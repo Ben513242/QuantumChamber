@@ -44,7 +44,7 @@
 - Consumes: 規格第 13.1、13.2、13.6、13.7 節的鎖定版本與 source-set 規則。
 - Produces: 可由 `./gradlew` 使用的 Gradle 8.8 Wrapper，以及 `main`／`client`／`test` source sets。
 
-- [ ] **Step 1: 確認 Java 21 前置條件**
+- [x] **Step 1: 確認 Java 21 前置條件**
 
 Run:
 
@@ -55,7 +55,7 @@ javac -version
 
 Expected: 兩者 major version 都是 `21`。若本機沒有 Java 21，先透過受信任的套件來源安裝 Temurin/OpenJDK 21，再重跑本步；不得以 Java 17 或 22 代替。
 
-- [ ] **Step 2: 建立 Gradle 設定與鎖定版本**
+- [x] **Step 2: 建立 Gradle 設定與鎖定版本**
 
 `settings.gradle`：
 
@@ -87,7 +87,7 @@ maven_group=dev.quantumchamber
 archives_base_name=quantumchamber
 ```
 
-- [ ] **Step 3: 建立單模組 Loom build**
+- [x] **Step 3: 建立單模組 Loom build**
 
 `build.gradle` 必須：
 
@@ -167,7 +167,7 @@ test {
 }
 ```
 
-- [ ] **Step 4: 建立保守的 Fabric metadata**
+- [x] **Step 4: 建立保守的 Fabric metadata**
 
 `src/main/resources/fabric.mod.json`：
 
@@ -196,7 +196,7 @@ test {
 }
 ```
 
-- [ ] **Step 5: 以官方 Gradle 8.8 發行檔產生並鎖定 Wrapper**
+- [x] **Step 5: 以官方 Gradle 8.8 發行檔產生並鎖定 Wrapper**
 
 Run:
 
@@ -214,7 +214,7 @@ Expand-Archive .tools/gradle-8.8-bin.zip -DestinationPath .tools -Force
 
 Expected: 官方 SHA-256 校驗相符，`Gradle 8.8` 與 Java 21；提交 `gradlew`、`gradlew.bat`、`gradle-wrapper.jar`、`gradle-wrapper.properties`，但不提交 `.tools/`。
 
-- [ ] **Step 6: 建立忽略規則**
+- [x] **Step 6: 建立忽略規則**
 
 `.gitignore` 至少忽略：
 
@@ -228,7 +228,7 @@ run/
 .tools/
 ```
 
-- [ ] **Step 7: 驗證 Gradle 模型可載入**
+- [x] **Step 7: 驗證 Gradle 模型可載入**
 
 Run:
 
@@ -238,7 +238,7 @@ Run:
 
 Expected: exit code `0`，且可看到 `build`、`runClient`、`runClientRender`、`runServer`、`test`。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add settings.gradle gradle.properties build.gradle gradlew gradlew.bat gradle/wrapper .gitignore src/main/resources/fabric.mod.json
@@ -263,7 +263,7 @@ git commit -m "build: bootstrap Fabric 1.21 toolchain"
 - Consumes: `ModPresenceProbe#isLoaded(String modId)`，由 production adapter 接到 `FabricLoader.isModLoaded`。
 - Produces: `CompatibilityManager.detect(ModPresenceProbe)` 回傳 `RuntimeCompatibility`；common initializer 只記錄偵測結果，client initializer 不承擔伺服器權威狀態。
 
-- [ ] **Step 1: 寫入會因類別尚不存在而失敗的測試**
+- [x] **Step 1: 寫入會因類別尚不存在而失敗的測試**
 
 `CompatibilityManagerTest` 必須驗證兩個行為：偵測已載入選用模組，以及所有選用模組皆未載入時的安全預設。
 
@@ -299,7 +299,7 @@ class CompatibilityManagerTest {
 }
 ```
 
-- [ ] **Step 2: 執行測試並確認 RED**
+- [x] **Step 2: 執行測試並確認 RED**
 
 Run:
 
@@ -309,7 +309,7 @@ Run:
 
 Expected: FAIL，原因為 `CompatibilityManager`／`RuntimeCompatibility` 尚未定義，而非 Gradle、下載或語法問題。
 
-- [ ] **Step 3: 實作最小可通過的 compatibility domain**
+- [x] **Step 3: 實作最小可通過的 compatibility domain**
 
 ```java
 package dev.quantumchamber.compat;
@@ -349,7 +349,7 @@ public final class CompatibilityManager {
 }
 ```
 
-- [ ] **Step 4: 執行測試並確認 GREEN**
+- [x] **Step 4: 執行測試並確認 GREEN**
 
 Run:
 
@@ -359,11 +359,11 @@ Run:
 
 Expected: `2 tests completed, 0 failed`。
 
-- [ ] **Step 5: 接上 Fabric common 與 client 入口**
+- [x] **Step 5: 接上 Fabric common 與 client 入口**
 
 `QuantumSuperpositionMod` 實作 `ModInitializer`，透過 `FabricLoader.getInstance()::isModLoaded` 呼叫 `CompatibilityManager.detect`，並用 SLF4J 記錄偵測摘要。`QuantumSuperpositionClient` 實作 `ClientModInitializer`，M0 僅記錄 client 初始化，不註冊 renderer、封包或遊戲內容。
 
-- [ ] **Step 6: 執行完整單元測試與編譯**
+- [x] **Step 6: 執行完整單元測試與編譯**
 
 Run:
 
@@ -373,7 +373,7 @@ Run:
 
 Expected: exit code `0`、JUnit 零失敗、產生 remapped mod JAR，且 common sources 無 client class loading 錯誤。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/main/java src/client/java src/test/java
