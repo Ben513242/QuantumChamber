@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.quantumchamber.universe.DimensionRole;
 import java.util.UUID;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtInt;
+import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.NbtString;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -85,6 +88,26 @@ class ChamberRegistryStateTest {
     void nonListRecordsFailsClosed() {
         NbtCompound encoded = validSchemaOneState();
         encoded.putString("Records", "not-a-list");
+
+        assertFailsClosed(encoded);
+    }
+
+    @Test
+    void nonEmptyStringRecordsListFailsClosed() {
+        NbtCompound encoded = validSchemaOneState();
+        NbtList strings = new NbtList();
+        strings.add(NbtString.of("bad-record"));
+        encoded.put("Records", strings);
+
+        assertFailsClosed(encoded);
+    }
+
+    @Test
+    void nonEmptyIntRecordsListFailsClosed() {
+        NbtCompound encoded = validSchemaOneState();
+        NbtList integers = new NbtList();
+        integers.add(NbtInt.of(42));
+        encoded.put("Records", integers);
 
         assertFailsClosed(encoded);
     }

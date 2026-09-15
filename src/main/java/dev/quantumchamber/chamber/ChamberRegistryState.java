@@ -70,10 +70,13 @@ public final class ChamberRegistryState extends PersistentState {
         if (!nbt.contains("Records", NbtElement.LIST_TYPE)) {
             return failed("Chamber registry Records is missing or has the wrong NBT type");
         }
+        NbtElement rawRecords = nbt.get("Records");
+        if (!(rawRecords instanceof NbtList records)) {
+            return failed("Chamber registry Records is not an NbtList");
+        }
 
         ChamberRegistryState state = new ChamberRegistryState();
         try {
-            NbtList records = nbt.getList("Records", NbtElement.COMPOUND_TYPE);
             if (!records.isEmpty() && records.getHeldType() != NbtElement.COMPOUND_TYPE) {
                 throw new IllegalArgumentException("Records must contain compounds");
             }
