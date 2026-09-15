@@ -396,7 +396,7 @@ git commit -m "feat: add Fabric entrypoints and compatibility detection"
 - Consumes: Task 1/2 的 Wrapper、Fabric metadata、entrypoints 與測試。
 - Produces: 對貢獻者可重現的建置說明、GitHub Actions build gate、client/dedicated-server 驗證紀錄。
 
-- [ ] **Step 1: 建立 README**
+- [x] **Step 1: 建立 README**
 
 README 必須包含：專案概念、M0 實際範圍、鎖定版本、Java 21 前置條件、`gradlew.bat clean build`、`gradlew.bat runClient`、`gradlew.bat runServer`、規格／計畫連結，以及以下授權聲明：
 
@@ -404,11 +404,11 @@ README 必須包含：專案概念、M0 實際範圍、鎖定版本、Java 21 �
 No license has been granted for this repository. All rights are reserved unless a license is added later.
 ```
 
-- [ ] **Step 2: 建立 GitHub Actions build gate**
+- [x] **Step 2: 建立 GitHub Actions build gate**
 
 `.github/workflows/build.yml` 必須在 push 與 pull request 上使用 Temurin 21、驗證 Wrapper、執行 `./gradlew clean build`，並上傳 `build/libs` 的 JAR artifact；Workflow 權限採 `contents: read`。
 
-- [ ] **Step 3: 驗證 client 啟動**
+- [x] **Step 3: 驗證 client 啟動**
 
 Run:
 
@@ -428,7 +428,7 @@ Expected: Minecraft 1.21 開啟至主選單、log 顯示 QuantumChamber common/c
 
 Expected: Minecraft 1.21 dedicated server 到達 `Done`、log 顯示 common 初始化、沒有 client class loading 錯誤。輸入 `stop` 正常關閉，並把實際結果記入 `m0-bootstrap.md`。
 
-- [ ] **Step 5: 執行完成前完整驗證**
+- [x] **Step 5: 執行完成前完整驗證**
 
 Run:
 
@@ -439,7 +439,7 @@ git status --short --branch --untracked-files=all
 
 Expected: build exit code `0`、測試零失敗；Git 僅顯示本 Task 預期文件／Workflow 變更，`run/`、`.gradle/`、`build/` 與 `.tools/` 不得出現。
 
-- [ ] **Step 6: 更新計畫勾選與 Commit**
+- [x] **Step 6: 更新計畫勾選與 Commit**
 
 在每個已證實步驟改為 `[x]`；無法執行的人工相容性項目保持 `[ ]` 並在 implementation note 說明，不得假報通過。
 
