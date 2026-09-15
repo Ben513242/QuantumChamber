@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "quantumchamber:block/chamber_controller" },
+    "facing=east": { "model": "quantumchamber:block/chamber_controller", "y": 90 },
+    "facing=south": { "model": "quantumchamber:block/chamber_controller", "y": 180 },
+    "facing=west": { "model": "quantumchamber:block/chamber_controller", "y": 270 }
+  }
+}

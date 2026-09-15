@@ -1,0 +1,6 @@
+{
+  "variants": {
+    "open=false": { "model": "quantumchamber:block/quantum_bulkhead" },
+    "open=true": { "model": "minecraft:block/air" }
+  }
+}
