@@ -71,4 +71,7 @@ java {
 test {
     useJUnitPlatform()
     workingDir file('run/testworlds')
+    doFirst {
+        workingDir.mkdirs()
+    }
 }
