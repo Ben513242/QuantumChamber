@@ -70,4 +70,5 @@ java {
 
 test {
     useJUnitPlatform()
+    workingDir file('run/testworlds')
 }
