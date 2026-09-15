@@ -56,7 +56,7 @@ public final class QuantumBulkheadBlock extends Block {
                 new ChamberDoorService().toggle(
                         view,
                         (target, open) -> world.setBlockState(target, world.getBlockState(target).with(OPEN, open)),
-                        ChamberMutationExecutor.DIRECT,
+                        ChamberProtectionService.get()::authorizedMutation,
                         frame.get());
             } catch (IllegalStateException failure) {
                 LOGGER.error("Bulkhead toggle rollback failure for frame {}: {}", frame.get(), failure.getMessage(), failure);

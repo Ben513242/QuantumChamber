@@ -1,5 +1,6 @@
 package dev.quantumchamber;
 
+import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.compat.CompatibilityManager;
 import dev.quantumchamber.compat.RuntimeCompatibility;
 import dev.quantumchamber.registry.ModBlockEntities;
@@ -18,6 +19,7 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ModBlocks.register();
         ModItems.register();
         ModBlockEntities.register();
+        ChamberProtectionService.initialize();
         RuntimeCompatibility compatibility = CompatibilityManager.detect(
                 FabricLoader.getInstance()::isModLoaded);
         LOGGER.info("Detected optional mod compatibility: sodium={}, iris={}, immersive_portals={}",
