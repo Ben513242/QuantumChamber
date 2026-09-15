@@ -27,7 +27,15 @@ public final class ChamberDoorService {
         List<BlockPos> changed = new ArrayList<>();
         for (BlockPos pos : positions) {
             if (!mutator.set(pos, next)) {
-                for (int index = changed.size() - 1; index >= 0; index--) mutator.set(changed.get(index), original);
+                List<BlockPos> rollbackFailures = new ArrayList<>();
+                for (int index = changed.size() - 1; index >= 0; index--) {
+                    BlockPos changedPos = changed.get(index);
+                    if (!mutator.set(changedPos, original)) rollbackFailures.add(changedPos);
+                }
+                if (!rollbackFailures.isEmpty()) {
+                    throw new IllegalStateException("Bulkhead rollback failed for " + rollbackFailures.size()
+                            + " cells: " + rollbackFailures.stream().map(BlockPos::toShortString).toList());
+                }
                 return false;
             }
             changed.add(pos);

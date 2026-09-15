@@ -2,6 +2,7 @@ package dev.quantumchamber.chamber;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -37,6 +38,25 @@ class ChamberDoorServiceTest {
         assertEquals(25, door.writes().size()); // 13 attempted writes, then 12 rollbacks
     }
 
+    @Test
+    void reportsIncompleteRollbackButStillAttemptsEveryPreviouslyWrittenCell() {
+        ChamberFrame frame = new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH);
+        List<BlockPos> expected = northDoorPositions();
+        BlockPos unrecovered = expected.get(4);
+        InMemoryDoor door = new InMemoryDoor(expected, false, 13, Set.of(unrecovered));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> new ChamberDoorService().toggle(door, door, ChamberMutationExecutor.DIRECT, frame));
+
+        assertTrue(failure.getMessage().contains("1"));
+        assertTrue(failure.getMessage().contains(unrecovered.toShortString()));
+        assertTrue(door.isOpen(unrecovered));
+        assertTrue(expected.subList(0, 12).stream().filter(pos -> !pos.equals(unrecovered)).noneMatch(door::isOpen));
+        assertTrue(expected.subList(12, 25).stream().noneMatch(door::isOpen));
+        assertEquals(12, door.rollbackAttempts().size());
+        assertTrue(door.rollbackAttempts().contains(unrecovered));
+    }
+
     private static List<BlockPos> northDoorPositions() {
         return List.of(
                 new BlockPos(-2, -5, 0), new BlockPos(-1, -5, 0), new BlockPos(0, -5, 0), new BlockPos(1, -5, 0), new BlockPos(2, -5, 0),
@@ -50,10 +70,17 @@ class ChamberDoorServiceTest {
         private final Map<BlockPos, Boolean> states = new LinkedHashMap<>();
         private final List<BlockPos> writes = new ArrayList<>();
         private final int failureWrite;
+        private final Set<BlockPos> rollbackFailurePositions;
+        private final List<BlockPos> rollbackAttempts = new ArrayList<>();
 
         private InMemoryDoor(List<BlockPos> positions, boolean open, int failureWrite) {
+            this(positions, open, failureWrite, Set.of());
+        }
+
+        private InMemoryDoor(List<BlockPos> positions, boolean open, int failureWrite, Set<BlockPos> rollbackFailurePositions) {
             positions.forEach(pos -> states.put(pos, open));
             this.failureWrite = failureWrite;
+            this.rollbackFailurePositions = rollbackFailurePositions;
         }
 
         @Override public ChamberCell cellAt(BlockPos pos) {
@@ -64,11 +91,17 @@ class ChamberDoorServiceTest {
         @Override public boolean set(BlockPos pos, boolean open) {
             writes.add(pos);
             if (failureWrite != 0 && writes.size() == failureWrite) return false;
+            if (!open && rollbackFailurePositions.contains(pos)) {
+                rollbackAttempts.add(pos);
+                return false;
+            }
+            if (!open && writes.size() > failureWrite) rollbackAttempts.add(pos);
             states.put(pos, open);
             return true;
         }
 
         boolean isOpen(BlockPos pos) { return states.get(pos); }
         List<BlockPos> writes() { return List.copyOf(writes); }
+        List<BlockPos> rollbackAttempts() { return List.copyOf(rollbackAttempts); }
     }
 }
