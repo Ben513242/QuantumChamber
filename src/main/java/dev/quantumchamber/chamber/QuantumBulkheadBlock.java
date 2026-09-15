@@ -42,6 +42,16 @@ public final class QuantumBulkheadBlock extends Block {
     @Override
     protected ActionResult onUse(BlockState state, World world, BlockPos pos, PlayerEntity player,
                                  BlockHitResult hit) {
-        return ActionResult.PASS;
+        if (world.isClient) {
+            return ActionResult.SUCCESS;
+        }
+        WorldChamberBlockView view = new WorldChamberBlockView(world);
+        ChamberLocator locator = new ChamberLocator(new ChamberDetector());
+        locator.findFrame(view, pos).ifPresent(frame -> new ChamberDoorService().toggle(
+                view,
+                (target, open) -> world.setBlockState(target, world.getBlockState(target).with(OPEN, open)),
+                ChamberMutationExecutor.DIRECT,
+                frame));
+        return ActionResult.SUCCESS;
     }
 }
