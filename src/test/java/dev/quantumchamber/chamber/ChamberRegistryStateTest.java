@@ -54,4 +54,68 @@ class ChamberRegistryStateTest {
         assertTrue(state.loadError().isPresent());
         assertThrows(IllegalStateException.class, () -> state.writeNbt(new NbtCompound()));
     }
+
+    @Test
+    void missingAnchorPositionFailsClosed() {
+        NbtCompound encoded = validSchemaOneState();
+        encoded.getList("Records", 10).getCompound(0).remove("AnchorPos");
+
+        assertFailsClosed(encoded);
+    }
+
+    @Test
+    void missingEnabledAndDestroyedFlagsFailClosed() {
+        NbtCompound encoded = validSchemaOneState();
+        NbtCompound record = encoded.getList("Records", 10).getCompound(0);
+        record.remove("Enabled");
+        record.remove("Destroyed");
+
+        assertFailsClosed(encoded);
+    }
+
+    @Test
+    void nonByteBooleanFlagFailsClosed() {
+        NbtCompound encoded = validSchemaOneState();
+        encoded.getList("Records", 10).getCompound(0).putInt("Enabled", 1);
+
+        assertFailsClosed(encoded);
+    }
+
+    @Test
+    void nonListRecordsFailsClosed() {
+        NbtCompound encoded = validSchemaOneState();
+        encoded.putString("Records", "not-a-list");
+
+        assertFailsClosed(encoded);
+    }
+
+    @Test
+    void verticalFacingFailsClosedEvenThoughItIsADirectionEnumValue() {
+        NbtCompound encoded = validSchemaOneState();
+        encoded.getList("Records", 10).getCompound(0).putString("Facing", "UP");
+
+        assertFailsClosed(encoded);
+    }
+
+    @Test
+    void invalidDimensionRoleEnumFailsClosed() {
+        NbtCompound encoded = validSchemaOneState();
+        encoded.getList("Records", 10).getCompound(0).putString("OriginDimensionRole", "VOID");
+
+        assertFailsClosed(encoded);
+    }
+
+    private static NbtCompound validSchemaOneState() {
+        ChamberRegistryState state = new ChamberRegistryState();
+        state.registry().registerOrigin(
+                World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
+                new ChamberFrame(new BlockPos(0, 70, 0), Direction.NORTH));
+        return state.writeNbt(new NbtCompound());
+    }
+
+    private static void assertFailsClosed(NbtCompound encoded) {
+        ChamberRegistryState restored = ChamberRegistryState.fromNbt(encoded);
+        assertTrue(restored.loadError().isPresent());
+        assertThrows(IllegalStateException.class, () -> restored.writeNbt(new NbtCompound()));
+    }
 }
