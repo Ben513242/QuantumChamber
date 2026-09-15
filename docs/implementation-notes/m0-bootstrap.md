@@ -31,7 +31,9 @@ M0 建立單一 Minecraft 1.21 Fabric module、Gradle Wrapper 8.8、split enviro
 
 ### Dedicated server 啟動
 
-首次 `runServer` 已確認 EULA gate：Minecraft 1.21 與 Fabric Loader 0.17.2 以 SERVER 環境啟動，common initializer 記錄選用模組摘要，接著 log 顯示 `You need to agree to the EULA in order to run the server.`。使用者尚未明確授權接受 Minecraft EULA，因此本紀錄不會將 `run/server/eula.txt` 改為 `eula=true`，也不宣稱 dedicated server 已到達 `Done` 或已正常 `stop` 關閉。
+首次 `runServer` 已確認 EULA gate：Minecraft 1.21 與 Fabric Loader 0.17.2 以 SERVER 環境啟動，common initializer 記錄選用模組摘要，接著 log 顯示 `You need to agree to the EULA in order to run the server.`。使用者其後明確授權在隔離的 `run/server/eula.txt` 設為 `eula=true`。
+
+接受後的第一次啟動已到達 `Done (3.255s)`，但非互動式 Gradle session 關閉 stdin，無法傳入 `stop`；該程序經命令列與父程序鏈核對後終止，這一輪不作為正常關閉通過證據。第二次以 TTY 執行 `runServer`，在同一 session 顯示 Minecraft 1.21、Fabric Loader 0.17.2、SERVER 環境與 common initializer，然後到達 `Done (2.426s)!`。輸入 `stop` 後 log 顯示 `Saving players`、`Saving worlds`、各維度 `All chunks are saved` 及 `All dimensions are saved`；Gradle `BUILD SUCCESSFUL` 且 exit code 0。這是 dedicated server 啟動與正常停止的 runtime 證據；本輪 log 未見 client class loading 錯誤，但不據此推論更廣泛的 multiplayer 相容性。
 
 ## 已知限制
 

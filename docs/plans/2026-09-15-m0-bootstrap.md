@@ -418,7 +418,7 @@ Run:
 
 Expected: Minecraft 1.21 開啟至主選單、log 顯示 QuantumChamber common/client 初始化、無 crash。人工關閉 client 後，將實際日期、Java、Loader、Fabric API 與結果記入 `m0-bootstrap.md`。
 
-- [ ] **Step 4: 驗證 dedicated server 啟動**
+- [x] **Step 4: 驗證 dedicated server 啟動**
 
 首次執行 `runServer` 後，在隔離的 `run/server/eula.txt` 將 EULA 設為 true，再重新啟動：
 
