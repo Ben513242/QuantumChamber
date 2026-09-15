@@ -461,7 +461,7 @@ git commit -m "docs: record M0 bootstrap verification"
 - Consumes: 已通過 M0 驗證且已提交的本機 `main` branch。
 - Produces: `Ben513242/QuantumChamber` Public Repository、`origin` remote 與已推送的 `main`。
 
-- [ ] **Step 1: 確認遠端名稱尚未被占用**
+- [x] **Step 1: 確認遠端名稱尚未被占用**
 
 Run:
 
@@ -471,7 +471,7 @@ gh repo view Ben513242/QuantumChamber
 
 Expected: 若不存在則回報 not found；若已存在，停止建立並先核對是否為本專案，不得覆寫既有 Repository。
 
-- [ ] **Step 2: 建立 Public Repository 並推送**
+- [x] **Step 2: 建立 Public Repository 並推送**
 
 Run:
 
@@ -481,7 +481,7 @@ gh repo create QuantumChamber --public --source . --remote origin --push
 
 Expected: Repository 建立成功，`main` 已推送，且不新增 GitHub 自動產生的 README、`.gitignore` 或 `LICENSE`。
 
-- [ ] **Step 3: 回讀遠端驗收**
+- [x] **Step 3: 回讀遠端驗收**
 
 Run:
 
