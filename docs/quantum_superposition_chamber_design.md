@@ -3,7 +3,7 @@
 > Status: Living design document  
 > Target: Minecraft Java Edition  
 > Document stage: Gameplay / architecture specification before implementation  
-> Revision: 0.7 — Code-agent handoff audited
+> Revision: 0.8 — foreign-world live 驗收依設計移入 M3
 >
 > **Code-agent handoff:** Read the entire specification, then follow **Section 32 — Code Agent Execution Contract**. Begin with M0 and do not jump directly to dynamic Universes. M3 and M7 contain explicit research/design gates and must not be guessed through.
 
@@ -2203,6 +2203,8 @@ Do not automatically delete old Universes to satisfy disk pressure. Persistence 
 - persistent Chamber Registry;
 - protection rules.
 
+M1 的驗證範圍為 vanilla role mapping、unknown-key pure tests、server identity guards 與 lifecycle cleanup；不為驗收 materialize foreign worlds。真正 non-vanilla／runtime-created ServerWorld 的 live coverage 已由使用者核准依設計延後至 M3，不阻塞 M1，也不屬於 M1 人工 gameplay gate。
+
 ### M2 — Superposition corridor prototype
 
 - static Superposition Dimension;
@@ -2225,6 +2227,8 @@ Do not automatically delete old Universes to satisfy disk pressure. Persistence 
 - global time sync;
 - destination projection materialization;
 - save/reload/crash-during-materialization test.
+
+**M3 必要驗收條件（由 M1 明確移交）：** 依設計延後至 M3，以真正非 vanilla／執行期建立的 `ServerWorld` 執行 live regression，涵蓋 unknown world-key handling、world identity guards、lifecycle detach 與 load-sync queue cleanup。M3 必須保留真實 world 建立／載入／卸載或替換／停止的對應證據；不得以 M1 的 pure key tests 或 vanilla runtime 證據代替這項 live acceptance。
 
 ### M4 — infinite candidate system
 
@@ -2401,7 +2405,13 @@ Pinned API/Javadoc references useful to the implementing agent:
 
 ---
 
-## 31. Revision History / 0.7 Handoff Audit
+## 31. Revision History
+
+### Revision 0.8 — M3 foreign-world live 驗收邊界（2026-09-16）
+
+- 使用者核准 acceptance change：真正 non-vanilla／runtime-created ServerWorld 的 live coverage 依設計延後至 M3，不再列為 M1 blocker。
+- M3 必須 live regression 驗證 unknown world-key handling、world identity guards、lifecycle detach 與 load-sync queue cleanup，並在 M3 implementation note 留存證據。
+- M1 保留 vanilla role mapping、unknown-key pure tests、server identity guards 與 lifecycle cleanup 的驗證範圍，不 materialize foreign worlds。M1 人工 gameplay／HUD 驗收仍需另行完成；此修訂不宣告 M1 complete，也不修改既有 0.7 決策。
 
 ### 31.1 Revision 0.7 — code-agent handoff audit
 
@@ -2490,6 +2500,8 @@ At minimum, run and record:
 ```
 
 plus the relevant Fabric GameTests/integration tests. M0/M1 and every milestone touching common/server code must also launch a dedicated server successfully with no client-class loading errors.
+
+**M1／M3 acceptance 邊界：** 使用者已核准將真正 non-vanilla／runtime-created `ServerWorld` 的 live testing 依設計延後至 M3。M1 只驗證 vanilla role mapping、unknown-key pure tests、server identity guards 與 lifecycle cleanup，不 materialize foreign worlds；此項不阻塞 M1，也不得混入 M1 人工 gameplay gate。M3 完成前則必須以真正的非 vanilla／執行期 world，live regression 驗證 unknown world-key handling、world identity guards、lifecycle detach 與 load-sync queue cleanup，並記錄於 `docs/implementation-notes/m3-dynamic-dimensions.md`；不能沿用 M1 pure tests 作為通過證據。M1 人工 gameplay／HUD checklist 仍是獨立且未豁免的驗收要求。
 
 For manual render milestones, record the exact test stack (Minecraft/Fabric API/Loader/Sodium/Iris/shader pack/resource pack) in `docs/implementation-notes/compatibility.md`.
 

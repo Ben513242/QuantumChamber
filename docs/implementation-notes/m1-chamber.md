@@ -1,6 +1,6 @@
 # M1 Chamber Foundation 實作與驗證紀錄
 
-驗證日期：2026-09-16（Asia/Taipei）。M1 foundation 程式與自動驗證已交付；完整人工 gameplay 與下列未覆蓋情境仍待驗收，因此不宣告整個 M1 completion gate 已完成。
+驗證日期：2026-09-16（Asia/Taipei）。M1 foundation 程式與自動驗證已交付；唯一剩餘的 M1 外部驗收門檻為完整人工 gameplay／HUD 清單，因此不宣告整個 M1 completion gate 已完成。Foreign／unknown ServerWorld live coverage 已由使用者核准依設計延後至 M3，不再列為 M1 blocker。
 
 ## 實作邊界
 
@@ -120,7 +120,8 @@ Dedicated restart 沒有在線參與者，因此只證明持久化與 held-high 
 
 ## 已知限制與後續邊界
 
-- unknown-world allow 與 foreign-server allow 在本次未建立真實非 vanilla ServerWorld／第二個同 JVM server 來驗證；只確認三 vanilla＋unknown key mapping、現有分支與 attached／實際 stopped-detached 路徑。未為測試新增 runtime dimension。
+- **使用者核准的 M3 deferral：** 真正 non-vanilla／runtime-created `ServerWorld` 的 live coverage 依設計延後至 M3，不阻塞 M1。M1 證據限於三 vanilla role mapping、unknown-key pure tests、server identity guards 的實作與 vanilla runtime 路徑，以及實際 lifecycle detach／load-sync queue cleanup；未 materialize foreign worlds，也不將這些證據外推為 foreign-world live coverage。
+- M3 必須以真正非 vanilla／執行期建立的 `ServerWorld`，live regression 驗證 unknown world-key handling、world identity guards、lifecycle detach 與 load-sync queue cleanup，並在 M3 implementation note 留存證據。此為 design spec Revision 0.8 的必要 M3 acceptance criterion，不屬於 M1 manual gate。
 - 未執行 renderer 視覺驗收、跨模組 compatibility matrix 或線上多人 GUI 驗收。
 - 使用者提供 AE2 Quantum Network Bridge 僅作視覺語言參考：對稱 multiblock、中央核心與 powered 藍光可供 M2 原創 cyan-violet 設計；不複製其模型、材質或配方。M1 未新增 renderer。
 - 下一步仍需獨立 M2 spec／plan；本次沒有 M2 skeleton。完整人工驗收通過前，M1 completion gate 維持未關閉。
