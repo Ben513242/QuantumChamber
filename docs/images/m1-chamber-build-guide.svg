@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1600" viewBox="0 0 1800 1600">
+  <title>QuantumChamber M1 施工與人工驗證圖</title>
+  <desc>7×7×7 外殼、逐層配置、192 格基岩、25 格艙門、1 格控制器，以及藥水與紅石驗證。開門後以控制器右鍵關閉整面門；人工玩法與多人驗證仍待觀察。</desc>
+  <defs>
+    <style>
+      text{font-family:"Microsoft JhengHei","Noto Sans TC",sans-serif;fill:#eaf2ff}
+      .title{font-size:42px;font-weight:700}.sub{font-size:21px;fill:#b7c8de}.h{font-size:28px;font-weight:700}.t{font-size:21px}.small{font-size:17px}.num{font-size:18px;fill:#acc2db}.dark{fill:#122032}.card{fill:#132236;stroke:#2c435e;stroke-width:2}.note{fill:#a9bfd9}.grid{stroke:#263446;stroke-width:2;fill:none}
+    </style>
+    <g id="grid7"><path class="grid" d="M0 0H280V280H0Z M40 0V280 M80 0V280 M120 0V280 M160 0V280 M200 0V280 M240 0V280 M0 40H280 M0 80H280 M0 120H280 M0 160H280 M0 200H280 M0 240H280"/></g>
+    <g id="floor"><rect width="280" height="280" fill="#7f8998"/><use href="#grid7"/></g>
+    <g id="middle"><rect width="280" height="280" fill="#7f8998"/><rect x="40" y="40" width="200" height="200" fill="#d9f0e2"/><rect x="40" y="0" width="200" height="40" fill="#9474d8"/><use href="#grid7"/></g>
+    <g id="ceiling"><rect width="280" height="280" fill="#7f8998"/><rect x="120" width="40" height="40" fill="#41c8d5"/><use href="#grid7"/></g>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#6ed6e0"/></marker>
+  </defs>
+  <rect width="1800" height="1600" fill="#091522"/>
+  <text x="50" y="66" class="title">QuantumChamber M1｜施工與人工驗證圖</text>
+  <text x="50" y="105" class="sub">精確施工以本圖格線為準；科幻效果圖只是外觀概念，非目前 M1 實際材質。</text>
+  <g transform="translate(50 130)"><rect width="25" height="25" fill="#7f8998"/><text x="36" y="21" class="t">B：Bedrock 基岩</text><rect x="285" width="25" height="25" fill="#9474d8"/><text x="321" y="21" class="t">D：Quantum Bulkhead</text><rect x="630" width="25" height="25" fill="#41c8d5"/><text x="666" y="21" class="t">C：Chamber Controller</text><rect x="1045" width="25" height="25" fill="#d9f0e2"/><text x="1081" y="21" class="t">A：內部空間（不是基岩）</text></g>
+
+  <rect x="40" y="180" width="520" height="430" rx="18" class="card"/>
+  <text x="65" y="223" class="h">① 正面：寬 7 × 高 7</text>
+  <g transform="translate(100 250)">
+    <rect width="280" height="280" fill="#7f8998"/><rect x="40" y="40" width="200" height="200" fill="#9474d8"/><rect x="120" width="40" height="40" fill="#41c8d5"/><use href="#grid7"/>
+    <text x="132" y="27" class="t dark">C</text>
+    <text x="132" y="150" class="title dark">D</text>
+    <text x="-38" y="27" class="num">y6</text><text x="-38" y="67" class="num">y5</text><text x="-38" y="107" class="num">y4</text><text x="-38" y="147" class="num">y3</text><text x="-38" y="187" class="num">y2</text><text x="-38" y="227" class="num">y1</text><text x="-38" y="267" class="num">y0</text>
+    <text x="14" y="308" class="num">x0</text><text x="54" y="308" class="num">x1</text><text x="94" y="308" class="num">x2</text><text x="134" y="308" class="num">x3</text><text x="174" y="308" class="num">x4</text><text x="214" y="308" class="num">x5</text><text x="254" y="308" class="num">x6</text>
+  </g>
+  <text x="402" y="302" class="small">頂部中央</text><text x="402" y="327" class="small">只有 1 格 C</text><path d="M400 335L250 270" stroke="#6ed6e0" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="65" y="580" class="t">中央 5 × 5 = 25 格 D；四周框架是 B。</text>
+
+  <rect x="580" y="180" width="1180" height="430" rx="18" class="card"/>
+  <text x="605" y="223" class="h">② 從下往上蓋：共 7 個水平層</text>
+  <g transform="translate(615 250)"><use href="#floor"/><text x="0" y="317" class="t">y = 0｜整片底板</text><text x="0" y="345" class="small note">49 格 B，中央也要填滿</text></g>
+  <g transform="translate(990 250)"><use href="#middle"/><text x="0" y="317" class="t">y = 1～5｜重複 5 層</text><text x="0" y="345" class="small note">每層：19 B + 5 D + 25 A</text></g>
+  <g transform="translate(1365 250)"><use href="#ceiling"/><text x="0" y="317" class="t">y = 6｜整片屋頂</text><text x="0" y="345" class="small note">48 B + 1 C；不要留開口</text></g>
+  <path d="M615 245H895 M990 245H1270 M1365 245H1645" stroke="#6ed6e0" stroke-width="2"/>
+  <text x="684" y="242" class="small" fill="#6ed6e0">前方 z = 0</text><text x="1059" y="242" class="small" fill="#6ed6e0">前方 z = 0</text><text x="1434" y="242" class="small" fill="#6ed6e0">前方 z = 0</text>
+
+  <rect x="40" y="630" width="820" height="310" rx="18" class="card"/>
+  <text x="65" y="674" class="h">③ 你的截圖下一步</text>
+  <text x="65" y="715" class="t">目前看起來是邊框，還不能視為完整 Chamber。</text>
+  <text x="65" y="754" class="t">• 若這圈是底層 y0：中央 5×5 也填滿 Bedrock。</text>
+  <text x="65" y="791" class="t">• 中間 y1～y5：前方中央 5 格改成 Bulkhead。</text>
+  <text x="65" y="828" class="t">• 重複蓋到總高度 7 格，最後封滿 y6 屋頂。</text>
+  <text x="65" y="865" class="t">• 屋頂前緣中央一格必須是 Controller，不是 Bedrock。</text>
+  <text x="65" y="908" class="small note">材料總數：192 Bedrock + 25 Quantum Bulkhead + 1 Controller</text>
+
+  <rect x="880" y="630" width="880" height="310" rx="18" class="card"/>
+  <text x="905" y="674" class="h">④ 中央側剖面：深 7 × 高 7</text>
+  <g transform="translate(930 695) scale(.72)"><rect width="280" height="280" fill="#7f8998"/><rect x="40" y="40" width="200" height="200" fill="#d9f0e2"/><rect x="0" y="40" width="40" height="200" fill="#9474d8"/><rect width="40" height="40" fill="#41c8d5"/><use href="#grid7"/></g>
+  <text x="1160" y="724" class="t">前牆 z0 → 內部 z1～5 → 後牆 z6</text>
+  <text x="1160" y="765" class="t">內部可站立空間：5 × 5 × 5</text>
+  <text x="1160" y="806" class="t">Controller 面向室外；房間延伸到它背後。</text>
+  <text x="1160" y="846" class="small note">站在室外、面對前牆放置 Controller，</text>
+  <text x="1160" y="875" class="small note">其 FACING 會朝向你；不要站室內反著放。</text>
+  <text x="905" y="917" class="small note">完工約 1 秒自動登錄、啟用並保護；不用另找啟用按鈕。</text>
+
+  <rect x="40" y="960" width="820" height="315" rx="18" class="card"/>
+  <text x="65" y="1003" class="h">⑤ 配方與量測裝置</text>
+  <text x="65" y="1045" class="t">Brewing Stand：燃料 Blaze Powder</text>
+  <text x="65" y="1082" class="t">下方放 Awkward Potion；上方放 Echo Shard。</text>
+  <text x="65" y="1119" class="t">完成後飲用 QuantumState，確認 effect／HUD icon。</text>
+  <text x="65" y="1163" class="t">Comparator 放在 Controller 室外側、同高度。</text>
+  <text x="65" y="1200" class="t">背面貼 Controller、箭頭朝外；下方補支撐方塊。</text>
+  <text x="65" y="1240" class="small note">Comparator 用一般比較模式；第一格 redstone dust 的 F3 power 可讀 3／7／11。</text>
+
+  <rect x="880" y="960" width="880" height="315" rx="18" class="card"/>
+  <text x="905" y="1003" class="h">⑥ 狀態：看第一格紅石粉 power</text>
+  <g transform="translate(910 1035)">
+    <rect width="180" height="85" rx="12" fill="#452433"/><text x="22" y="36" class="h">0｜INVALID</text><text x="22" y="67" class="small">無效／disabled</text>
+    <rect x="200" width="180" height="85" rx="12" fill="#394056"/><text x="222" y="36" class="h">3｜IDLE</text><text x="222" y="67" class="small">有效、條件不足</text>
+    <rect x="400" width="180" height="85" rx="12" fill="#24544c"/><text x="422" y="36" class="h">7｜READY</text><text x="422" y="67" class="small">密封、全員有 buff</text>
+    <rect x="600" width="210" height="85" rx="12" fill="#493b76"/><text x="622" y="36" class="h">11｜ARMED</text><text x="622" y="67" class="small">接受一次 rising edge</text>
+  </g>
+  <text x="905" y="1166" class="t">Lever：0 → powered 才 arm；持續 high 不 retrigger。</text>
+  <text x="905" y="1203" class="t">M1 停在 ARMED：不傳送、不出現走廊、不生成世界。</text>
+  <text x="905" y="1240" class="small note">15 是未來 Passage Ready，M1 不使用；ARMED 也不消耗這次 buff。</text>
+  <text x="905" y="1267" class="small note">讀 7／11 時須有室內玩家＋室外觀察者；唯一玩家離室後，狀態會降回 3。</text>
+
+  <rect x="40" y="1295" width="1720" height="265" rx="18" fill="#30251d" stroke="#db9b51" stroke-width="2"/>
+  <text x="65" y="1340" class="h" fill="#ffd291">Controller 門控與人工驗證注意｜測試通過不等於人工驗收完成</text>
+  <text x="65" y="1383" class="t">右鍵 Controller 可整面開／關 25 格；開啟 Bulkhead 的 outline 為空，關門請點 Controller。</text>
+  <text x="65" y="1420" class="t">先正常退出舊遊戲再啟動新版本。進入後靠近入口、避開門面，瞄準門頂中央 Controller 再右鍵關門。</text>
+  <text x="65" y="1463" class="small note">其他待驗：兩位玩家中一人無 buff 不得 ARMED；invalid shell 請在尚未註冊的第二座測試屋少放一格。</text>
+  <text x="65" y="1494" class="small note">已註冊 Chamber 受 protection 保護，不要硬拆。若沒有第二位玩家，請標「待驗」，不要算通過。</text>
+  <text x="65" y="1531" class="small note">新版：量子艙門紫色面板／腔室控制器青色核心；仍只有三種建材，舊方塊重啟即可套用造型。</text>
+</svg>

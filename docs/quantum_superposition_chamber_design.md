@@ -2,8 +2,8 @@
 
 > Status: Living design document  
 > Target: Minecraft Java Edition  
-> Document stage: Gameplay / architecture specification before implementation  
-> Revision: 0.8 — foreign-world live 驗收依設計移入 M3
+> Document stage: 持續維護的玩法／架構規格；M1 基礎實作與驗收中<br>
+> Revision: 0.9 — 核准 M1 Controller 整面門控與青紫辨識造型，保留 M3 foreign-world live 驗收邊界
 >
 > **Code-agent handoff:** Read the entire specification, then follow **Section 32 — Code Agent Execution Contract**. Begin with M0 and do not jump directly to dynamic Universes. M3 and M7 contain explicit research/design gates and must not be guessed through.
 
@@ -156,6 +156,10 @@ Orientation-relative local coordinates use `x=0..6`, `y=0..6`, `z=0..6`, with th
 The closed bulkhead should visually reference the vanilla `minecraft:block/bedrock` texture/model language where practical, so ordinary resource packs that replace bedrock also influence the closed Chamber appearance. The bulkhead itself remains a custom multiblock because it must open/close as one server-authoritative passage.
 
 For M1, manual/creative construction is acceptable. A survival-friendly construction ritual/recipe is **not a blocker for core implementation** and must not be invented silently by the code agent.
+
+2026-09-16 核准的 M1 操作修正：右鍵有效 Chamber 的 Controller，必須能在伺服器端將全部 25 格 Bulkhead 作為同一 logical door 開啟或關閉。開門後仍維持 empty outline／collision，玩家不必瞄準已成為空 outline 的艙門來關門；改以 Controller 為穩定入口。此入口沿用既有原子 door transaction、mutation authorization 與成功後的同步 Controller／comparator 刷新，不新增 renderer、packet、Session 或跨世界流程。原本右鍵處於關閉狀態的艙門來開門的入口仍保留。
+
+同日另核准青紫辨識造型：量子艙門使用紫色科幻面板，腔室控制器使用青色框與清楚的正面核心，基岩保留為底層／外框。採一般 JSON 模型與 Minecraft 既有材質引用，讓物品圖示同步沿用新造型；不新增 renderer、動畫、bloom、實際光源或自訂 packet，不改碰撞、保護、幾何、方塊 ID 或狀態機。圖解配色是辨識語彙，不承諾概念圖中的 shader 效果；艙體仍只有原本三種建材。
 
 ---
 

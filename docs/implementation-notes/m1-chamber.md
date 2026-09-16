@@ -120,6 +120,32 @@ Dedicated restart 沒有在線參與者，因此只證明持久化與 held-high 
 
 ## 已知限制與後續邊界
 
+### 2026-09-16 核准的門控與青紫造型 follow-up
+
+- `b1293ee` 增加 `ChamberControllerBlock.onUse`：依自身位置與 FACING 驗證有效 frame，透過既有 25-block door transaction 開／關整面門。新增5個原生 `BlockState.onUse` GameTests，涵蓋同步 ARMED→IDLE→READY、held-high 不重新 arm、授權不洩漏、EAST 與無效 shell／混合／缺失門。
+- `e67a675` 依獨立 task review 抽取 package-private `WorldChamberDoorAdapter`，共用 world mutator、authorizedMutation、成功同步刷新與 rollback 例外處理。Controller 僅 TOGGLED→SUCCESS；Bulkhead 只有 ROLLBACK_FAILED→FAIL，普通 REJECTED 仍 SUCCESS，保留原有互動政策。純交易、registry、redstone 與 load-sync queue 不改；scoped re-review 已批准。
+- 本次門控完整回歸為69 JVM、28 GameTests，failure／error／skip皆0；原生 server 互動不是人工滑鼠／客戶端動畫或世界 rollback 故障注入證據。
+- `1298a91` 只更動兩個 block models：量子艙門為紫色面板，控制器為六面青色識別板與唯一 NORTH 正面核心；基岩底層／particle保留。引用原生 bedrock／purpur_block／purple_concrete／cyan_concrete／sea_lantern，沒有加入PNG、renderer、luminance、動畫、bloom或packet。四向blockstates／item parent原接線保持；官方1.21 client.jar的air模型實際為`{}`，開門仍完全空模型。
+- 造型解析驗證為8個assets JSON、21 elements，完整parent／texture references、UV／bounds、四向核心與空模型皆通過；離線build退出0、69 JVM零failure／error／skip，成品JAR兩模型與src一致。task review批准只限資源接線與品質，不代表四向畫面／材質包／物品辨識已人工通過。
+- 主代理以ignored init script只在一次runClient覆寫至全新`run/client-appearance-task9`，不是既有`run/client-base`。16:14:07 client initialized；16:14:08／17兩次ResourceManager reload；16:14:09／18 blocks、GUI、mob_effect atlas建立。未見quantumchamber模型／貼圖／JSON錯誤，僅既有vanilla goat-horn missing sound與Sampler2 warning。
+- 該隔離log未見integrated server／玩家登入，沒有開世界；16:15:19 `Stopping!`，Gradle `BUILD SUCCESSFUL in 1m 32s`、退出碼0。原本使用者客戶端未被操作。此為新模型實際載入／烘焙證據，不外推為GUI玩法、貼圖目視或多人驗收。
+
+### 2026-09-16 Windows 啟動入口
+
+- `bd066ee` 新增 `start-client.bat`、單檔 `/start-client.bat text eol=crlf` 與 Windows-only `ClientLauncherTest`。以自身目錄為cwd，固定call同目錄Wrapper的`--no-daemon runClient`，setlocal保留程序內Java環境與原始退出碼，失敗顯示繁體中文並pause。
+- 6個測試透過真實cmd.exe／temp project／Gradle邊界替身驗證含空白路徑、異地cwd、固定參數、成功0／失敗23、明確JAVA_HOME優先、Adoptium21 fallback與無效JAVA_HOME錯誤傳遞；不開Minecraft或GPU。RED6因缺script失敗，GREEN6/6通過；完整JVM suite75，failure／error／skip皆0。
+- 診斷曾發現fixture格式化%符號、中文LF batch解析截斷與cmd重建ProgramFiles，皆已以實際stdout／bytes／Java map→cmd consumer定位。fixture改caller.bat在cmd啟動後設定隔離ProgramFiles；production不加test hook。Script實際29 CRLF／0 bare LF，Git consumer eol=crlf；Linux CI明確skip6，不能外推GPU／互動雙擊覆蓋。
+
+### 本次最終完整回歸
+
+主代理於 `bd066ee` 執行 `./gradlew.bat --no-daemon --offline clean build runGameTest`：退出碼0、`BUILD SUCCESSFUL in 1m 3s`，17 tasks中14 executed／3 up-to-date；main與client Java皆重新編譯，正式JAR重新產生。
+
+最新XML合計75 JUnit、28 GameTests，failure／error／skip皆0。16:45:50全部28個required GameTests通過；16:45:51三vanilla dimensions正常儲存、SERVER_STOPPED lifecycle detach與load queue cleanup驗證通過。啟動入口task review亦已批准，沒有新Critical／Important／Minor；門控／共用adapter／造型reviews已批准。
+
+這些新證據關閉本次程式、模型接線與啟動入口follow-up，不代表完整人工gameplay／HUD／兩位室內玩家或M1 whole-branch final review已完成。main不合併，保留既有M3 foreign-world live acceptance boundary。
+
+下列既有邊界仍保留：
+
 - **使用者核准的 M3 deferral：** 真正 non-vanilla／runtime-created `ServerWorld` 的 live coverage 依設計延後至 M3，不阻塞 M1。M1 證據限於三 vanilla role mapping、unknown-key pure tests、server identity guards 的實作與 vanilla runtime 路徑，以及實際 lifecycle detach／load-sync queue cleanup；未 materialize foreign worlds，也不將這些證據外推為 foreign-world live coverage。
 - M3 必須以真正非 vanilla／執行期建立的 `ServerWorld`，live regression 驗證 unknown world-key handling、world identity guards、lifecycle detach 與 load-sync queue cleanup，並在 M3 implementation note 留存證據。此為 design spec Revision 0.8 的必要 M3 acceptance criterion，不屬於 M1 manual gate。
 - 未執行 renderer 視覺驗收、跨模組 compatibility matrix 或線上多人 GUI 驗收。
