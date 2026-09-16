@@ -16,12 +16,9 @@ import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.util.shape.VoxelShapes;
 import net.minecraft.world.BlockView;
 import net.minecraft.world.World;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public final class QuantumBulkheadBlock extends Block {
     public static final BooleanProperty OPEN = Properties.OPEN;
-    private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
 
     public QuantumBulkheadBlock(AbstractBlock.Settings settings) {
         super(settings);
@@ -53,18 +50,8 @@ public final class QuantumBulkheadBlock extends Block {
         ChamberLocator locator = new ChamberLocator(new ChamberDetector());
         var frame = locator.findFrame(view, pos);
         if (frame.isPresent() && world instanceof ServerWorld serverWorld) {
-            try {
-                new ChamberDoorService().toggle(
-                        view,
-                        (target, open) -> world.setBlockState(target, world.getBlockState(target).with(OPEN, open)),
-                        ChamberProtectionService.get()::authorizedMutation,
-                        frame.get(),
-                        controllerPos -> ChamberControllerBlock.refreshState(serverWorld, controllerPos));
-            } catch (IllegalStateException failure) {
-                ChamberControllerBlock.refreshState(serverWorld, frame.get().controllerPos());
-                LOGGER.error("Bulkhead toggle rollback failure for frame {}: {}", frame.get(), failure.getMessage(), failure);
-                return ActionResult.FAIL;
-            }
+            if (WorldChamberDoorAdapter.toggle(serverWorld, view, frame.get())
+                    == WorldChamberDoorAdapter.Result.ROLLBACK_FAILED) return ActionResult.FAIL;
         }
         return ActionResult.SUCCESS;
     }

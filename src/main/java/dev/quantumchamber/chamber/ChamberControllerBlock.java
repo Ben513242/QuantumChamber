@@ -20,15 +20,12 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.util.math.random.Random;
 import org.jetbrains.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public final class ChamberControllerBlock extends BlockWithEntity implements BlockEntityProvider {
     public static final MapCodec<ChamberControllerBlock> CODEC = createCodec(ChamberControllerBlock::new);
     public static final DirectionProperty FACING = Properties.HORIZONTAL_FACING;
     private static final int REFRESH_DELAY_TICKS = 20;
     private static final ChamberRedstoneService REDSTONE = new ChamberRedstoneService();
-    private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
 
     public ChamberControllerBlock(AbstractBlock.Settings settings) {
         super(settings);
@@ -68,20 +65,8 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
         var view = new WorldChamberBlockView(world);
         var frame = new ChamberFrame(pos, state.get(FACING));
         if (!new ChamberDetector().validate(view, frame).valid()) return ActionResult.FAIL;
-        try {
-            boolean toggled = new ChamberDoorService().toggle(
-                    view,
-                    (target, open) -> world.setBlockState(target,
-                            world.getBlockState(target).with(QuantumBulkheadBlock.OPEN, open)),
-                    ChamberProtectionService.get()::authorizedMutation,
-                    frame,
-                    controllerPos -> refreshState(serverWorld, controllerPos));
-            return toggled ? ActionResult.SUCCESS : ActionResult.FAIL;
-        } catch (IllegalStateException failure) {
-            refreshState(serverWorld, frame.controllerPos());
-            LOGGER.error("Controller 門控 rollback 失敗，frame {}：{}", frame, failure.getMessage(), failure);
-            return ActionResult.FAIL;
-        }
+        return WorldChamberDoorAdapter.toggle(serverWorld, view, frame) == WorldChamberDoorAdapter.Result.TOGGLED
+                ? ActionResult.SUCCESS : ActionResult.FAIL;
     }
 
     @Override
