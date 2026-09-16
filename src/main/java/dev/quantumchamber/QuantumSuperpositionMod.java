@@ -1,6 +1,8 @@
 package dev.quantumchamber;
 
 import dev.quantumchamber.chamber.ChamberProtectionService;
+import dev.quantumchamber.chamber.ChamberControllerBlock;
+import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.compat.CompatibilityManager;
 import dev.quantumchamber.compat.RuntimeCompatibility;
 import dev.quantumchamber.registry.ModBlockEntities;
@@ -9,6 +11,7 @@ import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.registry.ModItems;
 import dev.quantumchamber.registry.ModPotions;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerBlockEntityEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +28,11 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ModPotions.register();
         ModPotions.registerBrewingRecipe();
         ChamberProtectionService.initialize();
+        ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.register((blockEntity, world) -> {
+            if (blockEntity instanceof ChamberControllerBlockEntity controller) {
+                ChamberControllerBlock.onControllerLoaded(world, controller.getPos());
+            }
+        });
         RuntimeCompatibility compatibility = CompatibilityManager.detect(
                 FabricLoader.getInstance()::isModLoaded);
         LOGGER.info("Detected optional mod compatibility: sodium={}, iris={}, immersive_portals={}",
