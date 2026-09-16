@@ -27,6 +27,30 @@ class ChamberDoorServiceTest {
     }
 
     @Test
+    void successfulToggleRefreshesTheResolvedControllerExactlyOnce() {
+        ChamberFrame frame = new ChamberFrame(new BlockPos(20, 80, -40), Direction.EAST);
+        InMemoryDoor door = new InMemoryDoor(doorPositions(frame), false, 0);
+        List<BlockPos> refreshed = new ArrayList<>();
+
+        assertTrue(new ChamberDoorService().toggle(
+                door, door, ChamberMutationExecutor.DIRECT, frame, refreshed::add));
+
+        assertEquals(List.of(frame.controllerPos()), refreshed);
+    }
+
+    @Test
+    void failedToggleDoesNotRefreshController() {
+        ChamberFrame frame = new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH);
+        InMemoryDoor door = new InMemoryDoor(northDoorPositions(), false, 13);
+        List<BlockPos> refreshed = new ArrayList<>();
+
+        assertFalse(new ChamberDoorService().toggle(
+                door, door, ChamberMutationExecutor.DIRECT, frame, refreshed::add));
+
+        assertTrue(refreshed.isEmpty());
+    }
+
+    @Test
     void rollsBackOnlyAlreadyWrittenCellsWhenThirteenthWriteFails() {
         ChamberFrame frame = new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH);
         List<BlockPos> expected = northDoorPositions();
@@ -64,6 +88,14 @@ class ChamberDoorServiceTest {
                 new BlockPos(-2, -3, 0), new BlockPos(-1, -3, 0), new BlockPos(0, -3, 0), new BlockPos(1, -3, 0), new BlockPos(2, -3, 0),
                 new BlockPos(-2, -2, 0), new BlockPos(-1, -2, 0), new BlockPos(0, -2, 0), new BlockPos(1, -2, 0), new BlockPos(2, -2, 0),
                 new BlockPos(-2, -1, 0), new BlockPos(-1, -1, 0), new BlockPos(0, -1, 0), new BlockPos(1, -1, 0), new BlockPos(2, -1, 0));
+    }
+
+    private static List<BlockPos> doorPositions(ChamberFrame frame) {
+        List<BlockPos> positions = new ArrayList<>();
+        for (int y = 1; y <= 5; y++) for (int x = 1; x <= 5; x++) {
+            positions.add(ChamberGeometry.localToWorld(frame, x, y, 0));
+        }
+        return positions;
     }
 
     private static final class InMemoryDoor implements ChamberBlockView, ChamberBlockMutator {

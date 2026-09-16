@@ -25,7 +25,7 @@ class ChamberRedstoneServiceTest {
         service.onPowerChanged(controller, true, snapshot(true, false));
         service.onPowerChanged(controller, true, snapshot(true, true));
 
-        assertEquals(ChamberState.IDLE, controller.chamberState());
+        assertEquals(ChamberState.READY, controller.chamberState());
 
         service.onPowerChanged(controller, false, snapshot(true, true));
         service.onPowerChanged(controller, true, snapshot(true, true));
@@ -59,6 +59,17 @@ class ChamberRedstoneServiceTest {
         service.onPowerChanged(controller, false, snapshot(true, false));
 
         assertEquals(ChamberState.IDLE, controller.chamberState());
+    }
+
+    @Test
+    void directRefreshDowngradesArmedAndNotifiesComparatorExactlyOnce() {
+        InMemoryController controller = initialized(ChamberState.ARMED);
+        CountingNotifier notifier = new CountingNotifier();
+
+        service.refreshState(controller, snapshot(true, false), notifier);
+
+        assertEquals(ChamberState.IDLE, controller.chamberState());
+        assertEquals(1, notifier.count());
     }
 
     private static InMemoryController initialized(ChamberState state) {
@@ -113,6 +124,19 @@ class ChamberRedstoneServiceTest {
         @Override
         public void setChamberState(ChamberState chamberState) {
             this.chamberState = chamberState;
+        }
+    }
+
+    private static final class CountingNotifier implements ChamberRedstoneService.ComparatorNotifier {
+        private int count;
+
+        @Override
+        public void update() {
+            count++;
+        }
+
+        private int count() {
+            return count;
         }
     }
 }

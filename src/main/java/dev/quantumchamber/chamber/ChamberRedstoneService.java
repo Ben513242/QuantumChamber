@@ -53,6 +53,8 @@ public final class ChamberRedstoneService {
             changeState(world, pos, controller, result.accepted() ? ChamberState.ARMED : result.readiness());
         } else if (previouslyPowered && !powered) {
             changeState(world, pos, controller, activationService.attemptArm(world, controller).readiness());
+        } else {
+            refreshState(world, pos);
         }
     }
 
@@ -63,6 +65,18 @@ public final class ChamberRedstoneService {
         ChamberState evaluated = activationService.attemptArm(world, controller).readiness();
         if (controller.chamberState() != ChamberState.ARMED || evaluated != ChamberState.READY) {
             changeState(world, pos, controller, evaluated);
+        }
+    }
+
+    /** Pure direct-refresh seam used by successful door mutations and unit tests. */
+    void refreshState(
+            ChamberControllerPort controller, ChamberActivationSnapshot snapshot, ComparatorNotifier comparatorNotifier) {
+        Objects.requireNonNull(controller, "controller");
+        Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(comparatorNotifier, "comparatorNotifier");
+        ChamberState evaluated = evaluator.evaluate(snapshot);
+        if (controller.chamberState() != ChamberState.ARMED || evaluated != ChamberState.READY) {
+            changeState(controller, evaluated, comparatorNotifier);
         }
     }
 
@@ -84,6 +98,8 @@ public final class ChamberRedstoneService {
             controller.setChamberState(evaluated == ChamberState.READY ? ChamberState.ARMED : evaluated);
         } else if (previouslyPowered && !powered) {
             controller.setChamberState(evaluated);
+        } else {
+            refreshState(controller, snapshot, () -> { });
         }
     }
 
@@ -114,5 +130,17 @@ public final class ChamberRedstoneService {
         controller.setChamberState(state);
         controller.markDirty();
         world.updateComparators(pos, ModBlocks.CHAMBER_CONTROLLER);
+    }
+
+    private static void changeState(
+            ChamberControllerPort controller, ChamberState state, ComparatorNotifier comparatorNotifier) {
+        if (controller.chamberState() == state) return;
+        controller.setChamberState(state);
+        comparatorNotifier.update();
+    }
+
+    @FunctionalInterface
+    interface ComparatorNotifier {
+        void update();
     }
 }

@@ -71,7 +71,7 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
 
     @Override
     protected void scheduledTick(BlockState state, ServerWorld world, BlockPos pos, Random random) {
-        REDSTONE.refreshState(world, pos);
+        refreshState(world, pos);
         scheduleRefresh(world, pos);
     }
 
@@ -90,6 +90,10 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
     public static void onControllerLoaded(ServerWorld world, BlockPos pos) {
         REDSTONE.onLoad(world, pos);
         scheduleRefresh(world, pos);
+    }
+
+    public static void refreshState(ServerWorld world, BlockPos pos) {
+        REDSTONE.refreshState(world, pos);
     }
 
     public static void scheduleRefresh(ServerWorld world, BlockPos pos) {

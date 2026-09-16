@@ -8,6 +8,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.state.StateManager;
 import net.minecraft.state.property.BooleanProperty;
 import net.minecraft.state.property.Properties;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
@@ -51,13 +52,14 @@ public final class QuantumBulkheadBlock extends Block {
         WorldChamberBlockView view = new WorldChamberBlockView(world);
         ChamberLocator locator = new ChamberLocator(new ChamberDetector());
         var frame = locator.findFrame(view, pos);
-        if (frame.isPresent()) {
+        if (frame.isPresent() && world instanceof ServerWorld serverWorld) {
             try {
                 new ChamberDoorService().toggle(
                         view,
                         (target, open) -> world.setBlockState(target, world.getBlockState(target).with(OPEN, open)),
                         ChamberProtectionService.get()::authorizedMutation,
-                        frame.get());
+                        frame.get(),
+                        controllerPos -> ChamberControllerBlock.refreshState(serverWorld, controllerPos));
             } catch (IllegalStateException failure) {
                 LOGGER.error("Bulkhead toggle rollback failure for frame {}: {}", frame.get(), failure.getMessage(), failure);
                 return ActionResult.FAIL;

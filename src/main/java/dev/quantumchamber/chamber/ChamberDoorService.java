@@ -2,11 +2,18 @@ package dev.quantumchamber.chamber;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import net.minecraft.util.math.BlockPos;
 
 public final class ChamberDoorService {
     public boolean toggle(ChamberBlockView view, ChamberBlockMutator mutator,
                           ChamberMutationExecutor executor, ChamberFrame frame) {
+        return toggle(view, mutator, executor, frame, ignored -> { });
+    }
+
+    public boolean toggle(ChamberBlockView view, ChamberBlockMutator mutator,
+                          ChamberMutationExecutor executor, ChamberFrame frame, ControllerRefresh refresh) {
+        Objects.requireNonNull(refresh, "refresh");
         List<BlockPos> positions = aperturePositions(frame);
         Boolean open = null;
         for (BlockPos pos : positions) {
@@ -19,7 +26,9 @@ public final class ChamberDoorService {
         if (open == null) return false;
         boolean original = open;
         boolean next = !original;
-        return executor.execute(() -> mutateWithRollback(mutator, positions, original, next));
+        boolean toggled = executor.execute(() -> mutateWithRollback(mutator, positions, original, next));
+        if (toggled) refresh.refresh(frame.controllerPos());
+        return toggled;
     }
 
     private static boolean mutateWithRollback(ChamberBlockMutator mutator, List<BlockPos> positions,
@@ -49,5 +58,10 @@ public final class ChamberDoorService {
             positions.add(ChamberGeometry.localToWorld(frame, x, y, 0));
         }
         return positions;
+    }
+
+    @FunctionalInterface
+    public interface ControllerRefresh {
+        void refresh(BlockPos controllerPos);
     }
 }
