@@ -11,6 +11,7 @@ import java.util.UUID;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.state.property.DirectionProperty;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Direction;
 
 /** Server-side M1 prerequisite orchestration.  State transition to ARMED belongs to the caller. */
@@ -45,16 +46,17 @@ public final class ChamberActivationService {
             return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.INVALID_STRUCTURE);
         }
 
-        ChamberRegistry registry = ChamberRegistryState.get(world.getServer()).registry();
-        ChamberRegistrationResult registration = registry.registerOrigin(world.getRegistryKey().getValue(), role.get(), frame);
-        if (registration.status() == ChamberRegistrationResult.Status.OVERLAP) {
-            return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.ORIGIN_OVERLAP);
+        ChamberRegistryState registryState = ChamberRegistryState.get(world.getServer());
+        OriginResolution origin = registerOrResolveOrigin(
+                new PersistentRegistryPort(registryState),
+                world.getRegistryKey().getValue(),
+                role.get(),
+                frame,
+                controller::setChamberUuid);
+        if (!origin.usable()) {
+            return new ArmAttemptResult(false, ChamberState.INVALID, List.of(), origin.failureReasons());
         }
-
-        ChamberRecord record = registry.records().get(registration.chamberUuid());
-        if (record == null) {
-            throw new IllegalStateException("registered chamber record is unavailable");
-        }
+        ChamberRecord record = origin.record().orElseThrow();
         List<ServerPlayerEntity> participants = occupants.findParticipants(world, frame);
         List<UUID> participantUuids = participants.stream().map(ServerPlayerEntity::getUuid).toList();
         List<ChamberActivationSnapshot.ParticipantEligibility> eligibility = participants.stream()
@@ -75,6 +77,34 @@ public final class ChamberActivationService {
         return controller.getCachedState().get(property);
     }
 
+    static OriginResolution registerOrResolveOrigin(
+            ChamberRegistryPort registry,
+            Identifier worldKey,
+            DimensionRole role,
+            ChamberFrame frame,
+            ChamberUuidSink chamberUuidSink) {
+        Objects.requireNonNull(registry, "registry");
+        Objects.requireNonNull(worldKey, "worldKey");
+        Objects.requireNonNull(role, "role");
+        Objects.requireNonNull(frame, "frame");
+        Objects.requireNonNull(chamberUuidSink, "chamberUuidSink");
+        if (registry.loadError().isPresent()) {
+            return OriginResolution.rejected(ArmAttemptResult.Failure.REGISTRY_UNAVAILABLE);
+        }
+
+        ChamberRegistrationResult registration = registry.registerOrigin(worldKey, role, frame);
+        if (registration.status() == ChamberRegistrationResult.Status.OVERLAP) {
+            return OriginResolution.rejected(ArmAttemptResult.Failure.ORIGIN_OVERLAP);
+        }
+
+        Optional<ChamberRecord> record = registry.record(registration.chamberUuid());
+        if (record.isEmpty()) {
+            return OriginResolution.rejected(ArmAttemptResult.Failure.REGISTRY_UNAVAILABLE);
+        }
+        chamberUuidSink.setChamberUuid(registration.chamberUuid());
+        return new OriginResolution(record, Set.of());
+    }
+
     private static ArmAttemptResult rejected(
             ChamberState readiness, List<UUID> participants, ArmAttemptResult.Failure failure) {
         return new ArmAttemptResult(false, readiness, participants, Set.of(failure));
@@ -89,5 +119,57 @@ public final class ChamberActivationService {
             failures.add(ArmAttemptResult.Failure.MISSING_QUANTUM_STATE);
         }
         return Set.copyOf(failures);
+    }
+
+    interface ChamberRegistryPort {
+        Optional<String> loadError();
+
+        ChamberRegistrationResult registerOrigin(Identifier worldKey, DimensionRole role, ChamberFrame frame);
+
+        Optional<ChamberRecord> record(UUID chamberUuid);
+    }
+
+    @FunctionalInterface
+    interface ChamberUuidSink {
+        void setChamberUuid(UUID chamberUuid);
+    }
+
+    record OriginResolution(Optional<ChamberRecord> record, Set<ArmAttemptResult.Failure> failureReasons) {
+        OriginResolution {
+            record = Objects.requireNonNull(record, "record");
+            failureReasons = Set.copyOf(Objects.requireNonNull(failureReasons, "failureReasons"));
+            if (record.isPresent() == !failureReasons.isEmpty()) {
+                throw new IllegalArgumentException("origin resolution must contain either a record or a failure");
+            }
+        }
+
+        static OriginResolution rejected(ArmAttemptResult.Failure failure) {
+            return new OriginResolution(Optional.empty(), Set.of(failure));
+        }
+
+        boolean usable() {
+            return record.isPresent();
+        }
+    }
+
+    private record PersistentRegistryPort(ChamberRegistryState state) implements ChamberRegistryPort {
+        private PersistentRegistryPort {
+            Objects.requireNonNull(state, "state");
+        }
+
+        @Override
+        public Optional<String> loadError() {
+            return state.loadError();
+        }
+
+        @Override
+        public ChamberRegistrationResult registerOrigin(Identifier worldKey, DimensionRole role, ChamberFrame frame) {
+            return state.registry().registerOrigin(worldKey, role, frame);
+        }
+
+        @Override
+        public Optional<ChamberRecord> record(UUID chamberUuid) {
+            return Optional.ofNullable(state.registry().records().get(chamberUuid));
+        }
     }
 }

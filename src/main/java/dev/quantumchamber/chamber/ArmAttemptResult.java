@@ -25,6 +25,7 @@ public record ArmAttemptResult(
 
     public enum Failure {
         UNSUPPORTED_DIMENSION,
+        REGISTRY_UNAVAILABLE,
         INVALID_STRUCTURE,
         ORIGIN_OVERLAP,
         DISABLED,
