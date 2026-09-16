@@ -28,11 +28,13 @@ Canonical state 位於 Overworld 的 `data/quantumchamber_chambers.dat`，`Schem
 
 首次 dedicated restart 在 `12:40:34` 被 watchdog 中止。呼叫鏈為 `ChunkSerializer → WorldChunk.setBlockEntity → BLOCK_ENTITY_LOAD → onControllerLoaded → world.getBlockEntity → getChunk`；回呼在 chunk 尚未完成 FULL 載入時查回同一 chunk，造成重入等待。
 
-Round 1 審查後，已移除可能 same-tick 執行且捕捉 stale world／position 的 `ServerTask` 方案。`BLOCK_ENTITY_LOAD` 現在只對事件提供的 controller 設定 runtime-only `loadSyncPending`，並呼叫 `world.scheduleBlockTick(pos, ModBlocks.CHAMBER_CONTROLLER, 1)`，不查詢 world／chunk。`ChamberControllerBlock.scheduledTick` 確認目前 block、BE 類型、未 removed 且 BE world 一致後，消耗 pending 標記並同步目前電平 without edge；後續走一般 refresh 與 20-tick 排程。方塊移除／替換時由 vanilla 丟棄舊 block tick，不保留會重新查回 chunk 的獨立工作。
+最終採用 `ChamberControllerLoadSyncQueue`：BLOCK_ENTITY_LOAD 只對事件提供的 controller 設定 runtime-only pending 並入列，不查詢 block entity／chunk。Entry 保存 server、world key／world identity、pos、原 BE identity，`dueTick=server.getTicks()+1`，由 `ServerTickEvents.END_SERVER_TICK` 處理。到期時必須仍是同一 server/world、原 BE 未 removed 且 world 一致、non-loading `getWorldChunk` 能直接取得已完成的 FULL chunk、目前 block 為 Controller、目前 BE 與 captured BE 相同，才 consume pending 並 without-edge sync；不符合就丟棄 entry。SERVER_STOPPED 清除該 server 的 entries。
 
-`loadSyncPending` 不寫入 NBT；每次 load event 都重新標記，因此即使既有 `PowerInitialized=true`，仍會在本次載入同步目前電平。Pending 期間的 neighbor update 不處理 edge，避免首次 block tick 前將落後的 persisted low 誤判成 rising edge。既有 NBT keys／持久化 contract 保留。Production 變更僅限 controller 載入排程與此 runtime 標記。
+這個 queue 與 20-tick periodic block refresh 分開。Round 1 曾改成 delay=1 的 block tick，但 GameTest 證明既有 20-tick block tick 的去重會延後 load sync；獨立 due-tick queue 消除這個干擾。載入同步不使用 `ServerTask` 或 block scheduler。一般 scheduledTick 保留 current block／BE／world guards，僅做 readiness refresh 與 20-tick reschedule。
 
-本機原始失敗證據：`run/server/crash-reports/crash-2026-09-16_12.40.34-server.txt`。初次成功記錄保留於 `run/server/m1-restart-initial.log`；Round 1 最終成功記錄為 `run/server/m1-restart.log`。
+`loadSyncPending` 不寫入 NBT；每次 load event 都重新標記，因此即使既有 `PowerInitialized=true`，仍會在本次載入同步目前電平。Pending 期間的 neighbor update 不處理 edge，避免 queue 首次同步前將落後的 persisted low 誤判成 rising edge。既有 NBT keys／持久化 contract 保留。Production 變更僅限 controller 載入同步與此 runtime 標記。
+
+本機原始失敗證據：`run/server/crash-reports/crash-2026-09-16_12.40.34-server.txt`。歷次成功記錄保留於 `run/server/m1-restart-initial.log`、`run/server/m1-restart-round1.log`；Round 2 最終記錄為 `run/server/m1-restart.log`。
 
 ## 測試與執行環境
 
@@ -52,15 +54,15 @@ git status --short --branch --untracked-files=all
 | 驗證 | 結果與實際範圍 |
 | --- | --- |
 | JUnit | 69 tests，0 failures；新增三 vanilla＋unknown key mapping、ProjectionIndex 跨 chunk remove／role 隔離、runtime load 標記不持久化且只消耗一次，並加強中段 rollback failure 後繼續寫入 |
-| Fabric GameTests | 20 tests；報告 `build/gametest-results.xml`；使用 real ServerWorld、ServerPlayerEntity 與原生方塊事件，未使用 mock framework |
+| Fabric GameTests | 23 tests；報告 `build/gametest-results.xml`；使用 real ServerWorld、ServerPlayerEntity 與原生方塊事件，未使用 mock framework |
 | Mixin/protection | registered interior／controller 的 setBlock 被拒絕；外部 setBlock 成功；爆炸以 protected glass／外部 glass 對照；流體以 protected air／外部流動對照 |
 | 活塞移動 contract | Bulkhead／bedrock shell 不移動，外部 stone 可被推動；兩種 Chamber 方塊本身不可推動，因此此 case 不獨立證明 Mixin 攔截 |
 | 互動與接線 | `onUse` 切換 25 格；ARMED 開門立即 IDLE，再關門 READY；真正 comparator 方塊輸出 3→7；scheduled tick、BLOCK_ENTITY_LOAD、null UUID omission |
 | 玩家 | 有 buff READY；兩位不同 UUID 玩家其中一位無 buff 拒絕；真正 spectator 排除 |
 | 電平 | rising edge ARMED；same-high 不 retrigger；故意載入 stale low latch 到 held-high 世界，LOAD 同步成 high 且 READY 不變 |
-| 載入回歸 | load 排程後移除／換成 chest：舊 BE 不同步、替代 BE 身分不變、沒有殘留 controller refresh tick；真 controller 下一 tick sync，之後不重複 sync；持久化 initialized=true 仍可同步已變化的世界電平 |
+| 載入回歸 | queue 入列後移除／換成 chest：舊 BE 不同步、替代 BE 身分不變、entry 被清除；同 block 換成新 BE 時，舊 entry 不得提前同步新 BE；已存在 20-tick refresh 時仍於1–2 ticks內同步 high，之後 low→high 可 arm；未載入 chunk 不被強載 |
 | 配方 | runtime BrewingRecipeRegistry 確認配方存在與實際 craft 產物；未取代人工 brewing stand GUI 驗收 |
-| lifecycle | testmod 在真正 SERVER_STOPPED 後記錄 `M1 lifecycle detach verified after SERVER_STOPPED`；observer 在 SERVER_STARTED 才註冊，避開 mod initializer 順序差異 |
+| lifecycle | testmod 在 SERVER_STOPPING 留下一筆真 pending entry，SERVER_STOPPED 後驗證保護 detach 與 queue 清空，記錄 `M1 lifecycle detach verified after SERVER_STOPPED` 與 `M1 load queue cleared after SERVER_STOPPED`；observer 在 SERVER_STARTED 才註冊，避開 mod initializer 順序差異 |
 
 GameTest 的原生 `createMockCreativeServerPlayerInWorld()` 會把 `isSpectator()` 固定為 false；測試改用未覆寫的 ServerPlayerEntity，透過 embedded connection 接入 PlayerManager，結束後移除玩家。
 
@@ -87,6 +89,7 @@ setblock 103 107 100 minecraft:redstone_block
 - 初次：`12:37:59 Done`、`12:38:04` 查詢 NBT、`12:38:08 stop`、`12:38:09 All dimensions are saved`。
 - 修正後重啟：`12:43:06 Done`、`12:43:11` 同一 NBT、`12:43:15 stop`，三 vanilla dimensions 正常儲存。
 - Round 1 最終版本重啟同一 world：`13:29:33 Done`、`13:29:38` 同一 controller NBT、`13:29:42 stop`／所有 dimensions 儲存；沒有 watchdog，registry 解碼與 SHA-256 仍一致。
+- Round 2 獨立 queue 版本重啟同一 world：`13:54:47 Done`、`13:54:52` 同一 controller NBT、`13:54:56 stop`／所有 dimensions 儲存；沒有 watchdog，registry 解碼與 SHA-256 仍一致。
 - Controller：`ChamberUuid=[-616379319,1488932183,-1377398559,266153682]`，`InstanceKind=ORIGIN`、`ChamberState=IDLE`、`WasPowered=1`、`PowerInitialized=1`，重啟前後一致。
 - 直接解碼兩份壓縮 NBT，比較完整 registry record 一致：world `minecraft:overworld`、role `OVERWORLD`、anchor `[103,106,100]`、facing `NORTH`、enabled `1`、destroyed `0`。
 - 兩份 registry 檔案 SHA-256 均為 `80ED28EDD4414A67945B0763130A4006154FBD9DFB01BF4683497676E6744CC9`。
@@ -104,7 +107,7 @@ Dedicated restart 沒有在線參與者，因此只證明持久化與 held-high 
 
 `12:44:21 QuantumChamber client initialized`，block／mob_effect atlas 成功載入；`12:44:46` integrated server 啟動、`12:44:47 Player518` 登入；`12:46:10` 玩家離線後 server 正常保存，`12:46:39 Stopping!`，Gradle exit 0。證據為 `run/client-base/logs/latest.log`。Vanilla 日誌包含 goat-horn missing sound 與 Sampler2 warning；沒有觀察到 QuantumChamber asset loading error。
 
-這份 client runtime 記錄來自 `9aded34` 的驗證版本；Round 1 的載入排程修正另以 GameTests 與同世界 dedicated restart 回歸驗證，未補做人工 HUD／GUI 驗收。
+這份 client runtime 記錄來自 `9aded34` 的驗證版本；Round 1／2 的載入同步修正另以 GameTests 與同世界 dedicated restart 回歸驗證，未補做人工 HUD／GUI 驗收。
 
 目前沒有可用的 native GUI 自動操作／截圖能力；上述證據不代表已目視驗證貼圖、HUD 或完成手動玩法。以下保留待人工執行：
 

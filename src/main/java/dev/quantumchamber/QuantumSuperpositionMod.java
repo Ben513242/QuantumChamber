@@ -2,6 +2,7 @@ package dev.quantumchamber;
 
 import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
+import dev.quantumchamber.chamber.ChamberControllerLoadSyncQueue;
 import dev.quantumchamber.compat.CompatibilityManager;
 import dev.quantumchamber.compat.RuntimeCompatibility;
 import dev.quantumchamber.registry.ModBlockEntities;
@@ -27,11 +28,11 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ModPotions.register();
         ModPotions.registerBrewingRecipe();
         ChamberProtectionService.initialize();
+        ChamberControllerLoadSyncQueue.initialize();
         ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.register((blockEntity, world) -> {
             if (blockEntity instanceof ChamberControllerBlockEntity controller) {
-                // 只標記事件提供的 BE 與排程；chunk 尚未 FULL，不得在此查回 world/chunk。
-                controller.markLoadSyncPending();
-                world.scheduleBlockTick(controller.getPos(), ModBlocks.CHAMBER_CONTROLLER, 1);
+                // 僅保留事件身分並入列；chunk 尚未 FULL，不得在此查回 world/chunk。
+                ChamberControllerLoadSyncQueue.enqueue(world, controller);
             }
         });
         RuntimeCompatibility compatibility = CompatibilityManager.detect(

@@ -57,7 +57,7 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
     @Override
     protected void onBlockAdded(BlockState state, World world, BlockPos pos, BlockState oldState, boolean notify) {
         super.onBlockAdded(state, world, pos, oldState, notify);
-        if (world instanceof ServerWorld serverWorld) serverWorld.scheduleBlockTick(pos, this, 1);
+        if (world instanceof ServerWorld serverWorld) scheduleRefresh(serverWorld, pos);
     }
 
     @Override
@@ -75,11 +75,7 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
         if (!world.getBlockState(pos).isOf(ModBlocks.CHAMBER_CONTROLLER)
                 || !(world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller)
                 || controller.isRemoved() || controller.getWorld() != world) return;
-        if (controller.consumeLoadSyncPending()) {
-            REDSTONE.onLoad(world, pos);
-        } else {
-            refreshState(world, pos);
-        }
+        refreshState(world, pos);
         scheduleRefresh(world, pos);
     }
 

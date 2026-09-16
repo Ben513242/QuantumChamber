@@ -32,6 +32,79 @@ import net.minecraft.world.World;
 
 public final class M1ChamberGameTests implements FabricGameTest {
     @GameTest(templateName = "quantumchamber:m1_empty")
+    public void unloaded_chunk_entry_is_dropped_without_loading_it(TestContext context) {
+        var world = context.getWorld();
+        BlockPos pos = context.getAbsolutePos(new BlockPos(4096, 3, 4096));
+        context.assertTrue(world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4) == null, "測試前 chunk 未載入");
+        var detached = new ChamberControllerBlockEntity(pos, ModBlocks.CHAMBER_CONTROLLER.getDefaultState());
+        detached.setWorld(world);
+        ChamberControllerLoadSyncQueue.enqueue(world, detached);
+        context.waitAndRun(2, () -> {
+            context.assertTrue(world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4) == null, "queue 不得強載 chunk");
+            context.assertTrue(!detached.powerInitialized(), "未載入 chunk 的 BE 不得同步");
+            context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), detached), "未載入 chunk 的 entry 已丟棄");
+            context.complete();
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void replaced_entity_is_not_synced_by_an_older_queue_entry(TestContext context) {
+        BlockPos pos = new BlockPos(7, 3, 7);
+        var world = context.getWorld();
+        world.setBlockState(context.getAbsolutePos(pos.up()), Blocks.REDSTONE_BLOCK.getDefaultState(), 2);
+        context.setBlockState(pos, ModBlocks.CHAMBER_CONTROLLER);
+        var original = (ChamberControllerBlockEntity) context.getBlockEntity(pos);
+        context.waitAndRun(1, () -> {
+            world.removeBlockEntity(context.getAbsolutePos(pos));
+            var replacement = new ChamberControllerBlockEntity(context.getAbsolutePos(pos), original.getCachedState());
+            replacement.setPowerInitialized(true);
+            world.addBlockEntity(replacement);
+            // 即使舊物件的 removed flag 已被清除，也必須由 current BE identity 排除它。
+            original.cancelRemoval();
+            context.waitAndRun(1, () -> {
+                context.assertTrue(!replacement.wasPowered(), "舊 entry 不得提前同步替代 BE");
+                context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), original), "舊 identity entry 已丟棄");
+                context.assertTrue(ChamberLoadSyncTestAccess.hasPending(world.getServer(), replacement), "新 entry 要等自己的 due tick");
+            });
+            context.waitAndRun(2, () -> {
+                context.assertTrue(replacement.wasPowered(), "新 BE 在自己的 due tick 才同步");
+                context.assertTrue(!original.powerInitialized(), "不得同步舊物件");
+                context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), replacement), "新 entry 已完成並釋放");
+                context.complete();
+            });
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void reload_sync_is_not_delayed_by_existing_periodic_block_tick(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        context.waitAndRun(3, () -> {
+            var original = ChamberGameTestBuilder.controller(context);
+            context.assertTrue(original.powerInitialized(), "第一次載入同步已完成");
+            context.assertTrue(context.getWorld().getBlockTickScheduler().isQueued(frame.controllerPos(), ModBlocks.CHAMBER_CONTROLLER), "20 tick periodic refresh 已存在");
+            context.getWorld().setBlockState(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 2);
+            original.setChamberState(ChamberState.READY);
+            var nbt = original.createNbt(context.getWorld().getRegistryManager());
+            nbt.putBoolean("WasPowered", false);
+            nbt.putBoolean("PowerInitialized", true);
+            context.getWorld().removeBlockEntity(frame.controllerPos());
+            var restored = new ChamberControllerBlockEntity(frame.controllerPos(), original.getCachedState());
+            restored.read(nbt, context.getWorld().getRegistryManager());
+            context.getWorld().addBlockEntity(restored);
+            context.assertTrue(!restored.wasPowered(), "本 tick 不可立即 sync");
+            context.waitAndRun(2, () -> {
+                context.assertTrue(restored.wasPowered(), "既有 periodic tick 不得把 load sync 延後到20 ticks");
+                state(context, ChamberState.READY, 7);
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.AIR);
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                state(context, ChamberState.ARMED, 11);
+                finish(context, player);
+            });
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
     public void removed_controller_load_tick_does_not_touch_old_entity(TestContext context) {
         BlockPos pos = new BlockPos(7, 3, 7);
         context.setBlockState(pos, ModBlocks.CHAMBER_CONTROLLER);
@@ -42,7 +115,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
             context.assertTrue(oldController.isRemoved(), "舊 controller 已移除");
             context.assertTrue(!oldController.powerInitialized(), "不得同步已移除的 BE");
             context.assertTrue(context.getBlockState(pos).isAir(), "移除後保持 air");
-            context.assertTrue(!context.getWorld().getBlockTickScheduler().isQueued(context.getAbsolutePos(pos), ModBlocks.CHAMBER_CONTROLLER), "vanilla 必須丟棄舊 block tick，不能留下 refresh");
+            context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(context.getWorld().getServer(), oldController), "queue 必須釋放已移除的 BE");
             context.complete();
         });
     }
@@ -57,7 +130,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
         context.waitAndRun(2, () -> {
             context.assertTrue(oldController.isRemoved() && !oldController.powerInitialized(), "不得同步被替換的 controller");
             context.assertTrue(context.getBlockEntity(pos) == replacement && !replacement.isRemoved(), "替代 chest BE 保持原身分");
-            context.assertTrue(!context.getWorld().getBlockTickScheduler().isQueued(context.getAbsolutePos(pos), ModBlocks.CHAMBER_CONTROLLER), "替換後沒有 controller refresh tick");
+            context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(context.getWorld().getServer(), oldController), "queue 必須釋放已替換的 BE");
             context.complete();
         });
     }

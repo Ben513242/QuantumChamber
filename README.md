@@ -6,7 +6,7 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 已實作 7×7×7 Chamber、25 格整面 Bulkhead、Controller、QuantumState 藥水、Origin registry 持久化、方塊保護，以及 vanilla redstone rising edge 啟動至 `ARMED`。Comparator 狀態為 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。
 
-目前已有 69 個 JUnit、20 個 Fabric GameTests、client runtime 與 dedicated-server 重啟證據；完整人工 gameplay 清單仍待驗收，M1 completion gate 尚未全部關閉。No Universe、corridor 或 teleport implementation；亦未新增動態 Dimension、Session、packet 或 renderer。
+目前已有 69 個 JUnit、23 個 Fabric GameTests、client runtime 與 dedicated-server 重啟證據；完整人工 gameplay 清單仍待驗收，M1 completion gate 尚未全部關閉。No Universe、corridor 或 teleport implementation；亦未新增動態 Dimension、Session、packet 或 renderer。
 
 ## 鎖定版本
 
