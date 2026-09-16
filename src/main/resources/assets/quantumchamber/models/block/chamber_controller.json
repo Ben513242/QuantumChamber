@@ -1,6 +1,100 @@
 {
-  "parent": "minecraft:block/cube_all",
+  "parent": "minecraft:block/block",
   "textures": {
-    "all": "minecraft:block/bedrock"
-  }
+    "particle": "minecraft:block/bedrock",
+    "base": "minecraft:block/bedrock",
+    "frame": "minecraft:block/cyan_concrete",
+    "core": "minecraft:block/sea_lantern"
+  },
+  "elements": [
+    {
+      "from": [0,0,0],
+      "to": [16,16,16],
+      "faces": {
+        "down": {"uv":[0,0,16,16],"texture":"#base","cullface":"down"},
+        "up": {"uv":[0,0,16,16],"texture":"#base","cullface":"up"},
+        "north": {"uv":[0,0,16,16],"texture":"#base","cullface":"north"},
+        "south": {"uv":[0,0,16,16],"texture":"#base","cullface":"south"},
+        "west": {"uv":[0,0,16,16],"texture":"#base","cullface":"west"},
+        "east": {"uv":[0,0,16,16],"texture":"#base","cullface":"east"}
+      }
+    },
+    {
+      "from": [1,-0.125,1],
+      "to": [15,0,15],
+      "faces": {
+        "down": {"uv":[0,0,16,16],"texture":"#frame","cullface":"down"},
+        "north": {"uv":[0,0,16,16],"texture":"#frame","cullface":"down"},
+        "south": {"uv":[0,0,16,16],"texture":"#frame","cullface":"down"},
+        "west": {"uv":[0,0,16,16],"texture":"#frame","cullface":"down"},
+        "east": {"uv":[0,0,16,16],"texture":"#frame","cullface":"down"}
+      }
+    },
+    {
+      "from": [1,16,1],
+      "to": [15,16.125,15],
+      "faces": {
+        "up": {"uv":[0,0,16,16],"texture":"#frame","cullface":"up"},
+        "north": {"uv":[0,0,16,16],"texture":"#frame","cullface":"up"},
+        "south": {"uv":[0,0,16,16],"texture":"#frame","cullface":"up"},
+        "west": {"uv":[0,0,16,16],"texture":"#frame","cullface":"up"},
+        "east": {"uv":[0,0,16,16],"texture":"#frame","cullface":"up"}
+      }
+    },
+    {
+      "from": [1,1,-0.125],
+      "to": [15,15,0],
+      "faces": {
+        "down": {"uv":[0,0,16,16],"texture":"#frame","cullface":"north"},
+        "up": {"uv":[0,0,16,16],"texture":"#frame","cullface":"north"},
+        "north": {"uv":[0,0,16,16],"texture":"#frame","cullface":"north"},
+        "west": {"uv":[0,0,16,16],"texture":"#frame","cullface":"north"},
+        "east": {"uv":[0,0,16,16],"texture":"#frame","cullface":"north"}
+      }
+    },
+    {
+      "from": [1,1,16],
+      "to": [15,15,16.125],
+      "faces": {
+        "down": {"uv":[0,0,16,16],"texture":"#frame","cullface":"south"},
+        "up": {"uv":[0,0,16,16],"texture":"#frame","cullface":"south"},
+        "south": {"uv":[0,0,16,16],"texture":"#frame","cullface":"south"},
+        "west": {"uv":[0,0,16,16],"texture":"#frame","cullface":"south"},
+        "east": {"uv":[0,0,16,16],"texture":"#frame","cullface":"south"}
+      }
+    },
+    {
+      "from": [-0.125,1,1],
+      "to": [0,15,15],
+      "faces": {
+        "down": {"uv":[0,0,16,16],"texture":"#frame","cullface":"west"},
+        "up": {"uv":[0,0,16,16],"texture":"#frame","cullface":"west"},
+        "north": {"uv":[0,0,16,16],"texture":"#frame","cullface":"west"},
+        "south": {"uv":[0,0,16,16],"texture":"#frame","cullface":"west"},
+        "west": {"uv":[0,0,16,16],"texture":"#frame","cullface":"west"}
+      }
+    },
+    {
+      "from": [16,1,1],
+      "to": [16.125,15,15],
+      "faces": {
+        "down": {"uv":[0,0,16,16],"texture":"#frame","cullface":"east"},
+        "up": {"uv":[0,0,16,16],"texture":"#frame","cullface":"east"},
+        "north": {"uv":[0,0,16,16],"texture":"#frame","cullface":"east"},
+        "south": {"uv":[0,0,16,16],"texture":"#frame","cullface":"east"},
+        "east": {"uv":[0,0,16,16],"texture":"#frame","cullface":"east"}
+      }
+    },
+    {
+      "from": [4,4,-0.25],
+      "to": [12,12,-0.125],
+      "faces": {
+        "down": {"uv":[0,0,16,16],"texture":"#core","cullface":"north"},
+        "up": {"uv":[0,0,16,16],"texture":"#core","cullface":"north"},
+        "north": {"uv":[0,0,16,16],"texture":"#core","cullface":"north"},
+        "west": {"uv":[0,0,16,16],"texture":"#core","cullface":"north"},
+        "east": {"uv":[0,0,16,16],"texture":"#core","cullface":"north"}
+      }
+    }
+  ]
 }
