@@ -1,4 +1,9 @@
 {
   "block.quantumchamber.chamber_controller": "Chamber Controller",
-  "block.quantumchamber.quantum_bulkhead": "Quantum Bulkhead"
+  "block.quantumchamber.quantum_bulkhead": "Quantum Bulkhead",
+  "effect.quantumchamber.quantum_state": "Quantum State",
+  "item.minecraft.potion.effect.quantum_state": "Potion of Quantum State",
+  "item.minecraft.splash_potion.effect.quantum_state": "Splash Potion of Quantum State",
+  "item.minecraft.lingering_potion.effect.quantum_state": "Lingering Potion of Quantum State",
+  "item.minecraft.tipped_arrow.effect.quantum_state": "Arrow of Quantum State"
 }

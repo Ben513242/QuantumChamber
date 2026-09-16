@@ -1,4 +1,9 @@
 {
   "block.quantumchamber.chamber_controller": "腔室控制器",
-  "block.quantumchamber.quantum_bulkhead": "量子艙門"
+  "block.quantumchamber.quantum_bulkhead": "量子艙門",
+  "effect.quantumchamber.quantum_state": "量子態",
+  "item.minecraft.potion.effect.quantum_state": "量子態藥水",
+  "item.minecraft.splash_potion.effect.quantum_state": "飛濺量子態藥水",
+  "item.minecraft.lingering_potion.effect.quantum_state": "滯留量子態藥水",
+  "item.minecraft.tipped_arrow.effect.quantum_state": "量子態之箭"
 }
