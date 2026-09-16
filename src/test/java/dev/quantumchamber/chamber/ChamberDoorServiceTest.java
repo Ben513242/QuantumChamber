@@ -66,7 +66,8 @@ class ChamberDoorServiceTest {
     void reportsIncompleteRollbackButStillAttemptsEveryPreviouslyWrittenCell() {
         ChamberFrame frame = new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH);
         List<BlockPos> expected = northDoorPositions();
-        BlockPos unrecovered = expected.get(4);
+        // 此位置在 reverse rollback 中段失敗，後面仍有多格必須繼續復原。
+        BlockPos unrecovered = expected.get(7);
         InMemoryDoor door = new InMemoryDoor(expected, false, 13, Set.of(unrecovered));
 
         IllegalStateException failure = assertThrows(IllegalStateException.class,
@@ -79,6 +80,7 @@ class ChamberDoorServiceTest {
         assertTrue(expected.subList(12, 25).stream().noneMatch(door::isOpen));
         assertEquals(12, door.rollbackAttempts().size());
         assertTrue(door.rollbackAttempts().contains(unrecovered));
+        assertTrue(door.rollbackAttempts().indexOf(unrecovered) < door.rollbackAttempts().size() - 1);
     }
 
     @Test

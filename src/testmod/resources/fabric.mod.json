@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "quantumchamber-testmod",
+  "version": "1.0.0",
+  "name": "QuantumChamber M1 Game Tests",
+  "environment": "server",
+  "entrypoints": {
+    "main": ["dev.quantumchamber.gametest.M1LifecycleProbe"],
+    "fabric-gametest": ["dev.quantumchamber.gametest.M1ChamberGameTests"]
+  },
+  "depends": { "quantumchamber": "*", "fabric-api": "*", "minecraft": "1.21" }
+}

@@ -11,6 +11,25 @@ import org.junit.jupiter.api.Test;
 
 class ProjectionIndexTest {
     @Test
+    void removalClearsAllCoveredChunksButPreservesOtherRolesAndRecords() {
+        ProjectionIndex index = new ProjectionIndex();
+        UUID removed = UUID.randomUUID();
+        UUID retained = UUID.randomUUID();
+        BlockBox bounds = new BlockBox(12, 64, 12, 18, 70, 18);
+        index.add(DimensionRole.OVERWORLD, removed, bounds);
+        index.add(DimensionRole.OVERWORLD, retained, bounds);
+        index.add(DimensionRole.NETHER, removed, bounds);
+        index.remove(DimensionRole.OVERWORLD, removed, bounds);
+        index.remove(DimensionRole.OVERWORLD, removed, bounds);
+        for (int x : new int[] {15, 16}) for (int z : new int[] {15, 16}) {
+            assertEquals(Set.of(retained), index.candidates(DimensionRole.OVERWORLD, new BlockPos(x, 65, z)));
+            assertEquals(Set.of(removed), index.candidates(DimensionRole.NETHER, new BlockPos(x, 65, z)));
+        }
+        index.remove(DimensionRole.OVERWORLD, retained, bounds);
+        assertEquals(Set.of(), index.candidates(DimensionRole.OVERWORLD, bounds));
+    }
+
+    @Test
     void indexesEveryChunkTouchedBySevenBlockWideBounds() {
         ProjectionIndex index = new ProjectionIndex();
         UUID chamber = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
