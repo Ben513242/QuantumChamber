@@ -25,12 +25,108 @@ import net.minecraft.potion.Potions;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 
 public final class M1ChamberGameTests implements FabricGameTest {
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void controller_interaction_toggles_all_cells_and_refreshes_without_rearming(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        attempt(context);
+        context.waitAndRun(2, () -> {
+            try {
+                var interior = frame.controllerPos().add(0, -4, 3);
+                context.assertTrue(!context.getWorld().setBlockState(interior, Blocks.STONE.getDefaultState()), "互動前一般受保護寫入被拒絕");
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                state(context, ChamberState.ARMED, 11);
+                context.assertTrue(useController(context, frame, player).isAccepted(), "Controller 原生互動必須成功");
+                assertDoors(context, frame, true);
+                state(context, ChamberState.IDLE, 3);
+                context.assertTrue(!context.getWorld().setBlockState(interior, Blocks.STONE.getDefaultState()), "開門後授權不得洩漏");
+                context.assertTrue(useController(context, frame, player).isAccepted(), "Controller 可再次關門");
+                assertDoors(context, frame, false);
+                state(context, ChamberState.READY, 7);
+                context.getWorld().updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
+                state(context, ChamberState.READY, 7);
+                context.assertTrue(!context.getWorld().setBlockState(interior, Blocks.STONE.getDefaultState()), "關門後一般受保護寫入仍被拒絕");
+                context.assertTrue(context.getWorld().getBlockState(interior).isAir(), "受保護內部保持 air");
+                context.complete();
+            } finally {
+                context.getWorld().getServer().getPlayerManager().remove(player);
+            }
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void controller_interaction_uses_its_east_facing(TestContext context) {
+        var frame = ChamberGameTestBuilder.build(context, false, Direction.EAST, false);
+        var player = participant(context, true);
+        try {
+            context.assertTrue(useController(context, frame, player).isAccepted(), "東向 Controller 原生互動必須成功");
+            assertDoors(context, frame, true);
+            context.complete();
+        } finally {
+            context.getWorld().getServer().getPlayerManager().remove(player);
+        }
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void controller_interaction_rejects_missing_shell_without_door_changes(TestContext context) {
+        var frame = ChamberGameTestBuilder.build(context, false, Direction.NORTH, true);
+        assertRejectedController(context, frame);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void controller_interaction_rejects_mixed_door_without_partial_changes(TestContext context) {
+        var frame = build(context, false);
+        context.getWorld().setBlockState(frame.controllerPos().down(), ModBlocks.QUANTUM_BULKHEAD.getDefaultState().with(QuantumBulkheadBlock.OPEN, true));
+        assertRejectedController(context, frame);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void controller_interaction_rejects_missing_door_without_partial_changes(TestContext context) {
+        var frame = build(context, false);
+        context.getWorld().setBlockState(frame.controllerPos().down(), Blocks.AIR.getDefaultState());
+        assertRejectedController(context, frame);
+    }
+
+    private static ActionResult useController(TestContext context, ChamberFrame frame, ServerPlayerEntity player) {
+        var pos = frame.controllerPos();
+        return context.getWorld().getBlockState(pos).onUse(context.getWorld(), player,
+                new BlockHitResult(Vec3d.ofCenter(pos), frame.outwardFacing(), pos, false));
+    }
+
+    private static void assertDoors(TestContext context, ChamberFrame frame, boolean open) {
+        for (int x = -2; x <= 2; x++) for (int y = -5; y <= -1; y++) {
+            var pos = frame.controllerPos().offset(frame.outwardFacing().rotateYCounterclockwise(), x).add(0, y, 0);
+            var cell = context.getWorld().getBlockState(pos);
+            context.assertTrue(cell.isOf(ModBlocks.QUANTUM_BULKHEAD) && cell.get(QuantumBulkheadBlock.OPEN) == open,
+                    "整面 25 格門狀態必須一致：" + pos.toShortString());
+        }
+    }
+
+    private static void assertRejectedController(TestContext context, ChamberFrame frame) {
+        var before = new java.util.LinkedHashMap<BlockPos, net.minecraft.block.BlockState>();
+        for (int x = -2; x <= 2; x++) for (int y = -5; y <= -1; y++) {
+            var pos = frame.controllerPos().add(x, y, 0);
+            before.put(pos, context.getWorld().getBlockState(pos));
+        }
+        var player = participant(context, true);
+        try {
+            context.assertEquals(useController(context, frame, player), ActionResult.FAIL, "無效 shell／門格必須回傳失敗");
+            before.forEach((pos, original) -> context.assertEquals(context.getWorld().getBlockState(pos), original, "拒絕互動不得部分寫門格"));
+            context.complete();
+        } finally {
+            context.getWorld().getServer().getPlayerManager().remove(player);
+        }
+    }
+
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void unloaded_chunk_entry_is_dropped_without_loading_it(TestContext context) {
         var world = context.getWorld();
