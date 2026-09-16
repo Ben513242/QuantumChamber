@@ -81,6 +81,18 @@ class ChamberDoorServiceTest {
         assertTrue(door.rollbackAttempts().contains(unrecovered));
     }
 
+    @Test
+    void incompleteRollbackDoesNotInvokeSuccessfulToggleRefresh() {
+        ChamberFrame frame = new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH);
+        InMemoryDoor door = new InMemoryDoor(northDoorPositions(), false, 13, Set.of(northDoorPositions().get(4)));
+        List<BlockPos> refreshed = new ArrayList<>();
+
+        assertThrows(IllegalStateException.class,
+                () -> new ChamberDoorService().toggle(door, door, ChamberMutationExecutor.DIRECT, frame, refreshed::add));
+
+        assertTrue(refreshed.isEmpty());
+    }
+
     private static List<BlockPos> northDoorPositions() {
         return List.of(
                 new BlockPos(-2, -5, 0), new BlockPos(-1, -5, 0), new BlockPos(0, -5, 0), new BlockPos(1, -5, 0), new BlockPos(2, -5, 0),

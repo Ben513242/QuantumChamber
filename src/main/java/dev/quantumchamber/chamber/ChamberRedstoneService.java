@@ -53,8 +53,6 @@ public final class ChamberRedstoneService {
             changeState(world, pos, controller, result.accepted() ? ChamberState.ARMED : result.readiness());
         } else if (previouslyPowered && !powered) {
             changeState(world, pos, controller, activationService.attemptArm(world, controller).readiness());
-        } else {
-            refreshState(world, pos);
         }
     }
 
@@ -82,8 +80,20 @@ public final class ChamberRedstoneService {
 
     /** Pure seam for unit tests: it deliberately has no world, registry, or player-effect mutation. */
     void onPowerChanged(ChamberControllerPort controller, boolean powered, ChamberActivationSnapshot snapshot) {
+        onPowerChanged(controller, powered, snapshot, () -> { }, () -> { });
+    }
+
+    /** Pure edge path with observability for tests; same-level events deliberately do nothing. */
+    void onPowerChanged(
+            ChamberControllerPort controller,
+            boolean powered,
+            ChamberActivationSnapshot snapshot,
+            ComparatorNotifier comparatorNotifier,
+            ArmAttemptObserver armAttemptObserver) {
         Objects.requireNonNull(controller, "controller");
         Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(comparatorNotifier, "comparatorNotifier");
+        Objects.requireNonNull(armAttemptObserver, "armAttemptObserver");
         if (!controller.powerInitialized()) {
             synchronize(controller, powered);
             return;
@@ -95,11 +105,10 @@ public final class ChamberRedstoneService {
         persistLatch(controller, powered);
         ChamberState evaluated = evaluator.evaluate(snapshot);
         if (risingEdge) {
-            controller.setChamberState(evaluated == ChamberState.READY ? ChamberState.ARMED : evaluated);
+            armAttemptObserver.onAttempt();
+            changeState(controller, evaluated == ChamberState.READY ? ChamberState.ARMED : evaluated, comparatorNotifier);
         } else if (previouslyPowered && !powered) {
-            controller.setChamberState(evaluated);
-        } else {
-            refreshState(controller, snapshot, () -> { });
+            changeState(controller, evaluated, comparatorNotifier);
         }
     }
 
@@ -142,5 +151,10 @@ public final class ChamberRedstoneService {
     @FunctionalInterface
     interface ComparatorNotifier {
         void update();
+    }
+
+    @FunctionalInterface
+    interface ArmAttemptObserver {
+        void onAttempt();
     }
 }

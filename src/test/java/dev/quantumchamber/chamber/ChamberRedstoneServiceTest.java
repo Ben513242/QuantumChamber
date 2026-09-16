@@ -25,7 +25,7 @@ class ChamberRedstoneServiceTest {
         service.onPowerChanged(controller, true, snapshot(true, false));
         service.onPowerChanged(controller, true, snapshot(true, true));
 
-        assertEquals(ChamberState.READY, controller.chamberState());
+        assertEquals(ChamberState.IDLE, controller.chamberState());
 
         service.onPowerChanged(controller, false, snapshot(true, true));
         service.onPowerChanged(controller, true, snapshot(true, true));
@@ -70,6 +70,28 @@ class ChamberRedstoneServiceTest {
 
         assertEquals(ChamberState.IDLE, controller.chamberState());
         assertEquals(1, notifier.count());
+    }
+
+    @Test
+    void sameHighDoorMutationEventsPreserveArmedUntilCommittedRefresh() {
+        InMemoryController controller = initialized(ChamberState.ARMED);
+        controller.setWasPowered(true);
+        CountingNotifier notifier = new CountingNotifier();
+        CountingArmAttempts attempts = new CountingArmAttempts();
+
+        for (int index = 0; index < 25; index++) {
+            service.onPowerChanged(controller, true, snapshot(true, false), notifier, attempts);
+        }
+
+        assertEquals(ChamberState.ARMED, controller.chamberState());
+        assertEquals(0, notifier.count());
+        assertEquals(0, attempts.count());
+
+        service.refreshState(controller, snapshot(true, false), notifier);
+
+        assertEquals(ChamberState.IDLE, controller.chamberState());
+        assertEquals(1, notifier.count());
+        assertEquals(0, attempts.count());
     }
 
     private static InMemoryController initialized(ChamberState state) {
@@ -132,6 +154,19 @@ class ChamberRedstoneServiceTest {
 
         @Override
         public void update() {
+            count++;
+        }
+
+        private int count() {
+            return count;
+        }
+    }
+
+    private static final class CountingArmAttempts implements ChamberRedstoneService.ArmAttemptObserver {
+        private int count;
+
+        @Override
+        public void onAttempt() {
             count++;
         }
 

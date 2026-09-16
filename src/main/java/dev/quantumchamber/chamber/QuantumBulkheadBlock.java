@@ -61,6 +61,7 @@ public final class QuantumBulkheadBlock extends Block {
                         frame.get(),
                         controllerPos -> ChamberControllerBlock.refreshState(serverWorld, controllerPos));
             } catch (IllegalStateException failure) {
+                ChamberControllerBlock.refreshState(serverWorld, frame.get().controllerPos());
                 LOGGER.error("Bulkhead toggle rollback failure for frame {}: {}", frame.get(), failure.getMessage(), failure);
                 return ActionResult.FAIL;
             }
