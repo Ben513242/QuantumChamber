@@ -35,7 +35,8 @@ public final class ChamberRedstoneService {
     /** Handles a neighboring redstone update and calls attemptArm at most once per rising edge. */
     public void onNeighborUpdate(ServerWorld world, BlockPos pos) {
         ChamberControllerBlockEntity controller = controllerAt(world, pos);
-        if (controller == null) return;
+        // 首次 block tick 同步前，持久化電平可能已落後於世界；不能據此推導新 edge。
+        if (controller == null || controller.loadSyncPending()) return;
         boolean powered = world.isReceivingRedstonePower(pos);
         if (!controller.powerInitialized()) {
             synchronize(controller, powered);

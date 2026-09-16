@@ -17,6 +17,22 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
     private ChamberState state = ChamberState.INVALID;
     private boolean wasPowered;
     private boolean powerInitialized;
+    // 每次 runtime load 都重新標記；不能隨 NBT 跨載入保存。
+    private boolean loadSyncPending;
+
+    public void markLoadSyncPending() {
+        loadSyncPending = true;
+    }
+
+    boolean loadSyncPending() {
+        return loadSyncPending;
+    }
+
+    boolean consumeLoadSyncPending() {
+        boolean pending = loadSyncPending;
+        loadSyncPending = false;
+        return pending;
+    }
 
     public ChamberControllerBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.CHAMBER_CONTROLLER, pos, state);

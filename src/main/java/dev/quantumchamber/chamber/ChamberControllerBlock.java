@@ -1,6 +1,7 @@
 package dev.quantumchamber.chamber;
 
 import com.mojang.serialization.MapCodec;
+import dev.quantumchamber.registry.ModBlocks;
 import net.minecraft.block.AbstractBlock;
 import net.minecraft.block.BlockEntityProvider;
 import net.minecraft.block.BlockRenderType;
@@ -56,7 +57,7 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
     @Override
     protected void onBlockAdded(BlockState state, World world, BlockPos pos, BlockState oldState, boolean notify) {
         super.onBlockAdded(state, world, pos, oldState, notify);
-        if (world instanceof ServerWorld serverWorld) scheduleRefresh(serverWorld, pos);
+        if (world instanceof ServerWorld serverWorld) serverWorld.scheduleBlockTick(pos, this, 1);
     }
 
     @Override
@@ -71,7 +72,14 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
 
     @Override
     protected void scheduledTick(BlockState state, ServerWorld world, BlockPos pos, Random random) {
-        refreshState(world, pos);
+        if (!world.getBlockState(pos).isOf(ModBlocks.CHAMBER_CONTROLLER)
+                || !(world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller)
+                || controller.isRemoved() || controller.getWorld() != world) return;
+        if (controller.consumeLoadSyncPending()) {
+            REDSTONE.onLoad(world, pos);
+        } else {
+            refreshState(world, pos);
+        }
         scheduleRefresh(world, pos);
     }
 
@@ -87,16 +95,11 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
                 : 0;
     }
 
-    public static void onControllerLoaded(ServerWorld world, BlockPos pos) {
-        REDSTONE.onLoad(world, pos);
-        scheduleRefresh(world, pos);
-    }
-
     public static void refreshState(ServerWorld world, BlockPos pos) {
         REDSTONE.refreshState(world, pos);
     }
 
     public static void scheduleRefresh(ServerWorld world, BlockPos pos) {
-        world.scheduleBlockTick(pos, dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER, REFRESH_DELAY_TICKS);
+        world.scheduleBlockTick(pos, ModBlocks.CHAMBER_CONTROLLER, REFRESH_DELAY_TICKS);
     }
 }

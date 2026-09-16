@@ -2,6 +2,8 @@ package dev.quantumchamber.chamber;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import dev.quantumchamber.registry.ModBlocks;
 import java.util.UUID;
@@ -14,6 +16,22 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class ChamberControllerBlockEntityNbtTest {
+    @Test
+    void loadSyncPendingIsConsumedOnceAndNeverPersisted() {
+        var original = controller();
+        original.setPowerInitialized(true);
+        original.markLoadSyncPending();
+        assertTrue(original.consumeLoadSyncPending());
+        assertFalse(original.consumeLoadSyncPending());
+        original.markLoadSyncPending();
+        NbtCompound encoded = original.createNbt(DynamicRegistryManager.EMPTY);
+        assertFalse(encoded.contains("LoadSyncPending"));
+        var restored = controller();
+        restored.read(encoded, DynamicRegistryManager.EMPTY);
+        assertTrue(restored.powerInitialized());
+        assertFalse(restored.consumeLoadSyncPending());
+    }
+
     private static final UUID CHAMBER_UUID = UUID.fromString("00000000-0000-0000-0000-000000000008");
 
     @BeforeAll

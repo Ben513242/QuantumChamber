@@ -1,7 +1,6 @@
 package dev.quantumchamber;
 
 import dev.quantumchamber.chamber.ChamberProtectionService;
-import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.compat.CompatibilityManager;
 import dev.quantumchamber.compat.RuntimeCompatibility;
@@ -12,7 +11,6 @@ import dev.quantumchamber.registry.ModItems;
 import dev.quantumchamber.registry.ModPotions;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerBlockEntityEvents;
-import net.minecraft.server.ServerTask;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,11 +29,9 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ChamberProtectionService.initialize();
         ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.register((blockEntity, world) -> {
             if (blockEntity instanceof ChamberControllerBlockEntity controller) {
-                // BLOCK_ENTITY_LOAD 可能在 chunk 尚未完成 FULL 載入時觸發；禁止在此同步查回該 chunk。
-                // send 明確入列；execute 在 server thread 可能立即執行而重入 chunk 載入。
-                var server = world.getServer();
-                server.send(new ServerTask(server.getTicks(),
-                        () -> ChamberControllerBlock.onControllerLoaded(world, controller.getPos())));
+                // 只標記事件提供的 BE 與排程；chunk 尚未 FULL，不得在此查回 world/chunk。
+                controller.markLoadSyncPending();
+                world.scheduleBlockTick(controller.getPos(), ModBlocks.CHAMBER_CONTROLLER, 1);
             }
         });
         RuntimeCompatibility compatibility = CompatibilityManager.detect(

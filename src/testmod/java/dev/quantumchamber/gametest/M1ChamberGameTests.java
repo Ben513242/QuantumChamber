@@ -2,6 +2,7 @@ package dev.quantumchamber.gametest;
 
 import dev.quantumchamber.chamber.*;
 import dev.quantumchamber.registry.ModEffects;
+import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.registry.ModPotions;
 import dev.quantumchamber.universe.DimensionRole;
 import com.mojang.authlib.GameProfile;
@@ -30,6 +31,61 @@ import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 
 public final class M1ChamberGameTests implements FabricGameTest {
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void removed_controller_load_tick_does_not_touch_old_entity(TestContext context) {
+        BlockPos pos = new BlockPos(7, 3, 7);
+        context.setBlockState(pos, ModBlocks.CHAMBER_CONTROLLER);
+        var oldController = (ChamberControllerBlockEntity) context.getBlockEntity(pos);
+        context.assertTrue(!oldController.powerInitialized(), "load 不可在同一 tick 同步");
+        context.removeBlock(pos);
+        context.waitAndRun(2, () -> {
+            context.assertTrue(oldController.isRemoved(), "舊 controller 已移除");
+            context.assertTrue(!oldController.powerInitialized(), "不得同步已移除的 BE");
+            context.assertTrue(context.getBlockState(pos).isAir(), "移除後保持 air");
+            context.assertTrue(!context.getWorld().getBlockTickScheduler().isQueued(context.getAbsolutePos(pos), ModBlocks.CHAMBER_CONTROLLER), "vanilla 必須丟棄舊 block tick，不能留下 refresh");
+            context.complete();
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void replaced_controller_load_tick_does_not_touch_replacement_entity(TestContext context) {
+        BlockPos pos = new BlockPos(7, 3, 7);
+        context.setBlockState(pos, ModBlocks.CHAMBER_CONTROLLER);
+        var oldController = (ChamberControllerBlockEntity) context.getBlockEntity(pos);
+        context.setBlockState(pos, Blocks.CHEST);
+        var replacement = context.getBlockEntity(pos);
+        context.waitAndRun(2, () -> {
+            context.assertTrue(oldController.isRemoved() && !oldController.powerInitialized(), "不得同步被替換的 controller");
+            context.assertTrue(context.getBlockEntity(pos) == replacement && !replacement.isRemoved(), "替代 chest BE 保持原身分");
+            context.assertTrue(!context.getWorld().getBlockTickScheduler().isQueued(context.getAbsolutePos(pos), ModBlocks.CHAMBER_CONTROLLER), "替換後沒有 controller refresh tick");
+            context.complete();
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void controller_load_syncs_once_on_next_tick_without_arming(TestContext context) {
+        build(context, false);
+        var player = participant(context, true);
+        var controller = ChamberGameTestBuilder.controller(context);
+        ChamberProtectionService.get().authorizedMutation(() -> context.getWorld().setBlockState(
+                controller.getPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 2));
+        controller.setChamberState(ChamberState.READY);
+        controller.setWasPowered(false);
+        controller.setPowerInitialized(true);
+        context.assertTrue(!controller.wasPowered(), "callback 不可同步當前 tick");
+        context.waitAndRun(2, () -> {
+            context.assertTrue(controller.powerInitialized() && controller.wasPowered(), "下一個 block tick 同步 held-high");
+            state(context, ChamberState.READY, 7);
+            // 保留 initialized=true，令可見 latch 偏離實際電平，用來偵測後續不應發生的重複 sync。
+            controller.setWasPowered(false);
+        });
+        context.waitAndRun(25, () -> {
+            context.assertTrue(controller.powerInitialized() && !controller.wasPowered(), "一般 refresh 不得重做 load sync");
+            state(context, ChamberState.READY, 7);
+            finish(context, player);
+        });
+    }
+
     private static ChamberFrame build(TestContext context, boolean open) {
         return ChamberGameTestBuilder.build(context, open, Direction.NORTH, false);
     }
@@ -61,9 +117,9 @@ public final class M1ChamberGameTests implements FabricGameTest {
 
     private static void state(TestContext context, ChamberState expected, int signal) {
         var controller = ChamberGameTestBuilder.controller(context);
-        context.assertEquals(expected, controller.chamberState(), "controller 狀態");
-        context.assertEquals(signal, context.getWorld().getBlockState(controller.getPos())
-                .getComparatorOutput(context.getWorld(), controller.getPos()), "comparator 輸出");
+        context.assertEquals(controller.chamberState(), expected, "controller 狀態");
+        context.assertEquals(context.getWorld().getBlockState(controller.getPos())
+                .getComparatorOutput(context.getWorld(), controller.getPos()), signal, "comparator 輸出");
     }
 
     @GameTest(templateName = "quantumchamber:m1_empty")
@@ -124,14 +180,15 @@ public final class M1ChamberGameTests implements FabricGameTest {
     public void rising_edge_arms_once(TestContext context) {
         var frame = build(context, false);
         var player = participant(context, true);
-        ChamberControllerBlock.onControllerLoaded(context.getWorld(), frame.controllerPos());
-        context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
-        state(context, ChamberState.ARMED, 11);
-        // 已消耗同一 edge 後，將可見狀態退回 READY；持續高電位不得再次 arm。
-        ChamberGameTestBuilder.controller(context).setChamberState(ChamberState.READY);
-        context.getWorld().updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
-        state(context, ChamberState.READY, 7);
-        finish(context, player);
+        context.waitAndRun(2, () -> {
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+            state(context, ChamberState.ARMED, 11);
+            // 已消耗同一 edge 後，將可見狀態退回 READY；持續高電位不得再次 arm。
+            ChamberGameTestBuilder.controller(context).setChamberState(ChamberState.READY);
+            context.getWorld().updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
+            state(context, ChamberState.READY, 7);
+            finish(context, player);
+        });
     }
 
     @GameTest(templateName = "quantumchamber:m1_empty")
@@ -144,11 +201,14 @@ public final class M1ChamberGameTests implements FabricGameTest {
         var nbt = original.createNbt(context.getWorld().getRegistryManager());
         // 故意載入落後於世界實際電平的 latch，證明 LOAD 回呼真的同步且不產生 edge。
         nbt.putBoolean("WasPowered", false);
-        nbt.putBoolean("PowerInitialized", false);
+        nbt.putBoolean("PowerInitialized", true);
         context.getWorld().removeBlockEntity(frame.controllerPos());
         var restored = new ChamberControllerBlockEntity(frame.controllerPos(), original.getCachedState());
         restored.read(nbt, context.getWorld().getRegistryManager());
         context.getWorld().addBlockEntity(restored);
+        context.assertTrue(restored.powerInitialized() && !restored.wasPowered(), "保留已持久化 initialized=true；runtime load 尚未同步");
+        context.getWorld().updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
+        state(context, ChamberState.READY, 7);
         context.waitAndRun(2, () -> {
             context.assertTrue(restored.wasPowered() && restored.powerInitialized(), "BLOCK_ENTITY_LOAD 同步高電位");
             context.getWorld().updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
@@ -228,6 +288,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
 
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void piston_cannot_move_registered_bulkhead_or_shell(TestContext context) {
+        // 僅驗證方塊移動 contract；Bulkhead／bedrock 本身不可推動，不獨立證明 Mixin。
         var frame = build(context, false);
         attempt(context);
         var door = frame.controllerPos().down(3);
@@ -271,20 +332,21 @@ public final class M1ChamberGameTests implements FabricGameTest {
         var frame = build(context, false);
         var player = participant(context, true);
         attempt(context);
-        ChamberControllerBlock.onControllerLoaded(context.getWorld(), frame.controllerPos());
-        context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
-        state(context, ChamberState.ARMED, 11);
-        context.useBlock(ChamberGameTestBuilder.CONTROLLER.down(3), player);
-        int opened = 0;
-        for (int x = -2; x <= 2; x++) for (int y = -5; y <= -1; y++) {
-            if (context.getWorld().getBlockState(frame.controllerPos().add(x, y, 0)).get(QuantumBulkheadBlock.OPEN)) opened++;
-        }
-        context.assertEquals(25, opened, "onUse 一次開啟 25 格");
-        state(context, ChamberState.IDLE, 3);
-        context.useBlock(ChamberGameTestBuilder.CONTROLLER.down(3), player);
-        context.assertTrue(new ChamberDetector().validate(new WorldChamberBlockView(context.getWorld()), frame).sealed(), "第二次 onUse 關閉整面門");
-        state(context, ChamberState.READY, 7);
-        finish(context, player);
+        context.waitAndRun(2, () -> {
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+            state(context, ChamberState.ARMED, 11);
+            context.useBlock(ChamberGameTestBuilder.CONTROLLER.down(3), player);
+            int opened = 0;
+            for (int x = -2; x <= 2; x++) for (int y = -5; y <= -1; y++) {
+                if (context.getWorld().getBlockState(frame.controllerPos().add(x, y, 0)).get(QuantumBulkheadBlock.OPEN)) opened++;
+            }
+            context.assertEquals(25, opened, "onUse 一次開啟 25 格");
+            state(context, ChamberState.IDLE, 3);
+            context.useBlock(ChamberGameTestBuilder.CONTROLLER.down(3), player);
+            context.assertTrue(new ChamberDetector().validate(new WorldChamberBlockView(context.getWorld()), frame).sealed(), "第二次 onUse 關閉整面門");
+            state(context, ChamberState.READY, 7);
+            finish(context, player);
+        });
     }
 
     @GameTest(templateName = "quantumchamber:m1_empty")
