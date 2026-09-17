@@ -20,7 +20,7 @@ public final class ChamberOccupantService {
         return !spectator && contains(interior, playerBounds);
     }
 
-    static boolean contains(Box outer, Box inner) {
+    public static boolean contains(Box outer, Box inner) {
         return inner.minX >= outer.minX && inner.maxX <= outer.maxX
                 && inner.minY >= outer.minY && inner.maxY <= outer.maxY
                 && inner.minZ >= outer.minZ && inner.maxZ <= outer.maxZ;

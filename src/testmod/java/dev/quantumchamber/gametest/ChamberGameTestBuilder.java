@@ -13,6 +13,14 @@ public final class ChamberGameTestBuilder {
     private ChamberGameTestBuilder() {}
 
     public static ChamberFrame build(TestContext context, boolean open, Direction facing, boolean missingShell) {
+        return build(context,open,facing,missingShell,true);
+    }
+
+    public static ChamberFrame buildForSession(TestContext context,boolean open,Direction facing,boolean missingShell) {
+        return build(context,open,facing,missingShell,false);
+    }
+
+    private static ChamberFrame build(TestContext context,boolean open,Direction facing,boolean missingShell,boolean foundation) {
         BlockPos anchor = switch (facing) {
             case NORTH -> CONTROLLER;
             case SOUTH -> new BlockPos(7, 7, 10);
@@ -21,6 +29,7 @@ public final class ChamberGameTestBuilder {
             default -> throw new IllegalArgumentException("fixture 僅支援水平朝向");
         };
         ChamberFrame frame = new ChamberFrame(context.getAbsolutePos(anchor), facing);
+        M1FoundationSessionFixture.set(context.getWorld(),frame.controllerPos(),foundation);
         ChamberProtectionService.get().authorizedMutation(() -> {
             for (int x = 0; x < 7; x++) {
                 for (int y = 0; y < 7; y++) {

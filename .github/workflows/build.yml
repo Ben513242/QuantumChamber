@@ -77,7 +77,22 @@ jobs:
             'trusted_geometry_requires_durable_reservation_and_stays_unpublished',
             'trusted_returning_before_geometry_never_builds',
             'trusted_retirement_retries_failed_cell_before_release',
-            'trusted_returning_before_prepare_retires_durable_reservation'
+            'trusted_returning_before_prepare_retires_durable_reservation',
+            'native_lever_closed_buffed_cohort_enters_fixed_world_windows',
+            'native_missing_one_buff_rejects_whole_cohort',
+            'native_zero_people_never_starts_session',
+            'native_only_spectator_never_starts_or_consumes',
+            'native_twenty_six_people_rejected_before_reservation',
+            'native_second_move_failure_rolls_back_hidden_nbt_whole_cohort_windows',
+            'native_after_false_publish_failure_keeps_current_hidden_effect_windows',
+            'native_buff_expiry_during_geometry_keeps_precommit_returning',
+            'native_shared_entry_preserves_frozen_relative_pose_north_windows',
+            'native_shared_entry_preserves_frozen_relative_pose_east_windows',
+            'native_shared_entry_preserves_frozen_relative_pose_south_windows',
+            'native_shared_entry_preserves_frozen_relative_pose_west_windows',
+            'native_staging_disconnect_keeps_frozen_offline_participant',
+            'native_staging_extra_occupant_rejects_without_shortening_journal',
+            'native_staging_low_keeps_true_pending_and_source_protection'
           )
           foreach ($testName in $requiredGameTests) {
             $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")

@@ -84,7 +84,7 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         this.powerInitialized = powerInitialized;
     }
 
-    boolean activationBlocked() {
+    public boolean activationBlocked() {
         return activationBlocked;
     }
 

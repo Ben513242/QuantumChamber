@@ -138,12 +138,14 @@ public final class ChamberPowerCoordinator {
             registry.setPowerState(uuid, ChamberPowerState.POWERED);
             if (!record.enabled()) return ChamberState.INVALID;
             if (presence == ChamberSessionGateway.Presence.ACTIVE) return ChamberState.ARMED;
+            if (presence == ChamberSessionGateway.Presence.ARMING) return ChamberState.READY;
             var preview = readiness.get();
             if (!preview.accepted()) return preview.readiness();
             if (sessions.activationBlocked()) return ChamberState.IDLE;
             if (current == ChamberState.ARMED) return current;
             return switch (Objects.requireNonNull(sessions.start(preview.participantUuids()), "start result")) {
                 case ARMED_ONLY, STARTED -> ChamberState.ARMED;
+                case STAGING -> ChamberState.READY;
                 case REJECTED -> ChamberState.READY;
             };
         } catch (RuntimeException failure) {

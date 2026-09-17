@@ -272,10 +272,14 @@ assertEquals(999_999, parts.get(1).firstCorePage());
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberSessionGateway.java`
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberPowerCoordinator.java`
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberOccupantService.java`
+- Modify: `src/main/java/dev/quantumchamber/chamber/ChamberControllerBlockEntity.java`（僅既有activationBlocked唯讀getter改public，stage重驗故障，不setter／清旗標）
 - Test: `src/test/java/dev/quantumchamber/chamber/ChamberPowerCoordinatorTest.java`
+- Modify: `.github/workflows/build.yml`（Windows必要entry／fault／expiry／staging／return-idempotence GT XML守門，平台能力不變）
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/ChamberGameTestBuilder.java`
 - Create: `src/testmod/java/dev/quantumchamber/gametest/M1FoundationSessionFixture.java`
 - Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/M1FoundationSessionGatewayMixin.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/SessionTransferFault.java`（default-off，owned server／world／SID／player／case限定）
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/SessionTransferFaultMixin.java`（partial move／false提交後checkpoint故障證據，不production seam）
 - Modify: `src/testmod/resources/quantumchamber-test.mixins.json`
 
 **Interfaces:**
@@ -285,7 +289,7 @@ assertEquals(999_999, parts.get(1).firstCorePage());
 - Produces: gateway簽名不變，additive `Presence.ARMING`、`StartResult.STAGING` 支援4096budget非同步準備；coordinator在ARMING/STAGING維持READY=7／POWERED保護而不重複start，SUPERPOSITION才ACTIVE/11。低位／管理停用仍走原先return，ActivationBlocked故障旗標不清除。純測 staging重複刷新只start1、低位取消仍先return、false/throw仍保護。
 - Foundation測試隔離：現有M1 nativeGT明確驗ARMED_ONLY／不消耗／不傳送；testmod-only fixture map以同server/world/controller位置身分限定M1 foundation backend，SuperpositionSessionManager.start的testmod mixin只對已標記fixture回ARMED_ONLY。ChamberGameTestBuilder原build在寫方塊前標記Foundation，新增buildForSession供M2明確移除該位置Foundation標記並走真backend；不保持跨tick global gateway override，不攔M2 case，不以Foundation結果聲稱M2 live。STOPPED清map，release無fixture/mixin。
 - Produces: `public boolean SessionTransferService.move(ServerPlayerEntity, ServerWorld, Vec3d, Vec3d, float, float)` 回傳實際核對成功，不信teleport boolean。
-- Produces: `public static Map<UUID,Vec3d> ChamberReturnPlacement.plan(ChamberFrame,List<UUID>)` 保留 UUID 確定性5×5floor slots；另有 `public static Map<UUID,Vec3d> plan(ChamberFrame,List<UUID>,Map<UUID,Vec3d> sourcePositions)`，先按來源 frame 的 local z／x 排序，再以 UUID 破同值，保持入場相對排序。真 session 使用三參數版本，兩參數版本只在沒有來源 pose 時提供明確 fallback；最多25人，capacity不足入場前拒絕。
+- Produces: `public static Map<UUID,Vec3d> ChamberReturnPlacement.plan(ChamberFrame,List<UUID>)` 保留 UUID 確定性5×5floor slots；另有 `public static Map<UUID,Vec3d> plan(ChamberFrame,List<UUID>,Map<UUID,Vec3d> sourcePositions)`，先按來源 frame 的 local z／x 排序，再以 UUID 破同值，返還時保留來源相對排序（不是距離），不作為entry位置。Task4的真session返還使用三參數版本，兩參數版本只在沒有來源pose時提供明確fallback；最多25人，capacity不足入場前拒絕。Task3僅產出與測試返還API；entry採精確typed affine，pre-commit原pose rollback未確認則保持RETURNING,true，不用量化槽位假稱姿態未變。
 - Produces: `QuantumEffectTransaction` 以NBT snapshot／restore與完整cohort一次commit，不提供Universe傳送API。
 - Produces: 將既有 `ChamberOccupantService.contains(Box outer,Box inner)` 簽名公開成 `public static boolean`，重用現有六邊界完整bbox判定；算法不重寫、spectator篩選不變，供M2 transfer／恢復與nativeGT使用，不杜撰 Box.contains(Box) overload。
 

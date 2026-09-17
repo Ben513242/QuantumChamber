@@ -35,6 +35,7 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ChamberControllerLoadSyncQueue.initialize();
         ServerLifecycleEvents.SERVER_STARTED.register(server -> SessionRecoveryState.get(server).requireHealthy());
         dev.quantumchamber.corridor.SessionSpaceProtection.initialize();
+        dev.quantumchamber.superposition.SuperpositionSessionManager.initialize();
         ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.register((blockEntity, world) -> {
             if (blockEntity instanceof ChamberControllerBlockEntity controller) {
                 // 僅保留事件身分並入列；chunk 尚未 FULL，不得在此查回 world/chunk。

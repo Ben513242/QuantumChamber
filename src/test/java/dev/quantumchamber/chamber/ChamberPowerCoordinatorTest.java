@@ -11,6 +11,26 @@ import net.minecraft.world.World;
 import org.junit.jupiter.api.Test;
 
 class ChamberPowerCoordinatorTest {
+    @Test void stagingRemainsReadyAndStartsOnlyOnceAcrossIneligibleRefresh() {
+        backend.startResult = ChamberSessionGateway.StartResult.STAGING;
+        assertEquals(ChamberState.READY,refresh(true,ChamberState.IDLE,true));
+        backend.presence = ChamberSessionGateway.Presence.ARMING;
+        for(int i=0;i<3;i++) assertEquals(ChamberState.READY,refresh(true,ChamberState.READY,false));
+        assertEquals(1,backend.starts);
+        assertEquals(ChamberPowerState.POWERED,registry.records().get(uuid).powerState());
+    }
+    @Test void stagingLowOrDisabledMustReturnAndFalseOrThrowNeverUnlocks() {
+        backend.presence = ChamberSessionGateway.Presence.ARMING;
+        backend.returned = false;
+        assertEquals(ChamberState.ARMED,refresh(false,ChamberState.READY,false));
+        assertEquals(ChamberPowerState.RETURNING,registry.records().get(uuid).powerState());
+        backend.throwOnReturn = true;
+        assertEquals(ChamberState.ARMED,refresh(false,ChamberState.READY,false));
+        backend.throwOnReturn = false;
+        registry.setEnabled(uuid,false);
+        assertEquals(ChamberState.ARMED,refresh(true,ChamberState.READY,false));
+        assertEquals(0,backend.starts);
+    }
     @Test void doorFaultBlocksStartAcrossRefreshAndRepowerButDoesNotBlockReturn() {
         registry.setPowerState(uuid, ChamberPowerState.POWERED);
         backend.blocked = true;
@@ -121,13 +141,14 @@ class ChamberPowerCoordinatorTest {
         int starts;
         boolean blocked;
         List<UUID> startedParticipants;
+        ChamberSessionGateway.StartResult startResult = ChamberSessionGateway.StartResult.ARMED_ONLY;
         @Override public ChamberSessionGateway.Presence presence() { return presence; }
         @Override public boolean activationBlocked() { return blocked; }
         @Override public ChamberSessionGateway.StartResult start(List<UUID> ids) {
             assertEquals(ChamberPowerState.POWERED, registry.records().get(uuid).powerState());
             starts++;
             startedParticipants = ids;
-            return ChamberSessionGateway.StartResult.ARMED_ONLY;
+            return startResult;
         }
         @Override public boolean returnToOrigin() {
             assertEquals(ChamberPowerState.RETURNING, registry.records().get(uuid).powerState());

@@ -7,8 +7,8 @@ import net.minecraft.server.world.ServerWorld;
 
 /** M1.2 的 session 邊界；M2 才安裝實際空間服務。 */
 public interface ChamberSessionGateway {
-    enum Presence { NONE, ACTIVE, RETURNING, UNKNOWN }
-    enum StartResult { ARMED_ONLY, STARTED, REJECTED }
+    enum Presence { NONE, ARMING, ACTIVE, RETURNING, UNKNOWN }
+    enum StartResult { ARMED_ONLY, STAGING, STARTED, REJECTED }
 
     Presence presence(MinecraftServer server, UUID chamberUuid);
     StartResult start(ServerWorld originWorld, ChamberControllerBlockEntity controller, List<UUID> participantUuids);
