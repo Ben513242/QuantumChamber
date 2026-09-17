@@ -19,10 +19,57 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Build
         run: ./gradlew clean build
+      - name: 非 Windows GameTest 平台契約
+        run: ./gradlew runGameTest --no-daemon
       - name: Upload mod JAR
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: quantumchamber-jars
           path: build/libs/*.jar
+          if-no-files-found: error
+      - name: 上傳 Ubuntu 測試證據
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantumchamber-tests-ubuntu
+          path: |
+            build/test-results/test/*.xml
+            build/gametest-results.xml
+            run/gametest/logs/latest.log
+          if-no-files-found: error
+
+  windows-native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Windows 原生建置與 GameTest
+        run: ./gradlew.bat clean build runGameTest --rerun-tasks --no-daemon
+      - name: 確認 Windows 原生案例確實執行
+        shell: pwsh
+        run: |
+          $suites = @('PlayerCheckpointStoreTest', 'WindowsPlayerCheckpointVerifierTest')
+          foreach ($suite in $suites) {
+            [xml]$result = Get-Content -Raw "build/test-results/test/TEST-dev.quantumchamber.persistence.$suite.xml"
+            $row = $result.testsuite
+            if ([int]$row.tests -le 0 -or [int]$row.failures -ne 0 -or [int]$row.errors -ne 0 -or [int]$row.skipped -ne 0) {
+              throw "必要 Windows 原生 suite 未全數實際通過：$suite"
+            }
+          }
+          # 非 Windows 專屬拒絕案例在 Windows 合法略過，不套用全 XML 零 skipped。
+      - name: 上傳 Windows 原生測試證據
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantumchamber-native-windows
+          path: |
+            build/libs/*.jar
+            build/test-results/test/*.xml
+            build/gametest-results.xml
+            run/gametest/logs/latest.log
           if-no-files-found: error

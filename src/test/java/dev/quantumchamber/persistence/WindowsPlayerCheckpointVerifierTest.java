@@ -9,8 +9,11 @@ import java.nio.file.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+@EnabledOnOs(OS.WINDOWS)
 class WindowsPlayerCheckpointVerifierTest {
     @TempDir Path directory;
 

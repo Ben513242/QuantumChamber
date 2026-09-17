@@ -5,8 +5,11 @@ import java.io.IOException;
 import java.nio.file.*;
 import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+@EnabledOnOs(OS.WINDOWS)
 class PlayerCheckpointStoreTest {
     @TempDir Path directory;
     @Test void fullNbtEqualityIncludesUnknownModKeysBeforeForce() throws Exception {

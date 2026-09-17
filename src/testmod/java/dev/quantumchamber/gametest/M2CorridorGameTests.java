@@ -1,6 +1,7 @@
 package dev.quantumchamber.gametest;
 
 import com.mojang.authlib.GameProfile;
+import com.sun.jna.Platform;
 import dev.quantumchamber.persistence.PlayerCheckpointStore;
 import dev.quantumchamber.persistence.PlayerRecoveryCheckpoint;
 import dev.quantumchamber.persistence.PlayerRecoveryCheckpointAccess;
@@ -93,7 +94,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
     }
 
     @GameTest(templateName = "quantumchamber:m1_empty")
-    public void native_marker_roundtrip_copy_and_save(TestContext context) throws Exception {
+    public void native_marker_roundtrip_copy_and_platform_checkpoint(TestContext context) throws Exception {
         var player = connect(context);
         try {
             player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1234));
@@ -108,7 +109,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             legacy.readNbt(player.writeNbt(new NbtCompound()));
             context.assertTrue(((PlayerRecoveryCheckpointAccess) legacy).quantumchamber$getRecoveryCheckpoint().isEmpty(),
                     "舊版無 marker NBT 經原生 read 仍為空");
-            PlayerCheckpointStore.saveAndVerify(context.getWorld().getServer(), player, Optional.empty());
+            assertCheckpointPlatformContract(context, player, Optional.empty());
             var checkpoint = new PlayerRecoveryCheckpoint(UUID.randomUUID(), PlayerRecoveryCheckpoint.AppliedPolicy.KEEP_CURRENT);
             access.quantumchamber$setRecoveryCheckpoint(checkpoint);
             var encoded = player.writeNbt(new NbtCompound());
@@ -122,7 +123,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 context.assertEquals(Optional.of(checkpoint), ((PlayerRecoveryCheckpointAccess) copied)
                         .quantumchamber$getRecoveryCheckpoint(), "原生 copyFrom 保留 marker");
             } finally { context.getWorld().getServer().getPlayerManager().remove(copied); }
-            PlayerCheckpointStore.saveAndVerify(context.getWorld().getServer(), player, Optional.of(checkpoint));
+            assertCheckpointPlatformContract(context, player, Optional.of(checkpoint));
             context.assertTrue(player.writeNbt(new NbtCompound()).contains("DataVersion", 3), "原生 snapshot 已含 DataVersion");
             boolean rejected = false;
             try {
@@ -168,6 +169,22 @@ public final class M2CorridorGameTests implements FabricGameTest {
             context.assertEquals(raw, player.writeNbt(new NbtCompound()).get(PlayerRecoveryCheckpoint.NBT_KEY), "拒絕後仍保留原始 marker");
         }
         context.complete();
+    }
+
+    private static void assertCheckpointPlatformContract(TestContext context, ServerPlayerEntity player,
+            Optional<PlayerRecoveryCheckpoint> checkpoint) throws java.io.IOException {
+        if (Platform.isWindows()) {
+            PlayerCheckpointStore.saveAndVerify(context.getWorld().getServer(), player, checkpoint);
+            return;
+        }
+        // 非 Windows 只驗證受控拒絕；這個分支不代表原生 checkpoint 保存成功。
+        boolean rejected = false;
+        try {
+            PlayerCheckpointStore.saveAndVerify(context.getWorld().getServer(), player, checkpoint);
+        } catch (java.io.IOException failure) {
+            rejected = failure.getMessage().contains("非 Windows");
+        }
+        context.assertTrue(rejected, "非 Windows 必須回報能力拒絕，不能因其他錯誤假通過");
     }
 
     private static ServerPlayerEntity disconnected(TestContext context) {
