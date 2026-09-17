@@ -17,6 +17,25 @@ class ChamberActivationServiceTest {
     private static final ChamberFrame FIRST_FRAME = new ChamberFrame(new BlockPos(40, 80, -20), Direction.NORTH);
 
     @Test
+    void originLookupIsReadOnlyAndRequiresEveryIdentityCoordinate() {
+        int[] mutations = {0};
+        ChamberRegistry registry = new ChamberRegistry(() -> mutations[0]++);
+        assertTrue(registry.findOrigin(OVERWORLD, DimensionRole.OVERWORLD, FIRST_FRAME).isEmpty());
+        assertEquals(0, mutations[0]);
+        UUID uuid = registry.registerOrigin(OVERWORLD, DimensionRole.OVERWORLD, FIRST_FRAME).chamberUuid();
+        assertEquals(uuid, registry.findOrigin(OVERWORLD, DimensionRole.OVERWORLD, FIRST_FRAME)
+                .orElseThrow().chamberUuid());
+        assertTrue(registry.findOrigin(Identifier.of("other", "world"), DimensionRole.OVERWORLD, FIRST_FRAME).isEmpty());
+        assertTrue(registry.findOrigin(OVERWORLD, DimensionRole.NETHER, FIRST_FRAME).isEmpty());
+        assertTrue(registry.findOrigin(OVERWORLD, DimensionRole.OVERWORLD,
+                new ChamberFrame(new BlockPos(41, 80, -20), Direction.NORTH)).isEmpty());
+        assertTrue(registry.findOrigin(OVERWORLD, DimensionRole.OVERWORLD,
+                new ChamberFrame(new BlockPos(40, 80, -20), Direction.SOUTH)).isEmpty());
+        assertEquals(1, registry.records().size());
+        assertEquals(1, mutations[0]);
+    }
+
+    @Test
     void rejectsUnreadableRegistryWithoutMutationOrUuidWrite() {
         InMemoryRegistry port = new InMemoryRegistry(Optional.of("unsupported schema"));
         RecordingUuidSink uuidSink = new RecordingUuidSink();

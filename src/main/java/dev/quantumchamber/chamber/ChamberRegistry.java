@@ -29,12 +29,7 @@ public final class ChamberRegistry {
         Objects.requireNonNull(role, "role");
         Objects.requireNonNull(frame, "frame");
 
-        Optional<ChamberRecord> existing = records.values().stream()
-                .filter(record -> record.originWorldKey().equals(worldKey))
-                .filter(record -> record.originDimensionRole() == role)
-                .filter(record -> record.anchorPos().equals(frame.controllerPos()))
-                .filter(record -> record.facing() == frame.outwardFacing())
-                .findFirst();
+        Optional<ChamberRecord> existing = findOrigin(worldKey, role, frame);
         if (existing.isPresent()) {
             return new ChamberRegistrationResult(ChamberRegistrationResult.Status.EXISTING, existing.get().chamberUuid());
         }
@@ -54,6 +49,19 @@ public final class ChamberRegistry {
         putLoaded(record);
         changed.run();
         return new ChamberRegistrationResult(ChamberRegistrationResult.Status.CREATED, chamberUuid);
+    }
+
+    /** 完全唯讀地查找相同世界、role、Controller 位置與朝向的既有紀錄。 */
+    public Optional<ChamberRecord> findOrigin(Identifier worldKey, DimensionRole role, ChamberFrame frame) {
+        Objects.requireNonNull(worldKey, "worldKey");
+        Objects.requireNonNull(role, "role");
+        Objects.requireNonNull(frame, "frame");
+        return records.values().stream()
+                .filter(record -> record.originWorldKey().equals(worldKey))
+                .filter(record -> record.originDimensionRole() == role)
+                .filter(record -> record.anchorPos().equals(frame.controllerPos()))
+                .filter(record -> record.facing() == frame.outwardFacing())
+                .findFirst();
     }
 
     public Optional<ChamberRecord> findAt(DimensionRole role, BlockPos pos) {

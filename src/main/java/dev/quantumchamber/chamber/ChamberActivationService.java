@@ -14,7 +14,7 @@ import net.minecraft.state.property.DirectionProperty;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Direction;
 
-/** Server-side M1 prerequisite orchestration.  State transition to ARMED belongs to the caller. */
+/** 伺服器端 M1 前置條件協調；ARMED 狀態轉換由呼叫端負責。 */
 public final class ChamberActivationService {
     private final ChamberDetector detector;
     private final ChamberOccupantService occupants;
@@ -32,12 +32,29 @@ public final class ChamberActivationService {
     }
 
     public ArmAttemptResult attemptArm(ServerWorld world, ChamberControllerBlockEntity controller) {
+        ArmAttemptResult preview = evaluateReadiness(world, controller);
+        if (!preview.accepted()) return preview;
+        OriginResolution origin = registerOrResolveOrigin(
+                new PersistentRegistryPort(ChamberRegistryState.get(world.getServer())),
+                world.getRegistryKey().getValue(), DimensionRole.fromVanillaKey(world.getRegistryKey()).orElseThrow(),
+                new ChamberFrame(controller.getPos(), facing(controller)), controller::setChamberUuid);
+        if (!origin.usable()) {
+            return new ArmAttemptResult(false, ChamberState.INVALID, preview.participantUuids(), origin.failureReasons());
+        }
+        return preview;
+    }
+
+    /** 只預覽資格，不配發 UUID、不新增或修改 Registry record。 */
+    public ArmAttemptResult evaluateReadiness(ServerWorld world, ChamberControllerBlockEntity controller) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(controller, "controller");
 
         Optional<DimensionRole> role = DimensionRole.fromVanillaKey(world.getRegistryKey());
         if (role.isEmpty()) {
             return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.UNSUPPORTED_DIMENSION);
+        }
+        if (controller.instanceKind() != ChamberInstanceKind.ORIGIN) {
+            return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.INVALID_STRUCTURE);
         }
 
         ChamberFrame frame = new ChamberFrame(controller.getPos(), facing(controller));
@@ -47,16 +64,18 @@ public final class ChamberActivationService {
         }
 
         ChamberRegistryState registryState = ChamberRegistryState.get(world.getServer());
-        OriginResolution origin = registerOrResolveOrigin(
-                new PersistentRegistryPort(registryState),
-                world.getRegistryKey().getValue(),
-                role.get(),
-                frame,
-                controller::setChamberUuid);
-        if (!origin.usable()) {
-            return new ArmAttemptResult(false, ChamberState.INVALID, List.of(), origin.failureReasons());
+        if (registryState.loadError().isPresent()) {
+            return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.REGISTRY_UNAVAILABLE);
         }
-        ChamberRecord record = origin.record().orElseThrow();
+        Optional<ChamberRecord> origin = registryState.registry().findOrigin(
+                world.getRegistryKey().getValue(), role.get(), frame);
+        // 有 UUID 必須核對既有身分，不能因紀錄缺失而降級成新草稿。
+        if ((controller.chamberUuid() != null && (origin.isEmpty()
+                || !controller.chamberUuid().equals(origin.get().chamberUuid())))
+                || origin.filter(record -> record.instanceKind() != ChamberInstanceKind.ORIGIN || record.destroyed())
+                        .isPresent()) {
+            return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.INVALID_STRUCTURE);
+        }
         List<ServerPlayerEntity> participants = occupants.findParticipants(world, frame);
         List<UUID> participantUuids = participants.stream().map(ServerPlayerEntity::getUuid).toList();
         List<ChamberActivationSnapshot.ParticipantEligibility> eligibility = participants.stream()
@@ -64,7 +83,7 @@ public final class ChamberActivationService {
                         player.getUuid(), player.hasStatusEffect(ModEffects.QUANTUM_STATE)))
                 .toList();
         ChamberActivationSnapshot snapshot = new ChamberActivationSnapshot(
-                record.enabled(), structure.valid(), structure.sealed(), eligibility);
+                origin.map(ChamberRecord::enabled).orElse(true), structure.valid(), structure.sealed(), eligibility);
         ChamberState readiness = evaluator.evaluate(snapshot);
         if (readiness == ChamberState.READY) {
             return new ArmAttemptResult(true, readiness, participantUuids, Set.of());

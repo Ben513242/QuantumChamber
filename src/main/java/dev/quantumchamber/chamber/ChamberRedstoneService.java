@@ -53,7 +53,7 @@ public final class ChamberRedstoneService {
             ArmAttemptResult result = activationService.attemptArm(world, controller);
             changeState(world, pos, controller, result.accepted() ? ChamberState.ARMED : result.readiness());
         } else if (previouslyPowered && !powered) {
-            changeState(world, pos, controller, activationService.attemptArm(world, controller).readiness());
+            changeState(world, pos, controller, activationService.evaluateReadiness(world, controller).readiness());
         }
     }
 
@@ -61,7 +61,7 @@ public final class ChamberRedstoneService {
     public void refreshState(ServerWorld world, BlockPos pos) {
         ChamberControllerBlockEntity controller = controllerAt(world, pos);
         if (controller == null) return;
-        ChamberState evaluated = activationService.attemptArm(world, controller).readiness();
+        ChamberState evaluated = activationService.evaluateReadiness(world, controller).readiness();
         if (controller.chamberState() != ChamberState.ARMED || evaluated != ChamberState.READY) {
             changeState(world, pos, controller, evaluated);
         }

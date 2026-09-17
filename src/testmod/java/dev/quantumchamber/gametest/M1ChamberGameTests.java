@@ -15,6 +15,8 @@ import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.PistonBlock;
 import net.minecraft.block.ComparatorBlock;
+import net.minecraft.block.LeverBlock;
+import net.minecraft.block.enums.BlockFace;
 import net.minecraft.block.entity.ComparatorBlockEntity;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.PotionContentsComponent;
@@ -34,6 +36,97 @@ import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 
 public final class M1ChamberGameTests implements FabricGameTest {
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void draft_refresh_and_doors_do_not_register_until_native_lever_edge(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        ChamberControllerBlock.refreshState(context.getWorld(), frame.controllerPos());
+        state(context, ChamberState.READY, 7);
+        assertDraft(context, frame);
+        context.assertTrue(useController(context, frame, player).isAccepted(), "草稿可開門");
+        state(context, ChamberState.IDLE, 3);
+        assertDraft(context, frame);
+        context.assertTrue(useController(context, frame, player).isAccepted(), "草稿可關門");
+        assertDraft(context, frame);
+        var lever = ChamberGameTestBuilder.CONTROLLER.north();
+        context.setBlockState(lever, Blocks.LEVER.getDefaultState()
+                .with(LeverBlock.FACE, BlockFace.WALL).with(LeverBlock.FACING, Direction.NORTH));
+        context.waitAndRun(25, () -> {
+            state(context, ChamberState.READY, 7);
+            assertDraft(context, frame);
+            context.useBlock(lever, player);
+            state(context, ChamberState.ARMED, 11);
+            var controller = ChamberGameTestBuilder.controller(context);
+            context.assertTrue(controller.chamberUuid() != null, "真正拉桿 edge 才配發 UUID");
+            var record = ChamberRegistryState.get(context.getWorld().getServer()).registry()
+                    .findOrigin(context.getWorld().getRegistryKey().getValue(), DimensionRole.OVERWORLD, frame).orElseThrow();
+            context.assertEquals(controller.chamberUuid(), record.chamberUuid(), "BE 與 record UUID 相同");
+            player.removeStatusEffect(ModEffects.QUANTUM_STATE);
+            context.useBlock(lever, player);
+            context.assertTrue(!context.getWorld().setBlockState(frame.controllerPos().add(0, -4, 3),
+                    Blocks.STONE.getDefaultState()), "falling 與 buff 消失仍保持已註冊保護");
+            finish(context, player);
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void zero_participant_pulse_does_not_register(TestContext context) {
+        rejectedDraftPulse(context, false, false, false, false);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void unbuffed_pulse_does_not_register(TestContext context) {
+        rejectedDraftPulse(context, false, true, false, false);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void open_door_pulse_does_not_register(TestContext context) {
+        rejectedDraftPulse(context, true, true, true, false);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void invalid_shell_pulse_does_not_register(TestContext context) {
+        rejectedDraftPulse(context, false, true, true, true);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void unknown_existing_uuid_is_not_treated_as_draft(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        UUID unknown = UUID.randomUUID();
+        ChamberGameTestBuilder.controller(context).setChamberUuid(unknown);
+        context.waitAndRun(2, () -> {
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+            state(context, ChamberState.INVALID, 0);
+            context.assertEquals(unknown, ChamberGameTestBuilder.controller(context).chamberUuid(), "不得覆寫未知 UUID");
+            context.assertTrue(ChamberRegistryState.get(context.getWorld().getServer()).registry()
+                    .findAt(DimensionRole.OVERWORLD, frame.controllerPos()).isEmpty(), "身分拒絕不得註冊");
+            finish(context, player);
+        });
+    }
+
+    private static void rejectedDraftPulse(TestContext context, boolean open, boolean hasPlayer,
+            boolean buffed, boolean missingShell) {
+        var frame = ChamberGameTestBuilder.build(context, open, Direction.NORTH, missingShell);
+        var player = hasPlayer ? participant(context, buffed) : null;
+        context.waitAndRun(2, () -> {
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+            context.assertTrue(ChamberGameTestBuilder.controller(context).chamberState() != ChamberState.ARMED,
+                    "條件不足不得 ARMED");
+            assertDraft(context, frame);
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.AIR);
+            assertDraft(context, frame);
+            if (player == null) context.complete(); else finish(context, player);
+        });
+    }
+
+    private static void assertDraft(TestContext context, ChamberFrame frame) {
+        context.assertTrue(ChamberGameTestBuilder.controller(context).chamberUuid() == null, "預覽不得配發 UUID");
+        context.assertTrue(ChamberRegistryState.get(context.getWorld().getServer()).registry()
+                .findOrigin(context.getWorld().getRegistryKey().getValue(), DimensionRole.OVERWORLD, frame).isEmpty(),
+                "預覽不得註冊");
+    }
+
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void controller_interaction_toggles_all_cells_and_refreshes_without_rearming(TestContext context) {
         var frame = build(context, false);
@@ -233,7 +326,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
 
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void controller_load_syncs_once_on_next_tick_without_arming(TestContext context) {
-        build(context, false);
+        var frame = build(context, false);
         var player = participant(context, true);
         var controller = ChamberGameTestBuilder.controller(context);
         ChamberProtectionService.get().authorizedMutation(() -> context.getWorld().setBlockState(
@@ -245,12 +338,14 @@ public final class M1ChamberGameTests implements FabricGameTest {
         context.waitAndRun(2, () -> {
             context.assertTrue(controller.powerInitialized() && controller.wasPowered(), "下一個 block tick 同步 held-high");
             state(context, ChamberState.READY, 7);
+            assertDraft(context, frame);
             // 保留 initialized=true，令可見 latch 偏離實際電平，用來偵測後續不應發生的重複 sync。
             controller.setWasPowered(false);
         });
         context.waitAndRun(25, () -> {
             context.assertTrue(controller.powerInitialized() && !controller.wasPowered(), "一般 refresh 不得重做 load sync");
             state(context, ChamberState.READY, 7);
+            assertDraft(context, frame);
             finish(context, player);
         });
     }
@@ -284,6 +379,15 @@ public final class M1ChamberGameTests implements FabricGameTest {
         return new ChamberActivationService().attemptArm(context.getWorld(), ChamberGameTestBuilder.controller(context));
     }
 
+    private static void registerEligibleFixture(TestContext context) {
+        var player = participant(context, true);
+        try {
+            context.assertTrue(attempt(context).accepted(), "保護 fixture 必須先通過完整資格才註冊");
+        } finally {
+            context.getWorld().getServer().getPlayerManager().remove(player);
+        }
+    }
+
     private static void state(TestContext context, ChamberState expected, int signal) {
         var controller = ChamberGameTestBuilder.controller(context);
         context.assertEquals(controller.chamberState(), expected, "controller 狀態");
@@ -295,9 +399,11 @@ public final class M1ChamberGameTests implements FabricGameTest {
     public void valid_closed_buffed_chamber_becomes_ready(TestContext context) {
         var frame = build(context, false);
         var player = participant(context, true);
-        context.assertTrue(attempt(context).accepted(), "有效且有 buff 的參與者可啟用");
+        context.assertTrue(new ChamberActivationService().evaluateReadiness(
+                context.getWorld(), ChamberGameTestBuilder.controller(context)).accepted(), "有效且有 buff 的參與者可預覽");
         ChamberControllerBlock.refreshState(context.getWorld(), frame.controllerPos());
         state(context, ChamberState.READY, 7);
+        assertDraft(context, frame);
         finish(context, player);
     }
 
@@ -380,6 +486,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
         state(context, ChamberState.READY, 7);
         context.waitAndRun(2, () -> {
             context.assertTrue(restored.wasPowered() && restored.powerInitialized(), "BLOCK_ENTITY_LOAD 同步高電位");
+            assertDraft(context, frame);
             context.getWorld().updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
             state(context, ChamberState.READY, 7);
             finish(context, player);
@@ -408,7 +515,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void overlapping_same_role_chamber_is_rejected(TestContext context) {
         var frame = build(context, false);
-        attempt(context);
+        registerEligibleFixture(context);
         var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
         var result = registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
                 new ChamberFrame(frame.controllerPos().east(), frame.outwardFacing()));
@@ -419,7 +526,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void same_xyz_different_role_registry_records_are_allowed(TestContext context) {
         var frame = build(context, false);
-        attempt(context);
+        registerEligibleFixture(context);
         var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
         var result = registry.registerOrigin(World.NETHER.getValue(), DimensionRole.NETHER, frame);
         context.assertEquals(ChamberRegistrationResult.Status.CREATED, result.status(), "不同 role 同座標可註冊");
@@ -430,7 +537,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void protected_volume_rejects_ordinary_set_block(TestContext context) {
         var frame = build(context, false);
-        attempt(context);
+        registerEligibleFixture(context);
         M1LifecycleProbe.observeProtectedPosition(context.getWorld(), frame.controllerPos());
         var interior = frame.controllerPos().add(0, -4, 3);
         context.assertTrue(!context.getWorld().setBlockState(interior, Blocks.STONE.getDefaultState()), "registered interior 禁止 setBlock");
@@ -443,7 +550,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void explosion_does_not_modify_registered_volume(TestContext context) {
         var frame = build(context, false);
-        attempt(context);
+        registerEligibleFixture(context);
         var target = frame.controllerPos().add(0, -4, 3);
         ChamberProtectionService.get().authorizedMutation(() -> context.getWorld().setBlockState(target, Blocks.GLASS.getDefaultState()));
         var outside = frame.controllerPos().add(0, 2, 0);
@@ -459,7 +566,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
     public void piston_cannot_move_registered_bulkhead_or_shell(TestContext context) {
         // 僅驗證方塊移動 contract；Bulkhead／bedrock 本身不可推動，不獨立證明 Mixin。
         var frame = build(context, false);
-        attempt(context);
+        registerEligibleFixture(context);
         var door = frame.controllerPos().down(3);
         var piston = door.north();
         context.getWorld().setBlockState(piston, Blocks.PISTON.getDefaultState().with(PistonBlock.FACING, Direction.SOUTH));
@@ -483,8 +590,14 @@ public final class M1ChamberGameTests implements FabricGameTest {
 
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void fluid_update_cannot_replace_registered_volume(TestContext context) {
-        var frame = build(context, true);
-        attempt(context);
+        var frame = build(context, false);
+        registerEligibleFixture(context);
+        var player = participant(context, true);
+        try {
+            context.assertTrue(useController(context, frame, player).isAccepted(), "fluid fixture 在註冊後開門");
+        } finally {
+            context.getWorld().getServer().getPlayerManager().remove(player);
+        }
         var source = frame.controllerPos().add(0, -3, 2);
         ChamberProtectionService.get().authorizedMutation(() -> context.getWorld().setBlockState(source, Blocks.WATER.getDefaultState()));
         var control = frame.controllerPos().add(5, -3, 2);
