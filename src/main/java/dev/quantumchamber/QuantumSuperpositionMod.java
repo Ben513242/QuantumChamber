@@ -13,6 +13,8 @@ import dev.quantumchamber.registry.ModItems;
 import dev.quantumchamber.registry.ModPotions;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerBlockEntityEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import dev.quantumchamber.persistence.SessionRecoveryState;
 import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,7 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ChamberProtectionService.initialize();
         ChamberMaintenanceInteraction.initialize();
         ChamberControllerLoadSyncQueue.initialize();
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> SessionRecoveryState.get(server).requireHealthy());
         ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.register((blockEntity, world) -> {
             if (blockEntity instanceof ChamberControllerBlockEntity controller) {
                 // 僅保留事件身分並入列；chunk 尚未 FULL，不得在此查回 world/chunk。

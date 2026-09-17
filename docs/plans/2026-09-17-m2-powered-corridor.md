@@ -15,7 +15,7 @@
 - Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Fabric Loom 1.7.4、Java 21、Gradle Wrapper 8.8。
 - 單一 Fabric module，main／client 分離、三種建材、7×7×7／5×5×5、Controller local(3,6,0)、25格門與青紫造型不變。
 - 僅固定靜態 Superposition Dimension；無 UniverseRegistry、runtime allocation、Universe candidate selection、跨宇宙passage或跨宇宙projection materialization。固定空間的入口replica允許PROJECTION標記，沒有新Universe origin／跨宇宙投影。
-- 無 mandatory renderer／portal／dimension library、無自訂 packet、無 LICENSE；不push／merge main、不改玩家存檔、不刪世界。
+- 無 mandatory renderer／portal／dimension library、無自訂 packet、無 LICENSE；只有全部驗收gate與最終review無問題後依使用者授權push／merge main，未驗不猜通過；不改既有玩家存檔、不刪世界。
 - 玩家至少一人、排除spectator、完整bbox在interior、全員buff；凍結cohort，成功時一次消耗全員效果，失敗不消耗。
 - 外部斷電：先安全返還、結束session、再解除原艙保護。離線／返還失敗／錯身分仍保護，不可猜其他world或床／spawn。
 - 火把使用已核准可選client方案；不改原生world光照、不替代QuantumState，照明與GPU相容性人工待驗。
@@ -35,6 +35,19 @@
 - 每tick方塊建造／清理預算4096；occupied page上限128、局部實例上限64、管理entity pin上限256。資源不足走安全返還，不刪有價物品、不提交未準備映射。
 
 環境沿用 M1.2：Java21、GRADLE_USER_HOME=C:/Users/Ben/.gradle、require_escalated操作快取、offline聚焦與提交前完整測試；Git per-command safe.directory。先完成M1.2自動gate再dispatch M2 Task1。只讀API查核的完整證據位置記入本計畫ledger。
+
+## 已核准修訂：原生 HANDLE checkpoint（2026-09-17）
+
+使用者已同意重用Minecraft內附JNA實作，並授權全部gate通過後push／合併main；人工未驗不當作已通過。
+
+- 公開 `PlayerCheckpointStore.saveAndVerify(MinecraftServer,ServerPlayerEntity,Optional<PlayerRecoveryCheckpoint>) throws IOException` 不變。只驗原生save結果，不自行重寫UUID.dat、不外露可指定path的public API。
+- 重用MC1.21 runtime已有 `jna/jna-platform 5.14.0`；不加依賴/新JNI DLL/moduleopens/系統權限。Win32薄封裝精確函式/struct以官方5.14.0/Microsoft與本機binary核對，不猜。
+- 同existing正式UUID.dat的自有Win32 HANDLE讀全部compressed bytes→原生NBT完整expected snapshot等值（含DataVersion/unknownmodkeys）→同HANDLE `FlushFileBuffers`→同HANDLE再讀不變。以native volume/File ID比held與正式path metadata probe，不用nullkey/bytes/時間戳/path字串冒充identity。
+- volume root為信任錨，逐層hold普通ancestor directory HANDLE，OPEN_REPARSE_POINT/拒絕reparse與非directory/拒絕WRITE與DELETE分享，核對opened path與File ID，才開leaf；不能只Java precheck再open而重現junction ABA。目錄READ_ATTRIBUTES，leafexistingREAD+WRITE/noCREATE/noTRUNCATE。所有HANDLE finally對稱close；sharing/未知ID/JNA/Win32錯→IOException保留權威。
+- 第一個必驗是本機Windows11/NTFS/JDK21；UNC/remote/ReFS/未知provider不猜支持。非Windows若不能窄地提供同handle原生identity就fail closed並明列runtime限制，不能留已否定的path-fileKey原子假說或用CI skip冒稱實測。保留64MiB compressed-size上限；不承諾跨檔原子/整機斷電。
+- Task1可Create `src/main/java/dev/quantumchamber/persistence/WindowsPlayerCheckpointVerifier.java`（鎖鏈/readback/identity/flush）、`WindowsCheckpointNative.java`（package-private JNA接口/struct/錯誤/close），Test `src/test/java/dev/quantumchamber/persistence/WindowsPlayerCheckpointVerifierTest.java`。只有窄平台封裝，不PlayerRepository/大native框架；Task3/4 API不變。
+- 聚焦TDD：nullkey本機正向完整NBT；missing/stale/corrupt/backup拒絕；同handle read/flush不變；leaf/ancestor rename、junction ABA、第二writer、identity/flush失敗、close無leak。僅ownfreshfixtures，效應/座標/inventory不變nativeGT仍綠。不mocks冒稱native、不OSskips冒稱跨平台。
+- 若volume/ancestor鎖本機拒絕或需改support/interface，具體NEEDS_CONTEXT由root裁定，不content-only放寬。聚焦後完整clean build/GT一次、XML/JAR/main-only四world正向、獨立spec+quality評審。推送/合併只全部gate無問題後。
 
 ### Task 1: 固定世界、版本化恢復資料與checked journal
 
@@ -59,9 +72,12 @@
 - Test: `src/test/java/dev/quantumchamber/persistence/PlayerCheckpointStoreTest.java`
 - Test: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`
 - Modify: `src/testmod/resources/fabric.mod.json`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/StaticDimensionsTestServerMixin.java`
+- Modify: `src/testmod/resources/quantumchamber-test.mixins.json`
 
 **Interfaces:**
 - Produces: `SuperpositionWorld.KEY` 為 RegistryKey<World>，ID quantumchamber:superposition。
+- TestServer 靜態資料bootstrap：pinned `TestServer.method_40377(LevelInfo, SaveLoading.LoadContextSupplierContext)` 使用空DIMENSION registry而丟棄datapack世界；僅testmod `@Redirect`其 `DimensionOptionsRegistryHolder.toConfig(Registry<DimensionOptions>): DimensionsConfig` 入參，依原生dedicated Main路徑改為 `context.dimensionsRegistryManager().get(RegistryKeys.DIMENSION)`。handler附加enclosing `LevelInfo`／`LoadContextSupplierContext`，保留FLAT holder；不new ServerWorld/runtime allocate/production hook。此Mixin只testmod註冊，release不得包含。
 - Produces: `SessionState { ARMING, SUPERPOSITION, RETURNING }`。
 - Produces: recovery record含UUID session/chamber、完整ChamberOriginAuthority、List<Participant>、List<SpaceLease>、state、boolean restoreEntryEffectOnReturn；nested SpaceLease含int slotId及防禦性複製的BlockBox bounds，確保重啟能保護舊空間、不提早reuse。Participant含UUID、sourcePosition/velocity、yaw/pitch、QuantumState NBT快照、returned；集合與NBT複製，不持久化Java/world物件。缺lease／錯bounds／重複slot均拒絕，不以空slots猜安全。
 - Produces: schema1 的 RestoreEntryEffectOnReturn 為必填 boolean，ARMING 必須 true、SUPERPOSITION 必須 false；RETURNING 沿用原權威決策，不能按目前 state／是否有 buff 重算。false 表示完全不修改當下 QuantumState，不能刪除走廊中後來新喝的效果。缺欄位／型別錯誤／非法 state-policy 組合皆拒絕。
@@ -70,7 +86,7 @@
 - Produces: `public static void SessionJournalStore.write(Path target, NbtCompound wrapped)`／`public static NbtCompound read(Path target)`，compressed NBT，write失敗拋明確例外，temp與target皆在同一data目錄；不吞錯、不清dirty假成功。
 - Produces: `public record PlayerRecoveryCheckpoint(UUID sessionUuid, AppliedPolicy appliedPolicy)`，nested enum `RESTORE_ENTRY/KEEP_CURRENT`；namespaced 玩家 NBT compound `quantumchamber:recovery_checkpoint`、schema1，單一 marker、不累積歷史。嚴格 UUID／policy／型別／schema；native load 遇壞 marker 不得靜默轉 Optional.empty 或讓原生例外捕捉使其假成新玩家。getter 延後回報健康失敗，保留原始 marker NBT，正常 auto-save/copyFrom 不覆寫未知 marker。
 - Produces: `public interface PlayerRecoveryCheckpointAccess`，`Optional<PlayerRecoveryCheckpoint> quantumchamber$getRecoveryCheckpoint()`、`void quantumchamber$setRecoveryCheckpoint(PlayerRecoveryCheckpoint)`；setter拒絕null，getter對損壞 marker 明確拋健康例外。Mixin 只保存／複製這個 marker；若 copyFrom 需要健康／原始 marker 狀態，可增加 marker-only copy method 並在report列精確簽名，不暴露任意玩家 NBT。
-- Produces: `public static void PlayerCheckpointStore.saveAndVerify(MinecraftServer,ServerPlayerEntity,Optional<PlayerRecoveryCheckpoint>) throws IOException`；單一 protected PlayerManager.savePlayerData invoker、server-thread-only。Optional.empty 僅供入場消耗 checkpoint，不新增返還 marker；Optional.of 要求正確 runtime marker。原生保存後讀正式 UUID.dat（不是dat_old）的完整原生 NBT，與當下原生 snapshot 語意相等比較，包含所有其他mod keys；原生DataVersion等metadata按已核對pinned bytecode建完整expected，不剔除未知欄位。相等後對同一opened FileChannel force(true)，檢查路徑／file identity／force後內容未變；缺檔、stale、replacement、parse或force失敗皆拋IOException，不自行改寫玩家檔、不假成功。
+- Produces: `public static void PlayerCheckpointStore.saveAndVerify(MinecraftServer,ServerPlayerEntity,Optional<PlayerRecoveryCheckpoint>) throws IOException`；單一 protected PlayerManager.savePlayerData invoker、server-thread-only。Optional.empty 僅供入場消耗 checkpoint，不新增返還 marker；Optional.of 要求正確 runtime marker。原生保存後讀正式 UUID.dat（不是dat_old）的完整原生 NBT，與當下原生 snapshot 語意相等比較，包含所有其他mod keys；原生DataVersion等metadata按已核對pinned bytecode建完整expected，不剔除未知欄位。Windows以同一opened原生HANDLE完整讀回／FlushFileBuffers／native File ID/正式path probe與ancestor namespace鎖鏈／flush後不變，依已核准原生修訂；不能用path-fileKey/nullkey/bytes冒充handleidentity；缺檔、stale、replacement、parse或force失敗皆拋IOException，不自行改寫玩家檔、不假成功。
 - Checkpoint路徑只從目前 server 的原生玩家資料路徑與 UUID 組成；先核對 WorldSavePath 實際常數名，不使用玩家提供路徑。純IO測試可測小 package-private 檔案核對核心，native serializer／read/write/copyFrom另有GameTest，不拿假serializer當live gate。saveAndVerify不等於跨檔原子提交或整機斷電保證。
 
 - [ ] **Step 1: 原生已知world缺失先RED。** 不引用新class：

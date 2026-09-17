@@ -4,6 +4,8 @@
   "package": "dev.quantumchamber.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "WorldSetBlockStateMixin"
+    "WorldSetBlockStateMixin",
+    "ServerPlayerRecoveryCheckpointMixin",
+    "PlayerManagerSaveInvoker"
   ]
 }

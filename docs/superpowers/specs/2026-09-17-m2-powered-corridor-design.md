@@ -13,7 +13,7 @@
 - 沿用原設計 §6.1、§19 的單一固定 `quantumchamber:superposition` 空間、相同入口 replica、有限頁面與 logical corridor。
 - 無 `UniverseRegistry`、runtime dimension allocation、平行 Overworld／Nether／End family、Universe candidate selection、跨宇宙 passage 或 projection materialization。
 - M2 允許原世界↔固定 Superposition Dimension 的直接入場／返還；這不是 M3 的新宇宙穿越。
-- 不新增 mandatory renderer／portal／dimension library，不新增 `LICENSE`，不合併／推送 `main`，不刪使用者世界。
+- 不新增 mandatory renderer／portal／dimension library，不新增 `LICENSE`；僅全部驗收gate與最終review無問題後依使用者最新授權push／合併main，未驗不猜通過，不刪使用者世界。
 
 ## 2. 單人成功畫面
 
@@ -98,6 +98,10 @@
 - 掉落物與投射物列入頁面生命週期及斷電清理策略；不在仍有玩家／有價物品的 slot 上直接清空方塊。支援失敗時保留可恢復狀態與明確錯誤。
 - 沒有可證實的來源資料時不得猜另一個 Universe；記錄錯誤並阻止不安全提交。
 
+## 6.1 已核准原生checkpoint修訂
+
+使用者同意重用Minecraft既有JNA。原生save後同一opened原生HANDLE讀回完整NBT、FlushFileBuffers、File ID/正式path probe與普通ancestor鎖鏈/reparse拒絕，取代FileChannel字面契約；不重寫player.dat、不加依賴/NativeDLL/moduleopens/系統權限。未知provider/平台不能證明identity即IOException/fail closed，Windows NTFS當前必驗；其他平台不以path-key ABA假說充當fd identity。保持checkpoint成功才returned/journalflush、pending仍保護，不跨檔原子/整機斷電claim。
+
 ## 7. 光照與邊界
 
 - 沿用 M1.2 的可選 LambDynamicLights 方案，驗證主手／副手持火把在普通艙內、入口 replica、走廊跨頁與返還後都能照亮。
@@ -116,4 +120,4 @@
 - 人工單人 gate：不用指令，外部拉桿開→進入→關門→喝藥或已有 buff→走廊真的延伸。斷電可使用預先設好的外部延遲斷電電路，不要求第二帳號或室內輸入指令。
 - 最終人工 gate：斷電回同一原艙且看回普通盒子、原艙創造模式可拆、session replica／非原艙不因斷電獲得拆除權限、全程沒有新 Universe allocation。
 
-實作前須審閱本規格，再在 `docs/plans/` 建立獨立 M2 計畫。M1.2 自動驗證完成後，可在 feature branch 繼續 M2；M1.2／M2 的人工 gate 必須各自記錄，未關閉前不得合併 main。本文件不是 main 合併授權，也不豁免既有人工驗收。
+實作前須審閱本規格，再在 `docs/plans/` 建立獨立M2計畫。使用者已授權全部gate與最終review無問題後push／合併main；M1.2／M2人工gate仍各自記錄，未關不得猜通過，此授權不豁免既有人工驗收。
