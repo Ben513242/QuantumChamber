@@ -85,7 +85,21 @@ public final class ChamberRegistry {
         }
         records.put(chamberUuid, new ChamberRecord(
                 current.chamberUuid(), current.originWorldKey(), current.originDimensionRole(), current.anchorPos(),
-                current.facing(), current.instanceKind(), enabled, current.destroyed()));
+                current.facing(), current.instanceKind(), enabled, current.destroyed(), current.powerState()));
+        changed.run();
+        return true;
+    }
+
+    public boolean setPowerState(UUID chamberUuid, ChamberPowerState state) {
+        Objects.requireNonNull(chamberUuid, "chamberUuid");
+        Objects.requireNonNull(state, "state");
+        ChamberRecord current = records.get(chamberUuid);
+        if (current == null || current.powerState() == state) {
+            return false;
+        }
+        records.put(chamberUuid, new ChamberRecord(
+                current.chamberUuid(), current.originWorldKey(), current.originDimensionRole(), current.anchorPos(),
+                current.facing(), current.instanceKind(), current.enabled(), current.destroyed(), state));
         changed.run();
         return true;
     }

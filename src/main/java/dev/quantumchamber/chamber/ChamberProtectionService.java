@@ -6,6 +6,7 @@ import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 
 /** Guards registered chamber volumes while keeping persistent-state access off the block mutation path. */
@@ -22,8 +23,11 @@ public final class ChamberProtectionService {
     }
 
     public static void initialize() {
-        ServerLifecycleEvents.SERVER_STARTED.register(server ->
-                INSTANCE.attach(server, ChamberRegistryState.get(server).registry()));
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            ChamberRegistryState state = ChamberRegistryState.get(server);
+            state.requireHealthy();
+            INSTANCE.attach(server, state.registry());
+        });
         ServerLifecycleEvents.SERVER_STOPPED.register(INSTANCE::detach);
     }
 
@@ -36,7 +40,23 @@ public final class ChamberProtectionService {
             return true;
         }
         return DimensionRole.fromVanillaKey(world.getRegistryKey())
-                .map(role -> mayMutate(role, pos))
+                .map(role -> attachedServer.getWorld(world.getRegistryKey()) == world
+                        ? mayMutate(world.getRegistryKey().getValue(), role, pos)
+                        : mayMutate(role, pos))
+                .orElse(true);
+    }
+
+    boolean mayMutate(Identifier worldKey, DimensionRole role, BlockPos pos) {
+        Objects.requireNonNull(worldKey, "worldKey");
+        Objects.requireNonNull(role, "role");
+        Objects.requireNonNull(pos, "pos");
+        ChamberRegistry registry = attachedRegistry;
+        return isAuthorized() || registry == null || registry.findAt(role, pos)
+                .map(record -> record.powerState() == ChamberPowerState.OFF
+                        && record.instanceKind() == ChamberInstanceKind.ORIGIN
+                        && !record.destroyed()
+                        && record.originWorldKey().equals(worldKey)
+                        && record.originDimensionRole() == role)
                 .orElse(true);
     }
 

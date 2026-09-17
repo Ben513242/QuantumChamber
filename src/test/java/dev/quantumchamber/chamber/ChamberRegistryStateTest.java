@@ -19,6 +19,76 @@ import org.junit.jupiter.api.Test;
 
 class ChamberRegistryStateTest {
     @Test
+    void schemaVersionTwoDecodesAndPreservesOffPowerState() {
+        ChamberRegistryState state = new ChamberRegistryState();
+        UUID uuid = state.registry().registerOrigin(Identifier.of("minecraft", "overworld"),
+                DimensionRole.OVERWORLD, new ChamberFrame(new BlockPos(15, 70, 14), Direction.NORTH)).chamberUuid();
+        NbtCompound input = state.writeNbt(new NbtCompound());
+        input.putInt("SchemaVersion", 2);
+        input.getList("Records", 10).getCompound(0).putString("PowerState", "OFF");
+
+        ChamberRegistryState restored = ChamberRegistryState.fromNbt(input);
+
+        assertTrue(restored.loadError().isEmpty());
+        assertEquals(uuid, restored.registry().records().get(uuid).chamberUuid());
+        assertEquals("OFF", restored.writeNbt(new NbtCompound())
+                .getList("Records", 10).getCompound(0).getString("PowerState"));
+    }
+
+    @Test
+    void schemaVersionTwoRoundTripsEveryPowerStateWithoutInferringEnabled() {
+        for (String power : new String[] {"UNKNOWN", "OFF", "POWERED", "RETURNING"}) {
+            NbtCompound encoded = validSchemaTwoState();
+            NbtCompound record = encoded.getList("Records", 10).getCompound(0);
+            record.putString("PowerState", power);
+            record.putBoolean("Enabled", false);
+            ChamberRegistryState restored = ChamberRegistryState.fromNbt(encoded);
+            assertTrue(restored.loadError().isEmpty());
+            NbtCompound output = restored.writeNbt(new NbtCompound()).getList("Records", 10).getCompound(0);
+            assertEquals(power, output.getString("PowerState"));
+            assertFalse(output.getBoolean("Enabled"));
+        }
+    }
+
+    @Test
+    void schemaVersionTwoRejectsMissingWrongTypeAndInvalidPowerState() {
+        NbtCompound missing = validSchemaTwoState();
+        missing.getList("Records", 10).getCompound(0).remove("PowerState");
+        assertFailsClosed(missing);
+        NbtCompound wrongType = validSchemaTwoState();
+        wrongType.getList("Records", 10).getCompound(0).putInt("PowerState", 1);
+        assertFailsClosed(wrongType);
+        NbtCompound invalid = validSchemaTwoState();
+        invalid.getList("Records", 10).getCompound(0).putString("PowerState", "ON");
+        assertFailsClosed(invalid);
+    }
+
+    @Test
+    void bothSchemasRejectDuplicateUuidAndMismatchedWorldRoleWithoutPartialState() {
+        for (int version : new int[] {1, 2}) {
+            NbtCompound duplicate = validSchemaTwoState();
+            duplicate.putInt("SchemaVersion", version);
+            NbtList records = duplicate.getList("Records", 10);
+            records.add(records.getCompound(0).copy());
+            assertFailsClosed(duplicate);
+            NbtCompound mismatch = validSchemaTwoState();
+            mismatch.putInt("SchemaVersion", version);
+            mismatch.getList("Records", 10).getCompound(0).putString("OriginWorldKey", "minecraft:the_nether");
+            assertFailsClosed(mismatch);
+        }
+    }
+
+    @Test
+    void healthGuardRejectsUnreadableRegistryButAllowsHealthyRegistry() {
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> new ChamberRegistryState().requireHealthy());
+        NbtCompound invalid = new NbtCompound();
+        invalid.putInt("SchemaVersion", 99);
+        var failed = ChamberRegistryState.fromNbt(invalid);
+        var exception = assertThrows(IllegalStateException.class, failed::requireHealthy);
+        assertTrue(exception.getMessage().contains(failed.loadError().orElseThrow()));
+    }
+
+    @Test
     void schemaVersionOneRoundTripPreservesEveryChamberFieldAndRebuildsIndex() {
         ChamberRegistryState state = new ChamberRegistryState();
         ChamberRegistrationResult registered = state.registry().registerOrigin(
@@ -31,6 +101,8 @@ class ChamberRegistryStateTest {
         assertTrue(state.isDirty());
 
         NbtCompound encoded = state.writeNbt(new NbtCompound());
+        encoded.putInt("SchemaVersion", 1);
+        encoded.getList("Records", 10).getCompound(0).remove("PowerState");
         encoded.getList("Records", 10).getCompound(0).putBoolean("Destroyed", true);
         ChamberRegistryState restored = ChamberRegistryState.fromNbt(encoded);
         ChamberRecord record = restored.registry().records().get(chamberUuid);
@@ -44,13 +116,15 @@ class ChamberRegistryStateTest {
         assertEquals(ChamberInstanceKind.ORIGIN, record.instanceKind());
         assertFalse(record.enabled());
         assertTrue(record.destroyed());
+        assertEquals(ChamberPowerState.UNKNOWN, record.powerState());
+        assertEquals(2, restored.writeNbt(new NbtCompound()).getInt("SchemaVersion"));
         assertEquals(chamberUuid, restored.registry().findAt(DimensionRole.NETHER, new BlockPos(16, 70, 0)).orElseThrow().chamberUuid());
     }
 
     @Test
     void unknownSchemaFailsClosedWithoutAllowingAnEmptyStateToOverwriteIt() {
         NbtCompound unknown = new NbtCompound();
-        unknown.putInt("SchemaVersion", 2);
+        unknown.putInt("SchemaVersion", 3);
 
         ChamberRegistryState state = ChamberRegistryState.fromNbt(unknown);
 
@@ -133,12 +207,23 @@ class ChamberRegistryStateTest {
         state.registry().registerOrigin(
                 World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
                 new ChamberFrame(new BlockPos(0, 70, 0), Direction.NORTH));
-        return state.writeNbt(new NbtCompound());
+        NbtCompound encoded = state.writeNbt(new NbtCompound());
+        encoded.putInt("SchemaVersion", 1);
+        encoded.getList("Records", 10).getCompound(0).remove("PowerState");
+        return encoded;
+    }
+
+    private static NbtCompound validSchemaTwoState() {
+        NbtCompound encoded = validSchemaOneState();
+        encoded.putInt("SchemaVersion", 2);
+        encoded.getList("Records", 10).getCompound(0).putString("PowerState", "OFF");
+        return encoded;
     }
 
     private static void assertFailsClosed(NbtCompound encoded) {
         ChamberRegistryState restored = ChamberRegistryState.fromNbt(encoded);
         assertTrue(restored.loadError().isPresent());
+        assertTrue(restored.registry().records().isEmpty());
         assertThrows(IllegalStateException.class, () -> restored.writeNbt(new NbtCompound()));
     }
 }

@@ -15,7 +15,14 @@ public record ChamberRecord(
         Direction facing,
         ChamberInstanceKind instanceKind,
         boolean enabled,
-        boolean destroyed) {
+        boolean destroyed,
+        ChamberPowerState powerState) {
+    public ChamberRecord(UUID chamberUuid, Identifier originWorldKey, DimensionRole originDimensionRole,
+            BlockPos anchorPos, Direction facing, ChamberInstanceKind instanceKind, boolean enabled, boolean destroyed) {
+        this(chamberUuid, originWorldKey, originDimensionRole, anchorPos, facing, instanceKind,
+                enabled, destroyed, ChamberPowerState.UNKNOWN);
+    }
+
     public ChamberRecord {
         Objects.requireNonNull(chamberUuid, "chamberUuid");
         Objects.requireNonNull(originWorldKey, "originWorldKey");
@@ -23,5 +30,6 @@ public record ChamberRecord(
         Objects.requireNonNull(anchorPos, "anchorPos");
         Objects.requireNonNull(facing, "facing");
         Objects.requireNonNull(instanceKind, "instanceKind");
+        Objects.requireNonNull(powerState, "powerState");
     }
 }

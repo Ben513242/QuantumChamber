@@ -27,7 +27,7 @@ public final class ChamberRegistryState extends PersistentState {
             ChamberRegistryState::fromNbt,
             DataFixTypes.LEVEL);
 
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
 
     private final ChamberRegistry registry;
@@ -54,6 +54,13 @@ public final class ChamberRegistryState extends PersistentState {
         return Optional.ofNullable(loadError);
     }
 
+    public void requireHealthy() {
+        if (loadError != null) {
+            throw new IllegalStateException("Chamber registry is unreadable; restore or repair " + STATE_ID
+                    + " before starting the server: " + loadError);
+        }
+    }
+
     public static ChamberRegistryState fromNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup registryLookup) {
         return fromNbt(nbt);
     }
@@ -64,7 +71,7 @@ public final class ChamberRegistryState extends PersistentState {
             return failed("Chamber registry SchemaVersion is missing or has the wrong NBT type");
         }
         int schemaVersion = nbt.getInt("SchemaVersion");
-        if (schemaVersion != SCHEMA_VERSION) {
+        if (schemaVersion != 1 && schemaVersion != SCHEMA_VERSION) {
             return failed("Unsupported chamber registry schema version: " + schemaVersion);
         }
         if (!nbt.contains("Records", NbtElement.LIST_TYPE)) {
@@ -85,7 +92,7 @@ public final class ChamberRegistryState extends PersistentState {
                 if (records.get(index).getType() != NbtElement.COMPOUND_TYPE) {
                     throw new IllegalArgumentException("Records entry " + index + " is not a compound");
                 }
-                ChamberRecord record = decodeRecord(records.getCompound(index));
+                ChamberRecord record = decodeRecord(records.getCompound(index), schemaVersion);
                 if (!chamberUuids.add(record.chamberUuid())) {
                     throw new IllegalArgumentException("Records contains duplicate ChamberUuid " + record.chamberUuid());
                 }
@@ -96,7 +103,7 @@ public final class ChamberRegistryState extends PersistentState {
             }
             return state;
         } catch (RuntimeException exception) {
-            return failed("Unable to decode chamber registry schema v1: " + exception.getMessage());
+            return failed("Unable to decode chamber registry schema v" + schemaVersion + ": " + exception.getMessage());
         }
     }
 
@@ -134,10 +141,11 @@ public final class ChamberRegistryState extends PersistentState {
         nbt.putString("InstanceKind", record.instanceKind().name());
         nbt.putBoolean("Enabled", record.enabled());
         nbt.putBoolean("Destroyed", record.destroyed());
+        nbt.putString("PowerState", record.powerState().name());
         return nbt;
     }
 
-    private static ChamberRecord decodeRecord(NbtCompound nbt) {
+    private static ChamberRecord decodeRecord(NbtCompound nbt, int schemaVersion) {
         if (!nbt.containsUuid("ChamberUuid")) {
             throw new IllegalArgumentException("ChamberUuid is missing or has the wrong NBT type");
         }
@@ -171,6 +179,11 @@ public final class ChamberRegistryState extends PersistentState {
 
         boolean enabled = requiredBoolean(nbt, "Enabled");
         boolean destroyed = requiredBoolean(nbt, "Destroyed");
+        ChamberPowerState powerState = ChamberPowerState.UNKNOWN;
+        if (schemaVersion == 2) {
+            requireType(nbt, "PowerState", NbtElement.STRING_TYPE);
+            powerState = parseEnum(ChamberPowerState.class, nbt.getString("PowerState"), "PowerState");
+        }
         return new ChamberRecord(
                 nbt.getUuid("ChamberUuid"),
                 worldKey,
@@ -179,7 +192,8 @@ public final class ChamberRegistryState extends PersistentState {
                 facing,
                 instanceKind,
                 enabled,
-                destroyed);
+                destroyed,
+                powerState);
     }
 
     private static void requireType(NbtCompound nbt, String key, byte type) {

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.quantumchamber.universe.DimensionRole;
+import java.util.UUID;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
@@ -14,6 +16,31 @@ class ChamberProtectionServiceTest {
     private static final ChamberFrame FRAME = new ChamberFrame(new BlockPos(0, 70, 0), Direction.NORTH);
     private static final BlockPos PROTECTED_POS = new BlockPos(0, 70, 0);
     private static final BlockPos OUTSIDE_POS = new BlockPos(20, 70, 0);
+
+    @Test
+    void onlyOffOriginWithMatchingWorldKeyMayMutateItsIndexedVolume() {
+        for (ChamberPowerState power : ChamberPowerState.values()) {
+            ChamberRegistry registry = new ChamberRegistry();
+            registry.putLoaded(new ChamberRecord(UUID.randomUUID(), World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
+                    PROTECTED_POS, Direction.NORTH, ChamberInstanceKind.ORIGIN, false, false, power));
+            ChamberProtectionService protection = new ChamberProtectionService();
+            protection.attach(registry);
+            org.junit.jupiter.api.Assertions.assertEquals(power == ChamberPowerState.OFF,
+                    protection.mayMutate(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, PROTECTED_POS));
+            assertFalse(protection.mayMutate(Identifier.of("foreign", "other"), DimensionRole.OVERWORLD, PROTECTED_POS));
+            assertTrue(registry.findAt(DimensionRole.OVERWORLD, PROTECTED_POS).isPresent());
+        }
+    }
+
+    @Test
+    void destroyedOffOriginDoesNotUnlock() {
+        ChamberRegistry registry = new ChamberRegistry();
+        registry.putLoaded(new ChamberRecord(UUID.randomUUID(), World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
+                PROTECTED_POS, Direction.NORTH, ChamberInstanceKind.ORIGIN, true, true, ChamberPowerState.OFF));
+        ChamberProtectionService protection = new ChamberProtectionService();
+        protection.attach(registry);
+        assertFalse(protection.mayMutate(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, PROTECTED_POS));
+    }
 
     @Test
     void allowsMutationBeforeARegistryIsAttached() {

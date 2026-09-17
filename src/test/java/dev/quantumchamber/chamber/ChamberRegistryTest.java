@@ -14,6 +14,40 @@ import org.junit.jupiter.api.Test;
 
 class ChamberRegistryTest {
     @Test
+    void powerChangesDirtyOnlyOnChangeAndRetainCollisionIndex() {
+        ChamberRegistryState state = new ChamberRegistryState();
+        ChamberRegistry registry = state.registry();
+        ChamberFrame frame = new ChamberFrame(new BlockPos(15, 70, 14), Direction.NORTH);
+        UUID uuid = registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, frame).chamberUuid();
+        state.setDirty(false);
+        assertFalse(registry.setPowerState(uuid, ChamberPowerState.UNKNOWN));
+        assertFalse(state.isDirty());
+        assertFalse(registry.setPowerState(UUID.randomUUID(), ChamberPowerState.OFF));
+        assertFalse(state.isDirty());
+        assertTrue(registry.setPowerState(uuid, ChamberPowerState.OFF));
+        assertTrue(state.isDirty());
+        state.setDirty(false);
+        assertFalse(registry.setPowerState(uuid, ChamberPowerState.OFF));
+        assertFalse(state.isDirty());
+        assertEquals(ChamberPowerState.OFF, registry.findAt(DimensionRole.OVERWORLD, frame.controllerPos()).orElseThrow().powerState());
+        assertEquals(ChamberRegistrationResult.Status.OVERLAP,
+                registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
+                        new ChamberFrame(new BlockPos(16, 70, 14), Direction.NORTH)).status());
+        assertEquals(uuid, registry.findOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, frame).orElseThrow().chamberUuid());
+    }
+
+    @Test
+    void changingEnabledPreservesIndependentPowerState() {
+        ChamberRegistry registry = new ChamberRegistry();
+        UUID uuid = UUID.randomUUID();
+        registry.putLoaded(new ChamberRecord(uuid, World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
+                new BlockPos(0, 70, 0), Direction.NORTH, ChamberInstanceKind.ORIGIN, true, false, ChamberPowerState.POWERED));
+        assertTrue(new ChamberLifecycleService(registry).setEnabled(uuid, false));
+        assertEquals(ChamberPowerState.POWERED, registry.records().get(uuid).powerState());
+        assertFalse(registry.records().get(uuid).enabled());
+    }
+
+    @Test
     void rejectsOverlappingOriginInSameDimensionRoleButAllowsSameCoordinatesInAnotherRole() {
         ChamberRegistry registry = new ChamberRegistry();
         ChamberFrame first = new ChamberFrame(new BlockPos(0, 70, 0), Direction.NORTH);
