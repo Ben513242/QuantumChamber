@@ -19,15 +19,10 @@ class ChamberRedstoneServiceTest {
     }
 
     @Test
-    void addingBuffWhilePowerRemainsHighDoesNotArmUntilAnotherPulse() {
+    void addingBuffWhilePowerRemainsHighArmsWithoutAnotherPulse() {
         InMemoryController controller = initialized(ChamberState.IDLE);
 
         service.onPowerChanged(controller, true, snapshot(true, false));
-        service.onPowerChanged(controller, true, snapshot(true, true));
-
-        assertEquals(ChamberState.IDLE, controller.chamberState());
-
-        service.onPowerChanged(controller, false, snapshot(true, true));
         service.onPowerChanged(controller, true, snapshot(true, true));
 
         assertEquals(ChamberState.ARMED, controller.chamberState());
@@ -52,19 +47,20 @@ class ChamberRedstoneServiceTest {
 
         service.onPowerChanged(controller, false, snapshot(true, true));
 
-        assertEquals(ChamberState.READY, controller.chamberState());
+        assertEquals(ChamberState.INVALID, controller.chamberState());
 
         controller.setChamberState(ChamberState.ARMED);
         controller.setWasPowered(true);
         service.onPowerChanged(controller, false, snapshot(true, false));
 
-        assertEquals(ChamberState.IDLE, controller.chamberState());
+        assertEquals(ChamberState.INVALID, controller.chamberState());
     }
 
     @Test
     void directRefreshDowngradesArmedAndNotifiesComparatorExactlyOnce() {
         InMemoryController controller = initialized(ChamberState.ARMED);
         CountingNotifier notifier = new CountingNotifier();
+        controller.setWasPowered(true);
 
         service.refreshState(controller, snapshot(true, false), notifier);
 
@@ -79,9 +75,12 @@ class ChamberRedstoneServiceTest {
         CountingNotifier notifier = new CountingNotifier();
         CountingArmAttempts attempts = new CountingArmAttempts();
 
-        for (int index = 0; index < 25; index++) {
-            service.onPowerChanged(controller, true, snapshot(true, false), notifier, attempts);
-        }
+        ChamberPowerCoordinator.deferActivation(() -> {
+            for (int index = 0; index < 25; index++) {
+                service.onPowerChanged(controller, true, snapshot(true, false), notifier, attempts);
+            }
+            return null;
+        });
 
         assertEquals(ChamberState.ARMED, controller.chamberState());
         assertEquals(0, notifier.count());

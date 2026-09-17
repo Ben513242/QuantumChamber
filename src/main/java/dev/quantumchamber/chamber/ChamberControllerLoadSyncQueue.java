@@ -66,6 +66,15 @@ public final class ChamberControllerLoadSyncQueue {
         return queue != null && queue.stream().anyMatch(entry -> entry.controller() == controller);
     }
 
+    static void discard(ServerWorld world, ChamberControllerBlockEntity controller) {
+        MinecraftServer server = world.getServer();
+        requireServerThread(server);
+        var queue = PENDING.get(server);
+        if (queue == null) return;
+        queue.removeIf(entry -> entry.world() == world && entry.controller() == controller);
+        if (queue.isEmpty()) PENDING.remove(server, queue);
+    }
+
     static int pendingCount(MinecraftServer server) {
         requireServerThread(server);
         var queue = PENDING.get(server);

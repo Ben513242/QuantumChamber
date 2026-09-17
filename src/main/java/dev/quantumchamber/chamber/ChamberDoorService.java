@@ -26,28 +26,45 @@ public final class ChamberDoorService {
         if (open == null) return false;
         boolean original = open;
         boolean next = !original;
-        boolean toggled = executor.execute(() -> mutateWithRollback(mutator, positions, original, next));
+        boolean toggled = executor.execute(() -> mutateWithRollback(view, mutator, positions, original, next));
         if (toggled) refresh.refresh(frame.controllerPos());
         return toggled;
     }
 
-    private static boolean mutateWithRollback(ChamberBlockMutator mutator, List<BlockPos> positions,
+    private static boolean mutateWithRollback(ChamberBlockView view, ChamberBlockMutator mutator, List<BlockPos> positions,
                                               boolean original, boolean next) {
         List<BlockPos> changed = new ArrayList<>();
         for (BlockPos pos : positions) {
-            if (!mutator.set(pos, next)) {
+            changed.add(pos);
+            RuntimeException mutationFailure = null;
+            boolean accepted = false;
+            try {
+                accepted = mutator.set(pos, next);
+            } catch (RuntimeException failure) {
+                mutationFailure = failure;
+            }
+            if (!accepted) {
                 List<BlockPos> rollbackFailures = new ArrayList<>();
                 for (int index = changed.size() - 1; index >= 0; index--) {
                     BlockPos changedPos = changed.get(index);
-                    if (!mutator.set(changedPos, original)) rollbackFailures.add(changedPos);
+                    ChamberCell restored = original ? ChamberCell.BULKHEAD_OPEN : ChamberCell.BULKHEAD_CLOSED;
+                    // 原生 setBlockState 對相同狀態回 false；尚未改變的失敗格不必再次寫入。
+                    if (view.cellAt(changedPos) == restored) continue;
+                    try {
+                        mutator.set(changedPos, original);
+                        if (view.cellAt(changedPos) != restored) rollbackFailures.add(changedPos);
+                    } catch (RuntimeException failure) {
+                        rollbackFailures.add(changedPos);
+                        if (mutationFailure == null) mutationFailure = failure;
+                        else mutationFailure.addSuppressed(failure);
+                    }
                 }
                 if (!rollbackFailures.isEmpty()) {
-                    throw new IllegalStateException("Bulkhead rollback failed for " + rollbackFailures.size()
-                            + " cells: " + rollbackFailures.stream().map(BlockPos::toShortString).toList());
+                    throw new IllegalStateException("整面門 rollback 失敗 " + rollbackFailures.size()
+                            + " 格：" + rollbackFailures.stream().map(BlockPos::toShortString).toList(), mutationFailure);
                 }
                 return false;
             }
-            changed.add(pos);
         }
         return true;
     }

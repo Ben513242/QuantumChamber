@@ -49,6 +49,13 @@ public final class ChamberActivationService {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(controller, "controller");
 
+        if (world.getServer().getWorld(world.getRegistryKey()) != world || controller.getWorld() != world
+                || controller.isRemoved() || !world.isChunkLoaded(controller.getPos())
+                || world.getBlockEntity(controller.getPos()) != controller
+                || !world.getBlockState(controller.getPos()).equals(controller.getCachedState())) {
+            return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.INVALID_STRUCTURE);
+        }
+
         Optional<DimensionRole> role = DimensionRole.fromVanillaKey(world.getRegistryKey());
         if (role.isEmpty()) {
             return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.UNSUPPORTED_DIMENSION);

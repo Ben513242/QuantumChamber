@@ -55,13 +55,15 @@ class ChamberLifecycleServiceTest {
     }
 
     @Test
-    void requiresDisabledAndRetainsAllChunkProtectionOnFalseOrThrow() {
+    void requiresOffRegardlessOfEnabledAndRetainsIndexOnFalseOrThrow() {
         var registry = new ChamberRegistry();
         var uuid = registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, FRAME).chamberUuid();
         var authority = authority(uuid);
         var service = new ChamberLifecycleService(registry);
-        assertFalse(service.dismantleOrigin(authority, () -> fail("啟用中不得移除")));
+        assertFalse(service.dismantleOrigin(authority, () -> fail("UNKNOWN 不得移除")));
         assertTrue(service.setOriginEnabled(authority, false));
+        assertFalse(service.dismantleOrigin(authority, () -> true));
+        registry.setPowerState(uuid, ChamberPowerState.OFF);
         var disabled = registry.records().get(uuid);
         assertFalse(service.dismantleOrigin(authority, () -> false));
         assertThrows(IllegalStateException.class, () -> service.dismantleOrigin(authority, () -> { throw new IllegalStateException("移除失敗"); }));
@@ -76,7 +78,7 @@ class ChamberLifecycleServiceTest {
         var uuid = registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, FRAME).chamberUuid();
         var other = registry.registerOrigin(World.NETHER.getValue(), DimensionRole.NETHER, FRAME).chamberUuid();
         var service = new ChamberLifecycleService(registry);
-        assertTrue(service.setOriginEnabled(authority(uuid), false));
+        registry.setPowerState(uuid, ChamberPowerState.OFF);
         assertTrue(service.dismantleOrigin(authority(uuid), () -> {
             assertCovered(registry, uuid, true);
             return true;
@@ -104,6 +106,7 @@ class ChamberLifecycleServiceTest {
         assertFalse(restored.registry().records().get(uuid).enabled());
         assertCovered(restored.registry(), uuid, true);
         restored.setDirty(false);
+        restored.registry().setPowerState(uuid, ChamberPowerState.OFF);
         assertTrue(new ChamberLifecycleService(restored.registry()).dismantleOrigin(authority(uuid), () -> true));
         assertTrue(restored.isDirty());
         var removed = ChamberRegistryState.fromNbt(restored.writeNbt(new NbtCompound()));

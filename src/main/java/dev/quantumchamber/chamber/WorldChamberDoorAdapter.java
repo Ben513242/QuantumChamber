@@ -11,6 +11,10 @@ final class WorldChamberDoorAdapter {
     private WorldChamberDoorAdapter() {}
 
     static Result toggle(ServerWorld world, WorldChamberBlockView view, ChamberFrame frame) {
+        return ChamberPowerCoordinator.deferActivation(() -> toggleDeferred(world, view, frame));
+    }
+
+    private static Result toggleDeferred(ServerWorld world, WorldChamberBlockView view, ChamberFrame frame) {
         try {
             boolean toggled = new ChamberDoorService().toggle(
                     view,

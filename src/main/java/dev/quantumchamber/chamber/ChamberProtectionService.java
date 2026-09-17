@@ -2,6 +2,7 @@ package dev.quantumchamber.chamber;
 
 import dev.quantumchamber.universe.DimensionRole;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
@@ -44,6 +45,20 @@ public final class ChamberProtectionService {
                         ? mayMutate(world.getRegistryKey().getValue(), role, pos)
                         : mayMutate(role, pos))
                 .orElse(true);
+    }
+
+    /** 僅讀已發布索引，不讀 PersistentState，也不存取 chunk。 */
+    public Optional<ChamberRecord> originAt(ServerWorld world, BlockPos pos) {
+        if (attachedRegistry == null || world.getServer() != attachedServer
+                || attachedServer.getWorld(world.getRegistryKey()) != world) return Optional.empty();
+        return DimensionRole.fromVanillaKey(world.getRegistryKey())
+                .flatMap(role -> attachedRegistry.findAt(role, pos))
+                .filter(record -> record.anchorPos().equals(pos) && record.originWorldKey().equals(world.getRegistryKey().getValue())
+                        && record.instanceKind() == ChamberInstanceKind.ORIGIN && !record.destroyed());
+    }
+
+    boolean completeOriginRemoval(ChamberOriginAuthority authority) {
+        return attachedRegistry != null && new ChamberLifecycleService(attachedRegistry).completeRemoval(authority);
     }
 
     boolean mayMutate(Identifier worldKey, DimensionRole role, BlockPos pos) {

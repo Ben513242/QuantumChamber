@@ -15,6 +15,7 @@ import net.minecraft.state.StateManager;
 import net.minecraft.state.property.DirectionProperty;
 import net.minecraft.state.property.Properties;
 import net.minecraft.util.ActionResult;
+import net.minecraft.text.Text;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
@@ -69,8 +70,18 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
         var view = new WorldChamberBlockView(world);
         var frame = new ChamberFrame(pos, state.get(FACING));
         if (!new ChamberDetector().validate(view, frame).valid()) return ActionResult.FAIL;
-        return WorldChamberDoorAdapter.toggle(serverWorld, view, frame) == WorldChamberDoorAdapter.Result.TOGGLED
-                ? ActionResult.SUCCESS : ActionResult.FAIL;
+        if (WorldChamberDoorAdapter.toggle(serverWorld, view, frame) != WorldChamberDoorAdapter.Result.TOGGLED) return ActionResult.FAIL;
+        if (world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller) {
+            String message = !controller.wasPowered() ? "艙門已切換；目前未供電。"
+                    : switch (controller.chamberState()) {
+                        case INVALID -> "艙門已切換；量子功能已停用或結構無效。";
+                        case IDLE -> "已供電保護；請關門、進艙並讓全員取得 QuantumState。";
+                        case READY -> "條件已齊，等待啟動。";
+                        case ARMED -> "艙體已進入量子準備、活動或安全返還狀態。";
+                    };
+            player.sendMessage(Text.literal(message), true);
+        }
+        return ActionResult.SUCCESS;
     }
 
     @Override

@@ -16,6 +16,84 @@ import org.junit.jupiter.api.Test;
 
 class ChamberDoorServiceTest {
     @Test
+    void unchangedFailedCellDoesNotTurnSuccessfulRollbackIntoFailure() {
+        var door = new InMemoryDoor(northDoorPositions(), false, 0);
+        int[] calls = {0};
+        ChamberBlockMutator setter = (pos, open) -> {
+            if (++calls[0] == 13 || door.isOpen(pos) == open) return false;
+            return door.set(pos, open);
+        };
+        assertFalse(new ChamberDoorService().toggle(door, setter, ChamberMutationExecutor.DIRECT,
+                new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH)));
+        assertTrue(northDoorPositions().stream().noneMatch(door::isOpen));
+    }
+
+    @Test
+    void deferredDoorFailureNeverArmsFromTransientFullyClosedDoor() {
+        for (int failureAt : new int[] {13, 25}) for (boolean throwsFailure : new boolean[] {false, true}) {
+            var positions = northDoorPositions();
+            var door = new InMemoryDoor(positions, true, 0);
+            var controller = new TestController();
+            var redstone = new ChamberRedstoneService();
+            int[] calls = {0};
+            int[] starts = {0};
+            ChamberBlockMutator setter = (pos, open) -> {
+                door.set(pos, open);
+                var snapshot = eligibility(positions.stream().noneMatch(door::isOpen));
+                redstone.onPowerChanged(controller, true, snapshot, () -> { }, () -> starts[0]++);
+                if (++calls[0] == failureAt) {
+                    if (throwsFailure) throw new IllegalStateException("門格已變更後失敗");
+                    return false;
+                }
+                return true;
+            };
+            assertFalse(ChamberPowerCoordinator.deferActivation(() -> new ChamberDoorService().toggle(
+                    door, setter, ChamberMutationExecutor.DIRECT, new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH))));
+            assertEquals(0, starts[0], "交易中的暫時 sealed 不得啟動");
+            assertTrue(positions.stream().allMatch(door::isOpen));
+            redstone.onPowerChanged(controller, true, eligibility(false), () -> { }, () -> starts[0]++);
+            assertEquals(ChamberState.IDLE, controller.chamberState());
+            assertEquals(0, starts[0]);
+        }
+    }
+
+    private static ChamberActivationSnapshot eligibility(boolean sealed) {
+        return new ChamberActivationSnapshot(true, true, sealed, List.of(
+                new ChamberActivationSnapshot.ParticipantEligibility(java.util.UUID.fromString("00000000-0000-0000-0000-000000000001"), true)));
+    }
+
+    private static final class TestController implements ChamberControllerPort {
+        private ChamberState state = ChamberState.IDLE;
+        @Override public boolean wasPowered() { return true; }
+        @Override public void setWasPowered(boolean powered) { }
+        @Override public boolean powerInitialized() { return true; }
+        @Override public void setPowerInitialized(boolean initialized) { }
+        @Override public ChamberState chamberState() { return state; }
+        @Override public void setChamberState(ChamberState next) { state = next; }
+    }
+
+    @Test
+    void lastSetterFailureAfterMutationRestoresAllCellsForFalseAndThrow() {
+        for (boolean throwsFailure : new boolean[] {false, true}) {
+            var positions = northDoorPositions();
+            var door = new InMemoryDoor(positions, true, 0);
+            int[] calls = {0};
+            ChamberBlockMutator setter = (pos, open) -> {
+                door.set(pos, open);
+                if (++calls[0] == 25) {
+                    if (throwsFailure) throw new IllegalStateException("最後格已改後失敗");
+                    return false;
+                }
+                return true;
+            };
+            boolean result = new ChamberDoorService().toggle(door, setter, ChamberMutationExecutor.DIRECT,
+                    new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH));
+            assertFalse(result);
+            assertTrue(positions.stream().allMatch(door::isOpen), "失敗格也必須 rollback");
+        }
+    }
+
+    @Test
     void togglesEveryListedDoorPosition() {
         ChamberFrame frame = new ChamberFrame(BlockPos.ORIGIN, Direction.NORTH);
         List<BlockPos> expected = northDoorPositions();
@@ -59,7 +137,7 @@ class ChamberDoorServiceTest {
         assertFalse(new ChamberDoorService().toggle(door, door, ChamberMutationExecutor.DIRECT, frame));
         assertTrue(expected.subList(0, 12).stream().noneMatch(door::isOpen));
         assertTrue(expected.subList(12, 25).stream().noneMatch(door::isOpen));
-        assertEquals(25, door.writes().size()); // 13 attempted writes, then 12 rollbacks
+        assertEquals(25, door.writes().size()); // 13 次嘗試，12 格真的變更才需復原
     }
 
     @Test
