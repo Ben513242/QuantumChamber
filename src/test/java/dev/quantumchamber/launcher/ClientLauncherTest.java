@@ -68,6 +68,30 @@ class ClientLauncherTest {
     }
 
     @Test
+    void rejectsEmptyQuotedSecondArgumentWithoutLaunchingGradle() throws Exception {
+        Result result = launch(0, installedJava("Java 21"), false, "light \"\"");
+        assertTrue(result.exitCode() != 0, result.output());
+        assertTrue(result.output().contains("start-client.bat [light]"), result.output());
+        assertTrue(Files.notExists(result.project().resolve("args.txt")));
+    }
+
+    @Test
+    void rejectsThirdArgumentAfterEmptyQuotedSecondArgumentWithoutLaunchingGradle() throws Exception {
+        Result result = launch(0, installedJava("Java 21"), false, "light \"\" extra");
+        assertTrue(result.exitCode() != 0, result.output());
+        assertTrue(result.output().contains("start-client.bat [light]"), result.output());
+        assertTrue(Files.notExists(result.project().resolve("args.txt")));
+    }
+
+    @Test
+    void rejectsEmptyQuotedFirstArgumentInsteadOfTreatingItAsNoArguments() throws Exception {
+        Result result = launch(0, installedJava("Java 21"), false, "\"\"");
+        assertTrue(result.exitCode() != 0, result.output());
+        assertTrue(result.output().contains("start-client.bat [light]"), result.output());
+        assertTrue(Files.notExists(result.project().resolve("args.txt")));
+    }
+
+    @Test
     void preservesGradleFailureCodeAndReadableError() throws Exception {
         Result result = launch(23, installedJava("Java 21"), false);
         assertEquals(23, result.exitCode(), result.output());

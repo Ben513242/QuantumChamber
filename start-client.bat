@@ -3,9 +3,10 @@ setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
 
 rem 僅接受明確的選用照明參數；無參數保留原始客戶端。
+rem 保留原始 token 的引號：明確傳入的 "" 也算一個參數。
 set "CLIENT_TASK=runClient"
-if not "%~2"=="" goto usageFailure
-if "%~1"=="" goto startClient
+if not [%2]==[] goto usageFailure
+if [%1]==[] goto startClient
 if /i not "%~1"=="light" goto usageFailure
 set "CLIENT_TASK=runClientLight"
 
