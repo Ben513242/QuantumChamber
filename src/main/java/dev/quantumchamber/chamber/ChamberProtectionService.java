@@ -3,6 +3,9 @@ package dev.quantumchamber.chamber;
 import dev.quantumchamber.universe.DimensionRole;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
@@ -18,6 +21,8 @@ public final class ChamberProtectionService {
     private final ThreadLocal<TargetAuthorization> targetAuthorization = new ThreadLocal<>();
     private MinecraftServer attachedServer;
     private ChamberRegistry attachedRegistry;
+    // 不持久化：載入的 OFF 也必須先核對實際世界，才能開放普通寫入。
+    private final Set<UUID> reconciledOffOrigins = new HashSet<>();
 
     public static ChamberProtectionService get() {
         return INSTANCE;
@@ -58,7 +63,25 @@ public final class ChamberProtectionService {
     }
 
     boolean completeOriginRemoval(ChamberOriginAuthority authority) {
-        return attachedRegistry != null && new ChamberLifecycleService(attachedRegistry).completeRemoval(authority);
+        boolean removed = attachedRegistry != null && new ChamberLifecycleService(attachedRegistry).completeRemoval(authority);
+        if (removed) reconciledOffOrigins.remove(authority.chamberUuid());
+        return removed;
+    }
+
+    void requireReconciliation(ServerWorld world, BlockPos controllerPos) {
+        originAt(world, controllerPos).ifPresent(record -> reconciledOffOrigins.remove(record.chamberUuid()));
+    }
+
+    /** 僅供已核對原艙身分、實際電位與 session 結果的協調器發布。 */
+    void completeReconciliation(ChamberRegistry registry, UUID uuid) {
+        if (registry != attachedRegistry) return;
+        var record = registry.records().get(uuid);
+        if (record != null && record.powerState() == ChamberPowerState.OFF
+                && record.instanceKind() == ChamberInstanceKind.ORIGIN && !record.destroyed()) {
+            reconciledOffOrigins.add(uuid);
+        } else {
+            reconciledOffOrigins.remove(uuid);
+        }
     }
 
     boolean mayMutate(Identifier worldKey, DimensionRole role, BlockPos pos) {
@@ -68,6 +91,7 @@ public final class ChamberProtectionService {
         ChamberRegistry registry = attachedRegistry;
         return isAuthorized() || registry == null || registry.findAt(role, pos)
                 .map(record -> record.powerState() == ChamberPowerState.OFF
+                        && reconciledOffOrigins.contains(record.chamberUuid())
                         && record.instanceKind() == ChamberInstanceKind.ORIGIN
                         && !record.destroyed()
                         && record.originWorldKey().equals(worldKey)
@@ -120,11 +144,13 @@ public final class ChamberProtectionService {
     }
 
     void attach(ChamberRegistry registry) {
+        reconciledOffOrigins.clear();
         attachedServer = null;
         attachedRegistry = Objects.requireNonNull(registry, "registry");
     }
 
     private void attach(MinecraftServer server, ChamberRegistry registry) {
+        reconciledOffOrigins.clear();
         attachedServer = server;
         attachedRegistry = registry;
     }
@@ -133,6 +159,7 @@ public final class ChamberProtectionService {
         if (attachedServer == server) {
             attachedServer = null;
             attachedRegistry = null;
+            reconciledOffOrigins.clear();
         }
     }
 

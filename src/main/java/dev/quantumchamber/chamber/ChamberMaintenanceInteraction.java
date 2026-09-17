@@ -57,7 +57,10 @@ public final class ChamberMaintenanceInteraction {
         }
         OriginContext context = resolve(serverWorld, pos, player);
         if (context == null) return result(player, false, "無法拆除：原始控制器身分不符。");
-        if (context.record().powerState() != ChamberPowerState.OFF) return result(player, false, "請先斷電並等待返還完成。");
+        if (context.record().powerState() != ChamberPowerState.OFF
+                || !ChamberProtectionService.get().mayMutate(serverWorld, pos)) {
+            return result(player, false, "請先斷電並等待載入協調與返還完成。");
+        }
         boolean removed = context.lifecycle().dismantleOrigin(context.authority(), () ->
                 ChamberProtectionService.get().authorizedMutation(serverWorld, pos, () -> serverWorld.removeBlock(pos, false)));
         // 非 PASS 取消原生後續 break，避免同一輸入再執行第二次 mutation。

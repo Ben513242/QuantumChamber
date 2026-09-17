@@ -1,6 +1,11 @@
 package dev.quantumchamber.chamber;
 
 import dev.quantumchamber.universe.DimensionRole;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
@@ -12,6 +17,7 @@ import net.minecraft.nbt.NbtList;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.WorldSavePath;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.PersistentState;
@@ -43,7 +49,21 @@ public final class ChamberRegistryState extends PersistentState {
     }
 
     public static ChamberRegistryState get(MinecraftServer server) {
-        return server.getOverworld().getPersistentStateManager().getOrCreate(TYPE, STATE_ID);
+        var manager = server.getOverworld().getPersistentStateManager();
+        var loaded = manager.get(TYPE, STATE_ID);
+        if (loaded != null) return loaded;
+        // 原生 manager 會吞掉 IO／gzip／NBT 例外並回傳 null；只有確認不存在才可初建。
+        var file = server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(STATE_ID + ".dat");
+        try {
+            Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (NoSuchFileException absent) {
+            return manager.getOrCreate(TYPE, STATE_ID);
+        } catch (IOException | SecurityException unreadable) {
+            throw new IllegalStateException("Chamber registry is unreadable; restore or repair " + STATE_ID
+                    + " before starting the server: cannot determine file state", unreadable);
+        }
+        throw new IllegalStateException("Chamber registry is unreadable; restore or repair " + STATE_ID
+                + " before starting the server: existing file could not be loaded: " + file);
     }
 
     public ChamberRegistry registry() {

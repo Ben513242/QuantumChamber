@@ -183,8 +183,11 @@ public final class M12PersistenceProbe implements ModInitializer {
         try {
             Path fixture = Path.of(System.getProperty("quantumchamber.m12.fixture")).toRealPath();
             Path world = server.getSavePath(WorldSavePath.ROOT).toRealPath();
-            require(fixture.getFileName().toString().startsWith("m12-corrupt"), "損壞探針只能使用 owned corrupt fixture");
-            require(fixture.getParent().getFileName().toString().equals("run"), "fixture 必須位於隔離 run 目錄");
+            String corruption = System.getProperty("quantumchamber.m12.corruption", "schema99");
+            boolean finalFix = fixture.getParent().getFileName().toString().equals("m12-final-fix")
+                    && fixture.getParent().getParent().getFileName().toString().equals("run");
+            require(finalFix || fixture.getFileName().toString().startsWith("m12-corrupt")
+                    && fixture.getParent().getFileName().toString().equals("run"), "損壞探針只能使用 owned fixture");
             require(world.equals(fixture.resolve("world")), "實際世界必須是指定 fixture/world");
             Path data = world.resolve("data");
             Path target = data.resolve(ChamberRegistryState.STATE_ID + ".dat");
@@ -195,9 +198,25 @@ public final class M12PersistenceProbe implements ModInitializer {
             invalid.put("Records", new NbtList());
             var wrapper = new NbtCompound();
             wrapper.put("data", invalid);
-            NbtIo.writeCompressed(wrapper, target);
-            String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(target)));
-            LOGGER.info("M12 corrupt fixture written stateId={} sha256={} path={}", ChamberRegistryState.STATE_ID, hash, target);
+            Path hashTarget = target;
+            switch (corruption) {
+                case "schema99" -> NbtIo.writeCompressed(wrapper, target);
+                case "truncated" -> Files.write(target, new byte[] {0x1f, (byte) 0x8b, 8});
+                case "invalidgzip" -> Files.write(target, new byte[] {0x1f, (byte) 0x8b, 7, 0, 0, 0, 0, 0, 0, 0});
+                case "invalidnbt" -> {
+                    try (var gzip = new java.util.zip.GZIPOutputStream(Files.newOutputStream(target))) {
+                        gzip.write(new byte[] {99, 0, 0});
+                    }
+                }
+                case "readfailure" -> {
+                    Files.createDirectory(target);
+                    hashTarget = target.resolve("preserve.txt");
+                    Files.writeString(hashTarget, "讀取失敗時必須保留的原始資料");
+                }
+                default -> throw new AssertionError("未知損壞種類");
+            }
+            String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(hashTarget)));
+            LOGGER.info("M12 corrupt fixture written stateId={} sha256={} path={} kind={}", ChamberRegistryState.STATE_ID, hash, target, corruption);
         } catch (IOException | NoSuchAlgorithmException exception) {
             throw new IllegalStateException("無法建立 fresh corrupt fixture", exception);
         }

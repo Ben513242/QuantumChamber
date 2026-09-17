@@ -314,6 +314,8 @@ public final class M1ChamberGameTests implements FabricGameTest {
                 var replacementPending = new ChamberControllerBlockEntity(controller.getPos(), controller.getCachedState());
                 replacementPending.setWorld(world);
                 ChamberControllerLoadSyncQueue.enqueue(world, replacementPending);
+                context.assertTrue(!world.removeBlock(frame.controllerPos(), false), "enqueue 後 OFF 尚未重新協調，不得普通拆除");
+                ChamberControllerBlock.refreshState(world, frame.controllerPos());
                 context.assertTrue(world.removeBlock(frame.controllerPos(), false), "OFF 原生 removeBlock 成功");
                 context.assertTrue(!registry.records().containsKey(uuid), "原生成功移除清 record");
                 context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), controller), "成功移除立即清同 BE queue");
@@ -324,6 +326,65 @@ public final class M1ChamberGameTests implements FabricGameTest {
                 world.getServer().getPlayerManager().remove(player);
             }
             context.complete();
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_reloaded_off_blocks_ordinary_remove_before_held_high_sync(TestContext context) {
+        reloadedOffRemainsProtected(context, false);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_reloaded_off_blocks_creative_attack_before_held_high_sync(TestContext context) {
+        reloadedOffRemainsProtected(context, true);
+    }
+
+    private static void reloadedOffRemainsProtected(TestContext context, boolean creativeAttack) {
+        var frame = build(context, true);
+        var world = context.getWorld();
+        var player = participant(context, false);
+        player.changeGameMode(GameMode.CREATIVE);
+        moveToController(player, frame);
+        context.waitAndRun(2, () -> {
+            try {
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.AIR);
+                var original = ChamberGameTestBuilder.controller(context);
+                var uuid = original.chamberUuid();
+                var registry = ChamberRegistryState.get(world.getServer()).registry();
+                var nbt = original.createNbt(world.getRegistryManager());
+                context.assertEquals(ChamberPowerState.OFF, registry.records().get(uuid).powerState(), "已保存 OFF 前置條件");
+                world.removeBlockEntity(frame.controllerPos());
+                var restored = new ChamberControllerBlockEntity(frame.controllerPos(), original.getCachedState());
+                restored.read(nbt, world.getRegistryManager());
+                world.addBlockEntity(restored);
+                world.setBlockState(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 2);
+                context.assertTrue(ChamberLoadSyncTestAccess.hasPending(world.getServer(), restored)
+                        && world.isReceivingRedstonePower(frame.controllerPos()), "重載未協調但實際高位");
+                if (creativeAttack) {
+                    nativeAttack(context, frame, player);
+                    context.assertTrue(world.getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER), "pending OFF 必須阻擋創造模式拆除");
+                } else {
+                    context.assertTrue(!world.removeBlock(frame.controllerPos(), false), "pending OFF 必須阻擋普通拆除");
+                }
+                context.assertEquals(uuid, restored.chamberUuid(), "pending 不變更 UUID");
+                context.assertEquals(ChamberPowerState.OFF, registry.records().get(uuid).powerState(), "runtime gate 不改 persisted OFF");
+                context.waitAndRun(2, () -> {
+                    try {
+                        context.assertEquals(ChamberPowerState.POWERED, registry.records().get(uuid).powerState(), "原生 queue 重讀高位");
+                        context.assertTrue(!world.removeBlock(frame.controllerPos(), false), "高位協調完成仍保護");
+                        context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.AIR);
+                        context.assertTrue(world.removeBlock(frame.controllerPos(), false), "真實低位與返還完成才解除");
+                        context.assertTrue(!registry.records().containsKey(uuid), "成功拆除清 record");
+                    } finally {
+                        world.getServer().getPlayerManager().remove(player);
+                    }
+                    context.complete();
+                });
+            } catch (RuntimeException | Error failure) {
+                world.getServer().getPlayerManager().remove(player);
+                throw failure;
+            }
         });
     }
 

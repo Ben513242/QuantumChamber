@@ -6,7 +6,9 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 已實作 7×7×7 Chamber、25 格整面 Bulkhead、Controller 右鍵整面門控、QuantumState 藥水、Origin registry 持久化，以及依實際紅石電位協調的原艙保護與自動 `ARMED`。Comparator 狀態為 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。
 
-2026-09-17 的非快取 `clean build runGameTest --rerun-tasks` 實際通過 111 個 JUnit（含 13 個 Windows 啟動腳本測試）與 52 個 Fabric GameTests，零失敗、零跳過。M1.2 四次獨立 Java 程序驗證供電→OFF→重供電→拆除，另有不含 testmod 的 dedicated Done→stop 與 release JAR／common-server 邊界證據。損壞 schema 會被健康 guard 拒絕；原生 launcher 可能仍回傳 0，故以明確例外、沒有正常 tick、原資料雜湊不變及外部驗證器非零共同判定，不能只看 Done 或 Java 退出碼。
+2026-09-17 初次 M1.2 非快取 `clean build runGameTest --rerun-tasks` 通過 111 個 JUnit（含 13 個 Windows 啟動腳本測試）與 52 個 Fabric GameTests，零失敗、零跳過。當時四次獨立 Java 程序驗證供電→OFF→重供電→拆除，另有不含 testmod 的 dedicated Done→stop 與 release JAR／common-server 邊界證據。損壞 schema 會被健康 guard 拒絕；原生 launcher 可能仍回傳 0，故以明確例外、沒有正常 tick、原資料雜湊不變及外部驗證器非零共同判定，不能只看 Done 或 Java 退出碼。
+
+同日最終修正後，再以全新隔離 fixture 完整重跑上述建置，通過 112 個 JUnit 與 56 個 GameTests，零失敗、零跳過。新增原生反例涵蓋：已保存 OFF 在載入協調前仍受保護（普通拆除與創造模式攻擊均拒絕）、控制器已 FULL 但紅石輸入鄰區未 FULL 時不強載且保留重試，以及損壞 gzip／NBT／底層讀取失敗時拒絕啟動並保留資料。完整證據與人工待驗界線見 [M1.2 驗證紀錄](docs/implementation-notes/m1.2-powered-origin.md)。
 
 新建艙體未供電時不註冊；有效空艙即使開門，也能先由外部供電取得 UUID 與保護。進艙、關門並補齊全員 QuantumState 後，持續高電位會自動進入 `ARMED`，不用再按一次拉桿。Controller 普通右鍵開關門；雙手空手蹲下右鍵切換管理用 `Enabled`，它與供電分開。斷電確認安全返還後才進入 `OFF`、輸出 0 並解除原艙保護，但 UUID 與碰撞占位保留；重新供電沿用 UUID。只有 `OFF` 的 Controller 真正成功移除後，才清除紀錄及全部索引，外殼不自動刪除；`Enabled=true` 也可在 OFF 拆除。schema1 可讀為保守的 `UNKNOWN`，schema2 保存獨立供電狀態。
 

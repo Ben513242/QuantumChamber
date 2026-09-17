@@ -28,6 +28,7 @@ public final class ChamberControllerLoadSyncQueue {
         MinecraftServer server = world.getServer();
         requireServerThread(server);
         controller.markLoadSyncPending();
+        ChamberProtectionService.get().requireReconciliation(world, controller.getPos());
         PENDING.computeIfAbsent(server, ignored -> new ArrayDeque<>()).addLast(new PendingLoad(
                 server, world.getRegistryKey(), world, controller.getPos().toImmutable(), controller,
                 (long) server.getTicks() + 1));
@@ -52,6 +53,11 @@ public final class ChamberControllerLoadSyncQueue {
             var chunk = entry.world().getChunkManager().getWorldChunk(entry.pos().getX() >> 4, entry.pos().getZ() >> 4);
             if (chunk == null || !chunk.getBlockState(entry.pos()).isOf(ModBlocks.CHAMBER_CONTROLLER)
                     || chunk.getBlockEntity(entry.pos()) != entry.controller()) continue;
+            if (!ChamberRedstoneService.powerNeighborhoodLoaded(entry.world(), entry.pos())) {
+                // 原 BE 仍有效但輸入尚不可讀；保留 pending 與保護，下一 tick 重試。
+                queue.addLast(entry);
+                continue;
+            }
             if (entry.controller().consumeLoadSyncPending()) {
                 REDSTONE.onLoad(entry.world(), entry.pos());
                 ChamberControllerBlock.scheduleRefresh(entry.world(), entry.pos());

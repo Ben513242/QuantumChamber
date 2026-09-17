@@ -24,7 +24,7 @@ $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 .\gradlew.bat --no-daemon runClient
 ```
 
-這是 Fabric 開發客戶端，會自動編譯／載入此工作區的模組，使用 `run/client-base`，不是將 JAR 自動安裝到微軟官方 Launcher 的 mods 目錄。世界位於 `run/client-base/saves`；既有世界可繼續使用，方塊 ID 與儲存 schema 沒有改動。
+這是 Fabric 開發客戶端，會自動編譯／載入此工作區的模組，使用 `run/client-base`，不是將 JAR 自動安裝到微軟官方 Launcher 的 mods 目錄。世界位於 `run/client-base/saves`；既有世界可繼續使用，方塊 ID 不變。M1.2 Registry 使用 schema2；相容讀取 schema1，保留 UUID／管理旗標，舊資料缺少的供電狀態先視為 UNKNOWN，待原艙載入後重新核對，不猜測舊電位。
 
 若舊遊戲仍開著，先正常儲存並退出，再啟動新版本。不要同時用兩個客戶端開同一世界。
 
@@ -46,9 +46,7 @@ $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 
 主手／副手火把、移動後照明、熄滅效果、GPU 與 shader 相容性均列為人工待驗。M1.2 的 POWERED 原艙輝光由可信原艙身分判定，不等於手持火把照明，也不代表 M2 走廊已完成。
 
-![精確施工與驗證圖](../images/m1-chamber-build-guide.png)
-
-[可放大的格線原圖](../images/m1-chamber-build-guide.svg)｜[科幻外觀概念圖](../images/m1-chamber-concept.png)
+歷史幾何參考：[舊版格線圖（PNG）](../images/m1-chamber-build-guide.png)｜[舊版格線原圖（SVG）](../images/m1-chamber-build-guide.svg)｜[科幻外觀概念圖](../images/m1-chamber-concept.png)。舊格線圖僅供 7×7×7／25 格艙門配置參考；其中 rising edge、比較器讀值與停用拆除說明已過時，不能作為 M1.2 操作指引。目前狀態、供電與維護規則以本文為準。
 
 ## 1. 準備材料
 
@@ -130,13 +128,13 @@ M1.2 可由唯一玩家先在室外撥桿供電，再自己入內測試；實體
 /data get block 100 70 100 ChamberUuid
 ```
 
-維持人在 interior：第一個 air 指令讓輸入保持低，全員有 buff 且關門可預覽 READY／7；第二個 setblock 供電後應自動 ARMED 且 UUID 存在。供電前查 `ChamberUuid` 沒有欄位屬於正常草稿。測試結束移走紅石方塊並等待 OFF；只修改艙體外這一格，不用刪世界。
+維持人在 interior：第一個 air 指令讓輸入保持低，完成安全協調後為 INVALID／0，即使全員有 buff 且關門也不預覽 READY；第二個 setblock 供電後，資格齊全應自動 ARMED／11 且 UUID 存在。供電缺資格為 IDLE／3；READY／7 是供電後條件已齊但尚未啟動的等待狀態，可能很短暫。供電前查 `ChamberUuid` 沒有欄位屬於正常草稿。測試結束移走紅石方塊並等待 OFF；只修改艙體外這一格，不用刪世界。
 
 ## 5. 待執行的人工驗證
 
 | 步驟 | 操作 | 預期觀察 |
 | --- | --- | --- |
-| A | 新建有效艙體、室內空無一人；輸入保持低電位 | IDLE，輸出 3；尚未註冊／保護，Creative 可拆改 |
+| A | 新建有效艙體、室內空無一人；輸入保持低電位 | INVALID，輸出 0；尚未註冊／保護，Creative 可拆改 |
 | B | 唯一玩家在室外將有效空艙供電 | IDLE／3；UUID 已註冊且整艙保護，不要求先喝藥或關門 |
 | C | 保持供電，玩家完整入內、非 spectator、全員有 QuantumState、門已關 | 自動 ARMED／11，不需新的 rising edge |
 | D | 持續供電，喝牛奶移除效果，再補喝 QuantumState | 先降 IDLE／3，再自動 ARMED／11；供電保護持續 |
@@ -170,6 +168,8 @@ M1.2 可由唯一玩家先在室外撥桿供電，再自己入內測試；實體
 
 **舊版世界：** 舊 UUID／管理旗標保留，不因升版刪除記錄或世界；保護按目前外部供電與可信原艙身分重新核對。若想重測草稿供電註冊，先切斷外部供電、確認 OFF 後 Creative 拆 Controller 再重建，或另選空地新建。身分無法可靠核對時不得提早解鎖；不要刪整個世界。
 
+即使 schema2 已保存 OFF，每次載入仍先保守鎖定；必須完成原艙身分、實際電位與返還協調才可拆改。紅石查詢需要的鄰接 chunk 尚未完整載入時會等待重試，不會把缺少資料視為斷電。Registry 檔案存在卻無法讀取、解壓或解析時會拒絕啟動並保留原始資料，應先備份再修復，不能以刪除世界處理。
+
 ## Controller 門控與客戶端重啟
 
 2026-09-16 已依使用者核准方案新增 Controller 的右鍵門控。關閉的 Bulkhead 仍可以右鍵開門；開啟後 outline 為空，滑鼠不能再次瞄準門，請改瞄準前牆最上排中央的 Controller。
@@ -178,12 +178,12 @@ M1.2 可由唯一玩家先在室外撥桿供電，再自己入內測試；實體
 2. 室外可右鍵艙門或 Controller 開門，全部 25 格同步開啟。
 3. 進入 interior 後靠近入口，但整個身體仍留在室內、不要站在門面上。
 4. 從開口瞄準門頂中央 Controller 的底面或可見表面，再右鍵關門。若無法瞄準，先確認方向、距離與視線，勿把已開啟的空門格當目標。
-5. 未供電時，有 buff 且門關閉可預覽 READY／7；保持供電並滿足資格便自動 ARMED／11。目前 M1.2 開門回 IDLE／3，再關門且 buff 有效會自動回 11；沒有 M2 真實 ACTIVE session 或走廊服務。
+5. 未供電且安全協調完成時為 INVALID／0；保持供電並滿足資格便自動 ARMED／11。目前 M1.2 在供電中開門回 IDLE／3，再關門且 buff 有效會自動回 11；READY／7 僅是供電後等待啟動的狀態。沒有 M2 真實 ACTIVE session 或走廊服務。
 
 這個入口保留原本的 25-block transaction、authorization 與同步刷新，不新增 GUI、renderer 或自訂 packet。原生互動自動回歸不代表上述滑鼠／視線／HUD／多人步驟已人工通過；請逐項記錄。
 
 ## 圖片說明
 
-- 格線施工圖直接依實際幾何與狀態契約繪製；PNG 是 SVG 的轉出版本。
+- 舊版格線施工圖的 PNG 是 SVG 轉出版本，僅保留歷史幾何參考用途；圖中文字屬於舊狀態／維護契約，不適用於 M1.2。
 - 科幻概念圖使用內建圖片生成工具，附件只作為 Minecraft 場景參考。提示內容摘要：7×7×7 基岩艙體、5×5×5 剖面、5×5 艙門、頂部中央控制器、外接比較器與拉桿，使用原創青色／紫色科幻語彙，禁止傳送門、走廊與 AE2 資產複製。
-- 概念圖的格數、材質、亮度與控制器細節可能藝術化；**施工以格線圖及本文件為準**。M1.2 POWERED 時的可信原艙輝光不等於概念圖效果，也不替代選用手持照明。
+- 概念圖的格數、材質、亮度與控制器細節可能藝術化；**施工與操作以本文件為準**，舊格線圖只能輔助對照幾何。M1.2 POWERED 時的可信原艙輝光不等於概念圖效果，也不替代選用手持照明。

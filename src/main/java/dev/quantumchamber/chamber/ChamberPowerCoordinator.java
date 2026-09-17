@@ -41,11 +41,13 @@ public final class ChamberPowerCoordinator {
 
     private void refreshNow(ServerWorld world, BlockPos controllerPos) {
         if (world.getServer().getWorld(world.getRegistryKey()) != world) return;
+        ChamberProtectionService.get().requireReconciliation(world, controllerPos);
         var chunk = world.getChunkManager().getWorldChunk(controllerPos.getX() >> 4, controllerPos.getZ() >> 4);
         if (chunk == null || !(chunk.getBlockEntity(controllerPos) instanceof ChamberControllerBlockEntity controller)
                 || controller.isRemoved() || controller.getWorld() != world || !controller.getPos().equals(controllerPos)) return;
         var block = chunk.getBlockState(controllerPos);
         if (!block.isOf(ModBlocks.CHAMBER_CONTROLLER) || !controller.getCachedState().equals(block)) return;
+        if (!ChamberRedstoneService.powerNeighborhoodLoaded(world, controllerPos)) return;
         boolean powered = world.isReceivingRedstonePower(controllerPos);
         controller.setWasPowered(powered);
         controller.setPowerInitialized(true);
@@ -97,6 +99,13 @@ public final class ChamberPowerCoordinator {
                     @Override public boolean returnToOrigin() { return gateway.returnToOrigin(world, controller); }
                 });
         changeState(world, controller, next);
+        if (!controller.isRemoved() && controller.getWorld() == world
+                && chunk.getBlockEntity(controllerPos) == controller && chunk.getBlockState(controllerPos).equals(block)
+                && controller.getCachedState().equals(block)
+                && registry.findOrigin(world.getRegistryKey().getValue(), role.get(), frame)
+                        .filter(record -> record.chamberUuid().equals(controller.chamberUuid())).isPresent()) {
+            ChamberProtectionService.get().completeReconciliation(registry, controller.chamberUuid());
+        }
     }
 
     static ChamberState reconcile(ChamberRegistry registry, UUID uuid, boolean powered, ChamberState current,

@@ -18,6 +18,19 @@ class ChamberProtectionServiceTest {
     private static final BlockPos OUTSIDE_POS = new BlockPos(20, 70, 0);
 
     @Test
+    void persistedOffRemainsProtectedUntilRuntimeReconciliation() {
+        var registry = new ChamberRegistry();
+        var uuid = UUID.randomUUID();
+        registry.putLoaded(new ChamberRecord(uuid, World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
+                PROTECTED_POS, Direction.NORTH, ChamberInstanceKind.ORIGIN, true, false, ChamberPowerState.OFF));
+        var protection = new ChamberProtectionService();
+        protection.attach(registry);
+        assertFalse(protection.mayMutate(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, PROTECTED_POS));
+        org.junit.jupiter.api.Assertions.assertEquals(ChamberPowerState.OFF, registry.records().get(uuid).powerState());
+        assertTrue(registry.findAt(DimensionRole.OVERWORLD, PROTECTED_POS).isPresent());
+    }
+
+    @Test
     void onlyOffOriginWithMatchingWorldKeyMayMutateItsIndexedVolume() {
         for (ChamberPowerState power : ChamberPowerState.values()) {
             ChamberRegistry registry = new ChamberRegistry();
@@ -25,6 +38,7 @@ class ChamberProtectionServiceTest {
                     PROTECTED_POS, Direction.NORTH, ChamberInstanceKind.ORIGIN, false, false, power));
             ChamberProtectionService protection = new ChamberProtectionService();
             protection.attach(registry);
+            protection.completeReconciliation(registry, registry.records().keySet().iterator().next());
             org.junit.jupiter.api.Assertions.assertEquals(power == ChamberPowerState.OFF,
                     protection.mayMutate(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, PROTECTED_POS));
             assertFalse(protection.mayMutate(Identifier.of("foreign", "other"), DimensionRole.OVERWORLD, PROTECTED_POS));
