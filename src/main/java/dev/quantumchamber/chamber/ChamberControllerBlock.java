@@ -112,6 +112,7 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
                 || controller.isRemoved() || controller.getWorld() != world) return;
         refreshState(world, pos);
         scheduleRefresh(world, pos);
+        ChamberGlowEmitter.emit(world, pos);
     }
 
     @Override

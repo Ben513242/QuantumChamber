@@ -7,10 +7,18 @@ import dev.quantumchamber.registry.ModPotions;
 import dev.quantumchamber.universe.DimensionRole;
 import com.mojang.authlib.GameProfile;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import net.minecraft.network.ClientConnection;
 import net.minecraft.network.NetworkSide;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.network.packet.s2c.play.ParticleS2CPacket;
+import net.minecraft.particle.DustColorTransitionParticleEffect;
+import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.network.ConnectedClientData;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
@@ -39,6 +47,134 @@ import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 
 public final class M1ChamberGameTests implements FabricGameTest {
+    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100)
+    public void powered_idle_origin_emits_bounded_native_blue_particles_without_state_mutation(TestContext context) {
+        var frame = build(context, true);
+        var packets = new ArrayList<ParticleS2CPacket>();
+        var observer = participant(context, false, packets);
+        context.waitAndRun(2, () -> {
+            try {
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                state(context, ChamberState.IDLE, 3);
+                var controller = ChamberGameTestBuilder.controller(context);
+                var before = controller.createNbt(context.getWorld().getRegistryManager());
+                var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
+                var records = registry.records();
+                packets.clear();
+                ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                context.assertEquals(24, packets.size(), "真實 ServerWorld 原生粒子封包預算");
+                int blue = 0;
+                int spark = 0;
+                for (var packet : packets) {
+                    context.assertEquals(0, packet.getCount(), "count=0 精確單粒子模式，不隨機散射");
+                    context.assertTrue(packet.getOffsetY() >= 0.08f && packet.getOffsetY() <= 0.16f,
+                            "原生封包保留向上速度");
+                    context.assertTrue(packet.getOffsetX() == 0 && packet.getOffsetZ() == 0 && packet.getSpeed() == 1,
+                            "沒有側向隨機速度");
+                    if (packet.getParameters() instanceof DustColorTransitionParticleEffect dust) {
+                        context.assertTrue(dust.getFromColor().z > dust.getFromColor().x
+                                && dust.getFromColor().y > dust.getFromColor().x, "青藍原生漸變");
+                        blue++;
+                    } else if (packet.getParameters() == ParticleTypes.END_ROD) {
+                        spark++;
+                    }
+                }
+                context.assertEquals(20, blue, "柔和青藍樣本");
+                context.assertEquals(4, spark, "少量原生明亮 spark");
+                context.assertEquals(before, controller.createNbt(context.getWorld().getRegistryManager()), "不修改 controller 狀態");
+                context.assertEquals(records, registry.records(), "不修改供電／保護／registry");
+            } finally {
+                context.getWorld().getServer().getPlayerManager().remove(observer);
+            }
+            context.complete();
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100)
+    public void glow_rejects_draft_wrong_identity_nonpowered_and_unloaded_origins(TestContext context) {
+        var frame = build(context, true);
+        var packets = new ArrayList<ParticleS2CPacket>();
+        var observer = participant(context, false, packets);
+        context.waitAndRun(2, () -> {
+            try {
+                packets.clear();
+                ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                context.assertTrue(packets.isEmpty(), "未註冊原艙無輸出");
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                var controller = ChamberGameTestBuilder.controller(context);
+                var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
+                var uuid = controller.chamberUuid();
+                packets.clear();
+                ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                context.assertEquals(24, packets.size(), "負面 fixture 的有效供電控制組確實輸出");
+                packets.clear();
+                controller.setChamberUuid(UUID.randomUUID());
+                ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                context.assertTrue(packets.isEmpty(), "錯誤 UUID 必須拒絕");
+                controller.setChamberUuid(uuid);
+                controller.setInstanceKind(ChamberInstanceKind.PROJECTION);
+                ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                context.assertTrue(packets.isEmpty(), "projection 身分必須拒絕");
+                controller.setInstanceKind(ChamberInstanceKind.ORIGIN);
+                for (var power : new ChamberPowerState[] {ChamberPowerState.OFF, ChamberPowerState.RETURNING, ChamberPowerState.UNKNOWN}) {
+                    registry.setPowerState(uuid, power);
+                    ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                    context.assertTrue(packets.isEmpty(), power + " 不新增粒子");
+                }
+                registry.setPowerState(uuid, ChamberPowerState.POWERED);
+                controller.setWasPowered(false);
+                ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                context.assertTrue(packets.isEmpty(), "斷電 latch 不新增粒子");
+                controller.setWasPowered(true);
+                var distant = frame.controllerPos().add(100000, 0, 100000);
+                context.assertTrue(!context.getWorld().isChunkLoaded(distant), "控制組遠方 chunk 未載入");
+                ChamberGlowEmitter.emit(context.getWorld(), distant);
+                context.assertTrue(packets.isEmpty() && !context.getWorld().isChunkLoaded(distant), "不強載 chunk");
+            } finally {
+                context.getWorld().getServer().getPlayerManager().remove(observer);
+            }
+            context.complete();
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100)
+    public void scheduled_glow_obeys_original_cadence_off_and_native_observation_distance(TestContext context) {
+        var frame = build(context, true);
+        var packets = new ArrayList<ParticleS2CPacket>();
+        var observer = participant(context, false, packets);
+        context.waitAndRun(2, () -> {
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+            packets.clear();
+        });
+        context.waitAndRun(25, () -> {
+            boolean emitted = packets.stream().anyMatch(p -> glowPacketAt(p, frame));
+            if (!emitted) context.getWorld().getServer().getPlayerManager().remove(observer);
+            context.assertTrue(emitted, "既有 scheduledTick 會產生艙體輝光");
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.AIR);
+            packets.clear();
+        });
+        context.waitAndRun(50, () -> {
+            try {
+                context.assertTrue(packets.stream().noneMatch(p -> glowPacketAt(p, frame)), "斷電後週期不再新增粒子");
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                observer.refreshPositionAndAngles(frame.controllerPos().getX() + 100, frame.controllerPos().getY(),
+                        frame.controllerPos().getZ(), 0, 0);
+                packets.clear();
+                ChamberGlowEmitter.emit(context.getWorld(), frame.controllerPos());
+                context.assertTrue(packets.isEmpty(), "原生非強制粒子不傳送到遠距離觀察者");
+            } finally {
+                context.getWorld().getServer().getPlayerManager().remove(observer);
+            }
+            context.complete();
+        });
+    }
+
+    private static boolean glowPacketAt(ParticleS2CPacket packet, ChamberFrame frame) {
+        var bounds = ChamberGeometry.bounds(frame);
+        return packet.getX() >= bounds.getMinX() - 0.5 && packet.getX() <= bounds.getMaxX() + 1.5
+                && packet.getZ() >= bounds.getMinZ() - 0.5 && packet.getZ() <= bounds.getMaxZ() + 1.5;
+    }
+
     @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100)
     public void native_failed_door_rollback_false_blocks_start_until_successful_repair(TestContext context) {
         failedDoorRollback(context, false);
@@ -888,12 +1024,24 @@ public final class M1ChamberGameTests implements FabricGameTest {
     }
 
     private static ServerPlayerEntity participant(TestContext context, boolean buffed) {
+        return participant(context, buffed, null);
+    }
+
+    private static ServerPlayerEntity participant(TestContext context, boolean buffed,
+            List<ParticleS2CPacket> particles) {
         // Vanilla helper 將 isSpectator 固定為 false；此處使用未覆寫的真實 ServerPlayerEntity。
         UUID uuid = UUID.randomUUID();
         var data = ConnectedClientData.createDefault(new GameProfile(uuid, "m1-" + uuid.toString().substring(0, 8)), false);
         var player = new ServerPlayerEntity(context.getWorld().getServer(), context.getWorld(), data.gameProfile(), data.syncedOptions());
         var connection = new ClientConnection(NetworkSide.SERVERBOUND);
-        new EmbeddedChannel(connection);
+        var channel = new EmbeddedChannel(connection);
+        if (particles != null) channel.pipeline().addLast(new ChannelOutboundHandlerAdapter() {
+            @Override public void write(ChannelHandlerContext channelContext, Object message,
+                                        ChannelPromise promise) throws Exception {
+                if (message instanceof ParticleS2CPacket particle) particles.add(particle);
+                super.write(channelContext, message, promise);
+            }
+        });
         context.getWorld().getServer().getPlayerManager().onPlayerConnect(connection, player, data);
         player.changeGameMode(GameMode.CREATIVE);
         BlockPos pos = context.getAbsolutePos(new BlockPos(7, 2, 7));
