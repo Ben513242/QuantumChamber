@@ -146,15 +146,17 @@ public final class CorridorPageManager {
                     while (writes<4096) {
                         if (job.next==null) job.next=job.builder.next();
                         if (job.next==null) {
-                            if (CorridorGeometry.hasEntrance(job.view)) SessionEntranceAllocator.identify(world,
-                                    CorridorGeometry.entrance(job.view),space.origin.chamberUuid());
                             space.builds.remove(job.view.ref().slotId());
                             org.slf4j.LoggerFactory.getLogger("quantumchamber").info("走廊幾何完成：session={} slot={} bounds={} elapsedTicks={} elapsedMs={}",
                                     space.id,job.view.ref().slotId(),job.view.bounds(),server.getTicks()-space.prepareTick,
                                     (System.nanoTime()-space.prepareNanos)/1_000_000);
                             break;
                         }
-                        write(job.next.position(),job.next.state()); job.next=null;
+                        write(job.next.position(),job.next.state());
+                        if (job.next.state().isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)) {
+                            SessionEntranceAllocator.identify(world,CorridorGeometry.entrance(job.view),space.origin.chamberUuid());
+                        }
+                        job.next=null;
                     }
                 }
                 while (writes<4096 && !space.overlay.isEmpty()) {

@@ -41,6 +41,128 @@ import java.util.List;
 import java.util.Map;
 
 public final class M2CorridorGameTests implements FabricGameTest {
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_r1_boundary_publish",tickLimit=100000)
+    public void native_projection_identified_before_budget_split_publish_windows(TestContext context) { projectionBoundary(context,false); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_r1_boundary_cancel",tickLimit=100000)
+    public void native_projection_identified_before_budget_split_cancel_windows(TestContext context) { projectionBoundary(context,true); }
+    private static void projectionBoundary(TestContext context,boolean cancel) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new TrustedSpace(context,Direction.NORTH,1); fixture.prepare();
+        when(context,1,() -> fixture.manager.ready(fixture.prepared),initialTick -> {
+            fixture.commit(); var before=fixture.manager.currentMappings(fixture.session).instances().getFirst();
+            // 真1536格rear-open布局36939次changed writes；C在36792，4096週期內4024，尚餘147次，天然跨tick。
+            var prepared=fixture.manager.prepareRemap(fixture.session,1,Set.of(0L,1L));
+            var target=prepared.target().instances().getFirst();
+            var position=BlockPos.ofFloored(fixture.manager.toPhysical(target.ref(),
+                    new CorridorPageManager.LogicalPose(3.5,6,0.5,Vec3d.ZERO,0,0)).position());
+            RuntimeException[] finding={null};
+            when(context,initialTick+1,() -> fixture.target.getBlockEntity(position) instanceof dev.quantumchamber.chamber.ChamberControllerBlockEntity
+                    && !fixture.manager.ready(prepared),boundaryTick -> {
+                var replica=(dev.quantumchamber.chamber.ChamberControllerBlockEntity)fixture.target.getBlockEntity(position);
+                try { assertProjection(context,replica,fixture.initial.chamberUuid(),"4096邊界C真建立同tick必須已標識"); }
+                catch(RuntimeException expectedFinding) { finding[0]=expectedFinding; }
+                context.assertEquals(1L,fixture.manager.currentMappings(fixture.session).epoch(),"邊界仍未publish新mapping");
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("Task3 R1 boundary：SID={} cancel={} tick={} C={} kind={} UUID={} ready=false",
+                        fixture.session,cancel,fixture.target.getServer().getTicks(),position,replica.instanceKind(),replica.chamberUuid());
+                if(cancel) {
+                    fixture.manager.retire(fixture.manager.cancelPrepared(prepared));
+                    context.runAtTick(boundaryTick+1,() -> {
+                        context.assertTrue(fixture.target.getBlockEntity(position)==replica,"取消下一tick Controller尚未被清理");
+                        context.assertTrue(replica.powerInitialized(),"取消下一tick已經過真load-sync，身分仍需正確");
+                        try { assertProjection(context,replica,fixture.initial.chamberUuid(),"取消後load-sync下一tick也保持來源身分"); }
+                        catch(RuntimeException expectedFinding) { if(finding[0]==null) finding[0]=expectedFinding; }
+                        fixture.returnTrusted();
+                        when(context,boundaryTick+2,() -> fixture.manager.releaseComplete(fixture.session),ignored -> {
+                            fixture.assertComplete(); if(finding[0]!=null) throw finding[0]; context.complete();
+                        });
+                    });
+                } else {
+                    when(context,boundaryTick+1,() -> fixture.manager.ready(prepared),readyTick -> {
+                        assertProjection(context,replica,fixture.initial.chamberUuid(),"完整ready仍正確projection");
+                        var player=fixture.players.getFirst().player();
+                        var batch=fixture.manager.beginRemap(prepared,Map.of(player.getUuid(),before.ref()));
+                        move(fixture.target,player,batch.moves().getFirst().after());
+                        fixture.manager.retire(fixture.manager.commitRemap(batch));
+                        context.assertEquals(2L,fixture.manager.currentMappings(fixture.session).epoch(),"真actual-cohort核對後publish epoch2");
+                        fixture.returnTrusted();
+                        when(context,readyTick+1,() -> fixture.manager.releaseComplete(fixture.session),ignored -> {
+                            fixture.assertComplete(); if(finding[0]!=null) throw finding[0]; context.complete();
+                        });
+                    });
+                }
+            });
+        });
+    }
+    private static void assertProjection(TestContext context,dev.quantumchamber.chamber.ChamberControllerBlockEntity replica,UUID chamber,String phase) {
+        context.assertTrue(replica.instanceKind()==ChamberInstanceKind.PROJECTION && chamber.equals(replica.chamberUuid()),phase);
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_r1_source_replace",tickLimit=100000)
+    public void native_replaced_source_controller_never_rolls_to_snapshot_windows(TestContext context) { invalidSource(context,true); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_r1_source_uuid",tickLimit=100000)
+    public void native_changed_source_uuid_never_rolls_to_snapshot_windows(TestContext context) { invalidSource(context,false); }
+    private static void invalidSource(TestContext context,boolean replacement) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.record()!=null,tick -> {
+            var initial=fixture.record(); var original=fixture.controller(); var player=fixture.players.getFirst().player();
+            var current=CorridorGeometry.position(fixture.frame,4.5,1,4.5);
+            player.refreshPositionAndAngles(current,123,23); player.setVelocity(Vec3d.ZERO);
+            var effects=player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt();
+            if(replacement) {
+                context.getWorld().removeBlockEntity(fixture.frame.controllerPos());
+                var changed=new dev.quantumchamber.chamber.ChamberControllerBlockEntity(fixture.frame.controllerPos(),original.getCachedState());
+                changed.setChamberUuid(initial.chamberUuid()); context.getWorld().addBlockEntity(changed);
+                context.assertTrue(fixture.controller()!=original && original.isRemoved(),"來源真的替換成另一instance，UUID仍相同");
+            } else { original.setChamberUuid(UUID.randomUUID()); original.markDirty(); }
+            when(context,tick+1,() -> SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid()).state()==SessionState.RETURNING,failedTick -> {
+                RuntimeException finding=null;
+                try {
+                    context.assertTrue(player.getServerWorld()==context.getWorld() && player.getPos().squaredDistanceTo(current)<1e-12
+                            && player.getYaw()==123 && player.getPitch()==23,"來源權威失效不得把目前pose搬回舊snapshot");
+                    context.assertEquals(effects,player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"錯來源不得消耗／覆寫目前效果");
+                    var returning=SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid());
+                    context.assertTrue(returning.restoreEntryEffectOnReturn() && initial.participants().equals(returning.participants()),"錯身分仍持久true與完整原cohort");
+                    context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"來源失效不得publish");
+                    context.assertTrue(!context.getWorld().setBlockState(fixture.frame.controllerPos().down(3),net.minecraft.block.Blocks.DIRT.getDefaultState()),
+                            "錯來源仍保留原registry保護");
+                } catch(RuntimeException expectedFinding) { finding=expectedFinding; }
+                if(replacement) {
+                    context.getWorld().removeBlockEntity(fixture.frame.controllerPos()); original.cancelRemoval(); context.getWorld().addBlockEntity(original);
+                } else { original.setChamberUuid(initial.chamberUuid()); original.markDirty(); }
+                var observed=finding;
+                fixture.trustedTeardown(failedTick+1,() -> { if(observed!=null) throw observed; context.complete(); });
+            });
+        });
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_r1_partial_bad_source",tickLimit=100000)
+    public void native_partial_move_invalid_source_keeps_actual_world_pose_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.record()!=null,tick -> {
+            var initial=fixture.record(); var second=fixture.players.get(1).player();
+            var secondPose=CorridorGeometry.position(fixture.frame,4.5,1,4.5);
+            second.refreshPositionAndAngles(secondPose,77,19); second.setVelocity(Vec3d.ZERO);
+            var fault=new SessionTransferFault(context.getWorld(),initial,SessionTransferFault.Case.SECOND_MOVE_INVALID_SOURCE);
+            when(context,tick+1,() -> SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid()).state()==SessionState.RETURNING,failedTick -> {
+                RuntimeException finding=null;
+                try {
+                    context.assertTrue(fault.hit() && fault.sourceInvalidated() && fault.successfulMoves()==1,"必須真首人入fixed後才錯置來源與第二move失敗");
+                    var first=fixture.server.getPlayerManager().getPlayer(fault.firstMovedUuid());
+                    context.assertTrue(first.getServerWorld()==fixture.target && first.getPos().squaredDistanceTo(fault.firstMovedPose().position())<1e-12,
+                            "部分move來源失效不得把fixed玩家錯rollback至原艙");
+                    context.assertTrue(second.getServerWorld()==context.getWorld() && second.getPos().squaredDistanceTo(secondPose)<1e-12
+                            && second.getYaw()==77 && second.getPitch()==19,"未搬者也不能搬向錯來源舊snapshot");
+                    var returning=SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid());
+                    context.assertTrue(returning.restoreEntryEffectOnReturn() && initial.participants().equals(returning.participants()),"partial錯來源持久true，完整journal來源不改");
+                    context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"partial壞來源不可publish");
+                    context.assertTrue(fixture.players.stream().allMatch(connection -> connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)),"尚未commit不可consume");
+                } catch(RuntimeException expectedFinding) { finding=expectedFinding; }
+                fault.restoreSourceIdentity(); fault.close();
+                var observed=finding;
+                fixture.trustedTeardown(failedTick+1,() -> { if(observed!=null) throw observed; context.complete(); });
+            });
+        });
+    }
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_powered_entry", tickLimit = 100000)
     public void native_lever_closed_buffed_cohort_enters_fixed_world_windows(TestContext context) {
         if (!Platform.isWindows()) {
@@ -141,8 +263,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("Task3 partial rollback：SID={} cohort={} captureTick={} {}",
                             initial.sessionUuid(),initial.participants().stream().map(SessionRecoveryRecord.Participant::playerUuid).toList(),
                             fault.rollbackTick(),fault.rollbackEvidence());
-                    context.complete();
-                } finally { fault.close(); fixture.close(); }
+                    // 所有原pose／hiddenNBT已證且全員在線；關observer後依真checkpoint／returned／release收尾，不稱Task4。
+                    fault.close(); fixture.trustedTeardown(ignored+1,context::complete);
+                } catch(RuntimeException | Error failure) { fault.close(); fixture.close(); throw failure; }
             });
         });
     }

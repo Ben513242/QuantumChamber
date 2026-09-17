@@ -92,7 +92,12 @@ jobs:
             'native_shared_entry_preserves_frozen_relative_pose_west_windows',
             'native_staging_disconnect_keeps_frozen_offline_participant',
             'native_staging_extra_occupant_rejects_without_shortening_journal',
-            'native_staging_low_keeps_true_pending_and_source_protection'
+            'native_staging_low_keeps_true_pending_and_source_protection',
+            'native_projection_identified_before_budget_split_publish_windows',
+            'native_projection_identified_before_budget_split_cancel_windows',
+            'native_replaced_source_controller_never_rolls_to_snapshot_windows',
+            'native_changed_source_uuid_never_rolls_to_snapshot_windows',
+            'native_partial_move_invalid_source_keeps_actual_world_pose_windows'
           )
           foreach ($testName in $requiredGameTests) {
             $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")

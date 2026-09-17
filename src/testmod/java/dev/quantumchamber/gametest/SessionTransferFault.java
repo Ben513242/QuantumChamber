@@ -15,7 +15,7 @@ import net.minecraft.util.math.Vec3d;
 
 /** 預設關閉的 own SID／server／world／玩家限定故障，release 沒有此 fixture。 */
 public final class SessionTransferFault implements AutoCloseable {
-    public enum Case { SECOND_MOVE, PUBLISH_AFTER_FALSE }
+    public enum Case { SECOND_MOVE, SECOND_MOVE_INVALID_SOURCE, PUBLISH_AFTER_FALSE }
     private static final Map<MinecraftServer,SessionTransferFault> ACTIVE=new IdentityHashMap<>();
     static { ServerLifecycleEvents.SERVER_STOPPED.register(ACTIVE::remove); }
     private final MinecraftServer server;
@@ -33,12 +33,14 @@ public final class SessionTransferFault implements AutoCloseable {
     private Map<UUID,CorridorPageManager.PhysicalPose> rollbackPoses=Map.of();
     private boolean falseVerified;
     private NbtCompound newEffect;
+    private boolean sourceInvalidated;
+    private CorridorPageManager.PhysicalPose firstMovedPose;
     public SessionTransferFault(ServerWorld source,SessionRecoveryRecord initial,Case faultCase) {
         this.source=source; this.server=source.getServer(); this.initial=initial; this.faultCase=faultCase;
         target=server.getWorld(SuperpositionWorld.KEY);
         people=initial.participants().stream().map(SessionRecoveryRecord.Participant::playerUuid)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        affected=initial.participants().get(faultCase==Case.SECOND_MOVE ? 1 : 0).playerUuid();
+        affected=initial.participants().get(faultCase==Case.PUBLISH_AFTER_FALSE ? 0 : 1).playerUuid();
         if(!server.isOnThread() || server.getWorld(source.getRegistryKey())!=source
                 || !initial.origin().worldKey().equals(source.getRegistryKey().getValue())
                 || initial.state()!=SessionState.ARMING || ACTIVE.putIfAbsent(server,this)!=null)
@@ -46,7 +48,7 @@ public final class SessionTransferFault implements AutoCloseable {
     }
     public static boolean rejectMove(ServerPlayerEntity player,ServerWorld target,Vec3d position) {
         var fault=ACTIVE.get(target.getServer());
-        if(fault==null || !fault.scope(player,target,position) || fault.faultCase!=Case.SECOND_MOVE || fault.hit
+        if(fault==null || !fault.scope(player,target,position) || fault.faultCase==Case.PUBLISH_AFTER_FALSE || fault.hit
                 || !fault.affected.equals(player.getUuid()) || fault.successfulMoves!=1) return false;
         fault.hit=true; return true;
     }
@@ -54,7 +56,16 @@ public final class SessionTransferFault implements AutoCloseable {
         var fault=ACTIVE.get(target.getServer());
         if(fault==null || !fault.server.isOnThread() || !success || !fault.people.contains(player.getUuid())
                 || fault.server.getPlayerManager().getPlayer(player.getUuid())!=player) return;
-        if(target==fault.target && fault.scope(player,target,position) && !fault.hit) fault.successfulMoves++;
+        if(target==fault.target && fault.scope(player,target,position) && !fault.hit) {
+            fault.successfulMoves++;
+            if(fault.faultCase==Case.SECOND_MOVE_INVALID_SOURCE && fault.successfulMoves==1) {
+                var controller=(dev.quantumchamber.chamber.ChamberControllerBlockEntity)fault.source.getBlockEntity(fault.initial.origin().controllerPos());
+                if(controller==null || controller.getWorld()!=fault.source || controller.isRemoved()
+                        || !fault.initial.chamberUuid().equals(controller.chamberUuid())) throw new AssertionError("own source identity故障安裝前已不符");
+                fault.firstMovedPose=new CorridorPageManager.PhysicalPose(player.getPos(),player.getVelocity(),player.getYaw(),player.getPitch());
+                controller.setChamberUuid(UUID.randomUUID()); controller.markDirty(); fault.sourceInvalidated=true;
+            }
+        }
     }
     public static void beforePublish(Object owner,UUID sid,Set<UUID> cohort) {
         for(var fault : ACTIVE.values()) {
@@ -132,6 +143,16 @@ public final class SessionTransferFault implements AutoCloseable {
     public String rollbackEvidence() { return "poses="+rollbackPoses+" effects="+rollbackEffects; }
     public boolean falseVerified() { return falseVerified; }
     public UUID affected() { return affected; }
+    public boolean sourceInvalidated() { return sourceInvalidated; }
+    public UUID firstMovedUuid() { return initial.participants().getFirst().playerUuid(); }
+    public CorridorPageManager.PhysicalPose firstMovedPose() { return firstMovedPose; }
+    public void restoreSourceIdentity() {
+        if(!server.isOnThread() || server.getWorld(source.getRegistryKey())!=source) throw new IllegalStateException("own fault修復必須server thread");
+        if(sourceInvalidated) {
+            var controller=(dev.quantumchamber.chamber.ChamberControllerBlockEntity)source.getBlockEntity(initial.origin().controllerPos());
+            controller.setChamberUuid(initial.chamberUuid()); controller.markDirty();
+        }
+    }
     public NbtCompound newEffect() { return newEffect==null ? null : newEffect.copy(); }
     @Override public void close() { if(!server.isOnThread()) throw new IllegalStateException("fault cleanup 必須在 server thread"); ACTIVE.remove(server,this); }
 }

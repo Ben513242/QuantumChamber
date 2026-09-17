@@ -99,10 +99,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         }
     }
     private boolean eligible(SuperpositionSession runtime) {
-        if(server.getWorld(runtime.source.getRegistryKey())!=runtime.source || runtime.controller.isRemoved()
-                || runtime.controller.getWorld()!=runtime.source || runtime.source.getBlockEntity(runtime.sourceFrame.controllerPos())!=runtime.controller
-                || !runtime.initial.chamberUuid().equals(runtime.controller.chamberUuid())
-                || runtime.controller.instanceKind()!=ChamberInstanceKind.ORIGIN || runtime.controller.activationBlocked()
+        if(!sourceAuthority(runtime) || runtime.controller.activationBlocked()
                 || !runtime.source.isReceivingRedstonePower(runtime.sourceFrame.controllerPos())) return false;
         var preview=new ChamberActivationService().evaluateReadiness(runtime.source,runtime.controller);
         return preview.accepted() && new HashSet<>(preview.participantUuids()).equals(ids(runtime.initial))
@@ -111,6 +108,29 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                     return player!=null && player.getServerWorld()==runtime.source && !player.isSpectator()
                             && player.hasStatusEffect(ModEffects.QUANTUM_STATE);
                 });
+    }
+    /** 只核對凍結來源權威，不把供電、enabled、buff或cohort資格當成返還目的身分。 */
+    private boolean sourceAuthority(SuperpositionSession runtime) {
+        var origin=runtime.initial.origin();
+        if(runtime.source.getServer()!=server || server.getWorld(runtime.source.getRegistryKey())!=runtime.source
+                || !origin.worldKey().equals(runtime.source.getRegistryKey().getValue())
+                || !origin.controllerPos().equals(runtime.sourceFrame.controllerPos()) || origin.facing()!=runtime.sourceFrame.outwardFacing()
+                || runtime.controller.isRemoved() || runtime.controller.getWorld()!=runtime.source
+                || !origin.controllerPos().equals(runtime.controller.getPos()) || !origin.chamberUuid().equals(runtime.controller.chamberUuid())
+                || runtime.controller.instanceKind()!=ChamberInstanceKind.ORIGIN) return false;
+        var chunk=runtime.source.getChunkManager().getWorldChunk(origin.controllerPos().getX()>>4,origin.controllerPos().getZ()>>4);
+        if(chunk==null || chunk.getBlockEntity(origin.controllerPos())!=runtime.controller) return false;
+        var block=chunk.getBlockState(origin.controllerPos());
+        if(!block.isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER) || !block.equals(runtime.controller.getCachedState())
+                || block.get(ChamberControllerBlock.FACING)!=origin.facing()) return false;
+        try {
+            var state=ChamberRegistryState.get(server); state.requireHealthy();
+            return state.registry().findOrigin(origin.worldKey(),origin.role(),runtime.sourceFrame)
+                    .filter(record -> record.chamberUuid().equals(origin.chamberUuid()) && !record.destroyed()
+                            && record.instanceKind()==ChamberInstanceKind.ORIGIN && record.originWorldKey().equals(origin.worldKey())
+                            && record.originDimensionRole()==origin.role() && record.anchorPos().equals(origin.controllerPos())
+                            && record.facing()==origin.facing()).isPresent();
+        } catch(RuntimeException unreadableAuthority) { return false; }
     }
     private void enter(SuperpositionSession runtime,CorridorPageManager pages) throws IOException {
         var target=server.getWorld(SuperpositionWorld.KEY);
@@ -174,7 +194,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
         boolean restore=durable==null || durable.restoreEntryEffectOnReturn();
         runtime.state=SessionState.RETURNING;
-        if(restore) {
+        if(restore && sourceAuthority(runtime)) {
             for(var person : runtime.initial.participants()) {
                 var player=server.getPlayerManager().getPlayer(person.playerUuid());
                 if(player!=null && (!transfers.move(player,runtime.source,person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch())
@@ -182,6 +202,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                     failure.addSuppressed(new IllegalStateException("rollback pose 尚未確認："+person.playerUuid()));
             }
             if(!runtime.effects.restore(server)) failure.addSuppressed(new IllegalStateException("rollback effects 尚未確認"));
+        } else if(restore) {
+            failure.addSuppressed(new IllegalStateException("來源權威已失效，禁止向保存pose移動或覆寫目前效果；保留true pending"));
         }
         try { returning(durable==null ? runtime.initial : durable); sourceTicket(runtime.initial); }
         catch(RuntimeException persistence) { failure.addSuppressed(persistence); }
