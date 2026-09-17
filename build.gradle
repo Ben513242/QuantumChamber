@@ -12,6 +12,21 @@ base {
 
 repositories {
     mavenCentral()
+    maven {
+        url 'https://api.modrinth.com/maven'
+        content {
+            includeGroup 'maven.modrinth'
+        }
+    }
+}
+
+// 選用照明只解析供獨立客戶端複製的官方 JAR，不進入任何編譯或執行 classpath。
+configurations {
+    lightingMods {
+        canBeResolved = true
+        canBeConsumed = false
+        transitive = false
+    }
 }
 
 sourceSets {
@@ -46,6 +61,11 @@ loom {
             name 'Minecraft Client - Render Compatibility'
             runDir 'run/client-render'
         }
+        clientLight {
+            client()
+            name 'Minecraft Client - Optional Handheld Lighting'
+            runDir 'run/client-light'
+        }
         server {
             server()
             runDir 'run/server'
@@ -62,6 +82,7 @@ loom {
 }
 
 dependencies {
+    lightingMods "maven.modrinth:lambdynamiclights:${project.lighting_mod_version}"
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
@@ -71,6 +92,38 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation "net.fabricmc:fabric-loader-junit:${project.loader_version}"
     testmodImplementation sourceSets.main.output
+}
+
+tasks.register('prepareClientLighting') {
+    inputs.files(configurations.lightingMods)
+    inputs.property('sha512', project.lighting_mod_sha512)
+    outputs.file(layout.projectDirectory.file("run/client-light/mods/lambdynamiclights-${project.lighting_mod_version}.jar"))
+    // 每次啟動都核對來源；快取遺失或被修改時不得使用舊複本降級啟動。
+    outputs.upToDateWhen { false }
+    doLast {
+        File artifact = configurations.lightingMods.singleFile
+        def digest = java.security.MessageDigest.getInstance('SHA-512')
+        artifact.withInputStream { stream ->
+            byte[] buffer = new byte[8192]
+            int count
+            while ((count = stream.read(buffer)) != -1) {
+                digest.update(buffer, 0, count)
+            }
+        }
+        String actualHash = digest.digest().encodeHex().toString()
+        if (actualHash != project.lighting_mod_sha512) {
+            throw new GradleException('選用照明 JAR 的 SHA512 不符，停止啟動；未複製任何模組。')
+        }
+        copy {
+            from artifact
+            into layout.projectDirectory.dir('run/client-light/mods')
+            rename { "lambdynamiclights-${project.lighting_mod_version}.jar" }
+        }
+    }
+}
+
+tasks.named('runClientLight') {
+    dependsOn tasks.named('prepareClientLighting')
 }
 
 processResources {

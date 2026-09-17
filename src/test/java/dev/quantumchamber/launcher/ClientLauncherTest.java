@@ -34,6 +34,40 @@ class ClientLauncherTest {
     }
 
     @Test
+    void selectsLightingProfileOnlyWhenRequested() throws Exception {
+        Path javaHome = installedJava("Java 21");
+        Result result = launch(0, javaHome, false, "light");
+        assertEquals(0, result.exitCode(), result.output());
+        assertEquals("--no-daemon runClientLight", result.observed("args"));
+        assertEquals(result.project().toString(), result.observed("cwd"));
+        assertEquals(javaHome.toString(), result.observed("java-home"));
+        assertEquals(temporaryDirectory.resolve("foreign caller").toString(), result.observed("caller-cwd"));
+    }
+
+    @Test
+    void preservesLightingProfileGradleFailureCode() throws Exception {
+        Result result = launch(23, installedJava("Java 21"), false, "light");
+        assertEquals(23, result.exitCode(), result.output());
+        assertEquals("--no-daemon runClientLight", result.observed("args"));
+        assertTrue(result.output().contains("失敗"), result.output());
+    }
+
+    @Test
+    void rejectsUnknownArgumentWithoutLaunchingGradle() throws Exception {
+        Result result = launch(0, installedJava("Java 21"), false, "unknown");
+        assertTrue(result.exitCode() != 0, result.output());
+        assertTrue(result.output().contains("start-client.bat [light]"), result.output());
+        assertTrue(Files.notExists(result.project().resolve("args.txt")));
+    }
+
+    @Test
+    void rejectsExtraArgumentWithoutLaunchingGradle() throws Exception {
+        Result result = launch(0, installedJava("Java 21"), false, "light extra");
+        assertTrue(result.exitCode() != 0, result.output());
+        assertTrue(Files.notExists(result.project().resolve("args.txt")));
+    }
+
+    @Test
     void preservesGradleFailureCodeAndReadableError() throws Exception {
         Result result = launch(23, installedJava("Java 21"), false);
         assertEquals(23, result.exitCode(), result.output());
@@ -74,6 +108,11 @@ class ClientLauncherTest {
     }
 
     private Result launch(int gradleExitCode, Path javaHome, boolean fallback) throws Exception {
+        return launch(gradleExitCode, javaHome, fallback, "");
+    }
+
+    private Result launch(int gradleExitCode, Path javaHome, boolean fallback, String clientArgument)
+            throws Exception {
         Path source = Path.of("../..", "start-client.bat").toAbsolutePath().normalize();
         assertTrue(Files.isRegularFile(source), "缺少專案根目錄 start-client.bat");
         Path project = Files.createDirectories(temporaryDirectory.resolve("isolated project with spaces"));
@@ -103,7 +142,9 @@ class ClientLauncherTest {
         Path caller = foreignDirectory.resolve("fixture-caller.bat");
         Files.writeString(caller, "@echo off\r\nset \"ProgramFiles=" + programFiles
                 + "\"\r\ncall \"" + project.resolve("start-client.bat")
-                + "\"\r\nexit /b %errorlevel%\r\n", StandardCharsets.UTF_8);
+                + "\" " + clientArgument + "\r\nset \"CALLER_EXIT_CODE=%errorlevel%\"\r\n> \""
+                + project.resolve("caller-cwd.txt") + "\" echo %cd%\r\nexit /b %CALLER_EXIT_CODE%\r\n",
+                StandardCharsets.UTF_8);
         ProcessBuilder builder = new ProcessBuilder("cmd.exe", "/d", "/c", "call \"" + caller + "\"");
         builder.directory(foreignDirectory.toFile()).redirectErrorStream(true);
         // Windows 環境名稱不分大小寫；移除所有大小寫變體，避免繼承宿主 JAVA_HOME。
