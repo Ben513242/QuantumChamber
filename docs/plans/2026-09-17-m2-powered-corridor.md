@@ -14,7 +14,7 @@
 
 - Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Fabric Loom 1.7.4、Java 21、Gradle Wrapper 8.8。
 - 單一 Fabric module，main／client 分離、三種建材、7×7×7／5×5×5、Controller local(3,6,0)、25格門與青紫造型不變。
-- 僅固定靜態 Superposition Dimension；無 UniverseRegistry、runtime allocation、Universe candidate selection、跨宇宙passage／projection materialization。
+- 僅固定靜態 Superposition Dimension；無 UniverseRegistry、runtime allocation、Universe candidate selection、跨宇宙passage或跨宇宙projection materialization。固定空間的入口replica允許PROJECTION標記，沒有新Universe origin／跨宇宙投影。
 - 無 mandatory renderer／portal／dimension library、無自訂 packet、無 LICENSE；不push／merge main、不改玩家存檔、不刪世界。
 - 玩家至少一人、排除spectator、完整bbox在interior、全員buff；凍結cohort，成功時一次消耗全員效果，失敗不消耗。
 - 外部斷電：先安全返還、結束session、再解除原艙保護。離線／返還失敗／錯身分仍保護，不可猜其他world或床／spawn。
@@ -46,17 +46,32 @@
 - Create: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryRecord.java`
 - Create: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryState.java`
 - Create: `src/main/java/dev/quantumchamber/persistence/SessionJournalStore.java`
+- Create: `src/main/java/dev/quantumchamber/persistence/PlayerRecoveryCheckpoint.java`
+- Create: `src/main/java/dev/quantumchamber/persistence/PlayerRecoveryCheckpointAccess.java`
+- Create: `src/main/java/dev/quantumchamber/persistence/PlayerCheckpointStore.java`
+- Create: `src/main/java/dev/quantumchamber/mixin/ServerPlayerRecoveryCheckpointMixin.java`
+- Create: `src/main/java/dev/quantumchamber/mixin/PlayerManagerSaveInvoker.java`
+- Modify: `src/main/resources/quantumchamber.mixins.json`
+- Modify: `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`
 - Test: `src/test/java/dev/quantumchamber/persistence/SessionRecoveryStateTest.java`
 - Test: `src/test/java/dev/quantumchamber/persistence/SessionJournalStoreTest.java`
+- Test: `src/test/java/dev/quantumchamber/persistence/PlayerRecoveryCheckpointTest.java`
+- Test: `src/test/java/dev/quantumchamber/persistence/PlayerCheckpointStoreTest.java`
 - Test: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`
 - Modify: `src/testmod/resources/fabric.mod.json`
 
 **Interfaces:**
 - Produces: `SuperpositionWorld.KEY` 為 RegistryKey<World>，ID quantumchamber:superposition。
 - Produces: `SessionState { ARMING, SUPERPOSITION, RETURNING }`。
-- Produces: recovery record含UUID session/chamber、完整ChamberOriginAuthority、List<Participant>、Set<Integer>physicalSlots、state；Participant含UUID、sourcePosition/velocity、yaw/pitch、QuantumState NBT快照、returned。集合與NBT複製，不持久化Java/world物件。
-- Produces: `SessionRecoveryState.get(MinecraftServer)`、`records()`、`put(SessionRecoveryRecord)`、`remove(UUID)`、`requireHealthy()`、`flush(MinecraftServer)`；STATE_ID quantumchamber_sessions、schema1。
-- Produces: `SessionJournalStore.write(Path target, NbtCompound wrapped)`／`read(Path target)`，compressed NBT，write失敗拋明確例外，temp與target皆在同一data目錄；不吞錯、不清dirty假成功。
+- Produces: recovery record含UUID session/chamber、完整ChamberOriginAuthority、List<Participant>、List<SpaceLease>、state、boolean restoreEntryEffectOnReturn；nested SpaceLease含int slotId及防禦性複製的BlockBox bounds，確保重啟能保護舊空間、不提早reuse。Participant含UUID、sourcePosition/velocity、yaw/pitch、QuantumState NBT快照、returned；集合與NBT複製，不持久化Java/world物件。缺lease／錯bounds／重複slot均拒絕，不以空slots猜安全。
+- Produces: schema1 的 RestoreEntryEffectOnReturn 為必填 boolean，ARMING 必須 true、SUPERPOSITION 必須 false；RETURNING 沿用原權威決策，不能按目前 state／是否有 buff 重算。false 表示完全不修改當下 QuantumState，不能刪除走廊中後來新喝的效果。缺欄位／型別錯誤／非法 state-policy 組合皆拒絕。
+- Produces: `public static SessionRecoveryState get(MinecraftServer)`、`public Map<UUID,SessionRecoveryRecord> records()`、`public void put(SessionRecoveryRecord)`、`public boolean remove(UUID)`、`public void requireHealthy()`、`public void flush(MinecraftServer)`；STATE_ID quantumchamber_sessions、schema1。
+- Produces: `public Map<UUID,SessionRecoveryRecord> flushedRecords()` 深度不可變已確認落盤snapshot：正常load健康資料或checkedflush成功才更新；put/remove記憶體dirty資料不冒充durable。Main initializer在SERVER_STARTED明確get/requireHealthy，損壞journal不得進入正常tick交易；此任務不install入場backend。
+- Produces: `public static void SessionJournalStore.write(Path target, NbtCompound wrapped)`／`public static NbtCompound read(Path target)`，compressed NBT，write失敗拋明確例外，temp與target皆在同一data目錄；不吞錯、不清dirty假成功。
+- Produces: `public record PlayerRecoveryCheckpoint(UUID sessionUuid, AppliedPolicy appliedPolicy)`，nested enum `RESTORE_ENTRY/KEEP_CURRENT`；namespaced 玩家 NBT compound `quantumchamber:recovery_checkpoint`、schema1，單一 marker、不累積歷史。嚴格 UUID／policy／型別／schema；native load 遇壞 marker 不得靜默轉 Optional.empty 或讓原生例外捕捉使其假成新玩家。getter 延後回報健康失敗，保留原始 marker NBT，正常 auto-save/copyFrom 不覆寫未知 marker。
+- Produces: `public interface PlayerRecoveryCheckpointAccess`，`Optional<PlayerRecoveryCheckpoint> quantumchamber$getRecoveryCheckpoint()`、`void quantumchamber$setRecoveryCheckpoint(PlayerRecoveryCheckpoint)`；setter拒絕null，getter對損壞 marker 明確拋健康例外。Mixin 只保存／複製這個 marker；若 copyFrom 需要健康／原始 marker 狀態，可增加 marker-only copy method 並在report列精確簽名，不暴露任意玩家 NBT。
+- Produces: `public static void PlayerCheckpointStore.saveAndVerify(MinecraftServer,ServerPlayerEntity,Optional<PlayerRecoveryCheckpoint>) throws IOException`；單一 protected PlayerManager.savePlayerData invoker、server-thread-only。Optional.empty 僅供入場消耗 checkpoint，不新增返還 marker；Optional.of 要求正確 runtime marker。原生保存後讀正式 UUID.dat（不是dat_old）的完整原生 NBT，與當下原生 snapshot 語意相等比較，包含所有其他mod keys；原生DataVersion等metadata按已核對pinned bytecode建完整expected，不剔除未知欄位。相等後對同一opened FileChannel force(true)，檢查路徑／file identity／force後內容未變；缺檔、stale、replacement、parse或force失敗皆拋IOException，不自行改寫玩家檔、不假成功。
+- Checkpoint路徑只從目前 server 的原生玩家資料路徑與 UUID 組成；先核對 WorldSavePath 實際常數名，不使用玩家提供路徑。純IO測試可測小 package-private 檔案核對核心，native serializer／read/write/copyFrom另有GameTest，不拿假serializer當live gate。saveAndVerify不等於跨檔原子提交或整機斷電保證。
 
 - [ ] **Step 1: 原生已知world缺失先RED。** 不引用新class：
 
@@ -69,7 +84,9 @@ context.assertTrue(context.getWorld().getServer().getWorld(key) != null,
 
 - [ ] **Step 2: 跑原生RED，另寫journal不可寫／錯schema／NBT roundtrip測試。** 期望M1.2沒有固定world，GameTest該項失敗；NBT缺source資料不得偷偷丟掉participant。
 - [ ] **Step 3: 實作靜態JSON與模型／codec／atomic store。** dimension使用minecraft:flat、layers=[]、biome=minecraft:the_void、structure_overrides=[]、features/lakes=false；type所有必要字段含has_raids/piglin_safe、無skylight、ambient0、min_y0、height/logical_height256、coordinate_scale1、bed/anchor=false、monster_spawn_light_level/block_light_limit0、effects=minecraft:overworld。Data pack48／resource pack34勿混用。保存wrapper data＋DataVersion，force temporary file後atomic replace；不支援atomic時拒絕交易，不unsafe覆蓋舊journal。flush可用save override呼叫checked store，不能讓原生save吞錯。
+- [ ] **Step 3b: 保存實體回收與lease足夠資料。** 開新幾何前先flush對應lease bounds；重啟保留已分配空間至相關participant返還完成。ARMING失敗才恢復QuantumState快照；正常SUPERPOSITION結束不重新給一劑效果。同一record重讀不會重複消耗或補發。直接測兩個 RETURNING roundtrip：restoreEntryEffectOnReturn=true 與 false 都不能遺失／互換；另測缺欄位及 ARMING,false／SUPERPOSITION,true 必須失敗。玩家 checkpoint 與 returned flag 的跨檔冪等由 Task4 覆蓋，不把此 codec 測試冒充 crash checkpoint 證據。
 - [ ] **Step 4: GREEN。** 世界實際getWorld、world codecs、journal寫入讀回／不可寫保留舊資料、重複UUID／非vanilla source role拒絕，完整clean build+GT。
+- [ ] **Step 4b: checkpoint GREEN。** 純 codec／完整 NBT 相等與 stale/壞檔負面；native marker write/read/copyFrom、無 marker舊玩家、raw壞 marker保留；真原生 player save 後正式.dat readback＋force。不移動玩家或消耗效果，只提供Task3/4需用的窄保存原語。
 - [ ] **Step 5: 自評／提交。** `feat: add static superposition world and durable recovery journal`；目前不傳送、不消耗藥水，report精確說明API與錯誤路徑。
 
 ### Task 2: 邏輯頁、局部affine配置、replica及session保護
@@ -83,7 +100,11 @@ context.assertTrue(context.getWorld().getServer().getWorld(key) != null,
 - Create: `src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java`
 - Create: `src/main/java/dev/quantumchamber/corridor/SessionEntranceAllocator.java`
 - Create: `src/main/java/dev/quantumchamber/corridor/SessionSpaceProtection.java`
+- Create: `src/main/java/dev/quantumchamber/corridor/SessionEntranceDoorService.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/ConnectedGameTestPlayer.java`
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberProtectionService.java`
+- Modify: `src/main/java/dev/quantumchamber/chamber/ChamberControllerBlock.java`
+- Modify: `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`
 - Test: `src/test/java/dev/quantumchamber/corridor/CorridorLayoutTest.java`
 - Test: `src/test/java/dev/quantumchamber/corridor/SlotAllocatorTest.java`
 - Test: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`
@@ -94,8 +115,89 @@ context.assertTrue(context.getWorld().getServer().getWorld(key) != null,
 - Produces: `public static List<LayoutComponent> CorridorLayout.plan(Set<Long> occupiedPages, int apron)`，nested `LayoutComponent(long firstCorePage, long lastCorePage, long aliasStartBlock, long aliasEndBlock)`，core頁端點inclusive／aliasEnd exclusive；排序依firstCorePage，回傳局部不跨空隙的分量，logical↔physical可逆、近entities同affine。
 - Produces: `public Optional<SlotLease> SlotAllocator.reserve(BlockBox relativeBounds)`、`public void release(int slotId)`，nested `SlotLease(int slotId, BlockPos origin, BlockBox bounds)`；完整AABB不交、中心間距>=160，不用歷史logical distance決定physical位置。
 - Produces: `public void CorridorPageManager.attach(MinecraftServer)`、`public void prepare(UUID sessionUuid, UUID chamberUuid, Direction facing, Set<Long> occupied)`、`public void tick()`、`public boolean ready(UUID)`、`public ChamberFrame entrance(UUID)`、`public Vec3d toPhysical(UUID,double lateral,double y,double logicalZ)`、`public void release(UUID)`；prepare只入列，ready才可commit，資料不存在／容量拒絕用明確例外，不回傳假frame。
+- Produces: `public static CorridorPageManager forServer(MinecraftServer)` 回傳已由bootstrap attach的唯一authority manager，server/world身分不符拒絕，不自動建立第二個allocator／tick loop。舊四參數prepare只解析完全匹配的既有reservation並委派typed prepare，不偷偷reserve或構造缺cohort紀錄。
+
+- Typed mapping契約如下；所有record集合／BlockBox防禦性複製，token必須匹配manager自己持有內容，不能由caller偽造slotId取得權限。current只已發布，prepared不授權正常操作；每session至多一pending，64上限計入current＋pending＋retiring。
+
+```java
+public static record MappingRef(UUID sessionUuid, long instanceEpoch, int slotId) {}
+
+public static record MappingView(
+        MappingRef ref,
+        long firstCorePage,
+        long lastCorePage,
+        long aliasStartBlock,
+        long aliasEndBlock,
+        long logicalAnchorBlock,
+        BlockPos localBlockOrigin,
+        Direction outwardFacing,
+        BlockBox bounds) {}
+
+public static record MappingSet(long epoch, List<MappingView> instances) {}
+
+public static record PreparedMappings(
+        UUID token,
+        UUID sessionUuid,
+        long baseEpoch,
+        MappingSet target) {}
+
+public static record PhysicalPose(
+        Vec3d position, Vec3d velocity, float yaw, float pitch) {}
+
+public static record LogicalPose(
+        double lateral,
+        double height,
+        double logicalZ,
+        Vec3d localVelocity,
+        float localYaw,
+        float pitch) {}
+
+public static record EntityMove(
+        UUID entityUuid,
+        MappingRef source,
+        MappingRef target,
+        LogicalPose logicalPose,
+        PhysicalPose before,
+        PhysicalPose after) {}
+
+public static record RemapBatch(
+        UUID token,
+        PreparedMappings prepared,
+        List<EntityMove> moves) {}
+
+public static record RetiredMappings(
+        UUID token,
+        UUID sessionUuid,
+        List<MappingRef> instances) {}
+
+public MappingSet currentMappings(UUID sessionUuid);
+public PreparedMappings prepareRemap(
+        UUID sessionUuid, long expectedCurrentEpoch, Set<Long> occupiedPages);
+public boolean ready(PreparedMappings prepared);
+public LogicalPose toLogical(MappingRef source, PhysicalPose physicalPose);
+public PhysicalPose toPhysical(MappingRef target, LogicalPose logicalPose);
+public RemapBatch beginRemap(
+        PreparedMappings prepared, Map<UUID, MappingRef> affectedEntityOwners);
+public RetiredMappings commitRemap(RemapBatch batch);
+public RetiredMappings cancelPrepared(PreparedMappings prepared);
+public void retire(RetiredMappings retired);
+public PreparedMappings reserveInitial(UUID sessionUuid, UUID chamberUuid,
+        Direction facing, Set<Long> occupiedPages);
+public void prepare(PreparedMappings initial);
+public void commitInitial(UUID sessionUuid, Set<UUID> cohort);
+```
+
+- initial：先freeze source snapshots/authority，reserveInitial只預留／回bounds、不寫geometry或publish；建立完整lease的ARMING,true並checkedflush，prepare自行核對durable record與reservation bounds/authority才入列。只可證實零geometry且無journal才provisional cancel；原子結果不明保留。commitInitial只在全員真world/bbox、effect commit/player checkpoint/durable SUPERPOSITION,false之後，自己重驗live cohort再publish epoch1；後孔25writes服從budget。
+- remap：prepareRemap保持old current並先flush新舊lease union，ready後beginRemap才擷取最新live全群pose/pins；同ticknative搬移所有affected players/items/projectiles，commitRemap自行重驗全群actual result才publish target/owner/epoch。未受影響分量保留instance epoch/lease；少列entity／偽token／過期epoch／newpin皆拒絕。部分失敗保留batch唯一source/target owner與兩邊lease，不用finally無條件cancel；一次受控rollback仍失敗即RETURNING。
+- retire：先pin／有價物品安全處理→同4096全域budget清幾何→checkedflush移除舊SpaceLease→allocator.release。durable清單只包含尚未安全釋放的current/prepared/retiring，不保留所有行走歷史；任何failure保守留reservation、達cap安全返還，不能無界加lease。release(UUID)為提出退休請求，不同步刪still-pinned空間。
+
 - Produces: `SessionEntranceAllocator` 入口同來源facing，CBE標PROJECTION＋來源chamber UUID；只在全員入場成功後開replica後牆的5×5孔通往走廊，不改原艙。
+- Geometry ownership：初次 core pages=-1..1／alias=[-672,768)；replica local x/y/z=0..6 與走廊同一 SlotLease，base writer排除這343格，replica writer獨佔 overlay，不另reserve造成AABB重疊。後孔成功後OPEN狀態由session保存，重建沿用，Controller與前門不能被base writer蓋掉；入口沒有永久pin，遠離後可退休，回頭重建同一overlay狀態。
+- Produces: `public static Optional<SessionEntranceDoorService.ToggleResult> tryToggle(ServerWorld,BlockPos)`，nested `public record ToggleResult(boolean changed,String message)`；僅已發布SUPERPOSITION、同server/world/current mapping、projection CBE UUID/facing與入口吻合才處理普通Controller右鍵，原子交易整面25格前門接既有負向走廊。empty表示非此服務目標而走原艙流程；known入口但ARMING/RETURNING/錯身分則handled拒絕，不回落Origin註冊或maintenance。操作租約阻止retire，成功才保存前門OPEN狀態供rebuild；不自動開／刪前門、不改來源前門、不給投影停用／拆除權。交易或rollback失敗保持safe保護並交session返還協調，不猜門已成功。
+- 連續位置字面：C=(1000,70,2000)，replica feet local(3.5,1,5.5) 在 N/S/E/W 分別為(1000.5,65,2005.5)/(1000.5,65,1995.5)/(995.5,65,2000.5)/(1005.5,65,2000.5)。負向軸需cell-boundary offset，velocity只旋轉不平移。NORTH洞口block(1000,67,2006)與走廊(1000,67,2007)相鄰；第二NORTH C=(1192,70,2000)中心距192且完整不交，只沿z移160仍AABB相交必須拒絕。
 - Produces: `ChamberProtectionService.registerAdditionalGuard(BiPredicate<ServerWorld,BlockPos>)`，SessionSpaceProtection使用精確server/world實例與slot index；registered once、STOPPED detach。
+- Bootstrap：Main initializer明確呼叫 `public static void SessionSpaceProtection.initialize()`，一次註冊known-space guard/lifecycle與PageManager tick；SERVER_STARTED在journal healthy後attach真固定world並保護所有未釋放leases，STOPPED清refs。Task3 session manager不重複註冊PageManager tick，4096是全域建造/退休/overlay/入口門的共同budget。
+- Geometry-only GT使用真Player但trusted recovery orchestration：reserveInitial→建立合法非空cohort/完整lease的ARMING,true並checkedflush→prepare typed token；無journal/只有put/錯bounds/RETURNING皆零writes。ready只sealed replica、epoch0；正向commit測例由trusted orchestration真移動/核對/效果與playercheckpoint→durableSUPERPOSITION,false→commitInitial，不冒充native lever-qualified入場。ConnectedGameTestPlayer此任務產出，後續Task3/4用同一helper；結尾有valid journal者需RETURNING/安全retire，不能直接release。
 
 - [ ] **Step 1: 數學RED，手算字面fixture。** from(-1)page=-1/local95、from(96)page1/local0；occupied={0,1000000}不生成中間gap；near positions95.5/96.5距離保持1且DoorKey across remap不變。
 
@@ -127,14 +229,25 @@ assertEquals(999_999, parts.get(1).firstCorePage());
 - Modify: `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`
 - Test: `src/test/java/dev/quantumchamber/transfer/ChamberReturnPlacementTest.java`
 - Test: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`
-- Create: `src/testmod/java/dev/quantumchamber/gametest/ConnectedGameTestPlayer.java`
+- Modify: `src/main/java/dev/quantumchamber/chamber/ChamberSessionGateway.java`
+- Modify: `src/main/java/dev/quantumchamber/chamber/ChamberPowerCoordinator.java`
+- Modify: `src/main/java/dev/quantumchamber/chamber/ChamberOccupantService.java`
+- Test: `src/test/java/dev/quantumchamber/chamber/ChamberPowerCoordinatorTest.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/ChamberGameTestBuilder.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/M1FoundationSessionFixture.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/M1FoundationSessionGatewayMixin.java`
+- Modify: `src/testmod/resources/quantumchamber-test.mixins.json`
 
 **Interfaces:**
 - Consumes: M1.2 ChamberSessionGateway.Presence／StartResult／start／returnToOrigin的精確簽名與ChamberSessions.install。
-- Produces: `SuperpositionSessionManager implements ChamberSessionGateway`、`initialize()`、`tick(MinecraftServer)`，authority/runtime state不落client。
-- Produces: `SessionTransferService.move(ServerPlayerEntity, ServerWorld, Vec3d, Vec3d, float, float)` 回傳實際核對成功，不信teleport boolean。
-- Produces: `ChamberReturnPlacement.plan(ChamberFrame,List<UUID>)` UUID確定性5×5floor slots，最多25人；capacity不足入場前拒絕。
+- Consumes: Task2 `ConnectedGameTestPlayer`（真連線fixture，原先未啟用恢復事件）。
+- Produces: `SuperpositionSessionManager implements ChamberSessionGateway`、`public static void initialize()` 註冊一次lifecycle/tick hooks、`public void tick(MinecraftServer)` 僅同attached server/thread執行，authority/runtime state不落client。
+- Produces: gateway簽名不變，additive `Presence.ARMING`、`StartResult.STAGING` 支援4096budget非同步準備；coordinator在ARMING/STAGING維持READY=7／POWERED保護而不重複start，SUPERPOSITION才ACTIVE/11。低位／管理停用仍走原先return，ActivationBlocked故障旗標不清除。純測 staging重複刷新只start1、低位取消仍先return、false/throw仍保護。
+- Foundation測試隔離：現有M1 nativeGT明確驗ARMED_ONLY／不消耗／不傳送；testmod-only fixture map以同server/world/controller位置身分限定M1 foundation backend，SuperpositionSessionManager.start的testmod mixin只對已標記fixture回ARMED_ONLY。ChamberGameTestBuilder原build在寫方塊前標記Foundation，新增buildForSession供M2明確移除該位置Foundation標記並走真backend；不保持跨tick global gateway override，不攔M2 case，不以Foundation結果聲稱M2 live。STOPPED清map，release無fixture/mixin。
+- Produces: `public boolean SessionTransferService.move(ServerPlayerEntity, ServerWorld, Vec3d, Vec3d, float, float)` 回傳實際核對成功，不信teleport boolean。
+- Produces: `public static Map<UUID,Vec3d> ChamberReturnPlacement.plan(ChamberFrame,List<UUID>)` 保留 UUID 確定性5×5floor slots；另有 `public static Map<UUID,Vec3d> plan(ChamberFrame,List<UUID>,Map<UUID,Vec3d> sourcePositions)`，先按來源 frame 的 local z／x 排序，再以 UUID 破同值，保持入場相對排序。真 session 使用三參數版本，兩參數版本只在沒有來源 pose 時提供明確 fallback；最多25人，capacity不足入場前拒絕。
 - Produces: `QuantumEffectTransaction` 以NBT snapshot／restore與完整cohort一次commit，不提供Universe傳送API。
+- Produces: 將既有 `ChamberOccupantService.contains(Box outer,Box inner)` 簽名公開成 `public static boolean`，重用現有六邊界完整bbox判定；算法不重寫、spectator篩選不變，供M2 transfer／恢復與nativeGT使用，不杜撰 Box.contains(Box) overload。
 
 - [ ] **Step 1: 原生先供電進人入場RED。** 沿用M1真ServerPlayer連線fixture，native lever高位／關門／喝藥後需進SuperpositionWorld且效果消耗；現有ARMED_ONLY adapter不移動，該斷言失敗。
 
@@ -145,7 +258,7 @@ context.assertTrue(!player.hasStatusEffect(ModEffects.QUANTUM_STATE), "成功入
 context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場保留攜帶物品");
 ```
 - [ ] **Step 2: 保存RED；測少一人buff、zero／spectator、容量、重複刷新。** 無效case全員仍在來源且buff未移除，held-high只一session。
-- [ ] **Step 3: 接gateway與ARMING交易。** 凍結cohort及source positions／effects，durable ARMING journal先於geometry/teleport提交；準備期間重驗來源／全員資格，offline／名單改變拒絕。全部world/positions核對成功才消耗效果並durable SUPERPOSITION、publish active、開replica後牆；任一步失敗rollback、保存RETURNING pending，不留下半cohort。active時source chamber空／藥效已耗不降級3。保持來源Controller的具體chunk session tickets，radius2且對稱remove。
+- [ ] **Step 3: 接gateway與ARMING交易。** 凍結cohort及source positions／effects，durable ARMING,true journal先於geometry/teleport提交；準備期間重驗來源／全員資格，offline／名單改變拒絕。全部world/positions核對成功才消耗效果並durable SUPERPOSITION,false、publish active、開replica後牆；任一步失敗rollback、保存RETURNING,true pending，不留下半cohort。從已提交活動轉返還則保存RETURNING,false，不還原入場快照也不刪除新藥效。active時source chamber空／藥效已耗不降級3。保持來源Controller的具體chunk session tickets，radius2且對稱remove。
 - [ ] **Step 4: GREEN跨world。** 真server/world身份、relative pose／inventory不變、NBT hidden-effect rollback、partial-move failure不解鎖，缺buff無人不創造新world；core JUnit+GT全過。
 - [ ] **Step 5: 自評／提交。** `feat: start shared superposition sessions from powered chambers`；尚待Task4完整斷電／登入恢復，不宣告整個M2完成。
 
@@ -154,6 +267,9 @@ context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場�
 **Files:**
 - Create: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryManager.java`
 - Create: `src/main/java/dev/quantumchamber/corridor/CorridorRepositionService.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/M2PersistenceProbe.java`
+- Modify: `src/testmod/resources/fabric.mod.json`
+- Modify: `src/testmod/resources/quantumchamber-test.mixins.json`
 - Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSessionManager.java`
 - Modify: `src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java`
 - Modify: `src/main/java/dev/quantumchamber/transfer/SessionTransferService.java`
@@ -162,15 +278,18 @@ context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場�
 
 **Interfaces:**
 - Consumes: durable recovery records、page mapping leases與gateway.returnToOrigin。
-- Produces: `SessionRecoveryManager.onJoin(UUID,MinecraftServer)` queue、`onDisconnect(UUID,MinecraftServer)`、`tick(MinecraftServer)`、`returnComplete(UUID)`；manager/gateway只在全cohort／資料確認後complete。
-- Produces: `CorridorRepositionService.tick` 管理邏輯位置、items/projectiles tag／pin、近群split/merge預備／commit／retire；相關entity每次只有一個authority mapping。
+- Consumes: Task1 PlayerRecoveryCheckpoint／PlayerCheckpointStore、flushedRecords；return保留原restoreEntryEffectOnReturn，不用RETURNING重算。確認真來源world/interior後才true還原／false不觸碰當下效果，再stamp單一session/policy marker；同session同policy marker跳過效果修改，錯policy／壞marker保守拒絕。saveAndVerify成功才flush returned=true，任一失敗保持保護／lease；登入queue前阻止正常移動／門操作，不能在JOIN callback直接teleport。
+- Produces: instance方法 `public void SessionRecoveryManager.onJoin(UUID,MinecraftServer)` queue、`public void onDisconnect(UUID,MinecraftServer)`、`public void tick(MinecraftServer)`、`public boolean returnComplete(UUID)`；manager/gateway只在全cohort／資料確認後complete。Netty DISCONNECT捕捉UUID/server後序列化，JOIN只queue下一tick，不用server.execute誤當下一tick。
+- Produces: instance方法 `public void CorridorRepositionService.tick(MinecraftServer)` 管理邏輯位置、items/projectiles tag／pin、近群split/merge預備／commit／retire；相關entity每次只有一個authority mapping。
+- Produces: M2PersistenceProbe 此任務只先建 checkpoint W1/W2 的 default-off條件phase與必要testmod-only fault mixin（各server/world/session/player限定，files/API列report），後續Task5擴充正常phase；release無probe/fault。不得以production test-only setter代替原生邊界。
+- Produces: `public boolean SessionTransferService.move(Entity,ServerWorld,Vec3d,Vec3d,float,float)` overload，處理items/projectiles的native傳送／同world重定位；核對真target Entity UUID/world/pose，可能新Entity物件需以UUID取得，不把舊removed物件當成功。
 
 - [ ] **Step 1: 原生來源斷電返還RED。** 在來源world移除電源，先確認RETURNING仍保護，再確認全部player原world/interior、session結束、原艙才可變更。不能只helper return true。
 
 ```java
 sourceWorld.setBlockState(sourceController.getPos().up(), Blocks.AIR.getDefaultState(), 3);
 context.assertTrue(player.getServerWorld() == sourceWorld, "斷電回到同一來源world實例");
-context.assertTrue(ChamberGeometry.interiorBox(sourceFrame).contains(player.getBoundingBox()),
+context.assertTrue(ChamberOccupantService.contains(ChamberGeometry.interiorBox(sourceFrame), player.getBoundingBox()),
         "全身回到有限原艙內");
 context.assertTrue(ChamberProtectionService.get().mayMutate(sourceWorld, sourceController.getPos()),
         "返還確認後原艙才解除保護");
@@ -180,12 +299,13 @@ context.assertTrue(ChamberProtectionService.get().mayMutate(sourceWorld, sourceC
 - [ ] **Step 2: 失敗與離線queue RED。** 真close EmbeddedChannel／ClientConnection觸發DISCONNECT，不以PlayerManager.remove冒充；重登callback尚未完成不得跨world，下一tick才恢復。錯source身分／missingworld／journal不可寫保留保護與slots。
 - [ ] **Step 3: 完整返還／恢復。** pending每人returned flags持久化後再清session；offline不當已returned。重啟全部舊session標RETURNING，恢復前禁止正常移動／門操作；已在原艙者可冪等確認，不重複消耗buff。STOPPING保存／釋放tickets，STOPPED清runtime；cleanup前先返還有價items、不unsafe清玩家腳下。高位重供電遇pending先完成舊返還。
 - [ ] **Step 4: GREEN頁面與群體。** 正負向長走／回頭、兩人跨96seam相近／遠分裂重聚、items／projectiles跨seam、移動途中斷電、source四朝向，底板與collision保持。資源不足不拆舊映射或遺失物品，記錄錯誤並安全返還。
+- [ ] **Step 4b: crash checkpoint GREEN。** W1 ARMING rollback 的RETURNING,true/returned=false，entry QS2400/amp1/hidden600/amp0已restore並持久marker；player checkpoint成功但returned flush拒絕，40ticks後再保存並中止owned fresh測試JVM；下JVM從真player.dat marker載入不重置回2400，重試成功才解鎖。committed分支新QS900/amp2同窗口保持新劑量而非entry snapshot。W2 journal ARMING,true、已真移動並消耗、A player checkpoint已保存但B checkpoint或SUPERPOSITION flush失敗，中止後全員回原艙並還原各entry1200/0與1800/1，第二次重啟不重套。另測native save正常返回但正式檔stale必拒絕。不得用STOPPING自動rollback修補窗口後宣稱crash proof；只中止本次建立且canonical runDir證實的測試JVM，不碰其他process。
 - [ ] **Step 5: 自評／提交。** `feat: recover corridor participants safely on power loss and reconnect`；逐項列真正event coverage與純seam coverage，未測visual保持待驗。
 
 ### Task 5: 真live restart、production smoke、玩法指引與final review
 
 **Files:**
-- Create: `src/testmod/java/dev/quantumchamber/gametest/M2PersistenceProbe.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/M2PersistenceProbe.java`
 - Modify: `src/testmod/resources/fabric.mod.json`
 - Create: `docs/implementation-notes/m2-corridor.md`
 - Modify: `docs/implementation-notes/m1-player-build-verification.md`
@@ -195,6 +315,17 @@ context.assertTrue(ChamberProtectionService.get().mayMutate(sourceWorld, sourceC
 **Interfaces:**
 - Produces: property quantumchamber.m2.phase、fresh run/m2-persistence／run/m2-production-smoke；default不啟用probe，release不含testmod。
 - Consumes: Tasks1–4的真固定world／nativepowered activation／journal與完整關閉流程。
+- Dedicated harness只用fresh case子目錄、loopback server-ip=127.0.0.1／server-port=0；各phase上一JVM完全exit後才啟動下一個，property未知phase立即明確失敗。每JVM PID＋startup nonce、same canonical save root、source/chamber/session/player UUID、authority、effect/marker、flushed journal與停止後playerdata readback保留。探針只印一次 M2_PHASE_READY_FOR_STOP，harness收到才console stop並確認四world save／exit0；probe不自行無條件stop。
+
+| fresh case | phase依序（各為不同JVM） | 必要斷言與停止條件 |
+| --- | --- | --- |
+| active-pending | active-save → active-resume-one → active-resume-last | 真native入場cohort A/B＋消耗；B真DISCONNECT仍pending。重啟只A真JOIN下一tick回來源並returned durable，B offline與保護保留；再次重啟B真JOIN完成，無舊active重建／snapshot補發，先全返還後解鎖 |
+| return-disconnect | return-disconnect-save → return-disconnect-resume | 原生斷電→RETURNING/protected→B在未返回時真close channel→A先回Bpending。重登下一tickB回真原world/bbox→checkpoint/returned→session end→OFF，不能用先disconnect後斷電的case替代 |
+| arming-rollback | arming-save → arming-resume-one → arming-resume-last | native資格建立durableARMING,true，自然geometry跨tick窗口或窄testmod故障留pending；A還原完整hidden NBT後returned、B offline，RETURNING再次重啟仍true；B完成、A不重套duration。不得事後構造假ARMING當native啟動 |
+| origin-missing | origin-missing-save → origin-missing-resume | 真native session後只在本fresh fixture authorized移除source C注入故障；兩JVM皆不得去spawn/床/別world，pending與lease/protection保留，正常stop只證明安全拒絕，不假稱返還成功 |
+| checkpoint-w1/w2 | owned受控中止 → recovery-resume → idempotency-resume | Task4兩個崩潰窗口真checkpoint/journal readback；中止前不走STOPPING修補，不中止共享或使用者JVM；下JVM用正常load／JOIN，不回填manifest位置/效果 |
+
+- 窄testmod故障可用scoped mixin包覆真move／checkpoint／checked journal flush，精確限定server/world/session/player/case，finally或STOPPED清；無fakebackend、無production test-only setter、不直接塞record假native coverage。每個fault/trusted setup與native evidence分開標示。JOIN callback早於normal connect完成，callback只觀察入列不移動，下一server tick才返還；PlayerManager.remove不是DISCONNECT證據，必有真channel close→Fabric事件→server-thread更新。
 
 - [ ] **Step 1: 新testworld的不同Java process證明session中斷／pending-return重啟。** 保存UUID／sourceworld／原位置／實際fixed-world participant與journal狀態，正常stop與重啟／重登確認原world返還、不重建舊session、不生成Universe。若使用trusted setup須明確區分native activation證據，不能用探針直接構造紀錄假裝live玩家。
 - [ ] **Step 2: production-only dedicated。** 無testmod／client mods，Done→console stop→四world全部save→exit0；無client-loading error／Dynamic Universe code。

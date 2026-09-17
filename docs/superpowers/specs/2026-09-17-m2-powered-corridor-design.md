@@ -62,6 +62,7 @@
 - `DoorKey` 由 session UUID、logical door index、LEFT／RIGHT 構成，不使用 physical slot 當永久身分。
 - M2 門面保留穩定邏輯身分；尚未提供 Universe backend 時，不讓側門假裝能穿越新宇宙。選擇／測量／跨宇宙通道依 M3／M4 邊界另行實作。
 - 採普通方塊、模型／blockstate JSON，不要求 recursive renderer 或 Sodium 私有 renderer hook。
+- 固定 session 入口 replica 的前門保留普通 Controller 右鍵整面開／關，打開後通往既有負向走廊；只有已發布 SUPERPOSITION 的目前映射可操作。ARMING／RETURNING、Shift 維護與投影拆除皆拒絕，不自動刪／開前門，不改來源原艙前門，也不是 M3 的跨宇宙門。
 
 ## 5. 斷電返還交易
 
@@ -92,6 +93,7 @@
 - 玩家離線時不把他從 cohort 靜默移除；保留 pending-return。斷電時其他在線參與者先返還，離線者在登入正常操作前返還。
 - 還有離線 pending-return 或返還失敗者時，原艙暫不解鎖；不刪玩家、不任意刪資料、不把空集合當作全部返還。
 - 重啟／不完整入場一律取消舊 session 並執行恢復，不能自動挑選／建立新 Universe，也不能因 persisted ARMED 複製一個 session。
+- 恢復資料需持久化藥效返還決策：不完整入場 rollback 才還原入場完整快照；成功 session 的正常返還不補發快照，也不刪除玩家在走廊後來新喝的 QuantumState。轉成 RETURNING 及再次重啟都不能遺失此決策。
 - 恢復與 cleanup 需冪等；SERVER_STOPPED 清 runtime queue／ticket／server identity，保留必需恢復資料。
 - 掉落物與投射物列入頁面生命週期及斷電清理策略；不在仍有玩家／有價物品的 slot 上直接清空方塊。支援失敗時保留可恢復狀態與明確錯誤。
 - 沒有可證實的來源資料時不得猜另一個 Universe；記錄錯誤並阻止不安全提交。
