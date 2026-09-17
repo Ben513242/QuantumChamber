@@ -293,7 +293,7 @@ assertEquals(999_999, parts.get(1).firstCorePage());
 - Produces: `QuantumEffectTransaction` 以NBT snapshot／restore與完整cohort一次commit，不提供Universe傳送API。
 - Produces: 將既有 `ChamberOccupantService.contains(Box outer,Box inner)` 簽名公開成 `public static boolean`，重用現有六邊界完整bbox判定；算法不重寫、spectator篩選不變，供M2 transfer／恢復與nativeGT使用，不杜撰 Box.contains(Box) overload。
 
-- [ ] **Step 1: 原生先供電進人入場RED。** 沿用M1真ServerPlayer連線fixture，native lever高位／關門／喝藥後需進SuperpositionWorld且效果消耗；現有ARMED_ONLY adapter不移動，該斷言失敗。
+- [x] **Step 1: 原生先供電進人入場RED。** 沿用M1真ServerPlayer連線fixture，native lever高位／關門／喝藥後需進SuperpositionWorld且效果消耗；現有ARMED_ONLY adapter不移動，該斷言失敗。
 
 ```java
 context.assertTrue(player.getServerWorld() == server.getWorld(SuperpositionWorld.KEY),
@@ -301,10 +301,10 @@ context.assertTrue(player.getServerWorld() == server.getWorld(SuperpositionWorld
 context.assertTrue(!player.hasStatusEffect(ModEffects.QUANTUM_STATE), "成功入場才消耗藥效");
 context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場保留攜帶物品");
 ```
-- [ ] **Step 2: 保存RED；測少一人buff、zero／spectator、容量、重複刷新。** 無效case全員仍在來源且buff未移除，held-high只一session。
-- [ ] **Step 3: 接gateway與ARMING交易。** 凍結cohort及source positions／effects，durable ARMING,true journal先於geometry/teleport提交；準備期間重驗來源／全員資格，offline／名單改變拒絕。全部world/positions核對成功才消耗效果並durable SUPERPOSITION,false、publish active、開replica後牆；false提交前失敗rollback、保存RETURNING,true pending，不留下半cohort。false已durable提交後若核對／publish失敗則安全RETURNING,false，不倒退補發效果。從已提交活動轉返還亦保存RETURNING,false，不還原入場快照也不刪除新藥效。active時source chamber空／藥效已耗不降級3。保持來源Controller的具體chunk session tickets，radius2且對稱remove。
-- [ ] **Step 4: GREEN跨world。** 真server/world身份、relative pose／inventory不變、NBT hidden-effect rollback、partial-move failure不解鎖，缺buff無人不創造新world；core JUnit+GT全過。
-- [ ] **Step 5: 自評／提交。** `feat: start shared superposition sessions from powered chambers`；尚待Task4完整斷電／登入恢復，不宣告整個M2完成。
+- [x] **Step 2: 保存RED；測少一人buff、zero／spectator、容量、重複刷新。** 無效case全員仍在來源且buff未移除，held-high只一session。
+- [x] **Step 3: 接gateway與ARMING交易。** 凍結cohort及source positions／effects，durable ARMING,true journal先於geometry/teleport提交；準備期間重驗來源／全員資格，offline／名單改變拒絕。全部world/positions核對成功才消耗效果並durable SUPERPOSITION,false、publish active、開replica後牆；false提交前失敗rollback、保存RETURNING,true pending，不留下半cohort。false已durable提交後若核對／publish失敗則安全RETURNING,false，不倒退補發效果。從已提交活動轉返還亦保存RETURNING,false，不還原入場快照也不刪除新藥效。active時source chamber空／藥效已耗不降級3。保持來源Controller的具體chunk session tickets，radius2且對稱remove。
+- [x] **Step 4: GREEN跨world。** 真server/world身份、relative pose／inventory不變、NBT hidden-effect rollback、partial-move failure不解鎖，缺buff無人不創造新world；core JUnit+GT全過。
+- [x] **Step 5: 自評／提交。** `feat: start shared superposition sessions from powered chambers`；實作`bdce032`完整162 declared JUnit（161實跑／1平台略過）＋90 GT；R1`941cd37` covering24 JUnit＋95 GT、成品與四world啟停已核對，Controller即時身分／錯source不rollback兩項scoped review結案。尚待Task4完整斷電／登入恢復，不宣告整個M2完成。
 
 ### Task 4: 斷電、離線重登、重啟恢復及頁面移動
 
