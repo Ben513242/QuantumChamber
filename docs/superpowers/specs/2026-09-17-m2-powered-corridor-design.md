@@ -94,9 +94,17 @@
 - 還有離線 pending-return 或返還失敗者時，原艙暫不解鎖；不刪玩家、不任意刪資料、不把空集合當作全部返還。
 - 重啟／不完整入場一律取消舊 session 並執行恢復，不能自動挑選／建立新 Universe，也不能因 persisted ARMED 複製一個 session。
 - 恢復資料需持久化藥效返還決策：不完整入場 rollback 才還原入場完整快照；成功 session 的正常返還不補發快照，也不刪除玩家在走廊後來新喝的 QuantumState。轉成 RETURNING 及再次重啟都不能遺失此決策。
+
+- 入場決策提交點為全員實際移動／效果消耗／原生 checkpoint 確認後的 checked SUPERPOSITION,false journal。提交前失敗使用 RETURNING,true；此決策已落盤後的發布／再次核對失敗則安全返還並繼承 false，不當成未提交失敗重套藥效。不可省略玩家 checkpoint 先於 false 提交的順序，也沒有跨檔原子保證。
 - 恢復與 cleanup 需冪等；SERVER_STOPPED 清 runtime queue／ticket／server identity，保留必需恢復資料。
 - 掉落物與投射物列入頁面生命週期及斷電清理策略；不在仍有玩家／有價物品的 slot 上直接清空方塊。支援失敗時保留可恢復狀態與明確錯誤。
+
+- 走廊租約權威持有完整有限 footprint 的 entity-ticking tickets，與來源票所有權分離；清理前須證明真實體資料已載入且追蹤就緒，不以FULL或空範圍查詢猜無占用。同tick搬移按真UUID／bbox確認，不單獨信任延後更新的區段索引；durable移除lease後才釋票，停止時對稱清理並保留恢復資料。
+
+- 資源上限另含全域4096個ticket覆蓋chunks：所有未安全釋放／provisional leases bounds的chunk rectangle四側外擴2取唯一聯集。幾何截面／高度／world bounds與溢位先驗，超量新配置拒絕／安全返還；非法或超量導入保留恢復資料並拒絕啟動。不得展開巨大集合或先加票才處理；此cap不保證64instances全量／任意視距或硬體效能。
 - 沒有可證實的來源資料時不得猜另一個 Universe；記錄錯誤並阻止不安全提交。
+
+- 最後暫時空間的回收須在全員返還進度已落盤、無占用／有價物品已安全處理、幾何清理完成後，移除整筆恢復紀錄並 checked 落盤，才釋放最後租約。原艙解除保護仍待同程序明確的已知收尾完成確認；單純查不到紀錄或僅記憶體移除不是返還證據。不寫空租約紀錄、不保留無界完成歷史。
 
 ## 6.1 已核准原生checkpoint修訂
 
@@ -105,6 +113,10 @@
 平台測試必須保留 Ubuntu 基礎建置與受控拒絕契約，另有 Windows 原生正向 gate，不能只略過原生案例便宣稱通過。Windows 必要 native suites 應實際執行且零略過；其他平台的拒絕、OS 條件略過與人工／GPU驗證分列。隔離 JVM 的 os.name 路由探測不等於真正 Linux runtime，尚未執行的遠端 CI 不聲稱已綠。
 
 ## 7. 光照與邊界
+
+入口 overlay 不永久釘住，也不能開向未建走廊。僅 alias 完整包含 replica logical blocks 0..6 與兩側連接格 −1、7，且兩側連接格不在端 cap 時物化。端 cap 位於 aliasStart／aliasEnd−1 時，精確條件為 `aliasStartBlock <= -2 && aliasEndBlock >= 9`；不符合時建普通封端走廊、base 不扣除343格，保存前後門 OPEN 意圖供回頭重建。未物化 current 入口的查詢明確拒絕，舊／退休 Controller 不授權；consumer 以 typed mapping／保存的 source frame 完成遠端移動與返還，不新增入口租約或擴大576 apron。
+
+非法租約導入的原生驗證須在真 dedicated bootstrap attach 前、default-off testmod 與明確 canonical owned fresh root 中執行；只 CREATE_NEW fixture journal，不覆寫玩家檔。拒啟須具體原因、normal tick=0、原 journal hash 不變與票清理證據，不能只憑 Java exit code。
 
 - 沿用 M1.2 的可選 LambDynamicLights 方案，驗證主手／副手持火把在普通艙內、入口 replica、走廊跨頁與返還後都能照亮。
 - 火把不替代 QuantumState，不需要在受保護 interior 放置方塊；照明缺少不改 cohort、session 或世界身分。

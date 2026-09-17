@@ -3,5 +3,5 @@
   "minVersion": "0.8",
   "package": "dev.quantumchamber.gametest.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": ["DoorWriteFaultMixin", "StaticDimensionsTestServerMixin"]
+  "mixins": ["DoorWriteFaultMixin", "StaticDimensionsTestServerMixin", "M2LeaseBootstrapFixtureMixin"]
 }

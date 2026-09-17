@@ -16,6 +16,12 @@ import net.minecraft.util.math.BlockPos;
 /** Guards registered chamber volumes while keeping persistent-state access off the block mutation path. */
 public final class ChamberProtectionService {
     private static final ChamberProtectionService INSTANCE = new ChamberProtectionService();
+    private static final java.util.List<java.util.function.BiPredicate<ServerWorld,BlockPos>> ADDITIONAL_GUARDS = new java.util.ArrayList<>();
+
+    /** 追加唯讀許可判斷；任何 guard 回傳 false 即拒絕普通寫入。 */
+    public static void registerAdditionalGuard(java.util.function.BiPredicate<ServerWorld,BlockPos> guard) {
+        ADDITIONAL_GUARDS.add(Objects.requireNonNull(guard));
+    }
 
     private final ThreadLocal<Integer> authorizationDepth = ThreadLocal.withInitial(() -> 0);
     private final ThreadLocal<TargetAuthorization> targetAuthorization = new ThreadLocal<>();
@@ -41,10 +47,11 @@ public final class ChamberProtectionService {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(pos, "pos");
         TargetAuthorization target = targetAuthorization.get();
-        if (isAuthorized() || (target != null && target.world() == world && target.pos().equals(pos))
-                || world.getServer() != attachedServer) {
+        if (isAuthorized() || (target != null && target.world() == world && target.pos().equals(pos))) {
             return true;
         }
+        for (var guard : ADDITIONAL_GUARDS) if (!guard.test(world,pos)) return false;
+        if (world.getServer() != attachedServer) return true;
         return DimensionRole.fromVanillaKey(world.getRegistryKey())
                 .map(role -> attachedServer.getWorld(world.getRegistryKey()) == world
                         ? mayMutate(world.getRegistryKey().getValue(), role, pos)

@@ -34,6 +34,8 @@
 - occupied±1是邏輯生命週期，另有兩端576格有限外觀apron，覆蓋Base32chunk／512格設計視距；不建立額外候選資料。無任意shader／擴大視距無縫保證，人工gate另記。
 - 每tick方塊建造／清理預算4096；occupied page上限128、局部實例上限64、管理entity pin上限256。資源不足走安全返還，不刪有價物品、不提交未準備映射。
 
+- 全域ticket覆蓋聯集上限4096chunks，與同值的block-write budget分開；計所有provisional/current/prepared/retiring／bootstrap leases bounds轉chunk rectangles各外擴2之唯一聯集。中心票依session/chunk另refcount。單rectangle／聯集超量在展開或加票前拒絕，long checked算術、7×7截面／高度／world bounds先驗；new配置拒絕／上層安全返還，非法或超量attach保留journal拒絕，不能加票後等OOM。不是64instances全量可用或任意視距／硬體效能保證。
+
 環境沿用 M1.2：Java21、GRADLE_USER_HOME=C:/Users/Ben/.gradle、require_escalated操作快取、offline聚焦與提交前完整測試；Git per-command safe.directory。先完成M1.2自動gate再dispatch M2 Task1。只讀API查核的完整證據位置記入本計畫ledger。
 
 ## 已核准修訂：原生 HANDLE checkpoint（2026-09-17）
@@ -111,6 +113,10 @@ context.assertTrue(context.getWorld().getServer().getWorld(key) != null,
 
 ### Task 2: 邏輯頁、局部affine配置、replica及session保護
 
+**已核准入口切邊契約（2026-09-18）：** 只有 alias 完整包含 replica 0..6 及前後連接格 −1／7、且連接格不在端 cap，才物化入口。端 cap 在 aliasStart／aliasEnd−1 時，精確條件為 `aliasStartBlock <= -2 && aliasEndBlock >= 9`。其餘建普通封端走廊、不排除 343 格；保存前後門 OPEN 意圖，回頭完整包含入口時重建。無 current 入口時 `entrance(UUID)` 明確拒絕；consumer 使用 typed mappings 與保存的來源 frame，不暗中 reserve。
+
+**原生 bootstrap 負向證據：** default-off testmod probe 只於明確 case／canonical owned fresh root，掛 `MinecraftServer.loadWorld` RETURN、健康 attach 前，以 CREATE_NEW 建立指定非法租約 journal。獨立 native main JVM 驗拒啟原因、normal tick=0、before／after journal hash 不變、票對稱清理；Java exit 0 不等於拒啟通過。既有 guard 補證據不是 retroactive RED；不得改既有玩家資料。
+
 **Files:**
 - Create: `src/main/java/dev/quantumchamber/corridor/LogicalAddress.java`
 - Create: `src/main/java/dev/quantumchamber/corridor/DoorKey.java`
@@ -122,6 +128,12 @@ context.assertTrue(context.getWorld().getServer().getWorld(key) != null,
 - Create: `src/main/java/dev/quantumchamber/corridor/SessionSpaceProtection.java`
 - Create: `src/main/java/dev/quantumchamber/corridor/SessionEntranceDoorService.java`
 - Create: `src/testmod/java/dev/quantumchamber/gametest/ConnectedGameTestPlayer.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/DoorWriteFault.java`（既有 testmod observer 的 block-write 計數與限定 clear 拒絕）
+- Modify: `.github/workflows/build.yml`（Windows 必要原生案例 XML 守門，追加 Task2 GT）
+- Create: `src/testmod/java/dev/quantumchamber/gametest/M2LeaseBootstrapProbe.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/M2LeaseBootstrapFixtureMixin.java`
+- Modify: `src/testmod/resources/fabric.mod.json`
+- Modify: `src/testmod/resources/quantumchamber-test.mixins.json`
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberProtectionService.java`
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberControllerBlock.java`
 - Modify: `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`
@@ -208,11 +220,17 @@ public void commitInitial(UUID sessionUuid, Set<UUID> cohort);
 ```
 
 - initial：先freeze source snapshots/authority，reserveInitial只預留／回bounds、不寫geometry或publish；建立完整lease的ARMING,true並checkedflush，prepare自行核對durable record與reservation bounds/authority才入列。只可證實零geometry且無journal才provisional cancel；原子結果不明保留。commitInitial只在全員真world/bbox、effect commit/player checkpoint/durable SUPERPOSITION,false之後，自己重驗live cohort再publish epoch1；後孔25writes服從budget。
+
+- commitInitial 可逐人再次原生 saveAndVerify(Optional.empty()) 並重驗全群真身分／pose後發布，不新增返還marker或通用收據系統；額外I/O需記錄。原來Task3 checkpoint-before-false順序不省略。false尚未checked提交的失敗為RETURNING,true；false已durable提交後的核對／publish失敗則安全RETURNING,false，保留lease／保護，不補發已提交藥效。
 - remap：prepareRemap保持old current並先flush新舊lease union，ready後beginRemap才擷取最新live全群pose/pins；同ticknative搬移所有affected players/items/projectiles，commitRemap自行重驗全群actual result才publish target/owner/epoch。未受影響分量保留instance epoch/lease；少列entity／偽token／過期epoch／newpin皆拒絕。部分失敗保留batch唯一source/target owner與兩邊lease，不用finally無條件cancel；一次受控rollback仍失敗即RETURNING。
 - retire：先pin／有價物品安全處理→同4096全域budget清幾何→checkedflush移除舊SpaceLease→allocator.release。durable清單只包含尚未安全釋放的current/prepared/retiring，不保留所有行走歷史；任何failure保守留reservation、達cap安全返還，不能無界加lease。release(UUID)為提出退休請求，不同步刪still-pinned空間。
 
+- 最後 lease 收尾：不寫空 spaceLeases；精確同 server 的 flushed RETURNING record 全 participant returned=true、無 live pins／有價 items 已安全處理、budget 清理完成，才 remove 整筆 journal＋checked flush，確認 durable 無 SID 後 release allocator。新增 `public boolean releaseComplete(UUID sessionUuid)` 與 `public void acknowledgeRelease(UUID sessionUuid)`，只對已知真正完成的有限當次收尾發布收據，未知／in-memory 缺失／flush 失敗均不 complete；上層消費後 acknowledge、不保留所有已結束 SID。Task4 consumer 最後確認並解除原艙保護，不能泛化「查不到紀錄」為返還成功。
+
+- Corridor lease tickets由唯一PageManager持有：checked durable lease後，完整finite bounds footprint以session UUID/radius2維持entity-ticking，session＋chunk去重/refcount，涵蓋prepared/current/retiring及bootstrap未釋leases。FULL非create＋world.isChunkLoaded(long)／shouldTick(ChunkPos)皆真才pin掃描／清理；同tickpose用iterateEntities真bbox/UUID，不以延後區段索引空判無pin。checked lease移除後才remove票，STOPPING對稱remove、STOPPED清refs／必要journal保留；Task3只source票。bounds／溢位／finite cap先驗，不對任意NBT巨box無界加票，chunk／IO／等待成本如實報告。
+
 - Produces: `SessionEntranceAllocator` 入口同來源facing，CBE標PROJECTION＋來源chamber UUID；只在全員入場成功後開replica後牆的5×5孔通往走廊，不改原艙。
-- Geometry ownership：初次 core pages=-1..1／alias=[-672,768)；replica local x/y/z=0..6 與走廊同一 SlotLease，base writer排除這343格，replica writer獨佔 overlay，不另reserve造成AABB重疊。後孔成功後OPEN狀態由session保存，重建沿用，Controller與前門不能被base writer蓋掉；入口沒有永久pin，遠離後可退休，回頭重建同一overlay狀態。
+- Geometry ownership：初次 core pages=-1..1／alias=[-672,768)；replica local x/y/z=0..6 與走廊同一 SlotLease。只有完整物化入口時 base writer 排除這343格，replica writer獨佔 overlay，不另reserve造成AABB重疊。後孔成功後OPEN狀態由session保存，重建沿用，Controller與前門不能被base writer蓋掉；入口沒有永久pin，遠離或切邊缺連接區時可不物化，回頭完整包含時重建同一overlay狀態。occupied={7}／alias=[0,1440) 是普通封端走廊，回到 occupied={6} 才恢復完整入口；舊／退休Controller不獲門授權。
 - Produces: `public static Optional<SessionEntranceDoorService.ToggleResult> tryToggle(ServerWorld,BlockPos)`，nested `public record ToggleResult(boolean changed,String message)`；僅已發布SUPERPOSITION、同server/world/current mapping、projection CBE UUID/facing與入口吻合才處理普通Controller右鍵，原子交易整面25格前門接既有負向走廊。empty表示非此服務目標而走原艙流程；known入口但ARMING/RETURNING/錯身分則handled拒絕，不回落Origin註冊或maintenance。操作租約阻止retire，成功才保存前門OPEN狀態供rebuild；不自動開／刪前門、不改來源前門、不給投影停用／拆除權。交易或rollback失敗保持safe保護並交session返還協調，不猜門已成功。
 - 連續位置字面：C=(1000,70,2000)，replica feet local(3.5,1,5.5) 在 N/S/E/W 分別為(1000.5,65,2005.5)/(1000.5,65,1995.5)/(995.5,65,2000.5)/(1005.5,65,2000.5)。負向軸需cell-boundary offset，velocity只旋轉不平移。NORTH洞口block(1000,67,2006)與走廊(1000,67,2007)相鄰；第二NORTH C=(1192,70,2000)中心距192且完整不交，只沿z移160仍AABB相交必須拒絕。
 - Produces: `ChamberProtectionService.registerAdditionalGuard(BiPredicate<ServerWorld,BlockPos>)`，SessionSpaceProtection使用精確server/world實例與slot index；registered once、STOPPED detach。
@@ -278,7 +296,7 @@ context.assertTrue(!player.hasStatusEffect(ModEffects.QUANTUM_STATE), "成功入
 context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場保留攜帶物品");
 ```
 - [ ] **Step 2: 保存RED；測少一人buff、zero／spectator、容量、重複刷新。** 無效case全員仍在來源且buff未移除，held-high只一session。
-- [ ] **Step 3: 接gateway與ARMING交易。** 凍結cohort及source positions／effects，durable ARMING,true journal先於geometry/teleport提交；準備期間重驗來源／全員資格，offline／名單改變拒絕。全部world/positions核對成功才消耗效果並durable SUPERPOSITION,false、publish active、開replica後牆；任一步失敗rollback、保存RETURNING,true pending，不留下半cohort。從已提交活動轉返還則保存RETURNING,false，不還原入場快照也不刪除新藥效。active時source chamber空／藥效已耗不降級3。保持來源Controller的具體chunk session tickets，radius2且對稱remove。
+- [ ] **Step 3: 接gateway與ARMING交易。** 凍結cohort及source positions／effects，durable ARMING,true journal先於geometry/teleport提交；準備期間重驗來源／全員資格，offline／名單改變拒絕。全部world/positions核對成功才消耗效果並durable SUPERPOSITION,false、publish active、開replica後牆；false提交前失敗rollback、保存RETURNING,true pending，不留下半cohort。false已durable提交後若核對／publish失敗則安全RETURNING,false，不倒退補發效果。從已提交活動轉返還亦保存RETURNING,false，不還原入場快照也不刪除新藥效。active時source chamber空／藥效已耗不降級3。保持來源Controller的具體chunk session tickets，radius2且對稱remove。
 - [ ] **Step 4: GREEN跨world。** 真server/world身份、relative pose／inventory不變、NBT hidden-effect rollback、partial-move failure不解鎖，缺buff無人不創造新world；core JUnit+GT全過。
 - [ ] **Step 5: 自評／提交。** `feat: start shared superposition sessions from powered chambers`；尚待Task4完整斷電／登入恢復，不宣告整個M2完成。
 
@@ -300,6 +318,8 @@ context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場�
 - Consumes: durable recovery records、page mapping leases與gateway.returnToOrigin。
 - Consumes: Task1 PlayerRecoveryCheckpoint／PlayerCheckpointStore、flushedRecords；return保留原restoreEntryEffectOnReturn，不用RETURNING重算。確認真來源world/interior後才true還原／false不觸碰當下效果，再stamp單一session/policy marker；同session同policy marker跳過效果修改，錯policy／壞marker保守拒絕。saveAndVerify成功才flush returned=true，任一失敗保持保護／lease；登入queue前阻止正常移動／門操作，不能在JOIN callback直接teleport。
 - Produces: instance方法 `public void SessionRecoveryManager.onJoin(UUID,MinecraftServer)` queue、`public void onDisconnect(UUID,MinecraftServer)`、`public void tick(MinecraftServer)`、`public boolean returnComplete(UUID)`；manager/gateway只在全cohort／資料確認後complete。Netty DISCONNECT捕捉UUID/server後序列化，JOIN只queue下一tick，不用server.execute誤當下一tick。
+
+- Consumes: Task2 `releaseComplete(UUID)`／`acknowledgeRelease(UUID)`；同程序全 cohort checked returned 與已知最後 lease 收尾確認後才結束 session／回 complete，再移除上層 runtime 並 acknowledge。原艙 OFF／解除保護仍由來源 coordinator 最後確認；未知 SID／in-memory 缺失不是完成。重啟只恢復 healthy journal 尚存在的 records，不重建已 durable 移除的舊 session。
 - Produces: instance方法 `public void CorridorRepositionService.tick(MinecraftServer)` 管理邏輯位置、items/projectiles tag／pin、近群split/merge預備／commit／retire；相關entity每次只有一個authority mapping。
 - Produces: M2PersistenceProbe 此任務只先建 checkpoint W1/W2 的 default-off條件phase與必要testmod-only fault mixin（各server/world/session/player限定，files/API列report），後續Task5擴充正常phase；release無probe/fault。不得以production test-only setter代替原生邊界。
 - Produces: `public boolean SessionTransferService.move(Entity,ServerWorld,Vec3d,Vec3d,float,float)` overload，處理items/projectiles的native傳送／同world重定位；核對真target Entity UUID/world/pose，可能新Entity物件需以UUID取得，不把舊removed物件當成功。

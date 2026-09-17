@@ -63,10 +63,16 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
                                  BlockHitResult hit) {
         if (world.isClient) return ActionResult.SUCCESS;
         if (!(world instanceof ServerWorld serverWorld)) return ActionResult.FAIL;
+        if (player.isSpectator()) return ActionResult.FAIL;
+        if (player.isSneaking() && dev.quantumchamber.corridor.SessionSpaceProtection.isProtected(serverWorld,pos)) return ActionResult.FAIL;
+        var entrance = dev.quantumchamber.corridor.SessionEntranceDoorService.tryToggle(serverWorld,pos);
+        if (entrance.isPresent()) {
+            player.sendMessage(Text.literal(entrance.get().message()),true);
+            return entrance.get().changed() ? ActionResult.SUCCESS : ActionResult.FAIL;
+        }
         if (player.isSneaking() && player.getMainHandStack().isEmpty() && player.getOffHandStack().isEmpty()) {
             return ChamberMaintenanceInteraction.toggleEnabled(serverWorld, pos, player);
         }
-        if (player.isSpectator()) return ActionResult.FAIL;
         var view = new WorldChamberBlockView(world);
         var frame = new ChamberFrame(pos, state.get(FACING));
         if (!new ChamberDetector().validate(view, frame).valid()) return ActionResult.FAIL;
