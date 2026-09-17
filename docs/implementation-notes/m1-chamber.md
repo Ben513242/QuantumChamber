@@ -1,6 +1,6 @@
 # M1 Chamber Foundation 實作與驗證紀錄
 
-驗證日期：2026-09-16（Asia/Taipei）。M1 foundation 程式與自動驗證已交付；唯一剩餘的 M1 外部驗收門檻為完整人工 gameplay／HUD 清單，因此不宣告整個 M1 completion gate 已完成。Foreign／unknown ServerWorld live coverage 已由使用者核准依設計延後至 M3，不再列為 M1 blocker。
+驗證日期：2026-09-16（Asia/Taipei）。以下為 `4f96569` 前的 M1 foundation 歷史證據，不能直接外推後續版本。2026-09-17 使用者核准 M1.1 紅石提交與 Origin 維護，新增流程的自動驗證與人工 gate 另記於 [M1.1 紀錄](m1.1-origin-maintenance.md)。整個 M1 completion gate 與 main 合併仍未宣告完成。Foreign／unknown ServerWorld live coverage 已由使用者核准依設計延後至 M3，不再列為 M1 blocker。
 
 ## 實作邊界
 

@@ -3,7 +3,7 @@
 > Status: Living design document  
 > Target: Minecraft Java Edition  
 > Document stage: 持續維護的玩法／架構規格；M1 基礎實作與驗收中<br>
-> Revision: 0.9 — 核准 M1 Controller 整面門控與青紫辨識造型，保留 M3 foreign-world live 驗收邊界
+> Revision: 0.10 — 核准 M1.1 成功紅石邊緣才註冊／保護，以及 Origin 停用與 Creative 拆除；保留 M3 foreign-world live 驗收邊界
 >
 > **Code-agent handoff:** Read the entire specification, then follow **Section 32 — Code Agent Execution Contract**. Begin with M0 and do not jump directly to dynamic Universes. M3 and M7 contain explicit research/design gates and must not be guessed through.
 
@@ -160,6 +160,10 @@ For M1, manual/creative construction is acceptable. A survival-friendly construc
 2026-09-16 核准的 M1 操作修正：右鍵有效 Chamber 的 Controller，必須能在伺服器端將全部 25 格 Bulkhead 作為同一 logical door 開啟或關閉。開門後仍維持 empty outline／collision，玩家不必瞄準已成為空 outline 的艙門來關門；改以 Controller 為穩定入口。此入口沿用既有原子 door transaction、mutation authorization 與成功後的同步 Controller／comparator 刷新，不新增 renderer、packet、Session 或跨世界流程。原本右鍵處於關閉狀態的艙門來開門的入口仍保留。
 
 同日另核准青紫辨識造型：量子艙門使用紫色科幻面板，腔室控制器使用青色框與清楚的正面核心，基岩保留為底層／外框。採一般 JSON 模型與 Minecraft 既有材質引用，讓物品圖示同步沿用新造型；不新增 renderer、動畫、bloom、實際光源或自訂 packet，不改碰撞、保護、幾何、方塊 ID 或狀態機。圖解配色是辨識語彙，不承諾概念圖中的 shader 效果；艙體仍只有原本三種建材。
+
+2026-09-17 核准 M1.1：新建艙體的結構刷新、開關門與載入僅唯讀預覽，不配發 UUID、不自動註冊或保護；只有 sealed、至少一位完整位於 interior 的非 spectator 玩家、全員 QuantumState、健康 Registry 與無同 role overlap，收到真正紅石未供電→供電才正式註冊 Origin、保護並 ARMED。已登錄後不因 buff／玩家／電力消失自動解鎖。
+
+Origin Controller 以「雙手空手＋蹲下右鍵」切換 enabled；停用立即 comparator0、禁止 arm，但 UUID／record／保護保留且普通門控仍可用。重新啟用及載入 held-high 不製造新 edge。停用後允許 Creative 左鍵 Controller，核對 UUID、kind、world key／role、anchor／facing 與非 destroyed；真實移除成功後才清 Registry 與所有 chunk 索引，解除保護。維護不要求完整 shell；失敗不先解鎖，不改生存基岩強度。Projection／錯世界不得維護。舊 schema1 紀錄保留，不做推測性刪除或破壞性 migration。完整契約見 [M1.1 核准契約](implementation-notes/m1.1-contract.md)。
 
 ---
 

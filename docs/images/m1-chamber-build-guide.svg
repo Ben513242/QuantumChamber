@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1600" viewBox="0 0 1800 1600">
-  <title>QuantumChamber M1 施工與人工驗證圖</title>
-  <desc>7×7×7 外殼、逐層配置、192 格基岩、25 格艙門、1 格控制器，以及藥水與紅石驗證。開門後以控制器右鍵關閉整面門；人工玩法與多人驗證仍待觀察。</desc>
+  <title>QuantumChamber M1.1 施工、紅石提交與維護圖</title>
+  <desc>7×7×7 外殼、逐層配置、192 格基岩、25 格艙門、1 格控制器，以及藥水與紅石驗證。READY 只預覽，成功紅石邊緣才註冊與保護。雙手空手蹲右鍵停用，再創造模式左鍵 Controller 拆除。人工玩法與多人驗證仍待觀察。</desc>
   <defs>
     <style>
       text{font-family:"Microsoft JhengHei","Noto Sans TC",sans-serif;fill:#eaf2ff}
@@ -13,7 +13,7 @@
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#6ed6e0"/></marker>
   </defs>
   <rect width="1800" height="1600" fill="#091522"/>
-  <text x="50" y="66" class="title">QuantumChamber M1｜施工與人工驗證圖</text>
+  <text x="50" y="66" class="title">QuantumChamber M1.1｜施工、紅石啟動與維護</text>
   <text x="50" y="105" class="sub">精確施工以本圖格線為準；科幻效果圖只是外觀概念，非目前 M1 實際材質。</text>
   <g transform="translate(50 130)"><rect width="25" height="25" fill="#7f8998"/><text x="36" y="21" class="t">B：Bedrock 基岩</text><rect x="285" width="25" height="25" fill="#9474d8"/><text x="321" y="21" class="t">D：Quantum Bulkhead</text><rect x="630" width="25" height="25" fill="#41c8d5"/><text x="666" y="21" class="t">C：Chamber Controller</text><rect x="1045" width="25" height="25" fill="#d9f0e2"/><text x="1081" y="21" class="t">A：內部空間（不是基岩）</text></g>
 
@@ -54,7 +54,7 @@
   <text x="1160" y="806" class="t">Controller 面向室外；房間延伸到它背後。</text>
   <text x="1160" y="846" class="small note">站在室外、面對前牆放置 Controller，</text>
   <text x="1160" y="875" class="small note">其 FACING 會朝向你；不要站室內反著放。</text>
-  <text x="905" y="917" class="small note">完工約 1 秒自動登錄、啟用並保護；不用另找啟用按鈕。</text>
+  <text x="905" y="917" class="small note">完工只預覽、可 Creative 拆改；有效紅石低→高才註冊並保護。</text>
 
   <rect x="40" y="960" width="820" height="315" rx="18" class="card"/>
   <text x="65" y="1003" class="h">⑤ 配方與量測裝置</text>
@@ -70,8 +70,8 @@
   <g transform="translate(910 1035)">
     <rect width="180" height="85" rx="12" fill="#452433"/><text x="22" y="36" class="h">0｜INVALID</text><text x="22" y="67" class="small">無效／disabled</text>
     <rect x="200" width="180" height="85" rx="12" fill="#394056"/><text x="222" y="36" class="h">3｜IDLE</text><text x="222" y="67" class="small">有效、條件不足</text>
-    <rect x="400" width="180" height="85" rx="12" fill="#24544c"/><text x="422" y="36" class="h">7｜READY</text><text x="422" y="67" class="small">密封、全員有 buff</text>
-    <rect x="600" width="210" height="85" rx="12" fill="#493b76"/><text x="622" y="36" class="h">11｜ARMED</text><text x="622" y="67" class="small">接受一次 rising edge</text>
+    <rect x="400" width="180" height="85" rx="12" fill="#24544c"/><text x="422" y="36" class="h">7｜READY</text><text x="422" y="67" class="small">全員 buff，僅預覽</text>
+    <rect x="600" width="210" height="85" rx="12" fill="#493b76"/><text x="622" y="36" class="h">11｜ARMED</text><text x="622" y="67" class="small">正式註冊、開始保護</text>
   </g>
   <text x="905" y="1166" class="t">Lever：0 → powered 才 arm；持續 high 不 retrigger。</text>
   <text x="905" y="1203" class="t">M1 停在 ARMED：不傳送、不出現走廊、不生成世界。</text>
@@ -79,10 +79,10 @@
   <text x="905" y="1267" class="small note">讀 7／11 時須有室內玩家＋室外觀察者；唯一玩家離室後，狀態會降回 3。</text>
 
   <rect x="40" y="1295" width="1720" height="265" rx="18" fill="#30251d" stroke="#db9b51" stroke-width="2"/>
-  <text x="65" y="1340" class="h" fill="#ffd291">Controller 門控與人工驗證注意｜測試通過不等於人工驗收完成</text>
+  <text x="65" y="1340" class="h" fill="#ffd291">Controller 操作與 Origin 維護｜測試通過不等於人工驗收完成</text>
   <text x="65" y="1383" class="t">右鍵 Controller 可整面開／關 25 格；開啟 Bulkhead 的 outline 為空，關門請點 Controller。</text>
-  <text x="65" y="1420" class="t">先正常退出舊遊戲再啟動新版本。進入後靠近入口、避開門面，瞄準門頂中央 Controller 再右鍵關門。</text>
-  <text x="65" y="1463" class="small note">其他待驗：兩位玩家中一人無 buff 不得 ARMED；invalid shell 請在尚未註冊的第二座測試屋少放一格。</text>
-  <text x="65" y="1494" class="small note">已註冊 Chamber 受 protection 保護，不要硬拆。若沒有第二位玩家，請標「待驗」，不要算通過。</text>
-  <text x="65" y="1531" class="small note">新版：量子艙門紫色面板／腔室控制器青色核心；仍只有三種建材，舊方塊重啟即可套用造型。</text>
+  <text x="65" y="1420" class="t">雙手空手＋蹲下右鍵 Controller：啟用 ↔ 停用；停用輸出 0，UUID 與保護仍保留。</text>
+  <text x="65" y="1463" class="small note">拆除：建議先在艙外關門，再停用→Creative 左鍵 Controller；成功後解鎖，其餘手動拆。開門 Bulkhead 無輪廓，請先關回。</text>
+  <text x="65" y="1494" class="small note">重新啟用、放置或載入時 held-high 不算新 edge。先關拉桿，再滿足 buff／關門條件後撥開。</text>
+  <text x="65" y="1531" class="small note">舊已註冊紀錄保留，可維護拆除後重建；多人／HUD 仍待人工驗收。先正常退出舊客戶端再啟動 bat。</text>
 </svg>
