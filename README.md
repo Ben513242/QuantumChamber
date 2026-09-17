@@ -2,13 +2,15 @@
 
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
-## M1 Chamber Foundation
+## M1.2 供電原艙
 
-已實作 7×7×7 Chamber、25 格整面 Bulkhead、Controller 右鍵整面門控、QuantumState 藥水、Origin registry 持久化、方塊保護，以及 vanilla redstone rising edge 啟動至 `ARMED`。Comparator 狀態為 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。
+已實作 7×7×7 Chamber、25 格整面 Bulkhead、Controller 右鍵整面門控、QuantumState 藥水、Origin registry 持久化，以及依實際紅石電位協調的原艙保護與自動 `ARMED`。Comparator 狀態為 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。
 
-目前核心程式非快取驗證為 81 個 JUnit（含 6 個 Windows 啟動腳本流程測試）、43 個 Fabric GameTests；M1.1 四次獨立程序重啟、production-only dedicated Done→stop、release JAR／common-server 邊界已驗證。完整人工 gameplay 清單仍待驗收，M1 completion gate 尚未全部關閉，main 尚未合併。既有 client runtime 與舊版 dedicated restart 是歷史證據，不能外推為本版 GUI 驗收。沒有 Universe、corridor 或 teleport implementation；亦未新增動態 Dimension、Session、自訂 packet 或 renderer。啟動腳本測試在 Linux CI 明確 skip，不當作跨平台或 GPU 覆蓋。
+2026-09-17 的非快取 `clean build runGameTest --rerun-tasks` 實際通過 111 個 JUnit（含 13 個 Windows 啟動腳本測試）與 52 個 Fabric GameTests，零失敗、零跳過。M1.2 四次獨立 Java 程序驗證供電→OFF→重供電→拆除，另有不含 testmod 的 dedicated Done→stop 與 release JAR／common-server 邊界證據。損壞 schema 會被健康 guard 拒絕；原生 launcher 可能仍回傳 0，故以明確例外、沒有正常 tick、原資料雜湊不變及外部驗證器非零共同判定，不能只看 Done 或 Java 退出碼。
 
-M1.1 新建艙體只預覽 3／7，不自動註冊或保護；有效紅石低→高才配發 UUID、ARMED／11 並保護整座。Controller 普通右鍵開關門；雙手空手蹲下右鍵停用／啟用，停用輸出 0 但保留 UUID 與保護。停用後 Creative 左鍵 Controller，成功移除才解除 Registry／全部相交 chunk 索引與保護；其餘方塊不自動刪除。舊 schema1 記錄保留，不推測性刪除或自動解鎖；不改基岩強度，也不新增第四種艙體方塊。
+新建艙體未供電時不註冊；有效空艙即使開門，也能先由外部供電取得 UUID 與保護。進艙、關門並補齊全員 QuantumState 後，持續高電位會自動進入 `ARMED`，不用再按一次拉桿。Controller 普通右鍵開關門；雙手空手蹲下右鍵切換管理用 `Enabled`，它與供電分開。斷電確認安全返還後才進入 `OFF`、輸出 0 並解除原艙保護，但 UUID 與碰撞占位保留；重新供電沿用 UUID。只有 `OFF` 的 Controller 真正成功移除後，才清除紀錄及全部索引，外殼不自動刪除；`Enabled=true` 也可在 OFF 拆除。schema1 可讀為保守的 `UNKNOWN`，schema2 保存獨立供電狀態。
+
+M1.2 的 session adapter 仍明確回傳 `NONE`／`ARMED_ONLY`，不消耗藥水效果、不傳送。M2 尚未實作；沒有 Universe、corridor、動態 Dimension、真正 Session、自訂 packet 或 renderer。獨立與整體評審、GPU／主副手火把／日夜與 shader、完整單人及多人玩法仍有待驗項目，尚未合併 main。自動測試與歷史 client runtime 不代表本版 GUI 驗收；啟動腳本測試在 Linux CI 明確 skip。
 
 量子艙門現為紫色面板，腔室控制器現為青色識別板與正面核心；兩者保留基岩底層／外框，使用一般模型與原生材質，不新增 renderer 或光源。方塊 ID 不變，既有艙體不需拆掉重建。
 
@@ -43,6 +45,8 @@ Windows PowerShell：
 
 `runClient` 使用隔離的 `run/client-base` 開發目錄；`runServer` 使用隔離的 `run/server` 目錄。首次 dedicated server 啟動會要求操作者在 `run/server/eula.txt` 明確接受 Minecraft EULA；在接受前不應啟動伺服器世界。
 
+選用手持火把動態照明可執行 `start-client.bat light`，使用獨立的 `run/client-light` 與固定版本、SHA512 核對的 LambDynamicLights。預設 client-base、server、GameTest 與 release JAR 不安裝或內嵌它。不同 profile 不共用存檔；需要搬移時請先退出遊戲、自行備份再複製，腳本不會自動搬移玩家世界。實際光影與 shader 相容性仍待人工驗證。
+
 `runGameTest` 使用 `run/gametest`，報告位於 `build/gametest-results.xml`；它是本機 integration 驗證，現有 CI 的 `clean build` 不會自動執行 GameTests。M1 gameplay 的重現步驟、已驗證項目與人工待驗清單見下方實作紀錄。
 
 ## 設計與執行紀錄
@@ -57,6 +61,8 @@ Windows PowerShell：
 - [M1.1 核准契約](docs/implementation-notes/m1.1-contract.md)
 - [M1.1 紅石提交與 Origin 維護計畫](docs/plans/2026-09-17-m1.1-origin-maintenance.md)
 - [M1.1 實作、基線限制與驗證紀錄](docs/implementation-notes/m1.1-origin-maintenance.md)
+- [M1.2 供電原艙計畫](docs/plans/2026-09-17-m1.2-powered-origin.md)
+- [M1.2 自動證據、重啟與人工待驗](docs/implementation-notes/m1.2-powered-origin.md)
 
 ## 授權
 
