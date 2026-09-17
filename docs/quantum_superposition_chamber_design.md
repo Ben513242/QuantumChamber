@@ -3,7 +3,11 @@
 > Status: Living design document  
 > Target: Minecraft Java Edition  
 > Document stage: 持續維護的玩法／架構規格；M1 基礎實作與驗收中<br>
-> Revision: 0.10 — 核准 M1.1 成功紅石邊緣才註冊／保護，以及 Origin 停用與 Creative 拆除；保留 M3 foreign-world live 驗收邊界
+> Revision: 0.11 — 核准單人先供電、後進艙啟動，以及斷電返還後解除原艙保護；技術規格待審閱，尚未實作
+>
+> **2026-09-17 玩法修訂：** 有效艙體外部供電即註冊並保護；供電期間可開門進入，關門且全員 QuantumState 後自動啟動，不要求第二個 rising edge。斷電先安全送回原始艙體、結束走廊，再解除原艙保護；其他宇宙的投影不可藉此拆除。另納入手持火把照明需求。
+>
+> 本修訂取代下文舊 rising-edge 啟動／斷電不解鎖的目標規則；M1.1 記錄保留為歷史與目前程式現況，不能當作新版已完成的證據。詳見 [M1.2 供電與保護規格](superpowers/specs/2026-09-17-m1.2-powered-origin-design.md) 與 [M2 走廊及返還規格](superpowers/specs/2026-09-17-m2-powered-corridor-design.md)。兩份文件的技術細節與可選照明模組待使用者審閱；M3 的任意 foreign／runtime-created world live gate 仍保留。
 >
 > **Code-agent handoff:** Read the entire specification, then follow **Section 32 — Code Agent Execution Contract**. Begin with M0 and do not jump directly to dynamic Universes. M3 and M7 contain explicit research/design gates and must not be guessed through.
 
