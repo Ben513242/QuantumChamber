@@ -10,8 +10,10 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.UUID;
 import net.minecraft.network.ClientConnection;
 import net.minecraft.network.NetworkSide;
+import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.server.network.ConnectedClientData;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
+import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.PistonBlock;
 import net.minecraft.block.ComparatorBlock;
@@ -28,6 +30,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -36,6 +39,269 @@ import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 
 public final class M1ChamberGameTests implements FabricGameTest {
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void own_registered_maintenance_callback_does_not_force_distant_unloaded_chunk(TestContext context) {
+        var player = participant(context, false);
+        var world = context.getWorld();
+        var distant = new BlockPos(1_000_000, world.getBottomY() + 10, 1_000_000);
+        context.assertTrue(!world.isChunkLoaded(distant), "遠距離目標 chunk 起初未載入");
+        context.assertTrue(!player.canInteractWithBlockAt(distant, 1.0), "遠距離目標確實超出原生 reach");
+        // 只測真實已註冊的模組 callback；Fabric router 基線會自行查詢遠端方塊，這不是原生端到端 noForce 證據。
+        var eventResult = maintenanceCallback().interact(player, world, Hand.MAIN_HAND, distant, Direction.NORTH);
+        context.assertEquals(ActionResult.PASS, eventResult, "遠距離 callback 回 PASS");
+        context.assertTrue(!world.isChunkLoaded(distant), "模組 callback 本身不得強載 chunk");
+        finish(context, player);
+    }
+
+    private static AttackBlockCallback maintenanceCallback() {
+        try {
+            var field = AttackBlockCallback.EVENT.getClass().getDeclaredField("handlers");
+            field.setAccessible(true);
+            for (var handler : (AttackBlockCallback[]) field.get(AttackBlockCallback.EVENT)) {
+                if (handler.getClass().getNestHost() == ChamberMaintenanceInteraction.class) return handler;
+            }
+            throw new AssertionError("Origin 維護 callback 尚未註冊");
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("無法讀取真實事件監聽器", exception);
+        }
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_empty_hands_sneaking_disables_without_shell_and_offhand_does_not_toggle_twice(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        context.assertTrue(attempt(context).accepted(), "維護 fixture 已註冊");
+        var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
+        var controller = ChamberGameTestBuilder.controller(context);
+        var uuid = controller.chamberUuid();
+        ChamberProtectionService.get().authorizedMutation(() -> context.getWorld().removeBlock(frame.controllerPos().west(3), false));
+        player.setSneaking(true);
+        context.assertTrue(nativeUse(context, frame, player, Hand.MAIN_HAND).isAccepted(), "破損 shell 仍可停用");
+        context.assertTrue(!registry.records().get(uuid).enabled(), "雙空手蹲下切換為停用");
+        state(context, ChamberState.INVALID, 0);
+        nativeUse(context, frame, player, Hand.OFF_HAND);
+        context.assertTrue(!registry.records().get(uuid).enabled(), "off-hand 不重複切換");
+        context.assertTrue(!context.getWorld().setBlockState(frame.controllerPos().add(0, -4, 3), Blocks.STONE.getDefaultState()), "停用仍保護 volume");
+        finish(context, player);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_sneaking_item_placement_and_spectator_preserve_enabled(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        attempt(context);
+        var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
+        var uuid = ChamberGameTestBuilder.controller(context).chamberUuid();
+        player.setSneaking(true);
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.LEVER));
+        context.assertTrue(nativeUse(context, frame, player, Hand.MAIN_HAND).isAccepted(), "持物蹲下走原生放置");
+        context.assertTrue(context.getWorld().getBlockState(frame.controllerPos().north()).isOf(Blocks.LEVER), "拉桿實際放置");
+        context.assertTrue(registry.records().get(uuid).enabled(), "持物不切換 enabled");
+        player.setStackInHand(Hand.MAIN_HAND, ItemStack.EMPTY);
+        player.setStackInHand(Hand.OFF_HAND, new ItemStack(Items.COMPARATOR));
+        nativeUse(context, frame, player, Hand.MAIN_HAND);
+        context.assertTrue(registry.records().get(uuid).enabled(), "副手持物不切換");
+        player.setStackInHand(Hand.OFF_HAND, ItemStack.EMPTY);
+        player.changeGameMode(GameMode.SPECTATOR);
+        nativeUse(context, frame, player, Hand.MAIN_HAND);
+        context.assertTrue(registry.records().get(uuid).enabled(), "旁觀者不得維護");
+        finish(context, player);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_reenable_held_high_previews_without_arming_and_disabled_door_still_works(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        attempt(context);
+        player.setSneaking(true);
+        nativeUse(context, frame, player, Hand.MAIN_HAND);
+        state(context, ChamberState.INVALID, 0);
+        player.setSneaking(false);
+        context.assertTrue(nativeUse(context, frame, player, Hand.MAIN_HAND).isAccepted(), "停用仍可開門");
+        assertDoors(context, frame, true);
+        nativeUse(context, frame, player, Hand.MAIN_HAND);
+        assertDoors(context, frame, false);
+        context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+        state(context, ChamberState.INVALID, 0);
+        player.setSneaking(true);
+        nativeUse(context, frame, player, Hand.MAIN_HAND);
+        state(context, ChamberState.READY, 7);
+        var controller = ChamberGameTestBuilder.controller(context);
+        context.assertTrue(controller.wasPowered() && controller.powerInitialized(), "重新啟用同步實際高電位");
+        context.getWorld().updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
+        state(context, ChamberState.READY, 7);
+        finish(context, player);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_creative_attack_dismantles_only_disabled_origin_and_releases_volume(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        attempt(context);
+        var controller = ChamberGameTestBuilder.controller(context);
+        var uuid = controller.chamberUuid();
+        var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
+        moveToController(player, frame);
+        nativeAttack(context, frame, player);
+        context.assertTrue(context.getWorld().getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER), "啟用中不能左鍵拆除");
+        player.setSneaking(true);
+        nativeUse(context, frame, player, Hand.MAIN_HAND);
+        context.assertTrue(!registry.records().get(uuid).enabled(), "拆除前先停用");
+        nativeAttack(context, frame, player);
+        context.assertTrue(context.getWorld().getBlockState(frame.controllerPos()).isAir(), "Controller 真正移除為 air");
+        context.assertTrue(controller.isRemoved(), "原 BE 已 removed");
+        context.assertTrue(!registry.records().containsKey(uuid), "成功後移除 record");
+        var bounds = ChamberGeometry.bounds(frame);
+        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) {
+            context.assertTrue(registry.findAt(DimensionRole.OVERWORLD, new BlockPos(x, bounds.getMinY(), z)).isEmpty(), "全部 bounds 無 ghost 保護");
+        }
+        context.assertTrue(context.getWorld().setBlockState(frame.controllerPos().add(0, -4, 3), Blocks.STONE.getDefaultState()), "普通 volume 修改恢復");
+        context.assertTrue(context.getWorld().getBlockState(frame.controllerPos().west(3)).isOf(Blocks.BEDROCK), "不自動拆其他 shell");
+        context.getWorld().removeBlock(frame.controllerPos().add(0, -4, 3), false);
+        context.getWorld().setBlockState(frame.controllerPos(), ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
+                .with(ChamberControllerBlock.FACING, frame.outwardFacing()));
+        var interior = context.getAbsolutePos(new BlockPos(7, 2, 7));
+        player.refreshPositionAndAngles(interior.getX() + 0.5, interior.getY(), interior.getZ() + 0.5, 0, 0);
+        assertDraft(context, frame);
+        context.waitAndRun(25, () -> {
+            assertDraft(context, frame);
+            context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+            state(context, ChamberState.ARMED, 11);
+            context.assertTrue(!ChamberGameTestBuilder.controller(context).chamberUuid().equals(uuid), "同位置重建需新 edge 與新 UUID");
+            finish(context, player);
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_attack_rejects_survival_projection_mismatch_and_distant_player(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        attempt(context);
+        var controller = ChamberGameTestBuilder.controller(context);
+        var uuid = controller.chamberUuid();
+        var registry = ChamberRegistryState.get(context.getWorld().getServer()).registry();
+        new ChamberLifecycleService(registry).setEnabled(uuid, false);
+        moveToController(player, frame);
+        player.changeGameMode(GameMode.SURVIVAL);
+        nativeAttack(context, frame, player);
+        assertOriginRemains(context, frame, uuid);
+        player.changeGameMode(GameMode.CREATIVE);
+        controller.setInstanceKind(ChamberInstanceKind.PROJECTION);
+        nativeAttack(context, frame, player);
+        assertOriginRemains(context, frame, uuid);
+        controller.setInstanceKind(ChamberInstanceKind.ORIGIN);
+        controller.setChamberUuid(UUID.randomUUID());
+        nativeAttack(context, frame, player);
+        assertOriginRemains(context, frame, uuid);
+        controller.setChamberUuid(uuid);
+        player.refreshPositionAndAngles(frame.controllerPos().getX() + 100, frame.controllerPos().getY(), frame.controllerPos().getZ(), 0, 0);
+        nativeAttack(context, frame, player);
+        assertOriginRemains(context, frame, uuid);
+        finish(context, player);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void maintenance_adapter_rejects_wrong_be_world_facing_removed_uuid_and_projection(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        attempt(context);
+        var world = context.getWorld();
+        var controller = ChamberGameTestBuilder.controller(context);
+        var uuid = controller.chamberUuid();
+        var registry = ChamberRegistryState.get(world.getServer()).registry();
+        var original = registry.records().get(uuid);
+        var nether = world.getServer().getWorld(World.NETHER);
+        context.assertTrue(!ChamberMaintenanceInteraction.toggleEnabled(nether, frame.controllerPos(), player).isAccepted(), "錯誤世界拒絕");
+        controller.setWorld(nether);
+        context.assertTrue(!ChamberMaintenanceInteraction.toggleEnabled(world, frame.controllerPos(), player).isAccepted(), "BE world 身分錯誤拒絕");
+        controller.setWorld(world);
+        var cached = controller.getCachedState();
+        controller.setCachedState(cached.with(ChamberControllerBlock.FACING, Direction.SOUTH));
+        context.assertTrue(!ChamberMaintenanceInteraction.toggleEnabled(world, frame.controllerPos(), player).isAccepted(), "BE cached facing 錯誤拒絕");
+        controller.setCachedState(cached);
+        controller.markRemoved();
+        context.assertTrue(!ChamberMaintenanceInteraction.toggleEnabled(world, frame.controllerPos(), player).isAccepted(), "removed BE 拒絕");
+        controller.cancelRemoval();
+        controller.setChamberUuid(null);
+        context.assertTrue(!ChamberMaintenanceInteraction.toggleEnabled(world, frame.controllerPos(), player).isAccepted(), "已註冊位置缺 UUID 拒絕");
+        controller.setChamberUuid(uuid);
+        controller.setInstanceKind(ChamberInstanceKind.PROJECTION);
+        context.assertTrue(!ChamberMaintenanceInteraction.toggleEnabled(world, frame.controllerPos(), player).isAccepted(), "Projection 維護拒絕");
+        controller.setInstanceKind(ChamberInstanceKind.ORIGIN);
+        context.assertEquals(original, registry.records().get(uuid), "所有拒絕保留原紀錄");
+        context.assertTrue(!world.removeBlock(frame.controllerPos(), false), "所有拒絕保留保護");
+        finish(context, player);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void exact_target_scope_rejects_other_cell_and_world_restores_nested_scope_and_throw(TestContext context) {
+        var frame = build(context, false);
+        registerEligibleFixture(context);
+        var protection = ChamberProtectionService.get();
+        var world = context.getWorld();
+        var target = frame.controllerPos();
+        var other = target.add(0, -4, 3);
+        var nether = world.getServer().getWorld(World.NETHER);
+        ChamberRegistryState.get(world.getServer()).registry().registerOrigin(World.NETHER.getValue(), DimensionRole.NETHER, frame);
+        protection.authorizedMutation(world, target, () -> {
+            context.assertTrue(!world.setBlockState(other, Blocks.STONE.getDefaultState()), "target scope 不授權另一格");
+            context.assertTrue(!protection.mayMutate(nether, target), "不同 world identity 不授權");
+            protection.authorizedMutation(world, other, () -> {
+                context.assertTrue(protection.mayMutate(world, other), "巢狀目標可寫入");
+                context.assertTrue(!protection.mayMutate(world, target), "內層取代外層 scope");
+                return true;
+            });
+            context.assertTrue(protection.mayMutate(world, target), "內層結束恢復外層 scope");
+            context.assertTrue(!protection.mayMutate(world, other), "外層不洩漏內層授權");
+            try {
+                protection.authorizedMutation(world, other, () -> { throw new IllegalStateException("巢狀預期例外"); });
+            } catch (IllegalStateException expected) { }
+            context.assertTrue(protection.mayMutate(world, target), "巢狀 throw 後恢復外層 target");
+            context.assertTrue(!protection.mayMutate(world, other), "巢狀 throw 不洩漏授權");
+            return true;
+        });
+        try {
+            protection.authorizedMutation(world, target, () -> { throw new IllegalStateException("預期例外"); });
+        } catch (IllegalStateException expected) { }
+        context.assertTrue(!world.removeBlock(target, false), "throw 後一般移除仍受保護");
+        context.assertTrue(protection.authorizedMutation(world, target, () -> world.removeBlock(target, false)), "精確授權可移除目標 C");
+        context.complete();
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty")
+    public void native_draft_maintenance_does_not_register_and_creative_break_remains_vanilla(TestContext context) {
+        var frame = build(context, false);
+        var player = participant(context, true);
+        player.setSneaking(true);
+        nativeUse(context, frame, player, Hand.MAIN_HAND);
+        assertDraft(context, frame);
+        moveToController(player, frame);
+        nativeAttack(context, frame, player);
+        context.assertTrue(context.getWorld().getBlockState(frame.controllerPos()).isAir(), "未註冊草稿保留原生 Creative 破壞");
+        finish(context, player);
+    }
+
+    private static ActionResult nativeUse(TestContext context, ChamberFrame frame, ServerPlayerEntity player, Hand hand) {
+        var pos = frame.controllerPos();
+        return player.interactionManager.interactBlock(player, context.getWorld(), player.getStackInHand(hand), hand,
+                new BlockHitResult(Vec3d.ofCenter(pos), Direction.NORTH, pos, false));
+    }
+
+    private static void nativeAttack(TestContext context, ChamberFrame frame, ServerPlayerEntity player) {
+        player.interactionManager.processBlockBreakingAction(frame.controllerPos(),
+                PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, Direction.NORTH, context.getWorld().getTopY(), 0);
+    }
+
+    private static void moveToController(ServerPlayerEntity player, ChamberFrame frame) {
+        var pos = frame.controllerPos();
+        player.refreshPositionAndAngles(pos.getX() + 0.5, pos.getY() - 1, pos.getZ() - 2, 0, 0);
+    }
+
+    private static void assertOriginRemains(TestContext context, ChamberFrame frame, UUID uuid) {
+        context.assertTrue(context.getWorld().getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER), "拒絕不得移除 Controller");
+        context.assertTrue(ChamberRegistryState.get(context.getWorld().getServer()).registry().records().containsKey(uuid), "拒絕保留 record");
+    }
+
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void draft_refresh_and_doors_do_not_register_until_native_lever_edge(TestContext context) {
         var frame = build(context, false);

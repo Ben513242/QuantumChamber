@@ -1,6 +1,7 @@
 package dev.quantumchamber;
 
 import dev.quantumchamber.chamber.ChamberProtectionService;
+import dev.quantumchamber.chamber.ChamberMaintenanceInteraction;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberControllerLoadSyncQueue;
 import dev.quantumchamber.compat.CompatibilityManager;
@@ -28,6 +29,7 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ModPotions.register();
         ModPotions.registerBrewingRecipe();
         ChamberProtectionService.initialize();
+        ChamberMaintenanceInteraction.initialize();
         ChamberControllerLoadSyncQueue.initialize();
         ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.register((blockEntity, world) -> {
             if (blockEntity instanceof ChamberControllerBlockEntity controller) {

@@ -13,6 +13,7 @@ public final class ChamberProtectionService {
     private static final ChamberProtectionService INSTANCE = new ChamberProtectionService();
 
     private final ThreadLocal<Integer> authorizationDepth = ThreadLocal.withInitial(() -> 0);
+    private final ThreadLocal<TargetAuthorization> targetAuthorization = new ThreadLocal<>();
     private MinecraftServer attachedServer;
     private ChamberRegistry attachedRegistry;
 
@@ -29,7 +30,9 @@ public final class ChamberProtectionService {
     public boolean mayMutate(ServerWorld world, BlockPos pos) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(pos, "pos");
-        if (isAuthorized() || world.getServer() != attachedServer) {
+        TargetAuthorization target = targetAuthorization.get();
+        if (isAuthorized() || (target != null && target.world() == world && target.pos().equals(pos))
+                || world.getServer() != attachedServer) {
             return true;
         }
         return DimensionRole.fromVanillaKey(world.getRegistryKey())
@@ -56,6 +59,20 @@ public final class ChamberProtectionService {
             } else {
                 authorizationDepth.set(previousDepth);
             }
+        }
+    }
+
+    public <T> T authorizedMutation(ServerWorld world, BlockPos target, Supplier<T> action) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(action, "action");
+        TargetAuthorization previous = targetAuthorization.get();
+        targetAuthorization.set(new TargetAuthorization(world, target.toImmutable()));
+        try {
+            return action.get();
+        } finally {
+            if (previous == null) targetAuthorization.remove();
+            else targetAuthorization.set(previous);
         }
     }
 
@@ -87,4 +104,6 @@ public final class ChamberProtectionService {
     private boolean isAuthorized() {
         return authorizationDepth.get() > 0;
     }
+
+    private record TargetAuthorization(ServerWorld world, BlockPos pos) { }
 }

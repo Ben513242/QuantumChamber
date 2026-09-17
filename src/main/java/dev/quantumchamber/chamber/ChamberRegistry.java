@@ -95,6 +95,15 @@ public final class ChamberRegistry {
         projectionIndex.add(record.originDimensionRole(), record.chamberUuid(), bounds(record));
     }
 
+    boolean removeOrigin(UUID chamberUuid) {
+        ChamberRecord record = records.get(chamberUuid);
+        if (record == null || record.instanceKind() != ChamberInstanceKind.ORIGIN || record.destroyed()) return false;
+        records.remove(chamberUuid);
+        projectionIndex.remove(record.originDimensionRole(), chamberUuid, bounds(record));
+        changed.run();
+        return true;
+    }
+
     private static BlockBox bounds(ChamberRecord record) {
         return ChamberGeometry.bounds(new ChamberFrame(record.anchorPos(), record.facing()));
     }
