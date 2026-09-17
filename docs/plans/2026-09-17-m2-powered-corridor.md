@@ -239,7 +239,7 @@ public void commitInitial(UUID sessionUuid, Set<UUID> cohort);
 - Bootstrap：Main initializer明確呼叫 `public static void SessionSpaceProtection.initialize()`，一次註冊known-space guard/lifecycle與PageManager tick；SERVER_STARTED在journal healthy後attach真固定world並保護所有未釋放leases，STOPPED清refs。Task3 session manager不重複註冊PageManager tick，4096是全域建造/退休/overlay/入口門的共同budget。
 - Geometry-only GT使用真Player但trusted recovery orchestration：reserveInitial→建立合法非空cohort/完整lease的ARMING,true並checkedflush→prepare typed token；無journal/只有put/錯bounds/RETURNING皆零writes。ready只sealed replica、epoch0；正向commit測例由trusted orchestration真移動/核對/效果與playercheckpoint→durableSUPERPOSITION,false→commitInitial，不冒充native lever-qualified入場。ConnectedGameTestPlayer此任務產出，後續Task3/4用同一helper；結尾有valid journal者需RETURNING/安全retire，不能直接release。
 
-- [ ] **Step 1: 數學RED，手算字面fixture。** from(-1)page=-1/local95、from(96)page1/local0；occupied={0,1000000}不生成中間gap；near positions95.5/96.5距離保持1且DoorKey across remap不變。
+- [x] **Step 1: 數學RED，手算字面fixture。** from(-1)page=-1/local95、from(96)page1/local0；occupied={0,1000000}不生成中間gap；near positions95.5/96.5距離保持1且DoorKey across remap不變。
 
 ```java
 LogicalAddress negative = LogicalAddress.from(-1);
@@ -253,10 +253,10 @@ assertEquals(-672, parts.get(0).aliasStartBlock());
 assertEquals(768, parts.get(0).aliasEndBlock());
 assertEquals(999_999, parts.get(1).firstCorePage());
 ```
-- [ ] **Step 2: 聚焦RED，建立entity/page pin與AABB collision案例。** 不用同一builder算expected、不測mock本身。
-- [ ] **Step 3: 最小配置／geometry。** 5×5 interior、7×7外框、8格左右門站、576apron；近interval合併、遠分量獨立，映射epoch更新整群，不單獨讓近玩家跳到另一slot。source orientation全四方向，完整bounds驗證。每tick4096寫入預算，頁準備前保留舊映射與pin；沒有玩家／items／projectiles／操作租約才回收。入口ChamberGeometry只用0..6，走廊另建座標helper。
-- [ ] **Step 4: 原生GREEN。** replica shell與門／CBE kind正確，known固定world普通setBlock被擋、authorized geometry可寫；跨頁碰撞地板／apron、遠玩家布局與slot資源界限。loop native服務尚不傳送玩家，視覺無終點人工待驗。
-- [ ] **Step 5: 自評與提交。** `feat: build bounded paged corridor spaces with guarded replicas`；報告實際bounds／budget與geometry完成時間。
+- [x] **Step 2: 聚焦RED，建立entity/page pin與AABB collision案例。** 不用同一builder算expected、不測mock本身。
+- [x] **Step 3: 最小配置／geometry。** 5×5 interior、7×7外框、8格左右門站、576apron；近interval合併、遠分量獨立，映射epoch更新整群，不單獨讓近玩家跳到另一slot。source orientation全四方向，完整bounds驗證。每tick4096寫入預算，頁準備前保留舊映射與pin；沒有玩家／items／projectiles／操作租約才回收。入口ChamberGeometry只用0..6，走廊另建座標helper。
+- [x] **Step 4: 原生GREEN。** replica shell與門／CBE kind正確，known固定world普通setBlock被擋、authorized geometry可寫；跨頁碰撞地板／apron、遠玩家布局與slot資源界限。loop native服務尚不傳送玩家，視覺無終點人工待驗。
+- [x] **Step 5: 自評與提交。** `feat: build bounded paged corridor spaces with guarded replicas`；報告實際bounds／budget與geometry完成時間。實作`b7490e7`／R1`c7a0e96`，原完整153 declared JUnit（152實跑／1平台略過）＋73 GT；R1 covering27 JUnit＋75 GT、成品與四world啟停均核對，scoped review I1結案。尚未紅石entry／完整返還backend，不宣告整M2完成。
 
 ### Task 3: 全員入場、效果交易與M1.2 gateway整合
 
