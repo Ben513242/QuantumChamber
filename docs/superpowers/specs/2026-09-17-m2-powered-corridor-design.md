@@ -108,6 +108,8 @@
 
 ## 6.1 已核准原生checkpoint修訂
 
+同session UUID的durable進度更新不得增減凍結cohort或改不可變來源快照（position／velocity／yaw／pitch／完整QuantumState NBT）；returned進度可更新，列表順序不具權威性。寫入前須同時核對current與上一份flushed名單，拒絕不得改records／dirty／flushed；租約破壞性清理／移除／完成收據前再核對runtime凍結來源。不能讓短名單先落盤，再靠記憶體拒絕掩蓋重啟後遺失離線玩家的缺口。
+
 使用者同意重用Minecraft既有JNA。原生save後同一opened原生HANDLE讀回完整NBT、FlushFileBuffers、File ID/正式path probe與普通ancestor鎖鏈/reparse拒絕，取代FileChannel字面契約；不重寫player.dat、不加依賴/NativeDLL/moduleopens/系統權限。未知provider/平台不能證明identity即IOException/fail closed，Windows NTFS當前必驗；其他平台不以path-key ABA假說充當fd identity。保持checkpoint成功才returned/journalflush、pending仍保護，不跨檔原子/整機斷電claim。
 
 平台測試必須保留 Ubuntu 基礎建置與受控拒絕契約，另有 Windows 原生正向 gate，不能只略過原生案例便宣稱通過。Windows 必要 native suites 應實際執行且零略過；其他平台的拒絕、OS 條件略過與人工／GPU驗證分列。隔離 JVM 的 os.name 路由探測不等於真正 Linux runtime，尚未執行的遠端 CI 不聲稱已綠。

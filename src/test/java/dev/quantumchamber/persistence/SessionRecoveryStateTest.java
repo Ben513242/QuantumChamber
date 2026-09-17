@@ -13,6 +13,66 @@ class SessionRecoveryStateTest {
     @TempDir Path directory;
     @BeforeAll static void initializeNativeVersion() { net.minecraft.SharedConstants.createGameVersion(); }
 
+    @Test void currentSourceCannotChangeBeforeFirstFlush() {
+        var original=SessionRecoveryState.fromNbt(fixture("ARMING",true)).records().values().iterator().next();
+        var state=new SessionRecoveryState(); state.put(original);
+        var person=original.participants().getFirst();
+        var changed=new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition().add(1,0,0),person.sourceVelocity(),
+                person.yaw(),person.pitch(),person.quantumStateSnapshot(),false);
+        assertThrows(IllegalArgumentException.class,() -> state.put(withPeople(original,java.util.List.of(changed))));
+        assertEquals(original,state.records().get(original.sessionUuid()));
+        assertTrue(state.isDirty()); assertTrue(state.flushedRecords().isEmpty());
+    }
+
+    @Test void flushedSourceCannotBeBypassedByRemovingCurrentRecord() {
+        var state=SessionRecoveryState.fromNbt(fixture("RETURNING",false));
+        var original=state.records().values().iterator().next();
+        var person=original.participants().getFirst();
+        var snapshot=person.quantumStateSnapshot(); snapshot.getCompound("hidden_effect").putInt("duration",2001);
+        var changed=new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),
+                person.yaw(),person.pitch(),snapshot,true);
+        state.remove(original.sessionUuid());
+        assertThrows(IllegalArgumentException.class,() -> state.put(withPeople(original,java.util.List.of(changed))));
+        assertTrue(state.records().isEmpty()); assertTrue(state.isDirty());
+        assertEquals(original,state.flushedRecords().get(original.sessionUuid()));
+    }
+
+    @Test void sameSidCannotShrinkGrowOrReplaceFrozenUuids() {
+        var input=fixture("RETURNING",false);
+        var second=participant(input).copy(); second.putUuid("PlayerUuid",UUID.fromString("00000000-0000-0000-0000-000000000004"));
+        record(input).getList("Participants",10).add(second);
+        var state=SessionRecoveryState.fromNbt(input); var original=state.records().values().iterator().next();
+        var first=original.participants().getFirst();
+        var third=new SessionRecoveryRecord.Participant(UUID.fromString("00000000-0000-0000-0000-000000000005"),first.sourcePosition(),first.sourceVelocity(),
+                first.yaw(),first.pitch(),first.quantumStateSnapshot(),true);
+        for(var people : java.util.List.of(java.util.List.of(first),java.util.List.of(first,third),
+                java.util.List.of(first,original.participants().getLast(),third))) {
+            assertThrows(IllegalArgumentException.class,() -> state.put(withPeople(original,people)));
+            assertEquals(original,state.records().get(original.sessionUuid()));
+            assertEquals(original,state.flushedRecords().get(original.sessionUuid())); assertFalse(state.isDirty());
+        }
+    }
+
+    @Test void returnedOnlyUpdatesCanReorderAndPersistCompleteSources() throws Exception {
+        var input=fixture("RETURNING",false);
+        var second=participant(input).copy(); second.putUuid("PlayerUuid",UUID.fromString("00000000-0000-0000-0000-000000000004"));
+        record(input).getList("Participants",10).add(second);
+        var state=SessionRecoveryState.fromNbt(input); var original=state.records().values().iterator().next();
+        var reordered=new java.util.ArrayList<SessionRecoveryRecord.Participant>();
+        for(var person : original.participants().reversed()) reordered.add(new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),
+                person.yaw(),person.pitch(),person.quantumStateSnapshot(),true));
+        var progress=withPeople(original,reordered); state.put(progress);
+        assertEquals(original,state.flushedRecords().get(original.sessionUuid()));
+        var path=directory.resolve("returned-only.dat"); state.save(path.toFile(),null);
+        assertEquals(progress,SessionRecoveryState.load(path).records().get(original.sessionUuid()));
+        assertFalse(state.isDirty());
+    }
+
+    private static SessionRecoveryRecord withPeople(SessionRecoveryRecord original,java.util.List<SessionRecoveryRecord.Participant> people) {
+        return new SessionRecoveryRecord(original.sessionUuid(),original.chamberUuid(),original.origin(),people,original.spaceLeases(),
+                original.state(),original.restoreEntryEffectOnReturn());
+    }
+
     @Test void actualMissingJournalIsHealthyButCorruptionAndDirectoryAreUnhealthy() throws Exception {
         var absent = directory.resolve("missing.dat");
         SessionRecoveryState.load(absent).requireHealthy();

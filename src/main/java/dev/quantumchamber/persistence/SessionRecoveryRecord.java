@@ -65,6 +65,20 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         @Override public NbtCompound quantumStateSnapshot() { return quantumStateSnapshot.copy(); }
     }
 
+    /** 以 UUID 比較凍結來源；順序與 returned 進度不是來源快照的一部分。 */
+    public static boolean sameParticipantSources(List<Participant> expected, List<Participant> actual) {
+        if (expected.size()!=actual.size()) return false;
+        var sources=new java.util.HashMap<UUID,Participant>();
+        for (var person : expected) if (sources.put(person.playerUuid(),person)!=null) return false;
+        for (var person : actual) {
+            var source=sources.remove(person.playerUuid());
+            if (source==null || !source.sourcePosition().equals(person.sourcePosition()) || !source.sourceVelocity().equals(person.sourceVelocity())
+                    || Float.compare(source.yaw(),person.yaw())!=0 || Float.compare(source.pitch(),person.pitch())!=0
+                    || !source.quantumStateSnapshot().equals(person.quantumStateSnapshot())) return false;
+        }
+        return sources.isEmpty();
+    }
+
     public record SpaceLease(int slotId, BlockBox bounds) {
         public SpaceLease {
             if (slotId < 0) throw new IllegalArgumentException("slotId 不得為負數");

@@ -86,6 +86,13 @@ public final class SessionRecoveryState extends PersistentState {
     public void put(SessionRecoveryRecord record) {
         requireMutationThread();
         requireHealthy();
+        var current=records.get(record.sessionUuid());
+        var durable=flushed.get(record.sessionUuid());
+        // 同時保護尚未落盤與上一份落盤來源；remove 後重放不能繞過 durable 凍結名單。
+        if ((current!=null && !SessionRecoveryRecord.sameParticipantSources(current.participants(),record.participants()))
+                || (durable!=null && !SessionRecoveryRecord.sameParticipantSources(durable.participants(),record.participants()))) {
+            throw new IllegalArgumentException("同一 session 的凍結 cohort／來源快照不可改動");
+        }
         var candidate = new LinkedHashMap<>(records); candidate.put(record.sessionUuid(), record);
         validateOwnership(candidate);
         records.put(record.sessionUuid(), record); markDirty();

@@ -113,6 +113,8 @@ context.assertTrue(context.getWorld().getServer().getWorld(key) != null,
 
 ### Task 2: 邏輯頁、局部affine配置、replica及session保護
 
+**凍結cohort的持久防線：** 同SID的恢復進度更新須保持完整UUID名單與不可變source position／velocity／yaw／pitch／完整QuantumState snapshot；僅returned進度可更新，列表順序可不同。`SessionRecoveryState.put` 替換前同時核對current與上一份flushed權威，拒絕不改records／dirty／flushed；PageManager破壞性清理與完成收據前仍重驗凍結來源。窄共用等值helper不改schema／平台，不能只runtime拒絕而讓短名單已落盤後重啟遺失離線玩家。
+
 **已核准入口切邊契約（2026-09-18）：** 只有 alias 完整包含 replica 0..6 及前後連接格 −1／7、且連接格不在端 cap，才物化入口。端 cap 在 aliasStart／aliasEnd−1 時，精確條件為 `aliasStartBlock <= -2 && aliasEndBlock >= 9`。其餘建普通封端走廊、不排除 343 格；保存前後門 OPEN 意圖，回頭完整包含入口時重建。無 current 入口時 `entrance(UUID)` 明確拒絕；consumer 使用 typed mappings 與保存的來源 frame，不暗中 reserve。
 
 **原生 bootstrap 負向證據：** default-off testmod probe 只於明確 case／canonical owned fresh root，掛 `MinecraftServer.loadWorld` RETURN、健康 attach 前，以 CREATE_NEW 建立指定非法租約 journal。獨立 native main JVM 驗拒啟原因、normal tick=0、before／after journal hash 不變、票對稱清理；Java exit 0 不等於拒啟通過。既有 guard 補證據不是 retroactive RED；不得改既有玩家資料。

@@ -64,6 +64,8 @@ jobs:
           # 非 Windows 專屬拒絕案例在 Windows 合法略過，不套用全 XML 零 skipped。
           [xml]$gameTests = Get-Content -Raw 'build/gametest-results.xml'
           $requiredGameTests = @(
+            'trusted_offline_cohort_cannot_be_dropped_before_release_windows',
+            'trusted_return_source_snapshot_changes_are_rejected_windows',
             'trusted_entrance_alias_edge_preserves_open_intent_windows',
             'trusted_native_initial_and_whole_cohort_remap_windows',
             'trusted_publish_checkpoint_failure_preserves_false_windows',

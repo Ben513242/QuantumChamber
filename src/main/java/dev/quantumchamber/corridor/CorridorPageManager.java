@@ -459,6 +459,7 @@ public final class CorridorPageManager {
         journal.requireHealthy();
         var record=journal.flushedRecords().get(space.id);
         if (record==null || !record.origin().equals(space.origin) || !record.chamberUuid().equals(space.origin.chamberUuid())
+                || !SessionRecoveryRecord.sameParticipantSources(space.source,record.participants())
                 || !leasesEqual(record.spaceLeases(),space.leases.values())) throw new IllegalStateException("durable lease／來源權威不符");
         return record;
     }
@@ -523,13 +524,10 @@ public final class CorridorPageManager {
         return true;
     }
     private void tickRelease(Space space) {
-        SessionRecoveryRecord record;
-        if (space.finalizing!=null) record=space.finalizing;
-        else {
-            record=durable(space);
-            if (record.state()!=SessionState.RETURNING || record.participants().stream().anyMatch(person -> !person.returned())) return;
-            if (!journal.records().containsKey(space.id)) return;
-        }
+        // 即使前次 checked remove 失敗，重試也先重驗完整凍結來源與所有返還進度。
+        var record=durable(space);
+        if (record.state()!=SessionState.RETURNING || record.participants().stream().anyMatch(person -> !person.returned())) return;
+        if (space.finalizing==null && !journal.records().containsKey(space.id)) return;
         if (space.operations>0 || space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty())) return;
         for (var lease : space.leases.values()) {
             if (!clear(space,lease.slotId(),lease.bounds())) return;
@@ -559,8 +557,8 @@ public final class CorridorPageManager {
     private void tickRetirement(Space space,int slot) {
         var lease=space.leases.get(slot);
         if (lease==null || space.operations>0 || !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty()) return;
-        if (!clear(space,slot,lease.bounds())) return;
         var record=durable(space);
+        if (!clear(space,slot,lease.bounds())) return;
         var remaining=space.leases.values().stream().filter(other -> other.slotId()!=slot).toList();
         if (remaining.isEmpty()) throw new IllegalStateException("最後租約必須經 release 收尾");
         journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),remaining,

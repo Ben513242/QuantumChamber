@@ -41,6 +41,109 @@ import java.util.List;
 import java.util.Map;
 
 public final class M2CorridorGameTests implements FabricGameTest {
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_return_cohort", tickLimit = 100000)
+    public void trusted_offline_cohort_cannot_be_dropped_before_release_windows(TestContext context) {
+        if (!Platform.isWindows()) {
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生離線 cohort 收尾保護");
+            context.complete(); return;
+        }
+        var fixture=new TrustedSpace(context,Direction.NORTH,2); fixture.prepare();
+        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+            fixture.commit();
+            var server=context.getWorld().getServer();
+            var first=fixture.initial.participants().get(0); var absent=fixture.initial.participants().get(1);
+            var player=fixture.players.get(0).player(); var profile=fixture.players.get(1).player().getGameProfile();
+            move(context.getWorld(),player,new CorridorPageManager.PhysicalPose(first.sourcePosition(),first.sourceVelocity(),first.yaw(),first.pitch()));
+            saveCheckpoint(server,player); fixture.players.get(0).close(); fixture.players.get(1).close();
+            context.assertTrue(server.getPlayerManager().getPlayer(absent.playerUuid())==null && fixture.target.getEntity(absent.playerUuid())==null,
+                    "第二位真的離線且不再形成 live pin，不能只模擬 returned flag");
+            var returnedFirst=new SessionRecoveryRecord.Participant(first.playerUuid(),first.sourcePosition(),first.sourceVelocity(),first.yaw(),first.pitch(),
+                    first.quantumStateSnapshot(),true);
+            var full=new SessionRecoveryRecord(fixture.session,fixture.initial.chamberUuid(),fixture.initial.origin(),List.of(returnedFirst,absent),
+                    fixture.initial.spaceLeases(),SessionState.RETURNING,false);
+            fixture.state.put(full); fixture.state.flush(server); fixture.manager.release(fixture.session);
+            var before=journalBytes(server); var writes=DoorWriteFault.observeWrites(fixture.target);
+            boolean rejected=false;
+            try {
+                fixture.state.put(new SessionRecoveryRecord(full.sessionUuid(),full.chamberUuid(),full.origin(),List.of(returnedFirst),
+                        full.spaceLeases(),full.state(),full.restoreEntryEffectOnReturn()));
+            } catch(IllegalArgumentException expected) { rejected=true; }
+            fixture.state.flush(server);
+            final boolean refused=rejected;
+            context.runAtTick(tick+2,() -> {
+                try {
+                    context.assertEquals(0,writes.total(),"離線未返還者遭漏列時不得有任何真清理寫入");
+                    context.assertTrue(refused,"同 SID 不可用縮減 cohort 取代全員返還");
+                    context.assertTrue(java.util.Arrays.equals(before,journalBytes(server)),"拒絕後正式 durable journal bytes 不變，重啟仍有完整 A/B");
+                    context.assertEquals(full,fixture.state.flushedRecords().get(fixture.session),"完整來源 cohort 持續保存在 durable snapshot");
+                    context.assertTrue(!fixture.manager.releaseComplete(fixture.session),"離線未返還不得完成");
+                    var bounds=fixture.initial.spaceLeases().getFirst().bounds();
+                    context.assertTrue(!fixture.target.setBlockState(new BlockPos(bounds.getMinX(),bounds.getMinY(),bounds.getMinZ()),net.minecraft.block.Blocks.DIRT.getDefaultState()),
+                            "尚未返還的 lease guard 不得移除");
+                    var other=new TrustedSpace(context,Direction.NORTH,1);
+                    context.assertTrue(other.prepared.target().instances().getFirst().ref().slotId()!=fixture.initial.spaceLeases().getFirst().slotId(),
+                            "未返還 lease 不能被另一 reservation 重用");
+                    fixture.manager.retire(fixture.manager.cancelPrepared(other.prepared)); other.players.forEach(ConnectedGameTestPlayer::close);
+                } finally { writes.close(); }
+                // 以相同 UUID 真正重新登入，再由測試可信編排傳回來源與保存，才更新 returned。
+                var data=ConnectedClientData.createDefault(profile,false);
+                var rejoined=new ServerPlayerEntity(server,context.getWorld(),data.gameProfile(),data.syncedOptions());
+                var connection=new ClientConnection(NetworkSide.SERVERBOUND); var channel=new EmbeddedChannel(connection);
+                try {
+                    server.getPlayerManager().onPlayerConnect(connection,rejoined,data);
+                    context.assertEquals(absent.playerUuid(),rejoined.getUuid(),"重新登入保持離線玩家 UUID");
+                    context.assertTrue(rejoined.getServerWorld()==fixture.target,"重新載入仍在原先未返還的 Superposition");
+                    move(context.getWorld(),rejoined,new CorridorPageManager.PhysicalPose(absent.sourcePosition(),absent.sourceVelocity(),absent.yaw(),absent.pitch()));
+                    saveCheckpoint(server,rejoined);
+                    var returnedAbsent=new SessionRecoveryRecord.Participant(absent.playerUuid(),absent.sourcePosition(),absent.sourceVelocity(),absent.yaw(),absent.pitch(),
+                            absent.quantumStateSnapshot(),true);
+                    fixture.state.put(new SessionRecoveryRecord(full.sessionUuid(),full.chamberUuid(),full.origin(),List.of(returnedAbsent,returnedFirst),
+                            full.spaceLeases(),full.state(),full.restoreEntryEffectOnReturn())); fixture.state.flush(server);
+                } finally { server.getPlayerManager().remove(rejoined); channel.finishAndReleaseAll(); }
+                when(context,tick+3,() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
+            });
+        });
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_return_snapshot", tickLimit = 100000)
+    public void trusted_return_source_snapshot_changes_are_rejected_windows(TestContext context) {
+        if (!Platform.isWindows()) {
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生來源快照不變與返還重試");
+            context.complete(); return;
+        }
+        var fixture=new TrustedSpace(context,Direction.NORTH,1); fixture.prepare();
+        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+            fixture.commit(); fixture.returnTrusted();
+            var full=fixture.state.flushedRecords().get(fixture.session); var person=full.participants().getFirst();
+            var before=journalBytes(context.getWorld().getServer());
+            var changedNbt=person.quantumStateSnapshot(); changedNbt.putString("immutable-source-proof","changed");
+            var changed=List.of(
+                    new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition().add(1,0,0),person.sourceVelocity(),person.yaw(),person.pitch(),person.quantumStateSnapshot(),true),
+                    new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity().add(0,1,0),person.yaw(),person.pitch(),person.quantumStateSnapshot(),true),
+                    new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw()+1,person.pitch(),person.quantumStateSnapshot(),true),
+                    new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch()+1,person.quantumStateSnapshot(),true),
+                    new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch(),changedNbt,true));
+            int refused=0;
+            for(var candidate : changed) try {
+                fixture.state.put(new SessionRecoveryRecord(full.sessionUuid(),full.chamberUuid(),full.origin(),List.of(candidate),full.spaceLeases(),full.state(),false));
+            } catch(IllegalArgumentException expected) { refused++; }
+            context.assertEquals(5,refused,"同 UUID 的 position／velocity／yaw／pitch／完整 NBT 逐欄改動都必須拒絕");
+            context.assertTrue(!fixture.state.isDirty(),"被拒絕的 put 不可修改 dirty");
+            context.assertEquals(full,fixture.state.records().get(fixture.session),"被拒絕的 put 不可修改 current record");
+            fixture.state.flush(context.getWorld().getServer());
+            context.assertTrue(java.util.Arrays.equals(before,journalBytes(context.getWorld().getServer())),"來源快照拒絕後正式 bytes 不變");
+            when(context,tick+1,() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
+        });
+    }
+
+    private static byte[] journalBytes(net.minecraft.server.MinecraftServer server) {
+        try { return java.nio.file.Files.readAllBytes(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID+".dat")); }
+        catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
+    }
+    private static void saveCheckpoint(net.minecraft.server.MinecraftServer server,ServerPlayerEntity player) {
+        try { PlayerCheckpointStore.saveAndVerify(server,player,Optional.empty()); }
+        catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
+    }
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_entrance_edge", tickLimit = 100000)
     public void trusted_entrance_alias_edge_preserves_open_intent_windows(TestContext context) {
         if (!Platform.isWindows()) {
