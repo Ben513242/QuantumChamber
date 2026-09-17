@@ -5,7 +5,7 @@
   "name": "QuantumChamber M1 Game Tests",
   "environment": "server",
   "entrypoints": {
-    "main": ["dev.quantumchamber.gametest.M1LifecycleProbe"],
+    "main": ["dev.quantumchamber.gametest.M1LifecycleProbe", "dev.quantumchamber.gametest.M11PersistenceProbe"],
     "fabric-gametest": ["dev.quantumchamber.gametest.M1ChamberGameTests"]
   },
   "depends": { "quantumchamber": "*", "fabric-api": "*", "minecraft": "1.21" }
