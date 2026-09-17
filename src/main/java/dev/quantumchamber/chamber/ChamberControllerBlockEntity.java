@@ -17,6 +17,8 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
     private ChamberState state = ChamberState.INVALID;
     private boolean wasPowered;
     private boolean powerInitialized;
+    // 門交易無法完整復原時，持久化禁止新啟動；僅成功整面門交易解除。
+    private boolean activationBlocked;
     // 每次 runtime load 都重新標記；不能隨 NBT 跨載入保存。
     private boolean loadSyncPending;
 
@@ -82,6 +84,16 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         this.powerInitialized = powerInitialized;
     }
 
+    boolean activationBlocked() {
+        return activationBlocked;
+    }
+
+    void setActivationBlocked(boolean blocked) {
+        if (activationBlocked == blocked) return;
+        activationBlocked = blocked;
+        markDirty();
+    }
+
     @Override
     protected void readNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup registryLookup) {
         super.readNbt(nbt, registryLookup);
@@ -90,6 +102,7 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         state = enumValue(nbt.getString("ChamberState"), ChamberState.INVALID, "ChamberState");
         wasPowered = nbt.getBoolean("WasPowered");
         powerInitialized = nbt.getBoolean("PowerInitialized");
+        activationBlocked = nbt.getBoolean("ActivationBlocked");
     }
 
     @Override
@@ -100,6 +113,7 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         nbt.putString("ChamberState", state.name());
         nbt.putBoolean("WasPowered", wasPowered);
         nbt.putBoolean("PowerInitialized", powerInitialized);
+        nbt.putBoolean("ActivationBlocked", activationBlocked);
     }
 
     private static <E extends Enum<E>> E enumValue(String value, E fallback, String key) {

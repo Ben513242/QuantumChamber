@@ -87,6 +87,7 @@ public final class ChamberPowerCoordinator {
                 () -> loaded ? activation.evaluateReadiness(world, controller)
                         : new ArmAttemptResult(false, ChamberState.INVALID, List.of(), Set.of(ArmAttemptResult.Failure.INVALID_STRUCTURE)),
                 new SessionActions() {
+                    @Override public boolean activationBlocked() { return controller.activationBlocked(); }
                     @Override public ChamberSessionGateway.Presence presence() {
                         return gateway.presence(world.getServer(), controller.chamberUuid());
                     }
@@ -130,6 +131,7 @@ public final class ChamberPowerCoordinator {
             if (presence == ChamberSessionGateway.Presence.ACTIVE) return ChamberState.ARMED;
             var preview = readiness.get();
             if (!preview.accepted()) return preview.readiness();
+            if (sessions.activationBlocked()) return ChamberState.IDLE;
             if (current == ChamberState.ARMED) return current;
             return switch (Objects.requireNonNull(sessions.start(preview.participantUuids()), "start result")) {
                 case ARMED_ONLY, STARTED -> ChamberState.ARMED;
@@ -176,6 +178,7 @@ public final class ChamberPowerCoordinator {
     }
 
     interface SessionActions {
+        default boolean activationBlocked() { return false; }
         ChamberSessionGateway.Presence presence();
         ChamberSessionGateway.StartResult start(List<UUID> participants);
         boolean returnToOrigin();

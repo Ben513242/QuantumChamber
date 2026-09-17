@@ -70,7 +70,12 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
         var view = new WorldChamberBlockView(world);
         var frame = new ChamberFrame(pos, state.get(FACING));
         if (!new ChamberDetector().validate(view, frame).valid()) return ActionResult.FAIL;
-        if (WorldChamberDoorAdapter.toggle(serverWorld, view, frame) != WorldChamberDoorAdapter.Result.TOGGLED) return ActionResult.FAIL;
+        if (WorldChamberDoorAdapter.toggle(serverWorld, view, frame) != WorldChamberDoorAdapter.Result.TOGGLED) {
+            if (world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller && controller.activationBlocked()) {
+                player.sendMessage(Text.literal("艙門交易故障，已禁止新啟動；請完成一次成功開／關門以修復。斷電仍可安全返還。"), true);
+            }
+            return ActionResult.FAIL;
+        }
         if (world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller) {
             String message = !controller.wasPowered() ? "艙門已切換；目前未供電。"
                     : switch (controller.chamberState()) {

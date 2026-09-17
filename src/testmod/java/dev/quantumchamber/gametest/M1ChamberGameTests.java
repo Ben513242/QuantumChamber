@@ -39,6 +39,97 @@ import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
 
 public final class M1ChamberGameTests implements FabricGameTest {
+    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100)
+    public void native_failed_door_rollback_false_blocks_start_until_successful_repair(TestContext context) {
+        failedDoorRollback(context, false);
+    }
+
+    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100)
+    public void native_failed_door_rollback_throw_blocks_start_until_successful_repair(TestContext context) {
+        failedDoorRollback(context, true);
+    }
+
+    private static void failedDoorRollback(TestContext context, boolean throwing) {
+        var frame = build(context, true);
+        var world = context.getWorld();
+        var player = participant(context, true);
+        context.waitAndRun(2, () -> {
+            var saved = ChamberSessions.gateway();
+            int[] starts = {0};
+            int[] consumptions = {0};
+            int[] returns = {0};
+            try {
+                context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                var controller = ChamberGameTestBuilder.controller(context);
+                UUID uuid = controller.chamberUuid();
+                var faultGateway = new ChamberSessionGateway() {
+                    @Override public Presence presence(net.minecraft.server.MinecraftServer server, UUID requested) {
+                        return uuid.equals(requested) ? Presence.NONE : saved.presence(server, requested);
+                    }
+                    @Override public StartResult start(net.minecraft.server.world.ServerWorld origin,
+                                                       ChamberControllerBlockEntity requested, java.util.List<UUID> participants) {
+                        if (!uuid.equals(requested.chamberUuid())) return saved.start(origin, requested, participants);
+                        starts[0]++;
+                        if (player.hasStatusEffect(ModEffects.QUANTUM_STATE)) {
+                            player.removeStatusEffect(ModEffects.QUANTUM_STATE);
+                            consumptions[0]++;
+                        }
+                        return StartResult.ARMED_ONLY;
+                    }
+                    @Override public boolean returnToOrigin(net.minecraft.server.world.ServerWorld origin, ChamberControllerBlockEntity requested) {
+                        if (!uuid.equals(requested.chamberUuid())) return saved.returnToOrigin(origin, requested);
+                        returns[0]++;
+                        return true;
+                    }
+                };
+                ChamberSessions.install(faultGateway);
+                var result = DoorWriteFault.during(world, frame, throwing, () -> useController(context, frame, player));
+                context.assertTrue(!result.isAccepted(), "rollback 失敗原生互動必須拒絕");
+                assertDoors(context, frame, false);
+                context.assertEquals(0, starts[0], "失敗交易仍 sealed 不得啟動");
+                context.assertEquals(0, consumptions[0], "失敗交易不得消耗 buff");
+                for (int index = 0; index < 3; index++) world.updateNeighborsAlways(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK);
+                context.assertEquals(0, starts[0], "重複 neighbor 不得繞過故障");
+                var nbt = controller.createNbt(world.getRegistryManager());
+                world.removeBlockEntity(frame.controllerPos());
+                var restored = new ChamberControllerBlockEntity(frame.controllerPos(), controller.getCachedState());
+                restored.read(nbt, world.getRegistryManager());
+                world.addBlockEntity(restored);
+                ChamberSessions.install(saved);
+                context.waitAndRun(25, () -> {
+                    var previous = ChamberSessions.gateway();
+                    ChamberSessions.install(faultGateway);
+                    try {
+                        context.assertTrue(restored.chamberState() != ChamberState.ARMED, "真實 20 tick 刷新不得繞過故障");
+                        ChamberControllerBlock.refreshState(world, frame.controllerPos());
+                        context.assertEquals(0, starts[0], "重載及 20 tick 刷新仍不可啟動");
+                        context.assertEquals(0, consumptions[0], "重載及週期刷新不得消耗 buff");
+                        context.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE), "故障前效果仍存在");
+                        context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.AIR);
+                        context.assertTrue(returns[0] > 0, "門故障不得阻止安全返還");
+                        context.assertEquals(ChamberPowerState.OFF, ChamberRegistryState.get(world.getServer()).registry().records().get(uuid).powerState(), "返還後照常 OFF");
+                        context.setBlockState(ChamberGameTestBuilder.CONTROLLER.up(), Blocks.REDSTONE_BLOCK);
+                        context.assertEquals(0, starts[0], "單純復電不得解除故障");
+                        context.assertTrue(useController(context, frame, player).isAccepted(), "完整成功開門解除故障");
+                        assertDoors(context, frame, true);
+                        context.assertEquals(0, starts[0], "成功開門尚未 sealed 不啟動");
+                        context.assertTrue(useController(context, frame, player).isAccepted(), "修復後完整關門成功");
+                        context.assertEquals(1, starts[0], "修復後只啟動一次");
+                        context.assertEquals(1, consumptions[0], "僅修復後 backend 接獲合法啟動才消耗");
+                    } finally {
+                        ChamberSessions.install(previous);
+                        world.getServer().getPlayerManager().remove(player);
+                    }
+                    context.complete();
+                });
+            } catch (RuntimeException | Error failure) {
+                ChamberSessions.install(saved);
+                world.getServer().getPlayerManager().remove(player);
+                throw failure;
+            }
+        });
+    }
+
     @GameTest(templateName = "quantumchamber:m1_empty")
     public void native_power_enter_close_buff_return_repower_and_remove(TestContext context) {
         var frame = build(context, true);

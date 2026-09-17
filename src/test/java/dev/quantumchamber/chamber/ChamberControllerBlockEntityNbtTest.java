@@ -17,6 +17,21 @@ import org.junit.jupiter.api.Test;
 
 class ChamberControllerBlockEntityNbtTest {
     @Test
+    void activationFaultSurvivesReloadAndOldNbtDefaultsToUnblocked() {
+        var original = controller();
+        original.setChamberUuid(CHAMBER_UUID);
+        var encoded = original.createNbt(DynamicRegistryManager.EMPTY);
+        encoded.putBoolean("ActivationBlocked", true);
+        var restored = controller();
+        restored.read(encoded, DynamicRegistryManager.EMPTY);
+        assertTrue(restored.createNbt(DynamicRegistryManager.EMPTY).getBoolean("ActivationBlocked"));
+        assertEquals(CHAMBER_UUID, restored.chamberUuid());
+        encoded.remove("ActivationBlocked");
+        restored.read(encoded, DynamicRegistryManager.EMPTY);
+        assertFalse(restored.createNbt(DynamicRegistryManager.EMPTY).getBoolean("ActivationBlocked"));
+    }
+
+    @Test
     void loadSyncPendingIsConsumedOnceAndNeverPersisted() {
         var original = controller();
         original.setPowerInitialized(true);

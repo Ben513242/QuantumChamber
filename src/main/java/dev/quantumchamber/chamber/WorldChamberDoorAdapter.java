@@ -23,12 +23,22 @@ final class WorldChamberDoorAdapter {
                     ChamberProtectionService.get()::authorizedMutation,
                     frame,
                     controllerPos -> ChamberControllerBlock.refreshState(world, controllerPos));
+            if (toggled) setActivationBlocked(world, frame, false);
             return toggled ? Result.TOGGLED : Result.REJECTED;
         } catch (IllegalStateException failure) {
+            // 必須在最外層 finally 執行延後刷新以前發布故障，不能只依最終 sealed 推斷成功。
+            setActivationBlocked(world, frame, true);
             ChamberControllerBlock.refreshState(world, frame.controllerPos());
             LOGGER.error("整面門控 rollback 失敗，frame {}：{}", frame, failure.getMessage(), failure);
             return Result.ROLLBACK_FAILED;
         }
+    }
+
+    private static void setActivationBlocked(ServerWorld world, ChamberFrame frame, boolean blocked) {
+        var pos = frame.controllerPos();
+        var chunk = world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4);
+        if (chunk != null && chunk.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller
+                && controller.getWorld() == world && !controller.isRemoved()) controller.setActivationBlocked(blocked);
     }
 
     enum Result {
