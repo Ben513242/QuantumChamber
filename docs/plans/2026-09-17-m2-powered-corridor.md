@@ -89,7 +89,7 @@
 - Produces: `public static void PlayerCheckpointStore.saveAndVerify(MinecraftServer,ServerPlayerEntity,Optional<PlayerRecoveryCheckpoint>) throws IOException`；單一 protected PlayerManager.savePlayerData invoker、server-thread-only。Optional.empty 僅供入場消耗 checkpoint，不新增返還 marker；Optional.of 要求正確 runtime marker。原生保存後讀正式 UUID.dat（不是dat_old）的完整原生 NBT，與當下原生 snapshot 語意相等比較，包含所有其他mod keys；原生DataVersion等metadata按已核對pinned bytecode建完整expected，不剔除未知欄位。Windows以同一opened原生HANDLE完整讀回／FlushFileBuffers／native File ID/正式path probe與ancestor namespace鎖鏈／flush後不變，依已核准原生修訂；不能用path-fileKey/nullkey/bytes冒充handleidentity；缺檔、stale、replacement、parse或force失敗皆拋IOException，不自行改寫玩家檔、不假成功。
 - Checkpoint路徑只從目前 server 的原生玩家資料路徑與 UUID 組成；先核對 WorldSavePath 實際常數名，不使用玩家提供路徑。純IO測試可測小 package-private 檔案核對核心，native serializer／read/write/copyFrom另有GameTest，不拿假serializer當live gate。saveAndVerify不等於跨檔原子提交或整機斷電保證。
 
-- [ ] **Step 1: 原生已知world缺失先RED。** 不引用新class：
+- [x] **Step 1: 原生已知world缺失先RED。** 不引用新class：
 
 ```java
 RegistryKey<World> key = RegistryKey.of(RegistryKeys.WORLD,
@@ -98,12 +98,16 @@ context.assertTrue(context.getWorld().getServer().getWorld(key) != null,
         "固定Superposition世界必須真實存在");
 ```
 
-- [ ] **Step 2: 跑原生RED，另寫journal不可寫／錯schema／NBT roundtrip測試。** 期望M1.2沒有固定world，GameTest該項失敗；NBT缺source資料不得偷偷丟掉participant。
-- [ ] **Step 3: 實作靜態JSON與模型／codec／atomic store。** dimension使用minecraft:flat、layers=[]、biome=minecraft:the_void、structure_overrides=[]、features/lakes=false；type所有必要字段含has_raids/piglin_safe、無skylight、ambient0、min_y0、height/logical_height256、coordinate_scale1、bed/anchor=false、monster_spawn_light_level/block_light_limit0、effects=minecraft:overworld。Data pack48／resource pack34勿混用。保存wrapper data＋DataVersion，force temporary file後atomic replace；不支援atomic時拒絕交易，不unsafe覆蓋舊journal。flush可用save override呼叫checked store，不能讓原生save吞錯。
-- [ ] **Step 3b: 保存實體回收與lease足夠資料。** 開新幾何前先flush對應lease bounds；重啟保留已分配空間至相關participant返還完成。ARMING失敗才恢復QuantumState快照；正常SUPERPOSITION結束不重新給一劑效果。同一record重讀不會重複消耗或補發。直接測兩個 RETURNING roundtrip：restoreEntryEffectOnReturn=true 與 false 都不能遺失／互換；另測缺欄位及 ARMING,false／SUPERPOSITION,true 必須失敗。玩家 checkpoint 與 returned flag 的跨檔冪等由 Task4 覆蓋，不把此 codec 測試冒充 crash checkpoint 證據。
-- [ ] **Step 4: GREEN。** 世界實際getWorld、world codecs、journal寫入讀回／不可寫保留舊資料、重複UUID／非vanilla source role拒絕，完整clean build+GT。
-- [ ] **Step 4b: checkpoint GREEN。** 純 codec／完整 NBT 相等與 stale/壞檔負面；native marker write/read/copyFrom、無 marker舊玩家、raw壞 marker保留；真原生 player save 後正式.dat readback＋force。不移動玩家或消耗效果，只提供Task3/4需用的窄保存原語。
-- [ ] **Step 5: 自評／提交。** `feat: add static superposition world and durable recovery journal`；目前不傳送、不消耗藥水，report精確說明API與錯誤路徑。
+- [x] **Step 2: 跑原生RED，另寫journal不可寫／錯schema／NBT roundtrip測試。** 期望M1.2沒有固定world，GameTest該項失敗；NBT缺source資料不得偷偷丟掉participant。
+- [x] **Step 3: 實作靜態JSON與模型／codec／atomic store。** dimension使用minecraft:flat、layers=[]、biome=minecraft:the_void、structure_overrides=[]、features/lakes=false；type所有必要字段含has_raids/piglin_safe、無skylight、ambient0、min_y0、height/logical_height256、coordinate_scale1、bed/anchor=false、monster_spawn_light_level/block_light_limit0、effects=minecraft:overworld。Data pack48／resource pack34勿混用。保存wrapper data＋DataVersion，force temporary file後atomic replace；不支援atomic時拒絕交易，不unsafe覆蓋舊journal。flush可用save override呼叫checked store，不能讓原生save吞錯。
+- [x] **Step 3b: 保存實體回收與lease足夠資料。** 開新幾何前先flush對應lease bounds；重啟保留已分配空間至相關participant返還完成。ARMING失敗才恢復QuantumState快照；正常SUPERPOSITION結束不重新給一劑效果。同一record重讀不會重複消耗或補發。直接測兩個 RETURNING roundtrip：restoreEntryEffectOnReturn=true 與 false 都不能遺失／互換；另測缺欄位及 ARMING,false／SUPERPOSITION,true 必須失敗。玩家 checkpoint 與 returned flag 的跨檔冪等由 Task4 覆蓋，不把此 codec 測試冒充 crash checkpoint 證據。
+- [x] **Step 4: GREEN。** 世界實際getWorld、world codecs、journal寫入讀回／不可寫保留舊資料、重複UUID／非vanilla source role拒絕，完整clean build+GT。
+- [x] **Step 4b: checkpoint GREEN。** 純 codec／完整 NBT 相等與 stale/壞檔負面；native marker write/read/copyFrom、無 marker舊玩家、raw壞 marker保留；真原生 player save 後正式.dat readback＋force。不移動玩家或消耗效果，只提供Task3/4需用的窄保存原語。
+- [x] **Step 5: 自評／提交。** `feat: add static superposition world and durable recovery journal`；目前不傳送、不消耗藥水，report精確說明API與錯誤路徑。
+
+**Task 1 自動完成證據：** source `1a21dcd`、平台修正 `395906c`，獨立評審的唯一 Important 已經限定複審確認 ADDRESSED，無新回歸。真 Windows 非快取 clean build＋GameTest：138 JUnit 宣告／137 實跑成功／1 非 Windows 專屬條件略過，12 必要 native 案例零略過，61 GameTest 零失敗。Production main-only Done→console stop→四世界保存→Java／wrapper exit0；沒有傳送／效果消耗／走廊實作。
+
+**平台驗證接續約束：** 保留 Ubuntu 基礎建置與平台契約 GameTest，另設 Windows 原生 gate，必要 native XML 必須實跑且零略過。非 Windows 的受控拒絕不是 checkpoint 保存成功；Windows 上 os.name 路由探測不是 Linux OS 實測。真正遠端 Actions、跨檔恢復 consumer、人工／GPU gate 仍待驗，不授予 main 合併通過。
 
 ### Task 2: 邏輯頁、局部affine配置、replica及session保護
 

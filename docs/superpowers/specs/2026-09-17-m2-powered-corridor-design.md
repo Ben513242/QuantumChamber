@@ -102,6 +102,8 @@
 
 使用者同意重用Minecraft既有JNA。原生save後同一opened原生HANDLE讀回完整NBT、FlushFileBuffers、File ID/正式path probe與普通ancestor鎖鏈/reparse拒絕，取代FileChannel字面契約；不重寫player.dat、不加依賴/NativeDLL/moduleopens/系統權限。未知provider/平台不能證明identity即IOException/fail closed，Windows NTFS當前必驗；其他平台不以path-key ABA假說充當fd identity。保持checkpoint成功才returned/journalflush、pending仍保護，不跨檔原子/整機斷電claim。
 
+平台測試必須保留 Ubuntu 基礎建置與受控拒絕契約，另有 Windows 原生正向 gate，不能只略過原生案例便宣稱通過。Windows 必要 native suites 應實際執行且零略過；其他平台的拒絕、OS 條件略過與人工／GPU驗證分列。隔離 JVM 的 os.name 路由探測不等於真正 Linux runtime，尚未執行的遠端 CI 不聲稱已綠。
+
 ## 7. 光照與邊界
 
 - 沿用 M1.2 的可選 LambDynamicLights 方案，驗證主手／副手持火把在普通艙內、入口 replica、走廊跨頁與返還後都能照亮。
