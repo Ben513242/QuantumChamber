@@ -487,7 +487,7 @@ schema2嚴格decode、完整defensive copies；每個existing new SessionRecover
 - Initial prepare依frozen Space.semantics驗policy：legacy ARMING,true／lateral ARMING,false；保留durable同一權威、完整cohort與typedepoch等guards，不刪policy條件。Task7 trusted lateral geometry暫按既有效果消耗gate無Buff，Task8切新Buff guard時同步更新fixture，兩者都不冒稱真飲用。
 - SessionEntranceAllocator `cell(...frontOpen,connectionOpen,SessionSemantics)`，legacy後孔、new source localx0/6 y/z1..5AIR；source正門z0/Controllerfacing保持，new不開後牆。base/overlay ownership互斥，mode持久carry。
 
-- [ ] **Step 1: 手算幾何RED。** 不使用helper算expected；此new旋轉保留cell/point boundary：
+- [x] **Step 1: 手算幾何RED。** 不使用helper算expected；此new旋轉保留cell/point boundary：
 
 ```java
 var basis = new CorridorBasis(Direction.NORTH, SessionSemantics.LATERAL_BUFF_MAINTAINED);
@@ -497,8 +497,8 @@ assertEquals(new Vec3d(-2, 3, 1), basis.toCorridorVector(new Vec3d(1, 3, 2)));
 ```
 
 新增四朝向literal worldfeet/sourcefloor表、continuous正負roundtrip、速度/yaw/pitch/bbox、new sourceC/正門與兩側connection、legacy bounds/return位置不變。Mode nativefactory尚未new，只trustedgeometry案例明確標示。
-- [ ] **Step 2: 跑聚焦RED／native fixture。** `test --tests '*CorridorBasisTest' --tests '*ChamberSpaceCoordinatesTest' --tests '*ChamberReturnPlacementTest'`，fresh nonceGT新lateral controllerfacing/兩側portal/cap邊界失敗；stubcompile不是行為RED。
-- [ ] **Step 3: source與corridor正交helper。** newbasis核心：
+- [x] **Step 2: 跑聚焦RED／native fixture。** `test --tests '*CorridorBasisTest' --tests '*ChamberSpaceCoordinatesTest' --tests '*ChamberReturnPlacementTest'`，fresh nonceGT新lateral controllerfacing/兩側portal/cap邊界失敗；stubcompile不是行為RED。
+- [x] **Step 3: source與corridor正交helper。** newbasis核心：
 
 ```java
 return semantics == SessionSemantics.LATERAL_BUFF_MAINTAINED
@@ -506,8 +506,10 @@ return semantics == SessionSemantics.LATERAL_BUFF_MAINTAINED
 ```
 
 inverseposition=(long,y,7-lateral)，vector=(-z,y,x)，inverse=(long,y,-lateral)；yaw由(-sin,0,cos)經vector轉換再atan2(-x,z)，MathHelper.wrapDegrees，pitch不改。SourceReturnPlacement與Recovery普通entity中心必用sourcehelper；entry從sourcehelper再basis轉到typedphysical，不共享可變globalmode。
-- [ ] **Step 4: mode-aware geometry GREEN。** 新controller/source方向、原門25交易、localx兩側connection；全樣式96seam正負走／0與16 split／9 merge、items/projectile、入口切邊{7}與{6}rebuild；fullbudget/caps/ticket門檻不放寬。最後非快取full/GT一次＋JAR／main-only，不以trustedgeometry當真喝藥native。
-- [ ] **Step 5: commit／review。** `feat: 分離原艙座標與左右走廊基底`，精確本task與report，明列legacy return-only與basisproducer/nativecreation仍legacy，獨立gate後Task8。
+- [x] **Step 4: mode-aware geometry GREEN。** 新controller/source方向、原門25交易、localx兩側connection；全樣式96seam正負走／0與16 split／9 merge、items/projectile、入口切邊{7}與{6}rebuild；fullbudget/caps/ticket門檻不放寬。最後非快取full/GT一次＋JAR／main-only，不以trustedgeometry當真喝藥native。
+- [x] **Step 5: commit／review。** `feat: 分離原艙座標與左右走廊基底`，精確本task與report，明列legacy return-only與basisproducer/nativecreation仍legacy，獨立gate後Task8。
+
+2026-09-18 Task7 證據：`747baac`，固定範圍 `7ff8826..747baac` 獨立spec✅／qualityApproved、Critical0／Important0。聚焦RED8／4fail→GREEN8；native prepare與mapping方向RED分開保存，capacity連鎖失敗不冒稱幾何RED。最後非快取clean fullgate182 JUnit declared／181通過／1合法OSskip、必要Windows12零skip；fresh GameTest109／0failure/error/skip，四朝向新增lateral幾何案例覆蓋正負seam／split／merge／入口切邊與items/arrow。雙JAR污染與全部testmod交集0、common client refs0；main-only新nonceDone→console stop→四世界save、Java/wrapper0。factory/checkInitialCohort仍legacy，trusted lateral fixture不是Buff維持證據；Task8更新fixture並實作真飲用。native非零velocity覆蓋Minor帶入Task8，既有warnings留finaltriage；Task9/10、GPU／人工／wholebranch仍待，不提前mainmerge。
 
 ### Task 8: 真飲用Buff維持、共同到期返還與HIGH再進
 
