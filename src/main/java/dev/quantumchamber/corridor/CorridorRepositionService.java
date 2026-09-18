@@ -33,7 +33,7 @@ public final class CorridorRepositionService {
                 var durable=journal.flushedRecords().get(record.sessionUuid());
                 if(durable!=null) try {
                     journal.put(new SessionRecoveryRecord(durable.sessionUuid(),durable.chamberUuid(),durable.origin(),durable.participants(),
-                            durable.spaceLeases(),SessionState.RETURNING,durable.restoreEntryEffectOnReturn())); journal.flush(server);
+                            durable.spaceLeases(),SessionState.RETURNING,durable.restoreEntryEffectOnReturn(),durable.semantics())); journal.flush(server);
                 } catch(RuntimeException persistence) { failure.addSuppressed(persistence); }
                 org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("頁面移動失敗，保留所有租約並要求安全返還，session={}",record.sessionUuid(),failure);
             }

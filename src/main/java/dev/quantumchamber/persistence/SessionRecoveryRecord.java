@@ -21,7 +21,12 @@ import net.minecraft.world.World;
 
 /** 恢復所需的純資料；任何可變 NBT 與空間邊界皆不洩漏內部參照。 */
 public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberOriginAuthority origin,
-        List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn) {
+        List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn,
+        SessionSemantics semantics) {
+    public SessionRecoveryRecord(UUID sessionUuid,UUID chamberUuid,ChamberOriginAuthority origin,
+            List<Participant> participants,List<SpaceLease> spaceLeases,SessionState state,boolean restoreEntryEffectOnReturn) {
+        this(sessionUuid,chamberUuid,origin,participants,spaceLeases,state,restoreEntryEffectOnReturn,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+    }
     public SessionRecoveryRecord {
         Objects.requireNonNull(sessionUuid, "sessionUuid");
         Objects.requireNonNull(chamberUuid, "chamberUuid");
@@ -37,10 +42,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             case END -> World.END.getValue();
         };
         if (!expectedWorld.equals(origin.worldKey())) throw new IllegalArgumentException("來源必須對應原生世界角色");
-        if ((state == SessionState.ARMING && !restoreEntryEffectOnReturn)
-                || (state == SessionState.SUPERPOSITION && restoreEntryEffectOnReturn)) {
-            throw new IllegalArgumentException("狀態與效果恢復權威決策不一致");
-        }
+        Objects.requireNonNull(semantics,"semantics").validateEffectPolicy(state,restoreEntryEffectOnReturn);
         participants = List.copyOf(participants);
         spaceLeases = List.copyOf(spaceLeases);
         if (participants.isEmpty() || spaceLeases.isEmpty()) throw new IllegalArgumentException("參與者與空間 lease 不得為空");
@@ -63,6 +65,12 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             quantumStateSnapshot = Objects.requireNonNull(quantumStateSnapshot, "quantumStateSnapshot").copy();
         }
         @Override public NbtCompound quantumStateSnapshot() { return quantumStateSnapshot.copy(); }
+    }
+
+    public static boolean sameAuthority(SessionRecoveryRecord expected,SessionRecoveryRecord actual) {
+        return expected.sessionUuid().equals(actual.sessionUuid()) && expected.chamberUuid().equals(actual.chamberUuid())
+                && expected.origin().equals(actual.origin()) && expected.semantics()==actual.semantics()
+                && sameParticipantSources(expected.participants(),actual.participants());
     }
 
     /** 以 UUID 比較凍結來源；順序與 returned 進度不是來源快照的一部分。 */
@@ -120,10 +128,14 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         }
         nbt.put("SpaceLeases", leases);
         nbt.putString("State", state.name()); nbt.putBoolean("RestoreEntryEffectOnReturn", restoreEntryEffectOnReturn);
+        nbt.putString("SessionSemantics",semantics.name());
         return nbt;
     }
 
-    static SessionRecoveryRecord fromNbt(NbtCompound nbt) {
+    static SessionRecoveryRecord fromNbt(NbtCompound nbt,int envelopeSchema) {
+        if (envelopeSchema!=1 && envelopeSchema!=2) throw new IllegalArgumentException("不支援 journal schema");
+        var semantics=envelopeSchema==1 ? SessionSemantics.LEGACY_FORWARD_CONSUMED
+                : SessionSemantics.valueOf(string(nbt,"SessionSemantics"));
         var source = compound(nbt, "Origin");
         int[] pos = ints(source, "ControllerPos", 3);
         var origin = new ChamberOriginAuthority(uuid(source, "ChamberUuid"), Identifier.of(string(source, "WorldKey")),
@@ -148,7 +160,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             leases.add(new SpaceLease(lease.getInt("SlotId"), new BlockBox(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5])));
         }
         return new SessionRecoveryRecord(uuid(nbt, "SessionUuid"), uuid(nbt, "ChamberUuid"), origin, people, leases,
-                SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"));
+                SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"),semantics);
     }
 
     static void requireType(NbtCompound nbt, String key, int type) {

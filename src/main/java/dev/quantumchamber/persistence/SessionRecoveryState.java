@@ -64,17 +64,18 @@ public final class SessionRecoveryState extends PersistentState {
     public static SessionRecoveryState fromNbt(NbtCompound nbt) {
         try {
             SessionRecoveryRecord.requireType(nbt, "SchemaVersion", 3);
-            if (nbt.getInt("SchemaVersion") != 1) throw new IllegalArgumentException("不支援 journal schema");
+            int schema=nbt.getInt("SchemaVersion");
+            if (schema!=1 && schema!=2) throw new IllegalArgumentException("不支援 journal schema");
             var state = new SessionRecoveryState();
             for (var raw : SessionRecoveryRecord.compounds(nbt, "Records")) {
-                var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw);
+                var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw,schema);
                 if (state.records.putIfAbsent(record.sessionUuid(), record) != null) throw new IllegalArgumentException("session UUID 重複");
             }
             validateOwnership(state.records);
             state.flushed = Map.copyOf(state.records);
             return state;
         } catch (RuntimeException exception) {
-            return failed("journal schema 1 無法解析：" + exception);
+            return failed("journal schema 無法解析：" + exception);
         }
     }
 
@@ -88,10 +89,10 @@ public final class SessionRecoveryState extends PersistentState {
         requireHealthy();
         var current=records.get(record.sessionUuid());
         var durable=flushed.get(record.sessionUuid());
-        // 同時保護尚未落盤與上一份落盤來源；remove 後重放不能繞過 durable 凍結名單。
-        if ((current!=null && !SessionRecoveryRecord.sameParticipantSources(current.participants(),record.participants()))
-                || (durable!=null && !SessionRecoveryRecord.sameParticipantSources(durable.participants(),record.participants()))) {
-            throw new IllegalArgumentException("同一 session 的凍結 cohort／來源快照不可改動");
+        // 同時保護尚未落盤與上一份落盤權威；remove 後重放不能更換來源、語意或 cohort。
+        if ((current!=null && !SessionRecoveryRecord.sameAuthority(current,record))
+                || (durable!=null && !SessionRecoveryRecord.sameAuthority(durable,record))) {
+            throw new IllegalArgumentException("同一 session 的凍結來源／語意／cohort 不可改動");
         }
         var candidate = new LinkedHashMap<>(records); candidate.put(record.sessionUuid(), record);
         validateOwnership(candidate);
@@ -110,7 +111,7 @@ public final class SessionRecoveryState extends PersistentState {
     }
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
-        nbt.putInt("SchemaVersion", 1);
+        nbt.putInt("SchemaVersion", 2);
         var entries = new NbtList(); records.values().forEach(record -> entries.add(record.toNbt()));
         nbt.put("Records", entries); return nbt;
     }

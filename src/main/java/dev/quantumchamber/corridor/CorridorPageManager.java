@@ -1,6 +1,7 @@
 package dev.quantumchamber.corridor;
 
 import dev.quantumchamber.chamber.ChamberFrame;
+import dev.quantumchamber.persistence.SessionSemantics;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -81,7 +82,7 @@ public final class CorridorPageManager {
         org.slf4j.LoggerFactory.getLogger("quantumchamber").info("走廊 bootstrap：storage={}，durable sessions={}",
                 server.getSavePath(net.minecraft.util.WorldSavePath.ROOT),journal.flushedRecords().size());
         for (var record : journal.flushedRecords().values()) {
-            var space=new Space(record.sessionUuid(),record.origin(),record.participants());
+            var space=new Space(record.sessionUuid(),record.origin(),record.participants(),record.semantics());
             for (var lease : record.spaceLeases()) {
                 validateFacingBounds(lease.bounds(),record.origin().facing());
                 validateWorldBounds(lease.bounds());
@@ -280,7 +281,7 @@ public final class CorridorPageManager {
             requirePageCapacity(space,occupiedPages); requirePinCapacity();
             var prepared=reserve(space,expectedCurrentEpoch,occupiedPages); reserved=true;
             journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),
-                    List.copyOf(space.leases.values()),record.state(),record.restoreEntryEffectOnReturn()));
+                    List.copyOf(space.leases.values()),record.state(),record.restoreEntryEffectOnReturn(),record.semantics()));
             journal.flush(server); durable(space); acquireTickets(space); enqueue(space); return prepared;
         } catch (RuntimeException failure) {
             if (!reserved) for (int slot : List.copyOf(space.leases.keySet())) if (!oldSlots.contains(slot)) {
@@ -426,7 +427,7 @@ public final class CorridorPageManager {
             snapshots.add(new SessionRecoveryRecord.Participant(player.getUuid(),player.getPos(),player.getVelocity(),player.getYaw(),
                     player.getPitch(),(net.minecraft.nbt.NbtCompound)effect.writeNbt(),false));
         }
-        var space=new Space(sessionUuid,origin,snapshots);
+        var space=new Space(sessionUuid,origin,snapshots,SessionSemantics.LEGACY_FORWARD_CONSUMED);
         requirePageCapacity(space,occupiedPages);
         spaces.put(sessionUuid,space);
         try { return reserve(space,0,occupiedPages); }
@@ -489,8 +490,9 @@ public final class CorridorPageManager {
     private SessionRecoveryRecord durable(Space space) {
         journal.requireHealthy();
         var record=journal.flushedRecords().get(space.id);
-        if (record==null || !record.origin().equals(space.origin) || !record.chamberUuid().equals(space.origin.chamberUuid())
-                || !SessionRecoveryRecord.sameParticipantSources(space.source,record.participants())
+        // 比較 Space 的不可變來源與語意；狀態、returned 與 lease 進度不構成來源身分。
+        if (record==null || !SessionRecoveryRecord.sameAuthority(new SessionRecoveryRecord(space.id,space.origin.chamberUuid(),
+                space.origin,space.source,record.spaceLeases(),SessionState.RETURNING,false,space.semantics),record)
                 || !leasesEqual(record.spaceLeases(),space.leases.values())) throw new IllegalStateException("durable lease／來源權威不符");
         return record;
     }
@@ -593,7 +595,7 @@ public final class CorridorPageManager {
         var remaining=space.leases.values().stream().filter(other -> other.slotId()!=slot).toList();
         if (remaining.isEmpty()) throw new IllegalStateException("最後租約必須經 release 收尾");
         journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),remaining,
-                record.state(),record.restoreEntryEffectOnReturn()));
+                record.state(),record.restoreEntryEffectOnReturn(),record.semantics()));
         journal.flush(server);
         if (journal.flushedRecords().get(space.id).spaceLeases().stream().anyMatch(other -> other.slotId()==slot)) {
             throw new IllegalStateException("舊租約移除尚未 durable");
@@ -720,7 +722,7 @@ public final class CorridorPageManager {
         if (record!=null) {
             try {
                 journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),
-                        List.copyOf(space.leases.values()),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
+                        List.copyOf(space.leases.values()),SessionState.RETURNING,record.restoreEntryEffectOnReturn(),record.semantics()));
                 journal.flush(server);
             } catch (RuntimeException persistenceFailure) { failure.addSuppressed(persistenceFailure); }
         }
@@ -779,6 +781,7 @@ public final class CorridorPageManager {
     }
     private static final class Space {
         final UUID id; final ChamberOriginAuthority origin; final List<SessionRecoveryRecord.Participant> source;
+        final SessionSemantics semantics;
         final Map<Integer,SessionRecoveryRecord.SpaceLease> leases=new LinkedHashMap<>();
         final Map<Integer,Build> builds=new LinkedHashMap<>();
         final ArrayDeque<CorridorGeometry.Cell> overlay=new ArrayDeque<>();
@@ -793,8 +796,8 @@ public final class CorridorPageManager {
         Set<Long> currentPages=Set.of(),pendingPages=Set.of();
         boolean queued,frontOpen,rearOpen,failed,releasing,provisionalCancelled; int operations,batchTick,prepareTick; long instanceEpoch,prepareNanos;
         SessionRecoveryRecord finalizing;
-        Space(UUID id,ChamberOriginAuthority origin,List<SessionRecoveryRecord.Participant> source) {
-            this.id=id; this.origin=origin; this.source=List.copyOf(source);
+        Space(UUID id,ChamberOriginAuthority origin,List<SessionRecoveryRecord.Participant> source,SessionSemantics semantics) {
+            this.id=id; this.origin=origin; this.source=List.copyOf(source); this.semantics=Objects.requireNonNull(semantics);
         }
     }
 }

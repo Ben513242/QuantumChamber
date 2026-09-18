@@ -87,7 +87,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 dev.quantumchamber.universe.DimensionRole.fromVanillaKey(source.getRegistryKey()).orElseThrow(),
                 frame.controllerPos(),frame.outwardFacing(),ChamberInstanceKind.ORIGIN);
         var initial=new SessionRecoveryRecord(id,chamber,origin,effects.snapshots(),prepared.target().instances().stream()
-                .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,true);
+                .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,true,
+                dev.quantumchamber.persistence.SessionSemantics.LEGACY_FORWARD_CONSUMED);
         var runtime=new SuperpositionSession(source,controller,frame,effects,prepared,initial);
         sessions.put(chamber,runtime);
         try {
@@ -200,7 +201,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         checkTargets(runtime,target,entrance,poses);
         var initial=runtime.initial;
         journal.put(new SessionRecoveryRecord(initial.sessionUuid(),initial.chamberUuid(),initial.origin(),initial.participants(),
-                initial.spaceLeases(),SessionState.SUPERPOSITION,false));
+                initial.spaceLeases(),SessionState.SUPERPOSITION,false,initial.semantics()));
         journal.flush(server);
         pages.commitInitial(initial.sessionUuid(),ids(initial));
         runtime.state=SessionState.SUPERPOSITION;
@@ -265,7 +266,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     private void returning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.RETURNING && record.equals(journal.records().get(record.sessionUuid()))) return;
         journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),
-                record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn())); journal.flush(server);
+                record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn(),record.semantics())); journal.flush(server);
     }
     private SessionRecoveryRecord record(UUID chamber) {
         return journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).findFirst().orElse(null);

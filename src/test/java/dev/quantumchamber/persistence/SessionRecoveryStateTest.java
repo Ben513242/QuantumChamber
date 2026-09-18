@@ -13,6 +13,107 @@ class SessionRecoveryStateTest {
     @TempDir Path directory;
     @BeforeAll static void initializeNativeVersion() { net.minecraft.SharedConstants.createGameVersion(); }
 
+    @Test void schemaTwoRoundtripsLateralFalseForEveryStateWithoutRotatingBounds() {
+        for (var phase : dev.quantumchamber.superposition.SessionState.values()) {
+            var input=fixture(phase.name(),false); input.putInt("SchemaVersion",2);
+            record(input).putString("SessionSemantics","LATERAL_BUFF_MAINTAINED");
+            var state=SessionRecoveryState.fromNbt(input); state.requireHealthy();
+            var decoded=state.records().values().iterator().next();
+            assertEquals(SessionSemantics.LATERAL_BUFF_MAINTAINED,decoded.semantics());
+            assertEquals(input,state.writeNbt(new NbtCompound()));
+            assertFalse(state.isDirty());
+            var invalid=input.copy(); record(invalid).putBoolean("RestoreEntryEffectOnReturn",true); unhealthy(invalid);
+        }
+    }
+
+    @Test void schemaTwoRequiresKnownStringSemanticsAndStrictEffectPolicy() {
+        for (var bad : new NbtElement[] {NbtString.of("UNKNOWN"),NbtInt.of(1),NbtByte.of(true)}) {
+            var input=fixture("RETURNING",false); input.putInt("SchemaVersion",2);
+            record(input).put("SessionSemantics",bad); unhealthy(input);
+        }
+        var missing=fixture("RETURNING",false); missing.putInt("SchemaVersion",2); unhealthy(missing);
+        for (var mode : SessionSemantics.values()) {
+            var input=fixture("RETURNING",false); input.putInt("SchemaVersion",2);
+            record(input).putString("SessionSemantics",mode.name());
+            record(input).remove("RestoreEntryEffectOnReturn"); unhealthy(input);
+        }
+    }
+
+    @Test void schemaOneAlwaysUsesStrictLegacyEvenWithLateralMetadata() {
+        var input=fixture("ARMING",false); record(input).putString("SessionSemantics","LATERAL_BUFF_MAINTAINED");
+        unhealthy(input);
+        input=fixture("ARMING",true); record(input).putString("SessionSemantics","LATERAL_BUFF_MAINTAINED");
+        var decoded=SessionRecoveryState.fromNbt(input).records().values().iterator().next();
+        assertEquals(SessionSemantics.LEGACY_FORWARD_CONSUMED,decoded.semantics());
+        assertEquals(SessionSemantics.LEGACY_FORWARD_CONSUMED,new SessionRecoveryRecord(decoded.sessionUuid(),decoded.chamberUuid(),
+                decoded.origin(),decoded.participants(),decoded.spaceLeases(),decoded.state(),true).semantics());
+    }
+
+    @Test void loadingSchemaOneDoesNotRewriteUntilCheckedProgressSave() throws Exception {
+        var input=fixture("RETURNING",false); var wrapper=new NbtCompound(); wrapper.put("data",input); wrapper.putInt("DataVersion",3953);
+        var path=directory.resolve("legacy.dat"); NbtIo.writeCompressed(wrapper,path);
+        byte[] original=java.nio.file.Files.readAllBytes(path);
+        var state=SessionRecoveryState.load(path); state.requireHealthy(); state.save(path.toFile(),null);
+        assertArrayEquals(original,java.nio.file.Files.readAllBytes(path)); assertFalse(state.isDirty());
+        var decoded=state.records().values().iterator().next(); state.put(decoded); state.save(path.toFile(),null);
+        var saved=SessionJournalStore.read(path).getCompound("data");
+        assertEquals(2,saved.getInt("SchemaVersion"));
+        assertEquals("LEGACY_FORWARD_CONSUMED",record(saved).getString("SessionSemantics"));
+        assertEquals(record(input).getList("SpaceLeases",10),record(saved).getList("SpaceLeases",10));
+    }
+
+    @Test void completeAuthorityCannotChangeCurrentFlushedOrRemoveReplay() {
+        var original=SessionRecoveryState.fromNbt(fixture("RETURNING",false)).records().values().iterator().next();
+        for (var changed : authorityChanges(original)) for (int mode=0;mode<3;mode++) {
+            var state=mode==0 ? new SessionRecoveryState() : SessionRecoveryState.fromNbt(fixture("RETURNING",false));
+            if (mode==0) state.put(original);
+            if (mode==2) state.remove(original.sessionUuid());
+            var before=state.records(); var flushed=state.flushedRecords(); boolean dirty=state.isDirty();
+            assertThrows(IllegalArgumentException.class,() -> state.put(changed));
+            assertFalse(SessionRecoveryRecord.sameAuthority(original,changed));
+            assertEquals(before,state.records()); assertEquals(flushed,state.flushedRecords()); assertEquals(dirty,state.isDirty());
+        }
+        var otherSid=new SessionRecoveryRecord(UUID.fromString("00000000-0000-0000-0000-000000000009"),original.chamberUuid(),
+                original.origin(),original.participants(),original.spaceLeases(),original.state(),false,original.semantics());
+        assertFalse(SessionRecoveryRecord.sameAuthority(original,otherSid));
+    }
+
+    @Test void authorityIgnoresProgressAndLeasesButRetainsLateralMode() {
+        var input=fixture("ARMING",false); input.putInt("SchemaVersion",2);
+        record(input).putString("SessionSemantics","LATERAL_BUFF_MAINTAINED");
+        var state=SessionRecoveryState.fromNbt(input); var original=state.records().values().iterator().next();
+        var people=original.participants().stream().map(p -> new SessionRecoveryRecord.Participant(p.playerUuid(),p.sourcePosition(),
+                p.sourceVelocity(),p.yaw(),p.pitch(),p.quantumStateSnapshot(),true)).toList();
+        var progress=new SessionRecoveryRecord(original.sessionUuid(),original.chamberUuid(),original.origin(),people,
+                java.util.List.of(new SessionRecoveryRecord.SpaceLease(1,new net.minecraft.util.math.BlockBox(96,0,0,191,20,10))),
+                dev.quantumchamber.superposition.SessionState.RETURNING,false,original.semantics());
+        assertTrue(SessionRecoveryRecord.sameAuthority(original,progress)); state.put(progress);
+        assertEquals(SessionSemantics.LATERAL_BUFF_MAINTAINED,state.records().get(original.sessionUuid()).semantics());
+        assertEquals(original,state.flushedRecords().get(original.sessionUuid()));
+    }
+
+    private static java.util.List<SessionRecoveryRecord> authorityChanges(SessionRecoveryRecord original) {
+        var changes=new java.util.ArrayList<SessionRecoveryRecord>();
+        changes.add(new SessionRecoveryRecord(original.sessionUuid(),original.chamberUuid(),original.origin(),original.participants(),
+                original.spaceLeases(),original.state(),false,SessionSemantics.LATERAL_BUFF_MAINTAINED));
+        for (int field=0;field<9;field++) {
+            var input=fixture("RETURNING",false); var source=record(input).getCompound("Origin"); var person=participant(input);
+            switch (field) {
+                case 0 -> { var id=UUID.fromString("00000000-0000-0000-0000-000000000008"); record(input).putUuid("ChamberUuid",id); source.putUuid("ChamberUuid",id); }
+                case 1 -> source.putIntArray("ControllerPos",new int[] {8,70,9});
+                case 2 -> source.putString("Facing","SOUTH");
+                case 3 -> { source.putString("WorldKey","minecraft:the_nether"); source.putString("Role","NETHER"); }
+                case 4 -> person.put("SourcePosition",vector(8.5,66,9.5));
+                case 5 -> person.put("SourceVelocity",vector(0.2,-0.2,0.3));
+                case 6 -> person.putFloat("Yaw",91);
+                case 7 -> person.putFloat("Pitch",-14);
+                case 8 -> person.getCompound("QuantumState").getCompound("hidden_effect").putInt("duration",2001);
+            }
+            changes.add(SessionRecoveryState.fromNbt(input).records().values().iterator().next());
+        }
+        return changes;
+    }
+
     @Test void currentSourceCannotChangeBeforeFirstFlush() {
         var original=SessionRecoveryState.fromNbt(fixture("ARMING",true)).records().values().iterator().next();
         var state=new SessionRecoveryState(); state.put(original);
@@ -70,7 +171,7 @@ class SessionRecoveryStateTest {
 
     private static SessionRecoveryRecord withPeople(SessionRecoveryRecord original,java.util.List<SessionRecoveryRecord.Participant> people) {
         return new SessionRecoveryRecord(original.sessionUuid(),original.chamberUuid(),original.origin(),people,original.spaceLeases(),
-                original.state(),original.restoreEntryEffectOnReturn());
+                original.state(),original.restoreEntryEffectOnReturn(),original.semantics());
     }
 
     @Test void actualMissingJournalIsHealthyButCorruptionAndDirectoryAreUnhealthy() throws Exception {
@@ -93,7 +194,9 @@ class SessionRecoveryStateTest {
             var input = fixture("RETURNING", restore);
             var state = SessionRecoveryState.fromNbt(input);
             state.requireHealthy();
-            assertEquals(input, state.writeNbt(new NbtCompound()));
+            var expected=input.copy(); expected.putInt("SchemaVersion",2);
+            record(expected).putString("SessionSemantics","LEGACY_FORWARD_CONSUMED");
+            assertEquals(expected, state.writeNbt(new NbtCompound()));
             assertEquals(state.records(), state.flushedRecords());
         }
     }
@@ -184,7 +287,7 @@ class SessionRecoveryStateTest {
         state.save(target.toFile(), null);
         assertFalse(state.isDirty());
         assertTrue(state.flushedRecords().isEmpty());
-        assertEquals(1, SessionJournalStore.read(target).getCompound("data").getInt("SchemaVersion"));
+        assertEquals(2, SessionJournalStore.read(target).getCompound("data").getInt("SchemaVersion"));
         state.put(SessionRecoveryState.fromNbt(fixture("ARMING", true)).records().values().iterator().next());
         assertThrows(UncheckedIOException.class, () -> state.save(target.resolve("impossible.dat").toFile(), null));
         assertTrue(state.isDirty());

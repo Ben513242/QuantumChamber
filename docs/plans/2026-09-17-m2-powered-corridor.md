@@ -417,6 +417,7 @@ Task6–10接續同一plan owner，單一implementation worker與Gradle/native�
 ### Task 6: schema2 semantics、strict legacy與凍結權威
 
 **Files:**
+- Modify: `src/main/java/dev/quantumchamber/corridor/CorridorRepositionService.java`（僅RETURNING copy保留durable.semantics）
 - Create: `src/main/java/dev/quantumchamber/persistence/SessionSemantics.java`
 - Modify: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryRecord.java`
 - Modify: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryState.java`
