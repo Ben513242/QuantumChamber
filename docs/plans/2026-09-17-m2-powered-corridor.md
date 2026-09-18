@@ -309,9 +309,16 @@ context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場�
 ### Task 4: 斷電、離線重登、重啟恢復及頁面移動
 
 **Files:**
+- Create: `src/main/java/dev/quantumchamber/mixin/ServerPlayNetworkHandlerRecoveryMixin.java`
+- Modify: `src/main/resources/quantumchamber.mixins.json`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/ConnectedGameTestPlayer.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/mixin/SessionTransferFaultMixin.java`（玩家 move 多載 descriptor 與核准的 remap LOW 觀察，保留原 observer）
 - Create: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryManager.java`
 - Create: `src/main/java/dev/quantumchamber/corridor/CorridorRepositionService.java`
 - Create: `src/testmod/java/dev/quantumchamber/gametest/M2PersistenceProbe.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/CheckpointWindowFaultMixin.java`（W1 成功觀察／W2 A 真確認後 B 窄拒絕）
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/SessionJournalWindowFaultMixin.java`（W1 窗口與核准的斷線 IO 拒絕）
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/PlayerNativeSaveWindowFaultMixin.java`（stale save 真完整 readback 拒絕）
 - Modify: `src/testmod/resources/fabric.mod.json`
 - Modify: `src/testmod/resources/quantumchamber-test.mixins.json`
 - Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSessionManager.java`
@@ -322,12 +329,21 @@ context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場�
 
 **Interfaces:**
 - Consumes: durable recovery records、page mapping leases與gateway.returnToOrigin。
+- Consumes: `CorridorPageManager.returnEntityPins(UUID)`／`affectedEntityOwners(PreparedMappings)`／`currentEntityOwners(UUID)` 唯讀 immutable 結果；same-server-thread、held token／epoch／durable frozen source／leases 與全部 footprint FULL／entityLoaded／ticking 查核不放寬，未 ready 不當沒有 entities；retained 映射不搬，不新增票或 tick。
+- Consumes: Recovery constructor 的 `Predicate<SessionRecoveryRecord> sourceAuthority`；live runtime 驗原始 Controller instance，重啟依 immutable origin 核對真 world／Controller UUID／ORIGIN／facing／healthy registry；身分驗證獨立於 power／enabled／buff，錯來源維持 pending／保護／leases。
+- Produces: `ServerPlayNetworkHandlerRecoveryMixin` 只在原生 forceMainThread 之後，限制同 server／player pending recovery 的 onPlayerMove／onVehicleMove／onPlayerInteractBlock；不限制登入／teleport confirm／disconnect，不新增 packet／第二 tick。測試 helper 的 DISCONNECT／重登證據使用真 channel close／Fabric event／正常 playerdata load，不拿 remove 或 manifest 回填代替。
 - Consumes: Task1 PlayerRecoveryCheckpoint／PlayerCheckpointStore、flushedRecords；return保留原restoreEntryEffectOnReturn，不用RETURNING重算。確認真來源world/interior後才true還原／false不觸碰當下效果，再stamp單一session/policy marker；同session同policy marker跳過效果修改，錯policy／壞marker保守拒絕。saveAndVerify成功才flush returned=true，任一失敗保持保護／lease；登入queue前阻止正常移動／門操作，不能在JOIN callback直接teleport。
 - Produces: instance方法 `public void SessionRecoveryManager.onJoin(UUID,MinecraftServer)` queue、`public void onDisconnect(UUID,MinecraftServer)`、`public void tick(MinecraftServer)`、`public boolean returnComplete(UUID)`；manager/gateway只在全cohort／資料確認後complete。Netty DISCONNECT捕捉UUID/server後序列化，JOIN只queue下一tick，不用server.execute誤當下一tick。
 
 - Consumes: Task2 `releaseComplete(UUID)`／`acknowledgeRelease(UUID)`；同程序全 cohort checked returned 與已知最後 lease 收尾確認後才結束 session／回 complete，再移除上層 runtime 並 acknowledge。原艙 OFF／解除保護仍由來源 coordinator 最後確認；未知 SID／in-memory 缺失不是完成。重啟只恢復 healthy journal 尚存在的 records，不重建已 durable 移除的舊 session。
 - Produces: instance方法 `public void CorridorRepositionService.tick(MinecraftServer)` 管理邏輯位置、items/projectiles tag／pin、近群split/merge預備／commit／retire；相關entity每次只有一個authority mapping。
+- Consumes: `CorridorRepositionService(MinecraftServer, Predicate<SessionRecoveryRecord> managedActiveSession)` 的最小 constructor 接點，由 Manager private map 核對同 server／SID 與 runtime／record SUPERPOSITION；只管理本 gateway 活動 session，不新 repository／tick／ticket，來源 guard 與完整 cohort 不變。
 - Produces: M2PersistenceProbe 此任務只先建 checkpoint W1/W2 的 default-off條件phase與必要testmod-only fault mixin（各server/world/session/player限定，files/API列report），後續Task5擴充正常phase；release無probe/fault。不得以production test-only setter代替原生邊界。
+- Consumes: 三個窗口 fault 的 pinned 完整 descriptor 與 native hit／formal playerdata／journal witnesses；default-off 且 server-thread／world／SID／profile／canonical owned runRoot／nonce／case 限定。HALT 只在外部核對 ready witness 的 PID／nonce 與所持 child Process、canonical fresh root 全一致後中止該唯一 JVM，不按 process name／群組猜目標，不走 STOPPING 或回填 manifest NBT；不承諾整機斷電一致性。
+- Consumes: W2 精確中止窗口可在既有 B checkpoint HEAD 使用 owned-only 單次有界 30 秒 barrier；A 真確認、B 尚未 native save、全 cohort 真 fixed／已耗藥、checked ARMING,true 才產生 formal witness 並等待外部精確中止。此為 checkpoint 受控阻擋尚未返回，不稱 IOException 已拋出後仍 ARMING；deadline 到期的 run 拋 IOException 並標非 crash 證據，不算 W2 gate。
+- Produces: 同一既有 State.flush HEAD 的 default-off DisconnectJournalFault，限定明確安裝的 server／source+fixed world／SID／完整 cohort，flushed SUPERPOSITION,false 而 current 轉 RETURNING 才拒絕；獨立 batchId、不與其他 journal cases 並行。native removal 不被 IO 例外中斷、唯一 tick 重試、staged RETURNING 仍 pending 限制移動、故障撤除後返還／receipt／OFF，以及另存 STOPPED sentinel；不新 target／getter／tick，不把共享 flush 說成單 SID 並行拒絕。
+- Produces: 同一既有玩家 move RETURN 的 default-off RemapPowerLoss，只在 own SID／完整 cohort 的 actual move 成功且 pose 位於新 prepared lease 非 current、flushed SUPERPOSITION,false 時，第一次真外部 lever LOW；記實際 UUID／pose／tick，驗同 tick RETURNING 保護與 partial batch 後完整返還／checkpoint／receipt／OFF，不新 target／API，不改原 observer 或成功判定。
+- Test scheduling: 五個既有 trusted heavy geometry case 各自獨立 batchId，保留原方法名稱、tickLimit100000、helper10秒／90000tick、全部FULL／loaded／ticking與多人／多SID／AABB／shared budget／cap斷言；只排除defaultBatch同時五份長廊載入的fixture資源干擾，不宣稱五Chambers並行或硬體效能通過，其餘測例不全套序列化。
 - Produces: `public boolean SessionTransferService.move(Entity,ServerWorld,Vec3d,Vec3d,float,float)` overload，處理items/projectiles的native傳送／同world重定位；核對真target Entity UUID/world/pose，可能新Entity物件需以UUID取得，不把舊removed物件當成功。
 
 - [ ] **Step 1: 原生來源斷電返還RED。** 在來源world移除電源，先確認RETURNING仍保護，再確認全部player原world/interior、session結束、原艙才可變更。不能只helper return true。

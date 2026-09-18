@@ -201,6 +201,35 @@ public final class CorridorPageManager {
         if (!completedReleases.remove(sessionUuid)) throw new IllegalStateException("沒有可消費的完成收據");
     }
     public MappingSet currentMappings(UUID sessionUuid) { return space(sessionUuid).current; }
+
+    /** 只有整份 durable lease 的實體皆可見，才可發布返還 pin 快照。 */
+    public Optional<List<UUID>> returnEntityPins(UUID sessionUuid) {
+        var space=space(sessionUuid);
+        if(durable(space).state()!=SessionState.RETURNING) throw new IllegalStateException("非 RETURNING 不可取得返還 pins");
+        if(space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()))) return Optional.empty();
+        requirePinCapacity(); var result=new LinkedHashSet<UUID>();
+        for(var lease : space.leases.values()) for(var entity : pins(lease.bounds())) result.add(entity.getUuid());
+        return Optional.of(List.copyOf(result));
+    }
+
+    public Optional<Map<UUID,MappingRef>> currentEntityOwners(UUID sessionUuid) {
+        var space=space(sessionUuid); durable(space);
+        if(space.current.instances().isEmpty() || space.current.instances().stream().anyMatch(view -> !leaseReady(view.bounds())))
+            return Optional.empty();
+        requirePinCapacity(); var owners=new LinkedHashMap<UUID,MappingRef>();
+        for(var view : space.current.instances()) for(var entity : pins(view.bounds())) {
+            if(!contains(box(view.bounds()),entity.getBoundingBox()) || owners.put(entity.getUuid(),view.ref())!=null)
+                throw new IllegalStateException("entity 沒有唯一完整 current bbox owner");
+        }
+        return Optional.of(Map.copyOf(owners));
+    }
+
+    public Map<UUID,MappingRef> affectedEntityOwners(PreparedMappings prepared) {
+        var space=pending(prepared); durable(space);
+        if(!ready(prepared) || changedSources(space).stream().anyMatch(view -> !leaseReady(view.bounds())))
+            throw new IllegalStateException("affected owners 尚未實體就緒");
+        requirePinCapacity(); return affectedOwners(space);
+    }
     Optional<SessionEntranceDoorService.ToggleResult> toggleEntrance(ServerWorld target,BlockPos pos) {
         requireThread();
         if (target!=world) return Optional.empty();

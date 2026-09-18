@@ -9,6 +9,7 @@ import java.util.*;
 import java.io.IOException;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.registry.*;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
@@ -25,6 +26,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     private final SessionTransferService transfers=new SessionTransferService();
     private MinecraftServer server;
     private SessionRecoveryState journal;
+    private SessionRecoveryManager recovery;
+    private CorridorRepositionService reposition;
     private int lastTick=Integer.MIN_VALUE;
 
     public static void initialize() {
@@ -34,6 +37,13 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         ChamberSessions.install(manager);
         ServerLifecycleEvents.SERVER_STARTED.register(manager::attach);
         ServerTickEvents.END_SERVER_TICK.register(manager::tick);
+        ServerPlayConnectionEvents.JOIN.register((handler,sender,owner) -> manager.recovery.onJoin(handler.player.getUuid(),owner));
+        ServerPlayConnectionEvents.DISCONNECT.register((handler,owner) -> {
+            var id=handler.player.getUuid();
+            owner.execute(() -> {
+                if(manager.server==owner && manager.recovery!=null) manager.recovery.onDisconnect(id,owner);
+            });
+        });
         ServerLifecycleEvents.SERVER_STOPPING.register(manager::stopping);
         ServerLifecycleEvents.SERVER_STOPPED.register(manager::detach);
     }
@@ -41,7 +51,13 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(server!=null || !owner.isOnThread()) throw new IllegalStateException("session authority 不可重複 attach");
         server=owner; journal=SessionRecoveryState.get(owner); journal.requireHealthy();
         CorridorPageManager.forServer(owner);
-        for(var record : journal.flushedRecords().values()) sourceTicket(record);
+        recovery=new SessionRecoveryManager(owner,this::sourceAuthority);
+        reposition=new CorridorRepositionService(owner,record -> {
+            var runtime=sessions.get(record.chamberUuid());
+            return server==owner && runtime!=null && runtime.initial.sessionUuid().equals(record.sessionUuid())
+                    && runtime.state==SessionState.SUPERPOSITION && record.state()==SessionState.SUPERPOSITION;
+        });
+        for(var record : journal.flushedRecords().values()) { sourceTicket(record); returning(record); }
     }
     @Override public Presence presence(MinecraftServer owner,UUID chamber) {
         requireServer(owner);
@@ -89,6 +105,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         for(var runtime : List.copyOf(sessions.values())) {
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
             if(durable!=null && durable.state()==SessionState.RETURNING) runtime.state=SessionState.RETURNING;
+            if(runtime.state==SessionState.SUPERPOSITION && !sourceAuthority(runtime)) {
+                fail(runtime,new IllegalStateException("活動中的來源身分失效")); continue;
+            }
             if(runtime.state!=SessionState.ARMING) continue;
             try {
                 if(!eligible(runtime)) throw new IllegalStateException("準備期間來源身分／cohort／全員資格改變");
@@ -97,6 +116,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 enter(runtime,pages);
             } catch(IOException | RuntimeException failure) { fail(runtime,failure); }
         }
+        reposition.tick(owner); recovery.tick(owner);
     }
     private boolean eligible(SuperpositionSession runtime) {
         if(!sourceAuthority(runtime) || runtime.controller.activationBlocked()
@@ -131,6 +151,27 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                             && record.originDimensionRole()==origin.role() && record.anchorPos().equals(origin.controllerPos())
                             && record.facing()==origin.facing()).isPresent();
         } catch(RuntimeException unreadableAuthority) { return false; }
+    }
+    /** 重啟只用持久 origin 核對；同程序仍綁定入場時的 Controller 實例。 */
+    private boolean sourceAuthority(SessionRecoveryRecord record) {
+        var runtime=sessions.get(record.chamberUuid());
+        if(runtime!=null) return runtime.initial.sessionUuid().equals(record.sessionUuid()) && sourceAuthority(runtime);
+        var origin=record.origin();
+        var source=server.getWorld(RegistryKey.of(RegistryKeys.WORLD,origin.worldKey()));
+        if(source==null) return false;
+        var chunk=source.getChunkManager().getWorldChunk(origin.controllerPos().getX()>>4,origin.controllerPos().getZ()>>4);
+        if(chunk==null || !(chunk.getBlockEntity(origin.controllerPos()) instanceof ChamberControllerBlockEntity controller)
+                || controller.isRemoved() || controller.getWorld()!=source || controller.instanceKind()!=ChamberInstanceKind.ORIGIN
+                || !origin.chamberUuid().equals(controller.chamberUuid())) return false;
+        var block=chunk.getBlockState(origin.controllerPos());
+        if(!block.isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER) || !block.equals(controller.getCachedState())
+                || block.get(ChamberControllerBlock.FACING)!=origin.facing()) return false;
+        var registry=ChamberRegistryState.get(server); registry.requireHealthy();
+        return registry.registry().findOrigin(origin.worldKey(),origin.role(),new ChamberFrame(origin.controllerPos(),origin.facing()))
+                .filter(value -> value.chamberUuid().equals(origin.chamberUuid()) && !value.destroyed()
+                        && value.instanceKind()==ChamberInstanceKind.ORIGIN && value.originWorldKey().equals(origin.worldKey())
+                        && value.originDimensionRole()==origin.role() && value.anchorPos().equals(origin.controllerPos())
+                        && value.facing()==origin.facing()).isPresent();
     }
     private void enter(SuperpositionSession runtime,CorridorPageManager pages) throws IOException {
         var target=server.getWorld(SuperpositionWorld.KEY);
@@ -179,7 +220,19 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     @Override public boolean returnToOrigin(ServerWorld source,ChamberControllerBlockEntity controller) {
         requireServer(source.getServer());
         var runtime=sessions.get(controller.chamberUuid()); var durable=record(controller.chamberUuid());
-        if(runtime==null && durable==null) return true;
+        var known=tickets.entrySet().stream().filter(entry -> entry.getValue().record().chamberUuid().equals(controller.chamberUuid()))
+                .findFirst().orElse(null);
+        if(runtime==null && durable==null && known==null) return true;
+        var authority=durable!=null ? durable : runtime!=null ? runtime.initial : known.getValue().record();
+        if(!sourceAuthority(authority) || server.getWorld(source.getRegistryKey())!=source
+                || source.getBlockEntity(authority.origin().controllerPos())!=controller) return false;
+        if(recovery.returnComplete(authority.sessionUuid())) {
+            sessions.remove(authority.chamberUuid());
+            var ticket=tickets.remove(authority.sessionUuid());
+            if(ticket!=null) ticket.world().getChunkManager().removeTicket(SOURCE_TICKET,ticket.chunk(),2,authority.sessionUuid());
+            CorridorPageManager.forServer(server).acknowledgeRelease(authority.sessionUuid());
+            return true;
+        }
         if(durable!=null) {
             if(!durable.origin().worldKey().equals(source.getRegistryKey().getValue())
                     || !durable.origin().controllerPos().equals(controller.getPos()) || controller.instanceKind()!=ChamberInstanceKind.ORIGIN)
@@ -187,7 +240,6 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             returning(durable);
         }
         if(runtime!=null) runtime.state=SessionState.RETURNING;
-        // Task4 尚未提供玩家返還與已知收尾收據；保留 durable pending 與來源保護。
         return false;
     }
     private void fail(SuperpositionSession runtime,Exception failure) {
@@ -224,7 +276,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(source==null) throw new IllegalStateException("來源 world 不存在，不猜 spawn");
         var chunk=new ChunkPos(record.origin().controllerPos());
         source.getChunkManager().addTicket(SOURCE_TICKET,chunk,2,record.sessionUuid());
-        tickets.put(record.sessionUuid(),new SourceTicket(source,chunk));
+        tickets.put(record.sessionUuid(),new SourceTicket(source,chunk,record));
     }
     private void stopping(MinecraftServer owner) {
         requireServer(owner);
@@ -233,7 +285,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         tickets.clear();
     }
     private void detach(MinecraftServer owner) {
-        if(server==owner) { sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE; }
+        if(server==owner) { recovery.detach(owner); recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE; }
     }
     private void requireServer(MinecraftServer owner) {
         if(owner!=server || server==null || !owner.isOnThread()) throw new IllegalStateException("session 必須在 attached server thread");
@@ -247,5 +299,5 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         var direction=CorridorGeometry.localVector(frame,new Vec3d(-Math.sin(angle),0,Math.cos(angle)));
         return (float)Math.toDegrees(Math.atan2(-direction.x,direction.z));
     }
-    private record SourceTicket(ServerWorld world,ChunkPos chunk) {}
+    private record SourceTicket(ServerWorld world,ChunkPos chunk,SessionRecoveryRecord record) {}
 }

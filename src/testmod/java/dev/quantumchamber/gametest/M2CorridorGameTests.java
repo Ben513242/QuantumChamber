@@ -41,6 +41,368 @@ import java.util.List;
 import java.util.Map;
 
 public final class M2CorridorGameTests implements FabricGameTest {
+    private static final Map<net.minecraft.server.MinecraftServer,DisconnectJournalFault> DISCONNECT_FAULTS=new java.util.IdentityHashMap<>();
+    private static final Map<net.minecraft.server.MinecraftServer,RemapPowerLoss> REMAP_LOW=new java.util.IdentityHashMap<>();
+
+    public static void afterRemapMove(ServerPlayerEntity player,net.minecraft.server.world.ServerWorld world,Vec3d position,Vec3d velocity,
+            float yaw,float pitch,boolean success) {
+        if(!world.getServer().isOnThread()) return;
+        var fault=REMAP_LOW.get(world.getServer());
+        if(fault==null || fault.hit || !success || world!=fault.fixture.target || player.getServerWorld()!=world
+                || fault.fixture.server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY)!=world
+                || fault.fixture.server.getWorld(fault.fixture.context.getWorld().getRegistryKey())!=fault.fixture.context.getWorld()
+                || world.getEntity(player.getUuid())!=player || fault.fixture.server.getPlayerManager().getPlayer(player.getUuid())!=player
+                || fault.initial.participants().stream().noneMatch(person -> person.playerUuid().equals(player.getUuid()))) return;
+        var record=SessionRecoveryState.get(fault.fixture.server).flushedRecords().get(fault.initial.sessionUuid());
+        if(record==null || record.state()!=SessionState.SUPERPOSITION || record.restoreEntryEffectOnReturn()) return;
+        if(!record.origin().equals(fault.initial.origin()) || !SessionRecoveryRecord.sameParticipantSources(record.participants(),fault.initial.participants()))
+            throw new IllegalStateException("remap LOW 失去凍結來源範圍");
+        var current=fault.fixture.pages.currentMappings(record.sessionUuid());
+        var currentSlots=current.instances().stream().map(view -> view.ref().slotId()).collect(java.util.stream.Collectors.toSet());
+        if(current.epoch()!=1 || current.instances().stream().anyMatch(view -> fullBox(view.bounds(),player.getBoundingBox()))) return;
+        if(record.spaceLeases().stream().noneMatch(lease -> !currentSlots.contains(lease.slotId()) && fullBox(lease.bounds(),player.getBoundingBox()))) return;
+        if(player.getPos().squaredDistanceTo(position)>=1e-12 || player.getVelocity().squaredDistanceTo(velocity)>=1e-12
+                || Math.abs(net.minecraft.util.math.MathHelper.wrapDegrees(player.getYaw()-yaw))>=1e-4 || Math.abs(player.getPitch()-pitch)>=1e-4)
+            throw new IllegalStateException("remap LOW 必須在真 UUID／完整 pose 已確認之後");
+        fault.hit=true; fault.tick=fault.fixture.server.getTicks(); fault.moved=player.getUuid();
+        fault.fixture.power();
+        fault.fixture.context.assertTrue(fault.fixture.record().state()==SessionState.RETURNING
+                && !fault.fixture.record().restoreEntryEffectOnReturn(),"first actual remap move後真LOW持久RETURNING,false");
+        fault.fixture.context.assertTrue(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(
+                fault.fixture.context.getWorld(),fault.fixture.frame.controllerPos()),"partial remap斷電同tick保持source保護");
+        fault.fixture.context.assertEquals(1L,fault.fixture.pages.currentMappings(record.sessionUuid()).epoch(),"partial batch不得提早publish");
+        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_REMAP_LOW_HIT sid={} player={} tick={} pose={} velocity={} yaw={} pitch={} epoch=1 leases={}",
+                record.sessionUuid(),player.getUuid(),fault.tick,position,velocity,yaw,pitch,record.spaceLeases().size());
+    }
+    private static boolean fullBox(BlockBox box,net.minecraft.util.math.Box entity) {
+        return dev.quantumchamber.chamber.ChamberOccupantService.contains(new net.minecraft.util.math.Box(box.getMinX(),box.getMinY(),box.getMinZ(),
+                box.getMaxX()+1,box.getMaxY()+1,box.getMaxZ()+1),entity);
+    }
+    private static final class RemapPowerLoss implements AutoCloseable {
+        final NativeEntry fixture; final SessionRecoveryRecord initial;
+        boolean hit; int tick=-1; UUID moved;
+        RemapPowerLoss(NativeEntry fixture) {
+            this.fixture=fixture; initial=fixture.record();
+            if(initial.state()!=SessionState.SUPERPOSITION || initial.restoreEntryEffectOnReturn() || initial.spaceLeases().size()!=1
+                    || REMAP_LOW.putIfAbsent(fixture.server,this)!=null) throw new IllegalStateException("只能明確安裝單初始mapping的remap LOW");
+            net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register(owner -> { if(owner==fixture.server) close(); });
+        }
+        @Override public void close() { REMAP_LOW.remove(fixture.server,this); }
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_mid_remap_low",tickLimit=100000)
+    public void native_power_loss_during_actual_remap_returns_cohort_and_value_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var initial=fixture.record(); var fault=new RemapPowerLoss(fixture);
+            var view=fixture.pages.currentMappings(initial.sessionUuid()).instances().getFirst();
+            var position=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(1.5,1,95.5,Vec3d.ZERO,0,0)).position();
+            var item=new net.minecraft.entity.ItemEntity(fixture.target,position.x,position.y,position.z,new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND,5));
+            item.setNoGravity(true); item.setVelocity(Vec3d.ZERO); item.setNeverDespawn(); item.setPickupDelayInfinite();
+            context.assertTrue(fixture.target.spawnEntity(item),"mid-remap真有價item"); var itemId=item.getUuid();
+            walkNative(fixture,fixture.players.get(0).player(),95.5); walkNative(fixture,fixture.players.get(1).player(),96.5);
+            when(context,tick+1,() -> fault.hit,lowTick -> {
+                fault.close();
+                context.assertTrue(fault.moved!=null && fault.tick>=0,"真move RETURN窗口必須命中");
+                context.assertTrue(SessionRecoveryRecord.sameParticipantSources(initial.participants(),fixture.record().participants())
+                        && fixture.record().spaceLeases().size()>=2,"partial batch保留完整sources與兩邊lease");
+                fixture.trustedTeardown(lowTick+1,() -> {
+                    var value=context.getWorld().getEntity(itemId);
+                    context.assertTrue(value instanceof net.minecraft.entity.ItemEntity returned && returned.getStack().getCount()==5
+                            && returned.getStack().isOf(net.minecraft.item.Items.DIAMOND),"cohort與五顆鑽石均真返還後才清理");
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_REMAP_LOW_OK sid={} sourceOff=true item={} amount=5",initial.sessionUuid(),itemId);
+                    context.complete();
+                });
+            });
+        });
+    }
+
+    /** 只供此明確安裝的原生案例拒絕整份 journal flush；沒有把共享檔案寫入假稱為單 SID 操作。 */
+    public static void beforeDisconnectJournalFlush(SessionRecoveryState journal,net.minecraft.server.MinecraftServer server) {
+        if(!server.isOnThread()) return;
+        var fault=DISCONNECT_FAULTS.get(server); if(fault==null) return;
+        var current=journal.records().get(fault.initial.sessionUuid()); var durable=journal.flushedRecords().get(fault.initial.sessionUuid());
+        if(current==null || durable==null || current.state()!=SessionState.RETURNING || durable.state()!=SessionState.SUPERPOSITION) return;
+        if(!server.isOnThread() || SessionRecoveryState.get(server)!=journal || server.getWorld(fault.source.getRegistryKey())!=fault.source
+                || server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY)!=fault.target
+                || !fault.initial.origin().equals(current.origin()) || !fault.initial.origin().equals(durable.origin())
+                || durable.restoreEntryEffectOnReturn() || current.restoreEntryEffectOnReturn()
+                || !SessionRecoveryRecord.sameParticipantSources(fault.initial.participants(),current.participants())
+                || !SessionRecoveryRecord.sameParticipantSources(fault.initial.participants(),durable.participants()))
+            throw new AssertionError("DisconnectJournalFault 失去原生 server/world/SID/凍結cohort範圍");
+        fault.rejectedTicks.add(server.getTicks());
+        throw new java.io.UncheckedIOException(new java.io.IOException("own DISCONNECT RETURNING journal flush 受控拒絕"));
+    }
+    private static final class DisconnectJournalFault implements AutoCloseable {
+        final net.minecraft.server.MinecraftServer server;
+        final net.minecraft.server.world.ServerWorld source,target;
+        final SessionRecoveryRecord initial;
+        final Set<Integer> rejectedTicks=new java.util.HashSet<>();
+        DisconnectJournalFault(NativeEntry fixture) {
+            server=fixture.server; source=fixture.context.getWorld(); target=fixture.target; initial=fixture.record();
+            if(!(server instanceof net.minecraft.test.TestServer) || initial.state()!=SessionState.SUPERPOSITION
+                    || initial.restoreEntryEffectOnReturn() || DISCONNECT_FAULTS.putIfAbsent(server,this)!=null)
+                throw new IllegalStateException("只能在已知原生 ACTIVE 測試session明確安裝");
+            net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register(owner -> { if(owner==server) close(); });
+        }
+        @Override public void close() { DISCONNECT_FAULTS.remove(server,this); }
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_disconnect_io",tickLimit=100000)
+    public void native_disconnect_io_failure_preserves_removal_pending_and_retry_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var initial=fixture.record(); var fault=new DisconnectJournalFault(fixture); var before=journalBytes(fixture.server);
+            var offline=fixture.players.remove(1); var profile=offline.player().getGameProfile(); var online=fixture.players.getFirst();
+            RuntimeException[] finding={null};
+            try {
+                offline.disconnect();
+                context.assertTrue(offline.disconnectTick()==fixture.server.getTicks() && fixture.server.getPlayerManager().getPlayer(profile.getId())==null,
+                        "IO拒絕不能中斷真Fabric DISCONNECT後的原生player removal");
+            } catch(RuntimeException failure) { finding[0]=failure; }
+            context.runAtTick(tick+3,() -> {
+                try {
+                    context.assertTrue(fault.rejectedTicks.size()>=2,"必須在兩個不同server ticks真正重試flush");
+                    var after=journalBytes(fixture.server);
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_DISCONNECT_IO_FORMAL sid={} beforeSha256={} afterSha256={} retryTicks={}",
+                            initial.sessionUuid(),disconnectHash(before),disconnectHash(after),fault.rejectedTicks);
+                    context.assertTrue(java.util.Arrays.equals(before,after),"整份formal journal hash/bytes不變，其他SID資料也未被覆寫");
+                    var durable=SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid());
+                    context.assertTrue(durable.state()==SessionState.SUPERPOSITION && SessionRecoveryRecord.sameParticipantSources(initial.participants(),durable.participants()),
+                            "失敗不偽稱durable RETURNING，也不縮減原cohort/source");
+                    context.assertTrue(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos())
+                            && !fixture.pages.releaseComplete(initial.sessionUuid()),"失敗保持來源保護、lease與未完成狀態");
+                    online.confirmTeleport(); var position=online.player().getPos();
+                    online.player().networkHandler.onPlayerMove(new net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.Full(
+                            position.x+0.125,position.y,position.z,online.player().getYaw(),online.player().getPitch(),false));
+                    context.assertEquals(position,online.player().getPos(),"staged RETURNING同群在線者也必須停止正常移動");
+                } catch(RuntimeException failure) { if(finding[0]==null) finding[0]=failure; }
+                finally { fault.close(); }
+                offline.close();
+                fixture.players.add(new ConnectedGameTestPlayer(context.getWorld(),profile));
+                net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register(owner -> {
+                    if(owner!=fixture.server) return;
+                    if(dev.quantumchamber.persistence.SessionRecoveryManager.blocks(profile.getId(),owner))
+                        throw new AssertionError("TASK4_DISCONNECT_STOPPED_FAILED 舊UUID仍pending");
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_DISCONNECT_STOPPED_OK sid={} uuid={} queueVisible=false",initial.sessionUuid(),profile.getId());
+                });
+                fixture.trustedTeardown(tick+4,() -> {
+                    if(finding[0]!=null) throw finding[0];
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_DISCONNECT_IO_OK sid={} retryTicks={} formalUnchanged=true sourceOff=true",
+                            initial.sessionUuid(),fault.rejectedTicks);
+                    context.complete();
+                });
+            });
+        });
+    }
+    private static String disconnectHash(byte[] bytes) {
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes)); }
+        catch(java.security.NoSuchAlgorithmException failure) { throw new IllegalStateException(failure); }
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_group_walk",tickLimit=100000)
+    public void native_cohort_walks_seam_splits_merges_and_returns_windows(TestContext context) {
+        cohortWalk(context,Direction.NORTH);
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_group_south",tickLimit=100000)
+    public void native_cohort_walks_and_returns_south_windows(TestContext context) { cohortWalk(context,Direction.SOUTH); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_group_east",tickLimit=100000)
+    public void native_cohort_walks_and_returns_east_windows(TestContext context) { cohortWalk(context,Direction.EAST); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_group_west",tickLimit=100000)
+    public void native_cohort_walks_and_returns_west_windows(TestContext context) { cohortWalk(context,Direction.WEST); }
+    private static void cohortWalk(TestContext context,Direction facing) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2,facing); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,activeTick -> {
+            var sid=fixture.record().sessionUuid();
+            // page0與page16的aliases [-672,768)、[864,2304)分離；每一步仍在舊mapping有底板的範圍內。
+            walkStages(fixture,sid,List.of(new WalkStage(95.5,96.5,1),new WalkStage(95.5,672.5,1),
+                    new WalkStage(95.5,1248.5,1),new WalkStage(95.5,1536.5,2),new WalkStage(95.5,866.5,1),
+                    new WalkStage(95.5,97.5,1),new WalkStage(-97.5,-98.5,1)),0,activeTick+1);
+        });
+    }
+    private record WalkStage(double first,double second,int instances) {}
+    private static void walkStages(NativeEntry fixture,UUID sid,List<WalkStage> stages,int index,int tick) {
+        if(index==stages.size()) { fixture.trustedTeardown(tick,fixture.context::complete); return; }
+        var stage=stages.get(index);
+        walkNative(fixture,fixture.players.get(0).player(),stage.first());
+        walkNative(fixture,fixture.players.get(1).player(),stage.second());
+        when(fixture.context,tick,() -> fixture.pages.currentMappings(sid).epoch()==index+2
+                && fixture.record().spaceLeases().size()==fixture.pages.currentMappings(sid).instances().size(),readyTick -> {
+            assertLogical(fixture.context,fixture,fixture.players.get(0).player(),stage.first());
+            assertLogical(fixture.context,fixture,fixture.players.get(1).player(),stage.second());
+            fixture.context.assertEquals(stage.instances(),fixture.pages.currentMappings(sid).instances().size(),"alias是否重疊決定近共享／遠分離");
+            walkStages(fixture,sid,stages,index+1,readyTick+1);
+        });
+    }
+    private static void walkNative(NativeEntry fixture,ServerPlayerEntity player,double z) {
+        var owners=fixture.pages.currentEntityOwners(fixture.record().sessionUuid()).orElseThrow();
+        var target=fixture.pages.toPhysical(owners.get(player.getUuid()),new CorridorPageManager.LogicalPose(3.5,1,z,Vec3d.ZERO,0,0));
+        var box=player.getBoundingBox().offset(target.position().subtract(player.getPos()));
+        fixture.context.assertTrue(fixture.target.isSpaceEmpty(player,box),"腳本長走終點仍有完整原生collision空間");
+        fixture.context.assertTrue(new dev.quantumchamber.transfer.SessionTransferService().move(player,fixture.target,target.position(),
+                target.velocity(),target.yaw(),target.pitch()),"真native pose推進，後續remap由產品tick完成");
+    }
+    private static void assertLogical(TestContext context,NativeEntry fixture,ServerPlayerEntity player,double z) {
+        var owners=fixture.pages.currentEntityOwners(fixture.record().sessionUuid()).orElseThrow();
+        var logical=fixture.pages.toLogical(owners.get(player.getUuid()),new CorridorPageManager.PhysicalPose(
+                player.getPos(),player.getVelocity(),player.getYaw(),player.getPitch()));
+        context.assertTrue(Math.abs(logical.logicalZ()-z)<1e-9,"remap保持手算logical z="+z);
+        var floor=BlockPos.ofFloored(player.getPos()).down();
+        context.assertTrue(!fixture.target.getBlockState(floor).getCollisionShape(fixture.target,floor).isEmpty(),"remap後仍有原生底板collision");
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_no_entrance",tickLimit=100000)
+    public void native_remote_mapping_without_entrance_returns_to_frozen_source_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var sid=fixture.record().sessionUuid(); var player=fixture.players.getFirst().player();
+            walkNative(fixture,player,576.5);
+            when(context,tick+1,() -> fixture.pages.currentMappings(sid).epoch()==2,second -> {
+                walkNative(fixture,player,672.5);
+                when(context,second+1,() -> fixture.pages.currentMappings(sid).epoch()==3,third -> {
+                    var view=fixture.pages.currentMappings(sid).instances().getFirst();
+                    context.assertEquals(0L,view.aliasStartBlock(),"page7遠端alias從0開始，端cap不可假造入口");
+                    boolean absent=false;
+                    try { fixture.pages.entrance(sid); } catch(IllegalStateException expected) { absent=true; }
+                    context.assertTrue(absent,"遠端current mapping明確沒有物化入口");
+                    fixture.trustedTeardown(third+1,context::complete);
+                });
+            });
+        });
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_entities",tickLimit=100000)
+    public void native_items_projectiles_cross_seam_and_return_before_cleanup_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var sid=fixture.record().sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
+            var position=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(1.5,1,95.5,Vec3d.ZERO,0,0)).position();
+            var item=new net.minecraft.entity.ItemEntity(fixture.target,position.x,position.y,position.z,
+                    new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND,3));
+            item.setNoGravity(true); item.setVelocity(Vec3d.ZERO); item.setNeverDespawn(); item.setPickupDelayInfinite();
+            context.assertTrue(fixture.target.spawnEntity(item),"真有價item入世界");
+            var projectile=net.minecraft.entity.EntityType.SNOWBALL.create(fixture.target);
+            context.assertTrue(projectile!=null,"原生projectile建立");
+            var shot=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(5,1,96.5,Vec3d.ZERO,0,0)).position();
+            projectile.refreshPositionAndAngles(shot,0,0); projectile.setNoGravity(true); projectile.setVelocity(Vec3d.ZERO);
+            context.assertTrue(fixture.target.spawnEntity(projectile),"真projectile入世界");
+            var itemId=item.getUuid(); var shotId=projectile.getUuid();
+            when(context,tick+1,() -> fixture.pages.currentMappings(sid).epoch()==2,remapped -> {
+                var owners=fixture.pages.currentEntityOwners(sid).orElseThrow();
+                context.assertTrue(owners.containsKey(itemId) && owners.containsKey(shotId),"remap包含item與projectile的唯一UUID owner");
+                var actual=fixture.target.getEntity(itemId);
+                var next=fixture.pages.toPhysical(owners.get(itemId),new CorridorPageManager.LogicalPose(1.5,1,96.5,Vec3d.ZERO,0,0));
+                context.assertTrue(new dev.quantumchamber.transfer.SessionTransferService().move(actual,fixture.target,next.position(),next.velocity(),0,0),
+                        "item真跨96seam重定位");
+                fixture.trustedTeardown(remapped+1,() -> {
+                    var returnedItem=context.getWorld().getEntity(itemId); var returnedShot=context.getWorld().getEntity(shotId);
+                    context.assertTrue(returnedItem instanceof net.minecraft.entity.ItemEntity value && value.getStack().isOf(net.minecraft.item.Items.DIAMOND)
+                            && value.getStack().getCount()==3,"以真target UUID找到三顆鑽石，不能使用舊removed reference");
+                    context.assertTrue(returnedShot instanceof net.minecraft.entity.projectile.ProjectileEntity,"projectile也先返還原world才清lease");
+                    context.assertTrue(!returnedItem.getCommandTags().contains("quantumchamber_session:"+sid)
+                            && !returnedShot.getCommandTags().contains("quantumchamber_session:"+sid),"返還後移除本session的管理tag");
+                    context.complete();
+                });
+            });
+        });
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_reconnect",tickLimit=100000)
+    public void native_channel_disconnect_and_join_queue_block_movement_until_next_tick_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,activeTick -> {
+            var initial=fixture.record(); var offline=fixture.players.remove(1); var id=offline.player().getUuid();
+            var profile=offline.player().getGameProfile(); offline.disconnect();
+            context.assertTrue(offline.disconnectTick()==fixture.server.getTicks() && offline.disconnectOnThread(),
+                    "真channel關閉必須進入Fabric DISCONNECT事件與server thread");
+            context.assertTrue(fixture.server.getPlayerManager().getPlayer(id)==null,"原生disconnect移除真正online玩家");
+            fixture.power();
+            when(context,activeTick+1,() -> fixture.record().participants().stream().anyMatch(SessionRecoveryRecord.Participant::returned),returnedTick -> {
+                context.assertTrue(SessionRecoveryRecord.sameParticipantSources(initial.participants(),fixture.record().participants()),
+                        "離線返還仍保留完整UUID cohort與逐欄來源snapshot");
+                context.assertTrue(fixture.record().participants().stream().filter(person -> person.playerUuid().equals(id))
+                        .noneMatch(SessionRecoveryRecord.Participant::returned),"離線者不可被當作returned");
+                var rejoined=new ConnectedGameTestPlayer(context.getWorld(),profile); fixture.players.add(rejoined);
+                context.assertEquals(fixture.server.getTicks(),rejoined.joinTick(),"真JOIN callback已觸發");
+                context.assertTrue(rejoined.player().getServerWorld()==fixture.target,"JOIN callback只能queue，原生playerdata仍在fixed world");
+                rejoined.confirmTeleport();
+                var before=rejoined.player().getPos();
+                rejoined.player().networkHandler.onPlayerMove(new net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.Full(
+                        before.x+0.125,before.y,before.z,rejoined.player().getYaw(),rejoined.player().getPitch(),false));
+                context.assertEquals(before,rejoined.player().getPos(),"JOIN queue等待下一tick期間封鎖真handler正常移動");
+                when(context,returnedTick+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                        .presence(fixture.server,initial.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,finishedTick -> {
+                    try {
+                        context.assertTrue(fixture.server.getTicks()>rejoined.joinTick(),"不能於JOIN當tick返還");
+                        context.assertTrue(rejoined.player().getServerWorld()==context.getWorld(),"下一tick由真backend回同一source");
+                        context.assertTrue(dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),
+                                "離線cohort重登返還完成後才OFF解保護");
+                        rejoined.confirmTeleport();
+                        var returned=rejoined.player().getPos();
+                        rejoined.player().networkHandler.onPlayerMove(new net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.Full(
+                                returned.x+0.125,returned.y,returned.z,rejoined.player().getYaw(),rejoined.player().getPitch(),false));
+                        context.assertTrue(Math.abs(rejoined.player().getX()-returned.x-0.125)<1e-9,"recovery完成後恢復正常網路移動");
+                        context.complete();
+                    } finally { offline.close(); fixture.close(); }
+                });
+            });
+        });
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_native_low",tickLimit=100000)
+    public void native_external_low_returns_cohort_before_source_unlock_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2);
+        fixture.players.get(0).player().refreshPositionAndAngles(CorridorGeometry.position(fixture.frame,4.25,2,4.25),17,9);
+        fixture.players.get(1).player().refreshPositionAndAngles(CorridorGeometry.position(fixture.frame,2.25,3,2.25),18,10);
+        context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,activeTick -> {
+            var initial=fixture.record();
+            var renewed=fixture.players.getFirst().player();
+            renewed.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,900,2));
+            var renewedNbt=renewed.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt();
+            fixture.power();
+            context.assertTrue(!context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()),
+                    "先由真外部拉桿切至LOW");
+            context.assertEquals(SessionState.RETURNING,fixture.record().state(),"真LOW立即進入持久RETURNING");
+            context.assertTrue(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(
+                    context.getWorld(),fixture.frame.controllerPos()),"返還尚待處理時原艙保持保護");
+            when(context,activeTick+1,() -> fixture.players.stream().allMatch(connection -> connection.player().getServerWorld()==context.getWorld()),returnedTick -> {
+                var returning=fixture.record();
+                context.assertTrue(returning!=null && returning.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned),
+                        "真player checkpoint之後完整cohort returned才checked落盤");
+                context.assertTrue(SessionRecoveryRecord.sameParticipantSources(initial.participants(),returning.participants()),
+                        "返還floor placement不可回寫入場來源pose／NBT");
+                context.assertTrue(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),
+                        "全員returned仍須等最後lease與coordinator收尾");
+            });
+            context.runAtTick(activeTick+200,() -> {
+                try {
+                    for(var connection : fixture.players) {
+                        var player=connection.player();
+                        context.assertTrue(player.getServerWorld()==context.getWorld(),"斷電必須由真backend回到同一來源world");
+                        context.assertTrue(dev.quantumchamber.chamber.ChamberOccupantService.contains(
+                                dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox()),
+                                "返還後全身位於有限原艙interior");
+                    }
+                    fixture.assertInventory();
+                    context.assertEquals(CorridorGeometry.position(fixture.frame,2.5,1,1.5),fixture.players.get(0).player().getPos(),"A依來源z/x排序落在第二個floor slot");
+                    context.assertEquals(CorridorGeometry.position(fixture.frame,1.5,1,1.5),fixture.players.get(1).player().getPos(),"B依來源z/x排序落在第一個floor slot");
+                    context.assertEquals(renewedNbt,renewed.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"committed false完整保留新900/amp2當下效果");
+                    for(var connection : fixture.players) context.assertEquals(Optional.of(new PlayerRecoveryCheckpoint(initial.sessionUuid(),
+                            PlayerRecoveryCheckpoint.AppliedPolicy.KEEP_CURRENT)),((PlayerRecoveryCheckpointAccess)connection.player()).quantumchamber$getRecoveryCheckpoint(),
+                            "每個真人持有同sid、false policy持久marker");
+                    context.assertTrue(!SessionRecoveryState.get(fixture.server).flushedRecords().containsKey(initial.sessionUuid()),
+                            "完整返還及最後lease清理之後journal才移除");
+                    context.assertEquals(dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,
+                            dev.quantumchamber.chamber.ChamberSessions.gateway().presence(fixture.server,initial.chamberUuid()),
+                            "真收尾完成後移除runtime session");
+                    context.assertTrue(dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(
+                            context.getWorld(),fixture.frame.controllerPos()),"真返還完成後來源coordinator才解除保護");
+                    context.complete();
+                } finally { fixture.close(); }
+            });
+        });
+    }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_r1_boundary_publish",tickLimit=100000)
     public void native_projection_identified_before_budget_split_publish_windows(TestContext context) { projectionBoundary(context,false); }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_r1_boundary_cancel",tickLimit=100000)
@@ -509,46 +871,26 @@ public final class M2CorridorGameTests implements FabricGameTest {
             context.assertTrue(!dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),
                     controller()),"Task4尚未完成不得假returnComplete");
         }
-        /** 真實編排僅為回收本測例資源；不是Task4 gateway返還或crash／多JVM恢復。 */
+        /** Task4 之後交由真 backend 收尾；保留既有呼叫名稱以便對照 Task3 入場案例。 */
         void trustedTeardown(int tick,Runnable complete) {
             var initial=record();
-            context.assertTrue(initial!=null && !dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),controller()),
-                    "先真gateway請求RETURNING，產品仍不得假returnComplete");
-            var returning=record();
-            context.assertEquals(SessionState.RETURNING,returning.state(),"trusted teardown要先checked RETURNING");
-            var participants=new java.util.ArrayList<SessionRecoveryRecord.Participant>();
-            for(var person : returning.participants()) {
-                var player=server.getPlayerManager().getPlayer(person.playerUuid());
-                var currentEffect=player.getStatusEffect(ModEffects.QUANTUM_STATE);
-                var before=currentEffect==null ? null : currentEffect.writeNbt();
-                context.assertTrue(new dev.quantumchamber.transfer.SessionTransferService().move(player,context.getWorld(),person.sourcePosition(),
-                        person.sourceVelocity(),person.yaw(),person.pitch()),"trusted逐真人精確移回保存source pose");
-                context.assertTrue(dev.quantumchamber.chamber.ChamberOccupantService.contains(
-                        dev.quantumchamber.chamber.ChamberGeometry.interiorBox(frame),player.getBoundingBox()),"trusted原艙完整bbox");
-                if(returning.restoreEntryEffectOnReturn()) {
-                    player.removeStatusEffect(ModEffects.QUANTUM_STATE);
-                    player.addStatusEffect(StatusEffectInstance.fromNbt(person.quantumStateSnapshot()));
-                    context.assertEquals(person.quantumStateSnapshot(),player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"trusted true完整snapshot");
-                } else {
-                    var after=player.getStatusEffect(ModEffects.QUANTUM_STATE);
-                    context.assertTrue(java.util.Objects.equals(before,after==null ? null : after.writeNbt()),"trusted false不刪當下新效果");
-                }
-                saveCheckpoint(server,player);
-                participants.add(new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),
-                        person.pitch(),person.quantumStateSnapshot(),true));
-            }
+            context.assertTrue(initial!=null,"必須是已知 source session 才能要求收尾");
+            if(context.getWorld().isReceivingRedstonePower(frame.controllerPos())) power();
+            else dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),controller());
             var journal=SessionRecoveryState.get(server);
-            journal.put(new SessionRecoveryRecord(returning.sessionUuid(),returning.chamberUuid(),returning.origin(),participants,returning.spaceLeases(),
-                    SessionState.RETURNING,returning.restoreEntryEffectOnReturn())); journal.flush(server);
-            pages.release(returning.sessionUuid());
-            when(context,tick,() -> pages.releaseComplete(returning.sessionUuid()),ignored -> {
+            when(context,tick,() -> dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,initial.chamberUuid())
+                    ==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,ignored -> {
                 try {
-                    context.assertTrue(!journal.flushedRecords().containsKey(returning.sessionUuid()),"真release收據需durable journal移除");
-                    pages.acknowledgeRelease(returning.sessionUuid());
-                    context.assertTrue(!dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),controller()),
-                            "只回收測例lease，runtime不清／產品return仍false");
-                    context.assertTrue(!context.getWorld().setBlockState(frame.controllerPos().down(3),net.minecraft.block.Blocks.DIRT.getDefaultState()),
-                            "trusted teardown不解除原艙保護");
+                    context.assertTrue(!journal.flushedRecords().containsKey(initial.sessionUuid()),"真release收據消費前已durable移除");
+                    for(var connection : players) {
+                        var player=connection.player();
+                        context.assertTrue(player.getServerWorld()==context.getWorld()
+                                && dev.quantumchamber.chamber.ChamberOccupantService.contains(
+                                        dev.quantumchamber.chamber.ChamberGeometry.interiorBox(frame),player.getBoundingBox()),
+                                "真backend全員回同source完整bbox");
+                    }
+                    context.assertTrue(dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),frame.controllerPos()),
+                            "LOW真返還收尾後解除來源保護");
                     complete.run();
                 } finally { close(); }
             });
@@ -892,7 +1234,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
         }
         return true;
     }
-    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100000)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId="m2_task4_isolated_incomplete", tickLimit = 100000)
     public void trusted_incomplete_cohort_after_false_never_publishes_windows(TestContext context) {
         if (!Platform.isWindows()) {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows durable false 後 cohort 拒絕");
@@ -911,7 +1253,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             when(context,tick+1,() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
         });
     }
-    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100000)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId="m2_task4_isolated_publish", tickLimit = 100000)
     public void trusted_publish_checkpoint_failure_preserves_false_windows(TestContext context) {
         if (!Platform.isWindows()) {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 發布前 checkpoint 拒絕；未執行原生正向保存");
@@ -938,7 +1280,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
         });
     }
 
-    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100000)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId="m2_task4_isolated_value", tickLimit = 100000)
     public void trusted_retirement_preserves_live_valuable_item_windows(TestContext context) {
         if (!Platform.isWindows()) {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生入場後 item pin 退休正向");
@@ -967,7 +1309,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
-    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100000)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId="m2_task4_isolated_remap", tickLimit = 100000)
     public void trusted_native_initial_and_whole_cohort_remap_windows(TestContext context) {
         if (!Platform.isWindows()) {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生 initial/remap 正向；此處不代表 checkpoint 通過");
@@ -1081,11 +1423,34 @@ public final class M2CorridorGameTests implements FabricGameTest {
                             +" loaded="+world.isChunkLoaded(sample.toLong())+" ticking="+world.shouldTick(sample)
                             +" tickingFuture="+world.getChunkManager().isTickingFutureReady(sample.toLong())
                             +" chunkDebug="+world.getChunkManager().getChunkLoadingDebugInfo(sample)
-                            +" worldTime="+world.getTime()+" serverTicks="+world.getServer().getTicks());
+                            +" worldTime="+world.getTime()+" serverTicks="+world.getServer().getTicks()+" own="+waitingLeaseEvidence(context));
                 }
                 whenUntil(context,tick+1,condition,ready,deadline);
             }
         });
+    }
+    private static String waitingLeaseEvidence(TestContext context) {
+        var server=context.getWorld().getServer(); var journal=SessionRecoveryState.get(server);
+        var world=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
+        var base=context.getAbsolutePos(BlockPos.ORIGIN); var details=new java.util.ArrayList<String>();
+        for(var record : journal.flushedRecords().values()) {
+            var offset=record.origin().controllerPos().subtract(base);
+            if(offset.getX()<0 || offset.getX()>20 || offset.getZ()<0 || offset.getZ()>20) continue;
+            var staged=journal.records().get(record.sessionUuid());
+            String state="sid="+record.sessionUuid()+" flushed="+record.state()+" current="+(staged==null ? "absent" : staged.state());
+            for(var lease : record.spaceLeases()) {
+                var box=lease.bounds(); int total=0,full=0,loaded=0,ticking=0;
+                for(int x=box.getMinX()>>4;x<=box.getMaxX()>>4;x++) for(int z=box.getMinZ()>>4;z<=box.getMaxZ()>>4;z++) {
+                    total++; var chunk=new net.minecraft.util.math.ChunkPos(x,z);
+                    if(world.getChunkManager().getWorldChunk(x,z)!=null) full++;
+                    if(world.isChunkLoaded(chunk.toLong())) loaded++;
+                    if(world.shouldTick(chunk)) ticking++;
+                }
+                state+=" slot="+lease.slotId()+" chunks="+total+" FULL="+full+" loaded="+loaded+" ticking="+ticking;
+            }
+            details.add(state);
+        }
+        return details.toString();
     }
 
     /** 只用於 geometry 測試的可信編排；紅石資格與失敗返還留 Task3/4。 */
@@ -1169,7 +1534,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             manager.acknowledgeRelease(session);
         }
     }
-    @GameTest(templateName = "quantumchamber:m1_empty", tickLimit = 100000)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId="m2_task4_isolated_reservation", tickLimit = 100000)
     public void trusted_geometry_requires_durable_reservation_and_stays_unpublished(TestContext context) {
         var server = context.getWorld().getServer();
         var manager = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);

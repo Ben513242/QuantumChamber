@@ -6,6 +6,7 @@
   "mixins": [
     "WorldSetBlockStateMixin",
     "ServerPlayerRecoveryCheckpointMixin",
+    "ServerPlayNetworkHandlerRecoveryMixin",
     "PlayerManagerSaveInvoker"
   ]
 }
