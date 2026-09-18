@@ -42,16 +42,19 @@ public final class CorridorRepositionService {
 
     private void advance(SessionRecoveryRecord record) {
         var pages=CorridorPageManager.forServer(server); var world=server.getWorld(SuperpositionWorld.KEY);
+        requireActiveBuff(record,pages);
         var state=tracking.computeIfAbsent(record.sessionUuid(),ignored -> new Tracking());
         if(state.pending!=null) {
             if(!pages.ready(state.pending)) return;
             var batch=pages.beginRemap(state.pending,pages.affectedEntityOwners(state.pending));
             try {
                 for(var move : batch.moves()) {
+                    requireActiveBuff(record,pages);
                     var entity=world.getEntity(move.entityUuid()); var pose=move.after();
                     if(entity==null || !transfers.move(entity,world,pose.position(),pose.velocity(),pose.yaw(),pose.pitch()))
                         throw new IllegalStateException("native entity remap 尚未確認："+move.entityUuid());
                 }
+                requireActiveBuff(record,pages);
                 var retired=pages.commitRemap(batch);
                 state.occupied=state.targetPages; state.pending=null; state.targetPages=Set.of();
                 pages.retire(retired);
@@ -93,6 +96,11 @@ public final class CorridorRepositionService {
         if(occupied.isEmpty() || occupied.equals(state.occupied)) return;
         state.targetPages=Set.copyOf(occupied);
         state.pending=pages.prepareRemap(record.sessionUuid(),pages.currentMappings(record.sessionUuid()).epoch(),state.targetPages);
+    }
+
+    private static void requireActiveBuff(SessionRecoveryRecord record,CorridorPageManager pages) {
+        if(record.semantics()==dev.quantumchamber.persistence.SessionSemantics.LATERAL_BUFF_MAINTAINED
+                && !pages.activeCohortHasBuff(record.sessionUuid())) throw new IllegalStateException("remap前完整cohort的Buff失效");
     }
 
     private static CorridorPageManager.PhysicalPose pose(Entity entity) {

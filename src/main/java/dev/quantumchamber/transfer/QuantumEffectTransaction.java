@@ -8,7 +8,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.nbt.NbtCompound;
 
-/** NBT 保存包含 hiddenEffect；整份 cohort 一起移除或完整恢復。 */
+/** 不可變 NBT 保存包含 hiddenEffect；新入場只核對，明確 legacy 才消耗或恢復。 */
 public final class QuantumEffectTransaction {
     private final List<SessionRecoveryRecord.Participant> sources;
     public QuantumEffectTransaction(List<ServerPlayerEntity> players) {
@@ -25,6 +25,18 @@ public final class QuantumEffectTransaction {
         sources=List.copyOf(snapshots);
     }
     public List<SessionRecoveryRecord.Participant> snapshots() { return sources; }
+    /** 只驗證完整原生玩家與目前效果；不移除、重給或改寫倒數及 hidden chain。 */
+    public void verifyCurrent(MinecraftServer server) {
+        requireThread(server);
+        for(var source : sources) {
+            var player=server.getPlayerManager().getPlayer(source.playerUuid());
+            if(player==null || player.getServer()!=server || !player.isAlive() || player.isRemoved() || player.isSpectator()
+                    || server.getWorld(player.getServerWorld().getRegistryKey())!=player.getServerWorld()
+                    || player.getServerWorld().getEntity(source.playerUuid())!=player
+                    || !player.hasStatusEffect(ModEffects.QUANTUM_STATE))
+                throw new IllegalStateException("完整cohort的目前QuantumState或玩家身分失效");
+        }
+    }
     public void commit(MinecraftServer server) {
         requireThread(server);
         for(var source : sources) {

@@ -65,11 +65,32 @@ class ChamberPowerCoordinatorTest {
         assertEquals(1, backend.starts);
     }
 
-    @Test void activeIgnoresEmptyOriginAndConsumedBuff() {
+    @Test void activePresenceIgnoresEmptyOriginReadiness() {
         registry.setPowerState(uuid, ChamberPowerState.POWERED);
         backend.presence = ChamberSessionGateway.Presence.ACTIVE;
         assertEquals(ChamberState.ARMED, refresh(true, ChamberState.ARMED, false));
         assertEquals(0, backend.starts);
+    }
+
+    @Test void buffReturnAtHeldHighWaitsForAckThenIdlesAndRedrinkMayStartAgain() {
+        registry.setPowerState(uuid,ChamberPowerState.POWERED);
+        backend.presence=ChamberSessionGateway.Presence.RETURNING;
+        backend.returned=false;
+        assertEquals(ChamberState.ARMED,refresh(true,ChamberState.ARMED,true));
+        assertEquals(0,backend.starts,"RETURNING中重新符合Buff也不能撤銷返還");
+        backend.returned=true;
+        assertEquals(ChamberState.IDLE,refresh(true,ChamberState.ARMED,false));
+        assertEquals(ChamberPowerState.POWERED,registry.records().get(uuid).powerState());
+        backend.startResult=ChamberSessionGateway.StartResult.STAGING;
+        assertEquals(ChamberState.READY,refresh(true,ChamberState.IDLE,true));
+        assertEquals(1,backend.starts);
+        backend.presence=ChamberSessionGateway.Presence.ARMING;
+        backend.returned=false;
+        assertEquals(ChamberState.ARMED,refresh(false,ChamberState.READY,false));
+        assertEquals(ChamberPowerState.RETURNING,registry.records().get(uuid).powerState());
+        backend.returned=true;
+        assertEquals(ChamberState.INVALID,refresh(false,ChamberState.ARMED,false));
+        assertEquals(ChamberPowerState.OFF,registry.records().get(uuid).powerState());
     }
 
     @Test void failedReturnKeepsProtectionAndRepowerMustFinishReturnBeforeStarting() {

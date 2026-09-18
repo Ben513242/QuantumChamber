@@ -275,6 +275,7 @@ public final class CorridorPageManager {
                 || space.failed || space.operations!=0) throw new IllegalStateException("remap epoch／操作狀態不符");
         var record=durable(space);
         if (record.state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("只有已發布 SUPERPOSITION 可 remap");
+        requireActiveBuff(space);
         var oldSlots=Set.copyOf(space.leases.keySet());
         boolean reserved=false;
         try {
@@ -321,6 +322,7 @@ public final class CorridorPageManager {
         var space=pending(prepared);
         if (prepared.baseEpoch()==0 || !ready(prepared) || space.batch!=null || space.operations!=0) throw new IllegalStateException("remap 尚未就緒");
         if (durable(space).state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("session 正在安全返還");
+        requireActiveBuff(space);
         requirePinCapacity();
         var owners=affectedOwners(space);
         if (!owners.equals(affectedEntityOwners)) throw new IllegalArgumentException("affected entity 清單不等於最新完整 live pins");
@@ -345,6 +347,7 @@ public final class CorridorPageManager {
         var space=pending(batch.prepared());
         if (space.batch!=batch || space.batchTick!=server.getTicks()) throw new IllegalArgumentException("過期或偽造 remap batch");
         if (space.failed || space.releasing || durable(space).state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("session 不再允許發布");
+        requireActiveBuff(space);
         requirePinCapacity();
         var expected=batch.moves().stream().map(EntityMove::entityUuid).collect(java.util.stream.Collectors.toSet());
         if (!movingPins(space).equals(expected)) throw new IllegalStateException("begin 後出現新的 pin 或遺失 entity");
@@ -543,13 +546,32 @@ public final class CorridorPageManager {
         var box=ChamberGeometry.interiorBox(entrance(space.id));
         for (UUID id : cohort) {
             var player=server.getPlayerManager().getPlayer(id);
-            if (player==null || player.getServerWorld()!=world || player.isSpectator() || !contains(box,player.getBoundingBox())
-                    || player.hasStatusEffect(ModEffects.QUANTUM_STATE)) throw new IllegalStateException("全 cohort 尚未完成真實入場與效果消耗");
+            if (player==null || player.getServerWorld()!=world || world.getEntity(id)!=player || !player.isAlive() || player.isRemoved()
+                    || player.isSpectator() || !contains(box,player.getBoundingBox())
+                    || player.hasStatusEffect(ModEffects.QUANTUM_STATE)!=(space.semantics==SessionSemantics.LATERAL_BUFF_MAINTAINED))
+                throw new IllegalStateException("全cohort尚未完成真實入場與對應模式效果核對");
         }
         var present=world.getPlayers(player -> player.getBoundingBox().intersects(box));
         if (!present.stream().map(Entity::getUuid).collect(java.util.stream.Collectors.toSet()).equals(cohort)) {
             throw new IllegalStateException("replica 內出現未凍結玩家");
         }
+    }
+    /** 同一份 Space／current／checked journal 與真玩家共同驗證；只供新模式維持資格。 */
+    public boolean activeCohortHasBuff(UUID sessionUuid) {
+        var space=space(sessionUuid);
+        var record=durable(space); var current=journal.records().get(sessionUuid);
+        if(space.semantics!=SessionSemantics.LATERAL_BUFF_MAINTAINED || space.failed || space.releasing
+                || record.state()!=SessionState.SUPERPOSITION || current==null || !current.equals(record)) return false;
+        for(var person : record.participants()) {
+            var player=server.getPlayerManager().getPlayer(person.playerUuid());
+            if(player==null || player.getServer()!=server || player.getServerWorld()!=world || world.getEntity(person.playerUuid())!=player
+                    || !player.isAlive() || player.isRemoved() || player.isSpectator() || !player.hasStatusEffect(ModEffects.QUANTUM_STATE)) return false;
+        }
+        return true;
+    }
+    private void requireActiveBuff(Space space) {
+        if(space.semantics==SessionSemantics.LATERAL_BUFF_MAINTAINED && !activeCohortHasBuff(space.id))
+            throw new IllegalStateException("新模式完整cohort的目前Buff失效，禁止繼續頁面移動或發布");
     }
     private void resetBudget() {
         if (budgetTick!=server.getTicks()) { budgetTick=server.getTicks(); writes=0; }

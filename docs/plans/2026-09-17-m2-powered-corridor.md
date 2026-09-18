@@ -543,6 +543,8 @@ context.assertTrue(player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(
 ```
 
 保存完整NBT/hidden與elapsednativeTicks對照，不單純>0當未重置。單人／兩人任一shortduration自然expire；vanilla MilkBucketItem.finishUsing移除真Buff；others效果不退款；HIGH source仍protected/POWERED、journal/receipt清後IDLE，再真喝／sealed新SID入場；sourceLOW最後OFF才能Creative拆。
+
+原生custom PotionContents的長／短效與hidden fixture允許並明確標示；不得在正式飲用後直接addStatusEffect延長。正式ModPotions3600仍需至少一個完整飲用→入場→剩餘duration未重置案例，可用已完成custom長效／milk全組返還／checked清理的同來源warm cycle，在HIGH正常再喝正式藥水進新SID；不降server tick／改藥水數值／強載／fake進度。
 - [ ] **Step 2: RED矩陣。** 缺一Buff／zero／spectator／26人／變來源C／UUID／offline保持原guard，prepare期間expire、partialactualmove/remap後失Buff、新劑hiddenEffect接續不誤判expire、RETURNING中redrink不撤銷。原移動callbackscopedfault與所有rawsentinel分開標native/trusted。
 - [ ] **Step 3: runtime核心分流。** creation顯式newmode/false，verifyCurrent不consume；active完整cohort任一!hasStatusEffect先Returning，再reposition/recovery。checkInitialCohort根據recordmode要求Buff仍有或legacy已耗，不blanket刪effect條件。HIGH ack原gateway→registryPOWERED重新readiness，LOW已完成→OFF。
 - [ ] **Step 4: GREEN／全套。** 聚焦newnative案例綠、mode/JUnit純tests，原known-world/UUID/floor/leases/budget保守門檻；legacyfixtures可繼續透過明確Mode構造，但native creation期待改new且不得以forcedlegacyfake真飲用。最後唯一full/GT／class/JAR／main-onlygate一次，WindowsCI未綠不放行M3。

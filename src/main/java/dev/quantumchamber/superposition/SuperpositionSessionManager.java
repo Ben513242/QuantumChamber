@@ -81,14 +81,14 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         var effects=new QuantumEffectTransaction(requested.stream().map(id -> server.getPlayerManager().getPlayer(id)).toList());
         var id=UUID.randomUUID(); var pages=CorridorPageManager.forServer(server);
         CorridorPageManager.PreparedMappings prepared;
-        try { prepared=pages.reserveInitial(id,chamber,frame.outwardFacing(),Set.of(0L)); }
+        try { prepared=pages.reserveInitial(id,chamber,frame.outwardFacing(),Set.of(0L),SessionSemantics.LATERAL_BUFF_MAINTAINED); }
         catch(IllegalArgumentException | IllegalStateException capacity) { return StartResult.REJECTED; }
         var origin=new ChamberOriginAuthority(chamber,source.getRegistryKey().getValue(),
                 dev.quantumchamber.universe.DimensionRole.fromVanillaKey(source.getRegistryKey()).orElseThrow(),
                 frame.controllerPos(),frame.outwardFacing(),ChamberInstanceKind.ORIGIN);
         var initial=new SessionRecoveryRecord(id,chamber,origin,effects.snapshots(),prepared.target().instances().stream()
-                .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,true,
-                dev.quantumchamber.persistence.SessionSemantics.LEGACY_FORWARD_CONSUMED);
+                .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,false,
+                SessionSemantics.LATERAL_BUFF_MAINTAINED);
         var runtime=new SuperpositionSession(source,controller,frame,effects,prepared,initial);
         sessions.put(chamber,runtime);
         try {
@@ -106,8 +106,11 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         for(var runtime : List.copyOf(sessions.values())) {
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
             if(durable!=null && durable.state()==SessionState.RETURNING) runtime.state=SessionState.RETURNING;
-            if(runtime.state==SessionState.SUPERPOSITION && !sourceAuthority(runtime)) {
-                fail(runtime,new IllegalStateException("活動中的來源身分失效")); continue;
+            if(runtime.state==SessionState.SUPERPOSITION) {
+                try {
+                    if(!sourceAuthority(runtime) || !CorridorPageManager.forServer(owner).activeCohortHasBuff(runtime.initial.sessionUuid()))
+                        throw new IllegalStateException("活動中的來源身分或完整cohort效果失效");
+                } catch(RuntimeException failure) { fail(runtime,failure); continue; }
             }
             if(runtime.state!=SessionState.ARMING) continue;
             try {
@@ -192,15 +195,19 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             poses.put(person.playerUuid(),pose);
         }
         for(var move : poses.entrySet()) {
+            if(!sourceAuthority(runtime)) throw new IllegalStateException("入場移動前來源身分失效");
+            runtime.effects.verifyCurrent(server);
             var pose=move.getValue();
             if(!transfers.move(server.getPlayerManager().getPlayer(move.getKey()),target,pose.position(),pose.velocity(),pose.yaw(),pose.pitch()))
                 throw new IllegalStateException("部分移動失敗，尚未提交 cohort");
         }
         checkTargets(runtime,target,entrance,poses);
-        runtime.effects.commit(server);
+        runtime.effects.verifyCurrent(server);
         for(var person : runtime.initial.participants()) PlayerCheckpointStore.saveAndVerify(server,
                 server.getPlayerManager().getPlayer(person.playerUuid()),Optional.empty());
         checkTargets(runtime,target,entrance,poses);
+        if(!sourceAuthority(runtime)) throw new IllegalStateException("發布前來源身分失效");
+        runtime.effects.verifyCurrent(server);
         var initial=runtime.initial;
         journal.put(new SessionRecoveryRecord(initial.sessionUuid(),initial.chamberUuid(),initial.origin(),initial.participants(),
                 initial.spaceLeases(),SessionState.SUPERPOSITION,false,initial.semantics()));
@@ -247,18 +254,21 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     }
     private void fail(SuperpositionSession runtime,Exception failure) {
         var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
-        boolean restore=durable==null || durable.restoreEntryEffectOnReturn();
+        var authority=durable==null ? runtime.initial : durable;
+        boolean restore=authority.restoreEntryEffectOnReturn();
+        // 效果政策不是提交旗標；新模式從 ARMING 起即 KEEP_CURRENT，仍須 rollback 未提交的 pose。
+        boolean rollback=durable==null || durable.state()==SessionState.ARMING;
         runtime.state=SessionState.RETURNING;
-        if(restore && sourceAuthority(runtime)) {
+        if(rollback && sourceAuthority(runtime)) {
             for(var person : runtime.initial.participants()) {
                 var player=server.getPlayerManager().getPlayer(person.playerUuid());
                 if(player!=null && (!transfers.move(player,runtime.source,person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch())
                         || !ChamberOccupantService.contains(ChamberGeometry.interiorBox(runtime.sourceFrame),player.getBoundingBox())))
                     failure.addSuppressed(new IllegalStateException("rollback pose 尚未確認："+person.playerUuid()));
             }
-            if(!runtime.effects.restore(server)) failure.addSuppressed(new IllegalStateException("rollback effects 尚未確認"));
-        } else if(restore) {
-            failure.addSuppressed(new IllegalStateException("來源權威已失效，禁止向保存pose移動或覆寫目前效果；保留true pending"));
+            if(restore && !runtime.effects.restore(server)) failure.addSuppressed(new IllegalStateException("rollback effects 尚未確認"));
+        } else if(rollback) {
+            failure.addSuppressed(new IllegalStateException("來源權威已失效，禁止向保存pose移動或覆寫目前效果；保留pending"));
         }
         try { returning(durable==null ? runtime.initial : durable); sourceTicket(runtime.initial); }
         catch(RuntimeException persistence) { failure.addSuppressed(persistence); }

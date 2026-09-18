@@ -43,6 +43,203 @@ import java.util.List;
 import java.util.Map;
 
 public final class M2CorridorGameTests implements FabricGameTest {
+    /** 捕捉入場消耗／重設正式藥效；全程使用原生飲用及玩家 inventory。 */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task8_native_drink",tickLimit=100000)
+    public void native_drink_retains_effect_and_milk_returns_whole_cohort_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2,Direction.NORTH,false);
+        var before=new java.util.HashMap<UUID,NbtCompound>();
+        for(var connection : fixture.players) {
+            var player=connection.player();
+            drink(context,player,net.minecraft.component.type.PotionContentsComponent.createStack(net.minecraft.item.Items.POTION,
+                    dev.quantumchamber.registry.ModPotions.QUANTUM_STATE));
+            context.assertEquals(3600,player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(),"正式藥水3600 ticks");
+            before.put(player.getUuid(),((NbtCompound)player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt()).copy());
+        }
+        context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.record()!=null,armingTick -> {
+            context.assertEquals(SessionState.ARMING,fixture.record().state(),"正式藥水先持久ARMING才移動");
+            context.assertEquals(SessionSemantics.LATERAL_BUFF_MAINTAINED,fixture.record().semantics(),"fresh正式飲用只建立新模式");
+            context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"fresh ARMING就採KEEP_CURRENT");
+            fixture.players.forEach(connection -> nativeEffectTicks(connection.player(),7));
+        when(context,armingTick+1,() -> fixture.record()!=null && fixture.record().state()==SessionState.SUPERPOSITION,tick -> {
+            try {
+            var initial=fixture.record();
+            for(var connection : fixture.players) {
+                var player=connection.player();
+                context.assertTrue(player.getServerWorld()==fixture.target,"真固定world入場");
+                context.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE),"入場保留QuantumState");
+                context.assertEquals(effectAfter(before.get(player.getUuid()),7),player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),
+                        "ARMING後7次原生playerTick：完整效果NBT不可重設或移除");
+                player.playerTick();
+                context.assertEquals(3592,player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(),"一次原生playerTick只減一");
+            }
+            var first=fixture.players.getFirst().player();
+            drink(context,first,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+            context.assertTrue(!first.hasStatusEffect(ModEffects.QUANTUM_STATE),"vanilla milk移除真Buff");
+            when(context,tick+1,fixture::returning,returnTick -> {
+                context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"milk全組KEEP_CURRENT返還");
+                context.assertEquals(initial.participants().size(),fixture.record().participants().size(),"凍結完整cohort");
+                when(context,returnTick+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                        .presence(fixture.server,initial.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,idleTick -> {
+                    assertHighIdle(fixture,initial.sessionUuid());
+                    context.assertTrue(!first.hasStatusEffect(ModEffects.QUANTUM_STATE),"返還不可退款milk已移除的效果");
+                    context.assertEquals(3592,fixture.players.get(1).player().getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(),"同行者效果不可退款或消耗");
+                    for(var connection : fixture.players) drink(context,connection.player(),net.minecraft.component.type.PotionContentsComponent.createStack(
+                            net.minecraft.item.Items.POTION,dev.quantumchamber.registry.ModPotions.QUANTUM_STATE));
+                    when(context,idleTick+1,fixture::activeReady,reentryTick -> {
+                        var second=fixture.record();
+                        context.assertTrue(!initial.sessionUuid().equals(second.sessionUuid()),"HIGH再喝正式藥水必須新SID");
+                        fixture.players.forEach(connection -> context.assertEquals(3600,connection.player().getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(),
+                                "正式3600再入場不改duration"));
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_DRINK_MILK_HIGH_REENTRY sid={} nextSid={} before={} after={} elapsedNativeTicks=8 serverTicks={}",
+                                initial.sessionUuid(),second.sessionUuid(),before,effectAfter(before.get(first.getUuid()),8),fixture.server.getTicks());
+                        fixture.trustedTeardown(reentryTick+1,() -> { assertLowAndCreativeBreak(fixture); context.complete(); });
+                    });
+                });
+            });
+            } catch(RuntimeException | Error failure) { fixture.close(); throw failure; }
+        });
+        });
+    }
+    private static void nativeEffectTicks(ServerPlayerEntity player,int count) {
+        // EmbeddedChannel 不經 NetworkIo 輪詢；呼叫相同原生 playerTick，明確計數效果 ticks。
+        for(int i=0;i<count;i++) player.playerTick();
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task8_native_custom_expiry_single",tickLimit=100000)
+    public void native_custom_single_expiry_returns_without_refund_windows(TestContext context) { nativeExpiry(context,1,false); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task8_native_custom_hidden",tickLimit=100000)
+    public void native_custom_hidden_continues_then_one_expiry_returns_two_windows(TestContext context) { nativeExpiry(context,2,true); }
+    private static void nativeExpiry(TestContext context,int count,boolean hidden) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,count,Direction.EAST,false);
+        fixture.players.forEach(connection -> customDrink(context,connection.player(),100,0));
+        var first=fixture.players.getFirst().player();
+        if(hidden) customDrink(context,first,3,2);
+        var before=((NbtCompound)first.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt()).copy();
+        context.assertEquals(hidden,before.contains("hidden_effect"),"native custom多劑飲用形成真hidden chain");
+        context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.record()!=null,armingTick -> {
+            nativeEffectTicks(first,2);
+            when(context,armingTick+1,fixture::activeReady,tick -> {
+                try {
+                    var sid=fixture.record().sessionUuid();
+                    context.assertEquals(effectAfter(before,2),first.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"入場完整hidden/current NBT只受2次原生tick影響");
+                    nativeEffectTicks(first,1);
+                    context.assertEquals(97,first.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(),"hidden接續沿用原生剩餘97tick");
+                    context.assertEquals(0,first.getStatusEffect(ModEffects.QUANTUM_STATE).getAmplifier(),"較弱hidden仍有效，不能當作失效");
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_CUSTOM_EFFECT_NBT sid={} hidden={} before={} entry={} continued={} elapsedNativeTicks=3",
+                            sid,hidden,before,effectAfter(before,2),first.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt());
+                    context.runAtTick(tick+1,() -> {
+                        context.assertEquals(SessionState.SUPERPOSITION,fixture.record().state(),"hidden接續後整組仍active");
+                        nativeEffectTicks(first,97);
+                        context.assertTrue(!first.hasStatusEffect(ModEffects.QUANTUM_STATE),"只用100次原生tick自然到期");
+                        when(context,tick+2,fixture::returning,returnTick -> {
+                            context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"任何人到期都KEEP_CURRENT全組返還");
+                            when(context,returnTick+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                                    .presence(fixture.server,fixture.controller().chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,idleTick -> {
+                                try {
+                                    assertHighIdle(fixture,sid);
+                                    context.assertTrue(!first.hasStatusEffect(ModEffects.QUANTUM_STATE),"已過期效果不得退款");
+                                    if(count==2) context.assertEquals(100,fixture.players.get(1).player().getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(),"未到期同行效果完整保留");
+                                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_CUSTOM_EXPIRY_OK sid={} cohort={} hidden={} before={} elapsedNativeTicks=100 serverTicks={}",
+                                            sid,count,hidden,before,fixture.server.getTicks());
+                                    fixture.power(); assertLowAndCreativeBreak(fixture); context.complete();
+                                } finally { fixture.close(); }
+                            });
+                        });
+                    });
+                } catch(RuntimeException | Error failure) { fixture.close(); throw failure; }
+            });
+        });
+    }
+    private static void customDrink(TestContext context,ServerPlayerEntity player,int duration,int amplifier) {
+        var stack=new net.minecraft.item.ItemStack(net.minecraft.item.Items.POTION);
+        stack.set(net.minecraft.component.DataComponentTypes.POTION_CONTENTS,new net.minecraft.component.type.PotionContentsComponent(
+                Optional.empty(),Optional.empty(),List.of(new StatusEffectInstance(ModEffects.QUANTUM_STATE,duration,amplifier,true,false,false))));
+        drink(context,player,stack);
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task8_native_partial_milk",tickLimit=100000)
+    public void native_custom_partial_entry_milk_rolls_back_pose_keeps_current_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2,Direction.WEST,false);
+        fixture.players.forEach(connection -> customDrink(context,connection.player(),1000,0));
+        context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.record()!=null,tick -> {
+            var initial=fixture.record();
+            var fault=new SessionTransferFault(context.getWorld(),initial,SessionTransferFault.Case.MILK_AFTER_FIRST_MOVE);
+            when(context,tick+1,fixture::returning,returnTick -> {
+                try {
+                    context.assertTrue(fault.hit() && fault.successfulMoves()==1 && fault.rollbackVerified(),"真首人move後milk：全組原pose rollback、效果KEEP_CURRENT");
+                    context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"prepared失效不可publish半群");
+                    context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"ARMING false不可被當作已提交而跳過pose rollback");
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_PARTIAL_MILK_OK sid={} captureTick={} {}",initial.sessionUuid(),fault.rollbackTick(),fault.rollbackEvidence());
+                    fault.close(); fixture.trustedTeardown(returnTick+1,context::complete);
+                } catch(RuntimeException | Error failure) { fault.close(); fixture.close(); throw failure; }
+            });
+        });
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task8_native_returning_redrink",tickLimit=100000)
+    public void native_custom_redrink_during_returning_cannot_revoke_old_session_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,1,Direction.NORTH,false);
+        var player=fixture.players.getFirst().player(); customDrink(context,player,1000,0);
+        context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var initial=fixture.record();
+            drink(context,player,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+            when(context,tick+1,fixture::returning,returnTick -> {
+                customDrink(context,player,2000,1);
+                var redrink=player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt();
+                for(int i=0;i<3;i++) new dev.quantumchamber.chamber.ChamberPowerCoordinator().refresh(context.getWorld(),fixture.frame.controllerPos());
+                context.assertEquals(initial.sessionUuid(),fixture.record().sessionUuid(),"RETURNING再喝不可換SID");
+                context.assertEquals(SessionState.RETURNING,fixture.record().state(),"新Buff不能撤銷RETURNING");
+                context.assertTrue(dev.quantumchamber.persistence.SessionRecoveryManager.blocks(player.getUuid(),fixture.server),"RETURNING中redrink後仍凍結玩家");
+                when(context,returnTick+1,() -> fixture.record()!=null && !fixture.record().sessionUuid().equals(initial.sessionUuid()) && fixture.activeReady(),reentryTick -> {
+                    try {
+                        context.assertTrue(!SessionRecoveryState.get(fixture.server).records().containsKey(initial.sessionUuid())
+                                && !SessionRecoveryState.get(fixture.server).flushedRecords().containsKey(initial.sessionUuid())
+                                && !fixture.pages.releaseComplete(initial.sessionUuid()),"新SID只在舊journal/receipt全部清理後出現");
+                        context.assertEquals(redrink,player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"安全返還及新入場不覆寫redrink效果");
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_RETURNING_REDRINK_OK oldSid={} newSid={} effect={}",initial.sessionUuid(),fixture.record().sessionUuid(),redrink);
+                        fixture.trustedTeardown(reentryTick+1,context::complete);
+                    } catch(RuntimeException | Error failure) { fixture.close(); throw failure; }
+                });
+            });
+        });
+    }
+    private static NbtCompound effectAfter(NbtCompound original,int ticks) {
+        var expected=original.copy();
+        expected.putInt("duration",original.getInt("duration")-ticks);
+        if(original.contains("hidden_effect")) expected.put("hidden_effect",effectAfter(original.getCompound("hidden_effect"),ticks));
+        return expected;
+    }
+    private static void assertHighIdle(NativeEntry fixture,UUID sid) {
+        var context=fixture.context;
+        context.assertTrue(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()),"全組返還不改外部HIGH");
+        context.assertEquals(dev.quantumchamber.chamber.ChamberState.IDLE,fixture.controller().chamberState(),"缺Buff全組返還後IDLE");
+        context.assertEquals(dev.quantumchamber.chamber.ChamberPowerState.POWERED,dev.quantumchamber.chamber.ChamberRegistryState.get(fixture.server)
+                .registry().records().get(fixture.controller().chamberUuid()).powerState(),"HIGH收尾仍POWERED");
+        context.assertTrue(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),"HIGH保護不能解除");
+        context.assertTrue(!SessionRecoveryState.get(fixture.server).records().containsKey(sid)
+                && !SessionRecoveryState.get(fixture.server).flushedRecords().containsKey(sid) && !fixture.pages.releaseComplete(sid),"journal與release receipt已完整清除及ack");
+        for(var connection : fixture.players) context.assertTrue(connection.player().getServerWorld()==context.getWorld(),"完整cohort皆真返還");
+    }
+    private static void assertLowAndCreativeBreak(NativeEntry fixture) {
+        fixture.context.assertEquals(dev.quantumchamber.chamber.ChamberPowerState.OFF,dev.quantumchamber.chamber.ChamberRegistryState.get(fixture.server)
+                .registry().records().get(fixture.controller().chamberUuid()).powerState(),"LOW完整返還才OFF");
+        var operator=fixture.operator.player(); operator.changeGameMode(net.minecraft.world.GameMode.CREATIVE);
+        fixture.context.assertTrue(operator.interactionManager.tryBreakBlock(fixture.frame.controllerPos()),"最後LOW OFF才允許原生Creative拆除");
+    }
+    private static void drink(TestContext context,ServerPlayerEntity player,net.minecraft.item.ItemStack stack) {
+        boolean milk=stack.isOf(net.minecraft.item.Items.MILK_BUCKET);
+        player.changeGameMode(net.minecraft.world.GameMode.SURVIVAL);
+        player.getInventory().setStack(8,stack);
+        var result=player.getInventory().getStack(8).finishUsing(player.getServerWorld(),player);
+        player.getInventory().setStack(8,result);
+        context.assertTrue(result.isOf(milk ? net.minecraft.item.Items.BUCKET : net.minecraft.item.Items.GLASS_BOTTLE),
+                "正常inventory飲用後容器依Vanilla回傳");
+    }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task7_lateral_north",tickLimit=100000)
     public void trusted_lateral_geometry_north_windows(TestContext context) { lateralGeometry(context,Direction.NORTH); }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task7_lateral_south",tickLimit=100000)
@@ -51,7 +248,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
     public void trusted_lateral_geometry_east_windows(TestContext context) { lateralGeometry(context,Direction.EAST); }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task7_lateral_west",tickLimit=100000)
     public void trusted_lateral_geometry_west_windows(TestContext context) { lateralGeometry(context,Direction.WEST); }
-    /** Task7 只驗可信幾何；暫移除 Buff 配合既有 publish guard，Task8 才驗正式維持 Buff。 */
+    /** 只驗可信 lateral 幾何及原生 remap，飲用流程由明確 native drink 案例驗證。 */
     private static void lateralGeometry(TestContext context,Direction facing) {
         if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new TrustedSpace(context,facing,2,SessionSemantics.LATERAL_BUFF_MAINTAINED);
@@ -163,6 +360,11 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 || Math.abs(net.minecraft.util.math.MathHelper.wrapDegrees(player.getYaw()-yaw))>=1e-4 || Math.abs(player.getPitch()-pitch)>=1e-4)
             throw new IllegalStateException("remap LOW 必須在真 UUID／完整 pose 已確認之後");
         fault.hit=true; fault.tick=fault.fixture.server.getTicks(); fault.moved=player.getUuid();
+        if(fault.buffLoss) {
+            drink(fault.fixture.context,player,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_REMAP_MILK_HIT sid={} player={} epoch={}",record.sessionUuid(),player.getUuid(),current.epoch());
+            return;
+        }
         fault.fixture.power();
         fault.fixture.context.assertTrue(fault.fixture.record().state()==SessionState.RETURNING
                 && !fault.fixture.record().restoreEntryEffectOnReturn(),"first actual remap move後真LOW持久RETURNING,false");
@@ -178,14 +380,44 @@ public final class M2CorridorGameTests implements FabricGameTest {
     }
     private static final class RemapPowerLoss implements AutoCloseable {
         final NativeEntry fixture; final SessionRecoveryRecord initial;
-        boolean hit; int tick=-1; UUID moved;
+        boolean hit; int tick=-1; UUID moved; final boolean buffLoss;
         RemapPowerLoss(NativeEntry fixture) {
+            this(fixture,false);
+        }
+        RemapPowerLoss(NativeEntry fixture,boolean buffLoss) {
+            this.buffLoss=buffLoss;
             this.fixture=fixture; initial=fixture.record();
             if(initial.state()!=SessionState.SUPERPOSITION || initial.restoreEntryEffectOnReturn() || initial.spaceLeases().size()!=1
                     || REMAP_LOW.putIfAbsent(fixture.server,this)!=null) throw new IllegalStateException("只能明確安裝單初始mapping的remap LOW");
             net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register(owner -> { if(owner==fixture.server) close(); });
         }
         @Override public void close() { REMAP_LOW.remove(fixture.server,this); }
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task8_native_remap_milk",tickLimit=100000)
+    public void native_custom_milk_after_first_remap_move_never_publishes_half_cohort_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new NativeEntry(context,2,Direction.SOUTH,false);
+        fixture.players.forEach(connection -> customDrink(context,connection.player(),1000,0));
+        context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var initial=fixture.record(); var fault=new RemapPowerLoss(fixture,true);
+            walkNative(fixture,fixture.players.get(0).player(),95.5); walkNative(fixture,fixture.players.get(1).player(),96.5);
+            when(context,tick+1,() -> fault.hit && fixture.returning(),returnTick -> {
+                try {
+                    context.assertEquals(1L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"真首人remap移動後milk失效不可publish半群epoch2");
+                    context.assertEquals(2,fixture.record().participants().size(),"不可縮減凍結cohort");
+                    context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"remap失效保持KEEP_CURRENT");
+                    fault.close();
+                    fixture.trustedTeardown(returnTick+1,() -> {
+                        context.assertTrue(!fixture.server.getPlayerManager().getPlayer(fault.moved).hasStatusEffect(ModEffects.QUANTUM_STATE),"rollback與返還皆不得退款milk");
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_REMAP_MILK_OK sid={} epoch=1 moved={}",initial.sessionUuid(),fault.moved);
+                        context.complete();
+                    });
+                } catch(RuntimeException | Error failure) {
+                    fault.close(); fixture.trustedTeardown(returnTick+1,() -> { throw failure; });
+                }
+            });
+        });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_mid_remap_low",tickLimit=100000)
     public void native_power_loss_during_actual_remap_returns_cohort_and_value_windows(TestContext context) {
@@ -581,7 +813,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                             && player.getYaw()==123 && player.getPitch()==23,"來源權威失效不得把目前pose搬回舊snapshot");
                     context.assertEquals(effects,player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"錯來源不得消耗／覆寫目前效果");
                     var returning=SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid());
-                    context.assertTrue(returning.restoreEntryEffectOnReturn() && initial.participants().equals(returning.participants()),"錯身分仍持久true與完整原cohort");
+                    context.assertTrue(!returning.restoreEntryEffectOnReturn() && initial.participants().equals(returning.participants()),"錯身分仍KEEP_CURRENT與完整原cohort");
                     context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"來源失效不得publish");
                     context.assertTrue(!context.getWorld().setBlockState(fixture.frame.controllerPos().down(3),net.minecraft.block.Blocks.DIRT.getDefaultState()),
                             "錯來源仍保留原registry保護");
@@ -606,14 +838,14 @@ public final class M2CorridorGameTests implements FabricGameTest {
             when(context,tick+1,() -> SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid()).state()==SessionState.RETURNING,failedTick -> {
                 RuntimeException finding=null;
                 try {
-                    context.assertTrue(fault.hit() && fault.sourceInvalidated() && fault.successfulMoves()==1,"必須真首人入fixed後才錯置來源與第二move失敗");
+                    context.assertTrue(fault.sourceInvalidated() && fault.successfulMoves()==1,"必須真首人入fixed後才錯置來源，第二move前guard拒絕");
                     var first=fixture.server.getPlayerManager().getPlayer(fault.firstMovedUuid());
                     context.assertTrue(first.getServerWorld()==fixture.target && first.getPos().squaredDistanceTo(fault.firstMovedPose().position())<1e-12,
                             "部分move來源失效不得把fixed玩家錯rollback至原艙");
                     context.assertTrue(second.getServerWorld()==context.getWorld() && second.getPos().squaredDistanceTo(secondPose)<1e-12
                             && second.getYaw()==77 && second.getPitch()==19,"未搬者也不能搬向錯來源舊snapshot");
                     var returning=SessionRecoveryState.get(fixture.server).flushedRecords().get(initial.sessionUuid());
-                    context.assertTrue(returning.restoreEntryEffectOnReturn() && initial.participants().equals(returning.participants()),"partial錯來源持久true，完整journal來源不改");
+                    context.assertTrue(!returning.restoreEntryEffectOnReturn() && initial.participants().equals(returning.participants()),"partial錯來源KEEP_CURRENT，完整journal來源不改");
                     context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"partial壞來源不可publish");
                     context.assertTrue(fixture.players.stream().allMatch(connection -> connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)),"尚未commit不可consume");
                 } catch(RuntimeException expectedFinding) { finding=expectedFinding; }
@@ -646,15 +878,13 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     dev.quantumchamber.registry.ModPotions.QUANTUM_STATE);
             potion.finishUsing(context.getWorld(),player);
             context.assertEquals(3600,player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(),"真喝正式3600tick藥水");
-            // GT加速tick會在chunk I/O期間跑數千tick；只有等待fixture延長，不改正式藥水數值。
-            player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,1_000_000));
         });
         when(context,3,() -> player.getServerWorld()==context.getWorld().getServer().getWorld(
                 dev.quantumchamber.superposition.SuperpositionWorld.KEY),tick -> {
             try {
                 context.assertTrue(player.getServerWorld() == context.getWorld().getServer().getWorld(
                         dev.quantumchamber.superposition.SuperpositionWorld.KEY),"完整cohort必須進入真實固定世界");
-                context.assertTrue(!player.hasStatusEffect(ModEffects.QUANTUM_STATE),"成功入場才消耗藥效");
+                context.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE),"成功入場保留藥效");
                 context.assertTrue(player.getInventory().getStack(0).isOf(net.minecraft.item.Items.TORCH),"入場保留攜帶物品");
                 context.complete();
             } finally { connection.close(); }
@@ -716,7 +946,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     context.assertTrue(fault.hit() && fault.successfulMoves()==1,"真首人移動成功後第二move才命中失敗");
                     context.assertTrue(fault.rollbackVerified(),"checked RETURNING同tick完整NBT／原pose／bbox rollback");
                     context.assertTrue(fault.rollbackTick()>=0 && fault.rollbackTick()<=fixture.server.getTicks(),"真same-tick capture sentinel");
-                    context.assertTrue(fixture.record().restoreEntryEffectOnReturn(),"false提交前維持true政策");
+                    context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"未提交pose rollback仍KEEP_CURRENT");
                     context.assertEquals(initial.participants(),fixture.record().participants(),"journal保留原完整cohort與source NBT");
                     fixture.assertInventory(); fixture.assertProtected();
                     context.assertEquals(1,fault.returnFlushes(),"已checked同筆RETURNING重複gateway請求不得再flush其他case的staged資料");
@@ -750,7 +980,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                             "提交後新效果與hidden chain不得刪除");
                     context.assertEquals(fault.newEffect(),affected.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"post-false完整新NBT精確不變");
                     context.assertTrue(fixture.players.stream().allMatch(connection -> connection.player().getUuid().equals(fault.affected())
-                            || !connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)),"其他cohort成員不可補發entry效果");
+                            || connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)),"其他cohort成員保留原有效效果");
                     fixture.assertInventory(); fixture.assertProtected();
                     context.complete();
                 } finally { fault.close(); fixture.close(); }
@@ -759,24 +989,52 @@ public final class M2CorridorGameTests implements FabricGameTest {
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_expiry",tickLimit=100000)
     public void native_buff_expiry_during_geometry_keeps_precommit_returning(TestContext context) {
-        var fixture=new NativeEntry(context,1);
+        var fixture=new NativeEntry(context,1,Direction.NORTH,false);
         var player=fixture.players.getFirst().player();
+        customDrink(context,player,1,0);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.record()!=null,startedTick -> {
         context.assertEquals(SessionState.ARMING,fixture.record().state(),"先證實geometry準備期");
-        player.removeStatusEffect(ModEffects.QUANTUM_STATE);
-        player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,1));
         // EmbeddedChannel不由NetworkIo輪詢；明確執行原生network handler使用的playerTick讓效果自然到期。
         player.playerTick();
         context.assertTrue(!player.hasStatusEffect(ModEffects.QUANTUM_STATE),"原生playerTick自然expiry，非直接remove冒充");
         when(context,startedTick+1,() -> fixture.returning(),tick -> {
             try {
-                context.assertTrue(fixture.record().restoreEntryEffectOnReturn(),"自然expiry沒有false提交");
+                context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"自然expiry不可退款，仍KEEP_CURRENT");
                 context.assertEquals(0L,fixture.pages.currentMappings(fixture.record().sessionUuid()).epoch(),"geometry準備時不可publish");
                 context.assertTrue(player.getServerWorld()==context.getWorld(),"expiry前尚未移動亦不可留下半cohort");
-                fixture.assertProtected(); context.complete();
-            } finally { fixture.close(); }
+                fixture.assertProtected();
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_CUSTOM_PREPARE_EXPIRY_OK sid={} elapsedNativeTicks=1 effectAbsent=true",fixture.record().sessionUuid());
+                if(Platform.isWindows()) fixture.trustedTeardown(tick+1,context::complete);
+                else { fixture.close(); context.complete(); }
+            } catch(RuntimeException | Error failure) { fixture.close(); throw failure; }
         });
+        });
+    }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task8_trusted_buff_guard",tickLimit=100000)
+    public void trusted_lateral_remap_begin_and_commit_recheck_complete_buff_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new TrustedSpace(context,Direction.NORTH,2,SessionSemantics.LATERAL_BUFF_MAINTAINED);
+        fixture.prepare();
+        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+            fixture.commit();
+            for(int i=0;i<2;i++) move(fixture.target,fixture.players.get(i).player(),new CorridorPageManager.PhysicalPose(
+                    fixture.manager.toPhysical(fixture.session,3.5,1,95.5+i),Vec3d.ZERO,0,0));
+            var prepared=fixture.manager.prepareRemap(fixture.session,1,Set.of(1L));
+            when(context,tick+1,() -> fixture.manager.ready(prepared),readyTick -> {
+                var first=fixture.players.getFirst().player();
+                drink(context,first,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+                context.assertTrue(!fixture.manager.activeCohortHasBuff(fixture.session),"getter查真Buff而非entry snapshot");
+                assertRejected(context,() -> fixture.manager.beginRemap(prepared,fixture.manager.affectedEntityOwners(prepared)),"begin前缺任何一人Buff不能移動");
+                customDrink(context,first,1000,0);
+                var batch=fixture.manager.beginRemap(prepared,fixture.manager.affectedEntityOwners(prepared));
+                for(var operation : batch.moves()) move(fixture.target,fixture.target.getEntity(operation.entityUuid()),operation.after());
+                drink(context,first,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+                assertRejected(context,() -> fixture.manager.commitRemap(batch),"actual全移動後失Buff也不可publish");
+                context.assertEquals(1L,fixture.manager.currentMappings(fixture.session).epoch(),"failed commit保留epoch1");
+                fixture.returnTrusted();
+                when(context,readyTick+1,() -> fixture.manager.releaseComplete(fixture.session),ignored -> {fixture.assertComplete(); context.complete();});
+            });
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_shared_north",tickLimit=100000)
@@ -790,11 +1048,12 @@ public final class M2CorridorGameTests implements FabricGameTest {
     private static void sharedEntry(TestContext context,Direction facing) {
         if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2,facing);
+        fixture.players.getFirst().player().setVelocity(new Vec3d(0.125,0.25,-0.375));
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.record()!=null,startedTick -> {
             var initial=fixture.record(); var chamber=fixture.controller().chamberUuid();
-            context.assertEquals(SessionState.ARMING,initial.state(),"先checked ARMING,true才geometry／移動");
-            context.assertTrue(initial.restoreEntryEffectOnReturn(),"準備期true政策");
+            context.assertEquals(SessionState.ARMING,initial.state(),"先checked ARMING,false才geometry／移動");
+            context.assertTrue(!initial.restoreEntryEffectOnReturn(),"準備期KEEP_CURRENT政策");
             context.assertEquals(2,initial.participants().size(),"完整兩人真cohort");
             context.assertEquals(dev.quantumchamber.chamber.ChamberState.READY,fixture.controller().chamberState(),"來源staging comparator7");
             for(int i=0;i<3;i++) new dev.quantumchamber.chamber.ChamberPowerCoordinator().refresh(context.getWorld(),fixture.frame.controllerPos());
@@ -809,11 +1068,13 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     context.assertTrue(player.getPos().squaredDistanceTo(person.sourcePosition().add(delta))<1e-12,"same facing物理平移精確保留相對pose");
                     context.assertEquals(person.sourceVelocity(),player.getVelocity(),"velocity不變");
                     context.assertEquals(person.yaw(),player.getYaw(),"yaw不變"); context.assertEquals(person.pitch(),player.getPitch(),"pitch不變");
-                    context.assertTrue(!player.hasStatusEffect(ModEffects.QUANTUM_STATE),"完整群一次消耗");
+                    context.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE),"完整群維持原有效效果");
                     context.assertTrue(dev.quantumchamber.chamber.ChamberOccupantService.contains(
                             dev.quantumchamber.chamber.ChamberGeometry.interiorBox(entrance),player.getBoundingBox()),"全員完整bbox位於replica");
                 }
                 fixture.assertInventory();
+                context.assertEquals(new Vec3d(0.125,0.25,-0.375),fixture.players.getFirst().player().getVelocity(),
+                        "三軸非零world速度在source/lateral座標轉換與真移動後精確保持");
                 context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"native checkpoint後checked false已提交");
                 context.assertEquals(initial.participants(),fixture.record().participants(),"immutable entry snapshots保留完整cohort");
                 var replica=(dev.quantumchamber.chamber.ChamberControllerBlockEntity)fixture.target.getBlockEntity(entrance.controllerPos());
@@ -826,7 +1087,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         context.assertEquals(dev.quantumchamber.chamber.ChamberState.ARMED,fixture.controller().chamberState(),"ACTIVE空原艙不降級3");
                         context.assertEquals(dev.quantumchamber.chamber.ChamberSessionGateway.Presence.ACTIVE,
                                 dev.quantumchamber.chamber.ChamberSessions.gateway().presence(fixture.server,chamber),"同sid維持active");
-                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("Task3 native shared：facing={} SID={} cohort={} immutableSources={} actualInventory=true epoch={} rearOpen=true",
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("Task8 native shared：facing={} SID={} cohort={} immutableSources={} actualInventory=true epoch={} lateralOpen=true",
                                 facing,initial.sessionUuid(),initial.participants().stream().map(SessionRecoveryRecord.Participant::playerUuid).toList(),
                                 initial.participants(),fixture.pages.currentMappings(initial.sessionUuid()).epoch());
                         var first=fixture.players.getFirst().player();
@@ -836,7 +1097,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         context.assertEquals(SessionState.RETURNING,fixture.record().state(),"真外部拉桿低位請求安全返還");
                         context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"ACTIVE轉返還不能改回true");
                         context.assertEquals(newEffect,first.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),"返還請求不得刪新效果");
-                        context.assertTrue(first.getServerWorld()==fixture.target,"Task4 backend未實作時保持真pending，不假移回");
+                        context.assertTrue(first.getServerWorld()==fixture.target,"返還請求同tick保留真pending，下一tick才安全移回");
                         fixture.trustedTeardown(publishedTick+26,context::complete);
                     } catch(RuntimeException | Error failure) { fixture.close(); throw failure; }
                 });
@@ -855,7 +1116,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             when(context,tick+1,fixture::returning,ignored -> {
                 try {
                     context.assertEquals(initial.participants(),fixture.record().participants(),"失去online玩家仍保留完整原cohort來源快照");
-                    context.assertTrue(fixture.record().restoreEntryEffectOnReturn(),"offline staging沒有false提交");
+                    context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"offline staging保持KEEP_CURRENT");
                     context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"offline不得publish");
                     context.assertTrue(fixture.players.getFirst().player().getServerWorld()==context.getWorld()
                             && fixture.players.getFirst().player().hasStatusEffect(ModEffects.QUANTUM_STATE),"在線者保持來源與效果");
@@ -885,13 +1146,13 @@ public final class M2CorridorGameTests implements FabricGameTest {
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_staging_low",tickLimit=100000)
-    public void native_staging_low_keeps_true_pending_and_source_protection(TestContext context) {
+    public void native_staging_low_keeps_current_effect_and_source_protection(TestContext context) {
         var fixture=new NativeEntry(context,2);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.record()!=null,tick -> {
             var initial=fixture.record(); fixture.power();
             context.assertEquals(SessionState.RETURNING,fixture.record().state(),"真低位先請求返還");
-            context.assertTrue(fixture.record().restoreEntryEffectOnReturn(),"未提交的staging取消維持true");
+            context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"未提交的staging取消仍KEEP_CURRENT");
             context.assertEquals(initial.participants(),fixture.record().participants(),"取消不可重建短cohort");
             context.assertTrue(fixture.players.stream().allMatch(connection -> connection.player().getServerWorld()==context.getWorld()
                     && connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)),"低位全員仍在來源且效果未消耗");
@@ -916,6 +1177,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
             this(context,count,Direction.NORTH);
         }
         NativeEntry(TestContext context,int count,Direction facing) {
+            this(context,count,facing,true);
+        }
+        NativeEntry(TestContext context,int count,Direction facing,boolean trustedEffects) {
             this.context=context; server=context.getWorld().getServer(); target=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
             pages=CorridorPageManager.forServer(server);
             frame=ChamberGameTestBuilder.buildForSession(context,false,facing,false);
@@ -933,7 +1197,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 var player=connection.player(); player.setNoGravity(true);
                 player.refreshPositionAndAngles(CorridorGeometry.position(frame,1.5+i%5,1,1.5+i/5%5),17+i,9+i);
                 player.setVelocity(Vec3d.ZERO);
-                player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,1_000_000));
+                if(trustedEffects) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,1_000_000));
                 player.getInventory().setStack(0,new net.minecraft.item.ItemStack(net.minecraft.item.Items.TORCH,7+i));
                 inventories.put(player.getUuid(),player.writeNbt(new NbtCompound()).get("Inventory").copy());
             }
@@ -952,7 +1216,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
             var record=record();
             if(record==null || record.state()!=SessionState.SUPERPOSITION || pages.currentMappings(record.sessionUuid()).epoch()!=1) return false;
             var entrance=pages.entrance(record.sessionUuid());
-            return target.getBlockState(CorridorGeometry.block(entrance,3,3,6)).isAir();
+            return target.getBlockState(ChamberSpaceCoordinates.block(entrance,
+                    record.semantics()==SessionSemantics.LATERAL_BUFF_MAINTAINED ? 0 : 3,3,
+                    record.semantics()==SessionSemantics.LATERAL_BUFF_MAINTAINED ? 3 : 6)).isAir();
         }
         void assertNoSession() {
             context.assertTrue(record()==null,"無效cohort不能reserve／寫journal／入場");
@@ -967,7 +1233,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             context.assertTrue(!context.getWorld().setBlockState(frame.controllerPos().down(3),net.minecraft.block.Blocks.DIRT.getDefaultState()),
                     "pending失敗不可解除來源艙保護");
             context.assertTrue(!dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),
-                    controller()),"Task4尚未完成不得假returnComplete");
+                    controller()),"完整checkpoint與lease尚未收尾前不得假returnComplete");
         }
         /** Task4 之後交由真 backend 收尾；保留既有呼叫名稱以便對照 Task3 入場案例。 */
         void trustedTeardown(int tick,Runnable complete) {
@@ -1595,7 +1861,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 var player=players.get(i).player(); cohort.add(player.getUuid());
                 var pose=manager.toPhysical(prepared.target().instances().getFirst().ref(),
                         new CorridorPageManager.LogicalPose(2.5+i,1,3.5,Vec3d.ZERO,90,15));
-                move(target,player,pose); player.removeStatusEffect(ModEffects.QUANTUM_STATE);
+                move(target,player,pose);
+                if(initial.semantics()==SessionSemantics.LEGACY_FORWARD_CONSUMED) player.removeStatusEffect(ModEffects.QUANTUM_STATE);
                 try { PlayerCheckpointStore.saveAndVerify(context.getWorld().getServer(),player,Optional.empty()); }
                 catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
             }

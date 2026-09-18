@@ -15,7 +15,7 @@ import net.minecraft.util.math.Vec3d;
 
 /** 預設關閉的 own SID／server／world／玩家限定故障，release 沒有此 fixture。 */
 public final class SessionTransferFault implements AutoCloseable {
-    public enum Case { SECOND_MOVE, SECOND_MOVE_INVALID_SOURCE, PUBLISH_AFTER_FALSE }
+    public enum Case { SECOND_MOVE, SECOND_MOVE_INVALID_SOURCE, PUBLISH_AFTER_FALSE, MILK_AFTER_FIRST_MOVE }
     private static final Map<MinecraftServer,SessionTransferFault> ACTIVE=new IdentityHashMap<>();
     static { ServerLifecycleEvents.SERVER_STOPPED.register(ACTIVE::remove); }
     private final MinecraftServer server;
@@ -48,7 +48,8 @@ public final class SessionTransferFault implements AutoCloseable {
     }
     public static boolean rejectMove(ServerPlayerEntity player,ServerWorld target,Vec3d position) {
         var fault=ACTIVE.get(target.getServer());
-        if(fault==null || !fault.scope(player,target,position) || fault.faultCase==Case.PUBLISH_AFTER_FALSE || fault.hit
+        if(fault==null || !fault.scope(player,target,position) || fault.faultCase==Case.PUBLISH_AFTER_FALSE
+                || fault.faultCase==Case.MILK_AFTER_FIRST_MOVE || fault.hit
                 || !fault.affected.equals(player.getUuid()) || fault.successfulMoves!=1) return false;
         fault.hit=true; return true;
     }
@@ -58,6 +59,13 @@ public final class SessionTransferFault implements AutoCloseable {
                 || fault.server.getPlayerManager().getPlayer(player.getUuid())!=player) return;
         if(target==fault.target && fault.scope(player,target,position) && !fault.hit) {
             fault.successfulMoves++;
+            if(fault.faultCase==Case.MILK_AFTER_FIRST_MOVE && fault.successfulMoves==1) {
+                fault.hit=true;
+                var milk=new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET);
+                player.getInventory().setStack(8,milk);
+                player.getInventory().setStack(8,milk.finishUsing(target,player));
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_PARTIAL_MILK_HIT sid={} player={} moves=1",fault.initial.sessionUuid(),player.getUuid());
+            }
             if(fault.faultCase==Case.SECOND_MOVE_INVALID_SOURCE && fault.successfulMoves==1) {
                 var controller=(dev.quantumchamber.chamber.ChamberControllerBlockEntity)fault.source.getBlockEntity(fault.initial.origin().controllerPos());
                 if(controller==null || controller.getWorld()!=fault.source || controller.isRemoved()
@@ -79,7 +87,8 @@ public final class SessionTransferFault implements AutoCloseable {
             for(UUID id : cohort) {
                 var player=fault.server.getPlayerManager().getPlayer(id);
                 if(player==null || player.getServerWorld()!=fault.target || fault.target.getEntity(id)!=player
-                        || player.hasStatusEffect(ModEffects.QUANTUM_STATE)) throw new AssertionError("publish fault 真cohort未進世界／耗藥");
+                        || player.hasStatusEffect(ModEffects.QUANTUM_STATE)!=(durable.semantics()==SessionSemantics.LATERAL_BUFF_MAINTAINED))
+                    throw new AssertionError("publish fault 真cohort未進世界／效果模式不符");
             }
             fault.falseVerified=true; fault.hit=true;
             var player=fault.server.getPlayerManager().getPlayer(fault.affected);
@@ -107,8 +116,8 @@ public final class SessionTransferFault implements AutoCloseable {
         var fault=ACTIVE.get(server);
         if(fault==null || !fault.hit || !server.isOnThread() || SessionRecoveryState.get(server)!=journal) return;
         var record=journal.flushedRecords().get(fault.initial.sessionUuid());
-        if(record==null || record.state()!=SessionState.RETURNING || !record.restoreEntryEffectOnReturn()
-                || fault.faultCase!=Case.SECOND_MOVE) return;
+        if(record==null || record.state()!=SessionState.RETURNING
+                || fault.faultCase!=Case.SECOND_MOVE && fault.faultCase!=Case.MILK_AFTER_FIRST_MOVE) return;
         fault.rollbackTick=server.getTicks();
         fault.returnFlushes++;
         var effects=new LinkedHashMap<UUID,NbtCompound>();
@@ -131,8 +140,10 @@ public final class SessionTransferFault implements AutoCloseable {
                     && Math.abs(player.getPitch()-person.pitch())<1e-4
                     && dev.quantumchamber.chamber.ChamberOccupantService.contains(dev.quantumchamber.chamber.ChamberGeometry.interiorBox(
                             new dev.quantumchamber.chamber.ChamberFrame(record.origin().controllerPos(),record.origin().facing())),player.getBoundingBox())
-                    && player.getStatusEffect(ModEffects.QUANTUM_STATE)!=null
-                    && person.quantumStateSnapshot().equals(player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt());
+                    && (fault.faultCase==Case.MILK_AFTER_FIRST_MOVE && person.playerUuid().equals(fault.firstMovedUuid())
+                            ? !player.hasStatusEffect(ModEffects.QUANTUM_STATE)
+                            : player.getStatusEffect(ModEffects.QUANTUM_STATE)!=null
+                                    && person.quantumStateSnapshot().equals(player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt()));
         });
     }
     public boolean hit() { return hit; }
