@@ -304,7 +304,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
         var targetPages=java.util.Arrays.stream(occupied[index]).boxed().collect(java.util.stream.Collectors.toSet());
         var prepared=fixture.manager.prepareRemap(fixture.session,index+1,targetPages);
         context.assertEquals(index==5 ? 2 : 1,prepared.target().instances().size(),"0/16 split，其餘merge");
-        when(context,tick,() -> fixture.manager.ready(prepared),readyTick -> {
+        // 重型 lateral remap 在 CI 曾需 12.468 秒；只延長此 fixture 階段，仍等待真實 readiness。
+        whenUntil(context,tick,() -> fixture.manager.ready(prepared),readyTick -> {
             var owners=fixture.manager.affectedEntityOwners(prepared);
             var batch=fixture.manager.beginRemap(prepared,owners);
             for(var operation : batch.moves()) {
@@ -334,7 +335,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             }
             when(context,readyTick+1,() -> fixture.state.flushedRecords().get(fixture.session).spaceLeases().size()
                     ==fixture.manager.currentMappings(fixture.session).instances().size(),nextTick -> lateralRemap(fixture,index+1,nextTick+1));
-        });
+        },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
     }
     private static final Map<net.minecraft.server.MinecraftServer,DisconnectJournalFault> DISCONNECT_FAULTS=new java.util.IdentityHashMap<>();
     private static final Map<net.minecraft.server.MinecraftServer,RemapPowerLoss> REMAP_LOW=new java.util.IdentityHashMap<>();
