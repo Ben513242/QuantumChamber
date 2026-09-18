@@ -434,7 +434,7 @@ Task6–10接續同一plan owner，單一implementation worker與Gradle/native�
 - Produces: `public static boolean SessionRecoveryRecord.sameAuthority(SessionRecoveryRecord,SessionRecoveryRecord)` 檢查SID/chamber/origin/semantics與完整同UUID來源snapshots；returned/state/leases不是來源identity。State.put同時current/flushed與PageManager破壞性清理前共用，不允remove-replay換mode／origin／cohort。Space持不可變semantics，bootstrap取strict record、原freshreservation明確legacy，不從目前Buff猜mode；Task7可消費這份同一權威。
 - Consumes: 原checked journal、原PlayerRecoveryCheckpoint schema1／KEEP_CURRENT/RESTORE_ENTRY、不改PStore/native verifier。fresh native保持原legacy行為，此task不創建左右session或改幾何。
 
-- [ ] **Step 1: 先寫enum policy／NBT／authority負向測試。** 刪掉lateral ARMING false允許分支會令此測試失敗：
+- [x] **Step 1: 先寫enum policy／NBT／authority負向測試。** 刪掉lateral ARMING false允許分支會令此測試失敗：
 
 ```java
 assertDoesNotThrow(() -> SessionSemantics.LATERAL_BUFF_MAINTAINED
@@ -446,8 +446,8 @@ assertThrows(IllegalArgumentException.class, () -> SessionSemantics.LATERAL_BUFF
 ```
 
 增加schema1缺policy／ARMING,false拒絕；schema2lateral三state=false roundtrip、未知mode／缺mode拒絕；同SIDmode/origin/chamber/sourceNBT改寫不改records/dirty/flushed，returned進度／排序可合法更新。fixture完整source/leases來自existing test已查helper，不用production builder算expected。
-- [ ] **Step 2: 聚焦跑RED。** `./gradlew.bat --offline --console=plain test --tests '*SessionSemanticsTest' --tests '*SessionRecoveryStateTest'`；新API初compile缺失是前置，不當behaviorRED。加最小API殼後讓新的合法lateral codec／freeze mutation測例真失敗，保存命令/XML。
-- [ ] **Step 3: 最小policy與codec。** enum policy核心：
+- [x] **Step 2: 聚焦跑RED。** `./gradlew.bat --offline --console=plain test --tests '*SessionSemanticsTest' --tests '*SessionRecoveryStateTest'`；新API初compile缺失是前置，不當behaviorRED。加最小API殼後讓新的合法lateral codec／freeze mutation測例真失敗，保存命令/XML。
+- [x] **Step 3: 最小policy與codec。** enum policy核心：
 
 ```java
 boolean invalid = this == LATERAL_BUFF_MAINTAINED
@@ -458,8 +458,10 @@ if (invalid) throw new IllegalArgumentException("狀態與效果恢復政策不�
 ```
 
 schema2嚴格decode、完整defensive copies；每個existing new SessionRecoveryRecord copy傳原semantics，failure不消失mode；freeze checks在mutation前。legacy原缺欄位拒絕保留，load不落盤、不建新world。
-- [ ] **Step 4: GREEN／回歸。** 聚焦policy/state/XML綠後單序列非快取clean build＋fresh nonce全GT一次，必要Windows12cases零skip、本機合法NonWindows skip分開、JAR testmod/commonclient檢查。記schema2metadata不代表新玩法已實作；PStore平台CI仍待Task9。
-- [ ] **Step 5: 精確commit／self-review。** `feat: 新增 M2 session semantics 與 strict legacy 相容`；只本task files和必要publicplan狀態，report RED/GREEN、全constructor copy/原mode、immutable拒絕與未驗列表。獨立review通過後才Task7。
+- [x] **Step 4: GREEN／回歸。** 聚焦policy/state/XML綠後單序列非快取clean build＋fresh nonce全GT一次，必要Windows12cases零skip、本機合法NonWindows skip分開、JAR testmod/commonclient檢查。記schema2metadata不代表新玩法已實作；PStore平台CI仍待Task9。
+- [x] **Step 5: 精確commit／self-review。** `feat: 新增 M2 session semantics 與 strict legacy 相容`；只本task files和必要publicplan狀態，report RED/GREEN、全constructor copy/原mode、immutable拒絕與未驗列表。獨立review通過後才Task7。
+
+2026-09-18 Task6 證據：實作 `dfc650f`、固定範圍 `3ed2ecb..dfc650f` 獨立規格✅／品質Approved、Critical0／Important0。正式聚焦RED22／8fail→GREEN22；最後非快取clean fullgate177 JUnit declared／176通過／1合法Windows平台略過（NonWindows測試），必要Windows12零skip；fresh GameTest105／0failure/error/skip。雙JAR全部testmod交集與污染0、common client refs0；新nonce主程式專用伺服器Done→console stop→四世界save，Java/wrapper0。schema2 metadata與strict legacy已完成，native factory仍legacy；左右／Buff維持由Task7–8接續，遠端CI由Task9、跨JVM由Task10驗證。報告OS annotation名稱已按source修正；既有warnings／預期fault留final triage，人工與整分支final仍待驗，不提前合併main。
 
 ### Task 7: 左右基底、來源座標分離與入口覆寫
 
