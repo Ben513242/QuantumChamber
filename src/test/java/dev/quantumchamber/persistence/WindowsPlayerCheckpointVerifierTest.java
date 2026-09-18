@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.nbt.*;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -16,6 +17,15 @@ import org.junit.jupiter.api.io.TempDir;
 @EnabledOnOs(OS.WINDOWS)
 class WindowsPlayerCheckpointVerifierTest {
     @TempDir Path directory;
+
+    @BeforeEach void captureFixtureLocation() throws IOException {
+        var attributes = Files.readAttributes(directory, java.nio.file.attribute.BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+        System.err.println("CHECKPOINT_FIXTURE java.io.tmpdir=" + System.getProperty("java.io.tmpdir")
+                + " tempDir=" + directory + " absolute=" + directory.toAbsolutePath().normalize()
+                + " directory=" + attributes.isDirectory() + " symbolicLink=" + attributes.isSymbolicLink()
+                + " other=" + attributes.isOther() + " fileKey=" + attributes.fileKey());
+    }
 
     @Test void realNativeReadFlushAndFormalIdentitySucceedEvenWhenJavaFileKeyIsNull() throws Exception {
         Path file = fixture(); var io = new TrackingNative();
@@ -169,10 +179,42 @@ class WindowsPlayerCheckpointVerifierTest {
     private static class TrackingNative extends WindowsCheckpointNative {
         int opened, closed, flushes, reads;
         final java.util.Set<HANDLE> active = new java.util.HashSet<>();
-        @Override HANDLE openDirectory(Path path) throws IOException { var h = super.openDirectory(path); opened++; active.add(h); return h; }
-        @Override HANDLE openLeaf(Path path) throws IOException { var h = super.openLeaf(path); opened++; active.add(h); return h; }
-        @Override HANDLE openProbe(Path path) throws IOException { var h = super.openProbe(path); opened++; active.add(h); return h; }
-        @Override void close(HANDLE handle) throws IOException { super.close(handle); closed++; active.remove(handle); }
+        final java.util.Map<HANDLE, Path> openedPaths = new java.util.HashMap<>();
+        boolean firstMismatch;
+        @Override HANDLE openDirectory(Path path) throws IOException { return captureOpen("directory", path, super.openDirectory(path)); }
+        @Override HANDLE openLeaf(Path path) throws IOException { return captureOpen("leaf", path, super.openLeaf(path)); }
+        @Override HANDLE openProbe(Path path) throws IOException { return captureOpen("probe", path, super.openProbe(path)); }
+        private HANDLE captureOpen(String kind, Path path, HANDLE handle) {
+            opened++; active.add(handle); openedPaths.put(handle, path);
+            System.err.println("CHECKPOINT_OPEN kind=" + kind + " handle=" + handle + " expected=" + path);
+            return handle;
+        }
+        @Override int requireLocalNtfs(Path root) throws IOException {
+            int volume = super.requireLocalNtfs(root);
+            System.err.println("CHECKPOINT_VOLUME root=" + root + " filesystem=NTFS volume=" + Integer.toUnsignedString(volume));
+            return volume;
+        }
+        @Override FileInfo info(HANDLE handle) throws IOException {
+            FileInfo actual = super.info(handle);
+            System.err.println("CHECKPOINT_INFO handle=" + handle + " expected=" + openedPaths.get(handle)
+                    + " attributes=0x" + Integer.toHexString(actual.attributes())
+                    + " volume=" + Integer.toUnsignedString(actual.volume())
+                    + " fileId=" + Long.toUnsignedString(actual.fileId()) + " size=" + actual.size());
+            return actual;
+        }
+        @Override Path finalPath(HANDLE handle) throws IOException {
+            Path actual = super.finalPath(handle);
+            Path expected = openedPaths.get(handle);
+            System.err.println("CHECKPOINT_NAME handle=" + handle + " expected=" + expected + " actual=" + actual);
+            if (!firstMismatch && !actual.equals(expected)) {
+                firstMismatch = true;
+                System.err.println("CHECKPOINT_FIRST_MISMATCH handle=" + handle + " expected=" + expected + " actual=" + actual);
+            }
+            return actual;
+        }
+        @Override void close(HANDLE handle) throws IOException {
+            super.close(handle); closed++; active.remove(handle); openedPaths.remove(handle);
+        }
         @Override void flush(HANDLE handle) throws IOException { super.flush(handle); flushes++; }
         @Override byte[] read(HANDLE handle, int length) throws IOException { var bytes = super.read(handle, length); reads++; return bytes; }
     }
