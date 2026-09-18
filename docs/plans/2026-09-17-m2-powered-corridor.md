@@ -557,16 +557,18 @@ context.assertTrue(player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(
 **Files:**
 - Modify: `src/test/java/dev/quantumchamber/persistence/WindowsPlayerCheckpointVerifierTest.java`
 - Modify: `src/test/java/dev/quantumchamber/persistence/PlayerCheckpointStoreTest.java`
-- Modify: `.github/workflows/build.yml`（只已證實平台fixture或診斷／證據上傳，不skip必要cases）
-- Modify: `build.gradle`（僅真實查明tmp/runtime boundary時的taskfixture設定）
+- R1 modify: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`（僅具名重型 lateral remap 的真geometry-ready有限等待）
+- Conditional modify: `.github/workflows/build.yml`（僅已證實平台fixture／診斷／證據上傳配置缺口，不skip必要cases）
+- Conditional modify: `build.gradle`（僅真實查明tmp/runtime boundary配置缺口時的taskfixture設定）
 - Production `WindowsCheckpointNative`／verifier若需改，列精確API與root裁定先核准，不預先允放寬。
 
 **Interfaces:**
 - Consumes: root已讀run35313938269：7fail皆ancestor HANDLE name mismatch，NTFS已過，不是ReFS；unknown expected/actual／firstancestor不能當短名已證實。
 - Produces: test-onlyTrackingNative openPath/HANDLE/finalPath、java.io.tmpdir/@TempDir、firstMismatch／attributes／NTFS證據；單一正向nativecase可重現。新診斷若CI才可見，featurepush/re-run屬外部write先依user特定授權處理，不自動mainmerge。
 - 正向fixture在自有普通NTFS已解析longname位置；若本機native短名能力可用，額外alias拒絕case具實際兩個names與handle witness。縮短/長名是假說直到真值；不能FILE_NAME_OPENED／dropancestor／取消FileID/NBT/flush／skip or assumeCIcounter。
+- 2026-09-18已證實修訂：diag6430dab/run35337907802以同HANDLE證RUNNER~1→runneradmin、ordinary NTFS/no reparse；只兩個測試setup解析toRealPath，原alias仍拒絕。fix8d13b06/run35344148186必要12已全綠，但north lateral GT有限10秒fixture逾時，sameSID geometry12468ms才完成；四方向已各自獨batch。R1只lateralRemap真geometry-ready用既有whenUntil有限30秒，其他10秒／90000tick／100000annotation／全部斷言及production不變。此為測試期限的局部例外，不承諾硬體效能；新SHA遠端全綠及necessary guard success仍必要，不能以增加deadline當完成。
 
-- [ ] **Step 1: 寫最小diagnostic characterization。** TrackingNative覆寫真method只捕捉與輸出，不fake返回：
+- [x] **Step 1: 寫最小diagnostic characterization。** TrackingNative覆寫真method只捕捉與輸出，不fake返回：
 
 ```java
 @Override Path finalPath(HANDLE handle) throws IOException {
@@ -577,18 +579,20 @@ context.assertTrue(player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(
 ```
 
 openDirectory覆寫先super成功再storeexpected(handle/path)，故capture不解鎖／跟隨junction；所有HANDLE cleanup仍原Verifier。只有!expected.equals(actual)印first差異，source非test-onlysetter。
-- [ ] **Step 2: 跑單一正向native。** `test --tests '*WindowsPlayerCheckpointVerifierTest.realNativeReadFlushAndFormalIdentitySucceedEvenWhenJavaFileKeyIsNull' --rerun-tasks`，保留rawexpected/actual/nativeFileID/volume及@TempDir，失敗原因與CIexactsignature核對。環境不能重現則下一stageownedCI diagnostic，不猜修復。
-- [ ] **Step 3: 唯一已證實原因最小修補。** 若names證實是fixture alias，fixture使用自有ordinary NTFS `temp.toRealPath()`只在測試setup，並驗native canonicalnames一致、原alias拒絕保留；如果toRealPath仍未長名或涉及reparse，報NEEDS_CONTEXT不加第三種fallback。若production namespace解析契約需改先root正式Ruling及反例tests；未知仍failclosed。
-- [ ] **Step 4: 原12必要cases零skip／XML與remote綠。** 本機native positive＋rename/junction/writer/identity/read/flush錯誤皆全實跑；最後noncachedfull105以上GT、Windowsremote對應code必要XML守門與Linux受控拒絕保留。CIred不能local綠冒稱remote綠。
-- [ ] **Step 5: commit／review。** `fix: 在已證實原生名稱邊界下修復 Windows CI fixture`，若只是diagnostic無修復明示狀態，不聲稱gate完成；majorreview先fix，reportrawXML/CI網址與SHA。
+- [x] **Step 2: 跑單一正向native。** `test --tests '*WindowsPlayerCheckpointVerifierTest.realNativeReadFlushAndFormalIdentitySucceedEvenWhenJavaFileKeyIsNull' --rerun-tasks`，保留rawexpected/actual/nativeFileID/volume及@TempDir，失敗原因與CIexactsignature核對。環境不能重現則下一stageownedCI diagnostic，不猜修復。
+- [x] **Step 3: 唯一已證實原因最小修補。** 若names證實是fixture alias，fixture使用自有ordinary NTFS `temp.toRealPath()`只在測試setup，並驗native canonicalnames一致、原alias拒絕保留；如果toRealPath仍未長名或涉及reparse，報NEEDS_CONTEXT不加第三種fallback。若production namespace解析契約需改先root正式Ruling及反例tests；未知仍failclosed。
+- [x] **Step 4: 原12必要cases零skip／XML與remote綠。** 本機native positive＋rename/junction/writer/identity/read/flush錯誤皆全實跑；最後noncachedfull105以上GT、Windowsremote對應code必要XML守門與Linux受控拒絕保留。CIred不能local綠冒稱remote綠。
+- [x] **Step 5: commit／review。** `fix: 在已證實原生名稱邊界下修復 Windows CI fixture`，若只是diagnostic無修復明示狀態，不聲稱gate完成；majorreview先fix，reportrawXML/CI網址與SHA。
+
+2026-09-18 Task9證據：固定完整範圍`d07b48a..bdb7402`，diag6430dab／fixture8d13b06／局部GT期限155a79c／同coverage守門名稱bdb7402，無production或NativeAPI/flags變更。本機真短名RED→canonicalGREEN且原alias仍拒絕；最後R1非快取183declared／182通過／1合法OSskip、必要12零skip／freshGT116零failure/error/skip，7compiled class hashes／雙JAR污染與交集0／main-only四worldsave。精確bdb遠端[run35351777308](https://github.com/Ben513242/QuantumChamber/actions/runs/35351777308) Windows與Ubuntu皆success；Windowsbuild-GT及必要guard實際success，原XML必要12與116GT全綠，UbuntuNonWindows拒絕case實跑、平台skips誠實保留。初review唯一Important已經R2scoped獨立確認ADDRESSED、qualityApproved、0新C/I/M，Task9單任務gate關閉。六warnings、31未逐SID分類runtime noise留finaltriage；Task10新版/legacy跨JVM／人工8／wholebranch／M3仍未完成，不提前mainmerge。
 
 ### Task 10: 新M2持久化全gate、8項指引與M3交接
 
 **Files:**
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/M2PersistenceProbe.java`
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/M2LeaseBootstrapProbe.java`
-- Modify: `src/testmod/resources/fabric.mod.json`
-- Modify: `src/testmod/resources/quantumchamber-test.mixins.json`（必要scoped同target，新增先root核准）
+- Conditional modify: `src/testmod/resources/fabric.mod.json`（僅真實entrypoint註冊缺口）
+- Conditional modify: `src/testmod/resources/quantumchamber-test.mixins.json`（僅必要scoped註冊缺口，新增target先root核准）
 - Modify: `docs/implementation-notes/m2-corridor.md`
 - Modify: `docs/implementation-notes/m1-player-build-verification.md`
 - Modify: `docs/implementation-notes/2026-09-18-m2-revision-status.md`
