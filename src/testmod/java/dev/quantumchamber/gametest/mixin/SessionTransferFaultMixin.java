@@ -19,7 +19,14 @@ abstract class SessionTransferFaultMixin {
     @Inject(method="move(Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/world/ServerWorld;Lnet/minecraft/util/math/Vec3d;Lnet/minecraft/util/math/Vec3d;FF)Z",at=@At("HEAD"),cancellable=true,remap=false,require=0)
     private void quantumchamberTest$reject(ServerPlayerEntity player,ServerWorld world,Vec3d position,Vec3d velocity,float yaw,float pitch,
             CallbackInfoReturnable<Boolean> callback) {
-        if(SessionTransferFault.rejectMove(player,world,position)) callback.setReturnValue(false);
+        if(SessionTransferFault.rejectMove(player,world,position)
+                || dev.quantumchamber.gametest.M2PersistenceProbe.normalRejectMove(player,world)) callback.setReturnValue(false);
+    }
+    @Inject(method="move(Lnet/minecraft/entity/Entity;Lnet/minecraft/server/world/ServerWorld;Lnet/minecraft/util/math/Vec3d;Lnet/minecraft/util/math/Vec3d;FF)Z",at=@At("HEAD"),cancellable=true,remap=false,require=0)
+    private void quantumchamberTest$normalEntity(net.minecraft.entity.Entity entity,ServerWorld world,Vec3d position,Vec3d velocity,float yaw,float pitch,
+            CallbackInfoReturnable<Boolean> callback) {
+        dev.quantumchamber.gametest.M2PersistenceProbe.normalObserveEntityMove(entity,world);
+        if(dev.quantumchamber.gametest.M2PersistenceProbe.normalRejectMove(entity,world)) callback.setReturnValue(false);
     }
     @Inject(method="move(Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/world/ServerWorld;Lnet/minecraft/util/math/Vec3d;Lnet/minecraft/util/math/Vec3d;FF)Z",at=@At("RETURN"),remap=false,require=0)
     private void quantumchamberTest$moved(ServerPlayerEntity player,ServerWorld world,Vec3d position,Vec3d velocity,float yaw,float pitch,

@@ -369,7 +369,14 @@ Task4 implementation `e4509fc` 已獨立 spec／quality Approved（Critical0／I
 ### Task 5: 真live restart、production smoke、玩法指引與final review
 
 **Files:**
+- Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSessionManager.java`（僅未完成attach的stopping／detach安全清理）
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/M2PersistenceProbe.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/M2LeaseBootstrapProbe.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/mixin/SessionTransferFaultMixin.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/M2TicketAcquireFaultMixin.java`
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/ChunkTicketManagerTestAccessor.java`（必要時唯讀 native ticketsByPosition）
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/ChunkTicketArgumentTestAccessor.java`（必要時唯讀 argument SID）
+- Modify: `src/testmod/resources/quantumchamber-test.mixins.json`
 - Modify: `src/testmod/resources/fabric.mod.json`
 - Create: `docs/implementation-notes/m2-corridor.md`
 - Modify: `docs/implementation-notes/m1-player-build-verification.md`
@@ -378,6 +385,10 @@ Task4 implementation `e4509fc` 已獨立 spec／quality Approved（Critical0／I
 
 **Interfaces:**
 - Produces: property quantumchamber.m2.phase、fresh run/m2-persistence／run/m2-production-smoke；default不啟用probe，release不含testmod。
+- Native ticket fault：default-off owned partial-acquire bootstrap case，目標第一張真native加票後第二張HEAD拒絕；唯讀真native membership證明目標對稱remove／零殘票、另一sentinel SID保留且無誤remove。合法trusted journal原hash不變／tick0／external verifier，finally只清自己的sentinel，不以observer計數或六個加票前拒啟案例替代。
+- Attach failure cleanup：未attach Manager 的 STOPPING no-op；matching partial owner的票清理與nullable recovery detach保持thread／identity、不依journal健康而中斷native shutdown。正常gateway／tick guard不放寬，不建新權威或改journal；partial真fault仍須STOPPED／tick0／hash verifier成功，最後classes重啟鏈與正常四world關閉再驗。
+- Normal active-save fixture：同server／canonical nonce root／SID／frozen A+B／原world與fixedworld，A在線、B真DC offline且flushed RETURNING,false後，只在既有transfer target拒A與真五鑽石item返還，以穩定正常stop前保存窗口。native入場與消耗／DISCONNECT維持；new JVM故障關閉、正常player與entitysave load，真UUID/count＋pending/protection與安全返還必要，不回填manifestNBT、不fake成功或改雙DC替代。
+- Native reload observer：active-resume-one只在同一Entity move HEAD唯讀記真fixed item UUID/count、held lease FULL/loaded/ticking與pin，因world tick載入後同tickRecovery END可能已返還。不得cancel／寫NBT／改結果，不把observer當fault hit；上一phase正式entityregion與move後真source entity／bbox、完整cohort／durable completion仍必要。
 - Consumes: Tasks1–4的真固定world／nativepowered activation／journal與完整關閉流程。
 - Dedicated harness只用fresh case子目錄、loopback server-ip=127.0.0.1／server-port=0；各phase上一JVM完全exit後才啟動下一個，property未知phase立即明確失敗。每JVM PID＋startup nonce、same canonical save root、source/chamber/session/player UUID、authority、effect/marker、flushed journal與停止後playerdata readback保留。探針只印一次 M2_PHASE_READY_FOR_STOP，harness收到才console stop並確認四world save／exit0；probe不自行無條件stop。
 
@@ -391,8 +402,10 @@ Task4 implementation `e4509fc` 已獨立 spec／quality Approved（Critical0／I
 
 - 窄testmod故障可用scoped mixin包覆真move／checkpoint／checked journal flush，精確限定server/world/session/player/case，finally或STOPPED清；無fakebackend、無production test-only setter、不直接塞record假native coverage。每個fault/trusted setup與native evidence分開標示。JOIN callback早於normal connect完成，callback只觀察入列不移動，下一server tick才返還；PlayerManager.remove不是DISCONNECT證據，必有真channel close→Fabric事件→server-thread更新。
 
-- [ ] **Step 1: 新testworld的不同Java process證明session中斷／pending-return重啟。** 保存UUID／sourceworld／原位置／實際fixed-world participant與journal狀態，正常stop與重啟／重登確認原world返還、不重建舊session、不生成Universe。若使用trusted setup須明確區分native activation證據，不能用探針直接構造紀錄假裝live玩家。
-- [ ] **Step 2: production-only dedicated。** 無testmod／client mods，Done→console stop→四world全部save→exit0；無client-loading error／Dynamic Universe code。
-- [ ] **Step 3: 最後非快取clean build／GT／XML／JAR與common/client檢查。** 原版baseline、light依賴解析與照明JAR hash分開；不啟動或覆寫使用者world。
-- [ ] **Step 4: 更新單人不指令指引與人工gate。** 外部拉桿→進艙→關門→已有buff或喝藥→真走廊；外部預設計時斷電電路→回同一普通盒子→可Creative拆。寫start-client.bat light、存檔備份人工複製、主副手torch、32chunk遠望／回頭、shader／resource reload、近玩家群組 seam清單；未實測必須標待驗。
+- [x] **Step 1: 新testworld的不同Java process證明session中斷／pending-return重啟。** 保存UUID／sourceworld／原位置／實際fixed-world participant與journal狀態，正常stop與重啟／重登確認原world返還、不重建舊session、不生成Universe。若使用trusted setup須明確區分native activation證據，不能用探針直接構造紀錄假裝live玩家。
+- [x] **Step 2: production-only dedicated。** 無testmod／client mods，Done→console stop→四world全部save→exit0；無client-loading error／Dynamic Universe code。
+- [x] **Step 3: 最後非快取clean build／GT／XML／JAR與common/client檢查。** 原版baseline、light依賴解析與照明JAR hash分開；不啟動或覆寫使用者world。
+- [x] **Step 4: 更新單人不指令指引與人工gate。** 外部拉桿→進艙→關門→已有buff或喝藥→真走廊；外部預設計時斷電電路→回同一普通盒子→可Creative拆。寫start-client.bat light、存檔備份人工複製、主副手torch、32chunk遠望／回頭、shader／resource reload、近玩家群組 seam清單；未實測必須標待驗。
 - [ ] **Step 5: whole-feature獨立final review與交付。** 包含main merge-base至HEAD完整diff、所有deferred／rulings、真測試證據；先fix blockers再交付本機分支。人工gate未關不得合併main，不假稱M3已完成。
+
+Task5 worker於2026-09-18完成本機Windows自動範圍：一次非快取full gate（JUnit167＝166實跑／1OS略過、GameTest105零失敗）與最後classes29個原生JVM驗證；四條正常phase、同UUID五鑽石正式entity save/load、部分票取得例外與六bootstrap、重驗Task4四checkpoint鏈及main-only四world啟停均通過。啟動失敗後Manager尚未attach卻在STOPPING拋錯的真RED已窄修；未放寬正常API或journal健康guard。最後formal NBT／region與class/JAR指紋分開核對。README與玩家指引已對齊實際worktree與M2狀態；兩項既有Minor診斷／多target warnings保留。Task5獨立review、whole-feature final review、真Ubuntu runtime與人工玩法／視覺仍待驗，未push／合併main。

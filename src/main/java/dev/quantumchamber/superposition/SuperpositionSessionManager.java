@@ -279,13 +279,19 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         tickets.put(record.sessionUuid(),new SourceTicket(source,chunk,record));
     }
     private void stopping(MinecraftServer owner) {
-        requireServer(owner);
+        // 前置 authority attach 失敗時仍會收到 STOPPING；此時沒有本 manager 的資源。
+        if(server==null) return;
+        if(owner!=server || !owner.isOnThread()) throw new IllegalStateException("session cleanup 必須在同一 server thread");
+        // 釋放已持有的來源票不讀寫 journal，不能由不健康或部分初始化的 journal 中斷關閉。
         for(var entry : tickets.entrySet()) entry.getValue().world().getChunkManager()
                 .removeTicket(SOURCE_TICKET,entry.getValue().chunk(),2,entry.getKey());
         tickets.clear();
     }
     private void detach(MinecraftServer owner) {
-        if(server==owner) { recovery.detach(owner); recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE; }
+        if(server!=owner) return;
+        if(!owner.isOnThread()) throw new IllegalStateException("session detach 必須在同一 server thread");
+        if(recovery!=null) recovery.detach(owner);
+        recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE;
     }
     private void requireServer(MinecraftServer owner) {
         if(owner!=server || server==null || !owner.isOnThread()) throw new IllegalStateException("session 必須在 attached server thread");

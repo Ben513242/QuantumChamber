@@ -1,8 +1,18 @@
 # QuantumChamber
 
+> **遠端審查快照／新版尚未實作：** [最新修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)中的左右延伸、入場保留 QuantumState Buff、任一參與者 Buff 失效則整組返還均已核准但尚未實作；原版自動驗證通過不代表新玩法通過，人工 checklist、Task5 獨立評審與整分支 final review 仍未完成。
+
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
-## M1.2 供電原艙
+## M2 供電走廊
+
+功能分支 `feature/m1-chamber` 已接上真實走廊入場、群體換頁與斷電返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，成功入場會一次消耗效果，進入固定的 `quantumchamber:superposition` 世界。斷電時先將玩家與有價物品安全送回同一原艙，再結束 session、完成租約清理及解除原艙保護；離線或來源身分不符時持續保留 pending。
+
+本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。主目錄的 `main` 較舊，不能用其客戶端驗收此功能。完整單人無指令流程、預先安排外部定時斷電、測試證據與人工待驗項目見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
+
+走廊是有限局部頁面與外觀延伸，並非無限配置世界；沒有動態 Dimension、Universe 選擇或 M3 跨宇宙通道。人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證，最終整體評審由 root 另行執行。此快照供遠端同步審查，尚未合併 main。
+
+## M1.2 基礎與歷史驗證
 
 已實作 7×7×7 Chamber、25 格整面 Bulkhead、Controller 右鍵整面門控、QuantumState 藥水、Origin registry 持久化，以及依實際紅石電位協調的原艙保護與自動 `ARMED`。Comparator 狀態為 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。
 
@@ -12,7 +22,7 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 新建艙體未供電時不註冊；有效空艙即使開門，也能先由外部供電取得 UUID 與保護。進艙、關門並補齊全員 QuantumState 後，持續高電位會自動進入 `ARMED`，不用再按一次拉桿。Controller 普通右鍵開關門；雙手空手蹲下右鍵切換管理用 `Enabled`，它與供電分開。斷電確認安全返還後才進入 `OFF`、輸出 0 並解除原艙保護，但 UUID 與碰撞占位保留；重新供電沿用 UUID。只有 `OFF` 的 Controller 真正成功移除後，才清除紀錄及全部索引，外殼不自動刪除；`Enabled=true` 也可在 OFF 拆除。schema1 可讀為保守的 `UNKNOWN`，schema2 保存獨立供電狀態。
 
-M1.2 的 session adapter 仍明確回傳 `NONE`／`ARMED_ONLY`，不消耗藥水效果、不傳送。M2 尚未實作；沒有 Universe、corridor、動態 Dimension、真正 Session、自訂 packet 或 renderer。獨立與整體評審、GPU／主副手火把／日夜與 shader、完整單人及多人玩法仍有待驗項目，尚未合併 main。自動測試與歷史 client runtime 不代表本版 GUI 驗收；啟動腳本測試在 Linux CI 明確 skip。
+上述 M1.2 歷史驗證當時使用 `NONE`／`ARMED_ONLY` adapter；目前功能分支已由 M2 真 session 接替。自動測試與歷史 client runtime 不代表本版 GUI 驗收；啟動腳本測試在 Linux CI 明確 skip，玩家 checkpoint 的原生 HANDLE 後端目前只對已驗 Windows／NTFS 條件提供成功證據，非 Windows 保守拒絕而非成功恢復。
 
 量子艙門現為紫色面板，腔室控制器現為青色識別板與正面核心；兩者保留基岩底層／外框，使用一般模型與原生材質，不新增 renderer 或光源。方塊 ID 不變，既有艙體不需拆掉重建。
 
@@ -34,7 +44,7 @@ M1.2 的 session adapter 仍明確回傳 `NONE`／`ARMED_ONLY`，不消耗藥水
 
 Windows 可在檔案總管雙擊專案根目錄的 [start-client.bat](start-client.bat)，或在 PowerShell 執行 `./start-client.bat`。腳本使用 Java 21，固定載入同一工作區的 Fabric 開發客戶端；失敗會保留錯誤與原始退出碼。
 
-M1 尚未合併 main；本機請從 `.worktrees/m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
+M2 功能分支尚未合併 main；本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
 
 Windows PowerShell：
 
@@ -65,6 +75,8 @@ Windows PowerShell：
 - [M1.1 實作、基線限制與驗證紀錄](docs/implementation-notes/m1.1-origin-maintenance.md)
 - [M1.2 供電原艙計畫](docs/plans/2026-09-17-m1.2-powered-origin.md)
 - [M1.2 自動證據、重啟與人工待驗](docs/implementation-notes/m1.2-powered-origin.md)
+- [M2 供電走廊計畫](docs/plans/2026-09-17-m2-powered-corridor.md)
+- [M2 單人操作、持久化與人工待驗](docs/implementation-notes/m2-corridor.md)
 
 ## 授權
 

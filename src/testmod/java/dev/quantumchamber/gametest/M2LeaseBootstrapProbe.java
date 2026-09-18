@@ -39,6 +39,14 @@ public final class M2LeaseBootstrapProbe implements ModInitializer {
     private static Path journal;
     private static String beforeHash;
     private static int ticks;
+    private static MinecraftServer partialServer;
+    private static net.minecraft.server.world.ServerChunkManager partialManager;
+    private static UUID partialSid,sentinelSid;
+    private static net.minecraft.server.world.ChunkTicketType<UUID> partialType;
+    private static net.minecraft.util.math.ChunkPos sentinelChunk;
+    private static Set<TicketWitness> otherTickets=Set.of();
+    private static int successfulAdds,successfulRemoves;
+    private static boolean partialHit,cleanupVerified;
 
     @Override public void onInitialize() {
         if (CASE==null) return;
@@ -55,13 +63,19 @@ public final class M2LeaseBootstrapProbe implements ModInitializer {
                 String after=journal==null ? "missing" : hash(journal);
                 LoggerFactory.getLogger("quantumchamber-testmod").info("LEASE_PROBE_FINISH case={} ticks={} unchanged={} afterSha256={}",
                         CASE,ticks,beforeHash!=null && beforeHash.equals(after),after);
+                if("partial-acquire".equals(CASE)) {
+                    requirePartial(partialHit && cleanupVerified && successfulAdds==1 && successfulRemoves==1,"部分取得必須有真 hit／membership／對稱清理");
+                    LoggerFactory.getLogger("quantumchamber-testmod").info("LEASE_PARTIAL_VERIFIED targetSid={} sentinelSid={} successfulAdds={} successfulRemoves={} nativeTarget=0 sentinelPreserved=true ticks={}",
+                            partialSid,sentinelSid,successfulAdds,successfulRemoves,ticks);
+                    partialServer=null; partialManager=null; partialType=null; otherTickets=Set.of();
+                }
             } catch (Exception failure) { throw new IllegalStateException("fixture after-hash 無法確認",failure); }
         });
     }
 
     public static void beforeAuthorityAttach(MinecraftServer server) {
         if (CASE==null) return;
-        if (!Set.of("shape","height","facing","huge","global-cap","world-border").contains(CASE)) {
+        if (!Set.of("shape","height","facing","huge","global-cap","world-border","partial-acquire").contains(CASE)) {
             throw new IllegalArgumentException("未知 lease fixture case");
         }
         try {
@@ -109,6 +123,12 @@ public final class M2LeaseBootstrapProbe implements ModInitializer {
                 NbtIo.writeCompressed(wrapped,output);
             }
             journal=path; beforeHash=hash(path);
+            if(CASE.equals("partial-acquire")) {
+                var nonce=System.getProperty("quantumchamber.m2.nonce");
+                requirePartial(nonce!=null && nonce.matches("[a-f0-9]{32}")
+                        && actual.getParent().getFileName().toString().equals("m2-lease-bootstrap-partial-acquire-"+nonce),"partial own nonce root 不符");
+                partialServer=server; partialManager=server.getWorld(SuperpositionWorld.KEY).getChunkManager(); partialSid=sid; sentinelSid=UUID.randomUUID();
+            }
             LoggerFactory.getLogger("quantumchamber-testmod").info("LEASE_PROBE_INSTALLED case={} savePath={} beforeSha256={}",CASE,path,beforeHash);
         } catch (Exception failure) { throw new IllegalStateException("[LEASE_PROBE_SETUP_FAILED] lease bootstrap fixture 安裝失敗",failure); }
     }
@@ -116,4 +136,64 @@ public final class M2LeaseBootstrapProbe implements ModInitializer {
     private static String hash(Path path) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));
     }
+
+    private record TicketWitness(long chunk,UUID sid,int level) {}
+
+    /** 原生集合僅讀；回傳 immutable 快照，絕不回寫 ticketsByPosition。 */
+    private static Set<TicketWitness> nativeTickets() {
+        var manager=partialManager.chunkLoadingManager.getTicketManager();
+        var entries=((dev.quantumchamber.gametest.mixin.ChunkTicketManagerTestAccessor)manager).quantumchamberTest$getTicketsByPosition();
+        var result=new java.util.HashSet<TicketWitness>();
+        for(var entry : entries.long2ObjectEntrySet()) for(var ticket : entry.getValue()) if(ticket.getType()==partialType) {
+            var argument=((dev.quantumchamber.gametest.mixin.ChunkTicketArgumentTestAccessor)(Object)ticket).quantumchamberTest$getArgument();
+            requirePartial(argument instanceof UUID && ticket.getLevel()==31,"own radius2 ticket 原生 SID／level 不符");
+            result.add(new TicketWitness(entry.getLongKey(),(UUID)argument,ticket.getLevel()));
+        }
+        return Set.copyOf(result);
+    }
+
+    private static boolean partialScope(net.minecraft.server.world.ServerChunkManager manager,net.minecraft.server.world.ChunkTicketType<?> type,int radius,Object argument) {
+        if(!"partial-acquire".equals(CASE) || partialServer==null || manager!=partialManager || !partialSid.equals(argument)) return false;
+        requirePartial(partialServer.isOnThread() && partialServer.getWorld(SuperpositionWorld.KEY).getChunkManager()==manager && radius==2,"partial native server/world/radius scope 不符");
+        if(partialType!=null) requirePartial(partialType==type,"partial ticket type identity 不符");
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static void beforeTicket(net.minecraft.server.world.ServerChunkManager manager,net.minecraft.server.world.ChunkTicketType<?> type,
+            net.minecraft.util.math.ChunkPos chunk,int radius,Object argument) {
+        if(!partialScope(manager,type,radius,argument)) return;
+        if(partialType==null) {
+            partialType=(net.minecraft.server.world.ChunkTicketType<UUID>)type; sentinelChunk=chunk;
+            manager.addTicket(partialType,chunk,2,sentinelSid); otherTickets=nativeTickets();
+            requirePartial(otherTickets.contains(new TicketWitness(chunk.toLong(),sentinelSid,31)),"sentinel 必須真 native membership");
+        }
+        if(successfulAdds==1) {
+            requirePartial(nativeTickets().stream().filter(ticket -> ticket.sid().equals(partialSid)).count()==1,"第二 add 前目標必須已真取得第一票");
+            partialHit=true;
+            LoggerFactory.getLogger("quantumchamber-testmod").info("LEASE_PARTIAL_HIT targetSid={} sentinelSid={} firstNativePresent=true rejectedChunk={}",partialSid,sentinelSid,chunk);
+            throw new IllegalStateException("[LEASE_PARTIAL_ACQUIRE] own SID 第一票成功後第二 add 受控拒絕");
+        }
+    }
+
+    public static void afterTicket(net.minecraft.server.world.ServerChunkManager manager,net.minecraft.server.world.ChunkTicketType<?> type,
+            net.minecraft.util.math.ChunkPos chunk,int radius,Object argument) {
+        if(!partialScope(manager,type,radius,argument)) return;
+        successfulAdds++;
+        requirePartial(successfulAdds==1 && nativeTickets().contains(new TicketWitness(chunk.toLong(),partialSid,31)),"成功 add 的原生 membership 不符");
+    }
+
+    public static void afterRemoveTicket(net.minecraft.server.world.ServerChunkManager manager,net.minecraft.server.world.ChunkTicketType<?> type,
+            net.minecraft.util.math.ChunkPos chunk,int radius,Object argument) {
+        if(!partialScope(manager,type,radius,argument)) return;
+        successfulRemoves++;
+        requirePartial(partialHit && successfulRemoves==successfulAdds && nativeTickets().equals(otherTickets),"原生 cleanup 必須目標零票／其他 SID 完全不變");
+        requirePartial(nativeTickets().contains(new TicketWitness(sentinelChunk.toLong(),sentinelSid,31)),"目標cleanup不可誤移除同chunk sentinel");
+        LoggerFactory.getLogger("quantumchamber-testmod").info("LEASE_PARTIAL_NATIVE_CLEANUP targetSid={} nativeTarget=0 sentinelPreserved=true snapshot={}",partialSid,nativeTickets());
+        try { cleanupVerified=true; }
+        finally { manager.removeTicket(partialType,sentinelChunk,2,sentinelSid); }
+        requirePartial(nativeTickets().stream().noneMatch(ticket -> ticket.sid().equals(partialSid) || ticket.sid().equals(sentinelSid)),"fixture 最後僅移除自己的 sentinel");
+    }
+
+    private static void requirePartial(boolean condition,String message) { if(!condition) throw new IllegalStateException(message); }
 }

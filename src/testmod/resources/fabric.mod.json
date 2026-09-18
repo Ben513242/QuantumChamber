@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "quantumchamber-testmod",
   "version": "1.0.0",
-  "name": "QuantumChamber M1 Game Tests",
+  "name": "QuantumChamber M1–M2 原生驗證",
   "environment": "server",
   "mixins": ["quantumchamber-test.mixins.json"],
   "entrypoints": {
