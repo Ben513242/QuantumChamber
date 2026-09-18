@@ -515,16 +515,16 @@ inverseposition=(long,y,7-lateral)，vector=(-z,y,x)，inverse=(long,y,-lateral)
 
 **Files:**
 - Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSessionManager.java`
-- Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSession.java`
+- Conditional modify（僅需求缺口）: `src/main/java/dev/quantumchamber/superposition/SuperpositionSession.java`
 - Modify: `src/main/java/dev/quantumchamber/transfer/QuantumEffectTransaction.java`
 - Modify: `src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java`
 - Modify: `src/main/java/dev/quantumchamber/corridor/CorridorRepositionService.java`
-- Modify: `src/main/java/dev/quantumchamber/chamber/ChamberPowerCoordinator.java`（只既有HIGHRETURNING握手必要接點，不第二authority）
+- Conditional modify（僅握手缺口）: `src/main/java/dev/quantumchamber/chamber/ChamberPowerCoordinator.java`（只既有HIGHRETURNING握手必要接點，不第二authority）
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/SessionTransferFault.java`
-- Modify: `src/testmod/java/dev/quantumchamber/gametest/mixin/SessionTransferFaultMixin.java`（既有exacttarget scoped observation；新target先root核准）
+- Conditional modify（僅既有hook不足）: `src/testmod/java/dev/quantumchamber/gametest/mixin/SessionTransferFaultMixin.java`（既有exacttarget scoped observation；新target先root核准）
 - Test: `src/test/java/dev/quantumchamber/chamber/ChamberPowerCoordinatorTest.java`
-- Test: `src/test/java/dev/quantumchamber/persistence/SessionSemanticsTest.java`
+- Conditional追加／既有regression重驗: `src/test/java/dev/quantumchamber/persistence/SessionSemanticsTest.java`
 
 **Interfaces:**
 - Consumes: Task6new ARMINGfalse／Task7lateralbasis/typed initial／原source identity、cohort完整snapshot及checkedreceipt。
@@ -534,7 +534,7 @@ inverseposition=(long,y,7-lateral)，vector=(-z,y,x)，inverse=(long,y,-lateral)
 - Produces: `public boolean CorridorPageManager.activeCohortHasBuff(UUID)`只sameauthority/durable SUPER/newmode/完整UUID nativeplayerworld/query真Buff；legacyconsumer不用此getter猜權威。不新增tick/tickets，Manager與Reposition在begin/move/commit前重驗，partial失效不publish半群。
 - Pose rollback與effectpolicy分開：durable ARMING或未提交先原pose rollback（same originalC必要），新效果KEEP_CURRENT；durableSUPER後只safeReturn保留當下效果。不能把restorefalse當「已提交」旗標。
 
-- [ ] **Step 1: 真飲用native RED。** vanilla QuantumState potion.finishUsing／正常玩家inventory，不直接addBuff冒充drink；新完整入場後斷言：
+- [x] **Step 1: 真飲用native RED。** vanilla QuantumState potion.finishUsing／正常玩家inventory，不直接addBuff冒充drink；新完整入場後斷言：
 
 ```java
 context.assertTrue(player.getServerWorld() == server.getWorld(SuperpositionWorld.KEY), "真固定world入場");
@@ -545,10 +545,12 @@ context.assertTrue(player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration(
 保存完整NBT/hidden與elapsednativeTicks對照，不單純>0當未重置。單人／兩人任一shortduration自然expire；vanilla MilkBucketItem.finishUsing移除真Buff；others效果不退款；HIGH source仍protected/POWERED、journal/receipt清後IDLE，再真喝／sealed新SID入場；sourceLOW最後OFF才能Creative拆。
 
 原生custom PotionContents的長／短效與hidden fixture允許並明確標示；不得在正式飲用後直接addStatusEffect延長。正式ModPotions3600仍需至少一個完整飲用→入場→剩餘duration未重置案例，可用已完成custom長效／milk全組返還／checked清理的同來源warm cycle，在HIGH正常再喝正式藥水進新SID；不降server tick／改藥水數值／強載／fake進度。
-- [ ] **Step 2: RED矩陣。** 缺一Buff／zero／spectator／26人／變來源C／UUID／offline保持原guard，prepare期間expire、partialactualmove/remap後失Buff、新劑hiddenEffect接續不誤判expire、RETURNING中redrink不撤銷。原移動callbackscopedfault與所有rawsentinel分開標native/trusted。
-- [ ] **Step 3: runtime核心分流。** creation顯式newmode/false，verifyCurrent不consume；active完整cohort任一!hasStatusEffect先Returning，再reposition/recovery。checkInitialCohort根據recordmode要求Buff仍有或legacy已耗，不blanket刪effect條件。HIGH ack原gateway→registryPOWERED重新readiness，LOW已完成→OFF。
-- [ ] **Step 4: GREEN／全套。** 聚焦newnative案例綠、mode/JUnit純tests，原known-world/UUID/floor/leases/budget保守門檻；legacyfixtures可繼續透過明確Mode構造，但native creation期待改new且不得以forcedlegacyfake真飲用。最後唯一full/GT／class/JAR／main-onlygate一次，WindowsCI未綠不放行M3。
-- [ ] **Step 5: 精確commit／review。** `feat: 以 QuantumState 維持共享左右走廊並安全返還`；報Buff nativeNBT/tick、sourceHIGHPowered/LowOFF順序／SID再進，HUD/GPU仍人工；獨立gate後Task9。
+- [x] **Step 2: RED矩陣。** 缺一Buff／zero／spectator／26人／變來源C／UUID／offline保持原guard，prepare期間expire、partialactualmove/remap後失Buff、新劑hiddenEffect接續不誤判expire、RETURNING中redrink不撤銷。原移動callbackscopedfault與所有rawsentinel分開標native/trusted。
+- [x] **Step 3: runtime核心分流。** creation顯式newmode/false，verifyCurrent不consume；active完整cohort任一!hasStatusEffect先Returning，再reposition/recovery。checkInitialCohort根據recordmode要求Buff仍有或legacy已耗，不blanket刪effect條件。HIGH ack原gateway→registryPOWERED重新readiness，LOW已完成→OFF。
+- [x] **Step 4: GREEN／全套。** 聚焦newnative案例綠、mode/JUnit純tests，原known-world/UUID/floor/leases/budget保守門檻；legacyfixtures可繼續透過明確Mode構造，但native creation期待改new且不得以forcedlegacyfake真飲用。最後唯一full/GT／class/JAR／main-onlygate一次，WindowsCI未綠不放行M3。
+- [x] **Step 5: 精確commit／review。** `feat: 以 QuantumState 維持共享左右走廊並安全返還`；報Buff nativeNBT/tick、sourceHIGHPowered/LowOFF順序／SID再進，HUD/GPU仍人工；獨立gate後Task9。
+
+2026-09-18 Task8 證據：`3c695e4`固定範圍`a28c258..3c695e4`獨立spec✅／qualityApproved、0Critical／0Important。最後單次非快取clean fullgate183declared JUnit／182通過／1合法NonWindows OSskip，必要Windows12與fresh GT116零failure/error/skip。正式3600 inventory/finishUsing→入場完整NBT保留、7+1顯式原生effect ticks為3592；milk/單雙人自然expiry/hidden接續→全組KEEP_CURRENT返還；HIGH清理ack後新SID、LOW完成OFF後Creative拆除；partial entry pose/refund分離、partial remap milk真hit維持epoch1，不半publish。四向非零worldvelocity字面斷言補Task7Minor。雙JAR/testmod交集/COMMON-client污染0、fresh main-only四worldsave/Java-wrapper0。normal NetworkIo倒數/HUD與GPU人工仍待；初RED XML覆蓋與Gradle截斷stdout誠實記錄，非重建歷史。正常expiry記WARN噪音Minor留finaltriage；Task9CI／Task10所有模式跨JVM／人工／wholebranch尚未放行，M3等待必要gate，不提前mainmerge。
 
 ### Task 9: WindowsCI實值診斷與安全fixture／原生gate
 
