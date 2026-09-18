@@ -17,6 +17,7 @@ import org.junit.jupiter.api.io.TempDir;
 @EnabledOnOs(OS.WINDOWS)
 class WindowsPlayerCheckpointVerifierTest {
     @TempDir Path directory;
+    private Path originalDirectory;
 
     @BeforeEach void captureFixtureLocation() throws IOException {
         var attributes = Files.readAttributes(directory, java.nio.file.attribute.BasicFileAttributes.class,
@@ -25,6 +26,9 @@ class WindowsPlayerCheckpointVerifierTest {
                 + " tempDir=" + directory + " absolute=" + directory.toAbsolutePath().normalize()
                 + " directory=" + attributes.isDirectory() + " symbolicLink=" + attributes.isSymbolicLink()
                 + " other=" + attributes.isOther() + " fileKey=" + attributes.fileKey());
+        originalDirectory = directory;
+        directory = directory.toRealPath();
+        System.err.println("CHECKPOINT_CANONICAL original=" + originalDirectory + " fixture=" + directory);
     }
 
     @Test void realNativeReadFlushAndFormalIdentitySucceedEvenWhenJavaFileKeyIsNull() throws Exception {
@@ -35,6 +39,16 @@ class WindowsPlayerCheckpointVerifierTest {
         assertTrue(io.opened > file.getNameCount());
         assertEquals(io.opened, io.closed);
         assertEquals(snapshot(), NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()));
+        if (!originalDirectory.equals(directory)) {
+            Path alias = originalDirectory.resolve("playerdata/player.dat");
+            var aliasIo = new TrackingNative();
+            IOException error = assertThrows(IOException.class,
+                    () -> new WindowsPlayerCheckpointVerifier(aliasIo).verify(alias, snapshot()));
+            assertTrue(error.getMessage().contains("opened HANDLE 路徑不符"));
+            assertTrue(aliasIo.firstMismatch);
+            assertEquals(0, aliasIo.reads);
+            assertEquals(aliasIo.opened, aliasIo.closed);
+        }
     }
 
     @Test void lockedLeafAndOrdinaryAncestorsDenyRenameSecondWriterAndJunctionAbaFirstStep() throws Exception {

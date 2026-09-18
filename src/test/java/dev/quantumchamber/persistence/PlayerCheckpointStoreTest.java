@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.nio.file.*;
 import net.minecraft.nbt.*;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -12,6 +13,11 @@ import org.junit.jupiter.api.io.TempDir;
 @EnabledOnOs(OS.WINDOWS)
 class PlayerCheckpointStoreTest {
     @TempDir Path directory;
+    @BeforeEach void resolveOwnedFixture() throws IOException {
+        Path original = directory;
+        directory = directory.toRealPath();
+        System.err.println("CHECKPOINT_STORE_FIXTURE original=" + original + " fixture=" + directory);
+    }
     @Test void fullNbtEqualityIncludesUnknownModKeysBeforeForce() throws Exception {
         var expected = snapshot(); var target = directory.resolve("player.dat");
         NbtIo.writeCompressed(expected, target);
