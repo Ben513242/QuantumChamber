@@ -3,7 +3,7 @@ package dev.quantumchamber.transfer;
 import dev.quantumchamber.chamber.ChamberFrame;
 import java.util.*;
 import net.minecraft.util.math.Vec3d;
-import dev.quantumchamber.corridor.CorridorGeometry;
+import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 
 /** 原艙有限 floor slots 的確定性配置。 */
 public final class ChamberReturnPlacement {
@@ -18,7 +18,7 @@ public final class ChamberReturnPlacement {
             var source = sources.get(id);
             if (source == null || !Double.isFinite(source.x) || !Double.isFinite(source.y) || !Double.isFinite(source.z))
                 throw new IllegalArgumentException("來源 pose 缺失或不是有限座標");
-            local.put(id,CorridorGeometry.localPosition(frame,source));
+            local.put(id,ChamberSpaceCoordinates.localPosition(frame,source));
         }
         ordered.sort(Comparator.<UUID>comparingDouble(id -> local.get(id).z)
                 .thenComparingDouble(id -> local.get(id).x).thenComparing(Comparator.naturalOrder()));
@@ -32,7 +32,7 @@ public final class ChamberReturnPlacement {
     }
     private static Map<UUID,Vec3d> place(ChamberFrame frame,List<UUID> people) {
         var result = new LinkedHashMap<UUID,Vec3d>();
-        for(int i=0;i<people.size();i++) result.put(people.get(i),CorridorGeometry.position(frame,1.5+i%5,1,1.5+i/5));
+        for(int i=0;i<people.size();i++) result.put(people.get(i),ChamberSpaceCoordinates.position(frame,1.5+i%5,1,1.5+i/5));
         return Collections.unmodifiableMap(result);
     }
 }

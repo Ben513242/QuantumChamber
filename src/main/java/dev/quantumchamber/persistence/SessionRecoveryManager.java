@@ -1,7 +1,6 @@
 package dev.quantumchamber.persistence;
 
 import dev.quantumchamber.chamber.*;
-import dev.quantumchamber.corridor.CorridorGeometry;
 import dev.quantumchamber.corridor.CorridorPageManager;
 import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
@@ -145,7 +144,7 @@ public final class SessionRecoveryManager {
         for(var id : pins.get()) {
             var entity=corridor.getEntity(id);
             if(entity==null || entity instanceof ServerPlayerEntity) return;
-            var position=CorridorGeometry.position(frame,3.5,1,3.5);
+            var position=ChamberSpaceCoordinates.position(frame,3.5,1,3.5);
             if(!ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame),entity.getBoundingBox().offset(position.subtract(entity.getPos())))
                     || !sourceAuthority.test(record) || !transfers.move(entity,source,position,Vec3d.ZERO,entity.getYaw(),entity.getPitch())) return;
             source.getEntity(id).removeCommandTag("quantumchamber_session:"+record.sessionUuid());

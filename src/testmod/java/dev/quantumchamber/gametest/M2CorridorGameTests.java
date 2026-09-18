@@ -7,6 +7,8 @@ import dev.quantumchamber.persistence.PlayerRecoveryCheckpoint;
 import dev.quantumchamber.persistence.PlayerRecoveryCheckpointAccess;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
+import dev.quantumchamber.persistence.SessionSemantics;
+import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.chamber.ChamberOriginAuthority;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.universe.DimensionRole;
@@ -41,6 +43,102 @@ import java.util.List;
 import java.util.Map;
 
 public final class M2CorridorGameTests implements FabricGameTest {
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task7_lateral_north",tickLimit=100000)
+    public void trusted_lateral_geometry_north_windows(TestContext context) { lateralGeometry(context,Direction.NORTH); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task7_lateral_south",tickLimit=100000)
+    public void trusted_lateral_geometry_south_windows(TestContext context) { lateralGeometry(context,Direction.SOUTH); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task7_lateral_east",tickLimit=100000)
+    public void trusted_lateral_geometry_east_windows(TestContext context) { lateralGeometry(context,Direction.EAST); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task7_lateral_west",tickLimit=100000)
+    public void trusted_lateral_geometry_west_windows(TestContext context) { lateralGeometry(context,Direction.WEST); }
+    /** Task7 只驗可信幾何；暫移除 Buff 配合既有 publish guard，Task8 才驗正式維持 Buff。 */
+    private static void lateralGeometry(TestContext context,Direction facing) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        var fixture=new TrustedSpace(context,facing,2,SessionSemantics.LATERAL_BUFF_MAINTAINED);
+        fixture.prepare();
+        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+            fixture.commit();
+            var entrance=fixture.manager.entrance(fixture.session);
+            context.assertEquals(net.minecraft.util.ActionResult.SUCCESS,useEntrance(fixture,entrance),"lateral 原正門25格交易");
+            // publish 後兩側覆寫需走原本共用4096預算。
+            context.runAtTick(tick+1,() -> {
+                assertLateralEntrance(fixture);
+                lateralRemap(fixture,0,tick+2);
+            });
+        });
+    }
+    private static void assertLateralEntrance(TrustedSpace fixture) {
+        var context=fixture.context; var frame=fixture.manager.entrance(fixture.session);
+        var view=fixture.manager.currentMappings(fixture.session).instances().stream()
+                .filter(value -> value.aliasStartBlock()<=-2 && value.aliasEndBlock()>=9).findFirst().orElseThrow();
+        var facing=fixture.initial.origin().facing();
+        context.assertEquals(facing.rotateYClockwise(),view.outwardFacing(),"mapping 朝向是實際走廊朝向");
+        context.assertEquals(facing,frame.outwardFacing(),"入口仍是來源方向");
+        var expected=view.localBlockOrigin().offset(view.outwardFacing().rotateYCounterclockwise(),6).up(6)
+                .offset(view.outwardFacing().getOpposite(),Math.toIntExact(3-view.logicalAnchorBlock()));
+        context.assertEquals(expected,frame.controllerPos(),"source Controller 位於 corridor block(6,6,3-anchor)");
+        context.assertEquals(facing,fixture.target.getBlockState(expected).get(dev.quantumchamber.chamber.ChamberControllerBlock.FACING),"Controller FACING 保持原艙");
+        for(int y=1;y<=5;y++) for(int n=1;n<=5;n++) {
+            context.assertTrue(fixture.target.getBlockState(ChamberSpaceCoordinates.block(frame,n,y,0))
+                    .get(dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN),"25格來源正門 OPEN 意圖");
+            context.assertTrue(fixture.target.getBlockState(ChamberSpaceCoordinates.block(frame,n,y,6)).isOf(net.minecraft.block.Blocks.BEDROCK),"不開來源後牆");
+            for(int x : new int[]{-1,0,6,7}) context.assertTrue(fixture.target.getBlockState(ChamberSpaceCoordinates.block(frame,x,y,n)).isAir(),"左右25格與外側connection都是AIR");
+        }
+        context.assertEquals(6,view.outwardFacing().getAxis()==Direction.Axis.X ? view.bounds().getMaxZ()-view.bounds().getMinZ()
+                : view.bounds().getMaxX()-view.bounds().getMinX(),"窄軸採實際corridorFacing");
+    }
+    private static void lateralRemap(TrustedSpace fixture,int index,int tick) {
+        long[][] occupied={{1},{-2},{0},{0,7},{0,13},{0,16},{9},{7},{6}};
+        double[][] positions={{95.5,96.5},{-97.5,-98.5},{3.5,4.5},{95.5,672.5},{95.5,1248.5},{95.5,1536.5},{672.5,866.5},{672.5,673.5},{576.5,577.5}};
+        if(index==occupied.length) {
+            fixture.returnTrusted();
+            when(fixture.context,tick,() -> fixture.manager.releaseComplete(fixture.session),ignored -> {fixture.assertComplete(); fixture.context.complete();});
+            return;
+        }
+        var context=fixture.context;
+        for(int i=0;i<2;i++) move(fixture.target,fixture.players.get(i).player(),new CorridorPageManager.PhysicalPose(
+                fixture.manager.toPhysical(fixture.session,3.5,1,positions[index][i]),Vec3d.ZERO,37,15));
+        var extra=itemAt(fixture.target,fixture.manager.toPhysical(fixture.session,2.5,1,positions[index][0]),4);
+        context.assertTrue(fixture.target.spawnEntity(extra),"lateral item pin");
+        var arrow=net.minecraft.entity.EntityType.ARROW.create(fixture.target);
+        var point=fixture.manager.toPhysical(fixture.session,4.5,1,positions[index][0]);
+        arrow.refreshPositionAndAngles(point.x,point.y,point.z,-25,12); arrow.setNoGravity(true); arrow.setVelocity(Vec3d.ZERO);
+        context.assertTrue(fixture.target.spawnEntity(arrow),"lateral projectile pin");
+        var targetPages=java.util.Arrays.stream(occupied[index]).boxed().collect(java.util.stream.Collectors.toSet());
+        var prepared=fixture.manager.prepareRemap(fixture.session,index+1,targetPages);
+        context.assertEquals(index==5 ? 2 : 1,prepared.target().instances().size(),"0/16 split，其餘merge");
+        when(context,tick,() -> fixture.manager.ready(prepared),readyTick -> {
+            var owners=fixture.manager.affectedEntityOwners(prepared);
+            var batch=fixture.manager.beginRemap(prepared,owners);
+            for(var operation : batch.moves()) {
+                context.assertEquals(operation.before().velocity(),operation.after().velocity(),"正交同方向映射保留速度");
+                context.assertTrue(Math.abs(net.minecraft.util.math.MathHelper.wrapDegrees(operation.before().yaw()-operation.after().yaw()))<1e-4,"yaw不反射");
+                context.assertEquals(operation.before().pitch(),operation.after().pitch(),"pitch保留");
+                move(fixture.target,fixture.target.getEntity(operation.entityUuid()),operation.after());
+                var destination=prepared.target().instances().stream().filter(view -> view.ref().equals(operation.target())).findFirst().orElseThrow();
+                context.assertTrue(fullBox(destination.bounds(),fixture.target.getEntity(operation.entityUuid()).getBoundingBox()),"完整bbox仍在target lease");
+            }
+            fixture.manager.retire(fixture.manager.commitRemap(batch));
+            if(index==7) {
+                assertRejected(context,() -> fixture.manager.entrance(fixture.session),"{7}缺完整入口，不可建立半個overlay");
+                var view=fixture.manager.currentMappings(fixture.session).instances().getFirst();
+                context.assertEquals(0L,view.aliasStartBlock(),"{7}原cap邊界");
+                for(int x=1;x<=5;x++) for(int y=1;y<=5;y++) context.assertTrue(fixture.target.getBlockState(
+                        view.localBlockOrigin().offset(view.outwardFacing().rotateYCounterclockwise(),x).up(y)
+                        .offset(view.outwardFacing().getOpposite(),Math.toIntExact(-view.logicalAnchorBlock())))
+                        .isOf(net.minecraft.block.Blocks.BEDROCK),"切邊cap完整，沒有入口AIR覆寫");
+            } else if(index!=6) assertLateralEntrance(fixture);
+            for(var id : List.of(extra.getUuid(),arrow.getUuid())) {
+                var entity=fixture.target.getEntity(id);
+                var returned=entity.teleportTo(new net.minecraft.world.TeleportTarget(context.getWorld(),fixture.initial.participants().getFirst().sourcePosition().add(11,0,0),
+                        Vec3d.ZERO,0,0,net.minecraft.world.TeleportTarget.NO_OP));
+                context.assertTrue(returned!=null && returned.getUuid().equals(id),"item/projectile UUID不遺失");
+                if(returned instanceof net.minecraft.entity.ItemEntity item) context.assertEquals(4,item.getStack().getCount(),"有價stack不減少");
+            }
+            when(context,readyTick+1,() -> fixture.state.flushedRecords().get(fixture.session).spaceLeases().size()
+                    ==fixture.manager.currentMappings(fixture.session).instances().size(),nextTick -> lateralRemap(fixture,index+1,nextTick+1));
+        });
+    }
     private static final Map<net.minecraft.server.MinecraftServer,DisconnectJournalFault> DISCONNECT_FAULTS=new java.util.IdentityHashMap<>();
     private static final Map<net.minecraft.server.MinecraftServer,RemapPowerLoss> REMAP_LOW=new java.util.IdentityHashMap<>();
 
@@ -1464,6 +1562,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
         final SessionRecoveryRecord initial;
         final CorridorPageManager.PreparedMappings prepared;
         TrustedSpace(TestContext context,Direction facing,int count) {
+            this(context,facing,count,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+        }
+        TrustedSpace(TestContext context,Direction facing,int count,SessionSemantics semantics) {
             this.context=context;
             var server=context.getWorld().getServer(); manager=CorridorPageManager.forServer(server); state=SessionRecoveryState.get(server);
             target=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
@@ -1480,10 +1581,11 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 people.add(new SessionRecoveryRecord.Participant(player.getUuid(),player.getPos(),player.getVelocity(),player.getYaw(),player.getPitch(),
                         (NbtCompound)player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),false));
             }
-            prepared=manager.reserveInitial(session,chamber,facing,Set.of(0L));
+            prepared=manager.reserveInitial(session,chamber,facing,Set.of(0L),semantics);
             initial=new SessionRecoveryRecord(session,chamber,new ChamberOriginAuthority(chamber,World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
                     frame.controllerPos(),facing,ChamberInstanceKind.ORIGIN),people,prepared.target().instances().stream()
-                    .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,true);
+                    .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,
+                    semantics==SessionSemantics.LEGACY_FORWARD_CONSUMED,semantics);
         }
         void prepare() { state.put(initial); state.flush(context.getWorld().getServer()); manager.prepare(prepared); }
         void commit() { manager.commitInitial(session,stageEntry()); }
@@ -1498,7 +1600,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
             }
             state.put(new SessionRecoveryRecord(session,initial.chamberUuid(),initial.origin(),initial.participants(),initial.spaceLeases(),
-                    SessionState.SUPERPOSITION,false)); state.flush(context.getWorld().getServer());
+                    SessionState.SUPERPOSITION,false,initial.semantics())); state.flush(context.getWorld().getServer());
             return Set.copyOf(cohort);
         }
         void returnTrusted() {
@@ -1513,7 +1615,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             }
             var current=state.flushedRecords().get(session);
             state.put(new SessionRecoveryRecord(session,initial.chamberUuid(),initial.origin(),people,current.spaceLeases(),SessionState.RETURNING,
-                    current.restoreEntryEffectOnReturn())); state.flush(context.getWorld().getServer()); manager.release(session);
+                    current.restoreEntryEffectOnReturn(),current.semantics())); state.flush(context.getWorld().getServer()); manager.release(session);
             players.forEach(ConnectedGameTestPlayer::close);
         }
         void finishUnentered() {

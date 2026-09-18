@@ -84,7 +84,7 @@ public final class CorridorPageManager {
         for (var record : journal.flushedRecords().values()) {
             var space=new Space(record.sessionUuid(),record.origin(),record.participants(),record.semantics());
             for (var lease : record.spaceLeases()) {
-                validateFacingBounds(lease.bounds(),record.origin().facing());
+                validateFacingBounds(lease.bounds(),record.semantics().corridorFacing(record.origin().facing()));
                 validateWorldBounds(lease.bounds());
                 allocator.restore(lease.slotId(),lease.bounds());
                 space.leases.put(lease.slotId(),lease);
@@ -155,7 +155,7 @@ public final class CorridorPageManager {
                         }
                         write(job.next.position(),job.next.state());
                         if (job.next.state().isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)) {
-                            SessionEntranceAllocator.identify(world,CorridorGeometry.entrance(job.view),space.origin.chamberUuid());
+                            SessionEntranceAllocator.identify(world,CorridorGeometry.entrance(job.view,space.semantics),space.origin.chamberUuid());
                         }
                         job.next=null;
                     }
@@ -177,7 +177,7 @@ public final class CorridorPageManager {
         var space=space(sessionUuid);
         var mappings=space.current.instances().isEmpty() && space.pending!=null ? space.pending.target() : space.current;
         return mappings.instances().stream().filter(CorridorGeometry::hasEntrance).findFirst()
-                .map(CorridorGeometry::entrance).orElseThrow(() -> new IllegalStateException("目前局部映射沒有入口 replica"));
+                .map(view -> CorridorGeometry.entrance(view,space.semantics)).orElseThrow(() -> new IllegalStateException("目前局部映射沒有入口 replica"));
     }
     public Vec3d toPhysical(UUID sessionUuid, double lateral, double y, double logicalZ) {
         var space=space(sessionUuid);
@@ -237,7 +237,7 @@ public final class CorridorPageManager {
         for (var space : spaces.values()) {
             var known=java.util.stream.Stream.concat(space.current.instances().stream(),space.pending==null ? java.util.stream.Stream.empty()
                     : space.pending.target().instances().stream()).filter(CorridorGeometry::hasEntrance)
-                    .filter(view -> CorridorGeometry.entrance(view).controllerPos().equals(pos)).findFirst();
+                    .filter(view -> CorridorGeometry.entrance(view,space.semantics).controllerPos().equals(pos)).findFirst();
             if (known.isEmpty()) continue;
             var denied=new SessionEntranceDoorService.ToggleResult(false,"入口狀態、身分或操作條件不符，拒絕操作並保持保護。");
             if (space.pending!=null || space.failed || space.releasing || space.operations!=0
@@ -256,7 +256,7 @@ public final class CorridorPageManager {
                 try {
                     boolean changed=new ChamberDoorService().toggle(new WorldChamberBlockView(world),
                             (position,open) -> write(position,world.getBlockState(position).with(QuantumBulkheadBlock.OPEN,open)),
-                            ChamberMutationExecutor.DIRECT,CorridorGeometry.entrance(known.get()));
+                            ChamberMutationExecutor.DIRECT,CorridorGeometry.entrance(known.get(),space.semantics));
                     if (!changed) {
                         fail(space,new IllegalStateException("入口整面門交易被拒絕")); return Optional.of(denied);
                     }
@@ -406,6 +406,9 @@ public final class CorridorPageManager {
         if (retired.instances().isEmpty()) space.retireTokens.remove(retired.token());
     }
     public PreparedMappings reserveInitial(UUID sessionUuid, UUID chamberUuid, Direction facing, Set<Long> occupiedPages) {
+        return reserveInitial(sessionUuid,chamberUuid,facing,occupiedPages,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+    }
+    public PreparedMappings reserveInitial(UUID sessionUuid, UUID chamberUuid, Direction facing, Set<Long> occupiedPages,SessionSemantics semantics) {
         requireThread();
         if (spaces.containsKey(sessionUuid) || completedReleases.contains(sessionUuid) || journal.records().containsKey(sessionUuid)
                 || !occupiedPages.equals(Set.of(0L))) throw new IllegalArgumentException("initial 必須是新的 session 與 occupied page 0");
@@ -427,7 +430,7 @@ public final class CorridorPageManager {
             snapshots.add(new SessionRecoveryRecord.Participant(player.getUuid(),player.getPos(),player.getVelocity(),player.getYaw(),
                     player.getPitch(),(net.minecraft.nbt.NbtCompound)effect.writeNbt(),false));
         }
-        var space=new Space(sessionUuid,origin,snapshots,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+        var space=new Space(sessionUuid,origin,snapshots,semantics);
         requirePageCapacity(space,occupiedPages);
         spaces.put(sessionUuid,space);
         try { return reserve(space,0,occupiedPages); }
@@ -441,7 +444,7 @@ public final class CorridorPageManager {
         var space=pending(initial);
         if (initial.baseEpoch()!=0 || space.queued || space.releasing) throw new IllegalStateException("initial 狀態不合法");
         var record=durable(space);
-        if (record.state()!=SessionState.ARMING || !record.restoreEntryEffectOnReturn()
+        if (record.state()!=SessionState.ARMING || record.restoreEntryEffectOnReturn()!=(space.semantics==SessionSemantics.LEGACY_FORWARD_CONSUMED)
                 || !participantsEqual(space.source,record.participants())) throw new IllegalStateException("initial 需要完整 durable ARMING 快照");
         acquireTickets(space); enqueue(space);
     }
@@ -466,8 +469,11 @@ public final class CorridorPageManager {
         space.current=space.pending.target(); space.currentPages=space.pendingPages;
         space.pending=null; space.queued=false; space.rearOpen=true;
         var frame=entrance(sessionUuid);
-        for (int y=1;y<=5;y++) for(int x=1;x<=5;x++) {
-            space.overlay.add(new CorridorGeometry.Cell(CorridorGeometry.block(frame,x,y,6),Blocks.AIR.getDefaultState()));
+        for (int y=1;y<=5;y++) for(int n=1;n<=5;n++) {
+            if(space.semantics==SessionSemantics.LATERAL_BUFF_MAINTAINED) {
+                for(int x : new int[]{0,6}) space.overlay.add(new CorridorGeometry.Cell(
+                        ChamberSpaceCoordinates.block(frame,x,y,n),Blocks.AIR.getDefaultState()));
+            } else space.overlay.add(new CorridorGeometry.Cell(ChamberSpaceCoordinates.block(frame,n,y,6),Blocks.AIR.getDefaultState()));
         }
     }
 
@@ -498,6 +504,7 @@ public final class CorridorPageManager {
     }
     private PreparedMappings reserve(Space space, long epoch, Set<Long> occupied) {
         var components=CorridorLayout.plan(occupied,576);
+        var corridorFacing=space.semantics.corridorFacing(space.origin.facing());
         var views=new ArrayList<MappingView>();
         for (var component : components) {
             var retained=space.current.instances().stream().filter(view -> view.firstCorePage()==component.firstCorePage()
@@ -505,14 +512,14 @@ public final class CorridorPageManager {
                     && view.aliasEndBlock()==component.aliasEndBlock()).findFirst();
             if (retained.isPresent()) { views.add(retained.get()); continue; }
             long anchor=Math.multiplyExact(component.firstCorePage()+1,96);
-            var lease=allocator.reserve(CorridorGeometry.relativeBounds(component,anchor,space.origin.facing()))
+            var lease=allocator.reserve(CorridorGeometry.relativeBounds(component,anchor,corridorFacing))
                     .orElseThrow(() -> new IllegalStateException("局部實例／完整 AABB 容量不足"));
             try { validateWorldBounds(lease.bounds()); }
             catch (RuntimeException failure) { allocator.release(lease.slotId()); throw failure; }
-            var frame=new ChamberFrame(lease.origin(),space.origin.facing());
+            var frame=new ChamberFrame(lease.origin(),corridorFacing);
             space.instanceEpoch=Math.incrementExact(space.instanceEpoch);
             var view=new MappingView(new MappingRef(space.id,space.instanceEpoch,lease.slotId()),component.firstCorePage(),component.lastCorePage(),
-                    component.aliasStartBlock(),component.aliasEndBlock(),anchor,CorridorGeometry.block(frame,0,0,0),space.origin.facing(),lease.bounds());
+                    component.aliasStartBlock(),component.aliasEndBlock(),anchor,CorridorGeometry.block(frame,0,0,0),corridorFacing,lease.bounds());
             space.leases.put(lease.slotId(),new SessionRecoveryRecord.SpaceLease(lease.slotId(),lease.bounds()));
             protectedLeases.put(lease.slotId(),lease.bounds()); views.add(view);
         }
@@ -523,7 +530,7 @@ public final class CorridorPageManager {
     private void enqueue(Space space) {
         space.prepareTick=server.getTicks(); space.prepareNanos=System.nanoTime();
         for (var view : space.pending.target().instances()) if (!space.current.instances().contains(view)) {
-            space.builds.put(view.ref().slotId(),new Build(view,space.frontOpen,space.rearOpen));
+            space.builds.put(view.ref().slotId(),new Build(view,space.frontOpen,space.rearOpen,space.semantics));
         }
         space.queued=true;
     }
@@ -629,7 +636,7 @@ public final class CorridorPageManager {
     }
     private void acquireTickets(Space space) {
         for (var lease : space.leases.values()) {
-            validateFacingBounds(lease.bounds(),space.origin.facing());
+            validateFacingBounds(lease.bounds(),space.semantics.corridorFacing(space.origin.facing()));
             if (space.ticketed.containsKey(lease.slotId())) continue;
             var chunks=footprint(lease.bounds()); var acquired=new HashSet<Long>();
             try {
@@ -777,7 +784,9 @@ public final class CorridorPageManager {
     }
     private static final class Build {
         final MappingView view; final CorridorGeometry.Builder builder; CorridorGeometry.Cell next;
-        Build(MappingView view,boolean front,boolean rear) { this.view=view; builder=new CorridorGeometry.Builder(view,front,rear); }
+        Build(MappingView view,boolean front,boolean rear,SessionSemantics semantics) {
+            this.view=view; builder=new CorridorGeometry.Builder(view,front,rear,semantics);
+        }
     }
     private static final class Space {
         final UUID id; final ChamberOriginAuthority origin; final List<SessionRecoveryRecord.Participant> source;

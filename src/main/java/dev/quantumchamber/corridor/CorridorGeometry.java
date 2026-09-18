@@ -1,6 +1,8 @@
 package dev.quantumchamber.corridor;
 
 import dev.quantumchamber.chamber.ChamberFrame;
+import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
+import dev.quantumchamber.persistence.SessionSemantics;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.BlockBox;
@@ -50,7 +52,14 @@ public final class CorridorGeometry {
                 view.outwardFacing());
     }
     static ChamberFrame entrance(CorridorPageManager.MappingView view) {
+        return entrance(view,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+    }
+    static ChamberFrame entrance(CorridorPageManager.MappingView view,SessionSemantics semantics) {
         var frame = frame(view);
+        if(semantics==SessionSemantics.LATERAL_BUFF_MAINTAINED) {
+            return new ChamberFrame(block(frame,6,6,Math.toIntExact(3-view.logicalAnchorBlock())),
+                    semantics.sourceFacing(view.outwardFacing()));
+        }
         return new ChamberFrame(frame.controllerPos().offset(view.outwardFacing().getOpposite(),
                 Math.toIntExact(-view.logicalAnchorBlock())), view.outwardFacing());
     }
@@ -68,11 +77,16 @@ public final class CorridorGeometry {
     static final class Builder {
         private final CorridorPageManager.MappingView view;
         private final boolean frontOpen, rearOpen;
+        private final SessionSemantics semantics;
         private final long volume;
         private long index;
         private int overlay;
         Builder(CorridorPageManager.MappingView view, boolean frontOpen, boolean rearOpen) {
+            this(view,frontOpen,rearOpen,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+        }
+        Builder(CorridorPageManager.MappingView view, boolean frontOpen, boolean rearOpen,SessionSemantics semantics) {
             this.view=view; this.frontOpen=frontOpen; this.rearOpen=rearOpen;
+            this.semantics=java.util.Objects.requireNonNull(semantics);
             volume = Math.multiplyExact(view.aliasEndBlock()-view.aliasStartBlock(),49);
             if (!hasEntrance(view)) overlay=343;
         }
@@ -93,8 +107,8 @@ public final class CorridorGeometry {
             }
             if (overlay>=343) return null;
             int cursor=overlay++, x=cursor%7, y=cursor/7%7, z=cursor/49;
-            var frame=entrance(view);
-            return new Cell(block(frame,x,y,z),SessionEntranceAllocator.cell(frame,x,y,z,frontOpen,rearOpen));
+            var frame=entrance(view,semantics);
+            return new Cell(ChamberSpaceCoordinates.block(frame,x,y,z),SessionEntranceAllocator.cell(frame,x,y,z,frontOpen,rearOpen,semantics));
         }
     }
     static Iterator<BlockPos> clearing(BlockBox box) {

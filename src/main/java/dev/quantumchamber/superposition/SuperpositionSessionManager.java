@@ -179,10 +179,12 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         var entrance=pages.entrance(runtime.initial.sessionUuid());
         var view=runtime.prepared.target().instances().getFirst();
         var poses=new LinkedHashMap<UUID,CorridorPageManager.PhysicalPose>();
+        var basis=new CorridorBasis(runtime.sourceFrame.outwardFacing(),runtime.initial.semantics());
         for(var person : runtime.initial.participants()) {
-            var local=CorridorGeometry.localPosition(runtime.sourceFrame,person.sourcePosition());
+            var local=basis.toCorridorPosition(ChamberSpaceCoordinates.localPosition(runtime.sourceFrame,person.sourcePosition()));
             var logical=new CorridorPageManager.LogicalPose(local.x,local.y,local.z,
-                    CorridorGeometry.localVector(runtime.sourceFrame,person.sourceVelocity()),localYaw(runtime.sourceFrame,person.yaw()),person.pitch());
+                    basis.toCorridorVector(ChamberSpaceCoordinates.localVector(runtime.sourceFrame,person.sourceVelocity())),
+                    basis.toCorridorYaw(localYaw(runtime.sourceFrame,person.yaw())),person.pitch());
             var pose=pages.toPhysical(view.ref(),logical);
             var player=server.getPlayerManager().getPlayer(person.playerUuid());
             if(player==null || !ChamberOccupantService.contains(ChamberGeometry.interiorBox(entrance),
@@ -303,7 +305,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     }
     private static float localYaw(ChamberFrame frame,float yaw) {
         double angle=Math.toRadians(yaw);
-        var direction=CorridorGeometry.localVector(frame,new Vec3d(-Math.sin(angle),0,Math.cos(angle)));
+        var direction=ChamberSpaceCoordinates.localVector(frame,new Vec3d(-Math.sin(angle),0,Math.cos(angle)));
         return (float)Math.toDegrees(Math.atan2(-direction.x,direction.z));
     }
     private record SourceTicket(ServerWorld world,ChunkPos chunk,SessionRecoveryRecord record) {}

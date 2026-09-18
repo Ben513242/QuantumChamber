@@ -484,6 +484,7 @@ schema2嚴格decode、完整defensive copies；每個existing new SessionRecover
 - Produces: `public record CorridorBasis(Direction sourceFacing,SessionSemantics semantics)`，`Direction corridorFacing()`；`Vec3d toCorridorPosition(Vec3d sourceLocal)`／`toSourcePosition(Vec3d corridorLocal)`／`toCorridorVector(Vec3d sourceLocalVector)`／`toSourceVector(Vec3d corridorLocalVector)`，`float toCorridorYaw(float sourceLocalYaw)`／`toSourceYaw(float corridorLocalYaw)`，finite/horizontal。
 - Geometry helper保留generic corridor frame算法，但Mode-aware入口 `static ChamberFrame entrance(MappingView,SessionSemantics)`；legacy用原C mapping、new sourceC在corridor block(lateral6,y6,long3-anchor)、來源facing=semantics.sourceFacing(view.outwardFacing())。
 - MappingView.outwardFacing表示actualcorridorFacing；Space.origin仍sourceFacing。reserveInitial additive `(...Direction sourceFacing,Set<Long>,SessionSemantics)`，原4參數明確legacy相容；typedtoken/epoch/durableMode完全匹配，bounds窄軸按actualcorridorFacing。舊record只return-only清舊bounds，不rotate／重新build。
+- Initial prepare依frozen Space.semantics驗policy：legacy ARMING,true／lateral ARMING,false；保留durable同一權威、完整cohort與typedepoch等guards，不刪policy條件。Task7 trusted lateral geometry暫按既有效果消耗gate無Buff，Task8切新Buff guard時同步更新fixture，兩者都不冒稱真飲用。
 - SessionEntranceAllocator `cell(...frontOpen,connectionOpen,SessionSemantics)`，legacy後孔、new source localx0/6 y/z1..5AIR；source正門z0/Controllerfacing保持，new不開後牆。base/overlay ownership互斥，mode持久carry。
 
 - [ ] **Step 1: 手算幾何RED。** 不使用helper算expected；此new旋轉保留cell/point boundary：
