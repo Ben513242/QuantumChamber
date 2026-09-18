@@ -31,16 +31,16 @@ Task10本機必要自動gate已通過：一次最後非快取 `clean build m2Exp
 
 發行JAR為291,559 bytes／SHA256 `1B542A17990B25342CF30E376A06297CAE17991D25797ED48DBA72393C08A401`；sources JAR為129,394 bytes／SHA256 `6AE4C3495336BC0CCABCF1657D439041C4F4F59DB016D066CCD632AEB5895D2F`。全部41個testmod class／25個testmod source與雙JAR交集、測試／照明污染、main對client-only直接引用均0。官方固定照明依賴SHA512符合鎖定值，沒有啟動client／GPU或搬移存檔。
 
-上述為本機gate完成；Task10精確提交的獨立review與新code遠端CI仍待root關閉，不能把Task9舊SHA的CI當成本次新SHA結果。初輪資料與唯一末次資料分列保留，不混用classes。
+固定code `4d7c2dfe93a59ba0278039545b4555b7a7747e35` 已正常推送到既有feature分支；Task10獨立Spec✅／qualityApproved、0Critical／0Important／3Minor。新精確SHA的[CI run35369672563](https://github.com/Ben513242/QuantumChamber/actions/runs/35369672563) Windows/Ubuntu皆success；Windows必要guard真實執行，原XML必要12零skip／GameTest116全零；UbuntuNonWindows拒絕測試實跑成功、25平台skip不冒稱Windows原生或Linux成功checkpoint。Cannot verify已逐項解決歸屬；W2 timeout拒絕實作已核，但未另讓barrier到期，沒有動態覆蓋宣稱。初輪與末次資料分列保留，不混classes，不用Task9舊CI替代新SHA。
 
 ## M3 開始條件與整體收尾
 
-M3 spike須等新版M2自動gate、Task10獨立review與必要新code遠端CI全綠；這份文件只交接，尚未執行M3。八項單人／多人指引已列於 [M2操作文件](m2-corridor.md#八項人工驗收)，皆待人工：真飲用／HUD、單人到期、多人失效與離線、HIGH再入／LOW、32chunks遠望、96格近遠seam、Iris／shader／resource reload、主副手火把。原生particles不是bloom；照明只屬選用client profile。
+新版M2必要自動gate、逐task獨立review與必要新code CI現已全綠，可進下一個M3 mandatory runtime-dimension feasibility spike。這份文件仍只交接，M3尚未執行。八項單人／多人指引已列於 [M2操作文件](m2-corridor.md#八項人工驗收)，皆待人工：真飲用／HUD、單人到期、多人失效與離線、HIGH再入／LOW、32chunks遠望、96格近遠seam、Iris／shader／resource reload、主副手火把。原生particles不是bloom；照明只屬選用client profile。
 
 原6個compiler warnings、deprecated notes、正常expiry WARN保留；Task9原31項runtime noise與TransferService診斷等production Minor留final triage，不宣稱已清空。whole-branch final只在整體收尾另做一次。使用者目前授權M2feature push，不代表main merge、刪除世界或新增LICENSE。
 
 ## 仍不在本次 M2 範圍
 
-玩家選候選門→測量立即塌縮→有限艙體→選定 Universe passage，需後續 M3／M4；目前側門只有門面與邏輯身分。沒有 UniverseRegistry、runtime Universe allocation、候選世界選擇或跨宇宙通道；不能假開門來冒充完成。
+M3先做runtime-dimension可行性探查與一個持久替代Overworld基底；候選門留M4、測量／塌縮及玩家passage留M5，完整Nether/End family parity與routing留後續里程碑，不一次混入M3。目前側門只有門面與邏輯身分。沒有 UniverseRegistry、runtime Universe allocation、候選世界選擇、開門collapse或跨宇宙通道；不能假開門來冒充完成。
 
 人工最新狀態：尚未全部測完。未合併 main。
