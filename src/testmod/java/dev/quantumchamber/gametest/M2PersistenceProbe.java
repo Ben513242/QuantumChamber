@@ -50,9 +50,12 @@ public final class M2PersistenceProbe implements ModInitializer {
         if(phase==null) return;
         if(normal && (!Set.of("active-save","active-resume-one","active-resume-last","return-disconnect-save","return-disconnect-resume",
                 "arming-save","arming-resume-one","arming-resume-last","origin-missing-save","origin-missing-resume").contains(phase)
+                && !phase.matches("legacy-(arming-true|super-false|return-true|return-false)-(save|resume|verify)")
+                && !phase.equals("legacy-arming-true-halt")
                 || startupNonce==null || !startupNonce.matches("[a-f0-9]{32}"))) throw new IllegalArgumentException("未知 M2 normal phase 或 startup nonce");
-        if((!normal && (!Set.of("prepare","recover","verify").contains(phase) || !Set.of("restore","keep","entry","stale").contains(kind)))
-                || nonce==null || !nonce.matches("[a-f0-9]{32}")) throw new IllegalArgumentException("未知或不完整 checkpoint probe phase");
+        if((!normal && (!Set.of("prepare","recover","verify").contains(phase) || !Set.of("keep","entry","stale").contains(kind)))
+                || nonce==null || !nonce.matches("[a-f0-9]{32}") || startupNonce==null || !startupNonce.matches("[a-f0-9]{32}")) throw new IllegalArgumentException("未知或不完整 checkpoint probe phase");
+        if(normal && !Set.of("milk","expiry").contains(System.getProperty("quantumchamber.m2.returnCause","milk"))) throw new IllegalArgumentException("未知返還原因");
         ServerLifecycleEvents.SERVER_STARTED.register(this::attach);
         if(normal) ServerTickEvents.START_SERVER_TICK.register(owner -> { if(owner==server && !finished) observeNormalLoad(); });
         ServerTickEvents.END_SERVER_TICK.register(this::tick);
@@ -143,9 +146,15 @@ public final class M2PersistenceProbe implements ModInitializer {
             source.setBlockState(frame.controllerPos().up(),Blocks.REDSTONE_BLOCK.getDefaultState(),3);
             var record=SessionRecoveryState.get(server).flushedRecords().values().stream()
                     .filter(value -> value.chamberUuid().equals(chamber)).findFirst().orElseThrow();
-            sid=record.sessionUuid(); require(record.state()==SessionState.ARMING && record.restoreEntryEffectOnReturn(),"先真 checked ARMING,true");
+            sid=record.sessionUuid(); require(record.state()==SessionState.ARMING && !record.restoreEntryEffectOnReturn()
+                    && record.semantics()==SessionSemantics.LATERAL_BUFF_MAINTAINED,"先真新 native checked ARMING,false");
             require(record.participants().getFirst().playerUuid().equals(a),"真 frozen checkpoint 順序與 A 不符");
             writeManifest();
+            if(kind.equals("entry")) {
+                for(int i=0;i<40;i++) player(a).playerTick();
+                require(player(a).getStatusEffect(ModEffects.QUANTUM_STATE).getDuration()==1160,"W2 ARMING 後 A 真倒數，不可退款 snapshot1200");
+                log("W2_NATIVE_EFFECT_TICKS nativePlayerTicks=40 serverTickDelta=0 A=1160 B=1800");
+            }
             if(kind.equals("restore")) transferFault=new SessionTransferFault(source,record,SessionTransferFault.Case.SECOND_MOVE);
             stage=1;
             if(kind.equals("stale")) stale();
@@ -215,10 +224,10 @@ public final class M2PersistenceProbe implements ModInitializer {
             require(player.getServerWorld()==source && ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame),player.getBoundingBox()),"真原艙完整 bbox");
             require(((PlayerRecoveryCheckpointAccess)player).quantumchamber$getRecoveryCheckpoint().equals(Optional.of(marker())),"完整 marker SID/policy");
             var effect=player.getStatusEffect(ModEffects.QUANTUM_STATE);
-            int duration=player.getUuid().equals(a) ? kind.equals("restore") ? 2360 : kind.equals("keep") ? 860 : 1200 : 1800;
+            int duration=player.getUuid().equals(a) ? kind.equals("restore") ? 2360 : kind.equals("keep") ? 860 : 1160 : 1800;
             int amplifier=player.getUuid().equals(a) ? kind.equals("restore") ? 1 : kind.equals("keep") ? 2 : 0 : 1;
             require(effect!=null && effect.getDuration()==duration && effect.getAmplifier()==amplifier,"重啟不得重套 entry 或覆寫新劑量");
-            Path expected=root.resolve((kind.equals("entry") ? "entry-" : "window-")+player.getUuid()+".effect.snbt");
+            Path expected=root.resolve("window-"+player.getUuid()+".effect.snbt");
             if(Files.exists(expected)) require(StringNbtReader.parse(Files.readString(expected)).equals(effect.writeNbt()),"完整 effect NBT 與原生窗口證據不符");
             PlayerCheckpointStore.saveAndVerify(server,player,Optional.of(marker()));
         }
@@ -237,9 +246,10 @@ public final class M2PersistenceProbe implements ModInitializer {
         if(probe==null || !probe.phase.equals("prepare") || !probe.kind.equals("entry") || !player.getUuid().equals(probe.b)
                 || !probe.aEntrySaved || expected.isPresent() || probe.barrierEntered) return;
         try {
-            require(probe.record()!=null && probe.record().state()==SessionState.ARMING && probe.record().restoreEntryEffectOnReturn(),"W2 必須 checked ARMING,true");
+            require(probe.record()!=null && probe.record().state()==SessionState.ARMING && !probe.record().restoreEntryEffectOnReturn()
+                    && probe.record().semantics()==SessionSemantics.LATERAL_BUFF_MAINTAINED,"W2 必須新 native checked ARMING,false");
             for(var person : probe.record().participants()) require(probe.player(person.playerUuid()).getServerWorld()==owner.getWorld(SuperpositionWorld.KEY)
-                    && !probe.player(person.playerUuid()).hasStatusEffect(ModEffects.QUANTUM_STATE),"W2 全群必須真 fixed 且耗藥");
+                    && probe.player(person.playerUuid()).hasStatusEffect(ModEffects.QUANTUM_STATE),"W2 全群必須真 fixed 且保留 Buff");
             require(probe.readOfficial(probe.a).getString("Dimension").equals(SuperpositionWorld.KEY.getValue().toString()),"A 正式檔必須已在 fixed");
             require(probe.readOfficial(probe.b).equals(readNbt(probe.root.resolve("entry-"+probe.b+".dat"))),"B 正式檔必須尚未被 checkpoint 改動");
             probe.barrierEntered=true; probe.witness("window");
@@ -253,7 +263,16 @@ public final class M2PersistenceProbe implements ModInitializer {
 
     public static void afterCheckpoint(MinecraftServer owner,ServerPlayerEntity player,Optional<PlayerRecoveryCheckpoint> expected) {
         var probe=scoped(owner,player); if(probe==null) return;
-        if(probe.normal) { probe.checkpointSuccesses++; return; }
+        if(probe.normal) {
+            probe.checkpointSuccesses++;
+            if(probe.phase.equals("legacy-arming-true-halt") && player.getUuid().equals(probe.a)
+                    && expected.equals(Optional.of(probe.marker())) && player.getServerWorld()==probe.source) {
+                require(probe.record()!=null && probe.record().semantics()==SessionSemantics.LEGACY_FORWARD_CONSUMED
+                        && probe.record().state()==SessionState.RETURNING && probe.record().restoreEntryEffectOnReturn(),"舊 RESTORE checkpoint 只接受正式 legacy RETURNING,true");
+                probe.windowSaved=true;
+            }
+            return;
+        }
         if(!probe.phase.equals("prepare")) return;
         probe.checkpointSuccesses++;
         if(probe.sid!=null && player.getUuid().equals(probe.a) && expected.isEmpty() && probe.record()!=null
@@ -266,7 +285,8 @@ public final class M2PersistenceProbe implements ModInitializer {
 
     public static void beforeJournalFlush(SessionRecoveryState journal,MinecraftServer owner) {
         var probe=active;
-        if(probe==null || probe.server!=owner || !probe.phase.equals("prepare") || !(probe.kind.equals("restore") || probe.kind.equals("keep"))
+        if(probe==null || probe.server!=owner || !(probe.phase.equals("prepare") && probe.kind.equals("keep")
+                || probe.phase.equals("legacy-arming-true-halt"))
                 || probe.sid==null || !probe.windowSaved) return;
         probe.requireScope(); require(SessionRecoveryState.get(owner)==journal,"fault journal owner 不符");
         var current=journal.records().get(probe.sid); var durable=journal.flushedRecords().get(probe.sid);
@@ -301,7 +321,7 @@ public final class M2PersistenceProbe implements ModInitializer {
     private ChamberControllerBlockEntity controller() { return source.getBlockEntity(frame.controllerPos()) instanceof ChamberControllerBlockEntity value ? value : null; }
     private ServerPlayerEntity player(UUID id) { return Objects.requireNonNull(server.getPlayerManager().getPlayer(id),"own player offline"); }
     private SessionRecoveryRecord record() { return sid==null ? null : SessionRecoveryState.get(server).flushedRecords().get(sid); }
-    private PlayerRecoveryCheckpoint marker() { return new PlayerRecoveryCheckpoint(sid,kind.equals("keep") || normal && !kind.equals("arming-rollback")
+    private PlayerRecoveryCheckpoint marker() { return new PlayerRecoveryCheckpoint(sid,!(kind.equals("restore") || kind.equals("legacy-arming-true") || kind.equals("legacy-return-true"))
             ? PlayerRecoveryCheckpoint.AppliedPolicy.KEEP_CURRENT : PlayerRecoveryCheckpoint.AppliedPolicy.RESTORE_ENTRY); }
     private static SessionRecoveryRecord.Participant participant(SessionRecoveryRecord record,UUID id) {
         return record.participants().stream().filter(person -> person.playerUuid().equals(id)).findFirst().orElseThrow();
@@ -316,13 +336,13 @@ public final class M2PersistenceProbe implements ModInitializer {
     private void copyOfficial(UUID id,String label) throws IOException {
         Files.copy(server.getSavePath(WorldSavePath.PLAYERDATA).resolve(id+".dat"),root.resolve(label+"-"+id+".dat"));
         NbtElement effect;
-        if(normal && server.getPlayerManager().getPlayer(id)==null) {
+        {
             effect=new NbtCompound();
             for(var value : readOfficial(id).getList("active_effects",NbtElement.COMPOUND_TYPE)) {
                 var candidate=(NbtCompound)value;
                 if(candidate.getString("id").equals("quantumchamber:quantum_state")) { effect=candidate; break; }
             }
-        } else effect=effectNbt(player(id));
+        }
         Files.writeString(root.resolve(label+"-"+id+".effect.snbt"),effect.toString(),StandardOpenOption.CREATE_NEW);
     }
     private void witness(String label) throws IOException {
@@ -351,8 +371,9 @@ public final class M2PersistenceProbe implements ModInitializer {
     private void result(String name,String status,Map<String,?> values) throws IOException {
         var data=new LinkedHashMap<String,Object>(); data.put("status",status); data.put("phase",phase); data.put("kind",kind); data.put("nonce",nonce);
         data.put("pid",ProcessHandle.current().pid()); data.put("runRoot",root.toString()); data.put("sid",sid==null ? null : sid.toString());
-        if(normal) data.put("startupNonce",startupNonce);
+        data.put("startupNonce",startupNonce);
         var durable=record(); data.put("journalState",durable==null ? "ABSENT" : durable.state().name());
+        data.put("semantics",durable==null ? null : durable.semantics().name());
         data.put("restorePolicy",durable==null ? null : durable.restoreEntryEffectOnReturn());
         data.put("durableReturnedA",durable==null || a==null ? null : participant(durable,a).returned());
         data.put("checkpointSuccesses",checkpointSuccesses); data.putAll(values);
@@ -361,6 +382,8 @@ public final class M2PersistenceProbe implements ModInitializer {
         Files.move(temporary,path,StandardCopyOption.ATOMIC_MOVE); log("RESULT status="+status+" path="+path);
     }
     private static String normalKind(String value) {
+        if(value.equals("legacy-arming-true-halt")) return "legacy-arming-true";
+        if(value.matches("legacy-(arming-true|super-false|return-true|return-false)-(save|resume|verify)")) return value.substring(0,value.lastIndexOf('-'));
         if(value.startsWith("active-")) return "active-pending";
         if(value.startsWith("arming-")) return "arming-rollback";
         if(value.startsWith("return-disconnect-")) return "return-disconnect";
@@ -370,11 +393,13 @@ public final class M2PersistenceProbe implements ModInitializer {
 
     /** 正常 phase 僅使用正式 world／playerdata；manifest 只有識別字，沒有可回填的 NBT。 */
     private void normalTick() throws Exception {
+        if(kind.startsWith("legacy-")) { legacyTick(); return; }
         if(phase.endsWith("-save")) { normalPrepare(); return; }
         if(stage==0) {
             if(!kind.equals("origin-missing") && (controller()==null || !chamber.equals(controller().chamberUuid()))) return;
             require(record()!=null && record().state()==SessionState.RETURNING,"bootstrap 必須由正式 journal 恢復 RETURNING");
-            require(record().restoreEntryEffectOnReturn()==kind.equals("arming-rollback"),"重啟效果政策不符");
+            require(record().semantics()==SessionSemantics.LATERAL_BUFF_MAINTAINED && !record().restoreEntryEffectOnReturn(),"新 native 重啟必須保留 lateral／KEEP_CURRENT");
+            require(record().participants().size()==2,"離線者不可丟失凍結名單");
             require(ChamberSessions.gateway().presence(server,chamber)!=ChamberSessionGateway.Presence.ACTIVE,"不可重建舊 ACTIVE");
             source.setBlockState(frame.controllerPos().up(),Blocks.AIR.getDefaultState(),3);
             var ids=kind.equals("origin-missing") ? List.of(a,b) : List.of(phase.endsWith("-one") ? a : b);
@@ -425,7 +450,7 @@ public final class M2PersistenceProbe implements ModInitializer {
             a=preview.participantUuids().getFirst(); b=preview.participantUuids().get(1); chamber=controller.chamberUuid();
             for(var id : List.of(a,b)) {
                 player(id).removeStatusEffect(ModEffects.QUANTUM_STATE);
-                player(id).addStatusEffect(kind.equals("arming-rollback") && id.equals(a) ? entryWithHidden()
+                player(id).addStatusEffect(id.equals(a) ? entryWithHidden()
                         : new StatusEffectInstance(ModEffects.QUANTUM_STATE,id.equals(a) ? 1200 : 1800,id.equals(a) ? 0 : 1));
                 PlayerCheckpointStore.saveAndVerify(server,player(id),Optional.empty()); copyOfficial(id,"entry");
             }
@@ -434,10 +459,12 @@ public final class M2PersistenceProbe implements ModInitializer {
             var nativeRecord=SessionRecoveryState.get(server).flushedRecords().values().stream()
                     .filter(value -> value.chamberUuid().equals(chamber)).findFirst().orElseThrow();
             sid=nativeRecord.sessionUuid();
-            require(nativeRecord.state()==SessionState.ARMING && nativeRecord.restoreEntryEffectOnReturn(),"真 powered activation 必須先 durable ARMING,true");
+            require(nativeRecord.state()==SessionState.ARMING && !nativeRecord.restoreEntryEffectOnReturn()
+                    && nativeRecord.semantics()==SessionSemantics.LATERAL_BUFF_MAINTAINED,"真 powered activation 必須先 durable 新 ARMING,false");
             log("M2_NORMAL NATIVE_ARMING sid="+sid+" chamber="+chamber+" authority="+nativeRecord.origin()+" cohort="+List.of(a,b));
             stage=1;
             if(kind.equals("arming-rollback")) {
+                tickCurrentEffects();
                 writeManifest(); disconnect(b); disconnect(a);
                 log("M2_NORMAL ARMING_GEOMETRY_WINDOW bothOffline=true consumed=false");
             }
@@ -445,14 +472,15 @@ public final class M2PersistenceProbe implements ModInitializer {
         }
         if(kind.equals("arming-rollback")) {
             if(record().state()!=SessionState.RETURNING) return;
-            require(record().restoreEntryEffectOnReturn() && record().participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned),"自然 ARMING 中斷保留 true 與兩人 pending");
+            require(!record().restoreEntryEffectOnReturn() && record().participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned),"自然 ARMING 中斷仍 KEEP_CURRENT 與兩人 pending");
             requireProtected(); normalReady(); return;
         }
         if(stage==1) {
             if(record().state()!=SessionState.SUPERPOSITION || ChamberSessions.gateway().presence(server,chamber)!=ChamberSessionGateway.Presence.ACTIVE) return;
             for(var id : List.of(a,b)) require(player(id).getServerWorld()==server.getWorld(SuperpositionWorld.KEY)
-                    && !player(id).hasStatusEffect(ModEffects.QUANTUM_STATE),"全 cohort 必須真入場且耗藥");
+                    && player(id).hasStatusEffect(ModEffects.QUANTUM_STATE),"全 cohort 必須真入場且保留 Buff");
             require(!record().restoreEntryEffectOnReturn(),"真 committed false");
+            tickCurrentEffects();
             log("M2_NORMAL NATIVE_ACTIVE sid="+sid+" A="+player(a).getPos()+" B="+player(b).getPos());
             if(kind.equals("active-pending")) {
                 var target=server.getWorld(SuperpositionWorld.KEY); var pos=player(a).getPos().add(0,0,2);
@@ -466,8 +494,25 @@ public final class M2PersistenceProbe implements ModInitializer {
                     ChamberProtectionService.get().authorizedMutation(() -> source.setBlockState(frame.controllerPos(),Blocks.AIR.getDefaultState(),3));
                     log("M2_NORMAL TRUSTED_SOURCE_REMOVAL originalAuthority="+record().origin());
                 }
-                source.setBlockState(frame.controllerPos().up(),Blocks.AIR.getDefaultState(),3);
-                log("M2_NORMAL POWER_LOST tick="+server.getTicks());
+                if(kind.equals("return-disconnect")) {
+                    var person=player(a); String cause=System.getProperty("quantumchamber.m2.returnCause","milk");
+                    int before=server.getTicks(), elapsed=0;
+                    if(cause.equals("milk")) {
+                        person.getInventory().setStack(8,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+                        var remaining=person.getInventory().getStack(8).finishUsing(person.getServerWorld(),person);
+                        require(remaining.isOf(net.minecraft.item.Items.BUCKET),"原生喝奶必須返回空桶");
+                        person.getInventory().setStack(8,remaining);
+                    } else {
+                        while(person.hasStatusEffect(ModEffects.QUANTUM_STATE) && elapsed<2400) { person.playerTick(); elapsed++; }
+                        require(elapsed==2360,"剩餘 2360 原生 ticks 必須自然到期");
+                    }
+                    require(!person.hasStatusEffect(ModEffects.QUANTUM_STATE),"任一 Buff 失效的真來源");
+                    Files.writeString(root.resolve("return-current-"+a+".effect.snbt"),effectNbt(person).toString(),StandardOpenOption.CREATE_NEW);
+                    log("M2_NORMAL BUFF_ENDED cause="+cause+" nativePlayerTicks="+elapsed+" serverTickDelta="+(server.getTicks()-before)+" high=true");
+                } else {
+                    source.setBlockState(frame.controllerPos().up(),Blocks.AIR.getDefaultState(),3);
+                    log("M2_NORMAL POWER_LOST tick="+server.getTicks());
+                }
             }
             stage=2; return;
         }
@@ -476,7 +521,7 @@ public final class M2PersistenceProbe implements ModInitializer {
         requireProtected();
         if(kind.equals("return-disconnect")) {
             if(disconnectedAt<0) {
-                require(!participant(record(),b).returned() && player(b).getServerWorld()==server.getWorld(SuperpositionWorld.KEY),"LOW 之後 B 必須尚未返回才可斷線");
+                require(!participant(record(),b).returned() && player(b).getServerWorld()==server.getWorld(SuperpositionWorld.KEY),"Buff 失效後 B 必須尚未返回才可斷線");
                 disconnect(b); return;
             }
             if(!participant(record(),a).returned()) return;
@@ -494,6 +539,82 @@ public final class M2PersistenceProbe implements ModInitializer {
         require(player(a).getServerWorld()==server.getWorld(SuperpositionWorld.KEY) && server.getPlayerManager().getPlayer(b)==null,"active-save A 在線 fixed、B 真 offline");
         require(record().participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned),"active-save 兩位都未 returned");
         require(itemAt(server.getWorld(SuperpositionWorld.KEY))!=null,"active-save 鑽石仍 fixed"); normalReady();
+    }
+
+    /** 舊世界相容來源與新 native activation 分開；只有正式 NBT 在下一 JVM 載入。 */
+    private void legacyTick() throws Exception {
+        if(phase.endsWith("-save")) {
+            if(controller()==null || controller().chamberUuid()==null) return;
+            source.setBlockState(frame.controllerPos().up(),Blocks.AIR.getDefaultState(),3);
+            require(SessionRecoveryState.get(server).flushedRecords().isEmpty(),"trusted legacy 不得經新 session factory");
+            a=connections.get(0).player().getUuid(); b=connections.get(1).player().getUuid();
+            chamber=controller().chamberUuid(); sid=UUID.randomUUID();
+            boolean restore=kind.endsWith("true"), alreadyMarked=kind.startsWith("legacy-return-");
+            var people=new ArrayList<SessionRecoveryRecord.Participant>();
+            for(var id : List.of(a,b)) {
+                var person=player(id); var effect=id.equals(a) ? entryWithHidden() : new StatusEffectInstance(ModEffects.QUANTUM_STATE,1800,1);
+                person.addStatusEffect(effect);
+                var snapshot=((NbtCompound)effect.writeNbt()).copy();
+                people.add(new SessionRecoveryRecord.Participant(id,person.getPos(),person.getVelocity(),person.getYaw(),person.getPitch(),snapshot,false));
+                NbtElement expected=snapshot;
+                if(!restore || alreadyMarked && id.equals(a)) {
+                    for(int i=0;i<40;i++) person.playerTick();
+                    expected=effectNbt(person);
+                } else person.removeStatusEffect(ModEffects.QUANTUM_STATE);
+                if(alreadyMarked && id.equals(a)) ((PlayerRecoveryCheckpointAccess)person).quantumchamber$setRecoveryCheckpoint(marker());
+                else require(person.teleport(server.getWorld(SuperpositionWorld.KEY),1000.5+(id.equals(b) ? 1 : 0),65,2000.5,Set.of(),person.getYaw(),person.getPitch()),"trusted fixture 原生teleport失敗");
+                PlayerCheckpointStore.saveAndVerify(server,person,alreadyMarked && id.equals(a) ? Optional.of(marker()) : Optional.empty());
+                Files.writeString(root.resolve("current-"+id+".effect.snbt"),expected.toString(),StandardOpenOption.CREATE_NEW);
+            }
+            require(server.save(false,true,true),"legacy source／玩家／fixed 必須先原生save");
+            var origin=new ChamberOriginAuthority(chamber,source.getRegistryKey().getValue(),dev.quantumchamber.universe.DimensionRole.OVERWORLD,
+                    frame.controllerPos(),Direction.NORTH,ChamberInstanceKind.ORIGIN);
+            var state=kind.equals("legacy-arming-true") ? SessionState.ARMING : kind.equals("legacy-super-false") ? SessionState.SUPERPOSITION : SessionState.RETURNING;
+            var legacy=new SessionRecoveryRecord(sid,chamber,origin,people,List.of(new SessionRecoveryRecord.SpaceLease(0,new BlockBox(997,64,1328,1003,70,2767))),state,restore,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+            M2LeaseBootstrapProbe.writeTrustedLegacy(server,root,legacy);
+            writeManifest(); normalReady(); return;
+        }
+        if(stage==0) {
+            if(controller()==null || !chamber.equals(controller().chamberUuid())) return;
+            if(phase.endsWith("-resume") || phase.endsWith("-halt")) {
+                var durable=record();
+                require(durable!=null && durable.state()==SessionState.RETURNING && durable.semantics()==SessionSemantics.LEGACY_FORWARD_CONSUMED
+                        && durable.restoreEntryEffectOnReturn()==kind.endsWith("true") && durable.participants().size()==2,"legacy 正式 loader 必須 return-only／完整cohort");
+                var box=durable.spaceLeases().getFirst().bounds();
+                require(box.getMinX()==997 && box.getMaxX()==1003 && box.getMinY()==64 && box.getMaxY()==70
+                        && box.getMinZ()==1328 && box.getMaxZ()==2767,"legacy loader 不得旋轉舊 bounds");
+                log("TASK10_LEGACY_NATIVE_LOAD semantics="+durable.semantics()+" policy="+marker().appliedPolicy()+" unmodifiedBounds="+box);
+            } else require(record()==null,"legacy 第二次restart journal 必須已退休");
+            for(var id : List.of(a,b)) {
+                var formal=readOfficial(id); var connection=new ConnectedGameTestPlayer(source,profiles.get(id)); connections.add(connection);
+                require(connection.joinTick()==server.getTicks() && connection.player().getServerWorld().getRegistryKey().getValue().toString().equals(formal.getString("Dimension"))
+                        && ((PlayerRecoveryCheckpointAccess)connection.player()).quantumchamber$getRecoveryCheckpoint().equals(markerFrom(formal)),"legacy 必須正常 playerdata load／JOIN");
+                connection.confirmTeleport();
+                if(phase.endsWith("-verify")) verifyReturned(id);
+                log("TASK10_LEGACY_NATIVE_JOIN uuid="+id+" formalMarker="+markerFrom(formal)+" effect="+effectNbt(connection.player()));
+            }
+            joinedAt=server.getTicks(); stage=1; return;
+        }
+        if(phase.equals("legacy-arming-true-halt")) {
+            if(blockedFlushes==0) return;
+            require(record()!=null && record().state()==SessionState.RETURNING && record().restoreEntryEffectOnReturn()
+                    && record().semantics()==SessionSemantics.LEGACY_FORWARD_CONSUMED && !participant(record(),a).returned()
+                    && windowSaved && player(a).getServerWorld()==source,"舊 W1 必須正式 checkpoint 成功且 durable returned=false");
+            player(a).playerTick(); nativeTicks++;
+            var effect=(NbtCompound)effectNbt(player(a));
+            require(effect.getInt("duration")==2400-nativeTicks && effect.getCompound("hidden_effect").getInt("duration")==600-nativeTicks,"舊 W1 主／hidden 必須自然倒數，不能重套");
+            if(nativeTicks==40) {
+                PlayerCheckpointStore.saveAndVerify(server,player(a),Optional.of(marker()));
+                Files.writeString(root.resolve("return-current-"+a+".effect.snbt"),effect.toString(),StandardOpenOption.CREATE_NEW);
+                witness("window");
+                result("ready","HALT_READY",Map.of("nativePlayerTicks",nativeTicks,"blockedFlushes",blockedFlushes,"legacySource","schema1-native-loader","serverTick",server.getTicks()));
+                finished=true;
+            }
+            return;
+        }
+        if(server.getTicks()<=joinedAt || !complete()) return;
+        for(var id : List.of(a,b)) verifyReturned(id);
+        normalReady();
     }
 
     private void disconnect(UUID id) {
@@ -532,8 +653,24 @@ public final class M2PersistenceProbe implements ModInitializer {
         var person=player(id);
         require(person.getServerWorld()==source && ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame),person.getBoundingBox()),"真原 world／完整 bbox 返還");
         require(((PlayerRecoveryCheckpointAccess)person).quantumchamber$getRecoveryCheckpoint().equals(Optional.of(marker())),"返還 marker SID／policy 必須相同");
-        if(kind.equals("arming-rollback")) require(StringNbtReader.parse(Files.readString(root.resolve("entry-"+id+".effect.snbt"))).equals(effectNbt(person)),"ARMING 完整 hidden NBT 必須還原");
-        else require(!person.hasStatusEffect(ModEffects.QUANTUM_STATE),"committed 不得補發入場效果");
+        var expected=root.resolve("return-current-"+id+".effect.snbt");
+        if(!Files.exists(expected)) expected=root.resolve("current-"+id+".effect.snbt");
+        require(StringNbtReader.parse(Files.readString(expected)).equals(effectNbt(person)),
+                "新 session 返還必須保留當下完整效果／hidden，不能退款 entry");
+    }
+
+    /** EmbeddedChannel 不輪詢 NetworkIo；這裡執行同一原生 playerTick，分別記錄效果與 server ticks。 */
+    private void tickCurrentEffects() throws IOException {
+        int before=server.getTicks();
+        for(var id : List.of(a,b)) {
+            var person=player(id);
+            for(int i=0;i<40;i++) person.playerTick();
+            var effect=person.getStatusEffect(ModEffects.QUANTUM_STATE);
+            require(effect!=null && effect.getDuration()==(id.equals(a) ? 2360 : 1760),"40 次原生 tick 必須維持已流逝 duration");
+            if(id.equals(a)) require(((NbtCompound)effect.writeNbt()).getCompound("hidden_effect").getInt("duration")==560,"hidden effect 也必須自然倒數 40");
+            Files.writeString(root.resolve("current-"+id+".effect.snbt"),effect.writeNbt().toString(),StandardOpenOption.CREATE_NEW);
+            log("M2_NORMAL NATIVE_EFFECT_TICKS uuid="+id+" nativePlayerTicks=40 serverTickDelta="+(server.getTicks()-before)+" effect="+effect.writeNbt());
+        }
     }
 
     private net.minecraft.entity.ItemEntity itemAt(ServerWorld world) {
@@ -632,6 +769,11 @@ public final class M2PersistenceProbe implements ModInitializer {
         if(phase.equals("active-save")) values.put("orderedNativePins",dev.quantumchamber.corridor.CorridorPageManager.forServer(server).returnEntityPins(sid).orElseThrow());
         values.put("item",itemId==null ? null : itemId.toString()); values.put("itemLoaded",itemLoaded); values.put("unreadySeen",unreadySeen);
         values.put("disconnectTick",disconnectedAt); values.put("joinTick",joinedAt); values.put("readyTick",server.getTicks());
+        if(kind.startsWith("legacy-") && phase.endsWith("-save")) {
+            require(SessionRecoveryState.get(server).records().isEmpty(),"legacy seed runtime 不得接管fixture");
+            values.put("trustedLegacySchema",1);
+            values.put("trustedJournalSha256",java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(root.resolve("trusted-legacy-journal.dat")))));
+        }
         result("ready","PASS",values); finished=true;
         log("M2_PHASE_READY_FOR_STOP phase="+phase+" startupNonce="+startupNonce);
     }

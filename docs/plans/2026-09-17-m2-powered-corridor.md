@@ -604,7 +604,7 @@ openDirectory覆寫先super成功再storeexpected(handle/path)，故capture不�
 - Produces: default-offphase `quantumchamber.m2.phase`保持unknown fail，ownednonce/canonical PID/startupnonce證明新schema2nativeactive/ARMING/returning跨不同JVM正常load；純schema1完整trustedlegacyfixture（CREATE_NEW）與true/false marker恢復讀回分開，不冒充newnativeentry。
 - caseGroup：newactive-save→resumeone→resumelast；newarming interrupted→resumeone→last（KEEP_CURRENT不退款）；returnwhilemilk/expiry→offlineB normalJOIN；neworiginmissing safe refusal；legacy ARMINGtrue、SUPERfalse、RETURNtrue/false各formalboundssave/load→2ndrestart idempotent。manifest只UUID，不回填NBT/座標/物品。
 
-- [ ] **Step 1: phase與effect policy RED。** 新native源期待retainBuff／newsemantics，oldphase期望consumed的失敗是契約更新不是regression濾掉；legacytrusted導入明確打印來源codec與unmodifiedbounds。必要case斷言例如：
+- [x] **Step 1: phase與effect policy RED。** 新native源期待retainBuff／newsemantics，oldphase期望consumed的失敗是契約更新不是regression濾掉；legacytrusted導入明確打印來源codec與unmodifiedbounds。必要case斷言例如：
 
 ```java
 context.assertTrue(record.semantics() == SessionSemantics.LATERAL_BUFF_MAINTAINED, "新native模式");
@@ -612,7 +612,9 @@ context.assertTrue(!record.restoreEntryEffectOnReturn(), "新session不退款藥
 context.assertTrue(record.participants().size() == 2, "離線者不丟名單");
 ```
 
-- [ ] **Step 2: 不同JVM與精確checkpoint窗口。** 正常stop後read真正player.dat／compressedjournal／source/fixedentityregion、sameUUID五鑽石、newmodebuff/hidden自然tick無reset。W1新KEEP_CURRENT checkpoint-before-returnedflush、W2新ARMINGfalse部分保存→取消全組，oldRESTORElegacyfixture另驗；HALT仍原heldchild/nonce/root/barrier規範，不能用STOPPING修補當crash。
-- [ ] **Step 3: 最後全套與產物。** 唯一final --rerun-tasks cleanbuild/freshGT/XML／skip理由、nativePipeline與schema1/2rawreadback／主程式與testmodclassfingerprints、release/sources污染/class/source交集0/mainclient0、officiallightSHA與main-only四worldDone-stop-save。任何最後改code重驗affectedchain不混oldSHA。
-- [ ] **Step 4: 8項單人/多人指引與status。** 真飲用→左右廊→HUDretained→任一Buff自然expiry全組回→HIGHPowered保護／全員redrink sealed新SID→LOWsafeReturnOFF；32chunk512block遠望／回頭／pair96seam近/遠、Iris/shader與resource reload列人工pending；原生particles非bloom、optionalLight主副手torch不混server。M2自動＋taskreviews先綠再M3spike，人工/wholebranch收尾，不假已完成。
+- [x] **Step 2: 不同JVM與精確checkpoint窗口。** 正常stop後read真正player.dat／compressedjournal／source/fixedentityregion、sameUUID五鑽石、newmodebuff/hidden自然tick無reset。W1新KEEP_CURRENT checkpoint-before-returnedflush、W2新ARMINGfalse部分保存→取消全組，oldRESTORElegacyfixture另驗；HALT仍原heldchild/nonce/root/barrier規範，不能用STOPPING修補當crash。
+- [x] **Step 3: 最後全套與產物。** 唯一final --rerun-tasks cleanbuild/freshGT/XML／skip理由、nativePipeline與schema1/2rawreadback／主程式與testmodclassfingerprints、release/sources污染/class/source交集0/mainclient0、officiallightSHA與main-only四worldDone-stop-save。任何最後改code重驗affectedchain不混oldSHA。
+- [x] **Step 4: 8項單人/多人指引與status。** 真飲用→左右廊→HUDretained→任一Buff自然expiry全組回→HIGHPowered保護／全員redrink sealed新SID→LOWsafeReturnOFF；32chunk512block遠望／回頭／pair96seam近/遠、Iris/shader與resource reload列人工pending；原生particles非bloom、optionalLight主副手torch不混server。M2自動＋taskreviews先綠再M3spike，人工/wholebranch收尾，不假已完成。
 - [ ] **Step 5: commit／review／handoff。** `test: 完成新版 M2 持久化 gate 與驗收指引`，只有本task獨立review；wholebranchreview仍在後續整體收尾一次，所有Minor/rulings/CI證據需交接。M3開始前文件明列沒有候選選擇/塌縮/family全量/passage。main不merge／無LICENSE／不刪owner或userworld直到所有必要gate明確關閉。
+
+2026-09-19 Task10本機證據：native舊ARMING,true期望RED已保留→新mode/KEEP_CURRENT GREEN；最後36個原生phase（34個數字PID、36個不同StartTime/startupNonce）含四schema1 legacy與新W1／W2／舊RESTORE中斷及二次恢復，31組正式NBT讀回成功。313份source/class指紋×36phase全對上最後clean classes。唯一末次非快取fullgate19工作全執行，183JUnit declared／182通過／1合法NonWindows skip、必要Windows12零skip、fresh GT116零failure/error/skip。雙JAR全部41 testmod class／25 source交集與污染0、main-client引用0，main-only四世界保存／exit0，官方照明SHA符合且未啟動GPU。原6warnings／expiry WARN／Task9未逐案分類noise與production Minor留final triage。8項人工與wholebranch仍pending；Task10獨立review／新精確SHA遠端CI仍待root關閉，Step5不預先勾完，M3未開始。

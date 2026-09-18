@@ -1,14 +1,14 @@
 # QuantumChamber
 
-> **遠端審查快照／新版尚未實作：** [最新修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)中的左右延伸、入場保留 QuantumState Buff、任一參與者 Buff 失效則整組返還均已核准但尚未實作；原版自動驗證通過不代表新玩法通過，人工 checklist、Task5 獨立評審與整分支 final review 仍未完成。
+> **新版 M2 已實作，驗收分層記錄：** 左右延伸、入場保留 QuantumState Buff、任一凍結參與者 Buff 失效則整組返還已接入原生流程；跨 JVM 持久化與產物 gate 的最新結果見 [修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。八項人工驗收與整分支 final review 留待整體收尾，尚未合併 main。
 
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
 ## M2 供電走廊
 
-功能分支 `feature/m1-chamber` 已接上真實走廊入場、群體換頁與斷電返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，成功入場會一次消耗效果，進入固定的 `quantumchamber:superposition` 世界。斷電時先將玩家與有價物品安全送回同一原艙，再結束 session、完成租約清理及解除原艙保護；離線或來源身分不符時持續保留 pending。
+功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。
 
-本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。主目錄的 `main` 較舊，不能用其客戶端驗收此功能。完整單人無指令流程、預先安排外部定時斷電、測試證據與人工待驗項目見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
+本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。主目錄的 `main` 較舊，不能用其客戶端驗收此功能。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工待驗，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
 走廊是有限局部頁面與外觀延伸，並非無限配置世界；沒有動態 Dimension、Universe 選擇或 M3 跨宇宙通道。人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證，最終整體評審由 root 另行執行。此快照供遠端同步審查，尚未合併 main。
 
@@ -59,7 +59,7 @@ Windows PowerShell：
 
 選用手持火把動態照明可執行 `start-client.bat light`，使用獨立的 `run/client-light` 與固定版本、SHA512 核對的 LambDynamicLights。預設 client-base、server、GameTest 與 release JAR 不安裝或內嵌它。不同 profile 不共用存檔；需要搬移時請先退出遊戲、自行備份再複製，腳本不會自動搬移玩家世界。實際光影與 shader 相容性仍待人工驗證。
 
-`runGameTest` 使用 `run/gametest`，報告位於 `build/gametest-results.xml`；它是本機 integration 驗證，現有 CI 的 `clean build` 不會自動執行 GameTests。M1 gameplay 的重現步驟、已驗證項目與人工待驗清單見下方實作紀錄。
+`runGameTest` 使用 `run/gametest`，報告位於 `build/gametest-results.xml`；單獨 `clean build` 不包含此工作。M2 CI 與本機完整 gate 另明確執行 GameTests，不能把建置成功當成遊戲測試已跑。重現步驟與人工待驗見下方紀錄。
 
 ## 設計與執行紀錄
 

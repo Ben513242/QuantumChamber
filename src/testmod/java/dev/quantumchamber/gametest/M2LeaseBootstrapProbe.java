@@ -137,6 +137,52 @@ public final class M2LeaseBootstrapProbe implements ModInitializer {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));
     }
 
+    /** 完整可信舊格式只安裝於全新 owned 世界；不注入此 JVM 的 runtime journal。 */
+    static void writeTrustedLegacy(MinecraftServer owner,Path canonicalRoot,SessionRecoveryRecord record) {
+        try {
+            String phase=System.getProperty("quantumchamber.m2.phase"),nonce=System.getProperty("quantumchamber.m2.nonce");
+            requirePartial(phase!=null && phase.matches("legacy-(arming-true|super-false|return-true|return-false)-save")
+                    && nonce!=null && nonce.matches("[a-f0-9]{32}") && owner.isOnThread(),"legacy 必須明確 phase／nonce／server thread");
+            String kind=phase.substring(0,phase.length()-5);
+            requirePartial(canonicalRoot.equals(canonicalRoot.toRealPath()) && Path.of(".").toRealPath().equals(canonicalRoot)
+                    && canonicalRoot.getFileName().toString().equals("m2-"+kind+"-"+nonce)
+                    && owner.getSavePath(WorldSavePath.ROOT).toRealPath().equals(canonicalRoot.resolve("world").toRealPath()),"legacy canonical owned root 不符");
+            var runtime=SessionRecoveryState.get(owner);
+            requirePartial(runtime.records().isEmpty() && runtime.flushedRecords().isEmpty() && !runtime.isDirty(),"legacy 安裝不得有新 native session／dirty journal");
+            requirePartial(record.semantics()==dev.quantumchamber.persistence.SessionSemantics.LEGACY_FORWARD_CONSUMED
+                    && record.participants().size()==2 && record.spaceLeases().size()==1,"legacy 必須明確模式／完整雙人／單lease");
+            var expectedState=kind.equals("legacy-arming-true") ? SessionState.ARMING
+                    : kind.equals("legacy-super-false") ? SessionState.SUPERPOSITION : SessionState.RETURNING;
+            requirePartial(record.state()==expectedState && record.restoreEntryEffectOnReturn()==kind.endsWith("true"),"legacy state／policy 不符");
+            var box=record.spaceLeases().getFirst().bounds();
+            requirePartial(record.origin().facing()==Direction.NORTH && box.getMinX()==997 && box.getMaxX()==1003
+                    && box.getMinY()==64 && box.getMaxY()==70 && box.getMinZ()==1328 && box.getMaxZ()==2767,"舊 forward bounds 不可旋轉");
+            for(var person : record.participants()) {
+                var formal=NbtIo.readCompressed(owner.getSavePath(WorldSavePath.PLAYERDATA).resolve(person.playerUuid()+".dat"),net.minecraft.nbt.NbtSizeTracker.of(64L*1024*1024));
+                requirePartial(formal.getUuid("UUID").equals(person.playerUuid()) && !person.quantumStateSnapshot().isEmpty(),"legacy 必須已有正式 native playerdata 與完整 snapshot");
+            }
+            var codec=new SessionRecoveryState(); codec.put(record);
+            var data=codec.writeNbt(new NbtCompound()); data.putInt("SchemaVersion",1);
+            for(var value : data.getList("Records",net.minecraft.nbt.NbtElement.COMPOUND_TYPE)) ((NbtCompound)value).remove("SessionSemantics");
+            var wrapped=new NbtCompound(); wrapped.put("data",data); NbtHelper.putDataVersion(wrapped);
+            var path=owner.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID+".dat");
+            Files.createDirectories(path.getParent());
+            try(var output=Files.newOutputStream(path,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)) { NbtIo.writeCompressed(wrapped,output); }
+            var read=NbtIo.readCompressed(path,net.minecraft.nbt.NbtSizeTracker.of(64L*1024*1024));
+            requirePartial(read.equals(wrapped),"legacy compressed NBT 完整讀回不符");
+            var checked=SessionRecoveryState.fromNbt(read.getCompound("data")); checked.requireHealthy();
+            var decoded=checked.flushedRecords().get(record.sessionUuid());
+            var decodedBox=decoded==null ? null : decoded.spaceLeases().getFirst().bounds();
+            requirePartial(checked.flushedRecords().size()==1 && decoded!=null && SessionRecoveryRecord.sameAuthority(record,decoded)
+                    && decoded.state()==record.state() && decoded.restoreEntryEffectOnReturn()==record.restoreEntryEffectOnReturn()
+                    && decodedBox.getMinX()==997 && decodedBox.getMaxX()==1003 && decodedBox.getMinY()==64 && decodedBox.getMaxY()==70
+                    && decodedBox.getMinZ()==1328 && decodedBox.getMaxZ()==2767
+                    && java.util.Arrays.equals(data.getList("Records",10).getCompound(0).getList("SpaceLeases",10).getCompound(0).getIntArray("Bounds"),new int[]{997,64,1328,1003,70,2767}),"legacy strict codec authority／policy／bounds 不符");
+            Files.copy(path,canonicalRoot.resolve("trusted-legacy-journal.dat"));
+            LoggerFactory.getLogger("quantumchamber-testmod").info("TASK10_TRUSTED_LEGACY_SCHEMA1 installed={} sha256={} unmodifiedBounds={} runtimeInjected=false data={}",path,hash(path),box,read);
+        } catch(Exception failure) { throw new IllegalStateException("可信 legacy fixture 拒絕安裝",failure); }
+    }
+
     private record TicketWitness(long chunk,UUID sid,int level) {}
 
     /** 原生集合僅讀；回傳 immutable 快照，絕不回寫 ticketsByPosition。 */

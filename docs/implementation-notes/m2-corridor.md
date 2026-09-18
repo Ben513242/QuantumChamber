@@ -1,67 +1,62 @@
 # M2 供電走廊：操作與驗證
 
-`feature/m1-chamber` 已實作真入場、有限走廊換頁與安全返還。單人操作與視覺效果仍待人工驗收；自動原生測試不等於已用滑鼠完成全部玩法。此分支尚未推送／合併 main，M3 跨宇宙通道未實作。
+功能分支 `feature/m1-chamber` 已實作以原艙門為基準左右延伸、入場保留 Buff、任一凍結參與者 Buff 失效則全組安全返還。自動驗證與人工觀察分開記錄；以下八項目前皆待人工驗收。尚未合併 main，M3 尚未執行。
 
-## 從正確的功能工作區啟動
+## 從功能工作區啟動
 
-本機完整路徑是 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber`，分支為 `feature/m1-chamber`。主目錄的 main 較舊；請先正常儲存並退出舊遊戲，再在此工作區啟動：
+先正常儲存並退出舊客戶端，再從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 執行 `start-client.bat`；選用照明為 `start-client.bat light`，不是 `--light`。
 
-```powershell
-Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber'
-.\start-client.bat
-# 選用手持照明的獨立 profile
-.\start-client.bat light
-```
-
-參數是 `light`，不是 `--light`。一般 profile 使用 `run/client-base/saves`，照明 profile 使用 `run/client-light/saves`；腳本不會複製或搬移存檔。請先在新創造模式測試世界操作。若需複製既有世界，先退出所有遊戲、人工完整備份到遊戲目錄外，再人工複製到另一 profile；保留原本資料夾，不要覆蓋或同時開啟同一世界。
+一般與照明 profile 分別使用 `run/client-base/saves`、`run/client-light/saves`；腳本不搬移世界。優先另建創造模式測試世界；如需複製舊世界，先退出遊戲並人工完整備份，不覆蓋原檔或同時開同一世界。
 
 ## 單人無遊戲指令流程
 
-沿用 [逐格施工指引](m1-player-build-verification.md) 的三種材料：192 基岩、25 量子艙門、1 腔室控制器。外側 7×7×7、內側 5×5×5、控制器在正面頂排中央；沿用 [SVG](../images/m1-chamber-build-guide.svg)／[PNG](../images/m1-chamber-build-guide.png) 核對格數，圖中舊版狀態與維護文字不作本版玩法依據。
+施工沿用 [逐格指引](m1-player-build-verification.md)：192 基岩、25 量子艙門、1 腔室控制器；外側7³、內部5³、控制器 local `(3,6,0)`。青色／紫色是現有方塊外觀，不增加第四種建材。舊施工圖僅供幾何參考。
 
-1. 未供電時先完成艙體、門控與外部紅石裝置，準備量子態藥水。釀造仍是水瓶→地獄疙瘩→回聲碎片；火把照明不能替代 QuantumState。
-2. 在艙外先供電。可用控制器上方、位於艙體外的拉桿；空艙或門開時也會先登錄 UUID 並保護艙體。
-3. 單人進入走廊後不能留在原世界操作外部拉桿，因此入艙前必須安排會自行斷電的外部計時電路，並確認沒有另一支拉桿／紅石方塊持續供電。先以紅石燈測試「足夠時間的高電位→低電位」，再接到控制器；實際電路與倒數時間列為人工待驗。
-4. 普通右鍵開門，完整走進 5×5×5 室內，再瞄準前牆上方控制器關門。開啟的門格沒有可瞄準外形，請操作控制器。
-5. 已有 QuantumState 可直接等待；否則在室內喝藥。關門、完整碰撞箱在室內、全員有效且非旁觀者後自動啟動，無須再次撥桿。走廊準備與原生保存需要時間；成功後才一次消耗全員入場效果。
-6. 確認已進入真延伸走廊，再向前走、回頭並觀察底板／碰撞。外部電路到時斷電後，應安全回到同一座原艙的原世界；所有參與者與有價物品處理完成後才結束 session、清理空間並解除原艙保護。
-7. 原艙回到 OFF 後仍是一座保留 UUID 的普通盒子，可重新供電；要拆除時以創造模式實際確認可拆，再移除控制器與材料。不要以效果消失、比較器輸出、管理停用或某位玩家先返回，推斷整個 session 已完成。
+1. 未供電時完成艙體與外部裝置；釀造水瓶→地獄疙瘩→回聲碎片的量子態藥水。火把不能代替 QuantumState。
+2. 在艙外先供電。有效空艙或門開時也可先取得 UUID 並保護艙體。
+3. 普通右鍵開門，完整進入室內；瞄準前牆頂排中央 Controller 關門。開門後門格沒有可瞄準外形，應操作 Controller。
+4. 真正飲用藥水並觀察 HUD。全員有效、非旁觀者、完整碰撞箱在室內且關門時自動準備走廊，不要求新紅石 edge。入場保留現有效果、duration 與 hidden chain，自然倒數；不額外消耗 Buff，也不改原生喝藥的物品規則。
+5. 走廊相對原艙門朝左右延伸，`sourceFacing` 與 `corridorFacing` 分開。先看左、右、回頭，再行走檢查底板／碰撞；側門目前只有門面與邏輯身分。
+6. 任何一位凍結參與者的 Buff 自然到期或喝奶解除，全組安全返回同一原艙，保留返還當下效果，沒有入場藥效退款。HIGH 仍保護原艙；全員再次補喝、關門並滿足資格後可建立新 SID。
+7. 要測 LOW 或拆除，回到原艙後從外部切斷供電；或在入艙前預先安排並量測外部計時斷電。待完整 cohort／有價物品返還與清理完成、原艙確認 OFF 後，才以 Creative 實際確認可拆。計時器是 LOW 案例的選用安排，Buff 返還不需要它。
 
-可選的單人計時器做法是外部漏斗接箱子，以比較器讀漏斗、再用中繼器將輸出接到控制器。先用外部拉桿鎖住漏斗並放入物品；此時漏斗比較器已供電。解除漏斗鎖定後開始流出物品，清空才斷電。這支拉桿控制的是漏斗鎖定，供電來源是比較器；不要另留直接供電的拉桿。物品數、線路與可用入艙時間先在空艙旁量測，不能把這份施工說明當成電路已人工通過。
+多人案例至少兩位室內玩家；如需觀察外部比較器，另安排觀察者。帳號、GPU 或觀察條件不足時保留待驗，不用自動測試代填。
 
-## 狀態、安全與恢復界線
+## 八項人工驗收
 
-- `ARMING`／`SUPERPOSITION`／`RETURNING` 是 session 狀態；原艙比較器仍用 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。等待返還也可能維持 11，所以 11 不是「已安全返還」的證明。
-- 入場前的 durable ARMING 保留完整效果快照，未提交入場時返還會還原；一旦 durable SUPERPOSITION 已提交 false，返還保留玩家當前效果，不補發入場藥效。同 session 的原生玩家 checkpoint 防止重啟再套用快照。
-- 重啟後只處理 journal 裡仍 pending 的完整 cohort，不重建舊活動 session。JOIN 先排隊、下一 server tick 才返還；離線玩家尚未回來，原艙與租約仍保持保護。
-- 原控制器 UUID／ORIGIN／原世界／朝向／registry 必須可信；缺來源不送去床、出生點或另一座艙。無法完成返還時保留資料與保護，應保存現場檢查，不刪世界來掩蓋問題。
-- 固定世界只有 `quantumchamber:superposition`，不建立 Universe 或動態 Dimension。每邏輯頁 96 格、兩端各 576 格外觀延伸；局部實例有限，並非無限物化世界。
-- 方塊建造／清理預算每 tick 4096，ticket 覆蓋聯集上限另外是 4096 chunks，兩者不同。64 實例上限不代表同時跑滿 64 個的硬體效能已通過；容量不足採安全返還。
-- 玩家 checkpoint 的成功 runtime 證據限已驗 Windows／NTFS／Java21 原生 HANDLE 條件。非 Windows 目前 fail closed；Ubuntu 建置契約、OS 條件略過與真正 Linux 恢復成功需分別看待。正常 stop、受控 JVM 中止與整機斷電也不是同一種保證。
+每項記錄版本／場景／單人或多人／實際結果與截圖；以下狀態統一為「待驗」，沒有從 headless 測試推定通過。
 
-## 自動證據與人工 gate
+| 項目 | 操作與預期 | 狀態 |
+| --- | --- | --- |
+| 1. 單人原生飲用與左右入口 | 外部 HIGH→完整入艙→關門→真喝藥；原生瓶子消耗正確、真進左右廊、HUD Buff 仍在且倒數不中斷 | 待驗 |
+| 2. 單人自然到期 | 不續杯，觀察 HUD 自然到期；回同一原世界／原艙，不退款效果；原艙 HIGH 仍受保護 | 待驗 |
+| 3. 多人共享效果與離線 | 兩人進同 session，任一位到期／喝奶即全組返還；另一位途中斷線，下次 JOIN 才完成，不丟 cohort／物品 | 待驗 |
+| 4. HIGH 再入場與 LOW 收尾 | HIGH 全員補喝且關門建立新 SID；另測外部 LOW，安全返還→清理→OFF 後 Creative 可拆 | 待驗 |
+| 5. 32 chunks／512 blocks 視距 | 32 chunk 設定下往兩側遠望、行走與回頭；記錄可見端部、底板及碰撞，不把有限實例稱為無限物化 | 待驗 |
+| 6. 多人96格頁面 seam | 近玩家同群越96格邊界；再拉遠、分離、重聚，核對接縫、實體與碰撞，不能只測單人 | 待驗 |
+| 7. 光影與資源重載 | Iris／shader 開關、資源重載、日夜與GPU組合；原生 particles 不是 bloom 或新增真光源 | 待驗 |
+| 8. 選用手持照明 | `light` 新世界主手／副手火把、移動、收起熄滅；與client-base對照，不混入dedicated或伺服器世界光照 | 待驗 |
 
-正常持久化探針使用明確 `quantumchamber.m2.phase`，預設停用；只在 fresh `run/m2-persistence` 的各自案例中，依序以不同 JVM 正常保存、退出及重登。`active-pending`、`return-disconnect`、`arming-rollback`、`origin-missing` 分別驗證離線 cohort、先斷電後斷線、true 政策跨兩次重啟、缺來源安全拒絕。測試用連線為原生玩家／Netty EmbeddedChannel 的真 JOIN／DISCONNECT，尚不等於遠端真人客戶端驗收。
+## 持久化與安全界線
 
-active-save 的穩定保存窗口使用明確 testmod 返還拒絕；真入場／效果消耗／B 斷線與原生保存均仍執行。下一 JVM 關閉該故障，以正式 entity region 正常 load 同 UUID 的五顆鑽石，未 FULL／entityLoaded／ticking 前不釋租約，返還後才允許完整收尾。manifest 只有識別字與期望，不回填物品或玩家 NBT。
+- 新 session 為 `LATERAL_BUFF_MAINTAINED`，從 durable `ARMING,false` 起即 KEEP_CURRENT；ARMING 中斷亦不退款藥效。schema2 凍結來源、參與者與模式，不能改同一 SID 的語意。
+- 舊 schema1 只按 `LEGACY_FORWARD_CONSUMED` return-only 讀取；完整原 bounds 不旋轉。舊 ARMING,true／RETURNING,true 可 RESTORE_ENTRY，已保存同 SID／policy marker 則不重套；舊 SUPERPOSITION,false／RETURNING,false 保留當前效果。這不是新版 native entry。
+- 重啟只恢復 pending 返還，不重建舊 ACTIVE。JOIN 先排隊、下一 server tick 返回；離線者仍在凍結名單，必要租約與來源保護繼續持有。
+- 原 Controller UUID／ORIGIN／世界／朝向／registry 必須可信。缺來源不送床、spawn 或另一座艙；保留現場，不刪世界掩蓋失敗。
+- Comparator仍為 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。11不是返還完成證明，管理停用也不是 LOW 或解除保護。
+- 固定世界僅 `quantumchamber:superposition`；每邏輯頁96格、外觀延伸兩端各576格，沒有動態 Universe。每 tick 方塊建造／清理4096格與ticket聯集4096chunks是不同預算；64實例上限不是滿載性能保證。
+- 成功原生玩家 checkpoint 證據限 Windows／NTFS／Java21 HANDLE 條件。Ubuntu 的合法拒絕及OS skips不等於 Linux native恢復成功。正常stop、受控JVM crash與整機斷電各自不同，不聲稱跨檔原子性。
 
-部分加票的 bootstrap 案例另使用合法 trusted journal，在第一票成功後拒絕第二票；核對原生票集合中目標 SID 零殘票、另一 SID 同區塊票保留，並驗 tick0、原 journal hash 不變。這與原六個加票前的拒啟案例分列。
+## 自動證據狀態與M3交接
 
-Task4 最後 W1 true／keep、W2 與 stale-save 證據保留。Task5 發現啟動加票失敗後，尚未 attach 的 session manager 會再於 STOPPING 拋錯，已窄修關閉／detach 流程；四條 checkpoint 鏈已以最後 classes 重新驗證。whole-feature final review 尚待 root 獨立執行。
+Task9 精確 code SHA `bdb74027206febdb332fbf8c098d9fc2d96bf53f` 的兩平台CI run `35351777308` 成功：Windows 必要12項零跳過，兩平台GameTest各116項成功；後置純文件BASE為 `681cdc41586797827ad984b43c77fef1eabfedf9`。Task9獨立review已結案。
 
-2026-09-18 本機 Windows 最後驗證：一次非快取 `clean build runGameTest --rerun-tasks`，167 個 JUnit 中166通過、1個非Windows專用案例依OS略過；105個GameTests全部通過。最後classes另完成29個原生JVM驗證（含預期拒啟與受控中止），正常phase皆由console stop後保存四world並exit0；十份正常停止後formal資料及四組checkpoint正式NBT另經唯讀讀回。五鑽石保持同一UUID、數量5與唯一實體，先留fixed、再回同一原艙；ARMING與已提交入場的效果政策保持分離。
+Task10 使用 default-off probe、fresh canonical nonce root、不同JVM和正式 playerdata／compressed journal／entity-region讀回，分別驗新原生來源與明確trusted legacy來源。manifest僅識別字，不回填效果、pose或inventory。EmbeddedChannel的原生效果ticks與server ticks分列，不冒充真人連線或HUD證據。Task10完整gate與獨立review狀態以 [修訂狀態](2026-09-18-m2-revision-status.md) 為準。
 
-發行JAR為282790 bytes，SHA256 `769FA9215C15622A951CD22CCDCE4927E702C334C59497BDC726891BC8C2D6DF`；testmod compiled classes與成品交集0、沒有test mixin metadata，main classes對client-only類別直接引用0。正式既有 `ModPresenceProbe` 是相容性介面，與testmod持久化探針不同。production-only dedicated已驗Done→console stop→四world save→Java／wrapper0，無testmod、client mods或client-loading error。
+2026-09-19 本機末次非快取驗證：183個JUnit中182通過、1個合法NonWindows案例略過，Windows必要12項零略過；116個GameTest零failure/error/skip。36個原生phase與31組正式NBT讀回均成功，全部source/class指紋對上最後clean classes；同UUID五鑽石從fixed正式region讀回原艙。新KEEP_CURRENT／ARMINGfalse與舊RESTORE_ENTRY的精確crash窗口分別通過，含第二次重啟不退款／不重套。另有partial-ticket對稱清理與不含testmod的main-only四世界Done→stop→save。這些本機結果不取代Task10獨立review與新SHA遠端CI。
 
-唯讀照明依賴解析及SHA512核對通過，未啟動客戶端或複製存檔。編譯保留既有deprecated訊息與testmod三target注入的6個annotation warnings，不宣稱輸出零警告。移動RuntimeException診斷細節與此warning整理列為非阻擋Minor；真Ubuntu runtime與下表人工項目仍未驗。
+Task5 文件狀態Minor在本次修訂同步：舊166/105與29JVM屬原方向／耗藥契約歷史證據，不能代替新版；Task5既有獨立review狀態不再誤列未完成。6個Mixin annotation warnings、deprecated notes、正常expiry WARN與其餘runtime noise保留；TransferService診斷等production Minor交整體final triage，不在本task擴修。
 
-| 人工項目 | 狀態 |
-| --- | --- |
-| 單人先供電→入艙關門→已有 buff／喝藥→真走廊 | 待驗 |
-| 外部計時斷電→回同一原艙→OFF 後 Creative 可拆 | 待驗 |
-| 主手／副手火把、移動後照明與收起後熄滅 | 待驗 |
-| 32 chunk 遠望、向前與回頭的外觀／底板／碰撞 | 待驗 |
-| 近玩家同群換頁、分離再重聚的 seam | 待驗 |
-| shader 開關、資源重載、GPU／日夜相容性 | 待驗 |
+M3前置：新版M2自動gate、Task10獨立review與必要新code遠端CI先綠，才開始M3 spike。本次只交接，沒有實作候選選擇／測量塌縮／family全量／跨Universe passage。八項人工與一次whole-branch final review依使用者安排留整體收尾；main不merge、不新增LICENSE，不清除既有世界或owner證據。
 
-LambDynamicLights 為選用 client-only 模組，解析及 SHA512 核對不代表已觀察到手持照明；不更改伺服器世界光照，也不加入預設 client-base、dedicated 或發行 JAR。任意 shader、擴大視距、實體數量與硬體負載未獲無縫或效能保證。
+LambDynamicLights是選用client-only模組。官方來源SHA核對與依賴解析不等於手持照明、Iris或shader已實測；本自動gate未啟動GPU客戶端。
