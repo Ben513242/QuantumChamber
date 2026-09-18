@@ -2,7 +2,7 @@
 
 日期：2026-09-18。基準：`96c3514fe6c41b41ef78c567d7b8395c1075b7b4`，既有功能分支 `feature/m1-chamber`。
 
-狀態：使用者已逐項確認下述玩法，並要求繼續實作；本文件整理技術與存檔契約，尚待書面規格審閱。新規則尚未實作，不以舊測試結果宣告完成。
+狀態：2026-09-18 使用者確認本修訂的左右走廊、Buff保留、任一人失效整組返還及8項驗收，授權完成M2修訂與自動gate後執行M3；人工checklist與整分支final review留到實作收尾。新規則尚未實作，不以舊測試結果宣告完成。
 
 本修訂取代 [原 M2 規格](2026-09-17-m2-powered-corridor-design.md) 的前後延伸、成功入場立即消耗效果與活動 session 不依藥效倒數結束三項規則；其餘原艙權威、有限資源、共享參與者、checked journal、native checkpoint、離線及安全清理契約維持。
 
@@ -16,7 +16,7 @@
 6. 全員再次有Buff、原艙關門且條件成立，可再建立一個新session；不要求第二次紅石rising edge，不重用已結束session UUID。
 7. 外部斷電仍先安全返還／收尾，再解除原艙保護；只有原建立world有合法維護／拆除權。
 
-候選門開啟、測量塌縮、選定宇宙與跨宇宙passage仍留到M3／M4；本修訂不假開側門來冒充完成。
+候選門與選擇系統留M4、共享測量／塌縮及passage留M5；M3僅可行性探查與一個持久替代Universe基底。本修訂不假開側門來冒充完成。
 
 ## 2. 方案與選擇
 
@@ -113,6 +113,6 @@ PlayerRecoveryCheckpoint schema1及RESTORE_ENTRY／KEEP_CURRENT標記不擴欄�
 
 全部harness只owned fresh loopback nonce worlds，PID／startup nonce／canonical storage與直接child身分保留，不回填manifest NBT、不操作使用者／共享JVM，不刪既有world／journal。
 
-人工待驗：單人免指令新流程、日夜輝光、HUD主副手火把、32chunk遠望／回頭／seam、Sodium／Iris／shader／resource reload。GPU／Linux／任意foreignworld／硬體效能與整機斷電一致性不由本機build冒稱；真正foreignworld仍M3 gate。
+人工待驗：單人免指令真飲用、新左右走廊、Buff HUD保留、到期整組返還、HIGH再喝再進、外部LOW安全返還/OFF、日夜輝光／主副手火把、32chunk遠望／回頭／seam、multiplayer seam、Iris/shader/resource reload。使用者要求人工checklist與整分支final review留到實作收尾；M2必要自動gate／每taskreview／WindowsCI先關閉才進M3，不把人工待驗宣告通過。GPU／Linux成功checkpoint／任意foreignworld／硬體效能與整機斷電一致性不由本機build冒稱；真正foreignworld仍M3 gate。
 
 只在使用者特定要求時推feature審查checkpoint；main合併仍須所有必要自動／獨立review與人工gate關閉，不因本次繼續實作授權自動合併。

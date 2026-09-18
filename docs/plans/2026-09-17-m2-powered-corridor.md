@@ -8,7 +8,7 @@
 
 **Tech Stack:** Minecraft 1.21／Fabric／Java21／Gradle8.8／JUnit5／Fabric GameTest／Netty EmbeddedChannel 測試fixture。
 
-**Spec:** `docs/superpowers/specs/2026-09-17-m2-powered-corridor-design.md`、`docs/superpowers/specs/2026-09-17-m1.2-powered-origin-design.md`。
+**Spec:** Task1–5歷史為 `docs/superpowers/specs/2026-09-17-m2-powered-corridor-design.md` 與M1.2；Task6起依已核准 `docs/superpowers/specs/2026-09-18-m2-lateral-buff-maintained-design.md`。2026-09-18使用者要求完成M2自動gate後進M3，人工checklist／整分支final review留實作收尾，main仍不得未驗合併。
 
 ## Global Constraints
 
@@ -16,7 +16,7 @@
 - 單一 Fabric module，main／client 分離、三種建材、7×7×7／5×5×5、Controller local(3,6,0)、25格門與青紫造型不變。
 - 僅固定靜態 Superposition Dimension；無 UniverseRegistry、runtime allocation、Universe candidate selection、跨宇宙passage或跨宇宙projection materialization。固定空間的入口replica允許PROJECTION標記，沒有新Universe origin／跨宇宙投影。
 - 無 mandatory renderer／portal／dimension library、無自訂 packet、無 LICENSE；只有全部驗收gate與最終review無問題後依使用者授權push／merge main，未驗不猜通過；不改既有玩家存檔、不刪世界。
-- 玩家至少一人、排除spectator、完整bbox在interior、全員buff；凍結cohort，成功時一次消耗全員效果，失敗不消耗。
+- 玩家至少一人、排除spectator、完整bbox在interior、全員buff；凍結cohort。Task1–5為歷史入場消耗；Task6起新session入場保留Buff、不重置duration／hiddenEffect，任一人失效整組返還，HIGH保持原艙保護；schema1保留舊恢復政策。
 - 外部斷電：先安全返還、結束session、再解除原艙保護。離線／返還失敗／錯身分仍保護，不可猜其他world或床／spawn。
 - 火把使用已核准可選client方案；不改原生world光照、不替代QuantumState，照明與GPU相容性人工待驗。
 - 所有說明與註解使用繁體中文；只用apply_patch修改來源；逐任務RED／GREEN／精確commit／獨立spec+quality評審。
@@ -408,4 +408,197 @@ Task4 implementation `e4509fc` 已獨立 spec／quality Approved（Critical0／I
 - [x] **Step 4: 更新單人不指令指引與人工gate。** 外部拉桿→進艙→關門→已有buff或喝藥→真走廊；外部預設計時斷電電路→回同一普通盒子→可Creative拆。寫start-client.bat light、存檔備份人工複製、主副手torch、32chunk遠望／回頭、shader／resource reload、近玩家群組 seam清單；未實測必須標待驗。
 - [ ] **Step 5: whole-feature獨立final review與交付。** 包含main merge-base至HEAD完整diff、所有deferred／rulings、真測試證據；先fix blockers再交付本機分支。人工gate未關不得合併main，不假稱M3已完成。
 
-Task5 worker於2026-09-18完成本機Windows自動範圍：一次非快取full gate（JUnit167＝166實跑／1OS略過、GameTest105零失敗）與最後classes29個原生JVM驗證；四條正常phase、同UUID五鑽石正式entity save/load、部分票取得例外與六bootstrap、重驗Task4四checkpoint鏈及main-only四world啟停均通過。啟動失敗後Manager尚未attach卻在STOPPING拋錯的真RED已窄修；未放寬正常API或journal健康guard。最後formal NBT／region與class/JAR指紋分開核對。README與玩家指引已對齊實際worktree與M2狀態；兩項既有Minor診斷／多target warnings保留。Task5獨立review、whole-feature final review、真Ubuntu runtime與人工玩法／視覺仍待驗，未push／合併main。
+Task5原版checkpoint96c3514已依使用者特定要求推feature供審查，未合併main；獨立spec/quality Approved、0Critical/0Important/3Minor。原本機167declared/166pass/1OSskip、105GT與29JVM證據保留，只證明舊方向／效果契約。遠端CI35313938269 Ubuntu build與非Windows契約成功、Windows167test/7fail/1skip／GT未開始，原因邊界為ancestor HANDLEpath mismatch、原始名稱差異尚缺證據；Task9須實際結案。歷史Minor診斷／六annotationwarnings／預期faultstack／文件時序不丟棄，whole-feature與人工留最後，不預先勾Step5。
+
+## 2026-09-18 修訂執行與gate
+
+Task6–10接續同一plan owner，單一implementation worker與Gradle/native序列；CI只允許唯讀診斷並行。共用checkpoint或fixture修改序列化，不能同時編譯M2與CI source。自動gate與獨立taskreview關閉後執行M3可行性探查；M3 production backend不得先跳過Minecraft1.21技術研究，不混M4候選／M5塌縮passage／M6完整family。人工8項留收尾，main仍需人工與wholebranch review。
+
+### Task 6: schema2 semantics、strict legacy與凍結權威
+
+**Files:**
+- Create: `src/main/java/dev/quantumchamber/persistence/SessionSemantics.java`
+- Modify: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryRecord.java`
+- Modify: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryState.java`
+- Modify: `src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java`（record複製carry semantics／durable freeze）
+- Modify: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryManager.java`（record複製carry semantics）
+- Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSessionManager.java`（record複製carry semantics，native creation仍legacy直到Task8）
+- Test: `src/test/java/dev/quantumchamber/persistence/SessionSemanticsTest.java`
+- Test: `src/test/java/dev/quantumchamber/persistence/SessionRecoveryStateTest.java`
+
+**Interfaces:**
+- Produces: canonical `SessionRecoveryRecord(...,SessionState state,boolean restoreEntryEffectOnReturn,SessionSemantics semantics)`；原7參數overload只明確LEGACY_FORWARD_CONSUMED相容，不能憑缺參數選new。record accessor `semantics()`不可變。
+- Produces: `SessionSemantics { LEGACY_FORWARD_CONSUMED, LATERAL_BUFF_MAINTAINED }`，`public void validateEffectPolicy(SessionState,boolean)`、`public Direction corridorFacing(Direction sourceFacing)`、`public Direction sourceFacing(Direction corridorFacing)`；水平驗證，legacy同朝向，lateral corridorFacing=sourceCW／inverseCCW。
+- Produces: schema1按完整舊codec合法性解析後memory legacy；schema2必填string SessionSemantics，未知／缺／錯型別拒絕。writer schema2只正常checked進度寫，不讀取先改檔、不旋轉舊bounds。Record package-private `fromNbt(NbtCompound,int envelopeSchema)`、`toNbt()`明確metadata。
+- Produces: `public static boolean SessionRecoveryRecord.sameAuthority(SessionRecoveryRecord,SessionRecoveryRecord)` 檢查SID/chamber/origin/semantics與完整同UUID來源snapshots；returned/state/leases不是來源identity。State.put同時current/flushed與PageManager破壞性清理前共用，不允remove-replay換mode／origin／cohort。Space持不可變semantics，bootstrap取strict record、原freshreservation明確legacy，不從目前Buff猜mode；Task7可消費這份同一權威。
+- Consumes: 原checked journal、原PlayerRecoveryCheckpoint schema1／KEEP_CURRENT/RESTORE_ENTRY、不改PStore/native verifier。fresh native保持原legacy行為，此task不創建左右session或改幾何。
+
+- [ ] **Step 1: 先寫enum policy／NBT／authority負向測試。** 刪掉lateral ARMING false允許分支會令此測試失敗：
+
+```java
+assertDoesNotThrow(() -> SessionSemantics.LATERAL_BUFF_MAINTAINED
+        .validateEffectPolicy(SessionState.ARMING, false));
+assertThrows(IllegalArgumentException.class, () -> SessionSemantics.LEGACY_FORWARD_CONSUMED
+        .validateEffectPolicy(SessionState.ARMING, false));
+assertThrows(IllegalArgumentException.class, () -> SessionSemantics.LATERAL_BUFF_MAINTAINED
+        .validateEffectPolicy(SessionState.RETURNING, true));
+```
+
+增加schema1缺policy／ARMING,false拒絕；schema2lateral三state=false roundtrip、未知mode／缺mode拒絕；同SIDmode/origin/chamber/sourceNBT改寫不改records/dirty/flushed，returned進度／排序可合法更新。fixture完整source/leases來自existing test已查helper，不用production builder算expected。
+- [ ] **Step 2: 聚焦跑RED。** `./gradlew.bat --offline --console=plain test --tests '*SessionSemanticsTest' --tests '*SessionRecoveryStateTest'`；新API初compile缺失是前置，不當behaviorRED。加最小API殼後讓新的合法lateral codec／freeze mutation測例真失敗，保存命令/XML。
+- [ ] **Step 3: 最小policy與codec。** enum policy核心：
+
+```java
+boolean invalid = this == LATERAL_BUFF_MAINTAINED
+        ? restoreEntryEffectOnReturn
+        : state == SessionState.ARMING && !restoreEntryEffectOnReturn
+                || state == SessionState.SUPERPOSITION && restoreEntryEffectOnReturn;
+if (invalid) throw new IllegalArgumentException("狀態與效果恢復政策不一致");
+```
+
+schema2嚴格decode、完整defensive copies；每個existing new SessionRecoveryRecord copy傳原semantics，failure不消失mode；freeze checks在mutation前。legacy原缺欄位拒絕保留，load不落盤、不建新world。
+- [ ] **Step 4: GREEN／回歸。** 聚焦policy/state/XML綠後單序列非快取clean build＋fresh nonce全GT一次，必要Windows12cases零skip、本機合法NonWindows skip分開、JAR testmod/commonclient檢查。記schema2metadata不代表新玩法已實作；PStore平台CI仍待Task9。
+- [ ] **Step 5: 精確commit／self-review。** `feat: 新增 M2 session semantics 與 strict legacy 相容`；只本task files和必要publicplan狀態，report RED/GREEN、全constructor copy/原mode、immutable拒絕與未驗列表。獨立review通過後才Task7。
+
+### Task 7: 左右基底、來源座標分離與入口覆寫
+
+**Files:**
+- Create: `src/main/java/dev/quantumchamber/chamber/ChamberSpaceCoordinates.java`
+- Create: `src/main/java/dev/quantumchamber/corridor/CorridorBasis.java`
+- Modify: `src/main/java/dev/quantumchamber/corridor/CorridorGeometry.java`
+- Modify: `src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java`
+- Modify: `src/main/java/dev/quantumchamber/corridor/SessionEntranceAllocator.java`
+- Modify: `src/main/java/dev/quantumchamber/transfer/ChamberReturnPlacement.java`
+- Modify: `src/main/java/dev/quantumchamber/persistence/SessionRecoveryManager.java`
+- Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSessionManager.java`（明確entry basis，creation仍legacy）
+- Test: `src/test/java/dev/quantumchamber/corridor/CorridorBasisTest.java`
+- Test: `src/test/java/dev/quantumchamber/chamber/ChamberSpaceCoordinatesTest.java`
+- Test: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`
+
+**Interfaces:**
+- Consumes: Task6 semantics/mode freeze；Mode不可由callerbool猜，Space按durable record。
+- Produces: source helper `public static BlockPos block(ChamberFrame,int,int,int)`、`position(ChamberFrame,double,double,double)`／`vector(ChamberFrame,Vec3d)`／`localPosition(ChamberFrame,Vec3d)`／`localVector(ChamberFrame,Vec3d)`，extract既有source affine語意，finite/horizontal驗證；不擴有限ChamberGeometry公開0..6 contract。
+- Produces: `public record CorridorBasis(Direction sourceFacing,SessionSemantics semantics)`，`Direction corridorFacing()`；`Vec3d toCorridorPosition(Vec3d sourceLocal)`／`toSourcePosition(Vec3d corridorLocal)`／`toCorridorVector(Vec3d sourceLocalVector)`／`toSourceVector(Vec3d corridorLocalVector)`，`float toCorridorYaw(float sourceLocalYaw)`／`toSourceYaw(float corridorLocalYaw)`，finite/horizontal。
+- Geometry helper保留generic corridor frame算法，但Mode-aware入口 `static ChamberFrame entrance(MappingView,SessionSemantics)`；legacy用原C mapping、new sourceC在corridor block(lateral6,y6,long3-anchor)、來源facing=semantics.sourceFacing(view.outwardFacing())。
+- MappingView.outwardFacing表示actualcorridorFacing；Space.origin仍sourceFacing。reserveInitial additive `(...Direction sourceFacing,Set<Long>,SessionSemantics)`，原4參數明確legacy相容；typedtoken/epoch/durableMode完全匹配，bounds窄軸按actualcorridorFacing。舊record只return-only清舊bounds，不rotate／重新build。
+- SessionEntranceAllocator `cell(...frontOpen,connectionOpen,SessionSemantics)`，legacy後孔、new source localx0/6 y/z1..5AIR；source正門z0/Controllerfacing保持，new不開後牆。base/overlay ownership互斥，mode持久carry。
+
+- [ ] **Step 1: 手算幾何RED。** 不使用helper算expected；此new旋轉保留cell/point boundary：
+
+```java
+var basis = new CorridorBasis(Direction.NORTH, SessionSemantics.LATERAL_BUFF_MAINTAINED);
+assertEquals(Direction.EAST, basis.corridorFacing());
+assertEquals(new Vec3d(1.5, 1, 3.5), basis.toCorridorPosition(new Vec3d(3.5, 1, 5.5)));
+assertEquals(new Vec3d(-2, 3, 1), basis.toCorridorVector(new Vec3d(1, 3, 2)));
+```
+
+新增四朝向literal worldfeet/sourcefloor表、continuous正負roundtrip、速度/yaw/pitch/bbox、new sourceC/正門與兩側connection、legacy bounds/return位置不變。Mode nativefactory尚未new，只trustedgeometry案例明確標示。
+- [ ] **Step 2: 跑聚焦RED／native fixture。** `test --tests '*CorridorBasisTest' --tests '*ChamberSpaceCoordinatesTest' --tests '*ChamberReturnPlacementTest'`，fresh nonceGT新lateral controllerfacing/兩側portal/cap邊界失敗；stubcompile不是行為RED。
+- [ ] **Step 3: source與corridor正交helper。** newbasis核心：
+
+```java
+return semantics == SessionSemantics.LATERAL_BUFF_MAINTAINED
+        ? new Vec3d(7 - sourceLocal.z, sourceLocal.y, sourceLocal.x) : sourceLocal;
+```
+
+inverseposition=(long,y,7-lateral)，vector=(-z,y,x)，inverse=(long,y,-lateral)；yaw由(-sin,0,cos)經vector轉換再atan2(-x,z)，MathHelper.wrapDegrees，pitch不改。SourceReturnPlacement與Recovery普通entity中心必用sourcehelper；entry從sourcehelper再basis轉到typedphysical，不共享可變globalmode。
+- [ ] **Step 4: mode-aware geometry GREEN。** 新controller/source方向、原門25交易、localx兩側connection；全樣式96seam正負走／0與16 split／9 merge、items/projectile、入口切邊{7}與{6}rebuild；fullbudget/caps/ticket門檻不放寬。最後非快取full/GT一次＋JAR／main-only，不以trustedgeometry當真喝藥native。
+- [ ] **Step 5: commit／review。** `feat: 分離原艙座標與左右走廊基底`，精確本task與report，明列legacy return-only與basisproducer/nativecreation仍legacy，獨立gate後Task8。
+
+### Task 8: 真飲用Buff維持、共同到期返還與HIGH再進
+
+**Files:**
+- Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSessionManager.java`
+- Modify: `src/main/java/dev/quantumchamber/superposition/SuperpositionSession.java`
+- Modify: `src/main/java/dev/quantumchamber/transfer/QuantumEffectTransaction.java`
+- Modify: `src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java`
+- Modify: `src/main/java/dev/quantumchamber/corridor/CorridorRepositionService.java`
+- Modify: `src/main/java/dev/quantumchamber/chamber/ChamberPowerCoordinator.java`（只既有HIGHRETURNING握手必要接點，不第二authority）
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/SessionTransferFault.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/mixin/SessionTransferFaultMixin.java`（既有exacttarget scoped observation；新target先root核准）
+- Test: `src/test/java/dev/quantumchamber/chamber/ChamberPowerCoordinatorTest.java`
+- Test: `src/test/java/dev/quantumchamber/persistence/SessionSemanticsTest.java`
+
+**Interfaces:**
+- Consumes: Task6new ARMINGfalse／Task7lateralbasis/typed initial／原source identity、cohort完整snapshot及checkedreceipt。
+- Produces: fresh native start只LATERAL_BUFF_MAINTAINED，reserve同mode→checkedARMINGfalse→prepare→全nativecohortmove→retain/verifyBuff→playercheckpoint→checkedSUPERfalse→publish；legacy只restore/read/return兼容。
+- Produces: `public void QuantumEffectTransaction.verifyCurrent(MinecraftServer)`只validate全員仍alive/online同server且QuantumState，沒有remove/add或duration改寫；既有legacy commit/restore保留給明確legacy。snapshotimmutable。
+- Produces: `public static boolean SessionRecoveryManager.blocks(UUID,MinecraftServer)`仍同thread current+flushedRETURNING failclosed。Runtime Buff缺／失效→checkedReturningfalse，全組固定；alreadyRETURNING不因redrink撤回。
+- Produces: `public boolean CorridorPageManager.activeCohortHasBuff(UUID)`只sameauthority/durable SUPER/newmode/完整UUID nativeplayerworld/query真Buff；legacyconsumer不用此getter猜權威。不新增tick/tickets，Manager與Reposition在begin/move/commit前重驗，partial失效不publish半群。
+- Pose rollback與effectpolicy分開：durable ARMING或未提交先原pose rollback（same originalC必要），新效果KEEP_CURRENT；durableSUPER後只safeReturn保留當下效果。不能把restorefalse當「已提交」旗標。
+
+- [ ] **Step 1: 真飲用native RED。** vanilla QuantumState potion.finishUsing／正常玩家inventory，不直接addBuff冒充drink；新完整入場後斷言：
+
+```java
+context.assertTrue(player.getServerWorld() == server.getWorld(SuperpositionWorld.KEY), "真固定world入場");
+context.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE), "入場保留QuantumState");
+context.assertTrue(player.getStatusEffect(ModEffects.QUANTUM_STATE).getDuration() > 0, "原生remaining持續");
+```
+
+保存完整NBT/hidden與elapsednativeTicks對照，不單純>0當未重置。單人／兩人任一shortduration自然expire；vanilla MilkBucketItem.finishUsing移除真Buff；others效果不退款；HIGH source仍protected/POWERED、journal/receipt清後IDLE，再真喝／sealed新SID入場；sourceLOW最後OFF才能Creative拆。
+- [ ] **Step 2: RED矩陣。** 缺一Buff／zero／spectator／26人／變來源C／UUID／offline保持原guard，prepare期間expire、partialactualmove/remap後失Buff、新劑hiddenEffect接續不誤判expire、RETURNING中redrink不撤銷。原移動callbackscopedfault與所有rawsentinel分開標native/trusted。
+- [ ] **Step 3: runtime核心分流。** creation顯式newmode/false，verifyCurrent不consume；active完整cohort任一!hasStatusEffect先Returning，再reposition/recovery。checkInitialCohort根據recordmode要求Buff仍有或legacy已耗，不blanket刪effect條件。HIGH ack原gateway→registryPOWERED重新readiness，LOW已完成→OFF。
+- [ ] **Step 4: GREEN／全套。** 聚焦newnative案例綠、mode/JUnit純tests，原known-world/UUID/floor/leases/budget保守門檻；legacyfixtures可繼續透過明確Mode構造，但native creation期待改new且不得以forcedlegacyfake真飲用。最後唯一full/GT／class/JAR／main-onlygate一次，WindowsCI未綠不放行M3。
+- [ ] **Step 5: 精確commit／review。** `feat: 以 QuantumState 維持共享左右走廊並安全返還`；報Buff nativeNBT/tick、sourceHIGHPowered/LowOFF順序／SID再進，HUD/GPU仍人工；獨立gate後Task9。
+
+### Task 9: WindowsCI實值診斷與安全fixture／原生gate
+
+**Files:**
+- Modify: `src/test/java/dev/quantumchamber/persistence/WindowsPlayerCheckpointVerifierTest.java`
+- Modify: `src/test/java/dev/quantumchamber/persistence/PlayerCheckpointStoreTest.java`
+- Modify: `.github/workflows/build.yml`（只已證實平台fixture或診斷／證據上傳，不skip必要cases）
+- Modify: `build.gradle`（僅真實查明tmp/runtime boundary時的taskfixture設定）
+- Production `WindowsCheckpointNative`／verifier若需改，列精確API與root裁定先核准，不預先允放寬。
+
+**Interfaces:**
+- Consumes: root已讀run35313938269：7fail皆ancestor HANDLE name mismatch，NTFS已過，不是ReFS；unknown expected/actual／firstancestor不能當短名已證實。
+- Produces: test-onlyTrackingNative openPath/HANDLE/finalPath、java.io.tmpdir/@TempDir、firstMismatch／attributes／NTFS證據；單一正向nativecase可重現。新診斷若CI才可見，featurepush/re-run屬外部write先依user特定授權處理，不自動mainmerge。
+- 正向fixture在自有普通NTFS已解析longname位置；若本機native短名能力可用，額外alias拒絕case具實際兩個names與handle witness。縮短/長名是假說直到真值；不能FILE_NAME_OPENED／dropancestor／取消FileID/NBT/flush／skip or assumeCIcounter。
+
+- [ ] **Step 1: 寫最小diagnostic characterization。** TrackingNative覆寫真method只捕捉與輸出，不fake返回：
+
+```java
+@Override Path finalPath(HANDLE handle) throws IOException {
+    Path actual = super.finalPath(handle);
+    System.err.println("CHECKPOINT_NAME handle=" + handle + " actual=" + actual);
+    return actual;
+}
+```
+
+openDirectory覆寫先super成功再storeexpected(handle/path)，故capture不解鎖／跟隨junction；所有HANDLE cleanup仍原Verifier。只有!expected.equals(actual)印first差異，source非test-onlysetter。
+- [ ] **Step 2: 跑單一正向native。** `test --tests '*WindowsPlayerCheckpointVerifierTest.realNativeReadFlushAndFormalIdentitySucceedEvenWhenJavaFileKeyIsNull' --rerun-tasks`，保留rawexpected/actual/nativeFileID/volume及@TempDir，失敗原因與CIexactsignature核對。環境不能重現則下一stageownedCI diagnostic，不猜修復。
+- [ ] **Step 3: 唯一已證實原因最小修補。** 若names證實是fixture alias，fixture使用自有ordinary NTFS `temp.toRealPath()`只在測試setup，並驗native canonicalnames一致、原alias拒絕保留；如果toRealPath仍未長名或涉及reparse，報NEEDS_CONTEXT不加第三種fallback。若production namespace解析契約需改先root正式Ruling及反例tests；未知仍failclosed。
+- [ ] **Step 4: 原12必要cases零skip／XML與remote綠。** 本機native positive＋rename/junction/writer/identity/read/flush錯誤皆全實跑；最後noncachedfull105以上GT、Windowsremote對應code必要XML守門與Linux受控拒絕保留。CIred不能local綠冒稱remote綠。
+- [ ] **Step 5: commit／review。** `fix: 在已證實原生名稱邊界下修復 Windows CI fixture`，若只是diagnostic無修復明示狀態，不聲稱gate完成；majorreview先fix，reportrawXML/CI網址與SHA。
+
+### Task 10: 新M2持久化全gate、8項指引與M3交接
+
+**Files:**
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/M2PersistenceProbe.java`
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/M2LeaseBootstrapProbe.java`
+- Modify: `src/testmod/resources/fabric.mod.json`
+- Modify: `src/testmod/resources/quantumchamber-test.mixins.json`（必要scoped同target，新增先root核准）
+- Modify: `docs/implementation-notes/m2-corridor.md`
+- Modify: `docs/implementation-notes/m1-player-build-verification.md`
+- Modify: `docs/implementation-notes/2026-09-18-m2-revision-status.md`
+- Modify: `README.md`
+- Modify: `docs/plans/2026-09-17-m2-powered-corridor.md`
+
+**Interfaces:**
+- Consumes: Tasks6–9真newnative與legacy-return-only、新schema2freeze、HIGH/LOWreceipt／Buffcurrent語意、remoteCIgreen。
+- Produces: default-offphase `quantumchamber.m2.phase`保持unknown fail，ownednonce/canonical PID/startupnonce證明新schema2nativeactive/ARMING/returning跨不同JVM正常load；純schema1完整trustedlegacyfixture（CREATE_NEW）與true/false marker恢復讀回分開，不冒充newnativeentry。
+- caseGroup：newactive-save→resumeone→resumelast；newarming interrupted→resumeone→last（KEEP_CURRENT不退款）；returnwhilemilk/expiry→offlineB normalJOIN；neworiginmissing safe refusal；legacy ARMINGtrue、SUPERfalse、RETURNtrue/false各formalboundssave/load→2ndrestart idempotent。manifest只UUID，不回填NBT/座標/物品。
+
+- [ ] **Step 1: phase與effect policy RED。** 新native源期待retainBuff／newsemantics，oldphase期望consumed的失敗是契約更新不是regression濾掉；legacytrusted導入明確打印來源codec與unmodifiedbounds。必要case斷言例如：
+
+```java
+context.assertTrue(record.semantics() == SessionSemantics.LATERAL_BUFF_MAINTAINED, "新native模式");
+context.assertTrue(!record.restoreEntryEffectOnReturn(), "新session不退款藥效");
+context.assertTrue(record.participants().size() == 2, "離線者不丟名單");
+```
+
+- [ ] **Step 2: 不同JVM與精確checkpoint窗口。** 正常stop後read真正player.dat／compressedjournal／source/fixedentityregion、sameUUID五鑽石、newmodebuff/hidden自然tick無reset。W1新KEEP_CURRENT checkpoint-before-returnedflush、W2新ARMINGfalse部分保存→取消全組，oldRESTORElegacyfixture另驗；HALT仍原heldchild/nonce/root/barrier規範，不能用STOPPING修補當crash。
+- [ ] **Step 3: 最後全套與產物。** 唯一final --rerun-tasks cleanbuild/freshGT/XML／skip理由、nativePipeline與schema1/2rawreadback／主程式與testmodclassfingerprints、release/sources污染/class/source交集0/mainclient0、officiallightSHA與main-only四worldDone-stop-save。任何最後改code重驗affectedchain不混oldSHA。
+- [ ] **Step 4: 8項單人/多人指引與status。** 真飲用→左右廊→HUDretained→任一Buff自然expiry全組回→HIGHPowered保護／全員redrink sealed新SID→LOWsafeReturnOFF；32chunk512block遠望／回頭／pair96seam近/遠、Iris/shader與resource reload列人工pending；原生particles非bloom、optionalLight主副手torch不混server。M2自動＋taskreviews先綠再M3spike，人工/wholebranch收尾，不假已完成。
+- [ ] **Step 5: commit／review／handoff。** `test: 完成新版 M2 持久化 gate 與驗收指引`，只有本task獨立review；wholebranchreview仍在後續整體收尾一次，所有Minor/rulings/CI證據需交接。M3開始前文件明列沒有候選選擇/塌縮/family全量/passage。main不merge／無LICENSE／不刪owner或userworld直到所有必要gate明確關閉。
