@@ -346,7 +346,7 @@ context.assertTrue(player.getInventory().getStack(0).isOf(Items.TORCH), "入場�
 - Test scheduling: 五個既有 trusted heavy geometry case 各自獨立 batchId，保留原方法名稱、tickLimit100000、helper10秒／90000tick、全部FULL／loaded／ticking與多人／多SID／AABB／shared budget／cap斷言；只排除defaultBatch同時五份長廊載入的fixture資源干擾，不宣稱五Chambers並行或硬體效能通過，其餘測例不全套序列化。
 - Produces: `public boolean SessionTransferService.move(Entity,ServerWorld,Vec3d,Vec3d,float,float)` overload，處理items/projectiles的native傳送／同world重定位；核對真target Entity UUID/world/pose，可能新Entity物件需以UUID取得，不把舊removed物件當成功。
 
-- [ ] **Step 1: 原生來源斷電返還RED。** 在來源world移除電源，先確認RETURNING仍保護，再確認全部player原world/interior、session結束、原艙才可變更。不能只helper return true。
+- [x] **Step 1: 原生來源斷電返還RED。** 在來源world移除電源，先確認RETURNING仍保護，再確認全部player原world/interior、session結束、原艙才可變更。不能只helper return true。
 
 ```java
 sourceWorld.setBlockState(sourceController.getPos().up(), Blocks.AIR.getDefaultState(), 3);
@@ -358,11 +358,13 @@ context.assertTrue(ChamberProtectionService.get().mayMutate(sourceWorld, sourceC
 ```
 
 上述斷言於返還完成的waitAndRun／runAtTick執行；來源斷電時另以returnPending驗證仍保護，不把同一tick同步helper當真恢復事件。
-- [ ] **Step 2: 失敗與離線queue RED。** 真close EmbeddedChannel／ClientConnection觸發DISCONNECT，不以PlayerManager.remove冒充；重登callback尚未完成不得跨world，下一tick才恢復。錯source身分／missingworld／journal不可寫保留保護與slots。
-- [ ] **Step 3: 完整返還／恢復。** pending每人returned flags持久化後再清session；offline不當已returned。重啟全部舊session標RETURNING，恢復前禁止正常移動／門操作；已在原艙者可冪等確認，不重複消耗buff。STOPPING保存／釋放tickets，STOPPED清runtime；cleanup前先返還有價items、不unsafe清玩家腳下。高位重供電遇pending先完成舊返還。
-- [ ] **Step 4: GREEN頁面與群體。** 正負向長走／回頭、兩人跨96seam相近／遠分裂重聚、items／projectiles跨seam、移動途中斷電、source四朝向，底板與collision保持。資源不足不拆舊映射或遺失物品，記錄錯誤並安全返還。
-- [ ] **Step 4b: crash checkpoint GREEN。** W1 ARMING rollback 的RETURNING,true/returned=false，entry QS2400/amp1/hidden600/amp0已restore並持久marker；player checkpoint成功但returned flush拒絕，40ticks後再保存並中止owned fresh測試JVM；下JVM從真player.dat marker載入不重置回2400，重試成功才解鎖。committed分支新QS900/amp2同窗口保持新劑量而非entry snapshot。W2 journal ARMING,true、已真移動並消耗、A player checkpoint已保存但B checkpoint或SUPERPOSITION flush失敗，中止後全員回原艙並還原各entry1200/0與1800/1，第二次重啟不重套。另測native save正常返回但正式檔stale必拒絕。不得用STOPPING自動rollback修補窗口後宣稱crash proof；只中止本次建立且canonical runDir證實的測試JVM，不碰其他process。
-- [ ] **Step 5: 自評／提交。** `feat: recover corridor participants safely on power loss and reconnect`；逐項列真正event coverage與純seam coverage，未測visual保持待驗。
+- [x] **Step 2: 失敗與離線queue RED。** 真close EmbeddedChannel／ClientConnection觸發DISCONNECT，不以PlayerManager.remove冒充；重登callback尚未完成不得跨world，下一tick才恢復。錯source身分／missingworld／journal不可寫保留保護與slots。
+- [x] **Step 3: 完整返還／恢復。** pending每人returned flags持久化後再清session；offline不當已returned。重啟全部舊session標RETURNING，恢復前禁止正常移動／門操作；已在原艙者可冪等確認，不重複消耗buff。STOPPING保存／釋放tickets，STOPPED清runtime；cleanup前先返還有價items、不unsafe清玩家腳下。高位重供電遇pending先完成舊返還。
+- [x] **Step 4: GREEN頁面與群體。** 正負向長走／回頭、兩人跨96seam相近／遠分裂重聚、items／projectiles跨seam、移動途中斷電、source四朝向，底板與collision保持。資源不足不拆舊映射或遺失物品，記錄錯誤並安全返還。
+- [x] **Step 4b: crash checkpoint GREEN。** W1 ARMING rollback 的RETURNING,true/returned=false，entry QS2400/amp1/hidden600/amp0已restore並持久marker；player checkpoint成功但returned flush拒絕，40ticks後再保存並中止owned fresh測試JVM；下JVM從真player.dat marker載入不重置回2400，重試成功才解鎖。committed分支新QS900/amp2同窗口保持新劑量而非entry snapshot。W2 journal ARMING,true、已真移動並消耗、A player checkpoint已保存但B checkpoint或SUPERPOSITION flush失敗，中止後全員回原艙並還原各entry1200/0與1800/1，第二次重啟不重套。另測native save正常返回但正式檔stale必拒絕。不得用STOPPING自動rollback修補窗口後宣稱crash proof；只中止本次建立且canonical runDir證實的測試JVM，不碰其他process。
+- [x] **Step 5: 自評／提交。** `feat: recover corridor participants safely on power loss and reconnect`；逐項列真正event coverage與純seam coverage，未測visual保持待驗。
+
+Task4 implementation `e4509fc` 已獨立 spec／quality Approved（Critical0／Important0，兩項診斷／annotation warning Minor 留待 final）。最後非快取 clean build＋105 GameTests 綠；167 declared JVM tests＝166 實跑／1 本機 Windows 平台略過。最後 classes 的 W1 true／keep／W2 三個受控中止恢復鏈與 stale save 鏈綠，正式 NBT 分別保留2360／hidden560、860、W2 entry1200／1800與相同 marker，不補發／重套。main-only 無 testmod 的四 world Done→stop→save／exit0、JAR 邊界已驗；正常 Task5 phase／有價 entities 跨 JVM／部分票例外、遠端 CI 與人工 GPU／玩法未被此結果取代。未 push／合併 main。
 
 ### Task 5: 真live restart、production smoke、玩法指引與final review
 
