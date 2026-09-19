@@ -70,6 +70,17 @@ loom {
             server()
             runDir 'run/server'
         }
+        m3Universe {
+            server()
+            name 'M3 Universe Native Readback'
+            source sourceSets.testmod
+            def nonce = providers.gradleProperty('m3UniverseNonce').getOrElse('disabled')
+            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) {
+                throw new GradleException('M3 nonce 只能包含小寫英數與連字號')
+            }
+            // Loom runDir 只接受本專案相對路徑；探針仍須另外通過四個啟動參數檢查。
+            runDir "run/m3-universe-${nonce}"
+        }
         gameTest {
             server()
             name 'M1 Game Test'
