@@ -1,6 +1,5 @@
 package dev.quantumchamber.universe;
 
-import java.util.Locale;
 import java.util.Objects;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
@@ -14,7 +13,10 @@ public final class UniverseKeys {
     public static RegistryKey<World> world(UniverseId universeId, DimensionRole role) {
         Objects.requireNonNull(universeId, "universeId");
         Objects.requireNonNull(role, "role");
-        String path = "universe/" + universeId.value() + "/" + role.name().toLowerCase(Locale.ROOT);
+        if (role != DimensionRole.OVERWORLD) {
+            throw new IllegalArgumentException("schema 1 只支援 OVERWORLD world key");
+        }
+        String path = "universe/" + universeId.value() + "/overworld";
         return RegistryKey.of(RegistryKeys.WORLD, Identifier.of("quantumchamber", path));
     }
 }
