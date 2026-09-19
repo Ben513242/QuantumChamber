@@ -369,6 +369,139 @@ class Minecraft121BackendGuardTest {
         assertNull(fixture.worlds.get(owned().worldKey()));
     }
 
+    @Test
+    void throwingUnloadObserverStillClosesActiveWorldAndReleasesOwnerBeforeUnhealthyStop() {
+        var fixture = new UnloadFixture(false);
+        fixture.unloadFailure = new IllegalStateException("注入 UNLOAD observer 失敗");
+        assertEquals(UnloadResult.FAILED_UNHEALTHY, fixture.unload());
+        assertObserverCleanup(fixture);
+    }
+
+    @Test
+    void fatalUnloadObserverStillClosesActiveWorldBeforeRethrowingExactError() {
+        var fixture = new UnloadFixture(false);
+        fixture.unloadFailure = new InjectedFatalError();
+        assertSame(fixture.unloadFailure, assertThrows(InjectedFatalError.class, fixture::unload));
+        assertObserverCleanup(fixture);
+    }
+
+    @Test
+    void throwingQuarantineObserverStillClosesAndReleasesWithoutAnyMapMutation() {
+        var fixture = new UnloadFixture(true);
+        fixture.unloadFailure = new IllegalStateException("注入 quarantine observer 失敗");
+        assertEquals(UnloadResult.FAILED_UNHEALTHY, fixture.unload());
+        assertObserverCleanup(fixture);
+    }
+
+    @Test
+    void fatalQuarantineObserverStillClosesAndReleasesBeforeRethrowingExactError() {
+        var fixture = new UnloadFixture(true);
+        fixture.unloadFailure = new InjectedFatalError();
+        assertSame(fixture.unloadFailure, assertThrows(InjectedFatalError.class, fixture::unload));
+        assertObserverCleanup(fixture);
+    }
+
+    @Test
+    void observerAndCloseFailuresKeepOriginalCauseAndRetainFailedOwner() {
+        for (boolean quarantine : List.of(false, true)) {
+            var fixture = new UnloadFixture(quarantine);
+            fixture.unloadFailure = new IllegalStateException("原始 observer 失敗");
+            fixture.throwClose = true;
+            assertEquals(UnloadResult.FAILED_UNHEALTHY, fixture.unload());
+            assertArrayEquals(new Throwable[] {fixture.closeFailure}, fixture.unloadFailure.getSuppressed());
+            assertEquals(List.of(fixture.unloadFailure), fixture.stopCauses);
+            assertNull(fixture.worlds.get(owned().worldKey()));
+            assertEquals(DynamicWorldRuntimeState.UNLOAD_FAILED, fixture.runtime.state(fixture.server, owned()));
+            assertSame(fixture.expected, fixture.runtime.snapshot(fixture.server).getFirst().world());
+            assertEquals(quarantine ? List.of(fixture.expected) : List.of(), fixture.ownership.quarantined(fixture.server));
+            assertEquals(1, fixture.events.stream().filter("UNLOAD"::equals).count());
+            assertEquals(List.of("CLOSE", "STOP"), fixture.events.subList(fixture.events.size() - 2, fixture.events.size()));
+            assertTrue(fixture.ownership.isUnhealthy(fixture.server));
+        }
+    }
+
+    @Test
+    void fatalObserverKeepsCleanupAndStopFailuresSuppressedOnExactError() {
+        var fixture = new UnloadFixture(true);
+        fixture.unloadFailure = new InjectedFatalError();
+        fixture.throwClose = true;
+        fixture.stopFailure = new IllegalStateException("次級 stop 失敗");
+        assertSame(fixture.unloadFailure, assertThrows(InjectedFatalError.class, fixture::unload));
+        assertArrayEquals(new Throwable[] {fixture.closeFailure, fixture.stopFailure}, fixture.unloadFailure.getSuppressed());
+        assertEquals(List.of(fixture.unloadFailure), fixture.stopCauses);
+        assertEquals(DynamicWorldRuntimeState.UNLOAD_FAILED, fixture.runtime.state(fixture.server, owned()));
+        assertEquals(List.of(fixture.expected), fixture.ownership.quarantined(fixture.server));
+        assertFalse(fixture.events.contains("REMOVE"));
+        assertTrue(fixture.events.contains("CLOSE"));
+        assertTrue(fixture.ownership.isUnhealthy(fixture.server));
+    }
+
+    @Test
+    void cleanupFatalAfterObserverExceptionIsRethrownWithObserverCause() {
+        var fixture = new UnloadFixture(false);
+        fixture.unloadFailure = new IllegalStateException("原始 observer 失敗");
+        fixture.fatal = new InjectedFatalError();
+        assertSame(fixture.fatal, assertThrows(InjectedFatalError.class, fixture::unload));
+        assertArrayEquals(new Throwable[] {fixture.unloadFailure}, fixture.fatal.getSuppressed());
+        assertEquals(List.of(fixture.fatal), fixture.stopCauses);
+        assertNull(fixture.worlds.get(owned().worldKey()));
+        assertEquals(DynamicWorldRuntimeState.UNLOAD_FAILED, fixture.runtime.state(fixture.server, owned()));
+        assertTrue(fixture.ownership.isUnhealthy(fixture.server));
+    }
+
+    @Test
+    void throwingObserverCannotCloseOrRemoveForeignReplacement() {
+        for (boolean quarantine : List.of(false, true)) {
+            var fixture = new UnloadFixture(quarantine);
+            fixture.unloadFailure = new IllegalStateException("替換 map 後 observer 失敗");
+            fixture.replaceAtUnload = true;
+            assertEquals(UnloadResult.FAILED_UNHEALTHY, fixture.unload());
+            assertSame(fixture.stranger, fixture.worlds.get(owned().worldKey()));
+            assertTrue(fixture.events.contains("DISCARD"));
+            assertFalse(fixture.events.contains("REMOVE"));
+            assertFalse(fixture.events.contains("CLOSE"));
+            assertEquals(1, fixture.unloadFailure.getSuppressed().length);
+            assertInstanceOf(IllegalStateException.class, fixture.unloadFailure.getSuppressed()[0]);
+            assertEquals(List.of(fixture.unloadFailure), fixture.stopCauses);
+            assertEquals(DynamicWorldRuntimeState.UNLOAD_FAILED, fixture.runtime.state(fixture.server, owned()));
+            assertEquals(quarantine ? List.of(fixture.expected) : List.of(), fixture.ownership.quarantined(fixture.server));
+        }
+    }
+
+    @Test
+    void observerAndRemoveFailurePreserveCausesWithoutClosingMappedWorld() {
+        var fixture = new UnloadFixture(false);
+        fixture.unloadFailure = new IllegalStateException("原始 observer 失敗");
+        fixture.rejectRemove = true;
+        assertEquals(UnloadResult.FAILED_UNHEALTHY, fixture.unload());
+        assertSame(fixture.expected, fixture.worlds.get(owned().worldKey()));
+        assertTrue(fixture.events.contains("REMOVE"));
+        assertFalse(fixture.events.contains("CLOSE"));
+        assertEquals(1, fixture.unloadFailure.getSuppressed().length);
+        assertInstanceOf(IllegalStateException.class, fixture.unloadFailure.getSuppressed()[0]);
+        assertEquals(List.of(fixture.unloadFailure), fixture.stopCauses);
+        assertEquals(DynamicWorldRuntimeState.UNLOAD_FAILED, fixture.runtime.state(fixture.server, owned()));
+        assertEquals(UnloadResult.FAILED_UNHEALTHY, fixture.unload());
+        assertEquals(1, fixture.events.stream().filter("UNLOAD"::equals).count());
+    }
+
+    private static void assertObserverCleanup(UnloadFixture fixture) {
+        assertEquals(fixture.quarantine
+                ? List.of("RESOURCES", "DRAIN", "FLUSH", "POST_FLUSH", "UNLOAD", "DISCARD", "CLOSE", "STOP")
+                : List.of("RESOURCES", "DRAIN", "FLUSH", "POST_FLUSH", "UNLOAD", "DISCARD", "REMOVE", "CLOSE", "STOP"), fixture.events);
+        assertTrue(fixture.worlds.isEmpty());
+        assertTrue(fixture.runtime.snapshot(fixture.server).isEmpty());
+        assertTrue(fixture.ownership.quarantined(fixture.server).isEmpty());
+        assertEquals(DynamicWorldRuntimeState.ABSENT, fixture.runtime.state(fixture.server, owned()));
+        assertTrue(fixture.ownership.isUnhealthy(fixture.server));
+        assertFalse(fixture.ownership.isBusy(fixture.server));
+        assertEquals(List.of(fixture.unloadFailure), fixture.stopCauses);
+        assertEquals(0, fixture.unloadFailure.getSuppressed().length);
+        assertEquals(fixture.quarantine ? UnloadResult.REJECTED_BUSY : UnloadResult.FAILED_UNHEALTHY, fixture.unload());
+        assertEquals(1, fixture.events.stream().filter("UNLOAD"::equals).count());
+        assertEquals(1, fixture.events.stream().filter("STOP"::equals).count());
+    }
+
     private static final class UnloadFixture implements Minecraft121DynamicDimensionBackend.UnloadAccess<Object> {
         final Object server = new Object();
         final Object expected = new String("world");
@@ -377,6 +510,8 @@ class Minecraft121BackendGuardTest {
         final Minecraft121DynamicDimensionBackend.FailureOwnership<Object, RegistryKey<World>, Object> ownership =
                 new Minecraft121DynamicDimensionBackend.FailureOwnership<>();
         final List<String> events = new ArrayList<>();
+        final List<Throwable> stopCauses = new ArrayList<>();
+        final IOException closeFailure = new IOException("注入 close 失敗");
         final HashMap<RegistryKey<World>, Object> worlds = new HashMap<>() {
             @Override public boolean remove(Object key, Object value) {
                 events.add("REMOVE");
@@ -396,6 +531,8 @@ class Minecraft121BackendGuardTest {
         int drainCalls;
         boolean flushed;
         Error fatal;
+        Throwable unloadFailure;
+        RuntimeException stopFailure;
 
         UnloadFixture(boolean quarantine) {
             this.quarantine = quarantine;
@@ -415,7 +552,11 @@ class Minecraft121BackendGuardTest {
         UnloadResult unload() { return unload(server, expected); }
         UnloadResult unload(Object requestedServer, Object requestedWorld) {
             return Minecraft121DynamicDimensionBackend.unloadOwned(requestedServer, owned(), requestedWorld,
-                    worlds, runtime, ownership, this, failure -> events.add("STOP"), quarantine);
+                    worlds, runtime, ownership, this, failure -> {
+                        events.add("STOP");
+                        stopCauses.add(failure);
+                        if (stopFailure != null) throw stopFailure;
+                    }, quarantine);
         }
 
         @Override public boolean playersEmpty(Object world) { assertSame(expected, world); return !blocked.equals("PLAYERS"); }
@@ -444,6 +585,8 @@ class Minecraft121BackendGuardTest {
             assertTrue(flushed);
             assertSame(expected, world);
             if (replaceAtUnload) worlds.put(owned().worldKey(), stranger);
+            if (unloadFailure instanceof Error error) throw error;
+            if (unloadFailure instanceof RuntimeException exception) throw exception;
         }
         @Override public void discardWorld(Object world) { events.add("DISCARD"); assertSame(expected, world); }
         @Override public void close(Object world) throws IOException {
@@ -452,7 +595,7 @@ class Minecraft121BackendGuardTest {
             assertEquals(DynamicWorldRuntimeState.UNLOADING, runtime.state(server, owned()));
             if (quarantine) assertEquals(List.of(expected), ownership.quarantined(server));
             if (fatal != null) throw fatal;
-            if (throwClose) throw new IOException("注入 close 失敗");
+            if (throwClose) throw closeFailure;
         }
     }
 

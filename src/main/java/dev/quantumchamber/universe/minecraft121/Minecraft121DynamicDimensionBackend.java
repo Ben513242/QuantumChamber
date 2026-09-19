@@ -356,34 +356,59 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
         }
         failures.beginOperation(server);
         boolean quiesced = false;
+        boolean unloadStarted = false;
+        boolean ownerReleased = false;
+        Throwable pendingFailure = null;
         try {
-            if (quarantine) runtime.beginFailedUnload(server, descriptor, expected);
-            else runtime.beginUnload(server, descriptor, expected);
-            if (!quiesce(expected, access)) {
-                throw new IllegalStateException("無法取得 blocking final-flush 與 post-flush 無工作 receipt");
+            try {
+                if (quarantine) runtime.beginFailedUnload(server, descriptor, expected);
+                else runtime.beginUnload(server, descriptor, expected);
+                if (!quiesce(expected, access)) {
+                    throw new IllegalStateException("無法取得 blocking final-flush 與 post-flush 無工作 receipt");
+                }
+                quiesced = true;
+                requireMapIdentity(worlds.get(descriptor.worldKey()), quarantine ? null : expected);
+                // Invocation 開始即不可回退；observer 拋錯也不能略過收尾或重新 dispatch。
+                unloadStarted = true;
+                access.dispatchUnload(expected);
+            } catch (Exception | Error failure) {
+                pendingFailure = failure;
             }
-            quiesced = true;
-            requireMapIdentity(worlds.get(descriptor.worldKey()), quarantine ? null : expected);
-            access.dispatchUnload(expected);
-            access.discardWorld(expected);
-            requireMapIdentity(worlds.get(descriptor.worldKey()), quarantine ? null : expected);
-            if (!quarantine && !worlds.remove(descriptor.worldKey(), expected)) {
-                throw new IllegalStateException("exact world remove 未成功");
+            if (unloadStarted) {
+                try {
+                    access.discardWorld(expected);
+                    requireMapIdentity(worlds.get(descriptor.worldKey()), quarantine ? null : expected);
+                    if (!quarantine && !worlds.remove(descriptor.worldKey(), expected)) {
+                        throw new IllegalStateException("exact world remove 未成功");
+                    }
+                    access.close(expected);
+                    requireMapIdentity(worlds.get(descriptor.worldKey()), null);
+                    runtime.release(server, descriptor, expected);
+                    ownerReleased = true;
+                    if (quarantine) failures.releaseQuarantine(server, expected);
+                } catch (Exception | Error cleanupFailure) {
+                    pendingFailure = combineUnloadFailures(pendingFailure, cleanupFailure);
+                }
             }
-            access.close(expected);
-            requireMapIdentity(worlds.get(descriptor.worldKey()), null);
-            runtime.release(server, descriptor, expected);
-            if (quarantine) failures.releaseQuarantine(server, expected);
-            return UnloadResult.UNLOADED;
-        } catch (Exception failure) {
-            recordUnloadFailure(server, descriptor, expected, runtime, failures, failure, stopUnhealthy);
+            if (pendingFailure == null) return UnloadResult.UNLOADED;
+            recordUnloadFailure(server, descriptor, expected, runtime, failures, pendingFailure,
+                    stopUnhealthy, ownerReleased);
+            if (pendingFailure instanceof Error fatal) throw fatal;
             return quiesced ? UnloadResult.FAILED_UNHEALTHY : UnloadResult.UNLOAD_UNSUPPORTED;
-        } catch (Error fatal) {
-            recordUnloadFailure(server, descriptor, expected, runtime, failures, fatal, stopUnhealthy);
-            throw fatal;
         } finally {
             failures.endOperation(server);
         }
+    }
+
+    private static Throwable combineUnloadFailures(Throwable original, Throwable cleanupFailure) {
+        if (original == null || original == cleanupFailure) return cleanupFailure;
+        // 原始 Error 保持 exact identity；普通 observer exception 遇 cleanup Error 則保留為 suppressed。
+        if (original instanceof Error || !(cleanupFailure instanceof Error)) {
+            suppress(original, cleanupFailure);
+            return original;
+        }
+        suppress(cleanupFailure, original);
+        return cleanupFailure;
     }
 
     private static <W> boolean quiesce(W expected, UnloadAccess<W> access) throws Exception {
@@ -401,11 +426,14 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
 
     private static <S, W> void recordUnloadFailure(S server, UniverseWorldDescriptor descriptor, W expected,
             UniverseRuntimeRegistry<S, W> runtime, FailureOwnership<S, RegistryKey<World>, W> failures,
-            Throwable failure, Consumer<Throwable> stopUnhealthy) {
-        try {
-            runtime.fail(server, descriptor, expected);
-        } catch (Throwable receiptFailure) {
-            suppress(failure, receiptFailure);
+            Throwable failure, Consumer<Throwable> stopUnhealthy, boolean ownerReleased) {
+        // 收尾已 release 的 owner 不再建立虛假的 UNLOAD_FAILED；server 仍必須 unhealthy／stop。
+        if (!ownerReleased) {
+            try {
+                runtime.fail(server, descriptor, expected);
+            } catch (Throwable receiptFailure) {
+                suppress(failure, receiptFailure);
+            }
         }
         failures.markUnhealthy(server);
         try {
