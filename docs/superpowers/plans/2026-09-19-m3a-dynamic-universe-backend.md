@@ -417,6 +417,7 @@ git commit -m "test: prove dynamic universe restart readback"
 - Modify: `src/main/java/dev/quantumchamber/universe/minecraft121/Minecraft121DynamicDimensionBackend.java`
 - Modify: `src/main/java/dev/quantumchamber/universe/UniverseRuntimeRegistry.java`
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberControllerLoadSyncQueue.java`
+- Modify: `src/test/java/dev/quantumchamber/universe/Minecraft121BackendGuardTest.java`
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java`
 - Modify: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/run-gate-a.ps1`
 - Create: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/task-7-gate-b-report.md`
@@ -426,19 +427,19 @@ git commit -m "test: prove dynamic universe restart readback"
 
 - [ ] **Step 1: 寫 Gate B RED phase**
 
-Phase `unload-replace` 先讀sentinel，再要求 A→unload receipt→map absent→B same key/different instance→sentinel readback。Phase `final-verify` 在第三JVM由catalog重建並再次只讀。
+Phase `unload-replace` 先讀sentinel，再要求 A→unload receipt→map absent→B same key/different instance→sentinel readback。Phase `final-verify` 在第三JVM由catalog重建並再次只讀。另加純 branch tests：R6 quarantine 在 foreign replacement仍佔原key時必保持 `REJECTED_BUSY` 且不碰陌生instance；原key釋放後才可走同一quiesce/final-flush/UNLOAD/close contract並移除strong reference。
 
 - [ ] **Step 2: 實作 quiesce fail-loud**
 
-順序固定：阻止新backend操作 → 驗players為空、forced chunks為空、自有tickets可撤 → remove自有tickets/listener → 重複 `ServerChunkManager.executeQueuedTasks()` 到明確無進度且受上限保護 → 以pinned 1.21 primary source確認會等待chunk/entity storage的 `world.save(null,true,false)` final flush → 再執行一次queued-task check。`executeQueuedTasks()==false` 單獨絕不算quiesced；缺primary-source-backed blocking flush receipt、flush拋錯或post-flush仍有工作，都回 `UNLOAD_UNSUPPORTED`，不remove map。
+順序固定：阻止新backend操作 → 驗players為空、forced chunks為空、自有tickets可撤 → remove自有tickets/listener → 重複 `ServerChunkManager.executeQueuedTasks()` 到明確無進度且受上限保護 → 以pinned 1.21 primary source確認會等待chunk/entity storage的 `world.save(null,true,false)` final flush → 再執行一次queued-task check。`executeQueuedTasks()==false` 單獨絕不算quiesced；缺primary-source-backed blocking flush receipt、flush拋錯或post-flush仍有工作，都回 `UNLOAD_UNSUPPORTED`，不remove map。R6 quarantine cleanup 使用相同quiesce helper，但 foreign replacement仍在原key時不得save/close或清strong reference。
 
 - [ ] **Step 3: 實作 destructive boundary**
 
-Final flush後：explicit UNLOAD once → `discardWorld(expected)` → `worlds.remove(key,expected)` → `expected.close()` → verify absent/release owner。Remove或close後失敗一律 `FAILED_UNHEALTHY`，禁止replacement並正常停止；不得重新掛回半close world。
+Final flush後：explicit UNLOAD once → `discardWorld(expected)` → active world才做`worlds.remove(key,expected)` → `expected.close()` → verify absent/release owner。R6 quarantine world本來不在map，只能在原key無foreign owner時save/UNLOAD/close並於close成功後移除strong reference，不得刪任何map entry。Remove或close後失敗一律 `FAILED_UNHEALTHY`，禁止replacement並正常停止；不得重新掛回半close world。
 
 - [ ] **Step 4: 執行 Gate B**
 
-使用Gate A同一owned world依序跑 `unload-replace`、`final-verify`，每phase新PID且前一個完整退出。要求LOAD/UNLOAD exact count、A/B identity、storage lock釋放、舊queue receipt為world unload/identity drop、region hash可解釋。
+使用Gate A同一owned world依序跑 `unload-replace`、`final-verify`，每phase新PID且前一個完整退出。要求LOAD/UNLOAD exact count、A/B identity、storage lock釋放、舊queue receipt為world unload/identity drop、region hash可解釋；same-key B的新queue entry不得被A的`discardWorld(expected)`清除。Task 5 quarantine tests及runtime registry snapshot最後必為空，否則Task 7不可PASS、Task 8不可開始。
 
 - [ ] **Step 5: 完整 regression**
 
@@ -449,7 +450,7 @@ Final flush後：explicit UNLOAD once → `discardWorld(expected)` → `worlds.r
 - [ ] **Step 6: 兩階段 review、commit**
 
 ```powershell
-git add src/main/java/dev/quantumchamber/universe src/main/java/dev/quantumchamber/chamber src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java
+git add src/main/java/dev/quantumchamber/universe src/main/java/dev/quantumchamber/chamber src/test/java/dev/quantumchamber/universe/Minecraft121BackendGuardTest.java src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java
 git commit -m "feat: unload and replace dynamic worlds safely"
 ```
 
