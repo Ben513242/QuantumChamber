@@ -16,11 +16,13 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.registry.RegistryKey;
@@ -36,7 +38,7 @@ import org.slf4j.LoggerFactory;
 public final class Minecraft121DynamicDimensionBackend implements DynamicDimensionBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger(Minecraft121DynamicDimensionBackend.class);
     private final UniverseRuntimeRegistry<MinecraftServer, ServerWorld> runtime = new UniverseRuntimeRegistry<>();
-    private final Set<MinecraftServer> unhealthy = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final FailureOwnership<MinecraftServer, RegistryKey<World>, ServerWorld> failures = new FailureOwnership<>();
     private final Map<ServerWorld, BorderBinding> borders = new IdentityHashMap<>();
     private final Minecraft121ServerWorldFactory factory = new Minecraft121ServerWorldFactory();
 
@@ -44,7 +46,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
     public MaterializeResult materialize(MinecraftServer server, UniverseWorldDescriptor descriptor) {
         requireThread(server);
         Objects.requireNonNull(descriptor, "descriptor");
-        if (unhealthy.contains(server)) {
+        if (failures.isUnhealthy(server)) {
             return result(MaterializeResult.Status.FAILED_UNHEALTHY);
         }
         var access = (MinecraftServerDynamicWorldAccess) server;
@@ -67,9 +69,15 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
         } catch (IOException | RuntimeException failure) {
             LOGGER.error("拒絕物化 {}：guard 未通過", descriptor.worldKey().getValue(), failure);
             return result(MaterializeResult.Status.REJECTED);
+        } catch (Error fatal) {
+            return result(finishFailure(fatal, null, cause -> failUnhealthy(server, descriptor, cause)));
         }
 
-        runtime.beginMaterialize(server, descriptor);
+        try {
+            runtime.beginMaterialize(server, descriptor);
+        } catch (Error fatal) {
+            return result(finishFailure(fatal, null, cause -> failUnhealthy(server, descriptor, cause)));
+        }
         ServerWorld created = null;
         boolean published = false;
         boolean loadStarted = false;
@@ -92,23 +100,45 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
             loadStarted = true;
             ServerWorldEvents.LOAD.invoker().onWorldLoad(server, created);
             requireWorldIdentity(server, descriptor, created);
+            var success = new MaterializeResult(MaterializeResult.Status.MATERIALIZED, created);
             runtime.activate(server, descriptor, created);
-            return new MaterializeResult(MaterializeResult.Status.MATERIALIZED, created);
-        } catch (Throwable failure) {
-            runtime.fail(server, descriptor, null);
-            // LOAD 開始後 observer 可能已有票據／工作；Gate B 前交由正常 shutdown 保存與關閉。
-            if (loadStarted || created == null) {
-                return failUnhealthy(server, descriptor, failure);
-            }
-            try {
-                rollbackUnpublished(worlds, descriptor, created, published);
-                LOGGER.error("物化 {} 失敗，已撤回未公開給 LOAD 的 world", descriptor.worldKey().getValue(), failure);
-                return result(MaterializeResult.Status.FAILED_ROLLED_BACK);
-            } catch (Throwable rollbackFailure) {
-                failure.addSuppressed(rollbackFailure);
-                return failUnhealthy(server, descriptor, failure);
-            }
+            return success;
+        } catch (Exception failure) {
+            return completeFailure(server, descriptor, worlds, created, published, loadStarted, failure);
+        } catch (Error fatal) {
+            return completeFailure(server, descriptor, worlds, created, published, loadStarted, fatal);
         }
+    }
+
+    private MaterializeResult completeFailure(MinecraftServer server, UniverseWorldDescriptor descriptor,
+            Map<RegistryKey<World>, ServerWorld> worlds, ServerWorld created, boolean published,
+            boolean loadStarted, Throwable failure) {
+        FailureAction recovery = loadStarted
+                ? () -> failures.retainAfterLoadFailure(server, descriptor.worldKey(), created, worlds)
+                : created != null ? () -> rollbackUnpublished(worlds, descriptor, created, published) : null;
+        if (failure instanceof Error fatal) {
+            // 已有致命 Error 時，receipt 的次級失敗不得遮蔽原始 Error 或阻止正常 stop。
+            try {
+                runtime.fail(server, descriptor, null);
+            } catch (Throwable receiptFailure) {
+                suppress(fatal, receiptFailure);
+            }
+            return result(finishFailure(fatal, recovery, cause -> failUnhealthy(server, descriptor, cause)));
+        }
+        try {
+            runtime.fail(server, descriptor, null);
+            if (loadStarted) {
+                recovery.run();
+            }
+        } catch (Error fatal) {
+            suppress(fatal, failure);
+            return completeFailure(server, descriptor, worlds, created, published, loadStarted, fatal);
+        } catch (Exception receiptFailure) {
+            suppress(failure, receiptFailure);
+            return failUnhealthy(server, descriptor, failure);
+        }
+        return result(finishFailure(failure, loadStarted ? null : recovery,
+                cause -> failUnhealthy(server, descriptor, cause)));
     }
 
     @Override
@@ -121,7 +151,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
     public Optional<ServerWorld> resolveActive(MinecraftServer server, UniverseWorldDescriptor descriptor) {
         requireThread(server);
         Objects.requireNonNull(descriptor, "descriptor");
-        if (unhealthy.contains(server)) {
+        if (failures.isUnhealthy(server)) {
             return Optional.empty();
         }
         return runtime.resolveActive(server, descriptor).filter(world -> world.getServer() == server
@@ -164,14 +194,88 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
 
     private MaterializeResult failUnhealthy(MinecraftServer server, UniverseWorldDescriptor descriptor,
             Throwable failure) {
-        unhealthy.add(server);
-        LOGGER.error("動態 world backend 已不健康，保留 {} 資料並請求正常停止", descriptor.worldKey().getValue(), failure);
-        server.stop(false);
+        failures.markUnhealthy(server);
+        try {
+            LOGGER.error("動態 world backend 已不健康，{} quarantine={}；請求正常停止，quarantine 尚未證明 save/close",
+                    descriptor.worldKey().getValue(), failures.quarantined(server).size(), failure);
+        } finally {
+            server.stop(false);
+        }
         return result(MaterializeResult.Status.FAILED_UNHEALTHY);
     }
 
     private static MaterializeResult result(MaterializeResult.Status status) {
         return new MaterializeResult(status, null);
+    }
+
+    static MaterializeResult.Status finishFailure(Throwable failure, FailureAction rollback,
+            Consumer<Throwable> stopUnhealthy) {
+        Throwable terminal = failure;
+        boolean rolledBack = false;
+        if (rollback != null) {
+            try {
+                rollback.run();
+                rolledBack = true;
+            } catch (Exception rollbackFailure) {
+                suppress(failure, rollbackFailure);
+            } catch (Error rollbackFatal) {
+                if (failure instanceof Error) {
+                    suppress(failure, rollbackFatal);
+                } else {
+                    suppress(rollbackFatal, failure);
+                    terminal = rollbackFatal;
+                }
+            }
+        }
+        // 所有 Error（含 AssertionError）都代表未證明可恢復的 VM／連結／不變量失敗。
+        if (terminal instanceof Error fatal) {
+            try {
+                stopUnhealthy.accept(fatal);
+            } catch (Throwable stopFailure) {
+                suppress(fatal, stopFailure);
+            }
+            throw fatal;
+        }
+        if (rolledBack) {
+            LOGGER.error("物化失敗，已撤回尚未發出 LOAD 的 world", failure);
+            return MaterializeResult.Status.FAILED_ROLLED_BACK;
+        }
+        stopUnhealthy.accept(terminal);
+        return MaterializeResult.Status.FAILED_UNHEALTHY;
+    }
+
+    private static void suppress(Throwable primary, Throwable secondary) {
+        if (primary != secondary) {
+            primary.addSuppressed(secondary);
+        }
+    }
+
+    @FunctionalInterface
+    interface FailureAction {
+        void run() throws Exception;
+    }
+
+    static final class FailureOwnership<S, K, W> {
+        private final Set<S> unhealthy = Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Map<S, Set<W>> quarantine = new IdentityHashMap<>();
+
+        void retainAfterLoadFailure(S server, K key, W created, Map<K, W> worlds) {
+            markUnhealthy(server);
+            W current = worlds.putIfAbsent(key, created);
+            if (current != null && current != created) {
+                // R6：不取代陌生 owner；只保留強參照，Task 7 quiesce 前不宣稱已 save/close。
+                quarantine.computeIfAbsent(server, ignored -> Collections.newSetFromMap(new IdentityHashMap<>()))
+                        .add(created);
+            }
+        }
+
+        void markUnhealthy(S server) { unhealthy.add(server); }
+
+        boolean isUnhealthy(S server) { return unhealthy.contains(server); }
+
+        List<W> quarantined(S server) {
+            return List.copyOf(quarantine.getOrDefault(server, Set.of()));
+        }
     }
 
     static void requireVersion(String version) {
