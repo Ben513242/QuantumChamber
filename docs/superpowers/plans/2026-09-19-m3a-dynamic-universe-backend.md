@@ -375,8 +375,8 @@ git commit -m "feat: materialize pinned Minecraft 1.21 worlds"
 - Create: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java`
 - Modify: `src/testmod/resources/fabric.mod.json`
 - Modify: `build.gradle`
-- Create: `.superpowers/sdd/2026-09-19-m3-dynamic-universe/run-gate-a.ps1`
-- Create: `.superpowers/sdd/2026-09-19-m3-dynamic-universe/task-6-gate-a-report.md`
+- Create: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/run-gate-a.ps1`
+- Create: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/task-6-gate-a-report.md`
 
 **Interfaces:**
 - Phase `create-save`：正式 registry allocate+flush後materialize、寫sentinel/controller。
@@ -418,8 +418,8 @@ git commit -m "test: prove dynamic universe restart readback"
 - Modify: `src/main/java/dev/quantumchamber/universe/UniverseRuntimeRegistry.java`
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberControllerLoadSyncQueue.java`
 - Modify: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java`
-- Modify: `.superpowers/sdd/2026-09-19-m3-dynamic-universe/run-gate-a.ps1`
-- Create: `.superpowers/sdd/2026-09-19-m3-dynamic-universe/task-7-gate-b-report.md`
+- Modify: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/run-gate-a.ps1`
+- Create: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/task-7-gate-b-report.md`
 
 **Interfaces:**
 - Produces: `unload(...expectedWorld)` with exact `UNLOADED` receipt；同 key replacement只接受該receipt。
@@ -498,7 +498,7 @@ git commit -m "feat: bootstrap persistent dynamic universes"
 **Files:**
 - Modify: `docs/implementation-notes/2026-09-19-m3-runtime-dimension-feasibility.md`
 - Create: `docs/implementation-notes/2026-09-19-m3a-dynamic-universe-backend.md`
-- Create: `.superpowers/sdd/2026-09-19-m3-dynamic-universe/final-gate-report.md`
+- Create: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/final-gate-report.md`
 
 **Interfaces:**
 - Produces: 可供 M3-B 信任的 exact commit、Gate A/B receipts與known limitations。
