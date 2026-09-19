@@ -350,7 +350,7 @@ Factory 使用同 server registry manager 的 Overworld `DimensionOptions`、`Un
 
 - [ ] **Step 4: 實作 materialize transaction**
 
-順序固定：guards → construct → border listener → `putIfAbsent` → identity checks → explicit `ServerWorldEvents.LOAD.invoker().onWorldLoad` → runtime active。Publish後失敗按 LOAD是否已發生執行 early rollback；rollback任何錯誤回 `FAILED_UNHEALTHY`。
+順序固定：guards → construct → border listener → `putIfAbsent` → identity checks → explicit `ServerWorldEvents.LOAD.invoker().onWorldLoad` → runtime active。LOAD dispatch前失敗可expected-remove並close尚未對observer公開的world；LOAD dispatch已開始後若失敗，在Task 7 Gate B前不得使用未證early unload，必須保留exact world於map、標記`FAILED_UNHEALTHY`並請求正常stop，交給vanilla shutdown save/UNLOAD/close。Task 7證明quiesce後才補完整publish後rollback。
 
 - [ ] **Step 5: 編譯、unit tests與main-only server smoke**
 
