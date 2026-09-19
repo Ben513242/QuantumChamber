@@ -464,6 +464,7 @@ git commit -m "feat: unload and replace dynamic worlds safely"
 - Modify: `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`
 - Test: `src/test/java/dev/quantumchamber/universe/UniverseRoleResolverTest.java`
 - Testmod: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseLifecycleGameTests.java`
+- Modify: `src/testmod/resources/fabric.mod.json`
 
 **Interfaces:**
 - Consumes: Gate A/B-proven backend。
@@ -488,7 +489,7 @@ git commit -m "feat: unload and replace dynamic worlds safely"
 - [ ] **Step 5: 兩階段 review、commit**
 
 ```powershell
-git add src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java src/main/java/dev/quantumchamber/universe src/test/java/dev/quantumchamber/universe src/testmod/java/dev/quantumchamber/gametest/M3UniverseLifecycleGameTests.java
+git add src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java src/main/java/dev/quantumchamber/universe src/test/java/dev/quantumchamber/universe src/testmod/java/dev/quantumchamber/gametest/M3UniverseLifecycleGameTests.java src/testmod/resources/fabric.mod.json
 git commit -m "feat: bootstrap persistent dynamic universes"
 ```
 
