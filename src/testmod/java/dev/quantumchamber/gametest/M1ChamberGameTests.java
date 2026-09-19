@@ -958,11 +958,16 @@ public final class M1ChamberGameTests implements FabricGameTest {
         context.assertTrue(world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4) == null, "測試前 chunk 未載入");
         var detached = new ChamberControllerBlockEntity(pos, ModBlocks.CHAMBER_CONTROLLER.getDefaultState());
         detached.setWorld(world);
+        var receipts = ChamberLoadSyncTestAccess.observe(world, detached);
         ChamberControllerLoadSyncQueue.enqueue(world, detached);
         context.waitAndRun(2, () -> {
-            context.assertTrue(world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4) == null, "queue 不得強載 chunk");
-            context.assertTrue(!detached.powerInitialized(), "未載入 chunk 的 BE 不得同步");
-            context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), detached), "未載入 chunk 的 entry 已丟棄");
+            try (receipts) {
+                context.assertTrue(world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4) == null, "queue 不得強載 chunk");
+                context.assertTrue(!detached.powerInitialized(), "未載入 chunk 的 BE 不得同步");
+                context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), detached), "未載入 chunk 的 entry 已丟棄");
+                context.assertEquals(receipts.outcomes(), List.of(ChamberLoadSyncOutcome.REQUEUED_NOT_DUE,
+                        ChamberLoadSyncOutcome.DROPPED_NO_FULL_CHUNK), "必須由未 FULL 分支丟棄");
+            }
             context.complete();
         });
     }
@@ -974,6 +979,7 @@ public final class M1ChamberGameTests implements FabricGameTest {
         world.setBlockState(context.getAbsolutePos(pos.up()), Blocks.REDSTONE_BLOCK.getDefaultState(), 2);
         context.setBlockState(pos, ModBlocks.CHAMBER_CONTROLLER);
         var original = (ChamberControllerBlockEntity) context.getBlockEntity(pos);
+        var receipts = ChamberLoadSyncTestAccess.observe(world, original);
         context.waitAndRun(1, () -> {
             world.removeBlockEntity(context.getAbsolutePos(pos));
             var replacement = new ChamberControllerBlockEntity(context.getAbsolutePos(pos), original.getCachedState());
@@ -982,9 +988,13 @@ public final class M1ChamberGameTests implements FabricGameTest {
             // 即使舊物件的 removed flag 已被清除，也必須由 current BE identity 排除它。
             original.cancelRemoval();
             context.waitAndRun(1, () -> {
-                context.assertTrue(!replacement.wasPowered(), "舊 entry 不得提前同步替代 BE");
-                context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), original), "舊 identity entry 已丟棄");
-                context.assertTrue(ChamberLoadSyncTestAccess.hasPending(world.getServer(), replacement), "新 entry 要等自己的 due tick");
+                try (receipts) {
+                    context.assertTrue(!replacement.wasPowered(), "舊 entry 不得提前同步替代 BE");
+                    context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), original), "舊 identity entry 已丟棄");
+                    context.assertTrue(ChamberLoadSyncTestAccess.hasPending(world.getServer(), replacement), "新 entry 要等自己的 due tick");
+                    context.assertEquals(receipts.outcomes(), List.of(ChamberLoadSyncOutcome.REQUEUED_NOT_DUE,
+                            ChamberLoadSyncOutcome.DROPPED_REPLACED_BE), "必須辨識 current BE identity 不符");
+                }
             });
             context.waitAndRun(2, () -> {
                 context.assertTrue(replacement.wasPowered(), "新 BE 在自己的 due tick 才同步");

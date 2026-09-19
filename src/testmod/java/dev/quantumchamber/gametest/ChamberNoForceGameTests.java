@@ -36,6 +36,7 @@ public final class ChamberNoForceGameTests implements FabricGameTest {
         var chunkPos = new ChunkPos(chunkX, chunkZ);
         // level 33 只維持 C 所在 chunk 為 FULL，不把鄰接 chunk 提升到 FULL。
         manager.addTicket(TICKET, chunkPos, 0, chunkPos);
+        ChamberLoadSyncTestAccess.Observation receipts = null;
         try {
             var chunk = world.getChunk(chunkX, chunkZ);
             var pos = new BlockPos(chunkX * 16 + (strong ? 14 : 15), 70, chunkZ * 16 + 8);
@@ -51,6 +52,8 @@ public final class ChamberNoForceGameTests implements FabricGameTest {
             registry.setPowerState(uuid, ChamberPowerState.OFF);
             controller.setPowerInitialized(false);
             controller.setWasPowered(true);
+            var observation = ChamberLoadSyncTestAccess.observe(world, controller);
+            receipts = observation;
             ChamberControllerLoadSyncQueue.enqueue(world, controller);
             context.assertTrue(manager.getWorldChunk(chunkX, chunkZ) == chunk, "C 已 FULL");
             context.assertTrue(manager.getWorldChunk(chunkX + 1, chunkZ) == null, "讀電位前鄰接 chunk 未 FULL");
@@ -63,6 +66,8 @@ public final class ChamberNoForceGameTests implements FabricGameTest {
                     context.assertTrue(manager.getWorldChunk(chunkX, chunkZ) == chunk, "queue 執行時 C 仍 FULL");
                     context.assertTrue(manager.getWorldChunk(chunkX + 1, chunkZ) == null, "原生 queue 也不得強載鄰接 chunk");
                     context.assertTrue(ChamberLoadSyncTestAccess.hasPending(world.getServer(), controller), "缺鄰格保留重試");
+                    context.assertTrue(observation.outcomes().contains(ChamberLoadSyncOutcome.REQUEUED_NEIGHBOR_NOT_READY), "必須實際經過缺鄰格重排分支");
+                    context.assertTrue(!observation.outcomes().contains(ChamberLoadSyncOutcome.CONSUMED), "鄰格未齊不得消耗 token");
                     context.assertTrue(!controller.powerInitialized() && controller.wasPowered(), "重試不得發布假低位");
                     // 只有測試明示載入缺少的鄰區；production 仍只能唯讀 FULL。
                     world.getChunk(chunkX + 1, chunkZ);
@@ -70,21 +75,40 @@ public final class ChamberNoForceGameTests implements FabricGameTest {
                         try {
                             context.assertTrue(controller.powerInitialized() && !controller.wasPowered(), "鄰格齊全後重讀真實低位");
                             context.assertTrue(!ChamberLoadSyncTestAccess.hasPending(world.getServer(), controller), "完成後釋放 queue");
+                            var outcomes = observation.outcomes();
+                            int retried = outcomes.indexOf(ChamberLoadSyncOutcome.REQUEUED_NEIGHBOR_NOT_READY);
+                            int consumed = outcomes.indexOf(ChamberLoadSyncOutcome.CONSUMED);
+                            context.assertTrue(retried >= 0 && consumed > retried
+                                            && outcomes.stream().filter(outcome -> outcome == ChamberLoadSyncOutcome.CONSUMED).count() == 1,
+                                    "receipt 必須先缺鄰格重排，再且僅消耗一次：" + outcomes);
+                            for (int index = 0; index < outcomes.size(); index++) {
+                                var outcome = outcomes.get(index);
+                                boolean expected = index < consumed
+                                        ? outcome == ChamberLoadSyncOutcome.REQUEUED_NOT_DUE
+                                                || outcome == ChamberLoadSyncOutcome.REQUEUED_NEIGHBOR_NOT_READY
+                                        : index == consumed
+                                                ? outcome == ChamberLoadSyncOutcome.CONSUMED
+                                                : outcome == ChamberLoadSyncOutcome.DROPPED_PENDING_TOKEN_MISSING;
+                                context.assertTrue(expected, "僅允許消耗前重排，消耗後丟棄重複 entry 的缺失 token：" + outcomes);
+                            }
                             context.assertEquals(ChamberPowerState.OFF, registry.records().get(uuid).powerState(), "保留同一 OFF 紀錄");
                             context.assertTrue(world.removeBlock(pos, false), "協調完成才開放普通拆除");
                             context.assertTrue(!registry.records().containsKey(uuid), "成功移除清原 UUID");
                         } finally {
                             manager.removeTicket(TICKET, chunkPos, 0, chunkPos);
+                            observation.close();
                         }
                         context.complete();
                     });
                 } catch (RuntimeException | Error failure) {
                     manager.removeTicket(TICKET, chunkPos, 0, chunkPos);
+                    observation.close();
                     throw failure;
                 }
             });
         } catch (RuntimeException | Error failure) {
             manager.removeTicket(TICKET, chunkPos, 0, chunkPos);
+            if (receipts != null) receipts.close();
             throw failure;
         }
     }
