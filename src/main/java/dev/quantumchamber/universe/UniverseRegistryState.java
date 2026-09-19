@@ -82,7 +82,10 @@ public final class UniverseRegistryState extends PersistentState {
             }
             requireType(nbt, "Records", NbtElement.LIST_TYPE);
             var rawRecords = (NbtList) nbt.get("Records");
-            if (!rawRecords.isEmpty() && rawRecords.getHeldType() != NbtElement.COMPOUND_TYPE) {
+            int expectedHeldType = rawRecords.isEmpty()
+                    ? NbtElement.END_TYPE
+                    : NbtElement.COMPOUND_TYPE;
+            if (rawRecords.getHeldType() != expectedHeldType) {
                 throw new IllegalArgumentException("Records 必須包含 compound");
             }
             var decoded = new ArrayList<UniverseRecord>(rawRecords.size());

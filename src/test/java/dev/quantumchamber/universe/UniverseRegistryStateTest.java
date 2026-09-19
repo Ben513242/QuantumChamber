@@ -5,15 +5,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtInt;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.NbtSizeTracker;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -102,6 +108,27 @@ class UniverseRegistryStateTest {
     }
 
     @Test
+    void zeroLengthRecordListAcceptsOnlyCanonicalEndHeldType() throws Exception {
+        var canonical = new NbtCompound();
+        canonical.putInt("SchemaVersion", 1);
+        canonical.put("Records", new NbtList());
+        UniverseRegistryState.fromNbt(canonical).requireHealthy();
+
+        for (byte heldType = NbtElement.BYTE_TYPE; heldType <= NbtElement.LONG_ARRAY_TYPE; heldType++) {
+            var malformed = catalogWithZeroLengthRecords(heldType);
+            var records = (NbtList) malformed.get("Records");
+            assertTrue(records.isEmpty());
+            assertEquals(heldType, records.getHeldType());
+
+            var loaded = UniverseRegistryState.fromNbt(malformed);
+
+            assertThrows(IllegalStateException.class, loaded::requireHealthy,
+                    "zero-length Records 宣告 held type " + heldType + " 時必須 fail closed");
+            assertThrows(IllegalStateException.class, loaded::records);
+        }
+    }
+
+    @Test
     void pathInventoryAllowsKnownStorageAndMarksUnknownOwnedStorageOrphaned() throws Exception {
         var state = new UniverseRegistryState();
         var record = state.allocateOverworld(ID, 7);
@@ -133,5 +160,24 @@ class UniverseRegistryStateTest {
                 UniverseRegistryState.inspectStorage(root.resolve("orphan-storage"), records));
         assertTrue(Files.exists(orphanRegion), "盤點不得刪除 orphan storage");
         assertEquals(record, state.find(UniverseId.of(ID)).orElseThrow());
+    }
+
+    private static NbtCompound catalogWithZeroLengthRecords(byte heldType) throws Exception {
+        var bytes = new ByteArrayOutputStream();
+        try (var output = new DataOutputStream(bytes)) {
+            output.writeByte(NbtElement.COMPOUND_TYPE);
+            output.writeUTF("");
+            output.writeByte(NbtElement.INT_TYPE);
+            output.writeUTF("SchemaVersion");
+            output.writeInt(1);
+            output.writeByte(NbtElement.LIST_TYPE);
+            output.writeUTF("Records");
+            output.writeByte(heldType);
+            output.writeInt(0);
+            output.writeByte(NbtElement.END_TYPE);
+        }
+        try (var input = new DataInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
+            return NbtIo.readCompound(input, NbtSizeTracker.ofUnlimitedBytes());
+        }
     }
 }
