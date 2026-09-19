@@ -115,7 +115,7 @@ public final class ChamberControllerLoadSyncQueue {
         }
     }
 
-    static void discardWorld(ServerWorld expected) {
+    public static void discardWorld(ServerWorld expected) {
         MinecraftServer server = expected.getServer();
         requireServerThread(server);
         var queue = PENDING.get(server);

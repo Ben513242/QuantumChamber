@@ -3,6 +3,7 @@ package dev.quantumchamber.universe;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.minecraft.registry.RegistryKey;
@@ -15,6 +16,32 @@ import net.minecraft.world.World;
  */
 public final class UniverseRuntimeRegistry<S, W> {
     private final Map<S, Map<RegistryKey<World>, Entry<W>>> servers = new IdentityHashMap<>();
+
+    /** LOAD 後失敗仍須保留 exact world，直到 backend 證明已 close。 */
+    public void retainFailedOwner(S server, UniverseWorldDescriptor descriptor, W expectedWorld) {
+        Objects.requireNonNull(expectedWorld, "expectedWorld");
+        var entry = require(server, descriptor, DynamicWorldRuntimeState.MATERIALIZE_FAILED);
+        if (entry.world != null) requireExactWorld(entry, expectedWorld);
+        entry.world = expectedWorld;
+    }
+
+    /** 只能由已驗 exact quarantine ownership 的 backend 開始失敗 world 清理。 */
+    public void beginFailedUnload(S server, UniverseWorldDescriptor descriptor, W expectedWorld) {
+        Objects.requireNonNull(expectedWorld, "expectedWorld");
+        var entry = require(server, descriptor, DynamicWorldRuntimeState.MATERIALIZE_FAILED);
+        requireExactWorld(entry, expectedWorld);
+        entry.state = DynamicWorldRuntimeState.UNLOADING;
+    }
+
+    public List<OwnedWorld<W>> snapshot(S server) {
+        Objects.requireNonNull(server, "server");
+        var worlds = servers.get(server);
+        return worlds == null ? List.of() : worlds.values().stream()
+                .sorted(java.util.Comparator.comparing(entry -> entry.descriptor.worldKey().getValue().toString()))
+                .map(entry -> new OwnedWorld<>(entry.descriptor, entry.state, entry.world)).toList();
+    }
+
+    public record OwnedWorld<W>(UniverseWorldDescriptor descriptor, DynamicWorldRuntimeState state, W world) { }
 
     public DynamicWorldRuntimeState state(S server, UniverseWorldDescriptor descriptor) {
         var entry = find(server, descriptor);

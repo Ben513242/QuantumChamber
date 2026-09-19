@@ -1,5 +1,6 @@
 package dev.quantumchamber.universe.minecraft121;
 
+import dev.quantumchamber.chamber.ChamberControllerLoadSyncQueue;
 import dev.quantumchamber.mixin.MinecraftServerDynamicWorldAccess;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.DynamicDimensionBackend;
@@ -49,6 +50,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
         if (failures.isUnhealthy(server)) {
             return result(MaterializeResult.Status.FAILED_UNHEALTHY);
         }
+        if (failures.isBusy(server)) return result(MaterializeResult.Status.REJECTED);
         var access = (MinecraftServerDynamicWorldAccess) server;
         var worlds = access.quantumchamber$getWorlds();
         Path storage;
@@ -120,6 +122,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
             // 已有致命 Error 時，receipt 的次級失敗不得遮蔽原始 Error 或阻止正常 stop。
             try {
                 runtime.fail(server, descriptor, null);
+                if (loadStarted && created != null) runtime.retainFailedOwner(server, descriptor, created);
             } catch (Throwable receiptFailure) {
                 suppress(fatal, receiptFailure);
             }
@@ -127,6 +130,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
         }
         try {
             runtime.fail(server, descriptor, null);
+            if (loadStarted && created != null) runtime.retainFailedOwner(server, descriptor, created);
             if (loadStarted) {
                 recovery.run();
             }
@@ -144,14 +148,83 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
     @Override
     public UnloadResult unload(MinecraftServer server, UniverseWorldDescriptor descriptor, ServerWorld expectedWorld) {
         requireThread(server);
-        return UnloadResult.UNLOAD_UNSUPPORTED;
+        if (!isOwnedIdentity(server, descriptor, expectedWorld)) return UnloadResult.REJECTED_BUSY;
+        return unloadOwned(server, descriptor, expectedWorld,
+                ((MinecraftServerDynamicWorldAccess) server).quantumchamber$getWorlds(), runtime, failures,
+                nativeUnloadAccess(server), cause -> failUnhealthy(server, descriptor, cause), false);
+    }
+
+    /** 不註冊 lifecycle；由 owner 在安全 server-thread 邊界清理 exact quarantine world。 */
+    public UnloadResult cleanupQuarantined(MinecraftServer server, UniverseWorldDescriptor descriptor,
+            ServerWorld expectedWorld) {
+        requireThread(server);
+        if (!isOwnedIdentity(server, descriptor, expectedWorld)) return UnloadResult.REJECTED_BUSY;
+        return unloadOwned(server, descriptor, expectedWorld,
+                ((MinecraftServerDynamicWorldAccess) server).quantumchamber$getWorlds(), runtime, failures,
+                nativeUnloadAccess(server), cause -> failUnhealthy(server, descriptor, cause), true);
+    }
+
+    public List<UniverseRuntimeRegistry.OwnedWorld<ServerWorld>> runtimeSnapshot(MinecraftServer server) {
+        requireThread(server);
+        return runtime.snapshot(server);
+    }
+
+    public boolean hasRuntimeOwners(MinecraftServer server) { return !runtimeSnapshot(server).isEmpty(); }
+
+    public List<ServerWorld> quarantinedWorlds(MinecraftServer server) {
+        requireThread(server);
+        return failures.quarantined(server);
+    }
+
+    private static boolean isOwnedIdentity(MinecraftServer server, UniverseWorldDescriptor descriptor, ServerWorld world) {
+        if (descriptor == null || world == null || world.getServer() != server
+                || !world.getRegistryKey().equals(descriptor.worldKey())) return false;
+        try {
+            requireDescriptor(descriptor);
+            return true;
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+    }
+
+    private UnloadAccess<ServerWorld> nativeUnloadAccess(MinecraftServer server) {
+        return new UnloadAccess<>() {
+            @Override public boolean playersEmpty(ServerWorld world) { return world.getPlayers().isEmpty(); }
+            @Override public boolean forcedChunksEmpty(ServerWorld world) { return world.getForcedChunks().isEmpty(); }
+            @Override public boolean releaseResources(ServerWorld world) {
+                requireThread(server);
+                // 此 backend 不建立 chunk ticket；呼叫者必須先撤回自己的 fixture／transfer ticket。
+                var binding = borders.get(world);
+                if (binding == null) return false;
+                binding.source().removeListener(binding.listener());
+                return borders.remove(world, binding);
+            }
+            @Override public boolean executeQueuedTasks(ServerWorld world) {
+                requireThread(server);
+                return world.getChunkManager().executeQueuedTasks();
+            }
+            @Override public boolean flushBlocking(ServerWorld world) {
+                requireThread(server);
+                requireVersion(FabricLoader.getInstance().getModContainer("minecraft").orElseThrow()
+                        .getMetadata().getVersion().getFriendlyString());
+                // Pinned 1.21：chunk save(true) 的 completeAll().join()，接著 entity flush 的
+                // awaitAll(true)／join() 與 entity taskExecutor.awaitAll() 都在此呼叫返回前完成。
+                world.save(null, true, false);
+                return true;
+            }
+            @Override public void dispatchUnload(ServerWorld world) {
+                ServerWorldEvents.UNLOAD.invoker().onWorldUnload(server, world);
+            }
+            @Override public void discardWorld(ServerWorld world) { ChamberControllerLoadSyncQueue.discardWorld(world); }
+            @Override public void close(ServerWorld world) throws IOException { world.close(); }
+        };
     }
 
     @Override
     public Optional<ServerWorld> resolveActive(MinecraftServer server, UniverseWorldDescriptor descriptor) {
         requireThread(server);
         Objects.requireNonNull(descriptor, "descriptor");
-        if (failures.isUnhealthy(server)) {
+        if (failures.isUnhealthy(server) || failures.isBusy(server)) {
             return Optional.empty();
         }
         return runtime.resolveActive(server, descriptor).filter(world -> world.getServer() == server
@@ -255,8 +328,96 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
         void run() throws Exception;
     }
 
+    interface UnloadAccess<W> {
+        boolean playersEmpty(W world);
+        boolean forcedChunksEmpty(W world);
+        boolean releaseResources(W world) throws Exception;
+        boolean executeQueuedTasks(W world);
+        boolean flushBlocking(W world) throws Exception;
+        void dispatchUnload(W world);
+        void discardWorld(W world);
+        void close(W world) throws Exception;
+    }
+
+    static <S, W> UnloadResult unloadOwned(S server, UniverseWorldDescriptor descriptor, W expected,
+            Map<RegistryKey<World>, W> worlds, UniverseRuntimeRegistry<S, W> runtime,
+            FailureOwnership<S, RegistryKey<World>, W> failures, UnloadAccess<W> access,
+            Consumer<Throwable> stopUnhealthy, boolean quarantine) {
+        if (!quarantine && failures.isUnhealthy(server)) return UnloadResult.FAILED_UNHEALTHY;
+        if (expected == null || failures.isBusy(server)) return UnloadResult.REJECTED_BUSY;
+        boolean owns = quarantine
+                ? failures.quarantined(server).stream().anyMatch(world -> world == expected)
+                    && runtime.snapshot(server).stream().anyMatch(entry -> entry.world() == expected
+                        && entry.descriptor().equals(descriptor)
+                        && entry.state() == DynamicWorldRuntimeState.MATERIALIZE_FAILED)
+                : runtime.resolveActive(server, descriptor).orElse(null) == expected;
+        if (!owns || worlds.get(descriptor.worldKey()) != (quarantine ? null : expected)) {
+            return UnloadResult.REJECTED_BUSY;
+        }
+        failures.beginOperation(server);
+        boolean quiesced = false;
+        try {
+            if (quarantine) runtime.beginFailedUnload(server, descriptor, expected);
+            else runtime.beginUnload(server, descriptor, expected);
+            if (!quiesce(expected, access)) {
+                throw new IllegalStateException("無法取得 blocking final-flush 與 post-flush 無工作 receipt");
+            }
+            quiesced = true;
+            requireMapIdentity(worlds.get(descriptor.worldKey()), quarantine ? null : expected);
+            access.dispatchUnload(expected);
+            access.discardWorld(expected);
+            requireMapIdentity(worlds.get(descriptor.worldKey()), quarantine ? null : expected);
+            if (!quarantine && !worlds.remove(descriptor.worldKey(), expected)) {
+                throw new IllegalStateException("exact world remove 未成功");
+            }
+            access.close(expected);
+            requireMapIdentity(worlds.get(descriptor.worldKey()), null);
+            runtime.release(server, descriptor, expected);
+            if (quarantine) failures.releaseQuarantine(server, expected);
+            return UnloadResult.UNLOADED;
+        } catch (Exception failure) {
+            recordUnloadFailure(server, descriptor, expected, runtime, failures, failure, stopUnhealthy);
+            return quiesced ? UnloadResult.FAILED_UNHEALTHY : UnloadResult.UNLOAD_UNSUPPORTED;
+        } catch (Error fatal) {
+            recordUnloadFailure(server, descriptor, expected, runtime, failures, fatal, stopUnhealthy);
+            throw fatal;
+        } finally {
+            failures.endOperation(server);
+        }
+    }
+
+    private static <W> boolean quiesce(W expected, UnloadAccess<W> access) throws Exception {
+        if (!access.playersEmpty(expected) || !access.forcedChunksEmpty(expected)
+                || !access.releaseResources(expected)) return false;
+        long started = System.nanoTime();
+        for (int count = 0; count < 4096 && System.nanoTime() - started < 5_000_000_000L; count++) {
+            if (!access.executeQueuedTasks(expected)) {
+                return access.flushBlocking(expected) && !access.executeQueuedTasks(expected)
+                        && access.playersEmpty(expected) && access.forcedChunksEmpty(expected);
+            }
+        }
+        return false;
+    }
+
+    private static <S, W> void recordUnloadFailure(S server, UniverseWorldDescriptor descriptor, W expected,
+            UniverseRuntimeRegistry<S, W> runtime, FailureOwnership<S, RegistryKey<World>, W> failures,
+            Throwable failure, Consumer<Throwable> stopUnhealthy) {
+        try {
+            runtime.fail(server, descriptor, expected);
+        } catch (Throwable receiptFailure) {
+            suppress(failure, receiptFailure);
+        }
+        failures.markUnhealthy(server);
+        try {
+            stopUnhealthy.accept(failure);
+        } catch (Throwable stopFailure) {
+            suppress(failure, stopFailure);
+        }
+    }
+
     static final class FailureOwnership<S, K, W> {
         private final Set<S> unhealthy = Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Set<S> busy = Collections.newSetFromMap(new IdentityHashMap<>());
         private final Map<S, Set<W>> quarantine = new IdentityHashMap<>();
 
         void retainAfterLoadFailure(S server, K key, W created, Map<K, W> worlds) {
@@ -272,6 +433,20 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
         void markUnhealthy(S server) { unhealthy.add(server); }
 
         boolean isUnhealthy(S server) { return unhealthy.contains(server); }
+
+        boolean isBusy(S server) { return busy.contains(server); }
+
+        void beginOperation(S server) {
+            if (!busy.add(server)) throw new IllegalStateException("此 server 已有 backend unload 操作");
+        }
+
+        void endOperation(S server) { busy.remove(server); }
+
+        void releaseQuarantine(S server, W expected) {
+            var worlds = quarantine.get(server);
+            if (worlds == null || !worlds.remove(expected)) throw new IllegalStateException("exact quarantine owner 已改變");
+            if (worlds.isEmpty()) quarantine.remove(server);
+        }
 
         List<W> quarantined(S server) {
             return List.copyOf(quarantine.getOrDefault(server, Set.of()));

@@ -15,6 +15,7 @@ import dev.quantumchamber.universe.UniverseCatalogStore;
 import dev.quantumchamber.universe.UniverseMaterializationService;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import dev.quantumchamber.universe.UniverseWorldDescriptor;
+import dev.quantumchamber.universe.UnloadResult;
 import dev.quantumchamber.universe.minecraft121.Minecraft121DynamicDimensionBackend;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -49,7 +50,7 @@ import net.minecraft.util.math.ChunkPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** 只在四個合法參數同時存在時，於兩個獨立 JVM 驗證正式 catalog 與原生存檔。 */
+/** 只在四個合法參數同時存在時，驗證正式 catalog、原生存檔與 exact-world replacement。 */
 public final class M3UniverseRuntimeProbe implements ModInitializer {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber-m3-probe");
     private static final Gson JSON = new Gson();
@@ -65,6 +66,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
 
     private final Map<String, Object> proof = new LinkedHashMap<>();
     private final List<String> failures = new ArrayList<>();
+    private final Minecraft121DynamicDimensionBackend backend = new Minecraft121DynamicDimensionBackend();
     private Configuration configuration;
     private MinecraftServer owner;
     private ServerWorld world;
@@ -78,6 +80,8 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
     private int ticks;
     private int loadedAtTick;
     private boolean ticketHeld;
+    private boolean earlyUnload;
+    private ServerWorld previousWorld;
 
     @Override
     public void onInitialize() {
@@ -91,7 +95,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         proof.put("pid", ProcessHandle.current().pid());
         proof.put("startTimeUtc", ProcessHandle.current().info().startInstant().orElseThrow().toString());
         proof.put("failures", failures);
-        proof.put("nativeReadOnly", configuration.phase().equals("reload-read"));
+        proof.put("nativeReadOnly", !configuration.phase().equals("create-save"));
         event("initialized", Map.of());
 
         // 明確排在正式 callback 之後，避免依賴 entrypoint 的偶然載入順序。
@@ -116,7 +120,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
                 if (configuration.phase().equals("create-save")) writeFixture();
                 else readFixture();
             } else {
-                require(ticks == 2 && server.getTicks() == loadedAtTick + 1, "只能驗下一個 END tick");
+                require(server.getTicks() == loadedAtTick + 1, "只能驗下一個 END tick");
                 observation.assertHealthy();
                 var outcomes = observation.outcomes();
                 proof.put("processingOutcomes", outcomes.stream().map(Enum::name).toList());
@@ -126,9 +130,10 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
                 assertNativeContent();
                 proof.put("originCountAfter", ChamberRegistryState.get(server).registry().records().size());
                 require((int) proof.get("originCountAfter") == 0, "foreign Controller 新增了 Chamber origin");
-                require(loads == 1 && blockEntityLoads == 1 && unloads == 0, "停止前 lifecycle 次數不符");
+                require(loads == blockEntityLoads && unloads == loads - 1, "驗收前 lifecycle 次數不符");
                 event("phase_assertions", Map.of("outcome", "CONSUMED", "nativeReadOnly", proof.get("nativeReadOnly")));
-                requestStop(server);
+                if (configuration.phase().equals("unload-replace") && loads == 1) replace(server);
+                else requestStop(server);
             }
         });
     }
@@ -166,7 +171,6 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         require(Boolean.TRUE.equals(proof.get("preMapAbsent")), "建構前 map 已有 foreign key");
         assertDimensionRegistryAbsent(server);
         event("pre_materialize", Map.of("mapAbsent", true, "dimensionRegistryAbsent", true, "catalogNbt", diskNbt.toString()));
-        var backend = new Minecraft121DynamicDimensionBackend();
         var result = new UniverseMaterializationService(backend).materializeChecked(server, record, descriptor);
         require(result.status() == MaterializeResult.Status.MATERIALIZED, "checked materialize 未成功：" + result.status());
         world = result.world();
@@ -190,6 +194,71 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
             }
         }
         event("materialized", Map.of("identity", true, "storage", storage.toString(), "fixtureChunk", CHUNK.toString()));
+    }
+
+    private void replace(MinecraftServer server) throws Exception {
+        previousWorld = world;
+        String oldStorage = (String) proof.get("storage");
+        NbtCompound oldNbt = controller.createNbtWithIdentifyingData(world.getRegistryManager());
+        proof.put("cIdentity", System.identityHashCode(previousWorld));
+        proof.put("cProcessingOutcomes", proof.get("processingOutcomes"));
+        ChamberControllerLoadSyncQueue.enqueue(world, controller);
+        require(ChamberLoadSyncTestAccess.hasPending(server, controller), "C 的 synthetic unload entry 未入列");
+        event("old_queue_witness", Map.of("synthetic", true, "exactWorld", "C"));
+        releaseTicket();
+        unloadExact(server, "C_END_SERVER_TICK");
+        require(observation.outcomes().equals(List.of(ChamberLoadSyncOutcome.CONSUMED,
+                ChamberLoadSyncOutcome.DISCARDED_WORLD_UNLOAD)), "C 舊 entry 沒有 exact world-unload receipt");
+        proof.put("cQueueOutcomes", observation.outcomes().stream().map(Enum::name).toList());
+        proof.put("cMapAbsent", server.getWorld(descriptor.worldKey()) == null);
+        require(Boolean.TRUE.equals(proof.get("cMapAbsent")) && !backend.hasRuntimeOwners(server)
+                && backend.quarantinedWorlds(server).isEmpty(), "C unload 後仍有 map／runtime／quarantine owner");
+        observation.close();
+        observation = null;
+        controller = null;
+        materialize(server);
+        require(world != previousWorld && server.getWorld(descriptor.worldKey()) == world
+                && backend.resolveActive(server, descriptor).orElseThrow() == world, "D 不是 same-key 新 exact instance");
+        require(oldStorage.equals(proof.get("storage")), "replacement 使用不同 native storage");
+        readFixture();
+        require(oldNbt.equals(controller.createNbtWithIdentifyingData(world.getRegistryManager())), "C／D 原生 Controller NBT 不同");
+        proof.put("dIdentity", System.identityHashCode(world));
+        proof.put("differentInstances", true);
+        proof.put("replacementExact", true);
+        proof.put("sameStorage", true);
+        proof.put("replacementNativeNbtExact", true);
+        require(ChamberLoadSyncTestAccess.hasPending(server, controller) && observation.outcomes().isEmpty(),
+                "discardWorld(C) 前 D 必須仍有尚未處理的真 BE entry");
+        ChamberLoadSyncTestAccess.discardWorld(previousWorld);
+        require(ChamberLoadSyncTestAccess.hasPending(server, controller) && observation.outcomes().isEmpty(),
+                "discardWorld(C) 誤刪 same-key D 的 pending entry");
+        proof.put("dPendingSurvivedDiscardC", true);
+        event("replacement_pending_survived", Map.of("differentInstances", true, "mapExactD", true,
+                "dPending", true, "sameStorage", true, "nativeNbtExact", true));
+    }
+
+    private void releaseTicket() {
+        if (ticketHeld) {
+            world.getChunkManager().removeTicket(FIXTURE_TICKET, CHUNK, 0, CHUNK);
+            ticketHeld = false;
+        }
+    }
+
+    private void unloadExact(MinecraftServer server, String boundary) {
+        earlyUnload = true;
+        try {
+            UnloadResult result = backend.unload(server, descriptor, world);
+            require(result == UnloadResult.UNLOADED, "early unload receipt 不成立：" + result);
+            require(server.getWorld(descriptor.worldKey()) == null && backend.resolveActive(server, descriptor).isEmpty(),
+                    "UNLOADED 後仍有 exact owner");
+            event("early_unload_receipt", Map.of("boundary", boundary, "result", result.name(), "mapAbsent", true));
+        } finally {
+            earlyUnload = false;
+        }
+    }
+
+    private boolean gateB() {
+        return configuration.phase().equals("unload-replace") || configuration.phase().equals("final-verify");
     }
 
     private void writeFixture() {
@@ -234,19 +303,19 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         if (descriptor == null || !eventWorld.getRegistryKey().equals(descriptor.worldKey()) || !blockEntity.getPos().equals(CONTROLLER)) return;
         guarded(eventWorld.getServer(), () -> {
             require(eventWorld == world && blockEntity instanceof ChamberControllerBlockEntity, "BE LOAD world／型別不符");
-            require(++blockEntityLoads == 1 && controller == null, "Controller BE LOAD 重複");
+            require(++blockEntityLoads == loads && controller == null, "Controller BE LOAD 重複");
             controller = (ChamberControllerBlockEntity) blockEntity;
             require(ChamberLoadSyncTestAccess.hasPending(owner, controller), "真 BE LOAD 後正式 queue 未 enqueue exact Controller");
             proof.put("queuedAtLoad", true);
             loadedAtTick = owner.getTicks();
-            if (configuration.phase().equals("reload-read")) {
+            if (!configuration.phase().equals("create-save")) {
                 var loadedNbt = controller.createNbtWithIdentifyingData(eventWorld.getRegistryManager());
                 assertControllerNbt(loadedNbt);
                 event("native_nbt_at_load", Map.of("nbt", loadedNbt.toString()));
             }
             observation = ChamberLoadSyncTestAccess.observe(eventWorld, controller,
                     receipt -> event("queue_receipt", Map.of("outcome", receipt.outcome().name(), "exactController", receipt.controller() == controller)));
-            event("block_entity_load", Map.of("queuedExactController", true, "tick", loadedAtTick));
+            event("block_entity_load", Map.of("queuedExactController", true, "tick", loadedAtTick, "instanceOrdinal", loads));
         });
     }
 
@@ -255,16 +324,19 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         require(server == owner && eventWorld.getServer() == server && server.getWorld(descriptor.worldKey()) == eventWorld, "LOAD exact identity 不符");
         loadWorld = eventWorld;
         loads++;
-        event("world_load", Map.of("count", loads, "exactMapIdentity", true));
+        event("world_load", Map.of("count", loads, "exactMapIdentity", true, "identity", System.identityHashCode(eventWorld)));
     }
 
     private void worldUnload(MinecraftServer server, ServerWorld eventWorld) {
         if (descriptor == null || !eventWorld.getRegistryKey().equals(descriptor.worldKey())) return;
         guarded(server, () -> {
             require(server == owner && eventWorld == world && server.getWorld(descriptor.worldKey()) == world, "shutdown UNLOAD exact identity 不符");
-            require(Boolean.TRUE.equals(proof.get("stoppingSeen")), "UNLOAD 不在正常 shutdown 內");
+            require(gateB() ? earlyUnload : Boolean.TRUE.equals(proof.get("stoppingSeen")), "UNLOAD 不在已核准邊界內");
             unloads++;
-            event("world_unload", Map.of("count", unloads, "exactMapIdentity", true));
+            require(unloads == loads, "同一 instance 的 UNLOAD 重送");
+            event("world_unload", Map.of("count", unloads, "exactMapIdentity", true,
+                    "dispatch", earlyUnload ? "backend-explicit" : "vanilla-shutdown",
+                    "identity", System.identityHashCode(eventWorld)));
         });
     }
 
@@ -284,10 +356,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         if (server != owner) return;
         guarded(server, () -> {
             proof.put("stoppingSeen", true);
-            if (ticketHeld) {
-                world.getChunkManager().removeTicket(FIXTURE_TICKET, CHUNK, 0, CHUNK);
-                ticketHeld = false;
-            }
+            releaseTicket();
             proof.put("ticketReleased", !ticketHeld);
             require(world != null && server.getWorld(descriptor.worldKey()) == world, "STOPPING 已失去 exact native owner");
             // 合成的停止清理見證與上面的真 BE LOAD 證據分開；不冒充 native enqueue。
@@ -295,6 +364,17 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
             require(ChamberLoadSyncTestAccess.hasPending(server, controller), "STOPPING 清理見證未入列");
             proof.put("queueWitnessBeforeStop", true);
             event("stopping_cleanup_witness", Map.of("synthetic", true, "queueCount", ChamberLoadSyncTestAccess.pendingCount(server)));
+            if (gateB()) {
+                unloadExact(server, configuration.phase().equals("unload-replace") ? "D_SERVER_STOPPING" : "E_SERVER_STOPPING");
+                require(observation.outcomes().equals(List.of(ChamberLoadSyncOutcome.CONSUMED,
+                        ChamberLoadSyncOutcome.DISCARDED_WORLD_UNLOAD)), "停止 world 的 queue cleanup receipt 不符");
+                proof.put("stoppingQueueOutcomes", observation.outcomes().stream().map(Enum::name).toList());
+                proof.put("stoppingMapAbsent", server.getWorld(descriptor.worldKey()) == null);
+                proof.put("runtimeEmpty", !backend.hasRuntimeOwners(server));
+                proof.put("quarantineEmpty", backend.quarantinedWorlds(server).isEmpty());
+                require(Boolean.TRUE.equals(proof.get("stoppingMapAbsent")) && Boolean.TRUE.equals(proof.get("runtimeEmpty"))
+                        && Boolean.TRUE.equals(proof.get("quarantineEmpty")), "停止前仍有 backend owner");
+            }
         });
     }
 
@@ -310,14 +390,21 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
             require(readField(protection, "attachedServer") == null && readField(protection, "attachedRegistry") == null,
                     "STOPPED protection 未 detach");
             proof.put("protectionDetached", true);
-            require(loads == 1 && unloads == 1, "正常停止未得到 LOAD1／UNLOAD1");
+            int expectedLoads = configuration.phase().equals("unload-replace") ? 2 : 1;
+            require(loads == expectedLoads && unloads == expectedLoads, "正常停止 LOAD／UNLOAD 次數不符");
+            if (gateB()) {
+                require(server.getWorld(descriptor.worldKey()) == null && backend.runtimeSnapshot(server).isEmpty()
+                        && backend.quarantinedWorlds(server).isEmpty(), "STOPPED 仍有 dynamic owner");
+                proof.put("noVanillaDuplicateUnload", true);
+            }
             if (observation != null) observation.close();
             event("stopped", Map.of("loads", loads, "unloads", unloads, "queueKeyRemoved", true, "protectionDetached", true));
         });
         proof.put("loads", loads);
         proof.put("unloads", unloads);
         proof.put("blockEntityLoads", blockEntityLoads);
-        proof.put("status", failures.isEmpty() && ticks == 2 ? "PASS" : "FAIL");
+        int expectedTicks = configuration.phase().equals("unload-replace") ? 3 : 2;
+        proof.put("status", failures.isEmpty() && ticks == expectedTicks ? "PASS" : "FAIL");
         write(configuration.evidence().resolve("final.json"), JSON.toJson(proof), false);
         LOGGER.info("M3 phase={} status={} key={} LOAD={} UNLOAD={}", configuration.phase(), proof.get("status"), proof.get("worldKey"), loads, unloads);
     }
@@ -378,7 +465,8 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
             String nonce = System.getProperty("quantumchamber.m3.nonce", "");
             String startupNonce = System.getProperty("quantumchamber.m3.startupNonce", "");
             String rootText = System.getProperty("quantumchamber.m3.root", "");
-            if (!Set.of("create-save", "reload-read").contains(phase) || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*")
+            if (!Set.of("create-save", "reload-read", "unload-replace", "final-verify").contains(phase)
+                    || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*")
                     || nonce.equals("disabled") || !startupNonce.matches("[0-9a-f]{32}") || rootText.isBlank()) return null;
             var allowed = Set.of("quantumchamber.m3.phase", "quantumchamber.m3.nonce", "quantumchamber.m3.startupNonce", "quantumchamber.m3.root");
             if (System.getProperties().stringPropertyNames().stream().anyMatch(key -> key.startsWith("quantumchamber.m3.") && !allowed.contains(key))) return null;
@@ -390,7 +478,9 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
                         || !root.getParent().getFileName().toString().equals("run")) return null;
                 Path owner = root.getParent().getParent().resolve(OWNER);
                 if (!owner.toRealPath().equals(owner)) return null;
-                Path evidence = owner.resolve("task-6-gate-a-" + nonce).resolve(phase);
+                boolean gateB = phase.equals("unload-replace") || phase.equals("final-verify");
+                if (gateB && !nonce.equals("task6-r8-c2d9f7c4c4614200a383fd31de13ad50")) return null;
+                Path evidence = owner.resolve((gateB ? "task-7-gate-b-" : "task-6-gate-a-") + nonce).resolve(phase);
                 if (!evidence.toRealPath().equals(evidence) || Files.exists(evidence.resolve("final.json"))) return null;
                 return new Configuration(phase, nonce, startupNonce, root, evidence);
             } catch (IOException | RuntimeException invalid) {
