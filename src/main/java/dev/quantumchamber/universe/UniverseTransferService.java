@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -44,13 +45,32 @@ public final class UniverseTransferService {
                 point.velocity(), point.yaw(), point.pitch());
     }
 
+    static Preflight preflight(boolean serverThread, Supplier<Observation> readObservation) {
+        if (!serverThread) return new Preflight(REJECT_SERVER_THREAD, null, null);
+        var raw = Objects.requireNonNull(readObservation.get(), "observation");
+        if (!raw.finitePose()) return new Preflight(REJECT_SOURCE_NON_FINITE, null, raw);
+        var source = new UniverseTransferPoint(raw.worldKey(), raw.position(), raw.velocity(), raw.yaw(), raw.pitch());
+        return new Preflight(ALLOW, source, raw);
+    }
+
+    record Preflight(UniverseTransferAuthority.Decision decision, UniverseTransferPoint source, Observation observation) {
+        UniverseTransferResult rejectedResult() {
+            return new UniverseTransferResult(Outcome.REJECTED_BEFORE_MOVE, decision, source,
+                    new MoveEvidence(NativeOutcome.NOT_ATTEMPTED, observation, "前置檢查"),
+                    new RollbackEvidence(RollbackOutcome.NOT_ATTEMPTED, NativeOutcome.NOT_ATTEMPTED, observation, ""),
+                    null, "前置檢查拒絕移動");
+        }
+    }
+
     public UniverseTransferResult moveToUniverse(ServerPlayerEntity player, UniverseWorldDescriptor descriptor) {
         Objects.requireNonNull(player, "player");
+        var server = player.getServer();
+        var preflight = preflight(server != null && server.isOnThread(), () -> observe(player, server));
+        if (preflight.decision() != ALLOW) return preflight.rejectedResult();
         Objects.requireNonNull(descriptor, "descriptor");
         var sourceWorld = player.getServerWorld();
-        var server = sourceWorld.getServer();
-        var source = freeze(player);
-        var playerId = player.getUuid();
+        var source = preflight.source();
+        var playerId = preflight.observation().playerId();
         var common = commonAuthority(player, server, sourceWorld, source, playerId);
         if (common != ALLOW) return rejected(player, server, source, common, "來源權威不成立");
 
@@ -106,10 +126,12 @@ public final class UniverseTransferService {
     /** source 是這次返還呼叫的 departure 快照；目標 home pose 來自 receipt.source。 */
     public UniverseTransferResult returnToSource(ServerPlayerEntity player, UniverseTransferReceipt receipt) {
         Objects.requireNonNull(player, "player");
+        var server = player.getServer();
+        var preflight = preflight(server != null && server.isOnThread(), () -> observe(player, server));
+        if (preflight.decision() != ALLOW) return preflight.rejectedResult();
         Objects.requireNonNull(receipt, "receipt");
         var departureWorld = player.getServerWorld();
-        var server = departureWorld.getServer();
-        var departure = freeze(player);
+        var departure = preflight.source();
         var common = commonAuthority(player, server, departureWorld, departure, receipt.playerId());
         if (common != ALLOW) return rejected(player, server, departure, common, "返還玩家／來源權威不成立");
         if (!receipt.destinationKey().equals(departure.worldKey())
@@ -232,11 +254,6 @@ public final class UniverseTransferService {
     private static boolean exactPlayer(MinecraftServer server, ServerPlayerEntity player) {
         return server.isOnThread() && player.getServer() == server && !player.isRemoved() && player.isAlive()
                 && server.getPlayerManager().getPlayer(player.getUuid()) == player;
-    }
-
-    private static UniverseTransferPoint freeze(ServerPlayerEntity player) {
-        return new UniverseTransferPoint(player.getServerWorld().getRegistryKey(), player.getPos(),
-                player.getVelocity(), player.getYaw(), player.getPitch());
     }
 
     private static Observation observe(ServerPlayerEntity player, MinecraftServer server) {

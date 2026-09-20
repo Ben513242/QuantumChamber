@@ -5,6 +5,7 @@ import static dev.quantumchamber.universe.UniverseTransferAuthority.Decision.*;
 
 import java.util.Arrays;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import org.junit.jupiter.api.Test;
@@ -107,6 +108,105 @@ class UniverseTransferAuthorityTest {
                 UniverseTransferResult.Outcome.FAILED_ROLLED_BACK, POST_MOVE_VERIFICATION_FAILED, SOURCE, unattempted, noRollback, null, ""));
         assertThrows(IllegalArgumentException.class, () -> new UniverseTransferResult(
                 UniverseTransferResult.Outcome.FAILED_RECOVERY_REQUIRED, POST_MOVE_VERIFICATION_FAILED, SOURCE, unattempted, noRollback, null, ""));
+    }
+
+    @Test
+    void offThreadPreflightNeverReadsEvenNonFinitePlayerFixture() {
+        for (var fixture : new UniverseTransferResult.Observation[] {
+                observed(SOURCE.position(), SOURCE.velocity(), 75, -25, true, true, true),
+                observed(new Vec3d(Double.NaN, 81, -0.5), SOURCE.velocity(), 75, -25, true, true, true)}) {
+            var reads = new AtomicInteger();
+            var preflight = assertDoesNotThrow(() -> UniverseTransferService.preflight(false, () -> {
+                reads.incrementAndGet();
+                return fixture;
+            }));
+            assertEquals(0, reads.get(), "off-thread 不得呼叫玩家觀測 supplier");
+            assertEquals(REJECT_SERVER_THREAD, preflight.decision());
+            var result = assertDoesNotThrow(preflight::rejectedResult);
+            assertEquals(UniverseTransferResult.Outcome.REJECTED_BEFORE_MOVE, result.outcome());
+            assertNull(result.source());
+            assertNull(result.actual());
+            assertEquals(UniverseTransferResult.NativeOutcome.NOT_ATTEMPTED, result.move().outcome());
+        }
+    }
+
+    @Test
+    void serverThreadNonFiniteSourceReturnsUnchangedRawEvidence() {
+        for (var raw : new UniverseTransferResult.Observation[] {
+                observed(new Vec3d(Double.NaN, 81, -0.5), SOURCE.velocity(), 75, -25, true, true, true),
+                observed(SOURCE.position(), new Vec3d(0, Double.POSITIVE_INFINITY, 0), 75, -25, true, true, true),
+                observed(SOURCE.position(), SOURCE.velocity(), Float.NEGATIVE_INFINITY, -25, true, true, true),
+                observed(SOURCE.position(), SOURCE.velocity(), 75, Float.NaN, true, true, true)}) {
+            var reads = new AtomicInteger();
+            var preflight = assertDoesNotThrow(() -> UniverseTransferService.preflight(true, () -> {
+                reads.incrementAndGet();
+                return raw;
+            }));
+            assertEquals(1, reads.get());
+            assertEquals(REJECT_SOURCE_NON_FINITE, preflight.decision());
+            var result = assertDoesNotThrow(preflight::rejectedResult);
+            assertEquals(REJECT_SOURCE_NON_FINITE, result.decision());
+            assertNull(result.source());
+            assertSame(raw, result.move().actual());
+            assertSame(raw, result.actual());
+        }
+    }
+
+    @Test
+    void validPreflightFreezesTheSingleRawObservation() {
+        var raw = observed(SOURCE.position(), SOURCE.velocity(), 75, -25, true, true, true);
+        var reads = new AtomicInteger();
+        var preflight = UniverseTransferService.preflight(true, () -> { reads.incrementAndGet(); return raw; });
+        assertEquals(1, reads.get());
+        assertEquals(ALLOW, preflight.decision());
+        assertEquals(SOURCE, preflight.source());
+        assertSame(raw, preflight.observation());
+    }
+
+    @Test
+    void resultAllowsMissingObservationOnlyForThreadRejectionAndMissingPointOnlyForNonFiniteSource() {
+        var raw = observed(SOURCE.position(), SOURCE.velocity(), 75, -25, true, true, true);
+        var threadRejection = assertDoesNotThrow(() -> rejection(REJECT_SERVER_THREAD, null, null));
+        assertNull(threadRejection.source());
+        assertNull(threadRejection.actual());
+        assertThrows(IllegalArgumentException.class, () -> rejection(REJECT_PLAYER_IDENTITY, null, null));
+        assertThrows(IllegalArgumentException.class, () -> rejection(REJECT_SOURCE_NON_FINITE, null, null));
+        assertThrows(IllegalArgumentException.class, () -> rejection(REJECT_SOURCE_NON_FINITE, null, raw));
+        assertThrows(IllegalArgumentException.class, () -> rejection(REJECT_PLAYER_IDENTITY, SOURCE, null));
+        assertThrows(IllegalArgumentException.class, () -> rejection(REJECT_PLAYER_IDENTITY, null, raw));
+    }
+
+    @Test
+    void rolledBackResultRejectsWorldPoseIdentityAndNonFiniteEvidence() {
+        for (var invalid : new UniverseTransferResult.Observation[] {
+                new UniverseTransferResult.Observation(PLAYER, World.NETHER, SOURCE.position(), SOURCE.velocity(), 75, -25, true, true, true),
+                observed(new Vec3d(15.5, 82, -0.5), SOURCE.velocity(), 75, -25, true, true, true),
+                observed(SOURCE.position(), Vec3d.ZERO, 75, -25, true, true, true),
+                observed(SOURCE.position(), SOURCE.velocity(), 76, -25, true, true, true),
+                observed(SOURCE.position(), SOURCE.velocity(), 75, -26, true, true, true),
+                observed(SOURCE.position(), SOURCE.velocity(), 75, -25, true, false, true),
+                observed(new Vec3d(Double.NaN, 81, -0.5), SOURCE.velocity(), 75, -25, true, true, true)}) {
+            assertThrows(IllegalArgumentException.class, () -> rolledBack(invalid));
+        }
+        var actual = observed(SOURCE.position(), SOURCE.velocity(), 75, -25, true, true, true);
+        assertEquals(UniverseTransferResult.Outcome.FAILED_ROLLED_BACK, rolledBack(actual).outcome());
+        assertThrows(IllegalArgumentException.class, () -> new UniverseTransferResult.RollbackEvidence(
+                UniverseTransferResult.RollbackOutcome.SUCCEEDED, UniverseTransferResult.NativeOutcome.REPORTED_FAILURE, actual, ""));
+    }
+
+    private static UniverseTransferResult rejection(UniverseTransferAuthority.Decision decision,
+            UniverseTransferPoint source, UniverseTransferResult.Observation actual) {
+        return new UniverseTransferResult(UniverseTransferResult.Outcome.REJECTED_BEFORE_MOVE, decision, source,
+                new UniverseTransferResult.MoveEvidence(UniverseTransferResult.NativeOutcome.NOT_ATTEMPTED, actual, ""),
+                new UniverseTransferResult.RollbackEvidence(UniverseTransferResult.RollbackOutcome.NOT_ATTEMPTED,
+                        UniverseTransferResult.NativeOutcome.NOT_ATTEMPTED, actual, ""), null, "");
+    }
+
+    private static UniverseTransferResult rolledBack(UniverseTransferResult.Observation actual) {
+        return new UniverseTransferResult(UniverseTransferResult.Outcome.FAILED_ROLLED_BACK, POST_MOVE_VERIFICATION_FAILED, SOURCE,
+                new UniverseTransferResult.MoveEvidence(UniverseTransferResult.NativeOutcome.REPORTED_FAILURE, actual, ""),
+                new UniverseTransferResult.RollbackEvidence(UniverseTransferResult.RollbackOutcome.SUCCEEDED,
+                        UniverseTransferResult.NativeOutcome.REPORTED_SUCCESS, actual, ""), null, "");
     }
 
     private static UniverseTransferResult.Observation observed(Vec3d position, Vec3d velocity,

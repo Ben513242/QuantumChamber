@@ -7,14 +7,16 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 
-/** 每次原生嘗試與回滾各保留實際觀測；receipt 僅在 MOVED 存在。 */
+/**
+ * 每次原生嘗試與回滾各保留實際觀測；receipt 僅在 MOVED 存在。
+ * 只有 thread 拒絕可以沒有 source／觀測；非有限來源拒絕沒有有效 source，但必須保留 raw 觀測。
+ */
 public record UniverseTransferResult(Outcome outcome, UniverseTransferAuthority.Decision decision,
         UniverseTransferPoint source, MoveEvidence move, RollbackEvidence rollback,
         UniverseTransferReceipt receipt, String detail) {
     public UniverseTransferResult {
         Objects.requireNonNull(outcome, "outcome");
         Objects.requireNonNull(decision, "decision");
-        Objects.requireNonNull(source, "source");
         Objects.requireNonNull(move, "move");
         Objects.requireNonNull(rollback, "rollback");
         Objects.requireNonNull(detail, "detail");
@@ -23,11 +25,26 @@ public record UniverseTransferResult(Outcome outcome, UniverseTransferAuthority.
         }
         boolean attempted = move.outcome() != NativeOutcome.NOT_ATTEMPTED;
         boolean noRollback = rollback.outcome() == RollbackOutcome.NOT_ATTEMPTED;
+        boolean beforeObservation = outcome == Outcome.REJECTED_BEFORE_MOVE
+                && decision == UniverseTransferAuthority.Decision.REJECT_SERVER_THREAD
+                && source == null && move.actual() == null && rollback.actual() == null;
+        boolean nonFiniteSource = outcome == Outcome.REJECTED_BEFORE_MOVE
+                && decision == UniverseTransferAuthority.Decision.REJECT_SOURCE_NON_FINITE
+                && source == null && move.actual() != null && !move.actual().finitePose()
+                && move.actual().equals(rollback.actual());
+        boolean fullEvidence = source != null && move.actual() != null && rollback.actual() != null;
+        if ((!beforeObservation && !nonFiniteSource && !fullEvidence)
+                || (decision == UniverseTransferAuthority.Decision.REJECT_SERVER_THREAD && !beforeObservation)
+                || (decision == UniverseTransferAuthority.Decision.REJECT_SOURCE_NON_FINITE && !nonFiniteSource)) {
+            throw new IllegalArgumentException("只有前置拒絕可以缺少 source 或觀測，且必須符合明確原因");
+        }
         boolean valid = switch (outcome) {
             case REJECTED_BEFORE_MOVE -> !attempted && noRollback && decision != UniverseTransferAuthority.Decision.ALLOW;
             case MOVED, RETURNED -> move.outcome() == NativeOutcome.REPORTED_SUCCESS && noRollback
                     && decision == UniverseTransferAuthority.Decision.ALLOW;
-            case FAILED_ROLLED_BACK -> attempted && rollback.outcome() == RollbackOutcome.SUCCEEDED;
+            case FAILED_ROLLED_BACK -> attempted && rollback.outcome() == RollbackOutcome.SUCCEEDED
+                    && rollback.nativeOutcome() == NativeOutcome.REPORTED_SUCCESS
+                    && rollback.actual().matches(source);
             case FAILED_RECOVERY_REQUIRED -> attempted && !noRollback && rollback.outcome() != RollbackOutcome.SUCCEEDED;
         };
         if (!valid || (receipt != null && (!receipt.source().equals(source)
@@ -57,13 +74,21 @@ public record UniverseTransferResult(Outcome outcome, UniverseTransferAuthority.
                     && Math.abs(MathHelper.wrapDegrees(yaw - point.yaw())) < 1e-4
                     && Math.abs(pitch - point.pitch()) < 1e-4;
         }
+
+        public boolean finitePose() {
+            return Double.isFinite(position.x) && Double.isFinite(position.y) && Double.isFinite(position.z)
+                    && Double.isFinite(velocity.x) && Double.isFinite(velocity.y) && Double.isFinite(velocity.z)
+                    && Float.isFinite(yaw) && Float.isFinite(pitch);
+        }
     }
 
     public record MoveEvidence(NativeOutcome outcome, Observation actual, String detail) {
         public MoveEvidence {
             Objects.requireNonNull(outcome, "outcome");
-            Objects.requireNonNull(actual, "actual");
             Objects.requireNonNull(detail, "detail");
+            if (actual == null && outcome != NativeOutcome.NOT_ATTEMPTED) {
+                throw new IllegalArgumentException("原生移動嘗試必須保留實際觀測");
+            }
         }
     }
     public record RollbackEvidence(RollbackOutcome outcome, NativeOutcome nativeOutcome,
@@ -71,13 +96,17 @@ public record UniverseTransferResult(Outcome outcome, UniverseTransferAuthority.
         public RollbackEvidence {
             Objects.requireNonNull(outcome, "outcome");
             Objects.requireNonNull(nativeOutcome, "nativeOutcome");
-            Objects.requireNonNull(actual, "actual");
             Objects.requireNonNull(detail, "detail");
+            if ((actual == null && outcome != RollbackOutcome.NOT_ATTEMPTED)
+                    || (outcome == RollbackOutcome.NOT_ATTEMPTED && nativeOutcome != NativeOutcome.NOT_ATTEMPTED)) {
+                throw new IllegalArgumentException("回滾分支與原生嘗試／觀測不一致");
+            }
             if (outcome == RollbackOutcome.SUCCEEDED && nativeOutcome != NativeOutcome.REPORTED_SUCCESS) {
                 throw new IllegalArgumentException("回滾成功必須有原生成功及實際觀測");
             }
         }
     }
 
+    /** 只有 REJECT_SERVER_THREAD 的 pre-observation rejection 回傳 null。 */
     public Observation actual() { return rollback.actual(); }
 }
