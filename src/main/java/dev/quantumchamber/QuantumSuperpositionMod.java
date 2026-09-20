@@ -11,6 +11,7 @@ import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.registry.ModItems;
 import dev.quantumchamber.registry.ModPotions;
+import dev.quantumchamber.universe.UniverseLifecycleService;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerBlockEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -42,6 +43,7 @@ public final class QuantumSuperpositionMod implements ModInitializer {
                 ChamberControllerLoadSyncQueue.enqueue(world, controller);
             }
         });
+        UniverseLifecycleService.initialize();
         RuntimeCompatibility compatibility = CompatibilityManager.detect(
                 FabricLoader.getInstance()::isModLoaded);
         LOGGER.info("Detected optional mod compatibility: sodium={}, iris={}, immersive_portals={}",

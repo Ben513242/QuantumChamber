@@ -7,7 +7,7 @@
   "mixins": ["quantumchamber-test.mixins.json"],
   "entrypoints": {
     "main": ["dev.quantumchamber.gametest.M1LifecycleProbe", "dev.quantumchamber.gametest.M11PersistenceProbe", "dev.quantumchamber.gametest.M12PersistenceProbe", "dev.quantumchamber.gametest.M2LeaseBootstrapProbe", "dev.quantumchamber.gametest.M2PersistenceProbe", "dev.quantumchamber.gametest.M3UniverseRuntimeProbe"],
-    "fabric-gametest": ["dev.quantumchamber.gametest.M1ChamberGameTests", "dev.quantumchamber.gametest.ChamberNoForceGameTests", "dev.quantumchamber.gametest.M2CorridorGameTests"]
+    "fabric-gametest": ["dev.quantumchamber.gametest.M1ChamberGameTests", "dev.quantumchamber.gametest.ChamberNoForceGameTests", "dev.quantumchamber.gametest.M2CorridorGameTests", "dev.quantumchamber.gametest.M3UniverseLifecycleGameTests"]
   },
   "depends": { "quantumchamber": "*", "fabric-api": "*", "minecraft": "1.21" }
 }
