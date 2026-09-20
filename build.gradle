@@ -81,6 +81,17 @@ loom {
             // Loom runDir 只接受本專案相對路徑；探針仍須另外通過四個啟動參數檢查。
             runDir "run/m3-universe-${nonce}"
         }
+        m3Transfer {
+            server()
+            name 'M3 Server Transfer Readiness'
+            source sourceSets.testmod
+            def nonce = providers.gradleProperty('m3TransferNonce').getOrElse('disabled')
+            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) {
+                throw new GradleException('M3 transfer nonce 只能包含小寫英數與連字號')
+            }
+            // 預設關閉；探針另外驗四個啟動參數、exact cwd 與本 plan 的 evidence owner。
+            runDir "run/m3-transfer-${nonce}"
+        }
         gameTest {
             server()
             name 'M1 Game Test'
