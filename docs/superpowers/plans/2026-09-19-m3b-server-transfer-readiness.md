@@ -29,8 +29,7 @@
 - `src/main/java/dev/quantumchamber/universe/UniverseTransferAuthority.java`：無live Minecraft object的純guard決策。
 - `src/main/java/dev/quantumchamber/universe/UniverseTransferService.java`：ACTIVE guard、safe target、native move、return。
 - `src/test/java/dev/quantumchamber/universe/UniverseTransferAuthorityTest.java`：pure authority/ordering tests。
-- `src/testmod/java/dev/quantumchamber/universe/UniverseTransferTestAccess.java`：同package建立故障verifier，不改正式預設路徑。
-- `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferGameTests.java`：真server player、native world identity與failure windows；共享GameTest不物化dynamic Universe。
+- `src/testmod/java/dev/quantumchamber/universe/UniverseTransferTestAccess.java`：同package建立NativeMove／backend故障wrapper，不改正式預設路徑。
 - `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferProbe.java`：不同JVM default-off round-trip。
 - `src/testmod/resources/fabric.mod.json`、`build.gradle`：只加入property-gated probe。
 - `docs/implementation-notes/2026-09-19-m3b-server-transfer-readiness.md`：證據與限制。
@@ -96,52 +95,10 @@ git commit -m "feat: guard native universe player transfers"
 
 ---
 
-### Task 2: 真 server player round-trip 與 failure windows
-
-**Files:**
-- Create: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferGameTests.java`
-- Create: `src/testmod/java/dev/quantumchamber/universe/UniverseTransferTestAccess.java`
-- Modify: `src/testmod/resources/fabric.mod.json`
-
-**Interfaces:**
-- Consumes: Task 1 transfer service；test-only backend adapter把既有static Superposition world當exact ACTIVE destination，共享GameTest不配置dynamic Universe。
-- Produces: GameTests for success、replaced destination、target not FULL、post-move verification failure、return source replacement。
-
-- [ ] **Step 1: 建立真player fixture RED test**
-
-沿用既有testmod native connection/player fixture pattern，建立一位由 `PlayerManager`擁有的 `ServerPlayerEntity`；不是mock。來源為vanilla Overworld，目的為既有static Superposition world，並由test-only backend adapter提供exact ACTIVE identity。這只驗native player move／guard／rollback，不建立第五dynamic world，也不得污染M2四world oracle；真正M3-A dynamic destination留Task 3 dedicated probe。
-
-- [ ] **Step 2: 成功往返 assertions**
-
-斷言進入後：同一player object、player manager exact identity、destination `getEntity(uuid)==player`、world instance/key、position/velocity/yaw/pitch與bbox安全；返回後完整對稱。
-
-- [ ] **Step 3: failure window assertions**
-
-- destination map被replacement：移動前拒絕。
-- target chunk非FULL：不得強載、不得移動。
-- native move後驗證故障：`UniverseTransferTestAccess` 透過package-private verifier seam只把post-move verification改成false，要求立即回source；不修改原生teleport結果。
-- source在return前被replacement：不得送往同key不同instance，回`FAILED_RECOVERY_REQUIRED`並保留destination player與source/actual evidence。
-
-- [ ] **Step 4: run full GameTests**
-
-```powershell
-& 'C:/Users/Ben/.gradle/wrapper/dists/gradle-8.8-bin/dl7vupf4psengwqhwktix4v1/gradle-8.8/bin/gradle.bat' runGameTest
-```
-
-Expected: 新舊全部PASS；無未具名force-load或player duplication。
-
-- [ ] **Step 5: 兩階段review、commit**
-
-```powershell
-git add src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferGameTests.java src/testmod/java/dev/quantumchamber/universe/UniverseTransferTestAccess.java src/testmod/resources/fabric.mod.json
-git commit -m "test: verify native universe player round trips"
-```
-
----
-
 ### Task 3: Different-JVM transfer probe 與 M3-B final gate
 
 **Files:**
+- Create: `src/testmod/java/dev/quantumchamber/universe/UniverseTransferTestAccess.java`
 - Create: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferProbe.java`
 - Modify: `src/testmod/resources/fabric.mod.json`
 - Modify: `build.gradle`
@@ -154,11 +111,18 @@ git commit -m "test: verify native universe player round trips"
 
 - [ ] **Step 1: default-off RED probe**
 
-Fresh owned server由catalog重建alternate world，建立native server player fixture與safe target，執行Overworld→alternate→Overworld。每段都原生save player NBT並驗Dimension key；缺property時entrypoint完全不動作。
+Fresh owned server由production lifecycle從catalog重建alternate world，testmod只讀取得同一context backend，建立PlayerManager擁有的native server player fixture與safe target；缺property時entrypoint完全不動作。Probe以不同JVM phase依序驗：
+
+- `success-roundtrip`：Overworld→alternate同XYZ→Overworld，完整player/world/entity/pose/velocity/yaw/pitch與正式player NBT。
+- `target-not-full`：目的bbox外圈至少一chunk維持非FULL，明確拒絕且前後不force-load／不移動。
+- `post-move-authority-loss`：test-only backend decorator在真NativeMove成功後才讓`resolveActive`失效，要求service真回來源並產生`FAILED_ROLLED_BACK`；不偽造native成功、不直接改玩家pose。
+- `stale-source-token`：service A成功移入後，以新service B嘗試return，舊source runtime token必`REJECTED_BEFORE_MOVE/REJECT_SOURCE_IDENTITY`且玩家留目的world；再由原service A真返回以安全收尾。這是move前拒絕，不冒稱`FAILED_RECOVERY_REQUIRED`。
+
+每段都原生save player NBT並驗Dimension key、同一player object／PlayerManager identity，並清player/ticket/floor fixture；不得註冊command、門或client packet。
 
 - [ ] **Step 2: 執行一次正式probe**
 
-保存PID、StartTime、startupNonce、world identities、player UUID、兩段pose、正式player NBT、catalog/region hash、stdout/stderr、normal stop。不得重跑同nonce。
+每phase使用同一nonce-owned save root但不同PID／StartTime／startupNonce；前一JVM完整normal stop/lock release後才下一個。保存world/backend identities、player UUID、source/destination/final pose、move/rollback results、正式player NBT、catalog/region hash、stdout/stderr與lifecycle LOAD/UNLOAD/STOPPED receipts。任一phase FAIL停止鏈，不重跑同phase/root。
 
 - [ ] **Step 3: 無快取全回歸**
 
@@ -179,6 +143,6 @@ M3-B固定commit range做spec compliance與quality review；Critical/Important�
 - [ ] **Step 6: commit，不push**
 
 ```powershell
-git add build.gradle src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferProbe.java src/testmod/resources/fabric.mod.json docs/implementation-notes/2026-09-19-m3b-server-transfer-readiness.md
+git add build.gradle src/testmod/java/dev/quantumchamber/universe/UniverseTransferTestAccess.java src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferProbe.java src/testmod/resources/fabric.mod.json docs/implementation-notes/2026-09-19-m3b-server-transfer-readiness.md
 git commit -m "docs: record M3-B transfer readiness evidence"
 ```
