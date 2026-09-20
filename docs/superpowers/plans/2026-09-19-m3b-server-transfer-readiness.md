@@ -116,7 +116,7 @@ Fresh owned server由production lifecycle從catalog重建alternate world，testm
 - `success-roundtrip`：Overworld→alternate同XYZ→Overworld，完整player/world/entity/pose/velocity/yaw/pitch與正式player NBT。
 - `target-not-full`：目的bbox外圈至少一chunk維持非FULL，明確拒絕且前後不force-load／不移動。
 - `post-move-authority-loss`：test-only backend decorator在真NativeMove成功後才讓`resolveActive`失效，要求service真回來源並產生`FAILED_ROLLED_BACK`；不偽造native成功、不直接改玩家pose。
-- `stale-source-token`：service A成功移入後，以新service B嘗試return，舊source runtime token必`REJECTED_BEFORE_MOVE/REJECT_SOURCE_IDENTITY`且玩家留目的world；再由原service A真返回以安全收尾。這是move前拒絕，不冒稱`FAILED_RECOVERY_REQUIRED`。
+- `stale-service-receipt`：service A成功移入後，以新service B嘗試return；B沒有A建立的destination runtime token，必在最早receipt gate回`REJECTED_BEFORE_MOVE/REJECT_RECEIPT_IDENTITY`且玩家留目的world，再由原service A真返回以安全收尾。只有receipt/destination token有效而source owner失效時才使用`REJECT_SOURCE_IDENTITY`；兩者都是move前拒絕，不冒稱`FAILED_RECOVERY_REQUIRED`。
 
 每段都原生save player NBT並驗Dimension key、同一player object／PlayerManager identity，並清player/ticket/floor fixture；不得註冊command、門或client packet。
 
