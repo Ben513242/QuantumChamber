@@ -12,6 +12,7 @@ import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.MaterializeResult;
 import dev.quantumchamber.universe.UniverseCatalogStore;
+import dev.quantumchamber.universe.UniverseLifecycleService;
 import dev.quantumchamber.universe.UniverseMaterializationService;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import dev.quantumchamber.universe.UniverseWorldDescriptor;
@@ -39,6 +40,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ChunkTicketType;
@@ -47,6 +49,7 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.WorldSavePath;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,13 +63,17 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
     private static final BlockPos SENTINEL = new BlockPos(8, 100, 8);
     private static final BlockPos CONTROLLER = new BlockPos(9, 100, 8);
     private static final ChunkPos CHUNK = new ChunkPos(0, 0);
+    private static final RegistryKey<World> FOREIGN_WORLD = RegistryKey.of(RegistryKeys.WORLD,
+            Identifier.of("quantumchamber", "universe/60000000-0000-4000-8000-000000000006/overworld"));
+    private static final Identifier BEFORE_PRODUCTION = Identifier.of("quantumchamber", "m3_probe_before_production");
     private static final Identifier AFTER_PRODUCTION = Identifier.of("quantumchamber", "m3_probe_after_production");
     private static final ChunkTicketType<ChunkPos> FIXTURE_TICKET = ChunkTicketType.create(
             "quantumchamber_m3_probe", Comparator.comparingLong(ChunkPos::toLong));
 
     private final Map<String, Object> proof = new LinkedHashMap<>();
     private final List<String> failures = new ArrayList<>();
-    private final Minecraft121DynamicDimensionBackend backend = new Minecraft121DynamicDimensionBackend();
+    private Minecraft121DynamicDimensionBackend backend;
+    private Object lifecycleContext;
     private Configuration configuration;
     private MinecraftServer owner;
     private ServerWorld world;
@@ -98,25 +105,133 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         proof.put("nativeReadOnly", !configuration.phase().equals("create-save"));
         event("initialized", Map.of());
 
-        // 明確排在正式 callback 之後，避免依賴 entrypoint 的偶然載入順序。
+        // 先綁定 exact server，再讓正式 bootstrap 執行；觀測 callback 明確排在正式處理之後。
+        ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(BEFORE_PRODUCTION, Event.DEFAULT_PHASE);
+        ServerLifecycleEvents.SERVER_STARTED.register(BEFORE_PRODUCTION, this::bindBeforeProduction);
         ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER_PRODUCTION);
-        ServerLifecycleEvents.SERVER_STARTED.register(AFTER_PRODUCTION, server -> owner = server);
+        ServerLifecycleEvents.SERVER_STARTED.register(AFTER_PRODUCTION, this::captureLifecycle);
         ServerTickEvents.END_SERVER_TICK.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER_PRODUCTION);
         ServerTickEvents.END_SERVER_TICK.register(AFTER_PRODUCTION, this::tick);
         ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER_PRODUCTION);
         ServerBlockEntityEvents.BLOCK_ENTITY_LOAD.register(AFTER_PRODUCTION, this::blockEntityLoad);
-        ServerWorldEvents.LOAD.register(this::worldLoad);
-        ServerWorldEvents.UNLOAD.register(this::worldUnload);
-        ServerLifecycleEvents.SERVER_STOPPING.register(this::stopping);
+        ServerWorldEvents.LOAD.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER_PRODUCTION);
+        ServerWorldEvents.LOAD.register(AFTER_PRODUCTION, this::worldLoad);
+        ServerWorldEvents.UNLOAD.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER_PRODUCTION);
+        ServerWorldEvents.UNLOAD.register(AFTER_PRODUCTION, this::worldUnload);
+        ServerLifecycleEvents.SERVER_STOPPING.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER_PRODUCTION);
+        ServerLifecycleEvents.SERVER_STOPPING.register(AFTER_PRODUCTION, this::stopping);
         ServerLifecycleEvents.SERVER_STOPPED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER_PRODUCTION);
         ServerLifecycleEvents.SERVER_STOPPED.register(AFTER_PRODUCTION, this::stopped);
+    }
+
+    private void bindBeforeProduction(MinecraftServer server) {
+        owner = server;
+        guarded(server, () -> {
+            require(server.isOnThread() && lifecycleContexts().get(server) == null,
+                    "probe 必須在 exact server 的正式 lifecycle context 建立前綁定");
+            require(server.getWorld(FOREIGN_WORLD) == null, "正式 bootstrap 前 foreign map key 已存在");
+            assertDimensionRegistryAbsent(server);
+            proof.put("preMapAbsent", true);
+            proof.put("boundBeforeProduction", true);
+            event("before_production", Map.of("mapAbsent", true, "contextAbsent", true));
+        });
+    }
+
+    private void captureLifecycle(MinecraftServer server) {
+        if (server != owner) return;
+        guarded(server, () -> {
+            lifecycleContext = lifecycleContexts().get(server);
+            require(lifecycleContext != null && Boolean.TRUE.equals(readField(lifecycleContext, "ready")),
+                    "正式 bootstrap 沒有留下健康的 exact server context");
+            var productionBackend = (Minecraft121DynamicDimensionBackend) readField(lifecycleContext, "backend");
+            boolean create = configuration.phase().equals("create-save");
+            if (create) {
+                require(productionBackend.runtimeSnapshot(server).isEmpty() && loads == 0
+                        && server.getWorld(FOREIGN_WORLD) == null, "create 必須由空 catalog 啟動");
+                backend = new Minecraft121DynamicDimensionBackend();
+            } else {
+                backend = productionBackend;
+                require(loads == 1 && loadWorld != null && server.getWorld(FOREIGN_WORLD) == loadWorld,
+                        "正式 bootstrap 必須已物化 exact foreign world 並發出唯一 LOAD");
+            }
+            proof.put("lifecycleContextIdentity", System.identityHashCode(lifecycleContext));
+            proof.put("lifecycleBackendIdentity", System.identityHashCode(productionBackend));
+            proof.put("probeBackendIdentity", System.identityHashCode(backend));
+            proof.put("backendOwner", create ? "probe-create" : "production-lifecycle");
+            proof.put("lifecycleReadyAfterBootstrap", true);
+            assertLifecycleContext(server);
+            event("after_production", Map.of("contextIdentity", System.identityHashCode(lifecycleContext),
+                    "backendIdentity", System.identityHashCode(backend), "loads", loads,
+                    "backendOwner", proof.get("backendOwner")));
+        });
+    }
+
+    private void assertLifecycleContext(MinecraftServer server) throws ReflectiveOperationException {
+        require(server == owner && lifecycleContext != null && lifecycleContexts().get(server) == lifecycleContext,
+                "正式 lifecycle 的 exact server context 被移除或替換");
+        var productionBackend = readField(lifecycleContext, "backend");
+        require(configuration.phase().equals("create-save") ? backend != productionBackend : backend == productionBackend,
+                "probe backend owner 不符 create／production lifecycle 契約");
+        require(((List<?>) readField(lifecycleContext, "materializeFailures")).isEmpty()
+                && readField(lifecycleContext, "stoppingFailure") == null, "lifecycle 已記錄未解決的失敗");
+        proof.put("lifecycleContextExact", true);
+    }
+
+    private ServerWorld lifecycleMaterializedWorld(MinecraftServer server) throws ReflectiveOperationException {
+        assertLifecycleContext(server);
+        var materialized = server.getWorld(descriptor.worldKey());
+        require(materialized != null && materialized == loadWorld && loads == 1 && unloads == 0
+                && backend.resolveActive(server, descriptor).orElseThrow() == materialized,
+                "未取得 production lifecycle 已建立的 exact ACTIVE world");
+        var tracked = (Map<?, ?>) readField(lifecycleContext, "unloads");
+        require(tracked.size() == 1 && Integer.valueOf(0).equals(tracked.get(materialized)),
+                "production lifecycle 未追蹤初始 exact world 的 LOAD");
+        proof.put("lifecycleMaterializedExact", true);
+        proof.put("lifecycleInitialWorldIdentity", System.identityHashCode(materialized));
+        event("lifecycle_world_adopted", Map.of("contextIdentity", System.identityHashCode(lifecycleContext),
+                "backendIdentity", System.identityHashCode(backend), "worldIdentity", System.identityHashCode(materialized),
+                "trackedUnloads", 0));
+        return materialized;
+    }
+
+    private void assertLifecycleUnload(MinecraftServer server, ServerWorld unloaded) throws ReflectiveOperationException {
+        assertLifecycleContext(server);
+        var tracked = (Map<?, ?>) readField(lifecycleContext, "unloads");
+        if (configuration.phase().equals("create-save")) {
+            require(tracked.isEmpty(), "空 catalog lifecycle 不得冒認 probe backend 的世界");
+        } else {
+            require(Integer.valueOf(1).equals(tracked.get(unloaded)), "production lifecycle 缺少 exact UNLOAD receipt");
+        }
+        proof.put("lifecycleUnloadTrackingExact", true);
+    }
+
+    private void assertLifecycleDetached(MinecraftServer server) throws ReflectiveOperationException {
+        require(lifecycleContext != null && !lifecycleContexts().containsKey(server), "STOPPED 正式 context 未 detach");
+        var tracked = (Map<?, ?>) readField(lifecycleContext, "unloads");
+        int expected = configuration.phase().equals("create-save") ? 0 : loads;
+        require(tracked.size() == expected && tracked.values().stream().allMatch(Integer.valueOf(1)::equals),
+                "STOPPED lifecycle 的每個 exact world 缺少唯一 UNLOAD");
+        if (expected > 0) {
+            require(tracked.containsKey(world) && (previousWorld == null || tracked.containsKey(previousWorld))
+                    && readField(lifecycleContext, "backend") == backend, "STOPPED lifecycle 失去 world／backend 身分");
+        }
+        require(Boolean.FALSE.equals(readField(lifecycleContext, "ready"))
+                && ((List<?>) readField(lifecycleContext, "materializeFailures")).isEmpty()
+                && readField(lifecycleContext, "stoppingFailure") == null, "STOPPED context 存在未解決失敗");
+        proof.put("lifecycleTrackedWorlds", tracked.size());
+        proof.put("lifecycleContextDetached", true);
+        event("lifecycle_detached", Map.of("trackedWorlds", tracked.size(), "exactUnloadCounts", tracked.values().toString()));
+    }
+
+    private static Map<?, ?> lifecycleContexts() throws ReflectiveOperationException {
+        return (Map<?, ?>) readStaticField(UniverseLifecycleService.class, "CONTEXTS");
     }
 
     private void tick(MinecraftServer server) {
         if (server != owner || !failures.isEmpty() || Boolean.TRUE.equals(proof.get("stopRequested"))) return;
         guarded(server, () -> {
             if (++ticks == 1) {
-                materialize(server);
+                materialize(server, false);
                 if (configuration.phase().equals("create-save")) writeFixture();
                 else readFixture();
             } else {
@@ -138,7 +253,8 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         });
     }
 
-    private void materialize(MinecraftServer server) throws Exception {
+    private void materialize(MinecraftServer server, boolean replacement) throws Exception {
+        assertLifecycleContext(server);
         require(server.isOnThread(), "探針必須在 server thread");
         require(server.getSavePath(WorldSavePath.ROOT).toRealPath().equals(configuration.root().resolve("world")), "實際 save root 不符");
         var chamberRegistry = ChamberRegistryState.get(server).registry();
@@ -165,15 +281,20 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         var record = catalog.records().values().iterator().next();
         require(record.definition().universeId().value().equals(UNIVERSE_UUID), "catalog UUID 不符");
         descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
+        require(descriptor.worldKey().equals(FOREIGN_WORLD), "catalog descriptor 不是觀測的固定 foreign key");
         proof.put("worldKey", descriptor.worldKey().getValue().toString());
         proof.put("catalogChecked", true);
-        proof.put("preMapAbsent", server.getWorld(descriptor.worldKey()) == null);
-        require(Boolean.TRUE.equals(proof.get("preMapAbsent")), "建構前 map 已有 foreign key");
         assertDimensionRegistryAbsent(server);
-        event("pre_materialize", Map.of("mapAbsent", true, "dimensionRegistryAbsent", true, "catalogNbt", diskNbt.toString()));
-        var result = new UniverseMaterializationService(backend).materializeChecked(server, record, descriptor);
-        require(result.status() == MaterializeResult.Status.MATERIALIZED, "checked materialize 未成功：" + result.status());
-        world = result.world();
+        if (configuration.phase().equals("create-save") || replacement) {
+            require(server.getWorld(descriptor.worldKey()) == null, "建構前 map 已有 foreign key");
+            event("pre_materialize", Map.of("mapAbsent", true, "dimensionRegistryAbsent", true,
+                    "catalogNbt", diskNbt.toString(), "replacement", replacement));
+            var result = new UniverseMaterializationService(backend).materializeChecked(server, record, descriptor);
+            require(result.status() == MaterializeResult.Status.MATERIALIZED, "checked materialize 未成功：" + result.status());
+            world = result.world();
+        } else {
+            world = lifecycleMaterializedWorld(server);
+        }
         require(world == loadWorld && world.getServer() == server && server.getWorld(descriptor.worldKey()) == world
                 && backend.resolveActive(server, descriptor).orElseThrow() == world, "物化後 exact identity 不符");
         var storage = ((MinecraftServerDynamicWorldAccess) server).quantumchamber$getSession().getWorldDirectory(descriptor.worldKey()).toRealPath();
@@ -216,7 +337,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         observation.close();
         observation = null;
         controller = null;
-        materialize(server);
+        materialize(server, true);
         require(world != previousWorld && server.getWorld(descriptor.worldKey()) == world
                 && backend.resolveActive(server, descriptor).orElseThrow() == world, "D 不是 same-key 新 exact instance");
         require(oldStorage.equals(proof.get("storage")), "replacement 使用不同 native storage");
@@ -320,8 +441,8 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
     }
 
     private void worldLoad(MinecraftServer server, ServerWorld eventWorld) {
-        if (descriptor == null || !eventWorld.getRegistryKey().equals(descriptor.worldKey())) return;
-        require(server == owner && eventWorld.getServer() == server && server.getWorld(descriptor.worldKey()) == eventWorld, "LOAD exact identity 不符");
+        if (!eventWorld.getRegistryKey().equals(FOREIGN_WORLD)) return;
+        require(server == owner && eventWorld.getServer() == server && server.getWorld(FOREIGN_WORLD) == eventWorld, "LOAD exact identity 不符");
         loadWorld = eventWorld;
         loads++;
         event("world_load", Map.of("count", loads, "exactMapIdentity", true, "identity", System.identityHashCode(eventWorld)));
@@ -334,6 +455,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
             require(gateB() ? earlyUnload : Boolean.TRUE.equals(proof.get("stoppingSeen")), "UNLOAD 不在已核准邊界內");
             unloads++;
             require(unloads == loads, "同一 instance 的 UNLOAD 重送");
+            assertLifecycleUnload(server, eventWorld);
             event("world_unload", Map.of("count", unloads, "exactMapIdentity", true,
                     "dispatch", earlyUnload ? "backend-explicit" : "vanilla-shutdown",
                     "identity", System.identityHashCode(eventWorld)));
@@ -342,7 +464,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
 
     private void assertDimensionRegistryAbsent(MinecraftServer server) {
         require(!server.getCombinedDynamicRegistries().getCombinedRegistryManager().get(RegistryKeys.DIMENSION)
-                .containsId(descriptor.worldKey().getValue()), "vanilla DIMENSION registry 出現 foreign definition");
+                .containsId(FOREIGN_WORLD.getValue()), "vanilla DIMENSION registry 出現 foreign definition");
         proof.put("dimensionRegistryAbsent", true);
     }
 
@@ -356,6 +478,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         if (server != owner) return;
         guarded(server, () -> {
             proof.put("stoppingSeen", true);
+            assertLifecycleContext(server);
             releaseTicket();
             proof.put("ticketReleased", !ticketHeld);
             require(world != null && server.getWorld(descriptor.worldKey()) == world, "STOPPING 已失去 exact native owner");
@@ -382,6 +505,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         if (server != owner) return;
         guarded(server, () -> {
             proof.put("stoppedSeen", true);
+            assertLifecycleDetached(server);
             require(!((Map<?, ?>) readStaticField(ChamberControllerLoadSyncQueue.class, "PENDING")).containsKey(server), "STOPPED 仍有 queue server key");
             proof.put("queueKeyRemoved", true);
             require(!((Map<?, ?>) readStaticField(ChamberControllerLoadSyncQueue.class, "OBSERVERS")).containsKey(server), "STOPPED 仍有 observer server key");
@@ -478,9 +602,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
                         || !root.getParent().getFileName().toString().equals("run")) return null;
                 Path owner = root.getParent().getParent().resolve(OWNER);
                 if (!owner.toRealPath().equals(owner)) return null;
-                boolean gateB = phase.equals("unload-replace") || phase.equals("final-verify");
-                if (gateB && !nonce.equals("task6-r8-c2d9f7c4c4614200a383fd31de13ad50")) return null;
-                Path evidence = owner.resolve((gateB ? "task-7-gate-b-" : "task-6-gate-a-") + nonce).resolve(phase);
+                Path evidence = owner.resolve("task-9-final-" + nonce).resolve(phase);
                 if (!evidence.toRealPath().equals(evidence) || Files.exists(evidence.resolve("final.json"))) return null;
                 return new Configuration(phase, nonce, startupNonce, root, evidence);
             } catch (IOException | RuntimeException invalid) {
