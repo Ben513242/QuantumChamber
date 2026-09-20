@@ -498,6 +498,7 @@ git commit -m "feat: bootstrap persistent dynamic universes"
 ### Task 9: M3-A final automated gate、文件與獨立 review
 
 **Files:**
+- Modify: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java`
 - Modify: `docs/implementation-notes/2026-09-19-m3-runtime-dimension-feasibility.md`
 - Create: `docs/implementation-notes/2026-09-19-m3a-dynamic-universe-backend.md`
 - Create: `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/final-gate-report.md`
@@ -517,6 +518,8 @@ git commit -m "feat: bootstrap persistent dynamic universes"
 
 四phase只能依序各一次；保存不同PID/StartTime/startupNonce、catalog hash、region hash、world key/storage、LOAD/UNLOAD receipts、queue outcomes、source/class hashes與normal stop。
 
+整合後 reload／unload-replace／final-verify 必須使用 `SERVER_STARTED` production lifecycle 已建立的 exact world與其server-scoped backend；testmod只在lifecycle之前綁定owner並捕捉LOAD，之後以只讀test access取得context backend，不得建立第二個backend owner或停用production lifecycle。create-save仍在空catalog啟動後配置第一筆definition。
+
 - [ ] **Step 3: dedicated main-only regression與artifact audit**
 
 空catalog與一筆catalog各做Done→stop；audit release/sources JAR無testmod/client leakage，common不載client classes。
@@ -532,7 +535,7 @@ Reviewer固定比較本M3-A起始commit到exact HEAD；Critical/Important為零�
 - [ ] **Step 6: commit，不push**
 
 ```powershell
-git add docs/implementation-notes
+git add src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java docs/implementation-notes
 git commit -m "docs: record M3-A dynamic universe evidence"
 ```
 
