@@ -184,7 +184,7 @@ class UniverseRoleResolverTest {
         counts.put(world, 1);
         assertDoesNotThrow(() -> UniverseLifecycleService.verifyStopped(
                 List.of(new UniverseRuntimeRegistry.OwnedWorld<>(descriptor, DynamicWorldRuntimeState.ACTIVE, world)),
-                List.of(), counts, key -> world, candidate -> candidate == world, null));
+                List.of(), counts, key -> world, candidate -> candidate == world, null, List.of()));
     }
 
     @Test
@@ -196,7 +196,7 @@ class UniverseRoleResolverTest {
             counts.put(world, count);
             assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
                     List.of(new UniverseRuntimeRegistry.OwnedWorld<>(descriptor, DynamicWorldRuntimeState.ACTIVE, world)),
-                    List.of(), counts, key -> world, candidate -> true, null));
+                    List.of(), counts, key -> world, candidate -> true, null, List.of()));
         }
     }
 
@@ -204,7 +204,7 @@ class UniverseRoleResolverTest {
     void quarantineCannotBeClearedEvenWhenUnloadWasObserved() {
         var world = new Object();
         assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
-                List.of(), List.of(world), Map.of(world, 1), key -> null, candidate -> true, null));
+                List.of(), List.of(world), Map.of(world, 1), key -> null, candidate -> true, null, List.of()));
     }
 
     @Test
@@ -213,7 +213,7 @@ class UniverseRoleResolverTest {
         var world = new Object();
         assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
                 List.of(new UniverseRuntimeRegistry.OwnedWorld<>(descriptor, DynamicWorldRuntimeState.UNLOAD_FAILED, world)),
-                List.of(), Map.of(world, 1), key -> new Object(), candidate -> true, null));
+                List.of(), Map.of(world, 1), key -> new Object(), candidate -> true, null, List.of()));
     }
 
     @Test
@@ -223,7 +223,7 @@ class UniverseRoleResolverTest {
         for (var state : List.of(DynamicWorldRuntimeState.MATERIALIZING, DynamicWorldRuntimeState.UNLOADING)) {
             assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
                     List.of(new UniverseRuntimeRegistry.OwnedWorld<>(descriptor, state, world)),
-                    List.of(), Map.of(world, 1), key -> world, candidate -> true, null));
+                    List.of(), Map.of(world, 1), key -> world, candidate -> true, null, List.of()));
         }
     }
 
@@ -233,27 +233,27 @@ class UniverseRoleResolverTest {
         var world = new Object();
         assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
                 List.of(new UniverseRuntimeRegistry.OwnedWorld<>(descriptor, DynamicWorldRuntimeState.ACTIVE, world)),
-                List.of(), Map.of(world, 1), key -> world, candidate -> false, null));
+                List.of(), Map.of(world, 1), key -> world, candidate -> false, null, List.of()));
     }
 
     @Test
-    void onlyAnUnownedMaterializeFailureMayLackAWorldAtStopped() {
+    void anUnownedMaterializeFailureWithoutRollbackProofCannotDetach() {
         var descriptor = descriptor(threeWorlds().state.find(new UniverseId(FIRST)).orElseThrow());
-        assertDoesNotThrow(() -> UniverseLifecycleService.verifyStopped(
+        assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
                 List.of(new UniverseRuntimeRegistry.OwnedWorld<Object>(descriptor, DynamicWorldRuntimeState.MATERIALIZE_FAILED, null)),
-                List.of(), Map.of(), key -> null, candidate -> true, null));
+                List.of(), Map.of(), key -> null, candidate -> true, null, List.of()));
         assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
                 List.of(new UniverseRuntimeRegistry.OwnedWorld<Object>(descriptor, DynamicWorldRuntimeState.ACTIVE, null)),
-                List.of(), Map.of(), key -> null, candidate -> true, null));
+                List.of(), Map.of(), key -> null, candidate -> true, null, List.of()));
     }
 
     @Test
     void releasedEarlyWorldStillRequiresItsSingleUnloadReceipt() {
         var oldWorld = new Object();
         assertDoesNotThrow(() -> UniverseLifecycleService.verifyStopped(
-                List.of(), List.of(), Map.of(oldWorld, 1), key -> null, candidate -> true, null));
+                List.of(), List.of(), Map.of(oldWorld, 1), key -> null, candidate -> true, null, List.of()));
         assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
-                List.of(), List.of(), Map.of(oldWorld, 0), key -> null, candidate -> true, null));
+                List.of(), List.of(), Map.of(oldWorld, 0), key -> null, candidate -> true, null, List.of()));
     }
 
     @Test
@@ -312,8 +312,101 @@ class UniverseRoleResolverTest {
     void stoppingFailurePreventsFalseDetachEvenWhenBackendSnapshotIsAlreadyEmpty() {
         var fatal = new AssertionError("cleanup completed but observer failed");
         var failure = assertThrows(IllegalStateException.class, () -> UniverseLifecycleService.verifyStopped(
-                List.of(), List.of(), Map.of(), key -> null, candidate -> true, fatal));
+                List.of(), List.of(), Map.of(), key -> null, candidate -> true, fatal, List.of()));
         assertSame(fatal, failure.getCause());
+    }
+
+    @Test
+    void unhealthyNullWorldResultRetainsContextEvenWithEmptyQuarantineAndUnloadReceipts() {
+        var access = oneWorld();
+        access.failCreate = 1;
+        access.failedResult = new MaterializeResult(MaterializeResult.Status.FAILED_UNHEALTHY, null);
+        var result = UniverseLifecycleService.bootstrap(access);
+        assertFalse(result.ready());
+        assertTrue(access.live.isEmpty() && access.unloads.isEmpty());
+        var runtime = access.runtime.snapshot(access.server).getFirst();
+        assertEquals(DynamicWorldRuntimeState.MATERIALIZE_FAILED, runtime.state());
+        assertNull(runtime.world());
+        var failure = assertThrows(IllegalStateException.class, access::verifyAndDetach);
+        assertSame(access, access.contexts.get(access.server));
+        assertSame(result.failure(), failure.getCause());
+        var recorded = access.materializeFailures.getFirst();
+        assertEquals(MaterializeResult.Status.FAILED_UNHEALTHY, recorded.status());
+        assertTrue(recorded.detail().contains("FAILED_UNHEALTHY"));
+        assertSame(result.failure(), recorded.cause());
+    }
+
+    @Test
+    void rolledBackNullWorldResultCanDetachOnlyWithItsRecordedBackendProof() {
+        var access = oneWorld();
+        access.failCreate = 1;
+        access.failedResult = new MaterializeResult(MaterializeResult.Status.FAILED_ROLLED_BACK, null);
+        var result = UniverseLifecycleService.bootstrap(access);
+        assertFalse(result.ready());
+        assertDoesNotThrow(access::verifyAndDetach);
+        assertFalse(access.contexts.containsKey(access.server));
+        assertEquals(MaterializeResult.Status.FAILED_ROLLED_BACK, access.materializeFailures.getFirst().status());
+        assertSame(result.failure(), access.materializeFailures.getFirst().cause());
+    }
+
+    @Test
+    void unknownMaterializeExceptionCannotTurnAnUnownedFailureIntoSafeCleanup() {
+        var access = oneWorld();
+        access.failCreate = 1;
+        var result = UniverseLifecycleService.bootstrap(access);
+        assertThrows(IllegalStateException.class, access::verifyAndDetach);
+        assertSame(access, access.contexts.get(access.server));
+        assertNull(access.materializeFailures.getFirst().status());
+        assertSame(result.failure(), access.materializeFailures.getFirst().cause());
+    }
+
+    @Test
+    void fatalMaterializeExceptionKeepsItsContextFailureReceiptAfterRethrow() {
+        var access = oneWorld();
+        access.failCreate = 1;
+        access.fatal = new AssertionError("可控制的 backend fatal");
+        assertSame(access.fatal, assertThrows(AssertionError.class, () -> UniverseLifecycleService.bootstrap(access)));
+        assertThrows(IllegalStateException.class, access::verifyAndDetach);
+        assertSame(access, access.contexts.get(access.server));
+        assertSame(access.fatal, access.materializeFailures.getFirst().cause());
+    }
+
+    @Test
+    void secondUnhealthyResultStillRetainsContextAfterFirstWorldWasSafelyUnloaded() {
+        var access = threeWorlds();
+        access.failCreate = 2;
+        access.failedResult = new MaterializeResult(MaterializeResult.Status.FAILED_UNHEALTHY, null);
+        var result = UniverseLifecycleService.bootstrap(access);
+        assertEquals(List.of("catalog", "inventory", "create:1", "create:2", "unload:1", "stop"), access.events);
+        assertTrue(result.retained().isEmpty() && access.live.isEmpty());
+        assertEquals(List.of(1), List.copyOf(access.unloads.values()));
+        assertThrows(IllegalStateException.class, access::verifyAndDetach);
+        assertSame(access, access.contexts.get(access.server));
+        assertEquals(1, access.materializeFailures.size());
+        assertEquals(MaterializeResult.Status.FAILED_UNHEALTHY, access.materializeFailures.getFirst().status());
+    }
+
+    @Test
+    void secondUnhealthyResultAndFirstCleanupFailureKeepBothCausesAndNativeOwner() {
+        var access = threeWorlds();
+        access.failCreate = 2;
+        access.failUnload = 1;
+        access.failedResult = new MaterializeResult(MaterializeResult.Status.FAILED_UNHEALTHY, null);
+        var result = UniverseLifecycleService.bootstrap(access);
+        assertEquals(1, result.retained().size());
+        assertSame(access.cleanupFailure, result.failure().getSuppressed()[0]);
+        // 模擬第一筆後續由 native shutdown 完成，仍不能掩蓋第二筆無 close 證據。
+        access.live.values().forEach(world -> access.unloads.put(world, 1));
+        assertThrows(IllegalStateException.class, access::verifyAndDetach);
+        assertSame(access, access.contexts.get(access.server));
+        assertSame(result.retained().getFirst().world(), access.live.values().iterator().next());
+        assertSame(result.failure(), access.materializeFailures.getFirst().cause());
+    }
+
+    private static FakeBootstrap oneWorld() {
+        var state = new UniverseRegistryState();
+        state.allocateOverworld(FIRST, 1);
+        return new FakeBootstrap(durable(state));
     }
 
     private static FakeBootstrap threeWorlds() {
@@ -340,6 +433,11 @@ class UniverseRoleResolverTest {
         final UniverseRegistryState state;
         final List<String> events = new ArrayList<>();
         final Map<UniverseWorldDescriptor, Object> live = new LinkedHashMap<>();
+        final Object server = new Object();
+        final UniverseRuntimeRegistry<Object, Object> runtime = new UniverseRuntimeRegistry<>();
+        final Map<Object, Integer> unloads = new IdentityHashMap<>();
+        final Map<Object, FakeBootstrap> contexts = new IdentityHashMap<>();
+        final List<UniverseLifecycleService.MaterializeFailure> materializeFailures = new ArrayList<>();
         final RuntimeException failure = new IllegalStateException("物化失敗 fixture");
         final RuntimeException cleanupFailure = new IllegalStateException("清理失敗 fixture");
         final RuntimeException stopFailure = new IllegalStateException("stop 失敗 fixture");
@@ -349,8 +447,12 @@ class UniverseRoleResolverTest {
         boolean orphan;
         boolean failStop;
         AssertionError fatal;
+        MaterializeResult failedResult;
 
-        FakeBootstrap(UniverseRegistryState state) { this.state = state; }
+        FakeBootstrap(UniverseRegistryState state) {
+            this.state = state;
+            contexts.put(server, this);
+        }
 
         @Override public UniverseRegistryState catalog() {
             events.add("catalog");
@@ -366,13 +468,24 @@ class UniverseRoleResolverTest {
         @Override public Object materialize(UniverseRecord record, UniverseWorldDescriptor descriptor) {
             int id = id(descriptor);
             events.add("create:" + id);
+            runtime.beginMaterialize(server, descriptor);
             if (id == failCreate) {
+                runtime.fail(server, descriptor, null);
+                if (failedResult != null) {
+                    return UniverseLifecycleService.materializedWorld(descriptor, failedResult.status(), failedResult.world());
+                }
                 if (fatal != null) throw fatal;
                 throw failure;
             }
             var world = new Object();
             assertNull(live.putIfAbsent(descriptor, world));
+            runtime.activate(server, descriptor, world);
+            unloads.put(world, 0);
             return world;
+        }
+
+        @Override public void recordMaterializeFailure(UniverseLifecycleService.MaterializeFailure failure) {
+            materializeFailures.add(failure);
         }
 
         @Override public void unload(UniverseWorldDescriptor descriptor, Object expected) {
@@ -380,7 +493,16 @@ class UniverseRoleResolverTest {
             events.add("unload:" + id);
             assertSame(expected, live.get(descriptor));
             if (id == failUnload) throw cleanupFailure;
+            runtime.beginUnload(server, descriptor, expected);
             assertTrue(live.remove(descriptor, expected));
+            unloads.put(expected, 1);
+            runtime.release(server, descriptor, expected);
+        }
+
+        void verifyAndDetach() {
+            UniverseLifecycleService.detachAfterVerification(contexts, server, this,
+                    () -> UniverseLifecycleService.verifyStopped(runtime.snapshot(server), List.of(), unloads,
+                            live::get, world -> true, null, materializeFailures));
         }
 
         @Override public void stop() {

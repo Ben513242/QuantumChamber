@@ -72,12 +72,11 @@ public final class UniverseLifecycleService {
                     }
                     var result = new UniverseMaterializationService(context.backend)
                             .materializeChecked(server, record, descriptor);
-                    if (result.status() != MaterializeResult.Status.MATERIALIZED
-                            && result.status() != MaterializeResult.Status.ALREADY_ACTIVE) {
-                        throw new IllegalStateException("Universe bootstrap 物化失敗: "
-                                + descriptor.worldKey().getValue() + " " + result.status());
-                    }
-                    return result.world();
+                    return materializedWorld(descriptor, result.status(), result.world());
+                }
+
+                @Override public void recordMaterializeFailure(MaterializeFailure failure) {
+                    context.materializeFailures.add(failure);
                 }
 
                 @Override public void unload(UniverseWorldDescriptor descriptor, ServerWorld expected) {
@@ -155,15 +154,12 @@ public final class UniverseLifecycleService {
         if (context == null) return;
         var snapshot = context.backend.runtimeSnapshot(server);
         try {
-            verifyStopped(snapshot, context.backend.quarantinedWorlds(server), context.unloads,
+            detachAfterVerification(CONTEXTS, server, context, () -> verifyStopped(snapshot, context.backend.quarantinedWorlds(server), context.unloads,
                     descriptor -> server.getWorld(descriptor.worldKey()), world -> world.getServer() == server,
-                    context.stoppingFailure);
+                    context.stoppingFailure, context.materializeFailures));
         } catch (RuntimeException failure) {
             LOGGER.error("M3_UNIVERSE_STOPPED_UNVERIFIED；保留 context，不以 bookkeeping 取代 cleanup", failure);
             throw failure;
-        }
-        if (!CONTEXTS.remove(server, context)) {
-            throw new IllegalStateException("Universe 停止後的 exact context owner 已改變");
         }
         // SERVER_STOPPED 已晚於 native close；丟棄此 server 專用 backend，不偽造 early-unload receipt。
         LOGGER.info("M3_UNIVERSE_STOPPED_VERIFIED worlds={} runtimeReceipts={} quarantine=0 contextDetached=true",
@@ -172,9 +168,14 @@ public final class UniverseLifecycleService {
 
     static <W> void verifyStopped(List<UniverseRuntimeRegistry.OwnedWorld<W>> runtime, List<W> quarantined,
             Map<W, Integer> unloads, Function<UniverseWorldDescriptor, W> nativeWorld,
-            Predicate<W> ownsServer, Throwable stoppingFailure) {
+            Predicate<W> ownsServer, Throwable stoppingFailure, List<MaterializeFailure> materializeFailures) {
         if (stoppingFailure != null) {
             throw new IllegalStateException("STOPPING 已記錄清理失敗，禁止以空 snapshot 冒稱成功 detach", stoppingFailure);
+        }
+        for (var failure : materializeFailures) {
+            if (failure.status() != MaterializeResult.Status.FAILED_ROLLED_BACK) {
+                throw new IllegalStateException("bootstrap 物化失敗沒有安全 close 證據: " + failure.detail(), failure.cause());
+            }
         }
         if (!quarantined.isEmpty()) throw new IllegalStateException("停止後仍有 quarantine 強參照");
         for (var count : unloads.values()) {
@@ -187,8 +188,11 @@ public final class UniverseLifecycleService {
             }
             var world = owner.world();
             if (world == null) {
-                if (owner.state() != DynamicWorldRuntimeState.MATERIALIZE_FAILED) {
-                    throw new IllegalStateException("runtime owner 缺少 exact world");
+                boolean rolledBack = materializeFailures.stream().anyMatch(failure ->
+                        failure.descriptor().equals(owner.descriptor())
+                                && failure.status() == MaterializeResult.Status.FAILED_ROLLED_BACK);
+                if (owner.state() != DynamicWorldRuntimeState.MATERIALIZE_FAILED || !rolledBack) {
+                    throw new IllegalStateException("runtime owner 缺少 exact world 或已證明的 rollback close 收據");
                 }
                 continue;
             }
@@ -197,6 +201,22 @@ public final class UniverseLifecycleService {
                 throw new IllegalStateException("失敗／active owner 沒有 exact native shutdown receipt");
             }
         }
+    }
+
+    static <S, C> void detachAfterVerification(Map<S, C> contexts, S server, C expected, Runnable verification) {
+        verification.run();
+        if (contexts.get(server) != expected || !contexts.remove(server, expected)) {
+            throw new IllegalStateException("Universe 停止後的 exact context owner 已改變");
+        }
+    }
+
+    static <W> W materializedWorld(UniverseWorldDescriptor descriptor, MaterializeResult.Status status, W world) {
+        Objects.requireNonNull(status, "backend materialize status");
+        if (status != MaterializeResult.Status.MATERIALIZED && status != MaterializeResult.Status.ALREADY_ACTIVE) {
+            if (world != null) throw new IllegalStateException("失敗的 materialize result 不得包含可用 world");
+            throw new MaterializeRejected(descriptor, status);
+        }
+        return Objects.requireNonNull(world, "成功的 materialize result 必須包含 exact world");
     }
 
     static <W> Throwable cleanupQuarantines(Supplier<List<W>> inventory, Consumer<W> cleanup) {
@@ -234,8 +254,15 @@ public final class UniverseLifecycleService {
             for (var record : ordered) {
                 if (record.desiredAvailability() != DesiredAvailability.EAGER_ENABLED) continue;
                 var descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
-                var world = Objects.requireNonNull(access.materialize(record, descriptor), "物化沒有返回 exact world");
-                retained.add(new OwnedWorld<>(descriptor, world));
+                try {
+                    var world = Objects.requireNonNull(access.materialize(record, descriptor), "物化沒有返回 exact world");
+                    retained.add(new OwnedWorld<>(descriptor, world));
+                } catch (Exception | Error failure) {
+                    // 只信任正式 result 的 typed status；未知例外不能推測成已完成 rollback。
+                    var status = failure instanceof MaterializeRejected rejected ? rejected.status : null;
+                    access.recordMaterializeFailure(new MaterializeFailure(descriptor, status, failure.toString(), failure));
+                    throw failure;
+                }
             }
             return new BootstrapResult<>(retained, null);
         } catch (Exception | Error failure) {
@@ -273,11 +300,24 @@ public final class UniverseLifecycleService {
         UniverseRegistryState catalog();
         UniverseRegistryState.StorageInventory inspectStorage(Collection<UniverseRecord> records) throws Exception;
         W materialize(UniverseRecord record, UniverseWorldDescriptor descriptor) throws Exception;
+        void recordMaterializeFailure(MaterializeFailure failure);
         void unload(UniverseWorldDescriptor descriptor, W expected) throws Exception;
         void stop();
     }
 
     record OwnedWorld<W>(UniverseWorldDescriptor descriptor, W world) { }
+
+    record MaterializeFailure(UniverseWorldDescriptor descriptor, MaterializeResult.Status status,
+                              String detail, Throwable cause) { }
+
+    private static final class MaterializeRejected extends IllegalStateException {
+        final MaterializeResult.Status status;
+
+        MaterializeRejected(UniverseWorldDescriptor descriptor, MaterializeResult.Status status) {
+            super("Universe bootstrap 物化失敗: " + descriptor.worldKey().getValue() + " " + status);
+            this.status = status;
+        }
+    }
 
     record BootstrapResult<W>(List<OwnedWorld<W>> retained, Throwable failure) {
         BootstrapResult { retained = List.copyOf(retained); }
@@ -287,6 +327,7 @@ public final class UniverseLifecycleService {
     private static final class Context {
         final Minecraft121DynamicDimensionBackend backend = new Minecraft121DynamicDimensionBackend();
         final Map<ServerWorld, Integer> unloads = new IdentityHashMap<>();
+        final List<MaterializeFailure> materializeFailures = new ArrayList<>();
         boolean ready;
         Throwable stoppingFailure;
     }
