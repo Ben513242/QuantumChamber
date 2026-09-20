@@ -60,7 +60,7 @@
 - `src/testmod/java/dev/quantumchamber/gametest/M3UniverseRuntimeProbe.java`：Gate A/B native runtime phases。
 - `src/testmod/resources/fabric.mod.json`：註冊 default-off probe entrypoint。
 - `build.gradle`：新增 property-gated `m3UniverseProbe` server run。
-- `.superpowers/sdd/2026-09-19-m3-dynamic-universe/`：gitignored harness、raw evidence、reviews與 receipts。
+- `.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/`：gitignored harness、raw evidence、reviews與 receipts。
 
 ---
 
@@ -251,7 +251,7 @@ git commit -m "feat: persist checked universe catalog"
 
 - [ ] **Step 3: 以 fake backend 驗 ordering**
 
-Fake backend本身的事件順序必須精確為 `CONSTRUCTED → PUBLISHED → LOAD → ACTIVE`；rollback則為 `UNLOAD → EXPECTED_REMOVE → CLOSE → FAILED_ROLLED_BACK`。`UniverseMaterializationService` 先驗 `UniverseRegistryState.flushedRecords()` 含有完全相同的record/descriptor，才呼叫backend；其service-level順序為 `CATALOG_FLUSHED → BACKEND_CALLED`。禁止只相信current/dirty record，也禁止key-only remove。
+Fake backend本身的事件順序必須精確為 `CONSTRUCTED → PUBLISHED → LOAD → ACTIVE`；其contract fixture rollback為 `UNLOAD → EXPECTED_REMOVE → CLOSE → FAILED_ROLLED_BACK`，不代表native post-LOAD故障已可安全回滾。`UniverseMaterializationService` 先驗 `UniverseRegistryState.flushedRecords()` 含有完全相同的record/descriptor，才呼叫backend；其service-level順序為 `CATALOG_FLUSHED → BACKEND_CALLED`。禁止只相信current/dirty record，也禁止key-only remove。
 
 - [ ] **Step 4: 執行 GREEN**
 
@@ -350,7 +350,7 @@ Factory 使用同 server registry manager 的 Overworld `DimensionOptions`、`Un
 
 - [ ] **Step 4: 實作 materialize transaction**
 
-順序固定：guards → construct → border listener → `putIfAbsent` → identity checks → explicit `ServerWorldEvents.LOAD.invoker().onWorldLoad` → runtime active。LOAD dispatch前失敗可expected-remove並close尚未對observer公開的world；LOAD dispatch已開始後若失敗，在Task 7 Gate B前不得使用未證early unload，必須保留exact world於map、標記`FAILED_UNHEALTHY`並請求正常stop，交給vanilla shutdown save/UNLOAD/close。Task 7證明quiesce後才補完整publish後rollback。
+順序固定：guards → construct → border listener → `putIfAbsent` → identity checks → explicit `ServerWorldEvents.LOAD.invoker().onWorldLoad` → runtime active。LOAD dispatch前失敗可expected-remove並close尚未對observer公開的world；LOAD dispatch已開始後的最終策略是fail-closed：exact owner仍在map時交由正常shutdown，map absent時只可`putIfAbsent`恢復created，foreign replacement不得覆寫而須保留strong quarantine，全部標記`FAILED_UNHEALTHY`並請求正常stop。Task 7只在原key無foreign owner時提供已證quiesce/save/UNLOAD/close cleanup；不把native post-LOAD故障描述成完整可回滾交易。
 
 - [ ] **Step 5: 編譯、unit tests與main-only server smoke**
 

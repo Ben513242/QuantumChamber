@@ -145,8 +145,8 @@ git commit -m "test: verify native universe player round trips"
 - Create: `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferProbe.java`
 - Modify: `src/testmod/resources/fabric.mod.json`
 - Modify: `build.gradle`
-- Create: `.superpowers/sdd/2026-09-19-m3-dynamic-universe/run-transfer-probe.ps1`
-- Create: `.superpowers/sdd/2026-09-19-m3-dynamic-universe/m3b-final-report.md`
+- Create: `.superpowers/sdd/2026-09-19-m3b-server-transfer-readiness/run-transfer-probe.ps1`
+- Create: `.superpowers/sdd/2026-09-19-m3b-server-transfer-readiness/m3b-final-report.md`
 - Create: `docs/implementation-notes/2026-09-19-m3b-server-transfer-readiness.md`
 
 **Interfaces:**
