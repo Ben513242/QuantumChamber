@@ -30,7 +30,7 @@
 - `src/main/java/dev/quantumchamber/universe/UniverseTransferService.java`：ACTIVE guard、safe target、native move、return。
 - `src/test/java/dev/quantumchamber/universe/UniverseTransferAuthorityTest.java`：pure authority/ordering tests。
 - `src/testmod/java/dev/quantumchamber/universe/UniverseTransferTestAccess.java`：同package建立故障verifier，不改正式預設路徑。
-- `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferGameTests.java`：真server player、world identity與failure windows。
+- `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferGameTests.java`：真server player、native world identity與failure windows；共享GameTest不物化dynamic Universe。
 - `src/testmod/java/dev/quantumchamber/gametest/M3UniverseTransferProbe.java`：不同JVM default-off round-trip。
 - `src/testmod/resources/fabric.mod.json`、`build.gradle`：只加入property-gated probe。
 - `docs/implementation-notes/2026-09-19-m3b-server-transfer-readiness.md`：證據與限制。
@@ -104,12 +104,12 @@ git commit -m "feat: guard native universe player transfers"
 - Modify: `src/testmod/resources/fabric.mod.json`
 
 **Interfaces:**
-- Consumes: M3-A ACTIVE world、Task 1 transfer service。
+- Consumes: Task 1 transfer service；test-only backend adapter把既有static Superposition world當exact ACTIVE destination，共享GameTest不配置dynamic Universe。
 - Produces: GameTests for success、replaced destination、target not FULL、post-move verification failure、return source replacement。
 
 - [ ] **Step 1: 建立真player fixture RED test**
 
-沿用既有testmod native connection/player fixture pattern，建立一位由 `PlayerManager`擁有的 `ServerPlayerEntity`；不是mock。來源為vanilla Overworld，目的為M3-A dynamic world。
+沿用既有testmod native connection/player fixture pattern，建立一位由 `PlayerManager`擁有的 `ServerPlayerEntity`；不是mock。來源為vanilla Overworld，目的為既有static Superposition world，並由test-only backend adapter提供exact ACTIVE identity。這只驗native player move／guard／rollback，不建立第五dynamic world，也不得污染M2四world oracle；真正M3-A dynamic destination留Task 3 dedicated probe。
 
 - [ ] **Step 2: 成功往返 assertions**
 
