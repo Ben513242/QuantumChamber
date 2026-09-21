@@ -108,6 +108,13 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         }
     }
 
+    /** 只更新恢復進度，完整保留已承認的候選 context、ledger 與 selection。 */
+    public SessionRecoveryRecord withProgress(List<Participant> people, List<SpaceLease> leases,
+            SessionState phase, boolean restoreEffect) {
+        return new SessionRecoveryRecord(sessionUuid,chamberUuid,origin,people,leases,phase,restoreEffect,semantics,
+                candidateContext,candidateLedger,candidateSelection);
+    }
+
     public record Participant(UUID playerUuid, Vec3d sourcePosition, Vec3d sourceVelocity,
             float yaw, float pitch, NbtCompound quantumStateSnapshot, boolean returned) {
         public Participant {
@@ -125,8 +132,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                 && previous.origin().equals(next.origin()) && previous.semantics()==next.semantics()
                 && sameParticipantSources(previous.participants(),next.participants())
                 && previous.candidateContext().equals(next.candidateContext())
-                && previous.candidateLedger().size() <= next.candidateLedger().size()
-                && previous.candidateLedger().equals(next.candidateLedger().subList(0, previous.candidateLedger().size()))
+                && new HashSet<>(next.candidateLedger()).containsAll(previous.candidateLedger())
                 && (previous.candidateSelection().orElse(null) instanceof CandidateSelection.Selectable
                     || previous.candidateSelection().equals(next.candidateSelection()));
     }

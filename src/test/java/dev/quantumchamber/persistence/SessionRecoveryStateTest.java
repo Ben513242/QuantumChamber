@@ -18,7 +18,7 @@ class SessionRecoveryStateTest {
     @TempDir Path directory;
     @BeforeAll static void initializeNativeVersion() { net.minecraft.SharedConstants.createGameVersion(); }
 
-    @Test void candidateAuthorityOnlyAcceptsExactCanonicalPrefixAndFrozenContext() {
+    @Test void candidateAuthorityOnlyAcceptsCanonicalSupersetAndFrozenContext() {
         var original = candidateRecord(false);
         var ledger = original.candidateLedger();
         var appended = new java.util.ArrayList<>(ledger);
@@ -33,7 +33,9 @@ class SessionRecoveryStateTest {
         var inserted = new java.util.ArrayList<>(ledger);
         inserted.add(new CandidateLedgerEntry(new DoorKey(original.sessionUuid(), -3, DoorKey.DoorWallSide.NEGATIVE_LATERAL),
                 appended.getLast().candidate()));
-        for (var invalidLedger : List.of(List.<CandidateLedgerEntry>of(), ledger.subList(1, ledger.size()), changed, inserted)) {
+        assertTrue(SessionRecoveryRecord.sameAuthority(original,
+                candidateCopy(original, original.candidateContext(), inserted, original.candidateSelection(), original.state())));
+        for (var invalidLedger : List.of(List.<CandidateLedgerEntry>of(), ledger.subList(1, ledger.size()), changed)) {
             assertFalse(SessionRecoveryRecord.sameAuthority(original,
                     candidateCopy(original, original.candidateContext(), invalidLedger, original.candidateSelection(), original.state())));
         }

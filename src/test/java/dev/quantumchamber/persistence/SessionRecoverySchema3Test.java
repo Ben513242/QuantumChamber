@@ -47,6 +47,28 @@ class SessionRecoverySchema3Test {
                 original.spaceLeases(), phase, false, original.semantics(), context, ledger, selection);
     }
 
+    @Test void canonicalLedgerSupersetAllowsEarlierStationAndSideButNeverRemovalOrReplacement() {
+        var full = SessionRecoveryState.fromNbt(fixture(false, false)).records().get(SESSION);
+        // 先承認正向站；之後朝負方向探索會在 canonical 清單前方插入。
+        var positive = copy(full, full.candidateContext(), List.of(full.candidateLedger().get(2)), full.candidateSelection(), full.state());
+        var negativePositiveSide = copy(full, full.candidateContext(), List.of(full.candidateLedger().get(1), full.candidateLedger().get(2)),
+                full.candidateSelection(), full.state());
+        var state = new SessionRecoveryState(); state.put(positive);
+        assertTrue(SessionRecoveryRecord.sameAuthority(positive, negativePositiveSide), "新增較小 station 仍保留所有既有候選");
+        assertDoesNotThrow(() -> state.put(negativePositiveSide));
+        assertTrue(SessionRecoveryRecord.sameAuthority(negativePositiveSide, full), "同 station 的另一側可插到 canonical 前方");
+        assertDoesNotThrow(() -> state.put(full));
+        assertFalse(SessionRecoveryRecord.sameAuthority(full, positive));
+        assertThrows(IllegalArgumentException.class, () -> state.put(positive));
+        var replaced = new ArrayList<>(full.candidateLedger());
+        replaced.set(0, new CandidateLedgerEntry(replaced.getFirst().doorKey(),
+                new QuantumCandidate.Source(new CandidateId(new CandidateBytes(bytes(99))))));
+        var changed = copy(full, full.candidateContext(), replaced, full.candidateSelection(), full.state());
+        assertFalse(SessionRecoveryRecord.sameAuthority(full, changed));
+        assertThrows(IllegalArgumentException.class, () -> state.put(changed));
+        assertEquals(full, state.records().get(SESSION));
+    }
+
     @Test void allCandidateAndSourceVariantsRoundtripWithExactBytesAndCanonicalLedgerOrder() {
         for (boolean catalog : new boolean[] {false, true}) for (boolean selected : new boolean[] {false, true}) {
             var input = fixture(selected, catalog);

@@ -11,5 +11,10 @@ abstract class SessionJournalWindowFaultMixin {
     private void quantumchamberTest$before(MinecraftServer server,CallbackInfo callback) {
         dev.quantumchamber.gametest.M2CorridorGameTests.beforeDisconnectJournalFlush((SessionRecoveryState)(Object)this,server);
         M2PersistenceProbe.beforeJournalFlush((SessionRecoveryState)(Object)this,server);
+        dev.quantumchamber.gametest.M4CandidateDoorGameTests.beforeCandidateFlush((SessionRecoveryState)(Object)this,server);
+    }
+    @Inject(method="flush(Lnet/minecraft/server/MinecraftServer;)V",at=@At("RETURN"),remap=false)
+    private void quantumchamberTest$after(MinecraftServer server,CallbackInfo callback) {
+        dev.quantumchamber.gametest.M4CandidateDoorGameTests.afterCandidateFlush((SessionRecoveryState)(Object)this,server);
     }
 }

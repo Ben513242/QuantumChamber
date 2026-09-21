@@ -133,8 +133,7 @@ public final class SessionRecoveryManager {
             var participants=record.participants().stream().map(entry -> entry.playerUuid().equals(completed)
                     ? new SessionRecoveryRecord.Participant(entry.playerUuid(),entry.sourcePosition(),entry.sourceVelocity(),entry.yaw(),entry.pitch(),
                             entry.quantumStateSnapshot(),true) : entry).toList();
-            record=new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),participants,record.spaceLeases(),
-                    SessionState.RETURNING,record.restoreEntryEffectOnReturn(),record.semantics());
+            record=record.withProgress(participants,record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn());
             journal.put(record); journal.flush(server);
         }
         var pages=CorridorPageManager.forServer(server);
@@ -172,8 +171,8 @@ public final class SessionRecoveryManager {
 
     private void markReturning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.RETURNING) return;
-        journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),record.spaceLeases(),
-                SessionState.RETURNING,record.restoreEntryEffectOnReturn(),record.semantics())); journal.flush(server);
+        journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
+        journal.flush(server);
     }
 
     private void requireServer(MinecraftServer owner) {

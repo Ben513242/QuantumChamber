@@ -109,7 +109,7 @@ class CandidateLedgerServiceTest {
         assertEquals(16384, near.state.flushedRecords().get(SESSION).candidateLedger().size());
     }
 
-    @Test void resolverFailureOrNonAppendCanonicalInputFailsBeforeMutation() throws Exception {
+    @Test void resolverFailureStopsMutationButEarlierCanonicalInsertPreservesExistingCandidate() throws Exception {
         var port = port(List.of());
         var wrong = new CandidateResolver(CandidateEntropyStateTest.fixedState(root.resolve("other"), new byte[32]));
         var mismatch = service.commitCandidates(port, OWNER,
@@ -118,9 +118,10 @@ class CandidateLedgerServiceTest {
         assertTrue(mismatch.sessionFailed()); assertTrue(mismatch.committedKeys().isEmpty()); assertEquals(0, port.puts);
         var existing = port(List.of(entry(1)));
         var reordered = commit(existing, List.of(key(0), key(1)));
-        assertTrue(reordered.sessionFailed()); assertTrue(reordered.committedKeys().isEmpty());
-        assertEquals(List.of(entry(1)), existing.state.flushedRecords().get(SESSION).candidateLedger());
-        assertEquals(0, existing.flushes);
+        assertFalse(reordered.sessionFailed()); assertEquals(List.of(key(0),key(1)),reordered.committedKeys());
+        assertEquals(entry(1), existing.state.flushedRecords().get(SESSION).candidateLedger().getLast());
+        assertEquals(2,existing.state.flushedRecords().get(SESSION).candidateLedger().size());
+        assertEquals(1, existing.flushes);
     }
 
     @Test void batchPutFlushAndEveryReadbackFaultReturnNoCommittedKeys() {

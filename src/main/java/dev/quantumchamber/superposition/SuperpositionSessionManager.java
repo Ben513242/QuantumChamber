@@ -78,6 +78,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(!preview.accepted() || !new HashSet<>(preview.participantUuids()).equals(new HashSet<>(requested))
                 || !source.isReceivingRedstonePower(controller.getPos())) return StartResult.REJECTED;
         var frame=new ChamberFrame(controller.getPos(),controller.getCachedState().get(ChamberControllerBlock.FACING));
+        dev.quantumchamber.candidate.CandidatePolicySnapshot candidateContext;
+        try { candidateContext=SuperpositionSession.freezeCandidateContext(server,source); }
+        catch(IOException | RuntimeException unhealthy) { return StartResult.REJECTED; }
         var effects=new QuantumEffectTransaction(requested.stream().map(id -> server.getPlayerManager().getPlayer(id)).toList());
         var id=UUID.randomUUID(); var pages=CorridorPageManager.forServer(server);
         CorridorPageManager.PreparedMappings prepared;
@@ -86,9 +89,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         var origin=new ChamberOriginAuthority(chamber,source.getRegistryKey().getValue(),
                 dev.quantumchamber.universe.DimensionRole.fromVanillaKey(source.getRegistryKey()).orElseThrow(),
                 frame.controllerPos(),frame.outwardFacing(),ChamberInstanceKind.ORIGIN);
-        var initial=new SessionRecoveryRecord(id,chamber,origin,effects.snapshots(),prepared.target().instances().stream()
+        var initial=SessionRecoveryRecord.candidateAware(id,chamber,origin,effects.snapshots(),prepared.target().instances().stream()
                 .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,false,
-                SessionSemantics.LATERAL_BUFF_MAINTAINED);
+                SessionSemantics.LATERAL_BUFF_MAINTAINED,candidateContext);
         var runtime=new SuperpositionSession(source,controller,frame,effects,prepared,initial);
         sessions.put(chamber,runtime);
         try {
@@ -209,8 +212,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(!sourceAuthority(runtime)) throw new IllegalStateException("發布前來源身分失效");
         runtime.effects.verifyCurrent(server);
         var initial=runtime.initial;
-        journal.put(new SessionRecoveryRecord(initial.sessionUuid(),initial.chamberUuid(),initial.origin(),initial.participants(),
-                initial.spaceLeases(),SessionState.SUPERPOSITION,false,initial.semantics()));
+        journal.put(initial.withProgress(initial.participants(),initial.spaceLeases(),SessionState.SUPERPOSITION,false));
         journal.flush(server);
         pages.commitInitial(initial.sessionUuid(),ids(initial));
         runtime.state=SessionState.SUPERPOSITION;
@@ -277,8 +279,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     }
     private void returning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.RETURNING && record.equals(journal.records().get(record.sessionUuid()))) return;
-        journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),
-                record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn(),record.semantics())); journal.flush(server);
+        journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
+        journal.flush(server);
     }
     private SessionRecoveryRecord record(UUID chamber) {
         return journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).findFirst().orElse(null);

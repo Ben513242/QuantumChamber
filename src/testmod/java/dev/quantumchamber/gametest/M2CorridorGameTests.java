@@ -482,7 +482,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
     public void native_disconnect_io_failure_preserves_removal_pending_and_retry_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
-        when(context,3,fixture::activeReady,tick -> {
+        // 先完成初始候選兩批，再量測拒絕 RETURNING flush 的整份檔案窗口。
+        when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,tick -> {
             var initial=fixture.record(); var fault=new DisconnectJournalFault(fixture); var before=journalBytes(fixture.server);
             var offline=fixture.players.remove(1); var profile=offline.player().getGameProfile(); var online=fixture.players.getFirst();
             RuntimeException[] finding={null};
@@ -1164,7 +1165,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
         });
     }
     /** 真backend的來源fixture；不改global gateway、不假返還或清除durable pending。 */
-    private static final class NativeEntry implements AutoCloseable {
+    static final class NativeEntry implements AutoCloseable {
         final TestContext context;
         final net.minecraft.server.MinecraftServer server;
         final net.minecraft.server.world.ServerWorld target;
@@ -1280,14 +1281,12 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     "第二位真的離線且不再形成 live pin，不能只模擬 returned flag");
             var returnedFirst=new SessionRecoveryRecord.Participant(first.playerUuid(),first.sourcePosition(),first.sourceVelocity(),first.yaw(),first.pitch(),
                     first.quantumStateSnapshot(),true);
-            var full=new SessionRecoveryRecord(fixture.session,fixture.initial.chamberUuid(),fixture.initial.origin(),List.of(returnedFirst,absent),
-                    fixture.initial.spaceLeases(),SessionState.RETURNING,false);
+            var full=fixture.initial.withProgress(List.of(returnedFirst,absent),fixture.initial.spaceLeases(),SessionState.RETURNING,false);
             fixture.state.put(full); fixture.state.flush(server); fixture.manager.release(fixture.session);
             var before=journalBytes(server); var writes=DoorWriteFault.observeWrites(fixture.target);
             boolean rejected=false;
             try {
-                fixture.state.put(new SessionRecoveryRecord(full.sessionUuid(),full.chamberUuid(),full.origin(),List.of(returnedFirst),
-                        full.spaceLeases(),full.state(),full.restoreEntryEffectOnReturn()));
+                fixture.state.put(full.withProgress(List.of(returnedFirst),full.spaceLeases(),full.state(),full.restoreEntryEffectOnReturn()));
             } catch(IllegalArgumentException expected) { rejected=true; }
             fixture.state.flush(server);
             final boolean refused=rejected;
@@ -1318,8 +1317,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     saveCheckpoint(server,rejoined);
                     var returnedAbsent=new SessionRecoveryRecord.Participant(absent.playerUuid(),absent.sourcePosition(),absent.sourceVelocity(),absent.yaw(),absent.pitch(),
                             absent.quantumStateSnapshot(),true);
-                    fixture.state.put(new SessionRecoveryRecord(full.sessionUuid(),full.chamberUuid(),full.origin(),List.of(returnedAbsent,returnedFirst),
-                            full.spaceLeases(),full.state(),full.restoreEntryEffectOnReturn())); fixture.state.flush(server);
+                    fixture.state.put(full.withProgress(List.of(returnedAbsent,returnedFirst),full.spaceLeases(),full.state(),full.restoreEntryEffectOnReturn()));
+                    fixture.state.flush(server);
                 } finally { server.getPlayerManager().remove(rejoined); channel.finishAndReleaseAll(); }
                 when(context,tick+3,() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
             });
@@ -1346,7 +1345,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch(),changedNbt,true));
             int refused=0;
             for(var candidate : changed) try {
-                fixture.state.put(new SessionRecoveryRecord(full.sessionUuid(),full.chamberUuid(),full.origin(),List.of(candidate),full.spaceLeases(),full.state(),false));
+                fixture.state.put(full.withProgress(List.of(candidate),full.spaceLeases(),full.state(),false));
             } catch(IllegalArgumentException expected) { refused++; }
             context.assertEquals(5,refused,"同 UUID 的 position／velocity／yaw／pitch／完整 NBT 逐欄改動都必須拒絕");
             context.assertTrue(!fixture.state.isDirty(),"被拒絕的 put 不可修改 dirty");
@@ -1434,8 +1433,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
     public void trusted_returning_before_prepare_retires_durable_reservation(TestContext context) {
         var fixture=new TrustedSpace(context,Direction.NORTH,1);
         var initial=fixture.initial;
-        fixture.state.put(new SessionRecoveryRecord(initial.sessionUuid(),initial.chamberUuid(),initial.origin(),initial.participants(),
-                initial.spaceLeases(),SessionState.RETURNING,true)); fixture.state.flush(context.getWorld().getServer());
+        fixture.state.put(initial.withProgress(initial.participants(),initial.spaceLeases(),SessionState.RETURNING,true));
+        fixture.state.flush(context.getWorld().getServer());
         assertRejected(context,() -> fixture.manager.prepare(fixture.prepared),"RETURNING不可入列geometry");
         var bounds=fixture.prepared.target().instances().getFirst().bounds();
         when(context,1,() -> !nativeLeaseReady(fixture.target,bounds),tick -> {
@@ -1577,8 +1576,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
     public void trusted_returning_before_geometry_never_builds(TestContext context) {
         var fixture=new TrustedSpace(context,Direction.NORTH,1); fixture.prepare();
         var initial=fixture.initial;
-        fixture.state.put(new SessionRecoveryRecord(initial.sessionUuid(),initial.chamberUuid(),initial.origin(),initial.participants(),
-                initial.spaceLeases(),SessionState.RETURNING,true)); fixture.state.flush(context.getWorld().getServer());
+        fixture.state.put(initial.withProgress(initial.participants(),initial.spaceLeases(),SessionState.RETURNING,true));
+        fixture.state.flush(context.getWorld().getServer());
         var bounds=fixture.prepared.target().instances().getFirst().bounds();
         when(context,1,() -> nativeLeaseReady(fixture.target,bounds),tick -> {
             // 單一隔離 batch 的 1440×7×7 建造最多 18 個4096寫入tick；等待20 tick觀察禁止寫入。
@@ -1819,7 +1818,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
     }
 
     /** 只用於 geometry 測試的可信編排；紅石資格與失敗返還留 Task3/4。 */
-    private static final class TrustedSpace {
+    static final class TrustedSpace {
         final TestContext context;
         final CorridorPageManager manager;
         final SessionRecoveryState state;
@@ -1832,6 +1831,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
             this(context,facing,count,SessionSemantics.LEGACY_FORWARD_CONSUMED);
         }
         TrustedSpace(TestContext context,Direction facing,int count,SessionSemantics semantics) {
+            this(context,facing,count,semantics,true);
+        }
+        TrustedSpace(TestContext context,Direction facing,int count,SessionSemantics semantics,boolean candidateAware) {
             this.context=context;
             var server=context.getWorld().getServer(); manager=CorridorPageManager.forServer(server); state=SessionRecoveryState.get(server);
             target=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
@@ -1849,10 +1851,11 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         (NbtCompound)player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),false));
             }
             prepared=manager.reserveInitial(session,chamber,facing,Set.of(0L),semantics);
-            initial=new SessionRecoveryRecord(session,chamber,new ChamberOriginAuthority(chamber,World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
+            var legacy=new SessionRecoveryRecord(session,chamber,new ChamberOriginAuthority(chamber,World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
                     frame.controllerPos(),facing,ChamberInstanceKind.ORIGIN),people,prepared.target().instances().stream()
                     .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,
                     semantics==SessionSemantics.LEGACY_FORWARD_CONSUMED,semantics);
+            initial=candidateAware ? M4CandidateTestAccess.candidateAware(legacy,server) : legacy;
         }
         void prepare() { state.put(initial); state.flush(context.getWorld().getServer()); manager.prepare(prepared); }
         void commit() { manager.commitInitial(session,stageEntry()); }
@@ -1868,7 +1871,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
             }
             state.put(new SessionRecoveryRecord(session,initial.chamberUuid(),initial.origin(),initial.participants(),initial.spaceLeases(),
-                    SessionState.SUPERPOSITION,false,initial.semantics())); state.flush(context.getWorld().getServer());
+                    SessionState.SUPERPOSITION,false,initial.semantics(),initial.candidateContext(),initial.candidateLedger(),initial.candidateSelection()));
+            state.flush(context.getWorld().getServer());
             return Set.copyOf(cohort);
         }
         void returnTrusted() {
@@ -1883,7 +1887,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
             }
             var current=state.flushedRecords().get(session);
             state.put(new SessionRecoveryRecord(session,initial.chamberUuid(),initial.origin(),people,current.spaceLeases(),SessionState.RETURNING,
-                    current.restoreEntryEffectOnReturn(),current.semantics())); state.flush(context.getWorld().getServer()); manager.release(session);
+                    current.restoreEntryEffectOnReturn(),current.semantics(),current.candidateContext(),current.candidateLedger(),current.candidateSelection()));
+            state.flush(context.getWorld().getServer()); manager.release(session);
             players.forEach(ConnectedGameTestPlayer::close);
         }
         void finishUnentered() {
@@ -1896,7 +1901,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         original.pitch(),original.quantumStateSnapshot(),true));
             }
             var current=state.flushedRecords().get(session);
-            state.put(new SessionRecoveryRecord(session,initial.chamberUuid(),initial.origin(),people,current.spaceLeases(),SessionState.RETURNING,true));
+            state.put(current.withProgress(people,current.spaceLeases(),SessionState.RETURNING,current.restoreEntryEffectOnReturn()));
             state.flush(context.getWorld().getServer()); manager.release(session); players.forEach(ConnectedGameTestPlayer::close);
         }
         void assertComplete() {
@@ -1931,9 +1936,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 frame.controllerPos(), Direction.NORTH, ChamberInstanceKind.ORIGIN);
         var person = new SessionRecoveryRecord.Participant(player.getUuid(), player.getPos(), player.getVelocity(),
                 player.getYaw(), player.getPitch(), (NbtCompound) player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(), false);
-        var record = new SessionRecoveryRecord(session, chamber, origin, java.util.List.of(person),
+        var record = M4CandidateTestAccess.candidateAware(new SessionRecoveryRecord(session, chamber, origin, java.util.List.of(person),
                 prepared.target().instances().stream().map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(), view.bounds())).toList(),
-                SessionState.ARMING, true);
+                SessionState.ARMING, true),server);
         state.put(record);
         assertRejected(context, () -> manager.prepare(prepared), "put 不代表 durable");
         context.assertTrue(destination.getBlockState(controller).isAir(), "拒絕必須零 geometry");
@@ -1960,7 +1965,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             assertRejected(context, () -> manager.commitInitial(session, java.util.Set.of(player.getUuid())), "ARMING 不得發布");
             var returned = new SessionRecoveryRecord.Participant(person.playerUuid(), person.sourcePosition(), person.sourceVelocity(),
                     person.yaw(), person.pitch(), person.quantumStateSnapshot(), true);
-            state.put(new SessionRecoveryRecord(session,chamber,origin,java.util.List.of(returned),record.spaceLeases(),SessionState.RETURNING,true));
+            state.put(record.withProgress(java.util.List.of(returned),record.spaceLeases(),SessionState.RETURNING,true));
             state.flush(server);
             manager.release(session);
             fixture.close();
@@ -1991,8 +1996,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 new BlockPos(100, 70, 100), Direction.NORTH, ChamberInstanceKind.ORIGIN);
         var participant = new SessionRecoveryRecord.Participant(UUID.randomUUID(), new Vec3d(100.5, 65, 100.5),
                 Vec3d.ZERO, 90, 0, (NbtCompound) new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1234).writeNbt(), false);
-        var record = new SessionRecoveryRecord(sessionUuid, chamberUuid, origin, java.util.List.of(participant),
-                java.util.List.of(new SessionRecoveryRecord.SpaceLease(63, new BlockBox(10000, 0, 0, 10095, 20, 10))), SessionState.ARMING, true);
+        var record = M4CandidateTestAccess.candidateAware(new SessionRecoveryRecord(sessionUuid, chamberUuid, origin, java.util.List.of(participant),
+                java.util.List.of(new SessionRecoveryRecord.SpaceLease(63, new BlockBox(10000, 0, 0, 10095, 20, 10))), SessionState.ARMING, true),server);
         try {
             state.put(record);
             context.assertTrue(!state.flushedRecords().containsKey(sessionUuid), "put 不冒充 durable");

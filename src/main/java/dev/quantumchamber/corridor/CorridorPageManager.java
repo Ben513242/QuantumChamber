@@ -1,6 +1,9 @@
 package dev.quantumchamber.corridor;
 
 import dev.quantumchamber.chamber.ChamberFrame;
+import dev.quantumchamber.candidate.CandidateLedgerService;
+import dev.quantumchamber.candidate.CandidateSelection;
+import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.persistence.SessionSemantics;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +61,7 @@ public final class CorridorPageManager {
     private MinecraftServer server;
     private ServerWorld world;
     private SessionRecoveryState journal;
+    private final CandidateLedgerService candidates = new CandidateLedgerService();
     private final SlotAllocator allocator = new SlotAllocator();
     private final Map<UUID,Space> spaces = new LinkedHashMap<>();
     private final Map<Integer,BlockBox> protectedLeases = new LinkedHashMap<>();
@@ -83,6 +87,7 @@ public final class CorridorPageManager {
                 server.getSavePath(net.minecraft.util.WorldSavePath.ROOT),journal.flushedRecords().size());
         for (var record : journal.flushedRecords().values()) {
             var space=new Space(record.sessionUuid(),record.origin(),record.participants(),record.semantics());
+            space.authority=record;
             for (var lease : record.spaceLeases()) {
                 validateFacingBounds(lease.bounds(),record.semantics().corridorFacing(record.origin().facing()));
                 validateWorldBounds(lease.bounds());
@@ -137,7 +142,9 @@ public final class CorridorPageManager {
             try {
                 if (space.releasing) { tickRelease(space); continue; }
                 if (space.failed) continue;
-                if (space.builds.isEmpty() && space.overlay.isEmpty() && space.retiring.isEmpty()) continue;
+                if (space.builds.isEmpty() && space.overlay.isEmpty() && space.retiring.isEmpty()) {
+                    refreshCandidates(space); continue;
+                }
                 var record=durable(space);
                 var staged=journal.records().get(space.id);
                 if (record.state()==SessionState.RETURNING || staged==null || staged.state()==SessionState.RETURNING) continue;
@@ -164,6 +171,7 @@ public final class CorridorPageManager {
                     var cell=space.overlay.removeFirst(); write(cell.position(),cell.state());
                 }
                 for (int slot : List.copyOf(space.retiring)) tickRetirement(space,slot);
+                refreshCandidates(space);
             } catch (RuntimeException failure) {
                 fail(space,failure);
             }
@@ -193,7 +201,7 @@ public final class CorridorPageManager {
         if (record.state()!=SessionState.RETURNING) throw new IllegalStateException("退休前必須 checked RETURNING");
         // ARMING落盤後、prepare之前也可能取消；退休同樣必須持有可見實體的完整票。
         acquireTickets(space);
-        space.releasing=true; space.builds.clear(); space.overlay.clear();
+        space.selectable=Map.of(); space.releasing=true; space.builds.clear(); space.overlay.clear();
     }
     public boolean releaseComplete(UUID sessionUuid) { requireThread(); return completedReleases.contains(sessionUuid); }
     static boolean canTrackRelease(int completed,int outstanding) { return completed<64 && outstanding<64-completed; }
@@ -202,6 +210,98 @@ public final class CorridorPageManager {
         if (!completedReleases.remove(sessionUuid)) throw new IllegalStateException("沒有可消費的完成收據");
     }
     public MappingSet currentMappings(UUID sessionUuid) { return space(sessionUuid).current; }
+
+    /** 實體索引是可重建 view；查詢仍核對 exact world、current owner 與完整 25 格。 */
+    public Optional<DoorKey> selectableDoor(ServerWorld target, BlockPos pos) {
+        if(target!=world || target==null || target.getServer()!=server) return Optional.empty();
+        requireThread();
+        for(var space : spaces.values()) {
+            if(!publishable(space)) continue;
+            for(var mapping : space.current.instances()) {
+                if(!mapping.bounds().contains(pos)) continue;
+                var key=CorridorGeometry.sideDoorKey(space.id,mapping,space.semantics,pos);
+                if(key.isPresent() && mapping.ref().equals(space.selectable.get(key.get())) && completeDoor(space,mapping,key.get()))
+                    return key;
+            }
+        }
+        return Optional.empty();
+    }
+
+    public Optional<QuantumCandidate> flushedCandidate(DoorKey key) {
+        requireThread();
+        var record=journal.flushedRecords().get(key.sessionUuid());
+        return record==null ? Optional.empty() : record.candidateLedger().stream().filter(entry -> entry.doorKey().equals(key))
+                .map(dev.quantumchamber.candidate.CandidateLedgerEntry::candidate).findFirst();
+    }
+
+    public Set<DoorKey> selectableDoors(UUID sessionUuid) {
+        requireThread(); var space=spaces.get(sessionUuid);
+        if(space==null || !publishable(space)) return Set.of();
+        var result=new HashSet<DoorKey>();
+        for(var mapping : space.current.instances()) for(var entry : space.selectable.entrySet())
+            if(mapping.ref().equals(entry.getValue()) && completeDoor(space,mapping,entry.getKey())) result.add(entry.getKey());
+        return Set.copyOf(result);
+    }
+
+    private boolean publishable(Space space) {
+        if(space.failed || space.releasing || space.pending!=null || space.batch!=null || space.operations!=0
+                || !space.builds.isEmpty() || !space.overlay.isEmpty() || !space.retiredViews.isEmpty() || !space.retiring.isEmpty()
+                || space.current.epoch()==0 || space.current.instances().isEmpty()) return false;
+        var record=durable(space);
+        return record.state()==SessionState.SUPERPOSITION && record.candidateContext().isPresent()
+                && record.candidateSelection().orElse(null) instanceof CandidateSelection.Selectable
+                && record.equals(journal.records().get(space.id))
+                && space.current.instances().stream().allMatch(mapping -> leaseReady(mapping.bounds()));
+    }
+
+    private boolean completeDoor(Space space, MappingView mapping, DoorKey key) {
+        if(!space.current.instances().contains(mapping) || !space.id.equals(key.sessionUuid())) return false;
+        long start=Math.multiplyExact(key.logicalStationIndex(),8);
+        if(start+1<mapping.aliasStartBlock() || start+5>=mapping.aliasEndBlock()) return false;
+        // 入口返還門可與 lateral station 重合；只排除其實際 25 格，不排除整個 station。
+        if(CorridorGeometry.hasEntrance(mapping)) {
+            var entrance=CorridorGeometry.entrance(mapping,space.semantics);
+            for(int column=1;column<=5;column++) for(int y=1;y<=5;y++)
+                if(CorridorGeometry.sideDoorKey(space.id,mapping,space.semantics,
+                        ChamberGeometry.localToWorld(entrance,column,y,0)).filter(key::equals).isPresent()) return false;
+        }
+        int x=key.wallSide()==DoorKey.DoorWallSide.NEGATIVE_LATERAL ? 0 : 6;
+        for(int z=1;z<=5;z++) for(int y=1;y<=5;y++) {
+            var pos=CorridorGeometry.block(CorridorGeometry.frame(mapping),x,y,Math.toIntExact(start+z-mapping.logicalAnchorBlock()));
+            if(!mapping.bounds().contains(pos) || !world.getBlockState(pos).isOf(dev.quantumchamber.registry.ModBlocks.QUANTUM_BULKHEAD)
+                    || !CorridorGeometry.sideDoorKey(space.id,mapping,space.semantics,pos).filter(key::equals).isPresent()) return false;
+        }
+        return true;
+    }
+
+    private void refreshCandidates(Space space) {
+        space.selectable=Map.of();
+        if(!publishable(space)) return;
+        var complete=new LinkedHashMap<DoorKey,MappingRef>();
+        for(var mapping : space.current.instances()) {
+            long first=Math.floorDiv(mapping.aliasStartBlock(),8), last=Math.floorDiv(mapping.aliasEndBlock()-1,8);
+            for(long station=first;station<=last;station++) for(var side : DoorKey.DoorWallSide.values()) {
+                var key=new DoorKey(space.id,station,side);
+                if(completeDoor(space,mapping,key) && complete.putIfAbsent(key,mapping.ref())!=null)
+                    throw new IllegalStateException("同一 DoorKey 不得有兩個 current physical owner");
+            }
+        }
+        var known=new HashSet<DoorKey>(); durable(space).candidateLedger().forEach(entry -> known.add(entry.doorKey()));
+        var missing=complete.keySet().stream().filter(key -> !known.contains(key)).limit(256).toList();
+        // manager.tick 本身按 server tick 去重；此欄再防止同 session 的其他路徑重複提交。
+        if(!missing.isEmpty() && space.candidateTick!=server.getTicks()) {
+            space.candidateTick=server.getTicks();
+            var result=candidates.commitCandidates(server,space.id,missing);
+            if(result.sessionFailed()) throw new IllegalStateException("候選 checked batch 失敗，禁止發布實體門");
+        }
+        if(!publishable(space)) return;
+        var projection=new LinkedHashMap<DoorKey,MappingRef>();
+        for(var entry : journal.flushedRecords().get(space.id).candidateLedger()) {
+            var owner=complete.get(entry.doorKey());
+            if(owner!=null) projection.put(entry.doorKey(),owner);
+        }
+        space.selectable=Map.copyOf(projection);
+    }
 
     /** 只有整份 durable lease 的實體皆可見，才可發布返還 pin 快照。 */
     public Optional<List<UUID>> returnEntityPins(UUID sessionUuid) {
@@ -276,13 +376,13 @@ public final class CorridorPageManager {
         var record=durable(space);
         if (record.state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("只有已發布 SUPERPOSITION 可 remap");
         requireActiveBuff(space);
+        space.selectable=Map.of();
         var oldSlots=Set.copyOf(space.leases.keySet());
         boolean reserved=false;
         try {
             requirePageCapacity(space,occupiedPages); requirePinCapacity();
             var prepared=reserve(space,expectedCurrentEpoch,occupiedPages); reserved=true;
-            journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),
-                    List.copyOf(space.leases.values()),record.state(),record.restoreEntryEffectOnReturn(),record.semantics()));
+            journal.put(record.withProgress(record.participants(),List.copyOf(space.leases.values()),record.state(),record.restoreEntryEffectOnReturn()));
             journal.flush(server); durable(space); acquireTickets(space); enqueue(space); return prepared;
         } catch (RuntimeException failure) {
             if (!reserved) for (int slot : List.copyOf(space.leases.keySet())) if (!oldSlots.contains(slot)) {
@@ -500,9 +600,11 @@ public final class CorridorPageManager {
         journal.requireHealthy();
         var record=journal.flushedRecords().get(space.id);
         // 比較 Space 的不可變來源與語意；狀態、returned 與 lease 進度不構成來源身分。
-        if (record==null || !SessionRecoveryRecord.sameAuthority(new SessionRecoveryRecord(space.id,space.origin.chamberUuid(),
-                space.origin,space.source,record.spaceLeases(),SessionState.RETURNING,false,space.semantics),record)
+        if (record==null || !space.id.equals(record.sessionUuid()) || !space.origin.equals(record.origin()) || space.semantics!=record.semantics()
+                || !SessionRecoveryRecord.sameParticipantSources(space.source,record.participants())
+                || space.authority!=null && !SessionRecoveryRecord.sameAuthority(space.authority,record)
                 || !leasesEqual(record.spaceLeases(),space.leases.values())) throw new IllegalStateException("durable lease／來源權威不符");
+        space.authority=record;
         return record;
     }
     private PreparedMappings reserve(Space space, long epoch, Set<Long> occupied) {
@@ -623,8 +725,7 @@ public final class CorridorPageManager {
         if (!clear(space,slot,lease.bounds())) return;
         var remaining=space.leases.values().stream().filter(other -> other.slotId()!=slot).toList();
         if (remaining.isEmpty()) throw new IllegalStateException("最後租約必須經 release 收尾");
-        journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),remaining,
-                record.state(),record.restoreEntryEffectOnReturn(),record.semantics()));
+        journal.put(record.withProgress(record.participants(),remaining,record.state(),record.restoreEntryEffectOnReturn()));
         journal.flush(server);
         if (journal.flushedRecords().get(space.id).spaceLeases().stream().anyMatch(other -> other.slotId()==slot)) {
             throw new IllegalStateException("舊租約移除尚未 durable");
@@ -746,12 +847,14 @@ public final class CorridorPageManager {
         return List.copyOf(result);
     }
     private void fail(Space space,Exception failure) {
-        space.failed=true;
+        space.selectable=Map.of(); space.failed=true;
         var record=journal.flushedRecords().get(space.id);
         if (record!=null) {
             try {
-                journal.put(new SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),record.participants(),
-                        List.copyOf(space.leases.values()),SessionState.RETURNING,record.restoreEntryEffectOnReturn(),record.semantics()));
+                var current=journal.records().get(space.id);
+                if(current!=null && SessionRecoveryRecord.sameAuthority(record,current)) record=current;
+                journal.put(record.withProgress(record.participants(),List.copyOf(space.leases.values()),SessionState.RETURNING,
+                        record.restoreEntryEffectOnReturn()));
                 journal.flush(server);
             } catch (RuntimeException persistenceFailure) { failure.addSuppressed(persistenceFailure); }
         }
@@ -826,7 +929,9 @@ public final class CorridorPageManager {
         MappingSet current=new MappingSet(0,List.of()); PreparedMappings pending; RemapBatch batch;
         Set<Long> currentPages=Set.of(),pendingPages=Set.of();
         boolean queued,frontOpen,rearOpen,failed,releasing,provisionalCancelled; int operations,batchTick,prepareTick; long instanceEpoch,prepareNanos;
-        SessionRecoveryRecord finalizing;
+        SessionRecoveryRecord finalizing,authority;
+        Map<DoorKey,MappingRef> selectable=Map.of();
+        int candidateTick=Integer.MIN_VALUE;
         Space(UUID id,ChamberOriginAuthority origin,List<SessionRecoveryRecord.Participant> source,SessionSemantics semantics) {
             this.id=id; this.origin=origin; this.source=List.copyOf(source); this.semantics=Objects.requireNonNull(semantics);
         }
