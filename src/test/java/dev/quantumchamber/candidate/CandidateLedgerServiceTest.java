@@ -199,6 +199,16 @@ class CandidateLedgerServiceTest {
         assertEquals(1, port.puts); assertEquals(1, port.flushes);
     }
 
+    @Test void selectedSessionRejectsEvenExistingCandidateBatchWithoutWriting() {
+        var port=port(List.of(entry(0),entry(1)));
+        assertEquals(SELECTED,select(port,key(0),PLAYER,7));
+        var selected=port.state.flushedRecords().get(SESSION);
+        assertTrue(commit(port,List.of(key(0))).sessionFailed());
+        assertTrue(commit(port,List.of(key(2))).sessionFailed());
+        assertEquals(selected,port.state.flushedRecords().get(SESSION));
+        assertEquals(1,port.puts); assertEquals(1,port.flushes);
+    }
+
     @Test void missingCandidateAndInvalidIdentityPlayerTimeAreRejectedWithoutMutation() {
         var port = port(List.of(entry(0)));
         assertEquals(NOT_SELECTABLE, select(port, key(1), PLAYER, 0));

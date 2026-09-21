@@ -37,6 +37,7 @@ import net.minecraft.server.world.ChunkTicketType;
 
 public final class CorridorPageManager {
     public record MappingRef(UUID sessionUuid, long instanceEpoch, int slotId) {}
+    public record CandidateDoorLocation(DoorKey key, MappingRef owner) {}
     public record MappingView(MappingRef ref, long firstCorePage, long lastCorePage, long aliasStartBlock,
             long aliasEndBlock, long logicalAnchorBlock, BlockPos localBlockOrigin, Direction outwardFacing, BlockBox bounds) {
         public MappingView { localBlockOrigin = localBlockOrigin.toImmutable(); bounds = SlotAllocator.copy(bounds); }
@@ -136,10 +137,11 @@ public final class CorridorPageManager {
         lastTick=server.getTicks(); resetBudget();
         try { requirePinCapacity(); }
         catch (IllegalStateException capacity) {
-            for (var space : List.copyOf(spaces.values())) if (!space.failed && !space.releasing) fail(space,capacity);
+            for (var space : List.copyOf(spaces.values())) if (!space.failed && !space.releasing && space.operations==0 && !measured(space)) fail(space,capacity);
         }
         for (var space : List.copyOf(spaces.values())) {
             try {
+                if (space.operations!=0 || measured(space)) continue;
                 if (space.releasing) { tickRelease(space); continue; }
                 if (space.failed) continue;
                 if (space.builds.isEmpty() && space.overlay.isEmpty() && space.retiring.isEmpty()) {
@@ -211,6 +213,69 @@ public final class CorridorPageManager {
     }
     public MappingSet currentMappings(UUID sessionUuid) { return space(sessionUuid).current; }
 
+    /** 定位與可選性分離：未完成、pending、retired 及 MEASURED 側門仍保留攔截權。 */
+    public Optional<CandidateDoorLocation> candidateDoor(ServerWorld target,BlockPos pos) {
+        requireThread();
+        if(target!=world || target.getServer()!=server) return Optional.empty();
+        for(var space : spaces.values()) {
+            var known=new ArrayList<>(space.current.instances());
+            if(space.pending!=null) known.addAll(space.pending.target().instances());
+            known.addAll(space.retiredViews.values());
+            for(var mapping : known) {
+                if(!mapping.bounds().contains(pos) || entranceCell(space,mapping,pos)) continue;
+                var key=CorridorGeometry.sideDoorKey(space.id,mapping,space.semantics,pos);
+                if(key.isPresent()) return Optional.of(new CandidateDoorLocation(key.get(),mapping.ref()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private boolean entranceCell(Space space,MappingView mapping,BlockPos pos) {
+        if(!CorridorGeometry.hasEntrance(mapping)) return false;
+        var frame=CorridorGeometry.entrance(mapping,space.semantics);
+        for(int x=1;x<=5;x++) for(int y=1;y<=5;y++)
+            if(ChamberGeometry.localToWorld(frame,x,y,0).equals(pos)) return true;
+        return false;
+    }
+
+    /** 空間操作共用的不可重入 guard；finally 保證提交失敗也會釋放。 */
+    public <T> T exclusiveOperation(UUID sessionUuid,java.util.function.Supplier<T> operation) {
+        var space=space(sessionUuid);
+        if(space.operations!=0) throw new IllegalStateException("空間已有進行中的操作");
+        space.operations++;
+        try { return operation.get(); } finally { space.operations--; }
+    }
+    public boolean operationInProgress(UUID sessionUuid) {
+        requireThread(); var space=spaces.get(sessionUuid);
+        return space!=null && space.operations!=0;
+    }
+
+    /** 只在持有操作guard時取得最新可供CAS的完整實體與durable證據。 */
+    public Optional<SessionRecoveryRecord> candidateSelectionRecord(CandidateDoorLocation door,ServerPlayerEntity player) {
+        var space=space(door.key().sessionUuid());
+        if(space.operations!=1 || !idleMapping(space)) return Optional.empty();
+        var mapping=space.current.instances().stream().filter(value -> value.ref().equals(door.owner())).findFirst().orElse(null);
+        if(mapping==null || !completeDoor(space,mapping,door.key())
+                || space.current.instances().stream().anyMatch(value -> !leaseReady(value.bounds()))) return Optional.empty();
+        var record=durable(space);
+        if((record.state()!=SessionState.SUPERPOSITION && record.state()!=SessionState.MEASURED)
+                || !record.equals(journal.records().get(space.id)) || record.candidateContext().isEmpty()
+                || record.participants().stream().noneMatch(person -> person.playerUuid().equals(player.getUuid()))
+                || record.participants().stream().anyMatch(SessionRecoveryRecord.Participant::returned)
+                || record.candidateLedger().stream().noneMatch(entry -> entry.doorKey().equals(door.key()))
+                || record.state()==SessionState.SUPERPOSITION && !door.owner().equals(space.selectable.get(door.key()))
+                || server.getPlayerManager().getPlayer(player.getUuid())!=player || player.getServerWorld()!=world
+                || world.getEntity(player.getUuid())!=player || player.isSpectator() || !player.isAlive() || player.isRemoved()
+                || space.current.instances().stream().filter(value -> contains(box(value.bounds()),player.getBoundingBox())).count()!=1
+                || !cohortHasBuff(record)) return Optional.empty();
+        return Optional.of(record);
+    }
+
+    private boolean measured(Space space) {
+        var record=journal.flushedRecords().get(space.id); var staged=journal.records().get(space.id);
+        return record!=null && record.state()==SessionState.MEASURED || staged!=null && staged.state()==SessionState.MEASURED;
+    }
+
     /** 實體索引是可重建 view；查詢仍核對 exact world、current owner 與完整 25 格。 */
     public Optional<DoorKey> selectableDoor(ServerWorld target, BlockPos pos) {
         if(target!=world || target==null || target.getServer()!=server) return Optional.empty();
@@ -244,14 +309,18 @@ public final class CorridorPageManager {
     }
 
     private boolean publishable(Space space) {
-        if(space.failed || space.releasing || space.pending!=null || space.batch!=null || space.operations!=0
-                || !space.builds.isEmpty() || !space.overlay.isEmpty() || !space.retiredViews.isEmpty() || !space.retiring.isEmpty()
-                || space.current.epoch()==0 || space.current.instances().isEmpty()) return false;
+        if(space.operations!=0 || !idleMapping(space)) return false;
         var record=durable(space);
         return record.state()==SessionState.SUPERPOSITION && record.candidateContext().isPresent()
                 && record.candidateSelection().orElse(null) instanceof CandidateSelection.Selectable
                 && record.equals(journal.records().get(space.id))
                 && space.current.instances().stream().allMatch(mapping -> leaseReady(mapping.bounds()));
+    }
+
+    private boolean idleMapping(Space space) {
+        return !(space.failed || space.releasing || space.pending!=null || space.batch!=null
+                || !space.builds.isEmpty() || !space.overlay.isEmpty() || !space.retiredViews.isEmpty() || !space.retiring.isEmpty()
+                || space.current.epoch()==0 || space.current.instances().isEmpty());
     }
 
     private boolean completeDoor(Space space, MappingView mapping, DoorKey key) {
@@ -291,7 +360,7 @@ public final class CorridorPageManager {
         // manager.tick 本身按 server tick 去重；此欄再防止同 session 的其他路徑重複提交。
         if(!missing.isEmpty() && space.candidateTick!=server.getTicks()) {
             space.candidateTick=server.getTicks();
-            var result=candidates.commitCandidates(server,space.id,missing);
+            var result=exclusiveOperation(space.id,() -> candidates.commitCandidates(server,space.id,missing));
             if(result.sessionFailed()) throw new IllegalStateException("候選 checked batch 失敗，禁止發布實體門");
         }
         if(!publishable(space)) return;
@@ -374,11 +443,12 @@ public final class CorridorPageManager {
         if (space.current.epoch()!=expectedCurrentEpoch || expectedCurrentEpoch==0 || space.pending!=null || space.releasing
                 || space.failed || space.operations!=0) throw new IllegalStateException("remap epoch／操作狀態不符");
         var record=durable(space);
-        if (record.state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("只有已發布 SUPERPOSITION 可 remap");
+        if (record.state()!=SessionState.SUPERPOSITION || measured(space)) throw new IllegalStateException("只有已發布 SUPERPOSITION 可 remap");
         requireActiveBuff(space);
         space.selectable=Map.of();
         var oldSlots=Set.copyOf(space.leases.keySet());
         boolean reserved=false;
+        space.operations++;
         try {
             requirePageCapacity(space,occupiedPages); requirePinCapacity();
             var prepared=reserve(space,expectedCurrentEpoch,occupiedPages); reserved=true;
@@ -389,11 +459,11 @@ public final class CorridorPageManager {
                 space.leases.remove(slot); allocator.release(slot); protectedLeases.remove(slot);
             }
             fail(space,failure); throw failure;
-        }
+        } finally { space.operations--; }
     }
     public boolean ready(PreparedMappings prepared) {
         var space=pending(prepared);
-        if (!space.queued || space.failed || space.releasing || !space.builds.isEmpty()) return false;
+        if (!space.queued || space.failed || space.releasing || space.operations!=0 || measured(space) || !space.builds.isEmpty()) return false;
         var record=durable(space); var staged=journal.records().get(space.id);
         return record.state()!=SessionState.RETURNING && staged!=null && staged.state()!=SessionState.RETURNING
                 && prepared.target().instances().stream().allMatch(view -> leaseReady(view.bounds()));
@@ -446,7 +516,7 @@ public final class CorridorPageManager {
     public RetiredMappings commitRemap(RemapBatch batch) {
         var space=pending(batch.prepared());
         if (space.batch!=batch || space.batchTick!=server.getTicks()) throw new IllegalArgumentException("過期或偽造 remap batch");
-        if (space.failed || space.releasing || durable(space).state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("session 不再允許發布");
+        if (space.failed || space.releasing || space.operations!=0 || measured(space) || durable(space).state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("session 不再允許發布");
         requireActiveBuff(space);
         requirePinCapacity();
         var expected=batch.moves().stream().map(EntityMove::entityUuid).collect(java.util.stream.Collectors.toSet());
@@ -467,6 +537,7 @@ public final class CorridorPageManager {
     }
     public RetiredMappings cancelPrepared(PreparedMappings prepared) {
         var space=pending(prepared);
+        if(space.operations!=0 || measured(space)) throw new IllegalStateException("空間操作中或已測量，不可取消mapping");
         if (prepared.baseEpoch()==0) {
             if (space.queued || journal.records().containsKey(space.id) || journal.flushedRecords().containsKey(space.id)) {
                 throw new IllegalStateException("只有零 geometry 且無 journal 的 provisional reservation 可取消");
@@ -492,6 +563,7 @@ public final class CorridorPageManager {
     }
     public void retire(RetiredMappings retired) {
         var space=space(retired.sessionUuid());
+        if(measured(space)) throw new IllegalStateException("已測量空間保留所有mapping");
         if (space.retireTokens.get(retired.token())!=retired) throw new IllegalArgumentException("偽造或過期退休 token");
         if (space.operations!=0) throw new IllegalStateException("入口操作租約尚未結束");
         if (space.provisionalCancelled) {
@@ -545,7 +617,7 @@ public final class CorridorPageManager {
     }
     public void prepare(PreparedMappings initial) {
         var space=pending(initial);
-        if (initial.baseEpoch()!=0 || space.queued || space.releasing) throw new IllegalStateException("initial 狀態不合法");
+        if (initial.baseEpoch()!=0 || space.queued || space.releasing || space.operations!=0 || measured(space)) throw new IllegalStateException("initial 狀態不合法");
         var record=durable(space);
         if (record.state()!=SessionState.ARMING || record.restoreEntryEffectOnReturn()!=(space.semantics==SessionSemantics.LEGACY_FORWARD_CONSUMED)
                 || !participantsEqual(space.source,record.participants())) throw new IllegalStateException("initial 需要完整 durable ARMING 快照");
@@ -553,7 +625,7 @@ public final class CorridorPageManager {
     }
     public void commitInitial(UUID sessionUuid, Set<UUID> cohort) {
         var space=space(sessionUuid);
-        if (space.pending==null || space.pending.baseEpoch()!=0) throw new IllegalStateException("initial reservation 不存在");
+        if (space.pending==null || space.pending.baseEpoch()!=0 || space.operations!=0 || measured(space)) throw new IllegalStateException("initial reservation 不存在");
         var record=durable(space);
         if (record.state()!=SessionState.SUPERPOSITION || record.restoreEntryEffectOnReturn()) {
             throw new IllegalStateException("initial 需要精確全 cohort 與 durable SUPERPOSITION,false");
@@ -664,6 +736,9 @@ public final class CorridorPageManager {
         var record=durable(space); var current=journal.records().get(sessionUuid);
         if(space.semantics!=SessionSemantics.LATERAL_BUFF_MAINTAINED || space.failed || space.releasing
                 || record.state()!=SessionState.SUPERPOSITION || current==null || !current.equals(record)) return false;
+        return cohortHasBuff(record);
+    }
+    private boolean cohortHasBuff(SessionRecoveryRecord record) {
         for(var person : record.participants()) {
             var player=server.getPlayerManager().getPlayer(person.playerUuid());
             if(player==null || player.getServer()!=server || player.getServerWorld()!=world || world.getEntity(person.playerUuid())!=player

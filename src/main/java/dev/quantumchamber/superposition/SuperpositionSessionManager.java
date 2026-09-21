@@ -67,7 +67,25 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(durable==null) return runtime==null ? Presence.NONE : Presence.UNKNOWN;
         if(durable.state()==SessionState.RETURNING) return Presence.RETURNING;
         if(runtime==null) return Presence.UNKNOWN;
-        return runtime.state==SessionState.SUPERPOSITION ? Presence.ACTIVE : Presence.ARMING;
+        return runtime.state==SessionState.SUPERPOSITION || runtime.state==SessionState.MEASURED
+                || durable.state()==SessionState.MEASURED ? Presence.ACTIVE : Presence.ARMING;
+    }
+    /** 互動仍綁定入場時的runtime與來源Controller；重啟return-only record沒有選擇權。 */
+    public boolean candidateSourceAuthorized(MinecraftServer owner,SessionRecoveryRecord record) {
+        requireServer(owner);
+        var runtime=sessions.get(record.chamberUuid());
+        return runtime!=null && (runtime.state==SessionState.SUPERPOSITION || runtime.state==SessionState.MEASURED)
+                && SessionRecoveryRecord.sameAuthority(runtime.initial,record)
+                && record.equals(journal.flushedRecords().get(record.sessionUuid()))
+                && record.equals(journal.records().get(record.sessionUuid())) && sourceAuthority(runtime);
+    }
+    /** 只承認checked SELECTED讀回；呼叫者仍持有空間操作guard。 */
+    public void candidateMeasured(MinecraftServer owner,UUID sid) {
+        requireServer(owner);
+        var record=journal.flushedRecords().get(sid);
+        if(record==null || record.state()!=SessionState.MEASURED || !candidateSourceAuthorized(owner,record))
+            throw new IllegalStateException("測量尚未完成exact readback");
+        sessions.get(record.chamberUuid()).state=SessionState.MEASURED;
     }
     @Override public StartResult start(ServerWorld source,ChamberControllerBlockEntity controller,List<UUID> requested) {
         requireServer(source.getServer());
@@ -107,8 +125,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(lastTick==owner.getTicks()) return;
         lastTick=owner.getTicks();
         for(var runtime : List.copyOf(sessions.values())) {
+            if(CorridorPageManager.forServer(owner).operationInProgress(runtime.initial.sessionUuid())) continue;
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
             if(durable!=null && durable.state()==SessionState.RETURNING) runtime.state=SessionState.RETURNING;
+            if(durable!=null && durable.state()==SessionState.MEASURED) runtime.state=SessionState.MEASURED;
             if(runtime.state==SessionState.SUPERPOSITION) {
                 try {
                     if(!sourceAuthority(runtime) || !CorridorPageManager.forServer(owner).activeCohortHasBuff(runtime.initial.sessionUuid()))
@@ -236,6 +256,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 .findFirst().orElse(null);
         if(runtime==null && durable==null && known==null) return true;
         var authority=durable!=null ? durable : runtime!=null ? runtime.initial : known.getValue().record();
+        if(CorridorPageManager.forServer(server).operationInProgress(authority.sessionUuid())) return false;
         if(!sourceAuthority(authority) || server.getWorld(source.getRegistryKey())!=source
                 || source.getBlockEntity(authority.origin().controllerPos())!=controller) return false;
         if(recovery.returnComplete(authority.sessionUuid())) {
@@ -279,8 +300,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     }
     private void returning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.RETURNING && record.equals(journal.records().get(record.sessionUuid()))) return;
-        journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
-        journal.flush(server);
+        CorridorPageManager.forServer(server).exclusiveOperation(record.sessionUuid(),() -> {
+            journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
+            journal.flush(server); return null;
+        });
     }
     private SessionRecoveryRecord record(UUID chamber) {
         return journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).findFirst().orElse(null);

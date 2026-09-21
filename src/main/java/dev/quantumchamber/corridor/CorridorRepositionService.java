@@ -27,7 +27,8 @@ public final class CorridorRepositionService {
         if(owner!=server || !owner.isOnThread()) throw new IllegalStateException("reposition 必須在同一 server thread");
         var journal=SessionRecoveryState.get(server); journal.requireHealthy();
         tracking.keySet().retainAll(journal.flushedRecords().keySet());
-        for(var record : journal.flushedRecords().values()) if(managedActiveSession.test(record)) {
+        for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.SUPERPOSITION && managedActiveSession.test(record)) {
+            if(CorridorPageManager.forServer(server).operationInProgress(record.sessionUuid())) continue;
             try { advance(record); }
             catch(RuntimeException failure) {
                 var durable=journal.flushedRecords().get(record.sessionUuid());

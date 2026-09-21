@@ -24,6 +24,274 @@ import net.minecraft.world.World;
 /** 候選接線走原生入場與 checked journal；fixture 不會進入 release JAR。 */
 public final class M4CandidateDoorGameTests {
     private static final Map<UUID, FlushObservation> OBSERVATIONS = new HashMap<>();
+    private static SelectionProbe selectionProbe;
+    private static CandidatePublishProbe publishProbe;
+    private static final String LOCKED_MESSAGE="量子候選已鎖定，等待塌縮";
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_first_wins",tickLimit=100000)
+    public void native_selection_all_25_cells_first_wins_and_measured_freeze(TestContext context) {
+        nativeCandidates(context,2,(fixture,tick) -> {
+            var before=fixture.record(); var sid=before.sessionUuid();
+            var mappings=fixture.pages.currentMappings(sid); var view=mappings.instances().getFirst();
+            var key=new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL);
+            var second=new DoorKey(sid,2,DoorKey.DoorWallSide.POSITIVE_LATERAL);
+            var snapshot=nativeSnapshot(fixture);
+            fixture.players.forEach(M4CandidateDoorGameTests::messages);
+            var probe=new SelectionProbe(fixture,"observe",cell(view,second,1,1)); selectionProbe=probe;
+            long time=fixture.target.getTime(); int serverTick=fixture.server.getTicks();
+            net.minecraft.util.ActionResult first;
+            try { first=use(fixture,cell(view,key,1,1),fixture.players.getFirst().player()); }
+            finally { selectionProbe=null; }
+            var selected=fixture.record();
+            var message=messages(fixture.players.getFirst());
+            var rejected=use(fixture,cell(view,second,1,1),fixture.players.get(1).player());
+            var secondMessage=messages(fixture.players.get(1));
+            for(int z=1;z<=5;z++) for(int y=1;y<=5;y++) {
+                var pos=cell(view,key,y,z);
+                context.assertEquals(net.minecraft.util.ActionResult.FAIL,use(fixture,pos,fixture.players.getFirst().player()),"同門25格在MEASURED都由候選互動拒絕");
+                context.assertTrue(!fixture.target.getBlockState(pos).get(dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN),"選擇與重複點擊25格都不得開門");
+            }
+            var witness=List.of(first.isAccepted(),rejected==net.minecraft.util.ActionResult.FAIL,
+                    selected.state()==SessionState.MEASURED,selected.equals(fixture.record()),
+                    message.equals(List.of(LOCKED_MESSAGE)),secondMessage.equals(List.of("候選已鎖定。")),
+                    serverTick==fixture.server.getTicks(),snapshot.equals(nativeSnapshot(fixture)),
+                    context.getWorld().getBlockState(fixture.frame.controllerPos()).getComparatorOutput(context.getWorld(),fixture.frame.controllerPos())!=15);
+            var expected=new CandidateSelection.Selected(key,fixture.pages.flushedCandidate(key).orElseThrow().candidateId(),
+                    fixture.players.getFirst().player().getUuid(),time,1);
+            context.waitAndRun(3,() -> {
+                boolean frozen=fixture.pages.currentMappings(sid).equals(mappings) && fixture.pages.selectableDoors(sid).isEmpty()
+                        && fixture.record().equals(selected) && snapshot.equals(nativeSnapshot(fixture));
+                boolean remapRejected=rejects(() -> fixture.pages.prepareRemap(sid,mappings.epoch(),Set.of(1L)));
+                var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+                boolean occupied=gateway.presence(fixture.server,selected.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.ACTIVE;
+                boolean rearm=gateway.start(context.getWorld(),fixture.controller(),selected.participants().stream()
+                        .map(SessionRecoveryRecord.Participant::playerUuid).toList())==dev.quantumchamber.chamber.ChamberSessionGateway.StartResult.REJECTED;
+                selectionTeardown(fixture,Math.toIntExact(context.getTick()+1),() -> {
+                    context.assertTrue(!witness.contains(false),"真互動first-wins／25格／actionbar／副作用："+witness+" actionbar="+message+" second="+secondMessage);
+                    context.assertEquals(Optional.of(expected),selected.candidateSelection(),"durable selectedBy/time/door/candidate固定");
+                    context.assertTrue(probe.before && probe.after && probe.exclusive,"flush前後持有同一guard且尚未送成功訊息");
+                    context.assertTrue(frozen && remapRejected && occupied && rearm,"MEASURED停止publish/remap、保留mapping並阻止rearm");
+                });
+            });
+        });
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_rejections",tickLimit=100000)
+    public void native_selection_rejects_identity_bbox_cohort_source_and_incomplete(TestContext context) {
+        nativeCandidates(context,2,(fixture,tick) -> {
+            var initial=fixture.record(); var sid=initial.sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
+            var key=new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL); var pos=cell(view,key,1,1);
+            var player=fixture.players.getFirst().player(); var failures=new ArrayList<String>();
+            try(var outsider=new ConnectedGameTestPlayer(fixture.target)) {
+                outsider.player().teleport(fixture.target,player.getX(),player.getY(),player.getZ(),Set.of(),0,0);
+                deny(fixture,pos,outsider.player(),"outsider",failures);
+            }
+            player.changeGameMode(net.minecraft.world.GameMode.SPECTATOR);
+            deny(fixture,pos,player,"spectator",failures); player.changeGameMode(net.minecraft.world.GameMode.SURVIVAL);
+            var impostor=new net.minecraft.server.network.ServerPlayerEntity(fixture.server,fixture.target,player.getGameProfile(),
+                    net.minecraft.network.packet.c2s.common.SyncedClientOptions.createDefault());
+            deny(fixture,pos,impostor,"同UUID錯誤實例",failures);
+            var pose=player.getPos(); var box=player.getBoundingBox();
+            player.setBoundingBox(box.offset(100000,0,0)); deny(fixture,pos,player,"bbox超出mapping",failures); player.setBoundingBox(box);
+            var bounds=view.bounds();
+            player.setBoundingBox(new net.minecraft.util.math.Box(bounds.getMinX()-.1,bounds.getMinY()+1,bounds.getMinZ()+1,
+                    bounds.getMinX()+.5,bounds.getMinY()+2.8,bounds.getMinZ()+1.6));
+            deny(fixture,pos,player,"bbox跨越邊界",failures); player.setBoundingBox(box);
+            player.teleport(context.getWorld(),pose.x,pose.y,pose.z,Set.of(),player.getYaw(),player.getPitch());
+            deny(fixture,pos,player,"actual world錯誤",failures);
+            player.teleport(fixture.target,pose.x,pose.y,pose.z,Set.of(),player.getYaw(),player.getPitch());
+            var other=fixture.players.get(1).player(); var effect=new net.minecraft.entity.effect.StatusEffectInstance(other.getStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE));
+            other.removeStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE);
+            deny(fixture,pos,player,"完整cohort buff失效",failures); other.addStatusEffect(effect);
+            var sourceController=fixture.controller(); sourceController.markRemoved();
+            try { deny(fixture,pos,player,"來源Controller失效",failures); } finally { sourceController.cancelRemoval(); }
+            var missing=cell(view,key,5,5);
+            ChamberProtectionService.get().authorizedMutation(fixture.target,missing,() -> fixture.target.setBlockState(missing,net.minecraft.block.Blocks.AIR.getDefaultState(),3));
+            deny(fixture,pos,player,"incomplete25格",failures);
+            ChamberProtectionService.get().authorizedMutation(fixture.target,missing,() -> fixture.target.setBlockState(missing,ModBlocks.QUANTUM_BULKHEAD.getDefaultState(),3));
+            var space=M4CandidateTestAccess.space(fixture.pages,sid);
+            var current=fixture.pages.currentMappings(sid);
+            var wrong=new CorridorPageManager.MappingView(new CorridorPageManager.MappingRef(sid,view.ref().instanceEpoch()+99,view.ref().slotId()),
+                    view.firstCorePage(),view.lastCorePage(),view.aliasStartBlock(),view.aliasEndBlock(),view.logicalAnchorBlock(),view.localBlockOrigin(),view.outwardFacing(),view.bounds());
+            M4CandidateTestAccess.set(space,"current",new CorridorPageManager.MappingSet(current.epoch()+1,List.of(wrong)));
+            try { deny(fixture,pos,player,"錯誤mapping instance",failures); } finally { M4CandidateTestAccess.set(space,"current",current); }
+            for(String field : List.of("failed","releasing","operations")) {
+                var previous=M4CandidateTestAccess.get(space,field); M4CandidateTestAccess.set(space,field,field.equals("operations") ? 1 : true);
+                try { deny(fixture,pos,player,field,failures); } finally { M4CandidateTestAccess.set(space,field,previous); }
+            }
+            var journal=SessionRecoveryState.get(fixture.server);
+            var interaction=new dev.quantumchamber.candidate.CandidateDoorInteraction();
+            context.assertTrue(interaction.onBulkheadUse(context.getWorld(),pos,player).isEmpty(),"非Superposition世界回既有Origin流程");
+            var entrance=fixture.pages.entrance(sid);
+            context.assertTrue(interaction.onBulkheadUse(fixture.target,dev.quantumchamber.chamber.ChamberGeometry.localToWorld(entrance,1,1,0),player).isEmpty(),
+                    "真正入口返還門保留既有入口流程");
+            context.assertEquals(Optional.of(net.minecraft.util.ActionResult.FAIL),java.util.concurrent.CompletableFuture.supplyAsync(
+                    () -> interaction.onBulkheadUse(fixture.target,pos,player)).join(),"非server thread不可讀選擇權威");
+            journal.put(initial.withProgress(initial.participants(),initial.spaceLeases(),SessionState.RETURNING,false));
+            deny(fixture,pos,player,"dirty RETURNING",failures);
+            context.assertEquals(initial,journal.flushedRecords().get(sid),"所有拒絕均不得覆寫durable record");
+            journal.flush(fixture.server); deny(fixture,pos,player,"durable RETURNING",failures);
+            fixture.trustedTeardown(tick+1,() -> { context.assertTrue(failures.isEmpty(),"側門拒絕不得fallthrough："+failures); context.complete(); });
+        });
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_flush_before",tickLimit=100000)
+    public void native_selection_flush_failure_never_sends_success(TestContext context) { selectionFailure(context,"before"); }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_flush_after",tickLimit=100000)
+    public void native_selection_readback_failure_never_sends_success(TestContext context) { selectionFailure(context,"after"); }
+
+    private static void selectionFailure(TestContext context,String mode) {
+        nativeCandidates(context,1,(fixture,tick) -> {
+            var before=fixture.record(); var view=fixture.pages.currentMappings(before.sessionUuid()).instances().getFirst();
+            var pos=cell(view,new DoorKey(before.sessionUuid(),1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1);
+            var probe=new SelectionProbe(fixture,mode,pos); messages(fixture.players.getFirst()); selectionProbe=probe;
+            net.minecraft.util.ActionResult outcome;
+            try { outcome=use(fixture,pos,fixture.players.getFirst().player()); } finally { selectionProbe=null; }
+            var received=messages(fixture.players.getFirst()); var journal=SessionRecoveryState.get(fixture.server);
+            boolean guardReleased=((Integer)M4CandidateTestAccess.get(M4CandidateTestAccess.space(fixture.pages,before.sessionUuid()),"operations"))==0;
+            var durable=fixture.record();
+            if(mode.equals("before")) {
+                // 拒絕flush後先證明dirty選擇不能被下一次互動承認，再由testmod清楚提交以便真backend收尾。
+                use(fixture,pos,fixture.players.getFirst().player()); received.addAll(messages(fixture.players.getFirst()));
+                journal.flush(fixture.server);
+            }
+            selectionTeardown(fixture,tick+1,() -> {
+                context.assertTrue(probe.before && (mode.equals("before") || probe.after),"fault必須命中正式checked選擇窗口");
+                context.assertEquals(net.minecraft.util.ActionResult.FAIL,outcome,"flush/readback例外拒絕");
+                context.assertTrue(!received.contains(LOCKED_MESSAGE) && guardReleased,"fault無成功actionbar且finally釋放guard");
+                context.assertEquals(mode.equals("before") ? SessionState.SUPERPOSITION : SessionState.MEASURED,durable.state(),"未寫／已寫但回傳失敗窗口明確區別");
+            });
+        });
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_unflushed",tickLimit=100000)
+    public void native_selection_cannot_use_candidate_before_checked_batch_readback(TestContext context) {
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
+        var probe=new CandidatePublishProbe(fixture); publishProbe=probe;
+        context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,tick -> {
+            publishProbe=null;
+            fixture.trustedTeardown(tick+1,() -> {
+                context.assertTrue(probe.observed && probe.rejected,"真候選batch未flush窗口：側門互動拒絕且current/durable零額外mutation"); context.complete();
+            });
+        });
+    }
+
+    /** 先完成選擇／freeze斷言，清理才使用明確testmod-only fixture重設；不宣稱Task8返還已實作。 */
+    private static void selectionTeardown(M2CorridorGameTests.NativeEntry fixture,int tick,Runnable assertions) {
+        RuntimeException failure=null;
+        try { assertions.run(); } catch(RuntimeException caught) { failure=caught; }
+        M4CandidateTestAccess.resetMeasuredForTeardown(fixture.server,fixture.pages,fixture.record().sessionUuid());
+        var observed=failure;
+        fixture.trustedTeardown(tick,() -> { if(observed!=null) throw observed; fixture.context.complete(); });
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_mapping_windows",tickLimit=100000)
+    public void native_selection_rejects_pending_batch_retired_and_unready_mapping(TestContext context) {
+        nativeCandidates(context,1,(fixture,tick) -> {
+            var sid=fixture.record().sessionUuid(); var pages=fixture.pages; var old=pages.currentMappings(sid);
+            var key=new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL); var oldCell=cell(old.instances().getFirst(),key,1,1);
+            var player=fixture.players.getFirst().player(); var failures=new ArrayList<String>();
+            var prepared=pages.prepareRemap(sid,old.epoch(),Set.of(1L));
+            deny(fixture,oldCell,player,"pending current",failures);
+            when(context,tick+1,() -> pages.ready(prepared),ready -> {
+                var next=prepared.target().instances().getFirst(); var nextCell=cell(next,key,1,1);
+                deny(fixture,nextCell,player,"prepared非current",failures);
+                var batch=pages.beginRemap(prepared,pages.affectedEntityOwners(prepared));
+                deny(fixture,oldCell,player,"remap batch",failures);
+                for(var move : batch.moves()) {
+                    var entity=fixture.target.getEntity(move.entityUuid()); var pose=move.after();
+                    ((net.minecraft.server.network.ServerPlayerEntity)entity).teleport(fixture.target,pose.position().x,pose.position().y,pose.position().z,Set.of(),pose.yaw(),pose.pitch());
+                    entity.setVelocity(pose.velocity());
+                }
+                var retired=pages.commitRemap(batch);
+                deny(fixture,oldCell,player,"retired physical",failures); deny(fixture,nextCell,player,"retirement未完成",failures);
+                pages.retire(retired);
+                when(context,ready+1,() -> pages.selectableDoors(sid).contains(key),published -> {
+                    var bounds=next.bounds(); var chunk=new net.minecraft.util.math.ChunkPos(bounds.getMinX()>>4,bounds.getMinZ()>>4);
+                    M4CandidateTestAccess.tickets(pages,sid,false);
+                    when(context,published+1,() -> !fixture.target.shouldTick(chunk),unready -> {
+                        deny(fixture,nextCell,player,"真撤票unready",failures); M4CandidateTestAccess.tickets(pages,sid,true);
+                        when(context,unready+1,() -> pages.selectableDoors(sid).contains(key),loaded ->
+                                fixture.trustedTeardown(loaded+1,() -> {
+                                    context.assertTrue(failures.isEmpty(),"pending/batch/retired/unready都攔截互動："+failures); context.complete();
+                                }));
+                    });
+                });
+            });
+        });
+    }
+
+    private static void nativeCandidates(TestContext context,int people,java.util.function.BiConsumer<M2CorridorGameTests.NativeEntry,Integer> ready) {
+        var fixture=new M2CorridorGameTests.NativeEntry(context,people,Direction.NORTH);
+        context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,
+                tick -> ready.accept(fixture,tick));
+    }
+    private static net.minecraft.util.ActionResult use(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player) {
+        return fixture.target.getBlockState(pos).onUse(fixture.target,player,new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(pos),Direction.UP,pos,false));
+    }
+    private static void deny(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player,String label,List<String> failures) {
+        if(use(fixture,pos,player)!=net.minecraft.util.ActionResult.FAIL || fixture.target.getBlockState(pos).get(dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN)) failures.add(label);
+    }
+    private static boolean rejects(Runnable operation) { try { operation.run(); return false; } catch(IllegalArgumentException | IllegalStateException expected) { return true; } }
+    private static List<String> messages(ConnectedGameTestPlayer fixture) {
+        var channel=(io.netty.channel.embedded.EmbeddedChannel)M4CandidateTestAccess.get(fixture,"channel");
+        // ServerCommonNetworkHandler在server tick會disableFlush；先flush已實際送入channel的封包，才能同tick觀察。
+        channel.runPendingTasks(); channel.flush(); channel.runPendingTasks();
+        var messages=new ArrayList<String>(); Object packet;
+        while((packet=channel.readOutbound())!=null) {
+            if(packet instanceof net.minecraft.network.packet.s2c.play.GameMessageS2CPacket message && message.overlay()) messages.add(message.content().getString());
+            io.netty.util.ReferenceCountUtil.release(packet);
+        }
+        return messages;
+    }
+    private static List<?> nativeSnapshot(M2CorridorGameTests.NativeEntry fixture) {
+        var catalog=UniverseRegistryState.get(fixture.server);
+        var space=M4CandidateTestAccess.space(fixture.pages,fixture.record().sessionUuid());
+        return List.of(catalog.records(),catalog.flushedRecords(),M4CandidateTestAccess.runtime(fixture.server),
+                java.util.stream.StreamSupport.stream(fixture.server.getWorlds().spliterator(),false).toList(),
+                fixture.players.stream().map(connection -> List.of(connection.player().getServerWorld(),connection.player().getPos(),
+                        connection.player().getVelocity(),connection.player().getYaw(),connection.player().getPitch())).toList(),
+                fixture.controller().chamberState(),Map.copyOf((Map<?,?>)M4CandidateTestAccess.get(space,"ticketRefs")),
+                Map.copyOf((Map<?,?>)M4CandidateTestAccess.get(space,"leases")),
+                ChamberProtectionService.get().mayMutate(fixture.target,fixture.pages.currentMappings(fixture.record().sessionUuid()).instances().getFirst().localBlockOrigin()));
+    }
+    private static final class CandidatePublishProbe {
+        final M2CorridorGameTests.NativeEntry fixture; boolean observed,rejected=true;
+        CandidatePublishProbe(M2CorridorGameTests.NativeEntry fixture) { this.fixture=fixture; }
+        void observe(SessionRecoveryState journal) {
+            var durable=fixture.record();
+            if(durable==null || durable.state()!=SessionState.SUPERPOSITION) return;
+            var current=journal.records().get(durable.sessionUuid());
+            var pending=current.candidateLedger().stream().filter(entry -> durable.candidateLedger().stream()
+                    .noneMatch(known -> known.doorKey().equals(entry.doorKey()))).findFirst();
+            if(pending.isEmpty()) return;
+            observed=true; var snapshot=journal.records();
+            var view=fixture.pages.currentMappings(durable.sessionUuid()).instances().getFirst();
+            var result=use(fixture,cell(view,pending.get().doorKey(),1,1),fixture.players.getFirst().player());
+            rejected &= result==net.minecraft.util.ActionResult.FAIL && snapshot.equals(journal.records()) && durable.equals(fixture.record());
+        }
+    }
+    private static final class SelectionProbe {
+        final M2CorridorGameTests.NativeEntry fixture; final String mode; final BlockPos second;
+        boolean before,after,exclusive=true;
+        SelectionProbe(M2CorridorGameTests.NativeEntry fixture,String mode,BlockPos second) { this.fixture=fixture; this.mode=mode; this.second=second; }
+        void observe(SessionRecoveryState journal,boolean afterFlush) {
+            var record=journal.records().get(fixture.record().sessionUuid());
+            if(record.state()!=SessionState.MEASURED) return;
+            if(afterFlush) after=true; else before=true;
+            var sid=record.sessionUuid(); var mappings=fixture.pages.currentMappings(sid);
+            exclusive &= ((Integer)M4CandidateTestAccess.get(M4CandidateTestAccess.space(fixture.pages,sid),"operations"))==1
+                    && fixture.pages.selectableDoors(sid).isEmpty() && messages(fixture.players.getFirst()).isEmpty()
+                    && rejects(() -> fixture.pages.prepareRemap(sid,mappings.epoch(),Set.of(1L)))
+                    && use(fixture,second,fixture.players.getLast().player())==net.minecraft.util.ActionResult.FAIL;
+            var before=journal.records();
+            exclusive &= !dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(fixture.context.getWorld(),fixture.controller())
+                    && before.equals(journal.records());
+            if(mode.equals(afterFlush ? "after" : "before")) throw new IllegalStateException("Task7受控選擇"+mode+" flush fault");
+        }
+    }
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m4_doors_north", tickLimit=100000)
     public void north_complete_doors_recycle_split_merge_and_seam(TestContext context) { completeDoors(context,Direction.NORTH,true); }
@@ -191,6 +459,8 @@ public final class M4CandidateDoorGameTests {
     }
 
     public static void beforeCandidateFlush(SessionRecoveryState state,MinecraftServer server) {
+        if(publishProbe!=null) publishProbe.observe(state);
+        if(selectionProbe!=null) selectionProbe.observe(state,false);
         for(var entry : OBSERVATIONS.entrySet()) {
             var current=state.records().get(entry.getKey()); var durable=state.flushedRecords().get(entry.getKey());
             if(current==null || durable==null || current.state()!=SessionState.SUPERPOSITION) continue;
@@ -203,6 +473,7 @@ public final class M4CandidateDoorGameTests {
         }
     }
     public static void afterCandidateFlush(SessionRecoveryState state,MinecraftServer server) {
+        if(selectionProbe!=null) selectionProbe.observe(state,true);
         for(var entry : OBSERVATIONS.entrySet()) {
             var record=state.flushedRecords().get(entry.getKey()); var observation=entry.getValue();
             if(observation.reentryProbed || record==null || record.state()!=SessionState.SUPERPOSITION || record.candidateLedger().size()!=256) continue;

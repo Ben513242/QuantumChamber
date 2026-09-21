@@ -61,6 +61,8 @@ public final class CandidateLedgerService {
         try {
             threadGuard.run();
             var previous = candidateRecord(journal, sessionUuid);
+            if (previous.state() != SessionState.SUPERPOSITION
+                    || !(previous.candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable)) return failedBatch();
             var requested = new TreeSet<DoorKey>(KEY_ORDER);
             for (var key : completeKeys) {
                 if (!sessionUuid.equals(key.sessionUuid())) throw new IllegalArgumentException("DoorKey session 不符");
@@ -94,6 +96,7 @@ public final class CandidateLedgerService {
             if (previous.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected) {
                 return SelectionOutcome.ALREADY_SELECTED;
             }
+            if (previous.state() != SessionState.SUPERPOSITION) return SelectionOutcome.REJECTED;
             var entry = previous.candidateLedger().stream().filter(candidate -> candidate.doorKey().equals(doorKey)).findFirst();
             if (entry.isEmpty()) return SelectionOutcome.NOT_SELECTABLE;
             var selection = new CandidateSelection.Selected(doorKey, entry.orElseThrow().candidate().candidateId(), playerUuid, gameTime, 1);

@@ -41,6 +41,21 @@ final class M4CandidateTestAccess {
         catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
     }
     static Object space(CorridorPageManager pages, UUID session) { return ((Map<?, ?>) get(pages, "spaces")).get(session); }
+    /** 僅在保存Task7觀察證據後清理fixture；不是MEASURED安全返還的實作或驗證。 */
+    @SuppressWarnings("unchecked")
+    static void resetMeasuredForTeardown(MinecraftServer server,CorridorPageManager pages,UUID sid) {
+        var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
+        var record=journal.flushedRecords().get(sid);
+        if(record.state()!=dev.quantumchamber.superposition.SessionState.MEASURED) return;
+        var reset=new dev.quantumchamber.persistence.SessionRecoveryRecord(record.sessionUuid(),record.chamberUuid(),record.origin(),
+                record.participants(),record.spaceLeases(),dev.quantumchamber.superposition.SessionState.SUPERPOSITION,false,record.semantics(),
+                record.candidateContext(),record.candidateLedger(),java.util.Optional.of(new dev.quantumchamber.candidate.CandidateSelection.Selectable()));
+        ((Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord>)get(journal,"records")).put(sid,reset);
+        ((Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord>)get(journal,"authorityHistory")).put(sid,reset);
+        journal.markDirty(); journal.flush(server); set(space(pages,sid),"authority",reset);
+        var runtime=((Map<?,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions")).get(record.chamberUuid());
+        set(runtime,"state",dev.quantumchamber.superposition.SessionState.SUPERPOSITION);
+    }
     /** 僅獨立 fresh-save runner，在全部 authority 都空的邊界模擬空 schema3 冷載入。 */
     static dev.quantumchamber.persistence.SessionRecoveryState reloadEmptySchemaThree(MinecraftServer server,CorridorPageManager pages)
             throws java.io.IOException {

@@ -171,8 +171,10 @@ public final class SessionRecoveryManager {
 
     private void markReturning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.RETURNING) return;
-        journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
-        journal.flush(server);
+        CorridorPageManager.forServer(server).exclusiveOperation(record.sessionUuid(),() -> {
+            journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
+            journal.flush(server); return null;
+        });
     }
 
     private void requireServer(MinecraftServer owner) {

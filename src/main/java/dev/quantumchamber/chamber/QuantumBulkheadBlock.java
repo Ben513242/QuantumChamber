@@ -46,6 +46,10 @@ public final class QuantumBulkheadBlock extends Block {
         if (world.isClient) {
             return ActionResult.SUCCESS;
         }
+        if (world instanceof ServerWorld serverWorld && player instanceof net.minecraft.server.network.ServerPlayerEntity serverPlayer) {
+            var candidate = new dev.quantumchamber.candidate.CandidateDoorInteraction().onBulkheadUse(serverWorld, pos, serverPlayer);
+            if (candidate.isPresent()) return candidate.get();
+        }
         WorldChamberBlockView view = new WorldChamberBlockView(world);
         ChamberLocator locator = new ChamberLocator(new ChamberDetector());
         var frame = locator.findFrame(view, pos);
