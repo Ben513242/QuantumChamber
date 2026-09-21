@@ -55,6 +55,18 @@ class SessionRecoveryStateTest {
         assertEquals(2, new SessionRecoveryState().writeNbt(new NbtCompound()).getInt("SchemaVersion"));
     }
 
+    @Test void schemaOneAndTwoKeepEmptyCompoundListsAndUnknownFieldCompatibility() throws Exception {
+        for (int schema : new int[] {1, 2}) {
+            var input = fixture("RETURNING", false); input.putInt("SchemaVersion", schema);
+            record(input).putString("SessionSemantics", "LEGACY_FORWARD_CONSUMED");
+            input.putString("UnknownEnvelopeField", "legacy"); record(input).putString("UnknownRecordField", "legacy");
+            var loaded = SessionRecoveryState.fromNbt(input); loaded.requireHealthy();
+            assertTrue(loaded.records().values().iterator().next().candidateContext().isEmpty());
+            input.put("Records", SessionRecoverySchema3Test.emptyList(NbtElement.COMPOUND_TYPE));
+            var empty = SessionRecoveryState.fromNbt(input); empty.requireHealthy(); assertTrue(empty.records().isEmpty());
+        }
+    }
+
     @Test void schemaTwoRequiresKnownStringSemanticsAndStrictEffectPolicy() {
         for (var bad : new NbtElement[] {NbtString.of("UNKNOWN"),NbtInt.of(1),NbtByte.of(true)}) {
             var input=fixture("RETURNING",false); input.putInt("SchemaVersion",2);

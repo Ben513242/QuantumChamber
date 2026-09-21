@@ -135,7 +135,7 @@ final class CandidateJournalCodec {
     private static CandidateBytes bytes(NbtCompound nbt, String key) {
         requireType(nbt, key, NbtElement.BYTE_ARRAY_TYPE); return new CandidateBytes(nbt.getByteArray(key));
     }
-    private static void keys(NbtCompound nbt, String... expected) {
-        if (!nbt.getKeys().equals(Set.of(expected))) throw new IllegalArgumentException("候選 payload 欄位缺失或含未知欄位");
+    static void keys(NbtCompound nbt, String... expected) {
+        if (!nbt.getKeys().equals(Set.of(expected))) throw new IllegalArgumentException("schema 3 payload 欄位缺失或含未知欄位");
     }
 }

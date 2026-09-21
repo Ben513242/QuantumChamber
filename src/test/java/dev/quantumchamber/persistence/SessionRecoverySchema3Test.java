@@ -62,22 +62,41 @@ class SessionRecoverySchema3Test {
             assertArrayEquals(bytes(21), ledger.getCompound(1).getCompound("Candidate").getCompound("Intent").getByteArray("AllocationToken"));
             assertArrayEquals(bytes(31), ledger.getCompound(1).getCompound("Candidate").getCompound("Intent").getByteArray("GenerationSeedMaterial"));
             assertArrayEquals(bytes(41), context(saved).getByteArray("EntropyFingerprint"));
-            var expected = input.copy(); var canonical = new NbtList();
-            canonical.add(ledger(input).getCompound(1).copy()); canonical.add(ledger(input).getCompound(2).copy()); canonical.add(ledger(input).getCompound(0).copy());
-            record(expected).put("CandidateLedger", canonical);
-            assertEquals(expected, saved);
+            assertEquals(input, saved);
             assertEquals(state.records(), SessionRecoveryState.fromNbt(saved).records());
         }
     }
 
-    @Test void selectableStatesAllowEmptyLedgerWithEndOrCompoundHeldType() throws Exception {
-        for (String phase : List.of("ARMING", "SUPERPOSITION", "RETURNING")) for (byte type : new byte[] {0, 10}) {
+    @Test void selectableStatesAllowCanonicalEmptyLedger() throws Exception {
+        for (String phase : List.of("ARMING", "SUPERPOSITION", "RETURNING")) {
             var input = fixture(false, false); record(input).putString("State", phase);
-            record(input).put("CandidateLedger", emptyList(type));
+            record(input).put("CandidateLedger", emptyList((byte) 0));
             var state = SessionRecoveryState.fromNbt(input); state.requireHealthy();
-            assertTrue(ledger(state.writeNbt(new NbtCompound())).isEmpty());
+            var savedLedger = ledger(state.writeNbt(new NbtCompound()));
+            assertTrue(savedLedger.isEmpty()); assertEquals(NbtElement.END_TYPE, savedLedger.getHeldType());
             assertEquals(3, state.writeNbt(new NbtCompound()).getInt("SchemaVersion"));
         }
+    }
+
+    @Test void noncanonicalStationOrderFailsClosed() {
+        var input = fixture(false, false); Collections.swap(ledger(input), 0, 2); unhealthy(input);
+    }
+
+    @Test void noncanonicalWallSideOrderFailsClosed() {
+        var input = fixture(false, false); Collections.swap(ledger(input), 0, 1); unhealthy(input);
+    }
+
+    @Test void schemaThreeEmptyCompoundListsAreRejected() throws Exception {
+        for (String field : List.of("Records", "CandidateLedger")) {
+            var input = fixture(false, false);
+            (field.equals("Records") ? input : record(input)).put(field, emptyList(NbtElement.COMPOUND_TYPE));
+            unhealthy(input);
+        }
+    }
+
+    @Test void schemaThreeRejectsUnknownEnvelopeAndRecordFields() {
+        var envelopeExtra = fixture(false, false); envelopeExtra.putString("UnknownEnvelopeField", "unexpected"); unhealthy(envelopeExtra);
+        var recordExtra = fixture(false, false); record(recordExtra).putString("UnknownRecordField", "unexpected"); unhealthy(recordExtra);
     }
 
     @Test void wrongHeldTypesFailEvenWhenListsAreEmpty() throws Exception {
@@ -119,10 +138,10 @@ class SessionRecoverySchema3Test {
             n -> source(n).putUuid("UniverseId", UNIVERSE),
             n -> source(n).remove("WorldKey"),
             n -> candidate(n, 0).putString("Kind", "UNKNOWN"),
-            n -> candidate(n, 0).remove("UniverseId"),
+            n -> candidate(n, 2).remove("UniverseId"),
+            n -> candidate(n, 0).putUuid("UniverseId", UNIVERSE),
+            n -> candidate(n, 0).put("Intent", new NbtCompound()),
             n -> candidate(n, 1).putUuid("UniverseId", UNIVERSE),
-            n -> candidate(n, 1).put("Intent", new NbtCompound()),
-            n -> candidate(n, 2).putUuid("UniverseId", UNIVERSE),
             n -> intent(n).putString("Profile", "UNKNOWN"),
             n -> intent(n).putInt("ProfileVersion", 2),
             n -> door(n, 0).putString("WallSide", "UNKNOWN"),
@@ -189,12 +208,12 @@ class SessionRecoverySchema3Test {
         var source = new NbtCompound(); source.putString("Kind", catalog ? "CATALOG" : "VANILLA"); source.putString("Role", "OVERWORLD");
         if (catalog) source.putUuid("UniverseId", UNIVERSE); else source.putString("WorldKey", "minecraft:overworld");
         context.put("SourceFamilyRef", source); row.put("CandidateContext", context);
-        var ledger = new NbtList(); ledger.add(entry(5, "NEGATIVE_LATERAL", "EXISTING", 2));
-        ledger.add(entry(-2, "NEGATIVE_LATERAL", "SOURCE", 1)); ledger.add(entry(-2, "POSITIVE_LATERAL", "NEW", 3));
+        var ledger = new NbtList(); ledger.add(entry(-2, "NEGATIVE_LATERAL", "SOURCE", 1));
+        ledger.add(entry(-2, "POSITIVE_LATERAL", "NEW", 3)); ledger.add(entry(5, "NEGATIVE_LATERAL", "EXISTING", 2));
         row.put("CandidateLedger", ledger);
         var selection = new NbtCompound(); selection.putString("Kind", selected ? "SELECTED" : "SELECTABLE");
         if (selected) {
-            selection.put("DoorKey", ledger.getCompound(0).getCompound("DoorKey").copy()); selection.putByteArray("CandidateId", bytes(2));
+            selection.put("DoorKey", ledger.getCompound(2).getCompound("DoorKey").copy()); selection.putByteArray("CandidateId", bytes(2));
             selection.putUuid("SelectedBy", UUID.fromString("00000000-0000-0000-0000-000000000002"));
             selection.putLong("SelectedAtGameTime", 0); selection.putInt("SelectionRevision", 1);
         }
@@ -226,7 +245,7 @@ class SessionRecoverySchema3Test {
     private static NbtCompound selection(NbtCompound root) { return record(root).getCompound("CandidateSelection"); }
     private static NbtCompound candidate(NbtCompound root, int index) { return ledger(root).getCompound(index).getCompound("Candidate"); }
     private static NbtCompound door(NbtCompound root, int index) { return ledger(root).getCompound(index).getCompound("DoorKey"); }
-    private static NbtCompound intent(NbtCompound root) { return candidate(root, 2).getCompound("Intent"); }
+    private static NbtCompound intent(NbtCompound root) { return candidate(root, 1).getCompound("Intent"); }
     static void unhealthy(NbtCompound input) {
         var state = SessionRecoveryState.fromNbt(input);
         assertThrows(IllegalStateException.class, state::requireHealthy);

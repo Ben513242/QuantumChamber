@@ -31,6 +31,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn,
         SessionSemantics semantics, Optional<CandidatePolicySnapshot> candidateContext,
         List<CandidateLedgerEntry> candidateLedger, Optional<CandidateSelection> candidateSelection) {
+    private static final Comparator<CandidateLedgerEntry> LEDGER_ORDER = Comparator
+            .comparingLong((CandidateLedgerEntry entry) -> entry.doorKey().logicalStationIndex())
+            .thenComparing(entry -> entry.doorKey().wallSide());
     /** 舊呼叫端只建立 legacy record；不推測 candidate context。 */
     public SessionRecoveryRecord(UUID sessionUuid,UUID chamberUuid,ChamberOriginAuthority origin,
             List<Participant> participants,List<SpaceLease> spaceLeases,SessionState state,boolean restoreEntryEffectOnReturn,
@@ -101,9 +104,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                     throw new IllegalArgumentException("選擇必須精確對應同一 session 的 ledger entry");
                 }
             }
-            candidateLedger = candidateLedger.stream().sorted(Comparator
-                    .comparingLong((CandidateLedgerEntry entry) -> entry.doorKey().logicalStationIndex())
-                    .thenComparing(entry -> entry.doorKey().wallSide())).toList();
+            candidateLedger = candidateLedger.stream().sorted(LEDGER_ORDER).toList();
         }
     }
 
@@ -192,6 +193,10 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
 
     static SessionRecoveryRecord fromNbt(NbtCompound nbt,int envelopeSchema) {
         if (envelopeSchema!=1 && envelopeSchema!=2 && envelopeSchema!=3) throw new IllegalArgumentException("不支援 journal schema");
+        if (envelopeSchema == 3) {
+            CandidateJournalCodec.keys(nbt, "SessionUuid", "ChamberUuid", "Origin", "Participants", "SpaceLeases", "State",
+                    "RestoreEntryEffectOnReturn", "SessionSemantics", "CandidateContext", "CandidateLedger", "CandidateSelection");
+        }
         if (envelopeSchema<3 && (nbt.contains("CandidateContext") || nbt.contains("CandidateLedger") || nbt.contains("CandidateSelection"))) {
             throw new IllegalArgumentException("legacy schema 不得攜帶候選 payload");
         }
@@ -203,7 +208,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                 DimensionRole.valueOf(string(source, "Role")), new BlockPos(pos[0], pos[1], pos[2]),
                 Direction.valueOf(string(source, "Facing")), ChamberInstanceKind.valueOf(string(source, "InstanceKind")));
         var people = new ArrayList<Participant>();
-        for (var raw : compounds(nbt, "Participants")) {
+        for (var raw : compounds(nbt, "Participants", envelopeSchema)) {
             var person = (NbtCompound) raw;
             requireType(person, "Yaw", NbtElement.FLOAT_TYPE); requireType(person, "Pitch", NbtElement.FLOAT_TYPE);
             people.add(new Participant(uuid(person, "PlayerUuid"), vector(person, "SourcePosition"),
@@ -211,7 +216,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                     compound(person, "QuantumState"), bool(person, "Returned")));
         }
         var leases = new ArrayList<SpaceLease>();
-        for (var raw : compounds(nbt, "SpaceLeases")) {
+        for (var raw : compounds(nbt, "SpaceLeases", envelopeSchema)) {
             var lease = (NbtCompound) raw; requireType(lease, "SlotId", NbtElement.INT_TYPE);
             int[] bounds = ints(lease, "Bounds", 6);
             // BlockBox 會自行交換反向座標；必須在建構前拒絕壞資料。
@@ -225,7 +230,14 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var selection = Optional.<CandidateSelection>empty();
         if (envelopeSchema == 3) {
             context = Optional.of(CandidateJournalCodec.context(compound(nbt, "CandidateContext")));
-            for (var raw : compounds(nbt, "CandidateLedger")) ledger.add(CandidateJournalCodec.entry((NbtCompound) raw));
+            CandidateLedgerEntry previous = null;
+            for (var raw : compounds(nbt, "CandidateLedger", envelopeSchema)) {
+                var entry = CandidateJournalCodec.entry((NbtCompound) raw);
+                if (previous != null && LEDGER_ORDER.compare(previous, entry) >= 0) {
+                    throw new IllegalArgumentException("schema 3 ledger 必須依 station 與 wall side 嚴格遞增");
+                }
+                ledger.add(entry); previous = entry;
+            }
             selection = Optional.of(CandidateJournalCodec.selection(compound(nbt, "CandidateSelection")));
         }
         return new SessionRecoveryRecord(uuid(nbt, "SessionUuid"), uuid(nbt, "ChamberUuid"), origin, people, leases,
@@ -250,6 +262,13 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var list = (NbtList) nbt.get(key);
         if (list.getHeldType() != NbtElement.COMPOUND_TYPE && !(list.isEmpty() && list.getHeldType() == NbtElement.END_TYPE)) {
             throw new IllegalArgumentException(key + " 必須包含 compound；空 list 僅允許 END 或 COMPOUND held type");
+        }
+        return list;
+    }
+    static NbtList compounds(NbtCompound nbt, String key, int envelopeSchema) {
+        var list = compounds(nbt, key);
+        if (envelopeSchema == 3 && list.isEmpty() && list.getHeldType() != NbtElement.END_TYPE) {
+            throw new IllegalArgumentException(key + " 的 schema 3 空 list 必須使用 END held type");
         }
         return list;
     }
