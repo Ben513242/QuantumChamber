@@ -3,5 +3,5 @@
   "minVersion": "0.8",
   "package": "dev.quantumchamber.gametest.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": ["DoorWriteFaultMixin", "StaticDimensionsTestServerMixin", "M2LeaseBootstrapFixtureMixin", "M1FoundationSessionGatewayMixin", "SessionTransferFaultMixin", "CheckpointWindowFaultMixin", "SessionJournalWindowFaultMixin", "PlayerNativeSaveWindowFaultMixin", "M4RecoveryWorldSaveMixin", "M2TicketAcquireFaultMixin", "ChunkTicketManagerTestAccessor", "ChunkTicketArgumentTestAccessor", "M4LegacyGameTestFilterMixin"]
+  "mixins": ["DoorWriteFaultMixin", "StaticDimensionsTestServerMixin", "M2LeaseBootstrapFixtureMixin", "M1FoundationSessionGatewayMixin", "SessionTransferFaultMixin", "CheckpointWindowFaultMixin", "SessionJournalWindowFaultMixin", "PlayerNativeSaveWindowFaultMixin", "M4RecoveryWorldSaveMixin", "M4RecoveryRegionWriteFaultMixin", "M4RecoveryChunkFutureDrainMixin", "M4RecoveryEntityFutureDrainMixin", "M4RecoveryServerSaveProbeMixin", "M2TicketAcquireFaultMixin", "ChunkTicketManagerTestAccessor", "ChunkTicketArgumentTestAccessor", "M4LegacyGameTestFilterMixin"]
 }

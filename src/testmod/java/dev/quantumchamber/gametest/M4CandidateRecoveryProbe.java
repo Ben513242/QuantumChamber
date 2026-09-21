@@ -33,6 +33,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     private static final String OWNER=".superpowers/sdd/2026-09-21-m4-candidate-doors";
     private static final Identifier BEFORE=Identifier.of("quantumchamber:m4_recovery_before"),AFTER=Identifier.of("quantumchamber:m4_recovery_after");
     private static M4CandidateRecoveryProbe active;
+    private static volatile NativeFault nativeFault;
     private final Map<String,Object> proof=new LinkedHashMap<>();
     private final List<String> failures=new ArrayList<>();
     private final List<ConnectedGameTestPlayer> players=new ArrayList<>();
@@ -49,6 +50,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     private String damagedHash,catalogHash,entropyHash;
     private int stage,ticks,faultCount,selectedTick;
     private boolean finished,passed,freezeSave;
+    private boolean outerSaveReturned;
 
     @Override public void onInitialize() {
         config=Configuration.read(); if(config==null) return;
@@ -93,7 +95,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 proof.put("noUniverseAllocation",true); proof.put("bootstrapRejectedBeforeSpaces",M4CandidateTestAccess.get(CorridorPageManager.class,"active")==null);
                 passed=true; stop(); return;
             }
-            if(Set.of("recover","verify").contains(config.phase())) {
+            if(reloading()) {
                 journal=SessionRecoveryState.get(owner); original=journal.flushedRecords().values().iterator().next();
                 sid=original.sessionUuid(); chamber=original.chamberUuid();
                 var expected=NbtIo.readCompressed(config.root().resolve("selected-receipt.dat"),NbtSizeTracker.ofUnlimitedBytes());
@@ -106,6 +108,10 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 require(hash(data("quantumchamber_universes.dat")).equals(catalogHash)
                         && hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),"跨 JVM catalog／entropy bytes 改變");
                 if(config.phase().equals("verify")) require(MeasuredRecoveryPhase.from(original)==MeasuredRecoveryPhase.DORMANT,"第三 JVM 必須 dormant");
+                if(config.phase().equals("recover-after-write-fail")) {
+                    require(!M4RecoveryDiskEvidence.geometryEmpty(config.root(),original.spaceLeases()),"fault 後正式磁碟應保留未清除 geometry，才能證明跨 JVM 重試");
+                    proof.put("diskGeometryPresentBeforeRetry",true);
+                }
             }
         });
     }
@@ -117,7 +123,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             if(config.phase().equals("verify")) {
                 require(M4CandidateTestAccess.space(pages,sid)==null,"dormant 不能重建 geometry／ticket space");
                 require(((Map<?,?>)M4CandidateTestAccess.get(ChamberSessions.gateway(),"tickets")).isEmpty(),"dormant 不能重建來源票");
-            } else if(config.phase().equals("recover")) {
+            } else if(reloading()) {
                 require(pages.measuredRecoveryRequested(sid),"active MEASURED restart 未請求 recovery");
                 require(M4CandidateTestAccess.space(pages,sid)!=null,"active MEASURED restart 必須恢復租約");
                 proof.put("leasesAndTicketsRestored",!((Map<?,?>)M4CandidateTestAccess.get(M4CandidateTestAccess.space(pages,sid),"ticketRefs")).isEmpty());
@@ -135,7 +141,10 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 if(ticks>=5) { proof.put("dormantRepeatedTicks",ticks); success(); }
                 return;
             }
-            if(config.phase().equals("recover")) { recovering(); return; }
+            if(config.phase().equals("native-write-fail") && nativeFault!=null && nativeFault.reported.get()>0) {
+                verifyNativeFailure(); return;
+            }
+            if(reloading()) { recovering(); return; }
             if(stage==0) { build(); stage=1; return; }
             if(stage==1) { arm(); return; }
             if(faultCount>0) { verifyDirty(); return; }
@@ -224,10 +233,15 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     }
     private void recovering() throws Exception {
         if(stage==0) {
+            if(config.phase().equals("recover-after-write-fail")) {
+                require(record().participants().stream().allMatch(SessionRecoveryRecord.Participant::returned),"失敗續跑保留原 returned checkpoint");
+                stage=1;
+            } else {
             // 至少等待三 tick，證明離線 pending 不會自行標記為返還。
             if(ticks<3) return;
             require(record().participants().stream().anyMatch(person -> !person.returned()),"離線 restart 不能自動 returned");
             join(original.participants().getFirst().playerUuid()); stage=1; return;
+            }
         }
         require(record().state()==SessionState.MEASURED && sameReceipt(original,record()),"recovery 改變測量收據");
         if(pages.measuredRecoveryComplete(sid)) { verifyDormant(); success(); }
@@ -257,6 +271,10 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         }
         proof.put("geometryAndTicketsReleased",true); proof.put("receiptRetained",true); proof.put("chamberBlocked",true);
         proof.put("finalRecoveryPhase","DORMANT");
+        if(config.phase().equals("recover-after-write-fail")) {
+            require(M4RecoveryDiskEvidence.geometryEmpty(config.root(),original.spaceLeases()),"DORMANT 前正式 MCA geometry 仍未清除");
+            proof.put("diskGeometryEmptyAfterRetry",true);
+        }
     }
 
     private void saveSelected() throws Exception {
@@ -282,6 +300,14 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         if(probe==null || owner!=probe.server || probe.sid==null || probe.finished) return;
         var previous=state.flushedRecords().get(probe.sid); var next=state.records().get(probe.sid);
         if(previous==null || next==null) return;
+        if(nativeFault!=null && nativeFault.reported.get()>0 && next.spaceLeases().isEmpty()) {
+            probe.freezeSave=true;
+            probe.proof.put("outerSaveReturnedNormally",probe.outerSaveReturned);
+            probe.proof.put("nativeWriteFailures",nativeFault.writes.get());
+            probe.proof.put("nativeFailureCallbacks",nativeFault.reported.get());
+            probe.guarded(() -> require(false,"原生 write 失敗被吞掉後仍嘗試寫空 lease"));
+            throw new IllegalStateException("RED：缺少 native save failure gate");
+        }
         if(previous.state()==SessionState.MEASURED && !previous.spaceLeases().isEmpty() && next.spaceLeases().isEmpty()) {
             boolean saved=probe.savedRecoveryWorlds.contains(previous.origin().worldKey())
                     && probe.savedRecoveryWorlds.contains(SuperpositionWorld.KEY.getValue());
@@ -306,6 +332,68 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         if(record!=null && record.state()==SessionState.MEASURED && !record.spaceLeases().isEmpty()
                 && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned))
             probe.savedRecoveryWorlds.add(world.getRegistryKey().getValue());
+    }
+    public static void beforeWorldSave(ServerWorld world) {
+        var probe=active;
+        if(probe==null || probe.server!=world.getServer() || !probe.config.phase().equals("native-write-fail") || probe.finished || nativeFault!=null) return;
+        var record=probe.record();
+        if(record.state()==SessionState.MEASURED && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) {
+            var positions=new HashSet<Long>(); record.spaceLeases().forEach(lease -> positions.addAll(chunks(lease.bounds())));
+            nativeFault=new NativeFault(Set.copyOf(positions),chunks(ChamberGeometry.bounds(probe.frame)),record.origin().worldKey());
+        }
+    }
+    public static void beforeRegionWrite(net.minecraft.world.storage.StorageKey key,ChunkPos pos) throws IOException {
+        var fault=nativeFault;
+        if(fault==null || !fault.matches(key,pos)) return;
+        fault.writes.incrementAndGet(); fault.types.add(key.dimension().getValue()+"/"+key.type());
+        throw new IOException("M4 owned-root 真 region write 受控失敗");
+    }
+    public static void drainFailedNativeWrite(java.util.concurrent.CompletableFuture<?> future) {
+        if(nativeFault!=null) future.handle((value,error) -> null).join();
+    }
+    public static void nativeFailureReported(net.minecraft.world.storage.StorageKey key,ChunkPos pos) {
+        var fault=nativeFault; if(fault!=null && fault.matches(key,pos)) fault.reported.incrementAndGet();
+    }
+    public static void afterServerSave(MinecraftServer owner,boolean result) {
+        var probe=active; if(probe!=null && probe.server==owner && nativeFault!=null && result) probe.outerSaveReturned=true;
+    }
+    private void verifyNativeFailure() throws Exception {
+        require(outerSaveReturned,"必須重現外層 server.save 正常回 true 的原生失敗");
+        require(record().spaceLeases().equals(original.spaceLeases()) && journal.records().get(sid).spaceLeases().equals(original.spaceLeases()),"write fault 不得移除 current／flushed leases");
+        require(sameReceipt(original,record()),"write fault 不得改 selection receipt");
+        var space=M4CandidateTestAccess.space(pages,sid);
+        require(space!=null && !((Map<?,?>)M4CandidateTestAccess.get(space,"ticketRefs")).isEmpty()
+                && !((Map<?,?>)M4CandidateTestAccess.get(pages,"protectedLeases")).isEmpty(),"write fault 必須保留 runtime／tickets／protection");
+        for(long packed : nativeFault.corridor) require(target.getChunkManager().getWorldChunk(new ChunkPos(packed).x,new ChunkPos(packed).z).needsSaving(),"corridor chunk 必須重新 dirty");
+        for(long packed : nativeFault.source) require(source.getChunkManager().getWorldChunk(new ChunkPos(packed).x,new ChunkPos(packed).z).needsSaving(),"source chunk 必須重新 dirty");
+        for(var entry : Map.of(source,nativeFault.source,target,nativeFault.corridor).entrySet()) {
+            var entities=M4CandidateTestAccess.get(M4CandidateTestAccess.get(entry.getKey(),"entityManager"),"dataAccess");
+            var empty=(it.unimi.dsi.fastutil.longs.LongSet)M4CandidateTestAccess.get(entities,"emptyChunks");
+            require(entry.getValue().stream().noneMatch(empty::contains),"entity empty cache 必須撤銷以便真重寫");
+            require(nativeFault.types.contains(entry.getKey().getRegistryKey().getValue()+"/entities"),"必須包含 source／corridor entity storage 的真失敗");
+        }
+        require(!((Map<?,?>)M4CandidateTestAccess.get(M4CandidateTestAccess.get(pages,"allocator"),"leases")).isEmpty(),"write fault 必須保留 allocator leases");
+        require(((NativeSaveFailureAccess)server).quantumchamber$saveFailureRevision()>0,"production server failure revision 未觀察到失敗");
+        proof.put("outerSaveReturnedNormally",true); proof.put("nativeWriteFailures",nativeFault.writes.get());
+        proof.put("nativeFailureCallbacks",nativeFault.reported.get()); proof.put("failedStorageTypes",List.copyOf(nativeFault.types));
+        proof.put("leasesAndResourcesRetained",true); proof.put("relatedChunksRedirtied",true); proof.put("entityEmptyCacheInvalidated",true);
+        proof.put("productionFailureRevision",((NativeSaveFailureAccess)server).quantumchamber$saveFailureRevision()); success();
+    }
+    private boolean reloading() { return Set.of("recover","verify","native-write-fail","recover-after-write-fail").contains(config.phase()); }
+    private static Set<Long> chunks(BlockBox bounds) {
+        var result=new HashSet<Long>();
+        for(int x=bounds.getMinX()>>4;x<=bounds.getMaxX()>>4;x++) for(int z=bounds.getMinZ()>>4;z<=bounds.getMaxZ()>>4;z++) result.add(ChunkPos.toLong(x,z));
+        return Set.copyOf(result);
+    }
+    private static final class NativeFault {
+        final Set<Long> corridor,source; final Identifier sourceKey;
+        final java.util.concurrent.atomic.AtomicInteger writes=new java.util.concurrent.atomic.AtomicInteger(),reported=new java.util.concurrent.atomic.AtomicInteger();
+        final Set<String> types=java.util.concurrent.ConcurrentHashMap.newKeySet();
+        NativeFault(Set<Long> corridor,Set<Long> source,Identifier key) { this.corridor=corridor; this.source=source; sourceKey=key; }
+        boolean matches(net.minecraft.world.storage.StorageKey key,ChunkPos pos) {
+            return key.dimension().equals(SuperpositionWorld.KEY) && corridor.contains(pos.toLong())
+                    || key.dimension().getValue().equals(sourceKey) && source.contains(pos.toLong());
+        }
     }
     public static boolean suppressJournalSave(Path path) {
         var probe=active;
@@ -342,7 +430,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             if(config.phase().equals("verify")) require(hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),"第三 JVM 重抽 entropy");
         });
         proof.put("status",passed && failures.isEmpty() && Boolean.TRUE.equals(proof.get("stoppingSeen")) ? "PASS" : "FAIL");
-        write(config.evidence().resolve("final.json"),JSON.toJson(proof)); event("stopped"); active=null;
+        write(config.evidence().resolve("final.json"),JSON.toJson(proof)); event("stopped"); active=null; nativeFault=null;
     }
     private void guarded(Checked action) {
         try { action.run(); }
@@ -380,7 +468,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             String prefix="quantumchamber.m4recovery.";
             String phase=System.getProperty(prefix+"phase",""),nonce=System.getProperty(prefix+"nonce",""),startup=System.getProperty(prefix+"startupNonce","");
             String supplied=System.getProperty(prefix+"root","");
-            if(!Set.of("select","recover","verify","low","buff","disconnect","dirty-candidate","dirty-selection","entropy-missing","entropy-corrupt","discovery-corrupt","journal-corrupt").contains(phase)
+            if(!Set.of("select","recover","verify","low","buff","disconnect","dirty-candidate","dirty-selection","entropy-missing","entropy-corrupt","discovery-corrupt","journal-corrupt","native-write-fail","recover-after-write-fail").contains(phase)
                     || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*") || nonce.equals("disabled") || !startup.matches("[0-9a-f]{32}") || supplied.isBlank()) return null;
             try {
                 var root=Path.of(supplied).toRealPath();

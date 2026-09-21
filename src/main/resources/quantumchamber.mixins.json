@@ -8,6 +8,11 @@
     "ServerPlayerRecoveryCheckpointMixin",
     "ServerPlayNetworkHandlerRecoveryMixin",
     "PlayerManagerSaveInvoker",
+    "MinecraftServerSaveFailureMixin",
+    "StorageIoWorkerSaveFailureMixin",
+    "EntityChunkRecoverySaveMixin",
+    "ServerWorldRecoveryStorageAccessor",
+    "ServerEntityManagerRecoveryStorageAccessor",
     "MinecraftServerDynamicWorldAccess"
   ]
 }

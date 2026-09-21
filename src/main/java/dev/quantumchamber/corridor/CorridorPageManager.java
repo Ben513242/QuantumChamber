@@ -841,7 +841,7 @@ public final class CorridorPageManager {
             if(space.finalizing==null) {
                 // receipt 仍持有完整 lease 時，先同步保存來源 pins 與已清空的走廊世界。
                 // crash 若發生於此處，重啟仍有 lease 可重做清理；空 receipt 不可早於 native 世界存檔。
-                if(!server.save(false,true,true)) throw new IllegalStateException("MEASURED 幾何／來源原生存檔未完成");
+                MeasuredWorldSaveCheckpoint.save(server,record);
                 space.finalizing=expected;
             }
             journal.put(expected); journal.flush(server);
