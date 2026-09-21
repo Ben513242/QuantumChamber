@@ -136,10 +136,54 @@ class CandidateLedgerServiceTest {
     @Test void dirtyCandidateIsNeitherReusedNorSelectableAndConflictingAuthorityFailsClosed() {
         var port = port(List.of());
         port.state.put(copy(port.initial, List.of(entry(0)), new CandidateSelection.Selectable(), SessionState.SUPERPOSITION));
-        assertEquals(NOT_SELECTABLE, select(port, key(0), PLAYER, 0));
+        var dirty = port.state.records(); var flushed = port.state.flushedRecords();
+        assertEquals(REJECTED, select(port, key(0), PLAYER, 0));
         var result = commit(port, List.of(key(0)));
         assertTrue(result.sessionFailed()); assertTrue(result.committedKeys().isEmpty());
-        assertTrue(port.state.flushedRecords().get(SESSION).candidateLedger().isEmpty()); assertEquals(0, port.flushes);
+        assertEquals(0, port.puts); assertEquals(0, port.flushes);
+        assertEquals(dirty, port.state.records()); assertEquals(flushed, port.state.flushedRecords());
+        assertTrue(port.state.isDirty());
+    }
+
+    @Test void selectionRejectsDirtyStateReturnedOrLeasesWithoutOverwritingProgress() {
+        for (String change : List.of("state", "returned", "leases")) {
+            var port = port(List.of(entry(0)));
+            var dirty = changedProgress(port.initial, change);
+            port.state.put(dirty);
+            var flushed = port.state.flushedRecords();
+            assertEquals(REJECTED, select(port, key(0), PLAYER, 0), change);
+            assertEquals(0, port.puts, change); assertEquals(0, port.flushes, change);
+            assertEquals(dirty, port.state.records().get(SESSION), change);
+            assertEquals(flushed, port.state.flushedRecords(), change); assertTrue(port.state.isDirty(), change);
+        }
+    }
+
+    @Test void batchRejectsDirtyStateReturnedOrLeasesWithoutOverwritingProgress() {
+        for (String change : List.of("state", "returned", "leases")) {
+            var port = port(List.of(entry(0)));
+            var dirty = changedProgress(port.initial, change);
+            port.state.put(dirty);
+            var flushed = port.state.flushedRecords();
+            var result = commit(port, List.of(key(0), key(1)));
+            assertTrue(result.sessionFailed(), change); assertTrue(result.committedKeys().isEmpty(), change);
+            assertEquals(0, port.puts, change); assertEquals(0, port.flushes, change);
+            assertEquals(dirty, port.state.records().get(SESSION), change);
+            assertEquals(flushed, port.state.flushedRecords(), change); assertTrue(port.state.isDirty(), change);
+        }
+    }
+
+    @Test void batchRechecksExpectedCurrentImmediatelyBeforePutAfterDerivationInputsLoad() {
+        var port = port(List.of(entry(0)));
+        var dirty = changedProgress(port.initial, "returned");
+        var flushed = port.state.flushedRecords();
+        var result = service.commitCandidates(port, OWNER, () -> {
+            port.state.put(dirty);
+            return inputs();
+        }, SESSION, List.of(key(1)));
+        assertTrue(result.sessionFailed()); assertTrue(result.committedKeys().isEmpty());
+        assertEquals(0, port.puts); assertEquals(0, port.flushes);
+        assertEquals(dirty, port.state.records().get(SESSION));
+        assertEquals(flushed, port.state.flushedRecords()); assertTrue(port.state.isDirty());
     }
 
     @Test void firstParticipantSelectsAndSecondGetsAlreadySelectedWithExactStoredChoice() {
@@ -182,9 +226,10 @@ class CandidateLedgerServiceTest {
         assertInstanceOf(CandidateSelection.Selected.class, port.state.records().get(SESSION).candidateSelection().orElseThrow());
         assertInstanceOf(CandidateSelection.Selectable.class, port.state.flushedRecords().get(SESSION).candidateSelection().orElseThrow());
         port.fault = Fault.NONE;
+        var dirty = port.state.records(); var flushed = port.state.flushedRecords();
         assertEquals(REJECTED, select(port, key(1), SECOND_PLAYER, 1));
-        assertEquals(1, port.flushes);
-        assertInstanceOf(CandidateSelection.Selectable.class, port.state.flushedRecords().get(SESSION).candidateSelection().orElseThrow());
+        assertEquals(1, port.puts); assertEquals(1, port.flushes);
+        assertEquals(dirty, port.state.records()); assertEquals(flushed, port.state.flushedRecords());
     }
 
     @Test void nonOwnerThreadAndUnhealthyReadRejectBeforeMutation() {
@@ -224,6 +269,20 @@ class CandidateLedgerServiceTest {
             CandidateSelection selection, SessionState phase) {
         return new SessionRecoveryRecord(original.sessionUuid(), original.chamberUuid(), original.origin(), original.participants(),
                 original.spaceLeases(), phase, false, original.semantics(), original.candidateContext(), ledger, Optional.of(selection));
+    }
+    private static SessionRecoveryRecord changedProgress(SessionRecoveryRecord original, String change) {
+        var people = new ArrayList<>(original.participants());
+        if (change.equals("returned")) {
+            var first = people.getFirst();
+            people.set(0, new SessionRecoveryRecord.Participant(first.playerUuid(), first.sourcePosition(), first.sourceVelocity(),
+                    first.yaw(), first.pitch(), first.quantumStateSnapshot(), true));
+        }
+        var leases = change.equals("leases")
+                ? List.of(new SessionRecoveryRecord.SpaceLease(1, new BlockBox(20, 0, 0, 30, 10, 10)))
+                : original.spaceLeases();
+        return new SessionRecoveryRecord(original.sessionUuid(), original.chamberUuid(), original.origin(), people, leases,
+                change.equals("state") ? SessionState.RETURNING : original.state(), original.restoreEntryEffectOnReturn(),
+                original.semantics(), original.candidateContext(), original.candidateLedger(), original.candidateSelection());
     }
     private static DoorKey key(long station) { return key(station, false); }
     private static DoorKey key(long station, boolean positive) {
@@ -266,6 +325,7 @@ class CandidateLedgerServiceTest {
             }
             return state.flushedRecords();
         }
+        @Override public SessionRecoveryRecord currentRecord(UUID sessionUuid) { return state.records().get(sessionUuid); }
         @Override public void put(SessionRecoveryRecord record) {
             puts++;
             if (fault == Fault.PUT) throw new IllegalStateException("put 失敗");

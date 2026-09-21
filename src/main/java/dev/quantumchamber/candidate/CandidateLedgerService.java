@@ -30,6 +30,7 @@ public final class CandidateLedgerService {
 
     interface JournalPort {
         Map<UUID, SessionRecoveryRecord> flushedRecords();
+        SessionRecoveryRecord currentRecord(UUID sessionUuid);
         void put(SessionRecoveryRecord record);
         void flush();
     }
@@ -111,16 +112,25 @@ public final class CandidateLedgerService {
                 || record.candidateLedger().size() > record.candidateContext().orElseThrow().maxCandidateEntries()) {
             throw new IllegalArgumentException("缺少合法 candidate session authority");
         }
+        requireExpectedCurrent(journal, record);
         return record;
     }
 
     private static SessionRecoveryRecord commitChecked(JournalPort journal, SessionRecoveryRecord previous, SessionRecoveryRecord next) {
         if (!SessionRecoveryRecord.sameAuthority(previous, next)) throw new IllegalArgumentException("候選 authority 非單調更新");
+        requireExpectedCurrent(journal, previous);
         journal.put(next);
         journal.flush();
         var actual = journal.flushedRecords().get(next.sessionUuid());
         if (!next.equals(actual)) throw new IllegalStateException("候選 journal exact readback 不符");
         return actual;
+    }
+
+    /** current 只用於 CAS 前置條件；候選與選擇仍以 expected flushed record 判斷。 */
+    private static void requireExpectedCurrent(JournalPort journal, SessionRecoveryRecord expected) {
+        if (!expected.equals(journal.currentRecord(expected.sessionUuid()))) {
+            throw new IllegalStateException("session current 與 expected flushed record 不符，拒絕覆寫 dirty 進度");
+        }
     }
 
     private static CandidateBatchResult committedKeys(SessionRecoveryRecord checked, Set<DoorKey> requested) {
@@ -141,6 +151,7 @@ public final class CandidateLedgerService {
         var state = SessionRecoveryState.get(server);
         return new JournalPort() {
             @Override public Map<UUID, SessionRecoveryRecord> flushedRecords() { return state.flushedRecords(); }
+            @Override public SessionRecoveryRecord currentRecord(UUID sessionUuid) { return state.records().get(sessionUuid); }
             @Override public void put(SessionRecoveryRecord record) { state.put(record); }
             @Override public void flush() { state.flush(server); }
         };
