@@ -14,7 +14,8 @@ class SessionRecoveryStateTest {
     @BeforeAll static void initializeNativeVersion() { net.minecraft.SharedConstants.createGameVersion(); }
 
     @Test void schemaTwoRoundtripsLateralFalseForEveryStateWithoutRotatingBounds() {
-        for (var phase : dev.quantumchamber.superposition.SessionState.values()) {
+        for (var phase : java.util.List.of(dev.quantumchamber.superposition.SessionState.ARMING,
+                dev.quantumchamber.superposition.SessionState.SUPERPOSITION, dev.quantumchamber.superposition.SessionState.RETURNING)) {
             var input=fixture(phase.name(),false); input.putInt("SchemaVersion",2);
             record(input).putString("SessionSemantics","LATERAL_BUFF_MAINTAINED");
             var state=SessionRecoveryState.fromNbt(input); state.requireHealthy();
@@ -24,6 +25,34 @@ class SessionRecoveryStateTest {
             assertFalse(state.isDirty());
             var invalid=input.copy(); record(invalid).putBoolean("RestoreEntryEffectOnReturn",true); unhealthy(invalid);
         }
+    }
+
+    @Test void legacyRecordsRemainCandidateEmptyAndEnvelopeCannotMixGenerations() {
+        for (int schema : new int[] {1, 2}) {
+            var input = fixture("RETURNING", false); input.putInt("SchemaVersion", schema);
+            record(input).putString("SessionSemantics", "LATERAL_BUFF_MAINTAINED");
+            var decoded = SessionRecoveryState.fromNbt(input).records().values().iterator().next();
+            assertTrue(decoded.candidateContext().isEmpty()); assertTrue(decoded.candidateLedger().isEmpty());
+            assertTrue(decoded.candidateSelection().isEmpty());
+            assertEquals(2, SessionRecoveryState.fromNbt(input).writeNbt(new NbtCompound()).getInt("SchemaVersion"));
+        }
+        var legacy = fixture("RETURNING", false); var legacyRow = record(legacy);
+        legacyRow.putUuid("SessionUuid", UUID.fromString("00000000-0000-0000-0000-000000000030"));
+        var chamber = UUID.fromString("00000000-0000-0000-0000-000000000031");
+        legacyRow.putUuid("ChamberUuid", chamber); legacyRow.getCompound("Origin").putUuid("ChamberUuid", chamber);
+        participant(legacy).putUuid("PlayerUuid", UUID.fromString("00000000-0000-0000-0000-000000000032"));
+        legacyRow.getList("SpaceLeases", 10).getCompound(0).putInt("SlotId", 1);
+        var oldRecord = SessionRecoveryState.fromNbt(legacy).records().values().iterator().next();
+        var current = SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false, false)).records().values().iterator().next();
+        for (boolean legacyFirst : new boolean[] {false, true}) {
+            var state = new SessionRecoveryState(); state.put(legacyFirst ? oldRecord : current);
+            var before = state.records(); var flushed = state.flushedRecords(); boolean dirty = state.isDirty();
+            assertThrows(IllegalArgumentException.class, () -> state.put(legacyFirst ? current : oldRecord));
+            assertEquals(before, state.records()); assertEquals(flushed, state.flushedRecords()); assertEquals(dirty, state.isDirty());
+        }
+        var mixed = SessionRecoverySchema3Test.fixture(false, false); mixed.getList("Records", 10).add(legacyRow.copy());
+        unhealthy(mixed); mixed.putInt("SchemaVersion", 2); unhealthy(mixed);
+        assertEquals(2, new SessionRecoveryState().writeNbt(new NbtCompound()).getInt("SchemaVersion"));
     }
 
     @Test void schemaTwoRequiresKnownStringSemanticsAndStrictEffectPolicy() {

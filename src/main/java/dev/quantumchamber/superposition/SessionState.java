@@ -1,2 +1,2 @@
 package dev.quantumchamber.superposition;
-public enum SessionState { ARMING, SUPERPOSITION, RETURNING }
+public enum SessionState { ARMING, SUPERPOSITION, RETURNING, MEASURED }

@@ -9,6 +9,16 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SessionJournalStoreTest {
     @TempDir Path directory;
+    @Test void schemaThreeCompressedRoundtripPreservesCandidateAndSelectionPayloads() throws Exception {
+        for (boolean selected : new boolean[] {false, true}) {
+            var state = SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(selected, true)); state.requireHealthy();
+            var wrapped = new NbtCompound(); wrapped.putInt("DataVersion", 3953); wrapped.put("data", state.writeNbt(new NbtCompound()));
+            var target = directory.resolve(selected ? "selected.dat" : "selectable.dat");
+            SessionJournalStore.write(target, wrapped);
+            assertEquals(wrapped, SessionJournalStore.read(target));
+            assertEquals(state.records(), SessionRecoveryState.load(target).records());
+        }
+    }
     @Test void compressedRoundtripAndReplacementPreserveExactWrappedData() throws Exception {
         var target = directory.resolve("sessions.dat");
         var wrapped = wrapped();

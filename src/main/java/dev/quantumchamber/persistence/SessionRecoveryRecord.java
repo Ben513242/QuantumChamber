@@ -1,12 +1,19 @@
 package dev.quantumchamber.persistence;
 import dev.quantumchamber.chamber.ChamberOriginAuthority;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
+import dev.quantumchamber.candidate.CandidateId;
+import dev.quantumchamber.candidate.CandidateLedgerEntry;
+import dev.quantumchamber.candidate.CandidatePolicySnapshot;
+import dev.quantumchamber.candidate.CandidateSelection;
+import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DimensionRole;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Comparator;
 import java.util.UUID;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -22,10 +29,25 @@ import net.minecraft.world.World;
 /** 恢復所需的純資料；任何可變 NBT 與空間邊界皆不洩漏內部參照。 */
 public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberOriginAuthority origin,
         List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn,
-        SessionSemantics semantics) {
+        SessionSemantics semantics, Optional<CandidatePolicySnapshot> candidateContext,
+        List<CandidateLedgerEntry> candidateLedger, Optional<CandidateSelection> candidateSelection) {
+    /** 舊呼叫端只建立 legacy record；不推測 candidate context。 */
+    public SessionRecoveryRecord(UUID sessionUuid,UUID chamberUuid,ChamberOriginAuthority origin,
+            List<Participant> participants,List<SpaceLease> spaceLeases,SessionState state,boolean restoreEntryEffectOnReturn,
+            SessionSemantics semantics) {
+        this(sessionUuid,chamberUuid,origin,participants,spaceLeases,state,restoreEntryEffectOnReturn,semantics,
+                Optional.empty(),List.of(),Optional.empty());
+    }
     public SessionRecoveryRecord(UUID sessionUuid,UUID chamberUuid,ChamberOriginAuthority origin,
             List<Participant> participants,List<SpaceLease> spaceLeases,SessionState state,boolean restoreEntryEffectOnReturn) {
         this(sessionUuid,chamberUuid,origin,participants,spaceLeases,state,restoreEntryEffectOnReturn,SessionSemantics.LEGACY_FORWARD_CONSUMED);
+    }
+    /** 新 candidate session 必須顯式提供凍結 context，且從 SELECTABLE 與空 ledger 開始。 */
+    public static SessionRecoveryRecord candidateAware(UUID sessionUuid, UUID chamberUuid, ChamberOriginAuthority origin,
+            List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn,
+            SessionSemantics semantics, CandidatePolicySnapshot context) {
+        return new SessionRecoveryRecord(sessionUuid,chamberUuid,origin,participants,spaceLeases,state,restoreEntryEffectOnReturn,
+                semantics,Optional.of(context),List.of(),Optional.of(new CandidateSelection.Selectable()));
     }
     public SessionRecoveryRecord {
         Objects.requireNonNull(sessionUuid, "sessionUuid");
@@ -53,6 +75,35 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var slots = new HashSet<Integer>();
         for (var lease : spaceLeases) {
             if (!slots.add(lease.slotId())) throw new IllegalArgumentException("空間 slot 重複");
+        }
+        Objects.requireNonNull(candidateContext, "candidateContext");
+        Objects.requireNonNull(candidateSelection, "candidateSelection");
+        candidateLedger = List.copyOf(candidateLedger);
+        if (candidateContext.isEmpty()) {
+            if (!candidateLedger.isEmpty() || candidateSelection.isPresent() || state == SessionState.MEASURED) {
+                throw new IllegalArgumentException("legacy record 不得包含候選或測量狀態");
+            }
+        } else {
+            var selection = candidateSelection.orElseThrow(() -> new IllegalArgumentException("候選 session 必須包含 selection"));
+            if ((state == SessionState.MEASURED) != (selection instanceof CandidateSelection.Selected)) {
+                throw new IllegalArgumentException("session 狀態與 selection 不一致");
+            }
+            var doors = new HashSet<DoorKey>(); var ids = new HashSet<CandidateId>();
+            for (var entry : candidateLedger) {
+                if (!sessionUuid.equals(entry.doorKey().sessionUuid()) || !doors.add(entry.doorKey())
+                        || !ids.add(entry.candidate().candidateId())) {
+                    throw new IllegalArgumentException("ledger 的 session、DoorKey 或 CandidateId 不合法");
+                }
+            }
+            if (selection instanceof CandidateSelection.Selected selected) {
+                if (!sessionUuid.equals(selected.doorKey().sessionUuid()) || candidateLedger.stream().noneMatch(entry ->
+                        entry.doorKey().equals(selected.doorKey()) && entry.candidate().candidateId().equals(selected.candidateId()))) {
+                    throw new IllegalArgumentException("選擇必須精確對應同一 session 的 ledger entry");
+                }
+            }
+            candidateLedger = candidateLedger.stream().sorted(Comparator
+                    .comparingLong((CandidateLedgerEntry entry) -> entry.doorKey().logicalStationIndex())
+                    .thenComparing(entry -> entry.doorKey().wallSide())).toList();
         }
     }
 
@@ -129,11 +180,21 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         nbt.put("SpaceLeases", leases);
         nbt.putString("State", state.name()); nbt.putBoolean("RestoreEntryEffectOnReturn", restoreEntryEffectOnReturn);
         nbt.putString("SessionSemantics",semantics.name());
+        if (candidateContext.isPresent()) {
+            nbt.put("CandidateContext", CandidateJournalCodec.context(candidateContext.orElseThrow()));
+            var ledger = new NbtList();
+            candidateLedger.forEach(entry -> ledger.add(CandidateJournalCodec.entry(entry)));
+            nbt.put("CandidateLedger", ledger);
+            nbt.put("CandidateSelection", CandidateJournalCodec.selection(candidateSelection.orElseThrow()));
+        }
         return nbt;
     }
 
     static SessionRecoveryRecord fromNbt(NbtCompound nbt,int envelopeSchema) {
-        if (envelopeSchema!=1 && envelopeSchema!=2) throw new IllegalArgumentException("不支援 journal schema");
+        if (envelopeSchema!=1 && envelopeSchema!=2 && envelopeSchema!=3) throw new IllegalArgumentException("不支援 journal schema");
+        if (envelopeSchema<3 && (nbt.contains("CandidateContext") || nbt.contains("CandidateLedger") || nbt.contains("CandidateSelection"))) {
+            throw new IllegalArgumentException("legacy schema 不得攜帶候選 payload");
+        }
         var semantics=envelopeSchema==1 ? SessionSemantics.LEGACY_FORWARD_CONSUMED
                 : SessionSemantics.valueOf(string(nbt,"SessionSemantics"));
         var source = compound(nbt, "Origin");
@@ -159,8 +220,16 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             }
             leases.add(new SpaceLease(lease.getInt("SlotId"), new BlockBox(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5])));
         }
+        var context = Optional.<CandidatePolicySnapshot>empty();
+        var ledger = new ArrayList<CandidateLedgerEntry>();
+        var selection = Optional.<CandidateSelection>empty();
+        if (envelopeSchema == 3) {
+            context = Optional.of(CandidateJournalCodec.context(compound(nbt, "CandidateContext")));
+            for (var raw : compounds(nbt, "CandidateLedger")) ledger.add(CandidateJournalCodec.entry((NbtCompound) raw));
+            selection = Optional.of(CandidateJournalCodec.selection(compound(nbt, "CandidateSelection")));
+        }
         return new SessionRecoveryRecord(uuid(nbt, "SessionUuid"), uuid(nbt, "ChamberUuid"), origin, people, leases,
-                SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"),semantics);
+                SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"),semantics,context,ledger,selection);
     }
 
     static void requireType(NbtCompound nbt, String key, int type) {
@@ -179,7 +248,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
     static NbtList compounds(NbtCompound nbt, String key) {
         requireType(nbt, key, NbtElement.LIST_TYPE);
         var list = (NbtList) nbt.get(key);
-        if (!list.isEmpty() && list.getHeldType() != NbtElement.COMPOUND_TYPE) throw new IllegalArgumentException(key + " 必須包含 compound");
+        if (list.getHeldType() != NbtElement.COMPOUND_TYPE && !(list.isEmpty() && list.getHeldType() == NbtElement.END_TYPE)) {
+            throw new IllegalArgumentException(key + " 必須包含 compound；空 list 僅允許 END 或 COMPOUND held type");
+        }
         return list;
     }
     private static int[] ints(NbtCompound nbt, String key, int length) {

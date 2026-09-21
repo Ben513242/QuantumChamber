@@ -65,7 +65,7 @@ public final class SessionRecoveryState extends PersistentState {
         try {
             SessionRecoveryRecord.requireType(nbt, "SchemaVersion", 3);
             int schema=nbt.getInt("SchemaVersion");
-            if (schema!=1 && schema!=2) throw new IllegalArgumentException("不支援 journal schema");
+            if (schema!=1 && schema!=2 && schema!=3) throw new IllegalArgumentException("不支援 journal schema");
             var state = new SessionRecoveryState();
             for (var raw : SessionRecoveryRecord.compounds(nbt, "Records")) {
                 var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw,schema);
@@ -111,7 +111,7 @@ public final class SessionRecoveryState extends PersistentState {
     }
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
-        nbt.putInt("SchemaVersion", 2);
+        nbt.putInt("SchemaVersion", envelopeSchema(records));
         var entries = new NbtList(); records.values().forEach(record -> entries.add(record.toNbt()));
         nbt.put("Records", entries); return nbt;
     }
@@ -142,11 +142,20 @@ public final class SessionRecoveryState extends PersistentState {
         if (owner != null) requireServerThread(owner);
     }
     private static void validateOwnership(Map<UUID, SessionRecoveryRecord> records) {
+        envelopeSchema(records);
         var chambers = new HashSet<UUID>(); var players = new HashSet<UUID>(); var slots = new HashSet<Integer>();
         for (var record : records.values()) {
             if (!chambers.add(record.chamberUuid())) throw new IllegalArgumentException("來源艙已有 session");
             for (var person : record.participants()) if (!players.add(person.playerUuid())) throw new IllegalArgumentException("玩家跨 session 重複");
             for (var lease : record.spaceLeases()) if (!slots.add(lease.slotId())) throw new IllegalArgumentException("slot 跨 session 重複");
         }
+    }
+    private static int envelopeSchema(Map<UUID, SessionRecoveryRecord> records) {
+        boolean legacy = false; boolean candidate = false;
+        for (var record : records.values()) {
+            if (record.candidateContext().isPresent()) candidate = true; else legacy = true;
+        }
+        if (legacy && candidate) throw new IllegalArgumentException("同一 journal envelope 不可混裝 legacy 與 candidate sessions");
+        return candidate ? 3 : 2;
     }
 }
