@@ -43,8 +43,8 @@ public final class SessionRecoveryManager {
         try {
             return active.joinTicks.containsKey(player) || active.disconnected.contains(player)
                     || java.util.stream.Stream.concat(active.journal.records().values().stream(),active.journal.flushedRecords().values().stream())
-                    .anyMatch(record -> record.state()==SessionState.RETURNING && record.participants().stream()
-                            .anyMatch(person -> person.playerUuid().equals(player)));
+                    .anyMatch(record -> record.participants().stream().anyMatch(person -> person.playerUuid().equals(player)
+                            && (record.state()==SessionState.RETURNING || record.state()==SessionState.MEASURED && !person.returned())));
         } catch(RuntimeException unreadable) { return true; }
     }
 
@@ -65,6 +65,7 @@ public final class SessionRecoveryManager {
 
     public void tick(MinecraftServer owner) {
         requireServer(owner); journal.requireHealthy();
+        if(!journal.recoveryWritesSafe()) return;
         // 落盤失敗不能中斷原生 disconnect 清理；識別資訊留在本服務，下一 tick 重試。
         for(var id : Set.copyOf(disconnected)) {
             try {
@@ -76,7 +77,14 @@ public final class SessionRecoveryManager {
         }
         joinTicks.entrySet().removeIf(entry -> owner.getTicks()>=entry.getValue());
         returnTicks.keySet().retainAll(journal.flushedRecords().keySet());
-        for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.RETURNING) {
+        var pages=CorridorPageManager.forServer(owner);
+        for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.RETURNING
+                || record.state()==SessionState.MEASURED && pages.measuredRecoveryRequested(record.sessionUuid())) {
+            if(pages.operationInProgress(record.sessionUuid())) continue;
+            // dirty candidate/selection 不得隨返還進度一併被承認；僅重試同一份 receipt 的進度。
+            var current=journal.records().get(record.sessionUuid());
+            if(current==null || !record.candidateContext().equals(current.candidateContext())
+                    || !record.candidateLedger().equals(current.candidateLedger()) || !record.candidateSelection().equals(current.candidateSelection())) continue;
             // 先完成本 tick 的入場／rollback 交易，下一 tick 才進行獨立返還 checkpoint。
             if(owner.getTicks()<=returnTicks.computeIfAbsent(record.sessionUuid(),ignored -> owner.getTicks())) continue;
             try { recover(record); failures.remove(record.sessionUuid()); }
@@ -91,6 +99,16 @@ public final class SessionRecoveryManager {
     public boolean returnComplete(UUID session) {
         requireServer(server);
         return CorridorPageManager.forServer(server).releaseComplete(session);
+    }
+
+    public void requestMeasuredRecovery(UUID session) {
+        requireServer(server);
+        CorridorPageManager.forServer(server).requestMeasuredRecovery(session);
+    }
+
+    public boolean measuredRecoveryComplete(UUID session) {
+        requireServer(server);
+        return CorridorPageManager.forServer(server).measuredRecoveryComplete(session);
     }
 
     public void detach(MinecraftServer owner) {
@@ -129,11 +147,7 @@ public final class SessionRecoveryManager {
             }
             PlayerCheckpointStore.saveAndVerify(server,player,Optional.of(marker));
             if(!inside(player,source,frame) || !sourceAuthority.test(record)) continue;
-            var completed=person.playerUuid();
-            var participants=record.participants().stream().map(entry -> entry.playerUuid().equals(completed)
-                    ? new SessionRecoveryRecord.Participant(entry.playerUuid(),entry.sourcePosition(),entry.sourceVelocity(),entry.yaw(),entry.pitch(),
-                            entry.quantumStateSnapshot(),true) : entry).toList();
-            record=record.withProgress(participants,record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn());
+            record=returnedRecord(record,person.playerUuid());
             journal.put(record); journal.flush(server);
         }
         var pages=CorridorPageManager.forServer(server);
@@ -148,7 +162,10 @@ public final class SessionRecoveryManager {
                     || !sourceAuthority.test(record) || !transfers.move(entity,source,position,Vec3d.ZERO,entity.getYaw(),entity.getPitch())) return;
             source.getEntity(id).removeCommandTag("quantumchamber_session:"+record.sessionUuid());
         }
-        if(record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) pages.release(record.sessionUuid());
+        if(record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) {
+            if(record.state()==SessionState.MEASURED) pages.releaseMeasured(record.sessionUuid());
+            else pages.release(record.sessionUuid());
+        }
     }
 
     private boolean inside(ServerPlayerEntity player,ServerWorld source,ChamberFrame frame) {
@@ -165,11 +182,13 @@ public final class SessionRecoveryManager {
     }
 
     private SessionRecoveryRecord recordFor(UUID player) {
-        return journal.flushedRecords().values().stream().filter(record -> record.participants().stream()
+        return journal.flushedRecords().values().stream().filter(record -> record.state()!=SessionState.MEASURED
+                || MeasuredRecoveryPhase.from(record)!=MeasuredRecoveryPhase.DORMANT).filter(record -> record.participants().stream()
                 .anyMatch(person -> person.playerUuid().equals(player))).findFirst().orElse(null);
     }
 
     private void markReturning(SessionRecoveryRecord record) {
+        if(record.state()==SessionState.MEASURED) { requestMeasuredRecovery(record.sessionUuid()); return; }
         if(record.state()==SessionState.RETURNING) return;
         CorridorPageManager.forServer(server).exclusiveOperation(record.sessionUuid(),() -> {
             journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
@@ -179,5 +198,16 @@ public final class SessionRecoveryManager {
 
     private void requireServer(MinecraftServer owner) {
         if(owner!=server || !owner.isOnThread()) throw new IllegalStateException("recovery 必須使用同一 server thread");
+    }
+
+    static SessionRecoveryRecord returnedRecord(SessionRecoveryRecord record,UUID player) {
+        if(record.state()!=SessionState.RETURNING && record.state()!=SessionState.MEASURED)
+            throw new IllegalArgumentException("只有返還中的 session 可更新玩家 checkpoint 進度");
+        if(record.participants().stream().noneMatch(person -> person.playerUuid().equals(player)))
+            throw new IllegalArgumentException("玩家不屬於凍結 cohort");
+        var people=record.participants().stream().map(person -> person.playerUuid().equals(player)
+                ? new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch(),
+                    person.quantumStateSnapshot(),true) : person).toList();
+        return record.withProgress(people,record.spaceLeases(),record.state(),record.restoreEntryEffectOnReturn());
     }
 }

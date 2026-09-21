@@ -57,7 +57,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             return server==owner && runtime!=null && runtime.initial.sessionUuid().equals(record.sessionUuid())
                     && runtime.state==SessionState.SUPERPOSITION && record.state()==SessionState.SUPERPOSITION;
         });
-        for(var record : journal.flushedRecords().values()) { sourceTicket(record); returning(record); }
+        for(var record : journal.flushedRecords().values()) {
+            if(record.state()==SessionState.MEASURED && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) continue;
+            sourceTicket(record); returning(record);
+        }
     }
     @Override public Presence presence(MinecraftServer owner,UUID chamber) {
         requireServer(owner);
@@ -129,6 +132,13 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
             if(durable!=null && durable.state()==SessionState.RETURNING) runtime.state=SessionState.RETURNING;
             if(durable!=null && durable.state()==SessionState.MEASURED) runtime.state=SessionState.MEASURED;
+            if(runtime.state==SessionState.MEASURED) {
+                try {
+                    if(!sourceAuthority(runtime) || !CorridorPageManager.forServer(owner).activeCohortHasBuff(runtime.initial.sessionUuid()))
+                        recovery.requestMeasuredRecovery(runtime.initial.sessionUuid());
+                } catch(RuntimeException failure) { recovery.requestMeasuredRecovery(runtime.initial.sessionUuid()); }
+                continue;
+            }
             if(runtime.state==SessionState.SUPERPOSITION) {
                 try {
                     if(!sourceAuthority(runtime) || !CorridorPageManager.forServer(owner).activeCohortHasBuff(runtime.initial.sessionUuid()))
@@ -144,6 +154,12 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             } catch(IOException | RuntimeException failure) { fail(runtime,failure); }
         }
         reposition.tick(owner); recovery.tick(owner);
+        for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.MEASURED
+                && recovery.measuredRecoveryComplete(record.sessionUuid())) {
+            sessions.remove(record.chamberUuid());
+            var ticket=tickets.remove(record.sessionUuid());
+            if(ticket!=null) ticket.world().getChunkManager().removeTicket(SOURCE_TICKET,ticket.chunk(),2,record.sessionUuid());
+        }
     }
     private boolean eligible(SuperpositionSession runtime) {
         if(!sourceAuthority(runtime) || runtime.controller.activationBlocked()
@@ -257,6 +273,11 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(runtime==null && durable==null && known==null) return true;
         var authority=durable!=null ? durable : runtime!=null ? runtime.initial : known.getValue().record();
         if(CorridorPageManager.forServer(server).operationInProgress(authority.sessionUuid())) return false;
+        if(authority.state()==SessionState.MEASURED) {
+            recovery.requestMeasuredRecovery(authority.sessionUuid());
+            // 清完幾何仍未消耗 selection；LOW 不可解除 Chamber 的 durable 阻擋。
+            return false;
+        }
         if(!sourceAuthority(authority) || server.getWorld(source.getRegistryKey())!=source
                 || source.getBlockEntity(authority.origin().controllerPos())!=controller) return false;
         if(recovery.returnComplete(authority.sessionUuid())) {
@@ -299,6 +320,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 runtime.initial.sessionUuid(),failure);
     }
     private void returning(SessionRecoveryRecord record) {
+        if(record.state()==SessionState.MEASURED) { recovery.requestMeasuredRecovery(record.sessionUuid()); return; }
+        if(!journal.recoveryWritesSafe()) throw new IllegalStateException("dirty candidate authority 尚未 checked，不可經返還落盤");
         if(record.state()==SessionState.RETURNING && record.equals(journal.records().get(record.sessionUuid()))) return;
         CorridorPageManager.forServer(server).exclusiveOperation(record.sessionUuid(),() -> {
             journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));

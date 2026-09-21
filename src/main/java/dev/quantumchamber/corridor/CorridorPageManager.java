@@ -87,8 +87,10 @@ public final class CorridorPageManager {
         org.slf4j.LoggerFactory.getLogger("quantumchamber").info("走廊 bootstrap：storage={}，durable sessions={}",
                 server.getSavePath(net.minecraft.util.WorldSavePath.ROOT),journal.flushedRecords().size());
         for (var record : journal.flushedRecords().values()) {
+            if(record.state()==SessionState.MEASURED && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) continue;
             var space=new Space(record.sessionUuid(),record.origin(),record.participants(),record.semantics());
             space.authority=record;
+            space.measuredRecoveryRequested=record.state()==SessionState.MEASURED;
             for (var lease : record.spaceLeases()) {
                 validateFacingBounds(lease.bounds(),record.semantics().corridorFacing(record.origin().facing()));
                 validateWorldBounds(lease.bounds());
@@ -137,11 +139,15 @@ public final class CorridorPageManager {
         lastTick=server.getTicks(); resetBudget();
         try { requirePinCapacity(); }
         catch (IllegalStateException capacity) {
-            for (var space : List.copyOf(spaces.values())) if (!space.failed && !space.releasing && space.operations==0 && !measured(space)) fail(space,capacity);
+            for (var space : List.copyOf(spaces.values())) if (!space.failed && !space.releasing && space.operations==0) fail(space,capacity);
         }
         for (var space : List.copyOf(spaces.values())) {
             try {
-                if (space.operations!=0 || measured(space)) continue;
+                if (space.operations!=0) continue;
+                if (measured(space)) {
+                    if(space.measuredReleasing) tickMeasuredRelease(space);
+                    continue;
+                }
                 if (space.releasing) { tickRelease(space); continue; }
                 if (space.failed) continue;
                 if (space.builds.isEmpty() && space.overlay.isEmpty() && space.retiring.isEmpty()) {
@@ -206,6 +212,36 @@ public final class CorridorPageManager {
         space.selectable=Map.of(); space.releasing=true; space.builds.clear(); space.overlay.clear();
     }
     public boolean releaseComplete(UUID sessionUuid) { requireThread(); return completedReleases.contains(sessionUuid); }
+
+    /** 請求只改 runtime；崩潰後 attach 會由 durable MEASURED 自動恢復。 */
+    public void requestMeasuredRecovery(UUID sessionUuid) {
+        requireThread();
+        var record=journal.flushedRecords().get(sessionUuid);
+        if(record==null || record.state()!=SessionState.MEASURED) throw new IllegalArgumentException("缺少 durable MEASURED receipt");
+        if(MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) return;
+        var space=space(sessionUuid);
+        if(space.operations!=0) throw new IllegalStateException("空間交易中不可請求返還");
+        space.measuredRecoveryRequested=true; space.selectable=Map.of();
+    }
+    public boolean measuredRecoveryRequested(UUID sessionUuid) {
+        requireThread(); var space=spaces.get(sessionUuid);
+        return space!=null && space.measuredRecoveryRequested;
+    }
+    public boolean measuredRecoveryComplete(UUID sessionUuid) {
+        requireThread(); var record=journal.flushedRecords().get(sessionUuid);
+        return record!=null && record.state()==SessionState.MEASURED
+                && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT && !spaces.containsKey(sessionUuid);
+    }
+    public void releaseMeasured(UUID sessionUuid) {
+        var space=space(sessionUuid);
+        if(space.measuredReleasing) return;
+        var record=durable(space);
+        if(!space.measuredRecoveryRequested || space.operations!=0
+                || MeasuredRecoveryPhase.from(record)!=MeasuredRecoveryPhase.RELEASE_GEOMETRY)
+            throw new IllegalStateException("MEASURED 清理前必須先確認全員返還與獨立 recovery 請求");
+        acquireTickets(space);
+        space.measuredReleasing=true; space.selectable=Map.of(); space.builds.clear(); space.overlay.clear();
+    }
     static boolean canTrackRelease(int completed,int outstanding) { return completed<64 && outstanding<64-completed; }
     public void acknowledgeRelease(UUID sessionUuid) {
         requireThread();
@@ -375,7 +411,9 @@ public final class CorridorPageManager {
     /** 只有整份 durable lease 的實體皆可見，才可發布返還 pin 快照。 */
     public Optional<List<UUID>> returnEntityPins(UUID sessionUuid) {
         var space=space(sessionUuid);
-        if(durable(space).state()!=SessionState.RETURNING) throw new IllegalStateException("非 RETURNING 不可取得返還 pins");
+        var record=durable(space);
+        if(record.state()!=SessionState.RETURNING && !(record.state()==SessionState.MEASURED && space.measuredRecoveryRequested))
+            throw new IllegalStateException("未請求安全返還不可取得 pins");
         if(space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()))) return Optional.empty();
         requirePinCapacity(); var result=new LinkedHashSet<UUID>();
         for(var lease : space.leases.values()) for(var entity : pins(lease.bounds())) result.add(entity.getUuid());
@@ -735,7 +773,8 @@ public final class CorridorPageManager {
         var space=space(sessionUuid);
         var record=durable(space); var current=journal.records().get(sessionUuid);
         if(space.semantics!=SessionSemantics.LATERAL_BUFF_MAINTAINED || space.failed || space.releasing
-                || record.state()!=SessionState.SUPERPOSITION || current==null || !current.equals(record)) return false;
+                || record.state()!=SessionState.SUPERPOSITION && record.state()!=SessionState.MEASURED
+                || current==null || !current.equals(record)) return false;
         return cohortHasBuff(record);
     }
     private boolean cohortHasBuff(SessionRecoveryRecord record) {
@@ -763,6 +802,7 @@ public final class CorridorPageManager {
         return true;
     }
     private void tickRelease(Space space) {
+        if(!journal.recoveryWritesSafe()) return;
         // 即使前次 checked remove 失敗，重試也先重驗完整凍結來源與所有返還進度。
         var record=durable(space);
         if (record.state()!=SessionState.RETURNING || record.participants().stream().anyMatch(person -> !person.returned())) return;
@@ -777,6 +817,38 @@ public final class CorridorPageManager {
         if (journal.flushedRecords().containsKey(space.id)) throw new IllegalStateException("最後 journal 移除未確認");
         for (int slot : space.leases.keySet()) { releaseTickets(space,slot); allocator.release(slot); protectedLeases.remove(slot); }
         spaces.remove(space.id); completedReleases.add(space.id);
+    }
+    private void tickMeasuredRelease(Space space) {
+        if(!journal.recoveryWritesSafe()) return;
+        // checked 寫入成功後、native 資源釋放前可再次進入；不重建已移除的 lease。
+        var record=journal.flushedRecords().get(space.id);
+        if(record!=null && record.state()==SessionState.MEASURED && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) {
+            if(space.finalizing==null || !space.finalizing.equals(record)) throw new IllegalStateException("缺少本次 retained cleanup 收據");
+        } else {
+            record=durable(space);
+            if(MeasuredRecoveryPhase.from(record)!=MeasuredRecoveryPhase.RELEASE_GEOMETRY || space.operations!=0) return;
+            var expected=record.withProgress(record.participants(),List.of(),SessionState.MEASURED,record.restoreEntryEffectOnReturn());
+            var current=journal.records().get(space.id);
+            if(!record.equals(current) && !expected.equals(current)) throw new IllegalStateException("dirty authority 不可經 cleanup 落盤");
+            if(space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty())) return;
+            for(var lease : space.leases.values()) if(!clear(space,lease.slotId(),lease.bounds())) return;
+            // 清除 iterator 完成後再查完整範圍；不能把曾寫 AIR 當成目前已清空。
+            for(var lease : space.leases.values()) {
+                var box=lease.bounds();
+                for(var pos : BlockPos.iterate(box.getMinX(),box.getMinY(),box.getMinZ(),box.getMaxX(),box.getMaxY(),box.getMaxZ()))
+                    if(!world.getBlockState(pos).isAir()) throw new IllegalStateException("MEASURED 幾何仍未清空");
+            }
+            if(space.finalizing==null) {
+                // receipt 仍持有完整 lease 時，先同步保存來源 pins 與已清空的走廊世界。
+                // crash 若發生於此處，重啟仍有 lease 可重做清理；空 receipt 不可早於 native 世界存檔。
+                if(!server.save(false,true,true)) throw new IllegalStateException("MEASURED 幾何／來源原生存檔未完成");
+                space.finalizing=expected;
+            }
+            journal.put(expected); journal.flush(server);
+            if(!expected.equals(journal.flushedRecords().get(space.id))) throw new IllegalStateException("retained receipt 尚未 exact readback");
+        }
+        for(int slot : space.leases.keySet()) { releaseTickets(space,slot); allocator.release(slot); protectedLeases.remove(slot); }
+        spaces.remove(space.id);
     }
     private boolean clear(Space space, int slot, BlockBox bounds) {
         if (space.cleared.contains(slot)) return true;
@@ -926,8 +998,16 @@ public final class CorridorPageManager {
         var record=journal.flushedRecords().get(space.id);
         if (record!=null) {
             try {
+                if(record.state()==SessionState.MEASURED) {
+                    requestMeasuredRecovery(space.id);
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("MEASURED 保留 receipt 等待安全返還：{}",space.id,failure);
+                    return;
+                }
+                if(!journal.recoveryWritesSafe()) throw new IllegalStateException("dirty candidate authority 不可經 fault recovery 承認");
                 var current=journal.records().get(space.id);
-                if(current!=null && SessionRecoveryRecord.sameAuthority(record,current)) record=current;
+                if(current!=null && (!record.candidateContext().equals(current.candidateContext())
+                        || !record.candidateLedger().equals(current.candidateLedger()) || !record.candidateSelection().equals(current.candidateSelection())))
+                    throw new IllegalStateException("dirty candidate authority 不可經 fault recovery 承認");
                 journal.put(record.withProgress(record.participants(),List.copyOf(space.leases.values()),SessionState.RETURNING,
                         record.restoreEntryEffectOnReturn()));
                 journal.flush(server);
@@ -1003,7 +1083,8 @@ public final class CorridorPageManager {
         final Map<Long,Integer> ticketRefs=new HashMap<>();
         MappingSet current=new MappingSet(0,List.of()); PreparedMappings pending; RemapBatch batch;
         Set<Long> currentPages=Set.of(),pendingPages=Set.of();
-        boolean queued,frontOpen,rearOpen,failed,releasing,provisionalCancelled; int operations,batchTick,prepareTick; long instanceEpoch,prepareNanos;
+        boolean queued,frontOpen,rearOpen,failed,releasing,provisionalCancelled,measuredRecoveryRequested,measuredReleasing;
+        int operations,batchTick,prepareTick; long instanceEpoch,prepareNanos;
         SessionRecoveryRecord finalizing,authority;
         Map<DoorKey,MappingRef> selectable=Map.of();
         int candidateTick=Integer.MIN_VALUE;

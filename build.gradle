@@ -92,6 +92,18 @@ loom {
             // 預設關閉；探針另外驗四個啟動參數、exact cwd 與本 plan 的 evidence owner。
             runDir "run/m3-transfer-${nonce}"
         }
+        m4Recovery {
+            server()
+            name 'M4 Retained Recovery Probe'
+            source sourceSets.testmod
+            def nonce = providers.gradleProperty('m4RecoveryNonce').getOrElse('disabled')
+            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M4 nonce 只能包含小寫英數與連字號')
+            runDir "run/m4-recovery-${nonce}"
+            ['phase', 'nonce', 'startupNonce', 'root'].each { key ->
+                def property = 'm4Recovery' + key.capitalize()
+                if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m4recovery.${key}=${providers.gradleProperty(property).get()}"
+            }
+        }
         gameTest {
             server()
             name 'M1 Game Test'

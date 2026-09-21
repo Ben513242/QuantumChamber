@@ -9,9 +9,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class SessionJournalWindowFaultMixin {
     @Inject(method="flush(Lnet/minecraft/server/MinecraftServer;)V",at=@At("HEAD"),remap=false)
     private void quantumchamberTest$before(MinecraftServer server,CallbackInfo callback) {
+        dev.quantumchamber.gametest.M4CandidateRecoveryProbe.beforeJournalFlush((SessionRecoveryState)(Object)this,server);
         dev.quantumchamber.gametest.M2CorridorGameTests.beforeDisconnectJournalFlush((SessionRecoveryState)(Object)this,server);
         M2PersistenceProbe.beforeJournalFlush((SessionRecoveryState)(Object)this,server);
         dev.quantumchamber.gametest.M4CandidateDoorGameTests.beforeCandidateFlush((SessionRecoveryState)(Object)this,server);
+    }
+    @Inject(method="save(Ljava/io/File;Lnet/minecraft/registry/RegistryWrapper$WrapperLookup;)V",at=@At("HEAD"),cancellable=true,remap=false)
+    private void quantumchamberTest$preserveCrashWindow(java.io.File file,net.minecraft.registry.RegistryWrapper.WrapperLookup lookup,CallbackInfo callback) {
+        if(dev.quantumchamber.gametest.M4CandidateRecoveryProbe.suppressJournalSave(file.toPath())) callback.cancel();
     }
     @Inject(method="flush(Lnet/minecraft/server/MinecraftServer;)V",at=@At("RETURN"),remap=false)
     private void quantumchamberTest$after(MinecraftServer server,CallbackInfo callback) {

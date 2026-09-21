@@ -97,13 +97,13 @@ class SessionRecoveryStateTest {
         }
     }
 
-    @Test void candidatePutProtectsCurrentFlushedAndHistoryAfterRemoveAndSave() {
+    @Test void candidatePutProtectsCurrentFlushedAndHistoryAfterRejectedRemoveAndSave() {
         var selectable = candidateRecord(false); var selected = candidateRecord(true);
         for (int mode = 0; mode < 5; mode++) {
             var state = mode == 0 ? new SessionRecoveryState()
                     : SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(mode == 1 || mode == 4, false));
             if (mode != 1 && mode != 4) state.put(selected);
-            if (mode >= 2) state.remove(selected.sessionUuid());
+            if (mode >= 2) assertThrows(IllegalStateException.class,() -> state.remove(selected.sessionUuid()));
             if (mode >= 3) state.save(directory.resolve("removed.dat").toFile(), null);
             var before = state.records(); var flushed = state.flushedRecords(); boolean dirty = state.isDirty();
             assertThrows(IllegalArgumentException.class, () -> state.put(selectable), "mode=" + mode);

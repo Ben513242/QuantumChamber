@@ -70,7 +70,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         Objects.requireNonNull(semantics,"semantics").validateEffectPolicy(state,restoreEntryEffectOnReturn);
         participants = List.copyOf(participants);
         spaceLeases = List.copyOf(spaceLeases);
-        if (participants.isEmpty() || spaceLeases.isEmpty()) throw new IllegalArgumentException("參與者與空間 lease 不得為空");
+        if (participants.isEmpty()) throw new IllegalArgumentException("參與者不得為空");
         var players = new HashSet<UUID>();
         for (var participant : participants) {
             if (!players.add(participant.playerUuid())) throw new IllegalArgumentException("參與者 UUID 重複");
@@ -106,6 +106,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             }
             candidateLedger = candidateLedger.stream().sorted(LEDGER_ORDER).toList();
         }
+        if(spaceLeases.isEmpty() && (state!=SessionState.MEASURED || candidateContext.isEmpty()
+                || participants.stream().anyMatch(person -> !person.returned())))
+            throw new IllegalArgumentException("只有全員已返還的 MEASURED receipt 可保留空 lease");
     }
 
     /** 只更新恢復進度，完整保留已承認的候選 context、ledger 與 selection。 */
@@ -133,6 +136,11 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                 && sameParticipantSources(previous.participants(),next.participants())
                 && previous.candidateContext().equals(next.candidateContext())
                 && new HashSet<>(next.candidateLedger()).containsAll(previous.candidateLedger())
+                && (previous.state()!=SessionState.MEASURED || previous.candidateLedger().equals(next.candidateLedger())
+                    && previous.restoreEntryEffectOnReturn()==next.restoreEntryEffectOnReturn()
+                    && previous.participants().stream().filter(Participant::returned).allMatch(person -> next.participants().stream()
+                        .anyMatch(other -> person.playerUuid().equals(other.playerUuid()) && other.returned()))
+                    && (next.spaceLeases().isEmpty() || previous.spaceLeases().equals(next.spaceLeases())))
                 && (previous.candidateSelection().orElse(null) instanceof CandidateSelection.Selectable
                     || previous.candidateSelection().equals(next.candidateSelection()));
     }

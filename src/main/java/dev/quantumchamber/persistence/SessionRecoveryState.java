@@ -96,6 +96,17 @@ public final class SessionRecoveryState extends PersistentState {
     public Map<UUID,SessionRecoveryRecord> records() { requireHealthy(); return Map.copyOf(records); }
     public Map<UUID,SessionRecoveryRecord> flushedRecords() { requireHealthy(); return flushed; }
     public boolean candidateInitialized() { requireHealthy(); return candidateInitialized; }
+    /** recovery／世界存檔不可順帶承認其他 session 的 dirty candidate 或 selection。 */
+    public boolean recoveryWritesSafe() {
+        requireHealthy();
+        for(var current : records.values()) if(current.candidateContext().isPresent()) {
+            var previous=flushed.get(current.sessionUuid());
+            if(previous==null || !previous.candidateContext().equals(current.candidateContext())
+                    || !previous.candidateLedger().equals(current.candidateLedger())
+                    || !previous.candidateSelection().equals(current.candidateSelection())) return false;
+        }
+        return true;
+    }
     public void put(SessionRecoveryRecord record) {
         requireMutationThread();
         requireHealthy();
@@ -120,6 +131,9 @@ public final class SessionRecoveryState extends PersistentState {
     public boolean remove(UUID id) {
         requireMutationThread();
         requireHealthy();
+        if(java.util.stream.Stream.of(records.get(id),flushed.get(id),authorityHistory.get(id))
+                .anyMatch(record -> record!=null && record.state()==dev.quantumchamber.superposition.SessionState.MEASURED))
+            throw new IllegalStateException("MEASURED receipt 必須保留，不能經一般 remove 消耗");
         if (records.remove(id) == null) return false;
         markDirty(); return true;
     }
