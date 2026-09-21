@@ -10,6 +10,11 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import dev.quantumchamber.registry.ModBlocks;
 import java.util.Iterator;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.Objects;
+import java.util.UUID;
 
 /** 走廊使用無限局部座標；不擴張 ChamberGeometry 的 0..6 契約。 */
 public final class CorridorGeometry {
@@ -50,6 +55,44 @@ public final class CorridorGeometry {
     static ChamberFrame frame(CorridorPageManager.MappingView view) {
         return new ChamberFrame(view.localBlockOrigin().offset(view.outwardFacing().rotateYCounterclockwise(), 3).up(6),
                 view.outwardFacing());
+    }
+    /** 實體 bulkhead 格若屬完整側門，傳回其穩定邏輯身分。 */
+    public static Optional<DoorKey> sideDoorKey(UUID sessionUuid, CorridorPageManager.MappingView mapping,
+            SessionSemantics semantics, BlockPos physicalPos) {
+        Objects.requireNonNull(sessionUuid, "sessionUuid");
+        Objects.requireNonNull(mapping, "mapping");
+        Objects.requireNonNull(semantics, "semantics");
+        Objects.requireNonNull(physicalPos, "physicalPos");
+        var basis = new CorridorBasis(semantics.sourceFacing(mapping.outwardFacing()), semantics);
+        if (basis.corridorFacing() != mapping.outwardFacing()) return Optional.empty();
+        var origin = mapping.localBlockOrigin();
+        var local = localVector(frame(mapping), new Vec3d(physicalPos.getX() - origin.getX(),
+                physicalPos.getY() - origin.getY(), physicalPos.getZ() - origin.getZ()));
+        int x = Math.toIntExact((long) local.x);
+        int y = Math.toIntExact((long) local.y);
+        long logicalZ = Math.addExact(mapping.logicalAnchorBlock(), (long) local.z);
+        if (logicalZ < mapping.aliasStartBlock() || logicalZ >= mapping.aliasEndBlock()
+                || y < 1 || y > 5 || Math.floorMod(logicalZ, 8) < 1 || Math.floorMod(logicalZ, 8) > 5) {
+            return Optional.empty();
+        }
+        var wallSide = switch (x) {
+            case 0 -> DoorKey.DoorWallSide.NEGATIVE_LATERAL;
+            case 6 -> DoorKey.DoorWallSide.POSITIVE_LATERAL;
+            default -> null;
+        };
+        return wallSide == null ? Optional.empty() : Optional.of(DoorKey.fromBlock(sessionUuid, logicalZ, wallSide));
+    }
+    /** 以標準 z 再 y 順序列出一扇側門的 5×5 邏輯格。 */
+    public static List<LogicalAddress> sideDoorCells(long logicalStationIndex, DoorKey.DoorWallSide wallSide) {
+        Objects.requireNonNull(wallSide, "wallSide");
+        long stationStart = Math.multiplyExact(logicalStationIndex, 8);
+        var cells = new ArrayList<LogicalAddress>(25);
+        for (long offset = 1; offset <= 5; offset++) {
+            long logicalZ = Math.addExact(stationStart, offset);
+            var cell = new LogicalAddress(Math.floorDiv(logicalZ, 96), Math.floorMod(logicalZ, 96));
+            for (int y = 1; y <= 5; y++) cells.add(cell);
+        }
+        return List.copyOf(cells);
     }
     static ChamberFrame entrance(CorridorPageManager.MappingView view) {
         return entrance(view,SessionSemantics.LEGACY_FORWARD_CONSUMED);

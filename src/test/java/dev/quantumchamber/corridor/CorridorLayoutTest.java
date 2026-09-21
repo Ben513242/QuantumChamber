@@ -47,8 +47,10 @@ class CorridorLayoutTest {
     }
     @Test void logicalDoorIdentityDoesNotIncludePhysicalSlot() {
         var session = java.util.UUID.randomUUID();
-        assertEquals(new DoorKey(session,-1,DoorKey.Side.LEFT), DoorKey.from(session,-1,DoorKey.Side.LEFT));
-        assertEquals(new DoorKey(session,12,DoorKey.Side.RIGHT), DoorKey.from(session,96,DoorKey.Side.RIGHT));
+        assertEquals(new DoorKey(session,-1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),
+                DoorKey.fromBlock(session,-1,DoorKey.DoorWallSide.NEGATIVE_LATERAL));
+        assertEquals(new DoorKey(session,12,DoorKey.DoorWallSide.POSITIVE_LATERAL),
+                DoorKey.fromBlock(session,96,DoorKey.DoorWallSide.POSITIVE_LATERAL));
     }
     @Test void negativeAndBoundaryCoordinatesUseFloorDivision() {
         assertEquals(new LogicalAddress(-1, 95), LogicalAddress.from(-1));
