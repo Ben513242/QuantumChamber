@@ -58,9 +58,11 @@ public final class M3UniverseLifecycleGameTests implements FabricGameTest {
         context.assertTrue(catalog.records().isEmpty(), "fresh production bootstrap 使用健康空 catalog");
         context.assertTrue(backend.runtimeSnapshot(server).isEmpty() && backend.quarantinedWorlds(server).isEmpty(), "空 catalog 沒有 runtime owner");
         context.assertEquals(4L, java.util.stream.StreamSupport.stream(server.getWorlds().spliterator(), false).count(), "empty bootstrap 保持四個原生 world");
+        M4GameTestBoundaryProbe.m3DisabledFixture(server, false);
         var record = catalog.allocateOverworld(UUID.fromString("80000000-0000-4000-8000-000000000008"), 8);
         catalog.changeAvailability(record.definition().universeId(), DesiredAvailability.DISABLED);
         catalog.flush(server);
+        M4GameTestBoundaryProbe.m3DisabledFixture(server, true);
         var descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
         context.assertTrue(server.getWorld(descriptor.worldKey()) == null, "DISABLED catalog 不物化 world");
         context.assertEquals(DimensionRole.OVERWORLD, UniverseRoleResolver.resolve(server, descriptor.worldKey()).orElseThrow(), "exact catalog role");

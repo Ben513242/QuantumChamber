@@ -94,6 +94,7 @@ public final class M3UniverseTransferProbe implements ModInitializer {
         proof.put("nonce", config.nonce());
         proof.put("startupNonce", config.startupNonce());
         proof.put("root", config.root().toString());
+        proof.put("evidenceOwner", config.evidence().getParent().getParent().toString());
         proof.put("pid", ProcessHandle.current().pid());
         proof.put("startTimeUtc", ProcessHandle.current().info().startInstant().orElseThrow().toString());
         proof.put("failures", failures);
@@ -442,15 +443,14 @@ public final class M3UniverseTransferProbe implements ModInitializer {
             String text = System.getProperty(prefix + "root", "");
             if (!Set.of("setup-catalog", "success-roundtrip", "target-not-full", "post-move-authority-loss", "stale-service-receipt").contains(phase)
                     || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*") || nonce.equals("disabled") || !startup.matches("[0-9a-f]{32}") || text.isBlank()) return null;
-            var allowed = Set.of(prefix + "phase", prefix + "nonce", prefix + "startupNonce", prefix + "root");
+            var allowed = Set.of(prefix + "phase", prefix + "nonce", prefix + "startupNonce", prefix + "root", prefix + "evidenceOwner");
             if (System.getProperties().stringPropertyNames().stream().anyMatch(key -> key.startsWith(prefix) && !allowed.contains(key))) return null;
             try {
                 Path supplied = Path.of(text);
                 Path root = supplied.toRealPath();
                 if (!supplied.isAbsolute() || !root.equals(supplied.normalize()) || !root.equals(Path.of("").toRealPath())
                         || !root.getFileName().toString().equals("m3-transfer-" + nonce) || !root.getParent().getFileName().toString().equals("run")) return null;
-                Path owner = root.getParent().getParent().resolve(OWNER);
-                if (!owner.toRealPath().equals(owner)) return null;
+                Path owner = ProbeEvidenceOwner.resolve(root, prefix, OWNER);
                 Path evidence = owner.resolve("transfer-final-" + nonce).resolve(phase);
                 if (!evidence.toRealPath().equals(evidence) || Files.exists(evidence.resolve("final.json")) || Files.exists(evidence.resolve("events.jsonl"))) return null;
                 return new Configuration(phase, nonce, startup, root, evidence);

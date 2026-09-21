@@ -152,7 +152,16 @@ public final class M4CandidateDoorGameTests {
             var durable=fixture.record();
             if(mode.equals("before")) {
                 // 拒絕flush後先證明dirty選擇不能被下一次互動承認，再由testmod清楚提交以便真backend收尾。
-                use(fixture,pos,fixture.players.getFirst().player()); received.addAll(messages(fixture.players.getFirst()));
+                var currentBeforeRetry=journal.records().get(before.sessionUuid());
+                var flushedBeforeRetry=journal.flushedRecords().get(before.sessionUuid());
+                var retryOutcome=use(fixture,pos,fixture.players.getFirst().player());
+                var retryMessages=messages(fixture.players.getFirst());
+                context.assertEquals(net.minecraft.util.ActionResult.FAIL,retryOutcome,"dirty 選擇的第二次互動必須 FAIL");
+                context.assertEquals(currentBeforeRetry,journal.records().get(before.sessionUuid()),"第二次互動不得改 current record");
+                context.assertEquals(flushedBeforeRetry,journal.flushedRecords().get(before.sessionUuid()),"第二次互動不得改 flushed record");
+                context.assertTrue(!retryMessages.contains(LOCKED_MESSAGE) && !retryMessages.contains("候選已鎖定。"),
+                        "dirty 選擇不得回成功或 ALREADY_SELECTED 訊息："+retryMessages);
+                received.addAll(retryMessages);
                 journal.flush(fixture.server);
             }
             selectionTeardown(fixture,tick+1,() -> {

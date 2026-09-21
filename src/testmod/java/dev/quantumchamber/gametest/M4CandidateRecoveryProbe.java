@@ -53,12 +53,17 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     private boolean outerSaveReturned;
 
     @Override public void onInitialize() {
-        config=Configuration.read(); if(config==null) return;
+        config=Configuration.read(); if(config==null) { M4GameTestBoundaryProbe.register(); return; }
         active=this;
         proof.put("producer","M4CandidateRecoveryProbe"); proof.put("phase",config.phase()); proof.put("nonce",config.nonce());
         proof.put("startupNonce",config.startupNonce()); proof.put("pid",ProcessHandle.current().pid());
         proof.put("startTimeUtc",ProcessHandle.current().info().startInstant().orElseThrow().toString());
         proof.put("root",config.root().toString()); proof.put("failures",failures);
+        proof.put("runtimeScope","testmod-present");
+        proof.put("loadedModIds",net.fabricmc.loader.api.FabricLoader.getInstance().getAllMods().stream()
+                .map(mod -> mod.getMetadata().getId()).sorted().toList());
+        proof.put("javaClassPath",System.getProperty("java.class.path"));
+        proof.put("jvmArguments",java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments());
         event("initialized");
         if(config.phase().equals("journal-corrupt")) guarded(() -> {
             damaged=config.root().resolve("world/data/quantumchamber_sessions.dat");
@@ -86,6 +91,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         server=owner;
         guarded(() -> {
             require(owner.getSavePath(WorldSavePath.ROOT).toRealPath().equals(config.root().resolve("world").toRealPath()),"storage root 不符");
+            proof.put("universeBefore",universeEvidence());
             if(config.phase().equals("journal-corrupt")) {
                 var unhealthy=SessionRecoveryState.get(owner); boolean rejected=false;
                 try { unhealthy.requireHealthy(); } catch(IllegalStateException expected) { rejected=true; }
@@ -415,6 +421,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 && hash(data("quantumchamber_universes.dat")).equals(catalogHash),"M4 probe 不得配置／物化 Universe");
         if(damaged!=null) require(hash(damaged).equals(damagedHash),"損壞 authority bytes 被覆寫");
         proof.put("noUniverseAllocation",true); proof.put("damagedBytesPreserved",damaged==null || hash(damaged).equals(damagedHash));
+        proof.put("universeAfter",universeEvidence());
+        require(proof.get("universeBefore").equals(proof.get("universeAfter")),"M4 前後 catalog records／bytes／world keys 必須完全相同");
         proof.put("candidateCount",sid==null ? 0 : record().candidateLedger().size());
         passed=true; stop();
     }
@@ -423,6 +431,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         if(owner!=server) return;
         guarded(() -> {
             proof.put("stoppedSeen",true);
+            proof.put("universeStopped",universeEvidence());
+            require(proof.get("universeBefore").equals(proof.get("universeStopped")),"正常停止不得改 Universe catalog／world keys");
             if(damaged!=null) require(hash(damaged).equals(damagedHash),"正常停止覆寫損壞 bytes");
             proof.put("damagedBytesPreserved",true);
             if(sid!=null && !config.phase().startsWith("entropy") && !config.phase().equals("discovery-corrupt"))
@@ -445,6 +455,15 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         catch(IOException failure) { throw new IllegalStateException(failure); }
     }
     private SessionRecoveryRecord record() { return journal.flushedRecords().get(sid); }
+    private Map<String,Object> universeEvidence() throws Exception {
+        var catalog=UniverseRegistryState.get(server);
+        String records=catalog.writeNbt(new NbtCompound()).toString();
+        return Map.of("catalogExists",Files.exists(data("quantumchamber_universes.dat")),
+                "catalogSha256",hash(data("quantumchamber_universes.dat")),"recordCount",catalog.records().size(),
+                "recordsSha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(records.getBytes(java.nio.charset.StandardCharsets.UTF_8))),
+                "worldKeys",java.util.stream.StreamSupport.stream(server.getWorlds().spliterator(),false)
+                        .map(world -> world.getRegistryKey().getValue().toString()).sorted().toList());
+    }
     private ChamberControllerBlockEntity controller() { return source.getBlockEntity(frame.controllerPos()) instanceof ChamberControllerBlockEntity c ? c : null; }
     private Path data(String file) { return config.root().resolve("world/data").resolve(file); }
     private static boolean sameReceipt(SessionRecoveryRecord a,SessionRecoveryRecord b) {

@@ -99,6 +99,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
         proof.put("nonce", configuration.nonce());
         proof.put("startupNonce", configuration.startupNonce());
         proof.put("root", configuration.root().toString());
+        proof.put("evidenceOwner", configuration.evidence().getParent().getParent().toString());
         proof.put("pid", ProcessHandle.current().pid());
         proof.put("startTimeUtc", ProcessHandle.current().info().startInstant().orElseThrow().toString());
         proof.put("failures", failures);
@@ -592,7 +593,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
             if (!Set.of("create-save", "reload-read", "unload-replace", "final-verify").contains(phase)
                     || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*")
                     || nonce.equals("disabled") || !startupNonce.matches("[0-9a-f]{32}") || rootText.isBlank()) return null;
-            var allowed = Set.of("quantumchamber.m3.phase", "quantumchamber.m3.nonce", "quantumchamber.m3.startupNonce", "quantumchamber.m3.root");
+            var allowed = Set.of("quantumchamber.m3.phase", "quantumchamber.m3.nonce", "quantumchamber.m3.startupNonce", "quantumchamber.m3.root", "quantumchamber.m3.evidenceOwner");
             if (System.getProperties().stringPropertyNames().stream().anyMatch(key -> key.startsWith("quantumchamber.m3.") && !allowed.contains(key))) return null;
             try {
                 Path supplied = Path.of(rootText);
@@ -600,8 +601,7 @@ public final class M3UniverseRuntimeProbe implements ModInitializer {
                 if (!supplied.isAbsolute() || !root.equals(supplied.normalize()) || !root.equals(Path.of("").toRealPath())
                         || !root.getFileName().toString().equals("m3-universe-" + nonce)
                         || !root.getParent().getFileName().toString().equals("run")) return null;
-                Path owner = root.getParent().getParent().resolve(OWNER);
-                if (!owner.toRealPath().equals(owner)) return null;
+                Path owner = ProbeEvidenceOwner.resolve(root, "quantumchamber.m3.", OWNER);
                 Path evidence = owner.resolve("task-9-final-" + nonce).resolve(phase);
                 if (!evidence.toRealPath().equals(evidence) || Files.exists(evidence.resolve("final.json"))) return null;
                 return new Configuration(phase, nonce, startupNonce, root, evidence);
