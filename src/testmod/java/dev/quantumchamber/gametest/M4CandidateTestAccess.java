@@ -16,9 +16,10 @@ final class M4CandidateTestAccess {
             dev.quantumchamber.persistence.SessionRecoveryRecord record,MinecraftServer server) {
         try {
             var root=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT);
-            var discovery=dev.quantumchamber.candidate.UniverseDiscoveryState.loadOrCreate(root);
-            boolean evidence=dev.quantumchamber.persistence.SessionRecoveryState.get(server).flushedRecords().values().stream()
-                    .anyMatch(existing -> existing.candidateContext().isPresent()) || !discovery.records().isEmpty();
+            boolean initialized=dev.quantumchamber.persistence.SessionRecoveryState.get(server).candidateInitialized();
+            var discovery=initialized ? dev.quantumchamber.candidate.UniverseDiscoveryState.load(root)
+                    : dev.quantumchamber.candidate.UniverseDiscoveryState.loadOrCreate(root);
+            boolean evidence=initialized || !discovery.records().isEmpty();
             var entropy=dev.quantumchamber.candidate.CandidateEntropyState.loadOrCreate(root,evidence);
             var source=net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.WORLD,record.origin().worldKey());
             var policy=new dev.quantumchamber.candidate.CandidatePolicySnapshot(net.minecraft.util.Identifier.of("quantumchamber:m4_v1"),
@@ -40,6 +41,26 @@ final class M4CandidateTestAccess {
         catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
     }
     static Object space(CorridorPageManager pages, UUID session) { return ((Map<?, ?>) get(pages, "spaces")).get(session); }
+    /** 僅獨立 fresh-save runner，在全部 authority 都空的邊界模擬空 schema3 冷載入。 */
+    static dev.quantumchamber.persistence.SessionRecoveryState reloadEmptySchemaThree(MinecraftServer server,CorridorPageManager pages)
+            throws java.io.IOException {
+        var before=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
+        var sessions=dev.quantumchamber.chamber.ChamberSessions.gateway();
+        if(!Boolean.getBoolean("quantumchamber.gametest.legacyOnly") || !before.records().isEmpty() || !before.flushedRecords().isEmpty()
+                || !((Map<?,?>)get(pages,"spaces")).isEmpty() || !((Map<?,?>)get(sessions,"sessions")).isEmpty())
+            throw new IllegalStateException("空schema3冷載入只允許獨立runner的全空authority邊界");
+        var data=new net.minecraft.nbt.NbtCompound(); data.putInt("SchemaVersion",3); data.put("Records",new net.minecraft.nbt.NbtList());
+        var wrapped=new net.minecraft.nbt.NbtCompound(); wrapped.put("data",data); net.minecraft.nbt.NbtHelper.putDataVersion(wrapped);
+        var path=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data/quantumchamber_sessions.dat");
+        net.minecraft.nbt.NbtIo.writeCompressed(wrapped,path);
+        var actual=net.minecraft.nbt.NbtIo.readCompressed(path,net.minecraft.nbt.NbtSizeTracker.of(4096));
+        if(!actual.equals(wrapped)) throw new IllegalStateException("空schema3 fixture讀回不符");
+        var loaded=dev.quantumchamber.persistence.SessionRecoveryState.fromNbt(actual.getCompound("data")); loaded.requireHealthy();
+        server.getOverworld().getPersistentStateManager().set(dev.quantumchamber.persistence.SessionRecoveryState.STATE_ID,loaded);
+        if(dev.quantumchamber.persistence.SessionRecoveryState.get(server)!=loaded) throw new IllegalStateException("native journal cache不符");
+        set(pages,"journal",loaded); set(sessions,"journal",loaded); set(get(sessions,"recovery"),"journal",loaded);
+        return loaded;
+    }
     static void tickets(CorridorPageManager pages, UUID session, boolean acquire) {
         var space = space(pages, session);
         try {

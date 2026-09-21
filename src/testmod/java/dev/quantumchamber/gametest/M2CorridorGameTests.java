@@ -1182,12 +1182,15 @@ public final class M2CorridorGameTests implements FabricGameTest {
             this(context,count,facing,true);
         }
         NativeEntry(TestContext context,int count,Direction facing,boolean trustedEffects) {
+            this(context,count,facing,trustedEffects,BlockPos.ORIGIN);
+        }
+        NativeEntry(TestContext context,int count,Direction facing,boolean trustedEffects,BlockPos offset) {
             this.context=context; server=context.getWorld().getServer(); target=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
             pages=CorridorPageManager.forServer(server);
-            frame=ChamberGameTestBuilder.buildForSession(context,false,facing,false);
+            frame=ChamberGameTestBuilder.buildForSession(context,false,facing,false,offset);
             var anchor=switch(facing) { case NORTH -> ChamberGameTestBuilder.CONTROLLER; case SOUTH -> new BlockPos(7,7,10);
                 case EAST -> new BlockPos(10,7,7); case WEST -> new BlockPos(4,7,7); default -> throw new IllegalArgumentException(); };
-            lever=anchor.offset(facing);
+            lever=anchor.add(offset).offset(facing);
             operator=new ConnectedGameTestPlayer(context.getWorld());
             operator.player().refreshPositionAndAngles(CorridorGeometry.position(frame,3.5,6,-1.5),0,0);
             operator.player().setNoGravity(true);

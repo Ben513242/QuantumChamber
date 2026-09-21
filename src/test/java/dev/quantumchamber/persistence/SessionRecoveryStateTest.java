@@ -18,6 +18,37 @@ class SessionRecoveryStateTest {
     @TempDir Path directory;
     @BeforeAll static void initializeNativeVersion() { net.minecraft.SharedConstants.createGameVersion(); }
 
+    @Test void emptySchemaThreeRetainsCandidateInitializationOnWrite() {
+        var input=new NbtCompound(); input.putInt("SchemaVersion",3); input.put("Records",new NbtList());
+        var state=SessionRecoveryState.fromNbt(input); state.requireHealthy();
+        assertTrue(state.candidateInitialized()); assertFalse(new SessionRecoveryState().candidateInitialized());
+        assertEquals(input,state.writeNbt(new NbtCompound()),"空schema3本身就是已初始化證據");
+        assertEquals(2,new SessionRecoveryState().writeNbt(new NbtCompound()).getInt("SchemaVersion"));
+    }
+
+    @Test void removingLastCandidatePersistsSchemaThreeAcrossCheckedSaveAndReload() {
+        var state=new SessionRecoveryState(); var record=candidateRecord(false); var file=directory.resolve("initialized-empty.dat");
+        state.put(record); assertTrue(state.candidateInitialized()); state.save(file.toFile(),null);
+        state.remove(record.sessionUuid()); state.save(file.toFile(),null);
+        var restored=SessionRecoveryState.load(file); restored.requireHealthy();
+        assertTrue(restored.candidateInitialized());
+        assertTrue(restored.records().isEmpty());
+        assertEquals(3,restored.writeNbt(new NbtCompound()).getInt("SchemaVersion"),"最後一筆移除不撤銷durable初始化證據");
+    }
+
+    @Test void initializedCandidateEnvelopeRejectsLegacyEvenWhenEmpty() {
+        var original=SessionRecoveryState.fromNbt(fixture("RETURNING",false)).records().values().iterator().next();
+        var legacy=new SessionRecoveryRecord(UUID.randomUUID(),original.chamberUuid(),original.origin(),original.participants(),
+                original.spaceLeases(),original.state(),original.restoreEntryEffectOnReturn(),original.semantics());
+        var input=new NbtCompound(); input.putInt("SchemaVersion",3); input.put("Records",new NbtList());
+        var loaded=SessionRecoveryState.fromNbt(input);
+        assertThrows(IllegalArgumentException.class,() -> loaded.put(legacy));
+        var initialized=new SessionRecoveryState(); var candidate=candidateRecord(false);
+        initialized.put(candidate); initialized.remove(candidate.sessionUuid());
+        assertThrows(IllegalArgumentException.class,() -> initialized.put(legacy));
+        assertTrue(initialized.records().isEmpty());
+    }
+
     @Test void candidateAuthorityOnlyAcceptsCanonicalSupersetAndFrozenContext() {
         var original = candidateRecord(false);
         var ledger = original.candidateLedger();

@@ -31,6 +31,8 @@ public final class SessionRecoveryState extends PersistentState {
     // 僅存活於本 process；remove 與空 journal flush 都不能抹去同 UUID 的最後 authority。
     private final Map<UUID, SessionRecoveryRecord> authorityHistory = new LinkedHashMap<>();
     private Map<UUID, SessionRecoveryRecord> flushed = Map.of();
+    // Schema 3 envelope 本身是不可撤銷的初始化證據；不新增 NBT 欄位。
+    private boolean candidateInitialized;
     private String loadError;
     private MinecraftServer owner;
 
@@ -74,6 +76,7 @@ public final class SessionRecoveryState extends PersistentState {
             if (schema!=1 && schema!=2 && schema!=3) throw new IllegalArgumentException("不支援 journal schema");
             if (schema == 3) CandidateJournalCodec.keys(nbt, "SchemaVersion", "Records");
             var state = new SessionRecoveryState();
+            state.candidateInitialized = schema == 3;
             for (var raw : SessionRecoveryRecord.compounds(nbt, "Records", schema)) {
                 var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw,schema);
                 if (state.records.putIfAbsent(record.sessionUuid(), record) != null) throw new IllegalArgumentException("session UUID 重複");
@@ -92,9 +95,13 @@ public final class SessionRecoveryState extends PersistentState {
     }
     public Map<UUID,SessionRecoveryRecord> records() { requireHealthy(); return Map.copyOf(records); }
     public Map<UUID,SessionRecoveryRecord> flushedRecords() { requireHealthy(); return flushed; }
+    public boolean candidateInitialized() { requireHealthy(); return candidateInitialized; }
     public void put(SessionRecoveryRecord record) {
         requireMutationThread();
         requireHealthy();
+        if (candidateInitialized && record.candidateContext().isEmpty()) {
+            throw new IllegalArgumentException("已初始化 candidate 的 journal 不得重新加入 legacy record");
+        }
         var current=records.get(record.sessionUuid());
         var durable=flushed.get(record.sessionUuid());
         var historical=authorityHistory.get(record.sessionUuid());
@@ -106,7 +113,9 @@ public final class SessionRecoveryState extends PersistentState {
         }
         var candidate = new LinkedHashMap<>(records); candidate.put(record.sessionUuid(), record);
         validateOwnership(candidate);
-        records.put(record.sessionUuid(), record); authorityHistory.put(record.sessionUuid(), record); markDirty();
+        records.put(record.sessionUuid(), record); authorityHistory.put(record.sessionUuid(), record);
+        candidateInitialized |= record.candidateContext().isPresent();
+        markDirty();
     }
     public boolean remove(UUID id) {
         requireMutationThread();
@@ -121,7 +130,7 @@ public final class SessionRecoveryState extends PersistentState {
     }
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
-        nbt.putInt("SchemaVersion", envelopeSchema(records));
+        nbt.putInt("SchemaVersion", candidateInitialized ? 3 : envelopeSchema(records));
         var entries = new NbtList(); records.values().forEach(record -> entries.add(record.toNbt()));
         nbt.put("Records", entries); return nbt;
     }

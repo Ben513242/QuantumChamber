@@ -28,7 +28,7 @@ public final class SuperpositionSession {
         var records=java.util.stream.Stream.concat(journal.records().values().stream(),journal.flushedRecords().values().stream()).toList();
         if(records.stream().anyMatch(record -> record.candidateContext().isEmpty()))
             throw new IllegalStateException("legacy session 尚待 return-only 清理，禁止混裝 M4 session");
-        boolean candidateEvidence=records.stream().anyMatch(record -> record.candidateContext().isPresent());
+        boolean candidateEvidence=journal.candidateInitialized();
         var root=server.getSavePath(WorldSavePath.ROOT);
         var discovery=candidateEvidence ? UniverseDiscoveryState.load(root) : UniverseDiscoveryState.loadOrCreate(root);
         var entropy=CandidateEntropyState.loadOrCreate(root,candidateEvidence || !discovery.records().isEmpty());

@@ -219,7 +219,12 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_authority_rejection",tickLimit=100000)
-    public void unhealthy_authorities_reject_and_isolated_legacy_schema2_completes_cleanup(TestContext context) {
+    public void unhealthy_authorities_reject_before_reservation(TestContext context) { authorityRejections(context,false); }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_legacy_runtime",tickLimit=100000)
+    public void isolated_legacy_schema2_then_empty_schema3_authority_gates(TestContext context) { authorityRejections(context,true); }
+
+    private static void authorityRejections(TestContext context,boolean legacyOnly) {
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         context.waitAndRun(3,() -> {
             var server=fixture.server; var root=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT);
@@ -230,8 +235,9 @@ public final class M4CandidateDoorGameTests {
                 var entropy=dev.quantumchamber.candidate.CandidateEntropyState.loadOrCreate(root,!discovery.records().isEmpty());
                 var entropyPath=root.resolve("data/quantumchamber_candidate_entropy.dat");
                 var discoveryPath=root.resolve("data/quantumchamber_universe_discovery.dat");
-                for(String mode : List.of("corrupt_entropy","corrupt_discovery","discovery_missing_entropy",
-                        "candidate_missing_discovery","candidate_missing_entropy","legacy_current","legacy_durable")) {
+                var modes=legacyOnly ? List.of("legacy_current","legacy_durable")
+                        : List.of("corrupt_entropy","corrupt_discovery","discovery_missing_entropy","candidate_missing_discovery","candidate_missing_entropy");
+                for(String mode : modes) {
                     var sid=UUID.randomUUID(); var chamber=UUID.randomUUID();
                     var origin=new dev.quantumchamber.chamber.ChamberOriginAuthority(chamber,World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
                             new BlockPos(100,80,100),Direction.NORTH,dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN);
@@ -277,9 +283,66 @@ public final class M4CandidateDoorGameTests {
                     }
                 }
                 assertEmptyAuthorities(context,fixture.pages,journal);
-                context.runAtTick(4,() -> legacySchema2Runtime(context));
+                if(legacyOnly) context.runAtTick(4,() -> legacySchema2Runtime(context)); else context.complete();
             } catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
             finally { fixture.close(); }
+        });
+    }
+
+    private static void emptySchemaThreeMissing(TestContext context,M2CorridorGameTests.NativeEntry fixture,
+            boolean missingDiscovery,List<String> findings,Runnable next) {
+        context.waitAndRun(3,() -> {
+            try {
+                var root=fixture.server.getSavePath(net.minecraft.util.WorldSavePath.ROOT);
+                dev.quantumchamber.candidate.UniverseDiscoveryState.loadOrCreate(root);
+                dev.quantumchamber.candidate.CandidateEntropyState.loadOrCreate(root,false);
+                var state=M4CandidateTestAccess.reloadEmptySchemaThree(fixture.server,fixture.pages);
+                var journalPath=root.resolve("data/quantumchamber_sessions.dat");
+                var journalBytes=java.nio.file.Files.readAllBytes(journalPath);
+                var records=state.records(); var durable=state.flushedRecords();
+                var spaces=Map.copyOf((Map<?,?>)M4CandidateTestAccess.get(fixture.pages,"spaces"));
+                var manager=dev.quantumchamber.chamber.ChamberSessions.gateway();
+                var sessions=Map.copyOf((Map<?,?>)M4CandidateTestAccess.get(manager,"sessions"));
+                var target=root.resolve(missingDiscovery ? "data/quantumchamber_universe_discovery.dat" : "data/quantumchamber_candidate_entropy.dat");
+                var backup=java.nio.file.Files.createTempFile(root.resolve("data"),"m4-empty-schema3-",".backup");
+                java.nio.file.Files.move(target,backup,java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                dev.quantumchamber.chamber.ChamberSessionGateway.StartResult startResult;
+                List<Boolean> unchanged;
+                try {
+                    // 只隔離供電事件的自動入場；受測的顯式 start 使用完整正式 gateway。
+                    M1FoundationSessionFixture.set(context.getWorld(),fixture.frame.controllerPos(),true);
+                    try {
+                        if(!context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                        new dev.quantumchamber.chamber.ChamberPowerCoordinator().refresh(context.getWorld(),fixture.frame.controllerPos());
+                    }
+                    finally { M1FoundationSessionFixture.set(context.getWorld(),fixture.frame.controllerPos(),false); }
+                    var preview=new dev.quantumchamber.chamber.ChamberActivationService().evaluateReadiness(context.getWorld(),fixture.controller());
+                    context.assertTrue(fixture.controller().chamberUuid()!=null && !fixture.controller().activationBlocked()
+                            && context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()) && preview.accepted(),
+                            "受測start前置：uuid="+fixture.controller().chamberUuid()+" blocked="+fixture.controller().activationBlocked()
+                                    +" power="+context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())+" "+preview);
+                    startResult=manager.start(context.getWorld(),fixture.controller(),fixture.players.stream().map(player -> player.player().getUuid()).toList());
+                    unchanged=List.of(!java.nio.file.Files.exists(target),records.equals(state.records()),durable.equals(state.flushedRecords()),
+                            spaces.equals(M4CandidateTestAccess.get(fixture.pages,"spaces")),sessions.equals(M4CandidateTestAccess.get(manager,"sessions")),
+                            java.util.Arrays.equals(journalBytes,java.nio.file.Files.readAllBytes(journalPath)));
+                } finally {
+                    java.nio.file.Files.move(backup,target,java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                var witness=unchanged;
+                Runnable verify=() -> {
+                    var scenario=missingDiscovery ? "discovery" : "entropy";
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
+                            "M4_EMPTY_SCHEMA3_AUTHORITY kind={} start={} fileMissing={} currentSame={} flushedSame={} spaceSame={} sessionSame={} bytesSame={}",
+                            scenario,startResult,witness.get(0),witness.get(1),witness.get(2),witness.get(3),witness.get(4),witness.get(5));
+                    if(startResult!=dev.quantumchamber.chamber.ChamberSessionGateway.StartResult.REJECTED || witness.contains(false))
+                        findings.add(scenario+" start="+startResult+" unchanged="+witness);
+                    context.waitAndRun(1,next);
+                };
+                if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                when(context,Math.toIntExact(context.getTick()+1),() -> dev.quantumchamber.chamber.ChamberSessions.gateway()
+                        .presence(fixture.server,fixture.controller().chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,
+                        done -> { assertEmptyAuthorities(context,fixture.pages,state); verify.run(); });
+            } catch(java.io.IOException failure) { fixture.close(); throw new IllegalStateException(failure); }
         });
     }
 
@@ -300,7 +363,18 @@ public final class M4CandidateDoorGameTests {
             context.assertTrue(pages.selectableDoors(legacy.session).isEmpty(),"legacy runtime不發布M4候選");
             legacy.returnTrusted();
             when(context,ready+1,() -> pages.releaseComplete(legacy.session),released -> {
-                legacy.assertComplete(); assertEmptyAuthorities(context,pages,journal); context.complete();
+                legacy.assertComplete(); assertEmptyAuthorities(context,pages,journal);
+                var findings=new ArrayList<String>();
+                context.waitAndRun(1,() -> {
+                    var source=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH,true,new BlockPos(32,0,0));
+                    emptySchemaThreeMissing(context,source,true,findings,
+                            () -> emptySchemaThreeMissing(context,source,false,findings,() -> {
+                                try {
+                                    context.assertTrue(findings.isEmpty(),"空schema3兩種缺權威都必須REJECTED且零mutation："+findings);
+                                    context.complete();
+                                } finally { source.close(); }
+                            }));
+                });
             });
         });
     }
