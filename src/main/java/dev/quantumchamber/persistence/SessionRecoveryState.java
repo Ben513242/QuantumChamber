@@ -23,7 +23,13 @@ import net.minecraft.world.PersistentState;
 /** 使用原生 manager 的生命週期，但讀寫均經過可觀測的 journal 健康閘門。 */
 public final class SessionRecoveryState extends PersistentState {
     public static final String STATE_ID = "quantumchamber_sessions";
+    @FunctionalInterface interface JournalReadback { NbtCompound read(Path path) throws IOException; }
+    private final JournalReadback readback;
+    public SessionRecoveryState() { this(SessionJournalStore::read); }
+    SessionRecoveryState(JournalReadback readback) { this.readback = java.util.Objects.requireNonNull(readback); }
     private final Map<UUID, SessionRecoveryRecord> records = new LinkedHashMap<>();
+    // 僅存活於本 process；remove 與空 journal flush 都不能抹去同 UUID 的最後 authority。
+    private final Map<UUID, SessionRecoveryRecord> authorityHistory = new LinkedHashMap<>();
     private Map<UUID, SessionRecoveryRecord> flushed = Map.of();
     private String loadError;
     private MinecraftServer owner;
@@ -74,6 +80,7 @@ public final class SessionRecoveryState extends PersistentState {
             }
             validateOwnership(state.records);
             state.flushed = Map.copyOf(state.records);
+            state.authorityHistory.putAll(state.flushed);
             return state;
         } catch (RuntimeException exception) {
             return failed("journal schema 無法解析：" + exception);
@@ -90,14 +97,16 @@ public final class SessionRecoveryState extends PersistentState {
         requireHealthy();
         var current=records.get(record.sessionUuid());
         var durable=flushed.get(record.sessionUuid());
-        // 同時保護尚未落盤與上一份落盤權威；remove 後重放不能更換來源、語意或 cohort。
+        var historical=authorityHistory.get(record.sessionUuid());
+        // 同時保護 dirty、durable 與已移除紀錄的 authority。
         if ((current!=null && !SessionRecoveryRecord.sameAuthority(current,record))
-                || (durable!=null && !SessionRecoveryRecord.sameAuthority(durable,record))) {
-            throw new IllegalArgumentException("同一 session 的凍結來源／語意／cohort 不可改動");
+                || (durable!=null && !SessionRecoveryRecord.sameAuthority(durable,record))
+                || (historical!=null && !SessionRecoveryRecord.sameAuthority(historical,record))) {
+            throw new IllegalArgumentException("同一 session 的凍結 authority 不可改動，ledger 與 selection 不可倒退");
         }
         var candidate = new LinkedHashMap<>(records); candidate.put(record.sessionUuid(), record);
         validateOwnership(candidate);
-        records.put(record.sessionUuid(), record); markDirty();
+        records.put(record.sessionUuid(), record); authorityHistory.put(record.sessionUuid(), record); markDirty();
     }
     public boolean remove(UUID id) {
         requireMutationThread();
@@ -124,12 +133,22 @@ public final class SessionRecoveryState extends PersistentState {
         if (!isDirty()) return;
         var wrapped = new NbtCompound(); wrapped.put("data", writeNbt(new NbtCompound()));
         NbtHelper.putDataVersion(wrapped);
+        var expected = Map.copyOf(records);
         try {
             SessionJournalStore.write(file.toPath(), wrapped);
-        } catch (IOException exception) {
-            throw new UncheckedIOException("journal 落盤失敗，保留 dirty 與上一個 durable snapshot", exception);
+            var actual = readback.read(file.toPath());
+            var decoded = fromNbt(actual.getCompound("data"));
+            decoded.requireHealthy();
+            if (!wrapped.equals(actual) || !expected.equals(decoded.records())) {
+                throw new IOException("journal 正式檔 exact readback 不符");
+            }
+            flushed = decoded.flushedRecords();
+            authorityHistory.putAll(flushed);
+        } catch (IOException | RuntimeException exception) {
+            throw new UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",
+                    exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
         }
-        flushed = Map.copyOf(records); setDirty(false);
+        setDirty(false);
     }
 
     private static SessionRecoveryState failed(String error) {

@@ -119,10 +119,16 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         @Override public NbtCompound quantumStateSnapshot() { return quantumStateSnapshot.copy(); }
     }
 
-    public static boolean sameAuthority(SessionRecoveryRecord expected,SessionRecoveryRecord actual) {
-        return expected.sessionUuid().equals(actual.sessionUuid()) && expected.chamberUuid().equals(actual.chamberUuid())
-                && expected.origin().equals(actual.origin()) && expected.semantics()==actual.semantics()
-                && sameParticipantSources(expected.participants(),actual.participants());
+    /** 方向性的 authority 檢查：next 只能保留或追加 previous 已承認的候選事實。 */
+    public static boolean sameAuthority(SessionRecoveryRecord previous,SessionRecoveryRecord next) {
+        return previous.sessionUuid().equals(next.sessionUuid()) && previous.chamberUuid().equals(next.chamberUuid())
+                && previous.origin().equals(next.origin()) && previous.semantics()==next.semantics()
+                && sameParticipantSources(previous.participants(),next.participants())
+                && previous.candidateContext().equals(next.candidateContext())
+                && previous.candidateLedger().size() <= next.candidateLedger().size()
+                && previous.candidateLedger().equals(next.candidateLedger().subList(0, previous.candidateLedger().size()))
+                && (previous.candidateSelection().orElse(null) instanceof CandidateSelection.Selectable
+                    || previous.candidateSelection().equals(next.candidateSelection()));
     }
 
     /** 以 UUID 比較凍結來源；順序與 returned 進度不是來源快照的一部分。 */

@@ -4,6 +4,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.Path;
 import java.io.UncheckedIOException;
 import java.util.UUID;
+import java.util.List;
+import java.util.Optional;
+import dev.quantumchamber.candidate.*;
+import dev.quantumchamber.corridor.DoorKey;
+import dev.quantumchamber.superposition.SessionState;
 import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
@@ -12,6 +17,111 @@ import org.junit.jupiter.api.io.TempDir;
 class SessionRecoveryStateTest {
     @TempDir Path directory;
     @BeforeAll static void initializeNativeVersion() { net.minecraft.SharedConstants.createGameVersion(); }
+
+    @Test void candidateAuthorityOnlyAcceptsExactCanonicalPrefixAndFrozenContext() {
+        var original = candidateRecord(false);
+        var ledger = original.candidateLedger();
+        var appended = new java.util.ArrayList<>(ledger);
+        appended.add(new CandidateLedgerEntry(new DoorKey(original.sessionUuid(), 6, DoorKey.DoorWallSide.NEGATIVE_LATERAL),
+                new QuantumCandidate.Source(new CandidateId(new CandidateBytes(SessionRecoverySchema3Test.bytes(60))))));
+        var next = candidateCopy(original, original.candidateContext(), appended, original.candidateSelection(), original.state());
+        assertTrue(SessionRecoveryRecord.sameAuthority(original, next));
+        assertFalse(SessionRecoveryRecord.sameAuthority(next, original));
+        var changed = new java.util.ArrayList<>(ledger);
+        changed.set(0, new CandidateLedgerEntry(ledger.getFirst().doorKey(),
+                new QuantumCandidate.Source(new CandidateId(new CandidateBytes(SessionRecoverySchema3Test.bytes(61))))));
+        var inserted = new java.util.ArrayList<>(ledger);
+        inserted.add(new CandidateLedgerEntry(new DoorKey(original.sessionUuid(), -3, DoorKey.DoorWallSide.NEGATIVE_LATERAL),
+                appended.getLast().candidate()));
+        for (var invalidLedger : List.of(List.<CandidateLedgerEntry>of(), ledger.subList(1, ledger.size()), changed, inserted)) {
+            assertFalse(SessionRecoveryRecord.sameAuthority(original,
+                    candidateCopy(original, original.candidateContext(), invalidLedger, original.candidateSelection(), original.state())));
+        }
+        var context = original.candidateContext().orElseThrow();
+        var raised = new CandidatePolicySnapshot(context.policyId(), 1, 1, 5, 20, 75, 5, 16384,
+                context.entropyFingerprint(), context.sourceFamilyRef());
+        var changedContext = candidateCopy(original, Optional.of(raised), ledger, original.candidateSelection(), original.state());
+        assertFalse(SessionRecoveryRecord.sameAuthority(original, changedContext));
+        assertFalse(SessionRecoveryRecord.sameAuthority(changedContext, original));
+        var legacy = candidateCopy(original, Optional.empty(), List.of(), Optional.empty(), original.state());
+        assertFalse(SessionRecoveryRecord.sameAuthority(original, legacy));
+        assertFalse(SessionRecoveryRecord.sameAuthority(legacy, original));
+    }
+
+    @Test void selectedAuthorityCannotResetOrChangeDoorCandidatePlayerTime() {
+        var selectable = candidateRecord(false); var selected = candidateRecord(true);
+        assertTrue(SessionRecoveryRecord.sameAuthority(selectable, selected));
+        assertTrue(SessionRecoveryRecord.sameAuthority(selected, selected));
+        assertFalse(SessionRecoveryRecord.sameAuthority(selected, selectable));
+        var choice = (CandidateSelection.Selected) selected.candidateSelection().orElseThrow();
+        var other = selected.candidateLedger().getFirst();
+        for (var changed : List.of(
+                new CandidateSelection.Selected(other.doorKey(), other.candidate().candidateId(), choice.selectedBy(), 0, 1),
+                new CandidateSelection.Selected(choice.doorKey(), choice.candidateId(), UUID.randomUUID(), 0, 1),
+                new CandidateSelection.Selected(choice.doorKey(), choice.candidateId(), choice.selectedBy(), 1, 1))) {
+            assertFalse(SessionRecoveryRecord.sameAuthority(selected,
+                    candidateCopy(selected, selected.candidateContext(), selected.candidateLedger(), Optional.of(changed), SessionState.MEASURED)));
+        }
+    }
+
+    @Test void candidatePutProtectsCurrentFlushedAndHistoryAfterRemoveAndSave() {
+        var selectable = candidateRecord(false); var selected = candidateRecord(true);
+        for (int mode = 0; mode < 5; mode++) {
+            var state = mode == 0 ? new SessionRecoveryState()
+                    : SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(mode == 1 || mode == 4, false));
+            if (mode != 1 && mode != 4) state.put(selected);
+            if (mode >= 2) state.remove(selected.sessionUuid());
+            if (mode >= 3) state.save(directory.resolve("removed.dat").toFile(), null);
+            var before = state.records(); var flushed = state.flushedRecords(); boolean dirty = state.isDirty();
+            assertThrows(IllegalArgumentException.class, () -> state.put(selectable), "mode=" + mode);
+            assertEquals(before, state.records()); assertEquals(flushed, state.flushedRecords()); assertEquals(dirty, state.isDirty());
+            state.put(selected);
+            assertEquals(selected, state.records().get(selected.sessionUuid()));
+        }
+    }
+
+    @Test void unsavedRemoveAndReinsertStillProtectsLegacyAuthority() {
+        var original = SessionRecoveryState.fromNbt(fixture("RETURNING", false)).records().values().iterator().next();
+        var state = new SessionRecoveryState(); state.put(original); state.remove(original.sessionUuid());
+        for (var changed : authorityChanges(original)) {
+            assertThrows(IllegalArgumentException.class, () -> state.put(changed));
+        }
+    }
+
+    @Test void checkedSaveReadbackFailuresPreserveDirtyAndPreviousFlushedSnapshot() throws Exception {
+        for (String fault : List.of("io", "malformed", "stale", "changed-progress", "extra-wrapper")) {
+            boolean[] armed = {false}; NbtCompound[] previous = {null};
+            var state = new SessionRecoveryState(path -> {
+                if (!armed[0]) return SessionJournalStore.read(path);
+                if (fault.equals("io")) throw new java.io.IOException("注入正式檔讀取失敗");
+                var actual = SessionJournalStore.read(path);
+                if (fault.equals("malformed")) actual.getCompound("data").putInt("SchemaVersion", 99);
+                if (fault.equals("stale")) actual = previous[0];
+                if (fault.equals("changed-progress")) participant(actual.getCompound("data")).putBoolean("Returned", true);
+                if (fault.equals("extra-wrapper")) actual.putString("Unexpected", "extra");
+                NbtIo.writeCompressed(actual, path);
+                return SessionJournalStore.read(path);
+            });
+            var file = directory.resolve("readback-" + fault + ".dat");
+            state.put(candidateRecord(false)); state.save(file.toFile(), null);
+            previous[0] = SessionJournalStore.read(file);
+            var flushed = state.flushedRecords();
+            state.put(candidateRecord(true)); armed[0] = true;
+            assertThrows(UncheckedIOException.class, () -> state.save(file.toFile(), null), fault);
+            assertTrue(state.isDirty(), fault); assertEquals(flushed, state.flushedRecords(), fault);
+            assertEquals(SessionState.MEASURED, state.records().values().iterator().next().state());
+        }
+    }
+
+    private static SessionRecoveryRecord candidateRecord(boolean selected) {
+        return SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(selected, false)).records().values().iterator().next();
+    }
+
+    private static SessionRecoveryRecord candidateCopy(SessionRecoveryRecord original, Optional<CandidatePolicySnapshot> context,
+            List<CandidateLedgerEntry> ledger, Optional<CandidateSelection> selection, SessionState phase) {
+        return new SessionRecoveryRecord(original.sessionUuid(), original.chamberUuid(), original.origin(), original.participants(),
+                original.spaceLeases(), phase, false, original.semantics(), context, ledger, selection);
+    }
 
     @Test void schemaTwoRoundtripsLateralFalseForEveryStateWithoutRotatingBounds() {
         for (var phase : java.util.List.of(dev.quantumchamber.superposition.SessionState.ARMING,
