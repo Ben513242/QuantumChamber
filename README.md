@@ -1,6 +1,12 @@
 # QuantumChamber
 
-> **新版 M2 已實作，驗收分層記錄：** 左右延伸、入場保留 QuantumState Buff、任一凍結參與者 Buff 失效則整組返還已接入原生流程；跨 JVM 持久化與產物 gate 的最新結果見 [修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。八項人工驗收與整分支 final review 留待整體收尾，尚未合併 main。
+> **功能分支 `feature/m1-chamber`（M1–M4）狀態，驗收分層記錄：** 以下都已實作，並完成自動 gate 與逐 task review：
+>
+> - M2 左右走廊、入場保留 QuantumState Buff、任一凍結參與者 Buff 失效則整組返還。
+> - M3-A 動態 Universe backend 與 M3-B server-side transfer readiness。
+> - M4 候選門。
+>
+> M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。M1／M1.2／M2／M4 的人工驗收尚待記錄；M2 的整分支 final review 依原安排留待整體收尾。M1–M4 在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
 
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
@@ -8,9 +14,13 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。
 
-本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。主目錄的 `main` 較舊，不能用其客戶端驗收此功能。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工待驗，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
+本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。M1–M4 合併 main 之前，主目錄的 `main` checkout 不含本功能，不能用其客戶端驗收；實際合併狀態以 `main`／tag 為準。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工待驗，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
-走廊是有限局部頁面與外觀延伸，並非無限配置世界；沒有動態 Dimension 或 M3 跨宇宙通道。M4 起完整側門可右鍵鎖定一次量子候選，但門保持關閉、玩家不移動，也不配置 Universe。鎖定後該 session 停止換頁。返還後，該座原艙在該存檔會被保留的選擇收據封鎖到 M5：期間無法再從它入場，也無法斷電拆除；已返還的玩家仍可使用其他 Chamber。驗收 M2 時請勿點側門，詳見 [M4 候選門紀錄](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)。人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證，最終整體評審由 root 另行執行。此快照供遠端同步審查，尚未合併 main。
+走廊是有限局部頁面與外觀延伸，並非無限配置世界。走廊本身是固定的 `quantumchamber:superposition` 世界，不是動態 Dimension；M3 已有動態 Universe backend 與 server-side transfer readiness，但尚未接成玩家可用的跨宇宙通道（屬 M5）。
+
+M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、玩家不移動，也不配置 Universe。鎖定後該 session 停止換頁。返還後，該座原艙在該存檔會被保留的選擇收據封鎖到 M5：期間無法再從它入場，也無法斷電拆除。參與者要等該 session 全員返還、清理完成（DORMANT）之後，才能使用其他 Chamber；返還與清理階段（`RETURN_PLAYERS`／`RELEASE_GEOMETRY`）仍會被拒絕開新 session。驗收 M2 時請勿點側門，詳見 [M4 候選門紀錄](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)。
+
+人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證，最終整體評審由 root 另行執行。合併 main 的條件與狀態見本頁開頭。
 
 ## M1.2 基礎與歷史驗證
 
@@ -44,7 +54,7 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 Windows 可在檔案總管雙擊專案根目錄的 [start-client.bat](start-client.bat)，或在 PowerShell 執行 `./start-client.bat`。腳本使用 Java 21，固定載入同一工作區的 Fabric 開發客戶端；失敗會保留錯誤與原始退出碼。
 
-M2 功能分支尚未合併 main；本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
+功能分支 `feature/m1-chamber`（M1–M4）在人工驗收記錄完成前不合併 main，實際合併與 tag 狀態以 `main`／tag 為準；合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
 
 Windows PowerShell：
 
@@ -77,6 +87,16 @@ Windows PowerShell：
 - [M1.2 自動證據、重啟與人工待驗](docs/implementation-notes/m1.2-powered-origin.md)
 - [M2 供電走廊計畫](docs/plans/2026-09-17-m2-powered-corridor.md)
 - [M2 單人操作、持久化與人工待驗](docs/implementation-notes/m2-corridor.md)
+- [M2 當時修訂狀態與 M3 交接（歷史）](docs/implementation-notes/2026-09-18-m2-revision-status.md)
+- [M3 動態 Universe 基底設計](docs/superpowers/specs/2026-09-19-m3-dynamic-universe-foundation-design.md)
+- [M3 runtime-dimension 可行性探查](docs/implementation-notes/2026-09-19-m3-runtime-dimension-feasibility.md)
+- [M3-A 動態 Universe backend 計畫](docs/superpowers/plans/2026-09-19-m3a-dynamic-universe-backend.md)
+- [M3-A 實作與證據](docs/implementation-notes/2026-09-19-m3a-dynamic-universe-backend.md)
+- [M3-B server-side transfer readiness 計畫](docs/superpowers/plans/2026-09-19-m3b-server-transfer-readiness.md)
+- [M3-B 實作與證據](docs/implementation-notes/2026-09-19-m3b-server-transfer-readiness.md)
+- [M4 候選門設計規格](docs/superpowers/specs/2026-09-21-m4-candidate-doors-design.md)
+- [M4 候選門計畫](docs/superpowers/plans/2026-09-21-m4-candidate-doors.md)
+- [M4 候選門權威、驗證證據與 M5 交接](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)
 
 ## 授權
 

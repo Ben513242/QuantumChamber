@@ -1,5 +1,7 @@
 # M3-B：server-side transfer readiness 證據
 
+> 後續狀態（2026-09-24）：M3-B whole-branch review（`81cec28..687cff9`）Critical 0／Important 0／Minor 0；M3 已推送至 `origin/feature/m1-chamber`（`687cff9`）。M4 候選門也已在同一分支完成；玩家可用的跨宇宙通道仍屬 M5。合併狀態以 `main`／tag 為準。以下為當時紀錄。
+
 驗證日期：2026-09-20。Minecraft 1.21／Java 21／Gradle 8.8，Windows 本機。Task 3 基準為 `5df30bc7fec331e87097feb49d5cdfcc19136d6b`。
 
 ## 範圍與結論

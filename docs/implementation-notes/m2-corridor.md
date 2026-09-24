@@ -1,6 +1,6 @@
 # M2 供電走廊：操作與驗證
 
-功能分支 `feature/m1-chamber` 已實作以原艙門為基準左右延伸、入場保留 Buff、任一凍結參與者 Buff 失效則全組安全返還。自動驗證與人工觀察分開記錄；以下八項目前皆待人工驗收。尚未合併 main，M3 尚未執行。
+功能分支 `feature/m1-chamber` 已實作以原艙門為基準左右延伸、入場保留 Buff、任一凍結參與者 Buff 失效則全組安全返還。自動驗證與人工觀察分開記錄；以下八項目前皆待人工驗收。M3-A／M3-B（動態 Universe backend、server-side transfer readiness）與 M4 候選門已在同一分支完成，但還沒有玩家可用的跨宇宙通道（屬 M5）；本文八項只驗 M2 行為，驗收時勿點側門。M1–M4 在 M1／M1.2／M2／M4 人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準。
 
 ## 從功能工作區啟動
 
@@ -16,7 +16,7 @@
 2. 在艙外先供電。有效空艙或門開時也可先取得 UUID 並保護艙體。
 3. 普通右鍵開門，完整進入室內；瞄準前牆頂排中央 Controller 關門。開門後門格沒有可瞄準外形，應操作 Controller。
 4. 真正飲用藥水並觀察 HUD。全員有效、非旁觀者、完整碰撞箱在室內且關門時自動準備走廊，不要求新紅石 edge。入場保留現有效果、duration 與 hidden chain，自然倒數；不額外消耗 Buff，也不改原生喝藥的物品規則。
-5. 走廊相對原艙門朝左右延伸，`sourceFacing` 與 `corridorFacing` 分開。先看左、右、回頭，再行走檢查底板／碰撞。M4 起，側門可右鍵鎖定一次候選（門不開、玩家不移動）。鎖定後走廊停止換頁。返還後，該座原艙在該存檔會被封鎖到 M5：無法再從它入場，也無法斷電拆除；玩家仍可使用其他 Chamber。驗收 M2 項目時請不要點側門，詳見 [M4 候選門紀錄](2026-09-21-m4-candidate-doors.md)。
+5. 走廊相對原艙門朝左右延伸，`sourceFacing` 與 `corridorFacing` 分開。先看左、右、回頭，再行走檢查底板／碰撞。M4 起，側門可右鍵鎖定一次候選（門不開、玩家不移動）。鎖定後走廊停止換頁。返還後，該座原艙在該存檔會被封鎖到 M5：無法再從它入場，也無法斷電拆除。參與者要等該 session 全員返還、清理完成（DORMANT）之後，才能使用其他 Chamber；返還與清理階段（`RETURN_PLAYERS`／`RELEASE_GEOMETRY`）仍會被拒絕開新 session。驗收 M2 項目時請不要點側門，詳見 [M4 候選門紀錄](2026-09-21-m4-candidate-doors.md)。
 6. 任何一位凍結參與者的 Buff 自然到期或喝奶解除，全組安全返回同一原艙，保留返還當下效果，沒有入場藥效退款。HIGH 仍保護原艙；全員再次補喝、關門並滿足資格後可建立新 SID。
 7. 要測 LOW 或拆除，回到原艙後從外部切斷供電；或在入艙前預先安排並量測外部計時斷電。待完整 cohort／有價物品返還與清理完成、原艙確認 OFF 後，才以 Creative 實際確認可拆。計時器是 LOW 案例的選用安排，Buff 返還不需要它。
 
@@ -44,10 +44,12 @@
 - 重啟只恢復 pending 返還，不重建舊 ACTIVE。JOIN 先排隊、下一 server tick 返回；離線者仍在凍結名單，必要租約與來源保護繼續持有。
 - 原 Controller UUID／ORIGIN／世界／朝向／registry 必須可信。缺來源不送床、spawn 或另一座艙；保留現場，不刪世界掩蓋失敗。
 - Comparator仍為 `INVALID=0`、`IDLE=3`、`READY=7`、`ARMED=11`。11不是返還完成證明，管理停用也不是 LOW 或解除保護。
-- 固定世界僅 `quantumchamber:superposition`；每邏輯頁96格、外觀延伸兩端各576格，沒有動態 Universe。每 tick 方塊建造／清理4096格與ticket聯集4096chunks是不同預算；64實例上限不是滿載性能保證。
+- 固定世界僅 `quantumchamber:superposition`；每邏輯頁96格、外觀延伸兩端各576格，走廊本身不配置動態 Universe。每 tick 方塊建造／清理4096格與ticket聯集4096chunks是不同預算；64實例上限不是滿載性能保證。
 - 成功原生玩家 checkpoint 證據限 Windows／NTFS／Java21 HANDLE 條件。Ubuntu 的合法拒絕及OS skips不等於 Linux native恢復成功。正常stop、受控JVM crash與整機斷電各自不同，不聲稱跨檔原子性。
 
-## 自動證據狀態與M3交接
+## 自動證據狀態與 M3 交接（M2 當時紀錄）
+
+以下為 2026-09-19 M2 結案時的交接；M3-A／M3-B 與 M4 其後已完成，見各自 note。
 
 Task9 精確 code SHA `bdb74027206febdb332fbf8c098d9fc2d96bf53f` 的兩平台CI run `35351777308` 成功：Windows 必要12項零跳過，兩平台GameTest各116項成功；後置純文件BASE為 `681cdc41586797827ad984b43c77fef1eabfedf9`。Task9獨立review已結案。
 

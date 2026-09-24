@@ -1,5 +1,7 @@
 # M3-A：持久動態 Universe backend 證據
 
+> 後續狀態（2026-09-24）：M3-A whole-branch review（`d0bd235..128ed84`）Critical 0／Important 0；M3-B 其後也已完成，M3 已推送至 `origin/feature/m1-chamber`（`687cff9`）。M4 候選門也已在同一分支完成。合併狀態以 `main`／tag 為準。以下為當時紀錄。
+
 驗證日期：2026-09-20。Minecraft 1.21／Yarn 1.21+build.9／Loader 0.17.2／Fabric API 0.102.0+1.21／Loom 1.7.4／Java 21／Gradle 8.8，Windows 本機。
 
 ## 狀態與範圍

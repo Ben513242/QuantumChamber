@@ -4,6 +4,8 @@
 
 狀態：2026-09-18 使用者確認本修訂的左右走廊、Buff保留、任一人失效整組返還及8項驗收，授權完成M2修訂與自動gate後執行M3；人工checklist與整分支final review留到實作收尾。新規則尚未實作，不以舊測試結果宣告完成。
 
+> 後續狀態（2026-09-24）：上行為核准當時的歷史快照。本修訂其後已在 `feature/m1-chamber` 實作並完成自動 gate 與逐 task review；八項人工驗收與整分支 final review 仍依原安排留待收尾，見 [M2 紀錄](../../implementation-notes/m2-corridor.md)。合併狀態以 `main`／tag 為準。
+
 本修訂取代 [原 M2 規格](2026-09-17-m2-powered-corridor-design.md) 的前後延伸、成功入場立即消耗效果與活動 session 不依藥效倒數結束三項規則；其餘原艙權威、有限資源、共享參與者、checked journal、native checkpoint、離線及安全清理契約維持。
 
 ## 1. 已確認的成功畫面

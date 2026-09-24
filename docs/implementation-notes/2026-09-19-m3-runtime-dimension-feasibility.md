@@ -1,5 +1,7 @@
 # M3 runtime-dimension 可行性探查
 
+> 後續狀態（2026-09-24）：M3-A 與 M3-B 其後都已完成，whole-branch review 皆 Critical 0／Important 0，並已推送至 `origin/feature/m1-chamber`（`687cff9`）。M4 候選門也已在同一分支完成。合併狀態以 `main`／tag 為準。以下為當時紀錄。
+
 日期：2026-09-19。基準：`d0bd235ae2dc4a9f36b3cf7fff89a7d851ffb3b9`，Minecraft1.21／Yarn1.21+build.9／Loader0.17.2／FabricAPI0.102.0+1.21／Loom1.7.4／Java21／Gradle8.8。
 
 ## 結論

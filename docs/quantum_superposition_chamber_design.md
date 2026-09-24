@@ -2,8 +2,8 @@
 
 > Status: Living design document  
 > Target: Minecraft Java Edition  
-> Document stage: 持續維護的玩法／架構規格；M1 基礎實作與驗收中<br>
-> Revision: 0.11 — 核准單人先供電、後進艙啟動，以及斷電返還後解除原艙保護；使用者已核准技術規格並授權實作，尚未完成
+> Document stage: 持續維護的玩法／架構規格；M0 已在 `main`，M1–M4 已在 `feature/m1-chamber` 實作並完成自動 gate 與逐 task review（人工驗收待記錄；尚待的整體收尾 review 見各 milestone note；合併狀態以 `main`／tag 為準）；M5 待設計<br>
+> Revision: 0.11 — 核准單人先供電、後進艙啟動，以及斷電返還後解除原艙保護；使用者已核准技術規格並授權實作（實作狀態見上一行）
 >
 > **2026-09-17 玩法修訂：** 有效艙體外部供電即註冊並保護；供電期間可開門進入，關門且全員 QuantumState 後自動啟動，不要求第二個 rising edge。斷電先安全送回原始艙體、結束走廊，再解除原艙保護；其他宇宙的投影不可藉此拆除。另納入手持火把照明需求。
 >
@@ -2546,9 +2546,13 @@ docs/quantum_superposition_chamber_design.md   <- this spec
 docs/implementation-notes/m0-bootstrap.md
 docs/implementation-notes/m1-chamber.md
 docs/implementation-notes/m2-corridor.md
-docs/implementation-notes/m3-dynamic-dimensions.md
+docs/implementation-notes/2026-09-19-m3a-dynamic-universe-backend.md
+docs/implementation-notes/2026-09-19-m3b-server-transfer-readiness.md
+docs/implementation-notes/2026-09-21-m4-candidate-doors.md
 ...
 ```
+
+（上列為實際存在的 note 檔名；後續 milestone 可用 `<日期>-<milestone>-<主題>.md` 命名。）
 
 Each note records actual file/API choices, mixins introduced, tests run, known compatibility limitations, and deviations explicitly approved by the human owner. This keeps future Minecraft-version ports maintainable.
 

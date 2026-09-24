@@ -4,7 +4,7 @@
 
 ## 啟動本分支的開發客戶端
 
-目前功能分支尚未合併 `main`，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動，不要在較舊的 main 目錄呼叫 Wrapper。另一台電腦若直接 clone／checkout `feature/m1-chamber`，則在該 clone 的根目錄執行，不必另建同名 worktree。
+功能分支 `feature/m1-chamber`（M1–M4）在 M1／M1.2／M2／M4 人工驗收記錄完成前不合併 `main`（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準。合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動，不要在不含本功能的 main 目錄呼叫 Wrapper。另一台電腦若直接 clone／checkout `feature/m1-chamber`，則在該 clone 的根目錄執行，不必另建同名 worktree。
 
 最方便的方式是在檔案總管進入該工作區，雙擊 `start-client.bat`。聊天中的檔案連結供閱讀，不會自動執行。PowerShell 也可使用：
 

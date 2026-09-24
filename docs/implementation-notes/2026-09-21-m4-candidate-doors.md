@@ -11,13 +11,14 @@ M4 是權威與持久化里程碑：
 - 門保持關閉，玩家不移動，沒有配置 Universe。
 - 真正的塌縮／通道留給 M5。
 - Whole-branch review 最終 Critical 0／Important 0（見「Final review」）。
-- 沒有合併 main。
+- spec §15 的 M4 遊戲內人工驗收**尚未執行**。本文所有證據都來自自動 gate 與 headless／跨 JVM probe，不代表人工可見行為已驗。
+- M1–M4 在 M1／M1.2／M2／M4 人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver）；實際合併與 tag 狀態以 `main`／tag 為準。
 
 Commit 範圍：
 
 - M4 code range：`ba9ca7338a855e85fa3e48161f6c7014a32634f7..752ada1b34f27685014fc3e6ec10fee77b88a86a`，共 17 commits。
 - Spec／plan docs commits（`687cff95efbb2cc127083107b94f8be0f56408c4..ba9ca73`）：`fdac2311caeef058d52d1906a789a4a7cf505713` 設計、`ba9ca7338a855e85fa3e48161f6c7014a32634f7` 計畫。
-- Task 10 docs commit：本 note 所在的 commit（`git log -1 -- docs/implementation-notes/2026-09-21-m4-candidate-doors.md`）。
+- Task 10 docs commits：`eba763b840ef738b17955c8b92ab594a210bc0c7`（初版），以及其後修正 review Minor／Nit 的 docs fix commit。完整清單以 `git log -- docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 為準。
 
 | Commit | Task | 內容 |
 | --- | --- | --- |
@@ -38,13 +39,15 @@ Commit 範圍：
 
 原始證據放在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（下稱 evidence owner）。`.superpowers/` 被 gitignore，是本機 scratch，不在 repo 內，也不進 release。因此本文直接寫出關鍵數字與 SHA-256；本文不能取代原始證據，交接時要以 exact commit 對照這些雜湊。
 
+**可重現性限制**：驅動下列 runtime gate 的 harness 只存在於 evidence owner，不在 repo。包括 `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、wrapper `wfix1-final-green.ps1`／`wfix1-final-green2.ps1`，以及 `wfix1-build-summary.ps1`、`task10-phase2-verify.ps1` 等 build-summary／verify 腳本。Repo 內 tracked 的只有它們呼叫的 `build.gradle` run 設定（`gameTestLegacy`、`m3Universe`、`m3Transfer`、`m4Recovery`）與 `src/testmod` 的 GameTest／probe。可重用 harness 要整理到 tracked `scripts/verification/`，這是使用者已決定的獨立 task。完成之前，只要刪除 worktree 或 `.superpowers/`，這些 gate 就無法用同一套 harness 重跑，本文的 SHA-256 也無法再對照原始檔。
+
 ## Stable DoorKey 與完整門
 
 - `DoorKey(UUID sessionUuid, long logicalStationIndex, DoorWallSide wallSide)`（`main/corridor/DoorKey.java:6-12`）：
   - `DoorWallSide` 為 `NEGATIVE_LATERAL`（local x=0）或 `POSITIVE_LATERAL`（x=6）。
   - 不含 physical position、page、slot、mapping epoch、anchor 或 facing。
 - `logicalStationIndex = Math.floorDiv(blockLogicalZ, 8)`，保留 signed `long`（`DoorKey.java:14-16`）。
-- 25 格 normalize：同一 station 內 `floorMod(z,8)∈[1,5]`、`y∈[1,5]`、x 為 0 或 6 的 Bulkhead 格，都對應到同一個 key（`main/corridor/CorridorGeometry.java:60-84`）。`sideDoorCells` 依 z 再 y 的順序列出 25 個 `LogicalAddress`（`CorridorGeometry.java:86-96`；production 沒有使用，見 deferred 清單）。
+- 25 格 normalize：同一 station 內 `floorMod(z,8)∈[1,5]`、`y∈[1,5]`、x 為 0 或 6 的 Bulkhead 格，都對應到同一個 key（`main/corridor/CorridorGeometry.java:60-84`）。`sideDoorCells`（`CorridorGeometry.java:86-96`）回傳 25 個元素，實際上是 5 個 `LogicalAddress`（z offset 1..5）各重複 5 次，不含 y 與牆面資訊；production 沒有使用，見 deferred 清單的 quality M5＝spec m-2。
 - 完整門判定（`CorridorPageManager.completeDoor`，`main/corridor/CorridorPageManager.java:372-390`）：
   - 只看目前 committed mapping 的 25 格實體 Bulkhead。
   - 與入口／返還 replica 實際重合的 exact 25 格會被排除，不會排除整個 station（`:376-382`）。
@@ -168,9 +171,12 @@ Ledger 內的 DoorKey 與 CandidateId 必須唯一，且都屬於同一個 sessi
 
 ## Batch、cap 與 commit-before-expose
 
-1. `CorridorPageManager.tick` 只在 space 沒有 build、overlay 或 retiring 工作時才呼叫 `refreshCandidates`（`CorridorPageManager.java:153-155`、`:182`）。
+1. `CorridorPageManager.tick` 每 tick 都會對 `operations==0`、不是 measured／releasing／failed 的 space 呼叫 `refreshCandidates`（`:144-152`）：
+   - 沒有 build、overlay、retiring 工作時，直接呼叫（`CorridorPageManager.java:153-154`）。
+   - 有工作時，若 durable 或 staged 為 RETURNING（或 staged 缺失）就在 `:158` 跳過本 tick；否則在該 tick 的建造、overlay 與 retirement 之後呼叫（`:182`）。
+   - 呼叫本身不代表會提交：`refreshCandidates` 先經 `publishable`（`:394`、`:357-364`），其中 `idleMapping`（`:366-370`）要求 mapping idle，也就是沒有 pending、batch、builds、overlay、retiredViews、retiring，且 epoch 不為 0、instances 非空。不 idle 就直接返回，不提交也不發布。
 2. `refreshCandidates`（`:392-419`）：
-   - 先清空 selectable index，並確認 `publishable`。
+   - 先清空 selectable index，再確認 `publishable`。
    - 從 current mapping 收集完整門。同一個 DoorKey 若有兩個 current physical owner，直接 fail（`:396-403`）。
    - 取 ledger 尚未有的 key，**每個 session 每 tick 最多 256 個**（`:405-408`）。
    - 在 session operation guard 內呼叫 `commitCandidates`（`:409`）。回報 `sessionFailed` 時丟出例外，交給 `fail(space)` 安全返還（`:410`、`:1006-1027`）。
@@ -181,12 +187,24 @@ Ledger 內的 DoorKey 與 CandidateId 必須唯一，且都屬於同一個 sessi
    - 總數超過 cap 16384 時整批失敗，不刪舊候選也不重抽（`:85`）。
    - 每個 batch 只經 `commitChecked` flush 一次（`:141-159`）：`sameAuthority` → current 必須 exact 等於 expected flushed（`:170-174`）→ `put` → `flush` → 從 `flushedRecords()` exact readback。
 4. 只有 readback 成功後，才以 **flushed ledger** 建立 physical selectable projection（`CorridorPageManager.java:412-418`）。
-   - `publishable`（`:357-370`）要求：durable 為 SUPERPOSITION＋SELECTABLE、current 與 flushed exact 相等、mapping idle、lease 已就緒。
+   - `publishable`（`:357-364`）要求：durable 為 SUPERPOSITION＋SELECTABLE、current 與 flushed exact 相等、mapping idle（`idleMapping`，`:366-370`）、lease 已就緒。提交後會再檢查一次（`:412`）。
    - Physical index 可以重建，本身不是持久權威。Page recycle 只清 index，不刪 ledger。
 
 ## Checked 提交失敗的收斂契約（W-I1）
 
-`commitChecked`（`CandidateLedgerService.java:141-159`）是唯一會改動 candidate 或 selection 的提交點。另一個 put candidate-aware record 的地方是 `start()` 的初始 ARMING，同樣是同一呼叫內 put 後立刻 flush。
+Production 共有 11 處 `journal.put`（以 `git grep -n "journal.put" 752ada1 -- src/main` 核對）。其中只有兩處會建立或改動 candidate context、ledger 或 selection，而且都在同一呼叫內 put 後立刻 flush：
+
+- `commitChecked`（`CandidateLedgerService.java:145`，方法範圍 `:141-159`）：ledger batch 與 selection 唯一的提交點。
+- `start()` 的初始 ARMING（`SuperpositionSessionManager.java:120`）：以 `candidateAware` 建立新 record。
+
+其餘 9 處都經 `withProgress`（`SessionRecoveryRecord.java:115-119`），只更新 participants、leases、state 與 restore flag，candidate 三欄位原樣保留：
+
+- `SuperpositionSessionManager.java:274`、`:350`
+- `CorridorPageManager.java:503`、`:857`、`:885`、`:1021`
+- `CorridorRepositionService.java:36`
+- `SessionRecoveryManager.java:158`、`:201`
+
+其中 `CorridorPageManager.java:857` put 的 `expected` 是在 `:840` 由 `withProgress` 產生；`SessionRecoveryManager.java:158` put 的 record 來自 `returnedRecord`（`:210-218`），內部同樣呼叫 `withProgress`。
 
 一旦 put 之後任何一步（flush、readback）失敗：
 
@@ -231,8 +249,9 @@ W-a 的 crash 分支經 ruling 接受，不視為 spec 偏離：§11 依 durable
   - 定位到走廊側門後取得 `exclusiveOperation` guard（`CorridorPageManager.java:277-283`），並在 guard 內重新定位（`CandidateDoorInteraction.java:30-32`）。
 - `candidateSelectionRecord`（`CorridorPageManager.java:299-318`）核對：
   - guard、idle mapping、完整門、lease ready。
-  - durable 與 current exact 相等。
-  - 玩家屬於凍結 participant 且尚未返還；在線、非 spectator、在正確 world。
+  - durable 為 SUPERPOSITION 或 `MEASURED`、帶有 candidate context，且與 current exact 相等（`:307-308`）。
+  - 玩家屬於凍結 participant（`:309`），而且 record 內**沒有任何** participant 已返還（`:310`）；不是只看該玩家自己是否返還。
+  - DoorKey 已在 ledger 中（`:311`）；玩家在線、存活、非 spectator、在正確 world（`:313-314`）。
   - bbox 只落在唯一一個 current mapping。
   - cohort Buff 有效；SUPERPOSITION 時 physical owner 必須等於 selectable index。
 - 之後再由 `candidateSourceAuthorized` 核對 runtime 與來源 Controller（`SuperpositionSessionManager.java:77-84`）。
@@ -306,19 +325,32 @@ W-a 的 crash 分支經 ruling 接受，不視為 spec 偏離：§11 依 durable
   - 該座原艙的 `presence` 會回 `UNKNOWN` 或 `ACTIVE`，在該 save 內無法再開新 session（`SuperpositionSessionManager.java:65-75`、`:96`）。
   - LOW 不能讓它進入 OFF（`main/chamber/ChamberPowerCoordinator.java:116-133` 搭配 `returnToOrigin=false`），所以無法走一般 OFF 拆除流程。
   - 這是 spec §11「封鎖該 Chamber 等待 M5 接管」的刻意行為；M5 之前沒有遊戲內解除路徑。
-  - 已返還的參與者可以使用**其他** Chamber。
-- `SessionRecoveryManager.blocks` 只攔截仍未返還的 `MEASURED` 參與者（`SessionRecoveryManager.java:41-50`）。DORMANT 全員已返還，所以不會攔截。
+  - 參與者要等該 session 進入 DORMANT（全員返還、幾何清理完成、lease 清空）之後，才可以使用**其他** Chamber。在 `RETURN_PLAYERS`／`RELEASE_GEOMETRY` 階段，該 record 還不是 DORMANT，`participantsAvailable` 會拒絕這些參與者開新 session。
+- `SessionRecoveryManager.blocks`（`SessionRecoveryManager.java:41-50`）由網路 handler mixin 呼叫，用來擋下移動、載具移動與方塊互動封包。它在以下情況回 true：
+  - 玩家在 `joinTicks`（JOIN 排隊中）或 `disconnected`（斷線 pending）中（`:45`）。
+  - current ∪ flushed 中，玩家屬於 `RETURNING` session（`:46-48`）。
+  - 玩家屬於 `MEASURED` session 且自己尚未返還（`:48`）。
+  - 讀取 journal 時丟出例外，一律攔截（`:49`）。
+- 在 `MEASURED` 的語境下，`blocks` 只攔截尚未返還的參與者。DORMANT 全員已返還，所以 DORMANT record 本身不會攔截任何人；前提是該玩家沒有落入其他條件，例如另一個 RETURNING session 或 JOIN／斷線 pending。
 
 ## 自動與跨 JVM 證據
 
-GameTest、recovery probe 與 M3 probe 都是 **testmod-present** runtime，receipt 皆記錄 `runtimeScope=testmod-present`，不是 main-only 證據。Main-only 證據另見下文。
+GameTest、recovery probe 與 M3 probe 都是 **testmod-present** runtime，不是 main-only 證據：
+
+- GameTest 的 per-test／suite boundary receipt 與 M4 recovery receipt 都記錄 `runtimeScope=testmod-present`（`M4PerTestUniverseProbe`、`M4GameTestBoundaryProbe`、`M4CandidateRecoveryProbe`）。
+- M3 probe（`M3UniverseRuntimeProbe`、`M3UniverseTransferProbe`）位於 `src/testmod`，同屬 testmod-present runtime，但它們的 receipt **沒有** `runtimeScope` 欄位。
+
+Main-only 證據另見下文。
 
 ### Final gates（HEAD `752ada1`）
 
 - 所有 gate 都在同一 HEAD 以 fresh root 執行。
 - Wrapper console `wfix1-final-green-console.log`（SHA-256 `803c194f4e1157107ebdb3e4584984beea12c390146b93964e6d2e5771c74fcb`）與 `wfix1-final-green2-console.log`（`0661e12d4b68eeacf0ad76388ec5375778d75f3a941f21edd2f521373cbb4c56`）的 START 行都是 `HEAD=752ada1b34f27685014fc3e6ec10fee77b88a86a`。
-- GameTest 與 main-only 都經 `task9-gates.ps1` 的可恢復 move／exact restore，原 world 以逐檔 hash 還原。
-- Task 10 phase 2 另以唯讀腳本 `task10-phase2-verify.ps1` 重新讀原始 XML、JUnit、JAR、receipt、restore 與 oracle，確認下表全部數字。結果 PASS，輸出 `task10-phase2-verify.json`，SHA-256 `4d5bf32c15db3bf6580888b66612c6bfe8aad0a8e5fe24a3e8fb8942177e14eb`。
+- **工作樹不是完全乾淨**：兩份 console 的 STATUS 行都顯示，當時有未提交的 `README.md` 與 `docs/implementation-notes/m2-corridor.md` 修改，也就是 Task 10 phase 1 的文件草稿。
+  - STATUS 行用的是 `git status --porcelain --untracked-files=no`，不會列出 untracked 檔。當時未追蹤的文件草稿沒有被記錄，例如本 note、`AGENTS.md` 與 handoffs，它們在 `eba763b` 才加入。
+  - 以上都是 `.md` 純文件。Release 與 sources JAR 都不含任何 `.md` entry（已逐一列出 `752ada1` full root 兩個 JAR 的 entries 確認），所以不影響 artifact 或 runtime 結果。
+- GameTest 與 main-only 都經 `task9-gates.ps1` 的可恢復 move／exact restore，原 world 以逐檔 hash 還原。這支 harness 只在 evidence owner 內，見前文「可重現性限制」。
+- Task 10 phase 2 另以唯讀腳本 `task10-phase2-verify.ps1`（同樣只在 evidence owner 內）重新讀原始 XML、JUnit、JAR、receipt、restore 與 oracle，確認下表全部數字。結果 PASS，輸出 `task10-phase2-verify.json`，SHA-256 `4d5bf32c15db3bf6580888b66612c6bfe8aad0a8e5fe24a3e8fb8942177e14eb`。
 
 | Gate | Root（evidence owner 內） | 結果 |
 | --- | --- | --- |
@@ -335,7 +367,7 @@ GameTest、recovery probe 與 M3 probe 都是 **testmod-present** runtime，rece
   - 唯一的 skip 是既有的 `NonWindowsPlayerCheckpointStoreTest.unsupportedPlatformRejectsBeforeNativeInitializationOrFileAccess()`，屬於 Windows 上的平台 skip。
   - Windows checkpoint 三個 class（2＋2＋10）都實際執行，0 skip。
 - **Suite boundary receipt**（依 server PID 過濾）：full `m4-boundary-d6a8815d8d2a4433ac4f6c6e733293d4.json` PASS；legacy `m4-boundary-dc3f583746a44566b77dbe099c6f1741.json` PASS。
-- **World restore**：full、legacy 與 main-only 的 `run/server`，全部是 `exactRestored=true`、`deleted=false`。
+- **World restore**：全部是 `exactRestored=true`、`deleted=false`。還原的原 world 路徑分別是：full `run/gametest/world`、legacy `run/gametest-legacy/world`、main-only `run/server`。
 - **Main-only**（Loom `runServer`，不含 testmod source set），三層 oracle 各自通過：
   - Fabric loaded mods 不含 `quantumchamber-testmod`。
   - runtime classpath／argfile（`process-22040-*`）命中 0。
@@ -394,8 +426,10 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 
 **M4 recovery 24 phases**（run id `61c7e7596ceb4da68b831331c3a06112`，aggregate SHA-256 `b3a9f5d6011324a01602803f2540bbcfd5b48ae7be154692517119d72633eaad`）：
 
-- 每個 phase 都是 fresh nonce-owned root，有不同的 startupNonce；launcher 以 (PID, StartTime) 判定唯一（PID 24636 被 Windows 重用過一次）。
+- 24 個 phase 分屬 14 條 chain（14 個 nonce），共 14 個 root（`run/m4-recovery-<runId>-<chain>`）。每條 chain 有一個 fresh、nonce-owned 的 root；同一條 chain 內的 phase 依序在**同一個** world 上重啟。不是每個 phase 都有自己的 fresh root。
+- 24 個 phase 的 startupNonce 全部不同；(PID, StartTime) 也 24 組全部唯一。只看 PID 是 23 個，因為 PID 24636 被 Windows 重用過一次（dirty-candidate 與 selection-flush-fault）。
 - 每個 phase 都是 Gradle exit 0、normal stop、lock released，receipt SHA-256 與 launcher 記錄一致。
+- 以上數字直接讀 `recovery-run-61c7e7596ceb4da68b831331c3a06112.json` 的 `phases[]` 核對。
 
 | Chain | Phases | 驗證內容 |
 | --- | --- | --- |
@@ -437,6 +471,13 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 - **沒有 collapse、passage、teleport、Chamber Projection、client packet 或 renderer**：M4 沒有修改 `src/client`，選擇後玩家與走廊都不移動。
 - **沒有正式的 discovery mutation**，也沒有 `AllocationToken → UniverseId` mapping（屬於 M5）。
 - **Comparator 不會輸出 15。**
+
+## 人工驗收狀態（spec §15）
+
+- **尚未執行**，目前沒有任何遊戲內人工紀錄。本文的自動證據不能代填人工結果。
+- spec §15 的範圍：側門可被選擇一次、收到「候選已鎖定」訊息、其他門被拒絕，門仍關閉，玩家仍在走廊。
+- 「走廊消失、回原艙、門後是新世界」屬於 M5，不得把 M4 的中間狀態回報成原需求已完成。
+- 驗收要和 M2 八項分開做。選擇側門後，session 返還會留下 DORMANT receipt，封鎖該座原艙直到 M5。M2 項目請用沒有點過側門的 Chamber 或世界；M4 §15 請用另一座 Chamber 或另一個測試世界。
 
 ## M5 handoff acceptance
 
@@ -485,6 +526,16 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 | q7 | `selectionTeardown` 失敗時 rethrow 會跳過收尾，`observed` 是死碼（`M4CandidateDoorGameTests.java:389-399`） | 改用 try/finally 收尾，並刪除死碼 |
 | s3 | candidate batch 的 dirty 窗口沒有 cross-JVM restart receipt | 與 selection 共用 `commitChecked`，目前由 selection-fault-restart 間接覆蓋；可補一條 batch-fault-restart chain |
 
+**Whole-branch fix round 1 review 的 Nits**（非阻擋；原本未存檔，Task 10 docs fix 補記）：
+
+| 項目 | 問題 | 建議修法 |
+| --- | --- | --- |
+| spec Nit 1 | GameTest RED root（`task9-wfix1-red-gametest-7059e314…`）與 probe RED console（`wfix1-probe-red-console.log`）只記 `HEAD=38d901e`，沒有記 `git status`；「production 未修改」是由失敗行為推定。unit 與 start 的 RED 有記 status | 之後的 RED harness 一律同時記錄 HEAD 與 `git status --porcelain` |
+| spec Nit 2 | `CandidateLedgerService.java:74`（flushed 不是 SUPERPOSITION＋SELECTABLE）與 `:85`（超過 cap）直接回 `failedBatch()`，沒有 root cause log | 在這兩個出口補固定訊息的 warn（不含 record 內容），並依 session 去重 |
+| quality Nit 1 | `M4LegacyGameTestFilterMixin.java:24` 的 `selected.size()!=batches.size()` 假設每個 batch 只有一個 test；只在 RED 取證的 `onlyBatches` 路徑使用 | 改為比對實際出現的 batchId 集合 |
+| quality Nit 2 | `M4CandidateTestAccess.java:74` 對 `checkedAuthority` 的 `NoSuchFieldException` fallback，在 HEAD 是死碼（只為了在 base 上跑 RED） | M4 收尾後刪除 fallback，缺欄位時直接失敗 |
+| quality Nit 3 | `CandidateLedgerService.describe()`（`:162-167`，迴圈在 `:165`）只防自我因果；多節點的 cause 環理論上會無限迴圈 | 以 identity set 或深度上限走訪 cause chain |
+
 **Task 9 fix1 的 scratch harness minor**：`task9-gates.ps1` 沒有依 server PID 過濾，就把 runDir 累積的 `classload-*.log` 與 `m4-boundary-*.json` 複製進 gate root。各 summary 只採用 server PID 的 artifacts，正確性不受影響。建議：只複製 server PID 的 artifacts。
 
 **觀察**：
@@ -511,12 +562,13 @@ M4 whole-branch review 最終 **Critical 0／Important 0**，spec compliance ✅
   - `COMMIT_FAILED` 正式擴充 plan Task 5 的介面。
   - Fix round 1 的所有 Minor 延後；Task 10 final gate 採用 `752ada1` 的 wfix1 roots。
 - Review 紀錄（evidence owner，gitignored）：
-  - `m4-final-review.md`，SHA-256 `729ac25935213678ff99cb91e7384e27c9b77bd003b52daad8aa1d91faf62f5c`。
+  - `m4-final-review.md`，SHA-256 `77adefc8b5def4321e8fa015ca41ad25159ce98dc8aa604c4809df59abf88fd0`（Task 10 docs fix 補入 fix round 1 Nits 與 Task 10 文件 review 摘要後的版本；`eba763b` 引用的舊版為 `729ac259…`）。
   - `m4-whole-branch-review-round1.md`，SHA-256 `6039bdafcef2484ccfc6c67e3db4d9c94c8dce0649eef9db99001dd6581b8954`。
   - `m4-whole-branch-fix1-review.diff`，SHA-256 `106c66524af136c773d3c4652fbf105eaaa301b9a19c2c131b5b9d606554bb22`。
   - `m4-whole-branch-fix1-report.md`，SHA-256 `4017d2e2165891d7d88208fbc384128b4e1d2c6a4fbc6303ddf24111e35301d4`。
   - `m4-whole-branch-fix1-verification-summary.json`，SHA-256 `2858b912979f2decc0fc6f08a50b7c9e21212c9f5c4b2d97042f3c6e7573d1e5`。
 - 逐 task review（Tasks 1–9）都已 clean，紀錄在 `progress.md`。
+- Task 10 文件 review（`eba763b`）：Approved，Critical 0／Important 0／Minor 6，另有若干 Nit。這些 Minor 與 Nit 由其後的 Task 10 docs fix commit 處理；該 commit 的 review 結果以 `progress.md` 為準。
 
 ## 參考資料
 
