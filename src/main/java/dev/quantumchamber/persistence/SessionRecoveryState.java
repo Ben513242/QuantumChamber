@@ -30,6 +30,10 @@ public final class SessionRecoveryState extends PersistentState {
     private final Map<UUID, SessionRecoveryRecord> records = new LinkedHashMap<>();
     // 僅存活於本 process；remove 與空 journal flush 都不能抹去同 UUID 的最後 authority。
     private final Map<UUID, SessionRecoveryRecord> authorityHistory = new LinkedHashMap<>();
+    // 最後一份經 strict load／readback 承認的 authority（remove 後仍保留）；只供 abortUnchecked 還原 history。
+    private final Map<UUID, SessionRecoveryRecord> checkedAuthority = new LinkedHashMap<>();
+    // CAS 還原失敗的 session：未 checked current 永不寫出，寫入時只用上一份 flushed authority。
+    private final java.util.Set<UUID> quarantined = new HashSet<>();
     private Map<UUID, SessionRecoveryRecord> flushed = Map.of();
     // Schema 3 envelope 本身是不可撤銷的初始化證據；不新增 NBT 欄位。
     private boolean candidateInitialized;
@@ -84,6 +88,7 @@ public final class SessionRecoveryState extends PersistentState {
             validateOwnership(state.records);
             state.flushed = Map.copyOf(state.records);
             state.authorityHistory.putAll(state.flushed);
+            state.checkedAuthority.putAll(state.flushed);
             return state;
         } catch (RuntimeException exception) {
             return failed("journal schema 無法解析：" + exception);
@@ -96,20 +101,52 @@ public final class SessionRecoveryState extends PersistentState {
     public Map<UUID,SessionRecoveryRecord> records() { requireHealthy(); return Map.copyOf(records); }
     public Map<UUID,SessionRecoveryRecord> flushedRecords() { requireHealthy(); return flushed; }
     public boolean candidateInitialized() { requireHealthy(); return candidateInitialized; }
-    /** recovery／世界存檔不可順帶承認其他 session 的 dirty candidate 或 selection。 */
-    public boolean recoveryWritesSafe() {
+    /**
+     * recovery 寫入是否安全：非隔離 session 的 current 都不得含未 checked 的 candidate context／ledger／selection。
+     * owner 失敗即 CAS 還原或隔離，因此只剩 checked 提交本身同步的 put→flush 窗口會回 false。
+     */
+    public boolean recoveryWritesSafe() { return uncheckedCandidateSessions().isEmpty(); }
+    public java.util.Set<UUID> uncheckedCandidateSessions() {
         requireHealthy();
-        for(var current : records.values()) if(current.candidateContext().isPresent()) {
-            var previous=flushed.get(current.sessionUuid());
-            if(previous==null || !previous.candidateContext().equals(current.candidateContext())
-                    || !previous.candidateLedger().equals(current.candidateLedger())
-                    || !previous.candidateSelection().equals(current.candidateSelection())) return false;
+        var unchecked=new java.util.LinkedHashSet<UUID>();
+        for(var current : records.values()) if(!quarantined.contains(current.sessionUuid()) && !candidateChecked(current)) unchecked.add(current.sessionUuid());
+        return java.util.Set.copyOf(unchecked);
+    }
+    private boolean candidateChecked(SessionRecoveryRecord current) {
+        if(current.candidateContext().isEmpty()) return true;
+        var previous=flushed.get(current.sessionUuid());
+        return previous!=null && previous.candidateContext().equals(current.candidateContext())
+                && previous.candidateLedger().equals(current.candidateLedger())
+                && previous.candidateSelection().equals(current.candidateSelection());
+    }
+    /**
+     * checked 提交（put→flush→readback）失敗後由 candidate authority owner 呼叫。CAS：只有 current 仍 exact 等於
+     * 本次提交的 next 才把 current 還原為上一份 flushed record（沒有時移除），authority history 還原為最後 checked authority；
+     * 之後任何 flush、autosave 或 stop 都無法承認未 checked 的 candidate／selection。next 已 checked 落盤時不倒退。
+     * CAS 不符且 current 仍含未 checked authority 時不猜測覆寫，改為隔離該 session（只影響它，其他 recovery 照常）。
+     * @return 該 session 已無未 checked candidate authority 時為 true；隔離時為 false
+     */
+    public boolean abortUnchecked(SessionRecoveryRecord expected) {
+        requireMutationThread();
+        requireHealthy();
+        var sid=expected.sessionUuid(); var current=records.get(sid); var durable=flushed.get(sid);
+        if(!expected.equals(current)) {
+            if(current==null || candidateChecked(current)) return true;
+            quarantined.add(sid);
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("candidate authority 還原 CAS 不符，隔離 session={}；之後只寫出上一份 flushed authority",sid);
+            return false;
         }
+        if(expected.equals(durable)) return true;
+        if(durable==null) records.remove(sid); else records.put(sid,durable);
+        var checked=checkedAuthority.get(sid);
+        if(checked==null) authorityHistory.remove(sid); else authorityHistory.put(sid,checked);
+        markDirty();
         return true;
     }
     public void put(SessionRecoveryRecord record) {
         requireMutationThread();
         requireHealthy();
+        requireNotQuarantined(record.sessionUuid());
         if (candidateInitialized && record.candidateContext().isEmpty()) {
             throw new IllegalArgumentException("已初始化 candidate 的 journal 不得重新加入 legacy record");
         }
@@ -131,6 +168,7 @@ public final class SessionRecoveryState extends PersistentState {
     public boolean remove(UUID id) {
         requireMutationThread();
         requireHealthy();
+        requireNotQuarantined(id);
         if(java.util.stream.Stream.of(records.get(id),flushed.get(id),authorityHistory.get(id))
                 .anyMatch(record -> record!=null && record.state()==dev.quantumchamber.superposition.SessionState.MEASURED))
             throw new IllegalStateException("MEASURED receipt 必須保留，不能經一般 remove 消耗");
@@ -144,9 +182,20 @@ public final class SessionRecoveryState extends PersistentState {
     }
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
-        nbt.putInt("SchemaVersion", candidateInitialized ? 3 : envelopeSchema(records));
-        var entries = new NbtList(); records.values().forEach(record -> entries.add(record.toNbt()));
+        var writable = writable();
+        nbt.putInt("SchemaVersion", candidateInitialized ? 3 : envelopeSchema(writable));
+        var entries = new NbtList(); writable.values().forEach(record -> entries.add(record.toNbt()));
         nbt.put("Records", entries); return nbt;
+    }
+    /** 所有寫出（checked flush、原生 autosave／stop）共用：隔離 session 只寫上一份 flushed authority，其他 session 照常。 */
+    private Map<UUID, SessionRecoveryRecord> writable() {
+        if (quarantined.isEmpty()) return records;
+        var result = new LinkedHashMap<UUID, SessionRecoveryRecord>();
+        records.forEach((id, record) -> {
+            var checked = quarantined.contains(id) ? flushed.get(id) : record;
+            if (checked != null) result.put(id, checked);
+        });
+        return result;
     }
     @Override public NbtCompound writeNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup lookup) { return writeNbt(nbt); }
 
@@ -156,7 +205,7 @@ public final class SessionRecoveryState extends PersistentState {
         if (!isDirty()) return;
         var wrapped = new NbtCompound(); wrapped.put("data", writeNbt(new NbtCompound()));
         NbtHelper.putDataVersion(wrapped);
-        var expected = Map.copyOf(records);
+        var expected = Map.copyOf(writable());
         try {
             SessionJournalStore.write(file.toPath(), wrapped);
             var actual = readback.read(file.toPath());
@@ -167,6 +216,7 @@ public final class SessionRecoveryState extends PersistentState {
             }
             flushed = decoded.flushedRecords();
             authorityHistory.putAll(flushed);
+            checkedAuthority.putAll(flushed);
         } catch (IOException | RuntimeException exception) {
             throw new UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",
                     exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
@@ -183,6 +233,9 @@ public final class SessionRecoveryState extends PersistentState {
     }
     private void requireMutationThread() {
         if (owner != null) requireServerThread(owner);
+    }
+    private void requireNotQuarantined(UUID id) {
+        if (quarantined.contains(id)) throw new IllegalStateException("session 的未 checked candidate authority 已隔離，拒絕再寫入");
     }
     private static void validateOwnership(Map<UUID, SessionRecoveryRecord> records) {
         envelopeSchema(records);

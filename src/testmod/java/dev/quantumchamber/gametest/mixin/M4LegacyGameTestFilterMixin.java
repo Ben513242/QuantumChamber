@@ -16,6 +16,13 @@ abstract class M4LegacyGameTestFilterMixin {
         boolean legacy=Boolean.getBoolean("quantumchamber.gametest.legacyOnly");
         var selected=callback.getReturnValue().stream().filter(test -> test.batchId().equals("m4_legacy_runtime")==legacy).toList();
         if(selected.isEmpty() || legacy && selected.size()!=1) throw new IllegalStateException("原生測試隔離範圍不符");
+        // 僅 RED 取證用：明確列出的 batch 子集；未設定時完整 suite 不受影響。
+        var only=System.getProperty("quantumchamber.gametest.onlyBatches","");
+        if(!only.isBlank()) {
+            var batches=java.util.Set.of(only.split(","));
+            selected=selected.stream().filter(test -> batches.contains(test.batchId())).toList();
+            if(selected.size()!=batches.size()) throw new IllegalStateException("指定 batch 子集不符："+batches);
+        }
         callback.setReturnValue(selected);
     }
 }

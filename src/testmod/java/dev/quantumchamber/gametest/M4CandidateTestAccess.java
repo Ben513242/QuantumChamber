@@ -29,6 +29,27 @@ final class M4CandidateTestAccess {
                     record.participants(),record.spaceLeases(),record.state(),record.restoreEntryEffectOnReturn(),record.semantics(),policy);
         } catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
     }
+    /** 僅測試：以正式 codec 可接受的 candidate-aware 形狀建立另一個 session，觸發整份 journal 的「其他 session」寫入。 */
+    static dev.quantumchamber.persistence.SessionRecoveryRecord syntheticSession(MinecraftServer server,UUID player,int slot) {
+        var chamber=UUID.randomUUID();
+        var origin=new dev.quantumchamber.chamber.ChamberOriginAuthority(chamber,net.minecraft.world.World.OVERWORLD.getValue(),
+                dev.quantumchamber.universe.DimensionRole.OVERWORLD,new net.minecraft.util.math.BlockPos(1000+16*slot,80,1000),
+                net.minecraft.util.math.Direction.NORTH,dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN);
+        var person=new dev.quantumchamber.persistence.SessionRecoveryRecord.Participant(player,net.minecraft.util.math.Vec3d.ZERO,
+                net.minecraft.util.math.Vec3d.ZERO,0,0,new net.minecraft.nbt.NbtCompound(),false);
+        var lease=new dev.quantumchamber.persistence.SessionRecoveryRecord.SpaceLease(slot,new net.minecraft.util.math.BlockBox(1000,80,1000,1006,86,1006));
+        return candidateAware(new dev.quantumchamber.persistence.SessionRecoveryRecord(UUID.randomUUID(),chamber,origin,List.of(person),List.of(lease),
+                dev.quantumchamber.superposition.SessionState.ARMING,false,dev.quantumchamber.persistence.SessionSemantics.LATERAL_BUFF_MAINTAINED),server);
+    }
+    /** 直接 strict decode 正式 journal 檔，不經 in-memory flushed snapshot。 */
+    static Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord> diskRecords(MinecraftServer server) {
+        try {
+            var path=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data/quantumchamber_sessions.dat");
+            var decoded=dev.quantumchamber.persistence.SessionRecoveryState.fromNbt(
+                    dev.quantumchamber.persistence.SessionJournalStore.read(path).getCompound("data"));
+            decoded.requireHealthy(); return decoded.flushedRecords();
+        } catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
+    }
     static Object get(Object target, String name) {
         try {
             var type = target instanceof Class<?> clazz ? clazz : target.getClass();

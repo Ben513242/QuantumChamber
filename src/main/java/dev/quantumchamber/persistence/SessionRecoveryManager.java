@@ -28,6 +28,7 @@ public final class SessionRecoveryManager {
     private final Set<UUID> disconnected=new HashSet<>(),disconnectWarnings=new HashSet<>();
     private final Map<UUID,String> failures=new HashMap<>();
     private final Map<UUID,Integer> returnTicks=new HashMap<>();
+    private Set<UUID> pausedFor=Set.of();
     private final SessionTransferService transfers=new SessionTransferService();
 
     public SessionRecoveryManager(MinecraftServer server,Predicate<SessionRecoveryRecord> sourceAuthority) {
@@ -65,7 +66,13 @@ public final class SessionRecoveryManager {
 
     public void tick(MinecraftServer owner) {
         requireServer(owner); journal.requireHealthy();
-        if(!journal.recoveryWritesSafe()) return;
+        // candidate owner 失敗即 CAS 還原或隔離（隔離 session 不計入），因此此 guard 只剩 checked 提交同步 put→flush 的瞬間窗口。
+        var unchecked=journal.uncheckedCandidateSessions();
+        if(!unchecked.isEmpty()) {
+            if(!unchecked.equals(pausedFor)) org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("recovery 暫停：未 checked candidate authority sessions={}",unchecked);
+            pausedFor=unchecked; return;
+        }
+        if(!pausedFor.isEmpty()) { org.slf4j.LoggerFactory.getLogger("quantumchamber").info("recovery 恢復：未 checked candidate authority 已清除"); pausedFor=Set.of(); }
         // 落盤失敗不能中斷原生 disconnect 清理；識別資訊留在本服務，下一 tick 重試。
         for(var id : Set.copyOf(disconnected)) {
             try {

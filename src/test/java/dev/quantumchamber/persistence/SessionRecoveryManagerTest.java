@@ -113,16 +113,25 @@ class SessionRecoveryManagerTest {
         assertThrows(IllegalArgumentException.class,() -> state.put(remapped));
     }
 
-    @Test void recoveryMustNotFlushAnyDirtyCandidateAuthority(@TempDir Path root) {
+    @Test void failedCheckedSelectionIsRevertedBeforeRecoveryOrWorldSaveCanAdmitIt(@TempDir Path root) throws Exception {
         var state=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false));
         assertTrue(state.recoveryWritesSafe());
-        state.put(measured());
-        assertFalse(state.recoveryWritesSafe(),"dirty SELECTED 不能由 recovery 或 world save 順帶承認");
-        state.save(root.resolve("selected.dat").toFile(),null);
-        assertTrue(state.recoveryWritesSafe());
-        var selected=state.flushedRecords().values().iterator().next();
-        state.put(SessionRecoveryManager.returnedRecord(selected,selected.participants().getFirst().playerUuid()));
-        assertTrue(state.recoveryWritesSafe(),"同一份 receipt 的 checkpoint 進度可重試");
+        var selected=measured();
+        state.put(selected);
+        assertFalse(state.recoveryWritesSafe(),"put→flush 同步窗口內的未 checked SELECTED 不可經 recovery 寫出");
+        var blocker=root.resolve("blocker"); java.nio.file.Files.writeString(blocker,"not a directory");
+        assertThrows(java.io.UncheckedIOException.class,() -> state.save(blocker.resolve("journal.dat").toFile(),null),"模擬 checked flush 失敗");
+        assertTrue(state.abortUnchecked(selected),"ledger owner 以 CAS 還原未 checked selection");
+        assertTrue(state.recoveryWritesSafe(),"還原後 recovery 不得停擺");
+        // 原生 autosave／stop 與其他 session 的 flush 都走同一 save(File)；此時只能寫出 flushed SELECTABLE。
+        state.save(root.resolve("world-save.dat").toFile(),null);
+        var durable=SessionRecoveryState.load(root.resolve("world-save.dat")).flushedRecords().values().iterator().next();
+        assertInstanceOf(CandidateSelection.Selectable.class,durable.candidateSelection().orElseThrow(),"world save 不得承認已回報失敗的 SELECTED");
+        assertEquals(SessionState.SUPERPOSITION,durable.state());
+        var flushed=state.flushedRecords().values().iterator().next();
+        var returning=flushed.withProgress(flushed.participants(),flushed.spaceLeases(),SessionState.RETURNING,false);
+        state.put(SessionRecoveryManager.returnedRecord(returning,returning.participants().getFirst().playerUuid()));
+        assertTrue(state.recoveryWritesSafe(),"同一份 flushed authority 的返還進度可重試");
         var unsaved=new SessionRecoveryState(); unsaved.put(selected);
         assertFalse(unsaved.recoveryWritesSafe(),"沒有 flushed candidate authority 不得透過 recovery 推測");
     }

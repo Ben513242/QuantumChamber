@@ -26,6 +26,8 @@ public final class M4CandidateDoorGameTests {
     private static final Map<UUID, FlushObservation> OBSERVATIONS = new HashMap<>();
     private static SelectionProbe selectionProbe;
     private static CandidatePublishProbe publishProbe;
+    private static BatchFaultProbe batchFaultProbe;
+    private static InitialFlushFaultProbe initialFlushFaultProbe;
     private static final String LOCKED_MESSAGE="量子候選已鎖定，等待塌縮";
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_first_wins",tickLimit=100000)
@@ -148,6 +150,122 @@ public final class M4CandidateDoorGameTests {
         selectionFailure(context,"after");
     }
 
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_fault_other_flush",tickLimit=100000)
+    public void native_selection_fault_never_admitted_by_other_session_flush_or_native_save(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"native_selection_fault_never_admitted_by_other_session_flush_or_native_save");
+        nativeCandidates(context,1,(fixture,tick) -> {
+            var before=fixture.record(); var sid=before.sessionUuid(); var connection=fixture.players.getFirst();
+            var pos=cell(fixture.pages.currentMappings(sid).instances().getFirst(),new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1);
+            var probe=new SelectionProbe(fixture,"before",pos); messages(connection); selectionProbe=probe;
+            net.minecraft.util.ActionResult outcome;
+            try { outcome=use(fixture,pos,connection.player()); } finally { selectionProbe=null; }
+            var received=messages(connection); var journal=SessionRecoveryState.get(fixture.server);
+            var current=journal.records().get(sid); var flushed=journal.flushedRecords().get(sid);
+            // 另一個 session 的 checked 寫入與原生 saveAll 都經同一 save(File) 把整份 journal 落盤。
+            var other=M4CandidateTestAccess.syntheticSession(fixture.server,UUID.randomUUID(),10003);
+            journal.put(other); journal.flush(fixture.server);
+            boolean nativeSaved=fixture.server.saveAll(true,true,true);
+            var disk=M4CandidateTestAccess.diskRecords(fixture.server).get(sid);
+            journal.remove(other.sessionUuid()); journal.flush(fixture.server);
+            var witness=new LinkedHashMap<String,Boolean>();
+            witness.put("faultHit",probe.before);
+            witness.put("outcomeFail",outcome==net.minecraft.util.ActionResult.FAIL);
+            witness.put("noSuccessOrAlreadyMessage",!received.contains(LOCKED_MESSAGE) && !received.contains("候選已鎖定。"));
+            witness.put("currentEqualsFlushed",flushed.equals(current));
+            witness.put("flushedReturningSelectable",flushed.state()==SessionState.RETURNING
+                    && flushed.candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable);
+            witness.put("flushedLedgerUnchanged",flushed.candidateLedger().equals(before.candidateLedger()));
+            witness.put("nativeSaved",nativeSaved);
+            witness.put("diskNotSelected",disk!=null && disk.state()!=SessionState.MEASURED
+                    && disk.candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable);
+            witness.put("diskEqualsFlushed",flushed.equals(disk));
+            witness.put("otherSessionRemoved",!journal.flushedRecords().containsKey(other.sessionUuid()));
+            var diskSummary=disk==null ? "ABSENT" : disk.state()+"/"+disk.candidateSelection().orElseThrow().getClass().getSimpleName();
+            selectionTeardown(fixture,tick+1,() -> context.assertTrue(!witness.containsValue(false),
+                    "選擇 flush fault 後其他 session flush／原生存檔不得承認 SELECTED："+witness+" disk="+diskSummary));
+        });
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_batch_fault_returning",tickLimit=100000)
+    public void native_candidate_batch_fault_converges_to_checked_returning(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"native_candidate_batch_fault_converges_to_checked_returning");
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
+        var probe=new BatchFaultProbe(fixture); batchFaultProbe=probe;
+        context.waitAndRun(2,fixture::power);
+        whenWithin(context,3,60,() -> probe.fired,fired -> context.runAtTick(fired+1,() -> {
+            batchFaultProbe=null;
+            var sid=probe.faulted.sessionUuid(); var journal=SessionRecoveryState.get(fixture.server);
+            var current=journal.records().get(sid); var flushed=journal.flushedRecords().get(sid);
+            context.assertTrue(flushed!=null && current!=null,"batch fault 後 session record 不得消失");
+            var other=M4CandidateTestAccess.syntheticSession(fixture.server,UUID.randomUUID(),10004);
+            journal.put(other); journal.flush(fixture.server);
+            boolean nativeSaved=fixture.server.saveAll(true,true,true);
+            var disk=M4CandidateTestAccess.diskRecords(fixture.server).get(sid);
+            journal.remove(other.sessionUuid()); journal.flush(fixture.server);
+            var witness=new LinkedHashMap<String,Boolean>();
+            witness.put("faultHitPendingBatch",probe.pending>0);
+            witness.put("flushedReturning",flushed.state()==SessionState.RETURNING);
+            witness.put("flushedLedgerIsPreFault",flushed.candidateLedger().equals(probe.faulted.candidateLedger()));
+            witness.put("currentEqualsFlushed",flushed.equals(current));
+            witness.put("noSelectableDoor",fixture.pages.selectableDoors(sid).isEmpty());
+            witness.put("nativeSaved",nativeSaved);
+            witness.put("diskEqualsFlushed",flushed.equals(disk));
+            witness.put("otherSessionRemoved",!journal.flushedRecords().containsKey(other.sessionUuid()));
+            context.assertTrue(!witness.containsValue(false),"candidate batch flush fault 必須同 process 收斂到 checked RETURNING："+witness
+                    +" flushed="+flushed.state()+"/"+flushed.candidateLedger().size()+" disk="+(disk==null ? "ABSENT" : disk.state()+"/"+disk.candidateLedger().size()));
+            fixture.trustedTeardown(fired+2,() -> M4PerTestUniverseProbe.complete(context));
+        }),() -> "batch fault 未命中");
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_start_flush_fault",tickLimit=100000)
+    public void native_start_initial_flush_fault_rejects_without_residue(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"native_start_initial_flush_fault_rejects_without_residue");
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
+        var probe=new InitialFlushFaultProbe(fixture);
+        context.waitAndRun(2,() -> {
+            var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player();
+            var records=journal.records(); var flushed=journal.flushedRecords(); var bytes=journalBytes(server);
+            var runtime=runtimeOwnership(fixture);
+            initialFlushFaultProbe=probe;
+            try { fixture.power(); } finally { initialFlushFaultProbe=null; }
+            // start 由供電同步觸發（同一次拉桿可能有多個鄰格更新而重試）；取證後立即斷電，避免 20 tick 週期 refresh 在故障解除後入場。
+            var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway(); var chamber=fixture.controller().chamberUuid();
+            var witness=new LinkedHashMap<String,Boolean>();
+            witness.put("initialFlushFaultHit",probe.faults>0);
+            witness.put("noJournalForChamber",journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber))
+                    && journal.flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
+            witness.put("journalUnchanged",records.equals(journal.records()) && flushed.equals(journal.flushedRecords()) && java.util.Arrays.equals(bytes,journalBytes(server)));
+            witness.put("presenceNone",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
+            witness.put("noReservationOrRuntimeResidue",runtime.equals(runtimeOwnership(fixture)));
+            witness.put("recoveryNotPaused",journal.recoveryWritesSafe());
+            witness.put("participantStayedAtSource",player.getServerWorld()==context.getWorld());
+            var presence=gateway.presence(server,chamber);
+            if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+            context.assertTrue(!witness.containsValue(false),"初始 ARMING flush 失敗必須 CAS 移除並取消 reservation，REJECTED 且零殘留："+witness
+                    +" presence="+presence+" faults="+probe.faults);
+            whenWithin(context,3,30,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+                    && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)),done -> {
+                fixture.close(); M4PerTestUniverseProbe.complete(context);
+            },() -> "start fault cleanup presence="+gateway.presence(server,chamber));
+        });
+    }
+
+    /** 空間、slot、page、來源票與 runtime session 的可比較快照；只讀 testmod reflection。 */
+    private static List<?> runtimeOwnership(M2CorridorGameTests.NativeEntry fixture) {
+        var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+        return List.of(Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(fixture.pages,"spaces")).keySet()),
+                Map.copyOf((Map<?,?>)M4CandidateTestAccess.get(fixture.pages,"protectedLeases")),
+                Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(M4CandidateTestAccess.get(fixture.pages,"allocator"),"leases")).keySet()),
+                Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(gateway,"sessions")).keySet()),
+                Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(gateway,"tickets")).keySet()));
+    }
+    /** 正式 journal 檔 bytes；尚未建立時以空陣列代表 ABSENT（隔離 batch 的全新 save）。 */
+    private static byte[] journalBytes(MinecraftServer server) {
+        var path=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID+".dat");
+        try { return java.nio.file.Files.exists(path) ? java.nio.file.Files.readAllBytes(path) : new byte[0]; }
+        catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
+    }
+
     private static void selectionFailure(TestContext context,String mode) {
         nativeCandidates(context,1,(fixture,tick) -> {
             var before=fixture.record(); var view=fixture.pages.currentMappings(before.sessionUuid()).instances().getFirst();
@@ -157,26 +275,33 @@ public final class M4CandidateDoorGameTests {
             try { outcome=use(fixture,pos,fixture.players.getFirst().player()); } finally { selectionProbe=null; }
             var received=messages(fixture.players.getFirst()); var journal=SessionRecoveryState.get(fixture.server);
             boolean guardReleased=((Integer)M4CandidateTestAccess.get(M4CandidateTestAccess.space(fixture.pages,before.sessionUuid()),"operations"))==0;
-            var durable=fixture.record();
+            var durable=fixture.record(); var current=journal.records().get(before.sessionUuid());
+            // 新契約：checked 提交失敗由 ledger owner CAS 還原；current 不得殘留任何未 checked selection，session 立即標記 failure。
+            boolean noUncheckedCurrent=durable.equals(current);
+            boolean sessionFailed=mode.equals("before")
+                    ? durable.state()==SessionState.RETURNING && durable.candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable
+                            && durable.candidateLedger().equals(before.candidateLedger())
+                    : fixture.pages.measuredRecoveryRequested(before.sessionUuid());
             if(mode.equals("before")) {
-                // 拒絕flush後先證明dirty選擇不能被下一次互動承認，再由testmod清楚提交以便真backend收尾。
+                // 第二次互動不得看到或重選已回報失敗的選擇；不再由 testmod 自行 flush 承認任何 dirty。
                 var currentBeforeRetry=journal.records().get(before.sessionUuid());
                 var flushedBeforeRetry=journal.flushedRecords().get(before.sessionUuid());
                 var retryOutcome=use(fixture,pos,fixture.players.getFirst().player());
                 var retryMessages=messages(fixture.players.getFirst());
-                context.assertEquals(net.minecraft.util.ActionResult.FAIL,retryOutcome,"dirty 選擇的第二次互動必須 FAIL");
+                context.assertEquals(net.minecraft.util.ActionResult.FAIL,retryOutcome,"失敗選擇後的第二次互動必須 FAIL");
                 context.assertEquals(currentBeforeRetry,journal.records().get(before.sessionUuid()),"第二次互動不得改 current record");
                 context.assertEquals(flushedBeforeRetry,journal.flushedRecords().get(before.sessionUuid()),"第二次互動不得改 flushed record");
                 context.assertTrue(!retryMessages.contains(LOCKED_MESSAGE) && !retryMessages.contains("候選已鎖定。"),
-                        "dirty 選擇不得回成功或 ALREADY_SELECTED 訊息："+retryMessages);
+                        "失敗選擇不得回成功或 ALREADY_SELECTED 訊息："+retryMessages);
                 received.addAll(retryMessages);
-                journal.flush(fixture.server);
             }
             selectionTeardown(fixture,tick+1,() -> {
                 context.assertTrue(probe.before && (mode.equals("before") || probe.after),"fault必須命中正式checked選擇窗口");
                 context.assertEquals(net.minecraft.util.ActionResult.FAIL,outcome,"flush/readback例外拒絕");
                 context.assertTrue(!received.contains(LOCKED_MESSAGE) && guardReleased,"fault無成功actionbar且finally釋放guard");
-                context.assertEquals(mode.equals("before") ? SessionState.SUPERPOSITION : SessionState.MEASURED,durable.state(),"未寫／已寫但回傳失敗窗口明確區別");
+                context.assertTrue(noUncheckedCurrent,"checked 提交失敗後 current 必須等於 flushed authority："+mode);
+                context.assertTrue(sessionFailed,"checked 提交失敗必須以 flushed authority 標記 session failure："+mode+" durable="+durable.state());
+                context.assertEquals(mode.equals("before") ? SessionState.RETURNING : SessionState.MEASURED,durable.state(),"未寫／已寫但回傳失敗窗口明確區別");
             });
         });
     }
@@ -199,6 +324,11 @@ public final class M4CandidateDoorGameTests {
     private static void selectionTeardown(M2CorridorGameTests.NativeEntry fixture,int tick,Runnable assertions) {
         RuntimeException failure=null;
         try { assertions.run(); } catch(RuntimeException caught) { failure=caught; }
+        if(failure!=null) {
+            // 斷言已失敗時直接回報原因，不讓後續收尾逾時掩蓋真正 RED 訊息。
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").error("M4_SELECTION_ASSERTION_FAILED {}",failure.getMessage());
+            throw failure;
+        }
         M4CandidateTestAccess.resetMeasuredForTeardown(fixture.server,fixture.pages,fixture.record().sessionUuid());
         var observed=failure;
         fixture.trustedTeardown(tick,() -> { if(observed!=null) throw observed; M4PerTestUniverseProbe.complete(fixture.context); });
@@ -490,6 +620,8 @@ public final class M4CandidateDoorGameTests {
     }
 
     public static void beforeCandidateFlush(SessionRecoveryState state,MinecraftServer server) {
+        if(initialFlushFaultProbe!=null) initialFlushFaultProbe.observe(state);
+        if(batchFaultProbe!=null) batchFaultProbe.observe(state);
         if(publishProbe!=null) publishProbe.observe(state);
         if(selectionProbe!=null) selectionProbe.observe(state,false);
         for(var entry : OBSERVATIONS.entrySet()) {
@@ -512,6 +644,33 @@ public final class M4CandidateDoorGameTests {
             observation.reentryProbed=true;
             observation.pages.tick(); observation.pages.tick();
             observation.hidden &= state.flushedRecords().get(entry.getKey()).candidateLedger().size()==256;
+        }
+    }
+    /** 武裝期間持續讓該 Chamber 初始 ARMING（尚無 flushed record）的 checked flush 失敗，模擬持續 IO 故障；每次重試都必須零殘留。 */
+    private static final class InitialFlushFaultProbe {
+        final M2CorridorGameTests.NativeEntry fixture; int faults;
+        InitialFlushFaultProbe(M2CorridorGameTests.NativeEntry fixture) { this.fixture=fixture; }
+        void observe(SessionRecoveryState journal) {
+            if(fixture.controller()==null || fixture.controller().chamberUuid()==null) return;
+            var chamber=fixture.controller().chamberUuid();
+            if(journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)
+                    && !journal.flushedRecords().containsKey(record.sessionUuid()))) return;
+            faults++;
+            throw new IllegalStateException("M4 GameTest 受控 initial ARMING flush fault");
+        }
+    }
+    /** 只在真實 candidate batch 的 checked flush 入口注入一次失敗；不修補 journal。 */
+    private static final class BatchFaultProbe {
+        final M2CorridorGameTests.NativeEntry fixture; boolean fired; SessionRecoveryRecord faulted; int pending;
+        BatchFaultProbe(M2CorridorGameTests.NativeEntry fixture) { this.fixture=fixture; }
+        void observe(SessionRecoveryState journal) {
+            if(fired || fixture.controller()==null || fixture.controller().chamberUuid()==null) return;
+            var durable=fixture.record();
+            if(durable==null || durable.state()!=SessionState.SUPERPOSITION) return;
+            var current=journal.records().get(durable.sessionUuid());
+            if(current==null || current.candidateLedger().size()<=durable.candidateLedger().size()) return;
+            fired=true; faulted=durable; pending=current.candidateLedger().size()-durable.candidateLedger().size();
+            throw new IllegalStateException("M4 GameTest 受控 candidate batch flush fault");
         }
     }
     private static final class FlushObservation {
@@ -705,6 +864,21 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
+    /** 有界等待（wall-clock，同 when）：逾時直接附診斷訊息失敗，不讓通用逾時訊息掩蓋 RED 原因。 */
+    private static void whenWithin(TestContext context,int tick,int seconds,BooleanSupplier condition,IntConsumer ready,
+            java.util.function.Supplier<String> diagnostics) {
+        whenWithinUntil(context,tick,condition,ready,diagnostics,System.nanoTime()+seconds*1_000_000_000L);
+    }
+    private static void whenWithinUntil(TestContext context,int tick,BooleanSupplier condition,IntConsumer ready,
+            java.util.function.Supplier<String> diagnostics,long deadline) {
+        context.runAtTick(tick,() -> {
+            if(condition.getAsBoolean()) ready.accept(tick);
+            else {
+                context.assertTrue(System.nanoTime()<deadline,"有界等待逾時："+diagnostics.get());
+                whenWithinUntil(context,tick+1,condition,ready,diagnostics,deadline);
+            }
+        });
+    }
     private static void when(TestContext context, int tick, BooleanSupplier condition, IntConsumer ready) {
         whenUntil(context,tick,condition,ready,System.nanoTime()+60_000_000_000L);
     }

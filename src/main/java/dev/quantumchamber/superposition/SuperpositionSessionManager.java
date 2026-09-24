@@ -115,12 +115,33 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 SessionSemantics.LATERAL_BUFF_MAINTAINED,candidateContext);
         var runtime=new SuperpositionSession(source,controller,frame,effects,prepared,initial);
         sessions.put(chamber,runtime);
+        try { journal.put(initial); journal.flush(server); }
+        catch(RuntimeException failure) {
+            // 初始 ARMING 未 checked：沒有上一份 flushed authority，只能 CAS 移除並取消零 geometry reservation。
+            if(abandonInitial(runtime,failure)) return StartResult.REJECTED;
+            fail(runtime,failure); return StartResult.STAGING;
+        }
         try {
-            journal.put(initial); journal.flush(server);
             sourceTicket(initial); pages.prepare(prepared);
             return StartResult.STAGING;
         } catch(RuntimeException failure) {
             fail(runtime,failure); return StartResult.STAGING;
+        }
+    }
+    /** 成功時玩家未移動、沒有 journal、runtime、source ticket、slot 或 page 保留；任何清理失敗改走既有 RETURNING。 */
+    private boolean abandonInitial(SuperpositionSession runtime,RuntimeException failure) {
+        var initial=runtime.initial;
+        try {
+            if(!journal.abortUnchecked(initial) || journal.records().containsKey(initial.sessionUuid())
+                    || journal.flushedRecords().containsKey(initial.sessionUuid())) return false;
+            var pages=CorridorPageManager.forServer(server);
+            pages.retire(pages.cancelPrepared(runtime.prepared));
+            sessions.remove(initial.chamberUuid());
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("入場 ARMING 未能 checked 落盤，已移除未 checked record 並取消 reservation，session={}：{}: {}",
+                    initial.sessionUuid(),failure.getClass().getName(),failure.getMessage());
+            return true;
+        } catch(RuntimeException cleanup) {
+            failure.addSuppressed(cleanup); return false;
         }
     }
     public void tick(MinecraftServer owner) {

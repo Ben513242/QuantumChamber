@@ -131,6 +131,8 @@ class CandidateLedgerServiceTest {
             var result = commit(port, List.of(key(-1), key(0)));
             assertTrue(result.sessionFailed(), fault.name()); assertTrue(result.committedKeys().isEmpty(), fault.name());
             assertEquals(1, port.puts); assertEquals(fault == Fault.PUT ? 0 : 1, port.flushes);
+            assertEquals(port.state.flushedRecords().get(SESSION), port.state.records().get(SESSION), "失敗 batch 不得殘留未 checked ledger：" + fault);
+            assertTrue(port.state.recoveryWritesSafe(), fault.name());
         }
     }
 
@@ -226,21 +228,70 @@ class CandidateLedgerServiceTest {
         for (var fault : Fault.values()) {
             if (fault == Fault.NONE) continue;
             var port = port(List.of(entry(0))); port.fault = fault;
-            assertEquals(REJECTED, select(port, key(0), PLAYER, 0), fault.name());
+            assertEquals(COMMIT_FAILED, select(port, key(0), PLAYER, 0), fault.name());
             assertEquals(1, port.puts); assertEquals(fault == Fault.PUT ? 0 : 1, port.flushes);
+            assertEquals(port.state.flushedRecords().get(SESSION), port.state.records().get(SESSION), "失敗選擇不得殘留未 checked current：" + fault);
+            assertTrue(port.state.recoveryWritesSafe(), fault.name());
         }
     }
 
-    @Test void failedFlushLeavesDirtySelectionButNextInteractionCannotTreatItAsSelected() {
+    @Test void failedFlushRevertsDirtySelectionSoNoLaterReadOrSaveCanTreatItAsSelected() throws Exception {
         var port = port(List.of(entry(0), entry(1))); port.fault = Fault.FLUSH;
-        assertEquals(REJECTED, select(port, key(0), PLAYER, 0));
-        assertInstanceOf(CandidateSelection.Selected.class, port.state.records().get(SESSION).candidateSelection().orElseThrow());
-        assertInstanceOf(CandidateSelection.Selectable.class, port.state.flushedRecords().get(SESSION).candidateSelection().orElseThrow());
+        var previous = port.state.flushedRecords().get(SESSION);
+        assertEquals(COMMIT_FAILED, select(port, key(0), PLAYER, 0), "checked 提交失敗必須明確要求 caller 標記 session failure");
+        assertEquals(previous, port.state.records().get(SESSION), "current 以 CAS 還原為上一份 flushed SELECTABLE");
+        assertEquals(previous, port.state.flushedRecords().get(SESSION));
+        assertTrue(port.state.isDirty(), "還原後保持 dirty，下一次寫出覆寫任何未確認內容");
         port.fault = Fault.NONE;
-        var dirty = port.state.records(); var flushed = port.state.flushedRecords();
-        assertEquals(REJECTED, select(port, key(1), SECOND_PLAYER, 1));
+        port.state.save(port.file.toFile(), null);
+        assertEquals(previous, diskRecord(port.file), "還原後的任何寫出都只含 flushed SELECTABLE");
         assertEquals(1, port.puts); assertEquals(1, port.flushes);
-        assertEquals(dirty, port.state.records()); assertEquals(flushed, port.state.flushedRecords());
+    }
+
+    @Test void failedSelectionFlushIsNeverAdmittedByOtherSessionFlushOrNativeSave() throws Exception {
+        var port = port(List.of(entry(0), entry(1))); port.fault = Fault.FLUSH;
+        var previous = port.state.flushedRecords().get(SESSION);
+        assertNotEquals(SELECTED, select(port, key(0), PLAYER, 0));
+        port.fault = Fault.NONE;
+        // 其他 session 的 checked 寫入與原生 autosave/stop 都走同一個整份 journal save(File)。
+        port.state.put(otherSession()); var disk = root.resolve("other-session-flush.dat"); port.state.save(disk.toFile(), null);
+        var durable = diskRecord(disk);
+        assertInstanceOf(CandidateSelection.Selectable.class, durable.candidateSelection().orElseThrow(),
+                "其他 session flush／原生存檔不得承認已回報失敗的 dirty SELECTED");
+        assertEquals(SessionState.SUPERPOSITION, durable.state());
+        assertEquals(previous.candidateLedger(), durable.candidateLedger());
+        assertEquals(port.state.flushedRecords().get(SESSION), port.state.records().get(SESSION), "失敗選擇不得殘留 in-memory SELECTED");
+        assertTrue(port.state.recoveryWritesSafe(), "還原後 recovery 不得停擺");
+        var returning = previous.withProgress(previous.participants(), previous.spaceLeases(), SessionState.RETURNING, false);
+        port.state.put(returning); port.state.save(disk.toFile(), null);
+        assertEquals(returning, diskRecord(disk), "session 必須能以 flushed SELECTABLE authority 寫 checked RETURNING");
+    }
+
+    @Test void failedBatchFlushIsNeverAdmittedByOtherSessionFlush() throws Exception {
+        var port = port(List.of(entry(-1))); port.fault = Fault.FLUSH;
+        var previous = port.state.flushedRecords().get(SESSION);
+        assertTrue(commit(port, List.of(key(-1), key(0))).sessionFailed());
+        port.fault = Fault.NONE;
+        port.state.put(otherSession()); var disk = root.resolve("batch-other-session-flush.dat"); port.state.save(disk.toFile(), null);
+        assertEquals(previous.candidateLedger(), diskRecord(disk).candidateLedger(), "其他 session flush 不得承認未 checked 的 candidate batch");
+        assertEquals(port.state.flushedRecords().get(SESSION), port.state.records().get(SESSION), "失敗 batch 不得殘留 dirty ledger");
+        var returning = previous.withProgress(previous.participants(), previous.spaceLeases(), SessionState.RETURNING, false);
+        port.state.put(returning); port.state.save(disk.toFile(), null);
+        assertEquals(returning, diskRecord(disk));
+    }
+
+    @Test void selectionWrittenButReadbackFailedRevertsAndReturningOverwritesUnacknowledgedDisk() throws Exception {
+        var port = port(List.of(entry(0))); port.fault = Fault.WRITE_THEN_FAIL;
+        var previous = port.state.flushedRecords().get(SESSION);
+        assertNotEquals(SELECTED, select(port, key(0), PLAYER, 3));
+        var unacknowledged = diskRecord(port.file);
+        assertEquals(SessionState.MEASURED, unacknowledged.state(), "fixture 必須讓 next 真正落盤後才讓 readback 失敗");
+        assertEquals(previous, port.state.flushedRecords().get(SESSION), "readback 失敗不得更新 flushed authority");
+        assertEquals(previous, port.state.records().get(SESSION), "readback 失敗後 current 必須還原為上一份 flushed authority");
+        port.fault = Fault.NONE;
+        var returning = previous.withProgress(previous.participants(), previous.spaceLeases(), SessionState.RETURNING, false);
+        port.state.put(returning); port.state.save(port.file.toFile(), null);
+        assertEquals(returning, diskRecord(port.file), "同 process 以 flushed SELECTABLE 的 checked RETURNING 覆寫未確認的 MEASURED");
     }
 
     @Test void nonOwnerThreadAndUnhealthyReadRejectBeforeMutation() {
@@ -295,6 +346,20 @@ class CandidateLedgerServiceTest {
                 change.equals("state") ? SessionState.RETURNING : original.state(), original.restoreEntryEffectOnReturn(),
                 original.semantics(), original.candidateContext(), original.candidateLedger(), original.candidateSelection());
     }
+    private SessionRecoveryRecord otherSession() {
+        var chamber = new UUID(0, 90);
+        var origin = new ChamberOriginAuthority(chamber, World.OVERWORLD.getValue(), DimensionRole.OVERWORLD,
+                new BlockPos(64, 0, 0), Direction.NORTH, ChamberInstanceKind.ORIGIN);
+        var person = new SessionRecoveryRecord.Participant(new UUID(0, 92), Vec3d.ZERO, Vec3d.ZERO, 0, 0, new NbtCompound(), false);
+        return SessionRecoveryRecord.candidateAware(new UUID(0, 91), chamber, origin, List.of(person),
+                List.of(new SessionRecoveryRecord.SpaceLease(5, new BlockBox(100, 0, 0, 110, 10, 10))),
+                SessionState.ARMING, false, SessionSemantics.LATERAL_BUFF_MAINTAINED, policy);
+    }
+    private static SessionRecoveryRecord diskRecord(Path file) throws java.io.IOException {
+        var decoded = SessionRecoveryState.fromNbt(dev.quantumchamber.persistence.SessionJournalStore.read(file).getCompound("data"));
+        decoded.requireHealthy();
+        return decoded.flushedRecords().get(SESSION);
+    }
     private static DoorKey key(long station) { return key(station, false); }
     private static DoorKey key(long station, boolean positive) {
         return new DoorKey(SESSION, station, positive ? DoorWallSide.POSITIVE_LATERAL : DoorWallSide.NEGATIVE_LATERAL);
@@ -304,7 +369,7 @@ class CandidateLedgerServiceTest {
         return new CandidateLedgerEntry(key(station), new QuantumCandidate.Source(new CandidateId(new CandidateBytes(bytes))));
     }
 
-    private enum Fault { NONE, PUT, FLUSH, READ_THROW, READ_STALE, READ_MISSING, READ_CHANGED }
+    private enum Fault { NONE, PUT, FLUSH, READ_THROW, READ_STALE, READ_MISSING, READ_CHANGED, WRITE_THEN_FAIL }
     private final class Port implements CandidateLedgerService.JournalPort {
         private final SessionRecoveryState state;
         private final SessionRecoveryRecord initial;
@@ -342,9 +407,18 @@ class CandidateLedgerServiceTest {
             if (fault == Fault.PUT) throw new IllegalStateException("put 失敗");
             state.put(record);
         }
+        @Override public boolean abortUnchecked(SessionRecoveryRecord expected) { return state.abortUnchecked(expected); }
         @Override public void flush() {
             flushes++;
             if (fault == Fault.FLUSH) throw new IllegalStateException("flush 失敗");
+            if (fault == Fault.WRITE_THEN_FAIL) {
+                // 正式檔已原子替換為 next，但 strict readback 失敗；flushed authority 不得前進。
+                var wrapped = new NbtCompound(); wrapped.put("data", state.writeNbt(new NbtCompound()));
+                net.minecraft.nbt.NbtHelper.putDataVersion(wrapped);
+                try { dev.quantumchamber.persistence.SessionJournalStore.write(file, wrapped); }
+                catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+                throw new java.io.UncheckedIOException(new java.io.IOException("受控 readback 失敗"));
+            }
             state.save(file.toFile(), null);
         }
     }

@@ -286,6 +286,16 @@ public final class CorridorPageManager {
         return space!=null && space.operations!=0;
     }
 
+    /**
+     * 選擇的 checked 提交失敗後，由互動 owner 在釋放 guard 後呼叫：ledger owner 已還原未 checked authority，
+     * 此處以 flushed authority 標記 failure 並安全返還（SUPERPOSITION 寫 checked RETURNING；已 checked 的 MEASURED 走保留式恢復）。
+     */
+    public void failCandidateSession(UUID sessionUuid,Exception cause) {
+        var space=space(sessionUuid);
+        if(space.operations!=0) throw new IllegalStateException("候選互動 guard 尚未釋放");
+        fail(space,cause);
+    }
+
     /** 只在持有操作guard時取得最新可供CAS的完整實體與durable證據。 */
     public Optional<SessionRecoveryRecord> candidateSelectionRecord(CandidateDoorLocation door,ServerPlayerEntity player) {
         var space=space(door.key().sessionUuid());

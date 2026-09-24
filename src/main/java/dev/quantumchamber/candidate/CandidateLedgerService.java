@@ -20,19 +20,26 @@ import net.minecraft.util.WorldSavePath;
 
 /** 候選 journal 的 checked 提交入口；不處理實體門與世界物化。 */
 public final class CandidateLedgerService {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("quantumchamber");
     private static final int MAX_NEW_ENTRIES = 256;
     private static final Comparator<DoorKey> KEY_ORDER = Comparator.comparingLong(DoorKey::logicalStationIndex)
             .thenComparing(DoorKey::wallSide);
     public record CandidateBatchResult(List<DoorKey> committedKeys, boolean sessionFailed) {
         public CandidateBatchResult { committedKeys = List.copyOf(committedKeys); }
     }
-    public enum SelectionOutcome { SELECTED, ALREADY_SELECTED, NOT_SELECTABLE, REJECTED }
+    /** COMMIT_FAILED：checked 提交已嘗試但失敗；未 checked authority 已由本 owner 還原或隔離，caller 必須標記 session failure。 */
+    public enum SelectionOutcome { SELECTED, ALREADY_SELECTED, NOT_SELECTABLE, REJECTED, COMMIT_FAILED }
 
     interface JournalPort {
         Map<UUID, SessionRecoveryRecord> flushedRecords();
         SessionRecoveryRecord currentRecord(UUID sessionUuid);
         void put(SessionRecoveryRecord record);
         void flush();
+        boolean abortUnchecked(SessionRecoveryRecord expected);
+    }
+    /** 已完成 CAS 還原／隔離並記錄 root cause 的提交失敗。 */
+    private static final class CommitFailure extends RuntimeException {
+        CommitFailure(Throwable cause) { super(cause.getMessage(), cause, false, false); }
     }
     record CandidateInputs(CandidateResolver resolver, UniverseDiscoveryState discovery) {}
     @FunctionalInterface interface InputsLoader { CandidateInputs load() throws IOException; }
@@ -46,6 +53,7 @@ public final class CandidateLedgerService {
                         UniverseDiscoveryState.load(root));
             }, sessionUuid, completeKeys);
         } catch (RuntimeException exception) {
+            LOGGER.warn("候選 batch 無法進入 checked 提交，session={} 將安全返還：{}", sessionUuid, describe(exception));
             return failedBatch();
         }
     }
@@ -53,6 +61,7 @@ public final class CandidateLedgerService {
         try {
             return trySelect(journal(server), () -> requireServerThread(server), sessionUuid, doorKey, playerUuid, gameTime);
         } catch (RuntimeException exception) {
+            LOGGER.debug("側門選擇在提交前拒絕，session={}：{}", sessionUuid, describe(exception));
             return SelectionOutcome.REJECTED;
         }
     }
@@ -80,7 +89,10 @@ public final class CandidateLedgerService {
             for (var key : missing) ledger.add(new CandidateLedgerEntry(key, loaded.resolver().resolve(key, context, pool)));
             var next = copy(previous, ledger, previous.candidateSelection().orElseThrow(), previous.state());
             return committedKeys(commitChecked(journal, previous, next), requested);
+        } catch (CommitFailure alreadyLogged) {
+            return failedBatch();
         } catch (IOException | RuntimeException exception) {
+            LOGGER.warn("候選 batch 無法 checked 提交，session={} 將安全返還：{}", sessionUuid, describe(exception));
             return failedBatch();
         }
     }
@@ -103,7 +115,10 @@ public final class CandidateLedgerService {
             var next = copy(previous, previous.candidateLedger(), selection, SessionState.MEASURED);
             commitChecked(journal, previous, next);
             return SelectionOutcome.SELECTED;
+        } catch (CommitFailure alreadyLogged) {
+            return SelectionOutcome.COMMIT_FAILED;
         } catch (RuntimeException exception) {
+            LOGGER.debug("側門選擇在提交前拒絕，session={}：{}", sessionUuid, describe(exception));
             return SelectionOutcome.REJECTED;
         }
     }
@@ -119,14 +134,36 @@ public final class CandidateLedgerService {
         return record;
     }
 
+    /**
+     * 唯一的 candidate／selection 提交點。put 之後任何失敗都先以 CAS 還原未 checked authority（或隔離），
+     * 確保之後其他 session 的 flush、原生 autosave 或 stop 都不能承認已回報失敗的 ledger／SELECTED。
+     */
     private static SessionRecoveryRecord commitChecked(JournalPort journal, SessionRecoveryRecord previous, SessionRecoveryRecord next) {
         if (!SessionRecoveryRecord.sameAuthority(previous, next)) throw new IllegalArgumentException("候選 authority 非單調更新");
         requireExpectedCurrent(journal, previous);
-        journal.put(next);
-        journal.flush();
-        var actual = journal.flushedRecords().get(next.sessionUuid());
-        if (!next.equals(actual)) throw new IllegalStateException("候選 journal exact readback 不符");
-        return actual;
+        try {
+            journal.put(next);
+            journal.flush();
+            var actual = journal.flushedRecords().get(next.sessionUuid());
+            if (!next.equals(actual)) throw new IllegalStateException("候選 journal exact readback 不符");
+            return actual;
+        } catch (RuntimeException failure) {
+            boolean clean;
+            try { clean = journal.abortUnchecked(next); }
+            catch (RuntimeException abortFailure) { failure.addSuppressed(abortFailure); clean = false; }
+            LOGGER.warn("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(),
+                    clean ? "未 checked authority 已還原為上一份 flushed authority" : "未能還原，已隔離該 session 的未 checked authority",
+                    describe(failure));
+            throw new CommitFailure(failure);
+        }
+    }
+
+    /** 只輸出例外 class 與 message（含 root cause）；不輸出 record、candidate bytes 或 entropy。 */
+    private static String describe(Throwable failure) {
+        var text = failure.getClass().getName() + ": " + failure.getMessage();
+        var root = failure;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        return root == failure ? text : text + " <- " + root.getClass().getName() + ": " + root.getMessage();
     }
 
     /** current 只用於 CAS 前置條件；候選與選擇仍以 expected flushed record 判斷。 */
@@ -157,6 +194,7 @@ public final class CandidateLedgerService {
             @Override public SessionRecoveryRecord currentRecord(UUID sessionUuid) { return state.records().get(sessionUuid); }
             @Override public void put(SessionRecoveryRecord record) { state.put(record); }
             @Override public void flush() { state.flush(server); }
+            @Override public boolean abortUnchecked(SessionRecoveryRecord expected) { return state.abortUnchecked(expected); }
         };
     }
     private static void requireServerThread(MinecraftServer server) {

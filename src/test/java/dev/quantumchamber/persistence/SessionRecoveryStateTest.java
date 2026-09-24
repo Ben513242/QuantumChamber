@@ -146,6 +146,99 @@ class SessionRecoveryStateTest {
         }
     }
 
+    @Test void abortUncheckedCasRestoresCurrentAndHistoryToFlushedAuthority() {
+        var state=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false));
+        var previous=candidateRecord(false); var selected=candidateRecord(true);
+        state.put(selected);
+        assertFalse(state.recoveryWritesSafe(),"put→flush 同步窗口內仍是未 checked selection");
+        assertTrue(state.abortUnchecked(selected));
+        assertEquals(previous,state.records().get(previous.sessionUuid()),"current 還原為上一份 flushed authority");
+        assertEquals(previous,state.flushedRecords().get(previous.sessionUuid()));
+        assertTrue(state.recoveryWritesSafe(),"還原後 recovery 不得停擺");
+        assertTrue(state.isDirty(),"還原後保留 dirty，下一次寫出會覆寫任何未確認的磁碟內容");
+        var returning=previous.withProgress(previous.participants(),previous.spaceLeases(),SessionState.RETURNING,false);
+        state.put(returning);
+        var file=directory.resolve("abort-returning.dat"); state.save(file.toFile(),null);
+        assertEquals(returning,SessionRecoveryState.load(file).flushedRecords().get(previous.sessionUuid()),"history 已還原，flushed SELECTABLE 可寫 RETURNING");
+    }
+
+    @Test void abortUncheckedIsNoOpWhenNextAlreadyCheckedOrNeverWritten() {
+        var state=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false));
+        var previous=candidateRecord(false); var selected=candidateRecord(true);
+        assertTrue(state.abortUnchecked(selected),"put 未發生：current 仍 checked，無需還原");
+        assertEquals(previous,state.records().get(previous.sessionUuid())); assertFalse(state.isDirty());
+        state.put(selected); state.save(directory.resolve("already-checked.dat").toFile(),null);
+        assertTrue(state.abortUnchecked(selected),"next 已 checked 落盤（例如 flush 後才失敗）時不得倒退 durable receipt");
+        assertEquals(selected,state.records().get(selected.sessionUuid())); assertEquals(selected,state.flushedRecords().get(selected.sessionUuid()));
+    }
+
+    @Test void abortUncheckedWithoutFlushedRecordRemovesCurrentAndRestoresCheckedHistory() {
+        var fresh=new SessionRecoveryState(); var initial=candidateRecord(false);
+        fresh.put(initial); assertFalse(fresh.recoveryWritesSafe());
+        assertTrue(fresh.abortUnchecked(initial));
+        assertTrue(fresh.records().isEmpty(),"沒有上一份 flushed record 時移除未 checked current");
+        assertTrue(fresh.recoveryWritesSafe());
+        var file=directory.resolve("abort-new-session.dat"); fresh.save(file.toFile(),null);
+        assertTrue(SessionRecoveryState.load(file).flushedRecords().isEmpty(),"之後任何寫出都不得承認未 checked 的新 session");
+        // 已 checked 後移除的同 UUID：還原只回到最後 checked authority，不能讓 remove→reinsert 繞過。
+        var state=SessionRecoveryState.fromNbt(SessionRecoveryStateTest.fixture("RETURNING",false));
+        var original=state.records().values().iterator().next();
+        state.remove(original.sessionUuid()); state.save(directory.resolve("removed.dat").toFile(),null);
+        state.put(original); assertTrue(state.abortUnchecked(original));
+        assertTrue(state.records().isEmpty());
+        for(var changed : authorityChanges(original)) assertThrows(IllegalArgumentException.class,() -> state.put(changed));
+    }
+
+    @Test void casMismatchQuarantinesOnlyThatSessionAndSaveWritesItsFlushedAuthority() {
+        var state=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false));
+        var previous=candidateRecord(false); var selected=candidateRecord(true);
+        state.put(selected);
+        var progressed=SessionRecoveryManager.returnedRecord(selected,selected.participants().getFirst().playerUuid());
+        state.put(progressed);
+        assertFalse(state.abortUnchecked(selected),"CAS 不符且仍含未 checked selection 時必須隔離而非猜測");
+        assertEquals(progressed,state.records().get(previous.sessionUuid()),"隔離不得猜測性覆寫 current");
+        assertTrue(state.recoveryWritesSafe(),"隔離只影響該 session，其他 recovery 不停擺");
+        assertThrows(IllegalStateException.class,() -> state.put(previous.withProgress(previous.participants(),previous.spaceLeases(),SessionState.RETURNING,false)));
+        assertThrows(IllegalStateException.class,() -> state.remove(previous.sessionUuid()));
+        var other=otherSession(new UUID(0,0x81),SessionState.SUPERPOSITION,false,new UUID(0,0x82),new UUID(0,0x83),12);
+        state.put(other);
+        var file=directory.resolve("quarantine.dat"); state.save(file.toFile(),null);
+        var disk=SessionRecoveryState.load(file); disk.requireHealthy();
+        assertEquals(java.util.Map.of(previous.sessionUuid(),previous,other.sessionUuid(),other),disk.flushedRecords(),
+                "隔離 session 只寫出上一份 flushed authority；其他 session 的合法進度照常落盤");
+        assertEquals(disk.flushedRecords(),state.flushedRecords());
+    }
+
+    @Test void readbackFailureAfterWriteRevertsAndReturningOverwritesUnacknowledgedDisk() throws Exception {
+        boolean[] armed={false};
+        var state=new SessionRecoveryState(path -> {
+            if(armed[0]) { armed[0]=false; throw new java.io.IOException("注入正式檔寫入後的 readback 失敗"); }
+            return SessionJournalStore.read(path);
+        });
+        var previous=candidateRecord(false); var selected=candidateRecord(true);
+        var file=directory.resolve("readback-window.dat");
+        state.put(previous); state.save(file.toFile(),null);
+        state.put(selected); armed[0]=true;
+        assertThrows(UncheckedIOException.class,() -> state.save(file.toFile(),null));
+        assertEquals(SessionState.MEASURED,SessionRecoveryState.load(file).flushedRecords().get(previous.sessionUuid()).state(),"fixture：next 已寫入但未確認");
+        assertEquals(previous,state.flushedRecords().get(previous.sessionUuid()),"readback 失敗不得前進 flushed");
+        assertTrue(state.abortUnchecked(selected));
+        var returning=previous.withProgress(previous.participants(),previous.spaceLeases(),SessionState.RETURNING,false);
+        state.put(returning); state.save(file.toFile(),null);
+        assertEquals(returning,SessionRecoveryState.load(file).flushedRecords().get(previous.sessionUuid()),"同 process 以 checked RETURNING 覆寫未確認的 MEASURED");
+    }
+
+    static SessionRecoveryRecord otherSession(UUID player,SessionState phase,boolean returned,UUID sid,UUID chamber,int slot) {
+        var template=candidateRecord(false); var source=template.participants().getFirst();
+        var origin=new dev.quantumchamber.chamber.ChamberOriginAuthority(chamber,template.origin().worldKey(),template.origin().role(),
+                template.origin().controllerPos().add(32*slot,0,0),template.origin().facing(),dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN);
+        var person=new SessionRecoveryRecord.Participant(player,source.sourcePosition(),source.sourceVelocity(),source.yaw(),source.pitch(),
+                source.quantumStateSnapshot(),returned);
+        return new SessionRecoveryRecord(sid,chamber,origin,List.of(person),
+                List.of(new SessionRecoveryRecord.SpaceLease(slot,new net.minecraft.util.math.BlockBox(0,0,96*slot,95,20,96*slot+10))),
+                phase,false,template.semantics(),template.candidateContext(),List.of(),Optional.of(new CandidateSelection.Selectable()));
+    }
+
     private static SessionRecoveryRecord candidateRecord(boolean selected) {
         return SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(selected, false)).records().values().iterator().next();
     }
