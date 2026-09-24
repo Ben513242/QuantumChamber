@@ -18,6 +18,7 @@
 
 | 編號 | 項目 | 模式 | 執行世界（建議） |
 | --- | --- | --- | --- |
+| B-0 | M1 殼體不完整＝INVALID＝比較器 0（W1 第一個執行） | 單人 | W1 |
 | A-1 | M2-1 單人飲用與左右入口（目前 HEAD 快速複驗） | 單人 | W1 |
 | A-2 | M2-2 單人自然到期（目前 HEAD 快速複驗） | 單人 | W1 |
 | B-1 | M2-4 HIGH 再入場與 LOW 收尾 | 單人 | W1 |
@@ -46,14 +47,20 @@
 ```powershell
 $repo = 'C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber'
 $bak  = 'C:\Users\Ben\Documents\QC-acceptance-backup-20260924'   # 必須在 repo 外
-New-Item -ItemType Directory -Force $bak | Out-Null
-Copy-Item -Recurse -LiteralPath "$repo\run\client-base\saves\新的世界test (1)" -Destination "$bak\client-base-新的世界test (1)"
-Copy-Item -Recurse -LiteralPath "$repo\run\server\m1-smoke" -Destination "$bak\server-m1-smoke"
-Copy-Item -LiteralPath "$repo\run\server\server.properties" -Destination "$bak\server.properties"
-Get-FileHash -Algorithm SHA256 -LiteralPath "$bak\server-m1-smoke\data\quantumchamber_chambers.dat"
+if (Test-Path -LiteralPath $bak) {
+    throw "備份目錄已存在，請勿重跑；改用新目錄名"
+} else {
+    New-Item -ItemType Directory $bak -ErrorAction Stop | Out-Null
+    Copy-Item -Recurse -LiteralPath "$repo\run\client-base\saves\新的世界test (1)" -Destination "$bak\client-base-新的世界test (1)" -ErrorAction Stop
+    Copy-Item -Recurse -LiteralPath "$repo\run\server\m1-smoke" -Destination "$bak\server-m1-smoke" -ErrorAction Stop
+    Copy-Item -LiteralPath "$repo\run\server\server.properties" -Destination "$bak\server.properties" -ErrorAction Stop
+    Get-FileHash -Algorithm SHA256 -LiteralPath "$bak\server-m1-smoke\data\quantumchamber_chambers.dat"
+}
 ```
 
-最後一行應為 `80ED28EDD4414A67945B0763130A4006154FBD9DFB01BF4683497676E6744CC9`，與 [M1 紀錄](../implementation-notes/m1-chamber.md) 的 registry SHA-256 相同。不同就先停下來確認來源。
+- 備份目錄已存在時會直接停止，避免之後重跑時用已被修改的檔案覆蓋備份；要重做備份請換一個新的目錄名，並同步修改後文用到的 `$bak`。
+- 最後輸出的雜湊應為 `80ED28EDD4414A67945B0763130A4006154FBD9DFB01BF4683497676E6744CC9`，與 [M1 紀錄](../implementation-notes/m1-chamber.md) 的 registry SHA-256 相同。不同就先停下來確認來源。
+- 後文的 `$repo`、`$bak` 都指這裡的定義；換了 PowerShell 視窗要重新設定這兩個變數（只設變數，不要重跑整段）。
 
 `run/` 內其他目錄（`gametest*`、`m*-recovery-*`、`m12-*` 等）是自動 gate 證據，驗收期間不要開啟或修改。
 
@@ -65,10 +72,10 @@ Get-FileHash -Algorithm SHA256 -LiteralPath "$bak\server-m1-smoke\data\quantumch
 Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber'
 git status --short
 git rev-parse --short HEAD
-git diff --stat 752ada1 HEAD -- src build.gradle gradle.properties settings.gradle gradle start-client.bat
+git diff --stat 752ada1 HEAD -- src build.gradle gradle.properties settings.gradle gradle gradlew gradlew.bat start-client.bat
 ```
 
-- `git status --short` 應該沒有輸出。
+- 開始驗收前，`git status --short` 應該沒有輸出。開始填寫本清單後，只出現本清單檔案被修改屬正常；出現其他檔案就先停下來確認。
 - 第三個指令沒有輸出，代表目前 HEAD 的程式與 `752ada1` 相同（其後只有文件 commit，包括 `9c421a7` 與本清單所在的 commit）。紀錄欄的 build 填第二個指令的結果。
 - 第三個指令有輸出，表示程式已變更：停止驗收，先在新 HEAD 重跑 automated gates。
 
@@ -76,7 +83,7 @@ git diff --stat 752ada1 HEAD -- src build.gradle gradle.properties settings.grad
 
 | 用途 | 指令（工作區根目錄） | Profile（runDir） | 存檔位置 |
 | --- | --- | --- | --- |
-| 單人：A、B-1、B-3、B-4、B-5 | 雙擊 `start-client.bat`，或 `.\start-client.bat`（即 `gradlew --no-daemon runClient`） | `run/client-base` | `run/client-base/saves` |
+| 單人：A、B-0、B-1、B-3、B-4、B-5 | 雙擊 `start-client.bat`，或 `.\start-client.bat`（即 `gradlew --no-daemon runClient`） | `run/client-base` | `run/client-base/saves` |
 | B-2 光影 | `.\gradlew.bat --no-daemon runClientRender` | `run/client-render` | `run/client-render/saves` |
 | 多人 | 見 2.3 | `run/server` 與三個 client profile | `run/server/<world>` |
 
@@ -88,13 +95,17 @@ git diff --stat 752ada1 HEAD -- src build.gradle gradle.properties settings.grad
 
 Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`server-ip=127.0.0.1`、`server-port=25576`、`level-name=m1-smoke`、`level-type=minecraft:flat`、`view-distance=3`，`eula.txt` 已接受。M1 曾以 `runServer --args=nogui` 在這個 loopback 位址啟動（見 [M1 紀錄](../implementation-notes/m1-chamber.md)「Dedicated server 與重啟證據」）。Repo 沒有「一台電腦同時開伺服器與多個客戶端」的現成腳本，以下步驟由既有 run config 組合而成；標示「需自行確認」的地方，請把實際情況寫進備註。
 
-1. 不要用 `level-name=m1-smoke` 直接開伺服器，那會改寫 schema1 證據世界。改用原生伺服器參數 `--world` 另開新世界（需自行確認；不必修改 `server.properties`）：
+資源提醒：同一台電腦要同時跑 1 個伺服器、3 個客戶端，以及各自的 Gradle JVM，記憶體與 CPU 需求都高（需自行確認）。不夠時可以把觀察者改到另一台電腦；C-4 不需要觀察者，可先關掉 OBS。
+
+1. **絕對不要讓伺服器開到 `m1-smoke`**：那會改寫 schema1 證據世界。做兩道防護：
+   - 伺服器停止時（它啟動時會重新寫出 `server.properties`），先完成 2.1 備份，再用文字編輯器（例如記事本）把 `run/server/server.properties` 的 `level-name=m1-smoke` 暫時改成 `level-name=QC-accept-mp`。改完用 `Select-String -LiteralPath "$repo\run\server\server.properties" -Pattern '^level-name='` 確認。
+   - 每次啟動都同時帶原生伺服器參數 `--world`（需自行確認）：
 
    ```powershell
-   .\gradlew.bat --no-daemon runServer --args='nogui --world QC-accept-mp'
+   .\gradlew.bat --no-daemon --console=plain runServer --args='nogui --world QC-accept-mp'
    ```
 
-   第一次啟動會建立 `run/server/QC-accept-mp`（超平坦）。`generator-settings={}` 可能讓日誌出現 `No key layers in MapLike[{}]` ERROR，這是 [M1.2 紀錄](../implementation-notes/m1.2-powered-origin.md) 已記錄的現象；若世界無法站立或無法使用，多人項目記 BLOCKED。
+   第一次啟動會建立 `run/server/QC-accept-mp`（超平坦）。確認主控台的世界名稱是 `QC-accept-mp`；若看到 `m1-smoke`，立刻輸入 `stop` 並回報。`generator-settings={}` 可能讓日誌出現 `No key layers in MapLike[{}]` ERROR，這是 [M1.2 紀錄](../implementation-notes/m1.2-powered-origin.md) 已記錄的現象；若世界無法站立或無法使用，多人項目記 BLOCKED。
 2. 主控台出現 `Done (…)! For help, type "help"` 後，在同一個視窗輸入 `op QC_A`、`op QC_B`、`op QC_OBS`。
 3. 另開三個 PowerShell 視窗，依序啟動客戶端。前一個進到標題畫面後再開下一個：
 
@@ -109,10 +120,10 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
    - 同一個工作區同時執行多個 Gradle 工作時會不會互等鎖，需自行確認。若後開的 Gradle 一直停在等待鎖，替代做法是在 repo 外另 clone 一份 `feature/m1-chamber`（同一 commit），從那份 clone 啟動第二、第三個客戶端（它們會使用該 clone 自己的 `run/`）。
    - 若 B-2 已在 `run/client-render/mods` 放入 Iris／Sodium，觀察者畫面會套用光影。這不影響伺服器判定，但請在備註註明。
 4. 每個客戶端：「多人遊戲」→「直接連線」→ `127.0.0.1:25576`。進入後用 `/gamemode creative` 建艙與取物；創造模式不影響資格判定（只排除旁觀者）。
-5. 若客戶端因安全個人資料（profile public key）相關訊息被拒絕，可先備份，再把 `server.properties` 的 `enforce-secure-profile` 改成 `false`（需自行確認）。
-6. C-4 需要較遠的視距時，可先備份，再把 `view-distance` 從 3 調高（例如 10），測完還原。
-7. 停止伺服器：在主控台輸入 `stop`。C-2 要用同一個指令重開。
-8. 測完：`deop QC_A`、`deop QC_B`、`deop QC_OBS`（`ops.json` 原本是 `[]`）；把 `run/server/QC-accept-mp` 複製到 repo 外保存；`server.properties` 若有修改，從備份還原。
+5. 若客戶端因安全個人資料（profile public key）相關訊息被拒絕，可在伺服器停止時把 `server.properties` 的 `enforce-secure-profile` 改成 `false`（需自行確認）。
+6. C-4 需要較遠的視距時，在伺服器停止時把 `view-distance` 從 3 調高（例如 10）；伺服器執行中修改會在下次啟動時被覆蓋。
+7. 停止伺服器：在主控台輸入 `stop`。C-2 重開時一律使用第 1 步的完整指令（含 `--world QC-accept-mp`）。
+8. 測完：`deop QC_A`、`deop QC_B`、`deop QC_OBS`（`ops.json` 原本是 `[]`）；輸入 `stop` 停止伺服器；把 `run/server/QC-accept-mp` 複製到 repo 外保存；最後把 `server.properties` 從備份還原：`Copy-Item -LiteralPath "$bak\server.properties" -Destination "$repo\run\server\server.properties"`，並用 `Select-String` 確認 `level-name=m1-smoke` 已恢復。
 
 不建議用單人世界「在區域網路上開放」：開發客戶端沒有正式帳號，整合伺服器通常會驗證加入者的帳號，第二個開發客戶端很可能無法加入（需自行確認）。
 
@@ -121,7 +132,7 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
 - 手動施工：依 [玩家指引](../implementation-notes/m1-player-build-verification.md)「1. 準備材料」「2. 從截圖的外框繼續蓋」（192 基岩、25 量子艙門、1 腔室控制器），以及「4. 比較器配置與觀察分工」（比較器、紅石粉、拉桿位置與 F3 讀值）。
 - 藥水：量子態藥水（Potion of Quantum State），效果 3 分鐘。釀造列在 D 段；本清單可以從創造模式物品欄拿，或輸入 `/give @s minecraft:potion[minecraft:potion_contents={potion:"quantumchamber:quantum_state"}] 8`。牛奶：`/give @s minecraft:milk_bucket`。
 - 讀值方式：艙外以 F3 瞄準比較器輸出端的**第一格紅石粉**，讀 `power`。預期值只有 `0`（INVALID）、`3`（IDLE）、`7`（READY）、`11`（ARMED）；出現 15 一律記 FAIL。
-- 選用的指令快速建艙（手動施工已由使用者回報驗過，這裡只為節省時間）。範例是超平坦世界（地表草地 y=-61）、角落 `(0,-61,20)`、艙門朝北（z=20 那一面）。請依 F3 換成自己的座標，並確認範圍內沒有其他建築：
+- 選用的指令快速建艙（手動施工見上方玩家指引；此處指令只為節省時間）。範例是超平坦世界（地表草地 y=-61）、角落 `(0,-61,20)`、艙門朝北（z=20 那一面）。請依 F3 換成自己的座標，並確認範圍內沒有其他建築：
 
   ```mcfunction
   /fill 0 -61 20 6 -55 26 minecraft:bedrock hollow
@@ -138,15 +149,16 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
 
 ### 2.5 警告
 
-- **(a) M4 側門會永久封鎖原艙（到 M5 為止）。** 右鍵走廊側門鎖定候選後，該 session 返還時會留下 DORMANT receipt：那座原艙在該存檔裡無法再入場，也無法斷電拆除，遊戲內沒有解除方法。B-5 必須用另一座 Chamber 或另一個測試世界（建議 W-M4），並且在所有 M2 項目（A、B-1、B-2、C-3、C-4）都驗完之後才做。A、B-1～B-4、C 段全程都不要右鍵走廊兩側的側門。
+- **(a) M4 側門會永久封鎖原艙（到 M5 為止）。** 右鍵走廊側門鎖定候選後，該 session 返還時會留下 DORMANT receipt：那座原艙在該存檔裡無法再入場，也無法斷電拆除，遊戲內沒有解除方法。B-5 必須用另一座 Chamber 或另一個測試世界（建議 W-M4），並且在所有 M2 項目（A、B-1、B-2、C-3、C-4）都驗完之後才做。A、B-0～B-4、C 段全程都不要右鍵走廊兩側的側門。
 - **(b) 不可降版。** 用本 build 在某個存檔建立過任何走廊 session 後，該存檔的 `data/quantumchamber_sessions.dat` 會寫成 schema3，並新增 `quantumchamber_candidate_entropy.dat` 與 `quantumchamber_universe_discovery.dat`；M4 之前的 build 讀不了 schema3，會 fail closed。Chamber registry 也會寫成 schema2，M1.2 之前的 build 讀不了。驗收用的存檔不要再用舊 build 開，也不要拿正式世界驗收。
 - **(c) 返還後要等清理完成才能用其他 Chamber。** 已返還的玩家要等該 session 全員返還、清理完成（M4 的 DORMANT）之後，才能從其他 Chamber 入場；返還與清理階段（`RETURN_PLAYERS`／`RELEASE_GEOMETRY`）仍會被拒絕。
+- **(d) 返還後先等幾秒。** 任何一次返還後，在該 session 清理完成前，參與者的移動與方塊互動會暫時被伺服器擋下（`SessionRecoveryManager.blocks`）；喝東西等使用物品不受影響。單人項目（例如 A-2、B-1a、B-1b）回到原艙後先等幾秒，再開門或操作方塊。
 - 單人測試途中不要退出世界；需要重開時，在備註記錄。
 
 ### 2.6 建議執行順序
 
 1. 2.1 備份、2.2 確認 build。
-2. W1（C1 一座艙）：A-1 → A-2 → B-1a → B-3a → B-3c → B-1b → B-3b → B-3d。
+2. W1（C1 一座艙）：B-0 → A-1 → A-2 → B-1a → B-3a → B-3c → B-1b → B-3b → B-3d。
 3. W-MP（2.3）：C-1a → C-1b → C-3a → C-1c → C-3b → C-4 → C-2。
 4. B-2（W-R）與 B-4（W-L），順序不限。
 5. 最後做 B-5（W-M4）。
@@ -174,7 +186,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 ### A-1 M2-1 單人原生飲用與左右入口
 
 - 來源：[M2 八項](../implementation-notes/m2-corridor.md#八項人工驗收) 第 1 項；[單人無遊戲指令流程](../implementation-notes/m2-corridor.md#單人無遊戲指令流程) 第 2–5 步。
-- 前置條件：W1 的 C1 已完工，比較器與拉桿就位，拉桿 OFF；身上有量子態藥水至少 4 瓶與牛奶 2 桶；沒有量子態效果。
+- 前置條件：W1 的 C1 已完成 B-0（已登錄、殼體完整），比較器與拉桿就位，拉桿 OFF；身上有量子態藥水至少 4 瓶與牛奶 2 桶；沒有量子態效果。
 - 操作步驟：
   1. 在艙外把拉桿扳到 ON，F3 讀 `power`。
   2. 右鍵量子艙門（或 Controller）開門，整個人走進室內（不要站在門檻上）。
@@ -202,7 +214,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   1. 不補喝、不喝奶，等量子態效果自然倒數到 0（約 3 分鐘）。
   2. 效果消失後觀察 1–5 秒。
   3. 按 F3 看維度與座標；按 E 看效果；確認背包沒有多出藥水。
-  4. 在室內右鍵量子艙門開門，走到艙外，F3 讀 `power`。
+  4. 等幾秒（見 2.5 (d)），在室內右鍵量子艙門開門，走到艙外，F3 讀 `power`。
   5. 以創造模式左鍵一格艙體基岩，再左鍵 Controller。
 - 預期結果：
   - 步驟 2：自動回到原世界、同一座原艙的室內。
@@ -216,13 +228,33 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 ## B. 單人待驗
 
+### B-0 殼體不完整＝INVALID＝比較器 0（W1 第一個執行）
+
+- 來源：[M1 紀錄](../implementation-notes/m1-chamber.md)「Client runtime 與人工驗收」第 4 項前半（Invalid shell=0、有效但條件不足=3）；[玩家指引](../implementation-notes/m1-player-build-verification.md) 表 A、B、F；[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「人工 gate」第 1 項（未紅石啟動的新艙可 Creative 拆改）。
+- 為什麼要在草稿階段做：已登錄的原艙只要不是已完成協調的 OFF，殼體就受保護，方塊拆不掉也放不回去；尚未登錄的草稿不受保護。玩家指引表 F 也是「另建尚未登錄的測試艙、少放一格基岩」，並提醒不要拆已受保護的艙。因此這一項要在 C1 第一次供電之前做。
+- 前置條件：W1 的 C1 剛蓋好（手動施工或 2.4 指令），拉桿 OFF，從未供電；`/data get block <Controller 座標> ChamberUuid` 查不到這個欄位。
+- 操作步驟：
+  1. 以創造模式左鍵拆掉一格殼體基岩，例如背牆正中央（2.4 範例為 `3 -58 26`）。不要拆 Controller、量子艙門或拉桿。
+  2. 拉桿扳到 ON，等 3 秒。F3 讀 `power`；輸入 `/data get block <Controller 座標> ChamberUuid`。
+  3. 在同一個位置放回一格基岩，等 3 秒。F3 讀 `power`；再查一次 `ChamberUuid`。
+  4. 拉桿扳到 OFF，等 3 秒，F3 讀 `power`。
+- 預期結果：
+  - 步驟 1：基岩可以移除（草稿不受保護）。
+  - 步驟 2：`power` = 0（已供電但殼體不完整，INVALID）；查不到 `ChamberUuid`（殼體無效時不會註冊）。
+  - 步驟 3：`power` = 3（殼體完整、已供電、艙內無人，IDLE）；`ChamberUuid` 出現一組整數陣列（這時才註冊並開始保護）。
+  - 步驟 4：`power` = 0（OFF）；C1 保留 UUID。接著做 A-1。
+
+| 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| B-0 殼體不完整＝INVALID＝0，補回後 3 |  |  |  | 單人 |  |  |  |
+
 ### B-1 M2-4 HIGH 再入場與 LOW 收尾
 
 - 來源：[M2 八項](../implementation-notes/m2-corridor.md#八項人工驗收) 第 4 項；[單人無遊戲指令流程](../implementation-notes/m2-corridor.md#單人無遊戲指令流程) 第 6–7 步；[M2 設計](../superpowers/specs/2026-09-17-m2-powered-corridor-design.md) §2。
 - 前置條件：接續 A-2（C1 拉桿 ON，玩家沒有量子態效果）。B-1b 需要在玩家還在走廊時切斷外部供電，擇一並在備註註明：
   - (i) 入艙前自行搭好、並已空跑量過時間的外部計時斷電電路（放在 Controller 附近）；
-  - (ii) 替代做法：在走廊內輸入 `/execute in minecraft:overworld run setblock <拉桿座標> minecraft:lever[face=floor,facing=north,powered=false]`，等同把拉桿扳到 OFF；
-  - (iii) 在多人環境由艙外玩家扳拉桿（此時模式記「多人」）。
+  - (ii) 替代做法：在走廊內輸入 `/execute in minecraft:overworld run setblock <拉桿座標> minecraft:lever[face=floor,facing=north,powered=false]`，等同把拉桿扳到 OFF。
+  - 不論用哪一種，B-1b 結束時 C1 都必須是 OFF（`power` = 0），因為 B-3b、B-3d 以此為前提。
 - B-1a HIGH 再入場，操作步驟：
   1. 進艙、關門（同 A-1 步驟 2–3）。
   2. 飲用量子態藥水，最多等約 5 秒。
@@ -233,9 +265,9 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 - B-1b 走廊中 LOW，操作步驟（依 2.6 順序，在 B-3c 之後進行）：
   1. 前置：玩家在走廊（B-3c 結束時的狀態），拉桿 ON，效果剩餘至少 1 分鐘。
   2. 在走廊地板丟下 1 顆鑽石（Q 鍵），記下背包的鑽石數。
-  3. 以 (i)、(ii) 或 (iii) 切斷外部供電，觀察 1–5 秒。
+  3. 以 (i) 或 (ii) 切斷外部供電，觀察 1–5 秒。
   4. 按 F3、按 E；看艙內地面與背包鑽石數。
-  5. 在室內右鍵量子艙門開門，走出艙外，F3 讀 `power`；在 32 格內觀察艙體外側四角約 10 秒。
+  5. 等幾秒（見 2.5 (d)），在室內右鍵量子艙門開門，走出艙外，F3 讀 `power`；在 32 格內觀察艙體外側四角約 10 秒。
 - B-1b 預期結果：
   - 步驟 3：自動回到 C1 室內（`minecraft:overworld`）。
   - 步驟 4：量子態效果保留剩餘時間（LOW 返還不移除、不退款）；走廊裡的鑽石出現在 C1 室內地面中央附近（若被自動撿起，背包數量會回到丟之前）。
@@ -250,14 +282,14 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 - 來源：[M2 八項](../implementation-notes/m2-corridor.md#八項人工驗收) 第 7 項；[M1.2 紀錄](../implementation-notes/m1.2-powered-origin.md)「警告與人工待驗」；[M1.2 設計](../superpowers/specs/2026-09-17-m1.2-powered-origin-design.md) §7（Sodium／Iris／shader 相容性須以精確版本人工驗證）。
 - 前置條件：
-  1. 從官方來源（例如 Modrinth）下載支援 Minecraft 1.21／Fabric 的 Sodium 與 Iris，放進 `run/client-render/mods`（資料夾不存在就建立）；選一個支援 1.21 的 shader pack 放進 `run/client-render/shaderpacks`。在備註記下檔名、版本與 SHA-256（`Get-FileHash`）。
+  1. 本專案固定 Minecraft 1.21（`gradle.properties` 的 `minecraft_version=1.21`）、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21。從官方來源（例如 Modrinth）下載標明支援 Minecraft **1.21** 的 Fabric 版 Sodium 與 Iris（不要選只支援 1.21.1 的版本），放進 `run/client-render/mods`（資料夾不存在就建立）；選一個支援 1.21 的 shader pack 放進 `run/client-render/shaderpacks`。在備註記下檔名、版本與 SHA-256（`Get-FileHash`）。
   2. Loom 開發客戶端能不能載入官方 Iris／Sodium JAR，需自行確認（本專案的 `run/client-light` 以同樣方式載入官方 LambDynamicLights）。啟動後 `run/client-render/logs/latest.log` 應有 `Detected optional mod compatibility: sodium=true, iris=true, immersive_portals=false`。載入失敗時 B-2 記 BLOCKED 並附 log，不要為此修改 `build.gradle`。
   3. `.\gradlew.bat --no-daemon runClientRender`，視訊設定的「粒子」設為「全部」。
   4. 建立新的創造世界 W-R（允許作弊），蓋一座艙 C-R，拉桿 OFF；準備藥水與牛奶。
 - 操作步驟（每個子項都截圖或錄影；Iris 預設 `K` 切換光影、`O` 開 shader pack 選單、`R` 重新載入 shader，以實際按鍵設定為準）：
   - B-2a 無光影、日夜：
     1. 確認光影關閉。`/time set day`，拉桿 ON，在艙外 5–20 格處觀察艙體外側四個直角與四面底部中點約 10 秒。
-    2. `/time set night`，重複觀察；F3 瞄準艙旁地面，記下 Client Light 的 block 值。
+    2. `/time set night`，重複觀察；站在艙旁，讀 F3 左側 Client Light 的 block 值（玩家所在格），記下來。
   - B-2b 開光影、日夜：啟用 shader pack，重複 B-2a 的 1–2。
   - B-2c 光影下的走廊與重載：
     1. 光影開著，進艙、關門、喝藥入場（不要右鍵側門）。
@@ -284,7 +316,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 - 來源：[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「人工 gate」第 1、5–8 項；[M1.1 契約](../implementation-notes/m1.1-contract.md) §2–§3；[玩家指引](../implementation-notes/m1-player-build-verification.md) 表 J–M 與「6. 停用、重新啟用與拆除」；[M1.2 設計](../superpowers/specs/2026-09-17-m1.2-powered-origin-design.md) §1、§4。
 - 語意說明：M1.1 原文的「重新啟用 held-high 不直接 11；新低→高才 11」與「停用後即可 Creative 左鍵拆 Controller」已被 M1.2 取代。本項依目前程式判定：重新啟用後只要仍供電並滿足資格就自動入場；拆除必須先斷電到 OFF，停用（`Enabled=false`）不等於斷電。
-- 前置條件：接續 B-1a（C1 拉桿 ON）。B-1a 返還後，先在室內右鍵量子艙門開門、走到艙外，輸入 `/data get block <Controller 座標> ChamberUuid`，把輸出的整數陣列記進 B-3d 的備註（舊 UUID）。
+- 前置條件：接續 B-1a（C1 拉桿 ON）。B-1a 返還後等幾秒（見 2.5 (d)），在室內右鍵量子艙門開門、走到艙外，輸入 `/data get block <Controller 座標> ChamberUuid`，把輸出的整數陣列記進 B-3d 的備註（舊 UUID）。
 - B-3a 停用（仍供電），操作步驟：
   1. 站在艙外，主手與副手都清空，按住 Shift 蹲下，右鍵 Controller 看得到的正面或頂面。
   2. F3 讀 `power`。
@@ -308,7 +340,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   - 步驟 3：`power` = 3（艙內無人）。
   - 步驟 4：自動入場（F3 `quantumchamber:superposition`），不需要拉桿新的低→高。留在走廊，接著做 B-1b。
 - B-3b 持物蹲下不被維護攔截，操作步驟（在 B-1b 之後；此時 C1 已登錄但為 OFF，比較器 0）：
-  1. 確認 `power` = 0 後，在艙外以創造模式左鍵拆掉 Controller 頂面的拉桿（艙體外，不受保護；若 B-1b 用的是計時電路，先讓頂面空出來）。
+  1. 確認 `power` = 0 後，輸入 `/setblock <拉桿座標> minecraft:air` 移除 Controller 頂面的拉桿（若 B-1b 用的是計時電路，同樣把 Controller 正上方那一格清空）。**不要用創造模式左鍵去拆拉桿**：C1 此時已是 OFF，左鍵若打到 Controller 會直接把它拆掉。
   2. 手持拉桿，按住 Shift 蹲下，右鍵 Controller 頂面。
   3. 觀察 actionbar，F3 讀 `power`。
 - B-3b 預期結果：拉桿放回 Controller 正上方（艙體外）；沒有出現「原始艙體已停用／已啟用」等維護訊息；`power` 仍是 0；拉桿保持 OFF。
@@ -335,7 +367,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 ### B-4 legacy schema1 舊房間
 
-- 來源：[M1.1 契約](../implementation-notes/m1.1-contract.md) §4；[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「核准行為」最後一項；[玩家指引](../implementation-notes/m1-player-build-verification.md)「6.」的「舊版世界」段；[README](../../README.md)「M1.2 基礎與歷史驗證」（schema1 讀為保守的 `UNKNOWN`）。
+- 來源：[M1.1 契約](../implementation-notes/m1.1-contract.md) §4；[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「核准行為」倒數第二項（`m1.1-origin-maintenance.md:13`）；[玩家指引](../implementation-notes/m1-player-build-verification.md)「6.」的「舊版世界」段；[README](../../README.md)「M1.2 基礎與歷史驗證」（schema1 讀為保守的 `UNKNOWN`）。
 - 範圍：只驗 Chamber registry 為 schema1 的舊房間。M2 session journal 的舊 schema1／2 return-only 恢復已由 GameTest 與跨 JVM 證據涵蓋，要人工重現需要舊版 M2 build，不列入本項。
 - 可用存檔調查（2026-09-24 唯讀檢查）：
   - `run/server/m1-smoke/data/quantumchamber_chambers.dat` 為 `SchemaVersion=1`，只有一筆 ORIGIN：anchor `103 106 100`、`NORTH`、`Enabled=1`、UUID `[-616379319, 1488932183, -1377398559, 266153682]`；SHA-256 與 M1 紀錄一致。
@@ -356,7 +388,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 - 操作步驟與預期結果：
   - B-4a 載入與身分：世界正常載入，沒有 registry 錯誤或拒絕啟動。輸入 `/data get block 103 106 100 ChamberUuid`，預期顯示 `[I; -616379319, 1488932183, -1377398559, 266153682]`（沿用舊 UUID）。
   - B-4b 依目前供電重新核對：F3 讀 `power`，預期 3（紅石方塊仍供電、艙內無人）。以創造模式左鍵 `100 100 100` 的基岩，預期不會被移除；左鍵 Controller，預期 actionbar 顯示「請先斷電並等待載入協調與返還完成。」
-  - B-4c 斷電與復電：以創造模式拆掉 `103 107 100` 的紅石方塊（艙體外），預期 `power` = 0、`ChamberUuid` 不變。輸入 `/setblock 103 107 100 minecraft:redstone_block` 復電，預期 `power` = 3、`ChamberUuid` 仍不變（重新供電沿用 UUID）。再拆掉紅石方塊，回到 `power` = 0。
+  - B-4c 斷電與復電：輸入 `/setblock 103 107 100 minecraft:air` 移除紅石方塊（艙體外），預期 `power` = 0、`ChamberUuid` 不變。輸入 `/setblock 103 107 100 minecraft:redstone_block` 復電，預期 `power` = 3、`ChamberUuid` 仍不變（重新供電沿用 UUID）。再輸入 `/setblock 103 107 100 minecraft:air`，回到 `power` = 0。用指令移除，是為了避免 OFF 時左鍵誤打到 Controller 而提前拆掉它。
   - B-4d 拆除與重建：`power` = 0 時以創造模式左鍵 Controller，預期 actionbar 顯示「控制器已拆除；艙體保護已解除。」輸入 `/setblock 103 106 100 quantumchamber:chamber_controller[facing=north]` 重建，預期 `power` = 0、查不到 `ChamberUuid`。輸入 `/setblock 103 107 100 minecraft:redstone_block`，預期 `power` = 3，`ChamberUuid` 是一組與舊 UUID 不同的新陣列。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
@@ -370,7 +402,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 - 來源：[M4 設計](../superpowers/specs/2026-09-21-m4-candidate-doors-design.md) §10、§11、§15；[M4 紀錄](../implementation-notes/2026-09-21-m4-candidate-doors.md)「Selection CAS、first-wins 與互動」「DORMANT 只封鎖自己的 Chamber（W-I2）」「人工驗收狀態（spec §15）」。
 - 範圍界線：M4 只會看到「側門可被選擇一次、收到鎖定訊息、其他門被拒絕、門仍關閉、玩家仍在走廊」。「走廊消失、回原艙、門後是新世界」屬於 M5，不得把 M4 的中間狀態回報成原需求已完成。
-- 前置條件：A、B-1～B-4、C 段都已做完（見 2.5 (a)）。在 `run/client-base` 建立新的創造世界 W-M4（允許作弊），蓋一座艙 C-M4，準備藥水與牛奶。
+- 前置條件：A、B-0～B-4、C 段都已做完（見 2.5 (a)）。在 `run/client-base` 建立新的創造世界 W-M4（允許作弊），蓋一座艙 C-M4，準備藥水與牛奶。
 - 操作步驟：
   1. 拉桿 ON（`power` = 3）；進艙、關門、飲用藥水，入場後確認 F3 為 `quantumchamber:superposition`。
   2. 在走廊等至少 3 秒，再離開入口艙至少 8 格。走廊兩側牆上每 8 格有一扇 5×5 的紫色量子艙門（完整側門）；入口艙自己的正面門不是側門。
@@ -416,7 +448,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 - 來源：[M1 紀錄](../implementation-notes/m1-chamber.md)「Client runtime 與人工驗收」第 4 項；[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「人工 gate」第 9 項；[玩家指引](../implementation-notes/m1-player-build-verification.md) 表 G；[M2 設計](../superpowers/specs/2026-09-17-m2-powered-corridor-design.md) §3（凍結完整 cohort，不排除缺 Buff 的室內玩家）。
 - C-1a 一人缺 Buff，操作步驟：
   1. OBS 把拉桿扳到 ON，讀 `power`。
-  2. A、B 進艙（碰撞箱完整在室內，都不是旁觀者），A 從開口右鍵 Controller 關門。
+  2. 先右鍵量子艙門（或 Controller）開門；A、B 進艙（碰撞箱完整在室內，都不是旁觀者），A 從開口右鍵 Controller 關門。
   3. 只有 A 喝藥，等 10 秒；OBS 讀 `power`；A、B 按 F3 看維度。
 - C-1a 預期結果：步驟 1 為 3；步驟 3 仍是 3，沒有人入場（A、B 都是 `minecraft:overworld`）。
 - C-1b 補齊後自動入場，操作步驟：B 喝藥（不扳拉桿、不開關門）；OBS 持續看 `power`；A、B 看 F3。
@@ -436,17 +468,27 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 ### C-2 M1 多人跨程序重啟
 
 - 來源：[M1 紀錄](../implementation-notes/m1-chamber.md)「Client runtime 與人工驗收」第 5 項、「Dedicated server 與重啟證據」最後一段；[M2 紀錄](../implementation-notes/m2-corridor.md)「持久化與安全界線」（重啟只恢復 pending 返還，不重建舊 ACTIVE；JOIN 先排隊、下一 server tick 返回）。
-- 語意說明：M1 原文「保持 lever high 儲存／重開，含合格參與者時不出現假 edge」是 rising-edge 時代的語意。M1.2 起持續供電加上全員合格會直接自動入場，不存在停在 READY 的合格狀態。因此依目前程式改驗兩件事：(a) 持續供電但不合格的艙，跨重啟後不會自行入場；(b) 活動中的 session 跨重啟只做返還，不會在走廊重建舊 session。
+- 語意說明：M1 原文「保持 lever high 儲存／重開，含合格參與者時不出現假 edge」是 rising-edge 時代的語意。M1.2 起持續供電加上全員合格會直接自動入場，正常情況下不存在停在 READY 的合格狀態（只有 `start()` 回 `REJECTED` 時才會停在 READY，見 `ChamberPowerCoordinator.java:149`）。因此依目前程式改驗兩件事：(a) 持續供電但不合格的艙，跨重啟後不會自行入場；(b) 活動中的 session 跨重啟只做返還，不會在走廊重建舊 session。
 - C-2a 不合格狀態跨重啟，操作步驟：
   1. C-MP 拉桿 ON；A、B 在艙內、門關。兩人先喝牛奶清掉殘留效果，再只讓 A 喝藥。OBS 讀 `power`；（選）`/data get block <Controller 座標> ChamberUuid` 記下。
-  2. 主控台輸入 `stop`，等程序結束；以 2.3 的同一指令重開，等到 `Done`。
+  2. 主控台輸入 `stop`，等程序結束；再以完整指令重開，等到 `Done`，並確認世界名稱是 `QC-accept-mp`。**一定要帶 `--world QC-accept-mp`，不可開到 `m1-smoke`：**
+
+     ```powershell
+     .\gradlew.bat --no-daemon --console=plain runServer --args='nogui --world QC-accept-mp'
+     ```
+
   3. **先讓 B 重新連線**（同名稱），確認 B 在艙內；之後 A、OBS 再連線。若 A 先上線而 B 還沒上線，艙內只剩合格的 A，會以 A 單人自動入場——這是正常行為，但本子項要重做。
   4. 等 10 秒；OBS 讀 `power`；（選）再查 `ChamberUuid`。
   5. B 喝藥。
 - C-2a 預期結果：步驟 1、4 都是 3，重啟後沒有人入場，UUID 不變；步驟 5 不扳拉桿即自動入場，OBS 看到 3 →（7）→ 11。接著做 C-2b。
 - C-2b 活動 session 跨重啟，操作步驟：
   1. A、B 在走廊（接 C-2a）；B 在走廊地上丟 1 顆鑽石。
-  2. 主控台 `stop`，重開伺服器。
+  2. 主控台 `stop`，等程序結束；再以完整指令重開，等到 `Done`，並確認世界名稱是 `QC-accept-mp`。**一定要帶 `--world QC-accept-mp`，不可開到 `m1-smoke`：**
+
+     ```powershell
+     .\gradlew.bat --no-daemon --console=plain runServer --args='nogui --world QC-accept-mp'
+     ```
+
   3. A 先連線，看 A 的位置與 F3；OBS 連線讀 `power`。
   4. A 喝牛奶。
   5. B 連線，看 B 的位置；OBS 讀 `power`；看艙內地面與背包。
@@ -505,14 +547,14 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 ## D. 使用者回報已驗（build／日期待補）
 
-使用者於 2026-09-24 回報下列項目已驗，但沒有記錄當時的 build 與日期。依使用者決定，這些項目不在目前 HEAD 重做；其中 M2-1、M2-2 已列入 A 段快速複驗。本表只記錄「使用者回報已驗（build／日期待補）」，不代表已在目前 HEAD 通過。
+使用者於 2026-09-24 回報下列項目已驗，但沒有記錄當時的 build 與日期。依使用者決定，這些項目不在目前 HEAD 重做；其中 M2-1、M2-2 另列入 A 段，待於目前 HEAD 快速複驗。本表只記錄「使用者回報已驗（build／日期待補）」，不代表已在目前 HEAD 通過。
 
 | 項目 | 來源 | 使用者回報日期 | 當時 build | 備註 |
 | --- | --- | --- | --- | --- |
-| M2-1 單人原生飲用與左右入口 | [M2 八項](../implementation-notes/m2-corridor.md#八項人工驗收) 第 1 項 | 2026-09-24 回報 |  | 已在 A-1 於目前 HEAD 複驗 |
-| M2-2 單人自然到期 | M2 八項第 2 項 | 2026-09-24 回報 |  | 已在 A-2 於目前 HEAD 複驗 |
+| M2-1 單人原生飲用與左右入口 | [M2 八項](../implementation-notes/m2-corridor.md#八項人工驗收) 第 1 項 | 2026-09-24 回報 |  | 列入 A-1，待於目前 HEAD 複驗（結果見 A-1） |
+| M2-2 單人自然到期 | M2 八項第 2 項 | 2026-09-24 回報 |  | 列入 A-2，待於目前 HEAD 複驗（結果見 A-2） |
 | M2-5 32 chunks／512 blocks 視距 | M2 八項第 5 項 | 2026-09-24 回報 |  | 未在目前 HEAD 重做 |
-| M2-8 選用手持照明（含 M1.2 主手／副手火把） | M2 八項第 8 項；[M1.2 設計](../superpowers/specs/2026-09-17-m1.2-powered-origin-design.md) §7；[玩家指引](../implementation-notes/m1-player-build-verification.md) 表 N | 2026-09-24 回報 |  | 未在目前 HEAD 重做。補填時請註明使用的 profile 與世界（預期為 `start-client.bat light`，即 `run/client-light`）；2026-09-24 唯讀檢查時 `run/client-light` 裡沒有 `saves` 資料夾，若當時不是用這個 profile，請改列 B 段重驗 |
+| M2-8 選用手持照明（含 M1.2 主手／副手火把） | M2 八項第 8 項；[M1.2 設計](../superpowers/specs/2026-09-17-m1.2-powered-origin-design.md) §7；[玩家指引](../implementation-notes/m1-player-build-verification.md) 表 N | 2026-09-24 回報 |  | 未在目前 HEAD 重做。2026-09-24 唯讀檢查：本工作區的 `run/client-light` 只有 `mods/`，沒有 `saves/`、`logs/` 與 `options.txt`；主 checkout 也沒有 `run/client-light`。補填時請確認當時是否在另一台電腦或其他 profile 驗的，並註明 profile 與世界；若不是 `start-client.bat light` 的選用照明環境，請改列 B 段重驗 |
 | M1 GUI／HUD／瞄準（釀造、飲用與效果 HUD、25 格門與 Controller 瞄準開關） | [M1 紀錄](../implementation-notes/m1-chamber.md)「Client runtime 與人工驗收」第 1–2 項；[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「人工 gate」第 2–3 項；玩家指引表 H | 2026-09-24 回報 |  | 未在目前 HEAD 重做 |
 | M1 拉桿與比較器 3→7→11（held-high 不重觸發） | M1 紀錄「Client runtime 與人工驗收」第 3 項；M1.1「人工 gate」第 4 項；玩家指引表 A–C | 2026-09-24 回報 |  | 未在目前 HEAD 重做。M1 原文是 rising-edge 語意；M1.2 起持續供電加上全員合格即自動入場（玩家指引表 C） |
 | M1 四向外觀與 `start-client.bat` 雙擊啟動 | M1 紀錄「2026-09-16 核准的門控與青紫造型 follow-up」「2026-09-16 Windows 啟動入口」 | 2026-09-24 回報 |  | 未在目前 HEAD 重做 |
@@ -524,7 +566,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 - M1「全程沒有傳送、走廊或新 Dimension／Universe」與 M1.1「全程沒有穿越、走廊或 Universe／Dimension allocation」：M2 起就有走廊。
 - M1「需新 edge 才 arm」、M1.1「重新啟用 held-high 不直接 11；新低→高才 11」：M1.2 起不需要 edge，改驗 B-3c。
 - M1.1「停用後 Creative 左鍵 C 拆除」：M1.2 起必須先斷電到 OFF，改驗 B-3a 步驟 4 與 B-3d。
-- M1.1「新建完工且未紅石啟動時可 Creative 拆改」併入 B-3d 步驟 6。
+- M1.1「新建完工且未紅石啟動時可 Creative 拆改」併入 B-0 步驟 1 與 B-3d 步驟 6。
 
 ## E. Gate 結論
 
@@ -558,6 +600,9 @@ Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）
 | --- | --- |
 | 比較器只有 0／3／7／11 | `main/chamber/ChamberStatusSignal.java:7-13` |
 | 供電空艙為 IDLE；停用為 INVALID；ARMING 為 READY、活動為 ARMED；返還未完成維持 ARMED | `main/chamber/ChamberPowerCoordinator.java:111-156`（`:117-126` 返還、`:139-150` 資格與入場） |
+| B-0：草稿殼體無效或未供電時為 INVALID 且不註冊；殼體完整並供電才註冊（每 20 ticks 刷新）；已登錄殼體無效也是 INVALID | `main/chamber/ChamberPowerCoordinator.java:73-86`、`main/chamber/ChamberControllerBlock.java:115-122`、`main/chamber/ChamberActivationEvaluator.java:9-10` |
+| B-0：未登錄位置不受保護；已登錄的殼體只有完成協調的 OFF 才可修改 | `main/chamber/ChamberProtectionService.java:94-106` |
+| 正常情況下 READY 只出現在準備入場（ARMING／STAGING）；`start()` 回 `REJECTED` 時停在 READY | `main/chamber/ChamberPowerCoordinator.java:141`、`:146-150` |
 | 資格：非旁觀者、碰撞箱完整在室內、全員有效果、門關 | `main/chamber/ChamberOccupantService.java:15-21`、`main/chamber/ChamberActivationEvaluator.java:9-16` |
 | 入場需持續供電與玩家預檢；DORMANT 不佔用參與者 | `main/superposition/SuperpositionSessionManager.java:96-102`、`main/persistence/SessionRecoveryState.java:146-151`、`:246-250` |
 | 關門訊息、停用後普通門控訊息 | `main/chamber/ChamberControllerBlock.java:85-94` |
