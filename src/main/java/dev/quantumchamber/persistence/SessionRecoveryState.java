@@ -143,6 +143,12 @@ public final class SessionRecoveryState extends PersistentState {
         markDirty();
         return true;
     }
+    /** start 前 ownership 預檢：DORMANT receipt 只封鎖自己的 Chamber，不佔用已返還參與者；未確認移除的 flushed record 仍佔用。 */
+    public boolean participantsAvailable(java.util.Collection<UUID> players) {
+        requireHealthy();
+        return java.util.stream.Stream.concat(records.values().stream(),flushed.values().stream()).filter(record -> !dormant(record))
+                .noneMatch(record -> record.participants().stream().anyMatch(person -> players.contains(person.playerUuid())));
+    }
     public void put(SessionRecoveryRecord record) {
         requireMutationThread();
         requireHealthy();
@@ -237,12 +243,18 @@ public final class SessionRecoveryState extends PersistentState {
     private void requireNotQuarantined(UUID id) {
         if (quarantined.contains(id)) throw new IllegalStateException("session 的未 checked candidate authority 已隔離，拒絕再寫入");
     }
+    /** DORMANT＝MEASURED+SELECTED、全員 returned 且無 lease；它只封鎖自己的 Chamber（spec §11）。 */
+    private static boolean dormant(SessionRecoveryRecord record) {
+        return record.state() == dev.quantumchamber.superposition.SessionState.MEASURED
+                && MeasuredRecoveryPhase.from(record) == MeasuredRecoveryPhase.DORMANT;
+    }
     private static void validateOwnership(Map<UUID, SessionRecoveryRecord> records) {
         envelopeSchema(records);
         var chambers = new HashSet<UUID>(); var players = new HashSet<UUID>(); var slots = new HashSet<Integer>();
         for (var record : records.values()) {
             if (!chambers.add(record.chamberUuid())) throw new IllegalArgumentException("來源艙已有 session");
-            for (var person : record.participants()) if (!players.add(person.playerUuid())) throw new IllegalArgumentException("玩家跨 session 重複");
+            // DORMANT receipt 的參與者皆已返還且沒有 lease；玩家唯一性只約束仍可能移動玩家的 session。
+            if (!dormant(record)) for (var person : record.participants()) if (!players.add(person.playerUuid())) throw new IllegalArgumentException("玩家跨 session 重複");
             for (var lease : record.spaceLeases()) if (!slots.add(lease.slotId())) throw new IllegalArgumentException("slot 跨 session 重複");
         }
     }

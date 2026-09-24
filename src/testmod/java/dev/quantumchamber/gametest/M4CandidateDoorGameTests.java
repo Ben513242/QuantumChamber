@@ -250,6 +250,71 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_dormant_other_chamber",tickLimit=100000)
+    public void dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber");
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
+        context.waitAndRun(2,() -> {
+            var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player().getUuid();
+            var dormant=M4CandidateTestAccess.dormantReceipt(server,player,10005);
+            journal.put(dormant); journal.flush(server);
+            var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+            var runtime=runtimeOwnership(fixture);
+            fixture.power();
+            whenWithin(context,3,60,fixture::activeReady,entered -> {
+                var active=fixture.record();
+                var witness=new LinkedHashMap<String,Boolean>();
+                witness.put("activeSessionOwnsParticipant",active.participants().stream().anyMatch(person -> person.playerUuid().equals(player)));
+                witness.put("dormantFlushedExact",dormant.equals(journal.flushedRecords().get(dormant.sessionUuid())));
+                witness.put("dormantCurrentExact",dormant.equals(journal.records().get(dormant.sessionUuid())));
+                witness.put("dormantPhase",MeasuredRecoveryPhase.from(journal.flushedRecords().get(dormant.sessionUuid()))==MeasuredRecoveryPhase.DORMANT);
+                witness.put("dormantChamberBlocked",gateway.presence(server,dormant.chamberUuid())!=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
+                witness.put("participantNotRecoveryBlocked",!SessionRecoveryManager.blocks(player,server));
+                context.assertTrue(!witness.containsValue(false),"DORMANT receipt 只封鎖自己的 Chamber："+witness);
+                fixture.trustedTeardown(entered+1,() -> {
+                    var after=new LinkedHashMap<String,Boolean>();
+                    after.put("noSpaceSlotOrPageLeak",runtime.equals(runtimeOwnership(fixture)));
+                    after.put("dormantStillExact",dormant.equals(journal.flushedRecords().get(dormant.sessionUuid())));
+                    after.put("dormantChamberStillBlocked",gateway.presence(server,dormant.chamberUuid())!=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
+                    context.assertTrue(!after.containsValue(false),"另一座 Chamber 收尾後不得洩漏 slot/page，DORMANT receipt 不變："+after);
+                    M4CandidateTestAccess.removeMeasuredForTeardown(server,dormant.sessionUuid());
+                    M4PerTestUniverseProbe.complete(context);
+                });
+            },() -> "presence="+gateway.presence(server,fixture.controller().chamberUuid())+" record="+(fixture.record()==null ? "ABSENT" : fixture.record().state()));
+        });
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_busy_participant_start",tickLimit=100000)
+    public void busy_participant_start_rejected_before_any_reservation(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"busy_participant_start_rejected_before_any_reservation");
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
+        context.waitAndRun(2,() -> {
+            var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player();
+            var busy=M4CandidateTestAccess.syntheticSession(server,player.getUuid(),10006);
+            journal.put(busy); journal.flush(server);
+            var records=journal.records(); var flushed=journal.flushedRecords(); var bytes=journalBytes(server);
+            var runtime=runtimeOwnership(fixture);
+            fixture.power();
+            context.runAtTick(4,() -> {
+                var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway(); var chamber=fixture.controller().chamberUuid();
+                var witness=new LinkedHashMap<String,Boolean>();
+                witness.put("noJournalForChamber",fixture.record()==null && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
+                witness.put("presenceNone",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
+                witness.put("journalUnchanged",records.equals(journal.records()) && flushed.equals(journal.flushedRecords()) && java.util.Arrays.equals(bytes,journalBytes(server)));
+                witness.put("noReservationOrRuntimeResidue",runtime.equals(runtimeOwnership(fixture)));
+                witness.put("participantStayedAtSource",player.getServerWorld()==context.getWorld());
+                context.assertTrue(!witness.containsValue(false),"忙碌參與者必須在任何 reservation 前 REJECTED 且零殘留："+witness
+                        +" presence="+gateway.presence(server,chamber));
+                if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                journal.remove(busy.sessionUuid()); journal.flush(server);
+                whenWithin(context,5,30,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+                        && !journal.flushedRecords().containsKey(busy.sessionUuid()),done -> {
+                    fixture.close(); M4PerTestUniverseProbe.complete(context);
+                },() -> "busy cleanup presence="+gateway.presence(server,chamber));
+            });
+        });
+    }
+
     /** 空間、slot、page、來源票與 runtime session 的可比較快照；只讀 testmod reflection。 */
     private static List<?> runtimeOwnership(M2CorridorGameTests.NativeEntry fixture) {
         var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();

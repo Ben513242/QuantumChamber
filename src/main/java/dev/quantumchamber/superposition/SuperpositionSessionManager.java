@@ -98,6 +98,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         var preview=new ChamberActivationService().evaluateReadiness(source,controller);
         if(!preview.accepted() || !new HashSet<>(preview.participantUuids()).equals(new HashSet<>(requested))
                 || !source.isReceivingRedstonePower(controller.getPos())) return StartResult.REJECTED;
+        // 任何 authority 建立或 reservation 前先做跨 session 玩家預檢；DORMANT receipt 只封鎖自己的 Chamber。
+        if(!journal.participantsAvailable(requested)) return StartResult.REJECTED;
         var frame=new ChamberFrame(controller.getPos(),controller.getCachedState().get(ChamberControllerBlock.FACING));
         dev.quantumchamber.candidate.CandidatePolicySnapshot candidateContext;
         try { candidateContext=SuperpositionSession.freezeCandidateContext(server,source); }

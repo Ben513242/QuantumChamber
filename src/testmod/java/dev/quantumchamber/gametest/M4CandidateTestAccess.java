@@ -41,6 +41,20 @@ final class M4CandidateTestAccess {
         return candidateAware(new dev.quantumchamber.persistence.SessionRecoveryRecord(UUID.randomUUID(),chamber,origin,List.of(person),List.of(lease),
                 dev.quantumchamber.superposition.SessionState.ARMING,false,dev.quantumchamber.persistence.SessionSemantics.LATERAL_BUFF_MAINTAINED),server);
     }
+    /** 僅測試：checked 可寫的 DORMANT receipt（MEASURED+SELECTED、全員 returned、無 lease）；真實 retained recovery 另由跨 JVM probe 證明。 */
+    static dev.quantumchamber.persistence.SessionRecoveryRecord dormantReceipt(MinecraftServer server,UUID player,int slot) {
+        var base=syntheticSession(server,player,slot);
+        var key=new dev.quantumchamber.corridor.DoorKey(base.sessionUuid(),1,dev.quantumchamber.corridor.DoorKey.DoorWallSide.NEGATIVE_LATERAL);
+        var bytes=new byte[32]; bytes[0]=(byte)slot; bytes[31]=7;
+        var candidate=new dev.quantumchamber.candidate.QuantumCandidate.Source(new dev.quantumchamber.candidate.CandidateId(new dev.quantumchamber.candidate.CandidateBytes(bytes)));
+        var source=base.participants().getFirst();
+        var returned=new dev.quantumchamber.persistence.SessionRecoveryRecord.Participant(player,source.sourcePosition(),source.sourceVelocity(),
+                source.yaw(),source.pitch(),source.quantumStateSnapshot(),true);
+        return new dev.quantumchamber.persistence.SessionRecoveryRecord(base.sessionUuid(),base.chamberUuid(),base.origin(),List.of(returned),List.of(),
+                dev.quantumchamber.superposition.SessionState.MEASURED,false,base.semantics(),base.candidateContext(),
+                List.of(new dev.quantumchamber.candidate.CandidateLedgerEntry(key,candidate)),
+                java.util.Optional.of(new dev.quantumchamber.candidate.CandidateSelection.Selected(key,candidate.candidateId(),player,0,1)));
+    }
     /** 直接 strict decode 正式 journal 檔，不經 in-memory flushed snapshot。 */
     static Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord> diskRecords(MinecraftServer server) {
         try {
@@ -49,6 +63,20 @@ final class M4CandidateTestAccess {
                     dev.quantumchamber.persistence.SessionJournalStore.read(path).getCompound("data"));
             decoded.requireHealthy(); return decoded.flushedRecords();
         } catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
+    }
+    /** 僅在保存 DORMANT 測試證據後移除 testmod 自建 receipt；production 仍禁止一般 remove 消耗 MEASURED。 */
+    @SuppressWarnings("unchecked")
+    static void removeMeasuredForTeardown(MinecraftServer server,UUID sid) {
+        var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
+        for(String field : List.of("records","authorityHistory","checkedAuthority")) {
+            java.lang.reflect.Field handle;
+            try { handle=journal.getClass().getDeclaredField(field); }
+            catch(NoSuchFieldException absent) { if(field.equals("checkedAuthority")) continue; throw new IllegalStateException(absent); }
+            try { handle.setAccessible(true); ((Map<UUID,?>)handle.get(journal)).remove(sid); }
+            catch(ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+        }
+        journal.markDirty(); journal.flush(server);
+        if(journal.flushedRecords().containsKey(sid) || journal.records().containsKey(sid)) throw new IllegalStateException("testmod DORMANT teardown 未確認");
     }
     static Object get(Object target, String name) {
         try {

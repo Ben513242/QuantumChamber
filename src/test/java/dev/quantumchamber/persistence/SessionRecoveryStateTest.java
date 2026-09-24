@@ -146,6 +146,36 @@ class SessionRecoveryStateTest {
         }
     }
 
+    @Test void dormantReceiptBlocksOnlyItsChamberAndReleasesReturnedParticipants() {
+        var dormant=dormantReceipt(); var player=dormant.participants().getFirst().playerUuid();
+        assertEquals(MeasuredRecoveryPhase.DORMANT,MeasuredRecoveryPhase.from(dormant));
+        var active=otherSession(player,SessionState.SUPERPOSITION,false,new UUID(0,0x61),new UUID(0,0x62),7);
+        var state=new SessionRecoveryState(); state.put(dormant);
+        state.put(active);
+        assertEquals(active,state.records().get(active.sessionUuid()),"DORMANT receipt 不得佔用已返還參與者");
+        var file=directory.resolve("dormant-other-chamber.dat"); state.save(file.toFile(),null);
+        var reloaded=SessionRecoveryState.load(file); reloaded.requireHealthy();
+        assertEquals(java.util.Map.of(dormant.sessionUuid(),dormant,active.sessionUuid(),active),reloaded.flushedRecords(),
+                "strict reload 必須接受 DORMANT receipt 與另一座 Chamber 的同一玩家");
+        var sameChamber=otherSession(new UUID(0,0x63),SessionState.ARMING,false,new UUID(0,0x64),dormant.chamberUuid(),8);
+        assertThrows(IllegalArgumentException.class,() -> state.put(sameChamber),"DORMANT receipt 仍封鎖自己的 Chamber");
+        assertEquals(dormant,state.records().get(dormant.sessionUuid()));
+    }
+
+    @Test void nonDormantParticipantsRemainExclusiveAcrossSessions() {
+        var measured=candidateRecord(true); var player=measured.participants().getFirst().playerUuid();
+        var geometryPending=SessionRecoveryManager.returnedRecord(measured,player);
+        assertEquals(MeasuredRecoveryPhase.RELEASE_GEOMETRY,MeasuredRecoveryPhase.from(geometryPending));
+        var returning=otherSession(player,SessionState.RETURNING,true,new UUID(0,0x71),new UUID(0,0x72),9);
+        var active=otherSession(player,SessionState.SUPERPOSITION,false,new UUID(0,0x73),new UUID(0,0x74),10);
+        for(var holder : List.of(measured,geometryPending,returning,active)) {
+            var state=new SessionRecoveryState(); state.put(holder);
+            var competing=otherSession(player,SessionState.ARMING,false,new UUID(0,0x75),new UUID(0,0x76),11);
+            assertThrows(IllegalArgumentException.class,() -> state.put(competing),"非 DORMANT 參與者仍為跨 session 唯一："+holder.state());
+            assertEquals(java.util.Map.of(holder.sessionUuid(),holder),state.records());
+        }
+    }
+
     @Test void abortUncheckedCasRestoresCurrentAndHistoryToFlushedAuthority() {
         var state=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false));
         var previous=candidateRecord(false); var selected=candidateRecord(true);
@@ -226,6 +256,25 @@ class SessionRecoveryStateTest {
         var returning=previous.withProgress(previous.participants(),previous.spaceLeases(),SessionState.RETURNING,false);
         state.put(returning); state.save(file.toFile(),null);
         assertEquals(returning,SessionRecoveryState.load(file).flushedRecords().get(previous.sessionUuid()),"同 process 以 checked RETURNING 覆寫未確認的 MEASURED");
+    }
+
+    @Test void participantsAvailableSkipsOnlyDormantReceipts() {
+        var dormant=dormantReceipt(); var player=dormant.participants().getFirst().playerUuid();
+        var state=new SessionRecoveryState(); state.put(dormant);
+        assertTrue(state.participantsAvailable(List.of(player)),"DORMANT receipt 不佔用已返還參與者");
+        var active=otherSession(player,SessionState.SUPERPOSITION,false,new UUID(0,0x91),new UUID(0,0x92),13);
+        state.put(active);
+        assertFalse(state.participantsAvailable(List.of(new UUID(0,0x99),player)),"非 DORMANT session 的參與者不可再入場");
+        var loaded=SessionRecoveryState.fromNbt(SessionRecoveryStateTest.fixture("RETURNING",false));
+        var holder=loaded.records().values().iterator().next(); loaded.remove(holder.sessionUuid());
+        assertFalse(loaded.participantsAvailable(List.of(holder.participants().getFirst().playerUuid())),"尚未確認移除的 flushed record 仍佔用玩家");
+        assertTrue(loaded.participantsAvailable(List.of(new UUID(0,0x99))));
+    }
+
+    static SessionRecoveryRecord dormantReceipt() {
+        var measured=candidateRecord(true);
+        var returned=SessionRecoveryManager.returnedRecord(measured,measured.participants().getFirst().playerUuid());
+        return returned.withProgress(returned.participants(),List.of(),SessionState.MEASURED,false);
     }
 
     static SessionRecoveryRecord otherSession(UUID player,SessionState phase,boolean returned,UUID sid,UUID chamber,int slot) {
