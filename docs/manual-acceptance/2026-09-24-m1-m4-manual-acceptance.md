@@ -54,11 +54,14 @@ if (Test-Path -LiteralPath $bak) {
     Copy-Item -Recurse -LiteralPath "$repo\run\client-base\saves\新的世界test (1)" -Destination "$bak\client-base-新的世界test (1)" -ErrorAction Stop
     Copy-Item -Recurse -LiteralPath "$repo\run\server\m1-smoke" -Destination "$bak\server-m1-smoke" -ErrorAction Stop
     Copy-Item -LiteralPath "$repo\run\server\server.properties" -Destination "$bak\server.properties" -ErrorAction Stop
+    Copy-Item -Recurse -LiteralPath "$repo\run\server\logs" -Destination "$bak\server-logs" -ErrorAction Stop
+    Copy-Item -Recurse -LiteralPath "$repo\run\client-base\logs" -Destination "$bak\client-base-logs" -ErrorAction Stop
     Get-FileHash -Algorithm SHA256 -LiteralPath "$bak\server-m1-smoke\data\quantumchamber_chambers.dat"
 }
 ```
 
 - 備份目錄已存在時會直接停止，避免之後重跑時用已被修改的檔案覆蓋備份；要重做備份請換一個新的目錄名，並同步修改後文用到的 `$bak`。
+- 日誌也要先備份：`runServer`／`runClient` 每次啟動都會依 `.gradle/loom-cache/log4j.xml`（`DefaultRolloverStrategy max=5`、`OnStartupTriggeringPolicy`）輪替，刪除最舊的 debug log，驗收期間的啟動會把既有證據擠掉。
 - 最後輸出的雜湊應為 `80ED28EDD4414A67945B0763130A4006154FBD9DFB01BF4683497676E6744CC9`，與 [M1 紀錄](../implementation-notes/m1-chamber.md) 的 registry SHA-256 相同。不同就先停下來確認來源。
 - 後文的 `$repo`、`$bak` 都指這裡的定義；換了 PowerShell 視窗要重新設定這兩個變數（只設變數，不要重跑整段）。
 
@@ -121,7 +124,7 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
    - 若 B-2 已在 `run/client-render/mods` 放入 Iris／Sodium，觀察者畫面會套用光影。這不影響伺服器判定，但請在備註註明。
 4. 每個客戶端：「多人遊戲」→「直接連線」→ `127.0.0.1:25576`。進入後用 `/gamemode creative` 建艙與取物；創造模式不影響資格判定（只排除旁觀者）。
 5. 若客戶端因安全個人資料（profile public key）相關訊息被拒絕，可在伺服器停止時把 `server.properties` 的 `enforce-secure-profile` 改成 `false`（需自行確認）。
-6. C-4 需要較遠的視距時，在伺服器停止時把 `view-distance` 從 3 調高（例如 10）；伺服器執行中修改會在下次啟動時被覆蓋。
+6. C-4 需要較遠的視距時，在伺服器停止時把 `view-distance` 從 3 調高（例如 10）。dedicated server 啟動時先讀取 `server.properties` 再寫回，執行中修改不會立即生效；部分指令（例如 `/whitelist on`、`/whitelist off`）也會在執行中重寫這個檔案，所以一律在停機時修改。
 7. 停止伺服器：在主控台輸入 `stop`。C-2 重開時一律使用第 1 步的完整指令（含 `--world QC-accept-mp`）。
 8. 測完：`deop QC_A`、`deop QC_B`、`deop QC_OBS`（`ops.json` 原本是 `[]`）；輸入 `stop` 停止伺服器；把 `run/server/QC-accept-mp` 複製到 repo 外保存；最後把 `server.properties` 從備份還原：`Copy-Item -LiteralPath "$bak\server.properties" -Destination "$repo\run\server\server.properties"`，並用 `Select-String` 確認 `level-name=m1-smoke` 已恢復。
 
@@ -237,12 +240,12 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   1. 以創造模式左鍵拆掉一格殼體基岩，例如背牆正中央（2.4 範例為 `3 -58 26`）。不要拆 Controller、量子艙門或拉桿。
   2. 拉桿扳到 ON，等 3 秒。F3 讀 `power`；輸入 `/data get block <Controller 座標> ChamberUuid`。
   3. 在同一個位置放回一格基岩，等 3 秒。F3 讀 `power`；再查一次 `ChamberUuid`。
-  4. 拉桿扳到 OFF，等 3 秒，F3 讀 `power`。
+  4. 拉桿扳到 OFF，等 3 秒，F3 讀 `power`；再輸入 `/data get block <Controller 座標> ChamberUuid`。
 - 預期結果：
   - 步驟 1：基岩可以移除（草稿不受保護）。
   - 步驟 2：`power` = 0（已供電但殼體不完整，INVALID）；查不到 `ChamberUuid`（殼體無效時不會註冊）。
   - 步驟 3：`power` = 3（殼體完整、已供電、艙內無人，IDLE）；`ChamberUuid` 出現一組整數陣列（這時才註冊並開始保護）。
-  - 步驟 4：`power` = 0（OFF）；C1 保留 UUID。接著做 A-1。
+  - 步驟 4：`power` = 0（OFF）；`ChamberUuid` 與步驟 3 的陣列相同（斷電保留 UUID）。接著做 A-1。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -379,10 +382,17 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   2. 關閉所有客戶端與伺服器，從備份複製一份到 client-base（`$repo`、`$bak` 沿用 2.1 的定義；不要直接開 `run/server/m1-smoke`，用本 build 開過後 registry 會改寫成 schema2）：
 
      ```powershell
-     Copy-Item -Recurse -LiteralPath "$bak\server-m1-smoke" -Destination "$repo\run\client-base\saves\QC-legacy-schema1"
+     $legacy = "$repo\run\client-base\saves\QC-legacy-schema1"   # 重驗時改用新資料夾名，例如 QC-legacy-schema1-r2
+     if (Test-Path -LiteralPath $legacy) {
+         throw "目的資料夾已存在；重驗請改用新資料夾名（例如 QC-legacy-schema1-r2）"
+     } else {
+         Copy-Item -Recurse -LiteralPath "$bak\server-m1-smoke" -Destination $legacy -ErrorAction Stop
+         Get-FileHash -Algorithm SHA256 -LiteralPath "$legacy\data\quantumchamber_chambers.dat"
+     }
      ```
 
-  3. `start-client.bat` →「單人遊戲」→ 選 `m1-smoke`（清單顯示 level.dat 內的名稱；資料夾是 `QC-legacy-schema1`）。
+     輸出的雜湊必須是 `80ED28EDD4414A67945B0763130A4006154FBD9DFB01BF4683497676E6744CC9`；不符就停止，不要開啟這份複本。已經開過的複本會被改寫成 schema2，重驗一律用新資料夾名重新複製，不要重用舊複本。
+  3. `start-client.bat` →「單人遊戲」→ 選 `m1-smoke`（清單顯示 level.dat 內的名稱；資料夾是 `QC-legacy-schema1` 或你重驗用的新名稱）。
   4. 進入後按 Esc →「在區域網路上開放」（Open to LAN）→「允許作弊」（Allow Cheats）設為開 → 開始。接著輸入 `/gamemode creative`、`/tp @s 103 106 95`，連按兩下空白鍵飛行。
   5. 在 Controller 北側擺比較器：`/setblock 103 105 99 minecraft:stone`、`/setblock 103 105 98 minecraft:stone`、`/setblock 103 106 99 minecraft:comparator[facing=south]`、`/setblock 103 106 98 minecraft:redstone_wire`；之後 F3 瞄準 `103 106 98` 讀 `power`。
 - 操作步驟與預期結果：
@@ -600,7 +610,9 @@ Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）
 | --- | --- |
 | 比較器只有 0／3／7／11 | `main/chamber/ChamberStatusSignal.java:7-13` |
 | 供電空艙為 IDLE；停用為 INVALID；ARMING 為 READY、活動為 ARMED；返還未完成維持 ARMED | `main/chamber/ChamberPowerCoordinator.java:111-156`（`:117-126` 返還、`:139-150` 資格與入場） |
-| B-0：草稿殼體無效或未供電時為 INVALID 且不註冊；殼體完整並供電才註冊（每 20 ticks 刷新）；已登錄殼體無效也是 INVALID | `main/chamber/ChamberPowerCoordinator.java:73-86`、`main/chamber/ChamberControllerBlock.java:115-122`、`main/chamber/ChamberActivationEvaluator.java:9-10` |
+| B-0：草稿殼體無效或未供電時為 INVALID 且不註冊；殼體完整並供電才註冊 | `main/chamber/ChamberPowerCoordinator.java:73-86` |
+| B-0：每 20 ticks 刷新一次 | `main/chamber/ChamberControllerBlock.java:28`（`REFRESH_DELAY_TICKS = 20`）、`:115-122`、`:140-142` |
+| B-0：已登錄但殼體無效也是 INVALID | `main/chamber/ChamberActivationService.java:68-71`、`main/chamber/ChamberPowerCoordinator.java:142-143` |
 | B-0：未登錄位置不受保護；已登錄的殼體只有完成協調的 OFF 才可修改 | `main/chamber/ChamberProtectionService.java:94-106` |
 | 正常情況下 READY 只出現在準備入場（ARMING／STAGING）；`start()` 回 `REJECTED` 時停在 READY | `main/chamber/ChamberPowerCoordinator.java:141`、`:146-150` |
 | 資格：非旁觀者、碰撞箱完整在室內、全員有效果、門關 | `main/chamber/ChamberOccupantService.java:15-21`、`main/chamber/ChamberActivationEvaluator.java:9-16` |

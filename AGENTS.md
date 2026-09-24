@@ -109,7 +109,7 @@ M4 Candidate Doors 實作與 review 已完成（plan 的 Completion Evidence 另
 下一步（依序）：
 
 1. M4 Task 10 文件 review 通過後，push `feature/m1-chamber`。
-2. 執行並記錄人工驗收：M1 HUD／GUI／多人與跨程序、M1.1 維護手勢與 legacy schema1 舊房間、M1.2 主副手火把／日夜粒子／shader、M2 八項、M4 spec §15。逐項步驟、預期結果與紀錄欄位見 [`docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md`](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。M2 項目請在沒有點過側門的 Chamber 或世界驗收：選擇側門後返還會留下 DORMANT receipt，封鎖該座原艙直到 M5。M4 §15 請用另一座 Chamber 或另一個測試世界。記錄人工結果的同一個 docs commit，必須一併更新狀態句，避免文件互相矛盾。至少包括下列各處，並以 `git grep -nE '人工驗收(尚待|仍待|待記錄)|仍待記錄|待人工|人工待驗|尚待驗證|尚未執行|留待(整體)?收尾|\| 待驗 \||「待驗」'` 掃描有無遺漏（2026-09-24 實跑，下列除清單本身外每一處都會命中；`docs/plans/`、各 note 中「以下為當時紀錄」之後的歷史段落與 README 文件索引的連結文字也會命中，可在 commit 說明理由後不改）：
+2. 執行並記錄人工驗收：M1 HUD／GUI／多人與跨程序、M1.1 維護手勢與 legacy schema1 舊房間、M1.2 主副手火把／日夜粒子／shader、M2 八項、M4 spec §15。逐項步驟、預期結果與紀錄欄位見 [`docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md`](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。M2 項目請在沒有點過側門的 Chamber 或世界驗收：選擇側門後返還會留下 DORMANT receipt，封鎖該座原艙直到 M5。M4 §15 請用另一座 Chamber 或另一個測試世界。記錄人工結果的同一個 docs commit，必須一併更新狀態句，避免文件互相矛盾。至少包括下列各處，並以 `git grep -nE '人工驗收(尚待|仍待|待記錄)|仍待記錄|待人工|人工待驗|尚待驗證|尚未執行|留待(整體)?收尾|\| 待驗 \||「待驗」'` 掃描有無遺漏（2026-09-24 實跑，下列除清單本身外每一處都會命中。其餘命中逐一判斷，並在記錄結果的 commit 說明理由；已知可忽略類別例如：`docs/plans/`、歷史狀態／當時紀錄段落（含 `docs/implementation-notes/2026-09-18-m2-revision-status.md:40`）、README 文件索引與歷史驗證指向句（:33、:74、:89、:91）、AGENTS 本身、清單本身引用章節名的句子、spec 本文、舊施工圖 `docs/images/m1-chamber-build-guide.svg`、player guide 操作指引句（:152））：
    - 人工驗收清單本身（逐項結果、D 段補填、E 段結論或 waiver）。
    - `README.md` 開頭的狀態段（:9）、「M2 供電走廊」段的人工待驗句（:17、:23），以及「建置與開發啟動」段（約 :72）的「實際光影與 shader 相容性仍待人工驗證」。
    - `docs/implementation-notes/m1-chamber.md:3` 與 `docs/implementation-notes/m1.2-powered-origin.md:3` 的「後續狀態」段。
