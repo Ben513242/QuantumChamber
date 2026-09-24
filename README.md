@@ -10,7 +10,7 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。主目錄的 `main` 較舊，不能用其客戶端驗收此功能。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工待驗，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
-走廊是有限局部頁面與外觀延伸，並非無限配置世界；沒有動態 Dimension、Universe 選擇或 M3 跨宇宙通道。人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證，最終整體評審由 root 另行執行。此快照供遠端同步審查，尚未合併 main。
+走廊是有限局部頁面與外觀延伸，並非無限配置世界；沒有動態 Dimension 或 M3 跨宇宙通道。M4 起完整側門可右鍵鎖定一次量子候選，但門保持關閉、玩家不移動，也不配置 Universe。鎖定後該 session 停止換頁。返還後，該座原艙在該存檔會被保留的選擇收據封鎖到 M5：期間無法再從它入場，也無法斷電拆除；已返還的玩家仍可使用其他 Chamber。驗收 M2 時請勿點側門，詳見 [M4 候選門紀錄](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)。人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證，最終整體評審由 root 另行執行。此快照供遠端同步審查，尚未合併 main。
 
 ## M1.2 基礎與歷史驗證
 
