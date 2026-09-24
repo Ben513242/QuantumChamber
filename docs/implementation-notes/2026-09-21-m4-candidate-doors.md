@@ -18,7 +18,7 @@ Commit 範圍：
 
 - M4 code range：`ba9ca7338a855e85fa3e48161f6c7014a32634f7..752ada1b34f27685014fc3e6ec10fee77b88a86a`，共 17 commits。
 - Spec／plan docs commits（`687cff95efbb2cc127083107b94f8be0f56408c4..ba9ca73`）：`fdac2311caeef058d52d1906a789a4a7cf505713` 設計、`ba9ca7338a855e85fa3e48161f6c7014a32634f7` 計畫。
-- Task 10 docs commits：`eba763b840ef738b17955c8b92ab594a210bc0c7`（初版），以及其後修正 review Minor／Nit 的 docs fix commit。完整清單以 `git log -- docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 為準。
+- Task 10 docs commits：`eba763b840ef738b17955c8b92ab594a210bc0c7`（初版），以及其後修正 review 意見的 docs fix commits。完整清單以 `git log -- docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 為準。
 
 | Commit | Task | 內容 |
 | --- | --- | --- |
@@ -39,7 +39,7 @@ Commit 範圍：
 
 原始證據放在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（下稱 evidence owner）。`.superpowers/` 被 gitignore，是本機 scratch，不在 repo 內，也不進 release。因此本文直接寫出關鍵數字與 SHA-256；本文不能取代原始證據，交接時要以 exact commit 對照這些雜湊。
 
-**可重現性限制**：驅動下列 runtime gate 的 harness 只存在於 evidence owner，不在 repo。包括 `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、wrapper `wfix1-final-green.ps1`／`wfix1-final-green2.ps1`，以及 `wfix1-build-summary.ps1`、`task10-phase2-verify.ps1` 等 build-summary／verify 腳本。Repo 內 tracked 的只有它們呼叫的 `build.gradle` run 設定（`gameTestLegacy`、`m3Universe`、`m3Transfer`、`m4Recovery`）與 `src/testmod` 的 GameTest／probe。可重用 harness 要整理到 tracked `scripts/verification/`，這是使用者已決定的獨立 task。完成之前，只要刪除 worktree 或 `.superpowers/`，這些 gate 就無法用同一套 harness 重跑，本文的 SHA-256 也無法再對照原始檔。
+**可重現性限制**：驅動下列 runtime gate 的 harness 只存在於 evidence owner，不在 repo。包括 `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、Gradle init script `task9-runtime.init.gradle`（所有 gate 的 Gradle 呼叫都以 `-I` 載入，含 M4 recovery）與 `task9-probe.init.gradle`（M3 lifecycle／transfer probe 使用）、wrapper `wfix1-final-green.ps1`／`wfix1-final-green2.ps1`，以及 `wfix1-build-summary.ps1`、`task10-phase2-verify.ps1` 等 build-summary／verify 腳本。Repo 內 tracked 的只有它們呼叫的 `build.gradle` run 設定（`gameTestLegacy`、`m3Universe`、`m3Transfer`、`m4Recovery`）與 `src/testmod` 的 GameTest／probe。可重用 harness 要整理到 tracked `scripts/verification/`，這是使用者已決定的獨立 task。完成之前，只要刪除 worktree 或 `.superpowers/`，這些 gate 就無法用同一套 harness 重跑，本文的 SHA-256 也無法再對照原始檔。
 
 ## Stable DoorKey 與完整門
 
@@ -443,12 +443,12 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 
 **Artifact 邊界**（`752ada1` full）：
 
-| JAR | Entries | testmod／gametest／probe 命中 | SHA-256 |
-| --- | --- | --- | --- |
-| `quantumchamber-0.1.0-SNAPSHOT.jar` | 293 | 0 | `dfe94f8d5441150f35a17c442d262110b07564dc2a976589e3d1315e848b74a1` |
-| `quantumchamber-0.1.0-SNAPSHOT-sources.jar` | 185 | 0 | `4f7b5776b532c3f5e89da1f2e190831d184e37c1c483f520214d44a4eea4783c` |
+| JAR | Entries | testmod／gametest 命中 | probe 命中 | SHA-256 |
+| --- | --- | --- | --- | --- |
+| `quantumchamber-0.1.0-SNAPSHOT.jar` | 293 | 0 | 僅 production `ModPresenceProbe.class`（合法） | `dfe94f8d5441150f35a17c442d262110b07564dc2a976589e3d1315e848b74a1` |
+| `quantumchamber-0.1.0-SNAPSHOT-sources.jar` | 185 | 0 | 僅 production `ModPresenceProbe.java`（合法） | `4f7b5776b532c3f5e89da1f2e190831d184e37c1c483f520214d44a4eea4783c` |
 
-- 唯一的 `probe` 命中是 production 的 `dev/quantumchamber/compat/ModPresenceProbe`，屬於已知的合法項目。
+- 唯一的 `probe` 命中是 production 的 `dev/quantumchamber/compat/ModPresenceProbe`，屬於已知的合法項目；除它之外，testmod／gametest／probe 命中都是 0（evidence owner 的 `m4-whole-branch-fix1-verification-summary.json` 中 `testmodEntries=0`、`gametestOrProbeEntries=0`）。
 - Release JAR 比 `38d901e` 多 1 個 entry：`dev/quantumchamber/candidate/CandidateLedgerService$CommitFailure.class`。
 - Sources JAR 的 zip 時間戳每次 build 都不同，所以整檔 SHA-256 不可跨 build 比較。
 
@@ -526,7 +526,7 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 | q7 | `selectionTeardown` 失敗時 rethrow 會跳過收尾，`observed` 是死碼（`M4CandidateDoorGameTests.java:389-399`） | 改用 try/finally 收尾，並刪除死碼 |
 | s3 | candidate batch 的 dirty 窗口沒有 cross-JVM restart receipt | 與 selection 共用 `commitChecked`，目前由 selection-fault-restart 間接覆蓋；可補一條 batch-fault-restart chain |
 
-**Whole-branch fix round 1 review 的 Nits**（非阻擋；原本未存檔，Task 10 docs fix 補記）：
+**Whole-branch fix round 1 review 的 Nits**（非阻擋；原本未存檔，Task 10 docs fix 補記。依 controller 保存的 reviewer 回覆轉錄；reviewer 原文未另存檔）：
 
 | 項目 | 問題 | 建議修法 |
 | --- | --- | --- |
@@ -562,7 +562,7 @@ M4 whole-branch review 最終 **Critical 0／Important 0**，spec compliance ✅
   - `COMMIT_FAILED` 正式擴充 plan Task 5 的介面。
   - Fix round 1 的所有 Minor 延後；Task 10 final gate 採用 `752ada1` 的 wfix1 roots。
 - Review 紀錄（evidence owner，gitignored）：
-  - `m4-final-review.md`，SHA-256 `77adefc8b5def4321e8fa015ca41ad25159ce98dc8aa604c4809df59abf88fd0`（Task 10 docs fix 補入 fix round 1 Nits 與 Task 10 文件 review 摘要後的版本；`eba763b` 引用的舊版為 `729ac259…`）。
+  - `m4-final-review.md`，SHA-256 `28250050dcfca8b1c835791b5e6ea2ede241e98244f01a01039fc897a837a0aa`（Task 10 docs fix round 2 在 fix round 1 Nits 段補註轉錄來源後的版本）。舊版 `729ac259…`（`eba763b` 引用）與 `77adefc8…`（第一輪 docs fix 補入 fix round 1 Nits 與 Task 10 文件 review 摘要後，`63e10ec` 引用）為前兩版。
   - `m4-whole-branch-review-round1.md`，SHA-256 `6039bdafcef2484ccfc6c67e3db4d9c94c8dce0649eef9db99001dd6581b8954`。
   - `m4-whole-branch-fix1-review.diff`，SHA-256 `106c66524af136c773d3c4652fbf105eaaa301b9a19c2c131b5b9d606554bb22`。
   - `m4-whole-branch-fix1-report.md`，SHA-256 `4017d2e2165891d7d88208fbc384128b4e1d2c6a4fbc6303ddf24111e35301d4`。

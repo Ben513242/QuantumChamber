@@ -6,7 +6,7 @@
 > - M3-A 動態 Universe backend 與 M3-B server-side transfer readiness。
 > - M4 候選門。
 >
-> M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。M1／M1.2／M2／M4 的人工驗收尚待記錄；M2 的整分支 final review 依原安排留待整體收尾。M1–M4 在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
+> M1（含 M1.1）與 M1.2 的全 feature final review 已完成；M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。M1／M1.2／M2／M4 的人工驗收尚待記錄。M2 的整分支 final review 依原安排留待整體收尾，須在合併 main 前完成或明確記錄為 gate waiver。M1–M4 在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
 
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
@@ -54,7 +54,7 @@ M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、�
 
 Windows 可在檔案總管雙擊專案根目錄的 [start-client.bat](start-client.bat)，或在 PowerShell 執行 `./start-client.bat`。腳本使用 Java 21，固定載入同一工作區的 Fabric 開發客戶端；失敗會保留錯誤與原始退出碼。
 
-功能分支 `feature/m1-chamber`（M1–M4）在人工驗收記錄完成前不合併 main，實際合併與 tag 狀態以 `main`／tag 為準；合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
+功能分支 `feature/m1-chamber`（M1–M4）在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準；合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
 
 Windows PowerShell：
 

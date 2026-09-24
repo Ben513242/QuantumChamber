@@ -1,5 +1,7 @@
 # M1 Chamber Foundation 實作與驗證紀錄
 
+> 後續狀態（2026-09-24）：M1＋M1.1 全 feature final review 已完成（`ddc8b1e..d252d42`，29 commits，Critical 0／Important 0／Minor 2，未要求 fix wave），見 [M1.1 紀錄](m1.1-origin-maintenance.md) 的「全 feature 最終程式碼審查」。下文所稱 final review 未完成為當時狀態。人工驗收仍待記錄；合併狀態以 `main`／tag 為準。以下為當時紀錄。
+
 驗證日期：2026-09-16（Asia/Taipei）。以下為 `4f96569` 前的 M1 foundation 歷史證據，不能直接外推後續版本。2026-09-17 使用者核准 M1.1 紅石提交與 Origin 維護，新增流程的自動驗證與人工 gate 另記於 [M1.1 紀錄](m1.1-origin-maintenance.md)。整個 M1 completion gate 與 main 合併仍未宣告完成。Foreign／unknown ServerWorld live coverage 已由使用者核准依設計延後至 M3，不再列為 M1 blocker。
 
 ## 實作邊界
