@@ -51,6 +51,14 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     private int stage,ticks,faultCount,selectedTick;
     private boolean finished,passed,freezeSave;
     private boolean outerSaveReturned;
+    // whole-branch fix1：selection checked 提交失敗窗口與 DORMANT 參與者另一座 Chamber 的跨 JVM 證據。
+    private static final Set<String> SELECTION_FAULTS=Set.of("selection-flush-fault","readback-fault","readback-crash");
+    private final ChamberFrame frame2=new ChamberFrame(new BlockPos(24,70,8),Direction.NORTH);
+    private SessionRecoveryRecord preFault,diskAtReadback,dormantReceipt;
+    private NbtCompound diskJournalAtReadback;
+    private boolean selectionFaultFired,readbackArmed;
+    private UUID chamber2,sid2;
+    private List<?> runtimeBeforeSecond;
 
     @Override public void onInitialize() {
         config=Configuration.read(); if(config==null) { M4GameTestBoundaryProbe.register(); return; }
@@ -101,6 +109,37 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 proof.put("noUniverseAllocation",true); proof.put("bootstrapRejectedBeforeSpaces",M4CandidateTestAccess.get(CorridorPageManager.class,"active")==null);
                 passed=true; stop(); return;
             }
+            if(config.phase().equals("selection-fault-restart")) {
+                journal=SessionRecoveryState.get(owner);
+                var manifest=JsonParser.parseString(Files.readString(config.root().resolve("fault-manifest.json"))).getAsJsonObject();
+                sid=UUID.fromString(manifest.get("sessionUuid").getAsString()); chamber=UUID.fromString(manifest.get("chamberUuid").getAsString());
+                original=journal.flushedRecords().get(sid);
+                var receipt=SessionRecoveryState.fromNbt(NbtIo.readCompressed(config.root().resolve("fault-receipt.dat"),NbtSizeTracker.ofUnlimitedBytes()));
+                require(original!=null && original.equals(receipt.flushedRecords().get(sid)),"跨 JVM：重啟 flushed record 必須 exact 等於失敗後 checked receipt");
+                require(original.state()==SessionState.RETURNING && original.candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable,
+                        "selection 提交失敗後重啟不得回 SELECTED／MEASURED");
+                require(ledgerSha256(original).equals(manifest.get("ledgerSha256").getAsString()) && original.candidateLedger().size()==manifest.get("ledgerSize").getAsInt(),
+                        "重啟不得重抽或截斷 candidate ledger");
+                catalogHash=manifest.get("catalogHash").getAsString(); entropyHash=manifest.get("entropyHash").getAsString();
+                require(hash(data("quantumchamber_universes.dat")).equals(catalogHash) && hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),
+                        "跨 JVM catalog／entropy bytes 改變");
+                proof.put("restartReceiptExact",true); proof.put("restartState","RETURNING"); proof.put("restartSelection","SELECTABLE");
+                proof.put("faultPhase",manifest.get("faultPhase").getAsString());
+                return;
+            }
+            if(config.phase().equals("dormant-reentry")) {
+                journal=SessionRecoveryState.get(owner); original=journal.flushedRecords().values().iterator().next();
+                sid=original.sessionUuid(); chamber=original.chamberUuid(); dormantReceipt=original;
+                require(journal.flushedRecords().size()==1 && MeasuredRecoveryPhase.from(original)==MeasuredRecoveryPhase.DORMANT,"必須由真實 retained recovery 的 DORMANT receipt 開始");
+                var expected=NbtIo.readCompressed(config.root().resolve("selected-receipt.dat"),NbtSizeTracker.ofUnlimitedBytes());
+                require(sameReceipt(SessionRecoveryState.fromNbt(expected).flushedRecords().get(sid),original),"DORMANT receipt 與首次 SELECTED receipt 不符");
+                var manifest=JsonParser.parseString(Files.readString(config.root().resolve("manifest.json"))).getAsJsonObject();
+                catalogHash=manifest.get("catalogHash").getAsString(); entropyHash=manifest.get("entropyHash").getAsString();
+                require(hash(data("quantumchamber_universes.dat")).equals(catalogHash) && hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),
+                        "跨 JVM catalog／entropy bytes 改變");
+                proof.put("dormantReceiptLoaded",true);
+                return;
+            }
             if(reloading()) {
                 journal=SessionRecoveryState.get(owner); original=journal.flushedRecords().values().iterator().next();
                 sid=original.sessionUuid(); chamber=original.chamberUuid();
@@ -126,7 +165,13 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         guarded(() -> {
             source=owner.getOverworld(); target=owner.getWorld(SuperpositionWorld.KEY);
             pages=CorridorPageManager.forServer(owner); journal=SessionRecoveryState.get(owner);
-            if(config.phase().equals("verify")) {
+            if(config.phase().equals("selection-fault-restart")) {
+                require(M4CandidateTestAccess.space(pages,sid)!=null,"RETURNING restart 必須恢復租約才能安全返還");
+                require(!pages.measuredRecoveryRequested(sid),"SELECTABLE restart 不得走 MEASURED retained recovery");
+            } else if(config.phase().equals("dormant-reentry")) {
+                require(M4CandidateTestAccess.space(pages,sid)==null,"dormant 不能重建 geometry／ticket space");
+                require(((Map<?,?>)M4CandidateTestAccess.get(ChamberSessions.gateway(),"tickets")).isEmpty(),"dormant 不能重建來源票");
+            } else if(config.phase().equals("verify")) {
                 require(M4CandidateTestAccess.space(pages,sid)==null,"dormant 不能重建 geometry／ticket space");
                 require(((Map<?,?>)M4CandidateTestAccess.get(ChamberSessions.gateway(),"tickets")).isEmpty(),"dormant 不能重建來源票");
             } else if(reloading()) {
@@ -142,6 +187,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         if(owner!=server || finished) return;
         guarded(() -> {
             require(++ticks<2400,"probe 有界等待逾時，stage="+stage);
+            if(config.phase().equals("selection-fault-restart")) { restartAfterSelectionFault(); return; }
+            if(config.phase().equals("dormant-reentry")) { dormantReentry(); return; }
             if(config.phase().equals("verify")) {
                 verifyDormant();
                 if(ticks>=5) { proof.put("dormantRepeatedTicks",ticks); success(); }
@@ -172,7 +219,9 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 var key=new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL);
                 var view=pages.currentMappings(sid).instances().getFirst();
                 var pos=cell(view,key); var player=players.getFirst().player();
+                if(SELECTION_FAULTS.contains(config.phase())) preFault=record;
                 var result=target.getBlockState(pos).onUse(target,player,new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(pos),Direction.UP,pos,false));
+                if(SELECTION_FAULTS.contains(config.phase())) { verifySelectionFault(result); return; }
                 if(config.phase().equals("dirty-selection")) {
                     require(result==ActionResult.FAIL && faultCount>0,"dirty SELECTED 必須拒絕成功 action"); verifyDirty(); return;
                 }
@@ -203,39 +252,169 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     }
 
     private void build() {
-        source.getChunk(0,0); M1FoundationSessionFixture.set(source,frame.controllerPos(),false);
+        source.getChunk(0,0); placeChamber(frame);
+        var connection=new ConnectedGameTestPlayer(source); players.add(connection); connection.confirmTeleport();
+        var player=connection.player(); player.setNoGravity(true);
+        player.refreshPositionAndAngles(CorridorGeometry.position(frame,2.5,1,2.5),17,9);
+    }
+    private void placeChamber(ChamberFrame chamberFrame) {
+        M1FoundationSessionFixture.set(source,chamberFrame.controllerPos(),false);
         ChamberProtectionService.get().authorizedMutation(() -> {
             for(int x=0;x<7;x++) for(int y=0;y<7;y++) for(int z=0;z<7;z++) {
                 boolean shell=x==0 || x==6 || y==0 || y==6 || z==0 || z==6;
                 var block=shell ? Blocks.BEDROCK.getDefaultState() : Blocks.AIR.getDefaultState();
                 if(z==0 && x>0 && x<6 && y>0 && y<6) block=ModBlocks.QUANTUM_BULKHEAD.getDefaultState();
-                source.setBlockState(ChamberGeometry.localToWorld(frame,x,y,z),block,3);
+                source.setBlockState(ChamberGeometry.localToWorld(chamberFrame,x,y,z),block,3);
             }
-            source.setBlockState(frame.controllerPos(),ModBlocks.CHAMBER_CONTROLLER.getDefaultState().with(ChamberControllerBlock.FACING,Direction.NORTH),3);
+            source.setBlockState(chamberFrame.controllerPos(),ModBlocks.CHAMBER_CONTROLLER.getDefaultState().with(ChamberControllerBlock.FACING,Direction.NORTH),3);
         });
-        source.setBlockState(frame.controllerPos().up(),Blocks.REDSTONE_BLOCK.getDefaultState(),3);
-        var connection=new ConnectedGameTestPlayer(source); players.add(connection); connection.confirmTeleport();
-        var player=connection.player(); player.setNoGravity(true);
-        player.refreshPositionAndAngles(CorridorGeometry.position(frame,2.5,1,2.5),17,9);
+        source.setBlockState(chamberFrame.controllerPos().up(),Blocks.REDSTONE_BLOCK.getDefaultState(),3);
     }
     private void arm() throws Exception {
-        var controller=controller(); if(controller==null || controller.chamberUuid()==null) return;
-        source.setBlockState(frame.controllerPos().up(),Blocks.AIR.getDefaultState(),3);
-        var player=players.getFirst().player();
-        if(!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,1000000));
-        if(!new ChamberActivationService().evaluateReadiness(source,controller).accepted()) return;
-        chamber=controller.chamberUuid(); PlayerCheckpointStore.saveAndVerify(server,player,Optional.empty());
-        require(server.save(false,true,true),"native source save 失敗");
-        source.setBlockState(frame.controllerPos().up(),Blocks.REDSTONE_BLOCK.getDefaultState(),3);
-        var initial=journal.flushedRecords().values().stream().filter(value -> value.chamberUuid().equals(chamber)).findFirst().orElseThrow();
-        sid=initial.sessionUuid(); require(initial.state()==SessionState.ARMING,"缺少 durable ARMING"); stage=2;
+        var initial=armChamber(frame,players.getFirst().player()); if(initial==null) return;
+        chamber=initial.chamberUuid(); sid=initial.sessionUuid(); stage=2;
     }
-    private void join(UUID id) {
+    /** 以真實 LOW→HIGH 供電觸發正式 start；尚未就緒回 null，已供電後必須立即有 checked ARMING。 */
+    private SessionRecoveryRecord armChamber(ChamberFrame chamberFrame,net.minecraft.server.network.ServerPlayerEntity player) throws Exception {
+        var controller=controllerAt(chamberFrame); if(controller==null || controller.chamberUuid()==null) return null;
+        source.setBlockState(chamberFrame.controllerPos().up(),Blocks.AIR.getDefaultState(),3);
+        if(!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,1000000));
+        if(!new ChamberActivationService().evaluateReadiness(source,controller).accepted()) return null;
+        var uuid=controller.chamberUuid(); PlayerCheckpointStore.saveAndVerify(server,player,Optional.empty());
+        require(server.save(false,true,true),"native source save 失敗");
+        source.setBlockState(chamberFrame.controllerPos().up(),Blocks.REDSTONE_BLOCK.getDefaultState(),3);
+        var initial=journal.flushedRecords().values().stream().filter(value -> value.chamberUuid().equals(uuid)).findFirst()
+                .orElseThrow(() -> new AssertionError("供電後缺少 checked ARMING：presence="+ChamberSessions.gateway().presence(server,uuid)));
+        require(initial.state()==SessionState.ARMING,"缺少 durable ARMING：state="+initial.state()+" sameAsDormantChamber="+uuid.equals(chamber)
+                +" records="+journal.flushedRecords().size());
+        return initial;
+    }
+    private void join(UUID id) { join(id,"measuredParticipantBlocked"); }
+    private void join(UUID id,String blockedProof) {
         var connection=new ConnectedGameTestPlayer(source,new GameProfile(id,"m4-"+id.toString().substring(0,8))); players.add(connection);
         connection.confirmTeleport(); connection.player().setNoGravity(true);
         require(connection.joinTick()>=0 && connection.player().getServerWorld()==target,"必須真 JOIN 載入 corridor playerdata");
-        require(SessionRecoveryManager.blocks(id,server),"尚未返還的 MEASURED 玩家必須被攔截");
-        proof.put("nativeJoinObserved",true); proof.put("measuredParticipantBlocked",true);
+        require(SessionRecoveryManager.blocks(id,server),"尚未返還的玩家必須被攔截");
+        proof.put("nativeJoinObserved",true); proof.put(blockedProof,true);
+    }
+    private void verifySelectionFault(ActionResult result) throws Exception {
+        require(result==ActionResult.FAIL && selectionFaultFired,"受控 selection fault 必須命中且互動只回 FAIL");
+        var current=journal.records().get(sid); var flushed=record();
+        proof.put("faultPhase",config.phase()); proof.put("faultCount",faultCount);
+        require(current!=null && sameReceipt(preFault,current),"失敗的 checked selection 必須由 ledger owner 還原；current 不得殘留未 checked SELECTED");
+        require(pages.selectableDoors(sid).isEmpty(),"失敗 session 不得再發布側門");
+        if(!config.phase().equals("selection-flush-fault")) {
+            require(diskAtReadback!=null && diskAtReadback.state()==SessionState.MEASURED
+                    && diskAtReadback.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected,"readback fault 前 next 必須已真正落盤");
+            proof.put("diskHadUnacknowledgedSelectedAtReadback",true);
+        }
+        if(config.phase().equals("readback-crash")) {
+            // 模擬「已還原、尚未寫出 RETURNING」時 crash：之後所有 journal 寫入凍結，停止時保留已寫入但未確認的 MEASURED。
+            require(preFault.equals(flushed) && freezeSave,"crash 窗口：flushed 仍為上一份 SELECTABLE，後續寫入已凍結");
+            var disk=diskRecord();
+            require(diskAtReadback.equals(disk),"crash 窗口：磁碟保留已寫入但未確認的 MEASURED+SELECTED");
+            original=disk;
+            NbtIo.writeCompressed(diskJournalAtReadback,config.root().resolve("selected-receipt.dat"));
+            entropyHash=hash(data("quantumchamber_candidate_entropy.dat"));
+            var manifest=new LinkedHashMap<String,Object>(); manifest.put("sessionUuid",sid.toString()); manifest.put("chamberUuid",chamber.toString());
+            manifest.put("catalogHash",catalogHash); manifest.put("entropyHash",entropyHash); manifest.put("journalHash",hash(data("quantumchamber_sessions.dat")));
+            manifest.put("ledgerSize",disk.candidateLedger().size()); manifest.put("ledgerSha256",ledgerSha256(disk)); manifest.put("faultPhase",config.phase());
+            write(config.root().resolve("manifest.json"),JSON.toJson(manifest)); proof.putAll(manifest);
+            proof.put("inProcessReverted",true); proof.put("crashWindowDiskState","MEASURED+SELECTED");
+            success(); return;
+        }
+        require(current.equals(flushed) && flushed.state()==SessionState.RETURNING && sameReceipt(preFault,flushed),
+                "同 process 必須以 flushed SELECTABLE authority 寫 checked RETURNING");
+        // 原生 autosave/stop 與其他 session 的 checked flush 都經同一 save(File) 寫整份 journal。
+        journal.markDirty(); require(server.save(false,true,true),"原生 save 必須完成");
+        var nativeDisk=diskRecord();
+        require(flushed.equals(nativeDisk),"原生存檔不得承認已回報失敗的 SELECTED");
+        var other=M4CandidateTestAccess.syntheticSession(server,UUID.randomUUID(),10000);
+        journal.put(other); journal.flush(server);
+        var otherDisk=diskRecord();
+        journal.remove(other.sessionUuid()); journal.flush(server);
+        require(flushed.equals(otherDisk) && !journal.flushedRecords().containsKey(other.sessionUuid()),"其他 session flush 不得承認已回報失敗的 SELECTED");
+        NbtIo.writeCompressed(journal.writeNbt(new NbtCompound()),config.root().resolve("fault-receipt.dat"));
+        entropyHash=hash(data("quantumchamber_candidate_entropy.dat"));
+        var manifest=new LinkedHashMap<String,Object>(); manifest.put("sessionUuid",sid.toString()); manifest.put("chamberUuid",chamber.toString());
+        manifest.put("catalogHash",catalogHash); manifest.put("entropyHash",entropyHash); manifest.put("journalHash",hash(data("quantumchamber_sessions.dat")));
+        manifest.put("ledgerSize",flushed.candidateLedger().size()); manifest.put("ledgerSha256",ledgerSha256(flushed)); manifest.put("faultPhase",config.phase());
+        write(config.root().resolve("fault-manifest.json"),JSON.toJson(manifest)); proof.putAll(manifest);
+        proof.put("inProcessDurable","RETURNING+SELECTABLE"); proof.put("nativeSaveNotAdmitted",true); proof.put("otherSessionFlushNotAdmitted",true);
+        success();
+    }
+    private void restartAfterSelectionFault() throws Exception {
+        var current=record();
+        if(current!=null) require(sameReceipt(original,current) && current.state()==SessionState.RETURNING && current.equals(journal.records().get(sid)),
+                "重啟後不得重抽／重選或殘留未 checked authority");
+        if(stage==0) {
+            if(ticks<3) return;
+            require(current!=null && current.participants().stream().anyMatch(person -> !person.returned()),"離線 restart 不能自動 returned");
+            join(original.participants().getFirst().playerUuid(),"returningParticipantBlocked"); stage=1; return;
+        }
+        if(current==null) {
+            var player=players.getFirst().player();
+            require(player.getServerWorld()==source && ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame),player.getBoundingBox()),"玩家必須安全返還原艙");
+            require(journal.records().isEmpty() && journal.flushedRecords().isEmpty() && pages.releaseComplete(sid),"SELECTABLE session 安全返還後依既有契約移除");
+            require(M4CandidateTestAccess.space(pages,sid)==null && ((Map<?,?>)M4CandidateTestAccess.get(pages,"protectedLeases")).isEmpty(),"返還後釋放 geometry／lease");
+            proof.put("safeReturnCompleted",true); proof.put("neverSelectedAcrossRestart",true); proof.put("ledgerNeverRederived",true);
+            success();
+        }
+    }
+    private void dormantReentry() throws Exception {
+        require(dormantReceipt.equals(record()) && dormantReceipt.equals(journal.records().get(sid)),"DORMANT receipt 必須保持 exact");
+        require(ChamberSessions.gateway().presence(server,chamber)!=ChamberSessionGateway.Presence.NONE,"DORMANT receipt 仍封鎖自己的 Chamber");
+        var participant=dormantReceipt.participants().getFirst().playerUuid();
+        if(stage==0) {
+            if(ticks<3) return;
+            var connection=new ConnectedGameTestPlayer(source,new GameProfile(participant,"m4-"+participant.toString().substring(0,8))); players.add(connection);
+            connection.confirmTeleport(); var player=connection.player(); player.setNoGravity(true);
+            require(player.getServerWorld()==source && !SessionRecoveryManager.blocks(participant,server),"已返還的 DORMANT 參與者不得被 recovery 攔截");
+            // KEEP_CURRENT 返還保留了 QuantumState；先移除，只讓 armChamber 的真實 LOW→HIGH 供電觸發第二座 Chamber 的 start。
+            player.removeStatusEffect(ModEffects.QUANTUM_STATE);
+            source.getChunk(1,0); placeChamber(frame2);
+            player.refreshPositionAndAngles(CorridorGeometry.position(frame2,2.5,1,2.5),17,9);
+            proof.put("dormantParticipantJoinedAtSource",true); stage=1; return;
+        }
+        if(stage==1) {
+            if(runtimeBeforeSecond==null) runtimeBeforeSecond=runtimeOwnership();
+            var initial=armChamber(frame2,players.getFirst().player()); if(initial==null) return;
+            chamber2=initial.chamberUuid(); sid2=initial.sessionUuid();
+            require(!chamber2.equals(chamber) && initial.participants().stream().anyMatch(person -> person.playerUuid().equals(participant)),
+                    "另一座 Chamber 必須接納 DORMANT 參與者");
+            proof.put("otherChamberArmed",true); stage=2; return;
+        }
+        var second=journal.flushedRecords().get(sid2);
+        if(stage==2) {
+            if(second==null || second.state()!=SessionState.SUPERPOSITION || players.getFirst().player().getServerWorld()!=target) return;
+            require(!SessionRecoveryManager.blocks(participant,server),"活動 session 參與者不得因 DORMANT receipt 被攔截");
+            proof.put("otherChamberEntered",true);
+            source.setBlockState(frame2.controllerPos().up(),Blocks.AIR.getDefaultState(),3); stage=3; return;
+        }
+        if(stage==3 && second==null && ChamberSessions.gateway().presence(server,chamber2)==ChamberSessionGateway.Presence.NONE) {
+            var player=players.getFirst().player();
+            require(player.getServerWorld()==source && ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame2),player.getBoundingBox()),"玩家安全返還第二座 Chamber");
+            require(runtimeBeforeSecond.equals(runtimeOwnership()),"第二座 Chamber 收尾後不得洩漏 space／slot／page／ticket");
+            proof.put("otherChamberReleasedWithoutLeak",true); proof.put("dormantReceiptUnchanged",true); proof.put("dormantChamberBlocked",true);
+            success();
+        }
+    }
+    private List<?> runtimeOwnership() {
+        var gateway=ChamberSessions.gateway();
+        return List.of(Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(pages,"spaces")).keySet()),
+                Map.copyOf((Map<?,?>)M4CandidateTestAccess.get(pages,"protectedLeases")),
+                Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(M4CandidateTestAccess.get(pages,"allocator"),"leases")).keySet()),
+                Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(gateway,"sessions")).keySet()),
+                Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(gateway,"tickets")).keySet()));
+    }
+    private SessionRecoveryRecord diskRecord() throws IOException {
+        var decoded=SessionRecoveryState.fromNbt(SessionJournalStore.read(data("quantumchamber_sessions.dat")).getCompound("data"));
+        decoded.requireHealthy(); return decoded.flushedRecords().get(sid);
+    }
+    private static String ledgerSha256(SessionRecoveryRecord record) throws Exception {
+        var single=new SessionRecoveryState(); single.put(record);
+        var ledger=single.writeNbt(new NbtCompound()).getList("Records",NbtElement.COMPOUND_TYPE).getCompound(0).get("CandidateLedger").toString();
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ledger.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
     private void recovering() throws Exception {
         if(stage==0) {
@@ -324,6 +503,14 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 throw new IllegalStateException("缺少 durable geometry 存檔證據");
             }
         }
+        if(SELECTION_FAULTS.contains(probe.config.phase()) && !probe.selectionFaultFired
+                && next.state()==SessionState.MEASURED && previous.state()!=SessionState.MEASURED) {
+            probe.selectionFaultFired=true; probe.faultCount++;
+            if(!previous.equals(probe.preFault)) probe.failures.add("selection fault 的 previous 不是互動前 flushed authority");
+            // 寫入前失敗：正式檔保持上一份；readback 類：讓 save 真正寫入 next 後才在 strict readback 失敗。
+            if(probe.config.phase().equals("selection-flush-fault")) throw new IllegalStateException("M4 owned-root 受控 selection flush fault（寫入前）");
+            probe.readbackArmed=true; return;
+        }
         boolean window=probe.config.phase().equals("dirty-candidate") && next.candidateLedger().size()>previous.candidateLedger().size()
                 || probe.config.phase().equals("dirty-selection") && next.state()==SessionState.MEASURED && previous.state()!=SessionState.MEASURED;
         if(!window && !probe.freezeSave) return;
@@ -401,6 +588,20 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                     || key.dimension().getValue().equals(sourceKey) && source.contains(pos.toLong());
         }
     }
+    /** readback 類 phase：next 已原子寫入正式檔後，讓 strict readback 受控失敗一次。 */
+    public static void beforeJournalReadback(Path path) {
+        var probe=active;
+        if(probe==null || !probe.readbackArmed || probe.finished || probe.sid==null
+                || !path.toAbsolutePath().normalize().equals(probe.data("quantumchamber_sessions.dat").toAbsolutePath().normalize())) return;
+        probe.readbackArmed=false;
+        try {
+            var written=SessionJournalStore.read(path).getCompound("data");
+            var decoded=SessionRecoveryState.fromNbt(written); decoded.requireHealthy();
+            probe.diskJournalAtReadback=written.copy(); probe.diskAtReadback=decoded.flushedRecords().get(probe.sid);
+        } catch(IOException | RuntimeException failure) { probe.failures.add("readback fault 前無法讀取已寫入 journal："+failure); }
+        if(probe.config.phase().equals("readback-crash")) probe.freezeSave=true;
+        throw new IllegalStateException("M4 owned-root 受控 journal readback fault（已寫入後）");
+    }
     public static boolean suppressJournalSave(Path path) {
         var probe=active;
         return probe!=null && probe.freezeSave && path.toAbsolutePath().normalize().equals(probe.data("quantumchamber_sessions.dat").toAbsolutePath().normalize());
@@ -409,6 +610,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         require(original.equals(record()) && journal.isDirty(),"dirty window 必須保留上一份 flushed authority");
         var current=journal.records().get(sid);
         require(!current.equals(original),"必須真建立 dirty current");
+        // fix1 契約：失敗的 checked 提交先由 ledger owner 還原；凍結窗口內只可殘留以 flushed authority 建立的 RETURNING 進度。
+        require(sameReceipt(original,current) && current.state()==SessionState.RETURNING,"dirty 窗口不得殘留未 checked candidate／selection");
         require(record().candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable,"dirty selection 不得成為 durable SELECTED");
         require(pages.selectableDoors(sid).isEmpty(),"dirty window 不得發布 selectable door");
         var disk=SessionRecoveryState.fromNbt(SessionJournalStore.read(data("quantumchamber_sessions.dat")).getCompound("data"));
@@ -423,7 +626,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         proof.put("noUniverseAllocation",true); proof.put("damagedBytesPreserved",damaged==null || hash(damaged).equals(damagedHash));
         proof.put("universeAfter",universeEvidence());
         require(proof.get("universeBefore").equals(proof.get("universeAfter")),"M4 前後 catalog records／bytes／world keys 必須完全相同");
-        proof.put("candidateCount",sid==null ? 0 : record().candidateLedger().size());
+        var finalRecord=sid==null ? null : record();
+        proof.put("candidateCount",finalRecord==null ? 0 : finalRecord.candidateLedger().size());
         passed=true; stop();
     }
     private void stop() { finished=true; proof.put("stopRequested",true); server.stop(false); }
@@ -437,7 +641,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             proof.put("damagedBytesPreserved",true);
             if(sid!=null && !config.phase().startsWith("entropy") && !config.phase().equals("discovery-corrupt"))
                 proof.put("finalJournalHash",hash(data("quantumchamber_sessions.dat")));
-            if(config.phase().equals("verify")) require(hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),"第三 JVM 重抽 entropy");
+            if(Set.of("verify","selection-fault-restart","dormant-reentry").contains(config.phase()))
+                require(hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),"重啟 JVM 重抽 entropy");
         });
         proof.put("status",passed && failures.isEmpty() && Boolean.TRUE.equals(proof.get("stoppingSeen")) ? "PASS" : "FAIL");
         write(config.evidence().resolve("final.json"),JSON.toJson(proof)); event("stopped"); active=null; nativeFault=null;
@@ -464,7 +669,10 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 "worldKeys",java.util.stream.StreamSupport.stream(server.getWorlds().spliterator(),false)
                         .map(world -> world.getRegistryKey().getValue().toString()).sorted().toList());
     }
-    private ChamberControllerBlockEntity controller() { return source.getBlockEntity(frame.controllerPos()) instanceof ChamberControllerBlockEntity c ? c : null; }
+    private ChamberControllerBlockEntity controller() { return controllerAt(frame); }
+    private ChamberControllerBlockEntity controllerAt(ChamberFrame chamberFrame) {
+        return source.getBlockEntity(chamberFrame.controllerPos()) instanceof ChamberControllerBlockEntity c ? c : null;
+    }
     private Path data(String file) { return config.root().resolve("world/data").resolve(file); }
     private static boolean sameReceipt(SessionRecoveryRecord a,SessionRecoveryRecord b) {
         return a.sessionUuid().equals(b.sessionUuid()) && a.origin().equals(b.origin()) && a.candidateContext().equals(b.candidateContext())
@@ -487,7 +695,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             String prefix="quantumchamber.m4recovery.";
             String phase=System.getProperty(prefix+"phase",""),nonce=System.getProperty(prefix+"nonce",""),startup=System.getProperty(prefix+"startupNonce","");
             String supplied=System.getProperty(prefix+"root","");
-            if(!Set.of("select","recover","verify","low","buff","disconnect","dirty-candidate","dirty-selection","entropy-missing","entropy-corrupt","discovery-corrupt","journal-corrupt","native-write-fail","recover-after-write-fail").contains(phase)
+            if(!Set.of("select","recover","verify","low","buff","disconnect","dirty-candidate","dirty-selection","entropy-missing","entropy-corrupt","discovery-corrupt","journal-corrupt","native-write-fail","recover-after-write-fail",
+                    "selection-flush-fault","readback-fault","readback-crash","selection-fault-restart","dormant-reentry").contains(phase)
                     || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*") || nonce.equals("disabled") || !startup.matches("[0-9a-f]{32}") || supplied.isBlank()) return null;
             try {
                 var root=Path.of(supplied).toRealPath();
