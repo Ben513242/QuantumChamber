@@ -1,5 +1,6 @@
 package dev.quantumchamber.gametest;
 
+import com.sun.jna.Platform;
 import dev.quantumchamber.candidate.CandidateSelection;
 import dev.quantumchamber.candidate.SourceFamilyRef;
 import dev.quantumchamber.corridor.*;
@@ -30,9 +31,19 @@ public final class M4CandidateDoorGameTests {
     private static InitialFlushFaultProbe initialFlushFaultProbe;
     private static final String LOCKED_MESSAGE="量子候選已鎖定，等待塌縮";
 
+    /**
+     * 比照 M2 `_windows` 平台契約：真入場需要 Windows 原生玩家 checkpoint，非 Windows 在 per-test baseline 之前完成，
+     * 不寫 receipt、不佔走廊容量；Windows 覆蓋由 CI 必要清單要求實際通過。
+     */
+    private static void platformSkip(TestContext context,String name) {
+        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：{} 需要 Windows 原生玩家 checkpoint",name);
+        context.complete();
+    }
+
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_first_wins",tickLimit=100000)
-    public void native_selection_all_25_cells_first_wins_and_measured_freeze(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_selection_all_25_cells_first_wins_and_measured_freeze");
+    public void native_selection_all_25_cells_first_wins_and_measured_freeze_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_selection_all_25_cells_first_wins_and_measured_freeze_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_selection_all_25_cells_first_wins_and_measured_freeze_windows");
         nativeCandidates(context,2,(fixture,tick) -> {
             var before=fixture.record(); var sid=before.sessionUuid();
             var mappings=fixture.pages.currentMappings(sid); var view=mappings.instances().getFirst();
@@ -80,8 +91,9 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_rejections",tickLimit=100000)
-    public void native_selection_rejects_identity_bbox_cohort_source_and_incomplete(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_selection_rejects_identity_bbox_cohort_source_and_incomplete");
+    public void native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows");
         nativeCandidates(context,2,(fixture,tick) -> {
             var initial=fixture.record(); var sid=initial.sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
             var key=new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL); var pos=cell(view,key,1,1);
@@ -140,19 +152,22 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_flush_before",tickLimit=100000)
-    public void native_selection_flush_failure_never_sends_success(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_selection_flush_failure_never_sends_success");
+    public void native_selection_flush_failure_never_sends_success_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_selection_flush_failure_never_sends_success_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_selection_flush_failure_never_sends_success_windows");
         selectionFailure(context,"before");
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_flush_after",tickLimit=100000)
-    public void native_selection_readback_failure_never_sends_success(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_selection_readback_failure_never_sends_success");
+    public void native_selection_readback_failure_never_sends_success_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_selection_readback_failure_never_sends_success_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_selection_readback_failure_never_sends_success_windows");
         selectionFailure(context,"after");
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_fault_other_flush",tickLimit=100000)
-    public void native_selection_fault_never_admitted_by_other_session_flush_or_native_save(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_selection_fault_never_admitted_by_other_session_flush_or_native_save");
+    public void native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows");
         nativeCandidates(context,1,(fixture,tick) -> {
             var before=fixture.record(); var sid=before.sessionUuid(); var connection=fixture.players.getFirst();
             var pos=cell(fixture.pages.currentMappings(sid).instances().getFirst(),new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1);
@@ -187,8 +202,9 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_batch_fault_returning",tickLimit=100000)
-    public void native_candidate_batch_fault_converges_to_checked_returning(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_candidate_batch_fault_converges_to_checked_returning");
+    public void native_candidate_batch_fault_converges_to_checked_returning_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_candidate_batch_fault_converges_to_checked_returning_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_candidate_batch_fault_converges_to_checked_returning_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         var probe=new BatchFaultProbe(fixture); batchFaultProbe=probe;
         context.waitAndRun(2,fixture::power);
@@ -218,8 +234,9 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_start_flush_fault",tickLimit=100000)
-    public void native_start_initial_flush_fault_rejects_without_residue(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_start_initial_flush_fault_rejects_without_residue");
+    public void native_start_initial_flush_fault_rejects_without_residue_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_start_initial_flush_fault_rejects_without_residue_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_start_initial_flush_fault_rejects_without_residue_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         var probe=new InitialFlushFaultProbe(fixture);
         context.waitAndRun(2,() -> {
@@ -251,8 +268,9 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_dormant_other_chamber",tickLimit=100000)
-    public void dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber");
+    public void dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         context.waitAndRun(2,() -> {
             var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player().getUuid();
@@ -285,8 +303,9 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_busy_participant_start",tickLimit=100000)
-    public void busy_participant_start_rejected_before_any_reservation(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"busy_participant_start_rejected_before_any_reservation");
+    public void busy_participant_start_rejected_before_any_reservation_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"busy_participant_start_rejected_before_any_reservation_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"busy_participant_start_rejected_before_any_reservation_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         context.waitAndRun(2,() -> {
             var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player();
@@ -372,8 +391,9 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_unflushed",tickLimit=100000)
-    public void native_selection_cannot_use_candidate_before_checked_batch_readback(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_selection_cannot_use_candidate_before_checked_batch_readback");
+    public void native_selection_cannot_use_candidate_before_checked_batch_readback_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_selection_cannot_use_candidate_before_checked_batch_readback_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_selection_cannot_use_candidate_before_checked_batch_readback_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         var probe=new CandidatePublishProbe(fixture); publishProbe=probe;
         context.waitAndRun(2,fixture::power);
@@ -400,8 +420,9 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_mapping_windows",tickLimit=100000)
-    public void native_selection_rejects_pending_batch_retired_and_unready_mapping(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_selection_rejects_pending_batch_retired_and_unready_mapping");
+    public void native_selection_rejects_pending_batch_retired_and_unready_mapping_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_selection_rejects_pending_batch_retired_and_unready_mapping_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_selection_rejects_pending_batch_retired_and_unready_mapping_windows");
         nativeCandidates(context,1,(fixture,tick) -> {
             var sid=fixture.record().sessionUuid(); var pages=fixture.pages; var old=pages.currentMappings(sid);
             var key=new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL); var oldCell=cell(old.instances().getFirst(),key,1,1);
@@ -508,23 +529,27 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m4_doors_north", tickLimit=100000)
-    public void north_complete_doors_recycle_split_merge_and_seam(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"north_complete_doors_recycle_split_merge_and_seam");
+    public void north_complete_doors_recycle_split_merge_and_seam_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"north_complete_doors_recycle_split_merge_and_seam_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"north_complete_doors_recycle_split_merge_and_seam_windows");
         completeDoors(context,Direction.NORTH,true);
     }
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m4_doors_east", tickLimit=100000)
-    public void east_complete_doors_require_checked_ledger(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"east_complete_doors_require_checked_ledger");
+    public void east_complete_doors_require_checked_ledger_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"east_complete_doors_require_checked_ledger_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"east_complete_doors_require_checked_ledger_windows");
         completeDoors(context,Direction.EAST,false);
     }
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m4_doors_south", tickLimit=100000)
-    public void south_complete_doors_require_checked_ledger(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"south_complete_doors_require_checked_ledger");
+    public void south_complete_doors_require_checked_ledger_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"south_complete_doors_require_checked_ledger_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"south_complete_doors_require_checked_ledger_windows");
         completeDoors(context,Direction.SOUTH,false);
     }
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m4_doors_west", tickLimit=100000)
-    public void west_complete_doors_require_checked_ledger(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"west_complete_doors_require_checked_ledger");
+    public void west_complete_doors_require_checked_ledger_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"west_complete_doors_require_checked_ledger_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"west_complete_doors_require_checked_ledger_windows");
         completeDoors(context,Direction.WEST,false);
     }
 
@@ -745,14 +770,16 @@ public final class M4CandidateDoorGameTests {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_authority_rejection",tickLimit=100000)
-    public void unhealthy_authorities_reject_before_reservation(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"unhealthy_authorities_reject_before_reservation");
+    public void unhealthy_authorities_reject_before_reservation_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"unhealthy_authorities_reject_before_reservation_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"unhealthy_authorities_reject_before_reservation_windows");
         authorityRejections(context,false);
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_legacy_runtime",tickLimit=100000)
-    public void isolated_legacy_schema2_then_empty_schema3_authority_gates(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"isolated_legacy_schema2_then_empty_schema3_authority_gates");
+    public void isolated_legacy_schema2_then_empty_schema3_authority_gates_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"isolated_legacy_schema2_then_empty_schema3_authority_gates_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"isolated_legacy_schema2_then_empty_schema3_authority_gates_windows");
         authorityRejections(context,true);
     }
 
@@ -911,8 +938,9 @@ public final class M4CandidateDoorGameTests {
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m4_candidate_context", tickLimit=100000)
-    public void native_start_freezes_candidate_context_before_geometry(TestContext context) {
-        M4PerTestUniverseProbe.begin(context,"native_start_freezes_candidate_context_before_geometry");
+    public void native_start_freezes_candidate_context_before_geometry_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_start_freezes_candidate_context_before_geometry_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_start_freezes_candidate_context_before_geometry_windows");
         var fixture = new M2CorridorGameTests.NativeEntry(context, 1, Direction.NORTH);
         context.waitAndRun(2, fixture::power);
         when(context, 3, () -> fixture.record() != null, tick -> {

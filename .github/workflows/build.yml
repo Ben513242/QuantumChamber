@@ -105,6 +105,33 @@ jobs:
               throw "必要 Windows 原生 GameTest 未實際通過：$testName"
             }
           }
+          # M4 候選門真入場需要原生 checkpoint；非 Windows 以 `_windows` 平台略過，Windows 必須實際通過。
+          # legacy 專用 batch 只在 runGameTestLegacy 執行，不在此清單。
+          $requiredM4GameTests = @(
+            'native_selection_all_25_cells_first_wins_and_measured_freeze_windows',
+            'native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows',
+            'native_selection_flush_failure_never_sends_success_windows',
+            'native_selection_readback_failure_never_sends_success_windows',
+            'native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows',
+            'native_candidate_batch_fault_converges_to_checked_returning_windows',
+            'native_start_initial_flush_fault_rejects_without_residue_windows',
+            'dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows',
+            'busy_participant_start_rejected_before_any_reservation_windows',
+            'native_selection_cannot_use_candidate_before_checked_batch_readback_windows',
+            'native_selection_rejects_pending_batch_retired_and_unready_mapping_windows',
+            'north_complete_doors_recycle_split_merge_and_seam_windows',
+            'east_complete_doors_require_checked_ledger_windows',
+            'south_complete_doors_require_checked_ledger_windows',
+            'west_complete_doors_require_checked_ledger_windows',
+            'unhealthy_authorities_reject_before_reservation_windows',
+            'native_start_freezes_candidate_context_before_geometry_windows'
+          )
+          foreach ($testName in $requiredM4GameTests) {
+            $node = $gameTests.SelectSingleNode("//testcase[@name='m4candidatedoorgametests.$testName']")
+            if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.skipped) {
+              throw "必要 Windows 原生 M4 GameTest 未實際通過：$testName"
+            }
+          }
       - name: 上傳 Windows 原生測試證據
         if: always()
         uses: actions/upload-artifact@v4
