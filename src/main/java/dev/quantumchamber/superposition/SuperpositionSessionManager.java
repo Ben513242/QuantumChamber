@@ -186,12 +186,14 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             if(runtime.state==SessionState.SUPERPOSITION) {
                 try {
                     if(!sourceAuthority(runtime) || !CorridorPageManager.forServer(owner).activeCohortHasBuff(runtime.initial.sessionUuid()))
-                        throw new IllegalStateException("活動中的來源身分或完整cohort效果失效");
+                        throw buffLapsed(runtime) ? new CohortBuffLapsed("凍結 cohort 有成員的 QuantumState 已到期或被解除")
+                                : new IllegalStateException("活動中的來源身分或完整cohort效果失效");
                 } catch(RuntimeException failure) { fail(runtime,failure); continue; }
             }
             if(runtime.state!=SessionState.ARMING) continue;
             try {
-                if(!eligible(runtime)) throw new IllegalStateException("準備期間來源身分／cohort／全員資格改變");
+                if(!eligible(runtime)) throw buffLapsed(runtime) ? new CohortBuffLapsed("準備期間凍結 cohort 有成員的 QuantumState 已到期或被解除")
+                        : new IllegalStateException("準備期間來源身分／cohort／全員資格改變");
                 var pages=CorridorPageManager.forServer(owner);
                 if(!pages.ready(runtime.prepared)) continue;
                 enter(runtime,pages);
@@ -360,8 +362,23 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         }
         try { returning(durable==null ? runtime.initial : durable); sourceTicket(runtime.initial); }
         catch(RuntimeException persistence) { failure.addSuppressed(persistence); }
-        org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("入場交易保留 RETURNING，效果恢復決策={}，session={}",restore,
-                runtime.initial.sessionUuid(),failure);
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        // Buff 自然到期或喝牛奶是規則內的整組返還，不附 stack；rollback／落盤等任何附帶失敗仍視為故障記 WARN＋stack。
+        if(failure instanceof CohortBuffLapsed && failure.getSuppressed().length==0)
+            logger.info("凍結 cohort 的 QuantumState 已失效，依規則整組安全返還（正常結束，非故障）：session={}，效果恢復決策={}，原因={}",
+                    runtime.initial.sessionUuid(),restore,failure.getMessage());
+        else logger.warn("入場交易保留 RETURNING，效果恢復決策={}，session={}",restore,runtime.initial.sessionUuid(),failure);
+    }
+    /** 來源權威仍有效，且至少一位在線、存活的凍結參與者已沒有 QuantumState（自然到期或被牛奶解除）。 */
+    private boolean buffLapsed(SuperpositionSession runtime) {
+        return sourceAuthority(runtime) && runtime.initial.participants().stream().anyMatch(person -> {
+            var player=server.getPlayerManager().getPlayer(person.playerUuid());
+            return player!=null && !player.isRemoved() && player.isAlive() && !player.hasStatusEffect(ModEffects.QUANTUM_STATE);
+        });
+    }
+    /** 規則內的整組返還原因（Buff 到期／喝牛奶）；只用來分流 log 等級，返還流程與其他失敗完全相同。 */
+    private static final class CohortBuffLapsed extends IllegalStateException {
+        CohortBuffLapsed(String message) { super(message); }
     }
     private void returning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.MEASURED) { recovery.requestMeasuredRecovery(record.sessionUuid()); return; }

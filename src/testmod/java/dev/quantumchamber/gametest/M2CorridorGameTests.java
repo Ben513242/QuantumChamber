@@ -871,6 +871,42 @@ public final class M2CorridorGameTests implements FabricGameTest {
             },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
         });
     }
+    /** 正常 Buff 到期／喝牛奶觸發的整組返還記 INFO、不附 stack；SUPERPOSITION 與 ARMING 兩種路徑都不得以 WARN＋stack 冒充故障。 */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_normal_end_info",tickLimit=100000)
+    public void native_buff_loss_return_logs_info_without_stack_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_buff_loss_return_logs_info_without_stack_windows");
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var first=fixture.record(); var player=fixture.players.getFirst().player();
+            var capture=new LogCapture("quantumchamber");
+            drink(context,player,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+            java.util.function.BooleanSupplier idle=() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                    .presence(fixture.server,first.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE;
+            when(context,tick+1,idle,idleTick -> {
+                player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE,1_000_000));
+                when(context,idleTick+1,() -> fixture.record()!=null && fixture.record().state()==SessionState.ARMING,armingTick -> {
+                    var second=fixture.record();
+                    player.removeStatusEffect(ModEffects.QUANTUM_STATE);
+                    when(context,armingTick+1,idle,doneTick -> {
+                        var witness=new java.util.LinkedHashMap<String,Boolean>();
+                        for(var entry : Map.of("superposition",first.sessionUuid(),"arming",second.sessionUuid()).entrySet()) {
+                            var infos=capture.matching(org.apache.logging.log4j.Level.INFO,"正常結束",entry.getValue().toString());
+                            var warns=capture.matching(org.apache.logging.log4j.Level.WARN,entry.getValue().toString());
+                            witness.put(entry.getKey()+"InfoWithoutStack",infos.size()==1 && infos.getFirst().thrown()==null);
+                            witness.put(entry.getKey()+"NoWarn",warns.isEmpty());
+                        }
+                        capture.close();
+                        context.assertTrue(!witness.containsValue(false),"正常 Buff 失效返還必須記 INFO 不附 stack："+witness);
+                        fixture.power();
+                        when(context,doneTick+1,() -> dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),off -> {
+                            fixture.close(); M4PerTestUniverseProbe.complete(context);
+                        });
+                    });
+                });
+            });
+        });
+    }
     private static final Map<net.minecraft.server.MinecraftServer,TeleportExceptionFault> TELEPORT_FAULTS=new java.util.IdentityHashMap<>();
     private static final class TeleportExceptionFault {
         final UUID player; final net.minecraft.server.world.ServerWorld destination; int hits; boolean armed=true;
