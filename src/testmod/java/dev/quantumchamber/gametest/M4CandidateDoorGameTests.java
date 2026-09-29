@@ -334,6 +334,66 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
+    /**
+     * MEASURED 清理遇持續原生存檔失敗：checkpoint 依 per-space 20→40→… tick 指數退避、同一原因的 WARN 只附一次 stack；
+     * 故障解除後完成 DORMANT，selection receipt 與 fail-closed 契約不變。GameTest server 不以 20 TPS 節流，故以 server tick 計數。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_ifix1_checkpoint_backoff",tickLimit=100000)
+    public void native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows");
+        nativeCandidates(context,1,(fixture,tick) -> {
+            var sid=fixture.record().sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
+            var player=fixture.players.getFirst().player();
+            var selected=use(fixture,cell(view,new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1),player);
+            context.assertTrue(selected.isAccepted() && fixture.record().state()==SessionState.MEASURED,"真側門 checked SELECTED 後才進入 MEASURED 清理");
+            var probe=new CheckpointFaultProbe(sid); checkpointFaultProbe=probe;
+            var capture=new LogCapture("quantumchamber");
+            player.removeStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE);
+            whenWithin(context,tick+1,120,() -> !probe.calls.isEmpty(),first -> {
+                int start=probe.calls.getFirst();
+                whenWithin(context,first+1,120,() -> fixture.server.getTicks()>=start+100,observed -> {
+                    var calls=List.copyOf(probe.calls);
+                    probe.armed=false;
+                    whenWithin(context,observed+1,120,() -> fixture.pages.measuredRecoveryComplete(sid),dormant -> {
+                        var receipt=SessionRecoveryState.get(fixture.server).flushedRecords().get(sid);
+                        var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"MEASURED 保留 receipt 等待安全返還",sid.toString());
+                        capture.close(); checkpointFaultProbe=null;
+                        var gaps=new ArrayList<Integer>(); for(int i=1;i<calls.size();i++) gaps.add(calls.get(i)-calls.get(i-1));
+                        var witness=new LinkedHashMap<String,Boolean>();
+                        witness.put("threeCallsInFirst100Ticks",calls.size()==3);
+                        witness.put("backoffGaps20Then40",gaps.equals(List.of(20,40)));
+                        witness.put("singleWarnWithStack",warnings.size()==1 && warnings.getFirst().thrown()!=null);
+                        witness.put("retriedAfterRecovery",probe.calls.size()>calls.size());
+                        witness.put("dormantAfterRecovery",receipt!=null && MeasuredRecoveryPhase.from(receipt)==MeasuredRecoveryPhase.DORMANT);
+                        witness.put("selectionReceiptKept",receipt!=null && receipt.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected);
+                        witness.put("playerReturnedToSource",player.getServerWorld()==context.getWorld());
+                        context.assertTrue(!witness.containsValue(false),"MEASURED checkpoint 退避／去重／恢復："+witness+" calls="+calls+" gaps="+gaps
+                                +" warnings="+warnings.size()+" totalCalls="+probe.calls.size());
+                        // DORMANT receipt 是本案例自建；取證後移除，避免封鎖後續 batch 的玩家與 Chamber。
+                        M4CandidateTestAccess.removeMeasuredForTeardown(fixture.server,sid);
+                        if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                        whenWithin(context,dormant+1,30,() -> ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
+                            fixture.close(); M4PerTestUniverseProbe.complete(context);
+                        },() -> "DORMANT receipt 移除並 LOW 後來源保護未解除");
+                    },() -> "故障解除後未完成 DORMANT：calls="+probe.calls);
+                },() -> "退避觀察窗口逾時：calls="+probe.calls);
+            },() -> "MEASURED checkpoint 未被呼叫");
+        });
+    }
+    private static CheckpointFaultProbe checkpointFaultProbe;
+    /** testmod mixin 在 MeasuredWorldSaveCheckpoint.save 開頭呼叫；只對 own SID 記錄 tick，故障窗口內受控失敗。 */
+    public static void beforeMeasuredCheckpoint(MinecraftServer server,SessionRecoveryRecord record) {
+        var probe=checkpointFaultProbe;
+        if(probe==null || !server.isOnThread() || !probe.sid.equals(record.sessionUuid())) return;
+        probe.calls.add(server.getTicks());
+        if(probe.armed) throw new IllegalStateException("M4 GameTest 受控 MEASURED 原生存檔 checkpoint 失敗");
+    }
+    private static final class CheckpointFaultProbe {
+        final UUID sid; final List<Integer> calls=new ArrayList<>(); boolean armed=true;
+        CheckpointFaultProbe(UUID sid) { this.sid=sid; }
+    }
+
     /** 空間、slot、page、來源票與 runtime session 的可比較快照；只讀 testmod reflection。 */
     static List<?> runtimeOwnership(M2CorridorGameTests.NativeEntry fixture) {
         var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();

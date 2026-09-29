@@ -57,6 +57,7 @@ public final class CorridorPageManager {
     }
     private static CorridorPageManager active;
     private static final ChunkTicketType<UUID> TICKET=ChunkTicketType.create("quantumchamber_corridor",Comparator.comparing(UUID::toString));
+    private static final int CHECKPOINT_RETRY_MIN_TICKS=20, CHECKPOINT_RETRY_MAX_TICKS=1200;
     private MinecraftServer server;
     private ServerWorld world;
     private SessionRecoveryState journal;
@@ -838,6 +839,11 @@ public final class CorridorPageManager {
             var expected=record.withProgress(record.participants(),List.of(),SessionState.MEASURED,record.restoreEntryEffectOnReturn());
             var current=journal.records().get(space.id);
             if(!record.equals(current) && !expected.equals(current)) throw new IllegalStateException("dirty authority 不可經 cleanup 落盤");
+            // 原生存檔 checkpoint 失敗後依 per-space 指數退避；receipt 改變視為新狀態，立即重試。退避期間不做整段 AIR 掃描或全服存檔。
+            if(space.finalizing==null && space.checkpointFailedFor!=null) {
+                if(!space.checkpointFailedFor.equals(record)) resetCheckpointBackoff(space);
+                else if(server.getTicks()<space.checkpointRetryTick) return;
+            }
             if(space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty())) return;
             for(var lease : space.leases.values()) if(!clear(space,lease.slotId(),lease.bounds())) return;
             // 清除 iterator 完成後再查完整範圍；不能把曾寫 AIR 當成目前已清空。
@@ -849,7 +855,12 @@ public final class CorridorPageManager {
             if(space.finalizing==null) {
                 // receipt 仍持有完整 lease 時，先同步保存來源 pins 與已清空的走廊世界。
                 // crash 若發生於此處，重啟仍有 lease 可重做清理；空 receipt 不可早於 native 世界存檔。
-                MeasuredWorldSaveCheckpoint.save(server,record);
+                try { MeasuredWorldSaveCheckpoint.save(server,record); }
+                catch(RuntimeException failure) { scheduleCheckpointRetry(space,record); throw failure; }
+                if(space.checkpointFailures>0) org.slf4j.LoggerFactory.getLogger("quantumchamber").info(
+                        "MEASURED 原生存檔 checkpoint 已恢復，繼續 DORMANT 收尾：session={}，先前連續失敗 {} 次（同一原因的 WARN 已去重）",
+                        space.id,space.checkpointFailures);
+                resetCheckpointBackoff(space);
                 space.finalizing=expected;
             }
             journal.put(expected); journal.flush(server);
@@ -857,6 +868,15 @@ public final class CorridorPageManager {
         }
         for(int slot : space.leases.keySet()) { releaseTickets(space,slot); allocator.release(slot); protectedLeases.remove(slot); }
         spaces.remove(space.id);
+    }
+    /** MEASURED 原生存檔 checkpoint 失敗：per-space 20→40→…→1200 ticks 指數退避，避免持續失敗時每 tick 全服 flush 存檔。 */
+    private void scheduleCheckpointRetry(Space space,SessionRecoveryRecord record) {
+        space.checkpointBackoff=space.checkpointBackoff==0 ? CHECKPOINT_RETRY_MIN_TICKS : Math.min(space.checkpointBackoff*2,CHECKPOINT_RETRY_MAX_TICKS);
+        space.checkpointRetryTick=server.getTicks()+space.checkpointBackoff;
+        space.checkpointFailedFor=record; space.checkpointFailures++;
+    }
+    private static void resetCheckpointBackoff(Space space) {
+        space.checkpointBackoff=0; space.checkpointRetryTick=0; space.checkpointFailedFor=null; space.checkpointFailures=0;
     }
     private boolean clear(Space space, int slot, BlockBox bounds) {
         if (space.cleared.contains(slot)) return true;
@@ -1008,7 +1028,7 @@ public final class CorridorPageManager {
             try {
                 if(record.state()==SessionState.MEASURED) {
                     requestMeasuredRecovery(space.id);
-                    org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("MEASURED 保留 receipt 等待安全返還：{}",space.id,failure);
+                    warnMeasured(space,failure);
                     return;
                 }
                 if(!journal.recoveryWritesSafe()) throw new IllegalStateException("dirty candidate authority 不可經 fault recovery 承認");
@@ -1022,6 +1042,17 @@ public final class CorridorPageManager {
             } catch (RuntimeException persistenceFailure) { failure.addSuppressed(persistenceFailure); }
         }
         org.slf4j.LoggerFactory.getLogger("quantumchamber").error("走廊保留租約等待安全返還：{}",space.id,failure);
+    }
+    /** MEASURED 保留 receipt 會 fail-closed 持續重試；同一原因只第一次附 stack，之後只計數，原因改變時補記前一原因的重複次數。 */
+    private static void warnMeasured(Space space,Exception failure) {
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        var cause=failure.getClass().getName()+": "+failure.getMessage();
+        if(cause.equals(space.measuredFailure)) { space.measuredFailureRepeats++; return; }
+        if(space.measuredFailure!=null && space.measuredFailureRepeats>0)
+            logger.warn("MEASURED 保留 receipt 的前一失敗原因另重複 {} 次（未重複記錄 stack）：session={} cause={}",
+                    space.measuredFailureRepeats,space.id,space.measuredFailure);
+        space.measuredFailure=cause; space.measuredFailureRepeats=0;
+        logger.warn("MEASURED 保留 receipt 等待安全返還：{}",space.id,failure);
     }
     private static Set<UUID> ids(List<SessionRecoveryRecord.Participant> people) {
         return people.stream().map(SessionRecoveryRecord.Participant::playerUuid).collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -1096,6 +1127,8 @@ public final class CorridorPageManager {
         SessionRecoveryRecord finalizing,authority;
         Map<DoorKey,MappingRef> selectable=Map.of();
         int candidateTick=Integer.MIN_VALUE;
+        int checkpointBackoff,checkpointRetryTick,checkpointFailures; SessionRecoveryRecord checkpointFailedFor;
+        String measuredFailure; int measuredFailureRepeats;
         Space(UUID id,ChamberOriginAuthority origin,List<SessionRecoveryRecord.Participant> source,SessionSemantics semantics) {
             this.id=id; this.origin=origin; this.source=List.copyOf(source); this.semantics=Objects.requireNonNull(semantics);
         }
