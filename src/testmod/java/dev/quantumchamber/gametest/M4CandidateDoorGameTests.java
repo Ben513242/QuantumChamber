@@ -347,9 +347,15 @@ public final class M4CandidateDoorGameTests {
             var player=fixture.players.getFirst().player();
             var selected=use(fixture,cell(view,new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1),player);
             context.assertTrue(selected.isAccepted() && fixture.record().state()==SessionState.MEASURED,"真側門 checked SELECTED 後才進入 MEASURED 清理");
+            // checkpoint fault probe 與 log capture 是本測試專用 hook：任一段等待逾時或斷言失敗都必須移除。
+            var hooks=new M2CorridorGameTests.TestHooks();
             var probe=new CheckpointFaultProbe(sid); checkpointFaultProbe=probe;
-            var capture=new LogCapture("quantumchamber");
-            player.removeStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE);
+            hooks.add(() -> { if(checkpointFaultProbe==probe) checkpointFaultProbe=null; });
+            LogCapture capture;
+            try {
+                capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
+                player.removeStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE);
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             whenWithin(context,tick+1,120,() -> !probe.calls.isEmpty(),first -> {
                 int start=probe.calls.getFirst();
                 whenWithin(context,first+1,120,() -> fixture.server.getTicks()>=start+100,observed -> {
@@ -357,8 +363,9 @@ public final class M4CandidateDoorGameTests {
                     probe.armed=false;
                     whenWithin(context,observed+1,120,() -> fixture.pages.measuredRecoveryComplete(sid),dormant -> {
                         var receipt=SessionRecoveryState.get(fixture.server).flushedRecords().get(sid);
-                        var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"MEASURED 保留 receipt 等待安全返還",sid.toString());
-                        capture.close(); checkpointFaultProbe=null;
+                        List<LogCapture.Entry> warnings;
+                        try { warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"MEASURED 保留 receipt 等待安全返還",sid.toString()); }
+                        finally { hooks.release(); }
                         var gaps=new ArrayList<Integer>(); for(int i=1;i<calls.size();i++) gaps.add(calls.get(i)-calls.get(i-1));
                         var witness=new LinkedHashMap<String,Boolean>();
                         witness.put("threeCallsInFirst100Ticks",calls.size()==3);
@@ -376,9 +383,9 @@ public final class M4CandidateDoorGameTests {
                         whenWithin(context,dormant+1,30,() -> ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
                             fixture.close(); M4PerTestUniverseProbe.complete(context);
                         },() -> "DORMANT receipt 移除並 LOW 後來源保護未解除");
-                    },() -> "故障解除後未完成 DORMANT：calls="+probe.calls);
-                },() -> "退避觀察窗口逾時：calls="+probe.calls);
-            },() -> "MEASURED checkpoint 未被呼叫");
+                    },() -> "故障解除後未完成 DORMANT：calls="+probe.calls,hooks);
+                },() -> "退避觀察窗口逾時：calls="+probe.calls,hooks);
+            },() -> "MEASURED checkpoint 未被呼叫",hooks);
         });
     }
     private static CheckpointFaultProbe checkpointFaultProbe;
@@ -1020,15 +1027,25 @@ public final class M4CandidateDoorGameTests {
     /** 有界等待（wall-clock，同 when）：逾時直接附診斷訊息失敗，不讓通用逾時訊息掩蓋 RED 原因。 */
     private static void whenWithin(TestContext context,int tick,int seconds,BooleanSupplier condition,IntConsumer ready,
             java.util.function.Supplier<String> diagnostics) {
-        whenWithinUntil(context,tick,condition,ready,diagnostics,System.nanoTime()+seconds*1_000_000_000L);
+        whenWithinUntil(context,tick,condition,ready,diagnostics,System.nanoTime()+seconds*1_000_000_000L,null);
+    }
+    /** 同上；逾時、斷言失敗或例外時先釋放本測試安裝的 hook，避免殘留到同一 server 的後續 batch。 */
+    private static void whenWithin(TestContext context,int tick,int seconds,BooleanSupplier condition,IntConsumer ready,
+            java.util.function.Supplier<String> diagnostics,M2CorridorGameTests.TestHooks hooks) {
+        whenWithinUntil(context,tick,condition,ready,diagnostics,System.nanoTime()+seconds*1_000_000_000L,hooks);
     }
     private static void whenWithinUntil(TestContext context,int tick,BooleanSupplier condition,IntConsumer ready,
-            java.util.function.Supplier<String> diagnostics,long deadline) {
+            java.util.function.Supplier<String> diagnostics,long deadline,M2CorridorGameTests.TestHooks hooks) {
         context.runAtTick(tick,() -> {
-            if(condition.getAsBoolean()) ready.accept(tick);
-            else {
-                context.assertTrue(System.nanoTime()<deadline,"有界等待逾時："+diagnostics.get());
-                whenWithinUntil(context,tick+1,condition,ready,diagnostics,deadline);
+            try {
+                if(condition.getAsBoolean()) ready.accept(tick);
+                else {
+                    context.assertTrue(System.nanoTime()<deadline,"有界等待逾時："+diagnostics.get());
+                    whenWithinUntil(context,tick+1,condition,ready,diagnostics,deadline,hooks);
+                }
+            } catch(RuntimeException | Error failure) {
+                if(hooks!=null) hooks.releaseAfter(failure);
+                throw failure;
             }
         });
     }

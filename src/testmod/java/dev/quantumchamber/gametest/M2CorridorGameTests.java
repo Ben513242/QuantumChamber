@@ -938,32 +938,37 @@ public final class M2CorridorGameTests implements FabricGameTest {
         var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
         when(context,3,fixture::activeReady,tick -> {
             var initial=fixture.record(); var player=fixture.players.getFirst().player(); var id=player.getUuid();
-            var capture=new LogCapture("quantumchamber");
+            // teleport fault 與 log capture 是本測試專用 hook：斷言失敗或等待逾時也必須移除，不得殘留到後續 batch。
+            var hooks=new TestHooks();
+            var capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
             var fault=new TeleportExceptionFault(id,context.getWorld()); TELEPORT_FAULTS.put(fixture.server,fault);
-            fixture.power();
+            hooks.add(() -> TELEPORT_FAULTS.remove(fixture.server,fault));
+            try { fixture.power(); } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             whenUntil(context,tick+1,() -> fault.hits>=5,faulted -> {
-                fault.armed=false;
-                var transfer=capture.matching(org.apache.logging.log4j.Level.WARN,"原生移動例外",id.toString());
-                var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還移動尚未確認",initial.sessionUuid().toString(),id.toString());
-                var witness=new java.util.LinkedHashMap<String,Boolean>();
-                witness.put("repeatedAttempts",fault.hits>=5);
-                witness.put("transferWarnOnce",transfer.size()==1);
-                witness.put("transferKeepsCause",transfer.size()==1 && transfer.getFirst().thrown()!=null
-                        && String.valueOf(transfer.getFirst().thrown().getMessage()).contains("受控原生 teleport 例外"));
-                witness.put("transferNamesWorlds",transfer.size()==1 && transfer.getFirst().message().contains("quantumchamber:superposition")
-                        && transfer.getFirst().message().contains(context.getWorld().getRegistryKey().getValue().toString()));
-                witness.put("recoveryPendingWarnOnce",pending.size()==1);
-                context.assertTrue(!witness.containsValue(false),"移動例外必須保留 cause 並去重記錄："+witness+" hits="+fault.hits
-                        +" transfer="+transfer.size()+" pending="+pending.size());
+                var witness=new java.util.LinkedHashMap<String,Boolean>(); int hits; int transferCount; int pendingCount;
+                try {
+                    fault.armed=false; hits=fault.hits;
+                    var transfer=capture.matching(org.apache.logging.log4j.Level.WARN,"原生移動例外",id.toString());
+                    var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還移動尚未確認",initial.sessionUuid().toString(),id.toString());
+                    transferCount=transfer.size(); pendingCount=pending.size();
+                    witness.put("repeatedAttempts",hits>=5);
+                    witness.put("transferWarnOnce",transfer.size()==1);
+                    witness.put("transferKeepsCause",transfer.size()==1 && transfer.getFirst().thrown()!=null
+                            && String.valueOf(transfer.getFirst().thrown().getMessage()).contains("受控原生 teleport 例外"));
+                    witness.put("transferNamesWorlds",transfer.size()==1 && transfer.getFirst().message().contains("quantumchamber:superposition")
+                            && transfer.getFirst().message().contains(context.getWorld().getRegistryKey().getValue().toString()));
+                    witness.put("recoveryPendingWarnOnce",pending.size()==1);
+                } finally { hooks.release(); }
+                context.assertTrue(!witness.containsValue(false),"移動例外必須保留 cause 並去重記錄："+witness+" hits="+hits
+                        +" transfer="+transferCount+" pending="+pendingCount);
                 when(context,faulted+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
                         .presence(fixture.server,initial.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,done -> {
                     try {
-                        TELEPORT_FAULTS.remove(fixture.server,fault); capture.close();
                         context.assertTrue(player.getServerWorld()==context.getWorld(),"故障解除後由真 backend 正常返還來源艙");
                         M4PerTestUniverseProbe.complete(context);
                     } finally { fixture.close(); }
                 });
-            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30),hooks);
         });
     }
     /** 正常 Buff 到期／喝牛奶觸發的整組返還記 INFO、不附 stack；SUPERPOSITION 與 ARMING 兩種路徑都不得以 WARN＋stack 冒充故障。 */
@@ -974,8 +979,11 @@ public final class M2CorridorGameTests implements FabricGameTest {
         var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
         when(context,3,fixture::activeReady,tick -> {
             var first=fixture.record(); var player=fixture.players.getFirst().player();
-            var capture=new LogCapture("quantumchamber");
-            drink(context,player,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET));
+            // log capture 是本測試專用 hook：任一段等待逾時或斷言失敗都必須移除。
+            var hooks=new TestHooks();
+            var capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
+            try { drink(context,player,new net.minecraft.item.ItemStack(net.minecraft.item.Items.MILK_BUCKET)); }
+            catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             java.util.function.BooleanSupplier idle=() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
                     .presence(fixture.server,first.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE;
             when(context,tick+1,idle,idleTick -> {
@@ -985,21 +993,22 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     player.removeStatusEffect(ModEffects.QUANTUM_STATE);
                     when(context,armingTick+1,idle,doneTick -> {
                         var witness=new java.util.LinkedHashMap<String,Boolean>();
-                        for(var entry : Map.of("superposition",first.sessionUuid(),"arming",second.sessionUuid()).entrySet()) {
-                            var infos=capture.matching(org.apache.logging.log4j.Level.INFO,"正常結束",entry.getValue().toString());
-                            var warns=capture.matching(org.apache.logging.log4j.Level.WARN,entry.getValue().toString());
-                            witness.put(entry.getKey()+"InfoWithoutStack",infos.size()==1 && infos.getFirst().thrown()==null);
-                            witness.put(entry.getKey()+"NoWarn",warns.isEmpty());
-                        }
-                        capture.close();
+                        try {
+                            for(var entry : Map.of("superposition",first.sessionUuid(),"arming",second.sessionUuid()).entrySet()) {
+                                var infos=capture.matching(org.apache.logging.log4j.Level.INFO,"正常結束",entry.getValue().toString());
+                                var warns=capture.matching(org.apache.logging.log4j.Level.WARN,entry.getValue().toString());
+                                witness.put(entry.getKey()+"InfoWithoutStack",infos.size()==1 && infos.getFirst().thrown()==null);
+                                witness.put(entry.getKey()+"NoWarn",warns.isEmpty());
+                            }
+                        } finally { hooks.release(); }
                         context.assertTrue(!witness.containsValue(false),"正常 Buff 失效返還必須記 INFO 不附 stack："+witness);
                         fixture.power();
                         when(context,doneTick+1,() -> dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),off -> {
                             fixture.close(); M4PerTestUniverseProbe.complete(context);
                         });
-                    });
-                });
-            });
+                    },hooks);
+                },hooks);
+            },hooks);
         });
     }
     /** ARMING 中止只拉回確實被本 session 移動、或目前真的在走廊世界的參與者；從未進走廊的在線成員保持原地。 */
@@ -1012,13 +1021,17 @@ public final class M2CorridorGameTests implements FabricGameTest {
             context.assertEquals(SessionState.ARMING,fixture.record().state(),"先證實 geometry 準備期，尚無人被移動");
             var entries=new java.util.HashSet<UUID>();
             if(CORRIDOR_ENTRIES.putIfAbsent(fixture.server,entries)!=null) throw new IllegalStateException("corridor entry observer 不可重複安裝");
+            // corridor entry observer 是本測試專用 hook：等待逾時或例外也必須移除，否則後續安裝者會連鎖失敗。
+            var hooks=new TestHooks(); hooks.add(() -> CORRIDOR_ENTRIES.remove(fixture.server,entries));
             var walker=fixture.players.get(0).player(); var lapsed=fixture.players.get(1).player();
             var walked=CorridorGeometry.position(fixture.frame,4.5,1,4.5);
-            walker.refreshPositionAndAngles(walked.x,walked.y,walked.z,33,4); walker.setVelocity(Vec3d.ZERO);
             var lapsedPose=lapsed.getPos();
-            lapsed.removeStatusEffect(ModEffects.QUANTUM_STATE);
+            try {
+                walker.refreshPositionAndAngles(walked.x,walked.y,walked.z,33,4); walker.setVelocity(Vec3d.ZERO);
+                lapsed.removeStatusEffect(ModEffects.QUANTUM_STATE);
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             when(context,armingTick+1,fixture::returning,returnTick -> {
-                CORRIDOR_ENTRIES.remove(fixture.server,entries);
+                hooks.release();
                 var witness=new java.util.LinkedHashMap<String,Boolean>();
                 witness.put("nobodyEnteredCorridor",entries.isEmpty());
                 witness.put("walkerKeptItsOwnPose",walker.getServerWorld()==context.getWorld() && walker.getPos().squaredDistanceTo(walked)<1e-12
@@ -1030,7 +1043,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     context.assertTrue(walker.getPos().squaredDistanceTo(walked)<1e-12,"返還收尾也不改寫仍在原艙內的成員位置");
                     M4PerTestUniverseProbe.complete(context);
                 });
-            });
+            },hooks);
         });
     }
     /**
@@ -1045,19 +1058,22 @@ public final class M2CorridorGameTests implements FabricGameTest {
         when(context,3,fixture::activeReady,tick -> {
             var initial=fixture.record(); var player=fixture.players.getFirst().player();
             player.setVelocity(0.25,0,-0.125);
-            var capture=new LogCapture("quantumchamber");
-            fixture.power();
+            // log capture 是本測試專用 hook：等待逾時或斷言失敗也必須移除。
+            var hooks=new TestHooks();
+            var capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
+            try { fixture.power(); } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             when(context,tick+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
                     .presence(fixture.server,initial.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,done -> {
                 try {
-                    var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還移動尚未確認",initial.sessionUuid().toString());
-                    capture.close();
+                    List<LogCapture.Entry> pending;
+                    try { pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還移動尚未確認",initial.sessionUuid().toString()); }
+                    finally { hooks.release(); }
                     context.assertTrue(player.getServerWorld()==context.getWorld() && dev.quantumchamber.chamber.ChamberOccupantService.contains(
                             dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox()),"帶速度的玩家仍由真 backend 返還原艙");
                     context.assertTrue(pending.isEmpty(),"人已在原艙內的 pose 暫態不得記移動失敗 WARN："+pending.size());
                     M4PerTestUniverseProbe.complete(context);
                 } finally { fixture.close(); }
-            });
+            },hooks);
         });
     }
     private static final Map<net.minecraft.server.MinecraftServer,TeleportExceptionFault> TELEPORT_FAULTS=new java.util.IdentityHashMap<>();
@@ -1338,11 +1354,18 @@ public final class M2CorridorGameTests implements FabricGameTest {
             var runtime=M4CandidateDoorGameTests.runtimeOwnership(fixture);
             var poses=fixture.players.stream().map(connection -> List.of(connection.player().getServerWorld(),connection.player().getPos(),
                     connection.player().getYaw(),connection.player().getPitch())).toList();
-            var capture=new LogCapture("quantumchamber");
-            var fault=CheckpointPlatformFault.simulateUnsupported(server);
+            // 平台 fault、corridor entry observer 與 log capture 都是本測試專用 hook：安裝途中例外、等待逾時或斷言失敗都必須全部移除；
+            // 平台 fault 一旦殘留，同一 server 後續所有入場都會被預檢拒絕而連鎖失敗。
+            var hooks=new TestHooks();
+            var fault=CheckpointPlatformFault.simulateUnsupported(server); hooks.add(fault::close);
             var entries=new java.util.HashSet<UUID>();
-            if(CORRIDOR_ENTRIES.putIfAbsent(server,entries)!=null) throw new IllegalStateException("corridor entry observer 不可重複安裝");
-            fixture.power();
+            LogCapture capture;
+            try {
+                if(CORRIDOR_ENTRIES.putIfAbsent(server,entries)!=null) throw new IllegalStateException("corridor entry observer 不可重複安裝");
+                hooks.add(() -> CORRIDOR_ENTRIES.remove(server,entries));
+                capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
+                fixture.power();
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             // 無 record 時至少涵蓋供電當下與兩次 20 tick 週期 refresh；若已建立 session，則觀察到 RETURNING 後再等 40 tick 以證明卡住。
             // GameTest server 不以 20 TPS 節流，入場所需的 chunk 載入受 wall-clock 限制，故 session 路徑以 60 秒 wall-clock 為上限。
             var observed=new int[]{0,-1}; long settleDeadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
@@ -1354,39 +1377,40 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 return record==null ? observed[0]>=45 : observed[1]>=0 && observed[0]-observed[1]>=40 || System.nanoTime()>=settleDeadline;
             };
             whenUntil(context,Math.toIntExact(context.getTick()+1),settled,settledTick -> {
-                CORRIDOR_ENTRIES.remove(server,entries);
-                var chamber=fixture.controller().chamberUuid();
-                var stuck=chamber==null ? null : journal.flushedRecords().values().stream().filter(value -> value.chamberUuid().equals(chamber)).findFirst().orElse(null);
-                var witness=new java.util.LinkedHashMap<String,Boolean>();
-                witness.put("neverMovedIntoCorridor",entries.isEmpty());
-                witness.put("notStuckReturning",stuck==null || stuck.state()!=SessionState.RETURNING);
-                witness.put("powered",context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()));
-                witness.put("noJournalForChamber",chamber!=null && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber))
-                        && journal.flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
-                witness.put("journalUnchanged",records.equals(journal.records()) && flushed.equals(journal.flushedRecords()));
-                witness.put("presenceNone",dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,chamber)
-                        ==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
-                witness.put("noReservationTicketOrRuntimeResidue",runtime.equals(M4CandidateDoorGameTests.runtimeOwnership(fixture)));
-                witness.put("playersNeverMoved",poses.equals(fixture.players.stream().map(connection -> List.of(connection.player().getServerWorld(),
-                        connection.player().getPos(),connection.player().getYaw(),connection.player().getPitch())).toList()));
-                witness.put("effectsKept",fixture.players.stream().allMatch(connection -> connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)));
-                witness.put("repeatedStartAttempts",fault.consulted()>=2);
-                var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"checkpoint 能力預檢");
-                // Windows 模擬從乾淨狀態開始，必須恰好一次；真實非 Windows 可能已由先前 batch 記過同一原因，本窗口不得再記。
-                witness.put("dedupedWarning",Platform.isWindows() ? warnings.size()==1 : warnings.size()<=1);
-                var remembered=M4CandidateTestAccess.get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"checkpointWarning");
-                witness.put("rejectionReasonRemembered",remembered instanceof String reason && reason.contains("非 Windows"));
-                witness.put("chamberReadyNotArmed",fixture.controller().chamberState()==dev.quantumchamber.chamber.ChamberState.READY);
-                fault.close(); capture.close();
+                var witness=new java.util.LinkedHashMap<String,Boolean>(); SessionRecoveryRecord stuck; int warningCount;
+                try {
+                    var chamber=fixture.controller().chamberUuid();
+                    stuck=chamber==null ? null : journal.flushedRecords().values().stream().filter(value -> value.chamberUuid().equals(chamber)).findFirst().orElse(null);
+                    witness.put("neverMovedIntoCorridor",entries.isEmpty());
+                    witness.put("notStuckReturning",stuck==null || stuck.state()!=SessionState.RETURNING);
+                    witness.put("powered",context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()));
+                    witness.put("noJournalForChamber",chamber!=null && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber))
+                            && journal.flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
+                    witness.put("journalUnchanged",records.equals(journal.records()) && flushed.equals(journal.flushedRecords()));
+                    witness.put("presenceNone",dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,chamber)
+                            ==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
+                    witness.put("noReservationTicketOrRuntimeResidue",runtime.equals(M4CandidateDoorGameTests.runtimeOwnership(fixture)));
+                    witness.put("playersNeverMoved",poses.equals(fixture.players.stream().map(connection -> List.of(connection.player().getServerWorld(),
+                            connection.player().getPos(),connection.player().getYaw(),connection.player().getPitch())).toList()));
+                    witness.put("effectsKept",fixture.players.stream().allMatch(connection -> connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)));
+                    witness.put("repeatedStartAttempts",fault.consulted()>=2);
+                    var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"checkpoint 能力預檢");
+                    warningCount=warnings.size();
+                    // Windows 模擬從乾淨狀態開始，必須恰好一次；真實非 Windows 可能已由先前 batch 記過同一原因，本窗口不得再記。
+                    witness.put("dedupedWarning",Platform.isWindows() ? warnings.size()==1 : warnings.size()<=1);
+                    var remembered=M4CandidateTestAccess.get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"checkpointWarning");
+                    witness.put("rejectionReasonRemembered",remembered instanceof String reason && reason.contains("非 Windows"));
+                    witness.put("chamberReadyNotArmed",fixture.controller().chamberState()==dev.quantumchamber.chamber.ChamberState.READY);
+                } finally { hooks.release(); }
                 context.assertTrue(!witness.containsValue(false),"不支援 checkpoint 平台必須在 start() 預檢受控 REJECTED 且零殘留："+witness
-                        +" consulted="+fault.consulted()+" warnings="+warnings.size()+" observedTicks="+observed[0]
+                        +" consulted="+fault.consulted()+" warnings="+warningCount+" observedTicks="+observed[0]
                         +" stuck="+(stuck==null ? "ABSENT" : stuck.state()+"/"+stuck.sessionUuid())+" entered="+entries);
                 fixture.power();
                 when(context,Math.toIntExact(context.getTick()+1),() -> dev.quantumchamber.chamber.ChamberProtectionService.get()
                         .mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
                     fixture.close(); M4PerTestUniverseProbe.complete(context);
                 });
-            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(120));
+            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(120),hooks);
         });
     }
     /** 僅供平台預檢案例：記錄 production 真 move 成功進入固定 Superposition world 的玩家。 */
@@ -2244,22 +2268,65 @@ public final class M2CorridorGameTests implements FabricGameTest {
     private static void when(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready) {
         whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10));
     }
+    /** 同上；逾時、斷言失敗或例外時先釋放本測試安裝的 hook。 */
+    private static void when(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,TestHooks hooks) {
+        whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10),hooks);
+    }
     private static void whenUntil(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,long deadline) {
+        whenUntil(context,tick,condition,ready,deadline,null);
+    }
+    /**
+     * 有限等待。hooks 不為 null 時，condition／ready 丟出（含斷言失敗）或逾時都先釋放本測試安裝的 hook 再讓測試失敗，
+     * 避免 log capture、平台／teleport fault 或 corridor observer 殘留到同一 server 的後續 batch 而連鎖失敗。
+     */
+    private static void whenUntil(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,long deadline,
+            TestHooks hooks) {
         context.runAtTick(tick,() -> {
-            if (condition.getAsBoolean()) ready.accept(tick);
-            else {
-                if (tick>=90000 || System.nanoTime()>=deadline) {
-                    var world=context.getWorld().getServer().getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
-                    var sample=new net.minecraft.util.math.ChunkPos(62,125);
-                    context.assertTrue(false,"有限等待逾時：FULL="+(world.getChunkManager().getWorldChunk(62,125)!=null)
-                            +" loaded="+world.isChunkLoaded(sample.toLong())+" ticking="+world.shouldTick(sample)
-                            +" tickingFuture="+world.getChunkManager().isTickingFutureReady(sample.toLong())
-                            +" chunkDebug="+world.getChunkManager().getChunkLoadingDebugInfo(sample)
-                            +" worldTime="+world.getTime()+" serverTicks="+world.getServer().getTicks()+" own="+waitingLeaseEvidence(context));
+            try {
+                if (condition.getAsBoolean()) ready.accept(tick);
+                else {
+                    if (tick>=90000 || System.nanoTime()>=deadline) {
+                        var world=context.getWorld().getServer().getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
+                        var sample=new net.minecraft.util.math.ChunkPos(62,125);
+                        context.assertTrue(false,"有限等待逾時：FULL="+(world.getChunkManager().getWorldChunk(62,125)!=null)
+                                +" loaded="+world.isChunkLoaded(sample.toLong())+" ticking="+world.shouldTick(sample)
+                                +" tickingFuture="+world.getChunkManager().isTickingFutureReady(sample.toLong())
+                                +" chunkDebug="+world.getChunkManager().getChunkLoadingDebugInfo(sample)
+                                +" worldTime="+world.getTime()+" serverTicks="+world.getServer().getTicks()+" own="+waitingLeaseEvidence(context));
+                    }
+                    whenUntil(context,tick+1,condition,ready,deadline,hooks);
                 }
-                whenUntil(context,tick+1,condition,ready,deadline);
+            } catch (RuntimeException | Error failure) {
+                if (hooks!=null) hooks.releaseAfter(failure);
+                throw failure;
             }
         });
+    }
+    /**
+     * 測試專用 hook（log capture、平台／teleport fault、corridor observer、checkpoint probe）的收尾清單：
+     * 依安裝相反順序釋放，每個動作各自執行、任一失敗不跳過其餘；重複釋放無作用，正常收尾與失敗路徑可共用。
+     */
+    static final class TestHooks {
+        private final java.util.ArrayDeque<Runnable> releases=new java.util.ArrayDeque<>();
+        private boolean released;
+        void add(Runnable release) {
+            if(released) throw new IllegalStateException("測試 hook 已釋放，不可再登記");
+            releases.push(release);
+        }
+        void release() {
+            if(released) return;
+            released=true;
+            RuntimeException failure=null;
+            while(!releases.isEmpty()) {
+                try { releases.pop().run(); }
+                catch(RuntimeException exception) { if(failure==null) failure=exception; else failure.addSuppressed(exception); }
+            }
+            if(failure!=null) throw failure;
+        }
+        /** 失敗路徑：先釋放 hook；釋放本身的例外附在原失敗上，不遮蔽原因。 */
+        void releaseAfter(Throwable failure) {
+            try { release(); } catch(RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+        }
     }
     private static String waitingLeaseEvidence(TestContext context) {
         var server=context.getWorld().getServer(); var journal=SessionRecoveryState.get(server);
