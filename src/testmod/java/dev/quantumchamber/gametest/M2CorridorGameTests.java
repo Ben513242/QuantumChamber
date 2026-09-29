@@ -753,6 +753,61 @@ public final class M2CorridorGameTests implements FabricGameTest {
             },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
         });
     }
+    /**
+     * 肩上鸚鵡只以 NBT 存在玩家身上：走廊內觸發原版「放下肩上 entity」（此處以受傷觸發，同路徑還有跳躍落下、碰水、飛行、睡眠、
+     * 粉雪、riptide、死亡、切換旁觀）時，不得交給走廊世界拒絕後被原版清空而永久遺失；返還原艙後仍在肩上，一般世界的原版放下照常。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix2_shoulder_parrot",tickLimit=100000)
+    public void native_shoulder_parrot_stays_on_shoulder_in_corridor_and_returns_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_shoulder_parrot_stays_on_shoulder_in_corridor_and_returns_windows");
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var player=fixture.players.getFirst().player(); player.changeGameMode(net.minecraft.world.GameMode.SURVIVAL);
+            // 比照原版 ShoulderRidingEntity.mountOnto：以完整 entity NBT（含 id 與 UUID）放上肩膀，不在任何世界生成實體。
+            var parrot=net.minecraft.entity.EntityType.PARROT.create(context.getWorld()); parrot.setOwner(player);
+            var shoulder=new NbtCompound();
+            context.assertTrue(parrot.saveSelfNbt(shoulder),"鸚鵡 NBT 必須可保存");
+            var parrotId=parrot.getUuid();
+            player.setOnGround(true);
+            context.assertTrue(player.getServerWorld()==fixture.target && player.addShoulderEntity(shoulder),"走廊內玩家肩上放置鸚鵡");
+            long placed=player.getWorld().getTime();
+            // 原版放上肩膀後 20 tick 內不會放下；等窗口確實開啟，受傷才會真的走到 dropShoulderEntities。
+            // 跨維度 teleport 後未 ACK 的玩家處於 teleportation state，原版視為對所有傷害無敵；比照真 client 先確認 teleport。
+            when(context,tick+1,() -> player.getWorld().getTime()>placed+21,armed -> {
+                fixture.players.getFirst().confirmTeleport();
+                var witness=new java.util.LinkedHashMap<String,Boolean>();
+                witness.put("damageReachesDropLogic",!player.isInTeleportationState() && !player.isInvulnerableTo(player.getDamageSources().outOfWorld()));
+                player.damage(player.getDamageSources().outOfWorld(),0.0f);
+                witness.put("dropWindowOpen",player.getWorld().getTime()>placed+20);
+                witness.put("stillInCorridor",player.getServerWorld()==fixture.target);
+                witness.put("shoulderKept",sameShoulderParrot(player.getShoulderEntityLeft(),parrotId));
+                witness.put("noParrotEntityInAnyWorld",entityInAnyWorld(fixture.server,parrotId)==null);
+                context.assertTrue(!witness.containsValue(false),"走廊內肩上鸚鵡不得因放下被拒而遺失："+witness+" shoulder="+player.getShoulderEntityLeft());
+                fixture.trustedTeardown(armed+1,() -> {
+                    var returned=new java.util.LinkedHashMap<String,Boolean>();
+                    returned.put("shoulderKeptAfterReturn",sameShoulderParrot(player.getShoulderEntityLeft(),parrotId));
+                    // 正向對照：回到一般世界後同一觸發照原版放下，證明攔截只限走廊世界（返還同樣是跨維度 teleport，先確認）。
+                    fixture.players.getFirst().confirmTeleport();
+                    returned.put("damageReachesDropLogic",!player.isInTeleportationState());
+                    player.damage(player.getDamageSources().outOfWorld(),0.0f);
+                    var dropped=context.getWorld().getEntity(parrotId);
+                    returned.put("vanillaDropInSourceWorld",dropped instanceof net.minecraft.entity.passive.ParrotEntity value && value.isTamed()
+                            && player.getUuid().equals(value.getOwnerUuid()) && player.getShoulderEntityLeft().isEmpty());
+                    if(dropped!=null) dropped.discard();
+                    context.assertTrue(!returned.containsValue(false),"返還後鸚鵡仍在肩上，一般世界原版放下照常："+returned);
+                    M4PerTestUniverseProbe.complete(context);
+                });
+            });
+        });
+    }
+    private static boolean sameShoulderParrot(NbtCompound shoulder,UUID id) {
+        return !shoulder.isEmpty() && "minecraft:parrot".equals(shoulder.getString("id")) && shoulder.containsUuid("UUID") && shoulder.getUuid("UUID").equals(id);
+    }
+    private static net.minecraft.entity.Entity entityInAnyWorld(net.minecraft.server.MinecraftServer server,UUID id) {
+        for(var world : server.getWorlds()) { var entity=world.getEntity(id); if(entity!=null) return entity; }
+        return null;
+    }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_reconnect",tickLimit=100000)
     public void native_channel_disconnect_and_join_queue_block_movement_until_next_tick_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }

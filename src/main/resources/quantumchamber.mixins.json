@@ -16,6 +16,7 @@
     "MinecraftServerDynamicWorldAccess",
     "ItemStackSuperpositionEntityMixin",
     "ServerWorldEntityAdmissionMixin",
-    "EntitySuperpositionTeleportMixin"
+    "EntitySuperpositionTeleportMixin",
+    "PlayerEntityShoulderSuperpositionMixin"
   ]
 }
