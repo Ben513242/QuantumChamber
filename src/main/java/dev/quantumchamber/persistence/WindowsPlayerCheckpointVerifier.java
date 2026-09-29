@@ -62,12 +62,15 @@ final class WindowsPlayerCheckpointVerifier {
         }
     }
 
-    /** 從 volume root 起逐層持有前 depth 個名稱的普通目錄；root 先確認為本機 NTFS，之後每層都必須在同一 volume。 */
+    /**
+     * 從 volume root 起逐層持有前 depth 個名稱的普通目錄。開任何 HANDLE 之前先確認 root 為本機固定 NTFS，
+     * 網路磁碟機等非本機 volume 不會對遠端 root 開 HANDLE；之後 root 與每層都必須在同一 volume。
+     */
     private ArrayList<Pin> pinDirectories(Path absolute, int depth, OwnedHandles owned) throws IOException {
         Path cursor = absolute.getRoot();
+        int volume = io.requireLocalNtfs(cursor);
         var pins = new ArrayList<Pin>();
         Pin root = pin(cursor, true, owned); pins.add(root);
-        int volume = io.requireLocalNtfs(cursor);
         if (volume != root.info().volume()) throw new IOException("volume root 身分不符");
         for (int i = 0; i < depth; i++) {
             cursor = cursor.resolve(absolute.getName(i));

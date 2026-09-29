@@ -183,6 +183,30 @@ class WindowsPlayerCheckpointVerifierTest {
         assertEquals(0, io.opened);
     }
 
+    @Test void nonLocalVolumeIsRejectedBeforeAnyRootOrDirectoryHandleOpens() throws Exception {
+        Path file = fixture(); Path folder = file.getParent();
+        // 以 fake native 模擬 GetDriveType 回報網路磁碟機：verify 與 verifyDirectory 都必須在開 root／目錄 HANDLE 之前拒絕，拒絕原因不變。
+        var remote = new TrackingNative() {
+            int localChecks;
+            @Override int requireLocalNtfs(Path root) throws IOException { localChecks++; throw new IOException("checkpoint 僅支援本機固定磁碟"); }
+        };
+        var verifier = new WindowsPlayerCheckpointVerifier(remote);
+        assertEquals("checkpoint 僅支援本機固定磁碟", assertThrows(IOException.class, () -> verifier.verifyDirectory(folder)).getMessage());
+        assertEquals("checkpoint 僅支援本機固定磁碟", assertThrows(IOException.class, () -> verifier.verify(file, snapshot())).getMessage());
+        assertEquals(2, remote.localChecks);
+        assertEquals(0, remote.opened, "非本機磁碟不得對 root 或任何目錄開 HANDLE");
+        assertEquals(0, remote.closed); assertEquals(0, remote.reads); assertEquals(0, remote.flushes);
+        // 本機 NTFS 仍走原本的完整 pin 鏈；volume 判定必須先於第一個 HANDLE。
+        var order = new java.util.ArrayList<String>();
+        var local = new TrackingNative() {
+            @Override int requireLocalNtfs(Path root) throws IOException { order.add("requireLocalNtfs"); return super.requireLocalNtfs(root); }
+            @Override HANDLE openDirectory(Path path) throws IOException { order.add("openDirectory"); return super.openDirectory(path); }
+        };
+        new WindowsPlayerCheckpointVerifier(local).verifyDirectory(folder);
+        assertEquals("requireLocalNtfs", order.getFirst(), "開第一個 HANDLE 前必須先完成本機 NTFS 判定：" + order);
+        assertTrue(local.opened > folder.getNameCount()); assertEquals(local.opened, local.closed);
+    }
+
     @Test void nativeCloseRuntimeFailureStillAttemptsEveryOwnedAncestorClose() throws Exception {
         Path file = fixture();
         var io = new TrackingNative() {
