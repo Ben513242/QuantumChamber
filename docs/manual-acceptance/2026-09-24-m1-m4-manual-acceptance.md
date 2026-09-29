@@ -1,6 +1,10 @@
 # M1–M4 人工驗收清單
 
-建立日期：2026-09-24。分支 `feature/m1-chamber`；程式基準為 code HEAD `752ada1`（`752ada1b34f27685014fc3e6ec10fee77b88a86a`），其後只有文件 commit。本清單建立時，A、B、C 段所有子項都還沒有任何結果紀錄。
+建立日期：2026-09-24；2026-09-29 依 M1–M4 整分支 final review 與整合修正（integration fix）更新。分支 `feature/m1-chamber`。
+
+**程式基準（2.2 的 `$base`）：code HEAD `428f52a`（`428f52a79daa18ab9f5fd7a7f0f2980a34598987`），其後只有文件 commit。** 清單建立時的基準是 `752ada1`；integration fix rounds 1–3（`1f900f5..428f52a`）改了 production，所以基準改為 `428f52a`，各子項的預期結果也已依這一版程式重新核對（見附錄與 [M1–M4 整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)）。基準 SHA 只由 docs commit 更新，本段、2.2 的 `$base` 與附錄必須一致。
+
+2026-09-29 更新時，A、B、C 段的正式紀錄表都還沒有任何結果；只有 B-5 有一份在使用者自有世界做的預驗，另列成獨立表，不計入 E 段。
 
 ## 1. 目的與範圍
 
@@ -15,6 +19,7 @@
 - [玩家施工與驗證指引](../implementation-notes/m1-player-build-verification.md)（表 A–N、「6. 停用、重新啟用與拆除」）
 - [M2 操作與驗證](../implementation-notes/m2-corridor.md#八項人工驗收)、[M2 設計](../superpowers/specs/2026-09-17-m2-powered-corridor-design.md) §2–§4
 - [M4 候選門紀錄](../implementation-notes/2026-09-21-m4-candidate-doors.md)「人工驗收狀態（spec §15）」「DORMANT 只封鎖自己的 Chamber（W-I2）」、[M4 設計](../superpowers/specs/2026-09-21-m4-candidate-doors-design.md) §10、§11、§15
+- [M1–M4 整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)「行為變更摘要」「對人工驗收的影響」（B-6、C-5 與各子項改寫的來源）
 
 | 編號 | 項目 | 模式 | 執行世界（建議） |
 | --- | --- | --- | --- |
@@ -26,10 +31,12 @@
 | B-3 | M1.1 維護手勢（依 M1.2 現行語意） | 單人 | W1 |
 | B-4 | legacy schema1 舊房間 | 單人 | W-L |
 | B-5 | M4 spec §15 側門（最後執行） | 單人 | W-M4 |
+| B-6 | 整合修正：走廊內互動限制（入口 Controller、放置類物品、經驗球、肩上鸚鵡；另有兩個選測） | 單人 | W1 |
 | C-1 | M1 多人資格判定 | 多人 | W-MP |
 | C-2 | M1 多人跨程序重啟 | 多人 | W-MP |
 | C-3 | M2-3 多人共享效果與離線 | 多人 | W-MP |
 | C-4 | M2-6 多人 96 格頁面 seam | 多人 | W-MP |
+| C-5 | （選測）整合修正：多人肩上鸚鵡顯示 | 多人 | W-MP |
 
 世界代號：W1＝`run/client-base/saves/QC-accept-sp`、W-R＝`run/client-render/saves/QC-accept-render`、W-L＝`run/client-base/saves/QC-legacy-schema1`（m1-smoke 複本）、W-M4＝`run/client-base/saves/QC-accept-m4`、W-MP＝`run/server/QC-accept-mp`。名稱可自訂，但都必須是新建或複本，不可用既有世界。
 
@@ -39,7 +46,7 @@
 
 先正常儲存並退出所有 Minecraft 客戶端與伺服器，再把下列資料複製到 repo 外：
 
-- `run/client-base/saves/新的世界test (1)`：目前 client-base 唯一的存檔，屬使用者資料。不得覆寫，也不要拿來驗收。
+- `run/client-base/saves/新的世界test (1)`：使用者自有世界，不是本清單的驗收世界。2026-09-29 使用者在其中做過 B-5 預驗，Controller 位於 `2 70 12` 的 Chamber 已留下 DORMANT receipt（見 2.5 (a)）。不得覆寫；除已記錄的 B-5 預驗外，不要拿來驗收。這裡備份到的是 B-5 預驗之後的狀態（schema3、含 DORMANT receipt）；測前沒有備份，2026-09-21 的 schema2 原狀態已無法復原。
 - `run/server/m1-smoke`：M1 dedicated 重啟證據，也是 B-4 唯一現成的 schema1 世界。不得直接開啟。
 - `run/server/server.properties`：多人驗收時伺服器會重新寫出此檔。
 - 官方 Launcher（`.minecraft`）的正式世界：本清單不使用。若要複製進開發 profile，先完整備份。
@@ -73,14 +80,20 @@ if (Test-Path -LiteralPath $bak) {
 
 ```powershell
 Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber'
+$base = '428f52a'   # 程式基準：只由 docs commit 更新，必須與本清單開頭一致
 git status --short
 git rev-parse --short HEAD
-git diff --stat 752ada1 HEAD -- src build.gradle gradle.properties settings.gradle gradle gradlew gradlew.bat start-client.bat
+# production：會進 release JAR 或影響遊戲內行為的檔案
+git diff --stat $base HEAD -- src/main src/client build.gradle gradle.properties settings.gradle gradle gradlew gradlew.bat start-client.bat
+# test-only：只影響自動測試
+git diff --stat $base HEAD -- src/test src/testmod
 ```
 
 - 開始驗收前，`git status --short` 應該沒有輸出。開始填寫本清單後，只出現本清單檔案被修改屬正常；出現其他檔案就先停下來確認。
-- 第三個指令沒有輸出，代表目前 HEAD 的程式與 `752ada1` 相同（其後只有文件 commit，包括 `9c421a7` 與本清單所在的 commit）。紀錄欄的 build 填第二個指令的結果。
-- 第三個指令有輸出，表示程式已變更：停止驗收，先在新 HEAD 重跑 automated gates。
+- 紀錄欄的 build 填第二個指令的結果。
+- production 指令沒有輸出：目前 HEAD 的 production 程式與 `$base` 相同（其後只有文件或測試 commit）。可以驗收。
+- production 指令有輸出：遊戲內行為可能已變更，**停止驗收**。先在新 HEAD 重跑 automated gates，依 E 段「review 引起的程式變更」條款判斷哪些子項要重驗，再以 docs commit 更新 `$base` 與清單開頭。
+- 只有 test-only 指令有輸出：只有測試碼變更，不影響遊戲內行為，不必停止驗收；在該列備註寫明（例如「test-only diff：`src/testmod/...`」）。這種情況下自動 gate 仍要在新 HEAD 重跑，但那是自動 gate 的工作，不是本清單的前提。
 
 啟動方式（依 `start-client.bat` 與 `build.gradle` 的 run config）：
 
@@ -152,17 +165,26 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
 
 ### 2.5 警告
 
-- **(a) M4 側門會永久封鎖原艙（到 M5 為止）。** 右鍵走廊側門鎖定候選後，該 session 返還時會留下 DORMANT receipt：那座原艙在該存檔裡無法再入場，也無法斷電拆除，遊戲內沒有解除方法。B-5 必須用另一座 Chamber 或另一個測試世界（建議 W-M4），並且在所有 M2 項目（A、B-1、B-2、C-3、C-4）都驗完之後才做。A、B-0～B-4、C 段全程都不要右鍵走廊兩側的側門。
+- **(a) M4 側門會永久封鎖原艙（到 M5 為止）。** 右鍵走廊側門鎖定候選後，該 session 返還時會留下 DORMANT receipt：那座原艙在該存檔裡無法再入場，也無法斷電拆除，遊戲內沒有解除方法。B-5 必須用另一座 Chamber 或另一個測試世界（建議 W-M4），並且在所有 M2 項目（A、B-1、B-2、B-6、C-3、C-4、C-5）都驗完之後才做。A、B-0～B-4、B-6、C 段全程都不要右鍵走廊兩側的側門（手上拿著物品時右鍵側門，同樣會鎖定候選）。
+  - **若已在非測試世界點過側門**：
+    1. 記下世界、Chamber 座標與朝向、build、日期（寫進 B-5 預驗表或該列備註）。
+    2. 不得用指令或 NBT 編輯去解除封鎖；那會破壞 M5 要接手的 receipt。
+    3. 之後這個世界只能用 ≥`752ada1` 的本分支 build 開啟。不可用 `main`（目前是 M0，不含本功能）開啟。
+    4. 立即執行 2.1 備份，並在備份目錄或備註註明「這是 B-5 之後的狀態」。
+    5. 記下該世界 `data/quantumchamber_sessions.dat` 的 SHA-256，作為 M5 migration 的真實 DORMANT 樣本：`Get-FileHash -Algorithm SHA256 -LiteralPath "<世界資料夾>\data\quantumchamber_sessions.dat"`。
+    6. 這座 Chamber 不得用於 A／B／C 段。
+  - 目前已知的一例：使用者自有世界 `run/client-base/saves/新的世界test (1)`，Controller 位於 `2 70 12`、朝 NORTH 的 Chamber，2026-09-29 以 build `1f900f5`（code 等同 `752ada1`）點過側門（見 B-5 預驗表）。2026-09-29 由 implementer 唯讀計算：`data/quantumchamber_sessions.dat` 41144 bytes、最後寫入時間 2026-09-29 09:25:55（+08:00），SHA-256 `268F249E77CA9716F1B7DD048AFF0BFD49AF0FFA712E6B43B34F833EF1306534`。截至 2026-09-29 的清單更新，2.1 的備份目錄尚不存在；備份後請核對備份內這個檔案的 SHA-256 與上值相同。
 - **(b) 不可降版。** 用本 build 在某個存檔建立過任何走廊 session 後，該存檔的 `data/quantumchamber_sessions.dat` 會寫成 schema3，並新增 `quantumchamber_candidate_entropy.dat` 與 `quantumchamber_universe_discovery.dat`；M4 之前的 build 讀不了 schema3，會 fail closed。Chamber registry 也會寫成 schema2，M1.2 之前的 build 讀不了。驗收用的存檔不要再用舊 build 開，也不要拿正式世界驗收。
-- **(c) 返還後要等清理完成才能用其他 Chamber。** 已返還的玩家要等該 session 全員返還、清理完成（M4 的 DORMANT）之後，才能從其他 Chamber 入場；返還與清理階段（`RETURN_PLAYERS`／`RELEASE_GEOMETRY`）仍會被拒絕。
-- **(d) 返還後先等幾秒。** 任何一次返還後，在該 session 清理完成前，參與者的移動與方塊互動會暫時被伺服器擋下（`SessionRecoveryManager.blocks`）；喝東西等使用物品不受影響。單人項目（例如 A-2、B-1a、B-1b）回到原艙後先等幾秒，再開門或操作方塊。
+- **(c) 返還後要等全員收尾才能開新 session。** 已返還的玩家可以正常移動與互動（見 (d)），但要等該 session 全員返還、清理完成之後，才能再從任何 Chamber 開新 session；M4 選過側門的 session 要到 DORMANT，之後只能用其他 Chamber。返還與清理階段（含 M4 的 `RETURN_PLAYERS`／`RELEASE_GEOMETRY`）開新 session 仍會被拒絕。
+- **(d) 返還期間只凍結尚未返還者（2026-09-29 整合修正起）。** 已返還的玩家回到原艙後，立刻可以正常移動、開門與操作方塊，不必等待。仍未返還的參與者（例如離線者）的移動、載具與方塊互動封包會被伺服器擋下（`SessionRecoveryManager.blocks`），直到自己返還；離線者重新連線後的下一個 tick 才返還。在全員返還並清理完成之前，原艙保護與比較器 11 維持不變，已返還的玩家也不能加入新 session。喝東西等使用物品不受影響。
+- **(e) 準備期中止。** READY（比較器 7）的準備期間，若資格失效（例如有人開門、有人的 Buff 失效），session 會中止並返還：只有本 session 已嘗試移動、或目前在走廊世界的成員會被拉回原位；仍在原艙內的成員保持原地，不再被拉回入場時的凍結位置。已知例外（延後 M5）：若成員在準備期用終界珍珠或歌萊果離開原艙，返還時仍會被送回原艙返還位。
 - 單人測試途中不要退出世界；需要重開時，在備註記錄。
 
 ### 2.6 建議執行順序
 
 1. 2.1 備份、2.2 確認 build。
-2. W1（C1 一座艙）：B-0 → A-1 → A-2 → B-1a → B-3a → B-3c → B-1b → B-3b → B-3d。
-3. W-MP（2.3）：C-1a → C-1b → C-3a → C-1c → C-3b → C-4 → C-2。
+2. W1（C1 一座艙）：B-0 → A-1 → A-2 → B-1a → B-3a → B-3c → B-1b → B-3b → B-3d → B-6a → B-6b →（選測）B-6c → B-6d → B-6e →（選測）B-6f。
+3. W-MP（2.3）：C-1a → C-1b → C-3a → C-1c → C-3b → C-4 → C-2 →（選測）C-5。
 4. B-2（W-R）與 B-4（W-L），順序不限。
 5. 最後做 B-5（W-M4）。
 
@@ -174,7 +196,7 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
 | --- | --- |
 | 日期 | `YYYY-MM-DD`（Asia/Taipei） |
 | 驗收者 | 操作的人；多人項目列出所有參與者 |
-| build（commit SHA） | 2.2 的 `git rev-parse --short HEAD` 結果；code 必須等同 `752ada1` |
+| build（commit SHA） | 2.2 的 `git rev-parse --short HEAD` 結果；production 程式必須等同當時的 `$base`（目前 `428f52a`，見 2.2）。基準因 review 引起的程式變更而更新時，未受影響的舊列依 E 段條款保留 |
 | 單人／多人 | 多人時註明玩家數與是否有觀察者 |
 | 結果 | `PASS`：所有預期都成立。`FAIL`：任一預期不成立，備註寫實際現象。`BLOCKED`：環境或前置條件無法完成（例如 Iris 無法載入）。`N/A`：不適用，必須寫理由；需要使用者同意的，另記入 E 段 waiver |
 | 證據 | 截圖或影片的完整路徑，建議放在 repo 外（例如 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-09-24\`）。F2 截圖預設存在各 profile 的 `screenshots/`（例如 `run/client-base/screenshots/`），驗收後複製出去 |
@@ -184,7 +206,7 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
 
 ## A. 目前 HEAD 快速複驗
 
-M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返還路徑有改動：`start()` 在任何 reservation 之前先做跨 session 玩家預檢並凍結 candidate context，返還路徑也新增 `MEASURED` 分支（見 [M4 紀錄](../implementation-notes/2026-09-21-m4-candidate-doors.md)「Discovery authority 與 policy snapshot」「MEASURED freeze 與 retained recovery」）。因此在目前 HEAD 以精簡步驟複驗。
+M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返還路徑有改動：`start()` 在任何 reservation 之前先做跨 session 玩家預檢並凍結 candidate context，返還路徑也新增 `MEASURED` 分支（見 [M4 紀錄](../implementation-notes/2026-09-21-m4-candidate-doors.md)「Discovery authority 與 policy snapshot」「MEASURED freeze 與 retained recovery」）。2026-09-29 的整合修正又在 `start()` 加入原生 checkpoint 能力預檢，並改為返還期間只凍結尚未返還者（見 [整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)「行為變更摘要」）。因此在目前 HEAD 以精簡步驟複驗。
 
 ### A-1 M2-1 單人原生飲用與左右入口
 
@@ -204,6 +226,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   - 步驟 4：藥水依原生規則消耗（生存模式變成玻璃瓶；創造模式不消耗）；畫面右上出現效果圖示，E 畫面顯示剩餘約 3:00。
   - 步驟 5：自動入場，F3 維度為 `quantumchamber:superposition`。
   - 步驟 6：效果仍在，剩餘時間接續遞減（沒有重置成 3:00，也沒有消失）；玩家在一間與原艙同形的入口艙內，入口艙左右兩側打開，走廊往左右延伸；地板與牆壁正常碰撞。
+- 平台說明（2026-09-29 整合修正）：本機 Windows、playerdata 位於本機固定 NTFS 是正常路徑。若步驟 5 沒有入場、比較器停在 7，先查 `run/client-base/logs/latest.log` 有沒有「玩家原生 checkpoint 能力預檢未通過，拒絕入場」WARN。非 Windows，或 playerdata 不在本機固定 NTFS（網路磁碟機、非 NTFS、卸除式磁碟、路徑上有 junction 或其他 reparse point，例如部分雲端同步資料夾）時，`start()` 會在任何預留、效果快照或移動之前拒絕，原艙停在 READY（比較器 7），同一原因只記一次 WARN。這不是本項的預期環境：記 BLOCKED 並附 log。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -217,12 +240,12 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   1. 不補喝、不喝奶，等量子態效果自然倒數到 0（約 3 分鐘）。
   2. 效果消失後觀察 1–5 秒。
   3. 按 F3 看維度與座標；按 E 看效果；確認背包沒有多出藥水。
-  4. 等幾秒（見 2.5 (d)），在室內右鍵量子艙門開門，走到艙外，F3 讀 `power`。
+  4. 在室內右鍵量子艙門開門，走到艙外，F3 讀 `power`。
   5. 以創造模式左鍵一格艙體基岩，再左鍵 Controller。
 - 預期結果：
-  - 步驟 2：自動回到原世界、同一座原艙的室內。
+  - 步驟 2：自動回到原世界、同一座原艙的室內；回到原艙後可以立即移動與開門，不必等待（見 2.5 (d)）。
   - 步驟 3：F3 維度為 `minecraft:overworld`、座標在 C1 室內；沒有量子態效果，也沒有退回藥水。
-  - 步驟 4：`power` = 3（仍供電、艙內沒有合格玩家）。
+  - 步驟 4：`power` = 3（仍供電、艙內沒有合格玩家）。若返還後立刻讀值，清理完成前可能短暫仍是 11（見 2.5 (d)），幾秒內應變成 3。
   - 步驟 5：基岩不會被移除（畫面可能閃一下再恢復）；Controller 不會被拆，actionbar 顯示「請先斷電並等待載入協調與返還完成。」
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
@@ -270,11 +293,11 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   2. 在走廊地板丟下 1 顆鑽石（Q 鍵），記下背包的鑽石數。
   3. 以 (i) 或 (ii) 切斷外部供電，觀察 1–5 秒。
   4. 按 F3、按 E；看艙內地面與背包鑽石數。
-  5. 等幾秒（見 2.5 (d)），在室內右鍵量子艙門開門，走出艙外，F3 讀 `power`；在 32 格內觀察艙體外側四角約 10 秒。
+  5. 在室內右鍵量子艙門開門，走出艙外，F3 讀 `power`；在 32 格內觀察艙體外側四角約 10 秒。
 - B-1b 預期結果：
-  - 步驟 3：自動回到 C1 室內（`minecraft:overworld`）。
-  - 步驟 4：量子態效果保留剩餘時間（LOW 返還不移除、不退款）；走廊裡的鑽石出現在 C1 室內地面中央附近（若被自動撿起，背包數量會回到丟之前）。
-  - 步驟 5：`power` = 0（OFF）；艙體不再冒出新的輝光粒子。保護解除在 B-3d 步驟 3 以「可拆除」確認。
+  - 步驟 3：自動回到 C1 室內（`minecraft:overworld`），可以立即移動與開門（見 2.5 (d)）。
+  - 步驟 4：量子態效果保留剩餘時間（LOW 返還不移除、不退款）；走廊裡的鑽石出現在 C1 室內地面中央附近（若被自動撿起，背包數量會回到丟之前）。走廊裡若有經驗球，同樣會被送到原艙中央（專項見 B-6d）。
+  - 步驟 5：`power` = 0（OFF）；若返還後立刻讀值，清理完成前可能短暫仍是 11，幾秒內應變成 0。艙體不再冒出新的輝光粒子。保護解除在 B-3d 步驟 3 以「可拆除」確認。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -319,7 +342,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 - 來源：[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「人工 gate」第 1、5–8 項；[M1.1 契約](../implementation-notes/m1.1-contract.md) §2–§3；[玩家指引](../implementation-notes/m1-player-build-verification.md) 表 J–M 與「6. 停用、重新啟用與拆除」；[M1.2 設計](../superpowers/specs/2026-09-17-m1.2-powered-origin-design.md) §1、§4。
 - 語意說明：M1.1 原文的「重新啟用 held-high 不直接 11；新低→高才 11」與「停用後即可 Creative 左鍵拆 Controller」已被 M1.2 取代。本項依目前程式判定：重新啟用後只要仍供電並滿足資格就自動入場；拆除必須先斷電到 OFF，停用（`Enabled=false`）不等於斷電。
-- 前置條件：接續 B-1a（C1 拉桿 ON）。B-1a 返還後等幾秒（見 2.5 (d)），在室內右鍵量子艙門開門、走到艙外，輸入 `/data get block <Controller 座標> ChamberUuid`，把輸出的整數陣列記進 B-3d 的備註（舊 UUID）。
+- 前置條件：接續 B-1a（C1 拉桿 ON）。B-1a 返還後，在室內右鍵量子艙門開門、走到艙外，輸入 `/data get block <Controller 座標> ChamberUuid`，把輸出的整數陣列記進 B-3d 的備註（舊 UUID）。
 - B-3a 停用（仍供電），操作步驟：
   1. 站在艙外，主手與副手都清空，按住 Shift 蹲下，右鍵 Controller 看得到的正面或頂面。
   2. F3 讀 `power`。
@@ -412,7 +435,8 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 - 來源：[M4 設計](../superpowers/specs/2026-09-21-m4-candidate-doors-design.md) §10、§11、§15；[M4 紀錄](../implementation-notes/2026-09-21-m4-candidate-doors.md)「Selection CAS、first-wins 與互動」「DORMANT 只封鎖自己的 Chamber（W-I2）」「人工驗收狀態（spec §15）」。
 - 範圍界線：M4 只會看到「側門可被選擇一次、收到鎖定訊息、其他門被拒絕、門仍關閉、玩家仍在走廊」。「走廊消失、回原艙、門後是新世界」屬於 M5，不得把 M4 的中間狀態回報成原需求已完成。
-- 前置條件：A、B-0～B-4、C 段都已做完（見 2.5 (a)）。在 `run/client-base` 建立新的創造世界 W-M4（允許作弊），蓋一座艙 C-M4，準備藥水與牛奶。
+- 前置條件：A、B-0～B-4、B-6、C 段都已做完（見 2.5 (a)）。build 的 production 程式等同 `$base`（目前 `428f52a`，見 2.2）。在 `run/client-base` 建立新的創造世界 W-M4（允許作弊），蓋一座艙 C-M4，準備藥水與牛奶。
+- 下方「B-5 預驗」表是 2026-09-29 在使用者自有世界、以 `1f900f5` build 做的部分觀察，不是本項的正式結果；正式 B-5 仍須在 W-M4 依本節步驟完整重做。
 - 操作步驟：
   1. 拉桿 ON（`power` = 3）；進艙、關門、飲用藥水，入場後確認 F3 為 `quantumchamber:superposition`。
   2. 在走廊等至少 3 秒，再離開入口艙至少 8 格。走廊兩側牆上每 8 格有一扇 5×5 的紫色量子艙門（完整側門）；入口艙自己的正面門不是側門。
@@ -438,6 +462,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   - 步驟 11：`power` 仍是 11，不會進入 OFF。
   - 步驟 12：Controller 不會被拆，actionbar 顯示「請先斷電並等待載入協調與返還完成。」；基岩不會被移除。
   - 步驟 13：C-M4b 可以正常入場（DORMANT 只封鎖自己的 Chamber）；之後喝奶返還即可。
+  - B-5d／e／f 的預期與 `752ada1` 時相同。2026-09-29 整合修正（F-CHECKPOINT）只改變「原生存檔 checkpoint 持續失敗時」的重試時序（每座艙 20→40→…→1200 ticks 退避，WARN 同原因只記一次），正常存檔成功時不會觀察到差異。
 - 完成後：W-M4 的 C-M4 會一直封鎖到 M5。這個世界不要再拿來做 M2 項目。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
@@ -448,6 +473,139 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 | B-5d 返還後原艙封鎖、無法再入場（步驟 7–9） |  |  |  | 單人 |  |  |  |
 | B-5e 比較器與 LOW 不進 OFF、無法拆除（步驟 10–12） |  |  |  | 單人 |  |  | 實際 `power`： |
 | B-5f （選測）另一座艙可入場（步驟 13） |  |  |  | 單人 |  |  |  |
+
+#### B-5 預驗（非 W-M4，不計入 E 段）
+
+2026-09-29 使用者在自有世界做了 B-5 的一部分。這不是上表的正式結果，E 段不採計；正式 B-5 仍須在 W-M4 依本節步驟完整重做。
+
+- 日期：2026-09-29。驗收者：Ben（controller 依使用者在 AskUserQuestion 的回答轉錄；存檔 NBT 的唯讀解碼只作為佐證，不代替觀察）。
+- build：`1f900f5`（code 等同 `752ada1`，早於 2026-09-29 的整合修正）。
+- 世界：`run/client-base/saves/新的世界test (1)`（使用者自有世界，非 W-M4，測前未備份）。Chamber：Controller `2 70 12`、NORTH。
+- B-5e（步驟 10–12）與 B-5f（步驟 13）沒有做，不列。
+- 處置：這座 Chamber 已被 DORMANT receipt 封鎖到 M5，依 2.5 (a) 處理，不得用於 A／B／C 段。
+
+| 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 計入 E 段 | 證據 | 備註 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| B-5a 選擇一次與鎖定訊息（步驟 3） | 2026-09-29 | Ben（controller 轉錄） | `1f900f5` | 單人 | 觀察到 | 否 |  | 使用者觀察到鎖定訊息 |
+| B-5b 同門再點與其他門被拒絕（步驟 5–6） | 2026-09-29 | Ben（controller 轉錄） | `1f900f5` | 單人 |  | 否 |  | 只觀察到步驟 6（另一扇門被拒絕）；步驟 5（同門再點）沒有做，因此不填結果 |
+| B-5c 門仍關閉、玩家仍在走廊（步驟 4） | 2026-09-29 | Ben（controller 轉錄） | `1f900f5` | 單人 | 觀察到 | 否 |  | 使用者觀察到門仍關閉、仍在走廊 |
+| B-5d 返還後原艙封鎖、無法再入場（步驟 7–9） | 2026-09-29 | Ben（controller 轉錄） | `1f900f5` | 單人 | 使用者陳述＋NBT 佐證 | 否 | `data/quantumchamber_sessions.dat`（SHA-256 見 2.5 (a)） | 使用者陳述返還後再喝藥不再入場。NBT 唯讀解碼：sessions SchemaVersion=3、1 筆 record `State=MEASURED`＋`CandidateSelection.Kind=SELECTED`（DoorKey station -1、`NEGATIVE_LATERAL`）、ledger 382 筆、participant `Returned=1`、`SpaceLeases=[]`（即 DORMANT）；chambers registry `PowerState=RETURNING` |
+
+### B-6 整合修正：走廊內互動限制（W1，在 B-3d 之後、B-5 之前）
+
+- 來源：[整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)「行為變更摘要」第 3、6 點；[M2 紀錄](../implementation-notes/m2-corridor.md)「持久化與安全界線」；[M2 設計](../superpowers/specs/2026-09-17-m2-powered-corridor-design.md) §4、§6（2026-09-29 整合修正段）；[左右走廊修訂](../superpowers/specs/2026-09-18-m2-lateral-buff-maintained-design.md) §3（2026-09-29 改寫）。
+- 基準：build 的 production 程式必須等同 `$base`（≥ `428f52a`）。這些行為是 2026-09-29 才加入的，`752ada1` 或更早 build 的結果不能沿用。
+- 共同警告：
+  - 全程不要右鍵走廊兩側牆上的側門，手上拿著物品也一樣（見 2.5 (a)）。需要右鍵時，一律對走廊**地板**，或 B-6a 指定的入口艙正面門與其 Controller。
+  - 走廊內的方塊受保護，無法放置或破壞任何方塊。
+- 共同前置：B-3d 結束時 C1 已重新註冊、拉桿 ON（`power` = 3），玩家在創造模式；身上有量子態藥水至少 6 瓶與牛奶 3 桶。任何時候效果剩餘不到 1 分鐘就補喝一瓶（在走廊內補喝不會中斷 session）。
+- 執行順序：B-6a →（B-6b、選測 B-6c、B-6d 接續同一個 session）→ B-6e（新的 session）→（選測）B-6f。
+
+**B-6a 走廊內右鍵入口 Controller 被拒**
+
+- 操作步驟：
+  1. 進艙、關門、飲用藥水，等候入場（同 A-1 步驟 2–5）。入場後先不要離開入口艙。
+  2. 面向入口艙的正面門（紫色 5×5 門，位置與原艙正面門相同）。不要蹲下，從門內側瞄準門頂中央 Controller 的底面，右鍵一次。
+  3. 按 F3 看維度，按 E 看效果；確認正面門仍是關閉（實心）。
+  4. 不要蹲下，右鍵入口艙正面門的任一格紫色門塊。
+- 預期結果：
+  - 步驟 2：actionbar 顯示「左右走廊的入口正門位於走廊牆面，不開放切換。」，門保持關閉。
+  - 步驟 3：仍在 `quantumchamber:superposition`；效果仍在並持續倒數（session 不受影響，沒有返還）。
+  - 步驟 4：門不動，也沒有 actionbar 訊息（入口艙正面門不屬於側門，入口艙也不是完整艙體，程式不處理這次點擊；依程式推導）。
+
+**B-6b 放置類物品被拒、物品不消耗**
+
+- 前置：接續 B-6a，仍在走廊。輸入 `/gamemode survival`（生存模式才看得出物品有沒有被扣），再取得下列物品：
+
+  ```mcfunction
+  /give @s minecraft:armor_stand 2
+  /give @s minecraft:item_frame 2
+  /give @s minecraft:glow_item_frame 2
+  /give @s minecraft:painting 2
+  /give @s minecraft:cow_spawn_egg 2
+  /give @s minecraft:end_crystal 2
+  /give @s minecraft:lead 2
+  /give @s minecraft:cod_bucket
+  /give @s minecraft:oak_boat
+  /give @s minecraft:oak_chest_boat
+  /give @s minecraft:minecart
+  /give @s minecraft:lingering_potion[minecraft:potion_contents={potion:"minecraft:regeneration"}]
+  ```
+
+- 操作步驟：
+  1. 按 E 記下每樣物品的數量。
+  2. 走出入口艙，站在走廊上。依序手持下列每一樣物品，瞄準腳前 2–3 格的走廊地板（基岩）右鍵一次：盔甲架、物品展示框、螢光物品展示框、畫、牛生怪蛋、終界水晶、拴繩、鱈魚桶、橡木船、附箱橡木船、礦車、滯留型藥水。
+  3. 滯留型藥水與橡木船，再朝走廊前方的空中（不對準任何方塊）右鍵一次。
+  4. 按 E 核對每樣物品的數量；環顧走廊，看有沒有出現新的 entity 或水。
+  5. 輸入 `/gamemode creative`。
+- 預期結果：
+  - 步驟 2、3：每一次都在 actionbar 顯示「量子走廊內不能放置船、盔甲架、展示框、生物等實體；物品未消耗。」。礦車與拴繩在原版需要鐵軌或柵欄才有作用，但這裡的拒絕發生在判斷目標方塊之前，所以同樣會顯示這則訊息。
+  - 步驟 4：每樣物品的數量都與步驟 1 相同（畫面上的數量或方塊可能先閃一下再恢復）；走廊裡沒有盔甲架、展示框、畫、牛、終界水晶、拴繩結、魚、船、礦車或藥水雲，也沒有水。
+
+**B-6c（選測）走廊內丟蛋不孵小雞**
+
+- 前置：接續 B-6b，仍在走廊，創造模式（丟蛋不消耗）。輸入 `/give @s minecraft:egg 16`。
+- 操作步驟：面向走廊的一端（不要對著側門），往前方地板連續丟 32 顆蛋；觀察 10 秒。
+- 預期結果：蛋落地破裂，沒有孵出任何小雞。`run/client-base/logs/latest.log` 可能出現一則 `type=minecraft:chicken` 的「量子走廊世界拒絕非管理 entity（加入世界…）」WARN；只有原版本來會孵出小雞時才會出現，沒有這則 WARN 不算 FAIL。
+
+**B-6d 經驗球跨頁面保留，並於返還時回到原艙中央**
+
+- 前置：接續 B-6b（或 B-6c），仍在走廊，創造模式，效果剩餘至少 2 分鐘（不足就補喝）。輸入 `/give @s minecraft:experience_bottle 3`。
+- 操作步驟：
+  1. 輸入 `/xp set @s 0 levels` 與 `/xp set @s 0 points`。
+  2. 面向走廊的一端（不要對著側門），略為抬頭，把 3 瓶經驗瓶盡量丟遠，落點至少 10 格外。確認地上出現綠色經驗球，而且沒有飛向你；若經驗球飛過來被吸收，後退拉開距離再重做本步驟（先重設經驗值）。
+  3. 轉身往走廊另一端走至少 120 格（會跨過至少一個 96 格頁面邊界），停 10 秒，再走回來；在距離經驗球至少 10 格處停下觀察。
+  4. 保持至少 10 格距離，喝牛奶。
+  5. 回到原艙後，觀察艙內地面約 5 秒；輸入 `/xp query @s points` 與 `/xp query @s levels`。
+- 預期結果：
+  - 步驟 3：經驗球仍在原來的位置（相對走廊不變），沒有消失，也沒有掉出走廊。
+  - 步驟 4：自動回到 C1 室內（`minecraft:overworld`）。
+  - 步驟 5：經驗球被送到原艙中央，並在 1–2 秒內被你吸收（聽得到拾取音效）；經驗點數或等級大於 0。若沒有被吸收，應看到經驗球留在原艙中央的地面上。
+
+**B-6e 肩上鸚鵡在走廊內不會落下**
+
+- 前置：B-6d 返還後，走到 C1 艙外（`minecraft:overworld`），效果不用保留。
+  1. 輸入 `/summon minecraft:parrot ~2 ~ ~` 與 `/give @s minecraft:wheat_seeds 16`，手持種子右鍵鸚鵡，直到出現愛心（已馴服）。
+  2. 輸入 `/gamemode survival`。站在鸚鵡旁的地面上不動（不要飛），等牠跳上你的肩膀；按 F5 切到第三人稱確認。已馴服的鸚鵡坐著時不會上肩，這時空手右鍵牠一次讓牠站起來。
+  3. 帶著肩上的鸚鵡走進 C1。**不要跳、不要飛、不要受傷**，這些都會讓鸚鵡依原版落下；落下了就重做第 2 步。關門、飲用藥水，等候入場。
+- 操作步驟：
+  1. 入場後按 F5，確認鸚鵡仍在肩上。
+  2. 在走廊原地跳 3 次，每次落地後看肩上。
+  3. 輸入 `/damage @s 1`（受到半顆心傷害），看肩上。
+  4. 輸入 `/gamemode creative`，連按兩下空白鍵飛起來，飛約 5 秒；在**自己的畫面**上（F5 第三人稱）看肩上。再連按兩下空白鍵落地。
+  5. 環顧走廊，確認地上沒有鸚鵡。
+  6. 喝牛奶返還。回到原艙後按 F5 看肩上。
+  7. 在原艙內連按兩下空白鍵飛起來。
+- 預期結果：
+  - 入場後，以及步驟 2、3、4：鸚鵡一直在肩上。步驟 4 飛行時，自己畫面上的鸚鵡也不會消失；這是 2026-09-29 client 端修正（`a7ff817`）唯一的實機驗證。
+  - 步驟 5：走廊地上沒有鸚鵡。
+  - 步驟 6：回到 C1 室內，鸚鵡仍在肩上。
+  - 步驟 7：鸚鵡依原版從肩上跳下，出現在原艙內（正向對照：一般世界照原版放下）。
+  - 走廊內鸚鵡從肩上消失，或返還後肩上沒有鸚鵡，都記 FAIL。只有步驟 4 自己畫面上的鸚鵡消失、但步驟 6 或 7 顯示鸚鵡其實還在時，同樣記 FAIL（client 修正未生效），並在備註寫明。
+- 範圍外：走廊內無法放置方塊，所以粉雪、床與碰水這三種原版觸發無法在走廊內重現，不列入；走廊內死亡時鸚鵡留在重生玩家肩上，只有 bytecode 論證，也不列入人工項目。
+
+**B-6f（選測、需要作弊權限）指令傳送非管理 entity 進走廊世界被拒**
+
+- 前置：在 W1 的 `minecraft:overworld`、艙體外空地，不在任何 session 中，創造模式。
+- 操作步驟：
+  1. 輸入 `/summon minecraft:cow ~3 ~ ~ {NoAI:1b,Tags:["qc_tp_test"]}`，記下這頭牛的位置。
+  2. 輸入 `/execute in quantumchamber:superposition run tp @e[tag=qc_tp_test] 0 100 0`。
+  3. 看牛是否還在原處；輸入 `/data get entity @e[tag=qc_tp_test,limit=1] Pos`。
+  4. 查看 `run/client-base/logs/latest.log`。
+  5. 清理：`/kill @e[tag=qc_tp_test]`。
+- 預期結果：
+  - 步驟 2：聊天欄仍顯示原版的傳送成功訊息。這是已知限制（傳送被拒時原版仍回報成功），不算 FAIL。
+  - 步驟 3：牛仍在 `minecraft:overworld` 的原位置，沒有消失；`Pos` 與步驟 1 相同。
+  - 步驟 4：有一則「量子走廊世界拒絕非管理 entity（指令跨維度傳送；…）：type=minecraft:cow」WARN。同一種 entity 同一路徑在同一次遊戲程序內只記一次，前面已記過時不會再出現。
+
+| 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| B-6a 入口 Controller 被拒、session 不受影響 |  |  |  | 單人 |  |  |  |
+| B-6b 放置類物品被拒、物品不消耗 |  |  |  | 單人 |  |  | 未顯示訊息或被扣的物品： |
+| B-6c （選測）丟蛋不孵小雞 |  |  |  | 單人 |  |  |  |
+| B-6d 經驗球跨頁面保留並回到原艙中央 |  |  |  | 單人 |  |  | 返還後經驗值： |
+| B-6e 肩上鸚鵡走廊內不落下、返還後原版放下 |  |  |  | 單人 |  |  |  |
+| B-6f （選測）指令傳送非管理 entity 被拒 |  |  |  | 單人 |  |  |  |
 
 ## C. 多人待驗
 
@@ -463,6 +621,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 - C-1a 預期結果：步驟 1 為 3；步驟 3 仍是 3，沒有人入場（A、B 都是 `minecraft:overworld`）。
 - C-1b 補齊後自動入場，操作步驟：B 喝藥（不扳拉桿、不開關門）；OBS 持續看 `power`；A、B 看 F3。
 - C-1b 預期結果：幾秒內自動入場；OBS 看到 3 →（可能只短暫出現 7）→ 11；A、B 都在 `quantumchamber:superposition`，在走廊裡互相看得到。接著做 C-3a。
+- C-1b 平台說明（2026-09-29 整合修正）：checkpoint 能力預檢看的是伺服器存檔的 playerdata（`run/server/QC-accept-mp/playerdata`）。本機 Windows 固定 NTFS 是正常路徑；若停在 7 不入場，先查 `run/server/logs/latest.log` 有沒有「玩家原生 checkpoint 能力預檢未通過，拒絕入場」WARN（非 Windows 或 playerdata 不在本機固定 NTFS 時，`start()` 會在任何預留之前拒絕，停在 READY／7，同一原因只記一次）。這不是本項的預期環境：記 BLOCKED 並附 log。
 - C-1c 旁觀者排除，操作步驟（在 C-3a 返還後）：
   1. C-3a 返還後兩人都在艙內、門關著。B 喝牛奶清掉效果，再輸入 `/gamemode spectator`，留在艙內；A 沒有效果，也留在艙內。OBS 讀 `power`。
   2. 只有 A 喝藥，等 10 秒；OBS 讀 `power`；A、B 看 F3。
@@ -503,9 +662,9 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   4. A 喝牛奶。
   5. B 連線，看 B 的位置；OBS 讀 `power`；看艙內地面與背包。
 - C-2b 預期結果：
-  - 步驟 3：A 連線後的下一個伺服器 tick 被送回原艙室內（`minecraft:overworld`，可能先短暫出現在走廊），不會回到可以繼續行走的舊 session；B 還沒返還，`power` = 11；在 B 返還前，伺服器暫不接受 A 的移動與方塊互動（A 可能被拉回原位），但可以喝牛奶。
+  - 步驟 3：A 連線後的下一個伺服器 tick 被送回原艙室內（`minecraft:overworld`，可能先短暫出現在走廊），不會回到可以繼續行走的舊 session。A 返還後就可以正常移動與互動，不必等 B（2.5 (d)）；B 還沒返還，`power` = 11，原艙仍受保護，A 在 B 返還前也不能開新 session。
   - 步驟 4：A 的量子態效果消失。
-  - 步驟 5：B 被送回原艙室內；兩人都返還並清理完成後 `power` = 3（A 沒有效果，不會自動再入場），A 恢復可以移動；鑽石出現在原艙室內（若被自動撿起，以背包數量核對）。
+  - 步驟 5：B 被送回原艙室內；兩人都返還並清理完成後 `power` = 3（A 沒有效果，不會自動再入場）；鑽石出現在原艙室內（若被自動撿起，以背包數量核對）。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -519,7 +678,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   1. B 在走廊地上丟 1 顆鑽石。
   2. A 喝牛奶。
   3. 看 A、B 的位置與效果；看艙內地面；OBS 讀 `power`。
-- C-3a 預期結果：A、B 都在 1–2 秒內回到原艙室內（`minecraft:overworld`）；A 沒有效果；B 的量子態效果保留剩餘時間（不退款、不重置）；鑽石出現在原艙室內；清理完成後 `power` = 3（A 沒有效果）。
+- C-3a 預期結果：A、B 都在 1–2 秒內回到原艙室內（`minecraft:overworld`）；A 沒有效果；B 的量子態效果保留剩餘時間（不退款、不重置）；鑽石出現在原艙室內（走廊裡若有經驗球，同樣送到原艙中央，見 B-6d）；清理完成後 `power` = 3（A 沒有效果）。
 - C-3b 途中斷線，操作步驟（在 C-1c 之後）：
   1. A、B 都喝藥、關門，重新入場；B 在走廊丟 1 顆鑽石，記下 B 的背包內容與效果剩餘時間。
   2. B 按 Esc →「中斷連線」。
@@ -527,8 +686,8 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   4. 等 30 秒以上，B 用同一個名稱重新連線。
   5. 看 B 的位置、背包與效果；OBS 讀 `power`；看艙內地面。
 - C-3b 預期結果：
-  - 步驟 3：B 斷線本身就會觸發整組返還，A 在 1–2 秒內回到原艙室內；B 還沒返還，`power` = 11；伺服器暫不接受 A 的移動與方塊互動（A 可能被拉回原位），但可以喝牛奶。
-  - 步驟 5：B 連線後的下一個 tick 被送回原艙室內（可能先短暫出現在走廊）；背包內容與斷線前相同；量子態效果保留斷線當下的剩餘時間；兩人都返還並清理後 A 恢復可以移動，`power` = 3；鑽石出現在原艙室內（或已被撿起）。
+  - 步驟 3：B 斷線本身就會觸發整組返還，A 在 1–2 秒內回到原艙室內。A 返還後就可以正常移動與互動，不必等 B（2.5 (d)）；B 還沒返還，`power` = 11，原艙仍受保護，A 在 B 返還前也不能開新 session。
+  - 步驟 5：B 連線後的下一個 tick 被送回原艙室內（可能先短暫出現在走廊）；背包內容與斷線前相同；量子態效果保留斷線當下的剩餘時間；兩人都返還並清理後 `power` = 3；鑽石出現在原艙室內（或已被撿起；走廊裡若有經驗球，同樣送到原艙中央）。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -546,7 +705,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   - 結束：一人喝牛奶，整組返還。
 - 預期結果：
   - C-4a、C-4c：地板、牆與側門外觀連續；沒有掉落、卡牆、看不見的牆或可見的端牆；對方的位置與動作同步，沒有瞬移、重疊或消失。F3 絕對座標若因實體 slot 重新定位而跳動，記錄即可，判定以畫面連續為準。
-  - C-4b：會合時對方出現在正確位置，站在地板上，不懸空也不穿牆；鑽石仍在原處，可以撿起；走廊結構連續。
+  - C-4b：會合時對方出現在正確位置，站在地板上，不懸空也不穿牆；鑽石仍在原處，可以撿起；走廊結構連續。（選做：丟鑽石時也在 10 格外丟一瓶經驗瓶；經驗球比照掉落物，會合時仍在原處，見 B-6d。）
   - 結束：兩人都回到原艙室內（`minecraft:overworld`）。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
@@ -555,21 +714,40 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 | C-4b 分離與重聚 |  |  |  | 多人（2） |  |  |  |
 | C-4c 反方向 |  |  |  | 多人（2） |  |  |  |
 
+### C-5（選測）多人肩上鸚鵡顯示
+
+- 來源：[整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)「行為變更摘要」第 3 點（肩上鸚鵡）。其他玩家畫面上的肩上 entity 由伺服器同步，本項確認走廊內保留肩上鸚鵡後，其他玩家看到的也一致。基準 ≥ `428f52a`。
+- 前置條件：在 C-2 之後。拉桿 ON；A、B 都沒有量子態效果，各有藥水至少 2 瓶與牛奶 1 桶。A 依 B-6e 前置第 1–2 步取得馴服的鸚鵡並放上肩（`/gamemode survival`）；B 站在旁邊看得到 A。全程不要右鍵側門。
+- 操作步驟：
+  1. A（帶著肩上的鸚鵡，不跳、不飛）與 B 進艙，關門，兩人都喝藥，等候入場。
+  2. 在走廊內，A 原地跳 3 次；再輸入 `/gamemode creative`，連按兩下空白鍵飛約 5 秒後落地。B 全程看 A 的肩上。
+  3. A 喝牛奶，整組返還。B 看 A 的肩上。
+  4. A 在原艙內連按兩下空白鍵飛起來。
+- 預期結果：
+  - 步驟 2：B 的畫面上，A 的鸚鵡一直在 A 的肩上；走廊地上沒有鸚鵡。
+  - 步驟 3：兩人都回到原艙室內，B 看到 A 的鸚鵡仍在 A 的肩上。
+  - 步驟 4：鸚鵡依原版從 A 的肩上跳下，B 也看得到牠出現在原艙內。
+
+| 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| C-5 （選測）多人肩上鸚鵡顯示 |  |  |  | 多人（2） |  |  |  |
+
 ## D. 使用者回報已驗（build／日期待補）
 
-使用者於 2026-09-24 回報下列項目已驗，但沒有記錄當時的 build 與日期。依使用者決定，這些項目不在目前 HEAD 重做；其中 M2-1、M2-2 另列入 A 段，待於目前 HEAD 快速複驗。本表只記錄「使用者回報已驗（build／日期待補）」，不代表已在目前 HEAD 通過。
+使用者於 2026-09-24 回報下列項目已驗（M2-4 的 LOW 返還為 2026-09-29 更正補報），但沒有記錄當時的 build 與日期。依使用者決定，這些項目不在目前 HEAD 重做；其中 M2-1、M2-2 另列入 A 段，待於目前 HEAD 快速複驗；M2-4 的 LOW 返還仍在 B-1b 於目前 HEAD 驗收。本表只記錄「使用者回報已驗（build／日期待補）」，不代表已在目前 HEAD 通過。
 
 | 項目 | 來源 | 使用者回報日期 | 當時 build | 備註 |
 | --- | --- | --- | --- | --- |
 | M2-1 單人原生飲用與左右入口 | [M2 八項](../implementation-notes/m2-corridor.md#八項人工驗收) 第 1 項 | 2026-09-24 回報 |  | 列入 A-1，待於目前 HEAD 複驗（結果見 A-1） |
 | M2-2 單人自然到期 | M2 八項第 2 項 | 2026-09-24 回報 |  | 列入 A-2，待於目前 HEAD 複驗（結果見 A-2） |
+| M2-4 LOW 返還（走廊中 LOW 安全返還） | M2 八項第 4 項後半 | 2026-09-29 回報（更正 2026-09-24 的「未驗」） |  | 仍在目前 HEAD 做 B-1b：M4 起返還路徑有改動，而且 B-1b 是 B-3b、B-3d 的前置。M2-4 前半的 HIGH 再入場（B-1a）與 M2-7 光影／shader（B-2）仍未驗，不列入本表 |
 | M2-5 32 chunks／512 blocks 視距 | M2 八項第 5 項 | 2026-09-24 回報 |  | 未在目前 HEAD 重做 |
 | M2-8 選用手持照明（含 M1.2 主手／副手火把） | M2 八項第 8 項；[M1.2 設計](../superpowers/specs/2026-09-17-m1.2-powered-origin-design.md) §7；[玩家指引](../implementation-notes/m1-player-build-verification.md) 表 N | 2026-09-24 回報 |  | 未在目前 HEAD 重做。2026-09-24 唯讀檢查：本工作區的 `run/client-light` 只有 `mods/`，沒有 `saves/`、`logs/` 與 `options.txt`；主 checkout 也沒有 `run/client-light`。補填時請確認當時是否在另一台電腦或其他 profile 驗的，並註明 profile 與世界；若不是 `start-client.bat light` 的選用照明環境，請改列 B 段重驗 |
 | M1 GUI／HUD／瞄準（釀造、飲用與效果 HUD、25 格門與 Controller 瞄準開關） | [M1 紀錄](../implementation-notes/m1-chamber.md)「Client runtime 與人工驗收」第 1–2 項；[M1.1 紀錄](../implementation-notes/m1.1-origin-maintenance.md)「人工 gate」第 2–3 項；玩家指引表 H | 2026-09-24 回報 |  | 未在目前 HEAD 重做 |
 | M1 拉桿與比較器 3→7→11（held-high 不重觸發） | M1 紀錄「Client runtime 與人工驗收」第 3 項；M1.1「人工 gate」第 4 項；玩家指引表 A–C | 2026-09-24 回報 |  | 未在目前 HEAD 重做。M1 原文是 rising-edge 語意；M1.2 起持續供電加上全員合格即自動入場（玩家指引表 C） |
 | M1 四向外觀與 `start-client.bat` 雙擊啟動 | M1 紀錄「2026-09-16 核准的門控與青紫造型 follow-up」「2026-09-16 Windows 啟動入口」 | 2026-09-24 回報 |  | 未在目前 HEAD 重做 |
 
-補填參考：`run/client-base/saves/新的世界test (1)` 最後寫入時間為 2026-09-21 09:16，其 session journal 仍是 schema2（沒有在 M4 build 建立過 session）。這只能用來推估 build，不代表上表的驗收都在該世界進行。
+補填參考：2026-09-24 建立本清單時，`run/client-base/saves/新的世界test (1)` 最後寫入時間為 2026-09-21 09:16，session journal 仍是 schema2（當時沒有在 M4 build 建立過 session），可用來推估上表項目的 build。2026-09-29 使用者在該世界做了 B-5 預驗之後，上述狀態已被覆蓋：該世界已被寫成 schema3，並含一份 DORMANT receipt（見 2.5 (a) 與 B-5 預驗表）；測前沒有備份，2026-09-21／schema2 的原狀態無法復原。以上都不代表上表的驗收是在該世界進行。
 
 以下舊清單條目已被後續 milestone 取代，不另外驗收：
 
@@ -582,13 +760,22 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 合併 `main` 前依序確認：
 
-1. A、B、C 每個子項都是 PASS，或是 N/A 且備註寫明理由。需要使用者同意的 N/A 或 BLOCKED，記入下方 waiver 表。
+1. A、B、C 每個子項，以符合前置條件（含 build 條件）的**最新一列**為準，結果都是 PASS，或是 N/A 且備註寫明理由。選測子項（B-5f、B-6c、B-6f、C-5）沒做時記 N/A 並寫「選測未做」。「B-5 預驗」表標為「計入 E 段：否」，不採計。需要使用者同意的 N/A 或 BLOCKED，記入下方 waiver 表。
 2. D 段補填 build 與日期；無法補填時，由使用者決定如何處理並寫在 D 段備註。
-3. 完成 [AGENTS.md](../../AGENTS.md)「下一步」第 3 步的 M2 整分支 final review，或由使用者明確記錄 waiver。
-4. 記錄人工結果的同一個 docs commit，同步更新 AGENTS.md「下一步」第 2 步列出的狀態句。
-5. 以上都完成後，才以 `git merge --ff-only` 合併 `main`，再依 AGENTS.md 第 4 步打 tag，並以獨立 docs commit 更新整合狀態。
+3. [AGENTS.md](../../AGENTS.md)「下一步」的 M2 整分支 final review：已於 2026-09-29 隨 M1–M4 整分支 review 完成，findings 由 integration fix rounds 1–3 修正並 re-review，見 [整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)。
+4. feature HEAD 在 GitHub Actions 的 Ubuntu 與 Windows job 都通過（以 GitHub Actions 上該 commit 的 run 為準；本機 gate 不能代替）。
+5. 記錄人工結果的同一個 docs commit，同步更新 AGENTS.md「下一步」第 2 步列出的狀態句。
+6. 以上都完成後，才以 `git merge --ff-only` 合併 `main`，再依 AGENTS.md「下一步」打 tag，並以獨立 docs commit 更新整合狀態。
 
 任一子項 FAIL：回到對應 milestone 修正，不在本清單改判。修正後在新 HEAD 重跑 automated gates，並重驗受影響的人工項目（至少包含同一子項，以及走同一條程式路徑的子項）；新結果另起一列，不覆寫原本的 FAIL。BLOCKED 先排除環境問題再重驗；排除不了時，與 N/A 一樣由使用者決定。
+
+**review 引起的程式變更**：驗收期間若因 review 或 triage 修改了程式（2.2 的 production 指令有輸出）：
+
+1. 在新 HEAD 重跑 automated gates。
+2. 依附錄「預期結果的程式依據」逐列對照 diff：預期文字需要改、或所依據的程式位置被修改的子項，視為受影響，在新 HEAD 重驗，新結果另起一列。
+3. 未受影響且已 PASS 的列保留原本的 build SHA，由 reviewer 在該列備註簽註「未受 `<舊 SHA>..<新 SHA>` 影響」與依據（例如 diff 沒有觸及附錄列出的檔案）。
+4. 只改 testmod、CI 或文件時，可以用 release JAR 內每個非 `META-INF` 的 class 檔，其 hash 與基準 build 的 JAR 逐一相等，證明 production 未變；這時所有已 PASS 的列都保留。
+5. 以 docs commit 更新本清單開頭與 2.2 的 `$base`，並同步附錄的行號。
 
 Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）：每一項都要記錄，並依 AGENTS.md「使用者 2026-09-24 決定」第 3 項，標示 `main` 是開發快照、不適合未備份的正式世界。
 
@@ -604,7 +791,7 @@ Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）
 
 ## 附錄：預期結果的程式依據
 
-以 `752ada1` 為準；`main/` 代表 `src/main/java/dev/quantumchamber/`。程式變更後，預期結果要重新核對。
+以 `428f52a`（清單開頭與 2.2 的 `$base`）為準；`main/` 代表 `src/main/java/dev/quantumchamber/`。程式變更後，預期結果要依 E 段「review 引起的程式變更」條款重新核對。
 
 | 預期 | 依據 |
 | --- | --- |
@@ -616,18 +803,28 @@ Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）
 | B-0：未登錄位置不受保護；已登錄的殼體只有完成協調的 OFF 才可修改 | `main/chamber/ChamberProtectionService.java:94-106` |
 | 正常情況下 READY 只出現在準備入場（ARMING／STAGING）；`start()` 回 `REJECTED` 時停在 READY | `main/chamber/ChamberPowerCoordinator.java:141`、`:146-150` |
 | 資格：非旁觀者、碰撞箱完整在室內、全員有效果、門關 | `main/chamber/ChamberOccupantService.java:15-21`、`main/chamber/ChamberActivationEvaluator.java:9-16` |
-| 入場需持續供電與玩家預檢；DORMANT 不佔用參與者 | `main/superposition/SuperpositionSessionManager.java:96-102`、`main/persistence/SessionRecoveryState.java:146-151`、`:246-250` |
+| 入場需持續供電與玩家預檢；DORMANT 不佔用參與者；返還中的 session 仍佔用已返還者 | `main/superposition/SuperpositionSessionManager.java:97-103`、`main/persistence/SessionRecoveryState.java:146-151`、`:246-250` |
+| A-1、C-1b：入場前 checkpoint 能力預檢；不支援時 REJECTED 停在 READY、同一原因只記一次 WARN、恢復記 INFO | `main/superposition/SuperpositionSessionManager.java:103-106`、`:141-153`；`main/persistence/PlayerCheckpointStore.java:15`、`:24-40`；`main/persistence/WindowsPlayerCheckpointVerifier.java:54-82`；`main/persistence/WindowsCheckpointNative.java:38-45`；`main/chamber/ChamberPowerCoordinator.java:149` |
 | 關門訊息、停用後普通門控訊息 | `main/chamber/ChamberControllerBlock.java:85-94` |
 | 空手蹲下右鍵才進維護；持物蹲下走原生放置 | `main/chamber/ChamberControllerBlock.java:73-75` |
 | 停用／啟用訊息；拆除須 OFF；拆除成功訊息 | `main/chamber/ChamberMaintenanceInteraction.java:21-32`、`:55-67` |
 | schema1 可讀、讀成 `UNKNOWN`；寫回 schema2 | `main/chamber/ChamberRegistryState.java:94`、`:134`、`:202-203` |
 | 側門點擊由候選互動處理；鎖定與已鎖定訊息 | `main/chamber/QuantumBulkheadBlock.java:49-52`、`main/candidate/CandidateDoorInteraction.java:40-47` |
 | 側門為兩側牆面、每 8 格一扇 5×5 | `main/corridor/CorridorGeometry.java:74-83` |
-| DORMANT 原艙：presence 為 UNKNOWN、LOW 不能 OFF | `main/superposition/SuperpositionSessionManager.java:65-75`、`:291-303`、`main/corridor/CorridorPageManager.java:216-224` |
-| 活動中效果失效即返還；MEASURED 走保留式返還 | `main/superposition/SuperpositionSessionManager.java:158-169` |
-| 重啟時非 DORMANT 紀錄改為返還，不重建舊 session | `main/superposition/SuperpositionSessionManager.java:60-63`、`:345-353` |
-| 斷線觸發整組返還；JOIN 下一 tick 返回；返還 pending 時擋移動與方塊互動 | `main/persistence/SessionRecoveryManager.java:41-65`、`:77-80`；`main/mixin/ServerPlayNetworkHandlerRecoveryMixin.java:17-29` |
-| 走廊掉落物返還到原艙中央 | `main/persistence/SessionRecoveryManager.java:160-171`、`main/corridor/CorridorPageManager.java:994-1004` |
+| DORMANT 原艙：presence 為 UNKNOWN、LOW 不能 OFF | `main/superposition/SuperpositionSessionManager.java:66-76`、`:323-327`、`main/corridor/CorridorPageManager.java:216-224` |
+| 活動中效果失效即整組返還（正常到期或喝奶記 INFO「…（正常結束，非故障）」、不附 stack）；MEASURED 走保留式返還 | `main/superposition/SuperpositionSessionManager.java:179-196`、`:369-386` |
+| 重啟時非 DORMANT 紀錄改為返還，不重建舊 session | `main/superposition/SuperpositionSessionManager.java:61-64`、`:387-395` |
+| 斷線觸發整組返還；JOIN 下一 tick 返回 | `main/persistence/SessionRecoveryManager.java:57-69`、`:81-89`、`:140` |
+| 2.5 (d)、A-2、B-1b、C-2b、C-3b：返還期間只擋尚未返還者的移動、載具與方塊互動，已返還者不擋；原艙保護與比較器 11 維持到全員收尾 | `main/persistence/SessionRecoveryManager.java:45-54`；`main/mixin/ServerPlayNetworkHandlerRecoveryMixin.java:17-29`；`main/chamber/ChamberPowerCoordinator.java:117-126` |
+| 2.5 (e)：ARMING 中止只拉回已嘗試移動或在走廊世界的成員 | `main/superposition/SuperpositionSession.java:25-26`、`main/superposition/SuperpositionSessionManager.java:286`、`:355-358` |
+| 走廊掉落物與經驗球計入 pin、跨頁面保留，返還到原艙中央（B-1b、B-6d、C-3、C-4） | `main/corridor/SuperpositionEntityPolicy.java:37-41`；`main/corridor/CorridorPageManager.java:1015-1026`；`main/corridor/CorridorRepositionService.java:88`；`main/persistence/SessionRecoveryManager.java:172-183` |
+| B-6a：LATERAL 走廊內右鍵入口 Controller 拒絕並顯示訊息、門不變 | `main/chamber/ChamberControllerBlock.java:67-72`、`main/corridor/SessionEntranceDoorService.java:10-14`、`main/corridor/CorridorPageManager.java:450-460` |
+| B-6a：入口艙正面門格不是側門，也不是完整艙體，點擊不處理 | `main/corridor/CorridorPageManager.java:252-274`、`main/chamber/QuantumBulkheadBlock.java:49-60`、`main/chamber/ChamberLocator.java:14-26` |
+| B-6b：走廊世界使用放置類物品即拒絕、不消耗、actionbar 訊息 | `main/mixin/ItemStackSuperpositionEntityMixin.java:22-40`、`main/corridor/SuperpositionEntityPolicy.java:43-47`、`:63-79` |
+| B-6c、B-6f：非管理 entity 加入世界或跨維度（含 `/tp`）進入走廊世界即拒絕，每種類每路徑一次 WARN | `main/mixin/ServerWorldEntityAdmissionMixin.java:21-27`、`main/mixin/EntitySuperpositionTeleportMixin.java:27-43`、`main/corridor/SuperpositionEntityPolicy.java:81-89` |
+| B-6e、C-5：走廊世界不放下肩上鸚鵡（server 與本機 client） | `main/mixin/PlayerEntityShoulderSuperpositionMixin.java:21-24`、`main/corridor/SuperpositionEntityPolicy.java:49-61` |
+| B-6 範圍外：走廊內方塊受保護，無法放置 | `main/mixin/WorldSetBlockStateMixin.java:28-43`、`main/corridor/SessionSpaceProtection.java:16`、`:22-24` |
+| B-5d／e／f：MEASURED 原生存檔 checkpoint 失敗時 per-space 退避 20→1200 ticks、WARN 去重 | `main/corridor/CorridorPageManager.java:60`、`:845-849`、`:858-867`、`:875-883`、`:1049-1059` |
 | 輝光只在 POWERED 時由原生粒子輸出，每 20 ticks 一次、4 秒呼吸 | `main/chamber/ChamberGlowEmitter.java:32-57`、`main/chamber/ChamberGlowPattern.java:9-39`、`main/chamber/ChamberControllerBlock.java:115-122` |
 | 入口艙左右兩側開放 | `main/corridor/SessionEntranceAllocator.java:29-30` |
 | 藥水效果 3600 ticks | `main/registry/ModPotions.java:15-18` |
