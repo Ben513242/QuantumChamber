@@ -455,6 +455,9 @@ public final class CorridorPageManager {
                     : space.pending.target().instances().stream()).filter(CorridorGeometry::hasEntrance)
                     .filter(view -> CorridorGeometry.entrance(view,space.semantics).controllerPos().equals(pos)).findFirst();
             if (known.isEmpty()) continue;
+            // 左右模式的入口 replica 正門位於走廊側牆：開啟會在牆面開出通往 lease 外 void 的 5×5 洞，一律 handled 拒絕，不讓 session 失敗。
+            if (space.semantics==SessionSemantics.LATERAL_BUFF_MAINTAINED)
+                return Optional.of(new SessionEntranceDoorService.ToggleResult(false,"左右走廊的入口正門位於走廊牆面，不開放切換。"));
             var denied=new SessionEntranceDoorService.ToggleResult(false,"入口狀態、身分或操作條件不符，拒絕操作並保持保護。");
             if (space.pending!=null || space.failed || space.releasing || space.operations!=0
                     || !space.current.instances().contains(known.get())) return Optional.of(denied);

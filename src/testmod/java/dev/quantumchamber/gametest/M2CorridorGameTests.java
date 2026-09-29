@@ -256,7 +256,10 @@ public final class M2CorridorGameTests implements FabricGameTest {
         when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
             fixture.commit();
             var entrance=fixture.manager.entrance(fixture.session);
-            context.assertEquals(net.minecraft.util.ActionResult.SUCCESS,useEntrance(fixture,entrance),"lateral 原正門25格交易");
+            // 左右模式入口正門位於走廊側牆，開啟會在牆面開出通往 lease 外 void 的 5×5 洞：Controller 右鍵一律 handled 拒絕，session 不因此失敗。
+            context.assertEquals(net.minecraft.util.ActionResult.FAIL,useEntrance(fixture,entrance),"lateral 入口正門拒絕切換");
+            var toggle=SessionEntranceDoorService.tryToggle(fixture.target,entrance.controllerPos());
+            context.assertTrue(toggle.isPresent() && !toggle.orElseThrow().changed(),"lateral 入口 handled 拒絕，不回落 Origin 門交易");
             // publish 後兩側覆寫需走原本共用4096預算。
             context.runAtTick(tick+1,() -> {
                 assertLateralEntrance(fixture);
@@ -276,8 +279,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
         context.assertEquals(expected,frame.controllerPos(),"source Controller 位於 corridor block(6,6,3-anchor)");
         context.assertEquals(facing,fixture.target.getBlockState(expected).get(dev.quantumchamber.chamber.ChamberControllerBlock.FACING),"Controller FACING 保持原艙");
         for(int y=1;y<=5;y++) for(int n=1;n<=5;n++) {
-            context.assertTrue(fixture.target.getBlockState(ChamberSpaceCoordinates.block(frame,n,y,0))
-                    .get(dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN),"25格來源正門 OPEN 意圖");
+            context.assertTrue(!fixture.target.getBlockState(ChamberSpaceCoordinates.block(frame,n,y,0))
+                    .get(dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN),"25格入口正門保持關閉（位於走廊牆面，拒絕切換）");
             context.assertTrue(fixture.target.getBlockState(ChamberSpaceCoordinates.block(frame,n,y,6)).isOf(net.minecraft.block.Blocks.BEDROCK),"不開來源後牆");
             for(int x : new int[]{-1,0,6,7}) context.assertTrue(fixture.target.getBlockState(ChamberSpaceCoordinates.block(frame,x,y,n)).isAir(),"左右25格與外側connection都是AIR");
         }
