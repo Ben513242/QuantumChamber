@@ -407,7 +407,7 @@ Main-only 證據另見下文。
 
 Catalog 為 `1c794607…`（1 筆）的 test，是在 M3 `empty_bootstrap_and_disabled_record_do_not_create_worlds` 建立 DISABLED sentinel 之後才執行的，所以 baseline 本來就含那 1 筆；它們自己的 before 與 after 仍完全相同，沒有新增任何 record。
 
-`428f52a` 新增的 M4 GameTest 只有 `native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows`：持續原生存檔失敗時，MEASURED 清理依 20→40 ticks 退避重試、WARN 只記一次並附 stack，恢復後到達 DORMANT 且 SELECTED receipt 保留。
+Integration fix（`1ca107d`）新增的 M4 GameTest 只有 `native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows`：持續原生存檔失敗時，MEASURED 清理依 20→40 ticks 退避重試、WARN 只記一次並附 stack，恢復後到達 DORMANT 且 SELECTED receipt 保留。
 
 ### M4 驗收時的 final gates（HEAD `752ada1`，歷史）
 

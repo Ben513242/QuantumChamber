@@ -31,7 +31,7 @@
 | B-3 | M1.1 維護手勢（依 M1.2 現行語意） | 單人 | W1 |
 | B-4 | legacy schema1 舊房間 | 單人 | W-L |
 | B-5 | M4 spec §15 側門（最後執行） | 單人 | W-M4 |
-| B-6 | 整合修正：走廊內互動限制（入口 Controller、放置類物品、經驗球、肩上鸚鵡；另有兩個選測） | 單人 | W1 |
+| B-6 | 整合修正：走廊內互動限制（入口正門、放置類物品、經驗球、肩上鸚鵡；另有兩個選測） | 單人 | W1 |
 | C-1 | M1 多人資格判定 | 多人 | W-MP |
 | C-2 | M1 多人跨程序重啟 | 多人 | W-MP |
 | C-3 | M2-3 多人共享效果與離線 | 多人 | W-MP |
@@ -90,7 +90,7 @@ git diff --stat $base HEAD -- src/test src/testmod
 ```
 
 - 開始驗收前，`git status --short` 應該沒有輸出。開始填寫本清單後，只出現本清單檔案被修改屬正常；出現其他檔案就先停下來確認。
-- 紀錄欄的 build 填第二個指令的結果。
+- 紀錄欄的 build 填 `git rev-parse --short HEAD` 的結果。
 - production 指令沒有輸出：目前 HEAD 的 production 程式與 `$base` 相同（其後只有文件或測試 commit）。可以驗收。
 - production 指令有輸出：遊戲內行為可能已變更，**停止驗收**。先在新 HEAD 重跑 automated gates，依 E 段「review 引起的程式變更」條款判斷哪些子項要重驗，再以 docs commit 更新 `$base` 與清單開頭。
 - 只有 test-only 指令有輸出：只有測試碼變更，不影響遊戲內行為，不必停止驗收；在該列備註寫明（例如「test-only diff：`src/testmod/...`」）。這種情況下自動 gate 仍要在新 HEAD 重跑，但那是自動 gate 的工作，不是本清單的前提。
@@ -169,7 +169,7 @@ Repo 現況：`run/server/server.properties` 已設定 `online-mode=false`、`se
   - **若已在非測試世界點過側門**：
     1. 記下世界、Chamber 座標與朝向、build、日期（寫進 B-5 預驗表或該列備註）。
     2. 不得用指令或 NBT 編輯去解除封鎖；那會破壞 M5 要接手的 receipt。
-    3. 之後這個世界只能用 ≥`752ada1` 的本分支 build 開啟。不可用 `main`（目前是 M0，不含本功能）開啟。
+    3. 之後這個世界只能用 ≥`752ada1` 的本分支 build 開啟。不可用不含 M4 的 build（例如合併前的 `main`）開啟。
     4. 立即執行 2.1 備份，並在備份目錄或備註註明「這是 B-5 之後的狀態」。
     5. 記下該世界 `data/quantumchamber_sessions.dat` 的 SHA-256，作為 M5 migration 的真實 DORMANT 樣本：`Get-FileHash -Algorithm SHA256 -LiteralPath "<世界資料夾>\data\quantumchamber_sessions.dat"`。
     6. 這座 Chamber 不得用於 A／B／C 段。
@@ -462,7 +462,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   - 步驟 11：`power` 仍是 11，不會進入 OFF。
   - 步驟 12：Controller 不會被拆，actionbar 顯示「請先斷電並等待載入協調與返還完成。」；基岩不會被移除。
   - 步驟 13：C-M4b 可以正常入場（DORMANT 只封鎖自己的 Chamber）；之後喝奶返還即可。
-  - B-5d／e／f 的預期與 `752ada1` 時相同。2026-09-29 整合修正（F-CHECKPOINT）只改變「原生存檔 checkpoint 持續失敗時」的重試時序（每座艙 20→40→…→1200 ticks 退避，WARN 同原因只記一次），正常存檔成功時不會觀察到差異。
+  - B-5d／e／f 的預期與 `752ada1` 時相同。2026-09-29 整合修正（F-CHECKPOINT）只改變「原生存檔 checkpoint 持續失敗時」的重試時序（每個 session 的走廊空間（per-space）以 20→40→…→1200 ticks 退避；WARN 同一原因只在第一次附 stack，之後只計數，原因改變時補記前一原因的重複次數），正常存檔成功時不會觀察到差異。
 - 完成後：W-M4 的 C-M4 會一直封鎖到 M5。這個世界不要再拿來做 M2 項目。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
@@ -494,24 +494,23 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 ### B-6 整合修正：走廊內互動限制（W1，在 B-3d 之後、B-5 之前）
 
 - 來源：[整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)「行為變更摘要」第 3、6 點；[M2 紀錄](../implementation-notes/m2-corridor.md)「持久化與安全界線」；[M2 設計](../superpowers/specs/2026-09-17-m2-powered-corridor-design.md) §4、§6（2026-09-29 整合修正段）；[左右走廊修訂](../superpowers/specs/2026-09-18-m2-lateral-buff-maintained-design.md) §3（2026-09-29 改寫）。
-- 基準：build 的 production 程式必須等同 `$base`（≥ `428f52a`）。這些行為是 2026-09-29 才加入的，`752ada1` 或更早 build 的結果不能沿用。
+- 基準：production 程式等同 `$base`（目前 `428f52a`，見 2.2）。這些行為是 2026-09-29 才加入的，`752ada1` 或更早 build 的結果不能沿用。
 - 共同警告：
-  - 全程不要右鍵走廊兩側牆上的側門，手上拿著物品也一樣（見 2.5 (a)）。需要右鍵時，一律對走廊**地板**，或 B-6a 指定的入口艙正面門與其 Controller。
+  - 全程不要右鍵走廊兩側牆上的側門，手上拿著物品也一樣（見 2.5 (a)）。需要右鍵時，一律對走廊**地板**，或 B-6a 指定的入口艙正面門。
   - 走廊內的方塊受保護，無法放置或破壞任何方塊。
 - 共同前置：B-3d 結束時 C1 已重新註冊、拉桿 ON（`power` = 3），玩家在創造模式；身上有量子態藥水至少 6 瓶與牛奶 3 桶。任何時候效果剩餘不到 1 分鐘就補喝一瓶（在走廊內補喝不會中斷 session）。
 - 執行順序：B-6a →（B-6b、選測 B-6c、B-6d 接續同一個 session）→ B-6e（新的 session）→（選測）B-6f。
 
-**B-6a 走廊內右鍵入口 Controller 被拒**
+**B-6a 走廊內右鍵入口艙正面門無反應**
 
+- 範圍說明：左右走廊的入口艙正面門在走廊內一直是關閉的。入口 Controller 位於正門頂排中央的正上方（入口艙 local `(3,6,0)`），上方與兩側是基岩、下方是關閉的正門，所以原版 client 在走廊內瞄不到它；對修改版 client 送出的切換請求，程式一律拒絕並顯示「左右走廊的入口正門位於走廊牆面，不開放切換。」。這個拒絕訊息由 GameTest `trusted_lateral_geometry_{north,east,south,west}_windows`（`src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java:243-250`，斷言 `:260`、`:262`）覆蓋，**不列入人工項目**。本項只驗原版 client 做得到的操作。
 - 操作步驟：
   1. 進艙、關門、飲用藥水，等候入場（同 A-1 步驟 2–5）。入場後先不要離開入口艙。
-  2. 面向入口艙的正面門（紫色 5×5 門，位置與原艙正面門相同）。不要蹲下，從門內側瞄準門頂中央 Controller 的底面，右鍵一次。
+  2. 面向入口艙的正面門（紫色 5×5 門，位置與原艙正面門相同）。不要蹲下，依序右鍵正面門的幾格紫色門塊，至少包含頂排中央那一格與底排任一格。
   3. 按 F3 看維度，按 E 看效果；確認正面門仍是關閉（實心）。
-  4. 不要蹲下，右鍵入口艙正面門的任一格紫色門塊。
 - 預期結果：
-  - 步驟 2：actionbar 顯示「左右走廊的入口正門位於走廊牆面，不開放切換。」，門保持關閉。
-  - 步驟 3：仍在 `quantumchamber:superposition`；效果仍在並持續倒數（session 不受影響，沒有返還）。
-  - 步驟 4：門不動，也沒有 actionbar 訊息（入口艙正面門不屬於側門，入口艙也不是完整艙體，程式不處理這次點擊；依程式推導）。
+  - 步驟 2：門不動，也沒有 actionbar 訊息（入口艙正面門不屬於側門，入口艙也不是完整艙體，程式不處理這次點擊；依程式推導）。
+  - 步驟 3：仍在 `quantumchamber:superposition`；效果仍在並持續倒數（session 不受影響，沒有返還）；正面門仍關閉。
 
 **B-6b 放置類物品被拒、物品不消耗**
 
@@ -550,12 +549,13 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 **B-6d 經驗球跨頁面保留，並於返還時回到原艙中央**
 
-- 前置：接續 B-6b（或 B-6c），仍在走廊，創造模式，效果剩餘至少 2 分鐘（不足就補喝）。輸入 `/give @s minecraft:experience_bottle 3`。
+- 前置：接續 B-6b（或 B-6c），仍在走廊（入口艙外），創造模式，效果剩餘至少 2 分鐘（不足就補喝）。
+- 為什麼不用經驗瓶：經驗球每隔一段時間會飛向 8 格內最近的玩家（創造模式也會吸收）。以原版常數推算，經驗瓶在平地的最大落點約 8.7 格，丟出後很難讓經驗球停在 8 格外（推算、非實測）。所以本項改用指令在 12 格外生成經驗球；經驗球屬於走廊世界允許的種類，會正常生成。
 - 操作步驟：
   1. 輸入 `/xp set @s 0 levels` 與 `/xp set @s 0 points`。
-  2. 面向走廊的一端（不要對著側門），略為抬頭，把 3 瓶經驗瓶盡量丟遠，落點至少 10 格外。確認地上出現綠色經驗球，而且沒有飛向你；若經驗球飛過來被吸收，後退拉開距離再重做本步驟（先重設經驗值）。
-  3. 轉身往走廊另一端走至少 120 格（會跨過至少一個 96 格頁面邊界），停 10 秒，再走回來；在距離經驗球至少 10 格處停下觀察。
-  4. 保持至少 10 格距離，喝牛奶。
+  2. 面向走廊延伸的方向（不要對著側門或牆面），平視（F3 的視角 pitch 約 0），輸入 `/summon minecraft:experience_orb ^ ^ ^12 {Value:10}`。確認前方約 12 格處的地上出現綠色經驗球，而且沒有飛向你；若它飛過來被吸收，先重設經驗值（步驟 1），往後退幾格再重做本步驟。
+  3. 轉身往走廊另一端走至少 120 格（會跨過至少一個 96 格頁面邊界），停 10 秒，再走回來；在距離經驗球超過 8 格（建議 10 格）處停下觀察。
+  4. 保持超過 8 格的距離，喝牛奶。
   5. 回到原艙後，觀察艙內地面約 5 秒；輸入 `/xp query @s points` 與 `/xp query @s levels`。
 - 預期結果：
   - 步驟 3：經驗球仍在原來的位置（相對走廊不變），沒有消失，也沒有掉出走廊。
@@ -600,7 +600,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| B-6a 入口 Controller 被拒、session 不受影響 |  |  |  | 單人 |  |  |  |
+| B-6a 右鍵入口正門無反應、session 不受影響 |  |  |  | 單人 |  |  |  |
 | B-6b 放置類物品被拒、物品不消耗 |  |  |  | 單人 |  |  | 未顯示訊息或被扣的物品： |
 | B-6c （選測）丟蛋不孵小雞 |  |  |  | 單人 |  |  |  |
 | B-6d 經驗球跨頁面保留並回到原艙中央 |  |  |  | 單人 |  |  | 返還後經驗值： |
@@ -705,7 +705,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
   - 結束：一人喝牛奶，整組返還。
 - 預期結果：
   - C-4a、C-4c：地板、牆與側門外觀連續；沒有掉落、卡牆、看不見的牆或可見的端牆；對方的位置與動作同步，沒有瞬移、重疊或消失。F3 絕對座標若因實體 slot 重新定位而跳動，記錄即可，判定以畫面連續為準。
-  - C-4b：會合時對方出現在正確位置，站在地板上，不懸空也不穿牆；鑽石仍在原處，可以撿起；走廊結構連續。（選做：丟鑽石時也在 10 格外丟一瓶經驗瓶；經驗球比照掉落物，會合時仍在原處，見 B-6d。）
+  - C-4b：會合時對方出現在正確位置，站在地板上，不懸空也不穿牆；鑽石仍在原處，可以撿起；走廊結構連續。（經驗球比照掉落物保留；因為經驗球會飛向 8 格內的玩家，本項不另測，單人專項見 B-6d。）
   - 結束：兩人都回到原艙室內（`minecraft:overworld`）。
 
 | 子項 | 日期 | 驗收者 | build（commit SHA） | 單人／多人 | 結果 | 證據 | 備註 |
@@ -716,7 +716,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 ### C-5（選測）多人肩上鸚鵡顯示
 
-- 來源：[整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)「行為變更摘要」第 3 點（肩上鸚鵡）。其他玩家畫面上的肩上 entity 由伺服器同步，本項確認走廊內保留肩上鸚鵡後，其他玩家看到的也一致。基準 ≥ `428f52a`。
+- 來源：[整合審查紀錄](../implementation-notes/2026-09-29-m1-m4-integration-review.md)「行為變更摘要」第 3 點（肩上鸚鵡）。其他玩家畫面上的肩上 entity 由伺服器同步，本項確認走廊內保留肩上鸚鵡後，其他玩家看到的也一致。基準：production 程式等同 `$base`（目前 `428f52a`，見 2.2）。
 - 前置條件：在 C-2 之後。拉桿 ON；A、B 都沒有量子態效果，各有藥水至少 2 瓶與牛奶 1 桶。A 依 B-6e 前置第 1–2 步取得馴服的鸚鵡並放上肩（`/gamemode survival`）；B 站在旁邊看得到 A。全程不要右鍵側門。
 - 操作步驟：
   1. A（帶著肩上的鸚鵡，不跳、不飛）與 B 進艙，關門，兩人都喝藥，等候入場。
@@ -818,7 +818,7 @@ Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）
 | 2.5 (d)、A-2、B-1b、C-2b、C-3b：返還期間只擋尚未返還者的移動、載具與方塊互動，已返還者不擋；原艙保護與比較器 11 維持到全員收尾 | `main/persistence/SessionRecoveryManager.java:45-54`；`main/mixin/ServerPlayNetworkHandlerRecoveryMixin.java:17-29`；`main/chamber/ChamberPowerCoordinator.java:117-126` |
 | 2.5 (e)：ARMING 中止只拉回已嘗試移動或在走廊世界的成員 | `main/superposition/SuperpositionSession.java:25-26`、`main/superposition/SuperpositionSessionManager.java:286`、`:355-358` |
 | 走廊掉落物與經驗球計入 pin、跨頁面保留，返還到原艙中央（B-1b、B-6d、C-3、C-4） | `main/corridor/SuperpositionEntityPolicy.java:37-41`；`main/corridor/CorridorPageManager.java:1015-1026`；`main/corridor/CorridorRepositionService.java:88`；`main/persistence/SessionRecoveryManager.java:172-183` |
-| B-6a：LATERAL 走廊內右鍵入口 Controller 拒絕並顯示訊息、門不變 | `main/chamber/ChamberControllerBlock.java:67-72`、`main/corridor/SessionEntranceDoorService.java:10-14`、`main/corridor/CorridorPageManager.java:450-460` |
+| B-6a 範圍說明（非人工項）：入口 Controller 在關閉正門的正上方、周圍是基岩，原版 client 瞄不到；LATERAL 走廊內的切換請求一律拒絕並顯示訊息，由 GameTest `trusted_lateral_geometry_*_windows` 覆蓋 | `main/corridor/SessionEntranceAllocator.java:22-32`、`main/chamber/QuantumBulkheadBlock.java:34-41`；`main/chamber/ChamberControllerBlock.java:67-72`、`main/corridor/SessionEntranceDoorService.java:10-14`、`main/corridor/CorridorPageManager.java:450-460`；`src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java:243-250`、`:260`、`:262` |
 | B-6a：入口艙正面門格不是側門，也不是完整艙體，點擊不處理 | `main/corridor/CorridorPageManager.java:252-274`、`main/chamber/QuantumBulkheadBlock.java:49-60`、`main/chamber/ChamberLocator.java:14-26` |
 | B-6b：走廊世界使用放置類物品即拒絕、不消耗、actionbar 訊息 | `main/mixin/ItemStackSuperpositionEntityMixin.java:22-40`、`main/corridor/SuperpositionEntityPolicy.java:43-47`、`:63-79` |
 | B-6c、B-6f：非管理 entity 加入世界或跨維度（含 `/tp`）進入走廊世界即拒絕，每種類每路徑一次 WARN | `main/mixin/ServerWorldEntityAdmissionMixin.java:21-27`、`main/mixin/EntitySuperpositionTeleportMixin.java:27-43`、`main/corridor/SuperpositionEntityPolicy.java:81-89` |
