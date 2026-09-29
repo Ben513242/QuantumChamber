@@ -68,12 +68,14 @@ jobs:
       - name: 確認 Windows 原生案例確實執行
         shell: pwsh
         run: |
+          # 各項檢查先彙整，最後一次列出全部缺席／失敗名稱；任一項不符即 throw（維持失敗即紅）。
+          $problems = [System.Collections.Generic.List[string]]::new()
           $suites = @('PlayerCheckpointStoreTest', 'WindowsPlayerCheckpointVerifierTest')
           foreach ($suite in $suites) {
             [xml]$result = Get-Content -Raw "build/test-results/test/TEST-dev.quantumchamber.persistence.$suite.xml"
             $row = $result.testsuite
             if ([int]$row.tests -le 0 -or [int]$row.failures -ne 0 -or [int]$row.errors -ne 0 -or [int]$row.skipped -ne 0) {
-              throw "必要 Windows 原生 suite 未全數實際通過：$suite"
+              $problems.Add("必要 Windows 原生 suite 未全數實際通過：$suite")
             }
           }
           # 非 Windows 專屬拒絕案例在 Windows 合法略過，不套用全 XML 零 skipped。
@@ -126,7 +128,7 @@ jobs:
           foreach ($testName in $requiredGameTests) {
             $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.skipped) {
-              throw "必要 Windows 原生 GameTest 未實際通過：$testName"
+              $problems.Add("必要 Windows 原生 GameTest 未實際通過：$testName")
             }
           }
           # M4 候選門真入場需要原生 checkpoint；非 Windows 以 `_windows` 平台略過，Windows 必須實際通過。
@@ -154,7 +156,7 @@ jobs:
           foreach ($testName in $requiredM4GameTests) {
             $node = $gameTests.SelectSingleNode("//testcase[@name='m4candidatedoorgametests.$testName']")
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.skipped) {
-              throw "必要 Windows 原生 M4 GameTest 未實際通過：$testName"
+              $problems.Add("必要 Windows 原生 M4 GameTest 未實際通過：$testName")
             }
           }
           # 通則（補強上方清單，不取代）：名稱以 _windows 結尾的案例在非 Windows 平台略過，在 Windows 必須全部實際通過。
@@ -162,25 +164,38 @@ jobs:
           $windowsCases = @($gameTests.SelectNodes('//testcase') | Where-Object { $_.name -like '*_windows' })
           foreach ($case in $windowsCases) {
             if ($null -ne $case.failure -or $null -ne $case.error -or $null -ne $case.skipped) {
-              throw "Windows 原生 _windows GameTest 未實際通過：$($case.name)"
+              $problems.Add("Windows 原生 _windows GameTest 未實際通過：$($case.name)")
             }
           }
           # 2) testmod 原始碼宣告的每個 _windows 案例都必須出現在 XML（不可缺席）；legacy 專用 batch 只在 runGameTestLegacy 執行，不在此列。
+          #    嚴格掃描取得 annotation 以排除 legacy batch；另以寬鬆掃描（任何 void <name>_windows( 宣告）交叉核對同一檔的名稱集合，
+          #    不一致代表宣告格式漂移（例如 @GameTest 與方法間多了 annotation），嚴格掃描會漏要求，必須失敗。
           $declared = @()
           foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*GameTests.java') {
             $source = Get-Content -Raw -LiteralPath $file.FullName
-            foreach ($match in [regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+_windows)\(TestContext')) {
+            $strict = @([regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+_windows)\(TestContext'))
+            $strictNames = @($strict | ForEach-Object { $_.Groups['name'].Value } | Sort-Object -Unique)
+            $looseNames = @([regex]::Matches($source, 'void\s+(?<name>\w+_windows)\s*\(') | ForEach-Object { $_.Groups['name'].Value } | Sort-Object -Unique)
+            $onlyLoose = @($looseNames | Where-Object { $_ -notin $strictNames })
+            $onlyStrict = @($strictNames | Where-Object { $_ -notin $looseNames })
+            if ($onlyLoose.Count -gt 0 -or $onlyStrict.Count -gt 0) {
+              $problems.Add("_windows 宣告掃描不一致（$($file.Name)）：僅寬鬆掃描 [$($onlyLoose -join ', ')]；僅嚴格掃描 [$($onlyStrict -join ', ')]")
+            }
+            foreach ($match in $strict) {
               if ($match.Groups['annotation'].Value -notmatch 'batchId\s*=\s*"m4_legacy_runtime"') {
                 $declared += $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
               }
             }
           }
-          if ($declared.Count -eq 0) { throw '找不到任何 _windows GameTest 宣告，守門規則失效' }
+          if ($declared.Count -eq 0) { $problems.Add('找不到任何 _windows GameTest 宣告，守門規則失效') }
           $present = @($windowsCases | ForEach-Object { $_.name })
           foreach ($testName in $declared) {
-            if ($testName -notin $present) { throw "Windows 原生 _windows GameTest 缺席：$testName" }
+            if ($testName -notin $present) { $problems.Add("Windows 原生 _windows GameTest 缺席：$testName") }
           }
-          Write-Output "Windows 原生 _windows GameTest：宣告 $($declared.Count) 個，XML $($windowsCases.Count) 個，全部實際通過"
+          if ($problems.Count -gt 0) {
+            throw ("Windows 原生守門未通過（$($problems.Count) 項）：`n" + ($problems -join "`n"))
+          }
+          Write-Output "Windows 原生 _windows GameTest：宣告 $($declared.Count) 個（嚴格與寬鬆掃描一致），XML $($windowsCases.Count) 個，全部實際通過"
       - name: 上傳 Windows 原生測試證據
         if: always()
         uses: actions/upload-artifact@v4
