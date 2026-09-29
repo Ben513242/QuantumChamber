@@ -19,6 +19,7 @@ import net.minecraft.item.LeadItem;
 import net.minecraft.item.LingeringPotionItem;
 import net.minecraft.item.MinecartItem;
 import net.minecraft.item.SpawnEggItem;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
@@ -43,6 +44,20 @@ public final class SuperpositionEntityPolicy {
     public static boolean restricted(World world) {
         return world instanceof ServerWorld server && server.getRegistryKey() == SuperpositionWorld.KEY
                 && server.getServer().getWorld(SuperpositionWorld.KEY) == server;
+    }
+
+    /**
+     * 玩家所在 world 是否略過原版「放下肩上 entity」（肩上鸚鵡留在肩上）。
+     * server 端與 {@link #restricted} 相同。client 端：原版 PlayerEntity.tickMovement 在 client 也會因飛行、睡眠、粉雪呼叫
+     * dropShoulderEntities，清空本機肩上 tracked data；server 端已保留、值沒變就不會重送，玩家自己畫面上的鸚鵡會消失到重登或回原艙放下。
+     */
+    public static boolean keepsShoulderEntities(World world) {
+        return keepsShoulderEntities(world.isClient(), world.getRegistryKey(), restricted(world));
+    }
+
+    /** client world 沒有 server 登錄表可比對，只能依 world key 判定（封包解出的 key 與常數為同一 interned 實例）。 */
+    static boolean keepsShoulderEntities(boolean client, RegistryKey<World> worldKey, boolean serverRestricted) {
+        return client ? worldKey == SuperpositionWorld.KEY : serverRestricted;
     }
 
     /**
