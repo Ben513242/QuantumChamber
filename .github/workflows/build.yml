@@ -21,6 +21,21 @@ jobs:
         run: ./gradlew clean build
       - name: 非 Windows GameTest 平台契約
         run: ./gradlew runGameTest --no-daemon
+      - name: 確認非 Windows 跨平台案例確實執行
+        shell: pwsh
+        run: |
+          # 非 Windows 上 `_windows` 案例一律平台略過；以下跨平台案例是 Ubuntu 唯一的真實入場／傳送覆蓋，必須存在且實際通過（不可略過或缺席）。
+          [xml]$gameTests = Get-Content -Raw 'build/gametest-results.xml'
+          $requiredCrossPlatform = @(
+            'unsupported_checkpoint_platform_rejects_start_without_residue',
+            'unmanaged_entity_command_teleport_into_superposition_stays_at_source'
+          )
+          foreach ($testName in $requiredCrossPlatform) {
+            $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")
+            if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
+              throw "必要跨平台 GameTest 未實際通過：$testName"
+            }
+          }
       - name: Upload mod JAR
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,7 +120,8 @@ jobs:
             'native_return_move_exception_logs_cause_once_then_recovers_windows',
             'native_buff_loss_return_logs_info_without_stack_windows',
             'native_arming_abort_leaves_unentered_members_in_place_windows',
-            'native_moving_player_return_logs_no_pending_move_warning_windows'
+            'native_moving_player_return_logs_no_pending_move_warning_windows',
+            'unmanaged_entity_command_teleport_into_superposition_stays_at_source'
           )
           foreach ($testName in $requiredGameTests) {
             $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")
@@ -141,6 +157,30 @@ jobs:
               throw "必要 Windows 原生 M4 GameTest 未實際通過：$testName"
             }
           }
+          # 通則（補強上方清單，不取代）：名稱以 _windows 結尾的案例在非 Windows 平台略過，在 Windows 必須全部實際通過。
+          # 1) XML 內每個 _windows 案例都不得有 failure／error／skipped。
+          $windowsCases = @($gameTests.SelectNodes('//testcase') | Where-Object { $_.name -like '*_windows' })
+          foreach ($case in $windowsCases) {
+            if ($null -ne $case.failure -or $null -ne $case.error -or $null -ne $case.skipped) {
+              throw "Windows 原生 _windows GameTest 未實際通過：$($case.name)"
+            }
+          }
+          # 2) testmod 原始碼宣告的每個 _windows 案例都必須出現在 XML（不可缺席）；legacy 專用 batch 只在 runGameTestLegacy 執行，不在此列。
+          $declared = @()
+          foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*GameTests.java') {
+            $source = Get-Content -Raw -LiteralPath $file.FullName
+            foreach ($match in [regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+_windows)\(TestContext')) {
+              if ($match.Groups['annotation'].Value -notmatch 'batchId\s*=\s*"m4_legacy_runtime"') {
+                $declared += $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
+              }
+            }
+          }
+          if ($declared.Count -eq 0) { throw '找不到任何 _windows GameTest 宣告，守門規則失效' }
+          $present = @($windowsCases | ForEach-Object { $_.name })
+          foreach ($testName in $declared) {
+            if ($testName -notin $present) { throw "Windows 原生 _windows GameTest 缺席：$testName" }
+          }
+          Write-Output "Windows 原生 _windows GameTest：宣告 $($declared.Count) 個，XML $($windowsCases.Count) 個，全部實際通過"
       - name: 上傳 Windows 原生測試證據
         if: always()
         uses: actions/upload-artifact@v4
