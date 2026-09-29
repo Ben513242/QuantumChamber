@@ -105,7 +105,7 @@
    - 已知殘留：舊存檔 superposition 世界中已存在、由 chunk 載入的非管理 entity 不經 `addEntity`，本輪未處理；騎乘載具入場後在走廊斷線重登，載具會遺失（修正前亦然）。
 4. **MEASURED checkpoint 退避（F-CHECKPOINT）**：原生存檔 checkpoint 失敗時 per-space 指數退避 20→40→…→1200 ticks，退避期間不掃描、不存檔；成功或 receipt 改變時重置（`main/corridor/CorridorPageManager.java:60`、`:845-849`、`:858-867`、`:875-883`）。WARN 同原因只在第一次附 stack，之後只計數，恢復時記 INFO（`:1032-1035`、`:1049-1059`）。
 5. **log 分類（R2 M1、R2 M2）**：transfer 例外 WARN 含 cause、UUID、type 與 from／to world（`main/transfer/SessionTransferService.java:50-58`）；只有返還後玩家仍不在原艙才記「返還移動尚未確認」（`SessionRecoveryManager.java:148-153`、`:190-195`）。正常 Buff 到期或喝奶的返還記 INFO（`SuperpositionSessionManager.java:186-196`、`:369-386`）。仍記 WARN／ERROR＋stack 的正常結束（N-4，延後）：入場移動途中喝奶、remap 期間 Buff 失效、一般斷線或死亡。
-6. **LATERAL 入口正門（R2 M3）**：LATERAL 模式走廊內右鍵入口 Controller 一律拒絕，門保持關閉，session 不受影響（`CorridorPageManager.java:458-460`）。入口 Controller 位於關閉正門的正上方、周圍是基岩（`main/corridor/SessionEntranceAllocator.java:22-32`），原版 client 在走廊內瞄不到它，這道拒絕是防修改版 client；拒絕訊息由 GameTest `trusted_lateral_geometry_{north,east,south,west}_windows` 覆蓋，不列入人工項目。這依使用者決定改寫 lateral spec §3「正面門仍由原 Controller 門交易處理」；M2 spec §4 的前門開關只適用 legacy 前後模式。
+6. **LATERAL 入口正門（R2 M3）**：LATERAL 模式走廊內右鍵入口 Controller 一律拒絕，門保持關閉，session 不受影響（`CorridorPageManager.java:458-460`）。入口 Controller 位於關閉正門的正上方、兩側與內側（天花板）是基岩、上方與外側在走廊 lease 之外（`main/corridor/SessionEntranceAllocator.java:22-32`），原版 client 在走廊內瞄不到它，這道拒絕是防修改版 client；拒絕結果由 GameTest `trusted_lateral_geometry_{north,east,south,west}_windows` 斷言（訊息文字沒有測試斷言，依程式 `CorridorPageManager.java:460`），不列入人工項目。這依使用者決定改寫 lateral spec §3「正面門仍由原 Controller 門交易處理」；M2 spec §4 的前門開關只適用 legacy 前後模式。
 7. **ARMING 中止（R2 M4）**：rollback 只拉回本 session 已嘗試移動、或目前在走廊世界的成員，仍在原艙內的成員保持原 pose（`main/superposition/SuperpositionSession.java:25-26`、`SuperpositionSessionManager.java:286`、`:355-358`）。但 durable RETURNING 之後，`recover()` 仍會把已離開原艙 interior 的未返還成員（例如 ARMING 期間用珍珠或歌萊果離艙）送回原艙返還位（N-3，行為變更延後 M5）。
 8. **schema3 不可降版**（R3 m-1，行為未變、補文件）：用本 build 建立過走廊 session 的存檔會寫成 schema3，M4 之前的 build 讀取會 fail closed。
 
@@ -181,7 +181,7 @@ Round 3 full gate 的 stdout 有 47 則 WARN／ERROR，逐類比對 round 2（46
 人工驗收在本輪修正前除 B-5 自有世界預驗（不計入 E 段）外尚未開始，所以修正不造成實際的重驗負擔。清單已改以 `428f52a` 為程式基準，並依本輪變更改寫或新增：
 
 - 預期文字改寫：2.5 (c)(d)、A-2、B-1b、B-3 前置條件、C-2b、C-3b（已返還者可移動）；A-1、C-1b（平台說明）；B-1b、C-3a、C-3b、C-4（經驗球）；B-5d／e／f（基準改 `428f52a`，正常路徑預期不變）。
-- 新增子項：B-6（右鍵走廊內入口正門無反應、放置類物品被拒、經驗球、肩上鸚鵡，以及選測的丟蛋與指令傳送）、C-5（選測，多人肩上鸚鵡）、D 段 M2-4 LOW 返還。入口 Controller 的拒絕訊息原版 client 觸及不到，由 GameTest 覆蓋，不列入人工項目。
+- 新增子項：B-6（右鍵走廊內入口正門無反應、放置類物品被拒、經驗球、肩上鸚鵡，以及選測的丟蛋與指令傳送）、C-5（選測，多人肩上鸚鵡）、D 段 M2-4 LOW 返還。入口 Controller 的拒絕原版 client 觸及不到；拒絕結果由 GameTest 斷言、訊息文字依程式，不列入人工項目。
 - F-DOC-B5 與 F-DOC-GUARD 的修正，見清單 2.2、2.5 (a)、B-5 預驗表與 E 段。
 
 ## Deferred triage 結論

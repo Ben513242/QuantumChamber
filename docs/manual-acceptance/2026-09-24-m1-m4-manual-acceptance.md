@@ -503,7 +503,7 @@ M2-1、M2-2 使用者已回報驗過（見 D 段），但 M4 之後入場與返�
 
 **B-6a 走廊內右鍵入口艙正面門無反應**
 
-- 範圍說明：左右走廊的入口艙正面門在走廊內一直是關閉的。入口 Controller 位於正門頂排中央的正上方（入口艙 local `(3,6,0)`），上方與兩側是基岩、下方是關閉的正門，所以原版 client 在走廊內瞄不到它；對修改版 client 送出的切換請求，程式一律拒絕並顯示「左右走廊的入口正門位於走廊牆面，不開放切換。」。這個拒絕訊息由 GameTest `trusted_lateral_geometry_{north,east,south,west}_windows`（`src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java:243-250`，斷言 `:260`、`:262`）覆蓋，**不列入人工項目**。本項只驗原版 client 做得到的操作。
+- 範圍說明：左右走廊的入口艙正面門在走廊內一直是關閉的。入口 Controller 位於正門頂排中央的正上方（入口艙 local `(3,6,0)`），兩側與內側（天花板）是基岩、下方是關閉的正門，上方與外側在走廊 lease 之外，所以原版 client 在走廊內瞄不到它；對修改版 client 送出的切換請求，程式一律拒絕並顯示「左右走廊的入口正門位於走廊牆面，不開放切換。」。拒絕結果（`FAIL`、handled 且未切換）由 GameTest `trusted_lateral_geometry_{north,east,south,west}_windows`（`src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java:243-250`，斷言 `:260`、`:262`）斷言；訊息文字沒有測試斷言，依程式 `CorridorPageManager.java:460`。**不列入人工項目**。本項只驗原版 client 做得到的操作。
 - 操作步驟：
   1. 進艙、關門、飲用藥水，等候入場（同 A-1 步驟 2–5）。入場後先不要離開入口艙。
   2. 面向入口艙的正面門（紫色 5×5 門，位置與原艙正面門相同）。不要蹲下，依序右鍵正面門的幾格紫色門塊，至少包含頂排中央那一格與底排任一格。
@@ -818,7 +818,7 @@ Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）
 | 2.5 (d)、A-2、B-1b、C-2b、C-3b：返還期間只擋尚未返還者的移動、載具與方塊互動，已返還者不擋；原艙保護與比較器 11 維持到全員收尾 | `main/persistence/SessionRecoveryManager.java:45-54`；`main/mixin/ServerPlayNetworkHandlerRecoveryMixin.java:17-29`；`main/chamber/ChamberPowerCoordinator.java:117-126` |
 | 2.5 (e)：ARMING 中止只拉回已嘗試移動或在走廊世界的成員 | `main/superposition/SuperpositionSession.java:25-26`、`main/superposition/SuperpositionSessionManager.java:286`、`:355-358` |
 | 走廊掉落物與經驗球計入 pin、跨頁面保留，返還到原艙中央（B-1b、B-6d、C-3、C-4） | `main/corridor/SuperpositionEntityPolicy.java:37-41`；`main/corridor/CorridorPageManager.java:1015-1026`；`main/corridor/CorridorRepositionService.java:88`；`main/persistence/SessionRecoveryManager.java:172-183` |
-| B-6a 範圍說明（非人工項）：入口 Controller 在關閉正門的正上方、周圍是基岩，原版 client 瞄不到；LATERAL 走廊內的切換請求一律拒絕並顯示訊息，由 GameTest `trusted_lateral_geometry_*_windows` 覆蓋 | `main/corridor/SessionEntranceAllocator.java:22-32`、`main/chamber/QuantumBulkheadBlock.java:34-41`；`main/chamber/ChamberControllerBlock.java:67-72`、`main/corridor/SessionEntranceDoorService.java:10-14`、`main/corridor/CorridorPageManager.java:450-460`；`src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java:243-250`、`:260`、`:262` |
+| B-6a 範圍說明（非人工項）：入口 Controller 在關閉正門的正上方、兩側與內側是基岩，原版 client 瞄不到；LATERAL 走廊內的切換請求一律拒絕並顯示訊息，拒絕結果由 GameTest `trusted_lateral_geometry_*_windows` 斷言，訊息文字依程式 | `main/corridor/SessionEntranceAllocator.java:22-32`、`main/chamber/QuantumBulkheadBlock.java:34-41`；`main/chamber/ChamberControllerBlock.java:67-72`、`main/corridor/SessionEntranceDoorService.java:10-14`、`main/corridor/CorridorPageManager.java:450-460`；`src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java:243-250`、`:260`、`:262` |
 | B-6a：入口艙正面門格不是側門，也不是完整艙體，點擊不處理 | `main/corridor/CorridorPageManager.java:252-274`、`main/chamber/QuantumBulkheadBlock.java:49-60`、`main/chamber/ChamberLocator.java:14-26` |
 | B-6b：走廊世界使用放置類物品即拒絕、不消耗、actionbar 訊息 | `main/mixin/ItemStackSuperpositionEntityMixin.java:22-40`、`main/corridor/SuperpositionEntityPolicy.java:43-47`、`:63-79` |
 | B-6c、B-6f：非管理 entity 加入世界或跨維度（含 `/tp`）進入走廊世界即拒絕，每種類每路徑一次 WARN | `main/mixin/ServerWorldEntityAdmissionMixin.java:21-27`、`main/mixin/EntitySuperpositionTeleportMixin.java:27-43`、`main/corridor/SuperpositionEntityPolicy.java:81-89` |

@@ -45,7 +45,7 @@
 
 現有logicalZ識別字若保留，必須註明是歷史名稱，代表走廊縱向邏輯座標而非原艙z或世界Z。logical page96、門站8、floor division、logical DoorKey與多人split／merge演算法維持。
 
-有限入口replica仍按來源艙facing覆寫同一7³體積，Controller及正面25格門保持原朝向。活動時連通入口兩側local x=0/6的5×5通道；~~正面門仍由原Controller門交易處理~~（2026-09-29 使用者決定改寫：左右模式的入口正門位於走廊牆面，開啟會在牆面開出通往 lease 外 void 的 5×5 洞，因此走廊內右鍵入口 Controller 一律拒絕切換，actionbar「左右走廊的入口正門位於走廊牆面，不開放切換。」，門保持關閉、session 不受影響（入口 Controller 在關閉正門的正上方、周圍是基岩，原版 client 瞄不到，這道拒絕是防修改版 client）；前門整面開關只保留給 legacy 前後模式），後牆不再當左右走廊的連接面。普通來源原艙的牆與門不因此被拆除。
+有限入口replica仍按來源艙facing覆寫同一7³體積，Controller及正面25格門保持原朝向。活動時連通入口兩側local x=0/6的5×5通道；~~正面門仍由原Controller門交易處理~~（2026-09-29 使用者決定改寫：左右模式的入口正門位於走廊牆面，開啟會在牆面開出通往 lease 外 void 的 5×5 洞，因此走廊內右鍵入口 Controller 一律拒絕切換，actionbar「左右走廊的入口正門位於走廊牆面，不開放切換。」，門保持關閉、session 不受影響（入口 Controller 在關閉正門的正上方、兩側與內側是基岩，原版 client 瞄不到，這道拒絕是防修改版 client）；前門整面開關只保留給 legacy 前後模式），後牆不再當左右走廊的連接面。普通來源原艙的牆與門不因此被拆除。
 
 原logical0..6入口完整物化條件、兩側連接格與端cap保護沿用；apron576／視距設計32chunks不擴大。新builder須把入口覆寫與走廊base cell ownership分離，不能用新走廊frame直接放原艙Controller。
 
