@@ -2338,7 +2338,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
     }
     /**
      * 測試專用 hook（log capture、平台／teleport fault、corridor observer、checkpoint probe）的收尾清單：
-     * 依安裝相反順序釋放，每個動作各自執行、任一失敗不跳過其餘；重複釋放無作用，正常收尾與失敗路徑可共用。
+     * 依安裝相反順序釋放，每個動作各自執行、任一失敗（RuntimeException 或 Error，含斷言失敗）不跳過其餘；
+     * 最後重丟第一個失敗，其餘附為 suppressed。重複釋放無作用，正常收尾與失敗路徑可共用。
      */
     static final class TestHooks {
         private final java.util.ArrayDeque<Runnable> releases=new java.util.ArrayDeque<>();
@@ -2350,16 +2351,17 @@ public final class M2CorridorGameTests implements FabricGameTest {
         void release() {
             if(released) return;
             released=true;
-            RuntimeException failure=null;
+            Throwable failure=null;
             while(!releases.isEmpty()) {
                 try { releases.pop().run(); }
-                catch(RuntimeException exception) { if(failure==null) failure=exception; else failure.addSuppressed(exception); }
+                catch(RuntimeException | Error exception) { if(failure==null) failure=exception; else failure.addSuppressed(exception); }
             }
-            if(failure!=null) throw failure;
+            if(failure instanceof RuntimeException exception) throw exception;
+            if(failure instanceof Error error) throw error;
         }
-        /** 失敗路徑：先釋放 hook；釋放本身的例外附在原失敗上，不遮蔽原因。 */
+        /** 失敗路徑：先釋放 hook；釋放本身的例外或 Error 附在原失敗上，不遮蔽原因。 */
         void releaseAfter(Throwable failure) {
-            try { release(); } catch(RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            try { release(); } catch(RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
         }
     }
     private static String waitingLeaseEvidence(TestContext context) {
