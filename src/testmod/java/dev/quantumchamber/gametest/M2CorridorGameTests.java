@@ -719,6 +719,43 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
+    /**
+     * /tp、/execute in … run tp 走 Entity.teleport(ServerWorld, x, y, z, flags, yaw, pitch)：原版先以 CHANGED_DIMENSION 移除原 entity
+     * 才把副本加入目標世界，且不看 addEntity 回傳值。非管理 entity 被送往量子走廊世界時必須在開頭被拒（回傳 false），原 entity 留在來源世界；
+     * 同世界傳送不受影響。不需要玩家 checkpoint，兩平台都實際執行。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix2_command_teleport",tickLimit=100000)
+    public void unmanaged_entity_command_teleport_into_superposition_stays_at_source(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"unmanaged_entity_command_teleport_into_superposition_stays_at_source");
+        var world=context.getWorld(); var server=world.getServer();
+        var corridor=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
+        var start=context.getAbsolute(new Vec3d(3.5,2,3.5));
+        var cow=net.minecraft.entity.EntityType.COW.create(world);
+        cow.refreshPositionAndAngles(start.x,start.y,start.z,0,0); cow.setNoGravity(true); cow.setAiDisabled(true);
+        context.assertTrue(world.spawnEntity(cow),"來源世界可正常生成測試用牛");
+        var id=cow.getUuid(); var witness=new java.util.LinkedHashMap<String,Boolean>(); List<String> unmanaged;
+        try {
+            // /tp 使用的原版 API：目標為走廊世界、來源為其他世界、非管理 entity。
+            witness.put("apiReturnsFalse",!cow.teleport(corridor,start.x,128,start.z,Set.of(),0,0));
+            witness.put("apiKeptAtSource",!cow.isRemoved() && world.getEntity(id)==cow);
+            // 真指令路徑（伺服器權限、靜默）：/execute in quantumchamber:superposition run tp <uuid> x y z。
+            server.getCommandManager().executeWithPrefix(server.getCommandSource().withSilent(),
+                    "execute in quantumchamber:superposition run tp "+id+" "+start.x+" 128 "+start.z);
+            witness.put("commandKeptAtSource",!cow.isRemoved() && world.getEntity(id)==cow && cow.getPos().squaredDistanceTo(start)<1e-12);
+            witness.put("absentFromCorridor",corridor.getEntity(id)==null);
+            // 同世界傳送照原版執行。
+            witness.put("sameWorldTeleportStillWorks",cow.teleport(world,start.x+1,start.y,start.z,Set.of(),0,0)
+                    && world.getEntity(id)==cow && Math.abs(cow.getX()-start.x-1)<1e-9);
+            unmanaged=java.util.stream.StreamSupport.stream(corridor.iterateEntities().spliterator(),false)
+                    .filter(entity -> !managedCorridorEntity(entity)).map(entity -> net.minecraft.entity.EntityType.getId(entity.getType()).toString()).toList();
+            witness.put("noUnmanagedEntityInCorridorWorld",unmanaged.isEmpty());
+        } finally {
+            var live=world.getEntity(id); if(live!=null) live.discard();
+            var stray=corridor.getEntity(id); if(stray!=null) stray.discard();
+        }
+        context.assertTrue(!witness.containsValue(false),"指令跨維度傳送不得讓非管理 entity 遺失："+witness+" unmanaged="+unmanaged);
+        M4PerTestUniverseProbe.complete(context);
+    }
     /** 經驗球比照掉落物：成為 pin、跨 seam 換頁，返還時回原艙且移除 session tag，不隨清理遺失。 */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_experience_orb",tickLimit=100000)
     public void native_experience_orb_crosses_seam_and_returns_before_cleanup_windows(TestContext context) {
