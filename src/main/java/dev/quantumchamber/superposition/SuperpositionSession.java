@@ -22,6 +22,8 @@ public final class SuperpositionSession {
     final CorridorPageManager.PreparedMappings prepared;
     final SessionRecoveryRecord initial;
     SessionState state=SessionState.ARMING;
+    /** 入場時本 session 已嘗試原生移動的參與者；ARMING rollback 只拉回這些人或目前真的在走廊世界的人。 */
+    final java.util.Set<java.util.UUID> moveAttempted=new java.util.HashSet<>();
     /** 先驗 discovery 與 entropy，再允許任何 session／space reservation。 */
     static CandidatePolicySnapshot freezeCandidateContext(MinecraftServer server, ServerWorld source) throws IOException {
         var journal=SessionRecoveryState.get(server);

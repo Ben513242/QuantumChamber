@@ -910,6 +910,37 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
+    /** ARMING 中止只拉回確實被本 session 移動、或目前真的在走廊世界的參與者；從未進走廊的在線成員保持原地。 */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_arming_rollback_scope",tickLimit=100000)
+    public void native_arming_abort_leaves_unentered_members_in_place_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_arming_abort_leaves_unentered_members_in_place_windows");
+        var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
+        when(context,3,() -> fixture.record()!=null,armingTick -> {
+            context.assertEquals(SessionState.ARMING,fixture.record().state(),"先證實 geometry 準備期，尚無人被移動");
+            var entries=new java.util.HashSet<UUID>();
+            if(CORRIDOR_ENTRIES.putIfAbsent(fixture.server,entries)!=null) throw new IllegalStateException("corridor entry observer 不可重複安裝");
+            var walker=fixture.players.get(0).player(); var lapsed=fixture.players.get(1).player();
+            var walked=CorridorGeometry.position(fixture.frame,4.5,1,4.5);
+            walker.refreshPositionAndAngles(walked.x,walked.y,walked.z,33,4); walker.setVelocity(Vec3d.ZERO);
+            var lapsedPose=lapsed.getPos();
+            lapsed.removeStatusEffect(ModEffects.QUANTUM_STATE);
+            when(context,armingTick+1,fixture::returning,returnTick -> {
+                CORRIDOR_ENTRIES.remove(fixture.server,entries);
+                var witness=new java.util.LinkedHashMap<String,Boolean>();
+                witness.put("nobodyEnteredCorridor",entries.isEmpty());
+                witness.put("walkerKeptItsOwnPose",walker.getServerWorld()==context.getWorld() && walker.getPos().squaredDistanceTo(walked)<1e-12
+                        && Math.abs(net.minecraft.util.math.MathHelper.wrapDegrees(walker.getYaw()-33))<1e-4);
+                witness.put("lapsedMemberUnmoved",lapsed.getServerWorld()==context.getWorld() && lapsed.getPos().squaredDistanceTo(lapsedPose)<1e-12);
+                witness.put("rollbackKeepsCurrentEffects",!fixture.record().restoreEntryEffectOnReturn());
+                context.assertTrue(!witness.containsValue(false),"ARMING 中止不得拉回從未進走廊的成員："+witness);
+                fixture.trustedTeardown(returnTick+1,() -> {
+                    context.assertTrue(walker.getPos().squaredDistanceTo(walked)<1e-12,"返還收尾也不改寫仍在原艙內的成員位置");
+                    M4PerTestUniverseProbe.complete(context);
+                });
+            });
+        });
+    }
     private static final Map<net.minecraft.server.MinecraftServer,TeleportExceptionFault> TELEPORT_FAULTS=new java.util.IdentityHashMap<>();
     private static final class TeleportExceptionFault {
         final UUID player; final net.minecraft.server.world.ServerWorld destination; int hits; boolean armed=true;

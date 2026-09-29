@@ -283,6 +283,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             if(!sourceAuthority(runtime)) throw new IllegalStateException("入場移動前來源身分失效");
             runtime.effects.verifyCurrent(server);
             var pose=move.getValue();
+            runtime.moveAttempted.add(move.getKey());
             if(!transfers.move(server.getPlayerManager().getPlayer(move.getKey()),target,pose.position(),pose.velocity(),pose.yaw(),pose.pitch()))
                 throw new IllegalStateException("部分移動失敗，尚未提交 cohort");
         }
@@ -350,8 +351,11 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         boolean rollback=durable==null || durable.state()==SessionState.ARMING;
         runtime.state=SessionState.RETURNING;
         if(rollback && sourceAuthority(runtime)) {
+            var corridor=server.getWorld(SuperpositionWorld.KEY);
             for(var person : runtime.initial.participants()) {
                 var player=server.getPlayerManager().getPlayer(person.playerUuid());
+                // 只拉回本 session 確實嘗試移動過、或目前真的在固定走廊世界的參與者；從未進走廊的在線成員保持原地。
+                if(player!=null && !runtime.moveAttempted.contains(person.playerUuid()) && player.getServerWorld()!=corridor) continue;
                 if(player!=null && (!transfers.move(player,runtime.source,person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch())
                         || !ChamberOccupantService.contains(ChamberGeometry.interiorBox(runtime.sourceFrame),player.getBoundingBox())))
                     failure.addSuppressed(new IllegalStateException("rollback pose 尚未確認："+person.playerUuid()));
