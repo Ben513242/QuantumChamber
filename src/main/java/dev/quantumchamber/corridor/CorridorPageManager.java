@@ -22,8 +22,6 @@ import dev.quantumchamber.superposition.SuperpositionWorld;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.entity.projectile.ProjectileEntity;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.Box;
@@ -994,9 +992,9 @@ public final class CorridorPageManager {
     private List<Entity> pins(BlockBox bounds) {
         var result=new ArrayList<Entity>(); var volume=box(bounds);
         // native teleport 同 tick 已改 pose，但區段索引可能尚未更新；直接比對 live entity 真 bbox。
+        // pin 種類與走廊世界的 entity 准入規則同源：玩家、掉落物、投射物與經驗球（經驗球比照掉落物搬運與返還）。
         for (var entity : world.iterateEntities()) if (!entity.isRemoved() && entity.getWorld()==world
-                && (entity instanceof ServerPlayerEntity || entity instanceof ItemEntity || entity instanceof ProjectileEntity)
-                && entity.getBoundingBox().intersects(volume)) {
+                && SuperpositionEntityPolicy.managed(entity) && entity.getBoundingBox().intersects(volume)) {
             result.add(entity);
             // 257 已足以證明超量；退休只需知道非空，不建立無界的 pin 清單。
             if (result.size()>256) break;

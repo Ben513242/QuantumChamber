@@ -8,8 +8,7 @@ import dev.quantumchamber.transfer.SessionTransferService;
 import java.util.*;
 import java.util.function.Predicate;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.entity.projectile.ProjectileEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.MinecraftServer;
 
 /** 只協調已發布玩家群體；所有空間、pin 就緒與票仍由 PageManager 擁有。 */
@@ -86,7 +85,7 @@ public final class CorridorRepositionService {
         for(var entry : owners.entrySet()) {
             var entity=world.getEntity(entry.getKey());
             if(entity==null) throw new IllegalStateException("已發布 pin 的真 UUID 已消失");
-            if(entity instanceof ItemEntity || entity instanceof ProjectileEntity) {
+            if(SuperpositionEntityPolicy.managed(entity) && !(entity instanceof PlayerEntity)) {
                 if(entity.getCommandTags().stream().anyMatch(value -> value.startsWith("quantumchamber_session:") && !value.equals(tag))
                         || !entity.getCommandTags().contains(tag) && !entity.addCommandTag(tag))
                     throw new IllegalStateException("普通實體沒有唯一 session tag");

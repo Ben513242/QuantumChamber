@@ -640,6 +640,116 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
+    /** 走廊 pin／返還只承認玩家、掉落物、投射物與經驗球；在 testmod 內獨立列出，不借用 production 判斷。 */
+    private static boolean managedCorridorEntity(net.minecraft.entity.Entity entity) {
+        return entity instanceof ServerPlayerEntity || entity instanceof net.minecraft.entity.ItemEntity
+                || entity instanceof net.minecraft.entity.projectile.ProjectileEntity || entity instanceof net.minecraft.entity.ExperienceOrbEntity;
+    }
+    private static BlockPos corridorBlock(CorridorPageManager.MappingView view,int lateral,int height,long logicalZ) {
+        var frame=new dev.quantumchamber.chamber.ChamberFrame(view.localBlockOrigin().offset(view.outwardFacing().rotateYCounterclockwise(),3).up(6),view.outwardFacing());
+        return CorridorGeometry.block(frame,lateral,height,Math.toIntExact(logicalZ-view.logicalAnchorBlock()));
+    }
+    /**
+     * 走廊世界不得出現玩家／掉落物／投射物／經驗球以外的 entity：船、盔甲架、終界水晶、展示框、生怪蛋與滯留型藥水在使用物品階段拒絕且不消耗；
+     * 直接加入世界、FallingBlock 與非玩家 entity 跨維度進入由 backstop 拒絕，被拒 entity 留在原世界不遺失。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_entity_placement",tickLimit=100000)
+    public void native_superposition_rejects_entity_placement_without_consuming_items_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_superposition_rejects_entity_placement_without_consuming_items_windows");
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var sid=fixture.record().sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
+            var player=fixture.players.getFirst().player(); player.changeGameMode(net.minecraft.world.GameMode.SURVIVAL);
+            var target=fixture.target; var witness=new java.util.LinkedHashMap<String,Boolean>();
+            // 使用方塊：盔甲架、終界水晶（地板是基岩）與生怪蛋點地板；物品展示框點牆面基岩。
+            record Use(String label,net.minecraft.item.Item item,BlockPos pos,Direction side) {}
+            var floorUp=Direction.getFacing(Vec3d.of(corridorBlock(view,3,1,12).subtract(corridorBlock(view,3,0,12))));
+            var wallIn=Direction.getFacing(Vec3d.of(corridorBlock(view,1,2,14).subtract(corridorBlock(view,0,2,14))));
+            for(var use : List.of(new Use("armorStand",net.minecraft.item.Items.ARMOR_STAND,corridorBlock(view,3,0,12),floorUp),
+                    new Use("endCrystal",net.minecraft.item.Items.END_CRYSTAL,corridorBlock(view,3,0,20),floorUp),
+                    new Use("cowSpawnEgg",net.minecraft.item.Items.COW_SPAWN_EGG,corridorBlock(view,3,0,28),floorUp),
+                    new Use("itemFrame",net.minecraft.item.Items.ITEM_FRAME,corridorBlock(view,0,2,14),wallIn))) {
+                var stack=new net.minecraft.item.ItemStack(use.item(),3); player.setStackInHand(net.minecraft.util.Hand.MAIN_HAND,stack);
+                var hit=new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(use.pos()).add(Vec3d.of(use.side().getVector()).multiply(0.5)),use.side(),use.pos(),false);
+                var result=player.interactionManager.interactBlock(player,target,stack,net.minecraft.util.Hand.MAIN_HAND,hit);
+                witness.put(use.label()+"Rejected",!result.isAccepted());
+                witness.put(use.label()+"NotConsumed",player.getMainHandStack().isOf(use.item()) && player.getMainHandStack().getCount()==3);
+            }
+            // 使用物品：站在走廊地板上沿走廊斜看前方地板放船（船不可與玩家 bbox 重疊），以及丟滯留型藥水。
+            var look=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(3.5,1,40.5,Vec3d.ZERO,0,45));
+            move(target,player,new CorridorPageManager.PhysicalPose(look.position(),Vec3d.ZERO,look.yaw(),45));
+            for(var entry : List.of(Map.entry("boat",new net.minecraft.item.ItemStack(net.minecraft.item.Items.OAK_BOAT,3)),
+                    Map.entry("lingeringPotion",net.minecraft.component.type.PotionContentsComponent.createStack(net.minecraft.item.Items.LINGERING_POTION,
+                            net.minecraft.potion.Potions.REGENERATION).copyWithCount(3)))) {
+                var stack=entry.getValue(); var item=stack.getItem(); player.setStackInHand(net.minecraft.util.Hand.MAIN_HAND,stack);
+                var result=player.interactionManager.interactItem(player,target,stack,net.minecraft.util.Hand.MAIN_HAND);
+                witness.put(entry.getKey()+"Rejected",!result.isAccepted());
+                witness.put(entry.getKey()+"NotConsumed",player.getMainHandStack().isOf(item) && player.getMainHandStack().getCount()==3);
+            }
+            player.setStackInHand(net.minecraft.util.Hand.MAIN_HAND,net.minecraft.item.ItemStack.EMPTY);
+            // backstop：直接加入世界、FallingBlock（受保護格不被移除）與藥水雲都不得進入走廊世界。
+            var inside=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(3.5,1,48.5,Vec3d.ZERO,0,0)).position();
+            witness.put("armorStandAddRejected",!target.spawnEntity(new net.minecraft.entity.decoration.ArmorStandEntity(target,inside.x,inside.y,inside.z)));
+            witness.put("cloudAddRejected",!target.spawnEntity(new net.minecraft.entity.AreaEffectCloudEntity(target,inside.x,inside.y,inside.z)));
+            var fallingAt=corridorBlock(view,3,0,56); var floorBefore=target.getBlockState(fallingAt);
+            net.minecraft.entity.FallingBlockEntity.spawnFromBlock(target,fallingAt,floorBefore);
+            witness.put("fallingBlockRejectedAndFloorKept",target.getBlockState(fallingAt).equals(floorBefore));
+            // 非玩家 entity 跨維度進入：拒絕時留在原世界，不遺失。
+            var cow=net.minecraft.entity.EntityType.COW.create(context.getWorld());
+            var outside=CorridorGeometry.position(fixture.frame,3.5,1,-4.5);
+            cow.refreshPositionAndAngles(outside.x,outside.y,outside.z,0,0); cow.setNoGravity(true); cow.setAiDisabled(true);
+            context.assertTrue(context.getWorld().spawnEntity(cow),"來源世界可正常生成測試用牛");
+            var moved=cow.teleportTo(new net.minecraft.world.TeleportTarget(target,inside,Vec3d.ZERO,0,0,net.minecraft.world.TeleportTarget.NO_OP));
+            witness.put("crossDimensionRejected",moved==null);
+            witness.put("rejectedEntityKeptAtSource",!cow.isRemoved() && context.getWorld().getEntity(cow.getUuid())==cow);
+            var unmanaged=java.util.stream.StreamSupport.stream(target.iterateEntities().spliterator(),false)
+                    .filter(entity -> !managedCorridorEntity(entity)).map(entity -> net.minecraft.entity.EntityType.getId(entity.getType()).toString()).toList();
+            witness.put("noUnmanagedEntityInCorridorWorld",unmanaged.isEmpty());
+            if(moved!=null && moved!=cow) moved.discard();
+            cow.discard();
+            context.assertTrue(!witness.containsValue(false),"走廊世界只容許玩家／掉落物／投射物／經驗球："+witness+" unmanaged="+unmanaged);
+            fixture.trustedTeardown(tick+1,() -> {
+                var left=java.util.stream.StreamSupport.stream(target.iterateEntities().spliterator(),false).filter(entity -> !managedCorridorEntity(entity)).toList();
+                context.assertTrue(left.isEmpty(),"返還與清理後走廊世界不得殘留非管理 entity："+left);
+                M4PerTestUniverseProbe.complete(context);
+            });
+        });
+    }
+    /** 經驗球比照掉落物：成為 pin、跨 seam 換頁，返還時回原艙且移除 session tag，不隨清理遺失。 */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_experience_orb",tickLimit=100000)
+    public void native_experience_orb_crosses_seam_and_returns_before_cleanup_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_experience_orb_crosses_seam_and_returns_before_cleanup_windows");
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var sid=fixture.record().sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
+            var player=fixture.players.getFirst().player(); player.experiencePickUpDelay=1_000_000;
+            var spawn=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(3.5,1,96.5,Vec3d.ZERO,0,0)).position();
+            var orb=new net.minecraft.entity.ExperienceOrbEntity(fixture.target,spawn.x,spawn.y,spawn.z,7);
+            orb.setNoGravity(true); orb.setVelocity(Vec3d.ZERO);
+            context.assertTrue(fixture.target.spawnEntity(orb),"真經驗球入走廊世界");
+            var orbId=orb.getUuid(); var tag="quantumchamber_session:"+sid; var witness=new java.util.LinkedHashMap<String,Boolean>();
+            long settle=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
+            whenUntil(context,tick+1,() -> fixture.pages.currentMappings(sid).epoch()==2 || System.nanoTime()>=settle,settled -> {
+                witness.put("orbPageTriggeredRemap",fixture.pages.currentMappings(sid).epoch()==2);
+                var owners=fixture.pages.currentEntityOwners(sid);
+                witness.put("orbHasUniqueCurrentOwner",owners.isPresent() && owners.get().containsKey(orbId));
+                var live=fixture.target.getEntity(orbId);
+                witness.put("orbTagged",live!=null && live.getCommandTags().contains(tag));
+                fixture.trustedTeardown(settled+1,() -> {
+                    var returned=context.getWorld().getEntity(orbId);
+                    witness.put("orbReturnedToSourceChamber",returned instanceof net.minecraft.entity.ExperienceOrbEntity value && value.getExperienceAmount()==7
+                            && dev.quantumchamber.chamber.ChamberOccupantService.contains(dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),value.getBoundingBox()));
+                    witness.put("orbTagRemoved",returned!=null && !returned.getCommandTags().contains(tag));
+                    if(returned!=null) returned.discard();
+                    var stray=fixture.target.getEntity(orbId); if(stray!=null) stray.discard();
+                    context.assertTrue(!witness.containsValue(false),"經驗球必須比照掉落物搬運與返還："+witness);
+                    M4PerTestUniverseProbe.complete(context);
+                });
+            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+        });
+    }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_reconnect",tickLimit=100000)
     public void native_channel_disconnect_and_join_queue_block_movement_until_next_tick_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }

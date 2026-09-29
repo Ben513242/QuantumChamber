@@ -13,6 +13,9 @@
     "EntityChunkRecoverySaveMixin",
     "ServerWorldRecoveryStorageAccessor",
     "ServerEntityManagerRecoveryStorageAccessor",
-    "MinecraftServerDynamicWorldAccess"
+    "MinecraftServerDynamicWorldAccess",
+    "ItemStackSuperpositionEntityMixin",
+    "ServerWorldEntityAdmissionMixin",
+    "EntitySuperpositionTeleportMixin"
   ]
 }
