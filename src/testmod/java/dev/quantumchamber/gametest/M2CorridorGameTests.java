@@ -680,6 +680,49 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
+    /** RETURNING 只凍結尚未返還者：離線者未回來時，已返還者仍可正常網路移動；原艙保護與玩家所有權不變，離線者重連後才返還。 */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_returned_not_frozen",tickLimit=100000)
+    public void native_returned_participant_moves_while_offline_member_pending_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_returned_participant_moves_while_offline_member_pending_windows");
+        var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,activeTick -> {
+            var initial=fixture.record(); var online=fixture.players.getFirst(); var id=online.player().getUuid();
+            var offline=fixture.players.remove(1); var absent=offline.player().getUuid(); var profile=offline.player().getGameProfile();
+            offline.disconnect();
+            fixture.power();
+            when(context,activeTick+1,() -> fixture.record()!=null && fixture.record().participants().stream()
+                    .anyMatch(person -> person.playerUuid().equals(id) && person.returned()),returnedTick -> {
+                var server=fixture.server; var journal=SessionRecoveryState.get(server);
+                var witness=new java.util.LinkedHashMap<String,Boolean>();
+                witness.put("durableReturning",fixture.record().state()==SessionState.RETURNING);
+                witness.put("offlinePending",fixture.record().participants().stream().anyMatch(person -> person.playerUuid().equals(absent) && !person.returned()));
+                witness.put("returnedAtSource",online.player().getServerWorld()==context.getWorld());
+                witness.put("returnedNotBlocked",!dev.quantumchamber.persistence.SessionRecoveryManager.blocks(id,server));
+                witness.put("offlineStillBlocked",dev.quantumchamber.persistence.SessionRecoveryManager.blocks(absent,server));
+                online.confirmTeleport(); var before=online.player().getPos();
+                online.player().networkHandler.onPlayerMove(new net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.Full(
+                        before.x+0.125,before.y,before.z,online.player().getYaw(),online.player().getPitch(),false));
+                witness.put("returnedMovesNatively",Math.abs(online.player().getX()-before.x-0.125)<1e-9);
+                witness.put("sourceStillProtected",!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()));
+                witness.put("returnedStillOwnedByCohort",!journal.participantsAvailable(List.of(id)));
+                witness.put("notReleased",!fixture.pages.releaseComplete(initial.sessionUuid()) && journal.flushedRecords().containsKey(initial.sessionUuid()));
+                context.assertTrue(!witness.containsValue(false),"RETURNING 只凍結尚未返還者："+witness);
+                var rejoined=new ConnectedGameTestPlayer(context.getWorld(),profile); fixture.players.add(rejoined);
+                when(context,returnedTick+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                        .presence(server,initial.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,finishedTick -> {
+                    try {
+                        context.assertTrue(rejoined.player().getServerWorld()==context.getWorld()
+                                && dev.quantumchamber.chamber.ChamberOccupantService.contains(dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),
+                                        rejoined.player().getBoundingBox()),"離線者重連後才由真 backend 返還同一來源艙");
+                        context.assertTrue(dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),
+                                "全員返還與最後 lease 收尾後，LOW 才解除來源保護");
+                        M4PerTestUniverseProbe.complete(context);
+                    } finally { offline.close(); fixture.close(); }
+                });
+            });
+        });
+    }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_native_low",tickLimit=100000)
     public void native_external_low_returns_cohort_before_source_unlock_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }

@@ -37,7 +37,10 @@ public final class SessionRecoveryManager {
         this.sourceAuthority=Objects.requireNonNull(sourceAuthority); active=this;
     }
 
-    /** 只能在原生網路 handler 已序列化的執行緒查詢，不讀取 Netty 執行緒上的 journal。 */
+    /**
+     * 只能在原生網路 handler 已序列化的執行緒查詢，不讀取 Netty 執行緒上的 journal。
+     * RETURNING 與 MEASURED 同樣只凍結尚未 checked 返還的參與者；已返還者即使同組仍有離線 pending，也恢復正常操作（M2 spec §6）。
+     */
     public static boolean blocks(UUID player,MinecraftServer owner) {
         if(active==null || active.server!=owner) return false;
         active.requireServer(owner);
@@ -45,7 +48,7 @@ public final class SessionRecoveryManager {
             return active.joinTicks.containsKey(player) || active.disconnected.contains(player)
                     || java.util.stream.Stream.concat(active.journal.records().values().stream(),active.journal.flushedRecords().values().stream())
                     .anyMatch(record -> record.participants().stream().anyMatch(person -> person.playerUuid().equals(player)
-                            && (record.state()==SessionState.RETURNING || record.state()==SessionState.MEASURED && !person.returned())));
+                            && (record.state()==SessionState.RETURNING || record.state()==SessionState.MEASURED) && !person.returned()));
         } catch(RuntimeException unreadable) { return true; }
     }
 
