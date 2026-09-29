@@ -25,17 +25,8 @@ final class WindowsPlayerCheckpointVerifier {
         try {
             Path absolute = supportedPath(path);
             try (var owned = new OwnedHandles()) {
-                Path cursor = absolute.getRoot();
-                var pins = new ArrayList<Pin>();
-                Pin root = pin(cursor, true, owned); pins.add(root);
-                int volume = io.requireLocalNtfs(cursor);
-                if (volume != root.info().volume()) throw new IOException("volume root 身分不符");
-                for (int i = 0; i < absolute.getNameCount() - 1; i++) {
-                    cursor = cursor.resolve(absolute.getName(i));
-                    Pin ancestor = pin(cursor, true, owned);
-                    if (ancestor.info().volume() != volume) throw new IOException("祖先目錄跨越未核准 volume");
-                    pins.add(ancestor);
-                }
+                var pins = pinDirectories(absolute, absolute.getNameCount() - 1, owned);
+                int volume = pins.getFirst().info().volume();
                 Pin leaf = pin(absolute, false, owned); pins.add(leaf);
                 if (leaf.info().volume() != volume) throw new IOException("玩家檔跨越未核准 volume");
                 long length = leaf.info().size();
@@ -54,6 +45,37 @@ final class WindowsPlayerCheckpointVerifier {
         } catch (RuntimeException | LinkageError exception) {
             throw new IOException("Windows checkpoint 原生 API／NBT 無法安全驗證", exception);
         }
+    }
+
+    /**
+     * 入場前能力預檢：對正式 playerdata 目錄本身走與 {@link #verify} 相同的 volume root、本機 NTFS、逐層普通目錄
+     * （拒絕 reparse／junction）與 namespace probe；不開啟任何玩家檔，也不讀寫、flush。
+     */
+    void verifyDirectory(Path path) throws IOException {
+        try {
+            Path absolute = supportedPath(path);
+            try (var owned = new OwnedHandles()) {
+                checkNamespace(pinDirectories(absolute, absolute.getNameCount(), owned));
+            }
+        } catch (RuntimeException | LinkageError exception) {
+            throw new IOException("Windows checkpoint 原生 API 無法安全驗證 playerdata 目錄", exception);
+        }
+    }
+
+    /** 從 volume root 起逐層持有前 depth 個名稱的普通目錄；root 先確認為本機 NTFS，之後每層都必須在同一 volume。 */
+    private ArrayList<Pin> pinDirectories(Path absolute, int depth, OwnedHandles owned) throws IOException {
+        Path cursor = absolute.getRoot();
+        var pins = new ArrayList<Pin>();
+        Pin root = pin(cursor, true, owned); pins.add(root);
+        int volume = io.requireLocalNtfs(cursor);
+        if (volume != root.info().volume()) throw new IOException("volume root 身分不符");
+        for (int i = 0; i < depth; i++) {
+            cursor = cursor.resolve(absolute.getName(i));
+            Pin ancestor = pin(cursor, true, owned);
+            if (ancestor.info().volume() != volume) throw new IOException("祖先目錄跨越未核准 volume");
+            pins.add(ancestor);
+        }
+        return pins;
     }
 
     private static Path supportedPath(Path path) throws IOException {

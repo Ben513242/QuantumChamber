@@ -335,7 +335,7 @@ public final class M4CandidateDoorGameTests {
     }
 
     /** 空間、slot、page、來源票與 runtime session 的可比較快照；只讀 testmod reflection。 */
-    private static List<?> runtimeOwnership(M2CorridorGameTests.NativeEntry fixture) {
+    static List<?> runtimeOwnership(M2CorridorGameTests.NativeEntry fixture) {
         var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
         return List.of(Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(fixture.pages,"spaces")).keySet()),
                 Map.copyOf((Map<?,?>)M4CandidateTestAccess.get(fixture.pages,"protectedLeases")),

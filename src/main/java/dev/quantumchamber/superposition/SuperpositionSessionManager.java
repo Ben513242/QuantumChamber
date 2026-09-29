@@ -29,6 +29,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     private SessionRecoveryManager recovery;
     private CorridorRepositionService reposition;
     private int lastTick=Integer.MIN_VALUE;
+    private String checkpointWarning;
 
     public static void initialize() {
         if(initialized) return;
@@ -100,6 +101,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 || !source.isReceivingRedstonePower(controller.getPos())) return StartResult.REJECTED;
         // 任何 authority 建立或 reservation 前先做跨 session 玩家預檢；DORMANT receipt 只封鎖自己的 Chamber。
         if(!journal.participantsAvailable(requested)) return StartResult.REJECTED;
+        // 原生玩家 checkpoint 是提交 SUPERPOSITION 與安全返還的必要條件；平台或存檔 volume 不支援時，在凍結 candidate context、
+        // reservation、效果快照或任何玩家移動之前受控拒絕，不能讓玩家進走廊後卡在 RETURNING。
+        if(!checkpointCapable()) return StartResult.REJECTED;
         var frame=new ChamberFrame(controller.getPos(),controller.getCachedState().get(ChamberControllerBlock.FACING));
         dev.quantumchamber.candidate.CandidatePolicySnapshot candidateContext;
         try { candidateContext=SuperpositionSession.freezeCandidateContext(server,source); }
@@ -129,6 +133,23 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         } catch(RuntimeException failure) {
             fail(runtime,failure); return StartResult.STAGING;
         }
+    }
+    /**
+     * 每次入場前重驗 playerdata 的原生 checkpoint 能力（只開目錄 metadata HANDLE，成本小），不快取成功結果；
+     * 同一原因只記一次 WARN，恢復通過時記一次 INFO。
+     */
+    private boolean checkpointCapable() {
+        var reason=PlayerCheckpointStore.unsupportedReason(server);
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        if(reason.isEmpty()) {
+            if(checkpointWarning!=null) logger.info("玩家原生 checkpoint 能力預檢已恢復通過，重新允許入場（先前原因：{}）",checkpointWarning);
+            checkpointWarning=null;
+            return true;
+        }
+        if(!reason.get().equals(checkpointWarning)) logger.warn("玩家原生 checkpoint 能力預檢未通過，拒絕入場（不預留走廊、不改效果、不移動玩家）：{}；playerdata={}",
+                reason.get(),server.getSavePath(net.minecraft.util.WorldSavePath.PLAYERDATA));
+        checkpointWarning=reason.get();
+        return false;
     }
     /** 成功時玩家未移動、沒有 journal、runtime、source ticket、slot 或 page 保留；任何清理失敗改走既有 RETURNING。 */
     private boolean abandonInitial(SuperpositionSession runtime,RuntimeException failure) {
@@ -375,7 +396,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(server!=owner) return;
         if(!owner.isOnThread()) throw new IllegalStateException("session detach 必須在同一 server thread");
         if(recovery!=null) recovery.detach(owner);
-        recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE;
+        recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE; checkpointWarning=null;
     }
     private void requireServer(MinecraftServer owner) {
         if(owner!=server || server==null || !owner.isOnThread()) throw new IllegalStateException("session 必須在 attached server thread");

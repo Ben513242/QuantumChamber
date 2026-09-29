@@ -85,6 +85,26 @@ class WindowsPlayerCheckpointVerifierTest {
         assertEquals(snapshot(), NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()));
     }
 
+    @Test void directoryCapabilityPinsTheSameAncestorChainAndRejectsJunctionOrUncWithoutPlayerFiles() throws Exception {
+        Path folder = Files.createDirectory(directory.resolve("playerdata")); var io = new TrackingNative();
+        new WindowsPlayerCheckpointVerifier(io).verifyDirectory(folder);
+        assertTrue(io.opened > folder.getNameCount(), "root、每層祖先與 playerdata 本身都必須持有並 probe");
+        assertEquals(0, io.reads); assertEquals(0, io.flushes); assertEquals(io.opened, io.closed);
+        try (var listing = Files.list(folder)) { assertEquals(0, listing.count(), "能力預檢不得建立玩家檔"); }
+        Path junction = directory.resolve("junction-playerdata");
+        var process = new ProcessBuilder("cmd.exe", "/d", "/c", "mklink", "/J", junction.toString(), folder.toString())
+                .redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.Charset.defaultCharset());
+        assertEquals(0, process.waitFor(), output);
+        var aliasIo = new TrackingNative();
+        IOException error = assertThrows(IOException.class, () -> new WindowsPlayerCheckpointVerifier(aliasIo).verifyDirectory(junction));
+        assertTrue(error.getMessage().contains("reparse"), error.getMessage());
+        assertEquals(0, aliasIo.reads); assertEquals(aliasIo.opened, aliasIo.closed);
+        var uncIo = new TrackingNative();
+        assertThrows(IOException.class, () -> new WindowsPlayerCheckpointVerifier(uncIo).verifyDirectory(Path.of("\\\\localhost\\share\\playerdata")));
+        assertEquals(0, uncIo.opened);
+    }
+
     @Test void sharingConflictFailsAndReleasesEveryPreviouslyOpenedAncestor() throws Exception {
         Path file = fixture(); var io = new TrackingNative();
         HANDLE writer = Kernel32.INSTANCE.CreateFile(file.toString(), 0x40000000, 7, null, 3, 0, null);

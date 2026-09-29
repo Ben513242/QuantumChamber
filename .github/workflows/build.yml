@@ -85,19 +85,21 @@ jobs:
             'native_twenty_six_people_rejected_before_reservation',
             'native_second_move_failure_rolls_back_hidden_nbt_whole_cohort_windows',
             'native_after_false_publish_failure_keeps_current_hidden_effect_windows',
-            'native_buff_expiry_during_geometry_keeps_precommit_returning',
+            'native_buff_expiry_during_geometry_keeps_precommit_returning_windows',
             'native_shared_entry_preserves_frozen_relative_pose_north_windows',
             'native_shared_entry_preserves_frozen_relative_pose_east_windows',
             'native_shared_entry_preserves_frozen_relative_pose_south_windows',
             'native_shared_entry_preserves_frozen_relative_pose_west_windows',
-            'native_staging_disconnect_keeps_frozen_offline_participant',
-            'native_staging_extra_occupant_rejects_without_shortening_journal',
-            'native_staging_low_keeps_current_effect_and_source_protection',
+            'native_staging_disconnect_keeps_frozen_offline_participant_windows',
+            'native_staging_extra_occupant_rejects_without_shortening_journal_windows',
+            'native_staging_low_keeps_current_effect_and_source_protection_windows',
             'native_projection_identified_before_budget_split_publish_windows',
             'native_projection_identified_before_budget_split_cancel_windows',
             'native_replaced_source_controller_never_rolls_to_snapshot_windows',
             'native_changed_source_uuid_never_rolls_to_snapshot_windows',
-            'native_partial_move_invalid_source_keeps_actual_world_pose_windows'
+            'native_partial_move_invalid_source_keeps_actual_world_pose_windows',
+            'native_returned_participant_moves_while_offline_member_pending_windows',
+            'unsupported_checkpoint_platform_rejects_start_without_residue'
           )
           foreach ($testName in $requiredGameTests) {
             $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")

@@ -343,6 +343,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
     public static void afterRemapMove(ServerPlayerEntity player,net.minecraft.server.world.ServerWorld world,Vec3d position,Vec3d velocity,
             float yaw,float pitch,boolean success) {
         if(!world.getServer().isOnThread()) return;
+        var entries=CORRIDOR_ENTRIES.get(world.getServer());
+        if(entries!=null && success && world.getRegistryKey()==dev.quantumchamber.superposition.SuperpositionWorld.KEY) entries.add(player.getUuid());
         var fault=REMAP_LOW.get(world.getServer());
         if(fault==null || fault.hit || !success || world!=fault.fixture.target || player.getServerWorld()!=world
                 || fault.fixture.server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY)!=world
@@ -974,6 +976,73 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         "超過25floor slots時全員效果保持"); context.complete(); } finally { fixture.close(); }
         });
     }
+    /**
+     * 原生 checkpoint 能力不支援時（Ubuntu 為真實非 Windows；Windows 以 testmod 平台路由模擬），start() 必須在任何
+     * reservation、效果變動或玩家移動前受控 REJECTED、零殘留，重複嘗試只記一次 WARN。本案例兩平台都實際執行。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_platform_precheck",tickLimit=100000)
+    public void unsupported_checkpoint_platform_rejects_start_without_residue(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"unsupported_checkpoint_platform_rejects_start_without_residue");
+        var fixture=new NativeEntry(context,2);
+        context.waitAndRun(2,() -> {
+            var server=fixture.server; var journal=SessionRecoveryState.get(server);
+            var records=journal.records(); var flushed=journal.flushedRecords();
+            var runtime=M4CandidateDoorGameTests.runtimeOwnership(fixture);
+            var poses=fixture.players.stream().map(connection -> List.of(connection.player().getServerWorld(),connection.player().getPos(),
+                    connection.player().getYaw(),connection.player().getPitch())).toList();
+            var capture=new LogCapture("quantumchamber");
+            var fault=CheckpointPlatformFault.simulateUnsupported(server);
+            var entries=new java.util.HashSet<UUID>();
+            if(CORRIDOR_ENTRIES.putIfAbsent(server,entries)!=null) throw new IllegalStateException("corridor entry observer 不可重複安裝");
+            fixture.power();
+            // 無 record 時至少涵蓋供電當下與兩次 20 tick 週期 refresh；若已建立 session，則觀察到 RETURNING 後再等 40 tick 以證明卡住。
+            // GameTest server 不以 20 TPS 節流，入場所需的 chunk 載入受 wall-clock 限制，故 session 路徑以 60 秒 wall-clock 為上限。
+            var observed=new int[]{0,-1}; long settleDeadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+            java.util.function.BooleanSupplier settled=() -> {
+                observed[0]++;
+                var chamber=fixture.controller().chamberUuid();
+                var record=chamber==null ? null : journal.flushedRecords().values().stream().filter(value -> value.chamberUuid().equals(chamber)).findFirst().orElse(null);
+                if(record!=null && record.state()==SessionState.RETURNING && observed[1]<0) observed[1]=observed[0];
+                return record==null ? observed[0]>=45 : observed[1]>=0 && observed[0]-observed[1]>=40 || System.nanoTime()>=settleDeadline;
+            };
+            whenUntil(context,Math.toIntExact(context.getTick()+1),settled,settledTick -> {
+                CORRIDOR_ENTRIES.remove(server,entries);
+                var chamber=fixture.controller().chamberUuid();
+                var stuck=chamber==null ? null : journal.flushedRecords().values().stream().filter(value -> value.chamberUuid().equals(chamber)).findFirst().orElse(null);
+                var witness=new java.util.LinkedHashMap<String,Boolean>();
+                witness.put("neverMovedIntoCorridor",entries.isEmpty());
+                witness.put("notStuckReturning",stuck==null || stuck.state()!=SessionState.RETURNING);
+                witness.put("powered",context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()));
+                witness.put("noJournalForChamber",chamber!=null && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber))
+                        && journal.flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
+                witness.put("journalUnchanged",records.equals(journal.records()) && flushed.equals(journal.flushedRecords()));
+                witness.put("presenceNone",dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,chamber)
+                        ==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
+                witness.put("noReservationTicketOrRuntimeResidue",runtime.equals(M4CandidateDoorGameTests.runtimeOwnership(fixture)));
+                witness.put("playersNeverMoved",poses.equals(fixture.players.stream().map(connection -> List.of(connection.player().getServerWorld(),
+                        connection.player().getPos(),connection.player().getYaw(),connection.player().getPitch())).toList()));
+                witness.put("effectsKept",fixture.players.stream().allMatch(connection -> connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)));
+                witness.put("repeatedStartAttempts",fault.consulted()>=2);
+                var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"checkpoint 能力預檢");
+                // Windows 模擬從乾淨狀態開始，必須恰好一次；真實非 Windows 可能已由先前 batch 記過同一原因，本窗口不得再記。
+                witness.put("dedupedWarning",Platform.isWindows() ? warnings.size()==1 : warnings.size()<=1);
+                var remembered=M4CandidateTestAccess.get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"checkpointWarning");
+                witness.put("rejectionReasonRemembered",remembered instanceof String reason && reason.contains("非 Windows"));
+                witness.put("chamberReadyNotArmed",fixture.controller().chamberState()==dev.quantumchamber.chamber.ChamberState.READY);
+                fault.close(); capture.close();
+                context.assertTrue(!witness.containsValue(false),"不支援 checkpoint 平台必須在 start() 預檢受控 REJECTED 且零殘留："+witness
+                        +" consulted="+fault.consulted()+" warnings="+warnings.size()+" observedTicks="+observed[0]
+                        +" stuck="+(stuck==null ? "ABSENT" : stuck.state()+"/"+stuck.sessionUuid())+" entered="+entries);
+                fixture.power();
+                when(context,Math.toIntExact(context.getTick()+1),() -> dev.quantumchamber.chamber.ChamberProtectionService.get()
+                        .mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
+                    fixture.close(); M4PerTestUniverseProbe.complete(context);
+                });
+            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(120));
+        });
+    }
+    /** 僅供平台預檢案例：記錄 production 真 move 成功進入固定 Superposition world 的玩家。 */
+    private static final Map<net.minecraft.server.MinecraftServer,Set<UUID>> CORRIDOR_ENTRIES=new java.util.IdentityHashMap<>();
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_partial",tickLimit=100000)
     public void native_second_move_failure_rolls_back_hidden_nbt_whole_cohort_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }
@@ -1033,7 +1102,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_expiry",tickLimit=100000)
-    public void native_buff_expiry_during_geometry_keeps_precommit_returning(TestContext context) {
+    public void native_buff_expiry_during_geometry_keeps_precommit_returning_windows(TestContext context) {
+        // 平台契約：入場預檢在非 Windows 受控拒絕，無法建立 ARMING；該平台改由 unsupported_checkpoint_platform_rejects_start_without_residue 覆蓋。
+        if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,1,Direction.NORTH,false);
         var player=fixture.players.getFirst().player();
         customDrink(context,player,1,0);
@@ -1050,8 +1121,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 context.assertTrue(player.getServerWorld()==context.getWorld(),"expiry前尚未移動亦不可留下半cohort");
                 fixture.assertProtected();
                 org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_CUSTOM_PREPARE_EXPIRY_OK sid={} elapsedNativeTicks=1 effectAbsent=true",fixture.record().sessionUuid());
-                if(Platform.isWindows()) fixture.trustedTeardown(tick+1,context::complete);
-                else { fixture.close(); context.complete(); }
+                fixture.trustedTeardown(tick+1,context::complete);
             } catch(RuntimeException | Error failure) { fixture.close(); throw failure; }
         });
         });
@@ -1150,7 +1220,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_offline",tickLimit=100000)
-    public void native_staging_disconnect_keeps_frozen_offline_participant(TestContext context) {
+    public void native_staging_disconnect_keeps_frozen_offline_participant_windows(TestContext context) {
+        // 平台契約：入場預檢在非 Windows 受控拒絕，無法建立 ARMING；該平台改由 unsupported_checkpoint_platform_rejects_start_without_residue 覆蓋。
+        if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.record()!=null,tick -> {
@@ -1171,7 +1243,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_cohort_change",tickLimit=100000)
-    public void native_staging_extra_occupant_rejects_without_shortening_journal(TestContext context) {
+    public void native_staging_extra_occupant_rejects_without_shortening_journal_windows(TestContext context) {
+        // 平台契約：入場預檢在非 Windows 受控拒絕，無法建立 ARMING；該平台改由 unsupported_checkpoint_platform_rejects_start_without_residue 覆蓋。
+        if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.record()!=null,tick -> {
@@ -1185,13 +1259,14 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         "額外UUID不是已授權入場cohort");
                 context.assertTrue(player.getServerWorld()==context.getWorld() && player.hasStatusEffect(ModEffects.QUANTUM_STATE),"額外人不搬移／不消耗");
                 fixture.assertProtected();
-                if(Platform.isWindows()) fixture.trustedTeardown(failedTick+1,context::complete);
-                else { fixture.close(); context.complete(); }
+                fixture.trustedTeardown(failedTick+1,context::complete);
             });
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_staging_low",tickLimit=100000)
-    public void native_staging_low_keeps_current_effect_and_source_protection(TestContext context) {
+    public void native_staging_low_keeps_current_effect_and_source_protection_windows(TestContext context) {
+        // 平台契約：入場預檢在非 Windows 受控拒絕，無法建立 ARMING；該平台改由 unsupported_checkpoint_platform_rejects_start_without_residue 覆蓋。
+        if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.record()!=null,tick -> {
@@ -1203,8 +1278,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     && connection.player().hasStatusEffect(ModEffects.QUANTUM_STATE)),"低位全員仍在來源且效果未消耗");
             context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"低位不可publish");
             fixture.assertProtected();
-            if(Platform.isWindows()) fixture.trustedTeardown(tick+1,context::complete);
-            else { fixture.close(); context.complete(); }
+            fixture.trustedTeardown(tick+1,context::complete);
         });
     }
     /** 真backend的來源fixture；不改global gateway、不假返還或清除durable pending。 */

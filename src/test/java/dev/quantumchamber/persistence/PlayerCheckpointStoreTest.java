@@ -35,6 +35,18 @@ class PlayerCheckpointStoreTest {
         var stale = expected.copy(); stale.putInt("foodLevel", 1); NbtIo.writeCompressed(stale, target);
         assertThrows(IOException.class, () -> PlayerCheckpointStore.verifyAndForce(target, expected));
     }
+    @Test void startCapabilityPrecheckAcceptsLocalNtfsPlayerdataAndRejectsJunction() throws Exception {
+        Path playerdata = Files.createDirectory(directory.resolve("playerdata"));
+        assertEquals(java.util.Optional.empty(), PlayerCheckpointStore.unsupportedReason(playerdata));
+        try (var listing = Files.list(playerdata)) { assertEquals(0, listing.count(), "預檢不得建立玩家檔"); }
+        Path junction = directory.resolve("junction-playerdata");
+        var process = new ProcessBuilder("cmd.exe", "/d", "/c", "mklink", "/J", junction.toString(), playerdata.toString())
+                .redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.Charset.defaultCharset());
+        assertEquals(0, process.waitFor(), output);
+        var reason = PlayerCheckpointStore.unsupportedReason(junction);
+        assertTrue(reason.isPresent() && reason.get().contains("reparse"), String.valueOf(reason));
+    }
     private static NbtCompound snapshot() {
         var nbt = new NbtCompound(); nbt.putInt("DataVersion", 3953); nbt.putInt("foodLevel", 20);
         var extra = new NbtCompound(); extra.putInt("Energy", 41); nbt.put("othermod:data", extra); return nbt;
