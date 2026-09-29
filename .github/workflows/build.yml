@@ -104,7 +104,8 @@ jobs:
             'native_experience_orb_crosses_seam_and_returns_before_cleanup_windows',
             'native_return_move_exception_logs_cause_once_then_recovers_windows',
             'native_buff_loss_return_logs_info_without_stack_windows',
-            'native_arming_abort_leaves_unentered_members_in_place_windows'
+            'native_arming_abort_leaves_unentered_members_in_place_windows',
+            'native_moving_player_return_logs_no_pending_move_warning_windows'
           )
           foreach ($testName in $requiredGameTests) {
             $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")

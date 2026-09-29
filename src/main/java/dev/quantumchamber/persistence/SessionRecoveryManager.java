@@ -147,7 +147,9 @@ public final class SessionRecoveryManager {
             boolean applyMarker=shouldApplyMarker(marker,previous);
             if(!inside(player,source,frame) && !transfers.move(player,source,slots.get(person.playerUuid()),Vec3d.ZERO,person.yaw(),person.pitch())
                     || !inside(player,source,frame)) {
-                warnMovePending(record.sessionUuid(),person.playerUuid(),source);
+                // 跨維度 teleport 不重設速度，原生 move 可能回報 pose 未確認但人已在原艙內；這是下一 tick 自然接續的暫態，
+                // 只有嘗試後仍不在原艙 interior 才是真的移動失敗而記 WARN。
+                if(!inside(player,source,frame)) warnMovePending(record.sessionUuid(),person.playerUuid(),source);
                 continue;
             }
             if(!sourceAuthority.test(record)) continue;

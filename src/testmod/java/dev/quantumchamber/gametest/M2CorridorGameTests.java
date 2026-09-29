@@ -941,6 +941,33 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
+    /**
+     * 跨維度 teleport 不重設玩家速度；帶速度的玩家返還時原生 move 會回報 pose 未確認、但人已在原艙內，下一 tick 自然接續。
+     * 這種暫態不是移動失敗，不得記「返還移動尚未確認」WARN。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_moving_return_quiet",tickLimit=100000)
+    public void native_moving_player_return_logs_no_pending_move_warning_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_moving_player_return_logs_no_pending_move_warning_windows");
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var initial=fixture.record(); var player=fixture.players.getFirst().player();
+            player.setVelocity(0.25,0,-0.125);
+            var capture=new LogCapture("quantumchamber");
+            fixture.power();
+            when(context,tick+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                    .presence(fixture.server,initial.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,done -> {
+                try {
+                    var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還移動尚未確認",initial.sessionUuid().toString());
+                    capture.close();
+                    context.assertTrue(player.getServerWorld()==context.getWorld() && dev.quantumchamber.chamber.ChamberOccupantService.contains(
+                            dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox()),"帶速度的玩家仍由真 backend 返還原艙");
+                    context.assertTrue(pending.isEmpty(),"人已在原艙內的 pose 暫態不得記移動失敗 WARN："+pending.size());
+                    M4PerTestUniverseProbe.complete(context);
+                } finally { fixture.close(); }
+            });
+        });
+    }
     private static final Map<net.minecraft.server.MinecraftServer,TeleportExceptionFault> TELEPORT_FAULTS=new java.util.IdentityHashMap<>();
     private static final class TeleportExceptionFault {
         final UUID player; final net.minecraft.server.world.ServerWorld destination; int hits; boolean armed=true;
