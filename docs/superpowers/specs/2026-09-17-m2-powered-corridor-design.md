@@ -4,7 +4,7 @@
 
 **狀態：2026-09-17 使用者已核准本規格與保守安全策略並授權實作。尚無 M2 程式，不宣告走廊、傳送或照明已可用。**
 
-> 後續狀態（2026-09-24）：上行為核准當時的歷史快照。M2 其後已在 `feature/m1-chamber` 實作；Task 6 起改依 [2026-09-18 左右走廊與藥效維持修訂](2026-09-18-m2-lateral-buff-maintained-design.md)。八項人工驗收仍待記錄，見 [M2 紀錄](../../implementation-notes/m2-corridor.md)。合併狀態以 `main`／tag 為準。
+> 後續狀態（2026-09-24；2026-09-29 更新）：上行為核准當時的歷史快照。M2 其後已在 `feature/m1-chamber` 實作；Task 6 起改依 [2026-09-18 左右走廊與藥效維持修訂](2026-09-18-m2-lateral-buff-maintained-design.md)。八項人工驗收仍待記錄，見 [M2 紀錄](../../implementation-notes/m2-corridor.md)。M2 整分支 final review 已於 2026-09-29 隨 M1–M4 整分支 review 完成；依其修正所做的規格補充以「2026-09-29 整合修正」標示於各節，見 [M1–M4 整合審查紀錄](../../implementation-notes/2026-09-29-m1-m4-integration-review.md)。合併狀態以 `main`／tag 為準。
 
 ## 1. 前置與固定範圍
 
@@ -61,10 +61,11 @@
 - 跨頁只在同一固定 Superposition Dimension 重新定位，保留朝向與安全速度；正常步行不得跌入 void 或看到端牆。
 - 多人可以相聚或分散到遠方；不生成兩人之間所有空頁面，各 session 的 slot 不重疊。
 - 只回收沒有玩家、相關掉落物／投射物、跨 seam 操作或門互動的頁面；必須有有限延遲與資源上限。
+  - 2026-09-29 整合修正：經驗球比照掉落物計入。整個固定 Superposition Dimension 只接受玩家、掉落物、投射物與經驗球；其他 entity（船、礦車、盔甲架、展示框、畫、生物、終界水晶、拴繩結、藥水雲等）在使用物品階段即拒絕且不消耗物品，並在加入世界與跨維度進入時拒絕，不能讓無法 pin 或返還的 entity 進入走廊。
 - `DoorKey` 由 session UUID、logical door index、LEFT／RIGHT 構成，不使用 physical slot 當永久身分。
 - M2 門面保留穩定邏輯身分；尚未提供 Universe backend 時，不讓側門假裝能穿越新宇宙。選擇／測量／跨宇宙通道依 M3／M4 邊界另行實作。
 - 採普通方塊、模型／blockstate JSON，不要求 recursive renderer 或 Sodium 私有 renderer hook。
-- 固定 session 入口 replica 的前門保留普通 Controller 右鍵整面開／關，打開後通往既有負向走廊；只有已發布 SUPERPOSITION 的目前映射可操作。ARMING／RETURNING、Shift 維護與投影拆除皆拒絕，不自動刪／開前門，不改來源原艙前門，也不是 M3 的跨宇宙門。
+- （本條只適用 legacy 前後模式；左右模式的入口正門位於走廊牆面，依 [左右走廊修訂](2026-09-18-m2-lateral-buff-maintained-design.md) §3 與使用者 2026-09-29 決定一律拒絕切換。）固定 session 入口 replica 的前門保留普通 Controller 右鍵整面開／關，打開後通往既有負向走廊；只有已發布 SUPERPOSITION 的目前映射可操作。ARMING／RETURNING、Shift 維護與投影拆除皆拒絕，不自動刪／開前門，不改來源原艙前門，也不是 M3 的跨宇宙門。
 
 ## 5. 斷電返還交易
 
@@ -93,13 +94,14 @@
 
 - 入場前版本化保存 session UUID、chamber UUID、來源 world／role、anchor／facing、參與者、原艙 local 位置與返還進度；恢復資料的落盤須先於入場提交。
 - 玩家離線時不把他從 cohort 靜默移除；保留 pending-return。斷電時其他在線參與者先返還，離線者在登入正常操作前返還。
+  - 2026-09-29 整合修正（澄清）：返還期間只凍結尚未返還者；已返還者恢復正常操作，不必等離線者。原艙保護與來源 lease 仍持有到全員返還與清理完成，已返還者在此之前也不能加入新 session。
 - 還有離線 pending-return 或返還失敗者時，原艙暫不解鎖；不刪玩家、不任意刪資料、不把空集合當作全部返還。
 - 重啟／不完整入場一律取消舊 session 並執行恢復，不能自動挑選／建立新 Universe，也不能因 persisted ARMED 複製一個 session。
 - 恢復資料需持久化藥效返還決策：不完整入場 rollback 才還原入場完整快照；成功 session 的正常返還不補發快照，也不刪除玩家在走廊後來新喝的 QuantumState。轉成 RETURNING 及再次重啟都不能遺失此決策。
 
 - 入場決策提交點為全員實際移動／效果消耗／原生 checkpoint 確認後的 checked SUPERPOSITION,false journal。提交前失敗使用 RETURNING,true；此決策已落盤後的發布／再次核對失敗則安全返還並繼承 false，不當成未提交失敗重套藥效。不可省略玩家 checkpoint 先於 false 提交的順序，也沒有跨檔原子保證。
 - 恢復與 cleanup 需冪等；SERVER_STOPPED 清 runtime queue／ticket／server identity，保留必需恢復資料。
-- 掉落物與投射物列入頁面生命週期及斷電清理策略；不在仍有玩家／有價物品的 slot 上直接清空方塊。支援失敗時保留可恢復狀態與明確錯誤。
+- 掉落物與投射物列入頁面生命週期及斷電清理策略；不在仍有玩家／有價物品的 slot 上直接清空方塊。支援失敗時保留可恢復狀態與明確錯誤。（2026-09-29 整合修正：經驗球比照掉落物，返還時送回原艙中央；其他 entity 不得進入走廊世界，見 §4。）
 
 - 走廊租約權威持有完整有限 footprint 的 entity-ticking tickets，與來源票所有權分離；清理前須證明真實體資料已載入且追蹤就緒，不以FULL或空範圍查詢猜無占用。同tick搬移按真UUID／bbox確認，不單獨信任延後更新的區段索引；durable移除lease後才釋票，停止時對稱清理並保留恢復資料。
 
@@ -113,6 +115,8 @@
 同session UUID的durable進度更新不得增減凍結cohort或改不可變來源快照（position／velocity／yaw／pitch／完整QuantumState NBT）；returned進度可更新，列表順序不具權威性。寫入前須同時核對current與上一份flushed名單，拒絕不得改records／dirty／flushed；租約破壞性清理／移除／完成收據前再核對runtime凍結來源。不能讓短名單先落盤，再靠記憶體拒絕掩蓋重啟後遺失離線玩家的缺口。
 
 使用者同意重用Minecraft既有JNA。原生save後同一opened原生HANDLE讀回完整NBT、FlushFileBuffers、File ID/正式path probe與普通ancestor鎖鏈/reparse拒絕，取代FileChannel字面契約；不重寫player.dat、不加依賴/NativeDLL/moduleopens/系統權限。未知provider/平台不能證明identity即IOException/fail closed，Windows NTFS當前必驗；其他平台不以path-key ABA假說充當fd identity。保持checkpoint成功才returned/journalflush、pending仍保護，不跨檔原子/整機斷電claim。
+
+2026-09-29 整合修正：不支援的平台或 playerdata volume（非 Windows，或 Windows 上不在本機固定 NTFS）改在 `start()` 預檢即受控拒絕，在任何 reservation、效果快照或玩家移動之前 REJECTED，不讓玩家進走廊後才因 checkpoint 失敗卡在 RETURNING。
 
 平台測試必須保留 Ubuntu 基礎建置與受控拒絕契約，另有 Windows 原生正向 gate，不能只略過原生案例便宣稱通過。Windows 必要 native suites 應實際執行且零略過；其他平台的拒絕、OS 條件略過與人工／GPU驗證分列。隔離 JVM 的 os.name 路由探測不等於真正 Linux runtime，尚未執行的遠端 CI 不聲稱已綠。
 
@@ -131,7 +135,7 @@
 
 - 純測試：level-trigger 資格、單一 session、cohort／效果原子消耗、分頁 floorDiv／往返、穩定 DoorKey、slot 不重疊、確定性返還、重試及恢復 NBT。
 - 原生 GameTest／testmod：外部先供電→進艙關門喝藥→真實固定 world 入場；缺 buff／零人／spectator 排除；斷電→返還→保護解除順序；返還失敗維持保護。
-- 分頁 live：連續走過多頁並返回、多人相距很遠、掉落物與投射物跨 seam、無可見終點且資源占用不按行走總距離無界成長。
+- 分頁 live：連續走過多頁並返回、多人相距很遠、掉落物與投射物跨 seam（2026-09-29 整合修正補入經驗球，並驗證非管理 entity 不得進入走廊世界）、無可見終點且資源占用不按行走總距離無界成長。
 - 持久化：活動中 disconnect、返還期間 disconnect、不同 Java 程序 restart、來源／目的 world identity 拒絕、同 tick 斷電與重新供電。
 - production-only dedicated Done→stop、各 world 正常儲存、無 client class 載入錯誤、release JAR 不含測試探針／第三方照明 JAR。
 - `clean build` 與全套相關測試；原版／照明／Sodium／Iris／shader 的人工紀錄分開，不宣稱 build 覆蓋 GPU。

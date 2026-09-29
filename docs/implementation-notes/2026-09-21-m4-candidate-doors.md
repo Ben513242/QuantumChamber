@@ -1,6 +1,6 @@
 # M4：候選門（Candidate Doors）權威與驗證證據
 
-驗證日期：2026-09-24。Minecraft 1.21／Yarn 1.21+build.9／Loader 0.17.2／Fabric API 0.102.0+1.21／Loom 1.7.4／Java 21／Gradle 8.8，Windows 本機。
+驗證日期：2026-09-24（integration fix 後的「目前 gates」為 2026-09-29）。Minecraft 1.21／Yarn 1.21+build.9／Loader 0.17.2／Fabric API 0.102.0+1.21／Loom 1.7.4／Java 21／Gradle 8.8，Windows 本機。
 
 ## 狀態與範圍
 
@@ -11,14 +11,16 @@ M4 是權威與持久化里程碑：
 - 門保持關閉，玩家不移動，沒有配置 Universe。
 - 真正的塌縮／通道留給 M5。
 - Whole-branch review 最終 Critical 0／Important 0（見「Final review」）。
-- spec §15 的 M4 遊戲內人工驗收**尚未執行**。本文所有證據都來自自動 gate 與 headless／跨 JVM probe，不代表人工可見行為已驗。
-- M1–M4 在 M1／M1.2／M2／M4 人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver）；實際合併與 tag 狀態以 `main`／tag 為準。
+- 2026-09-29 的 M1–M4 整分支 final review 另找到 7 項 Important（其中 F-CI 與 F-CHECKPOINT 直接涉及 M4），已由 integration fix rounds 1–3（`1f900f5..428f52a`）修正並 re-review；目前 code HEAD 為 `428f52a`。見 [M1–M4 整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
+- spec §15 的 M4 遊戲內人工驗收：正式 B-5（W-M4）**尚未執行**。2026-09-29 只有使用者在自有世界做的部分預驗（非 W-M4，不計入清單 E 段），見「人工驗收狀態（spec §15）」。本文其餘證據都來自自動 gate 與 headless／跨 JVM probe，不代表人工可見行為已驗。
+- M1–M4 在 M1／M1.1／M1.2／M2／M4 人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver）；實際合併與 tag 狀態以 `main`／tag 為準。
 
 Commit 範圍：
 
 - M4 code range：`ba9ca7338a855e85fa3e48161f6c7014a32634f7..752ada1b34f27685014fc3e6ec10fee77b88a86a`，共 17 commits。
 - Spec／plan docs commits（`687cff95efbb2cc127083107b94f8be0f56408c4..ba9ca73`）：`fdac2311caeef058d52d1906a789a4a7cf505713` 設計、`ba9ca7338a855e85fa3e48161f6c7014a32634f7` 計畫。
 - Task 10 docs commits：`eba763b840ef738b17955c8b92ab594a210bc0c7`（初版），以及其後修正 review 意見的 docs fix commits。完整清單以 `git log -- docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 為準。
+- M1–M4 integration fix rounds 1–3：`1f900f5e1c4f06a6dc6a529152b86e2168d9cac9..428f52a79daa18ab9f5fd7a7f0f2980a34598987`，共 20 commits（涉及 M4 的有 `c474338` M4 GameTest 平台 gate 與 `_windows` 改名、`1ca107d` MEASURED checkpoint 退避）。逐項見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
 
 | Commit | Task | 內容 |
 | --- | --- | --- |
@@ -35,11 +37,11 @@ Commit 範圍：
 | `c3cc053` | whole-branch fix1 | W-I2：DORMANT receipt 只封鎖自己的 Chamber |
 | `752ada1` | whole-branch fix1 | 跨 JVM 證明未 checked 的選擇不會跨重啟存活；dormant-reentry |
 
-下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`。行號以 `752ada1` 為準。
+下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`。行號以 `752ada1`（M4 驗收時的 code HEAD）為準，另標 `428f52a` 的段落除外。Integration fix 之後，`CorridorPageManager`、`CorridorRepositionService`、`SuperpositionSessionManager`、`SuperpositionSession`、`SessionRecoveryManager`、`PlayerCheckpointStore`、`WindowsPlayerCheckpointVerifier` 與 `SessionTransferService` 在 `428f52a` 的行號已位移，testmod 的 `M4CandidateDoorGameTests` 亦同（以 `git diff --stat 752ada1 428f52a -- src` 核對）；本文引用的其他 `src/main` 檔案在 `428f52a` 沒有變更。
 
 原始證據放在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（下稱 evidence owner）。`.superpowers/` 被 gitignore，是本機 scratch，不在 repo 內，也不進 release。因此本文直接寫出關鍵數字與 SHA-256；本文不能取代原始證據，交接時要以 exact commit 對照這些雜湊。
 
-**可重現性限制**：驅動下列 runtime gate 的 harness 只存在於 evidence owner，不在 repo。包括 `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、Gradle init script `task9-runtime.init.gradle`（所有 gate 的 Gradle 呼叫都以 `-I` 載入，含 M4 recovery）與 `task9-probe.init.gradle`（M3 lifecycle／transfer probe 使用）、wrapper `wfix1-final-green.ps1`／`wfix1-final-green2.ps1`，以及 `wfix1-build-summary.ps1`、`task10-phase2-verify.ps1` 等 build-summary／verify 腳本。Repo 內 tracked 的只有它們呼叫的 `build.gradle` run 設定（`gameTestLegacy`、`m3Universe`、`m3Transfer`、`m4Recovery`）與 `src/testmod` 的 GameTest／probe。可重用 harness 要整理到 tracked `scripts/verification/`，這是使用者已決定的獨立 task。完成之前，只要刪除 worktree 或 `.superpowers/`，這些 gate 就無法用同一套 harness 重跑，本文的 SHA-256 也無法再對照原始檔。
+**可重現性限制**：驅動下列 runtime gate 的 harness 只存在於 evidence owner，不在 repo。包括 `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、Gradle init script `task9-runtime.init.gradle`（所有 gate 的 Gradle 呼叫都以 `-I` 載入，含 M4 recovery）與 `task9-probe.init.gradle`（M3 lifecycle／transfer probe 使用）、wrapper `wfix1-final-green.ps1`／`wfix1-final-green2.ps1`，以及 `wfix1-build-summary.ps1`、`task10-phase2-verify.ps1` 等 build-summary／verify 腳本；integration fix 另有 `ifix*-gradle.ps1`、`ifix*-final-green.ps1`、`ifix*-build-summary.ps1` 與 CI 規則驗證 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`。Repo 內 tracked 的只有它們呼叫的 `build.gradle` run 設定（`gameTestLegacy`、`m3Universe`、`m3Transfer`、`m4Recovery`）與 `src/testmod` 的 GameTest／probe。可重用 harness 要整理到 tracked `scripts/verification/`，這是使用者已決定的獨立 task。完成之前，只要刪除 worktree 或 `.superpowers/`，這些 gate 就無法用同一套 harness 重跑，本文的 SHA-256 也無法再對照原始檔。
 
 ## Stable DoorKey 與完整門
 
@@ -103,6 +105,7 @@ Commit 範圍：
   2. 凍結 context；任一 authority 不健康就回 `REJECTED`，不建立 session 或空間（`:104-106`）。
   3. `reserveInitial`（`:110-111`）。
   4. 以 `candidateAware` 建立 ARMING＋SELECTABLE record，checked 落盤（`:115-125`）。
+- Integration fix（`d0a14bb`）在第 1 步與第 2 步之間加入原生 checkpoint 能力預檢：不支援的平台或 playerdata volume 直接 `REJECTED`，不凍結 context、不建立 entropy／discovery 檔（`428f52a`：`SuperpositionSessionManager.java:103-106`、`:141-153`）。
 
 ## Candidate weights 與 fallback
 
@@ -168,6 +171,7 @@ Ledger 內的 DoorKey 與 CandidateId 必須唯一，且都屬於同一個 sessi
 - legacy 仍然 strict 讀取，只走既有的 return-only recovery，不推測或補造 candidate。
 - 已有 legacy durable record 時，不建立新的 M4 session。
 - 因為 schema 3 marker 在同一 JVM 內是 sticky，GameTest 以隔離的 `runGameTestLegacy`（`run/gametest-legacy`）保留一個真 live schema 2 案例。
+- **不可降版**：用本 build 在某個存檔建立過任何走廊 session 之後，該存檔的 `quantumchamber_sessions.dat` 會寫成 schema 3；M4 之前的 build 讀取 schema 3 會 fail closed。這類存檔之後只能用 M4 起的 build 開啟。
 
 ## Batch、cap 與 commit-before-expose
 
@@ -307,7 +311,7 @@ W-a 的 crash 分支經 ruling 接受，不視為 spec 偏離：§11 依 durable
 2. 全員返還後：`MEASURED` 呼叫 `releaseMeasured`，一般 session 才呼叫 `release`（`:172-175`）。
 3. `tickMeasuredRelease`（`CorridorPageManager.java:831-862`）：
    - 清除幾何，並逐格確認已全部為 AIR（`:844-850`）。
-   - `MeasuredWorldSaveCheckpoint.save` 強制存檔來源 Chamber 與走廊的相關 chunks。它要求原生 chunk／entity IO barrier 完成、save-failure revision 不變；失敗時重新標髒並保留 lease（`main/persistence/MeasuredWorldSaveCheckpoint.java:22-44`）。
+   - `MeasuredWorldSaveCheckpoint.save` 強制存檔來源 Chamber 與走廊的相關 chunks。它要求原生 chunk／entity IO barrier 完成、save-failure revision 不變；失敗時重新標髒並保留 lease（`main/persistence/MeasuredWorldSaveCheckpoint.java:22-44`）。`428f52a` 起失敗後依 per-space 指數退避重試，見「M5 handoff acceptance」第 9 點。
    - 接著寫入「leases 為空、仍是 `MEASURED`」的 record，並 exact readback（`CorridorPageManager.java:854-858`），最後才釋放 ticket 與 slot。
    - 過程中不會經過一般 `tickRelease` 裡的 `journal.remove`（`:814-830`）。
 4. 結果是 dormant record：候選 context、ledger 與 selection receipt 全部保留。DORMANT 在 attach 時不重建 space 或來源票（`SuperpositionSessionManager.java:60-63`、`CorridorPageManager.java:90`）。
@@ -326,12 +330,12 @@ W-a 的 crash 分支經 ruling 接受，不視為 spec 偏離：§11 依 durable
   - LOW 不能讓它進入 OFF（`main/chamber/ChamberPowerCoordinator.java:116-133` 搭配 `returnToOrigin=false`），所以無法走一般 OFF 拆除流程。
   - 這是 spec §11「封鎖該 Chamber 等待 M5 接管」的刻意行為；M5 之前沒有遊戲內解除路徑。
   - 參與者要等該 session 進入 DORMANT（全員返還、幾何清理完成、lease 清空）之後，才可以使用**其他** Chamber。在 `RETURN_PLAYERS`／`RELEASE_GEOMETRY` 階段，該 record 還不是 DORMANT，`participantsAvailable` 會拒絕這些參與者開新 session。
-- `SessionRecoveryManager.blocks`（`SessionRecoveryManager.java:41-50`）由網路 handler mixin 呼叫，用來擋下移動、載具移動與方塊互動封包。它在以下情況回 true：
-  - 玩家在 `joinTicks`（JOIN 排隊中）或 `disconnected`（斷線 pending）中（`:45`）。
-  - current ∪ flushed 中，玩家屬於 `RETURNING` session（`:46-48`）。
-  - 玩家屬於 `MEASURED` session 且自己尚未返還（`:48`）。
-  - 讀取 journal 時丟出例外，一律攔截（`:49`）。
-- 在 `MEASURED` 的語境下，`blocks` 只攔截尚未返還的參與者。DORMANT 全員已返還，所以 DORMANT record 本身不會攔截任何人；前提是該玩家沒有落入其他條件，例如另一個 RETURNING session 或 JOIN／斷線 pending。
+- `SessionRecoveryManager.blocks` 由網路 handler mixin 呼叫，用來擋下移動、載具移動與方塊互動封包。以下依 `428f52a`（`SessionRecoveryManager.java:45-54`；integration fix `48c7dd8` 修正 F-FREEZE 之後），它在以下情況回 true：
+  - 玩家在 `joinTicks`（JOIN 排隊中）或 `disconnected`（斷線 pending）中（`:49`）。
+  - current ∪ flushed 中，玩家屬於 `RETURNING` 或 `MEASURED` session，**且自己尚未返還**（`:50-52`）。
+  - 讀取 journal 時丟出例外，一律攔截（`:53`）。
+- `752ada1` 的 `RETURNING` 分支不看 `returned`：只要同組有人離線不回來，已返還者也會被永久凍結（F-FREEZE）。修正後，`RETURNING` 與 `MEASURED` 都只攔截尚未返還的參與者；已返還者可以正常移動與互動，但原艙保護與比較器 11 仍維持到全員收尾，已返還者在收尾前也不能加入新 session（`participantsAvailable`）。離線者重新連線後的下一 tick 才返還。
+- DORMANT 全員已返還，所以 DORMANT record 本身不會攔截任何人；前提是該玩家沒有落入其他條件，例如 JOIN／斷線 pending。
 
 ## 自動與跨 JVM 證據
 
@@ -342,7 +346,72 @@ GameTest、recovery probe 與 M3 probe 都是 **testmod-present** runtime，不�
 
 Main-only 證據另見下文。
 
-### Final gates（HEAD `752ada1`）
+以下分成兩段：「目前 gates」是 integration fix round 3 在目前 code HEAD `428f52a` 的 Windows 本機結果；「M4 驗收時的 final gates」是 `752ada1` 的歷史數字。兩者都不是 GitHub Actions 結果，CI 狀態以 GitHub Actions 上 feature HEAD 的 run 為準。
+
+### 目前 gates（HEAD `428f52a`）
+
+2026-09-29 以 integration fix round 3 的最終 gates 為準：Windows 本機、fresh root、`--rerun-tasks`、未設 `onlyBatches`。彙整檔 `ifix3-verification-summary.json`（SHA-256 `7b562188772d8510c81f04d327beae81a9c538cdccd295c18185a6696626563e`）由唯讀腳本 `ifix3-build-summary.ps1` 從原始 artifact 產生，任何不符即失敗。三輪修正的逐項說明見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
+
+| Gate | Root（evidence owner 內） | 結果 |
+| --- | --- | --- |
+| `clean test runGameTest build --rerun-tasks` | `task9-ifix3-final-full-caa49a0fb8364e86beeb8c5a31ca9a57` | exit 0；server PID 48048；default 146/146（其中 `_windows` 73），0 failure／error／skipped；XML SHA-256 `fa59b5e441f7b53e40a28663533a4cf789920f637849403f33f606e15452d8ea` |
+| `runGameTestLegacy --rerun-tasks` | `task9-ifix3-final-legacy-b9e4f9ff6f344eac9c09e5ed81c0058c` | exit 0；server PID 63512；1/1；XML SHA-256 `b218808c111826f97b6b8740de9a765506db0ea191e719b0253049c444f71a40` |
+| main-only `runServer`＋oracle | `task9-ifix3-final-main-only-1f05282dc84749009f6f22f1b36b02a2` | PASS；server PID 67788 |
+| M3 lifecycle 4＋transfer 5 | `task9-ifix3-final-m3-7b631679c3ae45a3890d9361e20b3d1c` | 9/9 PASS |
+| M4 recovery 全 phases | `recovery-run-c772bda1174147c9b9e2fd9a9ca51d60.json`（SHA-256 `3bfc86a1c34b64c23d6fbb16e5d7a1de0680d4c7865db4c6be5db085c5d71e60`） | 24/24 PASS |
+
+- **JUnit**：401 tests、0 failures、0 errors、2 skipped。兩個 skip 都是 `NonWindowsPlayerCheckpointStoreTest`（Windows 上合法略過）。Windows checkpoint 17 個實際執行：`WindowsPlayerCheckpointVerifierTest` 12＋`PlayerCheckpointStoreTest` 3＋`PlayerRecoveryCheckpointTest` 2。
+- **Suite boundary receipt**：full `m4-boundary-4d0b473627f54a91827312706e0272e6.json` PASS；legacy `m4-boundary-1f0c2203be18430f8f85fd7d4c05507e.json` PASS。
+- **World restore**：full `run/gametest/world`、legacy `run/gametest-legacy/world`、main-only `run/server`（含 `m1-smoke`）都是 `exactRestored=true`、`deleted=false`。
+- **Main-only**：Fabric loaded mods 不含 testmod；classpath／argfile 命中 0；47 個 testmod-only types 的 class-load 命中 0；stale datapack warning 0；shutdown world keys 為 overworld／the_end／the_nether／`quantumchamber:superposition` 四鍵。`main-only-oracle.json` SHA-256 `4d70d8f9b2446973ddb217f6c530f429210b851a430fb052eaeabdf022657165`。
+- **M4 recovery**：24 個 phase 的 chain 結構與下文「M4 recovery 24 phases」相同（14 條 chain）；24 個 phase 的 PID、(PID, StartTime) 與 startupNonce 都各自唯一；全部 Gradle exit 0、normal stop、lock released，receipt SHA-256 與 launcher 記錄一致。
+- **Artifact 邊界**：release `quantumchamber-0.1.0-SNAPSHOT.jar` 299 entries（SHA-256 `9d995afcc6c0d780815a423eaea76311808eddd49c952bc0d577c00f2b19a9ce`）、sources 190 entries；testmod／gametest／probe 命中都是 0，唯一合法的 probe 是 production `dev/quantumchamber/compat/ModPresenceProbe`。
+
+**Per-test Universe receipts**：default 28 份（目錄 `m4-per-test-48048-f5bc8d7d2a264735adcf89a11d4c55e3/`）＋legacy 1 份（`m4-per-test-63512-5a7a6a80fc0642b6b096b5321a1e2283/`）。
+
+- M4 的 18 個 GameTest 已在 integration fix（`c474338`）全部加上 `_windows` 後綴並加平台 gate：非 Windows 在 per-test probe 開始前直接 `complete()`，不寫 receipt、不佔走廊容量。receipt 名稱同步改名。
+- Per-test probe 也涵蓋 integration fix 新增的 M2 GameTest，所以份數由 `752ada1` 的 17＋1 增為 28＋1。
+- 29 份全為 PASS，`snapshotExactUnchanged=true`、`runtimeHandlesExactUnchanged=true`，before／after canonical JSON 完全相同；world keys 都是四鍵。
+
+| Test | Run | Catalog（before=after） | Records n | Final receipt SHA-256 |
+| --- | --- | --- | --- | --- |
+| `busy_participant_start_rejected_before_any_reservation_windows` | default | `1c794607…` | 1 | `74bb7d66258c45552bd5bcc65700f4c04907e9766b4b6a132a5ab57c1a0ebbb8` |
+| `dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows` | default | ABSENT | 0 | `da50c6b8ee4c94a452c2b3322a00914afc38320311adf3923d9c25cc6c384876` |
+| `east_complete_doors_require_checked_ledger_windows` | default | ABSENT | 0 | `0c23ef534d03ba5009a0703bf68cfd3c92c100d7eec615ef9dc0e929f47ebfc8` |
+| `native_arming_abort_leaves_unentered_members_in_place_windows` | default | ABSENT | 0 | `490c2123c3de343d42d881c7047a07302a90feb668e33df28ea3166d21e488a9` |
+| `native_buff_loss_return_logs_info_without_stack_windows` | default | ABSENT | 0 | `755800f43eb36a65489998e9fef32ff5fec47459959564fdeb0564c579b63c26` |
+| `native_candidate_batch_fault_converges_to_checked_returning_windows` | default | ABSENT | 0 | `0a55f55a99dcef032a92e2db04ff3750b15dc7215625da7d5cc85f7ca9604f37` |
+| `native_experience_orb_crosses_seam_and_returns_before_cleanup_windows` | default | ABSENT | 0 | `e42966c7c2cd72175f7da4e3fc4b87294324dd85e940eb9fc651ff4130f0db18` |
+| `native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows` | default | `1c794607…` | 1 | `fe2b6a4ba2b184e118116a715543e97bbd24a3cfd2ab587ff166f50100e48d06` |
+| `native_moving_player_return_logs_no_pending_move_warning_windows` | default | ABSENT | 0 | `263864c5ee0b9d457772d7a34d3e99988c822fa9a075cc23ea836b9a6e400dda` |
+| `native_return_move_exception_logs_cause_once_then_recovers_windows` | default | ABSENT | 0 | `bebe40c879381f11ed89affd2d0b19671123c370ea0b33e659ce738cc0049d88` |
+| `native_returned_participant_moves_while_offline_member_pending_windows` | default | ABSENT | 0 | `71e557aa2e8ba91eb068640c3c01ed72396b6dad17255f7fea010b8fb90a2437` |
+| `native_selection_all_25_cells_first_wins_and_measured_freeze_windows` | default | ABSENT | 0 | `dc296db1eedf4ec6b59d6f354134e56b2bdc38bf55d4c7fb3ea1d0c092bc86e5` |
+| `native_selection_cannot_use_candidate_before_checked_batch_readback_windows` | default | ABSENT | 0 | `53f3e980b6c7a160a614c64eae0134a530cc0f68f66ddf16661a0208a07a0a20` |
+| `native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows` | default | ABSENT | 0 | `0f9b3841ab8d6cb55d76d3afbd0280cd55aa743d62208549c0f21e505e520c27` |
+| `native_selection_flush_failure_never_sends_success_windows` | default | `1c794607…` | 1 | `c473354b585688ac80c44c14083e3f833ac33b21bde756abc728d7b215fe07a7` |
+| `native_selection_readback_failure_never_sends_success_windows` | default | ABSENT | 0 | `34e00b5beb7edddf4d6240712ad1eed70c520ace9c0ea7cee38621e470da39d5` |
+| `native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows` | default | ABSENT | 0 | `00b7ac6f45218d98c07ea7e009b0b1355265bddc4b543c1f48cb41ee33ce9045` |
+| `native_selection_rejects_pending_batch_retired_and_unready_mapping_windows` | default | ABSENT | 0 | `ac34e1ae1a9e776aeb4cb410d0e2b88874a5b4ff85bcaa9bb9b402ec4acd836d` |
+| `native_shoulder_parrot_stays_on_shoulder_in_corridor_and_returns_windows` | default | ABSENT | 0 | `9525a0f378dc8d3ab77d792f58519fd8a91a07f8db7df1dcbf197e13f7617503` |
+| `native_start_freezes_candidate_context_before_geometry_windows` | default | ABSENT | 0 | `87fde91b7fbb05e3f7b064218337ebc1d0a9dc0cfa4f5f2d5209adcbfdca3774` |
+| `native_start_initial_flush_fault_rejects_without_residue_windows` | default | ABSENT | 0 | `a5ad2270beff9639ef7700130ac741f0969182ef969e43e84ee8743a62ed4184` |
+| `native_superposition_rejects_entity_placement_without_consuming_items_windows` | default | `1c794607…` | 1 | `883db873c44c212e2389b8996b51aafa472938ec404bcf643560e15c33e450fa` |
+| `north_complete_doors_recycle_split_merge_and_seam_windows` | default | ABSENT | 0 | `9c8d945842a6639515777d4b030054f2b3afab618b5de4aaf9f7950f08ca5b6a` |
+| `south_complete_doors_require_checked_ledger_windows` | default | ABSENT | 0 | `71015cdac03f2ba5ccb2ef8436686a0aff215bedb9b1d334895ef6b64ecc88fb` |
+| `unhealthy_authorities_reject_before_reservation_windows` | default | ABSENT | 0 | `dd67891bd977a0aa56205c2c1dad4c2a128e04b321fff9342aed35c4ebd1ec47` |
+| `unmanaged_entity_command_teleport_into_superposition_stays_at_source` | default | ABSENT | 0 | `635ac74854762debb06a7d696b5e2a19cc62f75527b37d2eff0d6476a1b5b709` |
+| `unsupported_checkpoint_platform_rejects_start_without_residue` | default | ABSENT | 0 | `b2827f6d22d959da5c75579525c54bb3091153facc1db03406564d15b94f3443` |
+| `west_complete_doors_require_checked_ledger_windows` | default | `1c794607…` | 1 | `2c2242bc06d9a8b74071c8f0f336577f50f419bdbc74ec175546736e67b5f450` |
+| `isolated_legacy_schema2_then_empty_schema3_authority_gates_windows` | legacy | ABSENT | 0 | `c4d064f955f92897ec61b1c43675de64f0c73dd24dd636f232484366bd776a36` |
+
+Catalog 為 `1c794607…`（1 筆）的 test，是在 M3 `empty_bootstrap_and_disabled_record_do_not_create_worlds` 建立 DISABLED sentinel 之後才執行的，所以 baseline 本來就含那 1 筆；它們自己的 before 與 after 仍完全相同，沒有新增任何 record。
+
+`428f52a` 新增的 M4 GameTest 只有 `native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows`：持續原生存檔失敗時，MEASURED 清理依 20→40 ticks 退避重試、WARN 只記一次並附 stack，恢復後到達 DORMANT 且 SELECTED receipt 保留。
+
+### M4 驗收時的 final gates（HEAD `752ada1`，歷史）
+
+以下是 M4 驗收時（`752ada1`）的 **Windows 本機**歷史數字，test 名稱當時還沒有 `_windows` 後綴。當時 M4 GameTests 沒有平台 gate：code 等同 `752ada1` 的 `9c421a7` 與 `1f900f5` 推上遠端後，GitHub Actions 的 Ubuntu job 兩次紅燈（run `35968503858`、`35975280939`，21/135 required GameTests 失敗），根因與修正見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md) 的 F-CI。
 
 - 所有 gate 都在同一 HEAD 以 fresh root 執行。
 - Wrapper console `wfix1-final-green-console.log`（SHA-256 `803c194f4e1157107ebdb3e4584984beea12c390146b93964e6d2e5771c74fcb`）與 `wfix1-final-green2-console.log`（`0661e12d4b68eeacf0ad76388ec5375778d75f3a941f21edd2f521373cbb4c56`）的 START 行都是 `HEAD=752ada1b34f27685014fc3e6ec10fee77b88a86a`。
@@ -377,34 +446,12 @@ Main-only 證據另見下文。
 - **M3**：create-save／reload-read／unload-replace／final-verify 與 setup-catalog／success-roundtrip／target-not-full／post-move-authority-loss／stale-service-receipt，每個 receipt 都是 PASS、`stoppedSeen=true`，evidenceOwner＝本 plan workspace。
   - 第一輪 root `task9-wfix1-final-m3-afd100e9e11b403d834459e31d6d8482` 失敗，保留未改判：原因是 harness 在 PS7 下的 `ConvertFrom-Json` DateKind 問題，不是 probe 或 production 缺陷。
 
-18 份 M4 per-test Universe receipts：default 目錄 `m4-per-test-25296-eec94b302934408bafbfcd5bbf72f8e5/`，legacy 目錄 `m4-per-test-17104-6eaef35602f1425984de0a579fd3bb20/`。
+18 份 M4 per-test Universe receipts（當時名稱沒有 `_windows` 後綴）：default 目錄 `m4-per-test-25296-eec94b302934408bafbfcd5bbf72f8e5/`（17 份），legacy 目錄 `m4-per-test-17104-6eaef35602f1425984de0a579fd3bb20/`（1 份）。
 
 - 每個 test 都有 `.before.json` 與 final receipt，`M4_PER_TEST_BEGIN`／`END` log 各恰 1 行。
 - 18 份全為 PASS，名稱唯一，`snapshotExactUnchanged=true`、`runtimeHandlesExactUnchanged=true`，before／after canonical JSON 完全相同。
 - 每份的 runtimeHandles 都是 0 筆；worldKeys 都是 overworld／the_end／the_nether／`quantumchamber:superposition`。
-
-| Test | Run | Catalog（before=after） | Records n | Final receipt SHA-256 |
-| --- | --- | --- | --- | --- |
-| `busy_participant_start_rejected_before_any_reservation`（新） | default | `1c794607…` | 1 | `1e31ff75f0049d92faafe00fa04f6bb65b2fe882b72872c384ab6b666e9ea845` |
-| `dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber`（新） | default | ABSENT | 0 | `e08ea128330df45dbeac234e70eafb589625ac5e2915529446654a29f1b08416` |
-| `east_complete_doors_require_checked_ledger` | default | ABSENT | 0 | `1d2d31dd447b168c7e3b2cdec97eb26dd8857e4d6090d9e24700feac9ae0a37a` |
-| `native_candidate_batch_fault_converges_to_checked_returning`（新） | default | ABSENT | 0 | `5da69119fb27c2ab3ed42901efa951f5285dc884731b55f2ab9d042ee082ff64` |
-| `native_selection_all_25_cells_first_wins_and_measured_freeze` | default | ABSENT | 0 | `dea6db61572bb69876ed281e8f02db67d09ec10d671566f6397a5e19d938b389` |
-| `native_selection_cannot_use_candidate_before_checked_batch_readback` | default | ABSENT | 0 | `6fc3aff120f85675adc9d55830954912c07127c1b8680243390befa631f1dd38` |
-| `native_selection_fault_never_admitted_by_other_session_flush_or_native_save`（新） | default | ABSENT | 0 | `bb28f078b01a13ea805a22c41b4e8c77fdac6727b6527d290ada6c80646c5124` |
-| `native_selection_flush_failure_never_sends_success` | default | `1c794607…` | 1 | `ea1039bfde75fceffc8c18ea4ffe8e803c0dbeffdd48c9764898ba36a5637f71` |
-| `native_selection_readback_failure_never_sends_success` | default | ABSENT | 0 | `adf1bcacd9b7280155e2510094ac860c0aa9e3b915690cbb9ce5b73d915a6edb` |
-| `native_selection_rejects_identity_bbox_cohort_source_and_incomplete` | default | ABSENT | 0 | `94db687d16c442a90665715cd25c3e14b828ebc725a9ff3f9978b967e282fffb` |
-| `native_selection_rejects_pending_batch_retired_and_unready_mapping` | default | ABSENT | 0 | `f2c99be9ae10ca842fcdc9c106848359776d08e4eae051c2fedfde375f643597` |
-| `native_start_freezes_candidate_context_before_geometry` | default | ABSENT | 0 | `67dde5847b819213892ed82828902278a84918762e892510c54bc28fa8e6c5e5` |
-| `native_start_initial_flush_fault_rejects_without_residue`（新） | default | ABSENT | 0 | `4ea80453255c44c08133e6f9b6c1c1edb587acf83fdf22470bcb710f3f6326b7` |
-| `north_complete_doors_recycle_split_merge_and_seam` | default | ABSENT | 0 | `242c67bac0f02ce6199712d2aa0ff656fe4e8e332fa791272f640a7785a1b992` |
-| `south_complete_doors_require_checked_ledger` | default | ABSENT | 0 | `a9e99bb08285740c2c42e174b0db551e914b9a38665ef0fd1212642a52dc43f2` |
-| `unhealthy_authorities_reject_before_reservation` | default | ABSENT | 0 | `ba66ba99c9de790a2affb68a08c7173afa4e3a6d33a80fe6d80473fe91449700` |
-| `west_complete_doors_require_checked_ledger` | default | `1c794607…` | 1 | `4c043c3f52d5d1b053db1555263f9c35bfffe9d8b0730377b43ab70d66c00545` |
-| `isolated_legacy_schema2_then_empty_schema3_authority_gates` | legacy | ABSENT | 0 | `9efdd86e746585c6dbfe2ebceacd102da38a6d3fd04c7e28c6ef3dd1836043c3` |
-
-Catalog 為 `1c794607…`（1 筆）的三個 test，是在 M3 `empty_bootstrap_and_disabled_record_do_not_create_worlds` 建立 DISABLED sentinel 之後才執行的，所以它們的 baseline 本來就含那 1 筆。它們自己的 before 與 after 仍完全相同，M4 沒有新增任何 record。
+- 逐份 SHA-256 表已由上方「目前 gates」的 `428f52a` 表取代；`752ada1` 當時的逐份表保留在本檔的 git 歷史，例如 `git show 1f900f5:docs/implementation-notes/2026-09-21-m4-candidate-doors.md`。
 
 GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-report.md` 與 `m4-whole-branch-fix1-report.md`）：
 
@@ -461,6 +508,7 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 - **Task 9 fix round 1（`38d901e`）**：per-test receipts 補到 13 份；有效 RED 為 `task9-fix1-per-test-red3-86839d3a1ce44db68dc09bbc0e94ee96`。
 - **Task 9 初版（`8917f84`）**：main-only、M3、M4 recovery 16 phases 與 Windows 14/14。
 - Whole-branch fix1 改了 production，因此以上 runtime 證據都已在 `752ada1` 重新跑過，不再沿用。
+- Integration fix rounds 1–3 又改了 production，`752ada1` 的 gates 同樣只作歷史紀錄；目前證據以上方「目前 gates（HEAD `428f52a`）」為準。
 
 ## M4 明確沒有做的事
 
@@ -474,7 +522,8 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 
 ## 人工驗收狀態（spec §15）
 
-- **尚未執行**，目前沒有任何遊戲內人工紀錄。本文的自動證據不能代填人工結果。
+- 正式 B-5（W-M4）**尚未執行**。本文的自動證據不能代填人工結果。
+- 2026-09-29 部分預驗（不計入清單 E 段）：使用者在自有世界 `run/client-base/saves/新的世界test (1)`（非清單建議的 W-M4，測前未備份）以 `1f900f5`（code 等同 `752ada1`）的 build 做了 B-5 的一部分，觀察到鎖定訊息、門仍關閉且仍在走廊、另一扇門被拒絕，以及返還後再喝藥不再入場；同門再點、比較器與 LOW 行為、另一座艙可入場都沒有做。逐項紀錄與存檔 NBT 佐證見 [人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 的「B-5 預驗」表與 2.5 (a)。
 - spec §15 的範圍：側門可被選擇一次、收到「候選已鎖定」訊息、其他門被拒絕，門仍關閉，玩家仍在走廊。
 - 「走廊消失、回原艙、門後是新世界」屬於 M5，不得把 M4 的中間狀態回報成原需求已完成。
 - 驗收要和 M2 八項分開做。選擇側門後，session 返還會留下 DORMANT receipt，封鎖該座原艙直到 M5。M2 項目請用沒有點過側門的 Chamber 或世界；M4 §15 請用另一座 Chamber 或另一個測試世界。
@@ -498,7 +547,16 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 6. **start 的 W-a 窗口**：初始 ARMING 已原子寫入、readback 失敗時，`start()` 經 `abandonInitial` 回 `REJECTED`。此時磁碟可能仍有該 ARMING record；若在下一次 journal 寫出覆蓋它之前 crash，重啟會依 durable ARMING 走 return-only，把玩家拉回原艙（玩家實際上未離開原艙）。
 7. **DORMANT 參與者可能同時在別的 session**：DORMANT 參與者可以同時屬於另一個活動 session。M5 任何「離開 DORMANT、重新移動玩家」的轉移，都必須再受跨 session 玩家唯一性約束。
 8. **原艙封鎖由 M5 接手**：dormant `MEASURED` 造成的原艙封鎖要由 M5 處理；M4 沒有提供遊戲內解除路徑。
-9. **活性風險**：`MeasuredWorldSaveCheckpoint` 使用的是全伺服器的 chunk／entity save 失敗計數（`MeasuredWorldSaveCheckpoint.java:30-38`）。無關 chunk 反覆失敗時，`MEASURED` 清理會無限重試。這是 fail-closed，但 M5 或後續 hardening 應改為只看相關 chunks。
+9. **活性風險**：`MeasuredWorldSaveCheckpoint` 使用的是全伺服器的 chunk／entity save 失敗計數（`MeasuredWorldSaveCheckpoint.java:30-38`）。無關 chunk 反覆失敗時，`MEASURED` 清理會一直重試。這是 fail-closed。2026-09-29 整分支 review（F-CHECKPOINT）指出 `752ada1` 會每 tick 全服存檔並記含 stack 的 WARN；integration fix `1ca107d` 已加上 per-space 指數退避 20→40→…→1200 ticks（成功或 receipt 改變時重置），WARN 同原因只在第一次附 stack、之後只計數，恢復時記 INFO（`428f52a`：`CorridorPageManager.java:60`、`:845-849`、`:858-867`、`:875-883`、`:1049-1059`）。「revision 只看本交易相關 chunks」仍待 M5 hardening (2)。
+10. **M5 前置 hardening（使用者 2026-09-29 指定優先序）**：
+    1. codec strictness：entropy root exact keys、decode 時強制 ledger 上限、schema 3 內層寬鬆欄位、Vanilla WorldKey canonical（＝下方 deferred quality M4）。這是 M5 schema migration 的前置。
+    2. `MeasuredWorldSaveCheckpoint` 的 revision 只看本交易相關 chunks（第 9 點）。
+    3. `abortUnchecked` 的 secondary-failure 路徑改為真正 fail-closed（＝下方 deferred q1–q3）。
+    - 另外，刪除 worktree 之前，必須先把 gate harness tracked 化到 `scripts/verification/`。其餘延後項見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「延後清單」。
+11. **Integration fix 帶來、M5 必須保留的行為**（`428f52a`）：
+    - 整個 `quantumchamber:superposition` 世界只接受玩家、掉落物、投射物與經驗球（`SuperpositionEntityPolicy.managed`）。M5 若要在該世界放其他 entity（例如 marker），必須先擴充這個准入規則。
+    - RETURNING／MEASURED 只凍結尚未返還的參與者；`start()` 在任何 reservation 之前做原生 checkpoint 能力預檢。
+    - ARMING 中止的 rollback 只拉回已移動或目前在走廊世界的成員；但 durable RETURNING 之後，`recover()` 仍會把已離開原艙 interior 的未返還成員（例如 ARMING 期間用終界珍珠或歌萊果離艙）送回原艙返還位（N-3，行為變更延後 M5 決定）。
 
 ## 已知 deferred 項目與觀察
 
@@ -538,6 +596,14 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 
 **Task 9 fix1 的 scratch harness minor**：`task9-gates.ps1` 沒有依 server PID 過濾，就把 runDir 累積的 `classload-*.log` 與 `m4-boundary-*.json` 複製進 gate root。各 summary 只採用 server PID 的 artifacts，正確性不受影響。建議：只複製 server PID 的 artifacts。
 
+**2026-09-29 M1–M4 整分支 final review 的 triage**（R3）：
+
+- 上方 round 1 quality M1／M2／M4／M5／M6 延後 M5；其中 M4 即 M5 hardening (1) codec strictness，須在 M5 schema 變更之前處理。
+- spec m-1 關閉（已接受並文件化）。
+- q1–q3 併入 M5 hardening (3)；q4、q5、q7 延後 M5；q6、s3 關閉（跨 JVM probe 已覆蓋）。
+- Nits 延後或關閉。
+- 本輪新增的延後項（逐項一句話＋建議修法）見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「延後清單」；M5 前置 hardening 的優先序見上方「M5 handoff acceptance」第 10 點。
+
 **觀察**：
 
 - `QuantumSuperpositionMod` 沒有在 server start 時 attach candidate 或 discovery 權威。Entropy 與 discovery 在 session 建立與每個 batch 時按需 strict 讀取；server start 只做 journal healthy gate（`main/QuantumSuperpositionMod.java:37`）。
@@ -569,6 +635,7 @@ M4 whole-branch review 最終 **Critical 0／Important 0**，spec compliance ✅
   - `m4-whole-branch-fix1-verification-summary.json`，SHA-256 `2858b912979f2decc0fc6f08a50b7c9e21212c9f5c4b2d97042f3c6e7573d1e5`。
 - 逐 task review（Tasks 1–9）都已 clean，紀錄在 `progress.md`。
 - Task 10 文件 review（`eba763b`）：Approved，Critical 0／Important 0／Minor 6，另有若干 Nit。這些 Minor 與 Nit 由其後的 Task 10 docs fix commit 處理；該 commit 的 review 結果以 `progress.md` 為準。
+- 其後的 M1–M4 整分支 final review（2026-09-29，範圍 `ddc8b1e..1f900f5`）與 integration fix rounds 1–3 的 review 結果，見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
 
 ## 參考資料
 
@@ -579,3 +646,4 @@ M4 whole-branch review 最終 **Critical 0／Important 0**，spec compliance ✅
   - `m4-final-review.md`、`m4-whole-branch-*`、`task10-*`、`task9-*`、`recovery-*`。
   - `m4-automated-gate-report.md`，SHA-256 `c4f981c7453fb14750f399e9917097c72f6c1395c83c5183aa771d8782a97094`。
 - 前置里程碑：[M3-A backend](2026-09-19-m3a-dynamic-universe-backend.md)、[M3-B transfer readiness](2026-09-19-m3b-server-transfer-readiness.md)、[M2 走廊](m2-corridor.md)。
+- 其後的整合修正：[M1–M4 整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。

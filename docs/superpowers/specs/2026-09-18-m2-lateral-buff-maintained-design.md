@@ -4,7 +4,7 @@
 
 狀態：2026-09-18 使用者確認本修訂的左右走廊、Buff保留、任一人失效整組返還及8項驗收，授權完成M2修訂與自動gate後執行M3；人工checklist與整分支final review留到實作收尾。新規則尚未實作，不以舊測試結果宣告完成。
 
-> 後續狀態（2026-09-24）：上行為核准當時的歷史快照。本修訂其後已在 `feature/m1-chamber` 實作並完成自動 gate 與逐 task review；八項人工驗收與整分支 final review 仍依原安排留待收尾，見 [M2 紀錄](../../implementation-notes/m2-corridor.md)。合併狀態以 `main`／tag 為準。
+> 後續狀態（2026-09-24；2026-09-29 更新）：上行為核准當時的歷史快照。本修訂其後已在 `feature/m1-chamber` 實作並完成自動 gate 與逐 task review。整分支 final review 已於 2026-09-29 隨 M1–M4 整分支 review 完成，findings 由 integration fix rounds 1–3 修正；對本修訂的改寫（§3 入口正門）以「2026-09-29」標示，見 [M1–M4 整合審查紀錄](../../implementation-notes/2026-09-29-m1-m4-integration-review.md)。八項人工驗收仍待記錄，見 [M2 紀錄](../../implementation-notes/m2-corridor.md)。合併狀態以 `main`／tag 為準。
 
 本修訂取代 [原 M2 規格](2026-09-17-m2-powered-corridor-design.md) 的前後延伸、成功入場立即消耗效果與活動 session 不依藥效倒數結束三項規則；其餘原艙權威、有限資源、共享參與者、checked journal、native checkpoint、離線及安全清理契約維持。
 
@@ -45,7 +45,7 @@
 
 現有logicalZ識別字若保留，必須註明是歷史名稱，代表走廊縱向邏輯座標而非原艙z或世界Z。logical page96、門站8、floor division、logical DoorKey與多人split／merge演算法維持。
 
-有限入口replica仍按來源艙facing覆寫同一7³體積，Controller及正面25格門保持原朝向。活動時連通入口兩側local x=0/6的5×5通道；正面門仍由原Controller門交易處理，後牆不再當左右走廊的連接面。普通來源原艙的牆與門不因此被拆除。
+有限入口replica仍按來源艙facing覆寫同一7³體積，Controller及正面25格門保持原朝向。活動時連通入口兩側local x=0/6的5×5通道；~~正面門仍由原Controller門交易處理~~（2026-09-29 使用者決定改寫：左右模式的入口正門位於走廊牆面，開啟會在牆面開出通往 lease 外 void 的 5×5 洞，因此走廊內右鍵入口 Controller 一律拒絕切換，actionbar「左右走廊的入口正門位於走廊牆面，不開放切換。」，門保持關閉、session 不受影響；前門整面開關只保留給 legacy 前後模式），後牆不再當左右走廊的連接面。普通來源原艙的牆與門不因此被拆除。
 
 原logical0..6入口完整物化條件、兩側連接格與端cap保護沿用；apron576／視距設計32chunks不擴大。新builder須把入口覆寫與走廊base cell ownership分離，不能用新走廊frame直接放原艙Controller。
 
@@ -63,7 +63,7 @@ PageManager原checkInitialCohort中的「仍有QuantumState則拒絕」需按明
 
 prepared remap期間與publish前仍重驗Buff；若移動途中失效，不publish半個cohort，也不拆正在占用的舊映射。使用已核准的default-off testmod真移動觀察驗此窗口，不新建production fault setter。
 
-死亡／斷線／重啟仍使用既有共同返還與offline pending策略，不移除凍結名單。返還只套KEEP_CURRENT marker；對還有Buff的人保留當下完整效果／自然duration，不刪除、不退款、不還原入場snapshot。已到期者仍沒有Buff。
+死亡／斷線／重啟仍使用既有共同返還與offline pending策略，不移除凍結名單（2026-09-29 澄清：返還期間只凍結尚未返還者，已返還者恢復正常操作，見原 M2 規格 §6）。返還只套KEEP_CURRENT marker；對還有Buff的人保留當下完整效果／自然duration，不刪除、不退款、不還原入場snapshot。已到期者仍沒有Buff。
 
 失敗回滾的pose與effect政策必須分開：新模式即使效果政策是KEEP_CURRENT，提交前部分移動失敗仍在正確原始Controller identity可確認時嘗試回原pose；未確認就保留RETURNING。不能沿用舊「restoreEntryEffectOnReturn=false就不回滾pose」的耦合；新模式永不重套舊效果snapshot。
 
