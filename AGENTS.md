@@ -41,7 +41,7 @@ milestone implementation → automated gates → required manual smoke → task�
 
 刪除任何 worktree（包括 `.worktrees/m1-chamber`）之前，必須先完成：
 
-- 測試世界（例如 `run/client-base/saves/新的世界test (1)`）移到 repo 外。
+- 使用者世界與驗收世界移到 repo 外，例如使用者自有世界 `run/client-base/saves/新的世界test (1)`（2026-09-29 做過 B-5 預驗，已含 DORMANT receipt；處置見人工驗收清單 2.5 (a)）。
 - `run/` 與 `.superpowers/` 備份到 repo 外，建立 SHA-256 manifest，並驗證備份可讀。
 - 可重用的 harness 與 `.tools/` 整理到 tracked `scripts/verification/`（獨立 task＋review）。
 
@@ -95,32 +95,35 @@ M4 Candidate Doors 實作與 review 已完成（plan 的 Completion Evidence 另
 
 - Tasks 1–9 的逐 task review，以及 M4 whole-branch review（含 fix round 1），都已 clean（Critical／Important 為 0）。
 - Task 10 文件 review 的結果與後續修正，見 SDD ledger（`progress.md`）。
-- Code HEAD 為 `752ada1b34f27685014fc3e6ec10fee77b88a86a`，其後只有文件 commit。
-- M1–M4 在 M1／M1.2／M2／M4 人工驗收記錄完成前不合併 `main`（除非另有明確記錄的 gate waiver）；合併前的完整 gate 順序（含 M2 整分支 final review）見下方「下一步」。實際合併、tag，以及 feature 分支的 push 狀態，以 `git status`、遠端 ref、`main` 與 tag 為準。
+- 2026-09-29 完成 M1–M4 整分支 final review（範圍 `ddc8b1e..1f900f5`，同時作為 M2 整分支 final review）。7 項 Important 由 integration fix rounds 1–3（`1f900f5..428f52a`，20 commits）修正，每輪都經 spec＋quality review（round 1 spec review 新增的 Important N-1 於 round 2 關閉）。見 [`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。
+- Code HEAD 為 `428f52a79daa18ab9f5fd7a7f0f2980a34598987`（integration fix round 3），其後只有文件 commit。M4 驗收時的 code HEAD 是 `752ada1`。
+- M1–M4 在 M1／M1.1／M1.2／M2／M4 人工驗收記錄完成前不合併 `main`（除非另有明確記錄的 gate waiver）；合併前的完整 gate 順序（含 GitHub Actions 雙平台通過）見下方「下一步」。實際 CI、合併、tag，以及 feature 分支的 push 狀態，以 GitHub Actions、`git status`、遠端 ref、`main` 與 tag 為準。
 
 先讀：
 
-- `docs/implementation-notes/2026-09-21-m4-candidate-doors.md`：M4 的 code-truth、runtime 證據、人工驗收狀態與 deferred 清單。M5 必須遵守其中的「M5 handoff acceptance」段。
+- `docs/implementation-notes/2026-09-21-m4-candidate-doors.md`：M4 的 code-truth、runtime 證據、人工驗收狀態與 deferred 清單。M5 必須遵守其中的「M5 handoff acceptance」段（含第 10 點 M5 前置 hardening 優先序）。
+- `docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`：M1–M4 整分支 final review、integration fix rounds 1–3 的行為變更、目前 gates 與延後清單。
 - `docs/superpowers/specs/2026-09-21-m4-candidate-doors-design.md`：§11 重啟矩陣、§14 M5 Handoff Contract、§15 人工可見界線。
 - `docs/quantum_superposition_chamber_design.md`：長期設計與 M5 範圍。
 - `.superpowers/sdd/2026-09-21-m4-candidate-doors/progress.md`：本機 SDD ledger 與 rulings（gitignored，不在 repo）。
-- 注意：M4 的 runtime gate harness（`task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、`task9-runtime.init.gradle`（所有 gate 的 Gradle 呼叫都以 `-I` 載入）、`task9-probe.init.gradle`（M3 lifecycle／transfer probe 使用）與各 build-summary／verify 腳本）目前只在這個 gitignored 的 SDD workspace。在 tracked 化到 `scripts/verification/` 之前，刪除 worktree 或 `.superpowers/`，就會讓這些 gate 與 note 內的 SHA 無法重現。
+- 注意：M4 的 runtime gate harness（`task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、`task9-runtime.init.gradle`（所有 gate 的 Gradle 呼叫都以 `-I` 載入）、`task9-probe.init.gradle`（M3 lifecycle／transfer probe 使用）、integration fix 的 `ifix*-gradle.ps1`／`ifix*-final-green.ps1`、CI 規則驗證 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`，以及各 build-summary／verify 腳本）目前只在這個 gitignored 的 SDD workspace。在 tracked 化到 `scripts/verification/` 之前，刪除 worktree 或 `.superpowers/`，就會讓這些 gate 與 note 內的 SHA 無法重現。
 
 下一步（依序）：
 
-1. M4 Task 10 文件 review 通過後，push `feature/m1-chamber`。
-2. 執行並記錄人工驗收：M1 HUD／GUI／多人與跨程序、M1.1 維護手勢與 legacy schema1 舊房間、M1.2 主副手火把／日夜粒子／shader、M2 八項、M4 spec §15。逐項步驟、預期結果與紀錄欄位見 [`docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md`](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。M2 項目請在沒有點過側門的 Chamber 或世界驗收：選擇側門後返還會留下 DORMANT receipt，封鎖該座原艙直到 M5。M4 §15 請用另一座 Chamber 或另一個測試世界。記錄人工結果的同一個 docs commit，必須一併更新狀態句，避免文件互相矛盾。至少包括下列各處，並以 `git grep -nE '人工驗收(尚待|仍待|待記錄)|仍待記錄|待人工|人工待驗|尚待驗證|尚未執行|留待(整體)?收尾|\| 待驗 \||「待驗」'` 掃描有無遺漏（2026-09-24 實跑，下列除清單本身外每一處都會命中。其餘命中逐一判斷，並在記錄結果的 commit 說明理由；已知可忽略類別例如：`docs/plans/`、歷史狀態／當時紀錄段落（含 `docs/implementation-notes/2026-09-18-m2-revision-status.md:40`）、README 文件索引與歷史驗證指向句（:33、:74、:89、:91）、AGENTS 本身、清單本身引用章節名的句子、spec 本文、舊施工圖 `docs/images/m1-chamber-build-guide.svg`、player guide 操作指引句（:152））：
+1. 整合修正的文件同步 commits 經 docs review 通過後，push `feature/m1-chamber`，並確認 feature HEAD 在 GitHub Actions 的 Ubuntu 與 Windows job 結果；紅燈先修正再重跑。push 與 CI 狀態以遠端 ref 與 GitHub Actions 為準。（M4 Task 10 當時的 push 依上方「使用者 2026-09-24 決定」第 1 項。）
+2. 執行並記錄人工驗收：M1 HUD／GUI／多人與跨程序、M1.1 維護手勢與 legacy schema1 舊房間、M1.2 主副手火把／日夜粒子／shader、M2 八項、M4 spec §15，以及 2026-09-29 整合修正新增的子項（B-6、選測 C-5）。逐項步驟、預期結果與紀錄欄位見 [`docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md`](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)；程式基準為 `428f52a`（清單 2.2 的 `$base`）。M2 項目請在沒有點過側門的 Chamber 或世界驗收：選擇側門後返還會留下 DORMANT receipt，封鎖該座原艙直到 M5。M4 §15 請用另一座 Chamber 或另一個測試世界。記錄人工結果的同一個 docs commit，必須一併更新狀態句，避免文件互相矛盾。至少包括下列各處，並以 `git grep -nE '人工驗收(尚待|仍待|待記錄)|仍待記錄|待人工|人工待驗|尚待驗證|尚未執行|留待(整體)?收尾|\| 待驗 \||「待驗」'` 掃描有無遺漏（2026-09-29 實跑，下列每一處的所在行或其標題行都會命中，清單本身除外。其餘命中逐一判斷，並在記錄結果的 commit 說明理由；已知可忽略類別例如：`docs/plans/`、歷史狀態／當時紀錄段落（含 `docs/implementation-notes/2026-09-18-m2-revision-status.md:40`、`docs/implementation-notes/m1.2-powered-origin.md:59`／`:84`）、README 文件索引與歷史驗證指向句（:37、:80、:95、:97）、AGENTS 本身、清單本身引用章節名的句子、spec 本文（例如 M2 spec :121、左右走廊修訂 :118）、舊施工圖 `docs/images/m1-chamber-build-guide.svg`、player guide 操作指引句（:152），以及 `src/` 的程式註解（例如 `SuperpositionEntityPolicy.java`、`ItemStackSuperpositionEntityMixin.java` 的「物品邏輯尚未執行」））：
    - 人工驗收清單本身（逐項結果、D 段補填、E 段結論或 waiver）。
-   - `README.md` 開頭的狀態段（:9）、「M2 供電走廊」段的人工待驗句（:17、:23），以及「建置與開發啟動」段（約 :72）的「實際光影與 shader 相容性仍待人工驗證」。
+   - `README.md` 開頭的狀態段（:9）、「M2 供電走廊」段的人工待驗句（:17、:27），以及「建置與開發啟動」段（約 :78）的「實際光影與 shader 相容性仍待人工驗證」。
    - `docs/implementation-notes/m1-chamber.md:3` 與 `docs/implementation-notes/m1.2-powered-origin.md:3` 的「後續狀態」段。
+   - `docs/implementation-notes/m1-chamber.md` 的「以下保留待人工執行」清單（:114-121）與 `docs/implementation-notes/m1.2-powered-origin.md` 的「警告與人工待驗」段中的待驗句（:65）。
    - `docs/implementation-notes/m1.1-origin-maintenance.md` 的「人工 gate」段（:75）。
    - `docs/implementation-notes/m1-player-build-verification.md:47` 與「5. 待執行的人工驗證」表 N（約 :150）。
-   - `docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 的「狀態與範圍」（:14）與「人工驗收狀態（spec §15）」（:477）。
+   - `docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 的「狀態與範圍」（:15）與「人工驗收狀態（spec §15）」（:525）。
    - `docs/implementation-notes/m2-corridor.md` 開頭段（:3），以及「八項人工驗收」段的「以下狀態統一為『待驗』」（:27）與表中八個「待驗」狀態格（:33-40）。
    - 三份 spec 的「後續狀態」行（皆為 :7）：`docs/superpowers/specs/2026-09-17-m1.2-powered-origin-design.md`、`docs/superpowers/specs/2026-09-17-m2-powered-corridor-design.md`、`docs/superpowers/specs/2026-09-18-m2-lateral-buff-maintained-design.md`。
    - 設計文件 `docs/quantum_superposition_chamber_design.md` 的 Document stage 行（:5）。
-3. M2 整分支 final review（2026-09-18 修訂規格要求留到收尾；M2 ledger 記錄尚未執行）：ff 合併 main 前完成，或由使用者明確延後並記為 gate waiver。範圍（只看 M2，或整條 feature branch）與 M2／M3-A deferred Minors 的 final triage，由使用者決定。依據：`.superpowers/sdd/2026-09-17-m2-powered-corridor/progress.md:11`、`docs/superpowers/specs/2026-09-18-m2-lateral-buff-maintained-design.md:5`、`docs/implementation-notes/2026-09-18-m2-revision-status.md:17`／`:42`、`docs/implementation-notes/m2-corridor.md:64`、`.superpowers/sdd/2026-09-19-m3a-dynamic-universe-backend/progress.md:79`。結果或 waiver 同樣以 docs commit 記錄，並同步第 2 步所列狀態句中與 M2 final review 相關的部分。本步建議先於第 2 步進行（也可與其平行），以減少人工項目需要重驗的機率。若 M2 final review／triage 導致程式變更，須在新 HEAD 重跑 automated gates，並重驗受影響的人工項目，之後才能進第 4 步。
-4. 人工驗收記錄完成（或依上方「使用者 2026-09-24 決定」第 3 項記錄 gate waiver），且 M2 整分支 final review 已完成或明確 waiver 後，以 `git merge --ff-only` 併入 `main` 並打 tag，再以獨立 docs commit 更新整合狀態：該 commit 先在 `feature/m1-chamber` 上 commit，再以 `git merge --ff-only` 前進 `main`，不直接在 `main` 上 commit。
+3. M2 整分支 final review：**已完成（2026-09-29）**。使用者以 10 類唯讀清單指定範圍為整條 feature branch `ddc8b1e..1f900f5`，同時完成 M2、M3-A／M3-B、M4 deferred Minors 的 final triage。7 項 Important 由 integration fix rounds 1–3 修正，全部 automated gates 在 `428f52a` 重跑並經 review。人工驗收在修正前尚未開始（B-5 的自有世界預驗不計入），所以沒有需要重驗的人工列；清單已改以 `428f52a` 為基準。紀錄見 [`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。之後若 review 或 triage 再導致程式變更，依清單 E 段「review 引起的程式變更」條款處理：在新 HEAD 重跑 automated gates，只重驗受影響的人工項目，再進第 4 步。
+4. 人工驗收記錄完成（或依上方「使用者 2026-09-24 決定」第 3 項記錄 gate waiver），且 feature HEAD 在 GitHub Actions 的 Ubuntu 與 Windows job 都通過（以 GitHub Actions 上該 commit 的 run 為準，本機 gate 不能代替）後，以 `git merge --ff-only` 併入 `main` 並打 tag，再以獨立 docs commit 更新整合狀態：該 commit 先在 `feature/m1-chamber` 上 commit，再以 `git merge --ff-only` 前進 `main`，不直接在 `main` 上 commit。
 5. 外部備份與驗證腳本 tracked 化完成之前，不刪除 `.worktrees/m1-chamber`。
 6. 以新的 worktree 開始 M5 設計／計畫。M5 只做最小的 collapse／passage 切片，從 checked `MEASURED+SELECTED` receipt 開始；不得把完整 Nether／End family 或 complex renderer 混入這個切片。不得重做已 review 完成的 M4 Tasks，也不得重抽候選或改寫 M4 receipt。
 

@@ -6,21 +6,25 @@
 > - M3-A 動態 Universe backend 與 M3-B server-side transfer readiness。
 > - M4 候選門。
 >
-> M1（含 M1.1）與 M1.2 的全 feature final review 已完成；M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。M1／M1.2／M2／M4 的人工驗收尚待記錄。M2 的整分支 final review 依原安排留待整體收尾，須在合併 main 前完成或明確記錄為 gate waiver。M1–M4 在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
+> M1（含 M1.1）與 M1.2 的全 feature final review 已完成；M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。2026-09-29 另完成 M1–M4 整分支 final review（同時作為 M2 的整分支 final review），找到的 7 項 Important 已由 integration fix rounds 1–3 修正並 re-review，見 [M1–M4 整合審查紀錄](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。M1／M1.1／M1.2／M2／M4 的人工驗收尚待記錄。M1–M4 在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver）；合併前還需要 feature HEAD 在 GitHub Actions 的 Ubuntu 與 Windows job 都通過，完整順序見 [AGENTS.md](AGENTS.md)「下一步」。實際 CI、合併與 tag 狀態以 GitHub Actions、`main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
 
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
 ## M2 供電走廊
 
-功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。
+功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。返還期間只凍結尚未返還的玩家：已返還者回到原艙就能正常移動與互動，但原艙保護與比較器 11 維持到全員收尾，收尾前也不能開新 session；離線者重新連線後的下一 tick 才返還。
 
 本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。M1–M4 合併 main 之前，主目錄的 `main` checkout 不含本功能，不能用其客戶端驗收；實際合併狀態以 `main`／tag 為準。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工待驗，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
 走廊是有限局部頁面與外觀延伸，並非無限配置世界。走廊本身是固定的 `quantumchamber:superposition` 世界，不是動態 Dimension；M3 已有動態 Universe backend 與 server-side transfer readiness，但尚未接成玩家可用的跨宇宙通道（屬 M5）。
 
+走廊世界只接受玩家、掉落物、投射物與經驗球。在走廊內使用船／箱船、礦車、盔甲架、物品展示框／螢光物品展示框、畫、生怪蛋、裝有生物的桶、終界水晶、拴繩或滯留型藥水會被拒絕，物品不扣，actionbar 顯示「量子走廊內不能放置船、盔甲架、展示框、生物等實體；物品未消耗。」。以生成、跨維度、`/tp`、`/execute in … run tp` 或 `/spreadplayers` 送進走廊的其他 entity 會被拒絕並留在原處；這些指令與 `/summon` 被拒時，原版仍會顯示成功（已知限制）。經驗球比照掉落物跨頁面保留、返還時送到原艙中央；肩上的鸚鵡在走廊內不會被放下，返還後仍在肩上。入口艙的正面門位於走廊牆面，走廊內右鍵入口 Controller 一律拒絕切換，門保持關閉。
+
 M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、玩家不移動，也不配置 Universe。鎖定後該 session 停止換頁。返還後，該座原艙在該存檔會被保留的選擇收據封鎖到 M5：期間無法再從它入場，也無法斷電拆除。參與者要等該 session 全員返還、清理完成（DORMANT）之後，才能使用其他 Chamber；返還與清理階段（`RETURN_PLAYERS`／`RELEASE_GEOMETRY`）仍會被拒絕開新 session。驗收 M2 時請勿點側門，詳見 [M4 候選門紀錄](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)。
 
-人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證，最終整體評審由 root 另行執行。合併 main 的條件與狀態見本頁開頭。
+**不可降版**：用本 build 在某個存檔建立過任何走廊 session 之後，該存檔的 session journal 會寫成 schema3；M4 之前的 build 讀取會 fail closed。這類存檔之後只能用 M4 起的 build 開啟，也不要拿正式世界測試。
+
+人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證。合併 main 前的完整 gate 順序見 [AGENTS.md](AGENTS.md)「下一步」。
 
 逐項人工驗收步驟、預期結果與紀錄欄位見 [M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。
 
@@ -34,7 +38,7 @@ M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、�
 
 新建艙體未供電時不註冊；有效空艙即使開門，也能先由外部供電取得 UUID 與保護。進艙、關門並補齊全員 QuantumState 後，持續高電位會自動進入 `ARMED`，不用再按一次拉桿。Controller 普通右鍵開關門；雙手空手蹲下右鍵切換管理用 `Enabled`，它與供電分開。斷電確認安全返還後才進入 `OFF`、輸出 0 並解除原艙保護，但 UUID 與碰撞占位保留；重新供電沿用 UUID。只有 `OFF` 的 Controller 真正成功移除後，才清除紀錄及全部索引，外殼不自動刪除；`Enabled=true` 也可在 OFF 拆除。schema1 可讀為保守的 `UNKNOWN`，schema2 保存獨立供電狀態。
 
-上述 M1.2 歷史驗證當時使用 `NONE`／`ARMED_ONLY` adapter；目前功能分支已由 M2 真 session 接替。自動測試與歷史 client runtime 不代表本版 GUI 驗收；啟動腳本測試在 Linux CI 明確 skip，玩家 checkpoint 的原生 HANDLE 後端目前只對已驗 Windows／NTFS 條件提供成功證據，非 Windows 保守拒絕而非成功恢復。
+上述 M1.2 歷史驗證當時使用 `NONE`／`ARMED_ONLY` adapter；目前功能分支已由 M2 真 session 接替。自動測試與歷史 client runtime 不代表本版 GUI 驗收；啟動腳本測試在 Linux CI 明確 skip。玩家 checkpoint 的原生 HANDLE 後端目前只對已驗的 Windows 本機 NTFS 條件提供成功證據。非 Windows，或 Windows 上 playerdata 不在本機固定 NTFS（UNC／網路磁碟機、非 NTFS、卸除式磁碟，或路徑上有 junction 等 reparse point，例如部分雲端同步資料夾）時，`start()` 會在任何預留、效果或玩家移動之前拒絕入場：原艙停在 READY（比較器 7），同一原因只記一次 WARN，恢復時記 INFO。這是受控拒絕，不是成功恢復。已知殘留：預檢只檢查目錄鏈，玩家 `.dat` 本身是 reparse／hardlink 或超過 64 MiB 時，仍要到入場後的 checkpoint 才會發現。
 
 量子艙門現為紫色面板，腔室控制器現為青色識別板與正面核心；兩者保留基岩底層／外框，使用一般模型與原生材質，不新增 renderer 或光源。方塊 ID 不變，既有艙體不需拆掉重建。
 
@@ -69,6 +73,8 @@ Windows PowerShell：
 
 `runClient` 使用隔離的 `run/client-base` 開發目錄；`runServer` 使用隔離的 `run/server` 目錄。首次 dedicated server 啟動會要求操作者在 `run/server/eula.txt` 明確接受 Minecraft EULA；在接受前不應啟動伺服器世界。
 
+**`runServer` 注意**：本工作區的 `run/server/server.properties` 目前是 `level-name=m1-smoke`。`m1-smoke` 是 M1 dedicated 重啟證據，也是人工驗收 B-4 唯一的 schema1 世界；用本 build 直接執行 `runServer` 開一次，就會把它的 Chamber registry 改寫成 schema2。要開 dedicated server，先依 [M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 2.1 備份，並依 2.3 改用其他世界（停機時暫改 `level-name`，啟動時帶 `--world`）。
+
 選用手持火把動態照明可執行 `start-client.bat light`，使用獨立的 `run/client-light` 與固定版本、SHA512 核對的 LambDynamicLights。預設 client-base、server、GameTest 與 release JAR 不安裝或內嵌它。不同 profile 不共用存檔；需要搬移時請先退出遊戲、自行備份再複製，腳本不會自動搬移玩家世界。實際光影與 shader 相容性仍待人工驗證。
 
 `runGameTest` 使用 `run/gametest`，報告位於 `build/gametest-results.xml`；單獨 `clean build` 不包含此工作。M2 CI 與本機完整 gate 另明確執行 GameTests，不能把建置成功當成遊戲測試已跑。重現步驟與人工待驗見下方紀錄。
@@ -99,6 +105,8 @@ Windows PowerShell：
 - [M4 候選門設計規格](docs/superpowers/specs/2026-09-21-m4-candidate-doors-design.md)
 - [M4 候選門計畫](docs/superpowers/plans/2026-09-21-m4-candidate-doors.md)
 - [M4 候選門權威、驗證證據與 M5 交接](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)
+- [M1–M4 整分支 final review 與整合修正紀錄](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)
+- [M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)
 
 ## 授權
 
