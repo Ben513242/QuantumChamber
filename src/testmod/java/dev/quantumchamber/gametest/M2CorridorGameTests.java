@@ -835,6 +835,55 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
+    /** 返還移動的原生例外保留 cause 與 UUID／來源／目的 world 並去重；recovery 的移動失敗同樣只記一次 WARN，故障解除後正常返還。 */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_transfer_diagnostics",tickLimit=100000)
+    public void native_return_move_exception_logs_cause_once_then_recovers_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_return_move_exception_logs_cause_once_then_recovers_windows");
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var initial=fixture.record(); var player=fixture.players.getFirst().player(); var id=player.getUuid();
+            var capture=new LogCapture("quantumchamber");
+            var fault=new TeleportExceptionFault(id,context.getWorld()); TELEPORT_FAULTS.put(fixture.server,fault);
+            fixture.power();
+            whenUntil(context,tick+1,() -> fault.hits>=5,faulted -> {
+                fault.armed=false;
+                var transfer=capture.matching(org.apache.logging.log4j.Level.WARN,"原生移動例外",id.toString());
+                var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還移動尚未確認",initial.sessionUuid().toString(),id.toString());
+                var witness=new java.util.LinkedHashMap<String,Boolean>();
+                witness.put("repeatedAttempts",fault.hits>=5);
+                witness.put("transferWarnOnce",transfer.size()==1);
+                witness.put("transferKeepsCause",transfer.size()==1 && transfer.getFirst().thrown()!=null
+                        && String.valueOf(transfer.getFirst().thrown().getMessage()).contains("受控原生 teleport 例外"));
+                witness.put("transferNamesWorlds",transfer.size()==1 && transfer.getFirst().message().contains("quantumchamber:superposition")
+                        && transfer.getFirst().message().contains(context.getWorld().getRegistryKey().getValue().toString()));
+                witness.put("recoveryPendingWarnOnce",pending.size()==1);
+                context.assertTrue(!witness.containsValue(false),"移動例外必須保留 cause 並去重記錄："+witness+" hits="+fault.hits
+                        +" transfer="+transfer.size()+" pending="+pending.size());
+                when(context,faulted+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                        .presence(fixture.server,initial.chamberUuid())==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,done -> {
+                    try {
+                        TELEPORT_FAULTS.remove(fixture.server,fault); capture.close();
+                        context.assertTrue(player.getServerWorld()==context.getWorld(),"故障解除後由真 backend 正常返還來源艙");
+                        M4PerTestUniverseProbe.complete(context);
+                    } finally { fixture.close(); }
+                });
+            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+        });
+    }
+    private static final Map<net.minecraft.server.MinecraftServer,TeleportExceptionFault> TELEPORT_FAULTS=new java.util.IdentityHashMap<>();
+    private static final class TeleportExceptionFault {
+        final UUID player; final net.minecraft.server.world.ServerWorld destination; int hits; boolean armed=true;
+        TeleportExceptionFault(UUID player,net.minecraft.server.world.ServerWorld destination) { this.player=player; this.destination=destination; }
+    }
+    /** testmod mixin 在 ServerPlayerEntity.teleportTo 開頭呼叫；只對 own 玩家、own 目的 world 受控丟例外。 */
+    public static void beforePlayerTeleport(ServerPlayerEntity player,net.minecraft.world.TeleportTarget target) {
+        if(player.getServer()==null || !player.getServer().isOnThread()) return;
+        var fault=TELEPORT_FAULTS.get(player.getServer());
+        if(fault==null || !fault.player.equals(player.getUuid()) || target.world()!=fault.destination) return;
+        fault.hits++;
+        if(fault.armed) throw new IllegalStateException("M2 GameTest 受控原生 teleport 例外："+player.getUuid());
+    }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_native_low",tickLimit=100000)
     public void native_external_low_returns_cohort_before_source_unlock_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }

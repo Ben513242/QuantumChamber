@@ -28,6 +28,7 @@ public final class SessionRecoveryManager {
     private final Set<UUID> disconnected=new HashSet<>(),disconnectWarnings=new HashSet<>();
     private final Map<UUID,String> failures=new HashMap<>();
     private final Map<UUID,Integer> returnTicks=new HashMap<>();
+    private final Map<UUID,Set<UUID>> moveWarnings=new HashMap<>();
     private Set<UUID> pausedFor=Set.of();
     private final SessionTransferService transfers=new SessionTransferService();
 
@@ -87,6 +88,7 @@ public final class SessionRecoveryManager {
         }
         joinTicks.entrySet().removeIf(entry -> owner.getTicks()>=entry.getValue());
         returnTicks.keySet().retainAll(journal.flushedRecords().keySet());
+        moveWarnings.keySet().retainAll(journal.flushedRecords().keySet());
         var pages=CorridorPageManager.forServer(owner);
         for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.RETURNING
                 || record.state()==SessionState.MEASURED && pages.measuredRecoveryRequested(record.sessionUuid())) {
@@ -122,7 +124,7 @@ public final class SessionRecoveryManager {
     }
 
     public void detach(MinecraftServer owner) {
-        requireServer(owner); joinTicks.clear(); disconnected.clear(); disconnectWarnings.clear(); failures.clear(); returnTicks.clear(); if(active==this) active=null;
+        requireServer(owner); joinTicks.clear(); disconnected.clear(); disconnectWarnings.clear(); failures.clear(); returnTicks.clear(); moveWarnings.clear(); if(active==this) active=null;
     }
 
     private void recover(SessionRecoveryRecord initial) throws IOException {
@@ -143,8 +145,12 @@ public final class SessionRecoveryManager {
             var access=(PlayerRecoveryCheckpointAccess)player;
             var previous=access.quantumchamber$getRecoveryCheckpoint();
             boolean applyMarker=shouldApplyMarker(marker,previous);
-            if(!inside(player,source,frame) && !transfers.move(player,source,slots.get(person.playerUuid()),Vec3d.ZERO,person.yaw(),person.pitch())) continue;
-            if(!inside(player,source,frame) || !sourceAuthority.test(record)) continue;
+            if(!inside(player,source,frame) && !transfers.move(player,source,slots.get(person.playerUuid()),Vec3d.ZERO,person.yaw(),person.pitch())
+                    || !inside(player,source,frame)) {
+                warnMovePending(record.sessionUuid(),person.playerUuid(),source);
+                continue;
+            }
+            if(!sourceAuthority.test(record)) continue;
             if(applyMarker) {
                 if(record.restoreEntryEffectOnReturn()) {
                     var effect=StatusEffectInstance.fromNbt(person.quantumStateSnapshot());
@@ -159,6 +165,7 @@ public final class SessionRecoveryManager {
             if(!inside(player,source,frame) || !sourceAuthority.test(record)) continue;
             record=returnedRecord(record,person.playerUuid());
             journal.put(record); journal.flush(server);
+            var warned=moveWarnings.get(record.sessionUuid()); if(warned!=null) warned.remove(person.playerUuid());
         }
         var pages=CorridorPageManager.forServer(server);
         var pins=pages.returnEntityPins(record.sessionUuid());
@@ -176,6 +183,13 @@ public final class SessionRecoveryManager {
             if(record.state()==SessionState.MEASURED) pages.releaseMeasured(record.sessionUuid());
             else pages.release(record.sessionUuid());
         }
+    }
+
+    /** 返還移動未確認時保留 pending 並於下一 tick 重試；同一 session 的同一玩家只記一次 WARN，成功返還或 record 消失後才重置。 */
+    private void warnMovePending(UUID session,UUID player,ServerWorld source) {
+        if(moveWarnings.computeIfAbsent(session,ignored -> new HashSet<>()).add(player))
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("返還移動尚未確認，保留 pending 並於下一 tick 重試：session={} player={} source={}",
+                    session,player,source.getRegistryKey().getValue());
     }
 
     private boolean inside(ServerPlayerEntity player,ServerWorld source,ChamberFrame frame) {
