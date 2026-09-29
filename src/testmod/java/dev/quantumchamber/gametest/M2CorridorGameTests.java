@@ -723,6 +723,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
      * /tp、/execute in … run tp 走 Entity.teleport(ServerWorld, x, y, z, flags, yaw, pitch)：原版先以 CHANGED_DIMENSION 移除原 entity
      * 才把副本加入目標世界，且不看 addEntity 回傳值。非管理 entity 被送往量子走廊世界時必須在開頭被拒（回傳 false），原 entity 留在來源世界；
      * 同世界傳送不受影響。不需要玩家 checkpoint，兩平台都實際執行。
+     * API 步驟與真指令步驟各用一隻獨立的活 entity，指令步驟不會因目標已被 API 步驟移走而空過。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix2_command_teleport",tickLimit=100000)
     public void unmanaged_entity_command_teleport_into_superposition_stays_at_source(TestContext context) {
@@ -730,31 +731,64 @@ public final class M2CorridorGameTests implements FabricGameTest {
         var world=context.getWorld(); var server=world.getServer();
         var corridor=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
         var start=context.getAbsolute(new Vec3d(3.5,2,3.5));
-        var cow=net.minecraft.entity.EntityType.COW.create(world);
-        cow.refreshPositionAndAngles(start.x,start.y,start.z,0,0); cow.setNoGravity(true); cow.setAiDisabled(true);
-        context.assertTrue(world.spawnEntity(cow),"來源世界可正常生成測試用牛");
-        var id=cow.getUuid(); var witness=new java.util.LinkedHashMap<String,Boolean>(); List<String> unmanaged;
+        var cow=spawnHeldCow(context,start);
+        var commandStart=context.getAbsolute(new Vec3d(5.5,2,3.5));
+        var commandCow=spawnHeldCow(context,commandStart);
+        var id=cow.getUuid(); var commandId=commandCow.getUuid(); var witness=new java.util.LinkedHashMap<String,Boolean>();
+        List<String> unmanaged=List.of(); var commands=new java.util.ArrayList<String>();
         try {
             // /tp 使用的原版 API：目標為走廊世界、來源為其他世界、非管理 entity。
             witness.put("apiReturnsFalse",!cow.teleport(corridor,start.x,128,start.z,Set.of(),0,0));
             witness.put("apiKeptAtSource",!cow.isRemoved() && world.getEntity(id)==cow);
-            // 真指令路徑（伺服器權限、靜默）：/execute in quantumchamber:superposition run tp <uuid> x y z。
-            server.getCommandManager().executeWithPrefix(server.getCommandSource().withSilent(),
-                    "execute in quantumchamber:superposition run tp "+id+" "+start.x+" 128 "+start.z);
-            witness.put("commandKeptAtSource",!cow.isRemoved() && world.getEntity(id)==cow && cow.getPos().squaredDistanceTo(start)<1e-12);
-            witness.put("absentFromCorridor",corridor.getEntity(id)==null);
-            // 同世界傳送照原版執行。
+            // 真指令路徑（伺服器權限、靜默）。座標以 Locale.ROOT 固定小數輸出：GameTest 座標可達 ±1.5e7，double 直接拼接會印成科學記號，
+            // Brigadier 無法解析且靜默來源不報錯。先以同一格式在來源世界內傳送作正向對照，證明指令確實解析並執行。
+            var control=commandStart.add(1,0,0);
+            var sameWorld=runCommand(server,commandTeleport(world,commandId,control),commands);
+            witness.put("sameWorldCommandParsedCompletely",sameWorld.parsedCompletely());
+            witness.put("sameWorldCommandMoved",sameWorld.results().equals(List.of("true:1")) && world.getEntity(commandId)==commandCow
+                    && commandCow.getPos().squaredDistanceTo(control)<1e-12);
+            // /execute in quantumchamber:superposition run tp <uuid> x y z：TeleportCommand 回傳目標數 1，但 entity 必須留在來源世界原處。
+            var crossWorld=runCommand(server,commandTeleport(corridor,commandId,new Vec3d(control.x,128,control.z)),commands);
+            witness.put("commandParsedCompletely",crossWorld.parsedCompletely());
+            witness.put("commandExecuted",crossWorld.results().equals(List.of("true:1")));
+            witness.put("commandKeptAtSource",!commandCow.isRemoved() && world.getEntity(commandId)==commandCow
+                    && commandCow.getPos().squaredDistanceTo(control)<1e-12);
+            witness.put("absentFromCorridor",corridor.getEntity(id)==null && corridor.getEntity(commandId)==null);
+            // 同世界 API 傳送照原版執行。
             witness.put("sameWorldTeleportStillWorks",cow.teleport(world,start.x+1,start.y,start.z,Set.of(),0,0)
                     && world.getEntity(id)==cow && Math.abs(cow.getX()-start.x-1)<1e-9);
             unmanaged=java.util.stream.StreamSupport.stream(corridor.iterateEntities().spliterator(),false)
                     .filter(entity -> !managedCorridorEntity(entity)).map(entity -> net.minecraft.entity.EntityType.getId(entity.getType()).toString()).toList();
             witness.put("noUnmanagedEntityInCorridorWorld",unmanaged.isEmpty());
         } finally {
-            var live=world.getEntity(id); if(live!=null) live.discard();
-            var stray=corridor.getEntity(id); if(stray!=null) stray.discard();
+            for(var uuid : List.of(id,commandId)) {
+                var live=world.getEntity(uuid); if(live!=null) live.discard();
+                var stray=corridor.getEntity(uuid); if(stray!=null) stray.discard();
+            }
         }
-        context.assertTrue(!witness.containsValue(false),"指令跨維度傳送不得讓非管理 entity 遺失："+witness+" unmanaged="+unmanaged);
+        context.assertTrue(!witness.containsValue(false),"指令跨維度傳送不得讓非管理 entity 遺失："+witness+" commands="+commands+" unmanaged="+unmanaged);
         M4PerTestUniverseProbe.complete(context);
+    }
+    private static net.minecraft.entity.passive.CowEntity spawnHeldCow(TestContext context,Vec3d position) {
+        var cow=net.minecraft.entity.EntityType.COW.create(context.getWorld());
+        cow.refreshPositionAndAngles(position.x,position.y,position.z,0,0); cow.setNoGravity(true); cow.setAiDisabled(true);
+        context.assertTrue(context.getWorld().spawnEntity(cow),"來源世界可正常生成測試用牛");
+        return cow;
+    }
+    private static String commandTeleport(net.minecraft.server.world.ServerWorld target,UUID entity,Vec3d position) {
+        return String.format(java.util.Locale.ROOT,"execute in %s run tp %s %.3f %.3f %.3f",target.getRegistryKey().getValue(),entity,position.x,position.y,position.z);
+    }
+    private record CommandRun(boolean parsedCompletely,List<String> results) {}
+    /** 以伺服器權限、靜默來源解析後執行；parsedCompletely＝無解析例外且輸入全部消耗，results＝ReturnValueConsumer 收到的 success:value。 */
+    private static CommandRun runCommand(net.minecraft.server.MinecraftServer server,String command,List<String> log) {
+        var results=new java.util.ArrayList<String>();
+        var source=server.getCommandSource().withSilent().withReturnValueConsumer((success,value) -> results.add(success+":"+value));
+        var manager=server.getCommandManager();
+        var parse=manager.getDispatcher().parse(command,source);
+        boolean parsed=!parse.getReader().canRead() && parse.getExceptions().isEmpty() && net.minecraft.server.command.CommandManager.getException(parse)==null;
+        if(parsed) manager.execute(parse,command);
+        log.add(command+" parsed="+parsed+" results="+results);
+        return new CommandRun(parsed,List.copyOf(results));
     }
     /** 經驗球比照掉落物：成為 pin、跨 seam 換頁，返還時回原艙且移除 session tag，不隨清理遺失。 */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_experience_orb",tickLimit=100000)
