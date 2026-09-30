@@ -1,6 +1,6 @@
 # M1 Chamber Foundation 實作與驗證紀錄
 
-> 後續狀態（2026-09-24）：M1＋M1.1 全 feature final review 已完成（`ddc8b1e..d252d42`，29 commits，Critical 0／Important 0／Minor 2，未要求 fix wave），見 [M1.1 紀錄](m1.1-origin-maintenance.md) 的「全 feature 最終程式碼審查」。下文所稱 final review 未完成為當時狀態。人工驗收仍待記錄；合併狀態以 `main`／tag 為準。以下為當時紀錄。
+> 後續狀態（2026-09-24；2026-09-30 更新）：M1＋M1.1 全 feature final review 已完成（`ddc8b1e..d252d42`，29 commits，Critical 0／Important 0／Minor 2，未要求 fix wave），見 [M1.1 紀錄](m1.1-origin-maintenance.md) 的「全 feature 最終程式碼審查」。下文所稱 final review 未完成為當時狀態。人工驗收已於 2026-09-30 記錄在 [M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)（與本文的對應見「Client runtime 與人工驗收」段末）；合併狀態以 `main`／tag 為準。以下為當時紀錄。
 
 驗證日期：2026-09-16（Asia/Taipei）。以下為 `4f96569` 前的 M1 foundation 歷史證據，不能直接外推後續版本。2026-09-17 使用者核准 M1.1 紅石提交與 Origin 維護，新增流程的自動驗證與人工 gate 另記於 [M1.1 紀錄](m1.1-origin-maintenance.md)。整個 M1 completion gate 與 main 合併仍未宣告完成。Foreign／unknown ServerWorld live coverage 已由使用者核准依設計延後至 M3，不再列為 M1 blocker。
 
@@ -111,7 +111,7 @@ Dedicated restart 沒有在線參與者，因此只證明持久化與 held-high 
 
 這份 client runtime 記錄來自 `9aded34` 的驗證版本；Round 1／2 的載入同步修正另以 GameTests 與同世界 dedicated restart 回歸驗證，未補做人工 HUD／GUI 驗收。
 
-目前沒有可用的 native GUI 自動操作／截圖能力；上述證據不代表已目視驗證貼圖、HUD 或完成手動玩法。以下保留待人工執行：
+目前沒有可用的 native GUI 自動操作／截圖能力；上述證據不代表已目視驗證貼圖、HUD 或完成手動玩法。當時以下項目留給人工執行（2026-09-30 結果見下列項目之後的「2026-09-30 更新」）：
 
 - [ ] Creative 世界搭建完整 Chamber，右鍵整面門、走入 interior，再關門。
 - [ ] Brewing stand 以 Awkward Potion＋Echo Shard 釀造 QuantumState，飲用後確認 HUD、效果時間與 comparator 7。
@@ -119,6 +119,15 @@ Dedicated restart 沒有在線參與者，因此只證明持久化與 held-high 
 - [ ] Invalid shell=0、有效但條件不足=3；兩位玩家只有一位有 buff 時不得 ARMED。
 - [ ] 保持 lever high 儲存／重開，含合格參與者時不出現假 edge。
 - [ ] 全程沒有傳送、走廊或新 Dimension／Universe。
+
+2026-09-30 更新：上列項目已在 [M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 依目前語意驗收或處置（逐列 build 與證據以清單為準）：
+
+- 建艙、右鍵整面門、走入 interior 再關門：A-1 步驟 2–3、B-3a 步驟 3、B-3d 步驟 1 PASS（艙體以清單 2.4 的指令建造）。
+- 釀造、飲用、HUD 與效果時間：飲用與效果 HUD 見 A-1、B-2c PASS；釀造屬 D 段「M1 GUI／HUD／瞄準」，依使用者 2026-09-24 回報採計（沒有 build 紀錄）。M1.2 起 comparator 7 只在準備入場時短暫出現，C-1b 沒有讀到。
+- 拉桿與比較器 3→7→11、held-high 不重觸發：D 段「M1 拉桿與比較器」依使用者回報採計；0／3／11 另由 B-0、A-1、C-1、C-2 讀到。「需新 edge 才 arm」已被 M1.2 取代，改驗 B-3c。
+- Invalid shell=0、條件不足=3、兩人中一人缺 buff 不 ARMED：B-0、C-1a PASS。
+- 保持供電儲存／重開：依 M1.2 語意改驗 C-2a（不合格狀態跨重啟不自行入場）與 C-2b（活動 session 跨重啟只返還），PASS；這也涵蓋上文 dedicated restart 段的人工多人跨程序重啟。
+- 全程沒有傳送、走廊或新 Dimension／Universe：M2 起已有走廊，此條已被取代，不另驗（清單 D 段）。
 
 ## 已知限制與後續邊界
 

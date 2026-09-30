@@ -4,7 +4,7 @@
 
 **狀態：2026-09-17 使用者已核准本規格與保守安全策略並授權實作。尚無 M2 程式，不宣告走廊、傳送或照明已可用。**
 
-> 後續狀態（2026-09-24；2026-09-29 更新）：上行為核准當時的歷史快照。M2 其後已在 `feature/m1-chamber` 實作；Task 6 起改依 [2026-09-18 左右走廊與藥效維持修訂](2026-09-18-m2-lateral-buff-maintained-design.md)。八項人工驗收仍待記錄，見 [M2 紀錄](../../implementation-notes/m2-corridor.md)。M2 整分支 final review 已於 2026-09-29 隨 M1–M4 整分支 review 完成；依其修正所做的規格補充以「2026-09-29 整合修正」標示於各節，見 [M1–M4 整合審查紀錄](../../implementation-notes/2026-09-29-m1-m4-integration-review.md)。合併狀態以 `main`／tag 為準。
+> 後續狀態（2026-09-24；2026-09-29、2026-09-30 更新）：上行為核准當時的歷史快照。M2 其後已在 `feature/m1-chamber` 實作；Task 6 起改依 [2026-09-18 左右走廊與藥效維持修訂](2026-09-18-m2-lateral-buff-maintained-design.md)。八項人工驗收已於 2026-09-30 記錄，見 [M2 紀錄](../../implementation-notes/m2-corridor.md)「八項人工驗收」。M2 整分支 final review 已於 2026-09-29 隨 M1–M4 整分支 review 完成；依其修正所做的規格補充以「2026-09-29 整合修正」標示於各節，見 [M1–M4 整合審查紀錄](../../implementation-notes/2026-09-29-m1-m4-integration-review.md)。合併狀態以 `main`／tag 為準。
 
 ## 1. 前置與固定範圍
 

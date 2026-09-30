@@ -6,7 +6,7 @@
 > - M3-A 動態 Universe backend 與 M3-B server-side transfer readiness。
 > - M4 候選門。
 >
-> M1（含 M1.1）與 M1.2 的全 feature final review 已完成；M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。2026-09-29 另完成 M1–M4 整分支 final review（同時作為 M2 的整分支 final review），找到的 7 項 Important 已由 integration fix rounds 1–3 修正並 re-review，見 [M1–M4 整合審查紀錄](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。M1／M1.1／M1.2／M2／M4 的人工驗收尚待記錄。M1–M4 在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver）；合併前還需要 feature HEAD 在 GitHub Actions 的 Ubuntu 與 Windows job 都通過，完整順序見 [AGENTS.md](AGENTS.md)「下一步」。實際 CI、合併與 tag 狀態以 GitHub Actions、`main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
+> M1（含 M1.1）與 M1.2 的全 feature final review 已完成；M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。2026-09-29 另完成 M1–M4 整分支 final review（同時作為 M2 的整分支 final review），找到的 7 項 Important 已由 integration fix rounds 1–3 修正並 re-review；2026-09-30 人工驗收途中發現的入場 bug 由 integration fix round 4（`ba854e8`）修正並 review，見 [M1–M4 整合審查紀錄](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。M1／M1.1／M1.2／M2／M4 的人工驗收已於 2026-09-30 記錄（[M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) E 段：無 gate waiver，結論可合併）。合併 main 前，記錄結果的 docs commit 還要在 GitHub Actions 的 Ubuntu 與 Windows job 都通過，完整順序見 [AGENTS.md](AGENTS.md)「下一步」。實際 CI、合併與 tag 狀態以 GitHub Actions、`main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
 
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
@@ -14,7 +14,7 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。返還期間只凍結尚未返還的玩家：已返還者回到原艙就能正常移動與互動，但原艙保護與比較器 11 維持到全員收尾，收尾前也不能開新 session；離線者重新連線後的下一 tick 才返還。
 
-本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。M1–M4 合併 main 之前，主目錄的 `main` checkout 不含本功能，不能用其客戶端驗收；實際合併狀態以 `main`／tag 為準。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工待驗，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
+本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。M1–M4 合併 main 之前，主目錄的 `main` checkout 不含本功能，不能用其客戶端驗收；實際合併狀態以 `main`／tag 為準。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工驗收的結果，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
 走廊是有限局部頁面與外觀延伸，並非無限配置世界。走廊本身是固定的 `quantumchamber:superposition` 世界，不是動態 Dimension；M3 已有動態 Universe backend 與 server-side transfer readiness，但尚未接成玩家可用的跨宇宙通道（屬 M5）。
 
@@ -24,7 +24,7 @@ M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、�
 
 **不可降版**：用本 build 在某個存檔建立過任何走廊 session 之後，該存檔的 session journal 會寫成 schema3；M4 之前的 build 讀取會 fail closed。這類存檔之後只能用 M4 起的 build 開啟，也不要拿正式世界測試。
 
-人工單人玩法、32 chunk 遠望、近玩家 seam、照明／shader／GPU 尚待驗證。合併 main 前的完整 gate 順序見 [AGENTS.md](AGENTS.md)「下一步」。
+2026-09-30 已記錄人工驗收：單人玩法（清單 A、B-0、B-1、B-3、B-6）、近玩家 seam（C-4）、shader 與 GPU（B-2：Sodium 0.6.13、Iris 1.8.8、Complementary Reimagined r5.9.3，RTX 4090）都是 PASS；32 chunk 遠望與手持照明依使用者 2026-09-24 的回報採計（清單 D 段，沒有 build 紀錄）。合併 main 前的完整 gate 順序見 [AGENTS.md](AGENTS.md)「下一步」。
 
 逐項人工驗收步驟、預期結果與紀錄欄位見 [M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。
 
@@ -60,7 +60,7 @@ M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、�
 
 Windows 可在檔案總管雙擊專案根目錄的 [start-client.bat](start-client.bat)，或在 PowerShell 執行 `./start-client.bat`。腳本使用 Java 21，固定載入同一工作區的 Fabric 開發客戶端；失敗會保留錯誤與原始退出碼。
 
-功能分支 `feature/m1-chamber`（M1–M4）在人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準；合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
+功能分支 `feature/m1-chamber`（M1–M4）的人工驗收已於 2026-09-30 記錄；記錄結果的 docs commit 在 GitHub Actions 雙平台通過後，才以 `--ff-only` 合併 main，實際合併與 tag 狀態以 `main`／tag 為準；合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
 
 Windows PowerShell：
 
@@ -75,7 +75,7 @@ Windows PowerShell：
 
 **`runServer` 注意**：本工作區的 `run/server/server.properties` 目前是 `level-name=m1-smoke`。`m1-smoke` 是 M1 dedicated 重啟證據，也是人工驗收 B-4 唯一的 schema1 世界；用本 build 直接執行 `runServer` 開一次，就會把它的 Chamber registry 改寫成 schema2。要開 dedicated server，先依 [M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 2.1 備份，並依 2.3 改用其他世界（停機時暫改 `level-name`，啟動時帶 `--world`）。
 
-選用手持火把動態照明可執行 `start-client.bat light`，使用獨立的 `run/client-light` 與固定版本、SHA512 核對的 LambDynamicLights。預設 client-base、server、GameTest 與 release JAR 不安裝或內嵌它。不同 profile 不共用存檔；需要搬移時請先退出遊戲、自行備份再複製，腳本不會自動搬移玩家世界。實際光影與 shader 相容性仍待人工驗證。
+選用手持火把動態照明可執行 `start-client.bat light`，使用獨立的 `run/client-light` 與固定版本、SHA512 核對的 LambDynamicLights。預設 client-base、server、GameTest 與 release JAR 不安裝或內嵌它。不同 profile 不共用存檔；需要搬移時請先退出遊戲、自行備份再複製，腳本不會自動搬移玩家世界。光影與 shader 相容性已於 2026-09-30 在 `run/client-render` 以 Sodium 0.6.13、Iris 1.8.8 與 Complementary Reimagined r5.9.3（RTX 4090）人工驗收（清單 B-2）；手持火把照明依使用者 2026-09-24 的回報採計（清單 D 段 M2-8）。
 
 `runGameTest` 使用 `run/gametest`，報告位於 `build/gametest-results.xml`；單獨 `clean build` 不包含此工作。M2 CI 與本機完整 gate 另明確執行 GameTests，不能把建置成功當成遊戲測試已跑。重現步驟與人工待驗見下方紀錄。
 

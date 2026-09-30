@@ -1,10 +1,10 @@
 # M1～M2 玩家施工與驗證指引
 
-本指引對應 `feature/m1-chamber` 的新版 M2：有效原艙（Origin）由外部供電註冊／保護，玩家入內關門、補齊藥水後進入左右走廊並保留 Buff。任一凍結參與者的效果自然到期／喝奶解除即全組返還，不退款藥效。施工尺寸與材料沿用 M1；這是操作指引，不是人工驗收證據。單人／多人八項待驗與恢復界線見 [M2 操作與驗證](m2-corridor.md#八項人工驗收)。
+本指引對應 `feature/m1-chamber` 的新版 M2：有效原艙（Origin）由外部供電註冊／保護，玩家入內關門、補齊藥水後進入左右走廊並保留 Buff。任一凍結參與者的效果自然到期／喝奶解除即全組返還，不退款藥效。施工尺寸與材料沿用 M1；這是操作指引，不是人工驗收證據。單人／多人八項人工驗收與恢復界線見 [M2 操作與驗證](m2-corridor.md#八項人工驗收)。
 
 ## 啟動本分支的開發客戶端
 
-功能分支 `feature/m1-chamber`（M1–M4）在 M1／M1.1／M1.2／M2／M4 人工驗收記錄完成前不合併 `main`（除非另有明確記錄的 gate waiver），實際合併與 tag 狀態以 `main`／tag 為準。合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動，不要在不含本功能的 main 目錄呼叫 Wrapper。另一台電腦若直接 clone／checkout `feature/m1-chamber`，則在該 clone 的根目錄執行，不必另建同名 worktree。
+功能分支 `feature/m1-chamber`（M1–M4）的 M1／M1.1／M1.2／M2／M4 人工驗收已於 2026-09-30 記錄；記錄結果的 docs commit 在 GitHub Actions 雙平台通過後，才以 `--ff-only` 合併 `main`，實際合併與 tag 狀態以 `main`／tag 為準。合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動，不要在不含本功能的 main 目錄呼叫 Wrapper。另一台電腦若直接 clone／checkout `feature/m1-chamber`，則在該 clone 的根目錄執行，不必另建同名 worktree。
 
 最方便的方式是在檔案總管進入該工作區，雙擊 `start-client.bat`。聊天中的檔案連結供閱讀，不會自動執行。PowerShell 也可使用：
 
@@ -44,7 +44,7 @@ $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 
 請優先在 light profile 建立新測試世界。若確實需要使用既有世界，先正常退出所有遊戲，再手動將來源世界資料夾完整備份到遊戲目錄外；確認備份後，人工複製到另一 profile 的 `saves`，不要移動／覆蓋原檔，也不要同時開啟同一世界。這是可選的人工作法，啟動腳本不會操作 `saves`。
 
-主手／副手火把、移動後照明、熄滅效果、GPU 與 shader 相容性均列為人工待驗。POWERED 原艙輝光由可信原艙身分判定，不等於手持火把照明，也不代表 M2 人工視覺驗收已完成。
+主手／副手火把、移動後照明、熄滅效果、GPU 與 shader 相容性都屬於人工驗收項目。2026-09-30 已記錄在 [M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)：GPU 與 shader 見 B-2（Sodium 0.6.13、Iris 1.8.8、Complementary Reimagined r5.9.3，RTX 4090），手持火把照明依使用者 2026-09-24 的回報採計（D 段 M2-8，沒有 build 紀錄）。POWERED 原艙輝光由可信原艙身分判定，不等於手持火把照明，也不代表 M2 人工視覺驗收已完成。
 
 歷史幾何參考：[舊版格線圖（PNG）](../images/m1-chamber-build-guide.png)｜[舊版格線原圖（SVG）](../images/m1-chamber-build-guide.svg)｜[科幻外觀概念圖](../images/m1-chamber-concept.png)。舊格線圖僅供 7×7×7／25 格艙門配置參考；其中 rising edge、比較器讀值與停用拆除說明已過時，不能作為 M1.2 操作指引。目前狀態、供電與維護規則以本文為準。
 
@@ -132,6 +132,8 @@ M1.2 可由唯一玩家先在室外撥桿供電，再自己入內測試；實體
 
 ## 5. 待執行的人工驗證
 
+本表是操作指引。2026-09-30 的 M1–M4 人工驗收結果記錄在 [M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)；表 N（選用手持照明）依使用者 2026-09-24 回報採計，見清單 D 段 M2-8。
+
 | 步驟 | 操作 | 預期觀察 |
 | --- | --- | --- |
 | A | 新建有效艙體、室內空無一人；輸入保持低電位 | INVALID，輸出 0；尚未註冊／保護，Creative 可拆改 |
@@ -147,7 +149,7 @@ M1.2 可由唯一玩家先在室外撥桿供電，再自己入內測試；實體
 | K | 保持供電，以同一手勢重新啟用並滿足室內資格 | 自動 ARMED／11；管理停用期間仍供電便仍受保護 |
 | L | 已確認 OFF、完整原艙身分，Creative 左鍵 Controller | 成功移除才清除 UUID 記錄／所有相交 chunk 索引；不要求先管理停用 |
 | M | 同位置重建完整艙體，再供電 | 成功註冊新的 UUID，不重用被拆除艙體的 UUID |
-| N | `start-client.bat light`，新測試世界主手／副手持火把並移動 | 動態照明人工待驗；client-base／server 不應新增照明模組 |
+| N | `start-client.bat light`，新測試世界主手／副手持火把並移動 | 火把照明隨移動更新、收起後熄滅；client-base／server 不應新增照明模組 |
 
 兩位室內玩家的實體輸出案例需另外安排外部觀察者，或使用供電前已設置並驗證的室內讀值線路。帳號或觀察條件不足時，該項保留「待驗」，不要算通過。
 

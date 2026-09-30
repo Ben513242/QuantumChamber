@@ -1,16 +1,16 @@
 # M1–M4 整分支 final review 與整合修正紀錄
 
-日期：2026-09-29（Asia/Taipei）。分支 `feature/m1-chamber`。整合修正後的 code HEAD：`428f52a79daa18ab9f5fd7a7f0f2980a34598987`（其後只有文件 commit）。
+日期：2026-09-29（Asia/Taipei；integration fix round 4 與人工驗收結果為 2026-09-30）。分支 `feature/m1-chamber`。整合修正後的 code HEAD：`ba854e846482cf37bbb808bfc2df134090273969`（integration fix round 4，其後只有文件 commit）；rounds 1–3 結束時為 `428f52a79daa18ab9f5fd7a7f0f2980a34598987`。
 
 本文是 [AGENTS.md](../../AGENTS.md)「下一步」所列「M2 整分支 final review」gate 的結果紀錄。M2 過去沒有做過 whole-branch review；本輪以整條 feature branch 為範圍一次完成，同時完成 M2、M3-A／M3-B、M4 deferred Minors 的 final triage。
 
-本文只記錄 review、程式修正與本機自動 gate，不代表下列任何一項：
+本文只記錄 review、程式修正與本機自動 gate（2026-09-30 另摘要人工驗收結果與 round 4 的 CI run），不代表下列任何一項：
 
-- 人工驗收已通過。除 B-5 的自有世界預驗（不計入 E 段）外，人工驗收尚未開始；見 [M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。
-- GitHub Actions 已通過。本文的 gate 都是 Windows 本機結果；feature HEAD 在 Ubuntu 與 Windows job 的結果，以 GitHub Actions 上該 commit 的 run 為準。
+- 人工驗收的正式紀錄。2026-09-29 撰寫時，除 B-5 的自有世界預驗（不計入 E 段）外，人工驗收還沒開始；2026-09-30 的結果以 [M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 為準，本文「人工驗收結果（2026-09-30）」只作摘要。
+- 記錄人工結果的 docs commit（及之後的 feature HEAD）已通過 GitHub Actions。本文的 gate 都是 Windows 本機結果；feature HEAD 在 Ubuntu 與 Windows job 的結果，以 GitHub Actions 上該 commit 的 run 為準（round 4 的 run 見「Integration fix round 4（2026-09-30）」）。
 - 已合併 `main` 或已打 tag。實際狀態以 `main`／tag 為準。
 
-原始證據在 gitignored 的 evidence owner `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（本機 scratch，不在 repo）。本文直接寫出關鍵數字與 SHA-256；gate harness 的可重現性限制與 [M4 紀錄](2026-09-21-m4-candidate-doors.md)「可重現性限制」相同，另加本輪的 `ifix*-gradle.ps1`、`ifix*-final-green.ps1`、`ifix*-build-summary.ps1` 與 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`。下文 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `428f52a` 為準。
+原始證據在 gitignored 的 evidence owner `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（本機 scratch，不在 repo）。本文直接寫出關鍵數字與 SHA-256；gate harness 的可重現性限制與 [M4 紀錄](2026-09-21-m4-candidate-doors.md)「可重現性限制」相同，另加本輪的 `ifix*-gradle.ps1`、`ifix*-final-green.ps1`、`ifix*-build-summary.ps1` 與 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`。下文 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `428f52a` 為準；`ba854e8`（round 4）只改 `main/persistence/SessionRecoveryRecord.java`，下文引用的其他檔案行號不變。
 
 ## 範圍與方法
 
@@ -113,7 +113,7 @@
 
 三輪都在 Windows 本機、fresh root、`--rerun-tasks`、未設 `onlyBatches` 下執行；每輪 production 有變更，全套 gates 都在該輪最終 HEAD 重跑。所有 GameTest 與 main-only root 的 world restore 都是 `exactRestored=true`、`deleted=false`。
 
-| Gate | Round 1（`f7d7c7c`） | Round 2（`e20cd9d`） | Round 3（`428f52a`，目前 code HEAD） |
+| Gate | Round 1（`f7d7c7c`） | Round 2（`e20cd9d`） | Round 3（`428f52a`） |
 | --- | --- | --- | --- |
 | Full `clean test runGameTest build` | `task9-ifix1-final2-full-c468f1af4f44448abf0cecbfb408b0a2`：default 144/144；JUnit 397、0 failure／error、2 skip；Windows checkpoint JUnit 16；per-test receipts 26 | `task9-ifix2-final-full-187e976b50d14692ae06f05ea9a8b13b`：146/146；JUnit 398／0／2 skip；Windows checkpoint 17；receipts 28 | `task9-ifix3-final-full-caa49a0fb8364e86beeb8c5a31ca9a57`：146/146（其中 `_windows` 73）；JUnit 401、0 failure／error、2 skip；Windows checkpoint 17；receipts 28 |
 | `runGameTestLegacy` | `task9-ifix1-final2-legacy-477f584dd7144ef2857c87da4bc13c32`：1/1 | `task9-ifix2-final-legacy-c3818120e0f44b06b418674ac4605899`：1/1 | `task9-ifix3-final-legacy-b9e4f9ff6f344eac9c09e5ed81c0058c`：1/1 |
@@ -122,6 +122,8 @@
 | M3 lifecycle 4＋transfer 5 | `task9-ifix1-final2-m3-831b592fdf524e969086a426298c8842`：9/9 | `task9-ifix2-final-m3-e9e6f70ecb814ab88ab93db32ec9ce20`：9/9 | `task9-ifix3-final-m3-7b631679c3ae45a3890d9361e20b3d1c`：9/9 |
 | M4 recovery 全 phases | `recovery-run-5562c04489394d268dbaaf91d45e358b.json`：24/24 | `recovery-run-5b57104426ef434a9d4e67cd878e01af.json`：24/24 | `recovery-run-c772bda1174147c9b9e2fd9a9ca51d60.json`：24/24 |
 | Verification summary（SHA-256） | `ifix1-verification-summary.json`（`42f69524e11a4d280bde6d19ebe504f6b5bcb00a198011b1903f18d288632e5c`） | `ifix2-verification-summary.json`（`fc289e70f2e0b497f6f8d46033f301c8e84325cba36571afcf73ce69b0e34f50`） | `ifix3-verification-summary.json`（`7b562188772d8510c81f04d327beae81a9c538cdccd295c18185a6696626563e`） |
+
+目前 code HEAD `ba854e8`（round 4）的 gates 見下方「Integration fix round 4（2026-09-30）」。
 
 Round 3 細節（`428f52a`）：
 
@@ -165,6 +167,7 @@ Round 3 細節（`428f52a`）：
 | 1 | `1f900f5..f7d7c7c`（`ifix1-review.diff`） | ❌：原 9 項全部 CLOSED、gates 原始數字重算相符，但新增 Important N-1（肩上鸚鵡）與 Minor N-2～N-6 | Approved：Critical 0／Important 0／Minor 6（含 Nit）／待確認 3 |
 | 2 | `f7d7c7c..e20cd9d`（`ifix2-review.diff`） | ✅：Critical 0／Important 0／Minor 3／Nit 3；N-1 CLOSED | Approved：Critical 0／Important 0／Minor 2／Nit 5／待確認 4 |
 | 3 | `e20cd9d..428f52a`（`ifix3-review.diff`） | 單一 reviewer 兼 spec＋quality：✅＋Approved；範圍內 7 項 CLOSED；Critical 0／Important 0／Minor 2（皆為文件措辭，已寫入本文與 M4 紀錄）／Nit 3 | 同左 |
+| 4（2026-09-30） | `d03bbc6..ba854e8`（沒有另存 review package；結果記在 `progress.md`） | 單一 fresh reviewer 兼 spec＋quality：✅＋Approved；Critical 0／Important 0／Minor 2／Nit 3（見「Integration fix round 4（2026-09-30）」） | 同左 |
 
 Review package SHA-256：`ifix1-review.diff` `ce0da86ab33c2b1b9a3226503d879243c990a4026a95076368d12b64cb2134da`、`ifix2-review.diff` `0b3c9dec0b4f895b3cf54c9e0e126f95cdb21a47f12a3f58f1509710c6a6bfd5`、`ifix3-review.diff` `74ec9799e3b0b34ac265c00341fc26b64cf114d172563f89b13627eebf82b2b3`。
 
@@ -183,6 +186,42 @@ Round 3 full gate 的 stdout 有 47 則 WARN／ERROR，逐類比對 round 2（46
 - 預期文字改寫：2.5 (c)(d)、A-2、B-1b、B-3 前置條件、C-2b、C-3b（已返還者可移動）；A-1、C-1b（平台說明）；B-1b、C-3a、C-3b、C-4（經驗球）；B-5d／e／f（基準改 `428f52a`，正常路徑預期不變）。
 - 新增子項：B-6（右鍵走廊內入口正門無反應、放置類物品被拒、經驗球、肩上鸚鵡，以及選測的丟蛋與指令傳送）、C-5（選測，多人肩上鸚鵡）、D 段 M2-4 LOW 返還。入口 Controller 的拒絕原版 client 觸及不到；拒絕結果由 GameTest 斷言、訊息文字依程式，不列入人工項目。
 - F-DOC-B5 與 F-DOC-GUARD 的修正，見清單 2.2、2.5 (a)、B-5 預驗表與 E 段。
+
+2026-09-30 round 4 之後，清單基準改為 `ba854e8`，見下兩節。
+
+## Integration fix round 4（2026-09-30）
+
+2026-09-30 多人人工驗收（W-MP，build `d03bbc6`）途中發現入場 bug。使用者決定先修再合併。
+
+- **現象**：參與者 server 端 yaw 恰為 -0.0f 時，`start()` 的入場 ARMING checked 落盤每次都失敗。實例是 client yaw -360，經原版 `ServerPlayNetworkHandler.onPlayerMove` 的 `MathHelper.wrapDegrees`（`frem`）變成 -0.0f。Controller 停在 READY（比較器 7），每秒重試並記一則 WARN「入場 ARMING 未能 checked 落盤，已移除未 checked record 並取消 reservation…」（`main/superposition/SuperpositionSessionManager.java:163`），直到該玩家轉動視角；實測轉 5° 後立即入場。行為是 fail-closed：玩家沒有移動，也沒有資料損失。
+- **根因鏈**：`SessionRecoveryRecord.Participant` 原樣保存 -0.0 → `NbtFloat.of`／`NbtDouble.of` 把 ±0 都快取成 +0 → `SessionRecoveryState.save` 的 strict readback 以 record equals 比對（`Float.compare`；`Vec3d.equals` 用 `Double.compare`，兩者都區分 ±0）→ 記錄永遠不等於自己的 readback → `UncheckedIOException`「journal checked 落盤失敗…」→ `abandonInitial` 回 REJECTED。來源座標或速度的分量為 -0.0 時同理。
+- **修正**：`ba854e8`（parent `d03bbc6`；2 檔、+41 行）。`Participant` 的建構子在既有有限值檢查之後，把 yaw、pitch 與 `sourcePosition`／`sourceVelocity` 各分量的 -0.0 正規化為 +0。Implementer 稽核：`src/main` 只有 `SessionRecoveryRecord` 使用 `putFloat`／`putDouble`／`NbtDouble`。
+- **測試**：`SessionRecoveryStateTest` 新增 `negativeZeroSourceEqualsItsNbtRoundtrip` 與 `negativeZeroYawArmingPassesCheckedSaveReadback`（各 4 個欄位變體；含 `MathHelper.wrapDegrees(-360f)` 的 bit pattern 斷言，以及真實的 checked save／readback）。RED：38 tests 中 2 failed（round-trip 後 -0.0 與 0.0 不相等；save 丟出與線上相同的 `UncheckedIOException`）。GREEN：JUnit 403、0 failure／error、2 skipped。
+- **Review**：單一 fresh reviewer 兼 spec＋quality，範圍 `d03bbc6..ba854e8`：spec ✅、quality Approved；Critical 0／Important 0。Minor 1（`abandonInitial` 不 flush、WARN 每秒一則）與 testmod ±0 斷言 Nit 列入「延後清單」；其餘 Nit（測試名稱 `negativeZeroYaw…` 過窄、`positiveZero` 先配置 `Vec3d` 再比較）併入延後清單的「Nits」。Minor 2（文件：記錄線上缺陷、把清單 `$base` 改為 `ba854e8`）由清單更新處理。Reviewer 另逐列判定人工清單：已在 `d03bbc6` 記錄的 PASS 列都未受影響，無需重驗（依據 R1–R4 見清單 E 段簽註）。
+- **Gates**：Windows 本機，沿用 `task9-gates.ps1` 等同一套 harness，每個 gate 都是新的 root。Wrapper `ifix4-final-green.ps1`，console `ifix4-final-green-console.log` 的 START／END 都是 `HEAD=ba854e8…`，`END ALL exit=0`。當時工作樹只有人工驗收清單的未提交修改（文件）。本輪沒有另外產生 verification summary JSON，下表數字取自 console 與各 root。
+
+| Gate | Root（evidence owner 內） | 結果 |
+| --- | --- | --- |
+| Full `clean test runGameTest build` | `task9-ifix4-final-full-99fd4195785141b5a657be8b22fb206b` | default 146/146（其中 `_windows` 73）；JUnit 403、0 failure／error、2 skip（`NonWindowsPlayerCheckpointStoreTest`） |
+| `runGameTestLegacy` | `task9-ifix4-final-legacy-4a315df2c28640e19b89ac99207de431` | 1/1 |
+| main-only `runServer`＋oracle | `task9-ifix4-final-main-only-8dfbbdfb734b47a9a69f2b3b8beea7c7` | PASS |
+| M3 lifecycle 4＋transfer 5 | `task9-ifix4-final-m3-20d0ba3cf0244029b9d0428f79ba93ab` | PASS |
+| M4 recovery 全 phases | `recovery-run-44f84277d10d45409d8e845bea5b04d6.json` | 24/24 PASS |
+| CI 規則（`ifix3-ci-rule-check.ps1`，綠燈情境） | `ifix3-ci-ifix4-final-win-green-f163d212fb7b450fb1d1d0f2ed9e43f3`、`ifix3-ci-ifix4-final-ubuntu-green-32514311c3ff40139317260b6e282f47` | Windows、Ubuntu 都 PASS |
+| Release／sources JAR | （full root） | release 299 entries（256 classes）、sources 190；testmod 命中 0 |
+
+- **CI**：GitHub Actions run `36680727775`（`ba854e8`）：Ubuntu job `build` success、Windows job `windows-native` success。
+
+## 人工驗收結果（2026-09-30）
+
+逐列結果、證據檔名與偏差以 [M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 為準，本節只摘要。
+
+- **執行方式**：Claude 經使用者授權代為操作：以鍵盤滑鼠自動輸入驅動開發客戶端，用截圖與唯讀指令讀值，並核對 log。證據在 repo 外的 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-09-30\`；驅動腳本 `C:\Users\Ben\Documents\QC-acceptance-evidence\tools\mc-drive.ps1` 也在 repo 外，不追蹤。
+- **build**：A、B-0、B-1、B-3、B-6 與 C 段在 `d03bbc6`（production 等同 `428f52a`）；B-2、B-4、B-5 在 `ba854e8`。`d03bbc6` 的列經 round 4 reviewer 判定未受影響，保留原 build。
+- **PASS**：A-1、A-2、B-0、B-1a／b、B-3a–d、B-6a–f（含選測 B-6c、B-6f）、C-1a–c、C-2a／b、C-3a／b、C-4a–c、C-5（選測）；B-2a–e（Sodium 0.6.13、Iris 1.8.8、Complementary Reimagined r5.9.3，RTX 4090；只有一種 GPU，其他組合記 N/A）；B-4a–d（legacy schema1 複本 r4）；B-5a、B-5d、B-5e、B-5f（選測）。
+- **B-5b、B-5c 的預期更正**：依原預期記為 FAIL（待判讀）：選定後再點同門沒有出現「候選已鎖定。」，客戶端 F3 座標會沿牆漂移（伺服器端位置不變）。原因是選定後 `MEASURED` 且未返還的參與者，其 `onPlayerInteractBlock` 與 `onPlayerMove` 都被 `ServerPlayNetworkHandlerRecoveryMixin` 取消（`SessionRecoveryManager.blocks`）。使用者 2026-09-30 決定依 M4 設計 §10（`:241` 選定後凍結所有門互動；`:245` `ALREADY_SELECTED` 只出現在同一 tick 的第二個互動）與 §15 更正預期。原 FAIL 列保留，另加依更正後預期判定的 PASS 列（同一份證據，沒有重測）。客戶端漂移與訊息可達性列入下方「延後清單」。
+- **D 段**：使用者 2026-09-24／2026-09-29 回報的項目無法補填 build；使用者 2026-09-30 決定依回報採計，不另行重驗。
+- **E 段**：沒有 gate waiver。結論為可合併，但記錄這些結果的 docs commit 須先在 GitHub Actions 雙平台通過，才以 `--ff-only` 合併。
 
 ## Deferred triage 結論
 
@@ -222,6 +261,10 @@ Round 3 full gate 的 stdout 有 47 則 WARN／ERROR，逐類比對 round 2（46
 | M4 fix round 1 q4、q5、q7 | 雙重故障的全域 recovery 暫停、`abandonInitial` log 缺 root cause、`selectionTeardown` 收尾 | 同上 |
 | Nits | 各輪 review 的 Nit（例如 policy test 名稱過寬、`@Unique` 缺漏、`WARNED` 為 JVM 範圍） | 延後或關閉 |
 | harness tracked 化 | `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、`task9-runtime.init.gradle`、`task9-probe.init.gradle`、`ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1` 等只在 gitignored evidence owner | 整理到 tracked `scripts/verification/`（獨立 task＋review）；這是刪除 worktree 前的必要條件 |
+| 凍結時沒有位置修正（2026-09-30 人工驗收） | `MEASURED`／`RETURNING` 凍結由 `ServerPlayNetworkHandlerRecoveryMixin` 取消 `onPlayerMove`，只丟棄移動封包、不送位置修正；被凍結參與者的客戶端座標（F3）會沿牆漂移到返還為止，伺服器端位置不變（清單 B-5c 實見） | 取消移動時送回 teleport／位置修正 |
+| `abandonInitial` 不 flush（round 4 review Minor 1） | `SuperpositionSessionManager.abandonInitial` 只 abort＋`markDirty`、不 flush：被放棄的 ARMING record 留在磁碟上，直到下一次成功存檔；其間 crash，重啟會當成 RETURNING 處理（既有測試 `readbackFailureAfterWriteRevertsAndReturningOverwritesUnacknowledgedDisk` 已明確接受；即 M4 紀錄「M5 handoff acceptance」第 6 點）。ARMING 失敗的 WARN 每秒一則（與 M4 fix round 1 q5 相關） | 評估放棄後補一次 checked 寫出；WARN 比照 `checkpointCapable` 同原因去重 |
+| testmod ±0 斷言（round 4 review Nit） | testmod `M2CorridorGameTests.java:1591` 以裝箱的 `context.assertEquals` 比對 yaw 與 pitch，會區分 ±0；目前沒有 -0 fixture，不影響結果 | 下次動 testmod 時改用原始 float 比較 |
+| `ALREADY_SELECTED` 的可達性（文件真相，非缺陷） | 選定後凍結所有門互動（M4 設計 §10 `:241`），「候選已鎖定。」只會出現在同一 tick 的第二個互動（`:245`），真實客戶端的參與者看不到（清單 B-5b） | 不改程式；M5 的玩家說明與人工預期沿用此界線 |
 
 ## 參考資料
 
@@ -229,5 +272,6 @@ Round 3 full gate 的 stdout 有 47 則 WARN／ERROR，逐類比對 round 2（46
   - `m1m4-whole-branch-final-review.md`（整分支 final review 彙整）
   - `ifix1-report.md`（SHA-256 `a20a9a8df307d8a41e5a744cdf30f5083d7af8cbcaaa246d49a86c34f46a3ce0`）、`ifix2-report.md`（`045c92966fc1283e29229a8da23651b005daaead64e3f1bf5c7671b73c1e7d4e`）、`ifix3-report.md`（`3219c27bec2692bf57a38ffbe93f3e3e394a58909bf0fd212a80ff238f59b908`）
   - `ifix{1,2,3}-verification-summary.json`、`ifix{1,2,3}-evidence-sha256.json`、`ifix{1,2,3}-review.diff`
+  - Round 4：`ifix4-final-green.ps1`、`ifix4-final-green-console.log` 與 `task9-ifix4-final-*` roots（review 結果只記在 `progress.md`）
   - `progress.md`：SDD ledger、各 review 條目與使用者決定。
 - [M4 候選門紀錄](2026-09-21-m4-candidate-doors.md)、[M2 操作與驗證](m2-corridor.md)、[M1–M4 人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。

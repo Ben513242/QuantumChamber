@@ -1,6 +1,6 @@
 # M4：候選門（Candidate Doors）權威與驗證證據
 
-驗證日期：2026-09-24（integration fix 後的「目前 gates」為 2026-09-29）。Minecraft 1.21／Yarn 1.21+build.9／Loader 0.17.2／Fabric API 0.102.0+1.21／Loom 1.7.4／Java 21／Gradle 8.8，Windows 本機。
+驗證日期：2026-09-24（integration fix 後的「目前 gates」為 2026-09-29，round 4 重跑為 2026-09-30；spec §15 人工驗收為 2026-09-30）。Minecraft 1.21／Yarn 1.21+build.9／Loader 0.17.2／Fabric API 0.102.0+1.21／Loom 1.7.4／Java 21／Gradle 8.8，Windows 本機。
 
 ## 狀態與範圍
 
@@ -11,9 +11,9 @@ M4 是權威與持久化里程碑：
 - 門保持關閉，玩家不移動，沒有配置 Universe。
 - 真正的塌縮／通道留給 M5。
 - Whole-branch review 最終 Critical 0／Important 0（見「Final review」）。
-- 2026-09-29 的 M1–M4 整分支 final review 另找到 7 項 Important（其中 F-CI 與 F-CHECKPOINT 直接涉及 M4），已由 integration fix rounds 1–3（`1f900f5..428f52a`）修正並 re-review；目前 code HEAD 為 `428f52a`。見 [M1–M4 整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
-- spec §15 的 M4 遊戲內人工驗收：正式 B-5（W-M4）**尚未執行**。2026-09-29 只有使用者在自有世界做的部分預驗（非 W-M4，不計入清單 E 段），見「人工驗收狀態（spec §15）」。本文其餘證據都來自自動 gate 與 headless／跨 JVM probe，不代表人工可見行為已驗。
-- M1–M4 在 M1／M1.1／M1.2／M2／M4 人工驗收記錄完成前不合併 main（除非另有明確記錄的 gate waiver）；實際合併與 tag 狀態以 `main`／tag 為準。
+- 2026-09-29 的 M1–M4 整分支 final review 另找到 7 項 Important（其中 F-CI 與 F-CHECKPOINT 直接涉及 M4），已由 integration fix rounds 1–3（`1f900f5..428f52a`）修正並 re-review。2026-09-30 人工驗收途中，integration fix round 4（`ba854e8`，只改 `SessionRecoveryRecord.Participant` 的 -0.0 正規化）另修正一個入場 bug；目前 code HEAD 為 `ba854e8`。見 [M1–M4 整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
+- spec §15 的 M4 遊戲內人工驗收：正式 B-5 已於 2026-09-30 在 W-M4 以 `ba854e8` 記錄，B-5a–f 的最新有效列都是 PASS。其中 B-5b、B-5c 依使用者決定改依 spec §10／§15 更正預期後判定，原 FAIL（待判讀）列保留；見「人工驗收狀態（spec §15）」。2026-09-29 另有使用者在自有世界做的部分預驗（非 W-M4，不計入清單 E 段）。本文其餘證據都來自自動 gate 與 headless／跨 JVM probe，不能代填人工結果。
+- M1／M1.1／M1.2／M2／M4 人工驗收已於 2026-09-30 記錄（清單 E 段：無 gate waiver，結論可合併）；合併 main 前，記錄結果的 docs commit 還要在 GitHub Actions 雙平台通過。實際合併與 tag 狀態以 `main`／tag 為準。
 
 Commit 範圍：
 
@@ -21,6 +21,7 @@ Commit 範圍：
 - Spec／plan docs commits（`687cff95efbb2cc127083107b94f8be0f56408c4..ba9ca73`）：`fdac2311caeef058d52d1906a789a4a7cf505713` 設計、`ba9ca7338a855e85fa3e48161f6c7014a32634f7` 計畫。
 - Task 10 docs commits：`eba763b840ef738b17955c8b92ab594a210bc0c7`（初版），以及其後修正 review 意見的 docs fix commits。完整清單以 `git log -- docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 為準。
 - M1–M4 integration fix rounds 1–3：`1f900f5e1c4f06a6dc6a529152b86e2168d9cac9..428f52a79daa18ab9f5fd7a7f0f2980a34598987`，共 20 commits（涉及 M4 的有 `c474338` M4 GameTest 平台 gate 與 `_windows` 改名、`1ca107d` MEASURED checkpoint 退避）。逐項見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
+- M1–M4 integration fix round 4（2026-09-30）：`ba854e846482cf37bbb808bfc2df134090273969`（parent `d03bbc6`），只改 `SessionRecoveryRecord.Participant`（-0.0 正規化為 +0）與 `SessionRecoveryStateTest`。見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「Integration fix round 4（2026-09-30）」。
 
 | Commit | Task | 內容 |
 | --- | --- | --- |
@@ -37,7 +38,7 @@ Commit 範圍：
 | `c3cc053` | whole-branch fix1 | W-I2：DORMANT receipt 只封鎖自己的 Chamber |
 | `752ada1` | whole-branch fix1 | 跨 JVM 證明未 checked 的選擇不會跨重啟存活；dormant-reentry |
 
-下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`。行號以 `752ada1`（M4 驗收時的 code HEAD）為準，另標 `428f52a` 的段落除外。Integration fix 之後，`CorridorPageManager`、`CorridorRepositionService`、`SuperpositionSessionManager`、`SuperpositionSession`、`SessionRecoveryManager`、`PlayerCheckpointStore`、`WindowsPlayerCheckpointVerifier` 與 `SessionTransferService` 在 `428f52a` 的行號已位移，testmod 的 `M4CandidateDoorGameTests` 亦同（以 `git diff --stat 752ada1 428f52a -- src` 核對）；本文引用的其他 `src/main` 檔案在 `428f52a` 沒有變更。
+下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`。行號以 `752ada1`（M4 驗收時的 code HEAD）為準，另標 `428f52a` 的段落除外。Integration fix 之後，`CorridorPageManager`、`CorridorRepositionService`、`SuperpositionSessionManager`、`SuperpositionSession`、`SessionRecoveryManager`、`PlayerCheckpointStore`、`WindowsPlayerCheckpointVerifier` 與 `SessionTransferService` 在 `428f52a` 的行號已位移，testmod 的 `M4CandidateDoorGameTests` 亦同（以 `git diff --stat 752ada1 428f52a -- src` 核對）；本文引用的其他 `src/main` 檔案在 `428f52a` 沒有變更。`ba854e8`（round 4）只改 `SessionRecoveryRecord.java`：`Participant` 建構子多 3 行、在 `finite` 之後多一個私有 helper `positiveZero`（`:314-317`）。本文引用的 `:85-111`、`:115-119` 不變，`sameAuthority`（`:133-146`）在 `ba854e8` 位移 3 行（`:136-149`）。
 
 原始證據放在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（下稱 evidence owner）。`.superpowers/` 被 gitignore，是本機 scratch，不在 repo 內，也不進 release。因此本文直接寫出關鍵數字與 SHA-256；本文不能取代原始證據，交接時要以 exact commit 對照這些雜湊。
 
@@ -272,7 +273,7 @@ W-a 的 crash 分支經 ruling 接受，不視為 spec 偏離：§11 依 durable
 **回饋**：
 
 - 只有 `SELECTED` 才會觸發 `candidateMeasured`（`SuperpositionSessionManager.java:86-92`）、送出 actionbar「量子候選已鎖定，等待塌縮」並回傳 `SUCCESS`（`CandidateDoorInteraction.java:37`、`:40-43`）。
-- `ALREADY_SELECTED` 只顯示「候選已鎖定。」；其他情況回 FAIL，沒有成功訊息（`:44-47`）。
+- `ALREADY_SELECTED` 只顯示「候選已鎖定。」；其他情況回 FAIL，沒有成功訊息（`:44-47`）。選定後 `MEASURED` 會凍結尚未返還參與者的方塊互動（見「DORMANT 只封鎖自己的 Chamber（W-I2）」的 `SessionRecoveryManager.blocks`），所以這則訊息只在同一 tick 的第二個互動可達（spec §10），真實客戶端看不到（2026-09-30 人工驗收 B-5b）。
 - 注意：如果 `candidateMeasured` 在 checked `SELECTED` 之後才丟例外，互動會以 FAIL 結束（`:48-50`），但 durable receipt 已經成立。
 
 **互動不寫任何方塊**：25 格 Bulkhead 維持 `OPEN=false`，玩家與走廊都不移動。Comparator 仍是 `INVALID=0／IDLE=3／READY=7／ARMED=11`（`main/chamber/ChamberStatusSignal.java:7-13`，M4 未修改），不會輸出 15。
@@ -346,11 +347,13 @@ GameTest、recovery probe 與 M3 probe 都是 **testmod-present** runtime，不�
 
 Main-only 證據另見下文。
 
-以下分成兩段：「目前 gates」是 integration fix round 3 在目前 code HEAD `428f52a` 的 Windows 本機結果；「M4 驗收時的 final gates」是 `752ada1` 的歷史數字。兩者都不是 GitHub Actions 結果，CI 狀態以 GitHub Actions 上 feature HEAD 的 run 為準。
+以下分成兩段：「目前 gates」是目前 code HEAD `ba854e8`（integration fix round 4）的重跑摘要，加上 round 3 在 `428f52a` 的 Windows 本機明細；「M4 驗收時的 final gates」是 `752ada1` 的歷史數字。兩者都不是 GitHub Actions 結果，CI 狀態以 GitHub Actions 上 feature HEAD 的 run 為準。
 
-### 目前 gates（HEAD `428f52a`）
+### 目前 gates（`ba854e8` 摘要＋`428f52a` 明細）
 
-2026-09-29 以 integration fix round 3 的最終 gates 為準：Windows 本機、fresh root、`--rerun-tasks`、未設 `onlyBatches`。彙整檔 `ifix3-verification-summary.json`（SHA-256 `7b562188772d8510c81f04d327beae81a9c538cdccd295c18185a6696626563e`）由唯讀腳本 `ifix3-build-summary.ps1` 從原始 artifact 產生，任何不符即失敗。三輪修正的逐項說明見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
+2026-09-30 integration fix round 4 在 `ba854e8` 以同一套 harness 重跑全部 gates（Windows 本機、每個 gate 新的 root，wrapper console `ifix4-final-green-console.log` 全部 exit 0）：default GameTest 146/146（其中 `_windows` 73）；JUnit 403、0 failure／error、2 skipped；legacy 1/1；main-only oracle PASS；M3 lifecycle 4＋transfer 5 PASS；M4 recovery 24/24（`recovery-run-44f84277d10d45409d8e845bea5b04d6.json`）；CI 綠燈規則 PASS；release JAR 299 entries、sources 190、testmod 命中 0。Root 名稱與 GitHub Actions run 見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「Integration fix round 4（2026-09-30）」。`ba854e8` 的逐份 receipt 與 XML SHA-256 沒有另外整理，下表與以下明細仍是 `428f52a` 的數字。
+
+以下明細是 2026-09-29 integration fix round 3（`428f52a`）的最終 gates：Windows 本機、fresh root、`--rerun-tasks`、未設 `onlyBatches`。彙整檔 `ifix3-verification-summary.json`（SHA-256 `7b562188772d8510c81f04d327beae81a9c538cdccd295c18185a6696626563e`）由唯讀腳本 `ifix3-build-summary.ps1` 從原始 artifact 產生，任何不符即失敗。三輪修正的逐項說明見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
 
 | Gate | Root（evidence owner 內） | 結果 |
 | --- | --- | --- |
@@ -508,7 +511,7 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 - **Task 9 fix round 1（`38d901e`）**：per-test receipts 補到 13 份；有效 RED 為 `task9-fix1-per-test-red3-86839d3a1ce44db68dc09bbc0e94ee96`。
 - **Task 9 初版（`8917f84`）**：main-only、M3、M4 recovery 16 phases 與 Windows 14/14。
 - Whole-branch fix1 改了 production，因此以上 runtime 證據都已在 `752ada1` 重新跑過，不再沿用。
-- Integration fix rounds 1–3 又改了 production，`752ada1` 的 gates 同樣只作歷史紀錄；目前證據以上方「目前 gates（HEAD `428f52a`）」為準。
+- Integration fix rounds 1–4 又改了 production，`752ada1` 的 gates 同樣只作歷史紀錄；目前證據以上方「目前 gates」為準。
 
 ## M4 明確沒有做的事
 
@@ -522,7 +525,10 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 
 ## 人工驗收狀態（spec §15）
 
-- 正式 B-5（W-M4）**尚未執行**。本文的自動證據不能代填人工結果。
+- 2026-09-30 正式 B-5 已在 W-M4（`run/client-base/saves/QC-accept-WM4`）以 `ba854e8` 記錄，由 Claude 經使用者授權代為操作；逐列結果與證據見 [人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 的 B-5 表。本文的自動證據不能代填人工結果。
+  - PASS：B-5a（選擇一次與鎖定訊息）、B-5d（返還後原艙封鎖、無法再入場）、B-5e（比較器維持 11、LOW 不進 OFF、無法拆除）、B-5f（選測，另一座艙可入場）。
+  - B-5b（同門再點與其他門被拒絕）、B-5c（門仍關閉、玩家仍在走廊）依原預期記為 FAIL（待判讀）：選定後 `MEASURED` 且未返還的參與者，其 `onPlayerInteractBlock` 與 `onPlayerMove` 都被 `ServerPlayNetworkHandlerRecoveryMixin` 取消（`SessionRecoveryManager.blocks`），所以再點同門沒有「候選已鎖定。」，客戶端 F3 座標沿牆漂移（伺服器端位置不變）。使用者 2026-09-30 決定依 spec §10（`:241` 選定後凍結所有門互動；`:245` `ALREADY_SELECTED` 只出現在同一 tick 的第二個互動）與 §15 更正清單預期；原列保留，另加依更正後預期判定的 PASS 列（同一份證據，沒有重測）。後續見「M5 handoff acceptance」第 12 點。
+  - W-M4 的三座艙（C-M4、C-M4b、C-M4c）都已留下 DORMANT receipt，封鎖到 M5。
 - 2026-09-29 部分預驗（不計入清單 E 段）：使用者在自有世界 `run/client-base/saves/新的世界test (1)`（非清單建議的 W-M4，測前未備份）以 `1f900f5`（code 等同 `752ada1`）的 build 做了 B-5 的一部分，觀察到鎖定訊息、門仍關閉且仍在走廊、另一扇門被拒絕，以及返還後再喝藥不再入場；同門再點、比較器與 LOW 行為、另一座艙可入場都沒有做。逐項紀錄與存檔 NBT 佐證見 [人工驗收清單](../manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) 的「B-5 預驗」表與 2.5 (a)。
 - spec §15 的範圍：側門可被選擇一次、收到「候選已鎖定」訊息、其他門被拒絕，門仍關閉，玩家仍在走廊。
 - 「走廊消失、回原艙、門後是新世界」屬於 M5，不得把 M4 的中間狀態回報成原需求已完成。
@@ -544,7 +550,7 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
    - W-a 的 crash 分支。
    - W-b（flush 已 checked，之後才回報失敗）。
    - `candidateMeasured` 在 checked `SELECTED` 之後丟例外。
-6. **start 的 W-a 窗口**：初始 ARMING 已原子寫入、readback 失敗時，`start()` 經 `abandonInitial` 回 `REJECTED`。此時磁碟可能仍有該 ARMING record；若在下一次 journal 寫出覆蓋它之前 crash，重啟會依 durable ARMING 走 return-only，把玩家拉回原艙（玩家實際上未離開原艙）。
+6. **start 的 W-a 窗口**：初始 ARMING 已原子寫入、readback 失敗時，`start()` 經 `abandonInitial` 回 `REJECTED`。此時磁碟可能仍有該 ARMING record；若在下一次 journal 寫出覆蓋它之前 crash，重啟會依 durable ARMING 走 return-only，把玩家拉回原艙（玩家實際上未離開原艙）。2026-09-30 人工驗收的 -0.0 入場 bug 在線上實際走過這個窗口（磁碟上實見未 checked 的 ARMING record，直到下一次成功寫入才被覆蓋）；`abandonInitial` 不 flush 與 WARN 每秒一則已列入 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「延後清單」。
 7. **DORMANT 參與者可能同時在別的 session**：DORMANT 參與者可以同時屬於另一個活動 session。M5 任何「離開 DORMANT、重新移動玩家」的轉移，都必須再受跨 session 玩家唯一性約束。
 8. **原艙封鎖由 M5 接手**：dormant `MEASURED` 造成的原艙封鎖要由 M5 處理；M4 沒有提供遊戲內解除路徑。
 9. **活性風險**：`MeasuredWorldSaveCheckpoint` 使用的是全伺服器的 chunk／entity save 失敗計數（`MeasuredWorldSaveCheckpoint.java:30-38`）。無關 chunk 反覆失敗時，`MEASURED` 清理會一直重試。這是 fail-closed。2026-09-29 整分支 review（F-CHECKPOINT）指出 `752ada1` 會每 tick 全服存檔並記含 stack 的 WARN；integration fix `1ca107d` 已加上 per-space 指數退避 20→40→…→1200 ticks（成功或 receipt 改變時重置），WARN 同原因只在第一次附 stack、之後只計數，恢復時記 INFO（`428f52a`：`CorridorPageManager.java:60`、`:845-849`、`:858-867`、`:875-883`、`:1049-1059`）。「revision 只看本交易相關 chunks」仍待 M5 hardening (2)。
@@ -557,6 +563,9 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
     - 整個 `quantumchamber:superposition` 世界只接受玩家、掉落物、投射物與經驗球（`SuperpositionEntityPolicy.managed`）。M5 若要在該世界放其他 entity（例如 marker），必須先擴充這個准入規則。
     - RETURNING／MEASURED 只凍結尚未返還的參與者；`start()` 在任何 reservation 之前做原生 checkpoint 能力預檢。
     - ARMING 中止的 rollback 只拉回已移動或目前在走廊世界的成員；但 durable RETURNING 之後，`recover()` 仍會把已離開原艙 interior 的未返還成員（例如 ARMING 期間用終界珍珠或歌萊果離艙）送回原艙返還位（N-3，行為變更延後 M5 決定）。
+12. **2026-09-30 人工驗收發現的界線（延後 M5，非 blocker）**：
+    - 凍結沒有位置修正：`MEASURED`／`RETURNING` 凍結由 `ServerPlayNetworkHandlerRecoveryMixin` 取消 `onPlayerMove`，只丟棄移動封包、不送位置修正，被凍結參與者的客戶端座標（F3）會漂移到返還為止，伺服器端位置不變（B-5c 實見）。候選修法：取消移動時送回 teleport／位置修正。
+    - `ALREADY_SELECTED` 的可達性：選定後凍結所有門互動（spec §10 `:241`），「候選已鎖定。」只在同一 tick 的第二個互動可達（`:245`），真實客戶端的參與者看不到。這是文件真相、不是缺陷；M5 的玩家說明與人工預期不得承諾這則訊息。
 
 ## 已知 deferred 項目與觀察
 
@@ -602,7 +611,7 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 - spec m-1 關閉（已接受並文件化）。
 - q1–q3 併入 M5 hardening (3)；q4、q5、q7 延後 M5；q6、s3 關閉（跨 JVM probe 已覆蓋）。
 - Nits 延後或關閉。
-- 本輪新增的延後項（逐項一句話＋建議修法）見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「延後清單」；M5 前置 hardening 的優先序見上方「M5 handoff acceptance」第 10 點。
+- 本輪新增的延後項（逐項一句話＋建議修法）見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「延後清單」；M5 前置 hardening 的優先序見上方「M5 handoff acceptance」第 10 點。2026-09-30 人工驗收與 integration fix round 4 review 新增的延後項也列在同一清單，其中與 M4 有關的兩項見「M5 handoff acceptance」第 12 點。
 
 **觀察**：
 
@@ -635,7 +644,7 @@ M4 whole-branch review 最終 **Critical 0／Important 0**，spec compliance ✅
   - `m4-whole-branch-fix1-verification-summary.json`，SHA-256 `2858b912979f2decc0fc6f08a50b7c9e21212c9f5c4b2d97042f3c6e7573d1e5`。
 - 逐 task review（Tasks 1–9）都已 clean，紀錄在 `progress.md`。
 - Task 10 文件 review（`eba763b`）：Approved，Critical 0／Important 0／Minor 6，另有若干 Nit。這些 Minor 與 Nit 由其後的 Task 10 docs fix commit 處理；該 commit 的 review 結果以 `progress.md` 為準。
-- 其後的 M1–M4 整分支 final review（2026-09-29，範圍 `ddc8b1e..1f900f5`）與 integration fix rounds 1–3 的 review 結果，見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
+- 其後的 M1–M4 整分支 final review（2026-09-29，範圍 `ddc8b1e..1f900f5`）與 integration fix rounds 1–4 的 review 結果，見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。
 
 ## 參考資料
 

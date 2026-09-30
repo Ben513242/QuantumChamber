@@ -2,7 +2,7 @@
 
 > Status: Living design document  
 > Target: Minecraft Java Edition  
-> Document stage: 持續維護的玩法／架構規格；M0 已在 `main`，M1–M4 已在 `feature/m1-chamber` 實作並完成自動 gate、逐 task review 與 2026-09-29 的 M1–M4 整分支 final review（修正見 `docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`；人工驗收待記錄；合併狀態以 `main`／tag 為準）；M5 待設計<br>
+> Document stage: 持續維護的玩法／架構規格；M0 已在 `main`，M1–M4 已在 `feature/m1-chamber` 實作並完成自動 gate、逐 task review 與 2026-09-29 的 M1–M4 整分支 final review（修正見 `docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`，含 2026-09-30 的 integration fix round 4；人工驗收已於 2026-09-30 記錄，見 `docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md`；合併狀態以 `main`／tag 為準）；M5 待設計<br>
 > Revision: 0.11 — 核准單人先供電、後進艙啟動，以及斷電返還後解除原艙保護；使用者已核准技術規格並授權實作（實作狀態見上一行）
 >
 > **2026-09-17 玩法修訂：** 有效艙體外部供電即註冊並保護；供電期間可開門進入，關門且全員 QuantumState 後自動啟動，不要求第二個 rising edge。斷電先安全送回原始艙體、結束走廊，再解除原艙保護；其他宇宙的投影不可藉此拆除。另納入手持火把照明需求。
