@@ -6,7 +6,7 @@
 > - M3-A 動態 Universe backend 與 M3-B server-side transfer readiness。
 > - M4 候選門。
 >
-> M1（含 M1.1）與 M1.2 的全 feature final review 已完成；M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。2026-09-29 另完成 M1–M4 整分支 final review（同時作為 M2 的整分支 final review），找到的 7 項 Important 已由 integration fix rounds 1–3 修正並 re-review；2026-09-30 人工驗收途中發現的入場 bug 由 integration fix round 4（`ba854e8`）修正並 review，見 [M1–M4 整合審查紀錄](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。M1／M1.1／M1.2／M2／M4 的人工驗收已於 2026-09-30 記錄（[M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) E 段：無 gate waiver，結論可合併）。合併 main 前，記錄結果的 docs commit 還要在 GitHub Actions 的 Ubuntu 與 Windows job 都通過，完整順序見 [AGENTS.md](AGENTS.md)「下一步」。實際 CI、合併與 tag 狀態以 GitHub Actions、`main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
+> M1（含 M1.1）與 M1.2 的全 feature final review 已完成；M3-A、M3-B 與 M4 另各自通過 whole-branch review（Critical／Important 0）。2026-09-29 另完成 M1–M4 整分支 final review（同時作為 M2 的整分支 final review），找到的 7 項 Important 已由 integration fix rounds 1–3 修正並 re-review；2026-09-30 人工驗收途中發現的入場 bug 由 integration fix round 4（`ba854e8`）修正並 review，見 [M1–M4 整合審查紀錄](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。M1／M1.1／M1.2／M2／M4 的人工驗收已於 2026-09-30 記錄（[M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md) E 段：無 gate waiver，結論可合併）。記錄結果的 docs commit `9bce72e` 在 GitHub Actions run `36691210399` 的 Ubuntu 與 Windows job 都通過後，2026-09-30 以 `--ff-only` 合併 main（`ddc8b1e..9bce72e`），並建立 annotated tag `m1-m4`。實際 CI、合併與 tag 狀態以 GitHub Actions、`main`／tag 為準。M2 當時的跨 JVM 持久化與產物 gate 見 [M2 當時修訂狀態](docs/implementation-notes/2026-09-18-m2-revision-status.md)。
 
 QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組原型；其長期設計目標是支援具持久狀態的量子疊加 Chamber 與平行 Universe。
 
@@ -60,7 +60,7 @@ M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、�
 
 Windows 可在檔案總管雙擊專案根目錄的 [start-client.bat](start-client.bat)，或在 PowerShell 執行 `./start-client.bat`。腳本使用 Java 21，固定載入同一工作區的 Fabric 開發客戶端；失敗會保留錯誤與原始退出碼。
 
-功能分支 `feature/m1-chamber`（M1–M4）的人工驗收已於 2026-09-30 記錄；記錄結果的 docs commit 在 GitHub Actions 雙平台通過後，才以 `--ff-only` 合併 main，實際合併與 tag 狀態以 `main`／tag 為準；合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
+功能分支 `feature/m1-chamber`（M1–M4）的人工驗收已於 2026-09-30 記錄，同日以 `--ff-only` 合併 main 並建立 tag `m1-m4`；實際合併與 tag 狀態以 `main`／tag 為準。本機可從主 checkout 或 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動（兩者在合併當下內容相同）。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
 
 Windows PowerShell：
 

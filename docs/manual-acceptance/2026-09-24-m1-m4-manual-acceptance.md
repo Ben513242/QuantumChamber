@@ -808,6 +808,8 @@ Gate waiver（只有在使用者決定帶著未 PASS 的項目合併時才填）
 | --- | --- | --- | --- |
 | 可合併（仍須本清單所在 docs commit 在 GitHub Actions 雙平台通過後，才以 `--ff-only` 合併） | 2026-09-30 | Ben（使用者於 AskUserQuestion 核可；controller 轉錄） | code `ba854e8`（人工驗收的程式基準） |
 
+合併紀錄：本清單所在的 docs commit `9bce72e` 在 GitHub Actions run `36691210399` 的 Ubuntu `build` 與 Windows `windows-native` 都通過後，2026-09-30 以 `git merge --ff-only` 合併 `main`（`ddc8b1e..9bce72e`），並建立 annotated tag `m1-m4`。
+
 ## 附錄：預期結果的程式依據
 
 以 `ba854e8`（清單開頭與 2.2 的 `$base`）為準（`428f52a..ba854e8` 的 production 變更只有 `main/persistence/SessionRecoveryRecord.java`，不在下表；下表所列檔案與行號不變）；`main/` 代表 `src/main/java/dev/quantumchamber/`。程式變更後，預期結果要依 E 段「review 引起的程式變更」條款重新核對。
