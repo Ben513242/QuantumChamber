@@ -271,6 +271,40 @@ class SessionRecoveryStateTest {
         assertTrue(loaded.participantsAvailable(List.of(new UUID(0,0x99))));
     }
 
+    @Test void negativeZeroSourceEqualsItsNbtRoundtrip() {
+        assertAll(negativeZeroArming().stream().map(initial -> () ->
+                assertEquals(initial,SessionRecoveryRecord.fromNbt(initial.toNbt(),3),"NBT 以 +0 寫出 ±0，record 仍須 exact 相等")));
+    }
+
+    @Test void negativeZeroYawArmingPassesCheckedSaveReadback() {
+        var variants=negativeZeroArming();
+        assertAll(java.util.stream.IntStream.range(0,variants.size()).mapToObj(i -> () -> {
+            var initial=variants.get(i); var state=new SessionRecoveryState(); state.put(initial);
+            var file=directory.resolve("negative-zero-"+i+".dat");
+            assertDoesNotThrow(() -> state.save(file.toFile(),null),"入場 ARMING 不得因 -0.0 視角／向量被 exact readback 拒絕："+i);
+            assertFalse(state.isDirty());
+            assertEquals(initial,state.flushedRecords().get(initial.sessionUuid()));
+            assertEquals(initial,SessionRecoveryState.load(file).flushedRecords().get(initial.sessionUuid()));
+        }));
+    }
+
+    /** 原生 wrapDegrees(-360f) 以 frem 得 -0.0f；另含 -0.0 pitch 與向量分量。 */
+    private static List<SessionRecoveryRecord> negativeZeroArming() {
+        float yaw=net.minecraft.util.math.MathHelper.wrapDegrees(-360.0f);
+        assertEquals(Float.floatToRawIntBits(-0.0f),Float.floatToRawIntBits(yaw),"fixture：原生 wrapDegrees(-360) 產生 -0.0f");
+        var template=candidateRecord(false); var p=template.participants().getFirst();
+        var people=List.of(
+                new SessionRecoveryRecord.Participant(p.playerUuid(),p.sourcePosition(),p.sourceVelocity(),yaw,p.pitch(),p.quantumStateSnapshot(),false),
+                new SessionRecoveryRecord.Participant(p.playerUuid(),p.sourcePosition(),p.sourceVelocity(),p.yaw(),-0.0f,p.quantumStateSnapshot(),false),
+                new SessionRecoveryRecord.Participant(p.playerUuid(),new net.minecraft.util.math.Vec3d(-0.0,66.0,9.5),p.sourceVelocity(),
+                        p.yaw(),p.pitch(),p.quantumStateSnapshot(),false),
+                new SessionRecoveryRecord.Participant(p.playerUuid(),p.sourcePosition(),new net.minecraft.util.math.Vec3d(0.1,-0.0,0.3),
+                        p.yaw(),p.pitch(),p.quantumStateSnapshot(),false));
+        return people.stream().map(person -> SessionRecoveryRecord.candidateAware(template.sessionUuid(),template.chamberUuid(),
+                template.origin(),List.of(person),template.spaceLeases(),SessionState.ARMING,false,template.semantics(),
+                template.candidateContext().orElseThrow())).toList();
+    }
+
     static SessionRecoveryRecord dormantReceipt() {
         var measured=candidateRecord(true);
         var returned=SessionRecoveryManager.returnedRecord(measured,measured.participants().getFirst().playerUuid());

@@ -124,6 +124,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             Objects.requireNonNull(playerUuid, "playerUuid");
             finite(sourcePosition); finite(sourceVelocity);
             if (!Float.isFinite(yaw) || !Float.isFinite(pitch)) throw new IllegalArgumentException("視角必須為有限值");
+            // NBT 把 ±0 都快取寫成 +0，strict readback 以 Float／Double.compare 比對；-0.0 先正規化為 +0。
+            sourcePosition = positiveZero(sourcePosition); sourceVelocity = positiveZero(sourceVelocity);
+            yaw = yaw == 0.0f ? 0.0f : yaw; pitch = pitch == 0.0f ? 0.0f : pitch;
             quantumStateSnapshot = Objects.requireNonNull(quantumStateSnapshot, "quantumStateSnapshot").copy();
         }
         @Override public NbtCompound quantumStateSnapshot() { return quantumStateSnapshot.copy(); }
@@ -307,6 +310,10 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         if (!Double.isFinite(vector.x) || !Double.isFinite(vector.y) || !Double.isFinite(vector.z)) {
             throw new IllegalArgumentException("向量必須為有限值");
         }
+    }
+    private static Vec3d positiveZero(Vec3d vector) {
+        var canonical = new Vec3d(vector.x == 0 ? 0.0 : vector.x, vector.y == 0 ? 0.0 : vector.y, vector.z == 0 ? 0.0 : vector.z);
+        return canonical.equals(vector) ? vector : canonical;
     }
     private static NbtList vector(Vec3d vector) {
         var list = new NbtList(); list.add(NbtDouble.of(vector.x)); list.add(NbtDouble.of(vector.y)); list.add(NbtDouble.of(vector.z)); return list;
