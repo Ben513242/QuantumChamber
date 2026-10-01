@@ -548,7 +548,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
   - 預載不用阻塞式 `getChunk(create=true)`。
   - 第一次寫入清 interior、箱子不噴物品、逐格驗證、checkpoint 之後才 COMPLETE；之後的寫入只修不變量 cell、保留 interior；COMPLETE 之後刪除 projection ledger（schema 4）→ 不重寫 interior。
   - 實體交叉檢查：ledger 沒有 entry、目的地已有一座艙 → `PROJECTION_CONFLICT`；有 PENDING 時照第一次寫入。
-  - 既有 entry 的位置驗證（spec §6「既有紀錄的驗證」）：`CollapseAuthorities.projection(UUID, UniverseId)` 不帶來源艙位置、不驗證 Role／ControllerPos／OutwardFacing。在決定首次寫入或修復之前，一律先 `writeProjection(PENDING)` 取得 site 驗證（回 INVALID_TRANSITION 並帶回 COMPLETE 時改走修復路徑），或以帶預期位置的查詢比對；不符 → `AUTHORITY_CORRUPT`。不得直接拿 `FOUND COMPLETE` 跳過驗證。
+  - 既有 entry 的位置驗證（spec §6「既有紀錄的驗證」）：`CollapseAuthorities.projection(UUID, UniverseId)` 不帶來源艙位置、不驗證 Role／ControllerPos／OutwardFacing。在決定首次寫入或修復之前，一律先 `writeProjection(PENDING)` 取得 site 驗證（回 `ALREADY_COMPLETE` 並帶回 COMPLETE entry 時改走修復路徑；新 key 直接寫 COMPLETE 是 caller 錯誤，會丟例外），或以帶預期位置的查詢比對；不符 → `AUTHORITY_CORRUPT`。不得直接拿 `FOUND COMPLETE` 跳過驗證。
   - §9.3 退化規則只依權威健康（初始化結果、執行期間 `lost`）切換；projection ledger 已滿或單筆不符不得讓全部投影進入退化模式。
   - 要寫入的 cell 有玩家時不寫入；有生成的動物時照常寫入、不移除 entity。
   - 投影衝突 → `PROJECTION_CONFLICT`；注入寫入失敗 → `PROJECTION_FAILED` → 邊緣觸發＋退避重試成功。
