@@ -1725,6 +1725,7 @@ GREEN 數字：
   - 本段的 docs commit 接在 `20966a2` 之後。
 - Code range `6cce51f..20966a2`。
 - 還沒有任何程式會產生塌縮狀態（提交 COLLAPSING 屬 F3d），所以 production 行為不變：新的分支只有測試 fixture 走得到，M4 狀態的判斷都照舊（逐列見下表）。
+- Review：首輪結果與 fix round 1 見本節最後的「Fix round 1」。
 
 ### §13.2 逐列對照
 
@@ -1843,8 +1844,8 @@ GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 
 ### 偏離 plan／spec 字面之處
 
 - **COLLAPSING 的返還由推導驅動，不需要請求**：MEASURED 的保留式 recovery 要先有 `requestMeasuredRecovery`（runtime 旗標）。COLLAPSING 的 RETURN_PLAYERS／RELEASE_GEOMETRY 依 spec §7.3 是由 receipt 推導、不另存的階段，§13.2 也要求 M5 狀態不呼叫 `requestMeasuredRecovery`，所以 recovery tick 直接依 `recoveryWork` 處理 COLLAPSING，重啟後也不需要 attach 補旗標。結果是 plan F3d 檔案清單中 `SessionRecoveryManager` 的「COLLAPSING 凍結、返還延伸」與 `CorridorPageManager` 的「release 延伸」已在本 task 完成（§13.2 與 controller 補充第 2 點都指派給 F3a）。F3d 仍負責提交、返還失敗 WARN 附 cause、落點碰撞（R2 M6），以及 live 流程的 GameTest。
-- **`CorridorPageManager.fail` 不在 §13.2 表內，但一併延伸**：它是 measured release 路徑（`:837-842` 那一列）的失敗處理。若不延伸，COLLAPSING 的清理一失敗（例如原生存檔 checkpoint）就會嘗試寫 RETURNING（被 `sameAuthority` 拒絕），而且每次都記 ERROR。現在的做法：保留收據一律不轉 RETURNING；MEASURED 照舊請求 recovery；兩者都記同一則去重的 WARN，文字帶狀態（MEASURED 的文字不變，testmod 的既有斷言照舊通過）。由 G3 的受控 checkpoint 失敗與 mutation M-G2 鎖住。
-- **SSM 的 measured 收尾迴圈（`:203`）維持只處理 DORMANT**：§13.2 寫「COLLAPSING 的 release 收尾使用延伸後的同一路徑」，但 spec §5 規定 COLLAPSING 的 runtime 與來源 ticket 保留到終局或進入 SEALED，而這個迴圈的工作正是釋放兩者。所以解讀為：COLLAPSING 的收尾是 `CPM.tickMeasuredRelease` 的同一路徑，SSM 不在清理完成時釋放 runtime 與 ticket（G3 斷言 ticket 仍在）。
+- **`CorridorPageManager.fail` 不在 §13.2 表內，但一併延伸**：它是 measured release 路徑（`:837-842` 那一列）的失敗處理。若不延伸，COLLAPSING 的清理一失敗（例如原生存檔 checkpoint）就會嘗試寫 RETURNING（被 `sameAuthority` 拒絕），而且每次都記 ERROR。現在的做法：保留收據一律不轉 RETURNING；MEASURED 照舊請求 recovery；兩者都記同一則去重的 WARN，文字帶狀態（MEASURED 的文字不變，testmod 的既有斷言照舊通過）。由 G3 的受控 checkpoint 失敗與 mutation M-G2 鎖住。（controller 依 spec review 追認，見「Fix round 1」）
+- **SSM 的 measured 收尾迴圈（`:203`）維持只處理 DORMANT**：§13.2 寫「COLLAPSING 的 release 收尾使用延伸後的同一路徑」，但 spec §5 規定 COLLAPSING 的 runtime 與來源 ticket 保留到終局或進入 SEALED，而這個迴圈的工作正是釋放兩者。所以解讀為：COLLAPSING 的收尾是 `CPM.tickMeasuredRelease` 的同一路徑，SSM 不在清理完成時釋放 runtime 與 ticket（G3 斷言 ticket 仍在）。（controller 裁定照實作，§13.2 的措辭列入 F7 的 spec errata，見「交給後續」）
 - **為了可測而抽出的方法**：`SSM.attachRecord`、`CPM.restoreSpace` 是 private，GameTest 以反射呼叫，因為開服接手無法在共用的 GameTest server 上重跑；`SRM.recordFor(journal, player)`、`frozen(journal, player)`、`recoveryWork` 是 package-private，JUnit 在同一個 package。行為與原本的迴圈本體或條件相同，只多了 M5 分支。
 - **例外文字**：`CPM.requestMeasuredRecovery` 的例外由「缺少 durable MEASURED receipt」改為「缺少 durable 保留收據」，`releaseMeasured` 的例外改為「保留收據清理前必須先確認全員返還（MEASURED 另須獨立 recovery 請求）」。沒有測試依賴這兩段文字。
 - **G3 自行提交 COLLAPSING**：F3d 之前沒有 production 的提交路徑，G3 以 `commitRestore` 代替 `CollapseService`；其餘的 tick、返還與清理都走 production 路徑。
@@ -1858,8 +1859,57 @@ GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 
 
 - F3d：
   - 提交：live MEASURED 的 runtime 已持有來源 ticket；DORMANT 續行與同一 instance 內的 SEALED→COLLAPSING 重試必須自行取得來源 ticket（attach 只涵蓋重啟）。提交之後，recovery 會依 `recoveryWork` 自動返還與清理，不要呼叫 `requestMeasuredRecovery`（對塌縮狀態是 no-op）。
-  - 終局與進入 SEALED：需要正式 API 釋放 `SuperpositionSessionManager` 的 runtime（`sessions`）與來源 ticket（`tickets`）。目前 testmod 以 `M4CandidateTestAccess.releaseCollapseRuntimeForTeardown`／`releaseSourceTicketForTeardown` 反射代替，有 API 之後應改用它。終局之後若 runtime 仍在，presence 會是 UNKNOWN，原艙停在 RETURNING（spec §5 的警告）。
+  - 終局與進入 SEALED：需要正式 API 釋放 `SuperpositionSessionManager` 的 runtime（`sessions`）與來源 ticket（`tickets`）。目前 testmod 以 `M4CandidateTestAccess.releaseCollapseRuntimeForTeardown`／`releaseSourceTicketForTeardown` 反射代替，有 API 之後應改用它，並刪除這兩個 helper（fix round 1 的 m-4）。終局之後若 runtime 仍在，presence 會是 UNKNOWN，原艙停在 RETURNING（spec §5 的警告）。
+  - 離開 SETTLED 的時機（fix round 1 的 I-1）：`MeasuredRecoveryPhase.released()` 與 SETTLED 只是 flushed record 的推導。清 lease 的寫出失敗、同一 tick 內 RETRY_FLUSH 成功時，record 先變成 SETTLED，走廊 space 要到下一個走廊 tick 才釋放。CollapseService 離開 SETTLED（RESOLVE、終局、C→S）之前，必須等 `CorridorPageManager.measuredRecoveryComplete(sid)`（或 `SessionRecoveryManager` 的同名委派）為真。「清 lease 的 flush 注入失敗、同一 tick 內 RETRY_FLUSH 成功」列入 F3d 的 RED：fix round 1 的 G3 已能在 recovery 層重現，F3d 要在 CollapseService 的流程上再鎖一次。
+  - RETRY_FLUSH 沒有退避（fix round 1 的 m-6）：目前每個 tick 都重試寫出。依 spec §6 收斂共通第 2 點，以權威為單位統一退避。
+  - `MeasuredRecoveryPhase.from` 只接受 MEASURED 與 COLLAPSING（SELECTED），PASSAGE_READY、SEALED 與其他狀態丟 `IllegalArgumentException`（fix round 1 的 m-7）。CollapseService 走訪 journal 時要先以狀態過濾，或逐 session catch，不能讓例外從 `END_SERVER_TICK` 拋出。
   - PASSAGE_READY 由 `CollapseService` 在開服後以 `terminate(PASSAGE_ENDED)` 結束（見「補充第 6 點」）。
   - 多人返還 roll-forward 的 live 注入測試（RED 清單已列）；返還失敗 WARN 附 cause；落點碰撞（R2 M6）。
   - `SessionRecoveryManager` 收斂完成的 INFO 仍寫「未 checked candidate authority 已收斂」。F3d 本來就要改 `M4CandidateDoorGameTests.java`，可以連同 `:373` 的斷言一起改成不限 candidate 的文字。
+- F6 的 W1：attach 為 MEASURED／COLLAPSING 重建走廊 space 的正向測試（controller 依 F3a spec review 裁定交給 W1）。
+- F7：spec §13.2「COLLAPSING 的 release 收尾使用延伸後的同一路徑」的措辭與 SSM 收尾迴圈（`SSM:203`）只處理 DORMANT 的實作不一致，controller 裁定照實作，措辭列入 F7 的 spec errata（見「偏離」第 3 條）。
 - F5：`ChamberState.PASSAGE`→15、`ChamberStatusSignal`、`ChamberControllerBlock` 的訊息，以及 `reconcile` 的 R2 M5。`reconcile` 的 M5 分支目前一律回 ARMED（`PC:117-122`），F5 在這裡加入「PASSAGE＋已供電＋enabled→15」。
+
+### Fix round 1（`dce3da0`）
+
+- Review（首輪）：spec review ✅（Critical 0、Important 0、Minor 3）。controller 裁定：「偏離」的 (b) `CPM.fail` 延伸追認；(c) SSM `:203` 照實作，§13.2 的措辭列入 F7 勘誤；attach 重建 space 的正向測試交給 F6 的 W1。code quality review Not approved（Critical 0、Important 1、Minor 7），controller 指派本輪處理 I-1 與 m-1～m-7（m-6 只寫交接）。開工 HEAD 是 `7506be2`。
+- Commit `dce3da0` `fix: expose retained release completion and narrow the collapse lineage check`（parent `7506be2`）：`CorridorPageManager.java`、`MeasuredRecoveryPhase.java`（只有 Javadoc）、`SessionRecoveryManager.java`（只有 Javadoc）、`SuperpositionSessionManager.java`（只有例外文字）；測試新增 `src/test/java/dev/quantumchamber/corridor/CorridorPageManagerLineageTest.java`，修改 testmod `M4CandidateDoorGameTests.java`、`M4CandidateTestAccess.java`。本小節由其後的 docs commit 加入，同一個 commit 也在本節開頭加上 Review 行，在「偏離」第 2、3 條加註 controller 的裁定，並在「交給後續」補上 I-1、m-6、m-7 與 m-4 的交接，以及 F6 W1、F7 errata 兩條。
+- 行號以 `dce3da0` 為準。
+
+| 項目 | 處理 |
+| --- | --- |
+| I-1 (a) 清理完成的查詢 | 延伸既有的 `CPM.measuredRecoveryComplete`（`CPM:254-258`），不另開 API：flushed 是 MEASURED 或 COLLAPSING、`released()` 成立，而且 `!spaces.containsKey`。MEASURED 時就是原本的「DORMANT 且 space 已釋放」；SSM 收尾迴圈（`SSM:305`）先過濾 MEASURED，M4 行為不變。Javadoc 寫明 record 可能先於 space 變成 SETTLED，塌縮流程離開 SETTLED 之前必須等它為真。`SRM.measuredRecoveryComplete`（`SRM:240`）是同一個查詢的委派，補了 Javadoc |
+| I-1 (b) `released()` 的 Javadoc | `MeasuredRecoveryPhase.java:27-32`：只是 flushed record 的推導，不代表走廊 space、slot、保護範圍與 chunk ticket 已釋放；判斷清理完成要用 (a) 的查詢 |
+| I-1 (c) 交接 | 寫進「交給後續」的 F3d：CollapseService 離開 SETTLED（RESOLVE、終局、C→S）之前必須等 (a) 為真；「清 lease 的 flush 注入失敗、同一 tick 內 RETRY_FLUSH 成功」列入 F3d 的 RED（本輪的 G3 已能重現，F3d 要在 CollapseService 的流程上再鎖一次） |
+| I-1 測試 | G3 新增 `ReleaseFlushFault`（`M4CandidateDoorGameTests.java:665-682`，由 `beforeCandidateFlush` 在每次 journal flush 開頭呼叫，`:1285`）：COLLAPSING 清 lease 的寫出（current 已清空、flushed 仍有 lease）在 flush 開頭受控失敗恰一次。同一個 tick 內 recovery 的 RETRY_FLUSH 寫出成功，所以第一次看到 SETTLED 的 record 時 space 還在。新 witness：`releaseFlushFaultedOnce`、`recordSettledBeforeSpaceReleased`（重現 I-1 的情境）、`releaseIncompleteWhileSpaceRemains`（查詢為假）、`releaseCompleteOnceSpaceReleased`（space 釋放之後為真）。checkpoint 與清 lease 各失敗一次，保留 WARN 改為 `retainedWarnOncePerCause`（兩則、各附 stack、各對應一個原因） |
+| m-1 `sameLineage` 限縮 | `CPM:761-787`：改為 package-private static。單步 `sameAuthority` 照舊；放寬只限最新 flushed 是 COLLAPSING、快取是 SUPERPOSITION／MEASURED／COLLAPSING。Javadoc 說明：COLLAPSING 沒有 opened／expires、Crossed、RecoveryRequired 與 SealedReason（合法組合規定全部為空），所以不重檢；不放寬 ARMING，因為 `commitInitial` 與選門都會經過 `durable`，快取到 MEASURED 之前至少是 SUPERPOSITION；PASSAGE_READY 與 SEALED 沒有 space，快取不可能是它們。新增 JUnit 表格 `CorridorPageManagerLineageTest`（17 列，見下） |
+| m-2 失敗路徑的殘留 | G1（`:1671-`）加 `TestHooks`：本艙還有 fixture record 就移除，再斷電解除保護；成功路徑最後也 `hooks.release()`（冪等）。G2 的 hook 改用同一個 helper `cleanupFixtures`（`:1967-1975`），以 origin 位置找出本 test 的 fixture，連 `collapseFixture` 中途失敗留下的 MEASURED 也移除（反射）。G3 在 commit 成功後最先登記收尾 hook：清理真的完成（`measuredRecoveryComplete`）就以終局 API 移除，record 已不在就釋放 runtime 與來源 ticket；清理還沒完成時不能安全移除，保留現場。成功路徑先自行終局，再 `hooks.release()`，並新增 `runtimeAndTicketReleased` witness。這些收尾只動 journal、runtime 與 ticket，不動 catalog 或 world keys，boundary oracle 不受影響 |
+| m-3 G2 的 witness | 改名為 `disconnectWithActiveBWritesNeither`（`:1793`），註解與 test Javadoc 寫明：它只證明整合結果（斷線待處理清除、A 與 B 都沒被改寫）。GREEN 的 `markReturning` 對 A、B 都不寫入，所以 GameTest 分不出找到的是誰；「只找到 B」的鑑別由 JUnit `recordForFindsOnlyTheSessionThatStillOccupiesThePlayer` 的 16 組獨立案例鎖住 |
+| m-4 `releaseCollapseRuntimeForTeardown` | `M4CandidateTestAccess.java:264-280`：多一個 server 參數；前置檢查該 session 已不在 journal（current 與 flushed），或 flushed 是 SEALED，不符就丟例外。Javadoc 寫明 F3d 提供正式 API 之後刪除它與 `releaseSourceTicketForTeardown`（後者 G2 也用來移除自己以 `attachRecord` 建立的 ticket，所以不做 journal 前置檢查） |
+| m-5 例外文字 | `SSM:496` 改為「未 checked authority 尚未確認，不可經返還落盤」，`CPM:1095`、`:1099` 改為「未 checked authority 不可經 fault recovery 承認」。沒有測試依賴這些文字。`SRM` 收斂完成的 INFO 依原交接留給 F3d |
+| m-6 RETRY_FLUSH 沒有退避 | 本輪不改，寫進「交給後續」的 F3d：依 spec §6 收斂共通第 2 點，以權威為單位統一退避 |
+| m-7 `from` 的前提 | `MeasuredRecoveryPhase.java:13-16` 的 Javadoc：只接受 MEASURED 與 COLLAPSING（SELECTED），其他狀態丟 `IllegalArgumentException`，走訪多筆 record 的呼叫端要先過濾或逐筆隔離例外。「交給後續」的 F3d 寫明 CollapseService 要 per-session catch 或先過濾 |
+
+測試：
+
+- JUnit +1（540 → 541）：`CorridorPageManagerLineageTest.lineageRelaxesOnlyMultiStepProgressIntoCollapsing`。fixture 只用 public 建構子（與 persistence 測試的 schema 3 fixture 同形狀）。
+  - 接受：SUP→M→C、SUP→M→C→C、M→C→C（返還）、M(A 返還)→C（全員返還、清 lease）、C(返還)→C(清 lease)（單步）、S→C 重試（單步）。
+  - 拒絕：Destination 改變、CommittedAtGameTime 改變、selection 改變、ledger 少一筆（快取 M 與快取 SUP 兩種）、returned 倒退、R→C、快取 SEALED(TRR)→C、M→…→PASSAGE_READY、M→…→SEALED、快取 ARMING→C。CollapseRevision 無法改變：`CollapseFields` 的建構子要求非空 Collapse 的 revision 固定為 1，所以以 CommittedAtGameTime 與 Destination 代表不可變欄位。
+  - 對照：除了兩個單步列，其餘每一列都同時斷言單步 `sameAuthority` 不成立，證明接受確實來自放寬、拒絕不是靠第一行放行。
+- GameTest 數量不變（156，`_windows` 80）：G1、G2、G3 的修改見上表。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3a/fix1/`。`git diff 7506be2 dce3da0 -- <path>` 輸出的 SHA-256 前 8 碼（`fix1/diff-hashes.txt`）：`src` `b5263af5`、`src/main` `ff740a22`、`src/test` `95282c60`、`src/testmod` `9b0e7fc1`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| 開發確認（不作為證據） | GREEN 的 production 與測試，在 RED 之前先確認改過的 GameTest 能跑完 | GameTest＋onlyBatches 3 個 F3a batch：`gate-f3a-fix1-dev-green-cb02fcd400584be48cc6e36d3df1ae0f` | 3/3 PASS；log 有兩則 COLLAPSING 保留 WARN（checkpoint、清 lease 的受控失敗）與 checkpoint 恢復的 INFO |
+| RED JUnit | `7506be2`；porcelain 為 3 個 ` M` 與 1 個 `??`（逐檔 blob 在 `fix1/red-state.txt`）。`CorridorPageManager.java` 是暫時的 RED adapter（`fix1/red-main-adapter.diff`，前 8 碼 `878fdf30`）：只把 `sameLineage` 改成 package-private，判定與 `7506be2` 相同；其他 production 檔與 `7506be2` 相同。測試與 GREEN 相同 | focused `persistence.*`、`chamber.*`、`corridor.*`（`fix1/red-junit.log`、`red-junit-xml/`、`red-junit-breakdown.txt`、`red-failure-types.txt`） | 預期 FAIL：298 個中 1 個，就是新的 lineage test。5 個子失敗全部是 `AssertionFailedError`：R→C、快取 SEALED(TRR)→C、M→…→PASSAGE_READY、M→…→SEALED、快取 ARMING→C 都是 `expected: <false> but was: <true>`。其餘列在 RED 通過（舊的放寬也會拒絕它們），以 mutation L-1 證明 |
+| RED GameTest | 同上一列的工作樹（GameTest 不跑 JUnit，所以不必換掉 JUnit 測試檔） | GameTest＋onlyBatches 3 個 F3a batch：`gate-f3a-fix1-red-gametest-7e2e004462c643dcb736bd2290fb0a67` | 預期 FAIL：G1、G2 PASS；G3 只有 `releaseCompleteOnceSpaceReleased=false`（`7506be2` 的查詢對 COLLAPSING 一律為假）。`releaseFlushFaultedOnce`、`recordSettledBeforeSpaceReleased`、`releaseIncompleteWhileSpaceRemains` 都是 true，也就是 I-1 的情境在 `7506be2` 上確實出現。test 的收尾照常完成，boundary oracle PASS，world exact restore |
+| mutation | GREEN 工作樹，每個 mutation 單獨套用，跑完還原並以 `git hash-object` 核對（`fix1/mutations.sh`、`mutations/summary.txt`、`L-1.diff`、`L-1.log`、`L-1-TEST.xml`、`Q-1.diff`、`Q-1-gate.log`） | L-1：只跑 lineage test。Q-1：GameTest＋onlyBatches `m5_f3a_native_collapsing_return`，`gate-f3a-fix1-mut-q-1-cdd96dab471f43bc93804fabe6776775` | L-1（放寬分支改回 `return record.state().collapseState();`，controller 指定的 mutation）：11 個拒絕列全部失敗（`expected: <false> but was: <true>`）。Q-1（查詢不看 `!spaces.containsKey`）：G3 只有 `releaseIncompleteWhileSpaceRemains=false`。兩者還原後 blob 都與 GREEN 相同；Q-1 的 world exact restore |
+| GREEN focused | 工作樹，blob 與 `dce3da0` 相同（`fix1/green-state.txt`、`commit-blobs.txt`） | `fix1/green-focused.log`、`green-focused-xml/` | 298，0 failure／error，2 skipped |
+| GREEN JUnit 全部 | 同上 | `fix1/green-junit-all.log`、`green-junit-all-xml/` | 541，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）；比 F3a 首輪多 1，就是新的 lineage test |
+| GREEN Full | 同上 | `gate-f3a-fix1-green-full-b56446d837a64cf18574965fde713265` | PASS（`fix1/green-full-summary.txt`）：default GameTest 156/156（`_windows` 80）；boundary oracle PASS；per-test receipt 38/38 PASS；world exact restore；JUnit 541；release 350 entries／306 classes、sources 206，entry 清單與首輪完全相同（`fix1/green-jar-delta.txt`）；testmod 命中 0 |
+| GREEN Legacy | 同上 | `gate-f3a-fix1-green-legacy-cbe101eed6b84474a021ae5b6b35f2db` | PASS：1/1，world exact restore |
+| GREEN M4 recovery | 同上 | `recovery-run-5c17fbd9a8c8478e99e691a7d9629d6d.json`（`fix1/recovery-console.log`、`green-recovery-summary.txt`） | PASS：24/24 phases、24 個獨立 JVM，全部正常停止、lock 已釋放 |
+
+- 所有 gate 都在 commit 之前以工作樹執行；commit 時 7 個檔的 blob 與 gate 前記錄的逐一相同（`fix1/green-state.txt`、`pre-commit-hashes.txt`、`commit-blobs.txt`）。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
