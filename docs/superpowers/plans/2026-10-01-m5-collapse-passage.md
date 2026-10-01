@@ -40,7 +40,7 @@
    - hook 的靜態集合在同一個 JVM 內不得清除。
    - default run 中每一個會產生 MEASURED 的 test 都必須掛 hook（F4a 之後，沒掛 hook 的 test 會在 default run 配置宇宙，Review Focus 8 會抓到）。
 8. **與使用者指定順序的差異：** 使用者的順序把 discovery／terminal 排在 passage 之後。本 plan 把終局 API 放在 F2a、discovery append 放在 F2c，因為 SOURCE fast path（F3d）需要終局 API，而 spec §3 詮釋 2 把 discovery 放進 RESOLVE（F4a）。其餘順序相同。
-9. **pure JVM 的 fault 注入：** 權威的 IO 失敗（ledger、discovery、catalog 的「atomic move 完成、讀回失敗」）以 package-private 的 IO port 注入，比照 `SessionRecoveryState.JournalReadback`（`SessionRecoveryState.java:26-29`），不用 testmod mixin。GameTest 層的注入（物化失敗、投影寫入失敗、native move）才用 testmod mixin。
+9. **pure JVM 的 fault 注入：** 權威的 IO 失敗（ledger、discovery、catalog 的「atomic move 完成、讀回失敗」）在 pure JVM 測試以 package-private 的 IO port 注入，比照 `SessionRecoveryState.JournalReadback`（`SessionRecoveryState.java:26-29`）。port 的可見性決定測試位置：store 層的注入測試放在 store 所在的 package（catalog 在 `universe`，discovery 在 `candidate`）；`CollapseAuthorities` 在 `collapse` package 提供自己的 package-private port。GameTest 層的注入（物化失敗、投影寫入失敗、native move，以及 GameTest 中需要的 ledger IO 失敗）用 testmod mixin。
 10. **門的目標狀態：** F3b 在 `ChamberDoorService` 新增公開的「把 25 格門套用成指定狀態（open＋membrane）」API，沿用既有的 rollback 與 `activationBlocked` 處理；之後 F3d、F4b、F5 都經由它改門，不在 `CollapseService` 重寫一份。
 11. **過渡期的 presence：** `Presence.COLLAPSE`／`PASSAGE`、`presence()` 依 collapse view 推導，以及 `reconcile` 對 M5 presence 的分支（不走 pending、不呼叫 `returnToOrigin`、power state 只設 POWERED 或 RETURNING、比較器 11）都在 F3a 完成；`ChamberState.PASSAGE`→15 留到 F5。所以 F3d 之後產生的 M5 record 一開始就有正確的 presence。
 
@@ -383,7 +383,7 @@ public final class CollapseAuthorities {          // 每個 server instance 一�
 - Modify: `src/main/java/dev/quantumchamber/candidate/UniverseDiscoveryState.java`（正式 checked `append`）
 - Modify: `src/main/java/dev/quantumchamber/collapse/CollapseAuthorities.java`（discovery 與 catalog 的收斂 owner）
 - Modify: `src/main/java/dev/quantumchamber/universe/UniverseRegistryState.java`、`UniverseCatalogStore.java`（只限加入 package-private 的 IO port 以便注入「atomic move 完成、讀回失敗」；production 行為不變）
-- Test: `src/test/java/dev/quantumchamber/candidate/UniverseDiscoveryStateTest.java`、新增 `src/test/java/dev/quantumchamber/collapse/CatalogConvergenceTest.java`（fault 注入依決策 9）
+- Test: `src/test/java/dev/quantumchamber/candidate/UniverseDiscoveryStateTest.java`、擴充或新增 `src/test/java/dev/quantumchamber/universe/UniverseRegistryStateTest.java`（catalog 的 store 層注入）、`src/test/java/dev/quantumchamber/collapse/CollapseAuthoritiesTest.java`（以 `CollapseAuthorities` 自己的 port 測未確認狀態）；fault 注入依決策 9
 
 **範圍：** spec §6.2（既有 record 驗證、roll-forward；**不**新增 catalog 還原 API）、§6.4（append 與既有 record 驗證）、§6 收斂規則（discovery 與 catalog 部分）。M3 既有的 `save` 失敗語意（保留 current 與 dirty）本來就是 roll-forward，不改。
 
@@ -474,7 +474,7 @@ public final class CollapseAuthorities {          // 每個 server instance 一�
 - Modify: 依賴「MEASURED 會一直等待」的 M4 GameTest：`src/testmod/java/dev/quantumchamber/gametest/M4CandidateDoorGameTests.java`（加入 hook、處理延後清單「M4 test 收尾」與 q7 的 `selectionTeardown`）；若 `TestHooks` 或 M2 的 `OBSERVED` 靜態表必須改，先回報 controller
 - Test: `M5CollapseGameTests.java`（SOURCE、無殘留）、`M5UniverseGameTests.java`（UNIVERSE 停在 RESOLVE 的過渡測試）
 
-**範圍：** spec §7 開頭的規則（讀 collapse view、寫入前 current＝flushed、尚未確認的 roll-forward 期間只做收斂並攔截門的互動、「已供電」＝即時紅石輸入）、§7.1、§7.2、§7.3 的 RETURN_PLAYERS／RELEASE_GEOMETRY／RESOLVE（本 task 的 RESOLVE 是 stub：對 UNIVERSE 目的地停住、WARN 一次「目的地解析尚未實作」，不配置、不寫 SEALED；F4a 取代）、§7.4 SOURCE fast path、§5 終局之後移除 runtime 與來源 ticket、§11.1 的觸發部分、§11.3、§10.8 的「塌縮」與「Nether／End 選門」訊息。PREPARE、量子膜的套用與 PREPARE 期間的門規則在 F4b。
+**範圍：** spec §7 開頭的規則（讀 collapse view、寫入前 current＝flushed、尚未確認的 roll-forward 期間只做收斂、「已供電」＝即時紅石輸入）。本 task 涵蓋的階段（返還、清理、RESOLVE stub、WAITING）門都是一般狀態，依 spec §7 照該階段規則處理，**不改門的攔截**（攔截在 F4b）。另含§7.1、§7.2、§7.3 的 RETURN_PLAYERS／RELEASE_GEOMETRY／RESOLVE（本 task 的 RESOLVE 是 stub：對 UNIVERSE 目的地停住、WARN 一次「目的地解析尚未實作」，不配置、不寫 SEALED；F4a 取代）、§7.4 SOURCE fast path、§5 終局之後移除 runtime 與來源 ticket、§11.1 的觸發部分、§11.3、§10.8 的「塌縮」與「Nether／End 選門」訊息。PREPARE、量子膜的套用與 PREPARE 期間的門規則在 F4b。
 
 - [ ] **Step 1: RED（GameTest）。**
   - 選門 → 下一 tick COLLAPSING；全員返還（含返還落點碰撞、WARN 附 cause）；COLLAPSING 期間未返還者凍結並收到位置修正。
@@ -551,6 +551,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
   - 投影衝突 → `PROJECTION_CONFLICT`；注入寫入失敗 → `PROJECTION_FAILED` → 邊緣觸發＋退避重試成功。
   - 保護（破壞、放置、爆炸、活塞、流體）；退化規則；Controller 載入辨識為 inert PROJECTION（比較器 0、不 `registerOrigin`、不重複 log），涵蓋 chunk 載入與投影寫入時 `ChamberControllerBlock.onBlockAdded`（`:98-101`）觸發 refresh 兩條路徑。
   - 投影方塊只在 PENDING 確認之後寫：注入 PENDING 的落盤失敗 → 不寫任何方塊。
+  - 門狀態的重新套用（spec §7.3）：sealed 量子膜期間讓來源 chunk 卸載再重載 → 下一個 tick 依 collapse view 重新套用，不在 chunk 載入事件當下寫方塊。
   - sealed 量子膜只在門口沒有 entity、艙內沒有非參與者時套用；sealed 期間被指令傳進艙內的非參與者可以把門改為一般開門，塌縮不結束；艙外的非參與者被拒。
   - PREPARE 一開始（預載未完成）參與者關門 → 終局，catalog 已多 1、discovery 有紀錄（Review Focus 3）；門口有 entity 時改為一般開門。
   - PREPARE 中斷電 → 釋放 ticket、門一般開門、退回 WAITING；恢復供電並由參與者觸發 → 回到 PREPARE，沒有第二個宇宙。
@@ -596,7 +597,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 - Modify: `.github/workflows/build.yml`（新增的 `_windows` test 加入必要清單）
 - 必要時 Modify: `CollapseService.java`、`SessionRecoveryManager.java`（只限 §12 矩陣需要的修正，先回報 controller）
 
-**範圍：** spec §12（矩陣與 W1–W12）、§11.2 的重啟後重試（`MATERIALIZE_FAILED`、`AUTHORITY_UNREADABLE`）、§15 Cross-JVM、CI 清單。另加 phase：`AUTHORITY_UNREADABLE`（注入 IO）→ SEALED → 重啟 → 重試成功（spec §15）。
+**範圍：** spec §12（矩陣與 W1–W12）、§11.2 的重啟後重試（`MATERIALIZE_FAILED`、`AUTHORITY_UNREADABLE`）、§15 Cross-JVM、CI 清單。另加 phase：`AUTHORITY_UNREADABLE`（注入 IO）→ SEALED → 重啟 → 重試成功（spec §15）；sealed 量子膜期間 crash → 重啟後停在 WAITING，門是一般開門，沒有留下有碰撞的膜（spec §7.3）。
 
 - [ ] **Step 1: RED。** 每個 W 窗口一個 phase；先以 mutation 證明 probe 能偵測失敗（例如故意讓 W2 重新推導不同的 UniverseId）。
 - [ ] **Step 2: GREEN。** 每個 phase 證明：同一個 UniverseId、catalog 最多多 1 筆、沒有重抽、沒有人被困。
