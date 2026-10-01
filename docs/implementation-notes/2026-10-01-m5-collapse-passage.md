@@ -1044,7 +1044,7 @@ GREEN 數字：
   - 本段的 docs commit 接在 `b400b7f` 之後。
 - Code range `cfe5133..b400b7f`。
 - 沒有接任何 runtime 呼叫點：production 不會呼叫 `markCollapseAuthoritiesInitialized`，journal 照舊寫 schema 3（或 2），也沒有任何程式產生塌縮狀態，所以 production 行為不變。
-- Review：尚未進行。
+- Review：首輪結果與 fix round 1（`2d13248`）見本節最後的「Fix round 1」。
 
 ### Code-truth（`b400b7f`）
 
@@ -1152,7 +1152,7 @@ GREEN 數字：
 - `CollapseFields.destination` 照 plan 是 `CollapseDestination`（不是 `Optional`）；只有 `EMPTY` 為 null，建構子保證其餘情況都非 null。
 - Destination 必須對應被選中的候選（SOURCE↔`Source`、EXISTING 的 UniverseId、NEW→`Universe`）：spec §5 的合法組合沒有列這條，但 §7.2 規定了提交時的值，所以放進 record 的不變量。NEW 的推導值比對需要 F2b 的 `deriveUniverseId`，留給 F2b／F4a。
 - `Crossed`「只增不減」實作為前綴比對（只能在尾端附加），比集合包含更嚴格；正常的跨越寫入一次加一位，不受影響。
-- SEALED→COLLAPSING 的重試邊在 journal 層級對所有非 TRR 原因都開放（含 EXISTING_INELIGIBLE、AUTHORITY_CORRUPT、PROJECTION_CONFLICT）：spec §5 只把 TRR 排除在這條邊之外，「永久原因不自動重試」（§11.2）由塌縮流程的觸發政策負責，`SealedReason.retryable()` 提供判斷。
+- SEALED→COLLAPSING 的重試邊在 journal 層級對所有非 TRR 原因都開放（含 EXISTING_INELIGIBLE、AUTHORITY_CORRUPT、PROJECTION_CONFLICT）：spec §5 只把 TRR 排除在這條邊之外。「永久原因不自動重試」（§11.2）是 caller 的前提：fix round 1 起 `commitRestore` 的 Javadoc 寫明，S→C 只能在 caller 以 `SealedReason.retryable()`／`restartOnly()` 與 §11.2 的觸發、退避把關之後呼叫。
 - 一般 `put` 不能憑空建立塌縮狀態的 record（current、flushed、history 都沒有時拒絕）：spec §5 的塌縮狀態只能由 MEASURED 經狀態邊進入。之後的 GameTest 要放 M5 fixture，必須先放 MEASURED 再經 `commitRestore`（需要 `m5ReadyThisInstance`），或沿用 testmod 的反射。
 - READY 提交（C→R）不要求 `m5ReadyThisInstance`：spec §5 只用它決定「能不能提交新的 COLLAPSING」；READY 所需的權威確認由 F2b 之後的流程負責。
 - `TerminalOrigin` 的 SOURCE_FAST_PATH 與 PREPARE_DOOR_CLOSED 另要求全員已返還、lease 為空：spec §5 只寫「`Destination=SOURCE` 的 COLLAPSING」與「PREPARE 期間」，但 PREPARE 依 §7.3 必然在這個條件之後，提前移除 record 會讓尚未返還的參與者失去收據。
@@ -1164,7 +1164,7 @@ GREEN 數字：
 - strict codec 的訊息仍寫「schema 3 payload 欄位缺失或含未知欄位」「schema 3 ledger …」，schema 4 也沿用；`SessionRecoveryStrictnessTest` 以這些字串斷言，沒有為了措辭改既有測試。
 - `SessionRecoveryManager.returnedRecord`（`:308-317`）只接受 RETURNING／MEASURED，F3a 延伸返還到 COLLAPSING 時要一併處理（不在本 task 檔案清單）。
 - 多位參與者的 COLLAPSING 返還：第一位的 roll-forward 寫出失敗後，current 帶著他的返還進度；下一 tick 若以 flushed 為基礎寫第二位，`sameAuthority` 會拒絕（第一位的返還倒退）。這正是 spec §6 表格所說「真正讓它收斂的是只重試同一份 current 的寫出」，F3a／F3d 必須在 `rollForwardPending` 為真時只重試 flush，不疊寫新進度。
-- 隔離中的塌縮 session 若帶著尚未確認的 roll-forward 內容，`convergeQuarantined` 會以 flushed 取代它（roll-forward 內容被丟棄）。這只會在 restore 類的雙重故障之後出現；之後的塌縮流程會依 flushed 重做，不另處理。
+- 隔離與尚未確認的 roll-forward：`b400b7f` 的 `quarantine()` 會隔離帶著未確認 roll-forward 內容的 session，`convergeQuarantined` 再以 flushed 取代 current，可能把已落地的 SEALED(TRR) 寫回成 READY（違反 §10.3）。fix round 1 起，`quarantine()` 對「只差已 checked 的 roll-forward 進度」的 session 回 false、不隔離，caller 只重試寫出。只有 roll-forward 旗標與未 checked 的 restore 殘留同時存在時才隔離；經公開 API 不會出現這種組合，只有雙重故障才會。這時殘留必須收斂，roll-forward 內容會連同殘留一起由 flushed 取代，旗標同時清除。
 
 ### 交給後續
 
@@ -1172,3 +1172,80 @@ GREEN 數字：
 - F3a：`SessionRecoveryManager.recordFor`、`blocks`／`freezes`、`presence()` 與 spec §13.2 其餘呼叫點改用 `occupies`、`receiptRetained` 與 `collapseView`；COLLAPSING 的返還與清 lease 經一般 `put`（roll-forward）或 `commitRollForward`。
 - F3d：COLLAPSING 提交一律經 `commitRestore`（`REJECTED`／`RESTORED` 時走 §7.1 的提交失敗路徑與退避）；終局經 `terminate`，同時移除 `SuperpositionSessionManager` 的 `sessions` 與來源 `tickets`；SOURCE fast path、通道結束與 §11.3 取消的 INFO 由呼叫端記；commit 失敗的 WARN 去重也在呼叫端。
 - F7：寫入文件：M5 build 寫過 schema 4 之後，M4 build 讀取會 fail closed（不可降版）。
+
+### Fix round 1（2d13248）
+
+- Review（首輪）：spec review ✅（Critical 0、Important 0、Minor 2），code quality review Approved（Critical 0、Important 0、Minor 8）。controller 指派本輪處理 Q1–Q6、nit 與 spec M1／M2；Q7 交給 F3a（見下方）。
+- Commit `2d13248` `fix: tighten collapse edges and keep unconfirmed roll-forward out of quarantine`（parent `a143b2f`）：`SessionRecoveryRecord.java`、`SessionRecoveryState.java`、`SessionState.java`、`SessionRecoverySchema4Test.java`。本小節由其後的 docs commit 加入，同一個 commit 也改寫了上方「偏離 plan／spec 字面之處」的 SEALED→COLLAPSING 一條與「觀察」的隔離一條。
+- 行號以 `2d13248` 為準。
+
+| 項目 | 處理 |
+| --- | --- |
+| Q1 改變狀態的邊不得夾帶進度 | `collapseEdge`（`SessionRecoveryRecord.java:236-270`）：M→C、C→R、C→S、R→S（TRR）、S→C 要求 `participants` 與 `spaceLeases` 都與 previous exact 相同（`sameProgress`，含 returned 與順序）。進度只能經 C→C、R→R 的 self-loop 寫入。§7.1 的「部分參與者已返還、lease 已清空」是 previous MEASURED 本來就帶著的進度，提交時原樣帶入，所以仍合法（`部分返還的 MEASURED→COLLAPSING`、`DORMANT→COLLAPSING` 兩列照舊合法）。沒有需要夾帶進度的邊 |
+| Q2 不隔離尚未確認的 roll-forward | `quarantine`（`SessionRecoveryState.java:210-218`）：session 有 roll-forward 旗標，而且 current 的 authority 已 checked（`authorityChecked`：candidate 三欄位與 flushed 相同、沒有跨 restore 邊）時回 false，不隔離。Javadoc 寫明理由（收斂會以 flushed 取代 current，把可能已落地的 SEALED(TRR) 寫回成 READY，違反 §10.3）與 caller 的做法（只重試寫出）。已隔離時直接回 false（原本由 `Set.add` 回 false，行為相同） |
+| Q2 兩者能否同時存在 | roll-forward 旗標只由一般 `put` 設定，而一般 `put` 在 current、flushed、history 任一份到 record 是 restore 邊時拒絕；塌縮狀態的 candidate 三欄位又由 `sameAuthority` 固定。所以經公開 API 不會同時有「旗標」與「未 checked 殘留」，只有雙重故障（測試以反射製造）才會。那時照常隔離：殘留必須收斂，`restoreCheckedAuthority` 同時清除旗標 |
+| Q2 內部的 CAS 不符分支 | `commitRestore`（`:456`）與 `terminate`（`:491`）的 CAS 不符分支照舊呼叫 `quarantine`；若因上述規則被拒（current 是已 checked 的 roll-forward 內容），回 `ROLL_FORWARD_PENDING`，不再謊稱 `QUARANTINED`。`TerminalResult.Status` 新增 `ROLL_FORWARD_PENDING`（`:343`）：沒有終局，caller 只重試寫出。終局的 flush 期間以一般 `put` 重入寫入 roll-forward 就會走到這裡（`terminalCasMismatchWithUnconfirmedRollForwardIsNotQuarantined`）；`commitRestore` 的窗口中一般 `put` 寫不出這種 current，只能以反射覆蓋 |
+| Q3 讀回已確認之後的例外 | `warnAfterConfirmed`（`:508-513`）：三個入口在 flushed 已確認、但 flush 有例外時記 WARN（`FailureText.describe`），同一個 session 以 `FailureText.dedupeKey` 去重（`confirmedFailureWarnings` `:59`，原因改變才再記；終局成功時移除，`:495`），沿用 `SessionRecoveryManager` 的去重慣例 |
+| Q4 log 責任 | `terminate` 不再記 WARN（`:471-497`），與 `commit*` 一致。`CommitResult`（`:296-320`）、`TerminalResult`（`:325-349`）的 Javadoc 寫明 caller 依 (sid, 提交的狀態邊／origin, `FailureText.dedupeKey`) 去重後記 WARN |
+| Q5 API 前提 | `commitRestore` 的 Javadoc：S→C 只能在 caller 以 `SealedReason.retryable()`／`restartOnly()` 與 §11.2 的觸發、退避把關之後呼叫。`TerminalOrigin`：`SOURCE_FAST_PATH`／`PREPARE_DOOR_CLOSED` 只能在 PREPARE 階段呼叫（RESOLVE 已完成），journal 只能檢查 settled，前提由 caller 負責。`markCollapseAuthoritiesInitialized`（`:130-144`）：不可撤銷；只能在兩個 ledger 都建立並 strict 驗證成功之後呼叫；呼叫之後 `m5Evidence()` 不再等於「flushed envelope 是否為 4」 |
+| nit | `checkedAuthority` 欄位註解（`:42-44`）改為說明它供 `restoreCheckedAuthority` 的四個呼叫者，終局確認後修剪；`SessionState.retainsReceipt()`（`SessionState.java:7-11`）註明呼叫端用 `SessionRecoveryState.receiptRetained`（§13.2）；`writtenSchema`（`:616-624`）註明 `envelopeSchema` 的不混裝驗證是副作用、回傳值只在最後一行使用 |
+
+測試（`SessionRecoverySchema4Test`，JUnit +5，既有 test 有增改）：
+
+- Q1：`stateEdgesAcceptOnlyTheSpecifiedTransitions` 加 6 個非法列：M→C 夾帶返還、M→C 夾帶清 lease、C→R 夾帶返還與清 lease、C→R 夾帶清 lease、C→S 夾帶返還與清 lease、C→S 夾帶清 lease（R→S、S→C 兩端都已 settled，無法夾帶）。
+- Q2：新增 `unconfirmedRollForwardIsNotQuarantinedAndTheNextFlushWritesIt`（TRR 的 roll-forward 寫出在 atomic move 之後讀回失敗 → `quarantine` 回 false → current 仍是 TRR → 下一次 flush 寫出 TRR，不退回 READY）、`terminalCasMismatchWithUnconfirmedRollForwardIsNotQuarantined`、`commitRestoreCasMismatchWithUnconfirmedRollForwardIsNotQuarantined`；`collapseViewUsesCurrentOnlyForUnconfirmedRollForward` 原本「put SEALED → 隔離 → view 回 flushed」的案例改成「`quarantine` 回 false、view 仍是 SEALED」，另加雙重故障（反射）照常隔離、view 回 flushed 的案例。
+- Q3：`exceptionAfterConfirmedReadbackStillCountsAsCommitted` 加 log capture：第一個原因出現兩次（restore、roll-forward）只記一次 WARN；換原因後再記一次，之後終局遇到同一個新原因不再記，共 2 則，含 session 與 root cause。
+- Q4：`terminalFlushFailureRestoresExpectedAndKeepsDirty` 加 log capture：終局失敗時 journal 不記 WARN。
+- Q6／spec M1 的覆蓋：
+  - `:274` 的空斷言（`commitRollForward(transfer, transfer)` 被拒其實是因為「沒有變更」）改成有實際變更的 TRR self-loop（多附加一位 Crossed），並斷言拒絕原因是「不是 roll-forward 類」。
+  - 新增 `preconditionsRejectBeforeAnyWrite`：先隔離再終局 → REJECTED；`commitRollForward(MEASURED, 返還後的 MEASURED)` → REJECTED，journal 不變、不 dirty。
+  - 新增 `quarantinedDoubleFaultConvergesAndClearsTheRollForwardFlag`：Q2 改了隔離條件，所以用 Q2 允許隔離的雙重故障（反射）：旗標＋restore 殘留 → 隔離 → 收斂 → 旗標為假。
+  - 單一違規的 fixture：非 TRR SEALED 只帶 Crossed（opened／expires 為 -1，每個非 TRR 原因各一）、COLLAPSING 只帶 RecoveryRequired、READY 只帶 RecoveryRequired、READY 只帶 SealedReason、TRR 的 Crossed 含參與者以外的 UUID。
+  - `!m5Evidence` 守門改斷言錯誤訊息（「M5 authority 尚未初始化」）。
+  - Nether fixture 只改 `SourceFamilyRef`、不動 Origin；另加「只有 Origin 在 Nether」的列（REJECTED）。
+  - `commitRestoreFailureRestoresCurrentKeepsDirtyAndIsOverwrittenByTheNextWrite` 擴充為三條 restore 邊（M→C、C→R、S→C）× 兩種失敗。
+- log capture 是測試內的 log4j appender（比照 testmod `LogCapture`），掛上時先送 WARN 探針，攔不到就失敗，不能以空結果冒充「沒有 WARN」。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f2a/fix1/`。diff hash 是 `git diff a143b2f 2d13248 -- <path>` 輸出的 SHA-256：`src` `075bdb92…`、`src/main` `aa95d7bd…`、`src/test` `e584af9e…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED | `a143b2f`；測試為本輪的 `SessionRecoverySchema4Test`，production 只多 `TerminalResult.Status.ROLL_FORWARD_PENDING` 一個常數讓測試能編譯（`fix1/red-state.txt`、`red-main-adapter.diff`，tracked diff `f68be30e…`） | focused `persistence.*`（`fix1/red-junit.log`、`red-junit-cases.txt`） | 預期 FAIL：36 個中 7 個，全部在目標斷言失敗，沒有任何 fixture 在建構時丟例外。Q1：6 個新邊列 `expected: <false> but was: <true>`；Q2：`未確認的 SEALED(TRR) 不得隔離 ==> expected: <false> but was: <true>`、view 案例同、兩個 CAS 不符案例 `expected: <ROLL_FORWARD_PENDING> but was: <QUARANTINED>`；Q3：`expected: <2> but was: <0>`；Q4：`expected: <[]> but was: <[checked 終局未確認…]>`。其餘 29 個（含所有只補覆蓋的測試）通過 |
+| mutation | GREEN 工作樹，每個 mutation 單獨套用、只跑 `SessionRecoverySchema4Test`、跑完從備份還原並以 SHA-256 核對（`fix1/mutations.ps1`、`mutations/summary.txt`、`mutations/M-*.log`、`M-*-TEST.xml`） | 12 個 | 全部被對應的測試抓到，見下表；跑完後 4 個檔的 blob 與跑之前相同（`pre-mutation-hashes.txt`、`post-mutation-hashes.txt`） |
+| GREEN focused | 工作樹，blob 與 `2d13248` 相同（`fix1/green-state.txt`） | `fix1/green-focused.log` | 164，0 failure／error，2 skipped；`SessionRecoverySchema4Test` 36/36 |
+| GREEN JUnit 全部 | 同上 | `fix1/green-junit-all.log` | 483，0 failure／error，2 skipped |
+| GREEN Full | 同上 | `gate-f2a-fix1-green-full-1146b03a353145e0a9705b7f96e4a086` | PASS |
+| GREEN Legacy | 同上 | `gate-f2a-fix1-green-legacy-3d22705faa5d4807b889c837dfdc074e` | PASS |
+| GREEN M4 recovery（第一次） | 同上（`fix1/recovery-console.log`） | root `run/m4-recovery-0118ed4b47cc4027a7878ed58a3f6c53-chain`；phase evidence `.superpowers/sdd/2026-09-21-m4-candidate-doors/recovery-0118ed4b47cc4027a7878ed58a3f6c53-chain/dormant-reentry/` | FAIL，保留不改判：`chain` 的 select、recover、verify PASS，第 4 個 phase `dormant-reentry` 8 分鐘逾時（`owned phase 逾時；禁止同 root 重跑`）。見下方說明 |
+| GREEN M4 recovery（重跑，新 nonce） | 同上（`fix1/recovery2-console.log`） | `recovery-run-adba9afab5da40c983703cbac4c1e433.json` | PASS |
+
+| Mutation | 拿掉的守門 | 失敗的測試（目標斷言） |
+| --- | --- | --- |
+| M-a | `rollForwardEdge` 排除 SEALED | `sealedTransferRecoveryRequiredIsFullyFrozen`（拒絕原因不再是「不是 roll-forward 類」） |
+| M-b | `terminate` 拒絕隔離中的 session | `preconditionsRejectBeforeAnyWrite`（`被拒絕的提交不得寫出`） |
+| M-c | `commitRollForward` 的邊檢查 | `preconditionsRejectBeforeAnyWrite`、`sealedTransferRecoveryRequiredIsFullyFrozen` |
+| M-d | `restoreCheckedAuthority` 清除旗標 | `quarantinedDoubleFaultConvergesAndClearsTheRollForwardFlag` |
+| M-e | 塌縮寫入要求 `m5Evidence` | `collapseCommitsRequireEvidenceAndNewCollapsingRequiresReadiness`（訊息變成 restore 邊的拒絕） |
+| M-f | §11.3 改看 `origin().role()` | `unsupportedSourceCancelAcceptsOnlyNonOverworldDormantNewOrExisting`（3 列：兩個只改 SourceFamilyRef 的列被拒、只改 Origin 的列被接受） |
+| M-g | `commitRestore` 失敗時還原 current | `commitRestoreFailureRestoresCurrentKeepsDirtyAndIsOverwrittenByTheNextWrite`（三條邊 × 兩種失敗共 6 個案例）、`commitRestoreWindowIsVisibleAsUncheckedAuthority` |
+| M-h | 非 TRR SEALED 的 Crossed 為空 | `sealedMatrixBindsTransferRecoveryRequiredToPassageFieldsBothWays`（7 個「非 TRR 只帶 Crossed」） |
+| M-i | COLLAPSING 的 RecoveryRequired 為空 | `collapsingMatrixAllowsPartialReturnButNoPassageFields`（「COLLAPSING 只帶 RecoveryRequired」） |
+| M-j | READY 的 RecoveryRequired 為空 | `passageReadyMatrixRequiresSettledUniverseWithOpenedPassage`（「READY 只帶 RecoveryRequired」） |
+| M-k | READY 沒有 SealedReason | 同上（「READY 只帶 SealedReason」） |
+| M-l | TRR 的 Crossed⊆參與者 | `sealedMatrixBindsTransferRecoveryRequiredToPassageFieldsBothWays`（「TRR 的 Crossed 只能是參與者」）、`schemaFourRejectionFixturesFailClosed`（Crossed 含 OUTSIDER 的 fixture） |
+
+- Full、Legacy 與 M4 recovery 在 commit 之前以工作樹執行；commit 時 4 個檔的 blob 與 gate 前記錄的相同。
+- default GameTest 153/153（`_windows` 79）、boundary PASS、per-test receipt 35/35；legacy 1/1、receipt 1/1；兩個 gate 的 world 都 exact restore。
+- JUnit 483，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`），比首輪多 5，就是本輪新增的 5 個 test。
+- JAR：release 320 entries（276 classes）、sources 200，與首輪 entry 清單完全相同（`fix1/green-jar-delta.txt`；`ROLL_FORWARD_PENDING` 是既有 enum 的常數，`confirmedFailureWarnings` 是欄位，都不新增 class）。testmod 命中 0。
+- M4 recovery（重跑）24/24 phases、24 個獨立 JVM。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+- 第一次 M4 recovery 的 `dormant-reentry` 逾時：
+  - probe 本身的斷言都通過：`events.jsonl` 只有 `initialized`、沒有 `failure`；log 依序是第二座 Chamber 走廊幾何完成、`走廊 STOPPING 票已對稱移除`、`Stopping server`、`Saving players`、`Saving worlds`，也就是 `success()` 之後的 `server.stop`。
+  - 之後原版的停服沒有結束。兩次 jstack（`fix1/dormant-reentry-jstack-98312.txt`、`-b.txt`，相隔 87 秒）的 `Server thread` 都在 `MinecraftServer.shutdown → ServerChunkManager.tick → ServerChunkLoadingManager.unloadChunks → tryUnloadChunk → thenRunAsync`，CPU 由 689 秒增加到 776 秒（約 100% 忙等），沒有 `quantumchamber` 的 frame。
+  - 同一 phase 的時間線（加入後約 3 秒停服）與 F2a 首輪的 `recovery-run-6baddfa9…` 相同，那次在 1 秒內停完。本輪的程式改動不在 M4 路徑上：Q1 只影響進入塌縮狀態的邊；Q2 只在有 roll-forward 旗標時生效，而旗標只會出現在塌縮狀態；終局與提交在 runtime 沒有呼叫點。判斷為原版停服的 chunk unload 忙等，與本輪改動無關；未查明觸發條件，若之後再出現要另開 task 調查。
+  - 處置：確認 PID 98312 的 commandline 是這個 nonce 的 `dormant-reentry` 之後才強制結束（`fix1/dormant-reentry-kill.txt`）。失敗的 root 與 phase evidence 原樣保留，以新的 nonce 重跑全部 24 phases。
+
+交給後續（本輪新增）：
+
+- F3a（Q7）：`uncheckedCandidateSessions` 現在也包含 restore 類殘留，名稱只講 candidate；`SessionRecoveryManager.java:147-148` 的 WARN 文字也只說「未 checked candidate authority」。兩處要改名或改字都需要動允許清單外的呼叫端（`SessionRecoveryManager`、`SuperpositionSessionManager`、testmod），交給 F3a。
+- F3d：終局與兩種 commit 的失敗都不在 journal 記 log，由 `CollapseService` 依 (sid, 狀態邊／origin, `FailureText.dedupeKey`) 去重後記 WARN；`ROLL_FORWARD_PENDING`（含終局回的那一種）時只重試寫出，不疊寫、不終局。
