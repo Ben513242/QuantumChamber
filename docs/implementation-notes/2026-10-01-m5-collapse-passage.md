@@ -843,3 +843,102 @@ Legacy 與 M4 recovery 依 controller 指示省略：本輪只改移動封包 mi
 - `.github/workflows/build.yml` 的明列清單沒有加入新的 `_windows` test，依 controller 對 H2／H3 的裁定留給 F6，期間由同一步驟的通則涵蓋。
 - 既有在凍結中送移動封包的 test（`native_disconnect_io_failure_preserves_removal_pending_and_retry_windows`、`native_channel_disconnect_and_join_queue_block_movement_until_next_tick_windows`）現在也會收到位置修正。它們斷言伺服器位置不變，仍成立；之後解凍再移動前都先 `confirmTeleport()`（取最後一則 teleport id），不受影響。
 - `onPlayerInteractBlock` 的凍結仍只取消，不重送方塊狀態；原生 sequence ACK 已讓客戶端撤回預測，不在 H4 範圍。
+
+## F1a：真 client probe 工具
+
+- Commit `6d28fa0` `test: add an opt-in real-client universe probe`（parent `fad924c`），只改派工列出的檔案：`build.gradle`；新增 `src/testmod/clientprobe/java/dev/quantumchamber/gametest/M5ClientProbe.java`、`src/testmod/clientprobe/resources/fabric.mod.json`，以及派工允許的 pure JVM 測試 `src/test/java/dev/quantumchamber/gametest/M5ClientProbeTest.java`。`UniverseTransferTestAccess.java`、`M3UniverseTransferProbe.java` 與 testmod 的 `fabric.mod.json` 都沒有改。
+- Code range `fad924c..6d28fa0`；本段由其後的 docs commit 加入。
+
+### Code-truth（`6d28fa0`）
+
+| 項目 | 位置 | 行為 |
+| --- | --- | --- |
+| source set `clientProbe` | `build.gradle:129-137` | java／resources 只在 `src/testmod/clientprobe/`。compile classpath＝main 的 compile classpath＋main 輸出＋testmod 輸出，只有 common Minecraft jar（不含 clientOnly），所以引用 client-only 類別會編譯失敗。runtime classpath＝自己的輸出＋`client.runtimeClasspath`＋testmod 的 `classesDirs`：不帶 testmod 的 `fabric.mod.json` 與 mixin 設定，client run 的 mod list 不會出現 testmod，也不靠它的 `environment:"server"` 過濾 |
+| source set `serverProbe` | `:139-143` | 沒有 source；runtime classpath＝`testmod.runtimeClasspath`＋testmod 輸出＋clientProbe 輸出，不經過 clientProbe 的 runtimeClasspath，clientOnly jar 不會上 server classpath |
+| JUnit classpath | `:145-148` | test 的 compile／runtime classpath 只多 `build/classes/java/clientProbe`（不帶 clientprobe 的 `fabric.mod.json`） |
+| run `clientProbe`／`serverProbe` | `:151-173` | `client()`／`server()`；`source` 是上面兩個 source set；都加 `vmArg -Dquantumchamber.clientProbe=true`。runDir 依 `-Pm5ProbeNonce` 為 `run/client-probe-<nonce>`／`run/server-probe-<nonce>`，nonce 格式檢查與 `m4Recovery` 相同（沒給時是 `disabled`） |
+| nonce 必填 | `:175-184` | `runClientProbe`／`runServerProbe` 的 `doFirst`：沒有 `-Pm5ProbeNonce` 或值為 `disabled` 時，在啟動 JVM 與建立 runDir 之前失敗，避免共用 `run/*-probe-disabled` |
+| `check` | `:186-188` | 依賴 `compileClientProbeJava`；Full gate 的 `build` 因此會編譯 clientProbe |
+| mod metadata | `src/testmod/clientprobe/resources/fabric.mod.json` | id `quantumchamber-clientprobe`、`environment:"*"`、唯一的 `main` entrypoint `M5ClientProbe`、沒有 mixin；depends `quantumchamber`、`fabric-api`、`minecraft 1.21` |
+| 開關 | `M5ClientProbe.java:67-80` | `System.getProperty("quantumchamber.clientProbe")` 精確等於 `true` 才註冊指令與事件，否則什麼都不註冊 |
+| 指令樹 | `:82-89` | `/qcprobe universe allocate｜enter｜return｜status`；根節點 `requires(hasPermissionLevel(2))`，子指令沒有參數 |
+| READY 紀錄 | `:104-121` | `SERVER_STARTED`（排在預設 phase 之後，晚於正式 lifecycle 的 bootstrap）讀 server 實際的 dispatcher，記 `M5_CLIENT_PROBE_READY server=<dedicated｜integrated> registered=… subcommands=… op1Denied=… op2Allowed=…`，後接 lifecycle 與 catalog 狀態。兩種 run 的 smoke 以這一行斷言 `/qcprobe` 已註冊 |
+| allocate | `:123-158` | 先 `UniverseTransferTestAccess.capture(server)`（正式 lifecycle 必須 ready 且健康）。catalog dirty 時拒絕；已有固定 UUID `f1a00000-0000-4000-8000-00000000f1a0` 時只回報 durable／ACTIVE；有其他 Universe 時拒絕；空 catalog 時 `allocateOverworld(uuid, 0)`（`EAGER_ENABLED`）→ `flush` → 讀回磁碟檔，比對 current／flushed／disk 相同且不 dirty，提示重啟 |
+| enter | `:160-184`；`advance` `:253-280` | 見下方「等待 FULL 與傳送」 |
+| return | `:186-209` | 只用本 server instance 內的 receipt。玩家不在 receipt 的目的世界時（例如死亡重生）作廢 receipt。在來源世界對 receipt 來源位置的 bbox 加 ticket，等 FULL 後 `returnToSource`，RETURNED 才移除 receipt。不改來源世界的方塊 |
+| status | `:212-221` | 唯讀：玩家的 world key、座標、receipt／pending；lifecycle；catalog 每筆的 availability、durable、ACTIVE |
+| 不建立 backend | `activeTarget` `:294-304`、`service` `:282-291` | backend 一律取自 `capture(server).backend()`，只呼叫 `resolveActive`，沒有 `new` backend、沒有 `materialize`。每個 server 只建一個 `UniverseTransferService(backend, new SessionTransferService())`（receipt 的 world token 只在建立它的 service 內有效）；backend instance 改變時拒絕 |
+| server 綁定 | `bind` `:337-344`；`stopping`／`stopped` `:236-250` | integrated server 可在同一個 JVM 重開，所以狀態綁定 server instance，換 server 時清空。STOPPING 釋放所有 ticket，STOPPED 清除參照 |
+
+**等待 FULL 與傳送**：
+
+- `enter` 的受理條件：玩家在 `minecraft:overworld`、不在坐騎上、`isOnGround`、腳底恰在完整方塊頂面（與 transfer 安全檢查同一個式子）、bbox 內沒有流體（`standingRefusal` `:404-413`）。transfer 沿用同一個 XYZ，返還時來源位置也要通過安全檢查，所以這些條件在入口就擋下，不等 transfer 拒絕。
+- 受理後在目的 Universe 對「bbox 外擴 2 格涵蓋的 chunks」（`requiredChunks` `:393-401`，與 `UniverseTransferService.targetSafety` 同一個範圍）加 radius 0 的 ticket（level 33，FULL），指令就此結束。
+- `END_SERVER_TICK`（排在預設 phase 之後）每 tick 檢查：玩家仍是同一個 entity、仍在原世界；依目前的 pose 重算 chunks、補上缺的 ticket；以 `ServerChunkManager.getWorldChunk` 判斷是否全部 FULL。以 javap 確認：`getWorldChunk` 走 `ChunkHolder.getOrNull(FULL)`，不阻塞；`getChunk(x, z, FULL, false)` 在 holder 已達 FULL 等級、但尚未完成時，會在 server thread 上 `runTasks` 等待，等於阻塞，所以不用它判斷。
+- 全部 FULL 且站立條件成立的那一個 tick 內：重新取 lifecycle 與 exact ACTIVE world（instance 改變就取消）→ 準備落點 → `moveToUniverse`；MOVED 時保存 receipt。之後不論成功與否都釋放本 request 的 ticket，玩家自己的 ticket 會保住目的 chunk。
+- 落點準備（`prepareLanding` `:419-441`）：bbox 下方每一欄的頂面不完整時放石頭；bbox 內有碰撞形狀或流體的方塊改成空氣；flags 只用 `NOTIFY_LISTENERS`，不觸發鄰格更新。實際改動的位置寫在結果 log 的 `landingChanges=`。plan 原本只寫「下方放一塊地板」：Universe 與存檔共用種子，同一個 XYZ 的自然地形通常相同，但玩家站在自己放的方塊上、或站在挖開的洞裡時，目的地會缺地板或有方塊擋住，transfer 會以 `REJECT_TARGET_UNSAFE` 拒絕，所以補齊整個 bbox 的範圍。
+- 上限 600 ticks；逾時、玩家離線或換世界都取消並釋放 ticket。站立條件在等待期間暫時不成立（例如正在跳）時繼續等，逾時才取消。
+- `return` 同樣先加 ticket 等 FULL：玩家離開後來源 chunk 可能已卸載，transfer 會以 `REJECT_TARGET_NOT_FULL` 拒絕。
+
+### 測試
+
+- JUnit +1：`M5ClientProbeTest.registersQcprobeOnlyWithExactTrueProperty`。以 `CommandRegistrationCallback.EVENT` 發到新的 dispatcher，依序驗證：沒有 property → 沒有 `qcprobe`；`TRUE`（非精確值）→ 沒有；`true` → 有，op 1 拒絕、op 2 允許，`universe` 之下恰為四個沒有參數的子指令。Fabric 的事件是全域的、註冊之後不能撤銷，所以三段寫在同一個 test、依此順序執行。
+- enter／return 的實際傳送需要真 client 玩家，沒有自動化覆蓋，由 F1b 驗證。GameTest 不變（clientProbe 不在 GameTest 的 classpath 上）。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f1a/`；gate root 在 `.superpowers/verification/`。diff hash 是 `git diff fad924c 6d28fa0 -- <path>` 輸出的 SHA-256：`src` `f6ccd58d…`、`src/testmod` `c0b9010f…`、`src/test` `7a17438c…`、`build.gradle` `3dc7fccc…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| classpath baseline | `fad924c`，工作樹乾淨（`f1a/baseline-state.txt`） | `f1a/classpaths-baseline-fad924c.txt` | 以 `f1a/dump-run-classpaths.init.gradle` 列出每個 run 的 source set、runDir、vmArg 與解析後的 classpath |
+| RED | `fad924c`；`build.gradle`＋4 個新檔，`M5ClientProbe` 暫時是無條件註冊完整指令樹的 stub（`f1a/red-state.txt`） | focused JUnit（`f1a/red-console.log`、`f1a/red-TEST-M5ClientProbeTest.xml`） | 預期 FAIL：`沒有 property 時不得註冊 /qcprobe ==> expected: <null> but was: <<literal qcprobe>>` |
+| GREEN focused | 工作樹，blob 與 `6d28fa0` 相同 | `f1a/green-focused-console.log` | PASS；`M5_CLIENT_PROBE_ENABLED` 只在 `true` 那一段記一次；JUnit runtime 不需要 testmod 的 class |
+| classpath 比對 | 同上 | `f1a/classpaths-after-green.txt` | 既有 9 個 run（`runClient`、`runClientLight`、`runClientRender`、`runGameTest`、`runGameTestLegacy`、`runM3Transfer`、`runM3Universe`、`runM4Recovery`、`runServer`）的 classpath，以及 main／client／testmod source set，都與 baseline 逐行相同。test 只多 `build/classes/java/clientProbe`。`runServerProbe`＝`runGameTest` 的 classpath＋clientProbe 輸出，沒有 clientOnly jar 或 `-client` 模組；`runClientProbe`＝`runClient`＋clientProbe 輸出＋testmod class，沒有 `resources/testmod` |
+| 啟動 smoke | 同上（`f1a/smoke-state-f1a-smoke-5829b4de.txt`） | `f1a/smoke-f1a-smoke-5829b4de/`（`smoke-summary.json`） | PASS，見下方 |
+| GREEN Full | 同上（`f1a/green-state.txt`） | `gate-f1a-green-full-38594f95056a4c0d83631cf7041ff595` | PASS |
+| GREEN Main＋oracle | 同上 | `gate-f1a-green-main-183132da69324842ad053cc9887920d3` | PASS；`main-oracle.ps1` PASS |
+| run-all | `6d28fa0`，`STATUS` 為空（`f1a/run-all-console.log`） | `run-all-0413bd8524c645a699cb1f959f346cc4` | `END ALL exit=0`。`SUMMARY default=153/153 windows=79 legacy=1/1 perTest=35+1 junit=442 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=308entries/265classes sources=195 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+| nonce 必填 | `6d28fa0` | `f1a/guard-no-nonce.log`、`f1a/guard-disabled-nonce.log` | `runServerProbe` 不給 nonce、`runClientProbe -Pm5ProbeNonce=disabled`：都在 `build.gradle:180` 的 `doFirst` 失敗，沒有啟動遊戲 JVM，也沒有建立 `run/*-probe-disabled` |
+
+Full 與 Main＋oracle 在 commit 之前以工作樹執行；commit 時四個檔的 `git hash-object` 與 gate 前記錄的相同（`f1a/green-state.txt`）。run-all 與 nonce 防護在 commit 之後執行。
+
+GREEN 數字：
+
+- default GameTest 153/153（`_windows` 79），0 failure／error／skipped，與 H4 相同；boundary oracle PASS；per-test receipt 35/35 PASS。
+- JUnit 442，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）。比 H4 多 1，就是 `M5ClientProbeTest`。
+- JAR：release 308 entries（265 classes）、sources 195，與 H4 相同；testmod／gametest／clientprobe／`M5ClientProbe` 命中 0，probe 命中只有合法的 `ModPresenceProbe`。
+- Full gate 的實際 `runGameTest` JVM classpath（argfile）與 H4 最後一次 Full（`gate-h4-fix1-green-full-ffbfbccbe28744ee81c108bcea1cd5e8`）逐項相同，110 個、順序一致。
+- main-only oracle：layer 1／2／3 的 testmod 命中都是 0、world keys exact、正常停止、exact restore。另外對同一個 Main gate 做 clientprobe 專屬檢查（`f1a/green-main-clientprobe-check.json`）：mod list、`M5_CLIENT_PROBE` log、server JVM 的 commandline／argfile（`clientprobe`、`client-probe`、`quantumchamber.clientProbe`）、class-load（`M5ClientProbe`、`clientProbe` 來源）都是 0。
+
+### 啟動 smoke（nonce `f1a-smoke-5829b4de`）
+
+由 `f1a/f1a-smoke.ps1`（SHA-256 `a0d05644…`）執行，`f1a/f1a-smoke-verify.ps1`（`715c31f6…`）唯讀核對並寫出 `smoke-summary.json`。兩支腳本只在 gitignored 的 SDD workspace。所有 Gradle 呼叫都載入 `scripts/verification/runtime.init.gradle`（stdin、class-load log）。
+
+| 階段 | runDir | 內容 | 結果 |
+| --- | --- | --- | --- |
+| S1 | 新建 `run/server-probe-f1a-smoke-5829b4de`（腳本寫入 `eula.txt`、`server.properties`） | `runServerProbe`；console 依序 `qcprobe universe status`、`allocate`、`status`、`stop` | exit 0。mod list 有 `quantumchamber`、`quantumchamber-clientprobe`、`quantumchamber-testmod`。`M5_CLIENT_PROBE_READY server=dedicated registered=true subcommands=[allocate, enter, return, status] op1Denied=true op2Allowed=true lifecycle=READY catalog=0`。allocate：`已配置並 checked flush：quantumchamber:universe/f1a00000-0000-4000-8000-00000000f1a0/overworld（EAGER_ENABLED）`；之後 status 為 `durable=true ACTIVE=false`。沒有物化（沒有 `M3_UNIVERSE_LOAD`），`M3_UNIVERSE_STOPPED_VERIFIED worlds=0` |
+| S2 | 同一個 runDir（重啟） | `runServerProbe`；`status`、`allocate`、`stop` | exit 0。正式 bootstrap：`M3_UNIVERSE_LOAD key=…/overworld`、`M3_UNIVERSE_BOOTSTRAP_READY worlds=1`；READY 與 status 都是 `durable=true ACTIVE=true`；allocate 回報「已配置過 … ACTIVE=true，可以 enter」，沒有第二筆；`M3_UNIVERSE_STOPPED_VERIFIED worlds=1 runtimeReceipts=1 quarantine=0 contextDetached=true` |
+| C1 | 新建 `run/client-probe-f1a-smoke-5829b4de`；`saves/f1a-smoke` 是 S2 停止後（`session.lock` 已釋放）的 world 複本；腳本寫入最小 `options.txt`（`onboardAccessibility:false` 等，略過首次啟動的無障礙引導畫面） | `runClientProbe --args='--username QC_PROBE --quickPlaySingleplayer f1a-smoke'` | exit 0。mod list 有 `quantumchamber`、`quantumchamber-clientprobe`，沒有 `quantumchamber-testmod`。integrated server：`M3_UNIVERSE_BOOTSTRAP_READY worlds=1`，`M5_CLIENT_PROBE_READY server=integrated registered=true …`（ACTIVE=true），`QC_PROBE joined the game`。10 秒後截圖（`client-in-world.png`：地形、hotbar、血量；視窗沒有焦點，原版自動開了暫停選單），再以 `CloseMainWindow` 結束（等同按視窗的關閉鈕）：`Stopping!` → `QC_PROBE left the game` → `M3_UNIVERSE_STOPPED_VERIFIED worlds=1`。沒有 crash report，stderr 為空，沒有 ERROR 行 |
+
+- 實際 JVM classpath（argfile）：S1／S2 有 `resources/testmod` 與 `resources/clientProbe`，沒有 clientOnly jar；C1 有 `resources/clientProbe` 與 `classes/java/testmod`，沒有 `resources/testmod`。
+- class-load：三個 JVM 都從 `build/classes/java/clientProbe/` 載入 `M5ClientProbe`。C1 從 `build/classes/java/testmod/` 只載入 `UniverseTransferTestAccess` 與 `$Lifecycle`；除了 `M5ClientProbe*`，沒有載入任何 `dev.quantumchamber.gametest.*`（沒有 testmod 的 mixin 或 probe）。
+- C1 唯一的 WARN 是 `Missing data pack quantumchamber-testmod`：world 由帶 testmod 的 dedicated server 建立，是 AGENTS 所說的 stale save metadata warning。
+- 開始前已有一個閒置的 Gradle daemon（PID 129228，12:15 建立，不屬於本 task）；smoke 結束後 Java 程序仍只有它，沒有殘留。
+- smoke 沒有自動化 `enter`／`return`：需要在遊戲內以 op 玩家輸入指令，屬於 F1b。
+
+### 給 F1b 的使用說明
+
+- 單人：`runClientProbe -Pm5ProbeNonce=<新 nonce>`（可加 `--args='--username QC_A …'`）。新建世界時要開「允許作弊」，或進入後「在區域網路開放」並允許作弊，host 才是 op、才看得到 `/qcprobe`。fresh runDir 第一次啟動會出現無障礙引導畫面。
+- 流程：`/qcprobe universe allocate` → 儲存並離開到標題畫面 → 重新進入同一個世界（integrated server 重啟，由 bootstrap 物化）→ `/qcprobe universe status` 確認 `ACTIVE=true` → 站在完整方塊上 `enter` → `return`。
+- Dedicated：`runServerProbe -Pm5ProbeNonce=<新 nonce>`。runDir 要先放 `eula.txt` 與 `server.properties`（`online-mode=false`；`server-port` 要固定，smoke 用的 `0` 是隨機埠）。console 下 `qcprobe universe allocate` → `stop` → 以同一個 nonce 再啟動；client 連線後由 console `op <名字>`。`/qcprobe` 是 server 指令，client 端不需要 clientprobe。
+- receipt 不跨 server 重啟；重新登入（同一個 server instance）仍有效。重啟後要離開 Universe，用原版 `/execute in minecraft:overworld run tp @s <x> <y> <z>`。死亡重生後 receipt 會在下一次 `return` 時作廢。
+- 重新登入、重啟、重生之後，用 `status` 讀玩家所在的 world key。log 標記：`M5_CLIENT_PROBE_ENTER status=OK … outcome=MOVED …`、`M5_CLIENT_PROBE_RETURN status=OK … outcome=RETURNED …`、`landingChanges=[…]`；失敗時是 `status=FAIL` 或 `status=CANCELLED` 並附原因。
+- serverProbe run 帶 testmod（mixin 與各自 property 控制的 probe），證據一律標 `testmod-present`。
+
+### 觀察（未修改）
+
+- `main-oracle.ps1` 的 layer 1／2 與 `run-all.ps1` 的 JAR 樣式只比對 `testmod` 字樣與 `src/testmod/java` 的型別。clientProbe 的輸出路徑（`build/classes/java/clientProbe`）不含 `testmod`，若 clientProbe 洩漏到 `runServer`，只有 layer 3 的 `dev.quantumchamber.gametest.` 前綴與 JAR 的 `gametest`／`probe` 樣式會抓到。本 task 另做了專屬檢查（上方，全為 0）。是否把 `clientProbe` 加進 `scripts/verification/` 的樣式由 controller 決定（不在本 task 的檔案清單）。
+- probe 的 allocate 直接寫 catalog，不經 F2b 之後的 allocation ledger。F2b 上線後，用 probe 配置過的世界可能被 spec §6 判為 catalog 與 ledger 不一致；probe 世界都是一次性的，不要拿來測 M5 玩法。
+- JUnit 在同一個 JVM 內留下全域的指令與 lifecycle listener（Fabric 事件不能撤銷）。目前沒有其他 JUnit 建立 `CommandManager` 或啟動 server。
+- smoke 的 driver 與核對腳本沒有 tracked。之後若要重跑，需要另開 task 整理到 `scripts/verification/`。
