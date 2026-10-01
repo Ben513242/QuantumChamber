@@ -49,8 +49,8 @@ import org.slf4j.LoggerFactory;
  * <li><b>讀取失敗的分類</b>：讀到原始 bytes 之後的失敗（壓縮格式、NBT、strict decode）與確定遺失為 {@code AUTHORITY_CORRUPT}；讀檔時的 IO 例外為
  *     {@code AUTHORITY_UNREADABLE}。</li>
  * <li><b>寫入</b>：同目錄暫存檔、force、以正式讀取規則驗證暫存檔、atomic move、strict 讀回並 exact 比對（{@link CheckedNbtFile}，
- *     M4 discovery 的寫法）。寫入或讀回失敗時 roll-forward（spec §6）：current 保留這次的新內容，權威標為未確認；未確認期間這個權威的查詢與寫入一律回「未確認」，
- *     不做新決策，由 {@link #convergeIfNeeded} 依 {@link CollapseBackoff} 退避重試 checked 重寫。</li>
+ *     M4 discovery 的寫法）。寫入或讀回失敗時 roll-forward（spec §6）：current 保留這次的新內容，權威標為未確認；未確認期間這個權威的查詢與寫入一律回「未確認」
+ *     （{@code UNCONFIRMED}；discovery 的唯讀查詢與 catalog 的配置依 spec 不得 SEALED，回 {@code WAIT}），不做新決策，由 {@link #convergeIfNeeded} 依 {@link CollapseBackoff} 退避重試 checked 重寫。</li>
  * <li><b>discovery</b>（M4 的檔，不是 PersistentState）：不在初始化載入，每次使用時從磁碟 strict 讀取（與 M4 的讀取點一致）；檔案不存在一律是遺失
  *     （只有 NEW／EXISTING 的 RESOLVE 會用到，那時 journal 已有 candidate evidence，M4 已建立 discovery）。寫入與 ledger 相同，失敗時 roll-forward：
  *     current 保留這次的 append，絕不移除可能已落地的 record，所以 M4 從磁碟讀到的候選池不會倒退。</li>
@@ -171,12 +171,16 @@ public final class CollapseAuthorities {
             APPENDED,
             /** projection、discovery 的唯讀查詢：已確認的內容沒有這個 key。 */
             ABSENT,
-            /** 權威有尚未確認的 roll-forward 寫入：不做新決策，先 {@link CollapseAuthorities#convergeIfNeeded}。ledger 與 discovery 用它。 */
+            /**
+             * 權威有尚未確認的 roll-forward 寫入：不做新決策，先 {@link CollapseAuthorities#convergeIfNeeded}。ledger 的查詢與寫入、discovery 的
+             * 追加（NEW，依 §6.4 進 SEALED）用它，帶原因。
+             */
             UNCONFIRMED,
             /**
-             * 只有 catalog 會回（{@link CollapseAuthorities#allocateOrVerifyCatalog}）：catalog 有未確認的寫入（仍 dirty，或 current 不等於
-             * flushed），依 spec §6.2 <b>不得 SEALED</b>，下一個 tick 再試（catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗）。
-             * 不帶 SEALED 原因，也不帶 failure；{@link Lookup#succeeded()} 為 false。
+             * 權威有未確認的寫入，但這個呼叫依 spec <b>不得 SEALED</b>：下一個 tick 再試，或先 {@link CollapseAuthorities#convergeIfNeeded}。
+             * 只有兩處會回：catalog 的配置（{@link CollapseAuthorities#allocateOrVerifyCatalog}，§6.2：仍 dirty 或 current 不等於 flushed；
+             * catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗），以及 discovery 的唯讀查詢（{@link CollapseAuthorities#discovery}，
+             * §6 收斂共通第 2 點：EXISTING 重驗不做新決策，只等收斂）。不帶 SEALED 原因，也不帶 failure；{@link Lookup#succeeded()} 為 false。
              */
             WAIT,
             /** 本次的 checked 寫入或讀回失敗：current 保留它，權威標為未確認。 */
@@ -257,7 +261,7 @@ public final class CollapseAuthorities {
                 case CORRUPT -> Status.CORRUPT;
                 case UNREADABLE -> Status.UNREADABLE;
                 case FOUND, APPENDED, ABSENT -> throw new IllegalArgumentException("成功的查詢不是寫入失敗");
-                case WAIT -> throw new IllegalArgumentException("WAIT 只屬於 catalog，不是 projection 的寫入結果");
+                case WAIT -> throw new IllegalArgumentException("WAIT 只屬於 catalog 的配置與 discovery 的唯讀查詢，不是 projection 的寫入結果");
             };
             return new WriteResult(status, Optional.empty(), gate.sealedReason(), gate.failure());
         }
@@ -552,13 +556,20 @@ public final class CollapseAuthorities {
 
     /**
      * 唯讀的 discovery 查詢（spec §8.1 EXISTING 重驗用）：從磁碟 strict 讀取，回這個 UniverseId 的 record（{@code FOUND}，是否
-     * {@code gameplayEligible} 由呼叫端判斷）或 {@code ABSENT}。未確認、遺失與讀取失敗的處理同 {@link #appendDiscovery}。
+     * {@code gameplayEligible} 由呼叫端判斷）或 {@code ABSENT}。
+     * <ul>
+     * <li>discovery 有未確認的寫入（別的 session 的 append 尚未確認）時回 {@code WAIT}（不帶原因與 failure）：依 spec §6 收斂共通第 2 點，
+     *     未確認期間只重試收斂、不做新決策，所以呼叫端等下一個 tick 或先 {@link #convergeIfNeeded}，不判 {@code EXISTING_INELIGIBLE}，
+     *     也不 SEALED。這與 {@link #appendDiscovery}（NEW）不同：NEW 的未確認依 §6.4 回帶 {@code ALLOCATION_IO_FAILED} 的
+     *     {@code UNCONFIRMED}。</li>
+     * <li>初始化失敗、遺失與讀取失敗的處理同 {@link #appendDiscovery}。</li>
+     * </ul>
      */
     public Lookup<UniverseDiscoveryRecord> discovery(UniverseId universeId) {
         requireThread();
         Objects.requireNonNull(universeId, "universeId");
         Lookup<UniverseDiscoveryRecord> gate = gate(discovery);
-        if (gate != null) return gate;
+        if (gate != null) return gate.status() == Lookup.Status.UNCONFIRMED ? Lookup.waiting() : gate;
         var read = readDiscovery();
         if (!read.succeeded()) return failedAs(read);
         return read.value().orElseThrow().find(universeId).map(Lookup::found).orElseGet(Lookup::absent);

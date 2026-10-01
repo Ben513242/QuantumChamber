@@ -708,11 +708,12 @@ class CollapseAuthoritiesTest {
                 () -> assertEquals(poolBefore, m4View.eligibleSnapshot(frozen, VANILLA), "已凍結 watermark 的候選池不變"),
                 () -> assertTrue(m4View.eligibleSnapshot(m4View.watermark(), VANILLA).containsAll(poolBefore), "新的候選池不倒退"),
                 () -> assertTrue(m4View.eligibleSnapshot(m4View.watermark(), VANILLA).contains(landed), "新的候選池含已落地的 record"));
-            // 未確認期間不做新決策：同一筆也不回 FOUND，新的不追加，也不改檔。
+            // 未確認期間不做新決策：同一筆也不回 FOUND，新的不追加，也不改檔。NEW 的追加依 §6.4 帶原因（進 SEALED）；
+            // 唯讀查詢（EXISTING 重驗）依 §6 收斂共通第 2 點只等待收斂，回不帶原因的 WAIT。
             byte[] landedBytes = Files.readAllBytes(discoveryFile(save));
             assertUnconfirmed(authorities.appendDiscovery(first, 100, SELECTED_BY), SealedReason.ALLOCATION_IO_FAILED);
             assertUnconfirmed(authorities.appendDiscovery(second, 101, SELECTED_BY), SealedReason.ALLOCATION_IO_FAILED);
-            assertUnconfirmed(authorities.discovery(first), SealedReason.ALLOCATION_IO_FAILED);
+            assertWait(authorities.discovery(first));
             assertArrayEquals(landedBytes, Files.readAllBytes(discoveryFile(save)));
             // 退避期內不嘗試；到期以 checked 方式重寫 current（帶著已落地的 record）。
             int reads = io.readsOf(UniverseDiscoveryState.FILE_NAME);
