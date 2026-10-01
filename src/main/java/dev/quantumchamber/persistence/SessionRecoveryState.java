@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.stream.Stream;
 import java.io.File;
@@ -38,7 +39,8 @@ public final class SessionRecoveryState extends PersistentState {
     private final Map<UUID, SessionRecoveryRecord> records = new LinkedHashMap<>();
     // 僅存活於本 process；remove 與空 journal flush 都不能抹去同 UUID 的最後 authority。
     private final Map<UUID, SessionRecoveryRecord> authorityHistory = new LinkedHashMap<>();
-    // 最後一份經 strict load／readback 承認的 authority（remove 後仍保留）；只供 abortUnchecked／convergeQuarantined 還原 history。
+    // 最後一份經 strict load／readback 承認的 authority（一般 remove 後仍保留）；只供 restoreCheckedAuthority 還原 history
+    // （abortUnchecked、convergeQuarantined、commitRestore 與 terminate 的失敗還原）。checked 終局讀回確認後才修剪該 session。
     private final Map<UUID, SessionRecoveryRecord> checkedAuthority = new LinkedHashMap<>();
     // CAS 還原失敗或 owner 未能還原的 session：未 checked current 永不寫出，寫入時只用上一份 flushed authority；由 convergeQuarantined 收斂。
     private final java.util.Set<UUID> quarantined = new HashSet<>();
@@ -53,6 +55,8 @@ public final class SessionRecoveryState extends PersistentState {
     private final java.util.Set<UUID> terminated = new HashSet<>();
     // roll-forward 類寫入（spec §6）尚未經 checked flush 讀回確認的 session；collapse view 只在這時採用 current。
     private final java.util.Set<UUID> rollForwardPending = new HashSet<>();
+    // 「讀回已確認之後才出現的例外」最近一次 WARN 的去重鍵（FailureText.dedupeKey），以 session 為單位；終局成功時移除。
+    private final Map<UUID, String> confirmedFailureWarnings = new HashMap<>();
     private String loadError;
     private MinecraftServer owner;
 
@@ -125,6 +129,12 @@ public final class SessionRecoveryState extends PersistentState {
     public boolean m5ReadyThisInstance() { requireHealthy(); return m5ReadyThisInstance; }
     /**
      * 本 server instance 的 M5 authority 初始化成功（F2b）時呼叫：m5Evidence 與 m5ReadyThisInstance 都設為真。
+     * <ul>
+     * <li>不可撤銷：沒有對應的取消 API，兩個旗標在本 instance 內都不會再變回假。</li>
+     * <li>只能在 allocation 與 projection 兩個 ledger 都已建立（或確認存在）並 strict 驗證成功之後呼叫；任何原因的初始化失敗都不得呼叫
+     *     （spec §6：schema 4 envelope 本身就是兩個 ledger 已建立的證據）。</li>
+     * <li>呼叫之後 {@link #m5Evidence()} 不再等於「flushed envelope 是否為 schema 4」；需要後者的判斷必須在呼叫之前完成。</li>
+     * </ul>
      * 本身不標 dirty：candidate 已初始化的 journal 在之後第一次 checked 寫入時升為 schema 4（spec §12）。
      */
     public void markCollapseAuthoritiesInitialized() {
@@ -191,12 +201,19 @@ public final class SessionRecoveryState extends PersistentState {
     /**
      * 隔離 session：它的 current 不再被寫出（所有寫出只帶上一份 flushed authority），put／remove 一律拒絕，
      * 直到 {@link #convergeQuarantined} 以最後 checked authority 取代 current。owner 無法還原時，以此 fail-closed 停住該 session。
-     * @return 這次才進入隔離時為 true；已隔離或沒有這個 session 時為 false
+     * <p>拒絕隔離：session 有尚未確認的 roll-forward（{@link #rollForwardPending}），而 current 的 authority 已 checked
+     * （與 flushed 只差 roll-forward 進度，沒有未 checked 的 candidate 或 restore 殘留）。收斂會以 flushed 取代 current，
+     * 等於把可能已落地的事實（例如 SEALED(TRANSFER_RECOVERY_REQUIRED)）寫回成舊狀態，違反 spec §6 與 §10.3。這時 caller 不隔離，
+     * 只重試寫出（任何一次 checked flush 都會帶著 current）。roll-forward 旗標與未 checked 殘留同時存在時（只有雙重故障才會發生）照常隔離。
+     * @return 這次才進入隔離時為 true；已隔離、沒有這個 session，或因上述 roll-forward 拒絕時為 false
      */
     public boolean quarantine(UUID sessionUuid) {
         requireMutationThread();
         requireHealthy();
         if(!records.containsKey(sessionUuid) && !flushed.containsKey(sessionUuid)) return false;
+        if(quarantined.contains(sessionUuid)) return false;
+        var current=records.get(sessionUuid);
+        if(current!=null && rollForwardPending.contains(sessionUuid) && authorityChecked(current)) return false;
         return quarantined.add(sessionUuid);
     }
     public java.util.Set<UUID> quarantinedSessions() { requireHealthy(); return java.util.Set.copyOf(quarantined); }
@@ -276,14 +293,21 @@ public final class SessionRecoveryState extends PersistentState {
     /** 該 session 是否有尚未經 checked flush 讀回確認的 roll-forward 寫入；成立期間塌縮流程只重試寫出（spec §7）。 */
     public boolean rollForwardPending(UUID session) { requireHealthy(); return rollForwardPending.contains(session); }
 
-    /** checked 提交的結果。failure 只在不是 COMMITTED 時存在：REJECTED 時是拒絕原因，其餘是寫出失敗的 root cause，供 caller 依原因去重記錄。 */
+    /**
+     * checked 提交的結果。failure 只在不是 COMMITTED 時存在：REJECTED 時是拒絕原因，其餘是寫出失敗的 root cause。
+     * journal 不記這些失敗；caller 依 (sid, 提交的狀態邊, {@link FailureText#dedupeKey}) 去重後記 WARN。
+     */
     public record CommitResult(Status status, Optional<RuntimeException> failure) {
         public enum Status {
             /** put→flush→讀回確認 flushed exact 等於 next。 */
             COMMITTED,
             /** 寫入前就拒絕（CAS 不符、隔離、已終局、狀態邊不屬於這個提交種類、M5 尚未就緒）；journal 沒有改變。 */
             REJECTED,
-            /** roll-forward 寫出失敗：current 保留 next 並保持 dirty，collapse view 立即採用；之後任何寫出都帶著它。 */
+            /**
+             * current 帶著尚未確認的 roll-forward 內容並保持 dirty，collapse view 採用它；之後任何寫出都帶著它，caller 只重試寫出。
+             * roll-forward 寫出失敗時是 next；restore 寫出失敗而 CAS 不符、current 卻是已 checked 的 roll-forward 內容時是那份 current
+             * （不隔離，見 {@link #quarantine}）。
+             */
             ROLL_FORWARD_PENDING,
             /** restore 寫出失敗、CAS 成立：current 已還原為 expected（上一份 flushed）並保持 dirty，下一次寫出覆寫磁碟。 */
             RESTORED,
@@ -298,17 +322,25 @@ public final class SessionRecoveryState extends PersistentState {
         public boolean committed() { return status==Status.COMMITTED; }
     }
 
-    /** checked 終局的結果；failure 的規則同 {@link CommitResult}。 */
+    /**
+     * checked 終局的結果；failure 只在不是 REMOVED 時存在。journal 不記這些失敗（與 {@link CommitResult} 一致）；
+     * caller 依 (sid, origin, {@link FailureText#dedupeKey}) 去重後記 WARN。
+     */
     public record TerminalResult(Status status, Optional<RuntimeException> failure) {
         public enum Status {
             /** 移除、flush、讀回確認不存在；已修剪 authority history 並留下 tombstone。 */
             REMOVED,
             /** 起點不合法、CAS 不符、隔離或已終局；journal 沒有改變。 */
             REJECTED,
-            /** flush 或讀回失敗、CAS 成立：expected 已放回並保持 dirty（已記 WARN），下一次寫出覆寫磁碟。 */
+            /** flush 或讀回失敗、CAS 成立：expected 已放回並保持 dirty，下一次寫出覆寫磁碟。不改門。 */
             RESTORED,
-            /** flush 或讀回失敗、CAS 不符：已隔離該 session（已記 WARN）。 */
-            QUARANTINED
+            /** flush 或讀回失敗、CAS 不符：已隔離該 session，由 recovery 收斂。 */
+            QUARANTINED,
+            /**
+             * flush 或讀回失敗、CAS 不符，而 current 是已 checked、尚未確認的 roll-forward 內容（例如 flush 期間的重入寫入）：
+             * 不隔離、不丟棄它（見 {@link #quarantine}），沒有終局；caller 只重試寫出，確認之後再評估終局。
+             */
+            ROLL_FORWARD_PENDING
         }
         public TerminalResult {
             Objects.requireNonNull(status, "status"); Objects.requireNonNull(failure, "failure");
@@ -318,13 +350,22 @@ public final class SessionRecoveryState extends PersistentState {
         public boolean removed() { return status==Status.REMOVED; }
     }
 
-    /** checked 終局唯一接受的四種起點（spec §5）。 */
+    /**
+     * checked 終局唯一接受的四種起點（spec §5）。journal 只檢查能由 record 推導的條件（{@link #accepts}）；
+     * 「現在處於哪個推導階段」「參與者是否關門」「通道是否結束」由 caller 判斷並負責。
+     */
     public enum TerminalOrigin {
         /** PASSAGE_READY 的通道結束（§10.6）。 */
         PASSAGE_ENDED,
-        /** Destination=SOURCE 的 COLLAPSING 進入 PREPARE：全員已返還、lease 已清空（§7.4）。 */
+        /**
+         * Destination=SOURCE 的 COLLAPSING 進入 PREPARE（§7.4）。journal 只能檢查 settled（全員已返還、lease 已清空）；
+         * 只能在 PREPARE 階段呼叫（RELEASE_GEOMETRY 等前置階段都已完成），這個前提由 caller 負責。
+         */
         SOURCE_FAST_PATH,
-        /** Destination=UNIVERSE 的 COLLAPSING，PREPARE 期間參與者關門：全員已返還、lease 已清空（§7.3）。 */
+        /**
+         * Destination=UNIVERSE 的 COLLAPSING，PREPARE 期間參與者關門（§7.3）。journal 只能檢查 settled；
+         * 只能在 PREPARE 階段呼叫，也就是 RESOLVE 已完成（目的宇宙已配置、物化並 discovered），這個前提由 caller 負責。
+         */
         PREPARE_DOOR_CLOSED,
         /** §11.3：flushed DORMANT MEASURED、來源 SourceFamilyRef.role() 不是 OVERWORLD、選中的是 NEW 或 EXISTING 候選。 */
         UNSUPPORTED_SOURCE_CANCEL;
@@ -350,7 +391,8 @@ public final class SessionRecoveryState extends PersistentState {
      * spec §6 的 roll-forward 類 journal 寫入：COLLAPSING 的返還與清 lease 進度、PASSAGE_READY 加入 Crossed、進入 SEALED
      * （COLLAPSING→SEALED，或 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)）。前置條件：current 與 flushed 都 exact 等於 expected。
      * 寫出失敗時 current 保留 next 並保持 dirty（{@link CommitResult.Status#ROLL_FORWARD_PENDING}），之後任何寫出（重試、其他 session 的 flush、
-     * 原生 autosave、停服）都帶著它；未確認期間 {@link #collapseView} 採用 current。本方法不記 log，由 caller 依原因去重。
+     * 原生 autosave、停服）都帶著它；未確認期間 {@link #collapseView} 採用 current。寫出失敗不記 log，由 caller 依原因去重
+     * （見 {@link CommitResult}）；讀回已確認之後才出現的例外由 journal 記 WARN（{@link #warnAfterConfirmed}）。
      */
     public CommitResult commitRollForward(MinecraftServer server, SessionRecoveryRecord expected, SessionRecoveryRecord next) {
         requireServerThread(server);
@@ -365,8 +407,11 @@ public final class SessionRecoveryState extends PersistentState {
         if(refusal!=null) return CommitResult.of(CommitResult.Status.REJECTED,refusal);
         try { put(next,false); } catch(RuntimeException invalid) { return CommitResult.of(CommitResult.Status.REJECTED,invalid); }
         var failure=checkedFlush(flush);
-        // 以 flushed 判定：讀回已確認 next 就是 COMMITTED（即使 flush 之後才有例外）；否則 current 保留 next。
-        if(next.equals(flushed.get(next.sessionUuid()))) return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
+        // 以 flushed 判定：讀回已確認 next 就是 COMMITTED（flush 之後才有的例外記 WARN）；否則 current 保留 next。
+        if(next.equals(flushed.get(next.sessionUuid()))) {
+            failure.ifPresent(late -> warnAfterConfirmed(next.sessionUuid(),"roll-forward "+expected.state()+"→"+next.state(),late));
+            return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
+        }
         markDirty();
         return CommitResult.of(CommitResult.Status.ROLL_FORWARD_PENDING,failure.orElseGet(() -> new IllegalStateException("roll-forward 寫入的 exact readback 不符")));
     }
@@ -374,9 +419,13 @@ public final class SessionRecoveryState extends PersistentState {
     /**
      * spec §6 的 restore 類 journal 寫入：COLLAPSING 提交（MEASURED→COLLAPSING）、READY 提交（COLLAPSING→PASSAGE_READY）、
      * SEALED→COLLAPSING 重試。這三條邊只能經這裡寫入（一般 {@link #put} 拒絕）。前置條件：current 與 flushed 都 exact 等於 expected；
-     * 提交新的 COLLAPSING 另外要求 {@link #m5ReadyThisInstance}。寫出失敗時依 H3 的 CAS：current 仍 exact 等於 next 才還原為
-     * expected（上一份 flushed）並保持 dirty、authority history 還原為最後 checked authority；CAS 不符時隔離該 session、不猜測覆寫。
-     * 本方法不記 log，由 caller 依原因去重。
+     * 提交新的 COLLAPSING 另外要求 {@link #m5ReadyThisInstance}。
+     * <p>SEALED→COLLAPSING：journal 層級只排除 TRANSFER_RECOVERY_REQUIRED（spec §5）；caller 必須先以
+     * {@link dev.quantumchamber.collapse.SealedReason#retryable()}／{@link dev.quantumchamber.collapse.SealedReason#restartOnly()}
+     * 與 §11.2 的觸發、退避把關之後才呼叫，永久原因不得自動重試。
+     * <p>寫出失敗時依 H3 的 CAS：current 仍 exact 等於 next 才還原為 expected（上一份 flushed）並保持 dirty、authority history
+     * 還原為最後 checked authority；CAS 不符時隔離該 session、不猜測覆寫（current 是已 checked 的 roll-forward 內容時不隔離，回
+     * {@link CommitResult.Status#ROLL_FORWARD_PENDING}）。寫出失敗不記 log，由 caller 依原因去重；讀回已確認之後才出現的例外記 WARN。
      */
     public CommitResult commitRestore(MinecraftServer server, SessionRecoveryRecord expected, SessionRecoveryRecord next) {
         requireServerThread(server);
@@ -394,21 +443,26 @@ public final class SessionRecoveryState extends PersistentState {
         var sid=next.sessionUuid();
         try { put(next,true); } catch(RuntimeException invalid) { return CommitResult.of(CommitResult.Status.REJECTED,invalid); }
         var failure=checkedFlush(flush);
-        if(next.equals(flushed.get(sid))) return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
+        if(next.equals(flushed.get(sid))) {
+            failure.ifPresent(late -> warnAfterConfirmed(sid,"restore "+expected.state()+"→"+next.state(),late));
+            return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
+        }
         var cause=failure.orElseGet(() -> new IllegalStateException("restore 類寫入的 exact readback 不符"));
         if(next.equals(records.get(sid)) && !quarantined.contains(sid)) {
             restoreCheckedAuthority(sid);
             return CommitResult.of(CommitResult.Status.RESTORED,cause);
         }
         quarantine(sid);
-        return CommitResult.of(CommitResult.Status.QUARANTINED,cause);
+        return CommitResult.of(quarantined.contains(sid) ? CommitResult.Status.QUARANTINED : CommitResult.Status.ROLL_FORWARD_PENDING,cause);
     }
 
     /**
      * spec §5 唯一的 checked 終局：起點必須是 {@link TerminalOrigin} 接受的 record，而且 current 與 flushed 都 exact 等於 expected
      * → 移除 → flush → 讀回確認不存在。成功後才修剪該 session 的 authority history／checked authority，並留 process 內 tombstone
-     * （之後 put 拒絕同一個 UUID）。flush 或讀回失敗時依 H3 的 CAS 放回 expected 並保持 dirty（CAS 不符時隔離），記 WARN；不改門。
-     * runtime（{@code SuperpositionSessionManager} 的 sessions 與來源 ticket）的移除由呼叫端負責（F3d）。正常結束的 INFO 也由呼叫端記。
+     * （之後 put 拒絕同一個 UUID）。flush 或讀回失敗時依 H3 的 CAS 放回 expected 並保持 dirty（CAS 不符時隔離；current 是已 checked 的
+     * roll-forward 內容時不隔離），不改門。失敗不記 log，由 caller 依 (sid, origin, dedupeKey) 去重後記 WARN（見 {@link TerminalResult}）；
+     * 讀回已確認之後才出現的例外記 WARN。runtime（{@code SuperpositionSessionManager} 的 sessions 與來源 ticket）的移除與正常結束的 INFO
+     * 由呼叫端負責（F3d）。
      */
     public TerminalResult terminate(MinecraftServer server, SessionRecoveryRecord expected, TerminalOrigin origin) {
         requireServerThread(server);
@@ -429,27 +483,33 @@ public final class SessionRecoveryState extends PersistentState {
         var failure=checkedFlush(flush);
         if(flushed.containsKey(sid)) {
             var cause=failure.orElseGet(() -> new IllegalStateException("終局的 exact readback 仍含該 session"));
-            TerminalResult result;
             if(!records.containsKey(sid) && !quarantined.contains(sid)) {
                 restoreCheckedAuthority(sid);
-                result=TerminalResult.of(TerminalResult.Status.RESTORED,cause);
-            } else {
-                quarantine(sid);
-                result=TerminalResult.of(TerminalResult.Status.QUARANTINED,cause);
+                return TerminalResult.of(TerminalResult.Status.RESTORED,cause);
             }
-            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("checked 終局未確認，{}：session={} origin={}：{}",
-                    result.status()==TerminalResult.Status.RESTORED ? "已放回原 record 並保持 dirty，下一次寫出覆寫磁碟" : "CAS 不符，已隔離該 session",
-                    sid,origin,FailureText.describe(cause));
-            return result;
+            quarantine(sid);
+            return TerminalResult.of(quarantined.contains(sid) ? TerminalResult.Status.QUARANTINED : TerminalResult.Status.ROLL_FORWARD_PENDING,cause);
         }
-        // 讀回已確認不存在（即使 flush 之後才有例外）：才修剪 authority history，並留 tombstone。
-        authorityHistory.remove(sid); checkedAuthority.remove(sid); terminated.add(sid);
+        // 讀回已確認不存在（flush 之後才有的例外記 WARN）：才修剪 authority history，並留 tombstone。
+        failure.ifPresent(late -> warnAfterConfirmed(sid,"terminate "+origin,late));
+        authorityHistory.remove(sid); checkedAuthority.remove(sid); terminated.add(sid); confirmedFailureWarnings.remove(sid);
         return new TerminalResult(TerminalResult.Status.REMOVED,Optional.empty());
     }
 
     /** 執行一次 checked flush；成功與否由呼叫端以 flushed（讀回確認的內容）判定，這裡只帶回例外。 */
     private static Optional<RuntimeException> checkedFlush(Runnable flush) {
         try { flush.run(); return Optional.empty(); } catch(RuntimeException failure) { return Optional.of(failure); }
+    }
+
+    /**
+     * 讀回已確認之後才出現的例外（例如 flush 之後的 hook）：結果以 flushed 為準，不當成寫出失敗，但不得靜默丟棄。
+     * 同一個 session 依 {@link FailureText#dedupeKey} 去重，原因改變才再記（沿用 recovery 的去重慣例）。
+     */
+    private void warnAfterConfirmed(UUID sid, String write, RuntimeException late) {
+        var key=FailureText.dedupeKey(late);
+        if(key.equals(confirmedFailureWarnings.put(sid,key))) return;
+        org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("checked 寫出已讀回確認，之後才出現例外（結果以 flushed 為準，不重試）：session={} {}：{}",
+                sid,write,FailureText.describe(late));
     }
 
     /** commit 共用的前置條件；回傳拒絕原因，可以寫入時為 null。 */
@@ -554,6 +614,8 @@ public final class SessionRecoveryState extends PersistentState {
      * 兩個旗標都不會變回假，所以一旦寫成 schema 4 就不再降回。
      */
     private int writtenSchema(Map<UUID, SessionRecoveryRecord> writable) {
+        // envelopeSchema 先驗證不混裝 legacy 與 candidate（混裝時丟例外，寫出因此失敗）；它的回傳值（有 candidate → 3，否則 2）
+        // 只在最後一行使用。
         int envelope = envelopeSchema(writable);
         if (writable.values().stream().anyMatch(record -> record.candidateContext().isEmpty())) return 2;
         if (candidateInitialized) return m5Evidence ? 4 : 3;

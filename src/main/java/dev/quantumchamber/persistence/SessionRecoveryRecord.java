@@ -227,13 +227,16 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
     /**
      * spec §5 的狀態邊與 Collapse 單調性。M4 原有的狀態邊不變（這裡不檢查）；塌縮狀態只能由 MEASURED 或另一個塌縮狀態進入。
      * 兩端的 record 都已通過建構子的合法組合，所以這裡只比對「哪些欄位可以改變」。
+     * 改變狀態的邊（M→C、C→R、C→S、R→S、S→C）不得夾帶進度：參與者（含 returned）與 lease 必須原樣，進度只能經同狀態的 self-loop 寫入
+     * （§7.1 的提交帶著既有進度，不同時新增）。
      */
     private static boolean collapseEdge(SessionRecoveryRecord previous, SessionRecoveryRecord next) {
         var after = next.state();
         var from = previous.collapse(); var to = next.collapse();
+        boolean sameProgress = previous.participants().equals(next.participants()) && previous.spaceLeases().equals(next.spaceLeases());
         return switch (previous.state()) {
             case ARMING, SUPERPOSITION, RETURNING -> !after.collapseState();
-            case MEASURED -> after == SessionState.MEASURED || after == SessionState.COLLAPSING;
+            case MEASURED -> after == SessionState.MEASURED || after == SessionState.COLLAPSING && sameProgress;
             case COLLAPSING, PASSAGE_READY, SEALED -> {
                 // CollapseRevision、CommittedAtGameTime、Destination 一經寫入就不可再改。
                 if (!after.collapseState() || from.revision() != to.revision() || from.committedAtGameTime() != to.committedAtGameTime()
@@ -248,23 +251,23 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                     case COLLAPSING -> switch (after) {
                         // self-loop 只有返還與清 lease（上方已檢查單調）；COLLAPSING→READY 只寫入 opened／expires（只寫一次）。
                         case COLLAPSING -> passage && crossed && recovery && reason;
-                        case PASSAGE_READY -> crossed && recovery && reason;
+                        case PASSAGE_READY -> crossed && recovery && reason && sameProgress;
                         // TRANSFER_RECOVERY_REQUIRED 只能由 PASSAGE_READY 進入。
-                        case SEALED -> passage && crossed && recovery && !transfer;
+                        case SEALED -> passage && crossed && recovery && !transfer && sameProgress;
                         default -> false;
                     };
                     case PASSAGE_READY -> switch (after) {
                         // self-loop 只有附加 Crossed。
                         case PASSAGE_READY -> passage && recovery && reason && startsWith(to.crossed(), from.crossed());
                         // 只接受 TRR：opened／expires 與 Crossed 原樣保留，RecoveryRequired 由建構子驗證為恰一位未跨過的參與者。
-                        case SEALED -> passage && crossed && transfer;
+                        case SEALED -> passage && crossed && transfer && sameProgress;
                         default -> false;
                     };
                     case SEALED -> switch (after) {
                         // 沒有 self-loop 進度：TRR 完全凍結，其他原因的欄位也只能原樣。
                         case SEALED -> passage && crossed && recovery && reason;
                         // 重試只清空 SealedReason；TRANSFER_RECOVERY_REQUIRED 是永久原因，沒有這條邊。
-                        case COLLAPSING -> passage && crossed && recovery
+                        case COLLAPSING -> passage && crossed && recovery && sameProgress
                                 && from.sealedReason().filter(value -> value == SealedReason.TRANSFER_RECOVERY_REQUIRED).isEmpty();
                         default -> false;
                     };

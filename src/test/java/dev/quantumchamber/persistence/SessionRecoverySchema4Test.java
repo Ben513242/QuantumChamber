@@ -17,6 +17,11 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.function.Consumer;
 import net.minecraft.nbt.*;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -81,6 +86,10 @@ class SessionRecoverySchema4Test {
         cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled(base).withCollapse(SessionState.COLLAPSING, sealed)));
         var recovery = base.collapse().withPassage(100).transferRecoveryRequired(A);
         cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled(base).withCollapse(SessionState.COLLAPSING, recovery)));
+        // 單一違規：只帶 RecoveryRequired（opened／expires 為 -1、沒有 Crossed 與 SealedReason）。
+        var onlyRecovery = fields(base.collapse(), CollapseFields.UNSET, List.of(), List.of(A), Optional.empty());
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled(base).withCollapse(SessionState.COLLAPSING, onlyRecovery),
+                "COLLAPSING 只帶 RecoveryRequired"));
         cases.add(() -> assertDoesNotThrow(() -> collapsing(measured(SOURCE, 1)), "SOURCE 目的地可以 COLLAPSING"));
         assertAll(cases);
     }
@@ -99,6 +108,11 @@ class SessionRecoverySchema4Test {
                 ready.collapse().withCrossed(OUTSIDER)), "Crossed 必須是參與者子集"));
         cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled.withCollapse(SessionState.PASSAGE_READY,
                 ready.collapse().transferRecoveryRequired(A)), "READY 不帶 RecoveryRequired／SealedReason"));
+        // 單一違規：其餘欄位都是合法的 READY。
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled.withCollapse(SessionState.PASSAGE_READY,
+                fields(ready.collapse(), 100, List.of(), List.of(A), Optional.empty())), "READY 只帶 RecoveryRequired"));
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled.withCollapse(SessionState.PASSAGE_READY,
+                fields(ready.collapse(), 100, List.of(), List.of(), Optional.of(SealedReason.PROJECTION_FAILED))), "READY 只帶 SealedReason"));
         var source = settled(collapsing(measured(SOURCE, 1)));
         cases.add(() -> assertThrows(IllegalArgumentException.class, () -> source.withCollapse(SessionState.PASSAGE_READY,
                 source.collapse().withPassage(100)), "SOURCE 永遠不會進到 READY"));
@@ -119,7 +133,13 @@ class SessionRecoverySchema4Test {
                     crossedA.collapse().sealed(reason)), "非 TRR 不得帶 Crossed：" + reason));
             cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled.withCollapse(SessionState.SEALED,
                     fields(committed, committed.passageOpenedAtGameTime(), List.of(), List.of(B), Optional.of(reason))), "非 TRR 不得帶 RecoveryRequired：" + reason));
+            // 單一違規：opened／expires 為 -1，只帶 Crossed。
+            cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled.withCollapse(SessionState.SEALED,
+                    fields(committed, CollapseFields.UNSET, List.of(A), List.of(), Optional.of(reason))), "非 TRR 只帶 Crossed：" + reason));
         }
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled.withCollapse(SessionState.SEALED,
+                fields(ready.collapse(), 100, List.of(OUTSIDER), List.of(B), Optional.of(SealedReason.TRANSFER_RECOVERY_REQUIRED))),
+                "TRR 的 Crossed 只能是參與者"));
         cases.add(() -> assertDoesNotThrow(() -> transfer(crossedA, B)));
         cases.add(() -> assertDoesNotThrow(() -> transfer(ready, B), "沒有人跨過時也可能進入 TRR"));
         cases.add(() -> assertThrows(IllegalArgumentException.class, () -> settled.withCollapse(SessionState.SEALED,
@@ -233,7 +253,14 @@ class SessionRecoverySchema4Test {
                 new Edge("SEALED 換原因", sealed, otherReason, false),
                 new Edge("SEALED→PASSAGE_READY", sealed, ready, false),
                 new Edge("TRR 沒有回到 COLLAPSING 的重試邊", transfer, settled, false),
-                new Edge("PASSAGE_READY 改動 opened", ready, ready(settled, 200), false));
+                new Edge("PASSAGE_READY 改動 opened", ready, ready(settled, 200), false),
+                // 改變狀態的邊不得夾帶進度：進度只能經同狀態的 self-loop 寫入（§7.1 的提交帶著既有進度，不同時新增）。
+                new Edge("MEASURED→COLLAPSING 夾帶返還", measured, partial, false),
+                new Edge("MEASURED→COLLAPSING 夾帶清 lease", returned(measured, A, B), settled, false),
+                new Edge("COLLAPSING→PASSAGE_READY 夾帶返還與清 lease", partial, ready, false),
+                new Edge("COLLAPSING→PASSAGE_READY 夾帶清 lease", returnedAll, ready, false),
+                new Edge("COLLAPSING→SEALED 夾帶返還與清 lease", partial, sealed, false),
+                new Edge("COLLAPSING→SEALED 夾帶清 lease", returnedAll, sealed, false));
         assertAll(edges.stream().map(edge -> () ->
                 assertEquals(edge.legal(), SessionRecoveryRecord.sameAuthority(edge.previous(), edge.next()), edge.label())));
     }
@@ -271,7 +298,12 @@ class SessionRecoverySchema4Test {
             assertCommitted(disk.state.commitRestore(disk.flush(), settled, ready));
             assertCommitted(disk.state.commitRollForward(disk.flush(), ready, crossedA));
             assertCommitted(disk.state.commitRollForward(disk.flush(), crossedA, transfer));
-            assertEquals(CommitResult.Status.REJECTED, disk.state.commitRollForward(disk.flush(), transfer, transfer).status(), "沒有 self-loop");
+            // 有實際變更的 self-loop（再附加一位 Crossed）：拒絕原因必須是 SEALED 沒有 roll-forward 邊，而不是「沒有變更」。
+            var moreCrossed = transfer.withCollapse(SessionState.SEALED,
+                    fields(transfer.collapse(), 100, List.of(A, C), List.of(B), Optional.of(SealedReason.TRANSFER_RECOVERY_REQUIRED)));
+            var selfLoop = disk.state.commitRollForward(neverFlush(), transfer, moreCrossed);
+            assertEquals(CommitResult.Status.REJECTED, selfLoop.status(), "沒有 self-loop");
+            assertTrue(selfLoop.failure().orElseThrow().getMessage().contains("不是 roll-forward 類"), () -> selfLoop.failure().orElseThrow().toString());
             assertEquals(CommitResult.Status.REJECTED, disk.state.commitRestore(disk.flush(), transfer, settled).status(), "沒有重試邊");
             assertThrows(IllegalArgumentException.class, () -> disk.state.put(transfer(crossedA, C)));
             assertEquals(transfer, disk.state.records().get(SESSION)); assertEquals(transfer, disk.disk().get(SESSION));
@@ -378,7 +410,8 @@ class SessionRecoverySchema4Test {
         var noEvidence = new SessionRecoveryState(); noEvidence.put(measured);
         noEvidence.save(directory.resolve("no-evidence.dat").toFile(), null);
         assertFalse(noEvidence.m5Evidence());
-        assertThrows(IllegalStateException.class, () -> noEvidence.put(collapsing(measured)));
+        var noEvidenceWrite = assertThrows(IllegalStateException.class, () -> noEvidence.put(collapsing(measured)));
+        assertTrue(noEvidenceWrite.getMessage().contains("M5 authority 尚未初始化"), noEvidenceWrite::getMessage);
         assertEquals(CommitResult.Status.REJECTED, noEvidence.commitRestore(save(noEvidence, directory.resolve("no-evidence.dat")),
                 measured, collapsing(measured)).status(), "schema 4 之前不得寫入塌縮狀態");
     }
@@ -393,24 +426,42 @@ class SessionRecoverySchema4Test {
         assertEquals(CommitResult.Status.REJECTED, disk.state.commitRestore(disk.flush(), measured, next).status(), "CAS：expected 已不是 current");
     }
 
-    /** restore 類失敗（寫入前失敗，或 atomic move 完成、讀回失敗）：current 還原、保持 dirty，下一次寫出覆寫磁碟。 */
+    /** restore 類失敗（寫入前失敗，或 atomic move 完成、讀回失敗）：三條 restore 邊都 current 還原、保持 dirty，下一次寫出覆寫磁碟。 */
     @Test void commitRestoreFailureRestoresCurrentKeepsDirtyAndIsOverwrittenByTheNextWrite() {
-        assertAll(List.of("before-write", "after-write").stream().map(mode -> () -> {
-            var measured = measured(EXISTING, 1);
-            var disk = new Disk("restore-" + mode, measured);
-            var next = collapsing(measured);
-            var result = disk.state.commitRestore(mode.equals("after-write") ? disk.failingReadback() : disk.blocked(), measured, next);
-            assertEquals(CommitResult.Status.RESTORED, result.status(), mode); assertTrue(result.failure().isPresent());
-            assertEquals(measured, disk.state.records().get(SESSION), "current 還原為上一份已確認的內容");
-            assertEquals(measured, disk.state.flushedRecords().get(SESSION));
-            assertTrue(disk.state.isDirty()); assertTrue(disk.state.recoveryWritesSafe()); assertFalse(disk.state.rollForwardPending(SESSION));
-            assertEquals(Optional.of(measured), disk.state.collapseView(SESSION), "restore 類失敗不設 roll-forward 旗標");
-            if (mode.equals("after-write")) assertEquals(next, disk.disk().get(SESSION), "fixture：新內容已落地但未確認");
-            var other = SessionRecoveryStateTest.otherSession(OUTSIDER, SessionState.SUPERPOSITION, false, new UUID(0, 0x71), new UUID(0, 0x72), 4);
-            disk.state.put(other); disk.state.save(disk.file.toFile(), null);
-            assertEquals(Map.of(SESSION, measured, other.sessionUuid(), other), disk.disk(), "下一次寫出以上一份已確認的內容覆寫磁碟");
-            assertDoesNotThrow(() -> disk.state.put(returned(measured, A)), "authority history 已還原，可照常寫 MEASURED 進度");
-        }));
+        var cases = new ArrayList<Executable>();
+        for (String edge : List.of("MEASURED→COLLAPSING", "COLLAPSING→PASSAGE_READY", "SEALED→COLLAPSING"))
+            for (String mode : List.of("before-write", "after-write")) cases.add(() -> {
+                var label = edge + " " + mode;
+                var measured = measured(EXISTING, 1);
+                var settled = settled(collapsing(measured));
+                var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+                var disk = new Disk("restore-" + Math.abs(label.hashCode()), edge.startsWith("MEASURED") ? measured : settled(measured));
+                SessionRecoveryRecord expected; SessionRecoveryRecord next;
+                switch (edge) {
+                    case "MEASURED→COLLAPSING" -> { expected = measured; next = collapsing(measured); }
+                    case "COLLAPSING→PASSAGE_READY" -> {
+                        assertCommitted(disk.state.commitRestore(disk.flush(), settled(measured), settled));
+                        expected = settled; next = ready(settled);
+                    }
+                    default -> {
+                        assertCommitted(disk.state.commitRestore(disk.flush(), settled(measured), settled));
+                        assertCommitted(disk.state.commitRollForward(disk.flush(), settled, sealed));
+                        expected = sealed; next = sealed.withCollapse(SessionState.COLLAPSING, sealed.collapse().retry());
+                    }
+                }
+                var result = disk.state.commitRestore(mode.equals("after-write") ? disk.failingReadback() : disk.blocked(), expected, next);
+                assertEquals(CommitResult.Status.RESTORED, result.status(), label); assertTrue(result.failure().isPresent());
+                assertEquals(expected, disk.state.records().get(SESSION), "current 還原為上一份已確認的內容：" + label);
+                assertEquals(expected, disk.state.flushedRecords().get(SESSION));
+                assertTrue(disk.state.isDirty()); assertTrue(disk.state.recoveryWritesSafe()); assertFalse(disk.state.rollForwardPending(SESSION));
+                assertEquals(Optional.of(expected), disk.state.collapseView(SESSION), "restore 類失敗不設 roll-forward 旗標：" + label);
+                if (mode.equals("after-write")) assertEquals(next, disk.disk().get(SESSION), "fixture：新內容已落地但未確認：" + label);
+                var other = SessionRecoveryStateTest.otherSession(OUTSIDER, SessionState.SUPERPOSITION, false, new UUID(0, 0x71), new UUID(0, 0x72), 4);
+                disk.state.put(other); disk.state.save(disk.file.toFile(), null);
+                assertEquals(Map.of(SESSION, expected, other.sessionUuid(), other), disk.disk(), "下一次寫出以上一份已確認的內容覆寫磁碟：" + label);
+                assertDoesNotThrow(() -> disk.state.put(expected), "authority history 已還原為 expected：" + label);
+            });
+        assertAll(cases);
     }
 
     @Test void commitRestoreCasMismatchQuarantinesAndConvergesToFlushed() {
@@ -438,20 +489,30 @@ class SessionRecoverySchema4Test {
         assertEquals(Optional.of(sealed), sealedDisk.state.convergeQuarantined(SESSION), "SEALED 原樣保留");
     }
 
-    /** 讀回已確認之後才出現的例外（例如 flush 之後的 hook）：結果以 flushed 為準，不把已確認的寫入當成失敗而還原。 */
+    /**
+     * 讀回已確認之後才出現的例外（例如 flush 之後的 hook）：結果以 flushed 為準，不把已確認的寫入當成失敗而還原；
+     * 例外不得靜默丟棄，以 WARN 記錄，同一個 session 依 {@code FailureText.dedupeKey} 去重。
+     */
     @Test void exceptionAfterConfirmedReadbackStillCountsAsCommitted() {
         var dormant = settled(measured(NEW, 1));
         var disk = new Disk("after-readback", dormant);
         var settled = settled(collapsing(measured(NEW, 1)));
         Runnable lateFailure = () -> { disk.state.save(disk.file.toFile(), null); throw new IllegalStateException("注入：讀回確認之後的例外"); };
-        assertCommitted(disk.state.commitRestore(lateFailure, dormant, settled));
-        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
-        assertCommitted(disk.state.commitRollForward(lateFailure, settled, sealed));
-        assertFalse(disk.state.rollForwardPending(SESSION));
-        var retry = sealed.withCollapse(SessionState.COLLAPSING, sealed.collapse().retry());
-        assertCommitted(disk.state.commitRestore(disk.flush(), sealed, retry));
-        assertEquals(TerminalResult.Status.REMOVED, disk.state.terminate(lateFailure, retry, TerminalOrigin.PREPARE_DOOR_CLOSED).status());
-        assertFalse(disk.disk().containsKey(SESSION)); assertThrows(IllegalStateException.class, () -> disk.state.put(retry));
+        Runnable otherLateFailure = () -> { disk.state.save(disk.file.toFile(), null); throw new IllegalStateException("注入：另一個讀回確認之後的例外"); };
+        try (var logs = new Logs()) {
+            assertCommitted(disk.state.commitRestore(lateFailure, dormant, settled));
+            var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+            assertCommitted(disk.state.commitRollForward(lateFailure, settled, sealed));
+            assertFalse(disk.state.rollForwardPending(SESSION));
+            var retry = sealed.withCollapse(SessionState.COLLAPSING, sealed.collapse().retry());
+            assertCommitted(disk.state.commitRestore(otherLateFailure, sealed, retry));
+            assertEquals(TerminalResult.Status.REMOVED, disk.state.terminate(otherLateFailure, retry, TerminalOrigin.PREPARE_DOOR_CLOSED).status());
+            assertFalse(disk.disk().containsKey(SESSION)); assertThrows(IllegalStateException.class, () -> disk.state.put(retry));
+            var warnings = logs.messages(Level.WARN);
+            assertEquals(2, warnings.size(), () -> "同一原因只記一次，換原因再記一次：" + warnings);
+            assertTrue(warnings.get(0).contains(SESSION.toString()) && warnings.get(0).contains("注入：讀回確認之後的例外"), warnings.get(0));
+            assertTrue(warnings.get(1).contains("注入：另一個讀回確認之後的例外"), warnings.get(1));
+        }
     }
 
     /** put→flush 的同步窗口中，restore 類內容視同未 checked（不得被 recovery 或其他寫出承認）。 */
@@ -494,6 +555,80 @@ class SessionRecoverySchema4Test {
         }));
     }
 
+    /**
+     * spec §10.3（Review Focus 1）：SEALED(TRR) 的 roll-forward 寫出失敗之後不得被隔離——收斂會以 flushed（PASSAGE_READY）取代 current，
+     * 把可能已落地的 TRR 寫回成 READY。current 保留 TRR，下一次 flush 把它寫出。
+     */
+    @Test void unconfirmedRollForwardIsNotQuarantinedAndTheNextFlushWritesIt() {
+        var dormant = settled(measured(EXISTING, 2));
+        var disk = new Disk("trr-not-quarantined", dormant);
+        var settled = settled(collapsing(measured(EXISTING, 2)));
+        var ready = ready(settled); var crossedA = crossed(ready, A); var transfer = transfer(crossedA, B);
+        assertCommitted(disk.state.commitRestore(disk.flush(), dormant, settled));
+        assertCommitted(disk.state.commitRestore(disk.flush(), settled, ready));
+        assertCommitted(disk.state.commitRollForward(disk.flush(), ready, crossedA));
+        assertEquals(CommitResult.Status.ROLL_FORWARD_PENDING, disk.state.commitRollForward(disk.failingReadback(), crossedA, transfer).status());
+        assertEquals(transfer, disk.disk().get(SESSION), "fixture：TRR 已落地但未確認");
+        assertFalse(disk.state.quarantine(SESSION), "未確認的 SEALED(TRR) 不得隔離");
+        assertTrue(disk.state.quarantinedSessions().isEmpty());
+        assertEquals(transfer, disk.state.records().get(SESSION), "current 仍是 TRR");
+        assertEquals(Optional.of(transfer), disk.state.collapseView(SESSION));
+        disk.state.save(disk.file.toFile(), null);
+        assertEquals(transfer, disk.disk().get(SESSION), "下一次 flush 寫出 TRR，不退回 READY");
+        assertEquals(transfer, disk.state.flushedRecords().get(SESSION)); assertFalse(disk.state.rollForwardPending(SESSION));
+    }
+
+    /** 終局的 flush 期間有 roll-forward 寫入（重入）而失敗：不隔離、不丟棄它，回 ROLL_FORWARD_PENDING。 */
+    @Test void terminalCasMismatchWithUnconfirmedRollForwardIsNotQuarantined() {
+        var ready = ready(settled(collapsing(measured(EXISTING, 2))));
+        var state = journal(ready);
+        var result = state.terminate(() -> { state.put(crossed(ready, A)); throw new UncheckedIOException(new IOException("注入")); },
+                ready, TerminalOrigin.PASSAGE_ENDED);
+        assertEquals(TerminalResult.Status.ROLL_FORWARD_PENDING, result.status());
+        assertTrue(state.quarantinedSessions().isEmpty());
+        assertEquals(crossed(ready, A), state.records().get(SESSION)); assertTrue(state.rollForwardPending(SESSION));
+        assertEquals(Optional.of(crossed(ready, A)), state.collapseView(SESSION));
+    }
+
+    /** restore 提交的 CAS 不符、但 current 是已 checked 的 roll-forward 內容（只能以反射製造）：不隔離，回 ROLL_FORWARD_PENDING。 */
+    @Test void commitRestoreCasMismatchWithUnconfirmedRollForwardIsNotQuarantined() {
+        var settled = settled(collapsing(measured(EXISTING, 1)));
+        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+        var state = journal(settled);
+        var result = state.commitRestore(() -> { rollForwardBehindTheJournal(state, sealed); throw new UncheckedIOException(new IOException("注入")); },
+                settled, ready(settled));
+        assertEquals(CommitResult.Status.ROLL_FORWARD_PENDING, result.status());
+        assertTrue(state.quarantinedSessions().isEmpty());
+        assertEquals(sealed, state.records().get(SESSION)); assertEquals(Optional.of(sealed), state.collapseView(SESSION));
+    }
+
+    /** 雙重故障（反射）：roll-forward 旗標與未 checked 的 restore 殘留同時存在時照常隔離；收斂後旗標清除。 */
+    @Test void quarantinedDoubleFaultConvergesAndClearsTheRollForwardFlag() {
+        var measured = measured(EXISTING, 1);
+        var state = journal(measured); state.markCollapseAuthoritiesInitialized();
+        doubleFault(state, collapsing(measured));
+        assertTrue(state.rollForwardPending(SESSION)); assertEquals(Set.of(SESSION), state.uncheckedCandidateSessions());
+        assertTrue(state.quarantine(SESSION));
+        assertEquals(Optional.of(measured), state.convergeQuarantined(SESSION));
+        assertFalse(state.rollForwardPending(SESSION), "收斂以 flushed 取代 current 時清除旗標");
+        assertEquals(measured, state.records().get(SESSION));
+    }
+
+    /** 前置條件的鎖：先隔離再終局、以 roll-forward 寫 M4 的 MEASURED 進度，都在寫出之前拒絕。 */
+    @Test void preconditionsRejectBeforeAnyWrite() {
+        var ready = ready(settled(collapsing(measured(EXISTING, 1))));
+        var quarantined = journal(ready);
+        assertTrue(quarantined.quarantine(SESSION));
+        var terminal = quarantined.terminate(neverFlush(), ready, TerminalOrigin.PASSAGE_ENDED);
+        assertEquals(TerminalResult.Status.REJECTED, terminal.status(), "隔離中的 session 不得終局");
+        assertEquals(ready, quarantined.records().get(SESSION));
+        var measured = measured(EXISTING, 2);
+        var m4 = journal(measured);
+        var progress = m4.commitRollForward(neverFlush(), measured, returned(measured, A));
+        assertEquals(CommitResult.Status.REJECTED, progress.status(), "MEASURED 的進度不是 M5 roll-forward");
+        assertEquals(measured, m4.records().get(SESSION)); assertFalse(m4.isDirty());
+    }
+
     /** collapse view 只在 roll-forward 尚未確認時回 current：SEALED、Crossed、返還與清 lease 進度。 */
     @Test void collapseViewUsesCurrentOnlyForUnconfirmedRollForward() {
         var measured = measured(EXISTING, 2);
@@ -521,8 +656,15 @@ class SessionRecoverySchema4Test {
             var state = journal(settled); state.put(sealed);
             assertTrue(state.rollForwardPending(SESSION), "一般 put 的 roll-forward 也設旗標");
             assertEquals(Optional.of(sealed), state.collapseView(SESSION));
+            assertFalse(state.quarantine(SESSION), "只差 roll-forward 進度的 session 不得隔離");
+            assertEquals(Optional.of(sealed), state.collapseView(SESSION));
+        });
+        cases.add(() -> {
+            // 只有雙重故障（反射）才會同時有 roll-forward 旗標與未 checked 的 restore 殘留；這時照常隔離，collapse view 不採用 current。
+            var state = journal(measured); state.markCollapseAuthoritiesInitialized();
+            doubleFault(state, collapsing);
             assertTrue(state.quarantine(SESSION));
-            assertEquals(Optional.of(settled), state.collapseView(SESSION), "隔離 session 的 current 不採用");
+            assertEquals(Optional.of(measured), state.collapseView(SESSION), "隔離 session 的 current 不採用");
         });
         cases.add(() -> assertEquals(Optional.empty(), journal().collapseView(SESSION)));
         assertAll(cases);
@@ -600,7 +742,8 @@ class SessionRecoverySchema4Test {
                 new Row("Nether SOURCE DORMANT", settled(measured(SOURCE, 1, true)), false),
                 new Row("Nether NEW 尚未返還", measured(NEW, 1, true), false),
                 new Row("Nether NEW 已返還、lease 仍在", returned(measured(NEW, 1, true), A), false),
-                new Row("Overworld NEW DORMANT", settled(measured(NEW, 1)), false));
+                new Row("Overworld NEW DORMANT", settled(measured(NEW, 1)), false),
+                new Row("只有 Origin 在 Nether、SourceFamilyRef 是 OVERWORLD", settled(measured(NEW, 1, false, true)), false));
         assertAll(rows.stream().map(row -> () -> {
             var empty = new NbtCompound(); empty.putInt("SchemaVersion", 3); empty.put("Records", new NbtList());
             var state = SessionRecoveryState.fromNbt(empty); state.put(row.record());
@@ -619,7 +762,11 @@ class SessionRecoverySchema4Test {
             var disk = new Disk("terminal-" + mode, dormant);
             var settled = settled(collapsing(measured(SOURCE, 1)));
             assertCommitted(disk.state.commitRestore(disk.flush(), dormant, settled));
-            var result = disk.state.terminate(mode.equals("after-write") ? disk.failingReadback() : disk.blocked(), settled, TerminalOrigin.SOURCE_FAST_PATH);
+            TerminalResult result;
+            try (var logs = new Logs()) {
+                result = disk.state.terminate(mode.equals("after-write") ? disk.failingReadback() : disk.blocked(), settled, TerminalOrigin.SOURCE_FAST_PATH);
+                assertEquals(List.of(), logs.messages(Level.WARN), "終局失敗的 WARN 由 caller 依原因去重後記錄，journal 不記");
+            }
             assertEquals(TerminalResult.Status.RESTORED, result.status(), mode); assertTrue(result.failure().isPresent());
             assertEquals(settled, disk.state.records().get(SESSION)); assertEquals(settled, disk.state.flushedRecords().get(SESSION));
             assertTrue(disk.state.isDirty()); assertTrue(field(disk.state, "authorityHistory").containsKey(SESSION));
@@ -761,16 +908,21 @@ class SessionRecoverySchema4Test {
 
     // ---- fixtures ----
 
-    static SessionRecoveryRecord measured(int choice, int people) { return measured(choice, people, false); }
+    static SessionRecoveryRecord measured(int choice, int people) { return measured(choice, people, false, false); }
 
-    /** MEASURED＋SELECTED（選中 ledger 第 choice 筆），people 位參與者都尚未返還，lease 原樣；nether 時來源在 Nether。 */
-    static SessionRecoveryRecord measured(int choice, int people, boolean nether) {
+    /** 只把凍結的 SourceFamilyRef 改成 Nether（Origin 仍在主世界）：§11.3 的判定只看 SourceFamilyRef.role()。 */
+    static SessionRecoveryRecord measured(int choice, int people, boolean netherSource) { return measured(choice, people, netherSource, false); }
+
+    /** MEASURED＋SELECTED（選中 ledger 第 choice 筆），people 位參與者都尚未返還，lease 原樣；兩個旗標分別把 SourceFamilyRef／Origin 改到 Nether。 */
+    static SessionRecoveryRecord measured(int choice, int people, boolean netherSource, boolean netherOrigin) {
         var input = SessionRecoverySchema3Test.fixture(false, false);
-        if (nether) {
-            var origin = SessionRecoverySchema3Test.record(input).getCompound("Origin");
-            origin.putString("WorldKey", "minecraft:the_nether"); origin.putString("Role", "NETHER");
+        if (netherSource) {
             var source = SessionRecoverySchema3Test.context(input).getCompound("SourceFamilyRef");
             source.putString("WorldKey", "minecraft:the_nether"); source.putString("Role", "NETHER");
+        }
+        if (netherOrigin) {
+            var origin = SessionRecoverySchema3Test.record(input).getCompound("Origin");
+            origin.putString("WorldKey", "minecraft:the_nether"); origin.putString("Role", "NETHER");
         }
         var base = SessionRecoveryState.fromNbt(input).records().get(SESSION);
         var first = base.participants().getFirst();
@@ -850,6 +1002,46 @@ class SessionRecoverySchema4Test {
     private static Map<UUID, SessionRecoveryRecord> field(SessionRecoveryState state, String name) throws ReflectiveOperationException {
         var handle = SessionRecoveryState.class.getDeclaredField(name); handle.setAccessible(true);
         return (Map<UUID, SessionRecoveryRecord>) handle.get(state);
+    }
+    /**
+     * 以反射在 journal 背後把 current 換成 record，並設 roll-forward 旗標。正常 API 做不到：一般 put 拒絕 restore 邊，
+     * roll-forward 旗標也只由一般 put 設定。只用來覆蓋「CAS 不符」與「雙重故障」這兩條防禦分支。
+     */
+    @SuppressWarnings("unchecked")
+    private static void rollForwardBehindTheJournal(SessionRecoveryState state, SessionRecoveryRecord record) {
+        try {
+            field(state, "records").put(record.sessionUuid(), record);
+            var handle = SessionRecoveryState.class.getDeclaredField("rollForwardPending"); handle.setAccessible(true);
+            ((Set<UUID>) handle.get(state)).add(record.sessionUuid());
+        } catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+    }
+    /** 雙重故障：current 跨過 restore 邊（未 checked），同時帶著 roll-forward 旗標。 */
+    private static void doubleFault(SessionRecoveryState state, SessionRecoveryRecord restoreResidue) {
+        rollForwardBehindTheJournal(state, restoreResidue);
+    }
+
+    /** 只收 {@code quantumchamber} logger 的 log4j appender（比照 testmod 的 LogCapture）；先送探針，證明確實攔得到，不能以空結果冒充「沒有 WARN」。 */
+    private static final class Logs extends AbstractAppender implements AutoCloseable {
+        private final org.apache.logging.log4j.core.LoggerContext context;
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+        Logs() {
+            super("f2a-log-capture-" + UUID.randomUUID(), null, null, true, Property.EMPTY_ARRAY);
+            context = ((org.apache.logging.log4j.core.Logger) LogManager.getLogger("quantumchamber")).getContext();
+            start();
+            context.getConfiguration().getRootLogger().addAppender(this, null, null);
+            context.updateLoggers();
+            var probe = "F2A_LOG_CAPTURE_PROBE " + UUID.randomUUID();
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn(probe);
+            if (!messages(Level.WARN).contains(probe)) { close(); throw new IllegalStateException("log capture 無法觀察 quantumchamber 的 WARN"); }
+            events.clear();
+        }
+        @Override public void append(LogEvent event) { if ("quantumchamber".equals(event.getLoggerName())) events.add(event.toImmutable()); }
+        List<String> messages(Level level) {
+            synchronized (events) { return events.stream().filter(event -> event.getLevel() == level).map(event -> event.getMessage().getFormattedMessage()).toList(); }
+        }
+        @Override public void close() {
+            context.getConfiguration().getRootLogger().removeAppender(getName()); context.updateLoggers(); stop();
+        }
     }
 
     /** 以 checked put→save 建立的 journal（M5 authority 已初始化）。 */
