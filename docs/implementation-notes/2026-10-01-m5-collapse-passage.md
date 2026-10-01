@@ -532,7 +532,7 @@ fix round 2 的 GREEN 數字：
 - Review：
   - 首輪 spec review：✅，Minor 2。
   - 首輪 code quality review：Critical 0、Important 1、Minor 8。fix round 1（`3957624`）處理 Important 1 與 Minor 1、2、4–8；Minor 3（收斂寫出每 tick 重試、沒有退避）依 controller 裁定不在本 task 處理，記為延後項（journal 層級共用節流）。
-  - fix round 1 的 re-review：待進行。
+  - fix round 1 的 re-review：Critical 0、Important 0、Minor 0。H3 完成。
 
 ### Code-truth（`3957624`）
 
@@ -565,6 +565,7 @@ fix round 2 的 GREEN 數字：
   - start：`abandonInitial` 失敗、改走 `fail` 之後，`settleUncheckedInitial` 檢查初始 authority 是否已 checked。fallback RETURNING 已 checked 時照舊由一般返還流程處理；否則立即隔離仍留在 current 的未 checked record（同一 tick 的其他寫出也不會承認它），並記入 `abandonPending`。立即隔離分支由 `native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows` 覆蓋（fix round 1）。
 - 沒有 checked authority 的殘留，要等 recovery 以 checked 寫出確認移除（current、flushed 都沒有，且 `convergencePending` 為假），`finishAbandoned` 才取消 reservation（`cancelPrepared`＋`retire`）、移除 runtime 與來源票，chamber 可再使用。`cancelInitial` 可安全重試：`cancelPrepared` 成功後保留 `RetiredMappings`，`retire` 失敗時下一次只重做 `retire`。取消失敗時同原因只記一次 WARN，下一 tick 重試。
 - 保底的界線：殘留出現到下一個 recovery tick 之間，若有其他 session 的寫出，非隔離的殘留仍會被寫出。這與 M4 相同（M4 的暫停也擋不住其他 session 的寫出），只影響未知路徑。
+- 釋放 chamber 的殘留路徑（fix round 1 re-review 的觀察）：四件事同時發生時——abort 已移除 record、補寫失敗、`retire` 失敗、fallback 的 `returning` 因另一個 session 的殘留（`recoveryWritesSafe()==false`）在 put 之前就丟例外——current、flushed 都沒有該 session，`convergencePending` 為 false，下一個 tick 就釋放 chamber，但磁碟上可能還留著未確認的 ARMING（下一次成功寫出時覆蓋）。屬四重故障，不另處理。
 
 **放棄入場的補寫與 WARN（q5）**：
 
