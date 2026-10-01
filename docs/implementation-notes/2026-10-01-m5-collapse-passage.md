@@ -1281,3 +1281,156 @@ GREEN 數字：
 
 - 本輪不跑 Legacy 與 M4 recovery（controller 指示）：程式只改了 Javadoc，以及「讀回已確認之後的 log」這條路徑。這條路徑在 production 到不了，因為 F2a 的 commit 與終局在 runtime 沒有呼叫點，M4 與 legacy 流程都不經過它。
 - Full gate 在 commit 之前以工作樹執行；commit 時 3 個檔的 blob 與 gate 前記錄的相同。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+## F2b：M5 authority 初始化、兩個 ledger 與收斂
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `eeb0524` `feat: add the allocation and projection ledgers with schema 4 initialization evidence`（parent `7bae536`）：新增 `collapse/UniverseAllocationLedger.java`、`ProjectionLedger.java`、`CollapseAuthorities.java`、`CollapseBackoff.java`；改 `QuantumSuperpositionMod.java`（3 行）；測試新增 `src/test/java/dev/quantumchamber/collapse/UniverseAllocationLedgerTest.java`、`ProjectionLedgerTest.java`、`CollapseAuthoritiesTest.java`。
+  - 本段的 docs commit 接在 `eeb0524` 之後。
+- Code range `7bae536..eeb0524`。`SessionRecoveryState.java` 沒有修改：controller 補充第 5 點允許的唯讀 getter 用不到（見「偏離」）。
+- production 唯一的新行為是開服初始化：建立缺少的空 ledger、標記 journal 已初始化。之後第一次 checked journal 寫入（有 candidate record 時）寫出 schema 4。沒有接任何 gameplay 呼叫點（`CollapseService` 是 F3d），兩個 ledger 在 runtime 只會是空的。
+- Review：待 spec 與 code quality review。
+
+### Code-truth（`eeb0524`）
+
+行號以 `eeb0524` 為準；`A` 指 `collapse/CollapseAuthorities.java`，`U` 指 `collapse/UniverseAllocationLedger.java`，`P` 指 `collapse/ProjectionLedger.java`。
+
+| 項目 | 位置 | 行為 |
+| --- | --- | --- |
+| 註冊順序（決策 2） | `QuantumSuperpositionMod.java:47-49`；`registerEvents` `A:238-243` | 在 `SuperpositionSessionManager.initialize()` 之後、`UniverseLifecycleService.initialize()` 之前註冊 `SERVER_STARTED`（`onStarted` `:245-249`）與 `SERVER_STOPPED`（從 `INSTANCES` 移除）。Fabric 依註冊順序執行，所以初始化早於 bootstrap 物化（Full、Main gate 的 log 都是 M5 authority 的 INFO 先於 `M3_UNIVERSE_BOOTSTRAP_READY`）。`INSTANCES` 以 server identity 為 key（`:59`），單人在同一個 JVM 重開世界是新的 instance；`get(server)`（`:252-257`）只在開服之後、停服之前存在 |
+| 初始化 | `initialize(MinecraftServer)` `A:260-263`、`initialize(Supplier)` `:265-287`、`examine` `:289-311` | 每個 instance 一次（第二次丟 `IllegalStateException`）。先 `requireHealthy`，再在 `markCollapseAuthoritiesInitialized()` 之前讀 `m5Evidence()`：F2a 保證此時它等於「flushed envelope 已是 schema 4」；journal 檔不存在時是全新的 state，為假。兩個 ledger 都讀完而且沒有任何失敗，才建立缺少的空檔；全部成功才呼叫 `markCollapseAuthoritiesInitialized()`。成功記 INFO；任何失敗記 ERROR（含 root cause 與 stack trace），回傳失敗的 `InitResult`，不丟例外，所以之後的 lifecycle bootstrap 照常執行。意外的 `RuntimeException` 也轉成失敗的結果 |
+| 遺失判定與讀取分類 | `load` `A:313-333`、`createIfAbsent` `:335-346`、`parse` `:530-533`、`readFile` `:536-540` | 讀檔丟 `NoSuchFileException`：journal 還不是 schema 4 → `NOT_CREATED`，之後建立空檔為 `CREATED`；已是 schema 4 → `LOST`。讀原始 bytes 時的其他 IO 例外（含非一般檔案）→ `UNREADABLE`。讀到 bytes 之後的任何失敗（gzip、NBT、strict decode、超過 16 MiB）→ `CORRUPT`。建立空檔失敗（含讀回失敗）→ `UNREADABLE` |
+| 失敗的 SEALED 原因 | `InitResult.sealedReason` `A:109-113`、`gate` `:443-457` | 任一 ledger 為 `LOST` 或 `CORRUPT` → `AUTHORITY_CORRUPT`；其餘（IO、journal 不健康、標記失敗）→ `AUTHORITY_UNREADABLE`。初始化失敗時，兩個權威的查詢與寫入一律回這個原因，即使其中一個 ledger 讀取成功（spec §12：遺失或損壞時「不配置任何東西」） |
+| UniverseId 推導 | `deriveUniverseId` `U:79-94` | `SHA-256(UTF-8("quantumchamber:universe-id:v1") ‖ token)` 前 16 bytes，`byte[6]=(b&0x0F)|0x80`、`byte[8]=(b&0x3F)|0x80`（RFC 9562 version 8 與 variant 10），big-endian 組成 UUID |
+| allocation ledger | `U`：`Entry` `:45-57`、建構子 `:61-70`、`append` `:108-114`、`toNbt` `:116-130`、`fromNbt` `:133-152`、`MAX_ENTRIES` `:38` | 不可變。root 恰為 `{SchemaVersion, Entries}`，entry 恰為 `{AllocationToken(32 bytes), UniverseId(4 int), Profile, ProfileVersion}`；token 與 UniverseId 都唯一；只能追加，保留追加順序。strict decode 只驗結構（含筆數上限在逐筆解碼前檢查）；UniverseId 是否等於推導值、profile 是否為 OVERWORLD v1，由 lookup 以 `Entry.of(intent)` exact 比對（spec §6.1「已有 entry 就用 entry…不符進 SEALED」） |
+| projection ledger | `P`：`Entry` `:34-57`、建構子 `:61-70`、`with` `:85-102`、`toNbt` `:104-121`、`fromNbt` `:124-145` | 不可變。entry 恰為 `{ChamberUuid, UniverseId, Role, ControllerPos(3 int), OutwardFacing, Status}`；`(ChamberUuid, UniverseId)` 唯一；OutwardFacing 必須是水平方向。`with`：新 key 只能寫 PENDING（尾端追加）；既有 key 的 site（Role、ControllerPos、OutwardFacing）必須相同，而且只能 PENDING→COMPLETE（原位取代）；沒有刪除 |
+| allocation lookup-or-create | `lookupOrAppendAllocation` `A:359-379` | 閘門（初始化失敗、遺失、未確認）之後：同 token 的既有 entry 必須 exact 等於 `Entry.of(intent)`，否則 `CORRUPT`，不沿用、不覆寫；推導的 UniverseId 已屬於另一個 token、或已達上限 → `CORRUPT`；否則 checked 追加，回 `APPENDED`、`WRITE_FAILED` 或（寫入前發現檔案消失）`CORRUPT` |
+| projection 查詢與寫入 | `projection` `A:385-391`、`writeProjection` `:397-420` | `projection` 只回已確認的 entry（`FOUND`／`ABSENT`），未確認時回 `UNCONFIRMED`。`writeProjection` 要求 role 為 OVERWORLD（否則丟 `IllegalArgumentException`）；既有 entry 的 site 不符 → `CORRUPT`；同 Status → `UNCHANGED`（不寫檔）；新 key 寫 COMPLETE、或既有 COMPLETE 寫回 PENDING → `INVALID_TRANSITION`（caller 錯誤，帶回既有 entry，沒有 SEALED 原因）；新 key 已達上限 → `CORRUPT`；其餘 checked 寫入 |
+| checked 寫入 | `checkedWrite` `A:467-488`、`writeAtomic` `:506-521`、`verify` `:523-527` | 先確認正式檔仍存在（`NoSuchFileException` → 遺失：記一次 ERROR、該權威本 instance 一律 `CORRUPT`、不重建、current 不變）。再沿用 M4 discovery 的步驟：同目錄暫存檔、`force`、以正式讀取規則驗證暫存檔、`ATOMIC_MOVE`、讀回 strict decode 並 exact 比對。暫存檔驗證與讀回都經 IO port |
+| roll-forward 與收斂 | `rollForward` `A:491-503`、`unconfirmed` `:423-426`、`convergeIfNeeded` `:432-438`；`CollapseBackoff.java:17-32` | 寫入或讀回失敗：current 保留這次的新內容（絕不移除可能已落地的追加）、標為未確認、退避加倍；WARN 依 `FailureText.dedupeKey` 以權威為單位去重，成功後清除。未確認期間該權威的 `lookupOrAppendAllocation`／`projection`／`writeProjection` 一律回 `UNCONFIRMED`。`convergeIfNeeded` 在退避期之外以 checked 方式重寫 current；成功記 INFO「收斂完成」並清除退避，失敗維持未確認。退避數列 200、400、…、6400、12000（上限），新 instance 沒有退避 |
+| 結果型別 | `InitResult` `A:76-117`、`Lookup` `:123-157`、`WriteResult` `:160-211` | `Lookup`／`WriteResult` 的失敗狀態都帶 `sealedReason()`，F4a／F4b 直接用：`CORRUPT`→`AUTHORITY_CORRUPT`、`UNREADABLE`→`AUTHORITY_UNREADABLE`、`UNCONFIRMED`／`WRITE_FAILED`→allocation 為 `ALLOCATION_IO_FAILED`、projection 為 `PROJECTION_FAILED`。compact 建構子強制「只有失敗帶原因與 failure」 |
+| IO port（決策 9） | `LedgerIo` `A:73`；package-private 建構子 `:221` | `byte[] read(Path)`：初始化載入、暫存檔驗證、atomic move 之後的讀回都經過它；正式實作是 `readFile`。測試以它注入 IO 例外與「atomic move 完成、讀回失敗」，時鐘以 `IntSupplier` 注入（production 為 `server::getTicks`） |
+| strict NBT helper | `LedgerNbt` `A:582-611` | 兩個 ledger 共用：型別、4-int UUID、enum 名稱、`Entries` 的 held type（空 list 必須 END）與筆數上限 |
+
+### spec 對應與遺失判定表（§15）
+
+| spec | 程式位置 | 測試 |
+| --- | --- | --- |
+| §6 初始化：還不是 schema 4 時補建；已是 schema 4 時缺檔即遺失 | `examine`、`load`、`createIfAbsent` | 下列各列 |
+| §15 全新存檔第一次 NEW 不被判為遺失 | `load` `:317-318` → `createIfAbsent` | `CollapseAuthoritiesTest.freshSaveCreatesBothEmptyLedgersAndItsFirstNewIsNotLost`（含重啟後 strict 讀回、同 token 為 `FOUND`） |
+| §15 M4 schema 3 存檔、discovery 非空：升級後第一次 NEW 不被判為遺失 | `examine` `:296` 只看 `m5Evidence()`，不讀 discovery | `schemaThreeSaveWithNonEmptyDiscoveryIsNotTreatedAsLost`（初始化前寫出 3、之後寫出 4；discovery bytes 不變） |
+| §15 初始化只建立一個 ledger 就中斷（W11） | 同上：既有的 `LOADED`、缺的 `CREATED` | `interruptedInitializationRecreatesOnlyTheMissingLedger`（兩個方向；既有檔的 bytes 與 mtime 不變） |
+| §15 schema 4 刪除任一個 ledger：不重建、`AUTHORITY_CORRUPT` | `load` `:318-320`；`examine` `:305-306`；`gate` `:445-450` | `schemaFourJournalWithAMissingLedgerIsLostAndNeverRecreated`（兩個方向；不建檔、另一個檔 bytes 不變、ERROR 一則、journal 照寫 4） |
+| §15 只有 EXISTING 造訪過的存檔也一樣；COMPLETE 投影的 interior 不被重寫 | 同上；`projection()` 回 `CORRUPT`，不回 `ABSENT` | `existingOnlySaveWithADeletedLedgerIsLostToo`（allocation 一直是空的；刪任一個都 `LOST`；投影查詢不是 `ABSENT`，F4b 不會當成第一次寫入。實際不重寫 interior 由 F4b 驗證） |
+| §15 初始化失敗時 journal 不升 schema 4、不提交 COLLAPSING | `examine` `:307-309` 只在全部成功時標記 | `initializationFailuresNeverUpgradeTheJournalOrAllowCollapsing`（5 種失敗：`m5ReadyThisInstance` 與 `m5Evidence` 為假、寫出仍為 3、缺的 ledger 不建立、ERROR 一則）、`unhealthyJournalFailsInitializationWithoutTouchingTheLedgers` |
+| §15 確定遺失 → `AUTHORITY_CORRUPT`；IO 例外 → `AUTHORITY_UNREADABLE`（§6 讀取失敗的分類） | `load`、`InitResult.sealedReason`、`checkedWrite` `:470-474` | 上列兩個 test 的 5＋1 種情境（含 CORRUPT 與 IO 同時發生時取 CORRUPT）、`aLedgerThatDisappearsAtRuntimeIsLostAndNotRecreated`（執行期間消失，§6.1） |
+| §6 既有紀錄的驗證（ledger 部分）、§6.1 | `lookupOrAppendAllocation` `:366-376` | `existingAllocationEntriesMustBeExactlyWhatThisSessionWouldWrite`（推導值不符、ProfileVersion 2、UniverseId 屬於另一個 token 都 `CORRUPT`；檔案 bytes 不變） |
+| §6.5 site 驗證與 PENDING→COMPLETE | `writeProjection` `:404-417`、`P.with` | `existingProjectionEntriesMustMatchTheSourceChamberAndOnlyAdvance`、`ProjectionLedgerTest.transitionsAreOnlyPendingThenCompleteAndKeysAreUnique` |
+| §6 roll-forward：注入「atomic move 完成、讀回失敗」，append 不被移除、下一次使用前重寫、未確認期間拒絕新決策 | `rollForward`、`gate` `:451-455`、`convergeIfNeeded` | `allocationReadbackFailureAfterTheMoveKeepsTheAppendAndConvergesBeforeTheNextUse`、`unconfirmedProjectionPendingBlocksDecisionsUntilConverged` |
+| §6 表：新內容或舊內容重新讀取後都被接受 | strict decode 與 lookup | 上列兩個 test 的重啟讀回（新內容）、`allocationWriteFailureBeforeTheMoveIsRolledForwardToo`（move 之前失敗：舊內容重啟後同一個 token 得到同一個 UniverseId；本 instance 收斂寫出新內容） |
+| §6 收斂寫入本身失敗時維持未確認；以權威為單位的退避（§11.2 數列） | `convergeIfNeeded`、`CollapseBackoff` | `convergenceFailuresStayUnconfirmedWithAPerAuthorityDoublingBackoff`（200→12000 每一階的前一 tick 不嘗試、到期才嘗試；同一原因只記一次 WARN）、`backoffDoublesFrom200To12000AndResets` |
+| §6.1 推導、只能追加、唯一性、strict codec | `U` | `UniverseAllocationLedgerTest` 7 個 test |
+| §6.5 strict codec | `P` | `ProjectionLedgerTest` 5 個 test |
+
+### UniverseId 的 test vectors
+
+- 期望值不在測試裡用 production helper 反算。以 Python 3.11 的 `hashlib` 獨立計算：`SHA-256(b"quantumchamber:universe-id:v1" + token)` 取前 16 bytes，`d[6]=(d[6]&0x0F)|0x80`、`d[8]=(d[8]&0x3F)|0x80`，再以 `uuid.UUID(bytes=…)` 輸出。腳本與輸出在 `f2b/vectors.py`、`vectors.txt`；"one" 的 SHA-256 另以 .NET `SHA256.HashData` 交叉核對，結果相同。
+- 測試 `UniverseAllocationLedgerTest.derivedUniverseIdsMatchTheIndependentVectors` 以 hex 常數寫死 4 組，並斷言 `version()==8`、`variant()==2`：
+
+| token（hex） | SHA-256 前 16 bytes | UniverseId |
+| --- | --- | --- |
+| 32 個 `00` | `99a218638079ad81adcfd8b547656a24` | `99a21863-8079-8d81-adcf-d8b547656a24` |
+| `00 01 … 1f` | `da2b7e945767f9339bc740395d0f2854` | `da2b7e94-5767-8933-9bc7-40395d0f2854` |
+| 32 個 `ff` | `504cc474b37976299d035f901e452b40` | `504cc474-b379-8629-9d03-5f901e452b40` |
+| `01` 後接 31 個 `00` | `3e80969f13f2adf76ca687f2863b0480` | `3e80969f-13f2-8df7-aca6-87f2863b0480` |
+
+- 前三組原始的 byte 8 已經是 `10xxxxxx`，只靠它們抓不到「忘了設 variant」。第四組原始的 byte 6／8 是 `0xad`／`0x6c`，兩個位元遮罩都會改變值，所以特地加入。
+
+### 測試
+
+JUnit +28：`UniverseAllocationLedgerTest` 7、`ProjectionLedgerTest` 5、`CollapseAuthoritiesTest` 16，都在 `src/test/java/dev/quantumchamber/collapse/`。
+
+- `UniverseAllocationLedgerTest`：`derivedUniverseIdsMatchTheIndependentVectors`、`entryForAnIntentUsesTheDerivedIdAndTheIntentProfile`、`appendOnlyKeepsOrderAndRejectsDuplicateTokensAndUniverseIds`、`codecRoundtripsExactlyInAppendOrderWithExactKeys`、`strictDecodeRejectsMalformedLedgers`（24 個 rejection fixture，`assertAll` 逐一判定）、`decodeKeepsNonDerivedEntriesForLookupVerification`、`entryCountIsCheckedBeforeDecodingAnyEntry`（16384 筆 exact 讀回與寫回；16385 筆合法 entry 與 16385 筆空 compound 都以上限訊息拒絕；追加也不能超過上限）。
+- `ProjectionLedgerTest`：`codecRoundtripsEveryFacingAndStatusExactlyInWriteOrder`、`transitionsAreOnlyPendingThenCompleteAndKeysAreUnique`、`entryRequiresAHorizontalFacing`、`strictDecodeRejectsMalformedLedgers`（28 個 rejection fixture）、`entryCountIsCheckedBeforeDecodingAnyEntry`。
+- `CollapseAuthoritiesTest`：見上方對應表，另有 `initializationRunsOnceAndIsRequiredBeforeUse`。
+- 注入方式：測試的 `LedgerIo` 委派正式的 `readFile`，依檔名注入一次或持續的 `IOException`。對正式檔注入，在寫入時就是「atomic move 完成、讀回失敗」，在初始化時就是讀取的 IO 例外；對暫存檔注入，就是 move 之前的失敗。時鐘以 `int[]` 控制。log capture 是測試內的 log4j appender（比照 `SessionRecoverySchema4Test`），先送 WARN 探針，攔不到就失敗。
+- GameTest 不變（F2b 不加 GameTest）。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f2b/`；gate root 在 `.superpowers/verification/`。diff hash 是 `git diff 7bae536 eeb0524 -- <path>` 輸出的 SHA-256：`src` `b5fb6ef8…`、`src/main` `04fb698a…`、`src/test` `6ff80a9c…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED | `7bae536`；porcelain：` M QuantumSuperpositionMod.java`、`??` 4 個新 production 檔與 `src/test/java/dev/quantumchamber/collapse/`（`f2b/red-state.txt`）。4 個新 production 檔是暫時的 RED adapter（`f2b/red-adapter/`，與 GREEN 的差異在 `green-to-red.diff`）：GREEN 拿掉 spec 規則——推導改用 `UUID.nameUUIDFromBytes`；兩個 ledger 的 decode 寬鬆、沒有唯一性、上限、轉換規則與水平方向檢查；退避固定 200；初始化不看 journal envelope（一律補建）、IO 例外與損壞不分、任何情況都標記 journal、可重複初始化、未初始化也能查詢；lookup 不驗證既有紀錄；寫入前不檢查檔案消失，寫入失敗時還原 current、不標未確認、不收斂。測試檔與 GREEN 相同 | focused `dev.quantumchamber.collapse.*`（`f2b/red-junit.log`、`red-junit-cases.txt`、`red-TEST-*.xml`） | 預期 FAIL：28 個中 21 個失敗。逐一檢查 XML：21 個 test 的 69 個失敗原因全部是 `AssertionFailedError`（含 `assertThrows` 的「nothing was thrown」與「Unexpected exception type」），沒有任何 fixture 在建立時丟例外。通過的 7 個都是只補覆蓋的 test，以 mutation 證明（下表） |
+| RED 第一次（保留） | 同上，但 `CollapseAuthoritiesTest` 是較早的版本（`f2b/red1/`） | 同上 | 21 個失敗中，`existingProjectionEntriesMustMatchTheSourceChamberAndOnlyAdvance` 有一個原因是 `sealedReason().orElseThrow()` 丟出的 `NoSuchElementException`。為了讓失敗一律落在目標斷言，把測試中 16 處 `orElseThrow()` 的比對改成 `assertEquals(Optional.of(…), …)`，以同一個 adapter 重跑，就是上一列 |
+| mutation | GREEN 工作樹，每個 mutation 單獨套用、只跑目標 test class，跑完還原並以 `git hash-object` 核對（`f2b/mutations.ps1`、`mutations/summary.txt`、`M-*.log`、`M-*-TEST.xml`） | 7 個 | 全部被對應的 test 抓到（下表）；跑完後 4 個 production 檔的 blob 與 mutation 前相同 |
+| GREEN focused | 工作樹，blob 與 `eeb0524` 相同（`f2b/green-state.txt`、`commit-blobs.txt`） | `f2b/green-focused.log` | 28/28，0 failure／error |
+| GREEN JUnit 全部 | 同上 | `f2b/green-junit-all.log` | 512，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`） |
+| GREEN Full | 同上 | `gate-f2b-green-full-d49ee07a881448408795ccb45ca57192` | PASS |
+| GREEN Legacy | 同上 | `gate-f2b-green-legacy-c1dcaccf1b4b41f7a5e3c81c1e09ed93` | PASS |
+| GREEN Main＋oracle | 同上 | `gate-f2b-green-main-012f7bdf34034aa5a162618c5581c16b`（`main-only-oracle.json`） | PASS |
+| GREEN M3 | 同上 | `gate-f2b-green-m3-a3ddfa9c91e445fa898eb2c092c73c73` | PASS |
+| GREEN M4 recovery | 同上 | `recovery-run-bde9df436918427890464242656f72c8.json` | PASS |
+
+| Mutation | 改動 | 失敗的 test（目標） |
+| --- | --- | --- |
+| M-1 | `Entry.of` 改從 `generationSeedMaterial` 推導 | `entryForAnIntentUsesTheDerivedIdAndTheIntentProfile` |
+| M-2 | strict decode 依 UniverseId 排序 | `codecRoundtripsExactlyInAppendOrderWithExactKeys` |
+| M-3 | strict decode 驗證推導值（一筆不符整份失效） | `decodeKeepsNonDerivedEntriesForLookupVerification` |
+| M-4 | projection 的 ControllerPos 寫成 `{x, z, y}` | `codecRoundtripsEveryFacingAndStatusExactlyInWriteOrder` |
+| M-5 | 遺失判定反轉（還不是 schema 4 時缺檔判為遺失） | `freshSaveCreatesBothEmptyLedgersAndItsFirstNewIsNotLost` |
+| M-6 | 以 `candidateInitialized()` 取代 `m5Evidence()` | `schemaThreeSaveWithNonEmptyDiscoveryIsNotTreatedAsLost` |
+| M-7 | 只有一個 ledger 存在時把另一個判為遺失 | `interruptedInitializationRecreatesOnlyTheMissingLedger` |
+
+- 所有 gate 在 commit 之前以工作樹執行；commit 時 8 個檔的 blob 與 gate 前記錄的逐一相同（`f2b/green-state.txt`、`pre-commit-hashes.txt`、`commit-blobs.txt`）。數字由 `f2b/gate-summary.ps1`、`jar-delta.ps1` 唯讀計算。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+GREEN 數字：
+
+- default GameTest 153/153（`_windows` 79），0 failure／error／skipped，與 F2a 相同；boundary oracle PASS；per-test receipt 35/35 PASS。legacy 1/1，receipt 1/1。兩個 gate 的 world 都 exact restore。
+- JUnit 512，比 F2a fix round 2 的 484 多 28，就是本 task 新增的 3 個 test class。
+- JAR：release 337 entries（293 classes），比 F2a 的 320（276）多 17 個 class：`CollapseAuthorities` 與它的 `$Authority`、`$InitResult`、`$InitResult$Outcome`、`$LedgerIo`、`$LedgerNbt`、`$Lookup`、`$Lookup$Status`、`$Slot`、`$WriteResult`、`$WriteResult$Status`，`CollapseBackoff`，`ProjectionLedger`、`$Entry`、`$Entry$Status`，`UniverseAllocationLedger`、`$Entry`。sources 204，比 200 多 4 個 `.java`（`f2b/green-jar-delta.txt`）。testmod／gametest／probe 命中 0。
+- main-only：oracle 三層都沒有命中，正常停止、world keys exact、catalog 前後都不存在、exact restore。class-load 有 production 的 `CollapseAuthorities` 等 class。
+- M3：universe 4 個 phase、transfer 5 個 phase 全部 PASS。
+- M4 recovery 24/24 phases、24 個獨立 JVM。這次沒有出現 F2a fix round 1 的停服卡住。
+
+runtime 證據（plan Step 3「第一次在 runtime 寫出 schema 4 與 ledger 檔」，以 `f2b/inspect-data.py` 唯讀解析，輸出在 `f2b/green-*-world-data.txt`）：
+
+- Full gate 的 GameTest world：journal 為 schema 4；兩個 ledger 都存在，`{SchemaVersion:1, Entries:[]}`、空 list 為 END held type；沒有殘留的暫存檔。
+- M4 recovery 的 13 個 root（`journal-corrupt` 以外）：journal 都是由 M5 build 在 runtime 寫出的 schema 4，兩個 ledger 都存在且為空。跨 JVM 的 phase 以 `chain` 為例（各 phase 的 `latest.log`）：select 是 fresh root，初始化為兩個 `CREATED`、flushed journal 還不是 schema 4；之後的 recover、verify、dormant-reentry 都讀到 schema 4，初始化為兩個 `LOADED`。
+- `journal-corrupt`：既有的 journal 健康檢查 listener（`QuantumSuperpositionMod.java:38`）先丟例外，M5 的初始化沒有執行，data 目錄沒有 ledger 檔，與 M4 的預期相同。
+- main-only：沒有 journal（沒有 session），兩個空 ledger 已建立。legacy world：journal 最後是 schema 3（見「觀察」），兩個空 ledger 已建立。
+
+### 偏離 plan／spec 字面之處
+
+- **沒有新增 `SessionRecoveryState` getter**（controller 補充第 5 點）：`m5Evidence()` 在呼叫 `markCollapseAuthoritiesInitialized()` 之前就等於 flushed envelope 是否為 schema 4；journal 檔不存在時 `load` 回傳全新的 state，`m5Evidence()` 為假，正好對應 spec「schema 1–3，或 journal 檔不存在」。不需要另外區分檔案是否存在。
+- **寫入 helper**：controller 要求沿用既有 helper。`UniverseCatalogStore`／`SessionJournalStore` 的 `write` 都要求 `{data, DataVersion}` wrapper，與 spec §6.1 的檔案格式不同，讀回也不能經決策 9 的 port；discovery 的 `save` 是 private。所以照 discovery 的步驟在 `CollapseAuthorities.writeAtomic` 實作一份，兩個 ledger 共用；strict NBT helper 也因為 `JournalNbt` 是 persistence 的 package-private 而另寫在 `CollapseAuthorities.LedgerNbt`。只能修改 4 個新檔，所以都放在 `CollapseAuthorities` 內。
+- **讀取分類的界線**：spec 只說 strict decode 失敗為 `AUTHORITY_CORRUPT`、IO 例外為 `AUTHORITY_UNREADABLE`。`NbtIo` 對 gzip 或 NBT 格式錯誤也丟 `IOException`，所以改成「讀到原始 bytes 之前的失敗是 IO，之後的任何失敗都是內容損壞」。非一般檔案（例如目錄）照 discovery 當成 IO 例外。
+- **strict decode 只驗結構**：UniverseId 與推導值的比對、ProfileVersion 是否為 1、projection 的 Role 與 site，都在 lookup／寫入時比對，不讓整份 ledger 失效（spec §6.1、§6.5 都寫成「既有 entry…不符進 SEALED」）。decode 接受任何合法的 `DimensionRole`；`writeProjection` 要求 OVERWORLD。
+- **`projection()` 在未確認時也回 `UNCONFIRMED`**：controller 補充第 4 點只列 `lookupOrAppendAllocation`／`writeProjection`。但未確認的 PENDING 不能拿來決定寫方塊（spec §6 收斂共通第 2 點），所以查詢也一起拒絕。
+- **筆數上限**（controller 補充第 2 點）：兩個 ledger 都是 16384，沿用 M4 的 `MaxCandidateEntries`。理由：每筆 allocation 對應一個 `EAGER_ENABLED` 的宇宙，每次開服都會全部物化，實際遠低於此值；16384 筆的 NBT 約 3 MB，在讀檔的 16 MiB 預算之內。decode 在逐筆解碼前檢查（H1 的做法）；追加與新的 projection key 也先檢查，避免寫出讀不回來的檔案，或讓權威因為永遠失敗的寫入卡在未確認。已滿時回 `CORRUPT`（見「需要裁示」）。
+- **讀檔的記憶體上限**：正式 `readFile` 最多讀 16 MiB＋1 bytes，超過由 `parse` 判為損壞；解壓後的 NBT 預算與 discovery 相同（16 MiB）。
+- **初始化有任何讀取失敗時，不建立另一個缺少的 ledger**：spec 允許 schema 4 之前補建，但失敗時沒有必要產生副作用；下次開服照常補建（W11 的情境不受影響）。
+- **執行期間的遺失偵測**：spec §6.1「執行期間發現檔案消失，一律視為遺失」。實作為每次 checked 寫入（追加、收斂）前確認正式檔仍存在；不存在就把該權威標為遺失（本 instance 一律 `CORRUPT`、不重建、記一次 ERROR）。純查詢不讀檔。
+- **靜態註冊方法叫 `registerEvents()`**：plan 的介面把 `initialize(MinecraftServer)` 定為 instance 方法，所以沒有再用同名的 static `initialize()`。
+
+### 需要裁示
+
+- **ledger 已滿時的 SEALED 原因**：目前回 `AUTHORITY_CORRUPT`（永久）。理由是 append-only 的 ledger 一旦達到上限就不會再有空間，自動重試（`ALLOCATION_IO_FAILED`／`PROJECTION_FAILED`）只會在退避後一再失敗。spec 沒有容量相關的原因；若希望維持可重試，只需要改 `A:374-376` 與 `:414-416` 的回傳狀態。
+
+### 觀察（未修改）
+
+- legacy runner 的 `M4CandidateTestAccess.reloadEmptySchemaThree` 會以讀入的 schema 3 state 取代 server 的 journal（`m5Evidence` 為假），所以那個 world 之後的寫出是 schema 3，兩個空 ledger 照樣存在。下次以 M5 開啟時判定為「還不是 schema 4」，照常 `LOADED`，不是遺失，也不影響 legacy test 的斷言。這只是 testmod 的路徑。
+- Gradle 的 `stdout.log` 裡，本 task 新的中文 INFO（與既有的中文 log 一樣）因為 console 編碼而顯示成亂碼；`latest.log` 與 JUnit 的 log capture 內容正確。
+- 預設 GameTest world 結束時 journal 仍有 3 筆 record，是既有測試留下的（T0 已記錄的 GameTest 順序依賴類），與本 task 無關。
+
+### 交給後續
+
+- F2c：`CollapseAuthorities.Authority` 加入 discovery 與 catalog。ledger 的 `Slot`／`LedgerIo`／`checkedWrite` 只服務兩個 ledger；discovery 與 catalog 有各自的 store 與 port（決策 9），收斂旗標與退避可以沿用同一個 `CollapseBackoff`。
+- F3d：提交 COLLAPSING 時，NEW 的 `Destination` 用 `UniverseAllocationLedger.deriveUniverseId(intent.allocationToken())`（§7.2，提交時不寫 ledger）。F2a 把「NEW 的 Destination 等於推導值」的 record 不變量留給 F2b／F4a，但 `SessionRecoveryRecord.java` 不在 F2b 的檔案清單，所以這個比對交給 F4a（RESOLVE 時以 `lookupOrAppendAllocation` 的 entry 與 `Destination` 比對，不符進 `AUTHORITY_CORRUPT`）或由 controller 指派。
+- F4a：`lookupOrAppendAllocation` 之前先呼叫 `convergeIfNeeded(ALLOCATION_LEDGER)`；結果的 `sealedReason()` 可直接用於 SEALED（`AUTHORITY_UNREADABLE` 是 `restartOnly`）。SEALED 的 WARN／ERROR 去重由 caller 負責；權威層級的 WARN（寫入未確認）、ERROR（初始化失敗、執行期間遺失）已由 `CollapseAuthorities` 記錄。
+- F4b：
+  - `projection()` 只看 key、不驗 site。既有 PENDING 要照第一次寫入處理時，先 `writeProjection(PENDING)`（回 `UNCHANGED` 即通過 site 驗證）再寫方塊；`INVALID_TRANSITION` 且帶回 COMPLETE 時改走修復路徑。
+  - §9.3 的 `ProjectionProtectionIndex` 需要列舉已確認的 projection entries，以及 ledger 是否健康（退化規則）。`CollapseAuthorities` 目前只有依 key 的查詢，而 F4b 的檔案清單沒有 `CollapseAuthorities.java`：需要 controller 把它列入 F4b，或另行決定提供方式。
+  - 索引的 `SERVER_STARTED` listener 必須註冊在 `CollapseAuthorities.registerEvents()` 之後；任何更早的 `SERVER_STARTED` listener 都不能呼叫 `CollapseAuthorities.get(server)`（instance 在 `onStarted` 才建立）。
+- F7：寫入文件：M5 build 開服後，存檔的 `data/` 會多出 `quantumchamber_universe_allocations.dat` 與 `quantumchamber_projections.dat`；journal 一旦寫出 schema 4，就不能刪除這兩個檔（會被判為遺失）。
