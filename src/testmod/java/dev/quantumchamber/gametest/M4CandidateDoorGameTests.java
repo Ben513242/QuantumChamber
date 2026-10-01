@@ -427,12 +427,13 @@ public final class M4CandidateDoorGameTests {
             var selected=use(fixture,cell(view,new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1),player);
             context.assertTrue(selected.isAccepted() && fixture.record().state()==SessionState.MEASURED,"真側門 checked SELECTED 後才進入 MEASURED 清理");
             var measured=fixture.record();
-            // fault target、probe 與 probe 強制載入的 chunk 是本測試專用 hook：任一段等待逾時或斷言失敗都必須移除。
+            // fault target、probe、probe 強制載入的 chunk 與 log capture 是本測試專用 hook：任一段等待逾時或斷言失敗都必須移除。
             var hooks=new M2CorridorGameTests.TestHooks();
-            CheckpointScopeProbe probe;
+            CheckpointScopeProbe probe; LogCapture capture;
             try {
                 probe=new CheckpointScopeProbe(context.getWorld(),fixture.pages,measured); checkpointScopeProbe=probe;
                 hooks.add(() -> { if(checkpointScopeProbe==probe) checkpointScopeProbe=null; probe.release(); });
+                capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
             } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             // 其他 region 的 chunk 可能離來源艙 16 個 chunk：先確認它與 entity storage 都已載入，才讓玩家返還、開始清理。
             whenWithin(context,tick+1,60,probe::otherRegionLoaded,loaded -> {
@@ -451,8 +452,19 @@ public final class M4CandidateDoorGameTests {
                     witness.put("productionObservedOtherRegionFailure",third!=null && third.serverFailures()>=2 && third.workerFailures()>=1);
                     witness.put("otherRegionFailureAccepted",third!=null && third.accepted);
                     witness.put("exactlyThreeCalls",calls.size()==3);
+                    // 前兩次的受控 write 都要涵蓋 chunk 與 entities 兩份 storage。
+                    witness.put("failedCallsWroteChunkAndEntities",second!=null && first.writesAfter-first.writesBefore>=2 && second.writesAfter-second.writesBefore>=2);
+                    // 兩次失敗同一 region、同一來源：WARN 只記一次（附 stack），訊息穩定，沒有「前一原因另重複」行。
+                    var pos=probe.relevant.pos;
+                    var expectedCause="相關 region 的原生序列化或存檔已回報失敗，拒絕承認 checkpoint：source=chunk world="
+                            +context.getWorld().getRegistryKey().getValue()+" region=["+pos.getRegionX()+", "+pos.getRegionZ()+"]";
+                    var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"MEASURED 保留 receipt 等待安全返還",sid.toString());
+                    witness.put("singleStableRegionWarnWithStack",warnings.size()==1 && warnings.getFirst().thrown()!=null
+                            && expectedCause.equals(warnings.getFirst().thrown().getMessage()));
+                    witness.put("noRepeatedCauseWarn",capture.matching(org.apache.logging.log4j.Level.WARN,"前一失敗原因另重複",sid.toString()).isEmpty());
                     var diagnostics=" calls="+calls+" relevant="+probe.relevant+" sameRegion="+probe.sameRegion+" otherRegion="+probe.otherRegion
-                            +" relevantRegions="+probe.relevantRegions+" forcedByProbe="+probe.forcedByProbe;
+                            +" relevantRegions="+probe.relevantRegions+" forcedByProbe="+probe.forcedByProbe
+                            +" warnings="+warnings.stream().map(entry -> entry.thrown()==null ? "null" : entry.thrown().getMessage()).toList();
                     context.assertTrue(!witness.containsValue(false),"H2 checkpoint 以 region 判定："+witness+diagnostics);
                     whenWithin(context,ended+1,120,() -> fixture.pages.measuredRecoveryComplete(sid),dormant -> {
                         var finalReceipt=SessionRecoveryState.get(fixture.server).flushedRecords().get(sid);
@@ -565,12 +577,16 @@ public final class M4CandidateDoorGameTests {
         /** 解除故障，讓兩個無關 chunk 在之後的一般存檔重寫正常資料，並解除 probe 自己的強制載入。 */
         void release() {
             target=null;
-            for(var fault : List.of(sameRegion,otherRegion)) {
-                var chunk=world.getChunkManager().getWorldChunk(fault.pos.x,fault.pos.z);
-                if(chunk!=null) chunk.setNeedsSaving(true);
-                emptyEntityChunks().remove(fault.pos.toLong());
+            try {
+                for(var fault : List.of(sameRegion,otherRegion)) {
+                    var chunk=world.getChunkManager().getWorldChunk(fault.pos.x,fault.pos.z);
+                    if(chunk!=null) chunk.setNeedsSaving(true);
+                    emptyEntityChunks().remove(fault.pos.toLong());
+                }
+            } finally {
+                // 重新標髒失敗也必須解除 probe 自己的強制載入，不能留到後續 batch。
+                if(forcedByProbe) world.setChunkForced(otherRegion.pos.x,otherRegion.pos.z,false);
             }
-            if(forcedByProbe) world.setChunkForced(otherRegion.pos.x,otherRegion.pos.z,false);
         }
         private it.unimi.dsi.fastutil.longs.LongSet emptyEntityChunks() {
             return (it.unimi.dsi.fastutil.longs.LongSet)M4CandidateTestAccess.get(M4CandidateTestAccess.get(M4CandidateTestAccess.get(world,"entityManager"),"dataAccess"),"emptyChunks");
