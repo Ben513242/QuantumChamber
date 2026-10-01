@@ -1480,3 +1480,156 @@ runtime 證據（plan Step 3「第一次在 runtime 寫出 schema 4 與 ledger �
 
 - 本輪不跑 Legacy、Main＋oracle、M3 與 M4 recovery（controller 指示）：改動只在 `writeProjection` 的結果狀態（runtime 沒有呼叫點）、`verify` 的例外訊息、`get()` 的例外訊息與 Javadoc；`registerEvents`、`onStarted` 與初始化流程（`examine`、`load`、`createIfAbsent`）都沒有改。
 - Full gate 在 commit 之前以工作樹執行；commit 時 3 個檔的 blob 與 gate 前記錄的相同。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+## F2c：Discovery append 與 catalog 的既有紀錄驗證
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `c0167e0` `refactor: share the checked NBT file helper`（parent `b712193`）：新增 `persistence/CheckedNbtFile.java`、`collapse/LedgerNbt.java`；改 `collapse/CollapseAuthorities.java`、`UniverseAllocationLedger.java`、`ProjectionLedger.java`、`candidate/UniverseDiscoveryState.java`；`CollapseAuthoritiesTest.java` 只改一行引用（`CollapseAuthorities.readFile` → `CheckedNbtFile.readFile`）與一個 import。controller 補充第 6 點（F2b quality review Q5）。
+  - `96a442c` `feat: add checked discovery append and catalog verification`（parent `c0167e0`）：改 `candidate/UniverseDiscoveryState.java`、`collapse/CollapseAuthorities.java`、`universe/UniverseCatalogStore.java`、`universe/UniverseRegistryState.java`（後兩者只加 package-private 的讀回 port）；測試改 `UniverseDiscoveryStateTest.java`、`UniverseRegistryStateTest.java`（只新增一個 test method）、`CollapseAuthoritiesTest.java`。
+  - 本段的 docs commit 接在 `96a442c` 之後。
+- Code range `b712193..96a442c`。
+- production 的新行為只有 API，沒有接任何 gameplay 呼叫點（RESOLVE 是 F4a）。runtime 唯一的差別是 discovery 的讀寫改經 `CheckedNbtFile`（M4 的 `loadOrCreate`／`load` 照常，見「第 6 點」），以及 `onStarted` 多建一個 `ServerCatalog`（只包住 server，開服時不讀 catalog）。
+- Review：尚未進行。
+
+### Code-truth（`96a442c`）
+
+行號以 `96a442c` 為準；`A` 指 `collapse/CollapseAuthorities.java`，`D` 指 `candidate/UniverseDiscoveryState.java`，`C` 指 `persistence/CheckedNbtFile.java`，`N` 指 `collapse/LedgerNbt.java`。
+
+| 項目 | 位置 | 行為 |
+| --- | --- | --- |
+| discovery 的正式追加（§6.4） | `D.append` `:121-134`、`Append` `:38-51`、`find` `:105-108` | 只算出內容、不寫檔。沒有這個 UniverseId：新 record 為 ordinal＝`watermark()`＋1（`Math.addExact`；不可見的 record 也算）、`discoveredAtGameTime`＝傳入的 game time、`firstObserver`＝SelectedBy、`gameplayEligible`＝true，回 `APPENDED` 與多一筆的新 state（canonical 順序，新 record 一定在最後）。已有：`gameplayEligible` 而且 `firstObserver` 等於 SelectedBy 為 `EXISTING`，否則（不可見、別人、M4 fixture 沒有 observer）為 `MISMATCH`；兩者都回原本的 state，不改動。ordinal 與 time 不比對 |
+| discovery 的 store 層 port（決策 9） | `D.save(Path, ReadPort)` `:91-98`（package-private）；`save(Path)` `:85` 以 `CheckedNbtFile::readFile` 委派 | 暫存檔驗證與 atomic move 之後的讀回都經 port；失敗丟 `UnhealthyDiscoveryException`，正式檔不還原 |
+| discovery 的追加與收斂（§6.4、§6） | `A.appendDiscovery` `:500-522`、`readDiscovery` `:685-700`、`markLost` `:703-709`、discovery slot `:266-267` | 閘門（初始化、遺失、未確認）之後，每次從磁碟 strict 讀取（與 M4 讀取點相同，不快取）。`EXISTING`→`FOUND`（不寫）；`MISMATCH`→`CORRUPT`（不寫）；`APPENDED`→沿用 ledger 的 `checkedWrite`：寫入或讀回失敗為 roll-forward（current 保留這筆 append、標為未確認、以權威為單位退避、WARN 去重），回 `WRITE_FAILED`／`ALLOCATION_IO_FAILED`。讀取分類：`NoSuchFileException`→遺失（`CORRUPT`，本 instance 之後一律 `CORRUPT`、只記一次 ERROR、不重建）；讀 bytes 的 IO 例外→`UNREADABLE`（不黏著）；之後的解析或 strict decode 失敗→`CORRUPT`。game time 為負是 caller 錯誤，丟 `IllegalArgumentException` |
+| discovery 的唯讀查詢 | `A.discovery` `:528-536` | 給 F4a 的 EXISTING 重驗（§8.1）：`FOUND`（該 record，`gameplayEligible` 由呼叫端判斷）／`ABSENT`；閘門與讀取分類同上 |
+| catalog 配置或驗證（§6.2） | `A.allocateOrVerifyCatalog` `:555-597` | 依序：初始化閘門；catalog 不健康→`CORRUPT`；catalog 未確認（`:568`）→`UNCONFIRMED`（依 §6.2 不進 SEALED，見「偏離」）；flushed 已有該 UniverseId→`catalogRecordMatches`（`:575`），符合 `FOUND`、否則 `CORRUPT`，都不寫出；沒有→orphan 檢查（`:578-587`），再 `allocateOverworld(uuid, flushed 最大 ordinal＋1)`（空時 0）與 `flushCatalog`（`:595`）：成功 `APPENDED`，失敗 `WRITE_FAILED`／`ALLOCATION_IO_FAILED` |
+| 既有 catalog record 的判定 | `A.catalogRecordMatches` `:606-615`（public static） | definition 必須 exact 等於 M3 以同一個 UUID 與該 record 的 ordinal 呼叫 `new UniverseRegistry().allocateOverworld` 得到的 definition（OVERWORLD descriptor、world key、`VANILLA_OVERWORLD_SHARED_SEED_V1`、`SHARED_SAVE_SEED_V1`、storage policy 1）；availability 為 `EAGER_ENABLED`，`DISABLED` 只在 `acceptDisabled` 為 true（§8.3 的重試路徑，F4a 決定）時接受。不比對 ordinal |
+| orphan storage | `A.universeStorage` `:771-774`、`allocateOrVerifyCatalog` `:578-587` | storage 位置與 M3 `inspectStorage` 同一推導：`<save>/dimensions/<namespace>/<path>` 的上一層（`dimensions/quantumchamber/universe/<uuid>`）。catalog 沒有這筆、目錄（任何型別，不跟隨連結）卻已存在→`CORRUPT`，不採用、不刪除；`readAttributes` 的其他 IO 例外→`UNREADABLE`／`AUTHORITY_UNREADABLE`。pure JVM 可測，不需要 runtime 世界路徑 |
+| catalog 的未確認與收斂 | `A.catalogUnconfirmed` `:712-718`、`unconfirmed` `:621-625`、`convergeIfNeeded` `:632-644`、`convergeCatalog` `:720-733`、`flushCatalog` `:739-760`、`catalogConfirmed` `:763-768` | 不另存旗標，由 catalog 推導：`isDirty()`，或 current 不等於 flushed（catalog 不健康時為真）。所以原生 autosave 寫出成功就自動回到已確認；restore 之後 current 已等於 flushed、但仍 dirty，也算未確認。`flushCatalog` 經 port 寫出；失敗時 M3 的 save 已保留 current 與 dirty（`UniverseRegistryState.java:228-234`），這裡只記退避（`catalogBackoff`，以權威為單位）、WARN（同一原因一次）與「曾經失敗」；確認時清除退避，曾失敗過就記 INFO「CATALOG 收斂完成」。沒有新增還原 API |
+| catalog 的 port（決策 9） | `A.CatalogPort` `:82-88`、`ServerCatalog` `:90-93`、package-private 建構子 `:252` | production：`UniverseRegistryState.get(server)` 與 `flush(server)`。測試以它提供真的 M3 `UniverseRegistryState` 並注入寫出失敗 |
+| catalog 的 store 層 port（決策 9） | `UniverseCatalogStore.Readback` `:27-29`、`write(Path, NbtCompound, Readback)` `:35-60`（package-private）；`UniverseRegistryState` 欄位與建構子 `:43-52`、`save` `:228` | 只把 atomic move 之後的 `read(absolute)` 換成 port；public `write` 與 public 無參數建構子都用 `UniverseCatalogStore::read`，production 行為不變 |
+| 閘門 | `A.gate` `:649-658`、`initializationGate` `:661-670` | 四個權威共用初始化閘門（fail closed）：未初始化是 caller 錯誤，初始化失敗回初始化的失敗結果；之後檔案權威再看遺失與未確認。`convergeIfNeeded` 在初始化失敗時一律不做事 |
+| 共用 checked 檔案 helper | `C.write` `:58-75`、`verify` `:77-85`、`readFile` `:37-41`、`parse` `:44-47`、`ReadPort` `:34` | 第 6 點，見下一小節 |
+| 共用 strict NBT helper | `N` `:16-47` | 第 6 點，見下一小節 |
+
+### 第 6 點：共用 helper 的 refactor（`c0167e0`）
+
+- **`persistence/CheckedNbtFile`**：把 `CollapseAuthorities.writeAtomic`／`verify`／`parse`／`readFile` 與 `UniverseDiscoveryState.save`／`verifyReadback`／`readNbt` 兩份幾乎相同的寫法合成一份，帶 `ReadPort`（讀原始 bytes；檔案不存在丟 `NoSuchFileException`）。`CollapseAuthorities.LedgerIo` 改為 `extends CheckedNbtFile.ReadPort`，測試的 port 不用改型別。catalog（`UniverseCatalogStore`）與 journal（`SessionJournalStore`）的 `{data, DataVersion}` wrapper 不併入。
+- **strict NBT helper 選 `collapse/LedgerNbt.java`（從 `CollapseAuthorities` 搬出、public），不選 `JournalNbt` 改 public**。理由：
+  1. `JournalNbt` 的規則綁 journal envelope：`compounds` 的空 list 規則依 envelope schema 而不同，`keys` 的訊息寫「schema 3 payload」，另有 journal 專用的 `canonicalIdentifier`。本 task 對它只能改可見性或搬移，不能加筆數上限、enum 或與 schema 無關的 list 檢查；共用的話，ledger 與 discovery 要傳一個假的 envelope schema 3，錯誤訊息也會指向 journal。
+  2. `LedgerNbt` 原封搬出，ledger 的錯誤訊息逐字不變；只把原本寫死的 `Entries` 改成 key 參數，並拆出沒有上限的 `compounds(nbt, key)` 給 discovery 的 `Records`。兩個 ledger 不再經過 `CollapseAuthorities` 解碼（解開 Q5 指出的互相依賴）。
+  3. 代價：`JournalNbt` 仍有自己的 `requireType`／`uuid`（journal 專用，兩三行）；`candidate` 多了一條對 `collapse` 的 import（`collapse` 原本就依賴 `candidate`），性質與既有的 `candidate`↔`persistence`、`persistence`↔`collapse` 相同。
+- **行為不變的界線**：
+  - 接受與拒絕的集合完全相同。discovery 改用 `LedgerNbt` 後，型別、UUID 長度、list held type 的錯誤訊息不同，但 `load`／`loadOrCreate`／`save` 都把例外包成不帶 cause 的 `UnhealthyDiscoveryException`，對外看不到。
+  - discovery 讀檔改為「先讀原始 bytes（最多 16 MiB＋1）再解析」，比原本直接 `NbtIo.readCompressed(path, 16 MiB 預算)` 多一個壓縮檔大小上限。能通過 strict decode 的 discovery 內容，解壓後的 NBT 計量一定先超過 16 MiB 預算，所以這個上限不會比原本更早拒絕；兩者都會拒絕的內容，對外一樣是 `UnhealthyDiscoveryException`。
+  - ledger 的 `readFile`／`parse` 訊息由「M5 ledger／ledger 檔案」改成「checked NBT 檔案」，exact readback 不符的訊息不變（label 仍是權威名稱）。
+- **JUnit 前後相同**：refactor 前的基準是 F2b fix round 1 的 Full gate（`gate-f2b-fix1-green-full-7b226c11…`；`84acd2b..b712193` 沒有 `src/`、build 檔、`.github/` 或 `scripts/` 的差異）。refactor 之後在工作樹跑全部 JUnit：518，0 failure／error，2 skipped，**逐 class 數字與基準完全相同**（`f2c/refactor-baseline-junit-perclass.txt`、`refactor-junit-perclass.txt`）。之後沒有再改檔就 commit。
+
+### 第 7 點：F2b fix round 1 re-review 交給本 task 的兩項 Minor
+
+- (a) 「新 key 直接寫 COMPLETE 丟 IAE」排在閘門之後（`A:465`、`:477`）：新增 helper `completeWithoutPending`（`CollapseAuthoritiesTest`），以 `assertDoesNotThrow` 呼叫，用在 `initializationFailuresNeverUpgradeTheJournalOrAllowCollapsing`（5 種失敗：`CORRUPT`／`UNREADABLE`，斷言 SEALED 原因）與 `schemaFourJournalWithAMissingLedgerIsLostAndNeverRecreated`（兩個方向，斷言 `CORRUPT`）。mutation M-4（把檢查移到閘門之前、改讀 `projection.current`，並拿掉原位置的檢查）讓兩個 test 都失敗，失敗訊息是 `assertDoesNotThrow` 的「Unexpected exception thrown: java.lang.IllegalArgumentException」。
+- (b) `projection()` 的 Javadoc（`A:430-435`）補上「`ABSENT` 時，先做 spec §6.5 的實體交叉檢查（F4b），才能寫 PENDING。PENDING 一旦存在就不再做交叉檢查。」
+
+### spec 對應
+
+| spec | 程式位置 | 測試 |
+| --- | --- | --- |
+| §6.4 欄位：ordinal＝watermark＋1、當下 game time、firstObserver＝SelectedBy、gameplayEligible | `D.append` | `UniverseDiscoveryStateTest.appendUsesTheNextOrdinalTheGameTimeAndTheSelectedByObserver`（含不可見 record 與同 ordinal、空 discovery 從 0 開始、原 state 不變、新 watermark 之內可被選到、負的 game time 被拒）；`CollapseAuthoritiesTest.discoveryAppendWritesTheNextRecordAndIsIdempotent`（落盤後 M4 的 `load` 讀得到） |
+| §6.4 idempotency 與既有紀錄驗證（`gameplayEligible=false`、`firstObserver` 不符時拒絕且不改寫；ordinal 與 time 可以不同） | `D.append`、`A.appendDiscovery` | `appendIsIdempotentByUniverseIdAndOnlyAcceptsThisSessionsEligibleRecord`（`EXISTING` 回原 state；三種不符：不可見、別人、沒有 observer）；`existingDiscoveryRecordsMustBeEligibleAndFirstObservedByThisSession`（三種都 `AUTHORITY_CORRUPT`，檔案 bytes 不變）；`discoveryAppendWritesTheNextRecordAndIsIdempotent`（第二次 `FOUND`，不改寫） |
+| §6 roll-forward（discovery）：讀回失敗後已落地的 record 不移除、M4 讀取點的候選池不倒退、未確認期間不做新決策、下一次使用前重寫 | `A.appendDiscovery` → `checkedWrite`／`rollForward`、`gate`、`convergeIfNeeded` | `discoveryReadbackFailureKeepsTheLandedRecordAndM4PoolsNeverRegress`（以 M4 的 `UniverseDiscoveryState.load` 與 `eligibleSnapshot` 驗證：已凍結 watermark 的候選池不變、新的候選池含已落地的 record；未確認期間同一筆也不回 `FOUND`、新的不追加、檔案不變；1199 不嘗試、1200 重寫；之後 `FOUND`、下一筆 ordinal 2；WARN 一則、INFO「DISCOVERY 收斂完成」一則）；`discoveryWriteFailureBeforeTheMoveIsRolledForwardToo`；store 層 `UniverseDiscoveryStateTest.readbackFailureAfterTheMoveLeavesTheAppendOnDiskForM4Readers`、`temporaryVerificationFailureLeavesTheFormalFileUnchanged` |
+| §6 讀取失敗的分類（discovery） | `A.readDiscovery`、`markLost` | `discoveryReadFailuresAreClassified`（遺失：`CORRUPT`、不建檔、ERROR 一則；損壞：`CORRUPT`、不覆寫；IO：`UNREADABLE`、不是未確認、之後照常） |
+| §6.2 ordinal＝flushed 最大＋1、`EAGER_ENABLED`、先 checked flush | `A.allocateOrVerifyCatalog` | `catalogAllocationUsesTheNextFlushedOrdinalAndVerifiesExistingRecords`（0、再來 1；`DISABLED` 的 record 也算進最大 ordinal；寫出之後 flushed 與磁碟才有） |
+| §6.2 既有 record 驗證（profile、availability） | `A.catalogRecordMatches` | 同上（`DISABLED` 只在 `acceptDisabled` 時 `FOUND`；別的 UniverseId 的 record 不符；驗證不寫出）；`catalogRecordsWithAnotherProfileNeverReachAllocation`（`GeneratorProfile`、`SeedPolicy`、`StoragePolicyVersion` 不符時 M3 strict decode 就讓 catalog 不健康，`acceptDisabled` 真假都 `CORRUPT`，未確認為真、不寫出） |
+| §6.2 roll-forward：讀回失敗後保留 dirty、下一次寫出帶著它、確認前 `unconfirmed` 為真、未確認期間不疊加配置 | `A.flushCatalog`、`catalogUnconfirmed`、`convergeCatalog`；M3 `UniverseRegistryState.save` | `catalogReadbackFailureKeepsTheAllocationDirtyAndUnconfirmedUntilConverged`（CollapseAuthorities 自己的 port；重試只得到同一個 UniverseId，重新讀盤只多兩筆）；`nativeAutosaveConfirmsTheCatalogAndARestoredButDirtyCatalogStaysUnconfirmed`（原生 autosave 寫出即確認、不需 converge；restore 後 current 等於 flushed 但仍 dirty 為未確認）；store 層 `UniverseRegistryStateTest.allocationReadbackFailureAfterTheMoveKeepsCurrentAndDirtyAndTheNextWriteCarriesIt` |
+| §6.2 orphan storage | `A.universeStorage`、`allocateOrVerifyCatalog` | `orphanStorageIsCorruptAndIsNeitherAdoptedNorDeleted`（有 world 目錄、只有 universe 目錄兩種；不配置、不刪除、不寫出；其他 UUID 照常） |
+| §6 收斂共通第 2 點：以權威為單位的旗標與退避 | `Authority`、`unconfirmed`、`convergeIfNeeded` | 上列 roll-forward 測試都斷言另一個權威不受影響，並鎖住 1199／1200 的退避 |
+| §6 初始化失敗：UNIVERSE 目的地依初始化的失敗分類（discovery 與 catalog 也 fail closed） | `initializationGate` | `initializationFailuresNeverUpgradeTheJournalOrAllowCollapsing`（`appendDiscovery`、`discovery`、`allocateOrVerifyCatalog` 都回初始化的原因，不寫出 catalog、不建立 discovery）；`initializationRunsOnceAndIsRequiredBeforeUse` |
+
+### 測試
+
+JUnit +15（518 → 533）：`UniverseDiscoveryStateTest` +4（9 → 13）、`UniverseRegistryStateTest` +1（6 → 7）、`CollapseAuthoritiesTest` +10（22 → 32）。
+
+- 新增：
+  - `UniverseDiscoveryStateTest`：`appendUsesTheNextOrdinalTheGameTimeAndTheSelectedByObserver`、`appendIsIdempotentByUniverseIdAndOnlyAcceptsThisSessionsEligibleRecord`、`readbackFailureAfterTheMoveLeavesTheAppendOnDiskForM4Readers`、`temporaryVerificationFailureLeavesTheFormalFileUnchanged`。
+  - `UniverseRegistryStateTest`：`allocationReadbackFailureAfterTheMoveKeepsCurrentAndDirtyAndTheNextWriteCarriesIt`。這是 M3 的測試檔：只新增這個 method，用完整類名，沒有改 import 或既有 method（controller 補充第 3 點）。
+  - `CollapseAuthoritiesTest`：discovery 5 個（`discoveryAppendWritesTheNextRecordAndIsIdempotent`、`existingDiscoveryRecordsMustBeEligibleAndFirstObservedByThisSession`、`discoveryReadbackFailureKeepsTheLandedRecordAndM4PoolsNeverRegress`、`discoveryWriteFailureBeforeTheMoveIsRolledForwardToo`、`discoveryReadFailuresAreClassified`）、catalog 5 個（`catalogAllocationUsesTheNextFlushedOrdinalAndVerifiesExistingRecords`、`catalogRecordsWithAnotherProfileNeverReachAllocation`、`catalogReadbackFailureKeepsTheAllocationDirtyAndUnconfirmedUntilConverged`、`nativeAutosaveConfirmsTheCatalogAndARestoredButDirtyCatalogStaysUnconfirmed`、`orphanStorageIsCorruptAndIsNeitherAdoptedNorDeleted`）。
+- 改既有的 `CollapseAuthoritiesTest`：
+  - `interruptedInitializationRecreatesOnlyTheMissingLedger`、`schemaFourJournalWithAMissingLedgerIsLostAndNeverRecreated`、`existingOnlySaveWithADeletedLedgerIsLostToo` 的迴圈由 `Authority.values()` 改成只走兩個 ledger（`LEDGERS`）；`Authority` 加入 `DISCOVERY`、`CATALOG` 之後，原寫法會把它們當成 projection 再跑一次。
+  - 第 7 點 (a) 的斷言（見上）；`failedInitialization` 另加 discovery 與 catalog 的 fail closed 斷言；`initializationRunsOnceAndIsRequiredBeforeUse` 加兩行（discovery、catalog 未初始化丟例外）。
+  - fixtures：`authorities(save)` 改傳 `TestCatalog`（每個存檔一份真的 M3 `UniverseRegistryState`；`failAfterMove` 先以 `UniverseCatalogStore.write` 落地再丟例外，不經過 save，所以 catalog 照 M3 save 失敗的語意維持 current 與 dirty；`failBeforeMove` 不落地就丟例外）；`Io` 的 fault 改成可變 class 並加 `skip`（discovery 每次使用都先讀一次正式檔，`failReadbackAfter(…, 1)` 讓第二次讀，也就是 atomic move 之後的讀回失敗）；`@BeforeAll` 建立 game version（catalog wrapper 的 DataVersion）。
+- 注入方式（決策 9）：discovery 的 store 層以 `UniverseDiscoveryState.save(Path, ReadPort)`；catalog 的 store 層以 `UniverseRegistryState(Readback)`；`CollapseAuthorities` 用自己的 `LedgerIo`（discovery 檔）與 `CatalogPort`。都不用 testmod mixin。
+- GameTest 不變（F2c 不加 GameTest）。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f2c/`；gate root 在 `.superpowers/verification/`。diff hash 是 `git diff <a> <b> -- <path>` 輸出的 SHA-256 前 8 碼（`f2c/diff-hashes.txt`）：`b712193..c0167e0` 為 `src` `27653dbc`、`src/main` `f0456ee1`、`src/test` `7a837b9c`；`c0167e0..96a442c` 為 `src` `2697a11f`、`src/main` `510fed67`、`src/test` `f95f02c4`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| refactor JUnit | `b712193`；porcelain 為 5 個 ` M` 與 2 個 `??`（`f2c/refactor-state.txt`），內容等於之後的 `c0167e0` | `f2c/refactor-junit-all.log` | 518，0 failure／error，2 skipped；逐 class 與 F2b fix round 1 的 Full gate 相同（見「第 6 點」） |
+| RED | `c0167e0`；porcelain 為 7 個 ` M`（`f2c/red-state.txt`，含逐檔 blob）。`UniverseDiscoveryState.java` 與 `CollapseAuthorities.java` 是暫時的 RED adapter（`f2c/red-adapter/`，與 GREEN 的差異在 `green-to-red.diff`）：GREEN 拿掉 spec 規則——`append` 的 ordinal 沿用 watermark、不記 game time 與 observer、不檢查 game time、既有紀錄一律 `EXISTING`；`appendDiscovery`／`discovery` 不看初始化與未確認、讀取失敗一律 `CORRUPT`、寫入失敗時把舊內容寫回（移除已落地的 append）；`allocateOrVerifyCatalog` 不看初始化與未確認、不驗證既有紀錄、不檢查 orphan、ordinal 一律 0、不健康回 `UNREADABLE`；`catalogRecordMatches` 一律為真；catalog 不追蹤未確認；discovery 與 catalog 不收斂。兩個 M3 檔的 port 與測試檔與 GREEN 相同 | focused `candidate.*`、`universe.*`、`collapse.*`（`f2c/red-junit.log`、`red-junit-cases.txt`、`red-TEST-*.xml`、`red-failure-types.txt`） | 預期 FAIL：217 個中 15 個失敗，就是 13 個新的行為 test 與 2 個加了斷言的既有 test（`initializationFailuresNeverUpgradeTheJournalOrAllowCollapsing`、`initializationRunsOnceAndIsRequiredBeforeUse`）。逐一解析 XML 的 failure 內文：15 個 test 裡出現的例外型別只有 `AssertionFailedError`（`assertAll` 包成 `MultipleFailuresError`／`DefaultMultiCauseException`），沒有任何 fixture 在建立時丟例外。RED 通過的新斷言只補覆蓋，以 mutation 證明（下表 M-2、M-3、M-4）；`readbackFailureAfterTheMoveLeavesTheAppendOnDiskForM4Readers` 在 RED 是因為 adapter 的 ordinal 而失敗，「不還原正式檔」另以 M-1 證明 |
+| mutation | GREEN 工作樹，每個 mutation 單獨套用、只跑目標 test class，跑完還原並以 `git hash-object` 核對（`f2c/mutations.ps1`、`mutations/summary.txt`、`M-*.log`、`M-*-TEST.xml`） | 11 個 | 全部被目標 test 的斷言抓到（下表）；跑完後 3 個 production 檔的 blob 與 mutation 前相同。第一輪（保留在 `mutations/run1/`）的 M-2 是「先 move 再驗證暫存檔」，它讓每一次 save 都失敗，目標 test 只在建 fixture 時就丟例外；改成下表的版本後重跑全部 11 個 |
+| GREEN focused | 工作樹，blob 與 `96a442c` 相同（`f2c/green-state.txt`、`commit-blobs.txt`） | `f2c/green-focused.log` | 217/217 |
+| GREEN JUnit 全部 | 同上 | `f2c/green-junit-all.log`、`green-junit-perclass.txt` | 533，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）；與 refactor 後相比只有上述 3 個 class 增加 |
+| GREEN Full | 同上 | `gate-f2c-green-full-ac54bdbd7c4f48ab8c27296ef8d53fb6` | PASS（`f2c/green-full-summary.txt`） |
+| GREEN M3 | 同上 | `gate-f2c-green-m3-b3c1aaac100c44078a22f594383779ee` | PASS（`f2c/green-m3-summary.txt`） |
+| GREEN M4 recovery | 同上 | `recovery-run-9c8f822fb90345c2bf32d169a7320f30.json` | PASS（`f2c/recovery-console.log`、`green-recovery-summary.txt`） |
+
+| Mutation | 改動 | 失敗的 test（目標）與斷言 |
+| --- | --- | --- |
+| M-1 | `CheckedNbtFile`：atomic move 之後讀回失敗時，把正式檔寫回上一份 | `readbackFailureAfterTheMoveLeavesTheAppendOnDiskForM4Readers`（「atomic move 已完成：append 已落地，沒有被還原」） |
+| M-2 | `CheckedNbtFile`：驗證暫存檔之前先以暫存檔取代正式檔 | `temporaryVerificationFailureLeavesTheFormalFileUnchanged`（「atomic move 之前失敗：正式檔不變」） |
+| M-3 | M3 `UniverseRegistryState.save` 失敗時把 current 還原成 flushed 並清除 dirty | `allocationReadbackFailureAfterTheMoveKeepsCurrentAndDirtyAndTheNextWriteCarriesIt`（「保留 dirty」） |
+| M-4 | 第 7 點 (a)：IAE 檢查移到閘門之前、改讀 current | `schemaFourJournalWithAMissingLedgerIsLostAndNeverRecreated`、`initializationFailuresNeverUpgradeTheJournalOrAllowCollapsing`（`assertDoesNotThrow` 的「Unexpected exception thrown: java.lang.IllegalArgumentException」） |
+| M-5 | catalog 的未確認只比 current 與 flushed，不看 dirty | `nativeAutosaveConfirmsTheCatalogAndARestoredButDirtyCatalogStaysUnconfirmed`（「current 等於 flushed 但仍 dirty：下一次寫出之前仍未確認」） |
+| M-6 | 閘門不看 discovery 的未確認 | `discoveryReadbackFailureKeepsTheLandedRecordAndM4PoolsNeverRegress`（未確認期間回了 `FOUND`） |
+| M-7 | catalog 未確認時照常配置 | `catalogReadbackFailureKeepsTheAllocationDirtyAndUnconfirmedUntilConverged`（未確認期間回了 `APPENDED`） |
+| M-8 | catalog 收斂不看退避 | 同上（「退避期內不嘗試」`expected: <1> but was: <2>`） |
+| M-9 | discovery 收斂只清旗標、不寫出 current | `discoveryWriteFailureBeforeTheMoveIsRolledForwardToo`（「收斂把 current 寫出」） |
+| M-10 | 既有 catalog record 為 `DISABLED` 時一律接受 | `catalogAllocationUsesTheNextFlushedOrdinalAndVerifiesExistingRecords`（`acceptDisabled=false` 卻回 `FOUND`） |
+| M-11 | discovery 讀檔的 IO 例外判為 `CORRUPT` | `discoveryReadFailuresAreClassified`（`expected: <UNREADABLE> but was: <CORRUPT>`） |
+
+- M-5～M-11 鎖的是 RED 時排在第一個失敗斷言之後、沒有執行到的性質。
+- 所有 gate 在 commit 之前以工作樹執行；commit 時 7 個檔的 blob 與 gate 前記錄的逐一相同（`f2c/green-state.txt`、`commit-blobs.txt`）。數字由 F2b 的 `f2b/gate-summary.ps1`、`jar-delta.ps1` 與 `f2c/junit-perclass.ps1`、`junit-cases.ps1`、`failure-types.ps1` 唯讀計算。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+GREEN 數字：
+
+- default GameTest 153/153（`_windows` 79），0 failure／error／skipped，與 F2b 相同；world exact restore。
+- JUnit 533，比 F2b fix round 1 的 518 多 15，就是本 task 新增的 15 個 test。
+- JAR（`f2c/green-jar-delta.txt`，與 F2b fix round 1 的 Full gate 比較）：release 345 entries（301 classes），多 9 個、少 1 個：新增 `CheckedNbtFile`、`CheckedNbtFile$ReadPort`、`LedgerNbt`、`CollapseAuthorities$CatalogPort`、`$ServerCatalog`、`$1`（javac 為跨 class 的 enum switch 產生的 switch map）、`UniverseDiscoveryState$Append`、`$Append$Outcome`、`UniverseCatalogStore$Readback`，移除 `CollapseAuthorities$LedgerNbt`。sources 206，多 `CheckedNbtFile.java`、`LedgerNbt.java`。testmod／gametest／probe 命中 0。
+- M3：universe 4 個 phase、transfer 5 個 phase 全部 PASS。
+- M4 recovery 24/24 phases、24 個獨立 JVM（PID 不重複）。
+- runtime 證據（discovery 的讀寫改經 `CheckedNbtFile`，以 `f2c/inspect-discovery.py` 唯讀解碼，輸出在 `f2c/green-runtime-discovery.txt`）：Full gate 的 GameTest world 與 M4 recovery 的 12 個 root（`discovery-corrupt`、`journal-corrupt` 以外），discovery 都是由 M4 的 `loadOrCreate` 在 runtime 寫出的 `{SchemaVersion:1, Records:[]}`（root 恰為兩個 key、空 list 為 END held type），沒有暫存檔殘留。`discovery-corrupt` 是 probe 自己放的 4 bytes 損壞檔；`journal-corrupt` 沒有 discovery，與 F2b 記錄的相同（journal 健康檢查先失敗）。
+
+### 偏離 plan／spec 字面之處
+
+- **「正式 checked append」拆成兩層**：§6.4 的欄位與 idempotency 規則在 `UniverseDiscoveryState.append`（只算內容）；checked 寫入、讀取分類與 roll-forward 收斂在 `CollapseAuthorities.appendDiscovery`。後者直接用 `CheckedNbtFile` 與 `UniverseDiscoveryState` 的 codec 寫 discovery 檔（與 `UniverseDiscoveryState.save` 同一寫法），讀寫都經 `CollapseAuthorities` 自己的 `LedgerIo`，因為 discovery 自己的 `load`／`save` 把所有失敗包成同一個不帶 cause 的例外，分不出 spec §6 要求的遺失、IO 與損壞，而且它的 port 是 package-private（決策 9）。
+- **discovery 不快取**：每次使用都從磁碟 strict 讀取，與 M4 的讀取點一致；current 只在 roll-forward 未確認時持有（收斂時重寫的就是它）。未確認期間 M5 不寫 discovery，M4 只在檔案不存在時建立，所以 current 不會蓋掉別人的寫入。
+- **discovery 檔不存在一律是遺失**：spec 只對兩個 ledger 寫初始化與遺失的規則。M5 只在 RESOLVE 用 discovery，那時 journal 已有 candidate evidence，M4 已建立 discovery（`SuperpositionSession.java:33-35` 在有 evidence 時改用 `load`，不再建立），所以檔案不存在就是遺失；與 ledger 相同，本 instance 之後一律 `CORRUPT`、只記一次 ERROR、不重建。
+- **discovery 與 catalog 也走初始化閘門（fail closed）**：spec §6 的初始化失敗規則是「UNIVERSE 目的地到 RESOLVE 時依失敗分類進 SEALED」，沒有逐一列出 discovery 與 catalog。初始化失敗時 RESOLVE 第一步就會 SEALED，本來就走不到這兩步；統一 fail closed，讓初始化失敗的 instance 沒有任何 M5 寫入。
+- **新增唯讀的 `discovery(UniverseId)`**：plan 的 F2c 沒有列。F4a 的檔案清單沒有 `CollapseAuthorities.java`，而 §8.1 的 EXISTING 重驗需要分得出遺失、損壞、IO 與未確認的 discovery 查詢（M4 的 `load` 分不出來），所以在本 task 提供。
+- **catalog 的 `UNCONFIRMED` 帶 `ALLOCATION_IO_FAILED`**：`Lookup` 的不變式要求失敗的結果帶 SEALED 原因，但 §6.2 規定 catalog 不相等（dirty）時等下一個 tick、不進 SEALED。Javadoc（`Lookup` 與 `allocateOrVerifyCatalog`）寫明 catalog 的 `UNCONFIRMED` 是例外，F4a 應先查 `unconfirmed(CATALOG)`；見「需要裁示」。
+- **catalog 的未確認不另存旗標**：由 catalog 推導（`isDirty()` 或 current 不等於 flushed）。controller 補充第 4 點寫「`CollapseAuthorities` 只追蹤『未確認』」；推導的好處是原生 autosave 寫出之後自動確認，F4a 在 §8.3 直接用 M3 API 改 availability 時也自動涵蓋。本類別只保留退避、WARN 去重與「曾失敗」（INFO）這些簿記。
+- **profile 不符無法構成既有 record**：M3 的 `UniverseDefinition` 建構子只接受恰一個 OVERWORLD descriptor、`VANILLA_OVERWORLD_SHARED_SEED_V1`、`SHARED_SAVE_SEED_V1`、storage policy 1（`UniverseDefinition.java:16-45`），`GeneratorProfile`／`SeedPolicy` 也只有這一個值。所以「profile 不符」的 RED 以 catalog NBT 驗證：M3 strict decode 讓 catalog 不健康，`allocateOrVerifyCatalog` 回 `CORRUPT`、不配置；`catalogRecordMatches` 仍以 M3 的 `allocateOverworld` 產生的 definition exact 比對，防守日後放寬。availability 不符則直接以 `DISABLED` 驗證。
+- **orphan 判定在本 task 完成**：storage 位置可以從存檔根目錄與 `UniverseKeys` 推導（與 M3 `inspectStorage` 相同），pure JVM 可測，所以直接放在 `allocateOrVerifyCatalog` 裡，F4a 不需要另外接線。
+- **「current 恰等於 flushed 才配置」**：controller 補充第 2 點把等待流程交給 F4a；`allocateOrVerifyCatalog` 本身也先檢查，未確認時回 `UNCONFIRMED`、不配置（防守 F4a 漏查）。600 ticks 的 WARN 屬 F4a。
+- **本輪不跑 Legacy、Main＋oracle**：controller 指定 Full、M3 與 M4 recovery。沒有新增 `SERVER_STARTED` listener、mixin 或 client 程式；`onStarted` 只多建一個不讀任何東西的 `ServerCatalog`。
+
+### 需要裁示
+
+- **catalog 的 `UNCONFIRMED` 要不要改成不帶 SEALED 原因的獨立狀態**（例如 `WAIT`）：目前沿用 `Lookup` 的 `UNCONFIRMED` 並帶 `ALLOCATION_IO_FAILED`，靠 Javadoc 要求 F4a 不要因此 SEALED。改成獨立狀態需要放寬 `Lookup` 的不變式，F4a 才不必特別處理；兩種都不影響本 task 的測試意圖。
+- **strict NBT helper 的選擇**（第 6 點）：選了 `collapse/LedgerNbt.java`，`JournalNbt` 維持 journal 專用。若 controller 偏好 `JournalNbt` 改 public 共用，需要同意 ledger 與 discovery 傳入 envelope schema 3、錯誤訊息改為 journal 的措辭。
+
+### 觀察（未修改）
+
+- `UniverseDiscoveryState.UnhealthyDiscoveryException` 不帶 cause，M4 的 log 看不到 discovery 讀寫失敗的根因。M5 的路徑不經過它（`CollapseAuthorities` 自己分類並保留 cause），所以本 task 不改。
+- `UniverseDiscoveryStateTest` 的 `target()` 不是 normalize 過的路徑；store 層的注入以 `Path.equals` 比對 `CheckedNbtFile` 傳入的 normalize 路徑，在 `@TempDir`（已是絕對路徑）下相等。
+
+### 交給後續
+
+- F4a（RESOLVE 的接線；F4a 的檔案清單沒有 `CollapseAuthorities.java`，以下 API 都已在本 task 提供）：
+  - NEW 第 2 步（§6.2）：`unconfirmed(CATALOG)` 為真時先 `convergeIfNeeded(CATALOG)`；仍未確認就等下一個 tick、不進 SEALED，持續 600 ticks 記一次 WARN。否則 `allocateOrVerifyCatalog(id, false)`（§8.3 的 `MATERIALIZE_FAILED` 重試才傳 true）：`APPENDED`／`FOUND` 繼續；`WRITE_FAILED`→SEALED(`ALLOCATION_IO_FAILED`)；`CORRUPT`→`AUTHORITY_CORRUPT`（含 orphan、不符、catalog 不健康）；`UNREADABLE`→`AUTHORITY_UNREADABLE`；`UNCONFIRMED`（查完之後才變 dirty 的競態）照等待處理。物化只用 flushed catalog 的 record，而且 `unconfirmed(CATALOG)` 為假。
+  - NEW 第 4 步（§6.4）：物化成功之後 `convergeIfNeeded(DISCOVERY)`，再 `appendDiscovery(id, 當下 game time, SelectedBy)`：`APPENDED`／`FOUND` 完成；`WRITE_FAILED`／`UNCONFIRMED`→SEALED(`ALLOCATION_IO_FAILED`)，重試前先收斂；`CORRUPT`／`UNREADABLE`→對應的 AUTHORITY 原因。game time 用哪一個世界的時間由 F4a 決定（必須非負）。
+  - EXISTING（§8.1）：`discovery(id)` 為 `FOUND` 且 `gameplayEligible`；flushed catalog 的 record 以 `catalogRecordMatches(record, id, false)` 判定；不符→`EXISTING_INELIGIBLE`；discovery 的 `CORRUPT`／`UNREADABLE`→對應的 AUTHORITY 原因（§12）。
+  - §8.3：改為 `DISABLED`、重試時改回 `EAGER_ENABLED`、失敗時改回 `DISABLED`（restore），都直接用 M3 的 `changeAvailability` 與 `flush(server)`；`unconfirmed(CATALOG)` 會自動反映 dirty（含 restore 之後 current 等於 flushed 但仍 dirty），之後由 `convergeIfNeeded(CATALOG)` 或原生 autosave 寫出。這些寫出不經 `CollapseAuthorities`，失敗不會累積它的退避，第一次 `convergeIfNeeded` 會立即嘗試。
+- F6：W12 的跨 JVM 注入（catalog 配置與 discovery 追加的「atomic move 完成、讀回失敗」）需要 testmod mixin，可以掛在 `UniverseCatalogStore.write` 的讀回與 `CheckedNbtFile` 的讀檔（決策 9 的 GameTest 層注入）。
+- F7：M5 build 之後 discovery 與兩個 ledger 共用 `CheckedNbtFile` 的讀檔上限（檔案 16 MiB、解壓後 NBT 16 MiB）。
