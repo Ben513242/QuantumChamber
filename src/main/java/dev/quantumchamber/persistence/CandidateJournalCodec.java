@@ -2,19 +2,89 @@ package dev.quantumchamber.persistence;
 
 import static dev.quantumchamber.persistence.JournalNbt.*;
 import dev.quantumchamber.candidate.*;
+import dev.quantumchamber.collapse.CollapseDestination;
+import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
 import dev.quantumchamber.universe.UniverseId;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtHelper;
+import net.minecraft.nbt.NbtIntArray;
+import net.minecraft.nbt.NbtList;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Uuids;
 
-/** schema 3 候選 payload 的局部 strict codec；不執行 ledger service 或狀態遷移。 */
+/** schema 3／4 journal payload（候選 context、ledger、selection 與 schema 4 的 Collapse）的局部 strict codec；不執行 ledger service 或狀態遷移。 */
 final class CandidateJournalCodec {
     private CandidateJournalCodec() {}
+
+    /** schema 4 的 Collapse：M4 狀態為空 compound，塌縮狀態恰有 spec §5 表列的 8 個 key。 */
+    static NbtCompound collapse(CollapseFields collapse) {
+        var nbt = new NbtCompound();
+        if (collapse.isEmpty()) return nbt;
+        nbt.putInt("CollapseRevision", collapse.revision()); nbt.putLong("CommittedAtGameTime", collapse.committedAtGameTime());
+        var destination = new NbtCompound();
+        switch (collapse.destination()) {
+            case CollapseDestination.Source ignored -> destination.putString("Kind", "SOURCE");
+            case CollapseDestination.Universe universe -> {
+                destination.putString("Kind", "UNIVERSE"); destination.putUuid("UniverseId", universe.id().value());
+            }
+        }
+        nbt.put("Destination", destination);
+        nbt.putLong("PassageOpenedAtGameTime", collapse.passageOpenedAtGameTime());
+        nbt.putLong("PassageExpiresAtGameTime", collapse.passageExpiresAtGameTime());
+        nbt.put("Crossed", uuids(collapse.crossed())); nbt.put("RecoveryRequired", uuids(collapse.recoveryRequired()));
+        nbt.putString("SealedReason", collapse.sealedReason().map(Enum::name).orElse(""));
+        return nbt;
+    }
+
+    static CollapseFields collapse(NbtCompound nbt) {
+        if (nbt.isEmpty()) return CollapseFields.EMPTY;
+        keys("Collapse", nbt, "CollapseRevision", "CommittedAtGameTime", "Destination", "PassageOpenedAtGameTime",
+                "PassageExpiresAtGameTime", "Crossed", "RecoveryRequired", "SealedReason");
+        var raw = compound(nbt, "Destination");
+        CollapseDestination destination = switch (string(raw, "Kind")) {
+            case "SOURCE" -> { keys("Collapse.Destination", raw, "Kind"); yield new CollapseDestination.Source(); }
+            case "UNIVERSE" -> {
+                keys("Collapse.Destination", raw, "Kind", "UniverseId");
+                yield new CollapseDestination.Universe(UniverseId.of(uuid(raw, "UniverseId")));
+            }
+            default -> throw new IllegalArgumentException("未知 Destination variant");
+        };
+        var reason = string(nbt, "SealedReason");
+        return new CollapseFields(integer(nbt, "CollapseRevision"), longValue(nbt, "CommittedAtGameTime"), destination,
+                longValue(nbt, "PassageOpenedAtGameTime"), longValue(nbt, "PassageExpiresAtGameTime"), uuids(nbt, "Crossed"),
+                uuids(nbt, "RecoveryRequired"), reason.isEmpty() ? Optional.empty() : Optional.of(SealedReason.valueOf(reason)));
+    }
+
+    /** UUID 清單以 int array（與 putUuid 相同的 4 個 int）編碼；空清單沿用 END held type。 */
+    private static NbtList uuids(List<UUID> values) {
+        var list = new NbtList(); values.forEach(value -> list.add(NbtHelper.fromUuid(value))); return list;
+    }
+    private static List<UUID> uuids(NbtCompound nbt, String key) {
+        requireType(nbt, key, NbtElement.LIST_TYPE);
+        var list = (NbtList) nbt.get(key);
+        if (list.isEmpty()) {
+            if (list.getHeldType() != NbtElement.END_TYPE) throw new IllegalArgumentException(key + " 的空 list 必須使用 END held type");
+            return List.of();
+        }
+        if (list.getHeldType() != NbtElement.INT_ARRAY_TYPE) throw new IllegalArgumentException(key + " 必須包含 UUID int array");
+        var result = new ArrayList<UUID>();
+        for (var element : list) {
+            int[] value = ((NbtIntArray) element).getIntArray();
+            if (value.length != 4) throw new IllegalArgumentException(key + " 的 UUID 必須是 4 個 int");
+            result.add(Uuids.toUuid(value));
+        }
+        return result;
+    }
 
     static NbtCompound context(CandidatePolicySnapshot context) {
         var nbt = new NbtCompound(); nbt.putString("PolicyId", context.policyId().toString());

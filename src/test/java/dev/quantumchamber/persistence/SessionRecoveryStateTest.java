@@ -355,7 +355,7 @@ class SessionRecoveryStateTest {
 
     @Test void negativeZeroSourceEqualsItsNbtRoundtrip() {
         assertAll(negativeZeroArming().stream().map(initial -> () ->
-                assertEquals(initial,SessionRecoveryRecord.fromNbt(initial.toNbt(),3),"NBT 以 +0 寫出 ±0，record 仍須 exact 相等")));
+                assertEquals(initial,SessionRecoveryRecord.fromNbt(initial.toNbt(3),3),"NBT 以 +0 寫出 ±0，record 仍須 exact 相等")));
     }
 
     @Test void negativeZeroYawArmingPassesCheckedSaveReadback() {

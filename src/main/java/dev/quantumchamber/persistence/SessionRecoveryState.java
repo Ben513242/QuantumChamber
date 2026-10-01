@@ -1,8 +1,15 @@
 package dev.quantumchamber.persistence;
+import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.collapse.CollapseDestination;
+import dev.quantumchamber.superposition.SessionState;
+import dev.quantumchamber.universe.DimensionRole;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
+import java.util.stream.Stream;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -13,6 +20,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import net.minecraft.datafixer.DataFixTypes;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtHelper;
 import net.minecraft.registry.RegistryWrapper;
@@ -37,6 +45,14 @@ public final class SessionRecoveryState extends PersistentState {
     private Map<UUID, SessionRecoveryRecord> flushed = Map.of();
     // Schema 3 envelope 本身是不可撤銷的初始化證據；不新增 NBT 欄位。
     private boolean candidateInitialized;
+    // spec §5 的兩個旗標，不可混用。m5Evidence 只決定寫出的 schema：讀到 schema 4 或本 instance 初始化成功時為真，之後不變回假。
+    // m5ReadyThisInstance 只決定能不能提交新的 COLLAPSING：只有本 instance 的 M5 authority 初始化成功才為真，讀到 schema 4 不算。
+    private boolean m5Evidence;
+    private boolean m5ReadyThisInstance;
+    // 已 checked 終局（讀回確認不存在）的 session：本 process 內 put 一律拒絕同一個 UUID。
+    private final java.util.Set<UUID> terminated = new HashSet<>();
+    // roll-forward 類寫入（spec §6）尚未經 checked flush 讀回確認的 session；collapse view 只在這時採用 current。
+    private final java.util.Set<UUID> rollForwardPending = new HashSet<>();
     private String loadError;
     private MinecraftServer owner;
 
@@ -75,12 +91,14 @@ public final class SessionRecoveryState extends PersistentState {
 
     public static SessionRecoveryState fromNbt(NbtCompound nbt) {
         try {
-            JournalNbt.requireType(nbt, "SchemaVersion", 3);
+            JournalNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
             int schema=nbt.getInt("SchemaVersion");
-            if (schema!=1 && schema!=2 && schema!=3) throw new IllegalArgumentException("不支援 journal schema");
-            if (schema == 3) JournalNbt.keys(nbt, "SchemaVersion", "Records");
+            if (schema < 1 || schema > 4) throw new IllegalArgumentException("不支援 journal schema");
+            if (schema >= 3) JournalNbt.keys(nbt, "SchemaVersion", "Records");
             var state = new SessionRecoveryState();
-            state.candidateInitialized = schema == 3;
+            // schema 4 只會出現在 candidate 已初始化的 journal；它同時是 M5 authority 已初始化的證據，但不代表本 instance 已就緒。
+            state.candidateInitialized = schema >= 3;
+            state.m5Evidence = schema == 4;
             for (var raw : JournalNbt.compounds(nbt, "Records", schema)) {
                 var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw,schema);
                 if (state.records.putIfAbsent(record.sessionUuid(), record) != null) throw new IllegalArgumentException("session UUID 重複");
@@ -101,16 +119,42 @@ public final class SessionRecoveryState extends PersistentState {
     public Map<UUID,SessionRecoveryRecord> records() { requireHealthy(); return Map.copyOf(records); }
     public Map<UUID,SessionRecoveryRecord> flushedRecords() { requireHealthy(); return flushed; }
     public boolean candidateInitialized() { requireHealthy(); return candidateInitialized; }
+    /** M5 authority 已初始化的證據（決定寫出 schema 4）。在本 instance 呼叫 {@link #markCollapseAuthoritiesInitialized} 之前，它等於「flushed envelope 已是 schema 4」。 */
+    public boolean m5Evidence() { requireHealthy(); return m5Evidence; }
+    /** 提交新的 COLLAPSING（MEASURED→COLLAPSING、SEALED→COLLAPSING）的閘門；讀到 schema 4 不會讓它變真。 */
+    public boolean m5ReadyThisInstance() { requireHealthy(); return m5ReadyThisInstance; }
     /**
-     * recovery 寫入是否安全：非隔離 session 的 current 都不得含未 checked 的 candidate context／ledger／selection。
+     * 本 server instance 的 M5 authority 初始化成功（F2b）時呼叫：m5Evidence 與 m5ReadyThisInstance 都設為真。
+     * 本身不標 dirty：candidate 已初始化的 journal 在之後第一次 checked 寫入時升為 schema 4（spec §12）。
+     */
+    public void markCollapseAuthoritiesInitialized() {
+        requireMutationThread();
+        requireHealthy();
+        m5Evidence = true; m5ReadyThisInstance = true;
+    }
+    /**
+     * recovery 寫入是否安全：非隔離 session 的 current 都不得含未 checked 的 authority——candidate context／ledger／selection，
+     * 以及 M5 的 restore 類狀態邊（見 {@link #uncheckedCandidateSessions}）。
      * owner 失敗即 CAS 還原或隔離，recovery tick 也會隔離任何殘留，因此正常只剩 checked 提交本身同步的 put→flush 窗口會回 false。
+     * M5 的 roll-forward 類內容（返還與清 lease 進度、Crossed、進入 SEALED）不算未 checked：它們本來就要由之後的任何寫出帶出去。
      */
     public boolean recoveryWritesSafe() { return uncheckedCandidateSessions().isEmpty(); }
+    /**
+     * 非隔離、current 含未 checked authority 的 session。除了 candidate 三欄位與 flushed 不同之外，也包含 current 相對 flushed 跨過
+     * M5 restore 類狀態邊（MEASURED→COLLAPSING、COLLAPSING→PASSAGE_READY、SEALED→COLLAPSING）的 session：這類內容只能經
+     * {@link #commitRestore} 的同步 put→flush 承認，失敗即還原；殘留時由 recovery tick 隔離並收斂回 flushed。
+     */
     public java.util.Set<UUID> uncheckedCandidateSessions() {
         requireHealthy();
         var unchecked=new java.util.LinkedHashSet<UUID>();
-        for(var current : records.values()) if(!quarantined.contains(current.sessionUuid()) && !candidateChecked(current)) unchecked.add(current.sessionUuid());
+        for(var current : records.values()) if(!quarantined.contains(current.sessionUuid()) && !authorityChecked(current)) unchecked.add(current.sessionUuid());
         return java.util.Set.copyOf(unchecked);
+    }
+    private boolean authorityChecked(SessionRecoveryRecord current) {
+        if(!candidateChecked(current)) return false;
+        if(!current.state().collapseState()) return true;
+        var durable=flushed.get(current.sessionUuid());
+        return durable!=null && !restoreEdge(durable.state(),current.state());
     }
     private boolean candidateChecked(SessionRecoveryRecord current) {
         if(current.candidateContext().isEmpty()) return true;
@@ -125,8 +169,9 @@ public final class SessionRecoveryState extends PersistentState {
      * authority history 還原為最後 checked authority；之後任何 flush、autosave 或 stop 都無法承認未 checked 的 candidate／selection。
      * next 的 candidate authority 已 checked（已落盤、legacy，或與 flushed 只差返還／lease 等進度）時不倒退。
      * CAS 不符且 current 仍含未 checked authority 時不猜測覆寫，改為隔離該 session（只影響它，其他 recovery 照常）。
-     * @apiNote 只回退 candidate context／ledger／selection 尚未 checked 的寫入。candidate 三欄位不變的寫入（例如 M5 的 COLLAPSING、
-     *          READY、終局等 restore 類寫入）一律視為已 checked 而不回退；這類寫入需要以 {@code restoreCheckedAuthority} 另開的 CAS 入口。
+     * @apiNote 只回退 candidate context／ledger／selection 尚未 checked 的寫入。candidate 三欄位不變的寫入（M5 的 COLLAPSING、
+     *          READY、SEALED→COLLAPSING 與終局等 restore 類寫入）一律視為已 checked 而不回退；這類寫入只能經 {@link #commitRestore}
+     *          與 {@link #terminate}，由它們自己的 CAS 還原。
      * @return 該 session 已無未 checked candidate authority 時為 true；隔離時為 false
      */
     public boolean abortUnchecked(SessionRecoveryRecord expected) {
@@ -177,12 +222,16 @@ public final class SessionRecoveryState extends PersistentState {
         quarantined.remove(sessionUuid);
         return java.util.Optional.ofNullable(target);
     }
-    /** 收斂只把尚未測量的 authority 推進到 RETURNING；已在返還或保留 receipt 的狀態原樣保留。新增狀態時必須在此明確決定。 */
+    /**
+     * 收斂只把尚未測量的 authority 推進到 RETURNING；已在返還或保留 receipt 的狀態原樣保留。新增狀態時必須在此明確決定。
+     * M5 的三個塌縮狀態也保留收據，與 MEASURED 相同：收斂回上一份 flushed 的狀態，後續由塌縮流程依 §12 續做。
+     */
     private static SessionRecoveryRecord convergenceTarget(SessionRecoveryRecord durable) {
         return switch(durable.state()) {
             case ARMING, SUPERPOSITION -> durable.withProgress(durable.participants(),durable.spaceLeases(),
                     dev.quantumchamber.superposition.SessionState.RETURNING,durable.restoreEntryEffectOnReturn());
             case RETURNING, MEASURED -> durable;
+            case COLLAPSING, PASSAGE_READY, SEALED -> durable;
         };
     }
     /** 不檢查 CAS 的還原核心：current 還原為上一份 flushed record（沒有時移除），authority history 還原為最後 checked authority，並保持 dirty。 */
@@ -191,24 +240,264 @@ public final class SessionRecoveryState extends PersistentState {
         if(durable==null) records.remove(sid); else records.put(sid,durable);
         var checked=checkedAuthority.get(sid);
         if(checked==null) authorityHistory.remove(sid); else authorityHistory.put(sid,checked);
+        rollForwardPending.remove(sid);
         markDirty();
     }
-    /** start 前 ownership 預檢：DORMANT receipt 只封鎖自己的 Chamber，不佔用已返還參與者；未確認移除的 flushed record 仍佔用。 */
+
+    // ---- M5 塌縮（spec §5、§6） ----
+
+    /** spec §5 的 receiptRetained：MEASURED、COLLAPSING、PASSAGE_READY、SEALED 都保留 M4 收據，不能經一般 remove 消耗。 */
+    public static boolean receiptRetained(SessionState state) { return state.retainsReceipt(); }
+
+    /**
+     * spec §5 的單一佔用謂詞：record 是否仍佔用這位玩家（跨 session 的玩家唯一性只看它）。
+     * ARMING、SUPERPOSITION、RETURNING 與非 DORMANT 的 MEASURED 佔用全部參與者；DORMANT 不佔用任何人；
+     * 三個塌縮狀態只佔用尚未返還的參與者（PASSAGE_READY 與 SEALED 全員已返還，所以不佔用任何人）。Chamber 的唯一性不受影響。
+     */
+    public static boolean occupies(SessionRecoveryRecord record, UUID player) {
+        var person=record.participants().stream().filter(participant -> participant.playerUuid().equals(player)).findFirst();
+        if(person.isEmpty()) return false;
+        return switch(record.state()) {
+            case ARMING, SUPERPOSITION, RETURNING -> true;
+            case MEASURED -> !dormant(record);
+            case COLLAPSING, PASSAGE_READY, SEALED -> !person.orElseThrow().returned();
+        };
+    }
+
+    /**
+     * spec §6 的 collapse view：M5 對單一 session 的判斷以 flushed record 為準；唯一的例外是 roll-forward 尚未確認
+     * （SEALED、Crossed、返還與清 lease 的進度），這時以 current 為準。隔離中的 session 的 current 不採用。
+     */
+    public Optional<SessionRecoveryRecord> collapseView(UUID session) {
+        requireHealthy();
+        return Optional.ofNullable(rollForwardPending.contains(session) && !quarantined.contains(session) ? records.get(session) : flushed.get(session));
+    }
+
+    /** 該 session 是否有尚未經 checked flush 讀回確認的 roll-forward 寫入；成立期間塌縮流程只重試寫出（spec §7）。 */
+    public boolean rollForwardPending(UUID session) { requireHealthy(); return rollForwardPending.contains(session); }
+
+    /** checked 提交的結果。failure 只在不是 COMMITTED 時存在：REJECTED 時是拒絕原因，其餘是寫出失敗的 root cause，供 caller 依原因去重記錄。 */
+    public record CommitResult(Status status, Optional<RuntimeException> failure) {
+        public enum Status {
+            /** put→flush→讀回確認 flushed exact 等於 next。 */
+            COMMITTED,
+            /** 寫入前就拒絕（CAS 不符、隔離、已終局、狀態邊不屬於這個提交種類、M5 尚未就緒）；journal 沒有改變。 */
+            REJECTED,
+            /** roll-forward 寫出失敗：current 保留 next 並保持 dirty，collapse view 立即採用；之後任何寫出都帶著它。 */
+            ROLL_FORWARD_PENDING,
+            /** restore 寫出失敗、CAS 成立：current 已還原為 expected（上一份 flushed）並保持 dirty，下一次寫出覆寫磁碟。 */
+            RESTORED,
+            /** restore 寫出失敗、CAS 不符：已隔離該 session，之後只寫出它的 flushed authority，由 recovery 收斂。 */
+            QUARANTINED
+        }
+        public CommitResult {
+            Objects.requireNonNull(status, "status"); Objects.requireNonNull(failure, "failure");
+            if((status==Status.COMMITTED)==failure.isPresent()) throw new IllegalArgumentException("只有 COMMITTED 沒有 failure");
+        }
+        static CommitResult of(Status status, RuntimeException failure) { return new CommitResult(status, Optional.of(failure)); }
+        public boolean committed() { return status==Status.COMMITTED; }
+    }
+
+    /** checked 終局的結果；failure 的規則同 {@link CommitResult}。 */
+    public record TerminalResult(Status status, Optional<RuntimeException> failure) {
+        public enum Status {
+            /** 移除、flush、讀回確認不存在；已修剪 authority history 並留下 tombstone。 */
+            REMOVED,
+            /** 起點不合法、CAS 不符、隔離或已終局；journal 沒有改變。 */
+            REJECTED,
+            /** flush 或讀回失敗、CAS 成立：expected 已放回並保持 dirty（已記 WARN），下一次寫出覆寫磁碟。 */
+            RESTORED,
+            /** flush 或讀回失敗、CAS 不符：已隔離該 session（已記 WARN）。 */
+            QUARANTINED
+        }
+        public TerminalResult {
+            Objects.requireNonNull(status, "status"); Objects.requireNonNull(failure, "failure");
+            if((status==Status.REMOVED)==failure.isPresent()) throw new IllegalArgumentException("只有 REMOVED 沒有 failure");
+        }
+        static TerminalResult of(Status status, RuntimeException failure) { return new TerminalResult(status, Optional.of(failure)); }
+        public boolean removed() { return status==Status.REMOVED; }
+    }
+
+    /** checked 終局唯一接受的四種起點（spec §5）。 */
+    public enum TerminalOrigin {
+        /** PASSAGE_READY 的通道結束（§10.6）。 */
+        PASSAGE_ENDED,
+        /** Destination=SOURCE 的 COLLAPSING 進入 PREPARE：全員已返還、lease 已清空（§7.4）。 */
+        SOURCE_FAST_PATH,
+        /** Destination=UNIVERSE 的 COLLAPSING，PREPARE 期間參與者關門：全員已返還、lease 已清空（§7.3）。 */
+        PREPARE_DOOR_CLOSED,
+        /** §11.3：flushed DORMANT MEASURED、來源 SourceFamilyRef.role() 不是 OVERWORLD、選中的是 NEW 或 EXISTING 候選。 */
+        UNSUPPORTED_SOURCE_CANCEL;
+
+        boolean accepts(SessionRecoveryRecord record) {
+            return switch(this) {
+                case PASSAGE_ENDED -> record.state()==SessionState.PASSAGE_READY;
+                case SOURCE_FAST_PATH -> preparing(record) && record.collapse().destination() instanceof CollapseDestination.Source;
+                case PREPARE_DOOR_CLOSED -> preparing(record) && record.collapse().destination() instanceof CollapseDestination.Universe;
+                case UNSUPPORTED_SOURCE_CANCEL -> dormant(record)
+                        && record.candidateContext().orElseThrow().sourceFamilyRef().role()!=DimensionRole.OVERWORLD
+                        && record.selectedCandidate().filter(chosen -> chosen instanceof QuantumCandidate.New
+                            || chosen instanceof QuantumCandidate.Existing).isPresent();
+            };
+        }
+        private static boolean preparing(SessionRecoveryRecord record) {
+            return record.state()==SessionState.COLLAPSING && record.spaceLeases().isEmpty()
+                    && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
+        }
+    }
+
+    /**
+     * spec §6 的 roll-forward 類 journal 寫入：COLLAPSING 的返還與清 lease 進度、PASSAGE_READY 加入 Crossed、進入 SEALED
+     * （COLLAPSING→SEALED，或 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)）。前置條件：current 與 flushed 都 exact 等於 expected。
+     * 寫出失敗時 current 保留 next 並保持 dirty（{@link CommitResult.Status#ROLL_FORWARD_PENDING}），之後任何寫出（重試、其他 session 的 flush、
+     * 原生 autosave、停服）都帶著它；未確認期間 {@link #collapseView} 採用 current。本方法不記 log，由 caller 依原因去重。
+     */
+    public CommitResult commitRollForward(MinecraftServer server, SessionRecoveryRecord expected, SessionRecoveryRecord next) {
+        requireServerThread(server);
+        return commitRollForward(() -> flush(server), expected, next);
+    }
+    CommitResult commitRollForward(Runnable flush, SessionRecoveryRecord expected, SessionRecoveryRecord next) {
+        requireMutationThread();
+        requireHealthy();
+        var refusal=refusal(expected,next);
+        if(refusal==null && !rollForwardEdge(expected.state(),next.state()))
+            refusal=new IllegalArgumentException("不是 roll-forward 類的塌縮寫入（返還與清 lease 進度、Crossed、進入 SEALED）："+expected.state()+"→"+next.state());
+        if(refusal!=null) return CommitResult.of(CommitResult.Status.REJECTED,refusal);
+        try { put(next,false); } catch(RuntimeException invalid) { return CommitResult.of(CommitResult.Status.REJECTED,invalid); }
+        var failure=checkedFlush(flush);
+        // 以 flushed 判定：讀回已確認 next 就是 COMMITTED（即使 flush 之後才有例外）；否則 current 保留 next。
+        if(next.equals(flushed.get(next.sessionUuid()))) return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
+        markDirty();
+        return CommitResult.of(CommitResult.Status.ROLL_FORWARD_PENDING,failure.orElseGet(() -> new IllegalStateException("roll-forward 寫入的 exact readback 不符")));
+    }
+
+    /**
+     * spec §6 的 restore 類 journal 寫入：COLLAPSING 提交（MEASURED→COLLAPSING）、READY 提交（COLLAPSING→PASSAGE_READY）、
+     * SEALED→COLLAPSING 重試。這三條邊只能經這裡寫入（一般 {@link #put} 拒絕）。前置條件：current 與 flushed 都 exact 等於 expected；
+     * 提交新的 COLLAPSING 另外要求 {@link #m5ReadyThisInstance}。寫出失敗時依 H3 的 CAS：current 仍 exact 等於 next 才還原為
+     * expected（上一份 flushed）並保持 dirty、authority history 還原為最後 checked authority；CAS 不符時隔離該 session、不猜測覆寫。
+     * 本方法不記 log，由 caller 依原因去重。
+     */
+    public CommitResult commitRestore(MinecraftServer server, SessionRecoveryRecord expected, SessionRecoveryRecord next) {
+        requireServerThread(server);
+        return commitRestore(() -> flush(server), expected, next);
+    }
+    CommitResult commitRestore(Runnable flush, SessionRecoveryRecord expected, SessionRecoveryRecord next) {
+        requireMutationThread();
+        requireHealthy();
+        var refusal=refusal(expected,next);
+        if(refusal==null && !restoreEdge(expected.state(),next.state()))
+            refusal=new IllegalArgumentException("不是 restore 類的塌縮寫入（COLLAPSING 提交、READY、SEALED→COLLAPSING）："+expected.state()+"→"+next.state());
+        if(refusal==null && next.state()==SessionState.COLLAPSING && !m5ReadyThisInstance)
+            refusal=new IllegalStateException("本 server instance 的 M5 authority 尚未初始化成功，不提交新的 COLLAPSING");
+        if(refusal!=null) return CommitResult.of(CommitResult.Status.REJECTED,refusal);
+        var sid=next.sessionUuid();
+        try { put(next,true); } catch(RuntimeException invalid) { return CommitResult.of(CommitResult.Status.REJECTED,invalid); }
+        var failure=checkedFlush(flush);
+        if(next.equals(flushed.get(sid))) return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
+        var cause=failure.orElseGet(() -> new IllegalStateException("restore 類寫入的 exact readback 不符"));
+        if(next.equals(records.get(sid)) && !quarantined.contains(sid)) {
+            restoreCheckedAuthority(sid);
+            return CommitResult.of(CommitResult.Status.RESTORED,cause);
+        }
+        quarantine(sid);
+        return CommitResult.of(CommitResult.Status.QUARANTINED,cause);
+    }
+
+    /**
+     * spec §5 唯一的 checked 終局：起點必須是 {@link TerminalOrigin} 接受的 record，而且 current 與 flushed 都 exact 等於 expected
+     * → 移除 → flush → 讀回確認不存在。成功後才修剪該 session 的 authority history／checked authority，並留 process 內 tombstone
+     * （之後 put 拒絕同一個 UUID）。flush 或讀回失敗時依 H3 的 CAS 放回 expected 並保持 dirty（CAS 不符時隔離），記 WARN；不改門。
+     * runtime（{@code SuperpositionSessionManager} 的 sessions 與來源 ticket）的移除由呼叫端負責（F3d）。正常結束的 INFO 也由呼叫端記。
+     */
+    public TerminalResult terminate(MinecraftServer server, SessionRecoveryRecord expected, TerminalOrigin origin) {
+        requireServerThread(server);
+        return terminate(() -> flush(server), expected, origin);
+    }
+    TerminalResult terminate(Runnable flush, SessionRecoveryRecord expected, TerminalOrigin origin) {
+        requireMutationThread();
+        requireHealthy();
+        Objects.requireNonNull(origin,"origin");
+        var sid=expected.sessionUuid();
+        RuntimeException refusal=null;
+        if(quarantined.contains(sid) || terminated.contains(sid)) refusal=new IllegalStateException("session 已隔離或已 checked 終局");
+        else if(!expected.equals(records.get(sid)) || !expected.equals(flushed.get(sid)))
+            refusal=new IllegalStateException("CAS：current 與 flushed 都必須 exact 等於 expected");
+        else if(!origin.accepts(expected)) refusal=new IllegalArgumentException("終局起點不合法："+origin+" ← "+expected.state());
+        if(refusal!=null) return TerminalResult.of(TerminalResult.Status.REJECTED,refusal);
+        records.remove(sid); rollForwardPending.remove(sid); markDirty();
+        var failure=checkedFlush(flush);
+        if(flushed.containsKey(sid)) {
+            var cause=failure.orElseGet(() -> new IllegalStateException("終局的 exact readback 仍含該 session"));
+            TerminalResult result;
+            if(!records.containsKey(sid) && !quarantined.contains(sid)) {
+                restoreCheckedAuthority(sid);
+                result=TerminalResult.of(TerminalResult.Status.RESTORED,cause);
+            } else {
+                quarantine(sid);
+                result=TerminalResult.of(TerminalResult.Status.QUARANTINED,cause);
+            }
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("checked 終局未確認，{}：session={} origin={}：{}",
+                    result.status()==TerminalResult.Status.RESTORED ? "已放回原 record 並保持 dirty，下一次寫出覆寫磁碟" : "CAS 不符，已隔離該 session",
+                    sid,origin,FailureText.describe(cause));
+            return result;
+        }
+        // 讀回已確認不存在（即使 flush 之後才有例外）：才修剪 authority history，並留 tombstone。
+        authorityHistory.remove(sid); checkedAuthority.remove(sid); terminated.add(sid);
+        return new TerminalResult(TerminalResult.Status.REMOVED,Optional.empty());
+    }
+
+    /** 執行一次 checked flush；成功與否由呼叫端以 flushed（讀回確認的內容）判定，這裡只帶回例外。 */
+    private static Optional<RuntimeException> checkedFlush(Runnable flush) {
+        try { flush.run(); return Optional.empty(); } catch(RuntimeException failure) { return Optional.of(failure); }
+    }
+
+    /** commit 共用的前置條件；回傳拒絕原因，可以寫入時為 null。 */
+    private RuntimeException refusal(SessionRecoveryRecord expected, SessionRecoveryRecord next) {
+        var sid=expected.sessionUuid();
+        if(!sid.equals(next.sessionUuid())) return new IllegalArgumentException("expected 與 next 必須是同一個 session");
+        if(quarantined.contains(sid) || terminated.contains(sid)) return new IllegalStateException("session 已隔離或已 checked 終局");
+        if(!expected.equals(records.get(sid)) || !expected.equals(flushed.get(sid)))
+            return new IllegalStateException("CAS：current 與 flushed 都必須 exact 等於 expected");
+        if(next.equals(expected)) return new IllegalArgumentException("next 與 expected 相同，沒有可提交的變更");
+        return null;
+    }
+
+    /** spec §6 的 restore 類狀態邊：COLLAPSING 提交、READY 提交、SEALED→COLLAPSING 重試（終局另由 {@link #terminate} 處理）。 */
+    private static boolean restoreEdge(SessionState from, SessionState to) {
+        return from==SessionState.MEASURED && to==SessionState.COLLAPSING
+                || from==SessionState.COLLAPSING && to==SessionState.PASSAGE_READY
+                || from==SessionState.SEALED && to==SessionState.COLLAPSING;
+    }
+
+    /** spec §6 的 roll-forward 類狀態邊：COLLAPSING／PASSAGE_READY 的 self-loop 進度，以及由它們進入 SEALED。SEALED 沒有 self-loop 進度。 */
+    private static boolean rollForwardEdge(SessionState from, SessionState to) {
+        return (from==SessionState.COLLAPSING || from==SessionState.PASSAGE_READY) && (to==from || to==SessionState.SEALED);
+    }
+
+    /** start 前 ownership 預檢：只看 {@link #occupies}；未確認移除的 flushed record 仍佔用。 */
     public boolean participantsAvailable(java.util.Collection<UUID> players) {
         requireHealthy();
-        return java.util.stream.Stream.concat(records.values().stream(),flushed.values().stream()).filter(record -> !dormant(record))
-                .noneMatch(record -> record.participants().stream().anyMatch(person -> players.contains(person.playerUuid())));
+        return Stream.concat(records.values().stream(),flushed.values().stream())
+                .noneMatch(record -> players.stream().anyMatch(player -> occupies(record,player)));
     }
-    public void put(SessionRecoveryRecord record) {
+    /**
+     * 一般寫入。塌縮狀態的 record 只接受 roll-forward 類（返還與清 lease 進度、Crossed、進入 SEALED），並把該 session 記為
+     * roll-forward 尚未確認，直到 checked flush 讀回確認 flushed 已等於 current；restore 類狀態邊只能經 {@link #commitRestore}。
+     */
+    public void put(SessionRecoveryRecord record) { put(record,false); }
+    private void put(SessionRecoveryRecord record, boolean restoreCommit) {
         requireMutationThread();
         requireHealthy();
         requireNotQuarantined(record.sessionUuid());
+        if (terminated.contains(record.sessionUuid())) throw new IllegalStateException("session 已 checked 終局，同一 UUID 不得重新放回");
         if (candidateInitialized && record.candidateContext().isEmpty()) {
             throw new IllegalArgumentException("已初始化 candidate 的 journal 不得重新加入 legacy record");
         }
         var current=records.get(record.sessionUuid());
         var durable=flushed.get(record.sessionUuid());
         var historical=authorityHistory.get(record.sessionUuid());
+        if (record.state().collapseState()) requireCollapseWrite(record,current,durable,historical,restoreCommit);
         // 同時保護 dirty、durable 與已移除紀錄的 authority。
         if ((current!=null && !SessionRecoveryRecord.sameAuthority(current,record))
                 || (durable!=null && !SessionRecoveryRecord.sameAuthority(durable,record))
@@ -219,15 +508,31 @@ public final class SessionRecoveryState extends PersistentState {
         validateOwnership(candidate);
         records.put(record.sessionUuid(), record); authorityHistory.put(record.sessionUuid(), record);
         candidateInitialized |= record.candidateContext().isPresent();
+        if (record.state().collapseState() && !restoreCommit) {
+            if (record.equals(durable)) rollForwardPending.remove(record.sessionUuid()); else rollForwardPending.add(record.sessionUuid());
+        }
         markDirty();
+    }
+    /**
+     * 塌縮狀態的寫入前置：journal 必須已有 M5 證據（schema 4 之前不能存在塌縮狀態）；只能沿既有 authority 的狀態邊進入；
+     * 一般 put 不得寫 restore 類狀態邊（current、flushed 或 history 任一份到 record 是 restore 邊都拒絕）。
+     */
+    private void requireCollapseWrite(SessionRecoveryRecord record, SessionRecoveryRecord current, SessionRecoveryRecord durable,
+            SessionRecoveryRecord historical, boolean restoreCommit) {
+        if (!m5Evidence) throw new IllegalStateException("M5 authority 尚未初始化，journal 不得寫入塌縮狀態（schema 4 之前）");
+        var references = Stream.of(current, durable, historical).filter(Objects::nonNull).toList();
+        if (references.isEmpty()) throw new IllegalArgumentException("塌縮狀態只能由保留的 MEASURED receipt 經狀態邊進入");
+        if (!restoreCommit && references.stream().anyMatch(reference -> restoreEdge(reference.state(), record.state()))) {
+            throw new IllegalStateException("COLLAPSING 提交、READY 與 SEALED→COLLAPSING 是 restore 類寫入，只能經 commitRestore");
+        }
     }
     public boolean remove(UUID id) {
         requireMutationThread();
         requireHealthy();
         requireNotQuarantined(id);
-        if(java.util.stream.Stream.of(records.get(id),flushed.get(id),authorityHistory.get(id))
-                .anyMatch(record -> record!=null && record.state()==dev.quantumchamber.superposition.SessionState.MEASURED))
-            throw new IllegalStateException("MEASURED receipt 必須保留，不能經一般 remove 消耗");
+        if(Stream.of(records.get(id),flushed.get(id),authorityHistory.get(id))
+                .anyMatch(record -> record!=null && receiptRetained(record.state())))
+            throw new IllegalStateException("MEASURED 與塌縮狀態的 receipt 必須保留，不能經一般 remove 消耗（只有 checked 終局 API 可以移除）");
         if (records.remove(id) == null) return false;
         markDirty(); return true;
     }
@@ -239,9 +544,21 @@ public final class SessionRecoveryState extends PersistentState {
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
         var writable = writable();
-        nbt.putInt("SchemaVersion", candidateInitialized ? 3 : envelopeSchema(writable));
-        var entries = new NbtList(); writable.values().forEach(record -> entries.add(record.toNbt()));
+        int schema = writtenSchema(writable);
+        nbt.putInt("SchemaVersion", schema);
+        var entries = new NbtList(); writable.values().forEach(record -> entries.add(record.toNbt(schema)));
         nbt.put("Records", entries); return nbt;
+    }
+    /**
+     * spec §5 的寫出式子：有 legacy record → 2；否則 candidateInitialized → (m5Evidence ? 4 : 3)；否則 → 2（空 journal）。
+     * 兩個旗標都不會變回假，所以一旦寫成 schema 4 就不再降回。
+     */
+    private int writtenSchema(Map<UUID, SessionRecoveryRecord> writable) {
+        int envelope = envelopeSchema(writable);
+        if (writable.values().stream().anyMatch(record -> record.candidateContext().isEmpty())) return 2;
+        if (candidateInitialized) return m5Evidence ? 4 : 3;
+        // 空 journal → 2。有 candidate record 時 candidateInitialized 必為真，走不到這裡；仍沿用 envelope 判斷，不寫出錯誤的 2。
+        return envelope;
     }
     /** 所有寫出（checked flush、原生 autosave／stop）共用：隔離 session 只寫上一份 flushed authority，其他 session 照常。 */
     private Map<UUID, SessionRecoveryRecord> writable() {
@@ -273,6 +590,8 @@ public final class SessionRecoveryState extends PersistentState {
             flushed = decoded.flushedRecords();
             authorityHistory.putAll(flushed);
             checkedAuthority.putAll(flushed);
+            // roll-forward 尚未確認的 session：讀回確認 flushed 已等於 current 時清除。
+            rollForwardPending.removeIf(sid -> Objects.equals(flushed.get(sid), records.get(sid)));
         } catch (IOException | RuntimeException exception) {
             throw new UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",
                     exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
@@ -291,7 +610,7 @@ public final class SessionRecoveryState extends PersistentState {
         if (owner != null) requireServerThread(owner);
     }
     private void requireNotQuarantined(UUID id) {
-        if (quarantined.contains(id)) throw new IllegalStateException("session 的未 checked candidate authority 已隔離，拒絕再寫入");
+        if (quarantined.contains(id)) throw new IllegalStateException("session 的未 checked authority 已隔離，拒絕再寫入");
     }
     /** DORMANT＝MEASURED+SELECTED、全員 returned 且無 lease；它只封鎖自己的 Chamber（spec §11）。 */
     private static boolean dormant(SessionRecoveryRecord record) {
@@ -303,8 +622,9 @@ public final class SessionRecoveryState extends PersistentState {
         var chambers = new HashSet<UUID>(); var players = new HashSet<UUID>(); var slots = new HashSet<Integer>();
         for (var record : records.values()) {
             if (!chambers.add(record.chamberUuid())) throw new IllegalArgumentException("來源艙已有 session");
-            // DORMANT receipt 的參與者皆已返還且沒有 lease；玩家唯一性只約束仍可能移動玩家的 session。
-            if (!dormant(record)) for (var person : record.participants()) if (!players.add(person.playerUuid())) throw new IllegalArgumentException("玩家跨 session 重複");
+            // 玩家唯一性只約束仍佔用玩家的 session（occupies）：DORMANT 與塌縮狀態的已返還參與者不佔用；Chamber 的唯一性不變。
+            for (var person : record.participants())
+                if (occupies(record, person.playerUuid()) && !players.add(person.playerUuid())) throw new IllegalArgumentException("玩家跨 session 重複");
             for (var lease : record.spaceLeases()) if (!slots.add(lease.slotId())) throw new IllegalArgumentException("slot 跨 session 重複");
         }
     }

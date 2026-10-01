@@ -6,6 +6,9 @@ import dev.quantumchamber.candidate.CandidateId;
 import dev.quantumchamber.candidate.CandidateLedgerEntry;
 import dev.quantumchamber.candidate.CandidatePolicySnapshot;
 import dev.quantumchamber.candidate.CandidateSelection;
+import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.collapse.CollapseDestination;
+import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DimensionRole;
@@ -15,7 +18,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Comparator;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
@@ -27,14 +32,25 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 
-/** 恢復所需的純資料；任何可變 NBT 與空間邊界皆不洩漏內部參照。 */
+/**
+ * 恢復所需的純資料；任何可變 NBT 與空間邊界皆不洩漏內部參照。
+ * {@code collapse} 是 schema 4 的 {@code Collapse} compound：M4 狀態一律 {@link CollapseFields#EMPTY}，三個塌縮狀態的合法組合見 spec §5。
+ */
 public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberOriginAuthority origin,
         List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn,
         SessionSemantics semantics, Optional<CandidatePolicySnapshot> candidateContext,
-        List<CandidateLedgerEntry> candidateLedger, Optional<CandidateSelection> candidateSelection) {
+        List<CandidateLedgerEntry> candidateLedger, Optional<CandidateSelection> candidateSelection, CollapseFields collapse) {
     private static final Comparator<CandidateLedgerEntry> LEDGER_ORDER = Comparator
             .comparingLong((CandidateLedgerEntry entry) -> entry.doorKey().logicalStationIndex())
             .thenComparing(entry -> entry.doorKey().wallSide());
+    /** M4 的 11 欄位建構子：Collapse 為空（M4 狀態）。 */
+    public SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberOriginAuthority origin,
+            List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn,
+            SessionSemantics semantics, Optional<CandidatePolicySnapshot> candidateContext,
+            List<CandidateLedgerEntry> candidateLedger, Optional<CandidateSelection> candidateSelection) {
+        this(sessionUuid,chamberUuid,origin,participants,spaceLeases,state,restoreEntryEffectOnReturn,semantics,
+                candidateContext,candidateLedger,candidateSelection,CollapseFields.EMPTY);
+    }
     /** 舊呼叫端只建立 legacy record；不推測 candidate context。 */
     public SessionRecoveryRecord(UUID sessionUuid,UUID chamberUuid,ChamberOriginAuthority origin,
             List<Participant> participants,List<SpaceLease> spaceLeases,SessionState state,boolean restoreEntryEffectOnReturn,
@@ -82,14 +98,16 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         }
         Objects.requireNonNull(candidateContext, "candidateContext");
         Objects.requireNonNull(candidateSelection, "candidateSelection");
+        Objects.requireNonNull(collapse, "collapse");
         candidateLedger = List.copyOf(candidateLedger);
         if (candidateContext.isEmpty()) {
-            if (!candidateLedger.isEmpty() || candidateSelection.isPresent() || state == SessionState.MEASURED) {
-                throw new IllegalArgumentException("legacy record 不得包含候選或測量狀態");
+            if (!candidateLedger.isEmpty() || candidateSelection.isPresent() || state.retainsReceipt()) {
+                throw new IllegalArgumentException("legacy record 不得包含候選、測量或塌縮狀態");
             }
         } else {
             var selection = candidateSelection.orElseThrow(() -> new IllegalArgumentException("候選 session 必須包含 selection"));
-            if ((state == SessionState.MEASURED) != (selection instanceof CandidateSelection.Selected)) {
+            // MEASURED 與三個塌縮狀態都保留 SELECTED 收據；其餘狀態一律 SELECTABLE。
+            if (state.retainsReceipt() != (selection instanceof CandidateSelection.Selected)) {
                 throw new IllegalArgumentException("session 狀態與 selection 不一致");
             }
             var doors = new HashSet<DoorKey>(); var ids = new HashSet<CandidateId>();
@@ -107,16 +125,69 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             }
             candidateLedger = candidateLedger.stream().sorted(LEDGER_ORDER).toList();
         }
-        if(spaceLeases.isEmpty() && (state!=SessionState.MEASURED || candidateContext.isEmpty()
+        if(spaceLeases.isEmpty() && (!state.retainsReceipt() || candidateContext.isEmpty()
                 || participants.stream().anyMatch(person -> !person.returned())))
-            throw new IllegalArgumentException("只有全員已返還的 MEASURED receipt 可保留空 lease");
+            throw new IllegalArgumentException("只有全員已返還的保留收據（MEASURED 或塌縮狀態）可保留空 lease");
+        validateCollapse(state, participants, spaceLeases, candidateLedger, candidateSelection, collapse);
     }
 
-    /** 只更新恢復進度，完整保留已承認的候選 context、ledger 與 selection。 */
+    /**
+     * spec §5 的合法組合（M4 矩陣之外新增）。M4 狀態的 Collapse 必須為空；塌縮狀態必為 candidate＋SELECTED（上方已驗證），
+     * Destination 必須對應被選中的候選（§7.2），其餘欄位依狀態與 SealedReason 雙向約束。
+     */
+    private static void validateCollapse(SessionState state, List<Participant> participants, List<SpaceLease> spaceLeases,
+            List<CandidateLedgerEntry> ledger, Optional<CandidateSelection> selection, CollapseFields collapse) {
+        if (!state.collapseState()) {
+            if (!collapse.isEmpty()) throw new IllegalArgumentException("ARMING、SUPERPOSITION、RETURNING、MEASURED 的 Collapse 必須為空");
+            return;
+        }
+        if (collapse.isEmpty()) throw new IllegalArgumentException("塌縮狀態必須帶 Collapse 欄位");
+        var destination = collapse.destination();
+        boolean destinationMatches = switch (selectedCandidate(ledger, selection).orElseThrow()) {
+            case QuantumCandidate.Source ignored -> destination instanceof CollapseDestination.Source;
+            case QuantumCandidate.Existing existing -> destination instanceof CollapseDestination.Universe(var id) && id.equals(existing.universeId());
+            case QuantumCandidate.New ignored -> destination instanceof CollapseDestination.Universe;
+        };
+        if (!destinationMatches) throw new IllegalArgumentException("Destination 必須對應被選中的候選（SOURCE、EXISTING 的 UniverseId 或 NEW 的宇宙）");
+        Set<UUID> people = participants.stream().map(Participant::playerUuid).collect(Collectors.toSet());
+        boolean settled = spaceLeases.isEmpty() && participants.stream().allMatch(Participant::returned);
+        boolean universe = destination instanceof CollapseDestination.Universe;
+        var reason = collapse.sealedReason();
+        boolean valid = switch (state) {
+            // 允許部分參與者已返還；lease 原樣或已清空（空 lease 蘊含全員已返還，上方已驗證）。
+            case COLLAPSING -> !collapse.passageOpened() && collapse.crossed().isEmpty() && collapse.recoveryRequired().isEmpty() && reason.isEmpty();
+            case PASSAGE_READY -> settled && universe && collapse.passageOpened() && collapse.recoveryRequired().isEmpty() && reason.isEmpty()
+                    && people.containsAll(collapse.crossed());
+            case SEALED -> settled && universe && reason.isPresent() && (reason.orElseThrow() == SealedReason.TRANSFER_RECOVERY_REQUIRED
+                    // TRR 必須帶 READY 的 opened／expires 與恰一筆、不在 Crossed 中的 RecoveryRequired。
+                    ? collapse.passageOpened() && collapse.recoveryRequired().size() == 1 && people.contains(collapse.recoveryRequired().getFirst())
+                        && !collapse.crossed().contains(collapse.recoveryRequired().getFirst()) && people.containsAll(collapse.crossed())
+                    // 其他原因一律 -1 與空清單。
+                    : !collapse.passageOpened() && collapse.crossed().isEmpty() && collapse.recoveryRequired().isEmpty());
+            case ARMING, SUPERPOSITION, RETURNING, MEASURED -> throw new IllegalStateException("M4 狀態已在上方處理");
+        };
+        if (!valid) throw new IllegalArgumentException(state + " 的 Collapse 欄位組合不合法");
+    }
+
+    /** SELECTED 選中的那一筆候選；SELECTABLE 或 legacy 為空。 */
+    public Optional<QuantumCandidate> selectedCandidate() { return selectedCandidate(candidateLedger, candidateSelection); }
+
+    private static Optional<QuantumCandidate> selectedCandidate(List<CandidateLedgerEntry> ledger, Optional<CandidateSelection> selection) {
+        if (!(selection.orElse(null) instanceof CandidateSelection.Selected selected)) return Optional.empty();
+        return ledger.stream().filter(entry -> entry.doorKey().equals(selected.doorKey())).map(CandidateLedgerEntry::candidate).findFirst();
+    }
+
+    /** 只更新恢復進度，完整保留已承認的候選 context、ledger、selection 與 Collapse。 */
     public SessionRecoveryRecord withProgress(List<Participant> people, List<SpaceLease> leases,
             SessionState phase, boolean restoreEffect) {
         return new SessionRecoveryRecord(sessionUuid,chamberUuid,origin,people,leases,phase,restoreEffect,semantics,
-                candidateContext,candidateLedger,candidateSelection);
+                candidateContext,candidateLedger,candidateSelection,collapse);
+    }
+
+    /** 塌縮的狀態與 Collapse 欄位；參與者、lease 與收據原樣保留。合法與否由建構子與 {@link #sameAuthority} 判斷。 */
+    public SessionRecoveryRecord withCollapse(SessionState phase, CollapseFields fields) {
+        return new SessionRecoveryRecord(sessionUuid,chamberUuid,origin,participants,spaceLeases,phase,restoreEntryEffectOnReturn,semantics,
+                candidateContext,candidateLedger,candidateSelection,fields);
     }
 
     public record Participant(UUID playerUuid, Vec3d sourcePosition, Vec3d sourceVelocity,
@@ -133,20 +204,78 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         @Override public NbtCompound quantumStateSnapshot() { return quantumStateSnapshot.copy(); }
     }
 
-    /** 方向性的 authority 檢查：next 只能保留或追加 previous 已承認的候選事實。 */
+    /**
+     * 方向性的 authority 檢查：next 只能保留或追加 previous 已承認的候選事實。進入保留收據的狀態（MEASURED 與塌縮狀態）之後，
+     * context、ledger、selection 完全不變、returned 只增不減、lease 只能原樣或清空，狀態邊與 Collapse 欄位依 {@link #collapseEdge}。
+     */
     public static boolean sameAuthority(SessionRecoveryRecord previous,SessionRecoveryRecord next) {
         return previous.sessionUuid().equals(next.sessionUuid()) && previous.chamberUuid().equals(next.chamberUuid())
                 && previous.origin().equals(next.origin()) && previous.semantics()==next.semantics()
                 && sameParticipantSources(previous.participants(),next.participants())
                 && previous.candidateContext().equals(next.candidateContext())
                 && new HashSet<>(next.candidateLedger()).containsAll(previous.candidateLedger())
-                && (previous.state()!=SessionState.MEASURED || previous.candidateLedger().equals(next.candidateLedger())
+                && (!previous.state().retainsReceipt() || previous.candidateLedger().equals(next.candidateLedger())
                     && previous.restoreEntryEffectOnReturn()==next.restoreEntryEffectOnReturn()
                     && previous.participants().stream().filter(Participant::returned).allMatch(person -> next.participants().stream()
                         .anyMatch(other -> person.playerUuid().equals(other.playerUuid()) && other.returned()))
                     && (next.spaceLeases().isEmpty() || previous.spaceLeases().equals(next.spaceLeases())))
                 && (previous.candidateSelection().orElse(null) instanceof CandidateSelection.Selectable
-                    || previous.candidateSelection().equals(next.candidateSelection()));
+                    || previous.candidateSelection().equals(next.candidateSelection()))
+                && collapseEdge(previous,next);
+    }
+
+    /**
+     * spec §5 的狀態邊與 Collapse 單調性。M4 原有的狀態邊不變（這裡不檢查）；塌縮狀態只能由 MEASURED 或另一個塌縮狀態進入。
+     * 兩端的 record 都已通過建構子的合法組合，所以這裡只比對「哪些欄位可以改變」。
+     */
+    private static boolean collapseEdge(SessionRecoveryRecord previous, SessionRecoveryRecord next) {
+        var after = next.state();
+        var from = previous.collapse(); var to = next.collapse();
+        return switch (previous.state()) {
+            case ARMING, SUPERPOSITION, RETURNING -> !after.collapseState();
+            case MEASURED -> after == SessionState.MEASURED || after == SessionState.COLLAPSING;
+            case COLLAPSING, PASSAGE_READY, SEALED -> {
+                // CollapseRevision、CommittedAtGameTime、Destination 一經寫入就不可再改。
+                if (!after.collapseState() || from.revision() != to.revision() || from.committedAtGameTime() != to.committedAtGameTime()
+                        || !from.destination().equals(to.destination())) yield false;
+                boolean passage = from.passageOpenedAtGameTime() == to.passageOpenedAtGameTime()
+                        && from.passageExpiresAtGameTime() == to.passageExpiresAtGameTime();
+                boolean crossed = from.crossed().equals(to.crossed());
+                boolean recovery = from.recoveryRequired().equals(to.recoveryRequired());
+                boolean reason = from.sealedReason().equals(to.sealedReason());
+                boolean transfer = to.sealedReason().filter(value -> value == SealedReason.TRANSFER_RECOVERY_REQUIRED).isPresent();
+                yield switch (previous.state()) {
+                    case COLLAPSING -> switch (after) {
+                        // self-loop 只有返還與清 lease（上方已檢查單調）；COLLAPSING→READY 只寫入 opened／expires（只寫一次）。
+                        case COLLAPSING -> passage && crossed && recovery && reason;
+                        case PASSAGE_READY -> crossed && recovery && reason;
+                        // TRANSFER_RECOVERY_REQUIRED 只能由 PASSAGE_READY 進入。
+                        case SEALED -> passage && crossed && recovery && !transfer;
+                        default -> false;
+                    };
+                    case PASSAGE_READY -> switch (after) {
+                        // self-loop 只有附加 Crossed。
+                        case PASSAGE_READY -> passage && recovery && reason && startsWith(to.crossed(), from.crossed());
+                        // 只接受 TRR：opened／expires 與 Crossed 原樣保留，RecoveryRequired 由建構子驗證為恰一位未跨過的參與者。
+                        case SEALED -> passage && crossed && transfer;
+                        default -> false;
+                    };
+                    case SEALED -> switch (after) {
+                        // 沒有 self-loop 進度：TRR 完全凍結，其他原因的欄位也只能原樣。
+                        case SEALED -> passage && crossed && recovery && reason;
+                        // 重試只清空 SealedReason；TRANSFER_RECOVERY_REQUIRED 是永久原因，沒有這條邊。
+                        case COLLAPSING -> passage && crossed && recovery
+                                && from.sealedReason().filter(value -> value == SealedReason.TRANSFER_RECOVERY_REQUIRED).isEmpty();
+                        default -> false;
+                    };
+                    default -> false;
+                };
+            }
+        };
+    }
+
+    private static boolean startsWith(List<UUID> list, List<UUID> prefix) {
+        return list.size() >= prefix.size() && list.subList(0, prefix.size()).equals(prefix);
     }
 
     /** 以 UUID 比較凍結來源；順序與 returned 進度不是來源快照的一部分。 */
@@ -174,7 +303,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         }
     }
 
-    NbtCompound toNbt() {
+    /** 依 envelope schema 編碼：schema 4 多一個 {@code Collapse}（M4 狀態為空 compound）；schema 3 以下不得帶塌縮欄位。 */
+    NbtCompound toNbt(int envelopeSchema) {
+        if (envelopeSchema < 4 && !collapse.isEmpty()) throw new IllegalStateException("schema 4 之前的 envelope 不得寫出塌縮欄位");
         var nbt = new NbtCompound();
         nbt.putUuid("SessionUuid", sessionUuid); nbt.putUuid("ChamberUuid", chamberUuid);
         var source = new NbtCompound();
@@ -212,15 +343,19 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             nbt.put("CandidateLedger", ledger);
             nbt.put("CandidateSelection", CandidateJournalCodec.selection(candidateSelection.orElseThrow()));
         }
+        if (envelopeSchema >= 4) nbt.put("Collapse", CandidateJournalCodec.collapse(collapse));
         return nbt;
     }
 
     static SessionRecoveryRecord fromNbt(NbtCompound nbt,int envelopeSchema) {
-        if (envelopeSchema!=1 && envelopeSchema!=2 && envelopeSchema!=3) throw new IllegalArgumentException("不支援 journal schema");
-        // schema 3 起預設嚴格（之後的版本沿用）：record 與內層 compound 為 exact key、Origin 的 WorldKey 必須 canonical；
-        // schema 1／2 保留原本的寬鬆解析。
+        if (envelopeSchema < 1 || envelopeSchema > 4) throw new IllegalArgumentException("不支援 journal schema");
+        // schema 3 起預設嚴格（之後的版本沿用）：record 與內層 compound 為 exact key（並必須帶 candidate payload）、
+        // Origin 的 WorldKey 必須 canonical；schema 1／2 保留原本的寬鬆解析。schema 4 的 record 是 schema 3 的 11 個 key 再加 Collapse。
         boolean strict = envelopeSchema >= 3;
-        if (strict) {
+        if (envelopeSchema >= 4) {
+            keys(nbt, "SessionUuid", "ChamberUuid", "Origin", "Participants", "SpaceLeases", "State",
+                    "RestoreEntryEffectOnReturn", "SessionSemantics", "CandidateContext", "CandidateLedger", "CandidateSelection", "Collapse");
+        } else if (strict) {
             keys(nbt, "SessionUuid", "ChamberUuid", "Origin", "Participants", "SpaceLeases", "State",
                     "RestoreEntryEffectOnReturn", "SessionSemantics", "CandidateContext", "CandidateLedger", "CandidateSelection");
         }
@@ -284,7 +419,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             selection = Optional.of(CandidateJournalCodec.selection(compound(nbt, "CandidateSelection")));
         }
         return new SessionRecoveryRecord(uuid(nbt, "SessionUuid"), uuid(nbt, "ChamberUuid"), origin, people, leases,
-                SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"),semantics,context,ledger,selection);
+                SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"),semantics,context,ledger,selection,
+                // schema 3 讀入時在記憶體內補成空的 Collapse；塌縮狀態因此在 schema 3 一律被建構子拒絕。
+                envelopeSchema >= 4 ? CandidateJournalCodec.collapse(compound(nbt, "Collapse")) : CollapseFields.EMPTY);
     }
 
     // PlayerRecoveryCheckpoint 仍以 SessionRecoveryRecord 取用這三個 strict helper；實作在 JournalNbt。
