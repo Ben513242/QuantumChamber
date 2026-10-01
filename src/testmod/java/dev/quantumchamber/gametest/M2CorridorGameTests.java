@@ -1005,6 +1005,90 @@ public final class M2CorridorGameTests implements FabricGameTest {
             },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30),hooks);
         });
     }
+    /**
+     * H4：凍結中的移動封包被丟棄時，伺服器送回自己的權威位置。同一玩家每 10 ticks 最多一次：同一 tick 連送 20 個只修正一次，
+     * 之後連續 20 ticks 各送一個最多修正兩次。位置是伺服器現值（絕對座標），視角以相對 0 送出，不把客戶端鏡頭拉回伺服器的舊朝向。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h4_freeze_correction",tickLimit=100000)
+    public void native_frozen_movement_gets_throttled_position_corrections_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_frozen_movement_gets_throttled_position_corrections_windows");
+        var fixture=new NativeEntry(context,1); context.waitAndRun(2,fixture::power);
+        when(context,3,fixture::activeReady,tick -> {
+            var connection=fixture.players.getFirst(); var player=connection.player(); var id=player.getUuid();
+            var chamber=fixture.record().chamberUuid();
+            // teleport fault 讓返還移動持續失敗，玩家停在 durable RETURNING 的凍結中；斷言失敗或等待逾時也必須移除，不得殘留到後續 batch。
+            var hooks=new TestHooks();
+            var fault=new TeleportExceptionFault(id,context.getWorld()); TELEPORT_FAULTS.put(fixture.server,fault);
+            hooks.add(() -> TELEPORT_FAULTS.remove(fixture.server,fault));
+            try { fixture.power(); } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            when(context,tick+1,() -> fixture.returning() && fault.hits>=1,frozen -> {
+                positionCorrections(connection);
+                var anchor=player.getPos(); var corrections=new java.util.ArrayList<FrozenCorrection>();
+                for(int step=1;step<=20;step++) frozenMove(player,anchor,step);
+                for(var packet : positionCorrections(connection)) corrections.add(new FrozenCorrection(fixture.server.getTicks(),true,packet));
+                frozenMoves(context,connection,anchor,frozen+1,20,corrections,last -> {
+                    var burst=corrections.stream().filter(FrozenCorrection::burst).count();
+                    var spread=corrections.stream().filter(correction -> !correction.burst()).count();
+                    var witness=new java.util.LinkedHashMap<String,Boolean>();
+                    try {
+                        witness.put("stillFrozen",fixture.returning() && player.getServerWorld()==fixture.target
+                                && dev.quantumchamber.persistence.SessionRecoveryManager.blocks(id,fixture.server));
+                        witness.put("serverPositionHeld",player.getPos().equals(anchor));
+                        witness.put("burstCorrectedOnce",burst==1);
+                        witness.put("spreadCorrectedAtMostTwice",spread>=1 && spread<=2);
+                        witness.put("throttledPerPlayer",java.util.stream.IntStream.range(1,corrections.size())
+                                .allMatch(i -> corrections.get(i).serverTick()-corrections.get(i-1).serverTick()>=10));
+                        witness.put("serverAuthoritativePosition",corrections.stream().allMatch(correction -> correction.packet().getX()==anchor.x
+                                && correction.packet().getY()==anchor.y && correction.packet().getZ()==anchor.z));
+                        witness.put("viewNotPulledBack",corrections.stream().allMatch(correction -> correction.packet().getFlags().equals(Set.of(
+                                net.minecraft.network.packet.s2c.play.PositionFlag.Y_ROT,net.minecraft.network.packet.s2c.play.PositionFlag.X_ROT))
+                                && correction.packet().getYaw()==0f && correction.packet().getPitch()==0f));
+                    } finally { hooks.release(); }
+                    context.assertTrue(!witness.containsValue(false),"凍結中的移動封包必須得到節流的位置修正："+witness+" corrections="
+                            +corrections.stream().map(correction -> correction.serverTick()+(correction.burst() ? "(burst)" : "")).toList());
+                    when(context,last+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
+                            .presence(fixture.server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,done -> {
+                        try {
+                            context.assertTrue(player.getServerWorld()==context.getWorld(),"故障解除後由真 backend 正常返還來源艙");
+                            M4PerTestUniverseProbe.complete(context);
+                        } finally { fixture.close(); }
+                    });
+                },hooks);
+            },hooks);
+        });
+    }
+    private record FrozenCorrection(int serverTick,boolean burst,net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket packet) { }
+    /** 客戶端在凍結中繼續移動與轉頭：每一步往 +x 漂 0.125 格、yaw 加 1 度。 */
+    private static void frozenMove(ServerPlayerEntity player,Vec3d anchor,int step) {
+        player.networkHandler.onPlayerMove(new net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.Full(
+                anchor.x+0.125*step,anchor.y,anchor.z,player.getYaw()+step,player.getPitch(),false));
+    }
+    /** 從 tick 起每 tick 送一個凍結中的移動封包，共 count 個；每次立即讀出 outbound 的位置修正，最後以最後一個 tick 呼叫 done。 */
+    private static void frozenMoves(TestContext context,ConnectedGameTestPlayer connection,Vec3d anchor,int tick,int count,
+            List<FrozenCorrection> corrections,java.util.function.IntConsumer done,TestHooks hooks) {
+        context.runAtTick(tick,() -> {
+            try {
+                frozenMove(connection.player(),anchor,count);
+                for(var packet : positionCorrections(connection))
+                    corrections.add(new FrozenCorrection(connection.player().getServer().getTicks(),false,packet));
+                if(count>1) frozenMoves(context,connection,anchor,tick+1,count-1,corrections,done,hooks);
+                else done.accept(tick);
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        });
+    }
+    /** 讀出並釋放玩家連線已送出的封包，只回傳位置修正（PlayerPositionLookS2CPacket）。 */
+    private static List<net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket> positionCorrections(ConnectedGameTestPlayer connection) {
+        var channel=(EmbeddedChannel)M4CandidateTestAccess.get(connection,"channel");
+        // ServerCommonNetworkHandler 在 server tick 期間 disableFlush；先 flush 已送入 channel 的封包，才能同 tick 觀察。
+        channel.runPendingTasks(); channel.flush(); channel.runPendingTasks();
+        var corrections=new java.util.ArrayList<net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket>(); Object packet;
+        while((packet=channel.readOutbound())!=null) {
+            if(packet instanceof net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket position) corrections.add(position);
+            io.netty.util.ReferenceCountUtil.release(packet);
+        }
+        return corrections;
+    }
     /** 正常 Buff 到期／喝牛奶觸發的整組返還記 INFO、不附 stack；SUPERPOSITION 與 ARMING 兩種路徑都不得以 WARN＋stack 冒充故障。 */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_normal_end_info",tickLimit=100000)
     public void native_buff_loss_return_logs_info_without_stack_windows(TestContext context) {

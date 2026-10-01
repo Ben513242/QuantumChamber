@@ -33,7 +33,13 @@ public final class SessionRecoveryManager {
     private final Map<UUID,Optional<SessionRecoveryRecord>> converging=new LinkedHashMap<>();
     private final Map<UUID,String> convergenceFailures=new HashMap<>();
     private String convergenceWarning;
+    // 凍結中位置修正的節流：玩家 → 最近一次修正的 server tick。過期的項目與不存在等價，每個 recovery tick 清掉，
+    // 所以只留最近 CORRECTION_INTERVAL_TICKS 內修正過的玩家；斷線或 session 結束後最多再留一個間隔。
+    private final Map<UUID,Integer> corrections=new HashMap<>();
     private final SessionTransferService transfers=new SessionTransferService();
+
+    /** 凍結中的位置修正：同一玩家在這麼多 server ticks 內最多送一次。 */
+    public static final int CORRECTION_INTERVAL_TICKS=10;
 
     public SessionRecoveryManager(MinecraftServer server,Predicate<SessionRecoveryRecord> sourceAuthority) {
         if(!server.isOnThread() || active!=null) throw new IllegalStateException("recovery authority 不可重複 attach");
@@ -43,7 +49,7 @@ public final class SessionRecoveryManager {
 
     /**
      * 只能在原生網路 handler 已序列化的執行緒查詢，不讀取 Netty 執行緒上的 journal。
-     * RETURNING 與 MEASURED 同樣只凍結尚未 checked 返還的參與者；已返還者即使同組仍有離線 pending，也恢復正常操作（M2 spec §6）。
+     * 除了 JOIN 排隊與斷線待處理，current 或 flushed 任一份 record 凍結該玩家（{@link #freezes}）就攔截。
      */
     public static boolean blocks(UUID player,MinecraftServer owner) {
         if(active==null || active.server!=owner) return false;
@@ -51,9 +57,29 @@ public final class SessionRecoveryManager {
         try {
             return active.joinTicks.containsKey(player) || active.disconnected.contains(player)
                     || java.util.stream.Stream.concat(active.journal.records().values().stream(),active.journal.flushedRecords().values().stream())
-                    .anyMatch(record -> record.participants().stream().anyMatch(person -> person.playerUuid().equals(player)
-                            && (record.state()==SessionState.RETURNING || record.state()==SessionState.MEASURED) && !person.returned()));
+                    .anyMatch(record -> freezes(record,player));
         } catch(RuntimeException unreadable) { return true; }
+    }
+
+    /**
+     * 「record 是否凍結這位玩家」的唯一判斷。RETURNING 與 MEASURED 只凍結尚未 checked 返還的參與者；已返還者即使同組仍有離線 pending，
+     * 也恢復正常操作（M2 spec §6）。M5 的 COLLAPSING 只需加進這裡的狀態條件。
+     */
+    private static boolean freezes(SessionRecoveryRecord record,UUID player) {
+        return (record.state()==SessionState.RETURNING || record.state()==SessionState.MEASURED)
+                && record.participants().stream().anyMatch(person -> person.playerUuid().equals(player) && !person.returned());
+    }
+
+    /**
+     * {@link #blocks} 為真、丟棄移動封包時，是否該附送位置修正：同一玩家每 {@link #CORRECTION_INTERVAL_TICKS} 個 server ticks 最多一次，
+     * 回 true 即記下本次。與 blocks 相同，只能在原生 handler 已序列化的 server thread 呼叫。
+     */
+    public static boolean correctionDue(UUID player,MinecraftServer owner) {
+        if(active==null || active.server!=owner) return false;
+        active.requireServer(owner);
+        int now=owner.getTicks(); var last=active.corrections.get(player);
+        if(last!=null && now-last<CORRECTION_INTERVAL_TICKS) return false;
+        active.corrections.put(player,now); return true;
     }
 
     /** JOIN 只排下一 tick，不把 server.execute 視為登入完成。 */
@@ -72,7 +98,10 @@ public final class SessionRecoveryManager {
     }
 
     public void tick(MinecraftServer owner) {
-        requireServer(owner); journal.requireHealthy();
+        requireServer(owner);
+        // 先於 journal 健康檢查：journal 不健康時 blocks 仍會攔截並修正，節流狀態照樣過期。
+        corrections.values().removeIf(last -> owner.getTicks()-last>=CORRECTION_INTERVAL_TICKS);
+        journal.requireHealthy();
         // checked 提交（commitChecked、start 的初始 ARMING）失敗時，owner 會立即 CAS 還原或隔離未 checked authority；但雙重故障
         // （例如 abort 本身失敗、或初始 ARMING 的清理與 RETURNING 都寫不出）仍可能留下殘留。tick 在任何提交的同步 put→flush 之外執行，
         // 此時看得到的未 checked current 都是殘留：只隔離並收斂該 session，其他 session 的 recovery 照常，不全域暫停。
@@ -174,7 +203,7 @@ public final class SessionRecoveryManager {
 
     public void detach(MinecraftServer owner) {
         requireServer(owner); joinTicks.clear(); disconnected.clear(); disconnectWarnings.clear(); failures.clear(); returnTicks.clear(); moveWarnings.clear();
-        converging.clear(); convergenceFailures.clear(); convergenceWarning=null; if(active==this) active=null;
+        corrections.clear(); converging.clear(); convergenceFailures.clear(); convergenceWarning=null; if(active==this) active=null;
     }
 
     private void recover(SessionRecoveryRecord initial) throws IOException {
