@@ -6,6 +6,7 @@ import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.persistence.CheckedNbtFile;
 import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.SessionRecoveryState;
+import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseKeys;
@@ -54,8 +55,8 @@ import org.slf4j.LoggerFactory;
  *     （只有 NEW／EXISTING 的 RESOLVE 會用到，那時 journal 已有 candidate evidence，M4 已建立 discovery）。寫入與 ledger 相同，失敗時 roll-forward：
  *     current 保留這次的 append，絕不移除可能已落地的 record，所以 M4 從磁碟讀到的候選池不會倒退。</li>
  * <li><b>catalog</b>（M3 的 PersistentState）：依原生 dirty 機制收斂（M3 的 save 失敗時保留 current 與 dirty，下一次寫出——重試或原生
- *     autosave——帶著它）。這裡不另存旗標，「未確認」直接由 catalog 推導：仍 dirty，或 current 不等於 flushed。本類別只負責阻擋新決策、
- *     退避重試寫出，不新增還原 API。</li>
+ *     autosave——帶著它）。這裡不另存旗標，「未確認」直接由 catalog 推導：仍 dirty，或 current 不等於 flushed。本類別只負責阻擋新決策
+ *     （未確認時配置回 {@code WAIT}，依 §6.2 不 SEALED）、退避重試寫出，不新增還原 API。</li>
  * </ul>
  * 兩個 ledger 與 discovery 都不是 PersistentState，原生 autosave 與停服不會寫它們；收斂完成之前 crash，重啟後讀到的舊內容或新內容都合法
  * （spec §6 的表）。
@@ -67,6 +68,24 @@ public final class CollapseAuthorities {
 
     /** 收斂與未確認旗標的單位（spec §6 收斂共通第 2 點：以權威為單位）。 */
     public enum Authority { ALLOCATION_LEDGER, PROJECTION_LEDGER, DISCOVERY, CATALOG }
+
+    /**
+     * 既有 catalog record 可以接受的 availability（spec §6.2、§8.3）。只有 §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑可以接受
+     * {@code DISABLED}；其餘情況一律 {@link #EAGER_ONLY}。
+     */
+    public enum AvailabilityPolicy {
+        /** NEW 第一次 RESOLVE、EXISTING 重驗（§8.1）：只接受 {@code EAGER_ENABLED}。 */
+        EAGER_ONLY,
+        /** 只限 §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑：也接受 {@code DISABLED}，之後由 F4a 改回 {@code EAGER_ENABLED} 再物化。 */
+        MATERIALIZE_RETRY;
+
+        boolean accepts(DesiredAvailability availability) {
+            return switch (Objects.requireNonNull(availability, "availability")) {
+                case EAGER_ENABLED -> true;
+                case DISABLED -> this == MATERIALIZE_RETRY;
+            };
+        }
+    }
 
     /**
      * 決策 9 的 package-private IO port：讀取 ledger 與 discovery 檔（正式檔或暫存檔）的原始 bytes。初始化的載入、discovery 的讀取、
@@ -137,9 +156,8 @@ public final class CollapseAuthorities {
     }
 
     /**
-     * 查詢（與 allocation、discovery、catalog 的追加或配置）結果。成功的三種狀態沒有 SEALED 原因與 failure；其餘都帶著可直接用於 SEALED 的原因
-     * （F4a／F4b）與 failure。catalog 的 {@code UNCONFIRMED} 例外：spec §6.2 規定等下一個 tick 再試、不進 SEALED（見
-     * {@link CollapseAuthorities#allocateOrVerifyCatalog}）。
+     * 查詢（與 allocation、discovery、catalog 的追加或配置）結果。成功的三種狀態（FOUND、APPENDED、ABSENT）沒有 SEALED 原因與 failure；
+     * {@code WAIT} 也都沒有（不是失敗，下一個 tick 再試）；其餘四種失敗狀態都帶著可直接用於 SEALED 的原因（F4a／F4b）與 failure。
      * @param <T> entry 型別
      */
     public record Lookup<T>(Status status, Optional<T> value, Optional<SealedReason> sealedReason, Optional<RuntimeException> failure) {
@@ -153,8 +171,14 @@ public final class CollapseAuthorities {
             APPENDED,
             /** projection、discovery 的唯讀查詢：已確認的內容沒有這個 key。 */
             ABSENT,
-            /** 權威有尚未確認的 roll-forward 寫入：不做新決策，先 {@link CollapseAuthorities#convergeIfNeeded}。 */
+            /** 權威有尚未確認的 roll-forward 寫入：不做新決策，先 {@link CollapseAuthorities#convergeIfNeeded}。ledger 與 discovery 用它。 */
             UNCONFIRMED,
+            /**
+             * 只有 catalog 會回（{@link CollapseAuthorities#allocateOrVerifyCatalog}）：catalog 有未確認的寫入（仍 dirty，或 current 不等於
+             * flushed），依 spec §6.2 <b>不得 SEALED</b>，下一個 tick 再試（catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗）。
+             * 不帶 SEALED 原因，也不帶 failure；{@link Lookup#succeeded()} 為 false。
+             */
+            WAIT,
             /** 本次的 checked 寫入或讀回失敗：current 保留它，權威標為未確認。 */
             WRITE_FAILED,
             /**
@@ -168,16 +192,20 @@ public final class CollapseAuthorities {
         public Lookup {
             Objects.requireNonNull(status, "status"); Objects.requireNonNull(value, "value");
             Objects.requireNonNull(sealedReason, "sealedReason"); Objects.requireNonNull(failure, "failure");
-            boolean ok = status == Status.FOUND || status == Status.APPENDED || status == Status.ABSENT;
-            if (ok == sealedReason.isPresent() || ok == failure.isPresent()) throw new IllegalArgumentException("只有失敗的結果帶 SEALED 原因與 failure");
+            boolean failed = status == Status.WRITE_FAILED || status == Status.CORRUPT || status == Status.UNREADABLE || status == Status.UNCONFIRMED;
+            if (failed != sealedReason.isPresent() || failed != failure.isPresent()) {
+                throw new IllegalArgumentException("只有 WRITE_FAILED、CORRUPT、UNREADABLE、UNCONFIRMED 帶 SEALED 原因與 failure");
+            }
             if ((status == Status.FOUND || status == Status.APPENDED) != value.isPresent()) throw new IllegalArgumentException("只有 FOUND／APPENDED 帶 entry");
         }
 
-        public boolean succeeded() { return sealedReason.isEmpty(); }
+        /** 成功：FOUND、APPENDED、ABSENT。{@code WAIT} 與四種失敗狀態都為 false（依 status 判斷，不看有沒有 SEALED 原因）。 */
+        public boolean succeeded() { return status == Status.FOUND || status == Status.APPENDED || status == Status.ABSENT; }
 
         static <T> Lookup<T> found(T value) { return new Lookup<>(Status.FOUND, Optional.of(value), Optional.empty(), Optional.empty()); }
         static <T> Lookup<T> appended(T value) { return new Lookup<>(Status.APPENDED, Optional.of(value), Optional.empty(), Optional.empty()); }
         static <T> Lookup<T> absent() { return new Lookup<>(Status.ABSENT, Optional.empty(), Optional.empty(), Optional.empty()); }
+        static <T> Lookup<T> waiting() { return new Lookup<>(Status.WAIT, Optional.empty(), Optional.empty(), Optional.empty()); }
         static <T> Lookup<T> failed(Status status, SealedReason reason, RuntimeException failure) {
             return new Lookup<>(status, Optional.empty(), Optional.of(reason), Optional.of(failure));
         }
@@ -229,6 +257,7 @@ public final class CollapseAuthorities {
                 case CORRUPT -> Status.CORRUPT;
                 case UNREADABLE -> Status.UNREADABLE;
                 case FOUND, APPENDED, ABSENT -> throw new IllegalArgumentException("成功的查詢不是寫入失敗");
+                case WAIT -> throw new IllegalArgumentException("WAIT 只屬於 catalog，不是 projection 的寫入結果");
             };
             return new WriteResult(status, Optional.empty(), gate.sealedReason(), gate.failure());
         }
@@ -540,21 +569,23 @@ public final class CollapseAuthorities {
      * <ol>
      * <li>M5 初始化失敗 → 初始化的失敗結果（與 ledger 相同，不配置）。</li>
      * <li>catalog 不健康（M3 strict decode 失敗；正常情況下 bootstrap 已讓 server 停止）→ {@code CORRUPT}。</li>
-     * <li>catalog 有未確認的寫入（{@link #unconfirmed} 為真：仍 dirty，或 current 不等於 flushed）→ {@code UNCONFIRMED}，不配置。
-     *     <b>這個 {@code UNCONFIRMED} 依 §6.2 不進 SEALED</b>：等下一個 tick 再試（catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗；
-     *     持續 600 ticks 記一次 WARN 由 F4a 負責）。呼叫端應先查 {@link #unconfirmed}、需要時 {@link #convergeIfNeeded}。</li>
-     * <li>已有這個 UniverseId：以 {@link #catalogRecordMatches} 驗證，符合為 {@code FOUND}，否則 {@code CORRUPT}，不重新配置、不改寫。</li>
+     * <li>catalog 有未確認的寫入（{@link #unconfirmed} 為真：仍 dirty，或 current 不等於 flushed）→ {@code WAIT}（沒有 SEALED 原因、沒有
+     *     failure），不配置。依 §6.2 <b>不得 SEALED</b>，下一個 tick 再試（catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗；持續
+     *     600 ticks 記一次 WARN 由 F4a 負責）。呼叫端可以先查 {@link #unconfirmed}、需要時 {@link #convergeIfNeeded}。</li>
+     * <li>已有這個 UniverseId：以 {@link #catalogRecordMatches} 依 {@code availability} 驗證，符合為 {@code FOUND}，否則 {@code CORRUPT}，
+     *     不重新配置、不改寫。</li>
      * <li>沒有：該 UUID 的 storage 目錄已存在就是 orphan → {@code CORRUPT}，絕不採用或刪除那個目錄；檢查時的 IO 例外為 {@code UNREADABLE}。</li>
      * <li>否則 {@code allocateOverworld(uuid, flushed 的最大 ordinal＋1)}（catalog 為空時為 0），availability 為 {@code EAGER_ENABLED}，再
      *     checked 寫出：成功為 {@code APPENDED}；寫出或讀回失敗為 {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}——roll-forward，M3 的 save
      *     保留 current 與 dirty，下一次寫出（{@link #convergeIfNeeded} 的重試或原生 autosave）帶著它；確認之前不得物化。</li>
      * </ol>
-     * @param acceptDisabled 是否接受既有紀錄為 {@code DISABLED}：只有 spec §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑傳 true（F4a 之後自行改回
-     *     {@code EAGER_ENABLED}）；其餘一律 false
+     * @param availability 既有紀錄可以接受的 availability：只有 spec §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑傳
+     *     {@link AvailabilityPolicy#MATERIALIZE_RETRY}（接受 {@code DISABLED}，F4a 之後自行改回 {@code EAGER_ENABLED}）；其餘一律
+     *     {@link AvailabilityPolicy#EAGER_ONLY}
      */
-    public Lookup<UniverseRecord> allocateOrVerifyCatalog(UniverseId universeId, boolean acceptDisabled) {
+    public Lookup<UniverseRecord> allocateOrVerifyCatalog(UniverseId universeId, AvailabilityPolicy availability) {
         requireThread();
-        Objects.requireNonNull(universeId, "universeId");
+        Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");
         Lookup<UniverseRecord> initialization = initializationGate();
         if (initialization != null) return initialization;
         var state = catalog.catalog();
@@ -565,14 +596,11 @@ public final class CollapseAuthorities {
         } catch (IllegalStateException unhealthy) {
             return corrupt(new IllegalStateException("catalog 不健康，不配置", unhealthy));
         }
-        if (catalogUnconfirmed(state)) {
-            return Lookup.failed(Lookup.Status.UNCONFIRMED, SealedReason.ALLOCATION_IO_FAILED,
-                    new IllegalStateException("CATALOG 有尚未確認的寫入（仍 dirty 或 current 不等於 flushed），收斂之前不配置"));
-        }
+        if (catalogUnconfirmed(state)) return Lookup.waiting();
         catalogConfirmed();
         var existing = flushed.get(universeId);
         if (existing != null) {
-            if (catalogRecordMatches(existing, universeId, acceptDisabled)) return Lookup.found(existing);
+            if (catalogRecordMatches(existing, universeId, availability)) return Lookup.found(existing);
             return corrupt(new IllegalStateException("既有 catalog record 不是 M5 會配置的內容（descriptor、profile、seed policy 或 availability 不符）"));
         }
         var storage = universeStorage(universeId);
@@ -599,19 +627,16 @@ public final class CollapseAuthorities {
     /**
      * spec §6.2 的既有 catalog record 驗證（§8.1 的 EXISTING 重驗也適用）：record 的 definition 必須 exact 等於 M3 以同一個 UUID 與 ordinal
      * 配置的 OVERWORLD 內容（恰一個 OVERWORLD descriptor、world key、{@code VANILLA_OVERWORLD_SHARED_SEED_V1}、{@code SHARED_SAVE_SEED_V1}、
-     * storage policy 1），而且 availability 為 {@code EAGER_ENABLED}。不比對 AllocationOrdinal（配置時才決定）。目前 M3 的
+     * storage policy 1），而且 availability 為 {@code availability} 接受的值。不比對 AllocationOrdinal（配置時才決定）。目前 M3 的
      * {@code UniverseDefinition} 建構子已經不允許其他 descriptor 內容（strict decode 就會讓 catalog 不健康），這裡仍 exact 比對，防守日後放寬。
-     * @param acceptDisabled 為 true 時也接受 {@code DISABLED}：只有 spec §8.3 的重試路徑可以這樣呼叫（F4a），其餘一律 false
+     * @param availability 只有 spec §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑可以傳 {@link AvailabilityPolicy#MATERIALIZE_RETRY}（也接受
+     *     {@code DISABLED}，F4a）；其餘一律 {@link AvailabilityPolicy#EAGER_ONLY}
      */
-    public static boolean catalogRecordMatches(UniverseRecord record, UniverseId universeId, boolean acceptDisabled) {
-        Objects.requireNonNull(record, "record"); Objects.requireNonNull(universeId, "universeId");
+    public static boolean catalogRecordMatches(UniverseRecord record, UniverseId universeId, AvailabilityPolicy availability) {
+        Objects.requireNonNull(record, "record"); Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");
         var definition = record.definition();
         var expected = new UniverseRegistry().allocateOverworld(universeId.value(), definition.allocationOrdinal()).definition();
-        if (!definition.equals(expected)) return false;
-        return switch (record.desiredAvailability()) {
-            case EAGER_ENABLED -> true;
-            case DISABLED -> acceptDisabled;
-        };
+        return definition.equals(expected) && availability.accepts(record.desiredAvailability());
     }
 
     /**

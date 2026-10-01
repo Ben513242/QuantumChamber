@@ -1,5 +1,7 @@
 package dev.quantumchamber.collapse;
 
+import static dev.quantumchamber.collapse.CollapseAuthorities.AvailabilityPolicy.EAGER_ONLY;
+import static dev.quantumchamber.collapse.CollapseAuthorities.AvailabilityPolicy.MATERIALIZE_RETRY;
 import static dev.quantumchamber.collapse.UniverseAllocationLedgerTest.intent;
 import static dev.quantumchamber.collapse.UniverseAllocationLedgerTest.token;
 import static org.junit.jupiter.api.Assertions.*;
@@ -254,7 +256,7 @@ class CollapseAuthoritiesTest {
         assertThrows(IllegalStateException.class, () -> authorities.lookupOrAppendAllocation(intent(token(6))));
         assertThrows(IllegalStateException.class, () -> authorities.projection(CHAMBER, existingUniverse()));
         assertThrows(IllegalStateException.class, () -> authorities.appendDiscovery(existingUniverse(), 10, SELECTED_BY));
-        assertThrows(IllegalStateException.class, () -> authorities.allocateOrVerifyCatalog(existingUniverse(), false));
+        assertThrows(IllegalStateException.class, () -> authorities.allocateOrVerifyCatalog(existingUniverse(), EAGER_ONLY));
         assertFalse(authorities.initialized());
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
         assertThrows(IllegalStateException.class, () -> authorities.initialize(SessionRecoveryState::new));
@@ -785,7 +787,7 @@ class CollapseAuthoritiesTest {
         var catalog = catalog(save);
         var first = UniverseAllocationLedger.deriveUniverseId(token(50));
         var second = UniverseAllocationLedger.deriveUniverseId(token(51));
-        var allocated = authorities.allocateOrVerifyCatalog(first, false);
+        var allocated = authorities.allocateOrVerifyCatalog(first, EAGER_ONLY);
         assertEquals(Lookup.Status.APPENDED, allocated.status(), () -> allocated.toString());
         var firstRecord = allocated.value().orElseThrow();
         assertAll(
@@ -796,30 +798,47 @@ class CollapseAuthoritiesTest {
             () -> assertEquals(Map.of(first, firstRecord), catalog.disk().records()),
             () -> assertFalse(authorities.unconfirmed(Authority.CATALOG)));
         int flushes = catalog.flushes;
-        var again = authorities.allocateOrVerifyCatalog(first, false);
+        var again = authorities.allocateOrVerifyCatalog(first, EAGER_ONLY);
         assertEquals(Lookup.Status.FOUND, again.status(), "已有時不重新配置");
         assertEquals(Optional.of(firstRecord), again.value());
         assertEquals(flushes, catalog.flushes, "驗證不寫出");
         // §8.3 已把 first 改為 DISABLED；下一筆的 ordinal 仍是 flushed 的最大 ordinal＋1。
         catalog.state.changeAvailability(first, DesiredAvailability.DISABLED);
         catalog.state.save(catalog.path);
-        var secondRecord = authorities.allocateOrVerifyCatalog(second, false).value().orElseThrow();
+        var secondRecord = authorities.allocateOrVerifyCatalog(second, EAGER_ONLY).value().orElseThrow();
         assertEquals(1, secondRecord.definition().allocationOrdinal());
         // availability 不符：只有 §8.3 的重試路徑接受 DISABLED；不改寫、不寫出。
         byte[] bytes = Files.readAllBytes(catalog.path);
         flushes = catalog.flushes;
-        assertCorrupt(authorities.allocateOrVerifyCatalog(first, false));
-        var retry = authorities.allocateOrVerifyCatalog(first, true);
+        assertCorrupt(authorities.allocateOrVerifyCatalog(first, EAGER_ONLY));
+        var retry = authorities.allocateOrVerifyCatalog(first, MATERIALIZE_RETRY);
         assertEquals(Lookup.Status.FOUND, retry.status());
         var disabled = retry.value().orElseThrow();
         assertEquals(DesiredAvailability.DISABLED, disabled.desiredAvailability());
         assertEquals(flushes, catalog.flushes);
         assertArrayEquals(bytes, Files.readAllBytes(catalog.path));
         assertAll(
-            () -> assertFalse(CollapseAuthorities.catalogRecordMatches(disabled, first, false)),
-            () -> assertTrue(CollapseAuthorities.catalogRecordMatches(disabled, first, true)),
-            () -> assertTrue(CollapseAuthorities.catalogRecordMatches(secondRecord, second, false)),
-            () -> assertFalse(CollapseAuthorities.catalogRecordMatches(secondRecord, first, false), "別的 UniverseId 的 record"));
+            () -> assertFalse(CollapseAuthorities.catalogRecordMatches(disabled, first, EAGER_ONLY)),
+            () -> assertTrue(CollapseAuthorities.catalogRecordMatches(disabled, first, MATERIALIZE_RETRY)),
+            () -> assertTrue(CollapseAuthorities.catalogRecordMatches(secondRecord, second, EAGER_ONLY)),
+            () -> assertTrue(CollapseAuthorities.catalogRecordMatches(secondRecord, second, MATERIALIZE_RETRY), "MATERIALIZE_RETRY 也接受 EAGER_ENABLED"),
+            () -> assertFalse(CollapseAuthorities.catalogRecordMatches(secondRecord, first, EAGER_ONLY), "別的 UniverseId 的 record"));
+    }
+
+    /** spec §6.2：ordinal 是 flushed 的最大 ordinal＋1，不是筆數（有空號、最大的那筆是 DISABLED 時也一樣）。 */
+    @Test void catalogOrdinalIsTheFlushedMaximumPlusOneNotTheRecordCount() throws Exception {
+        var save = save("catalog-ordinal-gap");
+        var catalog = catalog(save);
+        var low = UniverseAllocationLedger.deriveUniverseId(token(60));
+        var high = UniverseAllocationLedger.deriveUniverseId(token(61));
+        catalog.state.allocateOverworld(low.value(), 0);
+        catalog.state.allocateOverworld(high.value(), 7);
+        catalog.state.changeAvailability(high, DesiredAvailability.DISABLED);
+        catalog.state.save(catalog.path);
+        var authorities = initialized(save);
+        var next = authorities.allocateOrVerifyCatalog(UniverseAllocationLedger.deriveUniverseId(token(62)), EAGER_ONLY);
+        assertEquals(Lookup.Status.APPENDED, next.status(), () -> next.toString());
+        assertEquals(8, next.value().orElseThrow().definition().allocationOrdinal(), "flushed 為 {0, 7}（7 是 DISABLED）：下一筆是 8，不是筆數 2");
     }
 
     /** profile、seed policy、storage policy 不符的 record 在 M3 strict decode 就讓 catalog 不健康；M5 不在不健康的 catalog 上做任何決策。 */
@@ -838,8 +857,8 @@ class CollapseAuthoritiesTest {
                 catalog.state = UniverseRegistryState.fromNbt(data);
                 assertThrows(IllegalStateException.class, catalog.state::requireHealthy, field + "：M3 strict decode 拒絕");
                 var authorities = initialized(save);
-                assertCorrupt(authorities.allocateOrVerifyCatalog(id, false));
-                assertCorrupt(authorities.allocateOrVerifyCatalog(id, true));
+                assertCorrupt(authorities.allocateOrVerifyCatalog(id, EAGER_ONLY));
+                assertCorrupt(authorities.allocateOrVerifyCatalog(id, MATERIALIZE_RETRY));
                 assertTrue(authorities.unconfirmed(Authority.CATALOG), field + "：不健康的 catalog 不能拿來做決策");
                 now[0] = 9000; authorities.convergeIfNeeded(Authority.CATALOG);
                 assertEquals(0, catalog.flushes, field + "：不寫出");
@@ -858,7 +877,7 @@ class CollapseAuthoritiesTest {
         var second = UniverseAllocationLedger.deriveUniverseId(token(54));
         try (var logs = new Logs()) {
             catalog.failAfterMove(1);
-            var failed = authorities.allocateOrVerifyCatalog(first, false);
+            var failed = authorities.allocateOrVerifyCatalog(first, EAGER_ONLY);
             assertEquals(Lookup.Status.WRITE_FAILED, failed.status(), () -> failed.toString());
             assertEquals(Optional.of(SealedReason.ALLOCATION_IO_FAILED), failed.sealedReason());
             var record = catalog.state.find(first).orElseThrow();
@@ -869,10 +888,10 @@ class CollapseAuthoritiesTest {
                 () -> assertEquals(Map.of(), catalog.state.flushedRecords(), "flushed 不前進（確認之前不得物化）"),
                 () -> assertEquals(Map.of(first, record), catalog.disk().records(), "atomic move 已完成：配置已落地"),
                 () -> assertFalse(authorities.unconfirmed(Authority.ALLOCATION_LEDGER), "收斂旗標以權威為單位"));
-            // 未確認期間不疊加新的配置：同一筆也不回 FOUND。
+            // 未確認期間不疊加新的配置：同一筆也不回 FOUND；依 §6.2 是 WAIT（不 SEALED），不是帶原因的失敗。
             int flushes = catalog.flushes;
-            assertUnconfirmed(authorities.allocateOrVerifyCatalog(second, false), SealedReason.ALLOCATION_IO_FAILED);
-            assertUnconfirmed(authorities.allocateOrVerifyCatalog(first, false), SealedReason.ALLOCATION_IO_FAILED);
+            assertWait(authorities.allocateOrVerifyCatalog(second, EAGER_ONLY));
+            assertWait(authorities.allocateOrVerifyCatalog(first, EAGER_ONLY));
             assertEquals(Map.of(first, record), catalog.state.records(), "沒有疊加第二筆");
             assertEquals(flushes, catalog.flushes);
             // 退避期內不寫出；到期 checked 寫出 current（帶著這筆配置）。
@@ -883,8 +902,8 @@ class CollapseAuthoritiesTest {
             assertEquals(flushes + 1, catalog.flushes);
             assertFalse(authorities.unconfirmed(Authority.CATALOG));
             assertEquals(Map.of(first, record), catalog.state.flushedRecords(), "下一次寫出帶著它");
-            assertEquals(Lookup.Status.FOUND, authorities.allocateOrVerifyCatalog(first, false).status(), "重試時同一個 UniverseId，不重新配置");
-            var next = authorities.allocateOrVerifyCatalog(second, false);
+            assertEquals(Lookup.Status.FOUND, authorities.allocateOrVerifyCatalog(first, EAGER_ONLY).status(), "重試時同一個 UniverseId，不重新配置");
+            var next = authorities.allocateOrVerifyCatalog(second, EAGER_ONLY);
             assertEquals(Lookup.Status.APPENDED, next.status());
             assertEquals(1, next.value().orElseThrow().definition().allocationOrdinal());
             assertEquals(1, logs.messages(Level.WARN).size(), () -> "寫出未確認記一次 WARN：" + logs.messages(Level.WARN));
@@ -900,7 +919,7 @@ class CollapseAuthoritiesTest {
         var first = UniverseAllocationLedger.deriveUniverseId(token(55));
         try (var logs = new Logs()) {
             catalog.failBeforeMove(1);
-            assertEquals(Lookup.Status.WRITE_FAILED, authorities.allocateOrVerifyCatalog(first, false).status());
+            assertEquals(Lookup.Status.WRITE_FAILED, authorities.allocateOrVerifyCatalog(first, EAGER_ONLY).status());
             assertFalse(Files.exists(catalog.path), "move 之前失敗：磁碟上還沒有 catalog");
             assertTrue(authorities.unconfirmed(Authority.CATALOG));
             // 原生 autosave 寫出 current：不需要 convergeIfNeeded 就不再未確認。
@@ -909,7 +928,7 @@ class CollapseAuthoritiesTest {
             int flushes = catalog.flushes;
             authorities.convergeIfNeeded(Authority.CATALOG);
             assertEquals(flushes, catalog.flushes, "已確認時不再寫出");
-            assertEquals(Lookup.Status.FOUND, authorities.allocateOrVerifyCatalog(first, false).status());
+            assertEquals(Lookup.Status.FOUND, authorities.allocateOrVerifyCatalog(first, EAGER_ONLY).status());
             assertEquals(1, logs.messages(Level.INFO).stream().filter(message -> message.contains("CATALOG 收斂完成")).count());
         }
         // spec §6 的 restore 類（§8.3 改回 EAGER_ENABLED 的寫入失敗時 F4a 把 current 改回）：current 等於 flushed，但仍 dirty → 仍未確認。
@@ -918,7 +937,7 @@ class CollapseAuthoritiesTest {
         assertEquals(catalog.state.flushedRecords(), catalog.state.records());
         assertTrue(catalog.state.isDirty());
         assertTrue(authorities.unconfirmed(Authority.CATALOG), "current 等於 flushed 但仍 dirty：下一次寫出之前仍未確認");
-        assertUnconfirmed(authorities.allocateOrVerifyCatalog(UniverseAllocationLedger.deriveUniverseId(token(56)), false), SealedReason.ALLOCATION_IO_FAILED);
+        assertWait(authorities.allocateOrVerifyCatalog(UniverseAllocationLedger.deriveUniverseId(token(56)), EAGER_ONLY));
         authorities.convergeIfNeeded(Authority.CATALOG);
         assertFalse(authorities.unconfirmed(Authority.CATALOG));
         assertFalse(catalog.state.isDirty());
@@ -934,14 +953,14 @@ class CollapseAuthoritiesTest {
         Files.createDirectories(save.resolve("dimensions/quantumchamber/universe").resolve(bare.value().toString()));
         var authorities = initialized(save);
         var catalog = catalog(save);
-        assertCorrupt(authorities.allocateOrVerifyCatalog(orphan, false));
-        assertCorrupt(authorities.allocateOrVerifyCatalog(bare, false));
+        assertCorrupt(authorities.allocateOrVerifyCatalog(orphan, EAGER_ONLY));
+        assertCorrupt(authorities.allocateOrVerifyCatalog(bare, EAGER_ONLY));
         assertAll(
             () -> assertArrayEquals(new byte[] {1}, Files.readAllBytes(region.resolve("r.0.0.mca")), "不採用、不刪除"),
             () -> assertEquals(Map.of(), catalog.state.records(), "不配置"),
             () -> assertEquals(0, catalog.flushes),
             () -> assertFalse(authorities.unconfirmed(Authority.CATALOG)));
-        assertEquals(Lookup.Status.APPENDED, authorities.allocateOrVerifyCatalog(UniverseAllocationLedger.deriveUniverseId(token(59)), false).status(),
+        assertEquals(Lookup.Status.APPENDED, authorities.allocateOrVerifyCatalog(UniverseAllocationLedger.deriveUniverseId(token(59)), EAGER_ONLY).status(),
                 "沒有 storage 的 UUID 照常配置");
     }
 
@@ -974,7 +993,7 @@ class CollapseAuthoritiesTest {
             // discovery 與 catalog 也 fail closed：回初始化的失敗結果，不讀、不寫、不配置（F2c）。
             assertEquals(Optional.of(reason), authorities.appendDiscovery(existingUniverse(), 10, SELECTED_BY).sealedReason(), name);
             assertEquals(Optional.of(reason), authorities.discovery(existingUniverse()).sealedReason(), name);
-            assertEquals(Optional.of(reason), authorities.allocateOrVerifyCatalog(existingUniverse(), false).sealedReason(), name);
+            assertEquals(Optional.of(reason), authorities.allocateOrVerifyCatalog(existingUniverse(), EAGER_ONLY).sealedReason(), name);
             assertEquals(0, catalog(save).flushes, name + "：不寫出 catalog");
             assertFalse(Files.exists(discoveryFile(save)), name + "：不建立 discovery");
             assertEquals(1, logs.messages(Level.ERROR).size(), name + "：初始化失敗記 ERROR");
@@ -1078,6 +1097,16 @@ class CollapseAuthoritiesTest {
     private static void assertUnconfirmed(Lookup<?> lookup, SealedReason reason) {
         assertEquals(Lookup.Status.UNCONFIRMED, lookup.status(), () -> lookup.toString());
         assertEquals(Optional.of(reason), lookup.sealedReason());
+    }
+
+    /** catalog 未確認時的配置結果（spec §6.2）：WAIT，沒有 SEALED 原因、沒有 failure，也不算成功。 */
+    private static void assertWait(Lookup<?> lookup) {
+        assertAll(
+            () -> assertEquals(Lookup.Status.WAIT, lookup.status(), () -> lookup.toString()),
+            () -> assertEquals(Optional.empty(), lookup.sealedReason(), "WAIT 不 SEALED"),
+            () -> assertEquals(Optional.empty(), lookup.failure(), "WAIT 不是失敗"),
+            () -> assertEquals(Optional.empty(), lookup.value()),
+            () -> assertFalse(lookup.succeeded(), "WAIT 不算成功"));
     }
 
     /** {@link CollapseAuthorities.LedgerIo} 的注入實作：委派正式的 {@code readFile}，依檔名注入 IO 例外，並記錄每一次讀取。 */

@@ -108,7 +108,8 @@ public final class UniverseDiscoveryState {
     }
 
     /**
-     * spec §6.4 的正式追加（只算出內容，不寫檔；只有 NEW 在 RESOLVE 物化成功之後呼叫）。以 UniverseId 判斷 idempotency：
+     * spec §6.4 的正式追加（只算出內容，不寫檔）。只由 {@code CollapseAuthorities.appendDiscovery} 呼叫（NEW 在 RESOLVE 物化成功之後）：
+     * gameplay 程式不得自行 append＋{@link #save}，否則繞過 checked 寫入的讀取分類、未確認閘門與 roll-forward 收斂。以 UniverseId 判斷 idempotency：
      * <ul>
      * <li>沒有這個 UniverseId：新的 record 為 {@code discoveryOrdinal}＝{@link #watermark()}＋1、{@code discoveredAtGameTime}＝當下的 game time、
      *     {@code firstObserver}＝SelectedBy、{@code gameplayEligible}＝true（{@link Append.Outcome#APPENDED}）。</li>
