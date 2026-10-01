@@ -216,38 +216,43 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
 
     static SessionRecoveryRecord fromNbt(NbtCompound nbt,int envelopeSchema) {
         if (envelopeSchema!=1 && envelopeSchema!=2 && envelopeSchema!=3) throw new IllegalArgumentException("不支援 journal schema");
-        if (envelopeSchema == 3) {
+        // schema 3 起預設嚴格（之後的版本沿用）：record 與內層 compound 為 exact key、Origin 的 WorldKey 必須 canonical；
+        // schema 1／2 保留原本的寬鬆解析。
+        boolean strict = envelopeSchema >= 3;
+        if (strict) {
             CandidateJournalCodec.keys(nbt, "SessionUuid", "ChamberUuid", "Origin", "Participants", "SpaceLeases", "State",
                     "RestoreEntryEffectOnReturn", "SessionSemantics", "CandidateContext", "CandidateLedger", "CandidateSelection");
         }
-        if (envelopeSchema<3 && (nbt.contains("CandidateContext") || nbt.contains("CandidateLedger") || nbt.contains("CandidateSelection"))) {
+        if (!strict && (nbt.contains("CandidateContext") || nbt.contains("CandidateLedger") || nbt.contains("CandidateSelection"))) {
             throw new IllegalArgumentException("legacy schema 不得攜帶候選 payload");
         }
         var semantics=envelopeSchema==1 ? SessionSemantics.LEGACY_FORWARD_CONSUMED
                 : SessionSemantics.valueOf(string(nbt,"SessionSemantics"));
-        // schema 3 的內層 compound 為 exact key，Origin 的 WorldKey 必須 canonical；schema 1／2 保留原本的寬鬆解析。
-        boolean strict = envelopeSchema == 3;
         var source = compound(nbt, "Origin");
-        if (strict) CandidateJournalCodec.keys(source, "ChamberUuid", "WorldKey", "Role", "ControllerPos", "Facing", "InstanceKind");
+        if (strict) CandidateJournalCodec.keys("Origin", source, "ChamberUuid", "WorldKey", "Role", "ControllerPos", "Facing", "InstanceKind");
         int[] pos = ints(source, "ControllerPos", 3);
-        var origin = new ChamberOriginAuthority(uuid(source, "ChamberUuid"),
-                strict ? CandidateJournalCodec.canonicalIdentifier(source, "WorldKey") : Identifier.of(string(source, "WorldKey")),
+        // 依原本的求值順序讀取（ControllerPos → ChamberUuid → WorldKey → 其餘），legacy 的錯誤訊息不變。
+        var chamberUuid = uuid(source, "ChamberUuid");
+        var worldKey = strict ? CandidateJournalCodec.canonicalIdentifier("Origin", source, "WorldKey") : Identifier.of(string(source, "WorldKey"));
+        var origin = new ChamberOriginAuthority(chamberUuid, worldKey,
                 DimensionRole.valueOf(string(source, "Role")), new BlockPos(pos[0], pos[1], pos[2]),
                 Direction.valueOf(string(source, "Facing")), ChamberInstanceKind.valueOf(string(source, "InstanceKind")));
         var people = new ArrayList<Participant>();
-        for (var raw : compounds(nbt, "Participants", envelopeSchema)) {
-            var person = (NbtCompound) raw;
-            if (strict) CandidateJournalCodec.keys(person, "PlayerUuid", "SourcePosition", "SourceVelocity", "Yaw", "Pitch",
-                    "QuantumState", "Returned");
+        var rawPeople = compounds(nbt, "Participants", envelopeSchema);
+        for (int index = 0; index < rawPeople.size(); index++) {
+            var person = (NbtCompound) rawPeople.get(index);
+            if (strict) CandidateJournalCodec.keys("Participants[" + index + "]", person, "PlayerUuid", "SourcePosition", "SourceVelocity",
+                    "Yaw", "Pitch", "QuantumState", "Returned");
             requireType(person, "Yaw", NbtElement.FLOAT_TYPE); requireType(person, "Pitch", NbtElement.FLOAT_TYPE);
             people.add(new Participant(uuid(person, "PlayerUuid"), vector(person, "SourcePosition"),
                     vector(person, "SourceVelocity"), person.getFloat("Yaw"), person.getFloat("Pitch"),
                     compound(person, "QuantumState"), bool(person, "Returned")));
         }
         var leases = new ArrayList<SpaceLease>();
-        for (var raw : compounds(nbt, "SpaceLeases", envelopeSchema)) {
-            var lease = (NbtCompound) raw;
-            if (strict) CandidateJournalCodec.keys(lease, "SlotId", "Bounds");
+        var rawLeases = compounds(nbt, "SpaceLeases", envelopeSchema);
+        for (int index = 0; index < rawLeases.size(); index++) {
+            var lease = (NbtCompound) rawLeases.get(index);
+            if (strict) CandidateJournalCodec.keys("SpaceLeases[" + index + "]", lease, "SlotId", "Bounds");
             requireType(lease, "SlotId", NbtElement.INT_TYPE);
             int[] bounds = ints(lease, "Bounds", 6);
             // BlockBox 會自行交換反向座標；必須在建構前拒絕壞資料。
@@ -259,7 +264,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var context = Optional.<CandidatePolicySnapshot>empty();
         var ledger = new ArrayList<CandidateLedgerEntry>();
         var selection = Optional.<CandidateSelection>empty();
-        if (envelopeSchema == 3) {
+        if (strict) {
             var decodedContext = CandidateJournalCodec.context(compound(nbt, "CandidateContext"));
             context = Optional.of(decodedContext);
             var rawLedger = compounds(nbt, "CandidateLedger", envelopeSchema);
@@ -304,7 +309,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
     }
     static NbtList compounds(NbtCompound nbt, String key, int envelopeSchema) {
         var list = compounds(nbt, key);
-        if (envelopeSchema == 3 && list.isEmpty() && list.getHeldType() != NbtElement.END_TYPE) {
+        if (envelopeSchema >= 3 && list.isEmpty() && list.getHeldType() != NbtElement.END_TYPE) {
             throw new IllegalArgumentException(key + " 的 schema 3 空 list 必須使用 END held type");
         }
         return list;

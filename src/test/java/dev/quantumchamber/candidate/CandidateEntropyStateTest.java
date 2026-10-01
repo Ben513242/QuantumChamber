@@ -2,9 +2,11 @@ package dev.quantumchamber.candidate;
 
 import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.*;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 
 class CandidateEntropyStateTest {
@@ -70,13 +72,15 @@ class CandidateEntropyStateTest {
     @Test void extraRootKeysFailClosedWithoutRegeneration() throws Exception {
         var extraString = valid(); extraString.putString("Comment", "do-not-expose-this-secret");
         var extraBytes = valid(); extraBytes.putByteArray("CandidateEntropyBackup", new byte[32]);
-        var cases = new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        var cases = new ArrayList<Executable>();
         for (boolean evidence : new boolean[] {false, true}) for (var invalid : new NbtCompound[] {extraString, extraBytes}) cases.add(() -> {
             Files.createDirectories(target(root).getParent());
             NbtIo.writeCompressed(invalid, target(root));
             byte[] before = Files.readAllBytes(target(root));
             var exception = assertThrows(CandidateEntropyState.UnhealthyEntropyException.class,
                 () -> CandidateEntropyState.loadOrCreate(root, evidence));
+            // 固定訊息：不帶位置、key 名稱或內容。
+            assertEquals("候選 entropy 欄位缺失或含未知欄位", exception.getMessage());
             assertFalse(exception.toString().contains("do-not-expose-this-secret"));
             assertNull(exception.getCause());
             assertArrayEquals(before, Files.readAllBytes(target(root)));

@@ -12,15 +12,27 @@ import org.junit.jupiter.api.function.Executable;
 /**
  * H1 codec strictness：schema 3 的 Origin／Participants／SpaceLeases exact key、ledger 不超過 MaxCandidateEntries、
  * vanilla WorldKey 帶 namespace 且為 canonical；合法 schema 3 照舊 exact 讀回，schema 1／2 的寬鬆解析不變。
+ * 失敗訊息必須帶位置標籤，未知 key 只報數量、不輸出名稱。
  */
 class SessionRecoveryStrictnessTest {
     private static final UUID SESSION = SessionRecoverySchema3Test.SESSION;
     private static final String UNKNOWN_FIELD = "schema 3 payload 欄位缺失或含未知欄位";
     private static final String LEDGER_LIMIT = "schema 3 ledger 超過 MaxCandidateEntries";
-    private static final String NOT_CANONICAL = "WorldKey 必須帶 namespace 且為 canonical 形式";
+    private static final String NOT_CANONICAL = " 必須帶 namespace 且為 canonical 形式";
+    private static final String NOT_IDENTIFIER = " 不是合法 identifier";
 
     @Test void ledgerAboveMaxCandidateEntriesFailsClosed() {
         rejected(withLedgerSize(16385), LEDGER_LIMIT);
+    }
+
+    /** 上限必須在逐筆解碼之前比對：16385 筆空 compound 要拿到上限錯誤，而不是第一筆的欄位錯誤。 */
+    @Test void ledgerLimitIsCheckedBeforeDecodingAnyEntry() {
+        var input = SessionRecoverySchema3Test.fixture(false, false);
+        var ledger = new NbtList();
+        for (int index = 0; index < 16385; index++) ledger.add(new NbtCompound());
+        record(input).put("CandidateLedger", ledger);
+        var message = rejected(input, LEDGER_LIMIT);
+        assertFalse(message.contains(UNKNOWN_FIELD), message);
     }
 
     @Test void ledgerAtMaxCandidateEntriesStillRoundtripsExactly() {
@@ -31,73 +43,83 @@ class SessionRecoveryStrictnessTest {
     }
 
     @Test void originRejectsUnknownKeys() {
-        var inputs = new ArrayList<NbtCompound>();
+        var cases = new ArrayList<Executable>();
         for (boolean selected : new boolean[] {false, true}) {
-            var input = schemaThree(selected, false); origin(input).putString("UnknownOriginField", "unexpected"); inputs.add(input);
+            var input = schemaThree(selected, false); origin(input).putString("UnknownOriginField", "unexpected");
+            cases.add(rejection(input, located("Origin", "[]", 1), "UnknownOriginField"));
         }
-        allRejected(inputs, UNKNOWN_FIELD);
+        assertAll(cases);
     }
 
     @Test void participantsRejectUnknownKeys() {
-        var inputs = new ArrayList<NbtCompound>();
+        var cases = new ArrayList<Executable>();
         for (boolean selected : new boolean[] {false, true}) for (int index : new int[] {0, 1}) {
             var input = schemaThree(selected, false); participant(input, index).putString("UnknownParticipantField", "unexpected");
-            inputs.add(input);
+            cases.add(rejection(input, located("Participants[" + index + "]", "[]", 1), "UnknownParticipantField"));
         }
-        allRejected(inputs, UNKNOWN_FIELD);
+        assertAll(cases);
     }
 
     @Test void spaceLeasesRejectUnknownKeys() {
-        var inputs = new ArrayList<NbtCompound>();
+        var cases = new ArrayList<Executable>();
         for (boolean selected : new boolean[] {false, true}) for (int index : new int[] {0, 1}) {
             var input = schemaThree(selected, false); lease(input, index).putIntArray("UnknownLeaseField", new int[] {1});
-            inputs.add(input);
+            cases.add(rejection(input, located("SpaceLeases[" + index + "]", "[]", 1), "UnknownLeaseField"));
         }
-        allRejected(inputs, UNKNOWN_FIELD);
+        assertAll(cases);
     }
 
-    /** 對照：缺 key、錯型別與改名在 H1 之前就會被拒絕，收緊後必須維持拒絕。 */
-    @Test void innerMissingRenamedAndWrongTypedKeysStayRejected() {
-        List<Function<NbtCompound, NbtCompound>> targets = List.of(
-                SessionRecoveryStrictnessTest::origin, n -> participant(n, 1), n -> lease(n, 1));
+    private record Target(String where, Function<NbtCompound, NbtCompound> compound) {}
+
+    /** 缺 key 與改名報出位置、缺少的 key 與未知 key 數量（改名後的名稱不輸出）；錯型別沿用各欄位既有的訊息。 */
+    @Test void innerMissingRenamedAndWrongTypedKeysReportTheirLocation() {
+        var targets = List.of(new Target("Origin", SessionRecoveryStrictnessTest::origin),
+                new Target("Participants[1]", n -> participant(n, 1)), new Target("SpaceLeases[1]", n -> lease(n, 1)));
+        var cases = new ArrayList<Executable>();
         for (var target : targets) {
-            for (String key : List.copyOf(target.apply(schemaThree(false, false)).getKeys())) {
-                var missing = schemaThree(false, false); target.apply(missing).remove(key);
-                SessionRecoverySchema3Test.unhealthy(missing);
-                var renamed = schemaThree(false, false); var renamedCompound = target.apply(renamed);
-                renamedCompound.put(key.toLowerCase(Locale.ROOT), renamedCompound.get(key).copy()); renamedCompound.remove(key);
-                SessionRecoverySchema3Test.unhealthy(renamed);
-                var wrongType = schemaThree(false, false); var wrongCompound = target.apply(wrongType);
+            for (String key : List.copyOf(target.compound().apply(schemaThree(false, false)).getKeys())) {
+                var missing = schemaThree(false, false); target.compound().apply(missing).remove(key);
+                cases.add(rejection(missing, located(target.where(), "[" + key + "]", 0)));
+                var renamed = schemaThree(false, false); var renamedCompound = target.compound().apply(renamed);
+                String lower = key.toLowerCase(Locale.ROOT);
+                renamedCompound.put(lower, renamedCompound.get(key).copy()); renamedCompound.remove(key);
+                cases.add(rejection(renamed, located(target.where(), "[" + key + "]", 1), lower));
+                var wrongType = schemaThree(false, false); var wrongCompound = target.compound().apply(wrongType);
                 wrongCompound.put(key, wrongType(wrongCompound.get(key)));
-                rejected(wrongType, key);
+                cases.add(rejection(wrongType, key));
             }
         }
+        assertAll(cases);
     }
 
     @Test void sourceFamilyWorldKeyMustBeNamespacedAndCanonical() {
-        var inputs = new ArrayList<NbtCompound>();
+        var cases = new ArrayList<Executable>();
         for (String raw : List.of("overworld", ":overworld")) {
-            var input = schemaThree(false, false); sourceFamily(input).putString("WorldKey", raw); inputs.add(input);
+            var input = schemaThree(false, false); sourceFamily(input).putString("WorldKey", raw);
+            cases.add(rejection(input, "SourceFamily.WorldKey" + NOT_CANONICAL));
         }
-        allRejected(inputs, NOT_CANONICAL);
+        assertAll(cases);
     }
 
     @Test void originWorldKeyMustBeNamespacedAndCanonical() {
-        var inputs = new ArrayList<NbtCompound>();
+        var cases = new ArrayList<Executable>();
         for (String raw : List.of("overworld", ":overworld")) {
-            var input = schemaThree(false, false); origin(input).putString("WorldKey", raw); inputs.add(input);
+            var input = schemaThree(false, false); origin(input).putString("WorldKey", raw);
+            cases.add(rejection(input, "Origin.WorldKey" + NOT_CANONICAL));
         }
-        allRejected(inputs, NOT_CANONICAL);
+        assertAll(cases);
     }
 
-    /** 對照：無效識別字在 H1 之前就由 Identifier 解析拒絕，收緊後必須維持拒絕。 */
-    @Test void invalidWorldKeysStayRejected() {
+    /** 無法解析的識別字與「非 canonical」分開回報。 */
+    @Test void invalidWorldKeysAreReportedAsInvalidIdentifiers() {
+        var cases = new ArrayList<Executable>();
         for (String raw : List.of("Minecraft:overworld", "minecraft:Overworld", "minecraft:overworld ")) {
             var source = schemaThree(false, false); sourceFamily(source).putString("WorldKey", raw);
-            SessionRecoverySchema3Test.unhealthy(source);
+            cases.add(rejection(source, "SourceFamily.WorldKey" + NOT_IDENTIFIER));
             var origin = schemaThree(false, false); origin(origin).putString("WorldKey", raw);
-            SessionRecoverySchema3Test.unhealthy(origin);
+            cases.add(rejection(origin, "Origin.WorldKey" + NOT_IDENTIFIER));
         }
+        assertAll(cases);
     }
 
     /** 不得退步：既有合法 schema 3 fixture（含多位參與者與多筆 lease）照舊 exact 讀回。 */
@@ -160,15 +182,24 @@ class SessionRecoveryStrictnessTest {
         return original instanceof NbtString ? NbtInt.of(1) : NbtString.of("wrong-type");
     }
 
-    /** 逐一判定每個 fixture，RED 時列出每一個仍被接受的 fixture，而不只第一個。 */
-    private static void allRejected(List<NbtCompound> inputs, String reason) {
-        assertAll(inputs.stream().map(input -> (Executable) () -> rejected(input, reason)));
+    /** exact key 失敗訊息：原句開頭，附位置、缺少的 key 與未知 key 數量。 */
+    private static String located(String where, String missing, int unknown) {
+        return UNKNOWN_FIELD + "：" + where + " missing=" + missing + " unknown=" + unknown;
     }
 
-    private static void rejected(NbtCompound input, String reason) {
+    /** 交給 assertAll 逐一判定，RED 時列出每一個不符的 fixture；hidden 是訊息中不得出現的字串（例如未知 key 名稱）。 */
+    private static Executable rejection(NbtCompound input, String reason, String... hidden) {
+        return () -> {
+            var message = rejected(input, reason);
+            for (String name : hidden) assertFalse(message.contains(name), () -> "訊息不得輸出「" + name + "」：" + message);
+        };
+    }
+
+    private static String rejected(NbtCompound input, String reason) {
         var error = assertThrows(IllegalStateException.class, SessionRecoveryState.fromNbt(input)::requireHealthy);
         assertTrue(error.getMessage().contains(reason), () -> "拒絕原因必須包含「" + reason + "」：" + error.getMessage());
         SessionRecoverySchema3Test.unhealthy(input);
+        return error.getMessage();
     }
 
     private static NbtCompound record(NbtCompound root) { return SessionRecoverySchema3Test.record(root); }
