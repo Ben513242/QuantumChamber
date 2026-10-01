@@ -536,7 +536,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 - Modify: `src/main/java/dev/quantumchamber/chamber/QuantumBulkheadBlock.java`、`ChamberControllerBlock.java`、`WorldChamberDoorAdapter.java`（門攔截排在 `ChamberDoorService` 之前）
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberProtectionService.java`（非 vanilla world key 查索引）
 - Modify: `src/main/java/dev/quantumchamber/chamber/ChamberPowerCoordinator.java`（只限 `refreshNow` `:54-58` 的載入辨識分流：索引中的 PROJECTION 為 inert）
-- Modify: `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`（決策 2：索引早於 bootstrap）
+- Modify: `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`（決策 2：索引早於 bootstrap，註冊在 `CollapseAuthorities.registerEvents()` 之後）
+- Modify: `src/main/java/dev/quantumchamber/collapse/CollapseAuthorities.java`（2026-10-02 F2b review 後加入：只限新增唯讀 API——列舉已確認的 projection entries，以及權威健康查詢。健康只看初始化結果與執行期間的 `lost`，不看單次呼叫回的 `CORRUPT`；後者也涵蓋單筆不符與 ledger 已滿）
 - 條件式：若改到 `ChamberControllerLoadSyncQueue`，依 spec §17 補 queue observer 的 regression，並先回報 controller
 - Test: 新增 `src/test/java/dev/quantumchamber/collapse/ProjectionProtectionIndexTest.java`；GameTest 加在 `M5UniverseGameTests.java`
 - Test（fault 注入）：`src/testmod/java/dev/quantumchamber/gametest/mixin/` 新增投影寫入或 checkpoint 失敗的 mixin，登記在 `quantumchamber-test.mixins.json`
@@ -547,6 +548,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
   - 預載不用阻塞式 `getChunk(create=true)`。
   - 第一次寫入清 interior、箱子不噴物品、逐格驗證、checkpoint 之後才 COMPLETE；之後的寫入只修不變量 cell、保留 interior；COMPLETE 之後刪除 projection ledger（schema 4）→ 不重寫 interior。
   - 實體交叉檢查：ledger 沒有 entry、目的地已有一座艙 → `PROJECTION_CONFLICT`；有 PENDING 時照第一次寫入。
+  - 既有 entry 的位置驗證（spec §6「既有紀錄的驗證」）：`CollapseAuthorities.projection(UUID, UniverseId)` 不帶來源艙位置、不驗證 Role／ControllerPos／OutwardFacing。在決定首次寫入或修復之前，一律先 `writeProjection(PENDING)` 取得 site 驗證（回 INVALID_TRANSITION 並帶回 COMPLETE 時改走修復路徑），或以帶預期位置的查詢比對；不符 → `AUTHORITY_CORRUPT`。不得直接拿 `FOUND COMPLETE` 跳過驗證。
+  - §9.3 退化規則只依權威健康（初始化結果、執行期間 `lost`）切換；projection ledger 已滿或單筆不符不得讓全部投影進入退化模式。
   - 要寫入的 cell 有玩家時不寫入；有生成的動物時照常寫入、不移除 entity。
   - 投影衝突 → `PROJECTION_CONFLICT`；注入寫入失敗 → `PROJECTION_FAILED` → 邊緣觸發＋退避重試成功。
   - 保護（破壞、放置、爆炸、活塞、流體）；退化規則；Controller 載入辨識為 inert PROJECTION（比較器 0、不 `registerOrigin`、不重複 log），涵蓋 chunk 載入與投影寫入時 `ChamberControllerBlock.onBlockAdded`（`:98-101`）觸發 refresh 兩條路徑。
