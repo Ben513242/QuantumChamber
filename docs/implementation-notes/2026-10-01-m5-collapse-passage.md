@@ -526,19 +526,24 @@ fix round 2 的 GREEN 數字：
 
 ## H3：未 checked authority 的收斂
 
-- Commit：`1fb9c9b`（parent `611bcad`），只改派工列出的檔案：production `SessionRecoveryState.java`、`CandidateLedgerService.java`、`SessionRecoveryManager.java`、`SuperpositionSessionManager.java`；測試 `SessionRecoveryStateTest.java`、`CandidateLedgerServiceTest.java`；testmod `M4CandidateDoorGameTests.java`。
-- Review：待 spec review 與 code quality review。
+- Commits：
+  - `1fb9c9b`（H3 首輪，parent `611bcad`），只改派工列出的檔案：production `SessionRecoveryState.java`、`CandidateLedgerService.java`、`SessionRecoveryManager.java`、`SuperpositionSessionManager.java`；測試 `SessionRecoveryStateTest.java`、`CandidateLedgerServiceTest.java`；testmod `M4CandidateDoorGameTests.java`。`6a3d56d` 是本段的 docs commit。
+  - `3957624`（fix round 1，parent `6a3d56d`）：同上 7 檔，另新增派工允許的 `persistence/FailureText.java` 與 `FailureTextTest.java`。內容見下方「Fix round 1」。
+- Review：
+  - 首輪 spec review：✅，Minor 2。
+  - 首輪 code quality review：Critical 0、Important 1、Minor 8。fix round 1（`3957624`）處理 Important 1 與 Minor 1、2、4–8；Minor 3（收斂寫出每 tick 重試、沒有退避）依 controller 裁定不在本 task 處理，記為延後項（journal 層級共用節流）。
+  - fix round 1 的 re-review：待進行。
 
-### Code-truth（`1fb9c9b`）
+### Code-truth（`3957624`）
 
 | 項目 | 位置 | 行為 |
 | --- | --- | --- |
-| q1 | `SessionRecoveryState.abortUnchecked`（`:130-143`） | CAS 成立時，只有 `candidateChecked(expected)` 為假才還原。candidate authority 已 checked 的 next（legacy、與 flushed 只差返還／lease 進度、W-b 已落盤）一律不倒退並回 true；原本的 `expected.equals(durable)` 早退由這條涵蓋。CAS 不符的隔離路徑不變 |
-| q2 | `CandidateLedgerService.commitChecked`、`contain`（`:146-189`） | abort 丟例外時呼叫新增的 `JournalPort.quarantine`（`:43`），真的隔離該 session；隔離也丟例外時記 ERROR。log 的處置文字取自 `Containment`（`:167-174`），依實際結果：還原（或 next 已 checked）、CAS 不符隔離、abort 失敗後隔離、兩者都失敗（等 recovery tick 隔離） |
-| q3 | `SessionRecoveryState.quarantine`、`quarantinedSessions`、`convergeQuarantined`、`convergenceTarget`（`:149-184`）；`SessionRecoveryManager.convergeUnchecked`（`:116-142`） | 見下方「隔離 session 的收斂」 |
-| q4 | `SessionRecoveryManager.tick`（`:74-79`）、`convergeUnchecked`；`SuperpositionSessionManager.settleUncheckedInitial`（`:206-214`）、`finishAbandoned`（`:216-231`，在 `recovery.tick` 之後呼叫） | 見下方「殘留與全域暫停」 |
-| q5 | `SuperpositionSessionManager.abandonInitial`（`:165-179`）、`cancelInitial`（`:181-188`）、`warnAbandoned`（`:190-201`）；start 成功落盤時的 INFO（`:134-135`） | 見下方「放棄入場的補寫與 WARN」 |
-| Nit 3 | `CandidateLedgerService.describe`（`:195-202`） | 以 identity set 走訪 cause 鏈，多節點環在有限步內停止。改為 `public static`，`SuperpositionSessionManager` 的 WARN 共用 |
+| q1 | `SessionRecoveryState.abortUnchecked`（`:132-145`） | CAS 成立時，只有 `candidateChecked(expected)` 為假才還原。candidate authority 已 checked 的 next（legacy、與 flushed 只差返還／lease 進度、W-b 已落盤）一律不倒退並回 true；原本的 `expected.equals(durable)` 早退由這條涵蓋。CAS 不符的隔離路徑不變。`@apiNote`（`:128-130`）註明只回退 candidate 欄位、不適用 M5 restore 類寫入 |
+| q2 | `CandidateLedgerService.commitChecked`、`contain`（`:147-192`） | abort 丟例外時呼叫 `JournalPort.quarantine`（`:44`，回傳是否新進入隔離），真的隔離該 session；隔離也丟例外時記 ERROR。`contain` 為 package-private，回傳 `Containment`（`:168-175`），log 的處置文字依實際結果：還原（含 next 已 checked、session 已不在 current）、已隔離（CAS 不符或原本就在隔離中）、abort 失敗後隔離、兩者都失敗（等 recovery tick 隔離） |
+| q3 | `SessionRecoveryState.quarantine`、`quarantinedSessions`、`convergeQuarantined`（package-private）、`convergenceTarget`（`:151-187`）；`SessionRecoveryManager.convergeUnchecked`（`:116-149`）、`convergencePending`（`:155-158`） | 見下方「隔離 session 的收斂」 |
+| q4 | `SessionRecoveryManager.tick`（`:74-79`）、`convergeUnchecked`；`SuperpositionSessionManager.settleUncheckedInitial`（`:223-231`）、`finishAbandoned`（`:236-252`，在 `recovery.tick` 之後呼叫） | 見下方「殘留與全域暫停」 |
+| q5 | `SuperpositionSessionManager.abandonInitial`（`:167-183`）、`cancelInitial`（`:188-198`）、`AbandonWarning`／`warnAbandoned`（`:200-217`）；start 成功落盤時的 INFO（`:136-137`） | 見下方「放棄入場的補寫與 WARN」 |
+| Nit 3 | `FailureText.describe`（`persistence/FailureText.java:17-24`） | 以 identity set 走訪 cause 鏈，多節點環在有限步內停止。由 `CandidateLedgerService.describe` 移到中立的 `FailureText`，`CandidateLedgerService`、`SessionRecoveryManager`、`SuperpositionSessionManager` 共用；同檔的 `dedupeKey`（`:31-46`）見 fix round 1 |
 
 **隔離 session 的收斂（q3）**：
 
@@ -547,7 +552,8 @@ fix round 2 的 GREEN 數字：
 - 收斂目標（`convergenceTarget`，對 `SessionState` exhaustive switch，新增狀態時編譯即要求決定）：flushed 為 ARMING／SUPERPOSITION → 同一 authority 的 RETURNING（candidate context、ledger、selection 原樣，只改狀態）；RETURNING／MEASURED → flushed 原樣；沒有 flushed authority → 移除。目標先經 `validateOwnership` 驗證才改動。
 - 取代後 current 已沒有未 checked authority，所以立即解除隔離並保持 dirty。任何之後的寫出（tick 的重試、其他 session、原生 autosave）帶著它都安全，也會覆寫磁碟上可能已落地但未確認的 next。
 - 被丟棄的是未 checked 的 candidate／selection，以及疊在它上面的進度（只有 CAS 不符的防禦路徑會有）。丟掉的返還進度由 recovery 依既有的 checkpoint marker 冪等重做。
-- 驅動者是 `SessionRecoveryManager.tick`：每個 tick 對隔離 session 呼叫 `convergeQuarantined`（`operationInProgress` 的 session 略過；驗證失敗時維持隔離、同原因只記一次 WARN），然後 checked flush。寫出成功才記 INFO「已收斂：→ checked RETURNING／checked 移除」；失敗時保持 dirty、下一 tick 重試，同原因只記一次 WARN，恢復時記 INFO。
+- 驅動者是 `SessionRecoveryManager.tick`：每個 tick 對隔離 session 呼叫 `convergeQuarantined`（`operationInProgress` 的 session 略過；驗證失敗時維持隔離、同原因只記一次 WARN），然後 checked flush。寫出成功後逐一以 flushed 比對收斂目標：exact 相符才記 INFO「已收斂：→ checked RETURNING／checked 移除」，不符（之後的寫入已改動該 session）記 WARN。寫出失敗時保持 dirty、下一 tick 重試，同原因只記一次 WARN，恢復時記 INFO。
+- 收斂完成的訊號：`convergencePending(sid)` 在 session 仍隔離中、或已取代 current 但 checked 寫出尚未成功時為真。依賴「殘留已 checked 移除」的清理（`finishAbandoned`）必須等它為假（fail-closed）。
 - flushed RETURNING 落盤後，既有流程接手：`SuperpositionSessionManager` 把 runtime 改為 RETURNING，`recover` 把玩家送回原艙並寫返還進度，最後 release、移除 record。
 
 **殘留與全域暫停（q4）**：
@@ -556,17 +562,22 @@ fix round 2 的 GREEN 數字：
 - `recoveryWritesSafe()` 的語意不變（只排除隔離 session），`CorridorPageManager` 的 `tickRelease`、`fail` 等仍以它把關；殘留在下一個 recovery tick 被隔離後即恢復。
 - 已知的建立點都在建立當下隔離，tick 只是保底：
   - `commitChecked`：CAS 不符（既有）與 abort 失敗（q2）。
-  - start：`abandonInitial` 失敗、改走 `fail` 之後，`settleUncheckedInitial` 檢查初始 authority 是否已 checked。fallback RETURNING 已 checked 時照舊由一般返還流程處理；否則立即隔離仍留在 current 的未 checked record（同一 tick 的其他寫出也不會承認它），並記入 `abandonPending`。
-- 沒有 checked authority 的殘留收斂為 checked 移除之後，`finishAbandoned` 取消 reservation（`cancelPrepared`＋`retire`）、移除 runtime 與來源票，chamber 可再使用。取消失敗時同原因只記一次 WARN，下一 tick 重試。
+  - start：`abandonInitial` 失敗、改走 `fail` 之後，`settleUncheckedInitial` 檢查初始 authority 是否已 checked。fallback RETURNING 已 checked 時照舊由一般返還流程處理；否則立即隔離仍留在 current 的未 checked record（同一 tick 的其他寫出也不會承認它），並記入 `abandonPending`。立即隔離分支由 `native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows` 覆蓋（fix round 1）。
+- 沒有 checked authority 的殘留，要等 recovery 以 checked 寫出確認移除（current、flushed 都沒有，且 `convergencePending` 為假），`finishAbandoned` 才取消 reservation（`cancelPrepared`＋`retire`）、移除 runtime 與來源票，chamber 可再使用。`cancelInitial` 可安全重試：`cancelPrepared` 成功後保留 `RetiredMappings`，`retire` 失敗時下一次只重做 `retire`。取消失敗時同原因只記一次 WARN，下一 tick 重試。
 - 保底的界線：殘留出現到下一個 recovery tick 之間，若有其他 session 的寫出，非隔離的殘留仍會被寫出。這與 M4 相同（M4 的暫停也擋不住其他 session 的寫出），只影響未知路徑。
 
 **放棄入場的補寫與 WARN（q5）**：
 
 - `abandonInitial`：CAS 移除未 checked 的 ARMING → 立即 checked flush，覆寫磁碟上可能已原子寫入但未確認的 ARMING（readback 才失敗的窗口）→ 取消 reservation、移除 runtime → 回 REJECTED。
-- 補寫失敗不改變放棄的結果：record 已不在 current，journal 保持 dirty，由下一次寫出覆寫；這個情況寫進 WARN 的原因。CAS 或清理失敗才改走既有的 `fail`（同上 q4）。
-- WARN 帶 `describe`（含 root cause）與第一次的 stack，依 chamber＋原因去重（`abandonWarnings`，比照 `checkpointCapable`）；同原因的再次放棄只記 DEBUG。同一 chamber 之後初始 ARMING checked 落盤成功時記一次 INFO 並清除。原本 WARN 只有頂層例外（`journal checked 落盤失敗…`），看不到 root cause，而且週期 refresh 每次重試都記一則。
+- 補寫失敗不改變放棄的結果：record 已不在 current，journal 保持 dirty，由下一次寫出覆寫；這個情況寫進 WARN 的原因。CAS 或清理失敗才改走既有的 `fail`（同上 q4），此時補寫的例外也附在原失敗上。
+- WARN 的內文用 `FailureText.describe`（含 root cause）並附第一次的 stack；去重鍵另用 `FailureText.dedupeKey` 加上補寫是否成功，依 chamber 保存（`abandonWarnings`，比照 `checkpointCapable`）。同原因的再次放棄只記 DEBUG。同一 chamber 之後初始 ARMING checked 落盤成功時，記一次 INFO（帶先前的顯示原因）並清除。原本 WARN 只有頂層例外（`journal checked 落盤失敗…`），看不到 root cause，而且週期 refresh 每次重試都記一則。
 
-**M5 restore 類（spec §6）的重用**：`restoreCheckedAuthority`（`:186-192`）是不檢查 CAS 的還原核心，`abortUnchecked` 與 `convergeQuarantined` 共用。依 q1，`abortUnchecked` 只回退 candidate authority；COLLAPSING 提交、READY、終局等 candidate 三欄位不變的 restore 類寫入，`abortUnchecked` 會視為已 checked 而不回退。F2a 需要以同一核心另開「current exact 等於 expected 才還原」的入口；H3 沒有新增這個入口。另外 `convergenceTarget` 對 M5 新狀態必須明確決定收斂目標（exhaustive switch 會在編譯時要求）。
+**M5 restore 類（spec §6）的重用**：
+
+- `restoreCheckedAuthority`（`:189-195`）是不檢查 CAS 的還原核心，`abortUnchecked` 與 `convergeQuarantined` 共用。
+- 依 q1，`abortUnchecked` 只回退 candidate authority（`@apiNote` 已註明）；COLLAPSING 提交、READY、終局等 candidate 三欄位不變的 restore 類寫入，`abortUnchecked` 會視為已 checked 而不回退。F2a 需要以同一核心另開「current exact 等於 expected 才還原」的入口；H3 沒有新增這個入口，`abortUnchecked` 也不改名。
+- `convergeQuarantined` 是 package-private，只由 `SessionRecoveryManager` 呼叫並負責 checked 寫出與確認。`convergenceTarget` 對 M5 新狀態必須明確決定收斂目標（exhaustive switch 會在編譯時要求）。
+- `uncheckedCandidateSessions`／`recoveryWritesSafe` 與 recovery tick 的保底，只偵測 candidate context／ledger／selection 未 checked 的 current。M5 restore 類寫入失敗後殘留的 COLLAPSING 等 current，candidate 三欄位與 flushed 相同，這三者都看不到。F2a 必須擴充偵測（例如把 M5 的 `Collapse` 欄位納入），或在 owner 端失敗時自行 CAS 還原或隔離。
 
 ### 既有測試的處置
 
@@ -595,7 +606,7 @@ GameTest（+4，其中 `_windows` +3）：
 - `native_quarantined_selection_converges_to_checked_returning_windows`（q3）：在真實 SUPERPOSITION session 上 put 未 checked 的 SELECTED，再疊返還進度，以原 next 呼叫 abort（CAS 不符而隔離）；斷言隔離中 put 拒絕、recovery 未暫停，之後 flushed 為同 authority 的 RETURNING＋SELECTABLE、current 等於 flushed、正式檔等於 flushed；`trustedTeardown` 驗證玩家回到原艙完整 bbox、record 已 checked 移除、保護解除。
 - 新增 `whenWithinTicks`：以 server tick 計數的有界等待。GameTest server 不以 20 TPS 節流，原本 wall-clock 的 `whenWithin` 在 RED 時晚於 100000 tick 的 tickLimit 才到期，診斷訊息被通用逾時蓋掉（見 RED round 1）。
 
-### Gate 與證據
+### Gate 與證據（H3 首輪，`1fb9c9b`）
 
 gate root 都在 `.superpowers/verification/`；逐輪的 state、console、diff 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h3/`。GameTest RED 以 `JAVA_TOOL_OPTIONS=-Dquantumchamber.gametest.onlyBatches=m5_h3_start_readback_fault,m5_h3_start_double_fault,m5_h3_unchecked_residue,m5_h3_quarantine_converges` 只跑 4 個新 batch（`M4LegacyGameTestFilterMixin` 的 RED 取證子集），避免 HEAD 上卡住的隔離 session 影響其他 test；production 與 JUnit 測試檔都是 HEAD 內容。
 
@@ -631,8 +642,69 @@ GREEN 數字：
 
 GREEN log 中的 H3 行（`latest.log`）：CAS 不符的隔離 WARN 之後，q3 記「未 checked candidate authority 已收斂：→ checked RETURNING」；q4 start 路徑記「→ checked 移除」與「初始 ARMING 殘留已 checked 移除，取消 reservation 並釋放 chamber」；q4 tick 保底記「recovery 發現未 checked candidate authority 殘留，隔離」與「→ checked 移除」；q5 的 WARN 帶 chamber 與 root cause（`… <- java.io.IOException: M5 H3 GameTest 受控 readback 失敗（ARMING 已寫入正式檔）`）。沒有其他 session 被隔離或收斂。
 
+### Fix round 1（`3957624`）
+
+處理首輪 code quality review 的 Important 1 與 Minor 1、2、4–8，以及 Nit「`finishAbandoned` 在 `abandonPending` 為空時提早 return」：
+
+| 項目 | 處理 |
+| --- | --- |
+| I-1 q5 WARN 去重鍵含隨機暫存檔路徑 | 新增中立的 `persistence/FailureText`：`describe`（由 `CandidateLedgerService.describe` 移入，`CandidateLedgerService` 的版本移除，呼叫端改用它）與 `dedupeKey`（同樣以 identity set 走訪 cause 鏈，每個節點取 class 與 message；`FileSystemException` 改取 `getReason()`）。`warnAbandoned` 以 `dedupeKey`＋補寫是否成功當去重鍵，WARN 內文照舊用 `describe`；`abandonWarnings` 改存 `AbandonWarning(key, reason)`，恢復時的 INFO 印 reason。另加一條：message 恰等於 cause 的 `toString()`（JDK 以單一 cause 包裝的預設，例如 `new UncheckedIOException(e)`）時記為 `<cause>`，否則外層 message 同樣帶路徑 |
+| Minor 1 收斂完成的訊號 | `SessionRecoveryManager.convergencePending(sid)`；`finishAbandoned` 等它為假，且 current、flushed 都已沒有該 session，才釋放 chamber 並記 INFO。`convergeUnchecked` 寫出成功後逐一比對 flushed 與目標，相符才記 INFO，不符記 WARN。Javadoc 與本段同步 |
+| Minor 2 測試缺口 | `contain` 改 package-private 並回傳 `Containment`，JUnit 表格涵蓋六種情況（含 Minor 6 的兩種）；cause 環的逐字輸出移到 `FailureTextTest`。`settleUncheckedInitial` 的立即隔離分支以新的 probe 模式覆蓋（見下方測試） |
+| Minor 3 收斂寫出沒有退避 | 不在本 task 處理（controller 裁定，延後為 journal 層級的共用節流） |
+| Minor 4 | `SessionRecoveryManager` 的兩處去重（收斂失敗、收斂寫出失敗）改用 `FailureText.dedupeKey`，WARN 照舊附 stack；`finishAbandoned` 的取消失敗去重也改用它。其他檔不改 |
+| Minor 5 F2a 重用 | `convergeQuarantined` 改 package-private；`abortUnchecked` 不改名，加 `@apiNote`；「M5 restore 類的重用」段補上偵測範圍的限制 |
+| Minor 6 | `JournalPort.quarantine` 改回傳 boolean。abort 失敗而隔離回 false 時：current 已不存在歸為 RESTORED，否則（原本就在隔離中）歸為 QUARANTINED |
+| Minor 7 | `cancelInitial` 可安全重試（`retiredInitial` 保留 `cancelPrepared` 的結果，重試只做 `retire`）；`abandonInitial` 清理失敗時，補寫的例外也加成 suppressed |
+| Minor 8 GameTest 收尾 | (a) q5 test 的取證與斷言都在同一個 try 內，`LogCapture` 一定移除；(b) q3 test 加失敗路徑 hook（關閉 fixture 玩家）；(c) q5 test 的收尾等待改用 `whenWithinTicks`；(d) tick 保底 test 的 hook 先檢查 `quarantinedSessions()`，隔離中交給 recovery，不呼叫會被拒絕的 remove |
+
+測試（JUnit +6、GameTest +1）：
+
+- `FailureTextTest`（新增，5 個）：
+  - `dedupeKeyIgnoresTemporaryFilePathsOfFileSystemExceptions`：兩個只差暫存檔路徑的 `AccessDeniedException`（包在相同的 `UncheckedIOException`）得到相同、逐字固定的鍵，`describe` 仍各自保留路徑。
+  - `dedupeKeyDoesNotRepeatAMessageThatIsJustItsCause`：`new UncheckedIOException(e)` 的外層記為 `<cause>`。
+  - `dedupeKeyKeepsDifferentCausesApart`：reason、例外 class、一般例外的 message、root 以外的節點，任一不同都是不同的鍵。
+  - `multiNodeCauseCycleTerminatesWithExactText`：兩節點 cause 環，`describe` 與 `dedupeKey` 都在 10 秒內結束且逐字相符。
+  - `describeShowsTopAndRootOnly`。
+- `CandidateLedgerServiceTest.containmentClassifiesWhatActuallyHappened`：以腳本化的 `JournalPort` 涵蓋 RESTORED、QUARANTINED、QUARANTINED_AFTER_ABORT_FAILURE、UNCONTAINED，以及隔離回 false 的兩種，並核對附在原失敗上的 suppressed 數。Port 的 `quarantine` 改回傳 boolean。
+- GameTest：
+  - `native_start_readback_fault_overwrites_unacknowledged_arming_and_dedupes_warning_windows`：probe 的 root cause 改為 message 含隨機暫存檔路徑的 `AccessDeniedException`（reason 為受控字串），新增 witness `tempPathsDiffered`。這是 warnAbandoned 層級的去重測試。
+  - `native_start_double_fault_residue_converges_and_releases_chamber_windows`：probe 改名 `DIVERGE_THEN_FAIL_CONVERGENCE`，殘留被收斂移除後的第一次寫出再受控失敗一次；以 `LogCapture` 斷言收斂寫出失敗 WARN 恰一則，且「釋放 chamber」的 INFO 在「已收斂 → checked 移除」的 INFO 之後。
+  - 新增 `native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows`（probe `CANCEL_THEN_FAIL`）：初始 flush 失敗；放棄時的補寫也失敗，probe 趁補寫把 ARMING 放回 current，使 `cancelPrepared` 失敗而改走 `fail`；`fail` 的 RETURNING 因 recovery 寫入不安全而沒有寫出。斷言 `settleUncheckedInitial` 在同一個 start 內立即隔離殘留，之後 checked 移除、釋放 chamber。
+
+逐輪證據在 `h3/fix1/`。diff hash 是 `git diff 6a3d56d 3957624 -- <path>` 輸出的 SHA-256：
+
+| 路徑 | SHA-256 |
+| --- | --- |
+| `src` | `6511ab09…` |
+| `src/main` | `50b62548…` |
+| `src/test` | `c3615e0a…` |
+| `src/testmod` | `401c7aea…`（與 GameTest RED 的 diff 相同） |
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED GameTest | `6a3d56d`（code＝`1fb9c9b`）；只有 `M4CandidateDoorGameTests.java` 有變更（`h3/fix1/red-gametest-state.txt`） | Full＋onlyBatches `m5_h3_start_readback_fault,m5_h3_start_double_fault,m5_h3_start_cancel_fault`：`gate-h3-fix1-red-gametest-f383ce786822485cbd4fad274883d146` | 預期 FAIL（JUnit 435 全過）。q5：`singleWarning=false`、`warningNamesChamberAndRootCause=false`，faults=3、3 則 WARN 各帶不同的暫存檔路徑。double fault：`releasedOnlyAfterCheckedRemoval=false`（收斂寫出失敗的同一 tick 就釋放 chamber 並記 INFO，checked 移除尚未確認：convergedLog=-1、freedLog=4）。cancel fault 在基底就 PASS：該分支首輪已存在，這是新覆蓋，不是 RED |
+| RED JUnit：新測試＋暫時 adapter | 同上 HEAD；production 2 檔＋測試 2 檔＋上列 testmod（`h3/fix1/red-junit-state.txt`）。adapter：`FailureText.describe` 為舊實作的複本、`dedupeKey` 沿用舊去重語意（＝`describe`）；`JournalPort.quarantine` 回傳 boolean、`contain` 改 package-private，但分類照舊忽略回傳值。GREEN 時改寫 | focused JUnit `FailureTextTest`＋`CandidateLedgerServiceTest` | 預期 FAIL：28 個中 3 個失敗，就是 3 個 RED test：暫存檔路徑不同的鍵不相等；`<cause>` 包裝的鍵不相等；表格中隔離回 false 的兩種都得到 QUARANTINED_AFTER_ABORT_FAILURE。表格的其餘 4 種、cause 環逐字輸出等對照通過 |
+| GREEN focused | 工作樹＝`3957624` | `compileTestmodJava`＋`dev.quantumchamber.persistence.*`＋`dev.quantumchamber.candidate.*` | PASS：180 個，0 failure／error，2 skipped（`NonWindowsPlayerCheckpointStoreTest`） |
+| GREEN Full | 同上 | `gate-h3-fix1-green-full-42d347dd99c545aa895f9ddd5af22fc6` | PASS |
+| GREEN Legacy | 同上 | `gate-h3-fix1-green-legacy-c7493f6715d343b9beccc7b59b683b22` | PASS |
+| GREEN M4 recovery | 同上 | `recovery-run-95f9887dfd0c46ae84a0cca0d2109e41.json` | PASS |
+
+gate 在 commit 之前以工作樹執行。執行前記錄 8 個檔案的 `git hash-object`（`h3/fix1/green-state.txt`），與 `3957624` 中各檔的 blob id 逐一相同（`h3/fix1/commit-hashes.txt`）。
+
+fix round 1 的 GREEN 數字：
+
+- default GameTest 152/152（`_windows` 78），0 failure／error／skipped。比首輪多 1 個，就是新增的 cancel fault test。boundary oracle PASS；per-test receipt 34/34 PASS。
+- JUnit 441，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）。比首輪的 435 多 6 個：`FailureTextTest` 5 個與 `containmentClassifiesWhatActuallyHappened`。
+- JAR：release 308 entries（265 classes），比首輪多 2 個 class：`FailureText`、`SuperpositionSessionManager$AbandonWarning`。sources 195，多 `FailureText.java`。testmod 命中只有合法的 `ModPresenceProbe`。
+- legacy 1/1，per-test receipt 1/1 PASS。
+- M4 recovery 24/24 phases，24 個獨立 JVM；每個 phase 的 Gradle exit 0，正常停止，lock 已釋放。
+
+GREEN log 中的對應行：double fault 依序為「收斂寫出失敗」WARN 一則、「已收斂 → checked 移除」、「收斂寫出已恢復」，之後才是「初始 ARMING 殘留已 checked 移除，取消 reservation 並釋放 chamber」；cancel fault 為「已收斂 → checked 移除」再釋放；q5 的「入場 ARMING 未能 checked 落盤」WARN 只有一則。其餘行（pin 上限 2 則、MEASURED checkpoint 恢復的 2／3 次）與前幾次 Full 相同。
+
 ### 觀察（未修改）
 
+- 延後項（controller 裁定，Minor 3）：收斂寫出失敗時每 tick 重試，沒有退避；之後以 journal 層級的共用節流處理。
 - 第一次 GREEN Full 中，`m2_native_shared_west`（M2 的 test，不是 H3 的）的 `recover` 寫出一次失敗，記一則 WARN「返還保留 pending … `journal checked 落盤失敗`」，下一 tick 重試成功、test PASS。前後沒有任何 session 被隔離或收斂，之前 8 個 Full gate 都沒有這一行。第二次 Full 的 batch 順序相同，這一行沒有再出現，所以判定為非決定性的暫態寫出失敗。WARN 只記例外 class 與 message，看不到 root cause（既有的 `SessionRecoveryManager` 寫法，不在本 task 修改）。
 - `.github/workflows/build.yml` 的 `$requiredM4GameTests` 明列清單沒有加入新的 3 個 `_windows` test（不在本 task 的檔案清單），由同一步驟的通則涵蓋；新的跨平台 test 不在 Ubuntu 的 `$requiredCrossPlatform` 清單。是否補進明列清單由 controller 決定。
 - q5 的補寫在同一 chamber 反覆放棄時，每次放棄都會多一次 journal checked 寫出（與入場嘗試同頻率，週期 refresh 約每 20 tick 一次）。持續 IO 故障時補寫本身也失敗，只記一次 WARN 原因。
