@@ -4,6 +4,7 @@ import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.chamber.ChamberMaintenanceInteraction;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberControllerLoadSyncQueue;
+import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.compat.CompatibilityManager;
 import dev.quantumchamber.compat.RuntimeCompatibility;
 import dev.quantumchamber.registry.ModBlockEntities;
@@ -43,6 +44,8 @@ public final class QuantumSuperpositionMod implements ModInitializer {
                 ChamberControllerLoadSyncQueue.enqueue(world, controller);
             }
         });
+        // M5 authority 的 SERVER_STARTED 初始化必須早於 lifecycle 的 bootstrap 物化（plan 決策 2；Fabric 依註冊順序執行）。
+        CollapseAuthorities.registerEvents();
         UniverseLifecycleService.initialize();
         RuntimeCompatibility compatibility = CompatibilityManager.detect(
                 FabricLoader.getInstance()::isModLoaded);
