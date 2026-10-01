@@ -2,12 +2,13 @@
 
 日期：2026-10-01。基準：`main`＝`a7e1be2`（code 等同 `ba854e8`），分支 `feature/m5-collapse`。下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `a7e1be2` 為準。
 
-狀態：草稿 v3，待使用者核可。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。獨立 spec review 共兩輪：
+狀態：v4。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。Spec review 共四輪：
 - v1 的 Critical 1、Important 8 由 v2 處理。
 - re-review 在 v2 新發現的 Critical 1、Important 2（N1–N3）與 Minor m1–m8 由 v3 處理。
 - 第三輪在 v3 新發現的 Important 1（N4）與 4 項 Minor，已在 v3 修正。
+- 使用者轉交的第四輪 review（`d9b3249`：Critical 1、Important 7、Minor 1）由 v4 處理。使用者同時指示：修正後直接進入 plan 與實作，不再另等核可。
 
-處置見 §20。本文核可前，不寫 implementation plan，也不改程式。
+處置見 §20。
 
 ## 1. 目標與成功畫面
 
@@ -17,8 +18,9 @@ M4 留下的是 checked `MEASURED + SELECTED` receipt：門已被量測，但門
 玩家在走廊右鍵側門（M4：checked SELECTED＋MEASURED）
 → 下一個 tick：checked COLLAPSING
 → 走廊收掉，全組回到原艙（門維持一般狀態，已返還的人可以自由開門）
-→ 開始準備：門口沒有實體時，門打開成量子膜（有碰撞，不能穿過）
-   └ 準備期間參與者關門 → 結束（不重抽；已配置的宇宙保留）
+→ 確定目的地：NEW 在這一步建立並登記新宇宙（不需要供電，關門也不會中止）
+→ 開始準備：門口沒有實體、艙內也沒有非參與者時，門打開成量子膜（有碰撞，不能穿過）
+   └ 準備期間參與者關門 → 結束（不重抽；目的宇宙已經存在，保留）
 → 目的地準備完成：checked PASSAGE_READY，量子膜可穿過，比較器 15
 → 參與者穿過量子膜：同 XYZ、同 yaw／pitch，進入被選中的宇宙（站在目的投影艙的門口）
 → 以下任一成立，通道就結束，原艙解除封鎖：
@@ -46,9 +48,9 @@ M4 留下的是 checked `MEASURED + SELECTED` receipt：門已被量測，但門
 - **非參與者不能使用通道。** 通道開著時，非參與者穿過量子膜只會走進原世界。
 - **只傳送玩家本人。** 掉落物、投射物與坐騎不會跟著穿過；騎乘中的參與者不會觸發傳送。
 - **離線的參與者會延後通道，走廊也不會立刻消失（不變量 24 的例外）。** 尚未返還的離線參與者，要等他重新連線、返還、走廊清完之後，才開始準備目的地（沿用 M2／M4 的返還規則）。期間已返還的人可以自由開門離開，原艙維持封鎖。
-- **永久性的失敗會讓原艙一直封鎖。** 這一版沒有管理員取消工具。只有在資料損壞、或 EXISTING 宇宙失去資格時才會發生（§11.2）；暫時性的 IO 失敗不算永久。
+- **永久性的失敗會讓原艙一直封鎖。** 這一版沒有管理員取消工具。只有在資料損壞、EXISTING 宇宙失去資格，或通道傳送發生無法回滾的原生錯誤時才會發生（§11.2）；暫時性的 IO 失敗不算永久。封鎖期間任何玩家都可以照常開門離開，不會被困住。
 - **物化重試時 crash 會停服。** `MATERIALIZE_FAILED` 重試時要先改回 `EAGER_ENABLED`；若在物化完成前 crash，下次開服會依 M3 契約停服（§8.3）。
-- **非參與者可能被困。** 預載卡住、全員離線、外人在艙內三者同時發生時，外人無法自行離開（§7.3）。
+- **投影不處理非玩家 entity。** 第一次寫入投影時，目的 volume 內的非玩家 entity 不移動、不移除，交由原版處理；可能窒息、被擠出，掛在被覆寫方塊上的掛畫或物品展示框也可能依原版規則掉落（§9.2）。
 - **時間凍結**：`/tick freeze` 會讓 game time 停止，通道的 60 秒也跟著停止計時。
 - 通道期間斷線、多組 cohort 重逢的完整語意，本切片只做到 fail-closed（§12），完整版留給後續切片。
 
@@ -72,7 +74,7 @@ M4 留下的是 checked `MEASURED + SELECTED` receipt：門已被量測，但門
 本文對上述決策的兩處詮釋，請在核可時確認：
 
 1. **Nether／End 的安全取消。** 「DORMANT 禁止安全取消」與 Nether／End 選項所附的「安全取消」方向相反。本文採用具體的 Nether／End 選項，但把取消限縮為唯一的例外（§11.3）。若改為「SEALED 保留到 M6」，只需要改 §11.3 與 §12 對應的列。
-2. **NEW 的 discovery 時機。** 使用者原本寫的是「第一次 checked PASSAGE_READY 時追加」。但依設計 §20.4，READY 之前關門也會結束通道；若等到 READY 才追加，已配置的宇宙會變成無法被候選系統選到的「幽靈世界」，這正是使用者想避免的情況。所以本文改為「物化成功之後、投影之前就追加」（§6.4），READY 仍然蘊含 discovery 已落盤。
+2. **NEW 的 discovery 時機。** 使用者原本寫的是「第一次 checked PASSAGE_READY 時追加」。但依設計 §20.4，READY 之前關門也會結束通道；若等到 READY 才追加，已配置的宇宙會變成無法被候選系統選到的「幽靈世界」，這正是使用者想避免的情況。所以本文改為在 RESOLVE 階段「物化成功之後就追加」（§6.4、§7.3），READY 仍然蘊含 discovery 已落盤。
 
 ## 4. 前置工作（排在功能 task 之前）
 
@@ -113,12 +115,14 @@ hardening 的順序依使用者 2026-09-29 的指定。每項都是獨立 task�
 ```text
 MEASURED＋SELECTED（M4；live 或 DORMANT）
   └─ checked → COLLAPSING
-       ├─ 推導階段：RETURN_PLAYERS → RELEASE_GEOMETRY → WAITING → PREPARE（不另存）
+       ├─ 推導階段：RETURN_PLAYERS → RELEASE_GEOMETRY → RESOLVE → WAITING → PREPARE（不另存）
        ├─ Destination=SOURCE：進入 PREPARE 時 checked 終局（移除 record）→ 一般開門
-       ├─ PREPARE 期間參與者關門：checked 終局（不重抽，已配置的宇宙保留）
-       ├─ 準備成功：checked → PASSAGE_READY → 通道結束時 checked 終局
-       └─ 準備失敗：checked → SEALED（收據保留）
-                       └─ 可重試的原因、且觸發成立：checked → COLLAPSING
+       ├─ PREPARE 期間參與者關門：checked 終局（不重抽；目的宇宙已在 RESOLVE 建立，保留）
+       ├─ 解析或準備失敗：checked → SEALED（收據保留）
+       │                  └─ 可重試的原因、且觸發成立：checked → COLLAPSING
+       └─ 準備成功：checked → PASSAGE_READY
+                       ├─ 通道結束：checked 終局
+                       └─ 傳送無法回滾（FAILED_RECOVERY_REQUIRED）：checked → SEALED(TRANSFER_RECOVERY_REQUIRED)，永久
 ```
 
 **Record 欄位**：schema 4 的 record 是 schema 3 的 11 個 key，再加一個 `Collapse` compound。ARMING、SUPERPOSITION、RETURNING、MEASURED 的 `Collapse` 必須是空 compound。M5 的三個狀態必須恰有以下 key：
@@ -128,15 +132,15 @@ MEASURED＋SELECTED（M4；live 或 DORMANT）
 | `CollapseRevision` | 固定為 1 |
 | `CommittedAtGameTime` | ≥ 0 |
 | `Destination` | `{Kind:"SOURCE"}` 或 `{Kind:"UNIVERSE", UniverseId}`。在 COLLAPSING 提交時決定，之後不可變 |
-| `PassageOpenedAtGameTime`、`PassageExpiresAtGameTime` | 只有 PASSAGE_READY 是實值，且 expires＝opened＋1200；其餘狀態為 -1 |
-| `Crossed` | 已成功完成 passage 傳送的參與者 UUID 清單，必須是 participants 的子集。只在 PASSAGE_READY 才可能非空；空清單沿用 END held type |
+| `PassageOpenedAtGameTime`、`PassageExpiresAtGameTime` | PASSAGE_READY 是實值，且 expires＝opened＋1200。由 READY 進入的 SEALED(`TRANSFER_RECOVERY_REQUIRED`) 保留同一組值。其餘狀態為 -1 |
+| `Crossed` | 已成功完成 passage 傳送的參與者 UUID 清單，必須是 participants 的子集。只在 PASSAGE_READY，以及由它進入的 SEALED(`TRANSFER_RECOVERY_REQUIRED`) 才可能非空；空清單沿用 END held type |
 | `SealedReason` | 只有 SEALED 是非空列舉，其餘狀態為空字串。列舉值見 §11.2 |
 
 **合法組合**（在 M4 矩陣之外新增）：
 
 - COLLAPSING：context 存在、selection 為 SELECTED、Crossed 為空。允許部分參與者已返還；lease 可以維持原樣或一次清空。依 M4 規則，空 lease 蘊含全員已返還（`main/persistence/SessionRecoveryRecord.java:109-111`）。
 - PASSAGE_READY：全員已返還、lease 為空、`Destination` 為 UNIVERSE（SOURCE 永遠不會進到 READY）。
-- SEALED：全員已返還、lease 為空、`Destination` 為 UNIVERSE。
+- SEALED：全員已返還、lease 為空、`Destination` 為 UNIVERSE。opened／expires 與 `Crossed` 依上表：只有 `TRANSFER_RECOVERY_REQUIRED` 可以帶著 READY 的值。
 
 **單調 authority**（`sameAuthority` 擴充）：
 
@@ -147,7 +151,8 @@ MEASURED＋SELECTED（M4；live 或 DORMANT）
 - MEASURED 之後的合法狀態邊：
   - MEASURED→COLLAPSING。
   - COLLAPSING→PASSAGE_READY、COLLAPSING→SEALED。
-  - SEALED→COLLAPSING：重試；只能清空 `SealedReason`。
+  - PASSAGE_READY→SEALED：只允許 `SealedReason=TRANSFER_RECOVERY_REQUIRED`，opened／expires 與 `Crossed` 原樣保留（§10.3）。
+  - SEALED→COLLAPSING：重試；只能清空 `SealedReason`。`TRANSFER_RECOVERY_REQUIRED` 是永久原因，沒有這條邊。
   - 同狀態的進度寫入（self-loop）：返還、清 lease、加入 `Crossed`。
 - M4 原有的狀態邊不變。
 
@@ -171,15 +176,19 @@ MEASURED＋SELECTED（M4；live 或 DORMANT）
   3. PREPARE 期間參與者關門。
   4. §11.3 的 Nether／End 取消。
 - 終局的流程：current 與 flushed 都要 exact 等於 expected → 移除 → flush → 讀回確認該 record 已不存在。
-- flush 或讀回失敗時，以 H3 的 CAS 規則放回 expected record，然後記 WARN；不改門。
+- flush 或讀回失敗時，以 H3 的 CAS 規則放回 expected record，並依 §6 的收斂規則保持 dirty，然後記 WARN；不改門。
 - 讀回確認之後，才修剪該 session 在 `authorityHistory`／`checkedAuthority` 的內容（＝M4 quality M1），並留一個 process 內的 session UUID tombstone，防止同一個 UUID 被重新放回。
 
 **版本與保護**：
 
-- M5 build 寫出 candidate-aware journal 時一律用 schema 4；只有 legacy 的 journal 仍寫 schema 2。schema 3 檔照舊可以 strict 讀取，記憶體內補成空的 `Collapse`。
+- schema 4 envelope 是「M5 authority 已初始化」的不可撤銷證據，做法與 M4「schema 3 envelope 是 candidate 初始化證據」相同，不另外新增 NBT 欄位（§6）：
+  - 本 JVM 的 M5 authority 初始化成功、而且 journal 沒有 legacy record 時，candidate-aware journal 一律寫成 schema 4。
+  - 初始化成功之前，journal 維持讀進來時的 schema（3，或 M4 規則下的 2），也就不能寫入任何 M5 狀態。
+  - 一旦寫成 schema 4 就不再降回。schema 4 也蘊含 M4 的 `candidateInitialized`。
+  - schema 3 檔照舊可以 strict 讀取，記憶體內補成空的 `Collapse`。
 - 用 M5 build 寫過之後，M4 build 讀到 schema 4 會 fail closed（不可降版，要寫進文件）。
 - `blocks()` 在 COLLAPSING 且玩家尚未返還時凍結（含 H4 的位置修正）；PASSAGE_READY 與 SEALED 不凍結。
-- `presence()` 在三個 M5 狀態都回 ACTIVE，所以該原艙不能開新 session。
+- `presence()`：COLLAPSING 與 SEALED 回 ACTIVE；PASSAGE_READY 回新增的 `Presence.PASSAGE`（§10.7）。三者都會讓該原艙不能開新 session。
 
 **謂詞**：定義 `receiptRetained(state)` 為 MEASURED、COLLAPSING、PASSAGE_READY、SEALED 四者之一。§13.2 列出所有必須改用這個謂詞、或另外處理 M5 狀態的既有分支。
 
@@ -187,19 +196,38 @@ MEASURED＋SELECTED（M4；live 或 DORMANT）
 
 四個權威都沿用 M4 discovery／entropy 的寫法：同目錄暫存檔、force、atomic move、strict 讀回，必要時 exact 比對。
 
-**建檔順序與遺失判定**：NEW 第一次需要 ledger 時，依序：
+**M5 authority 初始化與遺失判定**（沿用 M4 以 journal envelope 作為初始化證據的做法；`main/persistence/SessionRecoveryState.java:38-39`、`main/superposition/SuperpositionSession.java:33-36`）：
 
-1. 若 projection ledger 檔不存在，**而且** §6.5 判定為「視為空 ledger」，先以 checked 方式建立空檔。
-2. 在 allocation ledger 追加 entry。檔不存在時，**只有** §6.1 判定為「視為空 ledger」才一併建立。
+- allocation ledger 與 projection ledger 只由「M5 authority 初始化」建立。初始化在開服時、lifecycle bootstrap 物化之前執行（與 §9.3 的索引同一時點），每個 JVM 一次。
+- 判定只看 journal 的 flushed envelope：
+  - 尚未是 schema 4（schema 1–3，或 journal 檔不存在）：缺少的 ledger 檔以 checked 方式建立為空檔；已存在的檔照常 strict 讀取。
+  - 已是 schema 4：兩個 ledger 檔都必須存在。缺任何一個就是遺失，進 `AUTHORITY_CORRUPT`，不建檔、不補寫。
+- journal 只有在本 JVM 初始化成功之後才會寫成 schema 4（§5），而 M5 狀態只存在於 schema 4。所以：
+  - schema 4 envelope 本身就證明兩個 ledger 檔已建立；
+  - journal 還不是 schema 4 時，ledger 不可能有任何 M5 寫入，補建空檔不會蓋掉遺失的證據。
+- 這條規則不依賴 discovery 或 catalog 的內容。M4 時期 discovery 已經非空的存檔（例如 fixture 或驗收世界），升級後第一次 NEW 也不會被誤判為遺失。
+- 初始化失敗（IO 例外，或既有 ledger strict decode 失敗）：記 ERROR。本 JVM 的 journal 不升到 schema 4、不提交任何 COLLAPSING（§7.1 的提交失敗路徑）；已在 journal 中的 M5 record 若目的地是 UNIVERSE，到 RESOLVE 時依失敗分類進 SEALED；保護改用 §9.3 的退化規則。IO 例外在下次開服重試。
 
-判定為遺失時一律不建檔，直接進 SEALED(`AUTHORITY_CORRUPT`)。這樣建檔不會蓋掉遺失的證據。
+**既有紀錄的驗證**：所有 idempotent 的 lookup（allocation entry、catalog record、discovery record、projection entry），找到既有紀錄時都要先驗證它正是本 session 會寫出的內容，不符就進 `AUTHORITY_CORRUPT`，不沿用、不覆寫。各權威要比對的欄位見 §6.1–§6.5。
 
-依這個順序可以推得：
+**checked 寫入失敗的收斂**：
 
-- 只要 allocation ledger 非空，projection ledger 檔就一定已經存在。
-- 只要 discovery 非空，或 catalog 已有本 session 的 NEW 推導出的 UniverseId，allocation ledger 就一定已經存在。這是因為 catalog 配置與 discovery 都排在 allocation entry 之後（§8.2）。
+- 寫入失敗時，磁碟可能仍是舊內容，也可能已經是這次嘗試的新內容（atomic move 已完成、讀回才失敗；例如 `main/universe/UniverseCatalogStore.java:36-42`）。只還原記憶體無法讓兩者一致。
+- 規則：
+  1. 記憶體的 current 還原為上一份已確認的內容，並保持 dirty。下一次寫出（重試、原生 autosave 或停服）會以完整的已確認內容覆寫磁碟。discovery 與兩個 ledger 不是 PersistentState，由各自的 owner 記住「需要收斂」，下一次使用前先做一次 checked 重寫。
+  2. 收斂寫入成功之前，該權威在本 JVM 標為未確認：M5 不依它做新的配置、物化或 READY 判斷，只重試收斂（套用 §11.2 的退避）。收斂寫入本身也失敗時維持未確認。
+  3. 收斂完成之前若 crash，磁碟上可能留下「已落地但未確認」的新內容。M5 的寫入順序保證，這些內容在重啟後都是合法狀態，照常 strict 讀取、採用：
 
-§6.1 與 §6.5 的遺失判定只依據這兩條。不使用「projection 檔存在」作為 allocation 遺失的證據，因為步驟 1 與 2 之間可能 crash。
+| 已落地但未確認的寫入 | 重啟後為什麼合法 |
+| --- | --- |
+| allocation entry | COLLAPSING 已提交，`Destination` 就是同一個推導值 |
+| catalog record（`EAGER_ENABLED`） | allocation entry 已確認（W2、W3） |
+| catalog 改為 `DISABLED` | 等同 §8.3 已完成 |
+| discovery record | catalog 已確認，物化已發生；重啟時由 bootstrap 再物化（W5） |
+| projection COMPLETE | 方塊、驗證與原生存檔 checkpoint 都已完成 |
+| journal 的狀態推進（READY、SEALED、`Crossed`、終局移除） | 每一筆都是合法的 checked 狀態邊；重啟依 §12 處理 |
+
+- journal 的寫入（含進入 SEALED）失敗時，record 依 H3 CAS 留在上一份 checked 狀態，該 session 在本 JVM 套用記憶體內的退避；PREPARE 中的門依 §7.3 閘門失效的處理改為一般開門。重啟後依 §12 續做。
 
 **讀取失敗的分類**：
 
@@ -213,19 +241,18 @@ MEASURED＋SELECTED（M4；live 或 DORMANT）
 - 規則：只能追加；token 唯一、UniverseId 唯一；exact keys。
 - UniverseId 的推導：取 `SHA-256(UTF-8("quantumchamber:universe-id:v1") ‖ token)` 的前 16 bytes，設定 RFC 9562 的 version 8 與 variant 位元。
   - 推導讓 COLLAPSING 在任何配置之前，就能把 exact 的 `Destination` 寫下來。
-  - ledger 才是 idempotency 的權威：已有 entry 就用 entry；entry 與推導值不符時，進 SEALED(`AUTHORITY_CORRUPT`)。
-- 檔案缺失：
-  - discovery 為空，而且 catalog 沒有任何與 NEW 推導值相同的 UniverseId：視為空 ledger，依 §6 的建檔順序建立。
-  - discovery 非空，或 catalog 已有該推導 UniverseId、ledger 卻沒有對應 entry：視為 ledger 遺失，進 SEALED(`AUTHORITY_CORRUPT`)，不補寫。
+  - ledger 才是 idempotency 的權威：已有 entry 就用 entry。entry 的 UniverseId 與推導值不符，或 Profile／ProfileVersion 不是本切片的 OVERWORLD profile，進 SEALED(`AUTHORITY_CORRUPT`)。
+- 檔案缺失：依 §6 的初始化規則；執行期間發現檔案消失，一律視為遺失。
 - strict decode 失敗：進 SEALED(`AUTHORITY_CORRUPT`)。
 - 讀取時的 IO 例外：進 SEALED(`AUTHORITY_UNREADABLE`)。
-- 寫入的 IO 失敗：進 SEALED(`ALLOCATION_IO_FAILED`)，可重試。
+- 寫入的 IO 失敗：依 §6 的收斂規則處理，進 SEALED(`ALLOCATION_IO_FAILED`)，可重試。
 
 ### 6.2 Catalog 配置
 
 - 呼叫 `allocateOverworld(uuid, ordinal)`，其中 `ordinal` 是 flushed catalog 的最大 ordinal 加 1（catalog 為空時為 0），availability 為 `EAGER_ENABLED`。
 - **只有在 catalog 的 current 恰等於 flushed（沒有 dirty）時才配置。** 不相等時等到下一個 tick 再試，不進 SEALED。M5 是唯一的 runtime catalog 寫入者，而失敗時會還原，所以 dirty 只會短暫出現；持續超過 600 ticks 時記一次 WARN。
-- 先 checked flush，才物化。flush 或讀回失敗時，把 catalog 的 current 還原為 flushed，避免原生 autosave 把未確認的配置寫出去（比照 H3 的 CAS 還原）。之後進 SEALED(`ALLOCATION_IO_FAILED`)。`UniverseRegistryState` 目前沒有這個還原 API，由 F2 新增。
+- 先 checked flush，才物化。flush 或讀回失敗時，依 §6 的收斂規則：把 catalog 的 current 還原為 flushed 並保持 dirty，下一次寫出以已確認的內容覆寫磁碟；之後進 SEALED(`ALLOCATION_IO_FAILED`)。目前 `UniverseRegistryState.save` 失敗時保留 current 與 dirty（`main/universe/UniverseRegistryState.java:217-224`），沒有還原 API，由 F2 新增。
+- catalog 已有該 UniverseId 時不重新配置，但要驗證：OVERWORLD descriptor、`VANILLA_OVERWORLD_SHARED_SEED_V1`、`SHARED_SAVE_SEED_V1`，availability 為 `EAGER_ENABLED`（§8.3 的重試路徑才可能是 `DISABLED`）。不符進 SEALED(`AUTHORITY_CORRUPT`)。
 - 配置之前，先確認該 UUID 的 storage 目錄不存在。目錄已存在、catalog 卻沒有這筆紀錄，就是 orphan：進 SEALED(`AUTHORITY_CORRUPT`)，絕不採用或刪除那個目錄。
 
 ### 6.3 Runtime 物化與查詢由 lifecycle 擁有
@@ -248,20 +275,18 @@ M5 不另外 new `Minecraft121DynamicDimensionBackend`，也不繞過 lifecycle 
   - `discoveredAtGameTime` 為當下的 game time。
   - `firstObserver` 為 `SelectedBy`。
   - `gameplayEligible` 為 true。
-- 以 UniverseId 判斷 idempotency：已存在就不改動。
-- 寫入或讀回失敗：比照 §6.2，還原記憶體中的 current，然後進 SEALED(`ALLOCATION_IO_FAILED`)，可重試。重試時 append 是 idempotent。
-- 只有 NEW 會追加，時間點是物化成功之後、投影之前（§3 詮釋 2）。所以只要看到 PASSAGE_READY，就代表 discovery 已經落盤；準備期間有人關門結束通道時，已物化的宇宙也已經可以被選到。
+- 以 UniverseId 判斷 idempotency。已存在時先驗證：`gameplayEligible` 為 true，而且 `firstObserver` 等於本 session 的 `SelectedBy`（這個 UniverseId 由本 session 的 token 推導而來，只有本 session 會追加它）。驗證通過就不改動；不符進 SEALED(`AUTHORITY_CORRUPT`)，不改寫既有紀錄。`discoveryOrdinal` 與 `discoveredAtGameTime` 可以不同（例如上一次寫入已落地、讀回才失敗）。
+- 寫入或讀回失敗：依 §6 的收斂規則處理，然後進 SEALED(`ALLOCATION_IO_FAILED`)，可重試。重試時 append 是 idempotent。
+- 只有 NEW 會追加，時間點是 RESOLVE 階段物化成功之後（§3 詮釋 2）。所以只要看到 PASSAGE_READY，就代表 discovery 已經落盤；PREPARE 一定在 RESOLVE 之後，準備期間有人關門結束通道時，目的宇宙也已經可以被選到。
 - EXISTING 只重驗，不追加；SOURCE 不寫。
 
 ### 6.5 Projection ledger
 
 - 檔案：`<save>/data/quantumchamber_projections.dat`，schema 1。
 - Entry 欄位：`ChamberUuid`、`UniverseId`、`Role`（本切片只有 OVERWORLD）、`ControllerPos`、`OutwardFacing`、`Status`（PENDING 或 COMPLETE）。
-- `(ChamberUuid, UniverseId)` 唯一。Status 只能 PENDING→COMPLETE；不刪除 entry。
+- `(ChamberUuid, UniverseId)` 唯一。Status 只能 PENDING→COMPLETE；不刪除 entry。既有 entry 的 Role、ControllerPos、OutwardFacing 必須等於本 session 的來源艙，不符進 SEALED(`AUTHORITY_CORRUPT`)。
 - 寫方塊之前先 checked 寫入 PENDING。完整寫完、驗證、目的 chunks 的原生存檔 checkpoint 都成功之後，才 checked 改為 COMPLETE（§9.2）。
-- 檔案缺失：
-  - allocation ledger 為空或不存在：視為空 ledger，依 §6 的建檔順序建立。
-  - allocation ledger 非空：就是 ledger 遺失，進 SEALED(`AUTHORITY_CORRUPT`)。這樣不會把遺失誤判成「第一次寫入」，而清掉投影艙 interior 裡玩家的修改。
+- 檔案缺失：依 §6 的初始化規則。schema 4 之後檔案缺失一律是遺失，不會被誤判成「第一次寫入」而清掉投影艙 interior 裡玩家的修改；只有 EXISTING 造訪過的存檔也一樣。
 - strict decode 失敗：進 SEALED(`AUTHORITY_CORRUPT`)。讀取時的 IO 例外：進 SEALED(`AUTHORITY_UNREADABLE`)。
 - 以上兩種情況，保護都改用 §9.3 的退化規則。
 
@@ -280,7 +305,8 @@ M5 不另外 new `Minecraft121DynamicDimensionBackend`，也不繞過 lifecycle 
 - **live**（非 DORMANT）：選擇之後的下一個 tick，在 guard 閒置時提交。
   - 重啟後 attach 到非 DORMANT 的 MEASURED 時也一樣，這取代 M4「等待 M5 接管」的狀態。
   - 若 M4 的保留式 recovery 已經開始（例如同一個 tick Buff 失效，或有人斷線），照樣提交：record 允許部分參與者已返還、lease 已清空，COLLAPSING 直接接手後續的返還與清理。
-  - 提交 COLLAPSING 不要求供電。量測不可撤銷；斷電只影響 §7.3 的 PREPARE。
+  - 提交 COLLAPSING 不要求供電，§7.3 的 RESOLVE 也不要求。量測不可撤銷；斷電只影響 §7.3 的 PREPARE。
+  - 本 JVM 的 M5 authority 初始化失敗時（§6），提交一律視為失敗。
 - **DORMANT**：邊緣觸發，不是每個 tick 都觸發。觸發事件只有兩種：
   - 某位原參與者由艙外進入來源艙的 interior。
   - 開服 attach 之後，第一次觀察到有原參與者在艙內。
@@ -310,14 +336,17 @@ COLLAPSING record 在提交時寫入 `Destination`：
 | --- | --- | --- | --- |
 | `RETURN_PLAYERS` | 有人尚未返還 | 沿用 `SessionRecoveryManager.recover`，延伸到 COLLAPSING：在線的人立即返還，每人一次 checked 寫入；離線的人在重新連線時返還。落點用 `ChamberReturnPlacement`，並在這裡修正落點碰撞（R2 M6）與返還失敗 WARN 缺 cause 的問題 | 一般狀態；已返還的人可以照常開關 |
 | `RELEASE_GEOMETRY` | 全員已返還，但仍有 lease | 沿用 MEASURED 的 release 路徑並延伸：清除幾何、逐格確認為 AIR、H2 checkpoint、checked 寫入空 lease，最後才釋放 ticket 與 slot | 一般狀態 |
-| `WAITING` | 全員已返還、沒有 lease，但 PREPARE 的閘門不成立 | 等待閘門成立 | 一般狀態 |
-| `PREPARE` | 全員已返還、沒有 lease，而且閘門成立 | SOURCE 走 §7.4；UNIVERSE 走 §8、§9 | UNIVERSE：門口沒有實體時，改為 `open=true`＋`membrane=sealed_<axis>` |
+| `RESOLVE` | 全員已返還、沒有 lease，`Destination` 為 UNIVERSE，目的地尚未確定 | §8：EXISTING 重驗；NEW 依序完成 ledger、catalog、物化與 discovery。不需要供電、不看閘門，通常在同一個 tick 完成 | 一般狀態；開關門不影響塌縮 |
+| `WAITING` | 全員已返還、沒有 lease、目的地已確定（SOURCE 不需要確定），但 PREPARE 的閘門不成立 | 等待閘門成立 | 一般狀態 |
+| `PREPARE` | 同上，而且閘門成立 | SOURCE 走 §7.4；UNIVERSE 走 §9 的預載與投影 | UNIVERSE：依下方「套用量子膜的條件」，改為 `open=true`＋`membrane=sealed_<axis>` |
 
+- **目的地已確定**：EXISTING 為重驗通過；NEW 為 allocation entry、catalog record、ACTIVE world、discovery record 都已確認（§8.2）。這是由權威推導出來的，不另存；重啟之後由 RESOLVE 以 idempotent 的方式重新確認。
 - **PREPARE 的閘門**：來源艙已載入、結構合法、已供電、Origin 為 enabled，而且有原參與者在艙內。
   - live 塌縮返還之後，通常立即成立。
   - 不成立時停在 WAITING，之後依 §7.1 DORMANT 的邊緣觸發再評估。
+- **套用量子膜的條件**：門的 25 格內沒有任何 entity 的 bbox，**而且**艙內沒有非參與者玩家（不含旁觀者）。不成立時，準備照常在背景進行，門維持一般開門，下一個 tick 再試。
 - **門口有人時的規則**（適用所有會讓門變成有碰撞的轉換）：
-  - 改成 `sealed` 量子膜：門的 25 格內沒有任何 entity 的 bbox 才套用；否則下一個 tick 再試。
+  - 改成 `sealed` 量子膜：依上一條。
   - 改成關閉（SEALED、§10.6 (a)、PREPARE 期間關門）：門口有 entity 時，改為 `open=true`＋`membrane=none` 的一般開門，不關閉。
   - 目的是不讓任何人卡在方塊裡。
 - 「有原參與者在艙內」只是進入 PREPARE 的條件，不是持續條件；PREPARE 開始之後參與者離開艙內（例如斷線），準備照常繼續。
@@ -326,14 +355,14 @@ COLLAPSING record 在提交時寫入 `Destination`：
   2. 門改為 `open=true`＋`membrane=none` 的一般開門，所以不會有人被困住。
   3. 退回 WAITING。
 
-  已完成的 ledger、catalog、物化、discovery、投影都保留；閘門再次成立時，依 §7.1 的邊緣觸發續做。
+  已完成的 RESOLVE、投影都保留；閘門再次成立時，依 §7.1 的邊緣觸發續做。
 - **門狀態的重新套用**：門的方塊狀態由 durable 狀態投影出來。重啟或 chunk 載入之後，排入下一個 tick 的佇列再套用，不在 chunk 載入事件當下呼叫 `setBlockState`。
 - **PREPARE 期間的開關門**：
-  - 參與者在原艙這一側開關原艙門（bulkhead 或 Controller）：依設計 §20.4 結束這次塌縮，checked 終局，門改為關閉。不重抽；已配置、已物化的宇宙保留，也已經是 discovered。
-  - 非參與者：拒絕。
-  - 這個攔截必須排在 `ChamberDoorService` 之前，由 `CollapseService` 處理，順序是先終局、再改門。
-- **非參與者**：若在門變成量子膜之前走進艙內，最多會被困到 PASSAGE_READY；之後就可以穿過量子膜，走進原世界。
-  - 已知限制：若預載一直沒完成，而且所有參與者都已離線，留在艙內的非參與者不能關門，會一直被困住（只能靠管理員指令離開）。這需要預載卡住、全員離線、外人在艙內三者同時發生。
+  - 參與者在原艙這一側開關原艙門（bulkhead 或 Controller）：依設計 §20.4 結束這次塌縮，checked 終局，門改為關閉。不重抽；PREPARE 一定在 RESOLVE 之後，所以目的宇宙已經配置、物化，也已經是 discovered。
+  - 艙內的非參與者（bbox 在 interior 內）：門改為一般開門，讓他離開。這不結束塌縮、不改變階段；他離開之後，下一個 tick 依「套用量子膜的條件」重新套用。
+  - 艙外的非參與者：拒絕。
+  - 這個攔截必須排在 `ChamberDoorService` 之前，由 `CollapseService` 處理。參與者關門時，順序是先終局、再改門。
+- **非參與者不會被困**：量子膜只在艙內沒有非參與者時才套用，套用之後外人也進不來（量子膜有碰撞）。外人仍可能在 sealed 期間出現在艙內（例如在艙內重生，或被指令傳送進來），這時他可以依上一條把門改為一般開門。PASSAGE_READY 時量子膜可穿過，外人穿過只會走進原世界；SEALED 時任何玩家都可以照一般方式開門。
 - 處於 `MeasuredRecoveryPhase` 的對應延伸時，順便移除永遠不會回傳的 `RETAIN_RECEIPT`（M4 quality M6 的這一小項）。
 
 ### 7.4 SOURCE fast path
@@ -346,11 +375,13 @@ COLLAPSING record 在提交時寫入 `Destination`：
 
 不配置宇宙、不呼叫跨世界傳送、不寫 discovery、不會出現比較器 15。
 
-## 8. 目的地解析（PREPARE，`Destination=UNIVERSE`）
+## 8. 目的地解析（RESOLVE，`Destination=UNIVERSE`）
+
+RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（§7.3）。所以 PREPARE 期間不論誰關門，NEW 的目的宇宙都已經存在，不會出現「收據被消耗、宇宙卻從未建立」的情況。
 
 ### 8.1 EXISTING 重驗
 
-以下全部成立才繼續：
+以下全部成立才繼續。PASSAGE_READY 提交前會再驗一次（§10.2）：
 
 - discovery 有這個 UniverseId，且 `gameplayEligible`。
 - flushed catalog 有這筆紀錄，且為 `EAGER_ENABLED`。
@@ -362,11 +393,12 @@ COLLAPSING record 在提交時寫入 `Destination`：
 
 ### 8.2 NEW 的順序
 
-1. 依 §6 的建檔順序：projection ledger 檔不存在、且判定為「視為空 ledger」時，先建立空檔；再做 allocation ledger 的 lookup-or-create（checked，§6.1）。任一判定為遺失，就不建檔，直接進 SEALED(`AUTHORITY_CORRUPT`)。
-2. catalog 沒有這筆時，配置它（§6.2，checked）。
+1. allocation ledger 的 lookup-or-create（checked，§6.1）。ledger 檔由 §6 的初始化建立；判定為遺失就直接進 SEALED(`AUTHORITY_CORRUPT`)。
+2. catalog 沒有這筆時，配置它；已有時驗證它（§6.2，checked）。
 3. 透過 lifecycle 物化（§6.3，idempotent）。
-4. discovery 追加（§6.4，checked）。
-5. 之後依 §8.4 做預載與投影；投影前寫入 projection ledger 的 PENDING entry（§6.5）。
+4. discovery 追加，或驗證既有紀錄（§6.4，checked）。
+
+以上完成，RESOLVE 就結束。之後在 PREPARE 依 §8.4 做預載與投影；投影前寫入 projection ledger 的 PENDING entry（§6.5）。
 
 ### 8.3 物化失敗
 
@@ -380,8 +412,8 @@ COLLAPSING record 在提交時寫入 `Destination`：
 
 ### 8.4 共通
 
-- 接著：非同步預載（§9.1）→ 投影（§9.2）→ checked PASSAGE_READY（§10.2）。
-- 任何失敗都進 SEALED，並保留同一個 `Destination`；絕不換成別的宇宙。
+- PREPARE 依序：非同步預載（§9.1）→ 投影（§9.2）→ checked PASSAGE_READY（§10.2）。
+- RESOLVE 與 PREPARE 的任何失敗都進 SEALED，並保留同一個 `Destination`；絕不換成別的宇宙。
 
 ## 9. 非同步準備與最小 Projection
 
@@ -408,6 +440,11 @@ COLLAPSING record 在提交時寫入 `Destination`：
   - 對目的世界的相關 chunks 做原生存檔 checkpoint（H2 的通用元件）。
   - 以上都成功，才 checked 改為 COMPLETE。
 - **之後**（COMPLETE；EXISTING 再次造訪）：只修復不變量的 cell（shell、Controller、門），並把門設回開啟；不碰 interior，保留之前玩家在投影艙內的修改。
+
+**既有 entity**（兩種寫法都適用）：
+
+- 玩家：任何非旁觀玩家的 bbox 與 7×7×7 volume 相交時，不寫入任何方塊，下一個 tick 再試，併入 §9.1 的 600 ticks WARN。絕不把方塊寫在玩家身上；期間參與者可以依 §7.3 關門結束。
+- 非玩家 entity：投影不移動、不移除、不殺死，也不給予物品；方塊照常寫入，後果交由原版處理（可能窒息或被擠出，掛在被覆寫方塊上的掛畫與物品展示框可能依原版規則掉落）。第一次寫入只清 interior 的方塊，不清 entity。列入 §2 的已知限制。
 
 **衝突**：目的 volume 已經有另一座艙的 COMPLETE 投影時（例如原 Origin 拆除後，在同位置新建的艙），進 SEALED(`PROJECTION_CONFLICT`)，不覆寫。
 
@@ -459,15 +496,16 @@ COLLAPSING record 在提交時寫入 `Destination`：
 ### 10.2 PASSAGE_READY
 
 - **前置條件**：
-  - `Destination` 為 UNIVERSE；`resolveActive` 回傳目的世界。
+  - `Destination` 為 UNIVERSE；`resolveActive` 回傳目的世界；EXISTING 再次通過 §8.1 的重驗。
   - 預載已到 FULL。
   - 投影為 COMPLETE，且已驗證。
   - （只有 NEW）discovery 已落盤。
+  - 相關權威都不在 §6 的「未確認」狀態。
   - 來源艙已載入、結構合法、已供電、enabled。
 - **提交**：opened＝now、expires＝now＋1200。
 - **提交之後**：
   1. 門改為 `passable_<axis>`。
-  2. 比較器輸出 15。
+  2. 刷新該艙的 Controller，比較器經 §10.7 的 `Presence.PASSAGE` 輸出 15。
   3. 對在艙內的參與者顯示 actionbar「量子通道已開啟：穿過門口的量子膜即可前往。」
 - **client 同步**：設計 §20.4 readiness 第 7 項（client 收到目的地同步）由原版跨維度移動的 respawn／chunk 同步負責；F1 會以真 client 驗證，不另做預先同步。
 
@@ -489,7 +527,9 @@ COLLAPSING record 在提交時寫入 `Destination`：
 | --- | --- |
 | 成功 | checked 把該玩家加入 `Crossed` |
 | `FAILED_ROLLED_BACK` | 顯示 actionbar「通道傳送失敗，你仍在原世界。」，WARN 只記一次；通道仍開著，可以再試 |
-| `FAILED_RECOVERY_REQUIRED` | 記 ERROR（含診斷資訊），立即依 §10.6 結束通道，門恢復一般開門；該玩家的位置交由原版處理，不另外移動 |
+| `FAILED_RECOVERY_REQUIRED` | 不移除 record。checked PASSAGE_READY→SEALED(`TRANSFER_RECOVERY_REQUIRED`)，保留 participants、`Crossed`、opened／expires 與收據，作為需要人工處理的 recovery authority；記 ERROR（含 transfer result 的移動與回滾證據）。通道對所有人關閉，門依 §11.2 處理，釋放目的世界的 ticket。不再自動移動該玩家，也不重試 |
+
+`TRANSFER_RECOVERY_REQUIRED` 的 SEALED 寫入本身也失敗時：本 JVM 立即停止接受跨越（記憶體內關閉通道）、門改為一般開門，並依 §6 的收斂規則重試這筆 SEALED 寫入；不會改走終局。若在寫入成功之前重啟，依 §12 的 PASSAGE_READY 列結束，只剩 log 證據（傳送原生錯誤＋落盤失敗＋重啟的三重故障）。
 
 非參與者穿過量子膜時不觸發任何東西，會走進原世界。
 
@@ -535,8 +575,16 @@ COLLAPSING record 在提交時寫入 `Destination`：
 
 ### 10.7 比較器
 
-- 新增 `ChamberState.PASSAGE`，輸出 15。
-- COLLAPSING 與 SEALED 輸出 11。
+現有的比較器只經 `ChamberSessionGateway.Presence` 推導：`reconcile` 把 ACTIVE 對應到 ARMED（11，`main/chamber/ChamberPowerCoordinator.java:139-141`），enum 只有 NONE／ARMING／ACTIVE／RETURNING／UNKNOWN（`main/chamber/ChamberSessionGateway.java:10`）。若 PASSAGE_READY 也回 ACTIVE，就不可能輸出 15。因此：
+
+- `ChamberSessionGateway.Presence` 新增 `PASSAGE`。`SuperpositionSessionManager.presence()` 只在 flushed record 為 PASSAGE_READY 時回 `PASSAGE`。
+- `ChamberState` 新增 `PASSAGE`，`ChamberStatusSignal` 對應 15。
+- `reconcile`：
+  - 已供電、enabled、presence 為 `PASSAGE`：回 `ChamberState.PASSAGE`。
+  - 斷電、停用或 pending 時，`PASSAGE` 比照 ACTIVE 走 needsReturn 路徑；M5 狀態的 `returnToOrigin` 依 §13.2 處理（PASSAGE_READY 依 §10.6 (d) 結束）。
+- COLLAPSING 與 SEALED 仍回 ACTIVE，輸出 11。
+- `CollapseService` 在 READY 提交、通道結束、進入 SEALED 之後，都要刷新該艙的 Controller（`ChamberPowerCoordinator.refresh`），讓比較器即時更新。
+- `ChamberControllerBlockEntity` 讀到不認得的 `ChamberState` 時沿用既有的 INVALID fallback，所以舊 build 讀到 `PASSAGE` 不會 crash（M5 本來就不可降版）。
 - `ChamberPowerCoordinator.reconcile` 在 `current==ARMED` 時短路的問題（R2 M5），在同一段程式一起修。
 
 ### 10.8 訊息
@@ -560,13 +608,13 @@ actionbar 使用 zh_tw，en_us 另附翻譯：
 
 ### 11.1 DORMANT 續行
 
-- 觸發條件見 §7.1。提交 COLLAPSING 時，RETURN_PLAYERS 與 RELEASE_GEOMETRY 都已完成，直接進入 PREPARE 的閘門判斷。
+- 觸發條件見 §7.1。提交 COLLAPSING 時，RETURN_PLAYERS 與 RELEASE_GEOMETRY 都已完成，直接進入 RESOLVE，再進 PREPARE 的閘門判斷。
 - 使用的是原本的 candidate、原本的 allocation token，以及推導出的同一個 UniverseId。
 - NEW 即使沒有人跨過去，也會留下一個永久、而且已 discovered 的宇宙。
 
 ### 11.2 SEALED
 
-- **狀態**：玩家在原艙內；門為關閉（`open=false`、`membrane=none`；門口有人時，依 §7.3 改為一般開門）。玩家可以照一般方式開門離開，不會被困住。原艙維持封鎖（presence 為 ACTIVE），收據保留；已返還的參與者可以使用其他艙（§5）。
+- **狀態**：參與者在原艙內（`TRANSFER_RECOVERY_REQUIRED` 時，已跨過的人在目的世界）；門為關閉（`open=false`、`membrane=none`；門口有人時，依 §7.3 改為一般開門）。任何玩家（含非參與者）都可以照一般方式開門離開，不會被困住。原艙維持封鎖（presence 為 ACTIVE），收據保留；已返還的參與者可以使用其他艙（§5）。
 - **原因分類**：
 
 | `SealedReason` | 可否重試 | 重試的時機 |
@@ -578,6 +626,7 @@ actionbar 使用 zh_tw，en_us 另附翻譯：
 | `EXISTING_INELIGIBLE` | 永久 | — |
 | `AUTHORITY_CORRUPT` | 永久 | — |
 | `PROJECTION_CONFLICT` | 永久 | — |
+| `TRANSFER_RECOVERY_REQUIRED` | 永久 | —（只能由 PASSAGE_READY 進入，§10.3） |
 
 - **重試的觸發**：與 DORMANT 相同的邊緣觸發（§7.1），而且要在退避期之外。
   - 每個 session 的退避從 200 ticks 開始，每次失敗加倍，上限 12000 ticks。
@@ -585,7 +634,7 @@ actionbar 使用 zh_tw，en_us 另附翻譯：
   - 重試時 checked SEALED→COLLAPSING，重跑 PREPARE；仍失敗就回到 SEALED。WARN 依原因去重。
 - **永久原因**：不再自動重試。記 ERROR，說明「需要管理員處理」，原艙會一直封鎖（§2）。
 - 絕不重抽，也絕不取消。
-- §7.1 的「COLLAPSING 提交失敗」使用同一套退避。
+- §7.1 的「COLLAPSING 提交失敗」、§6 的收斂重試，以及 journal 寫入失敗後的記憶體內退避，都使用同一套退避。
 
 ### 11.3 Nether／End
 
@@ -611,8 +660,9 @@ actionbar 使用 zh_tw，en_us 另附翻譯：
 | DORMANT | 等 §7.1 的邊緣觸發 | 不影響 |
 | COLLAPSING | 依推導階段續做。門的狀態在下一個 tick 重新套用。ledger、catalog、物化、投影都是 idempotent | 未返還的人斷線：照舊凍結；重新加入時，在 JOIN 之後的下一個 tick 返還到原艙（沿用 M2／M4 機制）。已返還的人斷線：沒有影響 |
 | PASSAGE_READY | 開服時直接結束通道：checked 終局；門在下一個 tick 正規化為一般開門。已跨過的人在目的地，沒跨過的人在原艙 | 未跨過的人斷線：沒有影響，重新加入後若通道仍開著可以再試。已跨過的人：在目的世界重新加入（開服時已物化） |
-| SEALED | 保留；開服後第一次觸發即可重試（可重試的原因） | 不影響 |
-| allocation／projection ledger 或 discovery 損壞或遺失 | UNIVERSE 目的地進 SEALED(`AUTHORITY_CORRUPT`)，不配置任何東西 | — |
+| SEALED | 保留；開服後第一次觸發即可重試（可重試的原因）。`TRANSFER_RECOVERY_REQUIRED` 與其他永久原因不重試 | 不影響 |
+| allocation／projection ledger 或 discovery 損壞或遺失（journal 已是 schema 4，§6） | UNIVERSE 目的地進 SEALED(`AUTHORITY_CORRUPT`)，不配置任何東西 | — |
+| 存檔第一次用 M5 開啟（journal schema 1–3 或不存在） | M5 authority 初始化補建缺少的空 ledger；之後第一次 checked 寫入升為 schema 4 | 不變 |
 | allocation／projection ledger 或 discovery 讀取時 IO 例外 | UNIVERSE 目的地進 SEALED(`AUTHORITY_UNREADABLE`)；下次開服後重試一次 | — |
 | catalog 損壞 | 依 M3：開服 bootstrap 讓 server 停止（`main/universe/UniverseLifecycleService.java:52-56`、`:280-282`），不會走到 SEALED | — |
 
@@ -629,7 +679,8 @@ Cross-JVM 要覆蓋的 crash 窗口（每一個都要證明：同一個 Universe
 9. W8：DORMANT 續行，跨越重啟到達 READY。
 10. W9：物化失敗 → 已改為 `DISABLED`、SEALED → 重啟 → 開服不停止 → 重試成功。
 11. W10：Nether／End 的 NEW 收據（schema 3 fixture）→ 取消：catalog 筆數不變、原艙解除封鎖。同一批 fixture 的 SOURCE 收據則正常完成。
-12. W11：全新存檔的第一次 NEW，在 §6 建檔順序的步驟 1（projection ledger 空檔）之後、步驟 2（allocation entry）之前 crash → 重啟後不被判為遺失，照常到達 READY。
+12. W11：M4 schema 3 存檔（discovery 非空）第一次用 M5 開啟，M5 authority 初始化只建立了一個 ledger 空檔就 crash → 重啟時 journal 仍是 schema 3，補建另一個，不被判為遺失；之後第一次 NEW 照常到達 READY。
+13. W12：catalog 寫入的 atomic move 已完成、讀回失敗（注入）→ 記憶體還原並保持 dirty → 重啟前與重啟後，都只會得到同一個 UniverseId，catalog 最多多 1 筆（§6 收斂規則）。
 
 ## 13. 對 M4 行為的改變
 
@@ -651,7 +702,7 @@ Cross-JVM 要覆蓋的 crash 窗口（每一個都要證明：同一個 Universe
 | 檔案 | 位置 | 目前的行為 | M5 的處理 |
 | --- | --- | --- | --- |
 | `main/superposition/SuperpositionSessionManager.java` | `:59-64`、`:387-394`（attach） | 非 MEASURED 一律轉為 RETURNING | M5 狀態不轉 RETURNING：COLLAPSING 交給 `CollapseService`，PASSAGE_READY 依 §12 結束，SEALED 保留 |
-| 同上 | `:74-75`、`:81`（presence 與 runtime） | 只認 MEASURED | 改用 `receiptRetained`，三個 M5 狀態回 ACTIVE |
+| 同上 | `:74-75`、`:81`（presence 與 runtime） | 只認 MEASURED | 改用 `receiptRetained`：COLLAPSING、SEALED 回 ACTIVE，PASSAGE_READY 回 `PASSAGE`（§10.7） |
 | 同上 | `:178-186`（tick） | MEASURED 時請求 measured recovery | 只對 MEASURED 請求；M5 狀態由 `CollapseService` 負責，絕不呼叫 `requestMeasuredRecovery` |
 | 同上 | `:203`（measured 收尾的清理迴圈） | 只處理 MEASURED | COLLAPSING 的 release 收尾使用延伸後的同一路徑 |
 | 同上 | `:323`（LOW → `returnToOrigin`） | MEASURED 時只請求 recovery，不寫 RETURNING | M5 狀態一律不寫 RETURNING。COLLAPSING 停在 WAITING（PREPARE 進行到一半時依 §7.3 退回）；PASSAGE_READY 依 §10.6 (d) 結束；SEALED 保留 |
@@ -662,6 +713,9 @@ Cross-JVM 要覆蓋的 crash 窗口（每一個都要證明：同一個 Universe
 | 同上 | `:146-151`、`:246-258`（`dormant`、`participantsAvailable`、`validateOwnership`） | 只豁免 MEASURED DORMANT | 依 §5 的唯一性規則 |
 | `main/corridor/CorridorPageManager.java` | `:89-92`（attach）、`:219-232`（`requestMeasuredRecovery`／`releaseMeasured`）、`:306`、`:321`、`:424`、`:837-842`（measured release） | 只認 MEASURED | COLLAPSING 的 RETURN／RELEASE 使用延伸後的同一路徑；其他 M5 狀態沒有 space |
 | `main/persistence/MeasuredWorldSaveCheckpoint.java` | `:23` | 只接受 MEASURED 的 RELEASE_GEOMETRY | 也接受 COLLAPSING 的 RELEASE_GEOMETRY（H2 改為通用元件） |
+| `main/persistence/SessionRecoveryState.java` | `:83`、`:192`（envelope schema） | candidate 初始化後寫 schema 3 | 依 §5：M5 authority 初始化成功且沒有 legacy record 時寫 schema 4，之後不降回；schema 4 也蘊含 `candidateInitialized` |
+| `main/chamber/ChamberSessionGateway.java`、`ChamberState.java`、`ChamberStatusSignal.java` | `:10`、整檔、整檔 | 沒有 PASSAGE | 新增 `Presence.PASSAGE`、`ChamberState.PASSAGE`→15（§10.7） |
+| `main/chamber/ChamberPowerCoordinator.java` | `:111-156`（`reconcile`） | ACTIVE→ARMED；`current==ARMED` 短路 | `PASSAGE`→`ChamberState.PASSAGE`；斷電時比照 ACTIVE；同時修 R2 M5 |
 
 ## 14. 真 client blocker（F1）
 
@@ -683,13 +737,19 @@ M3 spec §8 把它列為正式 passage 的前置 blocker。F1 排在 T1、H1–H
 - schema 4 codec 的 strictness 與 rejection fixtures。
 - 合法狀態矩陣、`sameAuthority` 的狀態邊與 self-loop、不可變欄位、唯一性規則；終局 API 的 CAS、失敗放回與 tombstone。
 - allocation ledger：固定的推導 test vectors、只能追加、idempotency。
-- 遺失與損壞的判定表，至少包含：
+- 遺失與損壞的判定表（§6 的初始化規則），至少包含：
   - 全新存檔第一次 NEW 到達 READY，不被判為遺失。
-  - §6 建檔順序的每個中間狀態，都不被判為遺失。
-  - 完成一次 NEW 之後刪除 projection ledger 檔（或 allocation ledger 檔）：下一次 NEW 不會重建該檔，而是進 `AUTHORITY_CORRUPT`；已 COMPLETE 的投影 interior 不會被重寫。
+  - M4 schema 3 存檔、discovery 非空（fixture）：升級後第一次 NEW 不被判為遺失。
+  - 初始化只建立一個 ledger 就中斷：journal 仍是 schema 3 時補建另一個。
+  - journal 已是 schema 4 時刪除 projection ledger 檔（或 allocation ledger 檔）：不重建，進 `AUTHORITY_CORRUPT`；只有 EXISTING 造訪過的存檔也一樣；已 COMPLETE 的投影 interior 不會被重寫。
+  - 初始化失敗時 journal 不升 schema 4、不提交 COLLAPSING。
   - 確定遺失時進 `AUTHORITY_CORRUPT`；IO 例外時進 `AUTHORITY_UNREADABLE`。
+- 既有紀錄的驗證：allocation entry、catalog record、discovery record（`gameplayEligible=false` 或 `firstObserver` 不符）、projection entry 不符時都進 `AUTHORITY_CORRUPT`，且不改寫既有紀錄。
+- checked 寫入失敗的收斂：注入「atomic move 完成、讀回失敗」，確認記憶體還原、保持 dirty、下一次寫出覆寫磁碟；未確認期間不做新的配置或 READY 判斷；§6 表中每一種「已落地但未確認」的內容，重新讀取後都被接受。
 - `occupies` 謂詞與 `recordFor` 的查找。
 - projection ledger；discovery append 的 idempotency；catalog 配置失敗時的還原。
+- `reconcile`：presence 為 `PASSAGE` 時輸出 15；斷電時比照 ACTIVE。
+- 狀態邊：PASSAGE_READY→SEALED 只接受 `TRANSFER_RECOVERY_REQUIRED`，並保留 `Crossed` 與 opened／expires；它沒有 SEALED→COLLAPSING 的重試邊。
 - 推導階段與 PREPARE 閘門；四個朝向的跨越幾何；`PassageTransferPolicy` 的決策表（含跳躍、水、岩漿時的驗證與回滾資格）。
 - SEALED 的原因分類與退避。
 
@@ -697,7 +757,10 @@ M3 spec §8 把它列為正式 passage 的前置 blocker。F1 排在 T1、H1–H
 
 - 選門 → 下一個 tick 進 COLLAPSING → 全員返還 → 量子膜（sealed）→ NEW 的 READY → 比較器 15 → 參與者跨過，在目的投影艙的門口得到同 XYZ、yaw、pitch → `Crossed` 已記錄。
 - 兩人：一人跨過、一人留下 → 到期後門恢復一般開門、record 已移除 → 同一座艙可以開新 session。
-- 參與者在 READY 時關門；參與者在 PREPARE 時關門（終局、宇宙保留且已 discovered、沒有重抽）。
+- 參與者在 READY 時關門；參與者在 PREPARE 時關門（終局、宇宙保留且已 discovered、沒有重抽）。PREPARE 一開始（預載尚未完成）就關門的 NEW：catalog 恰好多 1 筆、discovery 有紀錄，證明 RESOLVE 先於 PREPARE。
+- 艙內有非參與者時不套用 sealed 量子膜；sealed 期間出現在艙內的非參與者（以指令傳送進去）可以把門改為一般開門，塌縮不結束，他離開之後量子膜重新套用。
+- 投影寫入：目的 volume 有玩家時不寫入、等到他離開；有非玩家 entity（例如生成的動物）時照常寫入、不移除 entity。
+- 注入 `FAILED_RECOVERY_REQUIRED`（testmod 的 native move fault）→ record 進 SEALED(`TRANSFER_RECOVERY_REQUIRED`)、`Crossed` 保留、比較器 11、門可開、沒有終局。
 - 返還期間有人離線：已返還的人可以開門離開；離線的人重新加入後完成返還，才開始準備。
 - SOURCE 的 fast path：catalog 不變，門為一般開門。
 - EXISTING：用 discovery fixture，到達同一個 UniverseId；另一座艙的 session 也能到達同一個宇宙（基本重逢）。fixture 必須同時寫入一致的 allocation 與 projection ledger，或使用不會觸發 §6 遺失判定的資料。
@@ -719,7 +782,7 @@ M3 spec §8 把它列為正式 passage 的前置 blocker。F1 排在 T1、H1–H
 
 **Cross-JVM**：
 
-- testmod 新增 M5 recovery probe，覆蓋 §12 的 W1–W11。
+- testmod 新增 M5 recovery probe，覆蓋 §12 的 W1–W12。
 - `scripts/verification/` 新增 `m5-collapse-probe.ps1`，納入 `run-all.ps1` 與 summary 檢查，並經 review。
 
 **回歸與 CI**：
@@ -736,15 +799,15 @@ M3 spec §8 把它列為正式 passage 的前置 blocker。F1 排在 T1、H1–H
 2. **T1** GameTest 順序依賴（§4）。
 3. **H1**、**H2**、**H3**、**H4**（§4）。
 4. **F1** 真 client blocker（§14）。
-5. **F2** schema 4、唯一性規則、終局 API、allocation ledger、projection ledger、discovery append、catalog 配置的還原（pure JVM）。
+5. **F2** schema 4（含 PASSAGE_READY→SEALED 的狀態邊）、M5 authority 初始化與 schema 4 升版、唯一性規則、終局 API、allocation ledger、projection ledger、discovery append、既有紀錄的驗證、checked 寫入失敗的收斂與 catalog 還原（pure JVM）。
 6. **F3** `CollapseService`：
-   - MEASURED→COLLAPSING、§13.2 的所有分支、返還與 release 的延伸（含 R2 M6、WARN cause）、WAITING 與 PREPARE 閘門、SOURCE fast path、COLLAPSING 凍結、PREPARE 期間關門。
+   - MEASURED→COLLAPSING、§13.2 的所有分支、返還與 release 的延伸（含 R2 M6、WARN cause）、推導階段（含 RESOLVE 的位置）、WAITING 與 PREPARE 閘門、套用量子膜的條件與非參與者的門規則、SOURCE fast path、COLLAPSING 凍結、PREPARE 期間關門。
    - Nether／End 規則與取消。
    - M4 測試的 collapse-suspended hook（含 M4 test 收尾與 q7）。
 7. **F4** 目的地：
-   - lifecycle 的 runtime 物化與查詢 API、EXISTING 重驗、NEW 配置、物化失敗改為 `DISABLED`、非同步預載。
-   - 投影的寫入、驗證與 checkpoint；投影的索引、保護、退化規則與載入辨識；SEALED 的原因與退避。
-8. **F5** 通道：量子膜的方塊狀態、模型、貼圖與 client render layer；PASSAGE_READY；跨越判定與 `PassageTransferPolicy`；結束條件；比較器 15（含 R2 M5）；訊息。
+   - RESOLVE：lifecycle 的 runtime 物化與查詢 API、EXISTING 重驗、NEW 配置、物化失敗改為 `DISABLED`。
+   - PREPARE：非同步預載；投影的寫入（含既有 entity 的處置）、驗證與 checkpoint；投影的索引、保護、退化規則與載入辨識；SEALED 的原因與退避。
+8. **F5** 通道：量子膜的方塊狀態、模型、貼圖與 client render layer；PASSAGE_READY；跨越判定與 `PassageTransferPolicy`；`FAILED_RECOVERY_REQUIRED`→SEALED；結束條件；`Presence.PASSAGE` 與比較器 15（含 R2 M5）；訊息。
 9. **F6** 復原：DORMANT 續行與 SEALED 重試的觸發、重啟與斷線矩陣、M5 cross-JVM probe 與 harness 擴充、CI 清單。
 10. **F7** 文件：implementation note、README 與玩家說明、設計文件狀態、`docs/implementation-notes/compatibility.md`（設計 §32.3 要求記錄實測的 render stack）、manual smoke 清單。
 
@@ -810,7 +873,9 @@ M3 spec §8 把它列為正式 passage 的前置 blocker。F1 排在 T1、H1–H
 
 Required manual smoke 由 Claude 代操作，回報給使用者時用白話，項目、做法與預期寫在一起：
 
-1. 單人：選門 → 回艙 → 量子膜 → 穿過，F3 座標前後一致 → 到期後門恢復一般開門。
+1. 單人，兩輪（單人跨過之後就符合「全員都已跨過」，通道立即結束，等不到 60 秒到期）：
+   - 跨過：選門 → 回艙 → 量子膜 → 穿過，F3 座標前後一致；之後以唯讀指令確認 record 已移除、原艙的門為一般開門（結束條件 (b)）。
+   - 到期：另一次選門，到量子膜可穿過之後不跨過，等 60 秒，門恢復一般開門（結束條件 (c)）。
 2. DORMANT 續行：從外部備份複製 M1–M4 的驗收世界 `QC-accept-WM4`。只用複本，不碰備份本身。
    - 寫預期之前，先以唯讀方式讀出三座艙的收據（候選類型 SOURCE／NEW／EXISTING）與供電狀態，再依收據寫預期。
    - 進入有 DORMANT 收據、已供電的艙，通道照原收據開啟（SOURCE 則是一般開門）。
@@ -868,13 +933,13 @@ SOURCE 與 EXISTING 由 GameTest 覆蓋；人工 smoke 若剛好抽到，就記�
 
 | Finding | 處置 |
 | --- | --- |
-| N1 discovery 時機與遺失判定矛盾 | §6 改為明確的建檔順序（先 projection 空檔，再 allocation entry），遺失判定只依這個順序推得的證據；§6.1、§6.5、§8.2 同步；§12 新增 W11；§15 新增判定表 |
+| N1 discovery 時機與遺失判定矛盾 | §6 改為明確的建檔順序（先 projection 空檔，再 allocation entry），遺失判定只依這個順序推得的證據；§6.1、§6.5、§8.2 同步；§12 新增 W11；§15 新增判定表。（v4 改用 schema 4 envelope 作為證據，見 §20.4） |
 | N2 `recordFor` 可能挑錯 record | §5 定義單一的 `occupies` 謂詞；§13.2 新增 `onJoin`／`onDisconnect`／`recordFor` 列；§15 新增測試 |
 | N3 暫時性 IO 被當成永久 | 拆成 `AUTHORITY_CORRUPT`（永久）與 `AUTHORITY_UNREADABLE`（重啟後重試）；§6、§9.3、§11.2、§12 同步；退化保護在讀取成功後自動解除 |
 | m1 runtime 物化失敗的記錄 | §6.3 |
 | m2 退化保護不是完整超集 | §9.3 改寫用語，並記為已知缺口 |
 | m3 PREPARE 中途閘門失效 | §7.3：釋放 ticket、門恢復一般開門、退回 WAITING |
-| m4 非參與者被困 | §7.3、§2 記為已知限制 |
+| m4 非參與者被困 | §7.3、§2 記為已知限制。（v4 改為不會被困，見 §20.4） |
 | m5 關門時門口有人 | §7.3 的門口規則涵蓋所有會讓門有碰撞的轉換 |
 | m6 catalog dirty 與還原 API | §6.2 |
 | m7 重試時 crash 會停服 | §8.3、§2 |
@@ -884,8 +949,24 @@ SOURCE 與 EXISTING 由 GameTest 覆蓋；人工 smoke 若剛好抽到，就記�
 
 | Finding | 處置 |
 | --- | --- |
-| N4 建檔會蓋掉遺失的證據 | §6 的建檔步驟改為以遺失判定為前提，判定為遺失時不建檔；§8.2 第 1 步同步；§15 新增「刪除 ledger 後不重建」的測試 |
+| N4 建檔會蓋掉遺失的證據 | §6 的建檔步驟改為以遺失判定為前提，判定為遺失時不建檔；§8.2 第 1 步同步；§15 新增「刪除 ledger 後不重建」的測試。（v4 的初始化規則保留同一個保證：schema 4 之後不建檔） |
 | Minor：PREPARE 的參與者條件是否持續 | §7.3：只是進入 PREPARE 的條件，不是持續條件 |
 | Minor：discovery 追加失敗、`changeAvailability` flush 失敗 | §6.4、§8.3：還原 current，並以既有原因進 SEALED |
 | Minor：「某個」推導值的用語 | §6 改為「本 session 的 NEW 推導出的 UniverseId」 |
 | Minor：關門時門口有人 | §10.6、§11.2 加註，依 §7.3 改為一般開門 |
+
+### 20.4 第四輪（使用者轉交，`d9b3249` → v4）
+
+逐項對照 `a7e1be2` 的程式碼核實，9 項都成立。
+
+| Finding | 核實 | 處置 |
+| --- | --- | --- |
+| Critical：回滾失敗後不可刪除 recovery authority（原 §10.3） | `FAILED_RECOVERY_REQUIRED` 代表原生移動後驗證失敗、回滾也沒有成功（`main/universe/UniverseTransferService.java:183-216`），玩家實際位置未確認；原文直接終局，會刪掉唯一的 record | §10.3 改為 PASSAGE_READY→SEALED(`TRANSFER_RECOVERY_REQUIRED`)，永久、保留 `Crossed` 與 opened／expires；§5 新增狀態邊與合法組合；§11.2、§12、§15 同步；SEALED 寫入失敗時的記憶體內關閉與三重故障窗口寫入 §10.3 |
+| Important：首次 M5 升級會誤判 allocation ledger 遺失（原 §6.1） | 遺失證據原本依 discovery 非空；M4 時期 discovery 已非空的存檔（fixture、驗收世界）第一次 NEW 就會永久 `AUTHORITY_CORRUPT`。同類問題：只有 EXISTING 造訪過的存檔，projection ledger 被刪後會被當成空檔重建 | §6 改用 M4 既有做法：journal 的 schema 4 envelope 是 M5 authority 初始化的不可撤銷證據（`SessionRecoveryState.java:38-39`）；初始化在開服時補建空 ledger；§5、§6.1、§6.5、§8.2、§12（W11 改寫）、§15 同步 |
+| Important：PREPARE 提前關門可能消耗尚不存在的 NEW Universe（原 §7.3） | 原文的配置在 PREPARE 內進行，PREPARE 一開始就關門會終局，NEW 收據被消耗、宇宙卻從未建立 | 新增推導階段 RESOLVE，排在 PREPARE 之前、不需要供電；§1、§5、§7.3、§8、§11.1、§15 同步 |
+| Important：現有 gateway 無法讓比較器輸出 15（原 §5） | `Presence` 只有 NONE／ARMING／ACTIVE／RETURNING／UNKNOWN，`reconcile` 把 ACTIVE 對應到 ARMED（`ChamberSessionGateway.java:10`、`ChamberPowerCoordinator.java:139-141`） | §10.7 新增 `Presence.PASSAGE` 與對應；§5、§10.2、§13.2、§15 同步 |
+| Important：只還原記憶體不能收斂 checked write 失敗（原 §6.2） | catalog 寫入在 atomic move 之後才讀回（`UniverseCatalogStore.java:36-42`），讀回失敗時磁碟已是新內容 | §6 新增「checked 寫入失敗的收斂」：還原並保持 dirty、未確認期間不做新決策、列出每一種已落地內容在重啟後為何合法；journal 寫入失敗的處理；§12 新增 W12 |
+| Important：Discovery idempotency 需要驗證既有 record（原 §6.4） | 原文「已存在就不改動」，會接受 `gameplayEligible=false` 或不屬於本 session 的紀錄 | §6.4 驗證 `gameplayEligible` 與 `firstObserver`；§6 新增「既有紀錄的驗證」，同樣套用到 allocation、catalog、projection |
+| Important：Projection 覆寫未定義既有 entity 的處置（原 §9.2） | 原文只定義方塊與 block entity | §9.2：有玩家就等待、絕不寫在玩家身上；非玩家 entity 不處理、交由原版；§2 已知限制 |
+| Important：Fail-closed 不應無限困住非參與者（原 §2） | 原文接受「預載卡住＋全員離線＋外人在艙內」時外人被困 | §7.3：艙內有非參與者時不套用量子膜；sealed 期間出現在艙內的非參與者可以把門改回一般開門；刪除 §2 的對應限制 |
+| Minor：單人 smoke 無法等到 60 秒到期（原 §18） | 單人跨過後即符合 (b) 全員跨過，通道立即結束 | §18 拆成「跨過」與「到期」兩輪 |
