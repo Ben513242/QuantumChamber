@@ -720,7 +720,8 @@ GREEN log 中的對應行：double fault 依序為「收斂寫出失敗」WARN �
 - Review：
   - 首輪 spec review：✅，Minor 3。
   - 首輪 code quality review：Critical 0、Important 0、Minor 6。fix round 1 處理 spec Minor 3 與 quality Minor 1–5；quality Minor 6（testmod 共用的 outbound 讀取 helper）由 controller 交給 F3d。
-  - fix round 1 尚未 re-review。
+  - 首輪 spec Minor 1、2 的處置：spec Minor 1（載具修正沒有自動化覆蓋）接受，只靠 code review（走廊世界不接受載具），F1b 可選擇在凍結中騎乘觀察；spec Minor 2（只覆蓋單人、RETURNING）中，MEASURED 與 RETURNING 共用 `blocks()`／`freezes`，不另補，各玩家獨立節流交給 F3d 的 COLLAPSING 凍結 GameTest。
+  - fix round 1 的 re-review：Critical 0、Important 0、Minor 1（本段 review 處置的追溯性，已在 controller 的 docs commit 補上）。H4 完成。
 
 ### Code-truth（`a534184`）
 
