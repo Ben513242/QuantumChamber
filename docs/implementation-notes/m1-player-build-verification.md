@@ -4,12 +4,12 @@
 
 ## 啟動本分支的開發客戶端
 
-功能分支 `feature/m1-chamber`（M1–M4）的 M1／M1.1／M1.2／M2／M4 人工驗收已於 2026-09-30 記錄；記錄結果的 docs commit 在 GitHub Actions 雙平台通過後，才以 `--ff-only` 合併 `main`，實際合併與 tag 狀態以 `main`／tag 為準。合併之前，本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動，不要在不含本功能的 main 目錄呼叫 Wrapper。另一台電腦若直接 clone／checkout `feature/m1-chamber`，則在該 clone 的根目錄執行，不必另建同名 worktree。
+功能分支 `feature/m1-chamber`（M1–M4）的 M1／M1.1／M1.2／M2／M4 人工驗收已於 2026-09-30 記錄；記錄結果的 docs commit 在 GitHub Actions 雙平台通過後，才以 `--ff-only` 合併 `main`，實際合併與 tag 狀態以 `main`／tag 為準。合併之後，本機請從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 啟動（原 `.worktrees\m1-chamber` 由使用者 2026-10-01 決定在外部備份後刪除）。另一台電腦若直接 clone／checkout `feature/m1-chamber`，則在該 clone 的根目錄執行，不必另建同名 worktree。
 
 最方便的方式是在檔案總管進入該工作區，雙擊 `start-client.bat`。聊天中的檔案連結供閱讀，不會自動執行。PowerShell 也可使用：
 
 ```powershell
-Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber'
+Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber'
 .\start-client.bat
 ```
 
@@ -18,7 +18,7 @@ Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-cham
 若要明確指定本機 JDK，PowerShell 原始啟動方式：
 
 ```powershell
-Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber'
+Set-Location 'C:\Users\Ben\Documents\minecraft QuantumChamber'
 $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot'
 $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 .\gradlew.bat --no-daemon runClient

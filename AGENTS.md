@@ -45,6 +45,8 @@ milestone implementation → automated gates → required manual smoke → task�
 - `run/` 與 `.superpowers/` 備份到 repo 外，建立 SHA-256 manifest，並驗證備份可讀。
 - 可重用的 harness 與 `.tools/` 整理到 tracked `scripts/verification/`（獨立 task＋review）。
 
+`.worktrees/m1-chamber` 的三項前提已於 2026-10-01 完成，見下方「下一步」第 5 步。
+
 ## 固定技術基線
 
 - Minecraft `1.21`
@@ -96,7 +98,7 @@ M4 Candidate Doors 實作與 review 已完成（plan 的 Completion Evidence 另
 - Tasks 1–9 的逐 task review，以及 M4 whole-branch review（含 fix round 1），都已 clean（Critical／Important 為 0）。
 - Task 10 文件 review 的結果與後續修正，見 SDD ledger（`progress.md`）。
 - 2026-09-29 完成 M1–M4 整分支 final review（範圍 `ddc8b1e..1f900f5`，同時作為 M2 整分支 final review）。7 項 Important 由 integration fix rounds 1–3（`1f900f5..428f52a`，20 commits）修正，每輪都經 spec＋quality review（round 1 spec review 新增的 Important N-1 於 round 2 關閉）。2026-09-30 人工驗收途中另發現入場 bug（參與者朝向恰為 -0.0 時，入場 ARMING 的 checked 落盤必定失敗），由 integration fix round 4（`ba854e8`，只改 `SessionRecoveryRecord.Participant`）修正，經 fresh reviewer spec ✅＋quality Approved（Critical／Important 0）。見 [`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。
-- Code HEAD 為 `ba854e846482cf37bbb808bfc2df134090273969`（integration fix round 4），其後只有文件 commit。Round 3 的 code HEAD 是 `428f52a`，M4 驗收時的 code HEAD 是 `752ada1`。
+- Code HEAD 為 `ba854e846482cf37bbb808bfc2df134090273969`（integration fix round 4），其後沒有 `src/`、build 檔或 `.github/` 的變更（只有文件與 `scripts/verification/`）。Round 3 的 code HEAD 是 `428f52a`，M4 驗收時的 code HEAD 是 `752ada1`。
 - M1／M1.1／M1.2／M2／M4 人工驗收已於 2026-09-30 記錄（清單 E 段：無 gate waiver，結論可合併）。記錄結果的 docs commit `9bce72e` 在 GitHub Actions run `36691210399` 雙平台通過後，2026-09-30 以 `git merge --ff-only` 合併 `main`（`ddc8b1e..9bce72e`），並建立 annotated tag `m1-m4`（指向 `9bce72e`）；其後只有整合狀態 docs commit。實際 CI、合併、tag，以及 feature 分支的 push 狀態，以 GitHub Actions、`git status`、遠端 ref、`main` 與 tag 為準。
 
 先讀：
@@ -124,7 +126,7 @@ M4 Candidate Doors 實作與 review 已完成（plan 的 Completion Evidence 另
    - 設計文件 `docs/quantum_superposition_chamber_design.md` 的 Document stage 行（:5）。
 3. M2 整分支 final review：**已完成（2026-09-29）**。使用者以 10 類唯讀清單指定範圍為整條 feature branch `ddc8b1e..1f900f5`，同時完成 M2、M3-A／M3-B、M4 deferred Minors 的 final triage。7 項 Important 由 integration fix rounds 1–3 修正，全部 automated gates 在 `428f52a` 重跑並經 review。人工驗收在修正前尚未開始（B-5 的自有世界預驗不計入），所以沒有需要重驗的人工列；清單已改以 `428f52a` 為基準。紀錄見 [`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`](docs/implementation-notes/2026-09-29-m1-m4-integration-review.md)。之後若 review 或 triage 再導致程式變更，依清單 E 段「review 引起的程式變更」條款處理：在新 HEAD 重跑 automated gates，只重驗受影響的人工項目，再進第 4 步。2026-09-30 人工驗收途中，integration fix round 4（`ba854e8`）即依此條款處理：automated gates 在 `ba854e8` 全部重跑，fresh reviewer 逐列判定已在 `d03bbc6` 記錄的 PASS 列都未受影響，沒有需要重驗的列（B-2、B-4、B-5 直接在 `ba854e8` 驗收）；清單基準改為 `ba854e8`。
 4. 人工驗收記錄完成（或依上方「使用者 2026-09-24 決定」第 3 項記錄 gate waiver；2026-09-30 已記錄，無 waiver），且 feature HEAD 在 GitHub Actions 的 Ubuntu 與 Windows job 都通過（以 GitHub Actions 上該 commit 的 run 為準，本機 gate 不能代替；依清單 E 段，該 HEAD 須已包含記錄人工結果的 docs commit）後，以 `git merge --ff-only` 併入 `main` 並打 tag（名稱由使用者選定為 `m1-m4`，annotated tag，於合併時建立），再以獨立 docs commit 更新整合狀態：該 commit 先在 `feature/m1-chamber` 上 commit，再以 `git merge --ff-only` 前進 `main`，不直接在 `main` 上 commit。**已完成（2026-09-30）**：`main` 由 `ddc8b1e` fast-forward 到 `9bce72e`，annotated tag `m1-m4` 指向 `9bce72e`，都已推上 `origin`；整合狀態由本步驟的獨立 docs commit 記錄。
-5. 外部備份與驗證腳本 tracked 化完成之前，不刪除 `.worktrees/m1-chamber`。其中「驗證腳本 tracked 化」已由新增 `scripts/verification/` 的 commit 滿足（`.tools/` 盤點後不納入，理由見該目錄 `README.md`；review 結果以 SDD ledger 為準）。外部備份另行處理，完成並記錄之前，仍不得刪除 worktree。
+5. 外部備份與驗證腳本 tracked 化完成之前，不刪除 `.worktrees/m1-chamber`。其中「驗證腳本 tracked 化」已由新增 `scripts/verification/` 的 commit 滿足（`.tools/` 盤點後不納入，理由見該目錄 `README.md`；review 結果以 SDD ledger 為準）。外部備份已於 2026-10-01 完成：`run/`、`.superpowers/`、`.tools/` 複製到 repo 外的 `C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\`（資料夾名稱去掉開頭的點：`run`、`superpowers`、`tools`）。`MANIFEST-sha256.txt` 共 139,564 檔，逐檔讀回比對全部相符，結果見同目錄 `BACKUP-LOG.txt`。使用者自有世界與驗收世界在備份的 `run/client-base/saves/`。使用者同日決定，備份完成後刪除整個 `.worktrees` 資料夾，M5 另開新的 worktree。刪除後，SDD ledger 與 evidence owner（上方「先讀」所列的 `.superpowers/sdd/...`）只存在於這份備份的 `superpowers/` 下。
 6. 以新的 worktree 開始 M5 設計／計畫。M5 只做最小的 collapse／passage 切片，從 checked `MEASURED+SELECTED` receipt 開始；不得把完整 Nether／End family 或 complex renderer 混入這個切片。不得重做已 review 完成的 M4 Tasks，也不得重抽候選或改寫 M4 receipt。
 
 `docs/handoffs/2026-09-24-m4-task9-resume*.md` 已完成，只保留為歷史紀錄，不再是接手入口。

@@ -42,7 +42,7 @@ Commit 範圍：
 
 原始證據放在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（下稱 evidence owner）。`.superpowers/` 被 gitignore，是本機 scratch，不在 repo 內，也不進 release。因此本文直接寫出關鍵數字與 SHA-256；本文不能取代原始證據，交接時要以 exact commit 對照這些雜湊。
 
-**可重現性限制**：驅動下列 runtime gate 的 harness 只存在於 evidence owner，不在 repo。包括 `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、Gradle init script `task9-runtime.init.gradle`（所有 gate 的 Gradle 呼叫都以 `-I` 載入，含 M4 recovery）與 `task9-probe.init.gradle`（M3 lifecycle／transfer probe 使用）、wrapper `wfix1-final-green.ps1`／`wfix1-final-green2.ps1`，以及 `wfix1-build-summary.ps1`、`task10-phase2-verify.ps1` 等 build-summary／verify 腳本；integration fix 另有 `ifix*-gradle.ps1`、`ifix*-final-green.ps1`、`ifix*-build-summary.ps1` 與 CI 規則驗證 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`。Repo 內 tracked 的只有它們呼叫的 `build.gradle` run 設定（`gameTestLegacy`、`m3Universe`、`m3Transfer`、`m4Recovery`）與 `src/testmod` 的 GameTest／probe。可重用 harness 要整理到 tracked `scripts/verification/`，這是使用者已決定的獨立 task。完成之前，只要刪除 worktree 或 `.superpowers/`，這些 gate 就無法用同一套 harness 重跑，本文的 SHA-256 也無法再對照原始檔。
+**可重現性限制**：驅動下列 runtime gate 的 harness 只存在於 evidence owner，不在 repo。包括 `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、Gradle init script `task9-runtime.init.gradle`（所有 gate 的 Gradle 呼叫都以 `-I` 載入，含 M4 recovery）與 `task9-probe.init.gradle`（M3 lifecycle／transfer probe 使用）、wrapper `wfix1-final-green.ps1`／`wfix1-final-green2.ps1`，以及 `wfix1-build-summary.ps1`、`task10-phase2-verify.ps1` 等 build-summary／verify 腳本；integration fix 另有 `ifix*-gradle.ps1`、`ifix*-final-green.ps1`、`ifix*-build-summary.ps1` 與 CI 規則驗證 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`。Repo 內 tracked 的只有它們呼叫的 `build.gradle` run 設定（`gameTestLegacy`、`m3Universe`、`m3Transfer`、`m4Recovery`）與 `src/testmod` 的 GameTest／probe。可重用 harness 要整理到 tracked `scripts/verification/`，這是使用者已決定的獨立 task。2026-10-01 已完成：tracked 版本在 `scripts/verification/`，新舊檔名、原始檔 SHA-256、邏輯差異與未收錄腳本的理由見該目錄 `README.md`；原始檔仍留在 evidence owner，本文的 SHA-256 以原始檔為準。
 
 ## Stable DoorKey 與完整門
 
@@ -421,7 +421,7 @@ Integration fix（`1ca107d`）新增的 M4 GameTest 只有 `native_measured_chec
 - **工作樹不是完全乾淨**：兩份 console 的 STATUS 行都顯示，當時有未提交的 `README.md` 與 `docs/implementation-notes/m2-corridor.md` 修改，也就是 Task 10 phase 1 的文件草稿。
   - STATUS 行用的是 `git status --porcelain --untracked-files=no`，不會列出 untracked 檔。當時未追蹤的文件草稿沒有被記錄，例如本 note、`AGENTS.md` 與 handoffs，它們在 `eba763b` 才加入。
   - 以上都是 `.md` 純文件。Release 與 sources JAR 都不含任何 `.md` entry（已逐一列出 `752ada1` full root 兩個 JAR 的 entries 確認），所以不影響 artifact 或 runtime 結果。
-- GameTest 與 main-only 都經 `task9-gates.ps1` 的可恢復 move／exact restore，原 world 以逐檔 hash 還原。這支 harness 只在 evidence owner 內，見前文「可重現性限制」。
+- GameTest 與 main-only 都經 `task9-gates.ps1` 的可恢復 move／exact restore，原 world 以逐檔 hash 還原。這支 harness 的原始檔在 evidence owner 內，tracked 版本是 `scripts/verification/gates.ps1`，見前文「可重現性限制」。
 - Task 10 phase 2 另以唯讀腳本 `task10-phase2-verify.ps1`（同樣只在 evidence owner 內）重新讀原始 XML、JUnit、JAR、receipt、restore 與 oracle，確認下表全部數字。結果 PASS，輸出 `task10-phase2-verify.json`，SHA-256 `4d5bf32c15db3bf6580888b66612c6bfe8aad0a8e5fe24a3e8fb8942177e14eb`。
 
 | Gate | Root（evidence owner 內） | 結果 |
@@ -558,7 +558,7 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
     1. codec strictness：entropy root exact keys、decode 時強制 ledger 上限、schema 3 內層寬鬆欄位、Vanilla WorldKey canonical（＝下方 deferred quality M4）。這是 M5 schema migration 的前置。
     2. `MeasuredWorldSaveCheckpoint` 的 revision 只看本交易相關 chunks（第 9 點）。
     3. `abortUnchecked` 的 secondary-failure 路徑改為真正 fail-closed（＝下方 deferred q1–q3）。
-    - 另外，刪除 worktree 之前，必須先把 gate harness tracked 化到 `scripts/verification/`。其餘延後項見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「延後清單」。
+    - 另外，刪除 worktree 之前，必須先把 gate harness tracked 化到 `scripts/verification/`（2026-10-01 已完成，刪除 worktree 的其餘前提見 `AGENTS.md`）。其餘延後項見 [整合審查紀錄](2026-09-29-m1-m4-integration-review.md)「延後清單」。
 11. **Integration fix 帶來、M5 必須保留的行為**（`428f52a`）：
     - 整個 `quantumchamber:superposition` 世界只接受玩家、掉落物、投射物與經驗球（`SuperpositionEntityPolicy.managed`）。M5 若要在該世界放其他 entity（例如 marker），必須先擴充這個准入規則。
     - RETURNING／MEASURED 只凍結尚未返還的參與者；`start()` 在任何 reservation 之前做原生 checkpoint 能力預檢。
@@ -603,7 +603,7 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 | quality Nit 2 | `M4CandidateTestAccess.java:74` 對 `checkedAuthority` 的 `NoSuchFieldException` fallback，在 HEAD 是死碼（只為了在 base 上跑 RED） | M4 收尾後刪除 fallback，缺欄位時直接失敗 |
 | quality Nit 3 | `CandidateLedgerService.describe()`（`:162-167`，迴圈在 `:165`）只防自我因果；多節點的 cause 環理論上會無限迴圈 | 以 identity set 或深度上限走訪 cause chain |
 
-**Task 9 fix1 的 scratch harness minor**：`task9-gates.ps1` 沒有依 server PID 過濾，就把 runDir 累積的 `classload-*.log` 與 `m4-boundary-*.json` 複製進 gate root。各 summary 只採用 server PID 的 artifacts，正確性不受影響。建議：只複製 server PID 的 artifacts。
+**Task 9 fix1 的 scratch harness minor**：`task9-gates.ps1` 沒有依 server PID 過濾，就把 runDir 累積的 `classload-*.log` 與 `m4-boundary-*.json` 複製進 gate root。各 summary 只採用 server PID 的 artifacts，正確性不受影響。建議：只複製 server PID 的 artifacts。2026-10-01：tracked 的 `scripts/verification/gates.ps1` 已改為只複製本次 server PID 的 artifacts；原始 `task9-gates.ps1` 不變。
 
 **2026-09-29 M1–M4 整分支 final review 的 triage**（R3）：
 

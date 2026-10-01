@@ -14,7 +14,7 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。返還期間只凍結尚未返還的玩家：已返還者回到原艙就能正常移動與互動，但原艙保護與比較器 11 維持到全員收尾，收尾前也不能開新 session；離線者重新連線後的下一 tick 才返還。
 
-本機請從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。M1–M4 合併 main 之前，主目錄的 `main` checkout 不含本功能，不能用其客戶端驗收；實際合併狀態以 `main`／tag 為準。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工驗收的結果，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
+本機請從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。M1–M4 已合併 `main`；實際合併狀態以 `main`／tag 為準。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工驗收的結果，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
 走廊是有限局部頁面與外觀延伸，並非無限配置世界。走廊本身是固定的 `quantumchamber:superposition` 世界，不是動態 Dimension；M3 已有動態 Universe backend 與 server-side transfer readiness，但尚未接成玩家可用的跨宇宙通道（屬 M5）。
 
@@ -60,7 +60,7 @@ M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、�
 
 Windows 可在檔案總管雙擊專案根目錄的 [start-client.bat](start-client.bat)，或在 PowerShell 執行 `./start-client.bat`。腳本使用 Java 21，固定載入同一工作區的 Fabric 開發客戶端；失敗會保留錯誤與原始退出碼。
 
-功能分支 `feature/m1-chamber`（M1–M4）的人工驗收已於 2026-09-30 記錄，同日以 `--ff-only` 合併 main 並建立 tag `m1-m4`；實際合併與 tag 狀態以 `main`／tag 為準。本機可從主 checkout 或 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 啟動（兩者在合併當下內容相同）。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
+功能分支 `feature/m1-chamber`（M1–M4）的人工驗收已於 2026-09-30 記錄，同日以 `--ff-only` 合併 main 並建立 tag `m1-m4`；實際合併與 tag 狀態以 `main`／tag 為準。本機從主 checkout 啟動。原 `.worktrees\m1-chamber` 的 `run/`（含世界）已備份到 `C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\run\`，要繼續玩其中的世界，從那裡複製到主 checkout 的 `run/client-base/saves/`。另一台電腦直接 checkout `feature/m1-chamber` 時，在該 clone 根目錄執行即可。舊客戶端不會熱載入程式修改，請先正常儲存並退出，勿同時開同一世界。
 
 Windows PowerShell：
 

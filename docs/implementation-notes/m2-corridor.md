@@ -4,7 +4,7 @@
 
 ## 從功能工作區啟動
 
-先正常儲存並退出舊客戶端，再從 `C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m1-chamber` 執行 `start-client.bat`；選用照明為 `start-client.bat light`，不是 `--light`。
+先正常儲存並退出舊客戶端，再從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 執行 `start-client.bat`；選用照明為 `start-client.bat light`，不是 `--light`。
 
 一般與照明 profile 分別使用 `run/client-base/saves`、`run/client-light/saves`；腳本不搬移世界。優先另建創造模式測試世界；如需複製舊世界，先退出遊戲並人工完整備份，不覆蓋原檔或同時開同一世界。
 

@@ -1,13 +1,13 @@
 # M1–M4 驗證 harness
 
-M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD workspace `.superpowers/sdd/2026-09-21-m4-candidate-doors/`，刪除 worktree 或 `.superpowers/` 後就無法重跑；這裡的腳本只改路徑、參數與名稱，安全行為（fresh world move／逐檔 hash exact restore、owned roots、拒絕覆寫、PID 過濾、main-only 三層 oracle、JAR testmod 檢查）與原始檔相同；少數邏輯差異逐項列在「來源對照」。
+M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD workspace `.superpowers/sdd/2026-09-21-m4-candidate-doors/`，刪除 worktree 或 `.superpowers/` 後就無法重跑；這裡的腳本只改路徑、參數與名稱，安全行為（fresh world move／逐檔 hash exact restore、owned roots、拒絕覆寫、main-only 三層 oracle、JAR testmod 檢查）與原始檔相同；PID 過濾等少數邏輯差異與拿掉的核對，逐項列在「來源對照」。
 
 ## 環境需求
 
 - Windows，repo 位於本機固定 NTFS 磁碟（Windows checkpoint 只接受本機固定 NTFS，`_windows` GameTest 與 checkpoint JUnit 都依賴它）。
 - PowerShell 7（`pwsh`）；`git` 在 PATH。`m4-recovery-probe.ps1` 另以 Windows PowerShell（`powershell.exe`）啟動 Gradle。
 - Java 21。本機驗證使用 Eclipse Adoptium `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot`（`JAVA_HOME`）。
-- Gradle 8.8：預設 `C:/Users/Ben/.gradle/wrapper/dists/gradle-8.8-bin/dl7vupf4psengwqhwktix4v1/gradle-8.8/bin/gradle.bat`，不存在時改用 repo 的 `gradlew.bat`；也可用 `-Gradle` 指定。兩者都不存在時直接失敗。
+- Gradle 8.8：預設 `C:/Users/Ben/.gradle/wrapper/dists/gradle-8.8-bin/dl7vupf4psengwqhwktix4v1/gradle-8.8/bin/gradle.bat`，不存在時改用 repo 的 `gradlew.bat`（這條 fallback 尚未實跑；第一次執行需要網路下載 Gradle）；也可用 `-Gradle` 指定絕對路徑。兩者都不存在時直接失敗。
 - 執行期間不得有 Minecraft client／server 或其他 Java 程序使用 `run/`。harness 會檢查 live owner 與 `session.lock`，有就拒絕。
 - 磁碟空間：一次 `run-all.ps1` 約 0.85 GB。evidence 約 420 MB（`-EvidenceRoot` 下約 260 MB，testmod 固定位置約 160 MB），`run/` 新增的 owned roots 約 420 MB；harness 都不刪除。
 
@@ -33,6 +33,8 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 
 成功時最後一行是 `END ALL exit=0 HEAD=<sha>`，倒數第二步印出 `SUMMARY ...`。任何步驟失敗都會印 `END <step> FAIL <原因>` 並停止。
 
+`run-all.ps1` 不會因工作樹有未提交的變更而拒絕執行，只會在 `console.log` 的 `STATUS` 行列出 tracked 變更。一次 run 要能採計，需同時滿足兩個條件：`src/`、build 檔與 `.github/` 都沒有未提交的變更；本目錄 `.ps1`／`.gradle` 的 `HARNESS` 雜湊等於受測 commit 中同一檔（`git show <commit>:<path>`）的 SHA-256。`HARNESS` 是工作樹 bytes 的雜湊；在 CRLF checkout 上兩者不會相同，這時改以 `git hash-object <path>` 等於 `git rev-parse <commit>:<path>` 來核對。
+
 個別執行：
 
 ```powershell
@@ -48,19 +50,19 @@ $v = 'scripts/verification'
     -JUnitDir <Full gate>/result-build/test-results/test -SourceRoot src/testmod/java
 ```
 
-`ci-rule-check.ps1` 不因規則 FAIL 而 throw，判定看 `<root>/result.json` 的 `verdict`。要證明規則會擋下缺漏或宣告漂移，加 `-Mutation drop|skip|fail -MutationTarget <XML testcase name>` 或 `-SourceMutation interpose-annotation -SourceTarget <方法名稱>`，預期 `verdict=FAIL`。
+`ci-rule-check.ps1` 不因規則 FAIL 而 throw，判定看 `<root>/result.json` 的 `verdict`。要證明規則會擋下缺漏或宣告漂移，加 `-Mutation drop|skip|fail -MutationTarget <XML testcase name>` 或 `-SourceMutation interpose-annotation -SourceTarget <方法名稱>`，預期 `verdict=FAIL`。`-Mode GameTest`／`Windows`、`-Only` 與 mutation 模式在 2026-10-01 沒有單獨實跑。
 
 ## Evidence 位置
 
 - `-EvidenceRoot`：預設 `<repo>/.superpowers/verification/`（gitignored）。只接受 repo 內、路徑無 reparse point、且被 gitignore 的目錄，否則在建立任何東西之前就拒絕。
 - `run-all.ps1` 每次建立新的 `run-all-<GUID>/`，內含 `console.log`、`gate-<label>-<GUID>/`、`recovery-run-<runId>.json`、`ci-<label>-<GUID>/` 與 `summary.json`。個別腳本直接在 `-EvidenceRoot` 下建立自己的 root。
-- 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`。目錄不存在時 harness 會建立。M3 gate root 另存每個 phase 的 receipt 複本。
+- 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`。目錄不存在時依程式應由 harness 建立，但還沒在沒有 `.superpowers/` 的 clean clone 上實跑。M3 gate root 另存每個 phase 的 receipt 複本。
 - `run/` 內：GameTest 與 main-only 把 `run/gametest/world`、`run/gametest-legacy/world`、`run/server` 移到 `<原路徑>.task9-backup-<GUID>-<tag>`，跑完後把 fresh 結果移進 gate root 的 `*-fresh/`，再把原檔移回並逐檔比對 hash（結果在 `<tag>-restore.json`）。M3 與 M4 recovery 每次新建 `run/m3-universe-m4-task9-<GUID>`、`run/m3-transfer-m4-task9-<GUID>`、`run/m4-recovery-<GUID>-<scenario>`，跑完保留。
 - 失敗時保留全部 root 與 receipt，修正後以新的 root 重跑，不在失敗 root 上改判。若 restore 失敗，原檔仍在 `.task9-backup-*`，先查明原因再手動移回，不要刪除。
 
 ## 預期結果（code `ba854e8`）
 
-`ba854e8` 之後只有文件 commit。2026-10-01 在 HEAD `e55b7f9` 以 `run-all.ps1` 實跑（約 14 分鐘：Full 約 3.5 分、M3 約 2.5 分、M4 recovery 約 6.5 分），`SUMMARY` 與 2026-09-30 integration fix round 4（`ifix4-final-green.ps1`）的數字一致。程式或測試有變更時，數字以新的 run 為準。
+`ba854e8` 之後沒有 `src/`、build 檔或 `.github/` 的變更（只有文件與本目錄）。2026-10-01 在 HEAD `e55b7f9` 以 `run-all.ps1` 實跑（約 14 分鐘：Full 約 3.5 分、M3 約 2.5 分、M4 recovery 約 6.5 分），`SUMMARY` 與 2026-09-30 integration fix round 4（`ifix4-final-green.ps1`）的數字一致。程式或測試有變更時，數字以新的 run 為準。
 
 | 項目 | 預期 |
 | --- | --- |
@@ -83,10 +85,10 @@ $v = 'scripts/verification'
 | `gates.ps1` | `task9-gates.ps1` | `34eaecabf9d4685771d53482130c04d496bbdf3e396f6c2d6fc06055249851e8` | 路徑與參數化；gate root 改名 `gate-<Label>-<GUID>`，輸出 `GATE_ROOT=`；移除 `RedOwner` 模式（Task 9 owner 修正前的一次性 RED；現行 testmod 已接受 evidenceOwner，該 RED 的前提不再成立）；classload／m4-boundary 只複製本次觀察到的 JVM PID（整合審查 R1 指定併入本 task）；`-Mode` 必填，`-Label`／`-Only` 加輸入驗證 |
 | `main-oracle.ps1` | `task9-main-oracle.ps1` | `7175c03aff38e3c600e06c75248f3a81c660b6a671bbe142c627a54e48bba96b` | 只改 repo root |
 | `m4-recovery-probe.ps1` | `run-m4-recovery-probe.ps1` | `00fca9fe186d5efac7d6df5d30dd7503c15d0d37f8a8b718977faccdb0bb0874` | 路徑與參數化；彙整 JSON 改寫到 `-EvidenceRoot`，已存在時拒絕覆寫 |
-| `ci-rule-check.ps1` | `ifix3-ci-rule-check.ps1`（取代 `ifix2-ci-rule-check.ps1`） | `279b7b9f46d729ec78bfe72de0e201c09d84a772c50d99751c6e0614f4ded808` | root 改為 `-EvidenceRoot`；輸出標記 `CI_RULE`；`-Label` 加輸入驗證 |
+| `ci-rule-check.ps1` | `ifix3-ci-rule-check.ps1`（取代 `ifix2-ci-rule-check.ps1`） | `279b7b9f46d729ec78bfe72de0e201c09d84a772c50d99751c6e0614f4ded808` | root 改為 `-EvidenceRoot`；輸出標記 `CI_RULE`；注入的失敗訊息改為「CI 規則檢查刻意注入的失敗」；`-Label` 加輸入驗證 |
 | `runtime.init.gradle` | `task9-runtime.init.gradle` | `40cccdea23acc6520e92ab03198acd2881132b54962dfca53216e4679dbe75e0` | 只加註解 |
 | `probe.init.gradle` | `task9-probe.init.gradle` | `3d14ca4f399a8cc75797b12f4d38c73b02ca149500ef024c53f212634e3c678d` | 只加註解 |
-| `run-all.ps1` | `ifix4-final-green.ps1`＋`ifix3-build-summary.ps1` §1–§8 | `dcdc2bbbd7c7461cea3712c0f4bc3e67c91d033437c6ee8f2d82464ffdd2b53d`／`63de6da09187a39a4f4b2f472daa2143bca78ff36ae98d6b0daa5b659fab7bc5` | 原本以名稱前綴在 SDD 目錄取最新建立的 root，改為在本次 run root 內要求恰一個；CI 綠燈結果改為 `verdict` 非 PASS 即失敗；summary 去掉該輪固定數量與一次性 RED/GREEN 核對，只保留通用不變式並輸出數字；核對執行前後 HEAD 相同 |
+| `run-all.ps1` | `ifix4-final-green.ps1`＋`ifix3-build-summary.ps1` §1–§8 | `dcdc2bbbd7c7461cea3712c0f4bc3e67c91d033437c6ee8f2d82464ffdd2b53d`／`63de6da09187a39a4f4b2f472daa2143bca78ff36ae98d6b0daa5b659fab7bc5` | 原本以名稱前綴在 SDD 目錄取最新建立的 root，改為在本次 run root 內要求恰一個；CI 綠燈結果改為 `verdict` 非 PASS 即失敗；summary 去掉該輪固定數量與一次性 RED/GREEN 核對，只保留通用不變式並輸出數字；核對執行前後 HEAD 相同。原 summary 另有幾項核對沒有保留：tracked 變更即失敗（改為 `STATUS` 行與上方採計規則）、workflow 必須等於 HEAD 版本、`M4CandidateDoorGameTests` 每個 `@GameTest` 都呼叫 begin、非 Windows gate 的案例白名單、`Set-StrictMode` |
 
 ## 未 tracked 的腳本
 

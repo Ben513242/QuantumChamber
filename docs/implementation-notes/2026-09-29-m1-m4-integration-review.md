@@ -10,7 +10,7 @@
 - 記錄人工結果的 docs commit（及之後的 feature HEAD）已通過 GitHub Actions。本文的 gate 都是 Windows 本機結果；feature HEAD 在 Ubuntu 與 Windows job 的結果，以 GitHub Actions 上該 commit 的 run 為準（round 4 的 run 見「Integration fix round 4（2026-09-30）」）。
 - 已合併 `main` 或已打 tag。實際狀態以 `main`／tag 為準。
 
-原始證據在 gitignored 的 evidence owner `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（本機 scratch，不在 repo）。本文直接寫出關鍵數字與 SHA-256；gate harness 的可重現性限制與 [M4 紀錄](2026-09-21-m4-candidate-doors.md)「可重現性限制」相同，另加本輪的 `ifix*-gradle.ps1`、`ifix*-final-green.ps1`、`ifix*-build-summary.ps1` 與 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`。下文 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `428f52a` 為準；`ba854e8`（round 4）只改 `main/persistence/SessionRecoveryRecord.java`，下文引用的其他檔案行號不變。
+原始證據在 gitignored 的 evidence owner `.superpowers/sdd/2026-09-21-m4-candidate-doors/`（本機 scratch，不在 repo）。本文直接寫出關鍵數字與 SHA-256；gate harness 的可重現性限制與 [M4 紀錄](2026-09-21-m4-candidate-doors.md)「可重現性限制」相同，另加本輪的 `ifix*-gradle.ps1`、`ifix*-final-green.ps1`、`ifix*-build-summary.ps1` 與 `ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1`（2026-10-01 起 tracked 版本在 `scripts/verification/`，見該目錄 `README.md`）。下文 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `428f52a` 為準；`ba854e8`（round 4）只改 `main/persistence/SessionRecoveryRecord.java`，下文引用的其他檔案行號不變。
 
 ## 範圍與方法
 
@@ -228,7 +228,7 @@ Round 3 full gate 的 stdout 有 47 則 WARN／ERROR，逐類比對 round 2（46
 - **M2**（R2）：TransferService 診斷（＝R2 M1）與正常到期 WARN（＝R2 M2）本輪已修；6 個 mixin annotation warnings 來自 testmod `SessionTransferFaultMixin`（`require=0`），不進 release，關閉；31 項 runtime noise 延後到下一次 fresh gate 分類；rollback 預期 ERROR、編碼分類、fullgate stdout 亂碼、`m2-corridor.md:3`／plan:411、T7 旋轉敏感度，關閉；T10 restore 死碼（＝R2 M8）延後 M5 清理。
 - **M3-A／M3-B**（R3）：queue observer／registration-isolated close 的專屬 regression 接受風險，M5 動到 queue 時補；discardWorld、post-LOAD quarantine 措辭、過期 owner 路徑，關閉；Task 5 預期的 IOException ERROR stack，關閉。
 - **M4**（R3）：round 1 quality M1／M2／M4／M5／M6 延後 M5（其中 M4＝hardening (1) codec strictness，須在 M5 schema 變更前）；spec m-1 關閉；fix round 1 q1–q3 併入 M5 hardening (3)；q4、q5、q7 延後 M5；q6、s3 關閉（跨 JVM probe 已覆蓋）；Nits 延後或關閉；M5 handoff 第 9 點依 F-CHECKPOINT 上調並已隨本輪退避修正更新。
-- **R1**：harness tracked 化維持延後（擋刪除 worktree，不擋合併）；`task9-gates.ps1` 的 PID 過濾併入同一個 task。
+- **R1**：harness tracked 化維持延後（擋刪除 worktree，不擋合併）；`task9-gates.ps1` 的 PID 過濾併入同一個 task（2026-10-01 已完成，含 PID 過濾）。
 
 ## 延後清單
 
@@ -260,7 +260,7 @@ Round 3 full gate 的 stdout 有 47 則 WARN／ERROR，逐類比對 round 2（46
 | M4 round 1 quality M1／M2／M5／M6 | `authorityHistory` 無上限、idle tick 全量重掃、`sideDoorCells` 資訊流失、死碼與重複 | 見 [M4 紀錄](2026-09-21-m4-candidate-doors.md)「已知 deferred 項目」 |
 | M4 fix round 1 q4、q5、q7 | 雙重故障的全域 recovery 暫停、`abandonInitial` log 缺 root cause、`selectionTeardown` 收尾 | 同上 |
 | Nits | 各輪 review 的 Nit（例如 policy test 名稱過寬、`@Unique` 缺漏、`WARNED` 為 JVM 範圍） | 延後或關閉 |
-| harness tracked 化 | `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、`task9-runtime.init.gradle`、`task9-probe.init.gradle`、`ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1` 等只在 gitignored evidence owner | 整理到 tracked `scripts/verification/`（獨立 task＋review）；這是刪除 worktree 前的必要條件 |
+| harness tracked 化 | `task9-gates.ps1`、`task9-main-oracle.ps1`、`run-m4-recovery-probe.ps1`、`task9-runtime.init.gradle`、`task9-probe.init.gradle`、`ifix2-ci-rule-check.ps1`／`ifix3-ci-rule-check.ps1` 等只在 gitignored evidence owner | 整理到 tracked `scripts/verification/`（獨立 task＋review）；這是刪除 worktree 前的必要條件。**2026-10-01 已完成** |
 | 凍結時沒有位置修正（2026-09-30 人工驗收） | `MEASURED`／`RETURNING` 凍結由 `ServerPlayNetworkHandlerRecoveryMixin` 取消 `onPlayerMove`，只丟棄移動封包、不送位置修正；被凍結參與者的客戶端座標（F3）會沿牆漂移到返還為止，伺服器端位置不變（清單 B-5c 實見） | 取消移動時送回 teleport／位置修正 |
 | `abandonInitial` 不 flush（round 4 review Minor 1） | `SuperpositionSessionManager.abandonInitial` 只 abort＋`markDirty`、不 flush：被放棄的 ARMING record 留在磁碟上，直到下一次成功存檔；其間 crash，重啟會當成 RETURNING 處理（既有測試 `readbackFailureAfterWriteRevertsAndReturningOverwritesUnacknowledgedDisk` 已明確接受；即 M4 紀錄「M5 handoff acceptance」第 6 點）。ARMING 失敗的 WARN 每秒一則（與 M4 fix round 1 q5 相關） | 評估放棄後補一次 checked 寫出；WARN 比照 `checkpointCapable` 同原因去重 |
 | testmod ±0 斷言（round 4 review Nit） | testmod `M2CorridorGameTests.java:1591` 以裝箱的 `context.assertEquals` 比對 yaw 與 pitch，會區分 ±0；目前沒有 -0 fixture，不影響結果 | 下次動 testmod 時改用原始 float 比較 |
