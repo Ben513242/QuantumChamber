@@ -391,14 +391,193 @@ public final class M4CandidateDoorGameTests {
     private static CheckpointFaultProbe checkpointFaultProbe;
     /** testmod mixin 在 MeasuredWorldSaveCheckpoint.save 開頭呼叫；只對 own SID 記錄 tick，故障窗口內受控失敗。 */
     public static void beforeMeasuredCheckpoint(MinecraftServer server,SessionRecoveryRecord record) {
+        var scope=checkpointScopeProbe;
+        if(scope!=null && server.isOnThread() && scope.sid.equals(record.sessionUuid())) scope.beforeCall(server);
         var probe=checkpointFaultProbe;
         if(probe==null || !server.isOnThread() || !probe.sid.equals(record.sessionUuid())) return;
         probe.calls.add(server.getTicks());
         if(probe.armed) throw new IllegalStateException("M4 GameTest 受控 MEASURED 原生存檔 checkpoint 失敗");
     }
+    /** testmod mixin 在 MeasuredWorldSaveCheckpoint.save 正常返回（checkpoint 被承認）時呼叫；例外路徑不會經過。 */
+    public static void afterMeasuredCheckpoint(MinecraftServer server,SessionRecoveryRecord record) {
+        var scope=checkpointScopeProbe;
+        if(scope!=null && server.isOnThread() && scope.sid.equals(record.sessionUuid())) scope.afterCall(server);
+    }
     private static final class CheckpointFaultProbe {
         final UUID sid; final List<Integer> calls=new ArrayList<>(); boolean armed=true;
         CheckpointFaultProbe(UUID sid) { this.sid=sid; }
+    }
+
+    /**
+     * M5 H2：MEASURED 原生存檔 checkpoint 只看本交易相關的 chunks（來源艙與走廊 lease）。
+     * 第一次 checkpoint 讓來源艙 controller 所在 chunk 的原生 region write（chunk＋entities）真的失敗：必須 fail-closed、保留 leases，
+     * 並沿用 20 tick 退避；第二次改讓同一世界、同一份 storage 的無關 chunk 真的失敗：checkpoint 必須被承認並完成 DORMANT。
+     * 故障在原生 IO worker 內發生，並只對故障目標等真 IO 完成，所以外層 server.save 照常回 true（見 ChunkCheckpointScopeFaultMixin）。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h2_checkpoint_scope",tickLimit=100000)
+    public void native_measured_checkpoint_ignores_unrelated_chunk_failure_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_measured_checkpoint_ignores_unrelated_chunk_failure_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_measured_checkpoint_ignores_unrelated_chunk_failure_windows");
+        nativeCandidates(context,1,(fixture,tick) -> {
+            var sid=fixture.record().sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
+            var player=fixture.players.getFirst().player();
+            var selected=use(fixture,cell(view,new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1),player);
+            context.assertTrue(selected.isAccepted() && fixture.record().state()==SessionState.MEASURED,"真側門 checked SELECTED 後才進入 MEASURED 清理");
+            var measured=fixture.record();
+            // fault target 與 probe 是本測試專用 hook：任一段等待逾時或斷言失敗都必須移除。
+            var hooks=new M2CorridorGameTests.TestHooks();
+            CheckpointScopeProbe probe;
+            try {
+                probe=new CheckpointScopeProbe(context.getWorld(),measured); checkpointScopeProbe=probe;
+                hooks.add(() -> { if(checkpointScopeProbe==probe) checkpointScopeProbe=null; probe.release(); });
+                player.removeStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE);
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            whenWithin(context,tick+1,120,() -> !probe.calls.isEmpty(),first -> {
+                // 第一次（相關 chunk 失敗）之後、第二次之前：flushed receipt、leases 與 runtime space 必須原樣保留。
+                var receipt=SessionRecoveryState.get(fixture.server).flushedRecords().get(sid);
+                boolean retained=probe.calls.size()==1 && !probe.calls.getFirst().accepted
+                        && receipt!=null && receipt.state()==SessionState.MEASURED && receipt.spaceLeases().equals(measured.spaceLeases())
+                        && MeasuredRecoveryPhase.from(receipt)==MeasuredRecoveryPhase.RELEASE_GEOMETRY
+                        && M4CandidateTestAccess.space(fixture.pages,sid)!=null && !fixture.pages.measuredRecoveryComplete(sid);
+                whenWithin(context,first+1,120,() -> probe.accepted() || probe.calls.size()>=3,ended -> {
+                    var calls=List.copyOf(probe.calls);
+                    var witness=new LinkedHashMap<String,Boolean>();
+                    witness.put("relevantFaultFiredChunkAndEntities",calls.getFirst().target==probe.relevant && calls.getFirst().faultTypes().containsAll(Set.of("chunk","entities")));
+                    witness.put("relevantFailureFailedClosed",!calls.getFirst().accepted);
+                    witness.put("leasesRetainedAfterRelevantFailure",retained);
+                    witness.put("backoffGap20Kept",calls.size()>=2 && calls.get(1).tick-calls.getFirst().tick==20);
+                    var second=calls.size()>=2 ? calls.get(1) : null;
+                    witness.put("unrelatedFaultFiredChunkAndEntities",second!=null && second.target==probe.unrelated && second.faultTypes().containsAll(Set.of("chunk","entities")));
+                    witness.put("productionObservedUnrelatedFailure",second!=null && second.serverFailures()>=2 && second.workerFailures()>=1);
+                    witness.put("unrelatedFailureAccepted",second!=null && second.accepted);
+                    witness.put("noThirdCall",calls.size()==2);
+                    var diagnostics=" calls="+calls+" relevant="+probe.relevant+" unrelated="+probe.unrelated;
+                    context.assertTrue(!witness.containsValue(false),"H2 checkpoint 只看相關 chunks："+witness+diagnostics);
+                    whenWithin(context,ended+1,120,() -> fixture.pages.measuredRecoveryComplete(sid),dormant -> {
+                        var finalReceipt=SessionRecoveryState.get(fixture.server).flushedRecords().get(sid);
+                        hooks.release();
+                        var after=new LinkedHashMap<String,Boolean>();
+                        after.put("dormantAfterAcceptedCheckpoint",finalReceipt!=null && MeasuredRecoveryPhase.from(finalReceipt)==MeasuredRecoveryPhase.DORMANT);
+                        after.put("selectionReceiptKept",finalReceipt!=null && finalReceipt.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected);
+                        after.put("stillTwoCalls",probe.calls.size()==2);
+                        after.put("playerReturnedToSource",player.getServerWorld()==context.getWorld());
+                        context.assertTrue(!after.containsValue(false),"H2 承認後完成 DORMANT："+after+" calls="+probe.calls);
+                        // DORMANT receipt 是本案例自建；取證後移除，避免封鎖後續 batch 的玩家與 Chamber。
+                        M4CandidateTestAccess.removeMeasuredForTeardown(fixture.server,sid);
+                        if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                        whenWithin(context,dormant+1,30,() -> ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
+                            fixture.close(); M4PerTestUniverseProbe.complete(context);
+                        },() -> "DORMANT receipt 移除並 LOW 後來源保護未解除");
+                    },() -> "承認後未完成 DORMANT：calls="+probe.calls,hooks);
+                },() -> "第二次 checkpoint 未承認也未重試：calls="+probe.calls,hooks);
+            },() -> "MEASURED checkpoint 未被呼叫",hooks);
+        });
+    }
+    private static volatile CheckpointScopeProbe checkpointScopeProbe;
+    /** testmod mixin（StorageIoWorker.write 內的 region write）：只對目前故障目標讓原生 write 受控失敗；在原生 IO thread 執行。 */
+    public static void beforeScopedRegionWrite(net.minecraft.world.storage.StorageKey key,net.minecraft.util.math.ChunkPos pos) throws java.io.IOException {
+        var probe=checkpointScopeProbe; var target=probe==null ? null : probe.target;
+        if(target==null || !target.matches(key,pos)) return;
+        target.types.add(key.type()); target.writes.incrementAndGet();
+        throw new java.io.IOException("M5 H2 GameTest 受控 region write 失敗："+target.label);
+    }
+    /** testmod mixin（StorageIoWorker.setResult RETURN）：只對故障目標等真 IO 完成，讓失敗 entry 不會留到 completeAll。 */
+    public static void drainScopedFault(net.minecraft.world.storage.StorageKey key,net.minecraft.util.math.ChunkPos pos,java.util.concurrent.CompletableFuture<?> future) {
+        var probe=checkpointScopeProbe; var target=probe==null ? null : probe.target;
+        if(target!=null && target.matches(key,pos)) future.handle((value,error) -> null).join();
+    }
+    /** 第一次 checkpoint 故障目標是相關 chunk（controller 所在 chunk），之後是同一世界、已載入的無關 chunk。 */
+    private static final class CheckpointScopeProbe {
+        final UUID sid; final net.minecraft.server.world.ServerWorld world; final ScopedFault relevant,unrelated;
+        final List<ScopedCall> calls=new ArrayList<>();
+        volatile ScopedFault target;
+        CheckpointScopeProbe(net.minecraft.server.world.ServerWorld world,SessionRecoveryRecord record) {
+            if(!world.getRegistryKey().getValue().equals(record.origin().worldKey())) throw new IllegalStateException("H2 probe 必須建立在來源世界");
+            sid=record.sessionUuid(); this.world=world;
+            // 與 production 相同的來源艙相關範圍：ChamberGeometry.bounds 涵蓋的 chunks。
+            var frame=new ChamberFrame(record.origin().controllerPos(),record.origin().facing());
+            var bounds=dev.quantumchamber.chamber.ChamberGeometry.bounds(frame); var related=new HashSet<Long>();
+            for(int x=bounds.getMinX()>>4;x<=bounds.getMaxX()>>4;x++) for(int z=bounds.getMinZ()>>4;z<=bounds.getMaxZ()>>4;z++)
+                related.add(net.minecraft.util.math.ChunkPos.toLong(x,z));
+            var controller=new net.minecraft.util.math.ChunkPos(frame.controllerPos());
+            relevant=new ScopedFault("relevant",world.getRegistryKey(),controller);
+            unrelated=new ScopedFault("unrelated",world.getRegistryKey(),unrelatedLoaded(world,controller,related));
+        }
+        /** 由近而遠找第一個「chunk 與 entity storage 都已載入、但不在來源艙範圍內」的 chunk；同一世界、同一份 storage。 */
+        private static net.minecraft.util.math.ChunkPos unrelatedLoaded(net.minecraft.server.world.ServerWorld world,net.minecraft.util.math.ChunkPos center,Set<Long> related) {
+            var entities=(net.minecraft.server.world.ServerEntityManager<?>)M4CandidateTestAccess.get(world,"entityManager");
+            for(int radius=1;radius<=4;radius++) for(int dx=-radius;dx<=radius;dx++) for(int dz=-radius;dz<=radius;dz++) {
+                if(Math.max(Math.abs(dx),Math.abs(dz))!=radius) continue;
+                var pos=new net.minecraft.util.math.ChunkPos(center.x+dx,center.z+dz);
+                if(!related.contains(pos.toLong()) && world.getChunkManager().getWorldChunk(pos.x,pos.z)!=null && entities.isLoaded(pos.toLong())) return pos;
+            }
+            throw new IllegalStateException("H2 probe 找不到已載入的無關 chunk");
+        }
+        void beforeCall(MinecraftServer server) {
+            // 前一次呼叫若以例外結束，沒有 RETURN 收據：以本次開始時的計數收尾（兩次呼叫之間沒有其他故障目標）。
+            if(!calls.isEmpty() && !calls.getLast().closed()) calls.getLast().close(serverRevision(server),workerRevision());
+            var fault=calls.isEmpty() ? relevant : unrelated;
+            if(fault==unrelated) {
+                // 無關 chunk 不在 production 的 redirty 範圍：本 hook 自行讓它的 chunk 與 entity 在這次 server.save 都會寫入。
+                var chunk=world.getChunkManager().getWorldChunk(fault.pos.x,fault.pos.z);
+                if(chunk==null) throw new IllegalStateException("H2 無關 chunk 已卸載");
+                chunk.setNeedsSaving(true); emptyEntityChunks().remove(fault.pos.toLong());
+            }
+            calls.add(new ScopedCall(server.getTicks(),fault,Set.copyOf(fault.types),fault.writes.get(),serverRevision(server),workerRevision()));
+            target=fault;
+        }
+        void afterCall(MinecraftServer server) {
+            var call=calls.getLast(); call.accepted=true; target=null;
+            call.close(serverRevision(server),workerRevision());
+        }
+        boolean accepted() { return calls.stream().anyMatch(call -> call.accepted); }
+        /** 解除故障，並讓無關 chunk 在之後的一般存檔重寫正常資料。 */
+        void release() {
+            target=null;
+            var chunk=world.getChunkManager().getWorldChunk(unrelated.pos.x,unrelated.pos.z);
+            if(chunk!=null) chunk.setNeedsSaving(true);
+            emptyEntityChunks().remove(unrelated.pos.toLong());
+        }
+        private it.unimi.dsi.fastutil.longs.LongSet emptyEntityChunks() {
+            return (it.unimi.dsi.fastutil.longs.LongSet)M4CandidateTestAccess.get(M4CandidateTestAccess.get(M4CandidateTestAccess.get(world,"entityManager"),"dataAccess"),"emptyChunks");
+        }
+        private static long serverRevision(MinecraftServer server) { return ((NativeSaveFailureAccess)server).quantumchamber$saveFailureRevision(); }
+        private long workerRevision() {
+            return ((NativeStorageSaveAccess)world.getChunkManager().getChunkIoWorker()).quantumchamber$saveFailures().revision();
+        }
+    }
+    private static final class ScopedFault {
+        final String label; final net.minecraft.registry.RegistryKey<World> dimension; final net.minecraft.util.math.ChunkPos pos;
+        final java.util.concurrent.atomic.AtomicInteger writes=new java.util.concurrent.atomic.AtomicInteger();
+        final Set<String> types=java.util.concurrent.ConcurrentHashMap.newKeySet();
+        ScopedFault(String label,net.minecraft.registry.RegistryKey<World> dimension,net.minecraft.util.math.ChunkPos pos) {
+            this.label=label; this.dimension=dimension; this.pos=pos;
+        }
+        boolean matches(net.minecraft.world.storage.StorageKey key,net.minecraft.util.math.ChunkPos chunk) {
+            return key.dimension().equals(dimension) && chunk.equals(pos) && (key.type().equals("chunk") || key.type().equals("entities"));
+        }
+        @Override public String toString() { return label+"@"+dimension.getValue()+"/"+pos+" writes="+writes.get()+" types="+types; }
+    }
+    /**
+     * 單次 checkpoint 呼叫：故障目標、期間新增的故障類型、受控 write 次數與 production 原生失敗計數
+     * （server 全域 onChunkSaveFailure 與來源世界 chunk worker）。被承認時在 RETURN 收尾，以例外結束時在下一次呼叫開始時收尾。
+     */
+    private static final class ScopedCall {
+        final int tick; final ScopedFault target; final Set<String> typesBefore; final int writesBefore; final long serverBefore,workerBefore;
+        boolean accepted; Set<String> typesAfter; int writesAfter=-1; long serverAfter=-1,workerAfter=-1;
+        ScopedCall(int tick,ScopedFault target,Set<String> typesBefore,int writesBefore,long serverBefore,long workerBefore) {
+            this.tick=tick; this.target=target; this.typesBefore=typesBefore; this.writesBefore=writesBefore; this.serverBefore=serverBefore; this.workerBefore=workerBefore;
+        }
+        boolean closed() { return typesAfter!=null; }
+        void close(long server,long worker) { typesAfter=Set.copyOf(target.types); writesAfter=target.writes.get(); serverAfter=server; workerAfter=worker; }
+        /** 尚未收尾時以目前值計算（只在最後一次呼叫發生）。 */
+        Set<String> faultTypes() { var added=new HashSet<>(closed() ? typesAfter : Set.copyOf(target.types)); added.removeAll(typesBefore); return added; }
+        long serverFailures() { return serverAfter<0 ? -1 : serverAfter-serverBefore; }
+        long workerFailures() { return workerAfter<0 ? -1 : workerAfter-workerBefore; }
+        @Override public String toString() {
+            return "{tick="+tick+" target="+target.label+" accepted="+accepted+" faultTypes="+faultTypes()+" writes="+writesBefore+"->"+(writesAfter<0 ? target.writes.get() : writesAfter)
+                    +" server+="+serverFailures()+" worker+="+workerFailures()+"}";
+        }
     }
 
     /** 空間、slot、page、來源票與 runtime session 的可比較快照；只讀 testmod reflection。 */

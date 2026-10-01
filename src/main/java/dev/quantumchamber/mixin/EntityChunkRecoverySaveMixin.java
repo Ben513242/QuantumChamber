@@ -15,7 +15,7 @@ abstract class EntityChunkRecoverySaveMixin implements EntityRecoverySaveAccess 
     @Unique private final NativeSaveFailures quantumchamber$failures=new NativeSaveFailures();
     @Inject(method="handleSaveFailure",at=@At("HEAD"))
     private void quantumchamber$observe(CompletableFuture<?> future,ChunkPos pos,CallbackInfo callback) {
-        quantumchamber$failures.observe(future);
+        quantumchamber$failures.observe(future,pos.toLong());
     }
     @Override public NativeSaveFailures quantumchamber$saveFailures() { return quantumchamber$failures; }
     @Override public void quantumchamber$markEntitiesForResave(Set<Long> chunks) {
