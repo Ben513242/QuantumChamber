@@ -1672,7 +1672,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     context.assertTrue(player.getServerWorld()==fixture.target && fixture.target.getEntity(person.playerUuid())==player,"真fixed world與UUID");
                     context.assertTrue(player.getPos().squaredDistanceTo(person.sourcePosition().add(delta))<1e-12,"same facing物理平移精確保留相對pose");
                     context.assertEquals(person.sourceVelocity(),player.getVelocity(),"velocity不變");
-                    context.assertEquals(person.yaw(),player.getYaw(),"yaw不變"); context.assertEquals(person.pitch(),player.getPitch(),"pitch不變");
+                    // 原始 float 比較：±0 視為相同角度（裝箱的 assertEquals 以 Float.equals 區分 +0 與 -0）。
+                    context.assertTrue(person.yaw()==player.getYaw(),"yaw不變："+person.yaw()+"→"+player.getYaw());
+                    context.assertTrue(person.pitch()==player.getPitch(),"pitch不變："+person.pitch()+"→"+player.getPitch());
                     context.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE),"完整群維持原有效效果");
                     context.assertTrue(dev.quantumchamber.chamber.ChamberOccupantService.contains(
                             dev.quantumchamber.chamber.ChamberGeometry.interiorBox(entrance),player.getBoundingBox()),"全員完整bbox位於replica");
