@@ -312,7 +312,42 @@ class CandidateLedgerServiceTest {
         assertEquals(1, batch.quarantines); assertEquals(java.util.Set.of(SESSION), batch.state.quarantinedSessions(), "batch 路徑同樣隔離");
     }
 
-    /** M4 quality Nit 3：失敗 log 的 cause 鏈有多節點環時，describe 必須在有限步內結束。 */
+    /** H3 fix round 1：提交失敗後未 checked authority 的處置，依實際結果分類（log 文字取自分類）；abort／quarantine 的例外附在原失敗上。 */
+    @Test void containmentClassifiesWhatActuallyHappened() {
+        record Case(String name, Boolean abort, Boolean quarantine, boolean current, CandidateLedgerService.Containment expected, int suppressed) {}
+        var next = port(List.of()).initial;
+        var cases = List.of(
+                new Case("CAS 還原成功", true, true, true, CandidateLedgerService.Containment.RESTORED, 0),
+                new Case("CAS 不符而隔離", false, true, true, CandidateLedgerService.Containment.QUARANTINED, 0),
+                new Case("abort 失敗後隔離", null, true, true, CandidateLedgerService.Containment.QUARANTINED_AFTER_ABORT_FAILURE, 1),
+                new Case("abort 與隔離都失敗", null, null, true, CandidateLedgerService.Containment.UNCONTAINED, 2),
+                new Case("abort 失敗、隔離回 false、current 已不存在", null, false, false, CandidateLedgerService.Containment.RESTORED, 1),
+                new Case("abort 失敗、隔離回 false、原本就已隔離", null, false, true, CandidateLedgerService.Containment.QUARANTINED, 1));
+        assertAll(cases.stream().map(test -> () -> {
+            var failure = new IllegalStateException("受控提交失敗");
+            assertEquals(test.expected(), CandidateLedgerService.contain(scripted(test.abort(), test.quarantine(), test.current() ? next : null), next, failure), test.name());
+            assertEquals(test.suppressed(), failure.getSuppressed().length, test.name());
+        }));
+    }
+    /** abort／quarantine：TRUE／FALSE 為回傳值，null 為丟出例外。 */
+    private static CandidateLedgerService.JournalPort scripted(Boolean abort, Boolean quarantine, SessionRecoveryRecord current) {
+        return new CandidateLedgerService.JournalPort() {
+            @Override public Map<UUID, SessionRecoveryRecord> flushedRecords() { throw new AssertionError("contain 不讀 flushed"); }
+            @Override public SessionRecoveryRecord currentRecord(UUID sessionUuid) { return current; }
+            @Override public void put(SessionRecoveryRecord record) { throw new AssertionError("contain 不寫入"); }
+            @Override public void flush() { throw new AssertionError("contain 不寫出"); }
+            @Override public boolean abortUnchecked(SessionRecoveryRecord expected) {
+                if (abort == null) throw new IllegalStateException("abort 本身失敗");
+                return abort;
+            }
+            @Override public boolean quarantine(UUID sessionUuid) {
+                if (quarantine == null) throw new IllegalStateException("隔離本身失敗");
+                return quarantine;
+            }
+        };
+    }
+
+    /** M4 quality Nit 3：失敗 log 的 cause 鏈有多節點環時，describe 必須在有限步內結束（逐字輸出見 FailureTextTest）。 */
     @Test void failureLogTerminatesOnMultiNodeCauseCycle() {
         var first = new IllegalStateException("cause 環 A"); var second = new IllegalStateException("cause 環 B");
         first.initCause(second); second.initCause(first);
@@ -444,7 +479,7 @@ class CandidateLedgerServiceTest {
             if (abortFails) throw new IllegalStateException("abort 本身失敗");
             return state.abortUnchecked(expected);
         }
-        @Override public void quarantine(UUID sessionUuid) { quarantines++; state.quarantine(sessionUuid); }
+        @Override public boolean quarantine(UUID sessionUuid) { quarantines++; return state.quarantine(sessionUuid); }
         @Override public void flush() {
             flushes++;
             if (fault == Fault.FLUSH) throw new IllegalStateException("flush 失敗");

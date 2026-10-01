@@ -1,6 +1,7 @@
 package dev.quantumchamber.candidate;
 
 import dev.quantumchamber.corridor.DoorKey;
+import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.superposition.SessionState;
@@ -40,7 +41,7 @@ public final class CandidateLedgerService {
         void flush();
         boolean abortUnchecked(SessionRecoveryRecord expected);
         /** abort 本身失敗時，以隔離 fail-closed 停住該 session。 */
-        void quarantine(UUID sessionUuid);
+        boolean quarantine(UUID sessionUuid);
     }
     /** 已完成 CAS 還原／隔離並記錄 root cause 的提交失敗。 */
     private static final class CommitFailure extends RuntimeException {
@@ -58,7 +59,7 @@ public final class CandidateLedgerService {
                         UniverseDiscoveryState.load(root));
             }, sessionUuid, completeKeys);
         } catch (RuntimeException exception) {
-            LOGGER.warn("候選 batch 無法進入 checked 提交，session={} 將安全返還：{}", sessionUuid, describe(exception));
+            LOGGER.warn("候選 batch 無法進入 checked 提交，session={} 將安全返還：{}", sessionUuid, FailureText.describe(exception));
             return failedBatch();
         }
     }
@@ -66,7 +67,7 @@ public final class CandidateLedgerService {
         try {
             return trySelect(journal(server), () -> requireServerThread(server), sessionUuid, doorKey, playerUuid, gameTime);
         } catch (RuntimeException exception) {
-            LOGGER.debug("側門選擇在提交前拒絕，session={}：{}", sessionUuid, describe(exception));
+            LOGGER.debug("側門選擇在提交前拒絕，session={}：{}", sessionUuid, FailureText.describe(exception));
             return SelectionOutcome.REJECTED;
         }
     }
@@ -97,7 +98,7 @@ public final class CandidateLedgerService {
         } catch (CommitFailure alreadyLogged) {
             return failedBatch();
         } catch (IOException | RuntimeException exception) {
-            LOGGER.warn("候選 batch 無法 checked 提交，session={} 將安全返還：{}", sessionUuid, describe(exception));
+            LOGGER.warn("候選 batch 無法 checked 提交，session={} 將安全返還：{}", sessionUuid, FailureText.describe(exception));
             return failedBatch();
         }
     }
@@ -123,7 +124,7 @@ public final class CandidateLedgerService {
         } catch (CommitFailure alreadyLogged) {
             return SelectionOutcome.COMMIT_FAILED;
         } catch (RuntimeException exception) {
-            LOGGER.debug("側門選擇在提交前拒絕，session={}：{}", sessionUuid, describe(exception));
+            LOGGER.debug("側門選擇在提交前拒絕，session={}：{}", sessionUuid, FailureText.describe(exception));
             return SelectionOutcome.REJECTED;
         }
     }
@@ -155,50 +156,39 @@ public final class CandidateLedgerService {
         } catch (RuntimeException failure) {
             var containment = contain(journal, next, failure);
             if (containment == Containment.UNCONTAINED) {
-                LOGGER.error("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, describe(failure));
+                LOGGER.error("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, FailureText.describe(failure));
             } else {
-                LOGGER.warn("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, describe(failure));
+                LOGGER.warn("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, FailureText.describe(failure));
             }
             throw new CommitFailure(failure);
         }
     }
 
     /** 提交失敗後未 checked authority 的實際處置。 */
-    private enum Containment {
-        RESTORED("已無未 checked authority（CAS 已還原為上一份 flushed authority，或 next 已 checked 而不倒退）"),
-        QUARANTINED("CAS 不符，已隔離該 session（之後只寫出上一份 flushed authority，由 recovery 收斂）"),
+    enum Containment {
+        RESTORED("已無未 checked authority（CAS 已還原為上一份 flushed authority，或 next 已 checked 而不倒退，或 session 已不在 current）"),
+        QUARANTINED("已隔離該 session（CAS 不符，或原本就在隔離中；之後只寫出上一份 flushed authority，由 recovery 收斂）"),
         QUARANTINED_AFTER_ABORT_FAILURE("CAS 還原本身失敗，已隔離該 session（之後只寫出上一份 flushed authority，由 recovery 收斂）"),
         UNCONTAINED("CAS 還原與隔離都失敗，未 checked authority 仍在 current，等待 recovery tick 隔離");
         final String description;
         Containment(String description) { this.description = description; }
     }
 
-    private static Containment contain(JournalPort journal, SessionRecoveryRecord next, RuntimeException failure) {
+    /** 以 CAS 還原未 checked authority；abort 本身失敗時改為隔離。abort／隔離的例外都附在 failure 上。 */
+    static Containment contain(JournalPort journal, SessionRecoveryRecord next, RuntimeException failure) {
         try {
             return journal.abortUnchecked(next) ? Containment.RESTORED : Containment.QUARANTINED;
         } catch (RuntimeException abortFailure) {
             failure.addSuppressed(abortFailure);
             try {
-                journal.quarantine(next.sessionUuid());
-                return Containment.QUARANTINED_AFTER_ABORT_FAILURE;
+                if (journal.quarantine(next.sessionUuid())) return Containment.QUARANTINED_AFTER_ABORT_FAILURE;
+                // 沒有新進入隔離：session 已不在 current（沒有可被承認的未 checked authority），或原本就在隔離中。
+                return journal.currentRecord(next.sessionUuid()) == null ? Containment.RESTORED : Containment.QUARANTINED;
             } catch (RuntimeException quarantineFailure) {
                 failure.addSuppressed(quarantineFailure);
                 return Containment.UNCONTAINED;
             }
         }
-    }
-
-    /**
-     * 只輸出例外 class 與 message（含 root cause）；不輸出 record、candidate bytes 或 entropy。其他 owner 的失敗 log 也共用。
-     * cause 鏈以 identity 去重走訪，多節點的 cause 環也會在有限步內停止。
-     */
-    public static String describe(Throwable failure) {
-        var text = failure.getClass().getName() + ": " + failure.getMessage();
-        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
-        var root = failure;
-        seen.add(root);
-        while (root.getCause() != null && seen.add(root.getCause())) root = root.getCause();
-        return root == failure ? text : text + " <- " + root.getClass().getName() + ": " + root.getMessage();
     }
 
     /** current 只用於 CAS 前置條件；候選與選擇仍以 expected flushed record 判斷。 */
@@ -230,7 +220,7 @@ public final class CandidateLedgerService {
             @Override public void put(SessionRecoveryRecord record) { state.put(record); }
             @Override public void flush() { state.flush(server); }
             @Override public boolean abortUnchecked(SessionRecoveryRecord expected) { return state.abortUnchecked(expected); }
-            @Override public void quarantine(UUID sessionUuid) { state.quarantine(sessionUuid); }
+            @Override public boolean quarantine(UUID sessionUuid) { return state.quarantine(sessionUuid); }
         };
     }
     private static void requireServerThread(MinecraftServer server) {

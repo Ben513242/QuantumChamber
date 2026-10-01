@@ -125,6 +125,8 @@ public final class SessionRecoveryState extends PersistentState {
      * authority history 還原為最後 checked authority；之後任何 flush、autosave 或 stop 都無法承認未 checked 的 candidate／selection。
      * next 的 candidate authority 已 checked（已落盤、legacy，或與 flushed 只差返還／lease 等進度）時不倒退。
      * CAS 不符且 current 仍含未 checked authority 時不猜測覆寫，改為隔離該 session（只影響它，其他 recovery 照常）。
+     * @apiNote 只回退 candidate context／ledger／selection 尚未 checked 的寫入。candidate 三欄位不變的寫入（例如 M5 的 COLLAPSING、
+     *          READY、終局等 restore 類寫入）一律視為已 checked 而不回退；這類寫入需要以 {@code restoreCheckedAuthority} 另開的 CAS 入口。
      * @return 該 session 已無未 checked candidate authority 時為 true；隔離時為 false
      */
     public boolean abortUnchecked(SessionRecoveryRecord expected) {
@@ -158,9 +160,10 @@ public final class SessionRecoveryState extends PersistentState {
      * authority history 也還原為最後 checked authority。flushed 為 ARMING／SUPERPOSITION 時推進為 RETURNING（candidate context、ledger、
      * selection 原樣保留，只改狀態），RETURNING／MEASURED 原樣保留；沒有 flushed authority 時移除。取代後已沒有未 checked authority，
      * 解除隔離並保持 dirty；caller 必須接著 checked flush，寫出成功才算收斂，同時覆寫磁碟上可能已落地但未確認的內容。
+     * 只由同 package 的 {@link SessionRecoveryManager} 呼叫，由它負責 checked flush 與確認。
      * @return 收斂目標；空值代表移除
      */
-    public java.util.Optional<SessionRecoveryRecord> convergeQuarantined(UUID sessionUuid) {
+    java.util.Optional<SessionRecoveryRecord> convergeQuarantined(UUID sessionUuid) {
         requireMutationThread();
         requireHealthy();
         if(!quarantined.contains(sessionUuid)) throw new IllegalStateException("只有隔離中的 session 可以收斂");

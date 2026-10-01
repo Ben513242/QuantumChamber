@@ -124,21 +124,37 @@ public final class SessionRecoveryManager {
             if(pages.operationInProgress(sid)) continue;
             try { converging.put(sid,journal.convergeQuarantined(sid)); convergenceFailures.remove(sid); }
             catch(RuntimeException failure) {
-                var cause=failure.getClass().getName()+": "+failure.getMessage();
+                var cause=FailureText.dedupeKey(failure);
                 if(!cause.equals(convergenceFailures.put(sid,cause))) logger.warn("隔離 session 尚無法收斂，維持隔離並於下一 tick 重試：session={}",sid,failure);
             }
         }
         if(converging.isEmpty()) return;
         try { journal.flush(owner); }
         catch(RuntimeException failure) {
-            var cause=failure.getClass().getName()+": "+failure.getMessage();
+            var cause=FailureText.dedupeKey(failure);
             if(!cause.equals(convergenceWarning)) logger.warn("未 checked authority 的收斂寫出失敗，保持 dirty 並於下一 tick 重試：sessions={}",converging.keySet(),failure);
             convergenceWarning=cause; return;
         }
-        converging.forEach((sid,target) -> logger.info("未 checked candidate authority 已收斂：session={} → {}",sid,
-                target.map(record -> "checked "+record.state()).orElse("checked 移除")));
+        // checked 寫出成功：逐一以 flushed 比對收斂目標，只有 exact 相符才宣告收斂。
+        var flushed=journal.flushedRecords();
+        converging.forEach((sid,target) -> {
+            var durable=flushed.get(sid);
+            if(target.map(record -> record.equals(durable)).orElse(durable==null))
+                logger.info("未 checked candidate authority 已收斂：session={} → {}",sid,target.map(record -> "checked "+record.state()).orElse("checked 移除"));
+            else logger.warn("收斂寫出成功，但 flushed 與收斂目標不符（之後的寫入已改動該 session）：session={} 目標={} flushed={}",sid,
+                    target.map(record -> "checked "+record.state()).orElse("移除"),durable==null ? "ABSENT" : durable.state());
+        });
         if(convergenceWarning!=null) logger.info("收斂寫出已恢復（先前原因：{}）",convergenceWarning);
         converging.clear(); convergenceWarning=null;
+    }
+
+    /**
+     * 該 session 的收斂是否仍未經 checked 寫出確認（隔離中，或已取代 current 但寫出尚未成功）。fail-closed：
+     * 依賴「殘留已 checked 移除」的清理（例如釋放 chamber）必須等它回 false。
+     */
+    public boolean convergencePending(UUID session) {
+        requireServer(server);
+        return converging.containsKey(session) || journal.quarantinedSessions().contains(session);
     }
 
     public boolean returnComplete(UUID session) {

@@ -274,6 +274,8 @@ public final class M4CandidateDoorGameTests {
     /**
      * H3 q5：初始 ARMING 已原子寫入正式檔、readback 才失敗（W-a）。abandonInitial 放棄之後必須補一次 checked 寫出，
      * 覆寫磁碟上未確認的 ARMING；同一 chamber 以同一原因反覆失敗時，WARN 只記一次並帶 root cause。
+     * 每次失敗的 root cause 是 message 含隨機暫存檔路徑的 AccessDeniedException（同 createTempFile／ATOMIC_MOVE 失敗），
+     * 去重不得因路徑不同而失效（H3 fix round 1 I-1）。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h3_start_readback_fault",tickLimit=100000)
     public void native_start_readback_fault_overwrites_unacknowledged_arming_and_dedupes_warning_windows(TestContext context) {
@@ -286,67 +288,76 @@ public final class M4CandidateDoorGameTests {
             var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
             var hooks=new M2CorridorGameTests.TestHooks();
             var capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
-            dev.quantumchamber.chamber.ChamberSessionGateway.StartResult retried;
-            initialFlushFaultProbe=probe;
+            hooks.add(() -> initialFlushFaultProbe=null);
+            UUID chamber;
             try {
-                // 第一次由供電觸發；再以同一 cohort 直接重試一次，模擬週期 refresh 以同一原因反覆失敗。
-                fixture.power();
-                retried=gateway.start(context.getWorld(),fixture.controller(),List.of(player.getUuid()));
-            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
-            finally { initialFlushFaultProbe=null; }
-            if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
-            var chamber=fixture.controller().chamberUuid();
-            var disk=M4CandidateTestAccess.diskRecords(server);
-            var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"入場 ARMING 未能 checked 落盤");
-            var witness=new LinkedHashMap<String,Boolean>();
-            witness.put("faultedAtLeastTwice",probe.faults>=2);
-            witness.put("unacknowledgedArmingReachedDisk",probe.diskHadArming);
-            witness.put("retryRejected",retried==dev.quantumchamber.chamber.ChamberSessionGateway.StartResult.REJECTED);
-            witness.put("noJournalForChamber",journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber))
-                    && journal.flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
-            witness.put("diskOverwrittenExactlyFlushed",disk.equals(journal.flushedRecords())
-                    && disk.values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
-            witness.put("presenceNone",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
-            witness.put("participantStayedAtSource",player.getServerWorld()==context.getWorld());
-            witness.put("singleWarning",warnings.size()==1);
-            witness.put("warningNamesChamberAndRootCause",warnings.size()==1 && warnings.getFirst().message().contains(chamber.toString())
-                    && warnings.getFirst().message().contains(InitialFlushFaultProbe.READBACK_FAULT));
-            try {
+                dev.quantumchamber.chamber.ChamberSessionGateway.StartResult retried;
+                initialFlushFaultProbe=probe;
+                try {
+                    // 第一次由供電觸發；再以同一 cohort 直接重試一次，模擬週期 refresh 以同一原因反覆失敗。
+                    fixture.power();
+                    retried=gateway.start(context.getWorld(),fixture.controller(),List.of(player.getUuid()));
+                } finally { initialFlushFaultProbe=null; }
+                if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                chamber=fixture.controller().chamberUuid();
+                var owned=chamber;
+                var disk=M4CandidateTestAccess.diskRecords(server);
+                var warnings=capture.matching(org.apache.logging.log4j.Level.WARN,"入場 ARMING 未能 checked 落盤");
+                var witness=new LinkedHashMap<String,Boolean>();
+                witness.put("faultedAtLeastTwice",probe.faults>=2);
+                witness.put("unacknowledgedArmingReachedDisk",probe.diskHadArming);
+                witness.put("tempPathsDiffered",probe.tempPaths.size()==probe.faults);
+                witness.put("retryRejected",retried==dev.quantumchamber.chamber.ChamberSessionGateway.StartResult.REJECTED);
+                witness.put("noJournalForChamber",journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(owned))
+                        && journal.flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(owned)));
+                witness.put("diskOverwrittenExactlyFlushed",disk.equals(journal.flushedRecords())
+                        && disk.values().stream().noneMatch(record -> record.chamberUuid().equals(owned)));
+                witness.put("presenceNone",gateway.presence(server,owned)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
+                witness.put("participantStayedAtSource",player.getServerWorld()==context.getWorld());
+                witness.put("singleWarning",warnings.size()==1);
+                witness.put("warningNamesChamberAndRootCause",warnings.size()==1 && warnings.getFirst().message().contains(owned.toString())
+                        && warnings.getFirst().message().contains(InitialFlushFaultProbe.READBACK_FAULT));
                 context.assertTrue(!witness.containsValue(false),"初始 ARMING 寫入後 readback 失敗：放棄後必須以 checked 寫出覆寫磁碟，WARN 依 chamber＋原因去重："
                         +witness+" faults="+probe.faults+" warnings="+warnings.stream().map(LogCapture.Entry::message).toList());
             } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             hooks.release();
-            whenWithin(context,3,30,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
-                    && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)),done -> {
+            var owned=chamber;
+            whenWithinTicks(context,3,100,() -> gateway.presence(server,owned)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+                    && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(owned)),done -> {
                 fixture.close(); M4PerTestUniverseProbe.complete(context);
-            },() -> "readback fault cleanup presence="+gateway.presence(server,chamber));
+            },() -> "readback fault cleanup presence="+gateway.presence(server,owned),null);
         });
     }
 
     /**
      * H3 q4：初始 flush 失敗＋abandonInitial 清理失敗＋RETURNING 也寫不出的殘留（current 有未 checked 的 RETURNING，沒有 flushed authority）。
      * 殘留不得被承認、不得讓 recovery 全域暫停；收斂為 checked 移除之後，reservation 與 runtime 也必須釋放，chamber 可再使用。
+     * 第一次收斂寫出也受控失敗：chamber 必須等 checked 移除確認之後才釋放（H3 fix round 1 Minor 1）。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h3_start_double_fault",tickLimit=100000)
     public void native_start_double_fault_residue_converges_and_releases_chamber_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_start_double_fault_residue_converges_and_releases_chamber_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_start_double_fault_residue_converges_and_releases_chamber_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
-        var probe=new InitialFlushFaultProbe(fixture,InitialFlushFaultProbe.Mode.DIVERGE_ONCE);
+        var probe=new InitialFlushFaultProbe(fixture,InitialFlushFaultProbe.Mode.DIVERGE_THEN_FAIL_CONVERGENCE);
         context.waitAndRun(2,() -> {
             var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player();
             var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+            var hooks=new M2CorridorGameTests.TestHooks();
+            var capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
+            // probe 保持武裝到第一次收斂寫出失敗之後；收尾或失敗時解除。
+            hooks.add(() -> initialFlushFaultProbe=null);
             initialFlushFaultProbe=probe;
-            try { fixture.power(); } finally { initialFlushFaultProbe=null; }
-            // 取證後立即斷電：殘留收斂、chamber 釋放之後，不讓週期 refresh 以同一 cohort 重新入場。
-            if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
-            var chamber=fixture.controller().chamberUuid(); var residue=probe.residue;
-            context.assertTrue(residue!=null,"雙重故障必須命中初始 ARMING 的 checked flush");
-            var sid=residue.sessionUuid();
+            try {
+                fixture.power();
+                // 取證後立即斷電：殘留收斂、chamber 釋放之後，不讓週期 refresh 以同一 cohort 重新入場。
+                if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                context.assertTrue(probe.residue!=null,"雙重故障必須命中初始 ARMING 的 checked flush");
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            var chamber=fixture.controller().chamberUuid(); var residue=probe.residue; var sid=residue.sessionUuid();
             boolean residueHeld=residue.equals(journal.records().get(sid)) && !journal.flushedRecords().containsKey(sid);
             boolean recoveryNotPaused=journal.recoveryWritesSafe();
             boolean chamberHeld=gateway.presence(server,chamber)!=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE;
-            var hooks=new M2CorridorGameTests.TestHooks();
             // 只在失敗路徑使用：以 CAS 移除仍留在 current 的殘留，避免它在同一 server 被之後的寫出承認。
             hooks.add(() -> {
                 var current=journal.records().get(sid);
@@ -355,21 +366,83 @@ public final class M4CandidateDoorGameTests {
             whenWithinTicks(context,3,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
                     && !journal.records().containsKey(sid),released -> {
                 var disk=M4CandidateTestAccess.diskRecords(server);
+                var entries=capture.entries(); int converged=-1,freed=-1;
+                for(int i=0;i<entries.size();i++) {
+                    var entry=entries.get(i);
+                    if(entry.level()!=org.apache.logging.log4j.Level.INFO || !entry.message().contains(sid.toString())) continue;
+                    if(converged<0 && entry.message().contains("未 checked candidate authority 已收斂")) converged=i;
+                    if(freed<0 && entry.message().contains("初始 ARMING 殘留已 checked 移除")) freed=i;
+                }
                 var witness=new LinkedHashMap<String,Boolean>();
                 witness.put("residueHeldAfterDoubleFault",residueHeld);
                 witness.put("recoveryNotPaused",recoveryNotPaused);
                 witness.put("chamberHeldUntilConverged",chamberHeld);
+                witness.put("convergenceFlushFailedOnce",probe.convergenceFaults==1
+                        && capture.matching(org.apache.logging.log4j.Level.WARN,"收斂寫出失敗").size()==1);
+                witness.put("releasedOnlyAfterCheckedRemoval",converged>=0 && freed>converged);
                 witness.put("residueNeverDurable",!journal.flushedRecords().containsKey(sid) && !disk.containsKey(sid)
                         && disk.values().stream().noneMatch(record -> record.chamberUuid().equals(chamber)));
                 witness.put("noSpaceRuntimeOrTicket",!((Map<?,?>)M4CandidateTestAccess.get(fixture.pages,"spaces")).containsKey(sid)
                         && !((Map<?,?>)M4CandidateTestAccess.get(gateway,"sessions")).containsKey(chamber)
                         && !((Map<?,?>)M4CandidateTestAccess.get(gateway,"tickets")).containsKey(sid));
                 witness.put("participantStayedAtSourceUnblocked",player.getServerWorld()==context.getWorld() && !SessionRecoveryManager.blocks(player.getUuid(),server));
-                context.assertTrue(!witness.containsValue(false),"雙重故障殘留必須收斂為 checked 移除並釋放 chamber："+witness);
+                context.assertTrue(!witness.containsValue(false),"雙重故障殘留必須收斂為 checked 移除並釋放 chamber："+witness
+                        +" convergedLog="+converged+" freedLog="+freed+" convergenceFaults="+probe.convergenceFaults);
                 hooks.release(); fixture.close(); M4PerTestUniverseProbe.complete(context);
             },() -> "雙重故障殘留未收斂：presence="+gateway.presence(server,chamber)+" current="
                     +(journal.records().containsKey(sid) ? journal.records().get(sid).state() : "ABSENT")
                     +" durable="+journal.flushedRecords().containsKey(sid),hooks);
+        });
+    }
+
+    /**
+     * H3 q4（start 的立即隔離分支）：初始 flush 失敗；放棄時補寫也失敗，而且 probe 趁補寫把 ARMING 重新放回 current，
+     * 讓取消 reservation 失敗、改走 fail；fail 的 RETURNING 因 recovery 寫入不安全而沒有寫出。殘留沒有被 abort 隔離，
+     * settleUncheckedInitial 必須在同一個 start 內立即隔離它；之後收斂為 checked 移除並釋放 chamber。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h3_start_cancel_fault",tickLimit=100000)
+    public void native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows");
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
+        var probe=new InitialFlushFaultProbe(fixture,InitialFlushFaultProbe.Mode.CANCEL_THEN_FAIL);
+        context.waitAndRun(2,() -> {
+            var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player();
+            var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+            initialFlushFaultProbe=probe;
+            try {
+                fixture.power();
+                if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+            } finally { initialFlushFaultProbe=null; }
+            context.assertTrue(probe.residue!=null && probe.faults==2,"初始 flush 與補寫都必須命中受控故障：faults="+probe.faults);
+            var chamber=fixture.controller().chamberUuid(); var residue=probe.residue; var sid=residue.sessionUuid();
+            boolean quarantinedAtOnce=journal.quarantinedSessions().contains(sid) && residue.equals(journal.records().get(sid))
+                    && !journal.flushedRecords().containsKey(sid);
+            boolean recoveryNotPaused=journal.recoveryWritesSafe();
+            var hooks=new M2CorridorGameTests.TestHooks();
+            // 只在失敗路徑使用：未被隔離時以 CAS 移除殘留；隔離中交給 recovery 收斂。
+            hooks.add(() -> {
+                var current=journal.records().get(sid);
+                if(current!=null && !journal.quarantinedSessions().contains(sid) && !journal.flushedRecords().containsKey(sid)) {
+                    journal.abortUnchecked(current); journal.flush(server);
+                }
+            });
+            whenWithinTicks(context,3,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+                    && !journal.records().containsKey(sid),released -> {
+                var disk=M4CandidateTestAccess.diskRecords(server);
+                var witness=new LinkedHashMap<String,Boolean>();
+                witness.put("quarantinedAtOnce",quarantinedAtOnce);
+                witness.put("recoveryNotPaused",recoveryNotPaused);
+                witness.put("residueNeverDurable",!journal.flushedRecords().containsKey(sid) && !disk.containsKey(sid));
+                witness.put("noSpaceRuntimeOrTicket",!((Map<?,?>)M4CandidateTestAccess.get(fixture.pages,"spaces")).containsKey(sid)
+                        && !((Map<?,?>)M4CandidateTestAccess.get(gateway,"sessions")).containsKey(chamber)
+                        && !((Map<?,?>)M4CandidateTestAccess.get(gateway,"tickets")).containsKey(sid));
+                witness.put("participantStayedAtSourceUnblocked",player.getServerWorld()==context.getWorld() && !SessionRecoveryManager.blocks(player.getUuid(),server));
+                context.assertTrue(!witness.containsValue(false),"未 checked 的初始殘留必須立即隔離並收斂、釋放 chamber："+witness);
+                hooks.release(); fixture.close(); M4PerTestUniverseProbe.complete(context);
+            },() -> "取消失敗的殘留未收斂：presence="+gateway.presence(server,chamber)+" current="
+                    +(journal.records().containsKey(sid) ? journal.records().get(sid).state() : "ABSENT")
+                    +" quarantined="+journal.quarantinedSessions().contains(sid),hooks);
         });
     }
 
@@ -386,10 +459,10 @@ public final class M4CandidateDoorGameTests {
             journal.put(residue);
             boolean residueUnchecked=journal.uncheckedCandidateSessions().contains(sid);
             var hooks=new M2CorridorGameTests.TestHooks();
-            // 只在失敗路徑使用：移除殘留（已被承認就一般 remove），避免它留在同一 server。
+            // 只在失敗路徑使用：移除殘留（已被承認就一般 remove），避免它留在同一 server；隔離中拒絕 remove，交給 recovery 收斂。
             hooks.add(() -> {
                 var current=journal.records().get(sid);
-                if(current==null) return;
+                if(current==null || journal.quarantinedSessions().contains(sid)) return;
                 if(journal.flushedRecords().containsKey(sid)) journal.remove(sid); else journal.abortUnchecked(current);
                 journal.flush(server);
             });
@@ -427,6 +500,8 @@ public final class M4CandidateDoorGameTests {
             boolean quarantined=!journal.abortUnchecked(selected);
             boolean putRejected=rejects(() -> journal.put(before.withProgress(before.participants(),before.spaceLeases(),SessionState.RETURNING,false)));
             boolean recoveryNotPaused=journal.recoveryWritesSafe();
+            // 只在失敗路徑使用：斷開本 test 的玩家連線（成功路徑由 trustedTeardown 收尾）。
+            var hooks=new M2CorridorGameTests.TestHooks(); hooks.add(fixture::close);
             whenWithinTicks(context,tick+1,200,() -> fixture.record()!=null && fixture.record().state()==SessionState.RETURNING,converged -> {
                 var durable=fixture.record(); var disk=M4CandidateTestAccess.diskRecords(server).get(sid);
                 var witness=new LinkedHashMap<String,Boolean>();
@@ -443,7 +518,7 @@ public final class M4CandidateDoorGameTests {
                 // 收尾即驗證玩家返還：全員回到原艙完整 bbox、record 已 checked 移除、保護解除。
                 fixture.trustedTeardown(converged+1,() -> M4PerTestUniverseProbe.complete(context));
             },() -> "隔離 session 未收斂：durable="+(fixture.record()==null ? "ABSENT" : fixture.record().state())
-                    +" current="+(journal.records().containsKey(sid) ? journal.records().get(sid).state() : "ABSENT"),null);
+                    +" current="+(journal.records().containsKey(sid) ? journal.records().get(sid).state() : "ABSENT"),hooks);
         });
     }
 
@@ -1218,21 +1293,39 @@ public final class M4CandidateDoorGameTests {
     /**
      * 武裝期間讓該 Chamber 初始 ARMING（尚無 flushed record）的 checked flush 失敗。
      * FAIL：每次都在寫入前失敗，模擬持續 IO 故障；每次重試都必須零殘留。
-     * WRITE_THEN_FAIL（H3 q5）：每次先把含該 ARMING 的整份 journal 原子寫入正式檔，再以 readback 失敗結束（W-a）。
-     * DIVERGE_ONCE（H3 q4）：只失敗一次；失敗前在 current 疊上同 authority 的 RETURNING，讓 abandonInitial 的 CAS 必定不符（雙重故障的殘留）。
+     * WRITE_THEN_FAIL（H3 q5）：每次先把含該 ARMING 的整份 journal 原子寫入正式檔，再以 readback 失敗結束（W-a）；root cause 是 message
+     * 含隨機暫存檔路徑的 AccessDeniedException，每次路徑都不同。
+     * DIVERGE_THEN_FAIL_CONVERGENCE（H3 q4）：初始 flush 失敗前在 current 疊上同 authority 的 RETURNING，讓 abandonInitial 的 CAS 必定不符
+     * （雙重故障的殘留）；之後殘留被收斂移除、第一次寫出時再受控失敗一次。
+     * CANCEL_THEN_FAIL（H3 q4）：初始 flush 失敗；放棄時的補寫也失敗，並趁補寫把 ARMING 放回 current，讓取消 reservation 失敗。
      */
     private static final class InitialFlushFaultProbe {
-        enum Mode { FAIL, WRITE_THEN_FAIL, DIVERGE_ONCE }
+        enum Mode { FAIL, WRITE_THEN_FAIL, DIVERGE_THEN_FAIL_CONVERGENCE, CANCEL_THEN_FAIL }
         static final String READBACK_FAULT="M5 H3 GameTest 受控 readback 失敗（ARMING 已寫入正式檔）";
-        final M2CorridorGameTests.NativeEntry fixture; final Mode mode; int faults;
+        final M2CorridorGameTests.NativeEntry fixture; final Mode mode; int faults,convergenceFaults;
         /** WRITE_THEN_FAIL：每次故障前，正式檔 strict 讀回都含該 ARMING。 */
         boolean diskHadArming=true;
-        /** DIVERGE_ONCE：疊在未 checked ARMING 之上的 RETURNING。 */
+        /** WRITE_THEN_FAIL：每次故障用的暫存檔路徑（互不相同）。 */
+        final Set<String> tempPaths=new HashSet<>();
+        /** DIVERGE_THEN_FAIL_CONVERGENCE：疊在未 checked ARMING 之上的 RETURNING；CANCEL_THEN_FAIL：被放回 current 的 ARMING。 */
         SessionRecoveryRecord residue;
         InitialFlushFaultProbe(M2CorridorGameTests.NativeEntry fixture) { this(fixture,Mode.FAIL); }
         InitialFlushFaultProbe(M2CorridorGameTests.NativeEntry fixture,Mode mode) { this.fixture=fixture; this.mode=mode; }
         void observe(SessionRecoveryState journal) {
-            if(fixture.controller()==null || fixture.controller().chamberUuid()==null || mode==Mode.DIVERGE_ONCE && residue!=null) return;
+            if(fixture.controller()==null || fixture.controller().chamberUuid()==null) return;
+            if(residue!=null) {
+                var sid=residue.sessionUuid();
+                if(journal.records().containsKey(sid) || journal.flushedRecords().containsKey(sid)) return;
+                if(mode==Mode.DIVERGE_THEN_FAIL_CONVERGENCE && convergenceFaults==0) {
+                    convergenceFaults++;
+                    throw new IllegalStateException("M5 H3 GameTest 受控收斂寫出失敗（殘留已自 current 移除）");
+                }
+                if(mode==Mode.CANCEL_THEN_FAIL && faults==1) {
+                    faults++; journal.put(residue);
+                    throw new IllegalStateException("M5 H3 GameTest 受控補寫失敗（ARMING 已放回 current）");
+                }
+                return;
+            }
             var chamber=fixture.controller().chamberUuid();
             var initial=journal.records().values().stream().filter(record -> record.chamberUuid().equals(chamber)
                     && !journal.flushedRecords().containsKey(record.sessionUuid())).findFirst().orElse(null);
@@ -1247,12 +1340,19 @@ public final class M4CandidateDoorGameTests {
                     try { SessionJournalStore.write(path,wrapped); }
                     catch(java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
                     diskHadArming &= M4CandidateTestAccess.diskRecords(fixture.server).containsKey(initial.sessionUuid());
-                    throw new java.io.UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",new java.io.IOException(READBACK_FAULT));
+                    var temp=path.resolveSibling(path.getFileName()+"."+UUID.randomUUID().toString().replace("-","")+".tmp").toString();
+                    tempPaths.add(temp);
+                    throw new java.io.UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",
+                            new java.nio.file.AccessDeniedException(temp,path.toString(),READBACK_FAULT));
                 }
-                case DIVERGE_ONCE -> {
+                case DIVERGE_THEN_FAIL_CONVERGENCE -> {
                     residue=initial.withProgress(initial.participants(),initial.spaceLeases(),SessionState.RETURNING,initial.restoreEntryEffectOnReturn());
                     journal.put(residue);
                     throw new IllegalStateException("M5 H3 GameTest 受控 initial ARMING flush fault（current 已疊上 RETURNING）");
+                }
+                case CANCEL_THEN_FAIL -> {
+                    residue=initial;
+                    throw new IllegalStateException("M5 H3 GameTest 受控 initial ARMING flush fault（之後補寫也失敗）");
                 }
             }
         }
