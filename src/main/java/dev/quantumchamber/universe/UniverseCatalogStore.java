@@ -19,9 +19,23 @@ public final class UniverseCatalogStore {
     private UniverseCatalogStore() {
     }
 
+    /**
+     * 決策 9 的 package-private IO port：{@link #write} 在 atomic move 之後的讀回。production 為 {@link #read}；pure JVM 測試以它注入
+     * 「atomic move 完成、讀回失敗」。
+     */
+    @FunctionalInterface
+    interface Readback {
+        NbtCompound read(Path target) throws IOException;
+    }
+
     public static void write(Path target, NbtCompound wrapped) throws IOException {
+        write(target, wrapped, UniverseCatalogStore::read);
+    }
+
+    static void write(Path target, NbtCompound wrapped, Readback readback) throws IOException {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(wrapped, "wrapped");
+        Objects.requireNonNull(readback, "readback");
         validateWrapper(wrapped);
         var expected = wrapped.copy();
         var absolute = target.toAbsolutePath().normalize();
@@ -36,7 +50,7 @@ public final class UniverseCatalogStore {
             Files.move(temporary, absolute,
                     StandardCopyOption.ATOMIC_MOVE,
                     StandardCopyOption.REPLACE_EXISTING);
-            var actual = read(absolute);
+            var actual = readback.read(absolute);
             if (!expected.equals(actual)) {
                 throw new IOException("Universe catalog atomic replace 後 exact readback 不符: " + absolute);
             }

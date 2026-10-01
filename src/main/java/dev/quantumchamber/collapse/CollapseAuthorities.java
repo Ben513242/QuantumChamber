@@ -1,11 +1,17 @@
 package dev.quantumchamber.collapse;
 
 import dev.quantumchamber.candidate.NewUniverseIntent;
+import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
+import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.persistence.CheckedNbtFile;
 import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
+import dev.quantumchamber.universe.UniverseKeys;
+import dev.quantumchamber.universe.UniverseRecord;
+import dev.quantumchamber.universe.UniverseRegistry;
+import dev.quantumchamber.universe.UniverseRegistryState;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -32,8 +38,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * M5 的 checked 權威（spec §6）：每個 server instance 一份，持有 allocation ledger（§6.1）與 projection ledger（§6.5）的已確認內容、
- * 收斂旗標與以權威為單位的退避。只在 server thread 使用。
+ * M5 的 checked 權威（spec §6）：每個 server instance 一份，持有 allocation ledger（§6.1）與 projection ledger（§6.5）的已確認內容，
+ * 也是 discovery（§6.4）與 catalog 配置（§6.2）的收斂 owner：四個權威各自的收斂旗標與以權威為單位的退避。只在 server thread 使用。
  * <ul>
  * <li><b>初始化</b>（{@link #initialize(MinecraftServer)}）：開服時（{@code SERVER_STARTED}，註冊順序早於 lifecycle bootstrap 物化）執行一次。
  *     只看 journal 的 flushed envelope：還不是 schema 4 時，缺少的 ledger 以 checked 方式建立為空檔；已是 schema 4 時，缺少任何一個就是遺失
@@ -44,23 +50,47 @@ import org.slf4j.LoggerFactory;
  * <li><b>寫入</b>：同目錄暫存檔、force、以正式讀取規則驗證暫存檔、atomic move、strict 讀回並 exact 比對（{@link CheckedNbtFile}，
  *     M4 discovery 的寫法）。寫入或讀回失敗時 roll-forward（spec §6）：current 保留這次的新內容，權威標為未確認；未確認期間這個權威的查詢與寫入一律回「未確認」，
  *     不做新決策，由 {@link #convergeIfNeeded} 依 {@link CollapseBackoff} 退避重試 checked 重寫。</li>
+ * <li><b>discovery</b>（M4 的檔，不是 PersistentState）：不在初始化載入，每次使用時從磁碟 strict 讀取（與 M4 的讀取點一致）；檔案不存在一律是遺失
+ *     （只有 NEW／EXISTING 的 RESOLVE 會用到，那時 journal 已有 candidate evidence，M4 已建立 discovery）。寫入與 ledger 相同，失敗時 roll-forward：
+ *     current 保留這次的 append，絕不移除可能已落地的 record，所以 M4 從磁碟讀到的候選池不會倒退。</li>
+ * <li><b>catalog</b>（M3 的 PersistentState）：依原生 dirty 機制收斂（M3 的 save 失敗時保留 current 與 dirty，下一次寫出——重試或原生
+ *     autosave——帶著它）。這裡不另存旗標，「未確認」直接由 catalog 推導：仍 dirty，或 current 不等於 flushed。本類別只負責阻擋新決策、
+ *     退避重試寫出，不新增還原 API。</li>
  * </ul>
- * 兩個 ledger 都不是 PersistentState，原生 autosave 與停服不會寫它們；收斂完成之前 crash，重啟後讀到的舊內容或新內容都合法（spec §6 的表）。
+ * 兩個 ledger 與 discovery 都不是 PersistentState，原生 autosave 與停服不會寫它們；收斂完成之前 crash，重啟後讀到的舊內容或新內容都合法
+ * （spec §6 的表）。
  */
 public final class CollapseAuthorities {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
     private static final Map<MinecraftServer, CollapseAuthorities> INSTANCES = Collections.synchronizedMap(new IdentityHashMap<>());
     private static boolean registered;
 
-    /** 收斂與未確認旗標的單位。F2c 會加入 discovery 與 catalog。 */
-    public enum Authority { ALLOCATION_LEDGER, PROJECTION_LEDGER }
+    /** 收斂與未確認旗標的單位（spec §6 收斂共通第 2 點：以權威為單位）。 */
+    public enum Authority { ALLOCATION_LEDGER, PROJECTION_LEDGER, DISCOVERY, CATALOG }
 
     /**
-     * 決策 9 的 package-private IO port：讀取 ledger 檔（正式檔或暫存檔）的原始 bytes。初始化的載入、寫入前的暫存檔驗證、atomic move 之後的讀回
-     * 都經過它，pure JVM 測試以它注入 IO 例外與「atomic move 完成、讀回失敗」。檔案不存在必須丟 {@link NoSuchFileException}。
-     * 正式實作是 {@link CheckedNbtFile#readFile}。
+     * 決策 9 的 package-private IO port：讀取 ledger 與 discovery 檔（正式檔或暫存檔）的原始 bytes。初始化的載入、discovery 的讀取、
+     * 寫入前的暫存檔驗證、atomic move 之後的讀回都經過它，pure JVM 測試以它注入 IO 例外與「atomic move 完成、讀回失敗」。
+     * 檔案不存在必須丟 {@link NoSuchFileException}。正式實作是 {@link CheckedNbtFile#readFile}。
      */
     @FunctionalInterface interface LedgerIo extends CheckedNbtFile.ReadPort {}
+
+    /**
+     * 決策 9 的 package-private catalog port。production 是 {@link ServerCatalog}（{@link UniverseRegistryState#get} 與
+     * {@link UniverseRegistryState#flush}）；pure JVM 測試以它提供 catalog 並注入寫出失敗，檢查本類別的未確認狀態。
+     */
+    interface CatalogPort {
+        /** 本 server 的 catalog（PersistentState，同一個 instance）。 */
+        UniverseRegistryState catalog();
+
+        /** checked 寫出 catalog 的 current。失敗時丟 {@link RuntimeException}；M3 的 save 失敗時保留 current 與 dirty。 */
+        void flush(UniverseRegistryState catalog);
+    }
+
+    private record ServerCatalog(MinecraftServer server) implements CatalogPort {
+        @Override public UniverseRegistryState catalog() { return UniverseRegistryState.get(server); }
+        @Override public void flush(UniverseRegistryState catalog) { catalog.flush(server); }
+    }
 
     /** 初始化的結果。 */
     public record InitResult(Outcome allocation, Outcome projection, boolean flushedSchemaFour, Optional<RuntimeException> failure) {
@@ -107,24 +137,31 @@ public final class CollapseAuthorities {
     }
 
     /**
-     * 查詢（與 allocation 的追加）結果。成功的三種狀態沒有 SEALED 原因與 failure；其餘都帶著可直接用於 SEALED 的原因（F4a／F4b）與 failure。
+     * 查詢（與 allocation、discovery、catalog 的追加或配置）結果。成功的三種狀態沒有 SEALED 原因與 failure；其餘都帶著可直接用於 SEALED 的原因
+     * （F4a／F4b）與 failure。catalog 的 {@code UNCONFIRMED} 例外：spec §6.2 規定等下一個 tick 再試、不進 SEALED（見
+     * {@link CollapseAuthorities#allocateOrVerifyCatalog}）。
      * @param <T> entry 型別
      */
     public record Lookup<T>(Status status, Optional<T> value, Optional<SealedReason> sealedReason, Optional<RuntimeException> failure) {
         public enum Status {
-            /** 找到 entry：allocation 為 exact 等於本 session 會寫出的內容；projection 為該 (chamber, UniverseId) 的已確認 entry。 */
+            /**
+             * 找到既有紀錄，而且已驗證：allocation、discovery、catalog 為 exact 等於（或正是）本 session 會寫出的內容；projection 為該
+             * (chamber, UniverseId) 的已確認 entry；discovery 的唯讀查詢為該 UniverseId 的 record（呼叫端自己判斷 gameplayEligible）。
+             */
             FOUND,
-            /** allocation：沒有 entry，本次 checked 追加並讀回確認。 */
+            /** allocation、discovery：沒有紀錄，本次 checked 追加並讀回確認；catalog：本次配置並 checked 寫出、讀回確認。 */
             APPENDED,
-            /** projection：已確認的 ledger 沒有這個 (chamber, UniverseId)。 */
+            /** projection、discovery 的唯讀查詢：已確認的內容沒有這個 key。 */
             ABSENT,
             /** 權威有尚未確認的 roll-forward 寫入：不做新決策，先 {@link CollapseAuthorities#convergeIfNeeded}。 */
             UNCONFIRMED,
-            /** 本次追加的 checked 寫入或讀回失敗：current 保留它，權威標為未確認。 */
+            /** 本次的 checked 寫入或讀回失敗：current 保留它，權威標為未確認。 */
             WRITE_FAILED,
-            /** 遺失、損壞、既有紀錄不是本 session 會寫出的內容、UniverseId 已屬於另一個 token、已達上限，或初始化因此失敗。 */
+            /**
+             * 遺失、損壞、既有紀錄不是本 session 會寫出的內容、UniverseId 已屬於另一個 token、已達上限、orphan storage，或初始化因此失敗。
+             */
             CORRUPT,
-            /** 初始化時的 IO 例外（或 journal 不健康）；下次開服重新初始化。 */
+            /** 初始化時的 IO 例外（或 journal 不健康），或 discovery 讀取、storage 檢查時的 IO 例外；重啟之後重試。 */
             UNREADABLE
         }
 
@@ -198,24 +235,36 @@ public final class CollapseAuthorities {
     }
 
     private final MinecraftServer owner;
+    private final Path saveRoot;
     private final LedgerIo io;
+    private final CatalogPort catalog;
     private final IntSupplier ticks;
     private final Slot<UniverseAllocationLedger> allocation;
     private final Slot<ProjectionLedger> projection;
+    private final Slot<UniverseDiscoveryState> discovery;
+    /** catalog 的收斂：以權威為單位的退避、WARN 去重鍵，以及本 instance 的寫出是否失敗過（確認時記 INFO）。未確認本身由 catalog 推導。 */
+    private final CollapseBackoff catalogBackoff = new CollapseBackoff();
+    private String catalogWarned;
+    private boolean catalogWriteFailed;
     private InitResult init;
 
     /** package-private：pure JVM 測試以自己的 port 與時鐘建立（沒有 server，不檢查執行緒）。 */
-    CollapseAuthorities(Path saveRoot, LedgerIo io, IntSupplier ticks) { this(null, saveRoot, io, ticks); }
+    CollapseAuthorities(Path saveRoot, LedgerIo io, CatalogPort catalog, IntSupplier ticks) { this(null, saveRoot, io, catalog, ticks); }
 
-    private CollapseAuthorities(MinecraftServer owner, Path saveRoot, LedgerIo io, IntSupplier ticks) {
+    private CollapseAuthorities(MinecraftServer owner, Path saveRoot, LedgerIo io, CatalogPort catalog, IntSupplier ticks) {
         this.owner = owner;
+        this.saveRoot = Objects.requireNonNull(saveRoot, "saveRoot").toAbsolutePath().normalize();
         this.io = Objects.requireNonNull(io, "io");
+        this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.ticks = Objects.requireNonNull(ticks, "ticks");
-        var data = Objects.requireNonNull(saveRoot, "saveRoot").toAbsolutePath().normalize().resolve("data");
+        var data = this.saveRoot.resolve("data");
         allocation = new Slot<>(Authority.ALLOCATION_LEDGER, data.resolve(UniverseAllocationLedger.FILE_NAME),
                 UniverseAllocationLedger::toNbt, UniverseAllocationLedger::fromNbt, UniverseAllocationLedger.empty(), SealedReason.ALLOCATION_IO_FAILED);
         projection = new Slot<>(Authority.PROJECTION_LEDGER, data.resolve(ProjectionLedger.FILE_NAME),
                 ProjectionLedger::toNbt, ProjectionLedger::fromNbt, ProjectionLedger.empty(), SealedReason.PROJECTION_FAILED);
+        // discovery 不由 M5 初始化建立或載入（M4 擁有建立），所以沒有空檔內容；confirmed／current 只在寫入之後才有值。
+        discovery = new Slot<>(Authority.DISCOVERY, data.resolve(UniverseDiscoveryState.FILE_NAME),
+                UniverseDiscoveryState::toNbt, UniverseDiscoveryState::fromNbt, null, SealedReason.ALLOCATION_IO_FAILED);
     }
 
     /**
@@ -230,7 +279,8 @@ public final class CollapseAuthorities {
     }
 
     private static void onStarted(MinecraftServer server) {
-        var authorities = new CollapseAuthorities(server, server.getSavePath(WorldSavePath.ROOT), CheckedNbtFile::readFile, server::getTicks);
+        var authorities = new CollapseAuthorities(server, server.getSavePath(WorldSavePath.ROOT), CheckedNbtFile::readFile,
+                new ServerCatalog(server), server::getTicks);
         if (INSTANCES.putIfAbsent(server, authorities) != null) throw new IllegalStateException("同一 server 的 M5 authority 不得重複初始化");
         authorities.initialize(server);
     }
@@ -380,6 +430,7 @@ public final class CollapseAuthorities {
     /**
      * 已確認的 projection entry（spec §6.5）；沒有時為 {@code ABSENT}。只看 key，不驗 site：決定第一次寫入或修復之前，先以
      * {@link #writeProjection} 寫 PENDING 取得 site 驗證（{@code UNCHANGED}＝既有 PENDING、{@code ALREADY_COMPLETE}＝既有 COMPLETE）。
+     * {@code ABSENT} 時，先做 spec §6.5 的實體交叉檢查（F4b），才能寫 PENDING。PENDING 一旦存在就不再做交叉檢查。
      * 權威未確認時回 {@code UNCONFIRMED}（未確認的 PENDING 不能拿來決定寫方塊）。
      */
     public Lookup<ProjectionLedger.Entry> projection(UUID chamber, UniverseId id) {
@@ -432,20 +483,162 @@ public final class CollapseAuthorities {
         return written == null ? WriteResult.of(WriteResult.Status.WRITTEN, entry) : WriteResult.failed(written);
     }
 
-    /** spec §6 的收斂旗標：該權威有尚未經 checked 讀回確認的 roll-forward 寫入。 */
+    /**
+     * NEW 的 discovery 追加（spec §6.4、§8.2 第 4 步；RESOLVE 物化成功之後呼叫）。欄位與 idempotency 依
+     * {@link UniverseDiscoveryState#append}：沒有這個 UniverseId 時 checked 追加（{@code APPENDED}）；已有時必須 {@code gameplayEligible} 而且
+     * {@code firstObserver} 等於 {@code selectedBy}（{@code FOUND}，不改動），否則 {@code CORRUPT}，不沿用、不改寫。
+     * <ul>
+     * <li>寫入或讀回失敗：roll-forward，current 保留這筆 append（絕不移除可能已落地的 record，M4 讀到的候選池不倒退），回
+     *     {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}；收斂之前一律 {@code UNCONFIRMED}，重試前先 {@link #convergeIfNeeded}。</li>
+     * <li>讀取失敗的分類（spec §6）：檔案不存在是遺失（{@code CORRUPT}，本 instance 之後一律 {@code CORRUPT}，不重建）；讀檔時的 IO 例外為
+     *     {@code UNREADABLE}；讀到 bytes 之後的解析或 strict decode 失敗為 {@code CORRUPT}。</li>
+     * </ul>
+     * 初始化失敗時與 ledger 相同，回初始化的失敗結果（spec §6：UNIVERSE 目的地到 RESOLVE 時依初始化的失敗分類進 SEALED），不讀、不寫。
+     * @param discoveredAtGameTime 當下的 game time（負數是 caller 錯誤，丟 {@link IllegalArgumentException}）
+     * @param selectedBy 本 session 的 {@code SelectedBy}
+     */
+    public Lookup<UniverseDiscoveryRecord> appendDiscovery(UniverseId universeId, long discoveredAtGameTime, UUID selectedBy) {
+        requireThread();
+        Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(selectedBy, "selectedBy");
+        if (discoveredAtGameTime < 0) throw new IllegalArgumentException("discovery 的 game time 必須非負");
+        Lookup<UniverseDiscoveryRecord> gate = gate(discovery);
+        if (gate != null) return gate;
+        var read = readDiscovery();
+        if (!read.succeeded()) return failedAs(read);
+        UniverseDiscoveryState.Append append;
+        try {
+            append = read.value().orElseThrow().append(universeId, discoveredAtGameTime, selectedBy);
+        } catch (ArithmeticException overflow) {
+            return corrupt(new IllegalStateException("discovery ordinal 溢位", overflow));
+        }
+        return switch (append.outcome()) {
+            case EXISTING -> Lookup.found(append.record());
+            case MISMATCH -> corrupt(new IllegalStateException("既有 discovery record 不是本 session 會寫出的內容（gameplayEligible 或 firstObserver 不符）"));
+            case APPENDED -> {
+                Lookup<UniverseDiscoveryRecord> written = checkedWrite(discovery, append.next());
+                yield written == null ? Lookup.appended(append.record()) : written;
+            }
+        };
+    }
+
+    /**
+     * 唯讀的 discovery 查詢（spec §8.1 EXISTING 重驗用）：從磁碟 strict 讀取，回這個 UniverseId 的 record（{@code FOUND}，是否
+     * {@code gameplayEligible} 由呼叫端判斷）或 {@code ABSENT}。未確認、遺失與讀取失敗的處理同 {@link #appendDiscovery}。
+     */
+    public Lookup<UniverseDiscoveryRecord> discovery(UniverseId universeId) {
+        requireThread();
+        Objects.requireNonNull(universeId, "universeId");
+        Lookup<UniverseDiscoveryRecord> gate = gate(discovery);
+        if (gate != null) return gate;
+        var read = readDiscovery();
+        if (!read.succeeded()) return failedAs(read);
+        return read.value().orElseThrow().find(universeId).map(Lookup::found).orElseGet(Lookup::absent);
+    }
+
+    /**
+     * NEW 的 catalog 配置或既有紀錄驗證（spec §6.2、§8.2 第 2 步）。只看 flushed catalog：
+     * <ol>
+     * <li>M5 初始化失敗 → 初始化的失敗結果（與 ledger 相同，不配置）。</li>
+     * <li>catalog 不健康（M3 strict decode 失敗；正常情況下 bootstrap 已讓 server 停止）→ {@code CORRUPT}。</li>
+     * <li>catalog 有未確認的寫入（{@link #unconfirmed} 為真：仍 dirty，或 current 不等於 flushed）→ {@code UNCONFIRMED}，不配置。
+     *     <b>這個 {@code UNCONFIRMED} 依 §6.2 不進 SEALED</b>：等下一個 tick 再試（catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗；
+     *     持續 600 ticks 記一次 WARN 由 F4a 負責）。呼叫端應先查 {@link #unconfirmed}、需要時 {@link #convergeIfNeeded}。</li>
+     * <li>已有這個 UniverseId：以 {@link #catalogRecordMatches} 驗證，符合為 {@code FOUND}，否則 {@code CORRUPT}，不重新配置、不改寫。</li>
+     * <li>沒有：該 UUID 的 storage 目錄已存在就是 orphan → {@code CORRUPT}，絕不採用或刪除那個目錄；檢查時的 IO 例外為 {@code UNREADABLE}。</li>
+     * <li>否則 {@code allocateOverworld(uuid, flushed 的最大 ordinal＋1)}（catalog 為空時為 0），availability 為 {@code EAGER_ENABLED}，再
+     *     checked 寫出：成功為 {@code APPENDED}；寫出或讀回失敗為 {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}——roll-forward，M3 的 save
+     *     保留 current 與 dirty，下一次寫出（{@link #convergeIfNeeded} 的重試或原生 autosave）帶著它；確認之前不得物化。</li>
+     * </ol>
+     * @param acceptDisabled 是否接受既有紀錄為 {@code DISABLED}：只有 spec §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑傳 true（F4a 之後自行改回
+     *     {@code EAGER_ENABLED}）；其餘一律 false
+     */
+    public Lookup<UniverseRecord> allocateOrVerifyCatalog(UniverseId universeId, boolean acceptDisabled) {
+        requireThread();
+        Objects.requireNonNull(universeId, "universeId");
+        Lookup<UniverseRecord> initialization = initializationGate();
+        if (initialization != null) return initialization;
+        var state = catalog.catalog();
+        Map<UniverseId, UniverseRecord> flushed;
+        try {
+            state.requireHealthy();
+            flushed = state.flushedRecords();
+        } catch (IllegalStateException unhealthy) {
+            return corrupt(new IllegalStateException("catalog 不健康，不配置", unhealthy));
+        }
+        if (catalogUnconfirmed(state)) {
+            return Lookup.failed(Lookup.Status.UNCONFIRMED, SealedReason.ALLOCATION_IO_FAILED,
+                    new IllegalStateException("CATALOG 有尚未確認的寫入（仍 dirty 或 current 不等於 flushed），收斂之前不配置"));
+        }
+        catalogConfirmed();
+        var existing = flushed.get(universeId);
+        if (existing != null) {
+            if (catalogRecordMatches(existing, universeId, acceptDisabled)) return Lookup.found(existing);
+            return corrupt(new IllegalStateException("既有 catalog record 不是 M5 會配置的內容（descriptor、profile、seed policy 或 availability 不符）"));
+        }
+        var storage = universeStorage(universeId);
+        try {
+            Files.readAttributes(storage, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return corrupt(new IllegalStateException("orphan storage：catalog 沒有這筆紀錄，storage 目錄卻已存在；不採用、不刪除：" + storage));
+        } catch (NoSuchFileException absent) {
+            // 正常：這個 UUID 從未物化過。
+        } catch (IOException failure) {
+            return Lookup.failed(Lookup.Status.UNREADABLE, SealedReason.AUTHORITY_UNREADABLE,
+                    new UncheckedIOException("無法確認 storage 目錄是否存在：" + storage, failure));
+        }
+        UniverseRecord allocated;
+        try {
+            long ordinal = Math.addExact(flushed.values().stream().mapToLong(record -> record.definition().allocationOrdinal()).max().orElse(-1), 1);
+            allocated = state.allocateOverworld(universeId.value(), ordinal);
+        } catch (RuntimeException failure) {
+            return corrupt(new IllegalStateException("catalog 配置失敗", failure));
+        }
+        Lookup<UniverseRecord> written = flushCatalog(state);
+        return written == null ? Lookup.appended(allocated) : written;
+    }
+
+    /**
+     * spec §6.2 的既有 catalog record 驗證（§8.1 的 EXISTING 重驗也適用）：record 的 definition 必須 exact 等於 M3 以同一個 UUID 與 ordinal
+     * 配置的 OVERWORLD 內容（恰一個 OVERWORLD descriptor、world key、{@code VANILLA_OVERWORLD_SHARED_SEED_V1}、{@code SHARED_SAVE_SEED_V1}、
+     * storage policy 1），而且 availability 為 {@code EAGER_ENABLED}。不比對 AllocationOrdinal（配置時才決定）。目前 M3 的
+     * {@code UniverseDefinition} 建構子已經不允許其他 descriptor 內容（strict decode 就會讓 catalog 不健康），這裡仍 exact 比對，防守日後放寬。
+     * @param acceptDisabled 為 true 時也接受 {@code DISABLED}：只有 spec §8.3 的重試路徑可以這樣呼叫（F4a），其餘一律 false
+     */
+    public static boolean catalogRecordMatches(UniverseRecord record, UniverseId universeId, boolean acceptDisabled) {
+        Objects.requireNonNull(record, "record"); Objects.requireNonNull(universeId, "universeId");
+        var definition = record.definition();
+        var expected = new UniverseRegistry().allocateOverworld(universeId.value(), definition.allocationOrdinal()).definition();
+        if (!definition.equals(expected)) return false;
+        return switch (record.desiredAvailability()) {
+            case EAGER_ENABLED -> true;
+            case DISABLED -> acceptDisabled;
+        };
+    }
+
+    /**
+     * spec §6 的收斂旗標：該權威有尚未經 checked 讀回確認的 roll-forward 寫入。catalog 由 catalog 本身推導（仍 dirty，或 current 不等於
+     * flushed；catalog 不健康時為真）：原生 autosave 寫出成功之後就自動回到已確認。
+     */
     public boolean unconfirmed(Authority authority) {
         requireThread();
+        if (Objects.requireNonNull(authority, "authority") == Authority.CATALOG) return catalogUnconfirmed(catalog.catalog());
         return slot(authority).unconfirmed;
     }
 
     /**
-     * 下一次使用前的收斂：權威未確認、而且不在退避期內時，以 checked 方式重寫 current（含所有可能已落地的追加）。成功即確認並清除退避；
-     * 失敗時維持未確認並加倍退避（{@link CollapseBackoff}，以權威為單位）。初始化失敗或已遺失時不做任何事。
+     * 下一次使用前的收斂：權威未確認、而且不在退避期內時，以 checked 方式重寫 current（含所有可能已落地的追加；catalog 為 checked 寫出 current）。
+     * 成功即確認並清除退避；失敗時維持未確認並加倍退避（{@link CollapseBackoff}，以權威為單位）。初始化失敗或已遺失時不做任何事
+     * （初始化失敗的 instance 沒有任何 M5 寫入）；catalog 已由原生 autosave 確認時只清除退避。
      */
     public void convergeIfNeeded(Authority authority) {
         requireThread();
+        Objects.requireNonNull(authority, "authority");
+        if (init == null || !init.succeeded()) return;
+        if (authority == Authority.CATALOG) {
+            convergeCatalog();
+            return;
+        }
         var slot = slot(authority);
-        if (init == null || !init.succeeded() || slot.lost != null || !slot.unconfirmed) return;
+        if (slot.lost != null || !slot.unconfirmed) return;
         if (!slot.backoff.ready(ticks.getAsInt())) return;
         rewrite(slot);
     }
@@ -454,13 +647,8 @@ public final class CollapseAuthorities {
 
     /** 查詢前的共通閘門：未初始化是 caller 錯誤；初始化失敗、遺失、未確認各回對應的失敗結果；可以使用時為 null。 */
     private <T> Lookup<T> gate(Slot<?> slot) {
-        if (init == null) throw new IllegalStateException("M5 authority 尚未初始化");
-        if (!init.succeeded()) {
-            var reason = init.sealedReason().orElseThrow();
-            var status = reason == SealedReason.AUTHORITY_CORRUPT ? Lookup.Status.CORRUPT : Lookup.Status.UNREADABLE;
-            return Lookup.failed(status, reason, new IllegalStateException("M5 authority 初始化失敗（allocation=" + init.allocation()
-                    + "，projection=" + init.projection() + "）", init.failure().orElseThrow()));
-        }
+        Lookup<T> initialization = initializationGate();
+        if (initialization != null) return initialization;
         if (slot.lost != null) return Lookup.failed(Lookup.Status.CORRUPT, SealedReason.AUTHORITY_CORRUPT, slot.lost);
         if (slot.unconfirmed) {
             return Lookup.failed(Lookup.Status.UNCONFIRMED, slot.writeFailure,
@@ -469,8 +657,120 @@ public final class CollapseAuthorities {
         return null;
     }
 
+    /** 四個權威共用的初始化閘門（fail closed）：未初始化是 caller 錯誤；初始化失敗回對應的失敗結果；成功時為 null。 */
+    private <T> Lookup<T> initializationGate() {
+        if (init == null) throw new IllegalStateException("M5 authority 尚未初始化");
+        if (!init.succeeded()) {
+            var reason = init.sealedReason().orElseThrow();
+            var status = reason == SealedReason.AUTHORITY_CORRUPT ? Lookup.Status.CORRUPT : Lookup.Status.UNREADABLE;
+            return Lookup.failed(status, reason, new IllegalStateException("M5 authority 初始化失敗（allocation=" + init.allocation()
+                    + "，projection=" + init.projection() + "）", init.failure().orElseThrow()));
+        }
+        return null;
+    }
+
     private static <T> Lookup<T> corrupt(RuntimeException failure) {
         return Lookup.failed(Lookup.Status.CORRUPT, SealedReason.AUTHORITY_CORRUPT, failure);
+    }
+
+    /** 把失敗的 Lookup 轉成另一個 entry 型別（失敗結果沒有 entry）。 */
+    private static <T> Lookup<T> failedAs(Lookup<?> failed) {
+        return Lookup.failed(failed.status(), failed.sealedReason().orElseThrow(), failed.failure().orElseThrow());
+    }
+
+    /**
+     * discovery 的 strict 讀取（每次都從磁碟讀，與 M4 的讀取點相同）。成功為 {@code FOUND}（值是整份 state）；檔案不存在為遺失（{@code CORRUPT}，
+     * 標記遺失、記一次 ERROR、不重建）；讀檔時的 IO 例外為 {@code UNREADABLE}；讀到 bytes 之後的失敗為 {@code CORRUPT}。
+     */
+    private Lookup<UniverseDiscoveryState> readDiscovery() {
+        byte[] bytes;
+        try {
+            bytes = io.read(discovery.path);
+        } catch (NoSuchFileException missing) {
+            return Lookup.failed(Lookup.Status.CORRUPT, SealedReason.AUTHORITY_CORRUPT, markLost(discovery, missing));
+        } catch (IOException failure) {
+            return Lookup.failed(Lookup.Status.UNREADABLE, SealedReason.AUTHORITY_UNREADABLE,
+                    new UncheckedIOException(discovery.authority + " 讀取時 IO 例外", failure));
+        }
+        try {
+            return Lookup.found(UniverseDiscoveryState.fromNbt(CheckedNbtFile.parse(bytes)));
+        } catch (IOException | RuntimeException failure) {
+            return corrupt(new IllegalStateException(discovery.authority + " strict decode 失敗", failure));
+        }
+    }
+
+    /** spec §6.1／§6.5：執行期間發現檔案消失，一律視為遺失；本 instance 之後一律 {@code CORRUPT}，不重建，current 不變，只記一次 ERROR。 */
+    private RuntimeException markLost(Slot<?> slot, NoSuchFileException missing) {
+        if (slot.lost == null) {
+            slot.lost = new IllegalStateException(slot.authority + " 在執行期間消失，視為遺失", missing);
+            LOGGER.error("M5 {} 的檔案在執行期間消失，視為遺失（AUTHORITY_CORRUPT）；不重建，需要管理員處理：{}", slot.authority, slot.path);
+        }
+        return slot.lost;
+    }
+
+    /** catalog 的未確認狀態由 catalog 推導：仍 dirty（含 restore 之後 current 已等於 flushed、但還沒寫出），或 current 不等於 flushed。 */
+    private static boolean catalogUnconfirmed(UniverseRegistryState state) {
+        try {
+            return state.isDirty() || !state.records().equals(state.flushedRecords());
+        } catch (IllegalStateException unhealthy) {
+            return true;
+        }
+    }
+
+    private void convergeCatalog() {
+        var state = catalog.catalog();
+        if (!catalogUnconfirmed(state)) {
+            catalogConfirmed();
+            return;
+        }
+        try {
+            state.requireHealthy();
+        } catch (IllegalStateException unhealthy) {
+            return;
+        }
+        if (!catalogBackoff.ready(ticks.getAsInt())) return;
+        flushCatalog(state);
+    }
+
+    /**
+     * catalog 的 checked 寫出。成功（之後 catalog 不再未確認）回 null；失敗時依 spec §6 的 roll-forward：M3 的 save 已保留 current 與 dirty
+     * （{@code UniverseRegistryState.save}），這裡只記退避與 WARN（同一原因一次），回 {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}。
+     */
+    private <T> Lookup<T> flushCatalog(UniverseRegistryState state) {
+        RuntimeException failure = null;
+        try {
+            catalog.flush(state);
+        } catch (RuntimeException flushFailure) {
+            failure = flushFailure;
+        }
+        if (failure == null && !catalogUnconfirmed(state)) {
+            catalogConfirmed();
+            return null;
+        }
+        if (failure == null) failure = new IllegalStateException("CATALOG 寫出之後仍有未確認的寫入");
+        catalogWriteFailed = true;
+        catalogBackoff.failed(ticks.getAsInt());
+        var key = FailureText.dedupeKey(failure);
+        if (!key.equals(catalogWarned)) {
+            catalogWarned = key;
+            LOGGER.warn("M5 CATALOG 的 checked 寫出未確認：current 保留並維持 dirty，{} ticks 後才重試收斂（或由原生 autosave 寫出）：{}",
+                    catalogBackoff.delayTicks(), FailureText.describe(failure), failure);
+        }
+        return Lookup.failed(Lookup.Status.WRITE_FAILED, SealedReason.ALLOCATION_IO_FAILED, failure);
+    }
+
+    /** catalog 已確認（本 instance 的寫出或原生 autosave）：清除退避與 WARN 去重鍵；本 instance 曾寫出失敗時記 INFO。 */
+    private void catalogConfirmed() {
+        if (catalogWriteFailed) LOGGER.info("M5 CATALOG 收斂完成：catalog 的寫出已讀回確認");
+        catalogWriteFailed = false;
+        catalogBackoff.reset();
+        catalogWarned = null;
+    }
+
+    /** 這個 UUID 的 universe storage 目錄（與 M3 {@code UniverseRegistryState.inspectStorage} 相同的推導：{@code <save>/dimensions/<namespace>/<path>} 的上一層）。 */
+    private Path universeStorage(UniverseId universeId) {
+        var key = UniverseKeys.world(universeId, DimensionRole.OVERWORLD).getValue();
+        return saveRoot.resolve("dimensions").resolve(key.getNamespace()).resolve(key.getPath()).normalize().getParent();
     }
 
     /**
@@ -481,10 +781,7 @@ public final class CollapseAuthorities {
         try {
             Files.readAttributes(slot.path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         } catch (NoSuchFileException missing) {
-            // spec §6.1／§6.5：執行期間發現檔案消失，一律視為遺失；不重建，current 不變。
-            slot.lost = new IllegalStateException(slot.authority + " 在執行期間消失，視為遺失", missing);
-            LOGGER.error("M5 {} 的檔案在執行期間消失，視為遺失（AUTHORITY_CORRUPT）；不重建，需要管理員處理：{}", slot.authority, slot.path);
-            return Lookup.failed(Lookup.Status.CORRUPT, SealedReason.AUTHORITY_CORRUPT, slot.lost);
+            return Lookup.failed(Lookup.Status.CORRUPT, SealedReason.AUTHORITY_CORRUPT, markLost(slot, missing));
         } catch (IOException failure) {
             return rollForward(slot, next, failure);
         }
@@ -515,15 +812,18 @@ public final class CollapseAuthorities {
         return Lookup.failed(Lookup.Status.WRITE_FAILED, slot.writeFailure, cause);
     }
 
-    /** {@link CheckedNbtFile#write}：暫存檔與 atomic move 之後的讀回都經過本權威的 {@link LedgerIo}，並以 ledger 的 strict decode 驗證。 */
-    private <L> void writeAtomic(Slot<L> slot, L ledger) throws IOException {
-        CheckedNbtFile.write(slot.path, slot.encode.apply(ledger), io, nbt -> slot.decode.apply(nbt), slot.authority.toString());
+    /** {@link CheckedNbtFile#write}：暫存檔與 atomic move 之後的讀回都經過本權威的 {@link LedgerIo}，並以該權威的 strict decode 驗證。 */
+    private <L> void writeAtomic(Slot<L> slot, L content) throws IOException {
+        CheckedNbtFile.write(slot.path, slot.encode.apply(content), io, nbt -> slot.decode.apply(nbt), slot.authority.toString());
     }
 
+    /** 檔案權威的 slot（catalog 是 PersistentState，沒有 slot）。 */
     private Slot<?> slot(Authority authority) {
         return switch (Objects.requireNonNull(authority, "authority")) {
             case ALLOCATION_LEDGER -> allocation;
             case PROJECTION_LEDGER -> projection;
+            case DISCOVERY -> discovery;
+            case CATALOG -> throw new IllegalArgumentException("CATALOG 沒有檔案 slot");
         };
     }
 
@@ -538,7 +838,10 @@ public final class CollapseAuthorities {
         return Optional.of(first);
     }
 
-    /** 一個 ledger 權威：已確認內容、current（roll-forward 尚未確認時領先）、收斂旗標、遺失狀態與以權威為單位的退避。 */
+    /**
+     * 一個檔案權威（兩個 ledger 與 discovery）：已確認內容、current（roll-forward 尚未確認時領先）、收斂旗標、遺失狀態與以權威為單位的退避。
+     * discovery 不在初始化載入，confirmed／current 只在寫入之後才有值，查詢一律重新從磁碟讀。
+     */
     private static final class Slot<L> {
         final Authority authority;
         final Path path;

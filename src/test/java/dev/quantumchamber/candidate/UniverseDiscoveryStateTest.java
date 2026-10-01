@@ -3,7 +3,9 @@ package dev.quantumchamber.candidate;
 import static org.junit.jupiter.api.Assertions.*;
 import static dev.quantumchamber.candidate.CandidateResolverTest.record;
 import static dev.quantumchamber.candidate.CandidateResolverTest.universe;
+import dev.quantumchamber.persistence.CheckedNbtFile;
 import dev.quantumchamber.universe.DimensionRole;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -149,6 +151,115 @@ class UniverseDiscoveryStateTest {
         assertArrayEquals(before, Files.readAllBytes(target()));
         assertTrue(UniverseDiscoveryState.load(root).records().isEmpty());
         try (var paths = Files.list(root.resolve("data"))) { assertEquals(1, paths.count()); }
+    }
+
+    // ---- spec §6.4 的正式追加（M5 F2c） ----
+
+    private static final UUID SELECTED_BY = UUID.fromString("00000000-0000-4000-8000-0000000000a1");
+
+    @Test void appendUsesTheNextOrdinalTheGameTimeAndTheSelectedByObserver() {
+        var first = record(universe(0, 1), 1, true);
+        var hidden = record(universe(0, 2), 4, false);
+        var tie = record(universe(0, 3), 4, true);
+        var state = UniverseDiscoveryState.fromRecords(List.of(tie, first, hidden));
+        assertEquals(4, state.watermark());
+        var id = universe(9, 9);
+        var append = state.append(id, 1234, SELECTED_BY);
+        var expected = new UniverseDiscoveryRecord(id, 5, 1234, Optional.of(SELECTED_BY), true);
+        assertAll(
+            () -> assertEquals(UniverseDiscoveryState.Append.Outcome.APPENDED, append.outcome()),
+            () -> assertEquals(expected, append.record(), "ordinal＝watermark＋1（不可見的 record 也算）、當下 game time、firstObserver＝SelectedBy、eligible"),
+            () -> assertEquals(List.of(first, hidden, tie, expected), append.next().records()),
+            () -> assertEquals(5, append.next().watermark()),
+            () -> assertEquals(Optional.of(expected), append.next().find(id)),
+            () -> assertEquals(List.of(first, hidden, tie), state.records(), "原 state 不變"),
+            () -> assertEquals(Optional.empty(), state.find(id)),
+            () -> assertEquals(List.of(first, tie, expected), append.next().eligibleSnapshot(append.next().watermark(), VANILLA),
+                    "新的 watermark 之內可被候選選到"));
+        var fromEmpty = UniverseDiscoveryState.fromRecords(List.of()).append(id, 0, SELECTED_BY);
+        assertEquals(new UniverseDiscoveryRecord(id, 0, 0, Optional.of(SELECTED_BY), true), fromEmpty.record(), "空的 discovery：第一筆 ordinal 為 0");
+        assertThrows(IllegalArgumentException.class, () -> state.append(universe(9, 10), -1, SELECTED_BY), "game time 必須非負");
+    }
+
+    @Test void appendIsIdempotentByUniverseIdAndOnlyAcceptsThisSessionsEligibleRecord() {
+        var id = universe(7, 7);
+        var later = record(universe(0, 8), 6, true);
+        // 上一次寫入已落地、讀回才失敗：ordinal 與 game time 可以和這一次不同。
+        var own = new UniverseDiscoveryRecord(id, 3, 99, Optional.of(SELECTED_BY), true);
+        var state = UniverseDiscoveryState.fromRecords(List.of(own, later));
+        var again = state.append(id, 5000, SELECTED_BY);
+        assertAll(
+            () -> assertEquals(UniverseDiscoveryState.Append.Outcome.EXISTING, again.outcome()),
+            () -> assertEquals(own, again.record()),
+            () -> assertSame(state, again.next(), "驗證通過就不改動"));
+        var other = UUID.fromString("00000000-0000-4000-8000-0000000000b2");
+        var cases = new ArrayList<org.junit.jupiter.api.function.Executable>();
+        for (var mismatch : List.of(
+                new UniverseDiscoveryRecord(id, 3, 99, Optional.of(SELECTED_BY), false),
+                new UniverseDiscoveryRecord(id, 3, 99, Optional.of(other), true),
+                new UniverseDiscoveryRecord(id, 3, 99, Optional.empty(), true))) {
+            cases.add(() -> {
+                var existing = UniverseDiscoveryState.fromRecords(List.of(mismatch, later));
+                var result = existing.append(id, 5000, SELECTED_BY);
+                assertEquals(UniverseDiscoveryState.Append.Outcome.MISMATCH, result.outcome(), mismatch.toString());
+                assertEquals(mismatch, result.record());
+                assertSame(existing, result.next(), "不符時不改寫");
+                assertEquals(List.of(mismatch, later), existing.records());
+            });
+        }
+        assertAll(cases);
+    }
+
+    /** 決策 9 的 store 層注入：atomic move 之後讀回失敗，正式檔已是新內容，不被還原；M4 讀取點看到的候選池只增不減。 */
+    @Test void readbackFailureAfterTheMoveLeavesTheAppendOnDiskForM4Readers() throws Exception {
+        UniverseDiscoveryState.fromRecords(List.of(record(universe(0, 1), 0, true), record(universe(0, 2), 1, false))).save(root);
+        var before = UniverseDiscoveryState.load(root);
+        long frozen = before.watermark();
+        var poolBefore = before.eligibleSnapshot(frozen, VANILLA);
+        var append = before.append(universe(0, 3), 77, SELECTED_BY);
+        var injected = new ArrayList<Path>();
+        assertThrows(UniverseDiscoveryState.UnhealthyDiscoveryException.class, () -> append.next().save(root, failOnce(target(), injected)));
+        assertEquals(List.of(target()), injected, "讀回失敗發生在正式檔（atomic move 之後）");
+        var after = UniverseDiscoveryState.load(root);
+        assertAll(
+            () -> assertEquals(append.next().records(), after.records(), "atomic move 已完成：append 已落地，沒有被還原"),
+            () -> assertEquals(frozen + 1, after.watermark()),
+            () -> assertEquals(poolBefore, after.eligibleSnapshot(frozen, VANILLA), "已凍結 watermark 的 session，候選池不變"),
+            () -> assertTrue(after.eligibleSnapshot(after.watermark(), VANILLA).containsAll(poolBefore), "新的候選池不倒退"),
+            () -> assertTrue(after.eligibleSnapshot(after.watermark(), VANILLA).contains(append.record()), "新的候選池含這筆 append"),
+            () -> assertNoTemporaryFiles());
+        // 收斂：同一份 current 重寫成功，record 仍在。
+        append.next().save(root);
+        assertEquals(append.next().records(), UniverseDiscoveryState.load(root).records());
+    }
+
+    @Test void temporaryVerificationFailureLeavesTheFormalFileUnchanged() throws Exception {
+        UniverseDiscoveryState.fromRecords(List.of(record(universe(0, 1), 0, true))).save(root);
+        byte[] before = Files.readAllBytes(target());
+        var append = UniverseDiscoveryState.load(root).append(universe(0, 3), 77, SELECTED_BY);
+        var injected = new ArrayList<Path>();
+        assertThrows(UniverseDiscoveryState.UnhealthyDiscoveryException.class, () -> append.next().save(root, failOnceOnTemporary(injected)));
+        assertEquals(1, injected.size(), "注入在暫存檔驗證");
+        assertArrayEquals(before, Files.readAllBytes(target()), "atomic move 之前失敗：正式檔不變");
+        assertNoTemporaryFiles();
+    }
+
+    private static CheckedNbtFile.ReadPort failOnce(Path failing, List<Path> injected) {
+        return path -> {
+            if (injected.isEmpty() && path.equals(failing)) { injected.add(path); throw new IOException("注入：atomic move 完成、讀回失敗"); }
+            return CheckedNbtFile.readFile(path);
+        };
+    }
+
+    private static CheckedNbtFile.ReadPort failOnceOnTemporary(List<Path> injected) {
+        return path -> {
+            if (injected.isEmpty() && path.getFileName().toString().endsWith(".tmp")) { injected.add(path); throw new IOException("注入：暫存檔驗證失敗"); }
+            return CheckedNbtFile.readFile(path);
+        };
+    }
+
+    private void assertNoTemporaryFiles() throws IOException {
+        try (var paths = Files.list(root.resolve("data"))) { assertEquals(List.of(), paths.filter(path -> path.toString().endsWith(".tmp")).toList()); }
     }
 
     private void assertRejectedAndPreserved() throws Exception {

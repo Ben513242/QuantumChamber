@@ -162,6 +162,41 @@ class UniverseRegistryStateTest {
         assertEquals(record, state.find(UniverseId.of(ID)).orElseThrow());
     }
 
+    /**
+     * M5 F2c（spec §6.2、決策 9 的 store 層注入）：catalog 配置的 atomic move 已完成、讀回失敗時，M3 的 save 本來就是 roll-forward——
+     * current 保留這筆配置並維持 dirty、flushed 不前進；下一次寫出（這裡用原生 autosave 的入口）帶著它。
+     */
+    @Test
+    void allocationReadbackFailureAfterTheMoveKeepsCurrentAndDirtyAndTheNextWriteCarriesIt() throws Exception {
+        var target = root.resolve("quantumchamber_universes.dat");
+        var readbacks = new java.util.ArrayList<Path>();
+        var failing = new boolean[] {true};
+        var state = new UniverseRegistryState(path -> {
+            readbacks.add(path);
+            if (failing[0]) {
+                failing[0] = false;
+                throw new java.io.IOException("注入：atomic move 完成、讀回失敗");
+            }
+            return UniverseCatalogStore.read(path);
+        });
+        var allocated = state.allocateOverworld(ID, 0);
+
+        assertThrows(UncheckedIOException.class, () -> state.save(target));
+
+        assertEquals(java.util.List.of(target.toAbsolutePath().normalize()), readbacks, "讀回發生在 atomic move 之後");
+        assertTrue(state.isDirty(), "保留 dirty");
+        assertEquals(java.util.Map.of(UniverseId.of(ID), allocated), state.records(), "current 保留這筆配置");
+        assertTrue(state.flushedRecords().isEmpty(), "flushed 不前進");
+        assertEquals(java.util.Map.of(UniverseId.of(ID), allocated), UniverseRegistryState.load(target).records(),
+                "atomic move 已完成：配置已落地");
+
+        state.save(target.toFile(), null);
+
+        assertFalse(state.isDirty());
+        assertEquals(java.util.Map.of(UniverseId.of(ID), allocated), state.flushedRecords(), "下一次寫出帶著它");
+        assertEquals(state.records(), UniverseRegistryState.load(target).records());
+    }
+
     private static NbtCompound catalogWithZeroLengthRecords(byte heldType) throws Exception {
         var bytes = new ByteArrayOutputStream();
         try (var output = new DataOutputStream(bytes)) {

@@ -40,6 +40,16 @@ public final class UniverseRegistryState extends PersistentState {
     private Map<UniverseId, UniverseRecord> flushed = Map.of();
     private String loadError;
     private MinecraftServer owner;
+    private final UniverseCatalogStore.Readback readback;
+
+    public UniverseRegistryState() {
+        this(UniverseCatalogStore::read);
+    }
+
+    /** 決策 9 的 package-private IO port：{@link #save} 經 {@link UniverseCatalogStore} 寫出後的讀回。production 為 {@link UniverseCatalogStore#read}。 */
+    UniverseRegistryState(UniverseCatalogStore.Readback readback) {
+        this.readback = Objects.requireNonNull(readback, "readback");
+    }
 
     public static UniverseRegistryState get(MinecraftServer server) {
         requireServerThread(server);
@@ -215,7 +225,7 @@ public final class UniverseRegistryState extends PersistentState {
         wrapped.put("data", writeNbt(new NbtCompound()));
         NbtHelper.putDataVersion(wrapped);
         try {
-            UniverseCatalogStore.write(target, wrapped);
+            UniverseCatalogStore.write(target, wrapped, readback);
         } catch (IOException exception) {
             throw new UncheckedIOException(
                     "Universe catalog 落盤失敗，保留 dirty 與上一個 durable snapshot", exception);

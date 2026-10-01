@@ -4,6 +4,8 @@ import static dev.quantumchamber.collapse.UniverseAllocationLedgerTest.intent;
 import static dev.quantumchamber.collapse.UniverseAllocationLedgerTest.token;
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.quantumchamber.candidate.SourceFamilyRef;
+import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.collapse.CollapseAuthorities.Authority;
 import dev.quantumchamber.collapse.CollapseAuthorities.InitResult.Outcome;
@@ -12,43 +14,67 @@ import dev.quantumchamber.collapse.CollapseAuthorities.WriteResult;
 import dev.quantumchamber.collapse.ProjectionLedger.Entry.Status;
 import dev.quantumchamber.persistence.CheckedNbtFile;
 import dev.quantumchamber.persistence.SessionRecoveryState;
+import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
+import dev.quantumchamber.universe.UniverseCatalogStore;
 import dev.quantumchamber.universe.UniverseId;
+import dev.quantumchamber.universe.UniverseRegistryState;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtSizeTracker;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.world.World;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
 import org.apache.logging.log4j.core.config.Property;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * spec §6 的 M5 authority：初始化與遺失判定（§15 的判定表）、既有紀錄的驗證、讀取失敗的分類，以及 roll-forward 收斂。
- * 檔案 IO 的失敗以 {@link CollapseAuthorities.LedgerIo} 這個 package-private port 注入（plan 決策 9），不用 testmod mixin。
+ * spec §6 的 M5 authority：初始化與遺失判定（§15 的判定表）、既有紀錄的驗證、讀取失敗的分類，以及 roll-forward 收斂；F2c 起含 discovery
+ * （§6.4）與 catalog 配置（§6.2）。檔案 IO 的失敗以 {@link CollapseAuthorities.LedgerIo}、catalog 的寫出失敗以
+ * {@link CollapseAuthorities.CatalogPort} 這兩個 package-private port 注入（plan 決策 9），不用 testmod mixin。
  */
 class CollapseAuthoritiesTest {
     @TempDir Path root;
     private final Io io = new Io();
+    private final Map<Path, TestCatalog> catalogs = new HashMap<>();
     private final int[] now = {1000};
     private static final UUID CHAMBER = UUID.fromString("00000000-0000-4000-8000-0000000000c1");
     private static final BlockPos CONTROLLER = new BlockPos(32, 70, -48);
+    /** 兩個由 M5 初始化建立的 ledger（Authority 另有 DISCOVERY 與 CATALOG）。 */
+    private static final List<Authority> LEDGERS = List.of(Authority.ALLOCATION_LEDGER, Authority.PROJECTION_LEDGER);
+    private static final UUID SELECTED_BY = UUID.fromString("00000000-0000-4000-8000-0000000000a1");
+    private static final SourceFamilyRef VANILLA = new SourceFamilyRef.Vanilla(World.OVERWORLD, DimensionRole.OVERWORLD);
+    /** M4 時期就存在的 discovery record（fixture 寫入，沒有 firstObserver）。 */
+    private static final UniverseDiscoveryRecord M4_RECORD =
+            new UniverseDiscoveryRecord(UniverseId.of(UUID.fromString("00000000-0000-4000-8000-0000000000d1")), 0, 5, Optional.empty(), true);
+
+    @BeforeAll static void gameVersion() {
+        // catalog 的 {data, DataVersion} wrapper 需要 game version（比照 UniverseRegistryStateTest）。
+        net.minecraft.SharedConstants.createGameVersion();
+    }
 
     // ---- 初始化與遺失判定（spec §6、§15） ----
 
@@ -110,7 +136,7 @@ class CollapseAuthoritiesTest {
     /** W11：初始化只建立了一個 ledger 就中斷；journal 仍是 schema 3，補建另一個，既有的照常讀取、不重寫。 */
     @Test void interruptedInitializationRecreatesOnlyTheMissingLedger() throws Exception {
         var cases = new ArrayList<Executable>();
-        for (var existing : Authority.values()) cases.add(() -> {
+        for (var existing : LEDGERS) cases.add(() -> {
             var save = save("w11-" + existing);
             var present = existing == Authority.ALLOCATION_LEDGER ? allocationFile(save) : projectionFile(save);
             var missing = existing == Authority.ALLOCATION_LEDGER ? projectionFile(save) : allocationFile(save);
@@ -135,7 +161,7 @@ class CollapseAuthoritiesTest {
 
     @Test void schemaFourJournalWithAMissingLedgerIsLostAndNeverRecreated() throws Exception {
         var cases = new ArrayList<Executable>();
-        for (var deleted : Authority.values()) cases.add(() -> {
+        for (var deleted : LEDGERS) cases.add(() -> {
             var save = save("lost-" + deleted);
             seed(save);
             var gone = deleted == Authority.ALLOCATION_LEDGER ? allocationFile(save) : projectionFile(save);
@@ -156,6 +182,7 @@ class CollapseAuthoritiesTest {
                 assertCorrupt(authorities.lookupOrAppendAllocation(intent(token(4))));
                 assertCorrupt(authorities.projection(CHAMBER, existingUniverse()));
                 assertEquals(WriteResult.Status.CORRUPT, authorities.writeProjection(pending(existingUniverse())).status());
+                assertEquals(WriteResult.Status.CORRUPT, completeWithoutPending(authorities, deleted.toString()).status());
                 assertFalse(Files.exists(gone), "不建檔、不補寫");
                 assertArrayEquals(keptBytes, Files.readAllBytes(kept));
                 assertEquals(1, logs.messages(Level.ERROR).stream().filter(message -> message.contains("M5 authority 初始化失敗")).count());
@@ -167,7 +194,7 @@ class CollapseAuthoritiesTest {
     /** 只有 EXISTING 造訪過的存檔（allocation ledger 一直是空的）：刪掉任一個 ledger 也一律是遺失；投影不會被當成「第一次寫入」。 */
     @Test void existingOnlySaveWithADeletedLedgerIsLostToo() throws Exception {
         var cases = new ArrayList<Executable>();
-        for (var deleted : Authority.values()) cases.add(() -> {
+        for (var deleted : LEDGERS) cases.add(() -> {
             var save = save("existing-only-" + deleted);
             var first = authorities(save);
             assertTrue(first.initialize(SessionRecoveryState::new).succeeded());
@@ -226,6 +253,8 @@ class CollapseAuthoritiesTest {
         var authorities = authorities(save("once"));
         assertThrows(IllegalStateException.class, () -> authorities.lookupOrAppendAllocation(intent(token(6))));
         assertThrows(IllegalStateException.class, () -> authorities.projection(CHAMBER, existingUniverse()));
+        assertThrows(IllegalStateException.class, () -> authorities.appendDiscovery(existingUniverse(), 10, SELECTED_BY));
+        assertThrows(IllegalStateException.class, () -> authorities.allocateOrVerifyCatalog(existingUniverse(), false));
         assertFalse(authorities.initialized());
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
         assertThrows(IllegalStateException.class, () -> authorities.initialize(SessionRecoveryState::new));
@@ -603,7 +632,326 @@ class CollapseAuthoritiesTest {
         assertEquals(200, backoff.delayTicks(), "成功之後重新從 200 開始");
     }
 
+    // ---- discovery（spec §6.4、§6 收斂；F2c） ----
+
+    @Test void discoveryAppendWritesTheNextRecordAndIsIdempotent() throws Exception {
+        var save = save("discovery-append");
+        writeDiscovery(save, M4_RECORD);
+        var authorities = initialized(save);
+        var id = UniverseAllocationLedger.deriveUniverseId(token(40));
+        var appended = authorities.appendDiscovery(id, 1234, SELECTED_BY);
+        var expected = new UniverseDiscoveryRecord(id, 1, 1234, Optional.of(SELECTED_BY), true);
+        assertAll(
+            () -> assertEquals(Lookup.Status.APPENDED, appended.status(), () -> appended.toString()),
+            () -> assertEquals(Optional.of(expected), appended.value(), "ordinal＝watermark＋1、當下 game time、firstObserver＝SelectedBy、eligible"),
+            () -> assertEquals(List.of(M4_RECORD, expected), UniverseDiscoveryState.load(save).records(), "M4 的讀取點讀到這筆 record"),
+            () -> assertNoTemporaryFiles(save));
+        byte[] written = Files.readAllBytes(discoveryFile(save));
+        var again = authorities.appendDiscovery(id, 9999, SELECTED_BY);
+        assertAll(
+            () -> assertEquals(Lookup.Status.FOUND, again.status(), "以 UniverseId 判斷 idempotency"),
+            () -> assertEquals(Optional.of(expected), again.value()),
+            () -> assertArrayEquals(written, Files.readAllBytes(discoveryFile(save)), "已存在時不改寫"),
+            () -> assertEquals(Optional.of(expected), authorities.discovery(id).value()),
+            () -> assertEquals(Lookup.Status.ABSENT, authorities.discovery(UniverseAllocationLedger.deriveUniverseId(token(41))).status()),
+            () -> assertFalse(authorities.unconfirmed(Authority.DISCOVERY)));
+    }
+
+    @Test void existingDiscoveryRecordsMustBeEligibleAndFirstObservedByThisSession() throws Exception {
+        var id = UniverseAllocationLedger.deriveUniverseId(token(42));
+        var other = UUID.fromString("00000000-0000-4000-8000-0000000000b2");
+        var cases = new ArrayList<Executable>();
+        for (var mismatch : List.of(
+                new UniverseDiscoveryRecord(id, 1, 50, Optional.of(SELECTED_BY), false),
+                new UniverseDiscoveryRecord(id, 1, 50, Optional.of(other), true),
+                new UniverseDiscoveryRecord(id, 1, 50, Optional.empty(), true))) {
+            var name = "discovery-mismatch-" + cases.size();
+            cases.add(() -> {
+                var save = save(name);
+                writeDiscovery(save, M4_RECORD, mismatch);
+                byte[] before = Files.readAllBytes(discoveryFile(save));
+                var authorities = initialized(save);
+                var result = authorities.appendDiscovery(id, 60, SELECTED_BY);
+                assertEquals(Lookup.Status.CORRUPT, result.status(), mismatch.toString());
+                assertEquals(Optional.of(SealedReason.AUTHORITY_CORRUPT), result.sealedReason(), mismatch.toString());
+                assertArrayEquals(before, Files.readAllBytes(discoveryFile(save)), "不沿用、不改寫既有紀錄");
+                assertFalse(authorities.unconfirmed(Authority.DISCOVERY));
+            });
+        }
+        assertAll(cases);
+    }
+
+    /** spec §6 roll-forward、§12 W12：discovery 的 atomic move 已完成、讀回失敗；已落地的 record 不移除，M4 讀到的候選池不倒退。 */
+    @Test void discoveryReadbackFailureKeepsTheLandedRecordAndM4PoolsNeverRegress() throws Exception {
+        var save = save("discovery-roll-forward");
+        writeDiscovery(save, M4_RECORD);
+        var authorities = initialized(save);
+        var before = UniverseDiscoveryState.load(save);
+        long frozen = before.watermark();
+        var poolBefore = before.eligibleSnapshot(frozen, VANILLA);
+        var first = UniverseAllocationLedger.deriveUniverseId(token(43));
+        var second = UniverseAllocationLedger.deriveUniverseId(token(44));
+        var landed = new UniverseDiscoveryRecord(first, 1, 100, Optional.of(SELECTED_BY), true);
+        try (var logs = new Logs()) {
+            // 第一次讀正式檔是追加前的讀取，第二次才是 atomic move 之後的讀回。
+            io.failReadbackAfter(UniverseDiscoveryState.FILE_NAME, 1);
+            var failed = authorities.appendDiscovery(first, 100, SELECTED_BY);
+            var m4View = UniverseDiscoveryState.load(save);
+            assertAll(
+                () -> assertEquals(Lookup.Status.WRITE_FAILED, failed.status(), () -> failed.toString()),
+                () -> assertEquals(Optional.of(SealedReason.ALLOCATION_IO_FAILED), failed.sealedReason()),
+                () -> assertTrue(authorities.unconfirmed(Authority.DISCOVERY)),
+                () -> assertFalse(authorities.unconfirmed(Authority.ALLOCATION_LEDGER), "收斂旗標以權威為單位"),
+                () -> assertEquals(List.of(M4_RECORD, landed), m4View.records(), "atomic move 已完成：record 已落地"),
+                () -> assertEquals(poolBefore, m4View.eligibleSnapshot(frozen, VANILLA), "已凍結 watermark 的候選池不變"),
+                () -> assertTrue(m4View.eligibleSnapshot(m4View.watermark(), VANILLA).containsAll(poolBefore), "新的候選池不倒退"),
+                () -> assertTrue(m4View.eligibleSnapshot(m4View.watermark(), VANILLA).contains(landed), "新的候選池含已落地的 record"));
+            // 未確認期間不做新決策：同一筆也不回 FOUND，新的不追加，也不改檔。
+            byte[] landedBytes = Files.readAllBytes(discoveryFile(save));
+            assertUnconfirmed(authorities.appendDiscovery(first, 100, SELECTED_BY), SealedReason.ALLOCATION_IO_FAILED);
+            assertUnconfirmed(authorities.appendDiscovery(second, 101, SELECTED_BY), SealedReason.ALLOCATION_IO_FAILED);
+            assertUnconfirmed(authorities.discovery(first), SealedReason.ALLOCATION_IO_FAILED);
+            assertArrayEquals(landedBytes, Files.readAllBytes(discoveryFile(save)));
+            // 退避期內不嘗試；到期以 checked 方式重寫 current（帶著已落地的 record）。
+            int reads = io.readsOf(UniverseDiscoveryState.FILE_NAME);
+            now[0] = 1199; authorities.convergeIfNeeded(Authority.DISCOVERY);
+            assertEquals(reads, io.readsOf(UniverseDiscoveryState.FILE_NAME), "退避期內不嘗試");
+            assertTrue(authorities.unconfirmed(Authority.DISCOVERY));
+            now[0] = 1200; authorities.convergeIfNeeded(Authority.DISCOVERY);
+            assertFalse(authorities.unconfirmed(Authority.DISCOVERY), "收斂寫入讀回確認");
+            assertEquals(List.of(M4_RECORD, landed), UniverseDiscoveryState.load(save).records(), "收斂不移除已落地的 record");
+            var retried = authorities.appendDiscovery(first, 999, SELECTED_BY);
+            assertEquals(Lookup.Status.FOUND, retried.status(), "重試時 idempotent（ordinal 與 time 可以不同）");
+            assertEquals(Optional.of(landed), retried.value());
+            var next = authorities.appendDiscovery(second, 101, SELECTED_BY);
+            assertEquals(Optional.of(new UniverseDiscoveryRecord(second, 2, 101, Optional.of(SELECTED_BY), true)), next.value());
+            assertEquals(List.of(M4_RECORD, landed, next.value().orElseThrow()), UniverseDiscoveryState.load(save).records());
+            assertEquals(1, logs.messages(Level.WARN).size(), () -> "寫入未確認記一次 WARN：" + logs.messages(Level.WARN));
+            assertEquals(1, logs.messages(Level.INFO).stream().filter(message -> message.contains("DISCOVERY 收斂完成")).count());
+        }
+    }
+
+    @Test void discoveryWriteFailureBeforeTheMoveIsRolledForwardToo() throws Exception {
+        var save = save("discovery-before-move");
+        writeDiscovery(save, M4_RECORD);
+        var authorities = initialized(save);
+        var id = UniverseAllocationLedger.deriveUniverseId(token(45));
+        io.failTemporary(UniverseDiscoveryState.FILE_NAME);
+        assertEquals(Lookup.Status.WRITE_FAILED, authorities.appendDiscovery(id, 7, SELECTED_BY).status());
+        assertEquals(List.of(M4_RECORD), UniverseDiscoveryState.load(save).records(), "move 之前失敗：磁碟仍是舊內容（候選池沒有變）");
+        assertNoTemporaryFiles(save);
+        assertTrue(authorities.unconfirmed(Authority.DISCOVERY), "current 保留這筆 append");
+        now[0] = 1200; authorities.convergeIfNeeded(Authority.DISCOVERY);
+        assertFalse(authorities.unconfirmed(Authority.DISCOVERY));
+        assertEquals(List.of(M4_RECORD, new UniverseDiscoveryRecord(id, 1, 7, Optional.of(SELECTED_BY), true)),
+                UniverseDiscoveryState.load(save).records(), "收斂把 current 寫出");
+    }
+
+    /** spec §6 讀取失敗的分類：遺失與內容損壞為 AUTHORITY_CORRUPT（遺失不重建）；讀檔的 IO 例外為 AUTHORITY_UNREADABLE。 */
+    @Test void discoveryReadFailuresAreClassified() throws Exception {
+        var id = UniverseAllocationLedger.deriveUniverseId(token(46));
+        var missing = save("discovery-missing");
+        try (var logs = new Logs()) {
+            var authorities = initialized(missing);
+            assertCorrupt(authorities.appendDiscovery(id, 1, SELECTED_BY));
+            assertCorrupt(authorities.discovery(id));
+            now[0] = 5000; authorities.convergeIfNeeded(Authority.DISCOVERY);
+            assertFalse(Files.exists(discoveryFile(missing)), "遺失：不建檔、不補寫");
+            assertEquals(1, logs.messages(Level.ERROR).size(), () -> "遺失只記一次 ERROR：" + logs.messages(Level.ERROR));
+        }
+        var garbage = save("discovery-garbage");
+        write(discoveryFile(garbage), new byte[] {31, -117, 8, 0, 1, 2});
+        var corrupt = initialized(garbage);
+        assertCorrupt(corrupt.appendDiscovery(id, 1, SELECTED_BY));
+        assertArrayEquals(new byte[] {31, -117, 8, 0, 1, 2}, Files.readAllBytes(discoveryFile(garbage)), "損壞的檔不被覆寫");
+        var unreadable = save("discovery-io");
+        writeDiscovery(unreadable, M4_RECORD);
+        byte[] before = Files.readAllBytes(discoveryFile(unreadable));
+        var authorities = initialized(unreadable);
+        io.failReadback(UniverseDiscoveryState.FILE_NAME);
+        var failed = authorities.appendDiscovery(id, 1, SELECTED_BY);
+        assertEquals(Lookup.Status.UNREADABLE, failed.status());
+        assertEquals(Optional.of(SealedReason.AUTHORITY_UNREADABLE), failed.sealedReason());
+        assertArrayEquals(before, Files.readAllBytes(discoveryFile(unreadable)));
+        assertFalse(authorities.unconfirmed(Authority.DISCOVERY), "讀取失敗不是未確認的寫入");
+        assertEquals(Lookup.Status.APPENDED, authorities.appendDiscovery(id, 1, SELECTED_BY).status(), "IO 例外不是遺失，之後照常");
+    }
+
+    // ---- catalog（spec §6.2、§6 收斂；F2c） ----
+
+    @Test void catalogAllocationUsesTheNextFlushedOrdinalAndVerifiesExistingRecords() throws Exception {
+        var save = save("catalog-allocate");
+        var authorities = initialized(save);
+        var catalog = catalog(save);
+        var first = UniverseAllocationLedger.deriveUniverseId(token(50));
+        var second = UniverseAllocationLedger.deriveUniverseId(token(51));
+        var allocated = authorities.allocateOrVerifyCatalog(first, false);
+        assertEquals(Lookup.Status.APPENDED, allocated.status(), () -> allocated.toString());
+        var firstRecord = allocated.value().orElseThrow();
+        assertAll(
+            () -> assertEquals(0, firstRecord.definition().allocationOrdinal(), "catalog 為空時 ordinal 為 0"),
+            () -> assertEquals(DesiredAvailability.EAGER_ENABLED, firstRecord.desiredAvailability()),
+            () -> assertEquals(Map.of(first, firstRecord), catalog.state.flushedRecords(), "checked 寫出之後才算配置完成"),
+            () -> assertFalse(catalog.state.isDirty()),
+            () -> assertEquals(Map.of(first, firstRecord), catalog.disk().records()),
+            () -> assertFalse(authorities.unconfirmed(Authority.CATALOG)));
+        int flushes = catalog.flushes;
+        var again = authorities.allocateOrVerifyCatalog(first, false);
+        assertEquals(Lookup.Status.FOUND, again.status(), "已有時不重新配置");
+        assertEquals(Optional.of(firstRecord), again.value());
+        assertEquals(flushes, catalog.flushes, "驗證不寫出");
+        // §8.3 已把 first 改為 DISABLED；下一筆的 ordinal 仍是 flushed 的最大 ordinal＋1。
+        catalog.state.changeAvailability(first, DesiredAvailability.DISABLED);
+        catalog.state.save(catalog.path);
+        var secondRecord = authorities.allocateOrVerifyCatalog(second, false).value().orElseThrow();
+        assertEquals(1, secondRecord.definition().allocationOrdinal());
+        // availability 不符：只有 §8.3 的重試路徑接受 DISABLED；不改寫、不寫出。
+        byte[] bytes = Files.readAllBytes(catalog.path);
+        flushes = catalog.flushes;
+        assertCorrupt(authorities.allocateOrVerifyCatalog(first, false));
+        var retry = authorities.allocateOrVerifyCatalog(first, true);
+        assertEquals(Lookup.Status.FOUND, retry.status());
+        var disabled = retry.value().orElseThrow();
+        assertEquals(DesiredAvailability.DISABLED, disabled.desiredAvailability());
+        assertEquals(flushes, catalog.flushes);
+        assertArrayEquals(bytes, Files.readAllBytes(catalog.path));
+        assertAll(
+            () -> assertFalse(CollapseAuthorities.catalogRecordMatches(disabled, first, false)),
+            () -> assertTrue(CollapseAuthorities.catalogRecordMatches(disabled, first, true)),
+            () -> assertTrue(CollapseAuthorities.catalogRecordMatches(secondRecord, second, false)),
+            () -> assertFalse(CollapseAuthorities.catalogRecordMatches(secondRecord, first, false), "別的 UniverseId 的 record"));
+    }
+
+    /** profile、seed policy、storage policy 不符的 record 在 M3 strict decode 就讓 catalog 不健康；M5 不在不健康的 catalog 上做任何決策。 */
+    @Test void catalogRecordsWithAnotherProfileNeverReachAllocation() throws Exception {
+        var id = UniverseAllocationLedger.deriveUniverseId(token(52));
+        var cases = new ArrayList<Executable>();
+        for (var field : List.of("GeneratorProfile", "SeedPolicy", "StoragePolicyVersion")) {
+            cases.add(() -> {
+                var save = save("catalog-profile-" + field);
+                var source = new UniverseRegistryState();
+                source.allocateOverworld(id.value(), 0);
+                var data = source.writeNbt(new NbtCompound());
+                var world = data.getList("Records", 10).getCompound(0).getList("Worlds", 10).getCompound(0);
+                if (field.equals("StoragePolicyVersion")) world.putInt(field, 2); else world.putString(field, "VANILLA_NETHER_V1");
+                var catalog = catalog(save);
+                catalog.state = UniverseRegistryState.fromNbt(data);
+                assertThrows(IllegalStateException.class, catalog.state::requireHealthy, field + "：M3 strict decode 拒絕");
+                var authorities = initialized(save);
+                assertCorrupt(authorities.allocateOrVerifyCatalog(id, false));
+                assertCorrupt(authorities.allocateOrVerifyCatalog(id, true));
+                assertTrue(authorities.unconfirmed(Authority.CATALOG), field + "：不健康的 catalog 不能拿來做決策");
+                now[0] = 9000; authorities.convergeIfNeeded(Authority.CATALOG);
+                assertEquals(0, catalog.flushes, field + "：不寫出");
+                assertFalse(Files.exists(catalog.path));
+            });
+        }
+        assertAll(cases);
+    }
+
+    /** spec §6.2、§12 W12：catalog 配置的 atomic move 已完成、讀回失敗；保留 dirty、確認前未確認、下一次寫出帶著它，只會有同一個 UniverseId。 */
+    @Test void catalogReadbackFailureKeepsTheAllocationDirtyAndUnconfirmedUntilConverged() throws Exception {
+        var save = save("catalog-roll-forward");
+        var authorities = initialized(save);
+        var catalog = catalog(save);
+        var first = UniverseAllocationLedger.deriveUniverseId(token(53));
+        var second = UniverseAllocationLedger.deriveUniverseId(token(54));
+        try (var logs = new Logs()) {
+            catalog.failAfterMove(1);
+            var failed = authorities.allocateOrVerifyCatalog(first, false);
+            assertEquals(Lookup.Status.WRITE_FAILED, failed.status(), () -> failed.toString());
+            assertEquals(Optional.of(SealedReason.ALLOCATION_IO_FAILED), failed.sealedReason());
+            var record = catalog.state.find(first).orElseThrow();
+            assertAll(
+                () -> assertTrue(authorities.unconfirmed(Authority.CATALOG), "確認之前 unconfirmed 為真"),
+                () -> assertTrue(catalog.state.isDirty(), "保留 dirty"),
+                () -> assertEquals(Map.of(first, record), catalog.state.records(), "current 保留這筆配置"),
+                () -> assertEquals(Map.of(), catalog.state.flushedRecords(), "flushed 不前進（確認之前不得物化）"),
+                () -> assertEquals(Map.of(first, record), catalog.disk().records(), "atomic move 已完成：配置已落地"),
+                () -> assertFalse(authorities.unconfirmed(Authority.ALLOCATION_LEDGER), "收斂旗標以權威為單位"));
+            // 未確認期間不疊加新的配置：同一筆也不回 FOUND。
+            int flushes = catalog.flushes;
+            assertUnconfirmed(authorities.allocateOrVerifyCatalog(second, false), SealedReason.ALLOCATION_IO_FAILED);
+            assertUnconfirmed(authorities.allocateOrVerifyCatalog(first, false), SealedReason.ALLOCATION_IO_FAILED);
+            assertEquals(Map.of(first, record), catalog.state.records(), "沒有疊加第二筆");
+            assertEquals(flushes, catalog.flushes);
+            // 退避期內不寫出；到期 checked 寫出 current（帶著這筆配置）。
+            now[0] = 1199; authorities.convergeIfNeeded(Authority.CATALOG);
+            assertEquals(flushes, catalog.flushes, "退避期內不嘗試");
+            assertTrue(authorities.unconfirmed(Authority.CATALOG));
+            now[0] = 1200; authorities.convergeIfNeeded(Authority.CATALOG);
+            assertEquals(flushes + 1, catalog.flushes);
+            assertFalse(authorities.unconfirmed(Authority.CATALOG));
+            assertEquals(Map.of(first, record), catalog.state.flushedRecords(), "下一次寫出帶著它");
+            assertEquals(Lookup.Status.FOUND, authorities.allocateOrVerifyCatalog(first, false).status(), "重試時同一個 UniverseId，不重新配置");
+            var next = authorities.allocateOrVerifyCatalog(second, false);
+            assertEquals(Lookup.Status.APPENDED, next.status());
+            assertEquals(1, next.value().orElseThrow().definition().allocationOrdinal());
+            assertEquals(1, logs.messages(Level.WARN).size(), () -> "寫出未確認記一次 WARN：" + logs.messages(Level.WARN));
+            assertEquals(1, logs.messages(Level.INFO).stream().filter(message -> message.contains("CATALOG 收斂完成")).count());
+        }
+        assertEquals(Set.of(first, second), catalog.disk().records().keySet(), "重新讀盤：catalog 只多這兩筆");
+    }
+
+    @Test void nativeAutosaveConfirmsTheCatalogAndARestoredButDirtyCatalogStaysUnconfirmed() throws Exception {
+        var save = save("catalog-autosave");
+        var authorities = initialized(save);
+        var catalog = catalog(save);
+        var first = UniverseAllocationLedger.deriveUniverseId(token(55));
+        try (var logs = new Logs()) {
+            catalog.failBeforeMove(1);
+            assertEquals(Lookup.Status.WRITE_FAILED, authorities.allocateOrVerifyCatalog(first, false).status());
+            assertFalse(Files.exists(catalog.path), "move 之前失敗：磁碟上還沒有 catalog");
+            assertTrue(authorities.unconfirmed(Authority.CATALOG));
+            // 原生 autosave 寫出 current：不需要 convergeIfNeeded 就不再未確認。
+            catalog.state.save(catalog.path.toFile(), null);
+            assertFalse(authorities.unconfirmed(Authority.CATALOG), "原生 autosave 帶著它寫出");
+            int flushes = catalog.flushes;
+            authorities.convergeIfNeeded(Authority.CATALOG);
+            assertEquals(flushes, catalog.flushes, "已確認時不再寫出");
+            assertEquals(Lookup.Status.FOUND, authorities.allocateOrVerifyCatalog(first, false).status());
+            assertEquals(1, logs.messages(Level.INFO).stream().filter(message -> message.contains("CATALOG 收斂完成")).count());
+        }
+        // spec §6 的 restore 類（§8.3 改回 EAGER_ENABLED 的寫入失敗時 F4a 把 current 改回）：current 等於 flushed，但仍 dirty → 仍未確認。
+        catalog.state.changeAvailability(first, DesiredAvailability.DISABLED);
+        catalog.state.changeAvailability(first, DesiredAvailability.EAGER_ENABLED);
+        assertEquals(catalog.state.flushedRecords(), catalog.state.records());
+        assertTrue(catalog.state.isDirty());
+        assertTrue(authorities.unconfirmed(Authority.CATALOG), "current 等於 flushed 但仍 dirty：下一次寫出之前仍未確認");
+        assertUnconfirmed(authorities.allocateOrVerifyCatalog(UniverseAllocationLedger.deriveUniverseId(token(56)), false), SealedReason.ALLOCATION_IO_FAILED);
+        authorities.convergeIfNeeded(Authority.CATALOG);
+        assertFalse(authorities.unconfirmed(Authority.CATALOG));
+        assertFalse(catalog.state.isDirty());
+    }
+
+    @Test void orphanStorageIsCorruptAndIsNeitherAdoptedNorDeleted() throws Exception {
+        var save = save("catalog-orphan");
+        var orphan = UniverseAllocationLedger.deriveUniverseId(token(57));
+        var region = save.resolve("dimensions/quantumchamber/universe").resolve(orphan.value().toString()).resolve("overworld/region");
+        Files.createDirectories(region);
+        Files.write(region.resolve("r.0.0.mca"), new byte[] {1});
+        var bare = UniverseAllocationLedger.deriveUniverseId(token(58));
+        Files.createDirectories(save.resolve("dimensions/quantumchamber/universe").resolve(bare.value().toString()));
+        var authorities = initialized(save);
+        var catalog = catalog(save);
+        assertCorrupt(authorities.allocateOrVerifyCatalog(orphan, false));
+        assertCorrupt(authorities.allocateOrVerifyCatalog(bare, false));
+        assertAll(
+            () -> assertArrayEquals(new byte[] {1}, Files.readAllBytes(region.resolve("r.0.0.mca")), "不採用、不刪除"),
+            () -> assertEquals(Map.of(), catalog.state.records(), "不配置"),
+            () -> assertEquals(0, catalog.flushes),
+            () -> assertFalse(authorities.unconfirmed(Authority.CATALOG)));
+        assertEquals(Lookup.Status.APPENDED, authorities.allocateOrVerifyCatalog(UniverseAllocationLedger.deriveUniverseId(token(59)), false).status(),
+                "沒有 storage 的 UUID 照常配置");
+    }
+
     // ---- fixtures ----
+
+    /** 新 key 直接寫 COMPLETE：閘門必須排在 caller 錯誤檢查之前，權威不可用時回失敗結果，不丟例外（F2b fix round 1 re-review Minor a）。 */
+    private static WriteResult completeWithoutPending(CollapseAuthorities authorities, String name) {
+        return assertDoesNotThrow(() -> authorities.writeProjection(pending(existingUniverse()).withStatus(Status.COMPLETE)),
+                name + "：權威不可用時，新 key 寫 COMPLETE 回失敗結果而不是丟例外");
+    }
 
     private void failedInitialization(String name, Fixture fixture, Outcome allocation, Outcome projection, SealedReason reason) throws Exception {
         io.clear();
@@ -622,6 +970,13 @@ class CollapseAuthoritiesTest {
             if (projection == Outcome.NOT_CREATED || projection == Outcome.UNREADABLE) assertFalse(Files.exists(projectionFile(save)), name + "：失敗時不建立缺少的 ledger");
             var lookup = authorities.lookupOrAppendAllocation(intent(token(30)));
             assertEquals(Optional.of(reason), lookup.sealedReason(), name);
+            assertEquals(Optional.of(reason), completeWithoutPending(authorities, name).sealedReason(), name);
+            // discovery 與 catalog 也 fail closed：回初始化的失敗結果，不讀、不寫、不配置（F2c）。
+            assertEquals(Optional.of(reason), authorities.appendDiscovery(existingUniverse(), 10, SELECTED_BY).sealedReason(), name);
+            assertEquals(Optional.of(reason), authorities.discovery(existingUniverse()).sealedReason(), name);
+            assertEquals(Optional.of(reason), authorities.allocateOrVerifyCatalog(existingUniverse(), false).sealedReason(), name);
+            assertEquals(0, catalog(save).flushes, name + "：不寫出 catalog");
+            assertFalse(Files.exists(discoveryFile(save)), name + "：不建立 discovery");
             assertEquals(1, logs.messages(Level.ERROR).size(), name + "：初始化失敗記 ERROR");
             assertNoTemporaryFiles(save);
         } finally {
@@ -631,7 +986,17 @@ class CollapseAuthoritiesTest {
 
     @FunctionalInterface private interface Fixture { void prepare(Path save) throws Exception; }
 
-    private CollapseAuthorities authorities(Path save) { return new CollapseAuthorities(save, io, () -> now[0]); }
+    private CollapseAuthorities authorities(Path save) { return new CollapseAuthorities(save, io, catalog(save), () -> now[0]); }
+
+    /** 以全新的 journal 初始化（建立兩個空 ledger）並斷言成功。 */
+    private CollapseAuthorities initialized(Path save) {
+        var authorities = authorities(save);
+        assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
+        return authorities;
+    }
+
+    /** 每個存檔一份 catalog（同一個存檔的「重啟」共用同一個 PersistentState instance）。 */
+    private TestCatalog catalog(Path save) { return catalogs.computeIfAbsent(save.toAbsolutePath().normalize(), TestCatalog::new); }
 
     private Path save(String name) throws IOException { return Files.createDirectories(root.resolve(name)); }
 
@@ -671,6 +1036,23 @@ class CollapseAuthoritiesTest {
 
     private static Path allocationFile(Path save) { return save.resolve("data").resolve(UniverseAllocationLedger.FILE_NAME); }
     private static Path projectionFile(Path save) { return save.resolve("data").resolve(ProjectionLedger.FILE_NAME); }
+    private static Path discoveryFile(Path save) { return save.resolve("data").resolve(UniverseDiscoveryState.FILE_NAME); }
+
+    /** 以 M4 的正式 codec 與 checked save 寫出 discovery fixture（record 依 canonical 順序）。 */
+    private static void writeDiscovery(Path save, UniverseDiscoveryRecord... records) throws IOException {
+        var list = new NbtList();
+        for (var record : records) {
+            var row = new NbtCompound();
+            row.putUuid("UniverseId", record.universeId().value());
+            row.putLong("DiscoveryOrdinal", record.discoveryOrdinal());
+            row.putLong("DiscoveredAtGameTime", record.discoveredAtGameTime());
+            record.firstObserver().ifPresent(observer -> row.putUuid("FirstObserver", observer));
+            row.putBoolean("GameplayEligible", record.gameplayEligible());
+            list.add(row);
+        }
+        var nbt = new NbtCompound(); nbt.putInt("SchemaVersion", 1); nbt.put("Records", list);
+        UniverseDiscoveryState.fromNbt(nbt).save(save);
+    }
 
     private static NbtCompound disk(Path file) throws IOException { return NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()); }
     private static UniverseAllocationLedger diskAllocationLedger(Path save) throws IOException { return UniverseAllocationLedger.fromNbt(disk(allocationFile(save))); }
@@ -700,8 +1082,16 @@ class CollapseAuthoritiesTest {
 
     /** {@link CollapseAuthorities.LedgerIo} 的注入實作：委派正式的 {@code readFile}，依檔名注入 IO 例外，並記錄每一次讀取。 */
     private static final class Io implements CollapseAuthorities.LedgerIo {
-        /** replacement 為 null 時丟 IOException；否則回傳 replacement 取代實際內容（讀到的 bytes 與寫入的不同）。 */
-        private record Fault(String fileName, boolean temporary, boolean once, String label, byte[] replacement) {
+        /**
+         * replacement 為 null 時丟 IOException；否則回傳 replacement 取代實際內容（讀到的 bytes 與寫入的不同）。skip 為生效前先放行的
+         * 符合讀取次數（discovery 每次使用都先讀正式檔，第二次讀正式檔才是 atomic move 之後的讀回）。
+         */
+        private static final class Fault {
+            final String fileName; final boolean temporary; final boolean once; final String label; final byte[] replacement;
+            int skip;
+            Fault(String fileName, boolean temporary, boolean once, String label, byte[] replacement, int skip) {
+                this.fileName = fileName; this.temporary = temporary; this.once = once; this.label = label; this.replacement = replacement; this.skip = skip;
+            }
             boolean matches(Path path) {
                 var name = path.getFileName().toString();
                 return temporary ? name.startsWith(fileName + ".") && name.endsWith(".tmp") : name.equals(fileName);
@@ -715,22 +1105,72 @@ class CollapseAuthoritiesTest {
             for (var iterator = faults.iterator(); iterator.hasNext();) {
                 var fault = iterator.next();
                 if (!fault.matches(path)) continue;
-                if (fault.once()) iterator.remove();
-                if (fault.replacement() != null) return fault.replacement().clone();
-                throw new IOException("注入：" + fault.label());
+                if (fault.skip > 0) { fault.skip--; continue; }
+                if (fault.once) iterator.remove();
+                if (fault.replacement != null) return fault.replacement.clone();
+                throw new IOException("注入：" + fault.label);
             }
             return CheckedNbtFile.readFile(path);
         }
 
-        /** 下一次讀正式檔失敗：寫入時就是「atomic move 完成、讀回失敗」，初始化時就是讀取的 IO 例外。 */
-        void failReadback(String fileName) { faults.add(new Fault(fileName, false, true, "atomic move 完成、讀回失敗", null)); }
-        void failReadbackAlways(String fileName) { faults.add(new Fault(fileName, false, false, "讀回持續失敗", null)); }
+        /** 下一次讀正式檔失敗：寫入時就是「atomic move 完成、讀回失敗」，初始化（或 discovery 的讀取）時就是讀取的 IO 例外。 */
+        void failReadback(String fileName) { faults.add(new Fault(fileName, false, true, "atomic move 完成、讀回失敗", null, 0)); }
+        /** 先放行 skip 次讀正式檔，下一次才失敗（discovery：放行追加前的讀取，讓 atomic move 之後的讀回失敗）。 */
+        void failReadbackAfter(String fileName, int skip) { faults.add(new Fault(fileName, false, true, "atomic move 完成、讀回失敗", null, skip)); }
+        void failReadbackAlways(String fileName) { faults.add(new Fault(fileName, false, false, "讀回持續失敗", null, 0)); }
         /** 下一次讀暫存檔失敗：寫入在 atomic move 之前就失敗，正式檔不變。 */
-        void failTemporary(String fileName) { faults.add(new Fault(fileName, true, true, "暫存檔驗證失敗", null)); }
+        void failTemporary(String fileName) { faults.add(new Fault(fileName, true, true, "暫存檔驗證失敗", null, 0)); }
         /** 持續把暫存檔讀成另一份合法的內容：暫存檔的 exact 讀回不符，寫入在 atomic move 之前失敗。 */
-        void staleTemporary(String fileName, byte[] replacement) { faults.add(new Fault(fileName, true, false, "暫存檔讀回不符", replacement.clone())); }
+        void staleTemporary(String fileName, byte[] replacement) { faults.add(new Fault(fileName, true, false, "暫存檔讀回不符", replacement.clone(), 0)); }
         void clear() { faults.clear(); }
         int readsOf(String fileName) { return (int) reads.stream().filter(path -> path.getFileName().toString().startsWith(fileName)).count(); }
+    }
+
+    /**
+     * {@link CollapseAuthorities.CatalogPort} 的測試實作（決策 9）：catalog 是真的 M3 {@link UniverseRegistryState}；寫出經 M3 的 save。
+     * 注入的失敗不經過 save，所以 catalog 照 M3 save 失敗時的語意維持 current 與 dirty：{@link #failAfterMove} 先以 M3 的 store 寫出再丟例外
+     * （「atomic move 完成、讀回失敗」，store 層本身的注入在 {@code UniverseRegistryStateTest}），{@link #failBeforeMove} 不寫出就丟例外。
+     */
+    private static final class TestCatalog implements CollapseAuthorities.CatalogPort {
+        final Path path;
+        UniverseRegistryState state = new UniverseRegistryState();
+        int flushes;
+        private int failures;
+        private boolean landBeforeFailure;
+
+        TestCatalog(Path save) { path = save.resolve("data").resolve(UniverseRegistryState.STATE_ID + ".dat"); }
+
+        @Override public UniverseRegistryState catalog() { return state; }
+
+        @Override public void flush(UniverseRegistryState catalog) {
+            assertSame(state, catalog, "寫出的是同一個 PersistentState");
+            flushes++;
+            if (failures > 0) {
+                failures--;
+                if (landBeforeFailure) {
+                    try { UniverseCatalogStore.write(path, wrapped(catalog)); } catch (IOException failure) { throw new UncheckedIOException(failure); }
+                }
+                throw new UncheckedIOException("注入：" + (landBeforeFailure ? "atomic move 完成、讀回失敗" : "atomic move 之前失敗"), new IOException("注入"));
+            }
+            catalog.save(path);
+        }
+
+        void failAfterMove(int times) { landBeforeFailure = true; failures = times; }
+        void failBeforeMove(int times) { landBeforeFailure = false; failures = times; }
+
+        /** 重新讀盤（等同重啟後 M3 載入的 catalog）。 */
+        UniverseRegistryState disk() throws IOException {
+            var loaded = UniverseRegistryState.fromNbt(UniverseCatalogStore.read(path).getCompound("data"));
+            loaded.requireHealthy();
+            return loaded;
+        }
+
+        private static NbtCompound wrapped(UniverseRegistryState catalog) {
+            var wrapped = new NbtCompound();
+            wrapped.put("data", catalog.writeNbt(new NbtCompound()));
+            NbtHelper.putDataVersion(wrapped);
+            return wrapped;
+        }
     }
 
     /** 只收 {@code quantumchamber} logger 的 log4j appender（比照 SessionRecoverySchema4Test）；先送探針，證明確實攔得到。 */
