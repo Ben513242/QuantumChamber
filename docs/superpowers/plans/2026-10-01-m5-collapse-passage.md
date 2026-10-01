@@ -181,7 +181,7 @@ Review 必確認：legacy schema 1／2 的解析沒有被收緊；沒有新增�
 
 **範圍（spec §4 H2；M4 handoff 第 9 點）：**
 - 目前 `MeasuredWorldSaveCheckpoint.java:30-38` 用全伺服器的 `saveFailureRevision`，`NativeSaveFailures` 是整個 worker 的計數。無關 chunk 的失敗會讓清理一直重試。
-- 改為 per-chunk（或等效）追蹤：`onChunkSaveFailure(error, key, pos)`、`StorageIoWorker.setResult(pos, …)`、`EntityChunkDataAccess.handleSaveFailure(future, pos)` 都帶 chunk 位置，記錄到「(storage, chunk) → 失敗 revision」。
+- 改為 per-chunk（或等效）追蹤：`onChunkSaveFailure(error, key, pos)`、`StorageIoWorker.setResult(pos, …)`、`EntityChunkDataAccess.handleSaveFailure(future, pos)` 都帶 chunk 位置，記錄到「(storage, chunk) → 失敗 revision」。判定時以 region 為單位（spec v5.3 §4 H2）：相關 chunks 所在 region 檔（`chunk >> 5`）內任一 chunk 的失敗都視為相關。原版 flush 時仍 pending 的寫入失敗由原版 join 傳出，仍 fail-closed；這是原版語意的界線，不繞過。
 - `completeAll`（region flush）失敗沒有 chunk 位置：保守地視為該 worker 全部 chunks 都失敗（fail-closed）。
 - `ChunkSaveCheckpoint.save(MinecraftServer, Map<ServerWorld, Set<ChunkPos>>)` 是通用元件：redirty → `server.save(false,true,true)` → barrier → 只比對相關 chunks 的失敗。`MeasuredWorldSaveCheckpoint` 改為呼叫它；F4b 的投影會再用它。
 - 沿用現有退避（`CorridorPageManager` 的 per-space 20→1200 ticks）與 WARN 去重；不改呼叫端語意。

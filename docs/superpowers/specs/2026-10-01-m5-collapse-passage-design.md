@@ -2,12 +2,12 @@
 
 日期：2026-10-01。基準：`main`＝`a7e1be2`（code 等同 `ba854e8`），分支 `feature/m5-collapse`。下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `a7e1be2` 為準。
 
-狀態：v5.2。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。Spec review 共五輪（含第五輪的 re-review）：
+狀態：v5.3。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。Spec review 共五輪（含第五輪的 re-review）：
 - v1 的 Critical 1、Important 8 由 v2 處理。
 - re-review 在 v2 新發現的 Critical 1、Important 2（N1–N3）與 Minor m1–m8 由 v3 處理。
 - 第三輪在 v3 新發現的 Important 1（N4）與 4 項 Minor，已在 v3 修正。
 - 使用者轉交的第四輪 review（`d9b3249`：Critical 1、Important 7、Minor 1）由 v4 處理。使用者同時指示：修正後直接進入 plan 與實作，不再另等核可。
-- 第五輪獨立 review 在 v4（`2c24d51`）新發現的 Important 3（I-1～I-3）與 Minor 10，由 v5 處理；re-review 在 v5 新發現的 Important 1（N-A）與 Minor 7，由 v5.1 處理；v5.1 輕量確認的 Minor 5 項由 v5.2 處理。
+- 第五輪獨立 review 在 v4（`2c24d51`）新發現的 Important 3（I-1～I-3）與 Minor 10，由 v5 處理；re-review 在 v5 新發現的 Important 1（N-A）與 Minor 7，由 v5.1 處理；v5.1 輕量確認的 Minor 5 項由 v5.2 處理；H2 實作的 spec review 指出的 §4 H2 用語問題由 v5.3 處理。
 
 處置見 §20。
 
@@ -95,8 +95,10 @@ hardening 的順序依使用者 2026-09-29 的指定。每項都是獨立 task�
   - 補 rejection fixtures。
   - H1 不改 schema 版號；既有的合法 fixture 必須照舊 exact 讀回。
 - **H2 checkpoint revision**：
-  - 原生存檔的失敗追蹤改為 per-chunk（或等效）。`MeasuredWorldSaveCheckpoint` 只看本交易相關的 chunks：來源艙，以及走廊 lease 涵蓋的 chunks。無關 chunk 的存檔失敗不再阻擋；相關 chunk 失敗時仍 fail-closed，並沿用現有退避。
-  - 這個「只看相關 chunks」的 checkpoint 要做成通用元件，§9.2 的投影會再次使用。
+  - 原生存檔的失敗追蹤改為以「同一 storage 的同一個 region 檔」為單位（region 檔的 header 由同一 region 的 32×32 chunks 共用，header 寫入失敗可能波及其中的相關 chunk）。`MeasuredWorldSaveCheckpoint` 只看本交易相關 chunks 所在的 region：來源艙，以及走廊 lease 涵蓋的 chunks。
+  - 不再阻擋的：其他 region、其他世界、其他 storage 的失敗，只要在原版 flush 之前就已完成（例如同步序列化失敗、已完成的寫入失敗）。
+  - 仍然 fail-closed 的：相關 region 的失敗、region flush（`completeAll`）的失敗，以及原版 flush 時仍 pending 的寫入失敗（原版 `completeAll().join()` 會讓 `server.save` 直接丟例外，`MinecraftServer.save` 與 `ServerWorld.save` 都沒有 catch）。後者是原版語意的界線，不繞過；它不比原本的全伺服器計數更糟。相關失敗都沿用現有退避。
+  - 這個 checkpoint 要做成通用元件，§9.2 的投影會再次使用，也受同樣的界線約束。
 - **H3 未 checked authority 的收斂**：
   - q1：`abortUnchecked` 只回退尚未 checked 的 authority。
   - q2：abort 本身拋例外時，要真的隔離該 session（或以等效的 fail-closed 停住它），而且 log 要與實際狀態一致。
@@ -1071,3 +1073,10 @@ v5.1 的輕量確認：Critical 0、Important 0、Minor 5（p1–p5），control
 | p3 COLLAPSING 進度寫入的引用 | §6 表改引 `SessionRecoveryManager.java:168-169`、`:93-108`，並說明真正的收斂來源 |
 | p4 §13.1 的類比 | 改為「guard 未閒置時延後提交」 |
 | p5 SEALED 期間的來源 ticket | §5：進入 SEALED 時釋放，重試時再取得 |
+
+### 20.7 H2 實作的 spec review（v5.2 → v5.3）
+
+| Finding | 處置 |
+| --- | --- |
+| Important：§4 H2「無關 chunk 的存檔失敗不再阻擋」在原版語意下不是無條件成立。原版 flush 時仍 pending 的寫入失敗，會由 `completeAll().join()` 讓 `server.save` 直接丟例外（javap 驗證 `ServerWorld.save`、`MinecraftServer.save` 沒有 catch） | §4 H2 改為明列「不再阻擋」與「仍 fail-closed」兩類，並把原版 pending 寫入記為界線；F4b 投影沿用同一元件與界線 |
+| Minor：region 檔 header 由同一 region 的 chunks 共用，無關 chunk 寫 header 失敗可能波及相關 chunk | §4 H2 把判定單位改為「同一 storage 的同一個 region 檔」，偏 fail-closed |
