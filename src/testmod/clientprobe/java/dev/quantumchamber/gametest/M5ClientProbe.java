@@ -18,7 +18,6 @@ import dev.quantumchamber.universe.UniverseTransferService;
 import dev.quantumchamber.universe.UniverseTransferTestAccess;
 import dev.quantumchamber.universe.UniverseWorldDescriptor;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,6 +31,7 @@ import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.CommandManager;
@@ -40,6 +40,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.Clearable;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.WorldSavePath;
 import net.minecraft.util.math.BlockPos;
@@ -48,6 +49,7 @@ import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.BlockView;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,8 +92,8 @@ public final class M5ClientProbe implements ModInitializer {
 
     /** 所有狀態都只在 server thread 讀寫；integrated server 可在同一個 JVM 重開，所以狀態綁定 server instance。 */
     static final class Probe {
-        private static final ChunkTicketType<ChunkPos> TICKET =
-                ChunkTicketType.create("quantumchamber_m5_client_probe", Comparator.comparingLong(ChunkPos::toLong));
+        /** argument 是玩家 UUID：不同玩家在同一個 chunk 的 ticket 各自獨立，釋放時不會互相移除。 */
+        private static final ChunkTicketType<UUID> TICKET = ChunkTicketType.create("quantumchamber_m5_client_probe", UUID::compareTo);
         /** 等待目的 chunks 到 FULL 的上限（30 秒）。 */
         private static final int TIMEOUT_TICKS = 600;
         private final Map<UUID, UniverseTransferReceipt> receipts = new HashMap<>();
@@ -173,8 +175,13 @@ public final class M5ClientProbe implements ModInitializer {
                 if (refusal != null) return fail(source, "ENTER", refusal);
                 var request = new Pending(Kind.ENTER, id, player, player.getServerWorld(), target.world(), null,
                         current.getTicks() + TIMEOUT_TICKS, new LinkedHashSet<>());
-                pending.put(id, request);
-                hold(request, requiredChunks(player.getBoundingBox()));
+                try {
+                    pending.put(id, request);
+                    hold(request, requiredChunks(player.getBoundingBox()));
+                } catch (RuntimeException failure) {
+                    finish(request);
+                    return fail(source, "ENTER", "加 chunk ticket 失敗，已釋放：" + failure);
+                }
                 return ok(source, "ENTER", "已在 " + target.descriptor().worldKey().getValue() + " 加 " + request.tickets().size()
                         + " 個 chunk ticket，目的 chunks 到 FULL 後自動傳送（上限 " + TIMEOUT_TICKS + " ticks）"
                         + (stale == null ? "" : "；舊 receipt 已作廢（玩家不在它的目的世界）"));
@@ -202,8 +209,13 @@ public final class M5ClientProbe implements ModInitializer {
             if (home == null) return fail(source, "RETURN", "receipt 的來源世界不存在：" + receipt.source().worldKey().getValue());
             var request = new Pending(Kind.RETURN, id, player, player.getServerWorld(), home, receipt,
                     current.getTicks() + TIMEOUT_TICKS, new LinkedHashSet<>());
-            pending.put(id, request);
-            hold(request, requiredChunks(homeBox(player, receipt)));
+            try {
+                pending.put(id, request);
+                hold(request, requiredChunks(homeBox(player, receipt)));
+            } catch (RuntimeException failure) {
+                finish(request);
+                return fail(source, "RETURN", "加 chunk ticket 失敗，已釋放：" + failure);
+            }
             return ok(source, "RETURN", "已在 " + home.getRegistryKey().getValue() + " 加 " + request.tickets().size()
                     + " 個 chunk ticket，來源 chunks 到 FULL 後自動傳回（上限 " + TIMEOUT_TICKS + " ticks）");
         }
@@ -345,12 +357,12 @@ public final class M5ClientProbe implements ModInitializer {
 
         private static void hold(Pending request, Set<ChunkPos> chunks) {
             for (var chunk : chunks) {
-                if (request.tickets().add(chunk)) request.world().getChunkManager().addTicket(TICKET, chunk, 0, chunk);
+                if (request.tickets().add(chunk)) request.world().getChunkManager().addTicket(TICKET, chunk, 0, request.playerId());
             }
         }
 
         private void finish(Pending request) {
-            for (var chunk : request.tickets()) request.world().getChunkManager().removeTicket(TICKET, chunk, 0, chunk);
+            for (var chunk : request.tickets()) request.world().getChunkManager().removeTicket(TICKET, chunk, 0, request.playerId());
             request.tickets().clear();
             pending.remove(request.playerId(), request);
         }
@@ -366,14 +378,32 @@ public final class M5ClientProbe implements ModInitializer {
                     + " rollback=" + result.rollback().outcome()
                     + (result.actual() == null ? "" : " world=" + result.actual().worldKey().getValue() + " pos=" + pos(result.actual().position()))
                     + (result.detail().isEmpty() ? "" : " detail=" + result.detail()) + (extra.isEmpty() ? "" : " " + extra);
+            String next = nextStep(request, result.outcome());
             if (success) LOGGER.info("M5_CLIENT_PROBE_{} status=OK player={} {}", request.kind(), request.playerId(), detail);
-            else LOGGER.error("M5_CLIENT_PROBE_{} status=FAIL player={} {}", request.kind(), request.playerId(), detail);
-            notify(request, success, detail);
+            else LOGGER.error("M5_CLIENT_PROBE_{} status=FAIL player={} {} next={}", request.kind(), request.playerId(), detail, next);
+            notify(request, success, next.isEmpty() ? detail : detail + "｜" + next);
         }
 
-        private static void notify(Pending request, boolean success, String text) {
-            if (!request.player().isRemoved()) {
-                request.player().sendMessage(Text.literal("[qcprobe] " + request.kind() + (success ? " OK " : " FAIL ") + text), false);
+        /** 失敗時給操作者的下一步；成功時為空字串。 */
+        private static String nextStep(Pending request, Outcome outcome) {
+            return switch (outcome) {
+                case MOVED, RETURNED -> "";
+                case REJECTED_BEFORE_MOVE -> request.kind() == Kind.ENTER
+                        ? "未移動；修正位置後可以再 enter"
+                        : "未移動、receipt 保留；修正來源位置後可以再 return，或用 /execute in "
+                                + request.receipt().source().worldKey().getValue() + " run tp @s "
+                                + String.format(Locale.ROOT, "%.3f %.3f %.3f", request.receipt().source().position().x,
+                                        request.receipt().source().position().y, request.receipt().source().position().z);
+                case FAILED_ROLLED_BACK -> "已回到移動前的位置；可以再試";
+                case FAILED_RECOVERY_REQUIRED -> "玩家狀態需要人工確認：依 F1b 規則停止並保留證據";
+            };
+        }
+
+        /** 送給目前在線的同一位玩家（重新登入後是新的 entity）；離線時不送。 */
+        private void notify(Pending request, boolean success, String text) {
+            var player = server == null ? null : server.getPlayerManager().getPlayer(request.playerId());
+            if (player != null) {
+                player.sendMessage(Text.literal("[qcprobe] " + request.kind() + (success ? " OK " : " FAIL ") + text), false);
             }
         }
 
@@ -400,44 +430,74 @@ public final class M5ClientProbe implements ModInitializer {
             return chunks;
         }
 
-        /** 傳送沿用同一個 XYZ，而 transfer 的安全檢查要求腳底恰在完整方塊頂面；返還時同一個位置也要通過檢查。 */
+        /**
+         * enter 的受理條件，與 UniverseTransferService.targetSafety 的位置條件相同：腳底恰在方塊頂面、bbox 下方每一欄都是
+         * 完整頂面、沒有流體、isSpaceEmpty。transfer 沿用同一個 XYZ，而 return 會在同一個來源位置套用同樣的檢查，
+         * 所以這裡不合格就不受理，避免 enter 成功、return 卻被 REJECT_TARGET_UNSAFE 拒絕。
+         */
         private static String standingRefusal(ServerPlayerEntity player) {
-            if (player.hasVehicle()) return "請先離開坐騎";
-            if (!player.isOnGround()) return "請站在地面上（不能在空中、飛行或跳躍中）";
+            var world = player.getServerWorld();
             var box = player.getBoundingBox();
+            return standingRefusal(player.hasVehicle(), player.isOnGround(), box, world, world.containsFluid(box),
+                    world.isSpaceEmpty(player, box));
+        }
+
+        static String standingRefusal(boolean riding, boolean onGround, Box box, BlockView world, boolean fluid, boolean spaceEmpty) {
+            if (riding) return "請先離開坐騎";
+            if (!onGround) return "請站在地面上（不能在空中、飛行或跳躍中）";
             if (Math.abs(box.minY - (MathHelper.floor(box.minY - 1e-7) + 1.0)) > 1e-6) {
-                return "請站在完整方塊的頂面（目前 Y=" + player.getY() + "）";
+                return "請站在完整方塊的頂面（目前 Y=" + box.minY + "）";
             }
-            if (player.getServerWorld().containsFluid(box)) return "請離開水或岩漿";
+            if (fluid) return "請離開水或岩漿";
+            for (var floor : floorColumns(box)) {
+                if (!world.getBlockState(floor).isSideSolidFullSquare(world, floor, Direction.UP)) {
+                    return "腳下 " + floor.toShortString() + " 不是完整方塊頂面（例如樹葉、半磚，或站在方塊邊緣）；請站到完整方塊的中央或換個位置";
+                }
+            }
+            if (!spaceEmpty) return "目前位置與方塊重疊；請換個位置";
             return null;
         }
 
+        /** bbox 下方每一欄的地板位置；欄位範圍與 UniverseTransferService.targetSafety 的地板檢查相同。 */
+        static List<BlockPos> floorColumns(Box box) {
+            var floors = new ArrayList<BlockPos>();
+            int floorY = MathHelper.floor(box.minY - 1e-7);
+            for (int x = MathHelper.floor(box.minX + 1e-7); x <= MathHelper.floor(box.maxX - 1e-7); x++) {
+                for (int z = MathHelper.floor(box.minZ + 1e-7); z <= MathHelper.floor(box.maxZ - 1e-7); z++) {
+                    floors.add(new BlockPos(x, floorY, z));
+                }
+            }
+            return floors;
+        }
+
         /**
-         * 在目的 world 讓 transfer 的安全檢查成立：bbox 下方每一格都放成完整方塊（原本就是則不動），
-         * bbox 內有碰撞或流體的方塊改成空氣。只用 NOTIFY_LISTENERS，不觸發鄰格更新。回傳實際改動的位置。
+         * 在目的 world 讓 transfer 的安全檢查成立：bbox 下方每一欄的頂面不完整時放石頭，bbox 內有碰撞或流體的方塊改成空氣。
+         * 寫入方式比照原版 /setblock（plan 決策 3）。回傳 setBlockState 確實改動的位置。
          */
         private static List<String> prepareLanding(ServerWorld world, Box box) {
             var changed = new ArrayList<String>();
-            int floorY = MathHelper.floor(box.minY - 1e-7);
             int topY = MathHelper.floor(box.maxY - 1e-7);
-            for (int x = MathHelper.floor(box.minX + 1e-7); x <= MathHelper.floor(box.maxX - 1e-7); x++) {
-                for (int z = MathHelper.floor(box.minZ + 1e-7); z <= MathHelper.floor(box.maxZ - 1e-7); z++) {
-                    var floor = new BlockPos(x, floorY, z);
-                    if (!world.getBlockState(floor).isSideSolidFullSquare(world, floor, Direction.UP)) {
-                        changed.add(floor.toShortString() + "=stone");
-                        world.setBlockState(floor, Blocks.STONE.getDefaultState(), Block.NOTIFY_LISTENERS);
-                    }
-                    for (int y = floorY + 1; y <= topY; y++) {
-                        var pos = new BlockPos(x, y, z);
-                        var state = world.getBlockState(pos);
-                        if (!state.getCollisionShape(world, pos).isEmpty() || !state.getFluidState().isEmpty()) {
-                            changed.add(pos.toShortString() + "=air");
-                            world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_LISTENERS);
-                        }
+            for (var floor : floorColumns(box)) {
+                if (!world.getBlockState(floor).isSideSolidFullSquare(world, floor, Direction.UP)
+                        && replace(world, floor, Blocks.STONE.getDefaultState())) {
+                    changed.add(floor.toShortString() + "=stone");
+                }
+                for (int y = floor.getY() + 1; y <= topY; y++) {
+                    var pos = new BlockPos(floor.getX(), y, floor.getZ());
+                    var state = world.getBlockState(pos);
+                    if ((!state.getCollisionShape(world, pos).isEmpty() || !state.getFluidState().isEmpty())
+                            && replace(world, pos, Blocks.AIR.getDefaultState())) {
+                        changed.add(pos.toShortString() + "=air");
                     }
                 }
             }
             return changed;
+        }
+
+        /** 先清空 block entity 的內容，再以 NOTIFY_LISTENERS｜FORCE_STATE｜SKIP_DROPS 寫入：不噴物品、不觸發鄰格更新。 */
+        private static boolean replace(ServerWorld world, BlockPos pos, BlockState state) {
+            Clearable.clear(world.getBlockEntity(pos));
+            return world.setBlockState(pos, state, Block.NOTIFY_LISTENERS | Block.FORCE_STATE | Block.SKIP_DROPS);
         }
 
         private static Box homeBox(ServerPlayerEntity player, UniverseTransferReceipt receipt) {

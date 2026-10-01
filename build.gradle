@@ -136,55 +136,60 @@ sourceSets {
         runtimeClasspath += client.runtimeClasspath + testmod.output.classesDirs
     }
     // 空的 source set，只當 serverProbe run 的 classpath 載體；不用 clientProbe 的 runtimeClasspath，避免 clientOnly jar 上 server classpath。
+    // testmod.runtimeClasspath 已含 testmod 自己的輸出。
     serverProbe {
         java.srcDirs = []
         resources.srcDirs = []
-        runtimeClasspath = testmod.runtimeClasspath + testmod.output + clientProbe.output
+        runtimeClasspath = testmod.runtimeClasspath + clientProbe.output
     }
-    // JUnit 只需要 clientProbe 的 class 驗證 /qcprobe 的註冊條件；不帶它的 fabric.mod.json。
+    // JUnit 只帶 clientProbe 的 class（不帶它的 fabric.mod.json），只測 /qcprobe 的註冊條件與純判斷。
+    // test 不得呼叫 Probe 的指令路徑：那會載入 testmod 的 UniverseTransferTestAccess，需要時要另加 testmod 的 classesDirs。
     test {
         compileClasspath += clientProbe.output.classesDirs
         runtimeClasspath += clientProbe.output.classesDirs
     }
 }
 
+// 兩個 probe run 都必須以 -Pm5ProbeNonce 指定 runDir：每一次新的驗收用新的 nonce（新的 runDir），
+// 同一次驗收中重啟同一個世界時沿用同一個 nonce。格式檢查與 m4Recovery 相同。
+def m5ProbeNonce = providers.gradleProperty('m5ProbeNonce')
+def m5ProbeRunNonce = m5ProbeNonce.getOrElse('disabled')
+if (!(m5ProbeRunNonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M5 probe nonce 只能包含小寫英數與連字號')
+
 loom {
     runs {
-        // 兩個 run 都需要 -Pm5ProbeNonce 指定新的 runDir；重啟同一個世界時沿用同一個 nonce。
         clientProbe {
             client()
             name 'M5 Real Client Probe'
             source sourceSets.clientProbe
+            ideConfigGenerated false
             vmArg '-Dquantumchamber.clientProbe=true'
-            def nonce = providers.gradleProperty('m5ProbeNonce').getOrElse('disabled')
-            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M5 probe nonce 只能包含小寫英數與連字號')
-            runDir "run/client-probe-${nonce}"
+            runDir "run/client-probe-${m5ProbeRunNonce}"
         }
         serverProbe {
             server()
             name 'M5 Real Client Probe Server'
             source sourceSets.serverProbe
+            ideConfigGenerated false
             vmArg '-Dquantumchamber.clientProbe=true'
-            def nonce = providers.gradleProperty('m5ProbeNonce').getOrElse('disabled')
-            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M5 probe nonce 只能包含小寫英數與連字號')
-            runDir "run/server-probe-${nonce}"
+            runDir "run/server-probe-${m5ProbeRunNonce}"
         }
     }
 }
 
 ['runClientProbe', 'runServerProbe'].each { probeRun ->
     tasks.named(probeRun) {
-        def probeNonce = providers.gradleProperty('m5ProbeNonce')
         doFirst {
-            if (!probeNonce.isPresent() || probeNonce.get() == 'disabled') {
-                throw new GradleException("${probeRun} 必須以 -Pm5ProbeNonce=<nonce> 指定新的 runDir")
+            if (!m5ProbeNonce.isPresent() || m5ProbeNonce.get() == 'disabled') {
+                throw new GradleException("${probeRun} 必須以 -Pm5ProbeNonce=<nonce> 指定 runDir")
             }
         }
     }
 }
 
+// clientProbeClasses 涵蓋 compile 與 processResources；Full gate 的 build 因此會建出 clientProbe。
 tasks.named('check') {
-    dependsOn tasks.named('compileClientProbeJava')
+    dependsOn tasks.named('clientProbeClasses')
 }
 
 dependencies {
