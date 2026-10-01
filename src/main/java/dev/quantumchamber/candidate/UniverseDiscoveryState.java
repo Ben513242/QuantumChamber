@@ -1,7 +1,7 @@
 package dev.quantumchamber.candidate;
 
-import dev.quantumchamber.collapse.LedgerNbt;
 import dev.quantumchamber.persistence.CheckedNbtFile;
+import dev.quantumchamber.persistence.LedgerNbt;
 import dev.quantumchamber.universe.UniverseId;
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;

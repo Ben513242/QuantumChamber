@@ -1,4 +1,4 @@
-package dev.quantumchamber.collapse;
+package dev.quantumchamber.persistence;
 
 import java.util.UUID;
 import net.minecraft.nbt.NbtCompound;
@@ -8,7 +8,8 @@ import net.minecraft.nbt.NbtList;
 /**
  * 裸 NBT 權威檔（M5 的 allocation／projection ledger 與 M4 的 discovery）共用的 strict NBT helper：型別、4-int UUID、enum 名稱，以及
  * compound list 的 held type（空 list 必須是 END）與筆數上限。只做格式檢查，不認得任何權威的語意；任何不符丟 {@link IllegalArgumentException}。
- * <p>session journal 另有自己的 {@code JournalNbt}：它的 list 規則依 journal envelope 的 schema 而不同，訊息也指向 journal，所以不共用。
+ * 與讀寫這些檔的 {@link CheckedNbtFile} 放在同一個 package。
+ * <p>session journal 另有自己的 {@code JournalNbt}（package-private）：它的 list 規則依 journal envelope 的 schema 而不同，訊息也指向 journal，所以不共用。
  */
 public final class LedgerNbt {
     private LedgerNbt() {}

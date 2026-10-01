@@ -2,6 +2,7 @@ package dev.quantumchamber.collapse;
 
 import dev.quantumchamber.candidate.CandidateBytes;
 import dev.quantumchamber.candidate.NewUniverseIntent;
+import dev.quantumchamber.persistence.LedgerNbt;
 import dev.quantumchamber.universe.GeneratorProfile;
 import dev.quantumchamber.universe.UniverseId;
 import java.nio.ByteBuffer;

@@ -1,5 +1,6 @@
 package dev.quantumchamber.collapse;
 
+import dev.quantumchamber.persistence.LedgerNbt;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
 import java.util.ArrayList;
