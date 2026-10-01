@@ -196,35 +196,58 @@ fix round 1 的 GREEN 數字：
 
 ## H2：只看相關 chunks 的存檔 checkpoint
 
-- Commit：`f7ac878`（parent `f6be3ed`）。只改派工列出的檔案：新增 `ChunkSaveCheckpoint.java`；修改 `MeasuredWorldSaveCheckpoint.java`、`NativeSaveFailures.java`、`NativeSaveFailureAccess.java`、三個 production mixin（`MinecraftServerSaveFailureMixin`、`StorageIoWorkerSaveFailureMixin`、`EntityChunkRecoverySaveMixin`）、`NativeSaveFailuresTest.java`、testmod 的 `MeasuredCheckpointFaultMixin.java` 與 `M4CandidateDoorGameTests.java`。`NativeStorageSaveAccess.java`、`EntityRecoverySaveAccess.java` 沒有修改。
+- Commits：
+  - `f7ac878`（H2 首輪，parent `f6be3ed`）。只改派工列出的檔案：新增 `ChunkSaveCheckpoint.java`；修改 `MeasuredWorldSaveCheckpoint.java`、`NativeSaveFailures.java`、`NativeSaveFailureAccess.java`、三個 production mixin（`MinecraftServerSaveFailureMixin`、`StorageIoWorkerSaveFailureMixin`、`EntityChunkRecoverySaveMixin`）、`NativeSaveFailuresTest.java`，以及 testmod 的 `MeasuredCheckpointFaultMixin.java` 與 `M4CandidateDoorGameTests.java`。`NativeStorageSaveAccess.java`、`EntityRecoverySaveAccess.java` 沒有修改。
+  - `14fc189`（fix round 1，parent `156298a`）：改為以 region 判定，內容見下方「Fix round 1」。
+  - H2 code 的 commit range 是 `f6be3ed..14fc189`，中間的 `1f26b67` 是本段的 docs commit，`156298a` 是 controller 的 spec v5.3／plan commit。
 - 新增一個 testmod mixin `ChunkCheckpointScopeFaultMixin`（登記在 `quantumchamber-test.mixins.json`），理由見下方「GameTest」。M4 recovery probe 專用的 `M4RecoveryRegionWriteFaultMixin` 與兩個 drain mixin 沒有修改。
-- Review：尚未進行。
+- Review：spec review 判定實作符合 plan；spec 用語由 controller 修為 v5.3（spec §20.7）。fix round 1 待 re-review。
 
-### Code-truth（`f7ac878`）
+### Code-truth（`14fc189`）
+
+判定單位是「同一 storage 的同一個 region 檔」（spec v5.3 §4 H2）。原因：region 檔的 header 由同一 region 的 32×32 chunks 共用，`RegionFile.writeChunk` 先寫資料、再寫 header，所以無關 chunk 的 header 寫入失敗可能波及相關 chunk。
 
 失敗記錄 `NativeSaveFailures`：
 
-- 狀態：單調遞增的 `revision`；`chunkFailures`（chunk → 最近一次失敗時的 revision）；`storageFailure`（最近一次沒有 chunk 位置的失敗時的 revision）。
-- 寫入：`observe(future, chunk)` 與 `fail(chunk)` 記到該 chunk；`observeFlush(future)` 與 `failStorage()` 記為整份失敗。
-- `verify(before, chunks)`（`:53-61`）：先等所有已受理的 observer 完成，barrier 語意與 H2 之前相同，無關 chunk 的 observer 也要等。之後 `storageFailure > before` 一律拒絕；`chunks` 中任一 chunk 的失敗 revision `> before` 就拒絕；其他 chunk 的失敗不影響。
-- 移除不帶位置的 `observe(future)` 與 `verify(before)`，所有呼叫點都必須帶位置或明確標為 flush。
+- 狀態：
+  - 單調遞增的 `revision`。
+  - `regionFailures`：region → 最近一次失敗時的 revision。
+  - `storageFailure`：最近一次沒有 chunk 位置的失敗時的 revision。
+- region key：
+  - 寫法與原版 `RegionBasedStorage` 選 region 檔的方式相同：`ChunkPos.toLong(getRegionX(), getRegionZ())`，也就是 chunk 座標 `>> 5`（`:66-69`）。
+  - 記錄直接以 region 為 key，不先記 chunk 再換算。判定只看「region 內最近一次失敗是否晚於 before」，兩種記法結果相同；以 region 為 key 比較簡單，筆數上限也降為曾經失敗的不同 region 數。
+- 寫入：
+  - `observe(future, chunk)` 與 `fail(chunk)`（`:34-37`）記到該 chunk 所在的 region。
+  - `observeFlush(future)` 與 `failStorage()` 記為整份失敗。
+- `verify(before, chunks)`（`:56-64`）：
+  - 先等所有已受理的 observer 完成。barrier 語意與 H2 之前相同，其他 region 的 observer 也要等。
+  - 接著判定：`storageFailure > before` 一律拒絕；`chunks` 所在任一 region 的失敗 revision `> before` 就拒絕；其他 region 的失敗不影響。
+- 移除不帶位置的 `observe(future)` 與 `verify(before)`，所有呼叫點都必須帶位置，或明確標為 flush。
 
 各失敗來源都帶位置：
 
 | 來源 | 記錄位置 | 記法 |
 | --- | --- | --- |
-| `MinecraftServer.onChunkSaveFailure(error, key, pos)`（含序列化失敗與 chunk、entities、poi 的非同步寫入失敗） | `MinecraftServerSaveFailureMixin` | 依 `key.dimension()` 分世界，每個世界一份 `NativeSaveFailures`，呼叫 `fail(pos)`；`pos` 為 null 時 `failStorage()`。同一世界的三種 storage 合併計入。新增介面方法 `NativeSaveFailureAccess.quantumchamber$saveFailures(RegistryKey<World>)` |
+| `MinecraftServer.onChunkSaveFailure(error, key, pos)`（含序列化失敗與 chunk、entities、poi 的非同步寫入失敗） | `MinecraftServerSaveFailureMixin` | 依 `key.dimension()` 分世界，每個世界一份 `NativeSaveFailures`，呼叫 `fail(pos)`；`pos` 為 null 時 `failStorage()`。同一世界的三種 storage 合併計入，同樣以 region 判定，比「同一 storage」更保守。新增介面方法 `NativeSaveFailureAccess.quantumchamber$saveFailures(RegistryKey<World>)` |
 | `StorageIoWorker.setResult(pos, …)` | `StorageIoWorkerSaveFailureMixin` | 每個 worker 一份，`observe(future, pos)` |
-| `StorageIoWorker.completeAll(sync)` | 同上 | `observeFlush`：沒有 chunk 位置，失敗時視為該 worker 全部 chunks 都失敗（fail-closed） |
+| `StorageIoWorker.completeAll(sync)` | 同上 | `observeFlush`：沒有 chunk 位置，失敗時視為該 worker 全部 region 都失敗（fail-closed） |
 | `EntityChunkDataAccess.handleSaveFailure(future, pos)` | `EntityChunkRecoverySaveMixin` | 每個 entity storage 一份，`observe(future, pos)` |
 
 - 全伺服器累計次數 `quantumchamber$saveFailureRevision()` 保留，只供診斷與既有 probe（`M4CandidateRecoveryProbe.java:569`、`:573`），checkpoint 不再使用。
-- 不同世界的相同 chunk 座標不會混在一起：server 端依 dimension 分開，worker 與 entity storage 本來就是每個世界各自一份。
+- 不同世界的相同 region 座標不會混在一起：server 端依 dimension 分開，worker 與 entity storage 本來就是每個世界各自一份。
 
-`ChunkSaveCheckpoint.save(MinecraftServer, Map<ServerWorld, Set<ChunkPos>>)`（通用元件，F4b 的投影會再用）：
+`ChunkSaveCheckpoint.save(MinecraftServer, Map<ServerWorld, Set<ChunkPos>>)`（通用元件，F4b 的投影會再用，受同樣的界線約束）：
 
-1. 守門：必須在 server thread；map 不得為空；每個世界必須屬於此 server，相關 chunk 集合不得為空；每個相關 chunk 與它的 entity storage 都必須已載入（`:23-24`、`:41-52`）。接著取得三個來源各自的 `before`。
-2. 重新標髒（`setNeedsSaving(true)`＋`markEntitiesForResave`）→ `server.save(false,true,true)`，回 false 視為失敗（`:31`）→ 每個世界做 barrier（`completeAll(true).join()`、`awaitAll(true)`）→ 每個世界 verify 三個來源，只看該世界的相關 chunks（`:64-68`）。
+1. 守門與基準：
+   - 必須在 server thread；map 不得為空。
+   - 每個世界必須屬於此 server，相關 chunk 集合不得為空。
+   - 每個相關 chunk 與它的 entity storage 都必須已載入（`:24-25`、`:42-53`）。
+   - 接著取得三個來源各自的 `before`。
+2. 存檔與比對：
+   1. 重新標髒（`setNeedsSaving(true)`＋`markEntitiesForResave`）。
+   2. `server.save(false,true,true)`，回 false 視為失敗（`:32`）。
+   3. 每個世界做 barrier（`completeAll(true).join()`、`awaitAll(true)`）。
+   4. 每個世界 verify 三個來源，只看該世界相關 chunks 所在的 region（`:65-69`）。
 3. 任何例外都重新標髒後重丟。
 
 `MeasuredWorldSaveCheckpoint.save`：
@@ -236,28 +259,46 @@ fix round 1 的 GREEN 數字：
 呼叫端與語意：
 
 - `CorridorPageManager` 沒有修改：per-space 20→1200 tick 退避、WARN 去重與恢復時的 INFO 都照舊。
-- 新的例外訊息都是固定字串，不含 chunk 位置，WARN 依 class＋message 去重仍有效：
-  - 「相關 chunk 的原生序列化或存檔已回報失敗，拒絕承認 checkpoint」
-  - 「原生 storage flush 已回報失敗（沒有 chunk 位置，視為全部 chunks），拒絕承認 checkpoint」
+- 新的例外訊息都是固定字串，不含 chunk 或 region 位置，WARN 依 class＋message 去重仍有效：
+  - 「相關 region 的原生序列化或存檔已回報失敗，拒絕承認 checkpoint」
+  - 「原生 storage flush 已回報失敗（沒有 chunk 位置，視為全部 region），拒絕承認 checkpoint」
   - 其餘訊息沿用 H2 之前的文字。舊訊息「原生 storage write／flush 已回報失敗，拒絕承認幾何清理」與「原生 chunk／entity 序列化或存檔失敗，保留 MEASURED leases」已移除，沒有測試或腳本比對它們。
-- 仍維持 fail-closed 的情況：相關 chunk 失敗、`completeAll` 失敗、`server.save` 丟例外或回 false、barrier 的 join 丟例外。這些情況一律拒絕並重新標髒，呼叫端保留 leases 並退避。
+- 不再阻擋的：其他 region、其他世界的失敗，前提是在原版 flush 之前就已完成（例如較早受理且已完成的寫入、同步的序列化失敗、非 flush 存檔或卸載時的失敗）。
+- 仍維持 fail-closed 的情況（一律拒絕並重新標髒，呼叫端保留 leases 並退避）：
+  - 相關 region 的失敗，包含同一 region 內的無關 chunk。
+  - `completeAll` 失敗。
+  - `server.save` 丟例外或回 false。
+  - barrier 的 join 丟例外。
 - `NativeSaveFailures` 只在上述三個 mixin 與 `ChunkSaveCheckpoint` 使用。玩家 checkpoint 不使用它，語意不受影響。
 
-界線（H2 未改變）：
+界線（spec v5.3 §4 H2，不繞過）：
 
-- 無關 chunk 的寫入如果在原版 `completeAll` 執行時仍 pending，原版會 join 到失敗，讓外層 `server.save` 直接丟例外。涉及的呼叫是 `VersionedChunkStorage.completeAll()` 的 `join`，以及 `EntityChunkDataAccess.awaitAll` 的 `join`；`ServerWorld.save` 與 `MinecraftServer.save` 都沒有 catch。這時 checkpoint 仍會失敗。不同世界也一樣：前一個世界的 `save` 丟例外後，後面的世界不會存檔。
-- H2 會忽略的，只有在 `completeAll` 取快照之前就已完成的無關失敗，例如較早受理的寫入、同步的序列化失敗，以及非 flush 存檔或卸載時的失敗。要完全消除上面那種情況，就得改用 `server.save` 以外的存檔路徑，這超出 plan 的指定範圍。
-- `chunkFailures` 只在失敗時新增，key 數量上限是曾經失敗的不同 chunk 數，沒有修剪。
+- region header：同一 region 內任一 chunk 的失敗都視為相關（見上方 Code-truth）。這偏向 fail-closed：與相關 chunks 同 region 的無關 chunk 反覆失敗時，清理仍會依退避一直重試。
+- 原版 pending 寫入：
+  - 情況：寫入在原版 flush 時若仍 pending，原版會 join 到失敗，讓外層 `server.save` 直接丟例外，checkpoint 一定失敗，不論它在哪個 region、哪個世界。前一個世界的 `save` 丟例外後，後面的世界也不會存檔。
+  - 原版程式：涉及 `VersionedChunkStorage.completeAll()` 的 `join` 與 `EntityChunkDataAccess.awaitAll` 的 `join`；以 javap 確認 `ServerWorld.save` 與 `MinecraftServer.save` 都沒有 catch。
+  - 定位：這是原版語意的界線，不比原本的全伺服器計數更糟。要完全消除，就得改用 `server.save` 以外的存檔路徑，超出 plan 的指定範圍。
+- `regionFailures` 只在失敗時新增，key 數量上限是曾經失敗的不同 region 數，沒有修剪。
 
-### 測試（`f7ac878`）
+### 測試（`14fc189`）
 
-JUnit `NativeSaveFailuresTest`：由 4 個增加為 13 個。
+JUnit `NativeSaveFailuresTest`：15 個（H2 前 4 個，首輪 13 個）。chunk 一律以 `ChunkPos.toLong` 表示：
+
+| 常數 | chunk | region |
+| --- | --- | --- |
+| `RELEVANT` | (3,-7) | (0,-1) |
+| `OTHER_RELEVANT` | (4,-7) | (0,-1) |
+| `SAME_REGION` | (31,-32) | (0,-1) |
+| `OTHER_REGION` | (40,12) | (1,0) |
 
 - 原有 4 個改為新 API，相關 chunk 照舊判定：吞掉的失敗仍使收據失效、barrier 等待延後的失敗、已完成的失敗不會遺失、上一輪失敗後的新成功可被承認。
-- H2 規則（3 個）：
-  - `unrelatedChunkWriteFailureDoesNotBlockRelevantChunks`：同一筆失敗若納入相關範圍，仍必須拒絕。
-  - `unrelatedReportedFailureDoesNotBlockRelevantChunks`。
-  - `barrierWaitsForUnrelatedAsyncFailureWithoutBlocking`：observer 完成前，barrier 不得返回。
+- 其他 region 不阻擋（3 個，首輪的同名 test 改以 region 命名）：
+  - `otherRegionWriteFailureDoesNotBlockRelevantChunks`：同一筆失敗若納入相關範圍，仍必須拒絕。
+  - `otherRegionReportedFailureDoesNotBlockRelevantChunks`。
+  - `barrierWaitsForOtherRegionAsyncFailureWithoutBlocking`：observer 完成前，barrier 不得返回。
+- region 判定（fix round 1 新增 2 個）：
+  - `sameRegionUnrelatedChunkFailureFailsClosed`：同 region 無關 chunk 的寫入失敗與同步回報失敗都必須拒絕。
+  - `regionBoundaryMatchesVanillaRegionFiles`：5 組含負座標的邊界，先斷言 fixture 與 `ChunkPos.getRegionX／Z` 一致。擋下 2 組：(-1,5) 對 (-32,31)、(31,0) 對 (0,31)。不擋 3 組：(0,5) 對 (-1,5)、(32,31) 對 (31,31)、(5,-33) 對 (5,-32)。
 - fail-closed 對照（6 個）：
   - 相關 chunk 寫入失敗與同步回報失敗。
   - flush 失敗對任何 chunk 集合（含空集合）都拒絕。
@@ -265,17 +306,26 @@ JUnit `NativeSaveFailuresTest`：由 4 個增加為 13 個。
   - snapshot 之前的失敗不計，同一 chunk 之後再失敗就計入。
   - 兩份 storage 的相同 chunk 座標互不影響。
 
-GameTest `native_measured_checkpoint_ignores_unrelated_chunk_failure_windows`（batch `m5_h2_checkpoint_scope`，`M4CandidateDoorGameTests.java:418`）：
+GameTest `native_measured_checkpoint_ignores_unrelated_chunk_failure_windows`（batch `m5_h2_checkpoint_scope`，`M4CandidateDoorGameTests.java:421`）。fix round 1 沿用同一個 test、不新增 GameTest，理由見「Fix round 1」。
 
-- 流程：
-  1. 真側門 checked SELECTED，移除 Buff 讓玩家返還。
-  2. 第一次 checkpoint：讓來源艙 controller 所在 chunk 的原生 region write（chunk＋entities）真的失敗。
-  3. 第二次 checkpoint：改讓同一世界、同一份 storage 中已載入的無關 chunk 失敗。hook 自行把該 chunk 標髒，並撤銷它的 entity 空快取。
+- 準備：
+  1. 真側門 checked SELECTED。
+  2. probe 依 production 的來源艙範圍算出相關 chunks 與它們的 region，再選三個故障目標，都在來源世界：
+     - 相關：controller 所在 chunk。
+     - 同 region：與 controller 同 region、不在來源艙範圍、chunk 與 entity storage 都已載入的鄰近 chunk。
+     - 其他 region：沿四個軸向最近、不在任何相關 region 的 chunk。原本未強制載入時由 probe 強制載入，收尾解除。
+  3. 等其他 region 的 chunk 與 entity storage 都載入後，才移除 Buff 讓玩家返還。
+- 三次 checkpoint 依序注入：
+  1. 相關 chunk。
+  2. 同 region 的無關 chunk。
+  3. 其他 region 的 chunk。
+
+  第 2、3 次由 hook 自行把目標 chunk 標髒，並撤銷它的 entity 空快取。注入都是讓原生 region write（chunk＋entities）真的失敗。
 - 判定：
-  - 第一次：故障確實觸發（chunk、entities 兩種）、未被承認、flushed receipt 與 leases 原樣保留、runtime space 仍在。
-  - 退避間隔 20 tick 不變。
-  - 第二次：故障確實觸發（chunk、entities），production 的 server 計數至少 +2、來源 chunk worker 計數至少 +1，checkpoint 被承認。
-  - 只有兩次呼叫，之後完成 DORMANT，selection receipt 保留，玩家回到來源。
+  - 第 1、2 次：故障確實觸發（chunk、entities 兩種）且未被承認。第 2、3 次開始前，flushed receipt 與 leases 原樣保留，runtime space 仍在。
+  - 退避間隔 20 → 40 tick。
+  - 第 3 次：故障確實觸發（chunk、entities），production 的 server 計數至少 +2、來源 chunk worker 計數至少 +1，checkpoint 被承認。
+  - 恰好三次呼叫，之後完成 DORMANT，selection receipt 保留，玩家回到來源，probe 的強制載入已解除。
   - 收尾移除本案例自建的 DORMANT receipt。
 - 故障注入 `ChunkCheckpointScopeFaultMixin`（`StorageIoWorker`）：
   - 以 `@WrapOperation` 在 `StorageIoWorker.write` 內、原生 try 範圍中的 `RegionBasedStorage.write` 前丟出 `IOException`。由 worker 自己 `completeExceptionally`，不寫入 region 檔。
@@ -285,9 +335,9 @@ GameTest `native_measured_checkpoint_ignores_unrelated_chunk_failure_windows`（
 - `MeasuredCheckpointFaultMixin` 只多一個 RETURN hook，用來記錄 checkpoint 被承認的那一次；原 HEAD hook 與既有退避測試的行為不變。
 - GameTest 只使用 HEAD 已有的 API（全伺服器計數、worker `revision()`），所以同一份測試碼可以在 HEAD 上跑 RED。
 
-### Gate 與證據
+### Gate 與證據（H2 首輪，`f7ac878`）
 
-gate root 都在 `.superpowers/verification/`；逐輪的 state、console、diff 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h2/`。
+首輪的判定單位是 chunk，fix round 1 改為 region。gate root 都在 `.superpowers/verification/`；逐輪的 state、console、diff 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h2/`。
 
 diff hash 是 `git diff f6be3ed f7ac878 -- <path>` 輸出的 SHA-256：
 
@@ -316,6 +366,48 @@ GREEN 數字：
 - JUnit 425，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）。比 H1 的 416 多 9 個，就是 `NativeSaveFailuresTest` 新增的 9 個。
 - JAR：release 300 entries（257 classes），sources 191。比 H1 各多 1：新增 `ChunkSaveCheckpoint`（含 `$Context`），移除 `MeasuredWorldSaveCheckpoint$Context`。testmod 命中只有合法的 `ModPresenceProbe`。
 - M4 recovery 24/24 phases，24 個獨立 JVM；每個 phase 的 Gradle exit 0，正常停止，lock 已釋放。`native-write-fail` 照舊 PASS：外層 save 正常返回、366 次真 region 寫入失敗、storage 類型涵蓋 superposition 與 overworld 的 chunk 與 entities，leases 與資源保留。
+
+### Fix round 1（`14fc189`）
+
+依 spec v5.3 §4 H2 與 §20.7（controller commit `156298a`）處理：
+
+1. 判定單位改為「同一 storage 的同一個 region 檔」。記錄也一併改以 region 為 key，理由見 Code-truth。
+2. 界線維持：原版 flush 時仍 pending 的寫入失敗由原版 join 傳出，仍 fail-closed，不繞過。
+3. GameTest 改為三次呼叫，順序是相關 → 同 region 的無關 chunk → 其他 region。
+   - 被承認的 checkpoint 會結束 MEASURED 清理，所以會擋下的情形必須排在被承認之前。
+   - 同一個 MEASURED session 內就能依序證明三個性質，也順便驗到連續兩次失敗的退避 20 → 40。
+   - 共用同一套 probe 與收尾，不新增 batch。GameTest 數量不變。
+4. 依判定單位的改動同步更新 javadoc 與註解（`ChunkSaveCheckpoint`、`MeasuredWorldSaveCheckpoint`、`NativeSaveFailureAccess`、兩個 mixin），沒有其他行為變更。`MeasuredCheckpointFaultMixin`、`ChunkCheckpointScopeFaultMixin`、`EntityChunkRecoverySaveMixin` 沒有修改。
+
+逐輪證據在 `h2/fix1/`。diff hash 是 `git diff 156298a 14fc189 -- <path>` 輸出的 SHA-256：
+
+| 路徑 | SHA-256 |
+| --- | --- |
+| `src` | `f642a651…` |
+| `src/main` | `4ccd5b26…` |
+| `src/test` | `0b70cd5e…` |
+| `src/testmod` | `aa2b2c08…`（與 GameTest RED 的 diff 相同） |
+
+H2 全部 code（`git diff f6be3ed 14fc189 -- src`）為 `dd0a1e3d…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED（JUnit）：新增 region 測試，production 維持 `f7ac878` 的 chunk 判定 | `156298a`；只有 `NativeSaveFailuresTest.java` 與 `M4CandidateDoorGameTests.java` 有變更（`h2/fix1/red-state.txt`） | focused JUnit `NativeSaveFailuresTest` | 預期 FAIL：15 個中 2 個失敗，都是「Expected IllegalStateException … nothing was thrown」。一個是 `sameRegionUnrelatedChunkFailureFailsClosed`，另一個是 `regionBoundaryMatchesVanillaRegionFiles` 中會擋下的 2 組；不擋的 3 組與其餘 13 個 test 都通過 |
+| RED（GameTest）：production 維持 `f7ac878`，只改 testmod | `156298a`；只有 `M4CandidateDoorGameTests.java` 有變更（`h2/fix1/red-gametest-state.txt`）。`NativeSaveFailuresTest.java` 暫時回到 HEAD 內容，讓 `test` 先通過；fix1 版本另存，SHA-256 `9b264467…`，跑完逐位元組放回 | Full `gate-h2-fix1-red-gametest-fe64e1e513804134bf42ea65f9062ca9` | 預期 FAIL：147 個中只有本 test 失敗（JUnit 425 全過）。第 2 次（同 region 的無關 chunk）被承認：`sameRegionFailureFailedClosed=false`，第 3 次不存在，所以其他 region 相關的 witness 也是 false。第 1 次的相關故障、fail-closed，以及第 2 次開始前的 leases 保留都成立。同 region 目標 [766825, 835548]、相關 [766826, 835549]、其他 region [766826, 835552]，最後一個由 probe 強制載入 |
+| GREEN focused | 工作樹＝`14fc189` | `compileTestmodJava`＋`dev.quantumchamber.persistence.*` | PASS：117 個，0 failure／error，2 skipped（`NonWindowsPlayerCheckpointStoreTest`）；`NativeSaveFailuresTest` 15/15 |
+| GREEN Full | 同上 | `gate-h2-fix1-green-full-8543616baa81464a8ded9ea37c999cf2` | PASS。log 中本 test 的 WARN 原因是新訊息「相關 region 的原生序列化或存檔已回報失敗」，恢復時記「先前連續失敗 2 次」 |
+| GREEN Windows | 同上 | `gate-h2-fix1-green-windows-07205b3634ab4db8a4414bb906089880` | PASS：17 個，0 failure |
+| GREEN Main＋oracle | 同上 | `gate-h2-fix1-green-main-8cc79d9cc7b94fadabddaa48cc5197c1` | PASS：main-only oracle 三層 testmod 命中 0、world keys exact、正常停止、exact restore |
+| GREEN M4 recovery | 同上 | `recovery-run-87cdd5b2aa084bd98aa17d513ead8c5d.json` | PASS |
+
+gate 在 commit 之前以工作樹執行。執行前記錄 8 個檔案的 `git hash-object`（`h2/fix1/green-state.txt`），與 `14fc189` 中各檔的 blob id 逐一相同（`h2/fix1/commit-hashes.txt`）。
+
+fix round 1 的 GREEN 數字：
+
+- default GameTest 147/147（`_windows` 74），0 failure／error／skipped，與首輪相同。boundary oracle PASS；per-test receipt 29/29 PASS。
+- JUnit 427，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）。比首輪的 425 多 2 個，就是新增的 2 個 region 判定 test。
+- JAR：release 300 entries（257 classes）、sources 191，與首輪相同；testmod 命中只有合法的 `ModPresenceProbe`。
+- M4 recovery 24/24 phases，24 個獨立 JVM，Gradle exit 0，正常停止，lock 已釋放。`native-write-fail` 照舊 PASS：366 次真 region 寫入失敗，涵蓋 superposition 與 overworld 的 chunk 與 entities，leases 與資源保留。
 
 ### 觀察（未修改）
 
