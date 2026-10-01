@@ -294,6 +294,36 @@ class CandidateLedgerServiceTest {
         assertEquals(returning, diskRecord(port.file), "同 process 以 flushed SELECTABLE 的 checked RETURNING 覆寫未確認的 MEASURED");
     }
 
+    /** H3 q2：abort 本身丟例外時必須真的隔離該 session；log 稱已隔離時狀態相符，之後任何寫出都只帶上一份 flushed authority。 */
+    @Test void abortFailureQuarantinesSessionSoNoLaterWriteAdmitsUncheckedAuthority() throws Exception {
+        var port = port(List.of(entry(0))); port.fault = Fault.FLUSH; port.abortFails = true;
+        var previous = port.state.flushedRecords().get(SESSION);
+        assertEquals(COMMIT_FAILED, select(port, key(0), PLAYER, 0));
+        assertEquals(1, port.aborts); assertEquals(1, port.quarantines, "abort 失敗後改以隔離 fail-closed");
+        assertEquals(java.util.Set.of(SESSION), port.state.quarantinedSessions(), "session 必須真的在隔離中");
+        assertTrue(port.state.uncheckedCandidateSessions().isEmpty(), "隔離 session 不讓 recovery 等待");
+        assertThrows(IllegalStateException.class, () -> port.state.put(
+                previous.withProgress(previous.participants(), previous.spaceLeases(), SessionState.RETURNING, false)), "隔離 session 拒絕再寫入");
+        port.fault = Fault.NONE;
+        port.state.put(otherSession()); var disk = root.resolve("abort-failure-other-flush.dat"); port.state.save(disk.toFile(), null);
+        assertEquals(previous, diskRecord(disk), "隔離 session 的未 checked SELECTED 不得被其他 session 的寫出承認");
+        var batch = port(List.of(entry(-1))); batch.fault = Fault.FLUSH; batch.abortFails = true;
+        assertTrue(commit(batch, List.of(key(-1), key(0))).sessionFailed());
+        assertEquals(1, batch.quarantines); assertEquals(java.util.Set.of(SESSION), batch.state.quarantinedSessions(), "batch 路徑同樣隔離");
+    }
+
+    /** M4 quality Nit 3：失敗 log 的 cause 鏈有多節點環時，describe 必須在有限步內結束。 */
+    @Test void failureLogTerminatesOnMultiNodeCauseCycle() {
+        var first = new IllegalStateException("cause 環 A"); var second = new IllegalStateException("cause 環 B");
+        first.initCause(second); second.initCause(first);
+        var port = port(List.of());
+        var batch = assertTimeoutPreemptively(java.time.Duration.ofSeconds(10),
+                () -> service.commitCandidates(port, OWNER, () -> { throw first; }, SESSION, List.of(key(0))), "batch 失敗 log");
+        assertTrue(batch.sessionFailed()); assertTrue(batch.committedKeys().isEmpty()); assertEquals(0, port.puts);
+        port.readFailure = first;
+        assertEquals(REJECTED, assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> select(port, key(0), PLAYER, 0), "選擇拒絕 log"));
+    }
+
     @Test void nonOwnerThreadAndUnhealthyReadRejectBeforeMutation() {
         var port = port(List.of(entry(0)));
         Runnable wrongThread = () -> { throw new IllegalStateException("非 owner thread"); };
@@ -374,8 +404,9 @@ class CandidateLedgerServiceTest {
         private final SessionRecoveryState state;
         private final SessionRecoveryRecord initial;
         private final Path file;
-        private int puts, flushes, reads;
-        private boolean failInitialRead;
+        private int puts, flushes, reads, aborts, quarantines;
+        private boolean failInitialRead, abortFails;
+        private RuntimeException readFailure;
         private Fault fault = Fault.NONE;
         Port(SessionRecoveryRecord initial) {
             this.initial = initial; file = root.resolve(UUID.randomUUID() + ".dat");
@@ -384,6 +415,7 @@ class CandidateLedgerServiceTest {
         }
         @Override public Map<UUID, SessionRecoveryRecord> flushedRecords() {
             reads++;
+            if (readFailure != null) throw readFailure;
             if (failInitialRead) throw new IllegalStateException("初次讀取失敗");
             if (flushes > 0) {
                 if (fault == Fault.READ_THROW) throw new IllegalStateException("readback 失敗");
@@ -407,7 +439,12 @@ class CandidateLedgerServiceTest {
             if (fault == Fault.PUT) throw new IllegalStateException("put 失敗");
             state.put(record);
         }
-        @Override public boolean abortUnchecked(SessionRecoveryRecord expected) { return state.abortUnchecked(expected); }
+        @Override public boolean abortUnchecked(SessionRecoveryRecord expected) {
+            aborts++;
+            if (abortFails) throw new IllegalStateException("abort 本身失敗");
+            return state.abortUnchecked(expected);
+        }
+        @Override public void quarantine(UUID sessionUuid) { quarantines++; state.quarantine(sessionUuid); }
         @Override public void flush() {
             flushes++;
             if (fault == Fault.FLUSH) throw new IllegalStateException("flush 失敗");

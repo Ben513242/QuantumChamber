@@ -210,13 +210,95 @@ class SessionRecoveryStateTest {
         assertTrue(fresh.recoveryWritesSafe());
         var file=directory.resolve("abort-new-session.dat"); fresh.save(file.toFile(),null);
         assertTrue(SessionRecoveryState.load(file).flushedRecords().isEmpty(),"之後任何寫出都不得承認未 checked 的新 session");
-        // 已 checked 後移除的同 UUID：還原只回到最後 checked authority，不能讓 remove→reinsert 繞過。
-        var state=SessionRecoveryState.fromNbt(SessionRecoveryStateTest.fixture("RETURNING",false));
+        // 已 checked 後移除的同 UUID：重新放入時沒有 flushed authority，屬未 checked；還原只回到最後 checked authority，不能讓 remove→reinsert 繞過。
+        // H3 q1 起 abort 只回退 candidate authority（legacy record 沒有，不再回退），所以這裡改用 candidate record 驗證同一性質。
+        var state=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false));
         var original=state.records().values().iterator().next();
         state.remove(original.sessionUuid()); state.save(directory.resolve("removed.dat").toFile(),null);
-        state.put(original); assertTrue(state.abortUnchecked(original));
+        state.put(original); assertFalse(state.recoveryWritesSafe(),"移除後重新放入的同 UUID 沒有 flushed authority");
+        assertTrue(state.abortUnchecked(original));
         assertTrue(state.records().isEmpty());
-        for(var changed : authorityChanges(original)) assertThrows(IllegalArgumentException.class,() -> state.put(changed));
+        for(var changed : candidateAuthorityChanges(original)) assertThrows(IllegalArgumentException.class,() -> state.put(changed));
+    }
+
+    /** H3 q1：CAS 成立時也只回退尚未 checked 的 candidate authority；candidate 三欄位已 checked、只差進度的 current 不得倒退。 */
+    @Test void abortUncheckedNeverRollsBackCheckedCandidateAuthority() {
+        var previous=candidateRecord(false);
+        var returning=previous.withProgress(previous.participants(),previous.spaceLeases(),SessionState.RETURNING,false);
+        var selectable=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false)); selectable.put(returning);
+        var selected=candidateRecord(true);
+        var returned=SessionRecoveryManager.returnedRecord(selected,selected.participants().getFirst().playerUuid());
+        var measured=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(true,false)); measured.put(returned);
+        var legacy=SessionRecoveryState.fromNbt(fixture("RETURNING",false)); var original=legacy.records().values().iterator().next();
+        var legacyProgress=SessionRecoveryManager.returnedRecord(original,original.participants().getFirst().playerUuid());
+        legacy.put(legacyProgress);
+        assertAll(java.util.stream.Stream.of(java.util.Map.entry(selectable,returning),java.util.Map.entry(measured,returned),
+                java.util.Map.entry(legacy,legacyProgress)).map(pair -> () -> {
+            var state=pair.getKey(); var progress=pair.getValue(); var label=progress.state()+"/candidate="+progress.candidateContext().isPresent();
+            assertTrue(state.recoveryWritesSafe(),"fixture：只差進度，沒有未 checked candidate authority："+label);
+            assertTrue(state.abortUnchecked(progress),"沒有可回退的 authority："+label);
+            assertEquals(progress,state.records().get(progress.sessionUuid()),"已 checked authority 的進度不得倒退為 durable："+label);
+            assertTrue(state.isDirty(),"進度仍待寫出："+label);
+        }));
+    }
+
+    /** H3 q3：隔離 session 以上一份 flushed authority 收斂為 checked RETURNING；未 checked 的 SELECTED 與疊在其上的進度都不寫出，之後照常寫返還進度。 */
+    @Test void quarantinedSessionConvergesToCheckedReturningFromFlushedAuthority() {
+        var state=SessionRecoveryState.fromNbt(SessionRecoverySchema3Test.fixture(false,false));
+        var previous=candidateRecord(false); var selected=candidateRecord(true); var sid=previous.sessionUuid();
+        var player=selected.participants().getFirst().playerUuid();
+        state.put(selected); state.put(SessionRecoveryManager.returnedRecord(selected,player));
+        assertFalse(state.abortUnchecked(selected),"fixture：CAS 不符而隔離");
+        assertEquals(java.util.Set.of(sid),state.quarantinedSessions());
+        var returning=previous.withProgress(previous.participants(),previous.spaceLeases(),SessionState.RETURNING,false);
+        assertEquals(Optional.of(returning),state.convergeQuarantined(sid),"收斂目標＝上一份 flushed authority 推進的 RETURNING");
+        assertTrue(state.quarantinedSessions().isEmpty(),"取代後已沒有未 checked authority，解除隔離");
+        assertEquals(returning,state.records().get(sid),"未 checked 的 SELECTED 與其上的進度都不保留");
+        assertTrue(state.recoveryWritesSafe()); assertTrue(state.isDirty());
+        var file=directory.resolve("quarantine-converged.dat"); state.save(file.toFile(),null);
+        assertEquals(returning,SessionRecoveryState.load(file).flushedRecords().get(sid),"checked RETURNING 落盤，SELECTED 從未被承認");
+        var returned=SessionRecoveryManager.returnedRecord(returning,player);
+        state.put(returned); state.save(file.toFile(),null);
+        assertEquals(returned,SessionRecoveryState.load(file).flushedRecords().get(sid),"收斂後照常寫出返還進度");
+        assertThrows(IllegalStateException.class,() -> state.convergeQuarantined(sid),"只有隔離中的 session 可以收斂");
+    }
+
+    /** H3 q4：沒有 checked authority 的隔離 session（未 checked 的初始 ARMING）收斂為 checked 移除，並覆寫磁碟上已落地但未確認的 ARMING。 */
+    @Test void quarantinedSessionWithoutCheckedAuthorityConvergesToCheckedRemoval() throws Exception {
+        boolean[] armed={false};
+        var state=new SessionRecoveryState(path -> {
+            if(armed[0]) { armed[0]=false; throw new java.io.IOException("注入 ARMING 寫入後的 readback 失敗"); }
+            return SessionJournalStore.read(path);
+        });
+        var other=otherSession(new UUID(0,0xA1),SessionState.SUPERPOSITION,false,new UUID(0,0xA2),new UUID(0,0xA3),14);
+        var file=directory.resolve("unchecked-arming.dat");
+        state.put(other); state.save(file.toFile(),null);
+        var template=candidateRecord(false);
+        var initial=template.withProgress(template.participants(),template.spaceLeases(),SessionState.ARMING,false); var sid=initial.sessionUuid();
+        state.put(initial); armed[0]=true;
+        assertThrows(UncheckedIOException.class,() -> state.save(file.toFile(),null));
+        assertEquals(initial,SessionRecoveryState.load(file).flushedRecords().get(sid),"fixture：未確認的 ARMING 已在磁碟上");
+        assertTrue(state.quarantine(sid)); assertFalse(state.quarantine(sid),"重複隔離回 false");
+        assertTrue(state.uncheckedCandidateSessions().isEmpty(),"隔離 session 不讓 recovery 等待");
+        assertThrows(IllegalStateException.class,() -> state.put(initial),"隔離 session 拒絕再寫入");
+        state.save(file.toFile(),null);
+        assertEquals(java.util.Map.of(other.sessionUuid(),other),SessionRecoveryState.load(file).flushedRecords(),"隔離期間的寫出不含沒有 checked authority 的 record");
+        assertEquals(Optional.empty(),state.convergeQuarantined(sid),"沒有 checked authority：收斂為移除");
+        assertFalse(state.records().containsKey(sid)); assertTrue(state.quarantinedSessions().isEmpty()); assertTrue(state.isDirty());
+        state.save(file.toFile(),null);
+        assertEquals(java.util.Map.of(other.sessionUuid(),other),SessionRecoveryState.load(file).flushedRecords(),"收斂後的 checked 寫出不含它，其他 session 不受影響");
+    }
+
+    /** candidate session 不得改動的 authority：frozen context、ledger 內容與 ledger 縮減。 */
+    private static List<SessionRecoveryRecord> candidateAuthorityChanges(SessionRecoveryRecord original) {
+        var ledger=original.candidateLedger(); var context=original.candidateContext().orElseThrow();
+        var raised=new CandidatePolicySnapshot(context.policyId(),1,1,5,20,75,5,16384,context.entropyFingerprint(),context.sourceFamilyRef());
+        var changed=new java.util.ArrayList<>(ledger);
+        changed.set(0,new CandidateLedgerEntry(ledger.getFirst().doorKey(),
+                new QuantumCandidate.Source(new CandidateId(new CandidateBytes(SessionRecoverySchema3Test.bytes(61))))));
+        return List.of(candidateCopy(original,Optional.of(raised),ledger,original.candidateSelection(),original.state()),
+                candidateCopy(original,original.candidateContext(),ledger.subList(1,ledger.size()),original.candidateSelection(),original.state()),
+                candidateCopy(original,original.candidateContext(),changed,original.candidateSelection(),original.state()));
     }
 
     @Test void casMismatchQuarantinesOnlyThatSessionAndSaveWritesItsFlushedAuthority() {

@@ -30,9 +30,9 @@ public final class SessionRecoveryState extends PersistentState {
     private final Map<UUID, SessionRecoveryRecord> records = new LinkedHashMap<>();
     // 僅存活於本 process；remove 與空 journal flush 都不能抹去同 UUID 的最後 authority。
     private final Map<UUID, SessionRecoveryRecord> authorityHistory = new LinkedHashMap<>();
-    // 最後一份經 strict load／readback 承認的 authority（remove 後仍保留）；只供 abortUnchecked 還原 history。
+    // 最後一份經 strict load／readback 承認的 authority（remove 後仍保留）；只供 abortUnchecked／convergeQuarantined 還原 history。
     private final Map<UUID, SessionRecoveryRecord> checkedAuthority = new LinkedHashMap<>();
-    // CAS 還原失敗的 session：未 checked current 永不寫出，寫入時只用上一份 flushed authority。
+    // CAS 還原失敗或 owner 未能還原的 session：未 checked current 永不寫出，寫入時只用上一份 flushed authority；由 convergeQuarantined 收斂。
     private final java.util.Set<UUID> quarantined = new HashSet<>();
     private Map<UUID, SessionRecoveryRecord> flushed = Map.of();
     // Schema 3 envelope 本身是不可撤銷的初始化證據；不新增 NBT 欄位。
@@ -103,7 +103,7 @@ public final class SessionRecoveryState extends PersistentState {
     public boolean candidateInitialized() { requireHealthy(); return candidateInitialized; }
     /**
      * recovery 寫入是否安全：非隔離 session 的 current 都不得含未 checked 的 candidate context／ledger／selection。
-     * owner 失敗即 CAS 還原或隔離，因此只剩 checked 提交本身同步的 put→flush 窗口會回 false。
+     * owner 失敗即 CAS 還原或隔離，recovery tick 也會隔離任何殘留，因此正常只剩 checked 提交本身同步的 put→flush 窗口會回 false。
      */
     public boolean recoveryWritesSafe() { return uncheckedCandidateSessions().isEmpty(); }
     public java.util.Set<UUID> uncheckedCandidateSessions() {
@@ -120,28 +120,75 @@ public final class SessionRecoveryState extends PersistentState {
                 && previous.candidateSelection().equals(current.candidateSelection());
     }
     /**
-     * checked 提交（put→flush→readback）失敗後由 candidate authority owner 呼叫。CAS：只有 current 仍 exact 等於
-     * 本次提交的 next 才把 current 還原為上一份 flushed record（沒有時移除），authority history 還原為最後 checked authority；
-     * 之後任何 flush、autosave 或 stop 都無法承認未 checked 的 candidate／selection。next 已 checked 落盤時不倒退。
+     * checked 提交（put→flush→readback）失敗後由 candidate authority owner 呼叫。CAS：只有 current 仍 exact 等於本次提交的 next，
+     * 而且 next 含尚未 checked 的 candidate authority 時，才把 current 還原為上一份 flushed record（沒有時移除），
+     * authority history 還原為最後 checked authority；之後任何 flush、autosave 或 stop 都無法承認未 checked 的 candidate／selection。
+     * next 的 candidate authority 已 checked（已落盤、legacy，或與 flushed 只差返還／lease 等進度）時不倒退。
      * CAS 不符且 current 仍含未 checked authority 時不猜測覆寫，改為隔離該 session（只影響它，其他 recovery 照常）。
      * @return 該 session 已無未 checked candidate authority 時為 true；隔離時為 false
      */
     public boolean abortUnchecked(SessionRecoveryRecord expected) {
         requireMutationThread();
         requireHealthy();
-        var sid=expected.sessionUuid(); var current=records.get(sid); var durable=flushed.get(sid);
+        var sid=expected.sessionUuid(); var current=records.get(sid);
         if(!expected.equals(current)) {
             if(current==null || candidateChecked(current)) return true;
-            quarantined.add(sid);
-            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("candidate authority 還原 CAS 不符，隔離 session={}；之後只寫出上一份 flushed authority",sid);
+            quarantine(sid);
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("candidate authority 還原 CAS 不符，隔離 session={}；之後只寫出上一份 flushed authority，由 recovery 收斂",sid);
             return false;
         }
-        if(expected.equals(durable)) return true;
+        if(candidateChecked(expected)) return true;
+        restoreCheckedAuthority(sid);
+        return true;
+    }
+    /**
+     * 隔離 session：它的 current 不再被寫出（所有寫出只帶上一份 flushed authority），put／remove 一律拒絕，
+     * 直到 {@link #convergeQuarantined} 以最後 checked authority 取代 current。owner 無法還原時，以此 fail-closed 停住該 session。
+     * @return 這次才進入隔離時為 true；已隔離或沒有這個 session 時為 false
+     */
+    public boolean quarantine(UUID sessionUuid) {
+        requireMutationThread();
+        requireHealthy();
+        if(!records.containsKey(sessionUuid) && !flushed.containsKey(sessionUuid)) return false;
+        return quarantined.add(sessionUuid);
+    }
+    public java.util.Set<UUID> quarantinedSessions() { requireHealthy(); return java.util.Set.copyOf(quarantined); }
+    /**
+     * 隔離 session 的收斂（H3 q3／q4）。隔離 session 的 current 從未被寫出或承認，所以不需 CAS：直接以最後 checked authority 取代，
+     * authority history 也還原為最後 checked authority。flushed 為 ARMING／SUPERPOSITION 時推進為 RETURNING（candidate context、ledger、
+     * selection 原樣保留，只改狀態），RETURNING／MEASURED 原樣保留；沒有 flushed authority 時移除。取代後已沒有未 checked authority，
+     * 解除隔離並保持 dirty；caller 必須接著 checked flush，寫出成功才算收斂，同時覆寫磁碟上可能已落地但未確認的內容。
+     * @return 收斂目標；空值代表移除
+     */
+    public java.util.Optional<SessionRecoveryRecord> convergeQuarantined(UUID sessionUuid) {
+        requireMutationThread();
+        requireHealthy();
+        if(!quarantined.contains(sessionUuid)) throw new IllegalStateException("只有隔離中的 session 可以收斂");
+        var durable=flushed.get(sessionUuid);
+        var target=durable==null ? null : convergenceTarget(durable);
+        var candidate=new LinkedHashMap<>(records);
+        if(target==null) candidate.remove(sessionUuid); else candidate.put(sessionUuid,target);
+        validateOwnership(candidate);
+        restoreCheckedAuthority(sessionUuid);
+        if(target!=null && !target.equals(durable)) { records.put(sessionUuid,target); authorityHistory.put(sessionUuid,target); }
+        quarantined.remove(sessionUuid);
+        return java.util.Optional.ofNullable(target);
+    }
+    /** 收斂只把尚未測量的 authority 推進到 RETURNING；已在返還或保留 receipt 的狀態原樣保留。新增狀態時必須在此明確決定。 */
+    private static SessionRecoveryRecord convergenceTarget(SessionRecoveryRecord durable) {
+        return switch(durable.state()) {
+            case ARMING, SUPERPOSITION -> durable.withProgress(durable.participants(),durable.spaceLeases(),
+                    dev.quantumchamber.superposition.SessionState.RETURNING,durable.restoreEntryEffectOnReturn());
+            case RETURNING, MEASURED -> durable;
+        };
+    }
+    /** 不檢查 CAS 的還原核心：current 還原為上一份 flushed record（沒有時移除），authority history 還原為最後 checked authority，並保持 dirty。 */
+    private void restoreCheckedAuthority(UUID sid) {
+        var durable=flushed.get(sid);
         if(durable==null) records.remove(sid); else records.put(sid,durable);
         var checked=checkedAuthority.get(sid);
         if(checked==null) authorityHistory.remove(sid); else authorityHistory.put(sid,checked);
         markDirty();
-        return true;
     }
     /** start 前 ownership 預檢：DORMANT receipt 只封鎖自己的 Chamber，不佔用已返還參與者；未確認移除的 flushed record 仍佔用。 */
     public boolean participantsAvailable(java.util.Collection<UUID> players) {

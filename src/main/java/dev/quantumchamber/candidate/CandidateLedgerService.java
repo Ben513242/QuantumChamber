@@ -27,7 +27,10 @@ public final class CandidateLedgerService {
     public record CandidateBatchResult(List<DoorKey> committedKeys, boolean sessionFailed) {
         public CandidateBatchResult { committedKeys = List.copyOf(committedKeys); }
     }
-    /** COMMIT_FAILED：checked 提交已嘗試但失敗；未 checked authority 已由本 owner 還原或隔離，caller 必須標記 session failure。 */
+    /**
+     * COMMIT_FAILED：checked 提交已嘗試但失敗；未 checked authority 已由本 owner 還原或隔離（兩者都失敗時記 ERROR，由 recovery tick 隔離），
+     * caller 必須標記 session failure。
+     */
     public enum SelectionOutcome { SELECTED, ALREADY_SELECTED, NOT_SELECTABLE, REJECTED, COMMIT_FAILED }
 
     interface JournalPort {
@@ -36,6 +39,8 @@ public final class CandidateLedgerService {
         void put(SessionRecoveryRecord record);
         void flush();
         boolean abortUnchecked(SessionRecoveryRecord expected);
+        /** abort 本身失敗時，以隔離 fail-closed 停住該 session。 */
+        void quarantine(UUID sessionUuid);
     }
     /** 已完成 CAS 還原／隔離並記錄 root cause 的提交失敗。 */
     private static final class CommitFailure extends RuntimeException {
@@ -135,8 +140,8 @@ public final class CandidateLedgerService {
     }
 
     /**
-     * 唯一的 candidate／selection 提交點。put 之後任何失敗都先以 CAS 還原未 checked authority（或隔離），
-     * 確保之後其他 session 的 flush、原生 autosave 或 stop 都不能承認已回報失敗的 ledger／SELECTED。
+     * 唯一的 candidate／selection 提交點。put 之後任何失敗都先以 CAS 還原未 checked authority（CAS 不符時隔離；abort 本身失敗時也改為隔離），
+     * 確保之後其他 session 的 flush、原生 autosave 或 stop 都不能承認已回報失敗的 ledger／SELECTED。log 依實際處置描述。
      */
     private static SessionRecoveryRecord commitChecked(JournalPort journal, SessionRecoveryRecord previous, SessionRecoveryRecord next) {
         if (!SessionRecoveryRecord.sameAuthority(previous, next)) throw new IllegalArgumentException("候選 authority 非單調更新");
@@ -148,21 +153,51 @@ public final class CandidateLedgerService {
             if (!next.equals(actual)) throw new IllegalStateException("候選 journal exact readback 不符");
             return actual;
         } catch (RuntimeException failure) {
-            boolean clean;
-            try { clean = journal.abortUnchecked(next); }
-            catch (RuntimeException abortFailure) { failure.addSuppressed(abortFailure); clean = false; }
-            LOGGER.warn("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(),
-                    clean ? "未 checked authority 已還原為上一份 flushed authority" : "未能還原，已隔離該 session 的未 checked authority",
-                    describe(failure));
+            var containment = contain(journal, next, failure);
+            if (containment == Containment.UNCONTAINED) {
+                LOGGER.error("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, describe(failure));
+            } else {
+                LOGGER.warn("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, describe(failure));
+            }
             throw new CommitFailure(failure);
         }
     }
 
-    /** 只輸出例外 class 與 message（含 root cause）；不輸出 record、candidate bytes 或 entropy。 */
-    private static String describe(Throwable failure) {
+    /** 提交失敗後未 checked authority 的實際處置。 */
+    private enum Containment {
+        RESTORED("已無未 checked authority（CAS 已還原為上一份 flushed authority，或 next 已 checked 而不倒退）"),
+        QUARANTINED("CAS 不符，已隔離該 session（之後只寫出上一份 flushed authority，由 recovery 收斂）"),
+        QUARANTINED_AFTER_ABORT_FAILURE("CAS 還原本身失敗，已隔離該 session（之後只寫出上一份 flushed authority，由 recovery 收斂）"),
+        UNCONTAINED("CAS 還原與隔離都失敗，未 checked authority 仍在 current，等待 recovery tick 隔離");
+        final String description;
+        Containment(String description) { this.description = description; }
+    }
+
+    private static Containment contain(JournalPort journal, SessionRecoveryRecord next, RuntimeException failure) {
+        try {
+            return journal.abortUnchecked(next) ? Containment.RESTORED : Containment.QUARANTINED;
+        } catch (RuntimeException abortFailure) {
+            failure.addSuppressed(abortFailure);
+            try {
+                journal.quarantine(next.sessionUuid());
+                return Containment.QUARANTINED_AFTER_ABORT_FAILURE;
+            } catch (RuntimeException quarantineFailure) {
+                failure.addSuppressed(quarantineFailure);
+                return Containment.UNCONTAINED;
+            }
+        }
+    }
+
+    /**
+     * 只輸出例外 class 與 message（含 root cause）；不輸出 record、candidate bytes 或 entropy。其他 owner 的失敗 log 也共用。
+     * cause 鏈以 identity 去重走訪，多節點的 cause 環也會在有限步內停止。
+     */
+    public static String describe(Throwable failure) {
         var text = failure.getClass().getName() + ": " + failure.getMessage();
+        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
         var root = failure;
-        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        seen.add(root);
+        while (root.getCause() != null && seen.add(root.getCause())) root = root.getCause();
         return root == failure ? text : text + " <- " + root.getClass().getName() + ": " + root.getMessage();
     }
 
@@ -195,6 +230,7 @@ public final class CandidateLedgerService {
             @Override public void put(SessionRecoveryRecord record) { state.put(record); }
             @Override public void flush() { state.flush(server); }
             @Override public boolean abortUnchecked(SessionRecoveryRecord expected) { return state.abortUnchecked(expected); }
+            @Override public void quarantine(UUID sessionUuid) { state.quarantine(sessionUuid); }
         };
     }
     private static void requireServerThread(MinecraftServer server) {

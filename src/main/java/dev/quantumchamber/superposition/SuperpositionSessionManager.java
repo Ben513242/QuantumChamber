@@ -30,6 +30,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     private CorridorRepositionService reposition;
     private int lastTick=Integer.MIN_VALUE;
     private String checkpointWarning;
+    // 初始 ARMING 未能 checked 落盤而放棄入場時，各 chamber 已記 WARN 的原因；同一 chamber 同一原因只記一次。
+    private final Map<UUID,String> abandonWarnings=new HashMap<>();
+    // 初始 authority 從未 checked、放棄入場失敗而改走 fail 的 session → 取消 reservation 失敗時已記 WARN 的原因（尚未失敗為 null）。
+    private final Map<UUID,String> abandonPending=new LinkedHashMap<>();
 
     public static void initialize() {
         if(initialized) return;
@@ -125,8 +129,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         catch(RuntimeException failure) {
             // 初始 ARMING 未 checked：沒有上一份 flushed authority，只能 CAS 移除並取消零 geometry reservation。
             if(abandonInitial(runtime,failure)) return StartResult.REJECTED;
-            fail(runtime,failure); return StartResult.STAGING;
+            fail(runtime,failure); settleUncheckedInitial(runtime); return StartResult.STAGING;
         }
+        var previous=abandonWarnings.remove(chamber);
+        if(previous!=null) org.slf4j.LoggerFactory.getLogger("quantumchamber").info("入場 ARMING 已恢復 checked 落盤：chamber={}（先前放棄原因：{}）",chamber,previous);
         try {
             sourceTicket(initial); pages.prepare(prepared);
             return StartResult.STAGING;
@@ -151,20 +157,76 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         checkpointWarning=reason.get();
         return false;
     }
-    /** 成功時玩家未移動、沒有 journal、runtime、source ticket、slot 或 page 保留；任何清理失敗改走既有 RETURNING。 */
+    /**
+     * 初始 ARMING 未能 checked 落盤時放棄入場：先以 CAS 移除未 checked record，再補一次 checked 寫出，覆寫磁碟上可能已原子寫入但未確認的
+     * ARMING（readback 才失敗的窗口）；最後取消零 geometry reservation 並移除 runtime。成功時玩家未移動，沒有 journal、runtime、source ticket、
+     * slot 或 page 保留。補寫失敗不影響放棄：record 已不在 current，journal 保持 dirty，由下一次寫出覆寫。CAS 或清理失敗才改走既有 RETURNING。
+     */
     private boolean abandonInitial(SuperpositionSession runtime,RuntimeException failure) {
         var initial=runtime.initial;
+        RuntimeException unacknowledged=null;
         try {
             if(!journal.abortUnchecked(initial) || journal.records().containsKey(initial.sessionUuid())
                     || journal.flushedRecords().containsKey(initial.sessionUuid())) return false;
-            var pages=CorridorPageManager.forServer(server);
-            pages.retire(pages.cancelPrepared(runtime.prepared));
-            sessions.remove(initial.chamberUuid());
-            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("入場 ARMING 未能 checked 落盤，已移除未 checked record 並取消 reservation，session={}：{}: {}",
-                    initial.sessionUuid(),failure.getClass().getName(),failure.getMessage());
-            return true;
+            try { journal.flush(server); }
+            catch(RuntimeException overwrite) { unacknowledged=overwrite; }
+            cancelInitial(runtime);
         } catch(RuntimeException cleanup) {
             failure.addSuppressed(cleanup); return false;
+        }
+        warnAbandoned(initial,failure,unacknowledged);
+        return true;
+    }
+    /** 取消從未 checked 的初始 reservation，並移除 runtime 與來源票。 */
+    private void cancelInitial(SuperpositionSession runtime) {
+        var pages=CorridorPageManager.forServer(server);
+        pages.retire(pages.cancelPrepared(runtime.prepared));
+        var sid=runtime.initial.sessionUuid();
+        sessions.remove(runtime.initial.chamberUuid());
+        var ticket=tickets.remove(sid);
+        if(ticket!=null) ticket.world().getChunkManager().removeTicket(SOURCE_TICKET,ticket.chunk(),2,sid);
+    }
+    /** 放棄入場的 WARN 帶 root cause，依 chamber＋原因去重（比照 checkpointCapable）；同一 chamber 之後 checked 落盤成功時記一次 INFO。 */
+    private void warnAbandoned(SessionRecoveryRecord initial,RuntimeException failure,RuntimeException unacknowledged) {
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        var overwrite=unacknowledged==null ? "磁碟上可能未確認的 ARMING 已由 checked 寫出覆寫"
+                : "補寫失敗，journal 保持 dirty，由下一次寫出覆寫（"+dev.quantumchamber.candidate.CandidateLedgerService.describe(unacknowledged)+"）";
+        var reason=dev.quantumchamber.candidate.CandidateLedgerService.describe(failure)+"；"+overwrite;
+        if(reason.equals(abandonWarnings.put(initial.chamberUuid(),reason))) {
+            logger.debug("入場 ARMING 以相同原因再次放棄（WARN 已去重）：chamber={} session={}",initial.chamberUuid(),initial.sessionUuid());
+            return;
+        }
+        logger.warn("入場 ARMING 未能 checked 落盤，已移除未 checked record 並取消 reservation（同一 chamber 同一原因只記一次）：chamber={} session={} 原因={}",
+                initial.chamberUuid(),initial.sessionUuid(),reason,failure);
+    }
+    /**
+     * 放棄入場失敗、改走 fail 之後（H3 q4）：fallback RETURNING 已 checked 時由一般返還流程接手。初始 authority 從未 checked 時，立即隔離仍留在
+     * current 的未 checked record，同一 tick 內其他寫出也不得承認它；recovery 把它收斂為 checked 移除之後，由 finishAbandoned 取消 reservation 並移除 runtime。
+     */
+    private void settleUncheckedInitial(SuperpositionSession runtime) {
+        var sid=runtime.initial.sessionUuid();
+        if(journal.flushedRecords().containsKey(sid)) return;
+        try { if(journal.uncheckedCandidateSessions().contains(sid)) journal.quarantine(sid); }
+        catch(RuntimeException failure) {
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("初始 ARMING 殘留尚未隔離，交由 recovery tick 處理：session={}",sid,failure);
+        }
+        abandonPending.putIfAbsent(sid,null);
+    }
+    /** 初始 authority 從未 checked 的 session：recovery 已把殘留收斂為 checked 移除後，取消 reservation 並移除 runtime，chamber 可再使用。 */
+    private void finishAbandoned() {
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        for(var sid : List.copyOf(abandonPending.keySet())) {
+            var runtime=sessions.values().stream().filter(value -> value.initial.sessionUuid().equals(sid)).findFirst().orElse(null);
+            // runtime 已不在，或 fallback RETURNING 後來已 checked：由一般返還流程接手。
+            if(runtime==null || journal.flushedRecords().containsKey(sid)) { abandonPending.remove(sid); continue; }
+            if(journal.records().containsKey(sid)) continue;
+            try {
+                cancelInitial(runtime); abandonPending.remove(sid);
+                logger.info("初始 ARMING 殘留已 checked 移除，取消 reservation 並釋放 chamber：chamber={} session={}",runtime.initial.chamberUuid(),sid);
+            } catch(RuntimeException failure) {
+                var cause=dev.quantumchamber.candidate.CandidateLedgerService.describe(failure);
+                if(!cause.equals(abandonPending.put(sid,cause))) logger.warn("初始 ARMING 殘留已移除，但 reservation 尚未取消，下一 tick 重試：session={}",sid,failure);
+            }
         }
     }
     public void tick(MinecraftServer owner) {
@@ -199,7 +261,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 enter(runtime,pages);
             } catch(IOException | RuntimeException failure) { fail(runtime,failure); }
         }
-        reposition.tick(owner); recovery.tick(owner);
+        reposition.tick(owner); recovery.tick(owner); finishAbandoned();
         for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.MEASURED
                 && recovery.measuredRecoveryComplete(record.sessionUuid())) {
             sessions.remove(record.chamberUuid());
@@ -418,6 +480,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(!owner.isOnThread()) throw new IllegalStateException("session detach 必須在同一 server thread");
         if(recovery!=null) recovery.detach(owner);
         recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE; checkpointWarning=null;
+        abandonWarnings.clear(); abandonPending.clear();
     }
     private void requireServer(MinecraftServer owner) {
         if(owner!=server || server==null || !owner.isOnThread()) throw new IllegalStateException("session 必須在 attached server thread");
