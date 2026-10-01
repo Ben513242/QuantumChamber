@@ -515,6 +515,32 @@ class SessionRecoverySchema4Test {
         }
     }
 
+    /**
+     * 讀回已確認之後的例外的去重鍵，在該 session 下一次乾淨（讀回確認、沒有例外）的寫出後清除：同一原因再出現時再記一次 WARN，
+     * 與 {@code SessionRecoveryManager} 成功後 {@code failures.remove} 的慣例一致；WARN 附上 stack trace。
+     */
+    @Test void cleanWriteClearsTheConfirmedWarningKey() {
+        var dormant = settled(measured(NEW, 1));
+        var disk = new Disk("after-readback-clean", dormant);
+        var settled = settled(collapsing(measured(NEW, 1)));
+        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+        var retry = sealed.withCollapse(SessionState.COLLAPSING, sealed.collapse().retry());
+        Runnable lateFailure = () -> { disk.state.save(disk.file.toFile(), null); throw new IllegalStateException("注入：讀回確認之後的例外"); };
+        try (var logs = new Logs()) {
+            assertCommitted(disk.state.commitRestore(lateFailure, dormant, settled));
+            assertCommitted(disk.state.commitRollForward(disk.flush(), settled, sealed));
+            assertCommitted(disk.state.commitRestore(lateFailure, sealed, retry));
+            var warnings = logs.events(Level.WARN);
+            var cases = new ArrayList<Executable>();
+            cases.add(() -> assertEquals(2, warnings.size(), () -> "中間的乾淨寫出清除去重鍵，同一原因再出現時再記一次：" + logs.messages(Level.WARN)));
+            for (var warning : warnings) cases.add(() -> {
+                assertNotNull(warning.getThrown(), "WARN 必須附上 stack trace");
+                assertEquals("注入：讀回確認之後的例外", warning.getThrown().getMessage());
+            });
+            assertAll(cases);
+        }
+    }
+
     /** put→flush 的同步窗口中，restore 類內容視同未 checked（不得被 recovery 或其他寫出承認）。 */
     @Test void commitRestoreWindowIsVisibleAsUncheckedAuthority() {
         var measured = measured(EXISTING, 1);
@@ -1037,7 +1063,10 @@ class SessionRecoverySchema4Test {
         }
         @Override public void append(LogEvent event) { if ("quantumchamber".equals(event.getLoggerName())) events.add(event.toImmutable()); }
         List<String> messages(Level level) {
-            synchronized (events) { return events.stream().filter(event -> event.getLevel() == level).map(event -> event.getMessage().getFormattedMessage()).toList(); }
+            return events(level).stream().map(event -> event.getMessage().getFormattedMessage()).toList();
+        }
+        List<LogEvent> events(Level level) {
+            synchronized (events) { return events.stream().filter(event -> event.getLevel() == level).toList(); }
         }
         @Override public void close() {
             context.getConfiguration().getRootLogger().removeAppender(getName()); context.updateLoggers(); stop();

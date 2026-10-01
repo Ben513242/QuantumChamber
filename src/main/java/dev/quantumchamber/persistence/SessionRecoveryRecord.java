@@ -207,6 +207,12 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
     /**
      * 方向性的 authority 檢查：next 只能保留或追加 previous 已承認的候選事實。進入保留收據的狀態（MEASURED 與塌縮狀態）之後，
      * context、ledger、selection 完全不變、returned 只增不減、lease 只能原樣或清空，狀態邊與 Collapse 欄位依 {@link #collapseEdge}。
+     * <p><b>不具遞移性。</b>塌縮狀態的邊是單步關係：改變狀態的邊不得夾帶進度，進度只能經同狀態的 self-loop 寫入。所以
+     * MEASURED→COLLAPSING 合法、COLLAPSING 的返還 self-loop 合法，但 MEASURED 直接到「已返還的 COLLAPSING」回 false；
+     * ARMING／SUPERPOSITION／RETURNING 到任何塌縮狀態也一律回 false（塌縮狀態只能由 MEASURED 進入）。
+     * <p>因此只能拿「最新一步」的 authority 比對——{@link SessionRecoveryState#put} 的 current、flushed 與 history——不能拿跨越多次寫入的
+     * 舊快照比對，否則合法的寫入序列會被判為違規。也正因為 {@code put} 同時要求 current、flushed、history 三者都成立，roll-forward 尚未確認
+     * （current 已帶進度、flushed 還是舊的）時再疊上狀態邊會被拒絕，符合 spec §7「尚未確認期間只收斂、不疊寫」。
      */
     public static boolean sameAuthority(SessionRecoveryRecord previous,SessionRecoveryRecord next) {
         return previous.sessionUuid().equals(next.sessionUuid()) && previous.chamberUuid().equals(next.chamberUuid())
@@ -228,7 +234,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
      * spec §5 的狀態邊與 Collapse 單調性。M4 原有的狀態邊不變（這裡不檢查）；塌縮狀態只能由 MEASURED 或另一個塌縮狀態進入。
      * 兩端的 record 都已通過建構子的合法組合，所以這裡只比對「哪些欄位可以改變」。
      * 改變狀態的邊（M→C、C→R、C→S、R→S、S→C）不得夾帶進度：參與者（含 returned）與 lease 必須原樣，進度只能經同狀態的 self-loop 寫入
-     * （§7.1 的提交帶著既有進度，不同時新增）。
+     * （§7.1 的提交帶著既有進度，不同時新增）。這是單步關係，不具遞移性（見 {@link #sameAuthority}）。
      */
     private static boolean collapseEdge(SessionRecoveryRecord previous, SessionRecoveryRecord next) {
         var after = next.state();

@@ -55,7 +55,8 @@ public final class SessionRecoveryState extends PersistentState {
     private final java.util.Set<UUID> terminated = new HashSet<>();
     // roll-forward 類寫入（spec §6）尚未經 checked flush 讀回確認的 session；collapse view 只在這時採用 current。
     private final java.util.Set<UUID> rollForwardPending = new HashSet<>();
-    // 「讀回已確認之後才出現的例外」最近一次 WARN 的去重鍵（FailureText.dedupeKey），以 session 為單位；終局成功時移除。
+    // 「讀回已確認之後才出現的例外」最近一次 WARN 的去重鍵（FailureText.dedupeKey），以 session 為單位；該 session 下一次乾淨的
+    // 寫出（讀回確認、沒有例外）或終局成功時移除。
     private final Map<UUID, String> confirmedFailureWarnings = new HashMap<>();
     private String loadError;
     private MinecraftServer owner;
@@ -392,7 +393,7 @@ public final class SessionRecoveryState extends PersistentState {
      * （COLLAPSING→SEALED，或 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)）。前置條件：current 與 flushed 都 exact 等於 expected。
      * 寫出失敗時 current 保留 next 並保持 dirty（{@link CommitResult.Status#ROLL_FORWARD_PENDING}），之後任何寫出（重試、其他 session 的 flush、
      * 原生 autosave、停服）都帶著它；未確認期間 {@link #collapseView} 採用 current。寫出失敗不記 log，由 caller 依原因去重
-     * （見 {@link CommitResult}）；讀回已確認之後才出現的例外由 journal 記 WARN（{@link #warnAfterConfirmed}）。
+     * （見 {@link CommitResult}）；讀回已確認之後才出現的例外由 journal 記 WARN（{@link #afterConfirmedWrite}）。
      */
     public CommitResult commitRollForward(MinecraftServer server, SessionRecoveryRecord expected, SessionRecoveryRecord next) {
         requireServerThread(server);
@@ -409,7 +410,7 @@ public final class SessionRecoveryState extends PersistentState {
         var failure=checkedFlush(flush);
         // 以 flushed 判定：讀回已確認 next 就是 COMMITTED（flush 之後才有的例外記 WARN）；否則 current 保留 next。
         if(next.equals(flushed.get(next.sessionUuid()))) {
-            failure.ifPresent(late -> warnAfterConfirmed(next.sessionUuid(),"roll-forward "+expected.state()+"→"+next.state(),late));
+            afterConfirmedWrite(next.sessionUuid(),"roll-forward "+expected.state()+"→"+next.state(),failure);
             return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
         }
         markDirty();
@@ -444,7 +445,7 @@ public final class SessionRecoveryState extends PersistentState {
         try { put(next,true); } catch(RuntimeException invalid) { return CommitResult.of(CommitResult.Status.REJECTED,invalid); }
         var failure=checkedFlush(flush);
         if(next.equals(flushed.get(sid))) {
-            failure.ifPresent(late -> warnAfterConfirmed(sid,"restore "+expected.state()+"→"+next.state(),late));
+            afterConfirmedWrite(sid,"restore "+expected.state()+"→"+next.state(),failure);
             return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
         }
         var cause=failure.orElseGet(() -> new IllegalStateException("restore 類寫入的 exact readback 不符"));
@@ -490,8 +491,8 @@ public final class SessionRecoveryState extends PersistentState {
             quarantine(sid);
             return TerminalResult.of(quarantined.contains(sid) ? TerminalResult.Status.QUARANTINED : TerminalResult.Status.ROLL_FORWARD_PENDING,cause);
         }
-        // 讀回已確認不存在（flush 之後才有的例外記 WARN）：才修剪 authority history，並留 tombstone。
-        failure.ifPresent(late -> warnAfterConfirmed(sid,"terminate "+origin,late));
+        // 讀回已確認不存在（flush 之後才有的例外記 WARN）：才修剪 authority history，並留 tombstone；session 已結束，去重鍵一併移除。
+        afterConfirmedWrite(sid,"terminate "+origin,failure);
         authorityHistory.remove(sid); checkedAuthority.remove(sid); terminated.add(sid); confirmedFailureWarnings.remove(sid);
         return new TerminalResult(TerminalResult.Status.REMOVED,Optional.empty());
     }
@@ -502,14 +503,19 @@ public final class SessionRecoveryState extends PersistentState {
     }
 
     /**
-     * 讀回已確認之後才出現的例外（例如 flush 之後的 hook）：結果以 flushed 為準，不當成寫出失敗，但不得靜默丟棄。
-     * 同一個 session 依 {@link FailureText#dedupeKey} 去重，原因改變才再記（沿用 recovery 的去重慣例）。
+     * 讀回已確認的寫出之後的 log 處理：flush 有例外（例如 flush 之後的 hook）時，結果仍以 flushed 為準、不當成寫出失敗，但不得靜默丟棄，
+     * 記 WARN 並附 stack trace；沒有例外（乾淨的寫出）時清除該 session 的去重鍵。
+     * <p>去重與 {@code SessionRecoveryManager} 的慣例一致：以 session 為單位記住最近一次的 {@link FailureText#dedupeKey}，
+     * 原因相同就不再記，原因改變或中間有一次乾淨寫出（{@code failures.remove} 的對應）之後再出現才再記。
+     * 去重鍵不區分寫入種類（restore、roll-forward、終局）：這種例外來自三者共用的 flush 路徑，與寫的是哪一條邊無關；
+     * 每則 WARN 仍帶上寫入種類。
      */
-    private void warnAfterConfirmed(UUID sid, String write, RuntimeException late) {
-        var key=FailureText.dedupeKey(late);
+    private void afterConfirmedWrite(UUID sid, String write, Optional<RuntimeException> late) {
+        if(late.isEmpty()) { confirmedFailureWarnings.remove(sid); return; }
+        var key=FailureText.dedupeKey(late.orElseThrow());
         if(key.equals(confirmedFailureWarnings.put(sid,key))) return;
         org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("checked 寫出已讀回確認，之後才出現例外（結果以 flushed 為準，不重試）：session={} {}：{}",
-                sid,write,FailureText.describe(late));
+                sid,write,FailureText.describe(late.orElseThrow()),late.orElseThrow());
     }
 
     /** commit 共用的前置條件；回傳拒絕原因，可以寫入時為 null。 */
