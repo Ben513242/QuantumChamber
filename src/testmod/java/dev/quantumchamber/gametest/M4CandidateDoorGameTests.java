@@ -855,14 +855,16 @@ public final class M4CandidateDoorGameTests {
         context.waitAndRun(3,() -> {
             var server=fixture.server; var root=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT);
             var journal=SessionRecoveryState.get(server);
+            // legacy 是單一 test 的獨立 fresh save，維持全域為空；共用 default run 的 batch 順序不固定，只看本 test 自己的 authority。
+            if(legacyOnly) assertEmptyAuthorities(context,fixture.pages,journal);
+            else {
+                // 新艙尚未供電註冊、沒有 chamber UUID，不可能已有自己的 journal、space、runtime session 或來源票。
+                var controller=fixture.controller();
+                context.assertTrue(controller!=null && controller.chamberUuid()==null,
+                        "default run 開始時 fixture 必須是尚未註冊的新艙：uuid="+(controller==null ? "NO_CONTROLLER" : controller.chamberUuid()));
+            }
             // 本 test 自建的 session／chamber；fixture chamber 的 UUID 在第一次供電才指派，由檢查時即時讀取。
             var ownSessions=new HashSet<UUID>(); var ownChambers=new HashSet<UUID>();
-            // 共用 default run 的 batch 順序不固定，只檢查本 test 自己的 authority；legacy 是單一 test 的獨立 fresh save，維持全域為空。
-            Runnable assertClean=() -> {
-                if(legacyOnly) assertEmptyAuthorities(context,fixture.pages,journal);
-                else assertOwnAuthoritiesEmpty(context,fixture,journal,ownSessions,ownChambers);
-            };
-            assertClean.run();
             try {
                 var discovery=dev.quantumchamber.candidate.UniverseDiscoveryState.loadOrCreate(root);
                 var entropy=dev.quantumchamber.candidate.CandidateEntropyState.loadOrCreate(root,!discovery.records().isEmpty());
@@ -910,10 +912,15 @@ public final class M4CandidateDoorGameTests {
                         context.assertEquals(spaces,M4CandidateTestAccess.get(fixture.pages,"spaces"),mode+" start不得reserve space");
                         if(mode.contains("missing")) context.assertTrue(!java.nio.file.Files.exists(target),mode+" 不得自動重建遺失權威");
                         if(mode.startsWith("candidate") || mode.startsWith("legacy")) {
-                            // 範圍檢查不得因限縮而漏掉本 test 自己的殘留。
+                            // 範圍檢查不得因限縮而漏掉本 test 自己的殘留；sid 與 chamber 兩條過濾路徑也各自單獨驗證。
+                            boolean flushed=!mode.equals("legacy_current");
+                            java.util.function.Predicate<List<String>> caught=found -> found.contains("current:"+sid) && (!flushed || found.contains("durable:"+sid));
                             var residue=ownAuthorityResidue(fixture,journal,ownSessions,ownChambers);
-                            context.assertTrue(residue.contains("current:"+sid) && (mode.equals("legacy_current") || residue.contains("durable:"+sid)),
-                                    mode+" 範圍檢查必須抓到本 test 自己的 journal 殘留："+residue);
+                            context.assertTrue(caught.test(residue),mode+" 範圍檢查必須抓到本 test 自己的 journal 殘留："+residue);
+                            var bySession=ownAuthorityResidue(fixture,journal,Set.of(sid),Set.of());
+                            context.assertTrue(caught.test(bySession),mode+" 只靠 session 過濾也必須抓到本 test 自己的殘留："+bySession);
+                            var byChamber=ownAuthorityResidue(fixture,journal,Set.of(),Set.of(chamber));
+                            context.assertTrue(caught.test(byChamber),mode+" 只靠 chamber 過濾也必須抓到本 test 自己的殘留："+byChamber);
                         }
                     } finally {
                         if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
@@ -922,19 +929,25 @@ public final class M4CandidateDoorGameTests {
                         journal.remove(sid); journal.flush(server);
                     }
                 }
-                if(legacyOnly) assertClean.run();
-                else {
-                    // 共用 default run：另一座 chamber 的可移除 ARMING 殘留，代表較早 batch 留下的他艙 authority，不得讓本 test 失敗。
+                if(legacyOnly) {
+                    assertEmptyAuthorities(context,fixture.pages,journal);
+                    context.runAtTick(4,() -> legacySchema2Runtime(context));
+                } else {
+                    assertOwnAuthoritiesEmpty(context,fixture,journal,ownSessions,ownChambers,"完成時");
+                    // 另一座 chamber 的可移除 ARMING 殘留，代表較早 batch 留下的他艙 authority，不得讓範圍檢查失敗。
                     var foreign=M4CandidateTestAccess.syntheticSession(server,UUID.randomUUID(),10007);
-                    journal.put(foreign); journal.flush(server);
+                    var cleanup=new M2CorridorGameTests.TestHooks();
+                    cleanup.add(() -> { journal.remove(foreign.sessionUuid()); journal.flush(server); });
                     try {
+                        journal.put(foreign); journal.flush(server);
                         context.assertTrue(journal.flushedRecords().containsKey(foreign.sessionUuid()),"他艙殘留必須實際存在於 durable journal");
-                        assertClean.run();
-                    } finally { journal.remove(foreign.sessionUuid()); journal.flush(server); }
+                        assertOwnAuthoritiesEmpty(context,fixture,journal,ownSessions,ownChambers,"他艙注入後");
+                    } catch(RuntimeException | Error failure) { cleanup.releaseAfter(failure); throw failure; }
+                    cleanup.release();
                     context.assertTrue(!journal.records().containsKey(foreign.sessionUuid()) && !journal.flushedRecords().containsKey(foreign.sessionUuid()),
                             "他艙 synthetic session 收尾必須移除");
+                    M4PerTestUniverseProbe.complete(context);
                 }
-                if(legacyOnly) context.runAtTick(4,() -> legacySchema2Runtime(context)); else M4PerTestUniverseProbe.complete(context);
             } catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
             finally { fixture.close(); }
         });
@@ -999,16 +1012,21 @@ public final class M4CandidateDoorGameTests {
 
     /** 只用於獨立 legacy runner（單一 test 的 fresh save），全域為空是該情境的前提；共用 default run 改用 assertOwnAuthoritiesEmpty。 */
     private static void assertEmptyAuthorities(TestContext context,CorridorPageManager pages,SessionRecoveryState journal) {
+        if(!Boolean.getBoolean("quantumchamber.gametest.legacyOnly")) throw new IllegalStateException("全域為空檢查只允許獨立 legacy runner");
         context.assertTrue(journal.records().isEmpty() && journal.flushedRecords().isEmpty()
                 && ((Map<?,?>)M4CandidateTestAccess.get(pages,"spaces")).isEmpty(),
                 "legacy隔離情境開始／完成都必須沒有current、durable journal或space");
     }
     private static void assertOwnAuthoritiesEmpty(TestContext context,M2CorridorGameTests.NativeEntry fixture,SessionRecoveryState journal,
-            Set<UUID> sessions,Set<UUID> chambers) {
+            Set<UUID> sessions,Set<UUID> chambers,String phase) {
         var residue=ownAuthorityResidue(fixture,journal,sessions,chambers);
-        context.assertTrue(residue.isEmpty(),"本 test 的 chamber／session 開始／完成時都不得留下 current、durable journal、space、runtime session 或來源票："+residue);
+        context.assertTrue(residue.isEmpty(),phase+"：本 test 的 chamber／session 不得留下 current、durable journal、space、runtime session 或來源票："+residue);
     }
-    /** 本 test 自己的 session／chamber（含 fixture chamber）在 journal、page space、runtime session 與來源票上的殘留；他艙 authority 不列入。 */
+    /**
+     * 本 test 自己的 session／chamber（含 fixture chamber）在 journal、page space、runtime session 與來源票上的殘留；他艙 authority 不列入。
+     * 本 test 的 start 全部被拒，所以 space:／runtime:／ticket: 三類，以及即時讀取 fixture chamber UUID 的路徑，在這裡只是防護、沒有正向對照；
+     * 有正向對照的只有 journal 的 current:／durable:（迴圈內 sid 與 chamber 兩條過濾路徑各自單獨驗證）。
+     */
     private static List<String> ownAuthorityResidue(M2CorridorGameTests.NativeEntry fixture,SessionRecoveryState journal,
             Set<UUID> sessions,Set<UUID> chambers) {
         var owned=new HashSet<>(chambers);
