@@ -96,7 +96,7 @@ hardening 的順序依使用者 2026-09-29 的指定。每項都是獨立 task�
   - H1 不改 schema 版號；既有的合法 fixture 必須照舊 exact 讀回。
 - **H2 checkpoint revision**：
   - 原生存檔的失敗追蹤改為以「同一 storage 的同一個 region 檔」為單位（region 檔的 header 由同一 region 的 32×32 chunks 共用，header 寫入失敗可能波及其中的相關 chunk）。`MeasuredWorldSaveCheckpoint` 只看本交易相關 chunks 所在的 region：來源艙，以及走廊 lease 涵蓋的 chunks。
-  - 不再阻擋的：其他 region、其他世界、其他 storage 的失敗，只要在原版 flush 之前就已完成（例如同步序列化失敗、已完成的寫入失敗）。
+  - 不再阻擋的：其他 region、其他世界的失敗，只要在原版 flush 之前就已完成（例如同步序列化失敗、已完成的寫入失敗）。server 端的失敗回報（`onChunkSaveFailure`）依世界合併 chunk、entities、poi 三種 storage，所以相關 region 內其他 storage 的失敗仍會阻擋（偏 fail-closed，屬「等效」範圍）。
   - 仍然 fail-closed 的：相關 region 的失敗、region flush（`completeAll`）的失敗，以及原版 flush 時仍 pending 的寫入失敗（原版 `completeAll().join()` 會讓 `server.save` 直接丟例外，`MinecraftServer.save` 與 `ServerWorld.save` 都沒有 catch）。後者是原版語意的界線，不繞過；它不比原本的全伺服器計數更糟。相關失敗都沿用現有退避。
   - 這個 checkpoint 要做成通用元件，§9.2 的投影會再次使用，也受同樣的界線約束。
 - **H3 未 checked authority 的收斂**：
