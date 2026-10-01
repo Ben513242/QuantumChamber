@@ -134,19 +134,19 @@ public final class UniverseAllocationLedger {
     static UniverseAllocationLedger fromNbt(NbtCompound nbt) {
         Objects.requireNonNull(nbt, "nbt");
         if (!nbt.getKeys().equals(ROOT_KEYS)) throw new IllegalArgumentException("allocation ledger root 欄位缺失或含未知欄位");
-        CollapseAuthorities.LedgerNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
+        LedgerNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
         if (nbt.getInt("SchemaVersion") != SCHEMA_VERSION) throw new IllegalArgumentException("不支援的 allocation ledger schema");
-        var list = CollapseAuthorities.LedgerNbt.entries(nbt, MAX_ENTRIES);
+        var list = LedgerNbt.compounds(nbt, "Entries", MAX_ENTRIES);
         var decoded = new ArrayList<Entry>(list.size());
         for (int index = 0; index < list.size(); index++) {
             var row = list.getCompound(index);
             if (!row.getKeys().equals(ENTRY_KEYS)) throw new IllegalArgumentException("allocation ledger Entries[" + index + "] 欄位缺失或含未知欄位");
-            CollapseAuthorities.LedgerNbt.requireType(row, "AllocationToken", NbtElement.BYTE_ARRAY_TYPE);
+            LedgerNbt.requireType(row, "AllocationToken", NbtElement.BYTE_ARRAY_TYPE);
             byte[] token = row.getByteArray("AllocationToken");
             if (token.length != 32) throw new IllegalArgumentException("allocation ledger Entries[" + index + "].AllocationToken 必須恰為 32 bytes");
-            var universeId = UniverseId.of(CollapseAuthorities.LedgerNbt.uuid(row, "UniverseId"));
-            var profile = CollapseAuthorities.LedgerNbt.enumValue(GeneratorProfile.class, row, "Profile");
-            CollapseAuthorities.LedgerNbt.requireType(row, "ProfileVersion", NbtElement.INT_TYPE);
+            var universeId = UniverseId.of(LedgerNbt.uuid(row, "UniverseId"));
+            var profile = LedgerNbt.enumValue(GeneratorProfile.class, row, "Profile");
+            LedgerNbt.requireType(row, "ProfileVersion", NbtElement.INT_TYPE);
             decoded.add(new Entry(new CandidateBytes(token), universeId, profile, row.getInt("ProfileVersion")));
         }
         return new UniverseAllocationLedger(decoded);

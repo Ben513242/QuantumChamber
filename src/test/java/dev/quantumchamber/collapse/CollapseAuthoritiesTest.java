@@ -10,6 +10,7 @@ import dev.quantumchamber.collapse.CollapseAuthorities.InitResult.Outcome;
 import dev.quantumchamber.collapse.CollapseAuthorities.Lookup;
 import dev.quantumchamber.collapse.CollapseAuthorities.WriteResult;
 import dev.quantumchamber.collapse.ProjectionLedger.Entry.Status;
+import dev.quantumchamber.persistence.CheckedNbtFile;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
@@ -718,7 +719,7 @@ class CollapseAuthoritiesTest {
                 if (fault.replacement() != null) return fault.replacement().clone();
                 throw new IOException("注入：" + fault.label());
             }
-            return CollapseAuthorities.readFile(path);
+            return CheckedNbtFile.readFile(path);
         }
 
         /** 下一次讀正式檔失敗：寫入時就是「atomic move 完成、讀回失敗」，初始化時就是讀取的 IO 例外。 */

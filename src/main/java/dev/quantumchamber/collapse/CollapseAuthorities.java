@@ -1,20 +1,17 @@
 package dev.quantumchamber.collapse;
 
 import dev.quantumchamber.candidate.NewUniverseIntent;
+import dev.quantumchamber.persistence.CheckedNbtFile;
 import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -29,10 +26,6 @@ import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtIo;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.nbt.NbtSizeTracker;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.WorldSavePath;
 import org.slf4j.Logger;
@@ -48,8 +41,8 @@ import org.slf4j.LoggerFactory;
  *     任何原因的失敗都不呼叫，並記 ERROR。</li>
  * <li><b>讀取失敗的分類</b>：讀到原始 bytes 之後的失敗（壓縮格式、NBT、strict decode）與確定遺失為 {@code AUTHORITY_CORRUPT}；讀檔時的 IO 例外為
  *     {@code AUTHORITY_UNREADABLE}。</li>
- * <li><b>寫入</b>：同目錄暫存檔、force、以正式讀取規則驗證暫存檔、atomic move、strict 讀回並 exact 比對（沿用 M4 discovery 的寫法）。
- *     寫入或讀回失敗時 roll-forward（spec §6）：current 保留這次的新內容，權威標為未確認；未確認期間這個權威的查詢與寫入一律回「未確認」，
+ * <li><b>寫入</b>：同目錄暫存檔、force、以正式讀取規則驗證暫存檔、atomic move、strict 讀回並 exact 比對（{@link CheckedNbtFile}，
+ *     M4 discovery 的寫法）。寫入或讀回失敗時 roll-forward（spec §6）：current 保留這次的新內容，權威標為未確認；未確認期間這個權威的查詢與寫入一律回「未確認」，
  *     不做新決策，由 {@link #convergeIfNeeded} 依 {@link CollapseBackoff} 退避重試 checked 重寫。</li>
  * </ul>
  * 兩個 ledger 都不是 PersistentState，原生 autosave 與停服不會寫它們；收斂完成之前 crash，重啟後讀到的舊內容或新內容都合法（spec §6 的表）。
@@ -58,10 +51,6 @@ public final class CollapseAuthorities {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
     private static final Map<MinecraftServer, CollapseAuthorities> INSTANCES = Collections.synchronizedMap(new IdentityHashMap<>());
     private static boolean registered;
-    /** ledger 檔（壓縮後）讀入記憶體的上限；超過視為內容損壞。 */
-    static final int MAX_FILE_BYTES = 16 * 1024 * 1024;
-    /** 解壓後 NBT 的配置預算（與 M4 discovery 相同）。 */
-    static final long MAX_NBT_BYTES = 16L * 1024 * 1024;
 
     /** 收斂與未確認旗標的單位。F2c 會加入 discovery 與 catalog。 */
     public enum Authority { ALLOCATION_LEDGER, PROJECTION_LEDGER }
@@ -69,8 +58,9 @@ public final class CollapseAuthorities {
     /**
      * 決策 9 的 package-private IO port：讀取 ledger 檔（正式檔或暫存檔）的原始 bytes。初始化的載入、寫入前的暫存檔驗證、atomic move 之後的讀回
      * 都經過它，pure JVM 測試以它注入 IO 例外與「atomic move 完成、讀回失敗」。檔案不存在必須丟 {@link NoSuchFileException}。
+     * 正式實作是 {@link CheckedNbtFile#readFile}。
      */
-    @FunctionalInterface interface LedgerIo { byte[] read(Path path) throws IOException; }
+    @FunctionalInterface interface LedgerIo extends CheckedNbtFile.ReadPort {}
 
     /** 初始化的結果。 */
     public record InitResult(Outcome allocation, Outcome projection, boolean flushedSchemaFour, Optional<RuntimeException> failure) {
@@ -240,7 +230,7 @@ public final class CollapseAuthorities {
     }
 
     private static void onStarted(MinecraftServer server) {
-        var authorities = new CollapseAuthorities(server, server.getSavePath(WorldSavePath.ROOT), CollapseAuthorities::readFile, server::getTicks);
+        var authorities = new CollapseAuthorities(server, server.getSavePath(WorldSavePath.ROOT), CheckedNbtFile::readFile, server::getTicks);
         if (INSTANCES.putIfAbsent(server, authorities) != null) throw new IllegalStateException("同一 server 的 M5 authority 不得重複初始化");
         authorities.initialize(server);
     }
@@ -330,7 +320,7 @@ public final class CollapseAuthorities {
             return InitResult.Outcome.UNREADABLE;
         }
         try {
-            var ledger = slot.decode.apply(parse(bytes));
+            var ledger = slot.decode.apply(CheckedNbtFile.parse(bytes));
             slot.confirmed = ledger; slot.current = ledger;
             return InitResult.Outcome.LOADED;
         } catch (IOException | RuntimeException failure) {
@@ -525,48 +515,9 @@ public final class CollapseAuthorities {
         return Lookup.failed(Lookup.Status.WRITE_FAILED, slot.writeFailure, cause);
     }
 
-    /** 同目錄暫存檔、force、以正式讀取規則驗證暫存檔、atomic move、strict 讀回並 exact 比對（沿用 M4 discovery 的寫法）。 */
+    /** {@link CheckedNbtFile#write}：暫存檔與 atomic move 之後的讀回都經過本權威的 {@link LedgerIo}，並以 ledger 的 strict decode 驗證。 */
     private <L> void writeAtomic(Slot<L> slot, L ledger) throws IOException {
-        var expected = slot.encode.apply(ledger);
-        var parent = slot.path.getParent();
-        Files.createDirectories(parent);
-        var temporary = Files.createTempFile(parent, slot.path.getFileName() + ".", ".tmp");
-        try {
-            NbtIo.writeCompressed(expected, temporary);
-            try (var channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) { channel.force(true); }
-            // 先用正式讀取規則驗暫存檔，避免讀不回來的內容取代上一份有效權威。
-            verify(slot, temporary, expected);
-            Files.move(temporary, slot.path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            verify(slot, slot.path, expected);
-        } finally {
-            Files.deleteIfExists(temporary);
-        }
-    }
-
-    /**
-     * 以正式讀取規則讀回並 exact 比對。不符時的訊息只帶正式檔名、不帶路徑：暫存檔名每次隨機，帶進訊息會讓 WARN 的去重鍵
-     * （{@link FailureText#dedupeKey}）每次不同，同一個原因被一再記錄。
-     */
-    private <L> void verify(Slot<L> slot, Path path, NbtCompound expected) throws IOException {
-        var actual = parse(io.read(path));
-        slot.decode.apply(actual);
-        if (!expected.equals(actual)) {
-            var which = path.equals(slot.path) ? "正式檔" : "暫存檔";
-            throw new IOException(slot.authority + " 的" + which + " exact readback 不符（" + slot.path.getFileName() + "）");
-        }
-    }
-
-    /** 原始 bytes → NBT。這一步（含之後的 strict decode）的任何失敗都是內容損壞，不是 IO 例外。 */
-    static NbtCompound parse(byte[] bytes) throws IOException {
-        if (bytes.length > MAX_FILE_BYTES) throw new IllegalArgumentException("ledger 檔案超過 " + MAX_FILE_BYTES + " bytes");
-        return NbtIo.readCompressed(new ByteArrayInputStream(bytes), NbtSizeTracker.of(MAX_NBT_BYTES));
-    }
-
-    /** 正式的 {@link LedgerIo}：必須是一般檔案（不跟隨連結）；最多讀 {@link #MAX_FILE_BYTES}＋1 bytes，超過的部分由 {@link #parse} 判為損壞。 */
-    static byte[] readFile(Path path) throws IOException {
-        var attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        if (!attributes.isRegularFile()) throw new IOException("M5 ledger 必須是一般檔案：" + path);
-        try (var input = Files.newInputStream(path)) { return input.readNBytes(MAX_FILE_BYTES + 1); }
+        CheckedNbtFile.write(slot.path, slot.encode.apply(ledger), io, nbt -> slot.decode.apply(nbt), slot.authority.toString());
     }
 
     private Slot<?> slot(Authority authority) {
@@ -605,38 +556,6 @@ public final class CollapseAuthorities {
         Slot(Authority authority, Path path, Function<L, NbtCompound> encode, Function<NbtCompound, L> decode, L empty, SealedReason writeFailure) {
             this.authority = authority; this.path = path; this.encode = encode; this.decode = decode;
             this.empty = empty; this.writeFailure = writeFailure; this.confirmed = empty; this.current = empty;
-        }
-    }
-
-    /** 兩個 ledger 共用的 strict NBT helper（persistence 的 {@code JournalNbt} 是 package-private，不能跨 package 使用）。 */
-    static final class LedgerNbt {
-        private LedgerNbt() {}
-
-        static void requireType(NbtCompound nbt, String key, int type) {
-            if (!nbt.contains(key, type)) throw new IllegalArgumentException(key + " 缺失或 NBT 型別錯誤");
-        }
-
-        static UUID uuid(NbtCompound nbt, String key) {
-            requireType(nbt, key, NbtElement.INT_ARRAY_TYPE);
-            if (nbt.getIntArray(key).length != 4) throw new IllegalArgumentException(key + " 必須是四個 int 的 UUID");
-            return nbt.getUuid(key);
-        }
-
-        static <E extends Enum<E>> E enumValue(Class<E> type, NbtCompound nbt, String key) {
-            requireType(nbt, key, NbtElement.STRING_TYPE);
-            var raw = nbt.getString(key);
-            for (var constant : type.getEnumConstants()) if (constant.name().equals(raw)) return constant;
-            throw new IllegalArgumentException(key + " 不是合法的 " + type.getSimpleName());
-        }
-
-        /** Entries list：空 list 必須是 END held type，非空必須是 COMPOUND；長度上限在逐筆解碼之前檢查（H1 的做法）。 */
-        static NbtList entries(NbtCompound nbt, int maxEntries) {
-            requireType(nbt, "Entries", NbtElement.LIST_TYPE);
-            var list = (NbtList) nbt.get("Entries");
-            int heldType = list.isEmpty() ? NbtElement.END_TYPE : NbtElement.COMPOUND_TYPE;
-            if (list.getHeldType() != heldType) throw new IllegalArgumentException("Entries 必須包含 compound；空 list 必須使用 END held type");
-            if (list.size() > maxEntries) throw new IllegalArgumentException("Entries 超過 " + maxEntries + " 筆上限");
-            return list;
         }
     }
 }

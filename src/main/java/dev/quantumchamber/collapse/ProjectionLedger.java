@@ -124,21 +124,21 @@ public final class ProjectionLedger {
     static ProjectionLedger fromNbt(NbtCompound nbt) {
         Objects.requireNonNull(nbt, "nbt");
         if (!nbt.getKeys().equals(ROOT_KEYS)) throw new IllegalArgumentException("projection ledger root 欄位缺失或含未知欄位");
-        CollapseAuthorities.LedgerNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
+        LedgerNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
         if (nbt.getInt("SchemaVersion") != SCHEMA_VERSION) throw new IllegalArgumentException("不支援的 projection ledger schema");
-        var list = CollapseAuthorities.LedgerNbt.entries(nbt, MAX_ENTRIES);
+        var list = LedgerNbt.compounds(nbt, "Entries", MAX_ENTRIES);
         var decoded = new ArrayList<Entry>(list.size());
         for (int index = 0; index < list.size(); index++) {
             var row = list.getCompound(index);
             if (!row.getKeys().equals(ENTRY_KEYS)) throw new IllegalArgumentException("projection ledger Entries[" + index + "] 欄位缺失或含未知欄位");
-            var chamber = CollapseAuthorities.LedgerNbt.uuid(row, "ChamberUuid");
-            var universeId = UniverseId.of(CollapseAuthorities.LedgerNbt.uuid(row, "UniverseId"));
-            var role = CollapseAuthorities.LedgerNbt.enumValue(DimensionRole.class, row, "Role");
-            CollapseAuthorities.LedgerNbt.requireType(row, "ControllerPos", NbtElement.INT_ARRAY_TYPE);
+            var chamber = LedgerNbt.uuid(row, "ChamberUuid");
+            var universeId = UniverseId.of(LedgerNbt.uuid(row, "UniverseId"));
+            var role = LedgerNbt.enumValue(DimensionRole.class, row, "Role");
+            LedgerNbt.requireType(row, "ControllerPos", NbtElement.INT_ARRAY_TYPE);
             int[] pos = row.getIntArray("ControllerPos");
             if (pos.length != 3) throw new IllegalArgumentException("projection ledger Entries[" + index + "].ControllerPos 必須是三個 int");
-            var facing = CollapseAuthorities.LedgerNbt.enumValue(Direction.class, row, "OutwardFacing");
-            var status = CollapseAuthorities.LedgerNbt.enumValue(Entry.Status.class, row, "Status");
+            var facing = LedgerNbt.enumValue(Direction.class, row, "OutwardFacing");
+            var status = LedgerNbt.enumValue(Entry.Status.class, row, "Status");
             decoded.add(new Entry(chamber, universeId, role, new BlockPos(pos[0], pos[1], pos[2]), facing, status));
         }
         return new ProjectionLedger(decoded);
