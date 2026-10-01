@@ -301,7 +301,7 @@ class CandidateLedgerServiceTest {
         assertEquals(COMMIT_FAILED, select(port, key(0), PLAYER, 0));
         assertEquals(1, port.aborts); assertEquals(1, port.quarantines, "abort 失敗後改以隔離 fail-closed");
         assertEquals(java.util.Set.of(SESSION), port.state.quarantinedSessions(), "session 必須真的在隔離中");
-        assertTrue(port.state.uncheckedCandidateSessions().isEmpty(), "隔離 session 不讓 recovery 等待");
+        assertTrue(port.state.uncheckedSessions().isEmpty(), "隔離 session 不讓 recovery 等待");
         assertThrows(IllegalStateException.class, () -> port.state.put(
                 previous.withProgress(previous.participants(), previous.spaceLeases(), SessionState.RETURNING, false)), "隔離 session 拒絕再寫入");
         port.fault = Fault.NONE;

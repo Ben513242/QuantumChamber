@@ -49,24 +49,38 @@ public final class SessionRecoveryManager {
 
     /**
      * 只能在原生網路 handler 已序列化的執行緒查詢，不讀取 Netty 執行緒上的 journal。
-     * 除了 JOIN 排隊與斷線待處理，current 或 flushed 任一份 record 凍結該玩家（{@link #freezes}）就攔截。
+     * 除了 JOIN 排隊與斷線待處理，record 凍結該玩家（{@link #frozen}）就攔截。
      */
     public static boolean blocks(UUID player,MinecraftServer owner) {
         if(active==null || active.server!=owner) return false;
         active.requireServer(owner);
         try {
-            return active.joinTicks.containsKey(player) || active.disconnected.contains(player)
-                    || java.util.stream.Stream.concat(active.journal.records().values().stream(),active.journal.flushedRecords().values().stream())
-                    .anyMatch(record -> freezes(record,player));
+            return active.joinTicks.containsKey(player) || active.disconnected.contains(player) || frozen(active.journal,player);
         } catch(RuntimeException unreadable) { return true; }
     }
 
     /**
-     * 「record 是否凍結這位玩家」的唯一判斷。RETURNING 與 MEASURED 只凍結尚未 checked 返還的參與者；已返還者即使同組仍有離線 pending，
-     * 也恢復正常操作（M2 spec §6）。M5 的 COLLAPSING 只需加進這裡的狀態條件。
+     * 是否有 record 凍結這位玩家。M4 的 session：current 或 flushed 任一份凍結就算。M5 的塌縮狀態（current 或 flushed 任一份是塌縮狀態的
+     * session）只看 spec §6 的 collapse view：返還進度的 roll-forward 尚未確認時採用 current，已返還的人先於落盤解除凍結；隔離中則看 flushed。
+     */
+    static boolean frozen(SessionRecoveryState journal,UUID player) {
+        var current=journal.records(); var durable=journal.flushedRecords();
+        var sessions=new LinkedHashSet<UUID>(current.keySet()); sessions.addAll(durable.keySet());
+        for(var sid : sessions) {
+            var staged=current.get(sid); var checked=durable.get(sid);
+            if(staged!=null && staged.state().collapseState() || checked!=null && checked.state().collapseState()) {
+                if(journal.collapseView(sid).filter(view -> freezes(view,player)).isPresent()) return true;
+            } else if(staged!=null && freezes(staged,player) || checked!=null && freezes(checked,player)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 「record 是否凍結這位玩家」的唯一判斷。RETURNING、MEASURED 與 M5 的 COLLAPSING 只凍結尚未 checked 返還的參與者；已返還者即使
+     * 同組仍有離線 pending，也恢復正常操作（M2 spec §6）。PASSAGE_READY 與 SEALED 不凍結（spec §5）。
      */
     private static boolean freezes(SessionRecoveryRecord record,UUID player) {
-        return (record.state()==SessionState.RETURNING || record.state()==SessionState.MEASURED)
+        return (record.state()==SessionState.RETURNING || record.state()==SessionState.MEASURED || record.state()==SessionState.COLLAPSING)
                 && record.participants().stream().anyMatch(person -> person.playerUuid().equals(player) && !person.returned());
     }
 
@@ -119,17 +133,22 @@ public final class SessionRecoveryManager {
         returnTicks.keySet().retainAll(journal.flushedRecords().keySet());
         moveWarnings.keySet().retainAll(journal.flushedRecords().keySet());
         var pages=CorridorPageManager.forServer(owner);
-        for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.RETURNING
-                || record.state()==SessionState.MEASURED && pages.measuredRecoveryRequested(record.sessionUuid())) {
-            if(pages.operationInProgress(record.sessionUuid())) continue;
+        for(var record : journal.flushedRecords().values()) {
+            var work=recoveryWork(journal,record,pages.measuredRecoveryRequested(record.sessionUuid()));
+            if(work==RecoveryWork.NONE || pages.operationInProgress(record.sessionUuid())) continue;
             // dirty candidate/selection 不得隨返還進度一併被承認；僅重試同一份 receipt 的進度。
             var current=journal.records().get(record.sessionUuid());
             if(current==null || !record.candidateContext().equals(current.candidateContext())
                     || !record.candidateLedger().equals(current.candidateLedger()) || !record.candidateSelection().equals(current.candidateSelection())) continue;
-            // 先完成本 tick 的入場／rollback 交易，下一 tick 才進行獨立返還 checkpoint。
-            if(owner.getTicks()<=returnTicks.computeIfAbsent(record.sessionUuid(),ignored -> owner.getTicks())) continue;
-            try { recover(record); failures.remove(record.sessionUuid()); }
-            catch(IOException | RuntimeException failure) {
+            try {
+                if(work==RecoveryWork.RETRY_FLUSH) journal.flush(owner);
+                else {
+                    // 先完成本 tick 的入場／rollback 交易，下一 tick 才進行獨立返還 checkpoint。
+                    if(owner.getTicks()<=returnTicks.computeIfAbsent(record.sessionUuid(),ignored -> owner.getTicks())) continue;
+                    recover(record);
+                }
+                failures.remove(record.sessionUuid());
+            } catch(IOException | RuntimeException failure) {
                 var message=failure.getClass().getName()+": "+failure.getMessage();
                 if(!message.equals(failures.put(record.sessionUuid(),message)))
                     org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("返還保留 pending，session={}: {}",record.sessionUuid(),message);
@@ -137,15 +156,36 @@ public final class SessionRecoveryManager {
         }
     }
 
+    /** recovery tick 對一筆 flushed record 要做的事。 */
+    enum RecoveryWork { NONE, RECOVER, RETRY_FLUSH }
+
     /**
-     * H3 q3／q4：未 checked candidate authority 的收斂。殘留先隔離（之後的寫出只帶上一份 flushed authority）；隔離 session 再以最後 checked
-     * authority 取代 current——flushed 為 ARMING／SUPERPOSITION 時推進為 checked RETURNING，玩家照常返還；沒有 flushed authority 時 checked 移除——
+     * RETURNING 一律返還；MEASURED 只在保留式 recovery 已請求時返還與清理。M5 的 COLLAPSING 依 receipt 推導（spec §7.3 的 RETURN_PLAYERS、
+     * RELEASE_GEOMETRY），不需要請求；返還與清理都完成（SETTLED）之後沒有工作。COLLAPSING 有尚未確認的 roll-forward（返還、清 lease 進度）時
+     * 只重試寫出同一份 current，不從 flushed 疊寫新進度（spec §6、§7；疊寫會讓已返還者倒退，被 sameAuthority 拒絕）。PASSAGE_READY 與
+     * SEALED 全員已返還、沒有 lease，沒有返還工作。
+     */
+    static RecoveryWork recoveryWork(SessionRecoveryState journal,SessionRecoveryRecord record,boolean measuredRecoveryRequested) {
+        return switch(record.state()) {
+            case RETURNING -> RecoveryWork.RECOVER;
+            case MEASURED -> measuredRecoveryRequested ? RecoveryWork.RECOVER : RecoveryWork.NONE;
+            case COLLAPSING -> MeasuredRecoveryPhase.from(record).released() ? RecoveryWork.NONE
+                    : journal.rollForwardPending(record.sessionUuid()) ? RecoveryWork.RETRY_FLUSH : RecoveryWork.RECOVER;
+            case ARMING, SUPERPOSITION, PASSAGE_READY, SEALED -> RecoveryWork.NONE;
+        };
+    }
+
+    /**
+     * H3 q3／q4：未 checked authority 的收斂（candidate 三欄位，以及 M5 restore 類狀態邊的殘留，見 {@link SessionRecoveryState#uncheckedSessions}）。
+     * 殘留先隔離（之後的寫出只帶上一份 flushed authority）；隔離 session 再以最後 checked authority 取代 current——flushed 為 ARMING／SUPERPOSITION
+     * 時推進為 checked RETURNING，玩家照常返還；RETURNING、MEASURED 與三個塌縮狀態原樣保留 flushed；沒有 flushed authority 時 checked 移除——
      * 並以 checked flush 確認。寫出失敗時保持 dirty，下一 tick 重試；WARN 同原因只記一次。
      */
     private void convergeUnchecked(MinecraftServer owner) {
         var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
-        for(var sid : journal.uncheckedCandidateSessions()) if(journal.quarantine(sid))
-            logger.warn("recovery 發現未 checked candidate authority 殘留，隔離 session={}：之後的寫出只帶上一份 flushed authority，並收斂為 checked RETURNING 或 checked 移除",sid);
+        for(var sid : journal.uncheckedSessions()) if(journal.quarantine(sid))
+            logger.warn("recovery 發現未 checked authority 殘留（candidate 或 M5 restore 類寫入），隔離 session={}：之後的寫出只帶上一份 flushed authority，"
+                    +"並收斂為該 flushed 狀態（ARMING／SUPERPOSITION 推進為 checked RETURNING，其餘原樣保留；沒有 flushed 時 checked 移除）",sid);
         var pages=CorridorPageManager.forServer(owner);
         var quarantined=journal.quarantinedSessions();
         convergenceFailures.keySet().retainAll(quarantined);
@@ -261,7 +301,8 @@ public final class SessionRecoveryManager {
             source.getEntity(id).removeCommandTag("quantumchamber_session:"+record.sessionUuid());
         }
         if(record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) {
-            if(record.state()==SessionState.MEASURED) pages.releaseMeasured(record.sessionUuid());
+            // MEASURED 與 COLLAPSING 保留收據：走保留式清理（spec §13.2），清完仍保留 record；RETURNING 走一般 release（移除 record）。
+            if(record.state()==SessionState.MEASURED || record.state()==SessionState.COLLAPSING) pages.releaseMeasured(record.sessionUuid());
             else pages.release(record.sessionUuid());
         }
     }
@@ -286,15 +327,22 @@ public final class SessionRecoveryManager {
         return !previous.equals(Optional.of(expected));
     }
 
-    private SessionRecoveryRecord recordFor(UUID player) {
-        return journal.flushedRecords().values().stream().filter(record -> record.state()!=SessionState.MEASURED
-                || MeasuredRecoveryPhase.from(record)!=MeasuredRecoveryPhase.DORMANT).filter(record -> record.participants().stream()
-                .anyMatch(person -> person.playerUuid().equals(player))).findFirst().orElse(null);
+    private SessionRecoveryRecord recordFor(UUID player) { return recordFor(journal,player); }
+
+    /**
+     * 依玩家找仍佔用他的 session（spec §5 的 {@link SessionRecoveryState#occupies}；塌縮狀態依 §6 的 collapse view）。DORMANT、PASSAGE_READY、
+     * SEALED 與塌縮狀態的已返還參與者不算，所以玩家同時是 SEALED A 的已返還參與者與活動 B 的參與者時只會找到 B。由於唯一性規則，最多一筆。
+     */
+    static SessionRecoveryRecord recordFor(SessionRecoveryState journal,UUID player) {
+        return journal.flushedRecords().values().stream()
+                .map(record -> record.state().collapseState() ? journal.collapseView(record.sessionUuid()).orElse(record) : record)
+                .filter(record -> SessionRecoveryState.occupies(record,player)).findFirst().orElse(null);
     }
 
     private void markReturning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.MEASURED) { requestMeasuredRecovery(record.sessionUuid()); return; }
-        if(record.state()==SessionState.RETURNING) return;
+        // COLLAPSING 的返還由 receipt 推導（recoveryWork），斷線不寫入；PASSAGE_READY 與 SEALED 不寫入（spec §12、§13.2）。
+        if(record.state()==SessionState.RETURNING || record.state().collapseState()) return;
         CorridorPageManager.forServer(server).exclusiveOperation(record.sessionUuid(),() -> {
             journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
             journal.flush(server); return null;
@@ -306,7 +354,8 @@ public final class SessionRecoveryManager {
     }
 
     static SessionRecoveryRecord returnedRecord(SessionRecoveryRecord record,UUID player) {
-        if(record.state()!=SessionState.RETURNING && record.state()!=SessionState.MEASURED)
+        // COLLAPSING 的返還進度是 roll-forward 類寫入（spec §6），經一般 put 寫入。
+        if(record.state()!=SessionState.RETURNING && record.state()!=SessionState.MEASURED && record.state()!=SessionState.COLLAPSING)
             throw new IllegalArgumentException("只有返還中的 session 可更新玩家 checkpoint 進度");
         if(record.participants().stream().noneMatch(person -> person.playerUuid().equals(player)))
             throw new IllegalArgumentException("玩家不屬於凍結 cohort");

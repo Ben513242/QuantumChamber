@@ -85,20 +85,7 @@ public final class CorridorPageManager {
         this.server=server; this.world=world; this.journal=journal;
         org.slf4j.LoggerFactory.getLogger("quantumchamber").info("走廊 bootstrap：storage={}，durable sessions={}",
                 server.getSavePath(net.minecraft.util.WorldSavePath.ROOT),journal.flushedRecords().size());
-        for (var record : journal.flushedRecords().values()) {
-            if(record.state()==SessionState.MEASURED && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) continue;
-            var space=new Space(record.sessionUuid(),record.origin(),record.participants(),record.semantics());
-            space.authority=record;
-            space.measuredRecoveryRequested=record.state()==SessionState.MEASURED;
-            for (var lease : record.spaceLeases()) {
-                validateFacingBounds(lease.bounds(),record.semantics().corridorFacing(record.origin().facing()));
-                validateWorldBounds(lease.bounds());
-                allocator.restore(lease.slotId(),lease.bounds());
-                space.leases.put(lease.slotId(),lease);
-                protectedLeases.put(lease.slotId(),lease.bounds());
-            }
-            spaces.put(space.id,space);
-        }
+        for (var record : journal.flushedRecords().values()) restoreSpace(record);
         try {
             for (var space : spaces.values()) acquireTickets(space);
             active=this;
@@ -106,6 +93,35 @@ public final class CorridorPageManager {
             for (var space : spaces.values()) removeAllTickets(space);
             throw failure;
         }
+    }
+    /**
+     * attach 時依一筆 durable record 重建 space。不需要 space 的保留收據（{@link #spaceless}）不建立：M5 只有尚未完成返還與清理的
+     * COLLAPSING 有 space，走 MEASURED 延伸後的同一路徑（spec §13.2）。
+     */
+    private void restoreSpace(SessionRecoveryRecord record) {
+        if(spaceless(record)) return;
+        var space=new Space(record.sessionUuid(),record.origin(),record.participants(),record.semantics());
+        space.authority=record;
+        space.measuredRecoveryRequested=record.state()==SessionState.MEASURED;
+        for (var lease : record.spaceLeases()) {
+            validateFacingBounds(lease.bounds(),record.semantics().corridorFacing(record.origin().facing()));
+            validateWorldBounds(lease.bounds());
+            allocator.restore(lease.slotId(),lease.bounds());
+            space.leases.put(lease.slotId(),lease);
+            protectedLeases.put(lease.slotId(),lease.bounds());
+        }
+        spaces.put(space.id,space);
+    }
+    /**
+     * 不需要走廊 space 的保留收據：返還與清理都已完成的 MEASURED（DORMANT）與 COLLAPSING（SETTLED），以及一律全員已返還、
+     * 沒有 lease 的 PASSAGE_READY 與 SEALED（spec §5、§13.2：其他 M5 狀態沒有 space）。
+     */
+    private static boolean spaceless(SessionRecoveryRecord record) {
+        return switch(record.state()) {
+            case MEASURED, COLLAPSING -> MeasuredRecoveryPhase.from(record).released();
+            case PASSAGE_READY, SEALED -> true;
+            case ARMING, SUPERPOSITION, RETURNING -> false;
+        };
     }
     static void stopping(MinecraftServer server) {
         if (active!=null && active.server==server) {
@@ -212,12 +228,15 @@ public final class CorridorPageManager {
     }
     public boolean releaseComplete(UUID sessionUuid) { requireThread(); return completedReleases.contains(sessionUuid); }
 
-    /** 請求只改 runtime；崩潰後 attach 會由 durable MEASURED 自動恢復。 */
+    /**
+     * 請求只改 runtime；崩潰後 attach 會由 durable MEASURED 自動恢復。M5 的塌縮狀態沒有請求可做：COLLAPSING 的返還與清理由 receipt 推導、
+     * 不需要請求（spec §7.3），PASSAGE_READY 與 SEALED 沒有 space（spec §13.2）。
+     */
     public void requestMeasuredRecovery(UUID sessionUuid) {
         requireThread();
         var record=journal.flushedRecords().get(sessionUuid);
-        if(record==null || record.state()!=SessionState.MEASURED) throw new IllegalArgumentException("缺少 durable MEASURED receipt");
-        if(MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) return;
+        if(record==null || !SessionRecoveryState.receiptRetained(record.state())) throw new IllegalArgumentException("缺少 durable 保留收據");
+        if(record.state().collapseState() || MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) return;
         var space=space(sessionUuid);
         if(space.operations!=0) throw new IllegalStateException("空間交易中不可請求返還");
         space.measuredRecoveryRequested=true; space.selectable=Map.of();
@@ -231,13 +250,14 @@ public final class CorridorPageManager {
         return record!=null && record.state()==SessionState.MEASURED
                 && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT && !spaces.containsKey(sessionUuid);
     }
+    /** MEASURED 與 COLLAPSING 共用的保留式清理（spec §13.2）：清完 lease 仍保留 record。COLLAPSING 不需要 recovery 請求（spec §7.3）。 */
     public void releaseMeasured(UUID sessionUuid) {
         var space=space(sessionUuid);
         if(space.measuredReleasing) return;
         var record=durable(space);
-        if(!space.measuredRecoveryRequested || space.operations!=0
+        if(!(space.measuredRecoveryRequested || record.state()==SessionState.COLLAPSING) || space.operations!=0
                 || MeasuredRecoveryPhase.from(record)!=MeasuredRecoveryPhase.RELEASE_GEOMETRY)
-            throw new IllegalStateException("MEASURED 清理前必須先確認全員返還與獨立 recovery 請求");
+            throw new IllegalStateException("保留收據清理前必須先確認全員返還（MEASURED 另須獨立 recovery 請求）");
         acquireTickets(space);
         space.measuredReleasing=true; space.selectable=Map.of(); space.builds.clear(); space.overlay.clear();
     }
@@ -316,9 +336,10 @@ public final class CorridorPageManager {
         return Optional.of(record);
     }
 
+    /** 保留收據（MEASURED 與 M5 塌縮狀態）的 space 凍結：不再 publish、remap、retire，只走保留式返還與清理（spec §13.2）。 */
     private boolean measured(Space space) {
         var record=journal.flushedRecords().get(space.id); var staged=journal.records().get(space.id);
-        return record!=null && record.state()==SessionState.MEASURED || staged!=null && staged.state()==SessionState.MEASURED;
+        return record!=null && SessionRecoveryState.receiptRetained(record.state()) || staged!=null && SessionRecoveryState.receiptRetained(staged.state());
     }
 
     /** 實體索引是可重建 view；查詢仍核對 exact world、current owner 與完整 25 格。 */
@@ -421,7 +442,9 @@ public final class CorridorPageManager {
     public Optional<List<UUID>> returnEntityPins(UUID sessionUuid) {
         var space=space(sessionUuid);
         var record=durable(space);
-        if(record.state()!=SessionState.RETURNING && !(record.state()==SessionState.MEASURED && space.measuredRecoveryRequested))
+        // COLLAPSING 的返還由 receipt 推導，不需要請求（spec §7.3）。
+        if(record.state()!=SessionState.RETURNING && record.state()!=SessionState.COLLAPSING
+                && !(record.state()==SessionState.MEASURED && space.measuredRecoveryRequested))
             throw new IllegalStateException("未請求安全返還不可取得 pins");
         if(space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()))) return Optional.empty();
         requirePinCapacity(); var result=new LinkedHashSet<UUID>();
@@ -724,10 +747,33 @@ public final class CorridorPageManager {
         // 比較 Space 的不可變來源與語意；狀態、returned 與 lease 進度不構成來源身分。
         if (record==null || !space.id.equals(record.sessionUuid()) || !space.origin.equals(record.origin()) || space.semantics!=record.semantics()
                 || !SessionRecoveryRecord.sameParticipantSources(space.source,record.participants())
-                || space.authority!=null && !SessionRecoveryRecord.sameAuthority(space.authority,record)
+                || space.authority!=null && !sameLineage(space.authority,record)
                 || !leasesEqual(record.spaceLeases(),space.leases.values())) throw new IllegalStateException("durable lease／來源權威不符");
         space.authority=record;
         return record;
+    }
+    /**
+     * 快取的 {@code space.authority}（上一次觀察到的 flushed）與最新 flushed 是否屬於同一條合法的寫入序列。
+     * <p>M4 狀態之間的 {@link SessionRecoveryRecord#sameAuthority} 本來就可遞移，照舊以它判定，守門不變。塌縮狀態的邊是單步關係、不具遞移性
+     * （F2a R1）：快取與最新 flushed 之間若隔了不只一次 checked 寫入（例如 MEASURED→COLLAPSING 提交之後又寫了返還進度），sameAuthority 會把合法
+     * 的序列誤判為違規。每一次寫入的單步狀態邊已由 journal 的 put（current、flushed 與 history 三者）把關，所以最新 flushed 是塌縮狀態而
+     * sameAuthority 不成立時，只比對跨越任意多次合法寫入都仍成立的不變量：candidate context 不變、ledger 只增不減；快取已保留收據時，ledger、
+     * selection 與效果政策不變、returned 只增不減；快取已是塌縮狀態時，CollapseRevision、CommittedAtGameTime 與 Destination 不變。
+     * 來源身分、參與者來源與 lease 另由 {@link #durable} 對 Space 核對。
+     */
+    private static boolean sameLineage(SessionRecoveryRecord cached,SessionRecoveryRecord record) {
+        if(SessionRecoveryRecord.sameAuthority(cached,record)) return true;
+        if(!record.state().collapseState()) return false;
+        var from=cached.collapse(); var to=record.collapse();
+        return cached.candidateContext().equals(record.candidateContext())
+                && new HashSet<>(record.candidateLedger()).containsAll(cached.candidateLedger())
+                && (!SessionRecoveryState.receiptRetained(cached.state()) || cached.candidateLedger().equals(record.candidateLedger())
+                        && cached.candidateSelection().equals(record.candidateSelection())
+                        && cached.restoreEntryEffectOnReturn()==record.restoreEntryEffectOnReturn()
+                        && cached.participants().stream().filter(SessionRecoveryRecord.Participant::returned).allMatch(person -> record.participants()
+                                .stream().anyMatch(other -> other.playerUuid().equals(person.playerUuid()) && other.returned())))
+                && (!cached.state().collapseState() || from.revision()==to.revision()
+                        && from.committedAtGameTime()==to.committedAtGameTime() && from.destination().equals(to.destination()));
     }
     private PreparedMappings reserve(Space space, long epoch, Set<Long> occupied) {
         var components=CorridorLayout.plan(occupied,576);
@@ -834,12 +880,13 @@ public final class CorridorPageManager {
         if(!journal.recoveryWritesSafe()) return;
         // checked 寫入成功後、native 資源釋放前可再次進入；不重建已移除的 lease。
         var record=journal.flushedRecords().get(space.id);
-        if(record!=null && record.state()==SessionState.MEASURED && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) {
+        if(record!=null && spaceless(record)) {
             if(space.finalizing==null || !space.finalizing.equals(record)) throw new IllegalStateException("缺少本次 retained cleanup 收據");
         } else {
             record=durable(space);
             if(MeasuredRecoveryPhase.from(record)!=MeasuredRecoveryPhase.RELEASE_GEOMETRY || space.operations!=0) return;
-            var expected=record.withProgress(record.participants(),List.of(),SessionState.MEASURED,record.restoreEntryEffectOnReturn());
+            // MEASURED 與 COLLAPSING 共用：只清空 lease，狀態原樣（COLLAPSING 的清 lease 是 roll-forward 類寫入，spec §6）。
+            var expected=record.withProgress(record.participants(),List.of(),record.state(),record.restoreEntryEffectOnReturn());
             var current=journal.records().get(space.id);
             if(!record.equals(current) && !expected.equals(current)) throw new IllegalStateException("dirty authority 不可經 cleanup 落盤");
             // 原生存檔 checkpoint 失敗後依 per-space 指數退避；receipt 改變視為新狀態，立即重試。退避期間不做整段 AIR 掃描或全服存檔。
@@ -853,7 +900,7 @@ public final class CorridorPageManager {
             for(var lease : space.leases.values()) {
                 var box=lease.bounds();
                 for(var pos : BlockPos.iterate(box.getMinX(),box.getMinY(),box.getMinZ(),box.getMaxX(),box.getMaxY(),box.getMaxZ()))
-                    if(!world.getBlockState(pos).isAir()) throw new IllegalStateException("MEASURED 幾何仍未清空");
+                    if(!world.getBlockState(pos).isAir()) throw new IllegalStateException(record.state()+" 幾何仍未清空");
             }
             if(space.finalizing==null) {
                 // receipt 仍持有完整 lease 時，先同步保存來源 pins 與已清空的走廊世界。
@@ -861,8 +908,8 @@ public final class CorridorPageManager {
                 try { MeasuredWorldSaveCheckpoint.save(server,record); }
                 catch(RuntimeException failure) { scheduleCheckpointRetry(space,record); throw failure; }
                 if(space.checkpointFailures>0) org.slf4j.LoggerFactory.getLogger("quantumchamber").info(
-                        "MEASURED 原生存檔 checkpoint 已恢復，繼續 DORMANT 收尾：session={}，先前連續失敗 {} 次（同一原因的 WARN 已去重）",
-                        space.id,space.checkpointFailures);
+                        "{} 原生存檔 checkpoint 已恢復，繼續 {} 收尾：session={}，先前連續失敗 {} 次（同一原因的 WARN 已去重）",
+                        record.state(),MeasuredRecoveryPhase.from(expected),space.id,space.checkpointFailures);
                 resetCheckpointBackoff(space);
                 space.finalizing=expected;
             }
@@ -1029,9 +1076,10 @@ public final class CorridorPageManager {
         var record=journal.flushedRecords().get(space.id);
         if (record!=null) {
             try {
-                if(record.state()==SessionState.MEASURED) {
-                    requestMeasuredRecovery(space.id);
-                    warnMeasured(space,failure);
+                // 保留收據不轉 RETURNING。MEASURED 請求保留式 recovery；COLLAPSING 走同一路徑，但返還與清理由 receipt 推導，不需要請求（spec §13.2）。
+                if(SessionRecoveryState.receiptRetained(record.state())) {
+                    if(record.state()==SessionState.MEASURED) requestMeasuredRecovery(space.id);
+                    warnMeasured(space,record.state(),failure);
                     return;
                 }
                 if(!journal.recoveryWritesSafe()) throw new IllegalStateException("dirty candidate authority 不可經 fault recovery 承認");
@@ -1046,16 +1094,16 @@ public final class CorridorPageManager {
         }
         org.slf4j.LoggerFactory.getLogger("quantumchamber").error("走廊保留租約等待安全返還：{}",space.id,failure);
     }
-    /** MEASURED 保留 receipt 會 fail-closed 持續重試；同一原因只第一次附 stack，之後只計數，原因改變時補記前一原因的重複次數。 */
-    private static void warnMeasured(Space space,Exception failure) {
+    /** 保留 receipt（MEASURED、COLLAPSING）會 fail-closed 持續重試；同一原因只第一次附 stack，之後只計數，原因改變時補記前一原因的重複次數。 */
+    private static void warnMeasured(Space space,SessionState state,Exception failure) {
         var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
         var cause=failure.getClass().getName()+": "+failure.getMessage();
         if(cause.equals(space.measuredFailure)) { space.measuredFailureRepeats++; return; }
         if(space.measuredFailure!=null && space.measuredFailureRepeats>0)
-            logger.warn("MEASURED 保留 receipt 的前一失敗原因另重複 {} 次（未重複記錄 stack）：session={} cause={}",
-                    space.measuredFailureRepeats,space.id,space.measuredFailure);
+            logger.warn("{} 保留 receipt 的前一失敗原因另重複 {} 次（未重複記錄 stack）：session={} cause={}",
+                    state,space.measuredFailureRepeats,space.id,space.measuredFailure);
         space.measuredFailure=cause; space.measuredFailureRepeats=0;
-        logger.warn("MEASURED 保留 receipt 等待安全返還：{}",space.id,failure);
+        logger.warn("{} 保留 receipt 等待安全返還：{}",state,space.id,failure);
     }
     private static Set<UUID> ids(List<SessionRecoveryRecord.Participant> people) {
         return people.stream().map(SessionRecoveryRecord.Participant::playerUuid).collect(java.util.stream.Collectors.toUnmodifiableSet());

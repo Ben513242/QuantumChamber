@@ -279,7 +279,7 @@ class SessionRecoveryStateTest {
         assertThrows(UncheckedIOException.class,() -> state.save(file.toFile(),null));
         assertEquals(initial,SessionRecoveryState.load(file).flushedRecords().get(sid),"fixture：未確認的 ARMING 已在磁碟上");
         assertTrue(state.quarantine(sid)); assertFalse(state.quarantine(sid),"重複隔離回 false");
-        assertTrue(state.uncheckedCandidateSessions().isEmpty(),"隔離 session 不讓 recovery 等待");
+        assertTrue(state.uncheckedSessions().isEmpty(),"隔離 session 不讓 recovery 等待");
         assertThrows(IllegalStateException.class,() -> state.put(initial),"隔離 session 拒絕再寫入");
         state.save(file.toFile(),null);
         assertEquals(java.util.Map.of(other.sessionUuid(),other),SessionRecoveryState.load(file).flushedRecords(),"隔離期間的寫出不含沒有 checked authority 的 record");

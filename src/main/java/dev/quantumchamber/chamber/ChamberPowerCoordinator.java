@@ -114,6 +114,12 @@ public final class ChamberPowerCoordinator {
         if (record == null || record.destroyed() || record.instanceKind() != ChamberInstanceKind.ORIGIN) return ChamberState.INVALID;
         try {
             var presence = Objects.requireNonNull(sessions.presence(), "presence");
+            if (presence == ChamberSessionGateway.Presence.COLLAPSE || presence == ChamberSessionGateway.Presence.PASSAGE) {
+                // M5 塌縮狀態（spec §10.7）：不走 pending／needsReturn、不呼叫 returnToOrigin（斷電等即時訊號由塌縮流程處理）。
+                // power state 只設 POWERED 或 RETURNING（不設 OFF，保護維持）；比較器暫時一律 ARMED（11），PASSAGE→15 留給 F5。
+                registry.setPowerState(uuid, powered && record.enabled() ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING);
+                return ChamberState.ARMED;
+            }
             boolean pending = record.powerState() == ChamberPowerState.RETURNING
                     || record.powerState() == ChamberPowerState.UNKNOWN
                     || presence == ChamberSessionGateway.Presence.RETURNING

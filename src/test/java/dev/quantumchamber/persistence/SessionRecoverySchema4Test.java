@@ -549,13 +549,13 @@ class SessionRecoverySchema4Test {
         boolean[] observed = {false};
         var result = disk.state.commitRestore(() -> {
             assertFalse(disk.state.recoveryWritesSafe(), "窗口中的 COLLAPSING 提交尚未 checked");
-            assertEquals(Set.of(SESSION), disk.state.uncheckedCandidateSessions());
+            assertEquals(Set.of(SESSION), disk.state.uncheckedSessions());
             assertEquals(Optional.of(measured), disk.state.collapseView(SESSION), "窗口中的 collapse view 仍是 flushed");
             observed[0] = true;
             throw new UncheckedIOException(new IOException("注入"));
         }, measured, next);
         assertTrue(observed[0]); assertEquals(CommitResult.Status.RESTORED, result.status());
-        assertTrue(disk.state.recoveryWritesSafe()); assertTrue(disk.state.uncheckedCandidateSessions().isEmpty());
+        assertTrue(disk.state.recoveryWritesSafe()); assertTrue(disk.state.uncheckedSessions().isEmpty());
     }
 
     /** roll-forward 類失敗：current 保留新內容、保持 dirty、recovery 不停擺，之後其他 session 的 flush 把它寫出。 */
@@ -571,7 +571,7 @@ class SessionRecoverySchema4Test {
             assertEquals(sealed, disk.state.records().get(SESSION), "current 保留新內容");
             assertEquals(settled, disk.state.flushedRecords().get(SESSION));
             assertTrue(disk.state.isDirty()); assertTrue(disk.state.recoveryWritesSafe(), "roll-forward 內容不讓 recovery 停擺");
-            assertTrue(disk.state.uncheckedCandidateSessions().isEmpty()); assertTrue(disk.state.rollForwardPending(SESSION));
+            assertTrue(disk.state.uncheckedSessions().isEmpty()); assertTrue(disk.state.rollForwardPending(SESSION));
             assertEquals(Optional.of(sealed), disk.state.collapseView(SESSION), "SEALED 先於落盤生效");
             var other = SessionRecoveryStateTest.otherSession(OUTSIDER, SessionState.SUPERPOSITION, false, new UUID(0, 0x81), new UUID(0, 0x82), 5);
             disk.state.put(other); disk.state.save(disk.file.toFile(), null);
@@ -633,7 +633,7 @@ class SessionRecoverySchema4Test {
         var measured = measured(EXISTING, 1);
         var state = journal(measured); state.markCollapseAuthoritiesInitialized();
         doubleFault(state, collapsing(measured));
-        assertTrue(state.rollForwardPending(SESSION)); assertEquals(Set.of(SESSION), state.uncheckedCandidateSessions());
+        assertTrue(state.rollForwardPending(SESSION)); assertEquals(Set.of(SESSION), state.uncheckedSessions());
         assertTrue(state.quarantine(SESSION));
         assertEquals(Optional.of(measured), state.convergeQuarantined(SESSION));
         assertFalse(state.rollForwardPending(SESSION), "收斂以 flushed 取代 current 時清除旗標");
@@ -929,6 +929,129 @@ class SessionRecoverySchema4Test {
             SessionRecoverySchema3Test.record(schemaThree).putString("State", "COLLAPSING"); SessionRecoverySchema3Test.unhealthy(schemaThree); });
         cases.add(() -> { var schemaThree = SessionRecoverySchema3Test.fixture(true, false);
             SessionRecoverySchema3Test.record(schemaThree).put("Collapse", new NbtCompound()); SessionRecoverySchema3Test.unhealthy(schemaThree); });
+        assertAll(cases);
+    }
+
+    // ---- F3a：既有 MEASURED-only 分支認得三個塌縮狀態（spec §13.2） ----
+
+    /** spec §7.3：RETURN_PLAYERS／RELEASE_GEOMETRY 由 MEASURED 與 COLLAPSING 共用推導；COLLAPSING 完成後是 SETTLED，永遠不會是 DORMANT。 */
+    @Test void measuredRecoveryPhaseExtendsToCollapsingAndDropsRetainReceipt() {
+        var measured = measured(EXISTING, 2);
+        var collapsing = collapsing(measured);
+        var settled = settled(collapsing);
+        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+        var cases = new ArrayList<Executable>();
+        cases.add(() -> assertEquals(MeasuredRecoveryPhase.RETURN_PLAYERS, assertDoesNotThrow(() -> MeasuredRecoveryPhase.from(collapsing)), "COLLAPSING 尚有人未返還"));
+        cases.add(() -> assertEquals(MeasuredRecoveryPhase.RETURN_PLAYERS, assertDoesNotThrow(() -> MeasuredRecoveryPhase.from(returned(collapsing, A))), "COLLAPSING 部分返還"));
+        cases.add(() -> assertEquals(MeasuredRecoveryPhase.RELEASE_GEOMETRY, assertDoesNotThrow(() -> MeasuredRecoveryPhase.from(returned(collapsing, A, B))), "COLLAPSING 全員返還、仍有 lease"));
+        cases.add(() -> assertEquals(MeasuredRecoveryPhase.SETTLED, assertDoesNotThrow(() -> MeasuredRecoveryPhase.from(settled)), "COLLAPSING 返還與清理完成"));
+        cases.add(() -> assertEquals(MeasuredRecoveryPhase.RETURN_PLAYERS, MeasuredRecoveryPhase.from(measured), "MEASURED 維持 M4 推導"));
+        cases.add(() -> assertEquals(MeasuredRecoveryPhase.RELEASE_GEOMETRY, MeasuredRecoveryPhase.from(returned(measured, A, B))));
+        cases.add(() -> assertEquals(MeasuredRecoveryPhase.DORMANT, MeasuredRecoveryPhase.from(settled(measured))));
+        for (var record : List.of(ready(settled), sealed))
+            cases.add(() -> assertThrows(IllegalArgumentException.class, () -> MeasuredRecoveryPhase.from(record), record.state() + " 沒有返還與清理階段"));
+        cases.add(() -> assertEquals(List.of(MeasuredRecoveryPhase.RETURN_PLAYERS, MeasuredRecoveryPhase.RELEASE_GEOMETRY, MeasuredRecoveryPhase.DORMANT,
+                MeasuredRecoveryPhase.SETTLED), List.of(MeasuredRecoveryPhase.values()), "永遠不會回傳的 RETAIN_RECEIPT 已移除"));
+        for (var phase : MeasuredRecoveryPhase.values()) cases.add(() -> assertEquals(phase == MeasuredRecoveryPhase.DORMANT
+                || phase == MeasuredRecoveryPhase.SETTLED, phase.released(), phase.name()));
+        assertAll(cases);
+    }
+
+    /**
+     * spec §5、§13.2：依玩家找所屬 session 只回傳仍佔用他的 record（occupies，塌縮狀態依 collapse view）。flushed 是 Map.copyOf，迭代順序不固定，
+     * 所以「SEALED A＋活動 B」重複 16 組彼此獨立的 UUID：只看參與者的 findFirst 全部恰好挑中 B 的機率約 2^-16。
+     */
+    @Test void recordForFindsOnlyTheSessionThatStillOccupiesThePlayer() {
+        var cases = new ArrayList<Executable>();
+        var settled = settled(collapsing(measured(EXISTING, 1)));
+        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+        for (int round = 0; round < 16; round++) {
+            var active = SessionRecoveryStateTest.otherSession(A, SessionState.RETURNING, false, new UUID(round + 1, 0x71), new UUID(round + 1, 0x72), 7);
+            var state = journal(sealed, active);
+            cases.add(() -> assertEquals(active, SessionRecoveryManager.recordFor(state, A), "SEALED A 的已返還參與者只屬於活動 B"));
+        }
+        cases.add(() -> assertNull(SessionRecoveryManager.recordFor(journal(sealed), A), "只有 SEALED A：不找到任何 session"));
+        cases.add(() -> assertNull(SessionRecoveryManager.recordFor(journal(ready(settled)), A), "PASSAGE_READY 全員已返還"));
+        cases.add(() -> assertNull(SessionRecoveryManager.recordFor(journal(settled(measured(EXISTING, 1))), A), "DORMANT 不佔用"));
+        var live = returned(measured(EXISTING, 2), A);
+        cases.add(() -> assertEquals(live, SessionRecoveryManager.recordFor(journal(live), A), "非 DORMANT 的 MEASURED 仍佔用已返還者"));
+        var partial = returned(collapsing(measured(EXISTING, 2)), A);
+        cases.add(() -> assertNull(SessionRecoveryManager.recordFor(journal(partial), A), "COLLAPSING 的已返還者"));
+        cases.add(() -> assertEquals(partial, SessionRecoveryManager.recordFor(journal(partial), B), "COLLAPSING 尚未返還者"));
+        cases.add(() -> {
+            var base = collapsing(measured(EXISTING, 2));
+            var state = journal(base);
+            assertEquals(CommitResult.Status.ROLL_FORWARD_PENDING,
+                    state.commitRollForward(() -> { throw new UncheckedIOException(new IOException("注入")); }, base, returned(base, A)).status());
+            assertNull(SessionRecoveryManager.recordFor(state, A), "返還進度尚未確認：依 collapse view，已返還者不再屬於它");
+            assertEquals(returned(base, A), SessionRecoveryManager.recordFor(state, B), "尚未返還者找到 collapse view 的 record");
+        });
+        assertAll(cases);
+    }
+
+    /** spec §5、§6：COLLAPSING 凍結尚未返還者；塌縮狀態只看 collapse view（已返還的人先於落盤解除）；PASSAGE_READY 與 SEALED 不凍結。 */
+    @Test void frozenFollowsTheCollapseViewForCollapseStates() {
+        var cases = new ArrayList<Executable>();
+        var collapsing = collapsing(measured(EXISTING, 2));
+        cases.add(() -> {
+            var state = journal(collapsing);
+            assertTrue(SessionRecoveryManager.frozen(state, A), "COLLAPSING 尚未返還者凍結");
+            assertTrue(SessionRecoveryManager.frozen(state, B));
+            assertFalse(SessionRecoveryManager.frozen(state, OUTSIDER));
+        });
+        cases.add(() -> {
+            var state = journal(collapsing);
+            assertEquals(CommitResult.Status.ROLL_FORWARD_PENDING,
+                    state.commitRollForward(() -> { throw new UncheckedIOException(new IOException("注入")); }, collapsing, returned(collapsing, A)).status());
+            assertFalse(SessionRecoveryManager.frozen(state, A), "返還進度尚未確認：collapse view 已返還，解除凍結");
+            assertTrue(SessionRecoveryManager.frozen(state, B), "另一位仍凍結");
+        });
+        var settled = settled(collapsing);
+        for (var record : List.of(ready(settled), settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.ALLOCATION_IO_FAILED))))
+            cases.add(() -> assertFalse(SessionRecoveryManager.frozen(journal(record), A), record.state() + " 不凍結"));
+        cases.add(() -> assertTrue(SessionRecoveryManager.frozen(journal(measured(EXISTING, 1)), A), "M4：MEASURED 尚未返還者照舊凍結"));
+        cases.add(() -> {
+            var state = journal(measured(EXISTING, 1));
+            var returning = SessionRecoveryStateTest.otherSession(B, SessionState.RETURNING, false, new UUID(0, 0x91), new UUID(0, 0x92), 9);
+            state.put(returning);
+            assertTrue(SessionRecoveryManager.frozen(state, B), "M4：只在 current 的 RETURNING 也凍結（current 或 flushed 任一份）");
+        });
+        assertAll(cases);
+    }
+
+    /**
+     * spec §7.3、§6、§13.2：recovery tick 對 COLLAPSING 依 receipt 推導返還與清理（不需要請求），完成後沒有工作；roll-forward 尚未確認時只重試
+     * 寫出、不從 flushed 疊寫新進度。PASSAGE_READY、SEALED 沒有返還工作；M4 的 RETURNING 與 MEASURED 維持原規則。
+     */
+    @Test void recoveryWorkDerivesCollapsingReturnFromTheReceiptAndOnlyRetriesUnconfirmedProgress() {
+        var cases = new ArrayList<Executable>();
+        var collapsing = collapsing(measured(EXISTING, 2));
+        for (var record : List.of(collapsing, returned(collapsing, A), returned(collapsing, A, B))) for (boolean requested : List.of(false, true)) {
+            var label = "COLLAPSING returned=" + record.participants().stream().filter(Participant::returned).count() + "/2 leases="
+                    + record.spaceLeases().size() + " requested=" + requested;
+            cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.RECOVER, SessionRecoveryManager.recoveryWork(journal(record), record, requested), label));
+        }
+        var settled = settled(collapsing);
+        cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.NONE, SessionRecoveryManager.recoveryWork(journal(settled), settled, true), "SETTLED"));
+        cases.add(() -> {
+            var state = journal(collapsing);
+            assertEquals(CommitResult.Status.ROLL_FORWARD_PENDING,
+                    state.commitRollForward(() -> { throw new UncheckedIOException(new IOException("注入")); }, collapsing, returned(collapsing, A)).status());
+            assertEquals(SessionRecoveryManager.RecoveryWork.RETRY_FLUSH, SessionRecoveryManager.recoveryWork(state, state.flushedRecords().get(SESSION), false),
+                    "返還進度尚未確認：只重試寫出");
+        });
+        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+        for (var record : List.of(ready(settled), sealed))
+            cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.NONE, SessionRecoveryManager.recoveryWork(journal(record), record, true), record.state().name()));
+        var measured = measured(EXISTING, 1);
+        cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.RECOVER, SessionRecoveryManager.recoveryWork(journal(measured), measured, true)));
+        cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.NONE, SessionRecoveryManager.recoveryWork(journal(measured), measured, false),
+                "MEASURED 仍須獨立 recovery 請求"));
+        for (var phase : List.of(SessionState.ARMING, SessionState.SUPERPOSITION, SessionState.RETURNING)) cases.add(() -> {
+            var record = SessionRecoveryStateTest.otherSession(A, phase, false, new UUID(0, 0xA1), new UUID(0, 0xA2), 10);
+            assertEquals(phase == SessionState.RETURNING ? SessionRecoveryManager.RecoveryWork.RECOVER : SessionRecoveryManager.RecoveryWork.NONE,
+                    SessionRecoveryManager.recoveryWork(journal(record), record, false), phase.name());
+        });
         assertAll(cases);
     }
 

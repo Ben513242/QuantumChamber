@@ -135,6 +135,48 @@ class ChamberPowerCoordinatorTest {
         assertEquals(ChamberPowerState.RETURNING, registry.records().get(uuid).powerState());
     }
 
+    /**
+     * spec §10.7（決策 11）：COLLAPSE 與 PASSAGE 不走 pending／needsReturn、不呼叫 returnToOrigin、不開新 session；power state 只設 POWERED
+     * （已供電且 enabled）或 RETURNING（不設 OFF，保護維持）；比較器暫時一律 ARMED（11），PASSAGE→15 留給 F5。涵蓋 registry 的每個
+     * power state（含 M4 DORMANT 留下的 RETURNING）、供電與 enabled 的四種組合，以及每個目前的 ChamberState。
+     */
+    @Test void collapseAndPassagePresenceNeverReturnOrStartAndOnlySetPoweredOrReturning() {
+        var cases = new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for (var presence : List.of(ChamberSessionGateway.Presence.COLLAPSE, ChamberSessionGateway.Presence.PASSAGE))
+            for (var prior : ChamberPowerState.values()) for (boolean powered : List.of(true, false)) for (boolean enabled : List.of(true, false))
+                for (var current : ChamberState.values()) {
+                    var label = presence + " prior=" + prior + " powered=" + powered + " enabled=" + enabled + " current=" + current;
+                    registry.setPowerState(uuid, prior); registry.setEnabled(uuid, enabled);
+                    backend.presence = presence; backend.returns = 0; backend.starts = 0;
+                    var next = refresh(powered, current, true);
+                    var power = registry.records().get(uuid).powerState();
+                    int returns = backend.returns, starts = backend.starts;
+                    cases.add(() -> assertEquals(ChamberState.ARMED, next, label));
+                    cases.add(() -> assertEquals(0, returns, "不呼叫 returnToOrigin：" + label));
+                    cases.add(() -> assertEquals(0, starts, "不開新 session：" + label));
+                    cases.add(() -> assertEquals(powered && enabled ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING, power, label));
+                }
+        assertAll(cases);
+    }
+
+    /** spec §10.7：終局之後 presence 回到 NONE，下一次 reconcile 依既有流程把 M5 斷電時留下的 RETURNING 解除為 POWERED 或 OFF。 */
+    @Test void terminalPresenceNoneResumesTheExistingReturningRelease() {
+        registry.setPowerState(uuid, ChamberPowerState.POWERED);
+        backend.presence = ChamberSessionGateway.Presence.COLLAPSE;
+        assertEquals(ChamberState.ARMED, refresh(false, ChamberState.ARMED, false));
+        assertEquals(ChamberPowerState.RETURNING, registry.records().get(uuid).powerState());
+        backend.presence = ChamberSessionGateway.Presence.NONE;
+        assertEquals(ChamberState.IDLE, refresh(true, ChamberState.ARMED, false));
+        assertEquals(1, backend.returns, "既有流程：RETURNING 先經 returnToOrigin 確認");
+        assertEquals(ChamberPowerState.POWERED, registry.records().get(uuid).powerState());
+        backend.presence = ChamberSessionGateway.Presence.COLLAPSE;
+        assertEquals(ChamberState.ARMED, refresh(false, ChamberState.IDLE, false));
+        backend.presence = ChamberSessionGateway.Presence.NONE;
+        assertEquals(ChamberState.INVALID, refresh(false, ChamberState.ARMED, false));
+        assertEquals(ChamberPowerState.OFF, registry.records().get(uuid).powerState());
+        assertEquals(0, backend.starts);
+    }
+
     @Test void nestedDeferralReleasesAfterException() {
         assertFalse(ChamberPowerCoordinator.activationDeferred());
         assertThrows(IllegalStateException.class, () -> ChamberPowerCoordinator.deferActivation(() -> {
@@ -160,6 +202,7 @@ class ChamberPowerCoordinatorTest {
         boolean returned = true;
         boolean throwOnReturn;
         int starts;
+        int returns;
         boolean blocked;
         List<UUID> startedParticipants;
         ChamberSessionGateway.StartResult startResult = ChamberSessionGateway.StartResult.ARMED_ONLY;
@@ -172,6 +215,7 @@ class ChamberPowerCoordinatorTest {
             return startResult;
         }
         @Override public boolean returnToOrigin() {
+            returns++;
             assertEquals(ChamberPowerState.RETURNING, registry.records().get(uuid).powerState());
             if (throwOnReturn) throw new IllegalStateException("返還失敗");
             if (returned) presence = ChamberSessionGateway.Presence.NONE;

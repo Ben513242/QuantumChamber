@@ -137,4 +137,161 @@ final class M4CandidateTestAccess {
         var owner = ((Map<?, ?>) get(UniverseLifecycleService.class, "CONTEXTS")).get(server);
         return ((Minecraft121DynamicDimensionBackend) get(owner, "backend")).runtimeSnapshot(server);
     }
+
+    // ---- F3a：M5 塌縮狀態的 fixture 與收尾。record 只經正式 journal API 建立與移除（F2a 裁定 (c)）；runtime 與來源 ticket 的釋放
+    // API 屬 F3d（spec §5 的終局），F3d 之前以反射收尾。 ----
+
+    /** 僅測試：指定 Controller 位置、朝北的 OVERWORLD ORIGIN 權威。該位置沒有 Controller 時來源身分驗證必定失敗，recovery 不會移動任何人。 */
+    static dev.quantumchamber.chamber.ChamberOriginAuthority origin(UUID chamber,net.minecraft.util.math.BlockPos controllerPos) {
+        return new dev.quantumchamber.chamber.ChamberOriginAuthority(chamber,net.minecraft.world.World.OVERWORLD.getValue(),
+                dev.quantumchamber.universe.DimensionRole.OVERWORLD,controllerPos,net.minecraft.util.math.Direction.NORTH,
+                dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN);
+    }
+    /**
+     * 僅測試：M5 fixture 的起點，candidate-aware 的 MEASURED＋SELECTED（選中 NEW 或 SOURCE）。參與者（值為是否已返還）與 lease 由呼叫端決定：
+     * 全員已返還、沒有 lease 即 DORMANT。塌縮狀態只能由這份收據先 put＋flush，再經 commitRestore 進入。
+     */
+    static dev.quantumchamber.persistence.SessionRecoveryRecord measuredReceipt(MinecraftServer server,
+            dev.quantumchamber.chamber.ChamberOriginAuthority origin,Map<UUID,Boolean> people,
+            List<dev.quantumchamber.persistence.SessionRecoveryRecord.SpaceLease> leases,boolean newCandidate) {
+        var sid=UUID.randomUUID();
+        var cohort=people.entrySet().stream().map(entry -> new dev.quantumchamber.persistence.SessionRecoveryRecord.Participant(entry.getKey(),
+                net.minecraft.util.math.Vec3d.ofCenter(origin.controllerPos()),net.minecraft.util.math.Vec3d.ZERO,0,0,
+                new net.minecraft.nbt.NbtCompound(),entry.getValue())).toList();
+        var frozen=candidateAware(new dev.quantumchamber.persistence.SessionRecoveryRecord(sid,origin.chamberUuid(),origin,cohort,
+                List.of(new dev.quantumchamber.persistence.SessionRecoveryRecord.SpaceLease(0,new net.minecraft.util.math.BlockBox(0,0,0,6,6,6))),
+                dev.quantumchamber.superposition.SessionState.ARMING,false,dev.quantumchamber.persistence.SessionSemantics.LATERAL_BUFF_MAINTAINED),server);
+        var key=new dev.quantumchamber.corridor.DoorKey(sid,1,dev.quantumchamber.corridor.DoorKey.DoorWallSide.NEGATIVE_LATERAL);
+        var id=new dev.quantumchamber.candidate.CandidateId(randomBytes());
+        dev.quantumchamber.candidate.QuantumCandidate candidate=newCandidate
+                ? new dev.quantumchamber.candidate.QuantumCandidate.New(id,new dev.quantumchamber.candidate.NewUniverseIntent(randomBytes(),
+                        dev.quantumchamber.universe.GeneratorProfile.VANILLA_OVERWORLD_SHARED_SEED_V1,1,randomBytes()))
+                : new dev.quantumchamber.candidate.QuantumCandidate.Source(id);
+        return new dev.quantumchamber.persistence.SessionRecoveryRecord(sid,origin.chamberUuid(),origin,cohort,leases,
+                dev.quantumchamber.superposition.SessionState.MEASURED,false,frozen.semantics(),frozen.candidateContext(),
+                List.of(new dev.quantumchamber.candidate.CandidateLedgerEntry(key,candidate)),
+                java.util.Optional.of(new dev.quantumchamber.candidate.CandidateSelection.Selected(key,id,cohort.getFirst().playerUuid(),0,1)));
+    }
+    private static dev.quantumchamber.candidate.CandidateBytes randomBytes() {
+        var bytes=new byte[32]; java.util.concurrent.ThreadLocalRandom.current().nextBytes(bytes);
+        return new dev.quantumchamber.candidate.CandidateBytes(bytes);
+    }
+    /** 僅測試：MEASURED 收據提交 COLLAPSING 的值（spec §7.2：SOURCE、EXISTING 的 UniverseId、NEW 的推導值）；參與者與 lease 原樣。 */
+    static dev.quantumchamber.persistence.SessionRecoveryRecord collapsing(dev.quantumchamber.persistence.SessionRecoveryRecord measured,long gameTime) {
+        dev.quantumchamber.collapse.CollapseDestination destination=switch(measured.selectedCandidate().orElseThrow()) {
+            case dev.quantumchamber.candidate.QuantumCandidate.Source ignored -> new dev.quantumchamber.collapse.CollapseDestination.Source();
+            case dev.quantumchamber.candidate.QuantumCandidate.Existing existing -> new dev.quantumchamber.collapse.CollapseDestination.Universe(existing.universeId());
+            case dev.quantumchamber.candidate.QuantumCandidate.New created -> new dev.quantumchamber.collapse.CollapseDestination.Universe(
+                    dev.quantumchamber.collapse.UniverseAllocationLedger.deriveUniverseId(created.intent().allocationToken()));
+        };
+        return measured.withCollapse(dev.quantumchamber.superposition.SessionState.COLLAPSING,
+                dev.quantumchamber.persistence.CollapseFields.committed(gameTime,destination));
+    }
+    /**
+     * 僅測試：以正式 API 把 M5 fixture 收尾到 checked 終局，不留 M5 record。SEALED（非 TRANSFER_RECOVERY_REQUIRED）先經 commitRestore 重試回
+     * COLLAPSING；尚未全員返還或仍有 lease 的 COLLAPSING 以一次 roll-forward 寫成全員返還、lease 清空；之後 COLLAPSING 依目的地以
+     * SOURCE_FAST_PATH 或 PREPARE_DOOR_CLOSED 終局，PASSAGE_READY 以 PASSAGE_ENDED 終局。只用於沒有走廊 space 的 fixture，或 space 已清除之後。
+     */
+    static void terminateCollapseFixture(MinecraftServer server,UUID sid) {
+        var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
+        var record=journal.flushedRecords().get(sid);
+        if(record==null) throw new IllegalStateException("M5 fixture 已不在 journal：session="+sid);
+        if(record.state()==dev.quantumchamber.superposition.SessionState.SEALED) {
+            var retry=record.withCollapse(dev.quantumchamber.superposition.SessionState.COLLAPSING,record.collapse().retry());
+            var result=journal.commitRestore(server,record,retry);
+            if(!result.committed()) throw new IllegalStateException("M5 fixture 收尾：SEALED→COLLAPSING 未確認："+result);
+            record=retry;
+        }
+        if(record.state()==dev.quantumchamber.superposition.SessionState.COLLAPSING && (!record.spaceLeases().isEmpty()
+                || record.participants().stream().anyMatch(person -> !person.returned()))) {
+            var people=record.participants().stream().map(person -> new dev.quantumchamber.persistence.SessionRecoveryRecord.Participant(person.playerUuid(),
+                    person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch(),person.quantumStateSnapshot(),true)).toList();
+            var settled=record.withProgress(people,List.of(),record.state(),record.restoreEntryEffectOnReturn());
+            var result=journal.commitRollForward(server,record,settled);
+            if(!result.committed()) throw new IllegalStateException("M5 fixture 收尾：返還與清 lease 未確認："+result);
+            record=settled;
+        }
+        var origin=switch(record.state()) {
+            case PASSAGE_READY -> dev.quantumchamber.persistence.SessionRecoveryState.TerminalOrigin.PASSAGE_ENDED;
+            case COLLAPSING -> record.collapse().destination() instanceof dev.quantumchamber.collapse.CollapseDestination.Source
+                    ? dev.quantumchamber.persistence.SessionRecoveryState.TerminalOrigin.SOURCE_FAST_PATH
+                    : dev.quantumchamber.persistence.SessionRecoveryState.TerminalOrigin.PREPARE_DOOR_CLOSED;
+            default -> throw new IllegalStateException("M5 fixture 收尾不支援："+record.state());
+        };
+        var result=journal.terminate(server,record,origin);
+        if(!result.removed() || journal.flushedRecords().containsKey(sid) || journal.records().containsKey(sid))
+            throw new IllegalStateException("M5 fixture 終局未確認："+result);
+    }
+    /** 僅測試：以反射呼叫 SuperpositionSessionManager 開服接手時對每筆 flushed record 執行的那一段（attachRecord）。 */
+    static void attachRecord(dev.quantumchamber.persistence.SessionRecoveryRecord record) {
+        call(dev.quantumchamber.chamber.ChamberSessions.gateway(),"attachRecord",record);
+    }
+    /** 僅測試：以反射呼叫 CorridorPageManager 開服時依 durable record 重建 space 的那一段（restoreSpace）。 */
+    static void restoreSpace(CorridorPageManager pages,dev.quantumchamber.persistence.SessionRecoveryRecord record) {
+        call(pages,"restoreSpace",record);
+    }
+    /** 僅測試：移除 restoreSpace 為沒有 lease 的 fixture 建立的 space（RED 時 HEAD 會建立）；有 lease 的 space 不在此處理。 */
+    @SuppressWarnings("unchecked")
+    static boolean removeSpaceForTeardown(CorridorPageManager pages,UUID sid) {
+        var space=space(pages,sid);
+        if(space==null) return false;
+        if(!((Map<?,?>)get(space,"leases")).isEmpty()) throw new IllegalStateException("只移除沒有 lease 的 fixture space");
+        ((Map<UUID,?>)get(pages,"spaces")).remove(sid);
+        return true;
+    }
+    static boolean sourceTicketHeld(UUID sid) { return ((Map<?,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"tickets")).containsKey(sid); }
+    static Object runtimeState(UUID chamber) {
+        var runtime=((Map<?,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions")).get(chamber);
+        return runtime==null ? null : get(runtime,"state");
+    }
+    static boolean disconnectPending(UUID player) {
+        return ((java.util.Set<?>)get(get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"recovery"),"disconnected")).contains(player);
+    }
+    /** 僅測試（F3d 之前）：釋放來源 ticket；spec §5 要求終局與進入 SEALED 時釋放，正式 API 屬 F3d。 */
+    @SuppressWarnings("unchecked")
+    static boolean releaseSourceTicketForTeardown(UUID sid) {
+        var ticket=((Map<UUID,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"tickets")).remove(sid);
+        if(ticket==null) return false;
+        var world=(net.minecraft.server.world.ServerWorld)get(ticket,"world");
+        var chunk=(net.minecraft.util.math.ChunkPos)get(ticket,"chunk");
+        var type=(net.minecraft.server.world.ChunkTicketType<UUID>)get(dev.quantumchamber.superposition.SuperpositionSessionManager.class,"SOURCE_TICKET");
+        world.getChunkManager().removeTicket(type,chunk,2,sid);
+        return true;
+    }
+    /** 僅測試（F3d 之前）：終局之後釋放該 session 的 runtime 與來源 ticket（spec §5：終局同時移除；正式 API 屬 F3d）。 */
+    @SuppressWarnings("unchecked")
+    static void releaseCollapseRuntimeForTeardown(UUID chamber,UUID sid) {
+        var sessions=(Map<UUID,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions");
+        var runtime=sessions.get(chamber);
+        if(runtime!=null && ((dev.quantumchamber.persistence.SessionRecoveryRecord)get(runtime,"initial")).sessionUuid().equals(sid)) sessions.remove(chamber);
+        releaseSourceTicketForTeardown(sid);
+    }
+    /**
+     * 只在 RED 取證時使用：HEAD 會讓 COLLAPSING 走進 MEASURED-only 分支丟例外。以反射把 journal（current、history、checked authority）與 runtime
+     * 退回原本的 MEASURED 並 flush，讓既有的 MEASURED 收尾（{@link #resetMeasuredForTeardown}）接手，避免下一個 END_SERVER_TICK 讓 GameTest server crash。
+     */
+    @SuppressWarnings("unchecked")
+    static void revertCollapseForTeardown(MinecraftServer server,CorridorPageManager pages,UUID sid,dev.quantumchamber.persistence.SessionRecoveryRecord measured) {
+        var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
+        for(String field : List.of("records","authorityHistory","checkedAuthority"))
+            ((Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord>)get(journal,field)).put(sid,measured);
+        ((java.util.Set<UUID>)get(journal,"rollForwardPending")).remove(sid);
+        journal.markDirty(); journal.flush(server);
+        if(!measured.equals(journal.flushedRecords().get(sid))) throw new IllegalStateException("RED 回退未確認");
+        set(space(pages,sid),"authority",measured);
+        var runtime=((Map<?,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions")).get(measured.chamberUuid());
+        if(runtime!=null) set(runtime,"state",dev.quantumchamber.superposition.SessionState.MEASURED);
+    }
+    /** 依名稱與參數個數找到宣告的方法（含 private 與 private record 的 accessor）並呼叫；被呼叫端的例外原樣拋出。 */
+    private static Object call(Object target,String name,Object... args) {
+        try {
+            var method=java.util.Arrays.stream(target.getClass().getDeclaredMethods())
+                    .filter(candidate -> candidate.getName().equals(name) && candidate.getParameterCount()==args.length).findFirst()
+                    .orElseThrow(() -> new NoSuchMethodException(target.getClass().getName()+"."+name));
+            method.setAccessible(true); return method.invoke(target,args);
+        } catch(InvocationTargetException failure) {
+            if(failure.getCause() instanceof RuntimeException runtime) throw runtime;
+            throw new IllegalStateException(failure.getCause());
+        } catch(ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+    }
 }

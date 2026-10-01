@@ -64,14 +64,29 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             return server==owner && runtime!=null && runtime.initial.sessionUuid().equals(record.sessionUuid())
                     && runtime.state==SessionState.SUPERPOSITION && record.state()==SessionState.SUPERPOSITION;
         });
-        for(var record : journal.flushedRecords().values()) {
-            if(record.state()==SessionState.MEASURED && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT) continue;
-            sourceTicket(record); returning(record);
+        for(var record : journal.flushedRecords().values()) attachRecord(record);
+    }
+    /**
+     * 開服時依一筆 flushed record 接手。M4 狀態：非 DORMANT 一律取得來源 ticket 並轉 RETURNING（MEASURED 改為保留式 recovery）。
+     * M5 的塌縮狀態不轉 RETURNING（spec §5、§12、§13.2），留給塌縮流程（F3d 的 CollapseService）：只有 COLLAPSING 需要來源 ticket
+     * （返還需要）；PASSAGE_READY 與 SEALED 不建 ticket、不寫入，record 原樣保留——PASSAGE_READY 由塌縮流程在開服後結束，SEALED 保留。
+     */
+    private void attachRecord(SessionRecoveryRecord record) {
+        switch(record.state()) {
+            case COLLAPSING -> sourceTicket(record);
+            case PASSAGE_READY, SEALED -> { }
+            case MEASURED -> { if(MeasuredRecoveryPhase.from(record)!=MeasuredRecoveryPhase.DORMANT) { sourceTicket(record); returning(record); } }
+            case ARMING, SUPERPOSITION, RETURNING -> { sourceTicket(record); returning(record); }
         }
     }
     @Override public Presence presence(MinecraftServer owner,UUID chamber) {
         requireServer(owner);
         var durable=record(chamber);
+        // spec §5、§10.7：三個塌縮狀態只依 collapse view 推導，排在 runtime 判斷之前（DORMANT 續行與重啟之後都沒有 runtime）。
+        if(durable!=null && durable.state().collapseState()) {
+            var view=journal.collapseView(durable.sessionUuid()).orElse(durable);
+            return view.state()==SessionState.PASSAGE_READY ? Presence.PASSAGE : Presence.COLLAPSE;
+        }
         var runtime=sessions.get(chamber);
         if(runtime!=null && runtime.state==SessionState.RETURNING) return Presence.RETURNING;
         if(durable==null) return runtime==null ? Presence.NONE : Presence.UNKNOWN;
@@ -223,7 +238,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     private void settleUncheckedInitial(SuperpositionSession runtime) {
         var sid=runtime.initial.sessionUuid();
         if(journal.flushedRecords().containsKey(sid)) return;
-        try { if(journal.uncheckedCandidateSessions().contains(sid)) journal.quarantine(sid); }
+        try { if(journal.uncheckedSessions().contains(sid)) journal.quarantine(sid); }
         catch(RuntimeException failure) {
             org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("初始 ARMING 殘留尚未隔離，交由 recovery tick 處理：session={}",sid,failure);
         }
@@ -257,6 +272,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         for(var runtime : List.copyOf(sessions.values())) {
             if(CorridorPageManager.forServer(owner).operationInProgress(runtime.initial.sessionUuid())) continue;
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
+            // spec §13.2：塌縮狀態由塌縮流程負責（F3d 的 CollapseService）；這裡不請求 measured recovery、不 fail，runtime 只跟隨 durable 狀態。
+            if(durable!=null && durable.state().collapseState()) { runtime.state=durable.state(); continue; }
             if(durable!=null && durable.state()==SessionState.RETURNING) runtime.state=SessionState.RETURNING;
             if(durable!=null && durable.state()==SessionState.MEASURED) runtime.state=SessionState.MEASURED;
             if(runtime.state==SessionState.MEASURED) {
@@ -283,6 +300,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             } catch(IOException | RuntimeException failure) { fail(runtime,failure); }
         }
         reposition.tick(owner); recovery.tick(owner); finishAbandoned();
+        // 只有 DORMANT 的 MEASURED 在保留式清理完成後釋放 runtime 與來源 ticket。COLLAPSING 的清理收尾走 CorridorPageManager 延伸後的同一路徑，
+        // runtime 與來源 ticket 保留到塌縮流程的終局或進入 SEALED 才釋放（spec §5，F3d）。
         for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.MEASURED
                 && recovery.measuredRecoveryComplete(record.sessionUuid())) {
             sessions.remove(record.chamberUuid());
@@ -402,6 +421,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 .findFirst().orElse(null);
         if(runtime==null && durable==null && known==null) return true;
         var authority=durable!=null ? durable : runtime!=null ? runtime.initial : known.getValue().record();
+        // spec §10.7、§13.2：塌縮狀態一律沒有副作用、回 false。斷電、停用與結構失效的後果由塌縮流程依即時訊號處理
+        // （RESOLVE 不受影響、PREPARE 退回 WAITING、PASSAGE_READY 結束、SEALED 保留）。
+        if(authority.state().collapseState()) return false;
         if(CorridorPageManager.forServer(server).operationInProgress(authority.sessionUuid())) return false;
         if(authority.state()==SessionState.MEASURED) {
             recovery.requestMeasuredRecovery(authority.sessionUuid());
@@ -469,6 +491,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     }
     private void returning(SessionRecoveryRecord record) {
         if(record.state()==SessionState.MEASURED) { recovery.requestMeasuredRecovery(record.sessionUuid()); return; }
+        // 塌縮狀態不轉 RETURNING（spec §13.2）；呼叫端（attach、returnToOrigin）已先排除，這裡再防守一次。
+        if(record.state().collapseState()) return;
         if(!journal.recoveryWritesSafe()) throw new IllegalStateException("dirty candidate authority 尚未 checked，不可經返還落盤");
         if(record.state()==SessionState.RETURNING && record.equals(journal.records().get(record.sessionUuid()))) return;
         CorridorPageManager.forServer(server).exclusiveOperation(record.sessionUuid(),() -> {

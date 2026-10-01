@@ -11,7 +11,10 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockBox;
 import net.minecraft.util.math.ChunkPos;
 
-/** 空 lease 前的原生持久化閘門：只看本交易相關 chunks（來源艙與走廊 lease）所在的 region，見 {@link ChunkSaveCheckpoint}。 */
+/**
+ * 空 lease 前的原生持久化閘門：只看本交易相關 chunks（來源艙與走廊 lease）所在的 region，見 {@link ChunkSaveCheckpoint}。
+ * MEASURED 與 COLLAPSING 的 RELEASE_GEOMETRY 共用（{@link MeasuredRecoveryPhase} 的同一份推導，spec §13.2）。
+ */
 public final class MeasuredWorldSaveCheckpoint {
     private MeasuredWorldSaveCheckpoint() { }
     public static void save(MinecraftServer server,SessionRecoveryRecord record) {

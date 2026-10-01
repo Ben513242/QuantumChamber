@@ -145,17 +145,17 @@ public final class SessionRecoveryState extends PersistentState {
     }
     /**
      * recovery 寫入是否安全：非隔離 session 的 current 都不得含未 checked 的 authority——candidate context／ledger／selection，
-     * 以及 M5 的 restore 類狀態邊（見 {@link #uncheckedCandidateSessions}）。
+     * 以及 M5 的 restore 類狀態邊（見 {@link #uncheckedSessions}）。
      * owner 失敗即 CAS 還原或隔離，recovery tick 也會隔離任何殘留，因此正常只剩 checked 提交本身同步的 put→flush 窗口會回 false。
      * M5 的 roll-forward 類內容（返還與清 lease 進度、Crossed、進入 SEALED）不算未 checked：它們本來就要由之後的任何寫出帶出去。
      */
-    public boolean recoveryWritesSafe() { return uncheckedCandidateSessions().isEmpty(); }
+    public boolean recoveryWritesSafe() { return uncheckedSessions().isEmpty(); }
     /**
      * 非隔離、current 含未 checked authority 的 session。除了 candidate 三欄位與 flushed 不同之外，也包含 current 相對 flushed 跨過
      * M5 restore 類狀態邊（MEASURED→COLLAPSING、COLLAPSING→PASSAGE_READY、SEALED→COLLAPSING）的 session：這類內容只能經
      * {@link #commitRestore} 的同步 put→flush 承認，失敗即還原；殘留時由 recovery tick 隔離並收斂回 flushed。
      */
-    public java.util.Set<UUID> uncheckedCandidateSessions() {
+    public java.util.Set<UUID> uncheckedSessions() {
         requireHealthy();
         var unchecked=new java.util.LinkedHashSet<UUID>();
         for(var current : records.values()) if(!quarantined.contains(current.sessionUuid()) && !authorityChecked(current)) unchecked.add(current.sessionUuid());
