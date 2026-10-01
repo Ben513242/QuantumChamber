@@ -853,7 +853,7 @@ Legacy 與 M4 recovery 依 controller 指示省略：本輪只改移動封包 mi
   - 首輪 spec review：✅，Minor 5。首輪 code quality review：Critical 0、Important 1、Minor 6。
   - fix round 1 處理 quality Important I-1 與 Minor M-1～M-6，以及 spec Minor 1–3（本 note 的文字）。fix round 1 的 re-review：Critical 0、Important 0、Minor 1（本段 code-truth 兩句過時描述，已在 controller 的 docs commit 加註）。F1a 完成；F1b 尚未進行。
   - controller 裁定：probe 的訊息用 `Text.literal` 可以接受（plan 的 `Text.translatable` 規則針對 production 訊息，testmod 也不能改 main 的語言檔）；在 `scripts/verification/` 的 main-only oracle 與 JAR 檢查加入 clientProbe，交給 F6。
-- F1b（真 client 驗證）尚未進行。
+- F1b（真 client 驗證）已於 2026-10-01 完成，結果見下方「F1b：真 client 驗證」。
 
 ### Code-truth（`6d28fa0`）
 
@@ -998,3 +998,38 @@ GREEN 數字：
 - probe 的 allocate 直接寫 catalog，不經 F2b 之後的 allocation ledger。F2b 上線後，用 probe 配置過的世界可能被 spec §6 判為 catalog 與 ledger 不一致；probe 世界都是一次性的，不要拿來測 M5 玩法。
 - JUnit 在同一個 JVM 內留下全域的指令與 lifecycle listener（Fabric 事件不能撤銷）。目前沒有其他 JUnit 建立 `CommandManager` 或啟動 server。
 - smoke 的 driver 與核對腳本沒有 tracked。之後若要重跑，需要另開 task 整理到 `scripts/verification/`。
+
+## F1b：真 client 驗證
+
+- 結論：通過。plan F1b 的四項檢查全部通過；沒有非預期的斷線，也沒有 crash report。M5 玩法實作從 F2a 繼續。
+- 執行：2026-10-01 22:04–22:36，Claude 代操作（Ben 授權），以鍵鼠自動輸入、截圖與唯讀指令進行。程式基準 `2e90ae9`（code 與 `2bd75b1` 相同）。本 task 不改 tracked 程式。
+- 證據：repo 外的 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-10-01-f1b\`，共 78 檔，其中截圖 56 張。`MANIFEST-sha256.txt` 的 SHA-256 為 `c36692f9bc6b7eabdcd883eee77d16fd88a5e1183a313a21eab580092f9a61a3`。runDir 為 `run/server-probe-f1b-ded-befbaafc`、`run/client-probe-f1b-dc-befbaafc`、`run/client-probe-f1b-sp-d826199d`（gitignored，保留）。證據全部標 `testmod-present`。
+
+### 結果
+
+| 項目 | Dedicated（`runServerProbe`＋`runClientProbe` 連線） | 單人（`runClientProbe` 的 integrated server） |
+|---|---|---|
+| allocate → 重啟 → 物化 | allocate 後 `/stop`，以同一個 nonce 重啟：`READY … ACTIVE=true` | 新建世界（創造、和平、允許指令）後 allocate → 儲存並離開 → 重新進入：`READY … ACTIVE=true` |
+| enter／return | `ENTER OK outcome=MOVED`，`RETURN OK outcome=RETURNED`，回到來源座標 | 同左 |
+| 天空、時間、天氣、地形 | F3 顯示 `quantumchamber:universe/f1a00000-…/overworld`。`/time set 18000` 後是星空夜色，`/weather rain` 後下雨，時間從 6000 繼續走到 6081。地形可見 | 同左（時間 6000→6097） |
+| 移動、放置、破壞 | 右鍵放置橡木木材、左鍵破壞，server 端 `/execute if block` 兩次都「測試通過」。按 W 前進，server 回報 z 從 61.5 到 63.655 | 同左（z 從 3.5 到 5.655） |
+| 在動態世界重新登入 | 中斷連線後重新加入：`world=quantumchamber:universe/…` | 儲存並回到標題畫面後重進：同左 |
+| 在動態世界重啟 server | `/stop` 後重啟：仍在 `quantumchamber:universe/…`（`receipt=none`，receipt 依設計不跨重啟） | 關閉遊戲，再以 `--quickPlaySingleplayer` 重開：同左 |
+| 在動態世界死亡 | `/kill` 後重生在 `minecraft:overworld` 的世界出生點 (-35.5, 65, 50.5) | 重生在 `minecraft:overworld` 的 (-8.5, 79, -0.5) |
+
+- Sodium＋Iris：在單人 runDir 測。Sodium 0.6.13 與 Iris 1.8.8 從外部備份的 `run/client-render` 唯讀複製，SHA-256 與來源相符。
+  - 啟動時偵測到 `sodium=true, iris=true`。
+  - 光影關閉（`enableShaders=false`）：enter → return 正常，F3 顯示 Sodium Renderer。
+  - 按 K 開啟 Complementary Reimagined r5.9.3 後 enter → return：Iris 先後 `Creating pipeline for dimension quantumchamber:universe/…/overworld` 與 `… minecraft:overworld`，畫面有光影效果，F3 有 Iris Shadow info。
+  - 結束時 `iris.properties` 仍是 `enableShaders=true`，光影沒有被強制關閉。
+
+### 偏差與觀察
+
+- 15 秒接手：單人兩次重新進入世界時，等待迴圈在 `latest.log` 沒有比對到加入紀錄，玩家分別閒置約 90 秒與 130 秒。事後用同一個條件重測可以命中；推測是寫入時序造成，未查明。世界是和平＋創造模式，沒有受傷或其他影響。之後改以 Gradle 輸出偵測。
+- 站立檢查：dedicated 與單人各有一次 `enter` 因為腳下是樹葉而被拒，這是預期行為。以 `/setblock` 把腳下換成石頭、`/tp` 到方塊中央後再 enter，動態世界的落點同時產生 `landingChanges=[…=stone]`。
+- 放置與破壞的目標是用 `/fill` 在空中鋪的石台（避開草叢與樹冠），朝向用 `/tp` 設定。放置與破壞本身是滑鼠操作，操作前以 F3 的 Targeted Block 確認目標。
+- Dedicated 在 `/tp` 到石台的那一刻，出現一次原版的 `QC_A moved too quickly! 0.0,12.0,8.0`，沒有其他影響。
+- 單人從世界清單重新進入時，原版顯示「使用實驗性設定的世界不受支援」；選「我知道我在做什麼！」後繼續。用 `--quickPlaySingleplayer` 進入時不顯示。level.dat 的世界生成設定裡只有 M1 起就有的 `quantumchamber:superposition`；Universe 的維度鍵只出現在玩家的 `LastDeathLocation`（原版的死亡紀錄）。推論：警告來自 datapack 維度，不是 M5 新增的；這點未另外驗證。
+- Iris 對光影包回報 uniform 與 block ID map 的 WARN（例如 `BIOME_PALE_GARDEN`、`minecraft:stone_slab has no property with the name variant`）。這些是光影包版本與 1.21 的差異，和本專案無關。
+- 未做：H4 提到的「凍結中騎乘載具」是可選的觀察項，本次沒有做。probe 不建立 Chamber session，玩家不會被凍結。
+- 所有斷線紀錄都對應 `/stop`（「伺服器已關閉」），或儲存離開與關閉遊戲（integrated 的「連線中斷」）。三個 runDir 都沒有 `crash-reports`。結束後只剩既有的閒置 Gradle daemon（PID 129228）。
