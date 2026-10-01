@@ -1289,7 +1289,7 @@ GREEN 數字：
   - 本段的 docs commit 接在 `eeb0524` 之後。
 - Code range `7bae536..eeb0524`。`SessionRecoveryState.java` 沒有修改：controller 補充第 5 點允許的唯讀 getter 用不到（見「偏離」）。
 - production 唯一的新行為是開服初始化：建立缺少的空 ledger、標記 journal 已初始化。之後第一次 checked journal 寫入（有 candidate record 時）寫出 schema 4。沒有接任何 gameplay 呼叫點（`CollapseService` 是 F3d），兩個 ledger 在 runtime 只會是空的。
-- Review：待 spec 與 code quality review。
+- Review：首輪結果與 fix round 1 見本節最後的「Fix round 1」。
 
 ### Code-truth（`eeb0524`）
 
@@ -1305,7 +1305,7 @@ GREEN 數字：
 | allocation ledger | `U`：`Entry` `:45-57`、建構子 `:61-70`、`append` `:108-114`、`toNbt` `:116-130`、`fromNbt` `:133-152`、`MAX_ENTRIES` `:38` | 不可變。root 恰為 `{SchemaVersion, Entries}`，entry 恰為 `{AllocationToken(32 bytes), UniverseId(4 int), Profile, ProfileVersion}`；token 與 UniverseId 都唯一；只能追加，保留追加順序。strict decode 只驗結構（含筆數上限在逐筆解碼前檢查）；UniverseId 是否等於推導值、profile 是否為 OVERWORLD v1，由 lookup 以 `Entry.of(intent)` exact 比對（spec §6.1「已有 entry 就用 entry…不符進 SEALED」） |
 | projection ledger | `P`：`Entry` `:34-57`、建構子 `:61-70`、`with` `:85-102`、`toNbt` `:104-121`、`fromNbt` `:124-145` | 不可變。entry 恰為 `{ChamberUuid, UniverseId, Role, ControllerPos(3 int), OutwardFacing, Status}`；`(ChamberUuid, UniverseId)` 唯一；OutwardFacing 必須是水平方向。`with`：新 key 只能寫 PENDING（尾端追加）；既有 key 的 site（Role、ControllerPos、OutwardFacing）必須相同，而且只能 PENDING→COMPLETE（原位取代）；沒有刪除 |
 | allocation lookup-or-create | `lookupOrAppendAllocation` `A:359-379` | 閘門（初始化失敗、遺失、未確認）之後：同 token 的既有 entry 必須 exact 等於 `Entry.of(intent)`，否則 `CORRUPT`，不沿用、不覆寫；推導的 UniverseId 已屬於另一個 token、或已達上限 → `CORRUPT`；否則 checked 追加，回 `APPENDED`、`WRITE_FAILED` 或（寫入前發現檔案消失）`CORRUPT` |
-| projection 查詢與寫入 | `projection` `A:385-391`、`writeProjection` `:397-420` | `projection` 只回已確認的 entry（`FOUND`／`ABSENT`），未確認時回 `UNCONFIRMED`。`writeProjection` 要求 role 為 OVERWORLD（否則丟 `IllegalArgumentException`）；既有 entry 的 site 不符 → `CORRUPT`；同 Status → `UNCHANGED`（不寫檔）；新 key 寫 COMPLETE、或既有 COMPLETE 寫回 PENDING → `INVALID_TRANSITION`（caller 錯誤，帶回既有 entry，沒有 SEALED 原因）；新 key 已達上限 → `CORRUPT`；其餘 checked 寫入 |
+| projection 查詢與寫入 | `projection` `A:385-391`、`writeProjection` `:397-420` | `projection` 只回已確認的 entry（`FOUND`／`ABSENT`），未確認時回 `UNCONFIRMED`。`writeProjection` 要求 role 為 OVERWORLD（否則丟 `IllegalArgumentException`）；既有 entry 的 site 不符 → `CORRUPT`；同 Status → `UNCHANGED`（不寫檔）；新 key 寫 COMPLETE、或既有 COMPLETE 寫回 PENDING → `INVALID_TRANSITION`（caller 錯誤，帶回既有 entry，沒有 SEALED 原因）；新 key 已達上限 → `CORRUPT`；其餘 checked 寫入。（fix round 1 起：既有 COMPLETE 寫回 PENDING 改回 `ALREADY_COMPLETE`，新 key 寫 COMPLETE 改為丟 `IllegalArgumentException`，`INVALID_TRANSITION` 已移除，見「Fix round 1」） |
 | checked 寫入 | `checkedWrite` `A:467-488`、`writeAtomic` `:506-521`、`verify` `:523-527` | 先確認正式檔仍存在（`NoSuchFileException` → 遺失：記一次 ERROR、該權威本 instance 一律 `CORRUPT`、不重建、current 不變）。再沿用 M4 discovery 的步驟：同目錄暫存檔、`force`、以正式讀取規則驗證暫存檔、`ATOMIC_MOVE`、讀回 strict decode 並 exact 比對。暫存檔驗證與讀回都經 IO port |
 | roll-forward 與收斂 | `rollForward` `A:491-503`、`unconfirmed` `:423-426`、`convergeIfNeeded` `:432-438`；`CollapseBackoff.java:17-32` | 寫入或讀回失敗：current 保留這次的新內容（絕不移除可能已落地的追加）、標為未確認、退避加倍；WARN 依 `FailureText.dedupeKey` 以權威為單位去重，成功後清除。未確認期間該權威的 `lookupOrAppendAllocation`／`projection`／`writeProjection` 一律回 `UNCONFIRMED`。`convergeIfNeeded` 在退避期之外以 checked 方式重寫 current；成功記 INFO「收斂完成」並清除退避，失敗維持未確認。退避數列 200、400、…、6400、12000（上限），新 instance 沒有退避 |
 | 結果型別 | `InitResult` `A:76-117`、`Lookup` `:123-157`、`WriteResult` `:160-211` | `Lookup`／`WriteResult` 的失敗狀態都帶 `sealedReason()`，F4a／F4b 直接用：`CORRUPT`→`AUTHORITY_CORRUPT`、`UNREADABLE`→`AUTHORITY_UNREADABLE`、`UNCONFIRMED`／`WRITE_FAILED`→allocation 為 `ALLOCATION_IO_FAILED`、projection 為 `PROJECTION_FAILED`。compact 建構子強制「只有失敗帶原因與 failure」 |
@@ -1408,15 +1408,16 @@ runtime 證據（plan Step 3「第一次在 runtime 寫出 schema 4 與 ledger �
 - **讀取分類的界線**：spec 只說 strict decode 失敗為 `AUTHORITY_CORRUPT`、IO 例外為 `AUTHORITY_UNREADABLE`。`NbtIo` 對 gzip 或 NBT 格式錯誤也丟 `IOException`，所以改成「讀到原始 bytes 之前的失敗是 IO，之後的任何失敗都是內容損壞」。非一般檔案（例如目錄）照 discovery 當成 IO 例外。
 - **strict decode 只驗結構**：UniverseId 與推導值的比對、ProfileVersion 是否為 1、projection 的 Role 與 site，都在 lookup／寫入時比對，不讓整份 ledger 失效（spec §6.1、§6.5 都寫成「既有 entry…不符進 SEALED」）。decode 接受任何合法的 `DimensionRole`；`writeProjection` 要求 OVERWORLD。
 - **`projection()` 在未確認時也回 `UNCONFIRMED`**：controller 補充第 4 點只列 `lookupOrAppendAllocation`／`writeProjection`。但未確認的 PENDING 不能拿來決定寫方塊（spec §6 收斂共通第 2 點），所以查詢也一起拒絕。
-- **筆數上限**（controller 補充第 2 點）：兩個 ledger 都是 16384，沿用 M4 的 `MaxCandidateEntries`。理由：每筆 allocation 對應一個 `EAGER_ENABLED` 的宇宙，每次開服都會全部物化，實際遠低於此值；16384 筆的 NBT 約 3 MB，在讀檔的 16 MiB 預算之內。decode 在逐筆解碼前檢查（H1 的做法）；追加與新的 projection key 也先檢查，避免寫出讀不回來的檔案，或讓權威因為永遠失敗的寫入卡在未確認。已滿時回 `CORRUPT`（見「需要裁示」）。
+- **筆數上限**（controller 補充第 2 點）：兩個 ledger 都是 16384，沿用 M4 的 `MaxCandidateEntries`。理由：每筆 allocation 對應一個 `EAGER_ENABLED` 的宇宙，每次開服都會全部物化，實際遠低於此值。寫滿時以 `NbtSizeTracker` 實測的解碼計量是 projection 13,402,377 bytes（約 13.4 MB）、allocation 9,961,737 bytes（約 10.0 MB），都在讀檔的 16 MiB（16,777,216 bytes）預算之內，寫滿仍讀得回來。這組數字來自 spec reviewer 的 scratchpad 程式 `scratchpad\f2b-budget\BudgetProbe.java`（輸出在同目錄 `run.log`；projection 用極端座標與 COMPLETE），本輪沒有重測；fix round 1 的 `fullAllocationLedgerRejectsNewAppendsWithoutWriting`／`fullProjectionLedgerRejectsNewKeysWithoutWriting` 另以正式初始化路徑（16 MiB 預算）讀入 16384 筆，結果都是 `LOADED`。（首輪寫的「約 3 MB」是未經計量的估計，不正確。）decode 在逐筆解碼前檢查（H1 的做法）；追加與新的 projection key 也先檢查，避免寫出讀不回來的檔案，或讓權威因為永遠失敗的寫入卡在未確認。已滿時回 `CORRUPT`（controller 已裁定接受，見「裁示」）。
 - **讀檔的記憶體上限**：正式 `readFile` 最多讀 16 MiB＋1 bytes，超過由 `parse` 判為損壞；解壓後的 NBT 預算與 discovery 相同（16 MiB）。
 - **初始化有任何讀取失敗時，不建立另一個缺少的 ledger**：spec 允許 schema 4 之前補建，但失敗時沒有必要產生副作用；下次開服照常補建（W11 的情境不受影響）。
 - **執行期間的遺失偵測**：spec §6.1「執行期間發現檔案消失，一律視為遺失」。實作為每次 checked 寫入（追加、收斂）前確認正式檔仍存在；不存在就把該權威標為遺失（本 instance 一律 `CORRUPT`、不重建、記一次 ERROR）。純查詢不讀檔。
 - **靜態註冊方法叫 `registerEvents()`**：plan 的介面把 `initialize(MinecraftServer)` 定為 instance 方法，所以沒有再用同名的 static `initialize()`。
 
-### 需要裁示
+### 裁示（controller，2026-10-02，F2b review 之後）
 
-- **ledger 已滿時的 SEALED 原因**：目前回 `AUTHORITY_CORRUPT`（永久）。理由是 append-only 的 ledger 一旦達到上限就不會再有空間，自動重試（`ALLOCATION_IO_FAILED`／`PROJECTION_FAILED`）只會在退避後一再失敗。spec 沒有容量相關的原因；若希望維持可重試，只需要改 `A:374-376` 與 `:414-416` 的回傳狀態。
+- **ledger 已滿時的 SEALED 原因**：回 `AUTHORITY_CORRUPT`（永久），接受。理由是 append-only 的 ledger 一旦達到上限就不會再有空間，自動重試（`ALLOCATION_IO_FAILED`／`PROJECTION_FAILED`）只會在退避後一再失敗。權威層的預先檢查由 fix round 1 的測試鎖住。
+- **F4b 的唯讀列舉與健康 API**：由 F4b 依 plan `245785f` 在 `CollapseAuthorities.java` 新增（只限唯讀：列舉已確認的 projection entries、權威健康查詢）。健康只看初始化結果與執行期間的 `lost`，不看單次呼叫回的 `CORRUPT`（後者也涵蓋單筆不符與 ledger 已滿）。
 
 ### 觀察（未修改）
 
@@ -1427,10 +1428,55 @@ runtime 證據（plan Step 3「第一次在 runtime 寫出 schema 4 與 ledger �
 ### 交給後續
 
 - F2c：`CollapseAuthorities.Authority` 加入 discovery 與 catalog。ledger 的 `Slot`／`LedgerIo`／`checkedWrite` 只服務兩個 ledger；discovery 與 catalog 有各自的 store 與 port（決策 9），收斂旗標與退避可以沿用同一個 `CollapseBackoff`。
+- F2c（fix round 1 加入，quality review Q5，controller 指派）：`CollapseAuthorities.writeAtomic`／`verify` 與 `UniverseDiscoveryState.save`／`verifyReadback` 的「暫存檔、force、驗證暫存檔、atomic move、讀回 exact 比對」是重複的寫法；`LedgerNbt` 放在 `CollapseAuthorities` 裡，兩個 ledger 類別因此反過來依賴它。F2c 本來就要改 `UniverseDiscoveryState` 並加 IO port，屆時一起抽出共用 helper，並解開這個互相依賴。
 - F3d：提交 COLLAPSING 時，NEW 的 `Destination` 用 `UniverseAllocationLedger.deriveUniverseId(intent.allocationToken())`（§7.2，提交時不寫 ledger）。F2a 把「NEW 的 Destination 等於推導值」的 record 不變量留給 F2b／F4a，但 `SessionRecoveryRecord.java` 不在 F2b 的檔案清單，所以這個比對交給 F4a（RESOLVE 時以 `lookupOrAppendAllocation` 的 entry 與 `Destination` 比對，不符進 `AUTHORITY_CORRUPT`）或由 controller 指派。
 - F4a：`lookupOrAppendAllocation` 之前先呼叫 `convergeIfNeeded(ALLOCATION_LEDGER)`；結果的 `sealedReason()` 可直接用於 SEALED（`AUTHORITY_UNREADABLE` 是 `restartOnly`）。SEALED 的 WARN／ERROR 去重由 caller 負責；權威層級的 WARN（寫入未確認）、ERROR（初始化失敗、執行期間遺失）已由 `CollapseAuthorities` 記錄。
 - F4b：
-  - `projection()` 只看 key、不驗 site。既有 PENDING 要照第一次寫入處理時，先 `writeProjection(PENDING)`（回 `UNCHANGED` 即通過 site 驗證）再寫方塊；`INVALID_TRANSITION` 且帶回 COMPLETE 時改走修復路徑。
-  - §9.3 的 `ProjectionProtectionIndex` 需要列舉已確認的 projection entries，以及 ledger 是否健康（退化規則）。`CollapseAuthorities` 目前只有依 key 的查詢，而 F4b 的檔案清單沒有 `CollapseAuthorities.java`：需要 controller 把它列入 F4b，或另行決定提供方式。
+  - `projection()` 只看 key、不驗 site。決定第一次寫入或修復之前，先 `writeProjection(PENDING)` 取得 site 驗證：`WRITTEN`／`UNCHANGED`（既有 PENDING）照第一次寫入處理；`ALREADY_COMPLETE`（fix round 1 起，帶回既有的 COMPLETE）改走修復路徑；`CORRUPT` 進 SEALED。plan `245785f` 的 F4b 寫的是「回 INVALID_TRANSITION 並帶回 COMPLETE」，最終狀態名是 `ALREADY_COMPLETE`，由 controller 同步 plan。
+  - §9.3 的 `ProjectionProtectionIndex` 需要列舉已確認的 projection entries，以及權威健康（退化規則）：依 controller 裁示，由 F4b 依 plan `245785f` 在 `CollapseAuthorities.java` 新增唯讀 API（見「裁示」）。
   - 索引的 `SERVER_STARTED` listener 必須註冊在 `CollapseAuthorities.registerEvents()` 之後；任何更早的 `SERVER_STARTED` listener 都不能呼叫 `CollapseAuthorities.get(server)`（instance 在 `onStarted` 才建立）。
 - F7：寫入文件：M5 build 開服後，存檔的 `data/` 會多出 `quantumchamber_universe_allocations.dat` 與 `quantumchamber_projections.dat`；journal 一旦寫出 schema 4，就不能刪除這兩個檔（會被判為遺失）。
+
+### Fix round 1（`84acd2b`）
+
+- Review（首輪）：spec review ✅（Critical 0、Important 0、Minor 3），code quality review Approved（Critical 0、Important 0、Minor 6）。controller 指派本輪處理 Q1–Q4、Q6 與 spec M2；Q5 交給 F2c（見「交給後續」）。開工 HEAD 是 controller 的 plan docs commit `245785f`（只改 F4b 的允許路徑與兩條 RED 項）。
+- Commit `84acd2b` `fix: separate completed projections and lock the per-authority backoff`（parent `245785f`）：`CollapseAuthorities.java`、`UniverseAllocationLedger.java`（只改 `MAX_ENTRIES` 的 Javadoc）、`CollapseAuthoritiesTest.java`。本小節由其後的 docs commit 加入，同一個 commit 也改寫了上方的 Review 行、Code-truth 的 projection 列（加註）、「偏離」的筆數上限一條、「裁示」（原「需要裁示」）與「交給後續」的 F2c、F4b 兩條。
+- 行號以 `84acd2b` 為準；`A` 指 `collapse/CollapseAuthorities.java`。
+
+| 項目 | 處理 |
+| --- | --- |
+| Q1 成功後重置與以權威為單位的退避沒有鎖住 | 只補測試。`allocationReadbackFailureAfterTheMoveKeepsTheAppendAndConvergesBeforeTheNextUse` 在收斂成功、再追加一筆成功之後，於 tick 1300 再注入同一種讀回失敗：斷言 1499 不嘗試、1500（1300＋200）就重寫成功，WARN 共 2 則、「收斂完成」INFO 共 2 則。新增 `backoffIsPerAuthorityWhenFailuresAreStaggered`：allocation 在 1000、projection 在 1100 各自失敗；1199 兩者都不嘗試；1200 只有 allocation 重寫，projection 不嘗試、仍未確認；1299 仍未確認，1300 才重寫。成功時的重置在 `checkedWrite`（`A:508`） |
+| Q2 ledger 已滿沒有權威層測試 | 只補測試。新增 `fullAllocationLedgerRejectsNewAppendsWithoutWriting`、`fullProjectionLedgerRejectsNewKeysWithoutWriting`：以正式的單筆 `toNbt` 組出 16384 筆的檔案，`journal(4)` 初始化為兩個 `LOADED`（寫滿仍讀得回來）；新的追加或新 key 回 `CORRUPT`／`AUTHORITY_CORRUPT`，檔案 bytes 不變、IO port 沒有任何讀取（沒有嘗試寫入）、沒有暫存檔、權威沒有變成未確認；既有 token 照常 `FOUND`，既有 key 的 PENDING→COMPLETE 照常寫入。可選項也做了：`freshSaveCreatesBothEmptyLedgersAndItsFirstNewIsNotLost` 斷言初始化成功恰好記一則開頭為「M5 authority 初始化完成」的 INFO，而且沒有 ERROR |
+| Q3 `INVALID_TRANSITION` 混用 caller 錯誤與正常的「已 COMPLETE」 | `WriteResult`（`A:159-208`）移除 `INVALID_TRANSITION` 與 `invalid` factory，新增 `ALREADY_COMPLETE`：寫 PENDING 而既有 entry 已是 COMPLETE、site 驗證相同時回傳（`A:434`），帶既有的 COMPLETE entry，沒有 failure、沒有 SEALED 原因，`succeeded()` 為真；F4b 改走修復路徑。site 不符仍是 `CORRUPT`（判斷在前）。新 key 直接寫 COMPLETE 改為丟 `IllegalArgumentException`（`A:436`），比照 role 檢查；選這個而不保留 `INVALID_TRANSITION` 的理由：已確認的 PENDING 不會消失（不刪除 entry，遺失由閘門先回 `CORRUPT`），所以這種呼叫一定是 caller 的錯誤，保留成結果狀態只會讓每個 caller 處理一條到不了的分支。這個檢查在閘門之後，因為它依賴已確認的 ledger 內容。compact 建構子（`A:185-191`）改為「成功的三種狀態帶 entry、沒有原因與 failure；其餘沒有 entry、必須有原因與 failure」。**最終狀態名是 `ALREADY_COMPLETE`**；plan `245785f` 的 F4b 寫的「回 INVALID_TRANSITION 並帶回 COMPLETE 時改走修復路徑」需要由 controller 同步（plan 不在本輪允許路徑） |
+| Q4 Javadoc 的呼叫前提 | `lookupOrAppendAllocation`（`A:361-367`）與 `writeProjection`（`A:403-419`）：只能在本 session 的 COLLAPSING 已經 checked 落盤（journal flushed 已是 schema 4）之後呼叫，並寫明初始化的遺失判定依賴這個不變量；`writeProjection` 另列 role 與「COMPLETE 只能寫在已確認的 PENDING 之後」兩個前提。`get()`（`A:248-261`）：Javadoc 與例外訊息都改為指出原因（instance 在 `registerEvents()` 註冊的 `SERVER_STARTED` listener 裡才建立、在 `SERVER_STOPPED` 釋放；更早註冊的 `SERVER_STARTED` listener 與停服之後都不能呼叫），取代原本會誤導的「尚未開服或已停服」。`initialize(MinecraftServer)`（`A:263-270`）：註明只供 `registerEvents` 的 listener 呼叫一次。`projection()`（`A:390-401`）的 Javadoc 改指向 `UNCHANGED`／`ALREADY_COMPLETE` 的驗證路徑 |
+| Q6 暫存檔讀回不符時 WARN 去重失效 | `verify`（`A:546-557`）的訊息不再帶路徑，改為「`<authority>` 的暫存檔／正式檔 exact readback 不符（`<正式檔名>`）」。新增 `temporaryReadbackMismatchWarnsOncePerCause`：IO port 持續把暫存檔讀成另一份合法的空 ledger，追加失敗後在 1200、1600 各重試一次（斷言確實有讀取），WARN 只有 1 則而且不含 `.tmp`；之後移除注入，2400 收斂成功 |
+| spec M2 | `UniverseAllocationLedger.java:33-38` 與上方「偏離」的筆數上限一條，改為實測的 `NbtSizeTracker` 計量（projection 13,402,377 bytes、allocation 9,961,737 bytes，預算 16,777,216 bytes）。數字取自 spec reviewer 的 `scratchpad\f2b-budget\`（`BudgetProbe.java`、`run.log`），本輪沒有重測；Q2 的兩個 test 以正式初始化路徑讀入 16384 筆作為佐證。兩項裁示寫入「裁示」 |
+
+測試（`CollapseAuthoritiesTest`，JUnit +6，既有 test 有增改）：
+
+- 新增 `backoffIsPerAuthorityWhenFailuresAreStaggered`、`fullAllocationLedgerRejectsNewAppendsWithoutWriting`、`fullProjectionLedgerRejectsNewKeysWithoutWriting`、`temporaryReadbackMismatchWarnsOncePerCause`、`completedProjectionAnswersAlreadyCompleteWithTheExistingEntry`、`completeWithoutPendingIsACallerError`。
+- 改 `allocationReadbackFailureAfterTheMoveKeepsTheAppendAndConvergesBeforeTheNextUse`（Q1 的重置段）、`freshSaveCreatesBothEmptyLedgersAndItsFirstNewIsNotLost`（INFO 斷言）、`existingProjectionEntriesMustMatchTheSourceChamberAndOnlyAdvance`（拿掉 `INVALID_TRANSITION` 的兩個斷言，它們移到上面兩個新 test；另加「既有 COMPLETE 的 site 不符仍是 CORRUPT」與這些呼叫都不寫檔）。
+- 測試的 `LedgerIo` 增加「以指定 bytes 取代讀到的內容」的注入（`staleTemporary`），用來製造暫存檔的 exact 讀回不符。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f2b/fix1/`。diff hash 是 `git diff 245785f 84acd2b -- <path>` 輸出的 SHA-256：`src` `be5be75f…`、`src/main` `b2e0c279…`、`src/test` `9ae7a46f…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED | `245785f`；porcelain 為 ` M CollapseAuthorities.java`、` M CollapseAuthoritiesTest.java`（`fix1/red-state.txt`）。production 只多 `WriteResult.Status.ALREADY_COMPLETE` 一個 enum 常數，讓測試能編譯，沒有任何行為改變；測試檔與 GREEN 相同 | focused `collapse.*`（`fix1/red-junit.log`、`red-junit-cases.txt`、`red-TEST-CollapseAuthoritiesTest.xml`） | 預期 FAIL：34 個中 3 個，就是兩個行為修正的 3 個 test，原因全部是 `AssertionFailedError`：Q3 `completedProjectionAnswersAlreadyCompleteWithTheExistingEntry` 為 `expected: <ALREADY_COMPLETE> but was: <INVALID_TRANSITION>`、failure 不為空、`succeeded()` 為假；Q3 `completeWithoutPendingIsACallerError` 為「Expected IllegalArgumentException to be thrown, but nothing was thrown」；Q6 為 `expected: <1> but was: <3>`（三則 WARN 各帶不同的 `.tmp` 路徑）。其餘 31 個通過，其中 Q1、Q2 與 INFO 斷言是只補覆蓋，以 mutation 證明（下表） |
+| RED 第一次（保留） | 同上，但 Q3 的斷言還在 `existingProjectionEntriesMustMatchTheSourceChamberAndOnlyAdvance` 裡（`fix1/red1/`） | 同上 | 32 個中 2 個失敗，原因都是 `AssertionFailedError`；但 `assertAll` 的第一組失敗之後，`ALREADY_COMPLETE` 的斷言沒有執行到。為了讓兩個目標斷言各自在 RED 失敗，拆成上面兩個新 test 後重跑，就是上一列 |
+| mutation | GREEN 工作樹，每個 mutation 單獨套用、只跑 `CollapseAuthoritiesTest`，跑完還原並以 `git hash-object` 核對（`fix1/mutations.ps1`、`mutations/summary.txt`、`F-*.log`、`F-*-TEST.xml`） | 6 個 | 全部被目標 test 抓到（下表）；跑完後 `CollapseAuthorities.java` 的 blob 與 mutation 前相同 |
+| GREEN focused | 工作樹，blob 與 `84acd2b` 相同（`fix1/green-state.txt`、`commit-blobs.txt`） | `fix1/green-focused.log` | 34/34 |
+| GREEN JUnit 全部 | 同上 | `fix1/green-junit-all.log` | 518，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`），比首輪多 6，就是本輪新增的 6 個 test |
+| GREEN Full | 同上 | `gate-f2b-fix1-green-full-7b226c11a19648b0ac71e5e1a052e18e` | PASS：default GameTest 153/153（`_windows` 79）、boundary PASS、per-test receipt 35/35、world exact restore；JUnit 518；release 337 entries／293 classes、sources 204，entry 清單與首輪完全相同（`fix1/green-jar-delta.txt`；`ALREADY_COMPLETE` 取代 `INVALID_TRANSITION`，同一個 enum class）；testmod 命中 0 |
+
+| Mutation | 改動 | 失敗的 test（目標） |
+| --- | --- | --- |
+| F-1 | 成功之後不重置退避（刪 `backoff.reset()`） | `allocationReadbackFailureAfterTheMoveKeepsTheAppendAndConvergesBeforeTheNextUse`（「1300＋200 到期就重寫」） |
+| F-2 | 成功之後不清除 WARN 去重鍵（刪 `warned = null`） | 同上（WARN `expected: <2> but was: <1>`） |
+| F-3 | 兩個權威共用同一個退避（4 處 `slot.backoff` 改成 `allocation.backoff`） | `backoffIsPerAuthorityWhenFailuresAreStaggered`（「allocation 在 1000＋200 到期就重寫」）；同一個 mutation 也讓 Q1 的 test 失敗 |
+| F-4 | 拿掉 allocation 已滿的預先檢查 | `fullAllocationLedgerRejectsNewAppendsWithoutWriting`：ledger 的 `IllegalArgumentException`（「allocation ledger 已達 16384 筆上限」）外洩 |
+| F-5 | 拿掉 projection 新 key 已滿的預先檢查 | `fullProjectionLedgerRejectsNewKeysWithoutWriting`：同上（「projection ledger 已達 16384 筆上限」）外洩 |
+| F-6 | 初始化成功改記 DEBUG | `freshSaveCreatesBothEmptyLedgersAndItsFirstNewIsNotLost`（INFO `expected: <1> but was: <0>`） |
+
+- 本輪不跑 Legacy、Main＋oracle、M3 與 M4 recovery（controller 指示）：改動只在 `writeProjection` 的結果狀態（runtime 沒有呼叫點）、`verify` 的例外訊息、`get()` 的例外訊息與 Javadoc；`registerEvents`、`onStarted` 與初始化流程（`examine`、`load`、`createIfAbsent`）都沒有改。
+- Full gate 在 commit 之前以工作樹執行；commit 時 3 個檔的 blob 與 gate 前記錄的相同。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
