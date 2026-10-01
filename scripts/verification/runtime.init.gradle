@@ -1,0 +1,13 @@
+// runtime.init.gradle：所有 gate 的 Gradle 呼叫都以 -I 載入。run* JavaExec 接上 stdin（harness 以 stdin 送 save-all／stop），
+// 並把 JVM class-load 紀錄寫到 runDir 的 classload-<pid>.log（main-only oracle 第三層）。
+// 來源：.superpowers/sdd/2026-09-21-m4-candidate-doors/task9-runtime.init.gradle（SHA-256 40cccdea23acc6520e92ab03198acd2881132b54962dfca53216e4679dbe75e0）；內容未改，只加本註解。
+allprojects {
+    afterEvaluate {
+        tasks.withType(JavaExec).configureEach {
+            if (name.startsWith('run')) {
+                standardInput = System.in
+                jvmArgs '-Xlog:class+load=info:file=classload-%p.log'
+            }
+        }
+    }
+}

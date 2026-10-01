@@ -1,0 +1,16 @@
+// probe.init.gradle：gates.ps1 -Mode M3 另外以 -I 載入。把 -Ptask9.<phase|nonce|startupNonce|root|evidenceOwner> 轉成
+// runM3Universe（quantumchamber.m3.*）與 runM3Transfer（quantumchamber.m3transfer.*）的 system property。
+// 來源：.superpowers/sdd/2026-09-21-m4-candidate-doors/task9-probe.init.gradle（SHA-256 3d14ca4f399a8cc75797b12f4d38c73b02ca149500ef024c53f212634e3c678d）；內容未改，只加本註解。
+allprojects {
+    afterEvaluate {
+        tasks.withType(JavaExec).configureEach {
+            if (name in ['runM3Universe', 'runM3Transfer']) {
+                ['phase','nonce','startupNonce','root','evidenceOwner'].each { suffix ->
+                    def prefix = name == 'runM3Universe' ? 'quantumchamber.m3.' : 'quantumchamber.m3transfer.'
+                    def property = 'task9.' + suffix
+                    if (project.hasProperty(property)) systemProperty(prefix + suffix, project.property(property))
+                }
+            }
+        }
+    }
+}
