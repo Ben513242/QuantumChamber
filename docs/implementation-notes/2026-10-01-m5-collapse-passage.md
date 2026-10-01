@@ -715,48 +715,62 @@ GREEN log 中的對應行：double fault 依序為「收斂寫出失敗」WARN �
 - Commits（parent `0c04bd4`），只改派工列出的檔案：
   - `355a3c0` `fix: send position corrections while recovery freezes movement`：production `ServerPlayNetworkHandlerRecoveryMixin.java`、`SessionRecoveryManager.java`（只有凍結判斷與節流狀態）、`quantumchamber.mixins.json`；testmod `M2CorridorGameTests.java`（新增 GameTest）。
   - `29bba37` `test: compare raw yaw and pitch, rename the testmod`：testmod `M2CorridorGameTests.java`（yaw／pitch 斷言）、`src/testmod/resources/fabric.mod.json`。
-  - Code range `0c04bd4..29bba37`；本段由其後的 docs commit 加入。
-- Review：尚未進行。
+  - Code range `0c04bd4..29bba37`；`1c4b432` 是本段的 docs commit。
+  - `a534184`（fix round 1，parent `1c4b432`）：`ServerPlayNetworkHandlerRecoveryMixin.java`、testmod `M2CorridorGameTests.java`。本段的 fix round 1 文字由其後的 docs commit 加入。內容見下方「Fix round 1」。
+- Review：
+  - 首輪 spec review：✅，Minor 3。
+  - 首輪 code quality review：Critical 0、Important 0、Minor 6。fix round 1 處理 spec Minor 3 與 quality Minor 1–5；quality Minor 6（testmod 共用的 outbound 讀取 helper）由 controller 交給 F3d。
+  - fix round 1 尚未 re-review。
 
-### Code-truth（`29bba37`）
+### Code-truth（`a534184`）
 
 | 項目 | 位置 | 行為 |
 | --- | --- | --- |
 | 單一凍結判斷 | `SessionRecoveryManager.freezes`（`:64-71`）；`blocks`（`:50-62`） | `freezes(record, player)`：狀態為 RETURNING 或 MEASURED，且該玩家是尚未 checked 返還的參與者。`blocks` 對 current 與 flushed 都改用它，語意不變；JOIN 排隊與斷線待處理和 record 無關，仍留在 `blocks`。F3d 只需要把 COLLAPSING 加進 `freezes` 的狀態條件 |
 | 節流 | `correctionDue`（`:73-83`）、`corrections`（`:36-38`）、`CORRECTION_INTERVAL_TICKS=10`（`:41-42`）；`tick`（`:100-104`）、`detach`（`:204-207`） | 以 `server.getTicks()` 計，同一玩家 10 ticks 內最多一次；回 true 時記下本次。玩家移動與載具移動共用同一個節流 |
 | 玩家位置修正 | mixin `quantumchamber$holdPlayerMovement`（`:23-34`） | 見下方「位置修正與原版 teleport 流程」 |
-| 騎乘 | mixin `quantumchamber$holdVehicleMovement`（`:36-45`） | 見下方「騎乘」 |
+| 騎乘 | mixin `quantumchamber$holdVehicleMovement`（`:36-48`） | 見下方「騎乘」 |
 | `defaultRequire: 1` | `quantumchamber.mixins.json:6-8` | main 的每個 injector 都必須命中，否則啟動失敗。原本以單一 injector 同時注入 `onPlayerMove` 與 `onVehicleMove`，`require` 以整個 injector 的成功數計算，其中一個失配仍會通過；拆成兩個 injector 後各自受檢 |
 | `@Unique` | mixin | 本 task 沒有新增 mixin 欄位；唯一的欄位 `player` 是 `@Shadow`，不需要 `@Unique`。節流狀態放在 `SessionRecoveryManager`，不放在 handler 上 |
-| ±0 斷言 | `M2CorridorGameTests.java:1675-1677` | `context.assertEquals`（裝箱，`Float.equals` 區分 +0 與 -0）改為原始 float `==`，訊息帶兩邊的值。目前沒有 -0 fixture，結果不變 |
+| ±0 斷言 | `M2CorridorGameTests.java:1679-1681` | `context.assertEquals`（裝箱，`Float.equals` 區分 +0 與 -0）改為原始 float `==`，訊息帶兩邊的值。目前沒有 -0 fixture，結果不變 |
 | testmod 名稱 | `src/testmod/resources/fabric.mod.json:5` | 「QuantumChamber M1–M2 原生驗證」→「QuantumChamber 原生驗證 testmod」。Fabric 的 mod list 只印 id 與版本，main-only oracle 以 mod id 比對，`scripts/verification/` 與 `.github/` 都沒有引用這個名稱 |
 
 **位置修正與原版 teleport 流程**（以 javap 讀 1.21 Yarn 的 `ServerPlayNetworkHandler`、`ClientPlayNetworkHandler`、`ServerPlayerEntity` 確認）：
 
 - 被凍結的玩家送出 `PlayerMoveC2SPacket`：照舊在 `forceMainThread` 之後取消，不進原版的移動處理。`correctionDue` 允許時，呼叫原版 `requestTeleport(x, y, z, yaw, pitch, {Y_ROT, X_ROT})`，座標是伺服器現值。
-- 原版 `requestTeleport` 設定待確認的位置與新的 teleport id，以同一個位置呼叫 `updatePositionAndAngles`（伺服器端狀態不變），再送 `PlayerPositionLookS2CPacket`。客戶端收到後設定位置、把絕對軸的速度歸零，回 `TeleportConfirmC2SPacket` 與一個 `Full` 移動封包。ACK 照常由沒有被攔截的 `onTeleportConfirm` 處理：id 相符時把位置設為請求值，並清掉待確認。之後的移動封包仍被凍結，也受節流，所以不會來回觸發。
+- 原版 `requestTeleport` 設定待確認的位置與新的 teleport id，以同一個位置呼叫 `updatePositionAndAngles`（位置與朝向不變；會重設 `prevX／Y／Z`、`prevYaw／prevPitch` 這些插值欄位與 handler 的待確認 teleport 狀態），再送 `PlayerPositionLookS2CPacket`。客戶端收到後設定位置、把絕對軸的速度歸零，回 `TeleportConfirmC2SPacket` 與一個 `Full` 移動封包。ACK 照常由沒有被攔截的 `onTeleportConfirm` 處理：id 相符時把位置設為請求值，並清掉待確認。之後的移動封包仍被凍結，也受節流，所以不會來回觸發。
 - 不會讓客戶端卡在等待 ACK：每一次修正都有新的 id，客戶端對每一則都回 ACK，最後一則相符。舊 id 的 ACK 原版直接忽略；只有「id 相符但沒有待確認」才會斷線，這個流程不會發生。
 - 不與伺服器的移動衝突：返還移動（`SessionTransferService.move` → `ServerPlayerEntity.teleportTo`，同世界與跨世界兩條分支都呼叫 `requestTeleport`）會換新的 id，先前修正的 ACK 不再生效，不會把玩家拉回舊座標。修正的目標永遠是送出當下的伺服器位置。
 - 原版 `onPlayerMove` 在 `notInAnyWorld`（終界結尾畫面）時直接 return，不處理 teleport；修正同樣略過。
 - 視角：凍結期間伺服器的 yaw／pitch 不再更新。以絕對值送出的話，每 10 ticks 會把鏡頭拉回舊朝向，所以 yaw／pitch 以相對 0 送出，客戶端保留自己的視角。
 - 節流狀態的清理：`corrections` 是「玩家 → 最近一次修正的 server tick」。過期的項目與不存在等價，`tick` 在 journal 健康檢查之前移除已滿 10 ticks 的項目（journal 不健康時 `blocks` 仍會攔截並修正），所以 map 只留最近 10 ticks 內修正過的玩家；玩家斷線或 session 結束後，最多再留一個間隔。`detach` 全部清除。沒有把節流狀態放在 handler 上，也沒有用 handler 的 `ticks`：GameTest 的嵌入式連線不經 `NetworkIo` 輪詢，handler 的 `ticks` 不會前進。
 - 玩家持續按著移動鍵時，客戶端最多先走 10 ticks 再被拉回（rubber-band）。這是節流的取捨，間隔是常數。
+- 節流在窗口開始時送出修正，窗口內不補送。放開按鍵後，最後一段位移要等客戶端下一個移動封包才會修正；原版客戶端靜止時至少每 20 ticks 送一次位置（`ClientPlayerEntity.sendMovementPackets` 的 `ticksSinceLastPositionPacketSent >= 20`），所以最長約 20 ticks＋RTT。
 
 **騎乘（`onVehicleMove`）：修正載具，不修正玩家。**
 
 - 騎乘中的客戶端只送只帶視角的 `PlayerMoveC2SPacket.LookAndOnGround`；原版 `onPlayerMove` 對騎乘中的玩家也只採用視角，位置由載具決定。所以騎乘時 `holdPlayerMovement` 只取消、不修正玩家；對騎乘中的玩家 `requestTeleport` 反而會和載具位置衝突。
-- 漂移來自客戶端控制的載具（`VehicleMoveC2SPacket`）。`holdVehicleMovement` 在根載具不是玩家本身時，送 `VehicleMoveS2CPacket(rootVehicle)`，與原版 `onVehicleMove` 拒絕載具移動時送的修正相同；客戶端只在自己控制該載具（`isLogicalSideForUpdatingMovement`）時套用，並回一個 `VehicleMoveC2SPacket`（仍被凍結、受節流）。
+- 漂移來自客戶端控制的載具（`VehicleMoveC2SPacket`）。`holdVehicleMovement` 只在原版 `onVehicleMove` 會處理的情況下修正：根載具不是玩家本身，而且 `getControllingPassenger()==player`。這時送 `VehicleMoveS2CPacket(rootVehicle)`，與原版拒絕載具移動時送的修正相同；客戶端只在自己控制該載具（`isLogicalSideForUpdatingMovement`）時套用，並回一個 `VehicleMoveC2SPacket`（仍被凍結、受節流）。其他情況原版也直接忽略封包，這裡只取消，不消耗節流。
+- 與原版的唯一差異（javap 確認）：原版還要求根載具等於 handler 的 `topmostRiddenEntity`。原版 `tick()` 每 tick 把它設為 `getRootVehicle()`，根載具就是玩家本身或不由玩家控制時改設 null，所以它是同一條件在上一個 handler tick 的快照。兩者只在剛上車、換載具或剛取得控制的那一個 tick 不同：原版忽略該封包，這裡送回的仍是載具的伺服器位置。為此 shadow 一個 private 欄位不划算，所以不比對。
 - 走廊世界只接受玩家、掉落物、投射物與經驗球（`SuperpositionEntityPolicy`），沒有載具。這條路徑只適用於不在走廊、尚未返還的參與者（例如 ARMING 期間離開原艙的 RETURNING 參與者），沒有 GameTest 覆蓋，只靠 code review。
 
-### 測試（`355a3c0`、`29bba37`）
+**`defaultRequire: 1` 給後續 task 的指引**：
 
-GameTest（+1，`_windows` +1）：`native_frozen_movement_gets_throttled_position_corrections_windows`（batch `m5_h4_freeze_correction`，`M2CorridorGameTests.java:1008-1091`）：
+- 之後新增的 main injector 自動受 `require=1` 約束：target 改名或簽名不符時，server 啟動就失敗。刻意可選的 injector 要明寫 `require=0`，並在註解寫明理由。
+- 同一個 injector 用 `method={...}` 注入多個方法時，`require` 以整個 injector 的成功數計算（Mixin `InjectionInfo` 每個 injector 只有一個計數），其中一個失配仍會通過。需要每個 target 都命中時要拆開，如本 task 的 `onPlayerMove`／`onVehicleMove`。
+- testmod 的 `quantumchamber-test.mixins.json` 沒有 `defaultRequire`。fault mixin 失配時不會失敗，只能靠各 test 的命中計數（例如 `hits`）斷言發現。
+- 相容性取捨：其他模組若改寫 `onPlayerMove`／`onVehicleMove`，讓本 mod 的注入點消失，server 會在啟動時 fail closed，而不是默默失去凍結。README 的說明由 F7 處理。
+
+### 測試（`355a3c0`、`29bba37`、`a534184`）
+
+GameTest（+1，`_windows` +1）：`native_frozen_movement_gets_throttled_position_corrections_windows`（batch `m5_h4_freeze_correction`，`M2CorridorGameTests.java:1008-1095`）：
 
 - 一人入場後，以既有的 `TeleportExceptionFault` 讓返還移動持續失敗，再以 LOW 觸發返還；等 durable RETURNING 且 recovery 至少嘗試過一次移動，玩家就停在走廊、被凍結。
 - 先讀掉既有的 outbound 封包。同一 tick 連送 20 個 `Full` 移動封包（每個往 +x 多漂 0.125 格、yaw 加 1 度），之後連續 20 ticks 每 tick 送一個；每次都立即讀出 outbound 的 `PlayerPositionLookS2CPacket`（讀法沿用 M4 `messages()`：先 flush 再讀）。
-- witness：`stillFrozen`（仍是 durable RETURNING、在走廊、`blocks` 為真）、`serverPositionHeld`（伺服器位置不變）、`burstCorrectedOnce`（同一 tick 的 20 個只修正一次）、`spreadCorrectedAtMostTwice`（連續 20 ticks 修正 1～2 次）、`throttledPerPlayer`（任兩次修正相隔 ≥ 10 server ticks）、`serverAuthoritativePosition`（修正的座標 exact 等於伺服器位置）、`viewNotPulledBack`（flags 恰為 `{Y_ROT, X_ROT}`，yaw、pitch 為 0）。
+- witness：`stillFrozen`（仍是 durable RETURNING、在走廊、`blocks` 為真）、`serverPositionHeld`（伺服器位置不變）、`burstCorrectedOnce`（同一 tick 的 20 個只修正一次）、`spreadCorrectedAtExactInterval`（burst 在 server tick S 時，之後 20 ticks 的修正恰在 `List.of(S+interval, S+2*interval)`；`interval` 讀 `SessionRecoveryManager.CORRECTION_INTERVAL_TICKS`，不寫字面值）、`correctionsSpacedByInterval`（任兩次修正相隔 ≥ `interval`）、`serverAuthoritativePosition`（修正的座標 exact 等於伺服器位置）、`viewNotPulledBack`（flags 恰為 `{Y_ROT, X_ROT}`，yaw、pitch 為 0）。
 - 收尾：移除 fault，等 recovery 正常返還、record checked 移除，玩家在來源艙；per-test Universe probe PASS。
 - 沒有新增 JUnit（派工的檔案清單不含 JUnit 測試檔）；節流由這個 GameTest 覆蓋。
+- 只有一位玩家；「節流是每位玩家各自計算」沒有在 H4 覆蓋，controller 交給 F3d 的 COLLAPSING 凍結 GameTest。
 
 ### Gate 與證據
 
@@ -796,6 +810,32 @@ GREEN 數字（兩次 Full 相同）：
 - M4 recovery 24/24 phases，24 個獨立 JVM；每個 phase 的 Gradle exit 0，正常停止，lock 已釋放。
 
 GREEN log 中，新 test 的 fault 造成「原生移動例外，保留 pending 等待重試」與「返還移動尚未確認」WARN 各一則，與既有的 `native_return_move_exception_logs_cause_once_then_recovers_windows` 相同（另一組就是它的）。
+
+### Fix round 1（`a534184`）
+
+處理首輪 spec review 的 Minor 3，以及 code quality review 的 Minor 1–5：
+
+| 項目 | 處理 |
+| --- | --- |
+| quality Minor 1 測試沒有鎖住精確間隔 | 新 witness `spreadCorrectedAtExactInterval`（`M2CorridorGameTests.java:1042-1043`）：burst 只有一次時，之後 20 ticks 的修正 server tick 必須恰為 `List.of(S+interval, S+2*interval)`。原本的 `spreadCorrectedAtMostTwice` 由它取代。`interval` 讀 `SessionRecoveryManager.CORRECTION_INTERVAL_TICKS`（本來就是 `public static final`，值 10，未修改），測試裡不再有字面值 10；javadoc 與失敗訊息（印出 `interval`、burst 與 spread 的 tick）同步 |
+| quality Minor 2 witness 名稱過寬 | `throttledPerPlayer` 改名 `correctionsSpacedByInterval`（`:1044-1045`）。只有一位玩家，「各玩家獨立節流」不在 H4 補，controller 交給 F3d 的 COLLAPSING 凍結 GameTest |
+| quality Minor 3／spec Minor 3 note 用語 | 「伺服器端狀態不變」改為位置與朝向不變、但會重設插值欄位與待確認 teleport 狀態；補上節流在窗口開始時送、窗口內不補送，放開按鍵後最後一段位移最長約 20 ticks＋RTT 才修正（見上方「位置修正與原版 teleport 流程」） |
+| quality Minor 4 `defaultRequire` 的指引 | 見上方「`defaultRequire: 1` 給後續 task 的指引」的四點：新 injector 自動受 `require=1` 約束、刻意可選要明寫 `require=0` 與理由；`method={...}` 多目標要拆開；testmod 沒有 `defaultRequire`；其他模組改寫目標方法時啟動 fail closed（README 由 F7 處理） |
+| quality Minor 5 載具條件 | `holdVehicleMovement`（mixin `:36-48`）改為只有在根載具不是玩家、而且 `getControllingPassenger()==player` 時才送 `VehicleMoveS2CPacket` 並消耗節流；其他情況只取消。javap 確認原版的第三個條件 `topmostRiddenEntity` 是同一條件的上個 tick 快照，不比對的理由寫在註解與上方「騎乘」 |
+
+載具分支仍沒有 GameTest（走廊世界沒有載具），只靠 code review。
+
+證據在 `h4/fix1/`。diff hash 是 `git diff 1c4b432 a534184 -- <path>` 輸出的 SHA-256：`src` `5c075cdb…`（與 GREEN 工作樹的 diff 相同）、`src/main` `bb9f3f64…`、`src/testmod` `c509882f…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED：新斷言＋暫時 mutation | `1c4b432`；`M2CorridorGameTests.java` 的新斷言，加上把 `correctionDue` 的 `now-last<CORRECTION_INTERVAL_TICKS` 暫時改成 `<=`，實際間隔變 11（`h4/fix1/red-state.txt`，diff `bdd3b6e6…`） | Full＋onlyBatches `gate-h4-fix1-red-7bf59df9a40644bd975e7e8ba40c4152` | 預期 FAIL：1/1（JUnit 441 全過）。只有 `spreadCorrectedAtExactInterval=false`：`interval=10 burstTicks=[1193] spreadTicks=[1204]`（S+11；S+22 已超出 20 ticks）。同一份資料下，舊的三個斷言（burst 一次、spread 1～2 次、間隔 ≥ 10）都成立，所以舊 test 抓不到這個 mutation。mutation 已還原，blob 與 `1c4b432` 相同 |
+| GREEN Full | `1c4b432`＋mixin＋testmod（`h4/fix1/green-state.txt`，blob 與 `a534184` 逐一相同） | `gate-h4-fix1-green-full-ffbfbccbe28744ee81c108bcea1cd5e8` | PASS |
+| GREEN Main＋oracle | 同上 | `gate-h4-fix1-green-main-482abfedebbd4af8871101dd3f4490b1` | PASS；`main-oracle.ps1` PASS |
+
+GREEN 數字與首輪相同：default GameTest 153/153（`_windows` 79），0 failure／error／skipped；boundary oracle PASS；per-test receipt 35/35；JUnit 441（2 skipped，只在 `NonWindowsPlayerCheckpointStoreTest`）；release 308 entries（265 classes）、sources 195，testmod 命中只有 `ModPresenceProbe`。Full 與 Main 兩次啟動，14 個 main mixin target class 都已載入，沒有 injection 錯誤。main-only oracle：layer 2／3 命中為空、world keys exact、正常停止、exact restore。
+
+Legacy 與 M4 recovery 依 controller 指示省略：本輪只改移動封包 mixin 的載具條件與一個 GameTest，不碰 journal、返還路徑或 recovery。
 
 ### 觀察（未修改）
 
