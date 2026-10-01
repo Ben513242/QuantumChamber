@@ -503,7 +503,7 @@ public final class CorridorPageManager {
                 space.operations++;
                 try {
                     boolean changed=new ChamberDoorService().toggle(new WorldChamberBlockView(world),
-                            (position,open) -> write(position,world.getBlockState(position).with(QuantumBulkheadBlock.OPEN,open)),
+                            (position,open) -> write(position,QuantumBulkheadBlock.withOpen(world.getBlockState(position),open)),
                             ChamberMutationExecutor.DIRECT,CorridorGeometry.entrance(known.get(),space.semantics));
                     if (!changed) {
                         fail(space,new IllegalStateException("入口整面門交易被拒絕")); return Optional.of(denied);

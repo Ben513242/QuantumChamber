@@ -1,0 +1,18 @@
+{
+  "ambientocclusion": false,
+  "textures": {
+    "particle": "quantumchamber:block/quantum_membrane",
+    "membrane": "quantumchamber:block/quantum_membrane"
+  },
+  "elements": [
+    {
+      "from": [0, 0, 8],
+      "to": [16, 16, 8],
+      "shade": false,
+      "faces": {
+        "north": {"uv": [0, 0, 16, 16], "texture": "#membrane"},
+        "south": {"uv": [0, 0, 16, 16], "texture": "#membrane"}
+      }
+    }
+  ]
+}

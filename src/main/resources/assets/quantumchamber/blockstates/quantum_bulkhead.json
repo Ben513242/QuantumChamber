@@ -1,6 +1,10 @@
 {
   "variants": {
     "open=false": { "model": "quantumchamber:block/quantum_bulkhead" },
-    "open=true": { "model": "minecraft:block/air" }
+    "membrane=none,open=true": { "model": "minecraft:block/air" },
+    "membrane=sealed_x,open=true": { "model": "quantumchamber:block/quantum_bulkhead_membrane" },
+    "membrane=passable_x,open=true": { "model": "quantumchamber:block/quantum_bulkhead_membrane" },
+    "membrane=sealed_z,open=true": { "model": "quantumchamber:block/quantum_bulkhead_membrane", "y": 90 },
+    "membrane=passable_z,open=true": { "model": "quantumchamber:block/quantum_bulkhead_membrane", "y": 90 }
   }
 }
