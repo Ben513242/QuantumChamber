@@ -32,8 +32,9 @@ public final class UniverseAllocationLedger {
     static final int SCHEMA_VERSION = 1;
     /**
      * 逐筆解碼前檢查的筆數上限（沿用 H1 為 M4 candidate ledger 加的做法：先比對 list 長度，再逐筆解碼）。數值沿用 M4 的
-     * {@code MaxCandidateEntries}（16384）：每筆對應一個 EAGER_ENABLED 的宇宙，每次開服都會全部物化，實際上遠低於此值；
-     * 16384 筆的 NBT 約 3 MB，在讀檔的 16 MiB 預算之內。追加時也先檢查，不寫出讀不回來的檔案。
+     * {@code MaxCandidateEntries}（16384）：每筆對應一個 EAGER_ENABLED 的宇宙，每次開服都會全部物化，實際上遠低於此值。
+     * 寫滿時以 {@code NbtSizeTracker} 實測的解碼計量：allocation 約 10.0 MB、projection 約 13.4 MB，都在讀檔的 16 MiB 預算之內，
+     * 寫滿仍讀得回來。追加時也先檢查，不寫出讀不回來的檔案。
      */
     public static final int MAX_ENTRIES = 16384;
     private static final Set<String> ROOT_KEYS = Set.of("SchemaVersion", "Entries");

@@ -14,6 +14,7 @@ import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
 import dev.quantumchamber.universe.UniverseId;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -55,7 +56,13 @@ class CollapseAuthoritiesTest {
         var journal = new SessionRecoveryState();
         assertFalse(journal.m5Evidence());
         var authorities = authorities(save);
-        var result = authorities.initialize(() -> journal);
+        CollapseAuthorities.InitResult result;
+        try (var logs = new Logs()) {
+            result = authorities.initialize(() -> journal);
+            assertEquals(1, logs.messages(Level.INFO).stream().filter(message -> message.startsWith("M5 authority 初始化完成")).count(),
+                    () -> "初始化成功記一則 INFO：" + logs.messages(Level.INFO));
+            assertEquals(List.of(), logs.messages(Level.ERROR));
+        }
         assertAll(
             () -> assertTrue(result.succeeded(), () -> "初始化必須成功：" + result),
             () -> assertEquals(Outcome.CREATED, result.allocation()),
@@ -265,19 +272,56 @@ class CollapseAuthoritiesTest {
             () -> assertEquals(WriteResult.Status.CORRUPT, authorities.writeProjection(moved).status()),
             () -> assertEquals(Optional.of(SealedReason.AUTHORITY_CORRUPT), authorities.writeProjection(turned).sealedReason()),
             () -> assertEquals(WriteResult.Status.UNCHANGED, authorities.writeProjection(pending).status()),
-            () -> assertEquals(WriteResult.Status.INVALID_TRANSITION, authorities.writeProjection(pending(UniverseId.of(UUID.randomUUID())).withStatus(Status.COMPLETE)).status(),
-                    "沒有 PENDING 不能直接 COMPLETE"),
             () -> assertThrows(IllegalArgumentException.class, () -> authorities.writeProjection(new ProjectionLedger.Entry(CHAMBER, existingUniverse(),
                     DimensionRole.NETHER, CONTROLLER, Direction.NORTH, Status.PENDING)), "本切片的投影只有 OVERWORLD"));
         assertEquals(reads, io.reads.size(), "被拒或沒有變更的寫入不碰檔案");
         assertArrayEquals(afterPending, Files.readAllBytes(projectionFile(save)));
         var complete = pending.withStatus(Status.COMPLETE);
         assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(complete).status());
-        var regression = authorities.writeProjection(pending);
-        assertEquals(WriteResult.Status.INVALID_TRANSITION, regression.status(), "COMPLETE 不能退回 PENDING");
-        assertEquals(Optional.of(complete), regression.entry(), "帶回既有的 COMPLETE，caller 改走修復路徑");
+        byte[] afterComplete = Files.readAllBytes(projectionFile(save));
+        int readsAfterComplete = io.reads.size();
+        var movedPending = new ProjectionLedger.Entry(CHAMBER, existingUniverse(), DimensionRole.OVERWORLD, CONTROLLER.up(), Direction.NORTH, Status.PENDING);
+        assertEquals(WriteResult.Status.CORRUPT, authorities.writeProjection(movedPending).status(), "既有 COMPLETE 的 site 不符仍是 CORRUPT");
         assertEquals(WriteResult.Status.UNCHANGED, authorities.writeProjection(complete).status());
+        assertEquals(readsAfterComplete, io.reads.size(), "CORRUPT／UNCHANGED 都不寫檔");
+        assertArrayEquals(afterComplete, Files.readAllBytes(projectionFile(save)));
         assertEquals(List.of(complete), diskProjectionLedger(save).entries());
+    }
+
+    /** 既有 entry 已是 COMPLETE 時寫 PENDING 不是錯誤：site 驗證通過後回 ALREADY_COMPLETE 並帶回既有內容，F4b 改走修復路徑（§9.2）。 */
+    @Test void completedProjectionAnswersAlreadyCompleteWithTheExistingEntry() throws Exception {
+        var save = save("projection-already-complete");
+        var authorities = authorities(save);
+        assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
+        var pending = pending(existingUniverse());
+        var complete = pending.withStatus(Status.COMPLETE);
+        assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(pending).status());
+        assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(complete).status());
+        byte[] before = Files.readAllBytes(projectionFile(save));
+        int reads = io.reads.size();
+        var already = authorities.writeProjection(pending);
+        assertAll(
+            () -> assertEquals(WriteResult.Status.ALREADY_COMPLETE, already.status(), "既有 COMPLETE 不退回 PENDING"),
+            () -> assertEquals(Optional.of(complete), already.entry(), "帶回既有的 COMPLETE"),
+            () -> assertEquals(Optional.empty(), already.failure(), "ALREADY_COMPLETE 不是失敗"),
+            () -> assertEquals(Optional.empty(), already.sealedReason()),
+            () -> assertTrue(already.succeeded()));
+        assertEquals(reads, io.reads.size(), "ALREADY_COMPLETE 不寫檔");
+        assertArrayEquals(before, Files.readAllBytes(projectionFile(save)));
+    }
+
+    /** 沒有 PENDING 就直接寫 COMPLETE 是 caller 的錯誤（比照 role 檢查直接丟例外），不寫檔。 */
+    @Test void completeWithoutPendingIsACallerError() throws Exception {
+        var save = save("projection-complete-without-pending");
+        var authorities = authorities(save);
+        assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
+        byte[] before = Files.readAllBytes(projectionFile(save));
+        int reads = io.reads.size();
+        assertThrows(IllegalArgumentException.class, () -> authorities.writeProjection(pending(existingUniverse()).withStatus(Status.COMPLETE)),
+                "沒有 PENDING 就直接寫 COMPLETE");
+        assertEquals(reads, io.reads.size(), "不寫檔");
+        assertArrayEquals(before, Files.readAllBytes(projectionFile(save)));
+        assertEquals(Lookup.Status.ABSENT, authorities.projection(CHAMBER, existingUniverse()).status());
     }
 
     // ---- checked 寫入失敗的收斂（spec §6 roll-forward） ----
@@ -314,11 +358,136 @@ class CollapseAuthoritiesTest {
             assertEquals(List.of(first, second), diskAllocationLedger(save).entries());
             assertEquals(1, logs.messages(Level.WARN).size(), () -> "寫入未確認記一次 WARN：" + logs.messages(Level.WARN));
             assertEquals(1, logs.messages(Level.INFO).stream().filter(message -> message.contains("收斂完成")).count());
+            // 收斂成功之後重置：同一種失敗再出現時，退避回到 200 ticks（不是延續成 400），而且去重鍵已清除，再記一次 WARN。
+            var third = UniverseAllocationLedger.Entry.of(intent(token(31)));
+            io.failReadback(UniverseAllocationLedger.FILE_NAME);
+            now[0] = 1300;
+            assertEquals(Lookup.Status.WRITE_FAILED, authorities.lookupOrAppendAllocation(intent(token(31))).status());
+            int again = io.readsOf(UniverseAllocationLedger.FILE_NAME);
+            now[0] = 1499; authorities.convergeIfNeeded(Authority.ALLOCATION_LEDGER);
+            assertEquals(again, io.readsOf(UniverseAllocationLedger.FILE_NAME), "重置後的第一次退避期內不嘗試");
+            now[0] = 1500; authorities.convergeIfNeeded(Authority.ALLOCATION_LEDGER);
+            assertFalse(authorities.unconfirmed(Authority.ALLOCATION_LEDGER), "成功之後退避重置為 200：1300＋200 到期就重寫");
+            assertEquals(List.of(first, second, third), diskAllocationLedger(save).entries());
+            assertEquals(2, logs.messages(Level.WARN).size(), () -> "成功之後同一原因再出現要再記一次 WARN：" + logs.messages(Level.WARN));
+            assertEquals(2, logs.messages(Level.INFO).stream().filter(message -> message.contains("收斂完成")).count());
         }
         // 重啟後新內容照常 strict 讀取。
         var restarted = authorities(save);
         assertEquals(Outcome.LOADED, restarted.initialize(() -> journal(4)).allocation());
         assertEquals(Lookup.Status.FOUND, restarted.lookupOrAppendAllocation(intent(token(22))).status());
+    }
+
+    @Test void backoffIsPerAuthorityWhenFailuresAreStaggered() throws Exception {
+        var save = save("staggered-backoff");
+        var authorities = authorities(save);
+        assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
+        io.failReadback(UniverseAllocationLedger.FILE_NAME);
+        now[0] = 1000;
+        assertEquals(Lookup.Status.WRITE_FAILED, authorities.lookupOrAppendAllocation(intent(token(32))).status());
+        io.failReadback(ProjectionLedger.FILE_NAME);
+        now[0] = 1100;
+        assertEquals(WriteResult.Status.WRITE_FAILED, authorities.writeProjection(pending(existingUniverse())).status());
+        int allocation = io.readsOf(UniverseAllocationLedger.FILE_NAME), projection = io.readsOf(ProjectionLedger.FILE_NAME);
+        now[0] = 1199;
+        authorities.convergeIfNeeded(Authority.ALLOCATION_LEDGER); authorities.convergeIfNeeded(Authority.PROJECTION_LEDGER);
+        assertEquals(List.of(allocation, projection), List.of(io.readsOf(UniverseAllocationLedger.FILE_NAME), io.readsOf(ProjectionLedger.FILE_NAME)),
+                "兩個權威都還在各自的退避期內");
+        // allocation 的退避只由自己的失敗（1000）決定：projection 在 1100 的失敗不得把它延長。
+        now[0] = 1200;
+        authorities.convergeIfNeeded(Authority.ALLOCATION_LEDGER); authorities.convergeIfNeeded(Authority.PROJECTION_LEDGER);
+        assertAll(
+            () -> assertFalse(authorities.unconfirmed(Authority.ALLOCATION_LEDGER), "allocation 在 1000＋200 到期就重寫"),
+            () -> assertTrue(authorities.unconfirmed(Authority.PROJECTION_LEDGER), "projection 要到 1100＋200"),
+            () -> assertEquals(projection, io.readsOf(ProjectionLedger.FILE_NAME), "projection 在 1200 不嘗試"));
+        now[0] = 1299; authorities.convergeIfNeeded(Authority.PROJECTION_LEDGER);
+        assertTrue(authorities.unconfirmed(Authority.PROJECTION_LEDGER));
+        now[0] = 1300; authorities.convergeIfNeeded(Authority.PROJECTION_LEDGER);
+        assertFalse(authorities.unconfirmed(Authority.PROJECTION_LEDGER), "projection 的退避也只由自己的失敗決定");
+        assertEquals(List.of(UniverseAllocationLedger.Entry.of(intent(token(32)))), diskAllocationLedger(save).entries());
+        assertEquals(List.of(pending(existingUniverse())), diskProjectionLedger(save).entries());
+    }
+
+    // ---- ledger 已滿（Q2：權威層的預先檢查，避免 ledger 的 IllegalArgumentException 外洩） ----
+
+    @Test void fullAllocationLedgerRejectsNewAppendsWithoutWriting() throws Exception {
+        var save = save("allocation-full");
+        int limit = UniverseAllocationLedger.MAX_ENTRIES;
+        var rows = new NbtList();
+        for (int index = 0; index < limit; index++) {
+            rows.add(((NbtList) UniverseAllocationLedger.empty().append(UniverseAllocationLedgerTest.entry(index)).toNbt().get("Entries")).getCompound(0).copy());
+        }
+        var full = new NbtCompound(); full.putInt("SchemaVersion", 1); full.put("Entries", rows);
+        Files.createDirectories(allocationFile(save).getParent());
+        NbtIo.writeCompressed(full, allocationFile(save));
+        NbtIo.writeCompressed(ProjectionLedger.empty().toNbt(), projectionFile(save));
+        var authorities = authorities(save);
+        var result = authorities.initialize(() -> journal(4));
+        assertEquals(List.of(Outcome.LOADED, Outcome.LOADED), List.of(result.allocation(), result.projection()), "寫滿的 ledger 照常讀得回來");
+        byte[] before = Files.readAllBytes(allocationFile(save));
+        int reads = io.reads.size();
+        assertCorrupt(authorities.lookupOrAppendAllocation(intent(token(limit))));
+        assertAll(
+            () -> assertArrayEquals(before, Files.readAllBytes(allocationFile(save)), "已滿時不寫入"),
+            () -> assertEquals(reads, io.reads.size(), "已滿時不嘗試寫入"),
+            () -> assertFalse(authorities.unconfirmed(Authority.ALLOCATION_LEDGER)),
+            () -> assertNoTemporaryFiles(save),
+            () -> assertEquals(Lookup.Status.FOUND, authorities.lookupOrAppendAllocation(intent(token(5))).status(), "既有的 entry 照常可用"));
+    }
+
+    @Test void fullProjectionLedgerRejectsNewKeysWithoutWriting() throws Exception {
+        var save = save("projection-full");
+        int limit = ProjectionLedger.MAX_ENTRIES;
+        var rows = new NbtList();
+        for (int index = 0; index < limit; index++) {
+            rows.add(((NbtList) ProjectionLedger.empty().with(ProjectionLedgerTest.entry(index, Direction.SOUTH, Status.PENDING)).toNbt().get("Entries"))
+                    .getCompound(0).copy());
+        }
+        var full = new NbtCompound(); full.putInt("SchemaVersion", 1); full.put("Entries", rows);
+        Files.createDirectories(projectionFile(save).getParent());
+        NbtIo.writeCompressed(full, projectionFile(save));
+        NbtIo.writeCompressed(UniverseAllocationLedger.empty().toNbt(), allocationFile(save));
+        var authorities = authorities(save);
+        var result = authorities.initialize(() -> journal(4));
+        assertEquals(List.of(Outcome.LOADED, Outcome.LOADED), List.of(result.allocation(), result.projection()), "寫滿的 ledger 照常讀得回來");
+        byte[] before = Files.readAllBytes(projectionFile(save));
+        int reads = io.reads.size();
+        var rejected = authorities.writeProjection(ProjectionLedgerTest.entry(limit, Direction.SOUTH, Status.PENDING));
+        assertAll(
+            () -> assertEquals(WriteResult.Status.CORRUPT, rejected.status()),
+            () -> assertEquals(Optional.of(SealedReason.AUTHORITY_CORRUPT), rejected.sealedReason()),
+            () -> assertArrayEquals(before, Files.readAllBytes(projectionFile(save)), "已滿時不寫入"),
+            () -> assertEquals(reads, io.reads.size(), "已滿時不嘗試寫入"),
+            () -> assertFalse(authorities.unconfirmed(Authority.PROJECTION_LEDGER)),
+            () -> assertNoTemporaryFiles(save));
+        // 上限只限制新的 key：既有 key 的 PENDING→COMPLETE 是原位取代，照常寫入。
+        assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(ProjectionLedgerTest.entry(7, Direction.SOUTH, Status.COMPLETE)).status());
+    }
+
+    // ---- verify 的訊息不得帶隨機暫存檔路徑（Q6：WARN 去重） ----
+
+    @Test void temporaryReadbackMismatchWarnsOncePerCause() throws Exception {
+        var save = save("stale-temporary");
+        var authorities = authorities(save);
+        assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
+        io.staleTemporary(UniverseAllocationLedger.FILE_NAME, compressed(UniverseAllocationLedger.empty().toNbt()));
+        try (var logs = new Logs()) {
+            assertEquals(Lookup.Status.WRITE_FAILED, authorities.lookupOrAppendAllocation(intent(token(33))).status());
+            for (int due : new int[] {1200, 1600}) {
+                int reads = io.readsOf(UniverseAllocationLedger.FILE_NAME);
+                now[0] = due; authorities.convergeIfNeeded(Authority.ALLOCATION_LEDGER);
+                assertTrue(io.readsOf(UniverseAllocationLedger.FILE_NAME) > reads, "第 " + due + " tick 必須實際重試");
+                assertTrue(authorities.unconfirmed(Authority.ALLOCATION_LEDGER));
+            }
+            var warnings = logs.messages(Level.WARN);
+            assertEquals(1, warnings.size(), () -> "暫存檔讀回不符是同一個原因，只記一次 WARN：" + warnings);
+            assertFalse(warnings.getFirst().contains(".tmp"), () -> "WARN 不得帶隨機的暫存檔路徑：" + warnings.getFirst());
+        }
+        assertTrue(diskAllocationLedger(save).entries().isEmpty(), "暫存檔驗證失敗：正式檔不變");
+        io.clear();
+        now[0] = 2400; authorities.convergeIfNeeded(Authority.ALLOCATION_LEDGER);
+        assertFalse(authorities.unconfirmed(Authority.ALLOCATION_LEDGER));
+        assertEquals(List.of(UniverseAllocationLedger.Entry.of(intent(token(33)))), diskAllocationLedger(save).entries());
     }
 
     @Test void allocationWriteFailureBeforeTheMoveIsRolledForwardToo() throws Exception {
@@ -508,6 +677,10 @@ class CollapseAuthoritiesTest {
 
     private static void write(Path file, byte[] bytes) throws IOException { Files.createDirectories(file.getParent()); Files.write(file, bytes); }
 
+    private static byte[] compressed(NbtCompound nbt) throws IOException {
+        var out = new ByteArrayOutputStream(); NbtIo.writeCompressed(nbt, out); return out.toByteArray();
+    }
+
     private static void assertNoTemporaryFiles(Path save) throws IOException {
         var data = save.resolve("data");
         if (!Files.exists(data)) return;
@@ -526,7 +699,8 @@ class CollapseAuthoritiesTest {
 
     /** {@link CollapseAuthorities.LedgerIo} 的注入實作：委派正式的 {@code readFile}，依檔名注入 IO 例外，並記錄每一次讀取。 */
     private static final class Io implements CollapseAuthorities.LedgerIo {
-        private record Fault(String fileName, boolean temporary, boolean once, String label) {
+        /** replacement 為 null 時丟 IOException；否則回傳 replacement 取代實際內容（讀到的 bytes 與寫入的不同）。 */
+        private record Fault(String fileName, boolean temporary, boolean once, String label, byte[] replacement) {
             boolean matches(Path path) {
                 var name = path.getFileName().toString();
                 return temporary ? name.startsWith(fileName + ".") && name.endsWith(".tmp") : name.equals(fileName);
@@ -541,16 +715,19 @@ class CollapseAuthoritiesTest {
                 var fault = iterator.next();
                 if (!fault.matches(path)) continue;
                 if (fault.once()) iterator.remove();
+                if (fault.replacement() != null) return fault.replacement().clone();
                 throw new IOException("注入：" + fault.label());
             }
             return CollapseAuthorities.readFile(path);
         }
 
         /** 下一次讀正式檔失敗：寫入時就是「atomic move 完成、讀回失敗」，初始化時就是讀取的 IO 例外。 */
-        void failReadback(String fileName) { faults.add(new Fault(fileName, false, true, "atomic move 完成、讀回失敗")); }
-        void failReadbackAlways(String fileName) { faults.add(new Fault(fileName, false, false, "讀回持續失敗")); }
+        void failReadback(String fileName) { faults.add(new Fault(fileName, false, true, "atomic move 完成、讀回失敗", null)); }
+        void failReadbackAlways(String fileName) { faults.add(new Fault(fileName, false, false, "讀回持續失敗", null)); }
         /** 下一次讀暫存檔失敗：寫入在 atomic move 之前就失敗，正式檔不變。 */
-        void failTemporary(String fileName) { faults.add(new Fault(fileName, true, true, "暫存檔驗證失敗")); }
+        void failTemporary(String fileName) { faults.add(new Fault(fileName, true, true, "暫存檔驗證失敗", null)); }
+        /** 持續把暫存檔讀成另一份合法的內容：暫存檔的 exact 讀回不符，寫入在 atomic move 之前失敗。 */
+        void staleTemporary(String fileName, byte[] replacement) { faults.add(new Fault(fileName, true, false, "暫存檔讀回不符", replacement.clone())); }
         void clear() { faults.clear(); }
         int readsOf(String fileName) { return (int) reads.stream().filter(path -> path.getFileName().toString().startsWith(fileName)).count(); }
     }

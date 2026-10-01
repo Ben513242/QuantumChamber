@@ -156,7 +156,10 @@ public final class CollapseAuthorities {
         }
     }
 
-    /** projection 的寫入結果。WRITTEN／UNCHANGED 帶 entry；INVALID_TRANSITION 是 caller 的錯誤（沒有 SEALED 原因）；其餘帶 SEALED 原因。 */
+    /**
+     * projection 的寫入結果。成功的三種狀態（WRITTEN、UNCHANGED、ALREADY_COMPLETE）帶 entry，沒有 SEALED 原因與 failure；其餘都沒有 entry，
+     * 帶著可直接用於 SEALED 的原因（F4b）與 failure。caller 的前提錯誤（role 不是 OVERWORLD、沒有 PENDING 就寫 COMPLETE）直接丟例外，不是結果狀態。
+     */
     public record WriteResult(Status status, Optional<ProjectionLedger.Entry> entry, Optional<SealedReason> sealedReason,
             Optional<RuntimeException> failure) {
         public enum Status {
@@ -165,10 +168,10 @@ public final class CollapseAuthorities {
             /** 既有 entry 已是同一份內容（同 site、同 Status），沒有寫入；entry 為既有內容。 */
             UNCHANGED,
             /**
-             * Status 只能 PENDING→COMPLETE（spec §6.5）：新 key 直接寫 COMPLETE，或把既有 COMPLETE 寫回 PENDING。沒有寫入；既有 entry
-             * （若有）放在 entry，例如已 COMPLETE 時 caller 應改走修復路徑（§9.2）。
+             * 寫入 PENDING，而既有 entry 已是 COMPLETE：site 已驗證相同，沒有寫入（Status 不倒退，spec §6.5）；entry 為既有的 COMPLETE。
+             * 不是錯誤：這座艙之前已完成這個宇宙的投影，F4b 改走只修復不變量 cell 的路徑（§9.2），不清 interior。
              */
-            INVALID_TRANSITION,
+            ALREADY_COMPLETE,
             /** 權威有尚未確認的 roll-forward 寫入：不寫入，先 {@link CollapseAuthorities#convergeIfNeeded}。 */
             UNCONFIRMED,
             /** 本次的 checked 寫入或讀回失敗：current 保留它，權威標為未確認（投影方塊只在 PENDING 確認之後才寫）。 */
@@ -182,21 +185,15 @@ public final class CollapseAuthorities {
         public WriteResult {
             Objects.requireNonNull(status, "status"); Objects.requireNonNull(entry, "entry");
             Objects.requireNonNull(sealedReason, "sealedReason"); Objects.requireNonNull(failure, "failure");
-            boolean ok = status == Status.WRITTEN || status == Status.UNCHANGED;
-            if (ok == failure.isPresent()) throw new IllegalArgumentException("只有失敗的結果帶 failure");
-            if ((ok || status == Status.INVALID_TRANSITION) == sealedReason.isPresent()) {
-                throw new IllegalArgumentException("WRITTEN／UNCHANGED／INVALID_TRANSITION 沒有 SEALED 原因，其餘必須有");
-            }
-            if (ok && entry.isEmpty()) throw new IllegalArgumentException("WRITTEN／UNCHANGED 必須帶 entry");
+            boolean ok = status == Status.WRITTEN || status == Status.UNCHANGED || status == Status.ALREADY_COMPLETE;
+            if (ok == sealedReason.isPresent() || ok == failure.isPresent()) throw new IllegalArgumentException("只有失敗的結果帶 SEALED 原因與 failure");
+            if (ok != entry.isPresent()) throw new IllegalArgumentException("只有 WRITTEN／UNCHANGED／ALREADY_COMPLETE 帶 entry");
         }
 
         public boolean succeeded() { return failure.isEmpty(); }
 
         static WriteResult of(Status status, ProjectionLedger.Entry entry) {
             return new WriteResult(status, Optional.of(entry), Optional.empty(), Optional.empty());
-        }
-        static WriteResult invalid(Optional<ProjectionLedger.Entry> existing, String reason) {
-            return new WriteResult(Status.INVALID_TRANSITION, existing, Optional.empty(), Optional.of(new IllegalArgumentException(reason)));
         }
         static WriteResult failed(Lookup<?> gate) {
             var status = switch (gate.status()) {
@@ -248,15 +245,25 @@ public final class CollapseAuthorities {
         authorities.initialize(server);
     }
 
-    /** 本 server instance 的權威；只在開服之後、停服之前存在（單人遊戲在同一個 JVM 重開世界是新的 instance）。 */
+    /**
+     * 本 server instance 的權威（單人遊戲在同一個 JVM 重開世界是新的 instance）。instance 在 {@link #registerEvents()} 註冊的
+     * {@code SERVER_STARTED} listener 裡才建立，在 {@code SERVER_STOPPED} 釋放：比它更早註冊的 {@code SERVER_STARTED} listener 不能呼叫
+     * （Fabric 依註冊順序執行，那時還沒有 instance），停服之後也不能呼叫。初始化失敗時 instance 仍然存在，查詢會回對應的失敗結果。
+     */
     public static CollapseAuthorities get(MinecraftServer server) {
         var authorities = INSTANCES.get(Objects.requireNonNull(server, "server"));
-        if (authorities == null) throw new IllegalStateException("沒有此 server 的 M5 authority（尚未開服或已停服）");
+        if (authorities == null) {
+            throw new IllegalStateException("沒有此 server 的 M5 authority：instance 在 CollapseAuthorities.registerEvents() 註冊的 SERVER_STARTED "
+                    + "listener 裡才建立、在 SERVER_STOPPED 釋放；比它更早註冊的 SERVER_STARTED listener，以及停服之後，都不能呼叫");
+        }
         authorities.requireThread();
         return authorities;
     }
 
-    /** 開服初始化（每個 server instance 一次）；失敗時記 ERROR 並回傳失敗的結果，不丟例外。 */
+    /**
+     * 開服初始化：只供 {@link #registerEvents()} 註冊的 {@code SERVER_STARTED} listener 在建立 instance 之後呼叫一次（第二次丟例外）。
+     * 失敗時記 ERROR 並回傳失敗的結果，不丟例外，所以之後的 lifecycle bootstrap 照常執行。
+     */
     public InitResult initialize(MinecraftServer server) {
         if (server != owner) throw new IllegalArgumentException("CollapseAuthorities 不屬於這個 server");
         return initialize(() -> SessionRecoveryState.get(server));
@@ -355,6 +362,8 @@ public final class CollapseAuthorities {
      * NEW 的 allocation lookup-or-create（spec §6.1、§8.2 第 1 步）。已有同一個 token 的 entry 時，必須 exact 等於本 session 會寫出的內容
      * （{@link UniverseAllocationLedger.Entry#of}），否則 {@code CORRUPT}，不沿用、不覆寫；沒有時 checked 追加。
      * 權威未確認、遺失或初始化失敗時不做任何決策。
+     * <p>呼叫前提：本 session 的 COLLAPSING 已經 checked 落盤（journal 的 flushed envelope 已是 schema 4）。初始化的遺失判定依賴這個不變量
+     * （spec §6）：journal 還不是 schema 4 時，缺少的 ledger 會被當成第一次建立而補成空檔；若 ledger 在那之前就有寫入，遺失就偵測不到。
      */
     public Lookup<UniverseAllocationLedger.Entry> lookupOrAppendAllocation(NewUniverseIntent intent) {
         requireThread();
@@ -379,7 +388,8 @@ public final class CollapseAuthorities {
     }
 
     /**
-     * 已確認的 projection entry（spec §6.5）；沒有時為 {@code ABSENT}。只看 key，不驗 site：寫入時由 {@link #writeProjection} 驗證。
+     * 已確認的 projection entry（spec §6.5）；沒有時為 {@code ABSENT}。只看 key，不驗 site：決定第一次寫入或修復之前，先以
+     * {@link #writeProjection} 寫 PENDING 取得 site 驗證（{@code UNCHANGED}＝既有 PENDING、{@code ALREADY_COMPLETE}＝既有 COMPLETE）。
      * 權威未確認時回 {@code UNCONFIRMED}（未確認的 PENDING 不能拿來決定寫方塊）。
      */
     public Lookup<ProjectionLedger.Entry> projection(UUID chamber, UniverseId id) {
@@ -391,8 +401,21 @@ public final class CollapseAuthorities {
     }
 
     /**
-     * checked 寫入一筆 projection entry：新 key 只能寫 PENDING；既有 key 的 Role／ControllerPos／OutwardFacing 必須等於本 session 的來源艙
-     * （不符為 {@code CORRUPT}，不改寫），Status 只能 PENDING→COMPLETE，同一份內容為 {@code UNCHANGED}。本切片的 role 只有 OVERWORLD。
+     * checked 寫入一筆 projection entry（spec §6.5）。
+     * <ul>
+     * <li>既有 key 的 Role／ControllerPos／OutwardFacing 必須等於本 session 的來源艙，不符為 {@code CORRUPT}，不改寫。</li>
+     * <li>site 相同時：同一個 Status 為 {@code UNCHANGED}；既有 PENDING 寫 COMPLETE 才實際寫入；既有 COMPLETE 寫 PENDING 為
+     *     {@code ALREADY_COMPLETE}（Status 不倒退，帶回既有 entry，F4b 改走修復路徑）。</li>
+     * <li>新 key 只能寫 PENDING；已達上限為 {@code CORRUPT}。</li>
+     * </ul>
+     * 呼叫前提（違反時丟 {@link IllegalArgumentException}，不是結果狀態）：
+     * <ul>
+     * <li>本切片的 role 只有 OVERWORLD。</li>
+     * <li>COMPLETE 只能寫在已確認的 PENDING 之後：已確認的 PENDING 不會消失（不刪除 entry，遺失由閘門先回 {@code CORRUPT}），所以新 key
+     *     直接寫 COMPLETE 一定是 caller 的錯誤。</li>
+     * <li>與 {@link #lookupOrAppendAllocation} 相同：本 session 的 COLLAPSING 已經 checked 落盤（journal flushed 已是 schema 4），
+     *     初始化的遺失判定依賴這個不變量。</li>
+     * </ul>
      */
     public WriteResult writeProjection(ProjectionLedger.Entry entry) {
         requireThread();
@@ -408,9 +431,9 @@ public final class CollapseAuthorities {
                 return WriteResult.failed(corrupt(new IllegalStateException("既有 projection entry 的 Role／ControllerPos／OutwardFacing 與本 session 的來源艙不符")));
             }
             if (previous.status() == entry.status()) return WriteResult.of(WriteResult.Status.UNCHANGED, previous);
-            if (previous.status() == ProjectionLedger.Entry.Status.COMPLETE) return WriteResult.invalid(existing, "既有投影已是 COMPLETE，Status 不能退回 PENDING");
+            if (previous.status() == ProjectionLedger.Entry.Status.COMPLETE) return WriteResult.of(WriteResult.Status.ALREADY_COMPLETE, previous);
         } else {
-            if (entry.status() != ProjectionLedger.Entry.Status.PENDING) return WriteResult.invalid(Optional.empty(), "沒有 PENDING entry，不能直接寫 COMPLETE");
+            if (entry.status() != ProjectionLedger.Entry.Status.PENDING) throw new IllegalArgumentException("沒有已確認的 PENDING entry，不能直接寫 COMPLETE");
             if (ledger.entries().size() >= ProjectionLedger.MAX_ENTRIES) {
                 return WriteResult.failed(corrupt(new IllegalStateException("projection ledger 已達 " + ProjectionLedger.MAX_ENTRIES + " 筆上限")));
             }
@@ -520,10 +543,17 @@ public final class CollapseAuthorities {
         }
     }
 
+    /**
+     * 以正式讀取規則讀回並 exact 比對。不符時的訊息只帶正式檔名、不帶路徑：暫存檔名每次隨機，帶進訊息會讓 WARN 的去重鍵
+     * （{@link FailureText#dedupeKey}）每次不同，同一個原因被一再記錄。
+     */
     private <L> void verify(Slot<L> slot, Path path, NbtCompound expected) throws IOException {
         var actual = parse(io.read(path));
         slot.decode.apply(actual);
-        if (!expected.equals(actual)) throw new IOException(slot.authority + " exact readback 不符：" + path);
+        if (!expected.equals(actual)) {
+            var which = path.equals(slot.path) ? "正式檔" : "暫存檔";
+            throw new IOException(slot.authority + " 的" + which + " exact readback 不符（" + slot.path.getFileName() + "）");
+        }
     }
 
     /** 原始 bytes → NBT。這一步（含之後的 strict decode）的任何失敗都是內容損壞，不是 IO 例外。 */
