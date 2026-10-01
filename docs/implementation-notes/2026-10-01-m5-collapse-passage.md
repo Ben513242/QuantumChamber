@@ -1025,13 +1025,13 @@ GREEN 數字：
 
 ### 偏差與觀察
 
-- Dedicated 的 client 用 `runClientProbe`（plan 寫 `runClient`）：`runClient` 的 runDir 固定是 `run/client-base`，改用 `runClientProbe` 才能以新 nonce 取得全新的 runDir，不碰既有的 client 資料。clientProbe 在 client 端只多了 testmod 的 class，`/qcprobe` 由 server 端註冊，不影響連線測試；證據同樣標 `testmod-present`。
+- Dedicated 的 client 用 `runClientProbe`（plan 寫 `runClient`）：`runClient` 的 runDir 固定是 `run/client-base`，改用 `runClientProbe` 才能以新 nonce 取得全新的 runDir，不碰既有的 client 資料。clientProbe 在 client 端多了 `quantumchamber-clientprobe` mod（mod list 與 `M5_CLIENT_PROBE_ENABLED`）和 testmod 的 class；`/qcprobe` 由 dedicated server 註冊與執行，不影響連線測試；證據同樣標 `testmod-present`。
 - 15 秒接手：單人兩次重新進入世界時，等待迴圈在 `latest.log` 沒有比對到加入紀錄，玩家分別閒置約 90 秒與 130 秒。事後在同一個工作階段以同一個條件重測可以命中（只有工具輸出，未留檔）；推測是寫入時序造成，未查明。世界是和平＋創造模式，玩家沒有受傷。之後改以 Gradle 輸出偵測。
-- 未預期的方塊改動：單人動態世界 (-2, 71, 0) 的一格草方塊被破壞（`sp-17`～`sp-19` 截圖中視角朝下看著這個坑；docs reviewer 唯讀解析 region 檔，同座標在主世界是 `grass_block`、在 Universe 是 `air`，下方 (-2, 70, 0) 的泥土已長成草）。指令紀錄裡沒有任何指令動到這個位置，probe 兩次 enter 的 `landingChanges` 都是空的。依截圖，改動發生在 22:26:13 第二次 enter 到 22:29:20 之間，期間有儲存離開、從清單重進與約 130 秒閒置。推測是自動輸入在世界中誤觸左鍵，但無法從紀錄確定時刻，原因未查明。不影響 F1b 各項判定。
+- 未預期的方塊改動：單人動態世界 (-2, 71, 0) 的一格草方塊被破壞（`sp-17`～`sp-19` 截圖中視角朝下看著這個坑；docs reviewer 唯讀解析 region 檔，同座標在主世界是 `grass_block`、在 Universe 是 `air`，下方 (-2, 70, 0) 的泥土已長成草）。指令紀錄裡沒有任何指令動到這個位置，probe 在 (-2.5, 72, -0.5) 的兩次 enter，`landingChanges` 都是空的。依截圖，改動發生在 22:26:13 第二次 enter 到 22:29:20 之間，期間有儲存離開、從清單重進與約 130 秒閒置。推測是自動輸入在世界中誤觸左鍵，但無法從紀錄確定時刻，原因未查明。不影響 F1b 各項判定。
 - 站立檢查：dedicated 與單人各有一次 `enter` 因為腳下不是完整方塊頂面而被拒，這是預期行為。單人那次 F3 顯示 `M: 78 ML: 73`，表示腳下 y=78 是樹葉；dedicated 那次在森林的出生點附近，推測也是樹葉（拒絕訊息是通用文字，沒有截圖確認方塊種類）。以 `/setblock` 把腳下換成石頭、`/tp` 到方塊中央後再 enter，動態世界的落點同時產生 `landingChanges=[…=stone]`。
 - 放置與破壞的目標是用 `/fill` 在空中鋪的石台（避開草叢與樹冠），朝向用 `/tp` 設定。放置與破壞本身是滑鼠操作，操作前以 F3 的 Targeted Block 確認目標。
 - Dedicated 在 `/tp` 到石台的那一刻，出現一次原版的 `QC_A moved too quickly! 0.0,12.0,8.0`，沒有其他影響。
 - 單人從世界清單重新進入時，原版顯示「使用實驗性設定的世界不受支援」；選「我知道我在做什麼！」後繼續。用 `--quickPlaySingleplayer` 進入時不顯示。level.dat 的世界生成設定裡只有 M1 起就有的 `quantumchamber:superposition`；Universe 的維度鍵只出現在玩家的 `LastDeathLocation`（原版的死亡紀錄）。推論：警告來自 datapack 維度，不是 M5 新增的；這點未另外驗證。
-- Iris 對光影包回報 uniform 與 block ID map 的 WARN（例如 `BIOME_PALE_GARDEN`、`minecraft:stone_slab has no property with the name variant`），`run3-render-latest.log` 中有 9 段附在這些 WARN 上的 `java.lang.RuntimeException: Unknown variable …` stack trace，之後 grep `Exception` 時不要誤判。這些 WARN 在 22:34:39 建立 `minecraft:overworld` pipeline 時就第一次出現，和動態維度無關；推論是光影包版本與 1.21 的差異，不是本專案造成的。
+- Iris 對光影包回報 uniform 與 block ID map 的 WARN（例如 `BIOME_PALE_GARDEN`、`minecraft:stone_slab has no property with the name variant`），`run3-render-latest.log` 中有 9 段附在這些 WARN 上的 `java.lang.RuntimeException: Unknown variable …` stack trace，之後 grep `Exception` 時不要誤判。這些 WARN 在 22:34:39 開始建立 `minecraft:overworld` pipeline 之後（22:34:40–41）第一次出現，早於 22:35:09 進入動態維度，和動態維度無關；推論是光影包版本與 1.21 的差異，不是本專案造成的。
 - 未做：H4 提到的「凍結中騎乘載具」是可選的觀察項，本次沒有做。probe 不建立 Chamber session，玩家不會被凍結。
 - 所有斷線紀錄都對應三種預期操作：`/stop`（「伺服器已關閉」）、dedicated 重新登入測試時玩家主動中斷連線（`ded-s2-server.log` 的 `QC_A lost connection: Disconnected`），以及儲存離開與關閉遊戲（integrated 的「連線中斷」）。三個 runDir 都沒有 `crash-reports`。結束時的 Java 程序清單只剩既有的閒置 Gradle daemon（PID 129228）；這份清單只有工具輸出，未留檔。
