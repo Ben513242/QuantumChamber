@@ -1,4 +1,5 @@
 package dev.quantumchamber.persistence;
+import static dev.quantumchamber.persistence.JournalNbt.*;
 import dev.quantumchamber.chamber.ChamberOriginAuthority;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.candidate.CandidateId;
@@ -220,7 +221,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         // schema 1／2 保留原本的寬鬆解析。
         boolean strict = envelopeSchema >= 3;
         if (strict) {
-            CandidateJournalCodec.keys(nbt, "SessionUuid", "ChamberUuid", "Origin", "Participants", "SpaceLeases", "State",
+            keys(nbt, "SessionUuid", "ChamberUuid", "Origin", "Participants", "SpaceLeases", "State",
                     "RestoreEntryEffectOnReturn", "SessionSemantics", "CandidateContext", "CandidateLedger", "CandidateSelection");
         }
         if (!strict && (nbt.contains("CandidateContext") || nbt.contains("CandidateLedger") || nbt.contains("CandidateSelection"))) {
@@ -229,11 +230,11 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var semantics=envelopeSchema==1 ? SessionSemantics.LEGACY_FORWARD_CONSUMED
                 : SessionSemantics.valueOf(string(nbt,"SessionSemantics"));
         var source = compound(nbt, "Origin");
-        if (strict) CandidateJournalCodec.keys("Origin", source, "ChamberUuid", "WorldKey", "Role", "ControllerPos", "Facing", "InstanceKind");
+        if (strict) keys("Origin", source, "ChamberUuid", "WorldKey", "Role", "ControllerPos", "Facing", "InstanceKind");
         int[] pos = ints(source, "ControllerPos", 3);
         // 依原本的求值順序讀取（ControllerPos → ChamberUuid → WorldKey → 其餘），legacy 的錯誤訊息不變。
         var chamberUuid = uuid(source, "ChamberUuid");
-        var worldKey = strict ? CandidateJournalCodec.canonicalIdentifier("Origin", source, "WorldKey") : Identifier.of(string(source, "WorldKey"));
+        var worldKey = strict ? canonicalIdentifier("Origin", source, "WorldKey") : Identifier.of(string(source, "WorldKey"));
         var origin = new ChamberOriginAuthority(chamberUuid, worldKey,
                 DimensionRole.valueOf(string(source, "Role")), new BlockPos(pos[0], pos[1], pos[2]),
                 Direction.valueOf(string(source, "Facing")), ChamberInstanceKind.valueOf(string(source, "InstanceKind")));
@@ -241,7 +242,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var rawPeople = compounds(nbt, "Participants", envelopeSchema);
         for (int index = 0; index < rawPeople.size(); index++) {
             var person = (NbtCompound) rawPeople.get(index);
-            if (strict) CandidateJournalCodec.keys("Participants[" + index + "]", person, "PlayerUuid", "SourcePosition", "SourceVelocity",
+            if (strict) keys("Participants[" + index + "]", person, "PlayerUuid", "SourcePosition", "SourceVelocity",
                     "Yaw", "Pitch", "QuantumState", "Returned");
             requireType(person, "Yaw", NbtElement.FLOAT_TYPE); requireType(person, "Pitch", NbtElement.FLOAT_TYPE);
             people.add(new Participant(uuid(person, "PlayerUuid"), vector(person, "SourcePosition"),
@@ -252,7 +253,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var rawLeases = compounds(nbt, "SpaceLeases", envelopeSchema);
         for (int index = 0; index < rawLeases.size(); index++) {
             var lease = (NbtCompound) rawLeases.get(index);
-            if (strict) CandidateJournalCodec.keys("SpaceLeases[" + index + "]", lease, "SlotId", "Bounds");
+            if (strict) keys("SpaceLeases[" + index + "]", lease, "SlotId", "Bounds");
             requireType(lease, "SlotId", NbtElement.INT_TYPE);
             int[] bounds = ints(lease, "Bounds", 6);
             // BlockBox 會自行交換反向座標；必須在建構前拒絕壞資料。
@@ -286,34 +287,10 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                 SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"),semantics,context,ledger,selection);
     }
 
-    static void requireType(NbtCompound nbt, String key, int type) {
-        if (!nbt.contains(key, type)) throw new IllegalArgumentException(key + " 缺失或 NBT 型別錯誤");
-    }
-    static UUID uuid(NbtCompound nbt, String key) {
-        if (!nbt.containsUuid(key)) throw new IllegalArgumentException(key + " 必須是有效 UUID");
-        return nbt.getUuid(key);
-    }
-    static String string(NbtCompound nbt, String key) {
-        requireType(nbt, key, NbtElement.STRING_TYPE); return nbt.getString(key);
-    }
-    static NbtCompound compound(NbtCompound nbt, String key) {
-        requireType(nbt, key, NbtElement.COMPOUND_TYPE); return nbt.getCompound(key);
-    }
-    static NbtList compounds(NbtCompound nbt, String key) {
-        requireType(nbt, key, NbtElement.LIST_TYPE);
-        var list = (NbtList) nbt.get(key);
-        if (list.getHeldType() != NbtElement.COMPOUND_TYPE && !(list.isEmpty() && list.getHeldType() == NbtElement.END_TYPE)) {
-            throw new IllegalArgumentException(key + " 必須包含 compound；空 list 僅允許 END 或 COMPOUND held type");
-        }
-        return list;
-    }
-    static NbtList compounds(NbtCompound nbt, String key, int envelopeSchema) {
-        var list = compounds(nbt, key);
-        if (envelopeSchema >= 3 && list.isEmpty() && list.getHeldType() != NbtElement.END_TYPE) {
-            throw new IllegalArgumentException(key + " 的 schema 3 空 list 必須使用 END held type");
-        }
-        return list;
-    }
+    // PlayerRecoveryCheckpoint 仍以 SessionRecoveryRecord 取用這三個 strict helper；實作在 JournalNbt。
+    static void requireType(NbtCompound nbt, String key, int type) { JournalNbt.requireType(nbt, key, type); }
+    static UUID uuid(NbtCompound nbt, String key) { return JournalNbt.uuid(nbt, key); }
+    static String string(NbtCompound nbt, String key) { return JournalNbt.string(nbt, key); }
     private static int[] ints(NbtCompound nbt, String key, int length) {
         requireType(nbt, key, NbtElement.INT_ARRAY_TYPE); var values = nbt.getIntArray(key);
         if (values.length != length) throw new IllegalArgumentException(key + " 座標數量錯誤");

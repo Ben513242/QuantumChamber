@@ -1,13 +1,11 @@
 package dev.quantumchamber.persistence;
 
-import static dev.quantumchamber.persistence.SessionRecoveryRecord.*;
+import static dev.quantumchamber.persistence.JournalNbt.*;
 import dev.quantumchamber.candidate.*;
 import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
 import dev.quantumchamber.universe.UniverseId;
-import java.util.Set;
-import java.util.TreeSet;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.registry.RegistryKey;
@@ -135,29 +133,5 @@ final class CandidateJournalCodec {
     private static long longValue(NbtCompound nbt, String key) { requireType(nbt, key, NbtElement.LONG_TYPE); return nbt.getLong(key); }
     private static CandidateBytes bytes(NbtCompound nbt, String key) {
         requireType(nbt, key, NbtElement.BYTE_ARRAY_TYPE); return new CandidateBytes(nbt.getByteArray(key));
-    }
-    static void keys(NbtCompound nbt, String... expected) {
-        if (!nbt.getKeys().equals(Set.of(expected))) throw new IllegalArgumentException("schema 3 payload 欄位缺失或含未知欄位");
-    }
-    /**
-     * 帶位置標籤的 exact key 檢查：訊息以原句開頭，附 where、缺少的 key 與未知 key 的數量。
-     * 未知 key 的名稱來自存檔內容，只報數量、不輸出名稱。
-     */
-    static void keys(String where, NbtCompound nbt, String... expected) {
-        var wanted = Set.of(expected); var actual = nbt.getKeys();
-        if (actual.equals(wanted)) return;
-        var missing = new TreeSet<>(wanted); missing.removeAll(actual);
-        long unknown = actual.stream().filter(key -> !wanted.contains(key)).count();
-        throw new IllegalArgumentException("schema 3 payload 欄位缺失或含未知欄位：" + where + " missing=" + missing + " unknown=" + unknown);
-    }
-    /**
-     * schema 3 的 Identifier 欄位（目前用於 SourceFamilyRef 與 Origin 的 WorldKey）：必須帶 namespace，且 Identifier 讀回後
-     * 與原字串完全相同（拒絕 "overworld"、":overworld"）。where 是錯誤訊息的位置標籤，不輸出原字串。
-     */
-    static Identifier canonicalIdentifier(String where, NbtCompound nbt, String key) {
-        var raw = string(nbt, key); var parsed = Identifier.tryParse(raw);
-        if (parsed == null) throw new IllegalArgumentException(where + "." + key + " 不是合法 identifier");
-        if (!parsed.toString().equals(raw)) throw new IllegalArgumentException(where + "." + key + " 必須帶 namespace 且為 canonical 形式");
-        return parsed;
     }
 }

@@ -75,13 +75,13 @@ public final class SessionRecoveryState extends PersistentState {
 
     public static SessionRecoveryState fromNbt(NbtCompound nbt) {
         try {
-            SessionRecoveryRecord.requireType(nbt, "SchemaVersion", 3);
+            JournalNbt.requireType(nbt, "SchemaVersion", 3);
             int schema=nbt.getInt("SchemaVersion");
             if (schema!=1 && schema!=2 && schema!=3) throw new IllegalArgumentException("不支援 journal schema");
-            if (schema == 3) CandidateJournalCodec.keys(nbt, "SchemaVersion", "Records");
+            if (schema == 3) JournalNbt.keys(nbt, "SchemaVersion", "Records");
             var state = new SessionRecoveryState();
             state.candidateInitialized = schema == 3;
-            for (var raw : SessionRecoveryRecord.compounds(nbt, "Records", schema)) {
+            for (var raw : JournalNbt.compounds(nbt, "Records", schema)) {
                 var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw,schema);
                 if (state.records.putIfAbsent(record.sessionUuid(), record) != null) throw new IllegalArgumentException("session UUID 重複");
             }
