@@ -851,7 +851,7 @@ Legacy 與 M4 recovery 依 controller 指示省略：本輪只改移動封包 mi
 - `2bd75b1`（fix round 1，parent `779601d`）`test: align the client probe with the transfer safety rules`：`M5ClientProbe.java`、`build.gradle`（只動 F1a 區段），新增 `src/test/java/dev/quantumchamber/gametest/M5ClientProbeSafetyTest.java`。內容見下方「Fix round 1」；本段的 fix round 1 文字由其後的 docs commit 加入。
 - Review：
   - 首輪 spec review：✅，Minor 5。首輪 code quality review：Critical 0、Important 1、Minor 6。
-  - fix round 1 處理 quality Important I-1 與 Minor M-1～M-6，以及 spec Minor 1–3（本 note 的文字）。fix round 1 的 re-review：Critical 0、Important 0、Minor 1（本段 code-truth 兩句過時描述，已在 controller 的 docs commit 加註）。F1a 完成；F1b 尚未進行。
+  - fix round 1 處理 quality Important I-1 與 Minor M-1～M-6，以及 spec Minor 1–3（本 note 的文字）。fix round 1 的 re-review：Critical 0、Important 0、Minor 1（本段 code-truth 兩句過時描述，已在 controller 的 docs commit 加註）。F1a 完成（F1b 結果見下方「F1b：真 client 驗證」）。
   - controller 裁定：probe 的訊息用 `Text.literal` 可以接受（plan 的 `Text.translatable` 規則針對 production 訊息，testmod 也不能改 main 的語言檔）；在 `scripts/verification/` 的 main-only oracle 與 JAR 檢查加入 clientProbe，交給 F6。
 - F1b（真 client 驗證）已於 2026-10-01 完成，結果見下方「F1b：真 client 驗證」。
 
@@ -1003,7 +1003,7 @@ GREEN 數字：
 
 - 結論：通過。plan F1b 的四項檢查全部通過；沒有非預期的斷線，也沒有 crash report。M5 玩法實作從 F2a 繼續。
 - 執行：2026-10-01 22:04–22:36，Claude 代操作（Ben 授權），以鍵鼠自動輸入、截圖與唯讀指令進行。程式基準 `2e90ae9`（code 與 `2bd75b1` 相同）。本 task 不改 tracked 程式。
-- 證據：repo 外的 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-10-01-f1b\`，共 78 檔，其中截圖 56 張。`MANIFEST-sha256.txt` 的 SHA-256 為 `c36692f9bc6b7eabdcd883eee77d16fd88a5e1183a313a21eab580092f9a61a3`。runDir 為 `run/server-probe-f1b-ded-befbaafc`、`run/client-probe-f1b-dc-befbaafc`、`run/client-probe-f1b-sp-d826199d`（gitignored，保留）。證據全部標 `testmod-present`。
+- 證據：repo 外的 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-10-01-f1b\`。`MANIFEST-sha256.txt` 列出 80 檔（不含 MANIFEST 本身），其中截圖 56 張；MANIFEST 的 SHA-256 為 `58813ee5b5a111ae6f0028017416f490eaa401fb0490aea9a419f60ca5cdcb6f`。docs review 之後補入兩個 client runDir 的 `command_history.txt` 並重建 MANIFEST（原本 78 檔，SHA-256 `c36692f9…a61a3`）。runDir 為 `run/server-probe-f1b-ded-befbaafc`、`run/client-probe-f1b-dc-befbaafc`、`run/client-probe-f1b-sp-d826199d`（gitignored，保留）。證據全部標 `testmod-present`。
 
 ### 結果
 
@@ -1012,12 +1012,12 @@ GREEN 數字：
 | allocate → 重啟 → 物化 | allocate 後 `/stop`，以同一個 nonce 重啟：`READY … ACTIVE=true` | 新建世界（創造、和平、允許指令）後 allocate → 儲存並離開 → 重新進入：`READY … ACTIVE=true` |
 | enter／return | `ENTER OK outcome=MOVED`，`RETURN OK outcome=RETURNED`，回到來源座標 | 同左 |
 | 天空、時間、天氣、地形 | F3 顯示 `quantumchamber:universe/f1a00000-…/overworld`。`/time set 18000` 後是星空夜色，`/weather rain` 後下雨，時間從 6000 繼續走到 6081。地形可見 | 同左（時間 6000→6097） |
-| 移動、放置、破壞 | 右鍵放置橡木木材、左鍵破壞，server 端 `/execute if block` 兩次都「測試通過」。按 W 前進，server 回報 z 從 61.5 到 63.655 | 同左（z 從 3.5 到 5.655） |
+| 移動、放置、破壞 | 右鍵放置橡木材（`oak_planks`）、左鍵破壞。server 端對 (-23, 76, 63) 先測 `oak_planks`、再測 `air`，兩次都「測試通過」（座標見 `ded-logs\client-command_history.txt`）。按 W 前進，server 回報 z 從 61.5 到 63.655 | 同左，目標是 (-3, 86, 5)（`sp-logs\client-command_history.txt`）；z 從 3.5 到 5.655 |
 | 在動態世界重新登入 | 中斷連線後重新加入：`world=quantumchamber:universe/…` | 儲存並回到標題畫面後重進：同左 |
 | 在動態世界重啟 server | `/stop` 後重啟：仍在 `quantumchamber:universe/…`（`receipt=none`，receipt 依設計不跨重啟） | 關閉遊戲，再以 `--quickPlaySingleplayer` 重開：同左 |
-| 在動態世界死亡 | `/kill` 後重生在 `minecraft:overworld` 的世界出生點 (-35.5, 65, 50.5) | 重生在 `minecraft:overworld` 的 (-8.5, 79, -0.5) |
+| 在動態世界死亡 | `/kill` 後重生在 `minecraft:overworld` 的 (-35.5, 65, 50.5)（level.dat 的世界出生點是 (-32, 68, 48)，原版在附近選位） | 重生在 `minecraft:overworld` 的 (-8.5, 79, -0.5) |
 
-- Sodium＋Iris：在單人 runDir 測。Sodium 0.6.13 與 Iris 1.8.8 從外部備份的 `run/client-render` 唯讀複製，SHA-256 與來源相符。
+- Sodium＋Iris：在單人 runDir 測。Sodium 0.6.13 與 Iris 1.8.8（兩者都是 `+mc1.21.1` 版，跑在 MC 1.21）與光影包，從外部備份 `C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\run\client-render\` 的 `mods\`、`shaderpacks\` 唯讀複製，SHA-256 與來源相符（`render-mods-sha256.txt`）。
   - 啟動時偵測到 `sodium=true, iris=true`。
   - 光影關閉（`enableShaders=false`）：enter → return 正常，F3 顯示 Sodium Renderer。
   - 按 K 開啟 Complementary Reimagined r5.9.3 後 enter → return：Iris 先後 `Creating pipeline for dimension quantumchamber:universe/…/overworld` 與 `… minecraft:overworld`，畫面有光影效果，F3 有 Iris Shadow info。
@@ -1025,11 +1025,13 @@ GREEN 數字：
 
 ### 偏差與觀察
 
-- 15 秒接手：單人兩次重新進入世界時，等待迴圈在 `latest.log` 沒有比對到加入紀錄，玩家分別閒置約 90 秒與 130 秒。事後用同一個條件重測可以命中；推測是寫入時序造成，未查明。世界是和平＋創造模式，沒有受傷或其他影響。之後改以 Gradle 輸出偵測。
-- 站立檢查：dedicated 與單人各有一次 `enter` 因為腳下是樹葉而被拒，這是預期行為。以 `/setblock` 把腳下換成石頭、`/tp` 到方塊中央後再 enter，動態世界的落點同時產生 `landingChanges=[…=stone]`。
+- Dedicated 的 client 用 `runClientProbe`（plan 寫 `runClient`）：`runClient` 的 runDir 固定是 `run/client-base`，改用 `runClientProbe` 才能以新 nonce 取得全新的 runDir，不碰既有的 client 資料。clientProbe 在 client 端只多了 testmod 的 class，`/qcprobe` 由 server 端註冊，不影響連線測試；證據同樣標 `testmod-present`。
+- 15 秒接手：單人兩次重新進入世界時，等待迴圈在 `latest.log` 沒有比對到加入紀錄，玩家分別閒置約 90 秒與 130 秒。事後在同一個工作階段以同一個條件重測可以命中（只有工具輸出，未留檔）；推測是寫入時序造成，未查明。世界是和平＋創造模式，玩家沒有受傷。之後改以 Gradle 輸出偵測。
+- 未預期的方塊改動：單人動態世界 (-2, 71, 0) 的一格草方塊被破壞（`sp-17`～`sp-19` 截圖中視角朝下看著這個坑；docs reviewer 唯讀解析 region 檔，同座標在主世界是 `grass_block`、在 Universe 是 `air`，下方 (-2, 70, 0) 的泥土已長成草）。指令紀錄裡沒有任何指令動到這個位置，probe 兩次 enter 的 `landingChanges` 都是空的。依截圖，改動發生在 22:26:13 第二次 enter 到 22:29:20 之間，期間有儲存離開、從清單重進與約 130 秒閒置。推測是自動輸入在世界中誤觸左鍵，但無法從紀錄確定時刻，原因未查明。不影響 F1b 各項判定。
+- 站立檢查：dedicated 與單人各有一次 `enter` 因為腳下不是完整方塊頂面而被拒，這是預期行為。單人那次 F3 顯示 `M: 78 ML: 73`，表示腳下 y=78 是樹葉；dedicated 那次在森林的出生點附近，推測也是樹葉（拒絕訊息是通用文字，沒有截圖確認方塊種類）。以 `/setblock` 把腳下換成石頭、`/tp` 到方塊中央後再 enter，動態世界的落點同時產生 `landingChanges=[…=stone]`。
 - 放置與破壞的目標是用 `/fill` 在空中鋪的石台（避開草叢與樹冠），朝向用 `/tp` 設定。放置與破壞本身是滑鼠操作，操作前以 F3 的 Targeted Block 確認目標。
 - Dedicated 在 `/tp` 到石台的那一刻，出現一次原版的 `QC_A moved too quickly! 0.0,12.0,8.0`，沒有其他影響。
 - 單人從世界清單重新進入時，原版顯示「使用實驗性設定的世界不受支援」；選「我知道我在做什麼！」後繼續。用 `--quickPlaySingleplayer` 進入時不顯示。level.dat 的世界生成設定裡只有 M1 起就有的 `quantumchamber:superposition`；Universe 的維度鍵只出現在玩家的 `LastDeathLocation`（原版的死亡紀錄）。推論：警告來自 datapack 維度，不是 M5 新增的；這點未另外驗證。
-- Iris 對光影包回報 uniform 與 block ID map 的 WARN（例如 `BIOME_PALE_GARDEN`、`minecraft:stone_slab has no property with the name variant`）。這些是光影包版本與 1.21 的差異，和本專案無關。
+- Iris 對光影包回報 uniform 與 block ID map 的 WARN（例如 `BIOME_PALE_GARDEN`、`minecraft:stone_slab has no property with the name variant`），`run3-render-latest.log` 中有 9 段附在這些 WARN 上的 `java.lang.RuntimeException: Unknown variable …` stack trace，之後 grep `Exception` 時不要誤判。這些 WARN 在 22:34:39 建立 `minecraft:overworld` pipeline 時就第一次出現，和動態維度無關；推論是光影包版本與 1.21 的差異，不是本專案造成的。
 - 未做：H4 提到的「凍結中騎乘載具」是可選的觀察項，本次沒有做。probe 不建立 Chamber session，玩家不會被凍結。
-- 所有斷線紀錄都對應 `/stop`（「伺服器已關閉」），或儲存離開與關閉遊戲（integrated 的「連線中斷」）。三個 runDir 都沒有 `crash-reports`。結束後只剩既有的閒置 Gradle daemon（PID 129228）。
+- 所有斷線紀錄都對應三種預期操作：`/stop`（「伺服器已關閉」）、dedicated 重新登入測試時玩家主動中斷連線（`ded-s2-server.log` 的 `QC_A lost connection: Disconnected`），以及儲存離開與關閉遊戲（integrated 的「連線中斷」）。三個 runDir 都沒有 `crash-reports`。結束時的 Java 程序清單只剩既有的閒置 Gradle daemon（PID 129228）；這份清單只有工具輸出，未留檔。
