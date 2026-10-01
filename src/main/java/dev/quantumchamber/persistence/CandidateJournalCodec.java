@@ -43,7 +43,7 @@ final class CandidateJournalCodec {
         SourceFamilyRef ref = switch (string(source, "Kind")) {
             case "VANILLA" -> {
                 keys(source, "Kind", "Role", "WorldKey");
-                yield new SourceFamilyRef.Vanilla(RegistryKey.of(RegistryKeys.WORLD, Identifier.of(string(source, "WorldKey"))), role);
+                yield new SourceFamilyRef.Vanilla(RegistryKey.of(RegistryKeys.WORLD, canonicalIdentifier(source, "WorldKey")), role);
             }
             case "CATALOG" -> {
                 keys(source, "Kind", "Role", "UniverseId");
@@ -137,5 +137,11 @@ final class CandidateJournalCodec {
     }
     static void keys(NbtCompound nbt, String... expected) {
         if (!nbt.getKeys().equals(Set.of(expected))) throw new IllegalArgumentException("schema 3 payload 欄位缺失或含未知欄位");
+    }
+    /** schema 3 的 vanilla WorldKey：必須帶 namespace，且 Identifier 讀回後與原字串完全相同（拒絕 "overworld"、":overworld"）。 */
+    static Identifier canonicalIdentifier(NbtCompound nbt, String key) {
+        var raw = string(nbt, key); var parsed = Identifier.tryParse(raw);
+        if (parsed == null || !parsed.toString().equals(raw)) throw new IllegalArgumentException(key + " 必須帶 namespace 且為 canonical 形式");
+        return parsed;
     }
 }

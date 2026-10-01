@@ -9,6 +9,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.Set;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtIo;
@@ -66,6 +67,9 @@ public final class CandidateEntropyState {
         if (!attributes.isRegularFile()) throw new UnhealthyEntropyException("候選 entropy 必須是一般檔案");
         // 正常 payload 遠小於此上限；損壞檔案不可要求無界限 NBT 配置。
         NbtCompound nbt = NbtIo.readCompressed(target, NbtSizeTracker.of(4096));
+        if (!nbt.getKeys().equals(Set.of("SchemaVersion", "CandidateEntropy"))) {
+            throw new UnhealthyEntropyException("候選 entropy 欄位缺失或含未知欄位");
+        }
         if (!nbt.contains("SchemaVersion", NbtElement.INT_TYPE) || nbt.getInt("SchemaVersion") != 1
                 || !nbt.contains("CandidateEntropy", NbtElement.BYTE_ARRAY_TYPE)) {
             throw new UnhealthyEntropyException("候選 entropy schema 或型別不正確");

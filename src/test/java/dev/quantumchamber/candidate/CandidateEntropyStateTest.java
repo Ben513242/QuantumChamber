@@ -66,6 +66,26 @@ class CandidateEntropyStateTest {
         }
     }
 
+    /** H1：root 必須恰為 {SchemaVersion, CandidateEntropy}；多出的 key 一律 fail closed，且不換發 secret。 */
+    @Test void extraRootKeysFailClosedWithoutRegeneration() throws Exception {
+        var extraString = valid(); extraString.putString("Comment", "do-not-expose-this-secret");
+        var extraBytes = valid(); extraBytes.putByteArray("CandidateEntropyBackup", new byte[32]);
+        var cases = new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for (boolean evidence : new boolean[] {false, true}) for (var invalid : new NbtCompound[] {extraString, extraBytes}) cases.add(() -> {
+            Files.createDirectories(target(root).getParent());
+            NbtIo.writeCompressed(invalid, target(root));
+            byte[] before = Files.readAllBytes(target(root));
+            var exception = assertThrows(CandidateEntropyState.UnhealthyEntropyException.class,
+                () -> CandidateEntropyState.loadOrCreate(root, evidence));
+            assertFalse(exception.toString().contains("do-not-expose-this-secret"));
+            assertNull(exception.getCause());
+            assertArrayEquals(before, Files.readAllBytes(target(root)));
+            try (var files = Files.list(target(root).getParent())) { assertEquals(1, files.count()); }
+        });
+        // 逐一判定（依序執行），RED 時列出每一個仍被接受的 fixture。
+        assertAll(cases);
+    }
+
     @Test void directoryTargetAndBlockedDataParentFailChecked() throws Exception {
         Files.createDirectories(target(root));
         assertThrows(CandidateEntropyState.UnhealthyEntropyException.class, () -> CandidateEntropyState.loadOrCreate(root, false));
