@@ -1717,3 +1717,149 @@ GREEN 數字：
 
 - 本輪不跑 M3 與 M4 recovery（controller 指示）：只改一個唯讀查詢在未確認時的回傳狀態，這個查詢目前沒有任何 production caller（EXISTING 重驗屬 F4a），catalog、lifecycle、transfer、journal 與 discovery 的讀寫路徑都沒有變；Legacy、Main＋oracle 同樣不跑。
 - Full gate 在 commit 之前以工作樹執行；commit 時 2 個檔的 blob 與 gate 前記錄的相同。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+## F3a：既有 MEASURED-only 分支
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `20966a2` `refactor: teach MEASURED-only branches about the collapse states`（parent `6cce51f`）：production 8 個檔——`superposition/SuperpositionSessionManager.java`、`persistence/SessionRecoveryManager.java`、`SessionRecoveryState.java`（只有改名）、`MeasuredRecoveryPhase.java`、`MeasuredWorldSaveCheckpoint.java`（只有 Javadoc）、`corridor/CorridorPageManager.java`、`chamber/ChamberSessionGateway.java`、`ChamberPowerCoordinator.java`；測試擴充 `SessionRecoverySchema4Test.java`、`ChamberPowerCoordinatorTest.java`，以及 testmod 的 `M4CandidateDoorGameTests.java`、`M4CandidateTestAccess.java`（只新增 fixture 與收尾 helper）；`CandidateLedgerServiceTest.java`、`SessionRecoveryStateTest.java` 只改名稱（見「補充第 3 點」）。
+  - 本段的 docs commit 接在 `20966a2` 之後。
+- Code range `6cce51f..20966a2`。
+- 還沒有任何程式會產生塌縮狀態（提交 COLLAPSING 屬 F3d），所以 production 行為不變：新的分支只有測試 fixture 走得到，M4 狀態的判斷都照舊（逐列見下表）。
+
+### §13.2 逐列對照
+
+「spec 行號」以 spec 的基準 `a7e1be2` 為準，「目前行號」以 `20966a2` 為準。`SSM` 指 `superposition/SuperpositionSessionManager.java`，`SRM` 指 `persistence/SessionRecoveryManager.java`，`SRS` 指 `persistence/SessionRecoveryState.java`，`CPM` 指 `corridor/CorridorPageManager.java`，`PC` 指 `chamber/ChamberPowerCoordinator.java`。測試欄的 G1、G2、G3 見「測試」。
+
+| spec 列（spec 行號） | 目前行號 | 處置 | 測試 |
+| --- | --- | --- | --- |
+| SSM attach `:59-64`、`:387-394`（`returning`） | attach 迴圈 `SSM:67`、`attachRecord` `:74-81`、`returning` `:492-502` | 迴圈本體抽成 `attachRecord`（窮舉 switch）。COLLAPSING 只取得來源 ticket（返還需要），未完成的返還與清理由 recovery 依推導階段續做。PASSAGE_READY 與 SEALED 不建 ticket、不寫入，record 原樣保留。M4 狀態照舊：非 DORMANT 取得 ticket 並 `returning`。`returning` 對塌縮狀態直接 return（呼叫端已排除，這裡再防守一次）。PASSAGE_READY 如何保留給 F3d，見「補充第 6 點」 | G2 的 attach 段（以反射呼叫 `attachRecord`）|
+| SSM presence `:66-76`、runtime `:81` | presence `SSM:82-97`（塌縮狀態 `:85-89`）；`candidateSourceAuthorized` `:99-106` 未改 | flushed record 是塌縮狀態時，在任何 runtime 判斷之前只依 `collapseView` 推導：COLLAPSING、SEALED 回 `COLLAPSE`，PASSAGE_READY 回 `PASSAGE`。roll-forward 尚未確認的 READY→SEALED(TRR) 因此是 `COLLAPSE`。MEASURED 照舊。`:81` 的 runtime 判斷維持只認 SUPERPOSITION／MEASURED：塌縮狀態在上游 `candidateSelectionRecord`（`CPM:326`）就被拒絕，tick 也讓 runtime 跟隨塌縮狀態（下一列），塌縮狀態不會得到選擇權 | G1（presence）、G3（`presenceCollapse`、`runtimeFollowsCollapsing`）|
+| SSM tick `:178-186` | `SSM:276` | flushed 是塌縮狀態時，runtime.state 跟隨它並 `continue`：不請求 measured recovery、不 `fail`、不看 Buff（由塌縮流程負責，F3d）。MEASURED 照舊 | G3（HEAD 在這裡丟 `IllegalArgumentException`；延伸之後 Buff 到期也不丟例外）|
+| SSM measured 收尾 `:203` | `SSM:303-309` | 維持只處理 DORMANT 的 MEASURED（釋放 runtime 與來源 ticket）。COLLAPSING 的清理收尾走 `CPM.tickMeasuredRelease` 延伸後的同一路徑；依 spec §5，它的 runtime 與來源 ticket 保留到終局或進入 SEALED 才釋放（F3d），所以這個迴圈不處理它。見「偏離」 | G3（清理完成後 `sourceTicketHeldUntilTerminal`）|
+| SSM returnToOrigin `:315-345`（`:323`） | `SSM:417-450`（塌縮狀態 `:426`） | authority 是塌縮狀態時一律回 false，沒有任何寫入，也不動 ticket 或 runtime；排在 `operationInProgress` 與 MEASURED 分支之前 | G1（`returnToOriginNoSideEffect`）|
+| SRM blocks `:52` | `blocks` `SRM:54-60`、`frozen` `:66-76`、`freezes` `:82-85` | `freezes` 加入 COLLAPSING：只凍結尚未返還者；PASSAGE_READY 與 SEALED 不凍結。新增 package-private 的 `frozen(journal, player)`：M4 的 session 照舊看 current 或 flushed 任一份；current 或 flushed 任一份是塌縮狀態的 session，只看 `collapseView`（返還進度的 roll-forward 尚未確認時採用 current，已返還者先於落盤解除凍結；隔離中看 flushed） | JUnit `frozenFollowsTheCollapseViewForCollapseStates`；G2（`collapsingUnreturnedFrozen`）；G3（`collapsingUnreturnedFrozen`、`returnedPlayerNotFrozen`）|
+| SRM onJoin `:59`、onDisconnect `:81-84`、recordFor `:210-213` | onJoin `SRM:100-103`、斷線迴圈 `:124-131`、`recordFor` `:330`、`:336-340` | 新增 package-private 的 `recordFor(journal, player)`：走訪 flushed，塌縮狀態改用 `collapseView`，只回 `SessionRecoveryState.occupies` 成立的 record。DORMANT、PASSAGE_READY、SEALED 與塌縮狀態的已返還者都不算；依唯一性規則最多一筆 | JUnit `recordForFindsOnlyTheSessionThatStillOccupiesThePlayer`；G2（`sealedReturnedJoinNotQueued`、`sealedDisconnectWritesNothing`、`disconnectFindsOnlyActiveB`）|
+| SRM 返還迴圈 `:94`、release `:185`、markReturning `:216-222`、returnedRecord `:230` | 迴圈 `SRM:136-157`、`recoveryWork` `:160-176`、release `:303-307`、`markReturning` `:342-350`、`returnedRecord` `:356-366` | 迴圈條件抽成 `recoveryWork`（窮舉 switch）：RETURNING 為 RECOVER；MEASURED 照舊只在已請求時 RECOVER；COLLAPSING 依 receipt 推導——返還與清理完成（SETTLED）為 NONE，roll-forward 尚未確認為 RETRY_FLUSH（只重試寫出，補充第 2 點），其餘為 RECOVER；其他狀態為 NONE。全員返還後，MEASURED 與 COLLAPSING 都走 `releaseMeasured`。`markReturning` 對塌縮狀態不寫入：COLLAPSING 的返還由推導驅動，PASSAGE_READY 與 SEALED 依 §13.2 不寫入。`returnedRecord` 接受 COLLAPSING，進度經一般 `put`（roll-forward）寫入 | JUnit `recoveryWorkDerivesCollapsingReturnFromTheReceiptAndOnlyRetriesUnconfirmedProgress`；G3（真返還）|
+| SRS remove `:179` | `SRS:595-604` | **F2a 已完成**：current、flushed、history 任一份是 `receiptRetained` 的狀態都拒絕。本 task 未改 | F2a 的 `removeRejectsEveryRetainedReceiptState` |
+| SRS dormant、participantsAvailable、validateOwnership `:146-151`、`:246-258` | `participantsAvailable` `SRS:545-549`、`dormant` `:684-687`、`validateOwnership` `:688-698` | **F2a 已完成**：兩者都改用 `occupies`，Chamber 的唯一性不變。本 task 未改 | F2a 的 `occupiesReleasesOnlyReturnedCollapseParticipantsAndDormantReceipts`、`sealedReturnedParticipantCanJoinAnotherActiveSession` |
+| CPM attach `:89-92` | attach 迴圈 `CPM:88`、`restoreSpace` `:101-114`、`spaceless` `:119-125` | 迴圈本體抽成 `restoreSpace`。`spaceless`（窮舉 switch）判定不需要 space 的保留收據：返還與清理都完成的 MEASURED（DORMANT）與 COLLAPSING（SETTLED），以及 PASSAGE_READY、SEALED。只有尚未完成的 COLLAPSING 建立 space，走 MEASURED 的同一路徑 | G2（`noCorridorSpace`，以反射呼叫 `restoreSpace`）|
+| CPM requestMeasuredRecovery、releaseMeasured `:219-232` | `requestMeasuredRecovery` `CPM:235-243`、`measuredRecoveryComplete` `:248-252`（未改）、`releaseMeasured` `:254-263` | `requestMeasuredRecovery`：沒有保留收據才丟例外；塌縮狀態沒有請求可做（COLLAPSING 由推導驅動，PASSAGE_READY 與 SEALED 沒有 space），直接 return。`releaseMeasured`：COLLAPSING 不需要 recovery 請求，其餘條件不變。`measuredRecoveryComplete` 維持只認 DORMANT（供 SSM 收尾迴圈） | G1（`requestMeasuredRecoveryNoOp`）、G3（HEAD 丟 `IllegalArgumentException`）|
+| CPM `:306`（candidateSelectionRecord） | `CPM:326` | 未改：原條件只接受 SUPERPOSITION／MEASURED，塌縮狀態本來就被拒絕 | —（既有條件）|
+| CPM `:321`（measured） | `CPM:340-343` | 改為 flushed 或 current 任一份是 `receiptRetained`：塌縮狀態的 space 同樣凍結（不 publish、remap、retire），tick 只走保留式清理 | G3 |
+| CPM `:424`（returnEntityPins） | `CPM:442-453` | COLLAPSING 不需要請求就能取得 pins | G3 |
+| CPM `:837-842`（measured release） | `tickMeasuredRelease` `CPM:879-921` | 第一個分支改用 `spaceless`；空 lease 的 expected 保留原狀態（MEASURED 或 COLLAPSING；COLLAPSING 的清 lease 是 roll-forward）。「幾何仍未清空」與「checkpoint 已恢復，繼續 … 收尾」兩則訊息改為帶狀態，MEASURED 的文字不變。失敗處理 `fail` 的延伸見「偏離」 | G3（受控 checkpoint 失敗、退避、恢復、SETTLED）|
+| MWSC `:23` | `MeasuredWorldSaveCheckpoint.java:20-21` | 程式不變：守門用 `MeasuredRecoveryPhase.from`，延伸之後 COLLAPSING 的 RELEASE_GEOMETRY 也會通過。只更新 Javadoc | G3、mutation M-G4 |
+| SRS 版本白名單與寫出 schema `:78-85`、`:83`、`:192` | `fromNbt` `SRS:97-119`（白名單 `:101`）、`writtenSchema` `:622-630` | **F2a 已完成**。本 task 未改 | F2a 的 schema 測試 |
+| ChamberSessionGateway `:10` | `ChamberSessionGateway.java:10-14` | 新增 `Presence.COLLAPSE`、`PASSAGE`，Javadoc 寫明推導來源。repo 內沒有對 `Presence` 的窮舉 switch | G1、JUnit |
+| ChamberState、ChamberStatusSignal（整檔） | — | **F5**（`ChamberState.PASSAGE`→15），本 task 未改 | — |
+| PC reconcile `:111-156` | M5 分支 `PC:117-122` | 決策 11：presence 為 `COLLAPSE` 或 `PASSAGE` 時，在 pending 判斷之前處理：不走 pending／needsReturn、不呼叫 `returnToOrigin`、不開新 session；已供電且 enabled 時 power state 設 POWERED，否則設 RETURNING（不設 OFF，保護維持）；一律回 ARMED（11）。R2 M5（`current==ARMED` 短路）與 PASSAGE→15 屬 F5，未改 | JUnit `collapseAndPassagePresenceNeverReturnOrStartAndOnlySetPoweredOrReturning`、`terminalPresenceNoneResumesTheExistingReturningRelease`；G1（`poweredArmed11`、`COLLAPSING.unpoweredKeepsProtectionWithoutReturn`）|
+| ChamberControllerBlock `:87` | — | **F5**，本 task 未改 | — |
+
+### controller 補充第 2–7 點
+
+- **第 2 點（F2a 交接）**
+  - `recordFor`、`blocks`、`presence` 改用 `occupies`／`collapseView`：見上表。
+  - `returnedRecord` 延伸到 COLLAPSING：`SRM:356-366`。
+  - 多人返還的 roll-forward：`recoveryWork` 在 `rollForwardPending(sid)` 為真時回 RETRY_FLUSH，tick 只呼叫 `journal.flush`，不呼叫 `recover`，也不從 flushed 疊寫另一位的返還；WARN 沿用既有「返還保留 pending」的去重。真正的落盤注入（兩位參與者、第一位的 flush 失敗、第二位上線）已列在 F3d 的 RED 清單（「返還進度的 roll-forward：注入返還寫入的落盤失敗 → 只重試同一份 current」）。本 task 以 JUnit 鎖住決策本身，live 注入留給 F3d。
+- **第 3 點（Q7 改名）**
+  - `SessionRecoveryState.uncheckedCandidateSessions()` 改名為 `uncheckedSessions()`（`SRS:158`）。production 呼叫端：`SRS.recoveryWritesSafe`（`:152`）與 Javadoc、`SRM.convergeUnchecked`（`:184-188`）、`SSM.settleUncheckedInitial`（`:241`）。`CorridorPageManager` 沒有呼叫它。
+  - 只改名稱的既有測試共 6 個 test、7 處：`CandidateLedgerServiceTest.java:304`、`SessionRecoveryStateTest.java:282`、`SessionRecoverySchema4Test` 的 `commitRestoreWindowIsVisibleAsUncheckedAuthority`（2 處）、`rollForwardFailureKeepsCurrentAndAnotherSessionFlushWritesIt`、`quarantinedDoubleFaultConvergesAndClearsTheRollForwardFlag`，以及 testmod `M4CandidateDoorGameTests.java:460`（`unchecked_residue_is_quarantined_and_removed_without_pausing_recovery`）。斷言都不變。
+  - WARN（`SRM:187-188`）改為「recovery 發現未 checked authority 殘留（candidate 或 M5 restore 類寫入）……並收斂為該 flushed 狀態（ARMING／SUPERPOSITION 推進為 checked RETURNING，其餘原樣保留；沒有 flushed 時 checked 移除）」，與 `convergenceTarget` 一致；`convergeUnchecked` 的 Javadoc 同步更新。收斂完成的 INFO「未 checked candidate authority 已收斂」沒有改：testmod `M4CandidateDoorGameTests.java:373` 以這段文字斷言，而既有測試只允許改名稱（見「交給後續」）。
+- **第 4 點（F2a R1）**：選「改為只比對最新的 flushed」。`CPM.durable` 改用 `sameLineage`（`CPM:744-777`）：
+  - 先照舊以單步 `sameAuthority` 判定。M4 狀態之間它本來就可遞移，守門不變。
+  - 不成立、而最新 flushed 是塌縮狀態時，只比對跨越任意多次合法寫入都仍成立的不變量：candidate context 不變、ledger 只增不減；快取已保留收據時，ledger、selection、效果政策不變、returned 只增不減；快取已是塌縮狀態時，CollapseRevision、CommittedAtGameTime、Destination 不變。來源身分、參與者來源與 lease 照舊對 Space 核對。
+  - 不選「每次 checked 寫入後刷新快照」：寫入者分散在 recovery 的返還、`tickMeasuredRelease`，以及 F3d 之後的 `CollapseService` 提交，每一個都要記得通知 CPM，漏一個就會誤判。每一次寫入的單步狀態邊本來就由 journal 的 `put`（current、flushed、history 三者）把關，CPM 不需要重複。快取欄位保留，因為 testmod 的 `resetMeasuredForTeardown` 以反射寫它。
+  - 真實的多次寫入在本 task 已能重現，不必等 F3d：G3 的快取是選門時的 SUPERPOSITION，之後依序寫入 M→C 提交與 C 的返還進度。舊的比對會讓 `returnEntityPins` 丟「durable lease／來源權威不符」，返還永遠 pending（mutation M-G1）。
+- **第 5 點（fixture）**：G1、G2 的塌縮狀態都由 `M4CandidateTestAccess.measuredReceipt`（candidate-aware 的 MEASURED＋SELECTED）先 `put`＋`flush`，再經 `commitRestore`（M→C、C→R）或 `commitRollForward`（C→S）進入。G3 用真入場、真側門選擇得到的 live MEASURED，再 `commitRestore` M→C（GameTest server 開服時 `m5ReadyThisInstance` 已為真）。收尾一律走終局 API（`terminateCollapseFixture`：SEALED 先 S→C 重試；未完成的 COLLAPSING 以一次 roll-forward 寫成全員返還、lease 清空；之後依狀態與目的地走 SOURCE_FAST_PATH、PREPARE_DOOR_CLOSED 或 PASSAGE_ENDED）。runtime 與來源 ticket 的釋放 API 屬 F3d，G2、G3 以 testmod 反射（`releaseSourceTicketForTeardown`、`releaseCollapseRuntimeForTeardown`）收尾。沒有改動 catalog 或 world keys：default run 的 boundary oracle PASS，per-test Universe receipt 38/38 PASS。
+- **第 6 點（attach 的語意）**
+  - COLLAPSING：取得來源 ticket。未完成的返還與清理由 recovery 依推導階段續做，CPM 也會為它重建 space。
+  - PASSAGE_READY：`attachRecord` 不建 ticket、不轉 RETURNING、不寫入；CPM 不建 space；`recoveryWork` 回 NONE。presence 為 `PASSAGE`，所以 `start` 會因 presence 不是 NONE 而拒絕，`reconcile` 走 M5 分支。record 原樣留在 journal、原艙維持封鎖，等 F3d 的 `CollapseService` 在開服後以 `terminate(PASSAGE_ENDED)` 結束並正規化門。F3d 之前沒有任何程式會產生 PASSAGE_READY。
+  - SEALED：同上，不建 ticket、不寫入，原樣保留。
+- **第 7 點（`MeasuredRecoveryPhase`）**：選「延伸到 COLLAPSING」。
+  - `from` 接受 MEASURED 或 COLLAPSING（都必須是 SELECTED）。RETURN_PLAYERS、RELEASE_GEOMETRY 就是 spec §7.3 同名的推導階段，兩者共用同一份推導。
+  - 全員返還、lease 清空時，MEASURED 回 DORMANT，COLLAPSING 回新的 SETTLED。COLLAPSING 永遠不會得到 DORMANT，所以 M4 呼叫端的 `== DORMANT` 語意完全不變。新增 `released()`（DORMANT 或 SETTLED）。PASSAGE_READY 與 SEALED 照舊丟 `IllegalArgumentException`。
+  - 移除 `RETAIN_RECEIPT`：repo 內沒有任何引用；journal 不保存 phase，所以不影響序列化，也沒有出現在 log。
+  - 不另抽共用推導：多一個常數就能涵蓋；另抽一份，同名的階段就會有兩個來源。
+
+### 測試
+
+JUnit +6（534 → 540）：
+
+- `SessionRecoverySchema4Test` +4（37 → 41）：
+  - `measuredRecoveryPhaseExtendsToCollapsingAndDropsRetainReceipt`：COLLAPSING 的三個階段（以 `assertDoesNotThrow` 包住，HEAD 丟例外時落在斷言上）、MEASURED 照舊、PASSAGE_READY／SEALED 丟例外、`values()` 已不含 `RETAIN_RECEIPT`、`released()`。
+  - `recordForFindsOnlyTheSessionThatStillOccupiesThePlayer`：「SEALED A＋活動 B」重複 16 組彼此獨立的 UUID（flushed 是 `Map.copyOf`，迭代順序不固定；只看參與者的 `findFirst` 全部恰好挑中 B 的機率約 2^-16）；只有 SEALED A、PASSAGE_READY、DORMANT、COLLAPSING 的已返還者都找不到；非 DORMANT 的 MEASURED 與 COLLAPSING 的未返還者找得到；返還進度 roll-forward 尚未確認時依 collapse view。
+  - `frozenFollowsTheCollapseViewForCollapseStates`：COLLAPSING 凍結未返還者；roll-forward 尚未確認的已返還者解除；PASSAGE_READY／SEALED 不凍結；M4 的 MEASURED 與只在 current 的 RETURNING 照舊凍結。
+  - `recoveryWorkDerivesCollapsingReturnFromTheReceiptAndOnlyRetriesUnconfirmedProgress`：COLLAPSING 的三種進度不論有無請求都 RECOVER、SETTLED 為 NONE、roll-forward 尚未確認為 RETRY_FLUSH、PASSAGE_READY／SEALED 為 NONE，以及 M4 狀態照舊。
+- `ChamberPowerCoordinatorTest` +2（10 → 12）：
+  - `collapseAndPassagePresenceNeverReturnOrStartAndOnlySetPoweredOrReturning`：兩種 presence × registry 的 4 種 power state × 供電 × enabled × 4 種目前 ChamberState，共 128 組。
+  - `terminalPresenceNoneResumesTheExistingReturningRelease`：終局之後 presence 回到 NONE，既有流程把 RETURNING 解除為 POWERED 或 OFF。
+  - 既有的測試 backend 新增 `returns` 計數，只供新 test 使用；既有斷言不變。
+
+GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 → 38）。三個都在 `M4CandidateDoorGameTests.java`，各自使用獨立的 batchId：
+
+- G1 `collapse_states_derive_presence_and_never_return_through_reconcile`（`m5_f3a_presence_reconcile`，各平台）：以 `ChamberGameTestBuilder` 建立並供電的真原艙，依序放 COLLAPSING（SOURCE）、PASSAGE_READY、SEALED（NEW）fixture，斷言 presence、`returnToOrigin`、`requestMeasuredRecovery`（兩個入口）、`blocks`、refresh 後的 ChamberState、比較器與 power state，以及斷電時的 RETURNING 與保護；每種 fixture 終局後原艙回到 IDLE／POWERED，最後斷電解除保護。
+- G2 `collapse_states_attach_without_returning_and_lookup_only_occupying_sessions`（`m5_f3a_attach_lookup`，各平台）：以反射呼叫 `attachRecord`、`restoreSpace`；以 `onJoin`／`onDisconnect` 驗證 SEALED A 的已返還參與者，以及同時是活動 B（synthetic RETURNING）參與者時只找到 B；COLLAPSING 未返還者凍結。origin 在測試區內但沒有 Controller，所以 recovery 不會移動任何人。成功與失敗路徑都由 `TestHooks` 收尾。
+- G3 `native_collapsing_buff_lapse_returns_through_the_retained_path_windows`（`m5_f3a_native_collapsing_return`，Windows）：真入場 → 真側門選擇（MEASURED）→ `commitRestore` M→C → 移除 Buff → 在 test 內直接呼叫 `SuperpositionSessionManager.tick` 與 `requestMeasuredRecovery`。之後讓 production 路徑完成返還與清理，第一次原生存檔 checkpoint 以既有的 `CheckpointFaultProbe` 受控失敗。斷言收據、凍結、ticket、log（COLLAPSING 的保留 WARN 一則附 stack、沒有 RETURNING 的 ERROR、沒有「返還保留 pending」、checkpoint 恢復的 INFO 一則）。最後終局並釋放 runtime 與 ticket，斷電後原艙解除保護。
+  - RED 的安全：tick 與請求都以 `attempt` 在 test 內執行。HEAD 丟例外時，先以 `revertCollapseForTeardown`（只在 RED 使用）把 journal 與 runtime 退回 MEASURED，再走既有的 `resetMeasuredForTeardown`＋`trustedTeardown`，所以 RED run 沒有讓例外從 `END_SERVER_TICK` 拋出。
+- testmod helper（`M4CandidateTestAccess`，只新增）：`origin`、`measuredReceipt`、`collapsing`、`terminateCollapseFixture`、`attachRecord`、`restoreSpace`、`removeSpaceForTeardown`、`sourceTicketHeld`、`runtimeState`、`disconnectPending`、`releaseSourceTicketForTeardown`、`releaseCollapseRuntimeForTeardown`、`revertCollapseForTeardown`、`call`。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3a/`；gate root 在 `.superpowers/verification/`。`git diff 6cce51f 20966a2 -- <path>` 輸出的 SHA-256 前 8 碼（`f3a/diff-hashes.txt`）：`src` `61c84e32`、`src/main` `129c23e2`、`src/test` `37266fa7`、`src/testmod` `0eaa63eb`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| 開發確認（不作為證據） | 工作樹為 GREEN 的 production 與測試，在 RED 之前先確認新 GameTest 能跑完 | GameTest＋onlyBatches：`gate-f3a-dev-green-b8428108d7d54745aef340179ee2f76a` | 3/3 PASS |
+| RED JUnit 第一次（保留） | 同下一列，但 `recoveryWork…` 的失敗訊息在建構時呼叫 `MeasuredRecoveryPhase.from`（`f3a/red1/`） | focused | 6 個 test 失敗，其中 `recoveryWork…` 有 6 個子案例是在建構訊息時丟出 `IllegalArgumentException`，不是目標斷言。改成預先算好的 label 之後重跑，就是下一列 |
+| RED JUnit | `6cce51f`；porcelain 為 12 個 ` M`：6 個 production 檔是暫時的 RED adapter，6 個測試檔與 GREEN 相同（逐檔 blob 在 `f3a/red-state.txt`）。adapter（`f3a/red-main-adapter.diff`，SHA-256 前 8 碼 `ae7b7faf`）只提供讓測試能編譯的 API，行為維持 HEAD：`Presence` 兩個常數、`MeasuredRecoveryPhase.SETTLED` 與 `released()`（`from` 仍是 HEAD 的推導，`RETAIN_RECEIPT` 仍在）、改名、以 HEAD 語意抽出的 `SSM.attachRecord`、`CPM.restoreSpace`、`SRM.recordFor`／`frozen`／`recoveryWork`。`ChamberPowerCoordinator.java` 與 `MeasuredWorldSaveCheckpoint.java` 與 HEAD 相同 | focused `persistence.*`、`chamber.*`（`f3a/red-junit.log`、`red-junit-xml/`、`red-junit-cases.txt`、`red-junit-breakdown.txt`、`red-failure-types.txt`） | 預期 FAIL：271 個中 6 個，就是 6 個新 test；子失敗 332＋1＋7＋16＋2＋5 個全部是 `AssertionFailedError`，沒有任何 fixture 在建立時丟例外。`recordFor…` 的 16 組「SEALED A＋活動 B」有 12 組挑中 A，另外 4 個確定性子案例（只有 SEALED A、PASSAGE_READY、COLLAPSING 的已返還者、roll-forward）全部失敗；`measuredRecoveryPhase…` 的 4 個 COLLAPSING 案例為「Unexpected exception thrown: … 只有 MEASURED + SELECTED 可進行保留式恢復」，`values()` 仍含 `RETAIN_RECEIPT`。RED 時通過的斷言（MEASURED 照舊、PASSAGE_READY／SEALED 丟例外、`released()`、unpowered 的 RETURNING 等）以下表 mutation 證明 |
+| RED GameTest | `6cce51f`；production 同上一列的 adapter；兩個 JUnit 測試檔暫時換成只有改名的版本，讓 `test` 先通過（完整版本另存在 `f3a/full-tests/`，SHA-256 記在 `full-tests.sha256`，跑完逐位元組放回）；testmod 與 GREEN 相同（diff 前 8 碼 `0eaa63eb`，等於 commit 的 `src/testmod`）。逐檔 blob 在 `f3a/red-gametest-state.txt` | Full＋onlyBatches 3 個新 batch：`gate-f3a-red-gametest-af7f18345dc049b7b0efa17e4c153e25` | 預期 FAIL：JUnit 534 全過；3/3 新 GameTest 都失敗在目標 witness。G1：三種 fixture 的 presence、`returnToOrigin`（HEAD 丟例外）、`requestMeasuredRecovery`（丟例外）、`poweredArmed11`（power state 被 catch 設為 RETURNING）都是 false。G2：三種 fixture 的 attach 都丟例外；PASSAGE_READY 與 SEALED 也被建立 ticket；三者都被建立 space；`sealedReturnedJoinNotQueued`、`collapsingUnreturnedFrozen` 為 false；斷線等待逾時（SEALED A 被當成所屬 session，「斷線返還尚未落盤」WARN）。G3：「frozen=false tick=IllegalArgumentException: 缺少 durable MEASURED receipt request=同上」。RED run 沒有 crash，boundary oracle PASS，world exact restore |
+| mutation（JUnit） | GREEN 工作樹，每個 mutation 單獨套用、只跑目標 test class，跑完還原並以 `git hash-object` 核對（`f3a/mutations.sh`、`mutations/summary.txt`、`M-*.diff`、`M-*.log`、`M-*-TEST.xml`） | 7 個 | 全部被目標斷言抓到（下表）；跑完後 production blob 與 GREEN 相同 |
+| mutation（GameTest） | 同上（`f3a/gametest-mutations.sh`、`mutations/gametest-summary.txt`、`M-G*.diff`、`M-G*-gate.log`） | GameTest＋onlyBatches：`gate-f3a-mut-m-g1-167b1f29…`、`-m-g2-86ecce99…`、`-m-g3-c7122a70…`、`-m-g4-9a0adccc…`、`-m-g5-f839ed6d…` | 全部被抓到（下表）；5 個 gate 的 world 都 exact restore |
+| GREEN focused | 工作樹，blob 與 `20966a2` 相同（`f3a/green-state.txt`、`pre-commit-hashes.txt`、`commit-blobs.txt`） | `f3a/green-focused.log`、`green-focused-xml/` | 271，0 failure／error，2 skipped；`SessionRecoverySchema4Test` 41/41、`ChamberPowerCoordinatorTest` 12/12 |
+| GREEN JUnit 全部 | 同上 | `f3a/green-junit-all.log`、`green-junit-all-xml/` | 540，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）；比 F2c 的 534 多 6，就是本 task 新增的 6 個 test |
+| GREEN Full | 同上 | `gate-f3a-green-full-824d9fd266bc468b92ad8b4c584153cd` | PASS（`f3a/green-full-summary.txt`）：default GameTest 156/156（`_windows` 80），0 failure／error／skipped；boundary oracle PASS；per-test receipt 38/38 PASS；world exact restore；JUnit 540 |
+| GREEN Legacy | 同上 | `gate-f3a-green-legacy-aa3615cfcefb43ba82ad962fbc71ed7f` | PASS（`f3a/green-legacy-summary.txt`）：1/1，receipt 1/1，world exact restore |
+| GREEN M4 recovery | 同上 | `recovery-run-c9a7e12f6bdd4675bf5b0f9e43aa233d.json`（`f3a/recovery-console.log`、`green-recovery-summary.txt`） | PASS：24/24 phases、24 個獨立 JVM，全部正常停止、lock 已釋放 |
+
+| Mutation | 改動 | 失敗的 test（目標斷言） |
+| --- | --- | --- |
+| M-1 | `frozen` 對塌縮狀態也看 current 或 flushed 任一份（不用 collapse view） | `frozenFollowsTheCollapseViewForCollapseStates`（「返還進度尚未確認：collapse view 已返還，解除凍結」） |
+| M-2 | `recordFor` 不換成 collapse view | `recordForFindsOnlyTheSessionThatStillOccupiesThePlayer`（「返還進度尚未確認：依 collapse view，已返還者不再屬於它」） |
+| M-3 | `released()` 只認 DORMANT | `measuredRecoveryPhase…`、`recoveryWork…`（兩者的 SETTLED 案例） |
+| M-4 | `from` 接受任何保留收據 | `measuredRecoveryPhase…`（PASSAGE_READY、SEALED 不再丟例外） |
+| M-5 | `recoveryWork` 不回 RETRY_FLUSH | `recoveryWork…`（「返還進度尚未確認：只重試寫出」） |
+| M-6 | M5 分支斷電時設 OFF | `collapseAndPassage…`（96 個子案例）、`terminalPresenceNone…`（`expected: <RETURNING> but was: <OFF>`） |
+| M-7 | M5 分支只認 `COLLAPSE` | `collapseAndPassage…`（PASSAGE 的 166 個子案例：呼叫 `returnToOrigin`、開新 session） |
+| M-G1 | `CPM.durable` 改回單步 `sameAuthority`（補充第 4 點） | G3：返還進度寫入後 `returnEntityPins` 丟「durable lease／來源權威不符」（log 有「返還保留 pending」），清理一直沒有開始，有界等待逾時 |
+| M-G2 | `CPM.fail` 改回只認 MEASURED | G3：`checkpointFaultWarnsOnceAsRetained=false`、`neverAttemptsReturning=false`（log 有「走廊保留租約等待安全返還」ERROR） |
+| M-G3 | `attachRecord` 不為 COLLAPSING 取得 ticket | G2：`COLLAPSING.sourceTicketOnlyForCollapsing=false` |
+| M-G4 | `MeasuredWorldSaveCheckpoint` 只接受 MEASURED | G3：checkpoint 一直失敗，COLLAPSING 的清理沒有完成，有界等待逾時 |
+| M-G5 | 拿掉 SSM tick 的塌縮狀態分支 | G3：`runtimeFollowsCollapsing=false`。CPM 的 `requestMeasuredRecovery` 已改為不丟例外，所以 tick 本身不再丟出；這個 witness 是 tick 分支的唯一鎖 |
+
+- JAR（`f3a/green-jar-delta.txt`，與 F2c fix round 2 的 Full gate 比較）：release 350 entries（306 classes），多 4 個 class：`SessionRecoveryManager$RecoveryWork`，以及 javac 為跨 class 的 enum switch 產生的 switch map `CorridorPageManager$1`、`SessionRecoveryManager$1`、`SuperpositionSessionManager$1`。sources 206，與之前相同。testmod／gametest／probe 命中 0。
+- 所有 gate 都在 commit 之前以工作樹執行；commit 時 14 個檔的 blob 與 gate 前記錄的逐一相同（`f3a/green-state.txt`、`pre-commit-hashes.txt`、`commit-blobs.txt`）。數字由 `f3a/gate-summary.ps1`、`jar-delta.ps1`（沿用 F2b）唯讀計算。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+- 本輪不跑 Main＋oracle 與 M3：沒有新增 `SERVER_STARTED` listener、mixin、client 程式或資源，也沒有動 catalog、lifecycle 或 transfer。
+
+### 偏離 plan／spec 字面之處
+
+- **COLLAPSING 的返還由推導驅動，不需要請求**：MEASURED 的保留式 recovery 要先有 `requestMeasuredRecovery`（runtime 旗標）。COLLAPSING 的 RETURN_PLAYERS／RELEASE_GEOMETRY 依 spec §7.3 是由 receipt 推導、不另存的階段，§13.2 也要求 M5 狀態不呼叫 `requestMeasuredRecovery`，所以 recovery tick 直接依 `recoveryWork` 處理 COLLAPSING，重啟後也不需要 attach 補旗標。結果是 plan F3d 檔案清單中 `SessionRecoveryManager` 的「COLLAPSING 凍結、返還延伸」與 `CorridorPageManager` 的「release 延伸」已在本 task 完成（§13.2 與 controller 補充第 2 點都指派給 F3a）。F3d 仍負責提交、返還失敗 WARN 附 cause、落點碰撞（R2 M6），以及 live 流程的 GameTest。
+- **`CorridorPageManager.fail` 不在 §13.2 表內，但一併延伸**：它是 measured release 路徑（`:837-842` 那一列）的失敗處理。若不延伸，COLLAPSING 的清理一失敗（例如原生存檔 checkpoint）就會嘗試寫 RETURNING（被 `sameAuthority` 拒絕），而且每次都記 ERROR。現在的做法：保留收據一律不轉 RETURNING；MEASURED 照舊請求 recovery；兩者都記同一則去重的 WARN，文字帶狀態（MEASURED 的文字不變，testmod 的既有斷言照舊通過）。由 G3 的受控 checkpoint 失敗與 mutation M-G2 鎖住。
+- **SSM 的 measured 收尾迴圈（`:203`）維持只處理 DORMANT**：§13.2 寫「COLLAPSING 的 release 收尾使用延伸後的同一路徑」，但 spec §5 規定 COLLAPSING 的 runtime 與來源 ticket 保留到終局或進入 SEALED，而這個迴圈的工作正是釋放兩者。所以解讀為：COLLAPSING 的收尾是 `CPM.tickMeasuredRelease` 的同一路徑，SSM 不在清理完成時釋放 runtime 與 ticket（G3 斷言 ticket 仍在）。
+- **為了可測而抽出的方法**：`SSM.attachRecord`、`CPM.restoreSpace` 是 private，GameTest 以反射呼叫，因為開服接手無法在共用的 GameTest server 上重跑；`SRM.recordFor(journal, player)`、`frozen(journal, player)`、`recoveryWork` 是 package-private，JUnit 在同一個 package。行為與原本的迴圈本體或條件相同，只多了 M5 分支。
+- **例外文字**：`CPM.requestMeasuredRecovery` 的例外由「缺少 durable MEASURED receipt」改為「缺少 durable 保留收據」，`releaseMeasured` 的例外改為「保留收據清理前必須先確認全員返還（MEASURED 另須獨立 recovery 請求）」。沒有測試依賴這兩段文字。
+- **G3 自行提交 COLLAPSING**：F3d 之前沒有 production 的提交路徑，G3 以 `commitRestore` 代替 `CollapseService`；其餘的 tick、返還與清理都走 production 路徑。
+
+### 觀察（未修改）
+
+- RED 時，HEAD 的 `reconcile` 對塌縮 fixture 每次 refresh 都記一則「艙體 … session 協調失敗，保留返還保護」WARN（RED run 共 7 則）；延伸之後不再出現。
+- `CPM.measuredRecoveryRequested` 只對 MEASURED 有意義，COLLAPSING 的 space 不會設這個旗標。
+
+### 交給後續
+
+- F3d：
+  - 提交：live MEASURED 的 runtime 已持有來源 ticket；DORMANT 續行與同一 instance 內的 SEALED→COLLAPSING 重試必須自行取得來源 ticket（attach 只涵蓋重啟）。提交之後，recovery 會依 `recoveryWork` 自動返還與清理，不要呼叫 `requestMeasuredRecovery`（對塌縮狀態是 no-op）。
+  - 終局與進入 SEALED：需要正式 API 釋放 `SuperpositionSessionManager` 的 runtime（`sessions`）與來源 ticket（`tickets`）。目前 testmod 以 `M4CandidateTestAccess.releaseCollapseRuntimeForTeardown`／`releaseSourceTicketForTeardown` 反射代替，有 API 之後應改用它。終局之後若 runtime 仍在，presence 會是 UNKNOWN，原艙停在 RETURNING（spec §5 的警告）。
+  - PASSAGE_READY 由 `CollapseService` 在開服後以 `terminate(PASSAGE_ENDED)` 結束（見「補充第 6 點」）。
+  - 多人返還 roll-forward 的 live 注入測試（RED 清單已列）；返還失敗 WARN 附 cause；落點碰撞（R2 M6）。
+  - `SessionRecoveryManager` 收斂完成的 INFO 仍寫「未 checked candidate authority 已收斂」。F3d 本來就要改 `M4CandidateDoorGameTests.java`，可以連同 `:373` 的斷言一起改成不限 candidate 的文字。
+- F5：`ChamberState.PASSAGE`→15、`ChamberStatusSignal`、`ChamberControllerBlock` 的訊息，以及 `reconcile` 的 R2 M5。`reconcile` 的 M5 分支目前一律回 ARMED（`PC:117-122`），F5 在這裡加入「PASSAGE＋已供電＋enabled→15」。
