@@ -236,6 +236,7 @@ public final class SessionRecoveryManager {
         CorridorPageManager.forServer(server).requestMeasuredRecovery(session);
     }
 
+    /** 保留式清理是否真的完成（record 已 DORMANT／SETTLED，而且走廊 space 已釋放），見 {@link CorridorPageManager#measuredRecoveryComplete}。 */
     public boolean measuredRecoveryComplete(UUID session) {
         requireServer(server);
         return CorridorPageManager.forServer(server).measuredRecoveryComplete(session);

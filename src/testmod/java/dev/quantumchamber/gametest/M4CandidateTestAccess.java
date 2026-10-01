@@ -247,7 +247,10 @@ final class M4CandidateTestAccess {
     static boolean disconnectPending(UUID player) {
         return ((java.util.Set<?>)get(get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"recovery"),"disconnected")).contains(player);
     }
-    /** 僅測試（F3d 之前）：釋放來源 ticket；spec §5 要求終局與進入 SEALED 時釋放，正式 API 屬 F3d。 */
+    /**
+     * 僅測試（F3d 之前）：釋放來源 ticket；spec §5 要求終局與進入 SEALED 時釋放，正式 API 屬 F3d（有了之後刪除）。G2 也用它移除測試自己以
+     * {@link #attachRecord} 建立的 ticket（record 仍在 journal），所以這裡不做 journal 的前置檢查。
+     */
     @SuppressWarnings("unchecked")
     static boolean releaseSourceTicketForTeardown(UUID sid) {
         var ticket=((Map<UUID,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"tickets")).remove(sid);
@@ -258,9 +261,18 @@ final class M4CandidateTestAccess {
         world.getChunkManager().removeTicket(type,chunk,2,sid);
         return true;
     }
-    /** 僅測試（F3d 之前）：終局之後釋放該 session 的 runtime 與來源 ticket（spec §5：終局同時移除；正式 API 屬 F3d）。 */
+    /**
+     * 僅測試（F3d 之前）：終局之後（或進入 SEALED 之後）釋放該 session 的 runtime 與來源 ticket（spec §5；正式 API 屬 F3d，有了之後刪除本
+     * helper 與 {@link #releaseSourceTicketForTeardown}）。前置檢查：該 session 已不在 journal（current 與 flushed），或 flushed 是 SEALED；
+     * 不符就丟例外，不靜默釋放仍在進行的塌縮。
+     */
     @SuppressWarnings("unchecked")
-    static void releaseCollapseRuntimeForTeardown(UUID chamber,UUID sid) {
+    static void releaseCollapseRuntimeForTeardown(MinecraftServer server,UUID chamber,UUID sid) {
+        var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
+        var durable=journal.flushedRecords().get(sid);
+        boolean gone=durable==null && !journal.records().containsKey(sid);
+        if(!gone && (durable==null || durable.state()!=dev.quantumchamber.superposition.SessionState.SEALED))
+            throw new IllegalStateException("runtime 只能在終局或進入 SEALED 之後釋放：session="+sid+" flushed="+(durable==null ? "ABSENT" : durable.state()));
         var sessions=(Map<UUID,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions");
         var runtime=sessions.get(chamber);
         if(runtime!=null && ((dev.quantumchamber.persistence.SessionRecoveryRecord)get(runtime,"initial")).sessionUuid().equals(sid)) sessions.remove(chamber);

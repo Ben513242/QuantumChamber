@@ -245,10 +245,16 @@ public final class CorridorPageManager {
         requireThread(); var space=spaces.get(sessionUuid);
         return space!=null && space.measuredRecoveryRequested;
     }
+    /**
+     * 保留式清理是否真的完成：flushed record 是 MEASURED 或 COLLAPSING、返還與清理都已完成（{@link MeasuredRecoveryPhase#released()}），
+     * 而且走廊 space 已釋放（slot、保護範圍與 chunk ticket 都已歸還）。只看 record 不夠：清 lease 的寫出失敗之後，recovery 的 RETRY_FLUSH
+     * 可能在同一個 tick 確認 SETTLED，但 space 要到下一個走廊 tick 才釋放。塌縮流程離開 SETTLED（RESOLVE、終局、進入 SEALED）之前必須等它為真。
+     * MEASURED 時就是 DORMANT 且 space 已釋放，與 M4 相同。
+     */
     public boolean measuredRecoveryComplete(UUID sessionUuid) {
         requireThread(); var record=journal.flushedRecords().get(sessionUuid);
-        return record!=null && record.state()==SessionState.MEASURED
-                && MeasuredRecoveryPhase.from(record)==MeasuredRecoveryPhase.DORMANT && !spaces.containsKey(sessionUuid);
+        return record!=null && (record.state()==SessionState.MEASURED || record.state()==SessionState.COLLAPSING)
+                && MeasuredRecoveryPhase.from(record).released() && !spaces.containsKey(sessionUuid);
     }
     /** MEASURED 與 COLLAPSING 共用的保留式清理（spec §13.2）：清完 lease 仍保留 record。COLLAPSING 不需要 recovery 請求（spec §7.3）。 */
     public void releaseMeasured(UUID sessionUuid) {
@@ -754,16 +760,20 @@ public final class CorridorPageManager {
     }
     /**
      * 快取的 {@code space.authority}（上一次觀察到的 flushed）與最新 flushed 是否屬於同一條合法的寫入序列。
-     * <p>M4 狀態之間的 {@link SessionRecoveryRecord#sameAuthority} 本來就可遞移，照舊以它判定，守門不變。塌縮狀態的邊是單步關係、不具遞移性
-     * （F2a R1）：快取與最新 flushed 之間若隔了不只一次 checked 寫入（例如 MEASURED→COLLAPSING 提交之後又寫了返還進度），sameAuthority 會把合法
-     * 的序列誤判為違規。每一次寫入的單步狀態邊已由 journal 的 put（current、flushed 與 history 三者）把關，所以最新 flushed 是塌縮狀態而
-     * sameAuthority 不成立時，只比對跨越任意多次合法寫入都仍成立的不變量：candidate context 不變、ledger 只增不減；快取已保留收據時，ledger、
-     * selection 與效果政策不變、returned 只增不減；快取已是塌縮狀態時，CollapseRevision、CommittedAtGameTime 與 Destination 不變。
-     * 來源身分、參與者來源與 lease 另由 {@link #durable} 對 Space 核對。
+     * <p>先照舊以單步 {@link SessionRecoveryRecord#sameAuthority} 判定；M4 狀態之間它本來就可遞移，守門不變。
+     * <p>塌縮狀態的邊是單步關係、不具遞移性（F2a R1）：快取與最新 flushed 之間若隔了不只一次 checked 寫入（例如 MEASURED→COLLAPSING 提交之後
+     * 又寫了返還進度），sameAuthority 會把合法的序列誤判為違規。每一次寫入的單步狀態邊已由 journal 的 put（current、flushed 與 history 三者）
+     * 把關，所以只放寬這一種情況：最新 flushed 是 COLLAPSING（走廊 space 存在期間，只有它會跨越多次寫入），而快取是 SUPERPOSITION（選門時
+     * 的觀察）、MEASURED 或 COLLAPSING。這時只比對跨越任意多次合法寫入都仍成立的不變量：candidate context 不變、ledger 只增不減；快取已保留
+     * 收據時，ledger、selection 與效果政策不變、returned 只增不減；快取已是 COLLAPSING 時，CollapseRevision、CommittedAtGameTime 與
+     * Destination 不變。COLLAPSING 沒有 opened／expires、Crossed、RecoveryRequired 與 SealedReason（合法組合規定全部為空），所以不必重檢。
+     * ARMING 不放寬：入場提交 SUPERPOSITION 時（{@code commitInitial}）與選門時都會經過這裡，快取到 MEASURED 之前至少是 SUPERPOSITION。
+     * PASSAGE_READY 與 SEALED 都沒有 space，快取不可能是它們。來源身分、參與者來源與 lease 另由 {@link #durable} 對 Space 核對。
      */
-    private static boolean sameLineage(SessionRecoveryRecord cached,SessionRecoveryRecord record) {
+    static boolean sameLineage(SessionRecoveryRecord cached,SessionRecoveryRecord record) {
         if(SessionRecoveryRecord.sameAuthority(cached,record)) return true;
-        if(!record.state().collapseState()) return false;
+        if(record.state()!=SessionState.COLLAPSING || cached.state()!=SessionState.SUPERPOSITION && cached.state()!=SessionState.MEASURED
+                && cached.state()!=SessionState.COLLAPSING) return false;
         var from=cached.collapse(); var to=record.collapse();
         return cached.candidateContext().equals(record.candidateContext())
                 && new HashSet<>(record.candidateLedger()).containsAll(cached.candidateLedger())
@@ -1082,11 +1092,11 @@ public final class CorridorPageManager {
                     warnMeasured(space,record.state(),failure);
                     return;
                 }
-                if(!journal.recoveryWritesSafe()) throw new IllegalStateException("dirty candidate authority 不可經 fault recovery 承認");
+                if(!journal.recoveryWritesSafe()) throw new IllegalStateException("未 checked authority 不可經 fault recovery 承認");
                 var current=journal.records().get(space.id);
                 if(current!=null && (!record.candidateContext().equals(current.candidateContext())
                         || !record.candidateLedger().equals(current.candidateLedger()) || !record.candidateSelection().equals(current.candidateSelection())))
-                    throw new IllegalStateException("dirty candidate authority 不可經 fault recovery 承認");
+                    throw new IllegalStateException("未 checked authority 不可經 fault recovery 承認");
                 journal.put(record.withProgress(record.participants(),List.copyOf(space.leases.values()),SessionState.RETURNING,
                         record.restoreEntryEffectOnReturn()));
                 journal.flush(server);

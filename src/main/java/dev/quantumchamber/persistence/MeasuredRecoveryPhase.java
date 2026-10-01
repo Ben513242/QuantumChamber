@@ -10,6 +10,10 @@ import dev.quantumchamber.superposition.SessionState;
 public enum MeasuredRecoveryPhase {
     RETURN_PLAYERS, RELEASE_GEOMETRY, DORMANT, SETTLED;
 
+    /**
+     * 前提：record 必須是 MEASURED 或 COLLAPSING，而且是 SELECTED。其他狀態（含 PASSAGE_READY 與 SEALED）一律丟
+     * {@link IllegalArgumentException}；走訪多筆 record 的呼叫端必須先以狀態過濾，或逐筆隔離例外，不能讓它從 tick 拋出。
+     */
     public static MeasuredRecoveryPhase from(SessionRecoveryRecord record) {
         var state=record.state();
         if((state!=SessionState.MEASURED && state!=SessionState.COLLAPSING)
@@ -20,6 +24,10 @@ public enum MeasuredRecoveryPhase {
         return state==SessionState.MEASURED ? DORMANT : SETTLED;
     }
 
-    /** 返還與清理都已完成（DORMANT 或 SETTLED）：不再需要走廊 space、lease 與返還。 */
+    /**
+     * record 推導出的返還與清理都已完成（DORMANT 或 SETTLED）。這只是 flushed record 的推導，不代表走廊 space、slot、保護範圍與 chunk ticket
+     * 已經釋放：清 lease 的寫出失敗之後，record 可能先變成 SETTLED，space 要到下一個走廊 tick 才釋放。判斷清理是否真的完成，要用
+     * {@code CorridorPageManager.measuredRecoveryComplete}（或 {@code SessionRecoveryManager.measuredRecoveryComplete}）。
+     */
     public boolean released() { return this==DORMANT || this==SETTLED; }
 }

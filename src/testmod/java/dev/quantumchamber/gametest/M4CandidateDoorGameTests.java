@@ -662,6 +662,24 @@ public final class M4CandidateDoorGameTests {
         final UUID sid; final List<Integer> calls=new ArrayList<>(); boolean armed=true;
         CheckpointFaultProbe(UUID sid) { this.sid=sid; }
     }
+    private static ReleaseFlushFault releaseFlushFault;
+    /**
+     * F3a：COLLAPSING 清 lease 的 journal 寫出（current 已是全員返還、lease 清空，flushed 仍有 lease）在 flush 開頭受控失敗恰一次。
+     * 由 {@link #beforeCandidateFlush} 在每次 journal flush 開頭呼叫；之後的重試（recovery 的 RETRY_FLUSH）照常寫出。
+     */
+    private static final class ReleaseFlushFault {
+        static final String MESSAGE="F3a GameTest 受控：清 lease 的 journal 寫出失敗";
+        final UUID sid; int fired;
+        ReleaseFlushFault(UUID sid) { this.sid=sid; }
+        void observe(SessionRecoveryState state) {
+            if(fired>0) return;
+            var current=state.records().get(sid); var durable=state.flushedRecords().get(sid);
+            if(current==null || durable==null || current.state()!=SessionState.COLLAPSING || !current.spaceLeases().isEmpty()
+                    || durable.spaceLeases().isEmpty()) return;
+            fired++;
+            throw new IllegalStateException(MESSAGE);
+        }
+    }
 
     /**
      * M5 H2（spec v5.3）：MEASURED 原生存檔 checkpoint 以「同一 storage 的同一個 region 檔」判定，只看相關 chunks 所在的 region。
@@ -1264,6 +1282,8 @@ public final class M4CandidateDoorGameTests {
     }
 
     public static void beforeCandidateFlush(SessionRecoveryState state,MinecraftServer server) {
+        var release=releaseFlushFault;
+        if(release!=null && server.isOnThread()) release.observe(state);
         if(initialFlushFaultProbe!=null) initialFlushFaultProbe.observe(state);
         if(batchFaultProbe!=null) batchFaultProbe.observe(state);
         if(publishProbe!=null) publishProbe.observe(state);
@@ -1662,50 +1682,61 @@ public final class M4CandidateDoorGameTests {
             var registry=dev.quantumchamber.chamber.ChamberRegistryState.get(server).registry();
             var coordinator=new dev.quantumchamber.chamber.ChamberPowerCoordinator();
             var witness=new LinkedHashMap<String,Boolean>();
-            for(var phase : List.of(SessionState.COLLAPSING,SessionState.PASSAGE_READY,SessionState.SEALED)) {
-                var player=UUID.randomUUID();
-                var sid=collapseFixture(server,origin,Map.of(player,true),List.of(),phase,world.getTime()).sessionUuid();
-                var before=journalView(server,journal,sid);
-                var expected=phase==SessionState.PASSAGE_READY ? dev.quantumchamber.chamber.ChamberSessionGateway.Presence.PASSAGE
-                        : dev.quantumchamber.chamber.ChamberSessionGateway.Presence.COLLAPSE;
-                witness.put(phase+".presenceFromCollapseView",gateway.presence(server,chamber)==expected);
-                boolean[] returned={true};
-                var returnFailure=attempt(() -> returned[0]=gateway.returnToOrigin(world,controller));
-                witness.put(phase+".returnToOriginNoSideEffect",returnFailure==null && !returned[0]
-                        && before.equals(journalView(server,journal,sid)) && !M4CandidateTestAccess.sourceTicketHeld(sid));
-                var requestFailure=attempt(() -> {
-                    recovery.requestMeasuredRecovery(sid); CorridorPageManager.forServer(server).requestMeasuredRecovery(sid);
-                });
-                witness.put(phase+".requestMeasuredRecoveryNoOp",requestFailure==null && before.equals(journalView(server,journal,sid))
-                        && M4CandidateTestAccess.space(CorridorPageManager.forServer(server),sid)==null);
-                witness.put(phase+".returnedParticipantNotBlocked",!SessionRecoveryManager.blocks(player,server));
-                coordinator.refresh(world,frame.controllerPos());
-                witness.put(phase+".poweredArmed11",armedSignal(context,frame) && registry.records().get(chamber).powerState()
-                        ==dev.quantumchamber.chamber.ChamberPowerState.POWERED && before.equals(journalView(server,journal,sid)));
-                if(phase==SessionState.COLLAPSING) {
+            var hooks=new M2CorridorGameTests.TestHooks();
+            // 失敗路徑的收尾（成功路徑已逐一終局並斷電，這裡什麼都不做）：本艙還有 fixture record 就移除，再斷電讓原艙解除保護。
+            hooks.add(() -> {
+                cleanupFixtures(server,record -> record.chamberUuid().equals(chamber));
+                if(world.isReceivingRedstonePower(frame.controllerPos())) {
                     context.setBlockState(power,net.minecraft.block.Blocks.AIR); coordinator.refresh(world,frame.controllerPos());
-                    witness.put("COLLAPSING.unpoweredKeepsProtectionWithoutReturn",armedSignal(context,frame) && registry.records().get(chamber).powerState()
-                            ==dev.quantumchamber.chamber.ChamberPowerState.RETURNING && !ChamberProtectionService.get().mayMutate(world,frame.controllerPos())
-                            && before.equals(journalView(server,journal,sid)) && !M4CandidateTestAccess.sourceTicketHeld(sid));
-                    context.setBlockState(power,net.minecraft.block.Blocks.REDSTONE_BLOCK); coordinator.refresh(world,frame.controllerPos());
                 }
-                M4CandidateTestAccess.terminateCollapseFixture(server,sid);
-                coordinator.refresh(world,frame.controllerPos());
-                witness.put(phase+".terminalReturnsChamberToNormalFlow",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
-                        && registry.records().get(chamber).powerState()==dev.quantumchamber.chamber.ChamberPowerState.POWERED
-                        && controller.chamberState()==dev.quantumchamber.chamber.ChamberState.IDLE);
-            }
-            context.setBlockState(power,net.minecraft.block.Blocks.AIR); coordinator.refresh(world,frame.controllerPos());
+            });
+            try {
+                for(var phase : List.of(SessionState.COLLAPSING,SessionState.PASSAGE_READY,SessionState.SEALED)) {
+                    var player=UUID.randomUUID();
+                    var sid=collapseFixture(server,origin,Map.of(player,true),List.of(),phase,world.getTime()).sessionUuid();
+                    var before=journalView(server,journal,sid);
+                    var expected=phase==SessionState.PASSAGE_READY ? dev.quantumchamber.chamber.ChamberSessionGateway.Presence.PASSAGE
+                            : dev.quantumchamber.chamber.ChamberSessionGateway.Presence.COLLAPSE;
+                    witness.put(phase+".presenceFromCollapseView",gateway.presence(server,chamber)==expected);
+                    boolean[] returned={true};
+                    var returnFailure=attempt(() -> returned[0]=gateway.returnToOrigin(world,controller));
+                    witness.put(phase+".returnToOriginNoSideEffect",returnFailure==null && !returned[0]
+                            && before.equals(journalView(server,journal,sid)) && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                    var requestFailure=attempt(() -> {
+                        recovery.requestMeasuredRecovery(sid); CorridorPageManager.forServer(server).requestMeasuredRecovery(sid);
+                    });
+                    witness.put(phase+".requestMeasuredRecoveryNoOp",requestFailure==null && before.equals(journalView(server,journal,sid))
+                            && M4CandidateTestAccess.space(CorridorPageManager.forServer(server),sid)==null);
+                    witness.put(phase+".returnedParticipantNotBlocked",!SessionRecoveryManager.blocks(player,server));
+                    coordinator.refresh(world,frame.controllerPos());
+                    witness.put(phase+".poweredArmed11",armedSignal(context,frame) && registry.records().get(chamber).powerState()
+                            ==dev.quantumchamber.chamber.ChamberPowerState.POWERED && before.equals(journalView(server,journal,sid)));
+                    if(phase==SessionState.COLLAPSING) {
+                        context.setBlockState(power,net.minecraft.block.Blocks.AIR); coordinator.refresh(world,frame.controllerPos());
+                        witness.put("COLLAPSING.unpoweredKeepsProtectionWithoutReturn",armedSignal(context,frame) && registry.records().get(chamber).powerState()
+                                ==dev.quantumchamber.chamber.ChamberPowerState.RETURNING && !ChamberProtectionService.get().mayMutate(world,frame.controllerPos())
+                                && before.equals(journalView(server,journal,sid)) && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                        context.setBlockState(power,net.minecraft.block.Blocks.REDSTONE_BLOCK); coordinator.refresh(world,frame.controllerPos());
+                    }
+                    M4CandidateTestAccess.terminateCollapseFixture(server,sid);
+                    coordinator.refresh(world,frame.controllerPos());
+                    witness.put(phase+".terminalReturnsChamberToNormalFlow",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+                            && registry.records().get(chamber).powerState()==dev.quantumchamber.chamber.ChamberPowerState.POWERED
+                            && controller.chamberState()==dev.quantumchamber.chamber.ChamberState.IDLE);
+                }
+                context.setBlockState(power,net.minecraft.block.Blocks.AIR); coordinator.refresh(world,frame.controllerPos());
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             whenWithinTicks(context,ready+1,40,() -> ChamberProtectionService.get().mayMutate(world,frame.controllerPos()),released -> {
+                hooks.release();
                 context.assertTrue(!witness.containsValue(false),"M5 塌縮狀態的 presence／returnToOrigin／requestMeasuredRecovery／reconcile："+witness);
                 M4PerTestUniverseProbe.complete(context);
-            },() -> "斷電後原艙保護未解除：power="+registry.records().get(chamber).powerState(),null);
+            },() -> "斷電後原艙保護未解除：power="+registry.records().get(chamber).powerState(),hooks);
         },() -> "原艙尚未註冊並進入 IDLE",null);
     }
 
     /**
      * F3a（spec §5、§12、§13.2）：開服接手與依玩家查找。attach 只為 COLLAPSING 建立來源 ticket；PASSAGE_READY 與 SEALED 不建 ticket；三者都不轉
-     * RETURNING，也不建立走廊 space（返還與清理已完成）。SEALED A 的已返還參與者 JOIN 不排隊、斷線不寫入 A；同時是活動 B 的參與者時只找到 B。
+     * RETURNING，也不建立走廊 space（返還與清理已完成）。SEALED A 的已返還參與者 JOIN 不排隊、斷線不寫入 A；同時是活動 B 的參與者時，斷線待處理照常清除、A 與 B 都不被改寫（只找到 B 的鑑別在 JUnit）。
      * COLLAPSING 尚未返還的參與者被凍結。origin 在測試區內但沒有 Controller：來源身分驗證必定失敗，recovery 不會移動任何人。各平台都執行。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_f3a_attach_lookup",tickLimit=100000)
@@ -1716,21 +1747,19 @@ public final class M4CandidateDoorGameTests {
             var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
             var recovery=(SessionRecoveryManager)M4CandidateTestAccess.get(gateway,"recovery");
             var base=context.getAbsolutePos(new BlockPos(3,2,3)); long time=context.getWorld().getTime();
-            var owned=new ArrayList<UUID>(); var removable=new ArrayList<UUID>();
+            var removable=new ArrayList<UUID>();
             var hooks=new M2CorridorGameTests.TestHooks();
-            // 成功與失敗路徑都經 hooks.release() 收尾：釋放 ticket、移除 space，再以終局 API 或一般 remove 移除本 test 的 fixture。
+            // 成功與失敗路徑都經 hooks.release() 收尾：origin 在 base 的 fixture（含 collapseFixture 中途失敗留下的 MEASURED）釋放 ticket、
+            // 移除 space 後以終局 API 移除；活動 B 以一般 remove 移除。
             hooks.add(() -> {
-                for(var sid : List.copyOf(owned)) {
-                    M4CandidateTestAccess.releaseSourceTicketForTeardown(sid); M4CandidateTestAccess.removeSpaceForTeardown(pages,sid);
-                    if(journal.flushedRecords().containsKey(sid)) M4CandidateTestAccess.terminateCollapseFixture(server,sid);
-                }
+                cleanupFixtures(server,record -> record.origin().controllerPos().equals(base) && record.state()!=SessionState.RETURNING);
                 for(var sid : List.copyOf(removable)) if(journal.records().containsKey(sid)) { journal.remove(sid); journal.flush(server); }
             });
             var witness=new LinkedHashMap<String,Boolean>();
             try {
                 for(var phase : List.of(SessionState.COLLAPSING,SessionState.PASSAGE_READY,SessionState.SEALED)) {
                     var record=collapseFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(UUID.randomUUID(),true),List.of(),phase,time);
-                    var sid=record.sessionUuid(); owned.add(sid);
+                    var sid=record.sessionUuid();
                     var before=journalView(server,journal,sid);
                     var attach=attempt(() -> M4CandidateTestAccess.attachRecord(record));
                     var restore=attempt(() -> M4CandidateTestAccess.restoreSpace(pages,record));
@@ -1739,18 +1768,16 @@ public final class M4CandidateDoorGameTests {
                     witness.put(phase+".sourceTicketOnlyForCollapsing",M4CandidateTestAccess.sourceTicketHeld(sid)==(phase==SessionState.COLLAPSING));
                     witness.put(phase+".noCorridorSpace",M4CandidateTestAccess.space(pages,sid)==null);
                     M4CandidateTestAccess.releaseSourceTicketForTeardown(sid); M4CandidateTestAccess.removeSpaceForTeardown(pages,sid);
-                    M4CandidateTestAccess.terminateCollapseFixture(server,sid); owned.remove(sid);
+                    M4CandidateTestAccess.terminateCollapseFixture(server,sid);
                 }
                 var player=UUID.randomUUID();
                 var sealed=collapseFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(player,true),List.of(),SessionState.SEALED,time);
-                owned.add(sealed.sessionUuid());
                 recovery.onJoin(player,server);
                 witness.put("sealedReturnedJoinNotQueued",!SessionRecoveryManager.blocks(player,server));
                 recovery.onDisconnect(player,server);
                 var pending=UUID.randomUUID();
                 var collapsing=collapseFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(pending,false),
                         List.of(new SessionRecoveryRecord.SpaceLease(10013,new net.minecraft.util.math.BlockBox(1000,80,1000,1006,86,1006))),SessionState.COLLAPSING,time);
-                owned.add(collapsing.sessionUuid());
                 witness.put("collapsingUnreturnedFrozen",SessionRecoveryManager.blocks(pending,server));
                 whenWithinTicks(context,2,20,() -> !M4CandidateTestAccess.disconnectPending(player),cleared -> {
                     witness.put("sealedDisconnectWritesNothing",sealed.equals(journal.flushedRecords().get(sealed.sessionUuid()))
@@ -1761,7 +1788,9 @@ public final class M4CandidateDoorGameTests {
                     journal.put(active); removable.add(active.sessionUuid()); journal.flush(server);
                     recovery.onDisconnect(player,server);
                     whenWithinTicks(context,cleared+1,20,() -> !M4CandidateTestAccess.disconnectPending(player),found -> {
-                        witness.put("disconnectFindsOnlyActiveB",sealed.equals(journal.flushedRecords().get(sealed.sessionUuid()))
+                        // 這裡只證明整合結果（斷線待處理清除，A、B 都沒被改寫）；「SEALED A＋活動 B 時只找到 B」的鑑別由 JUnit
+                        // recordForFindsOnlyTheSessionThatStillOccupiesThePlayer 的 16 組獨立案例鎖住（GREEN 的 markReturning 對 A、B 都不寫入）。
+                        witness.put("disconnectWithActiveBWritesNeither",sealed.equals(journal.flushedRecords().get(sealed.sessionUuid()))
                                 && active.equals(journal.flushedRecords().get(active.sessionUuid())));
                         witness.put("activeBFreezesPlayer",SessionRecoveryManager.blocks(player,server));
                         hooks.release();
@@ -1778,9 +1807,10 @@ public final class M4CandidateDoorGameTests {
      * Buff 到期。HEAD 的 MEASURED-only 分支在這時丟例外：tick 的 Buff 分支請求 measured recovery，而 CorridorPageManager 只認 MEASURED。
      * 延伸之後：tick 與 requestMeasuredRecovery 都不丟例外；COLLAPSING 未返還者凍結；返還與清理由 receipt 推導，沿用 MEASURED 的同一路徑
      * （returnedRecord、roll-forward 寫入、releaseMeasured、原生存檔 checkpoint、清 lease），收據不變、不轉 RETURNING、保留來源 ticket。
-     * 第一次 checkpoint 受控失敗：只記一次 COLLAPSING 的保留 WARN、不嘗試 RETURNING，退避後重試成功。返還進度寫入之後，
-     * CorridorPageManager 以快取比對最新 flushed 不再誤判（controller 補充第 4 點）。收尾以終局 API 移除 record，runtime 與來源 ticket
-     * 以反射釋放（正式 API 屬 F3d）。
+     * 第一次 checkpoint 受控失敗：記一則 COLLAPSING 的保留 WARN、不嘗試 RETURNING，退避後重試成功。返還進度寫入之後，
+     * CorridorPageManager 以快取比對最新 flushed 不再誤判（controller 補充第 4 點）。清 lease 的 journal 寫出也受控失敗一次：同一個 tick 內
+     * recovery 的 RETRY_FLUSH 確認 SETTLED，但走廊 space 下一個 tick 才釋放，這段期間 measuredRecoveryComplete 必須為假（fix round 1 的 I-1）。
+     * 收尾以終局 API 移除 record，runtime 與來源 ticket 以反射釋放（正式 API 屬 F3d）；失敗路徑由 hook 在清理真的完成時代為收尾。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_f3a_native_collapsing_return",tickLimit=100000)
     public void native_collapsing_buff_lapse_returns_through_the_retained_path_windows(TestContext context) {
@@ -1800,10 +1830,21 @@ public final class M4CandidateDoorGameTests {
             context.assertTrue(commit.committed(),"fixture：MEASURED→COLLAPSING 經 commitRestore："+commit);
             var hooks=new M2CorridorGameTests.TestHooks();
             var probe=new CheckpointFaultProbe(sid);
+            var releaseFault=new ReleaseFlushFault(sid);
             LogCapture capture;
             try {
+                // 最先登記、最後執行的收尾：清理已真的完成（record SETTLED 且 space 已釋放）就以終局 API 移除 record；record 已不在就釋放
+                // runtime 與來源 ticket。清理還沒完成時不能安全移除，保留現場給失敗訊息診斷。成功路徑會先自行終局，這裡只剩釋放的冪等呼叫。
+                hooks.add(() -> {
+                    var record=journal.flushedRecords().get(sid);
+                    if(record!=null && record.state()==SessionState.COLLAPSING && fixture.pages.measuredRecoveryComplete(sid))
+                        M4CandidateTestAccess.terminateCollapseFixture(server,sid);
+                    if(!journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid))
+                        M4CandidateTestAccess.releaseCollapseRuntimeForTeardown(server,chamber,sid);
+                });
                 capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
                 checkpointFaultProbe=probe; hooks.add(() -> { if(checkpointFaultProbe==probe) checkpointFaultProbe=null; });
+                releaseFlushFault=releaseFault; hooks.add(() -> { if(releaseFlushFault==releaseFault) releaseFlushFault=null; });
                 player.removeStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE);
             } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             boolean frozen=SessionRecoveryManager.blocks(player.getUuid(),server);
@@ -1828,40 +1869,51 @@ public final class M4CandidateDoorGameTests {
                     +(M4CandidateTestAccess.space(fixture.pages,sid)!=null)+" calls="+probe.calls;
             whenWithinTicks(context,tick+1,1200,() -> !probe.calls.isEmpty(),faulted -> {
                 probe.armed=false;
-                whenWithinTicks(context,faulted+1,1200,() -> collapseSettled(journal,fixture.pages,sid),settled -> {
-                    var receipt=journal.flushedRecords().get(sid);
-                    witness.put("playerReturnedToSource",player.getServerWorld()==context.getWorld() && dev.quantumchamber.chamber.ChamberOccupantService.contains(
-                            dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox()));
-                    witness.put("returnedPlayerNotFrozen",!SessionRecoveryManager.blocks(player.getUuid(),server));
-                    witness.put("receiptKeptAsCollapsing",receipt.collapse().equals(collapsing.collapse())
-                            && receipt.candidateContext().equals(measured.candidateContext()) && receipt.candidateLedger().equals(measured.candidateLedger())
-                            && receipt.candidateSelection().equals(measured.candidateSelection()) && receipt.equals(M4CandidateTestAccess.diskRecords(server).get(sid)));
-                    witness.put("sourceTicketHeldUntilTerminal",M4CandidateTestAccess.sourceTicketHeld(sid));
-                    witness.put("presenceStillCollapse",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.COLLAPSE);
-                    List<LogCapture.Entry> retained,returning,pending,recovered;
-                    try {
-                        retained=capture.matching(org.apache.logging.log4j.Level.WARN,"COLLAPSING 保留 receipt 等待安全返還",sid.toString());
-                        returning=capture.matching(org.apache.logging.log4j.Level.ERROR,"走廊保留租約等待安全返還",sid.toString());
-                        pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還保留 pending",sid.toString());
-                        recovered=capture.matching(org.apache.logging.log4j.Level.INFO,"COLLAPSING 原生存檔 checkpoint 已恢復，繼續 SETTLED 收尾",sid.toString());
-                    } finally { hooks.release(); }
-                    witness.put("checkpointFaultWarnsOnceAsRetained",retained.size()==1 && retained.getFirst().thrown()!=null);
-                    witness.put("neverAttemptsReturning",returning.isEmpty());
-                    witness.put("noStaleAuthorityReturnPending",pending.isEmpty());
-                    witness.put("checkpointRetriedAndRecovered",recovered.size()==1 && probe.calls.size()>=2);
-                    var origin=receipt.collapse().destination() instanceof dev.quantumchamber.collapse.CollapseDestination.Source
-                            ? SessionRecoveryState.TerminalOrigin.SOURCE_FAST_PATH : SessionRecoveryState.TerminalOrigin.PREPARE_DOOR_CLOSED;
-                    witness.put("terminalRemoved",journal.terminate(server,receipt,origin).removed());
-                    M4CandidateTestAccess.releaseCollapseRuntimeForTeardown(chamber,sid);
-                    if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
-                    whenWithinTicks(context,settled+1,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
-                            && ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
-                        try {
-                            context.assertTrue(!witness.containsValue(false),"COLLAPSING 沿用保留式返還與清理："+witness+" retained="+retained.size()
-                                    +" pending="+pending.size()+" calls="+probe.calls);
-                        } finally { fixture.close(); }
-                        M4PerTestUniverseProbe.complete(context);
-                    },() -> "收尾後原艙未釋放：presence="+gateway.presence(server,chamber),null);
+                // 清 lease 的寫出在 flush 開頭受控失敗一次（ReleaseFlushFault）。同一個 tick 內 recovery 的 RETRY_FLUSH 寫出成功，所以第一次看到
+                // SETTLED 的 record 時，走廊 space 還在（下一個走廊 tick 才釋放）：清理完成的查詢這時必須為假，space 釋放之後才為真（I-1）。
+                whenWithinTicks(context,faulted+1,1200,() -> recordReleased(journal,sid),released -> {
+                    witness.put("releaseFlushFaultedOnce",releaseFault.fired==1);
+                    witness.put("recordSettledBeforeSpaceReleased",MeasuredRecoveryPhase.from(journal.flushedRecords().get(sid))==MeasuredRecoveryPhase.SETTLED
+                            && M4CandidateTestAccess.space(fixture.pages,sid)!=null);
+                    witness.put("releaseIncompleteWhileSpaceRemains",!fixture.pages.measuredRecoveryComplete(sid) && !recovery.measuredRecoveryComplete(sid));
+                    whenWithinTicks(context,released+1,40,() -> M4CandidateTestAccess.space(fixture.pages,sid)==null,settled -> {
+                        witness.put("releaseCompleteOnceSpaceReleased",fixture.pages.measuredRecoveryComplete(sid) && recovery.measuredRecoveryComplete(sid));
+                        var receipt=journal.flushedRecords().get(sid);
+                        witness.put("playerReturnedToSource",player.getServerWorld()==context.getWorld() && dev.quantumchamber.chamber.ChamberOccupantService.contains(
+                                dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox()));
+                        witness.put("returnedPlayerNotFrozen",!SessionRecoveryManager.blocks(player.getUuid(),server));
+                        witness.put("receiptKeptAsCollapsing",receipt.collapse().equals(collapsing.collapse())
+                                && receipt.candidateContext().equals(measured.candidateContext()) && receipt.candidateLedger().equals(measured.candidateLedger())
+                                && receipt.candidateSelection().equals(measured.candidateSelection()) && receipt.equals(M4CandidateTestAccess.diskRecords(server).get(sid)));
+                        witness.put("sourceTicketHeldUntilTerminal",M4CandidateTestAccess.sourceTicketHeld(sid));
+                        witness.put("presenceStillCollapse",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.COLLAPSE);
+                        var retained=capture.matching(org.apache.logging.log4j.Level.WARN,"COLLAPSING 保留 receipt 等待安全返還",sid.toString());
+                        var returning=capture.matching(org.apache.logging.log4j.Level.ERROR,"走廊保留租約等待安全返還",sid.toString());
+                        var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還保留 pending",sid.toString());
+                        var recovered=capture.matching(org.apache.logging.log4j.Level.INFO,"COLLAPSING 原生存檔 checkpoint 已恢復，繼續 SETTLED 收尾",sid.toString());
+                        // checkpoint 與清 lease 的寫出各失敗一次：兩個原因各記一則保留 WARN，各附 stack。
+                        witness.put("retainedWarnOncePerCause",retained.size()==2 && retained.stream().allMatch(entry -> entry.thrown()!=null)
+                                && retained.stream().anyMatch(entry -> String.valueOf(entry.thrown().getMessage()).contains("MEASURED 原生存檔 checkpoint 失敗"))
+                                && retained.stream().anyMatch(entry -> String.valueOf(entry.thrown().getMessage()).contains(ReleaseFlushFault.MESSAGE)));
+                        witness.put("neverAttemptsReturning",returning.isEmpty());
+                        witness.put("noStaleAuthorityReturnPending",pending.isEmpty());
+                        witness.put("checkpointRetriedAndRecovered",recovered.size()==1 && probe.calls.size()>=2);
+                        var origin=receipt.collapse().destination() instanceof dev.quantumchamber.collapse.CollapseDestination.Source
+                                ? SessionRecoveryState.TerminalOrigin.SOURCE_FAST_PATH : SessionRecoveryState.TerminalOrigin.PREPARE_DOOR_CLOSED;
+                        witness.put("terminalRemoved",journal.terminate(server,receipt,origin).removed());
+                        // 收尾 hook 在這裡釋放 runtime 與來源 ticket（record 已終局），並移除 log capture 與兩個 fault。
+                        hooks.release();
+                        witness.put("runtimeAndTicketReleased",M4CandidateTestAccess.runtimeState(chamber)==null && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                        if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                        whenWithinTicks(context,settled+1,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+                                && ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
+                            try {
+                                context.assertTrue(!witness.containsValue(false),"COLLAPSING 沿用保留式返還與清理："+witness+" retained="+retained.size()
+                                        +" pending="+pending.size()+" calls="+probe.calls);
+                            } finally { fixture.close(); }
+                            M4PerTestUniverseProbe.complete(context);
+                        },() -> "收尾後原艙未釋放：presence="+gateway.presence(server,chamber),null);
+                    },() -> "走廊 space 沒有在 SETTLED 之後釋放："+diagnostics.get(),hooks);
                 },() -> "COLLAPSING 未完成返還與清理："+diagnostics.get(),hooks);
             },() -> "COLLAPSING 的清理沒有走到原生存檔 checkpoint："+diagnostics.get(),hooks);
         });
@@ -1902,10 +1954,24 @@ public final class M4CandidateDoorGameTests {
         return controller.chamberState()==dev.quantumchamber.chamber.ChamberState.ARMED
                 && context.getWorld().getBlockState(frame.controllerPos()).getComparatorOutput(context.getWorld(),frame.controllerPos())==11;
     }
-    private static boolean collapseSettled(SessionRecoveryState journal,CorridorPageManager pages,UUID sid) {
+    /** flushed record 已推導為返還與清理完成（COLLAPSING 的 SETTLED）；只看 record，不看走廊 space。 */
+    private static boolean recordReleased(SessionRecoveryState journal,UUID sid) {
         var record=journal.flushedRecords().get(sid);
         return record!=null && record.state()==SessionState.COLLAPSING && record.spaceLeases().isEmpty()
-                && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned) && M4CandidateTestAccess.space(pages,sid)==null;
+                && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
+    }
+    /**
+     * 失敗路徑的收尾：符合條件的 fixture record 先釋放測試建立的來源 ticket 與沒有 lease 的 space，再移除——塌縮狀態走終局 API，MEASURED
+     * （collapseFixture 中途失敗留下的收據）以 testmod 反射移除。只用於沒有走廊 lease 的 fixture。
+     */
+    private static void cleanupFixtures(MinecraftServer server,java.util.function.Predicate<SessionRecoveryRecord> owned) {
+        var journal=SessionRecoveryState.get(server); var pages=CorridorPageManager.forServer(server);
+        for(var record : List.copyOf(journal.flushedRecords().values())) if(owned.test(record)) {
+            M4CandidateTestAccess.releaseSourceTicketForTeardown(record.sessionUuid());
+            M4CandidateTestAccess.removeSpaceForTeardown(pages,record.sessionUuid());
+            if(record.state()==SessionState.MEASURED) M4CandidateTestAccess.removeMeasuredForTeardown(server,record.sessionUuid());
+            else M4CandidateTestAccess.terminateCollapseFixture(server,record.sessionUuid());
+        }
     }
     /** 執行並回傳丟出的 RuntimeException（沒有就是 null）；RED 時讓 HEAD 的例外留在 test 內，不從 END_SERVER_TICK 拋出。 */
     private static RuntimeException attempt(Runnable action) {

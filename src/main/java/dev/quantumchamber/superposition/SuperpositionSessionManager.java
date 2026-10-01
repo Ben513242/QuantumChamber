@@ -493,7 +493,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(record.state()==SessionState.MEASURED) { recovery.requestMeasuredRecovery(record.sessionUuid()); return; }
         // 塌縮狀態不轉 RETURNING（spec §13.2）；呼叫端（attach、returnToOrigin）已先排除，這裡再防守一次。
         if(record.state().collapseState()) return;
-        if(!journal.recoveryWritesSafe()) throw new IllegalStateException("dirty candidate authority 尚未 checked，不可經返還落盤");
+        if(!journal.recoveryWritesSafe()) throw new IllegalStateException("未 checked authority 尚未確認，不可經返還落盤");
         if(record.state()==SessionState.RETURNING && record.equals(journal.records().get(record.sessionUuid()))) return;
         CorridorPageManager.forServer(server).exclusiveOperation(record.sessionUuid(),() -> {
             journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
