@@ -11,7 +11,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockBox;
 import net.minecraft.util.math.ChunkPos;
 
-/** 空 lease 前的原生持久化閘門：只看本交易相關的 chunks（來源艙與走廊 lease），見 {@link ChunkSaveCheckpoint}。 */
+/** 空 lease 前的原生持久化閘門：只看本交易相關 chunks（來源艙與走廊 lease）所在的 region，見 {@link ChunkSaveCheckpoint}。 */
 public final class MeasuredWorldSaveCheckpoint {
     private MeasuredWorldSaveCheckpoint() { }
     public static void save(MinecraftServer server,SessionRecoveryRecord record) {

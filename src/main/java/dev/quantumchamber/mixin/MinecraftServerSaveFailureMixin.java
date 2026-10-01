@@ -22,7 +22,7 @@ abstract class MinecraftServerSaveFailureMixin implements NativeSaveFailureAcces
     @Inject(method="onChunkSaveFailure",at=@At("HEAD"))
     private void quantumchamber$failed(Throwable error,StorageKey key,ChunkPos pos,CallbackInfo callback) {
         quantumchamber$failureCount.incrementAndGet();
-        // 依世界（StorageKey.dimension）與 chunk 記錄；同一世界的 chunk、entities、poi storage 合併計入。
+        // 依世界（StorageKey.dimension）分開、記到 chunk 所在的 region；同一世界的 chunk、entities、poi storage 合併計入。
         var failures=quantumchamber$saveFailures(key.dimension());
         if(pos==null) failures.failStorage(); else failures.fail(pos.toLong());
     }

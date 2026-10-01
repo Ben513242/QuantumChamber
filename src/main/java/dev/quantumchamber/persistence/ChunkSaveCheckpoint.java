@@ -11,10 +11,11 @@ import net.minecraft.world.storage.EntityChunkDataAccess;
 import net.minecraft.world.storage.StorageIoWorker;
 
 /**
- * 只看相關 chunks 的原生存檔 checkpoint（MEASURED 清理與投影共用）；外層 save 的返回值不是成功收據。
- * 流程：重新標髒相關 chunks → {@code server.save(false,true,true)} → 原生 IO barrier → 只比對相關 (world, chunk) 的失敗。
+ * 只看相關 chunks 所在 region 的原生存檔 checkpoint（MEASURED 清理與投影共用）；外層 save 的返回值不是成功收據。
+ * 流程：重新標髒相關 chunks → {@code server.save(false,true,true)} → 原生 IO barrier → 只比對相關 chunks 所在 region 檔的失敗。
  * 每個世界比對三個來源：server 的 onChunkSaveFailure（含序列化失敗）、chunk region worker、entity storage。
- * 無關 chunk 的失敗不阻擋；沒有 chunk 位置的 region flush 失敗視為該 worker 全部 chunks 失敗。
+ * 其他 region、其他世界的失敗不阻擋（前提是在原版 flush 之前已完成）；沒有 chunk 位置的 region flush 失敗視為該 worker 全部 region 失敗。
+ * 原版 flush 時仍 pending 的寫入失敗會由原版 completeAll().join() 讓 server.save 直接丟例外，這是原版語意的界線，不繞過。
  * 任何失敗都重新標髒並丟出例外（fail-closed），由呼叫端決定重試與退避。
  */
 public final class ChunkSaveCheckpoint {

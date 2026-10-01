@@ -18,7 +18,7 @@ abstract class StorageIoWorkerSaveFailureMixin implements NativeStorageSaveAcces
     }
     @Inject(method="completeAll",at=@At("RETURN"))
     private void quantumchamber$flush(boolean sync,CallbackInfoReturnable<CompletableFuture<Void>> callback) {
-        // completeAll（含 region flush／sync）沒有 chunk 位置：失敗時保守地視為這個 worker 的所有 chunks 都失敗。
+        // completeAll（含 region flush／sync）沒有 chunk 位置：失敗時保守地視為這個 worker 的所有 region 都失敗。
         quantumchamber$failures.observeFlush(callback.getReturnValue());
     }
     @Override public NativeSaveFailures quantumchamber$saveFailures() { return quantumchamber$failures; }
