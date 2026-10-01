@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "quantumchamber-clientprobe",
+  "version": "1.0.0",
+  "name": "QuantumChamber 真 client probe",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.quantumchamber.gametest.M5ClientProbe"]
+  },
+  "depends": { "quantumchamber": "*", "fabric-api": "*", "minecraft": "1.21" }
+}
