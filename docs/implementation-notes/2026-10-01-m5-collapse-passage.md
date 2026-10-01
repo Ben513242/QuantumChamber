@@ -1172,6 +1172,7 @@ GREEN 數字：
 - F3a：`SessionRecoveryManager.recordFor`、`blocks`／`freezes`、`presence()` 與 spec §13.2 其餘呼叫點改用 `occupies`、`receiptRetained` 與 `collapseView`；COLLAPSING 的返還與清 lease 經一般 `put`（roll-forward）或 `commitRollForward`。
 - F3d：COLLAPSING 提交一律經 `commitRestore`（`REJECTED`／`RESTORED` 時走 §7.1 的提交失敗路徑與退避）；終局經 `terminate`，同時移除 `SuperpositionSessionManager` 的 `sessions` 與來源 `tickets`；SOURCE fast path、通道結束與 §11.3 取消的 INFO 由呼叫端記；commit 失敗的 WARN 去重也在呼叫端。
 - F7：寫入文件：M5 build 寫過 schema 4 之後，M4 build 讀取會 fail closed（不可降版）。
+- F3a（fix round 2 加入）：`sameAuthority` 對塌縮狀態是單步關係、不具遞移性，只能拿最新一步的 authority 比對。`CorridorPageManager.durable(space)`（`:721-731`）在 `:727` 拿快取的 `space.authority` 和最新的 flushed 比對 `sameAuthority`，比對之後才刷新（`:729`）；快取的來源是 attach（`:91`）與上一次 `durable(space)` 呼叫，選門（`:305`）時也是經 `durable(space)` 取得。F3 依 §13.2 讓 COLLAPSING 的 release 重用 `releaseMeasured`（`:234-237`）時，若兩次 `durable(space)` 之間有不只一次 checked 寫入（例如 MEASURED→COLLAPSING 提交之後又寫了返還進度），快取與最新 flushed 之間就不是單步，會丟出「durable lease／來源權威不符」。必須在每次 checked 寫入後刷新快照，或改為只比對最新的 flushed。
 
 ### Fix round 1（2d13248）
 
@@ -1185,7 +1186,7 @@ GREEN 數字：
 | Q2 不隔離尚未確認的 roll-forward | `quarantine`（`SessionRecoveryState.java:210-218`）：session 有 roll-forward 旗標，而且 current 的 authority 已 checked（`authorityChecked`：candidate 三欄位與 flushed 相同、沒有跨 restore 邊）時回 false，不隔離。Javadoc 寫明理由（收斂會以 flushed 取代 current，把可能已落地的 SEALED(TRR) 寫回成 READY，違反 §10.3）與 caller 的做法（只重試寫出）。已隔離時直接回 false（原本由 `Set.add` 回 false，行為相同） |
 | Q2 兩者能否同時存在 | roll-forward 旗標只由一般 `put` 設定，而一般 `put` 在 current、flushed、history 任一份到 record 是 restore 邊時拒絕；塌縮狀態的 candidate 三欄位又由 `sameAuthority` 固定。所以經公開 API 不會同時有「旗標」與「未 checked 殘留」，只有雙重故障（測試以反射製造）才會。那時照常隔離：殘留必須收斂，`restoreCheckedAuthority` 同時清除旗標 |
 | Q2 內部的 CAS 不符分支 | `commitRestore`（`:456`）與 `terminate`（`:491`）的 CAS 不符分支照舊呼叫 `quarantine`；若因上述規則被拒（current 是已 checked 的 roll-forward 內容），回 `ROLL_FORWARD_PENDING`，不再謊稱 `QUARANTINED`。`TerminalResult.Status` 新增 `ROLL_FORWARD_PENDING`（`:343`）：沒有終局，caller 只重試寫出。終局的 flush 期間以一般 `put` 重入寫入 roll-forward 就會走到這裡（`terminalCasMismatchWithUnconfirmedRollForwardIsNotQuarantined`）；`commitRestore` 的窗口中一般 `put` 寫不出這種 current，只能以反射覆蓋 |
-| Q3 讀回已確認之後的例外 | `warnAfterConfirmed`（`:508-513`）：三個入口在 flushed 已確認、但 flush 有例外時記 WARN（`FailureText.describe`），同一個 session 以 `FailureText.dedupeKey` 去重（`confirmedFailureWarnings` `:59`，原因改變才再記；終局成功時移除，`:495`），沿用 `SessionRecoveryManager` 的去重慣例 |
+| Q3 讀回已確認之後的例外 | `warnAfterConfirmed`（`:508-513`）：三個入口在 flushed 已確認、但 flush 有例外時記 WARN（`FailureText.describe`），同一個 session 以 `FailureText.dedupeKey` 去重（`confirmedFailureWarnings` `:59`，原因改變才再記；終局成功時移除，`:495`）。（這一輪的去重與 `SessionRecoveryManager` 的慣例並不一致：乾淨的寫出不會清除去重鍵，WARN 也沒有附 stack trace。fix round 2 已修正，見下方「Fix round 2」） |
 | Q4 log 責任 | `terminate` 不再記 WARN（`:471-497`），與 `commit*` 一致。`CommitResult`（`:296-320`）、`TerminalResult`（`:325-349`）的 Javadoc 寫明 caller 依 (sid, 提交的狀態邊／origin, `FailureText.dedupeKey`) 去重後記 WARN |
 | Q5 API 前提 | `commitRestore` 的 Javadoc：S→C 只能在 caller 以 `SealedReason.retryable()`／`restartOnly()` 與 §11.2 的觸發、退避把關之後呼叫。`TerminalOrigin`：`SOURCE_FAST_PATH`／`PREPARE_DOOR_CLOSED` 只能在 PREPARE 階段呼叫（RESOLVE 已完成），journal 只能檢查 settled，前提由 caller 負責。`markCollapseAuthoritiesInitialized`（`:130-144`）：不可撤銷；只能在兩個 ledger 都建立並 strict 驗證成功之後呼叫；呼叫之後 `m5Evidence()` 不再等於「flushed envelope 是否為 4」 |
 | nit | `checkedAuthority` 欄位註解（`:42-44`）改為說明它供 `restoreCheckedAuthority` 的四個呼叫者，終局確認後修剪；`SessionState.retainsReceipt()`（`SessionState.java:7-11`）註明呼叫端用 `SessionRecoveryState.receiptRetained`（§13.2）；`writtenSchema`（`:616-624`）註明 `envelopeSchema` 的不混裝驗證是副作用、回傳值只在最後一行使用 |
@@ -1249,3 +1250,34 @@ GREEN 數字：
 
 - F3a（Q7）：`uncheckedCandidateSessions` 現在也包含 restore 類殘留，名稱只講 candidate；`SessionRecoveryManager.java:147-148` 的 WARN 文字也只說「未 checked candidate authority」。兩處要改名或改字都需要動允許清單外的呼叫端（`SessionRecoveryManager`、`SuperpositionSessionManager`、testmod），交給 F3a。
 - F3d：終局與兩種 commit 的失敗都不在 journal 記 log，由 `CollapseService` 依 (sid, 狀態邊／origin, `FailureText.dedupeKey`) 去重後記 WARN；`ROLL_FORWARD_PENDING`（含終局回的那一種）時只重試寫出，不疊寫、不終局。
+
+### Fix round 2（`b488bfc`）
+
+- Review：fix round 1 的 re-review Approved（Critical 0、Important 0、新 Minor 3）。controller 指派本輪處理 R1–R3。reviewer 讀過 jstack 與 log 後，判定 fix round 1 第一次 M4 recovery 的停服卡住與 F2a 無關：卡在 `save()` 之前等 chunk 卸載的迴圈，log 停在 `Saving worlds`，journal 還沒寫出。這一項另立追蹤，不歸 F2a。
+- Commit `b488bfc` `fix: clear the confirmed-write warning key after a clean write`（parent `55f0692`）：`SessionRecoveryRecord.java`、`SessionRecoveryState.java`、`SessionRecoverySchema4Test.java`。本小節由其後的 docs commit 加入，同一個 commit 也改寫了上方 Fix round 1 的 Q3 列，並在 F2a 的「交給後續」補上 F3a 一條。
+- 行號以 `b488bfc` 為準。
+
+| 項目 | 處理 |
+| --- | --- |
+| R1 `sameAuthority` 不具遞移性 | 只改 Javadoc。`sameAuthority`（`SessionRecoveryRecord.java:207-216`）寫明：塌縮狀態的邊是單步關係，例如 M→C 合法、C 的返還 self-loop 合法，但 M 直接到返還後的 C 回 false；ARMING／SUPERPOSITION／RETURNING 到任何塌縮狀態也回 false。只能和最新一步（`put` 的 current、flushed、history）比對，不能拿跨越多次寫入的舊快照比對；`put` 同時要求三者都成立，所以 roll-forward 尚未確認時再疊上狀態邊會被拒絕，符合 §7「不疊寫」。`collapseEdge`（`:233-239`）補一句指向它。`sameProgress` 仍在 `sameAuthority` 之內。`CorridorPageManager` 快取比對的風險寫入 F2a 的「交給後續」（F3a） |
+| R2 去重與 stack trace | `afterConfirmedWrite`（`SessionRecoveryState.java:505-519`，原 `warnAfterConfirmed`）：讀回已確認而 flush 沒有例外時，清除該 session 的去重鍵（對應 `SessionRecoveryManager` 成功後的 `failures.remove`）；有例外時才依 `FailureText.dedupeKey` 去重並記 WARN，最後一個參數傳 `late`，附上 stack trace。三個入口（`:413`、`:448`、`:495`）都改呼叫它；終局成功時仍一併移除去重鍵 |
+| R2 去重鍵是否區分寫入種類 | 不區分。這種例外來自 restore、roll-forward、終局三者共用的 flush 路徑（例如 flush 之後的 hook），與寫的是哪一條邊無關；用同一把鍵，同一原因只記一次。每則 WARN 仍帶寫入種類（`restore M→C`、`roll-forward …`、`terminate <origin>`）。Javadoc 與 `confirmedFailureWarnings`（`:58-60`）的註解同步更新 |
+| R3 note | Fix round 1 的 Q3 列改寫：那一輪「沿用 `SessionRecoveryManager` 的去重慣例」的說法不成立（乾淨寫出不清除去重鍵、WARN 沒有 stack trace），本輪才一致。F2a「交給後續」新增 F3a 一條（`CorridorPageManager.durable(space)` 的快取比對）。本小節 |
+
+測試（`SessionRecoverySchema4Test`，JUnit +1）：
+
+- 新增 `cleanWriteClearsTheConfirmedWarningKey`：同一原因的讀回後例外（restore）→ 中間一次乾淨的 roll-forward → 同一原因再出現（restore 重試），斷言共 2 則 WARN，而且每則都附 throwable、訊息是注入的那個例外。兩個斷言以 `assertAll` 分開判定。
+- 測試內的 log capture 增加 `events(Level)`，可以讀到 `LogEvent.getThrown()`。
+- `exceptionAfterConfirmedReadbackStillCountsAsCommitted` 不用改：它的序列中間沒有乾淨的寫出，去重鍵也不分寫入種類，仍是 2 則。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f2a/fix2/`。diff hash 是 `git diff 55f0692 b488bfc -- <path>` 輸出的 SHA-256：`src` `88f65793…`、`src/main` `dc5703d4…`、`src/test` `1bcc04cb…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED | `55f0692`，只有測試檔有變更（`fix2/red-state.txt`；tracked diff 的 SHA-256 前 8 碼 `6EB1E68E`） | focused `persistence.*`（`fix2/red-junit.log`、`red-junit-cases.txt`、`red-TEST-SessionRecoverySchema4Test.xml`） | 預期 FAIL：37 個中 1 個，就是新 test，兩個目標斷言都失敗：「中間的乾淨寫出清除去重鍵，同一原因再出現時再記一次」（只有 1 則），以及「WARN 必須附上 stack trace ==> expected: not <null>」 |
+| GREEN focused | 工作樹，blob 與 `b488bfc` 相同（`fix2/green-state.txt`、`commit-blobs.txt`） | `fix2/green-focused.log` | 165，0 failure／error，2 skipped；`SessionRecoverySchema4Test` 37/37 |
+| GREEN JUnit 全部 | 同上 | `fix2/green-junit-all.log` | 484，0 failure／error，2 skipped，比 fix round 1 多 1（新 test） |
+| GREEN Full | 同上 | `gate-f2a-fix2-green-full-1934f3843c7c40a98d29fd667aa22c82` | PASS：default GameTest 153/153（`_windows` 79）、boundary PASS、per-test receipt 35/35、world exact restore；JUnit 484；release 320 entries／276 classes、sources 200，entry 清單與 fix round 1 完全相同（`fix2/green-jar-delta.txt`）；testmod 命中 0 |
+
+- 本輪不跑 Legacy 與 M4 recovery（controller 指示）：程式只改了 Javadoc，以及「讀回已確認之後的 log」這條路徑。這條路徑在 production 到不了，因為 F2a 的 commit 與終局在 runtime 沒有呼叫點，M4 與 legacy 流程都不經過它。
+- Full gate 在 commit 之前以工作樹執行；commit 時 3 個檔的 blob 與 gate 前記錄的相同。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
