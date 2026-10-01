@@ -1006,8 +1006,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
         });
     }
     /**
-     * H4：凍結中的移動封包被丟棄時，伺服器送回自己的權威位置。同一玩家每 10 ticks 最多一次：同一 tick 連送 20 個只修正一次，
-     * 之後連續 20 ticks 各送一個最多修正兩次。位置是伺服器現值（絕對座標），視角以相對 0 送出，不把客戶端鏡頭拉回伺服器的舊朝向。
+     * H4：凍結中的移動封包被丟棄時，伺服器送回自己的權威位置。同一玩家每 CORRECTION_INTERVAL_TICKS（10）最多一次：同一 tick（S）
+     * 連送 20 個只修正一次，之後連續 20 ticks 各送一個，恰在 S+interval 與 S+2*interval 修正。位置是伺服器現值（絕對座標），
+     * 視角以相對 0 送出，不把客戶端鏡頭拉回伺服器的舊朝向。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h4_freeze_correction",tickLimit=100000)
     public void native_frozen_movement_gets_throttled_position_corrections_windows(TestContext context) {
@@ -1028,25 +1029,28 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 for(int step=1;step<=20;step++) frozenMove(player,anchor,step);
                 for(var packet : positionCorrections(connection)) corrections.add(new FrozenCorrection(fixture.server.getTicks(),true,packet));
                 frozenMoves(context,connection,anchor,frozen+1,20,corrections,last -> {
-                    var burst=corrections.stream().filter(FrozenCorrection::burst).count();
-                    var spread=corrections.stream().filter(correction -> !correction.burst()).count();
+                    int interval=dev.quantumchamber.persistence.SessionRecoveryManager.CORRECTION_INTERVAL_TICKS;
+                    var burst=corrections.stream().filter(FrozenCorrection::burst).map(FrozenCorrection::serverTick).toList();
+                    var spread=corrections.stream().filter(correction -> !correction.burst()).map(FrozenCorrection::serverTick).toList();
                     var witness=new java.util.LinkedHashMap<String,Boolean>();
                     try {
                         witness.put("stillFrozen",fixture.returning() && player.getServerWorld()==fixture.target
                                 && dev.quantumchamber.persistence.SessionRecoveryManager.blocks(id,fixture.server));
                         witness.put("serverPositionHeld",player.getPos().equals(anchor));
-                        witness.put("burstCorrectedOnce",burst==1);
-                        witness.put("spreadCorrectedAtMostTwice",spread>=1 && spread<=2);
-                        witness.put("throttledPerPlayer",java.util.stream.IntStream.range(1,corrections.size())
-                                .allMatch(i -> corrections.get(i).serverTick()-corrections.get(i-1).serverTick()>=10));
+                        witness.put("burstCorrectedOnce",burst.size()==1);
+                        // burst 在 server tick S；之後 S+1..S+20 各一個封包，修正必須恰在 S+interval 與 S+2*interval。
+                        witness.put("spreadCorrectedAtExactInterval",burst.size()==1
+                                && spread.equals(List.of(burst.getFirst()+interval,burst.getFirst()+2*interval)));
+                        witness.put("correctionsSpacedByInterval",java.util.stream.IntStream.range(1,corrections.size())
+                                .allMatch(i -> corrections.get(i).serverTick()-corrections.get(i-1).serverTick()>=interval));
                         witness.put("serverAuthoritativePosition",corrections.stream().allMatch(correction -> correction.packet().getX()==anchor.x
                                 && correction.packet().getY()==anchor.y && correction.packet().getZ()==anchor.z));
                         witness.put("viewNotPulledBack",corrections.stream().allMatch(correction -> correction.packet().getFlags().equals(Set.of(
                                 net.minecraft.network.packet.s2c.play.PositionFlag.Y_ROT,net.minecraft.network.packet.s2c.play.PositionFlag.X_ROT))
                                 && correction.packet().getYaw()==0f && correction.packet().getPitch()==0f));
                     } finally { hooks.release(); }
-                    context.assertTrue(!witness.containsValue(false),"凍結中的移動封包必須得到節流的位置修正："+witness+" corrections="
-                            +corrections.stream().map(correction -> correction.serverTick()+(correction.burst() ? "(burst)" : "")).toList());
+                    context.assertTrue(!witness.containsValue(false),"凍結中的移動封包必須得到節流的位置修正："+witness
+                            +" interval="+interval+" burstTicks="+burst+" spreadTicks="+spread);
                     when(context,last+1,() -> fixture.record()==null && dev.quantumchamber.chamber.ChamberSessions.gateway()
                             .presence(fixture.server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,done -> {
                         try {

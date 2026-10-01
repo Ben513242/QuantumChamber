@@ -33,14 +33,17 @@ abstract class ServerPlayNetworkHandlerRecoveryMixin {
                 EnumSet.of(PositionFlag.Y_ROT,PositionFlag.X_ROT));
     }
 
-    // 與原版 onVehicleMove 拒絕載具移動時相同：送回根載具的伺服器位置；客戶端只在自己控制該載具時套用。
+    // 只修正原版 onVehicleMove 會處理的載具：根載具不是玩家本身、而且由玩家控制。這時送回根載具的伺服器位置，與原版拒絕載具移動時的修正相同；
+    // 其他情況原版也直接忽略封包，這裡只取消、不消耗節流。原版另要求根載具等於 handler tick 留下的 topmostRiddenEntity（同一條件的上個 tick 快照），
+    // 這裡不比對：差別只在剛上車、換載具或剛取得控制的那一個 tick，原版忽略該封包，這裡送回的仍是載具的伺服器位置。
     @Inject(method="onVehicleMove(Lnet/minecraft/network/packet/c2s/play/VehicleMoveC2SPacket;)V",
             at=@At(value="INVOKE",target="Lnet/minecraft/network/NetworkThreadUtils;forceMainThread(Lnet/minecraft/network/packet/Packet;Lnet/minecraft/network/listener/PacketListener;Lnet/minecraft/server/world/ServerWorld;)V",shift=At.Shift.AFTER),cancellable=true)
     private void quantumchamber$holdVehicleMovement(CallbackInfo callback) {
         if(!SessionRecoveryManager.blocks(player.getUuid(),player.getServer())) return;
         callback.cancel();
         var vehicle=player.getRootVehicle();
-        if(vehicle==player || !SessionRecoveryManager.correctionDue(player.getUuid(),player.getServer())) return;
+        if(vehicle==player || vehicle.getControllingPassenger()!=player
+                || !SessionRecoveryManager.correctionDue(player.getUuid(),player.getServer())) return;
         ((ServerPlayNetworkHandler)(Object)this).sendPacket(new VehicleMoveS2CPacket(vehicle));
     }
 
