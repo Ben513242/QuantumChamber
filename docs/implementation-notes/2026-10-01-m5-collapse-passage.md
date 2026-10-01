@@ -847,7 +847,13 @@ Legacy 與 M4 recovery 依 controller 指示省略：本輪只改移動封包 mi
 ## F1a：真 client probe 工具
 
 - Commit `6d28fa0` `test: add an opt-in real-client universe probe`（parent `fad924c`），只改派工列出的檔案：`build.gradle`；新增 `src/testmod/clientprobe/java/dev/quantumchamber/gametest/M5ClientProbe.java`、`src/testmod/clientprobe/resources/fabric.mod.json`，以及派工允許的 pure JVM 測試 `src/test/java/dev/quantumchamber/gametest/M5ClientProbeTest.java`。`UniverseTransferTestAccess.java`、`M3UniverseTransferProbe.java` 與 testmod 的 `fabric.mod.json` 都沒有改。
-- Code range `fad924c..6d28fa0`；本段由其後的 docs commit 加入。
+- Code range `fad924c..6d28fa0`；`779601d` 是本段的 docs commit。
+- `2bd75b1`（fix round 1，parent `779601d`）`test: align the client probe with the transfer safety rules`：`M5ClientProbe.java`、`build.gradle`（只動 F1a 區段），新增 `src/test/java/dev/quantumchamber/gametest/M5ClientProbeSafetyTest.java`。內容見下方「Fix round 1」；本段的 fix round 1 文字由其後的 docs commit 加入。
+- Review：
+  - 首輪 spec review：✅，Minor 5。首輪 code quality review：Critical 0、Important 1、Minor 6。
+  - fix round 1 處理 quality Important I-1 與 Minor M-1～M-6，以及 spec Minor 1–3（本 note 的文字）。fix round 1 的 re-review 尚未進行。
+  - controller 裁定：probe 的訊息用 `Text.literal` 可以接受（plan 的 `Text.translatable` 規則針對 production 訊息，testmod 也不能改 main 的語言檔）；在 `scripts/verification/` 的 main-only oracle 與 JAR 檢查加入 clientProbe，交給 F6。
+- F1b（真 client 驗證）尚未進行。
 
 ### Code-truth（`6d28fa0`）
 
@@ -923,9 +929,56 @@ GREEN 數字：
 
 - 實際 JVM classpath（argfile）：S1／S2 有 `resources/testmod` 與 `resources/clientProbe`，沒有 clientOnly jar；C1 有 `resources/clientProbe` 與 `classes/java/testmod`，沒有 `resources/testmod`。
 - class-load：三個 JVM 都從 `build/classes/java/clientProbe/` 載入 `M5ClientProbe`。C1 從 `build/classes/java/testmod/` 只載入 `UniverseTransferTestAccess` 與 `$Lifecycle`；除了 `M5ClientProbe*`，沒有載入任何 `dev.quantumchamber.gametest.*`（沒有 testmod 的 mixin 或 probe）。
-- C1 唯一的 WARN 是 `Missing data pack quantumchamber-testmod`：world 由帶 testmod 的 dedicated server 建立，是 AGENTS 所說的 stale save metadata warning。
+- C1 唯一和 mod 相關的 WARN 是 `Missing data pack quantumchamber-testmod`：world 由帶 testmod 的 dedicated server 建立，是 AGENTS 所說的 stale save metadata warning。其餘 WARN 是原版開發環境的雜訊：`Missing sound for event` 6 則、shader `rendertype_entity_translucent_emissive` 找不到 sampler 1 則。
 - 開始前已有一個閒置的 Gradle daemon（PID 129228，12:15 建立，不屬於本 task）；smoke 結束後 Java 程序仍只有它，沒有殘留。
 - smoke 沒有自動化 `enter`／`return`：需要在遊戲內以 op 玩家輸入指令，屬於 F1b。
+
+### Fix round 1（`2bd75b1`）
+
+處理首輪 code quality review 的 Important I-1 與 Minor M-1～M-6；spec review 的 Minor 1–3 是本 note 的文字，一併修正。行號以 `2bd75b1` 為準。
+
+| 項目 | 處理 |
+| --- | --- |
+| I-1 enter 寬鬆、return 拒絕 | 原本的 `standingRefusal` 只檢查 `isOnGround`、Y 對齊與流體，但 `returnToSource` 在 receipt 的來源位置套用 `targetSafety`：bbox 下方每一欄都要 `isSideSolidFullSquare(UP)`，而且 `isSpaceEmpty`。站在樹葉上或方塊邊緣時 enter 會成功、return 被 `REJECT_TARGET_UNSAFE` 拒絕。現在拆成純判斷 `standingRefusal(riding, onGround, box, world, fluid, spaceEmpty)`（`M5ClientProbe.java:438-459`），在原本的條件之後以 `floorColumns`（`:462-471`，與 `prepareLanding` 及 `targetSafety` 的地板檢查同一個欄位範圍）逐欄檢查完整頂面，再檢查 `isSpaceEmpty(player, box)`。不合格時回報該欄座標與建議（站到完整方塊的中央或換個位置） |
+| I-1 return 被拒時的訊息 | `nextStep`（`:388-400`）：RETURN 為 `REJECTED_BEFORE_MOVE` 時回「未移動、receipt 保留；修正來源位置後可以再 return，或用 `/execute in <來源世界> run tp @s <x> <y> <z>`」，座標取自 receipt 的來源位置。receipt 只在 RETURNED 時移除（行為不變） |
+| M-1 put／hold 失敗 | `enter`、`returnHome` 的 `pending.put`＋`hold` 包在 `try`（`:178-184`、`:212-218`），`RuntimeException` 時以 `finish(request)` 釋放已加的 ticket、移除 pending，再回報失敗 |
+| M-2 ticket 互相移除 | 改為 `ChunkTicketType<UUID>`（`UUID::compareTo`，`:95-96`），argument 是 `request.playerId()`（`hold`／`finish` `:358-368`）。原本 argument 是 chunk 本身，兩位玩家在同一個 chunk 的 ticket 相同，先結束的一方會把另一方的 ticket 移除 |
+| M-3 落點寫入 | `prepareLanding`（`:477-495`）一律經 `replace`（`:498-501`）：寫入前 `Clearable.clear(world.getBlockEntity(pos))`，flags `NOTIFY_LISTENERS｜FORCE_STATE｜SKIP_DROPS`（比照 plan 決策 3 與原版 `/setblock`），只有 `setBlockState` 回傳 true 才記入 `landingChanges` |
+| M-4 下一步提示與通知對象 | `nextStep` 依 outcome 回提示：`REJECTED_BEFORE_MOVE` 未移動、可修正後重試；`FAILED_ROLLED_BACK` 已回到移動前的位置；`FAILED_RECOVERY_REQUIRED` 依 F1b 規則停止並保留證據。失敗的 log 另帶 `next=`。`notify`（`:403-408`）改送給 `getPlayer(playerId)` 取得的目前在線 entity（重新登入後是新的 entity），離線時不送 |
+| M-5 `build.gradle` | 刪除 `serverProbe` 重複的 `+ testmod.output`（`testmod.runtimeClasspath` 已含，`build.gradle:138-144`）；`check` 改為依賴 `clientProbeClasses`，涵蓋 resources（`:190-193`）；nonce 只在 `:153-157` 解析一次，兩個 run 與 `doFirst` 共用；註解改為「每一次新的驗收用新的 nonce（新的 runDir），同一次驗收中重啟同一個世界時沿用同一個」；兩個 probe run 加 `ideConfigGenerated false` |
+| M-6 `requiredChunks` 與 test 的界線 | 新增 JUnit 覆蓋負座標與 chunk 邊界（見下）；`build.gradle:145-146` 註明 test 不得呼叫 Probe 的指令路徑（會載入 testmod 的 `UniverseTransferTestAccess`），需要時要另加 testmod 的 `classesDirs` |
+| spec Minor 1–3 | 本 note：C1 的 WARN 改寫為「唯一和 mod 相關的 WARN」並列出其餘原版雜訊；兩種 run 的證據都標 `testmod-present`；寫明 F1b 尚未進行；使用說明補上「不要在 Chamber session 中使用」與新的 enter／return 行為；記錄 controller 的兩項裁定 |
+
+JUnit +5：`M5ClientProbeSafetyTest`（`src/test/java/dev/quantumchamber/gametest/`）。`Bootstrap.initialize()` 之後，以假的 `BlockView` 呼叫純判斷，不走指令路徑：
+
+- `acceptsStandingInsideOneFullBlockColumn`：正向對照，石頭上、單欄。
+- `refusesLeavesUnderTheFeet`：腳下是樹葉（頂面不完整），訊息含 `8, 63, 8`。
+- `refusesStandingOnTheEdgeOverAir`：bbox x＝8.65..9.25 跨兩欄，x＝8 是石頭、x＝9 是空氣，訊息含 `9, 63, 8`。
+- `refusesWhenTheBoxIsNotEmpty`：`isSpaceEmpty` 不成立。
+- `requiredChunksMatchTheTransferSafetyRangeAcrossChunkBorders`：x＝-0.3..0.3 → chunk x -1..0；13.7..14.3 → 0..1；原點的四個象限 → 4 個 chunk；8.2..8.8 → 只有 (0, 0)。
+
+證據在 `f1a/fix1/`。diff hash 是 `git diff 779601d 2bd75b1 -- <path>` 輸出的 SHA-256：`src` `bbd223fc…`、`src/testmod` `bc13bd38…`、`src/test` `935e507c…`、`build.gradle` `b0b26e97…`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED | `779601d`；`M5ClientProbe.java` 只把 `standingRefusal` 拆成純判斷、保留原本的條件（`world`、`spaceEmpty` 尚未使用），加上新測試檔（`f1a/fix1/red-state.txt`） | focused JUnit（`f1a/fix1/red-console.log`、`red-TEST-*.xml`） | 預期 FAIL 3/5：樹葉、邊緣、`isSpaceEmpty` 不成立都被接受（`expected: not <null>`）。正向對照與 `requiredChunks` PASS；`M5ClientProbeTest` 1/1 PASS |
+| GREEN focused | 工作樹，blob 與 `2bd75b1` 相同（`f1a/fix1/green-state.txt`） | `f1a/fix1/green-focused-console.log` | `M5ClientProbeSafetyTest` 5/5、`M5ClientProbeTest` 1/1 |
+| classpath 比對 | 同上 | `f1a/fix1/classpaths-after-fix1.txt` | 與首輪 GREEN 的 dump 相比，既有 9 個 run 與全部 source set（含刪除重複項後的 `serverProbe`）逐行相同。兩個 probe run 多出 `build/resources/clientProbe`，只因為這次 dump 時它已產生（Loom 只列出存在的路徑）；首輪 smoke 的實際 JVM classpath 本來就有它 |
+| GREEN Full | 同上 | `gate-f1a-fix1-green-full-bf8254c391154072a817eccf050824d9` | PASS |
+| GREEN Main＋oracle | 同上 | `gate-f1a-fix1-green-main-ac16fcbcf5504e3192840a9550a01f29` | PASS；`main-oracle.ps1` PASS；clientprobe 專屬檢查全為 0（`f1a/fix1/green-main-clientprobe-check.json`） |
+| 啟動 smoke | 同上（`f1a/fix1/smoke-state-f1a-fix1-smoke-14c7cc00.txt`） | `f1a/smoke-f1a-fix1-smoke-14c7cc00/` | PASS（S1、S2、C1；`smoke-summary.json`），結果與首輪相同，見下 |
+| run-all | `2bd75b1`，`STATUS` 為空（`f1a/fix1/run-all-console.log`） | `run-all-d5a7b33f1214479790a905c7b16081a5` | `END ALL exit=0`。`SUMMARY default=153/153 windows=79 legacy=1/1 perTest=35+1 junit=447 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=308entries/265classes sources=195 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+| nonce 必填 | `2bd75b1` | `f1a/fix1/guard-no-nonce.log`、`f1a/fix1/guard-disabled-nonce.log` | `runServerProbe` 不給 nonce、`runClientProbe -Pm5ProbeNonce=disabled`：都在 `build.gradle:184` 的 `doFirst` 失敗，沒有啟動遊戲 JVM，也沒有建立 `run/*-probe-disabled` |
+
+Full 與 Main＋oracle、smoke 在 commit 之前以工作樹執行；commit 時三個檔的 `git hash-object` 與 gate 前記錄的相同（`f1a/fix1/green-state.txt`）。run-all 與 nonce 防護在 commit 之後執行。
+
+GREEN 數字：
+
+- default GameTest 153/153（`_windows` 79），0 failure／error／skipped；boundary oracle PASS；per-test receipt 35/35 PASS。
+- JUnit 447，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）。比首輪多 5，就是 `M5ClientProbeSafetyTest`。
+- JAR：release 308 entries（265 classes）、sources 195，不變；testmod／gametest／clientprobe／`M5ClientProbe` 命中 0，probe 命中只有 `ModPresenceProbe`。Full 的 `build` 現在也執行 `processClientProbeResources`（`check` → `clientProbeClasses`）。
+- 啟動 smoke：S1、S2 的 mod list 有 `quantumchamber`、`quantumchamber-clientprobe`、`quantumchamber-testmod`，`M5_CLIENT_PROBE_READY server=dedicated registered=true`，allocate → 重啟 → bootstrap 物化（`ACTIVE=true`），`STOPPED_VERIFIED` 依序為 `worlds=0`、`worlds=1`。C1 的 mod list 只有 `quantumchamber`、`quantumchamber-clientprobe`，`M5_CLIENT_PROBE_READY server=integrated registered=true`、`QC_PROBE joined the game`，`CloseMainWindow` 後 `STOPPED_VERIFIED worlds=1`；stderr 為空、沒有 crash report；WARN 的種類與首輪相同（`Missing data pack quantumchamber-testmod` 1 則、`Missing sound for event` 2 則、shader sampler 1 則；`Missing sound` 的則數與首輪的 6 則不同，都是原版雜訊）。前後 Java 程序都只有既有的閒置 daemon（PID 129228），沒有殘留。
+- I-1 的修正沒有在遊戲內實測（smoke 不輸入指令）；由 JUnit 覆蓋，F1b 會實際走到。
 
 ### 給 F1b 的使用說明
 
@@ -934,11 +987,14 @@ GREEN 數字：
 - Dedicated：`runServerProbe -Pm5ProbeNonce=<新 nonce>`。runDir 要先放 `eula.txt` 與 `server.properties`（`online-mode=false`；`server-port` 要固定，smoke 用的 `0` 是隨機埠）。console 下 `qcprobe universe allocate` → `stop` → 以同一個 nonce 再啟動；client 連線後由 console `op <名字>`。`/qcprobe` 是 server 指令，client 端不需要 clientprobe。
 - receipt 不跨 server 重啟；重新登入（同一個 server instance）仍有效。重啟後要離開 Universe，用原版 `/execute in minecraft:overworld run tp @s <x> <y> <z>`。死亡重生後 receipt 會在下一次 `return` 時作廢。
 - 重新登入、重啟、重生之後，用 `status` 讀玩家所在的 world key。log 標記：`M5_CLIENT_PROBE_ENTER status=OK … outcome=MOVED …`、`M5_CLIENT_PROBE_RETURN status=OK … outcome=RETURNED …`、`landingChanges=[…]`；失敗時是 `status=FAIL` 或 `status=CANCELLED` 並附原因。
-- serverProbe run 帶 testmod（mixin 與各自 property 控制的 probe），證據一律標 `testmod-present`。
+- 兩種 run 的證據都標 `testmod-present`：serverProbe run 帶整個 testmod（mixin 與各自由 property 控制的 probe）；clientProbe run 的 classpath 有 testmod 的 class（`UniverseTransferTestAccess`），只是 testmod 沒有以 mod 的身分載入。兩者都不能當成 main-only 證據。
+- 不要在 Chamber session 中使用：probe 直接以 M3 的 transfer 移動玩家，不經過 session、journal 與返還流程。
+- `enter` 只在玩家站穩時受理：腳下每一格都是完整方塊頂面（不能站在樹葉、半磚上，也不能站在方塊邊緣、腳下一半懸空），而且不與方塊重疊。不合格時回報腳下的座標，請站到完整方塊的中央或換個位置。
+- `return` 在傳送前被拒（`REJECTED_BEFORE_MOVE`）時玩家沒有移動、receipt 保留：修正來源位置後可以再 `return`，或照訊息裡的 `/execute in <來源世界> run tp @s <x> <y> <z>` 離開。`FAILED_RECOVERY_REQUIRED` 時依 F1b 規則停止並保留證據。
 
 ### 觀察（未修改）
 
-- `main-oracle.ps1` 的 layer 1／2 與 `run-all.ps1` 的 JAR 樣式只比對 `testmod` 字樣與 `src/testmod/java` 的型別。clientProbe 的輸出路徑（`build/classes/java/clientProbe`）不含 `testmod`，若 clientProbe 洩漏到 `runServer`，只有 layer 3 的 `dev.quantumchamber.gametest.` 前綴與 JAR 的 `gametest`／`probe` 樣式會抓到。本 task 另做了專屬檢查（上方，全為 0）。是否把 `clientProbe` 加進 `scripts/verification/` 的樣式由 controller 決定（不在本 task 的檔案清單）。
+- `main-oracle.ps1` 的 layer 1／2 與 `run-all.ps1` 的 JAR 樣式只比對 `testmod` 字樣與 `src/testmod/java` 的型別。clientProbe 的輸出路徑（`build/classes/java/clientProbe`）不含 `testmod`，若 clientProbe 洩漏到 `runServer`，只有 layer 3 的 `dev.quantumchamber.gametest.` 前綴與 JAR 的 `gametest`／`probe` 樣式會抓到。本 task 另做了專屬檢查（上方，全為 0）。controller 裁定把 `clientProbe` 加進 `scripts/verification/` 的樣式交給 F6。
 - probe 的 allocate 直接寫 catalog，不經 F2b 之後的 allocation ledger。F2b 上線後，用 probe 配置過的世界可能被 spec §6 判為 catalog 與 ledger 不一致；probe 世界都是一次性的，不要拿來測 M5 玩法。
 - JUnit 在同一個 JVM 內留下全域的指令與 lifecycle listener（Fabric 事件不能撤銷）。目前沒有其他 JUnit 建立 `CommandManager` 或啟動 server。
 - smoke 的 driver 與核對腳本沒有 tracked。之後若要重跑，需要另開 task 整理到 `scripts/verification/`。
