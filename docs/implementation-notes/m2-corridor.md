@@ -2,7 +2,7 @@
 
 功能分支 `feature/m1-chamber` 已實作以原艙門為基準左右延伸、入場保留 Buff、任一凍結參與者 Buff 失效則全組安全返還。自動驗證與人工觀察分開記錄；以下八項的人工驗收已於 2026-09-30 記錄（其中第 5、8 項依使用者 2026-09-24 的回報採計），見「八項人工驗收」。M3-A／M3-B（動態 Universe backend、server-side transfer readiness）與 M4 候選門已在同一分支完成，但還沒有玩家可用的跨宇宙通道（屬 M5）；本文八項只驗 M2 行為，驗收時勿點側門。M2 的整分支 final review 已於 2026-09-29 隨 M1–M4 整分支 review 完成，findings 由 integration fix rounds 1–3（`428f52a`）修正；2026-09-30 人工驗收途中另由 round 4（目前 code HEAD `ba854e8`）修正一個入場 bug，見 [M1–M4 整合審查紀錄](2026-09-29-m1-m4-integration-review.md)。M1／M1.1／M1.2／M2／M4 人工驗收已記錄；記錄結果的 docs commit 在 GitHub Actions 雙平台通過後，才以 `--ff-only` 合併 main，實際合併與 tag 狀態以 `main`／tag 為準。
 
-## 從功能工作區啟動
+## 從主 checkout 啟動
 
 先正常儲存並退出舊客戶端，再從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 執行 `start-client.bat`；選用照明為 `start-client.bat light`，不是 `--light`。
 

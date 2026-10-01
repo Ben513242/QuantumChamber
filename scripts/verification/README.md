@@ -33,7 +33,13 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 
 成功時最後一行是 `END ALL exit=0 HEAD=<sha>`，倒數第二步印出 `SUMMARY ...`。任何步驟失敗都會印 `END <step> FAIL <原因>` 並停止。
 
-`run-all.ps1` 不會因工作樹有未提交的變更而拒絕執行，只會在 `console.log` 的 `STATUS` 行列出 tracked 變更。一次 run 要能採計，需同時滿足兩個條件：`src/`、build 檔與 `.github/` 都沒有未提交的變更；本目錄 `.ps1`／`.gradle` 的 `HARNESS` 雜湊等於受測 commit 中同一檔（`git show <commit>:<path>`）的 SHA-256。`HARNESS` 是工作樹 bytes 的雜湊；在 CRLF checkout 上兩者不會相同，這時改以 `git hash-object <path>` 等於 `git rev-parse <commit>:<path>` 來核對。
+`run-all.ps1` 不會因工作樹有未提交的變更而拒絕執行，只會在 `console.log` 的 `STATUS` 行列出 tracked 變更。一次 run 要能採計，需同時滿足三個條件：
+
+1. `STATUS` 行沒有 `src/`、build 檔或 `.github/` 的變更。
+2. 存在一個 commit C，本目錄每個 `.ps1`／`.gradle` 的 `HARNESS` 雜湊，都等於 C 中同一檔（`git show C:<path>`）的 SHA-256。
+3. C 與 run 的 `HEAD` 之間，沒有 `src/`、build 檔或 `.github/` 的差異。
+
+`HARNESS` 是工作樹 bytes 的雜湊。CRLF checkout 時，它不會等於 blob 內容的雜湊，這時改成兩步核對：先確認目前檔案的 SHA-256 仍等於 `HARNESS`，再確認 `git hash-object <path>` 等於 `git rev-parse C:<path>`。
 
 個別執行：
 
@@ -62,7 +68,7 @@ $v = 'scripts/verification'
 
 ## 預期結果（code `ba854e8`）
 
-`ba854e8` 之後沒有 `src/`、build 檔或 `.github/` 的變更（只有文件與本目錄）。2026-10-01 在 HEAD `e55b7f9` 以 `run-all.ps1` 實跑（約 14 分鐘：Full 約 3.5 分、M3 約 2.5 分、M4 recovery 約 6.5 分），`SUMMARY` 與 2026-09-30 integration fix round 4（`ifix4-final-green.ps1`）的數字一致。程式或測試有變更時，數字以新的 run 為準。
+`ba854e8` 之後沒有 `src/`、build 檔或 `.github/` 的變更（只有文件與本目錄）。2026-10-01 在 HEAD `e55b7f9` 以 `run-all.ps1` 實跑（約 14 分鐘：Full 約 3.5 分、M3 約 2.5 分、M4 recovery 約 6.5 分）。當時本目錄尚未 commit，依上方規則以 C＝`c262b2a` 採計：`HARNESS` 等於該 commit 的檔案內容，且 `e55b7f9..c262b2a` 沒有 `src/`、build 檔或 `.github/` 的變更。`SUMMARY` 與 2026-09-30 integration fix round 4（`ifix4-final-green.ps1`）的數字一致。程式或測試有變更時，數字以新的 run 為準。
 
 | 項目 | 預期 |
 | --- | --- |
