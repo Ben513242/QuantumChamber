@@ -99,6 +99,8 @@ loom {
             def nonce = providers.gradleProperty('m4RecoveryNonce').getOrElse('disabled')
             if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M4 nonce 只能包含小寫英數與連字號')
             runDir "run/m4-recovery-${nonce}"
+            // M5 plan 決策 7：M4 retained recovery 的 24 個 phase 假設 MEASURED 會一直等待；testmod 的 collapse-suspended hook 暫停全部 session。
+            vmArg '-Dquantumchamber.test.collapseSuspended=all'
             ['phase', 'nonce', 'startupNonce', 'root'].each { key ->
                 def property = 'm4Recovery' + key.capitalize()
                 if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m4recovery.${key}=${providers.gradleProperty(property).get()}"

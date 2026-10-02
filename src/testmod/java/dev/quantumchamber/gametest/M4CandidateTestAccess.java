@@ -143,9 +143,25 @@ final class M4CandidateTestAccess {
 
     /** 僅測試：指定 Controller 位置、朝北的 OVERWORLD ORIGIN 權威。該位置沒有 Controller 時來源身分驗證必定失敗，recovery 不會移動任何人。 */
     static dev.quantumchamber.chamber.ChamberOriginAuthority origin(UUID chamber,net.minecraft.util.math.BlockPos controllerPos) {
-        return new dev.quantumchamber.chamber.ChamberOriginAuthority(chamber,net.minecraft.world.World.OVERWORLD.getValue(),
-                dev.quantumchamber.universe.DimensionRole.OVERWORLD,controllerPos,net.minecraft.util.math.Direction.NORTH,
+        return origin(chamber,net.minecraft.world.World.OVERWORLD,controllerPos);
+    }
+    /** 僅測試（F3d）：同上，但指定原版世界（Nether／End 的 M4 時期收據，spec §11.3）；role 由 world 推得。 */
+    static dev.quantumchamber.chamber.ChamberOriginAuthority origin(UUID chamber,net.minecraft.registry.RegistryKey<net.minecraft.world.World> world,
+            net.minecraft.util.math.BlockPos controllerPos) {
+        return new dev.quantumchamber.chamber.ChamberOriginAuthority(chamber,world.getValue(),
+                dev.quantumchamber.universe.DimensionRole.fromVanillaKey(world).orElseThrow(),controllerPos,net.minecraft.util.math.Direction.NORTH,
                 dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN);
+    }
+    /**
+     * 僅測試（F3d）：把 session 標成「開服 attach 當下就在 journal」，模擬重啟之後的第一次觀察。{@code passage} 為真時標成開服時就是
+     * PASSAGE_READY（spec §12），否則標成 DORMANT 的「開服之後第一次觀察到原參與者在艙內」（spec §7.1）。只在 CollapseService 第一次看到
+     * 這個 session 之前呼叫（同一個 tick 的 test callback 裡）。
+     */
+    @SuppressWarnings("unchecked")
+    static void markStartup(MinecraftServer server,UUID sid,boolean passage) {
+        var service=((Map<MinecraftServer,?>)get(dev.quantumchamber.collapse.CollapseService.class,"INSTANCES")).get(server);
+        if(service==null) throw new IllegalStateException("沒有此 server 的 CollapseService");
+        ((java.util.Set<UUID>)get(service,passage ? "startupPassages" : "startupSessions")).add(sid);
     }
     /**
      * 僅測試：M5 fixture 的起點，candidate-aware 的 MEASURED＋SELECTED（選中 NEW 或 SOURCE）。參與者（值為是否已返還）與 lease 由呼叫端決定：

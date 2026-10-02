@@ -256,6 +256,14 @@ public final class CorridorPageManager {
         return record!=null && (record.state()==SessionState.MEASURED || record.state()==SessionState.COLLAPSING)
                 && MeasuredRecoveryPhase.from(record).released() && !spaces.containsKey(sessionUuid);
     }
+    /**
+     * spec §7.1：M4 的 measured release 是否進行到一半（{@code measuredReleasing} 已開始，或 checked 收據已在 {@code finalizing}）。這時塌縮流程
+     * 不提交 COLLAPSING，等它完成；完成之後 record 是 DORMANT，改走邊緣觸發。沒有走廊 space 時為假。
+     */
+    public boolean measuredReleaseInProgress(UUID sessionUuid) {
+        requireThread(); var space=spaces.get(sessionUuid);
+        return space!=null && (space.measuredReleasing || space.finalizing!=null);
+    }
     /** MEASURED 與 COLLAPSING 共用的保留式清理（spec §13.2）：清完 lease 仍保留 record。COLLAPSING 不需要 recovery 請求（spec §7.3）。 */
     public void releaseMeasured(UUID sessionUuid) {
         var space=space(sessionUuid);

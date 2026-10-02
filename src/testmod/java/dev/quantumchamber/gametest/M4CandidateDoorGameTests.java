@@ -30,6 +30,24 @@ public final class M4CandidateDoorGameTests {
     private static BatchFaultProbe batchFaultProbe;
     private static InitialFlushFaultProbe initialFlushFaultProbe;
     private static final String LOCKED_MESSAGE="量子候選已鎖定，等待塌縮";
+    /**
+     * M5 plan 決策 7：collapse-suspended hook 的靜態集合（{@code CollapseSuspendMixin} 讀取）。被加入的 session，{@code CollapseService} 完全不推進，
+     * M4 的 GameTest 因此維持「MEASURED 會一直等待」的原斷言。不變量：同一個 JVM 內不得清除（沒有移除的 API）；default run 中每一個會產生
+     * MEASURED 的 test 都必須在 CollapseService 第一次看到該 session 之前（選門的同一個 tick 之前）加入。
+     */
+    private static final Set<UUID> COLLAPSE_SUSPENDED=java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * M5 GameTest 的 journal flush 探針：每次 journal flush 開頭呼叫（{@link #beforeCandidateFlush}），丟出例外即讓那次寫出受控失敗。
+     * 只由 M5 的 test 設定，並在所有路徑上以 TestHooks 清除。
+     */
+    static volatile java.util.function.Consumer<SessionRecoveryState> m5FlushProbe;
+
+    /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
+    public static boolean collapseSuspended(UUID session) {
+        return "all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session);
+    }
+    /** 暫停這個 session 的塌縮流程（不可撤銷）。 */
+    static void suspendCollapse(UUID session) { COLLAPSE_SUSPENDED.add(Objects.requireNonNull(session,"session")); }
 
     /**
      * 比照 M2 `_windows` 平台契約：真入場需要 Windows 原生玩家 checkpoint，非 Windows 在 per-test baseline 之前完成，
@@ -207,6 +225,10 @@ public final class M4CandidateDoorGameTests {
         M4PerTestUniverseProbe.begin(context,"native_candidate_batch_fault_converges_to_checked_returning_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         var probe=new BatchFaultProbe(fixture); batchFaultProbe=probe;
+        // 延後清單「M4 test 收尾」：等待逾時或斷言失敗時也解除 probe 並關閉 fixture，不讓它攔截後續 batch 的 journal flush。
+        var hooks=new M2CorridorGameTests.TestHooks();
+        hooks.add(fixture::close);
+        hooks.add(() -> { if(batchFaultProbe==probe) batchFaultProbe=null; });
         context.waitAndRun(2,fixture::power);
         whenWithin(context,3,60,() -> probe.fired,fired -> context.runAtTick(fired+1,() -> {
             batchFaultProbe=null;
@@ -227,10 +249,12 @@ public final class M4CandidateDoorGameTests {
             witness.put("nativeSaved",nativeSaved);
             witness.put("diskEqualsFlushed",flushed.equals(disk));
             witness.put("otherSessionRemoved",!journal.flushedRecords().containsKey(other.sessionUuid()));
-            context.assertTrue(!witness.containsValue(false),"candidate batch flush fault 必須同 process 收斂到 checked RETURNING："+witness
-                    +" flushed="+flushed.state()+"/"+flushed.candidateLedger().size()+" disk="+(disk==null ? "ABSENT" : disk.state()+"/"+disk.candidateLedger().size()));
+            try {
+                context.assertTrue(!witness.containsValue(false),"candidate batch flush fault 必須同 process 收斂到 checked RETURNING："+witness
+                        +" flushed="+flushed.state()+"/"+flushed.candidateLedger().size()+" disk="+(disk==null ? "ABSENT" : disk.state()+"/"+disk.candidateLedger().size()));
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             fixture.trustedTeardown(fired+2,() -> M4PerTestUniverseProbe.complete(context));
-        }),() -> "batch fault 未命中");
+        }),() -> "batch fault 未命中",hooks);
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_start_flush_fault",tickLimit=100000)
@@ -530,9 +554,14 @@ public final class M4CandidateDoorGameTests {
         context.waitAndRun(2,() -> {
             var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player().getUuid();
             var dormant=M4CandidateTestAccess.dormantReceipt(server,player,10005);
+            // M5 plan 決策 7：DORMANT 也是 MEASURED，塌縮流程不得推進這份 M4 收據。
+            suspendCollapse(dormant.sessionUuid());
             journal.put(dormant); journal.flush(server);
             var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
             var runtime=runtimeOwnership(fixture);
+            // 延後清單「M4 test 收尾」：斷言失敗或等待逾時也移除自建的 DORMANT receipt，不封鎖同一 server 的後續 batch。
+            var hooks=new M2CorridorGameTests.TestHooks();
+            hooks.add(() -> { if(journal.flushedRecords().containsKey(dormant.sessionUuid())) M4CandidateTestAccess.removeMeasuredForTeardown(server,dormant.sessionUuid()); });
             fixture.power();
             whenWithin(context,3,60,fixture::activeReady,entered -> {
                 var active=fixture.record();
@@ -549,11 +578,13 @@ public final class M4CandidateDoorGameTests {
                     after.put("noSpaceSlotOrPageLeak",runtime.equals(runtimeOwnership(fixture)));
                     after.put("dormantStillExact",dormant.equals(journal.flushedRecords().get(dormant.sessionUuid())));
                     after.put("dormantChamberStillBlocked",gateway.presence(server,dormant.chamberUuid())!=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE);
-                    context.assertTrue(!after.containsValue(false),"另一座 Chamber 收尾後不得洩漏 slot/page，DORMANT receipt 不變："+after);
-                    M4CandidateTestAccess.removeMeasuredForTeardown(server,dormant.sessionUuid());
+                    // 取證之後才移除自建的 DORMANT receipt（成功與失敗路徑都經 hooks）。
+                    try { context.assertTrue(!after.containsValue(false),"另一座 Chamber 收尾後不得洩漏 slot/page，DORMANT receipt 不變："+after); }
+                    catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+                    hooks.release();
                     M4PerTestUniverseProbe.complete(context);
                 });
-            },() -> "presence="+gateway.presence(server,fixture.controller().chamberUuid())+" record="+(fixture.record()==null ? "ABSENT" : fixture.record().state()));
+            },() -> "presence="+gateway.presence(server,fixture.controller().chamberUuid())+" record="+(fixture.record()==null ? "ABSENT" : fixture.record().state()),hooks);
         });
     }
 
@@ -968,27 +999,37 @@ public final class M4CandidateDoorGameTests {
         M4PerTestUniverseProbe.begin(context,"native_selection_cannot_use_candidate_before_checked_batch_readback_windows");
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         var probe=new CandidatePublishProbe(fixture); publishProbe=probe;
+        // 延後清單「M4 test 收尾」：等待逾時時也解除 probe 並關閉 fixture，不讓它在後續 batch 的 journal flush 裡操作本 test 的玩家。
+        var hooks=new M2CorridorGameTests.TestHooks();
+        hooks.add(fixture::close);
+        hooks.add(() -> { if(publishProbe==probe) publishProbe=null; });
         context.waitAndRun(2,fixture::power);
-        when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,tick -> {
+        whenWithin(context,3,60,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,tick -> {
             publishProbe=null;
             fixture.trustedTeardown(tick+1,() -> {
                 context.assertTrue(probe.observed && probe.rejected,"真候選batch未flush窗口：側門互動拒絕且current/durable零額外mutation"); M4PerTestUniverseProbe.complete(context);
             });
-        });
+        },() -> "候選未在 358 扇側門發布：record="+(fixture.record()==null ? "ABSENT" : fixture.record().state()),hooks);
     }
 
-    /** 先完成選擇／freeze斷言，清理才使用明確testmod-only fixture重設；不宣稱Task8返還已實作。 */
+    /**
+     * 先完成選擇／freeze 斷言，清理才使用明確 testmod-only fixture 重設；不宣稱 Task8 返還已實作。
+     * q7：斷言失敗時仍收尾（finally）——把 MEASURED 重設回 SUPERPOSITION 並觸發一般返還（斷電），玩家連線保留到 recovery 把人送回原艙，
+     * 不讓 session 卡在 MEASURED 封鎖後續 batch；收尾本身的例外附在原失敗上，不遮蔽原因。原失敗直接回報，不等收尾逾時。
+     */
     private static void selectionTeardown(M2CorridorGameTests.NativeEntry fixture,int tick,Runnable assertions) {
-        RuntimeException failure=null;
-        try { assertions.run(); } catch(RuntimeException caught) { failure=caught; }
-        if(failure!=null) {
-            // 斷言已失敗時直接回報原因，不讓後續收尾逾時掩蓋真正 RED 訊息。
+        try { assertions.run(); }
+        catch(RuntimeException | Error failure) {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").error("M4_SELECTION_ASSERTION_FAILED {}",failure.getMessage());
+            try {
+                var record=fixture.record();
+                if(record!=null) M4CandidateTestAccess.resetMeasuredForTeardown(fixture.server,fixture.pages,record.sessionUuid());
+                if(fixture.context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+            } catch(RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }
         M4CandidateTestAccess.resetMeasuredForTeardown(fixture.server,fixture.pages,fixture.record().sessionUuid());
-        var observed=failure;
-        fixture.trustedTeardown(tick,() -> { if(observed!=null) throw observed; M4PerTestUniverseProbe.complete(fixture.context); });
+        fixture.trustedTeardown(tick,() -> M4PerTestUniverseProbe.complete(fixture.context));
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_mapping_windows",tickLimit=100000)
@@ -1029,11 +1070,14 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
+    /**
+     * 真入場、等 358 扇側門發布之後交給 {@code ready}。M5 plan 決策 7：在交出之前就暫停這個 session 的塌縮流程，之後的選門（MEASURED）照 M4 一直等待。
+     */
     private static void nativeCandidates(TestContext context,int people,java.util.function.BiConsumer<M2CorridorGameTests.NativeEntry,Integer> ready) {
         var fixture=new M2CorridorGameTests.NativeEntry(context,people,Direction.NORTH);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,
-                tick -> ready.accept(fixture,tick));
+                tick -> { suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
     }
     private static net.minecraft.util.ActionResult use(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player) {
         return fixture.target.getBlockState(pos).onUse(fixture.target,player,new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(pos),Direction.UP,pos,false));
@@ -1278,6 +1322,8 @@ public final class M4CandidateDoorGameTests {
     }
 
     public static void beforeCandidateFlush(SessionRecoveryState state,MinecraftServer server) {
+        var m5=m5FlushProbe;
+        if(m5!=null && server.isOnThread()) m5.accept(state);
         var release=releaseFlushFault;
         if(release!=null && server.isOnThread()) release.observe(state);
         if(initialFlushFaultProbe!=null) initialFlushFaultProbe.observe(state);
@@ -1922,6 +1968,8 @@ public final class M4CandidateDoorGameTests {
             Map<UUID,Boolean> people,List<SessionRecoveryRecord.SpaceLease> leases,SessionState phase,long time) {
         var journal=SessionRecoveryState.get(server);
         var measured=M4CandidateTestAccess.measuredReceipt(server,origin,people,leases,phase!=SessionState.COLLAPSING);
+        // M5 plan 決策 7：F3a 的 fixture 只驗證既有分支，塌縮流程不得推進它。
+        suspendCollapse(measured.sessionUuid());
         journal.put(measured); journal.flush(server);
         var record=M4CandidateTestAccess.collapsing(measured,time);
         requireCommitted(journal.commitRestore(server,measured,record),"MEASURED→COLLAPSING");
