@@ -1095,8 +1095,9 @@ public final class M5CollapseGameTests implements FabricGameTest {
     /**
      * F3d fix round 2（quality I-1，spec §6 收斂共通第 2 點）：COLLAPSING 清 lease 的寫出持續失敗。走廊清理第一次寫出失敗之後，current 已是
      * 清空 lease 的那一份、寫出尚未確認：走廊清理不再每個 tick 重掃 lease、重寫 journal，確認只交給 recovery 以 journal 為單位退避的
-     * RETRY_FLUSH。受控失敗前 3 次「current 沒有 lease、flushed 仍有 lease」的寫出，第 4 次成功。斷言第一次失敗之後的 200 ticks 內最多 2 次
-     * 寫出（同一個 tick 的走廊清理與 RETRY_FLUSH），之後的間隔依退避（200、400）；確認之後 space 釋放，SOURCE fast path 照常完成。
+     * RETRY_FLUSH。受控失敗前 3 次「current 沒有 lease、flushed 仍有 lease」的寫出，第 4 次成功（原生 autosave 也可能先帶出）。斷言第一次失敗
+     * 之後的 200 ticks 內最多 2 次寫出（同一個 tick 的走廊清理與 RETRY_FLUSH），之後的間隔依退避（200、400）；確認之後 space 釋放，SOURCE fast
+     * path 照常完成。
      * 只看次數與間隔，不看絕對 tick。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_release_fault_backoff", tickLimit = 100000)
@@ -1123,9 +1124,11 @@ public final class M5CollapseGameTests implements FabricGameTest {
             whenTicks(context, ready + 1, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
                 var witness = new LinkedHashMap<String, Boolean>();
                 int first = writes.isEmpty() ? -1 : writes.getFirst();
-                witness.put("fourWrites", writes.size() == 4);
+                // 確認可能來自第 4 次寫出，也可能由原生 autosave 先帶出（它不經過 journal 的 flush 探針）：只要求退避之後真的重試過。
+                witness.put("retriedAfterTheBackoff", writes.size() >= 3 && writes.size() <= 4);
                 witness.put("atMostTwoWithinTheFirst200Ticks", writes.stream().filter(tick -> tick < first + 200).count() <= 2);
-                witness.put("retriesFollowTheBackoff", writes.size() == 4 && writes.get(2) - first >= 200 && writes.get(3) - writes.get(2) >= 400);
+                witness.put("retriesFollowTheBackoff", writes.size() >= 3 && writes.get(2) - first >= 200
+                        && (writes.size() < 4 || writes.get(3) - writes.get(2) >= 400));
                 witness.put("spaceReleased", M4CandidateTestAccess.space(fixture.pages, sid) == null);
                 witness.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
                 witness.put("doorPlainOpen", doorAll(context.getWorld(), fixture.frame, true, MembraneState.NONE));
@@ -1140,7 +1143,8 @@ public final class M5CollapseGameTests implements FabricGameTest {
     /**
      * F3d fix round 2（quality m-7(a)，spec §7、§6 收斂共通第 2 點）：返還與清理都完成（SETTLED）的 COLLAPSING 之後的 roll-forward 也由 recovery
      * 以 journal 為單位帶退避重試。以 journal 的 commitRollForward 寫入 COLLAPSING→SEALED（模擬 F4a 進入 SEALED），前 3 次寫出受控失敗：
-     * 寫入當下 1 次、recovery 的 RETRY_FLUSH 在同一個 tick 1 次、200 ticks 後 1 次，400 ticks 後的第 4 次確認為 SEALED。期間 current 一直是那份
+     * 寫入當下 1 次、recovery 的 RETRY_FLUSH 在同一個 tick 1 次、200 ticks 後 1 次，400 ticks 後的第 4 次確認為 SEALED（原生 autosave 也可能
+     * 先帶出，它不經過 flush 探針；這時只有 3 次）。期間 current 一直是那份
      * SEALED，塌縮流程暫停、不疊寫（沒有任何塌縮流程的 WARN）。收尾以終局 API 移除。不需要原生 checkpoint，各平台都執行。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_roll_forward", tickLimit = 2000)
@@ -1187,8 +1191,10 @@ public final class M5CollapseGameTests implements FabricGameTest {
         }, confirmed -> {
             var witness = new LinkedHashMap<String, Boolean>();
             witness.put("confirmedTheSameSealed", sealed.equals(journal.flushedRecords().get(sid)) && !journal.rollForwardPending(sid));
-            witness.put("fourAttempts", attempts.size() == 4);
-            witness.put("retriesFollowTheBackoff", attempts.size() == 4 && attempts.get(2) - attempts.get(1) >= 200 && attempts.get(3) - attempts.get(2) >= 400);
+            // 確認可能來自第 4 次寫出，也可能由原生 autosave 先帶出（它不經過 journal 的 flush 探針）：只要求 recovery 在退避之後真的重試過。
+            witness.put("recoveryRetried", attempts.size() >= 3 && attempts.size() <= 4);
+            witness.put("retriesFollowTheBackoff", attempts.size() >= 3 && attempts.get(2) - attempts.get(1) >= 200
+                    && (attempts.size() < 4 || attempts.get(3) - attempts.get(2) >= 400));
             witness.put("collapseServiceNeverOverwrote", !overwritten[0]
                     && capture.matching(org.apache.logging.log4j.Level.WARN, "塌縮流程", sid.toString()).isEmpty());
             context.assertTrue(!witness.containsValue(false), "進入 SEALED 的 roll-forward 重試：" + witness + " attempts=" + attempts);
