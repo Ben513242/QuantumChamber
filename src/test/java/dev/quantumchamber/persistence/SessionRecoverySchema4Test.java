@@ -1043,6 +1043,14 @@ class SessionRecoverySchema4Test {
         var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
         for (var record : List.of(ready(settled), sealed))
             cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.NONE, SessionRecoveryManager.recoveryWork(journal(record), record, true), record.state().name()));
+        cases.add(() -> {
+            var ready = ready(settled);
+            var state = journal(ready);
+            assertEquals(CommitResult.Status.ROLL_FORWARD_PENDING,
+                    state.commitRollForward(() -> { throw new UncheckedIOException(new IOException("注入")); }, ready, crossed(ready, A)).status());
+            assertEquals(SessionRecoveryManager.RecoveryWork.RETRY_FLUSH, SessionRecoveryManager.recoveryWork(state, state.flushedRecords().get(SESSION), true),
+                    "PASSAGE_READY 的 Crossed 尚未確認：只重試寫出同一份 current");
+        });
         var measured = measured(EXISTING, 1);
         cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.RECOVER, SessionRecoveryManager.recoveryWork(journal(measured), measured, true)));
         cases.add(() -> assertEquals(SessionRecoveryManager.RecoveryWork.NONE, SessionRecoveryManager.recoveryWork(journal(measured), measured, false),

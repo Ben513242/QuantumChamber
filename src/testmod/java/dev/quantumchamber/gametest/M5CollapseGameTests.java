@@ -18,6 +18,7 @@ import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.CorridorGeometry;
 import dev.quantumchamber.corridor.CorridorPageManager;
 import dev.quantumchamber.corridor.DoorKey;
+import dev.quantumchamber.gametest.mixin.MinecraftServerAutosaveTestAccessor;
 import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
@@ -1095,10 +1096,12 @@ public final class M5CollapseGameTests implements FabricGameTest {
     /**
      * F3d fix round 2（quality I-1，spec §6 收斂共通第 2 點）：COLLAPSING 清 lease 的寫出持續失敗。走廊清理第一次寫出失敗之後，current 已是
      * 清空 lease 的那一份、寫出尚未確認：走廊清理不再每個 tick 重掃 lease、重寫 journal，確認只交給 recovery 以 journal 為單位退避的
-     * RETRY_FLUSH。受控失敗前 3 次「current 沒有 lease、flushed 仍有 lease」的寫出，第 4 次成功（原生 autosave 也可能先帶出）。斷言第一次失敗
-     * 之後的 200 ticks 內最多 2 次寫出（同一個 tick 的走廊清理與 RETRY_FLUSH），之後的間隔依退避（200、400）；確認之後 space 釋放，SOURCE fast
-     * path 照常完成。
+     * RETRY_FLUSH。受控失敗前 3 次「current 沒有 lease、flushed 仍有 lease」的寫出，第 4 次成功。斷言第一次失敗之後的 200 ticks 內最多 2 次
+     * 寫出（同一個 tick 的走廊清理與 RETRY_FLUSH），之後的間隔依退避（200、400）；確認之後 space 釋放，SOURCE fast path 照常完成。
      * 只看次數與間隔，不看絕對 tick。
+     * <p>fix round 3（spec re-review m-1）：原生 autosave 不經過 flush 探針。選門之前先等到接下來 800 個 tick 內不會有原生 autosave（選門到第一次
+     * 清 lease 的寫出實測 11 個 tick，4 次寫出在其後的第 0、0、200、600 個 tick，留約 190 ticks 餘裕），確認時斷言期間確實沒有 autosave，
+     * 所以恰好 4 次（fix round 2 為了 autosave 放寬成 3～4 次，這裡恢復）。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_release_fault_backoff", tickLimit = 100000)
     public void native_persistent_release_write_fault_waits_for_the_journal_backoff_windows(TestContext context) {
@@ -1118,36 +1121,47 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 writes.add(server.getTicks());
                 if (writes.size() <= 3) throw new IllegalStateException("F3d GameTest 受控：清 lease 的 journal 寫出持續失敗");
             };
-            M4CandidateDoorGameTests.m5FlushProbe = fault;
-            hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == fault) M4CandidateDoorGameTests.m5FlushProbe = null; });
-            interact(fixture.target, sourceDoor(fixture).cell(), fixture.players.getFirst().player());
-            whenTicks(context, ready + 1, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
-                var witness = new LinkedHashMap<String, Boolean>();
-                int first = writes.isEmpty() ? -1 : writes.getFirst();
-                // 確認可能來自第 4 次寫出，也可能由原生 autosave 先帶出（它不經過 journal 的 flush 探針）：只要求退避之後真的重試過。
-                witness.put("retriedAfterTheBackoff", writes.size() >= 3 && writes.size() <= 4);
-                witness.put("atMostTwoWithinTheFirst200Ticks", writes.stream().filter(tick -> tick < first + 200).count() <= 2);
-                witness.put("retriesFollowTheBackoff", writes.size() >= 3 && writes.get(2) - first >= 200
-                        && (writes.size() < 4 || writes.get(3) - writes.get(2) >= 400));
-                witness.put("spaceReleased", M4CandidateTestAccess.space(fixture.pages, sid) == null);
-                witness.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
-                witness.put("doorPlainOpen", doorAll(context.getWorld(), fixture.frame, true, MembraneState.NONE));
-                context.assertTrue(!witness.containsValue(false), "清 lease 的寫出持續失敗：" + witness + " writes=" + writes);
-                tearingDown[0] = true;
-                hooks.release();
-                powerOffAndClose(context, fixture, gone + 1, () -> M4PerTestUniverseProbe.complete(context));
-            }, () -> "清 lease 的寫出沒有確認：record=" + state(journal, sid) + " writes=" + writes, hooks);
+            afterAutosaveClear(context, ready + 1, "release_fault_backoff", 800, (start, autosave) -> {
+                M4CandidateDoorGameTests.m5FlushProbe = fault;
+                hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == fault) M4CandidateDoorGameTests.m5FlushProbe = null; });
+                interact(fixture.target, sourceDoor(fixture).cell(), fixture.players.getFirst().player());
+                whenTicks(context, start + 1, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
+                    var witness = new LinkedHashMap<String, Boolean>();
+                    int first = writes.isEmpty() ? -1 : writes.getFirst();
+                    witness.put("noNativeAutosaveBeforeTheConfirmation", autosave.untouched(server, writes));
+                    witness.put("fourWrites", writes.size() == 4);
+                    witness.put("atMostTwoWithinTheFirst200Ticks", writes.stream().filter(tick -> tick < first + 200).count() <= 2);
+                    witness.put("retriesFollowTheBackoff", writes.size() == 4 && writes.get(2) - first >= 200 && writes.get(3) - writes.get(2) >= 400);
+                    witness.put("spaceReleased", M4CandidateTestAccess.space(fixture.pages, sid) == null);
+                    witness.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                    witness.put("doorPlainOpen", doorAll(context.getWorld(), fixture.frame, true, MembraneState.NONE));
+                    context.assertTrue(!witness.containsValue(false), "清 lease 的寫出持續失敗：" + witness + " writes=" + writes
+                            + " start=" + autosave.start() + " autosaveAt=" + autosave.autosaveAt());
+                    tearingDown[0] = true;
+                    hooks.release();
+                    powerOffAndClose(context, fixture, gone + 1, () -> M4PerTestUniverseProbe.complete(context));
+                }, () -> "清 lease 的寫出沒有確認：record=" + state(journal, sid) + " writes=" + writes, hooks);
+            }, hooks);
         });
     }
 
     /**
      * F3d fix round 2（quality m-7(a)，spec §7、§6 收斂共通第 2 點）：返還與清理都完成（SETTLED）的 COLLAPSING 之後的 roll-forward 也由 recovery
      * 以 journal 為單位帶退避重試。以 journal 的 commitRollForward 寫入 COLLAPSING→SEALED（模擬 F4a 進入 SEALED），前 3 次寫出受控失敗：
-     * 寫入當下 1 次、recovery 的 RETRY_FLUSH 在同一個 tick 1 次、200 ticks 後 1 次，400 ticks 後的第 4 次確認為 SEALED（原生 autosave 也可能
-     * 先帶出，它不經過 flush 探針；這時只有 3 次）。期間 current 一直是那份
+     * 寫入當下 1 次、recovery 的 RETRY_FLUSH 在同一個 tick 1 次、200 ticks 後 1 次，400 ticks 後的第 4 次確認為 SEALED。期間 current 一直是那份
      * SEALED，塌縮流程暫停、不疊寫（沒有任何塌縮流程的 WARN）。收尾以終局 API 移除。不需要原生 checkpoint，各平台都執行。
+     * <p>fix round 3：
+     * <ul>
+     * <li>決策 7（spec re-review I-1）：fixture 是目的地 NEW 的 SETTLED COLLAPSING，刻意不掛 collapse-suspended hook（要證明塌縮流程在
+     *     roll-forward 未確認時自己暫停）。建立 fixture、裝探針、commitRollForward 都在同一個 callback 內完成，塌縮流程（END_SERVER_TICK）
+     *     從第一次看到這個 session 起就是「roll-forward 未確認」，一律暫停，不會推導到 RESOLVE（F4a 之後 RESOLVE 會配置宇宙）。整個 test
+     *     期間這個 sid 沒有 RESOLVE stub 或其他塌縮流程的 WARN。</li>
+     * <li>spec re-review m-1：原生 autosave 不經過 flush 探針。開始注入之前先等到接下來 800 個 tick 內不會有原生 autosave（4 次寫出在開始後的
+     *     第 0、0、200、600 個 tick，留 200 ticks 餘裕），確認時斷言期間確實沒有 autosave，所以恰好 4 次（fix round 2 為了 autosave 放寬成
+     *     3～4 次，這裡恢復）。</li>
+     * </ul>
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_roll_forward", tickLimit = 2000)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_roll_forward", tickLimit = 3000)
     public void settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff(TestContext context) {
         M4PerTestUniverseProbe.begin(context,"settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
@@ -1155,53 +1169,55 @@ public final class M5CollapseGameTests implements FabricGameTest {
         var owned = new ArrayList<UUID>();
         hooks.add(() -> cleanupFixtures(server, owned));
         LogCapture capture;
-        SessionRecoveryRecord settled;
         try {
             capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
-            var far = context.getAbsolutePos(BlockPos.ORIGIN).add(6000, 70, 6000);
-            // SEALED 只能接在 UNIVERSE 目的地之後（選中 NEW）。塌縮流程不暫停：SETTLED 之後停在 RESOLVE stub，不寫入。
-            settled = collapseFixture(server, M4CandidateTestAccess.origin(UUID.randomUUID(), far), Map.of(UUID.randomUUID(), true), List.of(), true,
-                    SessionState.COLLAPSING, false);
-            owned.add(settled.sessionUuid());
         } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
-        var sid = settled.sessionUuid();
-        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
-        var attempts = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
-        java.util.function.Consumer<SessionRecoveryState> fault = state -> {
-            var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
-            if (staged == null || durable == null || staged.state() != SessionState.SEALED || durable.state() != SessionState.COLLAPSING) return;
-            attempts.add(server.getTicks());
-            if (attempts.size() <= 3) throw new IllegalStateException("F3d GameTest 受控：進入 SEALED 的 journal 寫出失敗");
-        };
-        // 失敗路徑：先解除探針，再把尚未確認的寫出帶出去，最後才以終局 API 收尾（hooks 依後進先出執行）。
-        hooks.add(() -> { if (journal.rollForwardPending(sid)) journal.flush(server); });
-        M4CandidateDoorGameTests.m5FlushProbe = fault;
-        hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == fault) M4CandidateDoorGameTests.m5FlushProbe = null; });
-        boolean[] overwritten = {false};
-        at(context, 2, hooks, () -> {
+        var far = context.getAbsolutePos(BlockPos.ORIGIN).add(6000, 70, 6000);
+        afterAutosaveClear(context, 1, "sealed_roll_forward", 800, (start, autosave) -> {
+            // SEALED 只能接在 UNIVERSE 目的地之後（選中 NEW）。
+            var settled = collapseFixture(server, M4CandidateTestAccess.origin(UUID.randomUUID(), far), Map.of(UUID.randomUUID(), true), List.of(), true,
+                    SessionState.COLLAPSING, false);
+            var sid = settled.sessionUuid();
+            owned.add(sid);
+            var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+            var attempts = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+            java.util.function.Consumer<SessionRecoveryState> fault = state -> {
+                var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+                if (staged == null || durable == null || staged.state() != SessionState.SEALED || durable.state() != SessionState.COLLAPSING) return;
+                attempts.add(server.getTicks());
+                if (attempts.size() <= 3) throw new IllegalStateException("F3d GameTest 受控：進入 SEALED 的 journal 寫出失敗");
+            };
+            // 失敗路徑：先解除探針，再把尚未確認的寫出帶出去，最後才以終局 API 收尾（hooks 依後進先出執行）。
+            hooks.add(() -> { if (journal.rollForwardPending(sid)) journal.flush(server); });
+            M4CandidateDoorGameTests.m5FlushProbe = fault;
+            hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == fault) M4CandidateDoorGameTests.m5FlushProbe = null; });
+            // 探針已裝好，同一個 callback 內立即寫入：這個 tick 結束時塌縮流程第一次看到它，roll-forward 已經未確認。
             var result = journal.commitRollForward(server, settled, sealed);
             context.assertTrue(!result.committed() && journal.rollForwardPending(sid) && sealed.equals(journal.records().get(sid))
                     && settled.equals(journal.flushedRecords().get(sid)), "fixture：進入 SEALED 的寫出受控失敗，current 帶著 SEALED：" + result);
-        });
-        whenTicks(context, 3, 1500, () -> {
-            var current = journal.records().get(sid);
-            if (!sealed.equals(current)) overwritten[0] = true;
-            var durable = journal.flushedRecords().get(sid);
-            return durable != null && durable.state() == SessionState.SEALED;
-        }, confirmed -> {
-            var witness = new LinkedHashMap<String, Boolean>();
-            witness.put("confirmedTheSameSealed", sealed.equals(journal.flushedRecords().get(sid)) && !journal.rollForwardPending(sid));
-            // 確認可能來自第 4 次寫出，也可能由原生 autosave 先帶出（它不經過 journal 的 flush 探針）：只要求 recovery 在退避之後真的重試過。
-            witness.put("recoveryRetried", attempts.size() >= 3 && attempts.size() <= 4);
-            witness.put("retriesFollowTheBackoff", attempts.size() >= 3 && attempts.get(2) - attempts.get(1) >= 200
-                    && (attempts.size() < 4 || attempts.get(3) - attempts.get(2) >= 400));
-            witness.put("collapseServiceNeverOverwrote", !overwritten[0]
-                    && capture.matching(org.apache.logging.log4j.Level.WARN, "塌縮流程", sid.toString()).isEmpty());
-            context.assertTrue(!witness.containsValue(false), "進入 SEALED 的 roll-forward 重試：" + witness + " attempts=" + attempts);
-            hooks.release();
-            context.assertTrue(!journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), "收尾：以終局 API 移除");
-            M4PerTestUniverseProbe.complete(context);
-        }, () -> "進入 SEALED 的寫出一直沒有確認：attempts=" + attempts + " pending=" + journal.rollForwardPending(sid), hooks);
+            boolean[] overwritten = {false};
+            whenTicks(context, start + 1, 1500, () -> {
+                var current = journal.records().get(sid);
+                if (!sealed.equals(current)) overwritten[0] = true;
+                var durable = journal.flushedRecords().get(sid);
+                return durable != null && durable.state() == SessionState.SEALED;
+            }, confirmed -> {
+                var witness = new LinkedHashMap<String, Boolean>();
+                witness.put("confirmedTheSameSealed", sealed.equals(journal.flushedRecords().get(sid)) && !journal.rollForwardPending(sid));
+                witness.put("noNativeAutosaveBeforeTheConfirmation", autosave.untouched(server, attempts));
+                witness.put("fourAttempts", attempts.size() == 4);
+                witness.put("retriesFollowTheBackoff", attempts.size() == 4 && attempts.get(2) - attempts.get(1) >= 200
+                        && attempts.get(3) - attempts.get(2) >= 400);
+                witness.put("collapseServiceNeverOverwrote", !overwritten[0]
+                        && capture.matching(org.apache.logging.log4j.Level.WARN, "塌縮流程", sid.toString()).isEmpty());
+                witness.put("collapseFlowOnlySawPendingRollForward", collapseFlowNeverWarned(capture, sid));
+                context.assertTrue(!witness.containsValue(false), "進入 SEALED 的 roll-forward 重試：" + witness + " attempts=" + attempts
+                        + " start=" + autosave.start() + " autosaveAt=" + autosave.autosaveAt());
+                hooks.release();
+                context.assertTrue(!journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), "收尾：以終局 API 移除");
+                M4PerTestUniverseProbe.complete(context);
+            }, () -> "進入 SEALED 的寫出一直沒有確認：attempts=" + attempts + " pending=" + journal.rollForwardPending(sid), hooks);
+        }, hooks);
     }
 
     /**
@@ -1411,6 +1427,15 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 && pages.measuredRecoveryComplete(sid);
     }
 
+    /**
+     * 這個 session 從頭到尾沒有任何塌縮流程（{@code CollapseService}）的 WARN：RESOLVE stub 的「目的地解析尚未實作」、推進／提交／終局失敗的
+     * 「塌縮流程的…沒有完成」，以及終局之後改門的「終局之後原艙門…」。依 sid 篩選。
+     */
+    private static boolean collapseFlowNeverWarned(LogCapture capture, UUID sid) {
+        return java.util.stream.Stream.of("目的地解析尚未實作", "塌縮流程", "終局之後原艙門")
+                .allMatch(fragment -> capture.matching(org.apache.logging.log4j.Level.WARN, fragment, sid.toString()).isEmpty());
+    }
+
     static String state(SessionRecoveryState journal, UUID sid) {
         var record = journal.flushedRecords().get(sid);
         return record == null ? "ABSENT" : record.state().name();
@@ -1472,6 +1497,48 @@ public final class M5CollapseGameTests implements FabricGameTest {
             try { action.run(); }
             catch (RuntimeException | Error failure) { if (hooks != null) hooks.releaseAfter(failure); throw failure; }
         });
+    }
+
+    /**
+     * 原生 autosave 的排程（F3d fix round 3，spec re-review m-1）。Minecraft 1.21（Yarn 1.21+build.9）的 {@code MinecraftServer.tick}：
+     * {@code ++ticks} → {@code tickWorlds}（GameTest 的 callback 在其中的 {@code TestManager.tick} 執行）→ {@code ticksUntilAutosave} 減一，
+     * ≤0 時重設為 {@code getAutosaveInterval()}（20 TPS、沒有 sprint 時是 6000）並 {@code saveAll} → Fabric 的 {@code END_SERVER_TICK}
+     * （recovery 的 RETRY_FLUSH、塌縮流程）。autosave 不經過 journal 的 flush 探針，會直接把尚未確認的 roll-forward 寫出確認，探針因此少記
+     * 重試。callback 當下讀到倒數 c（≥1）時，下一次 autosave 發生在 server tick {@code getTicks()+c-1}：那個 tick 的 callback 之後、
+     * END_SERVER_TICK 之前。
+     */
+    static int nextAutosaveTick(MinecraftServer server) {
+        return server.getTicks() + ((MinecraftServerAutosaveTestAccessor) server).quantumchamberTest$getTicksUntilAutosave() - 1;
+    }
+
+    /**
+     * 開始注入之前的等待：從 {@code tick} 起逐 tick 檢查，等到「從這個 tick 起連續 {@code window} 個 server tick 都不會有原生 autosave」
+     * （下一次 autosave 在 {@code getTicks()+window} 或更晚），才在那個 tick 的 callback 呼叫 {@code start}（test tick、窗口）。不成立時，
+     * 倒數最晚再 {@code window} 個 tick 就觸發 autosave 並重設為一整個間隔，所以最多等 window＋1 個 tick；等不到代表 autosave 間隔被改過
+     * （{@code /tick rate}、{@code /tick sprint}），以失敗結束。窗口要涵蓋從開始注入到最後一次被探針計數的寫出。
+     */
+    static void afterAutosaveClear(TestContext context, int tick, String name, int window,
+            java.util.function.BiConsumer<Integer, AutosaveWindow> start, M2CorridorGameTests.TestHooks hooks) {
+        var server = context.getWorld().getServer();
+        whenTicks(context, tick, window + 2, () -> nextAutosaveTick(server) - server.getTicks() >= window, ready -> {
+            var clear = new AutosaveWindow(name, window, server.getTicks(), nextAutosaveTick(server));
+            LOGGER.info("M5_AUTOSAVE_CLEAR name={} start={} nextAutosave={} window={}", name, clear.start(), clear.autosaveAt(), window);
+            start.accept(ready, clear);
+        }, () -> "等不到 " + window + " 個 tick 內沒有原生 autosave 的窗口：tick=" + server.getTicks() + " nextAutosave=" + nextAutosaveTick(server), hooks);
+    }
+
+    /** {@link #afterAutosaveClear} 開始注入的 server tick，與當時的下一次原生 autosave。 */
+    record AutosaveWindow(String name, int window, int start, int autosaveAt) {
+        /**
+         * 從開始注入到現在都沒有發生原生 autosave（發生過的話倒數已重設，下一次 autosave 會往後移一整個間隔）。另記一行
+         * {@code M5_AUTOSAVE_WINDOW}，列出被探針計數的 server tick。
+         */
+        boolean untouched(MinecraftServer server, List<Integer> counted) {
+            int next = nextAutosaveTick(server);
+            LOGGER.info("M5_AUTOSAVE_WINDOW name={} start={} autosaveAt={} window={} now={} nextAutosave={} counted={}",
+                    name, start, autosaveAt, window, server.getTicks(), next, counted);
+            return next == autosaveAt;
+        }
     }
 
     /** 以 server tick 計的有界等待（同 M4 的 whenWithinTicks）：逾時、斷言失敗或例外時先釋放 hooks（可為 null）。 */
