@@ -2157,6 +2157,7 @@ GameTest +3（156 → 159；`_windows` 維持 80；per-test Universe receipt 維
 - Code range `4098d0c..e11b341`。派工時 HEAD 是 `c19a399`；之後 controller 的兩個 docs commit（`909f033`、`4098d0c`）只改 AGENTS.md 與本 note 的開頭、F1b，不影響本 task。
 - 範圍是 plan 決策 6 與 Review Focus 8：會配置或物化 Universe、或會留下 M5 record 的 GameTest，放進新的 `gameTestM5` run（獨立的 fresh 世界 `run/gametest-m5`），default run 的 boundary oracle 維持 PASS。
 - 行號以 `e11b341` 為準。`FLT` 指 `src/testmod/java/dev/quantumchamber/gametest/mixin/M4LegacyGameTestFilterMixin.java`，`M5U` 指 `src/testmod/java/dev/quantumchamber/gametest/M5UniverseGameTests.java`，`GT`、`RA`、`CRC` 指 `scripts/verification/` 的 `gates.ps1`、`run-all.ps1`、`ci-rule-check.ps1`，`YML` 指 `.github/workflows/build.yml`。
+- Review：首輪 spec review ✅（Critical 0、Important 0、Minor 2）；code quality review Approved（Critical 0、Important 0、Minor 7）。controller 指派全部在 fix round 1 處理，見本節最後的「Fix round 1」。本節其餘內容描述 `e11b341`（當時 M5 run 只有 sanity 一個 test）。
 
 ### plan 逐項對照
 
@@ -2282,3 +2283,81 @@ gate mutation（M-G1、M-S1 用 `-Mode GameTest`，其餘用 `-Mode M5GameTest`�
   - M2 時期也有許多 `_windows` test 不在明列清單（例如 `m2_task4_*`、`m2_task7_*`、`m2_task8_*`），屬既有狀態，不是 M5 新增。
 - F6：`m5-collapse-probe.ps1` 納入 `run-all.ps1` 時，沿用本 task 的 summary 寫法（gate 狀態、restore、數量、oracle）。
 - F7：`scripts/verification/README.md` 的「還沒在沒有 `.superpowers/` 的 clean clone 上實跑」一句（本 task 之後在 `:69`）仍待同步，已在 F7 待辦中，本 task 沒有動它。
+
+### Fix round 1（`5307407`）
+
+- Review（首輪）：spec review ✅（Critical 0、Important 0、Minor 2）；code quality review Approved（Critical 0、Important 0、Minor 7）。這些項目大多在 F3c 的檔案裡，F4a 改不到，但 F4a 開始物化 Universe 時一定會用到，所以 controller 指派本輪全部處理：S1、S2、Q1～Q7 與一個 Nit。開工 HEAD 是 `2ee8539`。
+- Commit `5307407` `test: harden the M5 GameTest run and document adding universe tests`（parent `2ee8539`）：`.github/workflows/build.yml`；`scripts/verification/` 的 `gates.ps1`、`run-all.ps1`、`README.md`；testmod `M4GameTestBoundaryProbe.java`、`M5UniverseGameTests.java`。`build.gradle`、`ci-rule-check.ps1`、filter mixin、`fabric.mod.json` 沒有改。本小節由其後的 docs commit 加入。
+- Code range `2ee8539..5307407`。
+- 行號以 `5307407` 為準，簡稱同本節開頭（`M5U`、`GT`、`RA`、`YML`）。
+
+| 項目 | 處理 |
+| --- | --- |
+| S1 suite 結束時的 catalog | 擇「testmod 寫 log 行」，不讀 `world-fresh` 的 catalog。理由：catalog 檔是 gzip 壓縮的 NBT，PowerShell 要另寫 NBT 解析；testmod 手上已有解析好的 state，而且 `SERVER_STOPPED` 在原生存檔之後，log 的內容就是磁碟上的內容（`converged=true` 證實 records 等於 flushed）。`M5U:124` `registerSuiteEnd` 由 `M4GameTestBoundaryProbe.java:29` 在 M5 run 呼叫（取代 boundary probe），`SERVER_STOPPED` 時寫 `M5_UNIVERSE_SUITE_END records=… digest=… converged=… unfinished=[…]`。digest（`M5U:236`）是依 UUID 排序的「UUID＝record NBT」的 SHA-256，所以只改 availability、筆數不變的改動也抓得到。增量行加上 `beforeDigest`／`afterDigest`；gate（`GT:254-266`）依序串接筆數與 digest，並要求恰一行 SUITE_END、筆數與 digest 等於最後一個 test 的 after、`converged=true`、沒有還沒通過的 test。`m5-oracle.json` 多了 `suiteEnd`，`RA:134` 也核對它 |
+| S2 README 耗時 | `README.md:30` 改為約 15 分鐘 |
+| Q1 可重試的 complete 與收斂 helper | `complete`（`M5U:160`）委派 `finish`（`M5U:192`）：未通過時丟 GameTest 斷言例外，baseline 保留、不寫增量行，狀態改變時才記一行 `M5_UNIVERSE_CATALOG_UNMET`（重試不洗版）；通過時才移除 baseline（`:210`）、寫一行 PASS。新增 `awaitConvergedThenComplete(context, delta, maxTicks)`（`M5U:170`）：每一輪對四個權威呼叫 `CollapseAuthorities.convergeIfNeeded`（`convergeAll` `M5U:216`；catalog 是 checked flush），收斂之後以最終判定完成；第一輪在呼叫當下，之後以 `runAtTick` 預先排好每個 tick 一輪（不在 `runAtTick` 的 callback 裡再排程，避開原版在迭代中改 map），收斂後條件不符或逾時都寫一行 `status=FAIL` 並讓 test 失敗。`begin`（`M5U:140`）失敗時列出還沒通過的 test（`unfinished` `M5U:248`）。class Javadoc（`M5U:30-49`）與各方法的 Javadoc 寫明用法；sanity 改以 `awaitConvergedThenComplete(context, 1, 20)` 結尾示範。新增兩個 harness test 鎖住行為：`harness_complete_retries_without_losing_the_baseline`（`M5U:88`，batch `m5_universe_harness_retry`：catalog 的變更 5 tick 後才寫出，以 `addInstantFinalTask` 重試 `complete`）與 `harness_await_converges_an_unflushed_catalog_change`（`M5U:109`，batch `m5_universe_harness_await`：變更不自行寫出，由 helper 收斂） |
+| Q2 CI timeout | 四個 GameTest step 都加 `timeout-minutes`：Ubuntu 的 default 與 M5、Windows 的 M5 為 20（`YML:23`、`:28`、`:105`）；Windows「原生建置與 GameTest」含 clean build 與全部 JUnit，2026-10-01 run `36804549120` 這一步約 9 分鐘，設為 30（`YML:100`） |
+| Q3 default 失敗時仍跑 M5 | 兩個 M5 step 加 `if: ${{ !cancelled() }}`（`YML:27`、`:104`）。job 仍是紅燈：GitHub Actions 中只要有一個 step 失敗（沒有 `continue-on-error`），job 的結論就是 failure；`!cancelled()` 只讓 M5 step 照跑，後面的檢查 step 維持預設的 `success()`，前一步失敗時略過，不會把 job 變綠。此項無法在本機實跑，依 GitHub Actions 的 step 狀態規則判定 |
+| Q4 三份「哪些 test 屬於 M5」的實作 | 三處都改為掃描 `src/testmod/java` 下全部 `*.java`（CI 原本只掃 `*GameTests.java`），掃描前先去掉以 `//`、`/*`、`*` 開頭的行（`GT:202`、`YML:52`、`:222`）。Windows step 的規則 3 併入規則 2 的同一個檔案迴圈。CI step 只能是 `run: \|` 原文（`ci-rule-check.ps1` 逐字抽出），無法共用腳本，所以 README「新增 M5 GameTest」一節最後一段寫明三處（與 filter）必須同步，以及同步的內容；三處的註解也互相指向 |
+| Q5 README 新增 M5 GameTest 的步驟 | `README.md:65-79`「新增 M5 GameTest」：放進 `M5UniverseGameTests`；一個 test 一個 batch、前綴 `m5_universe_<名稱>`；`_windows` 的平台略過放在 `begin` 之前（略過時不留 baseline）；`begin` 是第一個動作、名稱等於方法名稱；最後用 `awaitConvergedThenComplete` 或 `complete`（可放進 `addInstantFinalTask` 重試）；Windows 上每個 test 都必須走到最後並通過；衛生規則；用 `gates.ps1 -Mode M5GameTest` 跑，直接 `gradle runGameTestM5` 需要 fresh 的 `run/gametest-m5/world` |
+| Q6 run-all 核對 CI 結果的 mutation 欄位 | `RA:102`（ci-rule step）與 `RA:217`（summary）都要求 `mutation -eq 'none'` 而且 `sourceMutation -eq 'none'` |
+| Q7 新守門分支的 mutation | 見下方 mutation 表 M-Q7A（`GT:242-243` 宣告在其他 class）、M-Q7B（`GT:244` 共用 batch）、S-Q7C／M-Q7C（filter 的互斥，`M4LegacyGameTestFilterMixin.java:22`） |
+| Nit | Windows step 結尾兩行（`YML:270-271`）改為規則實際檢查的內容：`_windows` 案例分 default／M5 的宣告數，都出現在所屬 XML，兩份 XML 的 `_windows` 案例都沒有 failure／error／skipped；M5 宣告都出現在 M5 XML 且沒有 failure／error／skipped |
+
+測試：
+
+- JUnit 不變（560）；default GameTest 不變（160，`_windows` 80）。
+- M5 GameTest 1 → 3（新增兩個 harness test，各配置一筆 DISABLED、不物化）。執行順序（batch 依名稱的雜湊）是 harness_await → sanity → harness_retry，catalog 0 → 1 → 2 → 3。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3c/fix1/`。`git diff 2ee8539 5307407 -- <path>` 輸出的 SHA-256 前 8 碼（`fix1/diff-hashes.txt`）：`src/testmod` `5eeae94a`、`scripts/verification` `3f9a2c7d`、`.github` `06358092`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED S1 | `2ee8539`；porcelain 只有 ` M …/M5UniverseGameTests.java`（`fix1/red-s1-state.txt`）。test 檔是 `2ee8539` 的版本，sanity 在 `begin` 之後多註冊一個 `SERVER_STOPPING` listener，停服時多配置一筆並寫出（`fix1/red-s1.diff`，前 8 碼 `d49a6c1e`）；harness 是 `2ee8539` | `gate-f3c-fix1-red-s1-666a8ceb99f542428927928297db2926` | 預期的缺口：log 有 `F3C_S1_INJECTED_AFTER_LAST_COMPLETE records=2`（最後一個 test 的 after 是 1），gate 仍 PASS，`2ee8539` 的 oracle 看不到最後一個 test 之後的改動 |
+| RED Q1 | 同上；test 檔是 `2ee8539` 的版本加上兩個 harness test，以及只為編譯的 adapter：`awaitConvergedThenComplete` 直接呼叫 `2ee8539` 的 `complete`（`fix1/red-q1.diff`，前 8 碼 `982f4f71`；`red-q1-state.txt`） | `gate-f3c-fix1-red-q1-539d83089023425cb0609a2d5b711f64` | 預期 FAIL：harness_await 失敗在 `converged=false`（沒有主動收斂）。它留下未寫出的 catalog，sanity 與 harness_retry 都在 `begin` 的收斂檢查失敗，訊息沒有列出是哪個 test 留下的 |
+| RED Q1（retry） | 同上，onlyBatches `m5_universe_harness_retry`（`red-q1-retry-state.txt`） | `gate-f3c-fix1-red-q1-retry-b2f020d4ab7c46fa8ef7137bf932f0b8` | 預期 FAIL：第一次嘗試（未收斂）就移除 baseline 並寫一行 `status=FAIL`；第 5 tick 寫出之後，每次嘗試都失敗在「缺少 begin 記下的 catalog baseline」，直到 tick 上限 |
+| GREEN M5 | 工作樹，blob 與 `5307407` 相同（`fix1/green-state-blobs.txt`、`commit-blobs.txt`） | `gate-f3c-fix1-green-m5-5c8c78a33b7b4d40905aad4a899af5e7` | PASS：3/3；harness_retry 只記一行 UNMET、第 6 次嘗試通過；harness_await 當下就由 helper 收斂；增量 0→1→2→3，digest 逐一接續；`M5_UNIVERSE_SUITE_END records=3`、digest 與最後一個 test 的 after 相同、`converged=true`、`unfinished=[]` |
+| GREEN Full | 同上 | `gate-f3c-fix1-green-full-6dce8d0411444774ba4529ca0e8e1f9d`（`fix1/green-full-summary.txt`） | PASS：default 160/160（`_windows` 80）；boundary PASS；scope PASS（宣告 160／1／3）；JUnit 560（2 skipped）；release 359／312、sources 210；log ERROR 28、WARN 45，與 F3c 首輪相同 |
+| CI 規則 | 同上；XML 取自上兩列（`fix1/ci-matrix.ps1`、`ci-matrix.txt`） | 22 個 `ci-f3c-fix1-ci-*` root | 22 列全部符合預期：F3c 首輪的 16 列照舊，另加 Q4 的 6 列（下表） |
+| gate mutation | 同上；每個單獨套用，跑完還原並以 `git hash-object` 核對（`fix1/gate-mutations.sh`、`mutations/summary.txt`、`roots-summary-1.txt`） | 9 個 `gate-f3c-fix1-mut-*` root（下表） | 全部符合預期；跑完 blob 與 GREEN 相同（`fix1/post-mutation-blobs.txt`） |
+| run-all | `5307407`，`STATUS` 為空（`fix1/run-all-console.log`） | `run-all-e74bc2927e5f4b29a459cd9f86815fdc` | `END ALL exit=0 HEAD=5307407a35041336c485addb7fd154c2f2aa0f8f`，約 15 分鐘。`SUMMARY default=160/160 windows=80 legacy=1/1 m5=3/3 perTest=38+1 junit=560 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=359entries/312classes sources=210 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`。本目錄每個檔的 `HARNESS` 雜湊都等於 `5307407` 的同一檔，以 C＝`5307407` 採計。`summary.json` 的 batch 範圍為 default 160、legacy 1、M5 3；`m5SuiteEnd` 為 3 筆、`converged=true` |
+
+Q4 的 CI 列（註解 mutation：在 `M5UniverseGameTests` 的 class Javadoc 寫 `{@code @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_example")}` 與 `{@code public void example_windows(TestContext context)}`，`fix1/javadoc-mutation.diff` 前 8 碼 `dcc93cfa`；以修改過的原始碼複本當 `-SourceRoot`）：
+
+| 列 | Workflow | Windows | Ubuntu |
+| --- | --- | --- | --- |
+| javadoc | `5307407` | PASS | PASS |
+| old-javadoc | `2ee8539`（`fix1/old-build.yml`） | FAIL：`_windows` 宣告掃描不一致「僅寬鬆掃描 [example_windows]」；M5 宣告掃描不一致「嚴格 3、寬鬆 4」 | FAIL：M5 宣告掃描不一致「嚴格 3、寬鬆 4」 |
+| old-green | `2ee8539`，原始碼不變 | PASS | PASS |
+
+同一個 Javadoc 改動，`2ee8539` 的 `Declared-GameTests` 判「GameTest 宣告格式漂移（M5UniverseGameTests.java）：@GameTest 4 個，可解析 3 個」，`5307407` 的版本 PASS（宣告 164 個，M5 3 個）（`fix1/q4-declared-scan.txt`）。
+
+| Mutation | 改動 | Root | 結果 |
+| --- | --- | --- | --- |
+| M-S1A | sanity 註冊 `SERVER_STOPPING` listener：停服時多配置一筆並寫出 | `gate-f3c-fix1-mut-m-s1a-20861a19334e4ede9d4df8eb5b5cf579` | 3/3 通過、scope PASS，gate FAIL「suite 結束時的 catalog 與最後一個 test 的結果不符：records=4（最後一個 test 之後是 3）」 |
+| M-S1B | 同上，但只把 sanity 那一筆改成 EAGER_ENABLED 並寫出（筆數不變） | `gate-f3c-fix1-mut-m-s1b-be15fbcabb53419f820cdd2714575dec` | 3/3 通過，gate FAIL：records=3、digest 不同 |
+| M-Q1A | `convergeAll` 不呼叫 `convergeIfNeeded` | `gate-f3c-fix1-mut-m-q1a-84d1a9c5f13b47ef8ddc2b55208aabbb` | harness_await 逾時，寫一行 `converged=false status=FAIL`；sanity 與 harness_retry 在 `begin` 失敗，訊息列出「還沒通過的 test：[harness_await_converges_an_unflushed_catalog_change]」；SUITE_END 的 `unfinished` 也列出它 |
+| M-Q1B | `finish` 一開始就移除 baseline（回到 `2ee8539` 的行為） | `gate-f3c-fix1-mut-m-q1b-f83e94f3a5874a3eb68f6e06fe1d14aa` | harness_retry 失敗在「缺少 begin 記下的 catalog baseline」；其他兩個照常通過 |
+| M-Q4（正向） | class Javadoc 寫入上表的註解 | `gate-f3c-fix1-mut-m-q4-6f16dead45c6444ab9ffe781c329d4f1` | gate PASS（沒有誤判為格式漂移），3/3 |
+| M-Q7A | `M5CollapseGameTests` 的 `m5_collapse_fluid` 改為 `m5_universe_fluid_outside` | `gate-f3c-fix1-mut-m-q7a-dea4d3794cca4bfdbb3a13c3ab29cef5` | 4/4 通過、scope PASS（宣告 4），gate FAIL「m5_universe batch 只能宣告在 M5UniverseGameTests：m5collapsegametests.every_bulkhead_state_holds_back_fluids」 |
+| M-Q7B | harness_await 的 batch 改為 `m5_universe_sanity`（與 sanity 共用） | `gate-f3c-fix1-mut-m-q7b-b03defc832a54f3492ab24ad47d032cb` | 3/3 通過、scope PASS，gate FAIL「M5 test 必須各自一個 batch」 |
+| S-Q7C（情境，不改檔） | M5 gate 另以 JAVA_TOOL_OPTIONS 加 `-Dquantumchamber.gametest.legacyOnly=true` | `gate-f3c-fix1-mut-s-q7c-6a954e480803461f9fb1c9020fb1ea3f` | 開服即失敗：「Failed to start the minecraft server」「IllegalStateException: legacyOnly 與 m5Only 不可同時設定」，約 19 秒結束，沒有卡住 |
+| M-Q7C | 拿掉 filter 的互斥檢查，同一情境 | `gate-f3c-fix1-mut-m-q7c-8cfe128d173341a4826195e7349d914f` | 不再於開服時拒絕：legacy 優先，M5 世界裡跑了 legacy 的那一個 test（1/1 通過），只靠 gate 的 scope 核對擋下（缺 3 個 M5 case、多 1 個 legacy case） |
+
+- Q6 以條件式驗證（`fix1/q6-condition-check.txt`）：取 `RA:102` 的條件式，對 CI 矩陣的實際 `result.json` 求值。green 兩列接受；`rename`、`rename-skip`、`rename-drop` 的 Ubuntu 列與 `rename` 的 Windows 列 verdict 都是 PASS，但 mutation／sourceMutation 不是 none，全部拒絕。沒有為此另跑一次 run-all。
+- Nit 的實際輸出（`fix1/win-green-output.txt`）：「Windows 原生 _windows GameTest：default 宣告 80 個、M5 宣告 0 個（嚴格與寬鬆掃描一致），都出現在所屬 XML；default XML 80 個、M5 XML 0 個 _windows 案例，都沒有 failure／error／skipped」「M5 GameTest：宣告 3 個（嚴格與寬鬆掃描一致），都出現在 M5 XML 且沒有 failure／error／skipped（M5 XML 共 3 個）」。
+- 所有 gate 都在 commit 之前以工作樹執行；commit 時 6 個檔的 blob 與 gate 前記錄的相同。run-all 在 commit 之後執行。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+偏離與說明：
+
+- **S1、Q1 的 RED**：S1 是 gate 的缺口，RED 的形式是「同一個情境，`2ee8539` 的 gate PASS」，GREEN 時以 M-S1A／M-S1B 證明 gate FAIL。Q1 的 RED 加了兩個新 test 與只為編譯的 adapter。RED Q1 中 harness_await 留下的未寫出狀態讓另外兩個 test 失敗在 `begin`，retry 的目標斷言沒有被打到，所以另以 onlyBatches 單獨跑 harness_retry（保留兩個 root）。`begin` 列出殘留 test 屬診斷訊息，以 M-Q1A 證明。
+- **M5 test 數 1 → 3**：Q1 的兩個新行為各用一個 test 鎖住；sanity 只示範一般結尾，它當下就已收斂，碰不到重試與主動收斂的路徑。
+- **timeout**：Windows 含建置的那一步用 30 分鐘，不是派工舉例的 20 分鐘（理由見上表 Q2）。
+- **Q3 沒有實跑**：本機無法執行 GitHub Actions，依 Actions 的 step 狀態規則判定（見上表）。
+- **Q4 沒有抽成共用腳本**：理由見上表；改為三處同一套規則，並在 README 與三處註解寫明必須同步。
+- **註解排除的範圍**：只排除整行註解（去掉前導空白後以 `//`、`/*`、`*` 開頭）。程式碼行尾的 `//` 註解，以及不以 `*` 開頭的多行 `/* */` 內文不排除；目前 testmod 沒有這兩種寫法會命中掃描的情況。
+
+交給後續：
+
+- F4a：新增 M5 GameTest 依 README「新增 M5 GameTest」一節。注入失敗的 test 優先用 `awaitConvergedThenComplete`；需要在多個 tick 後才判定時，也可以把 `complete` 放進 `addInstantFinalTask`。
+- F6：`_windows` 明列清單的交接同 F3c 首輪；M5 run 新增的兩個 harness test 不是 `_windows`，由 Windows 規則 3 與 Ubuntu 的 M5 規則要求。
