@@ -1,6 +1,10 @@
 package dev.quantumchamber.gametest;
 
 import dev.quantumchamber.persistence.SessionRecoveryState;
+import dev.quantumchamber.universe.MaterializeResult;
+import dev.quantumchamber.universe.UniverseWorldDescriptor;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -9,9 +13,12 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.test.GameTestState;
+import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,8 +32,12 @@ import org.slf4j.LoggerFactory;
  *     探針丟出例外即讓那次寫出受控失敗。只由 M5 的 test 經 {@code M5GameTestSupport.installFlushProbe} 安裝。</li>
  * <li>journal 寫出稽核（{@link #JOURNAL_AUDIT}，F4a-0 m-1）：{@code SessionJournalWriteCountMixin} 在 journal 正式檔每一次實際寫出之前呼叫
  *     {@link #beforeJournalWrite}。稽核由 {@code M5GameTestSupport.afterAutosaveClear} 在窗口開始時安裝。</li>
+ * <li>物化失敗（{@link #MATERIALIZE_FAULT}，F4a）：{@code MaterializeFaultMixin} 在 lifecycle backend 每一次物化的開頭呼叫
+ *     {@link #beforeMaterialize}，注入時以 {@code FAILED_ROLLED_BACK} 取代那次物化。由 {@code M5GameTestSupport.installMaterializeFault} 安裝。</li>
+ * <li>checked NBT 檔的讀取失敗（{@link #CHECKED_READ_FAULT}，F4a）：{@code CheckedNbtFileReadFaultMixin} 在 {@code CheckedNbtFile.readFile} 的開頭
+ *     呼叫 {@link #beforeCheckedRead}，注入時丟 {@link IOException}。由 {@code M5GameTestSupport.installCheckedReadFault} 安裝。</li>
  * </ul>
- * 探針與稽核各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 探針、稽核與兩個故障注入各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {
@@ -38,6 +49,10 @@ public final class M5TestHooks {
     static final Slot<Consumer<SessionRecoveryState>> FLUSH_PROBE = new Slot<>("journal flush 探針");
     /** journal 寫出稽核（{@code M5GameTestSupport.installJournalAudit}，由 {@code afterAutosaveClear} 呼叫）。 */
     static final Slot<JournalWriteAudit> JOURNAL_AUDIT = new Slot<>("journal 寫出稽核");
+    /** 物化失敗的注入（{@code M5GameTestSupport.installMaterializeFault}）。 */
+    static final Slot<MaterializeFault> MATERIALIZE_FAULT = new Slot<>("物化失敗注入");
+    /** checked NBT 檔的讀取失敗注入（{@code M5GameTestSupport.installCheckedReadFault}）。 */
+    static final Slot<CheckedReadFault> CHECKED_READ_FAULT = new Slot<>("checked NBT 讀取失敗注入");
 
     /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
     public static boolean collapseSuspended(UUID session) {
@@ -63,6 +78,22 @@ public final class M5TestHooks {
     public static void beforeJournalWrite(SessionRecoveryState state) {
         var audit = JOURNAL_AUDIT.get();
         if (audit != null) audit.record(state, true);
+    }
+
+    /**
+     * {@code MaterializeFaultMixin}：lifecycle backend 每一次物化的開頭呼叫。回傳非 null 時，mixin 以它取代這次物化（不呼叫原本的物化）。
+     * 只在 server thread 上生效；不丟出例外。
+     */
+    public static MaterializeResult beforeMaterialize(MinecraftServer server, UniverseWorldDescriptor descriptor) {
+        if (!server.isOnThread()) return null;
+        var fault = MATERIALIZE_FAULT.get();
+        return fault == null ? null : fault.intercept(descriptor);
+    }
+
+    /** {@code CheckedNbtFileReadFaultMixin}：checked NBT 檔每一次讀取的開頭呼叫；注入時丟 {@link IOException}，那次讀取因此失敗。 */
+    public static void beforeCheckedRead(Path path) throws IOException {
+        var fault = CHECKED_READ_FAULT.get();
+        if (fault != null) fault.intercept(path);
     }
 
     /**
@@ -103,6 +134,54 @@ public final class M5TestHooks {
             if (test == null) return "?";
             return test + (test.isCompleted() ? "（已結束而沒有釋放）" : "（執行中）");
         }
+    }
+
+    /**
+     * 物化失敗（F4a）：裝著的期間，對 {@code worldKey} 的每一次 backend 物化都計數並回 backend 的 {@code FAILED_ROLLED_BACK}（安全撤回：沒有建立
+     * world、沒有 runtime owner），不呼叫原本的物化。其他 world key 照常。lifecycle 對同一 instance 失敗過的 descriptor 的拒絕
+     * （{@code FAILED_BEFORE}）不經過 backend，不計數。
+     */
+    static final class MaterializeFault {
+        private final RegistryKey<World> worldKey;
+        private final AtomicInteger calls = new AtomicInteger();
+
+        MaterializeFault(RegistryKey<World> worldKey) { this.worldKey = Objects.requireNonNull(worldKey, "worldKey"); }
+
+        MaterializeResult intercept(UniverseWorldDescriptor descriptor) {
+            if (!descriptor.worldKey().equals(worldKey)) return null;
+            calls.incrementAndGet();
+            return new MaterializeResult(MaterializeResult.Status.FAILED_ROLLED_BACK, null);
+        }
+
+        /** backend 對這個 world key 的物化次數（每一次都已注入失敗）。 */
+        int calls() { return calls.get(); }
+    }
+
+    /**
+     * checked NBT 檔的讀取失敗（F4a）：檔名恰為 {@code fileName} 的讀取（暫存檔的名稱不同，不算），先放行 {@code skip} 次，之後的 {@code failures} 次
+     * 丟 {@link IOException}，再之後照常。對正式檔注入，在寫入時就是「atomic move 完成、讀回失敗」，在讀取時就是讀檔的 IO 例外。
+     */
+    static final class CheckedReadFault {
+        private final String fileName;
+        private int skip, remaining;
+        private final AtomicInteger hits = new AtomicInteger();
+
+        CheckedReadFault(String fileName, int skip, int failures) {
+            this.fileName = Objects.requireNonNull(fileName, "fileName"); this.skip = skip; this.remaining = failures;
+        }
+
+        synchronized void intercept(Path path) throws IOException {
+            var name = path.getFileName();
+            if (name == null || !name.toString().equals(fileName)) return;
+            if (skip > 0) { skip--; return; }
+            if (remaining <= 0) return;
+            remaining--;
+            hits.incrementAndGet();
+            throw new IOException("F4a GameTest 受控：讀取 " + fileName + " 失敗");
+        }
+
+        /** 已注入失敗的次數。 */
+        int hits() { return hits.get(); }
     }
 
     /**

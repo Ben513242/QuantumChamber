@@ -67,10 +67,11 @@ import org.slf4j.LoggerFactory;
  * <ul>
  * <li>排程：{@link #at}、{@link #whenTicks}（以 server tick 計的有界等待；失敗路徑先釋放 hooks）。</li>
  * <li>journal flush 探針：{@link #installFlushProbe}（裝在 {@link M5TestHooks}；被占用時丟出、不覆蓋；hooks 釋放或 test 結束時移除，
- *     見 {@link #installHook}）與計數探針 {@link FlushFault}。</li>
+ *     見 {@link #installHook}）與計數探針 {@link FlushFault}。F4a 的故障注入：{@link #installMaterializeFault}、{@link #installCheckedReadFault}。</li>
  * <li>原生 autosave 的窗口與 journal 寫出稽核：{@link #afterAutosaveClear}、{@link AutosaveWindow#journalWrites}。</li>
  * <li>塌縮 fixture：{@link #collapseFixture}、{@link #cleanupFixtures}；真原艙＋DORMANT 收據＋玩家在艙外：{@link DormantOrigin}；
- *     Nether 的真原艙＋真玩家：{@link NetherChamber}。</li>
+ *     Nether 的真原艙＋真玩家：{@link NetherChamber}；選中 EXISTING 的收據：{@link #existingReceipt}（F4a）。</li>
+ * <li>玩家收到的 actionbar 訊息：{@link #overlayKeys}（F4a）。</li>
  * <li>候選門：{@link CandidateDoor}、{@link #candidateDoor}、{@link #sourceDoor}。</li>
  * <li>log：{@link #captureLogs}（建立 capture 並登記關閉）、{@link #noWarnOrError}（這個 sid 沒有 WARN／ERROR）、
  *     {@link #collapseFlowNeverWarned}（依 marker）。</li>
@@ -131,6 +132,25 @@ final class M5GameTestSupport {
         var audit = new M5TestHooks.JournalWriteAudit(context.getWorld().getServer());
         installHook(context, M5TestHooks.JOURNAL_AUDIT, audit, hooks);
         return audit;
+    }
+
+    /** F4a：這個 UniverseId 的 OVERWORLD 每一次 backend 物化都注入失敗（{@link M5TestHooks#MATERIALIZE_FAULT}）；安裝、占用與移除的規則見 {@link #installHook}。 */
+    static M5TestHooks.MaterializeFault installMaterializeFault(TestContext context, dev.quantumchamber.universe.UniverseId universe,
+            M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.MaterializeFault(dev.quantumchamber.universe.UniverseKeys.world(universe, dev.quantumchamber.universe.DimensionRole.OVERWORLD));
+        installHook(context, M5TestHooks.MATERIALIZE_FAULT, fault, hooks);
+        return fault;
+    }
+
+    /**
+     * F4a：checked NBT 檔的讀取失敗（{@link M5TestHooks#CHECKED_READ_FAULT}）：檔名為 {@code fileName}（例如 {@code UniverseAllocationLedger.FILE_NAME}）
+     * 的讀取先放行 {@code skip} 次，之後 {@code failures} 次失敗；安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.CheckedReadFault installCheckedReadFault(TestContext context, String fileName, int skip, int failures,
+            M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.CheckedReadFault(fileName, skip, failures);
+        installHook(context, M5TestHooks.CHECKED_READ_FAULT, fault, hooks);
+        return fault;
     }
 
     /**
