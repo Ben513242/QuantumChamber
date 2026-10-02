@@ -3,6 +3,7 @@ package dev.quantumchamber.gametest;
 import static dev.quantumchamber.gametest.M5GameTestSupport.afterAutosaveClear;
 import static dev.quantumchamber.gametest.M5GameTestSupport.at;
 import static dev.quantumchamber.gametest.M5GameTestSupport.candidateDoor;
+import static dev.quantumchamber.gametest.M5GameTestSupport.captureLogs;
 import static dev.quantumchamber.gametest.M5GameTestSupport.cleanupFixtures;
 import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFixture;
 import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFlowNeverWarned;
@@ -14,6 +15,7 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.installFlushProbe;
 import static dev.quantumchamber.gametest.M5GameTestSupport.interact;
 import static dev.quantumchamber.gametest.M5GameTestSupport.moveInside;
 import static dev.quantumchamber.gametest.M5GameTestSupport.moveOutside;
+import static dev.quantumchamber.gametest.M5GameTestSupport.noWarnOrError;
 import static dev.quantumchamber.gametest.M5GameTestSupport.sourceDoor;
 import static dev.quantumchamber.gametest.M5GameTestSupport.state;
 import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
@@ -303,7 +305,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     guardAtCommit.add(fixture.pages.operationInProgress(sid));
             };
             try {
-                capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+                capture = captureLogs(hooks);
                 installFlushProbe(commitProbe, hooks);
                 // R2 M6：第一位玩家的預設返還 slot（原本的地板配置）放一塊石頭。
                 var sources = new LinkedHashMap<UUID, Vec3d>();
@@ -347,8 +349,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     after.put("diskHasNoRecord", !M4CandidateTestAccess.diskRecords(server).containsKey(sid));
                     after.put("oneCommitInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "塌縮已提交", sid.toString()).size() == 1);
                     after.put("oneSourceInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "SOURCE 塌縮完成", sid.toString()).size() == 1);
-                    after.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).isEmpty()
-                            && capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty());
+                    after.put("noWarnOrError", noWarnOrError(capture, sid));
                     after.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                     after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
                     after.put("firstAvoidedTheStone", !first.getPos().equals(blockedSlot));
@@ -404,7 +405,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             });
             LogCapture capture;
             try {
-                capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+                capture = captureLogs(hooks);
                 installFlushProbe(returnFault.andThen(releaseFault), hooks);
                 interact(fixture.target, sourceDoor(fixture).cell(), fixture.players.getFirst().player());
             } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
@@ -488,7 +489,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             hooks.add(() -> { if (!tearingDown[0]) { fixture.close(); offline.close(); if (rejoined[0] != null) rejoined[0].close(); } });
             LogCapture capture;
             try {
-                capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+                capture = captureLogs(hooks);
                 interact(fixture.target, sourceDoor(fixture).cell(), online.player());
                 fixture.players.remove(offline);
                 offline.disconnect();
@@ -695,8 +696,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 at(context, t + 28, hooks, () -> {
                     witness.put("startupFirstObservationResumes", !journal.flushedRecords().containsKey(startup.sessionUuid())
                             && capture.matching(org.apache.logging.log4j.Level.INFO, "SOURCE 塌縮完成", startup.sessionUuid().toString()).size() == 1);
-                    witness.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).isEmpty()
-                            && capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty()
+                    witness.put("noWarnOrError", noWarnOrError(capture, sid)
                             && capture.matching(org.apache.logging.log4j.Level.ERROR, startup.sessionUuid().toString()).isEmpty());
                     context.assertTrue(!witness.containsValue(false), "DORMANT 的邊緣觸發與 WAITING：" + witness);
                     journal.remove(other.sessionUuid()); journal.flush(server);
@@ -733,7 +733,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             });
             LogCapture capture;
             try {
-                capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+                capture = captureLogs(hooks);
                 installFlushProbe(fault, hooks);
                 interact(fixture.target, sourceDoor(fixture).cell(), p);
             } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
@@ -797,7 +797,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
         LogCapture capture;
         SessionRecoveryRecord nether, end, source;
         try {
-            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+            capture = captureLogs(hooks);
             var far = context.getAbsolutePos(BlockPos.ORIGIN).add(5000, 70, 5000);
             nether = M4CandidateTestAccess.measuredReceipt(server, M4CandidateTestAccess.origin(UUID.randomUUID(), World.NETHER, far),
                     Map.of(UUID.randomUUID(), true), List.of(), true);
@@ -846,7 +846,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
         SessionRecoveryRecord ready;
         try {
             ChamberGameTestBuilder.buildForSession(context, false, Direction.NORTH, false);
-            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+            capture = captureLogs(hooks);
             ready = collapseFixture(server, M4CandidateTestAccess.origin(UUID.randomUUID(), frame.controllerPos()), Map.of(UUID.randomUUID(), true),
                     List.of(), true, SessionState.PASSAGE_READY, false);
             owned.add(ready.sessionUuid());
@@ -891,10 +891,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
         var fixture = NetherChamber.open(context, new BlockPos(24008, 100, 24008), hooks);
         var nether = fixture.nether; var frame = fixture.frame; var power = fixture.power; var connection = fixture.connection;
         hooks.add(() -> cleanupFixtures(server, owned));
-        LogCapture capture;
-        try {
-            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
-        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        var capture = captureLogs(hooks);
         var p = fixture.player();
         fixture.whenEntered(context, hooks, ready -> {
             var record = fixture.record(journal); var sid = record.sessionUuid(); var chamber = record.chamberUuid();
@@ -949,8 +946,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     after.put("collapsedMessage", overlayKeys(connection).contains(COLLAPSED_KEY));
                     after.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                     after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(dormant) && !M4CandidateTestAccess.sourceTicketHeld(dormant));
-                    after.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, dormant.toString()).isEmpty()
-                            && capture.matching(org.apache.logging.log4j.Level.ERROR, dormant.toString()).isEmpty());
+                    after.put("noWarnOrError", noWarnOrError(capture, dormant));
                     context.assertTrue(!after.containsValue(false), "Nether 原艙的收尾與 M4 SOURCE 收據：" + after);
                     hooks.release();
                     M4PerTestUniverseProbe.complete(context);
@@ -979,10 +975,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
         // 與 G-NETHER 的原艙不同 chunk（每次 gate 都是 fresh 世界，但同一個 run 裡兩個 test 都會留下已註冊的 Nether 原艙）。
         var fixture = NetherChamber.open(context, new BlockPos(24200, 100, 24008), hooks);
         var nether = fixture.nether; var frame = fixture.frame; var connection = fixture.connection;
-        LogCapture capture;
-        try {
-            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
-        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        var capture = captureLogs(hooks);
         var p = fixture.player();
         fixture.whenEntered(context, hooks, ready -> {
             var record = fixture.record(journal); var sid = record.sessionUuid(); var chamber = record.chamberUuid();
@@ -1041,8 +1034,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 after.put("diskHasNoRecord", !M4CandidateTestAccess.diskRecords(server).containsKey(sid) && !journal.records().containsKey(sid));
                 after.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                 after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
-                after.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).isEmpty()
-                        && capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty());
+                after.put("noWarnOrError", noWarnOrError(capture, sid));
                 // spec §11.3「原艙解除封鎖」：取消之後 Controller 已協調（不再停在 session 期間的 ARMED），registry 的 power state 不是 RETURNING。
                 after.put("controllerCoordinated", controller(nether, frame).chamberState() != ChamberState.ARMED);
                 after.put("registryNotReturning", ChamberRegistryState.get(server).registry().records().get(chamber).powerState()
@@ -1132,10 +1124,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var owned = new ArrayList<UUID>();
         hooks.add(() -> cleanupFixtures(server, owned));
-        LogCapture capture;
-        try {
-            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
-        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        var capture = captureLogs(hooks);
         var far = context.getAbsolutePos(BlockPos.ORIGIN).add(6000, 70, 6000);
         afterAutosaveClear(context, 1, "sealed_roll_forward", 800, (start, autosave) -> {
             // SEALED 只能接在 UNIVERSE 目的地之後（選中 NEW）。

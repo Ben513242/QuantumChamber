@@ -67,6 +67,8 @@ import org.slf4j.LoggerFactory;
  * <li>塌縮 fixture：{@link #collapseFixture}、{@link #cleanupFixtures}；真原艙＋DORMANT 收據＋玩家在艙外：{@link DormantOrigin}；
  *     Nether 的真原艙＋真玩家：{@link NetherChamber}。</li>
  * <li>候選門：{@link CandidateDoor}、{@link #candidateDoor}、{@link #sourceDoor}。</li>
+ * <li>log：{@link #captureLogs}（建立 capture 並登記關閉）、{@link #noWarnOrError}（這個 sid 沒有 WARN／ERROR）、
+ *     {@link #collapseFlowNeverWarned}（依 marker）。</li>
  * </ul>
  * 這裡的程式不得丟出例外到 {@code END_SERVER_TICK}：探針只在 journal flush 的開頭丟出受控的例外（那次寫出因此失敗）。
  */
@@ -292,6 +294,32 @@ final class M5GameTestSupport {
         return record == null ? "ABSENT" : record.state().name();
     }
 
+    // ---- log ----
+
+    /**
+     * 開始擷取 {@code quantumchamber} logger 的 log（{@link LogCapture}），並在 hooks 登記關閉（F4a-0 fix round 1，quality Q5）。建立失敗（capture
+     * 觀察不到 production logger）或 hooks 已釋放時，先關閉已建立的 capture、釋放 hooks，再丟出。
+     */
+    static LogCapture captureLogs(M2CorridorGameTests.TestHooks hooks) {
+        LogCapture capture = null;
+        try {
+            capture = new LogCapture("quantumchamber");
+            hooks.add(capture::close);
+            return capture;
+        } catch (RuntimeException | Error failure) {
+            if (capture != null) {
+                try { capture.close(); } catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            }
+            hooks.releaseAfter(failure);
+            throw failure;
+        }
+    }
+
+    /** capture 期間，訊息含這個 sid 的 WARN 與 ERROR 都沒有（不分 marker，塌縮流程以外的 log 也算）。 */
+    static boolean noWarnOrError(LogCapture capture, UUID sid) {
+        return capture.matching(Level.WARN, sid.toString()).isEmpty() && capture.matching(Level.ERROR, sid.toString()).isEmpty();
+    }
+
     /**
      * capture 期間，這個 session 沒有任何塌縮流程（{@code CollapseService}）的 WARN 或 ERROR（F4a-0，F3d quality re-review m-2）。依 SLF4J marker
      * 篩選，不依訊息字串，所以新的 WARN 用什麼字句都會被看到：
@@ -352,8 +380,7 @@ final class M5GameTestSupport {
                 connection[0] = new ConnectedGameTestPlayer(context.getWorld());
                 connection[0].player().setNoGravity(true);
                 moveOutside(connection[0].player(), frame);
-                var capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
-                return new DormantOrigin(context, frame, connection[0], capture, owned, hooks);
+                return new DormantOrigin(context, frame, connection[0], captureLogs(hooks), owned, hooks);
             } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
         }
 

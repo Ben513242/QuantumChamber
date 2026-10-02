@@ -1067,7 +1067,7 @@ public final class M4CandidateDoorGameTests {
                 tick -> { M5TestHooks.suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
     }
     private static net.minecraft.util.ActionResult use(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player) {
-        return fixture.target.getBlockState(pos).onUse(fixture.target,player,new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(pos),Direction.UP,pos,false));
+        return M5GameTestSupport.interact(fixture.target,pos,player);
     }
     private static void deny(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player,String label,List<String> failures) {
         if(use(fixture,pos,player)!=net.minecraft.util.ActionResult.FAIL || fixture.target.getBlockState(pos).get(dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN)) failures.add(label);
@@ -1700,7 +1700,7 @@ public final class M4CandidateDoorGameTests {
         var frame=ChamberGameTestBuilder.buildForSession(context,false,Direction.NORTH,false);
         var power=ChamberGameTestBuilder.CONTROLLER.up();
         context.waitAndRun(2,() -> context.setBlockState(power,net.minecraft.block.Blocks.REDSTONE_BLOCK));
-        whenTicks(context,3,40,() -> registeredIdle(context,frame),ready -> {
+        whenTicks(context,3,40,() -> M5GameTestSupport.registeredIdle(context.getWorld(),frame),ready -> {
             var server=context.getWorld().getServer(); var world=context.getWorld(); var journal=SessionRecoveryState.get(server);
             var controller=(dev.quantumchamber.chamber.ChamberControllerBlockEntity)world.getBlockEntity(frame.controllerPos());
             var chamber=controller.chamberUuid(); var origin=M4CandidateTestAccess.origin(chamber,frame.controllerPos());
@@ -1960,10 +1960,6 @@ public final class M4CandidateDoorGameTests {
     /** 一個 session 的 current、flushed 與正式檔 strict decode 的內容，用來證明呼叫沒有寫入。 */
     private static List<Object> journalView(MinecraftServer server,SessionRecoveryState journal,UUID sid) {
         return java.util.Arrays.asList(journal.records().get(sid),journal.flushedRecords().get(sid),M4CandidateTestAccess.diskRecords(server).get(sid));
-    }
-    private static boolean registeredIdle(TestContext context,ChamberFrame frame) {
-        return context.getWorld().getBlockEntity(frame.controllerPos()) instanceof dev.quantumchamber.chamber.ChamberControllerBlockEntity controller
-                && controller.chamberUuid()!=null && controller.chamberState()==dev.quantumchamber.chamber.ChamberState.IDLE;
     }
     /** Controller 顯示 ARMED，比較器輸出 11（PASSAGE→15 留給 F5）。 */
     private static boolean armedSignal(TestContext context,ChamberFrame frame) {
