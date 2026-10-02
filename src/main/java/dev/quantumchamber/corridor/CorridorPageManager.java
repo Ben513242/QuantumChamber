@@ -907,6 +907,9 @@ public final class CorridorPageManager {
             var expected=record.withProgress(record.participants(),List.of(),record.state(),record.restoreEntryEffectOnReturn());
             var current=journal.records().get(space.id);
             if(!record.equals(current) && !expected.equals(current)) throw new IllegalStateException("dirty authority 不可經 cleanup 落盤");
+            // COLLAPSING 的清 lease 是 roll-forward：current 已是 expected、寫出尚未確認時，確認交給 recovery 以 journal 為單位退避的
+            // RETRY_FLUSH（spec §6 收斂共通第 2 點），這裡不每個 tick 重掃 lease、重寫 journal。確認之後由上面的 spaceless 分支釋放。
+            if(record.state()==SessionState.COLLAPSING && expected.equals(current) && journal.rollForwardPending(space.id)) return;
             // 原生存檔 checkpoint 失敗後依 per-space 指數退避；receipt 改變視為新狀態，立即重試。退避期間不做整段 AIR 掃描或全服存檔。
             if(space.finalizing==null && space.checkpointFailedFor!=null) {
                 if(!space.checkpointFailedFor.equals(record)) resetCheckpointBackoff(space);

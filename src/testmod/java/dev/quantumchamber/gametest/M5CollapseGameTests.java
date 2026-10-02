@@ -9,6 +9,8 @@ import dev.quantumchamber.chamber.ChamberOccupantService;
 import dev.quantumchamber.chamber.ChamberOriginAuthority;
 import dev.quantumchamber.chamber.ChamberRegistryState;
 import dev.quantumchamber.chamber.ChamberSessionGateway;
+import dev.quantumchamber.chamber.ChamberState;
+import dev.quantumchamber.chamber.ChamberPowerState;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.collapse.CollapseDestination;
@@ -487,8 +489,8 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     witness.put("closeAccepted", interact(world, cell, online.player()).isAccepted() && doorAll(world, fixture.frame, false, MembraneState.NONE));
                     witness.put("closeKeepsCollapse", record.equals(journal.flushedRecords().get(sid)));
                     at(context, onlineBack + 6, hooks, () -> {
-                        witness.put("buffLapseNoErrorOrReconcileWarn", capture.matching(org.apache.logging.log4j.Level.ERROR).isEmpty()
-                                && capture.matching(org.apache.logging.log4j.Level.WARN, "session 協調失敗").isEmpty());
+                        witness.put("buffLapseNoErrorOrReconcileWarn", capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty()
+                                && capture.matching(org.apache.logging.log4j.Level.WARN, "session 協調失敗", record.chamberUuid().toString()).isEmpty());
                         witness.put("buffLapseKeepsCollapse", record.equals(journal.flushedRecords().get(sid)));
                         context.assertTrue(!witness.containsValue(false), "離線參與者未返還期間：" + witness);
                         // spec §12 COLLAPSING 列：重新連線的人在 JOIN 的下一個 tick 返還。探針在 journal 寫出的開頭記下他的返還第一次寫出的 tick。
@@ -694,7 +696,8 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     witness.put("startupFirstObservationResumes", !journal.flushedRecords().containsKey(startup.sessionUuid())
                             && capture[0].matching(org.apache.logging.log4j.Level.INFO, "SOURCE 塌縮完成", startup.sessionUuid().toString()).size() == 1);
                     witness.put("noWarnOrError", capture[0].matching(org.apache.logging.log4j.Level.WARN, sid.toString()).isEmpty()
-                            && capture[0].matching(org.apache.logging.log4j.Level.ERROR).isEmpty());
+                            && capture[0].matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty()
+                            && capture[0].matching(org.apache.logging.log4j.Level.ERROR, startup.sessionUuid().toString()).isEmpty());
                     context.assertTrue(!witness.containsValue(false), "DORMANT 的邊緣觸發與 WAITING：" + witness);
                     journal.remove(other.sessionUuid()); journal.flush(server);
                     hooks.release();
@@ -720,7 +723,9 @@ public final class M5CollapseGameTests implements FabricGameTest {
             boolean[] tearingDown = {false};
             var hooks = new M2CorridorGameTests.TestHooks();
             hooks.add(() -> { if (!tearingDown[0]) fixture.close(); });
-            hooks.add(() -> M4CandidateTestAccess.set(journal, "m5ReadyThisInstance", true));
+            // 收尾還原開場時的原值（不寫死 true）。
+            var readyAtStart = (Boolean) M4CandidateTestAccess.get(journal, "m5ReadyThisInstance");
+            hooks.add(() -> M4CandidateTestAccess.set(journal, "m5ReadyThisInstance", readyAtStart));
             var fault = new CommitFault(server, sid);
             LogCapture capture;
             try {
@@ -755,7 +760,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     at(context, third + 3, hooks, () -> {
                         witness.put("notReadyRejectsWithoutWriting", fault.attempts.size() == 2 && journal.flushedRecords().get(sid).state() == SessionState.MEASURED);
                         witness.put("notReadyWarned", !capture.matching(org.apache.logging.log4j.Level.WARN, "M5 authority 尚未初始化成功", sid.toString()).isEmpty());
-                        M4CandidateTestAccess.set(journal, "m5ReadyThisInstance", true);
+                        M4CandidateTestAccess.set(journal, "m5ReadyThisInstance", readyAtStart);
                         // 被拒的那一次在 test tick third+1 結束時發生，退避加倍為 800。
                         int fourth = third + 1 + 800;
                         reenter(context, p, fixture.frame, fourth, hooks);
@@ -961,7 +966,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     after.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                     after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(dormant) && !M4CandidateTestAccess.sourceTicketHeld(dormant));
                     after.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, dormant.toString()).isEmpty()
-                            && capture.matching(org.apache.logging.log4j.Level.ERROR).isEmpty());
+                            && capture.matching(org.apache.logging.log4j.Level.ERROR, dormant.toString()).isEmpty());
                     context.assertTrue(!after.containsValue(false), "Nether 原艙的收尾與 M4 SOURCE 收據：" + after);
                     hooks.release();
                     M4PerTestUniverseProbe.complete(context);
@@ -973,7 +978,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
 
     /**
      * F3d fix round 1（spec §11.3 第 1、2 步）：Nether 原艙上真入場的 live session，繞過側門互動、在 operation guard 內直接經 ledger 選一扇 NEW 門，
-     * 製造非 DORMANT 的 Nether MEASURED NEW（M4 時期留下的收據就是這個形狀）。塌縮流程不提交 COLLAPSING：選門的下一個 tick 仍是 MEASURED、
+     * 製造非 DORMANT 的 Nether MEASURED NEW（record 形狀與 M4 收據相同；重啟時沒有 runtime、attach 已請求 recovery 的那條路徑屬 F6 的 W10）。塌縮流程不提交 COLLAPSING：選門的下一個 tick 仍是 MEASURED、
      * 已請求 M4 的保留式 recovery、記一則 INFO。玩家照 M4 返還回 Nether 原艙、走廊清理完成、checked 寫成 DORMANT；之後以
      * UNSUPPORTED_SOURCE_CANCEL 取消，記 INFO「不支援的來源維度，已安全取消」，presence 回 NONE、runtime 與來源 ticket 已釋放。從頭到尾沒有
      * 任何一次寫出 COLLAPSING，也沒有「量子態塌縮。」。catalog 不變由 per-test receipt 與 default run 的 boundary oracle 核對。
@@ -1073,7 +1078,11 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 after.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                 after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
                 after.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).isEmpty()
-                        && capture.matching(org.apache.logging.log4j.Level.ERROR).isEmpty());
+                        && capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty());
+                // spec §11.3「原艙解除封鎖」：取消之後 Controller 已協調（不再停在 session 期間的 ARMED），registry 的 power state 不是 RETURNING。
+                after.put("controllerCoordinated", controller(nether, frame).chamberState() != ChamberState.ARMED);
+                after.put("registryNotReturning", ChamberRegistryState.get(server).registry().records().get(chamber).powerState()
+                        != ChamberPowerState.RETURNING);
                 context.assertTrue(!after.containsValue(false), "Nether 的 live NEW 收據的取消：" + after + " dormantAt=" + dormantAt[0] + " gone=" + server.getTicks());
                 hooks.release();
                 M4PerTestUniverseProbe.complete(context);
@@ -1081,6 +1090,179 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     + " dormantAt=" + dormantAt[0], hooks);
         }, () -> "Nether 原艙沒有入場：record=" + Optional.ofNullable(chamberRecord(journal, nether, frame)).map(value -> value.state().name()).orElse("ABSENT"),
                 hooks);
+    }
+
+    /**
+     * F3d fix round 2（quality I-1，spec §6 收斂共通第 2 點）：COLLAPSING 清 lease 的寫出持續失敗。走廊清理第一次寫出失敗之後，current 已是
+     * 清空 lease 的那一份、寫出尚未確認：走廊清理不再每個 tick 重掃 lease、重寫 journal，確認只交給 recovery 以 journal 為單位退避的
+     * RETRY_FLUSH。受控失敗前 3 次「current 沒有 lease、flushed 仍有 lease」的寫出，第 4 次成功。斷言第一次失敗之後的 200 ticks 內最多 2 次
+     * 寫出（同一個 tick 的走廊清理與 RETRY_FLUSH），之後的間隔依退避（200、400）；確認之後 space 釋放，SOURCE fast path 照常完成。
+     * 只看次數與間隔，不看絕對 tick。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_release_fault_backoff", tickLimit = 100000)
+    public void native_persistent_release_write_fault_waits_for_the_journal_backoff_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"native_persistent_release_write_fault_waits_for_the_journal_backoff_windows");
+        nativeSourceEntry(context, 1, (fixture, ready) -> {
+            var server = fixture.server; var journal = SessionRecoveryState.get(server);
+            var sid = fixture.record().sessionUuid();
+            boolean[] tearingDown = {false};
+            var hooks = new M2CorridorGameTests.TestHooks();
+            hooks.add(() -> { if (!tearingDown[0]) fixture.close(); });
+            var writes = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+            java.util.function.Consumer<SessionRecoveryState> fault = state -> {
+                var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+                if (staged == null || durable == null || staged.state() != SessionState.COLLAPSING || !staged.spaceLeases().isEmpty()
+                        || durable.spaceLeases().isEmpty()) return;
+                writes.add(server.getTicks());
+                if (writes.size() <= 3) throw new IllegalStateException("F3d GameTest 受控：清 lease 的 journal 寫出持續失敗");
+            };
+            M4CandidateDoorGameTests.m5FlushProbe = fault;
+            hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == fault) M4CandidateDoorGameTests.m5FlushProbe = null; });
+            interact(fixture.target, sourceDoor(fixture).cell(), fixture.players.getFirst().player());
+            whenTicks(context, ready + 1, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
+                var witness = new LinkedHashMap<String, Boolean>();
+                int first = writes.isEmpty() ? -1 : writes.getFirst();
+                witness.put("fourWrites", writes.size() == 4);
+                witness.put("atMostTwoWithinTheFirst200Ticks", writes.stream().filter(tick -> tick < first + 200).count() <= 2);
+                witness.put("retriesFollowTheBackoff", writes.size() == 4 && writes.get(2) - first >= 200 && writes.get(3) - writes.get(2) >= 400);
+                witness.put("spaceReleased", M4CandidateTestAccess.space(fixture.pages, sid) == null);
+                witness.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                witness.put("doorPlainOpen", doorAll(context.getWorld(), fixture.frame, true, MembraneState.NONE));
+                context.assertTrue(!witness.containsValue(false), "清 lease 的寫出持續失敗：" + witness + " writes=" + writes);
+                tearingDown[0] = true;
+                hooks.release();
+                powerOffAndClose(context, fixture, gone + 1, () -> M4PerTestUniverseProbe.complete(context));
+            }, () -> "清 lease 的寫出沒有確認：record=" + state(journal, sid) + " writes=" + writes, hooks);
+        });
+    }
+
+    /**
+     * F3d fix round 2（quality m-7(a)，spec §7、§6 收斂共通第 2 點）：返還與清理都完成（SETTLED）的 COLLAPSING 之後的 roll-forward 也由 recovery
+     * 以 journal 為單位帶退避重試。以 journal 的 commitRollForward 寫入 COLLAPSING→SEALED（模擬 F4a 進入 SEALED），前 3 次寫出受控失敗：
+     * 寫入當下 1 次、recovery 的 RETRY_FLUSH 在同一個 tick 1 次、200 ticks 後 1 次，400 ticks 後的第 4 次確認為 SEALED。期間 current 一直是那份
+     * SEALED，塌縮流程暫停、不疊寫（沒有任何塌縮流程的 WARN）。收尾以終局 API 移除。不需要原生 checkpoint，各平台都執行。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_roll_forward", tickLimit = 2000)
+    public void settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var owned = new ArrayList<UUID>();
+        hooks.add(() -> cleanupFixtures(server, owned));
+        LogCapture capture;
+        SessionRecoveryRecord settled;
+        try {
+            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+            var far = context.getAbsolutePos(BlockPos.ORIGIN).add(6000, 70, 6000);
+            // SEALED 只能接在 UNIVERSE 目的地之後（選中 NEW）。塌縮流程不暫停：SETTLED 之後停在 RESOLVE stub，不寫入。
+            settled = collapseFixture(server, M4CandidateTestAccess.origin(UUID.randomUUID(), far), Map.of(UUID.randomUUID(), true), List.of(), true,
+                    SessionState.COLLAPSING, false);
+            owned.add(settled.sessionUuid());
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        var sid = settled.sessionUuid();
+        var sealed = settled.withCollapse(SessionState.SEALED, settled.collapse().sealed(SealedReason.PROJECTION_FAILED));
+        var attempts = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+        java.util.function.Consumer<SessionRecoveryState> fault = state -> {
+            var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+            if (staged == null || durable == null || staged.state() != SessionState.SEALED || durable.state() != SessionState.COLLAPSING) return;
+            attempts.add(server.getTicks());
+            if (attempts.size() <= 3) throw new IllegalStateException("F3d GameTest 受控：進入 SEALED 的 journal 寫出失敗");
+        };
+        // 失敗路徑：先解除探針，再把尚未確認的寫出帶出去，最後才以終局 API 收尾（hooks 依後進先出執行）。
+        hooks.add(() -> { if (journal.rollForwardPending(sid)) journal.flush(server); });
+        M4CandidateDoorGameTests.m5FlushProbe = fault;
+        hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == fault) M4CandidateDoorGameTests.m5FlushProbe = null; });
+        boolean[] overwritten = {false};
+        at(context, 2, hooks, () -> {
+            var result = journal.commitRollForward(server, settled, sealed);
+            context.assertTrue(!result.committed() && journal.rollForwardPending(sid) && sealed.equals(journal.records().get(sid))
+                    && settled.equals(journal.flushedRecords().get(sid)), "fixture：進入 SEALED 的寫出受控失敗，current 帶著 SEALED：" + result);
+        });
+        whenTicks(context, 3, 1500, () -> {
+            var current = journal.records().get(sid);
+            if (!sealed.equals(current)) overwritten[0] = true;
+            var durable = journal.flushedRecords().get(sid);
+            return durable != null && durable.state() == SessionState.SEALED;
+        }, confirmed -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            witness.put("confirmedTheSameSealed", sealed.equals(journal.flushedRecords().get(sid)) && !journal.rollForwardPending(sid));
+            witness.put("fourAttempts", attempts.size() == 4);
+            witness.put("retriesFollowTheBackoff", attempts.size() == 4 && attempts.get(2) - attempts.get(1) >= 200 && attempts.get(3) - attempts.get(2) >= 400);
+            witness.put("collapseServiceNeverOverwrote", !overwritten[0]
+                    && capture.matching(org.apache.logging.log4j.Level.WARN, "塌縮流程", sid.toString()).isEmpty());
+            context.assertTrue(!witness.containsValue(false), "進入 SEALED 的 roll-forward 重試：" + witness + " attempts=" + attempts);
+            hooks.release();
+            context.assertTrue(!journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), "收尾：以終局 API 移除");
+            M4PerTestUniverseProbe.complete(context);
+        }, () -> "進入 SEALED 的寫出一直沒有確認：attempts=" + attempts + " pending=" + journal.rollForwardPending(sid), hooks);
+    }
+
+    /**
+     * F3d fix round 2（quality m-2(i)）：SOURCE fast path 的終局寫出（移除 record）受控失敗一次。真原艙上的 DORMANT SOURCE 收據由邊緣觸發提交、
+     * 走到 PREPARE；第一次終局失敗只記 1 則 WARN，門維持原狀（一般關門），200 ticks 之前不重試；之後重試成功，門照常改為一般開門。
+     * 不需要原生 checkpoint，各平台都執行。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_terminal_fault", tickLimit = 2000)
+    public void source_fast_path_terminal_write_fault_backs_off_and_keeps_the_door(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"source_fast_path_terminal_write_fault_backs_off_and_keeps_the_door");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var frame = fixtureFrame(context, Direction.NORTH);
+        var power = ChamberGameTestBuilder.CONTROLLER.up();
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var owned = new ArrayList<UUID>();
+        ConnectedGameTestPlayer[] connection = {null};
+        // 已註冊的原艙比照其他原生 test 留在原地（只斷電）。
+        hooks.add(() -> { if (connection[0] != null) connection[0].close(); });
+        hooks.add(() -> context.setBlockState(power, Blocks.AIR));
+        hooks.add(() -> cleanupFixtures(server, owned));
+        LogCapture[] capture = {null};
+        try {
+            ChamberGameTestBuilder.buildForSession(context, false, Direction.NORTH, false);
+            connection[0] = new ConnectedGameTestPlayer(world);
+            connection[0].player().setNoGravity(true);
+            moveOutside(connection[0].player(), frame);
+            capture[0] = new LogCapture("quantumchamber"); hooks.add(capture[0]::close);
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        var p = connection[0].player();
+        context.waitAndRun(2, () -> context.setBlockState(power, Blocks.REDSTONE_BLOCK));
+        whenTicks(context, 3, 40, () -> registeredIdle(world, frame), registered -> {
+            var chamber = controller(world, frame).chamberUuid();
+            var receipt = M4CandidateTestAccess.measuredReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
+                    Map.of(p.getUuid(), true), List.of(), false);
+            var sid = receipt.sessionUuid();
+            var attempts = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+            java.util.function.Consumer<SessionRecoveryState> fault = state -> {
+                var durable = state.flushedRecords().get(sid);
+                if (durable == null || durable.state() != SessionState.COLLAPSING || state.records().containsKey(sid)) return;
+                attempts.add(server.getTicks());
+                if (attempts.size() == 1) throw new IllegalStateException("F3d GameTest 受控：SOURCE fast path 的終局寫出失敗");
+            };
+            M4CandidateDoorGameTests.m5FlushProbe = fault;
+            hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == fault) M4CandidateDoorGameTests.m5FlushProbe = null; });
+            journal.put(receipt); journal.flush(server); owned.add(sid);
+            boolean[] doorMovedEarly = {false};
+            at(context, registered + 1, hooks, () -> moveInside(p, frame));
+            whenTicks(context, registered + 2, 1500, () -> {
+                if (attempts.size() == 1 && journal.flushedRecords().containsKey(sid) && !doorAll(world, frame, false, MembraneState.NONE))
+                    doorMovedEarly[0] = true;
+                return !journal.flushedRecords().containsKey(sid);
+            }, gone -> {
+                var witness = new LinkedHashMap<String, Boolean>();
+                witness.put("twoTerminalAttempts", attempts.size() == 2);
+                witness.put("retryWaitedForTheBackoff", attempts.size() == 2 && attempts.get(1) - attempts.get(0) >= 200);
+                witness.put("oneTerminalWarn", capture[0].matching(org.apache.logging.log4j.Level.WARN, "SOURCE fast path 的終局", sid.toString()).size() == 1);
+                witness.put("doorKeptUntilTheTerminal", !doorMovedEarly[0]);
+                witness.put("doorPlainOpenAfter", doorAll(world, frame, true, MembraneState.NONE));
+                witness.put("oneSourceInfo", capture[0].matching(org.apache.logging.log4j.Level.INFO, "SOURCE 塌縮完成", sid.toString()).size() == 1);
+                witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                witness.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                witness.put("noError", capture[0].matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty());
+                context.assertTrue(!witness.containsValue(false), "SOURCE fast path 的終局寫出失敗：" + witness + " attempts=" + attempts);
+                hooks.release();
+                M4PerTestUniverseProbe.complete(context);
+            }, () -> "SOURCE 收據沒有完成：record=" + state(journal, sid) + " attempts=" + attempts, hooks);
+        }, () -> "原艙沒有註冊並進入 IDLE", hooks);
     }
 
     // ---- F3d 的 helper ----

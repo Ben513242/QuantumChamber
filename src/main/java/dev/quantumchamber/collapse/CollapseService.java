@@ -50,7 +50,8 @@ import org.slf4j.LoggerFactory;
  * spec §7 的塌縮交易（F3d）：把 checked {@code MEASURED＋SELECTED} 提交為 COLLAPSING，並依推導階段（{@link CollapsePhase}）推進。
  * <ul>
  * <li>只讀 spec §6 的 collapse view（flushed，加上 roll-forward 尚未確認的例外）；每次 journal 寫入前都要求該 session 的 current 恰等於 flushed。
- *     roll-forward 尚未確認時只收斂：同一份 current 的寫出由 recovery 的 RETRY_FLUSH 以 journal 為單位退避重試，這裡對該 session 全部暫停。</li>
+ *     roll-forward 尚未確認時只收斂：同一份 current 的寫出一律由 recovery 的 RETRY_FLUSH 以 journal 為單位退避重試（三個塌縮狀態都是，
+ *     含返還與清 lease 進度、進入 SEALED、Crossed；{@code SessionRecoveryManager.recoveryWork}），這裡對該 session 全部暫停、不自行重寫。</li>
  * <li>operation guard（spec §7）：走廊操作進行中的 session 一律略過。live 的提交仍有走廊 space，寫入包在
  *     {@code CorridorPageManager.exclusiveOperation} 之內；DORMANT 續行、終局與取消都在 space 釋放之後（PASSAGE_READY 沒有 space），
  *     沒有 guard 可取，在 server thread 上同步寫入。</li>
@@ -71,6 +72,8 @@ import org.slf4j.LoggerFactory;
  */
 public final class CollapseService {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
+    /** {@link #warn} 的寫入種類：每個 session 每個 tick 的推進（{@link #step}）丟出例外。 */
+    private static final String STEP = "推進";
     /** spec §10.8「塌縮」：提交 COLLAPSING 時，以及 SOURCE fast path 打開原艙門之後（§7.4 第 3 步）。 */
     public static final String MESSAGE_COLLAPSED = "message.quantumchamber.m5.collapsed";
     private static final Map<MinecraftServer, CollapseService> INSTANCES = new ConcurrentHashMap<>();
@@ -84,7 +87,7 @@ public final class CollapseService {
     private final Map<UUID, Track> tracks = new HashMap<>();
     /** 終局之後還沒套用成功的原艙門（以 chamber 為 key）。 */
     private final Map<UUID, PendingDoor> doors = new LinkedHashMap<>();
-    private String tickWarning;
+    private String tickWarning, tickWarningText;
     // 每個 tick 開頭取得；只在 server thread 使用。
     private SessionRecoveryState journal;
     private CorridorPageManager pages;
@@ -141,8 +144,11 @@ public final class CollapseService {
                 for (var record : List.copyOf(journal.flushedRecords().values())) {
                     try {
                         step(record);
+                        // 推進的去重鍵在成功時清除（同一原因再次發生時重新記 WARN）。
+                        var track = tracks.get(record.sessionUuid());
+                        if (track != null) track.warnings.remove(STEP);
                     } catch (RuntimeException failure) {
-                        warn(record.sessionUuid(), "推進", failure, null);
+                        warn(record.sessionUuid(), STEP, failure, null, "下一個 tick 重試");
                     }
                 }
                 var known = journal.flushedRecords().keySet();
@@ -157,12 +163,14 @@ public final class CollapseService {
                     door.backoff.failed(now);
                 }
             }
-            if (tickWarning != null) LOGGER.info("塌縮流程已恢復執行（先前原因的去重鍵：{}）", tickWarning);
+            if (tickWarning != null) LOGGER.info("塌縮流程已恢復執行（先前原因：{}）", tickWarningText);
             tickWarning = null;
+            tickWarningText = null;
         } catch (RuntimeException failure) {
             var key = FailureText.dedupeKey(failure);
             if (!key.equals(tickWarning)) LOGGER.warn("塌縮流程本 tick 無法執行，下一 tick 重試：{}", FailureText.describe(failure), failure);
             tickWarning = key;
+            tickWarningText = FailureText.describe(failure);
         }
     }
 
@@ -177,7 +185,7 @@ public final class CollapseService {
             case MEASURED -> measured(record);
             case COLLAPSING -> collapsing(record);
             case PASSAGE_READY -> { if (startupPassages.contains(sid)) endStartupPassage(record); }
-            // SEALED 的重試屬 F4a；其餘不是塌縮流程的狀態。
+            // SEALED 的處理屬 F4a（它的 roll-forward 寫出由 recovery 重試）；其餘不是塌縮流程的狀態。
             case ARMING, SUPERPOSITION, RETURNING, SEALED -> { }
         }
     }
@@ -186,21 +194,38 @@ public final class CollapseService {
 
     private void measured(SessionRecoveryRecord record) {
         var sid = record.sessionUuid();
-        // §7：寫入前 current 必須恰等於 flushed；M4 的返還進度尚未確認時（recovery 會重試）等待，不算失敗。
-        if (!record.equals(journal.records().get(sid))) return;
-        var phase = MeasuredRecoveryPhase.from(record);
+        var current = record.equals(journal.records().get(sid));
+        var phase = current ? MeasuredRecoveryPhase.from(record) : null;
         var track = track(sid);
-        if (unsupportedSource(record)) {
-            cancelUnsupported(record, phase, track);
-            return;
+        switch (measuredAction(current, current && unsupportedSource(record), phase == MeasuredRecoveryPhase.DORMANT,
+                current && pages.measuredReleaseInProgress(sid), track.backoff.ready(now))) {
+            case WAIT -> { }
+            case CANCEL_UNSUPPORTED -> cancelUnsupported(record, phase, track);
+            case RESUME_DORMANT -> resumeDormant(record, track);
+            case COMMIT_LIVE -> commit(record, track, false);
         }
-        if (phase == MeasuredRecoveryPhase.DORMANT) {
-            resumeDormant(record, track);
-            return;
-        }
-        // §7.1 live：M4 的 measured release 進行到一半時不提交，等它完成（完成之後是 DORMANT，改走邊緣觸發）。
-        if (pages.measuredReleaseInProgress(sid) || !track.backoff.ready(now)) return;
-        commit(record, track, false);
+    }
+
+    /** MEASURED 這一個 tick 的處置（{@link #measuredAction}）。 */
+    enum MeasuredAction { WAIT, CANCEL_UNSUPPORTED, RESUME_DORMANT, COMMIT_LIVE }
+
+    /**
+     * MEASURED 的分流（spec §7、§7.1、§11.3），純函式。operation guard 忙碌、已隔離與 testmod 的 collapse-suspended hook 都在 {@link #step}
+     * 開頭、呼叫這裡之前就略過。
+     * <ol>
+     * <li>寫入前 current 必須恰等於 flushed；M4 的返還進度尚未確認時（recovery 會重試）等待，不算失敗。</li>
+     * <li>§11.3：來源不是 OVERWORLD、選中 NEW／EXISTING 的收據一律走取消路徑，不提交（DORMANT 與否由取消路徑自己分）。</li>
+     * <li>DORMANT 走邊緣觸發（退避在觸發成立之後才看）。</li>
+     * <li>live：M4 的 measured release 進行到一半時、或在退避期內，不提交。</li>
+     * </ol>
+     */
+    static MeasuredAction measuredAction(boolean currentMatchesFlushed, boolean unsupportedSource, boolean dormant, boolean releaseInProgress,
+            boolean backoffReady) {
+        if (!currentMatchesFlushed) return MeasuredAction.WAIT;
+        if (unsupportedSource) return MeasuredAction.CANCEL_UNSUPPORTED;
+        if (dormant) return MeasuredAction.RESUME_DORMANT;
+        if (releaseInProgress || !backoffReady) return MeasuredAction.WAIT;
+        return MeasuredAction.COMMIT_LIVE;
     }
 
     /** §11.3：來源 role 不是 OVERWORLD，而且選中的是 NEW 或 EXISTING（SOURCE 照常完成）。 */
@@ -270,7 +295,8 @@ public final class CollapseService {
         var result = dormant ? journal.commitRestore(server, record, next)
                 : pages.exclusiveOperation(sid, () -> journal.commitRestore(server, record, next));
         if (!result.committed()) {
-            warn(sid, "提交 MEASURED→COLLAPSING", result.failure().orElseThrow(), result.status().name());
+            warn(sid, "提交 MEASURED→COLLAPSING", result.failure().orElseThrow(), result.status().name(),
+                    dormant ? "退避期過後、下一次觸發時重試" : "改走 M4 的保留式 recovery，之後依退避重試");
             track.backoff.failed(now);
             // §7.1：live 的提交失敗以 M4 的保留式 recovery 為 fallback（玩家返還，session 變成 DORMANT）；DORMANT 維持原狀。
             // requestMeasuredRecovery 要求沒有進行中的操作，所以在上面的 guard 釋放之後才呼叫。
@@ -284,7 +310,7 @@ public final class CollapseService {
         try {
             sessions.acquireCollapseTicket(server, next);
         } catch (RuntimeException failure) {
-            warn(sid, "取得來源 ticket", failure, null);
+            warn(sid, "取得來源 ticket", failure, null, "本 server instance 不重試，開服 attach 時會為 COLLAPSING 重新取得");
         }
         notifyParticipants(next, MESSAGE_COLLAPSED);
         LOGGER.info("塌縮已提交：session={} chamber={} 目的地={} 觸發={}", sid, next.chamberUuid(), describe(next.collapse().destination()),
@@ -391,7 +417,7 @@ public final class CollapseService {
 
     /** 終局沒有完成：依 (session, 寫入種類, 原因) 去重記 WARN；restore 類失敗之後以 session 為單位退避（§6、§11.2）。不改門。 */
     private void terminalFailed(SessionRecoveryRecord record, Track track, String what, TerminalResult result) {
-        warn(record.sessionUuid(), what, result.failure().orElseThrow(), result.status().name());
+        warn(record.sessionUuid(), what, result.failure().orElseThrow(), result.status().name(), "之後依退避重試");
         track.backoff.failed(now);
     }
 
@@ -462,7 +488,7 @@ public final class CollapseService {
         try {
             new ChamberPowerCoordinator().refresh(world, record.origin().controllerPos());
         } catch (RuntimeException failure) {
-            warn(record.sessionUuid(), "終局之後刷新 Controller", failure, null);
+            warn(record.sessionUuid(), "終局之後刷新 Controller", failure, null, "不重試，Controller 在下次載入或紅石更新時協調");
         }
     }
 
@@ -497,28 +523,53 @@ public final class CollapseService {
         var world = server.getWorld(door.world);
         if (world == null) return;
         var result = new ChamberDoorService().applyTarget(world, door.frame, ChamberDoorService.DoorState.OPEN);
-        switch (result.outcome()) {
-            case APPLIED, UNCHANGED -> {
-                doors.remove(door.chamber);
-                if (door.warned != null) LOGGER.info("原艙門已改為一般開門（先前：{}）：chamber={}", door.warned, door.chamber);
-            }
-            case NOT_LOADED -> { }
-            case DOOR_INCOMPLETE -> {
-                door.warn("門板不是完整的 25 格 bulkhead，等結構恢復", null);
-                door.backoff.failed(now);
-            }
-            case ROLLED_BACK, ROLLBACK_FAILED -> {
-                door.warn("門的寫入被拒（" + result.outcome() + "）", null);
-                if (door.retried) door.backoff.failed(now);
-                door.retried = true;
-            }
+        var step = doorStep(result.outcome(), door.retried, door.warned);
+        if (step.done()) {
+            doors.remove(door.chamber);
+            if (door.warned != null) LOGGER.info("原艙門已改為一般開門（先前：{}）：chamber={}", door.warned, door.chamber);
+            return;
         }
+        if (step.reason() != null) door.warn(step.reason(), null);
+        if (step.backOff()) door.backoff.failed(now);
+        door.retried = step.retried();
     }
 
-    private void warn(UUID sid, String what, RuntimeException failure, String status) {
+    /**
+     * 待套用門對一次 {@code applyTarget} 結果的處置（純函式，{@link #applyDoor} 照做）。{@code done}：完成並移除；{@code reason}：要記錄的原因
+     * （null 表示不記錄）；{@code warn}：這次是否記 WARN（同一原因去重，與 {@link PendingDoor#warn} 同一規則）；{@code backOff}：是否進入退避；
+     * {@code retried}：之後的「已立即重試過一次」狀態。
+     */
+    record DoorStep(boolean done, String reason, boolean warn, boolean backOff, boolean retried) { }
+
+    static DoorStep doorStep(ChamberDoorService.ApplyResult.Outcome outcome, boolean retried, String warned) {
+        return switch (outcome) {
+            case APPLIED, UNCHANGED -> new DoorStep(true, null, false, false, retried);
+            // 不強制載入：等之後的 tick。
+            case NOT_LOADED -> new DoorStep(false, null, false, false, retried);
+            // 結構性的：記一次並退避，等結構恢復。
+            case DOOR_INCOMPLETE -> pendingStep("門板不是完整的 25 格 bulkhead，等結構恢復", warned, true, retried);
+            // 下一個 tick 立即重試一次；之後再被拒才退避。
+            case ROLLED_BACK, ROLLBACK_FAILED -> pendingStep("門的寫入被拒（" + outcome + "）", warned, retried, true);
+        };
+    }
+
+    private static DoorStep pendingStep(String reason, String warned, boolean backOff, boolean retried) {
+        return new DoorStep(false, reason, newWarning(warned, reason), backOff, retried);
+    }
+
+    /** 待套用門的 WARN 去重：原因與上一次記錄的不同才記。 */
+    static boolean newWarning(String previous, String reason) {
+        return !reason.equals(previous);
+    }
+
+    /**
+     * 依 (session, 寫入種類, {@link FailureText#dedupeKey}) 去重記 WARN；{@code next} 是之後實際會發生的事（依退避重試、下一個 tick 重試、
+     * 或不重試由誰接手），只寫真的會發生的。成功時由呼叫端移除該寫入種類的鍵。
+     */
+    private void warn(UUID sid, String what, RuntimeException failure, String status, String next) {
         var key = FailureText.dedupeKey(failure);
         if (key.equals(track(sid).warnings.put(what, key))) return;
-        LOGGER.warn("塌縮流程的{}沒有完成{}，之後依退避或下一次觸發重試：session={}：{}", what, status == null ? "" : "（" + status + "）", sid,
+        LOGGER.warn("塌縮流程的{}沒有完成{}，{}：session={}：{}", what, status == null ? "" : "（" + status + "）", next, sid,
                 FailureText.describe(failure), failure);
     }
 
@@ -590,7 +641,7 @@ public final class CollapseService {
         }
 
         void warn(String reason, Throwable failure) {
-            if (reason.equals(warned)) return;
+            if (!newWarning(warned, reason)) return;
             warned = reason;
             LOGGER.warn("終局之後原艙門還沒改為一般開門，之後重試：chamber={} session={}：{}", chamber, session, reason, failure);
         }

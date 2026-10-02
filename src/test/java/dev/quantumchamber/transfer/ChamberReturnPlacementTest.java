@@ -54,6 +54,22 @@ class ChamberReturnPlacementTest {
         assertEquals(plain,ChamberReturnPlacement.plan(frame,people,sources,position -> position.y>=5),"y=5 不是候選：bbox 會超出 interior");
         assertEquals(plain,ChamberReturnPlacement.plan(frame,people,sources,position -> false),"全部被擋時沿用原本的地板 slot");
     }
+    /**
+     * R2 M6（F3d fix round 2，quality m-1）：部分被擋、部分被取走的混合情況。站上一層時先選這一欄還沒有人的候選，不疊在別人頭上；
+     * 全部被擋時的退路取第一個還沒被取走的地板 slot，不與前面的人重複。
+     */
+    @Test void returnSlotsNeitherStackNorRepeatWhenSomeCellsAreBlockedAndOthersTaken() {
+        var sources = Map.of(id(1),new Vec3d(5.5,1,1.5),id(2),new Vec3d(4.5,1,1.5),id(3),new Vec3d(3.5,1,1.5));
+        var onlyFirstFloor = new Vec3d(5.5,1,1.5);
+        assertEquals(Map.of(id(1),onlyFirstFloor,id(2),new Vec3d(4.5,2,1.5),id(3),new Vec3d(3.5,2,1.5)),
+                ChamberReturnPlacement.plan(frame,List.of(id(1),id(2),id(3)),sources,position -> position.y>=2 || position.equals(onlyFirstFloor)),
+                "地板只剩第一格：第一位站地板，其他人站上一層，而且不在他頭上");
+        var onlySecondFloor = new Vec3d(4.5,1,1.5);
+        var placed = ChamberReturnPlacement.plan(frame,List.of(id(1),id(2)),Map.of(id(1),sources.get(id(1)),id(2),sources.get(id(2))),
+                position -> position.equals(onlySecondFloor));
+        assertEquals(Map.of(id(1),onlySecondFloor,id(2),new Vec3d(5.5,1,1.5)),placed,
+                "唯一不被擋的地板 slot 被第一位取走之後，第二位的退路是第一個沒被取走的地板 slot，不重複");
+    }
     @Test void incompleteOrNonfiniteSourceAuthorityIsRejected() {
         assertThrows(IllegalArgumentException.class,() -> ChamberReturnPlacement.plan(frame,List.of(id(1)),Map.of()));
         assertThrows(IllegalArgumentException.class,() -> ChamberReturnPlacement.plan(frame,List.of(id(1)),

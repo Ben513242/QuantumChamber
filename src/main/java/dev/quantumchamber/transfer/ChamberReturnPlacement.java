@@ -16,27 +16,43 @@ public final class ChamberReturnPlacement {
         return place(frame,ordered(frame,people,sources));
     }
     /**
-     * 返還落點避開原艙內的方塊（整合審查延後清單 R2 M6）。順序與 {@link #plan(ChamberFrame,List,Map)} 相同；每位玩家依序取第一個
-     * {@code clear} 成立、而且還沒被前面的人取走的候選。候選依序是 25 個地板 slot（local y=1），再依序是同樣 25 格往上一層的 y=2、3、4
-     * （站在室內裝飾上；玩家 bbox 高 1.8，y=4 時仍完整在 interior 內）。地板沒有被擋時，結果與 {@link #plan(ChamberFrame,List,Map)} 相同。
-     * 全部候選都不成立時沿用原本的地板 slot（舊行為），呼叫端以同一個 {@code clear} 判斷是否落入這個退路並自行記錄。
+     * 返還落點避開原艙內的方塊（整合審查延後清單 R2 M6）。順序與 {@link #plan(ChamberFrame,List,Map)} 相同；每位玩家依序取：
+     * <ol>
+     * <li>第一個 {@code clear} 成立、還沒被前面的人取走的地板 slot（local y=1，25 格）；</li>
+     * <li>否則站上一層（y=2、3、4，站在室內裝飾上；玩家 bbox 高 1.8，y=4 時仍完整在 interior 內）。先選這一欄（同一個地板 slot 的垂直欄）
+     *     還沒有人的候選，避免疊在別人頭上；都沒有時才選任何 {@code clear} 成立、沒被取走的候選；</li>
+     * <li>都不成立時退回第一個還沒被取走的地板 slot（會與方塊碰撞；呼叫端以同一個 {@code clear} 判斷並自行記錄）。最多 25 人、每人取走一個
+     *     位置，輪到任何人時前面的人最多取走 24 個，所以一定有沒被取走的地板 slot，結果不會重複。</li>
+     * </ol>
+     * 地板沒有被擋時，結果與 {@link #plan(ChamberFrame,List,Map)} 相同。
      *
      * @param clear 站在這個位置（腳底中心）的玩家 bbox 是否不與方塊碰撞
      */
     public static Map<UUID,Vec3d> plan(ChamberFrame frame,List<UUID> people,Map<UUID,Vec3d> sources,Predicate<Vec3d> clear) {
         Objects.requireNonNull(clear,"clear");
         var ordered = ordered(frame,people,sources);
-        var fallback = place(frame,ordered);
-        var candidates = new ArrayList<Vec3d>(LEVELS*SLOTS);
-        for (int level=1;level<=LEVELS;level++) for (int i=0;i<SLOTS;i++) candidates.add(slot(frame,i,level));
         var taken = new HashSet<Vec3d>();
+        var occupiedColumns = new HashSet<Integer>();
         var result = new LinkedHashMap<UUID,Vec3d>();
         for (UUID id : ordered) {
-            var chosen = candidates.stream().filter(candidate -> !taken.contains(candidate) && clear.test(candidate)).findFirst()
-                    .orElse(fallback.get(id));
-            taken.add(chosen); result.put(id,chosen);
+            int chosen = pick(frame,1,1,taken,clear,Set.of());
+            if (chosen<0) chosen = pick(frame,2,LEVELS,taken,clear,occupiedColumns);
+            if (chosen<0) chosen = pick(frame,2,LEVELS,taken,clear,Set.of());
+            if (chosen<0) chosen = pick(frame,1,1,taken,position -> true,Set.of());
+            if (chosen<0) throw new IllegalStateException("沒有沒被取走的地板 slot（最多 25 人，不會發生）");
+            var position = slot(frame,chosen%SLOTS,chosen/SLOTS+1);
+            taken.add(position); occupiedColumns.add(chosen%SLOTS); result.put(id,position);
         }
         return Collections.unmodifiableMap(result);
+    }
+    /** 依 level、再依 slot 的順序，回傳第一個沒被取走、{@code clear} 成立、而且不在 {@code avoidColumns} 的候選（編碼為 (level-1)*25+slot），沒有則 -1。 */
+    private static int pick(ChamberFrame frame,int fromLevel,int toLevel,Set<Vec3d> taken,Predicate<Vec3d> clear,Set<Integer> avoidColumns) {
+        for (int level=fromLevel;level<=toLevel;level++) for (int i=0;i<SLOTS;i++) {
+            if (avoidColumns.contains(i)) continue;
+            var candidate = slot(frame,i,level);
+            if (!taken.contains(candidate) && clear.test(candidate)) return (level-1)*SLOTS+i;
+        }
+        return -1;
     }
     private static final int SLOTS = 25, LEVELS = 4;
     private static List<UUID> ordered(ChamberFrame frame,List<UUID> people,Map<UUID,Vec3d> sources) {

@@ -183,18 +183,20 @@ public final class SessionRecoveryManager {
 
     /**
      * RETURNING 一律返還；MEASURED 只在保留式 recovery 已請求時返還與清理。M5 的 COLLAPSING 依 receipt 推導（spec §7.3 的 RETURN_PLAYERS、
-     * RELEASE_GEOMETRY），不需要請求；返還與清理都完成（SETTLED）之後沒有工作。COLLAPSING 有尚未確認的 roll-forward（返還、清 lease 進度）時
-     * 只重試寫出同一份 current（以 journal 為單位退避，見 {@link #tick}），不從 flushed 疊寫新進度（spec §6、§7；疊寫會讓已返還者倒退，
-     * 被 sameAuthority 拒絕）。PASSAGE_READY 與
-     * SEALED 全員已返還、沒有 lease，沒有返還工作。
+     * RELEASE_GEOMETRY），不需要請求；返還與清理都完成（SETTLED）之後沒有返還工作。
+     * <p>三個塌縮狀態只要有尚未確認的 roll-forward（返還與清 lease 進度、進入 SEALED、Crossed 等），一律只重試寫出同一份 current
+     * （RETRY_FLUSH，以 journal 為單位退避，見 {@link #tick}），不從 flushed 疊寫新進度（spec §6 收斂共通第 2 點、§7；疊寫會讓已返還者倒退，
+     * 被 sameAuthority 拒絕）。這是所有 roll-forward 唯一的重試者：塌縮流程與走廊清理在 roll-forward 未確認時只暫停，不自行重寫。
+     * PASSAGE_READY 與 SEALED 全員已返還、沒有 lease，沒有返還工作。
      */
     static RecoveryWork recoveryWork(SessionRecoveryState journal,SessionRecoveryRecord record,boolean measuredRecoveryRequested) {
         return switch(record.state()) {
             case RETURNING -> RecoveryWork.RECOVER;
             case MEASURED -> measuredRecoveryRequested ? RecoveryWork.RECOVER : RecoveryWork.NONE;
-            case COLLAPSING -> MeasuredRecoveryPhase.from(record).released() ? RecoveryWork.NONE
-                    : journal.rollForwardPending(record.sessionUuid()) ? RecoveryWork.RETRY_FLUSH : RecoveryWork.RECOVER;
-            case ARMING, SUPERPOSITION, PASSAGE_READY, SEALED -> RecoveryWork.NONE;
+            case COLLAPSING -> journal.rollForwardPending(record.sessionUuid()) ? RecoveryWork.RETRY_FLUSH
+                    : MeasuredRecoveryPhase.from(record).released() ? RecoveryWork.NONE : RecoveryWork.RECOVER;
+            case PASSAGE_READY, SEALED -> journal.rollForwardPending(record.sessionUuid()) ? RecoveryWork.RETRY_FLUSH : RecoveryWork.NONE;
+            case ARMING, SUPERPOSITION -> RecoveryWork.NONE;
         };
     }
 

@@ -1,5 +1,6 @@
 package dev.quantumchamber.collapse;
 
+import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.superposition.SessionState;
 import java.util.Objects;
@@ -14,7 +15,8 @@ import java.util.function.BooleanSupplier;
  * <li>{@link #WAITING}：目的地已確定（SOURCE 不需要確定），但 PREPARE 的閘門不成立。</li>
  * <li>{@link #PREPARE}：同上，而且閘門成立。</li>
  * </ul>
- * M4 的 {@code MeasuredRecoveryPhase} 只看 record：它的 SETTLED 等於這裡的「全員已返還、沒有 lease」，不含走廊 space 是否已釋放。
+ * RETURN_PLAYERS 與 RELEASE_GEOMETRY 直接取自 {@link MeasuredRecoveryPhase#from}（M4 與 M5 共用的推導）；它的 SETTLED 只看 record，
+ * 不含走廊 space 是否已釋放，所以這裡另外要求 {@code releaseComplete}。
  */
 public enum CollapsePhase {
     RETURN_PLAYERS, RELEASE_GEOMETRY, RESOLVE, WAITING, PREPARE;
@@ -29,8 +31,10 @@ public enum CollapsePhase {
         Objects.requireNonNull(view, "view");
         Objects.requireNonNull(gate, "gate");
         if (view.state() != SessionState.COLLAPSING) throw new IllegalArgumentException("只有 COLLAPSING 有塌縮的推導階段：" + view.state());
-        if (view.participants().stream().anyMatch(person -> !person.returned())) return RETURN_PLAYERS;
-        if (!view.spaceLeases().isEmpty() || !releaseComplete) return RELEASE_GEOMETRY;
+        // 返還與清 lease 的判斷只有一個來源（MeasuredRecoveryPhase）；這裡只多加「走廊 space 真的釋放」。
+        var recovery = MeasuredRecoveryPhase.from(view);
+        if (recovery == MeasuredRecoveryPhase.RETURN_PLAYERS) return RETURN_PLAYERS;
+        if (recovery == MeasuredRecoveryPhase.RELEASE_GEOMETRY || !releaseComplete) return RELEASE_GEOMETRY;
         if (view.collapse().destination() instanceof CollapseDestination.Universe && !destinationResolved) return RESOLVE;
         return gate.getAsBoolean() ? PREPARE : WAITING;
     }

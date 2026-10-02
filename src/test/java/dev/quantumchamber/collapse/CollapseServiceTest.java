@@ -13,6 +13,7 @@ import dev.quantumchamber.candidate.CandidateSelection;
 import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.candidate.SourceFamilyRef;
+import dev.quantumchamber.chamber.ChamberDoorService.ApplyResult.Outcome;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.chamber.ChamberOriginAuthority;
 import dev.quantumchamber.corridor.DoorKey;
@@ -127,6 +128,46 @@ class CollapseServiceTest {
                 () -> assertEquals(List.of(), startup.observe(Set.of(A)), "之後回到邊緣觸發"),
                 () -> assertEquals(List.of(), primed.observe(Set.of(A)), "閘門以位準評估過之後只看邊緣"),
                 () -> assertEquals(List.of(B), primed.observe(ordered(A, B)), "prime 之後新進入的人觸發"));
+    }
+
+    /**
+     * F3d fix round 2（quality m-2）：MEASURED 的分流逐列。current 與 flushed 不同時一律等待；§11.3 的收據不論 DORMANT、清理、退避都走取消路徑；
+     * DORMANT 走邊緣觸發；live 只在 M4 的 measured release 沒有進行到一半、而且不在退避期內時提交。
+     */
+    @Test void measuredActionCommitsOnlyAnIdleSupportedLiveReceiptOutOfBackoff() {
+        record Row(boolean current, boolean unsupported, boolean dormant, boolean releasing, boolean backoffReady, CollapseService.MeasuredAction expected) { }
+        var rows = List.of(
+                new Row(false, true, true, false, true, CollapseService.MeasuredAction.WAIT),
+                new Row(false, false, false, false, true, CollapseService.MeasuredAction.WAIT),
+                new Row(true, true, false, false, true, CollapseService.MeasuredAction.CANCEL_UNSUPPORTED),
+                new Row(true, true, true, true, false, CollapseService.MeasuredAction.CANCEL_UNSUPPORTED),
+                new Row(true, false, true, true, false, CollapseService.MeasuredAction.RESUME_DORMANT),
+                new Row(true, false, false, true, true, CollapseService.MeasuredAction.WAIT),
+                new Row(true, false, false, false, false, CollapseService.MeasuredAction.WAIT),
+                new Row(true, false, false, false, true, CollapseService.MeasuredAction.COMMIT_LIVE));
+        assertAll(rows.stream().map(row -> (Executable) () -> assertEquals(row.expected(),
+                CollapseService.measuredAction(row.current(), row.unsupported(), row.dormant(), row.releasing(), row.backoffReady()), row.toString())));
+    }
+
+    /**
+     * F3d fix round 2（quality m-2）：待套用門的處置。ROLLED_BACK／ROLLBACK_FAILED 第一次立即重試、再被拒才退避；DOOR_INCOMPLETE 一律退避；
+     * NOT_LOADED 只等待；APPLIED／UNCHANGED 完成。WARN 依原因去重：同一原因只記一次，原因改變時再記。
+     */
+    @Test void pendingDoorRetriesOnceThenBacksOffAndDedupesWarnings() {
+        var rejected = "門的寫入被拒（ROLLED_BACK）";
+        var first = CollapseService.doorStep(Outcome.ROLLED_BACK, false, null);
+        var second = CollapseService.doorStep(Outcome.ROLLED_BACK, first.retried(), first.reason());
+        var third = CollapseService.doorStep(Outcome.ROLLBACK_FAILED, second.retried(), second.reason());
+        var incomplete = CollapseService.doorStep(Outcome.DOOR_INCOMPLETE, false, null);
+        assertAll(
+                () -> assertEquals(new CollapseService.DoorStep(false, rejected, true, false, true), first, "第一次被拒：記 WARN、不退避、下一個 tick 重試"),
+                () -> assertEquals(new CollapseService.DoorStep(false, rejected, false, true, true), second, "再被拒：退避，同一原因不再記 WARN"),
+                () -> assertEquals(new CollapseService.DoorStep(false, "門的寫入被拒（ROLLBACK_FAILED）", true, true, true), third, "原因改變：再記一次"),
+                () -> assertEquals(new CollapseService.DoorStep(false, "門板不是完整的 25 格 bulkhead，等結構恢復", true, true, false), incomplete, "結構性：退避"),
+                () -> assertFalse(CollapseService.doorStep(Outcome.DOOR_INCOMPLETE, false, incomplete.reason()).warn(), "結構性的同一原因去重"),
+                () -> assertEquals(new CollapseService.DoorStep(false, null, false, false, true), CollapseService.doorStep(Outcome.NOT_LOADED, true, rejected), "未載入：只等待"),
+                () -> assertTrue(CollapseService.doorStep(Outcome.APPLIED, true, rejected).done()),
+                () -> assertTrue(CollapseService.doorStep(Outcome.UNCHANGED, false, null).done()));
     }
 
     /**
