@@ -61,6 +61,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static final Map<TestContext, Baseline> ACTIVE = new IdentityHashMap<>();
     /** complete 未通過時最後一次記錄的狀態；狀態改變時才再記一行，重試不洗版。 */
     private static final Map<TestContext, String> UNMET = new IdentityHashMap<>();
+    /** complete 的判定丟過非 GameTestException 的例外：之後每次呼叫都直接丟同一個 GameTestException。 */
+    private static final Map<TestContext, GameTestException> BROKEN = new IdentityHashMap<>();
     private static final AtomicBoolean SUITE_END_REGISTERED = new AtomicBoolean();
     private static final UUID SANITY_UNIVERSE = UUID.fromString("50000000-0000-4000-8000-0000000f3c01");
     private static final UUID RETRY_UNIVERSE = UUID.fromString("50000000-0000-4000-8000-0000000f3c11");
@@ -109,7 +111,14 @@ public final class M5UniverseGameTests implements FabricGameTest {
         context.addInstantFinalTask(() -> {
             if (fixtureBroken.get()) throw new GameTestException("等待確定失敗");
             int attempt = attempts.incrementAndGet();
-            if (converged(CollapseAuthorities.get(server))) {
+            boolean convergedNow;
+            try {
+                convergedNow = converged(CollapseAuthorities.get(server));
+            } catch (RuntimeException failure) {
+                // runner 裡不讓非 GameTestException 的例外丟出（會讓 GameTest server 崩潰）。
+                throw asTestFailure(context, "retry harness 的收斂檢查", failure);
+            }
+            if (convergedNow) {
                 if (attempt <= 1) {
                     fixtureBroken.set(true);
                     failNextTick(context, new GameTestException("第一次嘗試就已收斂，complete 的重試路徑沒有被走到"));
@@ -188,7 +197,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
             mapField.setAccessible(true);
             return ((Map<?, ?>) mapField.get(state)).size();
         } catch (ReflectiveOperationException failure) {
-            throw new AssertionError("讀不到原版的 runAtTick 表", failure);
+            // 丟 RuntimeException：runAtTick 的迴圈只攔 Exception，Error 會讓 GameTest server 崩潰。
+            throw new IllegalStateException("讀不到原版的 runAtTick 表", failure);
         }
     }
 
@@ -234,9 +244,22 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * {@code context.addInstantFinalTask(() -> complete(context, n))} 裡逐 tick 重試。直接呼叫而失敗時，test 就此失敗。
      * <p>放進 {@code addInstantFinalTask} 時，只能在最後一步之後註冊（例如在最後一個 {@code waitAndRun} 的 callback 裡）：runner 從註冊
      * 的那個 tick 起每個 tick 都嘗試，catalog 增量一達標就 complete，之後才排定的檢查不會執行，等於誤判 PASS。
+     * <p>判定本身丟出非 GameTestException 的例外（例如 catalog 不健康時 {@code records()} 的 IllegalStateException）時，轉成
+     * GameTestException 再丟出，之後每次呼叫都直接丟同一個：runner 只攔 GameTestException，其他例外會讓 GameTest server 崩潰。在 runner 裡
+     * 呼叫時，test 因此在 tickLimit 以這個訊息失敗；直接呼叫或在 runAtTick 的 callback 裡呼叫時當場失敗。
      */
     private static void complete(TestContext context, int expectedDelta) {
-        finish(context, expectedDelta, false, true);
+        var broken = BROKEN.get(context);
+        if (broken != null) throw broken;
+        try {
+            finish(context, expectedDelta, false, true);
+        } catch (GameTestException retryOrFailure) {
+            throw retryOrFailure;
+        } catch (RuntimeException failure) {
+            var converted = asTestFailure(context, "complete 的判定", failure);
+            BROKEN.put(context, converted);
+            throw converted;
+        }
     }
 
     /** {@link #awaitConvergedThenComplete(TestContext, int, int, BooleanSupplier)}，沒有額外的 ready 條件。 */
@@ -255,7 +278,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * {@code CopyOnWriteArrayList}，在該 tick 迭代完那張表之後才執行，所以在任何 callback 裡呼叫本方法都不會改到迭代中的表。
      * <p>呼叫條件：
      * <ul>
-     * <li>必須是 test 的最後一個動作（可以在 {@code waitAndRun} 的 callback 裡）。</li>
+     * <li>必須是 test 的最後一個動作（可以在 {@code waitAndRun} 的 callback 裡），不要在 TimedTaskRunner 的工作（例如
+     *     {@code addInstantFinalTask}）裡呼叫。</li>
+     * <li>完成時點之後才到期的 {@code runAtTick}／{@code waitAndRun} 檢查不會執行（test 完成之後原版不再 tick 它）：還沒到期的檢查，
+     *     必須放進 {@code ready}（例如等它們都跑過），或排在呼叫本方法之前、而且在呼叫時已經到期。</li>
+     * <li>{@code ready} 與權威收斂丟出的例外（含 GameTestException）、以及最終判定丟出的例外，一律轉成 test 失敗，不會讓 GameTest server
+     *     崩潰：在 runner 裡時寫一行 {@code status=FAIL error=…}，在下一個 tick 確定失敗；在呼叫當下的第一輪時，轉成 GameTestException
+     *     丟給呼叫端（test 方法或 runAtTick 的 callback 會讓 test 失敗）。{@code ready} 用回傳 false 表示「還沒好」。</li>
      * <li>{@code maxTicks} 要小於 test 的 {@code tickLimit}（{@code @GameTest} 預設 100）減去呼叫時的 tick。超過 tickLimit 的那一個 tick，
      *     原版一律判 test 失敗：即使同一個 tick 剛收斂並寫了 PASS 的增量行也一樣；還沒收斂時則以「等待…」的訊息失敗，不會留下
      *     {@code status=FAIL} 的增量行。</li>
@@ -267,26 +296,66 @@ public final class M5UniverseGameTests implements FabricGameTest {
         if (maxTicks < 1) throw new IllegalArgumentException("maxTicks 必須至少 1：" + maxTicks);
         context.assertTrue(ACTIVE.containsKey(context), "缺少 begin 記下的 catalog baseline");
         var server = context.getWorld().getServer();
-        boolean readyNow = ready.getAsBoolean();
-        if (convergeAll(server) && readyNow) {
-            finish(context, expectedDelta, true, true);
+        // 第一輪在呼叫端的情境裡執行：例外轉成 GameTestException 丟給呼叫端，由 test 方法或 runAtTick 的 callback 讓 test 失敗。
+        boolean settledNow;
+        try {
+            boolean readyNow = ready.getAsBoolean();
+            settledNow = convergeAll(server) && readyNow;
+        } catch (RuntimeException failure) {
+            logFailedDelta(context, failure);
+            throw asTestFailure(context, "ready 條件或權威收斂", failure);
+        }
+        if (settledNow) {
+            try {
+                finish(context, expectedDelta, true, true);
+            } catch (RuntimeException failure) {
+                throw asTestFailure(context, "完成判定", failure);
+            }
             return;
         }
         long deadline = context.getTick() + maxTicks;
         var done = new AtomicBoolean();
         context.createTimedTaskRunner().createAndAdd(() -> {
             if (done.get()) return;
-            boolean readyThisTick = ready.getAsBoolean();
-            boolean settled = convergeAll(server) && readyThisTick;
-            // runner 把 GameTestException 當成「還沒好」，下一個 tick 再執行這個工作。
+            // runner 只攔 GameTestException（當成「還沒好」，下一個 tick 再執行這個工作）；其他例外會讓 GameTest server 崩潰，
+            // 所以 ready、權威收斂與最終判定的例外都在這裡轉成「下一個 tick 確定失敗」。
+            boolean readyThisTick;
+            boolean settled;
+            try {
+                readyThisTick = ready.getAsBoolean();
+                settled = convergeAll(server) && readyThisTick;
+            } catch (RuntimeException failure) {
+                done.set(true);
+                logFailedDelta(context, failure);
+                failNextTick(context, asTestFailure(context, "ready 條件或權威收斂", failure));
+                return;
+            }
             if (!settled && context.getTick() < deadline) throw new GameTestException("等待 M5 權威收斂" + (readyThisTick ? "" : "與 ready 條件"));
             done.set(true);
             try {
                 finish(context, expectedDelta, true, readyThisTick);
             } catch (RuntimeException failure) {
-                failNextTick(context, failure);
+                failNextTick(context, asTestFailure(context, "完成判定", failure));
             }
         });
+    }
+
+    /**
+     * 例外轉成 test 失敗：GameTestException 原樣回傳；其他 RuntimeException 先記一行 ERROR（含 stack），再包成 GameTestException。
+     * 原版的 TimedTaskRunner 只攔 GameTestException，其他例外會丟出 server tick，GameTest server 寫 crash report 之後結束（後面的 test
+     * 都不會執行）。
+     */
+    private static GameTestException asTestFailure(TestContext context, String what, RuntimeException failure) {
+        if (failure instanceof GameTestException gameTest) return gameTest;
+        var baseline = ACTIVE.get(context);
+        LOGGER.error("M5_UNIVERSE_HELPER_EXCEPTION name={} {}：{}", baseline == null ? "?" : baseline.name(), what, failure.toString(), failure);
+        return new GameTestException(what + "丟出例外：" + failure);
+    }
+
+    /** ready 或權威收斂丟出例外時，算不出增量，寫一行只有名稱、狀態與例外的 FAIL 增量行（gate 的 PASS 解析不受影響）。 */
+    private static void logFailedDelta(TestContext context, RuntimeException failure) {
+        var baseline = ACTIVE.get(context);
+        LOGGER.info("M5_UNIVERSE_CATALOG_DELTA name={} status=FAIL error={}", baseline == null ? "?" : baseline.name(), failure.toString());
     }
 
     /**
