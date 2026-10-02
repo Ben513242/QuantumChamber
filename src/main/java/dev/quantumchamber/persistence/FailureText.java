@@ -27,6 +27,8 @@ public final class FailureText {
      * WARN 去重用：cause 鏈每個節點的 class 與 message，以 {@code " <- "} 串接。message 不穩定的兩種節點改用穩定的文字：
      * 檔案系統例外只取 reason（message 帶檔案路徑，例如每次都不同的暫存檔名）；message 只是 cause 的 {@code toString()}
      * （JDK 以單一 cause 包裝時的預設）記為 {@code <cause>}，由下一個節點表達。
+     * <p><b>鍵不含檔案身分</b>：檔案系統例外的檔案與另一個檔案（{@code getOtherFile()}）都不進鍵，reason 為 null（Windows 的 AccessDeniedException 常見）時記為
+     * {@code null}。所以不同檔案、同一種失敗會共用同一把鍵、只記一次 WARN；要知道是哪個檔案，看 WARN 內文的 {@link #describe}。
      */
     public static String dedupeKey(Throwable failure) {
         var key = new StringBuilder();

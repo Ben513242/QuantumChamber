@@ -1081,17 +1081,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
             } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
         });
     }
-    /** 讀出並釋放玩家連線已送出的封包，只回傳位置修正（PlayerPositionLookS2CPacket）。 */
+    /** 讀出並釋放玩家連線已送出的封包，只回傳位置修正（PlayerPositionLookS2CPacket）；flush 與讀取見 {@link ConnectedGameTestPlayer#drainOutbound}。 */
     private static List<net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket> positionCorrections(ConnectedGameTestPlayer connection) {
-        var channel=(EmbeddedChannel)M4CandidateTestAccess.get(connection,"channel");
-        // ServerCommonNetworkHandler 在 server tick 期間 disableFlush；先 flush 已送入 channel 的封包，才能同 tick 觀察。
-        channel.runPendingTasks(); channel.flush(); channel.runPendingTasks();
-        var corrections=new java.util.ArrayList<net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket>(); Object packet;
-        while((packet=channel.readOutbound())!=null) {
-            if(packet instanceof net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket position) corrections.add(position);
-            io.netty.util.ReferenceCountUtil.release(packet);
-        }
-        return corrections;
+        return connection.drainOutbound(net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket.class);
     }
     /** 正常 Buff 到期／喝牛奶觸發的整組返還記 INFO、不附 stack；SUPERPOSITION 與 ARMING 兩種路徑都不得以 WARN＋stack 冒充故障。 */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_normal_end_info",tickLimit=100000)

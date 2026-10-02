@@ -51,6 +51,20 @@ class FailureTextTest {
         assertEquals(text, assertTimeoutPreemptively(Duration.ofSeconds(10), () -> FailureText.dedupeKey(first)));
     }
 
+    /**
+     * H3 fix round 1 re-review 的 Nit 2：reason 為 null 的檔案系統例外（Windows 的 AccessDeniedException 常見）。鍵不含檔案身分：
+     * 不同檔案得到同一把逐字固定的鍵，顯示文字仍各自保留路徑；reason 不同仍是不同的鍵。
+     */
+    @Test void dedupeKeyOfANullReasonCarriesNoFileIdentity() {
+        var first = journalFailure(new AccessDeniedException(TARGET + ".1.tmp"));
+        var second = journalFailure(new AccessDeniedException(TARGET + ".2.tmp", TARGET, null));
+        assertNotEquals(FailureText.describe(first), FailureText.describe(second), "fixture：顯示文字保留各自的檔案");
+        assertEquals("java.io.UncheckedIOException: journal checked 落盤失敗 <- java.nio.file.AccessDeniedException: null", FailureText.dedupeKey(first));
+        assertEquals(FailureText.dedupeKey(first), FailureText.dedupeKey(second));
+        assertNotEquals(FailureText.dedupeKey(first),
+                FailureText.dedupeKey(journalFailure(new AccessDeniedException(TARGET + ".1.tmp", null, "拒絕存取"))));
+    }
+
     @Test void describeShowsTopAndRootOnly() {
         var root = new IOException("磁碟已滿");
         assertEquals("java.lang.IllegalStateException: 單一失敗", FailureText.describe(new IllegalStateException("單一失敗")));

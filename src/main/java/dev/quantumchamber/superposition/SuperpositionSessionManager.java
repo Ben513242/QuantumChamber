@@ -301,7 +301,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         }
         reposition.tick(owner); recovery.tick(owner); finishAbandoned();
         // 只有 DORMANT 的 MEASURED 在保留式清理完成後釋放 runtime 與來源 ticket。COLLAPSING 的清理收尾走 CorridorPageManager 延伸後的同一路徑，
-        // runtime 與來源 ticket 保留到塌縮流程的終局或進入 SEALED 才釋放（spec §5，F3d）。
+        // runtime 與來源 ticket 保留到塌縮流程的終局或進入 SEALED 才釋放（spec §5：releaseAfterTerminal、releaseOnSealed）。
         for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.MEASURED
                 && recovery.measuredRecoveryComplete(record.sessionUuid())) {
             sessions.remove(record.chamberUuid());
@@ -499,6 +499,46 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             journal.put(record.withProgress(record.participants(),record.spaceLeases(),SessionState.RETURNING,record.restoreEntryEffectOnReturn()));
             journal.flush(server); return null;
         });
+    }
+    /**
+     * spec §5「終局」：checked 終局讀回確認之後，移除該 session 的 runtime（{@code sessions}）與來源 ticket（{@code tickets}）。不移除的話，
+     * {@link #presence} 會因殘留的 runtime 回 UNKNOWN，{@link #returnToOrigin} 也會從殘留的 ticket 取得塌縮 authority，原艙一直停在 RETURNING、
+     * 不能開新 session。前提：journal 的 current 與 flushed 都已沒有該 session；不符就丟例外，不釋放仍在進行的塌縮。冪等。
+     */
+    public void releaseAfterTerminal(MinecraftServer owner,UUID sessionUuid) {
+        requireServer(owner);
+        if(journal.records().containsKey(sessionUuid) || journal.flushedRecords().containsKey(sessionUuid))
+            throw new IllegalStateException("runtime 與來源 ticket 只能在 checked 終局之後釋放：session="+sessionUuid);
+        releaseRuntimeAndTicket(sessionUuid);
+    }
+    /**
+     * spec §5：執行期間進入 SEALED 時立即釋放來源 ticket，避免永久原因的 SEALED 讓來源 chunk 一直被載入；runtime 一併移除（SEALED 的
+     * presence 只依 record 推導，SEALED→COLLAPSING 重試也不需要 runtime）。重試提交之後以 {@link #acquireCollapseTicket} 再取得。
+     * 前提：該 session 的 collapse view 是 SEALED（含 roll-forward 尚未確認的 SEALED）；不符就丟例外。冪等。
+     */
+    public void releaseOnSealed(MinecraftServer owner,UUID sessionUuid) {
+        requireServer(owner);
+        var view=journal.collapseView(sessionUuid).orElse(null);
+        if(view==null || view.state()!=SessionState.SEALED)
+            throw new IllegalStateException("只有 SEALED 的 session 可以在進入時釋放來源 ticket：session="+sessionUuid);
+        releaseRuntimeAndTicket(sessionUuid);
+    }
+    /**
+     * 提交 COLLAPSING 之後取得來源 ticket（返還需要，spec §5）。live 塌縮的 runtime 在入場時已取得，這裡不重複；DORMANT 續行與同一個
+     * server instance 內的 SEALED→COLLAPSING 重試沒有 ticket，必須在這裡取得（attach 只為開服當下就是 COLLAPSING 的 record 取得）。
+     * 前提：flushed 恰是這筆 COLLAPSING record；不符就丟例外。冪等。
+     */
+    public void acquireCollapseTicket(MinecraftServer owner,SessionRecoveryRecord record) {
+        requireServer(owner);
+        var durable=journal.flushedRecords().get(record.sessionUuid());
+        if(durable==null || durable.state()!=SessionState.COLLAPSING || !durable.equals(record))
+            throw new IllegalStateException("只有已 checked 的 COLLAPSING 可以取得來源 ticket：session="+record.sessionUuid());
+        sourceTicket(record);
+    }
+    private void releaseRuntimeAndTicket(UUID sessionUuid) {
+        sessions.values().removeIf(runtime -> runtime.initial.sessionUuid().equals(sessionUuid));
+        var ticket=tickets.remove(sessionUuid);
+        if(ticket!=null) ticket.world().getChunkManager().removeTicket(SOURCE_TICKET,ticket.chunk(),2,sessionUuid);
     }
     private SessionRecoveryRecord record(UUID chamber) {
         return journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).findFirst().orElse(null);

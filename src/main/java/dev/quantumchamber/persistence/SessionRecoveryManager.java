@@ -28,11 +28,16 @@ public final class SessionRecoveryManager {
     private final Set<UUID> disconnected=new HashSet<>(),disconnectWarnings=new HashSet<>();
     private final Map<UUID,String> failures=new HashMap<>();
     private final Map<UUID,Integer> returnTicks=new HashMap<>();
-    private final Map<UUID,Set<UUID>> moveWarnings=new HashMap<>();
+    private final Map<UUID,Set<UUID>> moveWarnings=new HashMap<>(),landingWarnings=new HashMap<>();
     // 已以最後 checked authority 取代 current、尚待 checked 寫出確認的隔離 session（值為收斂目標，空值代表移除）。
     private final Map<UUID,Optional<SessionRecoveryRecord>> converging=new LinkedHashMap<>();
     private final Map<UUID,String> convergenceFailures=new HashMap<>();
-    private String convergenceWarning;
+    // 收斂寫出失敗的 WARN 去重鍵（FailureText.dedupeKey）與顯示文字（FailureText.describe）；恢復時的 INFO 印顯示文字。
+    private String convergenceWarning,convergenceWarningText;
+    // spec §6 收斂共通第 2 點：roll-forward 尚未確認時只重試同一份寫出（RETRY_FLUSH），以 journal 這個權威為單位退避（§11.2 的數列）。
+    // 第一次失敗後 200 ticks 才重試，之後加倍到 12000；任何一次寫出讀回確認、或已沒有尚未確認的 roll-forward 時清除。新 instance 沒有退避。
+    private final dev.quantumchamber.collapse.CollapseBackoff journalRetry=new dev.quantumchamber.collapse.CollapseBackoff();
+    private int journalRetryFailedTick=Integer.MIN_VALUE;
     // 凍結中位置修正的節流：玩家 → 最近一次修正的 server tick。過期的項目與不存在等價，每個 recovery tick 清掉，
     // 所以只留最近 CORRECTION_INTERVAL_TICKS 內修正過的玩家；斷線或 session 結束後最多再留一個間隔。
     private final Map<UUID,Integer> corrections=new HashMap<>();
@@ -132,7 +137,10 @@ public final class SessionRecoveryManager {
         joinTicks.entrySet().removeIf(entry -> owner.getTicks()>=entry.getValue());
         returnTicks.keySet().retainAll(journal.flushedRecords().keySet());
         moveWarnings.keySet().retainAll(journal.flushedRecords().keySet());
+        landingWarnings.keySet().retainAll(journal.flushedRecords().keySet());
         var pages=CorridorPageManager.forServer(owner);
+        int now=owner.getTicks();
+        boolean rollForwardOutstanding=false;
         for(var record : journal.flushedRecords().values()) {
             var work=recoveryWork(journal,record,pages.measuredRecoveryRequested(record.sessionUuid()));
             if(work==RecoveryWork.NONE || pages.operationInProgress(record.sessionUuid())) continue;
@@ -141,19 +149,33 @@ public final class SessionRecoveryManager {
             if(current==null || !record.candidateContext().equals(current.candidateContext())
                     || !record.candidateLedger().equals(current.candidateLedger()) || !record.candidateSelection().equals(current.candidateSelection())) continue;
             try {
-                if(work==RecoveryWork.RETRY_FLUSH) journal.flush(owner);
-                else {
+                if(work==RecoveryWork.RETRY_FLUSH) {
+                    // 只重試同一份 current 的寫出，以 journal 為單位退避（spec §6 收斂共通第 2 點）。同一個 tick 之前的寫出已確認時，
+                    // 這個 session 的 recoveryWork 已經不是 RETRY_FLUSH，不會走到這裡。
+                    rollForwardOutstanding=true;
+                    if(!journalRetry.ready(now)) continue;
+                    journal.flush(owner);
+                } else {
                     // 先完成本 tick 的入場／rollback 交易，下一 tick 才進行獨立返還 checkpoint。
-                    if(owner.getTicks()<=returnTicks.computeIfAbsent(record.sessionUuid(),ignored -> owner.getTicks())) continue;
+                    if(now<=returnTicks.computeIfAbsent(record.sessionUuid(),ignored -> now)) continue;
                     recover(record);
                 }
                 failures.remove(record.sessionUuid());
             } catch(IOException | RuntimeException failure) {
-                var message=failure.getClass().getName()+": "+failure.getMessage();
-                if(!message.equals(failures.put(record.sessionUuid(),message)))
-                    org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("返還保留 pending，session={}: {}",record.sessionUuid(),message);
+                // 返還寫入（roll-forward）或 RETRY_FLUSH 失敗、留下尚未確認的進度：journal 這個權威進入退避，同一個 tick 只算一次失敗。
+                if(journal.rollForwardPending(record.sessionUuid())) {
+                    rollForwardOutstanding=true;
+                    if(journalRetryFailedTick!=now) { journalRetry.failed(now); journalRetryFailedTick=now; }
+                }
+                // 整合審查延後清單「新 WARN 缺 cause」：以 FailureText.dedupeKey 去重，WARN 帶 root cause 的顯示文字並附 stack。
+                var key=FailureText.dedupeKey(failure);
+                if(!key.equals(failures.put(record.sessionUuid(),key)))
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("返還保留 pending，session={}：{}",record.sessionUuid(),
+                            FailureText.describe(failure),failure);
             }
         }
+        // 已沒有尚未確認的 roll-forward（本 tick 的寫出已確認，或其他寫出、原生 autosave 已帶出）：清除 journal 的退避。
+        if(!rollForwardOutstanding) { journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; }
     }
 
     /** recovery tick 對一筆 flushed record 要做的事。 */
@@ -162,7 +184,8 @@ public final class SessionRecoveryManager {
     /**
      * RETURNING 一律返還；MEASURED 只在保留式 recovery 已請求時返還與清理。M5 的 COLLAPSING 依 receipt 推導（spec §7.3 的 RETURN_PLAYERS、
      * RELEASE_GEOMETRY），不需要請求；返還與清理都完成（SETTLED）之後沒有工作。COLLAPSING 有尚未確認的 roll-forward（返還、清 lease 進度）時
-     * 只重試寫出同一份 current，不從 flushed 疊寫新進度（spec §6、§7；疊寫會讓已返還者倒退，被 sameAuthority 拒絕）。PASSAGE_READY 與
+     * 只重試寫出同一份 current（以 journal 為單位退避，見 {@link #tick}），不從 flushed 疊寫新進度（spec §6、§7；疊寫會讓已返還者倒退，
+     * 被 sameAuthority 拒絕）。PASSAGE_READY 與
      * SEALED 全員已返還、沒有 lease，沒有返還工作。
      */
     static RecoveryWork recoveryWork(SessionRecoveryState journal,SessionRecoveryRecord record,boolean measuredRecoveryRequested) {
@@ -202,19 +225,21 @@ public final class SessionRecoveryManager {
         catch(RuntimeException failure) {
             var cause=FailureText.dedupeKey(failure);
             if(!cause.equals(convergenceWarning)) logger.warn("未 checked authority 的收斂寫出失敗，保持 dirty 並於下一 tick 重試：sessions={}",converging.keySet(),failure);
-            convergenceWarning=cause; return;
+            convergenceWarning=cause; convergenceWarningText=FailureText.describe(failure); return;
         }
         // checked 寫出成功：逐一以 flushed 比對收斂目標，只有 exact 相符才宣告收斂。
         var flushed=journal.flushedRecords();
         converging.forEach((sid,target) -> {
             var durable=flushed.get(sid);
+            // 收斂對象不限 candidate authority，也包含 M5 restore 類寫入的殘留（uncheckedSessions）。
             if(target.map(record -> record.equals(durable)).orElse(durable==null))
-                logger.info("未 checked candidate authority 已收斂：session={} → {}",sid,target.map(record -> "checked "+record.state()).orElse("checked 移除"));
+                logger.info("未 checked authority 已收斂：session={} → {}",sid,target.map(record -> "checked "+record.state()).orElse("checked 移除"));
             else logger.warn("收斂寫出成功，但 flushed 與收斂目標不符（之後的寫入已改動該 session）：session={} 目標={} flushed={}",sid,
                     target.map(record -> "checked "+record.state()).orElse("移除"),durable==null ? "ABSENT" : durable.state());
         });
-        if(convergenceWarning!=null) logger.info("收斂寫出已恢復（先前原因：{}）",convergenceWarning);
-        converging.clear(); convergenceWarning=null;
+        // 恢復時印顯示文字（describe，含 root cause），不印去重鍵（H3 fix round 1 re-review 的 Nit 1）。
+        if(convergenceWarning!=null) logger.info("收斂寫出已恢復（先前原因：{}）",convergenceWarningText);
+        converging.clear(); convergenceWarning=null; convergenceWarningText=null;
     }
 
     /**
@@ -244,7 +269,9 @@ public final class SessionRecoveryManager {
 
     public void detach(MinecraftServer owner) {
         requireServer(owner); joinTicks.clear(); disconnected.clear(); disconnectWarnings.clear(); failures.clear(); returnTicks.clear(); moveWarnings.clear();
-        corrections.clear(); converging.clear(); convergenceFailures.clear(); convergenceWarning=null; if(active==this) active=null;
+        landingWarnings.clear();
+        corrections.clear(); converging.clear(); convergenceFailures.clear(); convergenceWarning=null; convergenceWarningText=null;
+        journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; if(active==this) active=null;
     }
 
     private void recover(SessionRecoveryRecord initial) throws IOException {
@@ -254,12 +281,14 @@ public final class SessionRecoveryManager {
         var frame=new ChamberFrame(initial.origin().controllerPos(),initial.origin().facing());
         var positions=new LinkedHashMap<UUID,Vec3d>();
         initial.participants().forEach(person -> positions.put(person.playerUuid(),person.sourcePosition()));
-        var slots=ChamberReturnPlacement.plan(frame,List.copyOf(positions.keySet()),positions);
+        // R2 M6：落點避開原艙內裝飾的碰撞；所有候選都被擋時沿用原本的地板 slot（舊行為），並記一次 WARN。
+        var slots=ChamberReturnPlacement.plan(frame,List.copyOf(positions.keySet()),positions,position -> landingClear(source,position));
         var record=initial;
         for(var person : initial.participants()) {
             if(person.returned() || joinTicks.containsKey(person.playerUuid())) continue;
             var player=server.getPlayerManager().getPlayer(person.playerUuid());
             if(player==null || player.isRemoved()) continue;
+            if(!inside(player,source,frame) && !landingClear(source,slots.get(person.playerUuid()))) warnLandingBlocked(record.sessionUuid(),person.playerUuid(),source);
             var marker=new PlayerRecoveryCheckpoint(record.sessionUuid(),record.restoreEntryEffectOnReturn()
                     ? PlayerRecoveryCheckpoint.AppliedPolicy.RESTORE_ENTRY : PlayerRecoveryCheckpoint.AppliedPolicy.KEEP_CURRENT);
             var access=(PlayerRecoveryCheckpointAccess)player;
@@ -312,6 +341,18 @@ public final class SessionRecoveryManager {
     private void warnMovePending(UUID session,UUID player,ServerWorld source) {
         if(moveWarnings.computeIfAbsent(session,ignored -> new HashSet<>()).add(player))
             org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("返還移動尚未確認，保留 pending 並於下一 tick 重試：session={} player={} source={}",
+                    session,player,source.getRegistryKey().getValue());
+    }
+
+    /** 站在 {@code position}（腳底中心）的標準玩家 bbox 是否不與方塊或實心 entity 碰撞（R2 M6 的返還落點檢查）。 */
+    private static boolean landingClear(ServerWorld world,Vec3d position) {
+        return world.isSpaceEmpty(net.minecraft.entity.EntityType.PLAYER.getDimensions().getBoxAt(position));
+    }
+
+    /** 原艙內沒有無碰撞的返還落點、沿用預設地板 slot 時記 WARN；同一 session 的同一玩家只記一次（與移動失敗的去重相同的重置時機）。 */
+    private void warnLandingBlocked(UUID session,UUID player,ServerWorld source) {
+        if(landingWarnings.computeIfAbsent(session,ignored -> new HashSet<>()).add(player))
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("原艙內沒有無碰撞的返還落點，沿用預設地板落點：session={} player={} source={}",
                     session,player,source.getRegistryKey().getValue());
     }
 

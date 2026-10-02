@@ -370,7 +370,7 @@ public final class M4CandidateDoorGameTests {
                 for(int i=0;i<entries.size();i++) {
                     var entry=entries.get(i);
                     if(entry.level()!=org.apache.logging.log4j.Level.INFO || !entry.message().contains(sid.toString())) continue;
-                    if(converged<0 && entry.message().contains("未 checked candidate authority 已收斂")) converged=i;
+                    if(converged<0 && entry.message().contains("未 checked authority 已收斂")) converged=i;
                     if(freed<0 && entry.message().contains("初始 ARMING 殘留已 checked 移除")) freed=i;
                 }
                 var witness=new LinkedHashMap<String,Boolean>();
@@ -1043,14 +1043,10 @@ public final class M4CandidateDoorGameTests {
     }
     private static boolean rejects(Runnable operation) { try { operation.run(); return false; } catch(IllegalArgumentException | IllegalStateException expected) { return true; } }
     private static List<String> messages(ConnectedGameTestPlayer fixture) {
-        var channel=(io.netty.channel.embedded.EmbeddedChannel)M4CandidateTestAccess.get(fixture,"channel");
-        // ServerCommonNetworkHandler在server tick會disableFlush；先flush已實際送入channel的封包，才能同tick觀察。
-        channel.runPendingTasks(); channel.flush(); channel.runPendingTasks();
-        var messages=new ArrayList<String>(); Object packet;
-        while((packet=channel.readOutbound())!=null) {
-            if(packet instanceof net.minecraft.network.packet.s2c.play.GameMessageS2CPacket message && message.overlay()) messages.add(message.content().getString());
-            io.netty.util.ReferenceCountUtil.release(packet);
-        }
+        // ServerCommonNetworkHandler在server tick會disableFlush；drainOutbound先flush已實際送入channel的封包，才能同tick觀察。
+        var messages=new ArrayList<String>();
+        for(var message : fixture.drainOutbound(net.minecraft.network.packet.s2c.play.GameMessageS2CPacket.class))
+            if(message.overlay()) messages.add(message.content().getString());
         return messages;
     }
     private static List<?> nativeSnapshot(M2CorridorGameTests.NativeEntry fixture) {
@@ -1767,8 +1763,11 @@ public final class M4CandidateDoorGameTests {
                     witness.put(phase+".attachDoesNotReturn",before.equals(journalView(server,journal,sid)));
                     witness.put(phase+".sourceTicketOnlyForCollapsing",M4CandidateTestAccess.sourceTicketHeld(sid)==(phase==SessionState.COLLAPSING));
                     witness.put(phase+".noCorridorSpace",M4CandidateTestAccess.space(pages,sid)==null);
-                    M4CandidateTestAccess.releaseSourceTicketForTeardown(sid); M4CandidateTestAccess.removeSpaceForTeardown(pages,sid);
+                    // 收尾：先移除 restoreSpace 建立的 space，再以終局 API 移除 record，最後以正式 API 釋放 attachRecord 建立的來源 ticket。
+                    M4CandidateTestAccess.removeSpaceForTeardown(pages,sid);
                     M4CandidateTestAccess.terminateCollapseFixture(server,sid);
+                    M4CandidateTestAccess.releaseAfterTerminal(server,sid);
+                    witness.put(phase+".ticketReleasedAfterTerminal",!M4CandidateTestAccess.sourceTicketHeld(sid) && !M4CandidateTestAccess.runtimeHeld(sid));
                 }
                 var player=UUID.randomUUID();
                 var sealed=collapseFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(player,true),List.of(),SessionState.SEALED,time);
@@ -1810,7 +1809,7 @@ public final class M4CandidateDoorGameTests {
      * 第一次 checkpoint 受控失敗：記一則 COLLAPSING 的保留 WARN、不嘗試 RETURNING，退避後重試成功。返還進度寫入之後，
      * CorridorPageManager 以快取比對最新 flushed 不再誤判（controller 補充第 4 點）。清 lease 的 journal 寫出也受控失敗一次：同一個 tick 內
      * recovery 的 RETRY_FLUSH 確認 SETTLED，但走廊 space 下一個 tick 才釋放，這段期間 measuredRecoveryComplete 必須為假（fix round 1 的 I-1）。
-     * 收尾以終局 API 移除 record，runtime 與來源 ticket 以反射釋放（正式 API 屬 F3d）；失敗路徑由 hook 在清理真的完成時代為收尾。
+     * 收尾以終局 API 移除 record，runtime 與來源 ticket 以正式 API（{@code releaseAfterTerminal}）釋放；失敗路徑由 hook 在清理真的完成時代為收尾。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_f3a_native_collapsing_return",tickLimit=100000)
     public void native_collapsing_buff_lapse_returns_through_the_retained_path_windows(TestContext context) {
@@ -1839,8 +1838,7 @@ public final class M4CandidateDoorGameTests {
                     var record=journal.flushedRecords().get(sid);
                     if(record!=null && record.state()==SessionState.COLLAPSING && fixture.pages.measuredRecoveryComplete(sid))
                         M4CandidateTestAccess.terminateCollapseFixture(server,sid);
-                    if(!journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid))
-                        M4CandidateTestAccess.releaseCollapseRuntimeForTeardown(server,chamber,sid);
+                    if(!journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid)) gateway.releaseAfterTerminal(server,sid);
                 });
                 capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
                 checkpointFaultProbe=probe; hooks.add(() -> { if(checkpointFaultProbe==probe) checkpointFaultProbe=null; });
@@ -1961,16 +1959,16 @@ public final class M4CandidateDoorGameTests {
                 && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
     }
     /**
-     * 失敗路徑的收尾：符合條件的 fixture record 先釋放測試建立的來源 ticket 與沒有 lease 的 space，再移除——塌縮狀態走終局 API，MEASURED
-     * （collapseFixture 中途失敗留下的收據）以 testmod 反射移除。只用於沒有走廊 lease 的 fixture。
+     * 失敗路徑的收尾：符合條件的 fixture record 先移除沒有 lease 的 space，再移除 record——塌縮狀態走終局 API，MEASURED（collapseFixture
+     * 中途失敗留下的收據）以 testmod 反射移除——最後以正式 API 釋放 runtime 與來源 ticket。只用於沒有走廊 lease 的 fixture。
      */
     private static void cleanupFixtures(MinecraftServer server,java.util.function.Predicate<SessionRecoveryRecord> owned) {
         var journal=SessionRecoveryState.get(server); var pages=CorridorPageManager.forServer(server);
         for(var record : List.copyOf(journal.flushedRecords().values())) if(owned.test(record)) {
-            M4CandidateTestAccess.releaseSourceTicketForTeardown(record.sessionUuid());
             M4CandidateTestAccess.removeSpaceForTeardown(pages,record.sessionUuid());
             if(record.state()==SessionState.MEASURED) M4CandidateTestAccess.removeMeasuredForTeardown(server,record.sessionUuid());
             else M4CandidateTestAccess.terminateCollapseFixture(server,record.sessionUuid());
+            M4CandidateTestAccess.releaseAfterTerminal(server,record.sessionUuid());
         }
     }
     /** 執行並回傳丟出的 RuntimeException（沒有就是 null）；RED 時讓 HEAD 的例外留在 test 內，不從 END_SERVER_TICK 拋出。 */

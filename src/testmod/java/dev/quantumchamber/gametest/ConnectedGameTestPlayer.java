@@ -51,13 +51,23 @@ public final class ConnectedGameTestPlayer implements AutoCloseable {
         channel.close().syncUninterruptibly(); connection.handleDisconnection(); channel.finishAndReleaseAll();
     }
     public void confirmTeleport() {
-        channel.runPendingTasks(); Integer teleport=null; Object outbound;
+        var positions=drainOutbound(net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket.class);
+        if(positions.isEmpty()) throw new IllegalStateException("沒有原生登入 teleport packet，不能假 ACK");
+        player.networkHandler.onTeleportConfirm(new net.minecraft.network.packet.c2s.play.TeleportConfirmC2SPacket(positions.getLast().getTeleportId()));
+    }
+    /**
+     * 讀出並釋放這個連線已送出的全部封包，只回傳 {@code type} 的封包（依送出順序）。先 runPendingTasks → flush → runPendingTasks：
+     * ServerCommonNetworkHandler 在 server tick 期間 disableFlush，不先 flush 就讀不到同一個 tick 送出的封包（例如凍結中的位置修正）。
+     * 其他型別的封包一併讀掉並釋放。
+     */
+    public <T> java.util.List<T> drainOutbound(Class<T> type) {
+        channel.runPendingTasks(); channel.flush(); channel.runPendingTasks();
+        var result=new java.util.ArrayList<T>(); Object outbound;
         while((outbound=channel.readOutbound())!=null) {
-            if(outbound instanceof net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket position) teleport=position.getTeleportId();
+            if(type.isInstance(outbound)) result.add(type.cast(outbound));
             io.netty.util.ReferenceCountUtil.release(outbound);
         }
-        if(teleport==null) throw new IllegalStateException("沒有原生登入 teleport packet，不能假 ACK");
-        player.networkHandler.onTeleportConfirm(new net.minecraft.network.packet.c2s.play.TeleportConfirmC2SPacket(teleport));
+        return result;
     }
     @Override public void close() {
         if(player.getServer().getPlayerManager().getPlayer(player.getUuid())==player) player.getServer().getPlayerManager().remove(player);

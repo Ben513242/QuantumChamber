@@ -138,8 +138,8 @@ final class M4CandidateTestAccess {
         return ((Minecraft121DynamicDimensionBackend) get(owner, "backend")).runtimeSnapshot(server);
     }
 
-    // ---- F3a：M5 塌縮狀態的 fixture 與收尾。record 只經正式 journal API 建立與移除（F2a 裁定 (c)）；runtime 與來源 ticket 的釋放
-    // API 屬 F3d（spec §5 的終局），F3d 之前以反射收尾。 ----
+    // ---- F3a：M5 塌縮狀態的 fixture 與收尾。record 只經正式 journal API 建立與移除（F2a 裁定 (c)）；runtime 與來源 ticket 經 F3d 的
+    // 正式 API（SuperpositionSessionManager.releaseAfterTerminal）釋放。 ----
 
     /** 僅測試：指定 Controller 位置、朝北的 OVERWORLD ORIGIN 權威。該位置沒有 Controller 時來源身分驗證必定失敗，recovery 不會移動任何人。 */
     static dev.quantumchamber.chamber.ChamberOriginAuthority origin(UUID chamber,net.minecraft.util.math.BlockPos controllerPos) {
@@ -244,39 +244,17 @@ final class M4CandidateTestAccess {
         var runtime=((Map<?,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions")).get(chamber);
         return runtime==null ? null : get(runtime,"state");
     }
+    /** 僅測試（只讀）：SuperpositionSessionManager 是否還有這個 session 的 runtime。 */
+    static boolean runtimeHeld(UUID sid) {
+        return ((Map<?,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions")).values().stream()
+                .anyMatch(runtime -> ((dev.quantumchamber.persistence.SessionRecoveryRecord)get(runtime,"initial")).sessionUuid().equals(sid));
+    }
     static boolean disconnectPending(UUID player) {
         return ((java.util.Set<?>)get(get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"recovery"),"disconnected")).contains(player);
     }
-    /**
-     * 僅測試（F3d 之前）：釋放來源 ticket；spec §5 要求終局與進入 SEALED 時釋放，正式 API 屬 F3d（有了之後刪除）。G2 也用它移除測試自己以
-     * {@link #attachRecord} 建立的 ticket（record 仍在 journal），所以這裡不做 journal 的前置檢查。
-     */
-    @SuppressWarnings("unchecked")
-    static boolean releaseSourceTicketForTeardown(UUID sid) {
-        var ticket=((Map<UUID,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"tickets")).remove(sid);
-        if(ticket==null) return false;
-        var world=(net.minecraft.server.world.ServerWorld)get(ticket,"world");
-        var chunk=(net.minecraft.util.math.ChunkPos)get(ticket,"chunk");
-        var type=(net.minecraft.server.world.ChunkTicketType<UUID>)get(dev.quantumchamber.superposition.SuperpositionSessionManager.class,"SOURCE_TICKET");
-        world.getChunkManager().removeTicket(type,chunk,2,sid);
-        return true;
-    }
-    /**
-     * 僅測試（F3d 之前）：終局之後（或進入 SEALED 之後）釋放該 session 的 runtime 與來源 ticket（spec §5；正式 API 屬 F3d，有了之後刪除本
-     * helper 與 {@link #releaseSourceTicketForTeardown}）。前置檢查：該 session 已不在 journal（current 與 flushed），或 flushed 是 SEALED；
-     * 不符就丟例外，不靜默釋放仍在進行的塌縮。
-     */
-    @SuppressWarnings("unchecked")
-    static void releaseCollapseRuntimeForTeardown(MinecraftServer server,UUID chamber,UUID sid) {
-        var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
-        var durable=journal.flushedRecords().get(sid);
-        boolean gone=durable==null && !journal.records().containsKey(sid);
-        if(!gone && (durable==null || durable.state()!=dev.quantumchamber.superposition.SessionState.SEALED))
-            throw new IllegalStateException("runtime 只能在終局或進入 SEALED 之後釋放：session="+sid+" flushed="+(durable==null ? "ABSENT" : durable.state()));
-        var sessions=(Map<UUID,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions");
-        var runtime=sessions.get(chamber);
-        if(runtime!=null && ((dev.quantumchamber.persistence.SessionRecoveryRecord)get(runtime,"initial")).sessionUuid().equals(sid)) sessions.remove(chamber);
-        releaseSourceTicketForTeardown(sid);
+    /** 正式 API（spec §5 的終局之後）：釋放 runtime 與來源 ticket。只是型別轉換的捷徑，前置檢查在 production。 */
+    static void releaseAfterTerminal(MinecraftServer server,UUID sid) {
+        ((dev.quantumchamber.superposition.SuperpositionSessionManager)dev.quantumchamber.chamber.ChamberSessions.gateway()).releaseAfterTerminal(server,sid);
     }
     /**
      * 只在 RED 取證時使用：HEAD 會讓 COLLAPSING 走進 MEASURED-only 分支丟例外。以反射把 journal（current、history、checked authority）與 runtime
