@@ -102,20 +102,30 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 - M1–M4 的歷程（逐 task 與整分支 review、integration fix rounds 1–4、人工驗收、合併、harness tracked 化與 worktree 退役）記在 `docs/implementation-notes/2026-09-21-m4-candidate-doors.md`、`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md` 與 `scripts/verification/README.md`。M1–M4 的 SDD ledger 只在外部備份：`C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\superpowers\sdd\2026-09-21-m4-candidate-doors\progress.md`（只讀）。
 - `scripts/verification/` 的 harness 原始檔（`task9-gates.ps1` 等）與 M1–M4 evidence，也都在同一份外部備份的 `superpowers\sdd\2026-09-21-m4-candidate-doors\`。M3 probe 與 M4 recovery 的 receipt 位置由 testmod 固定在 repo 內的 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`；依程式，tracked harness 在該目錄不存在時會自行建立，但還沒在 clean clone 實跑過。
 
-M5（`feature/m5-collapse`）處於設計階段：尚無 M5 spec、plan 或程式變更。
+M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`。
+
+- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.3），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
+- 進度（2026-10-02）：
+  - 已完成，並都經過 spec review 與 code quality review：T0、T1、H1–H4、F1a、F1b（真 client 驗證，通過）、F2a、F2b、F2c、F3a。
+  - F3b 在 fix round 的 review 中。
+  - 之後依 plan 的順序：F3c → F3d → F4a → F4b → F5 → F6 → F7 → milestone 收尾。
+- 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
+- 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
 先讀（依序）：
 
 1. 本檔。
-2. `docs/quantum_superposition_chamber_design.md` §28 的 M5 段落，以及 §32 Code Agent Execution Contract。
-3. `docs/superpowers/specs/2026-09-21-m4-candidate-doors-design.md` §10、§11、§14 M5 Handoff Contract、§15。
-4. `docs/implementation-notes/2026-09-21-m4-candidate-doors.md` 的「M5 handoff acceptance」第 1–12 點。
-5. `docs/implementation-notes/2026-09-29-m1-m4-integration-review.md` 的「延後清單」。
-6. `scripts/verification/README.md`：回歸 gate 的用法與預期數字。
+2. M5 spec（binding）與 plan。
+3. M5 implementation note：至少讀目前 task 之前各 task 的「交給後續」。
+4. M5 SDD ledger 的 Rulings、目前 task 段落，以及「F7 待辦彙整」。
+5. `scripts/verification/README.md`：回歸 gate 的用法與預期數字。
+6. 背景資料，需要時才讀：
+   - `docs/quantum_superposition_chamber_design.md` §28 的 M5 段落、§32 Code Agent Execution Contract。
+   - M4 spec §10、§11、§14、§15。
+   - M4 note 的「M5 handoff acceptance」。
+   - integration review 的「延後清單」。
 
-M5 spec 與 plan 核可後，另讀 `docs/superpowers/specs/`、`docs/superpowers/plans/` 下的 M5 檔案，以及 M5 的 SDD ledger（`.superpowers/sdd/<M5 plan>/progress.md`，gitignored）。
-
-M5 第一切片的硬界線（使用者 2026-10-01 指示；細節以核可後的 M5 spec 為準）：
+M5 第一切片的硬界線（使用者 2026-10-01 指示；細節以 M5 spec 為準）：
 
 - 只從 checked `MEASURED+SELECTED` 開始，讀 `flushedRecords()` 的 exact receipt。
 - 依 candidate variant 解析：`SOURCE` 用凍結的 `SourceFamilyRef`；`EXISTING` 在 collapse 時重驗 gameplay-eligible，不符就 fail closed；`NEW` 以 idempotent 的 `allocationToken` lookup-or-create。
@@ -127,11 +137,10 @@ M5 第一切片的硬界線（使用者 2026-10-01 指示；細節以核可後�
 
 下一步（依序）：
 
-1. brainstorming → M5 spec（`docs/superpowers/specs/` 下新檔）→ 使用者核可 → implementation plan → 使用者核可 → 實作。只問真正需要使用者決定的事，其餘依文件與合理預設處理，並在回報中說明。
+1. 依 plan 的 task 順序繼續實作。只問真正需要使用者決定的事，其餘依文件與合理預設處理，並在回報與 SDD ledger 中說明。
 2. 實作採 Subagent-Driven Development（見上方「開發與 review 流程」）。每次派工明列允許修改的路徑；不在別的 task 裡順手修已排入其他 task 或 milestone 的項目。
-3. M5 前置 hardening 排在 M5 功能 task 之前，順序依使用者 2026-09-29 指定：(1) codec strictness（M5 schema migration 的前置）；(2) `MeasuredWorldSaveCheckpoint` 的 revision 只看本交易相關的 chunks；(3) `abortUnchecked` 的 secondary-failure 路徑改為真正 fail-closed。
-4. 2026-09-30 人工驗收與 integration fix round 4 留給 M5 的 4 項：MEASURED／RETURNING 凍結時不送位置修正（客戶端座標漂移）；`abandonInitial` 不 flush，而且 WARN 每秒重複一次；testmod `M2CorridorGameTests.java:1591` 用裝箱的 ±0 斷言；`ALREADY_SELECTED` 真實客戶端到不了（M5 的玩家說明與人工驗收預期不得承諾「候選已鎖定。」這則訊息）。「延後清單」其餘各項，由 M5 spec 逐項決定納入、延後或關閉，並寫明理由。
-5. Gate：以 `pwsh -NoProfile -File scripts/verification/run-all.ps1` 作為回歸基線。本 worktree 相當於 clean clone，而 `scripts/verification/README.md` 註明這條路徑還沒實跑過；第一次跑時先確認 harness 在這種狀態下可用，失敗就保留 root 並回報。M5 新增的 gate 擴充進 `scripts/verification/`，並經 review。
+3. 前置 hardening 已完成（plan 的 H1–H4）：codec strictness、只看相關 chunks 的存檔 checkpoint、未 checked authority 的 fail-closed 收斂、凍結時的位置修正。2026-09-30 留給 M5 的 4 項，處置見 M5 spec §4 與 §17 的延後清單 triage。
+4. Gate：以 `pwsh -NoProfile -File scripts/verification/run-all.ps1` 作為回歸基線。T0 已在 clean clone 實跑通過。M5 新增的 gate 擴充進 `scripts/verification/`，並經 review。以重導輸出的方式呼叫 `run-all.ps1` 時，外層要等 Gradle daemon 結束才會返回；判斷完成請看 `END ALL` 行。
 6. Milestone 收尾，順序固定：automated gates → required manual smoke（寫入 tracked note）→ task 與 whole-branch review → docs truth → push feature → 確認 GitHub Actions 雙平台通過 → `--ff-only` 合併 `main` → tag `m5` → 依 worktree 退役流程完成外部備份與驗證，之後才刪除 worktree。
 
 `docs/handoffs/2026-09-24-m4-task9-resume*.md` 已完成，只保留為歷史紀錄，不再是接手入口。
