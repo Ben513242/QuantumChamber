@@ -110,7 +110,7 @@ M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（
   - T0：controller 執行的 clean-clone 基線，不改程式。
   - F1b：controller 代操作的真 client 驗證，四項通過，經獨立 docs review 與 re-review。
   - F3c 實作中。
-  - 之後依 plan 的順序：F3c → F3d → F4a → F4b → F5 → F6 → F7 → milestone 收尾。
+  - 之後依 plan 的順序：F3d → F4a → F4b → F5 → F6 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
@@ -119,7 +119,7 @@ M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（
 1. 本檔。
 2. M5 spec（binding）與 plan。
 3. M5 implementation note：至少讀目前 task 之前各 task 的「交給後續」。F2a 之前的交接，散在各 task 的「觀察（未修改）」與 code-truth 段落，例如 H2→F4b、H4→F3d、F1a→F6；可以 grep `交給 F` 或目標 task 的名稱。
-4. M5 SDD ledger 的 Rulings、目前 task 段落、各段的「交給 Fx」彙整（可 grep `交給 F`），以及「F7 待辦彙整」。
+4. M5 SDD ledger 的 Rulings、目前 task 段落、各段的「交給 Fx」與「交給後續」彙整（可 grep `交給`），以及「F7 待辦彙整」。
 5. `scripts/verification/README.md`：回歸 gate 的用法與預期數字。
 6. 背景資料，需要時才讀：
    - `docs/quantum_superposition_chamber_design.md` §28 的 M5 段落、§32 Code Agent Execution Contract。
