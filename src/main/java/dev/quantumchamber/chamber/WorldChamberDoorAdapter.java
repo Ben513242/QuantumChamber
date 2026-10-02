@@ -12,6 +12,8 @@ import org.slf4j.LoggerFactory;
 /** 共用世界交易與失敗處理；互動回應政策仍由入口決定。 */
 final class WorldChamberDoorAdapter {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
+    /** 門板周圍必須已是 FULL 的水平範圍（格）；與 {@link ChamberRedstoneService#powerNeighborhoodLoaded} 的 ±3 相同。 */
+    private static final int DOOR_NEIGHBORHOOD = 3;
 
     private WorldChamberDoorAdapter() {}
 
@@ -51,24 +53,21 @@ final class WorldChamberDoorAdapter {
     }
 
     /**
-     * 門板 25 格、Controller，以及它們的鄰格所在的 chunk 是否都已是 FULL；只用 {@code getWorldChunk} 查詢，不載入。
-     * 寫入門格時，原版的 neighbor update 與 shape update 會以會載入 chunk 的 {@code getBlockState} 讀相鄰六格，所以範圍是門平面
-     * local x 0–6、法線方向 local z −1～1（Controller 在 local (3,6,0)，也在其中）；高度不影響 chunk。
+     * 門板 25 格向水平各方向外擴 {@value #DOOR_NEIGHBORHOOD} 格（門平面 local x −2～8、法線方向 local z −3～3；Controller 在
+     * local (3,6,0)，也在其中）涵蓋的 chunk 是否都已是 FULL；只用 {@code getWorldChunk} 查詢，不載入。高度不影響 chunk。
+     *
+     * <p>保證的範圍：寫入門格本身、原版一層 neighbor／shape update（相鄰六格），以及這些鄰格一層的紅石讀取（水平 ±3，與
+     * {@link ChamberRedstoneService#powerNeighborhoodLoaded} 的專案慣例相同；例如門外或艙內的紅石元件、強充能、掉落的掛件）
+     * 都只會碰到已是 FULL 的 chunk，不會同步載入。更遠的連鎖反應（例如紅石沿線路一路傳遞）不在保證內。
+     * 每個軸最多跨 2 個 chunk，所以最多查 4 個 chunk。
      */
     private static boolean doorChunksLoaded(ServerWorld world, ChamberFrame frame) {
-        int minX = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE;
-        int minZ = Integer.MAX_VALUE;
-        int maxZ = Integer.MIN_VALUE;
-        for (int x : new int[] {0, ChamberGeometry.OUTER_SIZE - 1}) {
-            BlockPos plane = ChamberGeometry.localToWorld(frame, x, 0, 0);
-            for (BlockPos corner : new BlockPos[] {plane.offset(frame.outwardFacing()), plane.offset(frame.outwardFacing().getOpposite())}) {
-                minX = Math.min(minX, corner.getX());
-                maxX = Math.max(maxX, corner.getX());
-                minZ = Math.min(minZ, corner.getZ());
-                maxZ = Math.max(maxZ, corner.getZ());
-            }
-        }
+        BlockPos first = ChamberGeometry.localToWorld(frame, 1, 1, 0);
+        BlockPos last = ChamberGeometry.localToWorld(frame, ChamberGeometry.OUTER_SIZE - 2, 1, 0);
+        int minX = Math.min(first.getX(), last.getX()) - DOOR_NEIGHBORHOOD;
+        int maxX = Math.max(first.getX(), last.getX()) + DOOR_NEIGHBORHOOD;
+        int minZ = Math.min(first.getZ(), last.getZ()) - DOOR_NEIGHBORHOOD;
+        int maxZ = Math.max(first.getZ(), last.getZ()) + DOOR_NEIGHBORHOOD;
         var manager = world.getChunkManager();
         for (int chunkX = minX >> 4; chunkX <= maxX >> 4; chunkX++) {
             for (int chunkZ = minZ >> 4; chunkZ <= maxZ >> 4; chunkZ++) {

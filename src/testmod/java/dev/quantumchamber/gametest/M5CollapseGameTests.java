@@ -186,50 +186,71 @@ public final class M5CollapseGameTests implements FabricGameTest {
     }
 
     /**
-     * F3b fix round 1（I-1）：門板、Controller 或它們的鄰格所在 chunk 不是 FULL 時，applyTarget 不讀不寫、回 NOT_LOADED，
-     * 也不強制載入。沿用 ChamberNoForceGameTests 的手法：遠處的 chunk 以 radius 0 的 ticket 維持 FULL，鄰接的 chunk 不是 FULL；
-     * fixture 的方塊直接寫進那個 chunk（不經 World.setBlockState），不觸發鄰格更新，也不碰未載入的 chunk。
+     * F3b fix round 1–2：門板周圍水平 ±3 格（local x −2～8、z −3～3，含 Controller）所在的 chunk 有一個不是 FULL 時，
+     * applyTarget 不讀不寫、回 NOT_LOADED，也不強制載入。沿用 ChamberNoForceGameTests 的手法：遠處的 chunk 以 radius 0 的
+     * ticket 維持 FULL，鄰接的 chunk 不是 FULL；fixture 的方塊直接寫進 chunk（不經 World.setBlockState），不觸發鄰格更新，
+     * 也不碰未載入的 chunk。門一律朝北：local x 增加是往西，local z 增加（艙內）是往南。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_not_loaded", tickLimit = 100)
     public void door_target_refuses_unloaded_chunks_without_forcing_them(TestContext context) {
         var world = context.getWorld();
         List<String> failures = new ArrayList<>();
-        // A：門板最左一欄（local x=1）落在東側未載入的 chunk。
-        checkNotLoaded(world, failures, "straddle", new ChunkPos(2176, 2048), new ChunkPos(2177, 2048),
+        // A：門板 local x=1 那一欄落在東側未載入的 chunk；只有 20 格門在已載入的 chunk。
+        checkNotLoaded(world, failures, "straddle", List.of(new ChunkPos(2176, 2048)), new ChunkPos(2177, 2048), 20,
                 loaded -> new ChamberFrame(new BlockPos(loaded.getStartX() + 14, 70, loaded.getStartZ() + 8), Direction.NORTH));
-        // B：門板與 Controller 都在已載入的 chunk，但門外那一排（寫入時的 neighbor update 會讀）在北側未載入的 chunk。
-        checkNotLoaded(world, failures, "outsideRow", new ChunkPos(2240, 2048), new ChunkPos(2240, 2047),
+        // B：門板與 Controller 都在已載入的 chunk，但門外那一排（z=−1，寫入時的 neighbor update 會讀）在北側未載入的 chunk。
+        checkNotLoaded(world, failures, "outsideRow", List.of(new ChunkPos(2240, 2048)), new ChunkPos(2240, 2047), 25,
                 loaded -> new ChamberFrame(new BlockPos(loaded.getStartX() + 8, 70, loaded.getStartZ()), Direction.NORTH));
+        // C：只有外殼外 x=8 那一欄落在西側的 chunk、只有艙內 z=+3 那一排落在南側的 chunk，兩者都已載入；只有西南的對角 chunk
+        // 未載入，它只被 x=8、z=+3 的角落涵蓋，所以同時鎖住西側與南側的 ±3 邊界。
+        checkNotLoaded(world, failures, "diagonal", List.of(new ChunkPos(2304, 2048), new ChunkPos(2303, 2048), new ChunkPos(2304, 2049)),
+                new ChunkPos(2303, 2049), 25,
+                loaded -> new ChamberFrame(new BlockPos(loaded.getStartX() + 4, 70, loaded.getStartZ() + 13), Direction.NORTH));
+        // D：只有外殼外 x=−2 那一欄落在東側未載入的 chunk（x=−1 仍在已載入的 chunk）。
+        checkNotLoaded(world, failures, "eastEdge", List.of(new ChunkPos(2368, 2048)), new ChunkPos(2369, 2048), 25,
+                loaded -> new ChamberFrame(new BlockPos(loaded.getStartX() + 11, 70, loaded.getStartZ() + 8), Direction.NORTH));
+        // E：只有門外 z=−3 那一排落在北側未載入的 chunk（z=−2 仍在已載入的 chunk）。
+        checkNotLoaded(world, failures, "northEdge", List.of(new ChunkPos(2432, 2048)), new ChunkPos(2432, 2047), 25,
+                loaded -> new ChamberFrame(new BlockPos(loaded.getStartX() + 8, 70, loaded.getStartZ() + 2), Direction.NORTH));
         assertWitnesses(context, "F3b 未載入 chunk", failures);
         context.complete();
     }
 
-    private static void checkNotLoaded(ServerWorld world, List<String> failures, String name, ChunkPos loaded, ChunkPos missing,
-                                       java.util.function.Function<ChunkPos, ChamberFrame> frameIn) {
+    /**
+     * {@code loaded} 的每個 chunk 以 ticket 維持 FULL（第一個是 frame 的基準），{@code missing} 不是 FULL；門格只寫進已載入的 chunk，
+     * 結束時還原原狀態並移除 ticket。
+     */
+    private static void checkNotLoaded(ServerWorld world, List<String> failures, String name, List<ChunkPos> loaded, ChunkPos missing,
+                                       int expectedDoorCells, java.util.function.Function<ChunkPos, ChamberFrame> frameIn) {
         var manager = world.getChunkManager();
         String p = name + ".";
         Map<BlockPos, BlockState> originals = new LinkedHashMap<>();
-        // level 33 只維持 loaded 為 FULL，不把鄰接 chunk 提升到 FULL。
-        manager.addTicket(NOT_LOADED_TICKET, loaded, 0, loaded);
+        // level 33 只維持 ticket 所在的 chunk 為 FULL，不把鄰接 chunk 提升到 FULL。
+        loaded.forEach(chunkPos -> manager.addTicket(NOT_LOADED_TICKET, chunkPos, 0, chunkPos));
         try {
-            WorldChunk chunk = world.getChunk(loaded.x, loaded.z);
-            ChamberFrame frame = frameIn.apply(loaded);
+            Map<ChunkPos, WorldChunk> chunks = new LinkedHashMap<>();
+            for (ChunkPos chunkPos : loaded) chunks.put(chunkPos, world.getChunk(chunkPos.x, chunkPos.z));
+            ChamberFrame frame = frameIn.apply(loaded.getFirst());
             witness(failures, p + "missingNotFullBefore", manager.getWorldChunk(missing.x, missing.z) == null);
             BlockState closed = ModBlocks.QUANTUM_BULKHEAD.getDefaultState();
             for (BlockPos pos : door(frame)) {
-                if (!new ChunkPos(pos).equals(loaded)) continue; // 落在未載入 chunk 的門格不寫
+                WorldChunk chunk = chunks.get(new ChunkPos(pos));
+                if (chunk == null) continue; // 落在未載入 chunk 的門格不寫
                 originals.put(pos.toImmutable(), chunk.getBlockState(pos));
                 chunk.setBlockState(pos, closed, false);
             }
-            witness(failures, p + "doorPartlyInMissing", originals.size() == (name.equals("straddle") ? 20 : 25));
+            witness(failures, p + "doorCellsInLoadedChunks", originals.size() == expectedDoorCells);
             ApplyResult result = attempt(() -> new ChamberDoorService().applyTarget(world, frame, DoorState.sealed(Direction.NORTH)));
             witness(failures, p + "notLoaded", result != null && result.outcome() == Outcome.NOT_LOADED && !result.activationBlocked());
             witness(failures, p + "missingStillNotFull", manager.getWorldChunk(missing.x, missing.z) == null);
-            witness(failures, p + "nothingWritten", originals.keySet().stream().allMatch(pos -> chunk.getBlockState(pos).equals(closed)));
+            witness(failures, p + "nothingWritten", originals.keySet().stream()
+                    .allMatch(pos -> chunks.get(new ChunkPos(pos)).getBlockState(pos).equals(closed)));
         } finally {
-            WorldChunk chunk = manager.getWorldChunk(loaded.x, loaded.z);
-            if (chunk != null) originals.forEach((pos, state) -> chunk.setBlockState(pos, state, false));
-            manager.removeTicket(NOT_LOADED_TICKET, loaded, 0, loaded);
+            originals.forEach((pos, state) -> {
+                WorldChunk chunk = manager.getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4);
+                if (chunk != null) chunk.setBlockState(pos, state, false);
+            });
+            loaded.forEach(chunkPos -> manager.removeTicket(NOT_LOADED_TICKET, chunkPos, 0, chunkPos));
         }
     }
 

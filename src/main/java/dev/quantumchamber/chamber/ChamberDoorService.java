@@ -46,9 +46,11 @@ public final class ChamberDoorService {
      *
      * <p><b>只能在 server thread 呼叫</b>，否則丟 {@link IllegalStateException}。
      *
-     * <p><b>前提：相關 chunk 都已是 FULL。</b>門板 25 格、Controller，以及寫入時 neighbor update 會讀到的鄰格（門平面
-     * local x 0–6、門平面前後各一格）所在的 chunk 只要有一個不是 FULL，就不讀不寫任何一格、不載入 chunk，回
-     * {@link ApplyResult.Outcome#NOT_LOADED}。這個方法不會在 server thread 上同步載入 chunk。
+     * <p><b>前提：門板周圍的 chunk 都已是 FULL。</b>門板 25 格向水平各方向外擴 3 格（門平面 local x −2～8、法線方向
+     * local z −3～3，Controller 也在其中）所在的 chunk 只要有一個不是 FULL，就不讀不寫任何一格、不載入 chunk，回
+     * {@link ApplyResult.Outcome#NOT_LOADED}。通過之後的保證範圍：寫入門格本身、原版一層 neighbor／shape update，以及這些鄰格
+     * 一層的紅石讀取（水平 ±3，與 {@code ChamberRedstoneService.powerNeighborhoodLoaded} 的專案慣例相同）都不會載入 chunk；
+     * 更遠的連鎖反應（例如紅石沿線路一路傳遞）不在保證內。
      *
      * <p>交易與 {@link #toggle} 相同：只寫目前不是 target 的格（每格先記下自己的原狀態），在
      * {@link ChamberProtectionService} 的授權寫入中執行，任何一格失敗就把已改過的格逐一 rollback 回各自的原狀態；
@@ -208,7 +210,7 @@ public final class ChamberDoorService {
             /** 25 格原本就是 target：沒有寫入、不刷新，activationBlocked 不變（解除它需要一次 APPLIED）。 */
             UNCHANGED,
             /**
-             * 門板、Controller 或它們鄰格所在的 chunk 有一個不是 FULL：沒有讀寫任何一格，也沒有載入 chunk。
+             * 門板周圍水平 ±3 格（含 Controller）所在的 chunk 有一個不是 FULL：沒有讀寫任何一格，也沒有載入 chunk。
              * caller 等之後的 tick（chunk 已載入時）再試；不要為此強制載入，也不要設 activationBlocked。
              */
             NOT_LOADED,
