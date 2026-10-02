@@ -21,6 +21,8 @@ jobs:
         run: ./gradlew clean build
       - name: 非 Windows GameTest 平台契約
         run: ./gradlew runGameTest --no-daemon
+      - name: 非 Windows M5 GameTest
+        run: ./gradlew runGameTestM5 --no-daemon
       - name: 確認非 Windows 跨平台案例確實執行
         shell: pwsh
         run: |
@@ -34,6 +36,29 @@ jobs:
             $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
               throw "必要跨平台 GameTest 未實際通過：$testName"
+            }
+          }
+          # M5 run（runGameTestM5，M5 plan 決策 6）：batch 前綴 m5_universe 的案例只在這個 run 執行。名稱以 _windows 結尾的案例在非 Windows
+          # 平台略過，不列入；其餘每一個都必須出現在 M5 XML 並實際通過。嚴格掃描（@GameTest 緊接方法宣告）與寬鬆掃描（batchId 字串）的數量
+          # 不一致代表宣告格式漂移，嚴格掃描會漏要求，必須失敗。
+          [xml]$m5Tests = Get-Content -Raw 'build/gametest-m5-results.xml'
+          $m5Declared = @()
+          foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*GameTests.java') {
+            $source = Get-Content -Raw -LiteralPath $file.FullName
+            $strictM5 = @([regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+)\(TestContext') | Where-Object { $_.Groups['annotation'].Value -match 'batchId\s*=\s*"m5_universe' })
+            $looseM5 = [regex]::Matches($source, 'batchId\s*=\s*"m5_universe').Count
+            if ($strictM5.Count -ne $looseM5) {
+              throw "M5 GameTest 宣告掃描不一致（$($file.Name)）：嚴格掃描 $($strictM5.Count) 個，寬鬆掃描 $looseM5 個"
+            }
+            foreach ($match in $strictM5) {
+              $m5Declared += $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
+            }
+          }
+          if ($m5Declared.Count -eq 0) { throw '找不到任何 M5 GameTest 宣告，守門規則失效' }
+          foreach ($testName in @($m5Declared | Where-Object { $_ -notlike '*_windows' })) {
+            $node = $m5Tests.SelectSingleNode("//testcase[@name='$testName']")
+            if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
+              throw "必要 M5 GameTest 未實際通過：$testName"
             }
           }
       - name: Upload mod JAR
@@ -51,7 +76,9 @@ jobs:
           path: |
             build/test-results/test/*.xml
             build/gametest-results.xml
+            build/gametest-m5-results.xml
             run/gametest/logs/latest.log
+            run/gametest-m5/logs/latest.log
           if-no-files-found: error
 
   windows-native:
@@ -65,6 +92,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Windows 原生建置與 GameTest
         run: ./gradlew.bat clean build runGameTest --rerun-tasks --no-daemon
+      - name: Windows 原生 M5 GameTest
+        run: ./gradlew.bat runGameTestM5 --no-daemon
       - name: 確認 Windows 原生案例確實執行
         shell: pwsh
         run: |
@@ -80,6 +109,8 @@ jobs:
           }
           # 非 Windows 專屬拒絕案例在 Windows 合法略過，不套用全 XML 零 skipped。
           [xml]$gameTests = Get-Content -Raw 'build/gametest-results.xml'
+          # M5 run（runGameTestM5，M5 plan 決策 6）的 XML：batch 前綴 m5_universe 的案例只在這個 run 執行。
+          [xml]$m5Tests = Get-Content -Raw 'build/gametest-m5-results.xml'
           $requiredGameTests = @(
             'trusted_offline_cohort_cannot_be_dropped_before_release_windows',
             'trusted_return_source_snapshot_changes_are_rejected_windows',
@@ -160,17 +191,20 @@ jobs:
             }
           }
           # 通則（補強上方清單，不取代）：名稱以 _windows 結尾的案例在非 Windows 平台略過，在 Windows 必須全部實際通過。
-          # 1) XML 內每個 _windows 案例都不得有 failure／error／skipped。
+          # 1) default 與 M5 兩份 XML 內每個 _windows 案例都不得有 failure／error／skipped。
           $windowsCases = @($gameTests.SelectNodes('//testcase') | Where-Object { $_.name -like '*_windows' })
-          foreach ($case in $windowsCases) {
+          $m5WindowsCases = @($m5Tests.SelectNodes('//testcase') | Where-Object { $_.name -like '*_windows' })
+          foreach ($case in @($windowsCases + $m5WindowsCases)) {
             if ($null -ne $case.failure -or $null -ne $case.error -or $null -ne $case.skipped) {
               $problems.Add("Windows 原生 _windows GameTest 未實際通過：$($case.name)")
             }
           }
-          # 2) testmod 原始碼宣告的每個 _windows 案例都必須出現在 XML（不可缺席）；legacy 專用 batch 只在 runGameTestLegacy 執行，不在此列。
-          #    嚴格掃描取得 annotation 以排除 legacy batch；另以寬鬆掃描（任何 void <name>_windows( 宣告）交叉核對同一檔的名稱集合，
+          # 2) testmod 原始碼宣告的每個 _windows 案例都必須出現在所屬 run 的 XML（不可缺席）：legacy 專用 batch 只在 runGameTestLegacy 執行，
+          #    不在此列；batch 前綴 m5_universe 的案例只在 runGameTestM5 執行，要求出現在 M5 XML；其餘要求出現在 default XML。
+          #    嚴格掃描取得 annotation 以區分 batch；另以寬鬆掃描（任何 void <name>_windows( 宣告）交叉核對同一檔的名稱集合，
           #    不一致代表宣告格式漂移（例如 @GameTest 與方法間多了 annotation），嚴格掃描會漏要求，必須失敗。
           $declared = @()
+          $declaredM5 = @()
           foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*GameTests.java') {
             $source = Get-Content -Raw -LiteralPath $file.FullName
             $strict = @([regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+_windows)\(TestContext'))
@@ -182,8 +216,12 @@ jobs:
               $problems.Add("_windows 宣告掃描不一致（$($file.Name)）：僅寬鬆掃描 [$($onlyLoose -join ', ')]；僅嚴格掃描 [$($onlyStrict -join ', ')]")
             }
             foreach ($match in $strict) {
-              if ($match.Groups['annotation'].Value -notmatch 'batchId\s*=\s*"m4_legacy_runtime"') {
-                $declared += $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
+              $annotation = $match.Groups['annotation'].Value
+              $caseName = $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
+              if ($annotation -match 'batchId\s*=\s*"m5_universe') {
+                $declaredM5 += $caseName
+              } elseif ($annotation -notmatch 'batchId\s*=\s*"m4_legacy_runtime"') {
+                $declared += $caseName
               }
             }
           }
@@ -192,10 +230,36 @@ jobs:
           foreach ($testName in $declared) {
             if ($testName -notin $present) { $problems.Add("Windows 原生 _windows GameTest 缺席：$testName") }
           }
+          $m5Present = @($m5WindowsCases | ForEach-Object { $_.name })
+          foreach ($testName in $declaredM5) {
+            if ($testName -notin $m5Present) { $problems.Add("Windows 原生 M5 _windows GameTest 缺席：$testName") }
+          }
+          # 3) M5 run：每個宣告在 batch 前綴 m5_universe 的案例（不論名稱）都必須出現在 M5 XML 並實際通過。
+          #    嚴格掃描（@GameTest 緊接方法宣告）與寬鬆掃描（batchId 字串）的數量不一致代表宣告格式漂移，必須失敗。
+          $m5Declared = @()
+          foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*GameTests.java') {
+            $source = Get-Content -Raw -LiteralPath $file.FullName
+            $strictM5 = @([regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+)\(TestContext') | Where-Object { $_.Groups['annotation'].Value -match 'batchId\s*=\s*"m5_universe' })
+            $looseM5 = [regex]::Matches($source, 'batchId\s*=\s*"m5_universe').Count
+            if ($strictM5.Count -ne $looseM5) {
+              $problems.Add("M5 GameTest 宣告掃描不一致（$($file.Name)）：嚴格掃描 $($strictM5.Count) 個，寬鬆掃描 $looseM5 個")
+            }
+            foreach ($match in $strictM5) {
+              $m5Declared += $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
+            }
+          }
+          if ($m5Declared.Count -eq 0) { $problems.Add('找不到任何 M5 GameTest 宣告，守門規則失效') }
+          foreach ($testName in $m5Declared) {
+            $node = $m5Tests.SelectSingleNode("//testcase[@name='$testName']")
+            if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
+              $problems.Add("必要 M5 GameTest 未實際通過：$testName")
+            }
+          }
           if ($problems.Count -gt 0) {
             throw ("Windows 原生守門未通過（$($problems.Count) 項）：`n" + ($problems -join "`n"))
           }
           Write-Output "Windows 原生 _windows GameTest：宣告 $($declared.Count) 個（嚴格與寬鬆掃描一致），XML $($windowsCases.Count) 個，全部實際通過"
+          Write-Output "M5 GameTest：宣告 $($m5Declared.Count) 個（其中 _windows $($declaredM5.Count) 個），M5 XML $($m5Tests.SelectNodes('//testcase').Count) 個，全部實際通過"
       - name: 上傳 Windows 原生測試證據
         if: always()
         uses: actions/upload-artifact@v4
@@ -205,5 +269,7 @@ jobs:
             build/libs/*.jar
             build/test-results/test/*.xml
             build/gametest-results.xml
+            build/gametest-m5-results.xml
             run/gametest/logs/latest.log
+            run/gametest-m5/logs/latest.log
           if-no-files-found: error

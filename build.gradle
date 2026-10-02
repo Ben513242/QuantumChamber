@@ -121,6 +121,17 @@ loom {
             vmArg '-Dquantumchamber.gametest.legacyOnly=true'
             vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.file('gametest-legacy-results.xml').get().asFile}"
         }
+        // M5 plan 決策 6：會配置或物化 Universe、或會留下 M5 record 的 GameTest（batch id 前綴 m5_universe）在獨立的 fresh 世界執行，
+        // 不放在共用的 default run（它的 M4 boundary oracle 要求整個 suite 前後的 catalog 與 world keys 不變）。
+        gameTestM5 {
+            server()
+            name 'M5 Universe Game Test'
+            source sourceSets.testmod
+            runDir 'run/gametest-m5'
+            vmArg '-Dfabric-api.gametest'
+            vmArg '-Dquantumchamber.gametest.m5Only=true'
+            vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.file('gametest-m5-results.xml').get().asFile}"
+        }
     }
 }
 

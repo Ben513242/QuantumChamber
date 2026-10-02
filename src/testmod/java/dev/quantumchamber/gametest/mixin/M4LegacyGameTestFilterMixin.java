@@ -8,13 +8,23 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** 僅 testmod：legacy 用獨立新 save；正常完整 run 只排除此一個專用 batch。 */
+/**
+ * 僅 testmod：依 run 選擇 batch，三個 run 各用獨立的新 save。
+ * legacy run（legacyOnly）只跑 m4_legacy_runtime；M5 run（m5Only，plan 決策 6）只跑 batch id 前綴 m5_universe 的 test；
+ * default run 排除這兩者，其餘（含 m5_collapse_、m5_f3a_）全部執行。
+ */
 @Mixin(value=FabricGameTestHelper.class,remap=false)
 abstract class M4LegacyGameTestFilterMixin {
     @Inject(method="getTestFunctions",at=@At("RETURN"),cancellable=true,remap=false)
     private static void quantumchamberTest$isolatedLegacy(CallbackInfoReturnable<Collection<TestFunction>> callback) {
         boolean legacy=Boolean.getBoolean("quantumchamber.gametest.legacyOnly");
-        var selected=callback.getReturnValue().stream().filter(test -> test.batchId().equals("m4_legacy_runtime")==legacy).toList();
+        boolean m5=Boolean.getBoolean("quantumchamber.gametest.m5Only");
+        if(legacy && m5) throw new IllegalStateException("legacyOnly 與 m5Only 不可同時設定");
+        var selected=callback.getReturnValue().stream().filter(test -> {
+            boolean legacyBatch=test.batchId().equals("m4_legacy_runtime");
+            boolean m5Batch=test.batchId().startsWith("m5_universe");
+            return legacy ? legacyBatch : m5 ? m5Batch : !legacyBatch && !m5Batch;
+        }).toList();
         if(selected.isEmpty() || legacy && selected.size()!=1) throw new IllegalStateException("原生測試隔離範圍不符");
         // 僅 RED 取證用：明確列出的 batch 子集；未設定時完整 suite 不受影響。
         var only=System.getProperty("quantumchamber.gametest.onlyBatches","");

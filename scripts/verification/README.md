@@ -2,6 +2,8 @@
 
 M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD workspace `.superpowers/sdd/2026-09-21-m4-candidate-doors/`，刪除 worktree 或 `.superpowers/` 後就無法重跑；這裡的腳本只改路徑、參數與名稱，安全行為（fresh world move／逐檔 hash exact restore、owned roots、拒絕覆寫、main-only 三層 oracle、JAR testmod 檢查）與原始檔相同；PID 過濾等少數邏輯差異與拿掉的核對，逐項列在「來源對照」。
 
+M5 的 gate 擴充也放在這裡。M5 F3c 新增 M5 GameTest run（M5 plan 決策 6）：會配置或物化 Universe、或會留下 M5 record 的 GameTest（batch 前綴 `m5_universe`），在獨立的 fresh 世界 `run/gametest-m5` 執行，不放在 default run。
+
 ## 環境需求
 
 - Windows，repo 位於本機固定 NTFS 磁碟（Windows checkpoint 只接受本機固定 NTFS，`_windows` GameTest 與 checkpoint JUnit 都依賴它）。
@@ -15,13 +17,13 @@ M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD 
 
 | 檔案 | 用途 |
 | --- | --- |
-| `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`） |
+| `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`M5GameTest`（`runGameTestM5`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`）。三個 GameTest run（default、legacy、M5）都核對 XML 是本次 run 寫出的，而且 testcase 集合恰好等於原始碼依 batch 前綴矩陣屬於該 run 的宣告（`scope.json`）：`m4_legacy_runtime` 屬 legacy run，前綴 `m5_universe` 屬 M5 run，其餘屬 default run。default 與 legacy 另核對 M4 boundary oracle；M5 run 不註冊 boundary probe，改核對每個 M5 test 自己斷言的 catalog 增量（`m5-oracle.json`） |
 | `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod；另核對 world keys、正常停止與 exact restore |
 | `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，24 phases，每個 phase 一個 JVM |
-| `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；可加 XML／原始碼 mutation 證明規則會失敗 |
+| `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；fixture 同時放 default 與 M5 兩份 GameTest XML。可加 XML／原始碼 mutation 證明規則會失敗 |
 | `runtime.init.gradle` | 所有 gate 的 Gradle 呼叫都以 `-I` 載入：run* 接 stdin、寫 `classload-<pid>.log` |
 | `probe.init.gradle` | M3 gate 另外載入：把 `-Ptask9.*` 轉成 probe 的 system property |
-| `run-all.ps1` | 依序跑 Full、Legacy、Main＋oracle、M3、M4 recovery、CI 綠燈規則（Windows／Ubuntu 兩個 step），最後以唯讀 summary 核對 |
+| `run-all.ps1` | 依序跑 Full、Legacy、M5 GameTest、Main＋oracle、M3、M4 recovery、CI 綠燈規則（Windows／Ubuntu 兩個 step），最後以唯讀 summary 核對 |
 
 ## 執行
 
@@ -47,40 +49,44 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 $v = 'scripts/verification'
 & "$v/gates.ps1" -Mode Full -Label full            # 印出 GATE_ROOT=<gate root>
 & "$v/gates.ps1" -Mode Legacy -Label legacy
+& "$v/gates.ps1" -Mode M5GameTest -Label m5-gametest
 & "$v/gates.ps1" -Mode Main -Label main-only
 & "$v/main-oracle.ps1" -Gate <Main 的 GATE_ROOT>
 & "$v/gates.ps1" -Mode M3 -Label m3                # -Only universe 或 -Only transfer 只跑一條
 & "$v/m4-recovery-probe.ps1"                       # -Only chain,low 只跑指定 chain／scenario
 & "$v/ci-rule-check.ps1" -Label win-green -Workflow .github/workflows/build.yml `
     -Step '確認 Windows 原生案例確實執行' -GameTestXml <Full gate>/result-build/gametest-results.xml `
+    -M5GameTestXml <M5GameTest gate>/result-build/gametest-m5-results.xml `
     -JUnitDir <Full gate>/result-build/test-results/test -SourceRoot src/testmod/java
 ```
 
-`ci-rule-check.ps1` 不因規則 FAIL 而 throw，判定看 `<root>/result.json` 的 `verdict`。要證明規則會擋下缺漏或宣告漂移，加 `-Mutation drop|skip|fail -MutationTarget <XML testcase name>` 或 `-SourceMutation interpose-annotation -SourceTarget <方法名稱>`，預期 `verdict=FAIL`。`-Mode GameTest`／`Windows`、`-Only` 與 mutation 模式在 2026-10-01 沒有單獨實跑。
+`ci-rule-check.ps1` 不因規則 FAIL 而 throw，判定看 `<root>/result.json` 的 `verdict`。要證明規則會擋下缺漏或宣告漂移，加 `-Mutation drop|skip|fail -MutationTarget <XML testcase name>`（`-MutationXml m5` 改對 M5 XML）或 `-SourceMutation interpose-annotation -SourceTarget <方法名稱>`，預期 `verdict=FAIL`。`-SourceMutation rename-windows` 把方法與它的 testcase 一起改名為 `<名稱>_windows`，用來驗證 `_windows` 規則的納入與排除（M5 的 `_windows` 案例：Windows step 要求出現在 M5 XML 並實際通過，Ubuntu step 不要求）。`-Mode GameTest`／`Windows`、`-Only` 與 mutation 模式在 2026-10-01 沒有單獨實跑；M5 F3c 實跑過的 mutation 記在 M5 implementation note 的 F3c 段。
 
 ## Evidence 位置
 
 - `-EvidenceRoot`：預設 `<repo>/.superpowers/verification/`（gitignored）。只接受 repo 內、路徑無 reparse point、且被 gitignore 的目錄，否則在建立任何東西之前就拒絕。
 - `run-all.ps1` 每次建立新的 `run-all-<GUID>/`，內含 `console.log`、`gate-<label>-<GUID>/`、`recovery-run-<runId>.json`、`ci-<label>-<GUID>/` 與 `summary.json`。個別腳本直接在 `-EvidenceRoot` 下建立自己的 root。
 - 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`。目錄不存在時依程式應由 harness 建立，但還沒在沒有 `.superpowers/` 的 clean clone 上實跑。M3 gate root 另存每個 phase 的 receipt 複本。
-- `run/` 內：GameTest 與 main-only 把 `run/gametest/world`、`run/gametest-legacy/world`、`run/server` 移到 `<原路徑>.task9-backup-<GUID>-<tag>`，跑完後把 fresh 結果移進 gate root 的 `*-fresh/`，再把原檔移回並逐檔比對 hash（結果在 `<tag>-restore.json`）。M3 與 M4 recovery 每次新建 `run/m3-universe-m4-task9-<GUID>`、`run/m3-transfer-m4-task9-<GUID>`、`run/m4-recovery-<GUID>-<scenario>`，跑完保留。
+- `run/` 內：GameTest 與 main-only 把 `run/gametest/world`、`run/gametest-legacy/world`、`run/gametest-m5/world`、`run/server` 移到 `<原路徑>.task9-backup-<GUID>-<tag>`，跑完後把 fresh 結果移進 gate root 的 `*-fresh/`，再把原檔移回並逐檔比對 hash（結果在 `<tag>-restore.json`）。M3 與 M4 recovery 每次新建 `run/m3-universe-m4-task9-<GUID>`、`run/m3-transfer-m4-task9-<GUID>`、`run/m4-recovery-<GUID>-<scenario>`，跑完保留。
 - 失敗時保留全部 root 與 receipt，修正後以新的 root 重跑，不在失敗 root 上改判。若 restore 失敗，原檔仍在 `.task9-backup-*`，先查明原因再手動移回，不要刪除。
 
-## 預期結果（code `ba854e8`）
+## 預期結果（M5 F3c）
 
-`ba854e8` 之後沒有 `src/`、build 檔或 `.github/` 的變更（只有文件與本目錄）。2026-10-01 在 HEAD `e55b7f9` 以 `run-all.ps1` 實跑（約 14 分鐘：Full 約 3.5 分、M3 約 2.5 分、M4 recovery 約 6.5 分）。當時本目錄尚未 commit，依上方規則以 C＝`c262b2a` 採計：`HARNESS` 等於該 commit 的檔案內容，且 `e55b7f9..c262b2a` 沒有 `src/`、build 檔或 `.github/` 的變更。`SUMMARY` 與 2026-09-30 integration fix round 4（`ifix4-final-green.ps1`）的數字一致。程式或測試有變更時，數字以新的 run 為準。
+M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為準；每個 task 的數字變化記在 M5 implementation note（`docs/implementation-notes/2026-10-01-m5-collapse-passage.md`）。下表是 M5 F3c 的 code commit 上以 `run-all.ps1` 實跑的結果，commit、run root 與耗時記在 note 的 F3c 段。M1–M4 收尾時（code `ba854e8`，2026-10-01 在 HEAD `e55b7f9` 實跑、以 C＝`c262b2a` 採計）的數字是：default 146/146（`_windows` 73）、per-test receipts 28＋1、JUnit 403、release 299 entries（256 classes）、sources 190，其餘各項與下表相同（當時沒有 M5 GameTest 與 batch 範圍兩項）。
 
 | 項目 | 預期 |
 | --- | --- |
-| default GameTest | 146/146，其中 `_windows` 73；0 failure／error／skipped |
-| per-test Universe probe receipts | default 28＋legacy 1，全部 exact PASS |
-| JUnit | 403，0 failure／error，2 skipped（只限 `NonWindowsPlayerCheckpointStoreTest`）；Windows checkpoint 三個 class 共 17 個實際執行 |
+| default GameTest | 160/160，其中 `_windows` 80；0 failure／error／skipped |
+| per-test Universe probe receipts | default 38＋legacy 1，全部 exact PASS |
+| JUnit | 560，0 failure／error，2 skipped（只限 `NonWindowsPlayerCheckpointStoreTest`）；Windows checkpoint 三個 class 共 17 個實際執行 |
 | legacy GameTest | 1/1 |
+| M5 GameTest | 1/1；沒有 M4 boundary receipt；每個 M5 test 的 catalog 增量都已核對（sanity test 0 → 1 筆） |
+| batch 範圍 | default、legacy、M5 三個 run 的 XML 都恰好等於原始碼中屬於該 run 的宣告（160、1、1） |
 | main-only oracle | PASS（三層 testmod 命中 0、world keys exact、exact restore） |
 | M3 | lifecycle 4＋transfer 5 receipts PASS |
 | M4 recovery | 24/24 phases，各自獨立 JVM |
-| CI 綠燈規則 | Windows、Ubuntu 兩個 step 都 PASS |
-| JAR | release 299 entries（256 classes）、sources 190；testmod／gametest／probe 命中 0（`dev/quantumchamber/compat/ModPresenceProbe` 是合法的 production class） |
+| CI 綠燈規則 | Windows、Ubuntu 兩個 step 都 PASS（讀 default 與 M5 兩份 XML） |
+| JAR | release 359 entries（312 classes）、sources 210；testmod／gametest／probe 命中 0（`dev/quantumchamber/compat/ModPresenceProbe` 是合法的 production class） |
 
 ## 來源對照
 
@@ -88,13 +94,13 @@ $v = 'scripts/verification'
 
 | tracked 檔 | 原始檔 | 原始檔 SHA-256 | 相對原始檔的改動 |
 | --- | --- | --- | --- |
-| `gates.ps1` | `task9-gates.ps1` | `34eaecabf9d4685771d53482130c04d496bbdf3e396f6c2d6fc06055249851e8` | 路徑與參數化；gate root 改名 `gate-<Label>-<GUID>`，輸出 `GATE_ROOT=`；移除 `RedOwner` 模式（Task 9 owner 修正前的一次性 RED；現行 testmod 已接受 evidenceOwner，該 RED 的前提不再成立）；classload／m4-boundary 只複製本次觀察到的 JVM PID（整合審查 R1 指定併入本 task）；`-Mode` 必填，`-Label`／`-Only` 加輸入驗證 |
+| `gates.ps1` | `task9-gates.ps1` | `34eaecabf9d4685771d53482130c04d496bbdf3e396f6c2d6fc06055249851e8` | 路徑與參數化；gate root 改名 `gate-<Label>-<GUID>`，輸出 `GATE_ROOT=`；移除 `RedOwner` 模式（Task 9 owner 修正前的一次性 RED；現行 testmod 已接受 evidenceOwner，該 RED 的前提不再成立）；classload／m4-boundary 只複製本次觀察到的 JVM PID（整合審查 R1 指定併入本 task）；`-Mode` 必填，`-Label`／`-Only` 加輸入驗證。M5 F3c：新增 `M5GameTest` 模式；三個 GameTest run 加上 XML 新鮮度與 batch 範圍核對，M5 run 改核對逐 test 的 catalog 增量 |
 | `main-oracle.ps1` | `task9-main-oracle.ps1` | `7175c03aff38e3c600e06c75248f3a81c660b6a671bbe142c627a54e48bba96b` | 只改 repo root |
 | `m4-recovery-probe.ps1` | `run-m4-recovery-probe.ps1` | `00fca9fe186d5efac7d6df5d30dd7503c15d0d37f8a8b718977faccdb0bb0874` | 路徑與參數化；彙整 JSON 改寫到 `-EvidenceRoot`，已存在時拒絕覆寫 |
-| `ci-rule-check.ps1` | `ifix3-ci-rule-check.ps1`（取代 `ifix2-ci-rule-check.ps1`） | `279b7b9f46d729ec78bfe72de0e201c09d84a772c50d99751c6e0614f4ded808` | root 改為 `-EvidenceRoot`；輸出標記 `CI_RULE`；注入的失敗訊息改為「CI 規則檢查刻意注入的失敗」；`-Label` 加輸入驗證 |
+| `ci-rule-check.ps1` | `ifix3-ci-rule-check.ps1`（取代 `ifix2-ci-rule-check.ps1`） | `279b7b9f46d729ec78bfe72de0e201c09d84a772c50d99751c6e0614f4ded808` | root 改為 `-EvidenceRoot`；輸出標記 `CI_RULE`；注入的失敗訊息改為「CI 規則檢查刻意注入的失敗」；`-Label` 加輸入驗證。M5 F3c：必填 `-M5GameTestXml`，fixture 同時寫入兩份 XML；新增 `-MutationXml` 與 `-SourceMutation rename-windows` |
 | `runtime.init.gradle` | `task9-runtime.init.gradle` | `40cccdea23acc6520e92ab03198acd2881132b54962dfca53216e4679dbe75e0` | 只加註解 |
 | `probe.init.gradle` | `task9-probe.init.gradle` | `3d14ca4f399a8cc75797b12f4d38c73b02ca149500ef024c53f212634e3c678d` | 只加註解 |
-| `run-all.ps1` | `ifix4-final-green.ps1`＋`ifix3-build-summary.ps1` §1–§8 | `dcdc2bbbd7c7461cea3712c0f4bc3e67c91d033437c6ee8f2d82464ffdd2b53d`／`63de6da09187a39a4f4b2f472daa2143bca78ff36ae98d6b0daa5b659fab7bc5` | 原本以名稱前綴在 SDD 目錄取最新建立的 root，改為在本次 run root 內要求恰一個；CI 綠燈結果改為 `verdict` 非 PASS 即失敗；summary 去掉該輪固定數量與一次性 RED/GREEN 核對，只保留通用不變式並輸出數字；核對執行前後 HEAD 相同。原 summary 另有幾項核對沒有保留：tracked 變更即失敗（改為 `STATUS` 行與上方採計規則）、workflow 必須等於 HEAD 版本、`M4CandidateDoorGameTests` 每個 `@GameTest` 都呼叫 begin、非 Windows gate 的案例白名單、`Set-StrictMode` |
+| `run-all.ps1` | `ifix4-final-green.ps1`＋`ifix3-build-summary.ps1` §1–§8 | `dcdc2bbbd7c7461cea3712c0f4bc3e67c91d033437c6ee8f2d82464ffdd2b53d`／`63de6da09187a39a4f4b2f472daa2143bca78ff36ae98d6b0daa5b659fab7bc5` | 原本以名稱前綴在 SDD 目錄取最新建立的 root，改為在本次 run root 內要求恰一個；CI 綠燈結果改為 `verdict` 非 PASS 即失敗；summary 去掉該輪固定數量與一次性 RED/GREEN 核對，只保留通用不變式並輸出數字；核對執行前後 HEAD 相同。原 summary 另有幾項核對沒有保留：tracked 變更即失敗（改為 `STATUS` 行與上方採計規則）、workflow 必須等於 HEAD 版本、`M4CandidateDoorGameTests` 每個 `@GameTest` 都呼叫 begin、非 Windows gate 的案例白名單、`Set-StrictMode`。M5 F3c：新增 M5 GameTest 步驟；CI 規則同時讀 M5 XML；summary 加上 M5 XML、三個 run 的 batch 範圍與 M5 oracle |
 
 ## 未 tracked 的腳本
 

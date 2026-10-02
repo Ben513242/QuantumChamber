@@ -1,24 +1,29 @@
 # ci-rule-check.ps1：把 workflow 某個 step 的 `run: |` 原文逐字抽出，在 fixture 目錄（build/ 與 src/testmod/java 的複本）
 # 以與 GitHub Actions pwsh 相同的方式執行（前置 $ErrorActionPreference='stop'，dot-source）。
-# Mutation／SourceMutation 只改 fixture 內的複本：XML 缺漏／skip／fail，或在 @GameTest 與方法之間插入另一個 annotation（宣告格式漂移）。
+# fixture 同時放 default 與 M5 兩份 GameTest XML（build/gametest-results.xml、build/gametest-m5-results.xml；M5 F3c）。
+# Mutation／SourceMutation 只改 fixture 內的複本：XML 缺漏／skip／fail（-MutationXml 選 default 或 m5），在 @GameTest 與方法之間插入另一個
+# annotation（宣告格式漂移），或把方法改名為 <名稱>_windows（XML 中對應的 testcase 一起改名；用來驗證 _windows 規則的納入與排除）。
 # 只讀輸入、只寫本 root；本檔不因 FAIL 而 throw，結果見 <root>/result.json 的 verdict（呼叫端自行判定預期 PASS／FAIL）。
 # 來源：.superpowers/sdd/2026-09-21-m4-candidate-doors/ifix3-ci-rule-check.ps1（SHA-256 279b7b9f46d729ec78bfe72de0e201c09d84a772c50d99751c6e0614f4ded808），
 # 其前身 ifix2-ci-rule-check.ps1 沒有 SourceMutation。
-# 相對來源的改動：root 改為 <EvidenceRoot>/ci-<Label>-<GUID>；輸出標記改為 CI_RULE。
+# 相對來源的改動：root 改為 <EvidenceRoot>/ci-<Label>-<GUID>；輸出標記改為 CI_RULE；M5 F3c 加上 M5 XML、-MutationXml 與 rename-windows。
 # 參數：
-#   -Label -Workflow -Step -GameTestXml -JUnitDir -SourceRoot  必填；Step 為 workflow 內唯一的 step 名稱
-#   -Mutation drop｜skip｜fail＋-MutationTarget（XML testcase name）；-SourceMutation interpose-annotation＋-SourceTarget（方法名稱）
+#   -Label -Workflow -Step -GameTestXml -M5GameTestXml -JUnitDir -SourceRoot  必填；Step 為 workflow 內唯一的 step 名稱
+#   -Mutation drop｜skip｜fail＋-MutationTarget（XML testcase name）＋-MutationXml default｜m5（預設 default）
+#   -SourceMutation interpose-annotation｜rename-windows＋-SourceTarget（方法名稱）；rename-windows 之後，-MutationTarget 用改名後的名稱
 #   -EvidenceRoot  root 的上層；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 param(
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string]$Label,
     [Parameter(Mandatory)][string]$Workflow,
     [Parameter(Mandatory)][string]$Step,
     [Parameter(Mandatory)][string]$GameTestXml,
+    [Parameter(Mandatory)][string]$M5GameTestXml,
     [Parameter(Mandatory)][string]$JUnitDir,
     [Parameter(Mandatory)][string]$SourceRoot,
     [ValidateSet('none','drop','skip','fail')][string]$Mutation='none',
     [string]$MutationTarget='',
-    [ValidateSet('none','interpose-annotation')][string]$SourceMutation='none',
+    [ValidateSet('default','m5')][string]$MutationXml='default',
+    [ValidateSet('none','interpose-annotation','rename-windows')][string]$SourceMutation='none',
     [string]$SourceTarget='',
     [string]$EvidenceRoot=''
 )
@@ -63,6 +68,8 @@ New-Item -ItemType Directory -Path (Join-Path $fixture 'build/test-results/test'
 Copy-Item -Path (Join-Path $JUnitDir 'TEST-*.xml') -Destination (Join-Path $fixture 'build/test-results/test')
 New-Item -ItemType Directory -Path (Join-Path $fixture 'src/testmod') -Force | Out-Null
 Copy-Item -LiteralPath $SourceRoot -Destination (Join-Path $fixture 'src/testmod/java') -Recurse
+[xml]$xml=Get-Content -LiteralPath $GameTestXml -Raw
+[xml]$m5Xml=Get-Content -LiteralPath $M5GameTestXml -Raw
 $sourceMutated=$null
 if($SourceMutation -ne 'none'){
     if($SourceTarget -notmatch '^\w+$'){throw "SourceTarget 必須是方法名稱：$SourceTarget"}
@@ -71,22 +78,33 @@ if($SourceMutation -ne 'none'){
     if($hits.Count -ne 1){throw "source mutation 目標必須恰出現在一個檔案：$SourceTarget（$($hits.Count)）"}
     $text=Get-Content -LiteralPath $hits[0].FullName -Raw
     if(([regex]::Matches($text,[regex]::Escape($needle))).Count -ne 1){throw "source mutation 目標在檔案內不唯一：$SourceTarget"}
-    # interpose-annotation：@GameTest(...) 與方法宣告之間插入另一個 annotation（合法 Java，GameTest 仍會註冊）。
-    $text=$text.Replace($needle,"@SuppressWarnings(`"unused`")`n    $needle")
+    if($SourceMutation -eq 'interpose-annotation'){
+        # interpose-annotation：@GameTest(...) 與方法宣告之間插入另一個 annotation（合法 Java，GameTest 仍會註冊）。
+        $text=$text.Replace($needle,"@SuppressWarnings(`"unused`")`n    $needle")
+    } else {
+        # rename-windows：方法改名為 <名稱>_windows，兩份 XML 中對應的 testcase（恰一個）一起改名，模擬一個實際通過的 _windows 案例。
+        if($SourceTarget -like '*_windows'){throw "rename-windows 的目標不可已是 _windows：$SourceTarget"}
+        $text=$text.Replace($needle,"public void ${SourceTarget}_windows(TestContext")
+        $caseName=$hits[0].BaseName.ToLowerInvariant()+'.'+$SourceTarget
+        $cases=@(@($xml,$m5Xml) | ForEach-Object {$_.SelectNodes("//testcase[@name='$caseName']")} | Where-Object {$null -ne $_})
+        if($cases.Count -ne 1){throw "rename-windows 的 testcase 必須恰出現一次：$caseName（$($cases.Count)）"}
+        $cases[0].SetAttribute('name',$caseName+'_windows')
+    }
     [IO.File]::WriteAllText($hits[0].FullName,$text,[Text.UTF8Encoding]::new($false))
     $sourceMutated=[IO.Path]::GetRelativePath($fixture,$hits[0].FullName)
 }
-[xml]$xml=Get-Content -LiteralPath $GameTestXml -Raw
 if($Mutation -ne 'none'){
-    $node=$xml.SelectSingleNode("//testcase[@name='$MutationTarget']")
-    if($null -eq $node){throw "mutation 目標不在 XML：$MutationTarget"}
+    $target=if($MutationXml -eq 'm5'){$m5Xml}else{$xml}
+    $node=$target.SelectSingleNode("//testcase[@name='$MutationTarget']")
+    if($null -eq $node){throw "mutation 目標不在 $MutationXml XML：$MutationTarget"}
     switch($Mutation){
         'drop' {[void]$node.ParentNode.RemoveChild($node)}
-        'skip' {[void]$node.AppendChild($xml.CreateElement('skipped'))}
-        'fail' {$failure=$xml.CreateElement('failure');$failure.SetAttribute('message','CI 規則檢查刻意注入的失敗');[void]$node.AppendChild($failure)}
+        'skip' {[void]$node.AppendChild($target.CreateElement('skipped'))}
+        'fail' {$failure=$target.CreateElement('failure');$failure.SetAttribute('message','CI 規則檢查刻意注入的失敗');[void]$node.AppendChild($failure)}
     }
 }
 $xml.Save((Join-Path $fixture 'build/gametest-results.xml'))
+$m5Xml.Save((Join-Path $fixture 'build/gametest-m5-results.xml'))
 $stepFile=Join-Path $root 'step.ps1'
 Set-Content -LiteralPath $stepFile -Value ("`$ErrorActionPreference = 'stop'`n"+$script) -Encoding utf8
 $info=[Diagnostics.ProcessStartInfo]::new('pwsh')
@@ -97,9 +115,11 @@ $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.
 $output=$stdout.Result+$stderr
 Set-Content -LiteralPath (Join-Path $root 'output.log') -Value $output -Encoding utf8
 $windowsCases=@($xml.SelectNodes('//testcase') | Where-Object {$_.name -like '*_windows'}).Count
+$m5WindowsCases=@($m5Xml.SelectNodes('//testcase') | Where-Object {$_.name -like '*_windows'}).Count
 $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).Path;workflowSha256=(Get-FileHash -LiteralPath $Workflow -Algorithm SHA256).Hash;step=$Step
     gameTestXml=(Resolve-Path -LiteralPath $GameTestXml).Path;gameTestXmlSha256=(Get-FileHash -LiteralPath $GameTestXml -Algorithm SHA256).Hash
-    junitDir=$JUnitDir;sourceRoot=$SourceRoot;mutation=$Mutation;mutationTarget=$MutationTarget;sourceMutation=$SourceMutation;sourceTarget=$SourceTarget;sourceMutatedFile=$sourceMutated
-    fixtureWindowsCases=$windowsCases;exitCode=$process.ExitCode;verdict=$(if($process.ExitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
+    m5GameTestXml=(Resolve-Path -LiteralPath $M5GameTestXml).Path;m5GameTestXmlSha256=(Get-FileHash -LiteralPath $M5GameTestXml -Algorithm SHA256).Hash
+    junitDir=$JUnitDir;sourceRoot=$SourceRoot;mutation=$Mutation;mutationTarget=$MutationTarget;mutationXml=$MutationXml;sourceMutation=$SourceMutation;sourceTarget=$SourceTarget;sourceMutatedFile=$sourceMutated
+    fixtureWindowsCases=$windowsCases;fixtureM5WindowsCases=$m5WindowsCases;exitCode=$process.ExitCode;verdict=$(if($process.ExitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
 $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
-Write-Output "CI_RULE label=$Label step=$Step mutation=$Mutation target=$MutationTarget sourceMutation=$SourceMutation sourceTarget=$SourceTarget exit=$($process.ExitCode) root=$root"
+Write-Output "CI_RULE label=$Label step=$Step mutation=$Mutation target=$MutationTarget mutationXml=$MutationXml sourceMutation=$SourceMutation sourceTarget=$SourceTarget exit=$($process.ExitCode) root=$root"

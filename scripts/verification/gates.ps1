@@ -3,15 +3,18 @@
 # 來源：.superpowers/sdd/2026-09-21-m4-candidate-doors/task9-gates.ps1（SHA-256 34eaecabf9d4685771d53482130c04d496bbdf3e396f6c2d6fc06055249851e8）。
 # 相對來源的改動：repo root、gate root、Gradle、init script 改為參數或本目錄；移除 RedOwner（Task 9 owner 修正前的一次性 RED）；
 # classload／m4-boundary 只複製本次觀察到的 JVM PID（整合審查 R1）；Inventory 輸出改寫到 gate root。
+# M5 F3c（plan 決策 6）：新增 M5GameTest（runGameTestM5，獨立的 fresh 世界 run/gametest-m5）；三個 GameTest run 都核對 XML 是本次 run 寫出的，
+# 而且 testcase 集合等於原始碼依 batch 前綴矩陣應屬於該 run 的集合（scope.json）。M5 run 不檢查 M4 boundary oracle，改核對每個 M5 test
+# 自己斷言的 catalog 增量（m5-oracle.json）。
 # 參數：
-#   -Mode          Inventory｜Main｜GameTest｜Full｜Legacy｜Windows｜M3
+#   -Mode          Inventory｜Main｜GameTest｜Full｜Legacy｜M5GameTest｜Windows｜M3
 #   -Label         gate root 標籤（英數與連字號）
 #   -Only          M3 只跑 universe 或 transfer（空字串＝兩者）
 #   -EvidenceRoot  gate root 的上層；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle        gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 # M3 probe 的 evidence owner 由 testmod ProbeEvidenceOwner 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors，不受 -EvidenceRoot 影響。
 param(
-    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','Windows','M3')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M5GameTest','Windows','M3')][string]$Mode,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string]$Label='run',
     [ValidateSet('','universe','transfer')][string]$Only='',
     [string]$EvidenceRoot='',
@@ -103,7 +106,7 @@ function Server-Files([string]$root) {
 }
 function Copy-Build([string]$dest) {
     New-Item -ItemType Directory -Path $dest | Out-Null
-    foreach($name in @('test-results','reports','gametest-results.xml','gametest-legacy-results.xml','libs')) {
+    foreach($name in @('test-results','reports','gametest-results.xml','gametest-legacy-results.xml','gametest-m5-results.xml','libs')) {
         $source=Join-Path $repo "build/$name"
         if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination $dest -Recurse}
     }
@@ -186,19 +189,94 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     Write-Output "Gradle exit=$exit：$evidence"
     return $exit
 }
-function Fresh-Game([bool]$full,[bool]$legacy) {
-    $run=Join-Path $repo $(if($legacy){'run/gametest-legacy'}else{'run/gametest'})
+function Distinct-Count($items) { $set=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); foreach($item in $items){[void]$set.Add($item)}; return $set.Count }
+# plan 決策 6 的 batch 前綴矩陣（與 testmod M4LegacyGameTestFilterMixin 相同）：m4_legacy_runtime 屬 legacy run，前綴 m5_universe 屬 M5 run，其餘屬 default run。
+function Batch-Scope([string]$batch) { if($batch -ceq 'm4_legacy_runtime'){return 'legacy'}; if($batch.StartsWith('m5_universe',[StringComparison]::Ordinal)){return 'm5'}; return 'default' }
+# testmod 原始碼宣告的全部 GameTest：XML testcase 名稱（class 小寫＋'.'＋方法名稱）、batchId（沒寫時是原版預設 defaultBatch）與所屬 run。
+# 每個檔的 @GameTest 數必須等於可解析的宣告數；不一致代表宣告格式漂移（例如 @GameTest 與方法之間多了 annotation），直接失敗。
+function Declared-GameTests {
+    $cases=@()
+    foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'src/testmod/java') -Recurse -File -Filter '*.java' | Sort-Object FullName) {
+        $text=Get-Content -LiteralPath $file.FullName -Raw
+        $strict=@([regex]::Matches($text,'(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+)\(TestContext'))
+        $loose=([regex]::Matches($text,'@GameTest\b')).Count
+        if($strict.Count -ne $loose){throw "GameTest 宣告格式漂移（$($file.Name)）：@GameTest $loose 個，可解析 $($strict.Count) 個"}
+        foreach($match in $strict) {
+            $batchMatch=[regex]::Match($match.Groups['annotation'].Value,'batchId\s*=\s*"(?<batch>[^"]*)"')
+            $batch=if($batchMatch.Success){$batchMatch.Groups['batch'].Value}else{'defaultBatch'}
+            $cases+=[pscustomobject]@{case=$file.BaseName.ToLowerInvariant()+'.'+$match.Groups['name'].Value;name=$match.Groups['name'].Value;class=$file.BaseName;batch=$batch;scope=(Batch-Scope $batch)}
+        }
+    }
+    if((Distinct-Count @($cases | ForEach-Object case)) -ne $cases.Count){throw 'GameTest testcase 名稱不唯一'}
+    return $cases
+}
+# 本 run 的 XML testcase 集合必須恰好等於原始碼中屬於本 run 的宣告（以 JAVA_TOOL_OPTIONS 的 onlyBatches 取證時，再與那些 batch 取交集）。
+# 結果寫入 <gate>/scope.json；回傳本 run 應執行的宣告。
+function Assert-Scope([string]$xmlPath,[string]$scope) {
+    $declared=@(Declared-GameTests)
+    $expected=@($declared | Where-Object {$_.scope -ceq $scope})
+    $only=@()
+    if($env:JAVA_TOOL_OPTIONS -match '-Dquantumchamber\.gametest\.onlyBatches=(?<batches>\S+)'){$only=@($Matches['batches'].Split(','));$expected=@($expected | Where-Object {$_.batch -cin $only})}
+    [xml]$report=Get-Content -LiteralPath $xmlPath -Raw
+    $actual=@($report.SelectNodes('//testcase') | ForEach-Object {$_.name})
+    $expectedNames=@($expected | ForEach-Object case)
+    $missing=@($expectedNames | Where-Object {$_ -cnotin $actual})
+    $extra=@($actual | Where-Object {$_ -cnotin $expectedNames})
+    $status=if($expected.Count -gt 0 -and $missing.Count -eq 0 -and $extra.Count -eq 0 -and $actual.Count -eq $expected.Count){'PASS'}else{'FAIL'}
+    Save-Json (Join-Path $gate 'scope.json') ([ordered]@{scope=$scope;status=$status;onlyBatches=$only;xml=$xmlPath
+        declared=[ordered]@{default=@($declared | Where-Object {$_.scope -ceq 'default'}).Count;legacy=@($declared | Where-Object {$_.scope -ceq 'legacy'}).Count;m5=@($declared | Where-Object {$_.scope -ceq 'm5'}).Count}
+        expected=$expected.Count;actual=$actual.Count;missing=$missing;extra=$extra})
+    if($status -ne 'PASS'){throw "GameTest run 範圍不符（$scope）：expected=$($expected.Count) actual=$($actual.Count) 缺 [$($missing -join ', ')] 多 [$($extra -join ', ')]"}
+    return $expected
+}
+# M5 run 的 oracle（取代 default run 的 M4 boundary oracle）：JVM 帶 m5Only、沒有 boundary receipt；m5_universe 的 test 都宣告在 M5UniverseGameTests、
+# 各自一個 batch；每個 test 都留下恰一行 PASS 的 M5_UNIVERSE_CATALOG_DELTA。依 log 順序串接：fresh 世界從 0 筆開始，前一個 test 的 after
+# 等於下一個 test 的 before（catalog 只在各 test 自己斷言的範圍內改變）。結果寫入 <gate>/m5-oracle.json。
+function Assert-M5Run($server,$expected) {
+    if(-not $server.commandLine.Contains('-Dquantumchamber.gametest.m5Only=true')){throw 'M5 run 的 server JVM 沒有 -Dquantumchamber.gametest.m5Only=true'}
+    $boundary=@(Get-ChildItem -LiteralPath (Join-Path $gate 'execution') -Filter 'm4-boundary-*.json')
+    if($boundary.Count){throw "M5 run 不得留下 M4 boundary receipt：$($boundary.Name -join ', ')"}
+    $outside=@($expected | Where-Object {$_.class -cne 'M5UniverseGameTests'})
+    if($outside.Count){throw "m5_universe batch 只能宣告在 M5UniverseGameTests：$(@($outside | ForEach-Object case) -join ', ')"}
+    if((Distinct-Count @($expected | ForEach-Object batch)) -ne $expected.Count){throw 'M5 test 必須各自一個 batch（逐 test 的 catalog 增量才只屬於該 test）'}
+    $stdout=Get-Content -LiteralPath (Join-Path $gate 'execution/stdout.log') -Raw
+    $deltas=@([regex]::Matches($stdout,'M5_UNIVERSE_CATALOG_DELTA name=(?<name>\w+) before=(?<before>\d+) after=(?<after>\d+) expected=(?<expected>-?\d+) actual=(?<actual>-?\d+) converged=(?<converged>\w+) preserved=(?<preserved>\w+) status=(?<status>\w+)') | ForEach-Object {
+        [pscustomobject]@{name=$_.Groups['name'].Value;before=[int]$_.Groups['before'].Value;after=[int]$_.Groups['after'].Value;expected=[int]$_.Groups['expected'].Value;converged=$_.Groups['converged'].Value;preserved=$_.Groups['preserved'].Value;status=$_.Groups['status'].Value}
+    })
+    foreach($name in @($expected | ForEach-Object name)) {
+        $hit=@($deltas | Where-Object {$_.name -ceq $name})
+        if($hit.Count -ne 1 -or $hit[0].status -cne 'PASS' -or ($hit[0].after - $hit[0].before) -ne $hit[0].expected){throw "M5 test 的 catalog 增量缺失、重複或不符：$name"}
+    }
+    if($deltas.Count -ne $expected.Count){throw "M5_UNIVERSE_CATALOG_DELTA 有 $($deltas.Count) 行，M5 test 有 $($expected.Count) 個"}
+    $previous=0
+    foreach($delta in $deltas){if($delta.before -ne $previous){throw "catalog 在 test 自己斷言的範圍之外改變：$($delta.name) before=$($delta.before)，預期 $previous"};$previous=$delta.after}
+    Save-Json (Join-Path $gate 'm5-oracle.json') ([ordered]@{status='PASS';serverPid=$server.pid;boundaryReceipts=0;tests=$expected.Count;deltas=$deltas;finalRecordCount=$previous})
+}
+function Fresh-Game([bool]$full,[string]$scope) {
+    $run=Join-Path $repo $(if($scope -ceq 'legacy'){'run/gametest-legacy'}elseif($scope -ceq 'm5'){'run/gametest-m5'}else{'run/gametest'})
+    $task=if($scope -ceq 'legacy'){'runGameTestLegacy'}elseif($scope -ceq 'm5'){'runGameTestM5'}else{'runGameTest'}
+    $report=if($scope -ceq 'legacy'){'gametest-legacy-results.xml'}elseif($scope -ceq 'm5'){'gametest-m5-results.xml'}else{'gametest-results.xml'}
     $swap=Move-Fresh (Join-Path $run 'world') 'world'
     try {
         Copy-Build (Join-Path $gate 'prior-build')
-        $task=if($legacy){'runGameTestLegacy'}else{'runGameTest'}
         $tasks=if($full){@('clean','test',$task,'build','--rerun-tasks')}else{@($task,'--rerun-tasks')}
+        $runStart=[DateTime]::UtcNow
         $result=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $run '' 1200)[-1]
         Copy-Build (Join-Path $gate 'result-build')
         if($result -ne 0){throw "GameTest gate exit=$result"}
+        # 只認本次 run 寫出的 XML，不讀上一次留下的舊檔。
+        $written=Join-Path $repo "build/$report"
+        if(-not(Test-Path -LiteralPath $written -PathType Leaf) -or (Get-Item -LiteralPath $written).LastWriteTimeUtc -lt $runStart){throw "GameTest XML 不是本次 run 寫出的：$report"}
         $server=@(Get-Content -LiteralPath (Join-Path $gate 'execution/processes.json') -Raw | ConvertFrom-Json | Where-Object {$_.commandLine -match 'net.fabricmc.devlaunchinjector.Main'})
-        $boundary=@(Get-ChildItem -LiteralPath (Join-Path $gate 'execution') -Filter 'm4-boundary-*.json' | ForEach-Object {Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json} | Where-Object {$_.pid -eq $server[0].pid})
-        if($boundary.Count -ne 1 -or $boundary[0].status -ne 'PASS'){throw 'GameTest Universe boundary oracle 缺失或 FAIL'}
+        if($scope -ceq 'm5') {
+            if($server.Count -ne 1){throw "M5 run 必須恰有一個 server JVM（$($server.Count)）"}
+            $expected=@(Assert-Scope (Join-Path $gate "result-build/$report") 'm5')
+            Assert-M5Run $server[0] $expected
+        } else {
+            $boundary=@(Get-ChildItem -LiteralPath (Join-Path $gate 'execution') -Filter 'm4-boundary-*.json' | ForEach-Object {Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json} | Where-Object {$_.pid -eq $server[0].pid})
+            if($boundary.Count -ne 1 -or $boundary[0].status -ne 'PASS'){throw 'GameTest Universe boundary oracle 缺失或 FAIL'}
+            Assert-Scope (Join-Path $gate "result-build/$report") $scope | Out-Null
+        }
     } finally {Restore-Root $swap}
 }
 function Probe-Chain([string]$kind,[string[]]$phases) {
@@ -255,9 +333,10 @@ try {
             try {Server-Files $swap.root;$exit=@(Invoke-Gradle @('runServer') (Join-Path $gate 'execution') $swap.root 'main' 240)[-1];if($exit-ne 0){throw "main-only exit=$exit"}}
             finally {Restore-Root $swap}
         }
-        'GameTest' {Fresh-Game $false $false}
-        'Full' {Fresh-Game $true $false}
-        'Legacy' {Fresh-Game $false $true}
+        'GameTest' {Fresh-Game $false 'default'}
+        'Full' {Fresh-Game $true 'default'}
+        'Legacy' {Fresh-Game $false 'legacy'}
+        'M5GameTest' {Fresh-Game $false 'm5'}
         'Windows' {
             Copy-Build (Join-Path $gate 'prior-build')
             $exit=@(Invoke-Gradle @('test','--tests','dev.quantumchamber.persistence.WindowsPlayerCheckpointVerifierTest','--tests','dev.quantumchamber.persistence.PlayerCheckpointStoreTest','--tests','dev.quantumchamber.persistence.PlayerRecoveryCheckpointTest','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds'))[-1]
