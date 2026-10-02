@@ -107,21 +107,24 @@ public final class M5UniverseGameTests implements FabricGameTest {
         long flushAt = context.getTick() + 5;
         context.runAtTick(flushAt, () -> catalog.flush(server));
         var attempts = new AtomicInteger();
-        var fixtureBroken = new AtomicBoolean();
+        var failing = new AtomicBoolean();
         context.addInstantFinalTask(() -> {
-            if (fixtureBroken.get()) throw new GameTestException("等待確定失敗");
+            if (failing.get()) throw new GameTestException("等待確定失敗");
             int attempt = attempts.incrementAndGet();
             boolean convergedNow;
             try {
                 convergedNow = converged(CollapseAuthorities.get(server));
             } catch (RuntimeException failure) {
-                // runner 裡不讓非 GameTestException 的例外丟出（會讓 GameTest server 崩潰）。
-                throw asTestFailure(context, "retry harness 的收斂檢查", failure);
+                // runner 裡不讓非 GameTestException 的例外丟出（會讓 GameTest server 崩潰）；確定失敗一次，之後的重試不再記 ERROR。
+                var converted = asTestFailure(context, "retry harness 的收斂檢查", failure);
+                failing.set(true);
+                failDefinitely(context, converted);
+                throw converted;
             }
             if (convergedNow) {
                 if (attempt <= 1) {
-                    fixtureBroken.set(true);
-                    failNextTick(context, new GameTestException("第一次嘗試就已收斂，complete 的重試路徑沒有被走到"));
+                    failing.set(true);
+                    failDefinitely(context, new GameTestException("第一次嘗試就已收斂，complete 的重試路徑沒有被走到"));
                     throw new GameTestException("等待確定失敗");
                 }
                 LOGGER.info("M5_UNIVERSE_HARNESS_RETRY attempts={}", attempt);
@@ -245,8 +248,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <p>放進 {@code addInstantFinalTask} 時，只能在最後一步之後註冊（例如在最後一個 {@code waitAndRun} 的 callback 裡）：runner 從註冊
      * 的那個 tick 起每個 tick 都嘗試，catalog 增量一達標就 complete，之後才排定的檢查不會執行，等於誤判 PASS。
      * <p>判定本身丟出非 GameTestException 的例外（例如 catalog 不健康時 {@code records()} 的 IllegalStateException）時，轉成
-     * GameTestException 再丟出，之後每次呼叫都直接丟同一個：runner 只攔 GameTestException，其他例外會讓 GameTest server 崩潰。在 runner 裡
-     * 呼叫時，test 因此在 tickLimit 以這個訊息失敗；直接呼叫或在 runAtTick 的 callback 裡呼叫時當場失敗。
+     * GameTestException，以 {@link #failDefinitely} 讓 test 確定失敗，再丟出（runner 只攔 GameTestException，其他例外會讓 GameTest server
+     * 崩潰）。在 runner 裡呼叫時 test 在下一個 tick 失敗，直接呼叫或在 runAtTick 的 callback 裡呼叫時在同一個 tick 失敗，不必等 tickLimit。
+     * 之後每次呼叫都直接丟同一個例外（{@code BROKEN}）：失敗落地之前 runner 還會重試一次，這樣不會再記一次 ERROR、不會再排第二個失敗，
+     * 也不會在那之前因為判定剛好通過而先寫出 PASS。
      */
     private static void complete(TestContext context, int expectedDelta) {
         var broken = BROKEN.get(context);
@@ -258,6 +263,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         } catch (RuntimeException failure) {
             var converted = asTestFailure(context, "complete 的判定", failure);
             BROKEN.put(context, converted);
+            failDefinitely(context, converted);
             throw converted;
         }
     }
@@ -283,7 +289,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>完成時點之後才到期的 {@code runAtTick}／{@code waitAndRun} 檢查不會執行（test 完成之後原版不再 tick 它）：還沒到期的檢查，
      *     必須放進 {@code ready}（例如等它們都跑過），或排在呼叫本方法之前、而且在呼叫時已經到期。</li>
      * <li>{@code ready} 與權威收斂丟出的例外（含 GameTestException）、以及最終判定丟出的例外，一律轉成 test 失敗，不會讓 GameTest server
-     *     崩潰：在 runner 裡時寫一行 {@code status=FAIL error=…}，在下一個 tick 確定失敗；在呼叫當下的第一輪時，轉成 GameTestException
+     *     崩潰：在 runner 裡時寫一行 {@code status=FAIL error=…}，以 {@link #failDefinitely} 在下一個 tick 確定失敗；在呼叫當下的第一輪時，轉成 GameTestException
      *     丟給呼叫端（test 方法或 runAtTick 的 callback 會讓 test 失敗）。{@code ready} 用回傳 false 表示「還沒好」。</li>
      * <li>{@code maxTicks} 要小於 test 的 {@code tickLimit}（{@code @GameTest} 預設 100）減去呼叫時的 tick。超過 tickLimit 的那一個 tick，
      *     原版一律判 test 失敗：即使同一個 tick 剛收斂並寫了 PASS 的增量行也一樣；還沒收斂時則以「等待…」的訊息失敗，不會留下
@@ -327,7 +333,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             } catch (RuntimeException failure) {
                 done.set(true);
                 logFailedDelta(context, failure);
-                failNextTick(context, asTestFailure(context, "ready 條件或權威收斂", failure));
+                failDefinitely(context, asTestFailure(context, "ready 條件或權威收斂", failure));
                 return;
             }
             if (!settled && context.getTick() < deadline) throw new GameTestException("等待 M5 權威收斂" + (readyThisTick ? "" : "與 ready 條件"));
@@ -335,7 +341,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             try {
                 finish(context, expectedDelta, true, readyThisTick);
             } catch (RuntimeException failure) {
-                failNextTick(context, asTestFailure(context, "完成判定", failure));
+                failDefinitely(context, asTestFailure(context, "完成判定", failure));
             }
         });
     }
@@ -359,11 +365,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
-     * 在 TimedTaskRunner 的工作裡讓 test 確定失敗：runner 會把 GameTestException 當成「還沒好」而在下一個 tick 重試，所以改排一個在下一個
-     * tick 丟出的 {@code runAtTick}。只在 runner 的工作裡呼叫：runner 在該 tick 迭代完 runAtTick 的表之後才執行，這時插入不會改到迭代中的表。
+     * 讓 test 確定失敗：以原版公開的 {@code TimedTaskRunner.fail} 新增一個 runner，它的工作直接呼叫 {@code test.fail}。runner 放在
+     * {@code CopyOnWriteArrayList}，不碰 runAtTick 的表，所以在任何情境都能呼叫：在 test 方法或 runAtTick 的 callback 裡時，同一個 tick 的
+     * runner 階段就失敗；在 runner 的工作裡時，下一個 tick 失敗。需要它，是因為 runner 工作丟出的 GameTestException 只會被原版當成
+     * 「還沒好」而重試，要等到 tickLimit 才會失敗。
      */
-    private static void failNextTick(TestContext context, RuntimeException failure) {
-        context.runAtTick(context.getTick(), () -> { throw failure; });
+    private static void failDefinitely(TestContext context, GameTestException failure) {
+        context.createTimedTaskRunner().fail(() -> failure);
     }
 
     private static void finish(TestContext context, int expectedDelta, boolean finalAttempt, boolean ready) {
