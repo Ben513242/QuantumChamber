@@ -2064,7 +2064,7 @@ GameTest +3（156 → 159；`_windows` 維持 80；per-test Universe receipt 維
 
 | 項目 | 處理 |
 | --- | --- |
-| I-1 不強制載入 chunk | `WCDA:43` `apply` 依序檢查：server thread（`:45`）→ 量子膜軸（`CDS:95` `requireFits`，從核心抽出共用）→ `WCDA:58` `doorChunksLoaded`。門平面 local x 0–6、法線方向 local z −1～1 涵蓋的每個 chunk 都要 `getWorldChunk != null`（只查詢、不載入）。範圍比「門板＋Controller」多了門前後各一排：寫入門格時，原版的 neighbor update 與 shape update 以 `World.getBlockState`（`getChunk(FULL, create=true)`，會同步載入）讀相鄰六格，所以門平面剛好在 chunk 邊界上、門外那一排在另一個 chunk 時，那個 chunk 也必須 FULL。任一不是 FULL 就回新的 `NOT_LOADED`：不讀不寫任何一格、不設 activationBlocked；回報的 activationBlocked 以不載入的方式讀 Controller。Javadoc：`CDS:49-52` 寫明前提，`Outcome.NOT_LOADED`（`CDS:210-214`）寫明 caller 等之後的 tick 再試、不強制載入、不設 activationBlocked。Controller 的 chunk 在範圍內，所以只要不是 NOT_LOADED，ROLLBACK_FAILED 就一定設得到 activationBlocked |
+| I-1 不強制載入 chunk | `WCDA:43` `apply` 依序檢查：server thread（`:45`）→ 量子膜軸（`CDS:95` `requireFits`，從核心抽出共用）→ `WCDA:58` `doorChunksLoaded`。門平面 local x 0–6、法線方向 local z −1～1 涵蓋的每個 chunk 都要 `getWorldChunk != null`（只查詢、不載入）。範圍比「門板＋Controller」多了門前後各一排：寫入門格時，原版的 neighbor update 與 shape update 以 `World.getBlockState`（`getChunk(FULL, create=true)`，會同步載入）讀相鄰六格，所以門平面剛好在 chunk 邊界上、門外那一排在另一個 chunk 時，那個 chunk 也必須 FULL。（fix round 2 再擴大為門板周圍水平 ±3，見「Fix round 2」。）任一不是 FULL 就回新的 `NOT_LOADED`：不讀不寫任何一格、不設 activationBlocked；回報的 activationBlocked 以不載入的方式讀 Controller。Javadoc：`CDS:49-52` 寫明前提，`Outcome.NOT_LOADED`（`CDS:210-214`）寫明 caller 等之後的 tick 再試、不強制載入、不設 activationBlocked。Controller 的 chunk 在範圍內，所以只要不是 NOT_LOADED，ROLLBACK_FAILED 就一定設得到 activationBlocked |
 | I-1 的測試 | 新增 G4 `door_target_refuses_unloaded_chunks_without_forcing_them`（`m5_collapse_not_loaded`），沿用 `ChamberNoForceGameTests` 的手法（只讀，未修改）：遠處的 chunk 以 radius 0 的 ticket 維持 FULL，鄰接的 chunk 不是 FULL；fixture 的方塊直接寫進 chunk（`WorldChunk.setBlockState`），不觸發鄰格更新。兩個情境：A `straddle`，門板最左一欄（5 格）在東側未載入的 chunk；B `outsideRow`，門板與 Controller 都在已載入的 chunk，只有門外那一排在北側未載入的 chunk。斷言 NOT_LOADED、缺的 chunk 在呼叫前後都不是 FULL、已寫入的門格都沒被改。結束時還原被覆寫的方塊（先記下原狀態）並移除 ticket |
 | M-1 cutout mipped | `QuantumSuperpositionClient.java:18` 改為 `RenderLayer.getCutoutMipped()`：仍屬 cutout 類，符合 spec §10.1 的字面，關門遠景保留 mipmap。註解改寫（首版的「畫法不變」不正確，cutout 不做 mipmap）。「關門遠景」已與量子膜畫面一起列入 manual smoke（「交給後續」） |
 | M-2 兩項承諾的行為 | G1 新增兩段，四個朝向各跑一次。(4) `stale*`：門關上後，以原始寫入把一格改成 `open=false`＋sealed；`applyTarget(CLOSED)` 回 UNCHANGED、那一格不被重寫；`applyTarget(OPEN)` 回 APPLIED、25 格都是一般開門。(5) `offThread.rejected`：從另一個 thread 呼叫丟 `IllegalStateException`，門不變。呼叫以 `attempt` 包住，丟例外時 witness 記為 false，不中斷 test。mutation M-G4（`doorAt` 改讀原始 membrane）與 M-G5（拿掉 thread 檢查）都被抓到 |
@@ -2106,3 +2106,40 @@ GameTest +3（156 → 159；`_windows` 維持 80；per-test Universe receipt 維
 - log（與首輪的 Full gate 比較，以 `/ERROR]`、`/WARN]` 行計；首輪「Gate 與證據」寫的「WARN 49」是以子字串計，同一個 run 以行計為 46）：ERROR 29 → 28，WARN 46 → 46。差異都在 M2 的 batch：`m2_pin_capacity` 的「走廊保留租約等待安全返還」ERROR 3 → 2、「返還保留 pending」WARN 2 → 1；`m2_task4_disconnect_io` 多一則「session 協調失敗」WARN，它的 stack 是 M2 注入的 DISCONNECT journal flush 失敗，經排程的 Controller 刷新浮出，沒有門的程式。這是 M2 測試在不同 run 之間的時序差異（T0 已記錄 `m2_pin_capacity` 的連坐）。F3b 的四個 test 沒有任何 `M5_COLLAPSE_ATTEMPT_THREW`，rollback ERROR 仍是 G2 與 M1 各兩則。
 - 所有 gate 都在 commit 之前以工作樹執行；commit 時 5 個檔的 blob 與 gate 前記錄的逐一相同（`fix1/green-state-blobs.txt`、`pre-commit-hashes.txt`、`commit-blobs.txt`）。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
 - 本輪不跑 Legacy、M3 與 M4 recovery，理由同首輪。
+
+### Fix round 2（`f181203`）
+
+- Review（fix round 1 的 re-review）：Approved（Critical 0、Important 0、新 Minor 2）。reviewer 也獨立確認 fix round 1 的 log 差異與 F3b 無關。controller 指派兩項新 Minor 在 F5 使用這個 API 之前修掉。開工 HEAD 是 `090efdc`。
+- Commit `f181203` `fix: widen the door apply load check to the redstone neighborhood`（parent `090efdc`）：`ChamberDoorService.java`、`WorldChamberDoorAdapter.java`（只有檢查範圍與 Javadoc）；testmod `M5CollapseGameTests.java`（只有 G4）。本小節由其後的 docs commit 加入，同一個 commit 也在 fix round 1 的 I-1 列加註範圍已擴大。
+- 行號以 `f181203` 為準。
+
+| 項目 | 處理 |
+| --- | --- |
+| m-1 範圍與 Javadoc | `WCDA:64` `doorChunksLoaded` 改為門板 25 格向水平各方向外擴 `DOOR_NEIGHBORHOOD`＝3 格（`WCDA:16`），也就是門平面 local x −2～8、法線方向 local z −3～3，Controller 也在其中。這與專案先例 `ChamberRedstoneService.powerNeighborhoodLoaded` 把原版一層紅石讀取定為水平 ±3 的慣例相同。寫法改為取門板兩端欄的世界座標，再對世界 X、Z 各外擴 3，四個世界方向對應的 local 邊界依門的朝向而定。每個軸最多跨 2 個 chunk，最多查 4 個 chunk，成本不變。Javadoc（`WCDA:55-63`、`CDS:49-53`、`Outcome.NOT_LOADED`）改為描述實際保證：寫入門格本身、原版一層 neighbor／shape update，以及這些鄰格一層的紅石讀取（水平 ±3）都不會載入 chunk；更遠的連鎖反應（例如紅石沿線路一路傳遞）不在保證內。首版的「不會在 server thread 上同步載入 chunk」太絕對，已移除 |
+| m-2 G4 的新情境 | G4（`M5CollapseGameTests:195`）的 `checkNotLoaded`（`:223`）一般化為可以用 ticket 維持多個 FULL chunk、可指定預期寫入的門格數。門一律朝北（local x 增加是往西，艙內 z 增加是往南），新增三個情境，每個情境都只有恰好落在 ±3 邊界上的那一欄或那一排在未載入的 chunk：C `diagonal`，外殼外 x=8 那一欄所在的西側 chunk 與艙內 z=+3 那一排所在的南側 chunk都已載入，只有西南的對角 chunk 未載入，它只被 x=8、z=+3 的角落涵蓋，所以同時涵蓋外殼欄、艙內那一排與對角 chunk；D `eastEdge`，只有 x=−2 那一欄在東側未載入的 chunk；E `northEdge`，只有門外 z=−3 那一排在北側未載入的 chunk。四個世界方向的 ±3 邊界各由一個情境鎖住：西、南由 C，東由 D，北由 E |
+
+關於派工的「門平面在 chunk 的最後一排，艙內那一排（z=+1，或擴大後的 z=+3）」：若只讓 z=+1 落在未載入的 chunk，`090efdc` 的舊範圍（z −1～1）本來就會回 NOT_LOADED，RED 不會失敗。所以 C 讓門平面落在倒數第三排（z=+3 那一排剛好是下一個 chunk 的第一排），只有擴大後的邊界才涵蓋得到。
+
+測試：JUnit 數量不變（560）；GameTest 數量不變（160），只有 G4 多了三個情境。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3b/fix2/`。`git diff 090efdc f181203 -- <path>` 輸出的 SHA-256 前 8 碼（`fix2/diff-hashes.txt`）：`src` `0d1e00f8`、`src/main` `8c157ff1`、`src/testmod` `82e5a43f`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED GameTest | `090efdc`；porcelain 只有 ` M src/testmod/java/dev/quantumchamber/gametest/M5CollapseGameTests.java`，`src/main` 與 HEAD 相同（`fix2/red-state.txt`）。本輪沒有新 API，不需要 adapter | GameTest＋onlyBatches `m5_collapse_not_loaded`：`gate-f3b-fix2-red-gametest-34eece90a7d64743a4283f1f3e656e34`（`fix2/red-gametest-summary.txt`） | 預期 FAIL：新的三個情境都失敗在目標 witness，`diagonal`、`eastEdge`、`northEdge` 的 `notLoaded`（舊範圍沒有涵蓋到缺的 chunk，套用照常進行，回 APPLIED）與 `nothingWritten`（門格被改成 sealed）；`straddle`、`outsideRow` 照常通過。缺的 chunk 在 RED 也沒有被載入（舊程式的寫入只讀到相鄰一格）。boundary oracle PASS，world exact restore |
+| 開發確認（不作為證據） | GREEN 工作樹 | GameTest＋onlyBatches 3 個門的 batch：`gate-f3b-fix2-dev-green-1117bacf968f46698132a1c9cf35b00a` | 3/3 PASS |
+| mutation（GameTest） | GREEN 工作樹，每個 mutation 單獨套用、只跑 G4，跑完還原並以 `git hash-object` 核對（`fix2/gametest-mutations.sh`、`mutations/gametest-summary.txt`、`M-G*.diff`、`M-G*-gate.log`、`M-G*-witness.txt`） | GameTest＋onlyBatches `m5_collapse_not_loaded`：`gate-f3b-fix2-mut-m-g7-c759ed85a9094d45a15d3bc3e25865ef`、`-m-g8-155e666877464823bd3582ad97fb7841`、`-m-g9-1355828daef74c02a2633147420f12ba`、`-m-g10-2c56575df0a74b15bca04cb32cd5f1ee`、`-m-g11-16368ec266c64c7fa54fbc0458dd776f` | 下表；5 個 gate 的 boundary oracle PASS、world exact restore；跑完 blob 與 GREEN 相同（`fix2/pre-mutation-blobs.txt`、`green-state-blobs.txt`） |
+| GREEN focused | 工作樹，blob 與 `f181203` 相同 | `fix2/green-focused.log`、`green-focused-xml/` | 121，0 failure／error |
+| GREEN Full（含全部 JUnit） | 同上 | `gate-f3b-fix2-green-full-d704d51a02e64fc8a99567331f0cc220`（`fix2/green-full-summary.txt`、`green-junit-all-xml/`） | PASS：default GameTest 160/160（`_windows` 80）；boundary oracle PASS；per-test receipt 38/38；world exact restore；JUnit 560，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）；release 359 entries／312 classes、sources 210，entry 清單與 fix round 1 完全相同（`fix2/green-jar-delta.txt`）；testmod 命中 0 |
+
+| Mutation | 改動 | 結果 |
+| --- | --- | --- |
+| M-G7 | `DOOR_NEIGHBORHOOD` 改為 1（縮回 fix round 1 的範圍：local x 0～6、z −1～1） | `diagonal`、`eastEdge`、`northEdge` 的 `notLoaded`、`nothingWritten` |
+| M-G8 | 只有東側（maxX，門朝北時是 local x=−2）縮為 2 | 只有 `eastEdge.*` |
+| M-G9 | 只有西側（minX，local x=8）縮為 2 | 只有 `diagonal.*` |
+| M-G10 | 只有北側（minZ，門外 z=−3）縮為 2 | 只有 `northEdge.*` |
+| M-G11 | 只有南側（maxZ，艙內 z=+3）縮為 2 | 只有 `diagonal.*` |
+
+- log（與 fix round 1 的 Full gate 比較，以 `/ERROR]`、`/WARN]` 行計）：ERROR 28 → 28，WARN 46 → 45。唯一的差異是 `m2_task4_disconnect_io` 的 WARN 3 → 2，就是 fix round 1 記錄、會隨時序出現的那一則「session 協調失敗」，這次沒有出現；所有 `m5_collapse_*` batch 都沒有變化。rollback ERROR 仍是 G2 與 M1 各兩則，沒有 `M5_COLLAPSE_ATTEMPT_THREW`。
+- 所有 gate 都在 commit 之前以工作樹執行；commit 時 3 個檔的 blob 與 gate 前記錄的逐一相同（`fix2/green-state-blobs.txt`、`pre-commit-hashes.txt`、`commit-blobs.txt`）。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+- 本輪不跑 Main＋oracle：只改 main 的檢查範圍與 Javadoc，以及 testmod 的 G4，沒有動 client 程式、資源、`SERVER_STARTED` listener 或 mixin；client 的最後一次改動（fix round 1 的 cutout mipped）已由 `gate-f3b-fix1-green-main-1d9d52cc5f40446bb7215bc52870581e` 驗過。也不跑 Legacy、M3 與 M4 recovery，理由同首輪。
