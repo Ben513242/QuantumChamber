@@ -109,7 +109,7 @@ M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（
   - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d。
   - T0：controller 執行的 clean-clone 基線，不改程式。
   - F1b：controller 代操作的真 client 驗證，四項通過，經獨立 docs review 與 re-review。
-  - 下一個是 F4a，之後依 plan 的順序：F4b → F5 → F6 → F7 → milestone 收尾。
+  - 下一個是 F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援），之後依 plan 的順序：F4a → F4b → F5 → F6 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

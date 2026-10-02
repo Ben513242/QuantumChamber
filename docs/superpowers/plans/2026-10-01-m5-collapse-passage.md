@@ -493,6 +493,33 @@ public final class CollapseAuthorities {          // 每個 server instance 一�
 
 ---
 
+### Task F4a-0: M5 GameTest 共用支援（F3d 交接，controller 2026-10-02 插入）
+
+F3d 的 quality review 建議：在 F4a 新增任何 test 之前，先把 M5 GameTest 的共用部分抽出來，並另做一次獨立 review。這是前置整理，不屬 spec 的任何章節。除下列兩項 log 與門的小修之外，production 行為不變。
+
+**Files:**
+- Create: `src/testmod/java/dev/quantumchamber/gametest/M5GameTestSupport.java`。若需要拆分，可在同一個 package 多建幾個 M5 專用的 support 或 hook 類別。
+- Create: `src/testmod/java/dev/quantumchamber/gametest/mixin/` 下一個統計 journal 寫出的 mixin（`SessionRecoveryState.save(File,…)`），登記在 `quantumchamber-test.mixins.json`。
+- Modify:
+  - `M5CollapseGameTests.java`、`M5UniverseGameTests.java`。
+  - `M4CandidateDoorGameTests.java`、`M4CandidateTestAccess.java`、`LogCapture.java`：只限共用 helper 與 hook 的搬移、log 篩選。
+  - `mixin/SessionJournalWindowFaultMixin.java`、`mixin/CollapseSuspendMixin.java`：只限改指向搬移後的 hook 類別。
+- Modify: `src/main/java/dev/quantumchamber/collapse/CollapseService.java`，只限兩件事：
+  - log 帶 SLF4J Marker，或改用專屬 logger；
+  - `applyDoor` 依 `DoorStep.warn()` 決定是否記錄。
+- Modify: `scripts/verification/README.md` 的「新增 M5 GameTest」一節。
+
+**範圍：** F3d note「交給後續」中 F4a 的 `M5GameTestSupport` 與 quality re-review 的 m-1～m-3，以及 F3d fix round 2 的 m-6(d)（把 hook 搬出 `M4CandidateDoorGameTests`）。m-4 屬 F4a 本身。
+
+- [ ] **Step 1：** 純搬移。test 數不變；`m5_collapse_*`、`m5_universe_*`，以及掛 hook 的 M4／F3a batch，focused 全部 PASS。
+- [ ] **Step 2：** m-1。窗口 helper 改為斷言「窗口內每一次 journal 寫出都經過探針」，G-SEAL 與 G-RFB 改用它。在窗口內觸發一次 `server.save` 的 mutation 必須 FAIL。
+- [ ] **Step 3：** m-2。`collapseFlowNeverWarned` 改為依 marker（或 logger）篩選。用一則帶 marker、但沒有舊前綴的 WARN 做 mutation，必須 FAIL。
+- [ ] **Step 4：** m-3。`DoorStep` 的 JUnit 要能鎖住 production 的記錄行為。
+- [ ] **Step 5：** 完整回歸 `run-all.ps1`。
+- [ ] **Step 6: Commit** `test: share M5 GameTest support and count every journal write`
+
+---
+
 ### Task F4a: RESOLVE（lifecycle 物化、EXISTING 重驗、NEW 配置）
 
 **Files:**
