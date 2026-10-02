@@ -27,6 +27,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -45,7 +46,10 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.test.GameTestState;
 import net.minecraft.test.TestContext;
+import net.minecraft.test.TestListener;
+import net.minecraft.test.TestRunContext;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
@@ -62,7 +66,8 @@ import org.slf4j.LoggerFactory;
  * {@code M4CandidateDoorGameTests} 中 M5 期間加入的 test 共用。用法見 {@code scripts/verification/README.md}「新增 M5 GameTest」。
  * <ul>
  * <li>排程：{@link #at}、{@link #whenTicks}（以 server tick 計的有界等待；失敗路徑先釋放 hooks）。</li>
- * <li>journal flush 探針：{@link #installFlushProbe}（裝在 {@link M5TestHooks}，hooks 釋放時移除）與計數探針 {@link FlushFault}。</li>
+ * <li>journal flush 探針：{@link #installFlushProbe}（裝在 {@link M5TestHooks}；被占用時丟出、不覆蓋；hooks 釋放或 test 結束時移除，
+ *     見 {@link #installHook}）與計數探針 {@link FlushFault}。</li>
  * <li>原生 autosave 的窗口與 journal 寫出稽核：{@link #afterAutosaveClear}、{@link AutosaveWindow#journalWrites}。</li>
  * <li>塌縮 fixture：{@link #collapseFixture}、{@link #cleanupFixtures}；真原艙＋DORMANT 收據＋玩家在艙外：{@link DormantOrigin}；
  *     Nether 的真原艙＋真玩家：{@link NetherChamber}。</li>
@@ -113,13 +118,68 @@ final class M5GameTestSupport {
         });
     }
 
-    // ---- journal flush 探針 ----
+    // ---- journal flush 探針與寫出稽核（mixin 讀取的靜態 hook） ----
 
-    /** 把 {@code probe} 裝成 journal flush 探針（{@link M5TestHooks#beforeJournalFlush}）；hooks 釋放時，若仍是它就移除。 */
-    static <T extends Consumer<SessionRecoveryState>> T installFlushProbe(T probe, M2CorridorGameTests.TestHooks hooks) {
-        M5TestHooks.flushProbe = probe;
-        hooks.add(() -> { if (M5TestHooks.flushProbe == probe) M5TestHooks.flushProbe = null; });
+    /** 把 {@code probe} 裝成 journal flush 探針（{@link M5TestHooks#beforeJournalFlush}）；安裝、占用與移除的規則見 {@link #installHook}。 */
+    static <T extends Consumer<SessionRecoveryState>> T installFlushProbe(TestContext context, T probe, M2CorridorGameTests.TestHooks hooks) {
+        installHook(context, M5TestHooks.FLUSH_PROBE, probe, hooks);
         return probe;
+    }
+
+    /** 開始稽核 journal 寫出（{@link M5TestHooks#beforeJournalWrite}、{@link M5TestHooks.JournalWriteAudit}）；規則見 {@link #installHook}。 */
+    static M5TestHooks.JournalWriteAudit installJournalAudit(TestContext context, M2CorridorGameTests.TestHooks hooks) {
+        var audit = new M5TestHooks.JournalWriteAudit(context.getWorld().getServer());
+        installHook(context, M5TestHooks.JOURNAL_AUDIT, audit, hooks);
+        return audit;
+    }
+
+    /**
+     * 安裝 mixin 讀取的靜態 hook（F4a-0 fix round 1，quality Q1），依序：
+     * <ol>
+     * <li>在 hooks 登記移除：hooks 已釋放時在這裡就丟出，什麼都還沒裝，不會殘留；</li>
+     * <li>在這個 test 的原版 {@code GameTestState} 登記 {@link TestListener}：test 結束時（通過、失敗，或 tickLimit 逾時——逾時時原版不執行任何
+     *     callback，hooks 不會釋放）若仍裝著它，就移除並記一行 {@code M5_TEST_HOOK_RESIDUE} WARN；</li>
+     * <li>安裝：位置已被占用（同一個 batch 的另一個 test 正在使用，或沒有被移除的殘留）時丟 IllegalStateException、不覆蓋，訊息列出持有者。</li>
+     * </ol>
+     * 移除只在位置仍是這個值時生效（{@link M5TestHooks.Slot#remove}），所以安裝失敗時登記的移除不會動到持有者的值。
+     */
+    private static <T> void installHook(TestContext context, M5TestHooks.Slot<T> slot, T value, M2CorridorGameTests.TestHooks hooks) {
+        Objects.requireNonNull(value, slot.name);
+        var test = gameTestState(context);
+        hooks.add(() -> slot.remove(value));
+        test.addListener(new ReleaseOnCompletion<>(slot, value));
+        slot.install(value, test);
+    }
+
+    /** {@link #installHook} 的 TestListener：test 結束時位置若仍是 {@code value} 就移除，並記一行 WARN。在原版的 test tick 裡執行，不丟出例外。 */
+    private record ReleaseOnCompletion<T>(M5TestHooks.Slot<T> slot, T value) implements TestListener {
+        @Override public void onStarted(GameTestState test) { }
+        @Override public void onPassed(GameTestState test, TestRunContext context) { release(test); }
+        @Override public void onFailed(GameTestState test, TestRunContext context) { release(test); }
+        @Override public void onRetry(GameTestState lastState, GameTestState nextState, TestRunContext context) { }
+
+        private void release(GameTestState test) {
+            try {
+                if (slot.remove(value)) LOGGER.warn("M5_TEST_HOOK_RESIDUE test={} hook={} failed={}：test 結束時仍裝著（hooks 沒有釋放，例如 tickLimit 逾時），"
+                        + "已由 TestListener 移除", test, slot.name, test.isFailed());
+            } catch (RuntimeException failure) {
+                LOGGER.error("M5_TEST_HOOK_RESIDUE_FAILED test={} hook={}", test, slot.name, failure);
+            }
+        }
+    }
+
+    /**
+     * 原版 {@code TestContext} 背後的 {@code GameTestState}：欄位名稱是 Yarn 1.21+build.9 的 {@code TestContext.test}（GameTest 只在 Loom 的開發
+     * runtime 以 named 名稱執行；{@code M5UniverseGameTests.scheduledCount} 讀同一個欄位）。讀不到時丟 IllegalStateException。
+     */
+    static GameTestState gameTestState(TestContext context) {
+        try {
+            var field = TestContext.class.getDeclaredField("test");
+            field.setAccessible(true);
+            return (GameTestState) field.get(context);
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException("讀不到原版 TestContext 的 GameTestState", failure);
+        }
     }
 
     /**
@@ -177,8 +237,8 @@ final class M5GameTestSupport {
 
     /**
      * 開始注入之前的等待：從 {@code tick} 起逐 tick 檢查，等到「從這個 tick 起連續 {@code window} 個 server tick 都不會有原生 autosave」
-     * （下一次 autosave 在 {@code getTicks()+window} 或更晚），才在那個 tick 的 callback 開始稽核 journal 寫出（{@link M5TestHooks#startJournalAudit}，
-     * hooks 釋放時移除）並呼叫 {@code start}（test tick、窗口）。不成立時，倒數最晚再 {@code window} 個 tick 就觸發 autosave 並重設為一整個間隔，
+     * （下一次 autosave 在 {@code getTicks()+window} 或更晚），才在那個 tick 的 callback 開始稽核 journal 寫出（{@link #installJournalAudit}，
+     * hooks 釋放或 test 結束時移除）並呼叫 {@code start}（test tick、窗口）。不成立時，倒數最晚再 {@code window} 個 tick 就觸發 autosave 並重設為一整個間隔，
      * 所以最多等 window＋1 個 tick；等不到代表 autosave 間隔被改過（{@code /tick rate}、{@code /tick sprint}），以失敗結束。窗口要涵蓋從開始注入
      * 到最後一次被探針計數的寫出。等待只降低誤判的機率；窗口內有沒有繞過探針的寫出，由 {@link AutosaveWindow#journalWrites} 判定與診斷。
      */
@@ -186,7 +246,7 @@ final class M5GameTestSupport {
             BiConsumer<Integer, AutosaveWindow> start, M2CorridorGameTests.TestHooks hooks) {
         var server = context.getWorld().getServer();
         whenTicks(context, tick, window + 2, () -> nextAutosaveTick(server) - server.getTicks() >= window, ready -> {
-            var audit = M5TestHooks.startJournalAudit(server, hooks);
+            var audit = installJournalAudit(context, hooks);
             var clear = new AutosaveWindow(name, window, server.getTicks(), nextAutosaveTick(server), audit);
             LOGGER.info("M5_AUTOSAVE_CLEAR name={} start={} nextAutosave={} window={}", name, clear.start(), clear.autosaveAt(), window);
             start.accept(ready, clear);
@@ -386,11 +446,16 @@ final class M5GameTestSupport {
 
         ServerPlayerEntity player() { return connection.player(); }
 
-        /** 第 2 tick 供電；原艙註冊並進入 IDLE（最多 40 tick）之後，以那個 tick 與 Controller 的 chamber UUID 呼叫 {@code ready}。 */
+        /**
+         * 以呼叫當下的 test tick（{@code context.getTick()}，記為 t0）為基準（F4a-0 fix round 1，quality Q2）：t0+2 供電（經 {@link #at}，例外時先釋放
+         * hooks）；從 t0+3 起等原艙註冊並進入 IDLE（最多 40 tick），之後以那個 tick 與 Controller 的 chamber UUID 呼叫 {@code ready}。可以在 test
+         * 方法本體（t0=0）或任何 callback 裡呼叫。
+         */
         void whenRegistered(BiConsumer<Integer, UUID> ready) {
-            context.waitAndRun(2, () -> context.setBlockState(POWER, Blocks.REDSTONE_BLOCK));
-            whenTicks(context, 3, 40, () -> registeredIdle(world, frame), registered -> ready.accept(registered, controller(world, frame).chamberUuid()),
-                    () -> "原艙沒有註冊並進入 IDLE", hooks);
+            int start = Math.toIntExact(context.getTick());
+            at(context, start + 2, hooks, () -> context.setBlockState(POWER, Blocks.REDSTONE_BLOCK));
+            whenTicks(context, start + 3, 40, () -> registeredIdle(world, frame),
+                    registered -> ready.accept(registered, controller(world, frame).chamberUuid()), () -> "原艙沒有註冊並進入 IDLE", hooks);
         }
 
         /** 這座原艙上的 MEASURED＋SELECTED 收據（只建立，不寫入）；參與者的值是是否已返還，沒有 lease。全員已返還即 DORMANT。 */
@@ -417,11 +482,16 @@ final class M5GameTestSupport {
         final ChamberFrame frame;
         final BlockPos power;
         final ConnectedGameTestPlayer connection;
+        private final TestContext context;
+        private final M2CorridorGameTests.TestHooks hooks;
 
-        private NetherChamber(ServerWorld nether, ChamberFrame frame, ConnectedGameTestPlayer connection) {
-            this.nether = nether; this.frame = frame; this.power = frame.controllerPos().up(); this.connection = connection;
+        private NetherChamber(TestContext context, ServerWorld nether, ChamberFrame frame, ConnectedGameTestPlayer connection,
+                M2CorridorGameTests.TestHooks hooks) {
+            this.context = context; this.nether = nether; this.frame = frame; this.power = frame.controllerPos().up(); this.connection = connection;
+            this.hooks = hooks;
         }
 
+        /** 建置並連線（見類別說明）；之後的 {@link #whenEntered} 沿用這裡的 context 與 hooks。失敗時先釋放 hooks。 */
         static NetherChamber open(TestContext context, BlockPos controller, M2CorridorGameTests.TestHooks hooks) {
             var nether = context.getWorld().getServer().getWorld(World.NETHER);
             var frame = new ChamberFrame(controller, Direction.NORTH);
@@ -440,7 +510,7 @@ final class M5GameTestSupport {
                 player.teleport(nether, inside.x, inside.y, inside.z, Set.of(), 0, 0);
                 player.setNoGravity(true); player.setVelocity(Vec3d.ZERO);
                 player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
-                return new NetherChamber(nether, frame, connection[0]);
+                return new NetherChamber(context, nether, frame, connection[0], hooks);
             } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
         }
 
@@ -452,12 +522,17 @@ final class M5GameTestSupport {
             return journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(controller.chamberUuid())).findFirst().orElse(null);
         }
 
-        /** 第 2 tick 供電；真入場、走廊發布 358 扇側門（最多 20000 tick）之後，以那個 tick 呼叫 {@code ready}。 */
-        void whenEntered(TestContext context, M2CorridorGameTests.TestHooks hooks, IntConsumer ready) {
+        /**
+         * 以呼叫當下的 test tick（{@code context.getTick()}，記為 t0）為基準（F4a-0 fix round 1，quality Q2）：t0+2 供電；從 t0+3 起等真入場、走廊
+         * 發布 358 扇側門（最多 20000 tick），之後以那個 tick 呼叫 {@code ready}。context 與 hooks 沿用 {@link #open}；可以在 test 方法本體（t0=0）
+         * 或任何 callback 裡呼叫。
+         */
+        void whenEntered(IntConsumer ready) {
             var server = context.getWorld().getServer();
             var journal = SessionRecoveryState.get(server); var pages = CorridorPageManager.forServer(server);
-            at(context, 2, hooks, () -> nether.setBlockState(power, Blocks.REDSTONE_BLOCK.getDefaultState()));
-            whenTicks(context, 3, 20000, () -> {
+            int start = Math.toIntExact(context.getTick());
+            at(context, start + 2, hooks, () -> nether.setBlockState(power, Blocks.REDSTONE_BLOCK.getDefaultState()));
+            whenTicks(context, start + 3, 20000, () -> {
                 var record = record(journal);
                 return record != null && record.state() == SessionState.SUPERPOSITION && pages.currentMappings(record.sessionUuid()).epoch() == 1
                         && pages.selectableDoors(record.sessionUuid()).size() == 358;

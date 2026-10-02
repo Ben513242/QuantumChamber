@@ -306,7 +306,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             };
             try {
                 capture = captureLogs(hooks);
-                installFlushProbe(commitProbe, hooks);
+                installFlushProbe(context, commitProbe, hooks);
                 // R2 M6：第一位玩家的預設返還 slot（原本的地板配置）放一塊石頭。
                 var sources = new LinkedHashMap<UUID, Vec3d>();
                 before.participants().forEach(person -> sources.put(person.playerUuid(), person.sourcePosition()));
@@ -406,7 +406,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             LogCapture capture;
             try {
                 capture = captureLogs(hooks);
-                installFlushProbe(returnFault.andThen(releaseFault), hooks);
+                installFlushProbe(context, returnFault.andThen(releaseFault), hooks);
                 interact(fixture.target, sourceDoor(fixture).cell(), fixture.players.getFirst().player());
             } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             var witness = new LinkedHashMap<String, Boolean>();
@@ -521,7 +521,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                             if (returnTick[0] < 0 && returned(state.records().get(sid), absent) && !returned(state.flushedRecords().get(sid), absent))
                                 returnTick[0] = server.getTicks();
                         };
-                        installFlushProbe(returnProbe, hooks);
+                        installFlushProbe(context, returnProbe, hooks);
                         rejoined[0] = new ConnectedGameTestPlayer(world, profile);
                         int joined = rejoined[0].joinTick();
                         whenTicks(context, onlineBack + 7, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
@@ -734,7 +734,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             LogCapture capture;
             try {
                 capture = captureLogs(hooks);
-                installFlushProbe(fault, hooks);
+                installFlushProbe(context, fault, hooks);
                 interact(fixture.target, sourceDoor(fixture).cell(), p);
             } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             var witness = new LinkedHashMap<String, Boolean>();
@@ -893,7 +893,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
         hooks.add(() -> cleanupFixtures(server, owned));
         var capture = captureLogs(hooks);
         var p = fixture.player();
-        fixture.whenEntered(context, hooks, ready -> {
+        fixture.whenEntered(ready -> {
             var record = fixture.record(journal); var sid = record.sessionUuid(); var chamber = record.chamberUuid();
             var witness = new LinkedHashMap<String, Boolean>();
             witness.put("netherSource", record.candidateContext().orElseThrow().sourceFamilyRef().role() == DimensionRole.NETHER
@@ -977,7 +977,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
         var nether = fixture.nether; var frame = fixture.frame; var connection = fixture.connection;
         var capture = captureLogs(hooks);
         var p = fixture.player();
-        fixture.whenEntered(context, hooks, ready -> {
+        fixture.whenEntered(ready -> {
             var record = fixture.record(journal); var sid = record.sessionUuid(); var chamber = record.chamberUuid();
             // 每次 journal 寫出的開頭：這個 session 是否寫出過 COLLAPSING，以及第一次 checked 寫成 DORMANT 的 server tick。不得丟例外。
             boolean[] wroteCollapsing = {false}; int[] dormantAt = {-1};
@@ -990,7 +990,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                         && MeasuredRecoveryPhase.from(durable) == MeasuredRecoveryPhase.DORMANT;
                 if (dormantAt[0] < 0 && stagedDormant && !durableDormant) dormantAt[0] = server.getTicks();
             };
-            installFlushProbe(probe, hooks);
+            installFlushProbe(context, probe, hooks);
             overlayKeys(connection);
             // 繞過 CandidateDoorInteraction（它會拒絕 Nether 的新選擇），照它的 guard 與檢查直接經 ledger 選 NEW 門。
             var door = candidateDoor(pages, target, sid, QuantumCandidate.New.class);
@@ -1075,7 +1075,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                         && !durable.spaceLeases().isEmpty();
             });
             afterAutosaveClear(context, ready + 1, "release_fault_backoff", 800, (start, autosave) -> {
-                installFlushProbe(fault, hooks);
+                installFlushProbe(context, fault, hooks);
                 interact(fixture.target, sourceDoor(fixture).cell(), fixture.players.getFirst().player());
                 whenTicks(context, start + 1, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
                     var witness = new LinkedHashMap<String, Boolean>();
@@ -1140,7 +1140,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             });
             // 失敗路徑：先解除探針，再把尚未確認的寫出帶出去，最後才以終局 API 收尾（hooks 依後進先出執行）。
             hooks.add(() -> { if (journal.rollForwardPending(sid)) journal.flush(server); });
-            installFlushProbe(fault, hooks);
+            installFlushProbe(context, fault, hooks);
             // 探針已裝好，同一個 callback 內立即寫入：這個 tick 結束時塌縮流程第一次看到它，roll-forward 已經未確認。
             var result = journal.commitRollForward(server, settled, sealed);
             context.assertTrue(!result.committed() && journal.rollForwardPending(sid) && sealed.equals(journal.records().get(sid))
@@ -1193,7 +1193,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 var durable = state.flushedRecords().get(sid);
                 return durable != null && durable.state() == SessionState.COLLAPSING && !state.records().containsKey(sid);
             });
-            installFlushProbe(fault, hooks);
+            installFlushProbe(context, fault, hooks);
             origin.own(receipt);
             boolean[] doorMovedEarly = {false};
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
@@ -1218,6 +1218,64 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 M4PerTestUniverseProbe.complete(context);
             }, () -> "SOURCE 收據沒有完成：record=" + state(journal, sid) + " attempts=" + fault.ticks(), hooks);
         });
+    }
+
+    /**
+     * F4a-0 fix round 1（quality Q1）：mixin 讀取的兩個靜態 hook 位置（journal flush 探針、journal 寫出稽核）的安裝規則。(a) hooks 已釋放時安裝在
+     * 登記移除時就丟出，位置不殘留；(b) 位置被占用時，第二次安裝立即丟 IllegalStateException、不覆蓋，訊息指出 hook、持有者與這次安裝的 test，
+     * 安裝失敗的那組 hooks 釋放時也不動持有者的值；(c) 持有者的 hooks 釋放之後位置清空，可以再裝。「test 結束時（含 tickLimit 逾時）由
+     * TestListener 移除殘留」不能在 test 自己裡面驗證，以 mutation 驗證（note F4a-0 的 Fix round 1）。不碰 journal、不建 fixture，各平台都執行。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_harness_hook_slots")
+    public void harness_hook_slots_fail_fast_and_leave_no_residue(TestContext context) {
+        var self = M5GameTestSupport.gameTestState(context).toString();
+        // (a) hooks 已釋放：安裝在登記移除時就丟出，位置不殘留。先單獨判定：殘留會讓 (b) 的第一次安裝失敗、遮住原因。
+        var empty = new LinkedHashMap<String, Boolean>();
+        empty.put("startsEmpty", M5TestHooks.FLUSH_PROBE.get() == null && M5TestHooks.JOURNAL_AUDIT.get() == null);
+        var released = new M2CorridorGameTests.TestHooks();
+        released.release();
+        java.util.function.Consumer<SessionRecoveryState> late = state -> { };
+        var lateFailure = thrown(() -> installFlushProbe(context, late, released));
+        empty.put("releasedHooksRejected", lateFailure instanceof IllegalStateException && lateFailure.getMessage().contains("已釋放"));
+        empty.put("releasedHooksLeftNoProbe", M5TestHooks.FLUSH_PROBE.get() == null);
+        empty.put("releasedHooksLeftNoAudit", thrown(() -> M5GameTestSupport.installJournalAudit(context, released)) instanceof IllegalStateException
+                && M5TestHooks.JOURNAL_AUDIT.get() == null);
+        context.assertTrue(!empty.containsValue(false), "M5 靜態 hook 位置（hooks 已釋放時安裝）：" + empty);
+        var witness = new LinkedHashMap<String, Boolean>();
+        var holder = new M2CorridorGameTests.TestHooks();
+        var intruder = new M2CorridorGameTests.TestHooks();
+        var again = new M2CorridorGameTests.TestHooks();
+        try {
+            // (b) 占用中：第二次安裝立即丟出、不覆蓋；安裝失敗的那組 hooks 釋放時不動持有者的值。
+            java.util.function.Consumer<SessionRecoveryState> first = state -> { }, second = state -> { };
+            installFlushProbe(context, first, holder);
+            var audit = M5GameTestSupport.installJournalAudit(context, holder);
+            var probeTaken = thrown(() -> installFlushProbe(context, second, intruder));
+            var auditTaken = thrown(() -> M5GameTestSupport.installJournalAudit(context, intruder));
+            witness.put("occupiedProbeRejected", probeTaken instanceof IllegalStateException && probeTaken.getMessage().contains("journal flush 探針 已被占用")
+                    && probeTaken.getMessage().contains("持有者 " + self + "（執行中）") && probeTaken.getMessage().contains("這次安裝來自 " + self));
+            witness.put("occupiedAuditRejected", auditTaken instanceof IllegalStateException && auditTaken.getMessage().contains("journal 寫出稽核 已被占用"));
+            witness.put("occupiedNotOverwritten", M5TestHooks.FLUSH_PROBE.get() == first && M5TestHooks.JOURNAL_AUDIT.get() == audit);
+            intruder.release();
+            witness.put("intruderReleaseKeepsHolder", M5TestHooks.FLUSH_PROBE.get() == first && M5TestHooks.JOURNAL_AUDIT.get() == audit);
+            // (c) 持有者釋放之後位置清空，可以再裝。
+            holder.release();
+            witness.put("holderReleaseLeavesNoResidue", M5TestHooks.FLUSH_PROBE.get() == null && M5TestHooks.JOURNAL_AUDIT.get() == null);
+            installFlushProbe(context, second, again);
+            witness.put("reinstallAfterRelease", M5TestHooks.FLUSH_PROBE.get() == second);
+            again.release();
+            witness.put("endsEmpty", M5TestHooks.FLUSH_PROBE.get() == null && M5TestHooks.JOURNAL_AUDIT.get() == null);
+        } catch (RuntimeException | Error failure) {
+            for (var hooks : List.of(holder, intruder, again)) hooks.releaseAfter(failure);
+            throw failure;
+        }
+        context.assertTrue(!witness.containsValue(false), "M5 靜態 hook 位置：" + witness);
+        context.complete();
+    }
+
+    /** 執行並回傳丟出的例外；沒有丟出時為 null。 */
+    private static RuntimeException thrown(Runnable action) {
+        try { action.run(); return null; } catch (RuntimeException failure) { return failure; }
     }
 
     // ---- F3d 的 helper（M5 共用的部分在 M5GameTestSupport） ----

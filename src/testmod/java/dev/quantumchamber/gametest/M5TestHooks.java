@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.test.GameTestState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,19 +21,23 @@ import org.slf4j.LoggerFactory;
  * <li>collapse-suspended（M5 plan 決策 7，{@code CollapseSuspendMixin} 讀取）：被加入的 session，{@code CollapseService} 完全不推進，
  *     M4 的 GameTest 因此維持「MEASURED 會一直等待」的原斷言。不變量：同一個 JVM 內不得清除（沒有移除的 API）；default run 中每一個
  *     會產生 MEASURED 的 test 都必須在 CollapseService 第一次看到該 session 之前（選門的同一個 tick 之前）加入。</li>
- * <li>journal flush 探針：{@code SessionJournalWindowFaultMixin} 在每次 journal flush 開頭呼叫 {@link #beforeJournalFlush}，探針丟出例外即讓
- *     那次寫出受控失敗。只由 M5 的 test 設定（{@code M5GameTestSupport.installFlushProbe}），並在所有路徑上以 TestHooks 清除。</li>
- * <li>journal 寫出稽核（F4a-0 m-1）：{@code SessionJournalWriteCountMixin} 在 journal 正式檔每一次實際寫出之前呼叫
- *     {@link #beforeJournalWrite}。稽核由 {@code M5GameTestSupport.afterAutosaveClear} 在窗口開始時啟動，hooks 釋放時移除。</li>
+ * <li>journal flush 探針（{@link #FLUSH_PROBE}）：{@code SessionJournalWindowFaultMixin} 在每次 journal flush 開頭呼叫 {@link #beforeJournalFlush}，
+ *     探針丟出例外即讓那次寫出受控失敗。只由 M5 的 test 經 {@code M5GameTestSupport.installFlushProbe} 安裝。</li>
+ * <li>journal 寫出稽核（{@link #JOURNAL_AUDIT}，F4a-0 m-1）：{@code SessionJournalWriteCountMixin} 在 journal 正式檔每一次實際寫出之前呼叫
+ *     {@link #beforeJournalWrite}。稽核由 {@code M5GameTestSupport.afterAutosaveClear} 在窗口開始時安裝。</li>
  * </ul>
+ * 探針與稽核各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {
     private M5TestHooks() {}
 
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber-testmod");
     private static final Set<UUID> COLLAPSE_SUSPENDED = ConcurrentHashMap.newKeySet();
-    static volatile Consumer<SessionRecoveryState> flushProbe;
-    static volatile JournalWriteAudit journalAudit;
+    /** journal flush 探針（{@code M5GameTestSupport.installFlushProbe}）。 */
+    static final Slot<Consumer<SessionRecoveryState>> FLUSH_PROBE = new Slot<>("journal flush 探針");
+    /** journal 寫出稽核（{@code M5GameTestSupport.installJournalAudit}，由 {@code afterAutosaveClear} 呼叫）。 */
+    static final Slot<JournalWriteAudit> JOURNAL_AUDIT = new Slot<>("journal 寫出稽核");
 
     /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
     public static boolean collapseSuspended(UUID session) {
@@ -48,24 +53,56 @@ public final class M5TestHooks {
      */
     public static void beforeJournalFlush(SessionRecoveryState state, MinecraftServer server) {
         if (!server.isOnThread()) return;
-        var audit = journalAudit;
+        var audit = JOURNAL_AUDIT.get();
         if (audit != null) audit.record(state, false);
-        var probe = flushProbe;
+        var probe = FLUSH_PROBE.get();
         if (probe != null) probe.accept(state);
     }
 
     /** {@code SessionJournalWriteCountMixin}：journal 正式檔每一次實際寫出之前呼叫（不論來源）。沒有進行中的稽核時不做任何事；不丟出例外。 */
     public static void beforeJournalWrite(SessionRecoveryState state) {
-        var audit = journalAudit;
+        var audit = JOURNAL_AUDIT.get();
         if (audit != null) audit.record(state, true);
     }
 
-    /** 開始稽核 journal 寫出（同一時間只有一個）；hooks 釋放時，若仍是它就移除。 */
-    static JournalWriteAudit startJournalAudit(MinecraftServer server, M2CorridorGameTests.TestHooks hooks) {
-        var audit = new JournalWriteAudit(server);
-        journalAudit = audit;
-        hooks.add(() -> { if (journalAudit == audit) journalAudit = null; });
-        return audit;
+    /**
+     * mixin 讀取的一個靜態 hook 位置（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者。安裝與移除只經 {@code M5GameTestSupport}
+     * （先在 hooks 登記移除、再登記 test 結束時的移除，最後才安裝）；mixin 只讀 {@link #get}。安裝與移除在 server thread 上。
+     */
+    static final class Slot<T> {
+        final String name;
+        private volatile T value;
+        private GameTestState owner;
+
+        Slot(String name) { this.name = name; }
+
+        /** 目前裝著的值；沒有時為 null。 */
+        T get() { return value; }
+
+        /**
+         * 安裝。位置已被占用時丟 IllegalStateException、不覆蓋：可能是另一個 test 同時使用（同一個 batch 的 test 同時執行），或前一個 test 沒有
+         * 釋放的殘留；訊息列出 hook、持有者與它是否已結束，以及這次安裝的 test。
+         */
+        synchronized void install(T next, GameTestState test) {
+            Objects.requireNonNull(next, name);
+            if (value != null) throw new IllegalStateException(name + " 已被占用，不覆蓋：持有者 " + describe(owner) + "，這次安裝來自 " + describe(test)
+                    + "。同一時間只能有一個 test 使用；用探針或稽核的 test 必須獨占一個 batch");
+            value = next;
+            owner = test;
+        }
+
+        /** 目前仍是 {@code expected} 時移除，回傳是否移除；已被移除或換成別的值時不動。 */
+        synchronized boolean remove(T expected) {
+            if (expected == null || value != expected) return false;
+            value = null;
+            owner = null;
+            return true;
+        }
+
+        private static String describe(GameTestState test) {
+            if (test == null) return "?";
+            return test + (test.isCompleted() ? "（已結束而沒有釋放）" : "（執行中）");
+        }
     }
 
     /**
