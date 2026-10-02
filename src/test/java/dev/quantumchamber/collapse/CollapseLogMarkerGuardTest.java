@@ -25,9 +25,6 @@ import org.junit.jupiter.api.Test;
  *     傳出）、{@code LOGGER} 的其他方法（例如 fluent API 的 {@code atWarn()}；{@code is*Enabled()} 除外）、直接用 log4j 的 {@code LogManager}、
  *     {@code System.out/err} 或 {@code printStackTrace}，都算違規。</li>
  * <li>只有 {@code CollapseService} 可以宣告這兩個 marker；別的類別宣告同名常數，第一項的比對就失去意義。</li>
- * <li>例外：F2b 的 {@code CollapseAuthorities} 記 M5 權威的初始化與收斂，不歸屬任何 session，也不是塌縮流程的推進；它既有的 7 則 log 逐則列在
- *     {@link #LEGACY}（檔名、等級、第一個字串常值的開頭），每一則必須恰好對到一個呼叫。多一則沒有 marker 的 log 就失敗：新的 log 要帶 marker，
- *     或經 review 加進清單。</li>
  * </ul>
  * 不處理（寫明理由）：以反射或在別的 package 的 helper 裡代為記錄的 log——規則只約束 collapse package 的原始碼，別的 package 的 log 不是
  * 塌縮流程的 log；把 marker 存進別名常數再傳入（例如 {@code Marker m = LOG_MARKER}）會被當成沒有 marker 而失敗，請直接寫常數。
@@ -36,16 +33,6 @@ import org.junit.jupiter.api.Test;
  */
 class CollapseLogMarkerGuardTest {
     private static final String PACKAGE_DIR = "src/main/java/dev/quantumchamber/collapse";
-
-    /** 不帶 marker 的既有 log：{@code CollapseAuthorities}（F2b，M5 權威的初始化與收斂）。 */
-    private static final List<Legacy> LEGACY = List.of(
-            new Legacy("CollapseAuthorities.java", "info", "M5 authority 初始化完成"),
-            new Legacy("CollapseAuthorities.java", "error", "M5 authority 初始化失敗"),
-            new Legacy("CollapseAuthorities.java", "error", "M5 {} 的檔案在執行期間消失"),
-            new Legacy("CollapseAuthorities.java", "warn", "M5 CATALOG 的 checked 寫出未確認"),
-            new Legacy("CollapseAuthorities.java", "info", "M5 CATALOG 收斂完成"),
-            new Legacy("CollapseAuthorities.java", "info", "M5 {} 收斂完成"),
-            new Legacy("CollapseAuthorities.java", "warn", "M5 {} 的 checked 寫入未確認"));
 
     private static final Pattern LOGGER_TOKEN = Pattern.compile("\\bLOGGER\\b");
     private static final Pattern DECLARATION = Pattern.compile(
@@ -59,7 +46,6 @@ class CollapseLogMarkerGuardTest {
     private static final Set<String> LEVELS = Set.of("trace", "debug", "info", "warn", "error");
     private static final Set<String> QUERIES = Set.of("isTraceEnabled", "isDebugEnabled", "isInfoEnabled", "isWarnEnabled", "isErrorEnabled");
 
-    record Legacy(String file, String level, String prefix) { }
     /** 第一個參數不是塌縮 marker 的 logger 呼叫：檔名、行號、等級、第一個參數（字串常值時為它的內容）。 */
     record Unmarked(String file, int line, String level, String first) { }
     /** 一個檔案的掃描結果：帶 marker 的呼叫數、沒帶 marker 的呼叫、其他違規。 */
@@ -81,14 +67,7 @@ class CollapseLogMarkerGuardTest {
             unmarked.addAll(scan.unmarked());
             if (name.equals("CollapseService.java")) serviceMarked = scan.markedCalls();
         }
-        var remaining = new ArrayList<>(unmarked);
-        for (var legacy : LEGACY) {
-            var hits = remaining.stream().filter(call -> call.file().equals(legacy.file()) && call.level().equals(legacy.level())
-                    && call.first().startsWith(legacy.prefix())).toList();
-            if (hits.size() != 1) violations.add("例外清單的 " + legacy + " 對到 " + hits.size() + " 個呼叫（應恰好 1 個）：" + hits);
-            remaining.removeAll(hits);
-        }
-        remaining.forEach(call -> violations.add(call.file() + ":" + call.line() + " LOGGER." + call.level()
+        unmarked.forEach(call -> violations.add(call.file() + ":" + call.line() + " LOGGER." + call.level()
                 + " 的第一個參數不是 LOG_MARKER／TICK_LOG_MARKER：" + call.first()));
         int marked = serviceMarked;
         assertAll(

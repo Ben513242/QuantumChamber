@@ -60,6 +60,8 @@ import org.slf4j.LoggerFactory;
  * </ul>
  * 兩個 ledger 與 discovery 都不是 PersistentState，原生 autosave 與停服不會寫它們；收斂完成之前 crash，重啟後讀到的舊內容或新內容都合法
  * （spec §6 的表）。
+ * <p>這裡的 log 記的是權威本身（初始化、遺失、寫入未確認與收斂），不屬於任何 session，所以一律帶 {@link CollapseService#TICK_LOG_MARKER}
+ * （F4a，F4a-0 裁示 1）：GameTest 的 {@code collapseFlowNeverWarned} 因此也看得到權威寫入未確認的 WARN。
  */
 public final class CollapseAuthorities {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
@@ -353,12 +355,12 @@ public final class CollapseAuthorities {
         }
         init = result;
         if (result.succeeded()) {
-            LOGGER.info("M5 authority 初始化完成：allocation={}（{} 筆），projection={}（{} 筆），flushed journal 已是 schema 4={}",
+            LOGGER.info(CollapseService.TICK_LOG_MARKER, "M5 authority 初始化完成：allocation={}（{} 筆），projection={}（{} 筆），flushed journal 已是 schema 4={}",
                     result.allocation(), allocation.confirmed.entries().size(), result.projection(), projection.confirmed.entries().size(),
                     result.flushedSchemaFour());
         } else {
             var cause = result.failure().orElseThrow();
-            LOGGER.error("M5 authority 初始化失敗：allocation={}，projection={}，flushed journal 已是 schema 4={}；本 server instance 不提交新的 COLLAPSING，"
+            LOGGER.error(CollapseService.TICK_LOG_MARKER, "M5 authority 初始化失敗：allocation={}，projection={}，flushed journal 已是 schema 4={}；本 server instance 不提交新的 COLLAPSING，"
                     + "journal 不會因此升為 schema 4，UNIVERSE 目的地到 RESOLVE 時進 SEALED({})；下次開服重新初始化：{}",
                     result.allocation(), result.projection(), result.flushedSchemaFour(), result.sealedReason().orElseThrow(),
                     FailureText.describe(cause), cause);
@@ -739,7 +741,7 @@ public final class CollapseAuthorities {
     private RuntimeException markLost(Slot<?> slot, NoSuchFileException missing) {
         if (slot.lost == null) {
             slot.lost = new IllegalStateException(slot.authority + " 在執行期間消失，視為遺失", missing);
-            LOGGER.error("M5 {} 的檔案在執行期間消失，視為遺失（AUTHORITY_CORRUPT）；不重建，需要管理員處理：{}", slot.authority, slot.path);
+            LOGGER.error(CollapseService.TICK_LOG_MARKER, "M5 {} 的檔案在執行期間消失，視為遺失（AUTHORITY_CORRUPT）；不重建，需要管理員處理：{}", slot.authority, slot.path);
         }
         return slot.lost;
     }
@@ -789,7 +791,7 @@ public final class CollapseAuthorities {
         var key = FailureText.dedupeKey(failure);
         if (!key.equals(catalogWarned)) {
             catalogWarned = key;
-            LOGGER.warn("M5 CATALOG 的 checked 寫出未確認：current 保留並維持 dirty，{} ticks 後才重試收斂（或由原生 autosave 寫出）：{}",
+            LOGGER.warn(CollapseService.TICK_LOG_MARKER, "M5 CATALOG 的 checked 寫出未確認：current 保留並維持 dirty，{} ticks 後才重試收斂（或由原生 autosave 寫出）：{}",
                     catalogBackoff.delayTicks(), FailureText.describe(failure), failure);
         }
         return Lookup.failed(Lookup.Status.WRITE_FAILED, SealedReason.ALLOCATION_IO_FAILED, failure);
@@ -797,7 +799,7 @@ public final class CollapseAuthorities {
 
     /** catalog 已確認（本 instance 的寫出或原生 autosave）：清除退避與 WARN 去重鍵；本 instance 曾寫出失敗時記 INFO。 */
     private void catalogConfirmed() {
-        if (catalogWriteFailed) LOGGER.info("M5 CATALOG 收斂完成：catalog 的寫出已讀回確認");
+        if (catalogWriteFailed) LOGGER.info(CollapseService.TICK_LOG_MARKER, "M5 CATALOG 收斂完成：catalog 的寫出已讀回確認");
         catalogWriteFailed = false;
         catalogBackoff.reset();
         catalogWarned = null;
@@ -829,7 +831,7 @@ public final class CollapseAuthorities {
         boolean converged = slot.unconfirmed;
         slot.confirmed = next; slot.current = next; slot.unconfirmed = false;
         slot.backoff.reset(); slot.warned = null;
-        if (converged) LOGGER.info("M5 {} 收斂完成：checked 重寫已讀回確認", slot.authority);
+        if (converged) LOGGER.info(CollapseService.TICK_LOG_MARKER, "M5 {} 收斂完成：checked 重寫已讀回確認", slot.authority);
         return null;
     }
 
@@ -840,7 +842,7 @@ public final class CollapseAuthorities {
         var key = FailureText.dedupeKey(failure);
         if (!key.equals(slot.warned)) {
             slot.warned = key;
-            LOGGER.warn("M5 {} 的 checked 寫入未確認：保留新內容並標為未確認，{} ticks 後才重試收斂：{}",
+            LOGGER.warn(CollapseService.TICK_LOG_MARKER, "M5 {} 的 checked 寫入未確認：保留新內容並標為未確認，{} ticks 後才重試收斂：{}",
                     slot.authority, slot.backoff.delayTicks(), FailureText.describe(failure), failure);
         }
         var cause = failure instanceof RuntimeException runtime ? runtime : new UncheckedIOException(slot.authority + " checked 寫入失敗",

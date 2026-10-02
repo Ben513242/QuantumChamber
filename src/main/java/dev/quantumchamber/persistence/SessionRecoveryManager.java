@@ -170,7 +170,7 @@ public final class SessionRecoveryManager {
                 // 整合審查延後清單「新 WARN 缺 cause」：以 FailureText.dedupeKey 去重，WARN 帶 root cause 的顯示文字並附 stack。
                 var key=FailureText.dedupeKey(failure);
                 if(!key.equals(failures.put(record.sessionUuid(),key)))
-                    org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("返還保留 pending，session={}：{}",record.sessionUuid(),
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("recovery 寫出保留 pending（返還，或 roll-forward 的重試寫出），session={}：{}",record.sessionUuid(),
                             FailureText.describe(failure),failure);
             }
         }

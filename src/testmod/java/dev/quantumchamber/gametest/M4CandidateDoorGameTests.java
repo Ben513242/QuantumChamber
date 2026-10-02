@@ -1918,7 +1918,7 @@ public final class M4CandidateDoorGameTests {
                         witness.put("presenceStillCollapse",gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.COLLAPSE);
                         var retained=capture.matching(org.apache.logging.log4j.Level.WARN,"COLLAPSING 保留 receipt 等待安全返還",sid.toString());
                         var returning=capture.matching(org.apache.logging.log4j.Level.ERROR,"走廊保留租約等待安全返還",sid.toString());
-                        var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"返還保留 pending",sid.toString());
+                        var pending=capture.matching(org.apache.logging.log4j.Level.WARN,"recovery 寫出保留 pending",sid.toString());
                         var recovered=capture.matching(org.apache.logging.log4j.Level.INFO,"COLLAPSING 原生存檔 checkpoint 已恢復，繼續 SETTLED 收尾",sid.toString());
                         // checkpoint 與清 lease 的寫出各失敗一次：兩個原因各記一則保留 WARN，各附 stack。
                         witness.put("retainedWarnOncePerCause",retained.size()==2 && retained.stream().allMatch(entry -> entry.thrown()!=null)

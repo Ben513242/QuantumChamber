@@ -435,7 +435,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     witness.put("neverOverwroteAnotherReturn", !overwrote[0]);
                     witness.put("noRetryBeforeBackoff", retries.stream().allMatch(tick -> tick >= faultTick + 200));
                     witness.put("confirmedNotBeforeBackoff", confirmed >= 0 && (retries.isEmpty() || retries.getFirst() >= faultTick + 200));
-                    var pending = capture.matching(org.apache.logging.log4j.Level.WARN, "返還保留 pending", sid.toString());
+                    var pending = capture.matching(org.apache.logging.log4j.Level.WARN, "recovery 寫出保留 pending", sid.toString());
                     witness.put("oneWarnWithCause", pending.size() == 1 && pending.getFirst().thrown() != null
                             && pending.getFirst().message().contains(RETURN_FAULT));
                     // 清 lease 的寫出也失敗一次：第一次看到 SETTLED 的那個 tick，space 還在、record 還在（沒有離開 SETTLED）。record 若在
