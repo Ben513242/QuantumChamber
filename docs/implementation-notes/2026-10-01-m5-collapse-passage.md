@@ -1045,6 +1045,7 @@ GREEN 數字：
 - Code range `cfe5133..b400b7f`。
 - 沒有接任何 runtime 呼叫點：production 不會呼叫 `markCollapseAuthoritiesInitialized`，journal 照舊寫 schema 3（或 2），也沒有任何程式產生塌縮狀態，所以 production 行為不變。
 - Review：首輪結果與 fix round 1（`2d13248`）見本節最後的「Fix round 1」。
+- 最終 review：fix round 2（`b488bfc`）的 re-review Approved（Critical 0、Important 0、Minor 0）。**F2a 完成**：range `cfe5133..7bae536`（code `7c3c247`、`b400b7f`、`2d13248`、`b488bfc`）。
 
 ### Code-truth（`b400b7f`）
 
@@ -1290,6 +1291,7 @@ GREEN 數字：
 - Code range `7bae536..eeb0524`。`SessionRecoveryState.java` 沒有修改：controller 補充第 5 點允許的唯讀 getter 用不到（見「偏離」）。
 - production 唯一的新行為是開服初始化：建立缺少的空 ledger、標記 journal 已初始化。之後第一次 checked journal 寫入（有 candidate record 時）寫出 schema 4。沒有接任何 gameplay 呼叫點（`CollapseService` 是 F3d），兩個 ledger 在 runtime 只會是空的。
 - Review：首輪結果與 fix round 1 見本節最後的「Fix round 1」。
+- 最終 review：fix round 1（`84acd2b`）的 re-review Approved（Critical 0、Important 0、Minor 2，兩項併入 F2c 處理）。**F2b 完成**：range `7bae536..ba60df0`（code `eeb0524`、`84acd2b`）；期間另有 controller 的 plan commit `245785f`、`b712193`。
 
 ### Code-truth（`eeb0524`）
 
@@ -1490,6 +1492,7 @@ runtime 證據（plan Step 3「第一次在 runtime 寫出 schema 4 與 ledger �
 - Code range `b712193..96a442c`。
 - production 的新行為只有 API，沒有接任何 gameplay 呼叫點（RESOLVE 是 F4a）。runtime 唯一的差別是 discovery 的讀寫改經 `CheckedNbtFile`（M4 的 `loadOrCreate`／`load` 照常，見「第 6 點」），以及 `onStarted` 多建一個 `ServerCatalog`（只包住 server，開服時不讀 catalog）。
 - Review：首輪結果與 fix round 1 見本節最後的「Fix round 1」。
+- 最終 review：fix round 2（`82d7bb3`）的 re-review Approved（Critical 0、Important 0、Minor 0）。**F2c 完成**：range `b712193..6cce51f`（code `c0167e0`、`96a442c`、`7676424`、`fece7a3`、`82d7bb3`）。
 
 ### Code-truth（`96a442c`）
 
@@ -1726,6 +1729,7 @@ GREEN 數字：
 - Code range `6cce51f..20966a2`。
 - 還沒有任何程式會產生塌縮狀態（提交 COLLAPSING 屬 F3d），所以 production 行為不變：新的分支只有測試 fixture 走得到，M4 狀態的判斷都照舊（逐列見下表）。
 - Review：首輪結果與 fix round 1 見本節最後的「Fix round 1」。
+- 最終 review：fix round 1（`dce3da0`）的 re-review Approved（Critical 0、Important 0、Minor 0）。**F3a 完成**：range `6cce51f..e10baab`（code `20966a2`、`dce3da0`）。
 
 ### §13.2 逐列對照
 
@@ -1923,6 +1927,7 @@ GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 
 - 範圍是 spec §10.1 的方塊與門的狀態，以及決策 10 的「套用目標狀態」API。什麼時候套用哪個 membrane 屬 F4b、F5，本 task 沒有任何呼叫點。既有的開關門行為不變，只把切換 `OPEN` 的兩個寫入點改走 `withOpen`。
 - 行號以 `71dcaaf` 為準。`QBB` 指 `chamber/QuantumBulkheadBlock.java`，`CDS` 指 `chamber/ChamberDoorService.java`，`WCDA` 指 `chamber/WorldChamberDoorAdapter.java`，`MS` 指 `chamber/MembraneState.java`。測試欄的 J 是 `MembraneStateTest`，G1、G2、G3 見「測試」。
 - Review：首輪 spec review ✅（Critical 0、Important 0、Minor 2）；code quality review Not approved（Critical 0、Important 1、Minor 5）。controller 接受「偏離」第 1、2 條（開門擋流體、量子膜外框可瞄準）。處理見本節最後的「Fix round 1」；本節其餘內容描述 `71dcaaf`，fix round 1 改過的地方另加註。
+- 最終 review：fix round 2（`f181203`）的 re-review Approved（Critical 0、Important 0、Minor 0）。**F3b 完成**：range `e10baab..e197108`（code `71dcaaf`、`88c220a`、`f181203`）。
 
 ### spec §10.1 逐項對照
 
