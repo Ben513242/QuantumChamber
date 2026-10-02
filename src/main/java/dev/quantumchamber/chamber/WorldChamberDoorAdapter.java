@@ -36,13 +36,46 @@ final class WorldChamberDoorAdapter {
         }
     }
 
-    /** {@link ChamberDoorService#applyTarget} 的世界版本；交易與失敗處理與 {@link #toggle} 相同。 */
+    /**
+     * {@link ChamberDoorService#applyTarget} 的世界版本；交易與失敗處理與 {@link #toggle} 相同。順序：server thread、
+     * 量子膜軸、相關 chunk 都是 FULL（只查詢、不載入），通過之後才讀寫門格。
+     */
     static ChamberDoorService.ApplyResult apply(ServerWorld world, ChamberFrame frame, ChamberDoorService.DoorState target) {
         Objects.requireNonNull(world, "world");
-        Objects.requireNonNull(frame, "frame");
-        Objects.requireNonNull(target, "target");
         if (!world.getServer().isOnThread()) throw new IllegalStateException("門的目標狀態只能在 server thread 套用");
+        ChamberDoorService.requireFits(frame, target);
+        if (!doorChunksLoaded(world, frame)) {
+            return new ChamberDoorService.ApplyResult(ChamberDoorService.ApplyResult.Outcome.NOT_LOADED, activationBlocked(world, frame));
+        }
         return ChamberPowerCoordinator.deferActivation(() -> applyDeferred(world, frame, target));
+    }
+
+    /**
+     * 門板 25 格、Controller，以及它們的鄰格所在的 chunk 是否都已是 FULL；只用 {@code getWorldChunk} 查詢，不載入。
+     * 寫入門格時，原版的 neighbor update 與 shape update 會以會載入 chunk 的 {@code getBlockState} 讀相鄰六格，所以範圍是門平面
+     * local x 0–6、法線方向 local z −1～1（Controller 在 local (3,6,0)，也在其中）；高度不影響 chunk。
+     */
+    private static boolean doorChunksLoaded(ServerWorld world, ChamberFrame frame) {
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (int x : new int[] {0, ChamberGeometry.OUTER_SIZE - 1}) {
+            BlockPos plane = ChamberGeometry.localToWorld(frame, x, 0, 0);
+            for (BlockPos corner : new BlockPos[] {plane.offset(frame.outwardFacing()), plane.offset(frame.outwardFacing().getOpposite())}) {
+                minX = Math.min(minX, corner.getX());
+                maxX = Math.max(maxX, corner.getX());
+                minZ = Math.min(minZ, corner.getZ());
+                maxZ = Math.max(maxZ, corner.getZ());
+            }
+        }
+        var manager = world.getChunkManager();
+        for (int chunkX = minX >> 4; chunkX <= maxX >> 4; chunkX++) {
+            for (int chunkZ = minZ >> 4; chunkZ <= maxZ >> 4; chunkZ++) {
+                if (manager.getWorldChunk(chunkX, chunkZ) == null) return false;
+            }
+        }
+        return true;
     }
 
     private static ChamberDoorService.ApplyResult applyDeferred(ServerWorld world, ChamberFrame frame,
@@ -62,8 +95,12 @@ final class WorldChamberDoorAdapter {
             blockActivation(world, frame, failure);
             outcome = ChamberDoorService.ApplyResult.Outcome.ROLLBACK_FAILED;
         }
+        return new ChamberDoorService.ApplyResult(outcome, activationBlocked(world, frame));
+    }
+
+    private static boolean activationBlocked(ServerWorld world, ChamberFrame frame) {
         var controller = loadedController(world, frame);
-        return new ChamberDoorService.ApplyResult(outcome, controller != null && controller.activationBlocked());
+        return controller != null && controller.activationBlocked();
     }
 
     /** 門格目前實際生效的 open＋membrane；不是 bulkhead 時回 null。 */

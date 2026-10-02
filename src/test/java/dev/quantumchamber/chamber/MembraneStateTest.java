@@ -329,7 +329,7 @@ class MembraneStateTest {
         Outcome outcome = new ChamberDoorService().apply(cells, cells, ChamberMutationExecutor.DIRECT, frame,
                 DoorState.sealed(Direction.NORTH), refreshed::add);
 
-        assertEquals(Outcome.REJECTED, outcome);
+        assertEquals(Outcome.DOOR_INCOMPLETE, outcome, "結構性的拒絕與寫入被拒分開回報");
         assertTrue(cells.writes.isEmpty(), "缺一格時不寫任何一格");
         assertTrue(refreshed.isEmpty());
     }
@@ -352,7 +352,7 @@ class MembraneStateTest {
             Outcome outcome = new ChamberDoorService().apply(cells, cells, ChamberMutationExecutor.DIRECT, frame,
                     DoorState.CLOSED, refreshed::add);
 
-            assertEquals(Outcome.REJECTED, outcome, label);
+            assertEquals(Outcome.ROLLED_BACK, outcome, "寫入被拒、rollback 完成與門板不完整分開回報（" + label + "）");
             assertEquals(before, cells.states, "每一格回到自己的原狀態（" + label + "）");
             // 13 次嘗試；真的改過的格才需要復原（失敗格沒改時不重寫）。
             assertEquals(13 + (changedBeforeFailure ? 13 : 12), cells.writes.size(), label);
@@ -457,45 +457,57 @@ class MembraneStateTest {
     // ---- 寫入路徑守門 ----
 
     /**
-     * 補充第 1 點：open=false＋*_x/z 不能由任何寫入路徑產生。production 與 client 原始碼中，直接以 {@code .with(OPEN／MEMBRANE, …)}
-     * 寫 bulkhead 的位置只能在 {@link QuantumBulkheadBlock} 自己（{@code withOpen}／{@code withDoor}／預設狀態），
-     * 以及 {@code SessionEntranceAllocator} 從預設狀態（membrane=none）建立入口門；切換門的兩個寫入點必須經過 {@code withOpen}。
+     * 補充第 1 點：open=false＋*_x/z 不能由任何寫入路徑產生。掃描 production 與 client 原始碼：
+     * <ul>
+     *   <li>bulkhead 屬性（{@code QuantumBulkheadBlock.OPEN／MEMBRANE}，可帶套件名稱；或以 {@code import static} 引入的
+     *       {@code OPEN／MEMBRANE}）作為 {@code with}、{@code withIfExists}、{@code cycle} 的參數寫入時，只能在
+     *       {@link QuantumBulkheadBlock} 自己。唯一例外是對預設狀態（membrane=none）寫 {@code OPEN}，判定時忽略空白與換行；
+     *       目前只有 {@code SessionEntranceAllocator} 一處，新增的位置也要在這裡列出。</li>
+     *   <li>兩個門切換點傳給 {@code ChamberDoorService.toggle} 的 mutator，lambda 本體（去掉空白）必須逐字等於經過
+     *       {@code withOpen} 的寫法。</li>
+     * </ul>
+     * 只比對 bulkhead 自己的屬性常數；{@code Properties.OPEN} 是許多原版方塊共用的屬性，不列入。
      */
     @Test
     void everyOpenAndMembraneWriteGoesThroughTheBulkheadGuards() throws IOException {
         Path root = repositoryRoot();
-        Pattern write = Pattern.compile("\\.with\\(\\s*(?:QuantumBulkheadBlock\\.|Properties\\.)?(OPEN|MEMBRANE)\\s*,");
+        Pattern qualified = Pattern.compile("(?<![\\w.])(?:dev\\s*\\.\\s*quantumchamber\\s*\\.\\s*chamber\\s*\\.\\s*)?"
+                + "QuantumBulkheadBlock\\s*\\.\\s*(OPEN|MEMBRANE)\\b");
+        Pattern staticImport = Pattern.compile("import\\s+static\\s+dev\\.quantumchamber\\.chamber\\.QuantumBulkheadBlock\\s*\\.\\s*(OPEN|MEMBRANE|\\*)\\s*;");
+        Pattern bare = Pattern.compile("(?<![\\w.])(OPEN|MEMBRANE)\\b");
         Map<String, List<String>> unexpected = new TreeMap<>();
-        Map<String, Integer> defaultStateWrites = new TreeMap<>();
-        for (String sourceSet : List.of("src/main/java", "src/client/java")) {
-            List<Path> files;
-            try (var walk = Files.walk(root.resolve(sourceSet))) {
-                files = walk.filter(path -> path.toString().endsWith(".java")).sorted().toList();
-            }
-            for (Path file : files) {
-                String relative = root.relativize(file).toString().replace('\\', '/');
-                String text = Files.readString(file, StandardCharsets.UTF_8);
-                Matcher matcher = write.matcher(text);
-                while (matcher.find()) {
-                    if (relative.endsWith("/chamber/QuantumBulkheadBlock.java")) continue;
-                    String before = text.substring(Math.max(0, matcher.start() - 40), matcher.start());
-                    if (relative.endsWith("/corridor/SessionEntranceAllocator.java") && before.endsWith("QUANTUM_BULKHEAD.getDefaultState()")) {
-                        defaultStateWrites.merge(relative, 1, Integer::sum);
-                        continue;
-                    }
-                    int line = (int) text.substring(0, matcher.start()).chars().filter(c -> c == '\n').count() + 1;
-                    unexpected.computeIfAbsent(relative, ignored -> new ArrayList<>()).add(line + ":" + matcher.group());
+        Map<String, Integer> defaultStateOpenWrites = new TreeMap<>();
+        for (Path file : javaSources(root)) {
+            String relative = root.relativize(file).toString().replace('\\', '/');
+            if (relative.equals("src/main/java/dev/quantumchamber/chamber/QuantumBulkheadBlock.java")) continue;
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            Map<Integer, String> references = new TreeMap<>();
+            for (Matcher matcher = qualified.matcher(text); matcher.find(); ) references.put(matcher.start(), matcher.group(1));
+            Set<String> imported = new java.util.HashSet<>();
+            for (Matcher matcher = staticImport.matcher(text); matcher.find(); ) imported.add(matcher.group(1));
+            if (!imported.isEmpty()) {
+                for (Matcher matcher = bare.matcher(text); matcher.find(); ) {
+                    if (imported.contains("*") || imported.contains(matcher.group(1))) references.put(matcher.start(), matcher.group(1));
                 }
+            }
+            for (var reference : references.entrySet()) {
+                String receiver = writeReceiver(text, reference.getKey());
+                if (receiver == null) continue; // 讀取，例如 state.get(QuantumBulkheadBlock.OPEN)
+                if (reference.getValue().equals("OPEN") && receiver.endsWith("QUANTUM_BULKHEAD.getDefaultState()")) {
+                    defaultStateOpenWrites.merge(relative, 1, Integer::sum);
+                    continue;
+                }
+                int line = (int) text.substring(0, reference.getKey()).chars().filter(c -> c == '\n').count() + 1;
+                unexpected.computeIfAbsent(relative, ignored -> new ArrayList<>()).add(line + ":" + reference.getValue());
             }
         }
         assertEquals(Map.of(), unexpected, "直接寫 OPEN／MEMBRANE 的位置必須改用 QuantumBulkheadBlock.withOpen／withDoor");
-        assertEquals(Map.of("src/main/java/dev/quantumchamber/corridor/SessionEntranceAllocator.java", 1), defaultStateWrites,
-                "入口門只從預設狀態（membrane=none）建立");
-        for (String toggle : List.of("src/main/java/dev/quantumchamber/chamber/WorldChamberDoorAdapter.java",
-                "src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java")) {
-            assertTrue(Files.readString(root.resolve(toggle), StandardCharsets.UTF_8).contains("QuantumBulkheadBlock.withOpen("),
-                    toggle + " 的門切換經過 withOpen");
-        }
+        assertEquals(Map.of("src/main/java/dev/quantumchamber/corridor/SessionEntranceAllocator.java", 1), defaultStateOpenWrites,
+                "只有入口門從預設狀態（membrane=none）直接寫 OPEN");
+        assertEquals("(target,open)->world.setBlockState(target,QuantumBulkheadBlock.withOpen(world.getBlockState(target),open))",
+                toggleMutator(root, "src/main/java/dev/quantumchamber/chamber/WorldChamberDoorAdapter.java"), "原艙門切換的 mutator");
+        assertEquals("(position,open)->write(position,QuantumBulkheadBlock.withOpen(world.getBlockState(position),open))",
+                toggleMutator(root, "src/main/java/dev/quantumchamber/corridor/CorridorPageManager.java"), "入口 replica 門切換的 mutator");
     }
 
     // ---- helpers ----
@@ -545,6 +557,73 @@ class MembraneStateTest {
         InputStream stream = MembraneStateTest.class.getResourceAsStream(path);
         assertNotNull(stream, "資源不存在：" + path);
         return stream;
+    }
+
+    private static List<Path> javaSources(Path root) throws IOException {
+        List<Path> files = new ArrayList<>();
+        for (String sourceSet : List.of("src/main/java", "src/client/java")) {
+            try (var walk = Files.walk(root.resolve(sourceSet))) {
+                walk.filter(path -> path.toString().endsWith(".java")).sorted().forEach(files::add);
+            }
+        }
+        return files;
+    }
+
+    /**
+     * 位置是 {@code <receiver>.with(…)}、{@code withIfExists(…)} 或 {@code cycle(…)} 的參數時，回傳 receiver 結尾（去掉空白與換行，
+     * 最多 200 字元）；否則（例如 {@code state.get(…)}）回 null。
+     */
+    private static String writeReceiver(String text, int argumentStart) {
+        int cursor = skipWhitespaceBackward(text, argumentStart - 1);
+        if (cursor < 0 || text.charAt(cursor) != '(') return null;
+        cursor = skipWhitespaceBackward(text, cursor - 1);
+        int nameEnd = cursor + 1;
+        while (cursor >= 0 && Character.isJavaIdentifierPart(text.charAt(cursor))) cursor--;
+        if (!Set.of("with", "withIfExists", "cycle").contains(text.substring(cursor + 1, nameEnd))) return null;
+        cursor = skipWhitespaceBackward(text, cursor);
+        if (cursor < 0 || text.charAt(cursor) != '.') return null;
+        return text.substring(Math.max(0, cursor - 200), cursor).replaceAll("\\s+", "");
+    }
+
+    private static int skipWhitespaceBackward(String text, int index) {
+        while (index >= 0 && Character.isWhitespace(text.charAt(index))) index--;
+        return index;
+    }
+
+    /** {@code new ChamberDoorService().toggle(…)} 的第二個參數（mutator），去掉空白；檔案中必須恰好有一個這樣的呼叫。 */
+    private static String toggleMutator(Path root, String relative) throws IOException {
+        String text = Files.readString(root.resolve(relative), StandardCharsets.UTF_8);
+        Matcher call = Pattern.compile("new\\s+ChamberDoorService\\s*\\(\\s*\\)\\s*\\.\\s*toggle\\s*\\(").matcher(text);
+        assertTrue(call.find(), relative + " 沒有門切換呼叫");
+        int start = call.end();
+        assertFalse(call.find(), relative + " 有多個門切換呼叫");
+        List<String> arguments = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int depth = 0;
+        for (int index = start; index < text.length(); index++) {
+            char c = text.charAt(index);
+            if (c == '"' || c == '\'') {
+                int end = index + 1;
+                while (end < text.length() && text.charAt(end) != c) end += text.charAt(end) == '\\' ? 2 : 1;
+                current.append(text, index, Math.min(end + 1, text.length()));
+                index = end;
+                continue;
+            }
+            if (c == ')' && depth == 0) {
+                arguments.add(current.toString());
+                break;
+            }
+            if (c == ',' && depth == 0) {
+                arguments.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            if (c == '(' || c == '[' || c == '{') depth++;
+            if (c == ')' || c == ']' || c == '}') depth--;
+            current.append(c);
+        }
+        assertTrue(arguments.size() >= 2, relative + " 的門切換呼叫缺少 mutator 參數");
+        return arguments.get(1).replaceAll("\\s+", "");
     }
 
     private static Path repositoryRoot() {

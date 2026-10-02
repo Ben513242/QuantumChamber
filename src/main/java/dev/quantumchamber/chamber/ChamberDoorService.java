@@ -46,36 +46,38 @@ public final class ChamberDoorService {
      *
      * <p><b>只能在 server thread 呼叫</b>，否則丟 {@link IllegalStateException}。
      *
+     * <p><b>前提：相關 chunk 都已是 FULL。</b>門板 25 格、Controller，以及寫入時 neighbor update 會讀到的鄰格（門平面
+     * local x 0–6、門平面前後各一格）所在的 chunk 只要有一個不是 FULL，就不讀不寫任何一格、不載入 chunk，回
+     * {@link ApplyResult.Outcome#NOT_LOADED}。這個方法不會在 server thread 上同步載入 chunk。
+     *
      * <p>交易與 {@link #toggle} 相同：只寫目前不是 target 的格（每格先記下自己的原狀態），在
      * {@link ChamberProtectionService} 的授權寫入中執行，任何一格失敗就把已改過的格逐一 rollback 回各自的原狀態；
      * Controller 的刷新延到整個交易結束之後（{@link ChamberPowerCoordinator#deferActivation}）。
      * {@code activationBlocked} 的處理也與門切換相同：成功套用時解除，rollback 失敗時設定並記 ERROR。
+     * 每一種結果 caller 該怎麼處理（重試、等待或去重），見 {@link ApplyResult.Outcome} 各值的說明。
      *
-     * @throws IllegalArgumentException target 的量子膜軸與門的朝向不符（{@link MembraneState#fits}）；不寫任何一格
+     * @throws IllegalArgumentException target 的量子膜軸與門的朝向不符（{@link MembraneState#fits}）；不讀不寫任何一格
      */
     public ApplyResult applyTarget(ServerWorld world, ChamberFrame frame, DoorState target) {
         return WorldChamberDoorAdapter.apply(world, frame, target);
     }
 
     /**
-     * {@link #applyTarget} 的純邏輯核心。25 格不全是 bulkhead 時回 REJECTED 且不寫任何一格；全部已是 target 時回 UNCHANGED，
-     * 不呼叫 executor、不刷新；寫入失敗且 rollback 成功時回 REJECTED；rollback 失敗時丟 {@link IllegalStateException}
-     * （與 {@link #toggle} 相同，由世界版本轉成 ROLLBACK_FAILED）。只有 APPLIED 會刷新 Controller。
+     * {@link #applyTarget} 的純邏輯核心（chunk 已確認 FULL 之後）。25 格不全是 bulkhead 時回 DOOR_INCOMPLETE 且不寫任何一格；
+     * 全部已是 target 時回 UNCHANGED，不呼叫 executor、不刷新；寫入失敗且 rollback 成功時回 ROLLED_BACK；rollback 失敗時丟
+     * {@link IllegalStateException}（與 {@link #toggle} 相同，由世界版本轉成 ROLLBACK_FAILED）。只有 APPLIED 會刷新 Controller。
      */
     ApplyResult.Outcome apply(DoorStateView view, DoorStateMutator mutator, ChamberMutationExecutor executor,
                               ChamberFrame frame, DoorState target, ControllerRefresh refresh) {
         Objects.requireNonNull(view, "view");
         Objects.requireNonNull(mutator, "mutator");
         Objects.requireNonNull(executor, "executor");
-        Objects.requireNonNull(target, "target");
         Objects.requireNonNull(refresh, "refresh");
-        if (!target.membrane().fits(frame.outwardFacing())) {
-            throw new IllegalArgumentException("量子膜的軸與門的朝向不符：" + target + "，門朝 " + frame.outwardFacing());
-        }
+        requireFits(frame, target);
         Map<BlockPos, DoorState> originals = new LinkedHashMap<>();
         for (BlockPos pos : aperturePositions(frame)) {
             DoorState current = view.doorAt(pos);
-            if (current == null) return ApplyResult.Outcome.REJECTED;
+            if (current == null) return ApplyResult.Outcome.DOOR_INCOMPLETE;
             originals.put(pos, current);
         }
         List<BlockPos> pending = new ArrayList<>();
@@ -84,9 +86,18 @@ public final class ChamberDoorService {
         });
         if (pending.isEmpty()) return ApplyResult.Outcome.UNCHANGED;
         boolean applied = executor.execute(() -> mutateWithRollback(view::doorAt, mutator::set, pending, originals::get, target));
-        if (!applied) return ApplyResult.Outcome.REJECTED;
+        if (!applied) return ApplyResult.Outcome.ROLLED_BACK;
         refresh.refresh(frame.controllerPos());
         return ApplyResult.Outcome.APPLIED;
+    }
+
+    /** target 的量子膜軸必須符合門的朝向；不符是 caller 錯誤。 */
+    static void requireFits(ChamberFrame frame, DoorState target) {
+        Objects.requireNonNull(frame, "frame");
+        Objects.requireNonNull(target, "target");
+        if (!target.membrane().fits(frame.outwardFacing())) {
+            throw new IllegalArgumentException("量子膜的軸與門的朝向不符：" + target + "，門朝 " + frame.outwardFacing());
+        }
     }
 
     /**
@@ -177,8 +188,8 @@ public final class ChamberDoorService {
     }
 
     /**
-     * {@link #applyTarget} 的結果。{@code activationBlocked} 是呼叫結束時該 Controller 的 activationBlocked
-     * （Controller 不存在或所在 chunk 未載入時為 false）。
+     * {@link #applyTarget} 的結果。{@code activationBlocked} 是呼叫結束時該 Controller 的 activationBlocked，以不載入 chunk
+     * 的方式讀取；Controller 不存在或所在 chunk 不是 FULL 時為 false（後者只會出現在 {@link Outcome#NOT_LOADED}）。
      */
     public record ApplyResult(Outcome outcome, boolean activationBlocked) {
         public ApplyResult {
@@ -190,14 +201,31 @@ public final class ChamberDoorService {
             return outcome == Outcome.APPLIED || outcome == Outcome.UNCHANGED;
         }
 
+        /** 每一種結果 caller 該怎麼處理。除了 APPLIED 與 ROLLBACK_FAILED，activationBlocked 都不變。 */
         public enum Outcome {
             /** 已改成 target：activationBlocked 已解除，Controller 已刷新。 */
             APPLIED,
-            /** 25 格原本就是 target：沒有寫入、不刷新，activationBlocked 不變。 */
+            /** 25 格原本就是 target：沒有寫入、不刷新，activationBlocked 不變（解除它需要一次 APPLIED）。 */
             UNCHANGED,
-            /** 世界沒有改變：門板不是完整的 25 格 bulkhead，或寫入失敗且 rollback 成功。activationBlocked 不變。 */
-            REJECTED,
-            /** rollback 失敗，門處於混合狀態：已設 activationBlocked、刷新 Controller 並記 ERROR。 */
+            /**
+             * 門板、Controller 或它們鄰格所在的 chunk 有一個不是 FULL：沒有讀寫任何一格，也沒有載入 chunk。
+             * caller 等之後的 tick（chunk 已載入時）再試；不要為此強制載入，也不要設 activationBlocked。
+             */
+            NOT_LOADED,
+            /**
+             * 門板不是完整的 25 格 bulkhead（結構性）：沒有寫入。立即重試只會得到同樣的結果，caller 不要每個 tick 重試；
+             * 等結構恢復（例如之後的 Controller 刷新判定結構合法）再試，記錄依原因去重。
+             */
+            DOOR_INCOMPLETE,
+            /**
+             * 某一格的寫入被拒（回 false 或丟例外，例如保護或其他 mod 拒絕寫入），已完整 rollback：世界沒有改變。
+             * 可能是暫時性的；caller 可以在之後的 tick 重試，記錄去重，必要時退避。
+             */
+            ROLLED_BACK,
+            /**
+             * rollback 也失敗，門處於混合狀態：已設 activationBlocked、刷新 Controller 並記 ERROR（caller 不必再記 ERROR）。
+             * 之後任何一次 APPLIED（例如 caller 在之後的 tick 重試同一個 target）會解除 activationBlocked；重試的記錄要去重。
+             */
             ROLLBACK_FAILED
         }
     }

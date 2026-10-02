@@ -13,8 +13,9 @@ public final class QuantumSuperpositionClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // 量子膜（M5 spec §10.1）：置中、雙面、不透明的薄平面，用 cutout layer；關門的模型同屬這個方塊，貼圖不透明，畫法不變。
-        BlockRenderLayerMap.INSTANCE.putBlock(ModBlocks.QUANTUM_BULKHEAD, RenderLayer.getCutout());
+        // 量子膜（M5 spec §10.1）：置中、雙面、不透明的薄平面，用 cutout 類的 layer。render layer 以方塊為單位，關門的模型也在這一層；
+        // 用 cutout mipped 保留關門遠景的 mipmap（cutout 不做 mipmap），貼圖都不透明，不會因 alpha 被裁切。
+        BlockRenderLayerMap.INSTANCE.putBlock(ModBlocks.QUANTUM_BULKHEAD, RenderLayer.getCutoutMipped());
         LOGGER.info("QuantumChamber client initialized");
         LOGGER.info("Optional handheld lighting (lambdynlights) present: {}",
                 FabricLoader.getInstance().isModLoaded("lambdynlights"));
