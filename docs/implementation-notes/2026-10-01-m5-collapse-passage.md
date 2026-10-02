@@ -1922,7 +1922,7 @@ GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 
 - Code range `e10baab..71dcaaf`。
 - 範圍是 spec §10.1 的方塊與門的狀態，以及決策 10 的「套用目標狀態」API。什麼時候套用哪個 membrane 屬 F4b、F5，本 task 沒有任何呼叫點。既有的開關門行為不變，只把切換 `OPEN` 的兩個寫入點改走 `withOpen`。
 - 行號以 `71dcaaf` 為準。`QBB` 指 `chamber/QuantumBulkheadBlock.java`，`CDS` 指 `chamber/ChamberDoorService.java`，`WCDA` 指 `chamber/WorldChamberDoorAdapter.java`，`MS` 指 `chamber/MembraneState.java`。測試欄的 J 是 `MembraneStateTest`，G1、G2、G3 見「測試」。
-- Review：待獨立 spec review 與 code quality review。
+- Review：首輪 spec review ✅（Critical 0、Important 0、Minor 2）；code quality review Not approved（Critical 0、Important 1、Minor 5）。controller 接受「偏離」第 1、2 條（開門擋流體、量子膜外框可瞄準）。處理見本節最後的「Fix round 1」；本節其餘內容描述 `71dcaaf`，fix round 1 改過的地方另加註。
 
 ### spec §10.1 逐項對照
 
@@ -1933,7 +1933,7 @@ GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 
 | `open=false` 時只能是 `none` | `QBB:64` `withOpen`、`:76` `withDoor`、`CDS:157` `DoorState` 建構子；讀取端 `QBB:83` `membrane` 把指令寫出的關門＋量子膜當成 none | J `withOpenFalseAlways…`（M-J11）、`withDoorAndDoorStateReject…`、`everyOpenAndMembraneWrite…`（M-J14）；G1 `toggleClose.*`、`applyClosed.*`；G2 `noClosedMembrane`（M-G2b） |
 | 舊存檔沒有這個屬性，預設為 `none` | 預設狀態 `QBB:51`；原版 `BlockState.CODEC` 與 `NbtHelper.toBlockState` 對缺少的屬性一律取預設狀態的值 | J `defaultStateAndOldSavesWithoutTheMembraneDecodeToNone`（M-J2） |
 | 碰撞：`sealed_*` 完整方塊；`none`、`passable_*` 沒有 | `QBB:108` `getCollisionShape` | J `collisionIsAFullCubeOnlyWhenClosedOrSealed`（M-J10）；G1 `*.collision`（以 `isSpaceEmpty` 查真實世界碰撞） |
-| 模型：置中、雙面、不透明的薄平面；新貼圖；cutout | `blockstates/quantum_bulkhead.json`（`_z` 以 `y: 90` 旋轉）、`models/block/quantum_bulkhead_membrane.json`（z=8 的零厚度平面，north／south 兩面、沒有 `cullface`、`ambientocclusion: false`、`shade: false`）、`textures/block/quantum_membrane.png`；`QuantumSuperpositionClient.java:17` `BlockRenderLayerMap.putBlock(…, RenderLayer.getCutout())` | J `blockstateMapsEveryStateToExactlyOneModel`（10 個 state 各恰好一個 variant）、`membraneModelIsADoubleSidedCentredPlaneWithAnOpaqueSixteenPixelTexture`；真 client 畫面未驗（見「交給後續」） |
+| 模型：置中、雙面、不透明的薄平面；新貼圖；cutout | `blockstates/quantum_bulkhead.json`（`_z` 以 `y: 90` 旋轉）、`models/block/quantum_bulkhead_membrane.json`（z=8 的零厚度平面，north／south 兩面、沒有 `cullface`、`ambientocclusion: false`、`shade: false`）、`textures/block/quantum_membrane.png`；`QuantumSuperpositionClient.java:17` `BlockRenderLayerMap.putBlock(…, RenderLayer.getCutout())`（fix round 1 改為 `getCutoutMipped()`，見 M-1） | J `blockstateMapsEveryStateToExactlyOneModel`（10 個 state 各恰好一個 variant）、`membraneModelIsADoubleSidedCentredPlaneWithAnOpaqueSixteenPixelTexture`；真 client 畫面未驗（見「交給後續」） |
 | 逐狀態覆寫 opacity、face culling、`suffocates`、`blockVision` | 見「補充第 3 點」 | J `openStatesNeitherSuffocate…`（M-J3、M-J4、M-J5）、`openStatesLetLightThroughAndNeverCullNeighbourFaces`（M-J6、M-J7、M-J8） |
 | 方塊仍不可被流體取代 | `QBB:126`／`:131` `FluidFillable`（一律 false）、`:137` `canBucketPlace`（一律 false）；見「偏離」第 1 條 | J `noBulkheadStateCanBeFilledOrReplacedByFluids`（M-J13）；G3 |
 | `ChamberDetector` 與 `WorldChamberBlockView` 不變：`open=true` 不論 membrane 都是 BULKHEAD_OPEN | 沒有改動（`WorldChamberBlockView.java:22` 只看 `OPEN`） | G1 `*.detectorOpen`、`mixed.detectorOpen`（M-G1） |
@@ -1950,7 +1950,7 @@ GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 
 - **第 3 點（逐狀態覆寫，1.21 Yarn 名稱）**：bulkhead 是 `Settings.copy(Blocks.BEDROCK)`，原本的預設值都由碰撞或外框推導。只有關門維持 bedrock 的行為，開門（含量子膜）一律如下：
   - opacity：覆寫 `AbstractBlock#getOpacity(BlockState, BlockView, BlockPos)`（`QBB:120`）。開門 0；關門 `world.getMaxLightLevel()`，與 HEAD 由 `isOpaqueFullCube` 推得的 15 相同。薄平面的光照取自所在格，所在格不透光時平面會全黑。
   - face culling：覆寫 `AbstractBlock#getCullingShape(BlockState, BlockView, BlockPos)`（`QBB:114`），不用 `isSideInvisible`。開門回空形狀，所以 shape cache 的 `extrudedFaces` 是空的、`isOpaqueFullCube` 為 false，鄰格面向它的面一律照畫，薄平面周圍不會出現透視破洞；關門回完整方塊（HEAD 由外框推得的值）。預設的 culling shape 等於外框，而本 task 給量子膜一個薄板外框（見下），所以要明確覆寫，讓剔除不隨外框的選擇改變。`isSideInvisible` 只影響同方塊鄰格，量子膜模型的兩個面都沒有 `cullface`，不需要它。
-  - `suffocates`／`blockVision`：1.21 是 `AbstractBlock.Settings#suffocates(ContextPredicate)`、`#blockVision(ContextPredicate)` 的 predicate，`AbstractBlockState#shouldSuffocate`／`shouldBlockVision` 是 final，無法覆寫。所以在 block 自己的建構子中，對傳入的 Settings 設定（`QBB:50` `super(settings.suffocates(QuantumBulkheadBlock::closedDoor).blockVision(QuantumBulkheadBlock::closedDoor))`），不改 `ModBlocks.java`。predicate 是 `!state.get(OPEN)`（`QBB:94`）：關門與 bedrock 的預設（solid 且碰撞為完整方塊）相同；sealed 量子膜雖有完整碰撞，也不窒息、不遮蔽視線。
+  - `suffocates`／`blockVision`：1.21 是 `AbstractBlock.Settings#suffocates(ContextPredicate)`、`#blockVision(ContextPredicate)` 的 predicate。`AbstractBlockState#shouldSuffocate`／`shouldBlockVision` 只是評估建立 state 時從 Settings 拷貝的 predicate；`Block` 的建構子固定以原版 `BlockState::new` 建立 state，mod 無法換成自己的 `BlockState` 子類別去覆寫這兩個方法，`AbstractBlock` 上也沒有可覆寫的對應方法。（fix round 1 更正：首版寫成「兩個方法是 final」，不正確，它們不是 final。）所以在 block 自己的建構子中，對傳入的 Settings 設定（`QBB:50` `super(settings.suffocates(QuantumBulkheadBlock::closedDoor).blockVision(QuantumBulkheadBlock::closedDoor))`），不改 `ModBlocks.java`。predicate 是 `!state.get(OPEN)`（`QBB:94`）：關門與 bedrock 的預設（solid 且碰撞為完整方塊）相同；sealed 量子膜雖有完整碰撞，也不窒息、不遮蔽視線。
   - 外框（不在四項內，一併說明）：`getOutlineShape`（`QBB:99`）對量子膜回置中的 2px 薄板（`_x` 為 z 7–9，`_z` 為 x 7–9），讓玩家瞄得到量子膜（spec §7.3、§10.5 的「以 bulkhead 開關門」）；一般開門維持空形狀、關門維持完整方塊。
   - 模型關閉自身的 ambient occlusion 與 shade：sealed 量子膜碰撞為完整方塊，`getAmbientOcclusionLightLevel` 會回 0.2，相鄰量子膜會互相變暗；兩個軸向的平面也因此亮度一致。
 - **第 4 點（貼圖）**：`textures/block/quantum_membrane.png` 由 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3b/make-quantum-membrane-png.py`（SHA-256 `b2dfd1cef3035b02d72a846bebe4a900f17743b5fafb1f8389532c898a81810c`，gitignored）以 Python 標準庫產生，不取自網路或其他 mod。
@@ -1960,7 +1960,7 @@ GameTest +3（153 → 156；`_windows` 79 → 80；per-test Universe receipt 35 
 - **第 5 點（GameTest）**：三個 test 都在 `M5CollapseGameTests.java`（default run），batchId 為 `m5_collapse_membrane_door`、`m5_collapse_apply_rollback`、`m5_collapse_fluid`。都不配置 Universe、不寫 journal：原艙用 `ChamberGameTestBuilder.buildForSession` 建立、不供電，所以不註冊（每個 test 以 `neverRegistered` witness 確認），結束時在 `finally` 移除自己寫入的全部方塊（流體通道先清通道再清外殼，不觸發鄰格更新）。default run 的 boundary oracle PASS，per-test Universe receipt 維持 38/38。
 - **第 6 點（「套用目標狀態」API）**
   - `CDS:56` `public ApplyResult applyTarget(ServerWorld world, ChamberFrame frame, DoorState target)`，委派 `WCDA:40` `apply`。
-  - 回傳 `ApplyResult(Outcome outcome, boolean activationBlocked)`（`CDS:183`）。`Outcome` 有 APPLIED（已改成 target，activationBlocked 已解除、Controller 已刷新）、UNCHANGED（原本就是 target，不寫入、不刷新、activationBlocked 不變）、REJECTED（門板不是完整 25 格 bulkhead，或寫入失敗且 rollback 成功；世界不變）、ROLLBACK_FAILED（門處於混合狀態，已設 activationBlocked、刷新 Controller、記 ERROR）。`activationBlocked` 是呼叫結束時該 Controller 的旗標（Controller 不存在或未載入時為 false）；`succeeded()` 是 APPLIED 或 UNCHANGED。
+  - 回傳 `ApplyResult(Outcome outcome, boolean activationBlocked)`（`CDS:183`）。`Outcome` 有 APPLIED（已改成 target，activationBlocked 已解除、Controller 已刷新）、UNCHANGED（原本就是 target，不寫入、不刷新、activationBlocked 不變）、REJECTED（門板不是完整 25 格 bulkhead，或寫入失敗且 rollback 成功；世界不變）、ROLLBACK_FAILED（門處於混合狀態，已設 activationBlocked、刷新 Controller、記 ERROR）。（fix round 1：REJECTED 拆成 DOOR_INCOMPLETE 與 ROLLED_BACK，另加 NOT_LOADED，見「Fix round 1」的 I-1、M-3。）`activationBlocked` 是呼叫結束時該 Controller 的旗標（Controller 不存在或未載入時為 false）；`succeeded()` 是 APPLIED 或 UNCHANGED。
   - 不在 server thread 呼叫時丟 `IllegalStateException`（`WCDA:44`）；target 的量子膜軸與門的朝向不符時丟 `IllegalArgumentException`，不寫任何一格（`CDS:72-74`）。Javadoc（`CDS:42-55`）寫明這兩點，以及 F3d、F4b、F5 經由它改門。
   - 沿用既有處理：`mutateWithRollback` 改成以狀態型別參數化（`CDS:96`），toggle（`Boolean`）與 apply（`DoorState`）共用同一份逐格寫入與逆序 rollback；apply 只寫目前不是 target 的格，每格 rollback 回自己的原狀態（原狀態可以不一致，例如前一次 rollback 失敗留下的混合門）。rollback 失敗的處理抽成 `WCDA:77` `blockActivation`，toggle 與 apply 共用，ERROR 文字不變。Controller 刷新同樣延到交易結束（`deferActivation`）。
   - 純邏輯核心 `CDS:65` `apply(DoorStateView, DoorStateMutator, …)` 是 package-private，JUnit 以記憶體門測試；世界讀取以 `QBB.membrane` 取實際生效的 membrane（`WCDA:70`）。
@@ -2031,8 +2031,8 @@ GameTest +3（156 → 159；`_windows` 維持 80；per-test Universe receipt 維
 
 ### 偏離 plan／spec 字面之處
 
-- **流體：把「不可被流體取代」做成方塊本身的性質，連帶改變一般開門的既有行為**。spec 寫「方塊**仍**不可被流體取代」，但 HEAD 的開門沒有碰撞、不是 solid，原版 `FlowableFluid.canFill` 與 `BucketItem` 都會取代它；目前只有 Chamber 保護（`ChamberProtectionService` 在 OFF 以外拒絕寫入）擋住。passable 量子膜同樣沒有碰撞，所以沒有保護時也會被取代（G3 的 RED 證實 none、passable，以及 adapter 下的 sealed 都會被水取代）。本 task 讓 bulkhead 實作 `FluidFillable`（一律不可填入）並覆寫 `canBucketPlace`（一律 false），任何狀態都擋得住流體。副作用：未供電（OFF）或未註冊的艙，開著的門也不再被水或水桶沖掉（原本會被取代、而且不掉落）。這只會讓門更堅固，但屬既有行為的改變，請 controller 確認。
-- **量子膜有薄板外框**：spec 只規定碰撞與模型。給量子膜 2px 的外框，玩家才瞄得到它、以 bulkhead 開關門（spec §7.3、§10.5）；一般開門維持空外框。若要讓量子膜瞄不到，只需改 `getOutlineShape`；culling 已明確覆寫，不受影響。
+- **流體：把「不可被流體取代」做成方塊本身的性質，連帶改變一般開門的既有行為**。spec 寫「方塊**仍**不可被流體取代」，但 HEAD 的開門沒有碰撞、不是 solid，原版 `FlowableFluid.canFill` 與 `BucketItem` 都會取代它；目前只有 Chamber 保護（`ChamberProtectionService` 在 OFF 以外拒絕寫入）擋住。passable 量子膜同樣沒有碰撞，所以沒有保護時也會被取代（G3 的 RED 證實 none、passable，以及 adapter 下的 sealed 都會被水取代）。本 task 讓 bulkhead 實作 `FluidFillable`（一律不可填入）並覆寫 `canBucketPlace`（一律 false），任何狀態都擋得住流體。副作用：未供電（OFF）或未註冊的艙，開著的門也不再被水或水桶沖掉（原本會被取代、而且不掉落）。這只會讓門更堅固，但屬既有行為的改變，請 controller 確認。（controller 已接受。）
+- **量子膜有薄板外框**：spec 只規定碰撞與模型。給量子膜 2px 的外框，玩家才瞄得到它、以 bulkhead 開關門（spec §7.3、§10.5）；一般開門維持空外框。若要讓量子膜瞄不到，只需改 `getOutlineShape`；culling 已明確覆寫，不受影響。（controller 已接受；設計文件 :164「開門後仍維持 empty outline／collision」的同步交給 F7，見「交給後續」。）
 - **plan 只列 `withOpen`，另外新增 `withDoor` 與 `membrane`**：套用目標狀態 API 需要寫入完整的 open＋membrane（`withDoor`），讀取時需要把指令寫出的關門＋量子膜當成 none（`membrane`）。三者共用同一個 bulkhead 守門。
 - **既有程式的整理**：`mutateWithRollback` 改成以狀態型別參數化，`WorldChamberDoorAdapter` 抽出 `blockActivation`／`loadedController`。toggle 的行為、例外與 ERROR 文字都不變，既有的 `ChamberDoorServiceTest` 未修改並通過。
 - **測試位置**：門服務核心的 JUnit 放在 `MembraneStateTest`，因為 `ChamberDoorServiceTest` 不在允許路徑內。
@@ -2047,10 +2047,62 @@ GameTest +3（156 → 159；`_windows` 維持 80；per-test Universe receipt 維
 
 ### 交給後續
 
-- F3d：SOURCE fast path 以 `applyTarget(world, frame, DoorState.OPEN)` 改為一般開門，並依 `ApplyResult` 處理：REJECTED（門板不完整或寫入被拒）與 ROLLBACK_FAILED（已設 activationBlocked、已記 ERROR）都要決定重試或去重的方式；呼叫必須在 server thread。
+- F3d：SOURCE fast path 以 `applyTarget(world, frame, DoorState.OPEN)` 改為一般開門，並依 `ApplyResult` 處理（fix round 1 更新）：NOT_LOADED 等之後的 tick 再試、不強制載入；DOOR_INCOMPLETE 不要每個 tick 重試、等結構恢復；ROLLED_BACK 可在之後的 tick 重試並去重；ROLLBACK_FAILED 已設 activationBlocked、已記 ERROR，重試去重。各值的完整說明在 `ChamberDoorService.ApplyResult.Outcome` 的 Javadoc。呼叫必須在 server thread。
 - F4b：
   - 門的攔截要排在 `ChamberDoorService` 之前，量子膜門不要再走 `toggle`（見「觀察」第 1 條）。
   - sealed 量子膜以 `applyTarget(…, DoorState.sealed(facing))` 套用；量子膜軸不符是 caller 錯誤（丟例外）。
   - 「觀察」第 2 條的掛件與紅石傳導，請在 PREPARE 閘門的設計中判斷是否需要處理。
-- F5：passable 以 `DoorState.passable(facing)`；通道結束與「沒有所屬 session 的 membrane 正規化」以 `DoorState.OPEN` 或 `DoorState.CLOSED`。`QBB.membrane` 把 `open=false`＋量子膜讀成 none，所以對這種格套用 `CLOSED` 會得到 UNCHANGED、不重寫；它的行為與關門相同，下一次開門時由 `withOpen` 正規化。
-- 真 client 畫面（cutout、兩個軸向、薄平面周圍沒有透視破洞、外框）本 task 沒有實機確認，列入 M5 的 required manual smoke（spec §18）或 F1b 類的真 client 驗證。
+- F5：passable 以 `DoorState.passable(facing)`；通道結束與「沒有所屬 session 的 membrane 正規化」以 `DoorState.OPEN` 或 `DoorState.CLOSED`。`QBB.membrane` 把 `open=false`＋量子膜讀成 none，所以對這種格套用 `CLOSED` 會得到 UNCHANGED、不重寫；它的行為與關門相同，下一次開門時由 `withOpen` 正規化（fix round 1 的 G1 `stale*` 鎖住這兩點）。另外，UNCHANGED 不會解除 activationBlocked（解除需要一次 APPLIED）：前一次 rollback 失敗之後，門若剛好已是 target，正規化不會修復 Controller 的禁止啟動，F5 要決定是否另外處理。F5 在 load-sync 的 refresh 中正規化時，鄰接 chunk 可能還沒 FULL，會收到 NOT_LOADED，要排到之後的 tick 再試。
+- F7：設計文件 `docs/quantum_superposition_chamber_design.md:164` 寫「開門後仍維持 empty outline／collision」，與量子膜的外框（可瞄準）及 sealed 的完整碰撞不一致，需要同步。
+- 真 client 畫面（cutout mipped、兩個軸向、薄平面周圍沒有透視破洞、外框，以及關門遠景的 mipmap）本 task 沒有實機確認，列入 M5 的 required manual smoke（spec §18）或 F1b 類的真 client 驗證。
+
+### Fix round 1（`88c220a`）
+
+- Review（首輪）：spec review ✅（Critical 0、Important 0、Minor 2，其中 M-1 是「補充第 3 點」把 `shouldSuffocate`／`shouldBlockVision` 寫成 final 的錯誤理由）；code quality review Not approved（Critical 0、Important 1、Minor 5）。controller 指派 I-1、M-1～M-5 與 spec 的 M-1；不處理的三項已確認寫在「交給後續」（設計文件 :164 → F7、UNCHANGED 不解除 activationBlocked → F5、sealed 量子膜的掛件與強充能 → F4b）。開工 HEAD 是 `8513e09`。
+- Commit `88c220a` `fix: refuse door applies on unloaded chunks and split rejection reasons`（parent `8513e09`）：`ChamberDoorService.java`、`WorldChamberDoorAdapter.java`、`QuantumSuperpositionClient.java`；測試修改 `MembraneStateTest.java`、`M5CollapseGameTests.java`。本小節由其後的 docs commit 加入，同一個 commit 也更正「補充第 3 點」的理由、在本節開頭補上 Review 行、在幾處加註 fix round 1 的改動，並在「交給後續」補上 F5、F7 兩項。
+- 行號以 `88c220a` 為準。
+
+| 項目 | 處理 |
+| --- | --- |
+| I-1 不強制載入 chunk | `WCDA:43` `apply` 依序檢查：server thread（`:45`）→ 量子膜軸（`CDS:95` `requireFits`，從核心抽出共用）→ `WCDA:58` `doorChunksLoaded`。門平面 local x 0–6、法線方向 local z −1～1 涵蓋的每個 chunk 都要 `getWorldChunk != null`（只查詢、不載入）。範圍比「門板＋Controller」多了門前後各一排：寫入門格時，原版的 neighbor update 與 shape update 以 `World.getBlockState`（`getChunk(FULL, create=true)`，會同步載入）讀相鄰六格，所以門平面剛好在 chunk 邊界上、門外那一排在另一個 chunk 時，那個 chunk 也必須 FULL。任一不是 FULL 就回新的 `NOT_LOADED`：不讀不寫任何一格、不設 activationBlocked；回報的 activationBlocked 以不載入的方式讀 Controller。Javadoc：`CDS:49-52` 寫明前提，`Outcome.NOT_LOADED`（`CDS:210-214`）寫明 caller 等之後的 tick 再試、不強制載入、不設 activationBlocked。Controller 的 chunk 在範圍內，所以只要不是 NOT_LOADED，ROLLBACK_FAILED 就一定設得到 activationBlocked |
+| I-1 的測試 | 新增 G4 `door_target_refuses_unloaded_chunks_without_forcing_them`（`m5_collapse_not_loaded`），沿用 `ChamberNoForceGameTests` 的手法（只讀，未修改）：遠處的 chunk 以 radius 0 的 ticket 維持 FULL，鄰接的 chunk 不是 FULL；fixture 的方塊直接寫進 chunk（`WorldChunk.setBlockState`），不觸發鄰格更新。兩個情境：A `straddle`，門板最左一欄（5 格）在東側未載入的 chunk；B `outsideRow`，門板與 Controller 都在已載入的 chunk，只有門外那一排在北側未載入的 chunk。斷言 NOT_LOADED、缺的 chunk 在呼叫前後都不是 FULL、已寫入的門格都沒被改。結束時還原被覆寫的方塊（先記下原狀態）並移除 ticket |
+| M-1 cutout mipped | `QuantumSuperpositionClient.java:18` 改為 `RenderLayer.getCutoutMipped()`：仍屬 cutout 類，符合 spec §10.1 的字面，關門遠景保留 mipmap。註解改寫（首版的「畫法不變」不正確，cutout 不做 mipmap）。「關門遠景」已與量子膜畫面一起列入 manual smoke（「交給後續」） |
+| M-2 兩項承諾的行為 | G1 新增兩段，四個朝向各跑一次。(4) `stale*`：門關上後，以原始寫入把一格改成 `open=false`＋sealed；`applyTarget(CLOSED)` 回 UNCHANGED、那一格不被重寫；`applyTarget(OPEN)` 回 APPLIED、25 格都是一般開門。(5) `offThread.rejected`：從另一個 thread 呼叫丟 `IllegalStateException`，門不變。呼叫以 `attempt` 包住，丟例外時 witness 記為 false，不中斷 test。mutation M-G4（`doorAt` 改讀原始 membrane）與 M-G5（拿掉 thread 檢查）都被抓到 |
+| M-3 拆開 REJECTED | `Outcome`（`CDS:205-229`）改為 APPLIED、UNCHANGED、NOT_LOADED、DOOR_INCOMPLETE（門板不是完整 25 格 bulkhead，結構性：不要每個 tick 重試，等結構恢復，記錄去重）、ROLLED_BACK（寫入被拒、rollback 完成，可能是暫時性：之後的 tick 重試、去重、必要時退避）、ROLLBACK_FAILED（補上「之後一次 APPLIED 會解除、重試去重」）。每一值的 Javadoc 寫明 caller 的處理。JUnit 的兩個核心 test 改為斷言新值；G1 的缺格門改為 DOOR_INCOMPLETE；G2 新增 `refused.*`：`DoorWriteFault` 拒絕所有開門寫入時，關著的門套用一般開門回 ROLLED_BACK，門與 activationBlocked 都不變 |
+| M-4 守門掃描 | `MembraneStateTest:472` 改寫。只比對 bulkhead 自己的屬性常數：`QuantumBulkheadBlock.OPEN／MEMBRANE`（可帶套件名稱），或以 `import static` 引入的 `OPEN／MEMBRANE`；不再比對 `Properties.OPEN` 與其他類別的裸 `OPEN`。是否為寫入，由它是不是 `with`／`withIfExists`／`cycle` 的參數判定（`writeReceiver` `:576`）。預設狀態的豁免改為「寫 OPEN，而且 receiver 去掉空白與換行後以 `QUANTUM_BULKHEAD.getDefaultState()` 結尾」，不依賴排版，並斷言恰好只有 `SessionEntranceAllocator` 一處。兩個切換寫入點改為取出 `new ChamberDoorService().toggle(…)` 的第二個參數（`toggleMutator` `:594`），去掉空白後與預期的 lambda 本體逐字比對，不再用 `contains` |
+| M-5 建置在 try 之內 | G1、G2 先以 `fixtureFrame`（`M5CollapseGameTests:397`，與 `ChamberGameTestBuilder` 相同的錨點）算出 frame，建置放進 try，finally 清除同一個範圍，建置後以 `equals` 核對（`fixtureFrame` witness）。G3 先算好所有通道位置，建置或放水源失敗時以 `FluidPocket.clearAt`（`:455`）全部清掉再丟出。G4 的建置也在 try 之內 |
+| spec reviewer 的 M-1 | 「補充第 3 點」的理由已更正：兩個方法不是 final；真正的原因是 `Block` 建構子固定以原版 `BlockState::new` 建立 state，mod 無法換成自己的子類別，而這兩個方法只評估建立 state 時拷貝的 Settings predicate |
+
+測試：
+
+- JUnit 數量不變（560；`MembraneStateTest` 維持 19 個）：兩個核心 test 改為斷言 DOOR_INCOMPLETE／ROLLED_BACK，守門掃描改寫。
+- GameTest +1（159 → 160；`_windows` 維持 80；per-test Universe receipt 維持 38）：新增 G4；G1 多了 `stale*`、`offThread.rejected`、`fixtureFrame`；G2 多了 `refused.*`、`fixtureFrame`。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3b/fix1/`。`git diff 8513e09 88c220a -- <path>` 輸出的 SHA-256 前 8 碼（`fix1/diff-hashes.txt`）：`src` `17782852`、`src/main` `ddc24397`、`src/client` `7d5e59ab`、`src/test` `a113f75a`、`src/testmod` `cd4a3c5f`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED JUnit | `8513e09`；porcelain 為 3 個 ` M`（`ChamberDoorService.java`、`MembraneStateTest.java`、`M5CollapseGameTests.java`），逐檔 blob 在 `fix1/red-state.txt`。`ChamberDoorService.java` 是暫時的 RED adapter（`fix1/red-main-adapter.diff`，前 8 碼 `51fd2a29`）：只在 `Outcome` 加上 `NOT_LOADED`、`DOOR_INCOMPLETE`、`ROLLED_BACK` 三個常數讓測試能編譯，行為維持 `8513e09`（兩種拒絕仍回 REJECTED、不檢查 chunk） | focused `chamber.*`（`fix1/red-junit.log`、`red-junit-xml/`、`red-junit-breakdown.txt`） | 預期 FAIL：121 個中 2 個，`expected: <DOOR_INCOMPLETE> but was: <REJECTED>` 與 `expected: <ROLLED_BACK> but was: <REJECTED>`，都是 `AssertionFailedError`。改寫的守門掃描在 RED 就通過（`8513e09` 的程式本來就符合），以下表 M-J14～M-J19 證明 |
+| RED GameTest | 同上 | GameTest＋onlyBatches 4 個 batch：`gate-f3b-fix1-red-gametest-c121ffee80a94f01bc2b5349e95e1e4c`（`fix1/red-gametest-summary.txt`） | 預期 FAIL：1/4（G3 PASS）。G4 失敗 5 個 witness：`straddle.notLoaded`、`straddle.missingStillNotFull`（`8513e09` 讀門格時把東側 chunk 同步載入到 FULL）、`outsideRow.notLoaded`、`outsideRow.missingStillNotFull`（寫入門格時 neighbor update 把北側 chunk 載入）、`outsideRow.nothingWritten`。G1 是四個朝向的 `incompleteRejected`，G2 是 `refused.rolledBack`。M-2 的 `stale*`、`offThread.rejected` 在 RED 就通過（`8513e09` 已有這兩項行為），以 M-G4、M-G5 證明。boundary oracle PASS，world exact restore，沒有 chunk 存檔失敗 |
+| 開發確認（不作為證據） | GREEN 工作樹 | GameTest＋onlyBatches：`gate-f3b-fix1-dev-green-41faf92212234b298a39173727577f9b` | 4/4 PASS；只有 G2 預期的兩則 rollback ERROR |
+| mutation（JUnit） | GREEN 工作樹，每個 mutation 單獨套用、只跑 `MembraneStateTest`，跑完還原並以 `git hash-object` 核對（`fix1/mutations.sh`、`mutations/summary.txt`、`M-J*.diff`、`M-J*.log`、`M-J*-TEST.xml`） | 6 個 | 下表；跑完 blob 與 GREEN 相同（`fix1/pre-mutation-blobs.txt`） |
+| mutation（GameTest） | 同上（`fix1/gametest-mutations.sh`、`mutations/gametest-summary.txt`、`M-G*.diff`、`M-G*-gate.log`、`M-G*-witness.txt`） | GameTest＋onlyBatches：`gate-f3b-fix1-mut-m-g4-bcd7b017a8214f6290857ffb0bcd539b`、`-m-g5-1ad23eceed08414e9c5088a09d8297ef`、`-m-g6-c67a6a668b5447358d050e3c657f881f` | 下表；3 個 gate 的 boundary oracle PASS、world exact restore；跑完 blob 與 GREEN 相同（`fix1/green-state-blobs.txt`） |
+| GREEN focused | 工作樹，blob 與 `88c220a` 相同 | `fix1/green-focused.log`、`green-focused-xml/` | 121，0 failure／error |
+| GREEN Full（含全部 JUnit） | 同上 | `gate-f3b-fix1-green-full-5e807f3736ff4d55bb89d43198ac10ce`（`fix1/green-full-summary.txt`、`green-junit-all-xml/`） | PASS：default GameTest 160/160（`_windows` 80）；boundary oracle PASS；per-test receipt 38/38；world exact restore；JUnit 560，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）；release 359 entries／312 classes、sources 210，entry 清單與首輪完全相同（`fix1/green-jar-delta.txt`；`Outcome` 的新常數與 `requireFits` 不產生新 class）；testmod 命中 0 |
+| GREEN Main＋oracle | 同上 | `gate-f3b-fix1-green-main-1d9d52cc5f40446bb7215bc52870581e`（`fix1/green-main-gate.log`、`green-main-oracle.log`） | PASS：testmod 沒有載入，layer 2／3 命中 0，world keys exact，正常停止，exact restore |
+
+| Mutation | 改動 | 結果 |
+| --- | --- | --- |
+| M-J14 | `CorridorPageManager.java:506` 改回直接寫 `QuantumBulkheadBlock.OPEN` | 守門掃描失敗（`506:OPEN`） |
+| M-J15 | 同一行改為帶套件名稱的 `dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN` | 守門掃描失敗（首版的正則抓不到這種寫法） |
+| M-J16 | `WorldChamberDoorAdapter` 的 mutator 改為 `withOpen(…, true)`（忽略 `open` 參數） | 守門掃描的 lambda 逐字比對失敗（首版的 `contains` 抓不到） |
+| M-J17 | `SessionEntranceAllocator` 的預設狀態再接 `.with(QuantumBulkheadBlock.MEMBRANE, SEALED_X)` | 守門掃描失敗（`26:MEMBRANE`） |
+| M-J18（正向） | 同一行拆成四行（`ModBlocks.QUANTUM_BULKHEAD`／`.getDefaultState()`／`.with(`／`QuantumBulkheadBlock.OPEN, frontOpen)`） | 仍通過（19/19）：豁免不依賴排版 |
+| M-J19 | `CorridorPageManager` 加 `import static …QuantumBulkheadBlock.OPEN`，該行改為 `.with(OPEN,open)` | 守門掃描失敗（`507:OPEN`） |
+| M-G4 | `doorAt` 改讀原始 membrane | G1 四個朝向的 `staleClosed.unchanged`、`staleOpened.normalized`（讀到 `open=false`＋sealed 時 `DoorState` 丟例外）；之後的 `offThread`、`axisGuard`、`incompleteRejected` 因門停在關閉狀態而連帶失敗 |
+| M-G5 | 拿掉 server thread 檢查 | G1 四個朝向的 `offThread.rejected`（off-thread 的 `getWorldChunk` 一律回 null，所以得到 NOT_LOADED 而不是例外） |
+| M-G6 | `doorChunksLoaded` 只看門平面（不含門前後一排） | G4 的 `outsideRow.notLoaded`、`outsideRow.missingStillNotFull`、`outsideRow.nothingWritten`；`straddle.*` 照常通過 |
+
+- log（與首輪的 Full gate 比較，以 `/ERROR]`、`/WARN]` 行計；首輪「Gate 與證據」寫的「WARN 49」是以子字串計，同一個 run 以行計為 46）：ERROR 29 → 28，WARN 46 → 46。差異都在 M2 的 batch：`m2_pin_capacity` 的「走廊保留租約等待安全返還」ERROR 3 → 2、「返還保留 pending」WARN 2 → 1；`m2_task4_disconnect_io` 多一則「session 協調失敗」WARN，它的 stack 是 M2 注入的 DISCONNECT journal flush 失敗，經排程的 Controller 刷新浮出，沒有門的程式。這是 M2 測試在不同 run 之間的時序差異（T0 已記錄 `m2_pin_capacity` 的連坐）。F3b 的四個 test 沒有任何 `M5_COLLAPSE_ATTEMPT_THREW`，rollback ERROR 仍是 G2 與 M1 各兩則。
+- 所有 gate 都在 commit 之前以工作樹執行；commit 時 5 個檔的 blob 與 gate 前記錄的逐一相同（`fix1/green-state-blobs.txt`、`pre-commit-hashes.txt`、`commit-blobs.txt`）。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+- 本輪不跑 Legacy、M3 與 M4 recovery，理由同首輪。
