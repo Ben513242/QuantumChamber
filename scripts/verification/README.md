@@ -64,6 +64,18 @@ $v = 'scripts/verification'
 
 ## 新增 M5 GameTest
 
+M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只用 SOURCE 或不配置宇宙的 fixture，結束時不留 M5 record）與 `M5UniverseGameTests`（M5 run，見下方第 1–8 點）。兩者共用 `src/testmod/java/dev/quantumchamber/gametest/` 下的 `M5GameTestSupport`（helper 與 fixture）與 `M5TestHooks`（mixin 讀取的靜態 hook）；M5 期間放在 `M4CandidateDoorGameTests` 的 test 也用同一份。
+
+- **hook 釋放**：每個 test 建一個 `M2CorridorGameTests.TestHooks`，探針、log capture、fixture 的收尾都登記在它上面（後進先出）。排程用 `at(context, tick, hooks, …)` 與 `whenTicks(context, tick, 上限, 條件, ready, 診斷, hooks)`（以 server tick 計的有界等待）：斷言失敗、逾時或例外時先 `releaseAfter`，成功路徑最後 `release()`。test 的程式不得讓例外從 `END_SERVER_TICK` 拋出（GameTest server 會崩潰）；探針只能在 journal flush 的開頭丟出受控的例外。
+- **flush 探針與計數探針**：`installFlushProbe(probe, hooks)` 把探針裝在 `M5TestHooks`（`SessionJournalWindowFaultMixin` 在每次 journal flush 的開頭呼叫），hooks 釋放時移除。「記 tick、前 N 次失敗」用 `new FlushFault(server, 訊息, N, 條件)`：條件成立的 flush 記下 server tick（`ticks()`），前 N 次在 flush 開頭受控失敗（`failures()`；之後照常寫出的是 `retries()`；`disarm()` 之後不再失敗）。
+- **原生 autosave 的窗口與 journal 寫出統計**：靠探針計數、而且跨越多個 tick（例如 200 ticks 起跳的退避）的 test，先以 `afterAutosaveClear(context, tick, 名稱, 窗口長度, (start, window) -> …, hooks)` 等到窗口內不會有原生 autosave 才開始注入（降低誤判的機率），確認時以 `window.journalWrites(server, 計數, Set.of(自己的 sid))` 斷言 `onlyProbed()`：窗口內 journal 正式檔的每一次實際寫出都經過探針，而且探針看到的每一次 flush 只帶自己的 session 的變更。寫出由 testmod 的 `SessionJournalWriteCountMixin` 統計（`SessionRecoveryState.save(File,…)` 呼叫 `SessionJournalStore.write` 的那一點，不論來源）。違反時 `problems()` 逐則列出旁路的種類：原生 autosave、`server.save`（附呼叫端，例如 `ChunkSaveCheckpoint`）、停服存檔、其他寫出，或其他 session 的 flush；log 另有一行 `M5_JOURNAL_WINDOW` 列出窗口內每一次 flush 與寫出。失敗訊息請附上 `problems()`。
+- **塌縮流程的 log**：`CollapseService` 的每一則 log 都帶 SLF4J marker `CollapseService.LOG_MARKER`；不屬於任何 session 的（整個 tick 無法執行等）帶子 marker `TICK_LOG_MARKER`。「這個 session 沒有塌縮流程的 WARN／ERROR」用 `collapseFlowNeverWarned(capture, sid)`：依 marker 篩選，不比對訊息字串；沒有 sid 的 tick 層級 WARN 以「capture 期間沒有帶 `TICK_LOG_MARKER` 的 WARN／ERROR」涵蓋。判定前它先以 marker 記一行 INFO 探針，capture 讀不到 marker 時丟例外。其他依 marker 的篩選用 `LogCapture.marked(level, marker, 片段…)`。log 斷言一律依 sid 篩選，不斷言絕對筆數或 tick。
+- **fixture**：
+  - `collapseFixture(…, suspend)`：MEASURED 收據 put＋flush 之後，只經 commitRestore／commitRollForward 進入指定的塌縮狀態。`suspend` 為真時以 `M5TestHooks.suspendCollapse` 暫停這個 session 的塌縮流程（決策 7：集合在同一個 JVM 內不清除；default run 中會產生 MEASURED 的 test 都要在塌縮流程第一次看到它之前加入）。收尾用 `cleanupFixtures`。
+  - `DormantOrigin.open(context, hooks)`：真原艙（未供電）＋一位在艙外的真玩家與 log capture。`whenRegistered((tick, chamber) -> …)` 在第 2 tick 供電、原艙註冊並進入 IDLE 之後交出 chamber UUID；`own(receipt(chamber, 參與者, 是否選 NEW))` 寫入 DORMANT 收據，收尾時自動移除。
+  - `NetherChamber.open(context, controller, hooks)`：Nether 的真原艙＋一位在艙內的真玩家（強制載入並以石頭圍住）；`whenEntered(…)` 等真入場、358 扇側門發布。
+  - 候選門：`candidateDoor(pages, target, sid, 種類)`、`sourceDoor(fixture)` 回傳 `CandidateDoor(key, cell)`。
+
 會配置或物化 Universe、或會留下 M5 record 的 GameTest（M5 plan 決策 6）：
 
 1. 放進 `src/testmod/java/dev/quantumchamber/gametest/M5UniverseGameTests.java`。gate 要求 batch 前綴 `m5_universe` 的 test 都在這個 class。

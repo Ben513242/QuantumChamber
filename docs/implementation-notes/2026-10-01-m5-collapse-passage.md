@@ -2840,3 +2840,103 @@ M5 GameTest 的掃描（m-1 第 3 點；判斷「靠探針計數、而且跨越�
 偏離：
 1. **G-SEAL、G-RFB 恢復恰好 4 次**：派工只要求 helper。`8f3d76c` 把計數放寬成 3～4 次只是為了 autosave；helper 讓窗口涵蓋到第 4 次寫出，並以 `noNativeAutosaveBeforeTheConfirmation` 斷言期間沒有 autosave，放寬已經沒有理由，所以改回 fix round 2 原本的 `fourAttempts`／`fourWrites` 與間隔斷言。
 2. **JUnit 數不變**：派工的「預期 JUnit 多 1 個」與「在該檔補一列」不一致。依「只限第 3 項新增的一列」，補在既有 test 的 cases 表中（與同表 COLLAPSING 那一列相同的寫法），所以 JUnit 仍是 570；mutation 下該 test 失敗，失敗訊息只有新列。若要求獨立的 `@Test`，需要再改一次這個檔。
+
+## F4a-0：M5 GameTest 共用支援
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `81217a0` `test: share M5 GameTest support`（parent `219145a`）：Step 1 的純搬移。新增 testmod `M5GameTestSupport.java`、`M5TestHooks.java`；修改 `M5CollapseGameTests.java`、`M5UniverseGameTests.java`、`M4CandidateDoorGameTests.java`；`mixin/SessionJournalWindowFaultMixin.java`、`mixin/CollapseSuspendMixin.java` 只改指向。沒有 production 與 JUnit 的變更。
+  - `53e923e` `test: count every journal write and tag collapse warnings`（parent `81217a0`）：Step 2～4。production 只有 `collapse/CollapseService.java`（marker 與 `applyDoor`／`PendingDoor`）；JUnit `CollapseServiceTest.java`（只擴充 `pendingDoorRetriesOnceThenBacksOffAndDedupesWarnings`）；testmod 新增 `mixin/SessionJournalWriteCountMixin.java`，修改 `quantumchamber-test.mixins.json`（只登記它）、`M5TestHooks.java`、`M5GameTestSupport.java`、`M5CollapseGameTests.java`、`LogCapture.java`。
+  - 本段與 `scripts/verification/README.md`「新增 M5 GameTest」一節由其後的 docs commit 加入。
+- Code range `219145a..53e923e`。沒有改 `M2CorridorGameTests.TestHooks`、M2 的 `OBSERVED`、`SessionRecoveryState.java`、`build.gradle`、`.github/`、`scripts/verification/` 的腳本。
+- 範圍是 plan Task F4a-0：F3d「交給後續」中 F4a 的 `M5GameTestSupport`、quality re-review 的 m-1～m-3，以及 F3d fix round 2 的 m-6(d)（把 hook 搬出 `M4CandidateDoorGameTests`）。m-4 屬 F4a 本身，沒有處理（見「交給後續」）。除了 m-2 的 marker 與 m-3 的 `applyDoor` 結構，production 行為不變。
+- 行號以 `53e923e` 為準。`SUP` 指 `M5GameTestSupport`，`HK` 指 `M5TestHooks`，`WCM` 指 `mixin/SessionJournalWriteCountMixin`，`LC` 指 `LogCapture`；`M5C`、`M5U`、`M4C`、`CS`、`CST` 同 F3d 一節。
+- Review：由 controller 補。
+
+### 派工逐項對照
+
+| 派工 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| Step 1：`collapseFixture`、`cleanupFixtures` 在 M5C 與 M4C 各一份 | 合成 `SUP:221`／`:231`（MEASURED 收據只經 commitRestore／commitRollForward 進入指定狀態，最後確認 exact 落盤；`suspend` 為真時暫停）與 `SUP:258`／`:268`（依 session 清單或依條件；共用 `SUP:281` `removeFixture`）。M4C 的 F3a 規則（COLLAPSING 選 SOURCE、其他選 NEW、一律暫停）留成一行轉呼叫 `M4C:1956` `f3aFixture` | Step 1 前後 focused |
+| Step 1：`at`／`whenTicks` 與 M4C 的 `whenWithinTicks` 重複 | `SUP:81`、`SUP:93`；M4C 的 `whenWithinTicks` 刪除，呼叫點改用 `whenTicks`（static import；判定與逾時訊息逐字相同） | 同上（用到它的 H3、F3a batch 也在 focused 內） |
+| Step 1：Nether 原艙的建置在 G-NETHER 與 G-NLIVE 各寫一次 | `SUP:388` `NetherChamber`：`open` 強制載入、以石頭圍住並建置、連線並把玩家移進艙內（登記解除強制載入、關閉連線、斷電三個收尾）；`whenEntered` 第 2 tick 供電並等 358 扇側門；`record` 取這座艙的 flushed record | 同上 |
+| Step 1：`SourceDoor` 名不符實 | 改名 `CandidateDoor`（`SUP:475`），`candidateDoor`／`sourceDoor` 一併搬到 `SUP:483`／`:478` | 同上 |
+| Step 1：M5U 借用 M5C 的 static helper | M5U 改用 `SUP` 的 `at`、`interact`、`doorAll`、`moveInside` 與 `DormantOrigin`；M5C 不再有被別的類別呼叫的 helper | M5 前後 |
+| Step 1：5 個「記 tick、前 N 次失敗」的計數探針 | `SUP:128` `FlushFault`：條件成立就記 server tick，武裝時前 N 次在 flush 開頭以指定訊息丟出（`ticks()`、`failures()`、`retries()`、`disarm()`）。CommitFault＝N 無上限＋`disarm()`；ReturnWriteFault 拆成返還與清 lease 兩個 N＝1 的探針，以 `andThen` 依序檢查（兩者互斥：全員返還之後才會清 lease）；G-RFB、G-SEAL 的 N＝3；G-TERM 的 N＝1。探針一律經 `SUP:117` `installFlushProbe` 安裝 | 同上；G-RFB 與 G-SEAL 的計數在前後兩輪都是「開始＋11、＋0、＋200、＋600」與「＋0、＋0、＋200、＋600」 |
+| Step 1：autosave／寫出窗口 helper | `afterAutosaveClear`、`AutosaveWindow` 搬到 `SUP:183`、`:195`（Step 2 再擴充） | 同上 |
+| Step 1：G-DOR、G-TERM、G-RES 共用的「真原艙＋DORMANT 收據＋玩家在艙外」 | `SUP:322` `DormantOrigin`：`open` 依序登記關閉連線、斷電、`cleanupFixtures(owned)`，再建置、連線、移到艙外、開始 log capture；`whenRegistered` 第 2 tick 供電、等原艙註冊並 IDLE 之後交出 chamber UUID；`receipt` 只建立收據，`own` 先加入 `owned` 再 put＋flush | 同上 |
+| Step 1：`m5FlushProbe` 與 collapse-suspended 集合搬出 M4C | `HK:33` 集合（仍沒有移除的 API，決策 7 的不變量不變）、`HK:34` 探針、`HK:49` `beforeJournalFlush`。`SessionJournalWindowFaultMixin` 在原本呼叫 M4C `beforeCandidateFlush` 的那一行之前加一行呼叫 `HK.beforeJournalFlush`：m5 探針原本就是 `beforeCandidateFlush` 的第一個動作，順序不變。`CollapseSuspendMixin` 只改 import、Javadoc 與呼叫的類別。`M2CorridorGameTests.TestHooks` 與 M2 的 `OBSERVED` 沒有改 | 同上；掛 hook 的 6 個 M4／F3a batch 都在 focused 內 |
+| Step 2（m-1）：統計 journal 的每一次寫出 | `WCM`：掛在 `SessionRecoveryState.save(File,…)` 呼叫 `SessionJournalStore.write` 的那一點（`require=1`）。讀過 production：journal 唯一的寫出點是 `save`（`SessionRecoveryState.java:643`）；`flush`（`:605`）以正式路徑呼叫它；原生存檔（autosave、`server.save`、停服）經 `PersistentStateManager.save` 呼叫同一個 `save`；不 dirty 時 `save` 在 `:646` 提早返回、不寫，所以掛在寫出那一點才只算真的寫出。`HK:81` `JournalWriteAudit` 記兩種事件：探針看到的 flush（`HK:49`，在探針之前記）與實際寫出（`HK:58`），各附 server tick、呼叫端與「current 與 flushed 不同的 session」。寫出的來源依呼叫堆疊判定（`HK:139`）：有 `SessionRecoveryState.flush` 就是經 flush；否則看呼叫 `MinecraftServer.save/saveAll` 的那一層：`MinecraftServer.tick` 是原生 autosave、`shutdown` 是停服，其他是 `server.save`（附呼叫端，例如 `ChunkSaveCheckpoint.save`）；都不是則為其他寫出。稽核本身的例外只記下（判定時失敗）、不丟出，以免那次寫出被當成落盤失敗 | GREEN 的 `M5_JOURNAL_WINDOW` 列出 G-RFB、G-SEAL 窗口內的每一次 flush 與寫出（下方「Gate 與證據」） |
+| Step 2：窗口 helper 斷言「窗口內每一次寫出都是探針看到的」 | `afterAutosaveClear`（`SUP:183`）在開始注入的那個 tick 啟動稽核（hooks 釋放時移除）；`AutosaveWindow.journalWrites`（`SUP:204`）回傳 `JournalWindow(onlyProbed, nativeAutosave, problems)`：每一次實際寫出都經 flush，而且探針看到的每一次 flush（含受控失敗、沒有寫出的那幾次）只帶本 test 自己的 session 的變更。`problems` 逐則列出旁路的種類：原生 autosave、`server.save`＋呼叫端、停服、其他寫出、其他 session 的 flush（附 session 與呼叫端）；另記一行 `M5_JOURNAL_WINDOW`。`afterAutosaveClear` 的等待保留（降低誤判機率）；`nativeAutosave`（即 F3d `untouched` 的反面）只供診斷：autosave 時 journal 沒有變更就不會寫出，不單獨判定。G-RFB（`M5C:1093`）、G-SEAL（`M5C:1170`）的 `noNativeAutosaveBeforeTheConfirmation` 換成 `onlyProbedJournalWrites`，失敗訊息附 `problems` | RED F4A0-M1-BYPASS；F4A0-M1-AUTOSAVE |
+| Step 3（m-2）：marker 或專屬 logger，二擇一 | 選 SLF4J marker：`CS:83` `LOG_MARKER`（`QUANTUMCHAMBER_COLLAPSE`）、`CS:85` `TICK_LOG_MARKER`（`QUANTUMCHAMBER_COLLAPSE_TICK`，父 marker 是前者）。`CS` 的每一則 log 都帶 marker；不屬於任何 session 的三則（開服讀不到 journal 的 ERROR、整個 tick 無法執行的 WARN 與它恢復時的 INFO）帶子 marker。logger 名稱、等級與訊息都沒有改 | 選擇理由見下方「marker 與 logger 的選擇」 |
+| Step 3：witness 改依 marker | `SUP:306` `collapseFlowNeverWarned`：這個 sid 沒有帶 `LOG_MARKER`（含子 marker）的 WARN／ERROR，而且 capture 期間沒有任何帶 `TICK_LOG_MARKER` 的 WARN／ERROR。判定之前先以子 marker 記一行 INFO 探針（`M5_COLLAPSE_MARKER_PROBE`），確認 capture 讀得到 marker 與父子關係，讀不到就丟例外。`LC:19` 的 Entry 多記 log4j 收到的 marker，`LC:49` `marked` 以 `isInstanceOf` 篩選 | RED F4A0-M2-MARKER-WARN；F4A0-M2-NO-MARKER |
+| Step 3：`tickWarning` 若有 sid 可帶就帶 | 沒有 sid 可帶：`tick()` 外層 catch 涵蓋的是整個 tick 的失敗（取 journal、pages、走訪 flushed、去掉不在 journal 的 track），不屬於任何 session；每個 session 的例外已由內層 catch 經 `warn()` 帶 sid 記錄。所以帶子 marker，witness 另以「整個 capture 期間沒有帶子 marker 的 WARN／ERROR」涵蓋，寫在 `SUP:306` 的 Javadoc | — |
+| Step 4（m-3）：`applyDoor` 依 `step.warn()` 決定是否記錄；`PendingDoor` 只記下原因 | `CS:556` `recordDoorStep`：只在 `step.warn()` 為真時記 WARN，再交給 `PendingDoor.remember`（`CS:679`，只記下原因與「已立即重試過一次」），`backOff()` 時退避；回傳是否記了 WARN。`applyDoor`（`CS:532`）與 `tick()`／`openDoor` 的套用例外都經它；套用例外的處置抽成 `CS:584` `doorFailure`（「套用失敗：…」、同一原因去重、一律退避、不改重試狀態）。行為與搬移前逐項相同：同一原因不再記、原因改變再記、NOT_LOADED 沒有原因時保留上一個、套用例外的 WARN 仍附 stack。`PendingDoor` 由 private 改為 package-private（JUnit 用），沒有新增 class | JUnit 與 mutation（下表） |
+| Step 4：JUnit 要鎖住 production 的記錄行為 | 現有 JUnit 不足：它只測純函式 `doorStep`，`applyDoor` 是否照 `warn()` 記錄、`PendingDoor` 是否記下原因都沒有被執行到。擴充 `CST:161` `pendingDoorRetriesOnceThenBacksOffAndDedupesWarnings`：以真的 `PendingDoor` 經 `recordDoorStep` 走過 ROLLED_BACK、ROLLED_BACK、ROLLBACK_FAILED、NOT_LOADED、DOOR_INCOMPLETE×2 與兩次套用例外，斷言每一步是否記 WARN（`[T,F,T,F,T,F,T,F]`）、門記下的原因、退避 6 次（delay 6400）與重試狀態。仍是同一個 `@Test`，JUnit 數不變 | F4A0-M3-NO-REMEMBER、F4A0-M3-IGNORE-WARN |
+| Step 5：README 與 note | `scripts/verification/README.md`「新增 M5 GameTest」一節開頭新增共用支援的用法（hook 釋放、flush 探針與計數探針、窗口 helper 與 journal 寫出統計、marker 版 witness、`collapseFixture`／`DormantOrigin`／`NetherChamber`／候選門），原本的第 1–8 點不變；本節 | — |
+
+### marker 與 logger 的選擇
+
+- 專屬 logger 名稱會讓既有的 `LogCapture("quantumchamber")` 看不到塌縮流程的 log：`LC` 依 logger 名稱完全相等篩選，testmod 有 17 處以它斷言「塌縮已提交」「SOURCE 塌縮完成」「不支援的來源維度…」「開服時仍是 PASSAGE_READY」等 INFO，改名就要同步改這些 capture；latest.log 的 `(%logger{1})` 也會從 `(quantumchamber)` 變成新名稱的最後一段。
+- marker 不影響這兩者：logger 名稱、等級與訊息不變。已核對 Loom 開發 runtime 的 log4j 設定（`.gradle/loom-cache/log4j.xml`，GameTest 與各 gate 都用它）：三個 appender 的 pattern 都不印 marker，也沒有 marker filter。正式環境（非 Loom）的 log 設定沒有核對；marker 只是附加在 log event 上的資訊（推論：不影響輸出）。
+- `scripts/verification/` 中與 log 有關的地方都不看 logger 名稱或 marker：note 慣用的 WARN／ERROR 統計是以 `/WARN]`、`/ERROR]` 計行；`main-oracle.ps1` 只比對 `(Minecraft) Missing data pack quantumchamber-testmod` 那一行；`gates.ps1` 解析的是 `M5_UNIVERSE_*`、`M4_PER_TEST_*` 等 testmod 的行。run-all 的 latest.log 中塌縮流程的行仍是 `[Server thread/WARN] (quantumchamber) …`（例如 F4A0-M2-MARKER-WARN 的 mutation 行），WARN／ERROR 的計數只差下方說明的一則既有偶發。
+- `LogCapture` 讀得到 marker：SLF4J 的 marker 經 log4j-slf4j 轉成同名的 log4j marker（含父子關係），由 `LogEvent.getMarker()` 取得。以實跑確認：GREEN 與 run-all 的 G-SEAL 判定前的探針都通過；F4A0-M2-NO-MARKER（capture 不記 marker）時 G-SEAL 以「log capture 讀不到塌縮流程的 marker」失敗，不會以空結果通過。
+
+### 測試
+
+- default GameTest 173（`_windows` 88）、legacy 1、M5 5、per-test receipt 51＋1，都不變：沒有新增或刪除 `@GameTest`，`M4PerTestUniverseProbe.begin(` 仍是 52 處。
+- JUnit 570 不變（2 skipped）：Step 4 擴充的是既有的 `@Test`。`CollapseServiceTest` 仍是 7 個。
+- 改了 witness 的只有 G-RFB、G-SEAL：`noNativeAutosaveBeforeTheConfirmation` → `onlyProbedJournalWrites`；G-SEAL 的 `collapseFlowOnlySawPendingRollForward` 改依 marker。其餘 test 的斷言沒有改，只換成共用的 fixture、探針與 helper。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f4a0/`：state 由 `f4a0/state.ps1`（比照 `f3d/fix2/state.ps1`）產生；focused gate 由 `f4a0/gate.ps1`（比照 `f3d/fix3/gate.ps1`，先記 state，再以 `JAVA_TOOL_OPTIONS=-Dquantumchamber.gametest.onlyBatches=…` 跑 `gates.ps1`）執行；暫時性改動由 `f4a0/adapter.py` 套用與還原（套用前保存原檔，還原後以 `git hash-object` 核對），各 adapter 的 diff 在 `f4a0/adapters/<名稱>/`。gate root 在 `.superpowers/verification/`。`git diff 219145a 53e923e -- <path>` 輸出的 SHA-256 前 8 碼（`f4a0/diff-hashes.txt`）：`src/main` `621b072d`、`src/test` `01520b9b`、`src/testmod` `dcf65cb1`。
+
+focused 的範圍（`f4a0/focused-batches.txt`，34 個 batch）：全部 17 個 `m5_collapse_*`；F3d fix round 2 focused 的 6 個掛 hook 的 M4／F3a batch（`m4_select_first_wins`、`m4_ifix1_checkpoint_backoff`、`m4_dormant_other_chamber`、`m5_f3a_native_collapsing_return`、`m5_f3a_presence_reconcile`、`m5_f3a_attach_lookup`）；另外加上搬移碰到的 M4C batch：用到 `nativeCandidates`（暫停 hook）的 `m4_select_rejections`、`m4_select_flush_before`、`m4_select_flush_after`、`m4_select_fault_other_flush`、`m4_select_mapping_windows`、`m5_h2_checkpoint_scope`，與用到 `whenTicks` 的 5 個 `m5_h3_*`。M5 run 一律跑全部 5 個 `m5_universe_*`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| Step 1 前（focused） | `219145a`，工作樹乾淨（`f4a0-before-focused-state.txt`） | `gate-f4a0-before-focused-994587093f07449ab55408afc53f74c8` | PASS 34/34 |
+| Step 1 前（M5） | 同上（`f4a0-before-m5-state.txt`） | `gate-f4a0-before-m5-361bb1640e6542779264afe66660ab0a` | PASS 5/5 |
+| Step 1 後（focused） | `219145a`＋Step 1 的工作樹（`f4a0-after-focused-state.txt`，7 個檔的 blob 與 `81217a0` 相同） | `gate-f4a0-after-focused-f5d50d167f7449cba1b5b06b77797ea6` | PASS 34/34；testcase 集合與每一個的結果都與「Step 1 前」相同。G-RFB、G-SEAL 的計數型態相同（見上表）。WARN／ERROR 各多 1 則，都在 G-FB 的入場：走廊候選批次的 journal 原子移動遇到 Windows `AccessDeniedException`（`.tmp -> quantumchamber_sessions.dat`），該 session 依 M4 規則轉 RETURNING、原生入場重新開始，test 照常通過。這個 `AccessDeniedException` 在之前的 Full gate log（含 F3d 最終 run-all）中也出現過，屬環境偶發，與搬移無關 |
+| Step 1 後（M5） | 同上（`f4a0-after-m5-state.txt`） | `gate-f4a0-after-m5-dc409fade4cc4123a8c86700a8e549d1` | PASS 5/5，與「Step 1 前」相同 |
+| GREEN focused（第 1 輪，保留不採計） | `81217a0`＋Step 2～4 的工作樹（`f4a0-green-focused-state.txt`） | `gate-f4a0-green-focused-c8dc9fc71cd84ec082c6892f21846eca` | 32/34。兩個失敗都在 F4a-0 沒有碰的 production 路徑上（`f4a0/green-focused-1-failures.txt`）：F3a G3 `noStaleAuthorityReturnPending=false`，返還寫出遇到同一種 Windows `AccessDeniedException`，多出一則「返還保留 pending」；G-NLIVE `noWarnOrError=false`，保留式清理的原生存檔 checkpoint 丟「相關 chunk／entity storage 尚未完整載入」，多出一則「MEASURED 保留 receipt 等待安全返還」（見「觀察」第 2 條）。G-RFB、G-SEAL 都通過、`M5_JOURNAL_WINDOW` 都是 PASS |
+| GREEN focused（第 2 輪） | 同上，blob 與第 1 輪相同（`f4a0-green-focused-2-state.txt`） | `gate-f4a0-green-focused-2-c4e073d851db4092b1d0ec9841cf51c2` | PASS 34/34。G-RFB start=6167、counted=[6178, 6178, 6378, 6778]；G-SEAL start=12001、counted=[12001, 12001, 12201, 12601]；兩者 `nativeAutosave=false`、`problems=[]` |
+| GREEN M5 | 同上（`f4a0-green-m5-state.txt`） | `gate-f4a0-green-m5-24c4a84eb0064d31908fee1b9e4faf15` | PASS 5/5 |
+| GREEN JUnit（focused） | 同上 | Gradle `test --tests …CollapseServiceTest` | 7/7 |
+| F4A0-M1-BYPASS（Step 2 RED） | 同上；adapter `f4a0-m1-bypass`：G-SEAL 在進入 SEALED 的寫出受控失敗之後、同一個 callback 內呼叫 `server.save(false,true,true)`；G-RFB 在窗口內、選門之前 put＋flush 另一個 session 的 DORMANT 收據（模擬殘留 session 的 flush）；兩者都加上舊斷言 `legacyUntouched` 作對照 | `gate-f4a0-mut-m1-bypass-6198316ab90549b38fbc8a5cd0788fa3` | 兩個都在目標斷言 FAIL。G-SEAL：`onlyProbedJournalWrites=false`、`legacyUntouched=true`，`problems=[旁路寫出（server.save，呼叫端 M5CollapseGameTests.lambda$…:1163）tick=41]`（server.save 把 SEALED 帶出確認，attempts=[41]，計數 witness 也因此失敗）。G-RFB：`onlyProbedJournalWrites=false`、`legacyUntouched=true`，而計數的 witness 全部通過（writes=[1154, 1154, 1354, 1754]），`problems=[其他 session 的 flush（session=[…]，呼叫端 M5CollapseGameTests.lambda$…:1089）tick=1143]` |
+| F4A0-M1-AUTOSAVE | 同上；adapter `f4a0-m1-autosave`：helper 改成「在原生 autosave 之前恰好 150 ticks 開始注入」（比照 F3d fix3 的 forced-150），G-SEAL 的 tickLimit 暫時放大 | `gate-f4a0-mut-m1-autosave-ac9da059f0c046d399b6a7e53c63ca15` | 兩個都 FAIL，`problems=[旁路寫出（原生 autosave，呼叫端 MinecraftServer.tick:924）tick=6000／12000 …]`；這一型舊斷言也抓得到（`legacyUntouched=false`） |
+| F4A0-M2-MARKER-WARN（Step 3 RED） | 同上；adapter `f4a0-m2-marker-warn`：`CS` 在 roll-forward 未確認、暫停的那一刻，對該 sid 記一則帶 `LOG_MARKER`、但沒有舊前綴的 WARN（每個 session 一次）；G-SEAL 另加舊的字串版 witness `legacyStringWitness` | `gate-f4a0-mut-m2-marker-warn-53afd2dd59d048728cf3f3736021d50a` | G-SEAL FAIL：`collapseFlowOnlySawPendingRollForward=false`、`legacyStringWitness=true`、`collapseServiceNeverOverwrote=true`，計數與 `onlyProbedJournalWrites` 照常為真。latest.log 的那一行是 `[Server thread/WARN] (quantumchamber) F4a-0 mutation：…` |
+| F4A0-M2-NO-MARKER | 同上；adapter `f4a0-m2-no-marker`：`LC` 不記 marker | `gate-f4a0-mut-m2-no-marker-67c77bdccdb2497eb410119375a64865` | G-SEAL FAIL：「log capture 讀不到塌縮流程的 marker（QUANTUMCHAMBER_COLLAPSE／QUANTUMCHAMBER_COLLAPSE_TICK）」 |
+| F4A0-M3-NO-REMEMBER（Step 4） | 同上；adapter `f4a0-m3-no-remember`：`PendingDoor.remember` 不記下原因（去重壞掉） | Gradle `test --tests …CollapseServiceTest`（`f4a0/mut-f4a0-m3-no-remember-junit.log`、`.xml`） | 7 個中 1 個 FAIL：`pendingDoorRetriesOnceThenBacksOffAndDedupesWarnings`，記 WARN 的序列變成 `[T,T,T,F,T,T,T,T]`，門記下的原因全是 null |
+| F4A0-M3-IGNORE-WARN（Step 4） | 同上；adapter `f4a0-m3-ignore-warn`：`recordDoorStep` 不看 `step.warn()`，只要有原因就記 | 同上（`f4a0/mut-f4a0-m3-ignore-warn-junit.log`、`.xml`） | 同一個 test FAIL：序列 `[T,T,T,F,T,T,T,T]` |
+| run-all | `53e923e`，`STATUS` 只有 ` M scripts/verification/README.md`（`f4a0/run-all-console.log`） | `run-all-93e36a3b5f8e43b39bb8bbf446c70fcc`（Full：`gate-full-6f3c36c21e6241029ab77eaacb37f14d`） | `END ALL exit=0 HEAD=53e923e8b3ed75c62c7e7ce210aa86c2846bd249`，約 17 分鐘（18:53:49→19:11:06）。`SUMMARY default=173/173 windows=88 legacy=1/1 m5=5/5 perTest=51+1 junit=570 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=367entries/320classes sources=212 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`，與 F3d 最終 run-all（`run-all-b5b2bf9b30fc49e5980973ea708490c2`）逐項相同。`STATUS` 沒有 `src/`、build 檔或 `.github/` 的變更，本目錄的 `.ps1`／`.gradle` 都沒有改，依 README 的採計規則以 C＝`53e923e` 採計。Full 裡 G-RFB start=14169、counted=[14180, 14180, 14380, 14780]，G-SEAL start=101034、counted=[101034, 101034, 101234, 101634]，兩者 `M5_JOURNAL_WINDOW … problems=[] status=PASS` |
+
+- 每個 adapter 跑完都還原，還原後的 blob 與套用前相同（`adapter.py restore` 核對）；mutation 跑的是 GREEN 的工作樹。`81217a0` 的 7 個檔、`53e923e` 的 8 個檔 commit 時的 blob，分別與「Step 1 後」與 GREEN focused 2 的 state 相同。run-all 在兩個 code commit 之後執行。
+- release JAR：entry 清單與 F3d 最終 run-all 完全相同（367／320，`unzip -Z1` 比對）。內容不同的只有 `CollapseService` 與它的 6 個巢狀 class：`CollapseService.class` 與 `$PendingDoor`（marker 常數、`recordDoorStep`、`doorFailure`、`remember`，`PendingDoor` 由 private 改為 package-private）；`$1`、`$DoorStep`、`$EntryWatch`、`$MeasuredAction`、`$Track` 以 `javap -c -p -v` 去掉行號表之後完全相同（原始檔的行數位移）。sources 212 不變。新的 mixin 與 hook 類別都在 testmod，testmod 命中仍是 0。
+- log（Full gate，以 `/ERROR]`、`/WARN]` 行計）：ERROR 28 → 28，WARN 54 → 55。依 batch 分組、把 UUID 與數字正規化之後比對（`f4a0/wbdiff.txt`），唯一的差異是 `m2_task4_disconnect_io` 的「艙體 … 的 session 協調失敗，保留返還保護」，F3d 一節已記為既有的偶發（H2 與 F3b fix round 1 的 Full 也各出現過一次）。marker 探針在 Full 的 log 中恰一行（G-SEAL 一次）。
+- 結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+### 偏離派工字面之處
+
+1. **focused 的範圍比 F3d fix round 2 大**：除了指定的 `m5_collapse_*`、`m5_universe_*` 與 6 個掛 hook 的 batch，另外加上搬移碰到的 11 個 M4C batch（見上方範圍）。M5 run 的 5 個 test 前後各跑一次。
+2. **README 放在 docs commit**：派工的 commit 順序只列 code 與 note。README 的一節是 Step 5 的文件，與 note 一起放在第 3 個 commit（訊息據此調整）；run-all 的 `STATUS` 因此列出 README，不影響採計。
+3. **M4C 保留一行 `f3aFixture`**：它只是 F3a 的規則（COLLAPSING 選 SOURCE、一律暫停）轉呼叫共用的 `collapseFixture`，不是第二份實作。
+4. **合併後的 fixture 比原本的嚴一點**：M5C 的 `collapseFixture` 原本沒有最後的 exact 落盤核對（M4C 有），合併後兩邊都有；checked commit 成功時它必定成立。依 session 清單的 `cleanupFixtures` 也會先移除沒有 lease 的 space（M4C 原本就這麼做）；M5C 的 fixture 都沒有 space，這一步是 no-op。
+5. **「殘留 session 的 flush」以「探針看到的 flush 帶了別的 session 的變更」判定**：這涵蓋殘留 session 的 roll-forward、進度寫入等真的會被一起寫出的變更。另一種情形是別的程式路徑在沒有任何別的 session 變更時呼叫 flush（只會帶出本 test 的 session）：它在結構上無法與本 test 自己的 flush 區分，只能由 `M5_JOURNAL_WINDOW` 列出的呼叫端診斷，沒有列為判定條件。
+6. **多做的 mutation**：派工要求 Step 2 的 server.save 與 Step 3、Step 4 各一個；另外加上 F4A0-M1-BYPASS 的 G-RFB 殘留 session flush、F4A0-M1-AUTOSAVE 與 F4A0-M2-NO-MARKER，證明失敗訊息能區分旁路的種類，以及 marker 讀不到時不會默默通過。
+
+### 觀察（未修改）
+
+1. **Windows 的 journal 原子移動偶發 `AccessDeniedException`**（`quantumchamber_sessions.dat.<n>.tmp -> quantumchamber_sessions.dat`）：本 task 的 Step 1 後與 GREEN 第 1 輪各遇到一次；之前的 Full gate log（含 F3d 最終 run-all）中也有。production 照設計 fail closed（保留 dirty 與上一份 durable、之後重試），但會多一則 WARN；斷言「這個 sid 沒有 WARN」的 test（例如 F3a G3 的 `noStaleAuthorityReturnPending`）因此偶發失敗。
+2. **原生存檔 checkpoint 與走廊清理的就緒條件不一致**：`CorridorPageManager.leaseReady`（`CPM:1032`）只檢查 chunk 是 FULL、已載入、會 tick，而 `ChunkSaveCheckpoint` 另外要求 entity storage 已載入（`ChunkSaveCheckpoint.java:73`）。entity storage 是非同步載入的，兩者之間有空檔時 checkpoint 丟 IllegalStateException，走 per-space 退避（20 ticks 起跳）後重試，多一則「MEASURED 保留 receipt 等待安全返還」WARN。GREEN 第 1 輪的 G-NLIVE 因此失敗一次；所有已保存的 gate log 中只有這一次。production 會自行恢復；沒有修改（不在本 task 的允許路徑）。
+3. G-SEAL 的 `collapseServiceNeverOverwrote` 仍以字串「塌縮流程」比對 WARN；同一個 test 的 `collapseFlowOnlySawPendingRollForward` 已依 marker 涵蓋它，沒有改。
+
+### 交給後續
+
+- F4a：
+  - （F3d quality re-review m-4）G-SEAL 在確認的那一個 tick，塌縮流程會看到沒掛 hook 的 flushed SEALED（PROJECTION_FAILED），要到下一個 callback 才收尾。F4a 實作 SEALED 重試時，探針在放行第 4 次寫出時順手 `M5TestHooks.suspendCollapse(sid)`，或確認邊緣觸發不會成立。本 task 沒有處理。
+  - （F3d fix round 3 spec re-review 的觀察）H2（`m5_h2_checkpoint_scope`）若有 autosave 落在兩次 checkpoint 之間，約有 1% 的機率多出一則原生 ERROR 或 WARN，斷言不受影響。比對 Full gate 的 log 數字時，可以先從這裡查（本 task 的 run-all 沒有出現）。
+  - `CollapseService` 新增的 log 一律帶 `LOG_MARKER`；能歸屬到 session 的 WARN／ERROR 訊息要帶 `session=<UUID>`，不屬於任何 session 的改帶 `TICK_LOG_MARKER`。F3d「交給後續」中「新增的 WARN 要沿用 `warn()` 的『塌縮流程的…』前綴」那一條由此取代。
+  - F3d「交給後續」中「之後新增靠 journal 的 flush 探針計數、而且跨越 200 ticks 退避的 GameTest，以 `AutosaveWindow.untouched` 斷言」那一條，改為以 `afterAutosaveClear`＋`journalWrites(server, 計數, 自己的 session)` 斷言 `onlyProbed()`；test 自己建立的每一個 session 都要放進 `own`，否則它的 flush 會被判為「其他 session 的 flush」。
+  - 新的 M5 test 用 `M5GameTestSupport`（用法見 `scripts/verification/README.md`「新增 M5 GameTest」）；SRM 的 RETRY_FLUSH WARN 文字（「返還保留 pending」）仍待 F4a 改成不限返還，本 task 沒有動。
+- 觀察第 1、2 條（Windows `AccessDeniedException`、checkpoint 與 `leaseReady` 的就緒條件）需要 owner：第 2 條與 F4b 的投影共用同一個 checkpoint，建議 F4b 或之後允許修改 `CorridorPageManager` 的 task 一併判斷是否要在 `leaseReady` 加上 entity storage 的檢查；第 1 條影響的是「斷言沒有 WARN」的 test 的穩定性，建議 F6 整理 harness 時一併處理。
