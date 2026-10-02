@@ -2157,7 +2157,7 @@ GameTest +3（156 → 159；`_windows` 維持 80；per-test Universe receipt 維
 - Code range `4098d0c..e11b341`。派工時 HEAD 是 `c19a399`；之後 controller 的兩個 docs commit（`909f033`、`4098d0c`）只改 AGENTS.md 與本 note 的開頭、F1b，不影響本 task。
 - 範圍是 plan 決策 6 與 Review Focus 8：會配置或物化 Universe、或會留下 M5 record 的 GameTest，放進新的 `gameTestM5` run（獨立的 fresh 世界 `run/gametest-m5`），default run 的 boundary oracle 維持 PASS。
 - 行號以 `e11b341` 為準。`FLT` 指 `src/testmod/java/dev/quantumchamber/gametest/mixin/M4LegacyGameTestFilterMixin.java`，`M5U` 指 `src/testmod/java/dev/quantumchamber/gametest/M5UniverseGameTests.java`，`GT`、`RA`、`CRC` 指 `scripts/verification/` 的 `gates.ps1`、`run-all.ps1`、`ci-rule-check.ps1`，`YML` 指 `.github/workflows/build.yml`。
-- Review：首輪 spec review ✅（Critical 0、Important 0、Minor 2）；code quality review Approved（Critical 0、Important 0、Minor 7）。controller 指派全部在 fix round 1 處理，見本節最後的「Fix round 1」。本節其餘內容描述 `e11b341`（當時 M5 run 只有 sanity 一個 test）。
+- Review：首輪 spec review ✅（Critical 0、Important 0、Minor 2）；code quality review Approved（Critical 0、Important 0、Minor 7）。controller 指派全部在 fix round 1 處理，見本節最後的「Fix round 1」；fix round 1 的 re-review 為 Not approved（Important 1），見「Fix round 2」。本節其餘內容描述 `e11b341`（當時 M5 run 只有 sanity 一個 test）。
 
 ### plan 逐項對照
 
@@ -2295,7 +2295,7 @@ gate mutation（M-G1、M-S1 用 `-Mode GameTest`，其餘用 `-Mode M5GameTest`�
 | --- | --- |
 | S1 suite 結束時的 catalog | 擇「testmod 寫 log 行」，不讀 `world-fresh` 的 catalog。理由：catalog 檔是 gzip 壓縮的 NBT，PowerShell 要另寫 NBT 解析；testmod 手上已有解析好的 state，而且 `SERVER_STOPPED` 在原生存檔之後，log 的內容就是磁碟上的內容（`converged=true` 證實 records 等於 flushed）。`M5U:124` `registerSuiteEnd` 由 `M4GameTestBoundaryProbe.java:29` 在 M5 run 呼叫（取代 boundary probe），`SERVER_STOPPED` 時寫 `M5_UNIVERSE_SUITE_END records=… digest=… converged=… unfinished=[…]`。digest（`M5U:236`）是依 UUID 排序的「UUID＝record NBT」的 SHA-256，所以只改 availability、筆數不變的改動也抓得到。增量行加上 `beforeDigest`／`afterDigest`；gate（`GT:254-266`）依序串接筆數與 digest，並要求恰一行 SUITE_END、筆數與 digest 等於最後一個 test 的 after、`converged=true`、沒有還沒通過的 test。`m5-oracle.json` 多了 `suiteEnd`，`RA:134` 也核對它 |
 | S2 README 耗時 | `README.md:30` 改為約 15 分鐘 |
-| Q1 可重試的 complete 與收斂 helper | `complete`（`M5U:160`）委派 `finish`（`M5U:192`）：未通過時丟 GameTest 斷言例外，baseline 保留、不寫增量行，狀態改變時才記一行 `M5_UNIVERSE_CATALOG_UNMET`（重試不洗版）；通過時才移除 baseline（`:210`）、寫一行 PASS。新增 `awaitConvergedThenComplete(context, delta, maxTicks)`（`M5U:170`）：每一輪對四個權威呼叫 `CollapseAuthorities.convergeIfNeeded`（`convergeAll` `M5U:216`；catalog 是 checked flush），收斂之後以最終判定完成；第一輪在呼叫當下，之後以 `runAtTick` 預先排好每個 tick 一輪（不在 `runAtTick` 的 callback 裡再排程，避開原版在迭代中改 map），收斂後條件不符或逾時都寫一行 `status=FAIL` 並讓 test 失敗。`begin`（`M5U:140`）失敗時列出還沒通過的 test（`unfinished` `M5U:248`）。class Javadoc（`M5U:30-49`）與各方法的 Javadoc 寫明用法；sanity 改以 `awaitConvergedThenComplete(context, 1, 20)` 結尾示範。新增兩個 harness test 鎖住行為：`harness_complete_retries_without_losing_the_baseline`（`M5U:88`，batch `m5_universe_harness_retry`：catalog 的變更 5 tick 後才寫出，以 `addInstantFinalTask` 重試 `complete`）與 `harness_await_converges_an_unflushed_catalog_change`（`M5U:109`，batch `m5_universe_harness_await`：變更不自行寫出，由 helper 收斂） |
+| Q1 可重試的 complete 與收斂 helper | `complete`（`M5U:160`）委派 `finish`（`M5U:192`）：未通過時丟 GameTest 斷言例外，baseline 保留、不寫增量行，狀態改變時才記一行 `M5_UNIVERSE_CATALOG_UNMET`（重試不洗版）；通過時才移除 baseline（`:210`）、寫一行 PASS。新增 `awaitConvergedThenComplete(context, delta, maxTicks)`（`M5U:170`）：每一輪對四個權威呼叫 `CollapseAuthorities.convergeIfNeeded`（`convergeAll` `M5U:216`；catalog 是 checked flush），收斂之後以最終判定完成；第一輪在呼叫當下，之後以 `runAtTick` 預先排好每個 tick 一輪（不在 `runAtTick` 的 callback 裡再排程，避開原版在迭代中改 map；fix round 2 更正：helper 本身在 callback 內被呼叫時，這樣仍會一次插入多項，改用 TimedTaskRunner，見「Fix round 2」I1），收斂後條件不符或逾時都寫一行 `status=FAIL` 並讓 test 失敗。`begin`（`M5U:140`）失敗時列出還沒通過的 test（`unfinished` `M5U:248`）。class Javadoc（`M5U:30-49`）與各方法的 Javadoc 寫明用法；sanity 改以 `awaitConvergedThenComplete(context, 1, 20)` 結尾示範。新增兩個 harness test 鎖住行為：`harness_complete_retries_without_losing_the_baseline`（`M5U:88`，batch `m5_universe_harness_retry`：catalog 的變更 5 tick 後才寫出，以 `addInstantFinalTask` 重試 `complete`）與 `harness_await_converges_an_unflushed_catalog_change`（`M5U:109`，batch `m5_universe_harness_await`：變更不自行寫出，由 helper 收斂） |
 | Q2 CI timeout | 四個 GameTest step 都加 `timeout-minutes`：Ubuntu 的 default 與 M5、Windows 的 M5 為 20（`YML:23`、`:28`、`:105`）；Windows「原生建置與 GameTest」含 clean build 與全部 JUnit，2026-10-01 run `36804549120` 這一步約 9 分鐘，設為 30（`YML:100`） |
 | Q3 default 失敗時仍跑 M5 | 兩個 M5 step 加 `if: ${{ !cancelled() }}`（`YML:27`、`:104`）。job 仍是紅燈：GitHub Actions 中只要有一個 step 失敗（沒有 `continue-on-error`），job 的結論就是 failure；`!cancelled()` 只讓 M5 step 照跑，後面的檢查 step 維持預設的 `success()`，前一步失敗時略過，不會把 job 變綠。此項無法在本機實跑，依 GitHub Actions 的 step 狀態規則判定 |
 | Q4 三份「哪些 test 屬於 M5」的實作 | 三處都改為掃描 `src/testmod/java` 下全部 `*.java`（CI 原本只掃 `*GameTests.java`），掃描前先去掉以 `//`、`/*`、`*` 開頭的行（`GT:202`、`YML:52`、`:222`）。Windows step 的規則 3 併入規則 2 的同一個檔案迴圈。CI step 只能是 `run: \|` 原文（`ci-rule-check.ps1` 逐字抽出），無法共用腳本，所以 README「新增 M5 GameTest」一節最後一段寫明三處（與 filter）必須同步，以及同步的內容；三處的註解也互相指向 |
@@ -2359,5 +2359,65 @@ Q4 的 CI 列（註解 mutation：在 `M5UniverseGameTests` 的 class Javadoc �
 
 交給後續：
 
-- F4a：新增 M5 GameTest 依 README「新增 M5 GameTest」一節。注入失敗的 test 優先用 `awaitConvergedThenComplete`；需要在多個 tick 後才判定時，也可以把 `complete` 放進 `addInstantFinalTask`。
+- F4a：新增 M5 GameTest 依 README「新增 M5 GameTest」一節。注入失敗的 test 優先用 `awaitConvergedThenComplete`；需要在多個 tick 後才判定時，也可以把 `complete` 放進 `addInstantFinalTask`，但只能在最後一步之後註冊（例如在最後一個 `waitAndRun` 的 callback 裡呼叫）；在 test 開頭就註冊的話，catalog 增量一達標就會 complete，之後的檢查不會執行，等於誤判 PASS（fix round 2 M1 更正）。
 - F6：`_windows` 明列清單的交接同 F3c 首輪；M5 run 新增的兩個 harness test 不是 `_windows`，由 Windows 規則 3 與 Ubuntu 的 M5 規則要求。
+
+### Fix round 2（`86e16d4`）
+
+- Review（fix round 1 的 re-review）：Not approved（Critical 0、Important 1、Minor 3）；fix round 1 的其餘 8 項（S1、S2、Q2～Q7、Nit）確認已正確關閉。controller 指派 I1、M1～M3 與可選的 Nit。開工 HEAD 是 `1988744`。
+- Commit `86e16d4` `test: poll M5 convergence one tick at a time`（parent `1988744`）：testmod `M5UniverseGameTests.java`、`scripts/verification/README.md`、`.github/workflows/build.yml`（只有 job 層級的 timeout）。本小節由其後的 docs commit 加入；同一個 commit 也在 fix round 1 的 Q1 列加註，並更正 fix round 1「交給後續」的 F4a 一句（M1）。
+- Code range `1988744..86e16d4`。
+- 行號以 `86e16d4` 為準（`M5U`、`YML` 同前）。
+
+| 項目 | 處理 |
+| --- | --- |
+| I1 helper 在 callback 內呼叫時改到迭代中的 runAtTick 表 | 擇「專用的 TimedTaskRunner」，不用「每輪只排下一個 tick」的自我重排。理由：原版 1.21 的 `GameTestState` 把 runner 放在 `CopyOnWriteArrayList`，在同一個 tick 迭代完 `ticksByRunnables`（`Object2LongOpenHashMap`）之後才執行（javap 確認：`tickTests` 先迭代那張表，再 `timedTaskRunners.forEach(runSilently)`），所以不論 helper 在哪裡被呼叫，輪詢都不會插入正在迭代的表；自我重排每輪仍在 callback 內插入一項，只是 rehash 機率低。`awaitConvergedThenComplete`（`M5U:266`）第一輪在呼叫當下；沒有完成時以 `context.createTimedTaskRunner().createAndAdd(…)`（`M5U:277`）每個 tick 一輪，以 GameTestException 表示「還沒好」（runner 下一個 tick 重試）。不用 `addInstantFinalTask`：它會占用 test 唯一的 final clause（`markFinalCause`），而且 runner 成功之後會自動 complete。runner 會把 GameTestException 當成「還沒好」，所以逾時或收斂後條件不符時，寫一行 `status=FAIL` 之後由 `failNextTick`（`M5U:296`）排一個 `runAtTick` 在下一個 tick 丟出，讓 test 確定失敗；這一項是在 runner 階段插入，那時表已迭代完。另加可選的 `ready` 條件（`BooleanSupplier`，3 個參數的版本傳 `() -> true`），`finish`（`M5U:300`）把 `ready` 納入判定，不成立時在狀態尾端加 `ready=false`，PASS 行的格式不變 |
+| I1 harness | `harness_await_inside_a_scheduled_callback_keeps_other_scheduled_checks`（`M5U:150`，batch `m5_universe_harness_nested`）：先排 5 個 `runAtTick` 檢查（tick ＋4～＋8），在 `waitAndRun(2)` 的 callback 裡配置一筆、呼叫 helper（maxTicks 20），ready 要求外層恰好跑過一次、每個檢查都恰好跑過一次，所以第一輪一定不能完成。斷言三種：外層 callback 重跑時當場失敗（`M5U:163`）；檢查重複時當場失敗；檢查遺失時逾時失敗（`ready=false`）。這些現象取決於 lambda 的 identity hash，不一定每次發生，所以另加結構面的斷言：helper 呼叫前後 runAtTick 表的項目數不變（`M5U:174`；`scheduledCount` `M5U:182` 以反射只讀 `TestContext.test`／`GameTestState.ticksByRunnables` 的大小，欄位名稱以 javap 確認，GameTest 只在 Loom 的 named runtime 執行）。maxTicks 取 20 的理由：這張表有 5 個檢查＋外層，預設容量的 maxFill 是 24，一次預排在第 19 項就 rehash；以 fastutil 8.5.12 模擬原版的迴圈 2000 次（`fix2/sim/HarnessTrials2.java`、`HarnessTrials2.out`），1988744 的做法約 66% 出現異常（外層重跑 63%、檢查遺失 6%、iterator 例外 3%，沒有卡住）；maxTicks ≤ 15 不會 rehash，25～30 時 iterator 例外（等於 server 崩潰）升到約三成 |
+| I1 文件 | Javadoc（`M5U:243-265`）與 README「新增 M5 GameTest」第 5～7 點：為什麼用 runner；注入寫出失敗時退避從 200 tick 起跳（`CollapseBackoff.INITIAL_TICKS`，之後加倍），`maxTicks` 要超過 200、`tickLimit` 要跟著加大（預設 100） |
+| M1 `addInstantFinalTask` 的註冊時機 | class Javadoc（`M5U:46-49`）、`complete` 的 Javadoc（`M5U:235-236`）、README 第 5 點：只能在最後一步之後註冊（例如在最後一個 `waitAndRun` 的 callback 裡），在 test 開頭就註冊的話，catalog 增量一達標就會 complete，之後排定的檢查不會執行，等於誤判 PASS。fix round 1「交給後續」的 F4a 一句同步更正 |
+| M2 retry harness 通過前斷言至少失敗過一次 | `M5U:109-121`：每次嘗試先看權威是否已收斂；已收斂而且是第一次嘗試時，以 `failNextTick` 讓 test 確定失敗（runner 裡的 GameTestException 只會被重試） |
+| M3 deadline 超過 tickLimit | 擇「寫明」：Javadoc（`M5U:259-261`）與 README 第 7 點。超過 tickLimit 的那一個 tick，原版一律判 test 失敗：即使同一個 tick 剛收斂、已寫了 PASS 的增量行也一樣（`timedTaskRunners.forEach(runReported)` 之後 throwable 仍為 null 時判 `No sequences finished`）；還沒收斂時以「等待…」的訊息失敗，不留下 `status=FAIL` 的增量行。沒有改成由 caller 傳入 tickLimit：`TestContext` 沒有公開 tickLimit，caller 重複填寫同一個值也可能填錯 |
+| Nit（可選）job 層級 timeout | 兩個 job 都加 `timeout-minutes: 90`（`YML:14`、`:93`），Ubuntu 的 Build step 也受限 |
+
+測試：
+
+- JUnit 不變（560）；default GameTest 不變（160，`_windows` 80）。
+- M5 GameTest 3 → 4（新增 nested harness）。執行順序：harness_await → sanity → harness_retry → harness_nested，catalog 0 → 4。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3c/fix2/`。`git diff 1988744 86e16d4 -- <path>` 輸出的 SHA-256 前 8 碼（`fix2/diff-hashes.txt`）：`src/testmod` `dbe382a6`、`scripts/verification` `acb99f68`、`.github` `dd7e5f52`。
+
+nested harness 本身改過兩次（下表的 v1、v2、v3），每次都重跑：
+
+- v1：只有 ready 條件。
+- v2：外層 callback 與每個檢查重跑時當場失敗。
+- v3：加上表項目數的結構斷言，也就是 commit 的版本。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| GREEN M5（v1） | `1988744`＋工作樹 v1 | `gate-f3c-fix2-green-m5-aced232a7b764d319b1b18fd8185812b` | PASS 4/4；nested 的外層 1 次、5 個檢查各 1 次；SUITE_END 4 筆 |
+| GREEN Full（v1） | 同上 | `gate-f3c-fix2-green-full-e6f96452e8444ba495abc66ad9a518c5`（`fix2/green-full-summary.txt`） | PASS：default 160/160（`_windows` 80）；boundary PASS；scope 160／1／4；JUnit 560（2 skipped）；release 359／312、sources 210；log ERROR 28、WARN 45 |
+| RED／mutation I1（v1，1988744 的一次預排） | v1 的輪詢換回 `1988744` 的一次預排（`fix2/mut-i1-prescheduled.diff`，前 8 碼 `fafbc4c1`）；onlyBatches `m5_universe_harness_nested` | `gate-f3c-fix2-mut-m-i1-1-6f6471351f5d4a1d9186dbe7e83c35ec`、`-2-100aa32873da4c5aaf1e547d019e2e58`、`-3-0304f6aa1d2a4b12a9eba63f4d01c4a8` | 3/3 FAIL。三次都是外層 callback 重跑：第二次的 `allocateOverworld` 拿到不同的 ordinal，丟「既有 Universe definition 不可改寫」。第 3 次另外讓 server 崩潰：`NullPointerException: … "this.wrapped" is null`（fastutil iterator），crash report 在 `run/gametest-m5/crash-reports/`。失敗點不在 harness 自己的檢查，所以收緊為 v2 |
+| GREEN M5（v2） | 工作樹 v2 | `gate-f3c-fix2-green-m5-v2-ed00e03a30dc4f219bf5a7cafb8dfd6d` | PASS 4/4 |
+| GREEN Full（v2） | 同上 | `gate-f3c-fix2-green-full-v2-451f86ad51d14d95a29abfc07e49ae5c` | PASS，數字同 v1 |
+| mutation I1（v2） | 同一個替換 | `gate-f3c-fix2-mut-m-i1b-1-523b6f6f04514efaa98dcd89d469dcbd`、`-2-e7776762c4e748a1b65f41c49042b306`、`-3-f2132ac65f394553b7cbb61e5451736a` | 2/3 FAIL，都失敗在目標檢查「外層 waitAndRun 的 callback 重跑：runAtTick 的表在迭代中被改動」。第 1 次 PASS：那次的 hash 分布沒有出現異常（log 顯示檢查晚一個 tick 執行，但各 1 次）。這一次證明只靠現象是機率性的，所以加上結構斷言（v3） |
+| GREEN M5（v3） | 工作樹，blob 與 `86e16d4` 相同（`fix2/green-state-blobs.txt`、`commit-blobs.txt`） | `gate-f3c-fix2-green-m5-v3-d537ee65bc8a47be85d287f807febe2c` | PASS 4/4；nested 的外層 1 次、檢查各 1 次；增量 0→1→2→3→4、digest 接續；SUITE_END 4 筆、`converged=true`、`unfinished=[]` |
+| mutation I1（v3） | 同一個替換（`fix2/mut-i1-prescheduled-v3.diff`，前 8 碼 `5135e75e`） | `gate-f3c-fix2-mut-m-i1c-1-a824df3963a64a349a2884e3b2edd94c`、`-2-497c76ed801b4d3f8cb56cb25a31c820` | 2/2 FAIL，都失敗在結構斷言「awaitConvergedThenComplete 在 runAtTick 的 callback 裡插入了 20 個排程項目」，不再取決於 hash |
+| mutation M2 | retry harness 在註冊前就寫出 catalog（`mutations/M-M2.diff`，前 8 碼 `e38f7ee9`）；onlyBatches `m5_universe_harness_retry` | `gate-f3c-fix2-mut-m-m2-df05a131ce2a43aa8fc5a5f4c721e977` | FAIL：「第一次嘗試就已收斂，complete 的重試路徑沒有被走到」 |
+| 逾時路徑 | `convergeAll` 不呼叫 `convergeIfNeeded`（`mutations/M-TIMEOUT.diff`，前 8 碼 `01494a9c`）；onlyBatches `m5_universe_harness_await` | `gate-f3c-fix2-mut-m-timeout-dcdb6f1e7bee41bb9e11450d0b021b74` | FAIL：寫一行 `converged=false status=FAIL`，test 的失敗訊息是 finish 的「M5 catalog 增量不符…converged=false」，不是「等待…」或 tick 上限，表示 runner 逾時後由 `failNextTick` 確定失敗 |
+| CI 規則 | 工作樹 v3；XML 取自 GREEN Full v2 與 GREEN M5 v3（default XML 與 nested harness 的內容無關）；`fix1/ci-matrix.ps1` | 22 個 `ci-f3c-fix2-ci-*` root（`fix2/ci-matrix.txt`） | 22 列全部符合預期，與 fix round 1 相同 |
+| run-all | `86e16d4`，`STATUS` 為空（`fix2/run-all-console.log`） | `run-all-0eef2a87f8dc4871a1f7c6e7f440bb1c` | `END ALL exit=0 HEAD=86e16d4fec5045247dddfb8a436fd2f370b4b7db`，約 17 分鐘。`SUMMARY default=160/160 windows=80 legacy=1/1 m5=4/4 perTest=38+1 junit=560 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=359entries/312classes sources=210 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`。本目錄每個檔的 `HARNESS` 雜湊都等於 `86e16d4` 的同一檔，以 C＝`86e16d4` 採計。`summary.json` 的 batch 範圍為 160／1／4；`m5SuiteEnd` 為 4 筆、`converged=true` |
+
+- 所有 mutation 跑完都還原並以 `git hash-object` 核對；commit 時 3 個檔的 blob 與 GREEN M5 v3 之前記錄的相同。v3 只改 testmod 的 nested harness，沒有在 commit 前另跑 Full；commit 之後 run-all 的 Full 步驟就是 `86e16d4` 的 Full。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+觀察（未修改）：
+
+- run-all 的 Full 步驟 log 為 ERROR 31、WARN 46，commit 前的兩次 Full 為 28、45。差異只在兩個既有的 default batch：
+  - `m2_task4_disconnect_io` 的「session 協調失敗」WARN 多一則，是 F3b fix round 1 記錄過、隨時序出現的那一則。
+  - `m5_h2_checkpoint_scope`（H2）的 ERROR 15 → 18：同樣是那 3 個被注入失敗的 chunk，其中一個多存了一次（「Failed to store chunk」「Failed to save chunk」「Failed to store entity chunk」各多一行），test 照常通過。
+  - 兩者都與本輪的改動無關，本輪只改 M5 run 的 testmod、README 與 CI 的 job timeout。
+
+偏離與說明：
+
+- **RED 以 mutation 證明**：nested harness 呼叫的 4 個參數版本（帶 ready）在 `1988744` 不存在。所以 RED 是把 GREEN 的輪詢換回 `1988744` 的一次預排，與派工允許的「mutation（改回一次預排）」相同。
+- **反射只讀原版欄位**：只用在 nested harness 的結構斷言，不寫入。欄位名稱是 Yarn 1.21+build.9，換 mappings 時要一起改。
+- **崩潰的 root**：mutation I1 第 3 次（v1）的 server 崩潰屬預期的危害證據，crash report 留在 `run/gametest-m5/crash-reports/`，沒有刪除。
