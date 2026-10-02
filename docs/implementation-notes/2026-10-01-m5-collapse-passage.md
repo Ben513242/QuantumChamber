@@ -2493,7 +2493,7 @@ nested harness 本身改過兩次（下表的 v1、v2、v3），每次都重跑�
 - Code range `438c306..93df897`。沒有改 `SessionRecoveryState.java`（補充第 2 點的 API 不需要 journal 配合）、`TestHooks`、M2 的 `OBSERVED` 靜態表、`.github/`、`scripts/verification/`。
 - 範圍是 plan Task F3d：第一次在 production 提交 COLLAPSING。返還、清理、RESOLVE stub、WAITING 期間的門都是一般狀態，不攔截（F4b）；RESOLVE 只有 stub（F4a）；PREPARE 只有 SOURCE 的 fast path（UNIVERSE 的 PREPARE 屬 F4b）。
 - 行號以 `93df897` 為準。`CS` 指 `collapse/CollapseService.java`，`CP` 指 `collapse/CollapsePhase.java`，`SSM`、`SRM`、`CPM`、`CRP`、`CDI` 指 `SuperpositionSessionManager`、`SessionRecoveryManager`、`CorridorPageManager`、`ChamberReturnPlacement`、`CandidateDoorInteraction`；testmod 的 `M5C`、`M5U`、`M4C`、`M4A`、`MIX` 指 `M5CollapseGameTests`、`M5UniverseGameTests`、`M4CandidateDoorGameTests`、`M4CandidateTestAccess`、`mixin/CollapseSuspendMixin`；JUnit 的 `CST` 指 `CollapseServiceTest`。測試欄的 G-* 見「測試」。
-- Review：spec review ❌ I1／m5 → fix round 1（見本節最後的「Fix round 1」）；spec re-review ✅（Minor 2）、quality review Not approved（Important 1、Minor 7）→ fix round 2（見「Fix round 2」）。最終結果由 controller 補。本節其餘內容描述 `93df897`，fix round 1 改過的地方另加註。
+- Review：spec review ❌ I1／m5 → fix round 1（見本節最後的「Fix round 1」）；spec re-review ✅（Minor 2）、quality review Not approved（Important 1、Minor 7）→ fix round 2（見「Fix round 2」）；spec re-review（fix round 2）❌（Important 1、Minor 3）→ fix round 3（見「Fix round 3」）。最終結果由 controller 補。本節其餘內容描述 `93df897`，fix round 1 改過的地方另加註。
 
 ### plan Step 1 逐項對照
 
@@ -2655,6 +2655,10 @@ mutation（GameTest 都用 `-Mode GameTest` 加 onlyBatches，M-RESOLVEWARN 用 
   - 重啟矩陣：DORMANT 的「開服之後第一次觀察」與開服時的 PASSAGE_READY 目前以 `M4A:161` `markStartup` 模擬，真的跨 JVM 重啟屬 F6 的 harness。
   - （fix round 2，spec n-2、quality m-5）W10：以非 DORMANT 的 schema 3 fixture 加上真重啟，覆蓋 M4 時期的 Nether／End 收據（重啟時沒有 runtime、attach 已請求 recovery）；`markStartup` 對 production 狀態的反射寫入也由真重啟取代。
 - F7：README 與 player guide 的 M5 行為（Nether／End 選門的訊息、SOURCE 的塌縮）；「需要裁示」第 1 條若改訊息，spec §10.8 一併更新。
+  - （fix round 3，spec re-review m-3）spec errata 兩處：
+    - §7 :332：改為「roll-forward 尚未確認時，由 recovery tick 以 journal 為單位帶退避，重試同一份 current；塌縮流程與走廊清理暫停」（fix round 2 的 A2：`SRM:192` `recoveryWork`、`CS:325`、`CPM:912`）。
+    - §13.2 :758 的 SRM 列：註明 PASSAGE_READY 與 SEALED 在 roll-forward 待確認時，會重新寫出同一份 current（RETRY_FLUSH），這不是新的進度寫入。
+- （fix round 3）之後新增「靠 journal 的 flush 探針計數、而且跨越 200 ticks 退避」的 GameTest，比照 G-SEAL、G-RFB 先以 `afterAutosaveClear` 等出沒有原生 autosave 的窗口，確認時以 `AutosaveWindow.untouched` 斷言期間沒有 autosave（見「Fix round 3」）；F4a 抽出 `M5GameTestSupport` 時一併搬過去。G-SEAL 的 `collapseFlowNeverWarned` 以 CollapseService 的 WARN 用語比對（「目的地解析尚未實作」、「塌縮流程」、「終局之後原艙門」）：F4a 以真正的 RESOLVE 取代 stub 時，新增的 WARN 要沿用 `warn()` 的「塌縮流程的…」前綴，或同步更新這個 helper。
 - F4a 之後、有允許修改 mixin 的 task 時（fix round 2，quality m-6(d)）：把 `m5FlushProbe` 與 collapse-suspended 的靜態集合，從 `M4CandidateDoorGameTests` 移到 M5 專用的 hook 類別。
 - `TerminalOrigin.preparing`（`SessionRecoveryState.java:385`）是 RETURN_PLAYERS／RELEASE_GEOMETRY 判斷的第三份副本（fix round 2 的 B6 只收斂了 `CollapsePhase`），留給之後允許修改 `SessionRecoveryState` 的 task。
 - milestone 的 required manual smoke（fix round 1 的 m-3）：
@@ -2750,3 +2754,73 @@ mutation（GameTest 都用 `-Mode GameTest` 加 onlyBatches，M-RESOLVEWARN 用 
 
 觀察（未修改）：
 - SRM 的 RETRY_FLUSH 失敗 WARN 文字是「返還保留 pending」（`SRM:173`）。A2 之後它也涵蓋進入 SEALED、Crossed 的寫出，文字只說返還。本輪只允許改 `recoveryWork` 與 Javadoc，沒有動，交給 F4a。
+
+### Fix round 3（`08dd4d7`）
+
+- Review：spec re-review（fix round 2，範圍 `b82b2cf..675d53d`）❌（Critical 0、Important 1、Minor 3：I-1、m-1、m-2、m-3）。controller 指派本輪四項都處理，I-1 採 reviewer 的第一建議。原 implementer 的 context 過長，本輪由新的 implementer 接手。開工 HEAD 是 `675d53d`，worktree 乾淨。
+- Commit `08dd4d7` `test: keep the sealed retry fixture away from RESOLVE and the native autosave`（parent `675d53d`）：testmod `M5CollapseGameTests.java`、新增 `mixin/MinecraftServerAutosaveTestAccessor.java`、`quantumchamber-test.mixins.json`（只登記這個 accessor）；JUnit `SessionRecoverySchema4Test.java`（只有 m-2 的一列）。production（`src/main/`）、`scripts/verification/`、`.github/` 都沒有改。本小節由其後的 docs commit 加入；同一個 commit 也更新本節的 Review 行與「交給後續」。
+- Code range `675d53d..08dd4d7`。本小節的行號以 `08dd4d7` 為準（簡稱同前；`S4T` 指 `SessionRecoverySchema4Test`）。
+
+| 項目 | 處理 |
+| --- | --- |
+| I-1：G-SEAL 違反決策 7（fixture 是沒掛 hook 的 SETTLED COLLAPSING、目的地 NEW，tick 2 才寫 SEALED；中間塌縮流程推導為 RESOLVE，記一則 RESOLVE stub WARN） | 依裁定（reviewer 的第一建議）：等出沒有原生 autosave 的窗口（m-1）之後，在同一個 callback 內建立 fixture（仍不掛 collapse-suspended hook）、裝 flush 探針、立即 `commitRollForward`（`M5C:1176-1197`）。全部發生在 test callback（`tickWorlds` 之內），塌縮流程在這個 tick 的 `END_SERVER_TICK` 第一次看到這個 session 時，roll-forward 已經未確認，`CS:325` 早退；之後一直到確認為 SEALED 都是如此，確認之後的 SEALED 不是塌縮流程處理的狀態（`CS:189`）。所以塌縮流程永遠推導不到 RESOLVE，F4a 接上真的 RESOLVE 之後也不會在 default run 配置宇宙。`collapseServiceNeverOverwrote` 沒有改：仍不掛 hook，它量的仍是塌縮流程自己的暫停（每個 tick 的 current 都還是那份 SEALED，而且沒有「塌縮流程」WARN），下方 FIX3-CS-NO-PENDING-PAUSE 下 FAIL。新 witness `collapseFlowOnlySawPendingRollForward`（`M5C:1213`，helper `collapseFlowNeverWarned` `M5C:1434`）：LogCapture 在建立 fixture 之前就開始，整個 test 期間這個 sid 沒有 CollapseService 的 WARN：RESOLVE stub 的「目的地解析尚未實作」、`warn()` 的「塌縮流程的…沒有完成」、終局之後改門的「終局之後原艙門…」 |
+| m-1：原生 autosave 造成的誤判窗口（G-RFB、G-SEAL 的第 1、2 次寫出在同一個 tick，第 3 次在 200 ticks 之後；autosave 落在中間就只記到 2 次） | 見下方「原生 autosave 的排程」與「M5 GameTest 的掃描」。共用 helper `afterAutosaveClear`（`M5C:1520`）在開始注入之前等到「接下來 window 個 tick 內不會有原生 autosave」；`AutosaveWindow.untouched`（`M5C:1536`）在確認時斷言期間確實沒有 autosave。G-SEAL（`M5C:1176`）、G-RFB（`M5C:1124`）套用，窗口都是 800 ticks，各加一個 witness `noNativeAutosaveBeforeTheConfirmation`（`M5C:1207`、`:1131`）。因為窗口涵蓋到第 4 次寫出，兩者的計數恢復為 fix round 2 原本的恰好 4 次（`fourAttempts` `M5C:1208`、`fourWrites` `M5C:1132`，`retriesFollowTheBackoff` 也回到原本的寫法）；`8f3d76c` 的放寬只為了 autosave。G-SEAL 的 tickLimit 2000 → 3000（最多先等 801 ticks） |
+| m-2：`recoveryWork` 對 PASSAGE_READY 與 SEALED 的新分支沒有測試 | `S4T:1046-1053`：在 `recoveryWorkDerivesCollapsingReturnFromTheReceiptAndOnlyRetriesUnconfirmedProgress` 的 cases 表補一列。flushed 是 PASSAGE_READY（由 settled 推得），以 `commitRollForward` 寫入加入 Crossed（A）的 self-loop，flush 注入 `UncheckedIOException`（同檔 COLLAPSING 那一列的作法），斷言 `ROLL_FORWARD_PENDING`，而且 `recoveryWork` 回 `RETRY_FLUSH`。F2a 的 journal 允許這條邊（`SessionRecoveryState.rollForwardEdge`：PASSAGE_READY 的 self-loop 是 roll-forward 類；同檔 `S4T:232` 的 edge 表列為合法），不需要改用 SEALED。這是既有 test 裡的一列，JUnit 的 test 數不變（見「偏離」第 2 條） |
+| m-3：spec errata 的交接 | 「交給後續」的 F7 一條補上 §7 :332 與 §13.2 :758 兩處（本輪不改 spec） |
+
+原生 autosave 的排程（m-1 第 1 點）：
+- 看的原始碼：Loom cache 只有 Yarn mapped 的 jar，沒有 sources jar（沒有跑過 genSources），所以以 `javap -p -c` 讀 `~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-common/1.21-net.fabricmc.yarn.1_21.1.21+build.9-v2/minecraft-common-1.21-net.fabricmc.yarn.1_21.1.21+build.9-v2.jar`（SHA-256 `f1a51c67…`），Fabric 的部分讀 `fabric-lifecycle-events-v1-2.3.12+6c1df360d1-sources.jar` 的 `MinecraftServerMixin`。摘錄在 `fix3/autosave-source.txt`。
+- 結論：
+  1. 是一個會遞減的計數器 `MinecraftServer.ticksUntilAutosave`，不是看 `ticks % 6000`。建構子把它設為 6000（`<init>` offset 77–81）。
+  2. `MinecraftServer.tick(BooleanSupplier)`：`++ticks`（offset 4–11）→ `tickWorlds`（offset 23；GameTest 的 callback 在其中的 `TestManager.INSTANCE.tick()`）→ `ticksUntilAutosave` 減一（offset 52–59）→ ≤0 時重設為 `getAutosaveInterval()`（offset 69–74）並 `saveAll(true, false, false)`（offset 100–104）。Fabric 的 `END_SERVER_TICK` 注入在 `tick` 的 TAIL，`TestServer.tick` 先呼叫 `super.tick`。所以同一個 tick 內的順序是：GameTest callback → autosave → `END_SERVER_TICK`（recovery 的 RETRY_FLUSH、走廊清理、塌縮流程）。
+  3. `getAutosaveInterval()` 是 `max(100, (int)(tickRate × 300))`，sprint 期間改用實測的每 tick 耗時換算；20 TPS 時是 6000。
+  4. 計數器只在三處寫入：建構子、`tick` 自己的到期重設，以及 `updateAutosaveTicks()`（新間隔小於目前倒數時下修）。`updateAutosaveTicks()` 只由 `ServerTickManager.setTickRate`（`/tick rate`）與 `finishSprinting`（`/tick sprint` 結束）呼叫；整個 jar 只有 `MinecraftServer` 與 `ServerTickManager` 引用這兩個名稱。存檔指令、玩家加入、其他 `saveAll` 都不會重設它。
+  5. 因此沒有 `/tick` 指令時，autosave 落在 server tick 是 6000 倍數的那個 tick（fix round 2 的 102000；本輪 mutation 的 6000、12000）。callback 當下讀到倒數 c（≥1）時，autosave 在 server tick `getTicks()+c-1`。
+  6. autosave 經 `PersistentState.save` 寫出 journal，不經過 `flush`，所以 flush 開頭的探針看不到它（fix round 2 已經觀察到）。
+- helper：讀私有計數器用 testmod 的 accessor mixin（`MinecraftServerAutosaveTestAccessor`，唯讀），不假設 `% 6000`，也不用名稱反射。`afterAutosaveClear(context, tick, name, window, start, hooks)` 從 `tick` 起逐 tick 檢查 `nextAutosaveTick − getTicks() ≥ window`，成立就在那個 tick 的 callback 呼叫 `start`，記一行 `M5_AUTOSAVE_CLEAR`；不成立時倒數最晚 window 個 tick 內到期並重設為一整個間隔，所以最多等 window＋1 個 tick，等不到（間隔被 `/tick` 改過）就以有界等待逾時失敗。`AutosaveWindow.untouched` 比較「下一次 autosave」是否仍是開始時的那一個（發生過 autosave 就會往後移一整個間隔），記一行 `M5_AUTOSAVE_WINDOW`（含被探針計數的 server tick）。
+- 窗口長度：G-SEAL 開始注入的 tick 就是第 1、2 次寫出，第 3、4 次在 +200、+600，至少要 601；G-RFB 從選門到第一次清 lease 的寫出實測 11 個 tick（下表 dev1、GREEN focused、GREEN focused 2、FIX3-WAIT-PATH-RFB 四次都一樣），4 次寫出在 +11、+11、+211、+611，至少要 612。兩者都取 800，約有 190～200 ticks 的餘裕。
+
+M5 GameTest 的掃描（m-1 第 3 點；判斷「靠探針計數、而且跨越多個 tick」的 witness 會不會被 autosave 影響）：
+
+| Test | 探針計數的 witness | 判斷 | 處置 |
+| --- | --- | --- | --- |
+| G-RFB | 清 lease 寫出的次數與間隔（跨 600 ticks） | 會：autosave 落在第 1 次與第 3 次寫出之間就只記到 2 次 | 套用 helper（窗口 800） |
+| G-SEAL | 進入 SEALED 的寫出次數與間隔（跨 600 ticks） | 會：同上 | 套用 helper（窗口 800） |
+| G-RF | 返還寫出失敗之後的 `sameWriteRetries`、清 lease 失敗 1 次 | 不會誤判：Javadoc 已寫明確認可能由 autosave 帶出；`noRetryBeforeBackoff`、`confirmedNotBeforeBackoff` 在沒有重試時成立，`oneWarnWithCause` 只看第一次失敗。清 lease 的失敗與同一個 tick 的 RETRY_FLUSH 都在 `END_SERVER_TICK` 內，autosave 在它之前，插不進去。M-RETRY（失敗的下一個 tick 就重試）只有在 autosave 剛好落在失敗後的那一個 tick 時才會漏掉（約 1/6000） | 不套用 |
+| G-FB | 提交 COLLAPSING 的嘗試次數（跨約 1400 ticks） | 不會：restore 類寫出失敗時 current 還原為 MEASURED，沒有待確認的內容讓 autosave 帶出；探針只在塌縮流程的提交 flush 中計數，退避是塌縮流程的 per-session 退避 | 不套用 |
+| G-TERM | 終局寫出的嘗試次數與間隔 | 不會：終局寫出失敗時是 RESTORED（current 放回 record），同上 | 不套用 |
+| G-OFF | 重新連線者第一次返還寫出的 tick（恰為 JOIN＋1） | 不會：返還是 `commitRollForward`，put 與 flush 在同一個呼叫裡，autosave 無法先帶出 | 不套用 |
+| G-SRC | 提交那次寫出的 operation guard | 不會：只有一次寫出，在同一個呼叫裡 | 不套用 |
+| G-NLIVE | 是否寫出過 COLLAPSING、第一次寫成 DORMANT 的 tick | 不會：DORMANT 由走廊清理的 `journal.put(expected); journal.flush(server)` 寫入（`CPM:937`，同一個呼叫）；COLLAPSING 只可能經提交的 flush 寫入 | 不套用 |
+| G-ELSE、G-DOR、G-UNSUP、G-PASS、G-NETHER、F3b 的 4 個 | 沒有 journal 探針 | 不受影響 | 不套用 |
+| M5 run 的 5 個（`M5U`） | 沒有 journal 探針。`harness_retry` 計的是 `complete` 的嘗試次數：原版 `GameTestState.tickTests` 在同一次呼叫裡先執行 test 本體、再執行 timed task runner，第一次嘗試在 autosave 之前，一定看到未寫出的 catalog | 不受影響 | 不套用（也不在允許路徑） |
+
+- 本輪只掃描、沒有修改 M5 期間放在 `M4CandidateDoorGameTests`、`M2CorridorGameTests` 的 test（不在允許路徑）：F3a 的 `m5_f3a_native_collapsing_return` 的清 lease 失敗與 RETRY_FLUSH 在同一個 tick 的 `END_SERVER_TICK` 內；H2 的 `calls` 是 production checkpoint 的呼叫次數，region write 的計數斷言是 ≥；H3 的故障在入場的 initial flush，重試沒有 200 ticks 的退避，整段在 `whenWithinTicks` 的 100 ticks 上限內。這些沒有逐一以 mutation 驗證，列為觀察。
+
+測試：
+- default GameTest 173、M5 GameTest 5、legacy 1，都不變；只改 G-SEAL、G-RFB 的結構與 witness。
+- JUnit 570 不變：m-2 是既有 test 的 cases 表中的一列，不是新的 `@Test`。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3d/fix3/`：state 檔由 `fix3/state.ps1`（與 fix2 相同）產生；focused gate 由 `fix3/gate.ps1` 執行（先記 state，再以 `JAVA_TOOL_OPTIONS=-Dquantumchamber.gametest.onlyBatches=…` 跑 `gates.ps1 -Mode GameTest`，摘要寫 `fix3/<label>-summary.txt`）；暫時性改動由 `fix3/adapter.py` 套用與還原（套用前保存原檔，還原後以 `git hash-object` 核對），各 adapter 的 diff 在 `fix3/adapters/<名稱>/`。
+
+| 輪次 | 狀態 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED I-1 | `675d53d`；工作樹只有 `M5C`：HEAD 的 test 結構加上新 witness 與 `collapseFlowNeverWarned`（blob `7d859e0`，`fix3/f3d-fix3-red-seal-state.txt`、diff `fix3/red-seal.diff`） | `gate-f3d-fix3-red-seal-57f82c28fac249c1b186f75f6b6cc24d` | FAIL，witness 只有 `collapseFlowOnlySawPendingRollForward=false`，attempts=[57, 57, 257, 657]；log 有該 sid 的「目的地解析尚未實作（F4a）：COLLAPSING 停在 RESOLVE…」WARN（`fix3/f3d-fix3-red-seal-warn.txt`） |
+| RED m-2（JUnit mutation FIX3-SRM-READY-SEALED-NONE） | 工作樹已有新列；`SRM:198` 改回一律 NONE（`fix3/mut-junit-ready-sealed-none-state.txt`） | Gradle `test --tests …SessionRecoverySchema4Test`（`fix3/mut-junit-ready-sealed-none.log`、`.xml`） | 41 個 test 中 1 個 FAIL，assertAll 只有新列失敗：`expected: <RETRY_FLUSH> but was: <NONE>`；既有的 NONE 列照常通過 |
+| 開發（量測 L） | 工作樹（`fix3/f3d-fix3-dev1-state.txt`），與 `08dd4d7` 只差 G-RFB Javadoc 的一句 | `gate-f3d-fix3-dev1-e3c7c383e7a84e60b074b0764ef6569a` | PASS 2/2；G-RFB start=1788、writes=[1799, 1799, 1999, 2399]（L=11）；G-SEAL start=59、attempts=[59, 59, 259, 659] |
+| GREEN focused | 同上（`fix3/f3d-fix3-green-focused-state.txt`：`M5C` `ce510f8`） | `gate-f3d-fix3-green-focused-dc3933d5f8b045b2b867d57c5542fbef`（F3d 與 F3b 的全部 17 個 `m5_collapse_` batch） | PASS 17/17，`scope.json` PASS；G-RFB start=6245、writes=[6256, 6256, 6456, 6856]，G-SEAL start=9319、attempts=[9319, 9319, 9519, 9919]，兩者的 autosaveAt 都是 12000、確認時不變（`fix3/green-focused-autosave.txt`） |
+| GREEN focused 2 | 工作樹＝`08dd4d7`（`fix3/f3d-fix3-green-focused-2-state.txt`：`M5C` `76ab727`、`S4T` `a56d283`、mixins.json `c65193b`、accessor `d64bfce`） | `gate-f3d-fix3-green-focused-2-8c059ae1d3114cc8b3a9234b3dffd93e`（G-SEAL、G-RFB） | PASS 2/2；G-SEAL attempts=[57, 57, 257, 657]、G-RFB start=1840、writes=[1851, 1851, 2051, 2451]（`fix3/green-focused-2-autosave.txt`） |
+| GREEN JUnit | 同上（`fix3/green-junit-state.txt`） | Gradle `test --rerun-tasks`（`fix3/green-junit.log`） | 570，0 failure／error，2 skipped |
+| FIX3-CS-NO-PENDING-PAUSE（I-1 的 mutation） | GREEN focused 的工作樹；拿掉 `CS:325` 的 `rollForwardPending` 早退 | `gate-f3d-fix3-mut-cs-no-pending-pause-233e099b332b4c2c92c8dbcf76b9d686` | G-SEAL FAIL：`collapseServiceNeverOverwrote=false`、`collapseFlowOnlySawPendingRollForward=false`；log 是「塌縮流程的推進沒有完成，下一個 tick 重試：…IllegalArgumentException: 只有 COLLAPSING 有塌縮的推導階段：SEALED」，與 reviewer 的推論相同（`fix3/f3d-fix3-mut-cs-no-pending-pause-warn.txt`）。計數 witness 照常成立，attempts=[54, 54, 254, 654] |
+| FIX3-AUTOSAVE-FORCED-150（m-1 的 mutation） | 同上；helper 改成「在原生 autosave 之前恰好 150 ticks 開始注入」（最多等一整個間隔），G-SEAL 的 tickLimit 暫時放大到 9000 | `gate-f3d-fix3-mut-autosave-forced-150-a3c9d71366104b809894d10aa1427fbf` | 兩個都 FAIL：G-SEAL start=5850、autosave 在 6000，attempts=[5850, 5850]；G-RFB start=11850、autosave 在 12000，writes=[11861, 11861]。兩者都是 `noNativeAutosaveBeforeTheConfirmation=false`、`fourAttempts`／`fourWrites=false`、`retriesFollowTheBackoff=false`（`fix3/f3d-fix3-mut-autosave-forced-150-log.txt`）。不等待時，fix round 2 第 1 輪 run-all 的誤判可以穩定重現 |
+| FIX3-WAIT-PATH（預期 PASS，走 helper 的等待分支） | 同上；G-SEAL 的窗口暫時改成 5990、tickLimit 9000 | `gate-f3d-fix3-wait-path-65dea0b10a6d4eae988b4388fda23ec0` | PASS：開始時不成立，等到 6000 的 autosave 之後，在 6001 才開始注入；attempts=[6001, 6001, 6201, 6601]，autosaveAt=12000（`fix3/f3d-fix3-wait-path-log.txt`） |
+| FIX3-WAIT-PATH-RFB（預期 PASS） | 同上；G-RFB 的窗口暫時改成 5990 | `gate-f3d-fix3-wait-path-rfb-8cc391a60c544535938bdd54fc608bbe` | PASS：入場完成之後在 SUPERPOSITION 等了約 4300 ticks，6001 才選門；writes=[6012, 6012, 6212, 6612]，等待本身不影響 test（`fix3/f3d-fix3-wait-path-rfb-log.txt`） |
+| run-all | `08dd4d7`，`STATUS` 為空（`fix3/run-all-console.log`） | `run-all-b5b2bf9b30fc49e5980973ea708490c2`（Full：`gate-full-2eac6badc23d44cabdef554467fcf3db`） | `END ALL exit=0 HEAD=08dd4d76efda461d2235750ae9781b708bc921d3`，約 15 分鐘（17:35:10→17:50:14）。`SUMMARY default=173/173 windows=88 legacy=1/1 m5=5/5 perTest=51+1 junit=570 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=367entries/320classes sources=212 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`，與 fix round 2 的 run-all（`run-all-cfc41c7ebac1447f9f26b423a280d211`）逐項相同。Full 裡 G-RFB start=13887、writes=[13898, 13898, 14098, 14498]（autosaveAt=18000）；G-SEAL start=100133、attempts=[100133, 100133, 100333, 100733]（autosaveAt=102000，正是 fix round 2 第 1 輪誤判時的那一次 autosave） |
+
+- 每個 adapter 跑完都還原，還原後的 blob 與套用前相同（`adapter.py restore` 核對）；mutation 與等待分支跑的是 GREEN focused 的工作樹（`M5C` `ce510f8`），之後只改了 G-RFB Javadoc 的一句。`08dd4d7` 的 4 個檔 commit 時的 blob 與 GREEN focused 2、GREEN JUnit 的 state 相同。
+- 與 fix round 2 的 run-all 相比：default 173/173、`_windows` 88、per-test receipt 51＋1、JUnit 570（2 skipped）、legacy 1/1、M5 5/5、release 367／320、sources 212 都不變（本輪沒有新增 test、沒有改 production；accessor 在 testmod，不進 release 與 sources JAR，testmod 命中仍是 0）。log（Full gate，以 `/ERROR]`、`/WARN]` 行計）：ERROR 28 → 28，WARN 55 → 54，少的就是 G-SEAL 的 RESOLVE stub WARN；逐 batch 的比對在 `fix3/wbdiff.txt`（`fix3/wb.py` 依「Running test batch」分組，對 fix round 2 的 Full log 重算的結果與 `fix2/wb2.txt` 相同，只差負號的正規化）。G-SEAL 剩下 recovery 的「返還保留 pending」1 則，G-RFB 仍是 2 則。
+- 結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+偏離：
+1. **G-SEAL、G-RFB 恢復恰好 4 次**：派工只要求 helper。`8f3d76c` 把計數放寬成 3～4 次只是為了 autosave；helper 讓窗口涵蓋到第 4 次寫出，並以 `noNativeAutosaveBeforeTheConfirmation` 斷言期間沒有 autosave，放寬已經沒有理由，所以改回 fix round 2 原本的 `fourAttempts`／`fourWrites` 與間隔斷言。
+2. **JUnit 數不變**：派工的「預期 JUnit 多 1 個」與「在該檔補一列」不一致。依「只限第 3 項新增的一列」，補在既有 test 的 cases 表中（與同表 COLLAPSING 那一列相同的寫法），所以 JUnit 仍是 570；mutation 下該 test 失敗，失敗訊息只有新列。若要求獨立的 `@Test`，需要再改一次這個檔。
