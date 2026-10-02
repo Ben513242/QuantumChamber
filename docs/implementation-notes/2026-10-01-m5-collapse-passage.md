@@ -2421,3 +2421,31 @@ nested harness 本身改過兩次（下表的 v1、v2、v3），每次都重跑�
 - **RED 以 mutation 證明**：nested harness 呼叫的 4 個參數版本（帶 ready）在 `1988744` 不存在。所以 RED 是把 GREEN 的輪詢換回 `1988744` 的一次預排，與派工允許的「mutation（改回一次預排）」相同。
 - **反射只讀原版欄位**：只用在 nested harness 的結構斷言，不寫入。欄位名稱是 Yarn 1.21+build.9，換 mappings 時要一起改。
 - **崩潰的 root**：mutation I1 第 3 次（v1）的 server 崩潰屬預期的危害證據，crash report 留在 `run/gametest-m5/crash-reports/`，沒有刪除。
+
+### Fix round 3（`ccc8801`）
+
+- Review（fix round 2 的 re-review）：Approved（Critical 0、Important 0、Minor 2）；I1、M1～M3 已關閉，run-all 的 log 差異經 reviewer 確認與 fix round 2 無關。剩下兩項 Minor 都在 `M5UniverseGameTests.java` 與 README，F4a 一開始就會用到，所以 controller 指派本輪處理。開工 HEAD 是 `c2babda`。
+- Commit `ccc8801` `test: turn M5 helper exceptions into test failures`（parent `c2babda`）：testmod `M5UniverseGameTests.java`、`scripts/verification/README.md`。本小節由其後的 docs commit 加入。
+- Code range `c2babda..ccc8801`。行號以 `ccc8801` 為準（`M5U` 同前）。
+
+| 項目 | 處理 |
+| --- | --- |
+| Minor 1：runner 或 callback 丟出非 GameTestException 的例外會讓 server 崩潰 | 依據（reviewer 的 javap，本輪的 RED 實證）：`TimedTaskRunner.runSilently` 只攔 GameTestException，runAtTick 的迴圈只攔 `Exception`，其他例外丟出 server tick，`TestServer` 寫 crash report 後結束程序，後面的 test 都不會執行。處理分四處：<br>1. `awaitConvergedThenComplete` 的 runner 工作（`M5U:322-339`）：`ready` 與 `convergeAll` 包在 `catch (RuntimeException)` 裡，例外時設 `done`、寫一行 `M5_UNIVERSE_CATALOG_DELTA name=… status=FAIL error=…`（`logFailedDelta` `M5U:356`），再以 `failNextTick` 讓 test 在下一個 tick 確定失敗；最終判定的例外同樣轉成 `failNextTick`。訊息都帶原例外，原例外的 stack 另記一行 ERROR（`asTestFailure` `M5U:348`）。<br>2. 第一輪在呼叫當下執行（`M5U:300-316`）：例外轉成 GameTestException 丟給呼叫端。test 方法與 runAtTick 的 callback 都會讓 test 失敗。<br>3. `complete`（`M5U:251`）：判定丟出非 GameTestException 的例外（例如 catalog 不健康時 `records()` 的 IllegalStateException）時，轉成 GameTestException，之後每次呼叫都直接丟同一個（`BROKEN` `M5U:65`）。放在 `addInstantFinalTask` 裡時，test 在 tickLimit 以這個訊息失敗，不會讓 server 崩潰。<br>4. `scheduledCount` 改丟 IllegalStateException（`M5U:201`），因為 runAtTick 的迴圈攔不到 `Error`；retry harness 自己在 runner 裡的收斂檢查也同樣轉換（`M5U:119`）。<br>Javadoc（`M5U:285-289`）寫明：ready 用回傳 false 表示「還沒好」；ready、權威收斂與判定丟出的例外（含 GameTestException）一律轉成 test 失敗；不要在 TimedTaskRunner 的工作裡呼叫 helper。README 第 5 點同步 |
+| Minor 2：完成時點之後才到期的排程檢查會被跳過 | Javadoc（`M5U:283-284`）與 README 第 5 點各補一句：test 完成之後原版不再 tick 它，還沒到期的檢查必須放進 ready，或排在呼叫 helper 之前、而且在呼叫時已經到期 |
+
+測試：JUnit 560（2 skipped），M5 GameTest 4/4，數量都不變。例外的情境只做 mutation，跑完還原，沒有留在 GREEN。
+
+證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3c/fix3/`。`git diff c2babda ccc8801 -- <path>` 輸出的 SHA-256 前 8 碼：`src/testmod` `2b692a67`、`scripts/verification` `96e061aa`。五次 M5 gate 都是完整的 M5 run（沒有 onlyBatches），以確認失敗的 test 之後其他 test 照常執行（`fix3/runs.sh`、`mutations/summary.txt`、各 `*-state.txt`）。
+
+| 輪次 | 狀態 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED-A：ready 在 runner 裡丟例外 | `c2babda` 的 test 檔，harness_await 改用「第一輪回 false、之後丟 IllegalStateException」的 ready（`fix3/red-a.diff`，前 8 碼 `9c7e0fd9`） | `gate-f3c-fix3-red-a-d0e2a77733e74e8db796b185be6a86b1` | server 崩潰：「Game test server crashed」「Encountered an unexpected exception」IllegalStateException，crash report `run/gametest-m5/crash-reports/crash-2026-10-02_12.26.31-server.txt`。harness_await 是第一個 test，後面三個都沒有執行 |
+| RED-B：complete 的判定在 runner 裡丟例外 | `c2babda` 的 test 檔，`finish` 對 harness_retry 的非最終嘗試丟 IllegalStateException（`fix3/red-b.diff`，前 8 碼 `6c02a457`） | `gate-f3c-fix3-red-b-4dd90b965ebd42b1a8a9d8cc7e08c1f1` | server 崩潰（crash report `…crash-2026-10-02_12.26.55-server.txt`）。harness_await 與 sanity 已 PASS，nested 沒有執行 |
+| GREEN | 工作樹，blob 與 `ccc8801` 相同（`fix3/green-state-blobs.txt`、`commit-blobs.txt`） | `gate-f3c-fix3-green-650c0ceca7f846f78949d6d16497320b` | PASS 4/4；增量接續，SUITE_END 4 筆、`converged=true`、`unfinished=[]` |
+| GREEN-A | GREEN 的 test 檔加上與 RED-A 相同的 ready（`fix3/green-a.diff`，前 8 碼 `285f95d0`） | `gate-f3c-fix3-green-a-daa0aa0f63344c969a74f5acf38066b9` | 預期的 gate FAIL（exit 1，「1 required tests failed」），沒有崩潰。harness_await 的失敗訊息是「ready 條件或權威收斂丟出例外：java.lang.IllegalStateException: F3c fix round 3 mutation：ready 丟出例外」，log 有 `status=FAIL error=…` 與 ERROR stack；sanity、harness_retry、harness_nested 照常 PASS；SUITE_END 正常寫出（`unfinished` 列出 harness_await） |
+| GREEN-B | GREEN 的 test 檔加上與 RED-B 相同的 `finish` 例外（`fix3/green-b.diff`，前 8 碼 `c18a896e`） | `gate-f3c-fix3-green-b-efbf7467386f4251b3463b400448366d` | 預期的 gate FAIL，沒有崩潰。harness_retry 的失敗訊息是「complete 的判定丟出例外：java.lang.IllegalStateException: F3c fix round 3 mutation：finish 丟出例外」（runner 重試到 tickLimit 後由原版回報）；其他三個照常 PASS；SUITE_END 正常寫出 |
+| JUnit | 工作樹（同 GREEN） | Gradle `test --rerun-tasks`（`fix3/junit.log`、`junit-xml/`） | 560，0 failure／error，2 skipped（只在 `NonWindowsPlayerCheckpointStoreTest`）；同一次也重新編譯 testmod（`compileTestmodJava`） |
+
+- 每次跑完都把 test 檔還原並以 `git hash-object` 核對（`restored=OK`）；commit 時 2 個檔的 blob 與 GREEN 之前記錄的相同。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+- 本輪不跑 Full 與 run-all：只改 M5 run 的 testmod 類別（`M5UniverseGameTests` 只在 M5 run 執行；default run 由 filter 排除，`begin` 也會擋下）與 README。`scripts/` 的程式、CI、build 檔與 default run 都沒有改，所以 M5 gate 加上全部 JUnit 就涵蓋了本輪的變更，與派工的回歸範圍相同。
+- RED 的兩份 crash report 屬預期的危害證據，留在 `run/gametest-m5/crash-reports/`，沒有刪除。
