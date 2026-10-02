@@ -15,7 +15,8 @@ import org.apache.logging.log4j.core.config.Property;
  * 不替 production logger 建立獨立 LoggerConfig，因此既有 console／latest.log 輸出不受影響；release JAR 不含此類。
  */
 final class LogCapture extends AbstractAppender implements AutoCloseable {
-    record Entry(Level level,String message,Throwable thrown) {}
+    /** 一則 log；{@code marker} 是 log4j 收到的 marker（SLF4J marker 經 log4j-slf4j 轉成同名的 log4j marker，含父子關係），沒有時為 null。 */
+    record Entry(Level level,String message,Throwable thrown,org.apache.logging.log4j.Marker marker) {}
     private final String loggerName;
     private final org.apache.logging.log4j.core.LoggerContext loggerContext;
     private final List<Entry> entries=Collections.synchronizedList(new ArrayList<>());
@@ -37,12 +38,16 @@ final class LogCapture extends AbstractAppender implements AutoCloseable {
 
     @Override public void append(LogEvent event) {
         if(!loggerName.equals(event.getLoggerName())) return;
-        entries.add(new Entry(event.getLevel(),event.getMessage().getFormattedMessage(),event.getThrown()));
+        entries.add(new Entry(event.getLevel(),event.getMessage().getFormattedMessage(),event.getThrown(),event.getMarker()));
     }
     List<Entry> entries() { synchronized(entries) { return List.copyOf(entries); } }
     List<Entry> matching(Level level,String... fragments) {
         return entries().stream().filter(entry -> entry.level()==level)
                 .filter(entry -> java.util.Arrays.stream(fragments).allMatch(entry.message()::contains)).toList();
+    }
+    /** 同 {@link #matching}，另外只留帶 {@code marker}（或以它為父的子 marker）的 log。 */
+    List<Entry> marked(Level level,String marker,String... fragments) {
+        return matching(level,fragments).stream().filter(entry -> entry.marker()!=null && entry.marker().isInstanceOf(marker)).toList();
     }
     @Override public void close() {
         loggerContext.getConfiguration().getRootLogger().removeAppender(getName());

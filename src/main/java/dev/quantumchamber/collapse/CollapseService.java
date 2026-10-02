@@ -45,6 +45,8 @@ import net.minecraft.text.Text;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
+import org.slf4j.MarkerFactory;
 
 /**
  * spec §7 的塌縮交易（F3d）：把 checked {@code MEASURED＋SELECTED} 提交為 COLLAPSING，並依推導階段（{@link CollapsePhase}）推進。
@@ -69,9 +71,18 @@ import org.slf4j.LoggerFactory;
  * 註冊順序見 {@link #initialize()}；每個 session 的處理都在 {@link #step} 裡個別隔離例外，例外不會從 {@code END_SERVER_TICK} 拋出。
  * 終局與提交失敗的 WARN 由這裡依 (session, 寫入種類, {@link FailureText#dedupeKey}) 去重，成功時清除；正常結束（SOURCE fast path、§11.3 的取消、
  * 開服時通道的結束）一律記 INFO。門的攔截（PREPARE、PASSAGE_READY 期間）屬 F4b，F3d 的階段門都是一般狀態。
+ * 這裡的每一則 log 都帶 {@link #LOG_MARKER}（不屬於任何 session 的帶子 marker {@link #TICK_LOG_MARKER}）。
  */
 public final class CollapseService {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
+    /**
+     * 塌縮流程每一則 log 的 SLF4J marker：測試依它篩選塌縮流程的 WARN／ERROR，不依訊息的字串。能歸屬到 session 的 WARN／ERROR 都在訊息中帶
+     * {@code session=<UUID>}；不屬於任何 session 的（開服讀不到 journal、整個 tick 無法執行與它的恢復）改帶子 marker {@link #TICK_LOG_MARKER}。
+     * logger 名稱、等級與訊息都不變；console 與 latest.log 的格式不含 marker。
+     */
+    public static final Marker LOG_MARKER = MarkerFactory.getMarker("QUANTUMCHAMBER_COLLAPSE");
+    /** 不屬於任何 session 的塌縮流程 log（沒有 session 可帶）；父 marker 是 {@link #LOG_MARKER}。 */
+    public static final Marker TICK_LOG_MARKER = childMarker("QUANTUMCHAMBER_COLLAPSE_TICK", LOG_MARKER);
     /** {@link #warn} 的寫入種類：每個 session 每個 tick 的推進（{@link #step}）丟出例外。 */
     private static final String STEP = "推進";
     /** spec §10.8「塌縮」：提交 COLLAPSING 時，以及 SOURCE fast path 打開原艙門之後（§7.4 第 3 步）。 */
@@ -100,6 +111,12 @@ public final class CollapseService {
         this.startupPassages = new LinkedHashSet<>(startupPassages);
     }
 
+    private static Marker childMarker(String name, Marker parent) {
+        var marker = MarkerFactory.getMarker(name);
+        marker.add(parent);
+        return marker;
+    }
+
     /**
      * 註冊開服接手、每 tick 推進與停服釋放。{@code QuantumSuperpositionMod} 在 {@code SuperpositionSessionManager.initialize()} 與
      * {@code CollapseAuthorities.registerEvents()} 之後、{@code UniverseLifecycleService.initialize()} 之前呼叫（plan 決策 1）。Fabric 依註冊順序
@@ -119,7 +136,7 @@ public final class CollapseService {
         try {
             flushed = SessionRecoveryState.get(server).flushedRecords();
         } catch (RuntimeException unhealthy) {
-            LOGGER.error("塌縮流程讀不到 journal，本 server instance 不推進任何塌縮", unhealthy);
+            LOGGER.error(TICK_LOG_MARKER, "塌縮流程讀不到 journal，本 server instance 不推進任何塌縮", unhealthy);
             return;
         }
         var passages = new LinkedHashSet<UUID>();
@@ -159,16 +176,16 @@ public final class CollapseService {
                 try {
                     applyDoor(door);
                 } catch (RuntimeException failure) {
-                    door.warn("套用失敗：" + FailureText.describe(failure), failure);
-                    door.backoff.failed(now);
+                    recordDoorStep(door, doorFailure(FailureText.describe(failure), door.retried, door.warned), failure, now);
                 }
             }
-            if (tickWarning != null) LOGGER.info("塌縮流程已恢復執行（先前原因：{}）", tickWarningText);
+            if (tickWarning != null) LOGGER.info(TICK_LOG_MARKER, "塌縮流程已恢復執行（先前原因：{}）", tickWarningText);
             tickWarning = null;
             tickWarningText = null;
         } catch (RuntimeException failure) {
+            // 整個 tick 的失敗不屬於任何 session（沒有 session 可帶），所以帶 TICK_LOG_MARKER。
             var key = FailureText.dedupeKey(failure);
-            if (!key.equals(tickWarning)) LOGGER.warn("塌縮流程本 tick 無法執行，下一 tick 重試：{}", FailureText.describe(failure), failure);
+            if (!key.equals(tickWarning)) LOGGER.warn(TICK_LOG_MARKER, "塌縮流程本 tick 無法執行，下一 tick 重試：{}", FailureText.describe(failure), failure);
             tickWarning = key;
             tickWarningText = FailureText.describe(failure);
         }
@@ -251,7 +268,7 @@ public final class CollapseService {
             // 不提交 COLLAPSING：先依 M4 的保留式 recovery 完成返還與幾何清理（重啟時 attach 已請求）。
             if (!pages.measuredRecoveryRequested(sid)) {
                 pages.requestMeasuredRecovery(sid);
-                LOGGER.info("不支援的來源維度：不提交 COLLAPSING，先以保留式 recovery 返還與清理，到 DORMANT 之後取消：session={} chamber={} 來源={}",
+                LOGGER.info(LOG_MARKER, "不支援的來源維度：不提交 COLLAPSING，先以保留式 recovery 返還與清理，到 DORMANT 之後取消：session={} chamber={} 來源={}",
                         sid, record.chamberUuid(), record.origin().worldKey());
             }
             return;
@@ -264,7 +281,7 @@ public final class CollapseService {
             return;
         }
         terminated(record);
-        LOGGER.info("不支援的來源維度，已安全取消（正常結束，不配置宇宙、不重抽）：session={} chamber={} 來源={} 候選={}",
+        LOGGER.info(LOG_MARKER, "不支援的來源維度，已安全取消（正常結束，不配置宇宙、不重抽）：session={} chamber={} 來源={} 候選={}",
                 sid, record.chamberUuid(), record.origin().worldKey(), record.selectedCandidate().orElseThrow().getClass().getSimpleName());
         refresh(record);
     }
@@ -278,7 +295,7 @@ public final class CollapseService {
             if (!triggerReady(player)) continue;
             if (!chamberGate(record)) return;
             if (!track.backoff.ready(now)) {
-                LOGGER.debug("DORMANT 續行在退避期內，這次觸發不提交：session={} 下一次可在 tick {} 之後", sid, track.backoff.retryAtTick());
+                LOGGER.debug(LOG_MARKER, "DORMANT 續行在退避期內，這次觸發不提交：session={} 下一次可在 tick {} 之後", sid, track.backoff.retryAtTick());
                 return;
             }
             commit(record, track, true);
@@ -313,7 +330,7 @@ public final class CollapseService {
             warn(sid, "取得來源 ticket", failure, null, "本 server instance 不重試，開服 attach 時會為 COLLAPSING 重新取得");
         }
         notifyParticipants(next, MESSAGE_COLLAPSED);
-        LOGGER.info("塌縮已提交：session={} chamber={} 目的地={} 觸發={}", sid, next.chamberUuid(), describe(next.collapse().destination()),
+        LOGGER.info(LOG_MARKER, "塌縮已提交：session={} chamber={} 目的地={} 觸發={}", sid, next.chamberUuid(), describe(next.collapse().destination()),
                 dormant ? "DORMANT 續行" : "選門之後");
     }
 
@@ -367,7 +384,7 @@ public final class CollapseService {
     private void resolveStub(SessionRecoveryRecord view, Track track) {
         if (track.resolveWarned) return;
         track.resolveWarned = true;
-        LOGGER.warn("目的地解析尚未實作（F4a）：COLLAPSING 停在 RESOLVE，不配置、不寫 SEALED：session={} chamber={} 目的地={}",
+        LOGGER.warn(LOG_MARKER, "目的地解析尚未實作（F4a）：COLLAPSING 停在 RESOLVE，不配置、不寫 SEALED：session={} chamber={} 目的地={}",
                 view.sessionUuid(), view.chamberUuid(), describe(view.collapse().destination()));
     }
 
@@ -380,7 +397,7 @@ public final class CollapseService {
             return;
         }
         terminated(view);
-        LOGGER.info("SOURCE 塌縮完成（正常結束）：已 checked 終局，原艙門改為一般開門：session={} chamber={}", view.sessionUuid(), view.chamberUuid());
+        LOGGER.info(LOG_MARKER, "SOURCE 塌縮完成（正常結束）：已 checked 終局，原艙門改為一般開門：session={} chamber={}", view.sessionUuid(), view.chamberUuid());
         openDoor(view, 0);
         notifyParticipants(view, MESSAGE_COLLAPSED);
         refresh(view);
@@ -399,7 +416,7 @@ public final class CollapseService {
             return;
         }
         terminated(record);
-        LOGGER.info("開服時仍是 PASSAGE_READY 的量子通道已結束（spec §12，正常結束）：session={} chamber={}，門在下一個 tick 改為一般開門",
+        LOGGER.info(LOG_MARKER, "開服時仍是 PASSAGE_READY 的量子通道已結束（spec §12，正常結束）：session={} chamber={}，門在下一個 tick 改為一般開門",
                 sid, record.chamberUuid());
         openDoor(record, 1);
         refresh(record);
@@ -502,8 +519,7 @@ public final class CollapseService {
             try {
                 applyDoor(door);
             } catch (RuntimeException failure) {
-                door.warn("套用失敗：" + FailureText.describe(failure), failure);
-                door.backoff.failed(now);
+                recordDoorStep(door, doorFailure(FailureText.describe(failure), door.retried, door.warned), failure, now);
             }
         }
     }
@@ -517,7 +533,7 @@ public final class CollapseService {
         if (now < door.notBefore || !door.backoff.ready(now)) return;
         if (sessions.presence(server, door.chamber) != ChamberSessionGateway.Presence.NONE) {
             doors.remove(door.chamber);
-            LOGGER.info("原艙已開始新的 session，不再把門改為一般開門：chamber={} 先前 session={}", door.chamber, door.session);
+            LOGGER.info(LOG_MARKER, "原艙已開始新的 session，不再把門改為一般開門：chamber={} 先前 session={}", door.chamber, door.session);
             return;
         }
         var world = server.getWorld(door.world);
@@ -526,18 +542,29 @@ public final class CollapseService {
         var step = doorStep(result.outcome(), door.retried, door.warned);
         if (step.done()) {
             doors.remove(door.chamber);
-            if (door.warned != null) LOGGER.info("原艙門已改為一般開門（先前：{}）：chamber={}", door.warned, door.chamber);
+            if (door.warned != null) LOGGER.info(LOG_MARKER, "原艙門已改為一般開門（先前：{}）：chamber={}", door.warned, door.chamber);
             return;
         }
-        if (step.reason() != null) door.warn(step.reason(), null);
-        if (step.backOff()) door.backoff.failed(now);
-        door.retried = step.retried();
+        recordDoorStep(door, step, null, now);
     }
 
     /**
-     * 待套用門對一次 {@code applyTarget} 結果的處置（純函式，{@link #applyDoor} 照做）。{@code done}：完成並移除；{@code reason}：要記錄的原因
-     * （null 表示不記錄）；{@code warn}：這次是否記 WARN（同一原因去重，與 {@link PendingDoor#warn} 同一規則）；{@code backOff}：是否進入退避；
-     * {@code retried}：之後的「已立即重試過一次」狀態。
+     * {@link #applyDoor} 對一次沒有完成的套用（或套用丟出的例外，{@link #doorFailure}）的處置：只在 {@code step.warn()} 為真時記 WARN（去重由
+     * {@link #doorStep} 依 door 記下的上一個原因判定）；原因與「已立即重試過一次」交給 door 記下；{@code step.backOff()} 時退避。
+     * 回傳這次是否記了 WARN。
+     */
+    static boolean recordDoorStep(PendingDoor door, DoorStep step, Throwable failure, int now) {
+        if (step.warn()) LOGGER.warn(LOG_MARKER, "終局之後原艙門還沒改為一般開門，之後重試：chamber={} session={}：{}", door.chamber, door.session,
+                step.reason(), failure);
+        door.remember(step.reason(), step.retried());
+        if (step.backOff()) door.backoff.failed(now);
+        return step.warn();
+    }
+
+    /**
+     * 待套用門對一次 {@code applyTarget} 結果的處置（純函式，{@link #applyDoor} 經 {@link #recordDoorStep} 照做）。{@code done}：完成並移除；
+     * {@code reason}：要記下的原因（null 表示這次沒有原因）；{@code warn}：這次是否記 WARN（原因與上一次記下的不同才記，{@link #newWarning}）；
+     * {@code backOff}：是否進入退避；{@code retried}：之後的「已立即重試過一次」狀態。
      */
     record DoorStep(boolean done, String reason, boolean warn, boolean backOff, boolean retried) { }
 
@@ -551,6 +578,11 @@ public final class CollapseService {
             // 下一個 tick 立即重試一次；之後再被拒才退避。
             case ROLLED_BACK, ROLLBACK_FAILED -> pendingStep("門的寫入被拒（" + outcome + "）", warned, retried, true);
         };
+    }
+
+    /** 套用門時丟出例外：記下「套用失敗：…」（同一原因去重）並退避；「已立即重試過一次」不變。 */
+    static DoorStep doorFailure(String described, boolean retried, String warned) {
+        return pendingStep("套用失敗：" + described, warned, true, retried);
     }
 
     private static DoorStep pendingStep(String reason, String warned, boolean backOff, boolean retried) {
@@ -569,7 +601,7 @@ public final class CollapseService {
     private void warn(UUID sid, String what, RuntimeException failure, String status, String next) {
         var key = FailureText.dedupeKey(failure);
         if (key.equals(track(sid).warnings.put(what, key))) return;
-        LOGGER.warn("塌縮流程的{}沒有完成{}，{}：session={}：{}", what, status == null ? "" : "（" + status + "）", next, sid,
+        LOGGER.warn(LOG_MARKER, "塌縮流程的{}沒有完成{}，{}：session={}：{}", what, status == null ? "" : "（" + status + "）", next, sid,
                 FailureText.describe(failure), failure);
     }
 
@@ -626,8 +658,11 @@ public final class CollapseService {
         void prime(Set<UUID> insideNow) { inside = Set.copyOf(insideNow); }
     }
 
-    /** 終局之後還沒套用成功的原艙門。 */
-    private static final class PendingDoor {
+    /**
+     * 終局之後還沒套用成功的原艙門。只記下狀態（最近一次記下的原因、是否已立即重試過一次、退避）；要不要記 WARN 由 {@link #recordDoorStep}
+     * 依 {@link DoorStep#warn} 決定。
+     */
+    static final class PendingDoor {
         final UUID chamber, session;
         final RegistryKey<World> world;
         final ChamberFrame frame;
@@ -640,10 +675,10 @@ public final class CollapseService {
             this.chamber = chamber; this.session = session; this.world = world; this.frame = frame; this.notBefore = notBefore;
         }
 
-        void warn(String reason, Throwable failure) {
-            if (!newWarning(warned, reason)) return;
-            warned = reason;
-            LOGGER.warn("終局之後原艙門還沒改為一般開門，之後重試：chamber={} session={}：{}", chamber, session, reason, failure);
+        /** 記下這次的原因（沒有原因時保留上一個）與之後的「已立即重試過一次」狀態。 */
+        void remember(String reason, boolean retried) {
+            if (reason != null) warned = reason;
+            this.retried = retried;
         }
     }
 }

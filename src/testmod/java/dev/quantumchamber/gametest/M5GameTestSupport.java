@@ -11,6 +11,7 @@ import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.chamber.QuantumBulkheadBlock;
+import dev.quantumchamber.collapse.CollapseService;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.CorridorGeometry;
 import dev.quantumchamber.corridor.CorridorPageManager;
@@ -52,6 +53,7 @@ import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import org.apache.logging.log4j.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,7 +63,7 @@ import org.slf4j.LoggerFactory;
  * <ul>
  * <li>排程：{@link #at}、{@link #whenTicks}（以 server tick 計的有界等待；失敗路徑先釋放 hooks）。</li>
  * <li>journal flush 探針：{@link #installFlushProbe}（裝在 {@link M5TestHooks}，hooks 釋放時移除）與計數探針 {@link FlushFault}。</li>
- * <li>原生 autosave 的窗口：{@link #afterAutosaveClear}、{@link AutosaveWindow}。</li>
+ * <li>原生 autosave 的窗口與 journal 寫出稽核：{@link #afterAutosaveClear}、{@link AutosaveWindow#journalWrites}。</li>
  * <li>塌縮 fixture：{@link #collapseFixture}、{@link #cleanupFixtures}；真原艙＋DORMANT 收據＋玩家在艙外：{@link DormantOrigin}；
  *     Nether 的真原艙＋真玩家：{@link NetherChamber}。</li>
  * <li>候選門：{@link CandidateDoor}、{@link #candidateDoor}、{@link #sourceDoor}。</li>
@@ -173,33 +175,45 @@ final class M5GameTestSupport {
 
     /**
      * 開始注入之前的等待：從 {@code tick} 起逐 tick 檢查，等到「從這個 tick 起連續 {@code window} 個 server tick 都不會有原生 autosave」
-     * （下一次 autosave 在 {@code getTicks()+window} 或更晚），才在那個 tick 的 callback 呼叫 {@code start}（test tick、窗口）。不成立時，
-     * 倒數最晚再 {@code window} 個 tick 就觸發 autosave 並重設為一整個間隔，所以最多等 window＋1 個 tick；等不到代表 autosave 間隔被改過
-     * （{@code /tick rate}、{@code /tick sprint}），以失敗結束。窗口要涵蓋從開始注入到最後一次被探針計數的寫出。
+     * （下一次 autosave 在 {@code getTicks()+window} 或更晚），才在那個 tick 的 callback 開始稽核 journal 寫出（{@link M5TestHooks#startJournalAudit}，
+     * hooks 釋放時移除）並呼叫 {@code start}（test tick、窗口）。不成立時，倒數最晚再 {@code window} 個 tick 就觸發 autosave 並重設為一整個間隔，
+     * 所以最多等 window＋1 個 tick；等不到代表 autosave 間隔被改過（{@code /tick rate}、{@code /tick sprint}），以失敗結束。窗口要涵蓋從開始注入
+     * 到最後一次被探針計數的寫出。等待只降低誤判的機率；窗口內有沒有繞過探針的寫出，由 {@link AutosaveWindow#journalWrites} 判定與診斷。
      */
     static void afterAutosaveClear(TestContext context, int tick, String name, int window,
             BiConsumer<Integer, AutosaveWindow> start, M2CorridorGameTests.TestHooks hooks) {
         var server = context.getWorld().getServer();
         whenTicks(context, tick, window + 2, () -> nextAutosaveTick(server) - server.getTicks() >= window, ready -> {
-            var clear = new AutosaveWindow(name, window, server.getTicks(), nextAutosaveTick(server));
+            var audit = M5TestHooks.startJournalAudit(server, hooks);
+            var clear = new AutosaveWindow(name, window, server.getTicks(), nextAutosaveTick(server), audit);
             LOGGER.info("M5_AUTOSAVE_CLEAR name={} start={} nextAutosave={} window={}", name, clear.start(), clear.autosaveAt(), window);
             start.accept(ready, clear);
         }, () -> "等不到 " + window + " 個 tick 內沒有原生 autosave 的窗口：tick=" + server.getTicks() + " nextAutosave=" + nextAutosaveTick(server), hooks);
     }
 
-    /** {@link #afterAutosaveClear} 開始注入的 server tick，與當時的下一次原生 autosave。 */
-    record AutosaveWindow(String name, int window, int start, int autosaveAt) {
+    /** {@link #afterAutosaveClear} 開始注入的 server tick、當時的下一次原生 autosave，以及從那時起的 journal 寫出稽核。 */
+    record AutosaveWindow(String name, int window, int start, int autosaveAt, M5TestHooks.JournalWriteAudit audit) {
         /**
-         * 從開始注入到現在都沒有發生原生 autosave（發生過的話倒數已重設，下一次 autosave 會往後移一整個間隔）。另記一行
-         * {@code M5_AUTOSAVE_WINDOW}，列出被探針計數的 server tick。
+         * 窗口內每一次 journal 寫出都經過探針（F4a-0，F3d quality re-review m-1）：從開始注入到現在，正式檔的每一次實際寫出都經
+         * {@code SessionRecoveryState.flush}（探針在 flush 開頭看得到），而且探針看到的每一次 flush（含受控失敗的那幾次）只帶 {@code own} 的
+         * session 的變更。違反的事件逐則列在 {@link JournalWindow#problems}，並區分旁路的種類：原生 autosave、{@code server.save}（附呼叫端，例如
+         * {@code ChunkSaveCheckpoint}）、停服存檔、其他寫出，以及其他 session 的 flush（例如前一個 batch 殘留的 session）。另記一行
+         * {@code M5_JOURNAL_WINDOW}：被探針計數的 server tick、窗口內每一個事件，以及原生 autosave 的倒數是否移動過（{@code nativeAutosave}，
+         * 即 F3d 的 {@code untouched} 為假；autosave 時 journal 沒有變更就不會寫出，所以只供診斷，不單獨判定）。
          */
-        boolean untouched(MinecraftServer server, List<Integer> counted) {
+        JournalWindow journalWrites(MinecraftServer server, List<Integer> counted, Collection<UUID> own) {
             int next = nextAutosaveTick(server);
-            LOGGER.info("M5_AUTOSAVE_WINDOW name={} start={} autosaveAt={} window={} now={} nextAutosave={} counted={}",
-                    name, start, autosaveAt, window, server.getTicks(), next, counted);
-            return next == autosaveAt;
+            boolean nativeAutosave = next != autosaveAt;
+            var verdict = audit.verdict(own);
+            LOGGER.info("M5_JOURNAL_WINDOW name={} start={} now={} autosaveAt={} nextAutosave={} nativeAutosave={} counted={} own={} events={} problems={} status={}",
+                    name, start, server.getTicks(), autosaveAt, next, nativeAutosave, counted, own, verdict.events(), verdict.problems(),
+                    verdict.pass() ? "PASS" : "FAIL");
+            return new JournalWindow(verdict.pass(), nativeAutosave, verdict.problems());
         }
     }
+
+    /** {@link AutosaveWindow#journalWrites} 的結果：窗口內的寫出是否都經過探針、原生 autosave 的倒數是否移動過、違反的事件。 */
+    record JournalWindow(boolean onlyProbed, boolean nativeAutosave, List<String> problems) { }
 
     // ---- 塌縮 fixture ----
 
@@ -279,12 +293,25 @@ final class M5GameTestSupport {
     }
 
     /**
-     * 這個 session 從頭到尾沒有任何塌縮流程（{@code CollapseService}）的 WARN：RESOLVE stub 的「目的地解析尚未實作」、推進／提交／終局失敗的
-     * 「塌縮流程的…沒有完成」，以及終局之後改門的「終局之後原艙門…」。依 sid 篩選。
+     * capture 期間，這個 session 沒有任何塌縮流程（{@code CollapseService}）的 WARN 或 ERROR（F4a-0，F3d quality re-review m-2）。依 SLF4J marker
+     * 篩選，不依訊息字串，所以新的 WARN 用什麼字句都會被看到：
+     * <ul>
+     * <li>帶 {@code CollapseService.LOG_MARKER}（含子 marker）、訊息含這個 sid 的 WARN／ERROR（能歸屬到 session 的都帶 {@code session=<UUID>}）；</li>
+     * <li>任何帶 {@code CollapseService.TICK_LOG_MARKER} 的 WARN／ERROR：整個 tick 無法執行時的 WARN 不屬於任何 session，沒有 sid 可帶，
+     *     所以以「整個 capture 期間沒有」涵蓋。</li>
+     * </ul>
+     * 判定之前先以 production 的子 marker 記一行 INFO 探針（{@code M5_COLLAPSE_MARKER_PROBE}），確認 capture 讀得到 marker 與父子關係；讀不到時
+     * 丟出 IllegalStateException，不以空結果冒充「沒有 WARN」。
      */
     static boolean collapseFlowNeverWarned(LogCapture capture, UUID sid) {
-        return java.util.stream.Stream.of("目的地解析尚未實作", "塌縮流程", "終局之後原艙門")
-                .allMatch(fragment -> capture.matching(org.apache.logging.log4j.Level.WARN, fragment, sid.toString()).isEmpty());
+        String flow = CollapseService.LOG_MARKER.getName(), tick = CollapseService.TICK_LOG_MARKER.getName();
+        String probe = "M5_COLLAPSE_MARKER_PROBE " + UUID.randomUUID();
+        LoggerFactory.getLogger("quantumchamber").info(CollapseService.TICK_LOG_MARKER, probe);
+        if (capture.marked(Level.INFO, tick, probe).size() != 1 || capture.marked(Level.INFO, flow, probe).size() != 1)
+            throw new IllegalStateException("log capture 讀不到塌縮流程的 marker（" + flow + "／" + tick + "）");
+        for (var level : List.of(Level.WARN, Level.ERROR))
+            if (!capture.marked(level, flow, sid.toString()).isEmpty() || !capture.marked(level, tick).isEmpty()) return false;
+        return true;
     }
 
     /**

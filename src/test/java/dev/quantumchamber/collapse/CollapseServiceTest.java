@@ -14,6 +14,7 @@ import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.candidate.SourceFamilyRef;
 import dev.quantumchamber.chamber.ChamberDoorService.ApplyResult.Outcome;
+import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.chamber.ChamberOriginAuthority;
 import dev.quantumchamber.corridor.DoorKey;
@@ -28,6 +29,7 @@ import dev.quantumchamber.universe.UniverseId;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -152,6 +154,9 @@ class CollapseServiceTest {
     /**
      * F3d fix round 2（quality m-2）：待套用門的處置。ROLLED_BACK／ROLLBACK_FAILED 第一次立即重試、再被拒才退避；DOOR_INCOMPLETE 一律退避；
      * NOT_LOADED 只等待；APPLIED／UNCHANGED 完成。WARN 依原因去重：同一原因只記一次，原因改變時再記。
+     * <p>F4a-0（quality re-review m-3）：再以 production 的 {@link CollapseService#recordDoorStep}（{@code applyDoor} 與套用例外共用的處置）
+     * 驅動一扇真的 {@code PendingDoor} 走過一串結果，鎖住實際的記錄行為：只有 {@code DoorStep.warn()} 為真的那幾次記 WARN，門記下的原因決定下一次的
+     * 去重，退避照 {@code backOff}。
      */
     @Test void pendingDoorRetriesOnceThenBacksOffAndDedupesWarnings() {
         var rejected = "門的寫入被拒（ROLLED_BACK）";
@@ -159,6 +164,21 @@ class CollapseServiceTest {
         var second = CollapseService.doorStep(Outcome.ROLLED_BACK, first.retried(), first.reason());
         var third = CollapseService.doorStep(Outcome.ROLLBACK_FAILED, second.retried(), second.reason());
         var incomplete = CollapseService.doorStep(Outcome.DOOR_INCOMPLETE, false, null);
+        // production 的處置：每一步都從門自己記下的狀態推導（applyDoor 的寫法），回傳這次是否記了 WARN。
+        var door = new CollapseService.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, new ChamberFrame(new BlockPos(7, 70, 9), Direction.NORTH), 0);
+        var logged = new ArrayList<Boolean>();
+        var reasons = new ArrayList<String>();
+        for (var outcome : List.of(Outcome.ROLLED_BACK, Outcome.ROLLED_BACK, Outcome.ROLLBACK_FAILED, Outcome.NOT_LOADED, Outcome.DOOR_INCOMPLETE,
+                Outcome.DOOR_INCOMPLETE)) {
+            logged.add(CollapseService.recordDoorStep(door, CollapseService.doorStep(outcome, door.retried, door.warned), null, 100));
+            reasons.add(door.warned);
+        }
+        // 套用丟出例外（tick 與 openDoor 的 catch）：同一原因去重、一律退避。
+        for (int i = 0; i < 2; i++) {
+            logged.add(CollapseService.recordDoorStep(door, CollapseService.doorFailure("x", door.retried, door.warned),
+                    new IllegalStateException("x"), 100));
+            reasons.add(door.warned);
+        }
         assertAll(
                 () -> assertEquals(new CollapseService.DoorStep(false, rejected, true, false, true), first, "第一次被拒：記 WARN、不退避、下一個 tick 重試"),
                 () -> assertEquals(new CollapseService.DoorStep(false, rejected, false, true, true), second, "再被拒：退避，同一原因不再記 WARN"),
@@ -167,7 +187,14 @@ class CollapseServiceTest {
                 () -> assertFalse(CollapseService.doorStep(Outcome.DOOR_INCOMPLETE, false, incomplete.reason()).warn(), "結構性的同一原因去重"),
                 () -> assertEquals(new CollapseService.DoorStep(false, null, false, false, true), CollapseService.doorStep(Outcome.NOT_LOADED, true, rejected), "未載入：只等待"),
                 () -> assertTrue(CollapseService.doorStep(Outcome.APPLIED, true, rejected).done()),
-                () -> assertTrue(CollapseService.doorStep(Outcome.UNCHANGED, false, null).done()));
+                () -> assertTrue(CollapseService.doorStep(Outcome.UNCHANGED, false, null).done()),
+                () -> assertEquals(List.of(true, false, true, false, true, false, true, false), logged,
+                        "production 只在 DoorStep.warn() 為真時記 WARN：被拒、再被拒、原因改變、未載入、結構性、結構性、套用例外、同一例外"),
+                () -> assertEquals(Arrays.asList(rejected, rejected, "門的寫入被拒（ROLLBACK_FAILED）", "門的寫入被拒（ROLLBACK_FAILED）",
+                        "門板不是完整的 25 格 bulkhead，等結構恢復", "門板不是完整的 25 格 bulkhead，等結構恢復", "套用失敗：x", "套用失敗：x"), reasons,
+                        "門記下最近的原因（未載入沒有原因時保留上一個），下一次據此去重"),
+                () -> assertEquals(6400, door.backoff.delayTicks(), "退避 6 次（再被拒、原因改變、結構性兩次、套用例外兩次）：200→…→6400"),
+                () -> assertTrue(door.retried, "第一次被拒之後已立即重試過一次，之後不再立即重試"));
     }
 
     /**

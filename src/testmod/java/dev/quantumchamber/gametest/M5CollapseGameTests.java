@@ -62,6 +62,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
@@ -1061,8 +1062,9 @@ public final class M5CollapseGameTests implements FabricGameTest {
      * 寫出（同一個 tick 的走廊清理與 RETRY_FLUSH），之後的間隔依退避（200、400）；確認之後 space 釋放，SOURCE fast path 照常完成。
      * 只看次數與間隔，不看絕對 tick。
      * <p>fix round 3（spec re-review m-1）：原生 autosave 不經過 flush 探針。選門之前先等到接下來 800 個 tick 內不會有原生 autosave（選門到第一次
-     * 清 lease 的寫出實測 11 個 tick，4 次寫出在其後的第 0、0、200、600 個 tick，留約 190 ticks 餘裕），確認時斷言期間確實沒有 autosave，
-     * 所以恰好 4 次（fix round 2 為了 autosave 放寬成 3～4 次，這裡恢復）。
+     * 清 lease 的寫出實測 11 個 tick，4 次寫出在其後的第 0、0、200、600 個 tick，留約 190 ticks 餘裕），所以恰好 4 次（fix round 2 為了 autosave
+     * 放寬成 3～4 次，這裡恢復）。F4a-0（quality re-review m-1）：確認時斷言窗口內 journal 的每一次寫出都經過探針（{@code onlyProbedJournalWrites}），
+     * 涵蓋原生 autosave、{@code server.save}（例如保留式清理的 checkpoint）與其他 session 的 flush，失敗訊息列出是哪一種旁路。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_release_fault_backoff", tickLimit = 100000)
     public void native_persistent_release_write_fault_waits_for_the_journal_backoff_windows(TestContext context) {
@@ -1087,7 +1089,8 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     var witness = new LinkedHashMap<String, Boolean>();
                     var writes = fault.ticks();
                     int first = writes.isEmpty() ? -1 : writes.getFirst();
-                    witness.put("noNativeAutosaveBeforeTheConfirmation", autosave.untouched(server, writes));
+                    var journalWrites = autosave.journalWrites(server, writes, Set.of(sid));
+                    witness.put("onlyProbedJournalWrites", journalWrites.onlyProbed());
                     witness.put("fourWrites", writes.size() == 4);
                     witness.put("atMostTwoWithinTheFirst200Ticks", writes.stream().filter(tick -> tick < first + 200).count() <= 2);
                     witness.put("retriesFollowTheBackoff", writes.size() == 4 && writes.get(2) - first >= 200 && writes.get(3) - writes.get(2) >= 400);
@@ -1095,7 +1098,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     witness.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
                     witness.put("doorPlainOpen", doorAll(context.getWorld(), fixture.frame, true, MembraneState.NONE));
                     context.assertTrue(!witness.containsValue(false), "清 lease 的寫出持續失敗：" + witness + " writes=" + writes
-                            + " start=" + autosave.start() + " autosaveAt=" + autosave.autosaveAt());
+                            + " start=" + autosave.start() + " autosaveAt=" + autosave.autosaveAt() + " journalWrites=" + journalWrites.problems());
                     tearingDown[0] = true;
                     hooks.release();
                     powerOffAndClose(context, fixture, gone + 1, () -> M4PerTestUniverseProbe.complete(context));
@@ -1116,9 +1119,11 @@ public final class M5CollapseGameTests implements FabricGameTest {
      *     從第一次看到這個 session 起就是「roll-forward 未確認」，一律暫停，不會推導到 RESOLVE（F4a 之後 RESOLVE 會配置宇宙）。整個 test
      *     期間這個 sid 沒有 RESOLVE stub 或其他塌縮流程的 WARN。</li>
      * <li>spec re-review m-1：原生 autosave 不經過 flush 探針。開始注入之前先等到接下來 800 個 tick 內不會有原生 autosave（4 次寫出在開始後的
-     *     第 0、0、200、600 個 tick，留 200 ticks 餘裕），確認時斷言期間確實沒有 autosave，所以恰好 4 次（fix round 2 為了 autosave 放寬成
-     *     3～4 次，這裡恢復）。</li>
+     *     第 0、0、200、600 個 tick，留 200 ticks 餘裕），所以恰好 4 次（fix round 2 為了 autosave 放寬成 3～4 次，這裡恢復）。</li>
      * </ul>
+     * F4a-0（quality re-review m-1、m-2）：確認時斷言窗口內 journal 的每一次寫出都經過探針（{@code onlyProbedJournalWrites}），涵蓋原生
+     * autosave、{@code server.save} 與其他 session 的 flush，失敗訊息列出是哪一種旁路；「沒有塌縮流程的 WARN」改依 {@code CollapseService} 的
+     * log marker 篩選（{@code collapseFlowOnlySawPendingRollForward}），不再比對訊息字串。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_roll_forward", tickLimit = 3000)
     public void settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff(TestContext context) {
@@ -1161,7 +1166,8 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 var witness = new LinkedHashMap<String, Boolean>();
                 var attempts = fault.ticks();
                 witness.put("confirmedTheSameSealed", sealed.equals(journal.flushedRecords().get(sid)) && !journal.rollForwardPending(sid));
-                witness.put("noNativeAutosaveBeforeTheConfirmation", autosave.untouched(server, attempts));
+                var journalWrites = autosave.journalWrites(server, attempts, Set.of(sid));
+                witness.put("onlyProbedJournalWrites", journalWrites.onlyProbed());
                 witness.put("fourAttempts", attempts.size() == 4);
                 witness.put("retriesFollowTheBackoff", attempts.size() == 4 && attempts.get(2) - attempts.get(1) >= 200
                         && attempts.get(3) - attempts.get(2) >= 400);
@@ -1169,7 +1175,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                         && capture.matching(org.apache.logging.log4j.Level.WARN, "塌縮流程", sid.toString()).isEmpty());
                 witness.put("collapseFlowOnlySawPendingRollForward", collapseFlowNeverWarned(capture, sid));
                 context.assertTrue(!witness.containsValue(false), "進入 SEALED 的 roll-forward 重試：" + witness + " attempts=" + attempts
-                        + " start=" + autosave.start() + " autosaveAt=" + autosave.autosaveAt());
+                        + " start=" + autosave.start() + " autosaveAt=" + autosave.autosaveAt() + " journalWrites=" + journalWrites.problems());
                 hooks.release();
                 context.assertTrue(!journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), "收尾：以終局 API 移除");
                 M4PerTestUniverseProbe.complete(context);
