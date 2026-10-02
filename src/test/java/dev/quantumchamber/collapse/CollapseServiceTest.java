@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.quantumchamber.candidate.CandidateBytes;
+import dev.quantumchamber.candidate.CandidateDoorInteraction;
 import dev.quantumchamber.candidate.CandidateId;
 import dev.quantumchamber.candidate.CandidateLedgerEntry;
 import dev.quantumchamber.candidate.CandidatePolicySnapshot;
@@ -128,13 +129,20 @@ class CollapseServiceTest {
                 () -> assertEquals(List.of(B), primed.observe(ordered(A, B)), "prime 之後新進入的人觸發"));
     }
 
-    /** spec §10.8：F3d 的「塌縮」訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 與 en_us 同時存在；zh_tw 逐字等於 spec。 */
-    @Test void collapseMessageExistsInBothLanguages() throws Exception {
+    /**
+     * spec §10.8：F3d 的「塌縮」與「Nether／End 選門」訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 與 en_us 同時存在；
+     * zh_tw 逐字等於 spec。
+     */
+    @Test void f3dMessagesExistInBothLanguages() throws Exception {
         var zh = lang("zh_tw"); var en = lang("en_us");
+        var dimension = CandidateDoorInteraction.MESSAGE_DIMENSION_DOOR_UNAVAILABLE;
         assertAll(
                 () -> assertTrue(CollapseService.MESSAGE_COLLAPSED.startsWith("message.quantumchamber.m5.")),
                 () -> assertEquals("量子態塌縮。", text(zh, CollapseService.MESSAGE_COLLAPSED)),
                 () -> assertFalse(text(en, CollapseService.MESSAGE_COLLAPSED).isBlank(), "en_us 有翻譯"),
+                () -> assertTrue(dimension.startsWith("message.quantumchamber.m5.")),
+                () -> assertEquals("此維度的宇宙門尚未開放。", text(zh, dimension)),
+                () -> assertFalse(text(en, dimension).isBlank(), "en_us 有翻譯"),
                 () -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
     }
 

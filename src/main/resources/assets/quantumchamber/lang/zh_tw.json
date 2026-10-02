@@ -6,5 +6,6 @@
   "item.minecraft.splash_potion.effect.quantum_state": "飛濺量子態藥水",
   "item.minecraft.lingering_potion.effect.quantum_state": "滯留量子態藥水",
   "item.minecraft.tipped_arrow.effect.quantum_state": "量子態之箭",
-  "message.quantumchamber.m5.collapsed": "量子態塌縮。"
+  "message.quantumchamber.m5.collapsed": "量子態塌縮。",
+  "message.quantumchamber.m5.dimension_door_unavailable": "此維度的宇宙門尚未開放。"
 }

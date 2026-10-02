@@ -21,7 +21,10 @@ import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
+import dev.quantumchamber.superposition.SuperpositionWorld;
 import dev.quantumchamber.transfer.ChamberReturnPlacement;
+import dev.quantumchamber.universe.DimensionRole;
+import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberDetector;
 import dev.quantumchamber.chamber.ChamberDoorService;
@@ -50,6 +53,7 @@ import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.BucketItem;
 import net.minecraft.item.Items;
@@ -835,7 +839,152 @@ public final class M5CollapseGameTests implements FabricGameTest {
         });
     }
 
+    /** spec §10.8「Nether／End 選門」（以字面值斷言，不信任 production 常數）。 */
+    private static final String DIMENSION_DOOR_KEY = "message.quantumchamber.m5.dimension_door_unavailable";
+
+    /**
+     * F3d（spec §11.3、§10.8）：在 Nether 的遠方蓋一座真原艙（強制載入涵蓋的 chunk；外圍以石頭圍住，隔開岩漿與地形），一位玩家真入場。
+     * 走廊照常發布 358 扇側門；選 SOURCE 門與 NEW 門都被拒：回 FAIL、actionbar 是「此維度的宇宙門尚未開放。」、不寫 SELECTED、record 仍是
+     * 同一份 SUPERPOSITION，玩家沒有被凍結，照常可以在走廊移動。斷電收尾之後，同一座 Nether 原艙上的 M4 時期 DORMANT SOURCE 收據照一般
+     * 規則完成（§11.3 第二段）：供電、玩家由艙外進入 → 提交 COLLAPSING → SOURCE fast path → 一般開門；不走取消路徑。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_nether_door", tickLimit = 100000)
+    public void nether_side_doors_are_refused_and_an_m4_source_receipt_still_completes_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"nether_side_doors_are_refused_and_an_m4_source_receipt_still_completes_windows");
+        var server = context.getWorld().getServer(); var nether = server.getWorld(World.NETHER);
+        var journal = SessionRecoveryState.get(server); var pages = CorridorPageManager.forServer(server);
+        var target = server.getWorld(SuperpositionWorld.KEY);
+        var frame = new ChamberFrame(new BlockPos(24008, 100, 24008), Direction.NORTH);
+        var power = frame.controllerPos().up();
+        var chunks = netherBunkerChunks(frame);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var owned = new ArrayList<UUID>();
+        ConnectedGameTestPlayer[] connection = {null};
+        // 已註冊的 Nether 原艙比照其他原生 test 留在原地（只斷電）；不清除方塊，避免留下沒有 Controller 的 registry record。
+        hooks.add(() -> chunks.forEach(chunk -> nether.setChunkForced(chunk.x, chunk.z, false)));
+        hooks.add(() -> { if (connection[0] != null) connection[0].close(); });
+        hooks.add(() -> nether.setBlockState(power, Blocks.AIR.getDefaultState()));
+        hooks.add(() -> cleanupFixtures(server, owned));
+        LogCapture capture;
+        try {
+            chunks.forEach(chunk -> nether.setChunkForced(chunk.x, chunk.z, true));
+            buildNetherChamber(nether, frame);
+            connection[0] = new ConnectedGameTestPlayer(context.getWorld());
+            var player = connection[0].player();
+            var inside = ChamberSpaceCoordinates.position(frame, 3.5, 1, 3.5);
+            player.teleport(nether, inside.x, inside.y, inside.z, Set.of(), 0, 0);
+            player.setNoGravity(true); player.setVelocity(Vec3d.ZERO);
+            player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
+            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        var p = connection[0].player();
+        at(context, 2, hooks, () -> nether.setBlockState(power, Blocks.REDSTONE_BLOCK.getDefaultState()));
+        whenTicks(context, 3, 20000, () -> {
+            var record = chamberRecord(journal, nether, frame);
+            return record != null && record.state() == SessionState.SUPERPOSITION && pages.currentMappings(record.sessionUuid()).epoch() == 1
+                    && pages.selectableDoors(record.sessionUuid()).size() == 358;
+        }, ready -> {
+            var record = chamberRecord(journal, nether, frame); var sid = record.sessionUuid(); var chamber = record.chamberUuid();
+            var witness = new LinkedHashMap<String, Boolean>();
+            witness.put("netherSource", record.candidateContext().orElseThrow().sourceFamilyRef().role() == DimensionRole.NETHER
+                    && p.getServerWorld() == target);
+            // 先 ACK 入場的 teleport（同時讀掉先前的封包），之後的 actionbar 只會是這兩次選門的回應。
+            connection[0].confirmTeleport();
+            var sourceDoor = candidateDoor(pages, target, sid, QuantumCandidate.Source.class);
+            var newDoor = candidateDoor(pages, target, sid, QuantumCandidate.New.class);
+            var refusedSource = interact(target, sourceDoor.cell(), p);
+            var refusedNew = interact(target, newDoor.cell(), p);
+            var keys = overlayKeys(connection[0]);
+            witness.put("sourceDoorFails", refusedSource == ActionResult.FAIL);
+            witness.put("newDoorFails", refusedNew == ActionResult.FAIL);
+            witness.put("dimensionMessageEachTime", keys.equals(List.of(DIMENSION_DOOR_KEY, DIMENSION_DOOR_KEY)));
+            witness.put("noSelectionWritten", record.equals(journal.flushedRecords().get(sid)) && record.equals(journal.records().get(sid))
+                    && record.state() == SessionState.SUPERPOSITION && record.selectedCandidate().isEmpty());
+            witness.put("notFrozen", !SessionRecoveryManager.blocks(p.getUuid(), server));
+            var before = p.getPos();
+            p.networkHandler.onPlayerMove(new PlayerMoveC2SPacket.Full(before.x + 0.125, before.y, before.z, p.getYaw(), p.getPitch(), false));
+            witness.put("corridorWalkable", p.getServerWorld() == target && Math.abs(p.getX() - before.x - 0.125) < 1e-9);
+            context.assertTrue(!witness.containsValue(false), "Nether 的側門選擇：" + witness + " keys=" + keys);
+            // 斷電收尾：一般 M2 返還，玩家回到 Nether 原艙。
+            nether.setBlockState(power, Blocks.AIR.getDefaultState());
+            whenTicks(context, ready + 1, 20000, () -> !journal.flushedRecords().containsKey(sid)
+                    && ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE, released -> {
+                var after = new LinkedHashMap<String, Boolean>();
+                after.put("returnedToTheNetherChamber", p.getServerWorld() == nether
+                        && ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame), p.getBoundingBox()));
+                after.put("refusalLeftNoWarn", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).isEmpty());
+                // M4 時期留在這座 Nether 原艙的 DORMANT SOURCE 收據（P 已返還）。
+                var receipt = M4CandidateTestAccess.measuredReceipt(server, M4CandidateTestAccess.origin(chamber, World.NETHER, frame.controllerPos()),
+                        Map.of(p.getUuid(), true), List.of(), false);
+                journal.put(receipt); journal.flush(server); owned.add(receipt.sessionUuid());
+                var dormant = receipt.sessionUuid();
+                moveOutside(p, frame);
+                overlayKeys(connection[0]);
+                at(context, released + 1, hooks, () -> nether.setBlockState(power, Blocks.REDSTONE_BLOCK.getDefaultState()));
+                at(context, released + 2, hooks, () -> moveInside(p, frame));
+                at(context, released + 3, hooks, () -> {
+                    var committed = journal.flushedRecords().get(dormant);
+                    after.put("entryEdgeCommits", committed != null && committed.state() == SessionState.COLLAPSING
+                            && committed.collapse().destination() instanceof CollapseDestination.Source);
+                    context.assertTrue(!after.containsValue(false), "Nether 原艙的收尾與 M4 SOURCE 收據的提交：" + after);
+                });
+                whenTicks(context, released + 4, 40, () -> !journal.flushedRecords().containsKey(dormant), gone -> {
+                    after.put("doorPlainOpen", doorAll(nether, frame, true, MembraneState.NONE));
+                    after.put("oneCommitInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "塌縮已提交", dormant.toString()).size() == 1);
+                    after.put("oneSourceInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "SOURCE 塌縮完成", dormant.toString()).size() == 1);
+                    after.put("notCancelled", capture.matching(org.apache.logging.log4j.Level.INFO, "不支援的來源維度", dormant.toString()).isEmpty());
+                    after.put("collapsedMessage", overlayKeys(connection[0]).contains(COLLAPSED_KEY));
+                    after.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                    after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(dormant) && !M4CandidateTestAccess.sourceTicketHeld(dormant));
+                    after.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, dormant.toString()).isEmpty()
+                            && capture.matching(org.apache.logging.log4j.Level.ERROR).isEmpty());
+                    context.assertTrue(!after.containsValue(false), "Nether 原艙的收尾與 M4 SOURCE 收據：" + after);
+                    hooks.release();
+                    M4PerTestUniverseProbe.complete(context);
+                }, () -> "Nether 的 DORMANT SOURCE 收據沒有完成：record=" + state(journal, dormant), hooks);
+            }, () -> "Nether 原艙斷電之後沒有收尾：record=" + state(journal, sid), hooks);
+        }, () -> "Nether 原艙沒有入場：record=" + Optional.ofNullable(chamberRecord(journal, nether, frame)).map(value -> value.state().name()).orElse("ABSENT"),
+                hooks);
+    }
+
     // ---- F3d 的 helper ----
+
+    /** Nether fixture 原艙所在的 chunk（含外圍石牆）。 */
+    private static List<ChunkPos> netherBunkerChunks(ChamberFrame frame) {
+        var a = ChamberSpaceCoordinates.block(frame, -3, -1, -5); var b = ChamberSpaceCoordinates.block(frame, 9, 9, 9);
+        var chunks = new ArrayList<ChunkPos>();
+        for (int x = Math.min(a.getX(), b.getX()) >> 4; x <= Math.max(a.getX(), b.getX()) >> 4; x++)
+            for (int z = Math.min(a.getZ(), b.getZ()) >> 4; z <= Math.max(a.getZ(), b.getZ()) >> 4; z++) chunks.add(new ChunkPos(x, z));
+        return chunks;
+    }
+
+    /**
+     * Nether 的 fixture 原艙：以艙的區域座標，外圍（x −3..9、y −1..9、z −5..9 的邊界）一圈石頭、其餘清空，再照 {@link ChamberGameTestBuilder}
+     * 的配置蓋 7×7×7 的艙（基岩外殼、關著的 25 格門、朝北的 Controller）。
+     */
+    private static void buildNetherChamber(ServerWorld nether, ChamberFrame frame) {
+        ChamberProtectionService.get().authorizedMutation(() -> {
+            for (int x = -3; x <= 9; x++) for (int y = -1; y <= 9; y++) for (int z = -5; z <= 9; z++) {
+                boolean boundary = x == -3 || x == 9 || y == -1 || y == 9 || z == -5 || z == 9;
+                boolean chamber = x >= 0 && x <= 6 && y >= 0 && y <= 6 && z >= 0 && z <= 6;
+                BlockState state;
+                if (boundary) state = Blocks.STONE.getDefaultState();
+                else if (!chamber) state = Blocks.AIR.getDefaultState();
+                else if (z == 0 && x > 0 && x < 6 && y > 0 && y < 6) state = ModBlocks.QUANTUM_BULKHEAD.getDefaultState().with(QuantumBulkheadBlock.OPEN, false);
+                else state = ChamberGeometry.isShellCell(x, y, z) ? Blocks.BEDROCK.getDefaultState() : Blocks.AIR.getDefaultState();
+                nether.setBlockState(ChamberSpaceCoordinates.block(frame, x, y, z), state, Block.NOTIFY_ALL);
+            }
+            nether.setBlockState(frame.controllerPos(), ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
+                    .with(ChamberControllerBlock.FACING, frame.outwardFacing()), Block.NOTIFY_ALL);
+        });
+    }
+
+    /** 這座艙（依 Controller 的 chamber UUID）在 journal 裡的 flushed record；尚未註冊或沒有 session 時為 null。 */
+    private static SessionRecoveryRecord chamberRecord(SessionRecoveryState journal, ServerWorld world, ChamberFrame frame) {
+        if (!(world.getBlockEntity(frame.controllerPos()) instanceof ChamberControllerBlockEntity controller) || controller.chamberUuid() == null) return null;
+        return journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(controller.chamberUuid())).findFirst().orElse(null);
+    }
 
     /** 真入場（不暫停塌縮流程）、等 358 扇側門發布之後交給 {@code ready}；逾時就關閉 fixture。 */
     private static void nativeSourceEntry(TestContext context, int people, java.util.function.BiConsumer<M2CorridorGameTests.NativeEntry, Integer> ready) {
@@ -852,14 +1001,18 @@ public final class M5CollapseGameTests implements FabricGameTest {
 
     /** 這個 session 第一個 mapping 裡的一扇 SOURCE 候選門（依 station 與側別排序取第一扇），以及它可選擇的門格。 */
     private static SourceDoor sourceDoor(M2CorridorGameTests.NativeEntry fixture) {
-        var sid = fixture.record().sessionUuid();
-        var view = fixture.pages.currentMappings(sid).instances().getFirst();
-        return fixture.pages.selectableDoors(sid).stream()
-                .filter(key -> fixture.pages.flushedCandidate(key).orElse(null) instanceof QuantumCandidate.Source)
+        return candidateDoor(fixture.pages, fixture.target, fixture.record().sessionUuid(), QuantumCandidate.Source.class);
+    }
+
+    /** 同 {@link #sourceDoor}，但指定候選種類。 */
+    private static SourceDoor candidateDoor(CorridorPageManager pages, ServerWorld target, UUID sid, Class<? extends QuantumCandidate> kind) {
+        var view = pages.currentMappings(sid).instances().getFirst();
+        return pages.selectableDoors(sid).stream()
+                .filter(key -> kind.isInstance(pages.flushedCandidate(key).orElse(null)))
                 .sorted(Comparator.comparingLong(DoorKey::logicalStationIndex).thenComparing(DoorKey::wallSide))
                 .map(key -> new SourceDoor(key, doorCell(view, key)))
-                .filter(door -> fixture.pages.selectableDoor(fixture.target, door.cell()).equals(Optional.of(door.key())))
-                .findFirst().orElseThrow(() -> new IllegalStateException("358 扇側門裡找不到 SOURCE 候選門"));
+                .filter(door -> pages.selectableDoor(target, door.cell()).equals(Optional.of(door.key())))
+                .findFirst().orElseThrow(() -> new IllegalStateException("358 扇側門裡找不到 " + kind.getSimpleName() + " 候選門"));
     }
 
     private static BlockPos doorCell(CorridorPageManager.MappingView view, DoorKey key) {
