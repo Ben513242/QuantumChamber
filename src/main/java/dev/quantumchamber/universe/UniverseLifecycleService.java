@@ -147,15 +147,29 @@ public final class UniverseLifecycleService {
         }
         var active = context.backend.resolveActive(server, descriptor);
         if (active.isPresent()) return MaterializeOutcome.succeeded(MaterializeOutcome.Status.ALREADY_ACTIVE, active.get());
-        if (context.failedDescriptors.contains(descriptor)) {
+        var checked = record;
+        return attemptMaterialize(descriptor, context.failedDescriptors, context.materializeFailures,
+                () -> new UniverseMaterializationService(context.backend).materializeChecked(server, checked, descriptor));
+    }
+
+    /**
+     * {@link #materializeAllocated} 在前提成立、world 不是 ACTIVE 之後的部分（F4a fix round 1，M-1：抽成 package-private，讓 JUnit 以
+     * {@link #verifyStopped} 驗證停服驗證依賴這裡的失敗紀錄）：同一個 instance 內失敗過的 descriptor 直接 {@code FAILED_BEFORE}（不呼叫
+     * {@code materializer}）；否則物化一次，失敗時記入 {@code failedDescriptors}，並依 M3 的停服驗證規則記入 {@code materializeFailures}：
+     * 例外與 {@code Error} 記為沒有 status 的失敗（未證明安全，停服驗證會拒絕），{@code FAILED_ROLLED_BACK}、{@code FAILED_UNHEALTHY} 記下
+     * status；{@code REJECTED} 不記（它在 backend 建立 runtime owner 之前就被拒絕，沒有 owner 需要 rollback 收據）。{@code Error} 記入之後照舊丟出。
+     */
+    static MaterializeOutcome attemptMaterialize(UniverseWorldDescriptor descriptor, Set<UniverseWorldDescriptor> failedDescriptors,
+            List<MaterializeFailure> materializeFailures, Supplier<MaterializeResult> materializer) {
+        if (failedDescriptors.contains(descriptor)) {
             return MaterializeOutcome.refused(MaterializeOutcome.Status.FAILED_BEFORE, "同一個 server instance 內已物化失敗過：" + descriptor.worldKey().getValue());
         }
         MaterializeResult result;
         try {
-            result = new UniverseMaterializationService(context.backend).materializeChecked(server, record, descriptor);
+            result = materializer.get();
         } catch (RuntimeException | Error failure) {
-            context.failedDescriptors.add(descriptor);
-            context.materializeFailures.add(new MaterializeFailure(descriptor, null, failure.toString(), failure));
+            failedDescriptors.add(descriptor);
+            materializeFailures.add(new MaterializeFailure(descriptor, null, failure.toString(), failure));
             if (failure instanceof Error fatal) throw fatal;
             return new MaterializeOutcome(MaterializeOutcome.Status.FAILED, Optional.empty(), Optional.empty(), failure.toString());
         }
@@ -163,10 +177,10 @@ public final class UniverseLifecycleService {
             return MaterializeOutcome.succeeded(result.status() == MaterializeResult.Status.MATERIALIZED
                     ? MaterializeOutcome.Status.MATERIALIZED : MaterializeOutcome.Status.ALREADY_ACTIVE, result.world());
         }
-        context.failedDescriptors.add(descriptor);
+        failedDescriptors.add(descriptor);
         var detail = "runtime 物化失敗: " + descriptor.worldKey().getValue() + " " + result.status();
         if (result.status() != MaterializeResult.Status.REJECTED) {
-            context.materializeFailures.add(new MaterializeFailure(descriptor, result.status(), detail, null));
+            materializeFailures.add(new MaterializeFailure(descriptor, result.status(), detail, null));
         }
         return new MaterializeOutcome(MaterializeOutcome.Status.FAILED, Optional.empty(), Optional.of(result.status()), detail);
     }
