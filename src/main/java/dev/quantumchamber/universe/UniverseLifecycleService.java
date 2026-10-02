@@ -5,10 +5,13 @@ import java.util.Collection;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Consumer;
@@ -99,6 +102,141 @@ public final class UniverseLifecycleService {
         } catch (Error fatal) {
             LOGGER.error("M3_UNIVERSE_BOOTSTRAP_FATAL；已請求正常停止", fatal);
             throw fatal;
+        }
+    }
+
+    /**
+     * spec §6.3（M5 F4a）：執行期間物化一筆已配置的 Universe（NEW 的 RESOLVE）。使用 lifecycle Context 內既有的 backend 與 runtime registry，
+     * 不另外建立 backend；只能在 server thread 呼叫。只回傳結果，不記塌縮流程的 log（塌縮流程的 log 由 collapse package 帶 marker 記錄）；
+     * backend 與 M3 既有的 log 照舊。
+     * <ul>
+     * <li>前提（不符就不呼叫 backend）：lifecycle 有 ready 的 context（{@link MaterializeOutcome.Status#NOT_READY}）；flushed catalog 有這筆、
+     *     current 與 flushed 的這筆相同、availability 為 {@code EAGER_ENABLED}、有 exact catalog role 的 OVERWORLD descriptor
+     *     （{@link MaterializeOutcome.Status#NOT_ELIGIBLE}）。</li>
+     * <li>已經 ACTIVE：回傳同一個 world instance（{@link MaterializeOutcome.Status#ALREADY_ACTIVE}）。</li>
+     * <li>同一個 server instance 內這個 descriptor 物化失敗過：直接拒絕（{@link MaterializeOutcome.Status#FAILED_BEFORE}）。runtime registry
+     *     不允許原地重試（{@link UniverseRuntimeRegistry#fail}）；backend 沒有留下 receipt 的失敗（例如 REJECTED）也一樣拒絕。</li>
+     * <li>backend 失敗（{@link MaterializeOutcome.Status#FAILED}）：記入本 instance 的失敗集合；會留下 runtime receipt 或未證明安全的失敗
+     *     （{@code FAILED_ROLLED_BACK}、{@code FAILED_UNHEALTHY}、例外）同時記入 Context 的 materialize failures，與 bootstrap 一致，
+     *     停服驗證據此核對 rollback 收據（否則 {@code FAILED_ROLLED_BACK} 留下的 MATERIALIZE_FAILED owner 會讓正常停服 {@code STOPPED_UNVERIFIED}）。
+     *     {@code REJECTED} 在建立任何 runtime owner 之前就拒絕，不記入（記入的話，停服驗證會把它當成沒有安全 close 證據的失敗）。
+     *     {@link Error} 記入之後照舊往外丟（M3：Error 代表未證明可恢復的失敗）。</li>
+     * </ul>
+     */
+    public static MaterializeOutcome materializeAllocated(MinecraftServer server, UniverseId id) {
+        requireServerThread(server);
+        Objects.requireNonNull(id, "id");
+        var context = CONTEXTS.get(server);
+        if (context == null || !context.ready) return MaterializeOutcome.refused(MaterializeOutcome.Status.NOT_READY, "lifecycle 沒有 ready 的 context");
+        UniverseRecord record;
+        try {
+            var catalog = UniverseRegistryState.get(server);
+            catalog.requireHealthy();
+            record = catalog.flushedRecords().get(id);
+            if (record == null) return MaterializeOutcome.refused(MaterializeOutcome.Status.NOT_ELIGIBLE, "flushed catalog 沒有這筆");
+            if (!record.equals(catalog.records().get(id))) return MaterializeOutcome.refused(MaterializeOutcome.Status.NOT_ELIGIBLE, "current 與 flushed 的這筆不同");
+        } catch (IllegalStateException unhealthy) {
+            return MaterializeOutcome.refused(MaterializeOutcome.Status.NOT_ELIGIBLE, "catalog 不健康：" + unhealthy.getMessage());
+        }
+        if (record.desiredAvailability() != DesiredAvailability.EAGER_ENABLED) {
+            return MaterializeOutcome.refused(MaterializeOutcome.Status.NOT_ELIGIBLE, "availability 不是 EAGER_ENABLED：" + record.desiredAvailability());
+        }
+        var descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
+        if (descriptor == null || UniverseRoleResolver.resolve(server, descriptor.worldKey()).orElse(null) != DimensionRole.OVERWORLD) {
+            return MaterializeOutcome.refused(MaterializeOutcome.Status.NOT_ELIGIBLE, "沒有 exact catalog role 的 OVERWORLD descriptor");
+        }
+        var active = context.backend.resolveActive(server, descriptor);
+        if (active.isPresent()) return MaterializeOutcome.succeeded(MaterializeOutcome.Status.ALREADY_ACTIVE, active.get());
+        if (context.failedDescriptors.contains(descriptor)) {
+            return MaterializeOutcome.refused(MaterializeOutcome.Status.FAILED_BEFORE, "同一個 server instance 內已物化失敗過：" + descriptor.worldKey().getValue());
+        }
+        MaterializeResult result;
+        try {
+            result = new UniverseMaterializationService(context.backend).materializeChecked(server, record, descriptor);
+        } catch (RuntimeException | Error failure) {
+            context.failedDescriptors.add(descriptor);
+            context.materializeFailures.add(new MaterializeFailure(descriptor, null, failure.toString(), failure));
+            if (failure instanceof Error fatal) throw fatal;
+            return new MaterializeOutcome(MaterializeOutcome.Status.FAILED, Optional.empty(), Optional.empty(), failure.toString());
+        }
+        if (result.status() == MaterializeResult.Status.MATERIALIZED || result.status() == MaterializeResult.Status.ALREADY_ACTIVE) {
+            return MaterializeOutcome.succeeded(result.status() == MaterializeResult.Status.MATERIALIZED
+                    ? MaterializeOutcome.Status.MATERIALIZED : MaterializeOutcome.Status.ALREADY_ACTIVE, result.world());
+        }
+        context.failedDescriptors.add(descriptor);
+        var detail = "runtime 物化失敗: " + descriptor.worldKey().getValue() + " " + result.status();
+        if (result.status() != MaterializeResult.Status.REJECTED) {
+            context.materializeFailures.add(new MaterializeFailure(descriptor, result.status(), detail, null));
+        }
+        return new MaterializeOutcome(MaterializeOutcome.Status.FAILED, Optional.empty(), Optional.of(result.status()), detail);
+    }
+
+    /**
+     * spec §6.3（M5 F4a）：這個 UniverseId 的 exact ACTIVE world（EXISTING 重驗、之後的預載、投影與跨越判定使用）。依 flushed catalog 的
+     * OVERWORLD descriptor 向 lifecycle 的 backend 查詢；backend 同時核對 owning server、world key、native live map 與 exact instance。
+     * lifecycle 沒有 ready 的 context、catalog 不健康或沒有這筆時為空。只能在 server thread 呼叫；不記 log。
+     */
+    public static Optional<ServerWorld> resolveActive(MinecraftServer server, UniverseId id) {
+        requireServerThread(server);
+        Objects.requireNonNull(id, "id");
+        var context = CONTEXTS.get(server);
+        if (context == null || !context.ready) return Optional.empty();
+        UniverseRecord record;
+        try {
+            var catalog = UniverseRegistryState.get(server);
+            catalog.requireHealthy();
+            record = catalog.flushedRecords().get(id);
+        } catch (IllegalStateException unhealthy) {
+            return Optional.empty();
+        }
+        if (record == null) return Optional.empty();
+        var descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
+        return descriptor == null ? Optional.empty() : context.backend.resolveActive(server, descriptor);
+    }
+
+    private static void requireServerThread(MinecraftServer server) {
+        if (!Objects.requireNonNull(server, "server").isOnThread()) {
+            throw new IllegalStateException("Universe lifecycle 的 runtime API 必須在伺服器執行緒操作");
+        }
+    }
+
+    /**
+     * {@link #materializeAllocated} 的結果。只有 {@link Status#MATERIALIZED} 與 {@link Status#ALREADY_ACTIVE} 帶 exact world；
+     * {@code backendStatus} 只在 backend 回報失敗時存在；{@code detail} 是給呼叫端 log 的說明。
+     */
+    public record MaterializeOutcome(Status status, Optional<ServerWorld> world, Optional<MaterializeResult.Status> backendStatus, String detail) {
+        public enum Status {
+            /** 本次物化成功。 */
+            MATERIALIZED,
+            /** 已經 ACTIVE，回傳同一個 world instance。 */
+            ALREADY_ACTIVE,
+            /** lifecycle 沒有 ready 的 context（bootstrap 失敗、停服中，或沒有 context）；沒有呼叫 backend。 */
+            NOT_READY,
+            /** record 不符物化的前提；沒有呼叫 backend。 */
+            NOT_ELIGIBLE,
+            /** 同一個 server instance 內這個 descriptor 物化失敗過；沒有呼叫 backend。 */
+            FAILED_BEFORE,
+            /** backend 回報失敗（{@code backendStatus}），或丟出例外（{@code backendStatus} 空）。 */
+            FAILED
+        }
+
+        public MaterializeOutcome {
+            Objects.requireNonNull(status, "status"); Objects.requireNonNull(world, "world");
+            Objects.requireNonNull(backendStatus, "backendStatus"); Objects.requireNonNull(detail, "detail");
+            boolean active = status == Status.MATERIALIZED || status == Status.ALREADY_ACTIVE;
+            if (active != world.isPresent()) throw new IllegalArgumentException("只有成功的物化帶 exact world");
+            if (backendStatus.isPresent() && status != Status.FAILED) throw new IllegalArgumentException("只有 FAILED 帶 backend status");
+        }
+
+        /** 成功：本次物化或已經 ACTIVE。 */
+        public boolean active() { return world.isPresent(); }
+
+        private static MaterializeOutcome succeeded(Status status, ServerWorld world) {
+            return new MaterializeOutcome(status, Optional.of(world), Optional.empty(), "");
+        }
+
+        private static MaterializeOutcome refused(Status status, String detail) {
+            return new MaterializeOutcome(status, Optional.empty(), Optional.empty(), detail);
         }
     }
 
@@ -328,6 +466,8 @@ public final class UniverseLifecycleService {
         final Minecraft121DynamicDimensionBackend backend = new Minecraft121DynamicDimensionBackend();
         final Map<ServerWorld, Integer> unloads = new IdentityHashMap<>();
         final List<MaterializeFailure> materializeFailures = new ArrayList<>();
+        /** {@link #materializeAllocated} 在本 server instance 物化失敗過的 descriptor（含 REJECTED）：同一個 instance 內直接拒絕。 */
+        final Set<UniverseWorldDescriptor> failedDescriptors = new HashSet<>();
         boolean ready;
         Throwable stoppingFailure;
     }
