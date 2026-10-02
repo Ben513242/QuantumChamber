@@ -2850,7 +2850,13 @@ M5 GameTest 的掃描（m-1 第 3 點；判斷「靠探針計數、而且跨越�
 - Code range `219145a..53e923e`。沒有改 `M2CorridorGameTests.TestHooks`、M2 的 `OBSERVED`、`SessionRecoveryState.java`、`build.gradle`、`.github/`、`scripts/verification/` 的腳本。
 - 範圍是 plan Task F4a-0：F3d「交給後續」中 F4a 的 `M5GameTestSupport`、quality re-review 的 m-1～m-3，以及 F3d fix round 2 的 m-6(d)（把 hook 搬出 `M4CandidateDoorGameTests`）。m-4 屬 F4a 本身，沒有處理（見「交給後續」）。除了 m-2 的 marker 與 m-3 的 `applyDoor` 結構，production 行為不變。
 - 行號以 `53e923e` 為準。`SUP` 指 `M5GameTestSupport`，`HK` 指 `M5TestHooks`，`WCM` 指 `mixin/SessionJournalWriteCountMixin`，`LC` 指 `LogCapture`；`M5C`、`M5U`、`M4C`、`CS`、`CST` 同 F3d 一節。
-- Review：spec review ✅（Critical 0、Important 0、Minor 3：m-1～m-3）；quality review Approved（Critical 0、Important 0、Minor 5：Q1～Q5）。controller 裁定開窄範圍的 fix round 1（Q1～Q4、Q5 的部分項目、spec m-1～m-3），見本節最後的「Fix round 1」。最終結果由 controller 補。本節其餘內容描述 `53e923e`：fix round 1 改過的 API 在相關列另加註；首輪證據敘述的更正標「fix round 1 更正」。
+- Review：spec review ✅（Critical 0、Important 0、Minor 3：m-1～m-3）；quality review Approved（Critical 0、Important 0、Minor 5：Q1～Q5）。controller 裁定開窄範圍的 fix round 1（Q1～Q4、Q5 的部分項目、spec m-1～m-3），見本節最後的「Fix round 1」。
+- 最終 review：
+  - fix round 1 的 spec re-review ✅（Critical 0、Important 0、Minor 1：F6 交接漏列新的 harness，已由 controller 補在「交給後續」）。
+  - quality re-review Approved（Critical 0、Important 0、Minor 3）。其中 LEGACY 的文件描述與 fault hook 的 `Slot` 規則，已由 controller 寫入 README 與「交給後續」；其餘小幅重複交給 F6。
+  - **F4a-0 完成**：range `219145a..b56aba4`。
+    - code：`81217a0`、`53e923e`、`b333feb`、`a8863de`、`bab3474`、`d5a372e`。
+    - 最終 run-all：`run-all-32c099d096b049e98e6e8e21d773ff1f`，`END ALL exit=0`（`5bd9844`）。本節其餘內容描述 `53e923e`：fix round 1 改過的 API 在相關列另加註；首輪證據敘述的更正標「fix round 1 更正」。
 
 ### 派工逐項對照
 
@@ -2937,10 +2943,19 @@ focused 的範圍（`f4a0/focused-batches.txt`，34 個 batch）：全部 17 個
 - F4a：
   - （F3d quality re-review m-4）G-SEAL 在確認的那一個 tick，塌縮流程會看到沒掛 hook 的 flushed SEALED（PROJECTION_FAILED），要到下一個 callback 才收尾。F4a 實作 SEALED 重試時，探針在放行第 4 次寫出時順手 `M5TestHooks.suspendCollapse(sid)`，或確認邊緣觸發不會成立。本 task 沒有處理。
   - （F3d fix round 3 spec re-review 的觀察）H2（`m5_h2_checkpoint_scope`）若有 autosave 落在兩次 checkpoint 之間，約有 1% 的機率多出一則原生 ERROR 或 WARN，斷言不受影響。比對 Full gate 的 log 數字時，可以先從這裡查（本 task 的 run-all 沒有出現）。
-  - `CollapseService` 新增的 log 一律帶 `LOG_MARKER`；能歸屬到 session 的 WARN／ERROR 訊息要帶 `session=<UUID>`，不屬於任何 session 的改帶 `TICK_LOG_MARKER`。F3d「交給後續」中「新增的 WARN 要沿用 `warn()` 的『塌縮流程的…』前綴」那一條由此取代。fix round 1 起這是守門的規則：F4a 新增的 collapse 類別（例如 `DestinationResolver`）同樣適用，`CollapseLogMarkerGuardTest` 掃描整個 collapse package；在 `CollapseAuthorities` 新增 log 時，要帶 marker 或經 review 加進該 test 的 `LEGACY` 清單。plan 要 F4a 修改的 `UniverseLifecycleService` 在 universe package，不在掃描範圍：塌縮流程的 log 寫在 collapse package，或在 F4a 同步擴充守門。
+  - `CollapseService` 新增的 log 一律帶 `LOG_MARKER`；能歸屬到 session 的 WARN／ERROR 訊息要帶 `session=<UUID>`，不屬於任何 session 的改帶 `TICK_LOG_MARKER`。F3d「交給後續」中「新增的 WARN 要沿用 `warn()` 的『塌縮流程的…』前綴」那一條由此取代。fix round 1 起這是守門的規則：F4a 新增的 collapse 類別（例如 `DestinationResolver`）同樣適用，`CollapseLogMarkerGuardTest` 掃描整個 collapse package；`CollapseAuthorities` 的 7 則 log 由 F4a 改成帶 marker，並刪除 `LEGACY` 清單，之後不再新增例外。`UniverseLifecycleService` 不記塌縮流程的 WARN。以上兩點都是 controller 的裁示，見 Fix round 1 的「裁示」。（controller 更正：原本寫的「或經 review 加進 `LEGACY` 清單」「或同步擴充守門」不再適用。）
   - F3d「交給後續」中「之後新增靠 journal 的 flush 探針計數、而且跨越 200 ticks 退避的 GameTest，以 `AutosaveWindow.untouched` 斷言」那一條，改為以 `afterAutosaveClear`＋`journalWrites(server, 計數, 自己的 session)` 斷言 `onlyProbed()`；test 自己建立的每一個 session 都要放進 `own`，否則它的 flush 會被判為「其他 session 的 flush」。
   - 新的 M5 test 用 `M5GameTestSupport`（用法與前提見 `scripts/verification/README.md`「新增 M5 GameTest」）；SRM 的 RETRY_FLUSH WARN 文字（「返還保留 pending」）仍待 F4a 改成不限返還，本 task 沒有動。fix round 1 之後：探針經 `installFlushProbe(context, probe, hooks)`、稽核經 `afterAutosaveClear` 安裝，位置被占用時丟出；用探針或稽核的 test 必須獨占一個 batch；`DormantOrigin.whenRegistered`、`NetherChamber.whenEntered(ready)` 以呼叫當下的 tick 為基準，可以在 callback 裡呼叫。
 - 觀察第 1、2 條（Windows `AccessDeniedException`、checkpoint 與 `leaseReady` 的就緒條件）的 owner 由 controller 指定（SDD ledger）：第 2 條 F4b（與 F4b 的投影共用同一個 checkpoint，判斷是否要在 `leaseReady` 加上 entity storage 的檢查），第 1 條 F6（「斷言沒有 WARN」的 test 的穩定性，整理 harness 時一併處理）。fix round 1 的最終 focused 第 1 輪又遇到一次第 2 條（G-NLIVE，見「Fix round 1」）。
+- controller 依兩項最終 review 補充：
+  - F4a：
+    - plan 要求的物化失敗、ledger IO 失敗 mixin，所讀取的靜態 hook 一律做成 `M5TestHooks.Slot`，並經 `installHook` 安裝。規則已寫入 README（quality re-review Minor 2）。
+    - 依賴 `collapseFlowNeverWarned` 檢查權威寫入故障的 test，要等 `CollapseAuthorities` 的 7 則 log 補上 marker 之後才可信（quality re-review Minor 1）。
+  - F6：
+    - `build.yml` 的明列清單要加上 `harness_hook_slots_fail_fast_and_leave_no_residue`（跨平台，default run；spec re-review m-1）。
+    - 小幅重複（quality re-review Minor 3）：
+      - 讀取 `TestContext.test` 的反射有兩份：`M5GameTestSupport.gameTestState`、`M5U.scheduledCount`。可考慮改成 accessor mixin。
+      - JUnit 的 log4j appender 有三份：`CollapseServiceTest`、`CollapseAuthoritiesTest`、`SessionRecoverySchema4Test`。
 
 ### Fix round 1（`b333feb`、`a8863de`、`bab3474`、`d5a372e`；README `5bd9844`）
 
@@ -3013,6 +3028,6 @@ Gate 與證據：逐輪的 state、摘要與 log 統計在 `.superpowers/sdd/202
 5. **Q2 多做兩個 mutation**：派工沒有要求 Q2 的 RED。為了證明新的寫法可以在 callback 裡呼叫、舊的寫法不會報錯，加跑 FIX1-Q2-LATE-CALL 與它的對照。
 6. **spec m-3 的「6 份 mutation」**：核對 state 檔時發現 GREEN M5 的工作樹也有同一份 README，一併寫明。
 
-需要裁示：
-1. `CollapseAuthorities` 的例外清單是否接受；或在 F4a（它會碰到 SEALED 與權威的收斂）把這 7 則也改帶 marker、刪掉清單。
-2. plan 要 F4a 修改的 `UniverseLifecycleService` 在 universe package，不在守門範圍。F4a 若在那裡記錄塌縮流程相關的 WARN，witness 看不到；是否在 F4a 擴充守門的範圍。
+裁示（controller，2026-10-02，原「需要裁示」）：
+1. `CollapseAuthorities` 的例外清單：本輪接受；**F4a** 把這 7 則改成帶 marker（只改 log，不改行為），並刪除 `LEGACY` 清單與 `CollapseLogMarkerGuardTest` 中相關的 Javadoc（`:28-30`）。之後不再新增例外。理由：F4a 的 RESOLVE 會大量經過 `CollapseAuthorities`。在補上 marker 之前，權威寫入未確認的 WARN 不會被 `collapseFlowNeverWarned` 看到。
+2. 守門範圍維持只掃 collapse package。F4a 的設計準則：`UniverseLifecycleService` 的新 API（`materializeAllocated`／`resolveActive`）只回傳結果，不記塌縮流程的 WARN；塌縮流程的 WARN 一律在 collapse package（`DestinationResolver`／`CollapseService`）帶 marker 記錄。M3 既有的 log 不動。
