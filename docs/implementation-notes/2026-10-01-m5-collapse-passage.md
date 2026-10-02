@@ -2494,6 +2494,13 @@ nested harness 本身改過兩次（下表的 v1、v2、v3），每次都重跑�
 - 範圍是 plan Task F3d：第一次在 production 提交 COLLAPSING。返還、清理、RESOLVE stub、WAITING 期間的門都是一般狀態，不攔截（F4b）；RESOLVE 只有 stub（F4a）；PREPARE 只有 SOURCE 的 fast path（UNIVERSE 的 PREPARE 屬 F4b）。
 - 行號以 `93df897` 為準。`CS` 指 `collapse/CollapseService.java`，`CP` 指 `collapse/CollapsePhase.java`，`SSM`、`SRM`、`CPM`、`CRP`、`CDI` 指 `SuperpositionSessionManager`、`SessionRecoveryManager`、`CorridorPageManager`、`ChamberReturnPlacement`、`CandidateDoorInteraction`；testmod 的 `M5C`、`M5U`、`M4C`、`M4A`、`MIX` 指 `M5CollapseGameTests`、`M5UniverseGameTests`、`M4CandidateDoorGameTests`、`M4CandidateTestAccess`、`mixin/CollapseSuspendMixin`；JUnit 的 `CST` 指 `CollapseServiceTest`。測試欄的 G-* 見「測試」。
 - Review：spec review ❌ I1／m5 → fix round 1（見本節最後的「Fix round 1」）；spec re-review ✅（Minor 2）、quality review Not approved（Important 1、Minor 7）→ fix round 2（見「Fix round 2」）；spec re-review（fix round 2）❌（Important 1、Minor 3）→ fix round 3（見「Fix round 3」）。最終結果由 controller 補。本節其餘內容描述 `93df897`，fix round 1 改過的地方另加註。
+- 最終 review：
+  - fix round 3（`08dd4d7`）的 spec re-review ✅（Critical 0、Important 0、Minor 0）。
+  - fix round 2＋3（`b82b2cf..56a766e`）的 quality re-review Approved（Critical 0、Important 0、Minor 4，全部交給 F4a，見「交給後續」）。
+  - 兩項需要裁示的事項，使用者 2026-10-02 確認維持：「量子態塌縮。」顯示兩次；live 提交的時點。
+  - **F3d 完成**：range `438c306..56a766e`。
+    - code：`cc936d0`、`33624ad`、`93df897`、`186b8f7`、`fa9e39d`、`8f3d76c`、`08dd4d7`。
+    - 最終 run-all：`run-all-b5b2bf9b30fc49e5980973ea708490c2`，`END ALL exit=0`（`08dd4d7`）。
 
 ### plan Step 1 逐項對照
 
@@ -2659,6 +2666,15 @@ mutation（GameTest 都用 `-Mode GameTest` 加 onlyBatches，M-RESOLVEWARN 用 
     - §7 :332：改為「roll-forward 尚未確認時，由 recovery tick 以 journal 為單位帶退避，重試同一份 current；塌縮流程與走廊清理暫停」（fix round 2 的 A2：`SRM:192` `recoveryWork`、`CS:325`、`CPM:912`）。
     - §13.2 :758 的 SRM 列：註明 PASSAGE_READY 與 SEALED 在 roll-forward 待確認時，會重新寫出同一份 current（RETRY_FLUSH），這不是新的進度寫入。
 - （fix round 3）之後新增「靠 journal 的 flush 探針計數、而且跨越 200 ticks 退避」的 GameTest，比照 G-SEAL、G-RFB 先以 `afterAutosaveClear` 等出沒有原生 autosave 的窗口，確認時以 `AutosaveWindow.untouched` 斷言期間沒有 autosave（見「Fix round 3」）；F4a 抽出 `M5GameTestSupport` 時一併搬過去。G-SEAL 的 `collapseFlowNeverWarned` 以 CollapseService 的 WARN 用語比對（「目的地解析尚未實作」、「塌縮流程」、「終局之後原艙門」）：F4a 以真正的 RESOLVE 取代 stub 時，新增的 WARN 要沿用 `warn()` 的「塌縮流程的…」前綴，或同步更新這個 helper。
+- F4a（quality re-review 的 Minor 4 項，與抽出 `M5GameTestSupport` 放在同一個開工 step）：
+  - m-1：`AutosaveWindow.untouched` 只偵測原生 autosave。另一條路也會繞過 flush 探針直接寫出 journal：`ChunkSaveCheckpoint.save`（`:50`）→ `server.save` → `PersistentStateManager.save` → `SessionRecoveryState.save(File,…)`。保留式清理的 checkpoint、F4b 的投影都會走這條路；前一個 batch 殘留 session 的 flush 也會被探針計數。
+    - 建議一：用 testmod mixin 統計 `SessionRecoveryState.save(File,…)` 的所有寫出，斷言窗口內每一次都經過探針。
+    - 建議二：改成「autosave 剛發生後立即開始」。
+    - 上方「之後新增…比照 G-SEAL、G-RFB」那條建議，依此一併更新。
+  - m-2：`collapseFlowNeverWarned` 以字串比對，失效時只會默默變寬鬆。三種情況會漏：stub 移除之後、新的 WARN 沒有用該前綴、`tickWarning` 不含 sid。建議 `CollapseService` 的 log 帶 SLF4J Marker（或用專屬 logger），witness 改為「此 sid 沒有任何帶塌縮 marker 的 WARN 或 ERROR」。
+  - m-3：`DoorStep.warn` 由 JUnit 驗證，但 `applyDoor`（`CS:526-535`）沒有讀它，等價只靠兩邊都呼叫 `newWarning` 維持。改為由 `applyDoor` 依 `step.warn()` 決定是否記錄，或拿掉這個欄位。
+  - m-4：G-SEAL 在確認那一個 tick，塌縮流程會看到沒掛 hook 的 flushed SEALED（PROJECTION_FAILED），要到下一個 callback 才收尾。F4a 實作 SEALED 重試時，探針在放行第 4 次寫出時順手 `suspendCollapse(sid)`，或確認邊緣觸發不會成立。
+  - （fix round 3 spec re-review 的觀察）H2（`m5_h2_checkpoint_scope`）若有 autosave 落在兩次 checkpoint 之間，約有 1% 的機率多出一則原生 ERROR 或 WARN，斷言不受影響。比對 Full gate 的 log 數字時，可以先從這裡查。
 - F4a 之後、有允許修改 mixin 的 task 時（fix round 2，quality m-6(d)）：把 `m5FlushProbe` 與 collapse-suspended 的靜態集合，從 `M4CandidateDoorGameTests` 移到 M5 專用的 hook 類別。
 - `TerminalOrigin.preparing`（`SessionRecoveryState.java:385`）是 RETURN_PLAYERS／RELEASE_GEOMETRY 判斷的第三份副本（fix round 2 的 B6 只收斂了 `CollapsePhase`），留給之後允許修改 `SessionRecoveryState` 的 task。
 - milestone 的 required manual smoke（fix round 1 的 m-3）：
