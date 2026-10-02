@@ -51,6 +51,9 @@ import org.slf4j.LoggerFactory;
  * <ul>
  * <li>只讀 spec §6 的 collapse view（flushed，加上 roll-forward 尚未確認的例外）；每次 journal 寫入前都要求該 session 的 current 恰等於 flushed。
  *     roll-forward 尚未確認時只收斂：同一份 current 的寫出由 recovery 的 RETRY_FLUSH 以 journal 為單位退避重試，這裡對該 session 全部暫停。</li>
+ * <li>operation guard（spec §7）：走廊操作進行中的 session 一律略過。live 的提交仍有走廊 space，寫入包在
+ *     {@code CorridorPageManager.exclusiveOperation} 之內；DORMANT 續行、終局與取消都在 space 釋放之後（PASSAGE_READY 沒有 space），
+ *     沒有 guard 可取，在 server thread 上同步寫入。</li>
  * <li>提交（§7.1）：live 在選門之後的第一次 tick 提交，不要求供電；DORMANT 只在邊緣觸發（原參與者由艙外進入艙內，或開服之後第一次觀察到
  *     原參與者在艙內）而且來源艙已載入、結構合法、已供電、Origin enabled、不在退避期內時提交。「已供電」一律是 Controller 的即時紅石輸入。
  *     提交失敗：live 請求 M4 的保留式 recovery 作為 fallback；兩者都以 session 為單位退避（200→12000 ticks，新 instance 沒有退避）。</li>
@@ -261,11 +264,16 @@ public final class CollapseService {
     private void commit(SessionRecoveryRecord record, Track track, boolean dormant) {
         var sid = record.sessionUuid();
         var next = record.withCollapse(SessionState.COLLAPSING, CollapseFields.committed(server.getOverworld().getTime(), destination(record)));
-        var result = journal.commitRestore(server, record, next);
+        // spec §7：journal 的變更在這個 session 的 operation guard 之內。live（非 DORMANT）的 MEASURED 一定還有走廊 space：未 released 的
+        // MEASURED 在 attach 時重建 space，執行期間的 space 要到 release 完成才移除；step 開頭已確認 guard 閒置。DORMANT 續行時 space 已釋放、
+        // 沒有 guard 可取，維持「guard 忙就略過（step 開頭）＋同步寫入」。
+        var result = dormant ? journal.commitRestore(server, record, next)
+                : pages.exclusiveOperation(sid, () -> journal.commitRestore(server, record, next));
         if (!result.committed()) {
             warn(sid, "提交 MEASURED→COLLAPSING", result.failure().orElseThrow(), result.status().name());
             track.backoff.failed(now);
             // §7.1：live 的提交失敗以 M4 的保留式 recovery 為 fallback（玩家返還，session 變成 DORMANT）；DORMANT 維持原狀。
+            // requestMeasuredRecovery 要求沒有進行中的操作，所以在上面的 guard 釋放之後才呼叫。
             if (!dormant && !pages.measuredRecoveryRequested(sid)) pages.requestMeasuredRecovery(sid);
             return;
         }

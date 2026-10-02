@@ -1,6 +1,7 @@
 package dev.quantumchamber.gametest;
 
 import com.sun.jna.Platform;
+import dev.quantumchamber.candidate.CandidateLedgerService;
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberCell;
 import dev.quantumchamber.chamber.ChamberMaintenanceInteraction;
@@ -21,6 +22,7 @@ import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
+import dev.quantumchamber.superposition.SuperpositionSessionManager;
 import dev.quantumchamber.superposition.SuperpositionWorld;
 import dev.quantumchamber.transfer.ChamberReturnPlacement;
 import dev.quantumchamber.universe.DimensionRole;
@@ -259,7 +261,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
 
     /**
      * F3d（spec §7.1、§7.3、§7.4、§5 終局、H4、R2 M6）：兩位玩家真入場、選一扇 SOURCE 門。選門的同一個 tick 仍是 MEASURED，下一個 tick 已是
-     * checked COLLAPSING（Destination=SOURCE），兩人都收到「量子態塌縮。」；未返還的兩人被凍結，同一個 tick 各自收到一則位置修正（節流以玩家
+     * checked COLLAPSING（Destination=SOURCE；提交的寫出持有這個 session 的 operation guard，spec §7），兩人都收到「量子態塌縮。」；未返還的兩人被凍結，同一個 tick 各自收到一則位置修正（節流以玩家
      * 為單位）。第一位玩家的預設返還 slot 放了一塊石頭：返還落點避開它，兩人都完整在艙內、不與方塊碰撞。返還與清理完成之後走 SOURCE fast
      * path：record checked 移除、25 格門是一般開門、記一則 INFO、presence 回 NONE、runtime 與來源 ticket 已釋放、catalog 不變；關上門之後，
      * 同一座艙立即開始新的 session。
@@ -278,8 +280,17 @@ public final class M5CollapseGameTests implements FabricGameTest {
             LogCapture capture;
             BlockPos stone; Vec3d blockedSlot;
             ActionResult selected; SessionRecoveryRecord measured;
+            // spec §7（:330）：live 的提交寫出時持有這個 session 的 operation guard。探針在 MEASURED→COLLAPSING 那次 journal 寫出的開頭記下 guard。
+            var guardAtCommit = new ArrayList<Boolean>();
+            java.util.function.Consumer<SessionRecoveryState> commitProbe = state -> {
+                var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+                if (staged != null && durable != null && staged.state() == SessionState.COLLAPSING && durable.state() == SessionState.MEASURED)
+                    guardAtCommit.add(fixture.pages.operationInProgress(sid));
+            };
             try {
                 capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+                M4CandidateDoorGameTests.m5FlushProbe = commitProbe;
+                hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == commitProbe) M4CandidateDoorGameTests.m5FlushProbe = null; });
                 // R2 M6：第一位玩家的預設返還 slot（原本的地板配置）放一塊石頭。
                 var sources = new LinkedHashMap<UUID, Vec3d>();
                 before.participants().forEach(person -> sources.put(person.playerUuid(), person.sourcePosition()));
@@ -301,6 +312,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                         && collapsing.collapse().destination() instanceof CollapseDestination.Source
                         && collapsing.candidateSelection().equals(measured.candidateSelection())
                         && collapsing.candidateLedger().equals(measured.candidateLedger()));
+                witness.put("commitInsideOperationGuard", guardAtCommit.equals(List.of(true)));
                 for (var connection : fixture.players)
                     witness.put(label(connection) + ".collapsedMessage", overlayKeys(connection).contains(COLLAPSED_KEY));
                 // H4（交給 F3d）：同一個 tick 兩位未返還者各自收到一則位置修正。
@@ -435,7 +447,8 @@ public final class M5CollapseGameTests implements FabricGameTest {
     /**
      * F3d（spec §2、§3 詮釋 3、§12、Review Focus 7）：兩位玩家選 SOURCE 門，第二位在選門的同一個 tick 斷線。塌縮照常提交，第一位返還；
      * 第二位未返還，走廊不消失、塌縮停在 RETURN_PLAYERS。已返還的第一位可以開關原艙門，塌縮不結束；他的 Buff 被移除也不丟例外、不記 ERROR。
-     * 第二位重新連線之後，在 JOIN 的下一個 tick 返還，清理完成後走 SOURCE fast path。
+     * 第二位重新連線之後，在 JOIN 的下一個 tick 返還（以 journal 寫出的探針記下他的返還寫出所在的 server tick，必須恰為 JOIN 的 tick＋1），
+     * 清理完成後走 SOURCE fast path。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_offline_rejoin", tickLimit = 100000)
     public void native_offline_participant_rejoins_and_returns_while_the_collapse_holds_windows(TestContext context) {
@@ -478,6 +491,14 @@ public final class M5CollapseGameTests implements FabricGameTest {
                                 && capture.matching(org.apache.logging.log4j.Level.WARN, "session 協調失敗").isEmpty());
                         witness.put("buffLapseKeepsCollapse", record.equals(journal.flushedRecords().get(sid)));
                         context.assertTrue(!witness.containsValue(false), "離線參與者未返還期間：" + witness);
+                        // spec §12 COLLAPSING 列：重新連線的人在 JOIN 的下一個 tick 返還。探針在 journal 寫出的開頭記下他的返還第一次寫出的 tick。
+                        int[] returnTick = {-1};
+                        java.util.function.Consumer<SessionRecoveryState> returnProbe = state -> {
+                            if (returnTick[0] < 0 && returned(state.records().get(sid), absent) && !returned(state.flushedRecords().get(sid), absent))
+                                returnTick[0] = server.getTicks();
+                        };
+                        M4CandidateDoorGameTests.m5FlushProbe = returnProbe;
+                        hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == returnProbe) M4CandidateDoorGameTests.m5FlushProbe = null; });
                         rejoined[0] = new ConnectedGameTestPlayer(world, profile);
                         int joined = rejoined[0].joinTick();
                         whenTicks(context, onlineBack + 7, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
@@ -485,11 +506,11 @@ public final class M5CollapseGameTests implements FabricGameTest {
                             var back = rejoined[0].player();
                             after.put("rejoinedReturnedInside", back.getServerWorld() == world
                                     && ChamberOccupantService.contains(ChamberGeometry.interiorBox(fixture.frame), back.getBoundingBox()));
-                            after.put("returnedAfterJoin", joined >= 0);
+                            after.put("returnedOnTheTickAfterJoin", joined >= 0 && returnTick[0] == joined + 1);
                             after.put("doorPlainOpen", doorAll(world, fixture.frame, true, MembraneState.NONE));
                             after.put("oneSourceInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "SOURCE 塌縮完成", sid.toString()).size() == 1);
                             after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
-                            context.assertTrue(!after.containsValue(false), "重新連線之後：" + after);
+                            context.assertTrue(!after.containsValue(false), "重新連線之後：" + after + " joinTick=" + joined + " returnTick=" + returnTick[0]);
                             tearingDown[0] = true;
                             hooks.release();
                             fixture.players.add(rejoined[0]);
@@ -503,8 +524,10 @@ public final class M5CollapseGameTests implements FabricGameTest {
 
     /**
      * F3d（spec §5 的唯一性規則）：玩家 P 是塌縮 fixture A 的已返還參與者（A 還有一位未返還、離線的參與者），也是 SEALED fixture A′ 的已返還
-     * 參與者；兩者都不佔用 P，所以 P 可以在真的原艙開始 session B。P 斷線時，依玩家查找只找到 B：B 確實寫成 checked RETURNING，A 與 A′
-     * 都沒被改寫。P 重新連線後返還，B 完成收尾；A、A′ 以終局 API 移除。
+     * 參與者；兩者都不佔用 P，所以 P 可以在真的原艙開始 session B。P 斷線之後 B 寫成 checked RETURNING（主要經 SSM 的 cohort 檢查失敗走
+     * {@code fail}），A 與 A′ 都沒被改寫（塌縮狀態的 record 本來就不經斷線的 {@code markReturning} 寫入）。P 重新連線後返還，B 完成收尾；
+     * A、A′ 以終局 API 移除。本 test 只斷言這個整體結果；「依玩家查找只找到佔用他的 session」的直接斷言在 F3a 的
+     * {@code collapse_states_attach_without_returning_and_lookup_only_occupying_sessions}。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_returned_elsewhere", tickLimit = 100000)
     public void native_returned_participant_starts_elsewhere_and_only_the_active_session_returns_him_windows(TestContext context) {
@@ -944,6 +967,118 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     M4PerTestUniverseProbe.complete(context);
                 }, () -> "Nether 的 DORMANT SOURCE 收據沒有完成：record=" + state(journal, dormant), hooks);
             }, () -> "Nether 原艙斷電之後沒有收尾：record=" + state(journal, sid), hooks);
+        }, () -> "Nether 原艙沒有入場：record=" + Optional.ofNullable(chamberRecord(journal, nether, frame)).map(value -> value.state().name()).orElse("ABSENT"),
+                hooks);
+    }
+
+    /**
+     * F3d fix round 1（spec §11.3 第 1、2 步）：Nether 原艙上真入場的 live session，繞過側門互動、在 operation guard 內直接經 ledger 選一扇 NEW 門，
+     * 製造非 DORMANT 的 Nether MEASURED NEW（M4 時期留下的收據就是這個形狀）。塌縮流程不提交 COLLAPSING：選門的下一個 tick 仍是 MEASURED、
+     * 已請求 M4 的保留式 recovery、記一則 INFO。玩家照 M4 返還回 Nether 原艙、走廊清理完成、checked 寫成 DORMANT；之後以
+     * UNSUPPORTED_SOURCE_CANCEL 取消，記 INFO「不支援的來源維度，已安全取消」，presence 回 NONE、runtime 與來源 ticket 已釋放。從頭到尾沒有
+     * 任何一次寫出 COLLAPSING，也沒有「量子態塌縮。」。catalog 不變由 per-test receipt 與 default run 的 boundary oracle 核對。
+     * 只覆蓋 NEW：EXISTING 候選要 discovery 裡已有宇宙，default run 的世界沒有；建立它會改變 discovery 與 catalog。判斷本身對 NEW 與 EXISTING
+     * 相同（{@code CollapseService.unsupportedSource}，JUnit 逐一覆蓋 3 種 role × 3 種候選）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_nether_live_cancel", tickLimit = 100000)
+    public void nether_live_new_selection_recovers_to_dormant_then_cancels_windows(TestContext context) {
+        if(!Platform.isWindows()) { context.complete(); return; }
+        M4PerTestUniverseProbe.begin(context,"nether_live_new_selection_recovers_to_dormant_then_cancels_windows");
+        var server = context.getWorld().getServer(); var nether = server.getWorld(World.NETHER);
+        var journal = SessionRecoveryState.get(server); var pages = CorridorPageManager.forServer(server);
+        var target = server.getWorld(SuperpositionWorld.KEY);
+        // 與 G-NETHER 的原艙不同 chunk（每次 gate 都是 fresh 世界，但同一個 run 裡兩個 test 都會留下已註冊的 Nether 原艙）。
+        var frame = new ChamberFrame(new BlockPos(24200, 100, 24008), Direction.NORTH);
+        var power = frame.controllerPos().up();
+        var chunks = netherBunkerChunks(frame);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        ConnectedGameTestPlayer[] connection = {null};
+        hooks.add(() -> chunks.forEach(chunk -> nether.setChunkForced(chunk.x, chunk.z, false)));
+        hooks.add(() -> { if (connection[0] != null) connection[0].close(); });
+        hooks.add(() -> nether.setBlockState(power, Blocks.AIR.getDefaultState()));
+        LogCapture capture;
+        try {
+            chunks.forEach(chunk -> nether.setChunkForced(chunk.x, chunk.z, true));
+            buildNetherChamber(nether, frame);
+            connection[0] = new ConnectedGameTestPlayer(context.getWorld());
+            var player = connection[0].player();
+            var inside = ChamberSpaceCoordinates.position(frame, 3.5, 1, 3.5);
+            player.teleport(nether, inside.x, inside.y, inside.z, Set.of(), 0, 0);
+            player.setNoGravity(true); player.setVelocity(Vec3d.ZERO);
+            player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
+            capture = new LogCapture("quantumchamber"); hooks.add(capture::close);
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        var p = connection[0].player();
+        at(context, 2, hooks, () -> nether.setBlockState(power, Blocks.REDSTONE_BLOCK.getDefaultState()));
+        whenTicks(context, 3, 20000, () -> {
+            var record = chamberRecord(journal, nether, frame);
+            return record != null && record.state() == SessionState.SUPERPOSITION && pages.currentMappings(record.sessionUuid()).epoch() == 1
+                    && pages.selectableDoors(record.sessionUuid()).size() == 358;
+        }, ready -> {
+            var record = chamberRecord(journal, nether, frame); var sid = record.sessionUuid(); var chamber = record.chamberUuid();
+            // 每次 journal 寫出的開頭：這個 session 是否寫出過 COLLAPSING，以及第一次 checked 寫成 DORMANT 的 server tick。不得丟例外。
+            boolean[] wroteCollapsing = {false}; int[] dormantAt = {-1};
+            java.util.function.Consumer<SessionRecoveryState> probe = state -> {
+                var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+                if (staged == null) return;
+                if (staged.state() == SessionState.COLLAPSING) wroteCollapsing[0] = true;
+                boolean stagedDormant = staged.state() == SessionState.MEASURED && MeasuredRecoveryPhase.from(staged) == MeasuredRecoveryPhase.DORMANT;
+                boolean durableDormant = durable != null && durable.state() == SessionState.MEASURED
+                        && MeasuredRecoveryPhase.from(durable) == MeasuredRecoveryPhase.DORMANT;
+                if (dormantAt[0] < 0 && stagedDormant && !durableDormant) dormantAt[0] = server.getTicks();
+            };
+            M4CandidateDoorGameTests.m5FlushProbe = probe;
+            hooks.add(() -> { if (M4CandidateDoorGameTests.m5FlushProbe == probe) M4CandidateDoorGameTests.m5FlushProbe = null; });
+            overlayKeys(connection[0]);
+            // 繞過 CandidateDoorInteraction（它會拒絕 Nether 的新選擇），照它的 guard 與檢查直接經 ledger 選 NEW 門。
+            var door = candidateDoor(pages, target, sid, QuantumCandidate.New.class);
+            var location = pages.candidateDoor(target, door.cell()).orElseThrow();
+            var manager = (SuperpositionSessionManager) ChamberSessions.gateway();
+            var outcome = pages.exclusiveOperation(sid, () -> {
+                var selectable = pages.candidateSelectionRecord(location, p);
+                if (selectable.isEmpty() || !manager.candidateSourceAuthorized(server, selectable.get()))
+                    return CandidateLedgerService.SelectionOutcome.REJECTED;
+                var result = new CandidateLedgerService().trySelect(server, sid, location.key(), p.getUuid(), target.getTime());
+                if (result == CandidateLedgerService.SelectionOutcome.SELECTED) manager.candidateMeasured(server, sid);
+                return result;
+            });
+            var measured = journal.flushedRecords().get(sid);
+            var witness = new LinkedHashMap<String, Boolean>();
+            witness.put("netherSource", record.candidateContext().orElseThrow().sourceFamilyRef().role() == DimensionRole.NETHER);
+            witness.put("liveNewReceipt", outcome == CandidateLedgerService.SelectionOutcome.SELECTED && measured != null
+                    && measured.state() == SessionState.MEASURED && measured.selectedCandidate().orElse(null) instanceof QuantumCandidate.New
+                    && MeasuredRecoveryPhase.from(measured) != MeasuredRecoveryPhase.DORMANT);
+            witness.put("noRecoveryRequestedYet", !pages.measuredRecoveryRequested(sid));
+            context.assertTrue(!witness.containsValue(false), "Nether 的 live NEW 收據：" + witness + " outcome=" + outcome);
+            // 選門的 tick 結束時塌縮流程第一次看到它：不提交，請求 M4 的保留式 recovery。
+            at(context, ready + 1, hooks, () -> {
+                var now = journal.flushedRecords().get(sid);
+                witness.put("notCommittedNextTick", now != null && now.state() == SessionState.MEASURED && !wroteCollapsing[0]);
+                witness.put("retainedRecoveryRequested", pages.measuredRecoveryRequested(sid));
+                witness.put("oneNotCommittingInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "不支援的來源維度：不提交 COLLAPSING", sid.toString()).size() == 1);
+                context.assertTrue(!witness.containsValue(false), "Nether 的 live NEW 收據在選門的下一個 tick：" + witness + " record=" + state(journal, sid));
+                // 取消之後原艙仍供電、玩家回到艙內：沒有 Buff 就不會立刻開始新的 session，收尾單純。返還已由上面的請求驅動。
+                p.removeStatusEffect(ModEffects.QUANTUM_STATE);
+            });
+            whenTicks(context, ready + 2, 20000, () -> !journal.flushedRecords().containsKey(sid), gone -> {
+                var after = new LinkedHashMap<String, Boolean>();
+                after.put("neverWroteCollapsing", !wroteCollapsing[0]);
+                after.put("reachedDormantFirst", dormantAt[0] >= 0);
+                after.put("returnedToTheNetherChamber", p.getServerWorld() == nether
+                        && ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame), p.getBoundingBox()));
+                after.put("oneCancelInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "不支援的來源維度，已安全取消", sid.toString()).size() == 1);
+                after.put("noCommitInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "塌縮已提交", sid.toString()).isEmpty());
+                after.put("noCollapsedMessage", !overlayKeys(connection[0]).contains(COLLAPSED_KEY));
+                after.put("diskHasNoRecord", !M4CandidateTestAccess.diskRecords(server).containsKey(sid) && !journal.records().containsKey(sid));
+                after.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                after.put("runtimeAndTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                after.put("noWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).isEmpty()
+                        && capture.matching(org.apache.logging.log4j.Level.ERROR).isEmpty());
+                context.assertTrue(!after.containsValue(false), "Nether 的 live NEW 收據的取消：" + after + " dormantAt=" + dormantAt[0] + " gone=" + server.getTicks());
+                hooks.release();
+                M4PerTestUniverseProbe.complete(context);
+            }, () -> "Nether 的 live NEW 收據沒有被取消：record=" + state(journal, sid) + " requested=" + pages.measuredRecoveryRequested(sid)
+                    + " dormantAt=" + dormantAt[0], hooks);
         }, () -> "Nether 原艙沒有入場：record=" + Optional.ofNullable(chamberRecord(journal, nether, frame)).map(value -> value.state().name()).orElse("ABSENT"),
                 hooks);
     }
