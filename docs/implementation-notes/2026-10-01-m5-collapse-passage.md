@@ -3031,3 +3031,173 @@ Gate 與證據：逐輪的 state、摘要與 log 統計在 `.superpowers/sdd/202
 裁示（controller，2026-10-02，原「需要裁示」）：
 1. `CollapseAuthorities` 的例外清單：本輪接受；**F4a** 把這 7 則改成帶 marker（只改 log，不改行為），並刪除 `LEGACY` 清單與 `CollapseLogMarkerGuardTest` 中相關的 Javadoc（`:28-30`）。之後不再新增例外。理由：F4a 的 RESOLVE 會大量經過 `CollapseAuthorities`。在補上 marker 之前，權威寫入未確認的 WARN 不會被 `collapseFlowNeverWarned` 看到。
 2. 守門範圍維持只掃 collapse package。F4a 的設計準則：`UniverseLifecycleService` 的新 API（`materializeAllocated`／`resolveActive`）只回傳結果，不記塌縮流程的 WARN；塌縮流程的 WARN 一律在 collapse package（`DestinationResolver`／`CollapseService`）帶 marker 記錄。M3 既有的 log 不動。
+
+## F4a：RESOLVE（lifecycle 物化、EXISTING 重驗、NEW 配置）與 SEALED
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `4bb07b3` `refactor: tag the M5 authority logs with the collapse marker and widen the recovery pending warning`（parent `e4e1b2f`）：補充第 8、9 點。production `collapse/CollapseAuthorities.java`（7 則 log 加 marker、class Javadoc）、`persistence/SessionRecoveryManager.java`（只有 WARN 文字）；JUnit `CollapseLogMarkerGuardTest.java`（刪除 `LEGACY`）；testmod `M4CandidateDoorGameTests.java`、`M5CollapseGameTests.java`（各一處斷言改成新文字）；`scripts/verification/README.md`（刪除例外說明）。
+  - `458c297` `feat: let the universe lifecycle materialize and resolve allocated universes at runtime`（parent `4bb07b3`）：補充第 1 點，只有 `universe/UniverseLifecycleService.java`。
+  - `04c7fea` `feat: resolve collapse destinations through the ledger, catalog, lifecycle and discovery`（parent `458c297`）：補充第 2–4 點。新增 `collapse/DestinationResolver.java`、`collapse/ResolveResult.java`、JUnit `DestinationResolverTest.java`。
+  - `c825a49` `feat: run RESOLVE from the collapse service and enter and retry SEALED`（parent `04c7fea`）：補充第 5–7、10、12、13 點。production `collapse/CollapseService.java`、兩個語言檔（「進入 SEALED」）；JUnit `CollapseServiceTest.java`；testmod `M5UniverseGameTests.java`（G-RES 改寫成三個 test）、`M5GameTestSupport.java`（`existingReceipt`、`overlayKeys`）、`M5CollapseGameTests.java`（只有 G-SEAL 的探針與一個 witness）。
+  - `64ffaf9` `test: take the ineligible EXISTING authority snapshot after the receipt is written`（parent `c825a49`）：只有 `M5UniverseGameTests.java` 的 G-INELIGIBLE（見「Gate 與證據」的 D-FRESH）。
+  - `46946c0` `test: inject materialize and checked read faults into the universe GameTests`（parent `64ffaf9`）：補充第 11 點。testmod 新增 `mixin/MaterializeFaultMixin.java`、`mixin/CheckedNbtFileReadFaultMixin.java`，修改 `quantumchamber-test.mixins.json`（只登記這兩個）、`M5TestHooks.java`、`M5GameTestSupport.java`、`M5UniverseGameTests.java`（三個故障注入 test）；`scripts/verification/README.md`（新 helper 的用法）。
+  - 本段由其後的 docs commit 加入。
+- Code range `e4e1b2f..46946c0`。沒有改 `SuperpositionSessionManager.java`（`releaseOnSealed`、`acquireCollapseTicket` 已足夠）、`SessionRecoveryState.java`、`ChamberDoorService`、`UniverseRegistryState`、`gates.ps1`、`build.gradle`、`.github/`。
+- 範圍是 plan Task F4a：UNIVERSE 目的地的 RESOLVE、進入 SEALED 與 SEALED 的重試。RESOLVE 完成之後，F4b 之前停在 WAITING（PREPARE stub）；不預載、不投影、不寫 projection ledger、不攔截門（F4b），沒有通道（F5）。
+- 行號以 `46946c0` 為準（production 自 `c825a49` 起沒有變）。`DR` 指 `collapse/DestinationResolver.java`，`RR` 指 `collapse/ResolveResult.java`，`ULS` 指 `universe/UniverseLifecycleService.java`，`CA` 指 `collapse/CollapseAuthorities.java`，`DRT` 指 `DestinationResolverTest`，`GT` 指 `CollapseLogMarkerGuardTest`，`MFM`、`CRM` 指兩個新的 mixin；`CS`、`CST`、`SRM`、`M5C`、`M5U`、`M4C`、`SUP`、`HK` 同前面各節。
+- Review：待 spec review 與 quality review（結果由 controller 補）。
+
+### plan Step 1 逐項對照
+
+| plan Step 1 | 程式位置 | 測試 |
+| --- | --- | --- |
+| EXISTING：fixture 同時寫入一致的 allocation 與 projection ledger（spec §15）；重驗失敗 → `EXISTING_INELIGIBLE` | `DR:188` `resolveExisting`：§8.1 的條件依序是 discovery 有而且 `gameplayEligible`（`:193`、`:194`）、flushed catalog 有這筆而且是 `EAGER_ENABLED` 的 OVERWORLD（`:204`、`:205`，`catalogRecordMatches(EAGER_ONLY)`）、exact ACTIVE world（`:208`）、來源 role 是 OVERWORLD（`:209`）；任一不符 `:213` `ineligible`。只讀，不寫任何權威 | G-EXIST（`M5U:288`）：fixture 不是手寫的 ledger，而是先以 DORMANT NEW 收據 D1 經真的 RESOLVE 建立宇宙 U（allocation entry、catalog、ACTIVE world、discovery 都一致；projection ledger 沒有 entry，屬 spec §15「不會觸發 §6 遺失判定的資料」），終局 D1 之後寫入選中 EXISTING U 的 D2；`authoritiesUnchanged`（三個權威檔的 bytes）、`sameWorldInstance`。G-INELIGIBLE（`M5U:342`，discovery 沒有這個 UniverseId）。DRT `existingRevalidatesWithoutWritingAnyAuthority`（`:352`）、`existingIneligibleForEachRevalidationCondition`（`:365`，6 列：discovery 沒有、`gameplayEligible=false`、catalog 沒有、`DISABLED`、沒有 ACTIVE world、來源 NETHER） |
+| NEW：ledger → catalog → 物化 → discovery，catalog 恰好加 1；RESOLVE 不受斷電影響 | `DR:114` `resolveNew`：每一步之前 `convergeIfNeeded` 該權威（`:116`、`:125`、`:142`）；`:117` ledger、`:126` catalog、`:135` lifecycle、`:143` discovery。CS 的 RESOLVE 不看閘門（`CS:386-387`，見補充第 2 點） | G-NEW（`M5U:222`）：RESOLVE 之前斷電，`resolvedWithoutPower`、`oneAllocationEntry`、`catalogEagerEnabled`、`worldActive`、`discoveredByP`、`oneResolvedInfo`；catalog 增量 1（M5 oracle）。DRT `newResolvesLedgerCatalogWorldAndDiscoveryInOrderAndIsIdempotent`（`:69`，順序、game time、第二次呼叫不再寫入） |
+| 注入物化失敗 → `DISABLED`＋SEALED(`MATERIALIZE_FAILED`)、同 server instance 不重試、門可開、來源 ticket 已釋放 | `DR:173` `materializeFailed`；`ULS:150`（同一 instance 失敗過的 descriptor 直接 `FAILED_BEFORE`）；`CS:521` `sealedRetry`（restart-only、本 instance 封存的不重試，`CS:477`） | G-MATFAIL（`M5U:414`）：`catalogDisabledAndWritten`、`noWorld`、`doorClosedOnSeal`、`doorOpensAgain`、`ticketReleased`、`noRetryThisInstance`（退避期過後再由艙外進入）、`lifecycleRefusesTheFailedDescriptor`。DRT `materializeFailureDisablesTheRecordAndSealsMaterializeFailed`（`:173`） |
+| §8.3 的兩個方向：`DISABLED` 落盤失敗 → roll-forward；改回 `EAGER_ENABLED` 的寫入失敗 → restore | roll-forward：`DR:176-182`（M3 的 save 保留 current 的 `DISABLED` 與 dirty；記 ERROR，照樣 `MATERIALIZE_FAILED`）。restore：`DR:152` `reenable`（`:163-164` current 改回 `DISABLED`、維持 dirty、不物化） | DRT `disablingWriteFailureRollsForwardKeepsDisabledAndLogsOneError`（`:190`，atomic move 之前失敗與之後讀回失敗兩種）、`reenableWriteFailureRestoresDisabledAndDoesNotMaterialize`（`:243`）；另有 `materializeRetryReenablesThenMaterializesAndOnlyTheRetryAcceptsDisabled`（`:223`）、`materializeRetryThatFailsAgainDisablesAgain`（`:270`） |
+| 注入 IO → `AUTHORITY_UNREADABLE`／`ALLOCATION_IO_FAILED`；`ALLOCATION_IO_FAILED` 經邊緣觸發＋退避重試成功，而且沒有第二個宇宙 | 原因直接採用權威結果帶的 SEALED 原因（`DR:220` `failed`）；重試 `CS:527` `sealed`、`:550` `retrySealed`；重試後的 RESOLVE 先收斂 ledger（`DR:116`） | G-ALLOCIO（`M5U:485`）：allocation 正式檔的讀回失敗一次 → SEALED(`ALLOCATION_IO_FAILED`)；退避期內的進入不重試（`noRetryWithinTheBackoff`）；退避期過後的進入重試成功（`retriedOnce`、`ledgerConvergedFirst`、`stillOneAllocationEntry`、`oneUniverse`）。G-UNREADABLE（`M5U:552`）：discovery 讀檔的 IO 例外 → SEALED(`AUTHORITY_UNREADABLE`)、本 instance 不重試。DRT `allocationReadbackFailureSealsAllocationIoFailedAndRetryConvergesToOneUniverse`（`:113`）、`discoveryFailuresMapToTheirAuthorityReasons`（`:298`）、`existingDiscoveryReadFailuresAreAuthorityReasons`（`:411`）、`initializationFailureSealsEveryUniverseDestinationWithTheInitializationReason`（`:319`） |
+| orphan storage → `AUTHORITY_CORRUPT`；catalog dirty 時等待、不進 SEALED | orphan 由 `CA:619-622` 判定，`DR:128` 採用；catalog 的 `WAIT`：`DR:127` → `CS:427` `waiting`（不 SEALED，連續等待超過 600 ticks 記一次 WARN，`CS:436`） | DRT `orphanStorageIsCorruptAndNothingIsMaterialized`（`:157`）、`catalogWithUnconfirmedWritesWaitsWithoutSealing`（`:136`）、`existingWaitsWhileDiscoveryOrCatalogIsUnconfirmed`（`:391`）；CST `resolveWaitWarnsOnceAfterSixHundredTicks`（`:284`）。orphan 與 catalog dirty 沒有 GameTest（理由見「偏離」第 6 條） |
+
+### controller 補充第 1–14 點
+
+- **第 1 點（lifecycle API）**：`ULS:126` `materializeAllocated`、`:179` `resolveActive`，都只能在 server thread 呼叫（`:197`），使用 Context 既有的 backend（`context.backend`）與 runtime registry，不另外 new backend。
+  - 前提不符時不呼叫 backend：沒有 ready 的 context → `NOT_READY`（`:130`）；flushed catalog 沒有這筆、current 與 flushed 不同、不是 `EAGER_ENABLED`、沒有 exact catalog role 的 OVERWORLD descriptor → `NOT_ELIGIBLE`（`:136-147`）。已經 ACTIVE → `ALREADY_ACTIVE`（同一個 world instance）。
+  - 同一個 instance 內失敗過的 descriptor 直接拒絕：Context 的 `failedDescriptors`（`:470`），`:150` 回 `FAILED_BEFORE`。runtime registry 本來就不允許原地重試，這一層讓 `REJECTED` 等沒有留下 receipt 的失敗也一樣拒絕。
+  - 失敗記入 Context 的 materialize failures（`:158`、`:169`）：與 bootstrap 一致，停服驗證據此核對 rollback 收據。`REJECTED` 在建立 runtime owner 之前就拒絕，不記入（記入的話停服驗證會把它當成沒有安全 close 證據的失敗）。`Error` 記入之後照舊往外丟。
+  - 兩個 API 都不記 log；結果是 `ULS:207` `MaterializeOutcome`（只有成功帶 exact world，只有 `FAILED` 帶 backend status）。M3 的 log 與行為不變：`-Mode M3`（M3-B）PASS 4＋5。
+- **第 2 點（RESOLVE）**：`DR:97` `resolve(view, materializeRetry)` 回 `RR`（`Resolved`／`Wait(reason)`／`Sealed(reason, failure)`，`Sealed` 不接受 TRR）。前提不符（不是 COLLAPSING＋UNIVERSE、有人未返還、有 lease、SOURCE）丟 `IllegalArgumentException`（DRT `resolveOnlyAcceptsSettledUniverseCollapses`）。CS 以 `CS:404` `resolve` 取代 F3d 的 stub。
+  - EXISTING 依 §8.1（上表第 1 列）。discovery 或 catalog 未確認時回 `Wait`（`DR:191`、`:202`），不判 `EXISTING_INELIGIBLE`。
+  - NEW 依 §8.2 的四步，每一步之前先 `convergeIfNeeded` 該權威。結果依 F2c 交接的分類：成功繼續；`WAIT` 等待；其餘採用權威結果帶的 SEALED 原因與 root cause（`DR:220`）。
+  - catalog 的 `WAIT`：`CS:427` 不進 SEALED，下一個 tick 再試；同一次等待超過 600 ticks 記一次 WARN（`CS:436` `waitWarning`，純函式），確定或封存時重設（`Track.endWait`）。
+  - discovery 的 game time 用 overworld（`DR:87`）：與提交 COLLAPSING 時的 `CommittedAtGameTime` 同一個時鐘（F3d `CS` 的提交）；discovery 是跨世界的權威，不跟著來源艙的維度走。DRT `newResolves…`（`:69`）斷言寫入的是注入的 game time（R-9）。
+  - RESOLVE 不需要供電、不看閘門：`CS:386-387` 以 `CollapsePhase.derive(view, measuredRecoveryComplete, track.resolved, …)` 推導，RESOLVE 階段只看收據、`measuredRecoveryComplete` 與本 instance 的 `resolved`；UNIVERSE 的閘門 supplier 恆為假（第 7 點）。G-NEW 在 RESOLVE 之前斷電（GM-5 證明鎖住）。
+  - Destination 與 ledger entry 的 UniverseId 不符 → `AUTHORITY_CORRUPT`（`DR:120-123`，DRT `newDestinationThatIsNotTheLedgerEntryIsCorrupt`）。
+- **第 3 點（提交時的 Destination）**：選 (b)，維持 F3d 的推導值，由 RESOLVE 偵測不符。理由見「偏離」第 1 條。`CollapseAuthorities` 沒有新增查詢。
+- **第 4 點（§8.3）**：上表第 3、4 列。`DISABLED` 的 checked 寫出失敗時記 ERROR（`DR:179`，帶 `LOG_MARKER` 與 `session=`），照樣 `MATERIALIZE_FAILED`。重啟後的重試由 CS 傳 `materializeRetry=true`：catalog 以 `MATERIALIZE_RETRY` 驗證（接受 `DISABLED`，`DR:126`），先 `reenable`（`DR:152`）改回 `EAGER_ENABLED` 再物化，仍失敗就 `materializeFailed` 再改回 `DISABLED`；`reenable` 的寫出失敗屬 restore。兩個方向的 RED 是 RED-C 的 `disablingWriteFailure…` 與 `reenableWriteFailure…`，mutation R-4、R-5、R-12。CS 何時傳 `materializeRetry`：SEALED(`MATERIALIZE_FAILED`) 的重試（`CS:561`），以及開服時就是 COLLAPSING 的 session 在本 instance 的第一次 RESOLVE（`CS:378`，見「偏離」第 4 條）。
+- **第 5 點（進入 SEALED）**：`CS:454` `seal`，順序：
+  1. journal 以 `commitRollForward`（C→S）寫入 SEALED(reason)（`CS:457`）。呼叫前 `collapsing` 已確認 collapse view 等於 current（`CS:369` 起），也就是 current＝flushed。寫出未確認（`ROLL_FORWARD_PENDING`）時依 collapse view 照樣生效，記 WARN，重試交給 SRM 的 RETRY_FLUSH（F3d A2）；CS 對 roll-forward 未確認的 session 只暫停。寫入在前置檢查就被拒（`REJECTED`，journal 沒有改變）時，下一個 tick 只重試這筆 SEALED 寫入，不重跑 RESOLVE（`Track.pendingSeal`，`CS:380-383`）。
+  2. 門：`CS:730` `queueDoor(…, CLOSE_ON_SEALED)` 經 F3d 的待套用門與 `applyTarget`（`CS:754`）。每次嘗試都重新看門口：25 格門的範圍內有任何 entity 的 bbox（`CS:780` `doorwayOccupied`、`:785` `doorwayBox`）時改為一般開門（`open=true`、`membrane=none`），否則關閉（`CS:775` `sealedDoor`）。session 已不是 SEALED（重試回到 COLLAPSING 或已終局）時不再套用。
+  3. 對參與者顯示 `message.quantumchamber.m5.sealed`（zh_tw「量子通道無法開啟，已封存。」，en_us「The quantum passage could not open and has been sealed.」）。
+  4. 刷新 Controller（`CS:714`）。
+  5. `releaseOnSealed` 釋放來源 ticket（`CS:482`，失敗時 WARN，不重試，停服時一併釋放）。
+  6. log（`CS:490` `sealedLog`）：可重試的原因 WARN（附重試方式），永久原因 ERROR「需要管理員處理」；依 (session, 原因, `FailureText.dedupeKey`) 去重，RESOLVE 成功時清除。
+- **第 6 點（SEALED 的重試）**：`CS:521` `sealedRetry` 依 `retryable()`／`restartOnly()` 分流（純函式，CST `sealedRetryFollowsTheReasonTable` 逐一列出 8 個原因）：
+  - 可重試、非 restart-only（`ALLOCATION_IO_FAILED`、`PROJECTION_FAILED`）：`EDGE_WITH_BACKOFF`。
+  - `MATERIALIZE_FAILED`、`AUTHORITY_UNREADABLE`：只對開服 attach 當下就在 journal 的 session、而且本 instance 還沒用掉那一次（`restartRetryConsumed`）時重試；本 instance 自己以這兩個原因封存的，`seal` 時就標為已用掉（`CS:477`）。
+  - 永久原因與 TRR：`NONE`。
+  - 觸發（`CS:527` `sealed`）：與 DORMANT 相同的 `EntryWatch`；開服 attach 當下就在 journal 的 session，第一次觀察到原參與者在艙內也算（§7.1、§12）。進入 SEALED 時重設 `EntryWatch`，封存時已在艙內的人不算觸發。觸發者必須沒有被其他 session 佔用、來源艙通過 `chamberGate`（已載入、結構合法、已供電、enabled）、而且在 per-session 退避期之外：可重試的原因封存時 `backoff.failed`（200→12000），開服之後第一次不受限（新 instance 的 Track 沒有退避）。
+  - 重試（`CS:550` `retrySealed`）：checked SEALED→COLLAPSING（`commitRestore`，restore 類；`CollapseFields.retry()` 清掉原因）→ `acquireCollapseTicket` → INFO。之後由推導階段重跑 RESOLVE（未確認的權威由 resolver 先收斂）；restore 寫入失敗時 WARN 並退避。成功之後依推導階段繼續，F4b 之前停在 WAITING（G-ALLOCIO `collapsingAgainWithTicket`）。
+- **第 7 點（PREPARE stub）**：`CS:441` `prepareStub`：UNIVERSE 在 RESOLVE 完成之後推導為 WAITING（閘門 supplier 恆為假，不消耗邊緣觸發），每個 session 在本 instance 只 WARN 一次「準備階段尚未實作（F4b）」。不預載、不投影、不寫 projection ledger。G-NEW `oneWaitingStubWarn`、`stubWarnedOnce`（恢復供電之後也不重複，GM-4）。
+- **第 8 點（`CollapseAuthorities` 的 marker）**：`CA` 的 7 則 log 都帶 `TICK_LOG_MARKER`（`CA:358`、`:363`、`:744`、`:794`、`:802`、`:834`、`:845`），只改 log：它們記的是權威本身，不屬於任何 session（class Javadoc `CA:63`）。`GT` 的 `LEGACY` 清單、`record Legacy` 與 Javadoc 的說明刪除，未帶 marker 的呼叫一律是違規；README「塌縮流程的 log」一點的例外說明刪除。RED-A：`GT` 在改 `CA` 之前恰好列出這 7 處。G-ALLOCIO 的 `ledgerWarnCarriesTheTickMarker` 確認 `collapseFlowNeverWarned` 依 marker 看得到權威的 WARN。
+- **第 9 點（SRM 的 RETRY_FLUSH WARN）**：`SRM:173` 改為「recovery 寫出保留 pending（返還，或 roll-forward 的重試寫出），session=…」。以舊文字斷言的兩處同步：`M4C:1921`（F3a G3）、`M5C:438`（G-RF），斷言片段改為「recovery 寫出保留 pending」。沒有 JUnit 以這段文字斷言。
+- **第 10 點（測試放置與衛生）**：會配置或物化宇宙的 6 個 test 都在 `M5U`，各自一個 `m5_universe_<名稱>` batch，以 `begin`／`awaitConvergedThenComplete` 包住，只斷言增量。default run 的稽核見下一小節。G-RES（`m5_universe_resolve_stub`）刪除，改寫成 G-NEW（同一個 fixture：DORMANT NEW 收據、P 由艙外進入、RESOLVE 期間開關門），原本的 stub 斷言（停在 RESOLVE、catalog 增量 0）不再成立。
+- **第 11 點（fault 注入）**：`HK:53` `MATERIALIZE_FAULT`、`HK:55` `CHECKED_READ_FAULT` 都是 `Slot`；`SUP:138` `installMaterializeFault(context, universeId, hooks)`、`SUP:149` `installCheckedReadFault(context, 檔名, skip, failures, hooks)` 經 `installHook` 安裝。
+  - `MFM` 掛在 `Minecraft121DynamicDimensionBackend.materialize` 的開頭（`require=1`、cancellable）：這個 UniverseId 的 OVERWORLD 每一次經 backend 的物化都回 `FAILED_ROLLED_BACK`，不建立 world（`HK:144`，`calls()` 計數）。
+  - `CRM` 掛在 `CheckedNbtFile.readFile` 的開頭（static、`require=1`）：檔名恰為指定檔名的讀取，先放行 `skip` 次、之後 `failures` 次丟 `IOException`（`HK:164`）。對正式檔注入，寫入時就是「atomic move 完成、讀回失敗」，讀取時就是讀檔的 IO 例外。
+  - 三個注入 test 各自一個 batch；有界等待的總長度都小於 tickLimit 600（最長的 G-ALLOCIO：registered ≤ 43，等待到 registered＋228，再加 `awaitConvergedThenComplete` 的 20）；完成前都等 catalog 與 ledger 收斂（`awaitConvergedThenComplete`）。
+- **第 12 點（G-SEAL m-4）**：選「放行第 4 次寫出時暫停」：`M5C:1145-1149` 的探針在前 3 次受控失敗之後、看到同一份「current 是 SEALED、flushed 仍是 COLLAPSING」的寫出時呼叫 `M5TestHooks.suspendCollapse(sid)`，再交給 `FlushFault` 放行；新 witness `suspendedAtTheConfirmingWrite`（`M5C:1167`）。理由：確認之後的 flushed SEALED(`PROJECTION_FAILED`) 是可重試的原因，F4a 起塌縮流程會評估它的重試。雖然這個 fixture 的參與者是離線的隨機 UUID、也沒有艙體，邊緣觸發不會成立，但暫停讓「確認的那一個 tick 起到收尾之前都不推進」不必依賴這個推論（決策 7）。
+- **第 13 點（新增的 log）**：collapse package 新增的 log 都帶 `LOG_MARKER`：`CS` 的 RESOLVE 完成 INFO、等待 WARN、stub WARN、SEALED 的 WARN／ERROR、寫入失敗 WARN（經 `warn()`）、重試 INFO、待套用門的 log；`DR` 的 §8.3 ERROR。能歸屬到 session 的 WARN／ERROR 都帶 `session=<UUID>`。`GT` 在每一輪 JUnit 都通過（GREEN-C、GREEN-D）。
+- **第 14 點（plan Step 1 的 RED 清單）**：見上方「plan Step 1 逐項對照」。`gameplayEligible=false` 在 DRT 的 ineligible 表（`:365`），GameTest 沒有這一列：M5 不會寫出 `gameplayEligible=false` 的 discovery，要在 GameTest 造出它只能手寫 discovery 檔。orphan 與 catalog dirty 只有 JUnit（「偏離」第 6 條）。
+
+### default run 的稽核（補充第 10 點）
+
+F4a 之後，沒有掛 hook、目的地是 UNIVERSE 的 COLLAPSING 走到 RESOLVE，就會在 default run 配置宇宙。逐一稽核 default run 中會產生 MEASURED、COLLAPSING 或 DORMANT 續行，或以 NEW／EXISTING 收據為 fixture 的 test：
+
+| Test（batch） | 會不會走到 RESOLVE |
+| --- | --- |
+| G-SRC `m5_collapse_source_live`、G-RF `m5_collapse_return_roll_forward`、G-OFF `m5_collapse_offline_rejoin`、G-FB `m5_collapse_commit_fallback`、G-RFB `m5_collapse_release_fault_backoff` | 不會：原生選 SOURCE 側門（`sourceDoor`），`Destination=SOURCE`，推導階段沒有 RESOLVE |
+| G-DOR `m5_collapse_dormant_edge`、G-TERM `m5_collapse_terminal_fault` | 不會：DORMANT 收據選 SOURCE（`receipt(…, false)`，`M5C:630`、`:694`、`:1196`） |
+| G-ELSE `m5_collapse_returned_elsewhere` | 不會：兩個 fixture（COLLAPSING 選 SOURCE、SEALED 選 NEW）都以 `collapseFixture(…, suspend=true)` 暫停（`M5C:571`、`:574`）；另一個原生 session 只到 RETURNING |
+| G-UNSUP `m5_collapse_unsupported_cancel`、G-NETHER `m5_collapse_nether_door`、G-NLIVE `m5_collapse_nether_live_cancel` | 不會：Nether／End 的 NEW／EXISTING 收據依 §11.3 不提交，保留式 recovery 到 DORMANT 之後取消；G-NETHER 的 Nether 側門被拒，M4 SOURCE 收據照常完成 |
+| G-PASS `m5_collapse_startup_passage` | 不會：PASSAGE_READY fixture（NEW，未暫停）標為開服時就有，CS 直接 `PASSAGE_ENDED` 終局；PASSAGE_READY 沒有 RESOLVE |
+| G-SEAL `m5_collapse_sealed_roll_forward` | 不會：NEW 的 COLLAPSING fixture 未暫停，但同一個 callback 內就以 roll-forward 寫入 SEALED（未確認），CS 看到的是 roll-forward 未確認的 collapse view，只暫停；放行確認的第 4 次寫出時 `suspendCollapse`（補充第 12 點） |
+| 其他 `m5_collapse_*`（膜方塊、門的套用、流體、未載入、hook slot） | 不會：沒有 session |
+| M4C 原生選門（`m4_select_*`、`m4_ifix1_checkpoint_backoff`、`m5_h2_checkpoint_scope`、`m5_h3_*` 中產生 MEASURED 的） | 不會：經 `nativeCandidates`（`M4C:1063`），交出 fixture 之前 `suspendCollapse`（`:1067`）；M4 原斷言「MEASURED 一直等待」不變 |
+| M4C `m4_dormant_other_chamber` | 不會：`dormantReceipt` 選 SOURCE，而且 `suspendCollapse`（`M4C:543-545`） |
+| M4C `m5_f3a_*`（F3a 的三個 test） | 不會：`f3aFixture`（`M4C:1956`）一律暫停（COLLAPSING 選 SOURCE，其他選 NEW） |
+| M2 的走廊 test | 不會：只檢查 358 扇側門可選（`M2CorridorGameTests:491`），不選門 |
+| m4Recovery run（`m4-recovery-probe.ps1`） | 不會：`-Dquantumchamber.test.collapseSuspended=all`（`build.gradle:103`） |
+
+實證：run-all 的 Full 中 default run 的 boundary oracle（`M4GameTestBoundaryProbe`：suite 前後的 catalog 快照必須相同，只容許具名的 M3 fixture）為 PASS；Full 的 latest.log 沒有任何「目的地已確定」「準備階段尚未實作」「塌縮進入 SEALED」「M5 ALLOCATION_LEDGER」的行（見「Gate 與證據」）。
+
+### 測試
+
+- JUnit：572 → 595（2 skipped 不變）。`DRT` 18 個（新增，C）；`CST` 7 → 12（D）：`sealedMessageExistsInBothLanguages`（`:253`，key、zh_tw 逐字、兩個語言檔 key 集合相同）、`sealedRetryFollowsTheReasonTable`（`:266`，8 個原因 × 是否開服 × 是否已用掉）、`resolveWaitWarnsOnceAfterSixHundredTicks`（`:284`）、`sealedDoorClosesUnlessTheDoorwayIsOccupied`（`:296`，四個朝向的 25 格與門內外的 cell）、`sealedPendingDoorUsesItsOwnWording`（`:317`）。`GT` 仍是 2 個（只刪除 `LEGACY`）。
+- default GameTest 174 不變（`_windows` 88）：default run 沒有新增或刪除 `@GameTest`。G-SEAL 多一個 witness；G-RF、F3a G3 只改斷言的文字片段。
+- M5 GameTest：5 → 10。刪除 G-RES（−1）；D 新增 G-NEW、G-EXIST、G-INELIGIBLE（＋3）；E 新增 G-MATFAIL、G-ALLOCIO、G-UNREADABLE（＋3）。catalog 增量：G-NEW、G-EXIST（只有 D1）、G-MATFAIL（`DISABLED`）、G-ALLOCIO、G-UNREADABLE 各 ＋1，G-INELIGIBLE 0；連同 sanity 與三個 harness test，suite 結束時 9 筆。
+- legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 都不變。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f4a/`：`f4a/state.ps1`（比照 `f4a0/state.ps1`，記 HEAD、porcelain 與逐檔 blob）、`f4a/gate.ps1`（以 `onlyBatches` 跑 `gates.ps1`）、`f4a/junit.ps1`（Gradle `test --tests`）。暫時性改動由 `f4a/adapter.py` 套用與還原（套用前保存原檔，還原後以 `git hash-object` 核對），JUnit 與 GameTest 的 mutation 各由 `f4a/mut-junit.ps1`、`f4a/mut-gate.ps1` 執行，各 adapter 的 diff 在 `f4a/adapters/<名稱>/`。gate root 在 `.superpowers/verification/`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED-A（第 8 點） | `e4e1b2f`＋只改 `GT`（`red-a-guard-junit-state.txt`） | Gradle `test --tests …CollapseLogMarkerGuardTest` | 2 個中 1 個 FAIL：`everyCollapseLogCallCarriesTheCollapseMarker` 恰好列出 `CA` 的 7 處 |
+| GREEN-A | `e4e1b2f`＋A 的 6 個檔（`green-a-junit-state.txt`） | JUnit `GT`＋`CollapseAuthoritiesTest`；focused `gate-green-a-focused-fac464d550d14279967b60c0ba29a896`（G-RF、G-SEAL、F3a G3） | JUnit 2＋33 PASS；focused PASS，latest.log 中新文字的 WARN 2 則（G-RF、F3a G3 的受控失敗） |
+| GREEN-B（第 1 點） | `4bb07b3`＋`ULS`（`green-b-universe-junit-state.txt`） | JUnit `dev.quantumchamber.universe.*`；`gate-f4a-green-b-m3-95b0e39c86314f2783efb606720e2abf`（`-Mode M3`） | JUnit PASS；M3 PASS（universe 4、transfer 5） |
+| RED-C（第 2–4 點） | `458c297`＋DRT＋RED adapter（`f4a/red-c-adapter/DestinationResolver.java`：`resolve` 一律回 `Resolved`；`red-c3-junit-state.txt`） | Gradle `test --tests …DestinationResolverTest` | 18 個中 17 個 FAIL，全部是 `AssertionFailedError`（`red-c3-failure-types.txt`）；通過的是 `existingRevalidatesWithoutWritingAnyAuthority`（期望本來就是 `Resolved`，由 R-8 鎖住）。前兩輪 `red-c`、`red-c2` 有 fixture 層的例外（Optional 取值、`subList`、檔案不存在），修正 test 的 helper 之後才採計第三輪，兩輪保留不採計 |
+| GREEN-C | `458c297`＋C 的 3 個檔 | 同上＋`GT` | 18／18、2／2 |
+| R-1～R-12（JUnit mutation） | GREEN-C 的工作樹，各自套用 adapter | `mutations-junit-summary.txt` | 12 個都被抓到：R-1（不先收斂 ledger）→ allocation 讀回失敗那一個；R-2（不比對 Destination）→ `newDestinationThatIsNotTheLedgerEntryIsCorrupt`；R-3（catalog 的 WAIT 當 SEALED）→ catalog 等待；R-4（物化失敗不改 DISABLED）→ 3 個；R-5（reenable 失敗不 restore）→ `reenableWriteFailure…`；R-6（EXISTING 的 WAIT 判 INELIGIBLE）→ `existingWaits…`；R-7（不看 `gameplayEligible`）、R-10（不看 ACTIVE world）、R-11（不看來源 role）→ ineligible 表；R-8（EXISTING 也物化）→ `existingRevalidates…`＋ineligible 表；R-9（discovery game time 不用時鐘）→ `newResolves…`；R-12（DISABLED 寫出失敗不記 ERROR）→ `disablingWriteFailure…`。還原後 blob 與 GREEN-C 相同（`mut-c-base-state.txt`） |
+| RED-D（JUnit） | `04c7fea`＋D 的 test＋adapter `f4a/red-d-adapter/CollapseService.java`（`04c7fea` 的 CS，只補 test 需要的 API stub；`red-d-junit-state.txt`） | Gradle `test --tests …CollapseServiceTest` | 12 個中 5 個（新增的 5 個）FAIL，全部是 `AssertionFailedError` |
+| RED-D（GameTest） | `04c7fea`＋D 的 testmod 與 CST，CS 仍是 `04c7fea`（RESOLVE stub；`red-d-m5-state.txt`） | `gate-red-d-m5-5c2ca0a1b5bc4992bba0d27cd4ff6a53` | 3 個都 FAIL。G-NEW 在目標 witness（allocation、catalog、world、discovery、INFO、stub WARN）；G-INELIGIBLE 在 `sealedIneligible`、`sealedMessage`、`oneAdminError`、`ticketReleased`、`permanentNeverRetried`（`occupiedDoorwayStaysOpen`、`presenceCollapse`、`controllerRefreshedArmed` 在 stub 下也成立，由 GM-1 與「觀察」第 1 條處理）；G-EXIST 在 D1 的有界等待（stub 下 D1 不會建立宇宙），所以另以 RED-EXIST 的 adapter 證明 |
+| GREEN-D | `04c7fea`＋D 的 7 個檔（`green-d-junit-state.txt`、`green-d-m5-state.txt`、`green-d-focused-state.txt`） | JUnit CST＋GT＋DRT；`gate-green-d-m5-37b6851ba0ce4d7d901693d49235aa8f`；default focused `gate-green-d-focused-058d45fa1bc44df680cc00415298b7f6`（全部 18 個 `m5_collapse_*` 與 3 個 `m5_f3a_*`） | JUnit 12＋2＋18 PASS；M5 3／3、M5 oracle PASS、`M3_UNIVERSE_STOPPED_VERIFIED worlds=2 runtimeReceipts=2`；focused 21／21 |
+| RED-EXIST、GM-1～GM-7（GameTest mutation，第一輪） | `c825a49`，各自套用 adapter（`mut-chain-d.log`） | 8 個 root（`mutations-gate-summary.txt`） | 8 個都在目標 witness FAIL：RED-EXIST（EXISTING 一律 INELIGIBLE）→ G-EXIST `existingCommitted`、`oneResolvedInfo`、`noSealedWarnOrError`；GM-4（stub 不去重）→ G-NEW `oneWaitingStubWarn`、`stubWarnedOnce`；GM-5（RESOLVE 要求供電）→ G-NEW 斷電期間沒有配置。G-INELIGIBLE 的 5 個（GM-1、2、3、6、7）另外都多了 `authoritiesUnchanged=false`：見 D-FRESH |
+| D-FRESH（`64ffaf9` 的 RED／GREEN） | RED：`c825a49`，工作樹乾淨（`red-ineligible-fresh-state.txt`）；GREEN：`c825a49`＋G-INELIGIBLE 的修正 | RED `gate-red-ineligible-fresh-c128436e4f7645a2b3142cd2e1506c91`；GREEN `gate-green-ineligible-fresh-5ff71fde469649029e5ef52c4d6ee018` | G-INELIGIBLE 單獨在 fresh 世界執行時只有 `authoritiesUnchanged=false`：建立收據的 candidate context 先以 M4 的 `loadOrCreate` 建立空的 discovery 檔，而基準是在那之前取的。GREEN-D 一起跑三個 batch 時，discovery 檔已由 G-NEW 建立，所以沒有發現。修正：基準改在收據寫入之後才取；GREEN 單獨 PASS |
+| GM-1、2、3、6、7（第二輪） | `64ffaf9`，各自套用 adapter（`mut-chain-d2.log`；第一輪的 adapter 與結果移到 `f4a/adapters-round1/`） | 5 個 root | 只剩目標 witness FAIL：GM-1（門口有人也關門）→ `occupiedDoorwayStaysOpen`；GM-2（不釋放 ticket）→ `ticketReleased`；GM-3（永久原因也重試）→ `permanentNeverRetried`；GM-6（不顯示訊息）→ `sealedMessage`；GM-7（永久原因記 WARN）→ `oneAdminError`、`errorStillOnce` |
+| GREEN-E | `64ffaf9`＋E 的 7 個檔（`green-e-m5-state.txt`、`green-e-m5-all-state.txt`、`green-e-focused-state.txt`，blob 相同） | `gate-green-e-m5-1810c5473f984071bdd3ced7114b3009`（E 的 3 個）；`gate-green-e-m5-all-d8a03f4f63fb46f3b1da5954b801d9a6`（整個 M5 run）；default focused `gate-green-e-focused-76d33e8d58084d2ab0260f269a9c7c1c`（hook slots、G-SEAL、G-DOR、`m4_select_first_wins`、F3a presence） | 3／3；M5 10／10，catalog 增量逐 test 串接 0 → 9，`M5_UNIVERSE_SUITE_END records=9`，`M3_UNIVERSE_STOPPED_VERIFIED worlds=4 runtimeReceipts=4`；focused 5／5 |
+| RED-E 與 mutation（GameTest） | `64ffaf9`＋E 的工作樹，各自套用 adapter（`mut-chain-e.log`） | 6 個 root | 全部在目標 witness FAIL：RED-SEALED（SEALED 一律不重試）→ G-ALLOCIO 的有界等待逾時，診斷列出重試之前的 witness 全部成立；GR-4（同 R-4）→ G-MATFAIL `catalogDisabledAndWritten`；GM-9（restart-only 也在本 instance 重試）→ G-MATFAIL 與 G-UNREADABLE 的 `noRetryThisInstance`；GM-8（lifecycle 不拒絕失敗過的 descriptor）→ G-MATFAIL `lifecycleRefusesTheFailedDescriptor`（outcome 變成 `FAILED` 且 backend 被呼叫第二次）；GM-10（封存時不記退避）→ G-ALLOCIO `noRetryWithinTheBackoff`、`retriedOnce`；GR-1（同 R-1）→ G-ALLOCIO 的有界等待逾時 |
+| run-all | `46946c0`，工作樹乾淨（`run-all-state.txt`；`STATUS` 是空的；`f4a/run-all-console.log`） | `run-all-efb99d1e845549699febf6356355625f`（Full：`gate-full-598c608154f94c409db7a8ccfcff58e2`；M5：`gate-m5-gametest-a512afb9b7f64434b613629a43a31f7c`；M3：`gate-m3-67d85e0be50b4a618c584275f67c9ee9`） | `END ALL exit=0 HEAD=46946c087af69bdda3497c409824531f3beb0508`，約 15 分鐘（22:12:12→22:27:32）。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=10/10 perTest=51+1 junit=595 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=382entries/335classes sources=214 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`。default 與 legacy 的 boundary oracle（`m4-boundary-*.json`）都是 PASS |
+
+- 每個 adapter 跑完都還原，還原後的 blob 與套用前相同（`adapter.py restore` 核對；`mut-chain-*.log` 末尾的 porcelain）。每個 commit 的 blob 都與它之前最後一輪 GREEN 的 state 相同（`commit-*-blobs.txt`）。
+- 各 commit 的 focused：A 見 GREEN-A；B 見 GREEN-B；C 見 GREEN-C（C 只新增 class，CS 尚未呼叫它）；D 見 GREEN-D；`64ffaf9` 見 D-FRESH；E 見 GREEN-E。
+- 與 F4a-0 最終 run-all（`run-all-32c099d096b049e98e6e8e21d773ff1f`）的差異只有本 task 新增的部分：
+  - JUnit 572 → 595（＋23：DRT 18、CST 5）；M5 5 → 10（見「測試」）；default、legacy、perTest、windowsCheckpoint、M3、M4 recovery 不變。
+  - release JAR 367 → 382 entries（320 → 335 classes），新增的 15 個都是 main 的 class（`f4a/jar-diff.txt`）：`DestinationResolver` 與它的 `$1`（switch map）、`$Lifecycle`、`$Materialization`、`$Materialization$Kind`、`$ServerCatalog`、`$ServerLifecycle`；`ResolveResult` 與 `$Resolved`、`$Wait`、`$Sealed`；`UniverseLifecycleService$MaterializeOutcome`、`$MaterializeOutcome$Status`；`CollapseService$SealedRetry`、`$DoorGoal`。sources 212 → 214（`DestinationResolver.java`、`ResolveResult.java`）。兩個新 mixin 與 hook 類別都在 testmod，testmod 命中仍是 0。
+- log（以 `/WARN]`、`/ERROR]` 計行）：
+  - Full：WARN 54 → 54、ERROR 28 → 28。把 UUID 與數字正規化、排序之後比對（`f4a/wbdiff.txt`），唯一的差異是 SRM RETRY_FLUSH 的 4 則 WARN 文字由「返還保留 pending」換成「recovery 寫出保留 pending（返還，或 roll-forward 的重試寫出）」（補充第 9 點；G-RF、G-RFB、G-SEAL 的受控失敗與一則 managed entity pin 上限），一對一替換。Full 的 latest.log 沒有任何「目的地已確定」「準備階段尚未實作」「塌縮進入 SEALED」「SEALED 重試」「M5 ALLOCATION_LEDGER」「M5 CATALOG」的行：default run 沒有任何 session 走到 RESOLVE。
+  - M5 run：WARN 1 → 6、ERROR 0 → 1。少了 G-RES 的「目的地解析尚未實作」1 則；多了 G-NEW 與 G-EXIST（D2）的「準備階段尚未實作」各 1 則、G-ALLOCIO 的 allocation ledger 寫入未確認 1 則（`TICK_LOG_MARKER`）與 SEALED(`ALLOCATION_IO_FAILED`) 1 則、G-MATFAIL 的 SEALED(`MATERIALIZE_FAILED`) 1 則、G-UNREADABLE 的 SEALED(`AUTHORITY_UNREADABLE`) 1 則；ERROR 是 G-INELIGIBLE 的 SEALED(`EXISTING_INELIGIBLE`)「需要管理員處理」。都是 test 刻意造成、而且由 witness 斷言的。
+  - legacy：0／0 不變。
+- 本 task 沒有遇到派工列出的已知偶發（entity storage 未載入、Windows journal `AccessDeniedException`、H2 多一則原生 log），也沒有遇到停服卡住；所有失敗的 root 都是刻意的 RED 或 mutation。
+- 結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+### 偏離 plan／spec 字面之處
+
+1. **提交時的 Destination 選 (b)（補充第 3 點）**：維持 F3d 的推導值，由 RESOLVE 比對 ledger entry。理由：
+   - spec §7.2 的字面是「NEW 的 `deriveUniverseId(token)`」，§6.1 規定合法的 entry 一定等於推導值；兩者不符本身就是 `AUTHORITY_CORRUPT`。
+   - 提交 M→C 的時候，ledger 不可能已有這個 token 的合法 entry：ledger 只在 COLLAPSING 已 checked 落盤之後才寫（`CA` `lookupOrAppendAllocation` 的呼叫前提）。所以提交時讀 ledger 得到的，若合法就等於推導值，若不合法就是損壞。
+   - 若採 (a) 而 entry 不符，要嘛把損壞的 id 寫進不可變的 Destination（錯誤擴散），要嘛在提交時就拒絕（M4 的收據會停在 MEASURED，沒有 spec 規定的 SEALED 出口）。(b) 讓不符走 §8.4「RESOLVE 的失敗進 SEALED、保留同一個 Destination」，與其他權威損壞的處理一致。
+   - 交 spec reviewer 判斷。
+2. **`resolve` 的介面**：plan 寫 `resolve(MinecraftServer server, SessionRecoveryRecord record)`；實作是 `DestinationResolver.forServer(server).resolve(view, materializeRetry)`。server 在建立時綁定（JUnit 經 package-private 建構子注入 port，plan 決策 9 的作法）；`materializeRetry` 由 CS 明確傳入，因為「重啟之後、每個 instance 一次」的簿記在 CS 的 Track，resolver 本身不保存 instance 狀態。
+3. **commit 拆分與訊息**：plan Step 4 是一個 commit `feat: resolve collapse destinations before preparing the passage`；依派工拆成 6 個 code commit 與 1 個 docs commit（訊息見上）。plan 的 Files 列了 `SuperpositionSessionManager.java`，F3d 已提供 `releaseOnSealed`／`acquireCollapseTicket`，沒有修改。
+4. **開服時就是 COLLAPSING 的 session，第一次 RESOLVE 視同 §8.3 的重試**（`CS:378`）：§8.3 先寫 catalog 的 `DISABLED`、再寫 SEALED；兩者之間 crash 時，重啟後 session 仍是 COLLAPSING、catalog 卻已是 `DISABLED`。spec §6「重啟後為什麼合法」的表把這一列寫成「等同 §8.3 已完成」，§12 的 COLLAPSING 列要求重啟後「依推導階段續做、idempotent」；若照一般規則以 `EAGER_ONLY` 驗證，卻會把它判為既有紀錄不符的 `AUTHORITY_CORRUPT`（永久）。所以這種 session 在本 instance 的第一次 RESOLVE 以 `MATERIALIZE_RETRY` 驗證（catalog 是 `EAGER_ENABLED` 時沒有差別），等同「§8.3 已完成、重啟之後重試一次」。spec 沒有逐字寫出這條分流；這個窗口的 cross-JVM 證明屬 F6（W9 的變形），交 spec reviewer 判斷。
+5. **「目的地已確定」只記在本 instance**（`Track.resolved`）：重啟之後 RESOLVE 以 idempotent 的方式重新確認（§7.3、§12）。F3d 的 `CollapsePhase.derive` 已是這個介面。
+6. **orphan storage 與 catalog dirty 沒有 GameTest**：plan Step 1 最後一列由 DRT 涵蓋（真的 `CollapseAuthorities` 與 catalog，以 port 注入 IO 與 storage 目錄）。在 M5 run 造 orphan 需要在 `dimensions/` 下手動建立目錄；catalog dirty 需要讓 catalog 的寫出持續失敗，會讓之後所有 NEW 配置都 WAIT（F3c 的衛生規則）。兩者在 GameTest 層沒有額外的整合風險：WAIT 的處理只在 CS（CST 與 GREEN 的 G-NEW 已涵蓋呼叫路徑）。
+7. **物化失敗的注入點**：`MFM` 在 backend 的開頭直接回 `FAILED_ROLLED_BACK`，沒有走 backend 原生的 rollback（`created.close()`）。原生 rollback 是 M3 的範圍，GameTest 無法在不改 M3 的情況下讓它安全地失敗；這裡要驗證的是 F4a 的處理（`DISABLED`、SEALED、同 instance 拒絕、停服驗證）。注入的失敗照樣記入 Context 的 materialize failures，`M3_UNIVERSE_STOPPED_VERIFIED` 照常通過。
+8. **進入 SEALED 的寫入被前置檢查拒絕時（`REJECTED`）只重試這筆寫入**（`Track.pendingSeal`）：spec 沒有規定；RESOLVE 已有副作用（例如 §8.3 的 `DISABLED`），重跑 RESOLVE 會走 `EAGER_ONLY` 而判為 `AUTHORITY_CORRUPT`。
+9. **G-EXIST 用同一座艙**：spec §15 的「另一座艙的 session 也能到達同一個宇宙（基本重逢）」需要通道（F5）；RESOLVE 本身不看是哪一座艙。
+
+### 需要裁示
+
+1. 「偏離」第 1 條（提交時的 Destination 選 (b)）。
+2. 「偏離」第 4 條（開服時就是 COLLAPSING 的 session，第一次 RESOLVE 接受 `DISABLED`）。
+
+### 觀察（未修改）
+
+1. **G-INELIGIBLE 的 `controllerRefreshedArmed` 分辨不出有沒有刷新**：進入 SEALED 前後 presence 都是 `COLLAPSE`，Controller 在提交 COLLAPSING 時就已是 ARMED，所以拿掉刷新也成立。CS 的刷新與 F3d 終局之後的刷新共用 `CS:714`。要分辨，需要先讓 Controller 的快取與 presence 不一致（例如直接改 block entity），屬 harness 的工作。
+2. **開服時就是 SEALED 的 session，門不重新套用**：SEALED 的門在世界的方塊裡持久化。`seal` 的 journal 寫入與門的套用之間 crash 時，重啟後門可能維持開著：不會困住人，但與 §11.2「門為關閉」不一致，直到有人關門。
+3. **WAIT 的 WARN 以 CS 的 tick 計算**：`waitSince` 是本 instance 的 server tick，重啟之後重新計算；等待期間 session 進入其他階段（例如 roll-forward 未確認）不會重設。
+4. G-ALLOCIO 的重試要等兩個 200 ticks 的退避：per-session 的 SEALED 退避與 allocation ledger 的收斂退避同時開始，所以第一次重試時 ledger 已可以收斂。若之後兩者的起點不同（例如收斂失敗加倍），重試可能先遇到 `UNCONFIRMED`，再回到 SEALED(`ALLOCATION_IO_FAILED`) 並加倍退避；行為正確，只是重試次數變多。
+
+### 交給後續
+
+- F4b：
+  - UNIVERSE 的 PREPARE：`CS:386-387` 的閘門 supplier 目前恆為假，`CS:441` 的 stub 要換成預載、投影、量子膜與 PASSAGE_READY；`CollapsePhase` 的 WAITING／PREPARE 與 §7.3 的閘門評估沿用 SOURCE 的寫法。
+  - PREPARE 的失敗（`PROJECTION_FAILED`、`PROJECTION_CONFLICT`）經 `CS:454` `seal` 進入 SEALED；重試已由 `CS:527` 處理，PREPARE 只要回報原因。projection ledger 的未確認在重試時由 resolver 之後的 PREPARE 收斂。
+  - 門的攔截（PREPARE、PASSAGE_READY 期間）：SEALED 的門走 `CLOSE_ON_SEALED` 的待套用門；F4b 新增的攔截不要與它衝突（同一座艙的待套用門以 chamber 為 key，後排入的取代先排入的）。
+- F5：PASSAGE_READY 提交前，依 §10.2 再驗一次 EXISTING；`DR:188` 的 `resolveExisting` 可以重用（它只讀不寫）。TRR 只能由 PASSAGE_READY 進入，`ResolveResult.Sealed` 不接受 TRR。
+- F6：
+  - 重啟矩陣：SEALED(`MATERIALIZE_FAILED`、`AUTHORITY_UNREADABLE`) 在重啟之後的一次重試（W9）；開服時就是 COLLAPSING、catalog 已是 `DISABLED` 的窗口（「偏離」第 4 條）；SEALED 寫入與門之間的 crash（「觀察」第 2 條）。
+  - `build.yml` 的明列清單：本 task 沒有新增 default run 的 test；M5 run 的 6 個新 test 不在 `_windows` 規則內（各平台都執行）。
+  - harness：`MaterializeFault`、`CheckedReadFault` 已是 `Slot`；`CheckedReadFault` 以檔名比對，M4 的 discovery 讀取也會被它攔到（README 已註明）。
+- F7：玩家可見的「量子通道無法開啟，已封存。」與 SEALED 時可以照一般方式開門離開，要寫進玩家文件；管理員處理永久原因的方式（ERROR「需要管理員處理」）屬 §2 已列的限制。
