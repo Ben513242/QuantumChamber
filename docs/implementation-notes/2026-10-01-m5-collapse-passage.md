@@ -2482,3 +2482,170 @@ nested harness 本身改過兩次（下表的 v1、v2、v3），每次都重跑�
 - 若希望例外失敗的 test 不連累下一個 test，可以讓 `failDefinitely` 先盡力收斂一次（呼叫 `convergeAll`，忽略例外）。這超出本輪的窄範圍，沒有做，列為可選的後續。
 - 本輪不跑 Full 與 run-all，理由同 fix round 3：只改 M5 run 的 testmod 類別與 README。controller 會在 F3d 完成之後的新 HEAD 上跑 run-all 作為正式回歸。
 - 每次跑完都把 test 檔還原並以 `git hash-object` 核對；commit 時 2 個檔的 blob 與 GREEN 之前記錄的相同。結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+## F3d：CollapseService（提交、返還、SOURCE、Nether／End）
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `cc936d0` `fix: release collapse runtime through the session manager and harden returns`（parent `438c306`）：production `superposition/SuperpositionSessionManager.java`、`persistence/SessionRecoveryManager.java`、`FailureText.java`（只有 Javadoc）、`transfer/ChamberReturnPlacement.java`；測試擴充 `FailureTextTest.java`、`ChamberReturnPlacementTest.java`；testmod `ConnectedGameTestPlayer.java`、`M2CorridorGameTests.java`（只有共用 drain 的一處）、`M4CandidateDoorGameTests.java`、`M4CandidateTestAccess.java`。
+  - `33624ad` `feat: commit collapses and return the cohort to the origin chamber`（parent `cc936d0`）：production 新增 `collapse/CollapsePhase.java`、`CollapseService.java`，修改 `QuantumSuperpositionMod.java`、`corridor/CorridorPageManager.java`（只新增 `measuredReleaseInProgress`）、兩個語言檔（「塌縮」）；`build.gradle`（只有 `m4Recovery` run 的 vmArg）；測試新增 `src/test/java/dev/quantumchamber/collapse/CollapseServiceTest.java`；testmod 新增 `mixin/CollapseSuspendMixin.java`，修改 `quantumchamber-test.mixins.json`、`M4CandidateDoorGameTests.java`、`M4CandidateTestAccess.java`、`M5CollapseGameTests.java`、`M5UniverseGameTests.java`。
+  - `93df897` `feat: refuse side doors whose source is the Nether or the End`（parent `33624ad`）：`candidate/CandidateDoorInteraction.java`、兩個語言檔（「Nether／End 選門」）、`CollapseServiceTest.java`（語言 test 加上新 key）、`M5CollapseGameTests.java`（Nether 原艙的 test 與 helper）。
+  - 本段的 docs commit 接在 `93df897` 之後。
+- Code range `438c306..93df897`。沒有改 `SessionRecoveryState.java`（補充第 2 點的 API 不需要 journal 配合）、`TestHooks`、M2 的 `OBSERVED` 靜態表、`.github/`、`scripts/verification/`。
+- 範圍是 plan Task F3d：第一次在 production 提交 COLLAPSING。返還、清理、RESOLVE stub、WAITING 期間的門都是一般狀態，不攔截（F4b）；RESOLVE 只有 stub（F4a）；PREPARE 只有 SOURCE 的 fast path（UNIVERSE 的 PREPARE 屬 F4b）。
+- 行號以 `93df897` 為準。`CS` 指 `collapse/CollapseService.java`，`CP` 指 `collapse/CollapsePhase.java`，`SSM`、`SRM`、`CPM`、`CRP`、`CDI` 指 `SuperpositionSessionManager`、`SessionRecoveryManager`、`CorridorPageManager`、`ChamberReturnPlacement`、`CandidateDoorInteraction`；testmod 的 `M5C`、`M5U`、`M4C`、`M4A`、`MIX` 指 `M5CollapseGameTests`、`M5UniverseGameTests`、`M4CandidateDoorGameTests`、`M4CandidateTestAccess`、`mixin/CollapseSuspendMixin`；JUnit 的 `CST` 指 `CollapseServiceTest`。測試欄的 G-* 見「測試」。
+- Review：尚未 review。
+
+### plan Step 1 逐項對照
+
+| plan Step 1 | 程式位置 | 測試 |
+| --- | --- | --- |
+| 選門 → 下一 tick COLLAPSING | `CS:184` `measured`：current＝flushed（`:187`）、M4 的 measured release 進行到一半時等待（`:199`，`CPM:263`）、per-session 退避；`CS:261` `commit` 經 `commitRestore`（M→C），Destination 依 `CS:211`；live 不要求供電。CollapseService 在選門那個 tick 的 `END_SERVER_TICK` 提交，所以下一個 tick 看到的就是 checked COLLAPSING（見「偏離」第 2 條） | G-SRC `committedNextTick`；G-RF、G-FB 的第一個斷言；CST `destinationIsFixedAtCommitFromTheSelectedCandidate` |
+| 全員返還（落點碰撞、WARN 附 cause）；未返還者凍結並收到位置修正 | 返還與凍結是 F3a 的 `recoveryWork`／`frozen`，CS 不重複驅動。落點 `CRP:26`（`plan` 的碰撞版本）、`SRM:285`／`:348` `landingClear`／`:353` `warnLandingBlocked`；返還 WARN 附 cause `SRM:173` | G-SRC（預設 slot 放石頭、`firstAvoidedTheStone`、`returnedInsideWithoutCollision`、兩人同 tick 各一則位置修正）；G-RF `oneWarnWithCause`；JUnit `ChamberReturnPlacementTest.returnSlotsSkipBlockedCellsThenRaiseOrFallBackDeterministically`、`FailureTextTest.dedupeKeyOfANullReasonCarriesNoFileIdentity` |
+| SOURCE → 一般開門、catalog 不變、record 移除、INFO；presence NONE、runtime 與 ticket 釋放、同艙立即開新 session | `CS:341` `sourceFastPath`：`terminate(SOURCE_FAST_PATH)` → `:377` `terminated`（`SSM:508` `releaseAfterTerminal`）→ INFO → `:462` `openDoor`／`:482` `applyDoor` → `:443` 訊息 → `:451` `refresh` | G-SRC 的 after（`doorPlainOpen`、`diskHasNoRecord`、`oneSourceInfo`、`presenceNone`、`runtimeAndTicketReleased`、`newSessionStarted`）；per-test receipt（catalog 與 world keys 不變） |
+| 返還、清理、RESOLVE stub、WAITING 期間開關門不結束塌縮 | CS 不讀門的狀態，門也沒有攔截（F4b）；結束塌縮的只有 `CS:341`／`:220`／`:357` 的終局 | 返還：G-OFF `openKeepsCollapse`／`closeKeepsCollapse`；清理：G-RF `releaseDoorOpens`／`releaseDoorKeepsCollapse`；RESOLVE：G-RES `resolveDoorOpens`／`resolveDoorCloses`／`holdsAtResolve`；WAITING：G-DOR `waitingDoorOpens`／`doorDoesNotEndWaiting`／`waitingDoorCloses` |
+| 返還進度的 roll-forward：返還寫出失敗 → 只重試同一份 current、不疊寫；確認後恢復 | `SRM:152-157` RETRY_FLUSH 只寫出同一份 current、以 journal 退避；`SRM:164-174` 失敗時退避一次、WARN 去重；`CS:291` roll-forward 未確認時 CS 對該 session 全部暫停 | G-RF（`currentCarriesOneReturn`、`flushedHasNoReturn`、`neverOverwroteAnotherReturn`、`noRetryBeforeBackoff`、`confirmedNotBeforeBackoff`） |
+| 離線參與者重新加入後完成返還；COLLAPSING 期間 Buff 到期不丟例外 | F3a 的 recovery（JOIN 的下一個 tick 返還）；CS 不碰 Buff | G-OFF |
+| Nether／End 選門被拒；Nether／End 的 M4 NEW 收據 → DORMANT → 取消（INFO） | 選門 `CDI:41-46`、`:55`；收據 `CS:190`、`:204` `unsupportedSource`、`:220` `cancelUnsupported` | G-NETHER、G-UNSUP；CST `unsupportedSourceIsOnlyNetherOrEndWithNewOrExisting`、`f3dMessagesExistInBothLanguages` |
+| DORMANT 邊緣觸發；未供電或停用時不觸發 | `CS:244` `resumeDormant`、`:550` `EntryWatch`、`:414` `chamberGate`（即時紅石 `:427`、enabled `:430-432`） | G-DOR (a)～(e)；CST `entryWatchTriggersOnlyOnEntryEdges` |
+| 提交失敗 → M4 fallback → DORMANT → 退避；M5 authority 初始化失敗 → 不提交 | `CS:265-270`（WARN、`backoff.failed`、live 才 `requestMeasuredRecovery`）；`m5ReadyThisInstance` 為假時 journal 拒絕 M→C（F2b） | G-FB |
+| 跨 session 唯一性 | `CS:406` `triggerReady`＝`participantsAvailable`；唯一性規則本身是 F2a 的 `occupies` | G-ELSE；G-DOR `busyParticipantDidNotBlock` |
+| M4 GameTest 在 hook 下維持原斷言 | `MIX:23`；`M4C:38-50`；`build.gradle:103` | Full 169/169；`m4-recovery-probe` 24/24；M-HOOK |
+
+### controller 補充第 1–17 點
+
+- **第 1 點（F3a 已完成的部分）**：CS 沒有任何返還或清理的呼叫；`requestMeasuredRecovery` 只在 MEASURED 時呼叫（`CS:225`、`:269`），這兩處依第 8 點與 spec §11.3 是 M4 的保留式 recovery。`CP:32-33` 只讀 receipt 與 `measuredRecoveryComplete` 推導階段。
+- **第 2 點（終局與 runtime／ticket 的正式 API）**：`SSM:508` `releaseAfterTerminal`（要求 current 與 flushed 都沒有這個 session）、`SSM:519` `releaseOnSealed`（要求 collapse view 是 SEALED；F4a 才會呼叫）、`SSM:531` `acquireCollapseTicket`（要求 flushed 恰為這份 COLLAPSING），三者共用 `SSM:538`。CS 在每個 checked 終局之後呼叫（`CS:381`），presence 因此在 production 自行回到 NONE（G-SRC `presenceNone`、`newSessionStarted`）。testmod 的 `releaseCollapseRuntimeForTeardown`、`releaseSourceTicketForTeardown` 已刪除，F3a 的 G2、G3 與 M5 的收尾改走正式 API（`M4A:272` 只是轉呼叫）。`revertCollapseForTeardown`（`M4A:280`）保留：它把 COLLAPSING 退回 MEASURED，production 沒有、也不應該有 C→M 的正式路徑。`SessionRecoveryState.java` 沒有修改。
+- **第 3 點（離開 SETTLED 的前提）**：`CP:33` 在 `measuredRecoveryComplete` 為假時一律是 RELEASE_GEOMETRY，所以 RESOLVE、WAITING、PREPARE（SOURCE 終局）都要等走廊 space 真的釋放；DORMANT 續行（`CS:247`）與 §11.3 的取消（`CS:232`）也一樣。RED 用 G-RF 的後半：清 lease 的寫出受控失敗一次，同一個 tick 內 RETRY_FLUSH 寫出 SETTLED；斷言那個 tick 沒有離開 SETTLED，下一個 tick 才終局，space、slot、chunk ticket 都沒有洩漏（`settledWhileSpaceRemains`、`leftSettledOnlyAfterSpaceReleased`、`noSpaceSlotOrTicketLeak`）。M-SETTLED 證明它會抓到。
+- **第 4 點（RETRY_FLUSH 的退避）**：`SRM:39-40` 一個 journal 一個 `CollapseBackoff`（200→12000）。設計：
+  - 單位是 journal 這個權威：RETRY_FLUSH 每次都寫出整份 journal，以 session 為單位退避並不會少寫。
+  - 同一個 tick 只算一次失敗（`journalRetryFailedTick`），所以多個 session 同時待確認不會讓退避多跳幾級。
+  - 退避期內 RETRY_FLUSH 跳過（`SRM:156`）；本 tick 已沒有待確認的 roll-forward（寫出已確認，或被其他寫出、原生 autosave 帶出）時重設（`SRM:178`）。
+  - 只有 recovery 自己的寫出失敗會餵退避；走廊清理（CPM）的寫出失敗不餵。所以 F3a G3 的「清 lease 失敗、同一 tick RETRY_FLUSH 成功」照樣可以重現。
+- **第 5 點（`MeasuredRecoveryPhase.from`）**：CS 只在 `record.state()==MEASURED` 時呼叫它（`CS:188`），PASSAGE_READY、SEALED 走 `CS:173-179` 的其他分支；每個 session 另有 try/catch（`CS:139-143`），整個 tick 也有外層 catch（`CS:159-163`），例外不會從 `END_SERVER_TICK` 拋出。
+- **第 6 點（終局 WARN 的去重）**：`CS:510` `warn` 以 (session, 寫入種類, `FailureText.dedupeKey`) 去重；提交成功時清除該鍵（`CS:272`），終局成功時整個 Track 移除（`CS:379`）。G-FB 斷言兩種原因各一則 WARN。
+- **第 7 點（`TerminalOrigin` 的前提）**：`SOURCE_FAST_PATH` 只在 `CP` 推得 PREPARE 時呼叫（全員已返還、沒有 lease、`measuredRecoveryComplete`），`UNSUPPORTED_SOURCE_CANCEL` 只在 flushed DORMANT、`measuredRecoveryComplete`、`unsupportedSource` 時呼叫（`CS:232`），`PASSAGE_ENDED` 只對開服時就是 PASSAGE_READY 的 session（`CS:176`）。journal 本身另有檢查：M-NETHERSOURCE 的第一輪就是 journal 拒絕對 SOURCE 取消。
+- **第 8 點（提交 COLLAPSING）**：`CS:263-264` 以 `commitRestore`（M→C）提交，`m5ReadyThisInstance` 由 journal 檢查（G-FB 以反射把它暫時設為假）。Destination 依 §7.2（`CS:211`）：SOURCE、EXISTING 的 UniverseId、NEW 的 `deriveUniverseId(token)`；ledger 的查詢屬 RESOLVE（F4a），F3d 只用推導值（G-RES `destinationIsTheDerivedUniverse`）。CommittedAtGameTime 用 overworld 的 game time。提交失敗：WARN、per-session 退避（新 instance 沒有退避，所以開服後第一次觸發不受限）；live 另請求 M4 的保留式 recovery（`CS:269`），DORMANT 維持原狀。
+- **第 9 點（DORMANT 續行）**：觸發條件見上表；「已供電」一律是 `world.isReceivingRedstonePower(controllerPos)`（`CS:427`），而且艙體外擴 3 格涵蓋的 chunk 都已載入（`CS:435`，只查詢、不載入），不看 registry 的 `ChamberPowerState`。續行提交之後自行取得來源 ticket（`CS:276-280`，G-DOR `dormantResumeTakesTicket`、G-RES）。
+- **第 10 點（開服時就是 PASSAGE_READY）**：`CS:111` 開服時記下這些 session；`CS:357` 以 `terminate(PASSAGE_ENDED)` 終局、記 INFO，門在下一個 tick 才改為一般開門（`CS:370` 的延遲 1）。G-PASS 以 fixture 與 `M4A:161` `markStartup` 驗證；M-DOORNOW 證明「下一個 tick」有被鎖住。
+- **第 11 點（SOURCE fast path 的門）**：順序是終局 → 改門 → 訊息（`CS:348-351`）。`CS:482` 依 `ApplyResult`：APPLIED／UNCHANGED 完成；NOT_LOADED 等之後的 tick（不強制載入）；DOOR_INCOMPLETE 記一次並退避，等結構恢復；ROLLED_BACK、ROLLBACK_FAILED 下一個 tick 重試一次，再失敗才退避（ROLLBACK_FAILED 已設 activationBlocked、已記 ERROR）。去重以原因字串為單位（`CS:585`）。原艙已開始新的 session（presence 不是 NONE）時不再套用。
+- **第 12 點（R2 M6 與返還 WARN）**：見上表第 2 列。`CRP:26` 先依 25 個地板 slot（y=1），再依 y=2、3、4 找第一個不碰撞、未被占用的位置；都不行時退回預設 slot，並記 WARN（`SRM:291`、`:353`，同一 session 的同一玩家只記一次）。返還 pending 的 WARN 附 root cause 的 `describe` 與 stack（`SRM:173`）；M-CAUSE 證明它會抓到。
+- **第 13 點（文字修正）**：`SRM:236` 改為「未 checked authority 已收斂」，`M4C:397` 的斷言同步。
+- **第 14 點（H3、H4 交給 F3d 的子項）**：
+  - `ConnectedGameTestPlayer.drainOutbound`（`:63`）由 `confirmTeleport`（`:54`）、`M2CorridorGameTests:1086`（位置修正）、`M4C:1092`（訊息）共用。
+  - 同 tick 兩位參與者各一則位置修正：G-SRC 的 `oneCorrectionThisTick`（`M5C:310-316`）。
+  - `FailureText`：收斂恢復的 INFO 印 `describe`（`SRM:228`、`:241`）；null reason 的 JUnit；`dedupeKey` 的 Javadoc 註明「鍵不含檔案身分」（`FailureText:30`）。
+  - M4 test 收尾：`batchFaultProbe`、`publishProbe` 在所有路徑上以 TestHooks 清除並關閉 fixture（`M4C:228-231`、`:1002-1005`）；publish probe 的等待改為有界（`whenWithin` 60 秒）；DORMANT 收據的 test 在失敗路徑也移除自建的收據（`M4C:564`）。q7：`selectionTeardown`（`M4C:1020`）斷言失敗時仍收尾（把 MEASURED 重設回 SUPERPOSITION 並斷電觸發一般返還），收尾例外附在原失敗上；拿掉了死變數 `observed`。
+- **第 15 點（Nether／End）**：選門 `CDI:41-46`：只對 SUPERPOSITION 的新選擇判斷（MEASURED 的 M4 收據照原本回 ALREADY_SELECTED，見「偏離」第 4 條），回 FAIL、actionbar 是翻譯 key `message.quantumchamber.m5.dimension_door_unavailable`（`CDI:55`），不寫 SELECTED。收據：SOURCE 照一般規則完成；NEW／EXISTING 不提交，非 DORMANT 時請求一次保留式 recovery（`CS:224-228`，開服 attach 通常已請求），一到 flushed DORMANT（而且 space 已釋放）就 `terminate(UNSUPPORTED_SOURCE_CANCEL)`，記 INFO「不支援的來源維度，已安全取消」（`CS:239`）。
+- **第 16 點（RESOLVE stub）**：`CS:333`：UNIVERSE 目的地停在 RESOLVE，每個 session 在本 instance 只 WARN 一次，不配置、不寫 SEALED。G-RES 用 `begin`／`complete`，斷言 catalog 增量 0、allocation 與 projection ledger 的檔案 bytes 不變；M-RESOLVEWARN 證明「只一次」有被鎖住。
+- **第 17 點（F3c 交接）**：G-RES 放在 `M5UniverseGameTests`（`m5_universe_resolve_stub`），以 `awaitConvergedThenComplete(context, 0, 20)` 收尾，tickLimit 400；故障 hook（`m5FlushProbe`）一律以 TestHooks 在所有路徑上釋放；斷言只看增量（ticket、record、WARN 都以 session 篩選）。注入失敗的 test 都以 server tick 計算退避窗口（G-FB）。
+
+決策 1 的順序（`QuantumSuperpositionMod:41`、`:49`、`:52`、`:53`）：`SuperpositionSessionManager.initialize()` → `CollapseAuthorities.registerEvents()` → `CollapseService.initialize()`（`:52`）→ `UniverseLifecycleService.initialize()`。Fabric 依註冊順序執行，所以：
+- `SERVER_STARTED`：journal 的 `requireHealthy`、session 與 recovery 的 attach、M5 authority 的初始化都在 `CS:111` 之前；CS 記下開服時 journal 裡的 session（第 9、10 點的「開服之後第一次」）。
+- `END_SERVER_TICK`：`ChamberControllerLoadSyncQueue`、`CorridorPageManager.tick`、`SuperpositionSessionManager.tick`（含 recovery）都在 CS 之前；CS 看到的是本 tick 返還與清理寫入之後的 flushed。
+- `CorridorPageManager.operationInProgress` 為真的 session 一律略過（`CS:172`），隔離中的 session 也略過；有未 checked 殘留時（`recoveryWritesSafe` 為假，`CS:137`）整個 tick 不寫入。
+
+決策 7（`MIX:23`）：`CS:170` `step` 的開頭被 hook 取消時，這個 session 完全不推進（不提交、不 fallback、不終局）。testmod 的集合不得清除（`M4C:38`，沒有移除的 API）；default run 中會產生 MEASURED 的 test 都在交出 fixture 之前加入（`nativeCandidates` `M4C:1076`、F3a fixture `M4C:1972`、DORMANT 收據的 test `M4C:558`）；`m4Recovery` run 以 `-Dquantumchamber.test.collapseSuspended=all` 暫停全部（`build.gradle:103`）。
+
+### 測試
+
+- JUnit：560 → 567（2 skipped，只在 `NonWindowsPlayerCheckpointStoreTest`）。`cc936d0` 的 2 個（見上表）；`CST` 5 個：
+  - `collapsePhaseFollowsReturnReleaseResolveThenTheGate`（`CST:59`）：未返還 → RETURN_PLAYERS；有 lease 或 space 未釋放 → RELEASE_GEOMETRY；UNIVERSE 未確定 → RESOLVE；之後依閘門 PREPARE／WAITING，而且閘門只在前面都成立時才被呼叫；非 COLLAPSING 丟例外。
+  - `destinationIsFixedAtCommitFromTheSelectedCandidate`（`:90`）、`unsupportedSourceIsOnlyNetherOrEndWithNewOrExisting`（`:106`，3 role × 3 種候選）、`entryWatchTriggersOnlyOnEntryEdges`（`:115`）、`f3dMessagesExistInBothLanguages`（`:136`，兩個 key、zh_tw 逐字、兩個語言檔 key 集合相同）。
+- default GameTest：160 → 169（`_windows` 80 → 86，per-test Universe receipt 38 → 47）。新增 9 個，都在 `M5CollapseGameTests`、各自一個 batch，每個都呼叫 `M4PerTestUniverseProbe.begin`／`complete`：
+  - G-SRC `native_source_selection_collapses_returns_the_cohort_and_opens_the_door_windows`（`M5C:268`，`m5_collapse_source_live`）
+  - G-RF `native_return_write_fault_retries_only_the_same_write_then_settles_windows`（`M5C:359`，`m5_collapse_return_roll_forward`）
+  - G-OFF `native_offline_participant_rejoins_and_returns_while_the_collapse_holds_windows`（`M5C:441`，`m5_collapse_offline_rejoin`）
+  - G-ELSE `native_returned_participant_starts_elsewhere_and_only_the_active_session_returns_him_windows`（`M5C:510`，`m5_collapse_returned_elsewhere`）
+  - G-DOR `dormant_source_receipt_resumes_only_on_a_powered_enabled_entry_edge`（`M5C:572`，`m5_collapse_dormant_edge`，跨平台）
+  - G-FB `native_commit_failure_falls_back_to_dormant_and_backs_off_windows`（`M5C:691`，`m5_collapse_commit_fallback`）
+  - G-UNSUP `nether_and_end_universe_receipts_are_cancelled_once_dormant`（`M5C:760`，`m5_collapse_unsupported_cancel`，跨平台）
+  - G-PASS `startup_passage_ready_ends_and_normalizes_the_door_next_tick`（`M5C:806`，`m5_collapse_startup_passage`，跨平台）
+  - G-NETHER `nether_side_doors_are_refused_and_an_m4_source_receipt_still_completes_windows`（`M5C:852`，`m5_collapse_nether_door`）：在 Nether 的 (24008, 100, 24008) 強制載入涵蓋的 chunk，外圍以石頭圍住（隔開岩漿與地形），蓋一座真原艙（`M5C:954-987`），一位玩家真入場。結束時解除強制載入；已註冊的原艙比照其他原生 test 留在原地、只斷電。
+- M5 GameTest：4 → 5。G-RES `dormant_universe_receipt_commits_then_holds_at_the_resolve_stub`（`M5U:214`，`m5_universe_resolve_stub`），catalog 增量 0。
+- `_windows` 的原生 test 需要 Windows 的原生玩家 checkpoint，非 Windows 在 per-test baseline 之前完成；跨平台的 3 個不需要。
+- 原生入場的走廊要建很多個 tick（GameTest server 不以 20 TPS 節流），等待入場的上限一律 20000 tick（`M5C:996`）。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f3d/`；gate root 在 `.superpowers/verification/`。取證用的暫時性改動都由 `f3d/adapter.py` 套用與還原（套用前保存原檔、還原後以 `git hash-object` 核對），各 adapter 的 diff 在 `f3d/adapters/<名稱>/`。`git diff 438c306 93df897 -- <path>` 輸出的 SHA-256 前 8 碼（`f3d/diff-hashes.txt`）：`src/main` `e019c074`、`src/test` `528ac11e`、`src/testmod` `50178f75`、`build.gradle` `d60609fd`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED（`cc936d0` 的 JUnit） | `438c306`，工作樹是 `cc936d0` 的 production 加上新 test，`ChamberReturnPlacement` 是舊版（`f3d/a-red-junit-state.txt`、`a-red/`） | Gradle `test`（`a-red/red-junit.log`） | `returnSlotsSkipBlockedCellsThenRaiseOrFallBackDeterministically` FAIL（落點在石頭上）；`FailureTextTest` 的 null reason test 以 mutation A-1（reason 為 null 時改用帶檔名的 message）證明（`a-mut/`） |
+| focused（`cc936d0`） | 同上，工作樹＝`cc936d0`（`a-focused-gametest-state.txt`） | `gate-f3d-a-focused-d1d1e521419042fc84572a1816385900` | PASS 12/12（H4、H3、F3a G1～G3 與 M2 的 drain 使用者）；JUnit 全部通過（`a-junit-all.log`） |
+| RED JUnit | `cc936d0`；adapter `junit-red`（`CP` 一律 WAITING、Destination 一律 SOURCE、`unsupportedSource` 一律假、`EntryWatch` 不回傳、移除兩個語言 key，語言檔因此等於 HEAD）；`f3d/c3-red-junit-state.txt` | Gradle `test --tests …CollapseServiceTest`（`c3-red/red-junit.log`、XML） | 5/5 在各自的斷言 FAIL |
+| RED GameTest（第 1 輪） | `cc936d0`；adapter `tick-noop`（`CS.tick` 一開頭就 return，服務照常註冊）；`c3-red-gametest-state.txt` | `gate-f3d-red-c3-0f47ef9470fa46f8bb5e0e1748b9d6ca` | 保留不採計：G-DOR 在 (e) 放第二份收據時被 journal 以「來源艙已有 session」拒絕（fixture 失敗，不是目標斷言）。修正為 (a)～(d) 先斷言；另把 G-RF、G-FB 的第一個斷言提前到選門後的下一個 tick，G-NETHER 在 DORMANT 收據應已提交的 tick 先斷言（不再等到逾時） |
+| RED GameTest（第 2 輪） | 同上，test 已修正（`c3-red-gametest-2-state.txt`） | `gate-f3d-red-c3b-e0e5aa2bbbd54f64bb70225a754b6d55` | 8/9 在目標斷言 FAIL（`c3-red/red-gametest-2-summary.txt`）：G-SRC `committedNextTick=false`；G-RF「應已 checked COLLAPSING」；G-OFF `collapsingHoldsForTheOffline=false`；G-DOR (a)～(d) 的 `entryEdgeCommits=false`；G-FB `attempts=[]`；G-UNSUP `cancelled=false`；G-PASS `endedAtStartup=false`；G-NETHER `entryEdgeCommits=false`。G-ELSE PASS：它驗的是 F2a 的唯一性規則與 SSM 的斷線處理，CS 不參與，以 M-AVAILABLE 證明覆蓋 |
+| RED M5 | 同上 adapter；`-Mode M5GameTest`，onlyBatches `m5_universe_resolve_stub`（`c3-red-m5-2-state.txt`） | 第 1 輪 `gate-f3d-red-c3-m5-042712b601474bbdad6de0ae8bc6633d`；第 2 輪 `gate-f3d-red-c3-m5b-3f42d7783d364756a82b1044acf54044` | 第 1 輪保留不採計：witness 在 MEASURED 時讀 `collapse().destination()` 得到 NPE（test 的缺陷）；加上狀態判斷之後，第 2 輪在目標斷言 FAIL：`entryEdgeCommits=false`、`holdsAtResolve=false`、`oneResolveStubWarn=false` |
+| RED Nether | `cc936d0`；adapter `nether-open`（`CDI` 的判斷恆假）；onlyBatches `m5_collapse_nether_door`（`c4-red-gametest-2-state.txt`） | 第 1 輪 `gate-f3d-red-c4-a77dc751b4fd44f8881542a2e1266c77`；第 2 輪 `gate-f3d-red-c4b-ed2b5b9211244ce8a404117e272de8a2` | 第 1 輪保留不採計：SOURCE 門被選中之後，test 才找 NEW 門，此時已沒有可選的門（fixture 失敗）；改為先找好兩扇門。第 2 輪在目標斷言 FAIL：`sourceDoorFails=false`、`dimensionMessageEachTime=false`、`noSelectionWritten=false`、`notFrozen=false`、`corridorWalkable=false`，keys＝［量子候選已鎖定，等待塌縮、候選已鎖定。］ |
+| mutation | 工作樹（`mut-base-state.txt`、`mut-base-2-state.txt`、`mut-base-3-state.txt`）；每次只套用一個，跑完還原並核對 blob | 下表 | 下表 |
+| GREEN Full | 工作樹（`green2-state.txt`），只有 `M5U` 一行的 NPE 防護與 commit 不同（見下） | `gate-f3d-green-full2-8aad108b6dab41cab979a2db0ce7102b`（`green2/full-summary.txt`） | PASS：default 169/169（`_windows` 86），0 failure／error／skipped；boundary PASS；`scope.json` PASS（宣告 default 169／legacy 1／M5 5）；per-test receipt 47/47；JUnit 567，0 failure／error，2 skipped；release 365 entries／318 classes（新增 `CollapsePhase`、`CollapseService` 與它的 `$1`、`$EntryWatch`、`$PendingDoor`、`$Track`）、sources 212（新增 2 個 `.java`）；testmod 命中 0；world exact restore |
+| GREEN M5 | 工作樹（`green3-m5-state.txt`），blob 與 `93df897` 相同 | `gate-f3d-green-m5-3-72e79441961149c7a01e033a27e826f5` | PASS 5/5；`m5-oracle.json` PASS（G-RES 1 → 1，expected 0、converged、preserved） |
+| GREEN Legacy | 同 GREEN Full | `gate-f3d-green-legacy2-a8def7f63b63439081499fe6571edee0` | PASS 1/1 |
+| GREEN Main＋oracle | 同 GREEN Full | `gate-f3d-green-main2-6f0defaab642474289f5cfea297e7d66`（`green2/main-oracle.log`） | PASS；main-oracle PASS（mod list、classpath／argfiles／DLI、class-load 都沒有 testmod；exact restore） |
+| M4 recovery | 同 GREEN Full（`m4-recovery-state.txt`） | `f3d/green2/m4-recovery/recovery-run-9dbb81613e38475ab2a2c46ae770097c.json` | PASS 24/24 phases。各 phase 的 server log 都沒有任何塌縮流程的訊息（`塌縮已提交`、`SOURCE 塌縮完成`、`不支援的來源維度`、`塌縮流程`），hook 生效 |
+| commit 檢查（`33624ad`） | 工作樹＝`33624ad`（C4 的 5 個檔換成 C3 版本，`c3-commit-state.txt`；版本由 `c3-snapshot/make.py` 產生） | Gradle `test`（`c3-commit/junit.log`）；`gate-f3d-c3-commit-focused-501b035dfd6a40509a90ae1159481516` | JUnit 567 全部通過（語言 test 是 C3 的 `collapseMessageExistsInBothLanguages`）；focused 14/14 PASS（F3d 的 8 個 batch 與 hook 下的 6 個 M4／F3a batch） |
+| run-all | `93df897`，`STATUS` 為空（`f3d/run-all-console.log`） | `run-all-ff25dbc9e87749c2a09b599ad2ae5b71` | `END ALL exit=0 HEAD=93df897289c5cd51ddd485cefb0028e1ba4b492b`，約 17.5 分鐘（14:39:33→14:57:05）。`SUMMARY default=169/169 windows=86 legacy=1/1 m5=5/5 perTest=47+1 junit=567 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=365entries/318classes sources=212 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+
+- GREEN 的 Full、Legacy、Main 與 M4 recovery 跑的是 `M5U` 加上 NPE 防護之前的版本（blob `3a23d7c`）；之後只改了 `M5U:259-260` 的一個條件（先判斷狀態再讀 Destination），所以 M5 GameTest 以最終 blob 重跑（GREEN M5），其他 gate 不受影響（`M5U` 只在 M5 run 執行）。`33624ad`、`93df897` 的 15 個檔，commit 時的 blob 與 GREEN M5 之前記錄的相同（`green3-m5-state.txt`）；`cc936d0` 的 8 個檔在所有 gate 期間都是 HEAD。run-all 在 commit 之後以 `93df897` 全部重跑。
+- 第一組 GREEN（`gate-f3d-green-full-1f7748eb414143c9ae447fbc8d49ddc2`、`gate-f3d-green-m5-7db7d95a1a3c4d89a78f569607baef51`、`gate-f3d-green-legacy-0cd68855a2df4ecba58c8d85ba387a8d`、`gate-f3d-green-main-36985169b28646e18e6b7684f304c1d0`）都 PASS，但之後 G-RF 加上清理期間的開門，所以改以上表的第二組採計。
+- 開發期間的 GameTest（`gate-f3d-dev1-31cc8084cc7246ab8e8ac8f203d21435` exit 1：原生入場的等待上限 600／400 tick 太小，改為 20000；`dev2`、`dev3`、`dev4-m5` PASS）不採計。
+- log（以 `/ERROR]`、`/WARN]` 行計）：GREEN Full ERROR 28、WARN 50。F3c 的 Full 為 28／45；多出的 5 則都來自 F3d 的 batch（逐 batch 歸屬見 `green2/full-warn-by-batch.txt`）：G-FB 2（提交失敗的兩種原因）、G-RF 2（返還 pending，與 F3a 既有的「COLLAPSING 保留 receipt 等待安全返還」）、G-ELSE 1（B 斷線時 M2 既有的「入場交易保留 RETURNING」）。第一組 GREEN Full 多了 1 則 `m2_task4_disconnect_io` 的「艙體 … 的 session 協調失敗，保留返還保護」，這則在 H2 與 F3b fix round 1 的 Full 也各出現過一次，屬既有的偶發。
+- 結束後 Java 程序只剩閒置的 Gradle daemon（PID 129228）。
+
+mutation（GameTest 都用 `-Mode GameTest` 加 onlyBatches，M-RESOLVEWARN 用 `-Mode M5GameTest`；摘要在 `f3d/mut/<名稱>-summary.txt`）：
+
+| Mutation | 改動 | Root | 結果（目標檢查） |
+| --- | --- | --- | --- |
+| M-HOOK | `MIX` 不再取消 | `gate-f3d-mut-m-hook-078a3df517744e69a99262ec442e0230` | 6 個 hook 下的 M4／F3a test 中 2 個 FAIL：`native_selection_all_25_cells_first_wins_and_measured_freeze_windows`（MEASURED 應停止 publish／remap）、`native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows`（`dormantAfterRecovery=false`、`singleWarnWithStack=false`） |
+| M-RETRY | 拿掉 `SRM:156` 的退避 | `gate-f3d-mut-m-retry-d4d8fe1ecd27437c8b09cd11c694f44f` | G-RF `noRetryBeforeBackoff=false`（失敗的下一個 tick 就重試） |
+| M-SETTLED | `CP:33` 不看 `releaseComplete` | 第 1 輪 `gate-f3d-mut-m-settled-359f52d8d32647aea327a1a951b9c9c1`；第 2 輪 `gate-f3d-mut-m-settled-6a1941f4eb2e48d1bebef0e1d2a08d2e` | 第 1 輪 G-RF 以「返還確認之後沒有完成清理：record=ABSENT」逾時（record 在同一個 tick 就終局，等不到 SETTLED）；test 改為 record 消失也停下取證，第 2 輪 `settledWhileSpaceRemains=false`、`noSpaceSlotOrTicketLeak=false` |
+| M-CAUSE | 返還 pending 的 WARN 不附 throwable | `gate-f3d-mut-m-cause-c9b538230bad494bb2529d0669f35450` | G-RF `oneWarnWithCause=false` |
+| M-TICKET | 終局之後不呼叫 `releaseAfterTerminal` | `gate-f3d-mut-m-ticket-8d357ef8a9984c18a35a20d4bd6a5c5d` | G-SRC `presenceNone=false`、`runtimeAndTicketReleased=false`、`newSessionStarted=false`、`doorPlainOpen=false`（presence 不是 NONE，門不再套用） |
+| M-EDGE | `EntryWatch` 改成位準 | `gate-f3d-mut-m-edge-d384cf6a8d5b472881e9454d3237f991` | G-DOR `stayingInsideIgnored=false`、`noCommitYet=false` |
+| M-POWER | 閘門不看即時紅石輸入 | `gate-f3d-mut-m-power-eaacde1646cc41fc839ee2208e7edd41` | G-DOR `unpoweredEntryIgnored=false` |
+| M-OCCUPY | `occupies` 對塌縮狀態一律為真 | `gate-f3d-mut-m-occupy-09ff59fd57f34e60a538acd1b43fa3ad` | 不採計：journal 的唯一性驗證也用 `occupies`，fixture 在寫入時就被拒絕（「玩家跨 session 重複」）。改用 M-AVAILABLE |
+| M-AVAILABLE | `participantsAvailable` 把任何參與者都算成佔用（只改這個查詢） | `gate-f3d-mut-m-available-775e05f9b1584c5793dc7eb4d5d76a8e` | G-ELSE 在「已返還的塌縮與 SEALED 參與者不佔用 P」FAIL |
+| M-LOOKUP | `SRM.recordFor` 不看 `occupies` | `gate-f3d-mut-m-lookup-bd3bebf72fd14d54baa3b0c9df5c541c`、`gate-f3d-mut-m-lookup-ee2b7a39a9b24c42b032f59270f64419` | G-ELSE 兩次都 PASS（見「觀察」第 1 條）；F3a 的 `collapse_states_attach_without_returning_and_lookup_only_occupying_sessions` FAIL（`sealedReturnedJoinNotQueued=false`） |
+| M-DOORNOW | `CS:370` 的延遲改為 0 | `gate-f3d-mut-m-doornow-97e8e4d0f082408190890790e9dc171a` | G-PASS `doorNotYetWritten=false` |
+| M-NETHERSOURCE | `unsupportedSource` 對 SOURCE 也成立 | 第 1 輪 `gate-f3d-mut-m-nethersource-ed58292cc21440bb8f56f527b0d32ab0`；第 2 輪 `gate-f3d-mut-m-nethersource-00141cfbbd4d4ae9a109bfc072b38866` | 第 1 輪 G-NETHER FAIL（`entryEdgeCommits=false`），G-UNSUP PASS：journal 拒絕對 SOURCE 的取消，收據原樣留著，只多一則 WARN。G-UNSUP 改為同時斷言 SOURCE 收據沒有 WARN、沒有取消的 INFO；第 2 輪兩個都 FAIL（G-UNSUP `netherSourceKept=false`） |
+| M-RESOLVEWARN | `CS:334` 不去重 | `gate-f3d-mut-m-resolvewarn-6a4288aae81f45e585b9dd4346000237` | G-RES `oneResolveStubWarn=false`、`noOtherWarnOrError=false` |
+
+- mutation 跑在採計的 GREEN 之前；之後 test 的改動只有 G-RF 的清理期間開門、G-ELSE 的提前斷言、G-UNSUP 的 SOURCE 收據條件與 `M5U` 的 NPE 防護，都不影響各 mutation 的目標檢查。每次跑完的 blob 都與 `mut-base*-state.txt` 相同。
+
+### 偏離 plan／spec 字面之處
+
+1. **commit 拆成三個**：`cc936d0`（終局 API 與返還的修正，補充第 2、4、12、13、14 點）、`33624ad`（CollapseService、hook 與 M4 test）、`93df897`（Nether／End 的選門）。plan Step 4 的 commit 訊息用在 `33624ad`。`33624ad` 的 C3 版本另以 JUnit 與 focused GameTest 驗證（上表「commit 檢查」）。
+2. **「下一 tick COLLAPSING」**：CS 掛在 `END_SERVER_TICK`，選門（玩家互動封包或 test callback）在同一個 tick 的前段處理，所以提交發生在選門那個 tick 的結尾，guard 已閒置；下一個 tick 開始時看到的就是 checked COLLAPSING。spec §7.1「選擇之後的下一個 tick」以「下一個 tick 可見」解讀；若要求提交本身延到下一個 tick 的結尾，需要在 Track 記下選門的 tick（見「需要裁示」第 2 條）。
+3. **閘門的評估方式**：spec §7.3「不成立時停在 WAITING，之後依 §7.1 的邊緣觸發再評估」。實作是：本 instance 第一次推到閘門階段時以位準評估一次（live 返還之後通常立即成立；開服之後即「第一次觀察」），之後只在邊緣觸發時評估（`CS:313-331`）。進入 PREPARE 之後參與者在艙內不是持續條件；來源艙的條件不再成立就退回 WAITING（`CS:314-317`）。
+4. **Nether／End 的判斷只看 SUPERPOSITION**：spec §11.3 寫的是「新的選擇」。MEASURED 的 M4 收據在側門互動時照原本回 ALREADY_SELECTED（不寫入），不改成「此維度的宇宙門尚未開放。」。
+5. **G-RES 用 DORMANT 收據觸發**：plan 的 UNIVERSE 過渡測試沒有指定觸發方式。live 選 NEW 門需要原生 checkpoint（只有 Windows），而 M5 run 要求跨平台可跑，所以用真原艙上的 DORMANT NEW 收據與邊緣觸發；提交之後的路徑與 live 相同。
+6. **`m5FlushProbe` 放在 `M4CandidateDoorGameTests.beforeCandidateFlush`**：M5 test 需要在 journal flush 開頭注入失敗。既有的呼叫點是 `SessionJournalWindowFaultMixin` → `beforeCandidateFlush`，mixin 不在允許路徑內，所以在 `M4C:1325` 加一行轉呼叫，只在 server thread 上生效，由各 test 以 TestHooks 清除。
+7. **`revertCollapseForTeardown` 保留**（補充第 2 點寫「若能改走正式路徑，一併刪除」）：沒有 C→M 的正式路徑。
+8. **M-OCCUPY、M-LOOKUP**：G-ELSE 的覆蓋以 M-AVAILABLE 證明；`SRM.recordFor` 的覆蓋由 F3a 的 test 提供（見上表與「觀察」第 1 條）。
+
+### 需要裁示
+
+1. **「量子態塌縮。」顯示兩次**：spec §10.8 的「塌縮」訊息在提交時顯示（`CS:281`），§7.4 第 3 步「對參與者顯示訊息」沒有指定內容，目前也用同一則（`CS:351`）。SOURCE 的玩家因此在提交與開門時各看到一次。選項：(a) 維持；(b) fast path 不再顯示；(c) fast path 改用另一則（例如通道結束的「量子通道已關閉。」，但 SOURCE 沒有通道）。
+2. **live 提交的時點**：見「偏離」第 2 條。目前的解讀不需要改程式；若裁定為「下一個 tick 的結尾才提交」，CS 需要記下選門的 tick，G-SRC 等 test 的時點同步順延一個 tick。
+
+### 觀察（未修改）
+
+1. G-ELSE 在 M-LOOKUP 下兩次都 PASS。B 進入 RETURNING 不只經由 `SRM.recordFor`：P 斷線之後，B 的 runtime 在 tick 中檢查來源身分與 cohort 效果失敗，走 `SSM:286-291` 的 `fail`（G-ELSE 的 batch 因此有一則既有的「入場交易保留 RETURNING」WARN）；而且 `flushedRecords()` 是 `Map.copyOf`，迭代順序每個 JVM 不同。G-ELSE 斷言的是整體結果（B 進入 RETURNING、A 與 A′ 沒被改寫），查找本身在 F3a 的 test 有直接的斷言（M-LOOKUP 下 FAIL）。
+2. `CS:83` 的待套用門以 chamber 為 key，只存在記憶體：終局之後、門還沒套用成功之前重啟，門會停在終局前的狀態（F3d 只會留下一般關門或一般開門）。spec §7.3「門狀態的重新套用」由 collapse view 投影，終局之後沒有 record 可投影；是否需要開服時的正規化，交給 F5（沒有所屬 session 的 membrane 正規化）一併處理。
+3. 原生 test 的走廊建置在 GameTest server 上需要上千個 tick；`dev1` 用 600／400 tick 的上限全部逾時在 ARMING。之後一律以 20000 tick 為上限（`M5C:996`），實際約 1～3 秒。
+4. G-NETHER 在 Nether 強制載入 4 個以內的 chunk，結束時解除；已註冊的 Nether 原艙與外圍石牆留在 fresh 世界裡（每次 gate 都是 fresh 世界）。
+5. `m4-recovery-probe` 的 phase 證據（JSON）沒有記錄 JVM 的指令列，所以「hook 生效」以 `build.gradle:103` 與 server log 中沒有任何塌縮流程訊息證明。
+
+### 交給後續
+
+- F4a：
+  - 以真正的 RESOLVE 取代 `CS:333` 的 stub（`CS:300` 的分支），並在提交時依 §7.2 先查 allocation ledger（已有 entry 時用 entry 的 UniverseId；目前 `CS:211` 只用推導值）。
+  - 進入 SEALED 之後呼叫 `SSM:519` `releaseOnSealed`；SEALED 的重試（同一 instance 內 S→C）要自行取得來源 ticket（`SSM:531`），`CS:178` 目前不處理 SEALED。
+  - `retryable()`／`restartOnly()` 的分流照派工不在本 task。
+- F4b：UNIVERSE 的 PREPARE（`CS:301-304` 目前只處理 SOURCE）、量子膜的套用、PREPARE 期間的門攔截（排在 `ChamberDoorService` 之前）、PREPARE 中途閘門失效時釋放目的世界 ticket 並把門改為一般開門（`CS:314-317` 目前只退回 WAITING）。
+- F5：PASSAGE_READY 的 runtime 產生與通道結束；`CS:357` 只處理開服時就是 READY 的 record。終局之後的門正規化在重啟時遺失的情況（「觀察」第 2 條）。READY 提交之後的 Controller 刷新可沿用 `CS:451`。
+- F6：
+  - `build.yml` 的明列清單：本 task 新增 `_windows` 6 個（G-SRC、G-RF、G-OFF、G-ELSE、G-FB、G-NETHER），跨平台 3 個（G-DOR、G-UNSUP、G-PASS），M5 run 1 個（G-RES）；目前都由通則涵蓋。
+  - 重啟矩陣：DORMANT 的「開服之後第一次觀察」與開服時的 PASSAGE_READY 目前以 `M4A:161` `markStartup` 模擬，真的跨 JVM 重啟屬 F6 的 harness。
+- F7：README 與 player guide 的 M5 行為（Nether／End 選門的訊息、SOURCE 的塌縮）；「需要裁示」第 1 條若改訊息，spec §10.8 一併更新。
