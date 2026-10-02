@@ -17,12 +17,17 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.test.GameTest;
+import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,8 +43,11 @@ import org.slf4j.LoggerFactory;
  *     {@link #begin} 之前，略過時不留下 baseline。Windows 上每個 test 都必須走到 {@link #complete} 或
  *     {@link #awaitConvergedThenComplete} 並通過，gate 逐 test 要求一行 PASS 的增量。</li>
  * <li>第一個動作是 {@code begin(context, "<方法名稱>")}：不在 M5 run 時在碰 catalog 之前就失敗；名稱必須等於方法名稱。最後一個動作是
- *     {@link #complete}（可重試，適合放在 {@code context.addInstantFinalTask} 裡）或 {@link #awaitConvergedThenComplete}（主動收斂、
- *     逾時即失敗）。通過時寫一行 {@code M5_UNIVERSE_CATALOG_DELTA … status=PASS}，由 gate 逐 test 核對並依序串接；suite 結束時
+ *     {@link #awaitConvergedThenComplete}（主動收斂、逾時即失敗；可另給 ready 條件）或 {@link #complete}（可重試）。把 complete 放進
+ *     {@code context.addInstantFinalTask} 時，只能在最後一步之後註冊（例如在最後一個 {@code waitAndRun} 的 callback 裡）：在 test
+ *     開頭就註冊的話，catalog 增量一達標就會 complete，之後排定的檢查不會執行，等於誤判 PASS。注入寫出失敗時，權威的退避從 200 tick
+ *     起跳，{@code maxTicks} 與 {@code @GameTest(tickLimit = …)}（預設 100）都要留足，見 {@link #awaitConvergedThenComplete}。
+ *     通過時寫一行 {@code M5_UNIVERSE_CATALOG_DELTA … status=PASS}，由 gate 逐 test 核對並依序串接；suite 結束時
  *     （{@code SERVER_STOPPED}）再寫一行 {@code M5_UNIVERSE_SUITE_END}，gate 核對它等於最後一個 test 的結果。M5 run 不註冊 default run
  *     的 {@code M4GameTestBoundaryProbe}，改用這些逐 test 的增量。</li>
  * <li>衛生規則：test 完成前，catalog 與四個 M5 權威都必須已收斂（catalog 不 dirty、current 等於 flushed，沒有未確認的寫入）。注入失敗的
@@ -57,6 +65,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static final UUID SANITY_UNIVERSE = UUID.fromString("50000000-0000-4000-8000-0000000f3c01");
     private static final UUID RETRY_UNIVERSE = UUID.fromString("50000000-0000-4000-8000-0000000f3c11");
     private static final UUID AWAIT_UNIVERSE = UUID.fromString("50000000-0000-4000-8000-0000000f3c12");
+    private static final UUID NESTED_UNIVERSE = UUID.fromString("50000000-0000-4000-8000-0000000f3c13");
+    private static final int NESTED_CHECKS = 5;
 
     /**
      * F3c sanity：M5 run 可以配置 catalog。比照 M3 的 DISABLED fixture（{@code M3UniverseLifecycleGameTests}）：配置一筆 OVERWORLD、
@@ -82,7 +92,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
 
     /**
      * F3c fix round 1：{@link #complete} 可以重試。catalog 的變更 5 tick 之後才寫出，以 {@code addInstantFinalTask}（原版每個 tick 重試，
-     * 直到不丟例外）呼叫 complete：寫出之前的嘗試因未收斂而失敗，但保留 baseline、不寫增量行；寫出之後那一次通過。
+     * 直到不丟例外）呼叫 complete：寫出之前的嘗試因未收斂而失敗，但保留 baseline、不寫增量行；寫出之後那一次通過。註冊是本 test 的最後
+     * 一步，之後沒有其他檢查。通過之前斷言至少已失敗過一次（fix round 2 M2）：第一次就已收斂代表 fixture 失效，重試路徑沒有被走到。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_harness_retry")
     public void harness_complete_retries_without_losing_the_baseline(TestContext context) {
@@ -94,9 +105,18 @@ public final class M5UniverseGameTests implements FabricGameTest {
         long flushAt = context.getTick() + 5;
         context.runAtTick(flushAt, () -> catalog.flush(server));
         var attempts = new AtomicInteger();
+        var fixtureBroken = new AtomicBoolean();
         context.addInstantFinalTask(() -> {
-            attempts.incrementAndGet();
-            if (context.getTick() >= flushAt) LOGGER.info("M5_UNIVERSE_HARNESS_RETRY attempts={}", attempts.get());
+            if (fixtureBroken.get()) throw new GameTestException("等待確定失敗");
+            int attempt = attempts.incrementAndGet();
+            if (converged(CollapseAuthorities.get(server))) {
+                if (attempt <= 1) {
+                    fixtureBroken.set(true);
+                    failNextTick(context, new GameTestException("第一次嘗試就已收斂，complete 的重試路徑沒有被走到"));
+                    throw new GameTestException("等待確定失敗");
+                }
+                LOGGER.info("M5_UNIVERSE_HARNESS_RETRY attempts={}", attempt);
+            }
             complete(context, 1);
         });
     }
@@ -114,6 +134,62 @@ public final class M5UniverseGameTests implements FabricGameTest {
         catalog.changeAvailability(record.definition().universeId(), DesiredAvailability.DISABLED);
         context.assertTrue(CollapseAuthorities.get(server).unconfirmed(CollapseAuthorities.Authority.CATALOG), "寫出之前 catalog 是未確認");
         awaitConvergedThenComplete(context, 1, 20);
+    }
+
+    /**
+     * F3c fix round 2：在排程的 callback（{@code waitAndRun}）裡呼叫 {@link #awaitConvergedThenComplete}，第一輪不能完成（ready 未成立），
+     * 同時還有 {@value #NESTED_CHECKS} 個已排定、尚未到期的 {@code runAtTick} 檢查。helper 的輪詢不得在原版迭代 runAtTick 表
+     * （{@code GameTestState} 的 {@code Object2LongOpenHashMap}）的途中插入項目：一次插入多項會讓表在迭代中 rehash，使外層 callback
+     * 重跑、已排定的檢查遺失，或 iterator 丟例外。外層與每個檢查重跑時當場失敗；ready 要求外層恰好跑過一次、每個檢查都恰好跑過一次，
+     * 檢查遺失時 test 逾時失敗（{@code ready=false}）。這些現象取決於 lambda 的 identity hash，不一定每次發生，所以另外直接斷言
+     * helper 呼叫前後 runAtTick 表的項目數不變。
+     * maxTicks 取 20：若照 {@code 1988744} 的做法一次預排 maxTicks 項，這張表（5 個檢查＋外層，預設容量的 maxFill 為 24）在插入第 19 項時
+     * 就會 rehash。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_harness_nested")
+    public void harness_await_inside_a_scheduled_callback_keeps_other_scheduled_checks(TestContext context) {
+        begin(context, "harness_await_inside_a_scheduled_callback_keeps_other_scheduled_checks");
+        var server = context.getWorld().getServer();
+        var catalog = UniverseRegistryState.get(server);
+        var checks = new AtomicIntegerArray(NESTED_CHECKS);
+        var outer = new AtomicInteger();
+        var logged = new AtomicReference<String>();
+        long start = context.getTick();
+        for (int i = 0; i < NESTED_CHECKS; i++) {
+            int id = i;
+            context.runAtTick(start + 4 + id, () -> context.assertTrue(checks.incrementAndGet(id) == 1, "已排定的檢查 #" + id + " 重複執行"));
+        }
+        context.waitAndRun(2, () -> {
+            context.assertTrue(outer.incrementAndGet() == 1, "外層 waitAndRun 的 callback 重跑：runAtTick 的表在迭代中被改動");
+            var record = catalog.allocateOverworld(NESTED_UNIVERSE, nextOrdinal(catalog));
+            catalog.changeAvailability(record.definition().universeId(), DesiredAvailability.DISABLED);
+            int scheduledBefore = scheduledCount(context);
+            awaitConvergedThenComplete(context, 1, 20, () -> {
+                String state = "outer=" + outer.get() + " checks=" + checks;
+                if (!state.equals(logged.getAndSet(state))) LOGGER.info("M5_UNIVERSE_HARNESS_NESTED {}", state);
+                return outer.get() == 1 && IntStream.range(0, NESTED_CHECKS).allMatch(id -> checks.get(id) == 1);
+            });
+            // 結構面的斷言（不靠 rehash 是否剛好發生）：helper 在這個 callback 裡不得插入 runAtTick 的項目。
+            int inserted = scheduledCount(context) - scheduledBefore;
+            context.assertTrue(inserted == 0, "awaitConvergedThenComplete 在 runAtTick 的 callback 裡插入了 " + inserted + " 個排程項目");
+        });
+    }
+
+    /**
+     * 原版 {@code GameTestState} 的 runAtTick 表（{@code ticksByRunnables}）目前的項目數，只讀。欄位名稱是 Yarn 1.21+build.9 的
+     * {@code TestContext.test} 與 {@code GameTestState.ticksByRunnables}；GameTest 只在 Loom 的開發 runtime（named 名稱）執行。
+     */
+    private static int scheduledCount(TestContext context) {
+        try {
+            var testField = TestContext.class.getDeclaredField("test");
+            testField.setAccessible(true);
+            var state = testField.get(context);
+            var mapField = state.getClass().getDeclaredField("ticksByRunnables");
+            mapField.setAccessible(true);
+            return ((Map<?, ?>) mapField.get(state)).size();
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("讀不到原版的 runAtTick 表", failure);
+        }
     }
 
     /**
@@ -156,40 +232,72 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <p>通過時才移除 baseline、寫一行 {@code M5_UNIVERSE_CATALOG_DELTA … status=PASS}，再 {@code context.complete()}。未通過時丟出
      * GameTest 的斷言例外，baseline 保留、不寫增量行（狀態改變時另記一行 {@code M5_UNIVERSE_CATALOG_UNMET} 供診斷），所以可以放在
      * {@code context.addInstantFinalTask(() -> complete(context, n))} 裡逐 tick 重試。直接呼叫而失敗時，test 就此失敗。
+     * <p>放進 {@code addInstantFinalTask} 時，只能在最後一步之後註冊（例如在最後一個 {@code waitAndRun} 的 callback 裡）：runner 從註冊
+     * 的那個 tick 起每個 tick 都嘗試，catalog 增量一達標就 complete，之後才排定的檢查不會執行，等於誤判 PASS。
      */
     private static void complete(TestContext context, int expectedDelta) {
-        finish(context, expectedDelta, false);
+        finish(context, expectedDelta, false, true);
+    }
+
+    /** {@link #awaitConvergedThenComplete(TestContext, int, int, BooleanSupplier)}，沒有額外的 ready 條件。 */
+    private static void awaitConvergedThenComplete(TestContext context, int expectedDelta, int maxTicks) {
+        awaitConvergedThenComplete(context, expectedDelta, maxTicks, () -> true);
     }
 
     /**
-     * 收斂之後才完成：每一輪先對四個權威呼叫 {@code CollapseAuthorities.convergeIfNeeded}（catalog 為 checked flush；在退避期內不重寫），
-     * 全部已收斂就依 {@link #complete} 的條件完成。第一輪在呼叫當下執行，之後每個 tick 一輪（{@code runAtTick} 預先排好），最多
-     * {@code maxTicks} 個 tick。收斂之後條件仍不符，或逾時還沒收斂，都寫一行 {@code status=FAIL} 的增量並讓 test 失敗。
-     * <p>必須是 test 的最後一個動作；{@code maxTicks} 必須小於 test 的 tickLimit 減去目前的 tick。
+     * 收斂（而且 {@code ready} 成立）之後才完成：每一輪先對四個權威呼叫 {@code CollapseAuthorities.convergeIfNeeded}（catalog 為 checked
+     * flush；在退避期內不重寫），全部已收斂而且 ready 成立，就依 {@link #complete} 的條件做最終判定。第一輪在呼叫當下執行，之後由一個
+     * 專用的 {@code TimedTaskRunner}（{@code context.createTimedTaskRunner()}）每個 tick 一輪，最多 {@code maxTicks} 個 tick。收斂之後
+     * 條件仍不符，或逾時還沒收斂（或 ready 還不成立），都寫一行 {@code status=FAIL} 的增量並讓 test 失敗。
+     * <p>為什麼用 runner、不用 {@code runAtTick}：原版 {@code GameTestState} 逐 tick 迭代 {@code runAtTick} 的表
+     * （{@code Object2LongOpenHashMap}），執行完一項才 {@code iterator.remove()}。在 {@code runAtTick}／{@code waitAndRun} 的 callback
+     * 裡一次插入多項會讓表在迭代中 rehash：外層 callback 重跑、已排定的其他檢查遺失，或 iterator 丟例外。runner 存在另一份
+     * {@code CopyOnWriteArrayList}，在該 tick 迭代完那張表之後才執行，所以在任何 callback 裡呼叫本方法都不會改到迭代中的表。
+     * <p>呼叫條件：
+     * <ul>
+     * <li>必須是 test 的最後一個動作（可以在 {@code waitAndRun} 的 callback 裡）。</li>
+     * <li>{@code maxTicks} 要小於 test 的 {@code tickLimit}（{@code @GameTest} 預設 100）減去呼叫時的 tick。超過 tickLimit 的那一個 tick，
+     *     原版一律判 test 失敗：即使同一個 tick 剛收斂並寫了 PASS 的增量行也一樣；還沒收斂時則以「等待…」的訊息失敗，不會留下
+     *     {@code status=FAIL} 的增量行。</li>
+     * <li>注入寫出失敗時，權威的退避從 200 tick 起跳（{@code CollapseBackoff.INITIAL_TICKS}，之後加倍）：要等到收斂，{@code maxTicks}
+     *     至少要超過 200，{@code tickLimit} 也要跟著加大。</li>
+     * </ul>
      */
-    private static void awaitConvergedThenComplete(TestContext context, int expectedDelta, int maxTicks) {
+    private static void awaitConvergedThenComplete(TestContext context, int expectedDelta, int maxTicks, BooleanSupplier ready) {
         if (maxTicks < 1) throw new IllegalArgumentException("maxTicks 必須至少 1：" + maxTicks);
         context.assertTrue(ACTIVE.containsKey(context), "缺少 begin 記下的 catalog baseline");
         var server = context.getWorld().getServer();
-        if (convergeAll(server)) {
-            finish(context, expectedDelta, true);
+        boolean readyNow = ready.getAsBoolean();
+        if (convergeAll(server) && readyNow) {
+            finish(context, expectedDelta, true, true);
             return;
         }
-        var done = new AtomicBoolean();
         long deadline = context.getTick() + maxTicks;
-        for (long tick = context.getTick() + 1; tick <= deadline; tick++) {
-            boolean last = tick == deadline;
-            context.runAtTick(tick, () -> {
-                if (done.get()) return;
-                if (convergeAll(server) || last) {
-                    done.set(true);
-                    finish(context, expectedDelta, true);
-                }
-            });
-        }
+        var done = new AtomicBoolean();
+        context.createTimedTaskRunner().createAndAdd(() -> {
+            if (done.get()) return;
+            boolean readyThisTick = ready.getAsBoolean();
+            boolean settled = convergeAll(server) && readyThisTick;
+            // runner 把 GameTestException 當成「還沒好」，下一個 tick 再執行這個工作。
+            if (!settled && context.getTick() < deadline) throw new GameTestException("等待 M5 權威收斂" + (readyThisTick ? "" : "與 ready 條件"));
+            done.set(true);
+            try {
+                finish(context, expectedDelta, true, readyThisTick);
+            } catch (RuntimeException failure) {
+                failNextTick(context, failure);
+            }
+        });
     }
 
-    private static void finish(TestContext context, int expectedDelta, boolean finalAttempt) {
+    /**
+     * 在 TimedTaskRunner 的工作裡讓 test 確定失敗：runner 會把 GameTestException 當成「還沒好」而在下一個 tick 重試，所以改排一個在下一個
+     * tick 丟出的 {@code runAtTick}。只在 runner 的工作裡呼叫：runner 在該 tick 迭代完 runAtTick 的表之後才執行，這時插入不會改到迭代中的表。
+     */
+    private static void failNextTick(TestContext context, RuntimeException failure) {
+        context.runAtTick(context.getTick(), () -> { throw failure; });
+    }
+
+    private static void finish(TestContext context, int expectedDelta, boolean finalAttempt, boolean ready) {
         var baseline = ACTIVE.get(context);
         context.assertTrue(baseline != null, "缺少 begin 記下的 catalog baseline");
         var server = context.getWorld().getServer();
@@ -198,9 +306,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
         boolean preserved = baseline.records().entrySet().stream()
                 .allMatch(entry -> entry.getValue().equals(after.get(entry.getKey())));
         int actual = after.size() - baseline.records().size();
-        boolean pass = converged && preserved && actual == expectedDelta;
+        boolean pass = ready && converged && preserved && actual == expectedDelta;
+        // ready 只在不成立時出現在行尾（PASS 的增量行格式不變，gate 的解析不受影響）。
         String state = "name=" + baseline.name() + " before=" + baseline.records().size() + " after=" + after.size() + " expected=" + expectedDelta
-                + " actual=" + actual + " converged=" + converged + " preserved=" + preserved;
+                + " actual=" + actual + " converged=" + converged + " preserved=" + preserved + (ready ? "" : " ready=false");
         if (pass || finalAttempt) {
             LOGGER.info("M5_UNIVERSE_CATALOG_DELTA {} beforeDigest={} afterDigest={} status={}", state, baseline.digest(), digest(after), pass ? "PASS" : "FAIL");
         } else if (!state.equals(UNMET.put(context, state))) {

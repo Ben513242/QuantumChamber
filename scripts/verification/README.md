@@ -71,10 +71,11 @@ $v = 'scripts/verification'
 3. 名稱以 `_windows` 結尾的 test（需要 Windows 原生 checkpoint）：平台略過（`if(!Platform.isWindows()) { context.complete(); return; }`）放在 `begin` 之前，略過時不留下 baseline。Windows 上每個 test 都必須走到最後一步並通過，gate 逐 test 要求一行 PASS 的增量。
 4. 第一個動作（平台略過之後）是 `begin(context, "<方法名稱>")`，名稱必須等於方法名稱。它在不是 M5 run 時、在碰 catalog 之前就讓 test 失敗，也檢查開始時已收斂。
 5. 最後一個動作二選一：
-   - `awaitConvergedThenComplete(context, <預期的 catalog 增量>, <maxTicks>)`：每個 tick 主動呼叫 `CollapseAuthorities.convergeIfNeeded`（catalog 是 checked flush），收斂之後才完成，逾時就失敗。`maxTicks` 要小於 test 的 `tickLimit` 減去目前的 tick。
-   - `complete(context, <預期的 catalog 增量>)`：當下就判定。未通過時保留 baseline、不寫增量行，所以可以放在 `context.addInstantFinalTask(() -> complete(context, n))` 裡逐 tick 重試。
-6. 注入失敗的 test，要等 catalog 與四個 M5 權威都收斂之後才完成（衛生規則），否則之後的 NEW 配置會一直等待。
-7. 用 `gates.ps1 -Mode M5GameTest`（或 `run-all.ps1`）跑。直接執行 `gradle runGameTestM5` 時，`run/gametest-m5/world` 必須是 fresh 的：gate 從 0 筆開始串接增量，固定 UUID 的 fixture 在舊世界中也會撞到既有紀錄。
+   - `awaitConvergedThenComplete(context, <預期的 catalog 增量>, <maxTicks>[, <ready 條件>])`：每個 tick 主動呼叫 `CollapseAuthorities.convergeIfNeeded`（catalog 是 checked flush），收斂（而且 ready 條件成立）之後才完成，逾時就失敗。可以在 `waitAndRun`／`runAtTick` 的 callback 裡呼叫：輪詢由專用的 `TimedTaskRunner` 執行，不會在原版迭代 `runAtTick` 的表時插入項目。
+   - `complete(context, <預期的 catalog 增量>)`：當下就判定。未通過時保留 baseline、不寫增量行，所以可以放在 `context.addInstantFinalTask(() -> complete(context, n))` 裡逐 tick 重試；但只能在最後一步之後註冊（例如在最後一個 `waitAndRun` 的 callback 裡呼叫）。在 test 開頭就註冊的話，runner 從那個 tick 起每個 tick 都嘗試，catalog 增量一達標就 complete，之後排定的檢查不會執行，等於誤判 PASS。
+6. 注入失敗的 test，要等 catalog 與四個 M5 權威都收斂之後才完成（衛生規則），否則之後的 NEW 配置會一直等待。權威寫出失敗之後的退避從 200 tick 起跳（`CollapseBackoff.INITIAL_TICKS`，之後加倍），所以這類 test 的 `maxTicks` 要超過 200，`@GameTest(tickLimit = …)` 也要跟著加大（預設 100）。
+7. tick 上限：`maxTicks` 要小於 test 的 `tickLimit` 減去呼叫時的 tick。超過 `tickLimit` 的那一個 tick，原版一律判 test 失敗：即使同一個 tick 剛收斂、已寫了 PASS 的增量行也一樣；還沒收斂時以「等待…」的訊息失敗，不會留下 `status=FAIL` 的增量行。
+8. 用 `gates.ps1 -Mode M5GameTest`（或 `run-all.ps1`）跑。直接執行 `gradle runGameTestM5` 時，`run/gametest-m5/world` 必須是 fresh 的：gate 從 0 筆開始串接增量，固定 UUID 的 fixture 在舊世界中也會撞到既有紀錄。
 
 「哪些 test 屬於哪個 run」有三份實作：`gates.ps1` 的 `Batch-Scope`／`Declared-GameTests`，以及 `.github/workflows/build.yml` 的兩個檢查 step（「確認 Windows 原生案例確實執行」「確認非 Windows 跨平台案例確實執行」）。CI step 只能是 workflow 內的 `run: |` 原文（`ci-rule-check.ps1` 逐字抽出執行），沒辦法共用腳本，所以三處必須同步：都掃描 `src/testmod/java` 下全部 `*.java`；掃描前先去掉註解行（去掉前導空白後以 `//`、`/*`、`*` 開頭的行，含 Javadoc 內的 `{@code @GameTest}`）；嚴格掃描是 `@GameTest(...)` 緊接 `public void <名稱>(TestContext`；前綴規則是 `m4_legacy_runtime` 屬 legacy run、前綴 `m5_universe` 屬 M5 run、其餘屬 default run（與 testmod 的 `M4LegacyGameTestFilterMixin` 相同）。改其中一處時，三處與 filter 一起改，並以 `ci-rule-check.ps1` 與 M5 gate 重跑。
 
@@ -88,7 +89,7 @@ $v = 'scripts/verification'
 
 ## 預期結果（M5 F3c）
 
-M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為準；每個 task 的數字變化記在 M5 implementation note（`docs/implementation-notes/2026-10-01-m5-collapse-passage.md`）。下表是 M5 F3c fix round 1 的 code commit 上以 `run-all.ps1` 實跑的結果，commit、run root 與耗時記在 note 的 F3c 段（Fix round 1）。M1–M4 收尾時（code `ba854e8`，2026-10-01 在 HEAD `e55b7f9` 實跑、以 C＝`c262b2a` 採計）的數字是：default 146/146（`_windows` 73）、per-test receipts 28＋1、JUnit 403、release 299 entries（256 classes）、sources 190，其餘各項與下表相同（當時沒有 M5 GameTest 與 batch 範圍兩項）。
+M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為準；每個 task 的數字變化記在 M5 implementation note（`docs/implementation-notes/2026-10-01-m5-collapse-passage.md`）。下表是 M5 F3c fix round 2 的 code commit 上以 `run-all.ps1` 實跑的結果，commit、run root 與耗時記在 note 的 F3c 段（Fix round 2）。M1–M4 收尾時（code `ba854e8`，2026-10-01 在 HEAD `e55b7f9` 實跑、以 C＝`c262b2a` 採計）的數字是：default 146/146（`_windows` 73）、per-test receipts 28＋1、JUnit 403、release 299 entries（256 classes）、sources 190，其餘各項與下表相同（當時沒有 M5 GameTest 與 batch 範圍兩項）。
 
 | 項目 | 預期 |
 | --- | --- |
@@ -96,8 +97,8 @@ M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為
 | per-test Universe probe receipts | default 38＋legacy 1，全部 exact PASS |
 | JUnit | 560，0 failure／error，2 skipped（只限 `NonWindowsPlayerCheckpointStoreTest`）；Windows checkpoint 三個 class 共 17 個實際執行 |
 | legacy GameTest | 1/1 |
-| M5 GameTest | 3/3（sanity 與兩個 harness test）；沒有 M4 boundary receipt；每個 M5 test 的 catalog 增量都已核對並串接（各 ＋1，0 → 3 筆），suite 結束時 3 筆、digest 與最後一個 test 相同 |
-| batch 範圍 | default、legacy、M5 三個 run 的 XML 都恰好等於原始碼中屬於該 run 的宣告（160、1、3） |
+| M5 GameTest | 4/4（sanity 與三個 harness test）；沒有 M4 boundary receipt；每個 M5 test 的 catalog 增量都已核對並串接（各 ＋1，0 → 4 筆），suite 結束時 4 筆、digest 與最後一個 test 相同 |
+| batch 範圍 | default、legacy、M5 三個 run 的 XML 都恰好等於原始碼中屬於該 run 的宣告（160、1、4） |
 | main-only oracle | PASS（三層 testmod 命中 0、world keys exact、exact restore） |
 | M3 | lifecycle 4＋transfer 5 receipts PASS |
 | M4 recovery | 24/24 phases，各自獨立 JVM |

@@ -10,6 +10,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # job 層級的上限也涵蓋沒有個別 timeout 的 Build step。
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -88,6 +90,7 @@ jobs:
 
   windows-native:
     runs-on: windows-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
