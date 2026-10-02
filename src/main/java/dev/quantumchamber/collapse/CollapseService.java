@@ -176,7 +176,7 @@ public final class CollapseService {
                 try {
                     applyDoor(door);
                 } catch (RuntimeException failure) {
-                    recordDoorStep(door, doorFailure(FailureText.describe(failure), door.retried, door.warned), failure, now);
+                    applyFailure(door, failure, now);
                 }
             }
             if (tickWarning != null) LOGGER.info(TICK_LOG_MARKER, "塌縮流程已恢復執行（先前原因：{}）", tickWarningText);
@@ -519,7 +519,7 @@ public final class CollapseService {
             try {
                 applyDoor(door);
             } catch (RuntimeException failure) {
-                recordDoorStep(door, doorFailure(FailureText.describe(failure), door.retried, door.warned), failure, now);
+                applyFailure(door, failure, now);
             }
         }
     }
@@ -539,30 +539,42 @@ public final class CollapseService {
         var world = server.getWorld(door.world);
         if (world == null) return;
         var result = new ChamberDoorService().applyTarget(world, door.frame, ChamberDoorService.DoorState.OPEN);
-        var step = doorStep(result.outcome(), door.retried, door.warned);
-        if (step.done()) {
-            doors.remove(door.chamber);
-            if (door.warned != null) LOGGER.info(LOG_MARKER, "原艙門已改為一般開門（先前：{}）：chamber={}", door.warned, door.chamber);
-            return;
-        }
-        recordDoorStep(door, step, null, now);
+        if (applyOutcome(door, result.outcome(), now)) doors.remove(door.chamber);
     }
 
     /**
-     * {@link #applyDoor} 對一次沒有完成的套用（或套用丟出的例外，{@link #doorFailure}）的處置：只在 {@code step.warn()} 為真時記 WARN（去重由
-     * {@link #doorStep} 依 door 記下的上一個原因判定）；原因與「已立即重試過一次」交給 door 記下；{@code step.backOff()} 時退避。
-     * 回傳這次是否記了 WARN。
+     * {@link #applyDoor} 對一次 {@code applyTarget} 結果的處置（F4a-0 fix round 1：{@code applyDoor} 與 JUnit 共用同一份接線）：依門自己記下的狀態
+     * （{@code retried}、{@code warned}）推導 {@link #doorStep}。完成時，之前記過 WARN 的話記一則 INFO，回傳 true（呼叫端移除這扇門）；沒有完成時
+     * 經 {@link #recordDoorStep} 記錄、退避，回傳 false。
      */
-    static boolean recordDoorStep(PendingDoor door, DoorStep step, Throwable failure, int now) {
+    static boolean applyOutcome(PendingDoor door, ChamberDoorService.ApplyResult.Outcome outcome, int now) {
+        var step = doorStep(outcome, door.retried, door.warned);
+        if (step.done()) {
+            if (door.warned != null) LOGGER.info(LOG_MARKER, "原艙門已改為一般開門（先前：{}）：chamber={}", door.warned, door.chamber);
+            return true;
+        }
+        recordDoorStep(door, step, null, now);
+        return false;
+    }
+
+    /** 套用門時丟出例外（{@link #tick} 與 {@link #openDoor} 的 catch 共用）：依門記下的狀態推導 {@link #doorFailure}，經 {@link #recordDoorStep} 記錄並退避。 */
+    static void applyFailure(PendingDoor door, RuntimeException failure, int now) {
+        recordDoorStep(door, doorFailure(FailureText.describe(failure), door.retried, door.warned), failure, now);
+    }
+
+    /**
+     * 一次沒有完成的套用（或套用丟出的例外）的處置：只在 {@code step.warn()} 為真時記 WARN（去重由 {@link #doorStep} 依 door 記下的上一個原因
+     * 判定）；原因與「已立即重試過一次」交給 door 記下；{@code step.backOff()} 時退避。
+     */
+    private static void recordDoorStep(PendingDoor door, DoorStep step, Throwable failure, int now) {
         if (step.warn()) LOGGER.warn(LOG_MARKER, "終局之後原艙門還沒改為一般開門，之後重試：chamber={} session={}：{}", door.chamber, door.session,
                 step.reason(), failure);
         door.remember(step.reason(), step.retried());
         if (step.backOff()) door.backoff.failed(now);
-        return step.warn();
     }
 
     /**
-     * 待套用門對一次 {@code applyTarget} 結果的處置（純函式，{@link #applyDoor} 經 {@link #recordDoorStep} 照做）。{@code done}：完成並移除；
+     * 待套用門對一次 {@code applyTarget} 結果的處置（純函式，{@link #applyOutcome} 經 {@link #recordDoorStep} 照做）。{@code done}：完成並移除；
      * {@code reason}：要記下的原因（null 表示這次沒有原因）；{@code warn}：這次是否記 WARN（原因與上一次記下的不同才記，{@link #newWarning}）；
      * {@code backOff}：是否進入退避；{@code retried}：之後的「已立即重試過一次」狀態。
      */

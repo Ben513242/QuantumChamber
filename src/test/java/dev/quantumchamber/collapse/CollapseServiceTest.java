@@ -30,6 +30,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -43,6 +44,11 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
@@ -154,31 +160,48 @@ class CollapseServiceTest {
     /**
      * F3d fix round 2（quality m-2）：待套用門的處置。ROLLED_BACK／ROLLBACK_FAILED 第一次立即重試、再被拒才退避；DOOR_INCOMPLETE 一律退避；
      * NOT_LOADED 只等待；APPLIED／UNCHANGED 完成。WARN 依原因去重：同一原因只記一次，原因改變時再記。
-     * <p>F4a-0（quality re-review m-3）：再以 production 的 {@link CollapseService#recordDoorStep}（{@code applyDoor} 與套用例外共用的處置）
-     * 驅動一扇真的 {@code PendingDoor} 走過一串結果，鎖住實際的記錄行為：只有 {@code DoorStep.warn()} 為真的那幾次記 WARN，門記下的原因決定下一次的
-     * 去重，退避照 {@code backOff}。
+     * <p>F4a-0（quality re-review m-3）與 fix round 1（spec m-2）：再以 production 的 {@link CollapseService#applyOutcome}、
+     * {@link CollapseService#applyFailure}（{@code applyDoor} 與兩處套用例外的 catch 實際呼叫的同一份接線）驅動一扇真的 {@code PendingDoor} 走過一串
+     * 結果，並擷取 {@code quantumchamber} logger 的 log，鎖住實際的記錄行為：只有 {@code DoorStep.warn()} 為真的那幾次記 WARN（帶 {@code LOG_MARKER}、
+     * chamber 與 session，套用例外附 stack），門記下的原因決定下一次的去重，退避照 {@code backOff}；完成時回 true，之前記過 WARN 才記一則 INFO。
      */
     @Test void pendingDoorRetriesOnceThenBacksOffAndDedupesWarnings() {
         var rejected = "門的寫入被拒（ROLLED_BACK）";
+        var thrownReason = "套用失敗：java.lang.IllegalStateException: x";
         var first = CollapseService.doorStep(Outcome.ROLLED_BACK, false, null);
         var second = CollapseService.doorStep(Outcome.ROLLED_BACK, first.retried(), first.reason());
         var third = CollapseService.doorStep(Outcome.ROLLBACK_FAILED, second.retried(), second.reason());
         var incomplete = CollapseService.doorStep(Outcome.DOOR_INCOMPLETE, false, null);
-        // production 的處置：每一步都從門自己記下的狀態推導（applyDoor 的寫法），回傳這次是否記了 WARN。
-        var door = new CollapseService.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, new ChamberFrame(new BlockPos(7, 70, 9), Direction.NORTH), 0);
-        var logged = new ArrayList<Boolean>();
+        var frame = new ChamberFrame(new BlockPos(7, 70, 9), Direction.NORTH);
+        var door = new CollapseService.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, frame, 0);
+        // 沒有記過 WARN 就完成的門：不記 INFO。
+        var quiet = new CollapseService.PendingDoor(B, A, World.OVERWORLD, frame, 0);
+        var warned = new ArrayList<Integer>();
         var reasons = new ArrayList<String>();
-        for (var outcome : List.of(Outcome.ROLLED_BACK, Outcome.ROLLED_BACK, Outcome.ROLLBACK_FAILED, Outcome.NOT_LOADED, Outcome.DOOR_INCOMPLETE,
-                Outcome.DOOR_INCOMPLETE)) {
-            logged.add(CollapseService.recordDoorStep(door, CollapseService.doorStep(outcome, door.retried, door.warned), null, 100));
-            reasons.add(door.warned);
+        var doneBeforeApplied = new ArrayList<Boolean>();
+        boolean appliedDone, quietDone;
+        List<DoorLogs.Entry> logs;
+        try (var capture = new DoorLogs()) {
+            for (var outcome : List.of(Outcome.ROLLED_BACK, Outcome.ROLLED_BACK, Outcome.ROLLBACK_FAILED, Outcome.NOT_LOADED, Outcome.DOOR_INCOMPLETE,
+                    Outcome.DOOR_INCOMPLETE)) {
+                int before = capture.count(Level.WARN);
+                doneBeforeApplied.add(CollapseService.applyOutcome(door, outcome, 100));
+                warned.add(capture.count(Level.WARN) - before);
+                reasons.add(door.warned);
+            }
+            // 套用丟出例外（tick 與 openDoor 的 catch）：同一原因去重、一律退避。
+            for (int i = 0; i < 2; i++) {
+                int before = capture.count(Level.WARN);
+                CollapseService.applyFailure(door, new IllegalStateException("x"), 100);
+                warned.add(capture.count(Level.WARN) - before);
+                reasons.add(door.warned);
+            }
+            appliedDone = CollapseService.applyOutcome(door, Outcome.APPLIED, 100);
+            quietDone = CollapseService.applyOutcome(quiet, Outcome.UNCHANGED, 100);
+            logs = capture.entries();
         }
-        // 套用丟出例外（tick 與 openDoor 的 catch）：同一原因去重、一律退避。
-        for (int i = 0; i < 2; i++) {
-            logged.add(CollapseService.recordDoorStep(door, CollapseService.doorFailure("x", door.retried, door.warned),
-                    new IllegalStateException("x"), 100));
-            reasons.add(door.warned);
-        }
+        var warnings = logs.stream().filter(entry -> entry.level() == Level.WARN).toList();
+        var infos = logs.stream().filter(entry -> entry.level() == Level.INFO).toList();
         assertAll(
                 () -> assertEquals(new CollapseService.DoorStep(false, rejected, true, false, true), first, "第一次被拒：記 WARN、不退避、下一個 tick 重試"),
                 () -> assertEquals(new CollapseService.DoorStep(false, rejected, false, true, true), second, "再被拒：退避，同一原因不再記 WARN"),
@@ -188,13 +211,25 @@ class CollapseServiceTest {
                 () -> assertEquals(new CollapseService.DoorStep(false, null, false, false, true), CollapseService.doorStep(Outcome.NOT_LOADED, true, rejected), "未載入：只等待"),
                 () -> assertTrue(CollapseService.doorStep(Outcome.APPLIED, true, rejected).done()),
                 () -> assertTrue(CollapseService.doorStep(Outcome.UNCHANGED, false, null).done()),
-                () -> assertEquals(List.of(true, false, true, false, true, false, true, false), logged,
+                () -> assertEquals(List.of(1, 0, 1, 0, 1, 0, 1, 0), warned,
                         "production 只在 DoorStep.warn() 為真時記 WARN：被拒、再被拒、原因改變、未載入、結構性、結構性、套用例外、同一例外"),
                 () -> assertEquals(Arrays.asList(rejected, rejected, "門的寫入被拒（ROLLBACK_FAILED）", "門的寫入被拒（ROLLBACK_FAILED）",
-                        "門板不是完整的 25 格 bulkhead，等結構恢復", "門板不是完整的 25 格 bulkhead，等結構恢復", "套用失敗：x", "套用失敗：x"), reasons,
+                        "門板不是完整的 25 格 bulkhead，等結構恢復", "門板不是完整的 25 格 bulkhead，等結構恢復", thrownReason, thrownReason), reasons,
                         "門記下最近的原因（未載入沒有原因時保留上一個），下一次據此去重"),
                 () -> assertEquals(6400, door.backoff.delayTicks(), "退避 6 次（再被拒、原因改變、結構性兩次、套用例外兩次）：200→…→6400"),
-                () -> assertTrue(door.retried, "第一次被拒之後已立即重試過一次，之後不再立即重試"));
+                () -> assertTrue(door.retried, "第一次被拒之後已立即重試過一次，之後不再立即重試"),
+                () -> assertEquals(List.of(false, false, false, false, false, false), doneBeforeApplied, "沒有完成的結果都回 false（呼叫端不移除這扇門）"),
+                () -> assertTrue(appliedDone && quietDone, "APPLIED／UNCHANGED 回 true（呼叫端移除這扇門）"),
+                () -> assertEquals(List.of(rejected, "門的寫入被拒（ROLLBACK_FAILED）", "門板不是完整的 25 格 bulkhead，等結構恢復", thrownReason),
+                        warnings.stream().map(entry -> entry.message().substring(entry.message().indexOf("session=" + SESSION + "：")
+                                + ("session=" + SESSION + "：").length())).toList(), "WARN 的原因依序"),
+                () -> assertTrue(warnings.stream().allMatch(entry -> entry.marked() && entry.message().contains("chamber=" + CHAMBER)
+                        && entry.message().contains("session=" + SESSION)), () -> "每則 WARN 帶 LOG_MARKER、chamber 與 session：" + warnings),
+                () -> assertEquals(List.of(false, false, false, true), warnings.stream().map(entry -> entry.thrown() != null).toList(),
+                        "只有套用例外的 WARN 附 stack"),
+                () -> assertEquals(List.of("原艙門已改為一般開門（先前：" + thrownReason + "）：chamber=" + CHAMBER), infos.stream().map(DoorLogs.Entry::message).toList(),
+                        "完成時之前記過 WARN 才記一則 INFO（沒有記過 WARN 的門不記）"),
+                () -> assertTrue(infos.stream().allMatch(DoorLogs.Entry::marked), "INFO 帶 LOG_MARKER"));
     }
 
     /**
@@ -223,6 +258,48 @@ class CollapseServiceTest {
     private static String text(JsonObject lang, String key) {
         assertTrue(lang.has(key), "缺少 key：" + key);
         return lang.get(key).getAsString();
+    }
+
+    /**
+     * 只收 {@code quantumchamber} logger 的 log4j appender（比照 {@code CollapseAuthoritiesTest.Logs}），另記 log 是否帶 {@link CollapseService#LOG_MARKER}
+     * （含子 marker）。先以 {@code LOG_MARKER} 送一則 INFO 探針，確認攔得到 log 與 marker，再清空。
+     */
+    private static final class DoorLogs extends AbstractAppender implements AutoCloseable {
+        record Entry(Level level, String message, Throwable thrown, boolean marked) { }
+        private final org.apache.logging.log4j.core.LoggerContext context;
+        private final List<Entry> events = Collections.synchronizedList(new ArrayList<>());
+
+        DoorLogs() {
+            super("f4a0-fix1-door-log-capture-" + UUID.randomUUID(), null, null, true, Property.EMPTY_ARRAY);
+            context = ((org.apache.logging.log4j.core.Logger) LogManager.getLogger("quantumchamber")).getContext();
+            start();
+            context.getConfiguration().getRootLogger().addAppender(this, null, null);
+            context.updateLoggers();
+            var probe = "F4A0_FIX1_DOOR_LOG_PROBE " + UUID.randomUUID();
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").info(CollapseService.LOG_MARKER, probe);
+            if (entries().stream().noneMatch(entry -> entry.message().equals(probe) && entry.marked())) {
+                close();
+                throw new IllegalStateException("log capture 無法觀察 quantumchamber 的 log 與 LOG_MARKER");
+            }
+            events.clear();
+        }
+
+        @Override public void append(LogEvent event) {
+            if (!"quantumchamber".equals(event.getLoggerName())) return;
+            var marker = event.getMarker();
+            events.add(new Entry(event.getLevel(), event.getMessage().getFormattedMessage(), event.getThrown(),
+                    marker != null && marker.isInstanceOf(CollapseService.LOG_MARKER.getName())));
+        }
+
+        List<Entry> entries() { synchronized (events) { return List.copyOf(events); } }
+
+        int count(Level level) { return (int) entries().stream().filter(entry -> entry.level() == level).count(); }
+
+        @Override public void close() {
+            context.getConfiguration().getRootLogger().removeAppender(getName());
+            context.updateLoggers();
+            stop();
+        }
     }
 
     // ---- fixtures（只用 public 建構子） ----
