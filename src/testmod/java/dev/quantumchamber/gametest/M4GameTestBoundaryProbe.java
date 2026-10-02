@@ -16,15 +16,19 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.WorldSavePath;
 
-/** default／legacy GameTest 的前後快照（M5 run 不註冊）；此 receipt 明確屬於 testmod runtime。 */
+/** default／legacy GameTest 的前後快照（M5 run 改註冊 M5UniverseGameTests 的 suite 結束紀錄）；此 receipt 明確屬於 testmod runtime。 */
 final class M4GameTestBoundaryProbe {
     private static Map<String, Object> activeProof;
     private M4GameTestBoundaryProbe() { }
 
     static void register() {
         if (System.getProperty("fabric-api.gametest") == null) return;
-        // M5 run（plan 決策 6）刻意配置 Universe，不做 suite 前後的不變快照；改由每個 M5 test 自己斷言 catalog 增量（gates.ps1 -Mode M5GameTest）。
-        if (Boolean.getBoolean("quantumchamber.gametest.m5Only")) return;
+        // M5 run（plan 決策 6）刻意配置 Universe，不做 suite 前後的不變快照；改由每個 M5 test 自己斷言 catalog 增量，
+        // suite 結束時再寫出 catalog 的最終狀態（gates.ps1 -Mode M5GameTest 核對）。
+        if (Boolean.getBoolean("quantumchamber.gametest.m5Only")) {
+            M5UniverseGameTests.registerSuiteEnd();
+            return;
+        }
         String nonce = UUID.randomUUID().toString().replace("-", "");
         var proof = new LinkedHashMap<String, Object>();
         activeProof = proof;

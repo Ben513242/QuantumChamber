@@ -5,7 +5,7 @@
 # classload／m4-boundary 只複製本次觀察到的 JVM PID（整合審查 R1）；Inventory 輸出改寫到 gate root。
 # M5 F3c（plan 決策 6）：新增 M5GameTest（runGameTestM5，獨立的 fresh 世界 run/gametest-m5）；三個 GameTest run 都核對 XML 是本次 run 寫出的，
 # 而且 testcase 集合等於原始碼依 batch 前綴矩陣應屬於該 run 的集合（scope.json）。M5 run 不檢查 M4 boundary oracle，改核對每個 M5 test
-# 自己斷言的 catalog 增量（m5-oracle.json）。
+# 自己斷言的 catalog 增量，以及 suite 結束時的 catalog（m5-oracle.json；F3c fix round 1 加上 suite 結束）。
 # 參數：
 #   -Mode          Inventory｜Main｜GameTest｜Full｜Legacy｜M5GameTest｜Windows｜M3
 #   -Label         gate root 標籤（英數與連字號）
@@ -193,11 +193,13 @@ function Distinct-Count($items) { $set=[Collections.Generic.HashSet[string]]::ne
 # plan 決策 6 的 batch 前綴矩陣（與 testmod M4LegacyGameTestFilterMixin 相同）：m4_legacy_runtime 屬 legacy run，前綴 m5_universe 屬 M5 run，其餘屬 default run。
 function Batch-Scope([string]$batch) { if($batch -ceq 'm4_legacy_runtime'){return 'legacy'}; if($batch.StartsWith('m5_universe',[StringComparison]::Ordinal)){return 'm5'}; return 'default' }
 # testmod 原始碼宣告的全部 GameTest：XML testcase 名稱（class 小寫＋'.'＋方法名稱）、batchId（沒寫時是原版預設 defaultBatch）與所屬 run。
-# 每個檔的 @GameTest 數必須等於可解析的宣告數；不一致代表宣告格式漂移（例如 @GameTest 與方法之間多了 annotation），直接失敗。
+# 先去掉註解行（去掉前導空白後以 //、/*、* 開頭的行，含 Javadoc 內的 {@code @GameTest}），再掃描；每個檔的 @GameTest 數必須等於可解析的
+# 宣告數，不一致代表宣告格式漂移（例如 @GameTest 與方法之間多了 annotation），直接失敗。
+# 「哪些 test 屬於哪個 run」另有兩份實作在 .github/workflows/build.yml 的兩個檢查 step；三處的註解排除、嚴格／寬鬆掃描與前綴規則必須同步（README）。
 function Declared-GameTests {
     $cases=@()
     foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'src/testmod/java') -Recurse -File -Filter '*.java' | Sort-Object FullName) {
-        $text=Get-Content -LiteralPath $file.FullName -Raw
+        $text=(@((Get-Content -LiteralPath $file.FullName -Raw) -split '\r?\n') | Where-Object {$_ -notmatch '^\s*(//|/\*|\*)'}) -join "`n"
         $strict=@([regex]::Matches($text,'(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+)\(TestContext'))
         $loose=([regex]::Matches($text,'@GameTest\b')).Count
         if($strict.Count -ne $loose){throw "GameTest 宣告格式漂移（$($file.Name)）：@GameTest $loose 個，可解析 $($strict.Count) 個"}
@@ -230,8 +232,9 @@ function Assert-Scope([string]$xmlPath,[string]$scope) {
     return $expected
 }
 # M5 run 的 oracle（取代 default run 的 M4 boundary oracle）：JVM 帶 m5Only、沒有 boundary receipt；m5_universe 的 test 都宣告在 M5UniverseGameTests、
-# 各自一個 batch；每個 test 都留下恰一行 PASS 的 M5_UNIVERSE_CATALOG_DELTA。依 log 順序串接：fresh 世界從 0 筆開始，前一個 test 的 after
-# 等於下一個 test 的 before（catalog 只在各 test 自己斷言的範圍內改變）。結果寫入 <gate>/m5-oracle.json。
+# 各自一個 batch；每個 test 都留下恰一行 PASS 的 M5_UNIVERSE_CATALOG_DELTA。依 log 順序串接：fresh 世界從 0 筆開始，前一個 test 的 after（筆數與
+# digest）等於下一個 test 的 before；suite 結束時（SERVER_STOPPED）恰一行 M5_UNIVERSE_SUITE_END，筆數與 digest 等於最後一個 test 的 after、
+# converged=true、沒有還沒通過的 test（catalog 只在各 test 自己斷言的範圍內改變，最後一個 test 之後也沒有改變）。結果寫入 <gate>/m5-oracle.json。
 function Assert-M5Run($server,$expected) {
     if(-not $server.commandLine.Contains('-Dquantumchamber.gametest.m5Only=true')){throw 'M5 run 的 server JVM 沒有 -Dquantumchamber.gametest.m5Only=true'}
     $boundary=@(Get-ChildItem -LiteralPath (Join-Path $gate 'execution') -Filter 'm4-boundary-*.json')
@@ -240,17 +243,28 @@ function Assert-M5Run($server,$expected) {
     if($outside.Count){throw "m5_universe batch 只能宣告在 M5UniverseGameTests：$(@($outside | ForEach-Object case) -join ', ')"}
     if((Distinct-Count @($expected | ForEach-Object batch)) -ne $expected.Count){throw 'M5 test 必須各自一個 batch（逐 test 的 catalog 增量才只屬於該 test）'}
     $stdout=Get-Content -LiteralPath (Join-Path $gate 'execution/stdout.log') -Raw
-    $deltas=@([regex]::Matches($stdout,'M5_UNIVERSE_CATALOG_DELTA name=(?<name>\w+) before=(?<before>\d+) after=(?<after>\d+) expected=(?<expected>-?\d+) actual=(?<actual>-?\d+) converged=(?<converged>\w+) preserved=(?<preserved>\w+) status=(?<status>\w+)') | ForEach-Object {
-        [pscustomobject]@{name=$_.Groups['name'].Value;before=[int]$_.Groups['before'].Value;after=[int]$_.Groups['after'].Value;expected=[int]$_.Groups['expected'].Value;converged=$_.Groups['converged'].Value;preserved=$_.Groups['preserved'].Value;status=$_.Groups['status'].Value}
+    $deltas=@([regex]::Matches($stdout,'M5_UNIVERSE_CATALOG_DELTA name=(?<name>\w+) before=(?<before>\d+) after=(?<after>\d+) expected=(?<expected>-?\d+) actual=(?<actual>-?\d+) converged=(?<converged>\w+) preserved=(?<preserved>\w+) beforeDigest=(?<beforeDigest>[0-9a-f]{64}) afterDigest=(?<afterDigest>[0-9a-f]{64}) status=(?<status>\w+)') | ForEach-Object {
+        [pscustomobject]@{name=$_.Groups['name'].Value;before=[int]$_.Groups['before'].Value;after=[int]$_.Groups['after'].Value;expected=[int]$_.Groups['expected'].Value;converged=$_.Groups['converged'].Value;preserved=$_.Groups['preserved'].Value;beforeDigest=$_.Groups['beforeDigest'].Value;afterDigest=$_.Groups['afterDigest'].Value;status=$_.Groups['status'].Value}
     })
     foreach($name in @($expected | ForEach-Object name)) {
         $hit=@($deltas | Where-Object {$_.name -ceq $name})
         if($hit.Count -ne 1 -or $hit[0].status -cne 'PASS' -or ($hit[0].after - $hit[0].before) -ne $hit[0].expected){throw "M5 test 的 catalog 增量缺失、重複或不符：$name"}
     }
     if($deltas.Count -ne $expected.Count){throw "M5_UNIVERSE_CATALOG_DELTA 有 $($deltas.Count) 行，M5 test 有 $($expected.Count) 個"}
-    $previous=0
-    foreach($delta in $deltas){if($delta.before -ne $previous){throw "catalog 在 test 自己斷言的範圍之外改變：$($delta.name) before=$($delta.before)，預期 $previous"};$previous=$delta.after}
-    Save-Json (Join-Path $gate 'm5-oracle.json') ([ordered]@{status='PASS';serverPid=$server.pid;boundaryReceipts=0;tests=$expected.Count;deltas=$deltas;finalRecordCount=$previous})
+    $previous=0; $previousDigest=$null
+    foreach($delta in $deltas){
+        if($delta.before -ne $previous -or ($null -ne $previousDigest -and $delta.beforeDigest -cne $previousDigest)){throw "catalog 在 test 自己斷言的範圍之外改變：$($delta.name) before=$($delta.before)，預期 $previous（digest 也必須接續）"}
+        $previous=$delta.after; $previousDigest=$delta.afterDigest
+    }
+    $ends=@([regex]::Matches($stdout,'M5_UNIVERSE_SUITE_END records=(?<records>\d+) digest=(?<digest>[0-9a-f]{64}) converged=(?<converged>\w+) unfinished=\[(?<unfinished>[^\]]*)\]') | ForEach-Object {
+        [pscustomobject]@{records=[int]$_.Groups['records'].Value;digest=$_.Groups['digest'].Value;converged=$_.Groups['converged'].Value;unfinished=$_.Groups['unfinished'].Value}
+    })
+    if($ends.Count -ne 1){throw "M5_UNIVERSE_SUITE_END 必須恰一行（$($ends.Count)）"}
+    $suiteEnd=$ends[0]
+    if($suiteEnd.records -ne $previous -or $suiteEnd.digest -cne $previousDigest -or $suiteEnd.converged -cne 'true' -or $suiteEnd.unfinished.Length -ne 0){
+        throw "suite 結束時的 catalog 與最後一個 test 的結果不符：records=$($suiteEnd.records)（最後一個 test 之後是 $previous）digest 相同=$($suiteEnd.digest -ceq $previousDigest) converged=$($suiteEnd.converged) 還沒通過=[$($suiteEnd.unfinished)]"
+    }
+    Save-Json (Join-Path $gate 'm5-oracle.json') ([ordered]@{status='PASS';serverPid=$server.pid;boundaryReceipts=0;tests=$expected.Count;deltas=$deltas;finalRecordCount=$previous;suiteEnd=$suiteEnd})
 }
 function Fresh-Game([bool]$full,[string]$scope) {
     $run=Join-Path $repo $(if($scope -ceq 'legacy'){'run/gametest-legacy'}elseif($scope -ceq 'm5'){'run/gametest-m5'}else{'run/gametest'})

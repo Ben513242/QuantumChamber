@@ -99,7 +99,7 @@ Step 'ci-rule' {
     & $check -Label win-green -Workflow $workflow -Step '確認 Windows 原生案例確實執行' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot
     & $check -Label ubuntu-green -Workflow $workflow -Step '確認非 Windows 跨平台案例確實執行' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot
     # ci-rule-check.ps1 不因 FAIL 而 throw；綠燈核對在此判定。
-    foreach($label in 'win-green','ubuntu-green'){ $r=Read-Json (Join-Path (One "ci-$label-") 'result.json'); if($r.verdict -ne 'PASS'){throw "CI 規則 $label 未通過：exit=$($r.exitCode)"} }
+    foreach($label in 'win-green','ubuntu-green'){ $r=Read-Json (Join-Path (One "ci-$label-") 'result.json'); if($r.verdict -ne 'PASS' -or $r.mutation -ne 'none' -or $r.sourceMutation -ne 'none'){throw "CI 規則 $label 未通過或不是原樣執行：exit=$($r.exitCode) mutation=$($r.mutation) sourceMutation=$($r.sourceMutation)"} }
 }
 Step 'summary' {
     # 唯讀：只讀本次 run root 的原始 XML／receipt／JAR／oracle／CI 結果，任何不符直接 throw；不改寫任何 gate root。
@@ -129,9 +129,9 @@ Step 'summary' {
         if($r.status -ne 'PASS' -or $r.scope -cne $s.scope -or @($r.onlyBatches).Count -ne 0 -or $r.actual -ne $s.count -or $r.expected -ne $s.count){throw "batch 範圍不符：$($s.scope)"}
         $scopes[$s.scope]=$r.expected
     }
-    # 1c. M5 run 的 oracle：沒有 M4 boundary receipt，每個 M5 test 的 catalog 增量都已核對。
+    # 1c. M5 run 的 oracle：沒有 M4 boundary receipt，每個 M5 test 的 catalog 增量與 suite 結束時的 catalog 都已核對。
     $m5Oracle=Read-Json (Join-Path $m5 'm5-oracle.json')
-    if($m5Oracle.status -ne 'PASS' -or $m5Oracle.boundaryReceipts -ne 0 -or $m5Oracle.tests -ne $m5Cases.Count -or @($m5Oracle.deltas).Count -ne $m5Cases.Count){throw 'M5 oracle 不是完整 PASS'}
+    if($m5Oracle.status -ne 'PASS' -or $m5Oracle.boundaryReceipts -ne 0 -or $m5Oracle.tests -ne $m5Cases.Count -or @($m5Oracle.deltas).Count -ne $m5Cases.Count -or $null -eq $m5Oracle.suiteEnd -or $m5Oracle.suiteEnd.records -ne $m5Oracle.finalRecordCount){throw 'M5 oracle 不是完整 PASS'}
     # 2. per-test Universe probe receipts：每個呼叫 M4PerTestUniverseProbe.begin 的 GameTest 都有 exact PASS receipt。
     $pattern='(?s)@GameTest\((?<a>[^)]*)\)\s+public void (?<name>\w+)\(TestContext context\)\s*\{\s*(?<gate>if\(!Platform\.isWindows\(\)\)\s*\{[^{}]*\}\s*)?M4PerTestUniverseProbe\.begin\(context,"(?<begin>\w+)"\);'
     $tests=@(); $beginCalls=0
@@ -214,11 +214,11 @@ Step 'summary' {
     $ci=[ordered]@{}
     foreach($label in 'win-green','ubuntu-green'){
         $r=Read-Json (Join-Path (One "ci-$label-") 'result.json')
-        if($r.verdict -ne 'PASS' -or $r.workflowSha256 -ne $workflowHash -or $r.gameTestXmlSha256.ToLowerInvariant() -ne (Hash $defaultXml) -or $r.m5GameTestXmlSha256.ToLowerInvariant() -ne (Hash $m5Xml)){throw "CI 規則結果不符：$label verdict=$($r.verdict)"}
+        if($r.verdict -ne 'PASS' -or $r.mutation -ne 'none' -or $r.sourceMutation -ne 'none' -or $r.workflowSha256 -ne $workflowHash -or $r.gameTestXmlSha256.ToLowerInvariant() -ne (Hash $defaultXml) -or $r.m5GameTestXmlSha256.ToLowerInvariant() -ne (Hash $m5Xml)){throw "CI 規則結果不符：$label verdict=$($r.verdict) mutation=$($r.mutation) sourceMutation=$($r.sourceMutation)"}
         $ci[$label]=$r.verdict
     }
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
-        gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas)}
+        gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
         jars=$jars;mainOnly=[ordered]@{status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count};ci=$ci
