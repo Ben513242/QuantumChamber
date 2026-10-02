@@ -350,10 +350,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var p = origin.player();
         origin.whenRegistered((registered, chamber) -> {
             var unknown = UniverseId.of(UUID.randomUUID());
-            byte[][] before = {bytes(data, UniverseAllocationLedger.FILE_NAME), bytes(data, UniverseRegistryState.STATE_ID + ".dat"),
-                    bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)};
             var receipt = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
                     Map.of(p.getUuid(), true), unknown));
+            // 基準在收據寫入之後才取：fresh 世界裡，建立收據的 candidate context 會先建立空的 discovery 檔（M4 的 loadOrCreate）。
+            byte[][] before = {bytes(data, UniverseAllocationLedger.FILE_NAME), bytes(data, UniverseRegistryState.STATE_ID + ".dat"),
+                    bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)};
             var sid = receipt.sessionUuid();
             var witness = new java.util.LinkedHashMap<String, Boolean>();
             var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
