@@ -7,5 +7,6 @@
   "item.minecraft.lingering_potion.effect.quantum_state": "Lingering Potion of Quantum State",
   "item.minecraft.tipped_arrow.effect.quantum_state": "Arrow of Quantum State",
   "message.quantumchamber.m5.collapsed": "The quantum state has collapsed.",
-  "message.quantumchamber.m5.dimension_door_unavailable": "Universe doors are not yet open in this dimension."
+  "message.quantumchamber.m5.dimension_door_unavailable": "Universe doors are not yet open in this dimension.",
+  "message.quantumchamber.m5.sealed": "The quantum passage could not open and has been sealed."
 }

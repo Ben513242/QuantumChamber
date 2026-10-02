@@ -1,9 +1,12 @@
 package dev.quantumchamber.gametest;
 
 import static dev.quantumchamber.gametest.M5GameTestSupport.at;
+import static dev.quantumchamber.gametest.M5GameTestSupport.cleanupFixtures;
 import static dev.quantumchamber.gametest.M5GameTestSupport.doorAll;
 import static dev.quantumchamber.gametest.M5GameTestSupport.interact;
 import static dev.quantumchamber.gametest.M5GameTestSupport.moveInside;
+import static dev.quantumchamber.gametest.M5GameTestSupport.moveOutside;
+import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
 
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberGeometry;
@@ -12,7 +15,6 @@ import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.CollapseDestination;
-import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.gametest.M5GameTestSupport.DormantOrigin;
 import dev.quantumchamber.persistence.SessionRecoveryState;
@@ -20,6 +22,7 @@ import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
+import dev.quantumchamber.universe.UniverseLifecycleService;
 import dev.quantumchamber.universe.UniverseRecord;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import java.nio.charset.StandardCharsets;
@@ -206,64 +209,225 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
-     * F3d（spec §7.3 的 RESOLVE；過渡測試，F4a 以真正的 RESOLVE 取代）：真原艙上的 DORMANT NEW 收據，參與者 P 由艙外進入（已供電、enabled）
-     * → 提交 COLLAPSING，Destination 是 allocation token 的推導值（提交時不寫 ledger），DORMANT 續行取得來源 ticket。返還與清理在 DORMANT 時
-     * 已完成，下一步是 RESOLVE：F3d 的 stub 停在這裡，每個 session 只記一次 WARN，不配置（catalog 增量 0，allocation ledger 與 projection
-     * ledger 的檔案 bytes 不變）、不寫 SEALED。期間 P 開關門不影響塌縮（spec §3 詮釋 3）。收尾以終局 API 移除 record、正式 API 釋放來源
-     * ticket。不需要原生 checkpoint，各平台都執行。
+     * F4a（spec §8.2、§7.3、§6.3、§6.4；取代 F3d 的 RESOLVE stub test）：真原艙上的 DORMANT NEW 收據，參與者 P 由艙外進入（已供電、enabled）
+     * → 提交 COLLAPSING（Destination 是 allocation token 的推導值，DORMANT 續行取得來源 ticket）。RESOLVE 之前斷電：RESOLVE 不需要供電，照樣依序
+     * 完成 allocation entry（推導值，恰一筆）、catalog（EAGER_ENABLED，恰好多 1 筆）、lifecycle 物化（exact ACTIVE world）與 discovery
+     * （firstObserver＝P、gameplayEligible），記一則 INFO「目的地已確定」，不進 SEALED。期間 P 開關門不影響塌縮（spec §3 詮釋 3）。之後 F4b 之前
+     * 停在 WAITING：每個 session 只記一次 WARN「準備階段尚未實作」，恢復供電也不重複。收尾以終局 API 移除 record（宇宙保留），catalog 增量 1。
+     * 不需要原生 checkpoint，各平台都執行。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_resolve_stub", tickLimit = 400)
-    public void dormant_universe_receipt_commits_then_holds_at_the_resolve_stub(TestContext context) {
-        begin(context, "dormant_universe_receipt_commits_then_holds_at_the_resolve_stub");
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_resolve_new", tickLimit = 400)
+    public void dormant_new_receipt_resolves_without_power_then_waits_at_the_prepare_stub(TestContext context) {
+        begin(context, "dormant_new_receipt_resolves_without_power_then_waits_at_the_prepare_stub");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
-        var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
         var hooks = new M2CorridorGameTests.TestHooks();
-        // 真原艙＋在艙外的玩家；收尾時移除自己寫入的收據（MEASURED 以 testmod 反射、塌縮狀態以終局 API），再以正式 API 釋放來源 ticket。
         DormantOrigin origin;
-        byte[] allocationBefore, projectionBefore;
         try {
             origin = DormantOrigin.open(context, hooks);
-            allocationBefore = Files.readAllBytes(data.resolve(UniverseAllocationLedger.FILE_NAME));
-            projectionBefore = Files.readAllBytes(data.resolve(ProjectionLedger.FILE_NAME));
-        } catch (Exception failure) { hooks.releaseAfter(failure); throw asTestFailure(context, "fixture", new IllegalStateException(failure)); }
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
         origin.whenRegistered((registered, chamber) -> {
             var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
             var sid = dormant.sessionUuid();
-            var token = ((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken();
+            var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
             var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
             at(context, registered + 2, hooks, () -> {
                 var committed = journal.flushedRecords().get(sid);
-                witness.put("entryEdgeCommits", committed != null && committed.state() == SessionState.COLLAPSING);
-                witness.put("destinationIsTheDerivedUniverse", committed != null && committed.state() == SessionState.COLLAPSING
-                        && new CollapseDestination.Universe(UniverseAllocationLedger.deriveUniverseId(token)).equals(committed.collapse().destination()));
+                witness.put("entryEdgeCommits", committed != null && committed.state() == SessionState.COLLAPSING
+                        && new CollapseDestination.Universe(id).equals(committed.collapse().destination()));
                 witness.put("dormantResumeTakesTicket", M4CandidateTestAccess.sourceTicketHeld(sid));
-                witness.put("presenceCollapse", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.COLLAPSE);
+                // RESOLVE（這個 tick 的 END_SERVER_TICK）之前斷電，並由 P 打開原艙門。
+                context.setBlockState(DormantOrigin.POWER, net.minecraft.block.Blocks.AIR);
+                witness.put("resolveDoorOpens", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
             });
-            var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
-            at(context, registered + 4, hooks, () -> witness.put("resolveDoorOpens",
-                    interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE)));
-            at(context, registered + 5, hooks, () -> witness.put("resolveDoorCloses",
-                    interact(world, door, p).isAccepted() && doorAll(world, frame, false, MembraneState.NONE)));
-            at(context, registered + 12, hooks, () -> {
+            at(context, registered + 3, hooks, () -> {
+                var record = journal.flushedRecords().get(sid);
+                witness.put("resolvedWithoutPower", !world.isReceivingRedstonePower(frame.controllerPos())
+                        && record != null && record.state() == SessionState.COLLAPSING);
+                witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
+                var catalog = UniverseRegistryState.get(server).flushedRecords().get(id);
+                witness.put("catalogEagerEnabled", catalog != null && catalog.desiredAvailability() == DesiredAvailability.EAGER_ENABLED);
+                witness.put("worldActive", UniverseLifecycleService.resolveActive(server, id).filter(active -> server.getWorld(active.getRegistryKey()) == active).isPresent());
+                var discovered = CollapseAuthorities.get(server).discovery(id);
+                witness.put("discoveredByP", discovered.value().filter(found -> found.gameplayEligible()
+                        && found.firstObserver().equals(java.util.Optional.of(p.getUuid()))).isPresent());
+                witness.put("oneResolvedInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1);
+                witness.put("resolveDoorCloses", interact(world, door, p).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
+            });
+            at(context, registered + 5, hooks, () -> {
+                witness.put("oneWaitingStubWarn", capture.matching(org.apache.logging.log4j.Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
+                // 恢復供電：F4b 之前 UNIVERSE 不評估閘門，仍停在 WAITING。
+                context.setBlockState(DormantOrigin.POWER, net.minecraft.block.Blocks.REDSTONE_BLOCK);
+            });
+            at(context, registered + 9, hooks, () -> {
                 var held = journal.flushedRecords().get(sid);
-                witness.put("holdsAtResolve", held != null && held.state() == SessionState.COLLAPSING && held.equals(journal.records().get(sid)));
-                witness.put("oneResolveStubWarn", capture.matching(org.apache.logging.log4j.Level.WARN, "目的地解析尚未實作", sid.toString()).size() == 1);
-                witness.put("noOtherWarnOrError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).size() == 1
+                witness.put("stillWaiting", held != null && held.state() == SessionState.COLLAPSING && held.equals(journal.records().get(sid)));
+                witness.put("stubWarnedOnce", capture.matching(org.apache.logging.log4j.Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
+                witness.put("onlyTheStubWarnAndNoError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).size() == 1
                         && capture.matching(org.apache.logging.log4j.Level.ERROR).isEmpty());
-                try {
-                    witness.put("ledgersUntouched", java.util.Arrays.equals(allocationBefore, Files.readAllBytes(data.resolve(UniverseAllocationLedger.FILE_NAME)))
-                            && java.util.Arrays.equals(projectionBefore, Files.readAllBytes(data.resolve(ProjectionLedger.FILE_NAME))));
-                } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
-                // 收尾：終局 API 移除 record，正式 API 釋放 DORMANT 續行取得的來源 ticket。
+                // 收尾：終局 API 移除 record（宇宙保留、已 discovered），正式 API 釋放來源 ticket。
                 hooks.release();
                 witness.put("ticketReleasedAfterTerminal", !M4CandidateTestAccess.sourceTicketHeld(sid) && !journal.flushedRecords().containsKey(sid));
-                context.assertTrue(!witness.containsValue(false), "UNIVERSE 目的地停在 RESOLVE stub：" + witness);
+                context.assertTrue(!witness.containsValue(false), "NEW 的 RESOLVE：" + witness);
+                awaitConvergedThenComplete(context, 1, 20);
+            });
+        });
+    }
+
+    /**
+     * F4a（spec §8.1、§15 的 EXISTING）：先以 DORMANT NEW 收據 D1 經真的 RESOLVE 建立宇宙 U（allocation entry、catalog、ACTIVE world、discovery 一致），
+     * 終局 D1 之後，同一座原艙寫入選中 EXISTING U 的 DORMANT 收據 D2。P 由艙外進入 → 提交 COLLAPSING（Destination＝U）→ RESOLVE 只重驗：
+     * 目的地已確定、不進 SEALED，allocation ledger、catalog、discovery 的檔案都不被 D2 改動，lifecycle 仍是同一個 world instance。catalog 增量 1（只有 D1）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_resolve_existing", tickLimit = 400)
+    public void existing_receipt_revalidates_the_same_universe_without_writing(TestContext context) {
+        begin(context, "existing_receipt_revalidates_the_same_universe_without_writing");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var first = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
+            var u = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) first.selectedCandidate().orElseThrow()).intent().allocationToken());
+            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            at(context, registered + 1, hooks, () -> moveInside(p, frame));
+            // D1：提交在 registered+1、RESOLVE 在 registered+2；registered+3 確認 U 已建立，再以終局 API 移除 D1，P 回到艙外。
+            whenTicks(context, registered + 3, 20, () -> UniverseLifecycleService.resolveActive(server, u).isPresent()
+                    && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", first.sessionUuid().toString()).size() == 1, created -> {
+                cleanupFixtures(server, List.of(first.sessionUuid()));
+                moveOutside(p, frame);
+                var worldBefore = UniverseLifecycleService.resolveActive(server, u).orElseThrow();
+                byte[][] before = {bytes(data, UniverseAllocationLedger.FILE_NAME), bytes(data, UniverseRegistryState.STATE_ID + ".dat"),
+                        bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)};
+                var second = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
+                        Map.of(p.getUuid(), true), u));
+                var sid = second.sessionUuid();
+                at(context, created + 1, hooks, () -> moveInside(p, frame));
+                at(context, created + 4, hooks, () -> {
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("existingCommitted", record != null && record.state() == SessionState.COLLAPSING
+                            && new CollapseDestination.Universe(u).equals(record.collapse().destination()));
+                    witness.put("oneResolvedInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1);
+                    witness.put("noSealedWarnOrError", capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty()
+                            && capture.matching(org.apache.logging.log4j.Level.WARN, "SEALED", sid.toString()).isEmpty());
+                    witness.put("authoritiesUnchanged", java.util.Arrays.equals(before[0], bytes(data, UniverseAllocationLedger.FILE_NAME))
+                            && java.util.Arrays.equals(before[1], bytes(data, UniverseRegistryState.STATE_ID + ".dat"))
+                            && java.util.Arrays.equals(before[2], bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)));
+                    witness.put("sameWorldInstance", UniverseLifecycleService.resolveActive(server, u).orElse(null) == worldBefore);
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "EXISTING 的重驗：" + witness);
+                    awaitConvergedThenComplete(context, 1, 20);
+                });
+            }, () -> "D1 的 RESOLVE 沒有建立宇宙：record=" + M5GameTestSupport.state(journal, first.sessionUuid()), hooks);
+        });
+    }
+
+    /**
+     * F4a（spec §8.1、§11.2、§7.3、§5、§10.7、§10.8）：DORMANT EXISTING 收據指向 discovery 沒有的 UniverseId。P 由艙外進入 → 提交 COLLAPSING →
+     * RESOLVE 重驗不通過 → 以 roll-forward 寫入 SEALED(EXISTING_INELIGIBLE)。RESOLVE 之前 P 打開原艙門並站在門口：門口有 entity，所以門維持一般開門
+     * （不關在 P 身上）。P 收到「量子通道無法開啟，已封存。」（翻譯 key）；記一則 ERROR「需要管理員處理」；來源 ticket 已釋放；presence 為 COLLAPSE，
+     * Controller 已刷新為 ARMED（11）。永久原因：P 再次由艙外進入也不重試。catalog、allocation ledger、discovery 都不變，catalog 增量 0。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_existing_ineligible", tickLimit = 400)
+    public void existing_receipt_without_a_discovered_universe_seals_permanently(TestContext context) {
+        begin(context, "existing_receipt_without_a_discovered_universe_seals_permanently");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var unknown = UniverseId.of(UUID.randomUUID());
+            byte[][] before = {bytes(data, UniverseAllocationLedger.FILE_NAME), bytes(data, UniverseRegistryState.STATE_ID + ".dat"),
+                    bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)};
+            var receipt = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
+                    Map.of(p.getUuid(), true), unknown));
+            var sid = receipt.sessionUuid();
+            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
+            at(context, registered + 1, hooks, () -> { M5GameTestSupport.overlayKeys(origin.connection); moveInside(p, frame); });
+            at(context, registered + 2, hooks, () -> {
+                witness.put("committed", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                // RESOLVE（這個 tick 的 END_SERVER_TICK）之前：P 打開原艙門、站在門口。
+                witness.put("doorOpened", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
+                var doorway = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 3.5, 1, 0.5);
+                p.teleport(world, doorway.x, doorway.y, doorway.z, java.util.Set.of(), 0, 0);
+                var a = ChamberGeometry.localToWorld(frame, 1, 1, 0); var b = ChamberGeometry.localToWorld(frame, 5, 5, 0);
+                witness.put("standsInTheDoorway", new net.minecraft.util.math.Box(Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()),
+                        Math.min(a.getZ(), b.getZ()), Math.max(a.getX(), b.getX()) + 1, Math.max(a.getY(), b.getY()) + 1, Math.max(a.getZ(), b.getZ()) + 1)
+                        .intersects(p.getBoundingBox()));
+            });
+            at(context, registered + 3, hooks, () -> {
+                var record = journal.flushedRecords().get(sid);
+                witness.put("sealedIneligible", record != null && record.state() == SessionState.SEALED
+                        && record.collapse().sealedReason().equals(java.util.Optional.of(dev.quantumchamber.collapse.SealedReason.EXISTING_INELIGIBLE))
+                        && record.equals(journal.records().get(sid)));
+                witness.put("occupiedDoorwayStaysOpen", doorAll(world, frame, true, MembraneState.NONE));
+                witness.put("sealedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(SEALED_KEY));
+                var errors = capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString());
+                witness.put("oneAdminError", errors.size() == 1 && errors.getFirst().message().contains("需要管理員處理")
+                        && !capture.marked(org.apache.logging.log4j.Level.ERROR, dev.quantumchamber.collapse.CollapseService.LOG_MARKER.getName(), sid.toString()).isEmpty());
+                witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid));
+                witness.put("presenceCollapse", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.COLLAPSE);
+                witness.put("controllerRefreshedArmed", M5GameTestSupport.controller(world, frame).chamberState() == dev.quantumchamber.chamber.ChamberState.ARMED);
+                moveOutside(p, frame);
+            });
+            at(context, registered + 4, hooks, () -> moveInside(p, frame));
+            at(context, registered + 7, hooks, () -> {
+                witness.put("permanentNeverRetried", receiptStillSealed(journal, sid)
+                        && capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
+                witness.put("authoritiesUnchanged", java.util.Arrays.equals(before[0], bytes(data, UniverseAllocationLedger.FILE_NAME))
+                        && java.util.Arrays.equals(before[1], bytes(data, UniverseRegistryState.STATE_ID + ".dat"))
+                        && java.util.Arrays.equals(before[2], bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)));
+                witness.put("errorStillOnce", capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).size() == 1);
+                hooks.release();
+                context.assertTrue(!witness.containsValue(false), "EXISTING 重驗不通過進 SEALED：" + witness);
                 awaitConvergedThenComplete(context, 0, 20);
             });
         });
+    }
+
+    /** spec §10.8「進入 SEALED」（以字面值斷言，不信任 production 常數）。 */
+    private static final String SEALED_KEY = "message.quantumchamber.m5.sealed";
+
+    private static boolean receiptStillSealed(SessionRecoveryState journal, UUID sid) {
+        var record = journal.flushedRecords().get(sid);
+        return record != null && record.state() == SessionState.SEALED && record.equals(journal.records().get(sid));
+    }
+
+    /** allocation ledger 正式檔裡 UniverseId 為 {@code id} 的 entry 數（直接讀 NBT，不經 production 的 strict decode）。 */
+    private static int allocationEntries(MinecraftServer server, UniverseId id) {
+        var file = server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(UniverseAllocationLedger.FILE_NAME);
+        try {
+            var entries = net.minecraft.nbt.NbtIo.readCompressed(file, net.minecraft.nbt.NbtSizeTracker.ofUnlimitedBytes()).getList("Entries", net.minecraft.nbt.NbtElement.COMPOUND_TYPE);
+            int count = 0;
+            for (int i = 0; i < entries.size(); i++) if (entries.getCompound(i).getUuid("UniverseId").equals(id.value())) count++;
+            return count;
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException("讀不到 allocation ledger", failure);
+        }
+    }
+
+    /** {@code data/<name>} 的 bytes；不存在時為空陣列。 */
+    private static byte[] bytes(java.nio.file.Path data, String name) {
+        try {
+            var file = data.resolve(name);
+            return Files.exists(file) ? Files.readAllBytes(file) : new byte[0];
+        } catch (java.io.IOException failure) {
+            throw new IllegalStateException(failure);
+        }
     }
 
     /**

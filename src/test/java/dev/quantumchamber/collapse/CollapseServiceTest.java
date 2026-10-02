@@ -249,6 +249,95 @@ class CollapseServiceTest {
                 () -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
     }
 
+    /** F4a（spec §10.8）：「進入 SEALED」的訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 逐字等於 spec，en_us 有翻譯。 */
+    @Test void sealedMessageExistsInBothLanguages() throws Exception {
+        var zh = lang("zh_tw"); var en = lang("en_us");
+        assertAll(
+                () -> assertEquals("message.quantumchamber.m5.sealed", CollapseService.MESSAGE_SEALED),
+                () -> assertEquals("量子通道無法開啟，已封存。", text(zh, CollapseService.MESSAGE_SEALED)),
+                () -> assertFalse(text(en, CollapseService.MESSAGE_SEALED).isBlank(), "en_us 有翻譯"),
+                () -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
+    }
+
+    /**
+     * F4a（spec §11.2 的原因表）：可重試的 ALLOCATION_IO_FAILED、PROJECTION_FAILED 以邊緣觸發＋退避重試；MATERIALIZE_FAILED、AUTHORITY_UNREADABLE
+     * 只在重啟之後（開服當下就在 journal）、每個 server instance 一次；永久原因與 TRR 永不重試。逐列寫明，不由 {@link SealedReason} 的旗標反推。
+     */
+    @Test void sealedRetryFollowsTheReasonTable() {
+        var backoff = Set.of(SealedReason.ALLOCATION_IO_FAILED, SealedReason.PROJECTION_FAILED);
+        var restartOnce = Set.of(SealedReason.MATERIALIZE_FAILED, SealedReason.AUTHORITY_UNREADABLE);
+        var never = Set.of(SealedReason.EXISTING_INELIGIBLE, SealedReason.AUTHORITY_CORRUPT, SealedReason.PROJECTION_CONFLICT,
+                SealedReason.TRANSFER_RECOVERY_REQUIRED);
+        var cases = new ArrayList<Executable>();
+        cases.add(() -> assertEquals(Set.of(SealedReason.values()), union(backoff, restartOnce, never), "表涵蓋每一個原因"));
+        for (var reason : SealedReason.values()) for (boolean startup : new boolean[] {false, true}) for (boolean consumed : new boolean[] {false, true}) {
+            CollapseService.SealedRetry expected = backoff.contains(reason) ? CollapseService.SealedRetry.EDGE_WITH_BACKOFF
+                    : restartOnce.contains(reason) && startup && !consumed ? CollapseService.SealedRetry.EDGE_ONCE_AFTER_RESTART
+                    : CollapseService.SealedRetry.NONE;
+            cases.add(() -> assertEquals(expected, CollapseService.sealedRetry(reason, startup, consumed),
+                    reason + " startup=" + startup + " consumed=" + consumed));
+        }
+        assertAll(cases);
+    }
+
+    /** F4a（spec §6.2）：RESOLVE 的等待持續超過 600 ticks 時記一次 WARN；不在等待、還沒超過、或已記過都不記。 */
+    @Test void resolveWaitWarnsOnceAfterSixHundredTicks() {
+        assertAll(
+                () -> assertFalse(CollapseService.waitWarning(-1, 5000, false), "不在等待"),
+                () -> assertFalse(CollapseService.waitWarning(100, 700, false), "恰好 600 ticks：還沒超過"),
+                () -> assertTrue(CollapseService.waitWarning(100, 701, false), "超過 600 ticks：記一次"),
+                () -> assertFalse(CollapseService.waitWarning(100, 5000, true), "這次等待已記過"));
+    }
+
+    /**
+     * F4a（spec §11.2、§7.3）：進入 SEALED 時門改為關閉，門口有 entity 時改為一般開門；「門口」是 25 格門（區域 x、y 1..5，z 0）的整格範圍，
+     * 四個朝向都只涵蓋門板，不含艙內與門外的格。
+     */
+    @Test void sealedDoorClosesUnlessTheDoorwayIsOccupied() {
+        var cases = new ArrayList<Executable>();
+        cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.CLOSED, CollapseService.sealedDoor(false), "門口沒有 entity：關門"));
+        cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.sealedDoor(true), "門口有 entity：一般開門"));
+        for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
+            var frame = new ChamberFrame(new BlockPos(7, 70, 9), facing);
+            var box = CollapseService.doorwayBox(frame);
+            cases.add(() -> assertEquals(25.0, box.getLengthX() * box.getLengthY() * box.getLengthZ(), 1e-9, facing + "：恰為 25 格"));
+            for (int x = 1; x <= 5; x++) for (int y = 1; y <= 5; y++) {
+                var cell = dev.quantumchamber.chamber.ChamberGeometry.localToWorld(frame, x, y, 0);
+                cases.add(() -> assertTrue(box.contains(Vec3d.ofCenter(cell)), facing + "：門格 " + cell));
+            }
+            var inside = dev.quantumchamber.chamber.ChamberGeometry.localToWorld(frame, 3, 3, 1);
+            var outside = frame.controllerPos().offset(facing, 1).down(3);
+            cases.add(() -> assertFalse(box.contains(Vec3d.ofCenter(inside)), facing + "：艙內的格不算門口"));
+            cases.add(() -> assertFalse(box.contains(Vec3d.ofCenter(outside)), facing + "：門外的格不算門口"));
+        }
+        assertAll(cases);
+    }
+
+    /** F4a：進入 SEALED 的待套用門與終局之後的門共用同一套處置，log 的字句依目標區分（帶 LOG_MARKER、chamber 與 session）。 */
+    @Test void sealedPendingDoorUsesItsOwnWording() {
+        var frame = new ChamberFrame(new BlockPos(7, 70, 9), Direction.NORTH);
+        var door = new CollapseService.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, frame, 0, CollapseService.DoorGoal.CLOSE_ON_SEALED);
+        List<DoorLogs.Entry> logs;
+        try (var capture = new DoorLogs()) {
+            CollapseService.applyOutcome(door, Outcome.ROLLED_BACK, 100);
+            CollapseService.applyOutcome(door, Outcome.APPLIED, 100);
+            logs = capture.entries();
+        }
+        assertAll(
+                () -> assertEquals(List.of(Level.WARN, Level.INFO), logs.stream().map(DoorLogs.Entry::level).toList()),
+                () -> assertTrue(logs.getFirst().message().startsWith("進入 SEALED 之後原艙門還沒套用"), logs.getFirst().message()),
+                () -> assertTrue(logs.getLast().message().startsWith("進入 SEALED 之後的原艙門已套用"), logs.getLast().message()),
+                () -> assertTrue(logs.stream().allMatch(entry -> entry.marked() && entry.message().contains("chamber=" + CHAMBER)), logs::toString),
+                () -> assertTrue(logs.getFirst().message().contains("session=" + SESSION)));
+    }
+
+    @SafeVarargs
+    private static <T> Set<T> union(Set<T>... sets) {
+        var result = new java.util.HashSet<T>();
+        for (var set : sets) result.addAll(set);
+        return result;
+    }
+
     private static JsonObject lang(String name) throws Exception {
         try (var stream = CollapseService.class.getResourceAsStream("/assets/quantumchamber/lang/" + name + ".json")) {
             assertNotNull(stream, "語言檔不在 classpath：" + name);

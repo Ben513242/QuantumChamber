@@ -309,6 +309,27 @@ final class M5GameTestSupport {
         return record;
     }
 
+    /**
+     * F4a：選中 EXISTING 候選的 candidate-aware MEASURED＋SELECTED 收據（比照 {@code M4CandidateTestAccess.measuredReceipt}，候選改為
+     * {@code Existing(universe)}）。參與者的值是是否已返還，沒有 lease：全員已返還即 DORMANT。選中者是第一位參與者。只建立，不寫入。
+     */
+    static SessionRecoveryRecord existingReceipt(MinecraftServer server, ChamberOriginAuthority origin, Map<UUID, Boolean> people,
+            dev.quantumchamber.universe.UniverseId universe) {
+        var sid = UUID.randomUUID();
+        var cohort = people.entrySet().stream().map(entry -> new SessionRecoveryRecord.Participant(entry.getKey(), Vec3d.ofCenter(origin.controllerPos()),
+                Vec3d.ZERO, 0, 0, new net.minecraft.nbt.NbtCompound(), entry.getValue())).toList();
+        var frozen = M4CandidateTestAccess.candidateAware(new SessionRecoveryRecord(sid, origin.chamberUuid(), origin, cohort,
+                List.of(new SessionRecoveryRecord.SpaceLease(0, new net.minecraft.util.math.BlockBox(0, 0, 0, 6, 6, 6))), SessionState.ARMING, false,
+                dev.quantumchamber.persistence.SessionSemantics.LATERAL_BUFF_MAINTAINED), server);
+        var key = new DoorKey(sid, 1, DoorKey.DoorWallSide.NEGATIVE_LATERAL);
+        var bytes = new byte[32];
+        java.util.concurrent.ThreadLocalRandom.current().nextBytes(bytes);
+        var id = new dev.quantumchamber.candidate.CandidateId(new dev.quantumchamber.candidate.CandidateBytes(bytes));
+        return new SessionRecoveryRecord(sid, origin.chamberUuid(), origin, cohort, List.of(), SessionState.MEASURED, false, frozen.semantics(),
+                frozen.candidateContext(), List.of(new dev.quantumchamber.candidate.CandidateLedgerEntry(key, new QuantumCandidate.Existing(id, universe))),
+                Optional.of(new dev.quantumchamber.candidate.CandidateSelection.Selected(key, id, cohort.getFirst().playerUuid(), 0, 1)));
+    }
+
     private static void requireCommitted(SessionRecoveryState.CommitResult result, String edge) {
         if (!result.committed()) throw new IllegalStateException("M5 fixture " + edge + " 未確認：" + result);
     }
@@ -599,6 +620,17 @@ final class M5GameTestSupport {
     }
 
     // ---- 原艙與玩家 ----
+
+    /** 讀掉玩家目前收到的 actionbar 訊息，回傳翻譯 key（不是翻譯訊息時為文字）；先呼叫一次可以清掉之前的封包。 */
+    static List<String> overlayKeys(ConnectedGameTestPlayer connection) {
+        var keys = new ArrayList<String>();
+        for (var message : connection.drainOutbound(net.minecraft.network.packet.s2c.play.GameMessageS2CPacket.class)) {
+            if (!message.overlay()) continue;
+            keys.add(message.content().getContent() instanceof net.minecraft.text.TranslatableTextContent translatable
+                    ? translatable.getKey() : message.content().getString());
+        }
+        return keys;
+    }
 
     /** 以玩家的身分使用 {@code pos} 的方塊（門、側門）。 */
     static ActionResult interact(ServerWorld world, BlockPos pos, PlayerEntity player) {

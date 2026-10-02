@@ -1140,7 +1140,13 @@ public final class M5CollapseGameTests implements FabricGameTest {
             });
             // 失敗路徑：先解除探針，再把尚未確認的寫出帶出去，最後才以終局 API 收尾（hooks 依後進先出執行）。
             hooks.add(() -> { if (journal.rollForwardPending(sid)) journal.flush(server); });
-            installFlushProbe(context, fault, hooks);
+            // F4a（F3d quality re-review m-4）：放行第 4 次寫出（確認 SEALED）的同時暫停這個 session 的塌縮流程。確認之後的 flushed SEALED
+            // (PROJECTION_FAILED) 是可重試的原因，F4a 起塌縮流程會評估它的重試；暫停之後，確認的那一個 tick 起到收尾之前都不推進（決策 7）。
+            installFlushProbe(context, fault.andThen(state -> {
+                var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+                if (fault.failures() >= 3 && staged != null && durable != null && staged.state() == SessionState.SEALED
+                        && durable.state() == SessionState.COLLAPSING) M5TestHooks.suspendCollapse(sid);
+            }), hooks);
             // 探針已裝好，同一個 callback 內立即寫入：這個 tick 結束時塌縮流程第一次看到它，roll-forward 已經未確認。
             var result = journal.commitRollForward(server, settled, sealed);
             context.assertTrue(!result.committed() && journal.rollForwardPending(sid) && sealed.equals(journal.records().get(sid))
@@ -1158,6 +1164,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
                 var journalWrites = autosave.journalWrites(server, attempts, Set.of(sid));
                 witness.put("onlyProbedJournalWrites", journalWrites.onlyProbed());
                 witness.put("fourAttempts", attempts.size() == 4);
+                witness.put("suspendedAtTheConfirmingWrite", M5TestHooks.collapseSuspended(sid));
                 witness.put("retriesFollowTheBackoff", attempts.size() == 4 && attempts.get(2) - attempts.get(1) >= 200
                         && attempts.get(3) - attempts.get(2) >= 400);
                 witness.put("collapseServiceNeverOverwrote", !overwritten[0]
