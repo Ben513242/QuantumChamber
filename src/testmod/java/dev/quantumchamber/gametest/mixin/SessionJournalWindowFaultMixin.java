@@ -12,6 +12,7 @@ abstract class SessionJournalWindowFaultMixin {
         dev.quantumchamber.gametest.M4CandidateRecoveryProbe.beforeJournalFlush((SessionRecoveryState)(Object)this,server);
         dev.quantumchamber.gametest.M2CorridorGameTests.beforeDisconnectJournalFlush((SessionRecoveryState)(Object)this,server);
         M2PersistenceProbe.beforeJournalFlush((SessionRecoveryState)(Object)this,server);
+        dev.quantumchamber.gametest.M5TestHooks.beforeJournalFlush((SessionRecoveryState)(Object)this,server);
         dev.quantumchamber.gametest.M4CandidateDoorGameTests.beforeCandidateFlush((SessionRecoveryState)(Object)this,server);
     }
     @Inject(method="save(Ljava/io/File;Lnet/minecraft/registry/RegistryWrapper$WrapperLookup;)V",at=@At("HEAD"),cancellable=true,remap=false)

@@ -1,5 +1,9 @@
 package dev.quantumchamber.gametest;
 
+import static dev.quantumchamber.gametest.M5GameTestSupport.cleanupFixtures;
+import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFixture;
+import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
+
 import com.sun.jna.Platform;
 import dev.quantumchamber.candidate.CandidateSelection;
 import dev.quantumchamber.candidate.SourceFamilyRef;
@@ -30,24 +34,7 @@ public final class M4CandidateDoorGameTests {
     private static BatchFaultProbe batchFaultProbe;
     private static InitialFlushFaultProbe initialFlushFaultProbe;
     private static final String LOCKED_MESSAGE="量子候選已鎖定，等待塌縮";
-    /**
-     * M5 plan 決策 7：collapse-suspended hook 的靜態集合（{@code CollapseSuspendMixin} 讀取）。被加入的 session，{@code CollapseService} 完全不推進，
-     * M4 的 GameTest 因此維持「MEASURED 會一直等待」的原斷言。不變量：同一個 JVM 內不得清除（沒有移除的 API）；default run 中每一個會產生
-     * MEASURED 的 test 都必須在 CollapseService 第一次看到該 session 之前（選門的同一個 tick 之前）加入。
-     */
-    private static final Set<UUID> COLLAPSE_SUSPENDED=java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /**
-     * M5 GameTest 的 journal flush 探針：每次 journal flush 開頭呼叫（{@link #beforeCandidateFlush}），丟出例外即讓那次寫出受控失敗。
-     * 只由 M5 的 test 設定，並在所有路徑上以 TestHooks 清除。
-     */
-    static volatile java.util.function.Consumer<SessionRecoveryState> m5FlushProbe;
-
-    /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
-    public static boolean collapseSuspended(UUID session) {
-        return "all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session);
-    }
-    /** 暫停這個 session 的塌縮流程（不可撤銷）。 */
-    static void suspendCollapse(UUID session) { COLLAPSE_SUSPENDED.add(Objects.requireNonNull(session,"session")); }
+    // M5 plan 決策 7 的 collapse-suspended 靜態集合與 M5 的 journal flush 探針在 M5TestHooks（F4a-0 搬出）。
 
     /**
      * 比照 M2 `_windows` 平台契約：真入場需要 Windows 原生玩家 checkpoint，非 Windows 在 per-test baseline 之前完成，
@@ -346,7 +333,7 @@ public final class M4CandidateDoorGameTests {
             } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
             hooks.release();
             var owned=chamber;
-            whenWithinTicks(context,3,100,() -> gateway.presence(server,owned)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+            whenTicks(context,3,100,() -> gateway.presence(server,owned)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
                     && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(owned)),done -> {
                 fixture.close(); M4PerTestUniverseProbe.complete(context);
             },() -> "readback fault cleanup presence="+gateway.presence(server,owned),null);
@@ -387,7 +374,7 @@ public final class M4CandidateDoorGameTests {
                 var current=journal.records().get(sid);
                 if(current!=null && !journal.flushedRecords().containsKey(sid)) { journal.abortUnchecked(current); journal.flush(server); }
             });
-            whenWithinTicks(context,3,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+            whenTicks(context,3,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
                     && !journal.records().containsKey(sid),released -> {
                 var disk=M4CandidateTestAccess.diskRecords(server);
                 var entries=capture.entries(); int converged=-1,freed=-1;
@@ -451,7 +438,7 @@ public final class M4CandidateDoorGameTests {
                     journal.abortUnchecked(current); journal.flush(server);
                 }
             });
-            whenWithinTicks(context,3,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+            whenTicks(context,3,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
                     && !journal.records().containsKey(sid),released -> {
                 var disk=M4CandidateTestAccess.diskRecords(server);
                 var witness=new LinkedHashMap<String,Boolean>();
@@ -490,7 +477,7 @@ public final class M4CandidateDoorGameTests {
                 if(journal.flushedRecords().containsKey(sid)) journal.remove(sid); else journal.abortUnchecked(current);
                 journal.flush(server);
             });
-            whenWithinTicks(context,2,100,() -> !journal.records().containsKey(sid),removed -> {
+            whenTicks(context,2,100,() -> !journal.records().containsKey(sid),removed -> {
                 var disk=M4CandidateTestAccess.diskRecords(server);
                 var witness=new LinkedHashMap<String,Boolean>();
                 witness.put("residueWasUnchecked",residueUnchecked);
@@ -526,7 +513,7 @@ public final class M4CandidateDoorGameTests {
             boolean recoveryNotPaused=journal.recoveryWritesSafe();
             // 只在失敗路徑使用：斷開本 test 的玩家連線（成功路徑由 trustedTeardown 收尾）。
             var hooks=new M2CorridorGameTests.TestHooks(); hooks.add(fixture::close);
-            whenWithinTicks(context,tick+1,200,() -> fixture.record()!=null && fixture.record().state()==SessionState.RETURNING,converged -> {
+            whenTicks(context,tick+1,200,() -> fixture.record()!=null && fixture.record().state()==SessionState.RETURNING,converged -> {
                 var durable=fixture.record(); var disk=M4CandidateTestAccess.diskRecords(server).get(sid);
                 var witness=new LinkedHashMap<String,Boolean>();
                 witness.put("quarantinedByCasMismatch",quarantined);
@@ -555,7 +542,7 @@ public final class M4CandidateDoorGameTests {
             var server=fixture.server; var journal=SessionRecoveryState.get(server); var player=fixture.players.getFirst().player().getUuid();
             var dormant=M4CandidateTestAccess.dormantReceipt(server,player,10005);
             // M5 plan 決策 7：DORMANT 也是 MEASURED，塌縮流程不得推進這份 M4 收據。
-            suspendCollapse(dormant.sessionUuid());
+            M5TestHooks.suspendCollapse(dormant.sessionUuid());
             journal.put(dormant); journal.flush(server);
             var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
             var runtime=runtimeOwnership(fixture);
@@ -1077,7 +1064,7 @@ public final class M4CandidateDoorGameTests {
         var fixture=new M2CorridorGameTests.NativeEntry(context,people,Direction.NORTH);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,
-                tick -> { suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
+                tick -> { M5TestHooks.suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
     }
     private static net.minecraft.util.ActionResult use(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player) {
         return fixture.target.getBlockState(pos).onUse(fixture.target,player,new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(pos),Direction.UP,pos,false));
@@ -1322,8 +1309,6 @@ public final class M4CandidateDoorGameTests {
     }
 
     public static void beforeCandidateFlush(SessionRecoveryState state,MinecraftServer server) {
-        var m5=m5FlushProbe;
-        if(m5!=null && server.isOnThread()) m5.accept(state);
         var release=releaseFlushFault;
         if(release!=null && server.isOnThread()) release.observe(state);
         if(initialFlushFaultProbe!=null) initialFlushFaultProbe.observe(state);
@@ -1715,7 +1700,7 @@ public final class M4CandidateDoorGameTests {
         var frame=ChamberGameTestBuilder.buildForSession(context,false,Direction.NORTH,false);
         var power=ChamberGameTestBuilder.CONTROLLER.up();
         context.waitAndRun(2,() -> context.setBlockState(power,net.minecraft.block.Blocks.REDSTONE_BLOCK));
-        whenWithinTicks(context,3,40,() -> registeredIdle(context,frame),ready -> {
+        whenTicks(context,3,40,() -> registeredIdle(context,frame),ready -> {
             var server=context.getWorld().getServer(); var world=context.getWorld(); var journal=SessionRecoveryState.get(server);
             var controller=(dev.quantumchamber.chamber.ChamberControllerBlockEntity)world.getBlockEntity(frame.controllerPos());
             var chamber=controller.chamberUuid(); var origin=M4CandidateTestAccess.origin(chamber,frame.controllerPos());
@@ -1735,7 +1720,7 @@ public final class M4CandidateDoorGameTests {
             try {
                 for(var phase : List.of(SessionState.COLLAPSING,SessionState.PASSAGE_READY,SessionState.SEALED)) {
                     var player=UUID.randomUUID();
-                    var sid=collapseFixture(server,origin,Map.of(player,true),List.of(),phase,world.getTime()).sessionUuid();
+                    var sid=f3aFixture(server,origin,Map.of(player,true),List.of(),phase,world.getTime()).sessionUuid();
                     var before=journalView(server,journal,sid);
                     var expected=phase==SessionState.PASSAGE_READY ? dev.quantumchamber.chamber.ChamberSessionGateway.Presence.PASSAGE
                             : dev.quantumchamber.chamber.ChamberSessionGateway.Presence.COLLAPSE;
@@ -1768,7 +1753,7 @@ public final class M4CandidateDoorGameTests {
                 }
                 context.setBlockState(power,net.minecraft.block.Blocks.AIR); coordinator.refresh(world,frame.controllerPos());
             } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
-            whenWithinTicks(context,ready+1,40,() -> ChamberProtectionService.get().mayMutate(world,frame.controllerPos()),released -> {
+            whenTicks(context,ready+1,40,() -> ChamberProtectionService.get().mayMutate(world,frame.controllerPos()),released -> {
                 hooks.release();
                 context.assertTrue(!witness.containsValue(false),"M5 塌縮狀態的 presence／returnToOrigin／requestMeasuredRecovery／reconcile："+witness);
                 M4PerTestUniverseProbe.complete(context);
@@ -1800,7 +1785,7 @@ public final class M4CandidateDoorGameTests {
             var witness=new LinkedHashMap<String,Boolean>();
             try {
                 for(var phase : List.of(SessionState.COLLAPSING,SessionState.PASSAGE_READY,SessionState.SEALED)) {
-                    var record=collapseFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(UUID.randomUUID(),true),List.of(),phase,time);
+                    var record=f3aFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(UUID.randomUUID(),true),List.of(),phase,time);
                     var sid=record.sessionUuid();
                     var before=journalView(server,journal,sid);
                     var attach=attempt(() -> M4CandidateTestAccess.attachRecord(record));
@@ -1816,15 +1801,15 @@ public final class M4CandidateDoorGameTests {
                     witness.put(phase+".ticketReleasedAfterTerminal",!M4CandidateTestAccess.sourceTicketHeld(sid) && !M4CandidateTestAccess.runtimeHeld(sid));
                 }
                 var player=UUID.randomUUID();
-                var sealed=collapseFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(player,true),List.of(),SessionState.SEALED,time);
+                var sealed=f3aFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(player,true),List.of(),SessionState.SEALED,time);
                 recovery.onJoin(player,server);
                 witness.put("sealedReturnedJoinNotQueued",!SessionRecoveryManager.blocks(player,server));
                 recovery.onDisconnect(player,server);
                 var pending=UUID.randomUUID();
-                var collapsing=collapseFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(pending,false),
+                var collapsing=f3aFixture(server,M4CandidateTestAccess.origin(UUID.randomUUID(),base),Map.of(pending,false),
                         List.of(new SessionRecoveryRecord.SpaceLease(10013,new net.minecraft.util.math.BlockBox(1000,80,1000,1006,86,1006))),SessionState.COLLAPSING,time);
                 witness.put("collapsingUnreturnedFrozen",SessionRecoveryManager.blocks(pending,server));
-                whenWithinTicks(context,2,20,() -> !M4CandidateTestAccess.disconnectPending(player),cleared -> {
+                whenTicks(context,2,20,() -> !M4CandidateTestAccess.disconnectPending(player),cleared -> {
                     witness.put("sealedDisconnectWritesNothing",sealed.equals(journal.flushedRecords().get(sealed.sessionUuid()))
                             && sealed.equals(journal.records().get(sealed.sessionUuid())) && !SessionRecoveryManager.blocks(player,server));
                     // 活動 B：同一位玩家尚未返還（synthetic RETURNING，沒有 space；markReturning 對 RETURNING 不寫入）。
@@ -1832,7 +1817,7 @@ public final class M4CandidateDoorGameTests {
                     var active=arming.withProgress(arming.participants(),arming.spaceLeases(),SessionState.RETURNING,false);
                     journal.put(active); removable.add(active.sessionUuid()); journal.flush(server);
                     recovery.onDisconnect(player,server);
-                    whenWithinTicks(context,cleared+1,20,() -> !M4CandidateTestAccess.disconnectPending(player),found -> {
+                    whenTicks(context,cleared+1,20,() -> !M4CandidateTestAccess.disconnectPending(player),found -> {
                         // 這裡只證明整合結果（斷線待處理清除，A、B 都沒被改寫）；「SEALED A＋活動 B 時只找到 B」的鑑別由 JUnit
                         // recordForFindsOnlyTheSessionThatStillOccupiesThePlayer 的 16 組獨立案例鎖住（GREEN 的 markReturning 對 A、B 都不寫入）。
                         witness.put("disconnectWithActiveBWritesNeither",sealed.equals(journal.flushedRecords().get(sealed.sessionUuid()))
@@ -1911,16 +1896,16 @@ public final class M4CandidateDoorGameTests {
             witness.put("noMeasuredRecoveryRequest",!fixture.pages.measuredRecoveryRequested(sid));
             java.util.function.Supplier<String> diagnostics=() -> "record="+journal.flushedRecords().get(sid)+" space="
                     +(M4CandidateTestAccess.space(fixture.pages,sid)!=null)+" calls="+probe.calls;
-            whenWithinTicks(context,tick+1,1200,() -> !probe.calls.isEmpty(),faulted -> {
+            whenTicks(context,tick+1,1200,() -> !probe.calls.isEmpty(),faulted -> {
                 probe.armed=false;
                 // 清 lease 的寫出在 flush 開頭受控失敗一次（ReleaseFlushFault）。同一個 tick 內 recovery 的 RETRY_FLUSH 寫出成功，所以第一次看到
                 // SETTLED 的 record 時，走廊 space 還在（下一個走廊 tick 才釋放）：清理完成的查詢這時必須為假，space 釋放之後才為真（I-1）。
-                whenWithinTicks(context,faulted+1,1200,() -> recordReleased(journal,sid),released -> {
+                whenTicks(context,faulted+1,1200,() -> recordReleased(journal,sid),released -> {
                     witness.put("releaseFlushFaultedOnce",releaseFault.fired==1);
                     witness.put("recordSettledBeforeSpaceReleased",MeasuredRecoveryPhase.from(journal.flushedRecords().get(sid))==MeasuredRecoveryPhase.SETTLED
                             && M4CandidateTestAccess.space(fixture.pages,sid)!=null);
                     witness.put("releaseIncompleteWhileSpaceRemains",!fixture.pages.measuredRecoveryComplete(sid) && !recovery.measuredRecoveryComplete(sid));
-                    whenWithinTicks(context,released+1,40,() -> M4CandidateTestAccess.space(fixture.pages,sid)==null,settled -> {
+                    whenTicks(context,released+1,40,() -> M4CandidateTestAccess.space(fixture.pages,sid)==null,settled -> {
                         witness.put("releaseCompleteOnceSpaceReleased",fixture.pages.measuredRecoveryComplete(sid) && recovery.measuredRecoveryComplete(sid));
                         var receipt=journal.flushedRecords().get(sid);
                         witness.put("playerReturnedToSource",player.getServerWorld()==context.getWorld() && dev.quantumchamber.chamber.ChamberOccupantService.contains(
@@ -1949,7 +1934,7 @@ public final class M4CandidateDoorGameTests {
                         hooks.release();
                         witness.put("runtimeAndTicketReleased",M4CandidateTestAccess.runtimeState(chamber)==null && !M4CandidateTestAccess.sourceTicketHeld(sid));
                         if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
-                        whenWithinTicks(context,settled+1,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
+                        whenTicks(context,settled+1,100,() -> gateway.presence(server,chamber)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
                                 && ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
                             try {
                                 context.assertTrue(!witness.containsValue(false),"COLLAPSING 沿用保留式返還與清理："+witness+" retained="+retained.size()
@@ -1963,28 +1948,14 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
-    /** F3a fixture：MEASURED 收據 put＋flush 之後，只經 commitRestore（M→C、C→R）或 commitRollForward（C→S）進入指定的塌縮狀態。 */
-    private static SessionRecoveryRecord collapseFixture(MinecraftServer server,dev.quantumchamber.chamber.ChamberOriginAuthority origin,
+    /**
+     * F3a fixture（共用的 {@code M5GameTestSupport.collapseFixture}）：MEASURED 收據 put＋flush 之後，只經 commitRestore（M→C、C→R）或
+     * commitRollForward（C→S）進入指定的塌縮狀態；COLLAPSING 選 SOURCE，PASSAGE_READY 與 SEALED 選 NEW。M5 plan 決策 7：F3a 的 fixture 只驗證
+     * 既有分支，塌縮流程不得推進它（一律暫停）。
+     */
+    private static SessionRecoveryRecord f3aFixture(MinecraftServer server,dev.quantumchamber.chamber.ChamberOriginAuthority origin,
             Map<UUID,Boolean> people,List<SessionRecoveryRecord.SpaceLease> leases,SessionState phase,long time) {
-        var journal=SessionRecoveryState.get(server);
-        var measured=M4CandidateTestAccess.measuredReceipt(server,origin,people,leases,phase!=SessionState.COLLAPSING);
-        // M5 plan 決策 7：F3a 的 fixture 只驗證既有分支，塌縮流程不得推進它。
-        suspendCollapse(measured.sessionUuid());
-        journal.put(measured); journal.flush(server);
-        var record=M4CandidateTestAccess.collapsing(measured,time);
-        requireCommitted(journal.commitRestore(server,measured,record),"MEASURED→COLLAPSING");
-        if(phase==SessionState.PASSAGE_READY) {
-            var ready=record.withCollapse(SessionState.PASSAGE_READY,record.collapse().withPassage(time));
-            requireCommitted(journal.commitRestore(server,record,ready),"COLLAPSING→PASSAGE_READY"); record=ready;
-        } else if(phase==SessionState.SEALED) {
-            var sealed=record.withCollapse(SessionState.SEALED,record.collapse().sealed(dev.quantumchamber.collapse.SealedReason.PROJECTION_FAILED));
-            requireCommitted(journal.commitRollForward(server,record,sealed),"COLLAPSING→SEALED"); record=sealed;
-        }
-        if(!record.equals(journal.flushedRecords().get(record.sessionUuid()))) throw new IllegalStateException("M5 fixture 未 exact 落盤："+phase);
-        return record;
-    }
-    private static void requireCommitted(SessionRecoveryState.CommitResult result,String edge) {
-        if(!result.committed()) throw new IllegalStateException("M5 fixture "+edge+" 未確認："+result);
+        return collapseFixture(server,origin,people,leases,phase!=SessionState.COLLAPSING,phase,true,time);
     }
     /** 一個 session 的 current、flushed 與正式檔 strict decode 的內容，用來證明呼叫沒有寫入。 */
     private static List<Object> journalView(MinecraftServer server,SessionRecoveryState journal,UUID sid) {
@@ -2005,19 +1976,6 @@ public final class M4CandidateDoorGameTests {
         var record=journal.flushedRecords().get(sid);
         return record!=null && record.state()==SessionState.COLLAPSING && record.spaceLeases().isEmpty()
                 && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
-    }
-    /**
-     * 失敗路徑的收尾：符合條件的 fixture record 先移除沒有 lease 的 space，再移除 record——塌縮狀態走終局 API，MEASURED（collapseFixture
-     * 中途失敗留下的收據）以 testmod 反射移除——最後以正式 API 釋放 runtime 與來源 ticket。只用於沒有走廊 lease 的 fixture。
-     */
-    private static void cleanupFixtures(MinecraftServer server,java.util.function.Predicate<SessionRecoveryRecord> owned) {
-        var journal=SessionRecoveryState.get(server); var pages=CorridorPageManager.forServer(server);
-        for(var record : List.copyOf(journal.flushedRecords().values())) if(owned.test(record)) {
-            M4CandidateTestAccess.removeSpaceForTeardown(pages,record.sessionUuid());
-            if(record.state()==SessionState.MEASURED) M4CandidateTestAccess.removeMeasuredForTeardown(server,record.sessionUuid());
-            else M4CandidateTestAccess.terminateCollapseFixture(server,record.sessionUuid());
-            M4CandidateTestAccess.releaseAfterTerminal(server,record.sessionUuid());
-        }
     }
     /** 執行並回傳丟出的 RuntimeException（沒有就是 null）；RED 時讓 HEAD 的例外留在 test 內，不從 END_SERVER_TICK 拋出。 */
     private static RuntimeException attempt(Runnable action) {
@@ -2042,29 +2000,6 @@ public final class M4CandidateDoorGameTests {
                 else {
                     context.assertTrue(System.nanoTime()<deadline,"有界等待逾時："+diagnostics.get());
                     whenWithinUntil(context,tick+1,condition,ready,diagnostics,deadline,hooks);
-                }
-            } catch(RuntimeException | Error failure) {
-                if(hooks!=null) hooks.releaseAfter(failure);
-                throw failure;
-            }
-        });
-    }
-    /**
-     * 以 server tick 計的有界等待：GameTest server 不以 20 TPS 節流，wall-clock 期限可能晚於 tickLimit 才到，診斷訊息會被通用逾時蓋掉。
-     * 逾時、斷言失敗或例外時先釋放 hooks（可為 null）。
-     */
-    private static void whenWithinTicks(TestContext context,int tick,int ticks,BooleanSupplier condition,IntConsumer ready,
-            java.util.function.Supplier<String> diagnostics,M2CorridorGameTests.TestHooks hooks) {
-        whenWithinTicksUntil(context,tick,tick+ticks,condition,ready,diagnostics,hooks);
-    }
-    private static void whenWithinTicksUntil(TestContext context,int tick,int last,BooleanSupplier condition,IntConsumer ready,
-            java.util.function.Supplier<String> diagnostics,M2CorridorGameTests.TestHooks hooks) {
-        context.runAtTick(tick,() -> {
-            try {
-                if(condition.getAsBoolean()) ready.accept(tick);
-                else {
-                    context.assertTrue(tick<last,"有界等待逾時（至 tick "+last+"）："+diagnostics.get());
-                    whenWithinTicksUntil(context,tick+1,last,condition,ready,diagnostics,hooks);
                 }
             } catch(RuntimeException | Error failure) {
                 if(hooks!=null) hooks.releaseAfter(failure);
