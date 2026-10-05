@@ -70,7 +70,8 @@ import org.slf4j.MarkerFactory;
  * <li>進入 SEALED（§11.2、§5、§7.3、§10.7、§10.8）：journal 以 roll-forward 寫入 SEALED(reason)（寫入前 current＝flushed；寫出未確認時依
  *     collapse view 照樣生效，重試交給 recovery 的 RETRY_FLUSH）→ 門改為關閉（門口有 entity 時改為一般開門），經待套用門 →
  *     對參與者顯示「量子通道無法開啟，已封存。」→ 刷新 Controller → 釋放來源 ticket。可重試的原因記 WARN、永久原因記 ERROR「需要管理員處理」，
- *     都依 (session, 原因, {@link FailureText#dedupeKey}) 去重。寫入在前置檢查就被拒時，下一個 tick 只重試這筆 SEALED 寫入，不重跑 RESOLVE。</li>
+ *     都依 (session, 原因, {@link FailureText#dedupeKey}) 去重。寫入在前置檢查就被拒時，依 per-session 退避只重試這筆 SEALED 寫入，不重跑 RESOLVE
+ *     （F4a fix round 2）。</li>
  * <li>SEALED 的重試（§11.2）：可重試的原因，以與 DORMANT 相同的邊緣觸發，並在 per-session 退避（200→12000，開服之後第一次不受限）之外；
  *     {@code MATERIALIZE_FAILED}、{@code AUTHORITY_UNREADABLE} 只在重啟之後、每個 server instance 一次；永久原因與 TRR 不重試。重試時 checked
  *     SEALED→COLLAPSING（restore 類），再取得來源 ticket，之後依推導階段重跑 RESOLVE（未確認的權威由 resolver 先收斂）。</li>
@@ -105,6 +106,8 @@ public final class CollapseService {
     static final int WAIT_WARN_TICKS = 600;
     /** {@link #warn} 的寫入種類：進入 SEALED 的 journal 寫入、SEALED→COLLAPSING 的重試。 */
     private static final String SEAL_WRITE = "寫入 SEALED", RETRY = "重試 SEALED→COLLAPSING";
+    /** {@link #sideEffect} 的種類：提交 COLLAPSING 與 SEALED→COLLAPSING 重試之後取得來源 ticket（兩處共用同一個去重鍵），與失敗之後實際會發生的事。 */
+    private static final String ACQUIRE_TICKET = "取得來源 ticket", ACQUIRE_TICKET_NEXT = "本 server instance 不重試，開服 attach 時會為 COLLAPSING 重新取得";
     /** 進入 SEALED 的 WARN／ERROR 的去重鍵前綴（後接原因）；RESOLVE 成功時清除。 */
     private static final String SEALED_LOG = "進入 SEALED ";
     private static final Map<MinecraftServer, CollapseService> INSTANCES = new ConcurrentHashMap<>();
@@ -347,11 +350,7 @@ public final class CollapseService {
         track.backoff.reset();
         track.resetGate();
         // DORMANT 續行沒有來源 ticket（live 的 runtime 入場時已取得，這裡冪等）。
-        try {
-            sessions.acquireCollapseTicket(server, next);
-        } catch (RuntimeException failure) {
-            warn(sid, "取得來源 ticket", failure, null, "本 server instance 不重試，開服 attach 時會為 COLLAPSING 重新取得");
-        }
+        sideEffect(sid, ACQUIRE_TICKET, ACQUIRE_TICKET_NEXT, () -> sessions.acquireCollapseTicket(server, next));
         notifyParticipants(next, MESSAGE_COLLAPSED);
         LOGGER.info(LOG_MARKER, "塌縮已提交：session={} chamber={} 目的地={} 觸發={}", sid, next.chamberUuid(), describe(next.collapse().destination()),
                 dormant ? "DORMANT 續行" : "選門之後");
@@ -366,9 +365,10 @@ public final class CollapseService {
         var view = journal.collapseView(sid).orElse(record);
         if (!view.equals(journal.records().get(sid))) return;
         var track = track(sid);
-        // 進入 SEALED 的寫入在前置檢查就被拒：只重試這一筆寫入，不重跑 RESOLVE（RESOLVE 已有副作用，例如 §8.3 的 DISABLED）。
+        // 進入 SEALED 的寫入在前置檢查就被拒：只重試這一筆寫入，不重跑 RESOLVE（保留 RESOLVE 判定的原因，§8.4），而且依 per-session 退避，
+        // 不是每個 tick 重試（F4a fix round 2，m-5(b)；§6 journal 寫入失敗時的 session 行為、§11.2）。
         if (track.pendingSeal != null) {
-            seal(view, track, track.pendingSeal, track.pendingSealCause);
+            if (track.sealRetryDue(now)) seal(view, track, track.pendingSeal, track.pendingSealCause);
             return;
         }
         boolean universe = view.collapse().destination() instanceof CollapseDestination.Universe;
@@ -433,22 +433,21 @@ public final class CollapseService {
 
     /**
      * 進入 SEALED（§11.2）。journal 以 roll-forward 寫入 SEALED(reason)（current＝flushed 已在呼叫前確認）。寫出未確認時，依 collapse view
-     * SEALED 照樣生效，重試交給 recovery 的 RETRY_FLUSH（F3d 的 A2）；寫入在前置檢查就被拒時（journal 沒有改變），下一個 tick 只重試這筆寫入。
-     * 之後依序：門改為關閉（門口有 entity 時改為一般開門，§7.3）→ 對參與者顯示訊息（§10.8）→ 刷新 Controller（§10.7）→ 釋放來源 ticket（§5）
-     * → 依原因記 WARN（可重試）或 ERROR（永久，需要管理員處理），依 (session, 原因, dedupeKey) 去重。
+     * SEALED 照樣生效，重試交給 recovery 的 RETRY_FLUSH（F3d 的 A2）；寫入在前置檢查就被拒時（journal 沒有改變），依 per-session 退避只重試這筆
+     * 寫入（{@link Track#sealRejected}）。之後依序：門改為關閉（門口有 entity 時改為一般開門，§7.3）→ 對參與者顯示訊息（§10.8）→ 刷新 Controller
+     * （§10.7）→ 釋放來源 ticket（§5）→ 依原因記 WARN（可重試）或 ERROR（永久，需要管理員處理），依 (session, 原因, dedupeKey) 去重。
      */
     private void seal(SessionRecoveryRecord view, Track track, SealedReason reason, RuntimeException cause) {
         var sid = view.sessionUuid();
         var next = view.withCollapse(SessionState.SEALED, view.collapse().sealed(reason));
         var result = journal.commitRollForward(server, view, next);
         if (result.status() == SessionRecoveryState.CommitResult.Status.REJECTED) {
-            track.pendingSeal = reason;
-            track.pendingSealCause = cause;
-            warn(sid, SEAL_WRITE, result.failure().orElseThrow(), result.status().name(), "下一個 tick 只重試這筆 SEALED 寫入（不重跑 RESOLVE）");
+            track.sealRejected(reason, cause, now);
+            warn(sid, SEAL_WRITE, result.failure().orElseThrow(), result.status().name(),
+                    "依 per-session 退避（200 ticks 起、每次被拒加倍）只重試這筆 SEALED 寫入（不重跑 RESOLVE）");
             return;
         }
-        track.pendingSeal = null;
-        track.pendingSealCause = null;
+        track.sealWritten();
         if (result.committed()) {
             track.warnings.remove(SEAL_WRITE);
         } else {
@@ -464,11 +463,7 @@ public final class CollapseService {
         queueDoor(view, 0, DoorGoal.CLOSE_ON_SEALED);
         notifyParticipants(view, MESSAGE_SEALED);
         refresh(view, "進入 SEALED 之後刷新 Controller");
-        try {
-            sessions.releaseOnSealed(server, sid);
-        } catch (RuntimeException failure) {
-            warn(sid, "進入 SEALED 時釋放來源 ticket", failure, null, "不重試；停服時一併釋放");
-        }
+        sideEffect(sid, "進入 SEALED 時釋放來源 ticket", "不重試；停服時一併釋放", () -> sessions.releaseOnSealed(server, sid));
         sealedLog(view, reason, cause);
     }
 
@@ -546,11 +541,7 @@ public final class CollapseService {
         if (reason.restartOnly()) track.restartRetryConsumed = true;
         track.resolved = false;
         track.resetGate();
-        try {
-            sessions.acquireCollapseTicket(server, next);
-        } catch (RuntimeException failure) {
-            warn(sid, "取得來源 ticket", failure, null, "本 server instance 不重試，開服 attach 時會為 COLLAPSING 重新取得");
-        }
+        sideEffect(sid, ACQUIRE_TICKET, ACQUIRE_TICKET_NEXT, () -> sessions.acquireCollapseTicket(server, next));
         LOGGER.info(LOG_MARKER, "SEALED 重試：SEALED({})→COLLAPSING，重新解析目的地：session={} chamber={} 目的地={}", reason, sid, view.chamberUuid(),
                 describe(view.collapse().destination()));
     }
@@ -695,15 +686,12 @@ public final class CollapseService {
         refresh(record, "終局之後刷新 Controller");
     }
 
-    /** 刷新來源艙的 Controller（§10.7）；{@code what} 是失敗時 WARN 的寫入種類。 */
+    /** 刷新來源艙的 Controller（§10.7）；{@code what} 是失敗時 WARN 的寫入種類（成功時清掉它的去重鍵，{@link #sideEffect}）。 */
     private void refresh(SessionRecoveryRecord record, String what) {
         var world = server.getWorld(RegistryKey.of(RegistryKeys.WORLD, record.origin().worldKey()));
         if (world == null) return;
-        try {
-            new ChamberPowerCoordinator().refresh(world, record.origin().controllerPos());
-        } catch (RuntimeException failure) {
-            warn(record.sessionUuid(), what, failure, null, "不重試，Controller 在下次載入或紅石更新時協調");
-        }
+        sideEffect(record.sessionUuid(), what, "不重試，Controller 在下次載入或紅石更新時協調",
+                () -> new ChamberPowerCoordinator().refresh(world, record.origin().controllerPos()));
     }
 
     /** 終局之後把原艙門改為一般開門（open=true、membrane=none），經 {@link ChamberDoorService#applyTarget}；{@code delay} 個 tick 之後才第一次嘗試。 */
@@ -840,13 +828,40 @@ public final class CollapseService {
 
     /**
      * 依 (session, 寫入種類, {@link FailureText#dedupeKey}) 去重記 WARN；{@code next} 是之後實際會發生的事（依退避重試、下一個 tick 重試、
-     * 或不重試由誰接手），只寫真的會發生的。成功時由呼叫端移除該寫入種類的鍵。
+     * 或不重試由誰接手），只寫真的會發生的。成功時移除該寫入種類的鍵，所以同一原因「失敗 → 成功 → 再失敗」會再記一次：journal 寫入由呼叫端移除，
+     * 不重試的附帶動作（取得或釋放來源 ticket、刷新 Controller）一律經 {@link #sideEffect}，成功時自動移除（F4a fix round 2，m-6）。
      */
     private void warn(UUID sid, String what, RuntimeException failure, String status, String next) {
-        var key = FailureText.dedupeKey(failure);
-        if (key.equals(track(sid).warnings.put(what, key))) return;
+        if (!firstWarning(track(sid).warnings, what, failure)) return;
         LOGGER.warn(LOG_MARKER, "塌縮流程的{}沒有完成{}，{}：session={}：{}", what, status == null ? "" : "（" + status + "）", next, sid,
                 FailureText.describe(failure), failure);
+    }
+
+    /** {@link #warn} 的去重（純函式）：記下 {@code what} 這次的 {@link FailureText#dedupeKey}，與上一次記下的不同才回 true（要記 WARN）。 */
+    static boolean firstWarning(Map<String, String> warnings, String what, RuntimeException failure) {
+        var key = FailureText.dedupeKey(failure);
+        return !key.equals(warnings.put(what, key));
+    }
+
+    /**
+     * 不重試的附帶動作（F4a fix round 2，m-6）：執行 {@code action}，成功時從 {@code warnings} 移除 {@code what} 的去重鍵（{@code warnings} 為 null
+     * 表示這個 session 沒有簿記，例如已終局）並回 null；失敗時回傳例外、不動 {@code warnings}，由呼叫端交給 {@link #warn}。純簿記，JUnit 直接驗證。
+     */
+    static RuntimeException attempt(Map<String, String> warnings, String what, Runnable action) {
+        try {
+            action.run();
+        } catch (RuntimeException failure) {
+            return failure;
+        }
+        if (warnings != null) warnings.remove(what);
+        return null;
+    }
+
+    /** 不重試的附帶動作：{@link #attempt}，失敗時經 {@link #warn} 去重記 WARN（{@code next} 是之後實際會發生的事）。 */
+    private void sideEffect(UUID sid, String what, String next, Runnable action) {
+        var track = tracks.get(sid);
+        var failure = attempt(track == null ? null : track.warnings, what, action);
+        if (failure != null) warn(sid, what, failure, null, next);
     }
 
     private Track track(UUID sid) {
@@ -857,8 +872,8 @@ public final class CollapseService {
         return destination instanceof CollapseDestination.Universe universe ? "UNIVERSE " + universe.id().value() : "SOURCE";
     }
 
-    /** 每個 session 在本 server instance 的塌縮簿記（不持久化）。 */
-    private static final class Track {
+    /** 每個 session 在本 server instance 的塌縮簿記（不持久化）。package-private 只為了 JUnit 直接驗證它的方法（F4a fix round 2）。 */
+    static final class Track {
         /** 提交失敗、restore 類寫入（終局、SEALED 的重試）失敗、以可重試的原因進入 SEALED 之後的 per-session 退避（§7.1、§11.2）；RESOLVE 完成時清除。 */
         final CollapseBackoff backoff = new CollapseBackoff();
         /** WARN 的去重：寫入種類 → 最近一次的 {@link FailureText#dedupeKey}；成功時移除。 */
@@ -877,9 +892,31 @@ public final class CollapseService {
         /** RESOLVE 連續等待的起點（-1 表示不在等待）與這次等待是否已記過 WARN。 */
         long waitSince = -1;
         boolean waitWarned;
-        /** 進入 SEALED 的寫入在前置檢查就被拒：下一個 tick 只重試這筆寫入。 */
+        /** 進入 SEALED 的寫入在前置檢查就被拒：退避期過後只重試這筆寫入（{@link #sealRejected}）。 */
         SealedReason pendingSeal;
         RuntimeException pendingSealCause;
+
+        /**
+         * 進入 SEALED 的寫入在前置檢查就被拒（REJECTED，journal 沒有改變；F4a fix round 2，m-5(b)）：記下 RESOLVE 判定的原因與 root cause（§8.4：
+         * RESOLVE 的失敗進 SEALED、保留同一個 Destination），並記一次 per-session 退避。record 留在上一份已確認的狀態，與 restore 類寫入失敗相同，
+         * 套用 §11.2 的 per-session 記憶體內退避（spec §6「journal 寫入失敗時的 session 行為」、§11.2 最後一點），不是每個 tick 重試。
+         */
+        void sealRejected(SealedReason reason, RuntimeException cause, int now) {
+            pendingSeal = Objects.requireNonNull(reason, "reason");
+            pendingSealCause = Objects.requireNonNull(cause, "cause");
+            backoff.failed(now);
+        }
+
+        /** 有被拒的 SEALED 寫入，而且在 per-session 退避期之外：這個 tick 重試它（不重跑 RESOLVE）。 */
+        boolean sealRetryDue(int now) {
+            return pendingSeal != null && backoff.ready(now);
+        }
+
+        /** 進入 SEALED 的寫入沒有被拒（已確認，或 roll-forward 未確認、交給 recovery）：不再有待重試的寫入。 */
+        void sealWritten() {
+            pendingSeal = null;
+            pendingSealCause = null;
+        }
 
         EntryWatch entry(boolean armedAtStartup) {
             if (entry == null) entry = new EntryWatch(armedAtStartup);
