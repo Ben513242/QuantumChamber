@@ -25,6 +25,7 @@ import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
+import dev.quantumchamber.universe.MaterializeResult;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseLifecycleService;
 import dev.quantumchamber.universe.UniverseRecord;
@@ -446,6 +447,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         && !catalog.isDirty() && flushed.equals(catalog.records().get(id)));
                 witness.put("noWorld", UniverseLifecycleService.resolveActive(server, id).isEmpty() && server.getWorld(key) == null);
                 witness.put("backendCalledOnce", fault.calls() == 1);
+                // F4a fix round 2（S-m2）：materializeAllocated 把這次 FAILED_ROLLED_BACK 記入 lifecycle Context 的 materialize failures（停服驗證依它核對）。
+                witness.put("lifecycleRecordedTheRolledBackFailure",
+                        UniverseLifecycleService.materializeFailures(server, id, MaterializeResult.Status.FAILED_ROLLED_BACK) == 1);
                 witness.put("noDiscovery", CollapseAuthorities.get(server).discovery(id).status() == CollapseAuthorities.Lookup.Status.ABSENT);
                 witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
                 // F4a fix round 2（m-1）：每個 server instance 恰好一個 resolver（一份物化額度），不依賴 CollapseService 的快取。再取一次拿到同一個；以只在
@@ -479,7 +483,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 var outcome = UniverseLifecycleService.materializeAllocated(server, id);
                 catalog.changeAvailability(id, DesiredAvailability.DISABLED); catalog.flush(server);
                 witness.put("lifecycleRefusesTheFailedDescriptor", outcome.status() == UniverseLifecycleService.MaterializeOutcome.Status.FAILED_BEFORE
-                        && fault.calls() == 1 && server.getWorld(key) == null);
+                        && fault.calls() == 1 && server.getWorld(key) == null
+                        && UniverseLifecycleService.materializeFailures(server, id, MaterializeResult.Status.FAILED_ROLLED_BACK) == 1);
                 hooks.release();
                 context.assertTrue(!witness.containsValue(false), "物化失敗：" + witness + " outcome=" + outcome);
                 awaitConvergedThenComplete(context, 1, 20);
@@ -523,9 +528,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid));
                 witness.put("oneRetryableWarn", capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.LOG_MARKER.getName(),
                         "SEALED(ALLOCATION_IO_FAILED)", "退避期之外", sid.toString()).size() == 1);
-                // F4a-0 裁示 1：權威的 WARN 帶 TICK_LOG_MARKER，collapseFlowNeverWarned 依 marker 看得到它。
+                // F4a-0 裁示 1：權威的 WARN 帶 TICK_LOG_MARKER，collapseFlowNeverWarned 依 marker 看得到它。這則 log 屬於權威、不屬於任何 session，
+                // 訊息沒有 sid 可篩選，所以依 README「log 斷言」不斷言絕對筆數，只要求至少一則（F4a fix round 2，m-7）。
                 witness.put("ledgerWarnCarriesTheTickMarker", capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.TICK_LOG_MARKER.getName(),
-                        "ALLOCATION_LEDGER 的 checked 寫入未確認").size() == 1);
+                        "ALLOCATION_LEDGER 的 checked 寫入未確認").size() >= 1);
                 moveOutside(p, frame);
             });
             // 退避期內的邊緣觸發：不重試。
@@ -541,8 +547,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 var record = journal.flushedRecords().get(sid);
                 witness.put("retriedOnce", capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
                 witness.put("collapsingAgainWithTicket", record != null && record.state() == SessionState.COLLAPSING && M4CandidateTestAccess.sourceTicketHeld(sid));
+                // 收斂完成的 INFO 同樣屬於權威、沒有 sid：只要求至少一則（m-7）；「已收斂」由 unconfirmed 判定。
                 witness.put("ledgerConvergedFirst", !authorities.unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER)
-                        && capture.marked(org.apache.logging.log4j.Level.INFO, CollapseService.TICK_LOG_MARKER.getName(), "ALLOCATION_LEDGER 收斂完成").size() == 1);
+                        && capture.marked(org.apache.logging.log4j.Level.INFO, CollapseService.TICK_LOG_MARKER.getName(), "ALLOCATION_LEDGER 收斂完成").size() >= 1);
                 witness.put("stillOneAllocationEntry", allocationEntries(server, id) == 1);
                 var catalog = UniverseRegistryState.get(server).flushedRecords().get(id);
                 witness.put("oneUniverse", catalog != null && catalog.desiredAvailability() == DesiredAvailability.EAGER_ENABLED
@@ -671,8 +678,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F4a fix round 1（M-2；spec §6.2、§8.1、F2c 裁示 3）：CollapseService 的 RESOLVE 等待分支。D1（DORMANT NEW）的 discovery 追加在 atomic move
      * 之後讀回失敗（testmod 的 {@code CheckedNbtFileReadFaultMixin}）→ D1 進 SEALED(ALLOCATION_IO_FAILED)，discovery 權威未確認（已落地的 record 保留）。
      * D1 收尾之後，同一座原艙的 D2（DORMANT EXISTING，目的地是 D1 建立的宇宙 U）提交 COLLAPSING；discovery 的收斂再失敗兩次（權威的退避 200、400），
-     * 所以 D2 的 RESOLVE 等待約 1400 ticks：期間一直是 COLLAPSING、不進 SEALED，連續等待超過 600 ticks 時只記一則 WARN（帶 LOG_MARKER 與 session）；
-     * discovery 收斂之後 D2 照常確定目的地。catalog 增量 1（D1 的 U）。
+     * 所以 D2 的 RESOLVE 等待約 1400 ticks：期間一直是 COLLAPSING、不進 SEALED，連續等待超過 600 ticks 時只記一則 WARN（帶 LOG_MARKER 與 session），
+     * 等待約 585 ticks 時還沒有（F4a fix round 2，S-m1）；discovery 收斂之後 D2 照常確定目的地。catalog 增量 1（D1 的 U）。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_resolve_wait", tickLimit = 1700)
     public void existing_resolve_waits_for_an_unconfirmed_discovery_without_sealing_and_warns_once(TestContext context) {
@@ -707,6 +714,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
             });
             at(context, registered + 4, hooks, () -> moveInside(p, frame));
             // D2 的 RESOLVE 從 registered+5 起等待；超過 600 ticks 的 WARN 約在 registered+606。
+            // F4a fix round 2（S-m1）：WARN 的起點不早於預期——registered+590（等待約 585 ticks）時還沒有等待的 WARN。
+            at(context, registered + 590, hooks, () -> witness.put("noWaitWarnBeforeSixHundredTicks",
+                    M5GameTestSupport.state(journal, sid2).equals("COLLAPSING") && waitWarnings(capture, sid2) == 0));
             at(context, registered + 620, hooks, () -> {
                 witness.put("waitingWithoutSealing", M5GameTestSupport.state(journal, sid2).equals("COLLAPSING")
                         && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid2.toString()).isEmpty()
@@ -727,6 +737,89 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 awaitConvergedThenComplete(context, 1, 20);
             }, () -> "discovery 收斂之後 D2 沒有確定目的地：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
         });
+    }
+
+    /**
+     * F4a fix round 2（m-5(a)；spec §6 collapse view 與 roll-forward、§11.2、§7.3、§5、§10.8）：進入 SEALED 的 journal 寫出未確認（{@code ROLL_FORWARD_PENDING}）時，
+     * SEALED 依 collapse view 照樣生效。DORMANT NEW 收據的 RESOLVE 物化失敗（testmod 的 {@code MaterializeFaultMixin}）→ catalog 改為 DISABLED →
+     * 進入 SEALED(MATERIALIZE_FAILED) 的 C→S 寫出在 flush 開頭受控失敗一次（flush 探針＋{@code FlushFault}，比照 G-SEAL）。未確認的那一個 tick：門已關（P 在
+     * RESOLVE 之前打開了門，門口沒有人）、來源 ticket 已釋放、P 收到「量子通道無法開啟，已封存。」，這個 session 的「寫入 SEALED」WARN 恰好一則。下一個 tick
+     * recovery 的 RETRY_FLUSH 確認同一份 SEALED（探針看到的第 2 次寫出）；之後不重跑 RESOLVE：沒有「目的地已確定」、backend 只物化過一次、catalog 這筆仍是
+     * DISABLED、allocation entry 恰一筆（catalog 增量 1，沒有第二個宇宙）。原生 autosave 不經過探針、會直接把未確認的寫出帶出去，所以在
+     * {@code afterAutosaveClear} 的窗口內開始，確認時斷言窗口內 journal 的每一次寫出都經過探針、只帶這個 session 的變更。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_sealed_pending", tickLimit = 400)
+    public void sealed_entry_with_an_unconfirmed_write_still_closes_the_door_and_releases_the_ticket(TestContext context) {
+        begin(context, "sealed_entry_with_an_unconfirmed_write_still_closes_the_door_and_releases_the_ticket");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
+            var sid = dormant.sessionUuid();
+            var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
+            var materialize = M5GameTestSupport.installMaterializeFault(context, id, hooks);
+            // 「current 是 SEALED、flushed 仍是 COLLAPSING」的寫出：第 1 次（seal 的 commitRollForward）受控失敗，之後照常（recovery 的 RETRY_FLUSH）。
+            var flush = new M5GameTestSupport.FlushFault(server, "F4a fix round 2 GameTest 受控：進入 SEALED 的 journal 寫出失敗", 1, state -> {
+                var staged = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+                return staged != null && durable != null && staged.state() == SessionState.SEALED && durable.state() == SessionState.COLLAPSING;
+            });
+            // 失敗路徑：先解除探針（hooks 後進先出），再把尚未確認的寫出帶出去，最後才由 DormantOrigin 的收尾以終局 API 移除。
+            hooks.add(() -> { if (journal.rollForwardPending(sid)) journal.flush(server); });
+            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
+            M5GameTestSupport.afterAutosaveClear(context, registered + 1, "sealed_pending", 40, (start, autosave) -> {
+                M5GameTestSupport.installFlushProbe(context, flush, hooks);
+                M5GameTestSupport.overlayKeys(origin.connection);
+                // 提交在 start 的 END_SERVER_TICK；RESOLVE（物化失敗 → 進入 SEALED）在 start+1 的 END_SERVER_TICK。
+                moveInside(p, frame);
+                at(context, start + 1, hooks, () -> {
+                    witness.put("committed", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                    // RESOLVE 之前，P 在艙內打開原艙門；門口沒有人。
+                    witness.put("doorOpenedBeforeResolve", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
+                });
+                whenTicks(context, start + 2, 10, () -> journal.rollForwardPending(sid), pending -> {
+                    var view = journal.collapseView(sid).orElse(null);
+                    witness.put("pendingSealedView", view != null && view.state() == SessionState.SEALED
+                            && view.collapse().sealedReason().equals(java.util.Optional.of(SealedReason.MATERIALIZE_FAILED))
+                            && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && flush.failures() == 1);
+                    witness.put("doorClosedWhilePending", doorAll(world, frame, false, MembraneState.NONE));
+                    witness.put("ticketReleasedWhilePending", !M4CandidateTestAccess.sourceTicketHeld(sid));
+                    witness.put("sealedMessageWhilePending", M5GameTestSupport.overlayKeys(origin.connection).contains(SEALED_KEY));
+                    witness.put("oneSealWriteWarn", sealWriteWarnings(capture, sid) == 1);
+                    whenTicks(context, pending + 1, 10, () -> sealedWith(journal, sid, SealedReason.MATERIALIZE_FAILED) && !journal.rollForwardPending(sid), confirmed -> {
+                        var attempts = flush.ticks();
+                        witness.put("confirmedByTheRetryFlush", flush.failures() == 1 && attempts.size() == 2 && view != null
+                                && view.equals(journal.flushedRecords().get(sid)));
+                        var journalWrites = autosave.journalWrites(server, attempts, java.util.Set.of(sid));
+                        witness.put("onlyProbedJournalWrites", journalWrites.onlyProbed());
+                        at(context, confirmed + 5, hooks, () -> {
+                            witness.put("noResolveAfterTheConfirmation", sealedWith(journal, sid, SealedReason.MATERIALIZE_FAILED)
+                                    && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).isEmpty() && materialize.calls() == 1);
+                            var catalog = UniverseRegistryState.get(server).flushedRecords().get(id);
+                            witness.put("oneDisabledUniverse", catalog != null && catalog.desiredAvailability() == DesiredAvailability.DISABLED
+                                    && allocationEntries(server, id) == 1);
+                            witness.put("sealWriteWarnStillOnce", sealWriteWarnings(capture, sid) == 1);
+                            hooks.release();
+                            context.assertTrue(!witness.containsValue(false), "進入 SEALED 的寫出未確認：" + witness + " attempts=" + attempts
+                                    + " start=" + autosave.start() + " autosaveAt=" + autosave.autosaveAt() + " journalWrites=" + journalWrites.problems());
+                            awaitConvergedThenComplete(context, 1, 20);
+                        });
+                    }, () -> "RETRY_FLUSH 沒有確認 SEALED：record=" + M5GameTestSupport.state(journal, sid) + " attempts=" + flush.ticks(), hooks);
+                }, () -> "進入 SEALED 的寫出沒有停在未確認：record=" + M5GameTestSupport.state(journal, sid) + " attempts=" + flush.ticks()
+                        + " witness=" + witness, hooks);
+            }, hooks);
+        });
+    }
+
+    /** 這個 session 的「寫入 SEALED」WARN（{@code CollapseService} 的 {@code warn}，帶 LOG_MARKER）。 */
+    private static int sealWriteWarnings(LogCapture capture, UUID sid) {
+        return capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 SEALED", sid.toString()).size();
     }
 
     /** 這個 session 的「目的地解析持續等待」WARN（帶 LOG_MARKER）。 */

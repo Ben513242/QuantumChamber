@@ -219,6 +219,21 @@ public final class UniverseLifecycleService {
         return context != null && context.ready;
     }
 
+    /**
+     * 唯讀（M5 F4a fix round 2，S-m2）：本 server instance 的 lifecycle Context 記下的 materialize failure 中，這個 UniverseId 的 OVERWORLD world key、
+     * backend status 為 {@code status} 的筆數。停服驗證（{@link #verifyStopped}）依這些紀錄核對 rollback 收據；例外記為沒有 status 的失敗，不計入任何
+     * status。沒有 context 時為 0。只能在 server thread 呼叫；不記 log，不改變任何狀態。
+     */
+    public static int materializeFailures(MinecraftServer server, UniverseId id, MaterializeResult.Status status) {
+        requireServerThread(server);
+        Objects.requireNonNull(id, "id"); Objects.requireNonNull(status, "status");
+        var context = CONTEXTS.get(server);
+        if (context == null) return 0;
+        var worldKey = UniverseKeys.world(id, DimensionRole.OVERWORLD);
+        return (int) context.materializeFailures.stream()
+                .filter(failure -> failure.status() == status && failure.descriptor().worldKey().equals(worldKey)).count();
+    }
+
     private static void requireServerThread(MinecraftServer server) {
         if (!Objects.requireNonNull(server, "server").isOnThread()) {
             throw new IllegalStateException("Universe lifecycle 的 runtime API 必須在伺服器執行緒操作");
