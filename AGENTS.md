@@ -102,14 +102,14 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 - M1–M4 的歷程（逐 task 與整分支 review、integration fix rounds 1–4、人工驗收、合併、harness tracked 化與 worktree 退役）記在 `docs/implementation-notes/2026-09-21-m4-candidate-doors.md`、`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md` 與 `scripts/verification/README.md`。M1–M4 的 SDD ledger 只在外部備份：`C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\superpowers\sdd\2026-09-21-m4-candidate-doors\progress.md`（只讀）。
 - `scripts/verification/` 的 harness 原始檔（`task9-gates.ps1` 等）與 M1–M4 evidence，也都在同一份外部備份的 `superpowers\sdd\2026-09-21-m4-candidate-doors\`。M3 probe 與 M4 recovery 的 receipt 位置由 testmod 固定在 repo 內的 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`；依程式，tracked harness 在該目錄不存在時會自行建立；M5 T0（2026-10-01，HEAD `2c24d51`）已在 clean clone 實跑確認，見 M5 note 的「T0」。
 
-M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（2026-10-02 核對；實際狀態以遠端 ref 為準）。
+M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（2026-10-05 核對；實際狀態以遠端 ref 為準）。
 
 - spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.3），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
-- 進度（2026-10-02）：
-  - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）。
+- 進度（2026-10-05）：
+  - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）。
   - T0：controller 執行的 clean-clone 基線，不改程式。
   - F1b：controller 代操作的真 client 驗證，四項通過，經獨立 docs review 與 re-review。
-  - 下一個是 F4a，之後依 plan 的順序：F4b → F5 → F6 → F7 → milestone 收尾。
+  - 下一個是 F4b。F4b 開工時先做 note F4a「交給後續」的 Step 0（F4a 最終 review 留下的 Minor），再做 PREPARE。之後依 plan 的順序：F5 → F6 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

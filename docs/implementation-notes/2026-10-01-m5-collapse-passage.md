@@ -3045,7 +3045,33 @@ Gate 與證據：逐輪的 state、摘要與 log 統計在 `.superpowers/sdd/202
 - Code range `e4e1b2f..46946c0`。沒有改 `SuperpositionSessionManager.java`（`releaseOnSealed`、`acquireCollapseTicket` 已足夠）、`SessionRecoveryState.java`、`ChamberDoorService`、`UniverseRegistryState`、`gates.ps1`、`build.gradle`、`.github/`。
 - 範圍是 plan Task F4a：UNIVERSE 目的地的 RESOLVE、進入 SEALED 與 SEALED 的重試。RESOLVE 完成之後，F4b 之前停在 WAITING（PREPARE stub）；不預載、不投影、不寫 projection ledger、不攔截門（F4b），沒有通道（F5）。
 - 行號以 `46946c0` 為準（production 自 `c825a49` 起沒有變）。`DR` 指 `collapse/DestinationResolver.java`，`RR` 指 `collapse/ResolveResult.java`，`ULS` 指 `universe/UniverseLifecycleService.java`，`CA` 指 `collapse/CollapseAuthorities.java`，`DRT` 指 `DestinationResolverTest`，`GT` 指 `CollapseLogMarkerGuardTest`，`MFM`、`CRM` 指兩個新的 mixin；`CS`、`CST`、`SRM`、`M5C`、`M5U`、`M4C`、`SUP`、`HK` 同前面各節。
-- Review：spec review ❌（Critical 0、Important 1、Minor 6：I-1、M-1～M-6）；Q1、Q2（「需要裁示」兩條）判定符合 spec，controller 已接受。處置見本節末的「Fix round 1」（`7d6fae7`、`e0780fc`、`7f91400`）；fix round 1 的 review 結果由 controller 補。
+- Review：spec review ❌（Critical 0、Important 1、Minor 6：I-1、M-1～M-6）；Q1、Q2（「需要裁示」兩條）判定符合 spec，controller 已接受。處置見本節末的「Fix round 1」（`7d6fae7`、`e0780fc`、`7f91400`）與「Fix round 2」（`abb7ddf`、`0cdc951`、`72e4d8c`、`df66619`）。
+- 最終 review：
+  - fix round 1：
+    - spec re-review ✅（Critical 0、Important 0、Minor 3：S-m1～S-m3）。
+    - 首輪的 quality review（範圍 `e4e1b2f..ff4fc55`）Approved（Critical 0、Important 0、Minor 8：m-1～m-8）。
+    - controller 開窄範圍的 fix round 2，處理 m-1～m-8 與 S-m1、S-m2。
+    - S-m3（controller 裁示的 F7 errata 沒寫進 note）由 controller 補在「裁示」第 5 條。
+    - 所有 commit 之後的 run-all：`run-all-521b3824c2bd4c2386e935e0abbc4353`，`END ALL exit=0`（`ff4fc55`），SUMMARY 與 `7f91400` 的 `run-all-e35b21eb…` 相同。
+  - fix round 2：
+    - spec review ✅（Critical 0、Important 0、Minor 3：S2-mA～S2-mC）。§8.3 的兩個方向、權威退避、I-1 的不變式、`catalogRecord` 的 §8.1／§6.2 判定都判定成立。
+    - quality review Approved（Critical 0、Important 0、Minor 6：Q2-m1～Q2-m6）。
+    - 兩位 reviewer 都判定這些 Minor 可以等下次改到 CA／DR／CS 時處理。controller 不再開 fix round，全部寫進「交給後續」（F4b Step 0、F6）。
+    - 所有 commit 之後的 run-all：`run-all-9d3a6073d1d84645930b0af986e44af1`，`END ALL exit=0`（`942a33f`），SUMMARY 與 `df66619` 的 `run-all-a0e29009…` 相同。
+  - **F4a 完成**：range `e4e1b2f..942a33f`，之後接 controller 的 docs commit。
+    - code：`4bb07b3`、`458c297`、`04c7fea`、`c825a49`、`64ffaf9`、`46946c0`、`7d6fae7`、`e0780fc`、`7f91400`、`abb7ddf`、`0cdc951`、`72e4d8c`、`df66619`。
+    - docs：`459b4e0`、`ff4fc55`、`942a33f`。
+    - 最終 run-all：`run-all-9d3a6073d1d84645930b0af986e44af1`，`END ALL exit=0`（`942a33f`）。數字如下：
+
+      | 項目 | 數值 |
+      | --- | --- |
+      | default | 174/174（`_windows` 88） |
+      | M5 | 13/13 |
+      | JUnit | 611 |
+      | release | 383／336 |
+      | sources | 214 |
+      | Full WARN／ERROR | 54／28 |
+      | M5 WARN／ERROR | 13／1 |
 - 本節「Fix round 1」之前的內容描述首輪（`46946c0`）；fix round 1 改過的地方在相關列另加註「fix round 1」，加註裡的行號以 `7f91400` 為準。
 
 ### plan Step 1 逐項對照
@@ -3193,6 +3219,10 @@ fix round 1 由「需要裁示」改為本小節；以下都是 controller 在 F
 2. 「偏離」第 4 條（開服時就是 COLLAPSING 的 session，第一次 RESOLVE 接受 `DISABLED`）：spec review 判定這個讀法符合 spec，controller 接受（Q2）；實作在 fix round 1 由 I-1 的一般規則取代。
 3. resolve 的介面改為 `forServer(server).resolve(…)`（「偏離」第 2 條）：controller 接受（M-6）。fix round 1 之後的最終簽名是 `DestinationResolver.forServer(server).resolve(view)`。
 4. runtime 的 `REJECTED` 不記入 materialize failures（「偏離」第 10 條）：controller 接受（M-6）。
+5. （controller 補，fix round 1 的 spec re-review S-m3）Q1、Q2 與 I-1 的 spec errata 交給 F7，內容見「交給後續」的 F7。
+6. （controller 補，fix round 2）第一次 run-all（`run-all-a0e29009…`）的 Full WARN 是 55，多出的一則是 `m2_task4_disconnect_io` 既有的偶發 WARN「艙體 … 的 session 協調失敗」，歸屬見 Fix round 2。controller 裁示：
+   - 列入已知偶發。它不經過 M5 程式，也不會讓任何 gate 失敗。
+   - 之後比對 Full WARN 數字時，先排除這一則。
 
 ### 觀察（未修改）
 
@@ -3208,6 +3238,18 @@ fix round 1 由「需要裁示」改為本小節；以下都是 controller 在 F
   - PREPARE 的失敗（`PROJECTION_FAILED`、`PROJECTION_CONFLICT`）經 `CS:454` `seal` 進入 SEALED；重試已由 `CS:527` 處理，PREPARE 只要回報原因。projection ledger 的未確認在重試時由 resolver 之後的 PREPARE 收斂。
   - 門的攔截（PREPARE、PASSAGE_READY 期間）：SEALED 的門走 `CLOSE_ON_SEALED` 的待套用門；F4b 新增的攔截不要與它衝突（同一座艙的待套用門以 chamber 為 key，後排入的取代先排入的）。
   - （fix round 1，M-4）§7.3「門狀態的重新套用」（重啟或 chunk 載入之後，依 collapse view 排入下一個 tick 重新套用）由 F4b 實作時，要涵蓋 SEALED 的關門（門口有人時改為一般開門）。目前開服時就是 SEALED 的 session，門不會重新套用（「觀察」第 2 條）。
+  - （controller 補，fix round 2 的 quality Q2-m6）G-NEW 的 `onlyTheStubWarnAndNoError`（`M5U:274`）沒有依 sid 篩選 ERROR（Fix round 2「觀察」第 1 條）。PREPARE 實作之後，stub 的 WARN 會消失，F4b 本來就要改寫這個 witness。改寫時用 `noWarnOrError(capture, sid)`＋`collapseFlowNeverWarned(capture, sid)`：後者涵蓋帶 `TICK_LOG_MARKER` 的 log，不會失去 tick 層級 ERROR 的涵蓋。
+  - **Step 0（controller 補）：F4a 最終 review 留下的 Minor。** 兩位 reviewer 都判定可以等下次改到 CA／DR／CS 時一併處理。F4b 在開始 PREPARE 之前，先以獨立 commit 處理下列各項，每項都要有 RED 或 mutation 證據。F4b 的派工會把 `DestinationResolver.java` 與 `CollapseAuthorities.java` 中下列各點列入允許路徑。行號以 `942a33f` 為準。
+    - Q2-m1：`CA:692-724` 的 `WriteDirection` 可以和 availability 任意組合。依 spec §6 收斂規則表，方向由目標值決定：DISABLED 是 roll-forward，改回 EAGER_ENABLED 是 restore。作法二擇一：由 availability 推導方向、拿掉這個參數；或在組合不符時丟 `IllegalArgumentException`。兩種都要一併調整 `CAT:1010`。
+    - Q2-m2：`DR:208-216` 的 `materializeFailed` 把 CORRUPT 與初始化失敗也當成「寫出未確認」。比照 `reenable`（`DR:199`），`status != WRITE_FAILED` 時 `return failed(disabled)`，並刪掉 dead code `orElseGet`。
+    - S2-mA：restore 路徑記額度的時點（`DR:194-197`）。作法二擇一：呼叫前先 `materializeSpent.add`，回 WAIT 時再 `remove`；或在 Javadoc 寫明這個時點與它成立的前提。
+    - Q2-m3：m-6 的 JUnit（`CST:358-374`）自己重寫了 `sideEffect` 的組合邏輯，沒有經過 `CS:861-865`。作法：把組合抽成可直接呼叫的 static，讓 test 經由它驗證。
+    - Q2-m4：
+      - `Track.backoff` 的 Javadoc（`CS:877`）補上「進入 SEALED 的寫入被拒」。
+      - WARN 字句「200 ticks 起、每次被拒加倍」（`CS:447`）改用 `track.backoff.delayTicks()`。
+      - `sealedLog`（`CS:474`）改用 `firstWarning`。
+    - S2-mC：`warn` 的 Javadoc（`CS:829-831`）說得太滿。SEAL_WRITE 在 `ROLL_FORWARD_PENDING` 之後由 SRM 的 RETRY_FLUSH 確認，CS 只在 committed 時移除鍵（`CS:452`）。作法二擇一：縮小 Javadoc 的說法；或在 `sealed()` 觀察到已確認的 SEALED 時，清除 SEAL_WRITE 鍵。
+    - Q2-m5：CA 類別 Javadoc `CA:53` 的「寫入」那一點補上：`catalogRecord` 與 RESTORE 方向回 WAIT，ROLL_FORWARD 在未確認時照寫。
 - F5：PASSAGE_READY 提交前，依 §10.2 再驗一次 EXISTING；`DR:188` 的 `resolveExisting` 可以重用（它只讀不寫）。fix round 2：resolver 一律以 `DestinationResolver.forServer(server)` 取得（每個 server instance 一個，m-1）。TRR 只能由 PASSAGE_READY 進入，`ResolveResult.Sealed` 不接受 TRR。
   - （fix round 1，M-3）進入 SEALED 之後刷新 Controller（§10.7 :632，`CS:467` → `:700`）目前沒有測試鎖住：SEALED 前後 presence 都是 `COLLAPSE`、Controller 都是 ARMED，拿掉刷新也成立（「觀察」第 1 條）。F5 實作比較器時，要讓比較器在 SEALED 前後的數值不同，並補一個會因拿掉刷新而失敗的斷言。
 - F6：
@@ -3215,7 +3257,15 @@ fix round 1 由「需要裁示」改為本小節；以下都是 controller 在 F
   - （fix round 1，I-1 的跨重啟版）重啟之後 SEALED(`MATERIALIZE_FAILED`) 的那一次重試，在 RESOLVE 第 1 步就因 allocation ledger 未確認（另一個 session 的 append 讀回失敗、仍在退避）而封存為 `ALLOCATION_IO_FAILED`；之後的邊緣觸發重試仍要把 `DISABLED` 視為 §8.3 已完成，改回 `EAGER_ENABLED`、物化、確定目的地，不得是 `AUTHORITY_CORRUPT`。開服時就是 COLLAPSING、catalog 已是 `DISABLED` 的變形（第一次 RESOLVE 在改回之前以別的原因封存）同理。同一個 instance 內的版本已由 DRT 與 G-DISABLED 鎖住（見「Fix round 1」），F6 要補 cross-JVM 的版本。
   - `build.yml` 的明列清單：本 task 沒有新增 default run 的 test；M5 run 的 6 個新 test 不在 `_windows` 規則內（各平台都執行）。
   - harness：`MaterializeFault`、`CheckedReadFault` 已是 `Slot`；`CheckedReadFault` 以檔名比對，M4 的 discovery 讀取也會被它攔到（README 已註明）。
+  - （controller 補，fix round 2 的 spec S2-mB）`CS:370-371` 對 `sealRetryDue` 的接線沒有 CS 驅動的測試：把接線改成每個 tick 都呼叫 `seal` 的 mutation 會存活。原因是 production 的 REJECTED 只剩 `put` 的決定性驗證失敗，GameTest 造不出來。F6 整理 harness 時，新增 journal `put` 的 fault `Slot`，補一個經 `collapsing()` 驅動的 GameTest：被拒之後依 per-session 退避重試、不重跑 RESOLVE。
 - F7：玩家可見的「量子通道無法開啟，已封存。」與 SEALED 時可以照一般方式開門離開，要寫進玩家文件；管理員處理永久原因的方式（ERROR「需要管理員處理」）屬 §2 已列的限制。
+  - （controller 補，S-m3）spec errata：
+    - §7.2：註明提交 COLLAPSING 時，ledger 不可能已有本 token 的合法 entry，所以一律用 §6.1 的推導值；entry 的比對在 RESOLVE 進行（Q1）。
+    - §8.3／§12：catalog 若是本 session 推導 id 的 DISABLED，就視為 §8.3 已完成，與最近一次封存原因無關（Q2、I-1）。由每個 server instance 的物化額度決定下一步：
+      - 額度還在：走 §8.3 的重試，改回 EAGER_ENABLED 並物化，每個 instance 一次；
+      - 額度已用掉：SEALED(`MATERIALIZE_FAILED`)，等下次重啟。
+    - §6.2 :287 的「（§8.3 的重試路徑才可能是 DISABLED）」改寫成同一規則。
+  - （controller 補，fix round 2）已知偶發清單補一則：`m2_task4_disconnect_io` 偶爾多一則「艙體 … 的 session 協調失敗」WARN（見「裁示」第 6 條）。
 
 ### Fix round 1（`7d6fae7`、`e0780fc`、`7f91400`）
 
@@ -3274,7 +3324,7 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
 
 ### Fix round 2（`abb7ddf`、`0cdc951`、`72e4d8c`、`df66619`）
 
-- Review：fix round 1 之後 spec re-review ✅（Critical 0、Important 0、Minor 3：S-m1～S-m3），quality review Approved（Critical 0、Important 0、Minor 8：m-1～m-8）。controller 開窄範圍的 fix round 2，處理 quality m-1～m-8 與 spec S-m1、S-m2（S-m3 由 controller 處理）。開工 HEAD 是 `ff4fc55`，worktree 乾淨。本輪的 review 結果由 controller 補。
+- Review：fix round 1 之後 spec re-review ✅（Critical 0、Important 0、Minor 3：S-m1～S-m3），quality review Approved（Critical 0、Important 0、Minor 8：m-1～m-8）。controller 開窄範圍的 fix round 2，處理 quality m-1～m-8 與 spec S-m1、S-m2（S-m3 由 controller 處理）。開工 HEAD 是 `ff4fc55`，worktree 乾淨。本輪的 review 結果（spec ✅、quality Approved）見本節開頭的「最終 review」。
 - Commits（依序；每個 commit 只 stage 自己的檔案）：
   - `abb7ddf` `test: share one log capture across the collapse JUnit tests`（parent `ff4fc55`）：m-8。新增 `src/test/java/dev/quantumchamber/collapse/CollapseLogCapture.java`；`CAT`、`CST`、`DRT` 刪除各自的 appender。
   - `0cdc951` `refactor: keep one destination resolver per server and route its catalog access through the authorities`（parent `abb7ddf`）：m-1～m-4。`DR`、`CA`、`CS`（只有 resolver 的生命週期）、`ULS`（`ready`）、`DRT`、`CAT`、`M5U`（G-MATFAIL 的 m-1 witness）。
