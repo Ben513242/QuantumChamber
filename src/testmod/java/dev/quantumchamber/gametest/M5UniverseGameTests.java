@@ -654,6 +654,74 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F4a fix round 1（M-2；spec §6.2、§8.1、F2c 裁示 3）：CollapseService 的 RESOLVE 等待分支。D1（DORMANT NEW）的 discovery 追加在 atomic move
+     * 之後讀回失敗（testmod 的 {@code CheckedNbtFileReadFaultMixin}）→ D1 進 SEALED(ALLOCATION_IO_FAILED)，discovery 權威未確認（已落地的 record 保留）。
+     * D1 收尾之後，同一座原艙的 D2（DORMANT EXISTING，目的地是 D1 建立的宇宙 U）提交 COLLAPSING；discovery 的收斂再失敗兩次（權威的退避 200、400），
+     * 所以 D2 的 RESOLVE 等待約 1400 ticks：期間一直是 COLLAPSING、不進 SEALED，連續等待超過 600 ticks 時只記一則 WARN（帶 LOG_MARKER 與 session）；
+     * discovery 收斂之後 D2 照常確定目的地。catalog 增量 1（D1 的 U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_resolve_wait", tickLimit = 1700)
+    public void existing_resolve_waits_for_an_unconfirmed_discovery_without_sealing_and_warns_once(TestContext context) {
+        begin(context, "existing_resolve_waits_for_an_unconfirmed_discovery_without_sealing_and_warns_once");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var first = origin.receipt(chamber, Map.of(p.getUuid(), true), true);
+            var u = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) first.selectedCandidate().orElseThrow()).intent().allocationToken());
+            // 建立收據的 candidate context 會讀 discovery：D2 的收據也在注入之前建立，D1 收尾之後才寫入 journal。
+            var second = M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(p.getUuid(), true), u);
+            var sid1 = first.sessionUuid(); var sid2 = second.sessionUuid();
+            // D1 的追加先讀一次正式檔（放行），atomic move 之後的讀回失敗；之後兩次收斂的讀回也失敗，第三次收斂成功。
+            var fault = M5GameTestSupport.installCheckedReadFault(context, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME, 1, 3, hooks);
+            var authorities = CollapseAuthorities.get(server);
+            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            origin.own(first);
+            at(context, registered + 1, hooks, () -> moveInside(p, frame));
+            at(context, registered + 3, hooks, () -> {
+                witness.put("d1SealedWithAnUnconfirmedDiscovery", sealedWith(journal, sid1, SealedReason.ALLOCATION_IO_FAILED)
+                        && authorities.unconfirmed(CollapseAuthorities.Authority.DISCOVERY) && fault.hits() == 1
+                        && UniverseLifecycleService.resolveActive(server, u).isPresent());
+                cleanupFixtures(server, List.of(sid1));
+                moveOutside(p, frame);
+                origin.own(second);
+            });
+            at(context, registered + 4, hooks, () -> moveInside(p, frame));
+            // D2 的 RESOLVE 從 registered+5 起等待；超過 600 ticks 的 WARN 約在 registered+606。
+            at(context, registered + 620, hooks, () -> {
+                witness.put("waitingWithoutSealing", M5GameTestSupport.state(journal, sid2).equals("COLLAPSING")
+                        && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid2.toString()).isEmpty()
+                        && authorities.unconfirmed(CollapseAuthorities.Authority.DISCOVERY));
+                witness.put("oneWaitWarnAfterSixHundredTicks", waitWarnings(capture, sid2) == 1);
+            });
+            at(context, registered + 1300, hooks, () -> witness.put("stillWaitingWithTheSameWarn",
+                    M5GameTestSupport.state(journal, sid2).equals("COLLAPSING") && waitWarnings(capture, sid2) == 1
+                            && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid2.toString()).isEmpty()));
+            whenTicks(context, registered + 1400, 60, () -> !capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid2.toString()).isEmpty(), resolved -> {
+                witness.put("resolvedAfterTheDiscoveryConverged", M5GameTestSupport.state(journal, sid2).equals("COLLAPSING")
+                        && !authorities.unconfirmed(CollapseAuthorities.Authority.DISCOVERY) && fault.hits() == 3);
+                witness.put("warnedOnlyOnce", waitWarnings(capture, sid2) == 1);
+                witness.put("neverSealed", capture.matching(org.apache.logging.log4j.Level.WARN, "塌縮進入 SEALED", sid2.toString()).isEmpty()
+                        && capture.matching(org.apache.logging.log4j.Level.ERROR, sid2.toString()).isEmpty());
+                hooks.release();
+                context.assertTrue(!witness.containsValue(false), "RESOLVE 的等待：" + witness);
+                awaitConvergedThenComplete(context, 1, 20);
+            }, () -> "discovery 收斂之後 D2 沒有確定目的地：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
+        });
+    }
+
+    /** 這個 session 的「目的地解析持續等待」WARN（帶 LOG_MARKER）。 */
+    private static int waitWarnings(LogCapture capture, UUID sid) {
+        return capture.marked(org.apache.logging.log4j.Level.WARN, dev.quantumchamber.collapse.CollapseService.LOG_MARKER.getName(),
+                "目的地解析持續等待", sid.toString()).size();
+    }
+
     /** spec §10.8「進入 SEALED」（以字面值斷言，不信任 production 常數）。 */
     private static final String SEALED_KEY = "message.quantumchamber.m5.sealed";
 
