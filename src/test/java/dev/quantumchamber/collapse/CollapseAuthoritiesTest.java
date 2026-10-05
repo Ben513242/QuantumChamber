@@ -28,7 +28,6 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,10 +43,6 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
 import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.core.LogEvent;
-import org.apache.logging.log4j.core.appender.AbstractAppender;
-import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -86,7 +81,7 @@ class CollapseAuthoritiesTest {
         assertFalse(journal.m5Evidence());
         var authorities = authorities(save);
         CollapseAuthorities.InitResult result;
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             result = authorities.initialize(() -> journal);
             assertEquals(1, logs.messages(Level.INFO).stream().filter(message -> message.startsWith("M5 authority 初始化完成")).count(),
                     () -> "初始化成功記一則 INFO：" + logs.messages(Level.INFO));
@@ -171,7 +166,7 @@ class CollapseAuthoritiesTest {
             Files.delete(gone);
             byte[] keptBytes = Files.readAllBytes(kept);
             var journal = journal(4);
-            try (var logs = new Logs()) {
+            try (var logs = new CollapseLogCapture()) {
                 var authorities = authorities(save);
                 var result = authorities.initialize(() -> journal);
                 var expected = deleted == Authority.ALLOCATION_LEDGER ? List.of(Outcome.LOST, Outcome.LOADED) : List.of(Outcome.LOADED, Outcome.LOST);
@@ -240,7 +235,7 @@ class CollapseAuthoritiesTest {
         var broken = new NbtCompound(); broken.putInt("SchemaVersion", 99);
         var journal = SessionRecoveryState.fromNbt(broken);
         assertThrows(IllegalStateException.class, journal::requireHealthy);
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             var authorities = authorities(save);
             var result = authorities.initialize(() -> journal);
             assertEquals(List.of(Outcome.NOT_EXAMINED, Outcome.NOT_EXAMINED), List.of(result.allocation(), result.projection()));
@@ -364,7 +359,7 @@ class CollapseAuthoritiesTest {
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
         var first = UniverseAllocationLedger.Entry.of(intent(token(21)));
         var second = UniverseAllocationLedger.Entry.of(intent(token(22)));
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             io.failReadback(UniverseAllocationLedger.FILE_NAME);
             var failed = authorities.lookupOrAppendAllocation(intent(token(21)));
             assertEquals(Lookup.Status.WRITE_FAILED, failed.status());
@@ -503,7 +498,7 @@ class CollapseAuthoritiesTest {
         var authorities = authorities(save);
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
         io.staleTemporary(UniverseAllocationLedger.FILE_NAME, compressed(UniverseAllocationLedger.empty().toNbt()));
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             assertEquals(Lookup.Status.WRITE_FAILED, authorities.lookupOrAppendAllocation(intent(token(33))).status());
             for (int due : new int[] {1200, 1600}) {
                 int reads = io.readsOf(UniverseAllocationLedger.FILE_NAME);
@@ -546,7 +541,7 @@ class CollapseAuthoritiesTest {
         var save = save("allocation-backoff");
         var authorities = authorities(save);
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             io.failReadbackAlways(UniverseAllocationLedger.FILE_NAME);
             assertEquals(Lookup.Status.WRITE_FAILED, authorities.lookupOrAppendAllocation(intent(token(25))).status());
             long due = 1000;
@@ -597,7 +592,7 @@ class CollapseAuthoritiesTest {
         var save = save("runtime-lost");
         var authorities = authorities(save);
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             Files.delete(allocationFile(save));
             assertCorrupt(authorities.lookupOrAppendAllocation(intent(token(28))));
             assertCorrupt(authorities.lookupOrAppendAllocation(intent(token(29))));
@@ -694,7 +689,7 @@ class CollapseAuthoritiesTest {
         var first = UniverseAllocationLedger.deriveUniverseId(token(43));
         var second = UniverseAllocationLedger.deriveUniverseId(token(44));
         var landed = new UniverseDiscoveryRecord(first, 1, 100, Optional.of(SELECTED_BY), true);
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             // 第一次讀正式檔是追加前的讀取，第二次才是 atomic move 之後的讀回。
             io.failReadbackAfter(UniverseDiscoveryState.FILE_NAME, 1);
             var failed = authorities.appendDiscovery(first, 100, SELECTED_BY);
@@ -754,7 +749,7 @@ class CollapseAuthoritiesTest {
     @Test void discoveryReadFailuresAreClassified() throws Exception {
         var id = UniverseAllocationLedger.deriveUniverseId(token(46));
         var missing = save("discovery-missing");
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             var authorities = initialized(missing);
             assertCorrupt(authorities.appendDiscovery(id, 1, SELECTED_BY));
             assertCorrupt(authorities.discovery(id));
@@ -876,7 +871,7 @@ class CollapseAuthoritiesTest {
         var catalog = catalog(save);
         var first = UniverseAllocationLedger.deriveUniverseId(token(53));
         var second = UniverseAllocationLedger.deriveUniverseId(token(54));
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             catalog.failAfterMove(1);
             var failed = authorities.allocateOrVerifyCatalog(first, EAGER_ONLY);
             assertEquals(Lookup.Status.WRITE_FAILED, failed.status(), () -> failed.toString());
@@ -918,7 +913,7 @@ class CollapseAuthoritiesTest {
         var authorities = initialized(save);
         var catalog = catalog(save);
         var first = UniverseAllocationLedger.deriveUniverseId(token(55));
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             catalog.failBeforeMove(1);
             assertEquals(Lookup.Status.WRITE_FAILED, authorities.allocateOrVerifyCatalog(first, EAGER_ONLY).status());
             assertFalse(Files.exists(catalog.path), "move 之前失敗：磁碟上還沒有 catalog");
@@ -978,7 +973,7 @@ class CollapseAuthoritiesTest {
         var save = save("init-fail-" + name);
         fixture.prepare(save);
         var journal = journal(3);
-        try (var logs = new Logs()) {
+        try (var logs = new CollapseLogCapture()) {
             var authorities = authorities(save);
             var result = authorities.initialize(() -> journal);
             assertFalse(result.succeeded(), name);
@@ -1200,32 +1195,6 @@ class CollapseAuthoritiesTest {
             wrapped.put("data", catalog.writeNbt(new NbtCompound()));
             NbtHelper.putDataVersion(wrapped);
             return wrapped;
-        }
-    }
-
-    /** 只收 {@code quantumchamber} logger 的 log4j appender（比照 SessionRecoverySchema4Test）；先送探針，證明確實攔得到。 */
-    private static final class Logs extends AbstractAppender implements AutoCloseable {
-        private final org.apache.logging.log4j.core.LoggerContext context;
-        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
-        Logs() {
-            super("f2b-log-capture-" + UUID.randomUUID(), null, null, true, Property.EMPTY_ARRAY);
-            context = ((org.apache.logging.log4j.core.Logger) LogManager.getLogger("quantumchamber")).getContext();
-            start();
-            context.getConfiguration().getRootLogger().addAppender(this, null, null);
-            context.updateLoggers();
-            var probe = "F2B_LOG_CAPTURE_PROBE " + UUID.randomUUID();
-            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn(probe);
-            if (!messages(Level.WARN).contains(probe)) { close(); throw new IllegalStateException("log capture 無法觀察 quantumchamber 的 WARN"); }
-            events.clear();
-        }
-        @Override public void append(LogEvent event) { if ("quantumchamber".equals(event.getLoggerName())) events.add(event.toImmutable()); }
-        List<String> messages(Level level) {
-            synchronized (events) {
-                return events.stream().filter(event -> event.getLevel() == level).map(event -> event.getMessage().getFormattedMessage()).toList();
-            }
-        }
-        @Override public void close() {
-            context.getConfiguration().getRootLogger().removeAppender(getName()); context.updateLoggers(); stop();
         }
     }
 }

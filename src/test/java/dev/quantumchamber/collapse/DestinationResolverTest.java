@@ -28,7 +28,6 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -39,10 +38,6 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtList;
 import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.core.LogEvent;
-import org.apache.logging.log4j.core.appender.AbstractAppender;
-import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
@@ -620,8 +615,8 @@ class DestinationResolverTest {
         }
 
         /** 執行 {@code action}，回傳期間 {@code quantumchamber} logger 的指定等級 log。 */
-        List<LogEntry> logs(Runnable action, Level level) {
-            try (var capture = new Logs()) {
+        List<CollapseLogCapture.Entry> logs(Runnable action, Level level) {
+            try (var capture = new CollapseLogCapture()) {
                 action.run();
                 return capture.entries().stream().filter(entry -> entry.level() == level).toList();
             }
@@ -716,41 +711,4 @@ class DestinationResolverTest {
         }
     }
 
-    private record LogEntry(Level level, String message, Throwable thrown, boolean marked) { }
-
-    /** 只收 {@code quantumchamber} logger 的 log4j appender，另記是否帶 {@link CollapseService#LOG_MARKER}；先送探針確認攔得到 log 與 marker。 */
-    private static final class Logs extends AbstractAppender implements AutoCloseable {
-        private final org.apache.logging.log4j.core.LoggerContext context;
-        private final List<LogEntry> events = Collections.synchronizedList(new ArrayList<>());
-
-        Logs() {
-            super("f4a-resolver-log-capture-" + UUID.randomUUID(), null, null, true, Property.EMPTY_ARRAY);
-            context = ((org.apache.logging.log4j.core.Logger) LogManager.getLogger("quantumchamber")).getContext();
-            start();
-            context.getConfiguration().getRootLogger().addAppender(this, null, null);
-            context.updateLoggers();
-            var probe = "F4A_RESOLVER_LOG_PROBE " + UUID.randomUUID();
-            org.slf4j.LoggerFactory.getLogger("quantumchamber").error(CollapseService.LOG_MARKER, probe);
-            if (entries().stream().noneMatch(entry -> entry.message().equals(probe) && entry.marked())) {
-                close();
-                throw new IllegalStateException("log capture 無法觀察 quantumchamber 的 log 與 LOG_MARKER");
-            }
-            events.clear();
-        }
-
-        @Override public void append(LogEvent event) {
-            if (!"quantumchamber".equals(event.getLoggerName())) return;
-            var marker = event.getMarker();
-            events.add(new LogEntry(event.getLevel(), event.getMessage().getFormattedMessage(), event.getThrown(),
-                    marker != null && marker.isInstanceOf(CollapseService.LOG_MARKER.getName())));
-        }
-
-        List<LogEntry> entries() { synchronized (events) { return List.copyOf(events); } }
-
-        @Override public void close() {
-            context.getConfiguration().getRootLogger().removeAppender(getName());
-            context.updateLoggers();
-            stop();
-        }
-    }
 }

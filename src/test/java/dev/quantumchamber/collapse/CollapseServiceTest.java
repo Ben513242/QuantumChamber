@@ -30,7 +30,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -45,10 +44,6 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.core.LogEvent;
-import org.apache.logging.log4j.core.appender.AbstractAppender;
-import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
@@ -180,8 +175,8 @@ class CollapseServiceTest {
         var reasons = new ArrayList<String>();
         var doneBeforeApplied = new ArrayList<Boolean>();
         boolean appliedDone, quietDone;
-        List<DoorLogs.Entry> logs;
-        try (var capture = new DoorLogs()) {
+        List<CollapseLogCapture.Entry> logs;
+        try (var capture = new CollapseLogCapture()) {
             for (var outcome : List.of(Outcome.ROLLED_BACK, Outcome.ROLLED_BACK, Outcome.ROLLBACK_FAILED, Outcome.NOT_LOADED, Outcome.DOOR_INCOMPLETE,
                     Outcome.DOOR_INCOMPLETE)) {
                 int before = capture.count(Level.WARN);
@@ -227,9 +222,9 @@ class CollapseServiceTest {
                         && entry.message().contains("session=" + SESSION)), () -> "每則 WARN 帶 LOG_MARKER、chamber 與 session：" + warnings),
                 () -> assertEquals(List.of(false, false, false, true), warnings.stream().map(entry -> entry.thrown() != null).toList(),
                         "只有套用例外的 WARN 附 stack"),
-                () -> assertEquals(List.of("原艙門已改為一般開門（先前：" + thrownReason + "）：chamber=" + CHAMBER), infos.stream().map(DoorLogs.Entry::message).toList(),
+                () -> assertEquals(List.of("原艙門已改為一般開門（先前：" + thrownReason + "）：chamber=" + CHAMBER), infos.stream().map(CollapseLogCapture.Entry::message).toList(),
                         "完成時之前記過 WARN 才記一則 INFO（沒有記過 WARN 的門不記）"),
-                () -> assertTrue(infos.stream().allMatch(DoorLogs.Entry::marked), "INFO 帶 LOG_MARKER"));
+                () -> assertTrue(infos.stream().allMatch(CollapseLogCapture.Entry::marked), "INFO 帶 LOG_MARKER"));
     }
 
     /**
@@ -317,14 +312,14 @@ class CollapseServiceTest {
     @Test void sealedPendingDoorUsesItsOwnWording() {
         var frame = new ChamberFrame(new BlockPos(7, 70, 9), Direction.NORTH);
         var door = new CollapseService.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, frame, 0, CollapseService.DoorGoal.CLOSE_ON_SEALED);
-        List<DoorLogs.Entry> logs;
-        try (var capture = new DoorLogs()) {
+        List<CollapseLogCapture.Entry> logs;
+        try (var capture = new CollapseLogCapture()) {
             CollapseService.applyOutcome(door, Outcome.ROLLED_BACK, 100);
             CollapseService.applyOutcome(door, Outcome.APPLIED, 100);
             logs = capture.entries();
         }
         assertAll(
-                () -> assertEquals(List.of(Level.WARN, Level.INFO), logs.stream().map(DoorLogs.Entry::level).toList()),
+                () -> assertEquals(List.of(Level.WARN, Level.INFO), logs.stream().map(CollapseLogCapture.Entry::level).toList()),
                 () -> assertTrue(logs.getFirst().message().startsWith("進入 SEALED 之後原艙門還沒套用"), logs.getFirst().message()),
                 () -> assertTrue(logs.getLast().message().startsWith("進入 SEALED 之後的原艙門已套用"), logs.getLast().message()),
                 () -> assertTrue(logs.stream().allMatch(entry -> entry.marked() && entry.message().contains("chamber=" + CHAMBER)), logs::toString),
@@ -347,48 +342,6 @@ class CollapseServiceTest {
     private static String text(JsonObject lang, String key) {
         assertTrue(lang.has(key), "缺少 key：" + key);
         return lang.get(key).getAsString();
-    }
-
-    /**
-     * 只收 {@code quantumchamber} logger 的 log4j appender（比照 {@code CollapseAuthoritiesTest.Logs}），另記 log 是否帶 {@link CollapseService#LOG_MARKER}
-     * （含子 marker）。先以 {@code LOG_MARKER} 送一則 INFO 探針，確認攔得到 log 與 marker，再清空。
-     */
-    private static final class DoorLogs extends AbstractAppender implements AutoCloseable {
-        record Entry(Level level, String message, Throwable thrown, boolean marked) { }
-        private final org.apache.logging.log4j.core.LoggerContext context;
-        private final List<Entry> events = Collections.synchronizedList(new ArrayList<>());
-
-        DoorLogs() {
-            super("f4a0-fix1-door-log-capture-" + UUID.randomUUID(), null, null, true, Property.EMPTY_ARRAY);
-            context = ((org.apache.logging.log4j.core.Logger) LogManager.getLogger("quantumchamber")).getContext();
-            start();
-            context.getConfiguration().getRootLogger().addAppender(this, null, null);
-            context.updateLoggers();
-            var probe = "F4A0_FIX1_DOOR_LOG_PROBE " + UUID.randomUUID();
-            org.slf4j.LoggerFactory.getLogger("quantumchamber").info(CollapseService.LOG_MARKER, probe);
-            if (entries().stream().noneMatch(entry -> entry.message().equals(probe) && entry.marked())) {
-                close();
-                throw new IllegalStateException("log capture 無法觀察 quantumchamber 的 log 與 LOG_MARKER");
-            }
-            events.clear();
-        }
-
-        @Override public void append(LogEvent event) {
-            if (!"quantumchamber".equals(event.getLoggerName())) return;
-            var marker = event.getMarker();
-            events.add(new Entry(event.getLevel(), event.getMessage().getFormattedMessage(), event.getThrown(),
-                    marker != null && marker.isInstanceOf(CollapseService.LOG_MARKER.getName())));
-        }
-
-        List<Entry> entries() { synchronized (events) { return List.copyOf(events); } }
-
-        int count(Level level) { return (int) entries().stream().filter(entry -> entry.level() == level).count(); }
-
-        @Override public void close() {
-            context.getConfiguration().getRootLogger().removeAppender(getName());
-            context.updateLoggers();
-            stop();
-        }
     }
 
     // ---- fixtures（只用 public 建構子） ----
