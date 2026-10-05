@@ -14,7 +14,9 @@ import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseLifecycleService;
 import dev.quantumchamber.universe.UniverseRegistryState;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongSupplier;
 import net.minecraft.server.MinecraftServer;
@@ -34,9 +36,11 @@ import org.slf4j.LoggerFactory;
  *         {@code DISABLED}（寫出失敗時 roll-forward：current 保留 {@code DISABLED} 並維持 dirty，記 ERROR），再進 {@code MATERIALIZE_FAILED}。</li>
  *     <li>discovery 追加或驗證（§6.4），game time 取 overworld 的 game time（與提交 COLLAPSING 時的 {@code CommittedAtGameTime} 同一個時鐘）。</li>
  *     </ol>
- *     {@code materializeRetry}（§8.3 的重試，只在重啟之後、每個 server instance 一次）時 catalog 接受 {@code DISABLED}：先 checked 改回
- *     {@code EAGER_ENABLED}，寫出失敗屬 restore（current 改回 {@code DISABLED}、維持 dirty、不物化，{@code MATERIALIZE_FAILED}）；之後物化仍失敗就再改回
- *     {@code DISABLED}。</li>
+ *     catalog 中這個 UniverseId（本 session 的推導值，第 1 步已比對）是 {@code DISABLED} 時，依 spec §6 的收斂規則表等同 §8.3 已完成，與最近一次
+ *     封存的原因無關（F4a fix round 1，I-1）：本 server instance 還沒用掉這個 UniverseId 的物化額度時走 §8.3 的重試——先 checked 改回
+ *     {@code EAGER_ENABLED}（寫出失敗屬 restore：current 改回 {@code DISABLED}、維持 dirty、不物化，{@code MATERIALIZE_FAILED}），再物化，仍失敗就再改回
+ *     {@code DISABLED}；已經用掉時直接 {@code MATERIALIZE_FAILED}（不寫、不物化），等下次重啟。絕不判為 {@code AUTHORITY_CORRUPT}。物化的額度記在
+ *     {@link #materializeSpent}（每個 server instance 一個 resolver）；lifecycle 對失敗過的 descriptor 的 {@code FAILED_BEFORE} 是同一件事的後盾。</li>
  * <li><b>EXISTING</b>（§8.1）：discovery 有這個 UniverseId 而且 {@code gameplayEligible}；flushed catalog 有這筆、是 OVERWORLD 而且
  *     {@code EAGER_ENABLED}（{@link CollapseAuthorities#catalogRecordMatches}）；{@link UniverseLifecycleService#resolveActive} 回傳 exact ACTIVE world；
  *     來源 role 是 OVERWORLD。任一不符為 {@code EXISTING_INELIGIBLE}。discovery 或 catalog 有未確認的寫入時 {@link ResolveResult.Wait}
@@ -71,6 +75,12 @@ public final class DestinationResolver {
     private final CollapseAuthorities.CatalogPort catalog;
     private final Lifecycle lifecycle;
     private final LongSupplier gameTime;
+    /**
+     * 本 server instance 已用掉物化額度的 UniverseId（F4a fix round 1，I-1）：本 instance 對它物化失敗過，或已經做過一次 §8.3 的重試（改回
+     * {@code EAGER_ENABLED}）。只在記憶體：resolver 每個 server instance 一個，重啟之後是空的，所以「重啟之後、每個 instance 一次」只看這裡，不看最近一次
+     * 封存的原因。
+     */
+    private final Set<UniverseId> materializeSpent = new HashSet<>();
 
     /** package-private：JUnit 以自己的 port 建立（catalog 必須與 {@code authorities} 用同一個 PersistentState）。 */
     DestinationResolver(CollapseAuthorities authorities, CollapseAuthorities.CatalogPort catalog, Lifecycle lifecycle, LongSupplier gameTime) {
@@ -91,10 +101,8 @@ public final class DestinationResolver {
      * 解析 {@code view} 的目的地。
      * @param view COLLAPSING、{@code Destination=UNIVERSE}、全員已返還、沒有 lease 的 collapse view（spec §7.3 的 RESOLVE）；不符時丟
      *     {@link IllegalArgumentException}
-     * @param materializeRetry §8.3 的 {@code MATERIALIZE_FAILED} 重試（只在重啟之後、每個 server instance 一次，由呼叫端把關）：catalog 接受
-     *     {@code DISABLED} 並改回 {@code EAGER_ENABLED} 再物化。EXISTING 不看
      */
-    public ResolveResult resolve(SessionRecoveryRecord view, boolean materializeRetry) {
+    public ResolveResult resolve(SessionRecoveryRecord view) {
         Objects.requireNonNull(view, "view");
         if (view.state() != SessionState.COLLAPSING || !(view.collapse().destination() instanceof CollapseDestination.Universe universe)) {
             throw new IllegalArgumentException("RESOLVE 只處理 Destination=UNIVERSE 的 COLLAPSING：" + view.state());
@@ -103,7 +111,7 @@ public final class DestinationResolver {
             throw new IllegalArgumentException("RESOLVE 在全員返還、lease 清空之後才開始（spec §7.3）");
         }
         return switch (view.selectedCandidate().orElseThrow()) {
-            case QuantumCandidate.New created -> resolveNew(view, universe.id(), created.intent(), materializeRetry);
+            case QuantumCandidate.New created -> resolveNew(view, universe.id(), created.intent());
             case QuantumCandidate.Existing existing -> resolveExisting(view, universe.id());
             case QuantumCandidate.Source ignored -> throw new IllegalArgumentException("SOURCE 沒有 RESOLVE");
         };
@@ -111,7 +119,7 @@ public final class DestinationResolver {
 
     // ---- NEW（§8.2） ----
 
-    private ResolveResult resolveNew(SessionRecoveryRecord view, UniverseId id, NewUniverseIntent intent, boolean materializeRetry) {
+    private ResolveResult resolveNew(SessionRecoveryRecord view, UniverseId id, NewUniverseIntent intent) {
         // 1. allocation ledger（§6.1）。
         authorities.convergeIfNeeded(Authority.ALLOCATION_LEDGER);
         var allocation = authorities.lookupOrAppendAllocation(intent);
@@ -121,13 +129,18 @@ public final class DestinationResolver {
             return ResolveResult.sealed(SealedReason.AUTHORITY_CORRUPT, new IllegalStateException("Destination 的 UniverseId " + id.value()
                     + " 與 allocation entry 的 " + entry.universeId().value() + " 不符（spec §6.1：合法的 entry 一定等於推導值）"));
         }
-        // 2. catalog（§6.2）：未確認時等待，不 SEALED。
+        // 2. catalog（§6.2）：未確認時等待，不 SEALED。這個 UniverseId 是本 session 的推導值（第 1 步已比對），DISABLED 也接受（§8.3 已完成）。
         authorities.convergeIfNeeded(Authority.CATALOG);
-        var verified = authorities.allocateOrVerifyCatalog(id, materializeRetry ? AvailabilityPolicy.MATERIALIZE_RETRY : AvailabilityPolicy.EAGER_ONLY);
+        var verified = authorities.allocateOrVerifyCatalog(id, AvailabilityPolicy.MATERIALIZE_RETRY);
         if (verified.status() == Lookup.Status.WAIT) return ResolveResult.waiting("catalog 有未確認的寫入（§6.2）");
         if (!verified.succeeded()) return failed(verified);
         if (verified.value().orElseThrow().desiredAvailability() == DesiredAvailability.DISABLED) {
-            // 只有 MATERIALIZE_RETRY 會接受 DISABLED（§8.3 的重試）：先 checked 改回 EAGER_ENABLED，寫出失敗屬 restore。
+            // §6 收斂規則表：DISABLED 等同 §8.3 已完成，與最近一次封存的原因無關。本 instance 已用掉這個 UniverseId 的物化額度時等下次重啟；
+            // 否則走 §8.3 的重試：先 checked 改回 EAGER_ENABLED，寫出失敗屬 restore。
+            if (!materializeSpent.add(id)) {
+                return ResolveResult.sealed(SealedReason.MATERIALIZE_FAILED, new IllegalStateException("catalog 的這筆是 DISABLED（§8.3 已完成），"
+                        + "本 server instance 已用掉這個宇宙的物化額度（已物化失敗，或已重試過一次）：不寫、不物化，等下次重啟再重試"));
+            }
             var refused = reenable(id);
             if (refused != null) return refused;
         }
@@ -136,7 +149,10 @@ public final class DestinationResolver {
         switch (materialized.kind()) {
             case ACTIVE -> { }
             case NOT_READY -> { return ResolveResult.waiting("lifecycle 沒有 ready 的 context：" + materialized.detail()); }
-            case FAILED -> { return materializeFailed(view, id, materialized.detail()); }
+            case FAILED -> {
+                materializeSpent.add(id);
+                return materializeFailed(view, id, materialized.detail());
+            }
         }
         // 4. discovery（§6.4）。
         authorities.convergeIfNeeded(Authority.DISCOVERY);

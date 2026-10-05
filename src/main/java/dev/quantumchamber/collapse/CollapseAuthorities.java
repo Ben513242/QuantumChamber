@@ -72,13 +72,16 @@ public final class CollapseAuthorities {
     public enum Authority { ALLOCATION_LEDGER, PROJECTION_LEDGER, DISCOVERY, CATALOG }
 
     /**
-     * 既有 catalog record 可以接受的 availability（spec §6.2、§8.3）。只有 §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑可以接受
-     * {@code DISABLED}；其餘情況一律 {@link #EAGER_ONLY}。
+     * 既有 catalog record 可以接受的 availability（spec §6.2、§8.3）。只有 NEW 的 RESOLVE 查詢本 session 推導的 UniverseId 時可以接受
+     * {@code DISABLED}（spec §6 收斂規則表：等同 §8.3 已完成）；其餘情況一律 {@link #EAGER_ONLY}。
      */
     public enum AvailabilityPolicy {
-        /** NEW 第一次 RESOLVE、EXISTING 重驗（§8.1）：只接受 {@code EAGER_ENABLED}。 */
+        /** EXISTING 重驗（§8.1）與其他一律：只接受 {@code EAGER_ENABLED}。 */
         EAGER_ONLY,
-        /** 只限 §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑：也接受 {@code DISABLED}，之後由 F4a 改回 {@code EAGER_ENABLED} 再物化。 */
+        /**
+         * NEW 的 RESOLVE，UniverseId 是本 session 的推導值（F4a fix round 1，I-1）：也接受 {@code DISABLED}，與最近一次封存的原因無關；之後由 F4a 依本
+         * instance 的物化額度改回 {@code EAGER_ENABLED} 再物化，或等下次重啟。
+         */
         MATERIALIZE_RETRY;
 
         boolean accepts(DesiredAvailability availability) {
@@ -592,8 +595,8 @@ public final class CollapseAuthorities {
      *     checked 寫出：成功為 {@code APPENDED}；寫出或讀回失敗為 {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}——roll-forward，M3 的 save
      *     保留 current 與 dirty，下一次寫出（{@link #convergeIfNeeded} 的重試或原生 autosave）帶著它；確認之前不得物化。</li>
      * </ol>
-     * @param availability 既有紀錄可以接受的 availability：只有 spec §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑傳
-     *     {@link AvailabilityPolicy#MATERIALIZE_RETRY}（接受 {@code DISABLED}，F4a 之後自行改回 {@code EAGER_ENABLED}）；其餘一律
+     * @param availability 既有紀錄可以接受的 availability：NEW 的 RESOLVE（本 session 推導的 UniverseId）傳
+     *     {@link AvailabilityPolicy#MATERIALIZE_RETRY}（接受 {@code DISABLED}，F4a 依物化額度改回 {@code EAGER_ENABLED} 或等下次重啟）；其餘一律
      *     {@link AvailabilityPolicy#EAGER_ONLY}
      */
     public Lookup<UniverseRecord> allocateOrVerifyCatalog(UniverseId universeId, AvailabilityPolicy availability) {
@@ -642,8 +645,8 @@ public final class CollapseAuthorities {
      * 配置的 OVERWORLD 內容（恰一個 OVERWORLD descriptor、world key、{@code VANILLA_OVERWORLD_SHARED_SEED_V1}、{@code SHARED_SAVE_SEED_V1}、
      * storage policy 1），而且 availability 為 {@code availability} 接受的值。不比對 AllocationOrdinal（配置時才決定）。目前 M3 的
      * {@code UniverseDefinition} 建構子已經不允許其他 descriptor 內容（strict decode 就會讓 catalog 不健康），這裡仍 exact 比對，防守日後放寬。
-     * @param availability 只有 spec §8.3 的 {@code MATERIALIZE_FAILED} 重試路徑可以傳 {@link AvailabilityPolicy#MATERIALIZE_RETRY}（也接受
-     *     {@code DISABLED}，F4a）；其餘一律 {@link AvailabilityPolicy#EAGER_ONLY}
+     * @param availability 只有 NEW 的 RESOLVE（本 session 推導的 UniverseId）可以傳 {@link AvailabilityPolicy#MATERIALIZE_RETRY}（也接受
+     *     {@code DISABLED}，F4a fix round 1）；其餘一律 {@link AvailabilityPolicy#EAGER_ONLY}
      */
     public static boolean catalogRecordMatches(UniverseRecord record, UniverseId universeId, AvailabilityPolicy availability) {
         Objects.requireNonNull(record, "record"); Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");

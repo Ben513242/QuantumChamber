@@ -65,8 +65,8 @@ import org.slf4j.MarkerFactory;
  *     離開這兩個階段之前，必須等走廊 space 真的釋放（{@code CorridorPageManager.measuredRecoveryComplete}）。</li>
  * <li>RESOLVE（§8，F4a）：UNIVERSE 目的地經 {@link DestinationResolver} 確定（EXISTING 重驗；NEW 依序 ledger、catalog、物化、discovery），
  *     不需要供電、不看閘門。WAIT（catalog 或 discovery 有未確認的寫入）不進 SEALED，持續超過 {@value #WAIT_WARN_TICKS} ticks 記一次 WARN。
- *     「目的地已確定」只記在本 instance 的簿記，重啟之後 RESOLVE 以 idempotent 的方式重新確認。開服時就是 COLLAPSING 的 session，本 instance
- *     第一次 RESOLVE 視同 §8.3 的重啟後重試（catalog 可能已在 crash 前改為 DISABLED，spec §6 的表）。</li>
+ *     「目的地已確定」只記在本 instance 的簿記，重啟之後 RESOLVE 以 idempotent 的方式重新確認。NEW 的 UniverseId 在 catalog 是 DISABLED 時等同
+ *     §8.3 已完成（spec §6 的表）：要不要重試由 resolver 依本 instance 的物化額度判斷，與最近一次封存的原因無關，這裡不傳任何旗標（F4a fix round 1）。</li>
  * <li>進入 SEALED（§11.2、§5、§7.3、§10.7、§10.8）：journal 以 roll-forward 寫入 SEALED(reason)（寫入前 current＝flushed；寫出未確認時依
  *     collapse view 照樣生效，重試交給 recovery 的 RETRY_FLUSH）→ 門改為關閉（門口有 entity 時改為一般開門），經待套用門 →
  *     對參與者顯示「量子通道無法開啟，已封存。」→ 刷新 Controller → 釋放來源 ticket。可重試的原因記 WARN、永久原因記 ERROR「需要管理員處理」，
@@ -115,8 +115,6 @@ public final class CollapseService {
     private final Set<UUID> startupSessions;
     /** 開服時就是 PASSAGE_READY 的 session（§12）；F5 之前執行期間不會產生 PASSAGE_READY。 */
     private final Set<UUID> startupPassages;
-    /** 開服時就是 COLLAPSING 的 session：本 instance 第一次 RESOLVE 視同 §8.3 的重啟後重試（見 {@link #collapsing}）。 */
-    private final Set<UUID> startupCollapsing;
     private final Map<UUID, Track> tracks = new HashMap<>();
     /** 還沒套用成功的原艙門（以 chamber 為 key）：終局之後的一般開門，或進入 SEALED 時的關門。 */
     private final Map<UUID, PendingDoor> doors = new LinkedHashMap<>();
@@ -128,11 +126,10 @@ public final class CollapseService {
     private SuperpositionSessionManager sessions;
     private int now;
 
-    private CollapseService(MinecraftServer server, Set<UUID> startupSessions, Set<UUID> startupPassages, Set<UUID> startupCollapsing) {
+    private CollapseService(MinecraftServer server, Set<UUID> startupSessions, Set<UUID> startupPassages) {
         this.server = server;
         this.startupSessions = new LinkedHashSet<>(startupSessions);
         this.startupPassages = new LinkedHashSet<>(startupPassages);
-        this.startupCollapsing = new LinkedHashSet<>(startupCollapsing);
     }
 
     private static Marker childMarker(String name, Marker parent) {
@@ -164,12 +161,8 @@ public final class CollapseService {
             return;
         }
         var passages = new LinkedHashSet<UUID>();
-        var collapsing = new LinkedHashSet<UUID>();
-        flushed.values().forEach(record -> {
-            if (record.state() == SessionState.PASSAGE_READY) passages.add(record.sessionUuid());
-            if (record.state() == SessionState.COLLAPSING) collapsing.add(record.sessionUuid());
-        });
-        INSTANCES.put(server, new CollapseService(server, flushed.keySet(), passages, collapsing));
+        flushed.values().forEach(record -> { if (record.state() == SessionState.PASSAGE_READY) passages.add(record.sessionUuid()); });
+        INSTANCES.put(server, new CollapseService(server, flushed.keySet(), passages));
     }
 
     private static void onEndTick(MinecraftServer server) {
@@ -199,7 +192,6 @@ public final class CollapseService {
                 var known = journal.flushedRecords().keySet();
                 tracks.keySet().retainAll(known);
                 startupPassages.retainAll(known);
-                startupCollapsing.retainAll(known);
             }
             for (var door : List.copyOf(doors.values())) {
                 try {
@@ -373,9 +365,6 @@ public final class CollapseService {
         var view = journal.collapseView(sid).orElse(record);
         if (!view.equals(journal.records().get(sid))) return;
         var track = track(sid);
-        // spec §6 的表與 §8.3：開服時就是 COLLAPSING 的 session，catalog 可能在 crash 前已改為 DISABLED（SEALED 還沒寫入），本 instance 第一次
-        // RESOLVE 視同重啟後的 MATERIALIZE_FAILED 重試（catalog 是 EAGER_ENABLED 時沒有差別）。
-        if (startupCollapsing.remove(sid)) track.materializeRetry = true;
         // 進入 SEALED 的寫入在前置檢查就被拒：只重試這一筆寫入，不重跑 RESOLVE（RESOLVE 已有副作用，例如 §8.3 的 DISABLED）。
         if (track.pendingSeal != null) {
             seal(view, track, track.pendingSeal, track.pendingSealCause);
@@ -403,12 +392,11 @@ public final class CollapseService {
     /** §8 的 RESOLVE：目的地已確定之後只記在本 instance 的簿記（重啟之後 idempotent 重新確認）；等待不 SEALED；失敗進 SEALED。 */
     private void resolve(SessionRecoveryRecord view, Track track) {
         var sid = view.sessionUuid();
-        var result = resolver().resolve(view, track.materializeRetry);
+        var result = resolver().resolve(view);
         switch (result) {
             case ResolveResult.Wait wait -> waiting(view, track, wait.reason());
             case ResolveResult.Resolved resolved -> {
                 track.resolved = true;
-                track.materializeRetry = false;
                 track.endWait();
                 track.backoff.reset();
                 track.warnings.keySet().removeIf(what -> what.startsWith(SEALED_LOG));
@@ -416,7 +404,6 @@ public final class CollapseService {
                         describe(view.collapse().destination()));
             }
             case ResolveResult.Sealed sealed -> {
-                track.materializeRetry = false;
                 track.endWait();
                 seal(view, track, sealed.reason(), sealed.failure());
             }
@@ -558,7 +545,6 @@ public final class CollapseService {
         }
         track.warnings.remove(RETRY);
         if (reason.restartOnly()) track.restartRetryConsumed = true;
-        track.materializeRetry = reason == SealedReason.MATERIALIZE_FAILED;
         track.resolved = false;
         track.resetGate();
         try {
@@ -882,9 +868,10 @@ public final class CollapseService {
         boolean gateEvaluated, preparing;
         /** UNIVERSE 目的地在本 instance 已確定（RESOLVE 完成）；不持久化，重啟之後重新確認（§7.3）。 */
         boolean resolved;
-        /** 下一次 RESOLVE 是 §8.3 的重試（catalog 接受 DISABLED，先改回 EAGER_ENABLED）。 */
-        boolean materializeRetry;
-        /** 本 instance 已用掉 restart-only 原因的那一次重試，或本 instance 自己以 restart-only 的原因封存了它（§11.2「每個 server instance 一次」）。 */
+        /**
+         * 本 instance 已用掉 restart-only 原因的那一次 SEALED→COLLAPSING 重試，或本 instance 自己以 restart-only 的原因封存了它（§11.2「每個 server
+         * instance 一次」）。只管重試的觸發；物化本身每個 instance 一次由 resolver 依 UniverseId 把關（F4a fix round 1）。
+         */
         boolean restartRetryConsumed;
         /** UNIVERSE 的 PREPARE stub 已記過 WARN。 */
         boolean prepareWarned;

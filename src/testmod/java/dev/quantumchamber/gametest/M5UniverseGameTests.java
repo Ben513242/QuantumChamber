@@ -591,6 +591,69 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F4a fix round 1（I-1；spec §6 收斂規則表、§6.2、§8.3、§11.2）：catalog 中本 session 推導的 UniverseId 已是 DISABLED（§8.3 已完成，例如改為
+     * DISABLED 之後、寫入 SEALED 之前 crash，重啟後仍是 COLLAPSING）。第一次 RESOLVE 在改回 EAGER_ENABLED 之前就以別的原因封存：allocation entry 的
+     * 讀回失敗 → SEALED(ALLOCATION_IO_FAILED)。退避期過後 P 由艙外進入 → 重試 → RESOLVE 仍把 DISABLED 視為 §8.3 已完成：checked 改回 EAGER_ENABLED、
+     * 物化、追加 discovery，目的地確定；不會因為最近一次封存的原因不是 MATERIALIZE_FAILED 就判為 AUTHORITY_CORRUPT。catalog 增量 1（fixture 預先配置的那筆）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_disabled_retry", tickLimit = 600)
+    public void disabled_record_of_the_session_is_reenabled_after_an_allocation_io_retry(TestContext context) {
+        begin(context, "disabled_record_of_the_session_is_reenabled_after_an_allocation_io_retry");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
+            var sid = dormant.sessionUuid();
+            var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
+            // fixture：§8.3 已完成的 catalog（這個 UniverseId 已配置、已改為 DISABLED、已落盤），沒有 world。
+            var catalog = UniverseRegistryState.get(server);
+            catalog.allocateOverworld(id.value(), nextOrdinal(catalog));
+            catalog.changeAvailability(id, DesiredAvailability.DISABLED);
+            catalog.flush(server);
+            var fault = M5GameTestSupport.installCheckedReadFault(context, UniverseAllocationLedger.FILE_NAME, 0, 1, hooks);
+            var authorities = CollapseAuthorities.get(server);
+            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            at(context, registered + 1, hooks, () -> moveInside(p, frame));
+            // RESOLVE 在 registered+2 的 END_SERVER_TICK：寫 allocation entry 時讀回失敗，改回 EAGER_ENABLED 之前就封存。
+            at(context, registered + 3, hooks, () -> {
+                witness.put("sealedAllocationIoBeforeReenable", sealedWith(journal, sid, SealedReason.ALLOCATION_IO_FAILED) && fault.hits() == 1);
+                var flushed = UniverseRegistryState.get(server).flushedRecords().get(id);
+                witness.put("stillDisabledWithoutWorld", flushed != null && flushed.desiredAvailability() == DesiredAvailability.DISABLED
+                        && UniverseLifecycleService.resolveActive(server, id).isEmpty());
+                moveOutside(p, frame);
+            });
+            // 封存在 registered+2；per-session 與 ledger 收斂的退避（各 200）之後再由艙外進入。
+            at(context, registered + 2 + 205, hooks, () -> moveInside(p, frame));
+            // 重試之後等 RESOLVE 有結果：目的地確定，或又離開 COLLAPSING（修改前會進 SEALED(AUTHORITY_CORRUPT)）。
+            whenTicks(context, registered + 2 + 206, 20, () -> !capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).isEmpty()
+                    && (!capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).isEmpty()
+                        || !M5GameTestSupport.state(journal, sid).equals("COLLAPSING")), settled -> {
+                var record = journal.flushedRecords().get(sid);
+                witness.put("retriedOnce", capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
+                witness.put("resolvedAfterTheRetry", record != null && record.state() == SessionState.COLLAPSING
+                        && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1);
+                witness.put("neverAuthorityCorrupt", capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty()
+                        && capture.matching(org.apache.logging.log4j.Level.WARN, "AUTHORITY_CORRUPT", sid.toString()).isEmpty());
+                var reenabled = UniverseRegistryState.get(server).flushedRecords().get(id);
+                witness.put("reenabledMaterializedAndDiscovered", reenabled != null && reenabled.desiredAvailability() == DesiredAvailability.EAGER_ENABLED
+                        && UniverseLifecycleService.resolveActive(server, id).isPresent()
+                        && authorities.discovery(id).status() == CollapseAuthorities.Lookup.Status.FOUND);
+                witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
+                hooks.release();
+                context.assertTrue(!witness.containsValue(false), "DISABLED 的重試：" + witness + " record=" + M5GameTestSupport.state(journal, sid)
+                        + " sealed=" + (record == null ? "-" : record.collapse().sealedReason()));
+                awaitConvergedThenComplete(context, 1, 20);
+            }, () -> "重試之後 RESOLVE 沒有結果：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+        });
+    }
+
     /** spec §10.8「進入 SEALED」（以字面值斷言，不信任 production 常數）。 */
     private static final String SEALED_KEY = "message.quantumchamber.m5.sealed";
 

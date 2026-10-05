@@ -73,8 +73,8 @@ class DestinationResolverTest {
         var order = new ArrayList<String>();
         world.lifecycle.onMaterialize = requested -> order.add("materialize catalog=" + world.flushedAvailability(requested)
                 + " confirmed=" + !world.authorities.unconfirmed(Authority.CATALOG) + " discovered=" + world.discovered(requested).isPresent());
-        var first = world.resolver.resolve(view, false);
-        var second = world.resolver.resolve(view, false);
+        var first = world.resolver.resolve(view);
+        var second = world.resolver.resolve(view);
         var record = world.discovered(id).orElse(new UniverseDiscoveryRecord(id, 0, 0, Optional.empty(), false));
         assertAll(
                 () -> assertTrue(world.discovered(id).isPresent(), "discovery 已追加"),
@@ -101,7 +101,7 @@ class DestinationResolverTest {
         var other = UniverseId.of(UUID.fromString("00000000-0000-0000-0000-0000000000f9"));
         var view = CollapseServiceTest.cleared(CollapseServiceTest.returned(
                 CollapseServiceTest.collapsing(measured, new CollapseDestination.Universe(other)), A, B));
-        var result = world.resolver.resolve(view, false);
+        var result = world.resolver.resolve(view);
         assertAll(
                 () -> assertSealed(SealedReason.AUTHORITY_CORRUPT, result, "Destination 與 allocation entry 不符"),
                 () -> assertTrue(world.catalog.state.flushedRecords().isEmpty(), "不配置 catalog"),
@@ -115,12 +115,12 @@ class DestinationResolverTest {
         var view = settled(NEW);
         var id = universe(view);
         world.io.failReadback(UniverseAllocationLedger.FILE_NAME);
-        var failed = world.resolver.resolve(view, false);
+        var failed = world.resolver.resolve(view);
         boolean unconfirmed = world.authorities.unconfirmed(Authority.ALLOCATION_LEDGER);
         var landed = world.diskLedger().entries().size();
-        var withinBackoff = world.resolver.resolve(view, false);
+        var withinBackoff = world.resolver.resolve(view);
         now[0] += CollapseBackoff.INITIAL_TICKS;
-        var retried = world.resolver.resolve(view, false);
+        var retried = world.resolver.resolve(view);
         assertAll(
                 () -> assertSealed(SealedReason.ALLOCATION_IO_FAILED, failed, "atomic move 完成、讀回失敗"),
                 () -> assertTrue(unconfirmed, "allocation 權威未確認"),
@@ -140,11 +140,11 @@ class DestinationResolverTest {
         // 另一筆配置的寫出持續失敗（例如另一個 session）：catalog 一直 dirty。
         world.catalog.state.allocateOverworld(UUID.fromString("00000000-0000-0000-0000-0000000000b7"), 0);
         world.catalog.failBeforeMove(100);
-        var waiting = world.resolver.resolve(view, false);
-        var stillWaiting = world.resolver.resolve(view, false);
+        var waiting = world.resolver.resolve(view);
+        var stillWaiting = world.resolver.resolve(view);
         world.catalog.failBeforeMove(0);
         now[0] += CollapseBackoff.INITIAL_TICKS;
-        var resolved = world.resolver.resolve(view, false);
+        var resolved = world.resolver.resolve(view);
         assertAll(
                 () -> assertTrue(waiting instanceof ResolveResult.Wait, () -> "等待而不 SEALED：" + waiting),
                 () -> assertTrue(stillWaiting instanceof ResolveResult.Wait, () -> "退避期內仍等待：" + stillWaiting),
@@ -160,7 +160,7 @@ class DestinationResolverTest {
         var id = universe(view);
         var key = UniverseKeys.world(id, DimensionRole.OVERWORLD).getValue();
         var orphan = Files.createDirectories(world.save.resolve("dimensions").resolve(key.getNamespace()).resolve(key.getPath()));
-        var result = world.resolver.resolve(view, false);
+        var result = world.resolver.resolve(view);
         assertAll(
                 () -> assertSealed(SealedReason.AUTHORITY_CORRUPT, result, "orphan storage"),
                 () -> assertTrue(Files.isDirectory(orphan), "不刪除 orphan 目錄"),
@@ -176,7 +176,7 @@ class DestinationResolverTest {
         var id = universe(view);
         world.lifecycle.fail.add(id);
         Object[] result = {null};
-        var errors = world.logs(() -> result[0] = world.resolver.resolve(view, false), Level.ERROR);
+        var errors = world.logs(() -> result[0] = world.resolver.resolve(view), Level.ERROR);
         assertAll(
                 () -> assertSealed(SealedReason.MATERIALIZE_FAILED, (ResolveResult) result[0], "物化失敗"),
                 () -> assertEquals(DesiredAvailability.DISABLED, world.flushedAvailability(id), "flushed 已改為 DISABLED"),
@@ -197,7 +197,7 @@ class DestinationResolverTest {
             // 第 1 次寫出是配置（成功），第 2 次是改為 DISABLED（失敗）。
             world.catalog.failAfter(1, landed);
             Object[] result = {null};
-            var errors = world.logs(() -> result[0] = world.resolver.resolve(view, false), Level.ERROR);
+            var errors = world.logs(() -> result[0] = world.resolver.resolve(view), Level.ERROR);
             var current = world.currentAvailability(id);
             var flushed = world.flushedAvailability(id);
             var disk = world.diskAvailability(id);
@@ -219,24 +219,91 @@ class DestinationResolverTest {
         assertAll(cases);
     }
 
-    /** §8.3 的重試：catalog 是 DISABLED，先改回 EAGER_ENABLED 再物化；沒有重試旗標時 DISABLED 是損壞。 */
-    @Test void materializeRetryReenablesThenMaterializesAndOnlyTheRetryAcceptsDisabled() throws Exception {
+    /**
+     * §8.3 的重試：本 session 推導的 UniverseId 在 catalog 是 DISABLED（§6 收斂規則表：等同 §8.3 已完成），本 instance 第一次遇到時先 checked 改回
+     * EAGER_ENABLED 再物化。F4a fix round 1（I-1）取代首輪的「沒有重試旗標時 DISABLED 是損壞」：是否接受 DISABLED 不再由呼叫端依最近一次封存的原因傳入；
+     * EXISTING 的 DISABLED 仍是 EXISTING_INELIGIBLE（{@link #existingIneligibleForEachRevalidationCondition}）。
+     */
+    @Test void disabledRecordOfTheSessionIsReenabledThenMaterialized() throws Exception {
         var world = world("retry");
         var view = settled(NEW);
         var id = universe(view);
         world.afterMaterializeFailure(view);
-        var withoutRetry = world.resolver.resolve(view, false);
-        var withoutRetryCalls = List.copyOf(world.lifecycle.materialized);
         var order = new ArrayList<DesiredAvailability>();
         world.lifecycle.onMaterialize = requested -> order.add(world.flushedAvailability(requested));
-        var retried = world.resolver.resolve(view, true);
+        var retried = world.resolver.resolve(view);
         assertAll(
-                () -> assertSealed(SealedReason.AUTHORITY_CORRUPT, withoutRetry, "沒有重試旗標：DISABLED 不是 M5 會配置的內容"),
-                () -> assertEquals(List.of(), withoutRetryCalls, "沒有重試旗標時不物化"),
                 () -> assertEquals(new ResolveResult.Resolved(), retried, "重試：改回 EAGER_ENABLED、物化、discovery"),
                 () -> assertEquals(List.of(DesiredAvailability.EAGER_ENABLED), order, "物化之前已 checked 改回 EAGER_ENABLED"),
                 () -> assertEquals(DesiredAvailability.EAGER_ENABLED, world.diskAvailability(id)),
                 () -> assertTrue(world.discovered(id).isPresent(), "重試成功之後追加 discovery"));
+    }
+
+    /**
+     * F4a fix round 1（I-1，spec §6 收斂規則表、§6.2、§11.2）：「接受 DISABLED」與最近一次封存的原因無關。同一個 resolver（server instance）中，§8.3 的
+     * 重試（重啟之後 MATERIALIZE_FAILED 的那一次重試，或開服時就是 COLLAPSING、catalog 已是 DISABLED）在第 1 步遇到 ledger 未確認（另一個 session 的
+     * append 讀回失敗、仍在退避）→ SEALED(ALLOCATION_IO_FAILED)；退避之後的下一次重試仍把 DISABLED 視為 §8.3 已完成：改回 EAGER_ENABLED、物化、
+     * RESOLVED，絕不是 AUTHORITY_CORRUPT。暫時性的 IO 不會變成永久原因。
+     */
+    @Test void disabledRecordOfTheSessionIsRetriedRegardlessOfTheLastSealedReason() throws Exception {
+        var world = world("disabled-after-io");
+        var view = settled(NEW);
+        var id = universe(view);
+        world.afterMaterializeFailure(view);
+        world.io.failReadback(UniverseAllocationLedger.FILE_NAME);
+        var other = world.authorities.lookupOrAppendAllocation(otherIntent());
+        var sealedFirst = world.resolver.resolve(view);
+        var callsWhileSealed = List.copyOf(world.lifecycle.materialized);
+        var availabilityWhileSealed = world.diskAvailability(id);
+        now[0] += CollapseBackoff.INITIAL_TICKS;
+        var order = new ArrayList<DesiredAvailability>();
+        world.lifecycle.onMaterialize = requested -> order.add(world.flushedAvailability(requested));
+        var retried = world.resolver.resolve(view);
+        assertAll(
+                () -> assertEquals(CollapseAuthorities.Lookup.Status.WRITE_FAILED, other.status(), "fixture：另一個 session 的 append 未確認"),
+                () -> assertSealed(SealedReason.ALLOCATION_IO_FAILED, sealedFirst, "第 1 步：ledger 未確認"),
+                () -> assertEquals(List.of(), callsWhileSealed, "改回 EAGER_ENABLED 之前就封存：沒有物化"),
+                () -> assertEquals(DesiredAvailability.DISABLED, availabilityWhileSealed, "封存時 catalog 仍是 DISABLED"),
+                () -> assertEquals(new ResolveResult.Resolved(), retried, "下一次重試仍走 §8.3，不是 AUTHORITY_CORRUPT：" + retried),
+                () -> assertEquals(List.of(DesiredAvailability.EAGER_ENABLED), order, "物化之前已 checked 改回 EAGER_ENABLED"),
+                () -> assertEquals(DesiredAvailability.EAGER_ENABLED, world.diskAvailability(id)),
+                () -> assertTrue(world.discovered(id).isPresent(), "重試成功之後追加 discovery"));
+    }
+
+    /**
+     * F4a fix round 1（I-1）：本 instance 已用掉物化的額度（第一次物化就失敗，或已做過一次 §8.3 的重試：改回 EAGER_ENABLED 之後物化失敗，或改回
+     * EAGER_ENABLED 的寫出失敗而 restore）之後再遇到 DISABLED：SEALED(MATERIALIZE_FAILED)，等下次重啟；不是 AUTHORITY_CORRUPT，也不再寫 catalog、
+     * 不再物化。
+     */
+    @Test void aSpentInstanceSealsMaterializeFailedWithoutWritingOrMaterializingAgain() throws Exception {
+        record Row(String label, boolean disabledBefore, boolean materializeFails, boolean reenableFails) { }
+        var rows = List.of(
+                new Row("本 instance 第一次物化就失敗", false, true, false),
+                new Row("§8.3 的重試物化失敗", true, true, false),
+                new Row("§8.3 的重試改回 EAGER_ENABLED 的寫出失敗（restore）", true, false, true));
+        var cases = new ArrayList<Executable>();
+        int index = 0;
+        for (var row : rows) {
+            var world = world("spent-" + index++);
+            var view = settled(NEW);
+            var id = universe(view);
+            if (row.disabledBefore()) world.afterMaterializeFailure(view);
+            if (row.materializeFails()) world.lifecycle.fail.add(id);
+            if (row.reenableFails()) world.catalog.failAfter(0, false);
+            var first = world.resolver.resolve(view);
+            // restore 之後 catalog 仍 dirty：先收斂，再比對第二次解析有沒有寫入。
+            now[0] += 1;
+            world.authorities.convergeIfNeeded(Authority.CATALOG);
+            var calls = world.lifecycle.materialized.size();
+            var before = world.snapshot();
+            var second = world.resolver.resolve(view);
+            cases.add(() -> assertSealed(SealedReason.MATERIALIZE_FAILED, first, row.label() + "：fixture"));
+            cases.add(() -> assertSealed(SealedReason.MATERIALIZE_FAILED, second, row.label() + "：再遇到 DISABLED 等下次重啟，不是 AUTHORITY_CORRUPT"));
+            cases.add(() -> assertEquals(calls, world.lifecycle.materialized.size(), row.label() + "：不再物化"));
+            cases.add(() -> assertEquals(before, world.snapshot(), row.label() + "：不再寫任何權威"));
+            cases.add(() -> assertEquals(DesiredAvailability.DISABLED, world.diskAvailability(id), row.label() + "：catalog 維持 DISABLED"));
+        }
+        assertAll(cases);
     }
 
     /** §8.3 方向二：重試時改回 EAGER_ENABLED 的寫出失敗 → restore（current 改回 DISABLED、維持 dirty），不物化。 */
@@ -248,7 +315,7 @@ class DestinationResolverTest {
             var id = universe(view);
             world.afterMaterializeFailure(view);
             world.catalog.failAfter(0, landed);
-            var result = world.resolver.resolve(view, true);
+            var result = world.resolver.resolve(view);
             var current = world.currentAvailability(id);
             var disk = world.diskAvailability(id);
             boolean dirty = world.catalog.state.isDirty();
@@ -275,7 +342,7 @@ class DestinationResolverTest {
         world.lifecycle.fail.add(id);
         var order = new ArrayList<DesiredAvailability>();
         world.lifecycle.onMaterialize = requested -> order.add(world.flushedAvailability(requested));
-        var result = world.resolver.resolve(view, true);
+        var result = world.resolver.resolve(view);
         assertAll(
                 () -> assertSealed(SealedReason.MATERIALIZE_FAILED, result, "重試仍失敗"),
                 () -> assertEquals(List.of(DesiredAvailability.EAGER_ENABLED), order, "物化之前改回 EAGER_ENABLED"),
@@ -287,7 +354,7 @@ class DestinationResolverTest {
         var world = world("not-ready");
         var view = settled(NEW);
         world.lifecycle.notReady = true;
-        var result = world.resolver.resolve(view, false);
+        var result = world.resolver.resolve(view);
         assertAll(
                 () -> assertTrue(result instanceof ResolveResult.Wait, () -> "等待而不 SEALED：" + result),
                 () -> assertEquals(DesiredAvailability.EAGER_ENABLED, world.flushedAvailability(universe(view)), "catalog 不改為 DISABLED"),
@@ -305,9 +372,9 @@ class DestinationResolverTest {
         readback.io.failReadbackAfter(UniverseDiscoveryState.FILE_NAME, 1);
         var view = settled(NEW);
         var id = universe(view);
-        var io = unreadable.resolver.resolve(view, false);
-        var lost = missing.resolver.resolve(view, false);
-        var write = readback.resolver.resolve(view, false);
+        var io = unreadable.resolver.resolve(view);
+        var lost = missing.resolver.resolve(view);
+        var write = readback.resolver.resolve(view);
         assertAll(
                 () -> assertSealed(SealedReason.AUTHORITY_UNREADABLE, io, "讀檔的 IO 例外"),
                 () -> assertSealed(SealedReason.AUTHORITY_CORRUPT, lost, "檔案不存在是遺失"),
@@ -337,8 +404,8 @@ class DestinationResolverTest {
             var init = authorities.initialize(() -> journal);
             var lifecycle = new FakeLifecycle(catalog);
             var resolver = new DestinationResolver(authorities, catalog, lifecycle, () -> GAME_TIME);
-            var newResult = resolver.resolve(settled(NEW), false);
-            var existingResult = resolver.resolve(settled(EXISTING), false);
+            var newResult = resolver.resolve(settled(NEW));
+            var existingResult = resolver.resolve(settled(EXISTING));
             cases.add(() -> assertEquals(Optional.of(reason), init.sealedReason(), "fixture：初始化失敗的分類"));
             cases.add(() -> assertSealed(reason, newResult, "NEW：" + reason));
             cases.add(() -> assertSealed(reason, existingResult, "EXISTING：" + reason));
@@ -354,7 +421,7 @@ class DestinationResolverTest {
         world.existingUniverse(true, DesiredAvailability.EAGER_ENABLED);
         world.lifecycle.active.add(EXISTING_ID);
         var before = world.snapshot();
-        var result = world.resolver.resolve(settled(EXISTING), false);
+        var result = world.resolver.resolve(settled(EXISTING));
         assertAll(
                 () -> assertEquals(new ResolveResult.Resolved(), result),
                 () -> assertEquals(before, world.snapshot(), "只重驗：ledger、catalog、discovery 的檔案都不變"),
@@ -380,7 +447,7 @@ class DestinationResolverTest {
             if (row.active()) world.lifecycle.active.add(EXISTING_ID);
             var before = world.snapshot();
             var view = settled(row.source(), EXISTING);
-            var result = world.resolver.resolve(view, false);
+            var result = world.resolver.resolve(view);
             cases.add(() -> assertSealed(SealedReason.EXISTING_INELIGIBLE, result, row.label()));
             cases.add(() -> assertEquals(before, world.snapshot(), row.label() + "：不寫任何權威"));
         }
@@ -395,13 +462,13 @@ class DestinationResolverTest {
         discoveryPending.io.failReadbackAfter(UniverseDiscoveryState.FILE_NAME, 1);
         var other = UniverseId.of(UUID.fromString("00000000-0000-0000-0000-0000000000a9"));
         var pendingAppend = discoveryPending.authorities.appendDiscovery(other, 5, B);
-        var discoveryWait = discoveryPending.resolver.resolve(settled(EXISTING), false);
+        var discoveryWait = discoveryPending.resolver.resolve(settled(EXISTING));
         var catalogPending = world("existing-catalog-pending");
         catalogPending.existingUniverse(true, DesiredAvailability.EAGER_ENABLED);
         catalogPending.lifecycle.active.add(EXISTING_ID);
         catalogPending.catalog.state.allocateOverworld(UUID.fromString("00000000-0000-0000-0000-0000000000b8"), 5);
         catalogPending.catalog.failBeforeMove(100);
-        var catalogWait = catalogPending.resolver.resolve(settled(EXISTING), false);
+        var catalogWait = catalogPending.resolver.resolve(settled(EXISTING));
         assertAll(
                 () -> assertEquals(CollapseAuthorities.Lookup.Status.WRITE_FAILED, pendingAppend.status(), "fixture：另一個 append 未確認"),
                 () -> assertTrue(discoveryWait instanceof ResolveResult.Wait, () -> "discovery 未確認：等待：" + discoveryWait),
@@ -415,8 +482,8 @@ class DestinationResolverTest {
         var corrupt = world("existing-corrupt");
         Files.write(corrupt.save.resolve("data").resolve(UniverseDiscoveryState.FILE_NAME), new byte[] {1, 2, 3});
         assertAll(
-                () -> assertSealed(SealedReason.AUTHORITY_UNREADABLE, unreadable.resolver.resolve(settled(EXISTING), false), "讀檔的 IO 例外"),
-                () -> assertSealed(SealedReason.AUTHORITY_CORRUPT, corrupt.resolver.resolve(settled(EXISTING), false), "內容損壞"));
+                () -> assertSealed(SealedReason.AUTHORITY_UNREADABLE, unreadable.resolver.resolve(settled(EXISTING)), "讀檔的 IO 例外"),
+                () -> assertSealed(SealedReason.AUTHORITY_CORRUPT, corrupt.resolver.resolve(settled(EXISTING)), "內容損壞"));
     }
 
     @Test void resolveOnlyAcceptsSettledUniverseCollapses() throws Exception {
@@ -425,9 +492,9 @@ class DestinationResolverTest {
         var unsettled = CollapseServiceTest.collapsing(measured, CollapseService.destination(measured));
         var source = settled(SOURCE);
         assertAll(
-                () -> assertThrows(IllegalArgumentException.class, () -> world.resolver.resolve(measured, false), "MEASURED"),
-                () -> assertThrows(IllegalArgumentException.class, () -> world.resolver.resolve(unsettled, false), "尚未全員返還、lease 未清"),
-                () -> assertThrows(IllegalArgumentException.class, () -> world.resolver.resolve(source, false), "SOURCE 沒有 RESOLVE"));
+                () -> assertThrows(IllegalArgumentException.class, () -> world.resolver.resolve(measured), "MEASURED"),
+                () -> assertThrows(IllegalArgumentException.class, () -> world.resolver.resolve(unsettled), "尚未全員返還、lease 未清"),
+                () -> assertThrows(IllegalArgumentException.class, () -> world.resolver.resolve(source), "SOURCE 沒有 RESOLVE"));
     }
 
     // ---- fixtures ----
@@ -445,6 +512,14 @@ class DestinationResolverTest {
 
     private static NewUniverseIntent intent(SessionRecoveryRecord view) {
         return ((QuantumCandidate.New) view.selectedCandidate().orElseThrow()).intent();
+    }
+
+    /** 另一個 session 的 NEW intent（token 與 fixture 的不同）。 */
+    private static NewUniverseIntent otherIntent() {
+        byte[] token = new byte[32], seed = new byte[32];
+        java.util.Arrays.fill(token, (byte) 0x5a); java.util.Arrays.fill(seed, (byte) 0x3c);
+        return new NewUniverseIntent(new dev.quantumchamber.candidate.CandidateBytes(token),
+                dev.quantumchamber.universe.GeneratorProfile.VANILLA_OVERWORLD_SHARED_SEED_V1, 1, new dev.quantumchamber.candidate.CandidateBytes(seed));
     }
 
     private static void assertSealed(SealedReason expected, ResolveResult actual, String label) {
