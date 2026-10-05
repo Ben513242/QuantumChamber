@@ -197,7 +197,8 @@ class DestinationResolverTest {
             var flushed = world.flushedAvailability(id);
             var disk = world.diskAvailability(id);
             boolean dirty = world.catalog.state.isDirty(), unconfirmed = world.authorities.unconfirmed(Authority.CATALOG);
-            now[0] += 1;
+            // F4a fix round 2（m-2）：寫出失敗已記入 catalog 以權威為單位的退避，收斂要等退避期過後（resolverCatalogWriteFailureBacksOffTheNextConvergence）。
+            now[0] += CollapseBackoff.INITIAL_TICKS;
             world.authorities.convergeIfNeeded(Authority.CATALOG);
             var converged = world.diskAvailability(id);
             String label = landed ? "atomic move 完成、讀回失敗" : "atomic move 之前失敗";
@@ -286,8 +287,8 @@ class DestinationResolverTest {
             if (row.materializeFails()) world.lifecycle.fail.add(id);
             if (row.reenableFails()) world.catalog.failAfter(0, false);
             var first = world.resolver.resolve(view);
-            // restore 之後 catalog 仍 dirty：先收斂，再比對第二次解析有沒有寫入。
-            now[0] += 1;
+            // restore 之後 catalog 仍 dirty：先收斂（F4a fix round 2，m-2：寫出失敗已記入 catalog 的退避，等退避期過後），再比對第二次解析有沒有寫入。
+            now[0] += CollapseBackoff.INITIAL_TICKS;
             world.authorities.convergeIfNeeded(Authority.CATALOG);
             var calls = world.lifecycle.materialized.size();
             var before = world.snapshot();
@@ -315,7 +316,8 @@ class DestinationResolverTest {
             var disk = world.diskAvailability(id);
             boolean dirty = world.catalog.state.isDirty();
             var calls = List.copyOf(world.lifecycle.materialized);
-            now[0] += 1;
+            // F4a fix round 2（m-2）：寫出失敗已記入 catalog 以權威為單位的退避，收斂要等退避期過後。
+            now[0] += CollapseBackoff.INITIAL_TICKS;
             world.authorities.convergeIfNeeded(Authority.CATALOG);
             var converged = world.diskAvailability(id);
             String label = landed ? "atomic move 完成、讀回失敗" : "atomic move 之前失敗";
@@ -343,6 +345,87 @@ class DestinationResolverTest {
                 () -> assertEquals(List.of(DesiredAvailability.EAGER_ENABLED), order, "物化之前改回 EAGER_ENABLED"),
                 () -> assertEquals(DesiredAvailability.DISABLED, world.diskAvailability(id), "之後再改回 DISABLED"),
                 () -> assertTrue(world.discoveryRecords().isEmpty()));
+    }
+
+    /**
+     * F4a fix round 2（m-2，spec §6 收斂共通第 2 點「重試使用權威自己的退避，以權威為單位」）：resolver 對 catalog 的兩種寫出——§8.3 改為 DISABLED
+     * （roll-forward）與重試時改回 EAGER_ENABLED（restore）——的寫出失敗都記入 catalog 以權威為單位的退避。下一個 tick 的 {@code convergeIfNeeded(CATALOG)}
+     * 在退避期內不重寫，退避期過後才 checked 寫出 current（DISABLED）一次。
+     */
+    @Test void resolverCatalogWriteFailureBacksOffTheNextConvergence() throws Exception {
+        var cases = new ArrayList<Executable>();
+        for (boolean restore : new boolean[] {false, true}) {
+            var world = world(restore ? "backoff-restore" : "backoff-roll-forward");
+            var view = settled(NEW);
+            var id = universe(view);
+            String label = restore ? "改回 EAGER_ENABLED 的寫出失敗（restore）" : "改為 DISABLED 的寫出失敗（roll-forward）";
+            if (restore) {
+                world.afterMaterializeFailure(view);
+                world.catalog.failAfter(0, false);
+            } else {
+                world.lifecycle.fail.add(id);
+                // 第 1 次寫出是配置（成功），第 2 次是改為 DISABLED（失敗）。
+                world.catalog.failAfter(1, false);
+            }
+            var result = world.resolver.resolve(view);
+            int failedAt = world.catalog.flushes;
+            now[0] += 1;
+            world.authorities.convergeIfNeeded(Authority.CATALOG);
+            int nextTick = world.catalog.flushes - failedAt;
+            boolean unconfirmedWithinBackoff = world.authorities.unconfirmed(Authority.CATALOG);
+            now[0] += CollapseBackoff.INITIAL_TICKS;
+            world.authorities.convergeIfNeeded(Authority.CATALOG);
+            int afterBackoff = world.catalog.flushes - failedAt;
+            boolean confirmed = !world.authorities.unconfirmed(Authority.CATALOG);
+            var disk = world.diskAvailability(id);
+            cases.add(() -> assertSealed(SealedReason.MATERIALIZE_FAILED, result, label + "：fixture"));
+            cases.add(() -> assertEquals(0, nextTick, label + "：下一個 tick 仍在 catalog 的退避期內，不重寫"));
+            cases.add(() -> assertTrue(unconfirmedWithinBackoff, label + "：退避期內仍未確認"));
+            cases.add(() -> assertEquals(1, afterBackoff, label + "：退避期過後才寫出一次"));
+            cases.add(() -> assertTrue(confirmed, label + "：寫出之後已確認"));
+            cases.add(() -> assertEquals(DesiredAvailability.DISABLED, disk, label + "：寫出的是 DISABLED"));
+        }
+        assertAll(cases);
+    }
+
+    /**
+     * F4a fix round 2（m-2）：resolver 對 catalog 的寫出失敗與之後的收斂，都經 catalog 權威的簿記記 log：寫出失敗時一則權威層級的 WARN（帶
+     * {@code TICK_LOG_MARKER}，restore 時說明 current 已改回），收斂完成時一則 INFO「M5 CATALOG 收斂完成」。
+     */
+    @Test void resolverCatalogWriteFailureLogsTheAuthorityWarnAndTheConvergenceInfo() throws Exception {
+        var cases = new ArrayList<Executable>();
+        for (boolean restore : new boolean[] {false, true}) {
+            var world = world(restore ? "logs-restore" : "logs-roll-forward");
+            var view = settled(NEW);
+            var id = universe(view);
+            String label = restore ? "restore" : "roll-forward";
+            if (restore) {
+                world.afterMaterializeFailure(view);
+                world.catalog.failAfter(0, true);
+            } else {
+                world.lifecycle.fail.add(id);
+                world.catalog.failAfter(1, true);
+            }
+            Object[] result = {null};
+            List<CollapseLogCapture.Entry> logs;
+            try (var capture = new CollapseLogCapture()) {
+                result[0] = world.resolver.resolve(view);
+                now[0] += CollapseBackoff.INITIAL_TICKS;
+                world.authorities.convergeIfNeeded(Authority.CATALOG);
+                logs = capture.entries();
+            }
+            var warnings = logs.stream().filter(entry -> entry.level() == Level.WARN && entry.tick()
+                    && entry.message().startsWith("M5 CATALOG 的 checked 寫出未確認")).toList();
+            var converged = logs.stream().filter(entry -> entry.level() == Level.INFO && entry.tick()
+                    && entry.message().startsWith("M5 CATALOG 收斂完成")).toList();
+            cases.add(() -> assertSealed(SealedReason.MATERIALIZE_FAILED, (ResolveResult) result[0], label + "：fixture"));
+            cases.add(() -> assertEquals(1, warnings.size(), label + "：權威層級的 WARN 一則：" + logs));
+            cases.add(() -> assertEquals(restore, warnings.stream().anyMatch(entry -> entry.message().contains("restore")),
+                    label + "：restore 的 WARN 說明 current 已改回：" + warnings));
+            cases.add(() -> assertEquals(1, converged.size(), label + "：收斂完成記一則 INFO：" + logs));
+            cases.add(() -> assertFalse(world.authorities.unconfirmed(Authority.CATALOG), label + "：已收斂"));
+        }
+        assertAll(cases);
     }
 
     @Test void lifecycleWithoutAReadyContextWaits() throws Exception {
@@ -398,7 +481,7 @@ class DestinationResolverTest {
             }
             var init = authorities.initialize(() -> journal);
             var lifecycle = new FakeLifecycle(catalog);
-            var resolver = new DestinationResolver(authorities, catalog, lifecycle, () -> GAME_TIME);
+            var resolver = new DestinationResolver(authorities, lifecycle, () -> GAME_TIME);
             var newResult = resolver.resolve(settled(NEW));
             var existingResult = resolver.resolve(settled(EXISTING));
             cases.add(() -> assertEquals(Optional.of(reason), init.sealedReason(), "fixture：初始化失敗的分類"));
@@ -470,6 +553,65 @@ class DestinationResolverTest {
                 () -> assertTrue(catalogWait instanceof ResolveResult.Wait, () -> "catalog 未確認：等待：" + catalogWait));
     }
 
+    /**
+     * F4a fix round 2（m-3，spec §6 收斂共通第 2 點）：EXISTING 重驗先確認 catalog 與 discovery 都沒有未確認的寫入，之後才從磁碟讀 discovery（M4 的
+     * discovery 每次查詢都從磁碟讀）。任一個未確認期間只等待，不讀 discovery 檔（以計數 port 斷言）；兩者都確認之後讀一次、照常確定目的地。
+     */
+    @Test void existingReadsTheDiscoveryOnlyAfterTheCatalogAndTheDiscoveryAreConfirmed() throws Exception {
+        var catalogPending = world("existing-read-catalog-pending");
+        catalogPending.existingUniverse(true, DesiredAvailability.EAGER_ENABLED);
+        catalogPending.lifecycle.active.add(EXISTING_ID);
+        // 另一筆配置的寫出持續失敗：catalog 一直未確認。
+        catalogPending.catalog.state.allocateOverworld(UUID.fromString("00000000-0000-0000-0000-0000000000b9"), 5);
+        catalogPending.catalog.failBeforeMove(100);
+        int before = catalogPending.io.readsOf(UniverseDiscoveryState.FILE_NAME);
+        var whileCatalogPending = List.of(catalogPending.resolver.resolve(settled(EXISTING)), catalogPending.resolver.resolve(settled(EXISTING)),
+                catalogPending.resolver.resolve(settled(EXISTING)));
+        int readsWhileCatalogPending = catalogPending.io.readsOf(UniverseDiscoveryState.FILE_NAME) - before;
+        catalogPending.catalog.failBeforeMove(0);
+        now[0] += CollapseBackoff.INITIAL_TICKS;
+        var resolved = catalogPending.resolver.resolve(settled(EXISTING));
+        int readsAfterConverged = catalogPending.io.readsOf(UniverseDiscoveryState.FILE_NAME) - before;
+
+        var discoveryPending = world("existing-read-discovery-pending");
+        discoveryPending.existingUniverse(true, DesiredAvailability.EAGER_ENABLED);
+        discoveryPending.lifecycle.active.add(EXISTING_ID);
+        discoveryPending.io.failReadbackAfter(UniverseDiscoveryState.FILE_NAME, 1);
+        var pendingAppend = discoveryPending.authorities.appendDiscovery(UniverseId.of(UUID.fromString("00000000-0000-0000-0000-0000000000aa")), 5, B);
+        int beforeDiscovery = discoveryPending.io.readsOf(UniverseDiscoveryState.FILE_NAME);
+        var whileDiscoveryPending = discoveryPending.resolver.resolve(settled(EXISTING));
+        int readsWhileDiscoveryPending = discoveryPending.io.readsOf(UniverseDiscoveryState.FILE_NAME) - beforeDiscovery;
+        assertAll(
+                () -> assertTrue(whileCatalogPending.stream().allMatch(result -> result instanceof ResolveResult.Wait),
+                        () -> "catalog 未確認：等待：" + whileCatalogPending),
+                () -> assertEquals(0, readsWhileCatalogPending, "catalog 未確認期間不讀 discovery 檔"),
+                () -> assertEquals(new ResolveResult.Resolved(), resolved, "catalog 收斂之後照常確定目的地"),
+                () -> assertEquals(1, readsAfterConverged, "兩者都確認之後才讀一次 discovery"),
+                () -> assertEquals(CollapseAuthorities.Lookup.Status.WRITE_FAILED, pendingAppend.status(), "fixture：另一個 append 未確認"),
+                () -> assertTrue(whileDiscoveryPending instanceof ResolveResult.Wait, () -> "discovery 未確認：等待：" + whileDiscoveryPending),
+                () -> assertEquals(0, readsWhileDiscoveryPending, "discovery 未確認期間不讀 discovery 檔"));
+    }
+
+    /**
+     * F4a fix round 2（m-4）：EXISTING 重驗時 lifecycle 沒有 ready 的 context（{@link DestinationResolver.Activity#NOT_READY}），與「world 不是 ACTIVE」分開：
+     * 等待，不判 EXISTING_INELIGIBLE、不封存、不寫任何權威（與 NEW 物化時的 NOT_READY 相同）；lifecycle ready 之後照常確定目的地。
+     */
+    @Test void existingWaitsWhileTheLifecycleIsNotReady() throws Exception {
+        var world = world("existing-lifecycle-not-ready");
+        world.existingUniverse(true, DesiredAvailability.EAGER_ENABLED);
+        world.lifecycle.active.add(EXISTING_ID);
+        world.lifecycle.notReady = true;
+        var before = world.snapshot();
+        var waiting = world.resolver.resolve(settled(EXISTING));
+        var unchanged = world.snapshot();
+        world.lifecycle.notReady = false;
+        var resolved = world.resolver.resolve(settled(EXISTING));
+        assertAll(
+                () -> assertTrue(waiting instanceof ResolveResult.Wait, () -> "lifecycle 沒有 ready 的 context：等待而不封存：" + waiting),
+                () -> assertEquals(before, unchanged, "不寫任何權威"),
+                () -> assertEquals(new ResolveResult.Resolved(), resolved, "ready 之後照常確定目的地"));
+    }
+
     @Test void existingDiscoveryReadFailuresAreAuthorityReasons() throws Exception {
         var unreadable = world("existing-io");
         unreadable.existingUniverse(true, DesiredAvailability.EAGER_ENABLED);
@@ -535,7 +677,7 @@ class DestinationResolverTest {
         var authorities = new CollapseAuthorities(save, io, catalog, () -> now[0]);
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded(), "fixture：權威初始化");
         var lifecycle = new FakeLifecycle(catalog);
-        return new World(save, io, catalog, authorities, lifecycle, new DestinationResolver(authorities, catalog, lifecycle, () -> GAME_TIME));
+        return new World(save, io, catalog, authorities, lifecycle, new DestinationResolver(authorities, lifecycle, () -> GAME_TIME));
     }
 
     private record World(Path save, Io io, TestCatalog catalog, CollapseAuthorities authorities, FakeLifecycle lifecycle, DestinationResolver resolver) {
@@ -623,7 +765,10 @@ class DestinationResolverTest {
         }
     }
 
-    /** {@link DestinationResolver.Lifecycle} 的測試實作：記下每一次物化；{@code fail} 中的 UniverseId 物化失敗；{@code active} 是 exact ACTIVE 的宇宙。 */
+    /**
+     * {@link DestinationResolver.Lifecycle} 的測試實作：記下每一次物化；{@code fail} 中的 UniverseId 物化失敗；{@code active} 是 exact ACTIVE 的宇宙；
+     * {@code notReady} 時物化回 NOT_READY、ACTIVE 查詢回 {@link DestinationResolver.Activity#NOT_READY}（lifecycle 沒有 ready 的 context）。
+     */
     private static final class FakeLifecycle implements DestinationResolver.Lifecycle {
         final TestCatalog catalog;
         final List<UniverseId> materialized = new ArrayList<>();
@@ -643,15 +788,23 @@ class DestinationResolverTest {
             return new Materialization(Materialization.Kind.ACTIVE, "");
         }
 
-        @Override public boolean active(UniverseId id) { return active.contains(id); }
+        @Override public DestinationResolver.Activity active(UniverseId id) {
+            if (notReady) return DestinationResolver.Activity.NOT_READY;
+            return active.contains(id) ? DestinationResolver.Activity.ACTIVE : DestinationResolver.Activity.NOT_ACTIVE;
+        }
     }
 
-    /** {@link CollapseAuthorities.LedgerIo} 的注入實作（比照 CollapseAuthoritiesTest）：依檔名讓下一次（或 skip 次之後的）讀取丟 IOException。 */
+    /**
+     * {@link CollapseAuthorities.LedgerIo} 的注入實作（比照 CollapseAuthoritiesTest）：依檔名讓下一次（或 skip 次之後的）讀取丟 IOException，並記下每一次讀取
+     * （F4a fix round 2，m-3：計數 discovery 檔的讀取）。
+     */
     private static final class Io implements CollapseAuthorities.LedgerIo {
         private record Fault(String fileName, int[] skip) { }
         private final List<Fault> faults = new ArrayList<>();
+        private final List<Path> reads = new ArrayList<>();
 
         @Override public byte[] read(Path path) throws IOException {
+            reads.add(path);
             for (var iterator = faults.iterator(); iterator.hasNext();) {
                 var fault = iterator.next();
                 if (!path.getFileName().toString().equals(fault.fileName())) continue;
@@ -664,16 +817,20 @@ class DestinationResolverTest {
 
         void failReadback(String fileName) { failReadbackAfter(fileName, 0); }
         void failReadbackAfter(String fileName, int skip) { faults.add(new Fault(fileName, new int[] {skip})); }
+        /** 檔名恰為 {@code fileName} 的讀取次數（含注入失敗的那幾次；暫存檔的名稱不同，不算）。 */
+        int readsOf(String fileName) { return (int) reads.stream().filter(path -> path.getFileName().toString().equals(fileName)).count(); }
     }
 
     /**
      * {@link CollapseAuthorities.CatalogPort} 的測試實作：catalog 是真的 M3 {@link UniverseRegistryState}，寫出經 M3 的 save；注入的失敗不經過 save，所以
      * catalog 照 M3 save 失敗時的語意維持 current 與 dirty。{@link #failAfter} 讓前 {@code ok} 次寫出照常，之後的一次失敗（{@code landed} 為真時先以 M3 的
-     * store 寫出再丟，即「atomic move 完成、讀回失敗」）；{@link #failBeforeMove} 讓之後的 {@code times} 次都在寫出之前失敗。
+     * store 寫出再丟，即「atomic move 完成、讀回失敗」）；{@link #failBeforeMove} 讓之後的 {@code times} 次都在寫出之前失敗。{@code flushes} 是寫出的嘗試次數
+     * （含失敗的那幾次；F4a fix round 2，m-2）。
      */
     private static final class TestCatalog implements CollapseAuthorities.CatalogPort {
         final Path path;
         final UniverseRegistryState state = new UniverseRegistryState();
+        int flushes;
         private int ok = -1, failures;
         private boolean landed;
 
@@ -683,6 +840,7 @@ class DestinationResolverTest {
 
         @Override public void flush(UniverseRegistryState catalog) {
             assertSame(state, catalog, "寫出的是同一個 PersistentState");
+            flushes++;
             if (ok > 0) { ok--; catalog.save(path); return; }
             if (ok == 0 || failures > 0) {
                 if (ok == 0) ok = -1; else failures--;

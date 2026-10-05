@@ -855,6 +855,10 @@ class CollapseAuthoritiesTest {
                 var authorities = initialized(save);
                 assertCorrupt(authorities.allocateOrVerifyCatalog(id, EAGER_ONLY));
                 assertCorrupt(authorities.allocateOrVerifyCatalog(id, MATERIALIZE_RETRY));
+                // F4a fix round 2（m-2）：唯讀查詢與 availability 變更也一樣。
+                assertCorrupt(authorities.catalogRecord(id));
+                assertCorrupt(authorities.changeCatalogAvailability(id, DesiredAvailability.DISABLED, CollapseAuthorities.WriteDirection.ROLL_FORWARD));
+                assertCorrupt(authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, CollapseAuthorities.WriteDirection.RESTORE));
                 assertTrue(authorities.unconfirmed(Authority.CATALOG), field + "：不健康的 catalog 不能拿來做決策");
                 now[0] = 9000; authorities.convergeIfNeeded(Authority.CATALOG);
                 assertEquals(0, catalog.flushes, field + "：不寫出");
@@ -960,6 +964,95 @@ class CollapseAuthoritiesTest {
                 "沒有 storage 的 UUID 照常配置");
     }
 
+    /**
+     * F4a fix round 2（m-2，spec §8.1）：catalog 的唯讀查詢只看 flushed、不寫出：沒有這筆為 ABSENT，有就回 flushed 的 record（不論 availability，由呼叫端以
+     * {@code catalogRecordMatches} 判斷）；catalog 有未確認的寫入時 WAIT，不嘗試寫出。
+     */
+    @Test void catalogRecordIsAReadOnlyQueryOfTheFlushedCatalog() throws Exception {
+        var save = save("catalog-record");
+        var authorities = initialized(save);
+        var catalog = catalog(save);
+        var id = UniverseAllocationLedger.deriveUniverseId(token(63));
+        assertEquals(Lookup.Status.ABSENT, authorities.catalogRecord(id).status(), "沒有這筆");
+        catalog.state.allocateOverworld(id.value(), 0);
+        catalog.state.changeAvailability(id, DesiredAvailability.DISABLED);
+        catalog.state.save(catalog.path);
+        var found = authorities.catalogRecord(id);
+        assertEquals(Lookup.Status.FOUND, found.status(), () -> found.toString());
+        assertEquals(Optional.of(catalog.state.flushedRecords().get(id)), found.value(), "回 flushed 的 record，DISABLED 也回（由呼叫端判斷）");
+        catalog.state.allocateOverworld(UniverseAllocationLedger.deriveUniverseId(token(64)).value(), 1);
+        int flushes = catalog.flushes;
+        assertWait(authorities.catalogRecord(id));
+        assertEquals(flushes, catalog.flushes, "唯讀查詢不寫出");
+        assertEquals(1, catalog.state.flushedRecords().size(), "未確認的配置不出現在查詢的依據裡");
+    }
+
+    /**
+     * F4a fix round 2（m-2，spec §6 收斂規則表、§8.3）：catalog 的 availability 變更沿用 catalog 的收斂簿記。
+     * <ul>
+     * <li>roll-forward（改為 DISABLED）的寫出失敗：current 保留 DISABLED 並維持 dirty，以權威為單位退避（退避期內的收斂不重寫），WARN 一則；退避期過後
+     *     checked 寫出 DISABLED，記 INFO「收斂完成」。</li>
+     * <li>restore（改回 EAGER_ENABLED）在 catalog 未確認時是 WAIT、不變更；atomic move 已完成、讀回失敗時 current 改回 DISABLED 並維持 dirty（磁碟上暫時是
+     *     EAGER_ENABLED），WARN 說明 restore；之後的寫出以 DISABLED 覆寫磁碟。</li>
+     * <li>已是目標 availability 時 FOUND、不寫出；變更成功是 APPENDED；current 沒有這筆是呼叫端錯誤。</li>
+     * </ul>
+     */
+    @Test void catalogAvailabilityChangeRollsForwardOrRestoresWithTheCatalogBookkeeping() throws Exception {
+        var save = save("catalog-availability");
+        var authorities = initialized(save);
+        var catalog = catalog(save);
+        var id = UniverseAllocationLedger.deriveUniverseId(token(65));
+        assertEquals(Lookup.Status.APPENDED, authorities.allocateOrVerifyCatalog(id, EAGER_ONLY).status());
+        var rollForward = CollapseAuthorities.WriteDirection.ROLL_FORWARD;
+        var restore = CollapseAuthorities.WriteDirection.RESTORE;
+        try (var logs = new CollapseLogCapture()) {
+            int flushes = catalog.flushes;
+            assertEquals(Lookup.Status.FOUND, authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, rollForward).status(),
+                    "已是 EAGER_ENABLED：不寫出");
+            assertEquals(flushes, catalog.flushes);
+            // roll-forward 的寫出失敗（atomic move 之前）。
+            catalog.failBeforeMove(1);
+            var disabled = authorities.changeCatalogAvailability(id, DesiredAvailability.DISABLED, rollForward);
+            assertEquals(Lookup.Status.WRITE_FAILED, disabled.status(), () -> disabled.toString());
+            assertEquals(Optional.of(SealedReason.ALLOCATION_IO_FAILED), disabled.sealedReason());
+            assertAll(
+                () -> assertEquals(DesiredAvailability.DISABLED, catalog.state.records().get(id).desiredAvailability(), "current 保留 DISABLED"),
+                () -> assertEquals(DesiredAvailability.EAGER_ENABLED, catalog.state.flushedRecords().get(id).desiredAvailability()),
+                () -> assertTrue(catalog.state.isDirty() && authorities.unconfirmed(Authority.CATALOG)));
+            // restore 在 catalog 未確認時不變更。
+            flushes = catalog.flushes;
+            var records = catalog.state.records();
+            assertWait(authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, restore));
+            assertEquals(records, catalog.state.records(), "WAIT 不變更 current");
+            now[0] += 1; authorities.convergeIfNeeded(Authority.CATALOG);
+            assertEquals(flushes, catalog.flushes, "退避期內的收斂不重寫");
+            now[0] += CollapseBackoff.INITIAL_TICKS; authorities.convergeIfNeeded(Authority.CATALOG);
+            assertEquals(flushes + 1, catalog.flushes, "退避期過後寫出一次");
+            assertEquals(DesiredAvailability.DISABLED, catalog.disk().records().get(id).desiredAvailability());
+            assertFalse(authorities.unconfirmed(Authority.CATALOG));
+            // restore 的寫出：atomic move 已完成、讀回失敗。
+            catalog.failAfterMove(1);
+            var reenabled = authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, restore);
+            assertEquals(Lookup.Status.WRITE_FAILED, reenabled.status(), () -> reenabled.toString());
+            assertAll(
+                () -> assertEquals(DesiredAvailability.DISABLED, catalog.state.records().get(id).desiredAvailability(), "current 改回 DISABLED（restore）"),
+                () -> assertEquals(DesiredAvailability.EAGER_ENABLED, catalog.disk().records().get(id).desiredAvailability(), "磁碟上暫時是新內容"),
+                () -> assertTrue(catalog.state.isDirty() && authorities.unconfirmed(Authority.CATALOG), "維持 dirty"));
+            now[0] += CollapseBackoff.INITIAL_TICKS * 2; authorities.convergeIfNeeded(Authority.CATALOG);
+            assertEquals(DesiredAvailability.DISABLED, catalog.disk().records().get(id).desiredAvailability(), "之後的寫出以 DISABLED 覆寫磁碟");
+            // 成功的變更。
+            var changed = authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, restore);
+            assertEquals(Lookup.Status.APPENDED, changed.status(), () -> changed.toString());
+            assertEquals(DesiredAvailability.EAGER_ENABLED, catalog.state.flushedRecords().get(id).desiredAvailability());
+            var warnings = logs.messages(Level.WARN);
+            assertEquals(2, warnings.size(), () -> "兩次寫出失敗各一則 WARN：" + warnings);
+            assertTrue(!warnings.get(0).contains("restore") && warnings.get(1).contains("restore"), () -> warnings.toString());
+            assertEquals(2, logs.messages(Level.INFO).stream().filter(message -> message.contains("CATALOG 收斂完成")).count(), () -> logs.messages(Level.INFO).toString());
+        }
+        assertThrows(IllegalArgumentException.class, () -> authorities.changeCatalogAvailability(UniverseAllocationLedger.deriveUniverseId(token(66)),
+                DesiredAvailability.DISABLED, rollForward), "current 沒有這筆是呼叫端錯誤");
+    }
+
     // ---- fixtures ----
 
     /** 新 key 直接寫 COMPLETE：閘門必須排在 caller 錯誤檢查之前，權威不可用時回失敗結果，不丟例外（F2b fix round 1 re-review Minor a）。 */
@@ -990,6 +1083,10 @@ class CollapseAuthoritiesTest {
             assertEquals(Optional.of(reason), authorities.appendDiscovery(existingUniverse(), 10, SELECTED_BY).sealedReason(), name);
             assertEquals(Optional.of(reason), authorities.discovery(existingUniverse()).sealedReason(), name);
             assertEquals(Optional.of(reason), authorities.allocateOrVerifyCatalog(existingUniverse(), EAGER_ONLY).sealedReason(), name);
+            // F4a fix round 2（m-2）：catalog 的唯讀查詢與 availability 變更也 fail closed。
+            assertEquals(Optional.of(reason), authorities.catalogRecord(existingUniverse()).sealedReason(), name);
+            assertEquals(Optional.of(reason), authorities.changeCatalogAvailability(existingUniverse(), DesiredAvailability.DISABLED,
+                    CollapseAuthorities.WriteDirection.ROLL_FORWARD).sealedReason(), name);
             assertEquals(0, catalog(save).flushes, name + "：不寫出 catalog");
             assertFalse(Files.exists(discoveryFile(save)), name + "：不建立 discovery");
             assertEquals(1, logs.messages(Level.ERROR).size(), name + "：初始化失敗記 ERROR");

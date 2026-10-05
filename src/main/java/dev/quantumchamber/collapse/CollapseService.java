@@ -119,7 +119,6 @@ public final class CollapseService {
     /** 還沒套用成功的原艙門（以 chamber 為 key）：終局之後的一般開門，或進入 SEALED 時的關門。 */
     private final Map<UUID, PendingDoor> doors = new LinkedHashMap<>();
     private String tickWarning, tickWarningText;
-    private DestinationResolver resolver;
     // 每個 tick 開頭取得；只在 server thread 使用。
     private SessionRecoveryState journal;
     private CorridorPageManager pages;
@@ -150,6 +149,8 @@ public final class CollapseService {
         ServerLifecycleEvents.SERVER_STARTED.register(CollapseService::onStarted);
         ServerTickEvents.END_SERVER_TICK.register(CollapseService::onEndTick);
         ServerLifecycleEvents.SERVER_STOPPED.register(INSTANCES::remove);
+        // 每個 server instance 一個 resolver（F4a fix round 2，m-1）：停服時移除，重開世界拿到新的 resolver（物化額度重置）。
+        ServerLifecycleEvents.SERVER_STOPPED.register(DestinationResolver::release);
     }
 
     private static void onStarted(MinecraftServer server) {
@@ -384,15 +385,13 @@ public final class CollapseService {
         }
     }
 
-    private DestinationResolver resolver() {
-        if (resolver == null) resolver = DestinationResolver.forServer(server);
-        return resolver;
-    }
-
-    /** §8 的 RESOLVE：目的地已確定之後只記在本 instance 的簿記（重啟之後 idempotent 重新確認）；等待不 SEALED；失敗進 SEALED。 */
+    /**
+     * §8 的 RESOLVE：目的地已確定之後只記在本 instance 的簿記（重啟之後 idempotent 重新確認）；等待不 SEALED；失敗進 SEALED。resolver 每次都經
+     * {@link DestinationResolver#forServer} 取得：每個 server instance 恰好一個，這裡不另外快取（F4a fix round 2，m-1）。
+     */
     private void resolve(SessionRecoveryRecord view, Track track) {
         var sid = view.sessionUuid();
-        var result = resolver().resolve(view);
+        var result = DestinationResolver.forServer(server).resolve(view);
         switch (result) {
             case ResolveResult.Wait wait -> waiting(view, track, wait.reason());
             case ResolveResult.Resolved resolved -> {

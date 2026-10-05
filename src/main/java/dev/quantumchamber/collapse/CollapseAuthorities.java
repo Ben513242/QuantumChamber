@@ -55,8 +55,10 @@ import org.slf4j.LoggerFactory;
  *     （只有 NEW／EXISTING 的 RESOLVE 會用到，那時 journal 已有 candidate evidence，M4 已建立 discovery）。寫入與 ledger 相同，失敗時 roll-forward：
  *     current 保留這次的 append，絕不移除可能已落地的 record，所以 M4 從磁碟讀到的候選池不會倒退。</li>
  * <li><b>catalog</b>（M3 的 PersistentState）：依原生 dirty 機制收斂（M3 的 save 失敗時保留 current 與 dirty，下一次寫出——重試或原生
- *     autosave——帶著它）。這裡不另存旗標，「未確認」直接由 catalog 推導：仍 dirty，或 current 不等於 flushed。本類別只負責阻擋新決策
- *     （未確認時配置回 {@code WAIT}，依 §6.2 不 SEALED）、退避重試寫出，不新增還原 API。</li>
+ *     autosave——帶著它）。這裡不另存旗標，「未確認」直接由 catalog 推導：仍 dirty，或 current 不等於 flushed。本類別負責阻擋新決策
+ *     （未確認時配置與唯讀查詢回 {@code WAIT}，依 §6.2 不 SEALED）、以權威為單位退避重試寫出，以及寫出失敗與收斂完成的 log。F4a 對 catalog 的
+ *     讀寫都經這裡（F4a fix round 2，m-2）：配置或驗證（{@link #allocateOrVerifyCatalog}）、唯讀查詢（{@link #catalogRecord}）與 §8.3 的
+ *     availability 變更（{@link #changeCatalogAvailability}，restore 方向在寫出失敗時把 current 改回變更前的內容）。</li>
  * </ul>
  * 兩個 ledger 與 discovery 都不是 PersistentState，原生 autosave 與停服不會寫它們；收斂完成之前 crash，重啟後讀到的舊內容或新內容都合法
  * （spec §6 的表）。
@@ -90,6 +92,22 @@ public final class CollapseAuthorities {
                 case DISABLED -> this == MATERIALIZE_RETRY;
             };
         }
+    }
+
+    /**
+     * {@link #changeCatalogAvailability} 寫出或讀回失敗時的收斂方向（spec §6 收斂規則表的兩個方向；F4a fix round 2，m-2）。
+     */
+    public enum WriteDirection {
+        /**
+         * roll-forward（§8.3 改為 {@code DISABLED}：新內容是較保守的一方）：current 保留這次的新 availability 並維持 dirty（M3 save 失敗時的語意），
+         * 之後的寫出（{@link #convergeIfNeeded} 的重試或原生 autosave）帶著它。
+         */
+        ROLL_FORWARD,
+        /**
+         * restore（§8.3 重試時改回 {@code EAGER_ENABLED}：之後的物化依賴它）：current 改回變更前的 availability（較保守的一方）並維持 dirty，下一次寫出
+         * 以它覆寫磁碟（含 atomic move 已完成、讀回失敗而磁碟已是新內容的情況）。
+         */
+        RESTORE
     }
 
     /**
@@ -169,12 +187,16 @@ public final class CollapseAuthorities {
         public enum Status {
             /**
              * 找到既有紀錄，而且已驗證：allocation、discovery、catalog 為 exact 等於（或正是）本 session 會寫出的內容；projection 為該
-             * (chamber, UniverseId) 的已確認 entry；discovery 的唯讀查詢為該 UniverseId 的 record（呼叫端自己判斷 gameplayEligible）。
+             * (chamber, UniverseId) 的已確認 entry；discovery 與 catalog 的唯讀查詢為該 UniverseId 的 record（呼叫端自己判斷 gameplayEligible 或
+             * availability）；catalog 的 availability 變更：已確認的這筆已是目標 availability，沒有寫出。
              */
             FOUND,
-            /** allocation、discovery：沒有紀錄，本次 checked 追加並讀回確認；catalog：本次配置並 checked 寫出、讀回確認。 */
+            /**
+             * allocation、discovery：沒有紀錄，本次 checked 追加並讀回確認；catalog：本次配置並 checked 寫出、讀回確認；catalog 的 availability
+             * 變更：本次變更並 checked 寫出、讀回確認。
+             */
             APPENDED,
-            /** projection、discovery 的唯讀查詢：已確認的內容沒有這個 key。 */
+            /** projection、discovery 與 catalog 的唯讀查詢：已確認的內容沒有這個 key。 */
             ABSENT,
             /**
              * 權威有尚未確認的 roll-forward 寫入：不做新決策，先 {@link CollapseAuthorities#convergeIfNeeded}。ledger 的查詢與寫入、discovery 的
@@ -183,9 +205,11 @@ public final class CollapseAuthorities {
             UNCONFIRMED,
             /**
              * 權威有未確認的寫入，但這個呼叫依 spec <b>不得 SEALED</b>：下一個 tick 再試，或先 {@link CollapseAuthorities#convergeIfNeeded}。
-             * 只有兩處會回：catalog 的配置（{@link CollapseAuthorities#allocateOrVerifyCatalog}，§6.2：仍 dirty 或 current 不等於 flushed；
-             * catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗），以及 discovery 的唯讀查詢（{@link CollapseAuthorities#discovery}，
-             * §6 收斂共通第 2 點：EXISTING 重驗不做新決策，只等收斂）。不帶 SEALED 原因，也不帶 failure；{@link Lookup#succeeded()} 為 false。
+             * 只有這幾處會回：catalog 的配置（{@link CollapseAuthorities#allocateOrVerifyCatalog}，§6.2：仍 dirty 或 current 不等於 flushed；
+             * catalog 是共用權威，dirty 可能來自別的 session 的寫入失敗）、discovery 與 catalog 的唯讀查詢（{@link CollapseAuthorities#discovery}、
+             * {@link CollapseAuthorities#catalogRecord}，§6 收斂共通第 2 點：EXISTING 重驗不做新決策，只等收斂），以及 restore 方向的 catalog
+             * availability 變更（{@link CollapseAuthorities#changeCatalogAvailability}：之後的物化依賴它，是新決策）。不帶 SEALED 原因，也不帶
+             * failure；{@link Lookup#succeeded()} 為 false。
              */
             WAIT,
             /** 本次的 checked 寫入或讀回失敗：current 保留它，權威標為未確認。 */
@@ -266,7 +290,7 @@ public final class CollapseAuthorities {
                 case CORRUPT -> Status.CORRUPT;
                 case UNREADABLE -> Status.UNREADABLE;
                 case FOUND, APPENDED, ABSENT -> throw new IllegalArgumentException("成功的查詢不是寫入失敗");
-                case WAIT -> throw new IllegalArgumentException("WAIT 只屬於 catalog 的配置與 discovery 的唯讀查詢，不是 projection 的寫入結果");
+                case WAIT -> throw new IllegalArgumentException("WAIT 只屬於 catalog 與 discovery 的查詢、catalog 的配置與變更，不是 projection 的寫入結果");
             };
             return new WriteResult(status, Optional.empty(), gate.sealedReason(), gate.failure());
         }
@@ -602,18 +626,10 @@ public final class CollapseAuthorities {
     public Lookup<UniverseRecord> allocateOrVerifyCatalog(UniverseId universeId, AvailabilityPolicy availability) {
         requireThread();
         Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");
-        Lookup<UniverseRecord> initialization = initializationGate();
-        if (initialization != null) return initialization;
+        Lookup<UniverseRecord> gate = catalogGate("不配置");
+        if (gate != null) return gate;
         var state = catalog.catalog();
-        Map<UniverseId, UniverseRecord> flushed;
-        try {
-            state.requireHealthy();
-            flushed = state.flushedRecords();
-        } catch (IllegalStateException unhealthy) {
-            return corrupt(new IllegalStateException("catalog 不健康，不配置", unhealthy));
-        }
-        if (catalogUnconfirmed(state)) return Lookup.waiting();
-        catalogConfirmed();
+        Map<UniverseId, UniverseRecord> flushed = state.flushedRecords();
         var existing = flushed.get(universeId);
         if (existing != null) {
             if (catalogRecordMatches(existing, universeId, availability)) return Lookup.found(existing);
@@ -638,6 +654,74 @@ public final class CollapseAuthorities {
         }
         Lookup<UniverseRecord> written = flushCatalog(state);
         return written == null ? Lookup.appended(allocated) : written;
+    }
+
+    /**
+     * 唯讀的 catalog 查詢（spec §8.1 EXISTING 重驗用；F4a fix round 2，m-2，與 {@link #discovery} 同一個風格）：回 flushed catalog 的這筆
+     * （{@code FOUND}，是否符合 availability 與 descriptor 由呼叫端以 {@link #catalogRecordMatches} 判斷）或 {@code ABSENT}。不配置、不寫出、不讀磁碟。
+     * <ul>
+     * <li>M5 初始化失敗 → 初始化的失敗結果；catalog 不健康 → {@code CORRUPT}。</li>
+     * <li>catalog 有未確認的寫入（{@link #unconfirmed}）→ {@code WAIT}：未確認期間不做新決策（§6 收斂共通第 2 點），呼叫端等下一個 tick 或先
+     *     {@link #convergeIfNeeded}，不判 {@code EXISTING_INELIGIBLE}，也不 SEALED。</li>
+     * <li>已確認時與 {@link #allocateOrVerifyCatalog} 相同，清除 catalog 的退避與 WARN 去重（本 instance 曾寫出失敗時記 INFO「收斂完成」）。</li>
+     * </ul>
+     */
+    public Lookup<UniverseRecord> catalogRecord(UniverseId universeId) {
+        requireThread();
+        Objects.requireNonNull(universeId, "universeId");
+        Lookup<UniverseRecord> gate = catalogGate("不查詢");
+        if (gate != null) return gate;
+        var record = catalog.catalog().flushedRecords().get(universeId);
+        return record == null ? Lookup.absent() : Lookup.found(record);
+    }
+
+    /**
+     * checked 變更一筆 catalog record 的 availability（spec §8.3；F4a fix round 2，m-2），沿用 catalog 的收斂簿記：寫出並讀回確認時清除退避與 WARN
+     * 去重（本 instance 曾寫出失敗時記 INFO「收斂完成」），回 {@code APPENDED}；寫出或讀回失敗時以權威為單位退避（之後的 {@link #convergeIfNeeded}
+     * 在退避期內不重寫）、同一原因只記一次 WARN，回 {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}（SEALED 的原因由呼叫端決定，§8.3 一律是
+     * {@code MATERIALIZE_FAILED}）。失敗時 current 依 {@code direction}（spec §6 收斂規則表）：
+     * <ul>
+     * <li>{@link WriteDirection#ROLL_FORWARD}：保留新的 availability 並維持 dirty。不看 catalog 是否已確認：較保守的新內容必須立刻記下（§8.3「避免下次
+     *     開服時 bootstrap 因這筆失敗而停服」），這次寫出本身也帶出 current 中其他尚未確認的寫入（與之後的任何寫出相同）。</li>
+     * <li>{@link WriteDirection#RESTORE}：改回變更前的 availability 並維持 dirty，下一次寫出以它覆寫磁碟。之後的物化依賴這次變更，是新決策：catalog
+     *     有未確認的寫入時回 {@code WAIT}、不變更（§6 收斂共通第 2 點）。</li>
+     * </ul>
+     * 其餘：M5 初始化失敗 → 初始化的失敗結果；catalog 不健康 → {@code CORRUPT}；catalog 已確認、這筆已是 {@code availability} → {@code FOUND}，不寫出。
+     * 呼叫前提（違反時丟 {@link IllegalArgumentException}，不是結果狀態）：catalog 的 current 有這筆 record。
+     */
+    public Lookup<UniverseRecord> changeCatalogAvailability(UniverseId universeId, DesiredAvailability availability, WriteDirection direction) {
+        requireThread();
+        Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");
+        Objects.requireNonNull(direction, "direction");
+        Lookup<UniverseRecord> initialization = initializationGate();
+        if (initialization != null) return initialization;
+        var state = catalog.catalog();
+        UniverseRecord previous;
+        try {
+            state.requireHealthy();
+            previous = state.records().get(universeId);
+        } catch (IllegalStateException unhealthy) {
+            return corrupt(new IllegalStateException("catalog 不健康，不變更 availability", unhealthy));
+        }
+        if (previous == null) throw new IllegalArgumentException("catalog 沒有這筆 record，不能變更 availability：" + universeId.value());
+        boolean unconfirmed = catalogUnconfirmed(state);
+        if (direction == WriteDirection.RESTORE && unconfirmed) return Lookup.waiting();
+        if (!unconfirmed) {
+            catalogConfirmed();
+            if (previous.desiredAvailability() == availability) return Lookup.found(previous);
+        }
+        UniverseRecord changed;
+        try {
+            changed = state.changeAvailability(universeId, availability);
+        } catch (RuntimeException failure) {
+            return corrupt(new IllegalStateException("catalog 的 availability 變更失敗", failure));
+        }
+        Runnable restore = direction == WriteDirection.RESTORE ? () -> {
+            state.changeAvailability(universeId, previous.desiredAvailability());
+            if (!state.isDirty()) state.markDirty();
+        } : null;
+        Lookup<UniverseRecord> written = flushCatalog(state, restore);
+        return written == null ? Lookup.appended(changed) : written;
     }
 
     /**
@@ -774,10 +858,34 @@ public final class CollapseAuthorities {
     }
 
     /**
-     * catalog 的 checked 寫出。成功（之後 catalog 不再未確認）回 null；失敗時依 spec §6 的 roll-forward：M3 的 save 已保留 current 與 dirty
-     * （{@code UniverseRegistryState.save}），這裡只記退避與 WARN（同一原因一次），回 {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}。
+     * catalog 的配置與唯讀查詢共用的閘門（fail closed）：M5 初始化失敗 → 初始化的失敗結果；catalog 不健康 → {@code CORRUPT}（訊息帶
+     * {@code refusal}）；有未確認的寫入 → {@code WAIT}，不做新決策。可以使用時以 {@link #catalogConfirmed()} 清除收斂簿記，回 null。
      */
+    private <T> Lookup<T> catalogGate(String refusal) {
+        Lookup<T> initialization = initializationGate();
+        if (initialization != null) return initialization;
+        var state = catalog.catalog();
+        try {
+            state.requireHealthy();
+        } catch (IllegalStateException unhealthy) {
+            return corrupt(new IllegalStateException("catalog 不健康，" + refusal, unhealthy));
+        }
+        if (catalogUnconfirmed(state)) return Lookup.waiting();
+        catalogConfirmed();
+        return null;
+    }
+
+    /** {@link #flushCatalog(UniverseRegistryState, Runnable)}，roll-forward（失敗時 current 保留）。 */
     private <T> Lookup<T> flushCatalog(UniverseRegistryState state) {
+        return flushCatalog(state, null);
+    }
+
+    /**
+     * catalog 的 checked 寫出。成功（之後 catalog 不再未確認）回 null；失敗時回 {@code WRITE_FAILED}／{@code ALLOCATION_IO_FAILED}，並記以權威為單位的
+     * 退避與 WARN（同一原因一次）。{@code restore} 為 null 時是 spec §6 的 roll-forward：M3 的 save 已保留 current 與 dirty
+     * （{@code UniverseRegistryState.save}），這裡不改 current；不為 null 時是 restore：先執行它（把 current 改回變更前的內容並維持 dirty），WARN 的字句也說明。
+     */
+    private <T> Lookup<T> flushCatalog(UniverseRegistryState state, Runnable restore) {
         RuntimeException failure = null;
         try {
             catalog.flush(state);
@@ -789,13 +897,19 @@ public final class CollapseAuthorities {
             return null;
         }
         if (failure == null) failure = new IllegalStateException("CATALOG 寫出之後仍有未確認的寫入");
+        if (restore != null) restore.run();
         catalogWriteFailed = true;
         catalogBackoff.failed(ticks.getAsInt());
         var key = FailureText.dedupeKey(failure);
         if (!key.equals(catalogWarned)) {
             catalogWarned = key;
-            LOGGER.warn(CollapseService.TICK_LOG_MARKER, "M5 CATALOG 的 checked 寫出未確認：current 保留並維持 dirty，{} ticks 後才重試收斂（或由原生 autosave 寫出）：{}",
-                    catalogBackoff.delayTicks(), FailureText.describe(failure), failure);
+            if (restore == null) {
+                LOGGER.warn(CollapseService.TICK_LOG_MARKER, "M5 CATALOG 的 checked 寫出未確認：current 保留並維持 dirty，{} ticks 後才重試收斂（或由原生 autosave 寫出）：{}",
+                        catalogBackoff.delayTicks(), FailureText.describe(failure), failure);
+            } else {
+                LOGGER.warn(CollapseService.TICK_LOG_MARKER, "M5 CATALOG 的 checked 寫出未確認：current 已改回變更前的內容（restore）並維持 dirty，{} ticks 後才重試收斂"
+                        + "（或由原生 autosave 寫出）：{}", catalogBackoff.delayTicks(), FailureText.describe(failure), failure);
+            }
         }
         return Lookup.failed(Lookup.Status.WRITE_FAILED, SealedReason.ALLOCATION_IO_FAILED, failure);
     }

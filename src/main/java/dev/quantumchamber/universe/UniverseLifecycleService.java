@@ -208,6 +208,17 @@ public final class UniverseLifecycleService {
         return descriptor == null ? Optional.empty() : context.backend.resolveActive(server, descriptor);
     }
 
+    /**
+     * spec §6.3（M5 F4a fix round 2，m-4）：本 server instance 的 lifecycle 有 ready 的 context（bootstrap 成功、還沒開始停服）。沒有時
+     * {@link #materializeAllocated} 回 {@code NOT_READY}、{@link #resolveActive} 為空；需要分辨「lifecycle 沒有 ready 的 context」與「world 不是 ACTIVE」的
+     * 呼叫端（EXISTING 重驗）先查這裡。只能在 server thread 呼叫；不記 log。
+     */
+    public static boolean ready(MinecraftServer server) {
+        requireServerThread(server);
+        var context = CONTEXTS.get(server);
+        return context != null && context.ready;
+    }
+
     private static void requireServerThread(MinecraftServer server) {
         if (!Objects.requireNonNull(server, "server").isOnThread()) {
             throw new IllegalStateException("Universe lifecycle 的 runtime API 必須在伺服器執行緒操作");

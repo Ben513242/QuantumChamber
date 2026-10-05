@@ -16,6 +16,8 @@ import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.collapse.CollapseService;
+import dev.quantumchamber.collapse.DestinationResolver;
+import dev.quantumchamber.collapse.ResolveResult;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.gametest.M5GameTestSupport.DormantOrigin;
@@ -409,6 +411,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * P 收到「量子通道無法開啟，已封存。」；記一則「只在重啟之後重試」的 WARN、沒有 ERROR。per-session 退避期過後 P 再次由艙外進入也不重試
      * （restart-only，同一個 server instance 內不重試）。lifecycle 對同一個 descriptor 直接拒絕：暫時把 catalog 改回 EAGER_ENABLED 越過前提，
      * {@code materializeAllocated} 回 {@code FAILED_BEFORE}、不再呼叫 backend，之後改回 DISABLED。catalog 增量 1（DISABLED）。重啟之後的重試屬 F6。
+     * F4a fix round 2（m-1）：封存之後再以 {@code DestinationResolver.forServer} 取 resolver，拿到同一個，而且看得到本 instance 已用掉的物化額度。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_materialize_failed", tickLimit = 600)
     public void materialize_failure_disables_the_record_and_seals_until_a_restart(TestContext context) {
@@ -445,6 +448,16 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("backendCalledOnce", fault.calls() == 1);
                 witness.put("noDiscovery", CollapseAuthorities.get(server).discovery(id).status() == CollapseAuthorities.Lookup.Status.ABSENT);
                 witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
+                // F4a fix round 2（m-1）：每個 server instance 恰好一個 resolver（一份物化額度），不依賴 CollapseService 的快取。再取一次拿到同一個；以只在
+                // 記憶體的 COLLAPSING view（不寫 journal）再解析一次：本 instance 已用掉這個宇宙的物化額度，直接 MATERIALIZE_FAILED，不改回 EAGER_ENABLED、不再物化。
+                var resolver = DestinationResolver.forServer(server);
+                witness.put("oneResolverPerServer", resolver == DestinationResolver.forServer(server));
+                var sealedRecord = journal.flushedRecords().get(sid);
+                var again = sealedRecord == null || sealedRecord.state() != SessionState.SEALED ? null
+                        : resolver.resolve(sealedRecord.withCollapse(SessionState.COLLAPSING, sealedRecord.collapse().retry()));
+                witness.put("anotherLookupSeesTheSpentQuota", again instanceof ResolveResult.Sealed spent && spent.reason() == SealedReason.MATERIALIZE_FAILED
+                        && spent.failure().getMessage().contains("已用掉") && fault.calls() == 1
+                        && UniverseRegistryState.get(server).flushedRecords().get(id).desiredAvailability() == DesiredAvailability.DISABLED);
                 witness.put("doorClosedOnSeal", doorAll(world, frame, false, MembraneState.NONE));
                 witness.put("sealedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(SEALED_KEY));
                 witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid));
