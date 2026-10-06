@@ -80,14 +80,48 @@ class CollapseServiceTest {
                 new Row("SOURCE 閘門不成立", cleared(returned(source, A, B)), true, false, false, CollapsePhase.WAITING, true));
         for (var row : rows) cases.add(() -> {
             gateCalls.set(0);
-            assertEquals(row.expected(), CollapsePhase.derive(row.view(), row.releaseComplete(), row.resolved(), row.gateOpen() ? open : shut), row.label());
+            assertEquals(row.expected(), CollapsePhase.derive(row.view(), row.releaseComplete(), row.resolved(), false, row.gateOpen() ? open : shut).phase(),
+                    row.label());
             assertEquals(row.gateConsulted() ? 1 : 0, gateCalls.get(), "閘門只在前面的條件都成立時才評估（評估會消耗邊緣觸發）：" + row.label());
         });
-        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(measured(DimensionRole.OVERWORLD, NEW), true, true, open),
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(measured(DimensionRole.OVERWORLD, NEW), true, true, false, open),
                 "MEASURED 沒有塌縮的推導階段"));
         var sealed = cleared(returned(universe, A, B)).withCollapse(SessionState.SEALED,
                 cleared(returned(universe, A, B)).collapse().sealed(SealedReason.PROJECTION_FAILED));
-        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(sealed, true, true, open), "SEALED 沒有推導階段"));
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(sealed, true, true, false, open), "SEALED 沒有推導階段"));
+        assertAll(cases);
+    }
+
+    /**
+     * F4b-2（spec §7.3；F3d quality m-6(b)）：推導回傳相對於上一個 tick 的 PREPARE 轉換，呼叫端在轉換點做事（離開 PREPARE 時釋放目的世界的 ticket），
+     * 不靠閘門的副作用。上一個 tick 在 PREPARE、這個 tick 閘門不成立 → 離開（退回 WAITING）；推導回到 PREPARE 之前的階段也是離開，而且不評估閘門。
+     */
+    @Test void collapsePhaseReportsThePrepareTransition() {
+        var settled = cleared(returned(collapsing(measured(DimensionRole.OVERWORLD, NEW), new CollapseDestination.Universe(EXISTING_ID)), A, B));
+        var gateCalls = new AtomicInteger();
+        java.util.function.BooleanSupplier open = () -> { gateCalls.incrementAndGet(); return true; };
+        java.util.function.BooleanSupplier shut = () -> { gateCalls.incrementAndGet(); return false; };
+        record Row(String label, SessionRecoveryRecord view, boolean resolved, boolean preparing, boolean gateOpen, CollapsePhase phase,
+                CollapsePhase.Transition transition, boolean gateConsulted) {}
+        var rows = List.of(
+                new Row("WAITING 時閘門成立：進入", settled, true, false, true, CollapsePhase.PREPARE, CollapsePhase.Transition.ENTER_PREPARE, true),
+                new Row("PREPARE 中閘門仍成立：沒有轉換", settled, true, true, true, CollapsePhase.PREPARE, CollapsePhase.Transition.NONE, true),
+                new Row("PREPARE 中閘門失效：離開，退回 WAITING", settled, true, true, false, CollapsePhase.WAITING, CollapsePhase.Transition.LEAVE_PREPARE, true),
+                new Row("WAITING 時閘門不成立：沒有轉換", settled, true, false, false, CollapsePhase.WAITING, CollapsePhase.Transition.NONE, true),
+                new Row("PREPARE 中目的地不再確定：離開，不評估閘門", settled, false, true, true, CollapsePhase.RESOLVE, CollapsePhase.Transition.LEAVE_PREPARE, false),
+                new Row("PREPARE 中有人未返還（不會發生，仍要離開）", collapsing(measured(DimensionRole.OVERWORLD, NEW),
+                        new CollapseDestination.Universe(EXISTING_ID)), true, true, true, CollapsePhase.RETURN_PLAYERS, CollapsePhase.Transition.LEAVE_PREPARE, false));
+        var cases = new ArrayList<Executable>();
+        for (var row : rows) cases.add(() -> {
+            gateCalls.set(0);
+            var derived = CollapsePhase.derive(row.view(), true, row.resolved(), row.preparing(), row.gateOpen() ? open : shut);
+            assertEquals(new CollapsePhase.Derivation(row.phase(), row.transition()), derived, row.label());
+            assertEquals(row.gateConsulted() ? 1 : 0, gateCalls.get(), "閘門的評估次數：" + row.label());
+        });
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> new CollapsePhase.Derivation(CollapsePhase.WAITING, CollapsePhase.Transition.ENTER_PREPARE),
+                "進入 PREPARE 的階段必須是 PREPARE"));
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> new CollapsePhase.Derivation(CollapsePhase.PREPARE, CollapsePhase.Transition.LEAVE_PREPARE),
+                "離開 PREPARE 的階段不可能是 PREPARE"));
         assertAll(cases);
     }
 

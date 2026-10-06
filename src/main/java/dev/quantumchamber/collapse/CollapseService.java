@@ -374,9 +374,10 @@ public final class CollapseService {
         }
         boolean universe = view.collapse().destination() instanceof CollapseDestination.Universe;
         // UNIVERSE 的 PREPARE 屬 F4b：目的地確定之後停在 WAITING，不評估閘門（不消耗邊緣觸發）。
-        var phase = CollapsePhase.derive(view, pages.measuredRecoveryComplete(sid), track.resolved,
+        var derived = CollapsePhase.derive(view, pages.measuredRecoveryComplete(sid), track.resolved, track.preparing,
                 universe ? () -> false : () -> gate(view, track));
-        switch (phase) {
+        track.preparing = derived.phase() == CollapsePhase.PREPARE;
+        switch (derived.phase()) {
             // recovery 與走廊清理依收據推進（F3a）；這裡不重複驅動。
             case RETURN_PLAYERS, RELEASE_GEOMETRY -> { }
             case RESOLVE -> resolve(view, track);
@@ -549,16 +550,13 @@ public final class CollapseService {
     }
 
     /**
-     * §7.3 的 PREPARE 閘門：來源艙已載入、結構合法、已供電、Origin enabled，而且有原參與者在艙內。本 server instance 第一次看到這個 session
+     * §7.3 的 PREPARE 閘門在這個 tick 是否成立（{@link CollapsePhase#derive} 的 {@code gate}；轉換由推導結果回傳，這裡不改 {@code track.preparing}，
+     * F4b-2，F3d quality m-6(b)）：來源艙已載入、結構合法、已供電、Origin enabled，而且有原參與者在艙內。本 server instance 第一次看到這個 session
      * 走到閘門階段時立即評估（live 塌縮返還之後通常立即成立；開服之後就是「第一次觀察」）；不成立就停在 WAITING，之後只在 §7.1 的邊緣觸發
-     * （原參與者由艙外進入艙內）時再評估。進入 PREPARE 之後參與者在艙內不是持續條件；之後若來源艙的條件不再成立，退回 WAITING。
+     * （原參與者由艙外進入艙內）時再評估。進入 PREPARE 之後參與者在艙內不是持續條件：上一個 tick 在 PREPARE 時只看來源艙的條件，不成立就退回 WAITING。
      */
     private boolean gate(SessionRecoveryRecord view, Track track) {
-        if (track.preparing) {
-            if (chamberGate(view)) return true;
-            track.preparing = false;
-            return false;
-        }
+        if (track.preparing) return chamberGate(view);
         var insideNow = inside(view);
         List<UUID> candidates;
         if (!track.gateEvaluated) {
@@ -568,9 +566,7 @@ public final class CollapseService {
         } else {
             candidates = track.entry(false).observe(insideNow);
         }
-        if (candidates.stream().noneMatch(this::triggerReady) || !chamberGate(view)) return false;
-        track.preparing = true;
-        return true;
+        return candidates.stream().anyMatch(this::triggerReady) && chamberGate(view);
     }
 
     /** §7.4：先 checked 終局、再把門改為一般開門、再顯示訊息。不配置宇宙、不跨世界傳送、不寫 discovery。 */
