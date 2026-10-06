@@ -248,6 +248,8 @@ public final class CollapseService {
      */
     private void step(SessionRecoveryRecord record) {
         var sid = record.sessionUuid();
+        // 隔離中（H3 的收斂）不推進，也不釋放目的世界的 ticket（F4b-2 fix round 1，quality Q-M4 的判斷）：隔離是暫時的，解除之後依原進度續做；準備完成之後的
+        // tick 不會重新加 ticket，釋放了就要另外補回。
         if (pages.operationInProgress(sid) || journal.quarantinedSessions().contains(sid)) return;
         switch (record.state()) {
             case MEASURED -> measured(record);
@@ -468,8 +470,9 @@ public final class CollapseService {
      * 離開 PREPARE（§7.3「PREPARE 進行到一半時閘門不再成立」）：釋放目的世界的 ticket，退回 WAITING。已完成的 RESOLVE（{@code track.resolved}）與已寫入的
      * projection ledger 都保留；這一段準備的記憶體內進度丟棄，閘門再次成立時依 §7.1 的邊緣觸發，從 collapse view 與權威重新推導（PENDING 照第一次寫入、
      * COMPLETE 只修復）。PREPARE 期間閘門不看邊緣、不更新邊緣觸發的快照，所以這裡以目前在艙內的原參與者重新記下快照（F4b-2 fix round 1，quality Q-M2）：
-     * PREPARE 期間進艙的人不算之後的邊緣，沒有人移動時不會回到 PREPARE。目的世界不是 ACTIVE 時（不應發生）推導回到 RESOLVE，也經過這裡。F4b-3：這裡也是把門由
-     * sealed 量子膜改回一般開門的轉換點（本 task 不套用量子膜，門一直是一般狀態）。
+     * PREPARE 期間進艙的人不算之後的邊緣，沒有人移動時不會回到 PREPARE。目的世界不是 ACTIVE 時（不應發生）推導回到 RESOLVE，也經過這裡；RESOLVE 重新確認之後
+     * 與閘門失效相同，依邊緣觸發續做（F4b-2 fix round 1，quality Q-M3）。F4b-3：這裡也是把門由 sealed 量子膜改回一般開門的轉換點（本 task 不套用量子膜，門一直是
+     * 一般狀態）。
      */
     private void leavePrepare(SessionRecoveryRecord view, Track track, CollapsePhase phase) {
         track.prepare = null;
@@ -491,6 +494,8 @@ public final class CollapseService {
      * 等待（預載、玩家擋住寫入、checkpoint 未就緒）從進入 PREPARE 起超過 {@value #WAIT_WARN_TICKS} ticks 時記一次 WARN，然後繼續等（§9.1：沒有劇情上的
      * 逾時、不重抽）。準備完成之後停在 F5 之前（{@link #prepared}），之後的 tick 什麼都不做，目的世界的 ticket 繼續持有。
      * <p>F4b-3：每個 PREPARE 的 tick 在這裡判斷「套用量子膜的條件」（§7.3）；本 task 不套用量子膜，門維持一般開門、開關門照舊交給 {@code ChamberDoorService}。
+     * 判斷必須插在 {@code if (progress.ready) return;} 之前（F4b-2 fix round 1，quality Q-M4）：準備完成之後的 tick 在那裡就 return，門的狀態仍要每個 tick
+     * 維持。
      */
     private void prepareUniverse(SessionRecoveryRecord view, Track track) {
         var progress = track.prepare != null ? track.prepare : (track.prepare = new Prepare(now));
@@ -499,10 +504,11 @@ public final class CollapseService {
         var world = UniverseLifecycleService.resolveActive(server, id).orElse(null);
         if (world == null) {
             // RESOLVE 已確認 ACTIVE world，動態世界在執行期間不卸載；不成立時 fail closed：下一個 tick 推導回到 RESOLVE（離開 PREPARE、釋放 ticket），
-            // 由它 idempotent 地重新確認（不換宇宙）。
+            // 由它 idempotent 地重新確認（不換宇宙）。之後與閘門失效相同，依 §7.1 的邊緣觸發續做（F4b-2 fix round 1，quality Q-M3：§7.3「閘門再次成立時，
+            // 依 §7.1 的邊緣觸發續做」；不改成自動續做，見 note）。
             track.resolved = false;
-            LOGGER.warn(LOG_MARKER, "PREPARE 的目的世界不是 ACTIVE（不應發生），回到 RESOLVE 重新確認：session={} chamber={} 目的地={}", view.sessionUuid(),
-                    view.chamberUuid(), describe(view.collapse().destination()));
+            LOGGER.warn(LOG_MARKER, "PREPARE 的目的世界不是 ACTIVE（不應發生），回到 RESOLVE 重新確認；之後與閘門失效相同，依原參與者由艙外進入的邊緣觸發續做："
+                    + "session={} chamber={} 目的地={}", view.sessionUuid(), view.chamberUuid(), describe(view.collapse().destination()));
             return;
         }
         var frame = new ChamberFrame(view.origin().controllerPos(), view.origin().facing());
@@ -804,7 +810,11 @@ public final class CollapseService {
      * 進入 SEALED（§11.2）。journal 以 roll-forward 寫入 SEALED(reason)（current＝flushed 已在呼叫前確認）。寫出未確認時，依 collapse view
      * SEALED 照樣生效，重試交給 recovery 的 RETRY_FLUSH（F3d 的 A2）；寫入在前置檢查就被拒時（journal 沒有改變），依 per-session 退避只重試這筆
      * 寫入（{@link Track#sealRejected}）。之後依序：門改為關閉（門口有 entity 時改為一般開門，§7.3）→ 對參與者顯示訊息（§10.8）→ 刷新 Controller
-     * （§10.7）→ 釋放來源 ticket（§5）→ 依原因記 WARN（可重試）或 ERROR（永久，需要管理員處理），依 (session, 原因, dedupeKey) 去重。
+     * （§10.7）→ 釋放來源 ticket（§5）與目的世界的 ticket（§9.1）→ 依原因記 WARN（可重試）或 ERROR（永久，需要管理員處理），依 (session, 原因, dedupeKey)
+     * 去重。
+     * <p>被拒時不釋放目的世界的 ticket（F4b-2 fix round 1，quality Q-M4 的判斷）：journal 沒有改變，record 仍是 COLLAPSING，之後只重試這筆寫入（不推導階段），
+     * 寫入成功時才在這裡釋放；session 離開 journal 時由 {@link #releaseTerminatedDestinations} 釋放。PREPARE 中的被拒只有前置檢查的拒絕（呼叫前已確認
+     * current＝flushed＝view），沒有可以在 GameTest 造出的路徑，提早釋放無法驗證；交給 F4b-3（note「交給後續」）。
      */
     private void seal(SessionRecoveryRecord view, Track track, SealedReason reason, RuntimeException cause) {
         var sid = view.sessionUuid();
