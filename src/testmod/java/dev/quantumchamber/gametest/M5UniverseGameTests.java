@@ -1889,6 +1889,60 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F4b-2（spec §9.2 的失敗、§11.2 的重試、§6.5；plan Step 1 第 7 組「注入寫入失敗 → PROJECTION_FAILED → 邊緣觸發＋退避重試成功」與第 3 組「有 PENDING 時照第一次
+     * 寫入」）：第一次寫入真的寫完之後，testmod 的 {@code ProjectionWriteFaultMixin} 把結果換成 WRITE_FAILED（模擬寫入途中丟出例外，方塊可能已寫了一部分）→
+     * SEALED(PROJECTION_FAILED)（可重試的 WARN 一則，cause 是注入的例外）。ledger 留著 PENDING，目的地已有投影的 Controller；兩種 ticket 都已釋放。退避期內 P 再次
+     * 由艙外進入不重試；per-session 退避（200 tick）之後再進入 → SEALED→COLLAPSING → RESOLVE（idempotent：allocation entry 仍是一筆）→ PREPARE：已有 PENDING，不做
+     * §6.5 的交叉檢查（自己寫了一部分的 Controller 不是衝突），照第一次寫入重寫 → checkpoint → COMPLETE → 準備完成。catalog 增量 1（沒有第二個宇宙）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_write_fault", tickLimit = 1200)
+    public void projection_write_failure_seals_then_retries_after_the_backoff_over_its_own_pending(TestContext context) {
+        begin(context, "projection_write_failure_seals_then_retries_after_the_backoff_over_its_own_pending");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var authorities = CollapseAuthorities.get(server);
+            var fault = M5GameTestSupport.installProjectionWriteFault(context, universe.getRegistryKey(), ProjectionWriter.Mode.FIRST_WRITE, 1, hooks);
+            whenTicks(context, resolved + 1, 400, () -> sealedWith(journal, sid, SealedReason.PROJECTION_FAILED), sealed -> {
+                witness.put("writeFaultedOnce", fault.hits() == 1);
+                witness.put("pendingKept", authorities.projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent());
+                witness.put("controllerWrittenBeforeTheFault", universe.getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER));
+                witness.put("oneRetryableWarnWithTheInjectedCause", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "SEALED(PROJECTION_FAILED)",
+                        "受控：投影寫入失敗", sid.toString()).size() == 1 && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                witness.put("ticketsReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                moveOutside(p, frame);
+                // 退避期內的邊緣觸發：不重試。
+                at(context, sealed + 2, hooks, () -> moveInside(p, frame));
+                at(context, sealed + 5, hooks, () -> {
+                    witness.put("noRetryWithinTheBackoff", sealedWith(journal, sid, SealedReason.PROJECTION_FAILED)
+                            && capture.matching(Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
+                    moveOutside(p, frame);
+                });
+                // 封存在 sealed-1 的 END_SERVER_TICK；per-session 退避 200 tick 之後再由艙外進入，留 5 tick 餘裕。
+                at(context, sealed + 205, hooks, () -> moveInside(p, frame));
+                whenTicks(context, sealed + 206, 400, () -> !prepared(capture, sid).isEmpty(), ready -> {
+                    witness.put("retriedOnce", capture.matching(Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
+                    witness.put("rewroteOverItsOwnPending", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty()
+                            && authorities.projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent()
+                            && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                    witness.put("oneUniverse", allocationEntries(server, id) == 1 && capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 2);
+                    witness.put("faultNotHitAgain", fault.hits() == 1);
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "投影寫入失敗之後的重試：" + witness);
+                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                }, () -> "退避之後的重試沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "沒有進 SEALED(PROJECTION_FAILED)：record=" + M5GameTestSupport.state(journal, sid) + " hits=" + fault.hits(), hooks);
+        });
+    }
+
     /** 投影的不變量 cell 中已經是 spec 目標的格與方塊狀態（診斷用）。 */
     private static List<String> matchedShellCells(ServerWorld world, ChamberFrame frame) {
         var result = new ArrayList<String>();

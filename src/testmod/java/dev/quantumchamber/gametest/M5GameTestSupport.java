@@ -166,6 +166,17 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F4b-2：投影寫入失敗（{@link M5TestHooks#PROJECTION_WRITE_FAULT}）：{@code world} 以 {@code mode} 寫完的前 {@code failures} 次，結果換成 WRITE_FAILED；
+     * 安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.ProjectionWriteFault installProjectionWriteFault(TestContext context, net.minecraft.registry.RegistryKey<World> world,
+            dev.quantumchamber.collapse.ProjectionWriter.Mode mode, int failures, M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.ProjectionWriteFault(world, mode, failures);
+        installHook(context, M5TestHooks.PROJECTION_WRITE_FAULT, fault, hooks);
+        return fault;
+    }
+
+    /**
      * 安裝 mixin 讀取的靜態 hook（F4a-0 fix round 1，quality Q1），依序：
      * <ol>
      * <li>在 hooks 登記移除：hooks 已釋放時在這裡就丟出，什麼都還沒裝，不會殘留；</li>

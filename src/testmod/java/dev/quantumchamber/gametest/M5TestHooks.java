@@ -1,5 +1,6 @@
 package dev.quantumchamber.gametest;
 
+import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.MaterializeResult;
 import dev.quantumchamber.universe.UniverseWorldDescriptor;
@@ -41,6 +42,8 @@ import org.slf4j.LoggerFactory;
  *     呼叫 {@link #beforeCheckedRead}，注入時丟 {@link IOException}。由 {@code M5GameTestSupport.installCheckedReadFault} 安裝。</li>
  * <li>原生存檔 checkpoint 的探針（{@link #CHUNK_CHECKPOINT_PROBE}，F4b-2）：{@code ChunkSaveCheckpointProbeMixin} 在 {@code ChunkSaveCheckpoint.save} 的開頭
  *     呼叫 {@link #beforeChunkCheckpoint}，記下指定世界的每一次 checkpoint，前幾次可以受控失敗。由 {@code M5GameTestSupport.installChunkCheckpointProbe} 安裝。</li>
+ * <li>投影寫入失敗（{@link #PROJECTION_WRITE_FAULT}，F4b-2）：{@code ProjectionWriteFaultMixin} 在 {@code ProjectionWriter.write} 回傳之前呼叫
+ *     {@link #afterProjectionWrite}，注入時把寫完的結果換成 WRITE_FAILED。由 {@code M5GameTestSupport.installProjectionWriteFault} 安裝。</li>
  * </ul>
  * 探針、稽核與兩個故障注入各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
@@ -60,6 +63,8 @@ public final class M5TestHooks {
     static final Slot<CheckedReadFault> CHECKED_READ_FAULT = new Slot<>("checked NBT 讀取失敗注入");
     /** 原生存檔 checkpoint 的探針與失敗注入（F4b-2，{@code M5GameTestSupport.installChunkCheckpointProbe}）。 */
     static final Slot<ChunkCheckpointProbe> CHUNK_CHECKPOINT_PROBE = new Slot<>("原生存檔 checkpoint 探針");
+    /** 投影寫入失敗的注入（F4b-2，{@code M5GameTestSupport.installProjectionWriteFault}）。 */
+    static final Slot<ProjectionWriteFault> PROJECTION_WRITE_FAULT = new Slot<>("投影寫入失敗注入");
 
     /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
     public static boolean collapseSuspended(UUID session) {
@@ -111,6 +116,16 @@ public final class M5TestHooks {
         if (!server.isOnThread()) return;
         var probe = CHUNK_CHECKPOINT_PROBE.get();
         if (probe != null) probe.before(server, relevant);
+    }
+
+    /**
+     * {@code ProjectionWriteFaultMixin}：{@code ProjectionWriter.write} 回傳之前呼叫（F4b-2）。回傳非 null 時，mixin 以它取代這次的結果。只在 server thread 上生效；
+     * 不丟出例外。
+     */
+    public static ProjectionWriter.Result afterProjectionWrite(ServerWorld world, ProjectionWriter.Mode mode, ProjectionWriter.Result result) {
+        if (!world.getServer().isOnThread()) return null;
+        var fault = PROJECTION_WRITE_FAULT.get();
+        return fault == null ? null : fault.intercept(world, mode, result);
     }
 
     /**
@@ -237,6 +252,32 @@ public final class M5TestHooks {
 
         /** 依發生順序的每一次 checkpoint（含受控失敗的那幾次）。 */
         List<Call> calls() { return List.copyOf(calls); }
+    }
+
+    /**
+     * 投影寫入失敗（F4b-2）：裝著的期間，{@code world} 以 {@code mode} 寫完（WRITTEN）的前 {@code failures} 次，結果換成 WRITE_FAILED（帶受控的例外；方塊已經寫了，
+     * 模擬寫入途中丟出例外）。其他世界、其他模式、沒有寫完的結果照常。
+     */
+    static final class ProjectionWriteFault {
+        private final RegistryKey<World> world;
+        private final ProjectionWriter.Mode mode;
+        private int remaining;
+        private final AtomicInteger hits = new AtomicInteger();
+
+        ProjectionWriteFault(RegistryKey<World> world, ProjectionWriter.Mode mode, int failures) {
+            this.world = Objects.requireNonNull(world, "world"); this.mode = Objects.requireNonNull(mode, "mode"); this.remaining = failures;
+        }
+
+        synchronized ProjectionWriter.Result intercept(ServerWorld target, ProjectionWriter.Mode used, ProjectionWriter.Result result) {
+            if (!target.getRegistryKey().equals(world) || used != mode || result.status() != ProjectionWriter.Status.WRITTEN || remaining <= 0) return null;
+            remaining--;
+            hits.incrementAndGet();
+            return new ProjectionWriter.Result(ProjectionWriter.Status.WRITE_FAILED, result.written(), List.of(), List.of(),
+                    java.util.Optional.of(new IllegalStateException("F4b-2 GameTest 受控：投影寫入失敗（寫入 " + result.written() + " 格之後）")));
+        }
+
+        /** 已注入失敗的次數。 */
+        int hits() { return hits.get(); }
     }
 
     /**
