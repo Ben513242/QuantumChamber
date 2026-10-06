@@ -50,7 +50,10 @@ import org.slf4j.LoggerFactory;
  *     {@code AUTHORITY_UNREADABLE}。</li>
  * <li><b>寫入</b>：同目錄暫存檔、force、以正式讀取規則驗證暫存檔、atomic move、strict 讀回並 exact 比對（{@link CheckedNbtFile}，
  *     M4 discovery 的寫法）。寫入或讀回失敗時 roll-forward（spec §6）：current 保留這次的新內容，權威標為未確認；未確認期間這個權威的查詢與寫入一律回「未確認」
- *     （{@code UNCONFIRMED}；discovery 的唯讀查詢與 catalog 的配置依 spec 不得 SEALED，回 {@code WAIT}），不做新決策，由 {@link #convergeIfNeeded} 依 {@link CollapseBackoff} 退避重試 checked 重寫。</li>
+ *     （{@code UNCONFIRMED}；依 spec 不得 SEALED 的幾處回 {@code WAIT}：discovery 與 catalog 的唯讀查詢（{@link #discovery}、{@link #catalogRecord}）、
+ *     catalog 的配置（{@link #allocateOrVerifyCatalog}），以及 restore 方向的 catalog availability 變更），不做新決策，由 {@link #convergeIfNeeded} 依
+ *     {@link CollapseBackoff} 退避重試 checked 重寫。唯一的例外是 roll-forward 方向的 catalog availability 變更（§8.3 改為 {@code DISABLED}）：catalog
+ *     未確認時照樣寫入（較保守的新內容要立刻記下），見 {@link #changeCatalogAvailability}（F4b-1 Step 0，F4a fix round 2 quality Q2-m5）。</li>
  * <li><b>discovery</b>（M4 的檔，不是 PersistentState）：不在初始化載入，每次使用時從磁碟 strict 讀取（與 M4 的讀取點一致）；檔案不存在一律是遺失
  *     （只有 NEW／EXISTING 的 RESOLVE 會用到，那時 journal 已有 candidate evidence，M4 已建立 discovery）。寫入與 ledger 相同，失敗時 roll-forward：
  *     current 保留這次的 append，絕不移除可能已落地的 record，所以 M4 從磁碟讀到的候選池不會倒退。</li>
@@ -95,7 +98,9 @@ public final class CollapseAuthorities {
     }
 
     /**
-     * {@link #changeCatalogAvailability} 寫出或讀回失敗時的收斂方向（spec §6 收斂規則表的兩個方向；F4a fix round 2，m-2）。
+     * {@link #changeCatalogAvailability} 寫出或讀回失敗時的收斂方向（spec §6 收斂規則表的兩個方向；F4a fix round 2，m-2）。方向由目標值決定
+     * （F4b-1 Step 0，F4a fix round 2 quality Q2-m1）：改為 {@code DISABLED} 一定是 {@link #ROLL_FORWARD}，改回 {@code EAGER_ENABLED} 一定是
+     * {@link #RESTORE}；其他組合是 caller 錯誤。
      */
     public enum WriteDirection {
         /**
@@ -687,12 +692,21 @@ public final class CollapseAuthorities {
      *     有未確認的寫入時回 {@code WAIT}、不變更（§6 收斂共通第 2 點）。</li>
      * </ul>
      * 其餘：M5 初始化失敗 → 初始化的失敗結果；catalog 不健康 → {@code CORRUPT}；catalog 已確認、這筆已是 {@code availability} → {@code FOUND}，不寫出。
-     * 呼叫前提（違反時丟 {@link IllegalArgumentException}，不是結果狀態）：catalog 的 current 有這筆 record。
+     * 呼叫前提（違反時丟 {@link IllegalArgumentException}，不是結果狀態）：
+     * <ul>
+     * <li>方向由目標值決定（spec §6 收斂規則表；F4b-1 Step 0，F4a fix round 2 quality Q2-m1）：{@code DISABLED} 配 {@link WriteDirection#ROLL_FORWARD}、
+     *     {@code EAGER_ENABLED} 配 {@link WriteDirection#RESTORE}。不符時在任何閘門之前就丟出，不讀、不寫。</li>
+     * <li>catalog 的 current 有這筆 record。</li>
+     * </ul>
      */
     public Lookup<UniverseRecord> changeCatalogAvailability(UniverseId universeId, DesiredAvailability availability, WriteDirection direction) {
         requireThread();
         Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");
         Objects.requireNonNull(direction, "direction");
+        if (direction != directionFor(availability)) {
+            throw new IllegalArgumentException("availability 與收斂方向不符（spec §6 收斂規則表：改為 DISABLED 是 roll-forward，改回 EAGER_ENABLED 是 restore）："
+                    + availability + "／" + direction);
+        }
         Lookup<UniverseRecord> initialization = initializationGate();
         if (initialization != null) return initialization;
         var state = catalog.catalog();
@@ -722,6 +736,14 @@ public final class CollapseAuthorities {
         } : null;
         Lookup<UniverseRecord> written = flushCatalog(state, restore);
         return written == null ? Lookup.appended(changed) : written;
+    }
+
+    /** availability 變更的收斂方向由目標值決定（spec §6 收斂規則表）：{@code DISABLED} 是 roll-forward，{@code EAGER_ENABLED} 是 restore。 */
+    private static WriteDirection directionFor(DesiredAvailability availability) {
+        return switch (availability) {
+            case DISABLED -> WriteDirection.ROLL_FORWARD;
+            case EAGER_ENABLED -> WriteDirection.RESTORE;
+        };
     }
 
     /**

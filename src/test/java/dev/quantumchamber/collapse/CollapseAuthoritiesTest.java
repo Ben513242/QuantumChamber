@@ -1007,7 +1007,8 @@ class CollapseAuthoritiesTest {
         var restore = CollapseAuthorities.WriteDirection.RESTORE;
         try (var logs = new CollapseLogCapture()) {
             int flushes = catalog.flushes;
-            assertEquals(Lookup.Status.FOUND, authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, rollForward).status(),
+            // F4b-1 Step 0（Q2-m1）：方向由目標值決定，改回 EAGER_ENABLED 一律是 restore（原本這裡用了不符的 roll-forward）。
+            assertEquals(Lookup.Status.FOUND, authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, restore).status(),
                     "已是 EAGER_ENABLED：不寫出");
             assertEquals(flushes, catalog.flushes);
             // roll-forward 的寫出失敗（atomic move 之前）。
@@ -1051,6 +1052,53 @@ class CollapseAuthoritiesTest {
         }
         assertThrows(IllegalArgumentException.class, () -> authorities.changeCatalogAvailability(UniverseAllocationLedger.deriveUniverseId(token(66)),
                 DesiredAvailability.DISABLED, rollForward), "current 沒有這筆是呼叫端錯誤");
+    }
+
+    /**
+     * F4b-1 Step 0（F4a fix round 2 quality Q2-m1，spec §6 收斂規則表）：availability 變更的方向由目標值決定。改為 DISABLED 只能配 roll-forward、
+     * 改回 EAGER_ENABLED 只能配 restore；不符的兩種組合是呼叫端錯誤，在任何閘門之前就丟 IllegalArgumentException：不寫出、不改 current、不碰收斂簿記
+     * （catalog 已確認與未確認時都一樣）。
+     */
+    @Test void catalogAvailabilityDirectionMustFollowTheTargetValue() throws Exception {
+        var save = save("catalog-direction");
+        var authorities = initialized(save);
+        var catalog = catalog(save);
+        var id = UniverseAllocationLedger.deriveUniverseId(token(67));
+        assertEquals(Lookup.Status.APPENDED, authorities.allocateOrVerifyCatalog(id, EAGER_ONLY).status());
+        var rollForward = CollapseAuthorities.WriteDirection.ROLL_FORWARD;
+        var restore = CollapseAuthorities.WriteDirection.RESTORE;
+        var cases = new ArrayList<Executable>();
+        for (boolean pending : new boolean[] {false, true}) {
+            // 另一筆配置還沒寫出：catalog 未確認（restore 方向此時本來會回 WAIT，roll-forward 本來會照寫）。
+            if (pending) catalog.state.allocateOverworld(UniverseAllocationLedger.deriveUniverseId(token(68)).value(), 1);
+            String label = pending ? "catalog 未確認" : "catalog 已確認";
+            boolean unconfirmed = authorities.unconfirmed(Authority.CATALOG);
+            int flushes = catalog.flushes;
+            var records = catalog.state.records();
+            boolean dirty = catalog.state.isDirty();
+            // 每一次呼叫當下就記下結果（不延到 assertAll 才執行），之後的檢查看到的是這兩次呼叫之後的狀態。
+            Object rollForwardToEager = outcome(() -> authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, rollForward));
+            Object restoreToDisabled = outcome(() -> authorities.changeCatalogAvailability(id, DesiredAvailability.DISABLED, restore));
+            int flushesAfter = catalog.flushes;
+            var recordsAfter = catalog.state.records();
+            boolean dirtyAfter = catalog.state.isDirty();
+            cases.add(() -> assertEquals(pending, unconfirmed, label + "：fixture"));
+            cases.add(() -> assertInstanceOf(IllegalArgumentException.class, rollForwardToEager, label + "：改回 EAGER_ENABLED 配 roll-forward：" + rollForwardToEager));
+            cases.add(() -> assertInstanceOf(IllegalArgumentException.class, restoreToDisabled, label + "：改為 DISABLED 配 restore：" + restoreToDisabled));
+            cases.add(() -> assertEquals(flushes, flushesAfter, label + "：不寫出"));
+            cases.add(() -> assertEquals(records, recordsAfter, label + "：不改 current"));
+            cases.add(() -> assertEquals(dirty, dirtyAfter, label + "：dirty 不變"));
+        }
+        assertAll(cases);
+    }
+
+    /** 呼叫的結果：回傳值，或丟出的 RuntimeException（不往外丟）。 */
+    private static Object outcome(java.util.function.Supplier<?> call) {
+        try {
+            return call.get();
+        } catch (RuntimeException failure) {
+            return failure;
+        }
     }
 
     // ---- fixtures ----
