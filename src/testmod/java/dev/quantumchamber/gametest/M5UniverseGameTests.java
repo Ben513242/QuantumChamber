@@ -1021,9 +1021,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>放置：一格 shell 被授權寫入損壞成 AIR（模擬待修復的投影）之後，玩家對它放置石頭被拒、仍是 AIR；interior 照常放得下。</li>
      * <li>爆炸：一格 shell 換成玻璃（授權寫入）、相鄰的 interior 也放玻璃，在 interior 的玻璃上爆炸：interior 的玻璃消失，shell 的玻璃留著。</li>
      * <li>活塞：volume 外三台通電的活塞分別對著 shell、門板與 Controller：都推不動（不變量 cell 都是推不動的方塊，這條由既有的方塊設定擋下，
-     *     關掉索引的 RED 也推不動；寫入也經過同一個保護）；對照組的活塞照常推動石頭，證明這裡的觀察看得到推動。</li>
+     *     關掉索引的 RED 也推不動；寫入也經過同一個保護）；對照組的活塞照常推動石頭，證明這裡的觀察看得到推動。另一台活塞把石頭推向一格損壞成 AIR 的
+     *     shell：那一格的寫入被拒，仍是 AIR（關掉索引時會變成石頭）。原版 {@code PistonBlock.move} 在寫入被拒之後仍對那一格 {@code addBlockEntity}，
+     *     所以這一步會有一則原版 WARN（「Trying to set block entity … does not allow it」），被推的石頭不會留下（活塞頭停在石頭原本的位置）。</li>
      * <li>流體：一格 shell 損壞成 AIR，外側相鄰放水源，水源南北兩側用石頭擋住，只能往西（損壞的 shell）與往東（對照組的空格）流，兩邊離落差一樣近：
      *     水流不進那一格；對照組的空格照常有水。</li>
+     * <li>修復受保護的投影：上面四類留下的 4 格損壞（AIR、玻璃）由寫入器的修復寫回：WRITTEN、恰好 4 格，不變量 cell 全部符合、門開著，interior 放的石頭
+     *     保留，之後仍受保護。寫入器若不在授權之內寫，會被這個保護拒絕而 VERIFY_FAILED。</li>
      * </ul>
      * 新 chunk 的鄰居是非同步產生的（GameTest server 不以 20 TPS 節流），活塞的方塊事件與流體的排程刻要等 chunk 開始 block ticking 才會執行，
      * 所以先等投影周圍強制載入的 chunk 都 block ticking 再佈置；活塞與流體的判定也等到對照組的活塞推動完成、水源流動過之後（有界等待），
@@ -1119,6 +1123,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
         universe.setBlockState(controlTarget, net.minecraft.block.Blocks.AIR.getDefaultState());
         universe.setBlockState(controlStone, net.minecraft.block.Blocks.STONE.getDefaultState());
         var controlPiston = piston(universe, outside(frame, 11, 2, 3), controlStone, outside(frame, 12, 2, 3));
+        // 活塞把石頭推進損壞成 AIR 的不變量 cell：那一格的寫入被拒，仍是 AIR。
+        var pushedInto = local(frame, 6, 2, 2); var pushedStone = outside(frame, 7, 2, 2);
+        protection.authorizedMutation(() -> universe.setBlockState(pushedInto, net.minecraft.block.Blocks.AIR.getDefaultState()));
+        universe.setBlockState(pushedStone, net.minecraft.block.Blocks.STONE.getDefaultState());
+        var intoDamaged = piston(universe, outside(frame, 8, 2, 2), pushedStone, outside(frame, 9, 2, 2));
         // 流體：損壞成 AIR 的不變量 cell 不進水；對照組的外側空格有水。水源南北兩側擋住，只剩往西（dry）與往東（wet）兩個方向，
         // 兩邊下一格都有落差（dry 那側是爆炸清掉的 interior 玻璃，wet 那側是外面的空格），流向一樣優先。
         var dry = local(frame, 6, 4, 3); var source = outside(frame, 7, 4, 3); var wet = outside(frame, 8, 4, 3);
@@ -1133,15 +1142,30 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 && universe.getBlockState(controlTarget).isOf(net.minecraft.block.Blocks.STONE);
         java.util.function.BooleanSupplier controlFluidFlowed = () -> !universe.getFluidState(wet).isEmpty();
         java.util.function.BooleanSupplier waterMoved = () -> controlFluidFlowed.getAsBoolean() || !universe.getFluidState(dry).isEmpty();
-        whenTicks(context, ticking + 1, 200, () -> controlPistonPushed.getAsBoolean() && waterMoved.getAsBoolean(), settled -> {
+        // 推向損壞 cell 的活塞也伸出、移動中的方塊都已落定（沒有 MOVING_PISTON）才判定。
+        java.util.function.BooleanSupplier pushSettled = () -> universe.getBlockState(intoDamaged).get(net.minecraft.block.PistonBlock.EXTENDED)
+                && !universe.getBlockState(pushedInto).isOf(net.minecraft.block.Blocks.MOVING_PISTON)
+                && !universe.getBlockState(pushedStone).isOf(net.minecraft.block.Blocks.MOVING_PISTON);
+        whenTicks(context, ticking + 1, 200, () -> controlPistonPushed.getAsBoolean() && waterMoved.getAsBoolean() && pushSettled.getAsBoolean(), settled -> {
             witness.put("pistonsCannotMoveInvariantCells", universe.getBlockState(local(frame, 6, 2, 4)).isOf(net.minecraft.block.Blocks.BEDROCK)
                     && M5GameTestSupport.doorIs(universe, local(frame, 3, 2, 0), true, MembraneState.NONE)
                     && universe.getBlockState(frame.controllerPos()).isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)
                     && pistons.stream().noneMatch(pos -> universe.getBlockState(pos).get(net.minecraft.block.PistonBlock.EXTENDED)));
             witness.put("controlPistonPushes", controlPistonPushed.getAsBoolean());
+            witness.put("pistonCannotPushIntoADamagedInvariantCell", universe.getBlockState(pushedInto).isAir());
             witness.put("fluidCannotEnterAnInvariantCell", universe.getBlockState(dry).isAir() && universe.getFluidState(dry).isEmpty());
             witness.put("controlFluidFlows", controlFluidFlowed.getAsBoolean());
-            LOGGER.info("M5_PROJECTION_PROTECTION controlsSettledAfter={} denied={} allowed={}", settled - ticking, deniedCells, allowedCells);
+            LOGGER.info("M5_PROJECTION_PROTECTION controlsSettledAfter={} denied={} allowed={} pushedInto={} pushedStone={}", settled - ticking, deniedCells,
+                    allowedCells, universe.getBlockState(pushedInto), universe.getBlockState(pushedStone));
+            // 修復已受保護的 COMPLETE 投影（EXISTING 再次造訪的路徑）：寫入器必須在授權之內寫，否則被自己的保護拒絕而 VERIFY_FAILED。
+            // 損壞的不變量 cell：放置 test 的 local(0,3,3)、爆炸 test 的玻璃 local(6,3,3)、流體 test 的 local(6,4,3)、活塞 test 的 local(6,2,2)。
+            var repair = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.REPAIR);
+            witness.put("repairOfTheProtectedProjectionWritten", repair.status() == ProjectionWriter.Status.WRITTEN && repair.written() == 4);
+            witness.put("repairRestoresEveryInvariantCell", M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty()
+                    && doorAll(universe, frame, true, MembraneState.NONE));
+            witness.put("repairKeepsTheInteriorChange", universe.getBlockState(local(frame, 2, 1, 3)).isOf(net.minecraft.block.Blocks.STONE));
+            witness.put("stillProtectedAfterTheRepair", !protection.mayMutate(universe, shell));
+            LOGGER.info("M5_PROJECTION_PROTECTED_REPAIR status={} written={} mismatched={}", repair.status(), repair.written(), repair.mismatched().size());
             hooks.release();
             context.assertTrue(!witness.containsValue(false), "投影的保護：" + witness + " denied=" + deniedCells + " allowed=" + allowedCells);
             awaitConvergedThenComplete(context, 1, 20);
