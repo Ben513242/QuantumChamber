@@ -1556,7 +1556,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F4b-2（spec §9.2 的既有 entity、§9.1；plan Step 1 第 6 組的流程）：RESOLVE 之後、進入 PREPARE 之前，一位（創造模式、不受重力的）玩家 Q 站進宇宙 U 的投影
      * volume。第一次寫入每個 tick 都被 Q 擋住：一格都不寫（Controller 位置一直沒有 Controller），也不移動 Q；PENDING 已確認。從進入 PREPARE 起超過 600 ticks 時
-     * 記一則 WARN（帶 session，寫明玩家擋住寫入與 Q），之前沒有、之後不再記。Q 離開 volume 之後寫入、checkpoint、COMPLETE，準備完成。catalog 增量 1。
+     * 記一則 WARN（帶 session，寫明玩家擋住寫入與 Q），之前沒有；Q 再擋 5 個 tick 也不再記（去重）。Q 離開 volume 之後寫入、checkpoint、COMPLETE，準備完成，
+     * WARN 仍只有一則。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_blocked", tickLimit = 1500)
     public void prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks(TestContext context) {
@@ -1586,8 +1587,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("pendingConfirmed", CollapseAuthorities.get(server).projection(chamber, id).value()
                             .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent());
                     witness.put("playerNotMoved", q.getServerWorld() == universe && q.getPos().equals(qAt));
-                    standAt(q, universe, frame, 3.5, 1, -4.5);
-                    whenTicks(context, warned + 1, 300, () -> !prepared(capture, sid).isEmpty(), ready -> {
+                    // Q 再擋 5 個 tick：WARN 仍只有一則（去重），之後才離開 volume。
+                    at(context, warned + 5, hooks, () -> {
+                        witness.put("stillOneWarnWhileBlocked", prepareWaitWarnings(capture, sid).size() == 1 && prepared(capture, sid).isEmpty()
+                                && ProjectionWriter.controllerPresence(universe, frame) == ProjectionWriter.ControllerPresence.ABSENT);
+                        standAt(q, universe, frame, 3.5, 1, -4.5);
+                    });
+                    whenTicks(context, warned + 6, 300, () -> !prepared(capture, sid).isEmpty(), ready -> {
                         witness.put("writtenAfterQLeft", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
                         witness.put("warnedOnlyOnce", prepareWaitWarnings(capture, sid).size() == 1);
                         LOGGER.info("M5_PREPARE_BLOCKED warned={} ready={} warning={}", warned - enteredAt, ready - enteredAt, warning);
