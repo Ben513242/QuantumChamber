@@ -52,6 +52,8 @@ import org.junit.jupiter.api.io.TempDir;
 class DestinationResolverTest {
     @TempDir Path root;
     private final int[] now = {1000};
+    /** 為真時，權威的時鐘下一次被讀取就丟出一次例外（F4b-1 Step 0 S2-mA：catalog 的 restore 已改回 current 之後，呼叫鏈上丟出的例外）。 */
+    private boolean clockFault;
     private static final long GAME_TIME = 777;
 
     @BeforeAll static void gameVersion() {
@@ -345,6 +347,60 @@ class DestinationResolverTest {
                 () -> assertEquals(List.of(DesiredAvailability.EAGER_ENABLED), order, "物化之前改回 EAGER_ENABLED"),
                 () -> assertEquals(DesiredAvailability.DISABLED, world.diskAvailability(id), "之後再改回 DISABLED"),
                 () -> assertTrue(world.discoveryRecords().isEmpty()));
+    }
+
+    /**
+     * F4b-1 Step 0（F4a fix round 2 quality Q2-m2）：物化失敗之後改為 DISABLED 時，權威回的不是「寫出未確認」（WRITE_FAILED），而是 catalog 不健康的
+     * CORRUPT：比照 reenable，直接採用權威帶的原因（AUTHORITY_CORRUPT）與 root cause，不記「DISABLED 的寫出未確認」的 ERROR，也不當成 MATERIALIZE_FAILED。
+     */
+    @Test void materializeFailureWithAnUnhealthyCatalogSealsTheAuthorityReasonWithoutTheDisableError() throws Exception {
+        var world = world("materialize-failed-unhealthy");
+        var view = settled(NEW);
+        var id = universe(view);
+        world.lifecycle.fail.add(id);
+        // 物化失敗的那一刻，catalog 變得不健康（M3 strict decode 失敗的 state）：之後改為 DISABLED 的變更回 CORRUPT。
+        world.lifecycle.onMaterialize = requested -> world.catalog.swapped = UniverseRegistryState.fromNbt(new NbtCompound());
+        Object[] result = {null};
+        var errors = world.logs(() -> result[0] = world.resolver.resolve(view), Level.ERROR);
+        assertAll(
+                () -> assertEquals(List.of(id), world.lifecycle.materialized, "fixture：物化過一次而且失敗"),
+                () -> assertSealed(SealedReason.AUTHORITY_CORRUPT, (ResolveResult) result[0], "catalog 不健康：採用權威的原因"),
+                () -> assertTrue(result[0] instanceof ResolveResult.Sealed sealed && sealed.failure().getMessage().contains("catalog 不健康"),
+                        () -> "root cause 是權威帶的 failure：" + result[0]),
+                () -> assertEquals(List.of(), errors.stream().filter(entry -> entry.message().contains("DISABLED 的寫出未確認")).toList(),
+                        "不記「DISABLED 的寫出未確認」的 ERROR"));
+    }
+
+    /**
+     * F4b-1 Step 0（F4a fix round 2 spec S2-mA）：§8.3 的重試在改回 EAGER_ENABLED 時，權威的 restore 已經把 current 改回 DISABLED，之後呼叫鏈上丟出例外
+     * （這裡在權威讀時鐘時注入），沒有回到 resolver 的正常路徑。額度仍算用掉：收斂之後再解析一次，直接 SEALED(MATERIALIZE_FAILED)，不再改回
+     * EAGER_ENABLED、不物化（同一個 instance 內不會有第二次 §8.3 的重試）。
+     */
+    @Test void aReenableThatThrowsAfterTheRestoreStillSpendsTheQuota() throws Exception {
+        var world = world("reenable-throws");
+        var view = settled(NEW);
+        var id = universe(view);
+        world.afterMaterializeFailure(view);
+        // 改回 EAGER_ENABLED 的寫出失敗（atomic move 之前）→ restore 改回 DISABLED → 記退避時讀時鐘丟出例外。
+        world.catalog.failAfter(0, false);
+        clockFault = true;
+        var thrown = assertThrows(IllegalStateException.class, () -> world.resolver.resolve(view), "fixture：例外沿著呼叫鏈丟出");
+        var currentAfterThrow = world.currentAvailability(id);
+        // 收斂（寫出 DISABLED）之後再解析一次。
+        now[0] += CollapseBackoff.INITIAL_TICKS;
+        world.authorities.convergeIfNeeded(Authority.CATALOG);
+        int flushes = world.catalog.flushes;
+        var before = world.snapshot();
+        var again = world.resolver.resolve(view);
+        assertAll(
+                () -> assertTrue(thrown.getMessage().contains("注入"), thrown::toString),
+                () -> assertEquals(DesiredAvailability.DISABLED, currentAfterThrow, "fixture：restore 已把 current 改回 DISABLED"),
+                () -> assertFalse(world.authorities.unconfirmed(Authority.CATALOG), "fixture：catalog 已收斂"),
+                () -> assertSealed(SealedReason.MATERIALIZE_FAILED, again, "額度已用掉：等下次重啟"),
+                () -> assertTrue(again instanceof ResolveResult.Sealed sealed && sealed.failure().getMessage().contains("已用掉"), () -> again.toString()),
+                () -> assertEquals(flushes, world.catalog.flushes, "不再寫 catalog"),
+                () -> assertEquals(before, world.snapshot(), "不再寫任何權威"),
+                () -> assertEquals(List.of(), world.lifecycle.materialized, "不物化"));
     }
 
     /**
@@ -674,7 +730,13 @@ class DestinationResolverTest {
         UniverseDiscoveryState.loadOrCreate(save);
         var io = new Io();
         var catalog = new TestCatalog(save);
-        var authorities = new CollapseAuthorities(save, io, catalog, () -> now[0]);
+        var authorities = new CollapseAuthorities(save, io, catalog, () -> {
+            if (clockFault) {
+                clockFault = false;
+                throw new IllegalStateException("注入：讀時鐘時丟出例外");
+            }
+            return now[0];
+        });
         assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded(), "fixture：權威初始化");
         var lifecycle = new FakeLifecycle(catalog);
         return new World(save, io, catalog, authorities, lifecycle, new DestinationResolver(authorities, lifecycle, () -> GAME_TIME));
@@ -830,13 +892,15 @@ class DestinationResolverTest {
     private static final class TestCatalog implements CollapseAuthorities.CatalogPort {
         final Path path;
         final UniverseRegistryState state = new UniverseRegistryState();
+        /** 不為 null 時 {@link #catalog()} 改回傳它（F4b-1 Step 0 Q2-m2：模擬 catalog 在物化之後變得不健康）。 */
+        UniverseRegistryState swapped;
         int flushes;
         private int ok = -1, failures;
         private boolean landed;
 
         TestCatalog(Path save) { path = save.resolve("data").resolve(UniverseRegistryState.STATE_ID + ".dat"); }
 
-        @Override public UniverseRegistryState catalog() { return state; }
+        @Override public UniverseRegistryState catalog() { return swapped != null ? swapped : state; }
 
         @Override public void flush(UniverseRegistryState catalog) {
             assertSame(state, catalog, "寫出的是同一個 PersistentState");

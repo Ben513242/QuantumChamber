@@ -189,12 +189,17 @@ public final class DestinationResolver {
     /**
      * §8.3 的重試：經 {@link CollapseAuthorities#changeCatalogAvailability}（restore）把 {@code DISABLED} checked 改回 {@code EAGER_ENABLED}。成功回 null。
      * catalog 有未確認的寫入時等待（還沒用掉額度）；寫出或讀回失敗時屬 §6 的 restore——current 改回 {@code DISABLED}（較保守的一方），維持 dirty，
-     * 下一次寫出（收斂或原生 autosave）以它覆寫磁碟——不物化，回 {@code MATERIALIZE_FAILED}。嘗試過寫出（成功或失敗）就算用掉本 instance 的額度。
+     * 下一次寫出（收斂或原生 autosave）以它覆寫磁碟——不物化，回 {@code MATERIALIZE_FAILED}。
+     * <p>額度在呼叫之前就記下，只有 {@code WAIT}（沒有嘗試寫出）時才收回（F4b-1 Step 0，F4a fix round 2 spec S2-mA）：嘗試過寫出（成功、失敗，或寫出之後
+     * 呼叫鏈上任何一處丟出例外而沒有回到這裡）都算用掉本 instance 的額度，同一個 instance 內不會再改回 {@code EAGER_ENABLED} 第二次。
      */
     private ResolveResult reenable(UniverseId id) {
-        var reenabled = authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, WriteDirection.RESTORE);
-        if (reenabled.status() == Lookup.Status.WAIT) return ResolveResult.waiting("catalog 有未確認的寫入（§8.3 的重試改回 EAGER_ENABLED 之前）");
         materializeSpent.add(id);
+        var reenabled = authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, WriteDirection.RESTORE);
+        if (reenabled.status() == Lookup.Status.WAIT) {
+            materializeSpent.remove(id);
+            return ResolveResult.waiting("catalog 有未確認的寫入（§8.3 的重試改回 EAGER_ENABLED 之前）");
+        }
         if (reenabled.succeeded()) return null;
         if (reenabled.status() != Lookup.Status.WRITE_FAILED) return failed(reenabled);
         return ResolveResult.sealed(SealedReason.MATERIALIZE_FAILED, new IllegalStateException(
@@ -203,12 +208,15 @@ public final class DestinationResolver {
 
     /**
      * §8.3：物化失敗。經 {@link CollapseAuthorities#changeCatalogAvailability}（roll-forward）checked 把 catalog 的這筆改為 {@code DISABLED}（避免下次
-     * 開服時 bootstrap 因這筆停服）；寫出或讀回失敗時 current 保留 {@code DISABLED} 與 dirty，之後的寫出帶著它，記 ERROR。兩者都進 {@code MATERIALIZE_FAILED}。
+     * 開服時 bootstrap 因這筆停服）；寫出或讀回失敗（{@code WRITE_FAILED}）時 current 保留 {@code DISABLED} 與 dirty，之後的寫出帶著它，記 ERROR。
+     * 這兩種都進 {@code MATERIALIZE_FAILED}。其他失敗（初始化失敗、catalog 不健康、變更本身失敗）比照 {@link #reenable}，直接採用權威結果帶的原因與
+     * root cause（{@code AUTHORITY_CORRUPT}／{@code AUTHORITY_UNREADABLE}），不當成寫出未確認（F4b-1 Step 0，F4a fix round 2 quality Q2-m2）。
      */
     private ResolveResult materializeFailed(SessionRecoveryRecord view, UniverseId id, String detail) {
         var disabled = authorities.changeCatalogAvailability(id, DesiredAvailability.DISABLED, WriteDirection.ROLL_FORWARD);
         if (!disabled.succeeded()) {
-            var failure = disabled.failure().orElseGet(() -> new IllegalStateException("catalog 的 availability 變更沒有完成：" + disabled.status()));
+            if (disabled.status() != Lookup.Status.WRITE_FAILED) return failed(disabled);
+            var failure = disabled.failure().orElseThrow();
             LOGGER.error(CollapseService.LOG_MARKER, "物化失敗之後，把 catalog 改為 DISABLED 的寫出未確認（roll-forward：current 保留 DISABLED 並維持 dirty，"
                     + "由收斂或原生 autosave 寫出；確認之前重啟，開服仍可能因這筆停止，需要管理員留意）：session={} universe={}：{}",
                     view.sessionUuid(), id.value(), FailureText.describe(failure), failure);
