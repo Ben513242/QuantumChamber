@@ -1,6 +1,8 @@
 package dev.quantumchamber.gametest;
 
+import com.mojang.authlib.GameProfile;
 import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberFrame;
@@ -20,6 +22,7 @@ import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.gametest.mixin.MinecraftServerAutosaveTestAccessor;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
+import dev.quantumchamber.persistence.SessionSemantics;
 import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
@@ -717,11 +720,76 @@ final class M5GameTestSupport {
      */
     @SuppressWarnings("unchecked")
     static void simulateDoorStartup(MinecraftServer server, UUID sid) {
-        var service = ((Map<MinecraftServer, ?>) M4CandidateTestAccess.get(CollapseService.class, "INSTANCES")).get(server);
-        if (service == null) throw new IllegalStateException("沒有此 server 的 CollapseService");
+        var service = collapseService(server);
         ((Set<UUID>) M4CandidateTestAccess.get(service, "startupSessions")).add(sid);
         var track = ((Map<UUID, ?>) M4CandidateTestAccess.get(service, "tracks")).get(sid);
         if (track != null) M4CandidateTestAccess.set(track, "doorLoaded", null);
+    }
+
+    /** 這個 server 的 {@code CollapseService}（反射；本 mod 自己的欄位，不經 remap）。 */
+    @SuppressWarnings("unchecked")
+    private static Object collapseService(MinecraftServer server) {
+        var service = ((Map<MinecraftServer, ?>) M4CandidateTestAccess.get(CollapseService.class, "INSTANCES")).get(server);
+        if (service == null) throw new IllegalStateException("沒有此 server 的 CollapseService");
+        return service;
+    }
+
+    /** F4b-3 fix round 1：直接呼叫原艙門的攔截（{@link ChamberCollapsePort#doors()}；bulkhead 與 Controller 的 {@code onUse} 經過同一個 port），回傳它的處置。 */
+    static ChamberCollapsePort.DoorUse useDoor(ServerWorld world, ChamberFrame frame, PlayerEntity player) {
+        return ChamberCollapsePort.doors().use(world, frame, player);
+    }
+
+    /**
+     * F4b-3 fix round 1（spec S-M2）：判斷身分時丟出例外的非參與者（不在世界裡，比照 {@code TestContext.createMockPlayer}）：{@code isSpectator()} 丟
+     * {@link IllegalStateException}，用來造出攔截「判斷途中」的非預期例外（journal 健康）。
+     */
+    static PlayerEntity lookupFailingPlayer(ServerWorld world) {
+        return new PlayerEntity(world, BlockPos.ORIGIN, 0, new GameProfile(UUID.randomUUID(), "qc-lookup-fault")) {
+            @Override public boolean isSpectator() { throw new IllegalStateException("F4b-3 fix round 1 GameTest 受控：判斷玩家身分時丟出例外"); }
+            @Override public boolean isCreative() { return false; }
+        };
+    }
+
+    /**
+     * F4b-3 fix round 1（quality Q-I1）：讓 PREPARE 期間參與者關門的處置每次都丟出例外（持續性的處置失敗）。以反射把塌縮流程這個 session 的 {@code Track.backoff}
+     * （本 mod 自己的 final 欄位，不經 remap）換成 null：處置在退避檢查丟 {@link NullPointerException}。準備完成之後的 PREPARE tick 不讀它（只判斷原艙門），
+     * 所以塌縮流程照常。回傳還原的動作（也登記在 hooks）；只在 server thread、準備完成之後呼叫。
+     */
+    @SuppressWarnings("unchecked")
+    static Runnable breakParticipantDoorUse(MinecraftServer server, UUID sid, M2CorridorGameTests.TestHooks hooks) {
+        var track = ((Map<UUID, ?>) M4CandidateTestAccess.get(collapseService(server), "tracks")).get(sid);
+        if (track == null) throw new IllegalStateException("塌縮流程沒有這個 session 的簿記：" + sid);
+        var backoff = M4CandidateTestAccess.get(track, "backoff");
+        Runnable restore = () -> M4CandidateTestAccess.set(track, "backoff", backoff);
+        hooks.add(restore);
+        M4CandidateTestAccess.set(track, "backoff", null);
+        return restore;
+    }
+
+    /**
+     * F4b-3 fix round 1（quality Q-M1）：在 journal 放入一筆未 checked 的 authority，讓 {@code recoveryWritesSafe()} 為 false（等同 checked 提交 put→flush 之間的窗口，
+     * 或 recovery tick 還沒收斂的殘留）：新的 ARMING session，candidate context 還沒經 flush 讀回確認；別的 chamber、別的玩家、不與其他 session 衝突的 slot。不 flush，
+     * 也不交給塌縮流程（暫停）。回傳它的 session UUID；呼叫端在同一個 callback 內以 {@link #removeUncheckedAuthority} 移除（hooks 也登記移除）。
+     */
+    static UUID putUncheckedAuthority(MinecraftServer server, M2CorridorGameTests.TestHooks hooks) {
+        var journal = SessionRecoveryState.get(server);
+        var origin = M4CandidateTestAccess.origin(UUID.randomUUID(), new BlockPos(-30011, 100, -30011));
+        var person = new SessionRecoveryRecord.Participant(UUID.randomUUID(), Vec3d.ofCenter(origin.controllerPos()), Vec3d.ZERO, 0, 0,
+                new net.minecraft.nbt.NbtCompound(), false);
+        var record = M4CandidateTestAccess.candidateAware(new SessionRecoveryRecord(UUID.randomUUID(), origin.chamberUuid(), origin, List.of(person),
+                List.of(new SessionRecoveryRecord.SpaceLease(1_000_003, new net.minecraft.util.math.BlockBox(0, 0, 0, 6, 6, 6))), SessionState.ARMING, false,
+                SessionSemantics.LATERAL_BUFF_MAINTAINED), server);
+        var sid = record.sessionUuid();
+        M5TestHooks.suspendCollapse(sid);
+        hooks.add(() -> removeUncheckedAuthority(server, sid));
+        journal.put(record);
+        return sid;
+    }
+
+    /** {@link #putUncheckedAuthority} 放入的 session 從 current 移除（沒有 flush 過，所以 journal 回到放入之前的 authority）；已移除時不做事。 */
+    static void removeUncheckedAuthority(MinecraftServer server, UUID sid) {
+        var journal = SessionRecoveryState.get(server);
+        if (journal.records().containsKey(sid)) journal.remove(sid);
     }
 
     /** 以授權寫入把 25 格門直接寫成 open＋membrane（例如模擬 crash 留下的量子膜；經 bulkhead 的守門 {@code withDoor}，不經門服務）。 */

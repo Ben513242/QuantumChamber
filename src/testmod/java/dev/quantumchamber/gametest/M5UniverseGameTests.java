@@ -10,6 +10,7 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
 
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
+import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberFrame;
@@ -2369,6 +2370,96 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 }, () -> "第二次載入之後沒有重新套用：applied=" + reappliedTicks(log, sid) + " witness=" + witness, hooks);
             }, () -> "載入之後沒有重新套用：loaded=" + remote.loaded() + " applied=" + reappliedTicks(log, sid) + " witness=" + witness, hooks);
         });
+    }
+
+    /**
+     * F4b-3 fix round 1（quality Q-I1、Q-M1，spec S-M2；spec §7.3「PREPARE 期間的開關門」、§6 H3、§5）：PREPARE 擁有原艙門時，攔截的非預期例外與不安全的終局寫出都拒絕、
+     * 不改門、不結束塌縮，WARN 依 (session, 種類, 原因) 去重。DORMANT NEW 收據、參與者 P 在艙內；準備完成之後（門是 sealed 量子膜）依序：
+     * <ul>
+     * <li>判斷途中的例外（S-M2）：判斷身分時丟例外的非參與者（{@code M5GameTestSupport.lookupFailingPlayer}）直接呼叫 port 兩次：兩次都 REFUSED（不交給門服務），
+     *     門不變，WARN「原艙門的攔截」只多一則。</li>
+     * <li>處置途中的持續性例外（Q-I1）：{@code M5GameTestSupport.breakParticipantDoorUse} 讓 P 的關門處置每次都丟例外；P 以 bulkhead 連點兩次：都被拒，門仍是 sealed、
+     *     record 仍是 COLLAPSING、沒有終局，WARN 只多一則。</li>
+     * <li>成功之後同一原因再失敗會再記一次：艙內的非參與者 N 開門（處置成功）；N 離開、門重新套用 sealed 之後 P 再點一次 → WARN 再多一則。</li>
+     * <li>recovery 寫入不安全（Q-M1）：還原 P 的處置；journal 有一筆未 checked 的 authority（{@code M5GameTestSupport.putUncheckedAuthority}）時 P 關門 → 被拒、
+     *     不終局、門不變、那筆 authority 沒有被寫出，也沒有 WARN；移除之後 P 關門 → checked 終局、門關上。</li>
+     * </ul>
+     * 這個 session 的 WARN 只有上面三則與「通道尚未實作」，沒有 ERROR。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_refusal", tickLimit = 1200)
+    public void prepare_door_use_failures_refuse_and_warn_once_per_cause_until_recovery_writes_are_safe(TestContext context) {
+        begin(context, "prepare_door_use_failures_refuse_and_warn_once_per_cause_until_recovery_writes_are_safe");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        ServerPlayerEntity n;
+        try {
+            var insider = new ConnectedGameTestPlayer(world);
+            hooks.add(insider::close);
+            n = insider.player();
+            n.setNoGravity(true);
+            moveOutside(n, frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var doorCell = local(frame, 3, 3, 0);
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid).isEmpty(), ready -> {
+                witness.put("sealedWhenPrepared", M5GameTestSupport.doorSealed(world, frame));
+                int before = doorUseWarnings(capture, sid);
+                var faulty = M5GameTestSupport.lookupFailingPlayer(world);
+                witness.put("lookupFailureRefusedTwice", M5GameTestSupport.useDoor(world, frame, faulty) == ChamberCollapsePort.DoorUse.REFUSED
+                        && M5GameTestSupport.useDoor(world, frame, faulty) == ChamberCollapsePort.DoorUse.REFUSED);
+                witness.put("lookupFailureWarnedOnce", doorUseWarnings(capture, sid) - before == 1);
+                witness.put("sealedAfterTheLookupFailures", M5GameTestSupport.doorSealed(world, frame));
+                var restore = M5GameTestSupport.breakParticipantDoorUse(server, sid, hooks);
+                int beforeHandling = doorUseWarnings(capture, sid);
+                witness.put("failingCloseRefusedTwice", !interact(world, doorCell, p).isAccepted() && !interact(world, doorCell, p).isAccepted());
+                witness.put("oneWarnForTwoFailingCloses", doorUseWarnings(capture, sid) - beforeHandling == 1);
+                witness.put("sealedAndCollapsingAfterTheFailures", M5GameTestSupport.doorSealed(world, frame)
+                        && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && endedByADoor(capture, sid) == 0);
+                moveInside(n, frame);
+                witness.put("insiderOpens", interact(world, doorCell, n).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
+                moveOutside(n, frame);
+                at(context, ready + 2, hooks, () -> {
+                    witness.put("resealedAfterTheInsiderLeft", M5GameTestSupport.doorSealed(world, frame));
+                    int beforeAgain = doorUseWarnings(capture, sid);
+                    witness.put("failingCloseRefusedAgain", !interact(world, doorCell, p).isAccepted() && M5GameTestSupport.doorSealed(world, frame));
+                    witness.put("warnedAgainAfterASuccess", doorUseWarnings(capture, sid) - beforeAgain == 1);
+                    // 門改不了時（25 格之一暫時不是 bulkhead → DOOR_INCOMPLETE），艙內的非參與者被拒；同一個 callback 內放回原方塊（中間沒有 tick）。
+                    var corner = local(frame, 1, 1, 0);
+                    var cornerState = world.getBlockState(corner);
+                    moveInside(n, frame);
+                    ChamberProtectionService.get().authorizedMutation(() -> world.setBlockState(corner, Blocks.STONE.getDefaultState()));
+                    witness.put("insiderRefusedWhenTheDoorCannotChange", M5GameTestSupport.useDoor(world, frame, n) == ChamberCollapsePort.DoorUse.REFUSED);
+                    ChamberProtectionService.get().authorizedMutation(() -> world.setBlockState(corner, cornerState));
+                    moveOutside(n, frame);
+                    witness.put("sealedAfterTheIncompleteDoor", M5GameTestSupport.doorSealed(world, frame));
+                    restore.run();
+                    var unchecked = M5GameTestSupport.putUncheckedAuthority(server, hooks);
+                    witness.put("recoveryWritesUnsafe", !journal.recoveryWritesSafe());
+                    int beforeUnsafe = doorUseWarnings(capture, sid);
+                    witness.put("refusedWhileRecoveryWritesAreUnsafe", !interact(world, doorCell, p).isAccepted() && M5GameTestSupport.doorSealed(world, frame)
+                            && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && endedByADoor(capture, sid) == 0);
+                    witness.put("uncheckedAuthorityNotWrittenOut", !journal.flushedRecords().containsKey(unchecked));
+                    witness.put("noWarnWhileUnsafe", doorUseWarnings(capture, sid) == beforeUnsafe);
+                    M5GameTestSupport.removeUncheckedAuthority(server, unchecked);
+                    witness.put("recoveryWritesSafeAgain", journal.recoveryWritesSafe());
+                    witness.put("closesOnceSafe", interact(world, doorCell, p).isAccepted() && !journal.records().containsKey(sid)
+                            && !journal.flushedRecords().containsKey(sid) && endedByADoor(capture, sid) == 1 && doorAll(world, frame, false, MembraneState.NONE));
+                    witness.put("onlyTheseWarnsAndNoError", doorUseWarnings(capture, sid) == 3
+                            && capture.matching(Level.WARN, sid.toString()).size() == 3 + readyStubWarnings(capture, sid) && readyStubWarnings(capture, sid) == 1
+                            && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                    releaseThenComplete(context, hooks, witness, "原艙門的攔截失敗與不安全的終局：" + witness + " warnings=" + doorUseWarnings(capture, sid), 20, () -> true);
+                });
+            }, () -> "沒有準備完成：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /** 這個 session「原艙門的攔截」的 WARN 數（帶 LOG_MARKER；判斷與處置途中的非預期例外）。 */
+    private static int doorUseWarnings(LogCapture capture, UUID sid) {
+        return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "原艙門的攔截", sid.toString()).size();
     }
 
     /** 這個 session「PREPARE 期間參與者關門，塌縮已結束」的 INFO 數（帶 LOG_MARKER）。 */
