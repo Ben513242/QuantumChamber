@@ -1377,10 +1377,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "prepare_new_runs_the_destination_side_then_stops_before_the_passage");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
@@ -1430,10 +1427,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         witness.put("doorOpensNormally", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
                         witness.put("doorClosesNormally", interact(world, door, p).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
                         // 收尾：終局 API 移除 record；下一個 tick 塌縮流程釋放目的世界的 ticket（完成條件）。
-                        hooks.release();
-                        context.assertTrue(!witness.containsValue(false), "PREPARE 的目的宇宙側：" + witness + " tickets=" + tickets.keySet() + " area=" + area
-                                + " checkpoints=" + probe.calls());
-                        awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                        releaseThenComplete(context, hooks, witness, "PREPARE 的目的宇宙側：" + witness + " tickets=" + tickets.keySet() + " area=" + area
+                                + " checkpoints=" + probe.calls(), 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     });
                 }, () -> "沒有準備完成：tickets=" + M5GameTestSupport.destinationTickets(universe, sid).size() + " checkpoints=" + probe.calls()
                         + " witness=" + witness, hooks);
@@ -1454,10 +1449,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
         ConnectedGameTestPlayer second;
@@ -1497,9 +1489,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             && CollapseAuthorities.get(server).projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
                     witness.put("resolvedOnlyOnce", capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1);
                     witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
-                    hooks.release();
-                    context.assertTrue(!witness.containsValue(false), "PREPARE 中斷電：" + witness);
-                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    releaseThenComplete(context, hooks, witness, "PREPARE 中斷電：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                 }, () -> "邊緣觸發之後沒有回到 PREPARE：record=" + M5GameTestSupport.state(journal, sid) + " entered=" + entered(capture, sid)
                         + " witness=" + witness, hooks);
             }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
@@ -1520,10 +1510,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
@@ -1558,9 +1545,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("onlyTheReadyStubWarn", capture.matching(Level.WARN, sid2.toString()).size() == 1 && readyStubWarnings(capture, sid2) == 1
                             && capture.matching(Level.ERROR, sid2.toString()).isEmpty());
                     LOGGER.info("M5_PREPARE_REVISIT ready={}", prepared(capture, sid2).getFirst().message());
-                    hooks.release();
-                    context.assertTrue(!witness.containsValue(false), "EXISTING 再次造訪：" + witness);
-                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid2).isEmpty());
+                    releaseThenComplete(context, hooks, witness, "EXISTING 再次造訪：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid2).isEmpty());
                 }, () -> "D2 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
             }, () -> "D1 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid1), hooks);
         });
@@ -1577,10 +1562,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -1610,9 +1592,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         witness.put("writtenAfterQLeft", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
                         witness.put("warnedOnlyOnce", prepareWaitWarnings(capture, sid).size() == 1);
                         LOGGER.info("M5_PREPARE_BLOCKED warned={} ready={} warning={}", warned - enteredAt, ready - enteredAt, warning);
-                        hooks.release();
-                        context.assertTrue(!witness.containsValue(false), "玩家擋住投影寫入：" + witness);
-                        awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                        releaseThenComplete(context, hooks, witness, "玩家擋住投影寫入：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     }, () -> "Q 離開之後沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
                 }, () -> "等待超過 600 ticks 沒有記 WARN：witness=" + witness, hooks);
             }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
@@ -1631,10 +1611,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
@@ -1659,9 +1636,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 at(context, sealed + 5, hooks, () -> {
                     witness.put("permanentNeverRetried", sealedWith(journal, sid, SealedReason.PROJECTION_CONFLICT)
                             && capture.matching(Level.INFO, "SEALED 重試", sid.toString()).isEmpty() && capture.matching(Level.ERROR, sid.toString()).size() == 1);
-                    hooks.release();
-                    context.assertTrue(!witness.containsValue(false), "§6.5 的實體交叉檢查：" + witness);
-                    awaitConvergedThenComplete(context, 1, 20);
+                    releaseThenComplete(context, hooks, witness, "§6.5 的實體交叉檢查：" + witness, 20, () -> true);
                 });
             }, () -> "沒有進 SEALED(PROJECTION_CONFLICT)：record=" + M5GameTestSupport.state(journal, sid), hooks);
         });
@@ -1678,10 +1653,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -1704,9 +1676,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("onePermanentErrorNamingTheOtherProjection", errors.size() == 1 && errors.getFirst().message().contains("SEALED(PROJECTION_CONFLICT)")
                         && errors.getFirst().message().contains(otherChamber.toString()));
                 witness.put("ticketsReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
-                hooks.release();
-                context.assertTrue(!witness.containsValue(false), "§9.2 的衝突：" + witness + " matchedShell=" + matchedShellCells(universe, frame));
-                awaitConvergedThenComplete(context, 1, 20);
+                releaseThenComplete(context, hooks, witness, "§9.2 的衝突：" + witness + " matchedShell=" + matchedShellCells(universe, frame), 20, () -> true);
             }, () -> "沒有進 SEALED(PROJECTION_CONFLICT)：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
         });
     }
@@ -1722,10 +1692,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -1749,9 +1716,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("onePermanentErrorAboutTheSite", errors.size() == 1 && errors.getFirst().message().contains("SEALED(AUTHORITY_CORRUPT)")
                         && errors.getFirst().message().contains("ControllerPos"));
                 witness.put("ticketsReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
-                hooks.release();
-                context.assertTrue(!witness.containsValue(false), "既有 entry 的 site 驗證：" + witness + " matchedShell=" + matchedShellCells(universe, frame));
-                awaitConvergedThenComplete(context, 1, 20);
+                releaseThenComplete(context, hooks, witness, "既有 entry 的 site 驗證：" + witness + " matchedShell=" + matchedShellCells(universe, frame), 20, () -> true);
             }, () -> "沒有進 SEALED(AUTHORITY_CORRUPT)：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
         });
     }
@@ -1771,10 +1736,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
@@ -1817,9 +1779,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     rebuilt.set(true);
                     witness.put("rebuiltHealthy", Arrays.equals(saved, bytes(data, ProjectionLedger.FILE_NAME))
                             && authorities.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER).isEmpty() && index.degradation().isEmpty());
-                    hooks.release();
-                    context.assertTrue(!witness.containsValue(false), "projection ledger 遺失之後：" + witness);
-                    awaitConvergedThenComplete(context, 1, 20);
+                    releaseThenComplete(context, hooks, witness, "projection ledger 遺失之後：" + witness, 20, () -> true);
                 }, () -> "D2 沒有進 SEALED(AUTHORITY_CORRUPT)：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
             }, () -> "D1 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid1), hooks);
         });
@@ -1836,10 +1796,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "pending_write_failure_seals_without_writing_any_block");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -1853,9 +1810,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("oneRetryableWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "SEALED(PROJECTION_FAILED)", "退避期之外",
                         sid.toString()).size() == 1 && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                 witness.put("ticketsReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && !M4CandidateTestAccess.sourceTicketHeld(sid));
-                hooks.release();
-                context.assertTrue(!witness.containsValue(false), "PENDING 落盤失敗：" + witness);
-                awaitConvergedThenComplete(context, 1, 260);
+                releaseThenComplete(context, hooks, witness, "PENDING 落盤失敗：" + witness, 260, () -> true);
             }, () -> "沒有進 SEALED(PROJECTION_FAILED)：record=" + M5GameTestSupport.state(journal, sid) + " hits=" + fault.hits(), hooks);
         });
     }
@@ -1871,10 +1826,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "checkpoint_failure_seals_before_the_projection_is_complete");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -1895,9 +1847,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("oneRetryableWarnWithTheCheckpointCause", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "SEALED(PROJECTION_FAILED)",
                         "受控：原生存檔 checkpoint 失敗", sid.toString()).size() == 1 && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                 witness.put("ticketsReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
-                hooks.release();
-                context.assertTrue(!witness.containsValue(false), "checkpoint 失敗：" + witness + " calls=" + calls);
-                awaitConvergedThenComplete(context, 1, 20);
+                releaseThenComplete(context, hooks, witness, "checkpoint 失敗：" + witness + " calls=" + calls, 20, () -> true);
             }, () -> "沒有進 SEALED(PROJECTION_FAILED)：record=" + M5GameTestSupport.state(journal, sid) + " calls=" + probe.calls(), hooks);
         });
     }
@@ -1914,10 +1864,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "projection_write_failure_seals_then_retries_after_the_backoff_over_its_own_pending");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
@@ -1948,9 +1895,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                     witness.put("oneUniverse", allocationEntries(server, id) == 1 && capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 2);
                     witness.put("faultNotHitAgain", fault.hits() == 1);
-                    hooks.release();
-                    context.assertTrue(!witness.containsValue(false), "投影寫入失敗之後的重試：" + witness);
-                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    releaseThenComplete(context, hooks, witness, "投影寫入失敗之後的重試：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                 }, () -> "退避之後的重試沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
             }, () -> "沒有進 SEALED(PROJECTION_FAILED)：record=" + M5GameTestSupport.state(journal, sid) + " hits=" + fault.hits(), hooks);
         });
@@ -1974,10 +1919,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "checkpoint_waits_for_a_clean_recheck_while_the_invariant_cells_keep_changing");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -2030,9 +1972,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                                     && readyStubWarnings(capture, sid) == 1 && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                             LOGGER.info("M5_PREPARE_RECHECK firstCheckpoint={} changing={} ready={} checkpoints={}", firstCheckpoint - enteredAt,
                                     changing - enteredAt, ready - enteredAt, calls);
-                            hooks.release();
-                            context.assertTrue(!witness.containsValue(false), "checkpoint 之前的再驗：" + witness + " checkpoints=" + calls);
-                            awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                            releaseThenComplete(context, hooks, witness, "checkpoint 之前的再驗：" + witness + " checkpoints=" + calls, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                         }, () -> "Q 離開之後沒有準備完成：checkpoints=" + probe.calls().size() + " witness=" + witness, hooks);
                     }, () -> "改動 D 的期間逾時：checkpoints=" + probe.calls().size() + " witness=" + witness, hooks);
                 }, () -> "沒有做第一次 checkpoint：record=" + M5GameTestSupport.state(journal, sid), hooks);
@@ -2053,10 +1993,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         begin(context, "prepare_waits_while_another_projection_write_is_unconfirmed");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
-        DormantOrigin origin;
-        try {
-            origin = DormantOrigin.open(context, hooks);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -2095,9 +2032,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         witness.put("otherPendingKept", authorities.projection(other.chamberUuid(), id).value().filter(other::equals).isPresent());
                         witness.put("stillNoSeal", noSeal.getAsBoolean() && readyStubWarnings(capture, sid) == 1);
                         LOGGER.info("M5_PREPARE_UNCONFIRMED converged={} ready={}", converged - pendingAt, ready - pendingAt);
-                        hooks.release();
-                        context.assertTrue(!witness.containsValue(false), "另一座艙的寫入未確認時：" + witness);
-                        awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                        releaseThenComplete(context, hooks, witness, "另一座艙的寫入未確認時：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     }, () -> "Q 離開之後沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
                 }, () -> "projection ledger 沒有收斂：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
             }, () -> "本艙的 PENDING 沒有確認：record=" + M5GameTestSupport.state(journal, sid), hooks);
@@ -2223,6 +2158,27 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static void collapsedToUniverse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, List<UUID> others,
             ResolvedUniverse ready) {
         newCollapse(context, origin, hooks, false, others, ready);
+    }
+
+    /**
+     * PREPARE 系列 test 共用的前段（F4b-3 Step 0，F4b-2 quality Q-M5）：建好 {@link DormantOrigin}，失敗時轉成 test 失敗（{@link #asTestFailure}，hooks 已由
+     * {@code DormantOrigin.open} 釋放）。之後通常接 {@link #collapsedToUniverse}。
+     */
+    private static DormantOrigin openOrigin(TestContext context, M2CorridorGameTests.TestHooks hooks) {
+        try {
+            return DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+    }
+
+    /**
+     * PREPARE 系列 test 共用的後段（F4b-3 Step 0，F4b-2 quality Q-M5）：釋放 hooks（收尾的終局 API 移除收據、關閉玩家與 log capture），斷言 {@code witness}
+     * 全部成立（失敗訊息是 {@code message}），之後以 {@link #awaitConvergedThenComplete} 等權威收斂而且 {@code ready} 成立才完成，catalog 增量 1。
+     */
+    private static void releaseThenComplete(TestContext context, M2CorridorGameTests.TestHooks hooks, Map<String, Boolean> witness, String message,
+            int maxTicks, BooleanSupplier ready) {
+        hooks.release();
+        context.assertTrue(!witness.containsValue(false), message);
+        awaitConvergedThenComplete(context, 1, maxTicks, ready);
     }
 
     private static void newCollapse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, boolean suspend, List<UUID> others,
