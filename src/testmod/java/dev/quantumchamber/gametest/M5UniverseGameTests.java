@@ -1014,7 +1014,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     水流不進那一格；對照組的空格照常有水。</li>
      * </ul>
      * 新 chunk 的鄰居是非同步產生的（GameTest server 不以 20 TPS 節流），活塞的方塊事件與流體的排程刻要等 chunk 開始 block ticking 才會執行，
-     * 所以先等投影周圍強制載入的 chunk 都 block ticking 再佈置。catalog 增量 1（U）。
+     * 所以先等投影周圍強制載入的 chunk 都 block ticking 再佈置；活塞與流體的判定也等到對照組的活塞推動完成、水源流動過之後（有界等待），
+     * 不用固定的 tick 數。catalog 增量 1（U）。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_projection_protection", tickLimit = 400)
     public void projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids(TestContext context) {
@@ -1115,19 +1116,29 @@ public final class M5UniverseGameTests implements FabricGameTest {
         }
         universe.setBlockState(wet, net.minecraft.block.Blocks.AIR.getDefaultState());
         universe.setBlockState(source, net.minecraft.block.Blocks.WATER.getDefaultState());
-        at(context, ticking + 20, hooks, () -> {
+        // 等對照組的活塞真的推動（方塊事件與 block entity 都跑過）、水源也流動過（排程刻跑過；同一次流動同時往 dry 與 wet）再判定。
+        java.util.function.BooleanSupplier controlPistonPushed = () -> universe.getBlockState(controlPiston).get(net.minecraft.block.PistonBlock.EXTENDED)
+                && universe.getBlockState(controlTarget).isOf(net.minecraft.block.Blocks.STONE);
+        java.util.function.BooleanSupplier controlFluidFlowed = () -> !universe.getFluidState(wet).isEmpty();
+        java.util.function.BooleanSupplier waterMoved = () -> controlFluidFlowed.getAsBoolean() || !universe.getFluidState(dry).isEmpty();
+        whenTicks(context, ticking + 1, 200, () -> controlPistonPushed.getAsBoolean() && waterMoved.getAsBoolean(), settled -> {
             witness.put("pistonsCannotMoveInvariantCells", universe.getBlockState(local(frame, 6, 2, 4)).isOf(net.minecraft.block.Blocks.BEDROCK)
                     && M5GameTestSupport.doorIs(universe, local(frame, 3, 2, 0), true, MembraneState.NONE)
                     && universe.getBlockState(frame.controllerPos()).isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)
                     && pistons.stream().noneMatch(pos -> universe.getBlockState(pos).get(net.minecraft.block.PistonBlock.EXTENDED)));
-            witness.put("controlPistonPushes", universe.getBlockState(controlPiston).get(net.minecraft.block.PistonBlock.EXTENDED)
-                    && universe.getBlockState(controlTarget).isOf(net.minecraft.block.Blocks.STONE));
+            witness.put("controlPistonPushes", controlPistonPushed.getAsBoolean());
             witness.put("fluidCannotEnterAnInvariantCell", universe.getBlockState(dry).isAir() && universe.getFluidState(dry).isEmpty());
-            witness.put("controlFluidFlows", !universe.getFluidState(wet).isEmpty());
+            witness.put("controlFluidFlows", controlFluidFlowed.getAsBoolean());
+            LOGGER.info("M5_PROJECTION_PROTECTION controlsSettledAfter={} denied={} allowed={}", settled - ticking, deniedCells, allowedCells);
             hooks.release();
             context.assertTrue(!witness.containsValue(false), "投影的保護：" + witness + " denied=" + deniedCells + " allowed=" + allowedCells);
             awaitConvergedThenComplete(context, 1, 20);
-        });
+        }, () -> "對照組沒有發生：controlPistonPushed=" + controlPistonPushed.getAsBoolean() + " waterMoved=" + waterMoved.getAsBoolean()
+                + " piston=" + universe.getBlockState(controlPiston) + " target=" + universe.getBlockState(controlTarget) + " source=" + universe.getFluidState(source)
+                + " wet=" + universe.getBlockState(wet) + " blockTicking=" + universe.shouldTickBlockPos(controlPiston) + "/" + universe.shouldTickBlockPos(wet)
+                + " tickingFuture=" + universe.getChunkManager().isTickingFutureReady(net.minecraft.util.math.ChunkPos.toLong(controlPiston))
+                + "/" + universe.getChunkManager().isTickingFutureReady(net.minecraft.util.math.ChunkPos.toLong(wet)) + " time=" + universe.getTime()
+                + " witness=" + witness, hooks);
     }
 
     /**
