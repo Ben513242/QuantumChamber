@@ -91,12 +91,12 @@ class ProjectionProtectionIndexTest {
         var pending = entry(CHAMBER_A, U1, FRAME_A, Status.PENDING);
         var shell = ChamberGeometry.localToWorld(FRAME_A, 0, 3, 3);
         boolean beforeRecognized = index.projectionController(W1, FRAME_A.controllerPos());
-        index.confirmed(pending);
+        index.confirmed(written(pending));
         boolean pendingRecognized = index.projectionController(W1, FRAME_A.controllerPos());
         boolean pendingProtected = index.protects(W1, shell);
-        index.confirmed(pending.withStatus(Status.COMPLETE));
+        index.confirmed(written(pending.withStatus(Status.COMPLETE)));
         boolean completeProtected = index.protects(W1, shell);
-        index.confirmed(pending);
+        index.confirmed(written(pending));
         boolean stillProtected = index.protects(W1, shell);
         var moved = new ProjectionLedger.Entry(CHAMBER_A, U1, DimensionRole.OVERWORLD, FRAME_A.controllerPos().east(), Direction.NORTH, Status.COMPLETE);
         var nether = new ProjectionLedger.Entry(CHAMBER_B, U1, DimensionRole.NETHER, FRAME_B.controllerPos(), Direction.NORTH, Status.PENDING);
@@ -106,9 +106,67 @@ class ProjectionProtectionIndexTest {
             () -> assertFalse(pendingProtected, "PENDING 還不受保護"),
             () -> assertTrue(completeProtected, "COMPLETE 確認之後登記：受保護"),
             () -> assertTrue(stillProtected, "Status 只前進：已是 COMPLETE 時再登記 PENDING 維持 COMPLETE"),
-            () -> assertThrows(IllegalArgumentException.class, () -> index.confirmed(moved), "同一個 key 的 site 不同是 caller 錯誤"),
-            () -> assertThrows(IllegalArgumentException.class, () -> index.confirmed(nether), "對應不到世界（本切片只有 OVERWORLD）是 caller 錯誤"),
+            () -> assertThrows(IllegalArgumentException.class, () -> index.confirmed(written(moved)), "同一個 key 的 site 不同是 caller 錯誤"),
+            () -> assertThrows(IllegalArgumentException.class, () -> index.confirmed(written(nether)), "對應不到世界（本切片只有 OVERWORLD）是 caller 錯誤"),
             () -> assertTrue(index.protects(W1, shell) && !index.projectionController(W1, FRAME_B.controllerPos()), "被拒的登記不改變索引"));
+    }
+
+    /**
+     * F4b-2 Step 0（F4b-1 quality Q-m4）：更新入口只接受 checked 寫入的結果，而且只接受帶著已確認 entry 的三種成功狀態。失敗的結果（未確認、寫入失敗、
+     * 損壞、讀不到）沒有 entry：登記它們丟 {@link IllegalArgumentException}，索引不變（未確認的投影不會提早被辨識或受保護）。{@code ALREADY_COMPLETE}
+     * 帶回的既有 COMPLETE 照樣登記（開服時已在索引時是 no-op）。不在 server thread 時，{@code confirmed} 與 {@code intersecting} 都丟
+     * {@link IllegalStateException}，索引不變。
+     */
+    @Test void confirmedAcceptsOnlyConfirmedWriteResultsOnTheServerThread() {
+        var index = healthy();
+        index.load(List::of);
+        var pending = entry(CHAMBER_A, U1, FRAME_A, Status.PENDING);
+        var shell = ChamberGeometry.localToWorld(FRAME_A, 0, 3, 3);
+        var cases = new ArrayList<Executable>();
+        for (var status : List.of(CollapseAuthorities.WriteResult.Status.UNCONFIRMED, CollapseAuthorities.WriteResult.Status.WRITE_FAILED,
+                CollapseAuthorities.WriteResult.Status.CORRUPT, CollapseAuthorities.WriteResult.Status.UNREADABLE)) {
+            var failed = new CollapseAuthorities.WriteResult(status, Optional.empty(), Optional.of(SealedReason.PROJECTION_FAILED),
+                    Optional.of(new IllegalStateException("注入：" + status)));
+            cases.add(() -> assertThrows(IllegalArgumentException.class, () -> index.confirmed(failed), status + " 不能登記"));
+        }
+        boolean recognizedAfterFailures = index.projectionController(W1, FRAME_A.controllerPos());
+        index.confirmed(CollapseAuthorities.WriteResult.of(CollapseAuthorities.WriteResult.Status.UNCHANGED, pending));
+        boolean recognizedAfterUnchanged = index.projectionController(W1, FRAME_A.controllerPos());
+        index.confirmed(CollapseAuthorities.WriteResult.of(CollapseAuthorities.WriteResult.Status.ALREADY_COMPLETE, pending.withStatus(Status.COMPLETE)));
+        boolean protectedAfterAlreadyComplete = index.protects(W1, shell);
+        var offThread = new ProjectionProtectionIndex(Optional::empty, CATALOG, new ChamberRegistry(), () -> false);
+        offThread.load(List::of);
+        cases.add(() -> assertFalse(recognizedAfterFailures, "失敗的結果沒有登記任何東西"));
+        cases.add(() -> assertTrue(recognizedAfterUnchanged, "UNCHANGED（既有 PENDING）帶回已確認的 entry：登記"));
+        cases.add(() -> assertTrue(protectedAfterAlreadyComplete, "ALREADY_COMPLETE 帶回的 COMPLETE：受保護"));
+        cases.add(() -> assertThrows(IllegalStateException.class, () -> offThread.confirmed(written(pending)), "不在 server thread：confirmed 丟出"));
+        cases.add(() -> assertThrows(IllegalStateException.class, () -> offThread.intersecting(W1, ChamberGeometry.bounds(FRAME_A)),
+                "不在 server thread：intersecting 丟出"));
+        cases.add(() -> assertFalse(offThread.projectionController(W1, FRAME_A.controllerPos()), "被拒的登記不改變索引"));
+        assertAll(cases);
+    }
+
+    /**
+     * F4b-2 Step 0（F4b-1 quality Q-m6）：跨 chunk 邊界、含負座標的 frame。7×7×7 在 x 與 z 都跨兩個 chunk（chunk 座標為負），218 個不變量 cell 都受保護、
+     * 125 格 interior 都不受保護，{@code intersecting} 從任一個涵蓋的 chunk 都找得到。依 chunk 建立的索引若只登記 Controller 所在的 chunk，其他 chunk 的格就查不到。
+     */
+    @Test void crossChunkFrameWithNegativeCoordinatesIsIndexedInEveryCoveredChunk() {
+        var frame = new ChamberFrame(new BlockPos(-17, 70, -2), Direction.WEST);
+        var bounds = ChamberGeometry.bounds(frame);
+        var chunksX = new java.util.TreeSet<Integer>(); var chunksZ = new java.util.TreeSet<Integer>();
+        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) chunksX.add(x >> 4);
+        for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) chunksZ.add(z >> 4);
+        var index = healthy();
+        index.load(() -> List.of(entry(CHAMBER_A, U1, frame, Status.COMPLETE)));
+        var corners = List.of(new BlockPos(bounds.getMinX(), bounds.getMinY(), bounds.getMinZ()), new BlockPos(bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ()),
+                new BlockPos(bounds.getMinX(), bounds.getMaxY(), bounds.getMaxZ()), new BlockPos(bounds.getMaxX(), bounds.getMinY(), bounds.getMinZ()));
+        assertAll(
+            () -> assertTrue(chunksX.size() == 2 && chunksZ.size() == 2 && chunksX.first() < 0 && chunksZ.first() < 0,
+                    () -> "fixture：x 與 z 都跨兩個 chunk、含負的 chunk 座標：" + chunksX + " " + chunksZ),
+            () -> assertEquals(218, countCells(frame, pos -> index.protects(W1, pos), true), "每個涵蓋的 chunk 裡的不變量 cell 都受保護"),
+            () -> assertEquals(125, countCells(frame, pos -> !index.protects(W1, pos), false), "interior 都不受保護"),
+            () -> assertTrue(corners.stream().allMatch(corner -> index.intersecting(W1, new BlockBox(corner)).size() == 1),
+                    "四個 chunk 的角落都找得到這座投影"));
     }
 
     @Test void intersectingListsRegisteredProjectionsWhoseVolumeOverlaps() {
@@ -132,7 +190,7 @@ class ProjectionProtectionIndexTest {
         var origin = registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, FRAME_A);
         registry.registerOrigin(World.NETHER.getValue(), DimensionRole.NETHER, FRAME_B);
         var read = new AtomicInteger();
-        var index = new ProjectionProtectionIndex(() -> Optional.of(SealedReason.AUTHORITY_CORRUPT), CATALOG, registry);
+        var index = new ProjectionProtectionIndex(() -> Optional.of(SealedReason.AUTHORITY_CORRUPT), CATALOG, registry, () -> true);
         List<CollapseLogCapture.Entry> logs;
         try (var capture = new CollapseLogCapture()) {
             index.load(() -> { read.incrementAndGet(); return List.of(entry(CHAMBER_B, U1, FRAME_B, Status.COMPLETE)); });
@@ -154,6 +212,10 @@ class ProjectionProtectionIndexTest {
             () -> assertTrue(origin.chamberUuid() != null),
             () -> assertEquals(1, logs.stream().filter(entry -> entry.level() == Level.WARN && entry.tick() && entry.message().contains("退化")).count(),
                     () -> "退化記一則帶 TICK_LOG_MARKER 的 WARN：" + logs),
+            // F4b-2 Step 0（Q-m3）：WARN 的字句是 F4b-2 接上之後的實際行為（每個 PREPARE 的 tick 都先查退化），不附 stack（原因由權威的 ERROR 記下）。
+            () -> assertTrue(logs.stream().filter(entry -> entry.level() == Level.WARN).allMatch(entry -> entry.thrown() == null
+                    && entry.message().contains("還沒完成準備的 PREPARE（進行中的，以及之後開始的）一律進 SEALED(AUTHORITY_CORRUPT)")
+                    && entry.message().contains("已完成準備的不受影響")), () -> "退化 WARN 的字句與 stack：" + logs),
             () -> assertTrue(logs.stream().noneMatch(entry -> entry.level() == Level.ERROR), () -> "沒有 ERROR：" + logs));
     }
 
@@ -161,7 +223,7 @@ class ProjectionProtectionIndexTest {
         var registry = new ChamberRegistry();
         registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, FRAME_B);
         var health = new AtomicReference<Optional<SealedReason>>(Optional.empty());
-        var index = new ProjectionProtectionIndex(health::get, CATALOG, registry);
+        var index = new ProjectionProtectionIndex(health::get, CATALOG, registry, () -> true);
         index.load(() -> List.of(entry(CHAMBER_A, U1, FRAME_A, Status.COMPLETE)));
         var originShell = ChamberGeometry.localToWorld(FRAME_B, 6, 3, 3);
         boolean before = index.protects(W1, originShell);
@@ -205,7 +267,7 @@ class ProjectionProtectionIndexTest {
             @Override public void flush(UniverseRegistryState state) { throw new AssertionError("這個 test 不寫 catalog"); }
         }, () -> 1000);
         assertTrue(authorities.initialize(() -> journal(4)).succeeded(), "fixture：寫滿的 ledger 照常讀得回來");
-        var index = new ProjectionProtectionIndex(() -> authorities.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER), (id, role) -> Optional.empty(), null);
+        var index = new ProjectionProtectionIndex(() -> authorities.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER), (id, role) -> Optional.empty(), null, () -> true);
         index.load(authorities::confirmedProjections);
         var world = UniverseKeys.world(ProjectionLedgerTest.UNIVERSE, DimensionRole.OVERWORLD);
         var seven = ProjectionLedgerTest.entry(7, Direction.SOUTH, Status.COMPLETE);
@@ -235,13 +297,13 @@ class ProjectionProtectionIndexTest {
         var registry = new ChamberRegistry();
         registry.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, FRAME_A);
         var shell = ChamberGeometry.localToWorld(FRAME_A, 0, 3, 3);
-        var broken = new ProjectionProtectionIndex(Optional::empty, CATALOG, registry);
+        var broken = new ProjectionProtectionIndex(Optional::empty, CATALOG, registry, () -> true);
         var throwingHealth = new AtomicReference<RuntimeException>();
         var syncing = new ProjectionProtectionIndex(() -> {
             var failure = throwingHealth.get();
             if (failure != null) throw failure;
             return Optional.empty();
-        }, CATALOG, registry);
+        }, CATALOG, registry, () -> true);
         List<CollapseLogCapture.Entry> logs;
         try (var capture = new CollapseLogCapture()) {
             broken.load(() -> { throw new IllegalStateException("注入：列舉失敗"); });
@@ -254,7 +316,13 @@ class ProjectionProtectionIndexTest {
             () -> assertEquals(Optional.of(SealedReason.AUTHORITY_UNREADABLE), broken.degradation(), "建立失敗：fail closed"),
             () -> assertTrue(broken.protects(W1, shell), "fail closed 時套用退化規則"),
             () -> assertTrue(syncing.protects(W1, shell), "同步失敗：fail closed"),
-            () -> assertEquals(2, logs.stream().filter(entry -> entry.level() == Level.ERROR && entry.tick()).count(), () -> "兩則帶 TICK_LOG_MARKER 的 ERROR：" + logs));
+            () -> assertEquals(2, logs.stream().filter(entry -> entry.level() == Level.ERROR && entry.tick()).count(), () -> "兩則帶 TICK_LOG_MARKER 的 ERROR：" + logs),
+            // F4b-2 Step 0（F4b-1 quality Q-m3）：fail closed 的 stack 只印一次——ERROR 附 stack，接著的退化 WARN 不附。
+            () -> assertTrue(logs.stream().filter(entry -> entry.level() == Level.ERROR).allMatch(entry -> entry.thrown() != null), () -> "ERROR 附 stack：" + logs),
+            () -> assertEquals(2, logs.stream().filter(entry -> entry.level() == Level.WARN && entry.tick() && entry.message().contains("退化")).count(),
+                    () -> "每個索引一則退化 WARN：" + logs),
+            () -> assertTrue(logs.stream().filter(entry -> entry.level() == Level.WARN).allMatch(entry -> entry.thrown() == null),
+                    () -> "退化 WARN 不再重複印同一份 stack：" + logs));
     }
 
     @Test void startupLogsOneInfoWithTheTickMarker() {
@@ -297,11 +365,16 @@ class ProjectionProtectionIndexTest {
     // ---- fixtures ----
 
     private static ProjectionProtectionIndex healthy() {
-        return new ProjectionProtectionIndex(Optional::empty, CATALOG, new ChamberRegistry());
+        return new ProjectionProtectionIndex(Optional::empty, CATALOG, new ChamberRegistry(), () -> true);
     }
 
     private static ProjectionLedger.Entry entry(UUID chamber, UniverseId universe, ChamberFrame frame, Status status) {
         return new ProjectionLedger.Entry(chamber, universe, DimensionRole.OVERWORLD, frame.controllerPos(), frame.outwardFacing(), status);
+    }
+
+    /** checked 寫入已確認、寫入的就是 {@code entry} 的結果（{@code WRITTEN}）：更新入口只接受寫入結果（F4b-2 Step 0 Q-m4）。 */
+    private static CollapseAuthorities.WriteResult written(ProjectionLedger.Entry entry) {
+        return CollapseAuthorities.WriteResult.of(CollapseAuthorities.WriteResult.Status.WRITTEN, entry);
     }
 
     /** 這個 frame 的 7×7×7 中，{@code shell} 指定的那一類格（邊界或 interior）有多少格符合條件。 */

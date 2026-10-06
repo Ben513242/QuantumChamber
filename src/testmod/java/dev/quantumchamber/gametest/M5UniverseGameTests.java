@@ -1063,12 +1063,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var pending = authorities.writeProjection(new ProjectionLedger.Entry(chamber, id, DimensionRole.OVERWORLD, frame.controllerPos(),
                 frame.outwardFacing(), ProjectionLedger.Entry.Status.PENDING));
         witness.put("pendingConfirmed", pending.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
-        index.confirmed(pending.entry().orElseThrow());
+        index.confirmed(pending);
         witness.put("pendingNotProtected", protection.mayMutate(universe, shell));
         witness.put("firstWrite", ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE).status() == ProjectionWriter.Status.WRITTEN);
         var complete = authorities.writeProjection(pending.entry().orElseThrow().withStatus(ProjectionLedger.Entry.Status.COMPLETE));
         witness.put("completeConfirmed", complete.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
-        index.confirmed(complete.entry().orElseThrow());
+        index.confirmed(complete);
         int denied = 0, allowed = 0;
         for (int x = 0; x < 7; x++) for (int y = 0; y < 7; y++) for (int z = 0; z < 7; z++) {
             boolean may = protection.mayMutate(universe, local(frame, x, y, z));
@@ -1227,8 +1227,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 b.outwardFacing(), ProjectionLedger.Entry.Status.PENDING));
         witness.put("pendingConfirmed", pendingA.status() == CollapseAuthorities.WriteResult.Status.WRITTEN
                 && pendingB.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
-        index.confirmed(pendingA.entry().orElseThrow());
-        index.confirmed(pendingB.entry().orElseThrow());
+        index.confirmed(pendingA);
+        index.confirmed(pendingB);
         // A：寫入後丟掉 U 的 load-sync queue，只剩 onBlockAdded 排的 refresh。
         witness.put("aWritten", ProjectionWriter.write(universe, a, ProjectionWriter.Mode.FIRST_WRITE).status() == ProjectionWriter.Status.WRITTEN);
         var controllerA = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, a), "A 的 Controller block entity");
@@ -1260,8 +1260,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     var completeB = authorities.writeProjection(pendingB.entry().orElseThrow().withStatus(ProjectionLedger.Entry.Status.COMPLETE));
                     witness.put("completeConfirmed", completeA.status() == CollapseAuthorities.WriteResult.Status.WRITTEN
                             && completeB.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
-                    index.confirmed(completeA.entry().orElseThrow());
-                    index.confirmed(completeB.entry().orElseThrow());
+                    index.confirmed(completeA);
+                    index.confirmed(completeB);
                     // 供電：Controller 上方（volume 外）放紅石塊；B 的 neighbor update 立即 refresh，A 由排程的 refresh 讀到。
                     for (var frame : List.of(a, b)) universe.setBlockState(outside(frame, 3, 7, 0), net.minecraft.block.Blocks.REDSTONE_BLOCK.getDefaultState());
                     at(context, ticking + 70, hooks, () -> {

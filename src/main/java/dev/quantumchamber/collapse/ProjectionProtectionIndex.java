@@ -23,6 +23,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -46,11 +47,12 @@ import org.slf4j.LoggerFactory;
  *     沒有這筆時用 M3 的推導 {@link UniverseKeys#world}（catalog 的 descriptor 必定等於它，{@code UniverseDefinition} 的不變量）。</li>
  * <li><b>兩層</b>：已確認的 PENDING 與 COMPLETE entry 的 Controller 位置都用於載入辨識（{@link #projectionController}）；只有 COMPLETE 的不變量 cell
  *     （shell、Controller、門，即 7×7×7 的邊界）受保護（{@link #protects}），interior 不保護。</li>
- * <li><b>更新入口</b>（F4b-2 呼叫 {@link #confirmed}）：PENDING 確認之後、寫方塊之前登記一次，投影寫入 Controller 時 {@code onBlockAdded} 排入的 refresh 與
- *     load-sync 的 refresh 因此辨識為 PROJECTION（plan Step 1 第 8 組）；COMPLETE 確認之後再登記一次，這時才轉為受保護（spec §9.3「每次 COMPLETE 時更新」）。
- *     開服時的 PENDING entry 也入索引，同樣只用於辨識。Status 只會前進（PENDING→COMPLETE），不倒退。</li>
+ * <li><b>更新入口</b>（F4b-2 呼叫 {@link #confirmed}，傳入 checked 寫入的結果，F4b-2 Step 0 Q-m4）：PENDING 確認之後、寫方塊之前登記一次，投影寫入
+ *     Controller 時 {@code onBlockAdded} 排入的 refresh 與 load-sync 的 refresh 因此辨識為 PROJECTION（plan Step 1 第 8 組）；COMPLETE 確認之後再登記一次，
+ *     這時才轉為受保護（spec §9.3「每次 COMPLETE 時更新」）。開服時的 PENDING entry 也入索引，同樣只用於辨識。Status 只會前進（PENDING→COMPLETE），不倒退。</li>
  * <li><b>熱路徑</b>：{@link #protects} 與 {@link #projectionController} 每次 {@code setBlockState}、每次 Controller 刷新都可能經過，只讀 volatile 的不可變快照，
- *     不讀 PersistentState、不取鎖，任何執行緒都可以呼叫。更新只在 server thread，以 copy-on-write 發布新的快照。</li>
+ *     不讀 PersistentState、不取鎖。健康時任何執行緒都可以呼叫；退化之後 {@link #protects} 另讀 {@link ChamberRegistry}（不是執行緒安全的集合），只在
+ *     server thread 安全（F4b-2 Step 0 Q-m2）。更新只在 server thread，以 copy-on-write 發布新的快照。</li>
  * <li><b>退化</b>（§9.3）：只依權威健康切換——{@link CollapseAuthorities#unhealthy}（初始化結果、執行期間的遺失）；單筆不符或 ledger 已滿（單次呼叫的 CORRUPT）
  *     不會退化。退化時另外保護「所有目前登記中的 OVERWORLD Origin 艙，在每個動態 Overworld 同位置的不變量 cell」（{@link ChamberRegistry}）。開服時就退化
  *     （初始化失敗）不採用任何 ledger 內容；執行期間才遺失時，之前已在索引中的投影照樣受保護（較保守的一方）。一旦退化，本 instance 不再解除；下次開服若讀取
@@ -58,8 +60,8 @@ import org.slf4j.LoggerFactory;
  * <li>Origin 拆除之後 entry 保留：索引不看 chamber registry（Dead Chamber 照樣受保護）。不改 {@code ChamberRegistryState}，投影不進 chamber registry 或
  *     {@code ProjectionIndex}。</li>
  * </ul>
- * 這裡的 log 記的是索引本身（不屬於任何 session），一律帶 {@link CollapseService#TICK_LOG_MARKER}：建立時一則 INFO；退化時一則 WARN；建立或同步時發生非預期的
- * 例外時記 ERROR，並以退化規則 fail closed。
+ * 這裡的 log 記的是索引本身（不屬於任何 session），一律帶 {@link CollapseService#TICK_LOG_MARKER}：建立時一則 INFO；退化時一則 WARN（不附 stack）；建立或
+ * 同步時發生非預期的例外時記 ERROR（附 stack，只記這一次），並以退化規則 fail closed。
  */
 public final class ProjectionProtectionIndex {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
@@ -72,16 +74,22 @@ public final class ProjectionProtectionIndex {
     private final @Nullable ChamberRegistry registry;
     /** projection ledger 的權威健康（{@link CollapseAuthorities#unhealthy}）。只在 server thread 呼叫。 */
     private final Supplier<Optional<SealedReason>> health;
+    /** 目前是否在擁有者的 server thread（production 是 {@code server::isOnThread}）：{@link #confirmed} 與 {@link #intersecting} 的守門（F4b-2 Step 0 Q-m4）。 */
+    private final BooleanSupplier onServerThread;
     private final Map<RegistryKey<World>, Boolean> dynamicOverworlds = new ConcurrentHashMap<>();
     private volatile Snapshot snapshot = Snapshot.EMPTY;
     private volatile @Nullable SealedReason degraded;
 
-    /** package-private：JUnit 以自己的權威健康、catalog 與 registry 建立；之後以 {@link #load} 載入開服時的 entries。 */
+    /**
+     * package-private：JUnit 以自己的權威健康、catalog、registry 與執行緒判斷建立；之後以 {@link #load} 載入開服時的 entries。
+     * @param onServerThread 目前是否在擁有者的 server thread；不在時 {@link #confirmed} 與 {@link #intersecting} 丟 {@link IllegalStateException}
+     */
     ProjectionProtectionIndex(Supplier<Optional<SealedReason>> health, BiFunction<UniverseId, DimensionRole, Optional<RegistryKey<World>>> catalogWorld,
-            @Nullable ChamberRegistry registry) {
+            @Nullable ChamberRegistry registry, BooleanSupplier onServerThread) {
         this.health = Objects.requireNonNull(health, "health");
         this.catalogWorld = Objects.requireNonNull(catalogWorld, "catalogWorld");
         this.registry = registry;
+        this.onServerThread = Objects.requireNonNull(onServerThread, "onServerThread");
     }
 
     /**
@@ -111,13 +119,15 @@ public final class ProjectionProtectionIndex {
         try {
             authorities = CollapseAuthorities.get(server);
         } catch (RuntimeException missing) {
-            var index = new ProjectionProtectionIndex(() -> Optional.of(SealedReason.AUTHORITY_UNREADABLE), (id, role) -> Optional.empty(), registry);
+            var index = new ProjectionProtectionIndex(() -> Optional.of(SealedReason.AUTHORITY_UNREADABLE), (id, role) -> Optional.empty(), registry,
+                    server::isOnThread);
             index.failClosed("沒有此 server 的 M5 authority", missing);
             INSTANCES.put(server, index);
             return;
         }
         var source = authorities;
-        var index = new ProjectionProtectionIndex(() -> source.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER), catalogWorld(server), registry);
+        var index = new ProjectionProtectionIndex(() -> source.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER), catalogWorld(server), registry,
+                server::isOnThread);
         index.load(source::confirmedProjections);
         INSTANCES.put(server, index);
     }
@@ -147,7 +157,8 @@ public final class ProjectionProtectionIndex {
 
     /**
      * 熱路徑（{@code ChamberProtectionService.mayMutate} 遇到非 vanilla 的 world key 時）：這一格是否受投影保護（{@link #protects}）。沒有這個 server 的索引時
-     * 為 false：開服的 {@code SERVER_STARTED} 之前還沒有動態世界（bootstrap 在索引之後），停服之後不再有寫入。任何執行緒都可以呼叫。
+     * 為 false：開服的 {@code SERVER_STARTED} 之前還沒有動態世界（bootstrap 在索引之後），停服之後不再有寫入。健康時任何執行緒都可以呼叫；退化之後會讀
+     * {@link ChamberRegistry}，只在 server thread 安全（F4b-2 Step 0 Q-m2）。
      */
     public static boolean protectedCell(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos) {
         var index = INSTANCES.get(server);
@@ -168,7 +179,7 @@ public final class ProjectionProtectionIndex {
         try {
             var unhealthy = health.get();
             if (unhealthy.isPresent()) {
-                degrade(unhealthy.get(), null);
+                degrade(unhealthy.get());
             } else {
                 var indexed = new ArrayList<Indexed>();
                 int unmapped = 0;
@@ -188,14 +199,23 @@ public final class ProjectionProtectionIndex {
     }
 
     /**
-     * 更新入口（F4b-2）：登記一筆已確認的 projection entry。PENDING 在 checked 寫入確認之後、寫方塊之前呼叫（寫入時 Controller 的 refresh 辨識為
-     * PROJECTION）；COMPLETE 在 checked 寫入確認之後呼叫，這時這個投影的不變量 cell 才受保護。同一個 (chamber, UniverseId) 的 Status 只會前進，已是 COMPLETE
-     * 時再登記 PENDING 維持 COMPLETE。只在 server thread 呼叫。
-     * @throws IllegalArgumentException 同一個 key 的 site（Role、ControllerPos、OutwardFacing）與已登記的不同，或 entry 對應不到任何世界（本切片只有 OVERWORLD）——
-     *     ledger 已保證這兩者，違反是 caller 錯誤
+     * 更新入口（F4b-2）：登記一筆 checked 寫入已確認的 projection entry。傳入的是 {@link CollapseAuthorities#writeProjection} 的結果，不是寫入的輸入值
+     * （F4b-2 Step 0 Q-m4）：只有 {@code WRITTEN}、{@code UNCHANGED}、{@code ALREADY_COMPLETE} 帶著已確認的 entry；其他結果（未確認、寫入失敗、損壞、讀不到）
+     * 沒有 entry，登記它們會讓未確認的投影提早被辨識、甚至受保護，所以丟 {@link IllegalArgumentException}，不改變索引。PENDING 在 checked 寫入確認之後、
+     * 寫方塊之前呼叫（寫入時 Controller 的 refresh 辨識為 PROJECTION）；COMPLETE 在 checked 寫入確認之後呼叫，這時這個投影的不變量 cell 才受保護。同一個
+     * (chamber, UniverseId) 的 Status 只會前進，已是 COMPLETE 時再登記 PENDING（例如 {@code ALREADY_COMPLETE} 帶回的 entry）維持 COMPLETE。
+     * @throws IllegalArgumentException 結果不是上述三種成功狀態；同一個 key 的 site（Role、ControllerPos、OutwardFacing）與已登記的不同；或 entry 對應不到任何
+     *     世界（本切片只有 OVERWORLD）——ledger 已保證後兩者，違反都是 caller 錯誤
+     * @throws IllegalStateException 不在 server thread
      */
-    public void confirmed(ProjectionLedger.Entry entry) {
-        Objects.requireNonNull(entry, "entry");
+    public void confirmed(CollapseAuthorities.WriteResult result) {
+        Objects.requireNonNull(result, "result");
+        requireServerThread("confirmed");
+        var entry = switch (result.status()) {
+            case WRITTEN, UNCHANGED, ALREADY_COMPLETE -> result.entry().orElseThrow();
+            case UNCONFIRMED, WRITE_FAILED, CORRUPT, UNREADABLE -> throw new IllegalArgumentException(
+                    "只有已確認的 projection 寫入結果（WRITTEN／UNCHANGED／ALREADY_COMPLETE）可以登記：" + result.status());
+        };
         var world = worldKey(entry).orElseThrow(() -> new IllegalArgumentException("projection entry 對應不到世界（本切片只有 OVERWORLD）：" + entry));
         var previous = snapshot.byKey().get(new Key(entry.chamberUuid(), entry.universeId()));
         if (previous != null && !previous.entry().sameSite(entry)) {
@@ -215,10 +235,12 @@ public final class ProjectionProtectionIndex {
     }
 
     /**
-     * 與 {@code volume} 相交的已登記投影（PENDING 與 COMPLETE，依登記順序），供 F4b-2 判斷 §9.2 的「衝突」（另一座艙的 COMPLETE 投影）。只在 server thread 呼叫。
+     * 與 {@code volume} 相交的已登記投影（PENDING 與 COMPLETE，依登記順序），供 F4b-2 判斷 §9.2 的「衝突」（另一座艙的 COMPLETE 投影）。只在 server thread 呼叫
+     * （否則丟 {@link IllegalStateException}，F4b-2 Step 0 Q-m4）。
      */
     public List<ProjectionLedger.Entry> intersecting(RegistryKey<World> worldKey, BlockBox volume) {
         Objects.requireNonNull(worldKey, "worldKey"); Objects.requireNonNull(volume, "volume");
+        requireServerThread("intersecting");
         var view = snapshot.worlds().get(worldKey);
         if (view == null) return List.of();
         return view.all().stream().filter(indexed -> indexed.bounds().intersects(volume)).map(Indexed::entry).toList();
@@ -257,23 +279,32 @@ public final class ProjectionProtectionIndex {
         if (degraded != null) return;
         try {
             var unhealthy = health.get();
-            if (unhealthy.isPresent()) degrade(unhealthy.get(), null);
+            if (unhealthy.isPresent()) degrade(unhealthy.get());
         } catch (RuntimeException unexpected) {
             failClosed("同步權威健康時發生非預期的例外", unexpected);
         }
     }
 
-    private void degrade(SealedReason reason, @Nullable RuntimeException cause) {
+    /**
+     * 退化（只一次）：記一則 WARN，不附 stack（F4b-2 Step 0 Q-m3）——權威不健康的原因已由 {@code CollapseAuthorities} 的 ERROR 記下，非預期的例外已由
+     * {@link #failClosed} 的 ERROR 記下，不重複印同一份 stack。字句描述 F4b-2 接上之後的實際行為：塌縮流程每個 PREPARE 的 tick 都先查 {@link #degradation}。
+     */
+    private void degrade(SealedReason reason) {
         if (degraded != null) return;
         degraded = reason;
         LOGGER.warn(CollapseService.TICK_LOG_MARKER, "M5 投影保護索引退化（{}）：projection ledger 不健康，保護另加「登記中的 OVERWORLD Origin 艙在每個動態 Overworld 同位置的"
-                + "不變量 cell」，已在索引中的投影照樣受保護；新的 PREPARE 進 SEALED；下次開服若讀取成功自動解除", reason, cause);
+                + "不變量 cell」，已在索引中的投影照樣受保護；還沒完成準備的 PREPARE（進行中的，以及之後開始的）一律進 SEALED({})，已完成準備的不受影響；"
+                + "下次開服若讀取成功自動解除", reason, reason);
     }
 
-    /** 非預期的例外：記 ERROR，以退化規則 fail closed（原因記為 {@code AUTHORITY_UNREADABLE}，重啟之後重建）。 */
+    /** 非預期的例外：記 ERROR（附 stack，只記這一次），以退化規則 fail closed（原因記為 {@code AUTHORITY_UNREADABLE}，重啟之後重建）。 */
     private void failClosed(String what, RuntimeException failure) {
         LOGGER.error(CollapseService.TICK_LOG_MARKER, "M5 投影保護索引{}，改以退化規則保護：{}", what, failure.toString(), failure);
-        degrade(SealedReason.AUTHORITY_UNREADABLE, failure);
+        degrade(SealedReason.AUTHORITY_UNREADABLE);
+    }
+
+    private void requireServerThread(String what) {
+        if (!onServerThread.getAsBoolean()) throw new IllegalStateException("投影保護索引的 " + what + " 只能在 server thread 呼叫");
     }
 
     /** entry 的世界：catalog 的 descriptor；沒有時用 M3 的推導（只有 OVERWORLD）；都沒有時為空。 */
