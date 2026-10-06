@@ -404,7 +404,7 @@ public final class CollapseService {
         // ticket、退回 WAITING。SOURCE 的 PREPARE 在同一個 tick 就以 fast path 終局，沒有目的世界。
         if (universe) switch (derived.transition()) {
             case ENTER_PREPARE -> enterPrepare(view, track);
-            case LEAVE_PREPARE -> leavePrepare(view, track);
+            case LEAVE_PREPARE -> leavePrepare(view, track, derived.phase());
             case NONE -> { }
         }
         switch (derived.phase()) {
@@ -467,12 +467,14 @@ public final class CollapseService {
     /**
      * 離開 PREPARE（§7.3「PREPARE 進行到一半時閘門不再成立」）：釋放目的世界的 ticket，退回 WAITING。已完成的 RESOLVE（{@code track.resolved}）與已寫入的
      * projection ledger 都保留；這一段準備的記憶體內進度丟棄，閘門再次成立時依 §7.1 的邊緣觸發，從 collapse view 與權威重新推導（PENDING 照第一次寫入、
-     * COMPLETE 只修復）。F4b-3：這裡也是把門由 sealed 量子膜改回一般開門的轉換點（本 task 不套用量子膜，門一直是一般狀態）。
+     * COMPLETE 只修復）。目的世界不是 ACTIVE 時（不應發生）推導回到 RESOLVE，也經過這裡。F4b-3：這裡也是把門由 sealed 量子膜改回一般開門的轉換點（本 task
+     * 不套用量子膜，門一直是一般狀態）。
      */
-    private void leavePrepare(SessionRecoveryRecord view, Track track) {
+    private void leavePrepare(SessionRecoveryRecord view, Track track, CollapsePhase phase) {
         track.prepare = null;
         boolean released = releaseDestination(view.sessionUuid());
-        LOGGER.info(LOG_MARKER, "PREPARE 的閘門不再成立，退回 WAITING（已完成的 RESOLVE 與投影都保留{}）：session={} chamber={}",
+        LOGGER.info(LOG_MARKER, "{}（已寫入的投影都保留{}）：session={} chamber={}",
+                phase == CollapsePhase.WAITING ? "PREPARE 的閘門不再成立，退回 WAITING，已完成的 RESOLVE 保留" : "PREPARE 的目的地需要重新確認，回到 " + phase,
                 released ? "；已釋放目的世界的 ticket" : "", view.sessionUuid(), view.chamberUuid());
     }
 
