@@ -3395,6 +3395,7 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
   - `515fbc4` `docs: describe the F4b-1 projection GameTest helpers`（parent `340a953`）：`scripts/verification/README.md`「新增 M5 GameTest」的一點。
   - 本段由其後的 docs commit `docs: record F4b-1 projection components in the M5 note` 加入。
 - Code range `5bafb25..340a953`。沒有改 `CollapseService` 的流程（PREPARE stub 照舊；Step 0 的 CS 項目除外）、`ChamberControllerBlock`、`QuantumBulkheadBlock`、`WorldChamberDoorAdapter`、`ChamberControllerLoadSyncQueue`、`SuperpositionSessionManager`、`SessionRecoveryState`、`UniverseRegistryState`、`ChamberRegistryState`、`ChamberDoorService`、語言檔、`gates.ps1`、`build.gradle`、`.github/`；沒有新增 mixin。
+- Review：spec review ❌（Critical 0、Important 1、Minor 3：I-1、M-1～M-3）。三項「需要裁示」與「偏離」第 3 條，reviewer 都判定符合 spec，controller 正式接受（見「裁示」）。處置見本節末的「Fix round 1」。
 - 範圍是 plan Task F4b 拆分後的 F4b-1（plan「拆分」一段）。這些元件在 production 中，除了開服建立索引、保護查詢、載入辨識之外，還沒有呼叫端；寫入器只由測試呼叫。PREPARE（預載、PENDING→寫入→checkpoint→COMPLETE、§6.5 交叉檢查、§9.2 衝突、退化時進 SEALED、量子膜、門的攔截）屬 F4b-2。
 - 行號以 `340a953` 為準。`PW` 指 `collapse/ProjectionWriter.java`，`PPI` 指 `collapse/ProjectionProtectionIndex.java`，`PPIT` 指 `ProjectionProtectionIndexTest`，`CPS` 指 `chamber/ChamberProtectionService.java`，`CPC` 指 `chamber/ChamberPowerCoordinator.java`；`CA`、`CAT`、`DR`、`DRT`、`CS`、`CST`、`M5U`、`SUP` 同前面各節。M5U 新增的四個 test：
   - W1 `M5U:835` `projection_first_write_overwrites_the_volume_without_drops_or_neighbor_updates`（`m5_universe_projection_first_write`）
@@ -3407,7 +3408,7 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
 
 | 項目 | 處置與位置 | 證據 |
 | --- | --- | --- |
-| Q2-m1 | 二擇一選「組合不符時丟 `IllegalArgumentException`」：拿掉參數要改 `DR` 的兩個呼叫端，而 `DR` 只為 Q2-m2、S2-mA 列入允許路徑。`CA:735` 前提檢查、`CA:775` `directionFor`（DISABLED→ROLL_FORWARD、EAGER_ENABLED→RESTORE），Javadoc 同步。`CAT:1010` 改為 RESTORE | RED `red-0`：CAT `catalogAvailabilityDirectionMustFollowTheTargetValue`（`CAT:1147`，兩種不符的組合都丟、兩種相符的照寫）FAIL |
+| Q2-m1 | 二擇一選「組合不符時丟 `IllegalArgumentException`」：拿掉參數要改 `DR` 的兩個呼叫端，而 `DR` 只為 Q2-m2、S2-mA 列入允許路徑。`CA:739-742` 前提檢查（fix round 1 更正，M-3：首輪寫成 `CA:735`，那是方法宣告）、`CA:775` `directionFor`（DISABLED→ROLL_FORWARD、EAGER_ENABLED→RESTORE），Javadoc 同步。`CAT:1010` 改為 RESTORE | RED `red-0`：CAT `catalogAvailabilityDirectionMustFollowTheTargetValue`（`CAT:1147`，兩種不符的組合都丟、兩種相符的照寫）FAIL |
 | Q2-m2 | `DR:215` `materializeFailed`：`status != WRITE_FAILED` 時 `return failed(disabled)`（`DR:218`），刪掉 dead code `orElseGet` | RED `red-0`：DRT `materializeFailureWithAnUnhealthyCatalogSealsTheAuthorityReasonWithoutTheDisableError`（`DRT:356`）FAIL（修改前封存為 `MATERIALIZE_FAILED` 並記「DISABLED 的寫出未確認」ERROR） |
 | S2-mA | 二擇一選「呼叫前先記、回 WAIT 時移除」：`DR:196` `reenable` 在 `changeCatalogAvailability` 之前 `materializeSpent.add`（`DR:197`），WAIT 時 `remove`（`DR:200`），Javadoc 同步 | RED `red-0`：DRT `aReenableThatThrowsAfterTheRestoreStillSpendsTheQuota`（`DRT:379`，restore 寫入之後丟出的例外也算用掉額度）FAIL |
 | Q2-m3 | 組合抽成 static `CS:884` `sideEffect(warnings, ledger, sid, what, next, action)`，instance 版委派給它；WARN 的格式抽成 static `CS:847` `logWarn` | CST `sideEffectWarningKeysAreClearedOnSuccess`（`CST:366`）改為經由 production 的 static 驗證。mutation `mut-q2m3-composition-always-warns`（組合一律 WARN）：新 test FAIL（`mut-0-q2m3-new-test`），舊 test 存活（`mut-0-q2m3-head-test`，證明修改前的 test 沒有經過 production 的組合） |
@@ -3449,7 +3450,7 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
 - **第 7 點（`CA` 的唯讀 API）**：`CA:516` `confirmedProjections()`：已確認的 entries，依寫入順序；不健康時丟 `IllegalStateException`（呼叫端先查健康）。`CA:536` `unhealthy(authority)`：初始化失敗時回初始化的原因，執行期 `lost` 時回 `AUTHORITY_CORRUPT`，否則為空；不看單次呼叫回的 `CORRUPT`（已滿、單筆不符）。CATALOG 不是 M5 的 ledger，丟 `IllegalArgumentException`。既有 API 的行為不變（Step 0 的 Q2-m1、Q2-m5 除外）。CAT `confirmedProjectionsListOnlyCheckedEntriesInWriteOrder`（`CAT:621`）、`healthOnlyFollowsTheInitializationResultAndRuntimeLoss`（`CAT:656`），以及既有 `initializationFailures…` 與 `fullProjectionLedger…` 補的斷言。RED `red-1-ca-api`（stub）3 FAIL。
 - **第 8 點（保護與載入辨識）**：下兩小節。
 
-### 更新入口的設計（列入「需要裁示」第 1 條）
+### 更新入口的設計（「裁示」第 1 條，fix round 1 已接受）
 
 - `PPI:197` `confirmed(entry)`：F4b-2 每次 checked 寫入 projection entry 得到確認的 entry 之後呼叫（`WRITTEN`、`UNCHANGED`，或 `ALREADY_COMPLETE` 帶回的既有 entry）。
   - PENDING 確認之後、寫方塊之前登記：只供辨識（Controller 位置進集合），**不保護**。
@@ -3477,7 +3478,7 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
 
 - `CPC:57-67`：`role.isEmpty()`（動態世界）而且 `projectionControllerAt` 為真 → 把 block entity 的 instanceKind 寫回 PROJECTION（不同時才寫並 `markDirty`）、`changeState(INVALID)`、return。插在原本的 foreign 分支（`CPC:68`）之前，只動 plan 允許的 `:54-58` 分流；不在索引中的照舊走 foreign。不記 log。
 - 判定依據是索引，不是 block entity 的 instanceKind（§9.3「依索引判定」）。mutation `mut-7-kind-criterion`（判定改看 instanceKind）→ A、B 都沒有辨識，FAIL。
-- 寫回 instanceKind 的理由（列入「需要裁示」第 2 條）：foreign 分支同樣是 INVALID、比較器 0、不註冊、不啟動，只靠 INVALID 的話，辨識沒有任何可觀察的結果，兩條路徑的 test 也無從區分辨識與 foreign。PROJECTION 是既有的 enum 值：M1 走廊投影的 Controller 已經這樣標記（`SessionEntranceAllocator:39`，`CorridorPageManager:505` 依它判斷），ORIGIN 專屬的守門（發光、維護手勢、`ChamberActivationService`、session 的 controller 檢查）因此也一併不適用。
+- 寫回 instanceKind 的理由（「裁示」第 2 條，fix round 1 已接受）：foreign 分支同樣是 INVALID、比較器 0、不註冊、不啟動，只靠 INVALID 的話，辨識沒有任何可觀察的結果，兩條路徑的 test 也無從區分辨識與 foreign。PROJECTION 是既有的 enum 值：M1 走廊投影的 Controller 已經這樣標記（`SessionEntranceAllocator:39`，`CorridorPageManager:505` 依它判斷），ORIGIN 專屬的守門（發光、維護手勢、`ChamberActivationService`、session 的 controller 檢查）因此也一併不適用。
 - 兩條路徑都在 GT-L：
   - `onBlockAdded`：A 寫入之後立刻 `ChamberLoadSyncTestAccess.discardWorld(U)` 丟掉 load-sync（收據 `DISCARDED_WORLD_UNLOAD`）；寫入後 4 tick 還沒有 refresh 過（`powerInitialized=false`、ORIGIN），25 tick 時已由 `onBlockAdded` 排的 refresh 判定為 PROJECTION（`aRecognizedByBlockAdded`）。
   - load-sync：B 在 PENDING 登記一 tick 之後才寫入，收據 `REQUEUED_NOT_DUE, CONSUMED`，寫入後 3 tick（早於它自己 20 tick 後的排程 refresh）已是 PROJECTION（`bRecognizedByLoadSync`）。chunk 從磁碟載入時的 `BLOCK_ENTITY_LOAD` 走同一個 queue（「偏離」第 3 條）。
@@ -3517,6 +3518,7 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
 | P-FLAKE 修正 | `8c0d670`＋GT-P | `green-8q-protection-1..3`、`red-8-protection-no-index`、`green-8-protection-m5-1..3` | GREEN 3 次、M5 17/17 三次；RED FAIL。對照組的 settle 是 5、5、12、17、5、11 tick（RED 13） |
 | run-all | `515fbc4`，工作樹乾淨（`STATUS` 是空的） | `run-all-28d70ca9adf14ccdbb63acd8958c576b`（Full：`gate-full-a6b7c3fc51be40f4be2393dd5a036494`；M5：`gate-m5-gametest-58b7944b20ec46ea9f6e21b136377ac8`；`f4b1/run-all-final-console.txt`） | `END ALL exit=0 HEAD=515fbc4`。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=17/17 perTest=51+1 junit=626 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=393entries/346classes sources=216 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
 
+- 本節的 mutation 與 RED 以 adapter 名稱稱呼（`mut-index-*`、`mut-w-*`、`mut-cpc-*`…），evidence 的 root 以輪次命名（`mut-3-*`、`mut-4-*`、`mut-7-*`…）；兩者的對照表見「Fix round 1」的 M-3。
 - 索引的 mutation：`mut-index-intersect-all`、`mut-index-no-startup-info`、`mut-index-no-exact-key`、`mut-index-onshell-includes-interior`、`mut-index-pending-protected`、`mut-index-status-regresses` 都 FAIL。`mut-index-any-namespace`（拿掉 namespace 檢查）存活：它與之後的 exact key 相等重複，所以刪掉重複的檢查（`PPI:291`），改對 exact 相等做 mutation（`mut-index-no-exact-key` FAIL）。
 - 每個 adapter 跑完都還原，還原後的 blob 與套用前相同。每個 commit 的 blob 都與它之前最後一輪 GREEN 的 state 相同（`f4b1/commit-*-blobs.txt`）。`8c0d670` 的 `M5U` 是「HEAD＋GT-L」的 blob `5b0022a`（`f4b1/m5u-recognition-commit.java`，以 `git update-index --cacheinfo` stage），等於 `green-7q-recognition` 等各輪 state 記錄的 blob；工作樹當時已另有 GT-P 的修正，留給 `340a953`。
 - P-FLAKE：GT-P 首版在佈置後固定 20 tick 判定，`green-6q-protection`（還沒有等 block ticking）與 `green-7-recognition-m5`（已等 block ticking）兩次是對照組沒有發生（`controlPistonPushes`、`controlFluidFlows` 都是 false，保護的 witness 都成立）。`340a953` 改成以有界等待（200 tick）等對照組的活塞推動完成、水源流動過再判定，並記錄 settle 的 tick。之後各輪是 5–21 tick（run-all 的 M5 是 21），所以固定 20 tick 本來就不夠；多出的 tick 來自哪裡沒有追。
@@ -3534,10 +3536,12 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
 1. 更新入口（上方小節）：spec §9.3 的字面是「每次 COMPLETE 時更新」；本實作在 PENDING 確認時就登記 Controller 位置供辨識，COMPLETE 時才保護。
 2. Q2-m1 選丟 `IllegalArgumentException`，沒有拿掉參數（理由在 Step 0 表）。
 3. 「chunk 載入」路徑的 test 以寫入器放置 Controller 觸發的 `BLOCK_ENTITY_LOAD` → load-sync queue 驗證，沒有真的讓 chunk 卸載再載入。chunk 從磁碟載入時是同一個事件與同一個 queue（`QuantumSuperpositionMod:43-48`）。強制載入的 chunk 要卸載，得解除強制載入並等存檔卸載，時序不可控；重啟後載入屬 F6 的重啟矩陣。
-4. 活塞：shell、門板與 Controller 本身就推不動（既有的方塊設定），活塞在 `mayMutate` 之前就被擋，關掉索引的 RED 也推不動；`pistonsCannotMoveInvariantCells` 的牙齒是對照組的活塞。損壞成 AIR 的不變量 cell 被活塞推入方塊的情境沒有測：依原版 `PistonBlock.move`，目的格的 `setBlockState` 被拒之後仍會 `addBlockEntity`（MOVING_PISTON 的 block entity 落在 AIR 上），會記原版的 WARN，被推的方塊應該就此消失（依程式碼推論，未實測）。這與 Origin 的既有保護是同一條路徑，不在 F4b-1 範圍。
+4. 活塞：shell、門板與 Controller 本身就推不動（既有的方塊設定），活塞在 `mayMutate` 之前就被擋，關掉索引的 RED 也推不動；`pistonsCannotMoveInvariantCells` 的牙齒是對照組的活塞。首輪沒有測「活塞把方塊推進損壞成 AIR 的不變量 cell」；fix round 1（M-1）已補，見「Fix round 1」：那一格維持 AIR，原版 `PistonBlock.move` 在寫入被拒之後仍對那一格 `addBlockEntity`，記一則原版 WARN，被推的石頭消失、活塞頭留在石頭原本的位置。這與 Origin 的既有保護是同一條路徑。
 5. GT-P 的對照組以有界等待判定（P-FLAKE），不是固定 tick 數。
 
-### 需要裁示
+### 裁示
+
+首輪列為「需要裁示」的三項，以及「偏離」第 3 條（chunk 載入路徑以 `BLOCK_ENTITY_LOAD` → load-sync queue 驗證），spec review 都判定符合 spec，controller 正式接受（fix round 1 的派工）：
 
 1. 更新入口的設計（PENDING 確認時登記供辨識、COMPLETE 時保護；開服時 PENDING entry 只供辨識）。
 2. 辨識時把 block entity 的 instanceKind 寫回 PROJECTION（判定依據仍是索引；理由見「載入辨識」）。
@@ -3557,6 +3561,72 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
   - 寫入器的結果：`BLOCKED_BY_PLAYER`、`NOT_LOADED` 下一個 tick 再試（不是失敗）；`VERIFY_FAILED`、`WRITE_FAILED` 帶 failure，可直接當 SEALED(`PROJECTION_FAILED`) 的 root cause。寫入器不記 log，WARN／ERROR 由 F4b-2 以 session 記。`WRITE_FAILED` 的 GameTest 需要 F4b-2 的 fault mixin。
   - 寫入器不做衝突與 ledger 的判斷：§6.5 的實體交叉檢查用 `PW:105` `controllerPresence`；§9.2 的衝突用 `PPI:220` `intersecting`（回傳 PENDING 與 COMPLETE，F4b-2 只把另一座艙的 COMPLETE 當成衝突）；退化時新的 PREPARE 進 SEALED 用 `PPI:212` `degradation()`。
   - 預載：寫入器在 volume 的 chunk 不是都 FULL 時回 `NOT_LOADED`、不載入；F4b-2 的預載不得用阻塞式 `getChunk(create=true)`（plan Step 1）。GameTest 的 `forceProjectionChunks` 是 test 專用的同步載入。
-  - G-NEW 的 `onlyTheStubWarnAndNoError`（F4a 交下）照舊交給 F4b-2；W1、GT-P、GT-L 各有一則 stub WARN（M5 WARN 13 → 16），PREPARE 實作之後會消失，屆時 M5 run 的 WARN 數字要重新歸因。GT-P、GT-L 的 log 斷言只排除塌縮 session 本身的 log。
-- F6：重啟矩陣加入「PENDING 寫到一半時重啟」：開服時 PENDING entry 只供辨識，PREPARE 再寫；以及真正的 chunk 卸載再載入的辨識（「偏離」第 3 條）。
-- F7：spec §9.3 的 errata（若裁示採用更新入口的設計）：「PENDING 確認時登記 Controller 位置供載入辨識；COMPLETE 時開始保護」。
+  - G-NEW 的 `onlyTheStubWarnAndNoError`（F4a 交下）照舊交給 F4b-2；W1、GT-P、GT-L 各有一則 stub WARN（M5 WARN 13 → 16），PREPARE 實作之後會消失，屆時 M5 run 的 WARN 數字要重新歸因。GT-L 的 log 斷言只排除塌縮 session 本身的 log（fix round 1 更正：首輪寫成「GT-P、GT-L」，GT-P 沒有 log 斷言）。
+  - （fix round 1，controller 補）「寫入器驗證 → checkpoint → `writeProjection(COMPLETE)`」之間是 spec 本身就有的未保護窗口：這段期間不變量 cell 的損壞不會被擋，之後仍以 COMPLETE 記下，要到下次 EXISTING 造訪的修復才寫回。F4b-2 要在寫 COMPLETE 之前再驗一次（例如再以 REPAIR 呼叫寫入器，或比對不變量 cell），或在 note 註明這個窗口。
+- F6：
+  - 重啟矩陣加入「PENDING 寫到一半時重啟」：開服時 PENDING entry 只供辨識，PREPARE 再寫。
+  - （fix round 1，controller 補；spec review 對「偏離」第 3 條的意見）真正從磁碟載入時的辨識：在重啟矩陣中帶 COMPLETE 與 PENDING 的 entry 重啟，投影的 chunk 從磁碟載入之後，Controller 要辨識為 inert PROJECTION，而且不記 log。
+- F7：spec §9.3 的 errata（裁示已採用更新入口的設計）：「PENDING 確認時登記 Controller 位置供載入辨識；COMPLETE 時開始保護」。
+
+### Fix round 1（`0020bd5`、`a928216`）
+
+- Review：spec review ❌（Critical 0、Important 1、Minor 3）。三項「需要裁示」與「偏離」第 3 條判定符合 spec，controller 正式接受（「裁示」）。controller 的 fix round 1 派工處理 I-1、M-1～M-3。
+- Commits（依序；只 stage 自己的檔案）：
+  - `0020bd5` `test: lock the forced controller rewrite of the first projection write`（parent `c7bbde7`）：M-2。只有 `M5U` 的 W2。
+  - `a928216` `test: repair a protected projection and push into a damaged invariant cell`（parent `0020bd5`）：I-1、M-1。只有 `M5U` 的 GT-P。
+  - 本小節由其後的 docs commit `docs: record F4b-1 fix round 1 in the M5 note` 加入；同一個 commit 也更正本節的 M-3 兩處、在 Review 行、「偏離」第 4 條、「裁示」、「交給後續」加註 fix round 1。
+- Code range `c7bbde7..a928216`。只改 testmod 的 `M5UniverseGameTests.java`；沒有改 production（`ProjectionWriter` 沒有缺陷：I-1、M-2 的新斷言在修改前的寫入器上都通過），沒有改 `M5GameTestSupport.java`、mixin、`build.gradle`、`.github/`、`scripts/verification/`。
+- 本小節的行號以 `a928216` 為準。證據在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f4b1/fix1/`（以下簡稱 `fix1/`）：`state.ps1`、`gate.ps1`、`chain.ps1`、`adapter.py`、`wbcmp.py`、`jarcmp.py` 由 `f4b1/` 複製，只改 repo 的相對路徑與 adapter 表（`adapter.py` 另支援 `FILE:` 整檔替換，供逐 commit 取證）；`f4b1/` 下既有的檔案沒有改動。
+
+| 項目 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| I-1：寫入器經 `authorizedMutation`，以及修復 COMPLETE、已受保護的投影，都沒有測試 | 依 reviewer 的建議放在 GT-P（不新增 `@GameTest`）：五類保護之後（`M5U:1149` 起的判定 callback），對被損壞的 COMPLETE 投影呼叫 `ProjectionWriter.write(…, REPAIR)`。損壞的 4 格：放置 test 的 `local(0,3,3)`（AIR）、爆炸 test 的 `local(6,3,3)`（玻璃）、流體 test 的 `local(6,4,3)`（AIR）、M-1 的 `local(6,2,2)`（AIR）。新 witness：`repairOfTheProtectedProjectionWritten`（`M5U:1163`，WRITTEN 而且恰好 4 格）、`repairRestoresEveryInvariantCell`（`:1164`，`projectionMismatches(shellOnly=true)` 為空、門開著）、`repairKeepsTheInteriorChange`（`:1166`，`local(2,1,3)` 的石頭）、`stillProtectedAfterTheRepair`（`:1167`） | mutation `mut-w-no-authorization`（拿掉 `PW:131-133` 的 `authorizedMutation` 包裝）：`mut-a-no-authorization`、`mut-d-no-authorization`（`a928216` 的工作樹）都只有 GT-P FAIL，恰好 `repairOfTheProtectedProjectionWritten`、`repairRestoresEveryInvariantCell` 為 false；W2 照常 PASS（證明 W2 的修復不涵蓋授權） |
+| M-1：活塞這一類沒有能抓到保護失效的斷言 | 補「活塞把石頭推進損壞成 AIR 的不變量 cell」：授權寫入把 `local(6,2,2)` 改成 AIR，`outside(7,2,2)` 放石頭，`outside(8,2,2)` 的活塞由 `outside(9,2,2)` 的紅石塊供電、朝西推（`M5U:1126-1130`）。判定等這台活塞伸出、兩格都不是 MOVING_PISTON（`pushSettled`）。新 witness `pistonCannotPushIntoADamagedInvariantCell`（`M5U:1155`，那一格仍是 AIR） | RED `red-cps-no-index`：`red-a-protection-no-index`、`red-d-protection-no-index` 中那一格變成石頭（log `pushedInto=Block{minecraft:stone}`），witness 為 false。GREEN 的 log 是 `pushedInto=Block{minecraft:air} pushedStone=…piston_head…`：被推的石頭消失，活塞頭留在石頭原本的位置 |
+| M-2：第一次寫入時，格上已有 Controller 會被強制重寫，沒有測試 | W2 在 Q 離開之後、成功的第一次寫入之前，先在 Controller 位置放一座方塊狀態與目標相同、block entity 帶隨機 chamber UUID 的 Controller（`M5U:958-965`，`staleControllerHasAnIdentity`）。新 witness `existingControllerRewrittenWithADefaultBlockEntity`（`M5U:969`：block entity 換成新的、舊的已 removed、沒有 chamber UUID） | 兩個 mutation 都 FAIL，`firstWriteAfterQLeft`、`existingControllerRewrittenWithADefaultBlockEntity` 為 false：`mut-w-no-forced-controller-write`（`PW:174` 不強制重寫，`mut-a-…`、`mut-b-…`）與 `mut-w-no-controller-air-step`（`PW:181-183` 不先換成 AIR，同一格寫入相同的狀態不會換 block entity；`mut-a-…`、`mut-b-…`） |
+| M-3：note 的小錯 | Step 0 表的「`CA:735` 前提檢查」改為 `CA:739-742`；adapter 名與 root 名的對照見下表；另更正「交給後續」中「GT-P、GT-L 的 log 斷言」為只有 GT-L | — |
+
+M-3 的對照（左邊是 adapter 名，`f4b1/adapter.py`；右邊是 evidence 的 root／摘要名，`f4b1/<root>-summary.txt`）：
+
+| adapter | root |
+| --- | --- |
+| `red-q2m1-no-direction-check`、`red-q2m2-corrupt-as-unconfirmed`、`red-s2ma-spent-after-call`、`red-q2m4-fixed-text`（同時套用） | `red-0` |
+| `mut-q2m3-composition-always-warns`（`cst-at-head`＋它） | `mut-0-q2m3-new-test`（`mut-0-q2m3-head-test`） |
+| `mut-firstwarning-always` | `mut-0-firstwarning` |
+| `red-ca-api-stub` | `red-1-ca-api` |
+| `mut-ca-single-corrupt-marks-lost` | `mut-1-single-corrupt` |
+| `red-index-stub` | `red-3-index` |
+| `mut-index-intersect-all`、`-no-startup-info`、`-any-namespace`、`-no-exact-key`、`-onshell-includes-interior`、`-pending-protected`、`-status-regresses` | `mut-3-intersect-all`、`mut-3-no-startup-info`、`mut-3-any-namespace`、`mut-3-no-exact-key`、`mut-3-onshell-includes-interior`、`mut-3-pending-protected`、`mut-3-status-regresses` |
+| `red-w-naive` | `red-4-writer-naive`、`red-4b-writer-naive-w1` |
+| `mut-w-no-clear`、`mut-w-neighbors`、`mut-w-no-force-state`、`mut-w-spectators-block`、`mut-w-entities-block` | `mut-4-*` 與 `mut-4b-*` 同名（例如 `mut-w-no-clear` → `mut-4-no-clear`、`mut-4b-no-clear`） |
+| `mut-w-first-write-checks-pending-only`、`mut-w-repair-checks-every-invariant-cell`、`mut-w-repair-writes-interior` | `mut-4-first-write-checks-pending-only`、`mut-4-repair-checks-every-invariant-cell`、`mut-4-repair-writes-interior` |
+| `red-cps-no-index` | `red-6-protection-no-index`（不採計）、`red-6b-protection-no-index`、`red-8-protection-no-index` |
+| `red-cpc-no-recognition` | `red-7-recognition-no-branch` |
+| `mut-cpc-kind-criterion`、`mut-cpc-any-dynamic`、`mut-index-controllers-complete-only` | `mut-7-kind-criterion`、`mut-7-any-dynamic`、`mut-7-controllers-complete-only` |
+| fix round 1：`mut-w-no-authorization`、`red-cps-no-index`、`mut-w-no-forced-controller-write`、`mut-w-no-controller-air-step`（`fix1/adapter.py`） | `fix1/mut-a-no-authorization`、`mut-d-no-authorization`；`red-a-protection-no-index`、`red-d-protection-no-index`；`mut-a-`／`mut-b-no-forced-controller-write`；`mut-a-`／`mut-b-no-controller-air-step` |
+
+M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to set block entity net.minecraft.block.entity.PistonBlockEntity@… at position BlockPos{…}, but state Block{minecraft:air} does not allow it`（`WorldChunk.setBlockEntity`），位置就是 `local(6,2,2)`。`addBlockEntity` 之後的 `updateTicker` 仍登記了 ticker，但那個 block entity 沒有 world（`setBlockEntity` 拒絕時不設 world），ticker 的 `hasWorld()` 為假，不會 tick，所以沒有「invalid for ticking」的第二則 WARN；這個 ticker 留在 chunk 上，到 chunk 卸載為止。RED 中那一格放行，沒有這則 WARN。這個情境穩定（`green-a-quick`、`green-a-m5`、`green-c-quick`、`green-c-m5` 與 run-all 都是同一則），也不影響 M5 run 的 log 規則：gate 不掃描 WARN，`quantumchamber` logger 的斷言（GT-L）不收原版 logger。
+
+證據（逐輪的 state 記 HEAD、porcelain 與逐檔 blob）：
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| GREEN-A | `c7bbde7`＋W2、GT-P 的改動（`M5U` blob `30308a5`） | `gate-green-a-quick-cdefc6e935cc4000bb9014145bfbc700`；`gate-green-a-m5-30c7f26720f44e6883e1faf224f9aad8` | GT-P、W2 PASS；M5 17/17 |
+| 首輪 mutation／RED | GREEN-A 的工作樹＋adapter | `gate-mut-a-no-authorization-53fd8e52deb443008df0c0f818ed60e5`；`gate-red-a-protection-no-index-521d544ec0b54ce7944e34e87f0ffd17`；`gate-mut-a-no-forced-controller-write-70f48adba4bc45df82fb0df3ebd4d25e`；`gate-mut-a-no-controller-air-step-dad371d845204b64812cae5310a7fdc7` | 上表 |
+| GREEN-B（`0020bd5` 的內容） | `c7bbde7`＋只有 W2（`M5U` blob `c6b4b66`，`fix1/m5u-w2-only.java`，以 adapter `state-w2-only` 換入） | `gate-green-b-w2-quick-cbd81bd5e3e94ec0a26f9fa79c341dac`；`gate-green-b-w2-m5-af62d5cde0b744c79cb18e280f7e3efb`；mutation `gate-mut-b-no-forced-controller-write-4a8ca20a618846dd90504532ed2fdf74`、`gate-mut-b-no-controller-air-step-e2b7e0bfb9484d2bb908069240b1c3de` | W2 PASS；M5 17/17；兩個 mutation FAIL |
+| GREEN-C（`a928216` 的內容） | `c7bbde7`＋全部（`M5U` blob `5328482`；GREEN-A 之後只改了 GT-P 的 Javadoc：首版寫「兩則原版 WARN」，實測一則） | `gate-green-c-quick-b844cb8a49f44d4eb642ac70e6fff1f5`；`gate-green-c-m5-36af75c9409749d09579c3bd1d8a670e` | GT-P、W2 PASS；M5 17/17 |
+| `a928216` 的 mutation／RED | `a928216`，工作樹乾淨＋adapter | `gate-mut-d-no-authorization-7b9c1751cb4647e08c6c06e2d17fac54`；`gate-red-d-protection-no-index-c25b48ba59204b4895782c1c166575bb` | 與首輪相同 |
+| run-all | `a928216`，工作樹乾淨（`STATUS` 是空的） | `run-all-7bab6785434347c4ab75c5d21a34c4b0`（Full：`gate-full-5f11241d3816402782059fc56c68da40`；M5：`gate-m5-gametest-ee51511058224936aee030665488a908`；`fix1/run-all-console.txt`） | `END ALL exit=0 HEAD=a928216`。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=17/17 perTest=51+1 junit=626 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=393entries/346classes sources=216 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+
+- `0020bd5` 的 `M5U` 是 GREEN-B 的 blob `c6b4b66`：以 `git apply --cached` 只把 W2 的兩個 hunk 放進 index（`fix1/m5u-w2-only.patch`），取出成檔驗證之後以 `git update-index --cacheinfo` stage；`a928216` 是 GREEN-C 的 blob `5328482`（`fix1/commit-blobs.txt`）。每個 adapter 跑完都還原，還原後的 blob 與套用前相同。
+- 沒有改 production，所以沒有加跑 default 的 21 個 batch；run-all 的 Full 涵蓋 default run。
+- 與首輪的 run-all（`run-all-28d70ca9adf14ccdbb63acd8958c576b`，`515fbc4`）逐項比較：
+  - SUMMARY 的每一項都相同。M5 oracle PASS：17 個 test，suite 結束時 16 筆；`M3_UNIVERSE_STOPPED_VERIFIED worlds=10` 不變。
+  - release、sources JAR 的 entries 與每個 entry 的內容都相同（`fix1/jarcmp-release.txt`、`fix1/jarcmp-sources.txt`；本輪沒有改 production）。
+  - log（`fix1/wbcmp.py`）：Full 54／28、legacy 0／0 不變（`fix1/wbcmp-full.txt`、`wbcmp-legacy.txt`）。M5 WARN 16 → 17、ERROR 1 不變（`fix1/wbcmp-m5-gametest.txt`）：多出的一則是 M-1 的原版 WARN「Trying to set block entity … PistonBlockEntity … but state Block{minecraft:air} does not allow it」（上方「M-1 的原版 WARN」）。
+  - GT-P 的 log：`M5_PROJECTION_PROTECTION controlsSettledAfter=11 … pushedInto=Block{minecraft:air} pushedStone=…piston_head…`、`M5_PROJECTION_PROTECTED_REPAIR status=WRITTEN written=4 mismatched=0`。
+- 本輪沒有遇到派工列出的已知偶發，也沒有停服卡住；失敗的 root 都是刻意的 RED 或 mutation。
+
+測試：
+
+- M5 GameTest 17 不變：只增加 witness（W2 ＋2：`staleControllerHasAnIdentity`、`existingControllerRewrittenWithADefaultBlockEntity`；GT-P ＋5：`pistonCannotPushIntoADamagedInvariantCell` 與 I-1 的四個）。GT-P 的 catalog 增量仍是 1。
+- JUnit 626、default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 都不變。
