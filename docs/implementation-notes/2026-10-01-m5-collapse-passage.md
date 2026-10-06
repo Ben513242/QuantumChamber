@@ -3968,3 +3968,184 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
 
 - M5 GameTest 28 → 30：新增 P-RECHECK、P-UNCONF（各自一個 batch，catalog 增量各 1）；P-POWER 只加第二位參與者（名稱、batch、增量都不變）。suite 結束時 27 → 29 筆。
 - JUnit 631 不變（CST 17、PPIT 12、`GT` 2；CST 只改閘門的 fixture 與斷言）。default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 不變。
+
+## F4b-3：PREPARE 期間的原艙門（量子膜、門攔截、門狀態的重新套用）與 Step 0
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `099f4a8` `refactor: route chamber projection lookups through a chamber-defined port`（parent `3f96399`）：Step 0 的 Q-m1。新增 `chamber/ChamberCollapsePort.java`（只有投影查詢）；`ChamberProtectionService.java`、`ChamberPowerCoordinator.java`（只有改走 port）、`ProjectionProtectionIndex.java`（只有 port 的註冊）；新增 JUnit `collapse/ChamberCollapseDependencyGuardTest.java`。
+  - `71b5d74` `test: share the PREPARE GameTest opening and closing steps`（parent `099f4a8`）：Step 0 的 Q-M5。只有 `M5U`。
+  - `3b9bbb0` `refactor: require the PREPARE bookkeeping instead of creating it lazily`（parent `71b5d74`）：Step 0 的兩則 Nit。`CP`（只有 Javadoc）、`CS`。
+  - `270af2d` `feat: give the origin door its PREPARE state and reapply it from the collapse view`（parent `3b9bbb0`）：補充第 1、3、4、5、6 點。`CS`、`CST`；testmod `M5U`（只有 P-NEW、P-POWER）、`SUP`（只有 `doorSealed`）。
+  - `287d216` `feat: intercept origin door use during PREPARE before the door service`（parent `270af2d`）：補充第 2 點。`PORT`（加上門的攔截）、`WCDA`、`QBB`、`CCB`、`CS`、`CST`。
+  - `89c39ad` `test: cover the PREPARE origin door in the M5 run`（parent `287d216`）：testmod `M5U`（6 個新 test）、`SUP`、`HK`、新增 `mixin/SessionJournalPutFaultMixin.java`、`quantumchamber-test.mixins.json`（只登記它）。
+  - `7ad2ddc` `docs: describe the F4b-3 origin door GameTest helpers`（parent `89c39ad`）：`scripts/verification/README.md`「新增 M5 GameTest」一節。
+  - 本段由其後的 docs commit `docs: record F4b-3 source door in the M5 note` 加入。
+- Code range `3f96399..89c39ad`。沒有改 `ChamberDoorService`、`ChamberControllerLoadSyncQueue`、`QuantumSuperpositionMod`（port 的註冊在 `PPI.registerEvents()` 與 `CS.initialize()` 裡，兩者本來就由它呼叫）、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`CorridorPageManager`、`SuperpositionSessionManager`、`SessionRecoveryState`、`SessionRecoveryManager`、`UniverseRegistryState`、`ChamberRegistryState`、`UniverseLifecycleService`、`M5CollapseGameTests`、語言檔、`gates.ps1`、`build.gradle`、`.github/`。
+- Review：由 controller 補。
+- 範圍是 plan Task F4b「拆分」的 F4b-3：PREPARE 期間的原艙門（量子膜的套用條件與門口規則、門的攔截、閘門失效與暫停時的門、門狀態的重新套用），以及 Step 0（`chamber`／`collapse` 的依賴反轉、M5U 的前後段 helper、F4b-2 的兩則 Nit）。PASSAGE_READY 期間的門（§10.5）、passable 量子膜與沒有所屬 session 的量子膜正規化（§10.6 :613）屬 F5。
+- 行號以 `89c39ad` 為準。`PORT` 指 `chamber/ChamberCollapsePort.java`，`WCDA`、`QBB`、`CCB` 指 `chamber/WorldChamberDoorAdapter.java`、`QuantumBulkheadBlock.java`、`ChamberControllerBlock.java`，`GUARD` 指 `ChamberCollapseDependencyGuardTest`，`PJF` 指 `mixin/SessionJournalPutFaultMixin.java`；`CS`、`CST`、`CP`、`CPS`、`CPC`、`PPI`、`PPIT`、`M5U`、`SUP`、`HK` 同前面各節。M5U 新增的 6 個 test（M5 run，各自一個 batch，名稱不以 `_windows` 結尾，各平台都執行）：
+  - T-MEM `M5U:2064` `prepare_seals_the_membrane_only_with_a_clear_doorway_and_no_non_participant_inside`（`m5_universe_door_membrane`，tickLimit 1200，catalog 增量 1）
+  - T-CLOSE `M5U:2136` `prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept`（`m5_universe_door_close`，600，1）
+  - T-CLOSE-D `M5U:2180` `prepare_participant_closing_by_the_controller_with_an_entity_in_the_doorway_leaves_it_open`（`m5_universe_door_close_doorway`，600，1）
+  - T-REJ `M5U:2213` `prepare_rejected_seal_write_hands_the_door_back_open_until_the_retry_seals_it`（`m5_universe_door_rejected`，1200，1）
+  - T-START `M5U:2254` `startup_reapplies_a_stale_membrane_in_waiting_once_on_the_next_tick`（`m5_universe_door_startup`，900，1）
+  - T-RELOAD `M5U:2306` `sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it`（`m5_universe_door_reload`，1500，0：SEALED 收據不配置宇宙）
+  - 另外 F4b-2 的 P-NEW（`M5U:1377`）、P-POWER（`M5U:1448`）改了門的 witness（名稱、batch、增量都不變），見下表。
+
+### Step 0
+
+| 項目 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| Q-m1：`chamber` 與 `collapse` 互相依賴 | 新增 `PORT`：`chamber` 定義的反轉介面，比照 `ChamberSessions.gateway()`。`Projections`（`PORT:42`，`protectedCell`、`projectionControllerAt`）由 `PPI.registerEvents()` 註冊（`PPI:106`，委派給既有的兩個 static 查詢）；`Doors`（`PORT:61`）由 `CS.initialize()` 註冊（`CS:193`，見補充第 2 點）。沒有註冊時是 `NONE`：沒有投影（`protectedCell`／`projectionControllerAt` 都是 false，`mayMutate` 放行、Controller 走 foreign 分支）、不攔截（`PASS`），等同修改前「沒有索引」的語意。`CPS:65`、`CPC:56` 改呼叫 port，呼叫位置與順序不變；選 port 而不選 `registerAdditionalGuard`：後者排在 `attachedServer` 檢查之前、對 vanilla 世界也會被呼叫，保護的順序會改變。守門：`GUARD` 掃描 `src/main/java/dev/quantumchamber/chamber/` 下所有 `.java`，以 `CollapseLogMarkerGuardTest.mask` 遮掉註解與字串之後，不得出現 `dev.quantumchamber.collapse`（import、static import、完整限定名稱、點旁的空白都算）；另一個 test 鎖住掃描器本身（註解、Javadoc、字串、相近的識別字不算） | RED `red-s0a-guard`（`3f96399`＋只有 `GUARD`）：`chamberSourcesNeverReferenceTheCollapsePackage` FAIL（`[ChamberPowerCoordinator.java:3, ChamberProtectionService.java:3]`），掃描器的 test PASS。GREEN `green-s0a`（24 個 class：collapse 4＋chamber 20，全部 PASS）；GT-P、GT-L `green-s0a-m5` 2/2。mutation `mut-s0-no-port-install`（不註冊 `Projections`）：GT-P（`everyInvariantCellDenied`、`breakingRefused`… false）與 GT-L（`bRecognizedByLoadSync`、`aRecognizedByBlockAdded`、`poweredButInert` false）都 FAIL（`chain-s0.log`） |
+| Q-M5：M5U 的 F4b-2 test 前後段重複 | `M5U:2538` `openOrigin`（`DormantOrigin.open`＋`asTestFailure`）、`M5U:2548` `releaseThenComplete`（`hooks.release`、斷言 witness、`awaitConvergedThenComplete(context, 1, maxTicks, ready)`）。F4b-2 的 13 個 test 以 `f4b3/s0b_helpers.py` 機械替換（只動 F4b-2 一節，前段 13 處、後段 13 處都斷言匹配數；`s0b-report.txt` 逐處列出 maxTicks 與 ready），失敗訊息的字串不變。F4b-3 的新 test 也用它們（T-RELOAD 的增量是 0，自己寫後段）。不拆檔（屬 F6） | 純重構：`green-s0b-m5` M5 30/30，test 名稱與結果和 F4b-2 的 run-all 相同 |
+| Nit：`CollapsePhase.Gate#edge` 的 Javadoc | `CP:57` 只寫契約：「這個 tick 是否有 §7.1 的邊緣觸發。評估會消耗一次邊緣觸發：同一個觸發只會讓一次評估成立」；「本 instance 第一次以位準評估」是 `CS` 的 `PrepareGate` 的實作，留在它自己的 Javadoc | 只有 Javadoc |
+| Nit：`prepareUniverse` 走不到的 lazy `Prepare` | `CS:622` 改成 `Objects.requireNonNull(track.prepare, …)`：推導回傳 PREPARE 的那個 tick 由 `enterPrepare` 建立，之後一直保留到離開（`Track#preparing` 的不變式；`sealRejected` 不重設它，被拒期間 `collapsing()` 不推導階段，不會走到這裡） | 純重構：`green-s0c`（CST 17）、`green-s0c-m5`（P-NEW、P-POWER、P-REVISIT、T-WF 4/4） |
+
+### plan Step 1 中屬於 F4b-3 的 RED
+
+| plan Step 1 | 程式位置 | 測試與證據 |
+| --- | --- | --- |
+| 第 10 組：sealed 量子膜期間來源 chunk 卸載再重載 → 下一個 tick 依 collapse view 重新套用，不在 chunk 載入的當下寫方塊 | `CS:1141` `watchDoor`（每個 tick 對 COLLAPSING、SEALED 觀察一次來源艙是否載入）、`CS:1163` `doorReloaded`（一次性觸發）、`CS:1177` `reapplyDoor`（排入下一個 tick，`queueDoor(view, 1, …)`；已有待套用的門時只延後）、`CS:1168` `reapplyGoal`、`CS:1465` `applyDoor` 的 `NORMALIZE`。COLLAPSING 在同一個 instance 內不會卸載（來源 ticket，見「偏離」第 1 條），所以 PREPARE 的版本以 T-START 的模擬重啟證明 | T-START：WAITING 時門上留著 sealed 量子膜，模擬重啟之後的第一次觀察：觀察到的 tick 只排入（`notWrittenWhenObserved`），下一個 tick 才改為一般開門（`appliedOnTheQueuedTick`：INFO 記下的排入 tick 與套用 tick 相同）、只有一次（`onlyOnce`）；恢復供電、P 再進入 → PREPARE 依條件重新套用 sealed。mutation `mut-g-no-reapply`（拿掉重新套用）T-START 逾時在「沒有排入重新套用」；`mut-g-reapply-same-tick`（觀察到的同一個 tick 就套用）`notWrittenWhenObserved=false`；JUnit `CST:496` `doorReapplicationTriggersOnlyAfterAnUnloadOrOnTheFirstStartupObservation`（`j-mut-reload-on-first-runtime-observation` FAIL） |
+| 第 10 組（SEALED 版本）：開服或重載之後關門一次；門口有人時改為一般開門；玩家打開之後不會被關回去 | 同上；`applyDoor` 的 `CLOSE_ON_SEALED` 先等門口的 entity storage 載入（`CS:590` `doorwayEntitiesLoaded`），再依門口決定關門或一般開門（既有的 `sealedDoor`） | T-RELOAD（`SUP:651` `RemoteOrigin`：overworld 遠處、只有它自己強制載入的真原艙；真的讓 chunk 不再是 FULL 再載入兩次）：`notReappliedWhileLoaded`、`closedOnceAfterTheReload`、`appliedNoEarlierThanTheQueuedTick`、`anyPlayerOpensASealedDoor`、`notClosedAgain`（40 tick 後仍開著、只有一次重新套用）、`openedForTheEntityInTheDoorway`（第二次重載時門口有盔甲座）。實測關門等了 27～42 tick 的 entity storage（`M5_DOOR_RELOAD queued=[59, 133] applied=[86, 161]`）。mutation 都 FAIL：`mut-g-no-reapply`（逾時在「載入之後沒有重新套用」）、`mut-g-reapply-every-tick`（`notReappliedWhileLoaded=false`）、`mut-g-close-no-entity-wait`（`openedForTheEntityInTheDoorway=false`：entity 還沒載入就關門） |
+| 第 11 組：sealed 量子膜只在門口沒有 entity、艙內沒有非參與者時套用；sealed 期間被指令傳送進艙內的非參與者可以把門改為一般開門，塌縮不結束；艙外的非參與者被拒 | 套用：`CS:527` `prepareDoor`、`CS:565` `membraneTarget`、`CS:573` `outsiderInside`。攔截：`WCDA:25` `toggle` → `PORT` `Doors` → `CS:1239` `useDoor` → `CS:1253` `door` → `CS:1225` `doorAction` → `CS:1307` `openForInsider` | T-MEM：`plainOpenWithANonParticipantInside`、`preparingInTheBackground`、`sealedAfterTheNonParticipantLeft`、`aSpectatorInsideKeepsTheMembrane`、`plainOpenWithAnEntityInTheDoorwayAfterThePreparation`、`sealedAgainOnceTheDoorwayIsClear`、`insiderOpensAtOnce`、`collapseContinues`、`resealedAfterTheInsiderLeft`、`outsiderRefusedAtTheBulkhead`、`outsiderRefusedAtTheController`、`oneSealedAndOneOpenInfo`。RED 的等價：`mut-g-no-prepare-door`（F4b-2 的行為：不套用量子膜）T-MEM 10 個 witness false；`mut-g-no-interception`（F4b-2 的行為：門照舊交給 `ChamberDoorService`）`insiderOpensAtOnce`、`outsiderRefusedAt…` false。其他 mutation：`mut-g-membrane-ignores-outsider`、`mut-g-membrane-ignores-doorway`、`mut-g-outsider-passes`、`mut-g-prepare-door-after-the-ready-return`（判斷移到 READY stub 的 return 之後：準備完成之後門口的 entity 不再讓門打開）都 FAIL；JUnit `CST:478`、`CST:448` 與它們的 mutation |
+| 第 12 組（Review Focus 3）：PREPARE 一開始、預載還沒完成時參與者關門 → 終局，catalog 恰好多 1 筆、discovery 有紀錄；門口有 entity 時改為一般開門 | `CS:1319` `endByParticipant`：current＝flushed、退避期之外 → `terminate(PREPARE_DOOR_CLOSED)` → `terminated`（runtime、來源與目的世界的 ticket）→ INFO → `queueDoor(CLOSE_AFTER_TERMINAL)`（門口有 entity 時一般開門）→ 刷新 Controller | T-CLOSE：`sealedAtThePrepareStart`、`beforeThePreloadCompleted`、`terminalBeforeTheDoorChanged`（flush 探針在終局那一次 journal flush 的開頭看到門仍是 sealed）、`terminatedAtOnce`、`doorClosedAfterTheTerminal`、`ticketsReleasedAtOnce`、`universeKeptInTheCatalog`（EAGER_ENABLED、仍是 ACTIVE）、`universeDiscovered`（discovery 正式檔有 gameplay-eligible record）、`oneAllocationEntry`、`oneTerminalInfo`、`noWarnOrError`、`staysClosed`、`presenceNone`；catalog 增量 1。T-CLOSE-D（Controller、門口有盔甲座）：`plainOpenWithAnEntityInTheDoorway`、`leftPlainOpenNotClosed`、`ticketsReleased`。mutation：`mut-g-no-interception`（T-CLOSE 6 個、T-CLOSE-D 3 個 witness false）、`mut-g-door-before-terminal`（`terminalBeforeTheDoorChanged=false`）、`mut-g-close-ignores-doorway`（`leftPlainOpenNotClosed=false`）、`mut-g-membrane-ignores-doorway`（T-CLOSE-D `plainOpenWithAnEntityInTheDoorway=false`） |
+| 第 13 組的門：PREPARE 中斷電 → 門由 sealed 改回一般開門 | `CS:499` `leavePrepare` → `CS:514` `releasePrepareDoor`（`OPEN_ON_LEAVE`） | P-POWER 新增 `sealedWhilePreparing`、`plainOpenAfterThePowerLoss`、`sealedAgainAfterTheEdge`。mutation `mut-g-leave-keeps-membrane` `plainOpenAfterThePowerLoss=false`；`mut-g-no-prepare-door` 另兩個 false |
+| 補充第 2 點：roll-forward 尚未確認時拒絕 | `doorAction`（`CS:1225`）的 `rollForwardPending` | GameTest 造不出 PREPARE 中的 roll-forward 未確認（「觀察」第 2 條）。JUnit `CST:448` `doorActionFollowsThePrepareDoorRules` 走訪全部組合；mutation `j-mut-door-rollforward-ignored`、`j-mut-ready-rollforward-passes` 都只有這個 test FAIL |
+| 補充第 4 點：REJECTED 與隔離期間的門 | REJECTED：`seal` 的被拒分支（`CS:950`）。隔離：`step`（`CS:267`）在隔離的 return 之前呼叫 `watchDoor`，它在隔離中、上一次推導在 PREPARE 時交還門 | T-REJ（`PJF` 拒絕這個 session 的 SEALED 一次）：`plainOpenWhileTheSealIsRetried`、`stillCollapsing`、`destinationTicketKept`（Q-M4）、`oneRejectedWarn`、`onePauseInfo`、`stillPlainOpenDuringTheBackoff`、`closedOnceSealed`、`ticketsReleasedOnceSealed`、`putRejectedOnlyOnce`。mutation `mut-g-rejected-keeps-membrane`：`plainOpenWhileTheSealIsRetried`、`onePauseInfo`、`stillPlainOpenDuringTheBackoff` false。隔離只有程式與說明（「觀察」第 3 條） |
+
+### controller 補充第 1–11 點
+
+- **第 1 點（套用量子膜的條件）**：`CS:527` `prepareDoor` 在 `prepareUniverse` 的最前面（`CS:623`，`if (progress.ready) return;` 之前），所以進入 PREPARE 的那個 tick、預載與投影期間、準備完成之後的每個 tick 都判斷。條件（`CS:565` `membraneTarget`，純函式）：門的 25 格（`doorwayBox`）內沒有任何 entity 的 bbox，而且門口所在 chunk 的 entity storage 已載入（否則當成門口有人）；艙內沒有非參與者玩家（`CS:573`：同一個 world、不是旁觀者、不是這個 session 的參與者、bbox 與 interior 相交）。成立時 `applyTarget(…, DoorState.sealed(facing))`，否則 `DoorState.OPEN`；準備照常進行。`applyTarget` 的結果經既有的 `applyOutcome`／`recordDoorStep`（F3d、F4a-0）：APPLIED／UNCHANGED 完成；NOT_LOADED 下一個 tick 再試、不載入；DOOR_INCOMPLETE、ROLLED_BACK、ROLLBACK_FAILED 依原因去重記 WARN、退避（狀態記在 `Track.membrane`，成功時清除）。每次 PREPARE 的 tick 都呼叫 `applyTarget`，門已是目標時是 UNCHANGED（不寫入、不刷新）。改了門才記 INFO，「套用 sealed 量子膜」與「維持一般開門」每一段 PREPARE 各一則（`Prepare.sealedLogged`／`openLogged`）。PREPARE 擁有門的期間，先移除這座艙其他待套用的門（`doors.remove`）。
+- **第 2 點（門的攔截）**：位置選 `WCDA:25` `toggle`：bulkhead（`QBB:156`）與 Controller（`CCB:80`）的 `onUse` 都經它，是玩家開關原艙門唯一進到 `ChamberDoorService.toggle` 的路徑（走廊入口門走 `CorridorPageManager` 自己的 toggle，不是原艙）。`toggle` 多了 `PlayerEntity` 參數，先呼叫 `PORT` 的 `Doors`：`HANDLED` → `Result.INTERCEPTED`（不切換），`REFUSED` → `Result.REFUSED`（不切換、門不變）；兩個 `onUse` 對 REFUSED 回 `ActionResult.FAIL`，Controller 對 INTERCEPTED 照常顯示既有的門切換訊息（沒有新的訊息；拒絕時不顯示）。`CS:1253` `door`：依 world key、Controller 位置與朝向找出以這座艙為原艙的 session（`sessionAt`，collapse view），由純函式 `doorAction`（`CS:1225`）決定：
+  - COLLAPSING、目的地是 UNIVERSE、PREPARE 擁有原艙門（上一次推導在 PREPARE，而且沒有被拒而待重試的 SEALED 寫入、沒有隔離）：roll-forward 尚未確認 → 拒絕；參與者 → `endByParticipant`；艙內的非參與者（bbox 與 interior 相交）→ `openForInsider`（`applyTarget(OPEN)`、INFO，塌縮不結束；下一個 tick 依第 1 點重新判斷）；艙外的非參與者 → 拒絕（DEBUG）。
+  - PASSAGE_READY：roll-forward 尚未確認 → 拒絕（§7 :336）；其餘照一般門的邏輯，F5 在同一個 `doorAction` 接上 §10.5（F5 之前執行期間沒有 PASSAGE_READY，開服時的在第一個 tick 終局）。
+  - 其他：SEALED、門本來就是一般狀態的階段（RETURN_PLAYERS、RELEASE_GEOMETRY、RESOLVE、WAITING）、SOURCE、M1–M4 的狀態 → 照一般門的邏輯。
+  - 量子膜門不再經 `toggle`：PREPARE 擁有門時一律 HANDLED 或 REFUSED。
+  - 不丟出例外：讀不到 journal 時不攔截（DEBUG；M1–M4 的門行為不變，塌縮流程本身此時也不推進）；處置途中失敗時拒絕、不改門、依原因去重記 WARN（帶 `session=`）。
+- **第 3 點（閘門失效）**：`CS:499` `leavePrepare` 的轉換點呼叫 `CS:514` `releasePrepareDoor`：排入 `OPEN_ON_LEAVE`（立即嘗試一次；chunk 不是 FULL 時等之後的 tick），INFO 的字句補上「原艙門改為一般開門」。目的世界的 ticket 照 F4b-2 在同一點釋放。P-POWER 的三個新 witness。
+- **第 4 點（REJECTED 與隔離）**：設計選「被拒時先把門改為一般開門」：`seal` 的 REJECTED 分支（`CS:950`）在 PREPARE 中被拒時呼叫 `releasePrepareDoor`、記 INFO「PREPARE 暫停」；隔離由 `watchDoor` 在 `step` 隔離的 return 之前處理（同樣一次）。兩者都不釋放目的世界的 ticket（F4b-2 Q-M4 的裁示，沒有改）。PREPARE 恢復擁有門（隔離解除、`prepareDoor` 再次執行）時清除 `Track.doorReleased`、移除待套用的門；被拒的寫入最後成功時照常 `CLOSE_ON_SEALED`。T-REJ 以新的 testmod mixin `PJF` 造出 F4a 起「GameTest 造不出」的被拒路徑。
+- **第 5 點（門狀態的重新套用）**：見下方小節。沒有改 `ChamberControllerLoadSyncQueue`，不需要 §17 的 queue observer regression。
+- **第 6 點（門口有人時的規則）**：三種會讓門變成有碰撞的轉換都先看門口：sealed 量子膜（第 1 點）、PREPARE 期間參與者關門的終局之後（`CLOSE_AFTER_TERMINAL`）、SEALED 的關門（`CLOSE_ON_SEALED`，含重新套用）。門口有 entity 時一律改為一般開門。另外都要等門口那幾個 chunk 的 entity storage 載入（`CS:590`）才判斷門口：重啟或 chunk 重新載入之後 entity 是非同步載入的，`getOtherEntities` 在那之前看不到門口的 entity（T-RELOAD 的實測等了 27～42 tick；`mut-g-close-no-entity-wait` 會把門關在盔甲座上）。
+- **第 7 點（掛件與強充能）**、**第 8 點（先終局、再改門之間 crash）**：見下方小節。
+- **第 9 點（RED）**：見上表。新增的 6 個 `@GameTest` 都是 M5 run 的新 batch（M5 30 → 36）；P-NEW、P-POWER 只改 witness。
+- **第 10 點（default run 的隔離）**：見下方「default run 的稽核」。
+- **第 11 點（log 與訊息）**：新增的 log 都在 `CS`、都帶 marker（`CollapseLogMarkerGuardTest` 每輪 PASS）；能歸屬 session 的 WARN 都帶 `session=`（門的套用失敗沿用 `recordDoorStep` 的字句，帶 `chamber=`、`session=`；攔截途中失敗的 WARN）。正常情況只記 INFO：套用 sealed／維持一般開門（每段一次）、艙內的非參與者開門、PREPARE 期間參與者關門的終局、PREPARE 暫停（被拒、隔離）、重新套用的排入與完成。拒絕記 DEBUG。沒有新的玩家訊息（拒絕不顯示；Controller 的既有門切換訊息照舊）。
+
+### 補充第 5 點：「一次性」觸發的設計
+
+- 觸發只有兩種（`CS:1163` `doorReloaded(previous, loaded, startupSession)`，純函式）：
+  - 本 instance 看過來源艙「沒有載入」，這次「已載入」（chunk 重新載入）；
+  - 開服 attach 當下就在 journal 的 session（`startupSessions`），本 instance 第一次觀察到已載入（重啟之後）。
+- 「已載入」是艙體向水平外擴 3 格的 chunk 都是 FULL（與閘門、門的套用同一個範圍，只查詢、不載入），每個 tick 在 `step` 觀察一次，記在 `Track.doorLoaded`（不持久化、不隨 `resetGate` 重設）。執行期間才出現、一直載入著的 session 永遠不觸發：SEALED 的門被玩家打開之後不會被關回去（T-RELOAD 的 `notClosedAgain`；`mut-g-reapply-every-tick` 會把它關回去）。
+- 觸發時排入下一個 tick（`queueDoor(view, 1, goal)`），不在觀察到的那個 `END_SERVER_TICK`、更不在 chunk 載入的事件裡寫方塊；已有待套用的門（例如閘門失效時排入、chunk 不是 FULL 而一直等著）時只把它延到下一個 tick（`PendingDoor.deferTo`）。目標依 collapse view（`CS:1168`）：SEALED → `CLOSE_ON_SEALED`（門口有 entity 時一般開門）；COLLAPSING → `NORMALIZE`（門帶著量子膜就改為一般開門，否則不寫；PREPARE 時由 `prepareDoor` 接手並移除它）。roll-forward 中的 SEALED 也以 collapse view 投影成 SEALED，重載時關門，不會被套回 passable。
+- 重新套用的 INFO 記下排入時的「下一個 tick（tick N）」與完成時的 tick（T-START、T-RELOAD 以它們證明延後）。
+
+### 補充第 7 點：掛件與強充能（F3b「觀察」第 2 條）
+
+- 判斷：不需要處理，列為已知限制交給 F7。理由：
+  1. **「已供電」不會因 sealed／一般開門的切換而反覆失效。** sealed 量子膜是完整方塊、`isSolidBlock`，會傳導強充能；一般開門與 passable 沒有碰撞、不是 solid，傳導不到，bulkhead 本身也不發出紅石訊號。Controller 在門板最上排中間那格的正上方，只有「Controller 唯一的供電來源，是經由那一格門的強充能」（例如門外在那一格上掛拉桿）時，sealed → 一般開門才會讓閘門失效。那時掛在門上的拉桿或火把會因為失去支撐而掉落（原版的方塊更新），供電來源就此消失，退回 WAITING、門已是一般開門，之後要有新的供電與新的邊緣觸發才會再進入 PREPARE。所以每一次「失效」都需要一個新的外部事件，不會自己來回振盪；而閘門失效時依即時訊號退回 WAITING，正是 §7.3 的規則。
+  2. **掛件掉落的後果偏向安全。** sealed → 一般開門時（艙內出現非參與者、門口有 entity、閘門失效、隔離或被拒），掛在門上的掛件掉成物品；物品若落在門口，門口有 entity，量子膜會延後套用（最多到物品被撿起或消失），門維持一般開門，不會困住人。
+  3. 處理它（例如禁止在 sealed 量子膜上放置、或讓 sealed 不傳導）要改 `QuantumBulkheadBlock` 的方塊性質，屬 F3b 已 review 的範圍，也會改變關門（同樣 solid）的既有行為。
+- 已知限制（交 F7 寫進玩家說明）：sealed 量子膜可以掛掛件、會傳導強充能；改為一般開門時掛件會掉落；Controller 只靠門上強充能供電的艙，量子膜改為一般開門時會斷電而結束 PREPARE。
+
+### 補充第 8 點：「先終局、再改門」之間 crash（F3d m-7(b)）
+
+- 窗口：`endByParticipant` 的 checked 終局已讀回確認，`CLOSE_AFTER_TERMINAL` 還沒寫入門就 crash（或待套用的門還在等 NOT_LOADED、entity storage 時停服）。重啟之後 journal 沒有這個 session，門留著 sealed 量子膜（有碰撞）。待套用的門只在記憶體（以 chamber 為 key），所以 F4b-3 的重新套用（只看 journal 裡的 COLLAPSING、SEALED）涵蓋不到。
+- §10.6 :613（F5）：「找不到所屬 session、卻帶著 membrane 的 bulkhead，在 `ChamberPowerCoordinator` 刷新該艙時，排入下一個 tick 正規化為 `membrane=none`」涵蓋這個窗口：重啟之後 Controller 的 BE 載入會經 load-sync 排一次刷新，之後每 20 tick 的排程刻也刷新，所以只要 F5 在刷新時做這件事，就會正規化。結果是一般開門，不是關門：終局本來就已完成、不會被困住，與 §10.6 (b)(c)(d) 的結束狀態相同，可以接受。
+- 交給 F5 的條件：
+  1. 在 `refreshNow` 的 ORIGIN 分支、而且這座艙沒有 M5 塌縮狀態的 session（presence 不是 `COLLAPSE`／`PASSAGE`）時才正規化；有 COLLAPSING／SEALED 時由 F4b-3 的重新套用處理，兩者不要同時寫門。
+  2. 同時處理 sealed 與 passable，目標是 `DoorState.OPEN`。
+  3. 排入下一個 tick（刷新可能就在 chunk 載入的 load-sync 裡），NOT_LOADED 時等之後的 tick。
+  4. 量子膜只在 PREPARE 與通道期間才會出現，所以 MEASURED（含 DORMANT）的艙出現量子膜時，也是這一條的對象。
+- 沒有缺口需要另外交給 F5；Origin 被拆除的艙不再刷新，但拆除需要先完成 Controller 的刷新與維護手勢，不在這個窗口內。
+
+### default run 的稽核（補充第 10 點）
+
+| 新分支 | default run 中的行為 |
+| --- | --- |
+| `CPS:65`、`CPC:56` 改走 port | port 委派給同一個 static 查詢，結果與修改前相同；Full 的 GT 與 boundary oracle 照常 |
+| 門的攔截（`WCDA:25`） | 每一次原艙門的使用都查一次 journal 的 flushed records。default run 只有 SOURCE、M1–M4 的 session 與 suspend 的塌縮 fixture：SOURCE 與非塌縮狀態一律 PASS；被 collapse-suspended hook 暫停的 session 沒有 `Track`，PREPARE 不擁有門，也是 PASS。讀不到 journal 時 PASS（M2 的 journal 故障 test 不受影響） |
+| `prepareDoor`、閘門失效的門、被拒與隔離的門 | 只有 UNIVERSE 的 PREPARE 會走到；default run 沒有 test 走到 RESOLVE（F4a 的稽核），所以不會進 PREPARE |
+| 重新套用（`watchDoor`） | 只有「看過沒有載入」或「開服時就在的 session 的第一次觀察」才觸發。default run 以 `markStartup` 模擬開服的是 G-DOR（DORMANT）與 G-PASS（PASSAGE_READY，`watchDoor` 不看它）：G-DOR 的 DORMANT 收據提交 COLLAPSING 之後第一次觀察排入一次 `NORMALIZE`（INFO 一則），同一個 tick 的 SOURCE fast path 以終局之後的一般開門取代它，沒有因重新套用而寫門 |
+
+- 實證：見「Gate 與證據」的 default focused（`green-a2-default`、`c5-default`：21 個 `m5_collapse_*`／`m5_f3a_*` batch＋與門、Controller 有關的 7 個 M2 batch：`m2_task7_lateral_west`、`m2_return_cohort`、`m2_entrance_edge`、`m2_clear_retry`、`m2_task4_isolated_remap`、`m2_task4_isolated_reservation`、`m2_powered_entry`）與 run-all 的 Full（含 `defaultBatch` 的 M1：門的 rollback、Controller 開關門、缺格門、bulkhead toggle 等；`onlyBatches` 要求每個 batch 恰一個 test，`defaultBatch` 有 54 個，只能由 Full 跑）。
+
+### 測試
+
+- JUnit 631 → 636（＋5）：`GUARD` 2（新增）、CST 17 → 20（`doorActionFollowsThePrepareDoorRules`、`membraneIsSealedOnlyWithAClearDoorwayAndNoNonParticipantInside`、`doorReapplicationTriggersOnlyAfterAnUnloadOrOnTheFirstStartupObservation`）。PPIT 12、`CollapseLogMarkerGuardTest` 2、chamber 的 20 個 class 不變（沒有因 port 而改的 test）。
+- M5 GameTest 30 → 36：上列 6 個新 test，catalog 增量 T-RELOAD 0、其餘各 1；suite 結束時 29 → 34 筆。P-NEW 的 `doorOpensNormally`／`doorClosesNormally` 改為 `sealedMembraneWhenPrepared`／`sealedMembraneHeldAfterThePreparation`（F4b-3 起 PREPARE 期間參與者開關門就是終局），P-POWER 加三個 witness。
+- default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 不變：沒有新增或刪除 default run 的 `@GameTest`。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f4b3/`（以下簡稱 `f4b3/`）：`state.ps1`、`gate.ps1`、`junit.ps1`、`adapted-junit.ps1`、`chain.ps1`、`adapter.py`、`wbcmp.py`、`jarcmp.py` 由 `f4b2/fix1/` 複製，只改 repo 的相對路徑與註解；adapter 表在 `f4b3/adapters_f4b3.py`。`f4b2/` 下既有的檔案沒有改動。每個 adapter 跑完都還原，還原後的 blob 與套用前相同；每次 RED、GREEN、mutation 的 state 記 HEAD、porcelain 與逐檔 blob（`f4b3/<label>-state.txt`）。gate root 在 `.superpowers/verification/`。
+
+- commit 的拆分：最終版的工作樹（`f4b3/after-mut-g-state.txt`，與 GREEN 的 `green-a-m5-state.txt` 逐檔相同）先保存在 `f4b3/final/`；`270af2d` 的內容由 `f4b3/snapshots.py` 從最終版刪除區塊產生（每一處都斷言匹配數，`snapshots-report.txt`），`f4b3/swap.ps1` 把工作樹換成 `c4`（`270af2d`）、`c5`（`287d216`）再換回 `final`（換回時以 `git hash-object` 逐檔核對）。兩個中間 commit 都在換入之後以 JUnit 與 GameTest 驗過（下表），commit 時的 blob 等於 `commit-c4-state.txt`、`commit-c5-state.txt` 記下的；`89c39ad` 的 testmod 與 GREEN 的 blob 相同。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| Step 0 RED | `3f96399`＋只有 `GUARD` | `red-s0a-guard`（JUnit） | 守門 FAIL（`ChamberPowerCoordinator.java:3`、`ChamberProtectionService.java:3`）；掃描器的 test PASS |
+| Step 0 GREEN（Q-m1） | `3f96399`＋`099f4a8` 的檔 | `green-s0a`（JUnit 24 個 class）；`gate-green-s0a-m5-c10318e30fc447f89e6e6fd1f274bf3e`；`chain-s0.log`（`gate-mut-s0-no-port-install-13dcb519ca6946728cf429a7f7d72279`） | 154 個 JUnit PASS；GT-P、GT-L 2/2；mutation 2/2 FAIL |
+| Step 0（Q-M5） | `099f4a8`＋`M5U` | `gate-green-s0b-m5-982a34f0507149209fdae61812636cb2` | M5 30/30，test 集合與結果和 F4b-2 相同 |
+| Step 0（Nit） | `71b5d74`＋`CP`、`CS` | `green-s0c`（JUnit）；`gate-green-s0c-m5-1a742fd8e83443f890a0bd6fe6dc4263` | CST 17、`CollapseLogMarkerGuardTest` 2、`GUARD` 2；P-NEW、P-POWER、P-REVISIT、T-WF 4/4 |
+| 開發確認（不採計） | 最終版的前身 | `gate-dev-door-m5-1-4ec10ded145d4162ae3761d90e283cc3`、`gate-dev-door-m5-2-8ffc4f24e3714c96b38e17bf10da79be` | 見下方「不採計的 root」 |
+| GREEN（最終版） | `3b9bbb0`＋全部（＝`89c39ad` 的內容） | JUnit：`dev-door-1`、`j-*`；M5：`gate-green-a-m5-b9294ff30f914b4094973bb06ac38442`；default focused：`gate-green-a2-default-b57f7a50a0bb47f3bea14aa761c23626` | CST 20；M5 36/36；default 28/28 |
+| JUnit mutation | 同上＋adapter | `adapted-junit-summary.txt`：`j-mut-door-rollforward-ignored`、`j-mut-ready-rollforward-passes`、`j-mut-outsider-passes`（`doorAction…`）、`j-mut-membrane-ignores-outsider`、`j-mut-membrane-ignores-doorway`（`membraneIsSealed…`）、`j-mut-reload-on-first-runtime-observation`、`j-mut-reapply-every-tick`（`doorReapplication…`） | 7 個都只有目標 test FAIL |
+| GameTest mutation | 同上＋adapter（`plan-mut-g.json`、`chain-mut-g.log`） | 14 個 `gate-mut-g-*`（名稱見上方「RED」表） | 14 個都 FAIL 在目標 witness（`mut-g-*-summary.txt`） |
+| `270af2d` | `3b9bbb0`＋`swap.ps1 -To c4` | `c4-junit`；`gate-c4-m5-bb4b74b83949431c8297e08900079e25` | 156 個 JUnit PASS（CST 19）；P-NEW、P-POWER、P-REVISIT、T-WF、P-CROSS、P-DEGRADED、F4a 的 sealed_pending 7/7 |
+| `287d216` | `270af2d`＋`swap.ps1 -To c5` | `c5-junit`；`gate-c5-default-27c91532ada240d281823dd7f45a6216`；`gate-c5-m5-c9527cb3a4c244aabc27fd2264d61d9b` | 157 個 JUnit PASS（CST 20）；default 28/28；M5 4/4 |
+| run-all | `7ad2ddc`，工作樹乾淨（`STATUS` 是空的） | `run-all-4c73feaa25344beea8867cac2ba44074`（Full：`gate-full-7b461785cde64c449f28210109acb028`；M5：`gate-m5-gametest-8ca0268f8f384bf6bad7b892f702cad1`；`f4b3/run-all-console.txt`） | `END ALL exit=0 HEAD=7ad2ddc`。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=36/36 perTest=51+1 junit=636 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=410entries/363classes sources=217 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+
+- 不採計的 root：
+  - `gate-dev-door-m5-1-…`（8 個 batch，7/8）：T-RELOAD 首版有兩個 test 的缺陷：看到 `unloaded()` 的同一個 tick 就恢復強制載入，chunk 還在記憶體裡、塌縮流程看不到卸載，第二次沒有重新套用；而且以「套用 tick 等於排入 tick」斷言關門，但關門要等門口的 entity storage 載入（實測晚 42 tick）。改成多等 3 個 tick 再恢復、關門改斷言「不早於排入的 tick」之後，`dev-door-m5-2` PASS。不是 production 的問題。
+  - `gate-green-a-default-3d54962acb4f42abb93c32f52598118e`：focused 的 batch 清單放了 `defaultBatch`，testmod 的 `onlyBatches` 過濾要求每個 batch 恰一個 test，server 啟動即失敗、XML 是上一次的（gate.ps1 標 STALE）。拿掉之後是 `green-a2-default`；M1 的門 test 由 run-all 的 Full 涵蓋。
+- 與基準 run-all（`run-all-4d864a16e1cf45fd90cdfe3c3d35b0ac`，`97f1898`）逐項比較：
+  - M5 30 → 36、JUnit 631 → 636（「測試」）；default 174（`_windows` 88）、legacy 1、perTest 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly、CI 兩個平台都不變。M5 oracle PASS（M5 root 的 `m5-oracle.json`）：36 個 test 的 catalog 增量逐一串接（`existing_receipt_without_a_discovered_universe_seals_permanently` 與 T-RELOAD 為 0，其餘各 1），每個都 converged、preserved，suite 結束時 34 筆。`M3_UNIVERSE_STOPPED_VERIFIED` 的 worlds 23 → 28（多出的 5 與新增的配置宇宙的 test 數相同），`quarantine=0`、`contextDetached=true` 不變。
+  - release JAR 401 → 410 entries（354 → 363 classes，`f4b3/jarcmp-release-run-all.txt`）：新增 `ChamberCollapsePort` 與它的 `$Projections`、`$Projections$1`（`NONE`）、`$Doors`、`$DoorUse`（`Doors.NONE` 是 lambda，不產生 class 檔）、`WorldChamberDoorAdapter$1`（`toggle` 對 `DoorUse` 的 switch map）、`CollapseService$DoorAction`、`$DoorUser`、`ProjectionProtectionIndex$2`（`registerEvents` 註冊的匿名 `Projections`，與既有的 switch map 一起重新編號）；沒有移除。內容不同的 class 都屬於本 task 改過的 production 檔（`ChamberControllerBlock`、`ChamberPowerCoordinator`、`ChamberProtectionService`、`QuantumBulkheadBlock`、`WorldChamberDoorAdapter`、`CollapseService`、`ProjectionProtectionIndex` 與它們的 nested class）；`CollapsePhase` 只改 Javadoc、行數不變，class 相同。testmod 命中 0。
+  - sources JAR 216 → 217（`f4b3/jarcmp-sources-run-all.txt`）：新增 `ChamberCollapsePort.java`；內容不同的是上列 7 個檔與 `CollapsePhase.java`。
+  - log（以 `/WARN]`、`/ERROR]` 計行，UUID 與數字正規化、排序之後比對，`f4b3/wbcmp.py`）：Full 54／28 不變、逐行相同（`f4b3/wbcmp-full-run-all.txt`）；legacy 0／0（`wbcmp-legacy-run-all.txt`）。M5 WARN 29 → 32、ERROR 6 不變（`wbcmp-m5-gametest-run-all.txt`），多出的 3 則都是 test 刻意造成、有 witness 的：T-REJ 的「塌縮流程的寫入 SEALED 沒有完成（REJECTED）」與重試成功之後的「塌縮進入 SEALED(PROJECTION_FAILED)，可重試」（`oneRejectedWarn`）、T-MEM 的「通道尚未實作（F5）」（`onlyTheReadyStubWarnAndNoError`）。GT-P 的原版 `PistonBlockEntity` WARN 仍是一則，排序比對中的一減一加只是 object hash 不同。
+  - default run 的稽核：Full 的 latest.log 對「原艙門套用 sealed」「原艙門維持一般開門」「PREPARE 期間」「原艙門的攔截」「原艙門已依 collapse view 重新套用」「PREPARE 暫停」「進入 PREPARE」「quantumchamber_destination」都是 0 行；「重新套用原艙門」1 行（G-DOR 的 `NORMALIZE` 排入，見上方稽核表）。
+- 本 task 沒有遇到派工列出的已知偶發（G-NLIVE、Windows journal 的 `AccessDeniedException`、H2 多出的原生 ERROR／WARN、`m2_task4_disconnect_io` 多一則 WARN、`unloadChunks` 停服卡住、boundary oracle 挑到舊 receipt）；失敗的 root 都是刻意的 RED 或 mutation，以及上列「不採計的 root」。
+
+### 偏離 plan／spec 字面之處
+
+1. **第 10 組的 PREPARE 版本沒有在同一個 instance 內讓來源 chunk 卸載**：COLLAPSING（含 PREPARE）持有來源 ticket（`SuperpositionSessionManager.sourceTicket`：Controller 所在 chunk、半徑 2，涵蓋門與閘門看的艙體外擴 3 格），所以 PREPARE 期間來源 chunk 在同一個 instance 內不會卸載；只有重啟會讓它「重新載入」。改以 T-START 模擬重啟之後的第一次觀察（`simulateDoorStartup`，比照 F3d 的 `markStartup`），真正跨 JVM 的版本屬 F6（plan F6 已列「sealed 量子膜期間 crash → 重啟後停在 WAITING，門是一般開門」）。SEALED 已釋放來源 ticket，所以 SEALED 的版本以 T-RELOAD 真的讓 chunk 卸載再載入。
+2. **WAITING 等一般狀態的階段，重新套用只把量子膜改為一般開門，不把關著的門打開**（`NORMALIZE`）：補充第 5 點寫「開服時就是 WAITING：門要是一般開門，不得留下有碰撞的膜」。帶著量子膜的門一律改為一般開門；本來就關著的門是一般狀態的合法狀態（§7.3 表：已返還的人可以照常開關），保留不動，關門沒有碰撞以外的風險，裡面的人可以照一般方式開門。閘門失效（`OPEN_ON_LEAVE`）照 §7.3 的字面一律改為一般開門。
+3. **「艙內」以 bbox 與 interior 相交判定**（套用量子膜的條件、攔截的 INSIDER）：spec 的字面是「bbox 在 interior 內」。相交包含完整在內，兩處都偏向不套用有碰撞的門、讓人可以開門；跨在門口的人另由門口的規則涵蓋。參與者的邊緣觸發與閘門仍是「完整在內」（F3d）。
+4. **會讓門變成有碰撞的轉換，先等門口的 entity storage 載入**：spec 沒有寫；重啟或 chunk 重新載入之後 entity 是非同步載入的，不等就看不到門口的 entity（T-RELOAD 的 `mut-g-close-no-entity-wait`）。PREPARE 時沒有載入就當成門口有人（一般開門）；關門時等它載入、不寫入。
+5. **讀不到 journal 時不攔截**：§7 :336 要求 roll-forward 未確認時拒絕；journal 不健康時根本讀不到 collapse view，這時塌縮流程本身也不推進，而 M1–M4 的門行為不得改變（補充第 10 點），所以照一般門的邏輯。處置途中的失敗才拒絕、不改門。
+6. **PASSAGE_READY 只實作「roll-forward 未確認時拒絕」**：其餘（參與者結束通道、非參與者拒絕，§10.5）屬 F5，接在同一個 `doorAction`。
+7. **commit 拆分**：plan Step 4 是一個 commit；依派工依子主題拆成上列 7 個 commit 與 docs commit。派工例子的「量子膜的套用」「閘門失效與 REJECTED／隔離」「門狀態的重新套用」合成 `270af2d` 一個 commit（同一套待套用門的目標與 `Track` 的簿記，分開的中間版本要拆開同一批欄位）；攔截是 `287d216`。
+8. **新增 testmod mixin `PJF`**：F4a 交給 F6 的「journal `put` 的 fault Slot」（F4a 交給後續的 S2-mB），T-REJ 需要它，所以先在本 task 加上（`M5TestHooks.JOURNAL_PUT_FAULT`、`installJournalPutFault`）；F6 可以直接用它補 `sealRetryDue` 接線的 test。
+
+### 需要裁示
+
+（沒有必須停下的事項。下列是 spec 沒有寫明、本 task 依 spec 判定的讀法，請 reviewer 確認。）
+
+1. 「偏離」第 1 條：第 10 組的 PREPARE 版本以模擬重啟（T-START）代替同一個 instance 內的卸載，真正的重啟留給 F6。
+2. 「偏離」第 2 條：一般狀態的階段重新套用時，關著的門保留關著。
+3. Controller 的攔截處理之後（INTERCEPTED）照常顯示既有的門切換訊息；拒絕時不顯示訊息（spec §10.8 沒有拒絕的訊息）。
+
+### 觀察（未修改）
+
+1. **重新套用的觀察看的是「FULL」，同一個 tick 內的卸載又載入看不到**：chunk 還在記憶體裡時門的方塊也沒有重新讀入，不需要重新套用；T-RELOAD 因此在卸載之後多等 3 個 tick。
+2. **PREPARE 中的 roll-forward 未確認造不出來**：COLLAPSING 的 roll-forward 寫入（返還、清 lease）都在 PREPARE 之前；PREPARE 中的 roll-forward 只有進入 SEALED，那時 collapse view 已是 SEALED（照一般門的邏輯）。§7 :336 對 PREPARE 的拒絕只由 JUnit 鎖住；F5 的 PASSAGE_READY（`Crossed` 未確認）才會真的走到。
+3. **隔離只在塌縮流程自己造成的那個 tick 看得到**：recovery 的 tick 排在塌縮流程之前，每個 tick 開頭就以 `convergeQuarantined` 收斂（同時解除隔離），所以只有塌縮流程自己的 restore 類寫入或終局在 CAS 不符時隔離、或 `convergeQuarantined` 一直失敗時，塌縮流程才會看到隔離中的 PREPARE。這條路徑只有程式與 Javadoc，沒有 GameTest。
+4. **重新套用之前 Controller 的刷新先跑**：chunk 重新載入時，load-sync 會排一次 Controller 刷新；presence 是 `COLLAPSE`，刷新不改門，與重新套用不衝突。
+5. **門口的盔甲座在 chunk 重新載入之後要等 27～42 tick 才看得到**（T-RELOAD 實測）；這段期間 SEALED 的門不關（等待），不會困住人。
+
+### 交給後續
+
+- F5：
+  - PASSAGE_READY 期間的門（§10.5）接在 `CS:1225` `doorAction`：參與者 → 結束通道（先終局、再改門，§10.6 (a)）、非參與者 → 拒絕；roll-forward 未確認時已拒絕。`CS:1239` `useDoor` 與 `CS:1253` `door` 不必改。passable 量子膜由 F5 套用時，`prepareDoor` 只在 PREPARE 擁有門時執行，READY 之後不會把它改回 sealed。
+  - §10.6 :613 的正規化要涵蓋「先終局、再改門」之間 crash 留下的量子膜（上方「補充第 8 點」的四個條件）；有 COLLAPSING／SEALED 時不要與 `watchDoor` 的重新套用同時寫門。
+  - `CS` 已約 1880 行（F4b-2 交給 F5 的 Step 0 評估抽出 PREPARE）：原艙門的部分（`prepareDoor`、`watchDoor`、攔截、`applyDoor` 的目標）也可以一併評估抽成 package-private 類別。
+- F6：
+  - 重啟矩陣：sealed 量子膜期間 crash → 重啟後停在 WAITING、門是一般開門（T-START 的跨 JVM 版本）；SEALED 開服後關門一次、門口有人時一般開門；COLLAPSING 在 PREPARE 中重啟 → 依條件重新套用 sealed。
+  - `build.yml` 的明列清單：本 task 新增 M5 run 的 6 個 test（都不是 `_windows`）。
+  - `PJF`（`installJournalPutFault`）可以補 F4a 交下的 `sealRetryDue` 接線 test（S2-mB）。
+- F7：
+  - 玩家說明的已知限制（上方「補充第 7 點」）：sealed 量子膜可以掛掛件、會傳導強充能；改為一般開門時掛件掉落；只靠門上強充能供電的艙，量子膜改為一般開門時會結束 PREPARE。
+  - 玩家說明：PREPARE 期間（量子膜出現之後）參與者開關原艙門會結束塌縮（宇宙保留，不重抽）；艙內的非參與者可以開門離開；艙外的人打不開。
+  - spec errata：§7.3 第 10 組的「來源 chunk 卸載」在 COLLAPSING 期間只會因重啟發生（來源 ticket）；「艙內」的判定與門口的 entity storage 等待（「偏離」第 3、4 條）；一般狀態的階段重新套用時保留關著的門（「偏離」第 2 條）。
+  - README「預期結果」的數字以最新的 run-all 為準更新（M5 36、JUnit 636、release 410／363、sources 217）。
