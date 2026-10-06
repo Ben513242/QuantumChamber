@@ -916,8 +916,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F4b-1（spec §9.2 的既有 entity 與兩種寫法；plan Step 1 第 2 組的「修復只動不變量 cell、保留 interior」與第 6 組的玩家）：在宇宙 U 的投影位置，
      * <ol>
      * <li>第一次寫入時，一位（創造模式、不受傷的）玩家 Q 站在 volume 內——他所在的兩格事先已清成 AIR，本來就不需要寫——仍然擋住寫入：
-     *     BLOCKED_BY_PLAYER（帶 Q）、343 格一格都沒有改變（第一次寫入的檢查範圍是整個 7×7×7）；Q 移到 volume 外之後 WRITTEN；Controller 的位置由 ABSENT 變成
-     *     PRESENT（§6.5 實體交叉檢查用的查詢）。</li>
+     *     BLOCKED_BY_PLAYER（帶 Q）、343 格一格都沒有改變（第一次寫入的檢查範圍是整個 7×7×7）；Q 移到 volume 外、Controller 的位置先放一座方塊狀態與目標
+     *     相同但帶 chamber UUID 的 Controller 之後 WRITTEN：那座 Controller 仍被重寫，block entity 換成預設值（沒有 chamber UUID，不沿用既有身分）；
+     *     Controller 的位置由 ABSENT 變成 PRESENT（§6.5 實體交叉檢查用的查詢）。</li>
      * <li>修復：兩格 shell 損壞（AIR、石頭）、25 格門關閉、interior 放一塊玻璃，Q 站在 interior → WRITTEN、恰好改了 27 格；不變量 cell 全部回到目標（門回到
      *     開啟），interior 的玻璃保留，Q 沒有被移動（interior 的玩家不擋修復）。</li>
      * <li>修復被擋：Q 站在一格要寫的損壞 shell 裡 → BLOCKED_BY_PLAYER，兩格損壞都沒有寫；Q 改站在已開啟的門口（門已是目標，不需要寫）→ WRITTEN（修復只看
@@ -954,8 +955,19 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     && blocked.written() == 0);
             witness.put("nothingWrittenWhileBlocked", before.equals(cells(universe, frame)));
             standAt(q, universe, frame, 3.5, 1, -4.5);
+            // Controller 的位置上已有一座方塊狀態與目標相同、帶 chamber UUID 的 Controller：第一次寫入仍要重寫它，換成預設的 block entity。
+            var stale = dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
+                    .with(dev.quantumchamber.chamber.ChamberControllerBlock.FACING, frame.outwardFacing());
+            universe.setBlockState(frame.controllerPos(), stale);
+            var staleController = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, frame), "既有 Controller 的 block entity");
+            staleController.setChamberUuid(UUID.randomUUID());
+            witness.put("staleControllerHasAnIdentity", staleController.chamberUuid() != null
+                    && universe.getBlockState(frame.controllerPos()).equals(M5GameTestSupport.projectionTarget(frame, 3, 6, 0)));
             var first = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE);
             witness.put("firstWriteAfterQLeft", first.status() == ProjectionWriter.Status.WRITTEN && M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
+            var rewritten = M5GameTestSupport.controller(universe, frame);
+            witness.put("existingControllerRewrittenWithADefaultBlockEntity", rewritten != null && rewritten != staleController && staleController.isRemoved()
+                    && rewritten.chamberUuid() == null);
             witness.put("controllerPresentAfter", ProjectionWriter.controllerPresence(universe, frame) == ProjectionWriter.ControllerPresence.PRESENT);
             // 2. 修復：損壞兩格 shell、關門、interior 放玻璃；Q 在 interior。
             var holed = local(frame, 0, 3, 3); var stoned = local(frame, 6, 4, 2); var glass = local(frame, 2, 2, 2);
