@@ -18,6 +18,8 @@ import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.collapse.CollapseService;
 import dev.quantumchamber.collapse.DestinationResolver;
+import dev.quantumchamber.collapse.ProjectionLedger;
+import dev.quantumchamber.collapse.ProjectionProtectionIndex;
 import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.collapse.ResolveResult;
 import dev.quantumchamber.collapse.SealedReason;
@@ -838,7 +840,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             origin = DormantOrigin.open(context, hooks);
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var frame = origin.frame;
-        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, id) -> {
+        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
             var witness = new java.util.LinkedHashMap<String, Boolean>();
             var interiorChest = local(frame, 3, 1, 3); var shellChest = local(frame, 0, 4, 3); var interiorStone = local(frame, 2, 2, 2);
@@ -934,7 +936,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             origin = DormantOrigin.open(context, hooks);
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var frame = origin.frame;
-        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, id) -> {
+        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
             var witness = new java.util.LinkedHashMap<String, Boolean>();
             var connection = new ConnectedGameTestPlayer(context.getWorld());
@@ -997,8 +999,155 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
-    /** F4b-1 的 fixture 交出的宇宙：RESOLVE 完成的 server tick、宇宙 U 的 world、塌縮的 session 與 U。 */
-    @FunctionalInterface private interface ResolvedUniverse { void ready(int tick, net.minecraft.server.world.ServerWorld universe, UUID sid, UniverseId id); }
+    /**
+     * F4b-1（spec §9.3 的保護；plan Step 1 第 8 組的「保護（破壞、放置、爆炸、活塞、流體）」；補充第 4 點）：宇宙 U 的投影依 F4b-2 的順序經過權威與投影保護索引——
+     * checked 寫入 PENDING 並登記（這時還不受保護）、第一次寫入、checked 寫入 COMPLETE 並登記（受保護）。之後：
+     * <ul>
+     * <li>{@code ChamberProtectionService.mayMutate}：218 個不變量 cell 一律拒絕，125 格 interior 與 volume 外放行。</li>
+     * <li>投影艙的門照既有的門邏輯開關：玩家用門板把整面門關上、再打開（既有的授權寫入）。</li>
+     * <li>破壞：創造模式的玩家（直接走原版的 {@code tryBreakBlock}）打 shell、Controller 與門板都不會消失；interior 裡的石頭照常打掉。</li>
+     * <li>放置：一格 shell 被授權寫入損壞成 AIR（模擬待修復的投影）之後，玩家對它放置石頭被拒、仍是 AIR；interior 照常放得下。</li>
+     * <li>爆炸：一格 shell 換成玻璃（授權寫入）、相鄰的 interior 也放玻璃，在 interior 的玻璃上爆炸：interior 的玻璃消失，shell 的玻璃留著。</li>
+     * <li>活塞：volume 外三台通電的活塞分別對著 shell、門板與 Controller：都推不動（不變量 cell 都是推不動的方塊，這條由既有的方塊設定擋下，
+     *     關掉索引的 RED 也推不動；寫入也經過同一個保護）；對照組的活塞照常推動石頭，證明這裡的觀察看得到推動。</li>
+     * <li>流體：一格 shell 損壞成 AIR，外側相鄰放水源，水源南北兩側用石頭擋住，只能往西（損壞的 shell）與往東（對照組的空格）流，兩邊離落差一樣近：
+     *     水流不進那一格；對照組的空格照常有水。</li>
+     * </ul>
+     * 新 chunk 的鄰居是非同步產生的（GameTest server 不以 20 TPS 節流），活塞的方塊事件與流體的排程刻要等 chunk 開始 block ticking 才會執行，
+     * 所以先等投影周圍強制載入的 chunk 都 block ticking 再佈置。catalog 增量 1（U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_projection_protection", tickLimit = 400)
+    public void projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids(TestContext context) {
+        begin(context, "projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids");
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame;
+        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var chunks = M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
+            whenTicks(context, resolved, 200, () -> M5GameTestSupport.blockTicking(universe, chunks),
+                    ticking -> projectionProtection(context, hooks, universe, frame, chamber, id, ticking),
+                    () -> "投影周圍強制載入的 chunk 沒有開始 block ticking：" + chunks, hooks);
+        });
+    }
+
+    /** {@link #projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids} 在投影周圍的 chunk 開始 block ticking（{@code ticking}）之後的本體。 */
+    private static void projectionProtection(TestContext context, M2CorridorGameTests.TestHooks hooks, net.minecraft.server.world.ServerWorld universe,
+            dev.quantumchamber.chamber.ChamberFrame frame, UUID chamber, UniverseId id, int ticking) {
+        var server = context.getWorld().getServer();
+        var witness = new java.util.LinkedHashMap<String, Boolean>();
+        var protection = ChamberProtectionService.get();
+        var authorities = CollapseAuthorities.get(server);
+        var index = ProjectionProtectionIndex.get(server);
+        var shell = local(frame, 0, 3, 3);
+        // F4b-2 的順序：PENDING 確認並登記 → 寫方塊 → COMPLETE 確認並登記。
+        var pending = authorities.writeProjection(new ProjectionLedger.Entry(chamber, id, DimensionRole.OVERWORLD, frame.controllerPos(),
+                frame.outwardFacing(), ProjectionLedger.Entry.Status.PENDING));
+        witness.put("pendingConfirmed", pending.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
+        index.confirmed(pending.entry().orElseThrow());
+        witness.put("pendingNotProtected", protection.mayMutate(universe, shell));
+        witness.put("firstWrite", ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE).status() == ProjectionWriter.Status.WRITTEN);
+        var complete = authorities.writeProjection(pending.entry().orElseThrow().withStatus(ProjectionLedger.Entry.Status.COMPLETE));
+        witness.put("completeConfirmed", complete.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
+        index.confirmed(complete.entry().orElseThrow());
+        int denied = 0, allowed = 0;
+        for (int x = 0; x < 7; x++) for (int y = 0; y < 7; y++) for (int z = 0; z < 7; z++) {
+            boolean may = protection.mayMutate(universe, local(frame, x, y, z));
+            if (ChamberGeometry.isShellCell(x, y, z) && !may) denied++;
+            if (!ChamberGeometry.isShellCell(x, y, z) && may) allowed++;
+        }
+        int deniedCells = denied, allowedCells = allowed;
+        witness.put("everyInvariantCellDenied", deniedCells == 218);
+        witness.put("interiorAllowed", allowedCells == 125);
+        witness.put("outsideAllowed", protection.mayMutate(universe, outside(frame, 3, 2, -2)) && protection.mayMutate(universe, outside(frame, 3, 7, 3)));
+        var connection = new ConnectedGameTestPlayer(context.getWorld());
+        hooks.add(connection::close);
+        var b = connection.player();
+        b.changeGameMode(net.minecraft.world.GameMode.CREATIVE); b.setNoGravity(true);
+        standAt(b, universe, frame, 3.5, 1, 3.5);
+        // 門：既有的門邏輯（門板的 onUse → 整面門授權切換）。
+        var doorCell = local(frame, 3, 3, 0);
+        witness.put("doorClosesByTheExistingLogic", interact(universe, doorCell, b).isAccepted() && doorAll(universe, frame, false, MembraneState.NONE));
+        witness.put("doorOpensByTheExistingLogic", interact(universe, doorCell, b).isAccepted() && doorAll(universe, frame, true, MembraneState.NONE));
+        // 破壞。
+        for (var target : List.of(shell, frame.controllerPos(), doorCell)) b.interactionManager.tryBreakBlock(target);
+        witness.put("breakingRefused", universe.getBlockState(shell).isOf(net.minecraft.block.Blocks.BEDROCK)
+                && universe.getBlockState(frame.controllerPos()).isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)
+                && M5GameTestSupport.doorIs(universe, doorCell, true, MembraneState.NONE));
+        var interiorStone = local(frame, 2, 1, 2);
+        universe.setBlockState(interiorStone, net.minecraft.block.Blocks.STONE.getDefaultState());
+        b.interactionManager.tryBreakBlock(interiorStone);
+        witness.put("interiorBreaks", universe.getBlockState(interiorStone).isAir());
+        // 放置：損壞成 AIR 的不變量 cell 不能放；interior 可以。
+        protection.authorizedMutation(() -> universe.setBlockState(shell, net.minecraft.block.Blocks.AIR.getDefaultState()));
+        b.setStackInHand(net.minecraft.util.Hand.MAIN_HAND, new net.minecraft.item.ItemStack(net.minecraft.item.Items.STONE, 64));
+        placeOnTop(b, universe, local(frame, 0, 2, 3));
+        witness.put("placingIntoAnInvariantCellRefused", universe.getBlockState(shell).isAir());
+        placeOnTop(b, universe, local(frame, 2, 0, 3));
+        witness.put("interiorPlacementWorks", universe.getBlockState(local(frame, 2, 1, 3)).isOf(net.minecraft.block.Blocks.STONE));
+        // 爆炸：shell 的玻璃留著，interior 的玻璃消失。
+        var shellGlass = local(frame, 6, 3, 3); var interiorGlass = local(frame, 5, 3, 3);
+        protection.authorizedMutation(() -> {
+            universe.setBlockState(shellGlass, net.minecraft.block.Blocks.GLASS.getDefaultState());
+            universe.setBlockState(interiorGlass, net.minecraft.block.Blocks.GLASS.getDefaultState());
+        });
+        var blast = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 5.5, 3.5, 3.5);
+        universe.createExplosion(null, blast.x, blast.y, blast.z, 2, net.minecraft.world.World.ExplosionSourceType.BLOCK);
+        witness.put("explosionKeepsTheInvariantCell", universe.getBlockState(shellGlass).isOf(net.minecraft.block.Blocks.GLASS));
+        witness.put("explosionClearsTheInterior", universe.getBlockState(interiorGlass).isAir());
+        // 活塞：對著 shell、門板與 Controller 的活塞推不動；對照組照常推動石頭。
+        var pistons = new java.util.ArrayList<net.minecraft.util.math.BlockPos>();
+        pistons.add(piston(universe, outside(frame, 7, 2, 4), local(frame, 6, 2, 4), outside(frame, 8, 2, 4)));
+        pistons.add(piston(universe, outside(frame, 3, 2, -1), local(frame, 3, 2, 0), outside(frame, 3, 2, -2)));
+        pistons.add(piston(universe, outside(frame, 3, 7, 0), frame.controllerPos(), outside(frame, 3, 8, 0)));
+        var controlStone = outside(frame, 10, 2, 3); var controlTarget = outside(frame, 9, 2, 3);
+        universe.setBlockState(controlTarget, net.minecraft.block.Blocks.AIR.getDefaultState());
+        universe.setBlockState(controlStone, net.minecraft.block.Blocks.STONE.getDefaultState());
+        var controlPiston = piston(universe, outside(frame, 11, 2, 3), controlStone, outside(frame, 12, 2, 3));
+        // 流體：損壞成 AIR 的不變量 cell 不進水；對照組的外側空格有水。水源南北兩側擋住，只剩往西（dry）與往東（wet）兩個方向，
+        // 兩邊下一格都有落差（dry 那側是爆炸清掉的 interior 玻璃，wet 那側是外面的空格），流向一樣優先。
+        var dry = local(frame, 6, 4, 3); var source = outside(frame, 7, 4, 3); var wet = outside(frame, 8, 4, 3);
+        protection.authorizedMutation(() -> universe.setBlockState(dry, net.minecraft.block.Blocks.AIR.getDefaultState()));
+        for (var solid : List.of(outside(frame, 7, 3, 3), outside(frame, 8, 3, 3), outside(frame, 7, 4, 2), outside(frame, 7, 4, 4))) {
+            universe.setBlockState(solid, net.minecraft.block.Blocks.STONE.getDefaultState());
+        }
+        universe.setBlockState(wet, net.minecraft.block.Blocks.AIR.getDefaultState());
+        universe.setBlockState(source, net.minecraft.block.Blocks.WATER.getDefaultState());
+        at(context, ticking + 20, hooks, () -> {
+            witness.put("pistonsCannotMoveInvariantCells", universe.getBlockState(local(frame, 6, 2, 4)).isOf(net.minecraft.block.Blocks.BEDROCK)
+                    && M5GameTestSupport.doorIs(universe, local(frame, 3, 2, 0), true, MembraneState.NONE)
+                    && universe.getBlockState(frame.controllerPos()).isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)
+                    && pistons.stream().noneMatch(pos -> universe.getBlockState(pos).get(net.minecraft.block.PistonBlock.EXTENDED)));
+            witness.put("controlPistonPushes", universe.getBlockState(controlPiston).get(net.minecraft.block.PistonBlock.EXTENDED)
+                    && universe.getBlockState(controlTarget).isOf(net.minecraft.block.Blocks.STONE));
+            witness.put("fluidCannotEnterAnInvariantCell", universe.getBlockState(dry).isAir() && universe.getFluidState(dry).isEmpty());
+            witness.put("controlFluidFlows", !universe.getFluidState(wet).isEmpty());
+            hooks.release();
+            context.assertTrue(!witness.containsValue(false), "投影的保護：" + witness + " denied=" + deniedCells + " allowed=" + allowedCells);
+            awaitConvergedThenComplete(context, 1, 20);
+        });
+    }
+
+    /** 玩家手上的方塊放在 {@code below} 的上方（原版 {@code interactBlock}，打在頂面）。 */
+    private static void placeOnTop(net.minecraft.server.network.ServerPlayerEntity player, net.minecraft.server.world.ServerWorld world, net.minecraft.util.math.BlockPos below) {
+        var hit = new net.minecraft.util.hit.BlockHitResult(net.minecraft.util.math.Vec3d.ofCenter(below).add(0, 0.5, 0), net.minecraft.util.math.Direction.UP, below, false);
+        player.interactionManager.interactBlock(player, world, player.getMainHandStack(), net.minecraft.util.Hand.MAIN_HAND, hit);
+    }
+
+    /** 在 {@code at} 放一台朝向相鄰 {@code facing} 的活塞，再在 {@code power} 放紅石塊供電；回傳活塞的位置。 */
+    private static net.minecraft.util.math.BlockPos piston(net.minecraft.server.world.ServerWorld world, net.minecraft.util.math.BlockPos at,
+            net.minecraft.util.math.BlockPos facing, net.minecraft.util.math.BlockPos power) {
+        world.setBlockState(at, net.minecraft.block.Blocks.PISTON.getDefaultState().with(net.minecraft.block.PistonBlock.FACING, toward(at, facing)));
+        world.setBlockState(power, net.minecraft.block.Blocks.REDSTONE_BLOCK.getDefaultState());
+        return at;
+    }
+
+    /** F4b-1 的 fixture 交出的宇宙：RESOLVE 完成的 server tick、宇宙 U 的 world、塌縮的 session、原艙的 chamber UUID 與 U。 */
+    @FunctionalInterface private interface ResolvedUniverse {
+        void ready(int tick, net.minecraft.server.world.ServerWorld universe, UUID sid, UUID chamber, UniverseId id);
+    }
 
     /**
      * F4b-1 的 fixture：原艙上的 DORMANT NEW 收據，P 由艙外進入 → 提交 COLLAPSING → RESOLVE 建立並物化宇宙 U（之後停在 PREPARE stub 的 WAITING）。
@@ -1014,7 +1163,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             at(context, registered + 1, hooks, () -> moveInside(p, origin.frame));
             whenTicks(context, registered + 2, 20, () -> UniverseLifecycleService.resolveActive(server, id).isPresent()
                     && origin.capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1,
-                    resolved -> ready.ready(resolved, UniverseLifecycleService.resolveActive(server, id).orElseThrow(), sid, id),
+                    resolved -> ready.ready(resolved, UniverseLifecycleService.resolveActive(server, id).orElseThrow(), sid, chamber, id),
                     () -> "RESOLVE 沒有建立宇宙：record=" + M5GameTestSupport.state(journal, sid), hooks);
         });
     }

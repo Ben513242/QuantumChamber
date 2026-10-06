@@ -1,5 +1,6 @@
 package dev.quantumchamber.chamber;
 
+import dev.quantumchamber.collapse.ProjectionProtectionIndex;
 import dev.quantumchamber.universe.DimensionRole;
 import java.util.Objects;
 import java.util.Optional;
@@ -43,6 +44,11 @@ public final class ChamberProtectionService {
         ServerLifecycleEvents.SERVER_STOPPED.register(INSTANCE::detach);
     }
 
+    /**
+     * 每次 {@code World.setBlockState} 的保護判斷（{@code WorldSetBlockStateMixin}；玩家破壞與放置、活塞、爆炸、流體都經過它）。vanilla 的 world key 查
+     * chamber registry；非 vanilla 的 world key（M5 的動態宇宙）只查投影保護索引的記憶體快照（M5 spec §9.3，F4b-1）：投影的不變量 cell 拒絕未授權的變更，
+     * interior 與其他格放行。授權寫入在前面就放行。
+     */
     public boolean mayMutate(ServerWorld world, BlockPos pos) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(pos, "pos");
@@ -56,7 +62,7 @@ public final class ChamberProtectionService {
                 .map(role -> attachedServer.getWorld(world.getRegistryKey()) == world
                         ? mayMutate(world.getRegistryKey().getValue(), role, pos)
                         : mayMutate(role, pos))
-                .orElse(true);
+                .orElseGet(() -> !ProjectionProtectionIndex.protectedCell(world.getServer(), world.getRegistryKey(), pos));
     }
 
     /** 僅讀已發布索引，不讀 PersistentState，也不存取 chunk。 */

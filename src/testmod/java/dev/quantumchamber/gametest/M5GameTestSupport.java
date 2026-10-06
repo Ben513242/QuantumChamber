@@ -634,6 +634,14 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F4b-1：{@code chunks} 都已 block ticking——在模擬距離內（方塊事件與 block entity 才會執行），而且 ticking future 已完成（排程刻與流體才會執行）。
+     * 強制載入的 chunk 本身是同步載入的，但它開始 ticking 還要等鄰居非同步產生；GameTest server 不以 20 TPS 節流，固定等幾個 tick 不夠。
+     */
+    static boolean blockTicking(ServerWorld world, List<ChunkPos> chunks) {
+        return chunks.stream().allMatch(chunk -> world.shouldTickBlocksInChunk(chunk.toLong()) && world.getChunkManager().isTickingFutureReady(chunk.toLong()));
+    }
+
+    /**
      * spec §9.2 的投影在區域座標 (x, y, z)（0..6）的目標方塊，由 test 依 spec 自己寫出（不讀 production 的 {@code ProjectionWriter}）：local (3,6,0) 是
      * {@code FACING}＝outwardFacing 的 Controller，門板 25 格是 {@code open=true}、{@code membrane=none} 的 bulkhead，其餘 shell 是 bedrock，interior 是 AIR。
      */
