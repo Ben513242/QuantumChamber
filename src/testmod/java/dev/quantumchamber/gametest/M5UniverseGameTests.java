@@ -2247,7 +2247,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F4b-3（spec §7.3「門狀態的重新套用」；plan Step 1 第 10 組；補充第 5 點「開服時就是 WAITING：門要是一般開門，不得留下有碰撞的膜」）：RESOLVE 之後、第一次閘門
      * 評估之前斷電 → WAITING。以授權寫入在門上留下 sealed 量子膜（模擬 sealed 期間 crash 留下的膜），再模擬重啟之後的第一次觀察
-     * （{@code M5GameTestSupport.simulateDoorStartup}；真正跨 JVM 的重啟屬 F6）。塌縮流程觀察到的那個 tick 只排入佇列（INFO 記下套用的 tick N），下一個 tick（tick N）
+     * （{@code M5GameTestSupport.simulateDoorStartup}；真正跨 JVM 的重啟屬 F6）。塌縮流程觀察到的那個 tick 只排入佇列（INFO 記下套用的 tick N，原因是「重啟之後第一次載入」，
+     * F4b-3 fix round 1），下一個 tick（tick N）
      * 才依 collapse view 套用：門改為一般開門（INFO 記下 tick N）。之後不再重新套用（一次性）。恢復供電、P 由艙外再進入 → PREPARE → 依套用量子膜的條件重新套用 sealed。
      * catalog 增量 1。
      */
@@ -2275,6 +2276,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("appliedOnTheQueuedTick", reappliedTicks(capture, sid).equals(reapplyQueuedTicks(capture, sid)));
                     at(context, appliedAt + 5, hooks, () -> {
                         witness.put("onlyOnce", reapplyQueuedTicks(capture, sid).size() == 1 && reappliedTicks(capture, sid).size() == 1);
+                        witness.put("queuedAsTheFirstLoadAfterARestart", reapplyCauses(capture, sid).equals(List.of("重啟之後第一次載入")));
                         context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
                         moveOutside(p, frame);
                     });
@@ -2300,10 +2302,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     tick 依 collapse view 關門一次（關門要等門口的 entity storage 載入，所以套用的 tick 不早於排入時記下的 tick）。</li>
      * <li>非參與者 Q（遠在 test 結構那裡；開關門不需要靠近）照一般方式開門（SEALED 不攔截）：40 tick 之後仍開著，沒有第二次重新套用。</li>
      * <li>Q 關門、門口放一座盔甲座，再卸載、載入一次：重新套用等門口的 entity storage 載入之後才判斷，門口有 entity → 改為一般開門（不把門關在 entity 上）。</li>
+     * <li>F4b-3 fix round 1（quality Q-M2）：移走盔甲座、Q 關門，第三次卸載、載入：排入的關門還在等門口的 entity storage 時，Q 照一般方式開門 → 排入的關門取消
+     *     （INFO 一則），entity storage 載入之後門仍開著，沒有第三次套用。三次排入的 INFO 原因都是「重新載入」。</li>
      * </ul>
      * catalog 增量 0（SEALED 收據不配置宇宙）。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_reload", tickLimit = 1500)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_reload", tickLimit = 2000)
     public void sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it(TestContext context) {
         begin(context, "sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
@@ -2361,12 +2365,31 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("openedForTheEntityInTheDoorway", doorAll(world, frame, true, MembraneState.NONE));
                     witness.put("secondReapplyNoEarlierThanItsQueuedTick", reapplyQueuedTicks(log, sid).size() == 2
                             && reappliedTicks(log, sid).get(1) >= reapplyQueuedTicks(log, sid).get(1));
-                    witness.put("stillSealed", receiptStillSealed(journal, sid));
-                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(log, sid));
-                    LOGGER.info("M5_DOOR_RELOAD queued={} applied={}", reapplyQueuedTicks(log, sid), reappliedTicks(log, sid));
-                    hooks.release();
-                    context.assertTrue(!witness.containsValue(false), "SEALED 的原艙門在 chunk 重新載入之後：" + witness + " queued=" + reapplyQueuedTicks(log, sid));
-                    awaitConvergedThenComplete(context, 0, 20);
+                    // 第三次（F4b-3 fix round 1，quality Q-M2）：Q 關門之後卸載、載入；排入的關門還在等門口的 entity storage 時 Q 開門 → 排入的關門取消，不會被關回去。
+                    // 第二次重新載入之後，門口的盔甲座是從存檔重新載入的另一個 entity（原本的物件已隨 chunk 卸載移除），所以以世界查詢移走門口的 entity。
+                    witness.put("doorwayClearedBeforeTheThirdReload", M5GameTestSupport.discardDoorwayEntities(world, frame) == 1);
+                    witness.put("closedByHandBeforeTheThirdReload", interact(world, doorCell, q).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
+                    remote.unload();
+                    whenTicks(context, openedAt + 1, 200, remote::unloaded, unloadedThirdAt -> at(context, unloadedThirdAt + 3, hooks, () -> {
+                        witness.put("stillUnloadedBeforeTheThirdReload", remote.unloaded());
+                        remote.reload();
+                    }), () -> "第三次解除強制載入之後 chunk 仍是 FULL：witness=" + witness, hooks);
+                    whenTicks(context, openedAt + 2, 600, () -> remote.loaded() && reapplyQueuedTicks(log, sid).size() == 3, queuedAt -> {
+                        witness.put("closeStillPendingWhenQueued", doorAll(world, frame, false, MembraneState.NONE) && reappliedTicks(log, sid).size() == 2);
+                        witness.put("opensWhileTheCloseIsPending", interact(world, doorCell, q).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
+                        whenTicks(context, queuedAt, 300, () -> remote.entitiesLoaded(), storageAt -> at(context, storageAt + 2, hooks, () -> {
+                            witness.put("staysOpenOnceTheEntityStorageLoads", doorAll(world, frame, true, MembraneState.NONE) && reappliedTicks(log, sid).size() == 2);
+                            witness.put("onePendingCloseCancelled", pendingClosesCancelled(log, sid) == 1);
+                            witness.put("queuedAsReloads", reapplyCauses(log, sid).equals(List.of("重新載入", "重新載入", "重新載入")));
+                            witness.put("stillSealed", receiptStillSealed(journal, sid));
+                            witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(log, sid));
+                            LOGGER.info("M5_DOOR_RELOAD queued={} applied={} thirdQueuedAt={} entityStorageAt={}", reapplyQueuedTicks(log, sid), reappliedTicks(log, sid),
+                                    queuedAt, storageAt);
+                            hooks.release();
+                            context.assertTrue(!witness.containsValue(false), "SEALED 的原艙門在 chunk 重新載入之後：" + witness + " queued=" + reapplyQueuedTicks(log, sid));
+                            awaitConvergedThenComplete(context, 0, 20);
+                        }), () -> "第三次載入之後門口的 entity storage 沒有載入：witness=" + witness, hooks);
+                    }, () -> "第三次載入之後沒有排入重新套用：queued=" + reapplyQueuedTicks(log, sid) + " witness=" + witness, hooks);
                 }, () -> "第二次載入之後沒有重新套用：applied=" + reappliedTicks(log, sid) + " witness=" + witness, hooks);
             }, () -> "載入之後沒有重新套用：loaded=" + remote.loaded() + " applied=" + reappliedTicks(log, sid) + " witness=" + witness, hooks);
         });
@@ -2457,6 +2480,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /** 這個 session「SEALED 的原艙門被玩家照一般方式使用：取消還沒套用的關門」的 INFO 數（帶 LOG_MARKER；F4b-3 fix round 1）。 */
+    private static int pendingClosesCancelled(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "取消還沒套用的關門", "session=" + sid).size();
+    }
+
     /** 這個 session「原艙門的攔截」的 WARN 數（帶 LOG_MARKER；判斷與處置途中的非預期例外）。 */
     private static int doorUseWarnings(LogCapture capture, UUID sid) {
         return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "原艙門的攔截", sid.toString()).size();
@@ -2481,6 +2509,17 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static List<Integer> reappliedTicks(LogCapture capture, UUID sid) {
         return ticks(capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "原艙門已依 collapse view 重新套用", "session=" + sid),
                 Pattern.compile("，tick (\\d+)）"));
+    }
+
+    /** 這個 session 的原艙門重新套用排入（或延後）時記下的原因，依發生順序（「來源艙重啟之後第一次載入：」或「來源艙重新載入：」；F4b-3 fix round 1）。 */
+    private static List<String> reapplyCauses(LogCapture capture, UUID sid) {
+        var pattern = Pattern.compile("來源艙(重啟之後第一次載入|重新載入)：");
+        var result = new ArrayList<String>();
+        for (var entry : capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "下一個 tick（tick ", "session=" + sid)) {
+            var matcher = pattern.matcher(entry.message());
+            result.add(matcher.find() ? matcher.group(1) : "（沒有原因）");
+        }
+        return List.copyOf(result);
     }
 
     private static List<Integer> ticks(List<LogCapture.Entry> entries, Pattern pattern) {

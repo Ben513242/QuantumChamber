@@ -695,6 +695,9 @@ final class M5GameTestSupport {
         /** 涵蓋的 chunk 都不是 FULL（只查詢、不載入）。 */
         boolean unloaded() { return chunks.stream().allMatch(chunk -> world.getChunkManager().getWorldChunk(chunk.x, chunk.z) == null); }
 
+        /** 涵蓋的 chunk 的 entity storage 都已載入（F4b-3 fix round 1；重新載入之後 entity 是非同步載入的，比 FULL 晚）。 */
+        boolean entitiesLoaded() { return chunks.stream().allMatch(chunk -> world.isChunkLoaded(chunk.toLong())); }
+
         void unload() { chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, false)); }
 
         void reload() { chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, true)); }
@@ -715,7 +718,7 @@ final class M5GameTestSupport {
 
     /**
      * F4b-3：模擬重啟之後的第一次觀察（比照 {@code M4CandidateTestAccess.markStartup}）：把 session 標成開服 attach 當下就在 journal，並以反射清掉塌縮流程對它「來源艙已載入」
-     * 的觀察（{@code CollapseService.Track.doorLoaded}；本 mod 自己的欄位，不經 remap）。下一個 {@code END_SERVER_TICK} 的觀察就是「重啟之後第一次」，依 collapse view
+     * 的觀察（{@code CollapseService.Track.doorLoaded} 與 {@code doorSeenLoaded}；本 mod 自己的欄位，不經 remap）。下一個 {@code END_SERVER_TICK} 的觀察就是「重啟之後第一次」，依 collapse view
      * 重新套用原艙門。只在 server thread 呼叫；真正跨 JVM 的重啟屬 F6。
      */
     @SuppressWarnings("unchecked")
@@ -723,7 +726,10 @@ final class M5GameTestSupport {
         var service = collapseService(server);
         ((Set<UUID>) M4CandidateTestAccess.get(service, "startupSessions")).add(sid);
         var track = ((Map<UUID, ?>) M4CandidateTestAccess.get(service, "tracks")).get(sid);
-        if (track != null) M4CandidateTestAccess.set(track, "doorLoaded", null);
+        if (track == null) return;
+        M4CandidateTestAccess.set(track, "doorLoaded", null);
+        // F4b-3 fix round 1（Nit N-4）：重啟之後的 instance 還沒看過來源艙已載入。
+        M4CandidateTestAccess.set(track, "doorSeenLoaded", false);
     }
 
     /** 這個 server 的 {@code CollapseService}（反射；本 mod 自己的欄位，不經 remap）。 */
@@ -809,6 +815,20 @@ final class M5GameTestSupport {
         hooks.add(stand::discard);
         if (!world.spawnEntity(stand)) throw new IllegalStateException("盔甲座沒有加入世界");
         return stand;
+    }
+
+    /**
+     * F4b-3 fix round 1：移走門口（25 格門的外框，test 自己算）裡的所有 entity，回傳移走的數目。chunk 重新載入之後，門口的 entity 是從存檔重新載入的另一個物件，
+     * 卸載前拿到的參照已經不在世界裡，所以以世界查詢移除。
+     */
+    static int discardDoorwayEntities(ServerWorld world, ChamberFrame frame) {
+        var a = ChamberGeometry.localToWorld(frame, 1, 1, 0);
+        var b = ChamberGeometry.localToWorld(frame, 5, 5, 0);
+        var box = new net.minecraft.util.math.Box(Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()), Math.min(a.getZ(), b.getZ()),
+                Math.max(a.getX(), b.getX()) + 1, Math.max(a.getY(), b.getY()) + 1, Math.max(a.getZ(), b.getZ()) + 1);
+        var found = world.getOtherEntities(null, box);
+        found.forEach(net.minecraft.entity.Entity::discard);
+        return found.size();
     }
 
     /** 25 格門都是朝向的 sealed 量子膜（{@code open=true}＋{@code sealed_<axis>}）。 */

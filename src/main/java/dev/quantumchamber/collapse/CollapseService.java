@@ -1145,14 +1145,16 @@ public final class CollapseService {
         var track = track(sid);
         var world = server.getWorld(RegistryKey.of(RegistryKeys.WORLD, view.origin().worldKey()));
         boolean loaded = world != null && neighborhoodLoaded(world, new ChamberFrame(view.origin().controllerPos(), view.origin().facing()));
-        boolean startup = track.doorLoaded == null;
-        boolean reloaded = doorReloaded(track.doorLoaded, loaded, startupSessions.contains(sid));
+        boolean startupSession = startupSessions.contains(sid);
+        boolean reloaded = doorReloaded(track.doorLoaded, loaded, startupSession);
+        var cause = reapplyCause(startupSession, track.doorSeenLoaded);
         track.doorLoaded = loaded;
+        if (loaded) track.doorSeenLoaded = true;
         if (quarantined && track.preparing && !track.doorReleased) {
             releasePrepareDoor(view, track);
             LOGGER.info(LOG_MARKER, "session 隔離中（H3 的收斂），PREPARE 暫停：原艙門改為一般開門，隔離解除之後依原進度續做：session={} chamber={}", sid, view.chamberUuid());
         }
-        if (reloaded) reapplyDoor(view, startup);
+        if (reloaded) reapplyDoor(view, cause);
     }
 
     /**
@@ -1164,6 +1166,15 @@ public final class CollapseService {
         return loaded && (previous == null ? startupSession : !previous);
     }
 
+    /**
+     * 重新套用的原因在 log 裡的字句（純函式，F4b-3 fix round 1，Nit N-4）：開服 attach 當下就在 journal、而本 instance 還沒看過來源艙已載入（{@code seenLoaded}）的 session，
+     * 是重啟之後第一次載入（重啟之後來源 chunk 是非同步載入的，第一次觀察常常還沒載入，所以不只看是不是第一次觀察）；其餘是本 instance 看過它沒有載入之後的重新載入。
+     */
+    static String reapplyCause(boolean startupSession, boolean seenLoaded) {
+        return startupSession && !seenLoaded ? "重啟之後第一次載入：開服 attach 當下就在 journal 的 session，本 instance 第一次觀察到來源艙已載入"
+                : "重新載入：本 instance 看過來源艙沒有載入，這次已載入";
+    }
+
     /** 重新套用的目標（純函式）：SEALED 是關門（門口有 entity 時一般開門）；COLLAPSING 是把帶著量子膜的門改為一般開門。 */
     static DoorGoal reapplyGoal(SessionState viewState) {
         return switch (viewState) {
@@ -1173,21 +1184,23 @@ public final class CollapseService {
         };
     }
 
-    /** 排入下一個 tick 的重新套用（{@link #watchDoor}）；已有待套用的門時只把它延到下一個 tick。 */
-    private void reapplyDoor(SessionRecoveryRecord view, boolean startup) {
-        var why = startup ? "開服之後第一次觀察到來源艙已載入" : "來源艙的 chunk 重新載入";
+    /**
+     * 排入下一個 tick 的重新套用（{@link #watchDoor}；{@code cause} 是 {@link #reapplyCause} 的字句）；已有待套用的門時只把它延到下一個 tick。排入（或延後）記 INFO：
+     * 它記下的「下一個 tick（tick N）」是「不在 chunk 載入的當下寫方塊」的證據（GameTest 以它比對套用的 tick）；完成時只有實際改了門（APPLIED）才記 INFO（{@link #applyDoor}）。
+     */
+    private void reapplyDoor(SessionRecoveryRecord view, String cause) {
         var existing = doors.get(view.chamberUuid());
         if (existing != null) {
             existing.deferTo(now + 1);
             existing.reapplied = true;
-            LOGGER.info(LOG_MARKER, "{}：已有待套用的原艙門（{}），延到下一個 tick（tick {}）套用，不在 chunk 載入的當下寫方塊：session={} chamber={}", why, existing.goal,
-                    now + 1, view.sessionUuid(), view.chamberUuid());
+            LOGGER.info(LOG_MARKER, "來源艙{}：已有待套用的原艙門（{}），延到下一個 tick（tick {}）套用，不在 chunk 載入的當下寫方塊：session={} chamber={}", cause,
+                    existing.goal, now + 1, view.sessionUuid(), view.chamberUuid());
             return;
         }
         var goal = reapplyGoal(view.state());
         queueDoor(view, 1, goal).reapplied = true;
-        LOGGER.info(LOG_MARKER, "{}：下一個 tick（tick {}）依 collapse view 重新套用原艙門（{}），不在 chunk 載入的當下寫方塊：session={} chamber={} 狀態={}", why, now + 1, goal,
-                view.sessionUuid(), view.chamberUuid(), view.state());
+        LOGGER.info(LOG_MARKER, "來源艙{}：下一個 tick（tick {}）依 collapse view 重新套用原艙門（{}），不在 chunk 載入的當下寫方塊：session={} chamber={} 狀態={}", cause, now + 1,
+                goal, view.sessionUuid(), view.chamberUuid(), view.state());
     }
 
     /** 玩家與這座原艙的關係（{@link #doorAction}）。 */
@@ -1253,6 +1266,7 @@ public final class CollapseService {
      * <li>找出所屬 session 之前的例外（journal 健康時 {@link #sessionAt} 只讀記憶體內的 record，不會發生）：沒有 session 可以歸屬，也無法判斷門是否屬於塌縮流程，
      *     拒絕並記 WARN（不去重）。</li>
      * </ul>
+     * SEALED 的門照一般門的邏輯時（§11.2：任何玩家都可以照一般方式開門），同時取消這座艙還沒套用的關門（{@link #cancelSealedClose}，F4b-3 fix round 1，quality Q-M2）。
      */
     private ChamberCollapsePort.DoorUse door(ServerWorld world, ChamberFrame frame, PlayerEntity player) {
         if (!server.isOnThread()) return ChamberCollapsePort.DoorUse.PASS;
@@ -1278,7 +1292,10 @@ public final class CollapseService {
                     : !player.isSpectator() && player.getBoundingBox().intersects(ChamberGeometry.interiorBox(frame)) ? DoorUser.INSIDER : DoorUser.OUTSIDER;
             action = doorAction(view.state(), universe, journal.rollForwardPending(sid), owns, user);
             var use = switch (action) {
-                case PASS -> ChamberCollapsePort.DoorUse.PASS;
+                case PASS -> {
+                    if (view.state() == SessionState.SEALED) cancelSealedClose(view, player);
+                    yield ChamberCollapsePort.DoorUse.PASS;
+                }
                 case REFUSE -> {
                     LOGGER.debug(LOG_MARKER, "原艙門的開關被拒、不改門：session={} chamber={} 玩家={} 身分={}", sid, view.chamberUuid(), player.getUuid(), user);
                     yield ChamberCollapsePort.DoorUse.REFUSED;
@@ -1299,6 +1316,20 @@ public final class CollapseService {
             }
             return ChamberCollapsePort.DoorUse.REFUSED;
         }
+    }
+
+    /**
+     * SEALED 的原艙門被玩家照一般方式使用（spec §11.2、§7.3 :404「玩家打開之後不會被關回去」；F4b-3 fix round 1，quality Q-M2）：移除這座艙由同一個 session 排入、
+     * 還沒套用的關門（{@link DoorGoal#CLOSE_ON_SEALED}：進入 SEALED 時排入，或 chunk 重新載入之後的重新套用；例如還在等門口的 entity storage 載入、chunk 不是 FULL、
+     * 或在退避中）。之後的門由玩家照一般方式開關；只有下一次真的重新載入（{@link #watchDoor}）才再依 collapse view 關門一次。在門切換之前呼叫：門切換本身被拒時
+     * （例如門板不完整），門維持原狀，同樣不再由塌縮流程關上。
+     */
+    private void cancelSealedClose(SessionRecoveryRecord view, PlayerEntity player) {
+        var pending = doors.get(view.chamberUuid());
+        if (pending == null || pending.goal != DoorGoal.CLOSE_ON_SEALED || !pending.session.equals(view.sessionUuid())) return;
+        doors.remove(view.chamberUuid());
+        LOGGER.info(LOG_MARKER, "SEALED 的原艙門被玩家照一般方式使用：取消還沒套用的關門（{}），玩家開關的門不會被關回去：session={} chamber={} 玩家={}",
+                pending.reapplied ? "chunk 重新載入之後的重新套用" : "進入 SEALED 時排入", view.sessionUuid(), view.chamberUuid(), player.getUuid());
     }
 
     /** 以這座艙為原艙的 session 的 collapse view（依 world key、Controller 位置與朝向）；沒有時為 null。 */
@@ -1526,7 +1557,7 @@ public final class CollapseService {
                 if (!neighborhoodLoaded(world, door.frame)) return;
                 if (!doorHasMembrane(world, door.frame)) {
                     doors.remove(door.chamber);
-                    if (door.reapplied) LOGGER.info(LOG_MARKER, "原艙門已依 collapse view 重新套用（{}：門沒有量子膜，不需要改門，tick {}）：chamber={} session={}", door.goal, now,
+                    if (door.reapplied) LOGGER.debug(LOG_MARKER, "原艙門的重新套用不需要改門（{}：門沒有量子膜，tick {}）：chamber={} session={}", door.goal, now,
                             door.chamber, door.session);
                     return;
                 }
@@ -1538,8 +1569,13 @@ public final class CollapseService {
         var result = new ChamberDoorService().applyTarget(world, door.frame, target);
         if (!applyOutcome(door, result.outcome(), now)) return;
         doors.remove(door.chamber);
-        if (door.reapplied) LOGGER.info(LOG_MARKER, "原艙門已依 collapse view 重新套用（{}：{}，tick {}）：chamber={} session={}", door.goal, result.outcome(), now,
-                door.chamber, door.session);
+        if (!door.reapplied) return;
+        // F4b-3 fix round 1（Nit N-3）：實際改了門才記 INFO；門已是目標（UNCHANGED）記 DEBUG。
+        if (result.outcome() == ChamberDoorService.ApplyResult.Outcome.APPLIED) {
+            LOGGER.info(LOG_MARKER, "原艙門已依 collapse view 重新套用（{}：{}，tick {}）：chamber={} session={}", door.goal, result.outcome(), now, door.chamber, door.session);
+        } else {
+            LOGGER.debug(LOG_MARKER, "原艙門的重新套用不需要改門（{}：{}，tick {}）：chamber={} session={}", door.goal, result.outcome(), now, door.chamber, door.session);
+        }
     }
 
     /** §11.2、§7.3：進入 SEALED 時門改為關閉；門口有 entity 時改為一般開門（不關閉）。 */
@@ -1732,6 +1768,11 @@ public final class CollapseService {
          * 不隨 {@link #resetGate} 重設：同一個 session 在 SEALED 與重試之間來回時，載入的觀察仍有效。
          */
         Boolean doorLoaded;
+        /**
+         * 本 instance 曾觀察到來源艙已載入（{@link #watchDoor}）。開服時就在的 session 在這之前的觸發是「重啟之後第一次載入」（{@link #reapplyCause}，F4b-3 fix round 1）；
+         * 不隨 {@link #resetGate} 重設。
+         */
+        boolean doorSeenLoaded;
         /** PREPARE 每個 tick 的原艙門的套用狀態（WARN 去重與退避；成功時清除，F4b-3）。 */
         PendingDoor membrane;
         /** PREPARE 暫停或結束時，原艙門已交還為一般開門（{@link #releasePrepareDoor}）；PREPARE 再次擁有原艙門時清除。 */

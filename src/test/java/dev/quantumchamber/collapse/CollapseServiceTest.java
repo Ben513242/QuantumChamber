@@ -507,6 +507,11 @@ class CollapseServiceTest {
         cases.add(() -> assertFalse(CollapseService.doorReloaded(null, false, true), "開服時就在的 session：第一次觀察還沒載入"));
         cases.add(() -> assertTrue(CollapseService.doorReloaded(false, true, true), "開服時就在的 session：之後才載入"));
         cases.add(() -> assertFalse(CollapseService.doorReloaded(true, true, true), "開服時就在的 session：已觀察過、一直載入"));
+        // F4b-3 fix round 1（Nit N-4）：log 的原因區分「重啟之後第一次載入」與「重新載入」。開服時就在的 session 第一次觀察還沒載入、之後才載入，也是重啟之後第一次載入。
+        cases.add(() -> assertTrue(CollapseService.reapplyCause(true, false).startsWith("重啟之後第一次載入"), "開服時就在、本 instance 還沒看過已載入"));
+        cases.add(() -> assertTrue(CollapseService.reapplyCause(true, true).startsWith("重新載入"), "開服時就在、看過已載入之後卸載再載入"));
+        cases.add(() -> assertTrue(CollapseService.reapplyCause(false, false).startsWith("重新載入"), "執行期間才出現、卸載之後載入"));
+        cases.add(() -> assertTrue(CollapseService.reapplyCause(false, true).startsWith("重新載入"), "執行期間才出現、看過已載入之後卸載再載入"));
         cases.add(() -> assertEquals(CollapseService.DoorGoal.CLOSE_ON_SEALED, CollapseService.reapplyGoal(SessionState.SEALED), "SEALED：關門（門口有 entity 時一般開門）"));
         cases.add(() -> assertEquals(CollapseService.DoorGoal.NORMALIZE, CollapseService.reapplyGoal(SessionState.COLLAPSING), "COLLAPSING：量子膜改為一般開門"));
         for (var state : List.of(SessionState.ARMING, SessionState.SUPERPOSITION, SessionState.RETURNING, SessionState.MEASURED, SessionState.PASSAGE_READY))
