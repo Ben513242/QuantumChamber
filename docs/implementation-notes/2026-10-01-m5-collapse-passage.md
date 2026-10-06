@@ -3981,7 +3981,27 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
   - `7ad2ddc` `docs: describe the F4b-3 origin door GameTest helpers`（parent `89c39ad`）：`scripts/verification/README.md`「新增 M5 GameTest」一節。
   - 本段由其後的 docs commit `docs: record F4b-3 source door in the M5 note` 加入。
 - Code range `3f96399..89c39ad`。沒有改 `ChamberDoorService`、`ChamberControllerLoadSyncQueue`、`QuantumSuperpositionMod`（port 的註冊在 `PPI.registerEvents()` 與 `CS.initialize()` 裡，兩者本來就由它呼叫）、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`CorridorPageManager`、`SuperpositionSessionManager`、`SessionRecoveryState`、`SessionRecoveryManager`、`UniverseRegistryState`、`ChamberRegistryState`、`UniverseLifecycleService`、`M5CollapseGameTests`、語言檔、`gates.ps1`、`build.gradle`、`.github/`。
-- Review：spec review ✅（Critical 0、Important 0、Minor 4：S-M1～S-M4）；quality review Not approved（Critical 0、Important 1、Minor 4、Nit 5：Q-I1、Q-M1～Q-M3、`openForInsider`、N-1～N-4）。上一輪回報列出、需要裁示的各項讀法，spec reviewer 都判定可以接受或符合 spec，controller 正式接受（「裁示」）。處置見本節末的「Fix round 1」。
+- Review：spec review ✅（Critical 0、Important 0、Minor 4：S-M1～S-M4）；quality review Not approved（Critical 0、Important 1、Minor 4、Nit 5：Q-I1、Q-M1～Q-M3、`openForInsider`、N-1～N-4）。上一輪回報列出、需要裁示的各項讀法，spec reviewer 都判定可以接受或符合 spec，controller 正式接受（「裁示」）。
+- 最終 review：
+  - fix round 1 的 spec re-review ✅（Critical 0、Important 0、Minor 3：m-1～m-3）。偏離第 9～11 條都判定符合 spec，controller 接受。
+  - fix round 1 的 quality re-review Approved（Critical 0、Important 0、Minor 2、Nit 3）。Q-I1 已從根本關閉。
+  - controller 不再開 fix round。理由：兩位 reviewer 都判定這些 Minor 可以留到下次改門的程式時處理；使用者也指示 F4b 完成後就停。spec m-1～m-3、quality M-1、M-2 與 Nit，全部寫進「交給後續」的 F5 Step 0。
+  - **F4b-3 完成**：range `3f96399..df3aee2`，之後是 controller 的 docs commit。
+    - code：`099f4a8`、`71b5d74`、`3b9bbb0`、`270af2d`、`287d216`、`89c39ad`、`ae3f1bc`、`bbf7aa2`、`3c9b42c`。
+    - docs：`7ad2ddc`、`fda05fe`、`df3aee2`。
+    - 最終 run-all：`run-all-9a5c30415e954e88848c98cfb42f13c3`，`END ALL exit=0`（`3c9b42c`）。Full 那一輪多了一則已知偶發，以 `gate-full-rerun-06323a88…` 重跑，結果與基準逐行相同。
+
+      | 項目 | 數值 |
+      | --- | --- |
+      | default | 174/174 |
+      | M5 | 37/37 |
+      | JUnit | 636 |
+      | release／sources | 410／363、217 |
+      | Full WARN／ERROR | 54／28（重跑） |
+      | M5 WARN／ERROR | 36／6 |
+
+  - **F4b（F4b-1、F4b-2、F4b-3）全部完成**。
+- 處置見本節末的「Fix round 1」。
 - 範圍是 plan Task F4b「拆分」的 F4b-3：PREPARE 期間的原艙門（量子膜的套用條件與門口規則、門的攔截、閘門失效與暫停時的門、門狀態的重新套用），以及 Step 0（`chamber`／`collapse` 的依賴反轉、M5U 的前後段 helper、F4b-2 的兩則 Nit）。PASSAGE_READY 期間的門（§10.5）、passable 量子膜與沒有所屬 session 的量子膜正規化（§10.6 :613）屬 F5。
 - 行號以 `89c39ad` 為準。`PORT` 指 `chamber/ChamberCollapsePort.java`，`WCDA`、`QBB`、`CCB` 指 `chamber/WorldChamberDoorAdapter.java`、`QuantumBulkheadBlock.java`、`ChamberControllerBlock.java`，`GUARD` 指 `ChamberCollapseDependencyGuardTest`，`PJF` 指 `mixin/SessionJournalPutFaultMixin.java`；`CS`、`CST`、`CP`、`CPS`、`CPC`、`PPI`、`PPIT`、`M5U`、`SUP`、`HK` 同前面各節。M5U 新增的 6 個 test（M5 run，各自一個 batch，名稱不以 `_windows` 結尾，各平台都執行）：
   - T-MEM `M5U:2064` `prepare_seals_the_membrane_only_with_a_clear_doorway_and_no_non_participant_inside`（`m5_universe_door_membrane`，tickLimit 1200，catalog 增量 1）
@@ -4143,6 +4163,15 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
   - PASSAGE_READY 期間的門（§10.5）接在 `CS:1225` `doorAction`：參與者 → 結束通道（先終局、再改門，§10.6 (a)）、非參與者 → 拒絕；roll-forward 未確認時已拒絕。`CS:1239` `useDoor` 與 `CS:1253` `door` 不必改。passable 量子膜由 F5 套用時，`prepareDoor` 只在 PREPARE 擁有門時執行，READY 之後不會把它改回 sealed。
   - §10.6 :613 的正規化要涵蓋「先終局、再改門」之間 crash 留下的量子膜（上方「補充第 8 點」的四個條件）；有 COLLAPSING／SEALED 時不要與 `watchDoor` 的重新套用同時寫門。
   - **Step 0（必要，fix round 1 controller 派工）**：先把原艙門相關的程式從 `CS`（fix round 1 之後約 1950 行）抽成 package-private 類別（例如 `OriginDoors`），範圍包括 `PendingDoor`／`DoorGoal`／`DoorStep` 系列、`applyDoor`、`watchDoor`／`reapply*`（含 `reapplyCause`、`cancelSealedClose`）、`door`／`doorAction`／`openForInsider`／`endByParticipant`、門口系列（`doorwayEntitiesLoaded`、`doorwayOccupied`、`doorwayBox`）。行為不變，以獨立 commit 完成；之後才在上面接 §10.5 與 :613。F4b-2 交給 F5 的「評估抽出 PREPARE」一併在這個 Step 0 決定。
+  - **Step 0 的追加項目（controller 補，fix round 1 的 spec re-review 與 quality re-review 留下的 Minor 與 Nit）**。以 `3c9b42c` 為準：
+    - 抽出的範圍另含 `prepareDoor`、`releasePrepareDoor`、`membraneTarget`、`outsiderInside`、`doorHasMembrane`，以及 Track 上與門相關的欄位（`doorLoaded`、`doorSeenLoaded`、`membrane`、`doorReleased`）。寫明它們是跟著門一起抽，還是跟著 PREPARE 一起決定（quality Nit）。
+    - quality M-1：DOOR_USE 的去重鍵目前會被同一個 session 任何人的成功使用清掉（`CS:1314-1315`）。改成依 action 區分，例如 `DOOR_USE + action`，成功時只清同一個 action 的鍵；或在 note 寫明維持現狀的理由。T-FAIL 的 `warnedAgainAfterASuccess` 也要對應調整。
+    - quality M-2／spec m-3：T-FAIL 的 `breakParticipantDoorUse`（`SUP:765`）以反射把 final 的 `Track.backoff` 設成 null。F5 在準備完成點提交 PASSAGE_READY 時會讀 `track.backoff`，這個 test 會因此 NPE 而失敗。改成走 Slot 的 testmod 注入，例如在 `endByParticipant` 開頭丟出例外。README「新增 M5 GameTest」補上 F4b-3 fix round 1 新增的 helper：`useDoor`、`lookupFailingPlayer`、`putUncheckedAuthority`／`removeUncheckedAuthority`、`discardDoorwayEntities`、`RemoteOrigin.entitiesLoaded`。
+    - spec m-1：`CS:1319` 是找出所屬 session 之前的 WARN，沒有 `session=`，marker 要改為 `TICK_LOG_MARKER`。
+    - spec m-2：`cancelSealedClose` 在門切換之前就取消。若之後 toggle 被拒或 rollback，SEALED 艙會留著 sealed 量子膜，而 :613 的第 1 個條件把有 SEALED session 的艙排除在外。二擇一處理：
+      - 在 `doorHasMembrane` 為真時不取消；
+      - 或讓 :613 的正規化也涵蓋「SEALED 帶著量子膜」。
+    - quality Nit：T-RELOAD 各段有界等待的總和最壞約 2214 tick，超過 tickLimit 2000。縮小第三段的上限，或調高 tickLimit。
 - F6：
   - 重啟矩陣：sealed 量子膜期間 crash → 重啟後停在 WAITING、門是一般開門（T-START 的跨 JVM 版本）；SEALED 開服後關門一次、門口有人時一般開門；COLLAPSING 在 PREPARE 中重啟 → 依條件重新套用 sealed（第 10 組的 PREPARE 版本，fix round 1 spec S-M3）。
   - spec S-M1（fix round 1）：隔離期間 PREPARE 的原艙門交還（`3c9b42c` 的 `CS:1161-1164`，`watchDoor` 的隔離分支）目前沒有任何 test 或 mutation。補一個 phase 或 mutation（例如拿掉 `CS:1162` 的 `releasePrepareDoor`）。
