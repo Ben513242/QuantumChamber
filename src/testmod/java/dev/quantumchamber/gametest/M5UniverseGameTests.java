@@ -1366,8 +1366,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     涵蓋的是 volume 的 chunks；最後 343 格都是 spec 的目標（test 自己寫出），COMPLETE 的 site 就是原艙的位置，不變量 cell 受保護、interior 不受保護，
      *     Controller 辨識為投影。</li>
      * <li>準備完成（F4b-2 的停點）：INFO「準備完成」一則；WARN「通道尚未實作（F5）」恰一則、帶 session，這個 session 沒有其他 WARN／ERROR；record 仍是
-     *     COLLAPSING（沒有 PASSAGE_READY）。之後幾個 tick 不再重做（「準備完成」仍是一則），目的世界的 ticket 繼續持有；P 照一般方式開關原艙門（一般開門、
-     *     membrane none，門的攔截屬 F4b-3）。</li>
+     *     COLLAPSING（沒有 PASSAGE_READY）。之後幾個 tick 不再重做（「準備完成」仍是一則），目的世界的 ticket 繼續持有；原艙門在準備完成時與之後都是 sealed 量子膜
+     *     （F4b-3：門口沒有 entity、艙內只有參與者 P；F4b-2 時這裡斷言 P 照一般方式開關門，F4b-3 起那是 PREPARE 期間參與者關門的終局，見
+     *     {@code prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept}）。</li>
      * <li>終局之後（收尾的終局 API），下一個 tick 塌縮流程看到 session 已不在 journal，釋放目的世界的 ticket（完成條件）。</li>
      * </ul>
      * catalog 增量 1（U）。
@@ -1379,7 +1380,6 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
-        var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             var area = M5GameTestSupport.preloadArea(frame);
@@ -1419,13 +1419,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                     witness.put("stillCollapsing", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
                     LOGGER.info("M5_PREPARE_NEW tickets={} area={} waited={} checkpoints={}", tickets.size(), area.size(), preloadWaitedTicks(capture, sid), calls);
-                    var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
+                    witness.put("sealedMembraneWhenPrepared", M5GameTestSupport.doorSealed(world, frame));
                     at(context, ready + 5, hooks, () -> {
                         witness.put("holdsAtTheStub", prepared(capture, sid).size() == 1 && probe.calls().size() == 2
                                 && M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area)
                                 && M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
-                        witness.put("doorOpensNormally", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
-                        witness.put("doorClosesNormally", interact(world, door, p).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
+                        witness.put("sealedMembraneHeldAfterThePreparation", M5GameTestSupport.doorSealed(world, frame));
                         // 收尾：終局 API 移除 record；下一個 tick 塌縮流程釋放目的世界的 ticket（完成條件）。
                         releaseThenComplete(context, hooks, witness, "PREPARE 的目的宇宙側：" + witness + " tickets=" + tickets.keySet() + " area=" + area
                                 + " checkpoints=" + probe.calls(), 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
@@ -1442,7 +1441,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * 釋放目的世界的 ticket、退回 WAITING（INFO），record 仍是 COLLAPSING。恢復供電之後 P、B 都一直在艙內，沒有人移動，沒有邊緣觸發，不回到 PREPARE（B 在
      * PREPARE 期間的進入不算之後的邊緣：離開 PREPARE 時邊緣觸發的快照重新記下艙內的人）；P 由艙外再進入 → 回到 PREPARE，重新加上同一份 ticket、預載完成
      * （中斷的那一段沒有完成預載，所以「預載完成」只有一則），寫完投影、準備完成。RESOLVE 只有一次（「目的地已確定」恰一則），allocation entry 恰一筆，catalog
-     * 增量 1（沒有第二個宇宙）。
+     * 增量 1（沒有第二個宇宙）。F4b-3（plan Step 1 第 13 組的門、spec §7.3 閘門失效的第 2 步）：原艙門在進入 PREPARE 的那個 tick 套用 sealed 量子膜，斷電之後改回
+     * {@code open=true}＋{@code membrane=none} 的一般開門，回到 PREPARE 時重新套用。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_power", tickLimit = 900)
     public void prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it(TestContext context) {
@@ -1466,11 +1466,15 @@ public final class M5UniverseGameTests implements FabricGameTest {
             whenTicks(context, resolved + 1, 20, () -> !M5GameTestSupport.destinationTickets(universe, sid).isEmpty(), ticketed -> {
                 witness.put("preparingWithTheTickets", entered(capture, sid) == 1 && M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area));
                 witness.put("cutBeforeThePreloadCompleted", preloaded(capture, sid).isEmpty());
+                // F4b-3（plan Step 1 第 13 組的門）：進入 PREPARE 的那個 tick 已套用 sealed 量子膜。
+                witness.put("sealedWhilePreparing", M5GameTestSupport.doorSealed(context.getWorld(), frame));
                 // PREPARE 進行到一半時 B 進艙，同一個 tick 斷電。
                 moveInside(b, frame);
                 context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
                 at(context, ticketed + 1, hooks, () -> {
                     witness.put("ticketReleasedOnPowerLoss", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    // F4b-3（spec §7.3 閘門失效的第 2 步）：門由 sealed 量子膜改回 open=true＋membrane=none 的一般開門。
+                    witness.put("plainOpenAfterThePowerLoss", doorAll(context.getWorld(), frame, true, MembraneState.NONE));
                     witness.put("backToWaitingWithOneInfo", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "退回 WAITING",
                             "已釋放目的世界的 ticket", sid.toString()).size() == 1);
                     var record = journal.flushedRecords().get(sid);
@@ -1483,6 +1487,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 });
                 at(context, ticketed + 6, hooks, () -> moveInside(p, frame));
                 whenTicks(context, ticketed + 7, 400, () -> entered(capture, sid) == 2 && prepared(capture, sid).size() == 1, resumed -> {
+                    witness.put("sealedAgainAfterTheEdge", M5GameTestSupport.doorSealed(context.getWorld(), frame));
                     witness.put("resumedWithTheSameTickets", M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area));
                     witness.put("onePreloadCompletedAfterTheEdge", preloaded(capture, sid).size() == 1);
                     witness.put("projectedAfterTheEdge", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty()

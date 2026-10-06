@@ -440,6 +440,46 @@ class CollapseServiceTest {
                 () -> assertTrue(logs.getFirst().message().contains("session=" + SESSION)));
     }
 
+    /** F4b-3（spec §7.3「套用量子膜的條件」；補充第 1、6 點）：門口沒有 entity、艙內沒有非參與者時才是 sealed 量子膜（軸依朝向），否則一般開門。 */
+    @Test void membraneIsSealedOnlyWithAClearDoorwayAndNoNonParticipantInside() {
+        var cases = new ArrayList<Executable>();
+        for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.sealed(facing), CollapseService.membraneTarget(facing, true, false),
+                    facing + "：門口沒有人、艙內沒有非參與者 → sealed"));
+            cases.add(() -> assertTrue(CollapseService.membraneTarget(facing, true, false).membrane().fits(facing), facing + "：量子膜的軸符合門的朝向"));
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.membraneTarget(facing, false, false), facing + "：門口有 entity"));
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.membraneTarget(facing, true, true), facing + "：艙內有非參與者"));
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.membraneTarget(facing, false, true), facing + "：兩者都有"));
+        }
+        assertAll(cases);
+    }
+
+    /**
+     * F4b-3（spec §7.3「門狀態的重新套用」；補充第 5 點的一次性觸發）：只有「看過沒有載入、這次已載入」（來源 chunk 重新載入），或開服時就在 journal 的 session 的第一次
+     * 觀察（重啟之後）才觸發；執行期間才出現、一直載入著的 session 不觸發，所以 SEALED 的門被玩家打開之後不會被關回去。目標依 collapse view：SEALED 關門、COLLAPSING
+     * 把量子膜正規化。
+     */
+    @Test void doorReapplicationTriggersOnlyAfterAnUnloadOrOnTheFirstStartupObservation() {
+        // 一個執行期間才出現的 session 依序的觀察：第一次（已載入）、一直載入、卸載、重新載入、再一直載入。
+        Boolean[] previous = {null, true, true, false, true};
+        boolean[] loaded = {true, true, false, true, true};
+        boolean[] runtime = {false, false, false, true, false};
+        var cases = new ArrayList<Executable>();
+        for (int i = 0; i < loaded.length; i++) {
+            int at = i;
+            cases.add(() -> assertEquals(runtime[at], CollapseService.doorReloaded(previous[at], loaded[at], false), "執行期間的 session，第 " + at + " 次觀察"));
+        }
+        cases.add(() -> assertTrue(CollapseService.doorReloaded(null, true, true), "開服時就在的 session：第一次觀察到已載入"));
+        cases.add(() -> assertFalse(CollapseService.doorReloaded(null, false, true), "開服時就在的 session：第一次觀察還沒載入"));
+        cases.add(() -> assertTrue(CollapseService.doorReloaded(false, true, true), "開服時就在的 session：之後才載入"));
+        cases.add(() -> assertFalse(CollapseService.doorReloaded(true, true, true), "開服時就在的 session：已觀察過、一直載入"));
+        cases.add(() -> assertEquals(CollapseService.DoorGoal.CLOSE_ON_SEALED, CollapseService.reapplyGoal(SessionState.SEALED), "SEALED：關門（門口有 entity 時一般開門）"));
+        cases.add(() -> assertEquals(CollapseService.DoorGoal.NORMALIZE, CollapseService.reapplyGoal(SessionState.COLLAPSING), "COLLAPSING：量子膜改為一般開門"));
+        for (var state : List.of(SessionState.ARMING, SessionState.SUPERPOSITION, SessionState.RETURNING, SessionState.MEASURED, SessionState.PASSAGE_READY))
+            cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapseService.reapplyGoal(state), state + " 不由塌縮流程重新套用"));
+        assertAll(cases);
+    }
+
     /**
      * F4a fix round 2（m-5(b)，spec §6「journal 寫入失敗時的 session 行為」、§11.2 最後一點、§8.4）：進入 SEALED 的寫入在前置檢查就被拒（REJECTED）時，
      * 只重試這一筆寫入（保留 RESOLVE 判定的原因與 root cause），而且依 per-session 退避——200 ticks 起、每次被拒加倍——不是每個 tick 重試；寫入不再

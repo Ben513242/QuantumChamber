@@ -638,6 +638,13 @@ final class M5GameTestSupport {
         }
     }
 
+    // ---- 原艙門（F4b-3） ----
+
+    /** 25 格門都是朝向的 sealed 量子膜（{@code open=true}＋{@code sealed_<axis>}）。 */
+    static boolean doorSealed(ServerWorld world, ChamberFrame frame) {
+        return doorAll(world, frame, true, MembraneState.sealedFor(frame.outwardFacing()));
+    }
+
     // ---- 投影（F4b-1） ----
 
     /** {@link #forceProjectionChunks} 在投影的 7×7×7 外再水平外擴的格數：涵蓋紅石讀取（±3）、門的套用（±3）與 test 在投影外放的方塊。 */
