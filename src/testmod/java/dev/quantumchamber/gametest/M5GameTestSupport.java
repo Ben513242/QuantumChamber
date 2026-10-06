@@ -697,6 +697,30 @@ final class M5GameTestSupport {
         return result;
     }
 
+    /**
+     * F4b-2：testmod 專用的重建 hook（README「投影的殘留與隔離」）。projection ledger 在執行期遺失（檔案被刪、之後的 checked 寫入在前置檢查發現）之後，把檔案以
+     * {@code bytes} 寫回，再以反射解除 M5 authority 的遺失標記（{@code CollapseAuthorities} 的 projection slot 的 {@code lost}）與投影保護索引的退化
+     * （{@code degraded}），讓同一個 M5 run 之後的 batch 不受影響：兩者在同一個 instance 內本來不會解除，而 batch 的順序不固定。{@code bytes} 必須是遺失之前的正式檔
+     * （遺失的偵測不改 current，所以寫回之後檔案、已確認的內容與 current 一致）。之後權威必須健康、索引不退化，否則丟 IllegalStateException。冪等；只在 M5 run 用，
+     * 欄位名稱是 Loom 開發 runtime 的 named 名稱。
+     */
+    static void rebuildProjectionAuthority(MinecraftServer server, byte[] bytes) {
+        var file = server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data").resolve(dev.quantumchamber.collapse.ProjectionLedger.FILE_NAME);
+        try {
+            java.nio.file.Files.write(file, bytes);
+        } catch (java.io.IOException failure) {
+            throw new java.io.UncheckedIOException("重建 hook 寫不回 projection ledger", failure);
+        }
+        var authorities = dev.quantumchamber.collapse.CollapseAuthorities.get(server);
+        M4CandidateTestAccess.set(M4CandidateTestAccess.get(authorities, "projection"), "lost", null);
+        var index = dev.quantumchamber.collapse.ProjectionProtectionIndex.get(server);
+        M4CandidateTestAccess.set(index, "degraded", null);
+        var health = authorities.unhealthy(dev.quantumchamber.collapse.CollapseAuthorities.Authority.PROJECTION_LEDGER);
+        var degradation = index.degradation();
+        if (health.isPresent() || degradation.isPresent()) throw new IllegalStateException("重建之後 projection ledger 仍不健康：" + health + " " + degradation);
+        LOGGER.info("M5_PROJECTION_AUTHORITY_REBUILT bytes={}", bytes.length);
+    }
+
     /** spec §9.1 的預載範圍，由 test 依 spec 自己算出（不讀 production 的 {@code CollapseService.preloadChunks}）：艙體 bbox 水平外擴 2 格涵蓋的 chunk。 */
     static Set<ChunkPos> preloadArea(ChamberFrame frame) {
         var bounds = ChamberGeometry.bounds(frame);
