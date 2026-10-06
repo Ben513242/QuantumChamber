@@ -3661,3 +3661,206 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
 
 - M5 GameTest 17 不變：只增加 witness（W2 ＋2：`staleControllerHasAnIdentity`、`existingControllerRewrittenWithADefaultBlockEntity`；GT-P ＋5：`pistonCannotPushIntoADamagedInvariantCell` 與 I-1 的四個）。GT-P 的 catalog 增量仍是 1。
 - JUnit 626、default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 都不變。
+
+## F4b-2：PREPARE 的目的宇宙側（預載、投影、交叉檢查、衝突、退化）與 F4b-1 的 Step 0
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `b05032c` `fix: register only confirmed projection write results in the protection index`（parent `97df474`）：Step 0 的 Q-m4、Q-m2、Q-m3、Q-m6。`PPI`、`PPIT`；`M5U` 只改 GT-P、GT-L 的六個呼叫點（`confirmed(writeResult)`）。
+  - `62d535c` `refactor: make attempt private and describe it as the first step of sideEffect`（parent `b05032c`）：Q-m7。只有 `CS`。
+  - `6eeff52` `test: import the universe GameTest types and give the protection test room`（parent `62d535c`）：Q-m9、Q-m5。只有 `M5U`。
+  - `2924c8b` `docs: state the projection residue and isolation rule for M5 GameTests`（parent `6eeff52`）：Q-m8。只有 `scripts/verification/README.md`。
+  - `5e9b174` `refactor: return the PREPARE transition from the collapse phase derivation`（parent `2924c8b`）：補充第 3 點。`CP`、`CS`、`CST`；行為不變。
+  - `d5b059a` `feat: preload the destination universe under an M5 chunk ticket during PREPARE`（parent `5e9b174`）：補充第 2、3、4（移除 F4a 的 stub）、8 點。`CS`、`CST`；testmod `M5U`（P-NEW、P-POWER、G-NEW 改寫、F4b-1 fixture 暫停）、`SUP`。
+  - `9c8c986` `feat: write the destination projection through its ledger and checkpoint before COMPLETE`（parent `d5b059a`）：補充第 1、4、5、6 點。`CS`、`CST`；testmod `M5U`（P-NEW 擴充、P-POWER 擴充、P-REVISIT、P-BLOCK）、`SUP`、`HK`、新增 `mixin/ChunkSaveCheckpointProbeMixin.java`、`quantumchamber-test.mixins.json`（只登記它）。
+  - `c87ae77` `test: keep the blocking player five more ticks to lock the wait warning dedupe`（parent `9c8c986`）：只有 `M5U` 的 P-BLOCK（見「Gate 與證據」的 `mut-d-wait-warns-every-tick`）。
+  - `49e665e` `test: seal PREPARE on conflicts, a bad site, degradation and unconfirmed or failed writes`（parent `c87ae77`）：testmod `M5U`（P-CROSS、P-OVERLAP、P-SITE、P-DEGRADED、T-PF、T-CF）、`SUP`（重建 hook）。
+  - `b8b2b54` `refactor: name the phase PREPARE leaves to in its INFO`（parent `49e665e`）：只有 `CS` 的 `leavePrepare` 字句。
+  - `c67663c` `test: fail a projection write and retry it after the backoff over its own PENDING`（parent `b8b2b54`）：testmod `HK`、`SUP`、`M5U`（T-WF）、新增 `mixin/ProjectionWriteFaultMixin.java`、`quantumchamber-test.mixins.json`（只登記它）。
+  - `dc11821` `docs: describe the F4b-2 PREPARE GameTest helpers`（parent `c67663c`）：`scripts/verification/README.md`「新增 M5 GameTest」一節。
+  - 本段由其後的 docs commit `docs: record F4b-2 prepare destination side in the M5 note` 加入。
+- Code range `97df474..c67663c`。沒有改 `ChamberControllerBlock`、`QuantumBulkheadBlock`、`WorldChamberDoorAdapter`、`ChamberDoorService`、`ChamberProtectionService`、`ChamberPowerCoordinator`、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`CorridorPageManager`、`SuperpositionSessionManager`、`SessionRecoveryState`、`SessionRecoveryManager`、`UniverseRegistryState`、`ChamberRegistryState`、`UniverseLifecycleService`、語言檔、`gates.ps1`、`build.gradle`、`.github/`。
+- 範圍是 plan Task F4b「拆分」的 F4b-2：UNIVERSE 的 PREPARE（目的宇宙這一側），準備完成之後在 F5 之前停住（READY stub）。不套用量子膜、不攔截門（F4b-3）：PREPARE 期間原艙門維持一般狀態，開關門照舊交給 `ChamberDoorService`（§7.3「套用量子膜的條件不成立時，門維持一般開門」）。
+- 行號以 `c67663c` 為準。`CP` 指 `collapse/CollapsePhase.java`，`HK` 指 `M5TestHooks`，`CCPM` 指 `mixin/ChunkSaveCheckpointProbeMixin.java`，`PWFM` 指 `mixin/ProjectionWriteFaultMixin.java`；`CS`、`CST`、`PPI`、`PPIT`、`PW`、`CA`、`M5U`、`SUP` 同前面各節。M5U 新增的 11 個 test（各自一個 batch，名稱不以 `_windows` 結尾，各平台都執行，catalog 增量各 1）：
+  - P-NEW `M5U:1374` `prepare_new_runs_the_destination_side_then_stops_before_the_passage`（`m5_universe_prepare_new`）
+  - P-POWER `M5U:1449` `prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it`（`m5_universe_prepare_power`）
+  - P-REVISIT `M5U:1505` `existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior`（`m5_universe_prepare_revisit`）
+  - P-BLOCK `M5U:1563` `prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks`（`m5_universe_prepare_blocked`）
+  - P-CROSS `M5U:1616` `prepare_seals_a_conflict_when_the_destination_already_has_a_controller_without_a_ledger_entry`（`m5_universe_prepare_cross_check`）
+  - P-OVERLAP `M5U:1664` `prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`（`m5_universe_prepare_overlap`）
+  - P-SITE `M5U:1707` `prepare_validates_the_site_of_an_existing_complete_entry_before_repairing`（`m5_universe_prepare_site`）
+  - P-DEGRADED `M5U:1756` `deleting_the_projection_ledger_after_complete_degrades_and_seals_without_rewriting_the_interior`（`m5_universe_prepare_degraded`）
+  - T-PF `M5U:1822` `pending_write_failure_seals_without_writing_any_block`（`m5_universe_prepare_pending_fault`）
+  - T-CF `M5U:1857` `checkpoint_failure_seals_before_the_projection_is_complete`（`m5_universe_prepare_checkpoint_fault`）
+  - T-WF `M5U:1900` `projection_write_failure_seals_then_retries_after_the_backoff_over_its_own_pending`（`m5_universe_prepare_write_fault`）
+  - 另外 G-NEW 改名為 `dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge`（`M5U:278`，batch 不變）。
+
+### Step 0（F4b-1 quality review 的 Minor）
+
+| 項目 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| Q-m4 | `PPI:211` `confirmed(CollapseAuthorities.WriteResult)`：只接受 `WRITTEN`／`UNCHANGED`／`ALREADY_COMPLETE`（取結果帶的已確認 entry），其他四種丟 `IllegalArgumentException`、索引不變；`confirmed` 與 `intersecting`（`PPI:243`）都 `requireServerThread`（`PPI:306`）。執行緒判斷是建構子的新參數 `BooleanSupplier onServerThread`（`PPI:78`、`:88`；production 是 `server::isOnThread`，JUnit 傳 `() -> true` 或 `() -> false`）。`CS` 只傳 `writeProjection` 的結果（`CS:584`、`:648`） | PPIT `confirmedAcceptsOnlyConfirmedWriteResultsOnTheServerThread`（`PPIT:120`）。API 換了簽名，修改前的 test 無法編譯，所以以 mutation 證明：`mut-q4-no-status-check`（直接 `entry().orElseThrow()`：失敗的結果丟 `NoSuchElementException`，不是 IAE）、`mut-q4-no-confirmed-thread-check`、`mut-q4-no-intersecting-thread-check` 都只有這個 test FAIL（`f4b2/s0-mut-q4-*-junit-summary.txt`） |
+| Q-m2 | 類別 Javadoc「熱路徑」與 `protectedCell` 的 Javadoc：健康時任何執行緒都可以呼叫；退化之後讀 `ChamberRegistry`，只在 server thread 安全 | 只有 Javadoc |
+| Q-m3 | `PPI:301` `failClosed` 記 ERROR（附 stack）之後以 `degrade(reason)`（`PPI:292`，不再帶 cause）退化：同一份 stack 只印一次。WARN 字句改成接上之後的實際行為：「還沒完成準備的 PREPARE（進行中的，以及之後開始的）一律進 SEALED(原因)，已完成準備的不受影響」 | RED `red-q3-stack-twice`（修改前的 `degrade(reason, cause)` 與舊字句）：`unexpectedFailuresFailClosedWithTheDegradationRule`（`PPIT:296`，退化 WARN 不附 stack）與 `startupDegradation…`（`PPIT:188`，新字句）FAIL（`f4b2/s0-red-q3-stack-twice-junit-summary.txt`） |
+| Q-m5 | GT-P 的 tickLimit 400 → 600，Javadoc 寫出最壞的總和約 486 tick（註冊 ≤43、RESOLVE ≤+22、block ticking ≤+200、對照組 ≤+200、收斂 ≤+20） | 純設定；`gates.ps1 -Mode Inventory` 前後只有這一個 annotation 不同（`f4b2/qm9-before-inventory.json`、`qm9-after-inventory.json`） |
+| Q-m6 | PPIT `crossChunkFrameWithNegativeCoordinatesIsIndexedInEveryCoveredChunk`（`PPIT:153`）：frame `(-17, 70, -2)` 朝西，7×7×7 在 x、z 都跨兩個 chunk、chunk 座標為負（fixture 先斷言），218／125，四個角落都 `intersecting` 得到 | mutation `mut-q6-controller-chunk-only`（依 chunk 的索引只登記 Controller 所在的 chunk）：只有這個 test FAIL，218 → 35 |
+| Q-m7 | `CS` 的 `attempt` 改成 private，Javadoc 寫明唯一的呼叫端是 static `sideEffect` 的組合 | 純寫法；`CST` 不呼叫 `attempt` |
+| Q-m8 | README「新增 M5 GameTest」新增「投影的殘留與隔離」一點：projection ledger 的殘留不被 gate 串接、為什麼不會互相衝突；退化與執行期遺失在 instance 內不解除、batch 順序不固定（T1），所以必須以重建 hook 還原（`2924c8b`；`dc11821` 補上 hook 名稱與唯一使用它的 test） | 純文件 |
+| Q-m9 | `M5U` 程式碼行的 258 處完整限定名稱改用 import（註解行不動；`f4b2/qm9_imports.py` 機械替換、`f4b2/qm9-report.txt`），連同 F4a 的部分一起改，一份 import 清單 | `gates.ps1 -Mode Inventory` 前後都是 192 個 `@GameTest`，差異只有 Q-m5 的 tickLimit；M5 run 17/17（`green-0b-m5`） |
+
+- Step 0 的 JUnit GREEN：`green-0a`（PPIT 12、CST 14、`GT` 2）；GT-P、GT-L 在 `confirmed` 換簽名之後的 M5 subset `green-0a-m5` 2/2。
+
+### plan Step 1 中屬於 F4b-2 的 RED
+
+| plan Step 1 | 程式位置 | 測試與證據 |
+| --- | --- | --- |
+| 第 1 組：預載不用阻塞式 `getChunk(create=true)` | `CS:722` `preload`：第一次對 `CS:736` `preloadChunks`（bbox 水平外擴 `PRELOAD_MARGIN`＝2 格）的每個 chunk 加 `CS:130` `DESTINATION_TICKET`（`quantumchamber_destination`、argument＝session、radius 0＝level FULL），之後每個 tick 以 `getWorldChunk` 查詢 | P-NEW：`ticketsCoverTheBoxPlusTwoAtFull`（範圍由 test 依 spec 自己算，`SUP:736` `preloadArea`；ticket 從原生 ticket 表讀，`SUP:699`）、`preloadWaitedAtLeastOneTick`（production 的 INFO「等了 N ticks」≥1）、`everyPreloadChunkFull`。CST `preloadCoversTheChamberBoxPlusTwoBlocks`（四個朝向、負座標、貼著 chunk 邊界）。RED `red-c-universe-gate-shut`（修改前：UNIVERSE 的閘門恆為假）P-NEW、P-POWER FAIL；mutation `mut-c-blocking-preload`（改用 `world.getChunk(x, z)`）：`preloadWaitedAtLeastOneTick=false`（同一個 tick 就全部 FULL） |
+| 第 2 組：checkpoint 之後才 COMPLETE | `CS:615` 先 `ready`、`:620` `save`，`:643` 才寫 COMPLETE | P-NEW：checkpoint 探針（`CCPM`）記下每一次 checkpoint 當下 ledger 的狀態，`checkpointedTwiceBothWhilePending`、`checkpointCoversTheVolumeChunks`。T-CF：checkpoint 受控失敗 → `stillPendingNotComplete`。mutation `mut-d-complete-before-checkpoint`（COMPLETE 寫在 checkpoint 之前）P-NEW FAIL；`mut-e-complete-despite-checkpoint-failure`（checkpoint 失敗也繼續）T-CF FAIL |
+| 第 2 組：COMPLETE 之後刪除 projection ledger（schema 4）→ 不重寫 interior | ledger 遺失之後：下一次 checked 寫入的前置檢查判為遺失（`CA`，F2b）→ 權威不健康 → 索引退化 → `CS:509` 的退化檢查 → SEALED(`AUTHORITY_CORRUPT`) | P-DEGRADED：`lossDetectedByTheNextCheckedWrite`、`indexDegraded`、`ledgerNotRecreated`、`interiorNotRewritten`、`invariantNotRepaired`、`neverPrepared`、`onePermanentAdminError`；之後以重建 hook 還原（`rebuiltHealthy`）。mutation `mut-e-no-degradation-check` FAIL（見「觀察」第 1 條：拿掉退化檢查之後，`CA` 自己的遺失閘門仍會在投影那一步以 `AUTHORITY_CORRUPT` 封存，所以這個 mutation 是靠 ERROR 的 cause 抓到的） |
+| 第 3 組：實體交叉檢查；有 PENDING 時照第一次寫入 | `CS:557`：ledger 沒有 entry 時才查 `PW.controllerPresence`，PRESENT → `PROJECTION_CONFLICT` | P-CROSS：`noPendingWritten`、`interiorNotCleared`、`noProjectionBlocks`、`existingControllerKept`、`onePermanentAdminError`、`permanentNeverRetried`。T-WF 的重試：自己寫了一部分的 Controller 不算衝突（`rewroteOverItsOwnPending`）。mutation `mut-e-no-cross-check` P-CROSS FAIL；`mut-f-cross-check-with-pending`（已有 PENDING 也檢查）T-WF FAIL（重試封存成 `PROJECTION_CONFLICT`） |
+| 第 4 組：既有 entry 的位置驗證 | `CS:576`：一律以 `writeProjection(PENDING)` 取得 site 驗證，不直接拿 `FOUND COMPLETE` 走修復；`CS:689` `writeMode` | P-SITE：ledger 已有本艙在 U、ControllerPos 高一格的 COMPLETE → SEALED(`AUTHORITY_CORRUPT`)，`nothingRepairedAtThisSite`、`ledgerNotRewritten`。mutation `mut-e-skip-site-validation`（查到的 entry 直接決定寫法）FAIL |
+| 第 5 組：退化時進 SEALED 的流程 | `CS:509`：預載之後、任何 ledger 操作之前查 `PPI.degradation()`，有值就以它的原因封存；準備完成（`CS:495`）之後不再查 | P-DEGRADED（上列）。PPIT 的退化 test 不變 |
+| 第 6 組：玩家擋住時下一個 tick 重試，併入 600 ticks WARN | `CS:677` `writeStep`：`BLOCKED_BY_PLAYER`／`NOT_LOADED` → WAIT；`CS:745` `prepareWait` 從進入 PREPARE 起超過 600 ticks 記一次 WARN | P-BLOCK：`noWarnBeforeSixHundredTicks`、`warnNamesTheBlockingPlayer`、`nothingWrittenWhileBlocked`、`pendingConfirmed`、`playerNotMoved`、`stillOneWarnWhileBlocked`、`writtenAfterQLeft`、`warnedOnlyOnce`。mutation `mut-d-blocked-seals` FAIL；`mut-d-wait-warns-every-tick`（不去重）首輪存活 → `c87ae77` 讓 Q 再擋 5 tick，之後 FAIL |
+| 第 7 組：投影衝突；注入寫入失敗 → `PROJECTION_FAILED` → 邊緣觸發＋退避重試成功 | 衝突：`CS:570`／`:698` `conflict`（另一座艙的 COMPLETE）；寫入失敗：`writeStep` → SEAL（`PROJECTION_FAILED`，cause 是結果帶的 failure）；重試沿用 F4a 的 `sealed`／`retrySealed` | P-OVERLAP：`noPendingForThisChamber`、`notOverwritten`、`onePermanentErrorNamingTheOtherProjection`。T-WF：`writeFaultedOnce`、`pendingKept`、`oneRetryableWarnWithTheInjectedCause`、`noRetryWithinTheBackoff`、`retriedOnce`、`oneUniverse`（allocation entry 一筆、catalog 增量 1）。mutation `mut-e-no-overlap-conflict` P-OVERLAP FAIL；`mut-f-write-failure-waits` T-WF FAIL |
+| 第 9 組：投影方塊只在 PENDING 確認之後寫 | `CS:576-580`：PENDING 沒有確認（含讀回失敗）就封存、return | T-PF（`CheckedNbtFileReadFaultMixin` 對 `quantumchamber_projections.dat` 注入一次）：`pendingReadbackFaultedOnce`、`ledgerUnconfirmed`、`noBlockWritten`（343 格都是 AIR）、`notRegistered`。mutation `mut-e-write-despite-unconfirmed-pending` FAIL |
+| 第 13 組（ticket 與 WAITING）：PREPARE 中斷電 → ticket 釋放、回到 WAITING；恢復供電並由參與者觸發 → 回到 PREPARE，沒有第二個宇宙 | `CP:57` `derive` 回傳 `LEAVE_PREPARE` → `CS:473` `leavePrepare` 釋放 ticket | P-POWER：`cutBeforeThePreloadCompleted`、`ticketReleasedOnPowerLoss`、`backToWaitingWithOneInfo`、`stillCollapsing`、`noReentryWithoutAnEntryEdge`、`resumedWithTheSameTickets`、`projectedAfterTheEdge`、`resolvedOnlyOnce`、`oneAllocationEntry`。CST `collapsePhaseReportsThePrepareTransition`。mutation `mut-c-leave-keeps-ticket` P-POWER FAIL；`mut-b-leave-is-none` CST FAIL |
+
+### controller 補充第 1–11 點
+
+- **第 1 點（PREPARE 的步驟與順序）**：`CS:493` `prepareUniverse`＋`CS:547` `project`，每個 tick 依權威重新推導，可以在任一步中斷：
+  1. 預載（第 2 點）。
+  2. 退化檢查（`CS:509`）：預載已加 ticket 之後就查，不等預載完成（不需要 chunk）。
+  3. 預載還沒全部 FULL：等下一個 tick。完成時記 INFO「目的世界預載完成…等了 N ticks」。
+  4. `convergeIfNeeded(PROJECTION_LEDGER)`（`CS:550`），再 `CA.projection`：沒有成功（未確認、損壞、讀不到）就以結果帶的原因封存；`ABSENT` 時做 §6.5 的交叉檢查（`CS:557`）。
+  5. §9.2 的衝突（`CS:570`）。
+  6. `writeProjection(PENDING)`（`CS:576`）：沒有確認就封存，不寫方塊；確認之後以寫入結果登記到索引（`CS:584`，同一份 entry 不重複登記）。`CS:689` `writeMode`：`WRITTEN`／`UNCHANGED` → `FIRST_WRITE`，`ALREADY_COMPLETE` → `REPAIR`。
+  7. 寫入器：WAIT／SEAL／PROCEED（`CS:677`）。`REPAIR` 寫完就是準備完成（不寫 ledger、不做 checkpoint，見「偏離」第 2 條）。
+  8. 第一次寫入之後：`ChunkSaveCheckpoint.ready`（`CS:615`，未就緒等下一個 tick），`save`（`CS:620`，失敗 `PROJECTION_FAILED`）。
+  9. 再驗不變量 cell（`CS:625`，見下方「第 7 步」）。
+  10. checked 寫入 COMPLETE（`CS:643`），確認之後登記（`CS:648`），準備完成（`CS:657`）。
+  - 任何 checked 寫入沒有確認都封存，不在未確認的狀態下寫方塊。PENDING 的落盤失敗：T-PF。
+- **第 2 點（預載）**：見上表第 1 組。ticket 的釋放：閘門失效（`leavePrepare`）、進入 SEALED（`CS:812`，在 `seal()` 中、緊接著來源 ticket 的 `releaseOnSealed`）、塌縮流程自己的終局（`CS:959` `terminated`），以及其他路徑的終局（例如收尾的終局 API、F4b-3 的參與者關門、F5 的通道結束）：下一個 tick `CS:753` `releaseTerminatedDestinations` 看到 session 已不在 journal（current 與 flushed 都沒有）就釋放（`CS:224`）。F5 的釋放入口：`CS:772` static `releaseDestination(server, sid)`。超過 600 ticks 的 WARN：`CS:745`（併入第 6 組的等待）。
+- **第 3 點（階段轉換與閘門失效）**：`CP:27` `Transition`（`NONE`／`ENTER_PREPARE`／`LEAVE_PREPARE`）、`CP:40` `Derivation`、`CP:57` `derive(view, releaseComplete, resolved, preparing, gate)`：呼叫端傳入「上一個 tick 是否在 PREPARE」，`gate` 不再有改 `track.preparing` 的副作用（`CS:903`）；`CS:401-409` 依轉換呼叫 `enterPrepare`／`leavePrepare`。`leavePrepare` 是 F4b-3 把門改回一般開門的轉換點（Javadoc 寫明）。閘門失效時已完成的 RESOLVE（`track.resolved`）與投影都保留；閘門再次成立時依 §7.1 的邊緣觸發續做（P-POWER）。`CollapsePhase` 以外的推導語意不變（`5e9b174` 之後 default focused 21/21，`green-b-focused`）。
+- **第 4 點（READY stub）**：`CS:657` `prepared`：記 INFO「準備完成…投影=FIRST_WRITE／REPAIR（寫入 N 格）」；每個 session 在本 instance 只 WARN 一次「通道尚未實作（F5）…」（`Track.readyWarned`，帶 session）。之後的 PREPARE tick 直接 return（`CS:495`），不再重做；目的世界的 ticket 繼續持有。玩家照一般方式開關門（P-NEW `doorOpensNormally`／`doorClosesNormally`）。舊的 stub WARN「準備階段尚未實作（F4b）」與 `Track.prepareWarned` 已移除（`d5b059a`）。mutation `mut-d-ready-redoes`（沒有停點）P-NEW FAIL。
+- **第 5 點（EXISTING 再次造訪）**：P-REVISIT：D1 的 COMPLETE 之後，interior 的石頭保留、損壞的 shell 與關上的 25 格門被修復（`投影=REPAIR（寫入 26 格）`），projection 檔的 bytes 不變、沒有 checkpoint。mutation `mut-d-revisit-first-write` FAIL。「COMPLETE 之後刪除 ledger」：P-DEGRADED（上表第 2 組）。Q-m8 的隔離：P-DEGRADED 在完成之前以 `SUP:718` `rebuildProjectionAuthority` 還原，並登記在 hooks（失敗路徑也會還原）。
+- **第 6 點（SEALED 的原因與重試）**：PREPARE 的封存都經 F4a 的 `seal()`；原因直接採用權威或寫入器的結果：projection 的 `UNCONFIRMED`／`WRITE_FAILED` 是 `PROJECTION_FAILED`（F2b 的 slot 設定），損壞與 site 不符是 `AUTHORITY_CORRUPT`，讀不到是 `AUTHORITY_UNREADABLE`，交叉檢查與衝突是 `PROJECTION_CONFLICT`，寫入器與 checkpoint 的失敗是 `PROJECTION_FAILED`。重試語意沿用 `SealedReason` 與 F4a 的 `sealedRetry`：`PROJECTION_FAILED` 邊緣觸發＋退避（T-WF）；`PROJECTION_CONFLICT`、`AUTHORITY_CORRUPT` 永久（P-CROSS 的 `permanentNeverRetried`）；`AUTHORITY_UNREADABLE` 只在重啟之後。
+- **第 7 點（fault mixin）**：
+  - 投影寫入失敗：新增 `PWFM`（`ProjectionWriter.write` 的每個回傳點，把寫完的 WRITTEN 換成 WRITE_FAILED；`HK:67` `PROJECTION_WRITE_FAULT`、`HK:261`，`SUP:172` `installProjectionWriteFault`）。
+  - checkpoint 失敗：新增 `CCPM`（`ChunkSaveCheckpoint.save` 的開頭；`HK:65` `CHUNK_CHECKPOINT_PROBE`、`HK:224`，`SUP:161` `installChunkCheckpointProbe`），同一個 hook 也是 P-NEW 的觀察探針。既有的都不能重用：`CheckpointPlatformFaultMixin` 改的是 `PlayerCheckpointStore` 的平台判斷；`ChunkCheckpointScopeFaultMixin` 綁在 `M4CandidateDoorGameTests` 私有的 H2 探針（`static volatile`，不是 Slot，M4C 不在允許路徑）；`MeasuredCheckpointFaultMixin` 只看 MEASURED 的 checkpoint。
+  - PENDING 落盤失敗：重用 `CheckedNbtFileReadFaultMixin`（對 `quantumchamber_projections.dat` 的第一次讀取就是 PENDING 寫入的 atomic move 之後的讀回；`projection()` 只讀記憶體，暫存檔名稱不同），沒有新增。
+  - 兩個新 mixin 都是 Slot、經 `installHook`，登記在 `quantumchamber-test.mixins.json`，只在 testmod（release JAR 的 testmod 命中 0，見「Gate 與證據」）。
+- **第 8 點（G-NEW 的 witness 與 log 數字）**：G-NEW 改名，`onlyTheStubWarnAndNoError` 改寫成 `noWarnOrError(capture, sid)`＋`collapseFlowNeverWarned(capture, sid)`，另加 `waitingWithoutPower`、`noPrepareWithoutAnEntryEdge`（RESOLVE 之後第一次閘門評估時沒有供電 → WAITING、沒有目的世界的 ticket；恢復供電但沒有邊緣觸發，仍不進 PREPARE）。stub WARN 的斷言只有 G-NEW 有；W1、GT-P、GT-L 沒有斷言 stub WARN，改由 `resolvedUniverse` 在交出之前暫停 session（F4b-2 起 RESOLVE 之後會自己投影到同一個位置），所以它們不再有任何塌縮流程的 PREPARE log。`M5CollapseGameTests` 沒有 stub WARN 的斷言（`:1112` 只是 Javadoc 提到 F3d 的 RESOLVE stub），沒有修改。M5 run 的 WARN 逐則歸屬見「Gate 與證據」。
+- **第 9 點（`leaseReady`）**：不加，理由見下方小節。F4b-2 自己的 checkpoint 一律先問 `ChunkSaveCheckpoint.ready`（`CS:615`）。
+- **第 10 點（default run 的隔離）**：見下方「default run 的稽核」。
+- **第 11 點（log 與訊息）**：新增的 log 都在 collapse package、都帶 `LOG_MARKER`（`GT` 每輪 PASS）；能歸屬到 session 的 WARN 都帶 `session=`：600 ticks 的等待、「通道尚未實作（F5）」、目的世界不是 ACTIVE（不應發生）。正常情況只記 INFO：進入 PREPARE、預載完成、checkpoint 之前的改動已修復、準備完成、閘門失效退回 WAITING、ticket 釋放（進入 SEALED、終局）。沒有新的玩家訊息：PREPARE 的封存沿用 F4a 的「量子通道無法開啟，已封存。」；spec §10.8 沒有 PREPARE 期間的訊息。
+
+### 補充第 1 點第 7 步：COMPLETE 之前再驗不變量 cell
+
+- 作法：checkpoint 成功之後、同一個 tick，以 `ProjectionWriter.write(…, REPAIR)` 再驗一次（`CS:625`）。寫了 0 格就寫 COMPLETE；寫了任何一格（PENDING 期間不變量 cell 不受保護，第一次寫入與 checkpoint 之間可能被改動）就記 INFO、不寫 COMPLETE，下一個 tick 重做 checkpoint 與這次驗證（`Prepare.written` 仍為真，不重寫整個 volume）；玩家擋住或 chunk 不是 FULL 時等下一個 tick；驗證或寫入失敗封存 `PROJECTION_FAILED`。
+- 選 REPAIR、不另加唯讀 API 的理由：
+  - REPAIR 只寫與目標不同的不變量 cell；沒有損壞時一格都不寫、也不檢查玩家（要寫的格是空集合），所以它本身就是唯讀比對，而且與第一次寫入用同一份目標與驗證（含 Controller 的 block entity）。
+  - 有損壞時，直接修好比只回報不符更好：不需要多一輪「發現 → 下一個 tick 重寫整個 volume」，interior 在 PENDING 期間被放的東西也不會被第一次寫入再清一次。
+  - 不必改 `ProjectionWriter`（它只在需要唯讀 API 時才列入允許路徑）。
+- 為什麼同一個 tick 內的「checkpoint → 驗證 → COMPLETE」沒有窗口：`ChunkSaveCheckpoint.save` 在 server thread 上序列化相關 chunks 並等原生 IO 完成，之後的驗證與 COMPLETE 的 checked 寫入都是同步的，中間沒有任何遊戲邏輯執行；驗證通過，就代表 checkpoint 存下的方塊也通過。checkpoint 之前的改動由「修復 → 下一個 tick 重做 checkpoint」涵蓋。
+- 證據：P-NEW 以 checkpoint 探針在第一次 checkpoint 存檔之前把一格 shell 改成 AIR：INFO「已修復 1 格」一則、checkpoint 恰好兩次（兩次都看到 PENDING）、最後 343 格都是目標。mutation `mut-d-no-reverify`（拿掉再驗）FAIL：checkpoint 只有一次、那一格寫成 COMPLETE 時仍是 AIR。
+
+### 補充第 9 點：`leaseReady` 不加 entity storage 的檢查
+
+- F4a-0「觀察」第 2 條的前提不成立：`CorridorPageManager.leaseReady`（`CPM:1032`）呼叫的 `world.isChunkLoaded(packed)` 是 `ServerWorld.isChunkLoaded(long)`，它的實作就是 `entityManager.isLoaded(long)`（`ServerEntityManager.managedStatuses` 為 `LOADED`），與 `ChunkSaveCheckpoint.loaded` 的 entity storage 檢查（`manager.isLoaded(pos.toLong())`）是同一個判斷（javap：`f4b2/leaseready-javap-minecraft.txt`、`f4b2/leaseready-javap-cpm.txt`）。所以走廊 lease 的 chunks 早已要求 entity storage 已載入，再加一次是重複。
+- 兩次 G-NLIVE 的「相關 chunk／entity storage 尚未完整載入」（`gate-f4a0-green-focused-…/latest.log:2234`、`gate-fix1-final-focused-…/latest.log:2218`）都緊接在走廊幾何完成、§11.3 請求保留式 recovery 之後。`MeasuredWorldSaveCheckpoint.save` 的相關範圍除了走廊 lease，還有**來源世界**的艙體 chunks，而 `leaseReady` 只看走廊世界；同一個 tick 內 `leaseReady` 剛確認過走廊的 chunks，所以剩下的可能是來源（Nether）的 chunks。這屬於 measured release 的呼叫端（`tickMeasuredRelease` 在 checkpoint 之前沒有對來源 chunks 問 `ChunkSaveCheckpoint.ready`），不在 `leaseReady`，也不在本 task 的允許路徑；依派工不再追查（仍列為已知偶發），交給後續（見「交給後續」）。
+- M2、M4 的既有行為因此不變（沒有修改 `CorridorPageManager`）。
+
+### default run 的稽核（補充第 10 點）
+
+- F4b-2 只改 UNIVERSE 的 PREPARE（`collapsing()` 的 SOURCE 分支只多一個依推導結果記錄 `track.preparing` 的步驟，`5e9b174` 起行為不變）。UNIVERSE 要走到 PREPARE，必須先在 RESOLVE 確定目的地；F4a 的稽核（F4a「default run 的稽核」）已逐一列出 default run 中沒有任何 test 走到 RESOLVE，F4b-1、F4b-2 都沒有新增或修改 default run 的 `@GameTest`（`M5CollapseGameTests`、`M4CandidateDoorGameTests` 沒有改）。所以 default run 沒有 test 會進入 UNIVERSE 的 PREPARE。
+- 新的 testmod mixin 在 default run 也會載入，但沒有安裝 hook 時不做任何事（`CCPM` 對走廊清理的 MEASURED checkpoint 也只是呼叫空的 Slot）。
+- 實證：run-all 的 Full（default run）boundary oracle PASS；Full 的 latest.log 沒有任何「進入 PREPARE」「目的世界預載完成」「準備完成（預載與投影都已完成）」「通道尚未實作（F5）」「quantumchamber_destination」的行；Full 的 WARN／ERROR 與基準逐行比對見「Gate 與證據」。
+
+### 測試
+
+- JUnit 626 → 631（＋5）：CST 14 → 17（`collapsePhaseReportsThePrepareTransition`、`preloadCoversTheChamberBoxPlusTwoBlocks`、`prepareDecisionsFollowTheWriterAndLedgerResults`；`collapsePhaseFollows…` 改用新的 `derive`）、PPIT 10 → 12（Q-m4、Q-m6；Q-m3 補斷言、更新入口的 test 改用寫入結果）。`GT` 2 不變。
+- M5 GameTest 17 → 28：上列 11 個新 test，各自一個 batch，catalog 增量各 1；G-NEW 改名（batch 不變，數量不變）。suite 結束時 16 → 27 筆。
+- default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 不變：沒有新增或刪除 default run 的 `@GameTest`。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f4b2/`（以下簡稱 `f4b2/`）：`state.ps1`、`gate.ps1`、`junit.ps1`、`adapted-junit.ps1`、`chain.ps1`、`wbcmp.py`、`jarcmp.py` 由 `f4b1/`（`jarcmp.py` 由 `f4b1/fix1/`）複製，只改註解；`adapter.py` 的 adapter 表改放在 `f4b2/adapters_f4b2.py`。每個 adapter 跑完都還原，還原後的 blob 與套用前相同；每次 RED、GREEN、mutation 的 state 記 HEAD、porcelain 與逐檔 blob（`f4b2/<label>-state.txt`）。gate root 在 `.superpowers/verification/`。
+
+| 輪次 | HEAD／工作樹 | 證據 | 結果 |
+| --- | --- | --- | --- |
+| Step 0（PPI） | `97df474`＋Step 0 的檔 | `green-0a`（JUnit）、`s0-mut-q4-*`、`s0-red-q3-stack-twice`、`s0-mut-q6-controller-chunk-only`；M5 subset `gate-green-0a-m5-de126980a5194d7da0650c301c23ab0b` | JUnit PPIT 12／CST 14／`GT` 2 PASS；RED 與 3 個 mutation 都只有目標 test FAIL；GT-P、GT-L 2/2 |
+| Step 0（Q-m9、Q-m5） | `62d535c`＋`M5U` | `gate-qm9-before-b0299bb351fa4c55b4387f394a38dca7`、`gate-qm9-after-9ba7ea78dfd845d2a467ac136903b00f`（Inventory）；`gate-green-0b-m5-e19694419d954c91b024ce5815b3b839` | 192 個 `@GameTest`，差異只有 tickLimit；M5 17/17 |
+| 階段轉換 | `2924c8b`＋`CP`、`CS`、`CST` | `green-b3`、`mut-b3-leave-is-none`；default focused `gate-green-b-focused-88fb64fdbf3046d888f41aa20c05a2d0` | CST 15 PASS；mutation FAIL；21/21 |
+| 預載 | `5e9b174`＋C 的檔 | `green-c`；`gate-green-c-m5-d58902c673f5457891859d4b0e06f648`；`gate-green-c-focused-df3cb7fb53954ddf9291987186ea2f5e`；`chain-c.log` | CST 16 PASS；M5 19/19；default 21/21；RED `red-c-universe-gate-shut` 與 3 個 mutation FAIL |
+| 投影 | `d5b059a`＋D 的檔（＝`9c8c986`） | `green-d`；`gate-green-d-m5-c7646ac0b00040a3a91efe188544836f`；`chain-d.log`、`chain-d2.log` | CST 17、PPIT 12 PASS；M5 21/21；RED `red-d-no-projection` 與 mutation FAIL，`mut-d-wait-warns-every-tick` 存活 → `c87ae77` 之後 FAIL（`gate-mut-d2-wait-warns-every-tick-6c52022c736c4e1fa87aab3272958206`；GREEN `gate-green-d2-blocked-7e650455289c478f8b9c391ee5c2f1cc`） |
+| 失敗與 SEALED | `c87ae77`＋E 的檔（＝`49e665e`） | `gate-green-e2-m5-165bec1a8e2043e7bdff6be1f2ad3f1d`；`chain-e.log` | M5 27/27；7 個 mutation FAIL |
+| 字句 | `49e665e`＋`CS`（＝`b8b2b54`） | `green-w`；`gate-green-w-power-d38c9f41a6254bb29689e977ccd2ee72` | CST 17 PASS；P-POWER PASS |
+| 寫入失敗 | `b8b2b54`＋F 的檔（＝`c67663c`） | `gate-green-f-m5-4068cd10603e4e33b60af25d12e63524`；`chain-f.log` | M5 28/28；3 個 mutation FAIL |
+| 最終 focused | `dc11821`，工作樹乾淨 | `final-focused`（JUnit）；`gate-final-default-focused-fdf71a0c4d224c5b9fbdc63223938fbc` | CST 17、PPIT 12、`GT` 2 PASS；default 21/21 |
+| run-all | `dc11821`，工作樹乾淨（`STATUS` 是空的） | `run-all-3b4d8e88f93645ec8b4d9383c7e40094`（Full：`gate-full-4ebf4e7402264398bb1c90de81f6d1a0`；M5：`gate-m5-gametest-2674523120424fbd990f8a355f588eda`；`f4b2/run-all-console.txt`） | `END ALL exit=0 HEAD=dc11821`。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=28/28 perTest=51+1 junit=631 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=399entries/352classes sources=216 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+
+- RED 與 mutation 的對照（adapter → gate root 的 label 相同，`f4b2/<label>-summary.txt`）：
+  - commit C：`red-c-universe-gate-shut`（P-NEW、P-POWER 逾時在「RESOLVE 之後沒有進入 PREPARE」）、`mut-c-blocking-preload`（`preloadWaitedAtLeastOneTick=false`）、`mut-c-leave-keeps-ticket`（`ticketReleasedOnPowerLoss=false`）、`mut-c-no-terminal-sweep`（P-NEW 的完成條件 `ready=false`：終局之後 ticket 沒有釋放）。
+  - commit D：`red-d-no-projection`（P-NEW、P-REVISIT 逾時在「沒有準備完成」）、`mut-d-complete-before-checkpoint`、`mut-d-no-reverify`（`checkpointedTwiceBothWhilePending=false`、`windowDamageRepairedBeforeComplete=false`）、`mut-d-ready-redoes`（`holdsAtTheStub=false`）、`mut-d-revisit-first-write`（`interiorKept=false`）、`mut-d-blocked-seals`（等不到 600 ticks 的 WARN）、`mut-d2-wait-warns-every-tick`（`stillOneWarnWhileBlocked=false`）。
+  - commit E：`mut-e-no-cross-check`、`mut-e-no-overlap-conflict`、`mut-e-skip-site-validation`（三者都逾時在「沒有進 SEALED」）、`mut-e-no-degradation-check`（`onePermanentAdminError=false`，見「觀察」第 1 條）、`mut-e-write-despite-unconfirmed-pending`（`noBlockWritten=false`）、`mut-e-complete-despite-checkpoint-failure`（逾時在「沒有進 SEALED」）、`mut-e-seal-keeps-destination`（T-PF `ticketsReleased=false`；同一輪的 T-CF 因 T-PF 失敗而在 `begin` 的衛生檢查失敗，所以另以 `mut-f-seal-keeps-destination-checkpoint` 單獨跑 T-CF：`ticketsReleased=false`）。
+  - commit F：`mut-f-write-failure-waits`（逾時在「沒有進 SEALED」）、`mut-f-cross-check-with-pending`（重試封存成 `PROJECTION_CONFLICT`，逾時在「退避之後的重試沒有準備完成」）。
+- 不採計的 root：
+  - `green-b`、`green-b2`（JUnit）：新的 CST 列 fixture 寫錯（`returned(settled, A)` 沒有造出未返還的人；`cleared` 一個有未返還參與者的 record 違反收據不變量），不是 production 的問題；修正 fixture 之後 `green-b3`。同一份錯 fixture 上的 `mut-b-leave-is-none`、`mut-b2-leave-is-none` 也不採計，以 `mut-b3-leave-is-none` 為準。
+  - `gate-green-e-m5-2de88247e9694afdbd41934519aff835`（M5 25/27）：P-OVERLAP、P-SITE 的「沒有寫投影方塊」witness 用了 `controllerPresence == ABSENT`，但封存之後目的世界的 ticket 已釋放、chunk 可能已卸載，查詢回 `NOT_LOADED`；`gate-diag-e-m5-9a1420d07a2f49ee852794a12483bb06` 加印診斷確認 218 格都不是目標（`matchedShell=[]`）。改成讀方塊狀態之後 `green-e2-m5` 27/27。
+  - `mut-d-wait-warns-every-tick`（`gate-…-6e19067b90a040308994abd8429f072b`，存活）：P-BLOCK 在 WARN 出現的那一個 tick 就讓 Q 離開，每個 tick 都記 WARN 也看不出來；`c87ae77` 修正 test，之後的 `mut-d2-…` FAIL。
+
+- 與基準 run-all（`run-all-7bab6785434347c4ab75c5d21a34c4b0`，`a928216`）逐項比較：
+  - JUnit 626 → 631、M5 17 → 28（「測試」）；default 174（`_windows` 88）、legacy 1、perTest 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly、CI 兩個平台都不變。M5 oracle PASS（`m5-oracle.json`）：28 個 test 的 catalog 增量逐一串接（`existing_receipt_without_a_discovered_universe_seals_permanently` 為 0，其餘各 1），每個都 converged、preserved，suite 結束時 27 筆。`M3_UNIVERSE_STOPPED_VERIFIED` 的 worlds 10 → 21（`M3_UNIVERSE_LOAD`／`UNLOAD` 各 10 → 21，多出的 11 與新增的 test 數相同；沒有逐一對應到 test），`quarantine=0`、`contextDetached=true` 不變。
+  - release JAR 393 → 399 entries（346 → 352 classes，`f4b2/jarcmp-release-run-all.txt`）：新增 `CollapsePhase$Derivation`、`CollapsePhase$Transition`、`CollapseService$DestinationTicket`、`CollapseService$Prepare`、`CollapseService$WriteStep`，以及 `ProjectionProtectionIndex$1`（javac 為 `confirmed` 對 `WriteResult.Status` 的 switch 產生的 switch map）；沒有移除。內容不同的 class 都屬於本 task 改過的 3 個 production 檔（`CollapsePhase`、`CollapseService`、`ProjectionProtectionIndex` 與它們的 nested class）。其中 `CollapseService$1`（switch map 多了 `Transition`、`ControllerPresence`、`ProjectionWriter$Status`、`WriteResult$Status`）與 `CollapseService$Track`（`prepareWarned` 換成 `prepare`、`readyWarned`）的 bytecode 不同；其餘 nested class 以 `javap -p -c` 比對 bytecode 相同，差異只在行號表（`f4b2/jar-attribution.txt`）。testmod 命中 0。
+  - sources JAR 216 不變（`f4b2/jarcmp-sources-run-all.txt`）：內容不同的是 `CollapsePhase.java`、`CollapseService.java`、`ProjectionProtectionIndex.java`。
+  - log（以 `/WARN]`、`/ERROR]` 計行，UUID 與數字正規化、排序之後比對，`f4b2/wbcmp.py`）：Full 54／28 不變、逐行相同（`f4b2/wbcmp-full-run-all.txt`）；legacy 0／0（`wbcmp-legacy-run-all.txt`）。M5 WARN 17 → 25、ERROR 1 → 6（`wbcmp-m5-gametest-run-all.txt`）：
+    - 移除的 WARN 5 則：PREPARE stub「準備階段尚未實作（F4b）」（G-NEW、G-EXIST 的 D2、W1、GT-P、GT-L 各一）。M-1 的原版 WARN（GT-P 的 `PistonBlockEntity … does not allow it`）仍是一則，排序比對中出現一減一加只是 object hash 不同。
+    - 新增的 WARN 13 則：「通道尚未實作（F5）」7 則（P-NEW、P-POWER、P-REVISIT 的 D1 與 D2、P-BLOCK、P-DEGRADED 的 D1、T-WF 的重試）；600 ticks 的等待 1 則（P-BLOCK）；SEALED(`PROJECTION_FAILED`) 3 則（T-PF、T-CF、T-WF 的受控失敗）；`CA` 的「PROJECTION_LEDGER 的 checked 寫入未確認」1 則（T-PF）；`PPI` 的退化 WARN 1 則（P-DEGRADED）。
+    - 新增的 ERROR 5 則：`CA` 的「PROJECTION_LEDGER 的檔案在執行期間消失」1 則（P-DEGRADED）；SEALED(`AUTHORITY_CORRUPT`) 2 則（P-DEGRADED 的 D2、P-SITE）；SEALED(`PROJECTION_CONFLICT`) 2 則（P-CROSS、P-OVERLAP）。
+    - 17 − 5 ＋ 13 ＝ 25；1 ＋ 5 ＝ 6。每一則都是 test 刻意造成、而且有 witness 斷言的（P-NEW 等的「通道尚未實作」由 `readyStubWarnings` 斷言恰好一則）。
+  - default run 的稽核（上方「default run 的稽核」）：Full 的 latest.log 對「進入 PREPARE」「目的世界預載完成」「準備完成（預載與投影都已完成）」「通道尚未實作（F5）」「quantumchamber_destination」「準備階段尚未實作」「目的地已確定」都是 0 行。
+- 本 task 沒有遇到派工列出的已知偶發（G-NLIVE、Windows journal 的 `AccessDeniedException`、H2 多出的原生 ERROR／WARN、`m2_task4_disconnect_io` 多一則 WARN、`unloadChunks` 停服卡住）；失敗的 root 都是刻意的 RED 或 mutation，以及上列「不採計的 root」。
+
+### 偏離 plan／spec 字面之處
+
+1. **退化檢查的位置**：controller 的順序是「1. 預載 → 2. 退化」。本實作在預載加上 ticket、查詢之後就查退化，不等預載完成（`CS:509`）：退化不需要 chunk，提早封存就不必等 chunk 載入，也不會碰 ledger。預載完成之後的步驟順序與 controller 的相同。
+2. **修復（`ALREADY_COMPLETE`）不做 checkpoint、不寫 ledger**：spec §9.2 的「之後（COMPLETE）」只要求修復不變量 cell 並把門設回開啟；checkpoint 與 COMPLETE 是第一次寫入「讓 COMPLETE 成立」的條件，ledger 已是 COMPLETE。修復之後、原生存檔之前 crash，修復可能遺失，下一次造訪會再修。
+3. **準備完成之後不再查退化**：退化 WARN 與 spec §9.3「所有新的 PREPARE 都進 SEALED」一致的讀法是「還沒完成準備的 PREPARE」；準備完成是 F5 提交 PASSAGE_READY 的前一刻，F5 之後 PASSAGE_READY 本來就不受退化影響。
+4. **預載 ticket 的 level**：spec 只說「直到全部到達 FULL」。用 radius 0（level 33＝FULL）：剛好讓預載範圍到達 FULL，不讓它們 tick；entity storage 在 FULL（tracked）時也會載入，checkpoint 另外問 `ready`。
+5. **其他路徑的終局在下一個 tick 才釋放目的世界的 ticket**：塌縮流程自己的終局（`terminated`）當場釋放；別的路徑（收尾的終局 API、之後 F4b-3／F5 若不經 `terminated`）由 `releaseTerminatedDestinations` 在下一個 tick 看到 session 已不在 journal 時釋放。
+6. **600 ticks 的 WARN 從進入 PREPARE 起算，每一段 PREPARE 一次**：預載、玩家擋住寫入、checkpoint 未就緒、交叉檢查的 chunk 不是 FULL 都併入同一個時鐘（補充第 1 點第 5、6 步）；離開 PREPARE 再進入時重新起算。
+7. **`CollapsePhase.derive` 的簽名換成回傳 `Derivation`**：舊的 `derive(…, BooleanSupplier)` 刪除（只有 `CS` 與 `CST` 使用）。
+8. **G-NEW 改名**（batch 不變）：F4a 的名稱描述的 PREPARE stub 已不存在。
+9. **P-DEGRADED 是同一個 instance 內的遺失**（執行期間刪檔、下一次 checked 寫入發現），不是重啟之後的初始化判定；後者屬 F6 的重啟矩陣（「交給後續」）。
+10. **commit 拆分**：plan Step 4 是一個 commit `feat: project the chamber into the destination universe`；依派工依子主題拆成上列 code commit 與 docs commit。
+
+### 需要裁示
+
+1. 重建 hook（`SUP:718`）以反射清除 `CollapseAuthorities` 的 projection slot 的 `lost` 與 `ProjectionProtectionIndex` 的 `degraded`（只在 testmod、只由 P-DEGRADED 使用）。這是 Q-m8 列出的兩個選項之一（batch 順序不固定，「排在最後」不可行）；若不接受反射，替代作法是 P-DEGRADED 只做到「刪檔 → 修復仍保留 interior」而不觸發遺失（不能證明 `AUTHORITY_CORRUPT` 與退化），或改由 F6 的重啟矩陣涵蓋。
+2. 「偏離」第 2 條（修復不做 checkpoint）與第 3 條（準備完成之後不再查退化）是 spec 沒有寫明的讀法。
+3. 補充第 9 點的結論：`leaseReady` 不需要改；G-NLIVE 的偶發可能出在 measured release 沒有對來源世界的 chunks 先問 `ChunkSaveCheckpoint.ready`，需要指定一個允許修改 `CorridorPageManager.tickMeasuredRelease`（或 `MeasuredWorldSaveCheckpoint`）的 owner。
+
+### 觀察（未修改）
+
+1. **退化檢查與權威的遺失閘門重疊**：執行期間遺失時，`CA.projection()` 本身就因 `lost` 回 `CORRUPT`，所以拿掉 `CS:509` 的退化檢查，P-DEGRADED 的 D2 仍以 `AUTHORITY_CORRUPT` 封存（mutation `mut-e-no-degradation-check` 是靠 ERROR 的 cause 抓到的）。退化檢查另外涵蓋索引自己 fail closed（建立或同步時的非預期例外，權威本身健康）的情況，而且在預載完成之前就封存。
+2. **GameTest server 上的預載時間**：新宇宙的 1–4 個 chunk 到 FULL 要 85–264 tick（P-NEW、P-POWER、P-BLOCK 等的 INFO），GameTest server 不以 20 TPS 節流。
+3. **封存之後目的世界的 chunk 很快卸載**：ticket 釋放之後，`getWorldChunk` 可能回 null；test 讀方塊狀態（會同步載入）而不是用 `controllerPresence`（「不採計的 root」第 2 條）。
+4. **G-EXIST 的 D2 會進入 PREPARE 一個 tick**：RESOLVE 之後的下一個 tick 閘門成立、加 ticket，同一個 tick test 就以終局 API 收尾，下一個 tick 釋放 ticket（只有 INFO）。F4a 的其他 test 都在偵測到 RESOLVE 完成的那個 tick 收尾，沒有進入 PREPARE。
+5. **「目的世界不是 ACTIVE」的防守分支沒有 GameTest**（`CS:497-505`）：動態世界在執行期間不卸載，造不出這個狀態；推導回到 RESOLVE 的路徑由 CST 的轉換列（`PREPARE 中目的地不再確定`）涵蓋。
+6. **修復也會被玩家擋住**：玩家站在一格損壞的不變量 cell 裡時，修復（含 checkpoint 之後的再驗）等下一個 tick；站在 interior 或已是目標的門口不擋（F4b-1 W2 的寫入器行為）。
+
+### 交給後續
+
+- F4b-3：
+  - `CS:493` `prepareUniverse` 的每個 PREPARE tick 加上「套用量子膜的條件」的判斷（Javadoc 已標出位置）；`CS:473` `leavePrepare` 是閘門失效時把門由 sealed 改回一般開門的轉換點。準備完成（READY stub）之後的 tick 也要維持門的狀態。
+  - PREPARE 期間參與者關門的終局：若在 `CollapseService` 內經 `terminated()`，目的世界的 ticket 當場釋放；其他路徑由下一個 tick 的 `releaseTerminatedDestinations` 釋放。
+  - Q-m1（`chamber`↔`collapse` 互相依賴）不變。
+- F5：
+  - `CS:657` `prepared` 的停點換成 checked PASSAGE_READY（含 §10.2 的 EXISTING 再驗）；屆時移除「通道尚未實作（F5）」WARN 與 `Track.readyWarned`。
+  - PASSAGE_READY 期間繼續持有目的世界的 ticket（`releaseTerminatedDestinations` 只在 session 不在 journal 時釋放，PASSAGE_READY 仍在 journal）；通道結束時呼叫 `CS:772` `releaseDestination(server, sid)`（或 `CollapseService` 內的同名 instance 方法）。
+- F6：
+  - 重啟矩陣：W4（PENDING 寫到一半）、W4b（寫完、驗證過、checkpoint 之前）、W6（COMPLETE 之後、READY 之前）；開服時投影 ledger 在 schema 4 下遺失 → 初始化 `LOST`／`AUTHORITY_CORRUPT`、COMPLETE 投影的 interior 不被重寫（P-DEGRADED 的跨 JVM 版本）。重啟之後 `Track` 是新的：PREPARE 從預載重新推導（PENDING 照第一次寫入、COMPLETE 只修復）。
+  - `build.yml` 的明列清單：本 task 新增 M5 run 的 11 個 test（都不是 `_windows`），G-NEW 改名為 `dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge`。
+  - 補充第 9 點：measured release 的來源 chunks 沒有先問 `ChunkSaveCheckpoint.ready`（見「需要裁示」第 3 條）；G-NLIVE 的偶發仍列為已知偶發。
+- F7：
+  - spec errata：§9.1 預載 ticket 的 level（FULL）與「其他路徑的終局在下一個 tick 釋放」；§9.2 修復不做 checkpoint、不寫 ledger；§9.3「新的 PREPARE」＝還沒完成準備的 PREPARE（含進行中的）；§7.3 閘門失效的第 2 步（門）屬 F4b-3。
+  - README「預期結果」的數字（M5 28、JUnit 631 等）以本 task 的 run-all 為準更新。
