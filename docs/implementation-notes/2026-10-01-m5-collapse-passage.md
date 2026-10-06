@@ -3379,3 +3379,184 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
 - JUnit 603 → 611：DRT 20 → 24（m-2 兩個、m-3、m-4），CAT 33 → 35（`catalogRecord…`、`catalogAvailabilityChange…`），CST 12 → 14（m-5(b)、m-6）；`GT` 2、`ULMF` 6 不變。DRT 另有 3 個既有 test 只把收斂時點改為退避期過後（m-2）。
 - M5 GameTest 12 → 13：G-SEALPEND ＋1，一個 batch（`m5_universe_sealed_pending`），名稱不以 `_windows` 結尾（各平台都執行）。catalog 增量 1（物化失敗、改為 `DISABLED` 的那一筆），suite 結束時 11 → 12 筆；`M3_UNIVERSE_STOPPED_VERIFIED` 仍是 worlds 6（G-SEALPEND 沒有建立 world）。G-MATFAIL、G-WAIT、G-ALLOCIO 只增減 witness。
 - default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 都不變：本輪沒有新增或刪除 default run 的 `@GameTest`。
+
+## F4b-1：投影元件（寫入器、保護索引、保護、載入辨識）與 F4a 的 Step 0
+
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `4e6b75a` `fix: require the catalog availability write direction to follow its target value`（parent `5bafb25`）：Step 0 的 Q2-m1、Q2-m5。`CA`、`CAT`。
+  - `f2b8f34` `fix: keep authority failures and the spent quota exact in the destination resolver`（parent `4e6b75a`）：Q2-m2、S2-mA。`DR`、`DRT`。
+  - `544cd37` `refactor: route collapse side-effect warnings through one composition and report the real seal retry delay`（parent `f2b8f34`）：Q2-m3、Q2-m4、S2-mC。`CS`、`CST`。
+  - `4f962ca` `feat: list confirmed projections and report authority health for the protection index`（parent `544cd37`）：`CA` 的唯讀 API、`CAT`。
+  - `f809c98` `feat: write the destination projection with vanilla setblock semantics`（parent `4f962ca`）：新增 `collapse/ProjectionWriter.java`；testmod `M5GameTestSupport.java`（投影 helper）、`M5UniverseGameTests.java`（W1、W2）。
+  - `802342f` `feat: build the projection protection index at server start`（parent `f809c98`）：新增 `collapse/ProjectionProtectionIndex.java`、JUnit `ProjectionProtectionIndexTest.java`；`QuantumSuperpositionMod.java`（只有註冊）。
+  - `92881dd` `feat: protect projection invariant cells in dynamic universes`（parent `802342f`）：`ChamberProtectionService.java`；testmod `M5GameTestSupport.java`（`blockTicking`）、`M5UniverseGameTests.java`（GT-P）。
+  - `8c0d670` `feat: recognize projection controllers in dynamic universes by the index`（parent `92881dd`）：`ChamberPowerCoordinator.java`（只有 `refreshNow` 的分流）；testmod `M5UniverseGameTests.java`（GT-L）。
+  - `340a953` `test: judge projection pistons and fluids after their controls settle`（parent `8c0d670`）：只有 GT-P（見「Gate 與證據」的 P-FLAKE）。
+  - `515fbc4` `docs: describe the F4b-1 projection GameTest helpers`（parent `340a953`）：`scripts/verification/README.md`「新增 M5 GameTest」的一點。
+  - 本段由其後的 docs commit `docs: record F4b-1 projection components in the M5 note` 加入。
+- Code range `5bafb25..340a953`。沒有改 `CollapseService` 的流程（PREPARE stub 照舊；Step 0 的 CS 項目除外）、`ChamberControllerBlock`、`QuantumBulkheadBlock`、`WorldChamberDoorAdapter`、`ChamberControllerLoadSyncQueue`、`SuperpositionSessionManager`、`SessionRecoveryState`、`UniverseRegistryState`、`ChamberRegistryState`、`ChamberDoorService`、語言檔、`gates.ps1`、`build.gradle`、`.github/`；沒有新增 mixin。
+- 範圍是 plan Task F4b 拆分後的 F4b-1（plan「拆分」一段）。這些元件在 production 中，除了開服建立索引、保護查詢、載入辨識之外，還沒有呼叫端；寫入器只由測試呼叫。PREPARE（預載、PENDING→寫入→checkpoint→COMPLETE、§6.5 交叉檢查、§9.2 衝突、退化時進 SEALED、量子膜、門的攔截）屬 F4b-2。
+- 行號以 `340a953` 為準。`PW` 指 `collapse/ProjectionWriter.java`，`PPI` 指 `collapse/ProjectionProtectionIndex.java`，`PPIT` 指 `ProjectionProtectionIndexTest`，`CPS` 指 `chamber/ChamberProtectionService.java`，`CPC` 指 `chamber/ChamberPowerCoordinator.java`；`CA`、`CAT`、`DR`、`DRT`、`CS`、`CST`、`M5U`、`SUP` 同前面各節。M5U 新增的四個 test：
+  - W1 `M5U:835` `projection_first_write_overwrites_the_volume_without_drops_or_neighbor_updates`（`m5_universe_projection_first_write`）
+  - W2 `M5U:931` `projection_writer_waits_for_players_and_repairs_only_the_invariant_cells`（`m5_universe_projection_repair`）
+  - GT-P `M5U:1021` `projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids`（`m5_universe_projection_protection`）
+  - GT-L `M5U:1160` `projection_controllers_are_recognized_by_the_index_on_load_sync_and_block_added`（`m5_universe_projection_recognition`）
+  - 四個都由 `M5U` 的 `resolvedUniverse` 取得宇宙 U：原艙上的 DORMANT NEW 收據、P 由艙外進入、真的 RESOLVE 物化 U，之後停在 PREPARE stub 的 WAITING。catalog 增量各 1。
+
+### Step 0（F4a 最終 review 的 Minor）
+
+| 項目 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| Q2-m1 | 二擇一選「組合不符時丟 `IllegalArgumentException`」：拿掉參數要改 `DR` 的兩個呼叫端，而 `DR` 只為 Q2-m2、S2-mA 列入允許路徑。`CA:735` 前提檢查、`CA:775` `directionFor`（DISABLED→ROLL_FORWARD、EAGER_ENABLED→RESTORE），Javadoc 同步。`CAT:1010` 改為 RESTORE | RED `red-0`：CAT `catalogAvailabilityDirectionMustFollowTheTargetValue`（`CAT:1147`，兩種不符的組合都丟、兩種相符的照寫）FAIL |
+| Q2-m2 | `DR:215` `materializeFailed`：`status != WRITE_FAILED` 時 `return failed(disabled)`（`DR:218`），刪掉 dead code `orElseGet` | RED `red-0`：DRT `materializeFailureWithAnUnhealthyCatalogSealsTheAuthorityReasonWithoutTheDisableError`（`DRT:356`）FAIL（修改前封存為 `MATERIALIZE_FAILED` 並記「DISABLED 的寫出未確認」ERROR） |
+| S2-mA | 二擇一選「呼叫前先記、回 WAIT 時移除」：`DR:196` `reenable` 在 `changeCatalogAvailability` 之前 `materializeSpent.add`（`DR:197`），WAIT 時 `remove`（`DR:200`），Javadoc 同步 | RED `red-0`：DRT `aReenableThatThrowsAfterTheRestoreStillSpendsTheQuota`（`DRT:379`，restore 寫入之後丟出的例外也算用掉額度）FAIL |
+| Q2-m3 | 組合抽成 static `CS:884` `sideEffect(warnings, ledger, sid, what, next, action)`，instance 版委派給它；WARN 的格式抽成 static `CS:847` `logWarn` | CST `sideEffectWarningKeysAreClearedOnSuccess`（`CST:366`）改為經由 production 的 static 驗證。mutation `mut-q2m3-composition-always-warns`（組合一律 WARN）：新 test FAIL（`mut-0-q2m3-new-test`），舊 test 存活（`mut-0-q2m3-head-test`，證明修改前的 test 沒有經過 production 的組合） |
+| Q2-m4 | `Track.backoff` 的 Javadoc 補「進入 SEALED 的寫入被拒」；WARN 的重試說明改用 `CS:947` `Track.sealRetryNext()`（實際的 `delayTicks` 與 `retryAtTick`，`CS:447`）；`sealedLog` 改用 `firstWarning`（`CS:476`） | RED `red-0`：CST `rejectedSealWriteIsRetriedOnlyOutOfThePerSessionBackoff`（`CST:334`，斷言「200 ticks 後，tick 1200」與第二次的「400 ticks 後，tick 1600」）FAIL。`firstWarning` 的 mutation `mut-firstwarning-always`（不去重）：`sideEffect…` FAIL（`mut-0-firstwarning`）；`sealedLog` 的去重另由 G-INELIGIBLE 的 `errorStillOnce`（`M5U:404`，再次進入之後永久原因的 ERROR 仍只有一則）涵蓋（`green-0-m5` 13/13） |
+| S2-mC | 二擇一選「縮小 Javadoc」：`warn` 的 Javadoc 寫明 SEAL_WRITE 在 `ROLL_FORWARD_PENDING` 之後由 SRM 的 RETRY_FLUSH 確認時，CS 不移除這個鍵 | 只有 Javadoc |
+| Q2-m5 | `CA` 類別 Javadoc「寫入」一點補上：`catalogRecord`、`allocateOrVerifyCatalog` 與 RESTORE 方向在未確認時回 WAIT；ROLL_FORWARD 在未確認時照寫 | 只有 Javadoc |
+
+- `red-0` 一次套用四個 RED adapter（`red-q2m1-no-direction-check`、`red-q2m2-corrupt-as-unconfirmed`、`red-s2ma-spent-after-call`、`red-q2m4-fixed-text`），恰好這四個 test FAIL，都在目標斷言（`f4b1/red-0-failure-types.txt`：`AssertionFailedError`；Q2-m2 的訊息帶的 `IllegalStateException` 是 fixture 注入、被斷言檢查的 root cause）。
+- GREEN：`green-0a`、`green-0b`（CAT、DRT、CST、`GT`，逐 commit 取證）、`green-0-junit` 78、M5 `green-0-m5` 13/13、default focused `green-0-focused` 21/21（F4a `green-d-focused` 的 21 個 batch，`f4b1/focused-batches.txt`）。
+
+### plan Step 1 中屬於 F4b-1 的 RED
+
+| plan Step 1 | 程式位置 | 測試 |
+| --- | --- | --- |
+| 第 2 組：第一次寫入清 interior、箱子不噴物品、逐格驗證 | `PW:118` `write(…, FIRST_WRITE)`：目標 343 格（interior AIR、shell bedrock、`local(3,6,0)` 是 `FACING`＝outward 的 Controller、門 25 格 `open=true`／`membrane=none`）；寫入前 `Clearable.clear`，flags `PW:48` `NOTIFY_LISTENERS \| FORCE_STATE \| SKIP_DROPS`；寫完逐格驗證 | W1：`written`、`everyCellIsTheSpecTarget`（test 依 spec 自己寫出目標，`SUP:648` `projectionTarget`）、`controllerHasADefaultBlockEntity`、`chestsDroppedNothing`、`nothingDroppedLater`、`observerNotScheduled`／`observerNeverPulsed`（看著 shell 的觀察者：沒有 `FORCE_STATE` 就會排程）、`floatingWireStays`／`wireStillThere`（懸空在 shell 旁的紅石線：收到鄰格更新就掉落）。RED `red-4b-writer-naive-w1`（直接 `setBlockState` flags 3、不 clear、不擋玩家）W1 FAIL；mutation 都 FAIL：`mut-4b-no-clear`（箱子的物品掉出）、`mut-4b-neighbors`（加 `NOTIFY_NEIGHBORS`：紅石線掉落，連帶有掉落物）、`mut-4b-no-force-state`（觀察者排程） |
+| 第 2 組：之後的寫入只修不變量 cell、保留 interior；逐格驗證 | `PW:118` `write(…, REPAIR)`：只寫 218 個不變量 cell 中與目標不同的格；驗證失敗 → `VERIFY_FAILED`（failure 列出至多 8 格） | W2：`repairWritesExactlyTheDamagedInvariantCells`（恰好 27 格：2 格 shell＋25 格門）、`invariantCellsRestoredDoorOpen`、`interiorKept`、`verifyFailedAboveTheBuildLimit`、`notLoadedWithoutLoading`。mutation `mut-4-repair-writes-interior` FAIL。「checkpoint 之後才 COMPLETE」與「刪除 ledger 之後不重寫 interior」屬 F4b-2 |
+| 第 5 組：退化只依權威健康 | `PPI:256` `syncHealth` 只看 `CA:536` `unhealthy(PROJECTION_LEDGER)`（初始化結果與執行期的 `lost`） | PPIT `onlyAuthorityHealthDegradesNotAFullLedgerOrASingleMismatch`（`PPIT:188`，真的 CA：16384 筆已滿的 ledger、單筆 site 不符的 `CORRUPT` 都不退化；之後執行期遺失才退化）、`runtimeLossDegradesAtTheNextSyncKeepsKnownProjectionsAndNeverRecovers`（`:160`）、`startupDegradationIgnoresTheLedgerAndProtectsRegisteredOverworldOriginsInEveryDynamicOverworld`（`:130`）；CAT `healthOnlyFollowsTheInitializationResultAndRuntimeLoss`（`CAT:656`）。mutation `mut-ca-single-corrupt-marks-lost`（單筆 `CORRUPT` 就標為 lost）→ CAT 3 FAIL |
+| 第 6 組：要寫入的 cell 有玩家時不寫入；動物照常寫入、不移除 | `PW:118`：非旁觀玩家的 bbox 與檢查範圍相交 → `BLOCKED_BY_PLAYER`（帶玩家），一格都不寫；FIRST_WRITE 的檢查範圍是整個 7×7×7，REPAIR 只看這次要寫的格；非玩家 entity 不檢查、不移動 | W2：`firstWriteBlockedByQ`、`nothingWrittenWhileBlocked`（343 格都沒變）、`firstWriteAfterQLeft`、`interiorPlayerNotMoved`、`repairBlockedByAPlayerInADamagedCell`、`doorwayPlayerDoesNotBlockTheRepair`。W1：`pigNotMovedOrRemoved`、`pigStillThere`、`spectatorNotMoved`（旁觀玩家不擋）。mutation `mut-4-first-write-checks-pending-only`、`mut-4-repair-checks-every-invariant-cell`、`mut-4b-spectators-block`、`mut-4b-entities-block` 都 FAIL |
+| 第 8 組：保護（破壞、放置、爆炸、活塞、流體） | `CPS:65`：非 vanilla 的 world key 查 `PPI:152` `protectedCell` | GT-P（下一小節的「保護」）。RED `red-8-protection-no-index`（`mayMutate` 改回 `orElse(true)`）FAIL |
+| 第 8 組：退化規則 | `PPI:231` `protects` 的退化分支 | PPIT 上列三個退化 test、`unexpectedFailuresFailClosedWithTheDegradationRule`（`:234`） |
+| 第 8 組：Controller 載入辨識為 inert PROJECTION（比較器 0、不 `registerOrigin`、不重複 log），涵蓋 chunk 載入與 `onBlockAdded` 兩條路徑 | `CPC:57-67` | GT-L。RED `red-7-recognition-no-branch` FAIL；mutation `mut-7-kind-criterion`、`mut-7-any-dynamic`、`mut-7-controllers-complete-only` 都 FAIL |
+
+### controller 補充第 1–8 點
+
+- **第 1 點（寫入器的結果）**：`PW` 的 `Status`：`WRITTEN`（寫完而且逐格驗證通過）、`BLOCKED_BY_PLAYER`（被玩家擋住，一格都沒寫）、`NOT_LOADED`（volume 的 chunk 不是都 FULL，不讀不寫、不載入）、`VERIFY_FAILED`（寫了、驗證不符）、`WRITE_FAILED`（寫入中丟出例外）。`Result(status, written, mismatched, blockingPlayers, failure)` 的不變式在建構時檢查（只有 `VERIFY_FAILED`／`WRITE_FAILED` 帶 failure，只有 `BLOCKED_BY_PLAYER` 帶玩家）。`WRITE_FAILED` 沒有 GameTest（要 fault mixin，屬 F4b-2）。
+- **第 2 點（兩種模式）**：第一次寫入 343 格、interior 一律 AIR；修復只寫不變量 cell，門回到開啟。上表第 2 組。
+- **第 3 點（方塊與 block entity）**：shell 是 bedrock；Controller 是 `FACING`＝outward 的預設 block entity，不複製身分（第一次寫入一律重寫 Controller 格，`chamberUuid` 為 null，驗證也檢查）；門 `open=true`、`membrane=none`。
+- **第 4 點（寫法）**：`authorizedMutation` 之內，對既有的 block entity `Clearable.clear`，再以 `PW:48` 的 flags 寫入（比照原版 `/setblock`）。W1 證明箱子不噴物品、鄰格不觸發物理（上表）。
+- **第 5 點（玩家與 entity）**：上表第 6 組。
+- **第 6 點（索引）**：
+  - 註冊：`QuantumSuperpositionMod:56`，在 `CollapseService.initialize()` 之後、`UniverseLifecycleService.initialize()` 之前；所以它的 `SERVER_STARTED` 晚於 `CollapseAuthorities.registerEvents()` 的初始化、早於 lifecycle 的 bootstrap 物化（Fabric 依註冊順序執行，決策 2）。`PPI:92` `registerEvents`：`SERVER_STARTED` 建立、`END_SERVER_TICK` 同步健康（不丟例外）、`SERVER_STOPPED` 釋放。
+  - 資料：`CA:516` `confirmedProjections()`，加上 flushed catalog 的 `UniverseId → worldKey`（catalog 沒有這筆時用 M3 的推導 key，只有 OVERWORLD）。結構是不可變的快照：`worldKey → chunk → 投影`，另有 Controller 位置的集合；更新時整份換新（volatile）。
+  - 熱路徑只讀記憶體：`PPI:152` `protectedCell`（`mayMutate`）、`PPI:158` `projectionControllerAt`（`refreshNow`）。不讀 PersistentState。
+  - 更新入口 `PPI:197` `confirmed(entry)`：下一小節。
+  - 退化：只依權威健康切換。開服時不健康 → 不讀 ledger；執行期間 `lost` → 下一個 `END_SERVER_TICK` 退化，已在索引的投影照樣受保護。退化時另保護「chamber registry 中登記的 OVERWORLD Origin 艙，在每個動態 Overworld 同位置的不變量 cell」（`PPI:231-247`；動態 Overworld 以 M3 推導的 key exact 相等判定，`PPI:291`）。同一個 instance 內不解除，下次開服若健康就不退化。非預期的例外 fail closed：ERROR，退化為 `AUTHORITY_UNREADABLE`。
+  - F4b-2 的查詢：`PPI:212` `degradation()`（退化時回 SEALED 的原因）、`PPI:220` `intersecting(worldKey, volume)`（§9.2 的衝突：與 volume 相交的已登記投影）。
+  - Origin 拆除之後，entry 照樣在索引、照樣受保護：索引不看 chamber registry（退化分支除外）。沒有改 `ChamberRegistryState`；投影不進 chamber registry，也不進 `chamber/ProjectionIndex`。
+  - log：開服一則 INFO（COMPLETE／PENDING 筆數、世界數、無法對應世界而略過的筆數）；退化 WARN、fail closed ERROR。都帶 `TICK_LOG_MARKER`（屬於權威，不屬於任何 session）。
+- **第 7 點（`CA` 的唯讀 API）**：`CA:516` `confirmedProjections()`：已確認的 entries，依寫入順序；不健康時丟 `IllegalStateException`（呼叫端先查健康）。`CA:536` `unhealthy(authority)`：初始化失敗時回初始化的原因，執行期 `lost` 時回 `AUTHORITY_CORRUPT`，否則為空；不看單次呼叫回的 `CORRUPT`（已滿、單筆不符）。CATALOG 不是 M5 的 ledger，丟 `IllegalArgumentException`。既有 API 的行為不變（Step 0 的 Q2-m1、Q2-m5 除外）。CAT `confirmedProjectionsListOnlyCheckedEntriesInWriteOrder`（`CAT:621`）、`healthOnlyFollowsTheInitializationResultAndRuntimeLoss`（`CAT:656`），以及既有 `initializationFailures…` 與 `fullProjectionLedger…` 補的斷言。RED `red-1-ca-api`（stub）3 FAIL。
+- **第 8 點（保護與載入辨識）**：下兩小節。
+
+### 更新入口的設計（列入「需要裁示」第 1 條）
+
+- `PPI:197` `confirmed(entry)`：F4b-2 每次 checked 寫入 projection entry 得到確認的 entry 之後呼叫（`WRITTEN`、`UNCHANGED`，或 `ALREADY_COMPLETE` 帶回的既有 entry）。
+  - PENDING 確認之後、寫方塊之前登記：只供辨識（Controller 位置進集合），**不保護**。
+  - COMPLETE 確認之後再呼叫：這座投影的不變量 cell 開始受保護。
+  - Status 只前進：已登記 COMPLETE 時再登記 PENDING 不倒退。site（Role、ControllerPos、OutwardFacing）與已登記的不同、或對應不到世界 → `IllegalArgumentException`（ledger 已保證這兩者，違反是 caller 錯誤）。
+- 為什麼這樣同時滿足兩者：spec §9.3「每次 COMPLETE 時更新這個索引」對**保護**成立：只有 COMPLETE 的不變量 cell 受保護。plan 第 8 組要求投影寫入時 `onBlockAdded` 觸發的 refresh 辨識為 PROJECTION；第一次寫入發生在 PENDING 確認之後、COMPLETE 之前，所以 Controller 位置必須在 PENDING 確認時就登記。GT-L 的 A 與 B 都在 PENDING 期間被辨識。
+- 開服時 PENDING entry 也入索引，但只供辨識：PENDING 表示方塊可能已寫了一部分（寫入與 COMPLETE 之間 crash）。重啟之後那座 Controller 載入時辨識為 inert PROJECTION，F4b-2 的 PREPARE 再以第一次寫入或修復處理；依 §9.3 字面不保護。PPIT `startupIndexProtectsOnlyTheInvariantCellsOfCompleteProjectionsAndRecognizesEveryController`（`PPIT:59`）、`updateEntryRecognizesAConfirmedPendingFirstAndProtectsOnlyOnceComplete`（`:88`）；mutation `mut-index-pending-protected`、`mut-index-status-regresses`、`mut-index-controllers-complete-only` 都 FAIL。
+
+### 保護（補充第 8 點、派工第 4 點）
+
+- 呼叫點：既有 Origin 的保護全部經 `WorldSetBlockStateMixin`（`World.setBlockState` 的開頭呼叫 `CPS.mayMutate`，不分世界）。玩家破壞（`tryBreakBlock` → `removeBlock`）、放置（`BlockItem.place` → `setBlockState`）、爆炸（`onExploded` → `setBlockState`）、活塞（`PistonBlock.move` 的 `setBlockState`；shell、門與 Controller 本身也是推不動的方塊）、流體（`FlowableFluid` 的 `setBlockState`）都經過它。動態世界也走同一個 `mayMutate`，不需要新的 mixin。另有 `ChamberMaintenanceInteraction`（AttackBlockCallback）在動態世界拒絕拆 Controller，與索引無關。
+- `CPS:65`：vanilla 的 world key 照舊查 chamber registry；非 vanilla 的 world key 改為 `!protectedCell(...)`（修改前一律放行）。interior 與 volume 外放行。
+- GT-P 依 F4b-2 的順序：checked 寫入 PENDING 並登記（`pendingNotProtected`）、第一次寫入、checked 寫入 COMPLETE 並登記。之後：
+  - `mayMutate`：218 個不變量 cell 全部拒絕、125 格 interior 與 volume 外放行。
+  - 門：玩家以門板（既有的 `onUse` → 整面門的授權寫入）把門關上再打開。
+  - 破壞：創造模式的玩家（原版 `tryBreakBlock`）打 shell、Controller、門板都不消失；interior 的石頭照常打掉。
+  - 放置：授權寫入把一格 shell 損壞成 AIR 之後，玩家對它放石頭被拒；interior 照常放得下。
+  - 爆炸：shell 的玻璃留著，interior 的玻璃消失。
+  - 活塞：三台通電的活塞對著 shell、門板與 Controller，都推不動；對照組的活塞照常推動石頭。
+  - 流體：損壞成 AIR 的 shell 旁放水源（南北擋住，只能往西與往東，兩邊離落差一樣近）：水流不進 shell；對照組的空格有水。
+  - 新 chunk 要等鄰居非同步產生才開始 block ticking，所以先以 `SUP:640` `blockTicking` 等投影周圍強制載入的 chunk；活塞與流體的判定等對照組真的發生（`340a953`，見 P-FLAKE）。
+  - RED `red-8-protection-no-index`：`everyInvariantCellDenied`、`breakingRefused`、`placingIntoAnInvariantCellRefused`、`explosionKeepsTheInvariantCell`、`fluidCannotEnterAnInvariantCell` 都是 false。`pistonsCannotMoveInvariantCells` 也是 false，但那是因為 RED 中破壞沒有被擋、門板被打掉；活塞本身推不動不變量 cell（方塊設定），這一條的牙齒是對照組的活塞（「偏離」第 4 條）。
+
+### 載入辨識（補充第 8 點、派工第 5 點）
+
+- `CPC:57-67`：`role.isEmpty()`（動態世界）而且 `projectionControllerAt` 為真 → 把 block entity 的 instanceKind 寫回 PROJECTION（不同時才寫並 `markDirty`）、`changeState(INVALID)`、return。插在原本的 foreign 分支（`CPC:68`）之前，只動 plan 允許的 `:54-58` 分流；不在索引中的照舊走 foreign。不記 log。
+- 判定依據是索引，不是 block entity 的 instanceKind（§9.3「依索引判定」）。mutation `mut-7-kind-criterion`（判定改看 instanceKind）→ A、B 都沒有辨識，FAIL。
+- 寫回 instanceKind 的理由（列入「需要裁示」第 2 條）：foreign 分支同樣是 INVALID、比較器 0、不註冊、不啟動，只靠 INVALID 的話，辨識沒有任何可觀察的結果，兩條路徑的 test 也無從區分辨識與 foreign。PROJECTION 是既有的 enum 值：M1 走廊投影的 Controller 已經這樣標記（`SessionEntranceAllocator:39`，`CorridorPageManager:505` 依它判斷），ORIGIN 專屬的守門（發光、維護手勢、`ChamberActivationService`、session 的 controller 檢查）因此也一併不適用。
+- 兩條路徑都在 GT-L：
+  - `onBlockAdded`：A 寫入之後立刻 `ChamberLoadSyncTestAccess.discardWorld(U)` 丟掉 load-sync（收據 `DISCARDED_WORLD_UNLOAD`）；寫入後 4 tick 還沒有 refresh 過（`powerInitialized=false`、ORIGIN），25 tick 時已由 `onBlockAdded` 排的 refresh 判定為 PROJECTION（`aRecognizedByBlockAdded`）。
+  - load-sync：B 在 PENDING 登記一 tick 之後才寫入，收據 `REQUEUED_NOT_DUE, CONSUMED`，寫入後 3 tick（早於它自己 20 tick 後的排程 refresh）已是 PROJECTION（`bRecognizedByLoadSync`）。chunk 從磁碟載入時的 `BLOCK_ENTITY_LOAD` 走同一個 queue（「偏離」第 3 條）。
+  - foreign：C 不在索引裡，直接放置，照舊是 ORIGIN、INVALID、比較器 0（`cForeignAfterLoadSync`、`cStillForeign`）。mutation `mut-7-any-dynamic`（動態世界一律當成投影）→ C 被當成 PROJECTION，FAIL。
+  - inert：A、B 轉為 COMPLETE 之後在 Controller 上方放紅石塊供電，45 tick 後已讀到供電（`wasPowered`），仍是 PROJECTION、INVALID、比較器 0、沒有 chamber UUID（`poweredButInert`）；chamber registry 沒有 U 的紀錄（`noRegistryRecordInU`）、journal 沒有來源在 U 的 session（`noSessionFromU`）；整段期間 `quantumchamber` logger 除了塌縮 session 本身的 log 之外沒有 WARN／ERROR，也沒有任何 log 提到三座 Controller 的位置（`noWarnOrErrorOutsideTheSession`、`noLogAboutTheControllers`）。
+- 沒有改 `ChamberControllerLoadSyncQueue`，不需要 spec §17 的 queue observer regression。
+
+### default run 的稽核（派工第 8 點）
+
+| 新分支 | default run 中的行為 |
+| --- | --- |
+| 開服建立索引 | default、legacy、main-only、M5 run 開服各一則 INFO「M5 投影保護索引已建立：COMPLETE 0 筆…0 個世界」，沒有退化 WARN、fail closed ERROR。索引只讀 ledger 與 catalog，不寫任何權威：Full 的 boundary oracle PASS（catalog 快照與 world keys 不變） |
+| `CPS:65` | 只在非 vanilla 的 world key 生效（default run 中是走廊世界與 M3 fixture 的動態世界）。索引沒有 entry、也沒有退化，`protectedCell` 一律 false，與修改前的 `orElse(true)` 相同 |
+| `CPC:57` | 只在動態世界、而且索引有這個位置時生效；default run 的索引沒有 entry，一律走原本的分支。走廊投影的 Controller（PROJECTION）照舊走 foreign 分支 |
+
+- 實證：Full 的 default 174/174；Full latest.log 的 WARN／ERROR 54／28 不變，正規化排序之後與基準逐行相同（`f4b1/wbcmp-full-run-all-final.txt`）；legacy 0／0 不變。
+
+### 測試
+
+- JUnit 611 → 626（＋15）：CAT 35 → 38（Q2-m1 一個、API 兩個）、DRT 24 → 26（Q2-m2、S2-mA）、PPIT 0 → 10（新增）、CST 14 不變（Q2-m3 改寫一個、Q2-m4 補斷言）；`GT` 2 不變（`PW`、`PPI` 都在 collapse package，log 都帶 marker）。
+- M5 GameTest 13 → 17：W1、W2、GT-P、GT-L，各自一個 `m5_universe_projection_*` batch，名稱不以 `_windows` 結尾（各平台都執行），catalog 增量各 1；suite 結束時 12 → 16 筆。
+- default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 都不變：沒有新增或刪除 default run 的 `@GameTest`。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f4b1/`（以下簡稱 `f4b1/`）：`state.ps1`（記 HEAD、porcelain 與逐檔 blob）、`gate.ps1`（以 `onlyBatches` 跑 `gates.ps1`；2026-10-06 補上「XML 早於本次 gate 開始就標為 STALE、不採計」）、`junit.ps1`、`adapted-junit.ps1`、`chain.ps1`（依 plan JSON 逐步套用 adapter、跑 gate、還原並核對 blob）。暫時性改動由 `f4b1/adapter.py` 套用與還原（套用前保存原檔，還原後以 `git hash-object` 核對），各 adapter 的 diff 在 `f4b1/adapters/<名稱>/`。gate root 在 `.superpowers/verification/`。
+
+| 輪次 | HEAD／工作樹 | 證據 | 結果 |
+| --- | --- | --- | --- |
+| Step 0 RED／mutation | `5bafb25`＋Step 0 的檔 | `f4b1/red-0-*`、`mut-0-*` | 見 Step 0 表 |
+| Step 0 GREEN | 同上 | `green-0a`、`green-0b`、`green-0-junit`；`green-0-m5`、`green-0-focused` | JUnit 76／78／78 PASS；M5 13/13；focused 21/21 |
+| CA API | `544cd37`＋API | `red-1-ca-api`、`mut-1-single-corrupt`、`green-1-ca-api` | RED 3 FAIL；mutation 3 FAIL；GREEN 80 PASS |
+| 寫入器 | `4f962ca`＋`PW`、testmod（`hide-index` 讓工作樹等於該 commit） | `red-4-writer-naive`、`red-4b-writer-naive-w1`、`mut-4-*`、`mut-4b-*`、`green-4w-quick`、`green-4-writer-m5`、`green-4b-writer-m5`、`green-2-writer-junit` | RED W1、W2 FAIL；mutation 見上表（`mut-4-entities-block` 存活 → W1 改為等 entity storage 載入之後再寫，`mut-4b-entities-block` FAIL）；GREEN M5 15/15 |
+| 索引 | `4f962ca`＋`PPI`、PPIT、註冊 | `red-3-index`、`mut-3-*`、`green-3-index`、`green-3b-index`、`green-5-index-m5`、`green-5-index-focused` | RED 6 FAIL；mutation 見下；GREEN JUnit 95 PASS、M5 15/15、focused 21/21 |
+| 保護 | `802342f`＋`CPS`、GT-P | `green-6bq-protection`、`red-6b-protection-no-index`、`green-6b-protection-m5`、`green-6b-protection-default` | GREEN 1/1；RED FAIL（上一小節）；M5 16/16；default 174/174 |
+| 載入辨識 | `92881dd`＋`CPC`、GT-L（＝`8c0d670` 的 blob） | `green-7q-recognition`、`red-7-recognition-no-branch`、`mut-7-*`、`green-7-recognition-default`、`green-7-recognition-m5` | GREEN 1/1；RED 與 3 個 mutation FAIL；default 174/174；M5 16/17（GT-P 的 P-FLAKE） |
+| P-FLAKE 修正 | `8c0d670`＋GT-P | `green-8q-protection-1..3`、`red-8-protection-no-index`、`green-8-protection-m5-1..3` | GREEN 3 次、M5 17/17 三次；RED FAIL。對照組的 settle 是 5、5、12、17、5、11 tick（RED 13） |
+| run-all | `515fbc4`，工作樹乾淨（`STATUS` 是空的） | `run-all-28d70ca9adf14ccdbb63acd8958c576b`（Full：`gate-full-a6b7c3fc51be40f4be2393dd5a036494`；M5：`gate-m5-gametest-58b7944b20ec46ea9f6e21b136377ac8`；`f4b1/run-all-final-console.txt`） | `END ALL exit=0 HEAD=515fbc4`。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=17/17 perTest=51+1 junit=626 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=393entries/346classes sources=216 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+
+- 索引的 mutation：`mut-index-intersect-all`、`mut-index-no-startup-info`、`mut-index-no-exact-key`、`mut-index-onshell-includes-interior`、`mut-index-pending-protected`、`mut-index-status-regresses` 都 FAIL。`mut-index-any-namespace`（拿掉 namespace 檢查）存活：它與之後的 exact key 相等重複，所以刪掉重複的檢查（`PPI:291`），改對 exact 相等做 mutation（`mut-index-no-exact-key` FAIL）。
+- 每個 adapter 跑完都還原，還原後的 blob 與套用前相同。每個 commit 的 blob 都與它之前最後一輪 GREEN 的 state 相同（`f4b1/commit-*-blobs.txt`）。`8c0d670` 的 `M5U` 是「HEAD＋GT-L」的 blob `5b0022a`（`f4b1/m5u-recognition-commit.java`，以 `git update-index --cacheinfo` stage），等於 `green-7q-recognition` 等各輪 state 記錄的 blob；工作樹當時已另有 GT-P 的修正，留給 `340a953`。
+- P-FLAKE：GT-P 首版在佈置後固定 20 tick 判定，`green-6q-protection`（還沒有等 block ticking）與 `green-7-recognition-m5`（已等 block ticking）兩次是對照組沒有發生（`controlPistonPushes`、`controlFluidFlows` 都是 false，保護的 witness 都成立）。`340a953` 改成以有界等待（200 tick）等對照組的活塞推動完成、水源流動過再判定，並記錄 settle 的 tick。之後各輪是 5–21 tick（run-all 的 M5 是 21），所以固定 20 tick 本來就不夠；多出的 tick 來自哪裡沒有追。
+- 不採計的 root：`green-6-protection-default`：本 implementer 以 `onlyBatches=defaultBatch,…` 想選 default batch 的 test，但 `M4LegacyGameTestFilterMixin` 要求每個指定的 batch 恰好一個 test，`defaultBatch` 有 63 個，GameTest 在寫出 XML 之前就丟 `IllegalStateException`（`指定 batch 子集不符`）。`gate.ps1` 當時讀到 `result-build` 裡上一次 run 的 XML，摘要誤列 21 PASS；已補 STALE 檢查，改跑完整的 default run（`green-6b-protection-default`、`green-7-recognition-default`）。GT-P 首版的 `green-6q-protection`、`green-6-protection-m5`、`red-6-protection-no-index` 也不採計：首版流體的 fixture 讓水只流向南北兩側的落差，`controlFluidFlows` 恆為 false（RED 中 `fluidCannotEnterAnInvariantCell` 也因此是 true），`92881dd` 之前改為南北擋住、並等 block ticking。`green-7-recognition-m5` 是 P-FLAKE，保留 root。
+- 與 `942a33f` 的 run-all（`run-all-9d3a6073d1d84645930b0af986e44af1`）逐項比較：
+  - JUnit 611 → 626、M5 13 → 17（「測試」）；default 174（`_windows` 88）、legacy 1、perTest 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly、CI 兩個平台都不變。M5 oracle PASS：17 個 test 的 catalog 增量逐一串接，suite 結束時 16 筆；`M3_UNIVERSE_STOPPED_VERIFIED worlds=10`。
+  - release JAR 383 → 393 entries（336 → 346 classes，`f4b1/jarcmp-release-run-all-final.txt`）：只新增 `ProjectionWriter` 與它的 `ControllerPresence`、`Mode`、`Result`、`Status`，以及 `ProjectionProtectionIndex` 與它的 `Indexed`、`Key`、`Snapshot`、`WorldView`；沒有移除。內容不同的 class 都屬於本 task 改過的 6 個 production 檔（`QuantumSuperpositionMod`、`ChamberPowerCoordinator`、`ChamberProtectionService`、`CollapseAuthorities`、`CollapseService`、`DestinationResolver` 與它們的 nested class）。testmod 命中 0。
+  - sources JAR 214 → 216（`f4b1/jarcmp-sources-run-all-final.txt`）：新增 `ProjectionWriter.java`、`ProjectionProtectionIndex.java`；內容不同的是同上 6 個檔。
+  - log（以 `/WARN]`、`/ERROR]` 計行，UUID 與數字正規化、排序之後比對，`f4b1/wbcmp.py`）：Full 54／28 不變、逐行相同（`f4b1/wbcmp-full-run-all-final.txt`）；legacy 0／0（`wbcmp-legacy-run-all-final.txt`）。M5 WARN 13 → 16、ERROR 1 不變（`wbcmp-m5-gametest-run-all-final.txt`）：多出的 3 則都是 PREPARE stub 的「準備階段尚未實作（F4b）」，分別屬 W1、GT-P、GT-L 的塌縮 session（它們在 RESOLVE 之後還要幾個 tick 才收尾；W2 在 RESOLVE 的同一個 callback 就收尾，所以沒有）。
+  - 新增的 INFO：每次開服一則「M5 投影保護索引已建立」（四個 run 都是 0 筆）。
+- 本 task 沒有遇到派工列出的已知偶發，也沒有停服卡住。
+
+### 偏離 plan／spec 字面之處
+
+1. 更新入口（上方小節）：spec §9.3 的字面是「每次 COMPLETE 時更新」；本實作在 PENDING 確認時就登記 Controller 位置供辨識，COMPLETE 時才保護。
+2. Q2-m1 選丟 `IllegalArgumentException`，沒有拿掉參數（理由在 Step 0 表）。
+3. 「chunk 載入」路徑的 test 以寫入器放置 Controller 觸發的 `BLOCK_ENTITY_LOAD` → load-sync queue 驗證，沒有真的讓 chunk 卸載再載入。chunk 從磁碟載入時是同一個事件與同一個 queue（`QuantumSuperpositionMod:43-48`）。強制載入的 chunk 要卸載，得解除強制載入並等存檔卸載，時序不可控；重啟後載入屬 F6 的重啟矩陣。
+4. 活塞：shell、門板與 Controller 本身就推不動（既有的方塊設定），活塞在 `mayMutate` 之前就被擋，關掉索引的 RED 也推不動；`pistonsCannotMoveInvariantCells` 的牙齒是對照組的活塞。損壞成 AIR 的不變量 cell 被活塞推入方塊的情境沒有測：依原版 `PistonBlock.move`，目的格的 `setBlockState` 被拒之後仍會 `addBlockEntity`（MOVING_PISTON 的 block entity 落在 AIR 上），會記原版的 WARN，被推的方塊應該就此消失（依程式碼推論，未實測）。這與 Origin 的既有保護是同一條路徑，不在 F4b-1 範圍。
+5. GT-P 的對照組以有界等待判定（P-FLAKE），不是固定 tick 數。
+
+### 需要裁示
+
+1. 更新入口的設計（PENDING 確認時登記供辨識、COMPLETE 時保護；開服時 PENDING entry 只供辨識）。
+2. 辨識時把 block entity 的 instanceKind 寫回 PROJECTION（判定依據仍是索引；理由見「載入辨識」）。
+3. 退化時的辨識：`projectionControllerAt` 只看索引裡的 entries，不含退化分支由 chamber registry 推得的 Origin 位置。開服時就退化，投影的 Controller 走 foreign 分支：同樣 INVALID、比較器 0、不註冊、不啟動，只是 instanceKind 不寫回。若要在退化時也辨識，需要決定「registry 的 Origin 在動態 Overworld 同位置的 Controller」是否一律視為投影。
+
+### 觀察（未修改）
+
+1. 新 chunk 的 entity storage 是非同步載入的：剛強制載入的 chunk 裡生成的 entity，原版的 entity 查詢要等幾個 tick 才看得到（W1 先等豬看得到才寫入）。寫入器以 `world.getPlayers()` 檢查玩家，不受影響；F4b-2 若要以 entity 查詢做其他檢查，要注意這點。
+2. 同理，強制載入的 chunk 開始 block ticking 要等鄰居非同步產生；GameTest server 不以 20 TPS 節流，固定 tick 數的等待不可靠（README「F4b-1 的投影 helper」）。
+3. `onBlockAdded` 排的 refresh 與排程刻的 refresh 每 20 tick 一次，投影 Controller 每次都走辨識分支（只讀記憶體、不記 log）。
+4. W1 的 `written=220`：U 沿用 server 的 Overworld 設定，GameTest server 是 flat 世界，投影的 volume 原本都是 AIR；第一次寫入改的是 218 個不變量 cell，加上 W1 放在 interior 的箱子與石頭兩格。
+
+### 交給後續
+
+- F4b-2：
+  - 呼叫順序：`writeProjection(PENDING)` 確認 → `ProjectionProtectionIndex.get(server).confirmed(entry)` → `ProjectionWriter.write(…, FIRST_WRITE 或 REPAIR)` → checkpoint（`ChunkSaveCheckpoint.ready`／`save`）→ `writeProjection(COMPLETE)` 確認 → `confirmed(entry)`。`ALREADY_COMPLETE` 帶回的 entry 也要 `confirmed`（開服時已在索引，呼叫是 no-op）。`confirmed` 只在違反 ledger 的保證（site 改變、對應不到世界）時丟 `IllegalArgumentException`；F4b-2 在 `END_SERVER_TICK` 呼叫，仍要放在塌縮流程既有的例外界線之內。
+  - 寫入器的結果：`BLOCKED_BY_PLAYER`、`NOT_LOADED` 下一個 tick 再試（不是失敗）；`VERIFY_FAILED`、`WRITE_FAILED` 帶 failure，可直接當 SEALED(`PROJECTION_FAILED`) 的 root cause。寫入器不記 log，WARN／ERROR 由 F4b-2 以 session 記。`WRITE_FAILED` 的 GameTest 需要 F4b-2 的 fault mixin。
+  - 寫入器不做衝突與 ledger 的判斷：§6.5 的實體交叉檢查用 `PW:105` `controllerPresence`；§9.2 的衝突用 `PPI:220` `intersecting`（回傳 PENDING 與 COMPLETE，F4b-2 只把另一座艙的 COMPLETE 當成衝突）；退化時新的 PREPARE 進 SEALED 用 `PPI:212` `degradation()`。
+  - 預載：寫入器在 volume 的 chunk 不是都 FULL 時回 `NOT_LOADED`、不載入；F4b-2 的預載不得用阻塞式 `getChunk(create=true)`（plan Step 1）。GameTest 的 `forceProjectionChunks` 是 test 專用的同步載入。
+  - G-NEW 的 `onlyTheStubWarnAndNoError`（F4a 交下）照舊交給 F4b-2；W1、GT-P、GT-L 各有一則 stub WARN（M5 WARN 13 → 16），PREPARE 實作之後會消失，屆時 M5 run 的 WARN 數字要重新歸因。GT-P、GT-L 的 log 斷言只排除塌縮 session 本身的 log。
+- F6：重啟矩陣加入「PENDING 寫到一半時重啟」：開服時 PENDING entry 只供辨識，PREPARE 再寫；以及真正的 chunk 卸載再載入的辨識（「偏離」第 3 條）。
+- F7：spec §9.3 的 errata（若裁示採用更新入口的設計）：「PENDING 確認時登記 Controller 位置供載入辨識；COMPLETE 時開始保護」。
