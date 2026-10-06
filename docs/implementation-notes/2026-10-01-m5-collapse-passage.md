@@ -3680,6 +3680,25 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
   - 本段由其後的 docs commit `docs: record F4b-2 prepare destination side in the M5 note` 加入。
 - Code range `97df474..c67663c`。沒有改 `ChamberControllerBlock`、`QuantumBulkheadBlock`、`WorldChamberDoorAdapter`、`ChamberDoorService`、`ChamberProtectionService`、`ChamberPowerCoordinator`、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`CorridorPageManager`、`SuperpositionSessionManager`、`SessionRecoveryState`、`SessionRecoveryManager`、`UniverseRegistryState`、`ChamberRegistryState`、`UniverseLifecycleService`、語言檔、`gates.ps1`、`build.gradle`、`.github/`。
 - Review：spec review ✅（Critical 0、Important 0、Minor 5：S-M1～S-M5，Nit 1）；quality review Not approved（Critical 0、Important 1、Minor 6、Nit 3：Q-I1、Q-M1～Q-M6）。三項「需要裁示」與「偏離」第 1 條（退化檢查提早），spec reviewer 都判定符合 spec，controller 正式接受（見「裁示」）。處置見本節末的「Fix round 1」。
+- 最終 review：
+  - fix round 1 的 spec re-review ✅（Critical 0、Important 0、Minor 1）。Q-M3、Q-M4 的處理都判定符合 spec，controller 正式接受。Minor 1 由 controller 寫進「交給後續」的 F4b-3：REJECTED 與隔離期間，門也要改為一般開門。
+  - fix round 1 的 quality re-review Approved（Critical 0、Important 0、Minor 2、Nit 2）。Q-I1 從根本關閉，查過所有路徑，沒有其他每個 tick 存檔的路徑。Minor 與 Nit 由 controller 寫進「交給後續」：
+    - m-1（CS 的大小）交給 F5 的 Step 0；
+    - m-2 就是上面那一條；
+    - 兩則 Nit 交給 F4b-3 的 Step 0。
+  - **F4b-2 完成**：range `97df474..2dcfebf`，之後是 controller 的 docs commit。
+    - code：`b05032c`、`62d535c`、`6eeff52`、`5e9b174`、`d5b059a`、`9c8c986`、`c87ae77`、`49e665e`、`b8b2b54`、`c67663c`、`de3f56d`、`726c7e0`、`aea4b07`、`c3c7ea8`、`bfaf6f0`、`b6fdf59`、`1f41d0a`。
+    - docs：`2924c8b`、`dc11821`、`3e7cf1d`、`97f1898`、`2dcfebf`。
+    - 最終 run-all：`run-all-4d864a16e1cf45fd90cdfe3c3d35b0ac`，`END ALL exit=0`（`97f1898`）。基準數字如下：
+
+      | 項目 | 數值 |
+      | --- | --- |
+      | default | 174/174 |
+      | M5 | 30/30 |
+      | JUnit | 631 |
+      | release／sources | 401／354、216 |
+      | Full WARN／ERROR | 54／28 |
+      | M5 WARN／ERROR | 29／6 |
 - 範圍是 plan Task F4b「拆分」的 F4b-2：UNIVERSE 的 PREPARE（目的宇宙這一側），準備完成之後在 F5 之前停住（READY stub）。不套用量子膜、不攔截門（F4b-3）：PREPARE 期間原艙門維持一般狀態，開關門照舊交給 `ChamberDoorService`（§7.3「套用量子膜的條件不成立時，門維持一般開門」）。
 - 行號以 `c67663c` 為準。`CP` 指 `collapse/CollapsePhase.java`，`HK` 指 `M5TestHooks`，`CCPM` 指 `mixin/ChunkSaveCheckpointProbeMixin.java`，`PWFM` 指 `mixin/ProjectionWriteFaultMixin.java`；`CS`、`CST`、`PPI`、`PPIT`、`PW`、`CA`、`M5U`、`SUP` 同前面各節。M5U 新增的 11 個 test（各自一個 batch，名稱不以 `_windows` 結尾，各平台都執行，catalog 增量各 1）：
   - P-NEW `M5U:1374` `prepare_new_runs_the_destination_side_then_stops_before_the_passage`（`m5_universe_prepare_new`）
@@ -3863,12 +3882,17 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
   - （fix round 1，quality Q-M4）量子膜判斷的插入點：`prepareUniverse` 中 `if (progress.ready) return;` 之前（fix round 1 之後的 `CS:502`，Javadoc `CS:497`）。
   - （fix round 1，quality Q-M4）PREPARE 中 SEALED 的寫入被拒（REJECTED）與 session 被隔離時，本輪決定不釋放目的世界的 ticket（理由見「Fix round 1」的 Q-M4 列、`CS:815`、`CS:251`）。F4b-3 加上門的攔截之後若要在嘗試進入 SEALED 時就釋放，要能以測試造出被拒的路徑；若要在隔離時釋放，要補上解除隔離之後（含 READY stub 之後）重新加 ticket 的路徑。
   - （fix round 1，quality Q-M5）`M5UniverseGameTests` 的 F4b-2 test 前後段重複（`DormantOrigin.open`＋`asTestFailure`、`collapsedToUniverse`、收尾的 `hooks.release`＋`awaitConvergedThenComplete`，約 10 行 × 13 個）。F4b-3 要新增 test，可以先抽成 helper。
+  - （controller 補，fix round 1 spec re-review 的 Minor 1）REJECTED（`pendingSeal`）與隔離期間，`collapsing()` 在推導之前就 return，看不到閘門失效。F4b-3 套上 sealed 量子膜之後，這兩段期間門也必須能改回一般開門（§6 spec:260、§7.3 :392-394）。不能只處理 ticket。
+  - （controller 補，fix round 1 quality re-review 的 Nit）F4b-3 的 Step 0 一併處理：
+    - `CollapsePhase.Gate#edge` 的 Javadoc 只寫契約：評估會消耗一次邊緣觸發；
+    - `prepareUniverse` 的 lazy `Prepare` 建立已經走不到，改成 `requireNonNull`。
 - F5：
   - `CS:657` `prepared` 的停點換成 checked PASSAGE_READY（含 §10.2 的 EXISTING 再驗）；屆時移除「通道尚未實作（F5）」WARN 與 `Track.readyWarned`。
   - PASSAGE_READY 期間繼續持有目的世界的 ticket（`releaseTerminatedDestinations` 只在 session 不在 journal 時釋放，PASSAGE_READY 仍在 journal）；通道結束時呼叫 `CS:772` `releaseDestination(server, sid)`（或 `CollapseService` 內的同名 instance 方法）。
   - （fix round 1，spec S-M1）預載外擴 2 格，可能比 `UniverseTransferService:279-282` 的 FULL 檢查少 1 格。實作 `PassageTransferPolicy` 時讓兩邊的 chunk 推導一致（例如 margin 改成 3），並交 F7 寫 spec errata。
   - （fix round 1，spec S-M2）修復路徑（`ALREADY_COMPLETE`）沒有 checkpoint：READY 之前，對 `written > 0` 的修復補一次 `ChunkSaveCheckpoint.ready`＋`save`，或由 F6 驗證。
   - （fix round 1）`releaseDestination(server, sid)`（fix round 1 之後的 `CS:800`）目前沒有呼叫端、也沒有測試，F5 接上時補測試。
+  - （controller 補，fix round 1 quality re-review m-1）F5 的 Step 0：`CollapseService` 已有 1462 行，F4b-3 還會再加。F5 開工時先評估是否把 PREPARE（`Prepare`、`destinations`、預載與投影）抽成 package-private 類別。若決定抽，以獨立 commit 完成，行為不變。
 - F6：
   - 重啟矩陣：W4（PENDING 寫到一半）、W4b（寫完、驗證過、checkpoint 之前）、W6（COMPLETE 之後、READY 之前）；開服時投影 ledger 在 schema 4 下遺失 → 初始化 `LOST`／`AUTHORITY_CORRUPT`、COMPLETE 投影的 interior 不被重寫（P-DEGRADED 的跨 JVM 版本）。重啟之後 `Track` 是新的：PREPARE 從預載重新推導（PENDING 照第一次寫入、COMPLETE 只修復）。
   - `build.yml` 的明列清單：本 task 新增 M5 run 的 11 個 test（都不是 `_windows`），G-NEW 改名為 `dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge`。
