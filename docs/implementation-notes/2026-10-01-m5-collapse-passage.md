@@ -3396,6 +3396,23 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
   - 本段由其後的 docs commit `docs: record F4b-1 projection components in the M5 note` 加入。
 - Code range `5bafb25..340a953`。沒有改 `CollapseService` 的流程（PREPARE stub 照舊；Step 0 的 CS 項目除外）、`ChamberControllerBlock`、`QuantumBulkheadBlock`、`WorldChamberDoorAdapter`、`ChamberControllerLoadSyncQueue`、`SuperpositionSessionManager`、`SessionRecoveryState`、`UniverseRegistryState`、`ChamberRegistryState`、`ChamberDoorService`、語言檔、`gates.ps1`、`build.gradle`、`.github/`；沒有新增 mixin。
 - Review：spec review ❌（Critical 0、Important 1、Minor 3：I-1、M-1～M-3）。三項「需要裁示」與「偏離」第 3 條，reviewer 都判定符合 spec，controller 正式接受（見「裁示」）。處置見本節末的「Fix round 1」。
+- 最終 review：
+  - fix round 1 的 spec re-review ✅（Critical 0、Important 0、Minor 0）。
+  - quality review（範圍 `5bafb25..0576b44`）Approved（Critical 0、Important 0、Minor 9：Q-m1～Q-m9），也沒有發現 spec reviewer 漏掉的正確性缺陷。
+  - controller 不再開 fix round：Q-m1 交給 F4b-3 的 Step 0，其餘交給 F4b-2 的 Step 0，見「交給後續」。
+  - **F4b-1 完成**：range `5bafb25..0576b44`，之後是 controller 的 docs commit。
+    - code：`4e6b75a`、`f2b8f34`、`544cd37`、`4f962ca`、`f809c98`、`802342f`、`92881dd`、`8c0d670`、`340a953`、`0020bd5`、`a928216`。
+    - docs：`515fbc4`、`c7bbde7`、`0576b44`。
+    - 最終 run-all：`run-all-7bab6785434347c4ab75c5d21a34c4b0`，`END ALL exit=0`（`a928216`）。數字如下：
+
+      | 項目 | 數值 |
+      | --- | --- |
+      | default | 174/174 |
+      | M5 | 17/17 |
+      | JUnit | 626 |
+      | release／sources | 393／346、216 |
+      | Full WARN／ERROR | 54／28 |
+      | M5 WARN／ERROR | 17／1 |
 - 範圍是 plan Task F4b 拆分後的 F4b-1（plan「拆分」一段）。這些元件在 production 中，除了開服建立索引、保護查詢、載入辨識之外，還沒有呼叫端；寫入器只由測試呼叫。PREPARE（預載、PENDING→寫入→checkpoint→COMPLETE、§6.5 交叉檢查、§9.2 衝突、退化時進 SEALED、量子膜、門的攔截）屬 F4b-2。
 - 行號以 `340a953` 為準。`PW` 指 `collapse/ProjectionWriter.java`，`PPI` 指 `collapse/ProjectionProtectionIndex.java`，`PPIT` 指 `ProjectionProtectionIndexTest`，`CPS` 指 `chamber/ChamberProtectionService.java`，`CPC` 指 `chamber/ChamberPowerCoordinator.java`；`CA`、`CAT`、`DR`、`DRT`、`CS`、`CST`、`M5U`、`SUP` 同前面各節。M5U 新增的四個 test：
   - W1 `M5U:835` `projection_first_write_overwrites_the_volume_without_drops_or_neighbor_updates`（`m5_universe_projection_first_write`）
@@ -3567,6 +3584,20 @@ I-1 的三條路徑（第二位 implementer 的自我審查；派工 RED 的三�
   - 重啟矩陣加入「PENDING 寫到一半時重啟」：開服時 PENDING entry 只供辨識，PREPARE 再寫。
   - （fix round 1，controller 補；spec review 對「偏離」第 3 條的意見）真正從磁碟載入時的辨識：在重啟矩陣中帶 COMPLETE 與 PENDING 的 entry 重啟，投影的 chunk 從磁碟載入之後，Controller 要辨識為 inert PROJECTION，而且不記 log。
 - F7：spec §9.3 的 errata（裁示已採用更新入口的設計）：「PENDING 確認時登記 Controller 位置供載入辨識；COMPLETE 時開始保護」。
+- **F4b-2 Step 0（controller 補，quality review 的 Minor）**：F4b-2 開始 PREPARE 之前，先以獨立 commit 處理下列各項，每項都要有 RED 或 mutation 證據（純文件項除外）。行號以 `0576b44` 為準。
+  - Q-m4：`PPI:197-206` 的 `confirmed(Entry)` 接受原始 entry，F4b-2 若傳入 `writeProjection` 的輸入值，未確認的投影會提早被辨識，甚至受保護。改成接受 `CollapseAuthorities.WriteResult`：只接受 `WRITTEN`／`UNCHANGED`／`ALREADY_COMPLETE`，其他丟 `IllegalArgumentException`。`confirmed` 與 `intersecting` 都加上 server thread 檢查。
+  - Q-m2：`PPI:53`、`:150` 的「任何執行緒都可以呼叫」改寫：健康時任何執行緒都可以呼叫；退化分支會讀 `ChamberRegistry`，只在 server thread 安全。
+  - Q-m3：`PPI:269-276` 的 fail closed，同一份 stack trace 印了兩次。`degrade` 不帶 cause；WARN 字句「新的 PREPARE 進 SEALED」改成與 F4b-2 接上後的實際行為一致。
+  - Q-m5：GT-P 的 tickLimit 是 400（`M5U:1036`），小於有界等待總和的最壞情況（約 486 tick），改成 600。
+  - Q-m6：PPIT 補一個跨 chunk 邊界、含負座標的 frame，斷言 218／125，並以「只登記 Controller 所在 chunk」的 mutation 證明鎖得住。
+  - Q-m7：`CS:858-861` 的 `attempt` Javadoc 已過時：唯一的呼叫端是 static `sideEffect`。改字句，可以改成 private。
+  - Q-m8：在 README「新增 M5 GameTest」補一條隔離規則：索引退化之後，同一個 instance 內不會解除；GT-P、GT-L 寫入的 COMPLETE entry 會一直留在 M5 run 的 ledger。會讓 projection ledger 在執行期遺失的 test，要排在最後，或提供 testmod 專用的重建 hook；projection ledger 的殘留也要寫進串接說明。
+  - Q-m9：M5U 新增的部分有 173 處完整限定名稱，改用 import（只改寫法，行為不變，test 集合不變）。把投影的 test 拆到獨立類別不在這一輪做。
+- **F4b-3 Step 0（controller 補，quality Q-m1）**：`chamber` 與 `collapse` 互相依賴（`CPS:3`／`:65`、`CPC:3`／`:57`）。`5bafb25` 之前，`chamber` 不 import `collapse`，跨 package 都走反轉（`registerAdditionalGuard`、`ChamberSessions.gateway()`）。
+  - F4b-3 的門攔截也需要從 `chamber` 呼叫 `collapse`，所以一併處理：
+    - 保護改經 `registerAdditionalGuard`，或在 `chamber` 定義的 port；
+    - 辨識與門攔截改經 `chamber` 定義、由 `collapse` 註冊的 port。
+  - 處理後 `chamber` 不再 import `collapse`。以 grep 或 `CollapseLogMarkerGuardTest` 類的守門 test 鎖住。
 
 ### Fix round 1（`0020bd5`、`a928216`）
 
