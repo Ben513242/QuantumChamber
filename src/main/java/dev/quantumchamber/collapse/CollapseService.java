@@ -1,6 +1,7 @@
 package dev.quantumchamber.collapse;
 
 import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberDetector;
@@ -45,6 +46,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.MinecraftServer;
@@ -94,14 +96,15 @@ import org.slf4j.MarkerFactory;
  *     釋放目的世界的 ticket、退回 WAITING。目的世界的 ticket 在閘門失效、進入 SEALED、終局時釋放（通道結束屬 F5）。</li>
  * <li>PREPARE 期間的原艙門（F4b-3，§7 開頭、§7.3）：每個 PREPARE 的 tick 依「套用量子膜的條件」（門口沒有 entity、艙內沒有非參與者玩家）在 sealed 量子膜與
  *     一般開門之間選一個（{@link #prepareDoor}，門口有人時絕不套用有碰撞的門）；離開或暫停 PREPARE（閘門失效、SEALED 的寫入被拒、隔離）時門改回一般開門。
- *     重啟或來源 chunk 重新載入之後，門依 collapse view 排入下一個 tick 重新套用（{@link #watchDoor}）。玩家開關原艙門照舊交給 {@code ChamberDoorService}
- *     （PREPARE 期間的攔截在下一個 commit 接上）。</li>
+ *     玩家開關原艙門先經 {@code ChamberCollapsePort} 交給這裡（{@link #useDoor}，排在 {@code ChamberDoorService} 之前）：PREPARE 期間參與者開關門 →
+ *     checked 終局、再關門（門口有 entity 時一般開門）；艙內的非參與者 → 一般開門、塌縮不結束；艙外的非參與者與 roll-forward 尚未確認時 → 拒絕、不改門。
+ *     其他階段不攔截。重啟或來源 chunk 重新載入之後，門依 collapse view 排入下一個 tick 重新套用（{@link #watchDoor}）。</li>
  * <li>§11.3：來源 role 不是 OVERWORLD、選中 NEW／EXISTING 的 MEASURED 不提交，先以保留式 recovery 到 DORMANT，再 checked 終局取消（INFO）。</li>
  * <li>§12：開服時就是 PASSAGE_READY 的 record 直接 checked 終局（{@code PASSAGE_ENDED}），門在下一個 tick 改為一般開門。</li>
  * </ul>
  * 註冊順序見 {@link #initialize()}；每個 session 的處理都在 {@link #step} 裡個別隔離例外，例外不會從 {@code END_SERVER_TICK} 拋出。
  * 終局與提交失敗的 WARN 由這裡依 (session, 寫入種類, {@link FailureText#dedupeKey}) 去重，成功時清除；正常結束（SOURCE fast path、§11.3 的取消、
- * 開服時通道的結束）一律記 INFO。原艙門的攔截（PREPARE、PASSAGE_READY 期間）屬 F4b-3 的下一個 commit 與 F5。
+ * 開服時通道的結束、PREPARE 期間參與者關門）一律記 INFO。PASSAGE_READY 期間的門（§10.5）屬 F5，接在同一個 {@link #useDoor}。
  * 這裡的每一則 log 都帶 {@link #LOG_MARKER}（不屬於任何 session 的帶子 marker {@link #TICK_LOG_MARKER}）。
  */
 public final class CollapseService {
@@ -152,7 +155,9 @@ public final class CollapseService {
      */
     private final Map<UUID, DestinationTicket> destinations = new HashMap<>();
     private String tickWarning, tickWarningText;
-    // 每個 tick 開頭由 refreshContext 取得；只在 server thread 使用。
+    /** 原艙門的攔截丟出例外時的去重鍵（{@link #door}）。 */
+    private String doorUseWarning;
+    // 每個 tick 開頭（以及原艙門的攔截開頭）由 refreshContext 取得；只在 server thread 使用。
     private SessionRecoveryState journal;
     private CorridorPageManager pages;
     private SuperpositionSessionManager sessions;
@@ -184,6 +189,8 @@ public final class CollapseService {
         ServerLifecycleEvents.SERVER_STOPPED.register(INSTANCES::remove);
         // 每個 server instance 一個 resolver（F4a fix round 2，m-1）：停服時移除，重開世界拿到新的 resolver（物化額度重置）。
         ServerLifecycleEvents.SERVER_STOPPED.register(DestinationResolver::release);
+        // F4b-3：原艙門的攔截（spec §7、§7.3）經 chamber 定義的 port 交給這裡，排在 ChamberDoorService 之前（chamber 不 import collapse）。
+        ChamberCollapsePort.installDoors(CollapseService::useDoor);
     }
 
     private static void onStarted(MinecraftServer server) {
@@ -1183,6 +1190,151 @@ public final class CollapseService {
                 view.sessionUuid(), view.chamberUuid(), view.state());
     }
 
+    /** 玩家與這座原艙的關係（{@link #doorAction}）。 */
+    enum DoorUser {
+        /** 這個 session 的原參與者（不論在艙內或艙外；攔截只看原艙這一側的門）。 */
+        PARTICIPANT,
+        /** 非參與者，bbox 與 interior 相交（在艙內，含跨在門口的人）。 */
+        INSIDER,
+        /** 非參與者，在艙外。 */
+        OUTSIDER
+    }
+
+    /** 原艙門的攔截對一次開關門的處置（{@link #doorAction}）。 */
+    enum DoorAction {
+        /** 照一般門的邏輯切換（不屬於塌縮流程，或門本來就是一般狀態的階段）。 */
+        PASS,
+        /** 拒絕、不改門。 */
+        REFUSE,
+        /** 艙內的非參與者：門改為一般開門讓他離開，塌縮不結束、不改變階段。 */
+        OPEN_FOR_INSIDER,
+        /** PREPARE 期間參與者開關門：先 checked 終局、再關門（門口有 entity 時一般開門）。 */
+        END_AND_CLOSE
+    }
+
+    /**
+     * 原艙門的攔截規則（純函式；spec §7 :336、§7.3「PREPARE 期間的開關門」，F4b-3 補充第 2 點）。{@code prepareOwnsDoor} 是上一次推導在 PREPARE，而且 PREPARE 沒有
+     * 暫停（沒有被拒而待重試的 SEALED 寫入、沒有隔離）：
+     * <ul>
+     * <li>COLLAPSING、目的地是 UNIVERSE、PREPARE 擁有原艙門：roll-forward 尚未確認 → 拒絕；參與者 → 終局再關門；艙內的非參與者 → 一般開門；艙外的非參與者 → 拒絕。</li>
+     * <li>PASSAGE_READY：roll-forward 尚未確認 → 拒絕（§7 :336）；其餘屬 F5（§10.5），目前照一般門的邏輯（F5 之前執行期間不會出現 PASSAGE_READY，開服時的由 §12 在第一個
+     *     tick 終局）。</li>
+     * <li>其他（SEALED、門本來就是一般狀態的階段、SOURCE、M1–M4 的狀態）→ 照一般門的邏輯（§11.2：SEALED 時任何玩家都可以照一般方式開門；§3 詮釋 3）。</li>
+     * </ul>
+     */
+    static DoorAction doorAction(SessionState viewState, boolean universe, boolean rollForwardPending, boolean prepareOwnsDoor, DoorUser user) {
+        Objects.requireNonNull(viewState, "viewState");
+        Objects.requireNonNull(user, "user");
+        if (viewState == SessionState.PASSAGE_READY) return rollForwardPending ? DoorAction.REFUSE : DoorAction.PASS;
+        if (viewState != SessionState.COLLAPSING || !universe || !prepareOwnsDoor) return DoorAction.PASS;
+        if (rollForwardPending) return DoorAction.REFUSE;
+        return switch (user) {
+            case PARTICIPANT -> DoorAction.END_AND_CLOSE;
+            case INSIDER -> DoorAction.OPEN_FOR_INSIDER;
+            case OUTSIDER -> DoorAction.REFUSE;
+        };
+    }
+
+    /** {@link ChamberCollapsePort.Doors} 的實作（{@link #initialize} 註冊）：這個 server 沒有塌縮流程（例如開服時讀不到 journal）時不攔截。 */
+    private static ChamberCollapsePort.DoorUse useDoor(ServerWorld world, ChamberFrame frame, PlayerEntity player) {
+        var service = INSTANCES.get(world.getServer());
+        return service == null ? ChamberCollapsePort.DoorUse.PASS : service.door(world, frame, player);
+    }
+
+    /**
+     * 一次開關原艙門的攔截（玩家互動的封包處理裡、server thread 上，排在門切換之前）。找出以這座艙為原艙的 session，依 collapse view 與 {@link #doorAction} 處置。
+     * 不丟出例外：
+     * <ul>
+     * <li>讀不到 journal（不健康）時不攔截、照一般門的邏輯（記 DEBUG）：這時塌縮流程本身也不推進（{@link #tick} 記 tick 層級的 WARN），而 M1–M4 的門行為不得因此
+     *     改變；照一般門切換只會讓門變成一般狀態，不會把人困住。</li>
+     * <li>處置途中（終局、改門）失敗時拒絕、不改門，依原因去重記 WARN；PREPARE 的門仍由每個 tick 的 {@link #prepareDoor} 維持（艙內有非參與者時照樣改為一般開門）。</li>
+     * </ul>
+     */
+    private ChamberCollapsePort.DoorUse door(ServerWorld world, ChamberFrame frame, PlayerEntity player) {
+        SessionRecoveryRecord view;
+        Track track;
+        DoorUser user;
+        DoorAction action;
+        try {
+            if (!server.isOnThread() || !refreshContext()) return ChamberCollapsePort.DoorUse.PASS;
+            view = sessionAt(world, frame);
+            if (view == null) return ChamberCollapsePort.DoorUse.PASS;
+            var sid = view.sessionUuid();
+            track = tracks.get(sid);
+            boolean owns = track != null && track.preparing && track.pendingSeal == null && !journal.quarantinedSessions().contains(sid);
+            boolean universe = view.state().collapseState() && view.collapse().destination() instanceof CollapseDestination.Universe;
+            user = participates(view, player.getUuid()) ? DoorUser.PARTICIPANT
+                    : !player.isSpectator() && player.getBoundingBox().intersects(ChamberGeometry.interiorBox(frame)) ? DoorUser.INSIDER : DoorUser.OUTSIDER;
+            action = doorAction(view.state(), universe, journal.rollForwardPending(sid), owns, user);
+        } catch (RuntimeException unreadable) {
+            LOGGER.debug(TICK_LOG_MARKER, "原艙門的攔截讀不到 journal，這次不攔截、照一般門的邏輯：frame={}：{}", frame, FailureText.describe(unreadable));
+            return ChamberCollapsePort.DoorUse.PASS;
+        }
+        try {
+            var sid = view.sessionUuid();
+            doorUseWarning = null;
+            return switch (action) {
+                case PASS -> ChamberCollapsePort.DoorUse.PASS;
+                case REFUSE -> {
+                    LOGGER.debug(LOG_MARKER, "原艙門的開關被拒、不改門：session={} chamber={} 玩家={} 身分={}", sid, view.chamberUuid(), player.getUuid(), user);
+                    yield ChamberCollapsePort.DoorUse.REFUSED;
+                }
+                case OPEN_FOR_INSIDER -> openForInsider(view, world, frame, player);
+                case END_AND_CLOSE -> endByParticipant(view, track, player);
+            };
+        } catch (RuntimeException failure) {
+            var key = FailureText.dedupeKey(failure);
+            if (!key.equals(doorUseWarning))
+                LOGGER.warn(LOG_MARKER, "原艙門的攔截在處置途中丟出例外，這次拒絕、不改門：session={} chamber={} 玩家={} 處置={}：{}", view.sessionUuid(), view.chamberUuid(),
+                        player.getUuid(), action, FailureText.describe(failure), failure);
+            doorUseWarning = key;
+            return ChamberCollapsePort.DoorUse.REFUSED;
+        }
+    }
+
+    /** 以這座艙為原艙的 session 的 collapse view（依 world key、Controller 位置與朝向）；沒有時為 null。 */
+    private SessionRecoveryRecord sessionAt(ServerWorld world, ChamberFrame frame) {
+        var key = world.getRegistryKey().getValue();
+        for (var record : journal.flushedRecords().values()) {
+            var origin = record.origin();
+            if (origin.worldKey().equals(key) && origin.controllerPos().equals(frame.controllerPos()) && origin.facing() == frame.outwardFacing())
+                return journal.collapseView(record.sessionUuid()).orElse(record);
+        }
+        return null;
+    }
+
+    /** 艙內的非參與者開關門（§7.3）：門改為一般開門讓他離開，塌縮不結束、不改變階段；他離開之後 {@link #prepareDoor} 依套用量子膜的條件重新判斷。 */
+    private ChamberCollapsePort.DoorUse openForInsider(SessionRecoveryRecord view, ServerWorld world, ChamberFrame frame, PlayerEntity player) {
+        var result = new ChamberDoorService().applyTarget(world, frame, ChamberDoorService.DoorState.OPEN);
+        LOGGER.info(LOG_MARKER, "PREPARE 期間艙內的非參與者開關門：原艙門改為一般開門（{}），塌縮不結束；他離開之後依套用量子膜的條件重新判斷：session={} chamber={} 玩家={}",
+                result.outcome(), view.sessionUuid(), view.chamberUuid(), player.getUuid());
+        return ChamberCollapsePort.DoorUse.HANDLED;
+    }
+
+    /**
+     * PREPARE 期間參與者在原艙這一側開關門（§7.3、設計 §20.4）：先 checked 終局（{@code PREPARE_DOOR_CLOSED}；不重抽，目的宇宙在 RESOLVE 已配置、物化並 discovered），
+     * 再把門改為關閉（門口有 entity 時一般開門，{@link DoorGoal#CLOSE_AFTER_TERMINAL}），之後刷新 Controller。終局之後釋放 runtime、來源與目的世界的 ticket
+     * （{@link #terminated}）。寫入前 current 必須等於 flushed，也要在 per-session 退避期之外；終局沒有完成時記 WARN、退避，拒絕、不改門（§5）。
+     */
+    private ChamberCollapsePort.DoorUse endByParticipant(SessionRecoveryRecord view, Track track, PlayerEntity player) {
+        var sid = view.sessionUuid();
+        if (!view.equals(journal.records().get(sid)) || !track.backoff.ready(now)) {
+            LOGGER.debug(LOG_MARKER, "PREPARE 期間參與者關門，但 current 不等於 flushed 或在退避期內：這次拒絕、不改門：session={} 玩家={}", sid, player.getUuid());
+            return ChamberCollapsePort.DoorUse.REFUSED;
+        }
+        var result = journal.terminate(server, view, TerminalOrigin.PREPARE_DOOR_CLOSED);
+        if (!result.removed()) {
+            terminalFailed(view, track, "PREPARE 期間參與者關門的終局", result);
+            return ChamberCollapsePort.DoorUse.REFUSED;
+        }
+        terminated(view);
+        LOGGER.info(LOG_MARKER, "PREPARE 期間參與者關門，塌縮已結束（checked 終局，正常結束；不重抽，目的宇宙保留）：session={} chamber={} 目的地={} 玩家={}", sid,
+                view.chamberUuid(), describe(view.collapse().destination()), player.getUuid());
+        queueDoor(view, 0, DoorGoal.CLOSE_AFTER_TERMINAL);
+        refresh(view);
+        return ChamberCollapsePort.DoorUse.HANDLED;
+    }
+
     // ---- 共用 ----
 
     /** checked 終局讀回確認之後：釋放 runtime 與來源 ticket（spec §5）與目的世界的 ticket（§9.1），不再追蹤這個 session。 */
@@ -1302,7 +1454,8 @@ public final class CollapseService {
      * <li>終局之後的一般開門：原艙已開始新的 session（presence 不是 NONE）時，門屬於新的 session，不再套用。</li>
      * <li>進入 SEALED 的關門（§11.2）：這個 session 的 collapse view 已不是 SEALED（重試回到 COLLAPSING，或已終局）時不再套用。每次嘗試都重新
      *     檢查門口：25 格門內有任何 entity 的 bbox 時改為一般開門（§7.3），不把門關在任何人身上。</li>
-     * <li>會讓門變成有碰撞的關門（SEALED），要等門口的 entity storage 載入之後才判斷門口（重啟或 chunk 重新載入之後 entity 是非同步載入的）；
+     * <li>PREPARE 期間參與者關門的終局之後的關門（F4b-3）：同終局之後的一般開門，原艙已開始新的 session 時不再套用；門口的規則同上。</li>
+     * <li>會讓門變成有碰撞的兩種關門（SEALED、終局之後），都要等門口的 entity storage 載入之後才判斷門口（重啟或 chunk 重新載入之後 entity 是非同步載入的）；
      *     等待期間不寫入、不退避。</li>
      * <li>PREPARE 結束或暫停之後的一般開門（F4b-3）：一律套用（沒有碰撞）；PREPARE 再次擁有門時由 {@link #prepareDoor} 移除。</li>
      * <li>重新套用的量子膜正規化（F4b-3）：COLLAPSING 已不是這個 session 的 collapse view 時不再套用；門沒有量子膜時不寫入、完成；有時改為一般開門。</li>
@@ -1311,9 +1464,11 @@ public final class CollapseService {
      */
     private void applyDoor(PendingDoor door) {
         if (now < door.notBefore || !door.backoff.ready(now)) return;
-        if (door.goal == DoorGoal.OPEN_AFTER_TERMINAL && sessions.presence(server, door.chamber) != ChamberSessionGateway.Presence.NONE) {
+        if ((door.goal == DoorGoal.OPEN_AFTER_TERMINAL || door.goal == DoorGoal.CLOSE_AFTER_TERMINAL)
+                && sessions.presence(server, door.chamber) != ChamberSessionGateway.Presence.NONE) {
             doors.remove(door.chamber);
-            LOGGER.info(LOG_MARKER, "原艙已開始新的 session，不再把門改為一般開門：chamber={} 先前 session={}", door.chamber, door.session);
+            LOGGER.info(LOG_MARKER, door.goal == DoorGoal.OPEN_AFTER_TERMINAL ? "原艙已開始新的 session，不再把門改為一般開門：chamber={} 先前 session={}"
+                    : "原艙已開始新的 session，不再套用終局之後的原艙門：chamber={} 先前 session={}", door.chamber, door.session);
             return;
         }
         if (door.goal == DoorGoal.CLOSE_ON_SEALED
@@ -1332,7 +1487,7 @@ public final class CollapseService {
         ChamberDoorService.DoorState target;
         switch (door.goal) {
             case OPEN_AFTER_TERMINAL, OPEN_ON_LEAVE -> target = ChamberDoorService.DoorState.OPEN;
-            case CLOSE_ON_SEALED -> {
+            case CLOSE_ON_SEALED, CLOSE_AFTER_TERMINAL -> {
                 if (!doorwayEntitiesLoaded(world, door.frame)) return;
                 target = sealedDoor(doorwayOccupied(world, door.frame));
             }
@@ -1631,12 +1786,13 @@ public final class CollapseService {
     private record DestinationTicket(ServerWorld world, List<ChunkPos> chunks) { }
 
     /**
-     * 待套用門的目標：終局之後的一般開門，進入 SEALED 時的關門（門口有 entity 時一般開門）；F4b-3 另加 PREPARE 結束或暫停之後的一般開門、重新套用時的量子膜
-     * 正規化，以及 PREPARE 每個 tick 的原艙門（{@link Track#membrane}，不排入待套用的門）。{@code pending}／{@code done} 是 log 的字句。
+     * 待套用門的目標：終局之後的一般開門，進入 SEALED 時的關門（門口有 entity 時一般開門）；F4b-3 另加 PREPARE 期間參與者關門的終局之後的關門、PREPARE 結束或暫停
+     * 之後的一般開門、重新套用時的量子膜正規化，以及 PREPARE 每個 tick 的原艙門（{@link Track#membrane}，不排入待套用的門）。{@code pending}／{@code done} 是 log 的字句。
      */
     enum DoorGoal {
         OPEN_AFTER_TERMINAL("終局之後原艙門還沒改為一般開門", "原艙門已改為一般開門"),
         CLOSE_ON_SEALED("進入 SEALED 之後原艙門還沒套用（關門；門口有 entity 時一般開門）", "進入 SEALED 之後的原艙門已套用"),
+        CLOSE_AFTER_TERMINAL("PREPARE 期間參與者關門：終局之後原艙門還沒套用（關門；門口有 entity 時一般開門）", "PREPARE 期間參與者關門：終局之後的原艙門已套用"),
         OPEN_ON_LEAVE("PREPARE 結束或暫停之後原艙門還沒改為一般開門", "PREPARE 結束或暫停之後原艙門已改為一般開門"),
         NORMALIZE("重新套用：原艙門的量子膜還沒改為一般開門", "重新套用：原艙門的量子膜已改為一般開門"),
         PREPARE_MEMBRANE("PREPARE 的原艙門還沒套用（sealed 量子膜，或門口有人、艙內有非參與者時的一般開門）", "PREPARE 的原艙門已套用");

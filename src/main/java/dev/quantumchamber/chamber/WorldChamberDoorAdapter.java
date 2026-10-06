@@ -3,6 +3,7 @@ package dev.quantumchamber.chamber;
 import dev.quantumchamber.registry.ModBlocks;
 import java.util.Objects;
 import net.minecraft.block.BlockState;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import org.jetbrains.annotations.Nullable;
@@ -17,7 +18,16 @@ final class WorldChamberDoorAdapter {
 
     private WorldChamberDoorAdapter() {}
 
-    static Result toggle(ServerWorld world, WorldChamberBlockView view, ChamberFrame frame) {
+    /**
+     * 玩家開關原艙門（bulkhead 與 Controller 的 {@code onUse} 都經這裡）。先交給 M5 塌縮流程的攔截（{@link ChamberCollapsePort#doors()}，M5 spec §7、§7.3；
+     * 排在 {@link ChamberDoorService} 之前）：攔截處理了就回 {@link Result#INTERCEPTED}、拒絕就回 {@link Result#REFUSED}，兩者都不切換門；不攔截時照一般門的邏輯切換。
+     */
+    static Result toggle(ServerWorld world, WorldChamberBlockView view, ChamberFrame frame, PlayerEntity player) {
+        switch (ChamberCollapsePort.doors().use(world, frame, player)) {
+            case HANDLED -> { return Result.INTERCEPTED; }
+            case REFUSED -> { return Result.REFUSED; }
+            case PASS -> { }
+        }
         return ChamberPowerCoordinator.deferActivation(() -> toggleDeferred(world, view, frame));
     }
 
@@ -132,6 +142,10 @@ final class WorldChamberDoorAdapter {
     enum Result {
         TOGGLED,
         REJECTED,
-        ROLLBACK_FAILED
+        ROLLBACK_FAILED,
+        /** M5 塌縮流程的攔截已處理這次開關門（門由它改），沒有切換。 */
+        INTERCEPTED,
+        /** M5 塌縮流程的攔截拒絕這次開關門：門不變。 */
+        REFUSED
     }
 }

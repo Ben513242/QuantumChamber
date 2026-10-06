@@ -440,6 +440,40 @@ class CollapseServiceTest {
                 () -> assertTrue(logs.getFirst().message().contains("session=" + SESSION)));
     }
 
+    /**
+     * F4b-3（spec §7 :336、§7.3「PREPARE 期間的開關門」、§11.2、§3 詮釋 3；補充第 2 點）：原艙門的攔截規則。只有 COLLAPSING、目的地是 UNIVERSE、PREPARE 擁有原艙門時
+     * 才依身分處置（參與者終局再關門、艙內的非參與者一般開門、艙外的非參與者拒絕），roll-forward 尚未確認時一律拒絕；PASSAGE_READY 只有 roll-forward 尚未確認時拒絕
+     * （其餘屬 F5）；SEALED、一般狀態的階段、SOURCE 與 M1–M4 的狀態一律照一般門的邏輯。
+     */
+    @Test void doorActionFollowsThePrepareDoorRules() {
+        var cases = new ArrayList<Executable>();
+        for (var state : SessionState.values()) for (boolean universe : new boolean[] {false, true}) for (boolean pending : new boolean[] {false, true})
+            for (boolean owns : new boolean[] {false, true}) for (var user : CollapseService.DoorUser.values()) {
+                CollapseService.DoorAction expected;
+                if (state == SessionState.PASSAGE_READY) expected = pending ? CollapseService.DoorAction.REFUSE : CollapseService.DoorAction.PASS;
+                else if (state != SessionState.COLLAPSING || !universe || !owns) expected = CollapseService.DoorAction.PASS;
+                else if (pending) expected = CollapseService.DoorAction.REFUSE;
+                else expected = switch (user) {
+                    case PARTICIPANT -> CollapseService.DoorAction.END_AND_CLOSE;
+                    case INSIDER -> CollapseService.DoorAction.OPEN_FOR_INSIDER;
+                    case OUTSIDER -> CollapseService.DoorAction.REFUSE;
+                };
+                var row = state + " universe=" + universe + " rollForwardPending=" + pending + " prepareOwnsDoor=" + owns + " " + user;
+                var want = expected;
+                cases.add(() -> assertEquals(want, CollapseService.doorAction(state, universe, pending, owns, user), row));
+            }
+        // 規則本身的幾個錨點（上面的期望值是同一條規則的另一種寫法，這幾列直接寫死）。
+        cases.add(() -> assertEquals(CollapseService.DoorAction.END_AND_CLOSE,
+                CollapseService.doorAction(SessionState.COLLAPSING, true, false, true, CollapseService.DoorUser.PARTICIPANT), "PREPARE 期間參與者關門"));
+        cases.add(() -> assertEquals(CollapseService.DoorAction.REFUSE,
+                CollapseService.doorAction(SessionState.COLLAPSING, true, true, true, CollapseService.DoorUser.PARTICIPANT), "roll-forward 尚未確認時 PREPARE 一律拒絕"));
+        cases.add(() -> assertEquals(CollapseService.DoorAction.PASS,
+                CollapseService.doorAction(SessionState.COLLAPSING, true, true, false, CollapseService.DoorUser.OUTSIDER), "一般狀態的階段照一般門的邏輯"));
+        cases.add(() -> assertEquals(CollapseService.DoorAction.PASS,
+                CollapseService.doorAction(SessionState.SEALED, true, true, true, CollapseService.DoorUser.OUTSIDER), "SEALED 任何玩家都可以照一般方式開門"));
+        assertAll(cases);
+    }
+
     /** F4b-3（spec §7.3「套用量子膜的條件」；補充第 1、6 點）：門口沒有 entity、艙內沒有非參與者時才是 sealed 量子膜（軸依朝向），否則一般開門。 */
     @Test void membraneIsSealedOnlyWithAClearDoorwayAndNoNonParticipantInside() {
         var cases = new ArrayList<Executable>();

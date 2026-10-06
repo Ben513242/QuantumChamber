@@ -152,8 +152,9 @@ public final class QuantumBulkheadBlock extends Block implements FluidFillable {
         ChamberLocator locator = new ChamberLocator(new ChamberDetector());
         var frame = locator.findFrame(view, pos);
         if (frame.isPresent() && world instanceof ServerWorld serverWorld) {
-            if (WorldChamberDoorAdapter.toggle(serverWorld, view, frame.get())
-                    == WorldChamberDoorAdapter.Result.ROLLBACK_FAILED) return ActionResult.FAIL;
+            // M5 塌縮流程的攔截在 toggle 裡、門切換之前（spec §7.3）；被拒時門不變。
+            var result = WorldChamberDoorAdapter.toggle(serverWorld, view, frame.get(), player);
+            if (result == WorldChamberDoorAdapter.Result.ROLLBACK_FAILED || result == WorldChamberDoorAdapter.Result.REFUSED) return ActionResult.FAIL;
         }
         return ActionResult.SUCCESS;
     }
