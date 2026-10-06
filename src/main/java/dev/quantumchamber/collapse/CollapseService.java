@@ -527,8 +527,9 @@ public final class CollapseService {
     /**
      * 預載完成之後的投影（spec §6.5、§9.2；F4b-1 交下的呼叫順序），每個 tick 從權威重新推導：
      * <ol>
-     * <li>projection ledger：未確認的寫入先收斂（以權威為單位退避）；仍未確認、損壞或讀不到時，以結果帶的原因進 SEALED（未確認與寫入失敗是
-     *     {@code PROJECTION_FAILED}）。沒有這個 (chamber, UniverseId) 的 entry 時做 §6.5 的實體交叉檢查：目的地的投影 Controller 位置已有 Controller 就是
+     * <li>projection ledger：未確認的寫入先收斂（以權威為單位退避）；仍未確認時等下一個 tick（可能是別的 session 的寫入：只重試收斂、不做新決策，也不進
+     *     SEALED；F4b-2 fix round 1，quality Q-M1），損壞或讀不到時以結果帶的原因進 SEALED。沒有這個 (chamber, UniverseId) 的 entry 時做 §6.5 的實體交叉檢查：
+     *     目的地的投影 Controller 位置已有 Controller 就是
      *     {@code PROJECTION_CONFLICT}，不寫 PENDING、不清 interior。已有 entry（PENDING 或 COMPLETE）時不做這個檢查。</li>
      * <li>§9.2 的衝突：目的 volume 與另一座艙的 COMPLETE 投影相交 → {@code PROJECTION_CONFLICT}，不覆寫。</li>
      * <li>PENDING：一律以 {@code writeProjection(PENDING)} 取得 site 驗證（plan Step 1 第 4 組；不直接拿查到的 COMPLETE 跳過驗證）：新 key 是 checked 寫入，
@@ -552,6 +553,12 @@ public final class CollapseService {
         var authorities = CollapseAuthorities.get(server);
         authorities.convergeIfNeeded(CollapseAuthorities.Authority.PROJECTION_LEDGER);
         var known = authorities.projection(view.chamberUuid(), id);
+        if (known.status() == CollapseAuthorities.Lookup.Status.UNCONFIRMED) {
+            // F4b-2 fix round 1（quality Q-M1，controller 裁定）：未確認的寫入可能是別的 session 的；收斂之前只重試收斂、不做新決策（spec §6 收斂規則第 2 點），
+            // 也不進 SEALED。只有本 session 自己的 checked 寫入失敗才進 SEALED（下面的 PENDING 與 COMPLETE）。
+            prepareWait(view, progress, "projection ledger 有尚未確認的寫入（收斂之前不做新決策）");
+            return;
+        }
         if (!known.succeeded()) {
             seal(view, track, known.sealedReason().orElseThrow(), known.failure().orElseThrow());
             return;

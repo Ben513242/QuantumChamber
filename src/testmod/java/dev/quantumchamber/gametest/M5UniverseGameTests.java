@@ -2027,6 +2027,70 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F4b-2 fix round 1（quality Q-M1，controller 裁定；spec §6 收斂規則第 2 點：未確認期間只重試收斂、不做新決策）：projection ledger 有另一座艙尚未確認的寫入時，
+     * PREPARE 等待、不進 SEALED。（創造模式、不受重力的）玩家 Q 站在宇宙 U 的投影 volume 裡，擋住第一次寫入；本艙的 PENDING 確認之後，test 以 checked 寫入替另一座
+     * （不存在的）艙在 U 的遠處寫一筆 PENDING，讀回受控失敗一次（testmod 的 {@code CheckedNbtFileReadFaultMixin}）→ WRITE_FAILED、權威未確認（以權威為單位退避
+     * 200 tick）。這段期間本 session 的 projection 查詢回 UNCONFIRMED：不進 SEALED（沒有 SEALED 的 WARN／ERROR，record 仍是 COLLAPSING），不寫方塊。權威由塌縮
+     * 流程自己的收斂（{@code convergeIfNeeded}）確認之後，Q 離開，寫入、checkpoint、COMPLETE，準備完成；另一座艙的 PENDING 留在 ledger（收斂帶著它）。只有本
+     * session 自己的 checked 寫入失敗才進 SEALED（T-PF）。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_unconfirmed", tickLimit = 1200)
+    public void prepare_waits_while_another_projection_write_is_unconfirmed(TestContext context) {
+        begin(context, "prepare_waits_while_another_projection_write_is_unconfirmed");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var authorities = CollapseAuthorities.get(server);
+            var connection = new ConnectedGameTestPlayer(context.getWorld());
+            hooks.add(connection::close);
+            var q = connection.player();
+            q.changeGameMode(GameMode.CREATIVE); q.setNoGravity(true);
+            standAt(q, universe, frame, 3.5, 1, 3.5);
+            BooleanSupplier noSeal = () -> M5GameTestSupport.state(journal, sid).equals("COLLAPSING")
+                    && capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "塌縮進入 SEALED", sid.toString()).isEmpty()
+                    && capture.matching(Level.ERROR, sid.toString()).isEmpty();
+            whenTicks(context, resolved + 1, 400, () -> authorities.projection(chamber, id).value()
+                    .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent(), pendingAt -> {
+                var fault = M5GameTestSupport.installCheckedReadFault(context, ProjectionLedger.FILE_NAME, 0, 1, hooks);
+                var other = new ProjectionLedger.Entry(UUID.randomUUID(), id, DimensionRole.OVERWORLD, frame.controllerPos().add(64, 0, 0), frame.outwardFacing(),
+                        ProjectionLedger.Entry.Status.PENDING);
+                var written = authorities.writeProjection(other);
+                witness.put("otherWriteUnconfirmed", written.status() == CollapseAuthorities.WriteResult.Status.WRITE_FAILED && fault.hits() == 1
+                        && authorities.unconfirmed(CollapseAuthorities.Authority.PROJECTION_LEDGER));
+                witness.put("blockedBeforeTheOtherWrite", ProjectionWriter.controllerPresence(universe, frame) == ProjectionWriter.ControllerPresence.ABSENT);
+                at(context, pendingAt + 1, hooks, () -> witness.put("lookupUnconfirmed",
+                        authorities.projection(chamber, id).status() == CollapseAuthorities.Lookup.Status.UNCONFIRMED));
+                // 進了 SEALED 就不必再等收斂：在下面當場判定。
+                whenTicks(context, pendingAt + 2, 300, () -> !noSeal.getAsBoolean() || !authorities.unconfirmed(CollapseAuthorities.Authority.PROJECTION_LEDGER),
+                        converged -> {
+                    witness.put("noSealWhileUnconfirmed", noSeal.getAsBoolean());
+                    witness.put("nothingWrittenWhileUnconfirmed", ProjectionWriter.controllerPresence(universe, frame) == ProjectionWriter.ControllerPresence.ABSENT);
+                    witness.put("convergedAfterTheAuthorityBackoff", !authorities.unconfirmed(CollapseAuthorities.Authority.PROJECTION_LEDGER)
+                            && converged - pendingAt >= 190 && fault.hits() == 1);
+                    context.assertTrue(!witness.containsValue(false), "另一座艙的寫入未確認期間：" + witness + " record=" + M5GameTestSupport.state(journal, sid));
+                    standAt(q, universe, frame, 3.5, 1, -4.5);
+                    whenTicks(context, converged + 1, 100, () -> !prepared(capture, sid).isEmpty(), ready -> {
+                        witness.put("preparedAfterTheConvergence", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty()
+                                && authorities.projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
+                        witness.put("otherPendingKept", authorities.projection(other.chamberUuid(), id).value().filter(other::equals).isPresent());
+                        witness.put("stillNoSeal", noSeal.getAsBoolean() && readyStubWarnings(capture, sid) == 1);
+                        LOGGER.info("M5_PREPARE_UNCONFIRMED converged={} ready={}", converged - pendingAt, ready - pendingAt);
+                        hooks.release();
+                        context.assertTrue(!witness.containsValue(false), "另一座艙的寫入未確認時：" + witness);
+                        awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    }, () -> "Q 離開之後沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+                }, () -> "projection ledger 沒有收斂：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "本艙的 PENDING 沒有確認：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
     /** 這個 session「已修復 N 格」的 INFO 數（帶 LOG_MARKER）。 */
     private static int repairedInfos(LogCapture capture, UUID sid) {
         return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "已修復", sid.toString()).size();
