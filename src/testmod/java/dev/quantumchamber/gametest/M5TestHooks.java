@@ -49,7 +49,8 @@ import org.slf4j.LoggerFactory;
  * <li>journal put 的拒絕（{@link #JOURNAL_PUT_FAULT}，F4b-3）：{@code SessionJournalPutFaultMixin} 在 {@code SessionRecoveryState.put} 的開頭呼叫
  *     {@link #beforeJournalPut}，注入時丟出例外，checked 提交因此被拒（REJECTED）。由 {@code M5GameTestSupport.installJournalPutFault} 安裝。</li>
  * </ul>
- * 探針、稽核與兩個故障注入各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核與四個故障注入（物化、checked NBT 讀取、投影寫入、journal put）各是一個 {@link Slot}（F4a-0 fix round 1，
+ * quality Q1；F4b-3 fix round 1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {

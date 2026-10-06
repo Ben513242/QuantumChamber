@@ -465,6 +465,13 @@ class CollapseServiceTest {
         // 規則本身的幾個錨點（上面的期望值是同一條規則的另一種寫法，這幾列直接寫死）。
         cases.add(() -> assertEquals(CollapseService.DoorAction.END_AND_CLOSE,
                 CollapseService.doorAction(SessionState.COLLAPSING, true, false, true, CollapseService.DoorUser.PARTICIPANT), "PREPARE 期間參與者關門"));
+        // F4b-3 fix round 1（Nit N-1）：COLLAPSING＋UNIVERSE＋PREPARE 擁有原艙門時的另外兩種身分，以及 PREPARE 不擁有原艙門時的參與者。
+        cases.add(() -> assertEquals(CollapseService.DoorAction.OPEN_FOR_INSIDER,
+                CollapseService.doorAction(SessionState.COLLAPSING, true, false, true, CollapseService.DoorUser.INSIDER), "PREPARE 期間艙內的非參與者一般開門"));
+        cases.add(() -> assertEquals(CollapseService.DoorAction.REFUSE,
+                CollapseService.doorAction(SessionState.COLLAPSING, true, false, true, CollapseService.DoorUser.OUTSIDER), "PREPARE 期間艙外的非參與者被拒"));
+        cases.add(() -> assertEquals(CollapseService.DoorAction.PASS,
+                CollapseService.doorAction(SessionState.COLLAPSING, true, false, false, CollapseService.DoorUser.PARTICIPANT), "PREPARE 不擁有原艙門時參與者照一般門的邏輯"));
         cases.add(() -> assertEquals(CollapseService.DoorAction.REFUSE,
                 CollapseService.doorAction(SessionState.COLLAPSING, true, true, true, CollapseService.DoorUser.PARTICIPANT), "roll-forward 尚未確認時 PREPARE 一律拒絕"));
         cases.add(() -> assertEquals(CollapseService.DoorAction.PASS,

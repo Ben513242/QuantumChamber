@@ -13,8 +13,9 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
- * F4b-3 Step 0（F4b-1 quality Q-m1）：{@code chamber} package 不得依賴 {@code collapse} package。跨 package 一律走反轉：{@code collapse} 實作並註冊
- * {@code chamber} 定義的介面（{@code ChamberCollapsePort}；比照 {@code ChamberSessions.gateway()} 與 {@code ChamberProtectionService.registerAdditionalGuard}）。
+ * F4b-3 Step 0（F4b-1 quality Q-m1）：{@code chamber} package 的原始碼不直接參考 {@code collapse} package。跨 package 一律走反轉：{@code collapse} 實作並註冊
+ * {@code chamber} 定義的介面（{@code ChamberCollapsePort}；比照 {@code ChamberSessions.gateway()} 與 {@code ChamberProtectionService.registerAdditionalGuard}），
+ * 所以執行期間 {@code chamber} 仍經這個介面呼叫 {@code collapse} 註冊的實作；守門只約束原始碼裡的直接參考（F4b-3 fix round 1，Nit N-2）。
  * 掃描 {@code src/main/java/dev/quantumchamber/chamber/} 下所有 .java（含子 package）的原始碼：比對前以 {@link CollapseLogMarkerGuardTest#mask} 把註解換成空白、
  * 字串與字元常值的內容遮掉，之後不得出現 {@code dev.quantumchamber.collapse}（import、static import、完整限定名稱都算；點的前後可以有空白）。
  * <p>不處理（寫明理由）：以字串經反射載入 collapse 的類別（字串已遮掉）——chamber 沒有這種寫法，要禁止它需要另一種守門；只約束 main 的原始碼，test 與

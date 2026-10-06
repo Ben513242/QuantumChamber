@@ -144,12 +144,19 @@ public final class CollapseService {
     private static boolean initialized;
 
     private final MinecraftServer server;
-    /** 開服 attach 當下已在 journal 的 session：DORMANT 與 SEALED 重試的「開服之後第一次觀察到原參與者在艙內」只對它們成立（§7.1、§11.2）。 */
+    /**
+     * 開服 attach 當下已在 journal 的 session：DORMANT 與 SEALED 重試的「開服之後第一次觀察到原參與者在艙內」只對它們成立（§7.1、§11.2）；原艙門的重新套用也用它
+     * （{@link #doorReloaded} 的「重啟之後第一次觀察」與 {@link #reapplyCause}，§7.3，F4b-3）。
+     */
     private final Set<UUID> startupSessions;
     /** 開服時就是 PASSAGE_READY 的 session（§12）；F5 之前執行期間不會產生 PASSAGE_READY。 */
     private final Set<UUID> startupPassages;
     private final Map<UUID, Track> tracks = new HashMap<>();
-    /** 還沒套用成功的原艙門（以 chamber 為 key）：終局之後的一般開門，或進入 SEALED 時的關門。 */
+    /**
+     * 還沒套用成功的原艙門（以 chamber 為 key，{@link DoorGoal}）：終局之後的一般開門（{@code OPEN_AFTER_TERMINAL}）、進入 SEALED 時（含重新套用）的關門
+     * （{@code CLOSE_ON_SEALED}）、PREPARE 期間參與者關門的終局之後的關門（{@code CLOSE_AFTER_TERMINAL}）、PREPARE 結束或暫停之後的一般開門（{@code OPEN_ON_LEAVE}）、
+     * 重新套用時的量子膜正規化（{@code NORMALIZE}）。PREPARE 每個 tick 的原艙門不在這裡（{@link Track#membrane}）。
+     */
     private final Map<UUID, PendingDoor> doors = new LinkedHashMap<>();
     /**
      * 每個 session 在目的世界持有的預載 ticket（§9.1，以 session 為 key，不持久化）。在 PREPARE 期間結束（閘門失效）、進入 SEALED、終局時釋放；通道結束屬 F5
@@ -613,7 +620,7 @@ public final class CollapseService {
      * <li>預載還沒全部 FULL：等下一個 tick。之後的步驟見 {@link #project}。</li>
      * </ol>
      * 等待（預載、玩家擋住寫入、checkpoint 未就緒）從進入 PREPARE 起超過 {@value #WAIT_WARN_TICKS} ticks 時記一次 WARN，然後繼續等（§9.1：沒有劇情上的
-     * 逾時、不重抽）。準備完成之後停在 F5 之前（{@link #prepared}），之後的 tick 什麼都不做，目的世界的 ticket 繼續持有。
+     * 逾時、不重抽）。準備完成之後停在 F5 之前（{@link #prepared}），之後的 tick 只判斷原艙門（見下一段），目的世界的 ticket 繼續持有。
      * <p>每個 PREPARE 的 tick 先判斷原艙門（{@link #prepareDoor}：「套用量子膜的條件」，§7.3；F4b-3），再看準備是否已完成：判斷插在
      * {@code if (progress.ready) return;} 之前（F4b-2 fix round 1，quality Q-M4），所以準備完成之後的 tick 也每個 tick 重新判斷門。
      */
@@ -786,7 +793,8 @@ public final class CollapseService {
 
     /**
      * 準備完成（預載與投影都已完成；F4b-2 的停點，比照 F4a 的 PREPARE stub）：不提交 PASSAGE_READY（F5）。記一則 INFO；每個 session 在本 instance 只記一次
-     * WARN「通道尚未實作（F5）」。目的世界的 ticket 繼續持有，直到閘門失效、SEALED 或終局；之後的 PREPARE tick 什麼都不做。門照舊是一般狀態。
+     * WARN「通道尚未實作（F5）」。目的世界的 ticket 繼續持有，直到閘門失效、SEALED 或終局。之後的 PREPARE tick 不再預載或投影，只判斷原艙門（{@link #prepareDoor}，
+     * F4b-3）：每個 tick 依套用量子膜的條件，門是 sealed 量子膜，或（門口有人、艙內有非參與者時）一般開門。
      */
     private void prepared(SessionRecoveryRecord view, Track track, Prepare progress, ProjectionWriter.Mode mode, int written) {
         progress.ready = true;
