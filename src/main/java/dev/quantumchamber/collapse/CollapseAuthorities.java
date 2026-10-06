@@ -509,6 +509,39 @@ public final class CollapseAuthorities {
     }
 
     /**
+     * 已確認的 projection entries（spec §6.5；F4b-1：§9.3 的投影保護索引在開服時由它建立），依寫入順序、不可變。唯讀，不讀檔。只列已經 checked 讀回確認的
+     * 內容：roll-forward 尚未確認的寫入（current 領先已確認的內容）不在其中，確認之後才出現。
+     * <p>只在權威健康時有意義：初始化失敗或執行期間遺失時（{@link #unhealthy}）丟 {@link IllegalStateException}，不以空清單冒充「沒有投影」；呼叫端先查健康。
+     */
+    public List<ProjectionLedger.Entry> confirmedProjections() {
+        requireThread();
+        var reason = unhealthy(Authority.PROJECTION_LEDGER);
+        if (reason.isPresent()) {
+            throw new IllegalStateException("projection ledger 不健康（" + reason.get() + "），沒有可列舉的已確認內容；呼叫端應先查 unhealthy(PROJECTION_LEDGER)");
+        }
+        return projection.confirmed.entries();
+    }
+
+    /**
+     * 權威健康（spec §9.3 的退化規則；F4b-1，F2b 裁示）：只看初始化結果與執行期間的遺失。健康時為空；否則為這個權威到 SEALED 時的原因——初始化失敗時是
+     * {@link InitResult#sealedReason()}（遺失或損壞為 {@code AUTHORITY_CORRUPT}，IO 為 {@code AUTHORITY_UNREADABLE}），執行期間遺失是 {@code AUTHORITY_CORRUPT}。
+     * <ul>
+     * <li>不看單次呼叫回的 {@code CORRUPT}：單筆既有紀錄不符、ledger 已滿、orphan storage 只讓那一次的決策失敗，不代表整份權威不可信。</li>
+     * <li>未確認的寫入（{@link #unconfirmed}）也不算不健康：那是收斂中的狀態。</li>
+     * <li>只接受三個檔案權威。{@code CATALOG} 沒有「遺失」：它的健康是 M3 的 strict decode（不健康時開服 bootstrap 讓 server 停止，查詢時各 API 回
+     *     {@code CORRUPT}），所以丟 {@link IllegalArgumentException}。</li>
+     * </ul>
+     * 尚未初始化是 caller 錯誤（{@link IllegalStateException}）。唯讀。
+     */
+    public Optional<SealedReason> unhealthy(Authority authority) {
+        requireThread();
+        var slot = slot(Objects.requireNonNull(authority, "authority"));
+        if (init == null) throw new IllegalStateException("M5 authority 尚未初始化");
+        if (!init.succeeded()) return init.sealedReason();
+        return slot.lost == null ? Optional.empty() : Optional.of(SealedReason.AUTHORITY_CORRUPT);
+    }
+
+    /**
      * checked 寫入一筆 projection entry（spec §6.5）。
      * <ul>
      * <li>既有 key 的 Role／ControllerPos／OutwardFacing 必須等於本 session 的來源艙，不符為 {@code CORRUPT}，不改寫。</li>

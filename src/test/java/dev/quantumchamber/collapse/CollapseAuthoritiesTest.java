@@ -489,6 +489,9 @@ class CollapseAuthoritiesTest {
             () -> assertNoTemporaryFiles(save));
         // 上限只限制新的 key：既有 key 的 PENDING→COMPLETE 是原位取代，照常寫入。
         assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(ProjectionLedgerTest.entry(7, Direction.SOUTH, Status.COMPLETE)).status());
+        // F4b-1（spec §9.3、F2b 裁示）：ledger 已滿只讓那一次的新 key 失敗，不讓整份權威不健康，投影保護索引不因此退化。
+        assertEquals(Optional.empty(), authorities.unhealthy(Authority.PROJECTION_LEDGER), "已滿不是不健康");
+        assertEquals(limit, authorities.confirmedProjections().size(), "已確認的內容照常列舉");
     }
 
     // ---- verify 的訊息不得帶隨機暫存檔路徑（Q6：WARN 去重） ----
@@ -607,6 +610,88 @@ class CollapseAuthoritiesTest {
             assertFalse(Files.exists(projectionFile(save)));
             assertEquals(2, logs.messages(Level.ERROR).size(), () -> "每個權威的遺失記一次 ERROR：" + logs.messages(Level.ERROR));
         }
+    }
+
+    // ---- 唯讀列舉與權威健康（F4b-1：spec §9.3 的投影保護索引與退化規則） ----
+
+    /**
+     * 已確認的 projection entries：依寫入順序、不可變；PENDING→COMPLETE 原位取代；roll-forward 尚未確認的寫入（atomic move 已完成、讀回失敗）不在其中，
+     * 收斂確認之後才出現。只讀記憶體：列舉不讀檔。
+     */
+    @Test void confirmedProjectionsListOnlyCheckedEntriesInWriteOrder() throws Exception {
+        var save = save("confirmed-projections");
+        var authorities = initialized(save);
+        var first = pending(existingUniverse());
+        var second = pending(UniverseId.of(UUID.fromString("00000000-0000-4000-8000-0000000000e2")));
+        var empty = authorities.confirmedProjections();
+        assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(first).status());
+        var afterPending = authorities.confirmedProjections();
+        assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(first.withStatus(Status.COMPLETE)).status());
+        var afterComplete = authorities.confirmedProjections();
+        io.failReadback(ProjectionLedger.FILE_NAME);
+        assertEquals(WriteResult.Status.WRITE_FAILED, authorities.writeProjection(second).status(), "fixture：第二筆 roll-forward 尚未確認");
+        int reads = io.reads.size();
+        var whileUnconfirmed = authorities.confirmedProjections();
+        int readsWhileListing = io.reads.size() - reads;
+        boolean unconfirmed = authorities.unconfirmed(Authority.PROJECTION_LEDGER);
+        var healthWhileUnconfirmed = authorities.unhealthy(Authority.PROJECTION_LEDGER);
+        now[0] = 1200; authorities.convergeIfNeeded(Authority.PROJECTION_LEDGER);
+        var afterConverged = authorities.confirmedProjections();
+        assertAll(
+            () -> assertEquals(List.of(), empty, "全新存檔：沒有投影"),
+            () -> assertEquals(List.of(first), afterPending, "PENDING 確認之後列出"),
+            () -> assertEquals(List.of(first.withStatus(Status.COMPLETE)), afterComplete, "COMPLETE 原位取代 PENDING"),
+            () -> assertTrue(unconfirmed, "fixture：權威未確認"),
+            () -> assertEquals(List.of(first.withStatus(Status.COMPLETE)), whileUnconfirmed, "roll-forward 尚未確認的寫入不列出"),
+            () -> assertEquals(0, readsWhileListing, "列舉不讀檔"),
+            () -> assertEquals(Optional.empty(), healthWhileUnconfirmed, "未確認不是不健康"),
+            () -> assertEquals(List.of(first.withStatus(Status.COMPLETE), second), afterConverged, "收斂確認之後依寫入順序列出"),
+            () -> assertThrows(UnsupportedOperationException.class, () -> afterConverged.add(second), "不可變"));
+    }
+
+    /**
+     * 權威健康只看初始化結果與執行期間的遺失（spec §9.3；F2b 裁示）：單筆既有紀錄不符（CORRUPT）與未確認都不算不健康；檔案在執行期間消失是
+     * AUTHORITY_CORRUPT，只影響那一個權威。CATALOG 沒有「遺失」，查詢它是呼叫端錯誤；初始化之前也是。
+     */
+    @Test void healthOnlyFollowsTheInitializationResultAndRuntimeLoss() throws Exception {
+        var save = save("authority-health");
+        var authorities = authorities(save);
+        var beforeInit = outcome(() -> authorities.unhealthy(Authority.PROJECTION_LEDGER));
+        assertTrue(authorities.initialize(SessionRecoveryState::new).succeeded());
+        writeDiscovery(save, M4_RECORD);
+        var healthy = List.of(authorities.unhealthy(Authority.ALLOCATION_LEDGER), authorities.unhealthy(Authority.PROJECTION_LEDGER),
+                authorities.unhealthy(Authority.DISCOVERY));
+        var catalogQuery = outcome(() -> authorities.unhealthy(Authority.CATALOG));
+        // 單筆不符：既有 entry 的 site 不同 → 這一次 CORRUPT，權威仍健康。
+        var site = pending(existingUniverse());
+        assertEquals(WriteResult.Status.WRITTEN, authorities.writeProjection(site).status());
+        var mismatch = authorities.writeProjection(new ProjectionLedger.Entry(CHAMBER, existingUniverse(), DimensionRole.OVERWORLD, CONTROLLER.east(),
+                Direction.NORTH, Status.PENDING));
+        var afterMismatch = authorities.unhealthy(Authority.PROJECTION_LEDGER);
+        var listedAfterMismatch = authorities.confirmedProjections();
+        // 執行期間遺失：projection ledger 檔消失之後的下一次寫入。
+        Files.delete(projectionFile(save));
+        var lost = authorities.writeProjection(pending(UniverseId.of(UUID.fromString("00000000-0000-4000-8000-0000000000e3"))));
+        var afterLoss = List.of(authorities.unhealthy(Authority.ALLOCATION_LEDGER), authorities.unhealthy(Authority.PROJECTION_LEDGER),
+                authorities.unhealthy(Authority.DISCOVERY));
+        var listing = outcome(authorities::confirmedProjections);
+        // discovery 在執行期間消失：下一次使用時判為遺失。
+        Files.delete(discoveryFile(save));
+        var discoveryLost = authorities.appendDiscovery(existingUniverse(), 10, SELECTED_BY);
+        var discoveryHealth = authorities.unhealthy(Authority.DISCOVERY);
+        assertAll(
+            () -> assertInstanceOf(IllegalStateException.class, beforeInit, "初始化之前查詢是呼叫端錯誤：" + beforeInit),
+            () -> assertEquals(List.of(Optional.empty(), Optional.empty(), Optional.empty()), healthy, "初始化成功：三個檔案權威都健康"),
+            () -> assertInstanceOf(IllegalArgumentException.class, catalogQuery, "CATALOG 沒有遺失：呼叫端錯誤：" + catalogQuery),
+            () -> assertEquals(WriteResult.Status.CORRUPT, mismatch.status(), "fixture：單筆不符"),
+            () -> assertEquals(Optional.empty(), afterMismatch, "單筆不符不是不健康"),
+            () -> assertEquals(List.of(site), listedAfterMismatch, "單筆不符之後照常列舉"),
+            () -> assertEquals(WriteResult.Status.CORRUPT, lost.status(), "fixture：檔案消失"),
+            () -> assertEquals(List.of(Optional.empty(), Optional.of(SealedReason.AUTHORITY_CORRUPT), Optional.empty()), afterLoss,
+                    "執行期間遺失：只有 projection ledger 不健康（AUTHORITY_CORRUPT）"),
+            () -> assertInstanceOf(IllegalStateException.class, listing, "遺失之後不列舉：" + listing),
+            () -> assertEquals(Lookup.Status.CORRUPT, discoveryLost.status(), "fixture：discovery 消失"),
+            () -> assertEquals(Optional.of(SealedReason.AUTHORITY_CORRUPT), discoveryHealth, "discovery 在執行期間遺失：不健康"));
     }
 
     @Test void backoffDoublesFrom200To12000AndResets() {
@@ -1136,6 +1221,11 @@ class CollapseAuthoritiesTest {
             assertEquals(Optional.of(reason), authorities.changeCatalogAvailability(existingUniverse(), DesiredAvailability.DISABLED,
                     CollapseAuthorities.WriteDirection.ROLL_FORWARD).sealedReason(), name);
             assertEquals(0, catalog(save).flushes, name + "：不寫出 catalog");
+            // F4b-1（spec §9.3）：初始化失敗時三個檔案權威都不健康，原因是初始化的失敗分類；沒有可列舉的已確認投影（投影保護索引改用退化規則）。
+            for (var authority : List.of(Authority.ALLOCATION_LEDGER, Authority.PROJECTION_LEDGER, Authority.DISCOVERY)) {
+                assertEquals(Optional.of(reason), authorities.unhealthy(authority), name + "：" + authority + " 不健康");
+            }
+            assertThrows(IllegalStateException.class, authorities::confirmedProjections, name + "：不健康時不列舉");
             assertFalse(Files.exists(discoveryFile(save)), name + "：不建立 discovery");
             assertEquals(1, logs.messages(Level.ERROR).size(), name + "：初始化失敗記 ERROR");
             assertNoTemporaryFiles(save);
