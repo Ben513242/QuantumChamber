@@ -2044,6 +2044,372 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    // ---- F4b-3：PREPARE 期間的原艙門 ----
+
+    /**
+     * F4b-3（spec §7.3「套用量子膜的條件」「門口有人時的規則」「PREPARE 期間的開關門」「非參與者不會被困」；plan Step 1 第 11 組；補充第 1、2、6 點）：DORMANT NEW
+     * 收據、參與者 P 在艙內。
+     * <ul>
+     * <li>RESOLVE 之後、第一次閘門評估之前，非參與者 N 進艙：進入 PREPARE 時門維持一般開門（不套用量子膜），準備照常在背景進行（目的世界的 ticket）。N 離開之後下一個
+     *     tick 套用 sealed 量子膜；N 改成旁觀者再進艙，不影響（不含旁觀者）。</li>
+     * <li>準備完成之後（READY stub 的 return 之前仍每個 tick 判斷）：門口出現 entity（盔甲座）→ 一般開門；移走之後 → sealed。</li>
+     * <li>sealed 期間以傳送（等同指令）把 N 送進艙內、在同一個 tick 開門：門當場改為一般開門，塌縮不結束（record 仍是 COLLAPSING、ticket 照樣持有、沒有終局的 INFO）；
+     *     N 離開之後下一個 tick 重新套用 sealed。</li>
+     * <li>艙外的 N 以 bulkhead 或 Controller 開關門：都被拒（ActionResult 不是 accepted），門不變。</li>
+     * <li>log：「套用 sealed 量子膜」與「維持一般開門」的 INFO 這一段 PREPARE 各一則；這個 session 除了「通道尚未實作」之外沒有 WARN／ERROR。</li>
+     * </ul>
+     * catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_membrane", tickLimit = 1200)
+    public void prepare_seals_the_membrane_only_with_a_clear_doorway_and_no_non_participant_inside(TestContext context) {
+        begin(context, "prepare_seals_the_membrane_only_with_a_clear_doorway_and_no_non_participant_inside");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        ServerPlayerEntity n;
+        try {
+            var outsider = new ConnectedGameTestPlayer(world);
+            hooks.add(outsider::close);
+            n = outsider.player();
+            n.setNoGravity(true);
+            moveOutside(n, frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var doorCell = local(frame, 3, 3, 0);
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            moveInside(n, frame);
+            whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1, prepareAt -> {
+                witness.put("plainOpenWithANonParticipantInside", doorAll(world, frame, true, MembraneState.NONE));
+                witness.put("preparingInTheBackground", !M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                moveOutside(n, frame);
+                at(context, prepareAt + 1, hooks, () -> {
+                    witness.put("sealedAfterTheNonParticipantLeft", M5GameTestSupport.doorSealed(world, frame));
+                    n.changeGameMode(GameMode.SPECTATOR);
+                    moveInside(n, frame);
+                });
+                at(context, prepareAt + 3, hooks, () -> {
+                    witness.put("aSpectatorInsideKeepsTheMembrane", M5GameTestSupport.doorSealed(world, frame));
+                    n.changeGameMode(GameMode.SURVIVAL);
+                    moveOutside(n, frame);
+                });
+                whenTicks(context, prepareAt + 4, 500, () -> !prepared(capture, sid).isEmpty(), ready -> {
+                    witness.put("sealedWhenPrepared", M5GameTestSupport.doorSealed(world, frame));
+                    var stand = M5GameTestSupport.doorwayEntity(world, frame, hooks);
+                    at(context, ready + 2, hooks, () -> {
+                        witness.put("plainOpenWithAnEntityInTheDoorwayAfterThePreparation", doorAll(world, frame, true, MembraneState.NONE));
+                        stand.discard();
+                    });
+                    at(context, ready + 4, hooks, () -> witness.put("sealedAgainOnceTheDoorwayIsClear", M5GameTestSupport.doorSealed(world, frame)));
+                    at(context, ready + 5, hooks, () -> {
+                        moveInside(n, frame);
+                        witness.put("insiderOpensAtOnce", interact(world, doorCell, n).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
+                        witness.put("collapseContinues", M5GameTestSupport.state(journal, sid).equals("COLLAPSING")
+                                && !M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && endedByADoor(capture, sid) == 0);
+                        moveOutside(n, frame);
+                    });
+                    at(context, ready + 7, hooks, () -> {
+                        witness.put("resealedAfterTheInsiderLeft", M5GameTestSupport.doorSealed(world, frame));
+                        witness.put("outsiderRefusedAtTheBulkhead", !interact(world, doorCell, n).isAccepted() && M5GameTestSupport.doorSealed(world, frame));
+                        witness.put("outsiderRefusedAtTheController", !interact(world, frame.controllerPos(), n).isAccepted() && M5GameTestSupport.doorSealed(world, frame));
+                        witness.put("stillCollapsing", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && endedByADoor(capture, sid) == 0);
+                        witness.put("oneSealedAndOneOpenInfo", membraneInfos(capture, sid, "原艙門套用 sealed 量子膜") == 1
+                                && membraneInfos(capture, sid, "原艙門維持一般開門") == 1);
+                        witness.put("onlyTheReadyStubWarnAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 1 && readyStubWarnings(capture, sid) == 1
+                                && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                        releaseThenComplete(context, hooks, witness, "量子膜的套用條件與非參與者的門：" + witness, 20,
+                                () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    });
+                }, () -> "沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F4b-3（spec §7.3「PREPARE 期間的開關門」、設計 §20.4；plan Step 1 第 12 組、Review Focus 3；補充第 2 點）：進入 PREPARE、預載還沒完成時，參與者 P 以 bulkhead
+     * 關門 → 當場 checked 終局（{@code PREPARE_DOOR_CLOSED}；current 與 flushed 都沒有這個 session），之後才改門：journal 寫出終局的那一次 flush 開頭，門仍是
+     * sealed 量子膜（flush 探針記下）；終局之後門關上（門口沒有 entity）。不重抽：目的宇宙保留，catalog 有它的 EAGER_ENABLED record、discovery 有它的
+     * gameplay-eligible record、allocation entry 一筆；來源與目的世界的 ticket 當場釋放；INFO「PREPARE 期間參與者關門，塌縮已結束」一則，沒有 WARN／ERROR。
+     * 幾個 tick 之後門仍關著、原艙的 presence 是 NONE。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_close", tickLimit = 600)
+    public void prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept(TestContext context) {
+        begin(context, "prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var atTerminalFlush = new AtomicReference<String>();
+            M5GameTestSupport.installFlushProbe(context, state -> {
+                if (atTerminalFlush.get() == null && !state.records().containsKey(sid))
+                    atTerminalFlush.set(M5GameTestSupport.doorSealed(world, frame) ? "SEALED" : "NOT_SEALED");
+            }, hooks);
+            whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1, prepareAt -> {
+                witness.put("sealedAtThePrepareStart", M5GameTestSupport.doorSealed(world, frame));
+                witness.put("beforeThePreloadCompleted", preloaded(capture, sid).isEmpty());
+                witness.put("participantCloses", interact(world, local(frame, 3, 3, 0), p).isAccepted());
+                witness.put("terminalBeforeTheDoorChanged", "SEALED".equals(atTerminalFlush.get()));
+                witness.put("terminatedAtOnce", !journal.records().containsKey(sid) && !journal.flushedRecords().containsKey(sid));
+                witness.put("doorClosedAfterTheTerminal", doorAll(world, frame, false, MembraneState.NONE));
+                witness.put("ticketsReleasedAtOnce", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                var record = UniverseRegistryState.get(server).flushedRecords().get(id);
+                witness.put("universeKeptInTheCatalog", record != null && record.desiredAvailability() == DesiredAvailability.EAGER_ENABLED
+                        && UniverseLifecycleService.resolveActive(server, id).isPresent());
+                witness.put("universeDiscovered", discovered(server, id));
+                witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
+                witness.put("oneTerminalInfo", endedByADoor(capture, sid) == 1);
+                witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                at(context, prepareAt + 3, hooks, () -> {
+                    witness.put("staysClosed", doorAll(world, frame, false, MembraneState.NONE));
+                    witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                    releaseThenComplete(context, hooks, witness, "PREPARE 一開始參與者關門：" + witness + " atTerminalFlush=" + atTerminalFlush.get(), 20, () -> true);
+                });
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F4b-3（spec §7.3「門口有人時的規則」「PREPARE 期間的開關門」；plan Step 1 第 12 組的「門口有 entity 時改為一般開門」；補充第 6 點）：RESOLVE 之後、PREPARE 之前，門口
+     * 放一座盔甲座：進入 PREPARE 時門維持一般開門（門口有 entity，不套用量子膜）。參與者 P 以 Controller 開關門 → checked 終局，門不關上，維持 {@code open=true}＋
+     * {@code membrane=none}（不把門關在 entity 上）；兩種 ticket 已釋放。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_close_doorway", tickLimit = 600)
+    public void prepare_participant_closing_by_the_controller_with_an_entity_in_the_doorway_leaves_it_open(TestContext context) {
+        begin(context, "prepare_participant_closing_by_the_controller_with_an_entity_in_the_doorway_leaves_it_open");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            M5GameTestSupport.doorwayEntity(world, frame, hooks);
+            whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1, prepareAt -> {
+                witness.put("plainOpenWithAnEntityInTheDoorway", doorAll(world, frame, true, MembraneState.NONE));
+                witness.put("participantClosesByTheController", interact(world, frame.controllerPos(), p).isAccepted());
+                witness.put("terminatedAtOnce", !journal.records().containsKey(sid) && !journal.flushedRecords().containsKey(sid) && endedByADoor(capture, sid) == 1);
+                witness.put("leftPlainOpenNotClosed", doorAll(world, frame, true, MembraneState.NONE));
+                witness.put("ticketsReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                at(context, prepareAt + 3, hooks, () -> {
+                    witness.put("staysPlainOpen", doorAll(world, frame, true, MembraneState.NONE));
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                    releaseThenComplete(context, hooks, witness, "門口有 entity 時參與者以 Controller 關門：" + witness, 20, () -> true);
+                });
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F4b-3（spec §6 :260「restore 類失敗時 PREPARE 中的門依 §7.3 改為一般開門」、§7.3；補充第 4 點，F4b-2 spec re-review M-1）：PREPARE 中進入 SEALED 的寫入在前置
+     * 檢查就被拒（testmod 的 {@code SessionJournalPutFaultMixin}，對這個 session 的 SEALED 拒絕一次；觸發的是第一次投影寫入的受控失敗 → PROJECTION_FAILED）。被拒時
+     * collapsing() 只依 per-session 退避重試這筆寫入、不推導階段：門當場由 sealed 量子膜改回一般開門（INFO「PREPARE 暫停」一則），record 仍是 COLLAPSING，目的世界的
+     * ticket 繼續持有（F4b-2 Q-M4）；退避期間門一直是一般開門。退避（200 tick）之後重試成功：SEALED(PROJECTION_FAILED)，門關上（門口沒有 entity），兩種 ticket
+     * 釋放。put 只被拒一次。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_rejected", tickLimit = 1200)
+    public void prepare_rejected_seal_write_hands_the_door_back_open_until_the_retry_seals_it(TestContext context) {
+        begin(context, "prepare_rejected_seal_write_hands_the_door_back_open_until_the_retry_seals_it");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var write = M5GameTestSupport.installProjectionWriteFault(context, universe.getRegistryKey(), ProjectionWriter.Mode.FIRST_WRITE, 1, hooks);
+            var put = M5GameTestSupport.installJournalPutFault(context, sid, SessionState.SEALED, 1, hooks);
+            whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1, prepareAt -> {
+                witness.put("sealedWhilePreparing", M5GameTestSupport.doorSealed(world, frame));
+                whenTicks(context, prepareAt, 400, () -> put.hits() == 1, rejectedAt -> {
+                    witness.put("writeFaultedOnce", write.hits() == 1);
+                    witness.put("plainOpenWhileTheSealIsRetried", doorAll(world, frame, true, MembraneState.NONE));
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("stillCollapsing", record != null && record.state() == SessionState.COLLAPSING && record.equals(journal.records().get(sid)));
+                    witness.put("destinationTicketKept", !M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    witness.put("oneRejectedWarn", sealWriteWarnings(capture, sid) == 1);
+                    witness.put("onePauseInfo", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "進入 SEALED 的寫入被拒，PREPARE 暫停", sid.toString()).size() == 1);
+                    at(context, rejectedAt + 100, hooks, () -> witness.put("stillPlainOpenDuringTheBackoff", doorAll(world, frame, true, MembraneState.NONE)
+                            && M5GameTestSupport.state(journal, sid).equals("COLLAPSING")));
+                    whenTicks(context, rejectedAt + 101, 260, () -> sealedWith(journal, sid, SealedReason.PROJECTION_FAILED), sealed -> {
+                        witness.put("closedOnceSealed", doorAll(world, frame, false, MembraneState.NONE));
+                        witness.put("ticketsReleasedOnceSealed", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                        witness.put("putRejectedOnlyOnce", put.hits() == 1);
+                        releaseThenComplete(context, hooks, witness, "SEALED 的寫入被拒時的原艙門：" + witness, 20, () -> true);
+                    }, () -> "退避之後沒有進 SEALED：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+                }, () -> "SEALED 的寫入沒有被拒：record=" + M5GameTestSupport.state(journal, sid) + " write=" + write.hits() + " put=" + put.hits(), hooks);
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F4b-3（spec §7.3「門狀態的重新套用」；plan Step 1 第 10 組；補充第 5 點「開服時就是 WAITING：門要是一般開門，不得留下有碰撞的膜」）：RESOLVE 之後、第一次閘門
+     * 評估之前斷電 → WAITING。以授權寫入在門上留下 sealed 量子膜（模擬 sealed 期間 crash 留下的膜），再模擬重啟之後的第一次觀察
+     * （{@code M5GameTestSupport.simulateDoorStartup}；真正跨 JVM 的重啟屬 F6）。塌縮流程觀察到的那個 tick 只排入佇列（INFO 記下套用的 tick N），下一個 tick（tick N）
+     * 才依 collapse view 套用：門改為一般開門（INFO 記下 tick N）。之後不再重新套用（一次性）。恢復供電、P 由艙外再進入 → PREPARE → 依套用量子膜的條件重新套用 sealed。
+     * catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_startup", tickLimit = 900)
+    public void startup_reapplies_a_stale_membrane_in_waiting_once_on_the_next_tick(TestContext context) {
+        begin(context, "startup_reapplies_a_stale_membrane_in_waiting_once_on_the_next_tick");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+            at(context, resolved + 2, hooks, () -> {
+                witness.put("waitingWithoutPower", entered(capture, sid) == 0 && M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                M5GameTestSupport.writeDoor(world, frame, true, MembraneState.sealedFor(frame.outwardFacing()));
+                witness.put("staleMembraneWritten", M5GameTestSupport.doorSealed(world, frame));
+                M5GameTestSupport.simulateDoorStartup(server, sid);
+            });
+            whenTicks(context, resolved + 3, 10, () -> !reapplyQueuedTicks(capture, sid).isEmpty(), queuedAt -> {
+                witness.put("notWrittenWhenObserved", M5GameTestSupport.doorSealed(world, frame));
+                whenTicks(context, queuedAt, 5, () -> !reappliedTicks(capture, sid).isEmpty(), appliedAt -> {
+                    witness.put("plainOpenAfterTheReapply", doorAll(world, frame, true, MembraneState.NONE));
+                    witness.put("appliedOnTheQueuedTick", reappliedTicks(capture, sid).equals(reapplyQueuedTicks(capture, sid)));
+                    at(context, appliedAt + 5, hooks, () -> {
+                        witness.put("onlyOnce", reapplyQueuedTicks(capture, sid).size() == 1 && reappliedTicks(capture, sid).size() == 1);
+                        context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
+                        moveOutside(p, frame);
+                    });
+                    at(context, appliedAt + 6, hooks, () -> moveInside(p, frame));
+                    whenTicks(context, appliedAt + 7, 40, () -> entered(capture, sid) == 1 && M5GameTestSupport.doorSealed(world, frame), resealed -> {
+                        witness.put("noWarnOrErrorBesidesTheReadyStub", capture.matching(Level.ERROR, sid.toString()).isEmpty()
+                                && capture.matching(Level.WARN, sid.toString()).size() == readyStubWarnings(capture, sid));
+                        LOGGER.info("M5_DOOR_STARTUP queued={} applied={}", reapplyQueuedTicks(capture, sid), reappliedTicks(capture, sid));
+                        releaseThenComplete(context, hooks, witness, "重啟之後的原艙門：" + witness + " queued=" + reapplyQueuedTicks(capture, sid) + " applied="
+                                + reappliedTicks(capture, sid), 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    }, () -> "恢復供電、由艙外進入之後沒有重新套用 sealed：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+                }, () -> "排入之後沒有套用：applied=" + reappliedTicks(capture, sid) + " witness=" + witness, hooks);
+            }, () -> "模擬重啟之後沒有排入重新套用：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+        });
+    }
+
+    /**
+     * F4b-3（spec §7.3「門狀態的重新套用」、§11.2、§7.3 :404；plan Step 1 第 10 組的 SEALED 版本；補充第 5、6 點）：遠處的真原艙（{@code M5GameTestSupport.RemoteOrigin}，
+     * 只有它自己強制載入；不在 test 結構裡）上的 SEALED 收據（參與者是離線的隨機玩家，不會觸發重試），門先是一般開門。
+     * <ul>
+     * <li>執行期間一直載入著：不重新套用（門仍開著）。</li>
+     * <li>解除強制載入 → chunk 不再是 FULL（SEALED 沒有來源 ticket；多等 3 個 tick，讓塌縮流程觀察得到）→ 恢復 → 載入：觀察到的那個 tick 只排入佇列，最早下一個
+     *     tick 依 collapse view 關門一次（關門要等門口的 entity storage 載入，所以套用的 tick 不早於排入時記下的 tick）。</li>
+     * <li>非參與者 Q（遠在 test 結構那裡；開關門不需要靠近）照一般方式開門（SEALED 不攔截）：40 tick 之後仍開著，沒有第二次重新套用。</li>
+     * <li>Q 關門、門口放一座盔甲座，再卸載、載入一次：重新套用等門口的 entity storage 載入之後才判斷，門口有 entity → 改為一般開門（不把門關在 entity 上）。</li>
+     * </ul>
+     * catalog 增量 0（SEALED 收據不配置宇宙）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_reload", tickLimit = 1500)
+    public void sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it(TestContext context) {
+        begin(context, "sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        M5GameTestSupport.RemoteOrigin remote;
+        ServerPlayerEntity q;
+        LogCapture capture;
+        var owned = new ArrayList<UUID>();
+        try {
+            remote = M5GameTestSupport.RemoteOrigin.open(context, new BlockPos(30003, 100, 30003), hooks);
+            var connection = new ConnectedGameTestPlayer(world);
+            hooks.add(connection::close);
+            q = connection.player();
+            q.setNoGravity(true);
+            capture = M5GameTestSupport.captureLogs(hooks);
+            hooks.add(() -> cleanupFixtures(server, owned));
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = remote.frame;
+        var doorCell = local(frame, 3, 3, 0);
+        var log = capture;
+        remote.whenRegistered((registered, chamber) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            M5GameTestSupport.writeDoor(world, frame, true, MembraneState.NONE);
+            var sealedRecord = M5GameTestSupport.collapseFixture(server, remote.authority(chamber), Map.of(UUID.randomUUID(), true), List.of(), true,
+                    SessionState.SEALED, false);
+            var sid = sealedRecord.sessionUuid();
+            owned.add(sid);
+            at(context, registered + 3, hooks, () -> {
+                witness.put("notReappliedWhileLoaded", doorAll(world, frame, true, MembraneState.NONE) && reapplyQueuedTicks(log, sid).isEmpty());
+                remote.unload();
+            });
+            // 卸載之後多等幾個 tick 再恢復強制載入：塌縮流程的觀察（END_SERVER_TICK）要看得到「沒有載入」。同一個 tick 內恢復時，chunk 還在記憶體裡、門的方塊也沒有
+            // 重新讀入，塌縮流程看不到卸載，也就不需要重新套用。
+            whenTicks(context, registered + 4, 200, remote::unloaded, unloadedAt -> at(context, unloadedAt + 3, hooks, () -> {
+                witness.put("stillUnloadedBeforeTheReload", remote.unloaded());
+                remote.reload();
+            }), () -> "解除強制載入之後 chunk 仍是 FULL：witness=" + witness, hooks);
+            whenTicks(context, registered + 5, 600, () -> remote.loaded() && reappliedTicks(log, sid).size() == 1, closedAt -> {
+                witness.put("closedOnceAfterTheReload", doorAll(world, frame, false, MembraneState.NONE));
+                // 不在 chunk 載入的當下寫：套用的 tick 不早於排入時記下的「下一個 tick」（關門另要等門口的 entity storage 載入，可能更晚）。
+                witness.put("appliedNoEarlierThanTheQueuedTick", reapplyQueuedTicks(log, sid).size() == 1
+                        && reappliedTicks(log, sid).getFirst() >= reapplyQueuedTicks(log, sid).getFirst());
+                witness.put("anyPlayerOpensASealedDoor", interact(world, doorCell, q).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
+                at(context, closedAt + 40, hooks, () -> {
+                    witness.put("notClosedAgain", doorAll(world, frame, true, MembraneState.NONE) && reapplyQueuedTicks(log, sid).size() == 1);
+                    witness.put("closesAgainByHand", interact(world, doorCell, q).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
+                    M5GameTestSupport.doorwayEntity(world, frame, hooks);
+                    remote.unload();
+                });
+                whenTicks(context, closedAt + 41, 200, remote::unloaded, unloadedAgainAt -> at(context, unloadedAgainAt + 3, hooks, () -> {
+                    witness.put("stillUnloadedBeforeTheSecondReload", remote.unloaded());
+                    remote.reload();
+                }), () -> "第二次解除強制載入之後 chunk 仍是 FULL：witness=" + witness, hooks);
+                whenTicks(context, closedAt + 42, 600, () -> remote.loaded() && reappliedTicks(log, sid).size() == 2, openedAt -> {
+                    witness.put("openedForTheEntityInTheDoorway", doorAll(world, frame, true, MembraneState.NONE));
+                    witness.put("secondReapplyNoEarlierThanItsQueuedTick", reapplyQueuedTicks(log, sid).size() == 2
+                            && reappliedTicks(log, sid).get(1) >= reapplyQueuedTicks(log, sid).get(1));
+                    witness.put("stillSealed", receiptStillSealed(journal, sid));
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(log, sid));
+                    LOGGER.info("M5_DOOR_RELOAD queued={} applied={}", reapplyQueuedTicks(log, sid), reappliedTicks(log, sid));
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "SEALED 的原艙門在 chunk 重新載入之後：" + witness + " queued=" + reapplyQueuedTicks(log, sid));
+                    awaitConvergedThenComplete(context, 0, 20);
+                }, () -> "第二次載入之後沒有重新套用：applied=" + reappliedTicks(log, sid) + " witness=" + witness, hooks);
+            }, () -> "載入之後沒有重新套用：loaded=" + remote.loaded() + " applied=" + reappliedTicks(log, sid) + " witness=" + witness, hooks);
+        });
+    }
+
+    /** 這個 session「PREPARE 期間參與者關門，塌縮已結束」的 INFO 數（帶 LOG_MARKER）。 */
+    private static int endedByADoor(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "PREPARE 期間參與者關門，塌縮已結束", sid.toString()).size();
+    }
+
+    /** 這個 session PREPARE 的原艙門 INFO（{@code fragment} 是「原艙門套用 sealed 量子膜」或「原艙門維持一般開門」）的數目。 */
+    private static int membraneInfos(LogCapture capture, UUID sid, String fragment) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "PREPARE：", fragment, sid.toString()).size();
+    }
+
+    /** 這個 session 的原艙門重新套用排入（或延後）時記下的套用 tick，依發生順序（「下一個 tick（tick N）」）。 */
+    private static List<Integer> reapplyQueuedTicks(LogCapture capture, UUID sid) {
+        return ticks(capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "下一個 tick（tick ", "session=" + sid), Pattern.compile("下一個 tick（tick (\\d+)）"));
+    }
+
+    /** 這個 session 的原艙門重新套用完成時記下的 tick，依發生順序（「原艙門已依 collapse view 重新套用（…，tick N）」）。 */
+    private static List<Integer> reappliedTicks(LogCapture capture, UUID sid) {
+        return ticks(capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "原艙門已依 collapse view 重新套用", "session=" + sid),
+                Pattern.compile("，tick (\\d+)）"));
+    }
+
+    private static List<Integer> ticks(List<LogCapture.Entry> entries, Pattern pattern) {
+        var result = new ArrayList<Integer>();
+        for (var entry : entries) {
+            var matcher = pattern.matcher(entry.message());
+            if (matcher.find()) result.add(Integer.parseInt(matcher.group(1)));
+        }
+        return List.copyOf(result);
+    }
+
+    /** discovery 有這個 UniverseId 的 gameplay-eligible record（直接讀正式檔）。 */
+    private static boolean discovered(MinecraftServer server, UniverseId id) {
+        try {
+            return UniverseDiscoveryState.load(server.getSavePath(WorldSavePath.ROOT)).find(id).filter(record -> record.gameplayEligible()).isPresent();
+        } catch (IOException failure) {
+            throw new IllegalStateException("讀不到 discovery", failure);
+        }
+    }
+
     /** 這個 session「已修復 N 格」的 INFO 數（帶 LOG_MARKER）。 */
     private static int repairedInfos(LogCapture capture, UUID sid) {
         return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "已修復", sid.toString()).size();

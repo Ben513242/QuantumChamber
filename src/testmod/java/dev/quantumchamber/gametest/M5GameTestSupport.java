@@ -563,14 +563,14 @@ final class M5GameTestSupport {
             var nether = context.getWorld().getServer().getWorld(World.NETHER);
             var frame = new ChamberFrame(controller, Direction.NORTH);
             var power = frame.controllerPos().up();
-            var chunks = netherBunkerChunks(frame);
+            var chunks = bunkerChunks(frame);
             ConnectedGameTestPlayer[] connection = {null};
             hooks.add(() -> chunks.forEach(chunk -> nether.setChunkForced(chunk.x, chunk.z, false)));
             hooks.add(() -> { if (connection[0] != null) connection[0].close(); });
             hooks.add(() -> nether.setBlockState(power, Blocks.AIR.getDefaultState()));
             try {
                 chunks.forEach(chunk -> nether.setChunkForced(chunk.x, chunk.z, true));
-                buildNetherChamber(nether, frame);
+                buildBunkerChamber(nether, frame);
                 connection[0] = new ConnectedGameTestPlayer(context.getWorld());
                 var player = connection[0].player();
                 var inside = ChamberSpaceCoordinates.position(frame, 3.5, 1, 3.5);
@@ -607,38 +607,141 @@ final class M5GameTestSupport {
                     hooks);
         }
 
-        /** Nether fixture 原艙所在的 chunk（含外圍石牆）。 */
-        private static List<ChunkPos> netherBunkerChunks(ChamberFrame frame) {
-            var a = ChamberSpaceCoordinates.block(frame, -3, -1, -5); var b = ChamberSpaceCoordinates.block(frame, 9, 9, 9);
-            var chunks = new ArrayList<ChunkPos>();
-            for (int x = Math.min(a.getX(), b.getX()) >> 4; x <= Math.max(a.getX(), b.getX()) >> 4; x++)
-                for (int z = Math.min(a.getZ(), b.getZ()) >> 4; z <= Math.max(a.getZ(), b.getZ()) >> 4; z++) chunks.add(new ChunkPos(x, z));
-            return chunks;
+    }
+
+    /** {@link NetherChamber} 與 {@link RemoteOrigin} 的 fixture 原艙所在的 chunk（含外圍石牆）。 */
+    private static List<ChunkPos> bunkerChunks(ChamberFrame frame) {
+        var a = ChamberSpaceCoordinates.block(frame, -3, -1, -5); var b = ChamberSpaceCoordinates.block(frame, 9, 9, 9);
+        var chunks = new ArrayList<ChunkPos>();
+        for (int x = Math.min(a.getX(), b.getX()) >> 4; x <= Math.max(a.getX(), b.getX()) >> 4; x++)
+            for (int z = Math.min(a.getZ(), b.getZ()) >> 4; z <= Math.max(a.getZ(), b.getZ()) >> 4; z++) chunks.add(new ChunkPos(x, z));
+        return chunks;
+    }
+
+    /**
+     * {@link NetherChamber} 與 {@link RemoteOrigin} 的 fixture 原艙：以艙的區域座標，外圍（x −3..9、y −1..9、z −5..9 的邊界）一圈石頭、其餘清空，再照
+     * {@link ChamberGameTestBuilder} 的配置蓋 7×7×7 的艙（基岩外殼、關著的 25 格門、朝北的 Controller）。F4b-3 從 {@code NetherChamber} 搬出來共用，內容不變。
+     */
+    private static void buildBunkerChamber(ServerWorld world, ChamberFrame frame) {
+        ChamberProtectionService.get().authorizedMutation(() -> {
+            for (int x = -3; x <= 9; x++) for (int y = -1; y <= 9; y++) for (int z = -5; z <= 9; z++) {
+                boolean boundary = x == -3 || x == 9 || y == -1 || y == 9 || z == -5 || z == 9;
+                boolean chamber = x >= 0 && x <= 6 && y >= 0 && y <= 6 && z >= 0 && z <= 6;
+                BlockState state;
+                if (boundary) state = Blocks.STONE.getDefaultState();
+                else if (!chamber) state = Blocks.AIR.getDefaultState();
+                else if (z == 0 && x > 0 && x < 6 && y > 0 && y < 6) state = ModBlocks.QUANTUM_BULKHEAD.getDefaultState().with(QuantumBulkheadBlock.OPEN, false);
+                else state = ChamberGeometry.isShellCell(x, y, z) ? Blocks.BEDROCK.getDefaultState() : Blocks.AIR.getDefaultState();
+                world.setBlockState(ChamberSpaceCoordinates.block(frame, x, y, z), state, Block.NOTIFY_ALL);
+            }
+            world.setBlockState(frame.controllerPos(), ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
+                    .with(ChamberControllerBlock.FACING, frame.outwardFacing()), Block.NOTIFY_ALL);
+        });
+    }
+
+    /**
+     * F4b-3：overworld 遠處的真原艙（不在 test 結構裡；只有它自己強制載入，所以可以讓它的 chunk 真的卸載再載入），比照 {@link NetherChamber} 的建置：強制載入涵蓋的
+     * chunk、以石頭圍住並蓋朝北的原艙（門關著）。沒有玩家。{@link #open} 依序登記收尾：解除強制載入、斷電。已註冊的原艙比照其他原生 test 留在原地（只斷電）。
+     * <ul>
+     * <li>{@link #whenRegistered}：同 {@link DormantOrigin#whenRegistered}（t0+2 供電、等註冊並進入 IDLE），交出 tick 與 chamber UUID。</li>
+     * <li>{@link #unload}／{@link #reload}：解除／恢復強制載入。附近沒有玩家、塌縮流程也沒有來源 ticket（SEALED 已釋放）時，解除之後 chunk 不再是 FULL
+     *     （{@link #unloaded}）；恢復之後重新載入到 FULL（{@link #loaded}）。兩者都要以有界等待確認。</li>
+     * </ul>
+     */
+    static final class RemoteOrigin {
+        final ServerWorld world;
+        final ChamberFrame frame;
+        final BlockPos power;
+        final List<ChunkPos> chunks;
+        private final TestContext context;
+        private final M2CorridorGameTests.TestHooks hooks;
+
+        private RemoteOrigin(TestContext context, ChamberFrame frame, List<ChunkPos> chunks, M2CorridorGameTests.TestHooks hooks) {
+            this.context = context; this.world = context.getWorld(); this.frame = frame; this.power = frame.controllerPos().up(); this.chunks = chunks;
+            this.hooks = hooks;
         }
 
-        /**
-         * Nether 的 fixture 原艙：以艙的區域座標，外圍（x −3..9、y −1..9、z −5..9 的邊界）一圈石頭、其餘清空，再照 {@link ChamberGameTestBuilder}
-         * 的配置蓋 7×7×7 的艙（基岩外殼、關著的 25 格門、朝北的 Controller）。
-         */
-        private static void buildNetherChamber(ServerWorld nether, ChamberFrame frame) {
-            ChamberProtectionService.get().authorizedMutation(() -> {
-                for (int x = -3; x <= 9; x++) for (int y = -1; y <= 9; y++) for (int z = -5; z <= 9; z++) {
-                    boolean boundary = x == -3 || x == 9 || y == -1 || y == 9 || z == -5 || z == 9;
-                    boolean chamber = x >= 0 && x <= 6 && y >= 0 && y <= 6 && z >= 0 && z <= 6;
-                    BlockState state;
-                    if (boundary) state = Blocks.STONE.getDefaultState();
-                    else if (!chamber) state = Blocks.AIR.getDefaultState();
-                    else if (z == 0 && x > 0 && x < 6 && y > 0 && y < 6) state = ModBlocks.QUANTUM_BULKHEAD.getDefaultState().with(QuantumBulkheadBlock.OPEN, false);
-                    else state = ChamberGeometry.isShellCell(x, y, z) ? Blocks.BEDROCK.getDefaultState() : Blocks.AIR.getDefaultState();
-                    nether.setBlockState(ChamberSpaceCoordinates.block(frame, x, y, z), state, Block.NOTIFY_ALL);
-                }
-                nether.setBlockState(frame.controllerPos(), ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
-                        .with(ChamberControllerBlock.FACING, frame.outwardFacing()), Block.NOTIFY_ALL);
-            });
+        /** 在 test 的世界（overworld）以 {@code controller} 為 Controller 位置建置；失敗時先釋放 hooks。 */
+        static RemoteOrigin open(TestContext context, BlockPos controller, M2CorridorGameTests.TestHooks hooks) {
+            var world = context.getWorld();
+            var frame = new ChamberFrame(controller, Direction.NORTH);
+            var chunks = bunkerChunks(frame);
+            hooks.add(() -> chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, false)));
+            hooks.add(() -> world.setBlockState(frame.controllerPos().up(), Blocks.AIR.getDefaultState()));
+            try {
+                chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, true));
+                buildBunkerChamber(world, frame);
+                return new RemoteOrigin(context, frame, chunks, hooks);
+            } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
         }
+
+        /** 同 {@link DormantOrigin#whenRegistered}：以呼叫當下的 test tick（t0）為基準，t0+2 供電，從 t0+3 起等註冊並進入 IDLE（最多 40 tick）。 */
+        void whenRegistered(BiConsumer<Integer, UUID> ready) {
+            int start = Math.toIntExact(context.getTick());
+            at(context, start + 2, hooks, () -> world.setBlockState(power, Blocks.REDSTONE_BLOCK.getDefaultState()));
+            whenTicks(context, start + 3, 40, () -> registeredIdle(world, frame),
+                    registered -> ready.accept(registered, controller(world, frame).chamberUuid()), () -> "遠處的原艙沒有註冊並進入 IDLE", hooks);
+        }
+
+        /** 這座艙的原艙權威（overworld、朝北）。 */
+        ChamberOriginAuthority authority(UUID chamber) { return M4CandidateTestAccess.origin(chamber, frame.controllerPos()); }
+
+        /** 涵蓋的 chunk 都是 FULL（只查詢、不載入）。 */
+        boolean loaded() { return chunks.stream().allMatch(chunk -> world.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null); }
+
+        /** 涵蓋的 chunk 都不是 FULL（只查詢、不載入）。 */
+        boolean unloaded() { return chunks.stream().allMatch(chunk -> world.getChunkManager().getWorldChunk(chunk.x, chunk.z) == null); }
+
+        void unload() { chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, false)); }
+
+        void reload() { chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, true)); }
     }
 
     // ---- 原艙門（F4b-3） ----
+
+    /**
+     * F4b-3：journal put 的拒絕（{@link M5TestHooks#JOURNAL_PUT_FAULT}）：{@code session} 寫成 {@code state} 的前 {@code failures} 次 put 被拒（checked 提交回 REJECTED）；
+     * 安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.JournalPutFault installJournalPutFault(TestContext context, UUID session, SessionState state, int failures,
+            M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.JournalPutFault(session, state, failures);
+        installHook(context, M5TestHooks.JOURNAL_PUT_FAULT, fault, hooks);
+        return fault;
+    }
+
+    /**
+     * F4b-3：模擬重啟之後的第一次觀察（比照 {@code M4CandidateTestAccess.markStartup}）：把 session 標成開服 attach 當下就在 journal，並以反射清掉塌縮流程對它「來源艙已載入」
+     * 的觀察（{@code CollapseService.Track.doorLoaded}；本 mod 自己的欄位，不經 remap）。下一個 {@code END_SERVER_TICK} 的觀察就是「重啟之後第一次」，依 collapse view
+     * 重新套用原艙門。只在 server thread 呼叫；真正跨 JVM 的重啟屬 F6。
+     */
+    @SuppressWarnings("unchecked")
+    static void simulateDoorStartup(MinecraftServer server, UUID sid) {
+        var service = ((Map<MinecraftServer, ?>) M4CandidateTestAccess.get(CollapseService.class, "INSTANCES")).get(server);
+        if (service == null) throw new IllegalStateException("沒有此 server 的 CollapseService");
+        ((Set<UUID>) M4CandidateTestAccess.get(service, "startupSessions")).add(sid);
+        var track = ((Map<UUID, ?>) M4CandidateTestAccess.get(service, "tracks")).get(sid);
+        if (track != null) M4CandidateTestAccess.set(track, "doorLoaded", null);
+    }
+
+    /** 以授權寫入把 25 格門直接寫成 open＋membrane（例如模擬 crash 留下的量子膜；經 bulkhead 的守門 {@code withDoor}，不經門服務）。 */
+    static void writeDoor(ServerWorld world, ChamberFrame frame, boolean open, MembraneState membrane) {
+        ChamberProtectionService.get().authorizedMutation(() -> {
+            for (var pos : door(frame)) world.setBlockState(pos, QuantumBulkheadBlock.withDoor(world.getBlockState(pos), open, membrane));
+        });
+    }
+
+    /** 在門口（門格 local (3,1,0) 的中心、腳在那一格的底）放一座不受重力的盔甲座，在 hooks 登記移除，回傳它。 */
+    static net.minecraft.entity.decoration.ArmorStandEntity doorwayEntity(ServerWorld world, ChamberFrame frame, M2CorridorGameTests.TestHooks hooks) {
+        var stand = net.minecraft.entity.EntityType.ARMOR_STAND.create(world);
+        if (stand == null) throw new IllegalStateException("建不出盔甲座");
+        var cell = ChamberGeometry.localToWorld(frame, 3, 1, 0);
+        stand.refreshPositionAndAngles(cell.getX() + 0.5, cell.getY(), cell.getZ() + 0.5, 0, 0);
+        stand.setNoGravity(true);
+        hooks.add(stand::discard);
+        if (!world.spawnEntity(stand)) throw new IllegalStateException("盔甲座沒有加入世界");
+        return stand;
+    }
 
     /** 25 格門都是朝向的 sealed 量子膜（{@code open=true}＋{@code sealed_<axis>}）。 */
     static boolean doorSealed(ServerWorld world, ChamberFrame frame) {

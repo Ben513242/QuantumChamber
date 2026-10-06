@@ -46,6 +46,8 @@ import org.slf4j.LoggerFactory;
  *     呼叫 {@link #beforeChunkCheckpoint}，記下指定世界的每一次 checkpoint，前幾次可以受控失敗。由 {@code M5GameTestSupport.installChunkCheckpointProbe} 安裝。</li>
  * <li>投影寫入失敗（{@link #PROJECTION_WRITE_FAULT}，F4b-2）：{@code ProjectionWriteFaultMixin} 在 {@code ProjectionWriter.write} 回傳之前呼叫
  *     {@link #afterProjectionWrite}，注入時把寫完的結果換成 WRITE_FAILED。由 {@code M5GameTestSupport.installProjectionWriteFault} 安裝。</li>
+ * <li>journal put 的拒絕（{@link #JOURNAL_PUT_FAULT}，F4b-3）：{@code SessionJournalPutFaultMixin} 在 {@code SessionRecoveryState.put} 的開頭呼叫
+ *     {@link #beforeJournalPut}，注入時丟出例外，checked 提交因此被拒（REJECTED）。由 {@code M5GameTestSupport.installJournalPutFault} 安裝。</li>
  * </ul>
  * 探針、稽核與兩個故障注入各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
@@ -67,6 +69,8 @@ public final class M5TestHooks {
     static final Slot<ChunkCheckpointProbe> CHUNK_CHECKPOINT_PROBE = new Slot<>("原生存檔 checkpoint 探針");
     /** 投影寫入失敗的注入（F4b-2，{@code M5GameTestSupport.installProjectionWriteFault}）。 */
     static final Slot<ProjectionWriteFault> PROJECTION_WRITE_FAULT = new Slot<>("投影寫入失敗注入");
+    /** journal put 的拒絕注入（F4b-3，{@code M5GameTestSupport.installJournalPutFault}）。 */
+    static final Slot<JournalPutFault> JOURNAL_PUT_FAULT = new Slot<>("journal put 拒絕注入");
 
     /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
     public static boolean collapseSuspended(UUID session) {
@@ -128,6 +132,15 @@ public final class M5TestHooks {
         if (!world.getServer().isOnThread()) return null;
         var fault = PROJECTION_WRITE_FAULT.get();
         return fault == null ? null : fault.intercept(world, mode, result);
+    }
+
+    /**
+     * {@code SessionJournalPutFaultMixin}：journal 每一次 {@code put}（含 checked 提交）的開頭呼叫（F4b-3）。注入時丟 {@link IllegalStateException}，那次 put 因此被拒
+     * （checked 提交回 REJECTED，journal 沒有改變）。journal 的 put 本身只在 server thread 上執行。
+     */
+    public static void beforeJournalPut(dev.quantumchamber.persistence.SessionRecoveryRecord record) {
+        var fault = JOURNAL_PUT_FAULT.get();
+        if (fault != null) fault.intercept(record);
     }
 
     /**
@@ -279,6 +292,31 @@ public final class M5TestHooks {
         }
 
         /** 已注入失敗的次數。 */
+        int hits() { return hits.get(); }
+    }
+
+    /**
+     * journal put 的拒絕（F4b-3）：裝著的期間，{@code session} 的 put 中狀態為 {@code state} 的前 {@code failures} 次丟 {@link IllegalStateException}（決定性的驗證失敗；
+     * journal 沒有改變），之後照常。其他 session、其他狀態照常。
+     */
+    static final class JournalPutFault {
+        private final UUID session;
+        private final dev.quantumchamber.superposition.SessionState state;
+        private int remaining;
+        private final AtomicInteger hits = new AtomicInteger();
+
+        JournalPutFault(UUID session, dev.quantumchamber.superposition.SessionState state, int failures) {
+            this.session = Objects.requireNonNull(session, "session"); this.state = Objects.requireNonNull(state, "state"); this.remaining = failures;
+        }
+
+        synchronized void intercept(dev.quantumchamber.persistence.SessionRecoveryRecord record) {
+            if (!record.sessionUuid().equals(session) || record.state() != state || remaining <= 0) return;
+            remaining--;
+            hits.incrementAndGet();
+            throw new IllegalStateException("F4b-3 GameTest 受控：journal 拒絕寫入 " + state + "（session=" + session + "）");
+        }
+
+        /** 已注入拒絕的次數。 */
         int hits() { return hits.get(); }
     }
 
