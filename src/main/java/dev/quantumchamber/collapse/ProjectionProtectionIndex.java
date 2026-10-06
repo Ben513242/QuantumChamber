@@ -1,5 +1,6 @@
 package dev.quantumchamber.collapse;
 
+import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberGeometry;
 import dev.quantumchamber.chamber.ChamberRegistry;
@@ -96,10 +97,21 @@ public final class ProjectionProtectionIndex {
      * 註冊開服建立、每 tick 同步健康與停服釋放。{@code QuantumSuperpositionMod} 在 {@code CollapseAuthorities.registerEvents()}（與
      * {@code CollapseService.initialize()}）之後、{@code UniverseLifecycleService.initialize()} 之前呼叫（plan 決策 2）：Fabric 依註冊順序執行，所以建立時
      * M5 authority 已初始化、還沒有任何動態世界被物化，每個 {@code END_SERVER_TICK} 的同步晚於塌縮流程的 tick（同一個 tick 內的遺失當場生效）。
+     * 同時把 {@link #protectedCell} 與 {@link #projectionControllerAt} 註冊成 {@code ChamberCollapsePort} 的投影查詢（F4b-3 Step 0，F4b-1 quality Q-m1）：
+     * {@code ChamberProtectionService} 與 {@code ChamberPowerCoordinator} 經它查詢，chamber package 不 import collapse。
      */
     public static synchronized void registerEvents() {
         if (registered) return;
         registered = true;
+        ChamberCollapsePort.installProjections(new ChamberCollapsePort.Projections() {
+            @Override public boolean protectedCell(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos) {
+                return ProjectionProtectionIndex.protectedCell(server, worldKey, pos);
+            }
+
+            @Override public boolean projectionControllerAt(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos) {
+                return ProjectionProtectionIndex.projectionControllerAt(server, worldKey, pos);
+            }
+        });
         ServerLifecycleEvents.SERVER_STARTED.register(ProjectionProtectionIndex::onStarted);
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             var index = INSTANCES.get(server);

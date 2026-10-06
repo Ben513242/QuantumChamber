@@ -1,6 +1,5 @@
 package dev.quantumchamber.chamber;
 
-import dev.quantumchamber.collapse.ProjectionProtectionIndex;
 import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.universe.DimensionRole;
 import java.util.LinkedHashSet;
@@ -54,8 +53,8 @@ public final class ChamberPowerCoordinator {
         controller.setPowerInitialized(true);
         controller.markDirty();
         var role = DimensionRole.fromVanillaKey(world.getRegistryKey());
-        if (role.isEmpty() && ProjectionProtectionIndex.projectionControllerAt(world.getServer(), world.getRegistryKey(), controllerPos)) {
-            // M5 spec §9.3：動態世界的 Controller 依投影保護索引判定，不看 block entity 的 instanceKind。在索引裡 → inert 的 PROJECTION：
+        if (role.isEmpty() && ChamberCollapsePort.projections().projectionControllerAt(world.getServer(), world.getRegistryKey(), controllerPos)) {
+            // M5 spec §9.3：動態世界的 Controller 依投影保護索引判定（經 ChamberCollapsePort，F4b-3 Step 0），不看 block entity 的 instanceKind。在索引裡 → inert 的 PROJECTION：
             // 比較器 0（INVALID）、不 registerOrigin、不啟動、不記 log。instanceKind 寫回 PROJECTION 只是把判定結果記在 block entity 上
             // （與 M1 走廊投影的 Controller 一致；ORIGIN 專屬的發光、維護手勢與 session 守門因此一併不適用），不是判定依據。
             if (controller.instanceKind() != ChamberInstanceKind.PROJECTION) {
