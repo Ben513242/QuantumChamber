@@ -9,11 +9,22 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.moveOutside;
 import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
 
 import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.candidate.UniverseDiscoveryState;
+import dev.quantumchamber.chamber.ChamberControllerBlock;
+import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
+import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberGeometry;
+import dev.quantumchamber.chamber.ChamberInstanceKind;
+import dev.quantumchamber.chamber.ChamberLoadSyncOutcome;
+import dev.quantumchamber.chamber.ChamberLoadSyncTestAccess;
 import dev.quantumchamber.chamber.ChamberProtectionService;
+import dev.quantumchamber.chamber.ChamberRegistryState;
 import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberSessions;
+import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
+import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
+import dev.quantumchamber.chamber.QuantumBulkheadBlock;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.collapse.CollapseService;
@@ -26,23 +37,33 @@ import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.gametest.M5GameTestSupport.DormantOrigin;
 import dev.quantumchamber.persistence.SessionRecoveryState;
+import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.MaterializeResult;
 import dev.quantumchamber.universe.UniverseId;
+import dev.quantumchamber.universe.UniverseKeys;
 import dev.quantumchamber.universe.UniverseLifecycleService;
 import dev.quantumchamber.universe.UniverseRecord;
 import dev.quantumchamber.universe.UniverseRegistryState;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -54,11 +75,37 @@ import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.ObserverBlock;
+import net.minecraft.block.PistonBlock;
+import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.ItemEntity;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
+import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.NbtSizeTracker;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
+import net.minecraft.util.Hand;
 import net.minecraft.util.WorldSavePath;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.GameMode;
+import net.minecraft.world.World;
+import org.apache.logging.log4j.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -240,7 +287,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
             var sid = dormant.sessionUuid();
             var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
             at(context, registered + 2, hooks, () -> {
@@ -249,7 +296,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         && new CollapseDestination.Universe(id).equals(committed.collapse().destination()));
                 witness.put("dormantResumeTakesTicket", M4CandidateTestAccess.sourceTicketHeld(sid));
                 // RESOLVE（這個 tick 的 END_SERVER_TICK）之前斷電，並由 P 打開原艙門。
-                context.setBlockState(DormantOrigin.POWER, net.minecraft.block.Blocks.AIR);
+                context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
                 witness.put("resolveDoorOpens", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
             });
             at(context, registered + 3, hooks, () -> {
@@ -262,21 +309,21 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("worldActive", UniverseLifecycleService.resolveActive(server, id).filter(active -> server.getWorld(active.getRegistryKey()) == active).isPresent());
                 var discovered = CollapseAuthorities.get(server).discovery(id);
                 witness.put("discoveredByP", discovered.value().filter(found -> found.gameplayEligible()
-                        && found.firstObserver().equals(java.util.Optional.of(p.getUuid()))).isPresent());
-                witness.put("oneResolvedInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1);
+                        && found.firstObserver().equals(Optional.of(p.getUuid()))).isPresent());
+                witness.put("oneResolvedInfo", capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1);
                 witness.put("resolveDoorCloses", interact(world, door, p).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
             });
             at(context, registered + 5, hooks, () -> {
-                witness.put("oneWaitingStubWarn", capture.matching(org.apache.logging.log4j.Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
+                witness.put("oneWaitingStubWarn", capture.matching(Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
                 // 恢復供電：F4b 之前 UNIVERSE 不評估閘門，仍停在 WAITING。
-                context.setBlockState(DormantOrigin.POWER, net.minecraft.block.Blocks.REDSTONE_BLOCK);
+                context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
             });
             at(context, registered + 9, hooks, () -> {
                 var held = journal.flushedRecords().get(sid);
                 witness.put("stillWaiting", held != null && held.state() == SessionState.COLLAPSING && held.equals(journal.records().get(sid)));
-                witness.put("stubWarnedOnce", capture.matching(org.apache.logging.log4j.Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
-                witness.put("onlyTheStubWarnAndNoError", capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).size() == 1
-                        && capture.matching(org.apache.logging.log4j.Level.ERROR).isEmpty());
+                witness.put("stubWarnedOnce", capture.matching(Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
+                witness.put("onlyTheStubWarnAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 1
+                        && capture.matching(Level.ERROR).isEmpty());
                 // 收尾：終局 API 移除 record（宇宙保留、已 discovered），正式 API 釋放來源 ticket。
                 hooks.release();
                 witness.put("ticketReleasedAfterTerminal", !M4CandidateTestAccess.sourceTicketHeld(sid) && !journal.flushedRecords().containsKey(sid));
@@ -306,16 +353,16 @@ public final class M5UniverseGameTests implements FabricGameTest {
         origin.whenRegistered((registered, chamber) -> {
             var first = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
             var u = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) first.selectedCandidate().orElseThrow()).intent().allocationToken());
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
             // D1：提交在 registered+1、RESOLVE 在 registered+2；registered+3 確認 U 已建立，再以終局 API 移除 D1，P 回到艙外。
             whenTicks(context, registered + 3, 20, () -> UniverseLifecycleService.resolveActive(server, u).isPresent()
-                    && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", first.sessionUuid().toString()).size() == 1, created -> {
+                    && capture.matching(Level.INFO, "目的地已確定", first.sessionUuid().toString()).size() == 1, created -> {
                 cleanupFixtures(server, List.of(first.sessionUuid()));
                 moveOutside(p, frame);
                 var worldBefore = UniverseLifecycleService.resolveActive(server, u).orElseThrow();
                 byte[][] before = {bytes(data, UniverseAllocationLedger.FILE_NAME), bytes(data, UniverseRegistryState.STATE_ID + ".dat"),
-                        bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)};
+                        bytes(data, UniverseDiscoveryState.FILE_NAME)};
                 var second = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
                         Map.of(p.getUuid(), true), u));
                 var sid = second.sessionUuid();
@@ -324,12 +371,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     var record = journal.flushedRecords().get(sid);
                     witness.put("existingCommitted", record != null && record.state() == SessionState.COLLAPSING
                             && new CollapseDestination.Universe(u).equals(record.collapse().destination()));
-                    witness.put("oneResolvedInfo", capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1);
-                    witness.put("noSealedWarnOrError", capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty()
-                            && capture.matching(org.apache.logging.log4j.Level.WARN, "SEALED", sid.toString()).isEmpty());
-                    witness.put("authoritiesUnchanged", java.util.Arrays.equals(before[0], bytes(data, UniverseAllocationLedger.FILE_NAME))
-                            && java.util.Arrays.equals(before[1], bytes(data, UniverseRegistryState.STATE_ID + ".dat"))
-                            && java.util.Arrays.equals(before[2], bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)));
+                    witness.put("oneResolvedInfo", capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1);
+                    witness.put("noSealedWarnOrError", capture.matching(Level.ERROR, sid.toString()).isEmpty()
+                            && capture.matching(Level.WARN, "SEALED", sid.toString()).isEmpty());
+                    witness.put("authoritiesUnchanged", Arrays.equals(before[0], bytes(data, UniverseAllocationLedger.FILE_NAME))
+                            && Arrays.equals(before[1], bytes(data, UniverseRegistryState.STATE_ID + ".dat"))
+                            && Arrays.equals(before[2], bytes(data, UniverseDiscoveryState.FILE_NAME)));
                     witness.put("sameWorldInstance", UniverseLifecycleService.resolveActive(server, u).orElse(null) == worldBefore);
                     hooks.release();
                     context.assertTrue(!witness.containsValue(false), "EXISTING 的重驗：" + witness);
@@ -363,45 +410,45 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     Map.of(p.getUuid(), true), unknown));
             // 基準在收據寫入之後才取：fresh 世界裡，建立收據的 candidate context 會先建立空的 discovery 檔（M4 的 loadOrCreate）。
             byte[][] before = {bytes(data, UniverseAllocationLedger.FILE_NAME), bytes(data, UniverseRegistryState.STATE_ID + ".dat"),
-                    bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)};
+                    bytes(data, UniverseDiscoveryState.FILE_NAME)};
             var sid = receipt.sessionUuid();
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
             at(context, registered + 1, hooks, () -> { M5GameTestSupport.overlayKeys(origin.connection); moveInside(p, frame); });
             at(context, registered + 2, hooks, () -> {
                 witness.put("committed", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
                 // RESOLVE（這個 tick 的 END_SERVER_TICK）之前：P 打開原艙門、站在門口。
                 witness.put("doorOpened", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
-                var doorway = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 3.5, 1, 0.5);
-                p.teleport(world, doorway.x, doorway.y, doorway.z, java.util.Set.of(), 0, 0);
+                var doorway = ChamberSpaceCoordinates.position(frame, 3.5, 1, 0.5);
+                p.teleport(world, doorway.x, doorway.y, doorway.z, Set.of(), 0, 0);
                 var a = ChamberGeometry.localToWorld(frame, 1, 1, 0); var b = ChamberGeometry.localToWorld(frame, 5, 5, 0);
-                witness.put("standsInTheDoorway", new net.minecraft.util.math.Box(Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()),
+                witness.put("standsInTheDoorway", new Box(Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()),
                         Math.min(a.getZ(), b.getZ()), Math.max(a.getX(), b.getX()) + 1, Math.max(a.getY(), b.getY()) + 1, Math.max(a.getZ(), b.getZ()) + 1)
                         .intersects(p.getBoundingBox()));
             });
             at(context, registered + 3, hooks, () -> {
                 var record = journal.flushedRecords().get(sid);
                 witness.put("sealedIneligible", record != null && record.state() == SessionState.SEALED
-                        && record.collapse().sealedReason().equals(java.util.Optional.of(dev.quantumchamber.collapse.SealedReason.EXISTING_INELIGIBLE))
+                        && record.collapse().sealedReason().equals(Optional.of(SealedReason.EXISTING_INELIGIBLE))
                         && record.equals(journal.records().get(sid)));
                 witness.put("occupiedDoorwayStaysOpen", doorAll(world, frame, true, MembraneState.NONE));
                 witness.put("sealedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(SEALED_KEY));
-                var errors = capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString());
+                var errors = capture.matching(Level.ERROR, sid.toString());
                 witness.put("oneAdminError", errors.size() == 1 && errors.getFirst().message().contains("需要管理員處理")
-                        && !capture.marked(org.apache.logging.log4j.Level.ERROR, dev.quantumchamber.collapse.CollapseService.LOG_MARKER.getName(), sid.toString()).isEmpty());
+                        && !capture.marked(Level.ERROR, CollapseService.LOG_MARKER.getName(), sid.toString()).isEmpty());
                 witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid));
                 witness.put("presenceCollapse", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.COLLAPSE);
-                witness.put("controllerRefreshedArmed", M5GameTestSupport.controller(world, frame).chamberState() == dev.quantumchamber.chamber.ChamberState.ARMED);
+                witness.put("controllerRefreshedArmed", M5GameTestSupport.controller(world, frame).chamberState() == ChamberState.ARMED);
                 moveOutside(p, frame);
             });
             at(context, registered + 4, hooks, () -> moveInside(p, frame));
             at(context, registered + 7, hooks, () -> {
                 witness.put("permanentNeverRetried", receiptStillSealed(journal, sid)
-                        && capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
-                witness.put("authoritiesUnchanged", java.util.Arrays.equals(before[0], bytes(data, UniverseAllocationLedger.FILE_NAME))
-                        && java.util.Arrays.equals(before[1], bytes(data, UniverseRegistryState.STATE_ID + ".dat"))
-                        && java.util.Arrays.equals(before[2], bytes(data, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME)));
-                witness.put("errorStillOnce", capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).size() == 1);
+                        && capture.matching(Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
+                witness.put("authoritiesUnchanged", Arrays.equals(before[0], bytes(data, UniverseAllocationLedger.FILE_NAME))
+                        && Arrays.equals(before[1], bytes(data, UniverseRegistryState.STATE_ID + ".dat"))
+                        && Arrays.equals(before[2], bytes(data, UniverseDiscoveryState.FILE_NAME)));
+                witness.put("errorStillOnce", capture.matching(Level.ERROR, sid.toString()).size() == 1);
                 hooks.release();
                 context.assertTrue(!witness.containsValue(false), "EXISTING 重驗不通過進 SEALED：" + witness);
                 awaitConvergedThenComplete(context, 0, 20);
@@ -433,9 +480,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
             var sid = dormant.sessionUuid();
             var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
-            var key = dev.quantumchamber.universe.UniverseKeys.world(id, DimensionRole.OVERWORLD);
+            var key = UniverseKeys.world(id, DimensionRole.OVERWORLD);
             var fault = M5GameTestSupport.installMaterializeFault(context, id, hooks);
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
             at(context, registered + 1, hooks, () -> { M5GameTestSupport.overlayKeys(origin.connection); moveInside(p, frame); });
             at(context, registered + 2, hooks, () -> {
@@ -469,9 +516,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("doorClosedOnSeal", doorAll(world, frame, false, MembraneState.NONE));
                 witness.put("sealedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(SEALED_KEY));
                 witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid));
-                witness.put("oneRestartOnlyWarnAndNoError", capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.LOG_MARKER.getName(),
+                witness.put("oneRestartOnlyWarnAndNoError", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(),
                         "SEALED(MATERIALIZE_FAILED)", "只在重啟之後", sid.toString()).size() == 1
-                        && capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty());
+                        && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                 // spec §11.2：SEALED 時任何玩家都可以照一般方式開門。
                 witness.put("doorOpensAgain", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
                 moveOutside(p, frame);
@@ -480,7 +527,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             at(context, registered + 210, hooks, () -> moveInside(p, frame));
             at(context, registered + 213, hooks, () -> {
                 witness.put("noRetryThisInstance", sealedWith(journal, sid, SealedReason.MATERIALIZE_FAILED) && fault.calls() == 1
-                        && capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
+                        && capture.matching(Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
                 // lifecycle：同一個 instance 內物化失敗過的 descriptor 直接拒絕（不呼叫 backend）。暫時把 catalog 改回 EAGER_ENABLED 才能越過前提，之後改回 DISABLED。
                 var catalog = UniverseRegistryState.get(server);
                 catalog.changeAvailability(id, DesiredAvailability.EAGER_ENABLED); catalog.flush(server);
@@ -520,7 +567,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
             var fault = M5GameTestSupport.installCheckedReadFault(context, UniverseAllocationLedger.FILE_NAME, 0, 1, hooks);
             var authorities = CollapseAuthorities.get(server);
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
             // RESOLVE 在 registered+2 的 END_SERVER_TICK：寫 allocation entry 時讀回失敗。
             at(context, registered + 3, hooks, () -> {
@@ -530,11 +577,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("noCatalogYet", UniverseRegistryState.get(server).records().get(id) == null);
                 witness.put("readbackFaultedOnce", fault.hits() == 1);
                 witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid));
-                witness.put("oneRetryableWarn", capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.LOG_MARKER.getName(),
+                witness.put("oneRetryableWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(),
                         "SEALED(ALLOCATION_IO_FAILED)", "退避期之外", sid.toString()).size() == 1);
                 // F4a-0 裁示 1：權威的 WARN 帶 TICK_LOG_MARKER，collapseFlowNeverWarned 依 marker 看得到它。這則 log 屬於權威、不屬於任何 session，
                 // 訊息沒有 sid 可篩選，所以依 README「log 斷言」不斷言絕對筆數，只要求至少一則（F4a fix round 2，m-7）。
-                witness.put("ledgerWarnCarriesTheTickMarker", capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.TICK_LOG_MARKER.getName(),
+                witness.put("ledgerWarnCarriesTheTickMarker", capture.marked(Level.WARN, CollapseService.TICK_LOG_MARKER.getName(),
                         "ALLOCATION_LEDGER 的 checked 寫入未確認").size() >= 1);
                 moveOutside(p, frame);
             });
@@ -542,18 +589,18 @@ public final class M5UniverseGameTests implements FabricGameTest {
             at(context, registered + 5, hooks, () -> moveInside(p, frame));
             at(context, registered + 8, hooks, () -> {
                 witness.put("noRetryWithinTheBackoff", sealedWith(journal, sid, SealedReason.ALLOCATION_IO_FAILED)
-                        && capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
+                        && capture.matching(Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
                 moveOutside(p, frame);
             });
             // 封存在 registered+2 的 END_SERVER_TICK；200 ticks 的退避（per-session 與 ledger 的收斂各一個）之後再由艙外進入，留 5 ticks 餘裕。
             at(context, registered + 2 + 205, hooks, () -> moveInside(p, frame));
-            whenTicks(context, registered + 2 + 206, 20, () -> capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1, resolved -> {
+            whenTicks(context, registered + 2 + 206, 20, () -> capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1, resolved -> {
                 var record = journal.flushedRecords().get(sid);
-                witness.put("retriedOnce", capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
+                witness.put("retriedOnce", capture.matching(Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
                 witness.put("collapsingAgainWithTicket", record != null && record.state() == SessionState.COLLAPSING && M4CandidateTestAccess.sourceTicketHeld(sid));
                 // 收斂完成的 INFO 同樣屬於權威、沒有 sid：只要求至少一則（m-7）；「已收斂」由 unconfirmed 判定。
                 witness.put("ledgerConvergedFirst", !authorities.unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER)
-                        && capture.marked(org.apache.logging.log4j.Level.INFO, CollapseService.TICK_LOG_MARKER.getName(), "ALLOCATION_LEDGER 收斂完成").size() >= 1);
+                        && capture.marked(Level.INFO, CollapseService.TICK_LOG_MARKER.getName(), "ALLOCATION_LEDGER 收斂完成").size() >= 1);
                 witness.put("stillOneAllocationEntry", allocationEntries(server, id) == 1);
                 var catalog = UniverseRegistryState.get(server).flushedRecords().get(id);
                 witness.put("oneUniverse", catalog != null && catalog.desiredAvailability() == DesiredAvailability.EAGER_ENABLED
@@ -588,8 +635,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
             var sid = dormant.sessionUuid();
             var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
-            var fault = M5GameTestSupport.installCheckedReadFault(context, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME, 0, 1, hooks);
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var fault = M5GameTestSupport.installCheckedReadFault(context, UniverseDiscoveryState.FILE_NAME, 0, 1, hooks);
+            var witness = new LinkedHashMap<String, Boolean>();
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
             at(context, registered + 3, hooks, () -> {
                 witness.put("sealedUnreadable", sealedWith(journal, sid, SealedReason.AUTHORITY_UNREADABLE));
@@ -599,15 +646,15 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("discoveryReadFaultedOnce", fault.hits() == 1);
                 witness.put("noDiscovery", CollapseAuthorities.get(server).discovery(id).status() == CollapseAuthorities.Lookup.Status.ABSENT);
                 witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid));
-                witness.put("oneRestartOnlyWarnAndNoError", capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.LOG_MARKER.getName(),
+                witness.put("oneRestartOnlyWarnAndNoError", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(),
                         "SEALED(AUTHORITY_UNREADABLE)", "只在重啟之後", sid.toString()).size() == 1
-                        && capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty());
+                        && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                 moveOutside(p, frame);
             });
             at(context, registered + 210, hooks, () -> moveInside(p, frame));
             at(context, registered + 213, hooks, () -> {
                 witness.put("noRetryThisInstance", sealedWith(journal, sid, SealedReason.AUTHORITY_UNREADABLE)
-                        && capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
+                        && capture.matching(Level.INFO, "SEALED 重試", sid.toString()).isEmpty());
                 hooks.release();
                 context.assertTrue(!witness.containsValue(false), "discovery 讀取失敗：" + witness);
                 awaitConvergedThenComplete(context, 1, 20);
@@ -643,7 +690,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             catalog.flush(server);
             var fault = M5GameTestSupport.installCheckedReadFault(context, UniverseAllocationLedger.FILE_NAME, 0, 1, hooks);
             var authorities = CollapseAuthorities.get(server);
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
             // RESOLVE 在 registered+2 的 END_SERVER_TICK：寫 allocation entry 時讀回失敗，改回 EAGER_ENABLED 之前就封存。
             at(context, registered + 3, hooks, () -> {
@@ -656,15 +703,15 @@ public final class M5UniverseGameTests implements FabricGameTest {
             // 封存在 registered+2；per-session 與 ledger 收斂的退避（各 200）之後再由艙外進入。
             at(context, registered + 2 + 205, hooks, () -> moveInside(p, frame));
             // 重試之後等 RESOLVE 有結果：目的地確定，或又離開 COLLAPSING（修改前會進 SEALED(AUTHORITY_CORRUPT)）。
-            whenTicks(context, registered + 2 + 206, 20, () -> !capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).isEmpty()
-                    && (!capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).isEmpty()
+            whenTicks(context, registered + 2 + 206, 20, () -> !capture.matching(Level.INFO, "SEALED 重試", sid.toString()).isEmpty()
+                    && (!capture.matching(Level.INFO, "目的地已確定", sid.toString()).isEmpty()
                         || !M5GameTestSupport.state(journal, sid).equals("COLLAPSING")), settled -> {
                 var record = journal.flushedRecords().get(sid);
-                witness.put("retriedOnce", capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
+                witness.put("retriedOnce", capture.matching(Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
                 witness.put("resolvedAfterTheRetry", record != null && record.state() == SessionState.COLLAPSING
-                        && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1);
-                witness.put("neverAuthorityCorrupt", capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).isEmpty()
-                        && capture.matching(org.apache.logging.log4j.Level.WARN, "AUTHORITY_CORRUPT", sid.toString()).isEmpty());
+                        && capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1);
+                witness.put("neverAuthorityCorrupt", capture.matching(Level.ERROR, sid.toString()).isEmpty()
+                        && capture.matching(Level.WARN, "AUTHORITY_CORRUPT", sid.toString()).isEmpty());
                 var reenabled = UniverseRegistryState.get(server).flushedRecords().get(id);
                 witness.put("reenabledMaterializedAndDiscovered", reenabled != null && reenabled.desiredAvailability() == DesiredAvailability.EAGER_ENABLED
                         && UniverseLifecycleService.resolveActive(server, id).isPresent()
@@ -703,9 +750,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var second = M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(p.getUuid(), true), u);
             var sid1 = first.sessionUuid(); var sid2 = second.sessionUuid();
             // D1 的追加先讀一次正式檔（放行），atomic move 之後的讀回失敗；之後兩次收斂的讀回也失敗，第三次收斂成功。
-            var fault = M5GameTestSupport.installCheckedReadFault(context, dev.quantumchamber.candidate.UniverseDiscoveryState.FILE_NAME, 1, 3, hooks);
+            var fault = M5GameTestSupport.installCheckedReadFault(context, UniverseDiscoveryState.FILE_NAME, 1, 3, hooks);
             var authorities = CollapseAuthorities.get(server);
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             origin.own(first);
             at(context, registered + 1, hooks, () -> moveInside(p, frame));
             at(context, registered + 3, hooks, () -> {
@@ -723,19 +770,19 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     M5GameTestSupport.state(journal, sid2).equals("COLLAPSING") && waitWarnings(capture, sid2) == 0));
             at(context, registered + 620, hooks, () -> {
                 witness.put("waitingWithoutSealing", M5GameTestSupport.state(journal, sid2).equals("COLLAPSING")
-                        && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid2.toString()).isEmpty()
+                        && capture.matching(Level.INFO, "目的地已確定", sid2.toString()).isEmpty()
                         && authorities.unconfirmed(CollapseAuthorities.Authority.DISCOVERY));
                 witness.put("oneWaitWarnAfterSixHundredTicks", waitWarnings(capture, sid2) == 1);
             });
             at(context, registered + 1300, hooks, () -> witness.put("stillWaitingWithTheSameWarn",
                     M5GameTestSupport.state(journal, sid2).equals("COLLAPSING") && waitWarnings(capture, sid2) == 1
-                            && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid2.toString()).isEmpty()));
-            whenTicks(context, registered + 1400, 60, () -> !capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid2.toString()).isEmpty(), resolved -> {
+                            && capture.matching(Level.INFO, "目的地已確定", sid2.toString()).isEmpty()));
+            whenTicks(context, registered + 1400, 60, () -> !capture.matching(Level.INFO, "目的地已確定", sid2.toString()).isEmpty(), resolved -> {
                 witness.put("resolvedAfterTheDiscoveryConverged", M5GameTestSupport.state(journal, sid2).equals("COLLAPSING")
                         && !authorities.unconfirmed(CollapseAuthorities.Authority.DISCOVERY) && fault.hits() == 3);
                 witness.put("warnedOnlyOnce", waitWarnings(capture, sid2) == 1);
-                witness.put("neverSealed", capture.matching(org.apache.logging.log4j.Level.WARN, "塌縮進入 SEALED", sid2.toString()).isEmpty()
-                        && capture.matching(org.apache.logging.log4j.Level.ERROR, sid2.toString()).isEmpty());
+                witness.put("neverSealed", capture.matching(Level.WARN, "塌縮進入 SEALED", sid2.toString()).isEmpty()
+                        && capture.matching(Level.ERROR, sid2.toString()).isEmpty());
                 hooks.release();
                 context.assertTrue(!witness.containsValue(false), "RESOLVE 的等待：" + witness);
                 awaitConvergedThenComplete(context, 1, 20);
@@ -775,7 +822,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             });
             // 失敗路徑：先解除探針（hooks 後進先出），再把尚未確認的寫出帶出去，最後才由 DormantOrigin 的收尾以終局 API 移除。
             hooks.add(() -> { if (journal.rollForwardPending(sid)) journal.flush(server); });
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
             M5GameTestSupport.afterAutosaveClear(context, registered + 1, "sealed_pending", 40, (start, autosave) -> {
                 M5GameTestSupport.installFlushProbe(context, flush, hooks);
@@ -790,7 +837,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 whenTicks(context, start + 2, 10, () -> journal.rollForwardPending(sid), pending -> {
                     var view = journal.collapseView(sid).orElse(null);
                     witness.put("pendingSealedView", view != null && view.state() == SessionState.SEALED
-                            && view.collapse().sealedReason().equals(java.util.Optional.of(SealedReason.MATERIALIZE_FAILED))
+                            && view.collapse().sealedReason().equals(Optional.of(SealedReason.MATERIALIZE_FAILED))
                             && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && flush.failures() == 1);
                     witness.put("doorClosedWhilePending", doorAll(world, frame, false, MembraneState.NONE));
                     witness.put("ticketReleasedWhilePending", !M4CandidateTestAccess.sourceTicketHeld(sid));
@@ -800,11 +847,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         var attempts = flush.ticks();
                         witness.put("confirmedByTheRetryFlush", flush.failures() == 1 && attempts.size() == 2 && view != null
                                 && view.equals(journal.flushedRecords().get(sid)));
-                        var journalWrites = autosave.journalWrites(server, attempts, java.util.Set.of(sid));
+                        var journalWrites = autosave.journalWrites(server, attempts, Set.of(sid));
                         witness.put("onlyProbedJournalWrites", journalWrites.onlyProbed());
                         at(context, confirmed + 5, hooks, () -> {
                             witness.put("noResolveAfterTheConfirmation", sealedWith(journal, sid, SealedReason.MATERIALIZE_FAILED)
-                                    && capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).isEmpty() && materialize.calls() == 1);
+                                    && capture.matching(Level.INFO, "目的地已確定", sid.toString()).isEmpty() && materialize.calls() == 1);
                             var catalog = UniverseRegistryState.get(server).flushedRecords().get(id);
                             witness.put("oneDisabledUniverse", catalog != null && catalog.desiredAvailability() == DesiredAvailability.DISABLED
                                     && allocationEntries(server, id) == 1);
@@ -842,42 +889,42 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var frame = origin.frame;
         resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             var interiorChest = local(frame, 3, 1, 3); var shellChest = local(frame, 0, 4, 3); var interiorStone = local(frame, 2, 2, 2);
             var watched = local(frame, 0, 3, 3); var observer = outside(frame, -1, 3, 3);
             var wired = local(frame, 6, 2, 3); var wire = outside(frame, 7, 2, 3); var support = outside(frame, 7, 1, 3);
             ChamberProtectionService.get().authorizedMutation(() -> {
                 for (var chest : List.of(interiorChest, shellChest)) {
-                    universe.setBlockState(chest, net.minecraft.block.Blocks.CHEST.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
-                    ((net.minecraft.block.entity.ChestBlockEntity) universe.getBlockEntity(chest)).setStack(0, new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND, 5));
+                    universe.setBlockState(chest, Blocks.CHEST.getDefaultState(), Block.NOTIFY_ALL);
+                    ((ChestBlockEntity) universe.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 5));
                 }
-                universe.setBlockState(interiorStone, net.minecraft.block.Blocks.STONE.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
-                universe.setBlockState(observer, net.minecraft.block.Blocks.OBSERVER.getDefaultState()
-                        .with(net.minecraft.block.ObserverBlock.FACING, toward(observer, watched)), net.minecraft.block.Block.NOTIFY_ALL);
+                universe.setBlockState(interiorStone, Blocks.STONE.getDefaultState(), Block.NOTIFY_ALL);
+                universe.setBlockState(observer, Blocks.OBSERVER.getDefaultState()
+                        .with(ObserverBlock.FACING, toward(observer, watched)), Block.NOTIFY_ALL);
                 // 懸空的紅石線：先放在支撐上，再以不送更新的寫法拿掉支撐。
-                universe.setBlockState(wire, net.minecraft.block.Blocks.AIR.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
-                universe.setBlockState(support, net.minecraft.block.Blocks.STONE.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
-                universe.setBlockState(wire, net.minecraft.block.Blocks.REDSTONE_WIRE.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
-                universe.setBlockState(support, net.minecraft.block.Blocks.AIR.getDefaultState(),
-                        net.minecraft.block.Block.NOTIFY_LISTENERS | net.minecraft.block.Block.FORCE_STATE);
+                universe.setBlockState(wire, Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
+                universe.setBlockState(support, Blocks.STONE.getDefaultState(), Block.NOTIFY_ALL);
+                universe.setBlockState(wire, Blocks.REDSTONE_WIRE.getDefaultState(), Block.NOTIFY_ALL);
+                universe.setBlockState(support, Blocks.AIR.getDefaultState(),
+                        Block.NOTIFY_LISTENERS | Block.FORCE_STATE);
             });
-            var pig = net.minecraft.entity.EntityType.PIG.create(universe);
-            var pigAt = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 2.5, 3, 4.5);
+            var pig = EntityType.PIG.create(universe);
+            var pigAt = ChamberSpaceCoordinates.position(frame, 2.5, 3, 4.5);
             pig.refreshPositionAndAngles(pigAt.x, pigAt.y, pigAt.z, 0, 0);
             pig.setInvulnerable(true); pig.setNoGravity(true); pig.setAiDisabled(true);
             universe.spawnEntity(pig);
             hooks.add(pig::discard);
             var spectator = new ConnectedGameTestPlayer(context.getWorld());
             hooks.add(spectator::close);
-            spectator.player().changeGameMode(net.minecraft.world.GameMode.SPECTATOR);
-            var spectatorAt = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 4.5, 2, 2.5);
-            spectator.player().teleport(universe, spectatorAt.x, spectatorAt.y, spectatorAt.z, java.util.Set.of(), 0, 0);
+            spectator.player().changeGameMode(GameMode.SPECTATOR);
+            var spectatorAt = ChamberSpaceCoordinates.position(frame, 4.5, 2, 2.5);
+            spectator.player().teleport(universe, spectatorAt.x, spectatorAt.y, spectatorAt.z, Set.of(), 0, 0);
             var area = box(frame).expand(3);
             // 新產生的 chunk 的 entity storage 是非同步載入的：等到豬看得見（entity 的區段已在追蹤中），之後的掉落物檢查才有意義；同時等偵測器靜止。
             whenTicks(context, resolved + 4, 200, () -> visible(universe, pig, area)
-                    && !universe.getBlockState(observer).get(net.minecraft.block.ObserverBlock.POWERED)
-                    && !universe.getBlockTickScheduler().isQueued(observer, net.minecraft.block.Blocks.OBSERVER), settled -> {
-                witness.put("fixtureSettled", universe.getBlockState(wire).isOf(net.minecraft.block.Blocks.REDSTONE_WIRE) && universe.getBlockState(support).isAir()
+                    && !universe.getBlockState(observer).get(ObserverBlock.POWERED)
+                    && !universe.getBlockTickScheduler().isQueued(observer, Blocks.OBSERVER), settled -> {
+                witness.put("fixtureSettled", universe.getBlockState(wire).isOf(Blocks.REDSTONE_WIRE) && universe.getBlockState(support).isAir()
                         && items(universe, area) == 0 && spectator.player().getServerWorld() == universe);
                 var pigBefore = pig.getPos();
                 var spectatorBefore = spectator.player().getPos();
@@ -885,18 +932,18 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("written", result.status() == ProjectionWriter.Status.WRITTEN && result.written() > 0 && result.blockingPlayers().isEmpty());
                 witness.put("everyCellIsTheSpecTarget", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
                 witness.put("controllerHasADefaultBlockEntity", universe.getBlockEntity(frame.controllerPos())
-                        instanceof dev.quantumchamber.chamber.ChamberControllerBlockEntity controller && controller.chamberUuid() == null);
+                        instanceof ChamberControllerBlockEntity controller && controller.chamberUuid() == null);
                 witness.put("chestsDroppedNothing", items(universe, area) == 0);
-                witness.put("observerNotScheduled", !universe.getBlockTickScheduler().isQueued(observer, net.minecraft.block.Blocks.OBSERVER));
-                witness.put("floatingWireStays", universe.getBlockState(wire).isOf(net.minecraft.block.Blocks.REDSTONE_WIRE));
+                witness.put("observerNotScheduled", !universe.getBlockTickScheduler().isQueued(observer, Blocks.OBSERVER));
+                witness.put("floatingWireStays", universe.getBlockState(wire).isOf(Blocks.REDSTONE_WIRE));
                 witness.put("pigNotMovedOrRemoved", !pig.isRemoved() && pig.getPos().equals(pigBefore) && visible(universe, pig, area));
                 witness.put("spectatorNotMoved", spectator.player().getPos().equals(spectatorBefore));
                 LOGGER.info("M5_PROJECTION_FIRST_WRITE settled={} status={} written={} mismatched={}", settled - resolved, result.status(), result.written(),
                         result.mismatched().size());
                 at(context, settled + 4, hooks, () -> {
-                    witness.put("observerNeverPulsed", !universe.getBlockState(observer).get(net.minecraft.block.ObserverBlock.POWERED)
-                            && !universe.getBlockTickScheduler().isQueued(observer, net.minecraft.block.Blocks.OBSERVER));
-                    witness.put("wireStillThere", universe.getBlockState(wire).isOf(net.minecraft.block.Blocks.REDSTONE_WIRE));
+                    witness.put("observerNeverPulsed", !universe.getBlockState(observer).get(ObserverBlock.POWERED)
+                            && !universe.getBlockTickScheduler().isQueued(observer, Blocks.OBSERVER));
+                    witness.put("wireStillThere", universe.getBlockState(wire).isOf(Blocks.REDSTONE_WIRE));
                     witness.put("nothingDroppedLater", items(universe, area) == 0);
                     witness.put("pigStillThere", !pig.isRemoved() && visible(universe, pig, area));
                     hooks.release();
@@ -908,7 +955,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /** {@code entity} 在 {@code area} 內、而且以原版的 entity 查詢看得到（它所在的區段已在追蹤中）。 */
-    private static boolean visible(net.minecraft.server.world.ServerWorld world, net.minecraft.entity.Entity entity, net.minecraft.util.math.Box area) {
+    private static boolean visible(ServerWorld world, Entity entity, Box area) {
         return world.getEntitiesByClass(entity.getClass(), area, candidate -> candidate == entity).size() == 1;
     }
 
@@ -939,12 +986,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var frame = origin.frame;
         resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
-            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var witness = new LinkedHashMap<String, Boolean>();
             var connection = new ConnectedGameTestPlayer(context.getWorld());
             hooks.add(connection::close);
             var q = connection.player();
-            q.changeGameMode(net.minecraft.world.GameMode.CREATIVE); q.setNoGravity(true);
-            var air = net.minecraft.block.Blocks.AIR.getDefaultState();
+            q.changeGameMode(GameMode.CREATIVE); q.setNoGravity(true);
+            var air = Blocks.AIR.getDefaultState();
             // 1. 第一次寫入：Q 在 volume 內、站在已是目標（AIR）的兩格。
             universe.setBlockState(local(frame, 3, 1, 3), air); universe.setBlockState(local(frame, 3, 2, 3), air);
             standAt(q, universe, frame, 3.5, 1, 3.5);
@@ -956,10 +1003,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
             witness.put("nothingWrittenWhileBlocked", before.equals(cells(universe, frame)));
             standAt(q, universe, frame, 3.5, 1, -4.5);
             // Controller 的位置上已有一座方塊狀態與目標相同、帶 chamber UUID 的 Controller：第一次寫入仍要重寫它，換成預設的 block entity。
-            var stale = dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
-                    .with(dev.quantumchamber.chamber.ChamberControllerBlock.FACING, frame.outwardFacing());
+            var stale = ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
+                    .with(ChamberControllerBlock.FACING, frame.outwardFacing());
             universe.setBlockState(frame.controllerPos(), stale);
-            var staleController = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, frame), "既有 Controller 的 block entity");
+            var staleController = Objects.requireNonNull(M5GameTestSupport.controller(universe, frame), "既有 Controller 的 block entity");
             staleController.setChamberUuid(UUID.randomUUID());
             witness.put("staleControllerHasAnIdentity", staleController.chamberUuid() != null
                     && universe.getBlockState(frame.controllerPos()).equals(M5GameTestSupport.projectionTarget(frame, 3, 6, 0)));
@@ -972,32 +1019,32 @@ public final class M5UniverseGameTests implements FabricGameTest {
             // 2. 修復：損壞兩格 shell、關門、interior 放玻璃；Q 在 interior。
             var holed = local(frame, 0, 3, 3); var stoned = local(frame, 6, 4, 2); var glass = local(frame, 2, 2, 2);
             damage(universe, frame, holed, stoned, true);
-            ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(glass, net.minecraft.block.Blocks.GLASS.getDefaultState()));
+            ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(glass, Blocks.GLASS.getDefaultState()));
             standAt(q, universe, frame, 3.5, 1, 3.5);
             var qInside = q.getPos();
             var repaired = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.REPAIR);
             witness.put("repairWritesExactlyTheDamagedInvariantCells", repaired.status() == ProjectionWriter.Status.WRITTEN && repaired.written() == 27);
             witness.put("invariantCellsRestoredDoorOpen", M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty()
                     && M5GameTestSupport.doorAll(universe, frame, true, MembraneState.NONE));
-            witness.put("interiorKept", universe.getBlockState(glass).isOf(net.minecraft.block.Blocks.GLASS));
+            witness.put("interiorKept", universe.getBlockState(glass).isOf(Blocks.GLASS));
             witness.put("interiorPlayerNotMoved", q.getPos().equals(qInside));
             // 3. 修復被擋（Q 在要寫的損壞 shell 裡），之後 Q 站在已開啟的門口也不擋。
             damage(universe, frame, holed, stoned, false);
             standAt(q, universe, frame, 0.5, 3, 3.5);
             var blockedRepair = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.REPAIR);
             witness.put("repairBlockedByAPlayerInADamagedCell", blockedRepair.status() == ProjectionWriter.Status.BLOCKED_BY_PLAYER
-                    && universe.getBlockState(holed).isAir() && universe.getBlockState(stoned).isOf(net.minecraft.block.Blocks.STONE));
+                    && universe.getBlockState(holed).isAir() && universe.getBlockState(stoned).isOf(Blocks.STONE));
             standAt(q, universe, frame, 3.5, 1, 0.5);
             var doorway = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.REPAIR);
             witness.put("doorwayPlayerDoesNotBlockTheRepair", doorway.status() == ProjectionWriter.Status.WRITTEN && doorway.written() == 2
                     && M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty());
             // 4. 驗證失敗：頂端超出世界高度。
-            var high = new dev.quantumchamber.chamber.ChamberFrame(frame.controllerPos().withY(universe.getTopY() + 2), frame.outwardFacing());
+            var high = new ChamberFrame(frame.controllerPos().withY(universe.getTopY() + 2), frame.outwardFacing());
             var overflow = ProjectionWriter.write(universe, high, ProjectionWriter.Mode.FIRST_WRITE);
             witness.put("verifyFailedAboveTheBuildLimit", overflow.status() == ProjectionWriter.Status.VERIFY_FAILED && overflow.failure().isPresent()
                     && !overflow.mismatched().isEmpty() && overflow.mismatched().stream().allMatch(pos -> pos.getY() >= universe.getTopY()));
             // 5. 未載入：很遠的 frame。
-            var far = new dev.quantumchamber.chamber.ChamberFrame(frame.controllerPos().add(100_000, 0, 0), frame.outwardFacing());
+            var far = new ChamberFrame(frame.controllerPos().add(100_000, 0, 0), frame.outwardFacing());
             var unloaded = ProjectionWriter.write(universe, far, ProjectionWriter.Mode.FIRST_WRITE);
             witness.put("notLoadedWithoutLoading", unloaded.status() == ProjectionWriter.Status.NOT_LOADED
                     && ProjectionWriter.controllerPresence(universe, far) == ProjectionWriter.ControllerPresence.NOT_LOADED
@@ -1032,8 +1079,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * 新 chunk 的鄰居是非同步產生的（GameTest server 不以 20 TPS 節流），活塞的方塊事件與流體的排程刻要等 chunk 開始 block ticking 才會執行，
      * 所以先等投影周圍強制載入的 chunk 都 block ticking 再佈置；活塞與流體的判定也等到對照組的活塞推動完成、水源流動過之後（有界等待），
      * 不用固定的 tick 數。catalog 增量 1（U）。
+     * <p>tickLimit 600（F4b-2 Step 0，F4b-1 quality Q-m5）：有界等待最壞的總和約 486 tick（註冊 ≤43、RESOLVE ≤+22、block ticking ≤+200、
+     * 對照組 ≤+200、收斂 ≤+20）。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_projection_protection", tickLimit = 400)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_projection_protection", tickLimit = 600)
     public void projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids(TestContext context) {
         begin(context, "projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids");
         var hooks = new M2CorridorGameTests.TestHooks();
@@ -1051,10 +1100,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /** {@link #projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids} 在投影周圍的 chunk 開始 block ticking（{@code ticking}）之後的本體。 */
-    private static void projectionProtection(TestContext context, M2CorridorGameTests.TestHooks hooks, net.minecraft.server.world.ServerWorld universe,
-            dev.quantumchamber.chamber.ChamberFrame frame, UUID chamber, UniverseId id, int ticking) {
+    private static void projectionProtection(TestContext context, M2CorridorGameTests.TestHooks hooks, ServerWorld universe,
+            ChamberFrame frame, UUID chamber, UniverseId id, int ticking) {
         var server = context.getWorld().getServer();
-        var witness = new java.util.LinkedHashMap<String, Boolean>();
+        var witness = new LinkedHashMap<String, Boolean>();
         var protection = ChamberProtectionService.get();
         var authorities = CollapseAuthorities.get(server);
         var index = ProjectionProtectionIndex.get(server);
@@ -1082,7 +1131,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var connection = new ConnectedGameTestPlayer(context.getWorld());
         hooks.add(connection::close);
         var b = connection.player();
-        b.changeGameMode(net.minecraft.world.GameMode.CREATIVE); b.setNoGravity(true);
+        b.changeGameMode(GameMode.CREATIVE); b.setNoGravity(true);
         standAt(b, universe, frame, 3.5, 1, 3.5);
         // 門：既有的門邏輯（門板的 onUse → 整面門授權切換）。
         var doorCell = local(frame, 3, 3, 0);
@@ -1090,67 +1139,67 @@ public final class M5UniverseGameTests implements FabricGameTest {
         witness.put("doorOpensByTheExistingLogic", interact(universe, doorCell, b).isAccepted() && doorAll(universe, frame, true, MembraneState.NONE));
         // 破壞。
         for (var target : List.of(shell, frame.controllerPos(), doorCell)) b.interactionManager.tryBreakBlock(target);
-        witness.put("breakingRefused", universe.getBlockState(shell).isOf(net.minecraft.block.Blocks.BEDROCK)
-                && universe.getBlockState(frame.controllerPos()).isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)
+        witness.put("breakingRefused", universe.getBlockState(shell).isOf(Blocks.BEDROCK)
+                && universe.getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER)
                 && M5GameTestSupport.doorIs(universe, doorCell, true, MembraneState.NONE));
         var interiorStone = local(frame, 2, 1, 2);
-        universe.setBlockState(interiorStone, net.minecraft.block.Blocks.STONE.getDefaultState());
+        universe.setBlockState(interiorStone, Blocks.STONE.getDefaultState());
         b.interactionManager.tryBreakBlock(interiorStone);
         witness.put("interiorBreaks", universe.getBlockState(interiorStone).isAir());
         // 放置：損壞成 AIR 的不變量 cell 不能放；interior 可以。
-        protection.authorizedMutation(() -> universe.setBlockState(shell, net.minecraft.block.Blocks.AIR.getDefaultState()));
-        b.setStackInHand(net.minecraft.util.Hand.MAIN_HAND, new net.minecraft.item.ItemStack(net.minecraft.item.Items.STONE, 64));
+        protection.authorizedMutation(() -> universe.setBlockState(shell, Blocks.AIR.getDefaultState()));
+        b.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.STONE, 64));
         placeOnTop(b, universe, local(frame, 0, 2, 3));
         witness.put("placingIntoAnInvariantCellRefused", universe.getBlockState(shell).isAir());
         placeOnTop(b, universe, local(frame, 2, 0, 3));
-        witness.put("interiorPlacementWorks", universe.getBlockState(local(frame, 2, 1, 3)).isOf(net.minecraft.block.Blocks.STONE));
+        witness.put("interiorPlacementWorks", universe.getBlockState(local(frame, 2, 1, 3)).isOf(Blocks.STONE));
         // 爆炸：shell 的玻璃留著，interior 的玻璃消失。
         var shellGlass = local(frame, 6, 3, 3); var interiorGlass = local(frame, 5, 3, 3);
         protection.authorizedMutation(() -> {
-            universe.setBlockState(shellGlass, net.minecraft.block.Blocks.GLASS.getDefaultState());
-            universe.setBlockState(interiorGlass, net.minecraft.block.Blocks.GLASS.getDefaultState());
+            universe.setBlockState(shellGlass, Blocks.GLASS.getDefaultState());
+            universe.setBlockState(interiorGlass, Blocks.GLASS.getDefaultState());
         });
-        var blast = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 5.5, 3.5, 3.5);
-        universe.createExplosion(null, blast.x, blast.y, blast.z, 2, net.minecraft.world.World.ExplosionSourceType.BLOCK);
-        witness.put("explosionKeepsTheInvariantCell", universe.getBlockState(shellGlass).isOf(net.minecraft.block.Blocks.GLASS));
+        var blast = ChamberSpaceCoordinates.position(frame, 5.5, 3.5, 3.5);
+        universe.createExplosion(null, blast.x, blast.y, blast.z, 2, World.ExplosionSourceType.BLOCK);
+        witness.put("explosionKeepsTheInvariantCell", universe.getBlockState(shellGlass).isOf(Blocks.GLASS));
         witness.put("explosionClearsTheInterior", universe.getBlockState(interiorGlass).isAir());
         // 活塞：對著 shell、門板與 Controller 的活塞推不動；對照組照常推動石頭。
-        var pistons = new java.util.ArrayList<net.minecraft.util.math.BlockPos>();
+        var pistons = new ArrayList<BlockPos>();
         pistons.add(piston(universe, outside(frame, 7, 2, 4), local(frame, 6, 2, 4), outside(frame, 8, 2, 4)));
         pistons.add(piston(universe, outside(frame, 3, 2, -1), local(frame, 3, 2, 0), outside(frame, 3, 2, -2)));
         pistons.add(piston(universe, outside(frame, 3, 7, 0), frame.controllerPos(), outside(frame, 3, 8, 0)));
         var controlStone = outside(frame, 10, 2, 3); var controlTarget = outside(frame, 9, 2, 3);
-        universe.setBlockState(controlTarget, net.minecraft.block.Blocks.AIR.getDefaultState());
-        universe.setBlockState(controlStone, net.minecraft.block.Blocks.STONE.getDefaultState());
+        universe.setBlockState(controlTarget, Blocks.AIR.getDefaultState());
+        universe.setBlockState(controlStone, Blocks.STONE.getDefaultState());
         var controlPiston = piston(universe, outside(frame, 11, 2, 3), controlStone, outside(frame, 12, 2, 3));
         // 活塞把石頭推進損壞成 AIR 的不變量 cell：那一格的寫入被拒，仍是 AIR。
         var pushedInto = local(frame, 6, 2, 2); var pushedStone = outside(frame, 7, 2, 2);
-        protection.authorizedMutation(() -> universe.setBlockState(pushedInto, net.minecraft.block.Blocks.AIR.getDefaultState()));
-        universe.setBlockState(pushedStone, net.minecraft.block.Blocks.STONE.getDefaultState());
+        protection.authorizedMutation(() -> universe.setBlockState(pushedInto, Blocks.AIR.getDefaultState()));
+        universe.setBlockState(pushedStone, Blocks.STONE.getDefaultState());
         var intoDamaged = piston(universe, outside(frame, 8, 2, 2), pushedStone, outside(frame, 9, 2, 2));
         // 流體：損壞成 AIR 的不變量 cell 不進水；對照組的外側空格有水。水源南北兩側擋住，只剩往西（dry）與往東（wet）兩個方向，
         // 兩邊下一格都有落差（dry 那側是爆炸清掉的 interior 玻璃，wet 那側是外面的空格），流向一樣優先。
         var dry = local(frame, 6, 4, 3); var source = outside(frame, 7, 4, 3); var wet = outside(frame, 8, 4, 3);
-        protection.authorizedMutation(() -> universe.setBlockState(dry, net.minecraft.block.Blocks.AIR.getDefaultState()));
+        protection.authorizedMutation(() -> universe.setBlockState(dry, Blocks.AIR.getDefaultState()));
         for (var solid : List.of(outside(frame, 7, 3, 3), outside(frame, 8, 3, 3), outside(frame, 7, 4, 2), outside(frame, 7, 4, 4))) {
-            universe.setBlockState(solid, net.minecraft.block.Blocks.STONE.getDefaultState());
+            universe.setBlockState(solid, Blocks.STONE.getDefaultState());
         }
-        universe.setBlockState(wet, net.minecraft.block.Blocks.AIR.getDefaultState());
-        universe.setBlockState(source, net.minecraft.block.Blocks.WATER.getDefaultState());
+        universe.setBlockState(wet, Blocks.AIR.getDefaultState());
+        universe.setBlockState(source, Blocks.WATER.getDefaultState());
         // 等對照組的活塞真的推動（方塊事件與 block entity 都跑過）、水源也流動過（排程刻跑過；同一次流動同時往 dry 與 wet）再判定。
-        java.util.function.BooleanSupplier controlPistonPushed = () -> universe.getBlockState(controlPiston).get(net.minecraft.block.PistonBlock.EXTENDED)
-                && universe.getBlockState(controlTarget).isOf(net.minecraft.block.Blocks.STONE);
-        java.util.function.BooleanSupplier controlFluidFlowed = () -> !universe.getFluidState(wet).isEmpty();
-        java.util.function.BooleanSupplier waterMoved = () -> controlFluidFlowed.getAsBoolean() || !universe.getFluidState(dry).isEmpty();
+        BooleanSupplier controlPistonPushed = () -> universe.getBlockState(controlPiston).get(PistonBlock.EXTENDED)
+                && universe.getBlockState(controlTarget).isOf(Blocks.STONE);
+        BooleanSupplier controlFluidFlowed = () -> !universe.getFluidState(wet).isEmpty();
+        BooleanSupplier waterMoved = () -> controlFluidFlowed.getAsBoolean() || !universe.getFluidState(dry).isEmpty();
         // 推向損壞 cell 的活塞也伸出、移動中的方塊都已落定（沒有 MOVING_PISTON）才判定。
-        java.util.function.BooleanSupplier pushSettled = () -> universe.getBlockState(intoDamaged).get(net.minecraft.block.PistonBlock.EXTENDED)
-                && !universe.getBlockState(pushedInto).isOf(net.minecraft.block.Blocks.MOVING_PISTON)
-                && !universe.getBlockState(pushedStone).isOf(net.minecraft.block.Blocks.MOVING_PISTON);
+        BooleanSupplier pushSettled = () -> universe.getBlockState(intoDamaged).get(PistonBlock.EXTENDED)
+                && !universe.getBlockState(pushedInto).isOf(Blocks.MOVING_PISTON)
+                && !universe.getBlockState(pushedStone).isOf(Blocks.MOVING_PISTON);
         whenTicks(context, ticking + 1, 200, () -> controlPistonPushed.getAsBoolean() && waterMoved.getAsBoolean() && pushSettled.getAsBoolean(), settled -> {
-            witness.put("pistonsCannotMoveInvariantCells", universe.getBlockState(local(frame, 6, 2, 4)).isOf(net.minecraft.block.Blocks.BEDROCK)
+            witness.put("pistonsCannotMoveInvariantCells", universe.getBlockState(local(frame, 6, 2, 4)).isOf(Blocks.BEDROCK)
                     && M5GameTestSupport.doorIs(universe, local(frame, 3, 2, 0), true, MembraneState.NONE)
-                    && universe.getBlockState(frame.controllerPos()).isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER)
-                    && pistons.stream().noneMatch(pos -> universe.getBlockState(pos).get(net.minecraft.block.PistonBlock.EXTENDED)));
+                    && universe.getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER)
+                    && pistons.stream().noneMatch(pos -> universe.getBlockState(pos).get(PistonBlock.EXTENDED)));
             witness.put("controlPistonPushes", controlPistonPushed.getAsBoolean());
             witness.put("pistonCannotPushIntoADamagedInvariantCell", universe.getBlockState(pushedInto).isAir());
             witness.put("fluidCannotEnterAnInvariantCell", universe.getBlockState(dry).isAir() && universe.getFluidState(dry).isEmpty());
@@ -1163,7 +1212,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             witness.put("repairOfTheProtectedProjectionWritten", repair.status() == ProjectionWriter.Status.WRITTEN && repair.written() == 4);
             witness.put("repairRestoresEveryInvariantCell", M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty()
                     && doorAll(universe, frame, true, MembraneState.NONE));
-            witness.put("repairKeepsTheInteriorChange", universe.getBlockState(local(frame, 2, 1, 3)).isOf(net.minecraft.block.Blocks.STONE));
+            witness.put("repairKeepsTheInteriorChange", universe.getBlockState(local(frame, 2, 1, 3)).isOf(Blocks.STONE));
             witness.put("stillProtectedAfterTheRepair", !protection.mayMutate(universe, shell));
             LOGGER.info("M5_PROJECTION_PROTECTED_REPAIR status={} written={} mismatched={}", repair.status(), repair.written(), repair.mismatched().size());
             hooks.release();
@@ -1172,8 +1221,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
         }, () -> "對照組沒有發生：controlPistonPushed=" + controlPistonPushed.getAsBoolean() + " waterMoved=" + waterMoved.getAsBoolean()
                 + " piston=" + universe.getBlockState(controlPiston) + " target=" + universe.getBlockState(controlTarget) + " source=" + universe.getFluidState(source)
                 + " wet=" + universe.getBlockState(wet) + " blockTicking=" + universe.shouldTickBlockPos(controlPiston) + "/" + universe.shouldTickBlockPos(wet)
-                + " tickingFuture=" + universe.getChunkManager().isTickingFutureReady(net.minecraft.util.math.ChunkPos.toLong(controlPiston))
-                + "/" + universe.getChunkManager().isTickingFutureReady(net.minecraft.util.math.ChunkPos.toLong(wet)) + " time=" + universe.getTime()
+                + " tickingFuture=" + universe.getChunkManager().isTickingFutureReady(ChunkPos.toLong(controlPiston))
+                + "/" + universe.getChunkManager().isTickingFutureReady(ChunkPos.toLong(wet)) + " time=" + universe.getTime()
                 + " witness=" + witness, hooks);
     }
 
@@ -1201,10 +1250,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
             origin = DormantOrigin.open(context, hooks);
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var a = origin.frame;
-        var b = new dev.quantumchamber.chamber.ChamberFrame(outside(a, 35, 6, 0), a.outwardFacing());
-        var c = new dev.quantumchamber.chamber.ChamberFrame(outside(a, 67, 6, 0), a.outwardFacing());
+        var b = new ChamberFrame(outside(a, 35, 6, 0), a.outwardFacing());
+        var c = new ChamberFrame(outside(a, 67, 6, 0), a.outwardFacing());
         resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
-            var chunks = new java.util.ArrayList<net.minecraft.util.math.ChunkPos>();
+            var chunks = new ArrayList<ChunkPos>();
             for (var frame : List.of(a, b, c)) chunks.addAll(M5GameTestSupport.forceProjectionChunks(universe, frame, hooks));
             whenTicks(context, resolved, 200, () -> M5GameTestSupport.blockTicking(universe, chunks),
                     ticking -> projectionRecognition(context, hooks, origin.capture, universe, sid, chamber, id, a, b, c, ticking),
@@ -1214,12 +1263,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
 
     /** {@link #projection_controllers_are_recognized_by_the_index_on_load_sync_and_block_added} 在 chunk 開始 block ticking（{@code ticking}）之後的本體。 */
     private static void projectionRecognition(TestContext context, M2CorridorGameTests.TestHooks hooks, LogCapture capture,
-            net.minecraft.server.world.ServerWorld universe, UUID sid, UUID chamber, UniverseId id, dev.quantumchamber.chamber.ChamberFrame a,
-            dev.quantumchamber.chamber.ChamberFrame b, dev.quantumchamber.chamber.ChamberFrame c, int ticking) {
+            ServerWorld universe, UUID sid, UUID chamber, UniverseId id, ChamberFrame a,
+            ChamberFrame b, ChamberFrame c, int ticking) {
         var server = context.getWorld().getServer();
         var authorities = CollapseAuthorities.get(server);
         var index = ProjectionProtectionIndex.get(server);
-        var witness = new java.util.LinkedHashMap<String, Boolean>();
+        var witness = new LinkedHashMap<String, Boolean>();
         int mark = capture.entries().size();
         var pendingA = authorities.writeProjection(new ProjectionLedger.Entry(chamber, id, DimensionRole.OVERWORLD, a.controllerPos(), a.outwardFacing(),
                 ProjectionLedger.Entry.Status.PENDING));
@@ -1231,26 +1280,26 @@ public final class M5UniverseGameTests implements FabricGameTest {
         index.confirmed(pendingB);
         // A：寫入後丟掉 U 的 load-sync queue，只剩 onBlockAdded 排的 refresh。
         witness.put("aWritten", ProjectionWriter.write(universe, a, ProjectionWriter.Mode.FIRST_WRITE).status() == ProjectionWriter.Status.WRITTEN);
-        var controllerA = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, a), "A 的 Controller block entity");
-        var receiptsA = dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.observe(universe, controllerA);
+        var controllerA = Objects.requireNonNull(M5GameTestSupport.controller(universe, a), "A 的 Controller block entity");
+        var receiptsA = ChamberLoadSyncTestAccess.observe(universe, controllerA);
         hooks.add(receiptsA::close);
-        dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.discardWorld(universe);
+        ChamberLoadSyncTestAccess.discardWorld(universe);
         // C：不在索引裡的 Controller。
-        universe.setBlockState(c.controllerPos(), dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
-                .with(dev.quantumchamber.chamber.ChamberControllerBlock.FACING, c.outwardFacing()));
-        var controllerC = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, c), "C 的 Controller block entity");
-        var receiptsC = dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.observe(universe, controllerC);
+        universe.setBlockState(c.controllerPos(), ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
+                .with(ChamberControllerBlock.FACING, c.outwardFacing()));
+        var controllerC = Objects.requireNonNull(M5GameTestSupport.controller(universe, c), "C 的 Controller block entity");
+        var receiptsC = ChamberLoadSyncTestAccess.observe(universe, controllerC);
         hooks.add(receiptsC::close);
-        var consumed = dev.quantumchamber.chamber.ChamberLoadSyncOutcome.CONSUMED;
-        var discarded = List.of(dev.quantumchamber.chamber.ChamberLoadSyncOutcome.DISCARDED_WORLD_UNLOAD);
+        var consumed = ChamberLoadSyncOutcome.CONSUMED;
+        var discarded = List.of(ChamberLoadSyncOutcome.DISCARDED_WORLD_UNLOAD);
         at(context, ticking + 1, hooks, () -> {
             // B：PENDING 已登記一 tick 之後才寫入。
             witness.put("bWritten", ProjectionWriter.write(universe, b, ProjectionWriter.Mode.FIRST_WRITE).status() == ProjectionWriter.Status.WRITTEN);
-            var controllerB = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, b), "B 的 Controller block entity");
-            var receiptsB = dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.observe(universe, controllerB);
+            var controllerB = Objects.requireNonNull(M5GameTestSupport.controller(universe, b), "B 的 Controller block entity");
+            var receiptsB = ChamberLoadSyncTestAccess.observe(universe, controllerB);
             hooks.add(receiptsB::close);
             at(context, ticking + 4, hooks, () -> {
-                witness.put("aNotRefreshedYet", !controllerA.powerInitialized() && controllerA.instanceKind() == dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN
+                witness.put("aNotRefreshedYet", !controllerA.powerInitialized() && controllerA.instanceKind() == ChamberInstanceKind.ORIGIN
                         && receiptsA.outcomes().equals(discarded));
                 witness.put("bRecognizedByLoadSync", receiptsB.outcomes().contains(consumed) && inertProjection(universe, controllerB));
                 witness.put("cForeignAfterLoadSync", receiptsC.outcomes().contains(consumed) && foreign(universe, controllerC));
@@ -1263,21 +1312,21 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     index.confirmed(completeA);
                     index.confirmed(completeB);
                     // 供電：Controller 上方（volume 外）放紅石塊；B 的 neighbor update 立即 refresh，A 由排程的 refresh 讀到。
-                    for (var frame : List.of(a, b)) universe.setBlockState(outside(frame, 3, 7, 0), net.minecraft.block.Blocks.REDSTONE_BLOCK.getDefaultState());
+                    for (var frame : List.of(a, b)) universe.setBlockState(outside(frame, 3, 7, 0), Blocks.REDSTONE_BLOCK.getDefaultState());
                     at(context, ticking + 70, hooks, () -> {
                         witness.put("poweredButInert", controllerA.wasPowered() && controllerB.wasPowered()
                                 && inertProjection(universe, controllerA) && inertProjection(universe, controllerB));
                         witness.put("cStillForeign", foreign(universe, controllerC));
                         var key = universe.getRegistryKey().getValue();
-                        witness.put("noRegistryRecordInU", dev.quantumchamber.chamber.ChamberRegistryState.get(server).registry().records().values().stream()
+                        witness.put("noRegistryRecordInU", ChamberRegistryState.get(server).registry().records().values().stream()
                                 .noneMatch(record -> record.originWorldKey().equals(key)));
                         witness.put("noSessionFromU", SessionRecoveryState.get(server).records().values().stream()
                                 .noneMatch(record -> record.origin().worldKey().equals(key)));
                         var entries = capture.entries();
                         var window = entries.subList(mark, entries.size());
                         var positions = List.of(a.controllerPos(), b.controllerPos(), c.controllerPos());
-                        witness.put("noWarnOrErrorOutsideTheSession", window.stream().noneMatch(entry -> (entry.level() == org.apache.logging.log4j.Level.WARN
-                                || entry.level() == org.apache.logging.log4j.Level.ERROR) && !entry.message().contains(sid.toString())));
+                        witness.put("noWarnOrErrorOutsideTheSession", window.stream().noneMatch(entry -> (entry.level() == Level.WARN
+                                || entry.level() == Level.ERROR) && !entry.message().contains(sid.toString())));
                         witness.put("noLogAboutTheControllers", window.stream().noneMatch(entry -> positions.stream()
                                 .anyMatch(pos -> entry.message().contains(pos.toShortString()) || entry.message().contains(pos.toString()))));
                         LOGGER.info("M5_PROJECTION_RECOGNITION a={}/{} b={}/{} c={}/{} receiptsA={} receiptsB={} receiptsC={}", controllerA.instanceKind(),
@@ -1293,42 +1342,42 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /** inert 的 PROJECTION：仍在世界上、PROJECTION、INVALID、比較器 0、沒有 chamber UUID。 */
-    private static boolean inertProjection(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
-        return inWorld(world, controller) && controller.instanceKind() == dev.quantumchamber.chamber.ChamberInstanceKind.PROJECTION && inert(world, controller);
+    private static boolean inertProjection(ServerWorld world, ChamberControllerBlockEntity controller) {
+        return inWorld(world, controller) && controller.instanceKind() == ChamberInstanceKind.PROJECTION && inert(world, controller);
     }
 
     /** 未知的 foreign Controller：仍在世界上、refresh 過、ORIGIN（預設值）、INVALID、比較器 0、沒有 chamber UUID。 */
-    private static boolean foreign(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
+    private static boolean foreign(ServerWorld world, ChamberControllerBlockEntity controller) {
         return inWorld(world, controller) && controller.powerInitialized()
-                && controller.instanceKind() == dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN && inert(world, controller);
+                && controller.instanceKind() == ChamberInstanceKind.ORIGIN && inert(world, controller);
     }
 
-    private static boolean inWorld(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
+    private static boolean inWorld(ServerWorld world, ChamberControllerBlockEntity controller) {
         return !controller.isRemoved() && world.getBlockEntity(controller.getPos()) == controller;
     }
 
-    private static boolean inert(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
-        return controller.chamberState() == dev.quantumchamber.chamber.ChamberState.INVALID && controller.chamberUuid() == null
+    private static boolean inert(ServerWorld world, ChamberControllerBlockEntity controller) {
+        return controller.chamberState() == ChamberState.INVALID && controller.chamberUuid() == null
                 && world.getBlockState(controller.getPos()).getComparatorOutput(world, controller.getPos()) == 0;
     }
 
     /** 玩家手上的方塊放在 {@code below} 的上方（原版 {@code interactBlock}，打在頂面）。 */
-    private static void placeOnTop(net.minecraft.server.network.ServerPlayerEntity player, net.minecraft.server.world.ServerWorld world, net.minecraft.util.math.BlockPos below) {
-        var hit = new net.minecraft.util.hit.BlockHitResult(net.minecraft.util.math.Vec3d.ofCenter(below).add(0, 0.5, 0), net.minecraft.util.math.Direction.UP, below, false);
-        player.interactionManager.interactBlock(player, world, player.getMainHandStack(), net.minecraft.util.Hand.MAIN_HAND, hit);
+    private static void placeOnTop(ServerPlayerEntity player, ServerWorld world, BlockPos below) {
+        var hit = new BlockHitResult(Vec3d.ofCenter(below).add(0, 0.5, 0), Direction.UP, below, false);
+        player.interactionManager.interactBlock(player, world, player.getMainHandStack(), Hand.MAIN_HAND, hit);
     }
 
     /** 在 {@code at} 放一台朝向相鄰 {@code facing} 的活塞，再在 {@code power} 放紅石塊供電；回傳活塞的位置。 */
-    private static net.minecraft.util.math.BlockPos piston(net.minecraft.server.world.ServerWorld world, net.minecraft.util.math.BlockPos at,
-            net.minecraft.util.math.BlockPos facing, net.minecraft.util.math.BlockPos power) {
-        world.setBlockState(at, net.minecraft.block.Blocks.PISTON.getDefaultState().with(net.minecraft.block.PistonBlock.FACING, toward(at, facing)));
-        world.setBlockState(power, net.minecraft.block.Blocks.REDSTONE_BLOCK.getDefaultState());
+    private static BlockPos piston(ServerWorld world, BlockPos at,
+            BlockPos facing, BlockPos power) {
+        world.setBlockState(at, Blocks.PISTON.getDefaultState().with(PistonBlock.FACING, toward(at, facing)));
+        world.setBlockState(power, Blocks.REDSTONE_BLOCK.getDefaultState());
         return at;
     }
 
     /** F4b-1 的 fixture 交出的宇宙：RESOLVE 完成的 server tick、宇宙 U 的 world、塌縮的 session、原艙的 chamber UUID 與 U。 */
     @FunctionalInterface private interface ResolvedUniverse {
-        void ready(int tick, net.minecraft.server.world.ServerWorld universe, UUID sid, UUID chamber, UniverseId id);
+        void ready(int tick, ServerWorld universe, UUID sid, UUID chamber, UniverseId id);
     }
 
     /**
@@ -1344,74 +1393,74 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
             at(context, registered + 1, hooks, () -> moveInside(p, origin.frame));
             whenTicks(context, registered + 2, 20, () -> UniverseLifecycleService.resolveActive(server, id).isPresent()
-                    && origin.capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1,
+                    && origin.capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1,
                     resolved -> ready.ready(resolved, UniverseLifecycleService.resolveActive(server, id).orElseThrow(), sid, chamber, id),
                     () -> "RESOLVE 沒有建立宇宙：record=" + M5GameTestSupport.state(journal, sid), hooks);
         });
     }
 
     /** 投影在區域座標（0..6）的格。 */
-    private static net.minecraft.util.math.BlockPos local(dev.quantumchamber.chamber.ChamberFrame frame, int x, int y, int z) {
+    private static BlockPos local(ChamberFrame frame, int x, int y, int z) {
         return ChamberGeometry.localToWorld(frame, x, y, z);
     }
 
     /** 投影區域座標系的任意格（可以在 7×7×7 之外）。 */
-    private static net.minecraft.util.math.BlockPos outside(dev.quantumchamber.chamber.ChamberFrame frame, int x, int y, int z) {
-        return dev.quantumchamber.chamber.ChamberSpaceCoordinates.block(frame, x, y, z);
+    private static BlockPos outside(ChamberFrame frame, int x, int y, int z) {
+        return ChamberSpaceCoordinates.block(frame, x, y, z);
     }
 
     /** 由 {@code from} 指向相鄰的 {@code to} 的方向。 */
-    private static net.minecraft.util.math.Direction toward(net.minecraft.util.math.BlockPos from, net.minecraft.util.math.BlockPos to) {
-        return java.util.Objects.requireNonNull(net.minecraft.util.math.Direction.fromVector(to.getX() - from.getX(), to.getY() - from.getY(), to.getZ() - from.getZ()),
+    private static Direction toward(BlockPos from, BlockPos to) {
+        return Objects.requireNonNull(Direction.fromVector(to.getX() - from.getX(), to.getY() - from.getY(), to.getZ() - from.getZ()),
                 "不相鄰");
     }
 
     /** 投影的 7×7×7 外框（整格）。 */
-    private static net.minecraft.util.math.Box box(dev.quantumchamber.chamber.ChamberFrame frame) {
+    private static Box box(ChamberFrame frame) {
         var bounds = ChamberGeometry.bounds(frame);
-        return new net.minecraft.util.math.Box(bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(), bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1);
+        return new Box(bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(), bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1);
     }
 
     /** {@code area} 內的掉落物數。 */
-    private static int items(net.minecraft.server.world.ServerWorld world, net.minecraft.util.math.Box area) {
-        return world.getEntitiesByClass(net.minecraft.entity.ItemEntity.class, area, entity -> true).size();
+    private static int items(ServerWorld world, Box area) {
+        return world.getEntitiesByClass(ItemEntity.class, area, entity -> true).size();
     }
 
     /** 投影 7×7×7 的 343 格目前的方塊狀態（依區域座標順序）。 */
-    private static List<net.minecraft.block.BlockState> cells(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberFrame frame) {
-        var result = new java.util.ArrayList<net.minecraft.block.BlockState>();
+    private static List<BlockState> cells(ServerWorld world, ChamberFrame frame) {
+        var result = new ArrayList<BlockState>();
         for (int x = 0; x < 7; x++) for (int y = 0; y < 7; y++) for (int z = 0; z < 7; z++) result.add(world.getBlockState(local(frame, x, y, z)));
         return result;
     }
 
     /** 把玩家移到投影區域座標 (x, y, z) 的位置（同一個世界或跨世界）。 */
-    private static void standAt(net.minecraft.server.network.ServerPlayerEntity player, net.minecraft.server.world.ServerWorld world,
-            dev.quantumchamber.chamber.ChamberFrame frame, double x, double y, double z) {
-        var at = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, x, y, z);
-        player.teleport(world, at.x, at.y, at.z, java.util.Set.of(), 0, 0);
-        player.setVelocity(net.minecraft.util.math.Vec3d.ZERO);
+    private static void standAt(ServerPlayerEntity player, ServerWorld world,
+            ChamberFrame frame, double x, double y, double z) {
+        var at = ChamberSpaceCoordinates.position(frame, x, y, z);
+        player.teleport(world, at.x, at.y, at.z, Set.of(), 0, 0);
+        player.setVelocity(Vec3d.ZERO);
     }
 
     /** 以授權寫入損壞兩格不變量 cell（一格 AIR、一格石頭）；{@code closeDoor} 時另把 25 格門關上。 */
-    private static void damage(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberFrame frame, net.minecraft.util.math.BlockPos holed,
-            net.minecraft.util.math.BlockPos stoned, boolean closeDoor) {
+    private static void damage(ServerWorld world, ChamberFrame frame, BlockPos holed,
+            BlockPos stoned, boolean closeDoor) {
         ChamberProtectionService.get().authorizedMutation(() -> {
-            world.setBlockState(holed, net.minecraft.block.Blocks.AIR.getDefaultState());
-            world.setBlockState(stoned, net.minecraft.block.Blocks.STONE.getDefaultState());
+            world.setBlockState(holed, Blocks.AIR.getDefaultState());
+            world.setBlockState(stoned, Blocks.STONE.getDefaultState());
             if (closeDoor) for (var cell : M5GameTestSupport.door(frame)) {
-                world.setBlockState(cell, dev.quantumchamber.chamber.QuantumBulkheadBlock.withOpen(world.getBlockState(cell), false));
+                world.setBlockState(cell, QuantumBulkheadBlock.withOpen(world.getBlockState(cell), false));
             }
         });
     }
 
     /** 這個 session 的「寫入 SEALED」WARN（{@code CollapseService} 的 {@code warn}，帶 LOG_MARKER）。 */
     private static int sealWriteWarnings(LogCapture capture, UUID sid) {
-        return capture.marked(org.apache.logging.log4j.Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 SEALED", sid.toString()).size();
+        return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 SEALED", sid.toString()).size();
     }
 
     /** 這個 session 的「目的地解析持續等待」WARN（帶 LOG_MARKER）。 */
     private static int waitWarnings(LogCapture capture, UUID sid) {
-        return capture.marked(org.apache.logging.log4j.Level.WARN, dev.quantumchamber.collapse.CollapseService.LOG_MARKER.getName(),
+        return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(),
                 "目的地解析持續等待", sid.toString()).size();
     }
 
@@ -1426,7 +1475,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /** flushed 是 SEALED(reason)，而且 current 與 flushed 相同。 */
     private static boolean sealedWith(SessionRecoveryState journal, UUID sid, SealedReason reason) {
         var record = journal.flushedRecords().get(sid);
-        return record != null && record.state() == SessionState.SEALED && record.collapse().sealedReason().equals(java.util.Optional.of(reason))
+        return record != null && record.state() == SessionState.SEALED && record.collapse().sealedReason().equals(Optional.of(reason))
                 && record.equals(journal.records().get(sid));
     }
 
@@ -1434,21 +1483,21 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static int allocationEntries(MinecraftServer server, UniverseId id) {
         var file = server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(UniverseAllocationLedger.FILE_NAME);
         try {
-            var entries = net.minecraft.nbt.NbtIo.readCompressed(file, net.minecraft.nbt.NbtSizeTracker.ofUnlimitedBytes()).getList("Entries", net.minecraft.nbt.NbtElement.COMPOUND_TYPE);
+            var entries = NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()).getList("Entries", NbtElement.COMPOUND_TYPE);
             int count = 0;
             for (int i = 0; i < entries.size(); i++) if (entries.getCompound(i).getUuid("UniverseId").equals(id.value())) count++;
             return count;
-        } catch (java.io.IOException failure) {
+        } catch (IOException failure) {
             throw new IllegalStateException("讀不到 allocation ledger", failure);
         }
     }
 
     /** {@code data/<name>} 的 bytes；不存在時為空陣列。 */
-    private static byte[] bytes(java.nio.file.Path data, String name) {
+    private static byte[] bytes(Path data, String name) {
         try {
             var file = data.resolve(name);
             return Files.exists(file) ? Files.readAllBytes(file) : new byte[0];
-        } catch (java.io.IOException failure) {
+        } catch (IOException failure) {
             throw new IllegalStateException(failure);
         }
     }
