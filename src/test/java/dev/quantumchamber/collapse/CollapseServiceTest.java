@@ -125,6 +125,31 @@ class CollapseServiceTest {
         assertAll(cases);
     }
 
+    /**
+     * F4b-2（spec §9.1）：預載涵蓋「艙體 bbox 水平外擴 2 格」的每個 chunk，不多也不少。期望值由 test 逐格算出（每一格的 chunk），四個朝向、跨 chunk 邊界與負座標
+     * 都一樣；外擴 2 格讓 bbox 貼著 chunk 邊界時多涵蓋鄰 chunk（例如 bbox 從 x=16 開始時含 chunk x=0）。
+     */
+    @Test void preloadCoversTheChamberBoxPlusTwoBlocks() {
+        var cases = new ArrayList<Executable>();
+        for (var controller : List.of(new BlockPos(7, 70, 9), new BlockPos(-17, 70, -2), new BlockPos(19, 64, 33), new BlockPos(-1, 80, 15)))
+            for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
+                var frame = new ChamberFrame(controller, facing);
+                var bounds = dev.quantumchamber.chamber.ChamberGeometry.bounds(frame);
+                var expected = new java.util.HashSet<net.minecraft.util.math.ChunkPos>();
+                for (int x = bounds.getMinX() - 2; x <= bounds.getMaxX() + 2; x++)
+                    for (int z = bounds.getMinZ() - 2; z <= bounds.getMaxZ() + 2; z++) expected.add(new net.minecraft.util.math.ChunkPos(new BlockPos(x, 0, z)));
+                var actual = CollapseService.preloadChunks(frame);
+                cases.add(() -> assertEquals(expected, Set.copyOf(actual), controller + " " + facing));
+                cases.add(() -> assertEquals(actual.size(), Set.copyOf(actual).size(), "沒有重複：" + controller + " " + facing));
+            }
+        cases.add(() -> assertEquals(2, CollapseService.PRELOAD_MARGIN, "外擴 2 格（spec §9.1）"));
+        // bbox 從 x=16 開始（左邊界貼著 chunk 邊界）：外擴 2 格會涵蓋 chunk x=0。
+        var edge = new ChamberFrame(new BlockPos(19, 64, 40), Direction.NORTH);
+        cases.add(() -> assertEquals(16, dev.quantumchamber.chamber.ChamberGeometry.bounds(edge).getMinX(), "fixture：bbox 的 minX 貼著 chunk 邊界"));
+        cases.add(() -> assertTrue(CollapseService.preloadChunks(edge).stream().anyMatch(chunk -> chunk.x == 0), "外擴之後涵蓋鄰 chunk"));
+        assertAll(cases);
+    }
+
     @Test void destinationIsFixedAtCommitFromTheSelectedCandidate() {
         var newMeasured = measured(DimensionRole.OVERWORLD, NEW);
         var token = ((QuantumCandidate.New) newMeasured.selectedCandidate().orElseThrow()).intent().allocationToken();

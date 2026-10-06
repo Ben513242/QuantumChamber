@@ -26,6 +26,9 @@ import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.superposition.SuperpositionSessionManager;
 import dev.quantumchamber.universe.DimensionRole;
+import dev.quantumchamber.universe.UniverseLifecycleService;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -41,9 +44,11 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,15 +81,17 @@ import org.slf4j.MarkerFactory;
  * <li>SEALED 的重試（§11.2）：可重試的原因，以與 DORMANT 相同的邊緣觸發，並在 per-session 退避（200→12000，開服之後第一次不受限）之外；
  *     {@code MATERIALIZE_FAILED}、{@code AUTHORITY_UNREADABLE} 只在重啟之後、每個 server instance 一次；永久原因與 TRR 不重試。重試時 checked
  *     SEALED→COLLAPSING（restore 類），再取得來源 ticket，之後依推導階段重跑 RESOLVE（未確認的權威由 resolver 先收斂）。</li>
- * <li>WAITING／PREPARE（§7.3）：第一次走到閘門階段時立即評估閘門，之後只在邊緣觸發時再評估。SOURCE 進入 PREPARE 即走 §7.4 的 fast path：
- *     先 checked 終局、再把門改為一般開門、再顯示訊息；終局之後釋放 runtime 與來源 ticket（spec §5）。UNIVERSE 的 PREPARE 屬 F4b：目的地確定之後
- *     停在 WAITING（不評估閘門），每個 session 記一次 WARN「準備階段尚未實作」，不預載、不投影、不寫 projection ledger。</li>
+ * <li>WAITING／PREPARE（§7.3）：第一次走到閘門階段時立即評估閘門，之後只在邊緣觸發時再評估；推導回傳 PREPARE 的轉換（{@link CollapsePhase.Transition}）。
+ *     SOURCE 進入 PREPARE 即走 §7.4 的 fast path：先 checked 終局、再把門改為一般開門、再顯示訊息；終局之後釋放 runtime 與來源 ticket（spec §5）。
+ *     UNIVERSE 的 PREPARE（F4b-2，目的宇宙這一側，§9）：預載目的世界（M5 的 chunk ticket，非建立模式查詢）；閘門在 PREPARE 進行到一半時不再成立就
+ *     釋放目的世界的 ticket、退回 WAITING。目的世界的 ticket 在閘門失效、進入 SEALED、終局時釋放（通道結束屬 F5）。PREPARE 期間原艙門維持一般狀態，
+ *     開關門照舊交給 {@code ChamberDoorService}（量子膜與門的攔截屬 F4b-3）。</li>
  * <li>§11.3：來源 role 不是 OVERWORLD、選中 NEW／EXISTING 的 MEASURED 不提交，先以保留式 recovery 到 DORMANT，再 checked 終局取消（INFO）。</li>
  * <li>§12：開服時就是 PASSAGE_READY 的 record 直接 checked 終局（{@code PASSAGE_ENDED}），門在下一個 tick 改為一般開門。</li>
  * </ul>
  * 註冊順序見 {@link #initialize()}；每個 session 的處理都在 {@link #step} 裡個別隔離例外，例外不會從 {@code END_SERVER_TICK} 拋出。
  * 終局與提交失敗的 WARN 由這裡依 (session, 寫入種類, {@link FailureText#dedupeKey}) 去重，成功時清除；正常結束（SOURCE fast path、§11.3 的取消、
- * 開服時通道的結束）一律記 INFO。門的攔截（PREPARE、PASSAGE_READY 期間）屬 F4b，F3d／F4a 的階段門都是一般狀態。
+ * 開服時通道的結束）一律記 INFO。門的攔截（PREPARE、PASSAGE_READY 期間）屬 F4b-3 與 F5，F3d～F4b-2 的階段門都是一般狀態。
  * 這裡的每一則 log 都帶 {@link #LOG_MARKER}（不屬於任何 session 的帶子 marker {@link #TICK_LOG_MARKER}）。
  */
 public final class CollapseService {
@@ -111,6 +118,13 @@ public final class CollapseService {
     private static final String ACQUIRE_TICKET = "取得來源 ticket", ACQUIRE_TICKET_NEXT = "本 server instance 不重試，開服 attach 時會為 COLLAPSING 重新取得";
     /** 進入 SEALED 的 WARN／ERROR 的去重鍵前綴（後接原因）；RESOLVE 成功時清除。 */
     private static final String SEALED_LOG = "進入 SEALED ";
+    /**
+     * spec §9.1：M5 在目的世界的預載 chunk ticket（比照 {@code quantumchamber_source}／{@code quantumchamber_corridor}）。argument 是 session UUID，
+     * radius 0（level FULL）：只讓預載範圍的 chunk 到達 FULL，不讓它們 tick。
+     */
+    private static final ChunkTicketType<UUID> DESTINATION_TICKET = ChunkTicketType.create("quantumchamber_destination", Comparator.comparing(UUID::toString));
+    /** spec §9.1：預載涵蓋艙體 bbox 水平外擴的格數（涵蓋傳送時「玩家 bbox 外擴 2 格」的 FULL 檢查）。 */
+    static final int PRELOAD_MARGIN = 2;
     private static final Map<MinecraftServer, CollapseService> INSTANCES = new ConcurrentHashMap<>();
     private static boolean initialized;
 
@@ -122,6 +136,11 @@ public final class CollapseService {
     private final Map<UUID, Track> tracks = new HashMap<>();
     /** 還沒套用成功的原艙門（以 chamber 為 key）：終局之後的一般開門，或進入 SEALED 時的關門。 */
     private final Map<UUID, PendingDoor> doors = new LinkedHashMap<>();
+    /**
+     * 每個 session 在目的世界持有的預載 ticket（§9.1，以 session 為 key，不持久化）。在 PREPARE 期間結束（閘門失效）、進入 SEALED、終局時釋放；通道結束屬 F5
+     * （{@link #releaseDestination(MinecraftServer, UUID)}）。終局不論由誰執行，下一個 tick 看到 session 已不在 journal 時都會釋放。
+     */
+    private final Map<UUID, DestinationTicket> destinations = new HashMap<>();
     private String tickWarning, tickWarningText;
     // 每個 tick 開頭取得；只在 server thread 使用。
     private SessionRecoveryState journal;
@@ -197,6 +216,7 @@ public final class CollapseService {
                 var known = journal.flushedRecords().keySet();
                 tracks.keySet().retainAll(known);
                 startupPassages.retainAll(known);
+                releaseTerminatedDestinations();
             }
             for (var door : List.copyOf(doors.values())) {
                 try {
@@ -373,17 +393,22 @@ public final class CollapseService {
             return;
         }
         boolean universe = view.collapse().destination() instanceof CollapseDestination.Universe;
-        // UNIVERSE 的 PREPARE 屬 F4b：目的地確定之後停在 WAITING，不評估閘門（不消耗邊緣觸發）。
-        var derived = CollapsePhase.derive(view, pages.measuredRecoveryComplete(sid), track.resolved, track.preparing,
-                universe ? () -> false : () -> gate(view, track));
+        var derived = CollapsePhase.derive(view, pages.measuredRecoveryComplete(sid), track.resolved, track.preparing, () -> gate(view, track));
         track.preparing = derived.phase() == CollapsePhase.PREPARE;
+        // 轉換點（F4b-2，F3d quality m-6(b)）：UNIVERSE 進入 PREPARE 時開始這一段準備的簿記；離開時（閘門失效、或推導回到 RESOLVE）釋放目的世界的
+        // ticket、退回 WAITING。SOURCE 的 PREPARE 在同一個 tick 就以 fast path 終局，沒有目的世界。
+        if (universe) switch (derived.transition()) {
+            case ENTER_PREPARE -> enterPrepare(view, track);
+            case LEAVE_PREPARE -> leavePrepare(view, track);
+            case NONE -> { }
+        }
         switch (derived.phase()) {
             // recovery 與走廊清理依收據推進（F3a）；這裡不重複驅動。
             case RETURN_PLAYERS, RELEASE_GEOMETRY -> { }
             case RESOLVE -> resolve(view, track);
-            case WAITING -> { if (universe) prepareStub(view, track); }
-            // 只有 SOURCE 會走到 PREPARE（UNIVERSE 的閘門在 F4b 之前恆為假）。
-            case PREPARE -> sourceFastPath(view, track);
+            // WAITING：等 §7.1 的邊緣觸發（gate 在下一個 tick 再看）。
+            case WAITING -> { }
+            case PREPARE -> { if (universe) prepareUniverse(view, track); else sourceFastPath(view, track); }
         }
     }
 
@@ -425,12 +450,118 @@ public final class CollapseService {
         return !warned && since >= 0 && now - since > WAIT_WARN_TICKS;
     }
 
-    /** UNIVERSE 的 PREPARE 屬 F4b：目的地確定之後停在 WAITING，每個 session 只記一次 WARN；不預載、不投影、不寫 projection ledger。 */
-    private void prepareStub(SessionRecoveryRecord view, Track track) {
-        if (track.prepareWarned) return;
-        track.prepareWarned = true;
-        LOGGER.warn(LOG_MARKER, "準備階段尚未實作（F4b）：目的地已確定，COLLAPSING 停在 WAITING，不預載、不投影、不寫 projection ledger：session={} chamber={} 目的地={}",
-                view.sessionUuid(), view.chamberUuid(), describe(view.collapse().destination()));
+    // ---- UNIVERSE 的 PREPARE：目的宇宙這一側（F4b-2；spec §7.3、§9） ----
+
+    /** 進入 PREPARE（閘門剛成立，§7.3）：開始這一段準備的簿記；之後每個 tick 依 collapse view 推導下一步（不另存進度）。 */
+    private void enterPrepare(SessionRecoveryRecord view, Track track) {
+        track.prepare = new Prepare(now);
+        LOGGER.info(LOG_MARKER, "進入 PREPARE（閘門成立）：預載目的世界並寫入投影：session={} chamber={} 目的地={}", view.sessionUuid(), view.chamberUuid(),
+                describe(view.collapse().destination()));
+    }
+
+    /**
+     * 離開 PREPARE（§7.3「PREPARE 進行到一半時閘門不再成立」）：釋放目的世界的 ticket，退回 WAITING。已完成的 RESOLVE（{@code track.resolved}）與已寫入的
+     * projection ledger 都保留；這一段準備的記憶體內進度丟棄，閘門再次成立時依 §7.1 的邊緣觸發，從 collapse view 與權威重新推導（PENDING 照第一次寫入、
+     * COMPLETE 只修復）。F4b-3：這裡也是把門由 sealed 量子膜改回一般開門的轉換點（本 task 不套用量子膜，門一直是一般狀態）。
+     */
+    private void leavePrepare(SessionRecoveryRecord view, Track track) {
+        track.prepare = null;
+        boolean released = releaseDestination(view.sessionUuid());
+        LOGGER.info(LOG_MARKER, "PREPARE 的閘門不再成立，退回 WAITING（已完成的 RESOLVE 與投影都保留{}）：session={} chamber={}",
+                released ? "；已釋放目的世界的 ticket" : "", view.sessionUuid(), view.chamberUuid());
+    }
+
+    /**
+     * PREPARE 的一個 tick（UNIVERSE）。每個 tick 依序推導、可以在任一步中斷，重啟之後依同一份推導續做（spec §9、§6.5，F4b-1 交下的呼叫順序）：
+     * <ol>
+     * <li>預載（§9.1）：對目的世界涵蓋「艙體 bbox 外擴 {@value #PRELOAD_MARGIN} 格」的每個 chunk 加上 M5 的 chunk ticket，之後以非建立模式查詢，不在
+     *     server thread 上阻塞載入；還沒全部 FULL 時等下一個 tick。</li>
+     * </ol>
+     * 預載完成之後停在這裡（投影屬下一步）。等待超過 {@value #WAIT_WARN_TICKS} ticks 時記一次 WARN，然後繼續等（§9.1：沒有劇情上的逾時、不重抽）。
+     */
+    private void prepareUniverse(SessionRecoveryRecord view, Track track) {
+        var progress = track.prepare != null ? track.prepare : (track.prepare = new Prepare(now));
+        var id = ((CollapseDestination.Universe) view.collapse().destination()).id();
+        var world = UniverseLifecycleService.resolveActive(server, id).orElse(null);
+        if (world == null) {
+            // RESOLVE 已確認 ACTIVE world，動態世界在執行期間不卸載；不成立時 fail closed：下一個 tick 推導回到 RESOLVE（離開 PREPARE、釋放 ticket），
+            // 由它 idempotent 地重新確認（不換宇宙）。
+            track.resolved = false;
+            LOGGER.warn(LOG_MARKER, "PREPARE 的目的世界不是 ACTIVE（不應發生），回到 RESOLVE 重新確認：session={} chamber={} 目的地={}", view.sessionUuid(),
+                    view.chamberUuid(), describe(view.collapse().destination()));
+            return;
+        }
+        var frame = new ChamberFrame(view.origin().controllerPos(), view.origin().facing());
+        if (!preload(view.sessionUuid(), world, frame)) {
+            prepareWait(view, progress, "預載目的世界（chunk 還沒全部 FULL）");
+            return;
+        }
+        if (progress.preloadedAt < 0) {
+            progress.preloadedAt = now;
+            LOGGER.info(LOG_MARKER, "目的世界預載完成：session={} chamber={} 目的地={}，{} 個 chunk，等了 {} ticks", view.sessionUuid(), view.chamberUuid(),
+                    describe(view.collapse().destination()), destinations.get(view.sessionUuid()).chunks().size(), now - progress.since);
+        }
+    }
+
+    /**
+     * §9.1 的預載：這個 session 在目的世界還沒有 ticket 時，對 {@link #preloadChunks} 的每個 chunk 加上 {@link #DESTINATION_TICKET}（level FULL，argument
+     * 是 session UUID）；之後每個 tick 以非建立模式（{@code getWorldChunk}，不載入、不阻塞）查詢，全部 FULL 才回 true。
+     */
+    private boolean preload(UUID sid, ServerWorld world, ChamberFrame frame) {
+        var held = destinations.get(sid);
+        if (held == null || held.world() != world) {
+            if (held != null) releaseDestination(sid);
+            held = new DestinationTicket(world, preloadChunks(frame));
+            // 先記下再加：加到一半丟出時，釋放會移除已加的（removeTicket 對沒有的 ticket 不做任何事）。
+            destinations.put(sid, held);
+            for (var chunk : held.chunks()) world.getChunkManager().addTicket(DESTINATION_TICKET, chunk, 0, sid);
+        }
+        for (var chunk : held.chunks()) if (world.getChunkManager().getWorldChunk(chunk.x, chunk.z) == null) return false;
+        return true;
+    }
+
+    /** §9.1 預載涵蓋的 chunk：艙體 bbox 水平外擴 {@value #PRELOAD_MARGIN} 格，依 x、z 遞增的順序。 */
+    static List<ChunkPos> preloadChunks(ChamberFrame frame) {
+        var bounds = ChamberGeometry.bounds(frame);
+        var chunks = new ArrayList<ChunkPos>();
+        for (int x = (bounds.getMinX() - PRELOAD_MARGIN) >> 4; x <= (bounds.getMaxX() + PRELOAD_MARGIN) >> 4; x++)
+            for (int z = (bounds.getMinZ() - PRELOAD_MARGIN) >> 4; z <= (bounds.getMaxZ() + PRELOAD_MARGIN) >> 4; z++) chunks.add(new ChunkPos(x, z));
+        return List.copyOf(chunks);
+    }
+
+    /** PREPARE 的等待（§9.1）：下一個 tick 再試；從進入 PREPARE 起超過 {@value #WAIT_WARN_TICKS} ticks 還沒準備完成時記一次 WARN，然後繼續等。 */
+    private void prepareWait(SessionRecoveryRecord view, Prepare progress, String what) {
+        if (!waitWarning(progress.since, now, progress.waitWarned)) return;
+        progress.waitWarned = true;
+        LOGGER.warn(LOG_MARKER, "PREPARE 持續等待超過 {} ticks（不進 SEALED、不重抽，繼續等待）：session={} chamber={} 目的地={} 正在等：{}，自 tick {}", WAIT_WARN_TICKS,
+                view.sessionUuid(), view.chamberUuid(), describe(view.collapse().destination()), what, progress.since);
+    }
+
+    /** 終局（不論由誰執行，例如 F4b-3 的參與者關門、F5 的通道結束）：session 已不在 journal（current 與 flushed 都沒有）時，釋放它在目的世界的 ticket。 */
+    private void releaseTerminatedDestinations() {
+        for (var sid : List.copyOf(destinations.keySet())) {
+            if (journal.records().containsKey(sid) || journal.flushedRecords().containsKey(sid)) continue;
+            if (releaseDestination(sid)) LOGGER.info(LOG_MARKER, "session 已終局，釋放目的世界的 ticket：session={}", sid);
+        }
+    }
+
+    /** 釋放這個 session 在目的世界的 ticket（沒有時不做任何事），回傳是否釋放了。 */
+    private boolean releaseDestination(UUID sid) {
+        var held = destinations.remove(sid);
+        if (held == null) return false;
+        for (var chunk : held.chunks()) held.world().getChunkManager().removeTicket(DESTINATION_TICKET, chunk, 0, sid);
+        return true;
+    }
+
+    /**
+     * 釋放這個 session 在目的世界的預載 ticket（spec §9.1：通道結束、PREPARE 期間結束、進入 SEALED）。進入 SEALED、閘門失效與終局由塌縮流程自己釋放；
+     * 這個入口給 F5 的通道結束呼叫。只在 server thread；沒有這個 server 的塌縮流程或沒有 ticket 時回 false。
+     */
+    static boolean releaseDestination(MinecraftServer server, UUID sid) {
+        var service = INSTANCES.get(Objects.requireNonNull(server, "server"));
+        if (service == null) return false;
+        if (!server.isOnThread()) throw new IllegalStateException("目的世界的 ticket 只能在 server thread 釋放");
+        return service.releaseDestination(sid);
     }
 
     /**
@@ -465,6 +596,8 @@ public final class CollapseService {
         notifyParticipants(view, MESSAGE_SEALED);
         refresh(view, "進入 SEALED 之後刷新 Controller");
         sideEffect(sid, "進入 SEALED 時釋放來源 ticket", "不重試；停服時一併釋放", () -> sessions.releaseOnSealed(server, sid));
+        // spec §9.1：進入 SEALED 時與來源 ticket 一起釋放目的世界的預載 ticket（F4b-2）。
+        if (releaseDestination(sid)) LOGGER.info(LOG_MARKER, "進入 SEALED，已釋放目的世界的 ticket：session={} chamber={}", sid, view.chamberUuid());
         sealedLog(view, reason, cause);
     }
 
@@ -605,12 +738,13 @@ public final class CollapseService {
 
     // ---- 共用 ----
 
-    /** checked 終局讀回確認之後：釋放 runtime 與來源 ticket（spec §5），不再追蹤這個 session。 */
+    /** checked 終局讀回確認之後：釋放 runtime 與來源 ticket（spec §5）與目的世界的 ticket（§9.1），不再追蹤這個 session。 */
     private void terminated(SessionRecoveryRecord record) {
         var sid = record.sessionUuid();
         tracks.remove(sid);
         startupPassages.remove(sid);
         sessions.releaseAfterTerminal(server, sid);
+        if (releaseDestination(sid)) LOGGER.info(LOG_MARKER, "session 已終局，釋放目的世界的 ticket：session={}", sid);
     }
 
     /** 終局沒有完成：依 (session, 寫入種類, 原因) 去重記 WARN；restore 類失敗之後以 session 為單位退避（§6、§11.2）。不改門。 */
@@ -912,8 +1046,8 @@ public final class CollapseService {
          * instance 一次」）。只管重試的觸發；物化本身每個 instance 一次由 resolver 依 UniverseId 把關（F4a fix round 1）。
          */
         boolean restartRetryConsumed;
-        /** UNIVERSE 的 PREPARE stub 已記過 WARN。 */
-        boolean prepareWarned;
+        /** UNIVERSE 這一段 PREPARE 的記憶體內進度（進入 PREPARE 時建立，離開、進入 SEALED、重試時丟棄；不持久化，重啟之後重新推導）。 */
+        Prepare prepare;
         /** RESOLVE 連續等待的起點（-1 表示不在等待）與這次等待是否已記過 WARN。 */
         long waitSince = -1;
         boolean waitWarned;
@@ -960,6 +1094,7 @@ public final class CollapseService {
             entry = null;
             gateEvaluated = false;
             preparing = false;
+            prepare = null;
         }
 
         void endWait() {
@@ -967,6 +1102,24 @@ public final class CollapseService {
             waitWarned = false;
         }
     }
+
+    /**
+     * UNIVERSE 一段 PREPARE 的記憶體內進度（F4b-2）。只記「這一段」裡已觀察到的事（開始的 tick、預載完成的 tick、等待的 WARN 是否已記），權威的狀態
+     * （projection ledger 的 PENDING／COMPLETE）每個 tick 重新查；重啟或離開 PREPARE 之後從頭推導。
+     */
+    static final class Prepare {
+        /** 進入 PREPARE 的 server tick（§9.1 的 600 ticks WARN 由此起算）。 */
+        final int since;
+        /** 預載完成的 server tick（-1 表示還沒完成）。 */
+        int preloadedAt = -1;
+        /** 這一段的等待 WARN 是否已記過。 */
+        boolean waitWarned;
+
+        Prepare(int since) { this.since = since; }
+    }
+
+    /** 一個 session 在目的世界持有的預載 ticket：世界與 ticket 涵蓋的 chunk（{@link #preloadChunks}）。 */
+    private record DestinationTicket(ServerWorld world, List<ChunkPos> chunks) { }
 
     /** 待套用門的目標：終局之後的一般開門，或進入 SEALED 時的關門（門口有 entity 時一般開門）。{@code pending}／{@code done} 是 log 的字句。 */
     enum DoorGoal {

@@ -664,6 +664,36 @@ final class M5GameTestSupport {
         return result;
     }
 
+    // ---- PREPARE（F4b-2） ----
+
+    /** production 預載 ticket 的名稱（spec §9.1；以字面值比對，不讀 production 的常數）。 */
+    static final String DESTINATION_TICKET = "quantumchamber_destination";
+
+    /**
+     * F4b-2：這個 session 在 {@code world} 持有的預載 ticket（名稱為 {@value #DESTINATION_TICKET}、argument 是 session UUID）所在的 chunk 與 level，
+     * 從原生 ticket 表唯讀取得（{@code ChunkTicketManagerTestAccessor}；不修改原生集合）。沒有時為空。
+     */
+    static Map<ChunkPos, Integer> destinationTickets(ServerWorld world, UUID sid) {
+        var manager = world.getChunkManager().chunkLoadingManager.getTicketManager();
+        var entries = ((dev.quantumchamber.gametest.mixin.ChunkTicketManagerTestAccessor) manager).quantumchamberTest$getTicketsByPosition();
+        var result = new java.util.TreeMap<ChunkPos, Integer>(Comparator.comparingInt((ChunkPos chunk) -> chunk.x).thenComparingInt(chunk -> chunk.z));
+        for (var entry : entries.long2ObjectEntrySet()) for (var ticket : entry.getValue()) {
+            if (!DESTINATION_TICKET.equals(ticket.getType().toString())) continue;
+            var argument = ((dev.quantumchamber.gametest.mixin.ChunkTicketArgumentTestAccessor) (Object) ticket).quantumchamberTest$getArgument();
+            if (sid.equals(argument)) result.put(new ChunkPos(entry.getLongKey()), ticket.getLevel());
+        }
+        return result;
+    }
+
+    /** spec §9.1 的預載範圍，由 test 依 spec 自己算出（不讀 production 的 {@code CollapseService.preloadChunks}）：艙體 bbox 水平外擴 2 格涵蓋的 chunk。 */
+    static Set<ChunkPos> preloadArea(ChamberFrame frame) {
+        var bounds = ChamberGeometry.bounds(frame);
+        var chunks = new java.util.HashSet<ChunkPos>();
+        for (int x = bounds.getMinX() - 2; x <= bounds.getMaxX() + 2; x++)
+            for (int z = bounds.getMinZ() - 2; z <= bounds.getMaxZ() + 2; z++) chunks.add(new ChunkPos(new BlockPos(x, 0, z)));
+        return Set.copyOf(chunks);
+    }
+
     // ---- 候選門 ----
 
     /** 一扇候選門（SOURCE、NEW 或 EXISTING）與它可選擇的門格。 */

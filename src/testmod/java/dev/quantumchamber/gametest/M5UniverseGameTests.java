@@ -268,13 +268,15 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F4a（spec §8.2、§7.3、§6.3、§6.4；取代 F3d 的 RESOLVE stub test）：真原艙上的 DORMANT NEW 收據，參與者 P 由艙外進入（已供電、enabled）
      * → 提交 COLLAPSING（Destination 是 allocation token 的推導值，DORMANT 續行取得來源 ticket）。RESOLVE 之前斷電：RESOLVE 不需要供電，照樣依序
      * 完成 allocation entry（推導值，恰一筆）、catalog（EAGER_ENABLED，恰好多 1 筆）、lifecycle 物化（exact ACTIVE world）與 discovery
-     * （firstObserver＝P、gameplayEligible），記一則 INFO「目的地已確定」，不進 SEALED。期間 P 開關門不影響塌縮（spec §3 詮釋 3）。之後 F4b 之前
-     * 停在 WAITING：每個 session 只記一次 WARN「準備階段尚未實作」，恢復供電也不重複。收尾以終局 API 移除 record（宇宙保留），catalog 增量 1。
-     * 不需要原生 checkpoint，各平台都執行。
+     * （firstObserver＝P、gameplayEligible），記一則 INFO「目的地已確定」，不進 SEALED。期間 P 開關門不影響塌縮（spec §3 詮釋 3）。
+     * <p>F4b-2（spec §7.3、§7.1；F4a quality Q2-m6）：RESOLVE 之後的 PREPARE 閘門要求已供電。第一次評估（RESOLVE 的下一個 tick）時沒有供電 → 停在 WAITING，
+     * 不進入 PREPARE、不加目的世界的 ticket；之後恢復供電，但 P 一直在艙內，沒有 §7.1 的邊緣觸發，仍停在 WAITING（F4a 的 PREPARE stub 已移除，所以改名）。
+     * 這個 session 從頭到尾沒有任何 WARN／ERROR（{@code noWarnOrError}），也沒有塌縮流程的 WARN／ERROR（{@code collapseFlowNeverWarned}，含不帶 sid 的
+     * tick 層級 log）。收尾以終局 API 移除 record（宇宙保留），catalog 增量 1。不需要原生 checkpoint，各平台都執行。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_resolve_new", tickLimit = 400)
-    public void dormant_new_receipt_resolves_without_power_then_waits_at_the_prepare_stub(TestContext context) {
-        begin(context, "dormant_new_receipt_resolves_without_power_then_waits_at_the_prepare_stub");
+    public void dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge(TestContext context) {
+        begin(context, "dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
         DormantOrigin origin;
@@ -314,16 +316,22 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 witness.put("resolveDoorCloses", interact(world, door, p).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
             });
             at(context, registered + 5, hooks, () -> {
-                witness.put("oneWaitingStubWarn", capture.matching(Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
-                // 恢復供電：F4b 之前 UNIVERSE 不評估閘門，仍停在 WAITING。
+                // RESOLVE 之後的第一次閘門評估（registered+3）沒有供電：WAITING，沒有進入 PREPARE、沒有目的世界的 ticket。
+                var universe = UniverseLifecycleService.resolveActive(server, id).orElseThrow();
+                witness.put("waitingWithoutPower", capture.matching(Level.INFO, "進入 PREPARE", sid.toString()).isEmpty()
+                        && M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                // 恢復供電：P 一直在艙內，沒有邊緣觸發。
                 context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
             });
             at(context, registered + 9, hooks, () -> {
                 var held = journal.flushedRecords().get(sid);
                 witness.put("stillWaiting", held != null && held.state() == SessionState.COLLAPSING && held.equals(journal.records().get(sid)));
-                witness.put("stubWarnedOnce", capture.matching(Level.WARN, "準備階段尚未實作", sid.toString()).size() == 1);
-                witness.put("onlyTheStubWarnAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 1
-                        && capture.matching(Level.ERROR).isEmpty());
+                var universe = UniverseLifecycleService.resolveActive(server, id).orElseThrow();
+                witness.put("noPrepareWithoutAnEntryEdge", world.isReceivingRedstonePower(frame.controllerPos())
+                        && capture.matching(Level.INFO, "進入 PREPARE", sid.toString()).isEmpty() && M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                // F4a quality Q2-m6：依 sid 篩選（不分 marker），另以 marker 涵蓋塌縮流程不帶 sid 的 tick 層級 WARN／ERROR。
+                witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid));
+                witness.put("collapseFlowNeverWarned", M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
                 // 收尾：終局 API 移除 record（宇宙保留、已 discovered），正式 API 釋放來源 ticket。
                 hooks.release();
                 witness.put("ticketReleasedAfterTerminal", !M4CandidateTestAccess.sourceTicketHeld(sid) && !journal.flushedRecords().containsKey(sid));
@@ -1341,6 +1349,118 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    // ---- F4b-2：PREPARE 的目的宇宙側 ----
+
+    /**
+     * F4b-2（spec §9.1、§7.3；plan Step 1 第 1 組）：DORMANT NEW 收據 → RESOLVE 物化宇宙 U → 下一個 tick 閘門成立（P 在艙內、已供電），進入 PREPARE：
+     * <ul>
+     * <li>預載：塌縮流程在 U 對「艙體 bbox 水平外擴 2 格」涵蓋的每個 chunk 加上自己的 ticket（{@code quantumchamber_destination}，argument 是 session，
+     *     level 33＝FULL；涵蓋範圍由 test 依 spec 自己算出）。之後以非建立模式查詢：預載完成的 INFO 記下等了幾個 tick，至少 1（同一個 tick 加 ticket、
+     *     又在 server thread 上阻塞載入的話是 0），完成時每個 chunk 都是 FULL。</li>
+     * <li>終局之後（收尾的終局 API），下一個 tick 塌縮流程看到 session 已不在 journal，釋放目的世界的 ticket（完成條件）。</li>
+     * </ul>
+     * catalog 增量 1（U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_new", tickLimit = 600)
+    public void prepare_new_runs_the_destination_side_then_stops_before_the_passage(TestContext context) {
+        begin(context, "prepare_new_runs_the_destination_side_then_stops_before_the_passage");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var area = M5GameTestSupport.preloadArea(frame);
+            whenTicks(context, resolved + 1, 20, () -> !M5GameTestSupport.destinationTickets(universe, sid).isEmpty(), ticketed -> {
+                var tickets = M5GameTestSupport.destinationTickets(universe, sid);
+                witness.put("enteredPrepareOnce", entered(capture, sid) == 1);
+                witness.put("ticketsCoverTheBoxPlusTwoAtFull", tickets.keySet().equals(area) && tickets.values().stream().allMatch(level -> level == 33));
+                whenTicks(context, ticketed, 200, () -> !preloaded(capture, sid).isEmpty(), done -> {
+                    witness.put("preloadWaitedAtLeastOneTick", preloadWaitedTicks(capture, sid) >= 1);
+                    witness.put("everyPreloadChunkFull", area.stream().allMatch(chunk -> universe.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null));
+                    witness.put("stillCollapsing", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                    LOGGER.info("M5_PREPARE_NEW tickets={} area={} waited={}", tickets.size(), area.size(), preloadWaitedTicks(capture, sid));
+                    // 收尾：終局 API 移除 record；下一個 tick 塌縮流程釋放目的世界的 ticket（完成條件）。
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "PREPARE 的預載：" + witness + " tickets=" + tickets.keySet() + " area=" + area);
+                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                }, () -> "預載沒有完成：tickets=" + M5GameTestSupport.destinationTickets(universe, sid).size() + " witness=" + witness, hooks);
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F4b-2（spec §7.3「PREPARE 進行到一半時閘門不再成立」、§7.1；plan Step 1 第 13 組的 ticket 與 WAITING）：進入 PREPARE、預載還沒完成時斷電 →
+     * 下一個 tick 閘門失效：釋放目的世界的 ticket、退回 WAITING（INFO），record 仍是 COLLAPSING。恢復供電之後 P 一直在艙內，沒有邊緣觸發，不回到 PREPARE；
+     * P 由艙外再進入 → 回到 PREPARE，重新加上同一份 ticket、預載完成。RESOLVE 只有一次（「目的地已確定」恰一則），allocation entry 恰一筆，catalog 增量 1
+     * （沒有第二個宇宙）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_power", tickLimit = 600)
+    public void prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it(TestContext context) {
+        begin(context, "prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var area = M5GameTestSupport.preloadArea(frame);
+            whenTicks(context, resolved + 1, 20, () -> !M5GameTestSupport.destinationTickets(universe, sid).isEmpty(), ticketed -> {
+                witness.put("preparingWithTheTickets", entered(capture, sid) == 1 && M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area));
+                witness.put("cutBeforeThePreloadCompleted", preloaded(capture, sid).isEmpty());
+                // PREPARE 進行到一半時斷電。
+                context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                at(context, ticketed + 1, hooks, () -> {
+                    witness.put("ticketReleasedOnPowerLoss", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    witness.put("backToWaitingWithOneInfo", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "退回 WAITING",
+                            "已釋放目的世界的 ticket", sid.toString()).size() == 1);
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("stillCollapsing", record != null && record.state() == SessionState.COLLAPSING && record.equals(journal.records().get(sid)));
+                    context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
+                });
+                at(context, ticketed + 5, hooks, () -> {
+                    witness.put("noReentryWithoutAnEntryEdge", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && entered(capture, sid) == 1);
+                    moveOutside(p, frame);
+                });
+                at(context, ticketed + 6, hooks, () -> moveInside(p, frame));
+                whenTicks(context, ticketed + 7, 200, () -> entered(capture, sid) == 2 && preloaded(capture, sid).size() == 1, resumed -> {
+                    witness.put("resumedWithTheSameTickets", M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area));
+                    witness.put("resolvedOnlyOnce", capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1);
+                    witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "PREPARE 中斷電：" + witness);
+                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                }, () -> "邊緣觸發之後沒有回到 PREPARE：record=" + M5GameTestSupport.state(journal, sid) + " entered=" + entered(capture, sid)
+                        + " witness=" + witness, hooks);
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /** 這個 session「進入 PREPARE」的 INFO 數（帶 LOG_MARKER）。 */
+    private static int entered(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "進入 PREPARE", sid.toString()).size();
+    }
+
+    /** 這個 session「目的世界預載完成」的 INFO（帶 LOG_MARKER）。 */
+    private static List<LogCapture.Entry> preloaded(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "目的世界預載完成", sid.toString());
+    }
+
+    /** 第一則「目的世界預載完成」記下的等待 tick 數；沒有時為 -1。 */
+    private static int preloadWaitedTicks(LogCapture capture, UUID sid) {
+        var all = preloaded(capture, sid);
+        if (all.isEmpty()) return -1;
+        var matcher = java.util.regex.Pattern.compile("等了 (\\d+) ticks").matcher(all.getFirst().message());
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : -1;
+    }
+
     /** inert 的 PROJECTION：仍在世界上、PROJECTION、INVALID、比較器 0、沒有 chamber UUID。 */
     private static boolean inertProjection(ServerWorld world, ChamberControllerBlockEntity controller) {
         return inWorld(world, controller) && controller.instanceKind() == ChamberInstanceKind.PROJECTION && inert(world, controller);
@@ -1381,10 +1501,25 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
-     * F4b-1 的 fixture：原艙上的 DORMANT NEW 收據，P 由艙外進入 → 提交 COLLAPSING → RESOLVE 建立並物化宇宙 U（之後停在 PREPARE stub 的 WAITING）。
-     * RESOLVE 完成之後以那個 tick、U 的 world、session 與 U 呼叫 {@code ready}。收尾時 DormantOrigin 以終局 API 移除收據（宇宙保留，catalog 增量 1）。
+     * F4b-1 的 fixture：原艙上的 DORMANT NEW 收據，P 由艙外進入 → 提交 COLLAPSING → RESOLVE 建立並物化宇宙 U。RESOLVE 完成之後，先以
+     * {@code M5TestHooks.suspendCollapse} 暫停這個 session 的塌縮流程，再以那個 tick、U 的 world、session 與 U 呼叫 {@code ready}：F4b-2 起，RESOLVE 之後的下一個
+     * tick（P 仍在艙內、已供電）閘門成立、塌縮流程自己預載並寫投影；F4b-1 的 test 自己以寫入器與權威操作同一個位置的投影，所以在第一次閘門評估之前暫停
+     * （偵測 RESOLVE 完成的 callback 在它之後的 test tick 執行，早於那個 tick 的 {@code END_SERVER_TICK}）。收尾時 DormantOrigin 以終局 API 移除收據
+     * （宇宙保留，catalog 增量 1）。
      */
     private static void resolvedUniverse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, ResolvedUniverse ready) {
+        newCollapse(context, origin, hooks, true, ready);
+    }
+
+    /**
+     * F4b-2 的 fixture：同 {@link #resolvedUniverse}，但不暫停。RESOLVE 之後的下一個 tick，P 仍在艙內、原艙已供電、Origin enabled，閘門的第一次評估成立，
+     * 進入 PREPARE（預載目的世界、寫投影）。{@code ready} 在 RESOLVE 完成之後的 test tick 呼叫，早於第一次閘門評估。
+     */
+    private static void collapsedToUniverse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, ResolvedUniverse ready) {
+        newCollapse(context, origin, hooks, false, ready);
+    }
+
+    private static void newCollapse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, boolean suspend, ResolvedUniverse ready) {
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var p = origin.player();
         origin.whenRegistered((registered, chamber) -> {
@@ -1393,9 +1528,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
             at(context, registered + 1, hooks, () -> moveInside(p, origin.frame));
             whenTicks(context, registered + 2, 20, () -> UniverseLifecycleService.resolveActive(server, id).isPresent()
-                    && origin.capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1,
-                    resolved -> ready.ready(resolved, UniverseLifecycleService.resolveActive(server, id).orElseThrow(), sid, chamber, id),
-                    () -> "RESOLVE 沒有建立宇宙：record=" + M5GameTestSupport.state(journal, sid), hooks);
+                    && origin.capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1, resolved -> {
+                if (suspend) M5TestHooks.suspendCollapse(sid);
+                ready.ready(resolved, UniverseLifecycleService.resolveActive(server, id).orElseThrow(), sid, chamber, id);
+            }, () -> "RESOLVE 沒有建立宇宙：record=" + M5GameTestSupport.state(journal, sid), hooks);
         });
     }
 
