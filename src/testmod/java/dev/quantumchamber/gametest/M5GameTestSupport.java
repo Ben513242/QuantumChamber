@@ -12,6 +12,7 @@ import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.chamber.QuantumBulkheadBlock;
 import dev.quantumchamber.collapse.CollapseService;
+import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.CorridorGeometry;
 import dev.quantumchamber.corridor.CorridorPageManager;
@@ -36,6 +37,7 @@ import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import net.minecraft.block.Block;
@@ -43,6 +45,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -158,8 +161,8 @@ final class M5GameTestSupport {
      * chunks、{@code observe} 在那一刻的觀察），前 {@code failFirst} 次在存檔之前受控失敗；安裝、占用與移除的規則見 {@link #installHook}。{@code observe} 在
      * production 的 {@code END_SERVER_TICK} 裡執行（server thread），可以讀權威、改世界；它丟出的例外只記下。
      */
-    static M5TestHooks.ChunkCheckpointProbe installChunkCheckpointProbe(TestContext context, net.minecraft.registry.RegistryKey<World> world, int failFirst,
-            java.util.function.IntFunction<String> observe, M2CorridorGameTests.TestHooks hooks) {
+    static M5TestHooks.ChunkCheckpointProbe installChunkCheckpointProbe(TestContext context, RegistryKey<World> world, int failFirst,
+            IntFunction<String> observe, M2CorridorGameTests.TestHooks hooks) {
         var probe = new M5TestHooks.ChunkCheckpointProbe(world, failFirst, observe);
         installHook(context, M5TestHooks.CHUNK_CHECKPOINT_PROBE, probe, hooks);
         return probe;
@@ -169,8 +172,8 @@ final class M5GameTestSupport {
      * F4b-2：投影寫入失敗（{@link M5TestHooks#PROJECTION_WRITE_FAULT}）：{@code world} 以 {@code mode} 寫完的前 {@code failures} 次，結果換成 WRITE_FAILED；
      * 安裝、占用與移除的規則見 {@link #installHook}。
      */
-    static M5TestHooks.ProjectionWriteFault installProjectionWriteFault(TestContext context, net.minecraft.registry.RegistryKey<World> world,
-            dev.quantumchamber.collapse.ProjectionWriter.Mode mode, int failures, M2CorridorGameTests.TestHooks hooks) {
+    static M5TestHooks.ProjectionWriteFault installProjectionWriteFault(TestContext context, RegistryKey<World> world,
+            ProjectionWriter.Mode mode, int failures, M2CorridorGameTests.TestHooks hooks) {
         var fault = new M5TestHooks.ProjectionWriteFault(world, mode, failures);
         installHook(context, M5TestHooks.PROJECTION_WRITE_FAULT, fault, hooks);
         return fault;
@@ -712,8 +715,8 @@ final class M5GameTestSupport {
      * F4b-2：testmod 專用的重建 hook（README「投影的殘留與隔離」）。projection ledger 在執行期遺失（檔案被刪、之後的 checked 寫入在前置檢查發現）之後，把檔案以
      * {@code bytes} 寫回，再以反射解除 M5 authority 的遺失標記（{@code CollapseAuthorities} 的 projection slot 的 {@code lost}）與投影保護索引的退化
      * （{@code degraded}），讓同一個 M5 run 之後的 batch 不受影響：兩者在同一個 instance 內本來不會解除，而 batch 的順序不固定。{@code bytes} 必須是遺失之前的正式檔
-     * （遺失的偵測不改 current，所以寫回之後檔案、已確認的內容與 current 一致）。之後權威必須健康、索引不退化，否則丟 IllegalStateException。冪等；只在 M5 run 用，
-     * 欄位名稱是 Loom 開發 runtime 的 named 名稱。
+     * （遺失的偵測不改 current，所以寫回之後檔案、已確認的內容與 current 一致）。之後權威必須健康、索引不退化，否則丟 IllegalStateException。冪等；只在 M5 run 用。
+     * 反射的 {@code projection}、{@code lost}、{@code degraded} 都是本 mod 自己的欄位，不經 remap（F4b-2 fix round 1 更正）；改名時這裡要跟著改。
      */
     static void rebuildProjectionAuthority(MinecraftServer server, byte[] bytes) {
         var file = server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data").resolve(dev.quantumchamber.collapse.ProjectionLedger.FILE_NAME);

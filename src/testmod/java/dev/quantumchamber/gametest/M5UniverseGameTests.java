@@ -56,6 +56,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -70,6 +71,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
@@ -2146,7 +2148,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /** 投影的 7×7×7 涵蓋的 chunk（test 自己算，不讀 production）。 */
     private static Set<ChunkPos> volumeChunks(ChamberFrame frame) {
         var bounds = ChamberGeometry.bounds(frame);
-        var chunks = new java.util.HashSet<ChunkPos>();
+        var chunks = new HashSet<ChunkPos>();
         for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) chunks.add(new ChunkPos(new BlockPos(x, 0, z)));
         return Set.copyOf(chunks);
     }
@@ -2155,7 +2157,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static int preloadWaitedTicks(LogCapture capture, UUID sid) {
         var all = preloaded(capture, sid);
         if (all.isEmpty()) return -1;
-        var matcher = java.util.regex.Pattern.compile("等了 (\\d+) ticks").matcher(all.getFirst().message());
+        var matcher = Pattern.compile("等了 (\\d+) ticks").matcher(all.getFirst().message());
         return matcher.find() ? Integer.parseInt(matcher.group(1)) : -1;
     }
 

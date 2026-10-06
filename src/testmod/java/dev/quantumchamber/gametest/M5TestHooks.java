@@ -10,6 +10,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -17,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
@@ -227,10 +229,10 @@ public final class M5TestHooks {
 
         private final RegistryKey<World> world;
         private final int failFirst;
-        private final java.util.function.IntFunction<String> observe;
+        private final IntFunction<String> observe;
         private final List<Call> calls = new CopyOnWriteArrayList<>();
 
-        ChunkCheckpointProbe(RegistryKey<World> world, int failFirst, java.util.function.IntFunction<String> observe) {
+        ChunkCheckpointProbe(RegistryKey<World> world, int failFirst, IntFunction<String> observe) {
             this.world = Objects.requireNonNull(world, "world"); this.failFirst = failFirst; this.observe = Objects.requireNonNull(observe, "observe");
         }
 
@@ -273,7 +275,7 @@ public final class M5TestHooks {
             remaining--;
             hits.incrementAndGet();
             return new ProjectionWriter.Result(ProjectionWriter.Status.WRITE_FAILED, result.written(), List.of(), List.of(),
-                    java.util.Optional.of(new IllegalStateException("F4b-2 GameTest 受控：投影寫入失敗（寫入 " + result.written() + " 格之後）")));
+                    Optional.of(new IllegalStateException("F4b-2 GameTest 受控：投影寫入失敗（寫入 " + result.written() + " 格之後）")));
         }
 
         /** 已注入失敗的次數。 */
