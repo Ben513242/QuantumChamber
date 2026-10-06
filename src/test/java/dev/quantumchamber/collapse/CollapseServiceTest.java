@@ -35,7 +35,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockBox;
@@ -63,9 +62,6 @@ class CollapseServiceTest {
     @Test void collapsePhaseFollowsReturnReleaseResolveThenTheGate() {
         var universe = collapsing(measured(DimensionRole.OVERWORLD, NEW), new CollapseDestination.Universe(EXISTING_ID));
         var source = collapsing(measured(DimensionRole.OVERWORLD, SOURCE), new CollapseDestination.Source());
-        var gateCalls = new AtomicInteger();
-        java.util.function.BooleanSupplier open = () -> { gateCalls.incrementAndGet(); return true; };
-        java.util.function.BooleanSupplier shut = () -> { gateCalls.incrementAndGet(); return false; };
         var cases = new ArrayList<Executable>();
         record Row(String label, SessionRecoveryRecord view, boolean releaseComplete, boolean resolved, boolean gateOpen, CollapsePhase expected, boolean gateConsulted) {}
         var rows = List.of(
@@ -79,17 +75,30 @@ class CollapseServiceTest {
                 new Row("SOURCE 不需要確定、閘門成立", cleared(returned(source, A, B)), true, false, true, CollapsePhase.PREPARE, true),
                 new Row("SOURCE 閘門不成立", cleared(returned(source, A, B)), true, false, false, CollapsePhase.WAITING, true));
         for (var row : rows) cases.add(() -> {
-            gateCalls.set(0);
-            assertEquals(row.expected(), CollapsePhase.derive(row.view(), row.releaseComplete(), row.resolved(), false, row.gateOpen() ? open : shut).phase(),
-                    row.label());
-            assertEquals(row.gateConsulted() ? 1 : 0, gateCalls.get(), "閘門只在前面的條件都成立時才評估（評估會消耗邊緣觸發）：" + row.label());
+            var gate = new CountingGate(row.gateOpen());
+            assertEquals(row.expected(), CollapsePhase.derive(row.view(), row.releaseComplete(), row.resolved(), false, gate).phase(), row.label());
+            assertEquals(row.gateConsulted() ? 1 : 0, gate.edge, "閘門只在前面的條件都成立時才評估（評估會消耗邊緣觸發）：" + row.label());
+            assertEquals(0, gate.stillOpen, "上一個 tick 不在 PREPARE：只評估邊緣觸發：" + row.label());
         });
-        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(measured(DimensionRole.OVERWORLD, NEW), true, true, false, open),
-                "MEASURED 沒有塌縮的推導階段"));
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(measured(DimensionRole.OVERWORLD, NEW), true, true, false,
+                new CountingGate(true)), "MEASURED 沒有塌縮的推導階段"));
         var sealed = cleared(returned(universe, A, B)).withCollapse(SessionState.SEALED,
                 cleared(returned(universe, A, B)).collapse().sealed(SealedReason.PROJECTION_FAILED));
-        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(sealed, true, true, false, open), "SEALED 沒有推導階段"));
+        cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapsePhase.derive(sealed, true, true, false, new CountingGate(true)),
+                "SEALED 沒有推導階段"));
         assertAll(cases);
+    }
+
+    /** PREPARE 閘門的 fixture：兩種評估各自計數，回傳同一個值（F4b-2 fix round 1，quality Q-M6）。 */
+    private static final class CountingGate implements CollapsePhase.Gate {
+        final boolean open;
+        int stillOpen, edge;
+
+        CountingGate(boolean open) { this.open = open; }
+
+        @Override public boolean stillOpen() { stillOpen++; return open; }
+
+        @Override public boolean edge() { edge++; return open; }
     }
 
     /**
@@ -98,9 +107,6 @@ class CollapseServiceTest {
      */
     @Test void collapsePhaseReportsThePrepareTransition() {
         var settled = cleared(returned(collapsing(measured(DimensionRole.OVERWORLD, NEW), new CollapseDestination.Universe(EXISTING_ID)), A, B));
-        var gateCalls = new AtomicInteger();
-        java.util.function.BooleanSupplier open = () -> { gateCalls.incrementAndGet(); return true; };
-        java.util.function.BooleanSupplier shut = () -> { gateCalls.incrementAndGet(); return false; };
         record Row(String label, SessionRecoveryRecord view, boolean resolved, boolean preparing, boolean gateOpen, CollapsePhase phase,
                 CollapsePhase.Transition transition, boolean gateConsulted) {}
         var rows = List.of(
@@ -113,10 +119,13 @@ class CollapseServiceTest {
                         new CollapseDestination.Universe(EXISTING_ID)), true, true, true, CollapsePhase.RETURN_PLAYERS, CollapsePhase.Transition.LEAVE_PREPARE, false));
         var cases = new ArrayList<Executable>();
         for (var row : rows) cases.add(() -> {
-            gateCalls.set(0);
-            var derived = CollapsePhase.derive(row.view(), true, row.resolved(), row.preparing(), row.gateOpen() ? open : shut);
+            var gate = new CountingGate(row.gateOpen());
+            var derived = CollapsePhase.derive(row.view(), true, row.resolved(), row.preparing(), gate);
             assertEquals(new CollapsePhase.Derivation(row.phase(), row.transition()), derived, row.label());
-            assertEquals(row.gateConsulted() ? 1 : 0, gateCalls.get(), "閘門的評估次數：" + row.label());
+            int consulted = row.gateConsulted() ? 1 : 0;
+            // 上一個 tick 在 PREPARE 時只看來源艙的條件，否則只評估邊緣觸發（F4b-2 fix round 1，quality Q-M6：由 derive 選擇）。
+            assertEquals(row.preparing() ? consulted : 0, gate.stillOpen, "來源艙條件的評估次數：" + row.label());
+            assertEquals(row.preparing() ? 0 : consulted, gate.edge, "邊緣觸發的評估次數：" + row.label());
         });
         cases.add(() -> assertThrows(IllegalArgumentException.class, () -> new CollapsePhase.Derivation(CollapsePhase.WAITING, CollapsePhase.Transition.ENTER_PREPARE),
                 "進入 PREPARE 的階段必須是 PREPARE"));

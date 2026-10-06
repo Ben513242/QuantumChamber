@@ -398,7 +398,7 @@ public final class CollapseService {
             return;
         }
         boolean universe = view.collapse().destination() instanceof CollapseDestination.Universe;
-        var derived = CollapsePhase.derive(view, pages.measuredRecoveryComplete(sid), track.resolved, track.preparing, () -> gate(view, track));
+        var derived = CollapsePhase.derive(view, pages.measuredRecoveryComplete(sid), track.resolved, track.preparing, new PrepareGate(view, track));
         track.preparing = derived.phase() == CollapsePhase.PREPARE;
         // 轉換點（F4b-2，F3d quality m-6(b)）：UNIVERSE 進入 PREPARE 時開始這一段準備的簿記；離開時（閘門失效、或推導回到 RESOLVE）釋放目的世界的
         // ticket、退回 WAITING。SOURCE 的 PREPARE 在同一個 tick 就以 fast path 終局，沒有目的世界。
@@ -887,23 +887,35 @@ public final class CollapseService {
     }
 
     /**
-     * §7.3 的 PREPARE 閘門在這個 tick 是否成立（{@link CollapsePhase#derive} 的 {@code gate}；轉換由推導結果回傳，這裡不改 {@code track.preparing}，
-     * F4b-2，F3d quality m-6(b)）：來源艙已載入、結構合法、已供電、Origin enabled，而且有原參與者在艙內。本 server instance 第一次看到這個 session
-     * 走到閘門階段時立即評估（live 塌縮返還之後通常立即成立；開服之後就是「第一次觀察」）；不成立就停在 WAITING，之後只在 §7.1 的邊緣觸發
-     * （原參與者由艙外進入艙內）時再評估。進入 PREPARE 之後參與者在艙內不是持續條件：上一個 tick 在 PREPARE 時只看來源艙的條件，不成立就退回 WAITING。
+     * §7.3 的 PREPARE 閘門（{@link CollapsePhase#derive} 的 {@code gate}；轉換由推導結果回傳，這裡不改 {@code track.preparing}，F4b-2，F3d quality m-6(b)）：
+     * 來源艙已載入、結構合法、已供電、Origin enabled，而且有原參與者在艙內。由 {@code derive} 依上一個 tick 是否在 PREPARE 選擇評估方式（F4b-2 fix round 1，
+     * quality Q-M6：這裡不再讀 {@code track.preparing}）。
      */
-    private boolean gate(SessionRecoveryRecord view, Track track) {
-        if (track.preparing) return chamberGate(view);
-        var insideNow = inside(view);
-        List<UUID> candidates;
-        if (!track.gateEvaluated) {
-            track.gateEvaluated = true;
-            track.entry(false).prime(insideNow);
-            candidates = List.copyOf(insideNow);
-        } else {
-            candidates = track.entry(false).observe(insideNow);
+    private final class PrepareGate implements CollapsePhase.Gate {
+        private final SessionRecoveryRecord view;
+        private final Track track;
+
+        PrepareGate(SessionRecoveryRecord view, Track track) { this.view = view; this.track = track; }
+
+        /** 進入 PREPARE 之後參與者在艙內不是持續條件：只看來源艙的條件，不成立就退回 WAITING。 */
+        @Override public boolean stillOpen() { return chamberGate(view); }
+
+        /**
+         * 本 server instance 第一次看到這個 session 走到閘門階段時立即以位準評估（live 塌縮返還之後通常立即成立；開服之後就是「第一次觀察」）；不成立就停在
+         * WAITING，之後只在 §7.1 的邊緣觸發（原參與者由艙外進入艙內）時再評估。
+         */
+        @Override public boolean edge() {
+            var insideNow = inside(view);
+            List<UUID> candidates;
+            if (!track.gateEvaluated) {
+                track.gateEvaluated = true;
+                track.entry(false).prime(insideNow);
+                candidates = List.copyOf(insideNow);
+            } else {
+                candidates = track.entry(false).observe(insideNow);
+            }
+            return candidates.stream().anyMatch(CollapseService.this::triggerReady) && chamberGate(view);
         }
-        return candidates.stream().anyMatch(this::triggerReady) && chamberGate(view);
     }
 
     /** §7.4：先 checked 終局、再把門改為一般開門、再顯示訊息。不配置宇宙、不跨世界傳送、不寫 discovery。 */
@@ -1242,7 +1254,12 @@ public final class CollapseService {
         /** WARN 的去重：寫入種類 → 最近一次的 {@link FailureText#dedupeKey}；成功時移除。 */
         final Map<String, String> warnings = new HashMap<>();
         EntryWatch entry;
-        boolean gateEvaluated, preparing;
+        boolean gateEvaluated;
+        /**
+         * 上一個 tick 推導的階段是 PREPARE：只交給 {@link CollapsePhase#derive}（轉換與閘門的評估方式都由它決定，F4b-2 fix round 1，quality Q-M6）。UNIVERSE 時
+         * 恆等於 {@code prepare != null}（進入時建立、離開時丟棄）；SOURCE 的 PREPARE 沒有 {@link Prepare}。
+         */
+        boolean preparing;
         /** UNIVERSE 目的地在本 instance 已確定（RESOLVE 完成）；不持久化，重啟之後重新確認（§7.3）。 */
         boolean resolved;
         /**

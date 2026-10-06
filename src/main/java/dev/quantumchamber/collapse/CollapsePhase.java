@@ -47,18 +47,30 @@ public enum CollapsePhase {
     }
 
     /**
+     * PREPARE 的閘門（spec §7.3）。兩種評估由 {@link #derive} 依「上一個 tick 是否在 PREPARE」選一種，呼叫端不必自己再判斷一次（F4b-2 fix round 1，
+     * quality Q-M6：「上一個 tick 是否在 PREPARE」只有 {@code derive} 的參數這一個來源）。只在前面的條件都成立時才評估，每個 tick 至多一次。
+     */
+    public interface Gate {
+        /** 上一個 tick 在 PREPARE：來源艙的條件是否仍成立（參與者在艙內不是持續條件）。 */
+        boolean stillOpen();
+
+        /** 上一個 tick 不在 PREPARE：§7.1 的邊緣觸發（本 instance 第一次評估時以位準）是否成立；評估本身會消耗一次邊緣觸發。 */
+        boolean edge();
+    }
+
+    /**
      * @param view COLLAPSING 的 collapse view（spec §6）；其他狀態丟 {@link IllegalArgumentException}
      * @param releaseComplete 走廊 space 已真的釋放（{@code CorridorPageManager.measuredRecoveryComplete}）
      * @param destinationResolved UNIVERSE 目的地已確定；SOURCE 不看
-     * @param preparing 上一個 tick 推導的階段是 PREPARE（呼叫端的簿記，不持久化）
-     * @param gate 這個 tick PREPARE 的閘門是否成立（{@code preparing} 時是「來源艙的條件是否仍成立」，否則是「邊緣觸發是否成立」，spec §7.3）。只在前面的條件
-     *     都成立時才呼叫：呼叫本身可能消耗一次邊緣觸發
+     * @param preparing 上一個 tick 推導的階段是 PREPARE（呼叫端的簿記，不持久化）；決定轉換，也決定閘門的評估方式
+     * @param gate 這個 tick PREPARE 的閘門：{@code preparing} 時呼叫 {@link Gate#stillOpen}，否則呼叫 {@link Gate#edge}（spec §7.3）。只在前面的條件都成立時
+     *     才呼叫
      */
-    public static Derivation derive(SessionRecoveryRecord view, boolean releaseComplete, boolean destinationResolved, boolean preparing, BooleanSupplier gate) {
+    public static Derivation derive(SessionRecoveryRecord view, boolean releaseComplete, boolean destinationResolved, boolean preparing, Gate gate) {
         Objects.requireNonNull(view, "view");
         Objects.requireNonNull(gate, "gate");
         if (view.state() != SessionState.COLLAPSING) throw new IllegalArgumentException("只有 COLLAPSING 有塌縮的推導階段：" + view.state());
-        var phase = phase(view, releaseComplete, destinationResolved, gate);
+        var phase = phase(view, releaseComplete, destinationResolved, preparing ? gate::stillOpen : gate::edge);
         boolean prepare = phase == PREPARE;
         var transition = prepare == preparing ? Transition.NONE : prepare ? Transition.ENTER_PREPARE : Transition.LEAVE_PREPARE;
         return new Derivation(phase, transition);
