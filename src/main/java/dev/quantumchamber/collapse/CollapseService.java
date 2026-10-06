@@ -536,11 +536,14 @@ public final class CollapseService {
      *     寫入沒有確認（含讀回失敗）就進 SEALED，不寫任何方塊（§6 收斂規則第 2 點）。確認之後以寫入結果登記到投影保護索引（只供辨識）。</li>
      * <li>寫方塊（{@link ProjectionWriter}）：第一次寫入（PENDING）或修復（COMPLETE）。玩家擋住、volume 的 chunk 不是都 FULL：下一個 tick 再試；
      *     驗證或寫入失敗：{@code PROJECTION_FAILED}，以結果帶的 failure 當 root cause。修復完成就是準備完成（不寫 ledger、不做 checkpoint）。</li>
-     * <li>第一次寫入之後：目的 volume 的 chunks 先問 {@link ChunkSaveCheckpoint#ready}（未就緒等下一個 tick），再做原生存檔 checkpoint（失敗
-     *     {@code PROJECTION_FAILED}）。</li>
-     * <li>checkpoint 之後、寫 COMPLETE 之前，以修復模式再驗一次不變量 cell（F4b-1 交下的未保護窗口：PENDING 期間不變量 cell 不受保護，寫入與
-     *     checkpoint 之間可能被改動）。這次修復寫了任何一格，checkpoint 就沒有涵蓋它：下一個 tick 重做 checkpoint，不寫 COMPLETE。同一個 tick 內，
-     *     checkpoint、這次驗證與 COMPLETE 的寫入之間沒有任何遊戲邏輯執行，所以驗證通過時寫下的 COMPLETE 對應的就是 checkpoint 存下的方塊。</li>
+     * <li>第一次寫入之後：目的 volume 的 chunks 先問 {@link ChunkSaveCheckpoint#ready}（未就緒等下一個 tick）。</li>
+     * <li>checkpoint 之前，以修復模式再驗一次不變量 cell（F4b-1 交下的未保護窗口：PENDING 期間不變量 cell 不受保護，第一次寫入之後可能被改動）。修復了任何一格，
+     *     或被擋住（玩家站在要修復的格上、chunk 不是 FULL）：不做 checkpoint，下一個 tick 再驗（F4b-2 fix round 1，quality Q-I1：不變量 cell 一直被改動時不會每個
+     *     tick 都存檔；這是等待，併入 §9.1 的 600 ticks WARN，「已修復」的 INFO 每一段 PREPARE 只記一次）。</li>
+     * <li>再驗乾淨才做原生存檔 checkpoint（失敗 {@code PROJECTION_FAILED}）。</li>
+     * <li>checkpoint 之後、寫 COMPLETE 之前，以修復模式再驗一次：這次修復寫了任何一格，checkpoint 就沒有涵蓋它，不寫 COMPLETE，下一個 tick 從 checkpoint 之前的
+     *     再驗重來。同一個 tick 內，checkpoint、這次驗證與 COMPLETE 的寫入之間沒有任何遊戲邏輯執行，所以驗證通過時寫下的 COMPLETE 對應的就是 checkpoint 存下的
+     *     方塊；只有 checkpoint 本身改動方塊時這次驗證才會修復（GameTest 以 checkpoint 探針模擬）。</li>
      * <li>checked 寫入 COMPLETE（沒有確認就進 SEALED），確認之後登記到索引（不變量 cell 從這時起受保護），準備完成。</li>
      * </ol>
      */
@@ -601,6 +604,14 @@ public final class CollapseService {
             prepareWait(view, progress, "目的 chunks 的原生存檔 checkpoint 未就緒（chunk 或 entity storage 尚未完整載入）");
             return;
         }
+        // checkpoint 之前先再驗（F4b-2 fix round 1，quality Q-I1）：修復了任何一格、或被擋住，都不存檔、下一個 tick 再驗，所以不變量 cell 一直被改動
+        // （或有人站在要修復的格上）時不會每個 tick 都做一次 checkpoint（ChunkSaveCheckpoint 的呼叫端契約）。
+        var recheck = ProjectionWriter.write(world, frame, ProjectionWriter.Mode.REPAIR);
+        if (!proceeds(view, track, progress, recheck)) return;
+        if (recheck.written() > 0) {
+            repairedBeforeComplete(view, progress, recheck.written());
+            return;
+        }
         try {
             ChunkSaveCheckpoint.save(server, Map.of(world, chunks));
         } catch (RuntimeException failure) {
@@ -610,8 +621,7 @@ public final class CollapseService {
         var verify = ProjectionWriter.write(world, frame, ProjectionWriter.Mode.REPAIR);
         if (!proceeds(view, track, progress, verify)) return;
         if (verify.written() > 0) {
-            LOGGER.info(LOG_MARKER, "投影的不變量 cell 在第一次寫入與 checkpoint 之間被改動，已修復 {} 格；下一個 tick 重做 checkpoint，之後才寫 COMPLETE："
-                    + "session={} chamber={}", verify.written(), view.sessionUuid(), view.chamberUuid());
+            repairedBeforeComplete(view, progress, verify.written());
             return;
         }
         var complete = authorities.writeProjection(entry.withStatus(ProjectionLedger.Entry.Status.COMPLETE));
@@ -622,6 +632,19 @@ public final class CollapseService {
         index.confirmed(complete);
         progress.registered = complete.entry().orElseThrow();
         prepared(view, track, progress, mode, progress.writtenCells);
+    }
+
+    /**
+     * 第一次寫入之後、寫 COMPLETE 之前的再驗修復了 {@code written} 格（F4b-2 fix round 1，quality Q-I1）：不寫 COMPLETE，下一個 tick 再驗，乾淨才做
+     * checkpoint。INFO 這一段 PREPARE 只記一次（{@link Prepare#repairLogged}）；這也是等待，併入 §9.1 的 {@value #WAIT_WARN_TICKS} ticks WARN。
+     */
+    private void repairedBeforeComplete(SessionRecoveryRecord view, Prepare progress, int written) {
+        if (!progress.repairLogged) {
+            progress.repairLogged = true;
+            LOGGER.info(LOG_MARKER, "投影的不變量 cell 在第一次寫入之後被改動，已修復 {} 格；要等再驗沒有改動才做 checkpoint，之後才寫 COMPLETE（這一段 PREPARE 只記一次）："
+                    + "session={} chamber={}", written, view.sessionUuid(), view.chamberUuid());
+        }
+        prepareWait(view, progress, "投影的不變量 cell 在第一次寫入之後一直被改動（每次再驗都要修復，checkpoint 要等再驗沒有改動才做）");
     }
 
     /**
@@ -1342,6 +1365,8 @@ public final class CollapseService {
         /** 第一次寫入已寫完並逐格驗證（本段），之後只等 checkpoint、再驗與 COMPLETE；{@code writtenCells} 是那次實際改變的格數。 */
         boolean written;
         int writtenCells;
+        /** 「第一次寫入之後被改動、已修復」的 INFO 已記過（每一段 PREPARE 一次，F4b-2 fix round 1，quality Q-I1）。 */
+        boolean repairLogged;
         /** 準備完成（F5 之前的停點）。 */
         boolean ready;
 

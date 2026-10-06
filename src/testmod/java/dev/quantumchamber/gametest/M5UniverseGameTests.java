@@ -1943,6 +1943,95 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F4b-2 fix round 1（quality Q-I1；spec §9.1、§9.2；{@code ChunkSaveCheckpoint} 的呼叫端契約：不是每個 tick 都存檔）：第一次寫入之後，原生存檔 checkpoint
+     * 只在「checkpoint 之前的再驗」乾淨時才做。D 是門板格 {@code local(3,1,0)}：
+     * <ul>
+     * <li>第一次 checkpoint 存檔之前（checkpoint 探針）把 D 改成 AIR：checkpoint 之後的再驗修復它、不寫 COMPLETE（INFO「已修復 1 格」）。</li>
+     * <li>之後每個 test tick 都把 D 改成 AIR（模擬持續改動不變量 cell 的 1-tick 裝置），直到進入 PREPARE 之後 610 ticks：checkpoint 之前的再驗每個 tick 都修復 D、
+     *     不做 checkpoint（checkpoint 仍只有第一次那一次），「已修復」的 INFO 這一段 PREPARE 只記一次；超過 600 ticks 時記一則 PREPARE 等待的 WARN（帶 session，
+     *     寫明不變量 cell 一直被改動）。ledger 仍是 PENDING。</li>
+     * <li>接著把 D 改成 AIR，讓（創造模式、不受重力的）玩家 Q 站在 D：再驗被 Q 擋住，5 個 tick 都不做 checkpoint、不寫 D，WARN 仍是一則。</li>
+     * <li>Q 離開之後：再驗修復 D，下一個 tick 再驗乾淨才做第二次 checkpoint，之後寫 COMPLETE、準備完成；343 格都是目標，「已修復」的 INFO 仍是一則。</li>
+     * </ul>
+     * catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_recheck", tickLimit = 1500)
+    public void checkpoint_waits_for_a_clean_recheck_while_the_invariant_cells_keep_changing(TestContext context) {
+        begin(context, "checkpoint_waits_for_a_clean_recheck_while_the_invariant_cells_keep_changing");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var authorities = CollapseAuthorities.get(server);
+            var d = local(frame, 3, 1, 0);
+            Runnable damage = () -> ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(d, Blocks.AIR.getDefaultState()));
+            var probe = M5GameTestSupport.installChunkCheckpointProbe(context, universe.getRegistryKey(), 0, call -> {
+                if (call == 0) damage.run();
+                var lookup = authorities.projection(chamber, id);
+                return lookup.status() + lookup.value().map(entry -> " " + entry.status()).orElse("");
+            }, hooks);
+            var connection = new ConnectedGameTestPlayer(context.getWorld());
+            hooks.add(connection::close);
+            var q = connection.player();
+            q.changeGameMode(GameMode.CREATIVE); q.setNoGravity(true);
+            BooleanSupplier pending = () -> authorities.projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent();
+            whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1, enteredAt -> {
+                whenTicks(context, enteredAt, 400, () -> probe.calls().size() >= 1, firstCheckpoint -> {
+                    witness.put("firstCheckpointWhilePending", probe.calls().size() == 1 && probe.calls().getFirst().observed().equals("FOUND PENDING"));
+                    witness.put("repairedAfterTheFirstCheckpoint", repairedInfos(capture, sid) == 1 && universe.getBlockState(d).equals(
+                            M5GameTestSupport.projectionTarget(frame, 3, 1, 0)));
+                    // 每個 test tick（早於那個 tick 的 END_SERVER_TICK）都改動 D，直到進入 PREPARE 之後 610 ticks；從這個 tick 就開始（第一次 checkpoint 在上一個
+                    // tick 的 END_SERVER_TICK，這個 tick 的 END_SERVER_TICK 就會再驗）。
+                    damage.run();
+                    whenTicks(context, firstCheckpoint + 1, 700, () -> {
+                        damage.run();
+                        return context.getTick() >= enteredAt + 610;
+                    }, changing -> {
+                        witness.put("noCheckpointWhileChanging", probe.calls().size() == 1);
+                        witness.put("oneRepairInfoWhileChanging", repairedInfos(capture, sid) == 1);
+                        witness.put("oneWaitWarnNamingTheChange", prepareWaitWarnings(capture, sid).size() == 1
+                                && prepareWaitWarnings(capture, sid).getFirst().message().contains("不變量 cell"));
+                        witness.put("stillPendingWhileChanging", pending.getAsBoolean() && prepared(capture, sid).isEmpty());
+                        // 改動停止，但 Q 站在被改成 AIR 的 D：再驗被擋住。
+                        damage.run();
+                        standAt(q, universe, frame, 3.5, 1, 0.5);
+                        at(context, changing + 5, hooks, () -> {
+                            witness.put("noCheckpointWhileBlocked", probe.calls().size() == 1 && universe.getBlockState(d).isAir()
+                                    && prepareWaitWarnings(capture, sid).size() == 1 && repairedInfos(capture, sid) == 1 && pending.getAsBoolean());
+                            standAt(q, universe, frame, 3.5, 1, -4.5);
+                        });
+                        whenTicks(context, changing + 6, 100, () -> !prepared(capture, sid).isEmpty(), ready -> {
+                            var calls = probe.calls();
+                            witness.put("secondCheckpointAfterACleanRecheck", calls.size() == 2 && calls.get(1).observed().equals("FOUND PENDING"));
+                            witness.put("everyCellIsTheSpecTarget", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
+                            witness.put("complete", authorities.projection(chamber, id).value()
+                                    .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
+                            witness.put("stillOneRepairInfoAndOneWaitWarn", repairedInfos(capture, sid) == 1 && prepareWaitWarnings(capture, sid).size() == 1);
+                            witness.put("onlyTheWaitAndReadyStubWarnsAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 2
+                                    && readyStubWarnings(capture, sid) == 1 && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                            LOGGER.info("M5_PREPARE_RECHECK firstCheckpoint={} changing={} ready={} checkpoints={}", firstCheckpoint - enteredAt,
+                                    changing - enteredAt, ready - enteredAt, calls);
+                            hooks.release();
+                            context.assertTrue(!witness.containsValue(false), "checkpoint 之前的再驗：" + witness + " checkpoints=" + calls);
+                            awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                        }, () -> "Q 離開之後沒有準備完成：checkpoints=" + probe.calls().size() + " witness=" + witness, hooks);
+                    }, () -> "改動 D 的期間逾時：checkpoints=" + probe.calls().size() + " witness=" + witness, hooks);
+                }, () -> "沒有做第一次 checkpoint：record=" + M5GameTestSupport.state(journal, sid), hooks);
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /** 這個 session「已修復 N 格」的 INFO 數（帶 LOG_MARKER）。 */
+    private static int repairedInfos(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "已修復", sid.toString()).size();
+    }
+
     /** 投影的不變量 cell 中已經是 spec 目標的格與方塊狀態（診斷用）。 */
     private static List<String> matchedShellCells(ServerWorld world, ChamberFrame frame) {
         var result = new ArrayList<String>();
