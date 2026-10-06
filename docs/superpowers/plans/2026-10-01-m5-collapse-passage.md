@@ -586,19 +586,43 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - 第 6 組的玩家與動物；
     - 第 8 組全部。
   - 不改 `CollapseService` 的流程：Step 0 的 CS 項目除外，PREPARE stub 照舊。
-- **F4b-2：PREPARE 流程。**
+- **F4b-2：PREPARE 流程（目的宇宙這一側）。**（controller 2026-10-06 在 F4b-1 完成後再拆：原本的 F4b-2 同時牽涉目的宇宙與原艙門兩側，RED 有 10 組，另有 6 項交接，所以把原艙門的部分分給 F4b-3。）
+  - Step 0：F4b-1 quality review 留下的 Minor，清單見 note F4b-1「交給後續」的「F4b-2 Step 0」。
   - `CollapseService` 的 PREPARE：
     - §9.1 預載與 600 ticks WARN；
     - PENDING→寫入→checkpoint→COMPLETE→更新索引；
     - §6.5 實體交叉檢查與既有 entry 的位置驗證；
     - §9.2 衝突；
     - 退化時新的 PREPARE 進 SEALED。
-  - 量子膜的套用條件與門口規則。
-  - 門的攔截：`QuantumBulkheadBlock`、`ChamberControllerBlock`、`WorldChamberDoorAdapter`，排在 `ChamberDoorService` 之前。
-  - 閘門失效時釋放 ticket、門改一般開門、退回 WAITING。
-  - §7.3 門狀態的重新套用（含 SEALED 的關門）。
+  - 準備完成之後，在 F5 之前停住（READY stub，比照 F4a 的 PREPARE stub）。
+  - 閘門失效時釋放目的世界的 ticket、退回 WAITING。F3d m-6(b)：轉換點改成回傳明確的轉換結果。
   - 投影寫入與 checkpoint 的 fault mixin。
-  - Step 1 其餘的 RED，以及 note 各節交給 F4b 的流程項目：F3d m-6(b)、m-7(b)，F4a-0 的 `leaseReady` 就緒條件，F4a M-4、Q2-m6。
+  - 本子 task 不套用量子膜：門維持一般開門，這符合 §7.3「套用量子膜的條件不成立時，門維持一般開門」。PREPARE 期間的開關門照舊交給 `ChamberDoorService`，門攔截由 F4b-3 加上。
+  - Step 1 中目的宇宙側的 RED：
+    - 第 1 組：預載；
+    - 第 2 組：checkpoint 之後才 COMPLETE，以及刪除 ledger 之後不重寫；
+    - 第 3、4 組；
+    - 第 5 組中「退化時進 SEALED」的流程；
+    - 第 6 組的流程：玩家擋住時下一個 tick 重試，併入 600 ticks WARN；
+    - 第 7 組；
+    - 第 9 組；
+    - 第 13 組的 ticket 與 WAITING。
+  - 交接：F4a-0 的 `leaseReady` 就緒條件；F4a Q2-m6（G-NEW 的 witness）；F4b-1 的「驗證 → checkpoint → COMPLETE」未保護窗口。
+- **F4b-3：PREPARE 期間的原艙門。**
+  - Step 0：F4b-1 quality Q-m1（`chamber` 與 `collapse` 互相依賴），見 note F4b-1「交給後續」。
+  - 量子膜的套用條件與門口規則（§7.3）。
+  - 門的攔截：`QuantumBulkheadBlock`、`ChamberControllerBlock`、`WorldChamberDoorAdapter`，排在 `ChamberDoorService` 之前。行為包括：
+    - 參與者開關門會終局；
+    - 艙內的非參與者可以把門改成一般開門；
+    - 艙外的非參與者被拒；
+    - roll-forward 待確認期間拒絕開關門。
+  - 閘門失效時，門由 sealed 改為一般開門。
+  - §7.3 門狀態的重新套用，含 SEALED 的關門（F4a M-4）。
+  - Step 1 中原艙門側的 RED：第 10、11、12 組，以及第 13 組的門。
+  - 交接：
+    - F3b 的掛件與強充能評估；
+    - F3d m-7(b)：確認 §10.6 :613 的正規化（F5 實作）涵蓋「先終局、再改門」之間的 crash 窗口。
+- F4b-1、F4b-2、F4b-3 都完成，才算 F4b 完成。
 
 - [ ] **Step 1: RED。**
   - 預載不用阻塞式 `getChunk(create=true)`。
