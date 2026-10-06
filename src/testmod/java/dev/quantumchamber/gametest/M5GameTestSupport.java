@@ -612,6 +612,50 @@ final class M5GameTestSupport {
         }
     }
 
+    // ---- 投影（F4b-1） ----
+
+    /** {@link #forceProjectionChunks} 在投影的 7×7×7 外再水平外擴的格數：涵蓋紅石讀取（±3）、門的套用（±3）與 test 在投影外放的方塊。 */
+    static final int PROJECTION_MARGIN = 8;
+
+    /**
+     * F4b-1：以強制載入（{@code setChunkForced}，entity ticking）讓 {@code frame} 的 7×7×7 與它水平外擴 {@value #PROJECTION_MARGIN} 格涵蓋的 chunk 都是
+     * FULL，並在 server thread 上同步產生或載入它們（只有 test 可以這樣等待；production 的預載屬 F4b-2，不阻塞）。先在 hooks 登記解除強制載入，再載入。
+     * 回傳這些 chunk。
+     */
+    static List<ChunkPos> forceProjectionChunks(ServerWorld world, ChamberFrame frame, M2CorridorGameTests.TestHooks hooks) {
+        var bounds = ChamberGeometry.bounds(frame);
+        var chunks = new ArrayList<ChunkPos>();
+        for (int x = (bounds.getMinX() - PROJECTION_MARGIN) >> 4; x <= (bounds.getMaxX() + PROJECTION_MARGIN) >> 4; x++)
+            for (int z = (bounds.getMinZ() - PROJECTION_MARGIN) >> 4; z <= (bounds.getMaxZ() + PROJECTION_MARGIN) >> 4; z++) chunks.add(new ChunkPos(x, z));
+        hooks.add(() -> chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, false)));
+        chunks.forEach(chunk -> world.setChunkForced(chunk.x, chunk.z, true));
+        chunks.forEach(chunk -> world.getChunk(chunk.x, chunk.z));
+        return chunks;
+    }
+
+    /**
+     * spec §9.2 的投影在區域座標 (x, y, z)（0..6）的目標方塊，由 test 依 spec 自己寫出（不讀 production 的 {@code ProjectionWriter}）：local (3,6,0) 是
+     * {@code FACING}＝outwardFacing 的 Controller，門板 25 格是 {@code open=true}、{@code membrane=none} 的 bulkhead，其餘 shell 是 bedrock，interior 是 AIR。
+     */
+    static BlockState projectionTarget(ChamberFrame frame, int x, int y, int z) {
+        if (x == 3 && y == 6 && z == 0) return ModBlocks.CHAMBER_CONTROLLER.getDefaultState().with(ChamberControllerBlock.FACING, frame.outwardFacing());
+        if (z == 0 && x > 0 && x < 6 && y > 0 && y < 6) {
+            return ModBlocks.QUANTUM_BULKHEAD.getDefaultState().with(QuantumBulkheadBlock.OPEN, true).with(QuantumBulkheadBlock.MEMBRANE, MembraneState.NONE);
+        }
+        return ChamberGeometry.isShellCell(x, y, z) ? Blocks.BEDROCK.getDefaultState() : Blocks.AIR.getDefaultState();
+    }
+
+    /** 投影的 7×7×7 中不符合 {@link #projectionTarget} 的格（{@code shellOnly} 時只看不變量 cell）；全部符合時為空。 */
+    static List<BlockPos> projectionMismatches(ServerWorld world, ChamberFrame frame, boolean shellOnly) {
+        var result = new ArrayList<BlockPos>();
+        for (int x = 0; x < 7; x++) for (int y = 0; y < 7; y++) for (int z = 0; z < 7; z++) {
+            if (shellOnly && !ChamberGeometry.isShellCell(x, y, z)) continue;
+            var pos = ChamberGeometry.localToWorld(frame, x, y, z);
+            if (!world.getBlockState(pos).equals(projectionTarget(frame, x, y, z))) result.add(pos);
+        }
+        return result;
+    }
+
     // ---- 候選門 ----
 
     /** 一扇候選門（SOURCE、NEW 或 EXISTING）與它可選擇的門格。 */

@@ -10,6 +10,7 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
 
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberGeometry;
+import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.MembraneState;
@@ -17,6 +18,7 @@ import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.collapse.CollapseService;
 import dev.quantumchamber.collapse.DestinationResolver;
+import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.collapse.ResolveResult;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
@@ -814,6 +816,260 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 }, () -> "進入 SEALED 的寫出沒有停在未確認：record=" + M5GameTestSupport.state(journal, sid) + " attempts=" + flush.ticks()
                         + " witness=" + witness, hooks);
             }, hooks);
+        });
+    }
+
+    // ---- F4b-1：投影元件（ProjectionWriter、投影保護索引、保護、載入辨識） ----
+
+    /**
+     * F4b-1（spec §9.2；plan 決策 3；plan Step 1 第 2 組的「清 interior、箱子不噴物品、逐格驗證」與第 6 組的動物）：在真的 RESOLVE 建立的宇宙 U、原艙的同 XYZ
+     * 同朝向，以 {@code ProjectionWriter} 的第一次寫入寫出投影。寫入之前，volume 內有兩個裝了東西的箱子（interior 一個、shell cell 一個）、interior 的石頭、
+     * 一隻（不受傷的）豬與一位旁觀玩家；volume 外放兩個偵測器：看著一格 shell 的觀察者（抓形狀更新，即沒有 {@code FORCE_STATE}），以及懸空在另一格 shell
+     * 旁邊的紅石線（抓鄰格的方塊更新，即 {@code NOTIFY_NEIGHBORS}：它一收到就會因為沒有支撐而掉落）。寫完：WRITTEN；343 格逐格是 spec 的目標（test 自己依
+     * spec 寫出）；Controller 有預設的 block entity（沒有 chamber UUID）；沒有任何掉落物；觀察者沒有排程、沒有輸出；紅石線還在；豬沒有被移動或移除；旁觀
+     * 玩家不擋寫入。catalog 增量 1（U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_projection_first_write", tickLimit = 400)
+    public void projection_first_write_overwrites_the_volume_without_drops_or_neighbor_updates(TestContext context) {
+        begin(context, "projection_first_write_overwrites_the_volume_without_drops_or_neighbor_updates");
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame;
+        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, id) -> {
+            M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
+            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var interiorChest = local(frame, 3, 1, 3); var shellChest = local(frame, 0, 4, 3); var interiorStone = local(frame, 2, 2, 2);
+            var watched = local(frame, 0, 3, 3); var observer = outside(frame, -1, 3, 3);
+            var wired = local(frame, 6, 2, 3); var wire = outside(frame, 7, 2, 3); var support = outside(frame, 7, 1, 3);
+            ChamberProtectionService.get().authorizedMutation(() -> {
+                for (var chest : List.of(interiorChest, shellChest)) {
+                    universe.setBlockState(chest, net.minecraft.block.Blocks.CHEST.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
+                    ((net.minecraft.block.entity.ChestBlockEntity) universe.getBlockEntity(chest)).setStack(0, new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND, 5));
+                }
+                universe.setBlockState(interiorStone, net.minecraft.block.Blocks.STONE.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
+                universe.setBlockState(observer, net.minecraft.block.Blocks.OBSERVER.getDefaultState()
+                        .with(net.minecraft.block.ObserverBlock.FACING, toward(observer, watched)), net.minecraft.block.Block.NOTIFY_ALL);
+                // 懸空的紅石線：先放在支撐上，再以不送更新的寫法拿掉支撐。
+                universe.setBlockState(wire, net.minecraft.block.Blocks.AIR.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
+                universe.setBlockState(support, net.minecraft.block.Blocks.STONE.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
+                universe.setBlockState(wire, net.minecraft.block.Blocks.REDSTONE_WIRE.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
+                universe.setBlockState(support, net.minecraft.block.Blocks.AIR.getDefaultState(),
+                        net.minecraft.block.Block.NOTIFY_LISTENERS | net.minecraft.block.Block.FORCE_STATE);
+            });
+            var pig = net.minecraft.entity.EntityType.PIG.create(universe);
+            var pigAt = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 2.5, 3, 4.5);
+            pig.refreshPositionAndAngles(pigAt.x, pigAt.y, pigAt.z, 0, 0);
+            pig.setInvulnerable(true); pig.setNoGravity(true); pig.setAiDisabled(true);
+            universe.spawnEntity(pig);
+            hooks.add(pig::discard);
+            var spectator = new ConnectedGameTestPlayer(context.getWorld());
+            hooks.add(spectator::close);
+            spectator.player().changeGameMode(net.minecraft.world.GameMode.SPECTATOR);
+            var spectatorAt = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, 4.5, 2, 2.5);
+            spectator.player().teleport(universe, spectatorAt.x, spectatorAt.y, spectatorAt.z, java.util.Set.of(), 0, 0);
+            var area = box(frame).expand(3);
+            // 新產生的 chunk 的 entity storage 是非同步載入的：等到豬看得見（entity 的區段已在追蹤中），之後的掉落物檢查才有意義；同時等偵測器靜止。
+            whenTicks(context, resolved + 4, 200, () -> visible(universe, pig, area)
+                    && !universe.getBlockState(observer).get(net.minecraft.block.ObserverBlock.POWERED)
+                    && !universe.getBlockTickScheduler().isQueued(observer, net.minecraft.block.Blocks.OBSERVER), settled -> {
+                witness.put("fixtureSettled", universe.getBlockState(wire).isOf(net.minecraft.block.Blocks.REDSTONE_WIRE) && universe.getBlockState(support).isAir()
+                        && items(universe, area) == 0 && spectator.player().getServerWorld() == universe);
+                var pigBefore = pig.getPos();
+                var spectatorBefore = spectator.player().getPos();
+                var result = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE);
+                witness.put("written", result.status() == ProjectionWriter.Status.WRITTEN && result.written() > 0 && result.blockingPlayers().isEmpty());
+                witness.put("everyCellIsTheSpecTarget", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
+                witness.put("controllerHasADefaultBlockEntity", universe.getBlockEntity(frame.controllerPos())
+                        instanceof dev.quantumchamber.chamber.ChamberControllerBlockEntity controller && controller.chamberUuid() == null);
+                witness.put("chestsDroppedNothing", items(universe, area) == 0);
+                witness.put("observerNotScheduled", !universe.getBlockTickScheduler().isQueued(observer, net.minecraft.block.Blocks.OBSERVER));
+                witness.put("floatingWireStays", universe.getBlockState(wire).isOf(net.minecraft.block.Blocks.REDSTONE_WIRE));
+                witness.put("pigNotMovedOrRemoved", !pig.isRemoved() && pig.getPos().equals(pigBefore) && visible(universe, pig, area));
+                witness.put("spectatorNotMoved", spectator.player().getPos().equals(spectatorBefore));
+                LOGGER.info("M5_PROJECTION_FIRST_WRITE settled={} status={} written={} mismatched={}", settled - resolved, result.status(), result.written(),
+                        result.mismatched().size());
+                at(context, settled + 4, hooks, () -> {
+                    witness.put("observerNeverPulsed", !universe.getBlockState(observer).get(net.minecraft.block.ObserverBlock.POWERED)
+                            && !universe.getBlockTickScheduler().isQueued(observer, net.minecraft.block.Blocks.OBSERVER));
+                    witness.put("wireStillThere", universe.getBlockState(wire).isOf(net.minecraft.block.Blocks.REDSTONE_WIRE));
+                    witness.put("nothingDroppedLater", items(universe, area) == 0);
+                    witness.put("pigStillThere", !pig.isRemoved() && visible(universe, pig, area));
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "投影的第一次寫入：" + witness);
+                    awaitConvergedThenComplete(context, 1, 20);
+                });
+            }, () -> "entity storage 沒有載入或偵測器沒有靜止：pigVisible=" + visible(universe, pig, area), hooks);
+        });
+    }
+
+    /** {@code entity} 在 {@code area} 內、而且以原版的 entity 查詢看得到（它所在的區段已在追蹤中）。 */
+    private static boolean visible(net.minecraft.server.world.ServerWorld world, net.minecraft.entity.Entity entity, net.minecraft.util.math.Box area) {
+        return world.getEntitiesByClass(entity.getClass(), area, candidate -> candidate == entity).size() == 1;
+    }
+
+    /**
+     * F4b-1（spec §9.2 的既有 entity 與兩種寫法；plan Step 1 第 2 組的「修復只動不變量 cell、保留 interior」與第 6 組的玩家）：在宇宙 U 的投影位置，
+     * <ol>
+     * <li>第一次寫入時，一位（創造模式、不受傷的）玩家 Q 站在 volume 內——他所在的兩格事先已清成 AIR，本來就不需要寫——仍然擋住寫入：
+     *     BLOCKED_BY_PLAYER（帶 Q）、343 格一格都沒有改變（第一次寫入的檢查範圍是整個 7×7×7）；Q 移到 volume 外之後 WRITTEN；Controller 的位置由 ABSENT 變成
+     *     PRESENT（§6.5 實體交叉檢查用的查詢）。</li>
+     * <li>修復：兩格 shell 損壞（AIR、石頭）、25 格門關閉、interior 放一塊玻璃，Q 站在 interior → WRITTEN、恰好改了 27 格；不變量 cell 全部回到目標（門回到
+     *     開啟），interior 的玻璃保留，Q 沒有被移動（interior 的玩家不擋修復）。</li>
+     * <li>修復被擋：Q 站在一格要寫的損壞 shell 裡 → BLOCKED_BY_PLAYER，兩格損壞都沒有寫；Q 改站在已開啟的門口（門已是目標，不需要寫）→ WRITTEN（修復只看
+     *     這次要寫的格）。</li>
+     * <li>驗證失敗：同 X／Z、頂端超出世界高度的 frame → VERIFY_FAILED，不符的格都在世界高度之外，帶 failure。</li>
+     * <li>未載入：很遠的 frame → NOT_LOADED，沒有載入那個 chunk；Controller 位置的查詢也是 NOT_LOADED。</li>
+     * </ol>
+     * catalog 增量 1（U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_projection_repair", tickLimit = 400)
+    public void projection_writer_waits_for_players_and_repairs_only_the_invariant_cells(TestContext context) {
+        begin(context, "projection_writer_waits_for_players_and_repairs_only_the_invariant_cells");
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame;
+        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, id) -> {
+            M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
+            var witness = new java.util.LinkedHashMap<String, Boolean>();
+            var connection = new ConnectedGameTestPlayer(context.getWorld());
+            hooks.add(connection::close);
+            var q = connection.player();
+            q.changeGameMode(net.minecraft.world.GameMode.CREATIVE); q.setNoGravity(true);
+            var air = net.minecraft.block.Blocks.AIR.getDefaultState();
+            // 1. 第一次寫入：Q 在 volume 內、站在已是目標（AIR）的兩格。
+            universe.setBlockState(local(frame, 3, 1, 3), air); universe.setBlockState(local(frame, 3, 2, 3), air);
+            standAt(q, universe, frame, 3.5, 1, 3.5);
+            witness.put("controllerAbsentBefore", ProjectionWriter.controllerPresence(universe, frame) == ProjectionWriter.ControllerPresence.ABSENT);
+            var before = cells(universe, frame);
+            var blocked = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE);
+            witness.put("firstWriteBlockedByQ", blocked.status() == ProjectionWriter.Status.BLOCKED_BY_PLAYER && blocked.blockingPlayers().equals(List.of(q.getUuid()))
+                    && blocked.written() == 0);
+            witness.put("nothingWrittenWhileBlocked", before.equals(cells(universe, frame)));
+            standAt(q, universe, frame, 3.5, 1, -4.5);
+            var first = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE);
+            witness.put("firstWriteAfterQLeft", first.status() == ProjectionWriter.Status.WRITTEN && M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
+            witness.put("controllerPresentAfter", ProjectionWriter.controllerPresence(universe, frame) == ProjectionWriter.ControllerPresence.PRESENT);
+            // 2. 修復：損壞兩格 shell、關門、interior 放玻璃；Q 在 interior。
+            var holed = local(frame, 0, 3, 3); var stoned = local(frame, 6, 4, 2); var glass = local(frame, 2, 2, 2);
+            damage(universe, frame, holed, stoned, true);
+            ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(glass, net.minecraft.block.Blocks.GLASS.getDefaultState()));
+            standAt(q, universe, frame, 3.5, 1, 3.5);
+            var qInside = q.getPos();
+            var repaired = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.REPAIR);
+            witness.put("repairWritesExactlyTheDamagedInvariantCells", repaired.status() == ProjectionWriter.Status.WRITTEN && repaired.written() == 27);
+            witness.put("invariantCellsRestoredDoorOpen", M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty()
+                    && M5GameTestSupport.doorAll(universe, frame, true, MembraneState.NONE));
+            witness.put("interiorKept", universe.getBlockState(glass).isOf(net.minecraft.block.Blocks.GLASS));
+            witness.put("interiorPlayerNotMoved", q.getPos().equals(qInside));
+            // 3. 修復被擋（Q 在要寫的損壞 shell 裡），之後 Q 站在已開啟的門口也不擋。
+            damage(universe, frame, holed, stoned, false);
+            standAt(q, universe, frame, 0.5, 3, 3.5);
+            var blockedRepair = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.REPAIR);
+            witness.put("repairBlockedByAPlayerInADamagedCell", blockedRepair.status() == ProjectionWriter.Status.BLOCKED_BY_PLAYER
+                    && universe.getBlockState(holed).isAir() && universe.getBlockState(stoned).isOf(net.minecraft.block.Blocks.STONE));
+            standAt(q, universe, frame, 3.5, 1, 0.5);
+            var doorway = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.REPAIR);
+            witness.put("doorwayPlayerDoesNotBlockTheRepair", doorway.status() == ProjectionWriter.Status.WRITTEN && doorway.written() == 2
+                    && M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty());
+            // 4. 驗證失敗：頂端超出世界高度。
+            var high = new dev.quantumchamber.chamber.ChamberFrame(frame.controllerPos().withY(universe.getTopY() + 2), frame.outwardFacing());
+            var overflow = ProjectionWriter.write(universe, high, ProjectionWriter.Mode.FIRST_WRITE);
+            witness.put("verifyFailedAboveTheBuildLimit", overflow.status() == ProjectionWriter.Status.VERIFY_FAILED && overflow.failure().isPresent()
+                    && !overflow.mismatched().isEmpty() && overflow.mismatched().stream().allMatch(pos -> pos.getY() >= universe.getTopY()));
+            // 5. 未載入：很遠的 frame。
+            var far = new dev.quantumchamber.chamber.ChamberFrame(frame.controllerPos().add(100_000, 0, 0), frame.outwardFacing());
+            var unloaded = ProjectionWriter.write(universe, far, ProjectionWriter.Mode.FIRST_WRITE);
+            witness.put("notLoadedWithoutLoading", unloaded.status() == ProjectionWriter.Status.NOT_LOADED
+                    && ProjectionWriter.controllerPresence(universe, far) == ProjectionWriter.ControllerPresence.NOT_LOADED
+                    && universe.getChunkManager().getWorldChunk(far.controllerPos().getX() >> 4, far.controllerPos().getZ() >> 4) == null);
+            LOGGER.info("M5_PROJECTION_REPAIR blocked={} first={} repaired={}/{} blockedRepair={} doorway={}/{} overflow={}/{} unloaded={}", blocked.status(),
+                    first.status(), repaired.status(), repaired.written(), blockedRepair.status(), doorway.status(), doorway.written(), overflow.status(),
+                    overflow.mismatched().size(), unloaded.status());
+            hooks.release();
+            context.assertTrue(!witness.containsValue(false), "投影的寫入與修復：" + witness);
+            awaitConvergedThenComplete(context, 1, 20);
+        });
+    }
+
+    /** F4b-1 的 fixture 交出的宇宙：RESOLVE 完成的 server tick、宇宙 U 的 world、塌縮的 session 與 U。 */
+    @FunctionalInterface private interface ResolvedUniverse { void ready(int tick, net.minecraft.server.world.ServerWorld universe, UUID sid, UniverseId id); }
+
+    /**
+     * F4b-1 的 fixture：原艙上的 DORMANT NEW 收據，P 由艙外進入 → 提交 COLLAPSING → RESOLVE 建立並物化宇宙 U（之後停在 PREPARE stub 的 WAITING）。
+     * RESOLVE 完成之後以那個 tick、U 的 world、session 與 U 呼叫 {@code ready}。收尾時 DormantOrigin 以終局 API 移除收據（宇宙保留，catalog 增量 1）。
+     */
+    private static void resolvedUniverse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, ResolvedUniverse ready) {
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
+            var sid = dormant.sessionUuid();
+            var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
+            at(context, registered + 1, hooks, () -> moveInside(p, origin.frame));
+            whenTicks(context, registered + 2, 20, () -> UniverseLifecycleService.resolveActive(server, id).isPresent()
+                    && origin.capture.matching(org.apache.logging.log4j.Level.INFO, "目的地已確定", sid.toString()).size() == 1,
+                    resolved -> ready.ready(resolved, UniverseLifecycleService.resolveActive(server, id).orElseThrow(), sid, id),
+                    () -> "RESOLVE 沒有建立宇宙：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /** 投影在區域座標（0..6）的格。 */
+    private static net.minecraft.util.math.BlockPos local(dev.quantumchamber.chamber.ChamberFrame frame, int x, int y, int z) {
+        return ChamberGeometry.localToWorld(frame, x, y, z);
+    }
+
+    /** 投影區域座標系的任意格（可以在 7×7×7 之外）。 */
+    private static net.minecraft.util.math.BlockPos outside(dev.quantumchamber.chamber.ChamberFrame frame, int x, int y, int z) {
+        return dev.quantumchamber.chamber.ChamberSpaceCoordinates.block(frame, x, y, z);
+    }
+
+    /** 由 {@code from} 指向相鄰的 {@code to} 的方向。 */
+    private static net.minecraft.util.math.Direction toward(net.minecraft.util.math.BlockPos from, net.minecraft.util.math.BlockPos to) {
+        return java.util.Objects.requireNonNull(net.minecraft.util.math.Direction.fromVector(to.getX() - from.getX(), to.getY() - from.getY(), to.getZ() - from.getZ()),
+                "不相鄰");
+    }
+
+    /** 投影的 7×7×7 外框（整格）。 */
+    private static net.minecraft.util.math.Box box(dev.quantumchamber.chamber.ChamberFrame frame) {
+        var bounds = ChamberGeometry.bounds(frame);
+        return new net.minecraft.util.math.Box(bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(), bounds.getMaxX() + 1, bounds.getMaxY() + 1, bounds.getMaxZ() + 1);
+    }
+
+    /** {@code area} 內的掉落物數。 */
+    private static int items(net.minecraft.server.world.ServerWorld world, net.minecraft.util.math.Box area) {
+        return world.getEntitiesByClass(net.minecraft.entity.ItemEntity.class, area, entity -> true).size();
+    }
+
+    /** 投影 7×7×7 的 343 格目前的方塊狀態（依區域座標順序）。 */
+    private static List<net.minecraft.block.BlockState> cells(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberFrame frame) {
+        var result = new java.util.ArrayList<net.minecraft.block.BlockState>();
+        for (int x = 0; x < 7; x++) for (int y = 0; y < 7; y++) for (int z = 0; z < 7; z++) result.add(world.getBlockState(local(frame, x, y, z)));
+        return result;
+    }
+
+    /** 把玩家移到投影區域座標 (x, y, z) 的位置（同一個世界或跨世界）。 */
+    private static void standAt(net.minecraft.server.network.ServerPlayerEntity player, net.minecraft.server.world.ServerWorld world,
+            dev.quantumchamber.chamber.ChamberFrame frame, double x, double y, double z) {
+        var at = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, x, y, z);
+        player.teleport(world, at.x, at.y, at.z, java.util.Set.of(), 0, 0);
+        player.setVelocity(net.minecraft.util.math.Vec3d.ZERO);
+    }
+
+    /** 以授權寫入損壞兩格不變量 cell（一格 AIR、一格石頭）；{@code closeDoor} 時另把 25 格門關上。 */
+    private static void damage(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberFrame frame, net.minecraft.util.math.BlockPos holed,
+            net.minecraft.util.math.BlockPos stoned, boolean closeDoor) {
+        ChamberProtectionService.get().authorizedMutation(() -> {
+            world.setBlockState(holed, net.minecraft.block.Blocks.AIR.getDefaultState());
+            world.setBlockState(stoned, net.minecraft.block.Blocks.STONE.getDefaultState());
+            if (closeDoor) for (var cell : M5GameTestSupport.door(frame)) {
+                world.setBlockState(cell, dev.quantumchamber.chamber.QuantumBulkheadBlock.withOpen(world.getBlockState(cell), false));
+            }
         });
     }
 
