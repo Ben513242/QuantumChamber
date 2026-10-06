@@ -587,29 +587,14 @@ public final class CollapseService {
         var mode = writeMode(pending.status());
         if (mode == ProjectionWriter.Mode.REPAIR) {
             var repaired = ProjectionWriter.write(world, frame, mode);
-            switch (writeStep(repaired.status())) {
-                case WAIT -> prepareWait(view, progress, waitingFor(repaired));
-                case SEAL -> seal(view, track, SealedReason.PROJECTION_FAILED, repaired.failure().orElseThrow());
-                case PROCEED -> prepared(view, track, progress, mode, repaired.written());
-            }
+            if (proceeds(view, track, progress, repaired)) prepared(view, track, progress, mode, repaired.written());
             return;
         }
         if (!progress.written) {
             var first = ProjectionWriter.write(world, frame, mode);
-            switch (writeStep(first.status())) {
-                case WAIT -> {
-                    prepareWait(view, progress, waitingFor(first));
-                    return;
-                }
-                case SEAL -> {
-                    seal(view, track, SealedReason.PROJECTION_FAILED, first.failure().orElseThrow());
-                    return;
-                }
-                case PROCEED -> {
-                    progress.written = true;
-                    progress.writtenCells = first.written();
-                }
-            }
+            if (!proceeds(view, track, progress, first)) return;
+            progress.written = true;
+            progress.writtenCells = first.written();
         }
         var chunks = volumeChunks(frame);
         if (!ChunkSaveCheckpoint.ready(world, chunks)) {
@@ -623,22 +608,11 @@ public final class CollapseService {
             return;
         }
         var verify = ProjectionWriter.write(world, frame, ProjectionWriter.Mode.REPAIR);
-        switch (writeStep(verify.status())) {
-            case WAIT -> {
-                prepareWait(view, progress, waitingFor(verify));
-                return;
-            }
-            case SEAL -> {
-                seal(view, track, SealedReason.PROJECTION_FAILED, verify.failure().orElseThrow());
-                return;
-            }
-            case PROCEED -> {
-                if (verify.written() > 0) {
-                    LOGGER.info(LOG_MARKER, "投影的不變量 cell 在第一次寫入與 checkpoint 之間被改動，已修復 {} 格；下一個 tick 重做 checkpoint，之後才寫 COMPLETE："
-                            + "session={} chamber={}", verify.written(), view.sessionUuid(), view.chamberUuid());
-                    return;
-                }
-            }
+        if (!proceeds(view, track, progress, verify)) return;
+        if (verify.written() > 0) {
+            LOGGER.info(LOG_MARKER, "投影的不變量 cell 在第一次寫入與 checkpoint 之間被改動，已修復 {} 格；下一個 tick 重做 checkpoint，之後才寫 COMPLETE："
+                    + "session={} chamber={}", verify.written(), view.sessionUuid(), view.chamberUuid());
+            return;
         }
         var complete = authorities.writeProjection(entry.withStatus(ProjectionLedger.Entry.Status.COMPLETE));
         if (!complete.succeeded()) {
@@ -679,6 +653,24 @@ public final class CollapseService {
             case WRITTEN -> WriteStep.PROCEED;
             case BLOCKED_BY_PLAYER, NOT_LOADED -> WriteStep.WAIT;
             case VERIFY_FAILED, WRITE_FAILED -> WriteStep.SEAL;
+        };
+    }
+
+    /**
+     * 寫入器結果的共同處置（{@link #writeStep}，F4b-2 fix round 1，quality Q-M5）：WAIT 交給 {@link #prepareWait}、SEAL 以結果帶的 failure 進
+     * SEALED(PROJECTION_FAILED)，兩者都回 false（呼叫端 return）；PROCEED 回 true。
+     */
+    private boolean proceeds(SessionRecoveryRecord view, Track track, Prepare progress, ProjectionWriter.Result result) {
+        return switch (writeStep(result.status())) {
+            case PROCEED -> true;
+            case WAIT -> {
+                prepareWait(view, progress, waitingFor(result));
+                yield false;
+            }
+            case SEAL -> {
+                seal(view, track, SealedReason.PROJECTION_FAILED, result.failure().orElseThrow());
+                yield false;
+            }
         };
     }
 
