@@ -571,6 +571,35 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 
 **範圍：** spec §7.3 的 PREPARE 部分（閘門、套用量子膜的條件、門口規則、PREPARE 期間的開關門與非參與者規則、閘門失效）、§9（全部，含 §6.5 的實體交叉檢查），使用 H2 的 `ChunkSaveCheckpoint` 與決策 3 的寫入方式。
 
+**拆分（controller 2026-10-06）：** 本 task 的 RED 有 13 組，production 檔案有 9 個；F4a 的 implementer 光是一輪修正就用掉約 74 萬 token 的 context。所以拆成兩個子 task，各自走完 implementer → spec review → quality review，兩個都完成才算 F4b 完成。檔案清單與 Step 1 的 RED 不變，分配如下：
+
+- **F4b-1：投影元件。**
+  - Step 0：F4a 最終 review 留下的 Minor，清單見 note F4a「交給後續」的 F4b Step 0。只為這幾點，`DestinationResolver.java` 也列入允許路徑。
+  - 新增 `ProjectionWriter`（決策 3 的寫入方式；第一次寫入與修復兩種模式；逐格驗證；玩家 bbox 擋住時不寫入，非玩家 entity 照寫）。
+  - 新增 `ProjectionProtectionIndex`：開服時由 ledger 與 catalog 建立，註冊順序依決策 2；提供 COMPLETE 時的更新入口，以及退化規則。
+  - `CollapseAuthorities` 的唯讀列舉與健康 API。
+  - `ChamberProtectionService` 對非 vanilla world key 查索引：破壞、放置、爆炸、活塞、流體。
+  - `ChamberPowerCoordinator.refreshNow` 的 inert PROJECTION 載入辨識，涵蓋 chunk 載入與 `onBlockAdded` 兩條路徑。
+  - Step 1 中屬於這些元件的 RED：
+    - 第 2 組的「清 interior、箱子不噴物品、逐格驗證、修復只動不變量 cell、保留 interior」；
+    - 第 5 組的「退化只依權威健康」；
+    - 第 6 組的玩家與動物；
+    - 第 8 組全部。
+  - 不改 `CollapseService` 的流程：Step 0 的 CS 項目除外，PREPARE stub 照舊。
+- **F4b-2：PREPARE 流程。**
+  - `CollapseService` 的 PREPARE：
+    - §9.1 預載與 600 ticks WARN；
+    - PENDING→寫入→checkpoint→COMPLETE→更新索引；
+    - §6.5 實體交叉檢查與既有 entry 的位置驗證；
+    - §9.2 衝突；
+    - 退化時新的 PREPARE 進 SEALED。
+  - 量子膜的套用條件與門口規則。
+  - 門的攔截：`QuantumBulkheadBlock`、`ChamberControllerBlock`、`WorldChamberDoorAdapter`，排在 `ChamberDoorService` 之前。
+  - 閘門失效時釋放 ticket、門改一般開門、退回 WAITING。
+  - §7.3 門狀態的重新套用（含 SEALED 的關門）。
+  - 投影寫入與 checkpoint 的 fault mixin。
+  - Step 1 其餘的 RED，以及 note 各節交給 F4b 的流程項目：F3d m-6(b)、m-7(b)，F4a-0 的 `leaseReady` 就緒條件，F4a M-4、Q2-m6。
+
 - [ ] **Step 1: RED。**
   - 預載不用阻塞式 `getChunk(create=true)`。
   - 第一次寫入清 interior、箱子不噴物品、逐格驗證、checkpoint 之後才 COMPLETE；之後的寫入只修不變量 cell、保留 interior；COMPLETE 之後刪除 projection ledger（schema 4）→ 不重寫 interior。
