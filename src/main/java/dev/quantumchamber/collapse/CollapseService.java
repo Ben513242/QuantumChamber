@@ -35,6 +35,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.registry.RegistryKey;
@@ -443,8 +444,7 @@ public final class CollapseService {
         var result = journal.commitRollForward(server, view, next);
         if (result.status() == SessionRecoveryState.CommitResult.Status.REJECTED) {
             track.sealRejected(reason, cause, now);
-            warn(sid, SEAL_WRITE, result.failure().orElseThrow(), result.status().name(),
-                    "依 per-session 退避（200 ticks 起、每次被拒加倍）只重試這筆 SEALED 寫入（不重跑 RESOLVE）");
+            warn(sid, SEAL_WRITE, result.failure().orElseThrow(), result.status().name(), track.sealRetryNext());
             return;
         }
         track.sealWritten();
@@ -467,11 +467,13 @@ public final class CollapseService {
         sealedLog(view, reason, cause);
     }
 
-    /** 進入 SEALED 的 log：可重試的原因 WARN、永久原因 ERROR「需要管理員處理」，依 (session, 原因, dedupeKey) 去重。 */
+    /**
+     * 進入 SEALED 的 log：可重試的原因 WARN、永久原因 ERROR「需要管理員處理」，依 (session, 原因, dedupeKey) 去重（與 {@link #warn} 共用
+     * {@link #firstWarning}；F4b-1 Step 0，F4a fix round 2 quality Q2-m4）。
+     */
     private void sealedLog(SessionRecoveryRecord view, SealedReason reason, RuntimeException cause) {
         var sid = view.sessionUuid();
-        var key = FailureText.dedupeKey(cause);
-        if (key.equals(track(sid).warnings.put(SEALED_LOG + reason, key))) return;
+        if (!firstWarning(track(sid).warnings, SEALED_LOG + reason, cause)) return;
         var destination = describe(view.collapse().destination());
         if (reason.retryable()) {
             LOGGER.warn(LOG_MARKER, "塌縮進入 SEALED({})，可重試（{}）：session={} chamber={} 目的地={}：{}", reason,
@@ -828,11 +830,21 @@ public final class CollapseService {
 
     /**
      * 依 (session, 寫入種類, {@link FailureText#dedupeKey}) 去重記 WARN；{@code next} 是之後實際會發生的事（依退避重試、下一個 tick 重試、
-     * 或不重試由誰接手），只寫真的會發生的。成功時移除該寫入種類的鍵，所以同一原因「失敗 → 成功 → 再失敗」會再記一次：journal 寫入由呼叫端移除，
-     * 不重試的附帶動作（取得或釋放來源 ticket、刷新 Controller）一律經 {@link #sideEffect}，成功時自動移除（F4a fix round 2，m-6）。
+     * 或不重試由誰接手），只寫真的會發生的。鍵什麼時候移除，決定同一原因「失敗 → 成功 → 再失敗」會不會再記一次：
+     * <ul>
+     * <li>journal 寫入：由呼叫端在這裡自己的寫入確認（committed／removed）時移除。進入 SEALED 的寫入回 {@code ROLL_FORWARD_PENDING} 之後，確認它的是
+     *     recovery 的 RETRY_FLUSH，不是這裡，所以 {@code 寫入 SEALED} 的鍵不會在確認時移除：同一個 session 之後再以同一原因 pending，不會再記 WARN
+     *     （F4b-1 Step 0，F4a fix round 2 spec S2-mC 縮小原本「成功時移除」的說法）。</li>
+     * <li>不重試的附帶動作（取得或釋放來源 ticket、刷新 Controller）一律經 {@link #sideEffect}，成功時自動移除（F4a fix round 2，m-6）。</li>
+     * </ul>
      */
     private void warn(UUID sid, String what, RuntimeException failure, String status, String next) {
         if (!firstWarning(track(sid).warnings, what, failure)) return;
+        logWarn(sid, what, failure, status, next);
+    }
+
+    /** {@link #warn} 與 {@link #sideEffect} 共用的 WARN 字句（不去重）。 */
+    private static void logWarn(UUID sid, String what, RuntimeException failure, String status, String next) {
         LOGGER.warn(LOG_MARKER, "塌縮流程的{}沒有完成{}，{}：session={}：{}", what, status == null ? "" : "（" + status + "）", next, sid,
                 FailureText.describe(failure), failure);
     }
@@ -857,11 +869,24 @@ public final class CollapseService {
         return null;
     }
 
-    /** 不重試的附帶動作：{@link #attempt}，失敗時經 {@link #warn} 去重記 WARN（{@code next} 是之後實際會發生的事）。 */
+    /** 不重試的附帶動作：經 {@link #sideEffect(Map, Supplier, UUID, String, String, Runnable)}；這裡只接上這個 session 的簿記（沒有時為 null）。 */
     private void sideEffect(UUID sid, String what, String next, Runnable action) {
         var track = tracks.get(sid);
-        var failure = attempt(track == null ? null : track.warnings, what, action);
-        if (failure != null) warn(sid, what, failure, null, next);
+        sideEffect(track == null ? null : track.warnings, () -> track(sid).warnings, sid, what, next, action);
+    }
+
+    /**
+     * 不重試的附帶動作的組合（F4b-1 Step 0，F4a fix round 2 quality Q2-m3：production 與 JUnit 經同一份）：{@link #attempt} 執行 {@code action}
+     * （成功時從 {@code warnings} 移除 {@code what} 的去重鍵；{@code warnings} 為 null 表示這個 session 沒有簿記，例如已終局）；失敗時以
+     * {@link #firstWarning} 對 {@code ledger} 提供的簿記去重（沒有簿記時由它建立，與 {@link #warn} 相同），第一次遇到這個原因才記 WARN
+     * （{@code next} 是之後實際會發生的事）。回傳這次是否記了 WARN。
+     */
+    static boolean sideEffect(Map<String, String> warnings, Supplier<Map<String, String>> ledger, UUID sid, String what, String next,
+            Runnable action) {
+        var failure = attempt(warnings, what, action);
+        if (failure == null || !firstWarning(ledger.get(), what, failure)) return false;
+        logWarn(sid, what, failure, null, next);
+        return true;
     }
 
     private Track track(UUID sid) {
@@ -874,7 +899,10 @@ public final class CollapseService {
 
     /** 每個 session 在本 server instance 的塌縮簿記（不持久化）。package-private 只為了 JUnit 直接驗證它的方法（F4a fix round 2）。 */
     static final class Track {
-        /** 提交失敗、restore 類寫入（終局、SEALED 的重試）失敗、以可重試的原因進入 SEALED 之後的 per-session 退避（§7.1、§11.2）；RESOLVE 完成時清除。 */
+        /**
+         * 提交失敗、restore 類寫入（終局、SEALED 的重試）失敗、進入 SEALED 的寫入在前置檢查就被拒（{@link #sealRejected}）、以可重試的原因進入 SEALED
+         * 之後的 per-session 退避（§7.1、§11.2；被拒的一項由 F4b-1 Step 0 補進說明，F4a fix round 2 quality Q2-m4）；RESOLVE 完成時清除。
+         */
         final CollapseBackoff backoff = new CollapseBackoff();
         /** WARN 的去重：寫入種類 → 最近一次的 {@link FailureText#dedupeKey}；成功時移除。 */
         final Map<String, String> warnings = new HashMap<>();
@@ -910,6 +938,14 @@ public final class CollapseService {
         /** 有被拒的 SEALED 寫入，而且在 per-session 退避期之外：這個 tick 重試它（不重跑 RESOLVE）。 */
         boolean sealRetryDue(int now) {
             return pendingSeal != null && backoff.ready(now);
+        }
+
+        /**
+         * 被拒的 SEALED 寫入在 WARN 裡的「之後會發生的事」：以實際的 per-session 退避寫出延遲與下一次重試的 tick（F4b-1 Step 0，F4a fix round 2 quality
+         * Q2-m4：原本固定寫「200 ticks 起、每次被拒加倍」，與加倍之後的實際延遲不一致）。在 {@link #sealRejected} 之後呼叫。
+         */
+        String sealRetryNext() {
+            return "依 per-session 退避（" + backoff.delayTicks() + " ticks 後，tick " + backoff.retryAtTick() + "）只重試這筆 SEALED 寫入（不重跑 RESOLVE）";
         }
 
         /** 進入 SEALED 的寫入沒有被拒（已確認，或 roll-forward 未確認、交給 recovery）：不再有待重試的寫入。 */

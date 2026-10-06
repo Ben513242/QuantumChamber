@@ -336,8 +336,10 @@ class CollapseServiceTest {
         var cause = new IllegalStateException("x");
         boolean beforeRejection = track.sealRetryDue(1000);
         track.sealRejected(SealedReason.MATERIALIZE_FAILED, cause, 1000);
+        var firstNext = track.sealRetryNext();
         var first = List.of(track.sealRetryDue(1000), track.sealRetryDue(1001), track.sealRetryDue(1199), track.sealRetryDue(1200));
         track.sealRejected(SealedReason.MATERIALIZE_FAILED, cause, 1200);
+        var doubledNext = track.sealRetryNext();
         var doubled = List.of(track.sealRetryDue(1201), track.sealRetryDue(1599), track.sealRetryDue(1600));
         var reason = track.pendingSeal;
         var kept = track.pendingSealCause;
@@ -346,14 +348,20 @@ class CollapseServiceTest {
                 () -> assertFalse(beforeRejection, "沒有被拒的寫入"),
                 () -> assertEquals(List.of(false, false, false, true), first, "被拒之後：200 ticks 的退避期內不重試（不是每個 tick）"),
                 () -> assertEquals(List.of(false, false, true), doubled, "再被拒：退避加倍為 400"),
+                // F4b-1 Step 0（F4a fix round 2 quality Q2-m4）：WARN 的「之後會發生的事」寫的是實際的延遲與 tick，不是固定的「200 ticks 起」。
+                () -> assertTrue(firstNext.contains("200 ticks 後，tick 1200"), firstNext),
+                () -> assertTrue(doubledNext.contains("400 ticks 後，tick 1600"), doubledNext),
                 () -> assertEquals(SealedReason.MATERIALIZE_FAILED, reason, "重試的是 RESOLVE 判定的原因"),
                 () -> assertSame(cause, kept, "與它的 root cause"),
                 () -> assertFalse(track.sealRetryDue(100_000), "寫入不再被拒之後沒有待重試的寫入"));
     }
 
     /**
-     * F4a fix round 2（m-6，{@code warn} 的 Javadoc）：不重試的附帶動作（取得或釋放來源 ticket、刷新 Controller）經 {@code attempt} 執行，成功時清掉自己的
-     * WARN 去重鍵。同一原因連續失敗只記一次；「失敗 → 成功 → 同一原因再失敗」會再記一次；其他寫入種類的鍵不受影響；沒有簿記的 session（例如已終局）只執行。
+     * F4a fix round 2（m-6，{@code warn} 的 Javadoc）：不重試的附帶動作（取得或釋放來源 ticket、刷新 Controller）成功時清掉自己的 WARN 去重鍵。同一原因
+     * 連續失敗只記一次；「失敗 → 成功 → 同一原因再失敗」會再記一次；其他寫入種類的鍵不受影響；沒有簿記的 session（例如已終局）成功時只執行，失敗時記在
+     * {@code ledger} 提供的簿記上。
+     * <p>F4b-1 Step 0（F4a fix round 2 quality Q2-m3）：改經 production 的組合 {@link CollapseService#sideEffect(java.util.Map, java.util.function.Supplier,
+     * UUID, String, String, Runnable)}（執行、清鍵、去重、記 WARN 都在其中），並擷取 {@code quantumchamber} logger，斷言實際記下的 WARN，不在 test 裡重寫組合。
      */
     @Test void sideEffectWarningKeysAreClearedOnSuccess() {
         var warnings = new java.util.HashMap<String, String>();
@@ -361,16 +369,34 @@ class CollapseServiceTest {
         var failure = new IllegalStateException("ticket");
         Runnable fails = () -> { throw failure; };
         Runnable succeeds = () -> { };
+        var what = "進入 SEALED 時釋放來源 ticket";
         var logged = new ArrayList<Boolean>();
-        for (var action : List.of(fails, fails, succeeds, fails, succeeds, succeeds)) {
-            var thrown = CollapseService.attempt(warnings, "進入 SEALED 時釋放來源 ticket", action);
-            logged.add(thrown != null && CollapseService.firstWarning(warnings, "進入 SEALED 時釋放來源 ticket", thrown));
+        var warned = new ArrayList<Integer>();
+        var created = new java.util.HashMap<String, String>();
+        boolean untrackedSuccessLogged, untrackedFailureLogged;
+        List<CollapseLogCapture.Entry> logs;
+        try (var capture = new CollapseLogCapture()) {
+            for (var action : List.of(fails, fails, succeeds, fails, succeeds, succeeds)) {
+                int before = capture.count(Level.WARN);
+                logged.add(CollapseService.sideEffect(warnings, () -> warnings, SESSION, what, "不重試", action));
+                warned.add(capture.count(Level.WARN) - before);
+            }
+            // 沒有簿記的 session（warnings 為 null）：成功時只執行、不建立簿記；失敗時在 ledger 給的（新建的）簿記上去重並記 WARN。
+            untrackedSuccessLogged = CollapseService.sideEffect(null, () -> { throw new AssertionError("成功時不該建立簿記"); }, SESSION,
+                    "終局之後刷新 Controller", "不重試", succeeds);
+            untrackedFailureLogged = CollapseService.sideEffect(null, () -> created, SESSION, "終局之後刷新 Controller", "不重試", fails);
+            logs = capture.entries();
         }
+        var warnings3 = logs.stream().filter(entry -> entry.level() == Level.WARN).toList();
         assertAll(
                 () -> assertEquals(List.of(true, false, false, true, false, false), logged, "失敗記 WARN、同一原因去重、成功清掉之後同一原因再記一次"),
+                () -> assertEquals(List.of(1, 0, 0, 1, 0, 0), warned, "回傳值與實際記下的 WARN 一致"),
                 () -> assertEquals(java.util.Map.of("提交 MEASURED→COLLAPSING", "其他寫入種類的鍵"), warnings, "成功只清自己的鍵"),
-                () -> assertNull(CollapseService.attempt(null, "終局之後刷新 Controller", succeeds), "沒有簿記的 session：只執行"),
-                () -> assertSame(failure, CollapseService.attempt(null, "終局之後刷新 Controller", fails), "失敗時回傳例外，交給 warn"));
+                () -> assertFalse(untrackedSuccessLogged, "沒有簿記的 session：成功時只執行"),
+                () -> assertTrue(untrackedFailureLogged && created.containsKey("終局之後刷新 Controller"), "沒有簿記的 session：失敗時在 ledger 的簿記上去重"),
+                () -> assertEquals(3, warnings3.size(), () -> "WARN 共 3 則：" + warnings3),
+                () -> assertTrue(warnings3.stream().allMatch(entry -> entry.marked() && entry.message().contains("session=" + SESSION)
+                        && entry.message().contains("不重試") && entry.thrown() == failure), () -> "WARN 帶 LOG_MARKER、session、next 與 cause：" + warnings3));
     }
 
     @SafeVarargs
