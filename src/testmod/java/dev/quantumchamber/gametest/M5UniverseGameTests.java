@@ -1130,6 +1130,141 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F4b-1（spec §9.3 的載入辨識；plan Step 1 第 8 組；補充第 6 點）：動態世界的 Controller 依投影保護索引判定，不看 block entity 的 instanceKind。
+     * 宇宙 U 裡三座 Controller：
+     * <ul>
+     * <li>A（原艙的 frame）：PENDING 確認並登記後由寫入器第一次寫入，接著丟掉 U 的 load-sync queue（{@code discardWorld}，收據
+     *     DISCARDED_WORLD_UNLOAD），只剩 {@code onBlockAdded} 排的 refresh：寫入後 4 tick 還沒有 refresh 過（{@code powerInitialized=false}、ORIGIN），
+     *     之後由排程的 refresh 判定為 PROJECTION。</li>
+     * <li>B（沿區域 x 軸外移 32 格的 frame、另一個 chamber UUID）：PENDING 確認並登記後下一 tick 才寫入；load-sync 收據 CONSUMED，寫入後 3 tick 已判定為
+     *     PROJECTION（早於它自己 20 tick 後的排程 refresh）。chunk 載入時的 {@code BLOCK_ENTITY_LOAD} 走同一個 queue。</li>
+     * <li>C（外移 64 格，不在索引裡）：直接放一座 Controller → 照舊是 foreign：ORIGIN、INVALID、比較器 0。</li>
+     * </ul>
+     * A、B 是 INVALID、比較器 0、沒有 chamber UUID；兩座轉為 COMPLETE 並登記之後，在 Controller 上方放紅石塊供電，45 tick 後已讀到供電（{@code wasPowered}），
+     * 仍是 inert 的 PROJECTION；chamber registry 沒有 U 的紀錄、journal 沒有來源在 U 的 session。整段期間 quantumchamber logger 除了塌縮 session 本身的
+     * log 之外沒有 WARN／ERROR，也沒有任何 log 提到這三座 Controller 的位置（排程的 refresh 每 20 tick 一次，不會反覆記 log）。catalog 增量 1（U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_projection_recognition", tickLimit = 600)
+    public void projection_controllers_are_recognized_by_the_index_on_load_sync_and_block_added(TestContext context) {
+        begin(context, "projection_controllers_are_recognized_by_the_index_on_load_sync_and_block_added");
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var a = origin.frame;
+        var b = new dev.quantumchamber.chamber.ChamberFrame(outside(a, 35, 6, 0), a.outwardFacing());
+        var c = new dev.quantumchamber.chamber.ChamberFrame(outside(a, 67, 6, 0), a.outwardFacing());
+        resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var chunks = new java.util.ArrayList<net.minecraft.util.math.ChunkPos>();
+            for (var frame : List.of(a, b, c)) chunks.addAll(M5GameTestSupport.forceProjectionChunks(universe, frame, hooks));
+            whenTicks(context, resolved, 200, () -> M5GameTestSupport.blockTicking(universe, chunks),
+                    ticking -> projectionRecognition(context, hooks, origin.capture, universe, sid, chamber, id, a, b, c, ticking),
+                    () -> "投影周圍強制載入的 chunk 沒有開始 block ticking：" + chunks, hooks);
+        });
+    }
+
+    /** {@link #projection_controllers_are_recognized_by_the_index_on_load_sync_and_block_added} 在 chunk 開始 block ticking（{@code ticking}）之後的本體。 */
+    private static void projectionRecognition(TestContext context, M2CorridorGameTests.TestHooks hooks, LogCapture capture,
+            net.minecraft.server.world.ServerWorld universe, UUID sid, UUID chamber, UniverseId id, dev.quantumchamber.chamber.ChamberFrame a,
+            dev.quantumchamber.chamber.ChamberFrame b, dev.quantumchamber.chamber.ChamberFrame c, int ticking) {
+        var server = context.getWorld().getServer();
+        var authorities = CollapseAuthorities.get(server);
+        var index = ProjectionProtectionIndex.get(server);
+        var witness = new java.util.LinkedHashMap<String, Boolean>();
+        int mark = capture.entries().size();
+        var pendingA = authorities.writeProjection(new ProjectionLedger.Entry(chamber, id, DimensionRole.OVERWORLD, a.controllerPos(), a.outwardFacing(),
+                ProjectionLedger.Entry.Status.PENDING));
+        var pendingB = authorities.writeProjection(new ProjectionLedger.Entry(UUID.randomUUID(), id, DimensionRole.OVERWORLD, b.controllerPos(),
+                b.outwardFacing(), ProjectionLedger.Entry.Status.PENDING));
+        witness.put("pendingConfirmed", pendingA.status() == CollapseAuthorities.WriteResult.Status.WRITTEN
+                && pendingB.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
+        index.confirmed(pendingA.entry().orElseThrow());
+        index.confirmed(pendingB.entry().orElseThrow());
+        // A：寫入後丟掉 U 的 load-sync queue，只剩 onBlockAdded 排的 refresh。
+        witness.put("aWritten", ProjectionWriter.write(universe, a, ProjectionWriter.Mode.FIRST_WRITE).status() == ProjectionWriter.Status.WRITTEN);
+        var controllerA = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, a), "A 的 Controller block entity");
+        var receiptsA = dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.observe(universe, controllerA);
+        hooks.add(receiptsA::close);
+        dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.discardWorld(universe);
+        // C：不在索引裡的 Controller。
+        universe.setBlockState(c.controllerPos(), dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER.getDefaultState()
+                .with(dev.quantumchamber.chamber.ChamberControllerBlock.FACING, c.outwardFacing()));
+        var controllerC = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, c), "C 的 Controller block entity");
+        var receiptsC = dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.observe(universe, controllerC);
+        hooks.add(receiptsC::close);
+        var consumed = dev.quantumchamber.chamber.ChamberLoadSyncOutcome.CONSUMED;
+        var discarded = List.of(dev.quantumchamber.chamber.ChamberLoadSyncOutcome.DISCARDED_WORLD_UNLOAD);
+        at(context, ticking + 1, hooks, () -> {
+            // B：PENDING 已登記一 tick 之後才寫入。
+            witness.put("bWritten", ProjectionWriter.write(universe, b, ProjectionWriter.Mode.FIRST_WRITE).status() == ProjectionWriter.Status.WRITTEN);
+            var controllerB = java.util.Objects.requireNonNull(M5GameTestSupport.controller(universe, b), "B 的 Controller block entity");
+            var receiptsB = dev.quantumchamber.chamber.ChamberLoadSyncTestAccess.observe(universe, controllerB);
+            hooks.add(receiptsB::close);
+            at(context, ticking + 4, hooks, () -> {
+                witness.put("aNotRefreshedYet", !controllerA.powerInitialized() && controllerA.instanceKind() == dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN
+                        && receiptsA.outcomes().equals(discarded));
+                witness.put("bRecognizedByLoadSync", receiptsB.outcomes().contains(consumed) && inertProjection(universe, controllerB));
+                witness.put("cForeignAfterLoadSync", receiptsC.outcomes().contains(consumed) && foreign(universe, controllerC));
+                at(context, ticking + 25, hooks, () -> {
+                    witness.put("aRecognizedByBlockAdded", receiptsA.outcomes().equals(discarded) && inertProjection(universe, controllerA));
+                    var completeA = authorities.writeProjection(pendingA.entry().orElseThrow().withStatus(ProjectionLedger.Entry.Status.COMPLETE));
+                    var completeB = authorities.writeProjection(pendingB.entry().orElseThrow().withStatus(ProjectionLedger.Entry.Status.COMPLETE));
+                    witness.put("completeConfirmed", completeA.status() == CollapseAuthorities.WriteResult.Status.WRITTEN
+                            && completeB.status() == CollapseAuthorities.WriteResult.Status.WRITTEN);
+                    index.confirmed(completeA.entry().orElseThrow());
+                    index.confirmed(completeB.entry().orElseThrow());
+                    // 供電：Controller 上方（volume 外）放紅石塊；B 的 neighbor update 立即 refresh，A 由排程的 refresh 讀到。
+                    for (var frame : List.of(a, b)) universe.setBlockState(outside(frame, 3, 7, 0), net.minecraft.block.Blocks.REDSTONE_BLOCK.getDefaultState());
+                    at(context, ticking + 70, hooks, () -> {
+                        witness.put("poweredButInert", controllerA.wasPowered() && controllerB.wasPowered()
+                                && inertProjection(universe, controllerA) && inertProjection(universe, controllerB));
+                        witness.put("cStillForeign", foreign(universe, controllerC));
+                        var key = universe.getRegistryKey().getValue();
+                        witness.put("noRegistryRecordInU", dev.quantumchamber.chamber.ChamberRegistryState.get(server).registry().records().values().stream()
+                                .noneMatch(record -> record.originWorldKey().equals(key)));
+                        witness.put("noSessionFromU", SessionRecoveryState.get(server).records().values().stream()
+                                .noneMatch(record -> record.origin().worldKey().equals(key)));
+                        var entries = capture.entries();
+                        var window = entries.subList(mark, entries.size());
+                        var positions = List.of(a.controllerPos(), b.controllerPos(), c.controllerPos());
+                        witness.put("noWarnOrErrorOutsideTheSession", window.stream().noneMatch(entry -> (entry.level() == org.apache.logging.log4j.Level.WARN
+                                || entry.level() == org.apache.logging.log4j.Level.ERROR) && !entry.message().contains(sid.toString())));
+                        witness.put("noLogAboutTheControllers", window.stream().noneMatch(entry -> positions.stream()
+                                .anyMatch(pos -> entry.message().contains(pos.toShortString()) || entry.message().contains(pos.toString()))));
+                        LOGGER.info("M5_PROJECTION_RECOGNITION a={}/{} b={}/{} c={}/{} receiptsA={} receiptsB={} receiptsC={}", controllerA.instanceKind(),
+                                controllerA.chamberState(), controllerB.instanceKind(), controllerB.chamberState(), controllerC.instanceKind(),
+                                controllerC.chamberState(), receiptsA.outcomes(), receiptsB.outcomes(), receiptsC.outcomes());
+                        hooks.release();
+                        context.assertTrue(!witness.containsValue(false), "投影 Controller 的載入辨識：" + witness);
+                        awaitConvergedThenComplete(context, 1, 20);
+                    });
+                });
+            });
+        });
+    }
+
+    /** inert 的 PROJECTION：仍在世界上、PROJECTION、INVALID、比較器 0、沒有 chamber UUID。 */
+    private static boolean inertProjection(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
+        return inWorld(world, controller) && controller.instanceKind() == dev.quantumchamber.chamber.ChamberInstanceKind.PROJECTION && inert(world, controller);
+    }
+
+    /** 未知的 foreign Controller：仍在世界上、refresh 過、ORIGIN（預設值）、INVALID、比較器 0、沒有 chamber UUID。 */
+    private static boolean foreign(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
+        return inWorld(world, controller) && controller.powerInitialized()
+                && controller.instanceKind() == dev.quantumchamber.chamber.ChamberInstanceKind.ORIGIN && inert(world, controller);
+    }
+
+    private static boolean inWorld(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
+        return !controller.isRemoved() && world.getBlockEntity(controller.getPos()) == controller;
+    }
+
+    private static boolean inert(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
+        return controller.chamberState() == dev.quantumchamber.chamber.ChamberState.INVALID && controller.chamberUuid() == null
+                && world.getBlockState(controller.getPos()).getComparatorOutput(world, controller.getPos()) == 0;
+    }
+
     /** 玩家手上的方塊放在 {@code below} 的上方（原版 {@code interactBlock}，打在頂面）。 */
     private static void placeOnTop(net.minecraft.server.network.ServerPlayerEntity player, net.minecraft.server.world.ServerWorld world, net.minecraft.util.math.BlockPos below) {
         var hit = new net.minecraft.util.hit.BlockHitResult(net.minecraft.util.math.Vec3d.ofCenter(below).add(0, 0.5, 0), net.minecraft.util.math.Direction.UP, below, false);
