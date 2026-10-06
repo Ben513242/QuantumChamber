@@ -150,6 +150,52 @@ class CollapseServiceTest {
         assertAll(cases);
     }
 
+    /**
+     * F4b-2（spec §9.2、§6.5；F4b-1 交下的寫入器結果）：投影的純判斷。寫入器的結果：寫完繼續；玩家擋住、chunk 不是都 FULL 等下一個 tick；驗證或寫入失敗進
+     * SEALED。確認之後的 PENDING 決定寫法：新 key 與既有 PENDING 照第一次寫入、既有 COMPLETE 只修復，沒有確認的結果不能決定寫法。§9.2 的衝突只看另一座艙
+     * （或另一個宇宙）的 COMPLETE。checkpoint 的相關 chunks 是 7×7×7 涵蓋的 chunk（跨 chunk、負座標也是）。
+     */
+    @Test void prepareDecisionsFollowTheWriterAndLedgerResults() {
+        var cases = new ArrayList<Executable>();
+        for (var status : ProjectionWriter.Status.values()) {
+            var expected = switch (status) {
+                case WRITTEN -> CollapseService.WriteStep.PROCEED;
+                case BLOCKED_BY_PLAYER, NOT_LOADED -> CollapseService.WriteStep.WAIT;
+                case VERIFY_FAILED, WRITE_FAILED -> CollapseService.WriteStep.SEAL;
+            };
+            cases.add(() -> assertEquals(expected, CollapseService.writeStep(status), status.name()));
+        }
+        cases.add(() -> assertEquals(ProjectionWriter.Mode.FIRST_WRITE, CollapseService.writeMode(CollapseAuthorities.WriteResult.Status.WRITTEN), "新 key"));
+        cases.add(() -> assertEquals(ProjectionWriter.Mode.FIRST_WRITE, CollapseService.writeMode(CollapseAuthorities.WriteResult.Status.UNCHANGED), "既有 PENDING"));
+        cases.add(() -> assertEquals(ProjectionWriter.Mode.REPAIR, CollapseService.writeMode(CollapseAuthorities.WriteResult.Status.ALREADY_COMPLETE), "既有 COMPLETE"));
+        for (var status : List.of(CollapseAuthorities.WriteResult.Status.UNCONFIRMED, CollapseAuthorities.WriteResult.Status.WRITE_FAILED,
+                CollapseAuthorities.WriteResult.Status.CORRUPT, CollapseAuthorities.WriteResult.Status.UNREADABLE))
+            cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapseService.writeMode(status), "沒有確認：" + status));
+        var frame = new ChamberFrame(new BlockPos(-17, 70, -2), Direction.WEST);
+        var universe = UniverseId.of(UUID.fromString("00000000-0000-8000-8000-0000000000f1"));
+        var other = UniverseId.of(UUID.fromString("00000000-0000-8000-8000-0000000000f2"));
+        java.util.function.BiFunction<UUID, UniverseId, java.util.function.Function<ProjectionLedger.Entry.Status, ProjectionLedger.Entry>> entry =
+                (chamber, id) -> status -> new ProjectionLedger.Entry(chamber, id, DimensionRole.OVERWORLD, frame.controllerPos(), frame.outwardFacing(), status);
+        var ownPending = entry.apply(CHAMBER, universe).apply(ProjectionLedger.Entry.Status.PENDING);
+        var ownComplete = entry.apply(CHAMBER, universe).apply(ProjectionLedger.Entry.Status.COMPLETE);
+        var otherPending = entry.apply(A, universe).apply(ProjectionLedger.Entry.Status.PENDING);
+        var otherComplete = entry.apply(B, universe).apply(ProjectionLedger.Entry.Status.COMPLETE);
+        var ownChamberOtherUniverse = entry.apply(CHAMBER, other).apply(ProjectionLedger.Entry.Status.COMPLETE);
+        cases.add(() -> assertEquals(Optional.empty(), CollapseService.conflict(List.of(ownPending, ownComplete, otherPending), CHAMBER, universe),
+                "本艙在這個宇宙的 entry 與別人的 PENDING 都不算"));
+        cases.add(() -> assertEquals(Optional.of(otherComplete), CollapseService.conflict(List.of(ownComplete, otherPending, otherComplete), CHAMBER, universe),
+                "另一座艙的 COMPLETE 是衝突"));
+        cases.add(() -> assertEquals(Optional.of(ownChamberOtherUniverse), CollapseService.conflict(List.of(ownChamberOtherUniverse), CHAMBER, universe),
+                "同一座艙在另一個宇宙的 COMPLETE（同一個世界不會發生）也不是本 key"));
+        var bounds = dev.quantumchamber.chamber.ChamberGeometry.bounds(frame);
+        var expected = new java.util.HashSet<net.minecraft.util.math.ChunkPos>();
+        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++)
+            for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) expected.add(new net.minecraft.util.math.ChunkPos(new BlockPos(x, 0, z)));
+        cases.add(() -> assertEquals(expected, CollapseService.volumeChunks(frame), "checkpoint 的相關 chunks"));
+        cases.add(() -> assertEquals(4, expected.size(), "fixture：跨兩個 chunk 邊界"));
+        assertAll(cases);
+    }
+
     @Test void destinationIsFixedAtCommitFromTheSelectedCandidate() {
         var newMeasured = measured(DimensionRole.OVERWORLD, NEW);
         var token = ((QuantumCandidate.New) newMeasured.selectedCandidate().orElseThrow()).intent().allocationToken();

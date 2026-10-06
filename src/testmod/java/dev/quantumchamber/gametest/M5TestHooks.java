@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
@@ -17,7 +18,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTestState;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +39,8 @@ import org.slf4j.LoggerFactory;
  *     {@link #beforeMaterialize}，注入時以 {@code FAILED_ROLLED_BACK} 取代那次物化。由 {@code M5GameTestSupport.installMaterializeFault} 安裝。</li>
  * <li>checked NBT 檔的讀取失敗（{@link #CHECKED_READ_FAULT}，F4a）：{@code CheckedNbtFileReadFaultMixin} 在 {@code CheckedNbtFile.readFile} 的開頭
  *     呼叫 {@link #beforeCheckedRead}，注入時丟 {@link IOException}。由 {@code M5GameTestSupport.installCheckedReadFault} 安裝。</li>
+ * <li>原生存檔 checkpoint 的探針（{@link #CHUNK_CHECKPOINT_PROBE}，F4b-2）：{@code ChunkSaveCheckpointProbeMixin} 在 {@code ChunkSaveCheckpoint.save} 的開頭
+ *     呼叫 {@link #beforeChunkCheckpoint}，記下指定世界的每一次 checkpoint，前幾次可以受控失敗。由 {@code M5GameTestSupport.installChunkCheckpointProbe} 安裝。</li>
  * </ul>
  * 探針、稽核與兩個故障注入各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
@@ -53,6 +58,8 @@ public final class M5TestHooks {
     static final Slot<MaterializeFault> MATERIALIZE_FAULT = new Slot<>("物化失敗注入");
     /** checked NBT 檔的讀取失敗注入（{@code M5GameTestSupport.installCheckedReadFault}）。 */
     static final Slot<CheckedReadFault> CHECKED_READ_FAULT = new Slot<>("checked NBT 讀取失敗注入");
+    /** 原生存檔 checkpoint 的探針與失敗注入（F4b-2，{@code M5GameTestSupport.installChunkCheckpointProbe}）。 */
+    static final Slot<ChunkCheckpointProbe> CHUNK_CHECKPOINT_PROBE = new Slot<>("原生存檔 checkpoint 探針");
 
     /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
     public static boolean collapseSuspended(UUID session) {
@@ -94,6 +101,16 @@ public final class M5TestHooks {
     public static void beforeCheckedRead(Path path) throws IOException {
         var fault = CHECKED_READ_FAULT.get();
         if (fault != null) fault.intercept(path);
+    }
+
+    /**
+     * {@code ChunkSaveCheckpointProbeMixin}：{@code ChunkSaveCheckpoint.save} 的開頭呼叫（F4b-2）。只在 server thread 上：交給目前的探針記下這次 checkpoint；
+     * 探針在受控失敗時丟 {@link IllegalStateException}，那次 checkpoint 因此在存檔之前失敗（production 一律把 checkpoint 的例外當成失敗）。
+     */
+    public static void beforeChunkCheckpoint(MinecraftServer server, Map<ServerWorld, Set<ChunkPos>> relevant) {
+        if (!server.isOnThread()) return;
+        var probe = CHUNK_CHECKPOINT_PROBE.get();
+        if (probe != null) probe.before(server, relevant);
     }
 
     /**
@@ -182,6 +199,44 @@ public final class M5TestHooks {
 
         /** 已注入失敗的次數。 */
         int hits() { return hits.get(); }
+    }
+
+    /**
+     * 原生存檔 checkpoint 的探針（F4b-2）：只看 {@code relevant} 含 {@code world} 的 checkpoint（其他世界的照常，例如走廊清理的 MEASURED checkpoint）。
+     * 每一次都依序記下 server tick、這個世界的相關 chunks，以及 {@code observe} 在那一刻回傳的觀察（例如 projection ledger 的狀態；它也可以在存檔之前改動
+     * 世界，模擬「第一次寫入與 checkpoint 之間」的改動）；前 {@code failFirst} 次在存檔之前受控失敗。{@code observe} 丟出的例外只記下，不影響 checkpoint。
+     */
+    static final class ChunkCheckpointProbe {
+        /** 一次 checkpoint：server tick、這個世界的相關 chunks、{@code observe} 的觀察，以及是否受控失敗。 */
+        record Call(int tick, Set<ChunkPos> chunks, String observed, boolean failed) { }
+
+        private final RegistryKey<World> world;
+        private final int failFirst;
+        private final java.util.function.IntFunction<String> observe;
+        private final List<Call> calls = new CopyOnWriteArrayList<>();
+
+        ChunkCheckpointProbe(RegistryKey<World> world, int failFirst, java.util.function.IntFunction<String> observe) {
+            this.world = Objects.requireNonNull(world, "world"); this.failFirst = failFirst; this.observe = Objects.requireNonNull(observe, "observe");
+        }
+
+        void before(MinecraftServer server, Map<ServerWorld, Set<ChunkPos>> relevant) {
+            var mine = relevant.entrySet().stream().filter(entry -> entry.getKey().getRegistryKey().equals(world)).findFirst();
+            if (mine.isEmpty()) return;
+            int index = calls.size();
+            String observed;
+            try {
+                observed = observe.apply(index);
+            } catch (RuntimeException failure) {
+                observed = "觀察失敗：" + failure;
+                LOGGER.error("M5_CHECKPOINT_PROBE_OBSERVE_FAILED world={} call={}", world.getValue(), index, failure);
+            }
+            boolean fail = index < failFirst;
+            calls.add(new Call(server.getTicks(), Set.copyOf(mine.get().getValue()), observed, fail));
+            if (fail) throw new IllegalStateException("F4b-2 GameTest 受控：原生存檔 checkpoint 失敗（第 " + (index + 1) + " 次）");
+        }
+
+        /** 依發生順序的每一次 checkpoint（含受控失敗的那幾次）。 */
+        List<Call> calls() { return List.copyOf(calls); }
     }
 
     /**

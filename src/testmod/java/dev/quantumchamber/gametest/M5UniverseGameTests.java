@@ -1357,37 +1357,84 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>預載：塌縮流程在 U 對「艙體 bbox 水平外擴 2 格」涵蓋的每個 chunk 加上自己的 ticket（{@code quantumchamber_destination}，argument 是 session，
      *     level 33＝FULL；涵蓋範圍由 test 依 spec 自己算出）。之後以非建立模式查詢：預載完成的 INFO 記下等了幾個 tick，至少 1（同一個 tick 加 ticket、
      *     又在 server thread 上阻塞載入的話是 0），完成時每個 chunk 都是 FULL。</li>
+     * <li>投影（spec §6.5、§9.2；plan Step 1 第 2 組「checkpoint 之後才 COMPLETE」；補充第 1 點第 7 步）：checked 寫入 PENDING、第一次寫入、目的 volume 的 chunks
+     *     原生存檔 checkpoint、再驗不變量 cell、checked 寫入 COMPLETE。以 checkpoint 探針（{@code ChunkSaveCheckpointProbeMixin}，只看 U）記下每一次 checkpoint
+     *     當下 ledger 的狀態，並在第一次 checkpoint 存檔之前把一格 shell 改成 AIR（模擬第一次寫入與 checkpoint 之間、PENDING 不受保護時的改動）：checkpoint 之後的
+     *     再驗修復這一格（INFO「已修復 1 格」）、不寫 COMPLETE，下一個 tick 重做 checkpoint，之後才寫 COMPLETE。所以 checkpoint 恰好兩次、兩次都看到 PENDING，
+     *     涵蓋的是 volume 的 chunks；最後 343 格都是 spec 的目標（test 自己寫出），COMPLETE 的 site 就是原艙的位置，不變量 cell 受保護、interior 不受保護，
+     *     Controller 辨識為投影。</li>
+     * <li>準備完成（F4b-2 的停點）：INFO「準備完成」一則；WARN「通道尚未實作（F5）」恰一則、帶 session，這個 session 沒有其他 WARN／ERROR；record 仍是
+     *     COLLAPSING（沒有 PASSAGE_READY）。之後幾個 tick 不再重做（「準備完成」仍是一則），目的世界的 ticket 繼續持有；P 照一般方式開關原艙門（一般開門、
+     *     membrane none，門的攔截屬 F4b-3）。</li>
      * <li>終局之後（收尾的終局 API），下一個 tick 塌縮流程看到 session 已不在 journal，釋放目的世界的 ticket（完成條件）。</li>
      * </ul>
      * catalog 增量 1（U）。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_new", tickLimit = 600)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_new", tickLimit = 900)
     public void prepare_new_runs_the_destination_side_then_stops_before_the_passage(TestContext context) {
         begin(context, "prepare_new_runs_the_destination_side_then_stops_before_the_passage");
-        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
         DormantOrigin origin;
         try {
             origin = DormantOrigin.open(context, hooks);
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             var area = M5GameTestSupport.preloadArea(frame);
+            var authorities = CollapseAuthorities.get(server);
+            var damaged = local(frame, 6, 3, 3);
+            // 每一次 checkpoint：記下 ledger 的狀態；第一次在存檔之前把一格 shell 改成 AIR。
+            var probe = M5GameTestSupport.installChunkCheckpointProbe(context, universe.getRegistryKey(), 0, call -> {
+                var lookup = authorities.projection(chamber, id);
+                var observed = lookup.status() + lookup.value().map(entry -> " " + entry.status()).orElse("");
+                if (call == 0) ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(damaged, Blocks.AIR.getDefaultState()));
+                return observed;
+            }, hooks);
             whenTicks(context, resolved + 1, 20, () -> !M5GameTestSupport.destinationTickets(universe, sid).isEmpty(), ticketed -> {
                 var tickets = M5GameTestSupport.destinationTickets(universe, sid);
                 witness.put("enteredPrepareOnce", entered(capture, sid) == 1);
                 witness.put("ticketsCoverTheBoxPlusTwoAtFull", tickets.keySet().equals(area) && tickets.values().stream().allMatch(level -> level == 33));
-                whenTicks(context, ticketed, 200, () -> !preloaded(capture, sid).isEmpty(), done -> {
+                whenTicks(context, ticketed, 400, () -> !prepared(capture, sid).isEmpty(), ready -> {
                     witness.put("preloadWaitedAtLeastOneTick", preloadWaitedTicks(capture, sid) >= 1);
                     witness.put("everyPreloadChunkFull", area.stream().allMatch(chunk -> universe.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null));
+                    var calls = probe.calls();
+                    witness.put("checkpointedTwiceBothWhilePending", calls.size() == 2 && calls.stream().allMatch(call -> call.observed().equals("FOUND PENDING")));
+                    witness.put("checkpointCoversTheVolumeChunks", calls.stream().allMatch(call -> call.chunks().equals(volumeChunks(frame))));
+                    witness.put("windowDamageRepairedBeforeComplete", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "已修復 1 格",
+                            sid.toString()).size() == 1 && universe.getBlockState(damaged).isOf(Blocks.BEDROCK));
+                    witness.put("everyCellIsTheSpecTarget", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
+                    var complete = authorities.projection(chamber, id);
+                    witness.put("completeAtTheOriginSite", complete.value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE
+                            && entry.role() == DimensionRole.OVERWORLD && entry.controllerPos().equals(frame.controllerPos())
+                            && entry.outwardFacing() == frame.outwardFacing()).isPresent());
+                    var key = universe.getRegistryKey();
+                    witness.put("invariantProtectedInteriorNot", ProjectionProtectionIndex.protectedCell(server, key, damaged)
+                            && !ProjectionProtectionIndex.protectedCell(server, key, local(frame, 3, 3, 3)));
+                    witness.put("controllerRecognized", ProjectionProtectionIndex.projectionControllerAt(server, key, frame.controllerPos()));
+                    witness.put("oneReadyInfo", prepared(capture, sid).size() == 1);
+                    witness.put("oneReadyStubWarn", readyStubWarnings(capture, sid) == 1);
+                    witness.put("onlyTheReadyStubWarnAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 1
+                            && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                     witness.put("stillCollapsing", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
-                    LOGGER.info("M5_PREPARE_NEW tickets={} area={} waited={}", tickets.size(), area.size(), preloadWaitedTicks(capture, sid));
-                    // 收尾：終局 API 移除 record；下一個 tick 塌縮流程釋放目的世界的 ticket（完成條件）。
-                    hooks.release();
-                    context.assertTrue(!witness.containsValue(false), "PREPARE 的預載：" + witness + " tickets=" + tickets.keySet() + " area=" + area);
-                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
-                }, () -> "預載沒有完成：tickets=" + M5GameTestSupport.destinationTickets(universe, sid).size() + " witness=" + witness, hooks);
+                    LOGGER.info("M5_PREPARE_NEW tickets={} area={} waited={} checkpoints={}", tickets.size(), area.size(), preloadWaitedTicks(capture, sid), calls);
+                    var door = ChamberGeometry.localToWorld(frame, 3, 3, 0);
+                    at(context, ready + 5, hooks, () -> {
+                        witness.put("holdsAtTheStub", prepared(capture, sid).size() == 1 && probe.calls().size() == 2
+                                && M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area)
+                                && M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                        witness.put("doorOpensNormally", interact(world, door, p).isAccepted() && doorAll(world, frame, true, MembraneState.NONE));
+                        witness.put("doorClosesNormally", interact(world, door, p).isAccepted() && doorAll(world, frame, false, MembraneState.NONE));
+                        // 收尾：終局 API 移除 record；下一個 tick 塌縮流程釋放目的世界的 ticket（完成條件）。
+                        hooks.release();
+                        context.assertTrue(!witness.containsValue(false), "PREPARE 的目的宇宙側：" + witness + " tickets=" + tickets.keySet() + " area=" + area
+                                + " checkpoints=" + probe.calls());
+                        awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    });
+                }, () -> "沒有準備完成：tickets=" + M5GameTestSupport.destinationTickets(universe, sid).size() + " checkpoints=" + probe.calls()
+                        + " witness=" + witness, hooks);
             }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
         });
     }
@@ -1395,10 +1442,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F4b-2（spec §7.3「PREPARE 進行到一半時閘門不再成立」、§7.1；plan Step 1 第 13 組的 ticket 與 WAITING）：進入 PREPARE、預載還沒完成時斷電 →
      * 下一個 tick 閘門失效：釋放目的世界的 ticket、退回 WAITING（INFO），record 仍是 COLLAPSING。恢復供電之後 P 一直在艙內，沒有邊緣觸發，不回到 PREPARE；
-     * P 由艙外再進入 → 回到 PREPARE，重新加上同一份 ticket、預載完成。RESOLVE 只有一次（「目的地已確定」恰一則），allocation entry 恰一筆，catalog 增量 1
+     * P 由艙外再進入 → 回到 PREPARE，重新加上同一份 ticket、預載完成（中斷的那一段沒有完成預載，所以「預載完成」只有一則），寫完投影、準備完成。RESOLVE 只有一次（「目的地已確定」恰一則），allocation entry 恰一筆，catalog 增量 1
      * （沒有第二個宇宙）。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_power", tickLimit = 600)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_power", tickLimit = 900)
     public void prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it(TestContext context) {
         begin(context, "prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
@@ -1430,8 +1477,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     moveOutside(p, frame);
                 });
                 at(context, ticketed + 6, hooks, () -> moveInside(p, frame));
-                whenTicks(context, ticketed + 7, 200, () -> entered(capture, sid) == 2 && preloaded(capture, sid).size() == 1, resumed -> {
+                whenTicks(context, ticketed + 7, 400, () -> entered(capture, sid) == 2 && prepared(capture, sid).size() == 1, resumed -> {
                     witness.put("resumedWithTheSameTickets", M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area));
+                    witness.put("onePreloadCompletedAfterTheEdge", preloaded(capture, sid).size() == 1);
+                    witness.put("projectedAfterTheEdge", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty()
+                            && CollapseAuthorities.get(server).projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
                     witness.put("resolvedOnlyOnce", capture.matching(Level.INFO, "目的地已確定", sid.toString()).size() == 1);
                     witness.put("oneAllocationEntry", allocationEntries(server, id) == 1);
                     hooks.release();
@@ -1443,6 +1493,118 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F4b-2（spec §9.2「之後（COMPLETE；EXISTING 再次造訪）」、§6.5；補充第 5 點）：D1（DORMANT NEW）把原艙投影到宇宙 U，準備完成（COMPLETE）。之後在 U 的
+     * 投影艙 interior 放一塊石頭（玩家的修改，interior 不受保護），以授權寫入把一格 shell 損壞成 AIR、把 25 格門關上（COMPLETE 的不變量 cell 受保護），再以
+     * 終局 API 移除 D1。同一座原艙寫入選中 EXISTING U 的 D2，P 由艙外進入 → RESOLVE 只重驗 → PREPARE：ledger 已有本艙在 U 的 COMPLETE，PENDING 的寫入回
+     * ALREADY_COMPLETE（site 已驗證）→ 修復：只寫 26 格不變量 cell（1 格 shell＋25 格門，門回到開啟），interior 的石頭保留；不寫 ledger（projection 檔的
+     * bytes 不變）、不做 checkpoint（spec §9.2 的修復沒有要求；COMPLETE 已在 ledger），準備完成（INFO 記 REPAIR）。D2 的 WARN 只有「通道尚未實作」一則。
+     * catalog 增量 1（只有 D1 的 U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_revisit", tickLimit = 1200)
+    public void existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior(TestContext context) {
+        begin(context, "existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var data = server.getSavePath(WorldSavePath.ROOT).resolve("data");
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var authorities = CollapseAuthorities.get(server);
+            whenTicks(context, resolved + 1, 400, () -> !prepared(capture, sid1).isEmpty(), first -> {
+                var stone = local(frame, 2, 1, 2); var hole = local(frame, 0, 3, 3);
+                universe.setBlockState(stone, Blocks.STONE.getDefaultState());
+                witness.put("interiorChangeAllowed", universe.getBlockState(stone).isOf(Blocks.STONE));
+                witness.put("invariantCellProtected", !ChamberProtectionService.get().mayMutate(universe, hole));
+                ChamberProtectionService.get().authorizedMutation(() -> {
+                    universe.setBlockState(hole, Blocks.AIR.getDefaultState());
+                    for (var cell : M5GameTestSupport.door(frame)) universe.setBlockState(cell, QuantumBulkheadBlock.withOpen(universe.getBlockState(cell), false));
+                });
+                cleanupFixtures(server, List.of(sid1));
+                moveOutside(p, frame);
+                var ledgerBefore = bytes(data, ProjectionLedger.FILE_NAME);
+                var probe = M5GameTestSupport.installChunkCheckpointProbe(context, universe.getRegistryKey(), 0, call -> "", hooks);
+                var second = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
+                        Map.of(p.getUuid(), true), id));
+                var sid2 = second.sessionUuid();
+                at(context, first + 1, hooks, () -> moveInside(p, frame));
+                whenTicks(context, first + 2, 400, () -> !prepared(capture, sid2).isEmpty(), revisited -> {
+                    witness.put("invariantCellsRepairedDoorOpen", M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty()
+                            && doorAll(universe, frame, true, MembraneState.NONE));
+                    witness.put("interiorKept", universe.getBlockState(stone).isOf(Blocks.STONE));
+                    witness.put("repairWroteOnlyTheDamagedInvariantCells", prepared(capture, sid2).getFirst().message().contains("投影=REPAIR（寫入 26 格）"));
+                    witness.put("ledgerUntouched", Arrays.equals(ledgerBefore, bytes(data, ProjectionLedger.FILE_NAME)));
+                    witness.put("noCheckpointForTheRepair", probe.calls().isEmpty());
+                    witness.put("completeKept", authorities.projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE
+                            && entry.controllerPos().equals(frame.controllerPos()) && entry.outwardFacing() == frame.outwardFacing()).isPresent());
+                    witness.put("onlyTheReadyStubWarn", capture.matching(Level.WARN, sid2.toString()).size() == 1 && readyStubWarnings(capture, sid2) == 1
+                            && capture.matching(Level.ERROR, sid2.toString()).isEmpty());
+                    LOGGER.info("M5_PREPARE_REVISIT ready={}", prepared(capture, sid2).getFirst().message());
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "EXISTING 再次造訪：" + witness);
+                    awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid2).isEmpty());
+                }, () -> "D2 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
+            }, () -> "D1 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid1), hooks);
+        });
+    }
+
+    /**
+     * F4b-2（spec §9.2 的既有 entity、§9.1；plan Step 1 第 6 組的流程）：RESOLVE 之後、進入 PREPARE 之前，一位（創造模式、不受重力的）玩家 Q 站進宇宙 U 的投影
+     * volume。第一次寫入每個 tick 都被 Q 擋住：一格都不寫（Controller 位置一直沒有 Controller），也不移動 Q；PENDING 已確認。從進入 PREPARE 起超過 600 ticks 時
+     * 記一則 WARN（帶 session，寫明玩家擋住寫入與 Q），之前沒有、之後不再記。Q 離開 volume 之後寫入、checkpoint、COMPLETE，準備完成。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_blocked", tickLimit = 1500)
+    public void prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks(TestContext context) {
+        begin(context, "prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        DormantOrigin origin;
+        try {
+            origin = DormantOrigin.open(context, hooks);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var frame = origin.frame; var capture = origin.capture;
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var connection = new ConnectedGameTestPlayer(context.getWorld());
+            hooks.add(connection::close);
+            var q = connection.player();
+            q.changeGameMode(GameMode.CREATIVE); q.setNoGravity(true);
+            standAt(q, universe, frame, 3.5, 1, 3.5);
+            var qAt = q.getPos();
+            whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1, enteredAt -> {
+                at(context, enteredAt + 590, hooks, () -> witness.put("noWarnBeforeSixHundredTicks", prepareWaitWarnings(capture, sid).isEmpty()
+                        && prepared(capture, sid).isEmpty()));
+                whenTicks(context, enteredAt + 595, 30, () -> prepareWaitWarnings(capture, sid).size() == 1, warned -> {
+                    var warning = prepareWaitWarnings(capture, sid).getFirst().message();
+                    witness.put("warnNamesTheBlockingPlayer", warning.contains("玩家") && warning.contains(q.getUuid().toString()));
+                    witness.put("nothingWrittenWhileBlocked", ProjectionWriter.controllerPresence(universe, frame) == ProjectionWriter.ControllerPresence.ABSENT);
+                    witness.put("pendingConfirmed", CollapseAuthorities.get(server).projection(chamber, id).value()
+                            .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent());
+                    witness.put("playerNotMoved", q.getServerWorld() == universe && q.getPos().equals(qAt));
+                    standAt(q, universe, frame, 3.5, 1, -4.5);
+                    whenTicks(context, warned + 1, 300, () -> !prepared(capture, sid).isEmpty(), ready -> {
+                        witness.put("writtenAfterQLeft", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
+                        witness.put("warnedOnlyOnce", prepareWaitWarnings(capture, sid).size() == 1);
+                        LOGGER.info("M5_PREPARE_BLOCKED warned={} ready={} warning={}", warned - enteredAt, ready - enteredAt, warning);
+                        hooks.release();
+                        context.assertTrue(!witness.containsValue(false), "玩家擋住投影寫入：" + witness);
+                        awaitConvergedThenComplete(context, 1, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    }, () -> "Q 離開之後沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+                }, () -> "等待超過 600 ticks 沒有記 WARN：witness=" + witness, hooks);
+            }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /** 這個 session「PREPARE 持續等待超過 600 ticks」的 WARN（帶 LOG_MARKER）。 */
+    private static List<LogCapture.Entry> prepareWaitWarnings(LogCapture capture, UUID sid) {
+        return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "PREPARE 持續等待超過", sid.toString());
+    }
+
     /** 這個 session「進入 PREPARE」的 INFO 數（帶 LOG_MARKER）。 */
     private static int entered(LogCapture capture, UUID sid) {
         return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "進入 PREPARE", sid.toString()).size();
@@ -1451,6 +1613,24 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /** 這個 session「目的世界預載完成」的 INFO（帶 LOG_MARKER）。 */
     private static List<LogCapture.Entry> preloaded(LogCapture capture, UUID sid) {
         return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "目的世界預載完成", sid.toString());
+    }
+
+    /** 這個 session「準備完成」的 INFO（帶 LOG_MARKER）。 */
+    private static List<LogCapture.Entry> prepared(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "準備完成（預載與投影都已完成）", sid.toString());
+    }
+
+    /** 這個 session「通道尚未實作（F5）」的 WARN 數（帶 LOG_MARKER）。 */
+    private static int readyStubWarnings(LogCapture capture, UUID sid) {
+        return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "通道尚未實作（F5）", sid.toString()).size();
+    }
+
+    /** 投影的 7×7×7 涵蓋的 chunk（test 自己算，不讀 production）。 */
+    private static Set<ChunkPos> volumeChunks(ChamberFrame frame) {
+        var bounds = ChamberGeometry.bounds(frame);
+        var chunks = new java.util.HashSet<ChunkPos>();
+        for (int x = bounds.getMinX(); x <= bounds.getMaxX(); x++) for (int z = bounds.getMinZ(); z <= bounds.getMaxZ(); z++) chunks.add(new ChunkPos(new BlockPos(x, 0, z)));
+        return Set.copyOf(chunks);
     }
 
     /** 第一則「目的世界預載完成」記下的等待 tick 數；沒有時為 -1。 */

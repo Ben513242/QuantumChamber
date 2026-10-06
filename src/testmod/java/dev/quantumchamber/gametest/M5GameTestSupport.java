@@ -154,6 +154,18 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F4b-2：原生存檔 checkpoint 的探針（{@link M5TestHooks#CHUNK_CHECKPOINT_PROBE}）：{@code world} 的每一次 {@code ChunkSaveCheckpoint.save} 都記下（tick、相關
+     * chunks、{@code observe} 在那一刻的觀察），前 {@code failFirst} 次在存檔之前受控失敗；安裝、占用與移除的規則見 {@link #installHook}。{@code observe} 在
+     * production 的 {@code END_SERVER_TICK} 裡執行（server thread），可以讀權威、改世界；它丟出的例外只記下。
+     */
+    static M5TestHooks.ChunkCheckpointProbe installChunkCheckpointProbe(TestContext context, net.minecraft.registry.RegistryKey<World> world, int failFirst,
+            java.util.function.IntFunction<String> observe, M2CorridorGameTests.TestHooks hooks) {
+        var probe = new M5TestHooks.ChunkCheckpointProbe(world, failFirst, observe);
+        installHook(context, M5TestHooks.CHUNK_CHECKPOINT_PROBE, probe, hooks);
+        return probe;
+    }
+
+    /**
      * 安裝 mixin 讀取的靜態 hook（F4a-0 fix round 1，quality Q1），依序：
      * <ol>
      * <li>在 hooks 登記移除：hooks 已釋放時在這裡就丟出，什麼都還沒裝，不會殘留；</li>

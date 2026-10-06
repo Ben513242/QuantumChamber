@@ -15,6 +15,7 @@ import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.WorldChamberBlockView;
 import dev.quantumchamber.corridor.CorridorPageManager;
+import dev.quantumchamber.persistence.ChunkSaveCheckpoint;
 import dev.quantumchamber.persistence.CollapseFields;
 import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
@@ -26,6 +27,7 @@ import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.superposition.SuperpositionSessionManager;
 import dev.quantumchamber.universe.DimensionRole;
+import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseLifecycleService;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -35,6 +37,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,7 +86,9 @@ import org.slf4j.MarkerFactory;
  *     SEALED→COLLAPSING（restore 類），再取得來源 ticket，之後依推導階段重跑 RESOLVE（未確認的權威由 resolver 先收斂）。</li>
  * <li>WAITING／PREPARE（§7.3）：第一次走到閘門階段時立即評估閘門，之後只在邊緣觸發時再評估；推導回傳 PREPARE 的轉換（{@link CollapsePhase.Transition}）。
  *     SOURCE 進入 PREPARE 即走 §7.4 的 fast path：先 checked 終局、再把門改為一般開門、再顯示訊息；終局之後釋放 runtime 與來源 ticket（spec §5）。
- *     UNIVERSE 的 PREPARE（F4b-2，目的宇宙這一側，§9）：預載目的世界（M5 的 chunk ticket，非建立模式查詢）；閘門在 PREPARE 進行到一半時不再成立就
+ *     UNIVERSE 的 PREPARE（F4b-2，目的宇宙這一側，§9、§6.5）：預載目的世界（M5 的 chunk ticket，非建立模式查詢）→ 退化時進 SEALED → projection ledger
+ *     （§6.5 的實體交叉檢查、既有 entry 的 site 驗證）→ §9.2 的衝突 → checked PENDING → 寫投影（第一次寫入或修復）→ 原生存檔 checkpoint → 再驗不變量 cell
+ *     → checked COMPLETE → 準備完成，停在 F5 之前（不提交 PASSAGE_READY，每個 session 記一次 WARN「通道尚未實作」）。閘門在 PREPARE 進行到一半時不再成立就
  *     釋放目的世界的 ticket、退回 WAITING。目的世界的 ticket 在閘門失效、進入 SEALED、終局時釋放（通道結束屬 F5）。PREPARE 期間原艙門維持一般狀態，
  *     開關門照舊交給 {@code ChamberDoorService}（量子膜與門的攔截屬 F4b-3）。</li>
  * <li>§11.3：來源 role 不是 OVERWORLD、選中 NEW／EXISTING 的 MEASURED 不提交，先以保留式 recovery 到 DORMANT，再 checked 終局取消（INFO）。</li>
@@ -472,15 +477,20 @@ public final class CollapseService {
     }
 
     /**
-     * PREPARE 的一個 tick（UNIVERSE）。每個 tick 依序推導、可以在任一步中斷，重啟之後依同一份推導續做（spec §9、§6.5，F4b-1 交下的呼叫順序）：
+     * PREPARE 的一個 tick（UNIVERSE，F4b-2）。每個 tick 依序推導、可以在任一步中斷，重啟之後依同一份推導續做，不另存進度（spec §9、§6.5，F4b-1 交下的呼叫順序）：
      * <ol>
      * <li>預載（§9.1）：對目的世界涵蓋「艙體 bbox 外擴 {@value #PRELOAD_MARGIN} 格」的每個 chunk 加上 M5 的 chunk ticket，之後以非建立模式查詢，不在
-     *     server thread 上阻塞載入；還沒全部 FULL 時等下一個 tick。</li>
+     *     server thread 上阻塞載入。</li>
+     * <li>退化（§9.3）：投影保護索引已退化時（projection ledger 不健康），以它的原因進 SEALED。這一步不需要 chunk，所以在預載完成之前就檢查。</li>
+     * <li>預載還沒全部 FULL：等下一個 tick。之後的步驟見 {@link #project}。</li>
      * </ol>
-     * 預載完成之後停在這裡（投影屬下一步）。等待超過 {@value #WAIT_WARN_TICKS} ticks 時記一次 WARN，然後繼續等（§9.1：沒有劇情上的逾時、不重抽）。
+     * 等待（預載、玩家擋住寫入、checkpoint 未就緒）從進入 PREPARE 起超過 {@value #WAIT_WARN_TICKS} ticks 時記一次 WARN，然後繼續等（§9.1：沒有劇情上的
+     * 逾時、不重抽）。準備完成之後停在 F5 之前（{@link #prepared}），之後的 tick 什麼都不做，目的世界的 ticket 繼續持有。
+     * <p>F4b-3：每個 PREPARE 的 tick 在這裡判斷「套用量子膜的條件」（§7.3）；本 task 不套用量子膜，門維持一般開門、開關門照舊交給 {@code ChamberDoorService}。
      */
     private void prepareUniverse(SessionRecoveryRecord view, Track track) {
         var progress = track.prepare != null ? track.prepare : (track.prepare = new Prepare(now));
+        if (progress.ready) return;
         var id = ((CollapseDestination.Universe) view.collapse().destination()).id();
         var world = UniverseLifecycleService.resolveActive(server, id).orElse(null);
         if (world == null) {
@@ -492,7 +502,15 @@ public final class CollapseService {
             return;
         }
         var frame = new ChamberFrame(view.origin().controllerPos(), view.origin().facing());
-        if (!preload(view.sessionUuid(), world, frame)) {
+        boolean preloaded = preload(view.sessionUuid(), world, frame);
+        var index = ProjectionProtectionIndex.get(server);
+        var degraded = index.degradation();
+        if (degraded.isPresent()) {
+            seal(view, track, degraded.get(), new IllegalStateException("投影保護索引已退化（projection ledger 不健康：" + degraded.get()
+                    + "），還沒完成準備的 PREPARE 進 SEALED（spec §9.3）"));
+            return;
+        }
+        if (!preloaded) {
             prepareWait(view, progress, "預載目的世界（chunk 還沒全部 FULL）");
             return;
         }
@@ -501,6 +519,198 @@ public final class CollapseService {
             LOGGER.info(LOG_MARKER, "目的世界預載完成：session={} chamber={} 目的地={}，{} 個 chunk，等了 {} ticks", view.sessionUuid(), view.chamberUuid(),
                     describe(view.collapse().destination()), destinations.get(view.sessionUuid()).chunks().size(), now - progress.since);
         }
+        project(view, track, progress, world, frame, id, index);
+    }
+
+    /**
+     * 預載完成之後的投影（spec §6.5、§9.2；F4b-1 交下的呼叫順序），每個 tick 從權威重新推導：
+     * <ol>
+     * <li>projection ledger：未確認的寫入先收斂（以權威為單位退避）；仍未確認、損壞或讀不到時，以結果帶的原因進 SEALED（未確認與寫入失敗是
+     *     {@code PROJECTION_FAILED}）。沒有這個 (chamber, UniverseId) 的 entry 時做 §6.5 的實體交叉檢查：目的地的投影 Controller 位置已有 Controller 就是
+     *     {@code PROJECTION_CONFLICT}，不寫 PENDING、不清 interior。已有 entry（PENDING 或 COMPLETE）時不做這個檢查。</li>
+     * <li>§9.2 的衝突：目的 volume 與另一座艙的 COMPLETE 投影相交 → {@code PROJECTION_CONFLICT}，不覆寫。</li>
+     * <li>PENDING：一律以 {@code writeProjection(PENDING)} 取得 site 驗證（plan Step 1 第 4 組；不直接拿查到的 COMPLETE 跳過驗證）：新 key 是 checked 寫入，
+     *     既有 PENDING 是 {@code UNCHANGED}（照第一次寫入），既有 COMPLETE 是 {@code ALREADY_COMPLETE}（只修復）；site 不符是 {@code AUTHORITY_CORRUPT}。
+     *     寫入沒有確認（含讀回失敗）就進 SEALED，不寫任何方塊（§6 收斂規則第 2 點）。確認之後以寫入結果登記到投影保護索引（只供辨識）。</li>
+     * <li>寫方塊（{@link ProjectionWriter}）：第一次寫入（PENDING）或修復（COMPLETE）。玩家擋住、volume 的 chunk 不是都 FULL：下一個 tick 再試；
+     *     驗證或寫入失敗：{@code PROJECTION_FAILED}，以結果帶的 failure 當 root cause。修復完成就是準備完成（不寫 ledger、不做 checkpoint）。</li>
+     * <li>第一次寫入之後：目的 volume 的 chunks 先問 {@link ChunkSaveCheckpoint#ready}（未就緒等下一個 tick），再做原生存檔 checkpoint（失敗
+     *     {@code PROJECTION_FAILED}）。</li>
+     * <li>checkpoint 之後、寫 COMPLETE 之前，以修復模式再驗一次不變量 cell（F4b-1 交下的未保護窗口：PENDING 期間不變量 cell 不受保護，寫入與
+     *     checkpoint 之間可能被改動）。這次修復寫了任何一格，checkpoint 就沒有涵蓋它：下一個 tick 重做 checkpoint，不寫 COMPLETE。同一個 tick 內，
+     *     checkpoint、這次驗證與 COMPLETE 的寫入之間沒有任何遊戲邏輯執行，所以驗證通過時寫下的 COMPLETE 對應的就是 checkpoint 存下的方塊。</li>
+     * <li>checked 寫入 COMPLETE（沒有確認就進 SEALED），確認之後登記到索引（不變量 cell 從這時起受保護），準備完成。</li>
+     * </ol>
+     */
+    private void project(SessionRecoveryRecord view, Track track, Prepare progress, ServerWorld world, ChamberFrame frame, UniverseId id,
+            ProjectionProtectionIndex index) {
+        var authorities = CollapseAuthorities.get(server);
+        authorities.convergeIfNeeded(CollapseAuthorities.Authority.PROJECTION_LEDGER);
+        var known = authorities.projection(view.chamberUuid(), id);
+        if (!known.succeeded()) {
+            seal(view, track, known.sealedReason().orElseThrow(), known.failure().orElseThrow());
+            return;
+        }
+        if (known.status() == CollapseAuthorities.Lookup.Status.ABSENT) {
+            switch (ProjectionWriter.controllerPresence(world, frame)) {
+                case PRESENT -> {
+                    seal(view, track, SealedReason.PROJECTION_CONFLICT, new IllegalStateException("projection ledger 沒有這座艙在這個宇宙的 entry，目的地的投影 Controller 位置 "
+                            + frame.controllerPos().toShortString() + " 卻已有 Controller（spec §6.5 的實體交叉檢查）：不寫 PENDING、不清 interior"));
+                    return;
+                }
+                case NOT_LOADED -> {
+                    prepareWait(view, progress, "投影 Controller 位置的 chunk 不是 FULL");
+                    return;
+                }
+                case ABSENT -> { }
+            }
+        }
+        var conflict = conflict(index.intersecting(world.getRegistryKey(), ChamberGeometry.bounds(frame)), view.chamberUuid(), id);
+        if (conflict.isPresent()) {
+            seal(view, track, SealedReason.PROJECTION_CONFLICT, new IllegalStateException("目的 volume 已有另一座艙的 COMPLETE 投影（spec §9.2，不覆寫）："
+                    + conflict.get()));
+            return;
+        }
+        var pending = authorities.writeProjection(new ProjectionLedger.Entry(view.chamberUuid(), id, DimensionRole.OVERWORLD, frame.controllerPos(),
+                frame.outwardFacing(), ProjectionLedger.Entry.Status.PENDING));
+        if (!pending.succeeded()) {
+            seal(view, track, pending.sealedReason().orElseThrow(), pending.failure().orElseThrow());
+            return;
+        }
+        var entry = pending.entry().orElseThrow();
+        if (!entry.equals(progress.registered)) {
+            index.confirmed(pending);
+            progress.registered = entry;
+        }
+        var mode = writeMode(pending.status());
+        if (mode == ProjectionWriter.Mode.REPAIR) {
+            var repaired = ProjectionWriter.write(world, frame, mode);
+            switch (writeStep(repaired.status())) {
+                case WAIT -> prepareWait(view, progress, waitingFor(repaired));
+                case SEAL -> seal(view, track, SealedReason.PROJECTION_FAILED, repaired.failure().orElseThrow());
+                case PROCEED -> prepared(view, track, progress, mode, repaired.written());
+            }
+            return;
+        }
+        if (!progress.written) {
+            var first = ProjectionWriter.write(world, frame, mode);
+            switch (writeStep(first.status())) {
+                case WAIT -> {
+                    prepareWait(view, progress, waitingFor(first));
+                    return;
+                }
+                case SEAL -> {
+                    seal(view, track, SealedReason.PROJECTION_FAILED, first.failure().orElseThrow());
+                    return;
+                }
+                case PROCEED -> {
+                    progress.written = true;
+                    progress.writtenCells = first.written();
+                }
+            }
+        }
+        var chunks = volumeChunks(frame);
+        if (!ChunkSaveCheckpoint.ready(world, chunks)) {
+            prepareWait(view, progress, "目的 chunks 的原生存檔 checkpoint 未就緒（chunk 或 entity storage 尚未完整載入）");
+            return;
+        }
+        try {
+            ChunkSaveCheckpoint.save(server, Map.of(world, chunks));
+        } catch (RuntimeException failure) {
+            seal(view, track, SealedReason.PROJECTION_FAILED, failure);
+            return;
+        }
+        var verify = ProjectionWriter.write(world, frame, ProjectionWriter.Mode.REPAIR);
+        switch (writeStep(verify.status())) {
+            case WAIT -> {
+                prepareWait(view, progress, waitingFor(verify));
+                return;
+            }
+            case SEAL -> {
+                seal(view, track, SealedReason.PROJECTION_FAILED, verify.failure().orElseThrow());
+                return;
+            }
+            case PROCEED -> {
+                if (verify.written() > 0) {
+                    LOGGER.info(LOG_MARKER, "投影的不變量 cell 在第一次寫入與 checkpoint 之間被改動，已修復 {} 格；下一個 tick 重做 checkpoint，之後才寫 COMPLETE："
+                            + "session={} chamber={}", verify.written(), view.sessionUuid(), view.chamberUuid());
+                    return;
+                }
+            }
+        }
+        var complete = authorities.writeProjection(entry.withStatus(ProjectionLedger.Entry.Status.COMPLETE));
+        if (!complete.succeeded()) {
+            seal(view, track, complete.sealedReason().orElseThrow(), complete.failure().orElseThrow());
+            return;
+        }
+        index.confirmed(complete);
+        progress.registered = complete.entry().orElseThrow();
+        prepared(view, track, progress, mode, progress.writtenCells);
+    }
+
+    /**
+     * 準備完成（預載與投影都已完成；F4b-2 的停點，比照 F4a 的 PREPARE stub）：不提交 PASSAGE_READY（F5）。記一則 INFO；每個 session 在本 instance 只記一次
+     * WARN「通道尚未實作（F5）」。目的世界的 ticket 繼續持有，直到閘門失效、SEALED 或終局；之後的 PREPARE tick 什麼都不做。門照舊是一般狀態。
+     */
+    private void prepared(SessionRecoveryRecord view, Track track, Prepare progress, ProjectionWriter.Mode mode, int written) {
+        progress.ready = true;
+        LOGGER.info(LOG_MARKER, "準備完成（預載與投影都已完成）：session={} chamber={} 目的地={} 投影={}（寫入 {} 格），PREPARE 共 {} ticks", view.sessionUuid(),
+                view.chamberUuid(), describe(view.collapse().destination()), mode, written, now - progress.since);
+        if (track.readyWarned) return;
+        track.readyWarned = true;
+        LOGGER.warn(LOG_MARKER, "通道尚未實作（F5）：準備完成，COLLAPSING 停在準備完成、不提交 PASSAGE_READY；目的世界的 ticket 繼續持有，直到閘門失效、SEALED 或終局："
+                + "session={} chamber={} 目的地={}", view.sessionUuid(), view.chamberUuid(), describe(view.collapse().destination()));
+    }
+
+    /** {@link ProjectionWriter.Result} 的下一步（純函式）。 */
+    enum WriteStep {
+        /** 寫入完成而且逐格驗證通過：繼續。 */
+        PROCEED,
+        /** 玩家擋住、volume 的 chunk 不是都 FULL：沒有寫任何方塊，下一個 tick 再試（併入 §9.1 的 600 ticks WARN）。 */
+        WAIT,
+        /** 驗證或寫入失敗：進 SEALED(PROJECTION_FAILED)，以結果帶的 failure 當 root cause。 */
+        SEAL
+    }
+
+    static WriteStep writeStep(ProjectionWriter.Status status) {
+        return switch (Objects.requireNonNull(status, "status")) {
+            case WRITTEN -> WriteStep.PROCEED;
+            case BLOCKED_BY_PLAYER, NOT_LOADED -> WriteStep.WAIT;
+            case VERIFY_FAILED, WRITE_FAILED -> WriteStep.SEAL;
+        };
+    }
+
+    /**
+     * 確認之後的 PENDING 寫入結果決定寫法（純函式，spec §9.2）：新 key（{@code WRITTEN}）與既有 PENDING（{@code UNCHANGED}）照第一次寫入；既有 COMPLETE
+     * （{@code ALREADY_COMPLETE}）只修復。其他狀態沒有確認，是 caller 錯誤。
+     */
+    static ProjectionWriter.Mode writeMode(CollapseAuthorities.WriteResult.Status status) {
+        return switch (Objects.requireNonNull(status, "status")) {
+            case WRITTEN, UNCHANGED -> ProjectionWriter.Mode.FIRST_WRITE;
+            case ALREADY_COMPLETE -> ProjectionWriter.Mode.REPAIR;
+            case UNCONFIRMED, WRITE_FAILED, CORRUPT, UNREADABLE -> throw new IllegalArgumentException("沒有確認的 PENDING 不能決定寫法：" + status);
+        };
+    }
+
+    /** §9.2 的衝突（純函式）：相交的已登記投影中，另一座艙（或另一個宇宙）的 COMPLETE；本艙在這個宇宙的 entry（PENDING 或 COMPLETE）與 PENDING 都不算。 */
+    static Optional<ProjectionLedger.Entry> conflict(List<ProjectionLedger.Entry> intersecting, UUID chamber, UniverseId universe) {
+        return intersecting.stream().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE
+                && !(entry.chamberUuid().equals(chamber) && entry.universeId().equals(universe))).findFirst();
+    }
+
+    /** 投影寫入時要等的事（WARN 的字句）。 */
+    private static String waitingFor(ProjectionWriter.Result result) {
+        return result.status() == ProjectionWriter.Status.BLOCKED_BY_PLAYER ? "玩家的 bbox 與要寫入的投影 cell 相交（不把方塊寫在玩家身上）：" + result.blockingPlayers()
+                : "投影 volume 的 chunk 不是都 FULL";
+    }
+
+    /** 投影的 7×7×7 涵蓋的 chunk（原生存檔 checkpoint 的相關 chunks）。 */
+    static Set<ChunkPos> volumeChunks(ChamberFrame frame) {
+        var bounds = ChamberGeometry.bounds(frame);
+        var chunks = new LinkedHashSet<ChunkPos>();
+        for (int x = bounds.getMinX() >> 4; x <= bounds.getMaxX() >> 4; x++)
+            for (int z = bounds.getMinZ() >> 4; z <= bounds.getMaxZ() >> 4; z++) chunks.add(new ChunkPos(x, z));
+        return Set.copyOf(chunks);
     }
 
     /**
@@ -1048,6 +1258,8 @@ public final class CollapseService {
         boolean restartRetryConsumed;
         /** UNIVERSE 這一段 PREPARE 的記憶體內進度（進入 PREPARE 時建立，離開、進入 SEALED、重試時丟棄；不持久化，重啟之後重新推導）。 */
         Prepare prepare;
+        /** 「通道尚未實作（F5）」的 WARN 已記過（每個 session 在本 instance 一次）。 */
+        boolean readyWarned;
         /** RESOLVE 連續等待的起點（-1 表示不在等待）與這次等待是否已記過 WARN。 */
         long waitSince = -1;
         boolean waitWarned;
@@ -1114,6 +1326,13 @@ public final class CollapseService {
         int preloadedAt = -1;
         /** 這一段的等待 WARN 是否已記過。 */
         boolean waitWarned;
+        /** 最近一次登記到投影保護索引的已確認 entry（同一份不重複登記）。 */
+        ProjectionLedger.Entry registered;
+        /** 第一次寫入已寫完並逐格驗證（本段），之後只等 checkpoint、再驗與 COMPLETE；{@code writtenCells} 是那次實際改變的格數。 */
+        boolean written;
+        int writtenCells;
+        /** 準備完成（F5 之前的停點）。 */
+        boolean ready;
 
         Prepare(int since) { this.since = since; }
     }
