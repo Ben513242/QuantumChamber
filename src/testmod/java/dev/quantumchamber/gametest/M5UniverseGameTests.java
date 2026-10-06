@@ -1440,10 +1440,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
-     * F4b-2（spec §7.3「PREPARE 進行到一半時閘門不再成立」、§7.1；plan Step 1 第 13 組的 ticket 與 WAITING）：進入 PREPARE、預載還沒完成時斷電 →
-     * 下一個 tick 閘門失效：釋放目的世界的 ticket、退回 WAITING（INFO），record 仍是 COLLAPSING。恢復供電之後 P 一直在艙內，沒有邊緣觸發，不回到 PREPARE；
-     * P 由艙外再進入 → 回到 PREPARE，重新加上同一份 ticket、預載完成（中斷的那一段沒有完成預載，所以「預載完成」只有一則），寫完投影、準備完成。RESOLVE 只有一次（「目的地已確定」恰一則），allocation entry 恰一筆，catalog 增量 1
-     * （沒有第二個宇宙）。
+     * F4b-2（spec §7.3「PREPARE 進行到一半時閘門不再成立」、§7.1；plan Step 1 第 13 組的 ticket 與 WAITING）：收據有兩位原參與者 P、B（都已返還、在艙外），P 由艙外
+     * 進入觸發塌縮。進入 PREPARE、預載還沒完成時，B 進艙（PREPARE 期間閘門不看邊緣，F4b-2 fix round 1，quality Q-M2），同一個 tick 斷電 → 下一個 tick 閘門失效：
+     * 釋放目的世界的 ticket、退回 WAITING（INFO），record 仍是 COLLAPSING。恢復供電之後 P、B 都一直在艙內，沒有人移動，沒有邊緣觸發，不回到 PREPARE（B 在
+     * PREPARE 期間的進入不算之後的邊緣：離開 PREPARE 時邊緣觸發的快照重新記下艙內的人）；P 由艙外再進入 → 回到 PREPARE，重新加上同一份 ticket、預載完成
+     * （中斷的那一段沒有完成預載，所以「預載完成」只有一則），寫完投影、準備完成。RESOLVE 只有一次（「目的地已確定」恰一則），allocation entry 恰一筆，catalog
+     * 增量 1（沒有第二個宇宙）。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_power", tickLimit = 900)
     public void prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it(TestContext context) {
@@ -1456,13 +1458,22 @@ public final class M5UniverseGameTests implements FabricGameTest {
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
-        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+        ConnectedGameTestPlayer second;
+        try {
+            second = new ConnectedGameTestPlayer(context.getWorld());
+            hooks.add(second::close);
+            second.player().setNoGravity(true);
+            moveOutside(second.player(), frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var b = second.player();
+        collapsedToUniverse(context, origin, hooks, List.of(b.getUuid()), (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             var area = M5GameTestSupport.preloadArea(frame);
             whenTicks(context, resolved + 1, 20, () -> !M5GameTestSupport.destinationTickets(universe, sid).isEmpty(), ticketed -> {
                 witness.put("preparingWithTheTickets", entered(capture, sid) == 1 && M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area));
                 witness.put("cutBeforeThePreloadCompleted", preloaded(capture, sid).isEmpty());
-                // PREPARE 進行到一半時斷電。
+                // PREPARE 進行到一半時 B 進艙，同一個 tick 斷電。
+                moveInside(b, frame);
                 context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
                 at(context, ticketed + 1, hooks, () -> {
                     witness.put("ticketReleasedOnPowerLoss", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
@@ -2195,7 +2206,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * （宇宙保留，catalog 增量 1）。
      */
     private static void resolvedUniverse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, ResolvedUniverse ready) {
-        newCollapse(context, origin, hooks, true, ready);
+        newCollapse(context, origin, hooks, true, List.of(), ready);
     }
 
     /**
@@ -2203,14 +2214,24 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * 進入 PREPARE（預載目的世界、寫投影）。{@code ready} 在 RESOLVE 完成之後的 test tick 呼叫，早於第一次閘門評估。
      */
     private static void collapsedToUniverse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, ResolvedUniverse ready) {
-        newCollapse(context, origin, hooks, false, ready);
+        newCollapse(context, origin, hooks, false, List.of(), ready);
     }
 
-    private static void newCollapse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, boolean suspend, ResolvedUniverse ready) {
+    /** 同 {@link #collapsedToUniverse}，但收據另有 {@code others}（都已返還、在艙外）為原參與者（F4b-2 fix round 1，P-POWER 的第二位參與者）。 */
+    private static void collapsedToUniverse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, List<UUID> others,
+            ResolvedUniverse ready) {
+        newCollapse(context, origin, hooks, false, others, ready);
+    }
+
+    private static void newCollapse(TestContext context, DormantOrigin origin, M2CorridorGameTests.TestHooks hooks, boolean suspend, List<UUID> others,
+            ResolvedUniverse ready) {
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var p = origin.player();
+        var people = new LinkedHashMap<UUID, Boolean>();
+        people.put(p.getUuid(), true);
+        for (var other : others) people.put(other, true);
         origin.whenRegistered((registered, chamber) -> {
-            var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
+            var dormant = origin.own(origin.receipt(chamber, people, true));
             var sid = dormant.sessionUuid();
             var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
             at(context, registered + 1, hooks, () -> moveInside(p, origin.frame));

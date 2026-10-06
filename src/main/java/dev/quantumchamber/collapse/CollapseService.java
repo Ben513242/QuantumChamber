@@ -467,11 +467,13 @@ public final class CollapseService {
     /**
      * 離開 PREPARE（§7.3「PREPARE 進行到一半時閘門不再成立」）：釋放目的世界的 ticket，退回 WAITING。已完成的 RESOLVE（{@code track.resolved}）與已寫入的
      * projection ledger 都保留；這一段準備的記憶體內進度丟棄，閘門再次成立時依 §7.1 的邊緣觸發，從 collapse view 與權威重新推導（PENDING 照第一次寫入、
-     * COMPLETE 只修復）。目的世界不是 ACTIVE 時（不應發生）推導回到 RESOLVE，也經過這裡。F4b-3：這裡也是把門由 sealed 量子膜改回一般開門的轉換點（本 task
-     * 不套用量子膜，門一直是一般狀態）。
+     * COMPLETE 只修復）。PREPARE 期間閘門不看邊緣、不更新邊緣觸發的快照，所以這裡以目前在艙內的原參與者重新記下快照（F4b-2 fix round 1，quality Q-M2）：
+     * PREPARE 期間進艙的人不算之後的邊緣，沒有人移動時不會回到 PREPARE。目的世界不是 ACTIVE 時（不應發生）推導回到 RESOLVE，也經過這裡。F4b-3：這裡也是把門由
+     * sealed 量子膜改回一般開門的轉換點（本 task 不套用量子膜，門一直是一般狀態）。
      */
     private void leavePrepare(SessionRecoveryRecord view, Track track, CollapsePhase phase) {
         track.prepare = null;
+        track.entry(false).prime(inside(view));
         boolean released = releaseDestination(view.sessionUuid());
         LOGGER.info(LOG_MARKER, "{}（已寫入的投影都保留{}）：session={} chamber={}",
                 phase == CollapsePhase.WAITING ? "PREPARE 的閘門不再成立，退回 WAITING，已完成的 RESOLVE 保留" : "PREPARE 的目的地需要重新確認，回到 " + phase,
