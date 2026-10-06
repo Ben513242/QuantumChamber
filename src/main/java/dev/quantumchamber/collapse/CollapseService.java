@@ -856,10 +856,11 @@ public final class CollapseService {
     }
 
     /**
-     * 不重試的附帶動作（F4a fix round 2，m-6）：執行 {@code action}，成功時從 {@code warnings} 移除 {@code what} 的去重鍵（{@code warnings} 為 null
-     * 表示這個 session 沒有簿記，例如已終局）並回 null；失敗時回傳例外、不動 {@code warnings}，由呼叫端交給 {@link #warn}。純簿記，JUnit 直接驗證。
+     * {@link #sideEffect(Map, Supplier, UUID, String, String, Runnable)} 的第一步（唯一的呼叫端）：執行 {@code action}，成功時從 {@code warnings} 移除
+     * {@code what} 的去重鍵（{@code warnings} 為 null 表示這個 session 沒有簿記，例如已終局）並回 null；失敗時回傳例外、不動 {@code warnings}，由組合以
+     * {@link #firstWarning} 去重並記 WARN。JUnit 經由組合驗證（F4b-2 Step 0，F4b-1 quality Q-m7：原本的「由呼叫端交給 {@code warn}、JUnit 直接驗證」已過時）。
      */
-    static RuntimeException attempt(Map<String, String> warnings, String what, Runnable action) {
+    private static RuntimeException attempt(Map<String, String> warnings, String what, Runnable action) {
         try {
             action.run();
         } catch (RuntimeException failure) {
