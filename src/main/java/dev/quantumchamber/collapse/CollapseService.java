@@ -498,7 +498,8 @@ public final class CollapseService {
      * 維持。
      */
     private void prepareUniverse(SessionRecoveryRecord view, Track track) {
-        var progress = track.prepare != null ? track.prepare : (track.prepare = new Prepare(now));
+        // 推導回傳 PREPARE 時，進入的那個 tick 已由 enterPrepare 建立 Prepare，之後一直保留到離開（Track#preparing 的不變式）。
+        var progress = Objects.requireNonNull(track.prepare, "PREPARE 的簿記應已由 enterPrepare 建立");
         if (progress.ready) return;
         var id = ((CollapseDestination.Universe) view.collapse().destination()).id();
         var world = UniverseLifecycleService.resolveActive(server, id).orElse(null);
