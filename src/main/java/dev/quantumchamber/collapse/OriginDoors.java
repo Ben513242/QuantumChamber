@@ -60,7 +60,10 @@ import org.slf4j.LoggerFactory;
 final class OriginDoors {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
 
-    /** {@link CollapseService#warn} 的寫入種類：原艙門的攔截（{@link #door}）在判斷或處置途中丟出例外；這個 session 的攔截之後沒有例外地完成時清除（F4b-3 fix round 1，quality Q-I1）。 */
+    /**
+     * {@link CollapseService#warn} 的寫入種類的前綴：原艙門的攔截（{@link #door}）在判斷或處置途中丟出例外（F4b-3 fix round 1，quality Q-I1）。去重鍵依處置區分
+     * （{@link #doorUseKey}，F5-0，F4b-3 quality M-1）：這個 session 以同一個處置沒有例外地完成時，只清這個處置的鍵。
+     */
     private static final String DOOR_USE = "原艙門的攔截";
     /** 擁有這些門的塌縮流程（同一個 server instance）：共用它每個 tick 取得的 context（journal、session manager、server tick）與每個 session 的簿記。 */
     private final CollapseService service;
@@ -305,8 +308,10 @@ final class OriginDoors {
      * <li>只有 journal 不健康（{@code requireHealthy} 不通過）時不攔截、照一般門的邏輯（記 DEBUG）：這時塌縮流程本身也不推進（{@link CollapseService#tick} 記 tick 層級的 WARN），而
      *     M1–M4 的門行為不得因此改變；照一般門切換只會讓門變成一般狀態，不會把人困住。</li>
      * <li>其他非預期的例外（找出所屬 session 之後的判斷，或處置途中的終局、改門）一律拒絕、不改門，不交給門服務（PREPARE 擁有原艙門時不得經
-     *     {@code ChamberDoorService.toggle}），以 {@link CollapseService#warn} 依 (session, {@value #DOOR_USE}, 原因) 去重記 WARN；這個 session 的攔截之後沒有例外地完成時清除去重鍵，
-     *     所以同一原因「失敗 → 成功 → 再失敗」會再記一次。PREPARE 的門仍由每個 tick 的 {@link #prepareDoor} 維持（艙內有非參與者時照樣改為一般開門）。</li>
+     *     {@code ChamberDoorService.toggle}），以 {@link CollapseService#warn} 依 (session, 處置, 原因) 去重記 WARN（{@link #doorUseKey}；判斷途中的例外記成「判斷」）；
+     *     這個 session 之後以同一個處置沒有例外地完成時，只清除這個處置的去重鍵（F5-0，F4b-3 quality M-1：別人以別的處置成功，例如艙內的非參與者開門，不讓參與者的處置
+     *     失敗再記一次），所以同一個處置同一原因「失敗 → 成功 → 再失敗」會再記一次。「判斷」沒有對應的處置，它的鍵不會被處置的成功清除，同一原因只記一次（不同原因照常各記一次），
+     *     直到這個 session 的簿記移除。PREPARE 的門仍由每個 tick 的 {@link #prepareDoor} 維持（艙內有非參與者時照樣改為一般開門）。</li>
      * <li>找出所屬 session 之前的例外（journal 健康時 {@link #sessionAt} 只讀記憶體內的 record，不會發生）：沒有 session 可以歸屬，也無法判斷門是否屬於塌縮流程，
      *     拒絕並記 WARN（不去重）。</li>
      * </ul>
@@ -348,18 +353,26 @@ final class OriginDoors {
                 case END_AND_CLOSE -> endByParticipant(view, track, player);
             };
             var after = service.tracks.get(sid);
-            if (after != null) after.warnings.remove(DOOR_USE);
+            if (after != null) after.warnings.remove(doorUseKey(action));
             return use;
         } catch (RuntimeException failure) {
             if (view == null) {
                 LOGGER.warn(LOG_MARKER, "原艙門的攔截在找出所屬 session 時丟出例外（journal 健康），這次拒絕、不改門：frame={} 玩家={}：{}", frame, player.getUuid(),
                         FailureText.describe(failure), failure);
             } else {
-                service.warn(view.sessionUuid(), DOOR_USE, failure, action == null ? "判斷" : action.name(),
+                service.warn(view.sessionUuid(), doorUseKey(action), failure, null,
                         "這次拒絕、不改門（不交給門服務；PREPARE 的門仍由每個 tick 判斷），之後的開關門重新判斷");
             }
             return ChamberCollapsePort.DoorUse.REFUSED;
         }
+    }
+
+    /**
+     * 原艙門的攔截失敗的 WARN 去重鍵（也是 WARN 的寫入種類；純函式，F5-0，F4b-3 quality M-1）：依處置區分，判斷途中（還沒有處置，{@code action} 為 null）是「判斷」。
+     * 例如「原艙門的攔截（END_AND_CLOSE）」。
+     */
+    static String doorUseKey(DoorAction action) {
+        return DOOR_USE + "（" + (action == null ? "判斷" : action.name()) + "）";
     }
 
     /**

@@ -2403,9 +2403,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     門不變，WARN「原艙門的攔截」只多一則。</li>
      * <li>處置途中的持續性例外（Q-I1）：{@code M5GameTestSupport.installDoorUseFault}（F5-0 起；testmod 的 fault mixin，取代以反射弄壞 {@code Track.backoff}）讓 P 的關門處置
      *     每次都丟例外；P 以 bulkhead 連點兩次：都被拒，門仍是 sealed、record 仍是 COLLAPSING、沒有終局，WARN 只多一則。</li>
-     * <li>成功之後同一原因再失敗會再記一次：艙內的非參與者 N 開門（處置成功）；N 離開、門重新套用 sealed 之後 P 再點一次 → WARN 再多一則。</li>
+     * <li>別的處置成功不清這個處置的去重鍵（F5-0，quality M-1）：艙內的非參與者 N 開門（處置成功）；N 離開、門重新套用 sealed 之後 P 再點一次 → 被拒，WARN 不再多。</li>
      * <li>recovery 寫入不安全（Q-M1）：還原 P 的處置；journal 有一筆未 checked 的 authority（{@code M5GameTestSupport.putUncheckedAuthority}）時 P 關門 → 被拒、
-     *     不終局、門不變、那筆 authority 沒有被寫出，也沒有 WARN；移除之後 P 關門 → checked 終局、門關上。</li>
+     *     不終局、門不變、那筆 authority 沒有被寫出，也沒有 WARN；移除之後：</li>
+     * <li>同一個處置「失敗 → 成功 → 再失敗」會再記一次（F5-0，quality M-1）：P 的處置剛才沒有例外地完成（不安全而拒絕），清掉了自己的鍵；再讓處置失敗、P 點一次 →
+     *     被拒，WARN 再多一則。之後 P 關門 → checked 終局、門關上。</li>
      * </ul>
      * 這個 session 的 WARN 只有上面三則與「通道尚未實作」，沒有 ERROR。catalog 增量 1。
      */
@@ -2449,7 +2451,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("resealedAfterTheInsiderLeft", M5GameTestSupport.doorSealed(world, frame));
                     int beforeAgain = doorUseWarnings(capture, sid);
                     witness.put("failingCloseRefusedAgain", !interact(world, doorCell, p).isAccepted() && M5GameTestSupport.doorSealed(world, frame));
-                    witness.put("warnedAgainAfterASuccess", doorUseWarnings(capture, sid) - beforeAgain == 1);
+                    // F5-0（quality M-1）：去重鍵依處置區分，N 的成功（OPEN_FOR_INSIDER）不清 P 的處置（END_AND_CLOSE）的鍵，所以 P 同一原因的失敗不再記。
+                    witness.put("notWarnedAgainAfterAnotherActionSucceeded", doorUseWarnings(capture, sid) == beforeAgain);
                     // F5-0（quality M-2）：三次失敗的關門都是注入的處置失敗（fault mixin），不是別的原因。
                     witness.put("closeFailuresWereInjected", fault.hits() == 3);
                     // 門改不了時（25 格之一暫時不是 bulkhead → DOOR_INCOMPLETE），艙內的非參與者被拒；同一個 callback 內放回原方塊（中間沒有 tick）。
@@ -2471,6 +2474,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("noWarnWhileUnsafe", doorUseWarnings(capture, sid) == beforeUnsafe);
                     M5GameTestSupport.removeUncheckedAuthority(server, unchecked);
                     witness.put("recoveryWritesSafeAgain", journal.recoveryWritesSafe());
+                    // F5-0（quality M-1）：P 的處置剛才沒有例外地完成（不安全而拒絕），清掉了自己的鍵：同一原因「失敗 → 成功 → 再失敗」會再記一次。
+                    fault.arm();
+                    int beforeOwnSuccess = doorUseWarnings(capture, sid);
+                    witness.put("failingCloseRefusedAfterItsOwnSuccess", !interact(world, doorCell, p).isAccepted() && M5GameTestSupport.doorSealed(world, frame)
+                            && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && fault.hits() == 4);
+                    witness.put("warnedAgainAfterTheSameActionSucceeded", doorUseWarnings(capture, sid) - beforeOwnSuccess == 1);
+                    fault.disarm();
                     witness.put("closesOnceSafe", interact(world, doorCell, p).isAccepted() && !journal.records().containsKey(sid)
                             && !journal.flushedRecords().containsKey(sid) && endedByADoor(capture, sid) == 1 && doorAll(world, frame, false, MembraneState.NONE));
                     witness.put("onlyTheseWarnsAndNoError", doorUseWarnings(capture, sid) == 3
