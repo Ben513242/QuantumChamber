@@ -4246,3 +4246,136 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
 
 - M5 GameTest 36 → 37：新增 T-FAIL（自己一個 batch，catalog 增量 1）；T-RELOAD 加第三次重新載入、T-START 加一個 witness（名稱、batch、增量都不變）。
 - JUnit 636 不變（CST 20：`doorActionFollowsThePrepareDoorRules` 加 3 列錨點、`doorReapplication…` 加 4 列原因；`GUARD` 只改 Javadoc）。default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 不變。
+
+## F5-0：抽出原艙門（與 PREPARE）以及 F4b-3 的 Minor
+
+- Commits（依序；每個 commit 只 stage 自己的檔案，commit 時的 blob 都等於它之前最後一輪 GREEN 的 state 記下的 blob，`f5/f50/commit-c<N>-state.txt`）：
+  - `b49ed3e` `refactor: move the origin door out of CollapseService into OriginDoors`（parent `fd96305`）：第 1 點，純搬移。`CS`、新增 `collapse/OriginDoors.java`、`CST`（只有呼叫端）。
+  - `2ab39ad` `test: inject the participant door use failure through a slot fault mixin`（parent `b49ed3e`）：quality M-2／spec m-3。testmod `HK`、`SUP`、`M5U`（只有 T-FAIL）、新增 `mixin/OriginDoorUseFaultMixin.java`、`quantumchamber-test.mixins.json`（只登記它）。
+  - `010f79c` `fix: dedupe origin door use warnings per action`（parent `2ab39ad`）：quality M-1。`OD`；testmod `M5U`（只有 T-FAIL）。
+  - `8785510` `fix: mark the door use warning before the session lookup at the tick level`（parent `010f79c`）：spec m-1。`OD`、`CS`（只有 Javadoc）；testmod `HK`、`SUP`、`M5U`（只有 T-FAIL）、`ODF`。
+  - `5560d04` `fix: keep a sealed chamber's pending close while its door still has a membrane`（parent `8785510`）：spec m-2（二擇一的第一個）。`OD`；testmod `M5U`（新增 T-SMEM）。
+  - `306b76a` `test: give the sealed door reload test a tick limit above its bounded waits`（parent `5560d04`）：quality Nit。只有 `M5U`（T-RELOAD 的 tickLimit 與 Javadoc）。
+  - `b971f2d` `docs: describe the F4b-3 fix round 1 and F5-0 door helpers in the GameTest guide`（parent `306b76a`）：`scripts/verification/README.md`「新增 M5 GameTest」一節。
+  - 本節由其後的 docs commit `docs: record F5-0 door extraction in the M5 note` 加入。
+- Code range `fd96305..306b76a`。沒有改 `chamber/`（含 `ChamberCollapsePort`，port 的介面不變）、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`ProjectionProtectionIndex`、`CollapsePhase`、`universe/`、`superposition/`、`persistence/`、`corridor/`、語言檔、`gates.ps1`、`build.gradle`、`.github/`。`ChamberCollapseDependencyGuardTest`、`CollapseLogMarkerGuardTest` 也沒有改：守門掃描整個 collapse package，`OD` 以 static import 使用 `CollapseService` 的兩個 marker、logger 是 `LoggerFactory.getLogger("quantumchamber")`，每一輪 JUnit 都 PASS，不需要調整。
+- 範圍是 plan Task F5「拆分」的 F5-0：note F4b-3「交給後續」的 F5 Step 0（必要）與它的追加項目，以及 F4b-2「交給後續」的「評估抽出 PREPARE」。沒有任何通道（F5-1）、比較器與 membrane 正規化（F5-2）的行為。
+- 行號以 `b971f2d` 為準（code 與 `306b76a` 相同）。`OD` 指 `collapse/OriginDoors.java`，`ODF` 指 testmod 的 `mixin/OriginDoorUseFaultMixin.java`；`CS`、`CST`、`M5U`、`SUP`、`HK` 同前面各節。新增的 1 個 `@GameTest`（M5 run，自己一個 batch，名稱不以 `_windows` 結尾，各平台都執行）：
+  - T-SMEM `M5U:2518` `sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it`（`m5_universe_door_sealed_membrane`，tickLimit 300，catalog 增量 0：SEALED 收據不配置宇宙）
+
+### 第 1 點：抽出原艙門（純搬移，`b49ed3e`）
+
+- **新類別** `OD:62` `OriginDoors`（package-private final）：每個 server instance 一個，由 `CS:149` `originDoors = new OriginDoors(this)` 持有。從 `CS`（`3c9b42c`＝`fd96305` 的 code）逐字搬來（搬移以腳本依行號切出區塊，頭尾兩行先斷言，區塊內只做列出的替換並斷言次數，見下方「Gate 與證據」）：
+  - 型別：`PendingDoor`、`DoorGoal`、`DoorStep`、`DoorUser`、`DoorAction`；常數 `DOOR_USE`；欄位 `doors`（待套用的門，以 chamber 為 key）。
+  - PREPARE 期間的門：`releasePrepareDoor`、`prepareDoor`、`membraneTarget`、`outsiderInside`、`participates`、`doorwayEntitiesLoaded`、`doorHasMembrane`。
+  - 重新套用與攔截：`watchDoor`、`doorReloaded`、`reapplyCause`、`reapplyGoal`、`reapplyDoor`、`doorAction`、`door`、`cancelSealedClose`、`sessionAt`、`openForInsider`、`endByParticipant`。
+  - 待套用的門：`openDoor`、`queueDoor`、`applyDoor`、`sealedDoor`、`doorwayOccupied`、`doorwayBox`、`applyOutcome`、`applyFailure`、`recordDoorStep`、`doorStep`、`doorFailure`、`pendingStep`、`newWarning`。`tick` 裡套用待套用門的迴圈逐字搬成 `OD:475` `applyPending`（`CS:240` 呼叫）。
+  - 搬過去的程式只有一種改動：存取 `CollapseService` 的欄位與方法改經 `service`（`service.journal`、`service.now`、`service.server`、`service.sessions`、`service.tracks`、`service.startupSessions`、`service.track(…)`、`service.warn(…)`、`service.terminated(…)`、`service.terminalFailed(…)`、`service.refresh(…)`、`service.refreshContext()`，以及 static 的 `CollapseService.neighborhoodLoaded`、`CollapseService.describe`）。`CS` 這些成員由 private 改為 package-private（`CS:138` 的註解與「共用」一節的標題列出）；`CS` 對 `OD` 的呼叫點是 `CS:240`（`applyPending`）、`:262`（`watchDoor`）、`:493`、`:844`（`releasePrepareDoor`）、`:515`（`prepareDoor`）、`:863`（`queueDoor(CLOSE_ON_SEALED)`）、`:995`、`:1015`（`openDoor`）。Javadoc 的 `{@link}` 依新位置更新；`applyFailure` 的 Javadoc 原本寫「`tick` 與 `openDoor` 的 catch 共用」，更正為實際的 `applyPending` 與 `queueDoor`。
+- **對外入口**：port 的註冊留在 `CS:189` `CollapseService.initialize()`（`ChamberCollapsePort` 的 Javadoc 寫的就是這裡，chamber 不改）→ `CS:1025` `useDoor`（以 `INSTANCES` 找到這個 server 的塌縮流程）→ `OD:323` `door`。F5-1、F5-2 的接點寫在 `OD` 的 class Javadoc（`OD:36`）：
+  - F5-1：PASSAGE_READY 期間的開關門（§10.5）接在 `OD:293` `doorAction` 的 PASSAGE_READY 分支（roll-forward 尚未確認時已拒絕）與 `door` 的處置 switch（`OD:346`），`useDoor` 與 port 不必改；新的處置自動有自己的去重鍵（`doorUseKey`，第 3 點 M-1）。passable 量子膜經 `ChamberDoorService.applyTarget`；`prepareDoor` 只在 PREPARE 擁有原艙門時執行，READY 之後不會把它改回 sealed。通道結束 (a)–(d) 的改門排入 `OD:491` `queueDoor`（例如 `OPEN_AFTER_TERMINAL`）。`watchDoor` 目前不看 PASSAGE_READY。
+  - F5-2：§10.6 :613 的正規化。`PendingDoor` 帶著 session、`NORMALIZE` 要求 collapse view 是 COLLAPSING，所以沒有所屬 session 的正規化要另一個目標；有 COLLAPSING／SEALED 的 session 時由 `watchDoor` 與待套用的門處理，兩者不要同時寫門。
+- **Track 上與門相關的欄位**（`doorLoaded`、`doorSeenLoaded`、`membrane`、`doorReleased`）**留在 `Track`**（quality Nit：寫明跟著哪一邊）：
+  1. 它們的生命週期就是 `Track` 的：第一次推進時以 `track(sid)` 建立、`tick` 只保留 journal 裡的 session（`tracks.keySet().retainAll`）、終局時移除（`terminated`）、`resetGate` 重設 PREPARE 的部分（`membrane`、`doorReleased`）。搬到 `OD` 的 per-session map，要在這三處各加一個同步的呼叫，耦合反而增加，也多了行為改變的風險。
+  2. `OD` 本來就要讀 `Track` 的 `preparing`、`pendingSeal`、`backoff`、`warnings`（攔截的擁有判斷、參與者的處置），拿掉這四個欄位也不會讓 `OD` 少依賴 `Track`。
+  3. testmod 的反射（`simulateDoorStartup` 改 `Track.doorLoaded`／`doorSeenLoaded`）不必改。
+  - 它們跟著門一起抽，而不是跟著 PREPARE：讀寫它們的程式全部在 `OD`（`CS` 只剩 `seal` 被拒分支讀 `doorReleased`，與 `resetGate`）。`CS:1223` 的註解寫明這四個由 `OD` 讀寫。
+- **testmod 的反射**：沒有欄位跟著搬移。`M4CandidateTestAccess`／`SUP` 讀的 `INSTANCES`、`startupSessions`、`startupPassages`、`tracks`、`Track.doorLoaded`／`doorSeenLoaded` 都還在 `CS` 與 `Track`（其中 `startupSessions`、`tracks` 改成 package-private，`getDeclaredField` 照樣找得到）；`M4CandidateTestAccess.get`／`set` 找不到欄位時丟 `IllegalStateException`（fail fast）。`CollapseSuspendMixin` 掛的 `CS.step` 沒有搬移。F4b-3 fix round 1 的 `breakParticipantDoorUse`（反射 `Track.backoff`）由第 3 點 M-2 移除。
+- **CST**：只改呼叫端（`CollapseService.doorStep` → `OriginDoors.doorStep` 等 15 個名稱、2 處 Javadoc 的 `{@link}`，共 78 處）。以腳本核對：把 `OriginDoors.`／`OriginDoors#` 換回 `CollapseService.`／`CollapseService#` 之後，與 `fd96305` 的 `CST` 逐字相同，斷言沒有改。
+- **行為不變的證據**：
+  - test 集合與結果（`f5/f50/setcmp.py`，比較每個 testcase 的名稱與結果）：JUnit 全部 `base`（`fd96305`）與 `c1` 都是 636（PASS 634、SKIPPED 2），逐一相同（`cmp-c1-junit.txt`）；M5 run 全部 `gate-base-m5-18be6bd6fe75475f862a89179b85cfa9` 與 `gate-c1-m5-696fcd3b223d40fb97ebe597b0abb861` 都是 37/37，逐一相同（`cmp-c1-m5.txt`）；default 的 21 個 `m5_collapse_*`／`m5_f3a_*` batch（清單照抄 `f4a/green-d-focused-summary.txt` 第一行的 `batches=`，`f5/f50/default-batches.txt`）`gate-base-default-67d77d406a4041adaaa61fbd78553893` 與 `gate-c1-default-09e576fc8ad14a4a9f98780359fcbea7` 都是 21/21，逐一相同（`cmp-c1-default.txt`）。
+  - bytecode（`f5/f50/javapcmp.py`，結果 `javapcmp-c1.txt`）：對搬移前後 collapse package 的每一個 class 做 `javap -c -p`（`classes.ps1`，`base-classes/`、`c1-classes/`），逐一方法正規化之後比較指令序列。正規化只處理搬移本身會造成的差異：常數池索引換成符號、同 class 的成員補上 owner；搬移的 nested type 與成員改名（`moved-c1.json`）；刪掉 `OD` 經 `service`、`CS` 經 `originDoors` 的那一個 getfield；private 改為 package-private 時的 invokespecial／invokevirtual 視為同一種呼叫；分支目標與 exception table 換成指令序號；`ldc_w` 記成 `ldc`；enum switch 的鍵換成 enum 常數名稱（javac 依各 class 第一次用到的順序替 `$SwitchMap` 編號，`reapplyGoal` 的 `SessionState` switch 在兩個 class 的編號不同）。結果：
+    - 565 個方法相同，其中 60 個是搬移的（含 5 個型別的全部方法與搬移的 lambda）；
+    - 3 個不同，都是搬移本身：`CS.<init>`（`doors = new LinkedHashMap<>()` 換成 `originDoors = new OriginDoors(this)`，`OD.<init>` 建立同一個 `LinkedHashMap`；欄位初始化的順序 `tracks` → 門 → `destinations` 不變）、`CS.tick`（迴圈換成 `applyPending()`；把這個呼叫換回 `applyPending` 的本體之後，與搬移前逐指令相同，含 exception table：`INLINE … SAME`）、`CS$1 static {}`（enum switch 的合成 class：`ChamberDoorService$ApplyResult$Outcome` 的 switch map 移到 `OD$1`，`OD$1` 另有 `reapplyGoal` 用的 `SessionState`；`CS$1` 其餘 6 個 map 不變）；
+    - 4 個只在搬移後：`OD.<init>`、`OD static {}`（logger）、`OD.applyPending`、`OD$1 static {}`；
+    - `javap -v` 的 BootstrapMethods（lambda 的實作與方法參考 `CollapseService::useDoor` 的目標）正規化之後相同。
+    - 存取旗標的變化逐一列在 `javapcmp-c1.txt` 的 `SAME … 存取：` 行（`CS` 的 package-private 化與 `OD` 中被 `CS` 呼叫的 6 個方法）。
+
+### 第 2 點：PREPARE 不抽出
+
+- 判斷：F5-1 的改動在 PREPARE 留在 `CS` 時比較集中，所以這一步不抽出 `Prepare`、`destinations`、預載與投影。理由：
+  1. F5-1 對 PREPARE 的改動都在它與狀態機的交界：準備完成點（`CS:684` `prepared`）改成 checked PASSAGE_READY 的提交，要用 journal、`Track`、`seal`、EXISTING 的再驗（`DestinationResolver`）與原艙門的 passable（`OD`）。抽出之後，提交要嘛放在新類別裡、反過來呼叫這些（`journal`、`seal`、`warn`、`OD`），要嘛拆成「新類別回報準備完成、`CS` 提交」兩半，F5-1 的改動會分到兩個類別。
+  2. 目的世界的 ticket（`destinations`）不只屬於 PREPARE：PREPARE 加 ticket，釋放的卻是 `leavePrepare`、`seal`、`terminated`、`releaseTerminatedDestinations`，F5-1 還要在 PASSAGE_READY 期間繼續持有、在通道結束時以 `releaseDestination` 釋放。抽出之後這五、六個呼叫點都要跨類別。
+  3. F5-1 其餘的 PREPARE 改動是局部的：修復路徑的 checkpoint（F4b-2 S-M2，在 `project` 的 REPAIR 分支）與預載外擴和 FULL 檢查一致（S-M1，`PRELOAD_MARGIN`／`preloadChunks`），抽出不會讓它們更容易改。
+  4. 抽出原艙門之後 `CS` 從 1947 行降到 1341 行；原艙門有自己的入口（port）、自己的佇列與每個 tick 的套用，是可以獨立的一塊，PREPARE 則在狀態機的中間。
+- 之後若 F5-1 定出 PASSAGE_READY 的形狀、`CS` 又明顯變大，可以重新評估把「目的地側」（預載、投影、`destinations` 與 PASSAGE_READY 期間的 ticket）一起抽出；這不是本 task 交下的必要事項。
+
+### 第 3 點：F4b-3 最終 review 的 Minor 與 Nit
+
+| 項目 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| quality M-1：DOOR_USE 的去重鍵會被同一個 session 任何人的成功使用清掉 | `OD:378` `doorUseKey(action)`（純函式）：去重鍵（也是 WARN 的寫入種類）依處置區分，例如「原艙門的攔截（END_AND_CLOSE）」，判斷途中（還沒有處置）是「原艙門的攔截（判斷）」。`door` 的處置沒有例外地完成時只清這個處置的鍵（`OD:359`），失敗時以它記 WARN（`OD:367`，status 改傳 null，處置名稱已在寫入種類裡）。所以艙內的非參與者開門成功（OPEN_FOR_INSIDER）不再讓參與者的處置失敗（END_AND_CLOSE）再記一次；同一個處置「失敗 → 成功 → 再失敗」照舊再記一次。「判斷」沒有對應的處置，它的鍵不會被處置的成功清除（「偏離」第 4 條）。T-FAIL：`warnedAgainAfterASuccess` 換成 `notWarnedAgainAfterAnotherActionSucceeded`（N 成功之後 P 再失敗，WARN 不多）；新增 `failingCloseRefusedAfterItsOwnSuccess`、`warnedAgainAfterTheSameActionSucceeded`（P 的處置因 recovery 寫入不安全而沒有例外地被拒、清掉自己的鍵之後，再注入失敗，P 點一次：WARN 多一則）。這個 session 的 WARN 仍是三則（判斷 1、END_AND_CLOSE 2） | RED `red-c3`（`2ab39ad`＋T-FAIL 的改動，`gate-red-c3-9291cb302701482abec1707ddabc827a`）：`notWarnedAgainAfterAnotherActionSucceeded=false`、`onlyTheseWarnsAndNoError=false`（warnings=4）。GREEN `gate-c3-tfail-c4d068bdc49d4e40937f31891709f5e5`、M5 全部 `gate-c3-m5-ccc66d7ad7704a26aabb9ac26495744d` 37/37、JUnit `c3` 636。mutation（`chain-c3.log`）：`mut-c3-success-clears-every-action`（成功時清掉所有處置的鍵，即原本的行為）`notWarnedAgainAfterAnotherActionSucceeded=false`；`mut-c3-success-keeps-key`（成功時不清）`warnedAgainAfterTheSameActionSucceeded=false` |
+| quality M-2／spec m-3：T-FAIL 以反射把 final 的 `Track.backoff` 設成 null | 刪除 `SUP` 的 `breakParticipantDoorUse`。新的 testmod fault mixin `ODF`（`@Mixin(targets = "dev.quantumchamber.collapse.OriginDoors")`，package-private 的 `Track` 參數以 `@Coerce Object` 收）在 `OD:447` `endByParticipant` 的開頭呼叫 `HK` 的 `beforeParticipantDoorUse`；hook 是新的 Slot `HK:79` `DOOR_USE_FAULT`（`DoorUseFault`，`HK:356`：指定 session、武裝中時丟 `IllegalStateException`，`arm()`／`disarm()`、`hits()`），經 `SUP:765` `installDoorUseFault`（`installHook`）安裝，登記在 `quantumchamber-test.mixins.json`。T-FAIL 原本的 witness 全部照舊成立，另加 `closeFailuresWereInjected`（三次失敗的關門都是注入的）。README「新增 M5 GameTest」補上 F4b-3 fix round 1 的 `useDoor`、`lookupFailingPlayer`、`putUncheckedAuthority`／`removeUncheckedAuthority`、`discardDoorwayEntities`、`RemoteOrigin.entitiesLoaded`，以及 `installDoorUseFault` 與 package-private target 的 mixin 寫法（`b971f2d`） | GREEN `gate-c2-tfail-83a4039dd7f04d78b7b731a247d7cbf0`（T-FAIL 的 witness 與 F4b-3 fix round 1 相同）、M5 全部 `gate-c2-m5-0b3f8231a8b44afd86a2c0971cad36fd` 37/37。mutation `mut-c2-fault-never-fires`（注入從不發生，`chain-c2.log`）：`failingCloseRefusedTwice=false`、`oneWarnForTwoFailingCloses=false` 等（P 的關門照常終局）。WARN 的 root cause 由 `NullPointerException` 換成注入的 `IllegalStateException`（run-all 的 log 比對） |
+| spec m-1：找出所屬 session 之前的 WARN 沒有 `session=`，marker 卻是 `LOG_MARKER` | `OD:364` 改帶 `TICK_LOG_MARKER`（與其他不屬於任何 session 的塌縮流程 log 相同）；`OD` 的 class Javadoc、`door` 的 Javadoc 與 `CS:106` `LOG_MARKER` 的 Javadoc 補上這一種。T-FAIL：`DoorUseFault` 加上找出所屬 session 的位置（`armLookup()`／`disarmLookup()`、`lookupHits()`；`ODF` 的第二個注入在 `OD:405` `sessionAt` 的開頭），P 直接呼叫 port 一次：`refusedWhenTheSessionLookupFails`（REFUSED、門不變、注入一次）、`sessionLookupFailureWarnsAtTheTickLevel`（這位玩家「找出所屬 session」的 WARN 帶 `TICK_LOG_MARKER` 的多一則；它沒有 sid，不算進 `onlyTheseWarnsAndNoError` 的三則） | RED `red-c4`（`010f79c`＋testmod 的改動，`gate-red-c4-67c95eec05fd4fc8a63d600243759c26`）：只有 `sessionLookupFailureWarnsAtTheTickLevel=false`（`refusedWhenTheSessionLookupFails=true`：注入的位置有效）。GREEN `gate-c4-tfail-99d16a6fb3c140d6b45a8a9f2b6b85e3`、M5 全部 `gate-c4-m5-6f9a47eceffb49a383666d3f1b61703d` 37/37、JUnit `c4` 636 |
+| spec m-2：`cancelSealedClose` 在門切換之前就取消，門切換被拒或 rollback 時 SEALED 艙留著 sealed 量子膜 | 選第一個：`OD:391` `cancelSealedClose`（多了 world、frame 參數）在門還帶著量子膜（`doorHasMembrane`，`OD:394`）時不取消，記 DEBUG。之後的門切換被拒或 rollback 時，排入的關門照樣把量子膜清掉；門切換成功時，量子膜門的切換就是關門（`withOpen(false)` 同時清掉量子膜），排入的關門是 UNCHANGED；玩家接著再開門時門已沒有量子膜，照舊取消，所以玩家打開的門仍不會被關回去（§7.3 :404）。理由見「偏離」第 6 條。T-SMEM：原艙上的 SEALED 收據（參與者是離線的隨機玩家），門上留著 sealed 量子膜，模擬重啟之後的第一次觀察，塌縮流程排入下一個 tick 的關門；排入之後、套用之前，非參與者 P 直接呼叫 port（PASS）而不切換門（等同之後的門切換被拒）：`stillAMembraneWhenUsed`、`usePassesForASealedChamber`、`stillAMembraneAfterTheUse`、`pendingCloseKeptWhileTheDoorHasAMembrane`、`closedByThePendingClose`、`stillSealed`、`noWarnOrError`。門沒有量子膜時照舊取消，由 T-RELOAD 的第三次重新載入鎖住 | RED `red-c5`（`8785510`＋T-SMEM，`gate-red-c5-364a0d6e4cc94a6183b7528b5df8d3e6`）：`pendingCloseKeptWhileTheDoorHasAMembrane=false`、`closedByThePendingClose=false`（關門被取消，門仍是量子膜）。GREEN `gate-c5-sealed-membrane-81727a5c2e1b4b968faafc6107f9de57`（T-SMEM 與 T-RELOAD 2/2）、M5 全部 `gate-c5-m5-fe1b7e0d4f4a4b8c85066c6728733417` 38/38、JUnit `c5` 636。run-all 的實測：`M5_DOOR_SEALED_MEMBRANE queued=[4699] applied=[4699] cancelled=0` |
+| quality Nit：T-RELOAD 各段有界等待的總和最壞約 2214 tick，大於 tickLimit 2000 | 選調高 tickLimit：`M5U:2312` 2000 → 2300，Javadoc 列出預算（註冊最晚 tick 43；第一次重新套用最晚 648；第二次 1290；第三次排入 1892、entity storage 2192；收斂 20 tick，共 2214）。不縮小第三段的上限：run-all 的實測第三次只要約 45 tick（排入在第二次套用之後 7 tick，entity storage 再 38 tick），但縮小會讓這一段的餘裕和前兩段不一致，調高 tickLimit 不改任何等待的語意 | 只改 test 的預算，沒有 RED（要每一段都等到上限才看得到逾時；「需要裁示」第 2 條）。GREEN `gate-c6-reload-ba41b0b69714448a95872ca7953a1bf6`、M5 全部 `gate-c6-m5-829b61df802c44f0b84922858dc6e545` 38/38（與 `c5-m5` 逐一相同） |
+
+### 測試
+
+- JUnit 636 不變（CST 20 只改呼叫端；`GUARD` 2、`CollapseLogMarkerGuardTest` 2 不變）。
+- M5 GameTest 37 → 38：新增 T-SMEM（catalog 增量 0）。T-FAIL（名稱、batch、增量都不變）的 witness：`warnedAgainAfterASuccess` 換成 `notWarnedAgainAfterAnotherActionSucceeded`，新增 `closeFailuresWereInjected`、`failingCloseRefusedAfterItsOwnSuccess`、`warnedAgainAfterTheSameActionSucceeded`、`refusedWhenTheSessionLookupFails`、`sessionLookupFailureWarnsAtTheTickLevel`。T-RELOAD 只改 tickLimit 與 Javadoc。suite 結束時 35 筆不變。
+- default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 不變：沒有新增或刪除 default run 的 `@GameTest`。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f5/f50/`（以下簡稱 `f50/`）：`state.ps1`、`gate.ps1`、`junit.ps1`、`adapted-junit.ps1`、`chain.ps1`、`adapter.py`、`wbcmp.py`、`jarcmp.py` 由 `f4b3/fix1/` 複製，只改註解與 adapter 表的模組（`adapters_f50.py`）；`f4b3/` 下既有的檔案沒有改動。本輪新增 `junit-all.ps1`（`gradle test --rerun`，以 `junitsum.py` 摘出每個 testcase，timestamp 早於開始時間時標 STALE）、`classes.ps1`（保存 collapse package 的 class 檔與 `javap -c -p`）、`javapcmp.py`（bytecode 比較，搬移清單 `moved-c1.json`）、`setcmp.py`（testcase 集合比較）。每個 adapter 跑完都還原，還原後的 blob 與套用前相同；每次 RED、GREEN、mutation 的 state 記 HEAD、porcelain 與逐檔 blob（`f50/<label>-state.txt`）。gate root 在 `.superpowers/verification/`。commit 1 的搬移腳本是 `f50/extract-c1.py`（`OD` 的檔頭在 `extract-c1-od-header.java`；以行號切出區塊、斷言頭尾兩行與每一項替換的次數），之後的呼叫端、可見性與 Javadoc 連結逐處以手動編輯；結果以第 1 點的 javap 比較驗證。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| 基準 | `fd96305`，乾淨 | `base`（JUnit 全部）；`base-classes`；`gate-base-m5-18be6bd6fe75475f862a89179b85cfa9`；`gate-base-default-67d77d406a4041adaaa61fbd78553893` | 636（PASS 634、SKIPPED 2）；M5 37/37；default 21/21 |
+| commit 1（純搬移） | `fd96305`＋`CS`、`OD`、`CST`（＝`b49ed3e`） | `c1`（JUnit 全部）；`c1-classes`、`javapcmp-c1.txt`；`gate-c1-m5-696fcd3b223d40fb97ebe597b0abb861`；`gate-c1-default-09e576fc8ad14a4a9f98780359fcbea7` | 三組 test 的集合與結果都和基準逐一相同；javap 見第 1 點 |
+| commit 2（M-2） | `b49ed3e`＋testmod（＝`2ab39ad`） | `chain-c2.log`：`gate-c2-tfail-…`、`gate-mut-c2-fault-never-fires-cccb9830d1934bdcaa04cf0ea413afca`、`gate-c2-m5-…` | 1/1；mutation FAIL；M5 37/37 |
+| commit 3（M-1） | RED：`2ab39ad`＋`M5U`；GREEN：＋`OD`（＝`010f79c`） | `gate-red-c3-…`；`chain-c3.log`：`gate-c3-tfail-…`、`gate-mut-c3-success-clears-every-action-5d7cc43b630f4785ab5a15dc4cd10162`、`gate-mut-c3-success-keeps-key-ff862462f7334cf9b2a5ec7e23c05ed8`、`gate-c3-m5-…`；`c3`（JUnit 全部） | RED FAIL；1/1；mutation 2/2 FAIL；M5 37/37；636 |
+| commit 4（m-1） | RED：`010f79c`＋testmod；GREEN：＋`OD`、`CS`（＝`8785510`） | `gate-red-c4-…`；`chain-c4.log`：`gate-c4-tfail-…`、`gate-c4-m5-…`；`c4`（JUnit 全部） | RED FAIL；1/1；M5 37/37；636 |
+| commit 5（m-2） | RED：`8785510`＋`M5U`；GREEN：＋`OD`（＝`5560d04`） | `gate-red-c5-…`；`chain-c5.log`：`gate-c5-sealed-membrane-…`、`gate-c5-m5-…`；`c5`（JUnit 全部） | RED FAIL；2/2；M5 38/38；636 |
+| commit 6（Nit） | `5560d04`＋`M5U`（＝`306b76a`） | `gate-c6-reload-…`；`gate-c6-m5-…` | 1/1；M5 38/38 |
+| run-all | `b971f2d`，工作樹乾淨（`STATUS` 是空的） | `run-all-be78e13beeb94f628f8132f8226f2508`（Full：`gate-full-68798179680942818332ead73f84d8a0`；M5：`gate-m5-gametest-aff5520ebf70445abc10b97126295403`；`f50/run-all-console.txt`） | `END ALL exit=0 HEAD=b971f2d`。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=38/38 perTest=51+1 junit=636 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=412entries/365classes sources=218 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+
+- 失敗的 root 都是刻意的 RED 或 mutation，沒有不採計的 root。commit 2、6、7 沒有改 main 或 test 的程式，沒有另跑 JUnit；commit 3～5 改了 `OD` 的門的路徑，default 的門 test 由 run-all 的 Full（174 個）涵蓋。
+- 與基準 run-all（`run-all-9a5c30415e954e88848c98cfb42f13c3`，`3c9b42c`；Full 以 `gate-full-rerun-06323a8890f34205a3c40da2062be331` 為準）逐項比較：
+  - M5 37 → 38（T-SMEM）；default 174（`_windows` 88）、legacy 1、perTest 51＋1、JUnit 636、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly、CI 兩個平台都不變。M5 oracle PASS（`m5-oracle.json`）：38 個 test 的 catalog 增量逐一串接（`existing_receipt_without_a_discovered_universe_seals_permanently`、T-RELOAD 與 T-SMEM 為 0，其餘各 1），每個都 converged、preserved，suite 結束時 35 筆不變。`M3_UNIVERSE_STOPPED_VERIFIED worlds=29 runtimeReceipts=29 quarantine=0 contextDetached=true` 不變（T-SMEM 不配置宇宙）。
+  - release JAR 410 → 412 entries（363 → 365 classes，`f50/jarcmp-release-run-all.txt`）：`CollapseService$DoorAction`、`$DoorGoal`、`$DoorStep`、`$DoorUser`、`$PendingDoor` 換成 `OriginDoors$` 的同名 5 個，另新增 `OriginDoors`、`OriginDoors$1`（enum switch 的合成 class）。內容不同的是 `CollapseService` 與它其餘的 nested class（`$1`、`$DestinationTicket`、`$EntryWatch`、`$MeasuredAction`、`$Prepare`、`$PrepareGate`、`$SealedRetry`、`$Track`、`$WriteStep`）：`CS` 的原始碼變短，行號表與常數池跟著變；以 javap 比較，這些 nested class 的方法逐指令相同（`$Track.membrane` 的型別換成 `OriginDoors$PendingDoor`，`$1` 見第 1 點）。testmod 命中 0（`OriginDoorUseFaultMixin` 只在 testmod）。
+  - sources JAR 217 → 218（`f50/jarcmp-sources-run-all.txt`）：新增 `OriginDoors.java`；內容不同的只有 `CollapseService.java`。
+  - log（以 `/WARN]`、`/ERROR]` 計行，UUID 與數字正規化、排序之後比對，`f50/wbcmp.py`）：
+    - Full 54／28，與 `full-rerun` 逐行相同（`f50/wbcmp-full-run-all.txt`；這次沒有遇到 `m2_task4_disconnect_io` 的偶發）。
+    - legacy 0／0（`wbcmp-legacy-run-all.txt`）。
+    - M5 WARN 36 → 37、ERROR 6 不變（`wbcmp-m5-gametest-run-all.txt`），都來自 T-FAIL、都有 witness：多出的一則是找出所屬 session 之前的 WARN（m-1，帶 `TICK_LOG_MARKER`，`sessionLookupFailureWarnsAtTheTickLevel`）；原本的三則改成新的字句與 root cause（「塌縮流程的原艙門的攔截（END_AND_CLOSE）沒有完成」兩則，root cause 由 `NullPointerException` 換成注入的 `IllegalStateException`，M-2；「（判斷）」一則，M-1 的寫入種類），則數不變。GT-P 的原版 `PistonBlockEntity` WARN 仍是一則，排序比對中的一減一加只是 object hash 不同。
+  - default run 的稽核：Full 的 latest.log 對「原艙門的攔截」「取消還沒套用的關門」「保留還沒套用的關門」「來源艙重新載入」「原艙門已依 collapse view 重新套用」「原艙門套用 sealed」「PREPARE 期間」「進入 PREPARE」「PREPARE 暫停」都是 0 行；「重啟之後第一次載入」1 行（G-DOR 的 `NORMALIZE` 排入，與 F4b-3 fix round 1 相同）。
+  - T-RELOAD 在 run-all 的實測：`M5_DOOR_RELOAD queued=[6195, 6286, 6340] applied=[6238, 6333] thirdQueuedAt=157 entityStorageAt=195`（前兩次的關門等了 43、47 tick 的 entity storage，第三次被取消）。
+- 本 task 沒有遇到派工列出的已知偶發。
+
+### 偏離 plan／spec 字面之處
+
+1. **`CS` 的成員改成 package-private**：`OD` 直接讀寫 `CS` 每個 tick 取得的 context（`journal`、`now`、`sessions`、`server`）與 `tracks`、`startupSessions`，呼叫 `track`、`warn`、`terminated`、`terminalFailed`、`refresh(record)`、`refreshContext`、`neighborhoodLoaded`、`describe`。不另加存取方法或介面：只有同一個 package 的 `OD` 用到，直接存取讓搬移在 bytecode 上只多一個 getfield（第 1 點的比較依此正規化）。`door` 仍會改寫 `service.journal`（搬移前就是改寫 `CS` 自己的欄位）。
+2. **新增 `OD.applyPending` 與 `OD` 的建構子**：`tick` 的迴圈逐字搬過去（INLINE 比較相同）；建構子以 `requireNonNull` 記下 service。
+3. **`applyFailure` 的 Javadoc 更正**為實際的呼叫端（`applyPending`、`queueDoor`）。
+4. **（M-1）WARN 的字句**：寫入種類換成 `doorUseKey`，例如「塌縮流程的原艙門的攔截（END_AND_CLOSE）沒有完成，…」（原本是「…原艙門的攔截沒有完成（END_AND_CLOSE），…」），status 改傳 null 以免處置名稱重複。「判斷」的鍵不會被任何處置的成功清除：它沒有對應的處置，若讓任何處置的成功清掉它，「某位玩家每次判斷都失敗、其他人照常使用」就會每次都記 WARN，與 M-1 是同一個問題；journal 健康時判斷途中只讀記憶體與玩家的狀態，實際上造不出持續的判斷失敗（T-FAIL 以 `lookupFailingPlayer` 造出）。不同的原因照常各記一次，終局時隨 `Track` 移除。
+5. **（m-1）以 fault mixin 造出原本「不會發生」的路徑**：找出所屬 session 之前的例外在 journal 健康時造不出來，為了有 RED，`ODF` 多一個在 `sessionAt` 開頭的注入（與 M-2 共用一個 Slot）。
+6. **（m-2）選第一個，不交給 F5-2**：plan Task F5 的 F5-2 寫了「含 F4b-3 spec m-2：SEALED 帶著量子膜的情況」，派工允許二擇一。選在 `cancelSealedClose` 修，理由：缺口是 F4b-3 fix round 1 在這裡造成的；修在這裡，SEALED 艙的量子膜一律由它自己排入的關門清掉，F5-2 的正規化可以照 F4b-3「補充第 8 點」第 1 個條件，繼續排除有 COLLAPSING／SEALED 的艙，不必和待套用的門同時寫門；而且可以在 GameTest 以 RED 證明（T-SMEM）。F5-2 的正規化仍要處理找不到所屬 session 的量子膜（「交給後續」）。
+7. **（Nit）調高 tickLimit 而不是縮小第三段**：理由見第 3 點的表；沒有 RED。
+8. **commit 拆分**：純搬移一個 commit，Minor 依子主題各一個（M-2 先於 M-1，因為 M-1 的 T-FAIL 改動要用 M-2 的 `arm()`），README 一個，note 一個。
+
+### 需要裁示
+
+1. **m-2 選了第一個**（「偏離」第 6 條）：plan F5-2 那一句「含 F4b-3 spec m-2：SEALED 帶著量子膜的情況」需要 controller 改寫，例如「F4b-3 spec m-2 已由 F5-0 處理；正規化照 F4b-3 補充第 8 點，繼續排除有 COLLAPSING／SEALED 的艙」。
+2. **Nit 沒有 RED**：tickLimit 是 test 的預算，要每一段有界等待都等到上限才看得到逾時；以算式（Javadoc 與第 3 點的表）與 GREEN 代替。
+3. **M-1 的「判斷」鍵不被處置的成功清除**（「偏離」第 4 條）：這是對「成功時只清同一個 action 的鍵」的讀法；若要讓判斷成功（任何人的使用）也清掉它，只要在 `OD:359` 一併移除 `doorUseKey(null)`。
+
+### 觀察（未修改）
+
+1. **m-2 之後，量子膜門上保留的關門在門口有 entity 時套用一般開門**：只在 SEALED 的門還帶著量子膜時才會保留。玩家關上量子膜門（門切換成功）之後，若保留的關門套用時門口有 entity，它依 §7.3 改為一般開門，會打開玩家剛關上的門；這偏向不把門關在 entity 上，玩家再關一次時門已沒有量子膜，照舊取消。
+2. **`CS` 1947 → 1341 行，`OD` 713 行**（含 F5-0 的 Minor）。
+
+### 交給後續
+
+- F5-1：
+  - §10.5 接在 `OD:293` `doorAction` 的 PASSAGE_READY 分支與 `OD` `door` 的處置 switch；新的處置自動有自己的去重鍵（`doorUseKey`）；處置途中的失敗可以比照 T-FAIL 以 `installDoorUseFault` 的方式加注入位置（`ODF`、`HK.DoorUseFault`）。
+  - passable 量子膜由 `OD` 套用（`prepareDoor` 只在 PREPARE 擁有原艙門時執行）；通道結束的改門排入 `OD.queueDoor`；`watchDoor` 目前不看 PASSAGE_READY，F5-1 決定 PASSAGE_READY 期間的重新套用（開服時的 PASSAGE_READY 由 §12 在第一個 tick 終局）。
+  - PREPARE 沒有抽出：`CS:684` `prepared` 的 READY 提交、`releaseDestination` 都還在 `CS`（第 2 點）。
+- F5-2：
+  - §10.6 :613 的正規化照 F4b-3「補充第 8 點」的四個條件；SEALED 帶著量子膜的情況已由 F5-0 處理（第 3 點 m-2），正規化繼續排除有 COLLAPSING／SEALED 的艙。沒有所屬 session 的量子膜要另一個待套用的目標（`PendingDoor` 帶著 session、`NORMALIZE` 要求 COLLAPSING）。
+- F6：
+  - `build.yml` 的明列清單另加 T-SMEM `sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it`（不是 `_windows`）。
+  - 重啟矩陣可以加上「SEALED、門帶著量子膜時重啟」的跨 JVM 版本（T-SMEM 以 `simulateDoorStartup` 模擬）。
+- F7：
+  - README「預期結果」的數字以最新的 run-all 為準更新（F5-0 之後：M5 38、JUnit 636、release 412／365、sources 218）。
+  - spec errata：§7.3 :404「玩家打開之後不會被關回去」的例外：SEALED 的門還帶著量子膜時，玩家使用門不取消還沒套用的關門（第 3 點 m-2）。
