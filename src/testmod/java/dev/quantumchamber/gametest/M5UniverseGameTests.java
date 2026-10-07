@@ -2574,7 +2574,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>PREPARE 期間 N 在艙內：門維持一般開門（不套用 sealed 量子膜），準備照常完成，PASSAGE_READY 照樣提交（expires＝opened＋1200、Crossed 是空的），門改為 passable 量子膜；
      *     「量子通道已開啟」只給艙內的參與者 P，N 沒有收到。</li>
      * <li>N 由門板中線內側走到外側（穿過量子膜）：什麼都不觸發，N 留在原世界、Crossed 仍是空的。</li>
-     * <li>P 在越過中線的同一個 tick 騎上礦車：不觸發傳送，留在原世界。</li>
+     * <li>P 在越過中線的同一個 tick 騎上礦車：不觸發傳送，留在原世界。礦車浮在 local y=2（不受重力），騎乘時腳仍在門口、中線外側（礦車的乘坐點比礦車低，礦車放在
+     *     y=1 時腳會低於門口），所以只有「沒有騎乘」這個條件擋下跨越（{@code riderInTheDoorwayPastTheMidline}）。</li>
      * <li>P 下來之後由中線內側越到外側：傳送到宇宙 U 的同 XYZ、同 yaw、pitch，站在目的投影艙的門口（同一個 local 座標，門是 {@code open=true}＋{@code membrane=none}），
      *     Crossed＝[P]，INFO「已穿過量子通道」一則。</li>
      * <li>下一個 tick (b) 全員都已跨過：checked 終局（INFO (b) 一則），門改為一般開門，目的世界的 ticket 已釋放（{@code releaseDestination}），runtime 與來源 ticket 都已釋放、
@@ -2617,12 +2618,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     M5GameTestSupport.standInDoorway(p, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
                 });
                 at(context, readyAt + 2, hooks, () -> {
-                    // N 穿過量子膜；P 越過中線的同一個 tick 騎上一台不受重力的礦車。
+                    // N 穿過量子膜；P 越過中線的同一個 tick 騎上一台不受重力、浮在 local y=2 的礦車（騎乘時腳仍在門口）。
                     M5GameTestSupport.standInDoorway(n, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO);
                     M5GameTestSupport.standInDoorway(p, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO);
                     cart[0] = EntityType.MINECART.create(world);
                     if (cart[0] == null) throw new IllegalStateException("建不出礦車");
-                    var cartPos = ChamberSpaceCoordinates.position(frame, 4.5, 1, 0.3);
+                    var cartPos = ChamberSpaceCoordinates.position(frame, 4.5, 2, 0.3);
                     cart[0].refreshPositionAndAngles(cartPos.x, cartPos.y, cartPos.z, 0, 0);
                     cart[0].setNoGravity(true);
                     hooks.add(cart[0]::discard);
@@ -2631,6 +2632,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 at(context, readyAt + 3, hooks, () -> {
                     var record = journal.flushedRecords().get(sid);
                     witness.put("nonParticipantStaysInTheOriginalWorld", n.getServerWorld() == world && record.collapse().crossed().isEmpty());
+                    var riderLocal = ChamberSpaceCoordinates.localPosition(frame, p.getPos());
+                    witness.put("riderInTheDoorwayPastTheMidline", p.hasVehicle() && riderLocal.x >= 1 && riderLocal.x < 6 && riderLocal.y >= 1 && riderLocal.y < 6
+                            && riderLocal.z < 0.5);
                     witness.put("riderStaysInTheOriginalWorld", p.getServerWorld() == world && record.collapse().crossed().isEmpty() && crossedInfos(capture, sid) == 0);
                     p.stopRiding();
                     cart[0].discard();
