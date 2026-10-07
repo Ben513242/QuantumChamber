@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -444,6 +445,23 @@ class CollapseServiceTest {
         cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, false, true, inside, 0.7)), "被其他 session 佔用"));
         cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, false, false, null, 0.7)), "這個 tick 觀察不到"));
         assertAll(cases);
+    }
+
+    /**
+     * F5-1 fix round 1（spec review S-m1；spec §10.3「上一個 tick 還在中線內側」）：跨越只認上一個 tick（now−1）記下的 local z。推進被略過的 tick 不會觀察，更早的觀察
+     * （例如略過之前記下的中線內側）不算；同一個 tick 的觀察也不是「上一個 tick」。之後與這個 tick 中線外側的位置一起判斷：只有上一個 tick 的內側觀察觸發。
+     */
+    @Test void crossingUsesOnlyTheObservationOfThePreviousTick() {
+        var observed = Map.of(A, new PassageService.ObservedZ(0.7, 99), B, new PassageService.ObservedZ(0.8, 96),
+                SESSION, new PassageService.ObservedZ(0.6, 100));
+        var previous = PassageService.previousTick(observed, 100);
+        var outside = new Vec3d(3.5, 1, 0.3);
+        assertAll(
+                () -> assertEquals(Map.of(A, 0.7), previous, "只有 tick 99（now−1）的觀察"),
+                () -> assertTrue(PassageService.crosses(candidate(outside, previous.get(A))), "上一個 tick 在內側：觸發"),
+                () -> assertFalse(PassageService.crosses(candidate(outside, previous.get(B))), "推進被略過之前的內側觀察（tick 96）：不觸發"),
+                () -> assertFalse(PassageService.crosses(candidate(outside, previous.get(SESSION))), "同一個 tick 的觀察不是上一個 tick：不觸發"),
+                () -> assertEquals(Map.of(), PassageService.previousTick(Map.of(), 100), "沒有觀察"));
     }
 
     private static PassageService.Candidate candidate(Vec3d local, Double previous) {

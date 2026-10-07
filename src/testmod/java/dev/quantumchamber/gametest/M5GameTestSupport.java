@@ -869,6 +869,17 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F5-1 fix round 1（spec review S-m1）：暫停這個 session 的塌縮流程推進（{@link M5TestHooks#STEP_PAUSE}，testmod {@code CollapseSuspendMixin} 經
+     * {@link M5TestHooks#collapseSuspended} 讀它），{@code release()} 之後恢復；與不可撤銷的 {@link M5TestHooks#suspendCollapse} 不同。用來造出 production 中這個 session 的
+     * 推進被略過的 tick（journal 有未 checked 的 authority、隔離中、整個 tick 無法執行）。{@code hits()} 證明暫停真的發生。安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.StepPause installStepPause(TestContext context, UUID session, M2CorridorGameTests.TestHooks hooks) {
+        var pause = new M5TestHooks.StepPause(session);
+        installHook(context, M5TestHooks.STEP_PAUSE, pause, hooks);
+        return pause;
+    }
+
+    /**
      * F5-1：把玩家放到來源艙的門口（腳在區域座標 ({@code x}, {@code y}, {@code z})，同一個世界），朝向 {@code yaw}、{@code pitch}，速度設為 {@code velocity}。z ≥ 0.5 是
      * 門板中線的內側，z &lt; 0.5 是外側；跨越是「上一個 tick 在內側、這個 tick 在外側」，而且腳在門口（x∈[1,6)、y∈[1,6)；spec §10.3）。
      */

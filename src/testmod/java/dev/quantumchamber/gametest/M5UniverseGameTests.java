@@ -3341,6 +3341,55 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
+     * F5-1 fix round 1（spec review S-m1；spec §10.3「上一個 tick 還在中線內側」）：PASSAGE_READY 之後，P 站在門板中線內側（local z=0.7）被觀察一次，之後這個 session 的塌縮流程
+     * 推進暫停 3 個 tick（{@code installStepPause}；等同 production 中推進被略過的 tick：journal 有未 checked 的 authority、隔離中、整個 tick 無法執行），期間 P 走到中線外側
+     * （z=0.3）。恢復之後的第一個 tick：記下的內側觀察不是上一個 tick 的，不觸發跨越，P 留在原世界、Crossed 是空的（修正之前這個 tick 會把 P 傳送走）。之後 P 回到內側、再越過中線：
+     * 這次上一個 tick 有內側的觀察，傳送到 U，(b) 結束。這個 session 沒有任何 WARN／ERROR。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_stale", tickLimit = 900)
+    public void passage_crossing_needs_the_previous_tick_observation_after_skipped_ticks(TestContext context) {
+        begin(context, "passage_crossing_needs_the_previous_tick_observation_after_skipped_ticks");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                M5TestHooks.StepPause[] pause = {null};
+                Runnable inside = () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                Runnable outside = () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO);
+                sequence(context, readyAt + 1, hooks, List.of(
+                        // readyAt+1：這個 tick 的推進觀察到 P 在中線內側。
+                        inside,
+                        // readyAt+2～+4：推進暫停；+3 時 P 走到中線外側（沒有被觀察）。
+                        () -> pause[0] = M5GameTestSupport.installStepPause(context, sid, hooks),
+                        outside,
+                        () -> { },
+                        // readyAt+5：放行，這個 tick 的推進照常；上一次的觀察是 readyAt+1 的內側。
+                        () -> pause[0].release(),
+                        () -> {
+                            var record = journal.flushedRecords().get(sid);
+                            witness.put("stepPausedForThreeTicks", pause[0].hits() == 3);
+                            witness.put("noCrossingFromAStaleObservation", p.getServerWorld() == world && record != null && record.state() == SessionState.PASSAGE_READY
+                                    && record.collapse().crossed().isEmpty() && crossedInfos(capture, sid) == 0);
+                            inside.run();
+                        },
+                        // readyAt+7：上一個 tick（+6）觀察到內側，這個 tick 在外側。
+                        outside));
+                whenTicks(context, readyAt + 8, 10, () -> !journal.flushedRecords().containsKey(sid), ended -> {
+                    witness.put("crossedAfterAFreshObservation", p.getServerWorld() == universe && crossedInfos(capture, sid) == 1);
+                    witness.put("endedWhenEveryoneCrossed", passageEnded(capture, sid, "(b) 全員都已跨過") == 1);
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                    LOGGER.info("M5_PASSAGE_STALE ready={} ended={} paused={}", readyAt, ended, pause[0].hits());
+                    releaseThenComplete(context, hooks, witness, "略過推進之後的跨越：" + witness, 20, () -> true);
+                }, () -> "P 再越過中線之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
      * F5-1：從 {@code tick} 起每個 tick 依序執行一步（第 i 步在 {@code tick + i}）。每一步的 callback 只排下一步這一項：在一個 callback 裡一次排很多項 {@code runAtTick}，原版
      * 迭代表的途中插入多項有 rehash 的風險（README「新增 M5 GameTest」的前提）。例外或斷言失敗時先釋放 hooks（{@link M5GameTestSupport#at}）。
      */

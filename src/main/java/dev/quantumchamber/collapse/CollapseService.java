@@ -1378,10 +1378,11 @@ public final class CollapseService {
         /** UNIVERSE 這一段 PREPARE 的記憶體內進度（進入 PREPARE 時建立，離開、進入 SEALED、重試時丟棄；不持久化，重啟之後重新推導）。 */
         Prepare prepare;
         /**
-         * PASSAGE_READY 的跨越判定（§10.3，F5-1）：每位參與者上一個 tick 的腳在來源艙的 local z（{@link PassageService#observe}）；不在來源世界或觀察不到時沒有這個鍵。
-         * 每個 PASSAGE_READY 的 tick 都更新（roll-forward 未確認、結束條件成立的 tick 也一樣），所以永遠是真的上一個 tick。不持久化：重啟之後 PASSAGE_READY 直接結束（§12）。
+         * PASSAGE_READY 的跨越判定（§10.3，F5-1）：每位參與者最近一次觀察到的腳在來源艙的 local z 與那個 server tick（{@link PassageService#observe}）；不在來源世界或觀察不到時
+         * 沒有這個鍵。推進有執行的每個 PASSAGE_READY 的 tick 都更新（roll-forward 未確認、結束條件成立的 tick 也一樣）；推進被略過的 tick（未 checked 的 authority、隔離、例外）
+         * 不更新，所以跨越只認 tick 恰為上一個 tick 的觀察（{@link PassageService#previousTick}，F5-1 fix round 1，spec review S-m1）。不持久化：重啟之後 PASSAGE_READY 直接結束（§12）。
          */
-        final Map<UUID, Double> passageZ = new HashMap<>();
+        final Map<UUID, PassageService.ObservedZ> passageZ = new HashMap<>();
         /**
          * {@code FAILED_RECOVERY_REQUIRED} 之後 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入在前置檢查就被拒（journal 沒有改變；F5-1，防禦性）：通道在記憶體內
          * 關閉（不跨越、不評估結束條件、不終局、參與者關門被拒），依 per-session 退避只重試這筆寫入（{@link PassageService}）。

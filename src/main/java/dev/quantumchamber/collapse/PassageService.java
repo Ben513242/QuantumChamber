@@ -24,6 +24,7 @@ import dev.quantumchamber.universe.UniverseTransferResult;
 import dev.quantumchamber.universe.UniverseTransferService;
 import dev.quantumchamber.universe.UniverseWorldDescriptor;
 import dev.quantumchamber.universe.UnloadResult;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,7 +56,7 @@ import org.slf4j.LoggerFactory;
  *     終局沒有完成時記 WARN、per-session 退避，不改門，也不再跨越（結束條件仍成立）。</li>
  * <li><b>跨越</b>（§10.3，{@link #crosses}）：每個 tick 逐一檢查參與者，七個條件全部成立才觸發：參與者、還不在 Crossed；在線、exact 的玩家 instance、存活、非旁觀；
  *     位在 exact 的來源 world instance；沒有騎乘；沒有被其他 session 佔用（§5）；腳在門口（local x∈[1,6)、y∈[1,6)）；local z 已越過門板中線往外（z&lt;0.5）而上一個 tick
- *     還在中線內側（z≥0.5）。觸發之後以 {@link PassageTransferPolicy} 傳送到目的世界的同 XYZ、yaw、pitch 與速度（{@code UniverseTransferService} 的 plan 決策 4 多載）。
+ *     還在中線內側（z≥0.5；只認上一個 tick 的觀察，更舊的不算，{@link #previousTick}，fix round 1）。觸發之後以 {@link PassageTransferPolicy} 傳送到目的世界的同 XYZ、yaw、pitch 與速度（{@code UniverseTransferService} 的 plan 決策 4 多載）。
  *     非參與者不在檢查的對象裡：穿過量子膜只會走進原世界。</li>
  * <li><b>傳送結果</b>（§10.3 的表）：成功 → checked（roll-forward）加入 Crossed；{@code FAILED_ROLLED_BACK}（以及移動之前就被拒的 {@code REJECTED_BEFORE_MOVE}，玩家同樣
  *     留在原世界）→ actionbar「通道傳送失敗，你仍在原世界。」、依原因去重記一次 WARN，通道仍開著，可以再試；{@code FAILED_RECOVERY_REQUIRED} → 不移除 record，checked
@@ -104,23 +105,38 @@ final class PassageService {
     }
 
     /**
-     * 記下每位參與者這個 tick 的腳在來源艙的 local z（不在來源世界、或不是 exact 的在線玩家時移除），回傳上一個 tick 的值。只讀世界、只寫記憶體，所以 roll-forward 未確認、
-     * 結束條件成立的 tick 也照做：之後的「上一個 tick」永遠是真的上一個 tick。
+     * 記下每位參與者這個 tick（{@code service.now}）的腳在來源艙的 local z（不在來源世界、或不是 exact 的在線玩家時移除），回傳上一個 tick（now−1）記下的值
+     * （{@link #previousTick}）。只讀世界、只寫記憶體，所以 roll-forward 未確認、結束條件成立的 tick 也照做。
+     * <p>這個 session 的推進被略過的 tick 不會觀察：journal 有未 checked 的 authority（{@code CollapseService.tick} 整個略過）、隔離中、走廊操作進行中、推進在觀察之前丟出例外，
+     * 或整個 tick 無法執行。這時記下的值比上一個 tick 更舊，期間玩家可能已由中線內側走到外側（z 沒有下限，可能已離門口一段距離）。§10.3 的「上一個 tick 還在中線內側」只認
+     * now−1 的觀察（F5-1 fix round 1，spec review S-m1）：恢復之後的第一個 tick 不會因為更舊的觀察而觸發，這個 tick 的觀察成為下一個 tick 的「上一個 tick」。
      */
     private Map<UUID, Double> observe(SessionRecoveryRecord record, Track track) {
-        var previous = Map.copyOf(track.passageZ);
+        var previous = previousTick(track.passageZ, service.now);
         var world = sourceWorld(record);
         var frame = frame(record);
         for (var person : record.participants()) {
             var id = person.playerUuid();
             var player = service.server.getPlayerManager().getPlayer(id);
             if (world != null && player != null && !player.isRemoved() && player.getServerWorld() == world && world.getEntity(id) == player) {
-                track.passageZ.put(id, ChamberSpaceCoordinates.localPosition(frame, player.getPos()).z);
+                track.passageZ.put(id, new ObservedZ(ChamberSpaceCoordinates.localPosition(frame, player.getPos()).z, service.now));
             } else {
                 track.passageZ.remove(id);
             }
         }
         return previous;
+    }
+
+    /** 一位參與者的腳在來源艙的 local z，與觀察到它的 server tick（{@link Track#passageZ}；F5-1 fix round 1，S-m1）。 */
+    record ObservedZ(double z, int tick) { }
+
+    /**
+     * 上一個 tick（{@code now − 1}）記下的 local z（純函式，F5-1 fix round 1，spec review S-m1）：更早的觀察不算（那段期間這個 session 的推進被略過，看不到中線的穿越）。
+     */
+    static Map<UUID, Double> previousTick(Map<UUID, ObservedZ> observed, int now) {
+        var result = new HashMap<UUID, Double>();
+        observed.forEach((id, seen) -> { if (seen.tick() == now - 1) result.put(id, seen.z()); });
+        return result;
     }
 
     /** §10.6 的結束原因（(a) 由攔截觸發，其餘由 {@link #endCondition}）。{@code text} 是 INFO 的字句。 */
@@ -205,7 +221,10 @@ final class PassageService {
 
     // ---- 跨越與傳送（§10.3、§10.4） ----
 
-    /** 跨越判定的輸入（{@link #crosses}）：{@code local} 是腳這個 tick 在來源艙的 local 座標（觀察不到時為 null），{@code previousLocalZ} 是上一個 tick 的 local z。 */
+    /**
+     * 跨越判定的輸入（{@link #crosses}）：{@code local} 是腳這個 tick 在來源艙的 local 座標（觀察不到時為 null），{@code previousLocalZ} 是上一個 tick 的 local z（{@link #previousTick}；
+     * 上一個 tick 沒有觀察時為 null）。
+     */
     record Candidate(boolean participant, boolean alreadyCrossed, boolean exactOnlineAlive, boolean spectator, boolean inSourceWorld, boolean riding,
             boolean occupiedElsewhere, Vec3d local, Double previousLocalZ) { }
 

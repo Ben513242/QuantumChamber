@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * <ul>
  * <li>collapse-suspended（M5 plan 決策 7，{@code CollapseSuspendMixin} 讀取）：被加入的 session，{@code CollapseService} 完全不推進，
  *     M4 的 GameTest 因此維持「MEASURED 會一直等待」的原斷言。不變量：同一個 JVM 內不得清除（沒有移除的 API）；default run 中每一個
- *     會產生 MEASURED 的 test 都必須在 CollapseService 第一次看到該 session 之前（選門的同一個 tick 之前）加入。</li>
+ *     會產生 MEASURED 的 test 都必須在 CollapseService 第一次看到該 session 之前（選門的同一個 tick 之前）加入。可撤銷的暫停另見 {@link #STEP_PAUSE}。</li>
  * <li>journal flush 探針（{@link #FLUSH_PROBE}）：{@code SessionJournalWindowFaultMixin} 在每次 journal flush 開頭呼叫 {@link #beforeJournalFlush}，
  *     探針丟出例外即讓那次寫出受控失敗。只由 M5 的 test 經 {@code M5GameTestSupport.installFlushProbe} 安裝。</li>
  * <li>journal 寫出稽核（{@link #JOURNAL_AUDIT}，F4a-0 m-1）：{@code SessionJournalWriteCountMixin} 在 journal 正式檔每一次實際寫出之前呼叫
@@ -58,9 +58,12 @@ import org.slf4j.LoggerFactory;
  *     {@link #readyHeld}，裝著時這個 session 不提交、PREPARE 照常（原艙門每個 tick 依條件判斷），等同 production 可以到達的「PASSAGE_READY 的前置條件還沒成立」，只是時間
  *     拉長。給「準備完成之後仍在 PREPARE」的原艙門 test（F4b-3 的 T-MEM、T-FAIL；F5-1 之前它們停在 READY stub），以及要控制通道起算時點的 test（F5-1 的
  *     {@code m5_universe_passage_crossed_pending}）用。由 {@code M5GameTestSupport.holdReady} 安裝。</li>
+ * <li>塌縮流程推進的暫停（{@link #STEP_PAUSE}，F5-1 fix round 1）：{@code CollapseSuspendMixin} 經 {@link #collapseSuspended} 讀它，裝著、還沒放行時這個 session 的
+ *     {@code CollapseService.step} 一開始就取消；與 collapse-suspended 的集合不同，可以撤銷。給「這個 session 的推進被略過幾個 tick、之後恢復」的 test 用（F5-1 fix round 1 的
+ *     {@code m5_universe_passage_stale}）。由 {@code M5GameTestSupport.installStepPause} 安裝。</li>
  * </ul>
- * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核、六個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動）與 PASSAGE_READY 的
- * 提交暫緩各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核、六個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動）、PASSAGE_READY 的
+ * 提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {
@@ -88,10 +91,17 @@ public final class M5TestHooks {
     static final Slot<NativeMoveFault> NATIVE_MOVE_FAULT = new Slot<>("通道的原生移動被拒注入");
     /** PASSAGE_READY 的提交暫緩（F5-1，{@code M5GameTestSupport.holdReady}）。 */
     static final Slot<ReadyHold> READY_HOLD = new Slot<>("PASSAGE_READY 的提交暫緩");
+    /** 塌縮流程推進的暫停（F5-1 fix round 1，可撤銷；{@code M5GameTestSupport.installStepPause}）。 */
+    static final Slot<StepPause> STEP_PAUSE = new Slot<>("塌縮流程推進的暫停");
 
-    /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
+    /**
+     * {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。不可撤銷的集合
+     * （{@link #suspendCollapse}）之外，另看可撤銷的推進暫停（{@link #STEP_PAUSE}，F5-1 fix round 1）。
+     */
     public static boolean collapseSuspended(UUID session) {
-        return "all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session);
+        if ("all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session)) return true;
+        var pause = STEP_PAUSE.get();
+        return pause != null && pause.holds(session);
     }
 
     /** 暫停這個 session 的塌縮流程（不可撤銷）。 */
@@ -595,6 +605,31 @@ public final class M5TestHooks {
         int hits() { return hits.get(); }
 
         /** 之後不再暫緩（仍裝著，hooks 釋放時移除）。 */
+        void release() { released = true; }
+    }
+
+    /**
+     * 塌縮流程推進的暫停（F5-1 fix round 1，spec review S-m1；{@link #STEP_PAUSE}）：{@code session} 在裝著、還沒 {@link #release} 的期間，{@code CollapseSuspendMixin} 在
+     * {@code CollapseService.step} 的開頭取消它的推進（與 collapse-suspended 相同，但可撤銷），等同 production 中這個 session 的推進被略過的 tick（journal 有未 checked 的
+     * authority、隔離中、整個 tick 無法執行）。{@code hits()} 是被取消的推進次數（證明 mixin 真的套用）。
+     */
+    static final class StepPause {
+        private final UUID session;
+        private final AtomicInteger hits = new AtomicInteger();
+        private volatile boolean released;
+
+        StepPause(UUID session) { this.session = Objects.requireNonNull(session, "session"); }
+
+        boolean holds(UUID candidate) {
+            if (released || !session.equals(candidate)) return false;
+            hits.incrementAndGet();
+            return true;
+        }
+
+        /** 已取消的推進次數。 */
+        int hits() { return hits.get(); }
+
+        /** 之後不再暫停（仍裝著，hooks 釋放時移除）。 */
         void release() { released = true; }
     }
 }
