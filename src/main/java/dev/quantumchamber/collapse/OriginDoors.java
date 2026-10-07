@@ -51,7 +51,8 @@ import org.slf4j.LoggerFactory;
  * {@link #queueDoor}（例如 {@link DoorGoal#OPEN_AFTER_TERMINAL}）。{@link #watchDoor} 目前不看 PASSAGE_READY（開服時的通道由 §12 在第一個 tick 終局）。
  * <p><b>F5-2 的接點</b>（spec §10.6 :613）：找不到所屬 session 的量子膜，在 {@code ChamberPowerCoordinator} 刷新該艙時排入下一個 tick 正規化為一般開門。待套用的門以 chamber
  * 為 key（{@link #doors}），但 {@link PendingDoor} 帶著 session、{@link DoorGoal#NORMALIZE} 要求 collapse view 是 COLLAPSING，所以沒有 session 的正規化要另一個目標；條件見
- * M5 note F4b-3「補充第 8 點」。有 COLLAPSING／SEALED 的 session 時由 {@link #watchDoor} 與待套用的門處理，兩者不要同時寫門。
+ * M5 note F4b-3「補充第 8 點」。有 COLLAPSING／SEALED 的 session 時由 {@link #watchDoor} 與待套用的門處理，兩者不要同時寫門；SEALED 帶著量子膜時，{@link #cancelSealedClose}
+ * 不取消還沒套用的關門（F5-0，F4b-3 spec m-2），所以正規化可以繼續排除有 SEALED session 的艙。
  * <p>每個 session 的門狀態（{@code doorLoaded}、{@code doorSeenLoaded}、{@code membrane}、{@code doorReleased}）留在 {@link CollapseService.Track}：它們的生命週期（第一次
  * 推進時建立、只保留 journal 裡的 session、終局時移除、{@code resetGate} 重設 PREPARE 的部分）就是 Track 的，而這裡本來就要讀 Track 的 {@code preparing}、
  * {@code pendingSeal}、{@code backoff} 與 {@code warnings}。
@@ -316,7 +317,8 @@ final class OriginDoors {
      * <li>找出所屬 session 之前的例外（journal 健康時 {@link #sessionAt} 只讀記憶體內的 record，不會發生）：沒有 session 可以歸屬，也無法判斷門是否屬於塌縮流程，
      *     拒絕並記 WARN（不去重；沒有 {@code session=}，所以帶子 marker {@link CollapseService#TICK_LOG_MARKER}，F5-0，F4b-3 spec m-1）。</li>
      * </ul>
-     * SEALED 的門照一般門的邏輯時（§11.2：任何玩家都可以照一般方式開門），同時取消這座艙還沒套用的關門（{@link #cancelSealedClose}，F4b-3 fix round 1，quality Q-M2）。
+     * SEALED 的門照一般門的邏輯時（§11.2：任何玩家都可以照一般方式開門），同時取消這座艙還沒套用的關門（{@link #cancelSealedClose}，F4b-3 fix round 1，quality Q-M2；
+     * 門還帶著量子膜時不取消，F5-0，spec m-2）。
      */
     ChamberCollapsePort.DoorUse door(ServerWorld world, ChamberFrame frame, PlayerEntity player) {
         if (!service.server.isOnThread()) return ChamberCollapsePort.DoorUse.PASS;
@@ -343,7 +345,7 @@ final class OriginDoors {
             action = doorAction(view.state(), universe, service.journal.rollForwardPending(sid), owns, user);
             var use = switch (action) {
                 case PASS -> {
-                    if (view.state() == SessionState.SEALED) cancelSealedClose(view, player);
+                    if (view.state() == SessionState.SEALED) cancelSealedClose(view, world, frame, player);
                     yield ChamberCollapsePort.DoorUse.PASS;
                 }
                 case REFUSE -> {
@@ -382,10 +384,18 @@ final class OriginDoors {
      * 還沒套用的關門（{@link DoorGoal#CLOSE_ON_SEALED}：進入 SEALED 時排入，或 chunk 重新載入之後的重新套用；例如還在等門口的 entity storage 載入、chunk 不是 FULL、
      * 或在退避中）。之後的門由玩家照一般方式開關；只有下一次真的重新載入（{@link #watchDoor}）才再依 collapse view 關門一次。在門切換之前呼叫：門切換本身被拒時
      * （例如門板不完整），門維持原狀，同樣不再由塌縮流程關上。
+     * <p>例外（F5-0，F4b-3 spec m-2）：門還帶著量子膜（{@link #doorHasMembrane}；例如進入 SEALED 時 PREPARE 的 sealed 量子膜還沒被關門取代）時不取消。之後的門切換若被拒或
+     * rollback，門仍是量子膜，排入的關門照樣把它清掉，SEALED 的艙不會一直留著有碰撞的膜（§10.6 :613 的正規化不涵蓋有 SEALED session 的艙）；門切換成功時，量子膜門的切換就是
+     * 關門（{@code withOpen(false)} 同時清掉量子膜），排入的關門是 UNCHANGED。玩家接著再開門時，門已沒有量子膜，照上一段取消，所以玩家打開的門仍不會被關回去。
      */
-    private void cancelSealedClose(SessionRecoveryRecord view, PlayerEntity player) {
+    private void cancelSealedClose(SessionRecoveryRecord view, ServerWorld world, ChamberFrame frame, PlayerEntity player) {
         var pending = doors.get(view.chamberUuid());
         if (pending == null || pending.goal != DoorGoal.CLOSE_ON_SEALED || !pending.session.equals(view.sessionUuid())) return;
+        if (doorHasMembrane(world, frame)) {
+            LOGGER.debug(LOG_MARKER, "SEALED 的原艙門被玩家使用，但門還帶著量子膜：保留還沒套用的關門（{}），門切換被拒時由它清掉量子膜：session={} chamber={} 玩家={}",
+                    pending.reapplied ? "chunk 重新載入之後的重新套用" : "進入 SEALED 時排入", view.sessionUuid(), view.chamberUuid(), player.getUuid());
+            return;
+        }
         doors.remove(view.chamberUuid());
         LOGGER.info(LOG_MARKER, "SEALED 的原艙門被玩家照一般方式使用：取消還沒套用的關門（{}），玩家開關的門不會被關回去：session={} chamber={} 玩家={}",
                 pending.reapplied ? "chunk 重新載入之後的重新套用" : "進入 SEALED 時排入", view.sessionUuid(), view.chamberUuid(), player.getUuid());

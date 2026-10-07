@@ -2501,6 +2501,54 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * F5-0（F4b-3 spec m-2；spec §11.2、§7.3 :404）：SEALED 的原艙門帶著量子膜時，玩家照一般方式使用門不取消還沒套用的關門。之後的門切換若被拒或 rollback（門板不完整、
+     * 寫入被拒），門仍是量子膜；關門照樣把它清掉，SEALED 的艙不會一直留著有碰撞的膜。原艙（{@code DormantOrigin}）上的 SEALED 收據（參與者是離線的隨機玩家，不會觸發重試），
+     * 門上留著 sealed 量子膜（模擬進入 SEALED 時的關門還沒套用），再模擬重啟之後的第一次觀察（{@code M5GameTestSupport.simulateDoorStartup}）：塌縮流程只排入下一個 tick 的關門。
+     * 排入之後、套用之前，非參與者 P 直接呼叫 port（SEALED 照一般門的邏輯：PASS）而不切換門（等同之後的門切換被拒）：
+     * <ul>
+     * <li>關門沒有被取消（沒有「取消還沒套用的關門」的 INFO）；</li>
+     * <li>排入的關門照常在下一個 tick 套用：門關上，量子膜清掉。</li>
+     * </ul>
+     * 門沒有量子膜時照舊取消（T-RELOAD 的第三次重新載入）。catalog 增量 0（SEALED 收據不配置宇宙）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_sealed_membrane", tickLimit = 300)
+    public void sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it(TestContext context) {
+        begin(context, "sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var sealedRecord = M5GameTestSupport.collapseFixture(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(UUID.randomUUID(), true),
+                    List.of(), true, SessionState.SEALED, false);
+            var sid = sealedRecord.sessionUuid();
+            origin.owned.add(sid);
+            M5GameTestSupport.writeDoor(world, frame, true, MembraneState.sealedFor(frame.outwardFacing()));
+            witness.put("membraneWritten", M5GameTestSupport.doorSealed(world, frame));
+            M5GameTestSupport.simulateDoorStartup(server, sid);
+            whenTicks(context, registered + 1, 10, () -> reapplyQueuedTicks(capture, sid).size() == 1, queuedAt -> {
+                witness.put("stillAMembraneWhenUsed", M5GameTestSupport.doorSealed(world, frame) && reappliedTicks(capture, sid).isEmpty());
+                // 只呼叫 port、不切換門：等同 PASS 之後的門切換被拒或 rollback，門維持量子膜。
+                witness.put("usePassesForASealedChamber", M5GameTestSupport.useDoor(world, frame, p) == ChamberCollapsePort.DoorUse.PASS);
+                witness.put("stillAMembraneAfterTheUse", M5GameTestSupport.doorSealed(world, frame));
+                whenTicks(context, queuedAt + 1, 20, () -> !reappliedTicks(capture, sid).isEmpty() || pendingClosesCancelled(capture, sid) > 0, settledAt -> {
+                    witness.put("pendingCloseKeptWhileTheDoorHasAMembrane", pendingClosesCancelled(capture, sid) == 0);
+                    witness.put("closedByThePendingClose", doorAll(world, frame, false, MembraneState.NONE) && reappliedTicks(capture, sid).size() == 1);
+                    witness.put("stillSealed", receiptStillSealed(journal, sid));
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid));
+                    LOGGER.info("M5_DOOR_SEALED_MEMBRANE queued={} applied={} cancelled={}", reapplyQueuedTicks(capture, sid), reappliedTicks(capture, sid),
+                            pendingClosesCancelled(capture, sid));
+                    hooks.release();
+                    context.assertTrue(!witness.containsValue(false), "SEALED 的原艙門帶著量子膜時被使用：" + witness);
+                    awaitConvergedThenComplete(context, 0, 20);
+                }, () -> "排入的關門沒有套用、也沒有被取消：witness=" + witness, hooks);
+            }, () -> "模擬重啟之後沒有排入重新套用：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+        });
+    }
+
     /** 這個 session「SEALED 的原艙門被玩家照一般方式使用：取消還沒套用的關門」的 INFO 數（帶 LOG_MARKER；F4b-3 fix round 1）。 */
     private static int pendingClosesCancelled(LogCapture capture, UUID sid) {
         return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "取消還沒套用的關門", "session=" + sid).size();
