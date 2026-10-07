@@ -431,7 +431,7 @@ public final class M5ClientProbe implements ModInitializer {
         }
 
         /**
-         * enter 的受理條件，與 UniverseTransferService.targetSafety 的位置條件相同：腳底恰在方塊頂面、bbox 下方每一欄都是
+         * enter 的受理條件，與 TransferSafety.M3_SAFE_LANDING 的位置條件相同：腳底恰在方塊頂面、bbox 下方每一欄都是
          * 完整頂面、沒有流體、isSpaceEmpty。transfer 沿用同一個 XYZ，而 return 會在同一個來源位置套用同樣的檢查，
          * 所以這裡不合格就不受理，避免 enter 成功、return 卻被 REJECT_TARGET_UNSAFE 拒絕。
          */
@@ -458,7 +458,7 @@ public final class M5ClientProbe implements ModInitializer {
             return null;
         }
 
-        /** bbox 下方每一欄的地板位置；欄位範圍與 UniverseTransferService.targetSafety 的地板檢查相同。 */
+        /** bbox 下方每一欄的地板位置；欄位範圍與 TransferSafety.M3_SAFE_LANDING 的地板檢查相同。 */
         static List<BlockPos> floorColumns(Box box) {
             var floors = new ArrayList<BlockPos>();
             int floorY = MathHelper.floor(box.minY - 1e-7);

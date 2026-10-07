@@ -231,10 +231,41 @@ final class PassageService {
 
     /**
      * 跨越判定的輸入（{@link #crosses}）：{@code local} 是腳這個 tick 在來源艙的 local 座標（觀察不到時為 null），{@code previousLocalZ} 是上一個 tick 的 local z（{@link #previousTick}；
-     * 上一個 tick 沒有觀察時為 null）。
+     * 上一個 tick 沒有觀察時為 null）。以 {@link #builder} 依名稱設定（F5-1 fix round 1，quality Q-m7：9 個位置參數容易排錯）；沒有設定的欄位是 false 或 null。
      */
     record Candidate(boolean participant, boolean alreadyCrossed, boolean exactOnlineAlive, boolean spectator, boolean inSourceWorld, boolean riding,
-            boolean occupiedElsewhere, Vec3d local, Double previousLocalZ) { }
+            boolean occupiedElsewhere, Vec3d local, Double previousLocalZ) {
+        static Builder builder() { return new Builder(); }
+
+        /** 以這一份的每個欄位為起點的 builder（例如由全部成立的候選只改一個條件）。 */
+        Builder toBuilder() {
+            return builder().participant(participant).alreadyCrossed(alreadyCrossed).exactOnlineAlive(exactOnlineAlive).spectator(spectator).inSourceWorld(inSourceWorld)
+                    .riding(riding).occupiedElsewhere(occupiedElsewhere).local(local).previousLocalZ(previousLocalZ);
+        }
+
+        /** {@link Candidate} 的具名設定。 */
+        static final class Builder {
+            private boolean participant, alreadyCrossed, exactOnlineAlive, spectator, inSourceWorld, riding, occupiedElsewhere;
+            private Vec3d local;
+            private Double previousLocalZ;
+
+            private Builder() { }
+
+            Builder participant(boolean value) { participant = value; return this; }
+            Builder alreadyCrossed(boolean value) { alreadyCrossed = value; return this; }
+            Builder exactOnlineAlive(boolean value) { exactOnlineAlive = value; return this; }
+            Builder spectator(boolean value) { spectator = value; return this; }
+            Builder inSourceWorld(boolean value) { inSourceWorld = value; return this; }
+            Builder riding(boolean value) { riding = value; return this; }
+            Builder occupiedElsewhere(boolean value) { occupiedElsewhere = value; return this; }
+            Builder local(Vec3d value) { local = value; return this; }
+            Builder previousLocalZ(Double value) { previousLocalZ = value; return this; }
+
+            Candidate build() {
+                return new Candidate(participant, alreadyCrossed, exactOnlineAlive, spectator, inSourceWorld, riding, occupiedElsewhere, local, previousLocalZ);
+            }
+        }
+    }
 
     /** §10.3 的七個條件全部成立（純函式）。 */
     static boolean crosses(Candidate candidate) {
@@ -259,9 +290,17 @@ final class PassageService {
             var player = service.server.getPlayerManager().getPlayer(id);
             boolean exact = player != null && !player.isRemoved() && player.isAlive();
             boolean inSource = exact && player.getServerWorld() == world && world.getEntity(id) == player;
-            var candidate = new Candidate(true, current.collapse().crossed().contains(id), exact, exact && player.isSpectator(), inSource,
-                    exact && player.hasVehicle(), !service.journal.participantsAvailable(List.of(id)),
-                    inSource ? ChamberSpaceCoordinates.localPosition(frame, player.getPos()) : null, previous.get(id));
+            var candidate = Candidate.builder()
+                    .participant(true)
+                    .alreadyCrossed(current.collapse().crossed().contains(id))
+                    .exactOnlineAlive(exact)
+                    .spectator(exact && player.isSpectator())
+                    .inSourceWorld(inSource)
+                    .riding(exact && player.hasVehicle())
+                    .occupiedElsewhere(!service.journal.participantsAvailable(List.of(id)))
+                    .local(inSource ? ChamberSpaceCoordinates.localPosition(frame, player.getPos()) : null)
+                    .previousLocalZ(previous.get(id))
+                    .build();
             if (!crosses(candidate)) continue;
             var result = transfer(current, player);
             if (result == null) continue;

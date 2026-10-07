@@ -146,8 +146,9 @@ public final class CollapseService {
     private static final Map<MinecraftServer, CollapseService> INSTANCES = new ConcurrentHashMap<>();
     private static boolean initialized;
 
-    // server、startupSessions、tracks 與下方 context 中的 journal、sessions、now 是 package-private：同一個 server instance 的 OriginDoors 直接讀寫（F5-0，行為不變）。
-    // context 的 pages 仍是 private（OriginDoors 不用它）。
+    // server、startupSessions、tracks 與下方 context 中的 journal、sessions、now 是 package-private：同一個 server instance 的 OriginDoors 直接讀寫（F5-0，行為不變），
+    // F5-1 起 PassageService 也讀 server、journal、now；startupPassages、originDoors、passages 也是 package-private（理由見各自的 Javadoc）。context 的 pages 仍是 private
+    // （兩者都不用它）。
     final MinecraftServer server;
     /**
      * 開服 attach 當下已在 journal 的 session：DORMANT 與 SEALED 重試的「開服之後第一次觀察到原參與者在艙內」只對它們成立（§7.1、§11.2）；原艙門的重新套用也用它
@@ -1201,8 +1202,8 @@ public final class CollapseService {
         track.backoff.failed(now);
     }
 
-    /** 原參與者中在線、存活、非旁觀、位於來源 world 而且 bbox 完整在來源艙 interior 內的人。 */
-    Set<UUID> inside(SessionRecoveryRecord record) {
+    /** 原參與者中在線、存活、非旁觀、位於來源 world 而且 bbox 完整在來源艙 interior 內的人（只在這裡使用；F5-1 fix round 1，quality Q-m7 改回 private）。 */
+    private Set<UUID> inside(SessionRecoveryRecord record) {
         var result = new LinkedHashSet<UUID>();
         var world = server.getWorld(RegistryKey.of(RegistryKeys.WORLD, record.origin().worldKey()));
         if (world == null) return result;

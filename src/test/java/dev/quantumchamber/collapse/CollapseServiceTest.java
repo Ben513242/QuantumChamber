@@ -436,14 +436,19 @@ class CollapseServiceTest {
         var base = candidate(inside, 0.7);
         var cases = new ArrayList<Executable>();
         cases.add(() -> assertTrue(PassageService.crosses(base), "全部成立"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(false, false, true, false, true, false, false, inside, 0.7)), "非參與者"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, true, true, false, true, false, false, inside, 0.7)), "已跨過"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, false, false, true, false, false, inside, 0.7)), "離線、不是 exact 或死亡"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, true, true, false, false, inside, 0.7)), "旁觀"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, false, false, false, inside, 0.7)), "不在 exact 的來源世界"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, true, false, inside, 0.7)), "騎乘中"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, false, true, inside, 0.7)), "被其他 session 佔用"));
-        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, false, false, null, 0.7)), "這個 tick 觀察不到"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().participant(false).build()), "非參與者"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().alreadyCrossed(true).build()), "已跨過"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().exactOnlineAlive(false).build()), "離線、不是 exact 或死亡"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().spectator(true).build()), "旁觀"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().inSourceWorld(false).build()), "不在 exact 的來源世界"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().riding(true).build()), "騎乘中"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().occupiedElsewhere(true).build()), "被其他 session 佔用"));
+        cases.add(() -> assertFalse(PassageService.crosses(base.toBuilder().local(null).build()), "這個 tick 觀察不到"));
+        // F5-1 fix round 1（quality Q-m7）：builder 依名稱設定的每個欄位，與 record 的 canonical constructor 的位置一致（上面各列只改一個條件，兩個條件對調時看不出來）。
+        cases.add(() -> assertEquals(new PassageService.Candidate(true, false, true, false, true, false, false, inside, 0.7), base, "全部成立的候選"));
+        cases.add(() -> assertEquals(new PassageService.Candidate(false, true, false, true, false, true, true, null, null), base.toBuilder().participant(false)
+                .alreadyCrossed(true).exactOnlineAlive(false).spectator(true).inSourceWorld(false).riding(true).occupiedElsewhere(true).local(null).previousLocalZ(null)
+                .build(), "每個欄位都反過來"));
         assertAll(cases);
     }
 
@@ -464,8 +469,9 @@ class CollapseServiceTest {
                 () -> assertEquals(Map.of(), PassageService.previousTick(Map.of(), 100), "沒有觀察"));
     }
 
+    /** 幾何之外的條件全部成立的候選（參與者、在線而 exact、在來源世界；沒有跨過、不是旁觀、沒有騎乘、沒有被佔用）。 */
     private static PassageService.Candidate candidate(Vec3d local, Double previous) {
-        return new PassageService.Candidate(true, false, true, false, true, false, false, local, previous);
+        return PassageService.Candidate.builder().participant(true).exactOnlineAlive(true).inSourceWorld(true).local(local).previousLocalZ(previous).build();
     }
 
     /**
