@@ -45,11 +45,12 @@ import org.slf4j.LoggerFactory;
  * <li><b>重新套用</b>：{@link #watchDoor}（每個 tick 對 COLLAPSING、SEALED 與執行期間的 PASSAGE_READY 觀察一次來源艙）。</li>
  * <li><b>待套用的門</b>：{@link #queueDoor}、{@link #openDoor}（排入），{@link #applyPending}（每個 tick 套用），目標見 {@link DoorGoal}。</li>
  * </ul>
- * <p><b>PASSAGE_READY 的門</b>（spec §10.2，F5-1）：提交 PASSAGE_READY 之後 {@link #openPassage} 排入 passable 量子膜（{@link DoorGoal#PASSABLE}，立即嘗試一次）；
- * {@link #prepareDoor} 只在 PREPARE 擁有原艙門時執行，提交之後不會把它改回 sealed。重啟或來源 chunk 重新載入之後，執行期間的 PASSAGE_READY 依 collapse view 重新套用
- * passable（{@link #watchDoor}）；開服時就是 PASSAGE_READY 的由 §12 在第一個 tick 終局、門改為一般開門，不重新套用 passable。通道期間的開關門（§10.5）接在
- * {@link #doorAction} 的 PASSAGE_READY 分支（roll-forward 尚未確認時已拒絕）與 {@link #door} 的處置 switch，目前照一般門的邏輯；通道結束 (a)–(d) 的改門排入
- * {@link #queueDoor}（例如 {@link DoorGoal#OPEN_AFTER_TERMINAL}）。
+ * <p><b>PASSAGE_READY 的門</b>（spec §10.2–§10.6，F5-1）：提交 PASSAGE_READY 之後 {@link #openPassage} 排入 passable 量子膜（{@link DoorGoal#PASSABLE}，立即嘗試一次）；
+ * {@link #prepareDoor} 只在 PREPARE 擁有原艙門時執行，提交之後不會把它改回 sealed。通道期間的開關門（§10.5）由 {@link #doorAction} 的 PASSAGE_READY 分支決定：roll-forward
+ * 尚未確認時拒絕，參與者結束通道（{@link DoorAction#END_PASSAGE} → {@link PassageService#endByParticipant}：先終局、再改門），非參與者拒絕；{@code CollapseService.useDoor}
+ * 與 port 不必改。通道結束 (a)–(d) 的改門由 {@link PassageService} 排入 {@link #queueDoor}（(a) {@link DoorGoal#CLOSE_AFTER_TERMINAL}，(b)(c)(d)
+ * {@link DoorGoal#OPEN_AFTER_TERMINAL}）。重啟或來源 chunk 重新載入之後，執行期間的 PASSAGE_READY 依 collapse view 重新套用 passable（{@link #watchDoor}）；開服時就是
+ * PASSAGE_READY 的由 §12 在第一個 tick 終局、門改為一般開門，不重新套用 passable。
  * <p><b>F5-2 的接點</b>（spec §10.6 :613）：找不到所屬 session 的量子膜，在 {@code ChamberPowerCoordinator} 刷新該艙時排入下一個 tick 正規化為一般開門。待套用的門以 chamber
  * 為 key（{@link #doors}），但 {@link PendingDoor} 帶著 session、{@link DoorGoal#NORMALIZE} 要求 collapse view 是 COLLAPSING，所以沒有 session 的正規化要另一個目標；條件見
  * M5 note F4b-3「補充第 8 點」。有 COLLAPSING／SEALED 的 session 時由 {@link #watchDoor} 與待套用的門處理，兩者不要同時寫門；SEALED 帶著量子膜時，{@link #cancelSealedClose}
@@ -286,7 +287,9 @@ final class OriginDoors {
         /** 艙內的非參與者：門改為一般開門讓他離開，塌縮不結束、不改變階段。 */
         OPEN_FOR_INSIDER,
         /** PREPARE 期間參與者開關門：先 checked 終局、再關門（門口有 entity 時一般開門）。 */
-        END_AND_CLOSE
+        END_AND_CLOSE,
+        /** 通道期間（PASSAGE_READY）參與者開關門：結束通道（§10.6 (a)），先 checked 終局、再關門（門口有 entity 時一般開門；{@link PassageService#endByParticipant}，F5-1）。 */
+        END_PASSAGE
     }
 
     /**
@@ -294,14 +297,15 @@ final class OriginDoors {
      * 暫停（沒有被拒而待重試的 SEALED 寫入、沒有隔離）：
      * <ul>
      * <li>COLLAPSING、目的地是 UNIVERSE、PREPARE 擁有原艙門：roll-forward 尚未確認 → 拒絕；參與者 → 終局再關門；艙內的非參與者 → 一般開門；艙外的非參與者 → 拒絕。</li>
-     * <li>PASSAGE_READY：roll-forward 尚未確認 → 拒絕（§7 :336）；其餘（§10.5）尚未實作，目前照一般門的邏輯。</li>
+     * <li>PASSAGE_READY（§10.5，F5-1）：roll-forward 尚未確認 → 拒絕、不改門（§7 :336：{@code Crossed} 未確認時參與者關門也被拒）；參與者 → 結束通道（先終局、再改門）；
+     *     非參與者 → 拒絕（不論在艙內或艙外：passable 量子膜沒有碰撞，艙內的人可以直接走出去）。roll-forward 中的 SEALED（collapse view 是 SEALED）照 SEALED 的規則。</li>
      * <li>其他（SEALED、門本來就是一般狀態的階段、SOURCE、M1–M4 的狀態）→ 照一般門的邏輯（§11.2：SEALED 時任何玩家都可以照一般方式開門；§3 詮釋 3）。</li>
      * </ul>
      */
     static DoorAction doorAction(SessionState viewState, boolean universe, boolean rollForwardPending, boolean prepareOwnsDoor, DoorUser user) {
         Objects.requireNonNull(viewState, "viewState");
         Objects.requireNonNull(user, "user");
-        if (viewState == SessionState.PASSAGE_READY) return rollForwardPending ? DoorAction.REFUSE : DoorAction.PASS;
+        if (viewState == SessionState.PASSAGE_READY) return !rollForwardPending && user == DoorUser.PARTICIPANT ? DoorAction.END_PASSAGE : DoorAction.REFUSE;
         if (viewState != SessionState.COLLAPSING || !universe || !prepareOwnsDoor) return DoorAction.PASS;
         if (rollForwardPending) return DoorAction.REFUSE;
         return switch (user) {
@@ -362,6 +366,7 @@ final class OriginDoors {
                 }
                 case OPEN_FOR_INSIDER -> openForInsider(view, world, frame, player);
                 case END_AND_CLOSE -> endByParticipant(view, track, player);
+                case END_PASSAGE -> service.passages.endByParticipant(view, track, player);
             };
             var after = service.tracks.get(sid);
             if (after != null) after.warnings.remove(doorUseKey(action));
@@ -682,14 +687,14 @@ final class OriginDoors {
     }
 
     /**
-     * 待套用門的目標：終局之後的一般開門，進入 SEALED 時的關門（門口有 entity 時一般開門）；F4b-3 另加 PREPARE 期間參與者關門的終局之後的關門、PREPARE
+     * 待套用門的目標：終局之後的一般開門，進入 SEALED 時的關門（門口有 entity 時一般開門）；F4b-3 另加參與者關門的終局之後的關門（F5-1 起也用於通道期間的 (a)）、PREPARE
      * 結束或暫停之後的一般開門、重新套用時的量子膜正規化，以及 PREPARE 每個 tick 的原艙門（{@link CollapseService.Track#membrane}，不排入待套用的門）；F5-1 另加 PASSAGE_READY
      * 的 passable 量子膜。{@code pending}／{@code done} 是 log 的字句。
      */
     enum DoorGoal {
         OPEN_AFTER_TERMINAL("終局之後原艙門還沒改為一般開門", "原艙門已改為一般開門"),
         CLOSE_ON_SEALED("進入 SEALED 之後原艙門還沒套用（關門；門口有 entity 時一般開門）", "進入 SEALED 之後的原艙門已套用"),
-        CLOSE_AFTER_TERMINAL("PREPARE 期間參與者關門：終局之後原艙門還沒套用（關門；門口有 entity 時一般開門）", "PREPARE 期間參與者關門：終局之後的原艙門已套用"),
+        CLOSE_AFTER_TERMINAL("參與者關門（PREPARE 或通道期間）：終局之後原艙門還沒套用（關門；門口有 entity 時一般開門）", "參與者關門（PREPARE 或通道期間）：終局之後的原艙門已套用"),
         OPEN_ON_LEAVE("PREPARE 結束或暫停之後原艙門還沒改為一般開門", "PREPARE 結束或暫停之後原艙門已改為一般開門"),
         NORMALIZE("重新套用：原艙門的量子膜還沒改為一般開門", "重新套用：原艙門的量子膜已改為一般開門"),
         PREPARE_MEMBRANE("PREPARE 的原艙門還沒套用（sealed 量子膜，或門口有人、艙內有非參與者時的一般開門）", "PREPARE 的原艙門已套用"),

@@ -382,16 +382,98 @@ class CollapseServiceTest {
                 () -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
     }
 
-    /** F5-1（spec §10.8）：通道開啟的訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 逐字等於 spec，en_us 有翻譯。 */
+    /** F5-1（spec §10.8）：通道開啟、傳送失敗與通道結束的訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 逐字等於 spec，en_us 有翻譯。 */
     @Test void passageMessagesExistInBothLanguages() throws Exception {
         var zh = lang("zh_tw"); var en = lang("en_us");
         var cases = new ArrayList<Executable>();
-        for (var row : List.of(List.of(CollapseService.MESSAGE_PASSAGE_OPENED, "message.quantumchamber.m5.passage_opened", "量子通道已開啟：穿過門口的量子膜即可前往。"))) {
+        for (var row : List.of(List.of(CollapseService.MESSAGE_PASSAGE_OPENED, "message.quantumchamber.m5.passage_opened", "量子通道已開啟：穿過門口的量子膜即可前往。"),
+                List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED, "message.quantumchamber.m5.passage_transfer_failed", "通道傳送失敗，你仍在原世界。"),
+                List.of(CollapseService.MESSAGE_PASSAGE_CLOSED, "message.quantumchamber.m5.passage_closed", "量子通道已關閉。"))) {
             cases.add(() -> assertEquals(row.get(1), row.get(0)));
             cases.add(() -> assertEquals(row.get(2), text(zh, row.get(0))));
             cases.add(() -> assertFalse(text(en, row.get(0)).isBlank(), "en_us 有翻譯：" + row.get(0)));
         }
         cases.add(() -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
+        assertAll(cases);
+    }
+
+    /**
+     * F5-1（spec §10.3）：跨越判定的幾何，四個朝向都一樣。腳在門口（local x∈[1,6)、y∈[1,6)），local z 從中線內側（≥0.5）越到外側（&lt;0.5）才觸發；反方向、上一個 tick
+     * 沒有觀察、已在外側、門口範圍外都不觸發。local 座標由 production 的 {@code ChamberSpaceCoordinates.localPosition} 換算，test 以 {@code position} 從 local 造出世界座標，
+     * 再斷言換算回來的 local 與期望一致（換算本身也被鎖住）。
+     */
+    @Test void crossingGeometryWorksForEveryFacing() {
+        var cases = new ArrayList<Executable>();
+        for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
+            var frame = new ChamberFrame(new BlockPos(-17, 70, 33), facing);
+            record Row(String name, double x, double y, double z, Double previous, boolean expected) {}
+            for (var row : List.of(
+                    new Row("中線內側越到外側", 3.5, 1, 0.45, 0.55, true),
+                    new Row("門口的左右邊緣（x=1、x 接近 6）", 1.0, 1, 0.3, 0.7, true),
+                    new Row("門口的右邊緣", 5.999, 2.5, 0.3, 0.7, true),
+                    new Row("一個 tick 往外走很遠（沒有下限）", 3.5, 1, -2.5, 0.6, true),
+                    new Row("反方向（由外往內）", 3.5, 1, 0.6, 0.4, false),
+                    new Row("上一個 tick 已在外側", 3.5, 1, 0.3, 0.45, false),
+                    new Row("上一個 tick 沒有觀察", 3.5, 1, 0.3, null, false),
+                    new Row("還在中線內側", 3.5, 1, 0.5, 0.7, false),
+                    new Row("門口範圍外（x<1）", 0.9, 1, 0.3, 0.7, false),
+                    new Row("門口範圍外（x=6）", 6.0, 1, 0.3, 0.7, false),
+                    new Row("門口範圍外（腳在 y<1）", 3.5, 0.9, 0.3, 0.7, false),
+                    new Row("門口範圍外（腳在 y=6）", 3.5, 6.0, 0.3, 0.7, false))) {
+                var world = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, row.x(), row.y(), row.z());
+                var local = dev.quantumchamber.chamber.ChamberSpaceCoordinates.localPosition(frame, world);
+                cases.add(() -> assertEquals(row.z(), local.z, 1e-9, facing + " local z 換算：" + row.name()));
+                cases.add(() -> assertEquals(row.expected(), PassageService.crosses(candidate(local, row.previous())), facing + "：" + row.name()));
+            }
+        }
+        assertAll(cases);
+    }
+
+    /** F5-1（spec §10.3）：跨越的其他條件，每個條件單獨不成立就不觸發（幾何成立）；非參與者、已跨過、騎乘、旁觀、不在來源世界、離線或死亡、被其他 session 佔用。 */
+    @Test void crossingRequiresEveryParticipantCondition() {
+        var inside = new Vec3d(3.5, 1, 0.3);
+        var base = candidate(inside, 0.7);
+        var cases = new ArrayList<Executable>();
+        cases.add(() -> assertTrue(PassageService.crosses(base), "全部成立"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(false, false, true, false, true, false, false, inside, 0.7)), "非參與者"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, true, true, false, true, false, false, inside, 0.7)), "已跨過"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, false, false, true, false, false, inside, 0.7)), "離線、不是 exact 或死亡"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, true, true, false, false, inside, 0.7)), "旁觀"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, false, false, false, inside, 0.7)), "不在 exact 的來源世界"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, true, false, inside, 0.7)), "騎乘中"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, false, true, inside, 0.7)), "被其他 session 佔用"));
+        cases.add(() -> assertFalse(PassageService.crosses(new PassageService.Candidate(true, false, true, false, true, false, false, null, 0.7)), "這個 tick 觀察不到"));
+        assertAll(cases);
+    }
+
+    private static PassageService.Candidate candidate(Vec3d local, Double previous) {
+        return new PassageService.Candidate(true, false, true, false, true, false, false, local, previous);
+    }
+
+    /**
+     * F5-1（spec §10.6）：結束條件 (b)(c)(d) 依即時訊號；同時成立時依 (b)(c)(d) 的順序回報一個；來源艙沒有載入時無法判斷 (d)、不結束（(b)(c) 照常）；到期以 game time
+     * 計（恰好到 expires 就結束）。
+     */
+    @Test void passageEndConditionsFollowTheSpecOrder() {
+        var OK = CollapseService.SourceSignal.OK;
+        var cases = new ArrayList<Executable>();
+        cases.add(() -> assertEquals(Optional.empty(), PassageService.endCondition(false, 100, 1300, OK), "沒有任何結束條件"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.ALL_CROSSED), PassageService.endCondition(true, 100, 1300, OK), "(b) 全員都已跨過"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.EXPIRED), PassageService.endCondition(false, 1300, 1300, OK), "(c) 恰好到期"));
+        cases.add(() -> assertEquals(Optional.empty(), PassageService.endCondition(false, 1299, 1300, OK), "(c) 還差 1 tick"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.SOURCE_LOW),
+                PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.LOW), "(d) 沒有供電"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.SOURCE_DISABLED),
+                PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.DISABLED), "(d) Origin 被停用"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.SOURCE_INVALID),
+                PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.INVALID), "(d) 結構失效"));
+        cases.add(() -> assertEquals(Optional.empty(), PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.NOT_LOADED), "沒有載入：不判斷 (d)"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.EXPIRED),
+                PassageService.endCondition(false, 1300, 1300, CollapseService.SourceSignal.NOT_LOADED), "沒有載入時 (c) 照常"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.ALL_CROSSED),
+                PassageService.endCondition(true, 1300, 1300, CollapseService.SourceSignal.LOW), "同時成立時回報 (b)"));
+        cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.EXPIRED),
+                PassageService.endCondition(false, 1300, 1300, CollapseService.SourceSignal.LOW), "(c)(d) 同時成立時回報 (c)"));
         assertAll(cases);
     }
 
@@ -487,15 +569,16 @@ class CollapseServiceTest {
 
     /**
      * F4b-3（spec §7 :336、§7.3「PREPARE 期間的開關門」、§11.2、§3 詮釋 3；補充第 2 點）：原艙門的攔截規則。只有 COLLAPSING、目的地是 UNIVERSE、PREPARE 擁有原艙門時
-     * 才依身分處置（參與者終局再關門、艙內的非參與者一般開門、艙外的非參與者拒絕），roll-forward 尚未確認時一律拒絕；PASSAGE_READY 只有 roll-forward 尚未確認時拒絕
-     * （其餘屬 F5）；SEALED、一般狀態的階段、SOURCE 與 M1–M4 的狀態一律照一般門的邏輯。
+     * 才依身分處置（參與者終局再關門、艙內的非參與者一般開門、艙外的非參與者拒絕），roll-forward 尚未確認時一律拒絕；SEALED、一般狀態的階段、SOURCE 與 M1–M4 的狀態一律
+     * 照一般門的邏輯。F5-1（§10.5、§7 :336）：PASSAGE_READY 時參與者結束通道（END_PASSAGE），非參與者（艙內或艙外）與 roll-forward 尚未確認時一律拒絕。
      */
     @Test void doorActionFollowsThePrepareDoorRules() {
         var cases = new ArrayList<Executable>();
         for (var state : SessionState.values()) for (boolean universe : new boolean[] {false, true}) for (boolean pending : new boolean[] {false, true})
             for (boolean owns : new boolean[] {false, true}) for (var user : OriginDoors.DoorUser.values()) {
                 OriginDoors.DoorAction expected;
-                if (state == SessionState.PASSAGE_READY) expected = pending ? OriginDoors.DoorAction.REFUSE : OriginDoors.DoorAction.PASS;
+                if (state == SessionState.PASSAGE_READY) expected = !pending && user == OriginDoors.DoorUser.PARTICIPANT ? OriginDoors.DoorAction.END_PASSAGE
+                        : OriginDoors.DoorAction.REFUSE;
                 else if (state != SessionState.COLLAPSING || !universe || !owns) expected = OriginDoors.DoorAction.PASS;
                 else if (pending) expected = OriginDoors.DoorAction.REFUSE;
                 else expected = switch (user) {
@@ -523,6 +606,15 @@ class CollapseServiceTest {
                 OriginDoors.doorAction(SessionState.COLLAPSING, true, true, false, OriginDoors.DoorUser.OUTSIDER), "一般狀態的階段照一般門的邏輯"));
         cases.add(() -> assertEquals(OriginDoors.DoorAction.PASS,
                 OriginDoors.doorAction(SessionState.SEALED, true, true, true, OriginDoors.DoorUser.OUTSIDER), "SEALED 任何玩家都可以照一般方式開門"));
+        // F5-1（§10.5）：通道期間。
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.END_PASSAGE,
+                OriginDoors.doorAction(SessionState.PASSAGE_READY, true, false, false, OriginDoors.DoorUser.PARTICIPANT), "通道期間參與者關門結束通道"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.REFUSE,
+                OriginDoors.doorAction(SessionState.PASSAGE_READY, true, false, false, OriginDoors.DoorUser.INSIDER), "通道期間艙內的非參與者被拒"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.REFUSE,
+                OriginDoors.doorAction(SessionState.PASSAGE_READY, true, false, false, OriginDoors.DoorUser.OUTSIDER), "通道期間艙外的非參與者被拒"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.REFUSE,
+                OriginDoors.doorAction(SessionState.PASSAGE_READY, true, true, false, OriginDoors.DoorUser.PARTICIPANT), "Crossed 未確認時參與者關門被拒（§7）"));
         assertAll(cases);
     }
 

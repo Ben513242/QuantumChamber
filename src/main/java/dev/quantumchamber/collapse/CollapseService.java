@@ -88,8 +88,8 @@ import org.slf4j.MarkerFactory;
  *     → checked COMPLETE（修復寫了任何一格時也先做 checkpoint，F5-1 的 S-M2）→ 準備完成 → §10.2 的前置條件都成立時 checked 提交 PASSAGE_READY（restore 類，
  *     {@link #ready}；F5-1）。閘門在 PREPARE 進行到一半時不再成立就釋放目的世界的 ticket、退回 WAITING。目的世界的 ticket 在閘門失效、進入 SEALED、終局時釋放，
  *     PASSAGE_READY 期間繼續持有，通道結束時隨終局釋放。</li>
- * <li>PASSAGE_READY（§10.2，F5-1）：提交之後門改為 passable 量子膜、刷新 Controller、對艙內的參與者顯示「量子通道已開啟」。跨越、傳送與通道的結束（§10.3–§10.6）
- *     尚未實作：執行期間提交的 PASSAGE_READY 停在這裡，目的世界的 ticket 繼續持有。</li>
+ * <li>PASSAGE_READY（§10.2–§10.6，F5-1）：提交之後門改為 passable 量子膜、刷新 Controller、對艙內的參與者顯示「量子通道已開啟」；之後每個 tick 由 {@link PassageService}
+ *     判斷跨越、以 passage 的傳送政策傳送、checked 加入 Crossed、處理兩種傳送失敗，並依結束條件 (a)–(d) 結束通道。</li>
  * <li>PREPARE 期間的原艙門（F4b-3，§7 開頭、§7.3；F5-0 起在 {@link OriginDoors}）：每個 PREPARE 的 tick 依「套用量子膜的條件」（門口沒有 entity、艙內沒有非參與者玩家）在 sealed 量子膜與
  *     一般開門之間選一個（{@link OriginDoors#prepareDoor}，門口有人時絕不套用有碰撞的門）；離開或暫停 PREPARE（閘門失效、SEALED 的寫入被拒、隔離）時門改回一般開門。
  *     玩家開關原艙門先經 {@code ChamberCollapsePort} 交給這裡（{@link #useDoor} → {@link OriginDoors#door}，排在 {@code ChamberDoorService} 之前）：PREPARE 期間參與者開關門 →
@@ -100,7 +100,8 @@ import org.slf4j.MarkerFactory;
  * </ul>
  * 註冊順序見 {@link #initialize()}；每個 session 的處理都在 {@link #step} 裡個別隔離例外，例外不會從 {@code END_SERVER_TICK} 拋出。
  * 終局與提交失敗的 WARN 由這裡依 (session, 寫入種類, {@link FailureText#dedupeKey}) 去重，成功時清除；正常結束（SOURCE fast path、§11.3 的取消、
- * 開服時通道的結束、PREPARE 期間參與者關門）一律記 INFO。PASSAGE_READY 期間的門（§10.5）屬 F5，接在同一個 {@link #useDoor}（{@link OriginDoors#doorAction}）。
+ * 開服時通道的結束、PREPARE 期間參與者關門、通道結束 (a)–(d)、跨越）一律記 INFO。PASSAGE_READY 期間的門（§10.5）也經同一個 {@link #useDoor}（{@link OriginDoors#doorAction}
+ * 的 PASSAGE_READY 分支 → {@link PassageService#endByParticipant}）。
  * 這裡的每一則 log 都帶 {@link #LOG_MARKER}（不屬於任何 session 的帶子 marker {@link #TICK_LOG_MARKER}）。
  */
 public final class CollapseService {
@@ -118,10 +119,14 @@ public final class CollapseService {
     private static final String STEP = "推進";
     /** spec §10.8「塌縮」：提交 COLLAPSING 時，以及 SOURCE fast path 打開原艙門之後（§7.4 第 3 步）。 */
     public static final String MESSAGE_COLLAPSED = "message.quantumchamber.m5.collapsed";
-    /** spec §10.8「進入 SEALED」：執行期間進入 SEALED 時對參與者顯示（F4a）。 */
+    /** spec §10.8「進入 SEALED」：執行期間進入 SEALED 時對參與者顯示（F4a；F5-1 起也含 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)）。 */
     public static final String MESSAGE_SEALED = "message.quantumchamber.m5.sealed";
     /** spec §10.8「通道開啟」：提交 PASSAGE_READY 之後對在艙內的參與者顯示（§10.2 第 3 步，F5-1）。 */
     public static final String MESSAGE_PASSAGE_OPENED = "message.quantumchamber.m5.passage_opened";
+    /** spec §10.8「傳送失敗」：通道傳送沒有完成、玩家仍在原世界時對那位玩家顯示（§10.3，F5-1）。 */
+    public static final String MESSAGE_PASSAGE_TRANSFER_FAILED = "message.quantumchamber.m5.passage_transfer_failed";
+    /** spec §10.8「通道結束」：通道結束 (a)–(d) 時對在線的參與者顯示（F5-1；對象的判斷見 {@link PassageService}）。 */
+    public static final String MESSAGE_PASSAGE_CLOSED = "message.quantumchamber.m5.passage_closed";
     /** spec §6.2：RESOLVE 的等待（catalog 或 discovery 有未確認的寫入）持續超過這個 tick 數時記一次 WARN。 */
     static final int WAIT_WARN_TICKS = 600;
     /** {@link #warn} 的寫入種類：進入 SEALED 的 journal 寫入、SEALED→COLLAPSING 的重試。 */
@@ -149,16 +154,22 @@ public final class CollapseService {
      */
     final Set<UUID> startupSessions;
     /**
-     * 開服時就是 PASSAGE_READY 的 session（§12）：第一個 tick 直接終局（執行期間提交的 PASSAGE_READY 不在這裡）。package-private：
+     * 開服時就是 PASSAGE_READY 的 session（§12）：第一個 tick 直接終局，不交給 {@link PassageService}（執行期間提交的 PASSAGE_READY 不在這裡）。package-private：
      * {@link OriginDoors#watchDoor} 不為它們重新套用 passable 量子膜（F5-1）。
      */
     final Set<UUID> startupPassages;
     final Map<UUID, Track> tracks = new HashMap<>();
-    /** 這個 server instance 的原艙門（F4b-3 的攔截、PREPARE 期間的門、重新套用與待套用的門；F5-0 從這裡抽出，行為不變）。 */
-    private final OriginDoors originDoors = new OriginDoors(this);
     /**
-     * 每個 session 在目的世界持有的預載 ticket（§9.1，以 session 為 key，不持久化）。在 PREPARE 期間結束（閘門失效）、進入 SEALED、終局時釋放；PASSAGE_READY 期間繼續持有（F5-1）；
-     * 通道結束屬 F5（{@link #releaseDestination(MinecraftServer, UUID)}）。終局不論由誰執行，下一個 tick 看到 session 已不在 journal 時都會釋放。
+     * 這個 server instance 的原艙門（F4b-3 的攔截、PREPARE 期間的門、重新套用與待套用的門；F5-0 從這裡抽出，行為不變）。package-private：{@link PassageService}
+     * 經它排入通道結束與進入 SEALED 之後的門（F5-1）。
+     */
+    final OriginDoors originDoors = new OriginDoors(this);
+    /** 這個 server instance 的通道（PASSAGE_READY 的跨越、傳送與結束，F5-1）；與 {@link OriginDoors} 一樣經這裡共用每個 tick 的 context。 */
+    final PassageService passages = new PassageService(this);
+    /**
+     * 每個 session 在目的世界持有的預載 ticket（§9.1，以 session 為 key，不持久化）。在 PREPARE 期間結束（閘門失效）、進入 SEALED、終局時釋放
+     * （{@link #releaseDestination(UUID)}）；PASSAGE_READY 期間繼續持有，通道結束 (a)–(d) 是 checked 終局，由 {@link #terminated} 釋放（F5-1）。終局不論由誰執行，
+     * 下一個 tick 看到 session 已不在 journal 時都會釋放。
      */
     private final Map<UUID, DestinationTicket> destinations = new HashMap<>();
     private String tickWarning, tickWarningText;
@@ -275,8 +286,8 @@ public final class CollapseService {
         switch (record.state()) {
             case MEASURED -> measured(record);
             case COLLAPSING -> collapsing(record);
-            // §12：開服時就是 PASSAGE_READY 的直接終局。執行期間提交的（F5-1）：跨越與通道的結束尚未實作，停在 PASSAGE_READY。
-            case PASSAGE_READY -> { if (startupPassages.contains(sid)) endStartupPassage(record); }
+            // §12：開服時就是 PASSAGE_READY 的直接終局；執行期間提交的由通道處理（F5-1）。
+            case PASSAGE_READY -> { if (startupPassages.contains(sid)) endStartupPassage(record); else passages.tick(record); }
             // SEALED 只處理重試（§11.2）；它的 roll-forward 寫出由 recovery 重試。其餘不是塌縮流程的狀態。
             case SEALED -> sealed(record);
             case ARMING, SUPERPOSITION, RETURNING -> { }
@@ -721,8 +732,8 @@ public final class CollapseService {
      *     本身就離開 PREPARE（{@link #leavePrepare}），不會走到這裡。目的世界不是 ACTIVE 由 {@link #prepareUniverse} 在這之前處理（回到 RESOLVE）。</li>
      * </ul>
      * 提交之後依序：門改為 passable 量子膜（{@link OriginDoors#openPassage}；passable 沒有碰撞，§7.3「門口有人時的規則」只適用於會讓門變成有碰撞的轉換，所以不看門口；
-     * 艙內有非參與者時也照樣提交）→ 刷新 Controller（§10.7）→ 對在艙內的參與者顯示「量子通道已開啟」（§10.2 第 3 步）。PREPARE 的簿記丟棄。
-     * 提交沒有完成時依 §6「journal 寫入失敗時的 session 行為」：record 留在上一份已確認的 COLLAPSING，per-session 退避（§11.2），PREPARE 暫停、原艙門改為一般開門
+     * 艙內有非參與者時也照樣提交）→ 刷新 Controller（§10.7）→ 對在艙內的參與者顯示「量子通道已開啟」（§10.2 第 3 步）。PREPARE 的簿記丟棄，之後由 {@link PassageService}
+     * 處理。提交沒有完成時依 §6「journal 寫入失敗時的 session 行為」：record 留在上一份已確認的 COLLAPSING，per-session 退避（§11.2），PREPARE 暫停、原艙門改為一般開門
      * （與 §7.3 閘門失效時的門相同：sealed 量子膜有碰撞，不能在重試期間把人困在艙內），退避期過後只重試這筆提交。
      */
     private void ready(SessionRecoveryRecord view, Track track, Prepare progress, ServerWorld world, UniverseId id) {
@@ -796,7 +807,7 @@ public final class CollapseService {
         }
         track.warnings.remove(READY_WRITE);
         track.backoff.reset();
-        // PREPARE 的簿記到這裡結束：之後是 PASSAGE_READY（PREPARE 的門不再執行）。
+        // PREPARE 的簿記到這裡結束：之後是 PASSAGE_READY，由 PassageService 處理（PREPARE 的門不再執行）。
         track.preparing = false;
         track.prepare = null;
         track.membrane = null;
@@ -935,17 +946,6 @@ public final class CollapseService {
     }
 
     /**
-     * 釋放這個 session 在目的世界的預載 ticket（spec §9.1：通道結束、PREPARE 期間結束、進入 SEALED）。進入 SEALED、閘門失效與終局由塌縮流程自己釋放；
-     * 這個入口給 F5 的通道結束呼叫。只在 server thread；沒有這個 server 的塌縮流程或沒有 ticket 時回 false。
-     */
-    static boolean releaseDestination(MinecraftServer server, UUID sid) {
-        var service = INSTANCES.get(Objects.requireNonNull(server, "server"));
-        if (service == null) return false;
-        if (!server.isOnThread()) throw new IllegalStateException("目的世界的 ticket 只能在 server thread 釋放");
-        return service.releaseDestination(sid);
-    }
-
-    /**
      * 進入 SEALED（§11.2）。journal 以 roll-forward 寫入 SEALED(reason)（current＝flushed 已在呼叫前確認）。寫出未確認時，依 collapse view
      * SEALED 照樣生效，重試交給 recovery 的 RETRY_FLUSH（F3d 的 A2）；寫入在前置檢查就被拒時（journal 沒有改變），依 per-session 退避只重試這筆
      * 寫入（{@link Track#sealRejected}）。之後依序：門改為關閉（門口有 entity 時改為一般開門，§7.3）→ 對參與者顯示訊息（§10.8）→ 刷新 Controller
@@ -971,6 +971,16 @@ public final class CollapseService {
             }
             return;
         }
+        sealCommitted(view, track, reason, cause, result);
+    }
+
+    /**
+     * 進入 SEALED 的寫入沒有在前置檢查被拒（已確認，或 roll-forward 未確認、collapse view 已採用）之後的共同步驟（{@link #seal}；F5-1 起也是 PASSAGE_READY→SEALED
+     * (TRANSFER_RECOVERY_REQUIRED) 的 {@link PassageService} 使用）：門改為關閉（門口有 entity 時改為一般開門）→ 對參與者顯示訊息 → 刷新 Controller → 釋放來源 ticket
+     * 與目的世界的 ticket → 依原因記 WARN 或 ERROR。{@code view} 是寫入前的 record（原艙、參與者與 session 都與 SEALED 相同）。
+     */
+    void sealCommitted(SessionRecoveryRecord view, Track track, SealedReason reason, RuntimeException cause, SessionRecoveryState.CommitResult result) {
+        var sid = view.sessionUuid();
         track.sealWritten();
         if (result.committed()) {
             track.warnings.remove(SEAL_WRITE);
@@ -1151,7 +1161,8 @@ public final class CollapseService {
         return service == null ? ChamberCollapsePort.DoorUse.PASS : service.originDoors.door(world, frame, player);
     }
 
-    // ---- 共用（package-private 的幾個也由 OriginDoors 呼叫：terminated、terminalFailed、neighborhoodLoaded、refresh(record)、warn、track、describe） ----
+    // ---- 共用（package-private 的幾個也由 OriginDoors 與 PassageService 呼叫：terminated、terminalFailed、neighborhoodLoaded、refresh(record)、warn、track、describe；
+    // PassageService 另用 sealCommitted、sourceSignal、notifyParticipants） ----
 
     /** checked 終局讀回確認之後：釋放 runtime 與來源 ticket（spec §5）與目的世界的 ticket（§9.1），不再追蹤這個 session。 */
     void terminated(SessionRecoveryRecord record) {
@@ -1169,7 +1180,7 @@ public final class CollapseService {
     }
 
     /** 原參與者中在線、存活、非旁觀、位於來源 world 而且 bbox 完整在來源艙 interior 內的人。 */
-    private Set<UUID> inside(SessionRecoveryRecord record) {
+    Set<UUID> inside(SessionRecoveryRecord record) {
         var result = new LinkedHashSet<UUID>();
         var world = server.getWorld(RegistryKey.of(RegistryKeys.WORLD, record.origin().worldKey()));
         if (world == null) return result;
@@ -1189,28 +1200,49 @@ public final class CollapseService {
     }
 
     /**
-     * 來源艙已載入、結構合法、已供電、Origin enabled。一律依即時狀態：「已供電」是 Controller 的即時紅石輸入（spec §7），不看 registry 的
-     * {@code ChamberPowerState}；「已載入」涵蓋艙體向水平各方向外擴 3 格（紅石讀取與門的套用範圍）的 chunk，只查詢、不載入。
+     * 來源艙已載入、結構合法、已供電、Origin enabled（{@link #sourceSignal} 為 {@code OK}）：§7.1 的 DORMANT 觸發、§7.3 的閘門、§11.2 的重試觸發。
      */
     private boolean chamberGate(SessionRecoveryRecord record) {
+        return sourceSignal(record) == SourceSignal.OK;
+    }
+
+    /** 來源艙的即時訊號（{@link #sourceSignal}）：{@code OK} 之外的每一種都表示那一個條件不成立（依檢查順序，第一個不成立的）。 */
+    enum SourceSignal {
+        OK,
+        /** 來源世界或艙體向水平外擴 3 格的 chunk 沒有都 FULL（只查詢、不載入）。 */
+        NOT_LOADED,
+        /** 結構失效：Controller 的 block entity、方塊或朝向不符，或艙體驗證不通過。 */
+        INVALID,
+        /** 沒有供電：Controller 沒有即時紅石輸入。 */
+        LOW,
+        /** Origin 被停用：registry 讀不到、沒有這座原艙、已拆除，或不是 enabled。 */
+        DISABLED
+    }
+
+    /**
+     * 來源艙的即時訊號（F5-1 由原本的 {@code chamberGate} 拆出原因，判斷的條件與順序不變；§10.6 (d) 要分辨斷電、停用與結構失效）。一律依即時狀態：「已供電」是 Controller
+     * 的即時紅石輸入（spec §7），不看 registry 的 {@code ChamberPowerState}；「已載入」涵蓋艙體向水平各方向外擴 3 格（紅石讀取與門的套用範圍）的 chunk，只查詢、不載入。
+     */
+    SourceSignal sourceSignal(SessionRecoveryRecord record) {
         var origin = record.origin();
         var world = server.getWorld(RegistryKey.of(RegistryKeys.WORLD, origin.worldKey()));
-        if (world == null) return false;
+        if (world == null) return SourceSignal.NOT_LOADED;
         var frame = new ChamberFrame(origin.controllerPos(), origin.facing());
-        if (!neighborhoodLoaded(world, frame)) return false;
+        if (!neighborhoodLoaded(world, frame)) return SourceSignal.NOT_LOADED;
         var pos = origin.controllerPos();
         var chunk = world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4);
-        if (chunk == null || !(chunk.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller) || controller.isRemoved()
-                || controller.instanceKind() != ChamberInstanceKind.ORIGIN || !origin.chamberUuid().equals(controller.chamberUuid())) return false;
+        if (chunk == null) return SourceSignal.NOT_LOADED;
+        if (!(chunk.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller) || controller.isRemoved()
+                || controller.instanceKind() != ChamberInstanceKind.ORIGIN || !origin.chamberUuid().equals(controller.chamberUuid())) return SourceSignal.INVALID;
         var block = chunk.getBlockState(pos);
-        if (!block.isOf(ModBlocks.CHAMBER_CONTROLLER) || block.get(ChamberControllerBlock.FACING) != origin.facing()) return false;
-        if (!new ChamberDetector().validate(new WorldChamberBlockView(world), frame).valid()) return false;
-        if (!world.isReceivingRedstonePower(pos)) return false;
+        if (!block.isOf(ModBlocks.CHAMBER_CONTROLLER) || block.get(ChamberControllerBlock.FACING) != origin.facing()) return SourceSignal.INVALID;
+        if (!new ChamberDetector().validate(new WorldChamberBlockView(world), frame).valid()) return SourceSignal.INVALID;
+        if (!world.isReceivingRedstonePower(pos)) return SourceSignal.LOW;
         var registry = ChamberRegistryState.get(server);
-        if (registry.loadError().isPresent()) return false;
+        if (registry.loadError().isPresent()) return SourceSignal.DISABLED;
         return registry.registry().findOrigin(origin.worldKey(), origin.role(), frame)
                 .filter(found -> found.chamberUuid().equals(origin.chamberUuid()) && !found.destroyed()
-                        && found.instanceKind() == ChamberInstanceKind.ORIGIN && found.enabled()).isPresent();
+                        && found.instanceKind() == ChamberInstanceKind.ORIGIN && found.enabled()).isPresent() ? SourceSignal.OK : SourceSignal.DISABLED;
     }
 
     static boolean neighborhoodLoaded(ServerWorld world, ChamberFrame frame) {
@@ -1221,7 +1253,8 @@ public final class CollapseService {
         return true;
     }
 
-    private void notifyParticipants(SessionRecoveryRecord record, String key) {
+    /** 對在線的每一位參與者顯示 actionbar（spec §10.8；不論他在哪個世界）。 */
+    void notifyParticipants(SessionRecoveryRecord record, String key) {
         for (var person : record.participants()) {
             var player = server.getPlayerManager().getPlayer(person.playerUuid());
             if (player != null && !player.isRemoved()) player.sendMessage(Text.translatable(key), true);
@@ -1344,6 +1377,16 @@ public final class CollapseService {
         boolean restartRetryConsumed;
         /** UNIVERSE 這一段 PREPARE 的記憶體內進度（進入 PREPARE 時建立，離開、進入 SEALED、重試時丟棄；不持久化，重啟之後重新推導）。 */
         Prepare prepare;
+        /**
+         * PASSAGE_READY 的跨越判定（§10.3，F5-1）：每位參與者上一個 tick 的腳在來源艙的 local z（{@link PassageService#observe}）；不在來源世界或觀察不到時沒有這個鍵。
+         * 每個 PASSAGE_READY 的 tick 都更新（roll-forward 未確認、結束條件成立的 tick 也一樣），所以永遠是真的上一個 tick。不持久化：重啟之後 PASSAGE_READY 直接結束（§12）。
+         */
+        final Map<UUID, Double> passageZ = new HashMap<>();
+        /**
+         * {@code FAILED_RECOVERY_REQUIRED} 之後 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入在前置檢查就被拒（journal 沒有改變；F5-1，防禦性）：通道在記憶體內
+         * 關閉（不跨越、不評估結束條件、不終局、參與者關門被拒），依 per-session 退避只重試這筆寫入（{@link PassageService}）。
+         */
+        PassageService.PendingRecovery pendingRecovery;
         /** RESOLVE 連續等待的起點（-1 表示不在等待）與這次等待是否已記過 WARN。 */
         long waitSince = -1;
         boolean waitWarned;
