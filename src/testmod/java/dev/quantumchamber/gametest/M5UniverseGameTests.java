@@ -3660,6 +3660,91 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
+     * F5-2（spec §10.6 :613、plan Step 1「沒有所屬 session 的 membrane 在下一 tick 正規化」；M5 note F4b-3「補充第 8 點」的四個條件）：同一座已供電的原艙（{@code DormantOrigin}）
+     * 依序（每次都以 {@code ChamberControllerBlock.refreshState} 強制刷新 Controller；門的改動本身也會經 neighbor update 刷新）：
+     * <ol>
+     * <li>SEALED 的 fixture（暫停，不交給塌縮流程）＋門上的 sealed 量子膜：presence 是 COLLAPSE，不排入正規化（沒有「找不到所屬 session」的 INFO），幾個 tick 之後門仍是 sealed
+     *     （排除，chamber 端；有 SEALED session 的門由它自己的關門負責）。</li>
+     * <li>以終局 API 結束這個 fixture、門不動（模擬終局之後、改門之前 crash）→ 刷新：排入下一個 tick（INFO 記下 tick N＝刷新的 server tick＋1），刷新當下門還是量子膜；
+     *     tick N 正規化為一般開門（完成的 INFO 記下的 tick 也是 N）。</li>
+     * <li>門改為 passable 量子膜（沒有 session：排入）→ 同一個 callback 建立 PASSAGE_READY 的 fixture（暫停）：下一個 tick 丟棄這次正規化（INFO「由塌縮流程的 session 負責」，
+     *     帶這個 session），門仍是 passable（排除，塌縮流程端）。終局之後再刷新 → 正規化為一般開門（sealed 與 passable 都改為 OPEN）。</li>
+     * <li>MEASURED DORMANT 收據（參與者是離線的隨機玩家，不會觸發續行）＋sealed 量子膜 → 刷新 → 正規化為一般開門（MEASURED／DORMANT 的艙也包含在內）。</li>
+     * </ol>
+     * 這座艙沒有任何 WARN／ERROR，也沒有 tick 層級的 WARN／ERROR。catalog 增量 0（fixture 與收據都不配置宇宙）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_membrane_ownerless", tickLimit = 400)
+    public void ownerless_membrane_is_normalized_on_the_next_tick_unless_a_collapse_session_owns_the_door(TestContext context) {
+        begin(context, "ownerless_membrane_is_normalized_on_the_next_tick_unless_a_collapse_session_owns_the_door");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var sealedMembrane = MembraneState.sealedFor(frame.outwardFacing());
+        Runnable refresh = () -> ChamberControllerBlock.refreshState(world, frame.controllerPos());
+        origin.whenRegistered((registered, chamber) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var authority = M4CandidateTestAccess.origin(chamber, frame.controllerPos());
+            // 1. SEALED 的 session 擁有門：chamber 端不排入。
+            var sealed = M5GameTestSupport.collapseFixture(server, authority, Map.of(UUID.randomUUID(), true), List.of(), true, SessionState.SEALED, true);
+            origin.owned.add(sealed.sessionUuid());
+            M5GameTestSupport.writeDoor(world, frame, true, sealedMembrane);
+            refresh.run();
+            at(context, registered + 5, hooks, () -> {
+                witness.put("sealedSessionKeepsItsMembrane", M5GameTestSupport.doorSealed(world, frame) && ownerlessQueued(capture, chamber).isEmpty());
+                // 2. 終局之後、改門之前 crash：門仍是量子膜，沒有 session。
+                cleanupFixtures(server, List.of(sealed.sessionUuid()));
+                witness.put("terminatedWithTheMembraneLeft", !journal.flushedRecords().containsKey(sealed.sessionUuid()) && M5GameTestSupport.doorSealed(world, frame));
+                int refreshedAt = server.getTicks();
+                refresh.run();
+                witness.put("queuedForTheNextTickWithoutWriting", ownerlessQueued(capture, chamber).equals(List.of(refreshedAt + 1))
+                        && M5GameTestSupport.doorSealed(world, frame));
+                whenTicks(context, registered + 6, 20, () -> !ownerlessNormalized(capture, chamber).isEmpty(), normalizedAt -> {
+                    witness.put("normalizedOnTheQueuedTick", ownerlessNormalized(capture, chamber).equals(List.of(refreshedAt + 1))
+                            && doorAll(world, frame, true, MembraneState.NONE));
+                    // 3. passable → 排入 → 同一個 callback 建立 PASSAGE_READY 的 session：塌縮流程端在套用時排除。
+                    M5GameTestSupport.writeDoor(world, frame, true, MembraneState.passableFor(frame.outwardFacing()));
+                    refresh.run();
+                    witness.put("passableQueued", ownerlessQueued(capture, chamber).size() == 2);
+                    var ready = M5GameTestSupport.collapseFixture(server, authority, Map.of(UUID.randomUUID(), true), List.of(), true, SessionState.PASSAGE_READY, true);
+                    origin.owned.add(ready.sessionUuid());
+                    whenTicks(context, normalizedAt + 1, 20, () -> ownerlessSkipped(capture, chamber, ready.sessionUuid()) > 0, skippedAt -> {
+                        witness.put("readySessionKeepsItsPassableMembrane", M5GameTestSupport.doorPassable(world, frame)
+                                && ownerlessNormalized(capture, chamber).size() == 1 && ownerlessSkipped(capture, chamber, ready.sessionUuid()) == 1);
+                        cleanupFixtures(server, List.of(ready.sessionUuid()));
+                        refresh.run();
+                        whenTicks(context, skippedAt + 1, 20, () -> ownerlessNormalized(capture, chamber).size() == 2, passableNormalizedAt -> {
+                            witness.put("passableNormalizedAfterTheTerminal", doorAll(world, frame, true, MembraneState.NONE)
+                                    && ownerlessQueued(capture, chamber).size() == 3);
+                            // 4. MEASURED DORMANT 的艙也包含在內。
+                            var dormant = origin.own(origin.receipt(chamber, Map.of(UUID.randomUUID(), true), true));
+                            M5GameTestSupport.writeDoor(world, frame, true, sealedMembrane);
+                            refresh.run();
+                            whenTicks(context, passableNormalizedAt + 1, 20, () -> ownerlessNormalized(capture, chamber).size() == 3, dormantNormalizedAt -> {
+                                witness.put("dormantReceiptChamberNormalized", doorAll(world, frame, true, MembraneState.NONE)
+                                        && ownerlessQueued(capture, chamber).size() == 4 && M5GameTestSupport.state(journal, dormant.sessionUuid()).equals("MEASURED"));
+                                // 每一次都在排入時記下的 tick N 完成（第 2 次在 3. 被丟棄）。
+                                var queuedTicks = ownerlessQueued(capture, chamber);
+                                witness.put("normalizedEachOnItsQueuedTick", queuedTicks.size() == 4
+                                        && ownerlessNormalized(capture, chamber).equals(List.of(queuedTicks.get(0), queuedTicks.get(2), queuedTicks.get(3))));
+                                witness.put("noWarnOrError", capture.matching(Level.WARN, chamber.toString()).isEmpty() && capture.matching(Level.ERROR, chamber.toString()).isEmpty()
+                                        && capture.marked(Level.WARN, CollapseService.TICK_LOG_MARKER.getName()).isEmpty()
+                                        && capture.marked(Level.ERROR, CollapseService.TICK_LOG_MARKER.getName()).isEmpty());
+                                LOGGER.info("M5_MEMBRANE_OWNERLESS registered={} queued={} normalized={} skipped={}", registered, ownerlessQueued(capture, chamber),
+                                        ownerlessNormalized(capture, chamber), ownerlessSkipped(capture, chamber, ready.sessionUuid()));
+                                hooks.release();
+                                context.assertTrue(!witness.containsValue(false), "找不到所屬 session 的量子膜：" + witness);
+                                awaitConvergedThenComplete(context, 0, 20);
+                            }, () -> "DORMANT 收據的艙沒有正規化：queued=" + ownerlessQueued(capture, chamber) + " witness=" + witness, hooks);
+                        }, () -> "PASSAGE_READY 終局之後沒有正規化：queued=" + ownerlessQueued(capture, chamber) + " witness=" + witness, hooks);
+                    }, () -> "PASSAGE_READY 的 session 沒有讓正規化被丟棄：queued=" + ownerlessQueued(capture, chamber) + " normalized="
+                            + ownerlessNormalized(capture, chamber) + " passable=" + M5GameTestSupport.doorPassable(world, frame) + " witness=" + witness, hooks);
+                }, () -> "終局之後沒有正規化：queued=" + ownerlessQueued(capture, chamber) + " witness=" + witness, hooks);
+            });
+        });
+    }
+
+    /**
      * F5-1：從 {@code tick} 起每個 tick 依序執行一步（第 i 步在 {@code tick + i}）。每一步的 callback 只排下一步這一項：在一個 callback 裡一次排很多項 {@code runAtTick}，原版
      * 迭代表的途中插入多項有 rehash 的風險（README「新增 M5 GameTest」的前提）。例外或斷言失敗時先釋放 hooks（{@link M5GameTestSupport#at}）。
      */
@@ -3669,6 +3754,26 @@ public final class M5UniverseGameTests implements FabricGameTest {
             steps.getFirst().run();
             sequence(context, tick + 1, hooks, steps.subList(1, steps.size()));
         });
+    }
+
+    /**
+     * F5-2（spec §10.6 :613）：這座艙「找不到所屬 session、卻帶著量子膜的原艙門：下一個 tick（tick N）」的 INFO 記下的 tick N，依發生順序（帶 TICK_LOG_MARKER：不屬於任何
+     * session，所以依 chamber 篩選）。
+     */
+    private static List<Integer> ownerlessQueued(LogCapture capture, UUID chamber) {
+        return ticks(capture.marked(Level.INFO, CollapseService.TICK_LOG_MARKER.getName(), "找不到所屬 session、卻帶著量子膜的原艙門", "chamber=" + chamber),
+                Pattern.compile("下一個 tick（tick (\\d+)）"));
+    }
+
+    /** F5-2：這座艙「找不到所屬 session 的量子膜已正規化為一般開門（…，tick M）」的 INFO 記下的 tick M，依發生順序（帶 TICK_LOG_MARKER）。 */
+    private static List<Integer> ownerlessNormalized(LogCapture capture, UUID chamber) {
+        return ticks(capture.marked(Level.INFO, CollapseService.TICK_LOG_MARKER.getName(), "找不到所屬 session 的量子膜已正規化為一般開門", "chamber=" + chamber),
+                Pattern.compile("，tick (\\d+)）"));
+    }
+
+    /** F5-2：這座艙的正規化因為 {@code sid} 擁有門而被丟棄的 INFO 數（帶 LOG_MARKER 與 session）。 */
+    private static int ownerlessSkipped(LogCapture capture, UUID chamber, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "不再正規化找不到所屬 session 的量子膜", "chamber=" + chamber, "session=" + sid).size();
     }
 
     /** 來源 Controller 目前是 {@code state}，而且比較器輸出是 {@code signal}（F5-2：spec §10.7 的比較器）。 */
