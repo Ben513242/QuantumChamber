@@ -4406,3 +4406,179 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
 - F7：
   - README「預期結果」的數字以最新的 run-all 為準更新（F5-0 之後：M5 38、JUnit 636、release 412／365、sources 218）。
   - spec errata（controller 依 spec review S-m2 改寫）：SEALED 的門還帶著量子膜時，玩家使用門不會取消還沒套用的關門（第 3 點 m-2）。量子膜門的切換本身就是關門，所以這不構成 §7.3 :404 的例外：玩家打開的門仍不會被關回去。
+
+## F5-1：通道本體（PASSAGE_READY、跨越、passage 傳送、結束）
+
+- Commits（依序；每個 commit 只 stage 自己的檔案，commit 之前的工作樹都跑過該 commit 的 focused 測試，state 在 `f5/f51/commit-c<N>-state.txt`）：
+  - `1b8784d` `docs: correct the F5-0 door comments and state the targets mixin witness rule`（parent `ffb800c`）：Step 0（m-1～m-4），只有註解、Javadoc 與 README。`CS`、`OD`、`ODF`、README。
+  - `75cd2c3` `feat: let the universe transfer take a landing safety policy`（parent `1b8784d`）：補充第 4 點的決策 4。新增 `universe/TransferSafety.java`（`TS`）；`UTS` 只加多載並改由政策檢查；新增 `universe/TransferSafetyTest.java`（`TST`）。
+  - `0e620fe` `feat: add the passage transfer policy and derive the preload from its FULL check`（parent `75cd2c3`）：補充第 4 點的 passage 政策與 S-M1。新增 `collapse/PassageTransferPolicy.java`（`PTP`）與 `PassageTransferPolicyTest`（`PTPT`）；`CS` 的預載改用 `PTP.preloadChunks`；`CST` 的預載 test 換成 2 個；`TST` 的 fixture 改為 public（`PTPT` 共用）；testmod `SUP.preloadArea`、P-NEW 一個 witness 改名；README 一行。
+  - `1a4f504` `feat: commit checked PASSAGE_READY after the preparation and open a passable door`（parent `0e620fe`）：補充第 1 點（含 S-M2）、第 2 點的 passable 與重新套用、第 9 點的「通道開啟」。`CS`、`OD`、語言檔（1 個 key）、`CST`（2 個 test 與 1 處期望）；testmod `HK`（`READY_HOLD`）、`SUP`（`doorPassable`、`holdReady`）、新增 `mixin/CollapseReadyHoldMixin.java`（`RHM`）與它在 `quantumchamber-test.mixins.json` 的登記、`M5U`（既有 test 的更新，見「測試」）。
+  - `4b42a9d` `feat: run the passage: crossing, passage transfer, Crossed and the end conditions`（parent `1a4f504`）：補充第 2（通道期間的門）～7、9、11 點。新增 `collapse/PassageService.java`（`PS`）；`CS`、`OD`、語言檔（2 個 key）、`CST`（3 個 test 與 doorAction 的期望）。
+  - `5b3a98e` `test: cover the passage end to end in the M5 run`（parent `4b42a9d`）：12 個新的 M5 run GameTest。testmod `M5U`、`SUP`（`installNativeMoveFault`、`standInDoorway`、`removeFixture` 的 TRR 規則）、`HK`（`NATIVE_MOVE_FAULT`）、`mixin/SessionTransferFaultMixin.java`（`TF`，見「偏離」第 9 條）、`RHM` 的 Javadoc；README「新增 M5 GameTest」一節。
+  - `fd0a2cd` `test: float the rider's minecart in the doorway so riding is what blocks the crossing`（parent `5b3a98e`）：mutation `mut-c4-riders-cross` 存活之後修正 T-CROSS 的騎乘 fixture（見「觀察」第 1 條）。只有 `M5U`。
+  - 本節由其後的 docs commit `docs: record F5-1 passage in the M5 note` 加入。
+- Code range `ffb800c..fd0a2cd`。沒有改 `chamber/`（含 `ChamberCollapsePort`、`ChamberState`、`ChamberStatusSignal`、`ChamberPowerCoordinator`、`ChamberControllerBlock`）、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`ProjectionProtectionIndex`、`CollapsePhase`、`SuperpositionSessionManager`、`SessionRecoveryState`、`SessionRecoveryManager`、`UniverseRegistryState`、`ChamberRegistryState`、`UniverseLifecycleService`、`CorridorPageManager`、`gates.ps1`、`build.gradle`、`.github/`，也沒有改 M3 的 test 檔（`UniverseTransferAuthorityTest` 與 M3 的 GameTest／probe）。journal 沒有新 API：`Crossed`、`RecoveryRequired` 與 SEALED(TRR) 都用 F2a 已有的 `CollapseFields.withCrossed`／`transferRecoveryRequired` 與 `commitRollForward`。
+- 行號以 `fd0a2cd` 為準。`PS` 指 `collapse/PassageService.java`、`PTP` 指 `collapse/PassageTransferPolicy.java`、`TS` 指 `universe/TransferSafety.java`、`UTS` 指 `universe/UniverseTransferService.java`、`PTPT`／`TST` 是它們的 JUnit、`RHM` 指 testmod 的 `mixin/CollapseReadyHoldMixin.java`、`TF` 指 testmod 的 `mixin/SessionTransferFaultMixin.java`；`CS`、`OD`、`ODF`、`CST`、`M5U`、`SUP`、`HK` 同前面各節。新增的 12 個 `@GameTest`（M5 run，各自一個 batch，catalog 增量都是 1）：
+  - T-CROSS `M5U:2587` `passage_participant_crosses_to_the_same_pose_while_non_participants_and_riders_stay`（`m5_universe_passage_cross`，tickLimit 900）
+  - T-EXPIRE `M5U:2685` `passage_expires_after_one_of_two_crossed_and_the_chamber_opens_a_new_session_windows`（`m5_universe_passage_expire`，tickLimit 45000；`_windows`：最後一段要真的 M2 入場）
+  - T-CLOSE `M5U:2771` `passage_participant_closing_the_door_ends_it_and_non_participants_are_refused`（`m5_universe_passage_close`，900）
+  - T-POWER `M5U:2821` `passage_ends_with_a_plain_open_door_when_the_source_loses_power`（`m5_universe_passage_power`，900）
+  - T-EXIST `M5U:2858` `existing_passage_brings_a_second_chamber_to_the_same_universe`（`m5_universe_passage_existing`，1500）
+  - T-EXRE `M5U:2922` `existing_ready_revalidation_seals_when_the_universe_became_ineligible`（`m5_universe_passage_existing_recheck`，1200）
+  - T-ROLLBACK `M5U:2967` `passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once`（`m5_universe_passage_rolled_back`，900）
+  - T-TRR `M5U:3021` `passage_transfer_recovery_required_seals_and_keeps_the_crossed_receipt`（`m5_universe_passage_recovery`，1200）
+  - T-TRR-RF `M5U:3105` `passage_recovery_seal_write_failure_closes_the_passage_until_another_flush`（`m5_universe_passage_recovery_pending`，1500）
+  - T-CROSSED-RF `M5U:3177` `crossed_write_failure_pauses_the_passage_until_it_converges_then_expires`（`m5_universe_passage_crossed_pending`，4500）
+  - T-HAZ `M5U:3247` `passage_crossings_arrive_in_stone_water_lava_and_mid_jump`（`m5_universe_passage_hazards`，900）
+  - T-READY-FAULT `M5U:3314` `ready_write_failure_restores_backs_off_and_opens_the_door_plainly`（`m5_universe_passage_ready_fault`，2000）
+
+### Step 0（F5-0 quality review 的 Minor，`1b8784d`）
+
+| 項目 | 處置 |
+| --- | --- |
+| m-1 `CS:138` | 註解改為：`journal`、`sessions`、`now` 是 package-private，`pages` 仍是 private |
+| m-2 `ODF:25`、`:27`、README `:96` | 寫明 `@Mixin(targets=…)` 找不到 class 時 Mixin 只記 WARN、不套用（`strict` 預設關閉），`require=1` 只保護方法選擇器；用這種寫法的注入，test 必須有 `hits()` 一類的 witness |
+| m-3 `OD:315` | 「同一原因只記一次」改為「連續同一原因只記一次」 |
+| m-4 `OD:50` | 「READY 之後」改為「提交 PASSAGE_READY 之後」 |
+
+- 只有註解、Javadoc 與 README，沒有 RED。test 集合不變的證據：沒有改任何 test 的原始碼；`CS`、`OD`、`ODF` 編譯後 18 個 class 的 `javap -c -p` 與修改前逐字相同（`f5/f51/s0-base-javap/`、`s0-after-javap/`，`s0-javap-diff.txt` 是空的）；`CollapseLogMarkerGuardTest`、`ChamberCollapseDependencyGuardTest` PASS（`s0-junit-summary.txt`）。
+- F5-0 的建議（`PassageService` 與 `OD` 共用的 tick context 收斂成小介面或 record）：不收斂，理由見「偏離」第 1 條。
+
+### plan Step 1 中屬於 F5-1 的 RED
+
+GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` 把 production 換回 `1a4f504`（READY 已提交、還沒有通道；testmod 只用到 `4b42a9d` 的兩個訊息常數，adapter 補上同字面值的常數讓它編譯），`red-c3-ready-stub` 讓準備完成之後回到 F4b-2 的停點（不提交、記 stub 的 WARN）。其餘是 mutation（每個一次 gate、只跑相關的 batch）。JUnit 的 7 個純函式 mutation 一次套用，失敗的 test 恰好是預期的 7 個（`mut-junit-c5`）。root 都在 `.superpowers/verification/`。
+
+| plan 的 RED | 位置 | test | RED／mutation（root 的 label） |
+| --- | --- | --- | --- |
+| 跨越幾何：四個朝向、方向 | `PS:213` `crosses`、`PS:110` `observe`（上一個 tick 的 local z） | `CST` `crossingGeometryWorksForEveryFacing`（4 朝向 × 12 列，含反方向、上一個 tick 已在外側或沒有觀察、門口範圍外）；T-CROSS | `mut-junit-crosses-no-previous` → FAIL；`red-c4-passage`、`red-c4-passage-cross-2` → T-CROSS `crossedToTheUniverse=false` |
+| 跨越：騎乘、非參與者、已跨過 | `PS:225` `cross`（只逐一檢查 participants；`Candidate` 的七個條件） | `CST` `crossingRequiresEveryParticipantCondition`；T-CROSS（礦車浮在 local y=2，`riderInTheDoorwayPastTheMidline`） | `mut-junit-crosses-participant-riding` → FAIL；`mut-c4-riders-cross-2`（騎乘也跨越）→ T-CROSS `riderStaysInTheOriginalWorld=false`。非參與者不在迴圈裡（結構性），GameTest 的 `nonParticipantStaysInTheOriginalWorld` 是回歸檢查 |
+| policy 的決策表（跳躍、水、岩漿、石頭） | `PTP:40` `check` | `PTPT` `passagePolicyDecisionTable`；T-HAZ | `red-c2-policy-is-m3`、`mut-c2-policy-checks-fluid`／`-no-full`／`-no-border` → FAIL（`0e620fe` 時）；`mut-c4-transfer-m3`（通道用 2 參數的 `moveToUniverse`）→ T-HAZ 四位都 `arrived=false`；`red-c4-passage` → FAIL |
+| `FAILED_ROLLED_BACK` | `PS:305` `transferFailed` | T-ROLLBACK | `red-c4-passage` → FAIL；`mut-c4-transfer-warn-every-time`（WARN 不去重）→ `secondRejectedTooButWarnedOnce=false` |
+| TRR 與 SEALED 落盤失敗（Review Focus 1） | `PS:329` `recoveryRequired`、`CS:982` `sealCommitted` | T-TRR、T-TRR-RF | `red-c4-passage` → 兩個都 FAIL；`mut-c4-trr-as-rolled-back`（無法回滾也當成回滾成功）→ T-TRR 等不到 SEALED(TRR) |
+| `Crossed` 落盤失敗 | `PS:85` `tick` 的兩個只收斂的守門、`OD:305` `doorAction` | T-CROSSED-RF | `red-c4-passage` → FAIL；`mut-c4-pending-passes-through` → `p2NotTransferredWhilePending=false`；`mut-junit-door-c3` → `CST` doorAction FAIL |
+| 結束條件 (a)–(d)（INFO） | `PS:144` `endCondition`、`PS:157` `finish`、`PS:170` `closed`、`PS:185` `endByParticipant` | `CST` `passageEndConditionsFollowTheSpecOrder`；T-CLOSE (a)、T-CROSS (b)、T-EXPIRE／T-CROSSED-RF (c)、T-POWER (d) | `mut-junit-end-order` → FAIL；`red-c4-passage` → 四個都 FAIL；`mut-c4-no-destination-release-2` → T-POWER、T-CROSS `destinationTicketReleased=false` |
+| 兩人一人跨過、到期後一般開門、同艙可開新 session | 同上 | T-EXPIRE | `red-c4-passage` → `oneCrossedOneStayed=false`、到期後沒有結束 |
+| EXISTING 的基本重逢 | `CS:739` `ready`（EXISTING 再驗）、`PS` | T-EXIST | `red-c4-passage` → D1 沒有結束；`red-c3-ready-stub` → D1 沒有提交 PASSAGE_READY |
+| 艙內有非參與者時仍能提交 READY | `CS:739` `ready`（不看門口與艙內的人） | T-CROSS `readyCommittedWithTheNonParticipantInside` | `red-c3-ready-stub` → 沒有提交 PASSAGE_READY |
+
+- 第一版的兩個 mutation 存活，都已處理：`mut-c4-riders-cross`（`gate-mut-c4-riders-cross-79692e31c57f4b3baf658f2efd04b608`，T-CROSS PASS）揭露 fixture 的缺口，由 `fd0a2cd` 修正後 `mut-c4-riders-cross-2` FAIL（「觀察」第 1 條）；`mut-c4-no-destination-release`（只拿掉 `terminated` 裡的釋放，`gate-mut-c4-no-destination-release-8153398310fe4de689807f03f3dccd8b`，2 個都 PASS）不是有效的 mutation：同一個 tick 稍後的 `releaseTerminatedDestinations` 照樣釋放，test 的粒度看不出差異，所以改成兩處都拿掉（`-2`）。
+- `red-c4-passage` 中 T-EXRE PASS：它驗的是 READY 之前的 EXISTING 再驗（`1a4f504` 已有），RED 由 `mut-c3-no-existing-recheck` 提供（下一節）。
+
+### controller 補充第 1–11 點
+
+| 點 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| 1. READY 的前置條件與提交 | `CS:714` `prepared` 不再停在 stub，同一個 tick 呼叫 `CS:739` `ready`；之後每個 PREPARE 的 tick（`progress.ready`）也只呼叫它。前置條件的分類（`ready` 的 Javadoc）：**等待**（不進 SEALED、併入 §9.1 的 600 ticks WARN）＝預載還沒全部 FULL、`CS:823` `readyAuthorities`（catalog、discovery、projection ledger，NEW 另加 allocation ledger）先 `convergeIfNeeded` 之後仍未確認（§6 收斂共通第 2 點）、EXISTING 再驗回 WAIT；**SEALED**（§8.4：準備的失敗進 SEALED、保留同一個 Destination）＝EXISTING 再驗不通過（`DestinationResolver.resolve` 的 EXISTING 分支，`EXISTING_INELIGIBLE` 是 §8.1／§11.2 的永久原因；權威讀不到或損壞時用它帶的原因）、projection ledger 沒有 COMPLETE entry 或 NEW 的 discovery record 不在／不是 gameplay-eligible（已確認的寫入不見了，§6 的「確定遺失」→ `AUTHORITY_CORRUPT`）、查詢失敗用權威帶的原因；**退回 WAITING**＝來源艙已載入、結構合法、已供電、enabled 是 PREPARE 的閘門（§7.3），這個 tick 的推導已以 `PrepareGate` 確認，不成立時推導就離開 PREPARE；目的世界不是 ACTIVE 時 `prepareUniverse` 在呼叫 `ready` 之前回到 RESOLVE（F4b-2 的既有路徑）。提交是 `commitRestore`（COLLAPSING→PASSAGE_READY，`withPassage(overworld 的 game time)`：expires＝opened＋1200）。失敗時 record 留在 COLLAPSING、per-session 退避（200 起跳）、WARN「提交 PASSAGE_READY」依原因去重，PREPARE 暫停（`Prepare.readyFailed`）、原艙門改為一般開門（INFO 一則），退避期過後只重試提交。成功之後依序：`OD:507` `openPassage`（排入 `PASSABLE`，立即嘗試）→ 刷新 Controller → `CS:1265` `notifyInside`「量子通道已開啟」；PREPARE 的簿記丟棄。stub 的 WARN 與 `readyWarned` 已移除。**S-M2** 見下一節 | `red-c3-ready-stub`（7 個 test FAIL：P-NEW `readyCommittedOnce=false`、P-REVISIT、P-RECHECK、P-UNCONF、T-CROSS、T-EXIST、T-READY-FAULT）；`mut-c3-no-existing-recheck` → T-EXRE 沒有封存；`mut-c3-ready-fault-no-backoff` → T-READY-FAULT `noRetryWithinTheBackoff=false`；`mut-c3-no-passable` → P-NEW、T-CROSS 的 passable witness FAIL；`mut-junit-ready-authorities` → `CST` `readyWaitsForTheRelevantAuthorities` FAIL |
+| 2. 門 | 通道期間：`OD:305` `doorAction` 的 PASSAGE_READY 分支：roll-forward 尚未確認 → REFUSE（不改門）；參與者 → `END_PASSAGE` → `PS:185` `endByParticipant`（先 checked 終局，再排 `CLOSE_AFTER_TERMINAL`：門口有 entity 時一般開門）；非參與者（艙內或艙外）→ REFUSE。PREPARE 的門不會在 READY 之後改回 sealed：提交時 `track.preparing=false`、`prepare=null`，PASSAGE_READY 不走 `prepareUniverse`；`applyDoor` 的 PASSABLE 只在 collapse view 是 PASSAGE_READY 時套用（`OD:565`）。重新套用：`OD:204` `watchDoor` 另看執行期間的 PASSAGE_READY（開服時就是 PASSAGE_READY 的不看，§12 在第一個 tick 終局），`OD:242` `reapplyGoal(PASSAGE_READY)`＝`PASSABLE`；roll-forward 中的 SEALED 依 collapse view 是 `CLOSE_ON_SEALED`（F4b-3 既有） | `CST` doorAction 與重新套用的 test（`mut-junit-door-c3`、`mut-junit-reapply-normalize` → FAIL）；T-CLOSE（N 在艙外以 bulkhead、在艙內以 Controller 都被拒；P 關門 → (a)）；T-EXPIRE 的重新套用（`mut-c3-no-passage-reapply` → 等不到排入）；T-CROSSED-RF `p2CloseRefusedDoorUnchanged` |
+| 3. 跨越判定 | `PS:85` `tick` 每個 tick 先 `observe`（每位參與者腳的 local z，記在 `Track.passageZ`；roll-forward 未確認、結束條件成立的 tick 也更新，所以永遠是真的上一個 tick），再判斷。`PS:213` `crosses` 的七個條件：參與者且不在 Crossed；在線、exact、存活、非旁觀；在 exact 的來源 world；沒有騎乘；沒有被其他 session 佔用（`participantsAvailable`）；腳在門口（local x∈[1,6)、y∈[1,6)）；local z＜0.5 而且上一個 tick ≥0.5。非參與者不在檢查的對象裡 | 上一節的「跨越」兩列 |
+| 4. passage 傳送政策 | `TS` 的設計與 M3 不變的證據見下方「TransferSafety」；`PTP`；S-M1 見下一節 | 上一節的「policy」列；M3 gate |
+| 5. 傳送結果 | `PS:225` `cross`：MOVED → `PS:278` `crossed`（INFO、`commitRollForward` 加入 Crossed；之後的參與者以新的 record 為前提）；`FAILED_ROLLED_BACK`、`REJECTED_BEFORE_MOVE` → `PS:305` `transferFailed`（actionbar「通道傳送失敗，你仍在原世界。」，WARN「通道傳送」依原因去重，成功傳送時清除，通道仍開著）；`FAILED_RECOVERY_REQUIRED` → `PS:329` `recoveryRequired`：`commitRollForward` PASSAGE_READY→SEALED(`transferRecoveryRequired(player)`，保留 participants、Crossed、opened／expires 與收據），之後與其他原因進入 SEALED 相同（`CS:982` `sealCommitted`：門 `CLOSE_ON_SEALED`、「量子通道無法開啟，已封存。」、刷新、釋放來源與目的世界的 ticket、ERROR，cause 是 `PS:319` `recoveryCause` 的移動與回滾證據）；不再自動移動他，也不重試。寫出未確認（ROLL_FORWARD_PENDING）時 collapse view 已是 SEALED，`sealCommitted` 照做（§10.3 :571），寫出由 recovery 的 RETRY_FLUSH 帶退避重試，flushed 仍是 PASSAGE_READY 的期間 `PS.tick` 只收斂；前置檢查被拒（REJECTED，防禦性）時通道在記憶體內關閉（`Track.pendingRecovery`）、ERROR 一則、per-session 退避只重試這筆寫入 | T-ROLLBACK、T-TRR（REJECTED 路徑以 `installJournalPutFault` 造出一次，之後重試成功）、T-TRR-RF（flush 失敗 2 次：寫入本身與下一個 tick 的 RETRY_FLUSH；另一個 session 的 checked 寫入帶出 SEALED） |
+| 6. `Crossed` 落盤失敗 | `PS:85`：`rollForwardPending` 或 current≠flushed 時只觀察、不做別的（不跨越、不評估結束條件、不終局）；`doorAction` 拒絕參與者關門。收斂之後下一個 tick 恢復，這時已到期就依 (c) 結束 | T-CROSSED-RF（flush 失敗 4 次，第 5 次在到期之後才成功，接著 (c)）；`mut-c4-pending-passes-through` |
+| 7. 結束條件與順序 | `PS:144` `endCondition`（純函式）：(b) 全員都在 Crossed、(c) overworld game time ≥ expires、(d) `CS:1226` `sourceSignal` 的 LOW／DISABLED／INVALID（Controller 的紅石輸入、registry 的 enabled、結構驗證；不經 `returnToOrigin`）；同時成立依 (b)(c)(d) 回報一個；來源沒有載入時不判斷 (d)。(a) 由門的攔截觸發。結束：`PS:157` `finish`（退避期外 `terminate(PASSAGE_ENDED)`；沒有完成時 WARN、退避、不改門）→ `PS:170` `closed`：`CS.terminated`（釋放 runtime、來源 ticket 與目的世界的 ticket）→ INFO「量子通道已結束（正常結束：…）」→ 門（(a) `CLOSE_AFTER_TERMINAL`，(b)(c)(d) `OPEN_AFTER_TERMINAL`）→「量子通道已關閉。」→ 刷新 Controller（原艙解除封鎖；尚未處理的 LOW 由 `reconcile` 接著走一般的 OFF 流程）。順序與 spec 字面的差異見「偏離」第 4 條 | 上一節的「結束條件」與「兩人一人跨過」兩列；T-POWER `offFlow`（終局之後 registry 的 power state 走到 OFF） |
+| 8. 開服時就是 PASSAGE_READY | 沿用 F3d：`CS.startupPassages` 的 record 在第一個 tick 由 `endStartupPassage` 終局、門改為一般開門；`PS` 與 `watchDoor` 的 passable 都排除它們（`CS:290`、`OD:204`）。執行期間提交的 record 形狀（opened、expires、Crossed）與開服時讀到的相同，所以重啟之後走同一條終局路徑 | default 的 `m5_collapse_startup_passage` PASS（21 個 batch）；跨 JVM 屬 F6 |
+| 9. 訊息 | `CS:125`–`:129` 三個 key（`message.quantumchamber.m5.passage_opened`／`passage_transfer_failed`／`passage_closed`），`Text.translatable`，zh_tw 逐字等於 spec，en_us 有翻譯。對象：「通道開啟」給艙內的參與者（§10.2 第 3 步）；「傳送失敗」給那位玩家；「通道已關閉」給在線的每一位參與者（不論在原艙、已跨到目的宇宙或在別處；§10.8 只寫時機「通道結束」，跨過的人也需要知道通道已經關上、沒有正規回程，§2；與「進入 SEALED」的訊息相同）；TRR 是「進入 SEALED」的訊息 | `CST` `passageMessagesExistInBothLanguages`（`mut-junit-closed-text` → FAIL）；`mut-c3-no-opened-message` → P-NEW、T-CROSS、T-EXPIRE FAIL；T-CROSS `closedMessageToTheCrossedParticipant`、T-EXPIRE `closedMessageToBoth`、T-ROLLBACK `failureMessage` |
+| 10. default run 的隔離 | 通道只在 M5 run 發生：default run 沒有會提交執行期間 PASSAGE_READY 的 test（default 的塌縮 test 是 SOURCE、取消或不配置宇宙）。`TF` 的新條件只在 Slot 裝著時生效 | run-all：default 與 legacy 的 boundary oracle PASS、Full WARN／ERROR 54／28 不變、M3 4＋5（見「Gate 與證據」）；default 21 個 batch 與 F5-0 的 `c1-default` 逐一相同（`f5/f51/cmp-c6-default.txt`） |
+| 11. log | `PS` 的每一則 log 帶 `LOG_MARKER`（`CollapseLogMarkerGuardTest` 掃描整個 collapse package，`PS` 以 static import 使用 marker，logger 是 `LoggerFactory.getLogger("quantumchamber")`）；WARN／ERROR 都帶 `session=`；正常的結束 (a)–(d) 與跨越只記 INFO；WARN 經 `CS.warn` 依 (session, 寫入種類, `FailureText.dedupeKey`) 去重（「通道傳送」「寫入 Crossed」「寫入 SEALED(TRANSFER_RECOVERY_REQUIRED)」「提交 PASSAGE_READY」），TRR 的 ERROR 經 `sealedLog` 去重，被拒的 ERROR 只在第一次記 | `CollapseLogMarkerGuardTest` PASS；GameTest 以 `capture.marked(…, sid)` 斷言則數（T-CROSS、T-POWER、T-CLOSE 的 `noWarnOrError`／`collapseFlowNeverWarned`，T-ROLLBACK 的 WARN 一則） |
+
+### `TransferSafety` 的設計（決策 4）與 M3 不變的證據
+
+- `TS:22` `TransferSafety`（public interface）：`check(Site, Box)` 回 `Decision`（ALLOW／REJECT_TARGET_NOT_FULL／REJECT_TARGET_UNSAFE），`requirement()` 是被拒時的 detail。`Site` 是政策讀世界的介面（chunk 是否 FULL、世界高度、邊界、`spaceEmpty`、`containsFluid`、`floorSupports`），由 `UTS` 以 create=false 的查詢實作，所以政策可以用 fake 做 JUnit。共用的 static 檢查：`finite`、`fullChunkRange`（bbox 水平外擴 `FULL_MARGIN`＝2 格，`floor(min−2)>>4 … floor(max+2)>>4`）、`requireFull`（`MAX_CHUNK_SPAN`＝4，之後每個 chunk 都 FULL 才讀方塊）、`withinHeightAndBorder`。
+- `TS:31` `M3_SAFE_LANDING`：F5-1 之前 `UTS.targetSafety` 的程式逐行搬來、順序不變（有限值 → chunk 範圍 → FULL → 高度與邊界 → 無碰撞 → 無流體 → 腳底恰在方塊頂面而且每一欄都有完整的上表面）。`UTS:68` 既有的 `moveToUniverse(player, descriptor)` 委派 `UTS:76` 的 3 參數多載（`M3_SAFE_LANDING`）；前置檢查（`inspectSafety`）、移動之後的驗證（`verified`：pose（位置、速度、yaw、pitch）、bbox 與政策）與回滾資格都用同一個 safety；`returnToSource` 用 M3。
+- `PTP`：只保留有限值、FULL、高度與邊界（`requireFull` 之後才看邊界，不讀方塊），不做碰撞、流體與地板，不搜尋安全位置、不調整 Y。
+- M3 行為不變：`TST` 的 M3 決策表（`m3SafeLandingAllowsOnlyAFullClearSupportedLanding`）＋共用檢查的順序（`sharedChecksRejectTheSameWayForEveryPolicy`：chunk 不是 FULL 時不讀任何方塊），以 3 個 mutation 證明鎖得住（`mut-c1-m3-no-fluid`、`-no-floor-column`、`-terrain-before-full`，`f5/f51/adapted-junit-summary.txt`）；M3 的 JUnit `UniverseTransferAuthorityTest` 12/12（不改，`c1-junit-summary.txt`）；`gates.ps1 -Mode M3` 在 `75cd2c3` 的工作樹（`gate-f51-c1-m3-d416d06e1caa46b8b104cc54692c3989`）與 `fd0a2cd`（`gate-c6-m3-18884215569c4c7ca4416dcb5b4b1914`）都 PASS（universe 4 phases、transfer 5 phases）；run-all 的 `m3=4+5`。
+
+### S-M1、S-M2
+
+- **S-M1（預載與 FULL 檢查的 chunk 推導一致）**：兩邊共用同一個推導。`CS:920` `preloadChunks` ＝ `PTP.preloadChunks(frame)` ＝ `TS.fullChunkRange(PTP.reach(frame))`，`reach` 是艙體 bbox 水平外擴 1 格（`REACH`）。`fullChunkRange` 在 min、max 上單調，所以 bbox 在 `reach` 之內的玩家，傳送時 FULL 檢查涵蓋的 chunks 都在預載範圍內；跨越時腳在門口（x 在艙內）、上一個 tick 還在中線內側，這個 tick 腳的 local z 大於 −0.7（一個 tick 往外少於 1.2 格）時 bbox 都在 `reach` 之內。更快的移動可能讓 FULL 檢查看到沒有 ticket 的 chunk：那次是 `REJECTED_BEFORE_MOVE`，玩家留在原世界、通道仍開著（`PS:251`）。證據：`CST` `preloadIsTheTransferFullCheckDerivationOfTheChamberReach`、`preloadCoversTheTransferFullCheckOfEveryCrossingBox`（四個朝向、門口的每個 x、local z 到 −0.69），`red-c2-old-preload`（F4b-2 的「外擴 2 格」）→ 兩個都 FAIL；testmod `SUP.preloadArea` 改成同一個範圍（`0e620fe`）。交給 F7 寫 §9.1 的 errata。
+- **S-M2（修復之後的 checkpoint）**：`CS:600` `project` 把第一次寫入與修復統一成同一條路徑：修復一格都沒有寫時直接準備完成（方塊沒有改變，不做 checkpoint，F4b-2「偏離」第 2 條）；寫了任何一格（第一次寫入，或修復寫了方塊）時，READY 之前都要走 checkpoint 的流程：先問 `ChunkSaveCheckpoint.ready`、checkpoint 之前與之後各再驗一次不變量 cell、只在再驗乾淨時存檔，所以不會每個 tick 存檔（F4b-2 Q-I1）；修復不寫 COMPLETE（ledger 已是 COMPLETE）。證據：P-REVISIT 的 `oneCheckpointBeforeTheReady`（checkpoint 恰一次、當下 D2 仍是 COLLAPSING、之後才是 PASSAGE_READY），`mut-c3-repair-no-checkpoint`（修復一律不做 checkpoint，即 F4b-2 的行為）→ FAIL。交給 F7 寫 errata。
+
+### 測試
+
+- JUnit 636 → 646（`f5/f51/c6-all-junit-all.txt`，與 F5-0 的 `f50/c4-junit-all.txt` 比對：`cmp-c6-junit.txt`）：`TST` 3、`PTPT` 1、`CST` 20 → 26（新增 7 個，`preloadCoversTheChamberBoxPlusTwoBlocks` 換成 S-M1 的 2 個：`passageMessagesExistInBothLanguages`、`crossingGeometryWorksForEveryFacing`、`crossingRequiresEveryParticipantCondition`、`passageEndConditionsFollowTheSpecOrder`、`readyWaitsForTheRelevantAuthorities`、`preloadIsTheTransferFullCheckDerivationOfTheChamberReach`、`preloadCoversTheTransferFullCheckOfEveryCrossingBox`）；doorAction 與重新套用兩個既有 test 改期望。
+- M5 GameTest 38 → 50：新增 12 個（上方清單）。既有 test 的變化（名稱、batch、增量都不變，除了 P-NEW 改名）：
+  - P-NEW：方法名稱 `prepare_new_runs_the_destination_side_then_stops_before_the_passage` → `prepare_new_runs_the_destination_side_then_opens_the_passage`（batch `m5_universe_prepare_new` 不變）；stub 的 WARN witness 換成 `noWarnOrError`、`readyCommittedOnce`、`openedMessageToTheParticipantInside`、`passableMembraneWhenReady`、`holdsTheTicketWhileReady`、`passableMembraneHeld`。
+  - P-POWER：`sealedAgainAfterTheEdge` 改在回到 PREPARE 的那個 tick 判斷（準備完成的同一個 tick 門就改為 passable）。
+  - P-REVISIT：`noCheckpointForTheRepair` 換成 `oneCheckpointBeforeTheReady`（S-M2）；stub 的 WARN witness 換成 `noWarnOrError`。
+  - P-RECHECK：WARN 只有等待的一則；P-UNCONF：「沒有封存」改為不是 SEALED，`stillNoSealAndReady`；T-START、T-FAIL 的 stub WARN 例外拿掉。
+  - T-MEM、T-FAIL：以 `holdReady` 暫緩提交、留在 PREPARE，新增 `readyHeldInPrepare`（`hits()>0`，證明暫緩真的發生）。
+- default GameTest 174（`_windows` 88）、legacy 1、per-test receipt 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 不變：沒有新增或刪除 default run 的 `@GameTest`。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f5/f51/`（以下簡稱 `f51/`）：`state.ps1`、`gate.ps1`、`junit.ps1`、`junit-all.ps1`、`adapted-junit.ps1`、`chain.ps1`、`adapter.py`、`wbcmp.py`、`jarcmp.py`、`setcmp.py`、`junitsum.py`、`classes.ps1`、`javapcmp.py` 由 `f50/` 複製，只改註解與 adapter 表的模組（`adapters_f51.py`）；`adapter.py` 另加整檔換成指定 commit 版本的 `REV:<commit>`。每個 adapter 跑完都還原，還原後的 blob 與套用前相同；每次 RED、GREEN、mutation 的 state 記 HEAD、porcelain 與逐檔 blob（`f51/<label>-state.txt`）。commit 3～5 的拆分：最終版先備份，再以字串替換腳本（每個 old 斷言恰好出現一次）推出 `1a4f504` 的版本，focused 測試通過後 commit，之後還原最終版、依序 commit（`commit-c3`～`c5-state.txt`）。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| Step 0 | `ffb800c`＋註解（＝`1b8784d`） | `s0`（JUnit 守門）；`s0-base-javap`、`s0-after-javap` | PASS；javap 相同 |
+| commit 2 | `1b8784d`＋`TS`、`UTS`、`TST`（＝`75cd2c3`） | `c1`（`TST`、`UniverseTransferAuthorityTest`）；`gate-f51-c1-m3-d416d06e1caa46b8b104cc54692c3989`；mutation 3 個 | 3＋12 PASS；M3 PASS；mutation 3/3 FAIL |
+| commit 3 | `75cd2c3`＋`PTP`、`CS`、`CST`、testmod（＝`0e620fe`） | `c2b`（`PTPT`、`CST`、`TST`、guard）；`gate-c2-prepare-8cbcbef23b374e06878a5c1aa03a68bf`；`red-c2-*`、`mut-c2-*` | PASS；P-NEW、P-POWER 2/2；RED 與 mutation 都 FAIL（`c2` 是 z=−0.7 浮點邊界的失敗，不採計，改取樣 −0.69 之後 `c2b`） |
+| 開發輪次（不採計） | 工作樹 | `gate-dev-m5-1-4dfa7669af704e3a94f1a3b0b878aa1b`（38/38）；`-2-06827a9d6fb54faa903391ff02fa9f11`（47/50）；`-3-9a2e935a6ec94d6b88b64fe032a5cbe4`（4/5）；`-4-a4a5cfebc98f4ae298169be17df333e3`（1/1）；`-5-b6875d2b491c40d9aa4253f69077dde1`（50/50） | dev-m5-2 的 3 個失敗是 test 的排程與注入次數（「觀察」第 2、3 條），dev-m5-3 是 T-EXPIRE 在 M2 入場途中斷電（改為等真入場） |
+| commit 4（READY） | `0e620fe`＋c3 的版本（＝`1a4f504`） | `c3pre`（JUnit focused）；`gate-c3pre-m5-2cb2256473e84fd0ba0c372fa8111cbb` | `CST` 23；M5 38/38 |
+| commit 5（通道） | `1a4f504`＋`PS`、`CS`、`OD`、語言檔、`CST`（＝`4b42a9d`） | `c4pre`；`gate-c4pre-m5-139abac79f9b4f72a0521d96f0e19bca` | `CST` 26；M5 38/38 |
+| commit 6（GameTest） | `4b42a9d`＋testmod、README（＝`5b3a98e`） | `gate-c5pre-m5-4331aae5f38540d28c40fc2fa4ca15d2` | M5 50/50 |
+| RED／mutation | `5b3a98e`（`chain-red-c5.log`）、`5b3a98e`＋T-CROSS 的修正（`chain-red-c6.log`） | `gate-red-c4-passage-821058f9865343e5ad36e84b9e2b544a`、`gate-red-c3-ready-stub-d10e1f0095754ef181e54ef389765b2e`、`gate-mut-c3-repair-no-checkpoint-6bacdae5378a4cfeb78a342e0d807260`、`gate-mut-c3-no-existing-recheck-5093920bd8fb47dabfa7431dade5852d`、`gate-mut-c3-ready-fault-no-backoff-c720b708f8c346c99864e81853640d0f`、`gate-mut-c3-no-passable-4ffc1d2fe27b4aa99087bd86d42fd52e`、`gate-mut-c3-no-opened-message-8b5578dd73b049c8b4b73422e5165a28`、`gate-mut-c3-no-passage-reapply-81ca0913b09745868d386254e6ce0902`、`gate-mut-c4-transfer-m3-82df046231544a91b1451be5a29b3aeb`、`gate-mut-c4-transfer-warn-every-time-043726b085fd427192fe45d39eed5fcd`、`gate-mut-c4-trr-as-rolled-back-1e454e7c8743433597a0ffa318af2e1f`、`gate-mut-c4-pending-passes-through-6db97ed3a4c54b0eb56831aaaee7e7a1`、`gate-mut-c4-riders-cross-2-71d35d8de3374db4b1d3721e58f627fc`、`gate-mut-c4-no-destination-release-2-96b49b5a773744cdab32a2a0d8fa300d`、`gate-red-c4-passage-cross-2-b87e25c38dc445f7a796f0c3480eb456`；JUnit `mut-junit-c5` | RED：`red-c4-passage` 10 FAIL＋T-EXRE PASS、`red-c3-ready-stub` 7 FAIL；mutation 全部 FAIL；JUnit 恰好 7 個 FAIL。存活的兩個第一版 mutation 見上方 |
+| commit 7（騎乘 fixture） | `5b3a98e`＋`M5U`（＝`fd0a2cd`） | `gate-green-c6-cross-a0240f325954499cb5fa9751226de314` | 1/1 |
+| focused（最終） | `fd0a2cd`，乾淨 | `c6-all`（JUnit 全部）；`gate-c6-default-605274ea0be84e6a826a7cc7f8ddaf81`；`gate-c6-m3-18884215569c4c7ca4416dcb5b4b1914` | 646（PASS 644、SKIPPED 2）；default 21/21（與 F5-0 逐一相同）；M3 PASS |
+| run-all | `fd0a2cd`，工作樹乾淨 | `run-all-25df0f57323645ccb09098f6adf4400e`（Full：`gate-full-0bc68cf4f372449aa9e83c995d40e489`；M5：`gate-m5-gametest-f9e1d0ccb0204c40b63e99f273c164b3`；`f51/run-all-console.txt`） | `END ALL exit=0 HEAD=fd0a2cd`。`SUMMARY default=174/174 windows=88 legacy=1/1 m5=50/50 perTest=51+1 junit=646 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=425entries/378classes sources=221 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS` |
+
+- 與基準 run-all（`run-all-be78e13beeb94f628f8132f8226f2508`，`b971f2d`）逐項比較：
+  - M5 38 → 50（新增的 12 個）。M5 oracle PASS（`m5-oracle.json`）：50 個 test 的 catalog 增量逐一串接（新增的 12 個各 1），每個都 converged、preserved；suite 結束時 35 → 47 筆（新增 12 個宇宙）；`M3_UNIVERSE_STOPPED_VERIFIED worlds=41 runtimeReceipts=41 quarantine=0 contextDetached=true`（29 → 41）。
+  - JUnit 636 → 646（見「測試」）。default 174（`_windows` 88）、legacy 1、perTest 51＋1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly PASS、testmodHits 0、CI 兩個平台 PASS，都不變。default 與 legacy 的 boundary oracle PASS（兩個 gate 的 `m4-boundary-*.json` 都是 `status=PASS`）。
+  - release JAR 412 → 425 entries（365 → 378 classes，`f51/jarcmp-release-run-all.txt`）：新增 13 個 class：`CollapseService$SourceSignal`；`PassageService` 與 `$1`、`$Candidate`、`$LifecycleView`、`$PassageEnd`、`$PendingRecovery`；`PassageTransferPolicy`；`TransferSafety` 與 `$1`（`M3_SAFE_LANDING`）、`$ChunkRange`、`$Site`；`UniverseTransferService$1`（`site` 的匿名 class）。內容不同的是兩個語言檔、`CollapseService` 與它的 nested class、`OriginDoors` 與它的 nested class、`UniverseTransferService` 與 `$Preflight`／`$SafetyCheck`／`$WorldIdentity`（同一個原始檔重新編譯，行號表與常數池跟著變）。沒有刪除的 entry；testmod 命中 0（`RHM`、`TF` 只在 testmod）。
+  - sources JAR 218 → 221（`f51/jarcmp-sources-run-all.txt`）：新增 `PassageService.java`、`PassageTransferPolicy.java`、`TransferSafety.java`；內容不同的是兩個語言檔、`CollapseService.java`、`OriginDoors.java`、`UniverseTransferService.java`。
+  - log（以 `/WARN]`、`/ERROR]` 計行，UUID 與數字正規化、排序之後比對，`f51/wbcmp-*-run-all.txt`）：
+    - Full 54／28，與基準逐行相同（這次沒有遇到 `m2_task4_disconnect_io` 的偶發）；legacy 0／0。
+    - M5 WARN 37 → 33、ERROR 6 → 10，逐則歸屬：
+      - 少 11 則 WARN：「通道尚未實作（F5）」（READY stub 移除，每個走到準備完成的 session 原本一則）。
+      - 多 7 則 WARN：T-ROLLBACK「塌縮流程的通道傳送沒有完成」1（第二次同一原因去重）；T-READY-FAULT「提交 PASSAGE_READY 沒有完成（RESTORED）」1；T-TRR「寫入 SEALED(TRANSFER_RECOVERY_REQUIRED) 沒有完成（REJECTED）」1；T-TRR-RF「寫入 SEALED 沒有完成（ROLL_FORWARD_PENDING）」1 與 recovery 的「寫出保留 pending … SEALED(TRR)」1；T-CROSSED-RF「寫入 Crossed 沒有完成（ROLL_FORWARD_PENDING）」1 與 recovery 的「寫出保留 pending … Crossed」1（三次重試失敗由 recovery 去重成一則）。GT-P 的原版 `PistonBlockEntity` WARN 一減一加只是 object hash 不同。
+      - 多 4 則 ERROR：T-EXRE「SEALED(EXISTING_INELIGIBLE)」1；T-TRR、T-TRR-RF 的「SEALED(TRANSFER_RECOVERY_REQUIRED)」各 1；T-TRR「通道傳送無法回滾，但 SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒」1。
+      - 都是受控注入或刻意的封存，test 以 witness 斷言它們的則數；能歸屬 session 的都帶 `session=`。
+- 失敗或不採計的 root：`c2`（JUnit，z=−0.7 的浮點邊界，改取樣之後 `c2b`）、`s0-badargs`（`junit.ps1` 的陣列參數傳錯，只跑了一個 class）、`dev-m5-1`～`dev-m5-5`（開發輪次，見上表）；RED 與 mutation 的 FAIL 是刻意的；第一版的 `mut-c4-riders-cross`、`mut-c4-no-destination-release` 存活（見 RED 一節）。本 task 沒有遇到派工列出的已知偶發。
+
+### 偏離 plan／spec 字面之處
+
+1. **新增 `PassageService`，不把 tick context 收斂成介面或 record**（F5-0 的建議）：`PS` 與 `OD` 一樣是 `CS` 的 package-private 協作者，直接讀 `CS` 的 `journal`、`now`、`server`（`refreshContext` 每個 tick 重設 `journal` 與 `now`）並呼叫 `track`、`warn`、`terminated`、`terminalFailed`、`refresh`、`sealCommitted`、`sourceSignal`、`notifyParticipants`。不收斂的理由：context 是 `CS` 擁有、每個 tick 改變的狀態，record 快照要每個 tick 重建並傳進每個入口（門的攔截不在 tick 的路徑上），介面則只是把同一組十幾個成員再列一次；收斂還要改 F5-0 純搬移的 `OD`，超出 F5-1 的範圍。排門的路徑：`CS.originDoors` 由 private 改為 package-private final，`PS` 經它 `queueDoor`；`OD` 經 package-private 的 `CS.passages` 呼叫 `endByParticipant`。F5-0 交給 F5-2 的 Step 0 條件沒有觸發：`CS` 1513 行（未超過約 1600），`PS` 不直接碰 `destinations`、`Prepare`、`releaseDestination`（只經 `terminated` 與 `sealCommitted`）。
+2. **EXISTING 的再驗經 `DestinationResolver.resolve(view)`**：派工寫「只能呼叫既有的 `resolveExisting`」，但它是 private；public 的 `resolve` 對 EXISTING 只呼叫它（只讀不寫，`view` 在 PREPARE 中必定是全員返還、沒有 lease 的 COLLAPSING）。`DestinationResolver` 沒有改。
+3. **移除 `CS` 的 static `releaseDestination(MinecraftServer, UUID)`**：F4b-2 為「F5 的通道結束」預留的入口沒有用到。通道結束是 checked 終局，由 `CS.terminated` 釋放目的世界的 ticket（同一個 tick 稍後的 `releaseTerminatedDestinations` 是安全網）。F4b-2 交下的「`releaseDestination` 的測試」由 T-CROSS、T-POWER、T-CLOSE、T-EXPIRE 的 `destinationTicketReleased`／`everythingReleased` 承擔，以 `mut-c4-no-destination-release-2` 證明鎖得住。
+4. **結束的順序**：spec §10.6 的字面是「終局 → 門 → 刷新 Controller＋`releaseDestination` → 解除封鎖」。實作是「終局 → `CS.terminated`（runtime、來源 ticket、目的世界的 ticket）→ INFO → 門 → 訊息 → 刷新」：`OPEN_AFTER_TERMINAL`／`CLOSE_AFTER_TERMINAL` 在 presence 不是 NONE 時丟棄（`OD:548`，避免把新 session 的門打開），而 presence 要等 runtime 釋放之後才是 NONE，所以釋放必須在排門之前（SOURCE fast path 與 F4b-3 的 PREPARE 期間參與者關門都是這個順序）。全部在同一個 tick 內完成，門與 ticket 之間沒有可觀察的差異。
+5. **`REJECTED_BEFORE_MOVE` 與 `FAILED_ROLLED_BACK` 同樣處理**：spec §10.3 的表只列成功與兩種失敗；移動之前就被拒（例如 FULL 檢查看到沒有預載的 chunk）時玩家同樣留在原世界，所以同樣提示、去重記 WARN、通道仍開著。`RETURNED` 不會由 `moveToUniverse` 回傳（switch 窮舉）。
+6. **「量子通道已關閉」給在線的每一位參與者**：§10.8 只寫時機；理由見補充第 9 點。
+7. **提交 PASSAGE_READY 失敗時原艙門改為一般開門**：§6 只規定 record 留在 COLLAPSING、退避重試；門比照閘門失效時的處理（sealed 量子膜有碰撞，不能在重試期間把人困在艙內），重試成功之後直接改為 passable。
+8. **SEALED(TRR) 的寫入被拒（REJECTED）的路徑**：§10.3 :571 規定的是寫出失敗（roll-forward 未確認，collapse view 已是 SEALED）；前置檢查就被拒時 journal 沒有改變，所以通道在記憶體內關閉、只重試這筆寫入，記 ERROR 一則。這是防禦性的路徑，T-TRR 以 journal put 的注入造出。
+9. **修改 `TF`（`SessionTransferFaultMixin`）**：既有的兩個條件綁在 M2 的 ARMING 入場與 M2 的持久化 probe，限不到 PASSAGE_READY 的 session；在同一個注入點加一個 Slot 的條件（`HK.rejectNativeMove`，README：mixin 讀取的靜態 hook 一律是 Slot），不另開一個注入同一個方法的 mixin。M3 的 transfer probe 用的條件不變（M3 gate PASS）。
+10. **`removeFixture` 不移除 SEALED(TRR)**：它是永久的 recovery authority，沒有 API 可以終局或重試（SEALED→COLLAPSING 被 journal 拒絕），所以留在 M5 run 的 journal（T-TRR、T-TRR-RF 各一筆；原參與者都不再被佔用）。
+11. **P-NEW 改名**（batch 不變）：原名寫的是「停在通道之前」，F5-1 起不成立。CI 的 M5 規則依宣告動態掃描，不需要改 `build.yml`。
+12. **T-READY-FAULT 不用 `afterAutosaveClear`**：探針只計「current 是 PASSAGE_READY、flushed 是 COLLAPSING」的 flush，這只出現在提交本身的 flush（restore 類失敗之後 current 已還原），原生 autosave 不會讓計數誤判。
+13. **commit 拆分**：派工的例子是 8 個；這裡把「跨越與傳送」「失敗、TRR、Crossed 的落盤」「結束條件與門」合成一個 commit（`4b42a9d`）：`PS.tick` 是一條有順序的流程（只收斂 → 結束條件 → 跨越 → 傳送結果），拆開時中間的 commit 會有永不結束或沒有失敗處理的通道，focused 測試只能驗到 READY。GameTest 另成一個 commit（`5b3a98e`），RED 以「production 換回前一個 commit、testmod 用最終版」在 GameTest 層證明（`red-c4-passage`）。
+
+### 需要裁示
+
+1. 「量子通道已關閉」的對象（「偏離」第 6 條）：在線的每一位參與者；若 spec 的意思是只給艙內的人，`PS.closed` 改呼叫 `notifyInside`。
+2. 結束的順序（「偏離」第 4 條）：ticket 的釋放在排門之前；若接受，交給 F7 改 §10.6 的字面。
+3. `REJECTED_BEFORE_MOVE` 比照 `FAILED_ROLLED_BACK`（「偏離」第 5 條）。
+4. tick context 不收斂（「偏離」第 1 條）。
+5. SEALED(TRR) 永久留在 M5 run 的 journal（「偏離」第 10 條）：之後的 test 若依 journal 的筆數斷言，要把它們算進去。
+
+### 觀察（未修改）
+
+1. **騎乘的 fixture 原本沒有鎖住騎乘的條件**（`fd0a2cd` 已修正）：礦車的乘坐點比礦車低，礦車放在 local y=1 時，騎乘中的玩家腳低於門口（y＜1），門口的條件就先擋下，拿掉「沒有騎乘」的 mutation 存活。改成礦車浮在 local y=2，並以 `riderInTheDoorwayPastTheMidline` 證明騎乘時腳仍在門口、中線外側。另外，那個 mutation 下 `UTS` 照樣把騎乘中的玩家移到目的世界（MOVED）：passage 不能依賴傳送服務擋騎乘，只靠 §10.3 的條件。
+2. **`whenTicks` 排在目前的 tick 時，`ready` 拿到的 tick 比實際早一個**：之後以它為基準排的「內側、外側」兩步可能落在同一個 tick（dev-m5-2 的 T-EXPIRE、T-CROSSED-RF 因此看不到跨越）。新的 test 一律從下一個 tick 開始等；README 寫明。
+3. **recovery 的 RETRY_FLUSH 在 roll-forward 寫出失敗的下一個 tick 就重試**，它的退避從它自己的失敗才開始（200、400、800）。T-TRR-RF 的注入因此是 2 次、T-CROSSED-RF 是 4 次；README 寫明。
+4. **執行期間 PASSAGE_READY 的門的重新套用，在 production 只是防禦**：提交之後仍持有來源 ticket，同一個 instance 內來源艙不會卸載；重啟之後 record 在 `startupPassages`，§12 在第一個 tick 終局。T-EXPIRE 以 `simulateDoorStartup`（只把 session 加進 `startupSessions`）走到這條路徑。
+5. **M2 入場與返還的時間**：T-EXPIRE 的新 session 真入場約 1333 ticks（走廊發布 358 扇側門），斷電之後返還約 20 ticks；入場途中斷電時 600 ticks 內沒有返還（dev-m5-3），不在本 task 調查。
+6. **`CS` 1341 → 1513 行、`OD` 713 → 746 行、`PS` 394 行**。
+7. **`CS:148` 的註解只列出 `OriginDoors`**：「server、startupSessions、tracks 與 … journal、sessions、now 是 package-private：同一個 server instance 的 OriginDoors 直接讀寫」；F5-1 起 `PS` 也讀 `server`、`journal`、`now`，`startupPassages`、`originDoors`、`passages` 也是 package-private（各自的 Javadoc 寫了理由）。註解沒有錯，只是不完整；run-all 之後才發現，為了不讓 run-all 的 HEAD 與最終 HEAD 之間有 `src/` 的差異，留給下一個改 `CS` 的 task。
+
+### 交給後續
+
+- F5-2：
+  - 比較器 15：READY 提交之後的刷新目前沿用 F3a 的 ARMED（11）；`presence()` 的 PASSAGE 已在 F3a 完成。通道結束之後由 `PS.closed` 刷新（presence NONE）。
+  - §10.6 :613 的正規化：PASSAGE_READY 的 session 自己擁有門（`OD` 的 `PASSABLE` 目標只在 collapse view 是 PASSAGE_READY 時套用，`watchDoor` 也看執行期間的 PASSAGE_READY），正規化要排除有 PASSAGE_READY 的艙，與 COLLAPSING／SEALED 相同。
+  - F5-0 的 Step 0 條件沒有觸發（「偏離」第 1 條）。
+- F6：
+  - 重啟矩陣：PASSAGE_READY 提交之後、passable 套用之前 crash（重啟之後 §12 終局、一般開門）；`Crossed` 寫出未確認時 crash；SEALED(TRR) 跨重啟仍是永久原因、不重試；PASSAGE_READY→SEALED(TRR) 的寫出未確認時 crash（重啟之後 flushed 是 PASSAGE_READY，§12 會把它終局：要確認這是不是期望的行為，因為 TRR 的證據只在 current）。
+  - `build.yml` 的明列清單可加 T-EXPIRE（`_windows`）；P-NEW 改名不影響（動態掃描）。
+- F7：
+  - spec errata：S-M1（§9.1 的預載＝傳送時 FULL 檢查對「艙體 bbox 外擴 1 格」的推導）；S-M2（修復寫了方塊時 READY 之前做 checkpoint）；若裁示接受，§10.6 的結束順序、「量子通道已關閉」的對象、`REJECTED_BEFORE_MOVE` 的處理、提交 READY 失敗時的門。
+  - README「預期結果」的數字以最新的 run-all 為準（F5-1 之後：M5 50、JUnit 646、release 425／378、sources 221）。
