@@ -757,12 +757,13 @@ final class M5GameTestSupport {
     }
 
     /**
-     * F5-0（F4b-3 quality M-2，取代以反射把 {@code Track.backoff} 換成 null 的 {@code breakParticipantDoorUse}）：讓這個 session 的 PREPARE 期間參與者開關門的處置
-     * 每次都在開頭丟出例外（持續性的處置失敗；{@link M5TestHooks#DOOR_USE_FAULT}，testmod {@code OriginDoorUseFaultMixin}）。安裝時就武裝；{@code disarm()}／{@code arm()}
-     * 在同一個 test 內切換，{@code hits()} 是已注入的次數。安裝、占用與移除的規則見 {@link #installHook}。
+     * F5-0（F4b-3 quality M-2，取代以反射把 {@code Track.backoff} 換成 null 的 {@code breakParticipantDoorUse}）：原艙門攔截的失敗注入（{@link M5TestHooks#DOOR_USE_FAULT}，
+     * testmod {@code OriginDoorUseFaultMixin}）。安裝時就讓這個 session 的 PREPARE 期間參與者開關門的處置每次都在開頭丟出例外（持續性的處置失敗；{@code disarm()}／
+     * {@code arm()}，{@code hits()}）；{@code armLookup()}／{@code disarmLookup()} 另讓 {@code frame} 這座艙的攔截在找出所屬 session 時丟出例外（spec m-1，
+     * {@code lookupHits()}）。都在同一個 test 內切換。安裝、占用與移除的規則見 {@link #installHook}。
      */
-    static M5TestHooks.DoorUseFault installDoorUseFault(TestContext context, UUID session, M2CorridorGameTests.TestHooks hooks) {
-        var fault = new M5TestHooks.DoorUseFault(session);
+    static M5TestHooks.DoorUseFault installDoorUseFault(TestContext context, UUID session, ChamberFrame frame, M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.DoorUseFault(session, frame);
         installHook(context, M5TestHooks.DOOR_USE_FAULT, fault, hooks);
         return fault;
     }

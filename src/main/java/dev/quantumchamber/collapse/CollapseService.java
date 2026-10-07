@@ -104,7 +104,8 @@ public final class CollapseService {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
     /**
      * 塌縮流程每一則 log 的 SLF4J marker：測試依它篩選塌縮流程的 WARN／ERROR，不依訊息的字串。能歸屬到 session 的 WARN／ERROR 都在訊息中帶
-     * {@code session=<UUID>}；不屬於任何 session 的（開服讀不到 journal、整個 tick 無法執行與它的恢復）改帶子 marker {@link #TICK_LOG_MARKER}。
+     * {@code session=<UUID>}；不屬於任何 session 的（開服讀不到 journal、整個 tick 無法執行與它的恢復、原艙門的攔截讀不到 journal 或在找出所屬 session 之前失敗）
+     * 改帶子 marker {@link #TICK_LOG_MARKER}。
      * logger 名稱、等級與訊息都不變；console 與 latest.log 的格式不含 marker。
      */
     public static final Marker LOG_MARKER = MarkerFactory.getMarker("QUANTUMCHAMBER_COLLAPSE");

@@ -2407,7 +2407,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>recovery 寫入不安全（Q-M1）：還原 P 的處置；journal 有一筆未 checked 的 authority（{@code M5GameTestSupport.putUncheckedAuthority}）時 P 關門 → 被拒、
      *     不終局、門不變、那筆 authority 沒有被寫出，也沒有 WARN；移除之後：</li>
      * <li>同一個處置「失敗 → 成功 → 再失敗」會再記一次（F5-0，quality M-1）：P 的處置剛才沒有例外地完成（不安全而拒絕），清掉了自己的鍵；再讓處置失敗、P 點一次 →
-     *     被拒，WARN 再多一則。之後 P 關門 → checked 終局、門關上。</li>
+     *     被拒，WARN 再多一則。</li>
+     * <li>找出所屬 session 之前的例外（F5-0，spec m-1）：讓這座艙的攔截在找出所屬 session 時丟例外，P 直接呼叫 port 一次 → REFUSED、門不變；WARN 沒有 session 可帶，
+     *     帶 tick 層級的 marker（{@code TICK_LOG_MARKER}，不算進這個 session 的 WARN）。之後 P 關門 → checked 終局、門關上。</li>
      * </ul>
      * 這個 session 的 WARN 只有上面三則與「通道尚未實作」，沒有 ERROR。catalog 增量 1。
      */
@@ -2438,7 +2440,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         && M5GameTestSupport.useDoor(world, frame, faulty) == ChamberCollapsePort.DoorUse.REFUSED);
                 witness.put("lookupFailureWarnedOnce", doorUseWarnings(capture, sid) - before == 1);
                 witness.put("sealedAfterTheLookupFailures", M5GameTestSupport.doorSealed(world, frame));
-                var fault = M5GameTestSupport.installDoorUseFault(context, sid, hooks);
+                var fault = M5GameTestSupport.installDoorUseFault(context, sid, frame, hooks);
                 int beforeHandling = doorUseWarnings(capture, sid);
                 witness.put("failingCloseRefusedTwice", !interact(world, doorCell, p).isAccepted() && !interact(world, doorCell, p).isAccepted());
                 witness.put("oneWarnForTwoFailingCloses", doorUseWarnings(capture, sid) - beforeHandling == 1);
@@ -2481,6 +2483,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && fault.hits() == 4);
                     witness.put("warnedAgainAfterTheSameActionSucceeded", doorUseWarnings(capture, sid) - beforeOwnSuccess == 1);
                     fault.disarm();
+                    // F5-0（spec m-1）：找出所屬 session 之前的例外沒有 session 可以歸屬：拒絕、不改門，WARN 帶 tick 層級的 marker（TICK_LOG_MARKER）。
+                    fault.armLookup();
+                    int lookupWarnsBefore = sessionLookupWarnings(capture, p);
+                    witness.put("refusedWhenTheSessionLookupFails", M5GameTestSupport.useDoor(world, frame, p) == ChamberCollapsePort.DoorUse.REFUSED
+                            && M5GameTestSupport.doorSealed(world, frame) && fault.lookupHits() == 1);
+                    witness.put("sessionLookupFailureWarnsAtTheTickLevel", sessionLookupWarnings(capture, p) - lookupWarnsBefore == 1);
+                    fault.disarmLookup();
                     witness.put("closesOnceSafe", interact(world, doorCell, p).isAccepted() && !journal.records().containsKey(sid)
                             && !journal.flushedRecords().containsKey(sid) && endedByADoor(capture, sid) == 1 && doorAll(world, frame, false, MembraneState.NONE));
                     witness.put("onlyTheseWarnsAndNoError", doorUseWarnings(capture, sid) == 3
@@ -2500,6 +2509,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /** 這個 session「原艙門的攔截」的 WARN 數（帶 LOG_MARKER；判斷與處置途中的非預期例外）。 */
     private static int doorUseWarnings(LogCapture capture, UUID sid) {
         return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "原艙門的攔截", sid.toString()).size();
+    }
+
+    /** 這位玩家「原艙門的攔截在找出所屬 session 時丟出例外」的 WARN 數，只算帶 TICK_LOG_MARKER 的（沒有 session 可帶；F5-0，spec m-1）。 */
+    private static int sessionLookupWarnings(LogCapture capture, ServerPlayerEntity player) {
+        return capture.marked(Level.WARN, CollapseService.TICK_LOG_MARKER.getName(), "找出所屬 session", "玩家=" + player.getUuid()).size();
     }
 
     /** 這個 session「PREPARE 期間參與者關門，塌縮已結束」的 INFO 數（帶 LOG_MARKER）。 */

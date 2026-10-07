@@ -55,7 +55,8 @@ import org.slf4j.LoggerFactory;
  * <p>每個 session 的門狀態（{@code doorLoaded}、{@code doorSeenLoaded}、{@code membrane}、{@code doorReleased}）留在 {@link CollapseService.Track}：它們的生命週期（第一次
  * 推進時建立、只保留 journal 裡的 session、終局時移除、{@code resetGate} 重設 PREPARE 的部分）就是 Track 的，而這裡本來就要讀 Track 的 {@code preparing}、
  * {@code pendingSeal}、{@code backoff} 與 {@code warnings}。
- * <p>這裡的每一則 log 都帶 {@link CollapseService#LOG_MARKER} 或子 marker {@link CollapseService#TICK_LOG_MARKER}（{@code CollapseLogMarkerGuardTest}）。
+ * <p>這裡的每一則 log 都帶 {@link CollapseService#LOG_MARKER}；不屬於任何 session 的（攔截讀不到 journal、找出所屬 session 之前的例外）帶子 marker
+ * {@link CollapseService#TICK_LOG_MARKER}（{@code CollapseLogMarkerGuardTest}）。
  */
 final class OriginDoors {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
@@ -313,7 +314,7 @@ final class OriginDoors {
      *     失敗再記一次），所以同一個處置同一原因「失敗 → 成功 → 再失敗」會再記一次。「判斷」沒有對應的處置，它的鍵不會被處置的成功清除，同一原因只記一次（不同原因照常各記一次），
      *     直到這個 session 的簿記移除。PREPARE 的門仍由每個 tick 的 {@link #prepareDoor} 維持（艙內有非參與者時照樣改為一般開門）。</li>
      * <li>找出所屬 session 之前的例外（journal 健康時 {@link #sessionAt} 只讀記憶體內的 record，不會發生）：沒有 session 可以歸屬，也無法判斷門是否屬於塌縮流程，
-     *     拒絕並記 WARN（不去重）。</li>
+     *     拒絕並記 WARN（不去重；沒有 {@code session=}，所以帶子 marker {@link CollapseService#TICK_LOG_MARKER}，F5-0，F4b-3 spec m-1）。</li>
      * </ul>
      * SEALED 的門照一般門的邏輯時（§11.2：任何玩家都可以照一般方式開門），同時取消這座艙還沒套用的關門（{@link #cancelSealedClose}，F4b-3 fix round 1，quality Q-M2）。
      */
@@ -357,7 +358,8 @@ final class OriginDoors {
             return use;
         } catch (RuntimeException failure) {
             if (view == null) {
-                LOGGER.warn(LOG_MARKER, "原艙門的攔截在找出所屬 session 時丟出例外（journal 健康），這次拒絕、不改門：frame={} 玩家={}：{}", frame, player.getUuid(),
+                // 沒有 session 可帶（F5-0，F4b-3 spec m-1）：帶 tick 層級的子 marker，與其他不屬於任何 session 的塌縮流程 log 相同。
+                LOGGER.warn(TICK_LOG_MARKER, "原艙門的攔截在找出所屬 session 時丟出例外（journal 健康），這次拒絕、不改門：frame={} 玩家={}：{}", frame, player.getUuid(),
                         FailureText.describe(failure), failure);
             } else {
                 service.warn(view.sessionUuid(), doorUseKey(action), failure, null,

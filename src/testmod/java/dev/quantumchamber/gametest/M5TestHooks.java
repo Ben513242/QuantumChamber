@@ -48,11 +48,11 @@ import org.slf4j.LoggerFactory;
  *     {@link #afterProjectionWrite}，注入時把寫完的結果換成 WRITE_FAILED。由 {@code M5GameTestSupport.installProjectionWriteFault} 安裝。</li>
  * <li>journal put 的拒絕（{@link #JOURNAL_PUT_FAULT}，F4b-3）：{@code SessionJournalPutFaultMixin} 在 {@code SessionRecoveryState.put} 的開頭呼叫
  *     {@link #beforeJournalPut}，注入時丟出例外，checked 提交因此被拒（REJECTED）。由 {@code M5GameTestSupport.installJournalPutFault} 安裝。</li>
- * <li>原艙門攔截的處置失敗（{@link #DOOR_USE_FAULT}，F5-0，F4b-3 quality M-2）：{@code OriginDoorUseFaultMixin} 在 {@code OriginDoors.endByParticipant}（PREPARE 期間參與者
- *     開關門的處置）的開頭呼叫 {@link #beforeParticipantDoorUse}，注入時丟出例外，攔截因此在處置途中失敗（拒絕、去重記 WARN）。由
- *     {@code M5GameTestSupport.installDoorUseFault} 安裝。</li>
+ * <li>原艙門攔截的失敗（{@link #DOOR_USE_FAULT}，F5-0，F4b-3 quality M-2、spec m-1）：{@code OriginDoorUseFaultMixin} 在 {@code OriginDoors.endByParticipant}（PREPARE 期間參與者
+ *     開關門的處置）的開頭呼叫 {@link #beforeParticipantDoorUse}、在 {@code OriginDoors.sessionAt}（找出所屬 session）的開頭呼叫 {@link #beforeDoorSessionLookup}，注入時丟出例外，
+ *     攔截因此在處置途中或找出所屬 session 時失敗（拒絕、記 WARN）。由 {@code M5GameTestSupport.installDoorUseFault} 安裝。</li>
  * </ul>
- * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核與五個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門攔截的處置）各是一個 {@link Slot}（F4a-0 fix round 1，
+ * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核與五個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截）各是一個 {@link Slot}（F4a-0 fix round 1，
  * quality Q1；F4b-3 fix round 1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
@@ -75,8 +75,8 @@ public final class M5TestHooks {
     static final Slot<ProjectionWriteFault> PROJECTION_WRITE_FAULT = new Slot<>("投影寫入失敗注入");
     /** journal put 的拒絕注入（F4b-3，{@code M5GameTestSupport.installJournalPutFault}）。 */
     static final Slot<JournalPutFault> JOURNAL_PUT_FAULT = new Slot<>("journal put 拒絕注入");
-    /** 原艙門攔截的處置失敗注入（F5-0，{@code M5GameTestSupport.installDoorUseFault}）。 */
-    static final Slot<DoorUseFault> DOOR_USE_FAULT = new Slot<>("原艙門攔截的處置失敗注入");
+    /** 原艙門攔截的失敗注入（F5-0，{@code M5GameTestSupport.installDoorUseFault}）。 */
+    static final Slot<DoorUseFault> DOOR_USE_FAULT = new Slot<>("原艙門攔截的失敗注入");
 
     /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
     public static boolean collapseSuspended(UUID session) {
@@ -156,6 +156,15 @@ public final class M5TestHooks {
     public static void beforeParticipantDoorUse(dev.quantumchamber.persistence.SessionRecoveryRecord view) {
         var fault = DOOR_USE_FAULT.get();
         if (fault != null) fault.interceptParticipantClose(view);
+    }
+
+    /**
+     * {@code OriginDoorUseFaultMixin}：原艙門的攔截找出所屬 session（{@code OriginDoors.sessionAt}）的開頭呼叫（F5-0，spec m-1）。注入時丟 {@link IllegalStateException}：
+     * 攔截在還沒有 session 可以歸屬時失敗（production 拒絕、不改門、記 tick 層級的 WARN）。
+     */
+    public static void beforeDoorSessionLookup(dev.quantumchamber.chamber.ChamberFrame frame) {
+        var fault = DOOR_USE_FAULT.get();
+        if (fault != null) fault.interceptSessionLookup(frame);
     }
 
     /**
@@ -336,15 +345,23 @@ public final class M5TestHooks {
     }
 
     /**
-     * 原艙門攔截的處置失敗（F5-0，F4b-3 quality M-2；取代以反射把 {@code Track.backoff} 換成 null 的作法）：裝著而且武裝的期間（安裝時就武裝），{@code session} 的參與者
-     * 開關門的處置每一次都在開頭丟 {@link IllegalStateException}（持續性的處置失敗）。其他 session 照常。{@link #disarm}／{@link #arm} 在同一個 test 內切換，不必重新安裝。
+     * 原艙門攔截的失敗（F5-0；取代以反射把 {@code Track.backoff} 換成 null 的作法）。兩個位置各自武裝，都丟 {@link IllegalStateException}：
+     * <ul>
+     * <li>處置（F4b-3 quality M-2）：安裝時就武裝；{@code session} 的參與者開關門的處置每一次都在開頭失敗（持續性的處置失敗）。其他 session 照常。{@link #disarm}／{@link #arm}。</li>
+     * <li>找出所屬 session（F4b-3 spec m-1）：安裝時不武裝；{@code frame} 這座艙的每一次攔截都在找出所屬 session 時失敗（還沒有 session 可以歸屬）。
+     *     {@link #armLookup}／{@link #disarmLookup}。</li>
+     * </ul>
+     * 在同一個 test 內切換，不必重新安裝。
      */
     static final class DoorUseFault {
         private final UUID session;
-        private volatile boolean armed = true;
-        private final AtomicInteger hits = new AtomicInteger();
+        private final dev.quantumchamber.chamber.ChamberFrame frame;
+        private volatile boolean armed = true, lookupArmed;
+        private final AtomicInteger hits = new AtomicInteger(), lookupHits = new AtomicInteger();
 
-        DoorUseFault(UUID session) { this.session = Objects.requireNonNull(session, "session"); }
+        DoorUseFault(UUID session, dev.quantumchamber.chamber.ChamberFrame frame) {
+            this.session = Objects.requireNonNull(session, "session"); this.frame = Objects.requireNonNull(frame, "frame");
+        }
 
         void interceptParticipantClose(dev.quantumchamber.persistence.SessionRecoveryRecord view) {
             if (!armed || !view.sessionUuid().equals(session)) return;
@@ -352,12 +369,24 @@ public final class M5TestHooks {
             throw new IllegalStateException("F5-0 GameTest 受控：PREPARE 期間參與者開關原艙門的處置失敗（session=" + session + "）");
         }
 
+        void interceptSessionLookup(dev.quantumchamber.chamber.ChamberFrame target) {
+            if (!lookupArmed || !frame.equals(target)) return;
+            lookupHits.incrementAndGet();
+            throw new IllegalStateException("F5-0 GameTest 受控：原艙門的攔截找出所屬 session 時失敗（frame=" + frame + "）");
+        }
+
         /** 之後的處置照常（仍裝著）。 */
         void disarm() { armed = false; }
         /** 之後的處置再次失敗。 */
         void arm() { armed = true; }
-        /** 已注入失敗的次數。 */
+        /** 已注入的處置失敗次數。 */
         int hits() { return hits.get(); }
+        /** 之後這座艙的攔截在找出所屬 session 時失敗。 */
+        void armLookup() { lookupArmed = true; }
+        /** 之後找出所屬 session 照常。 */
+        void disarmLookup() { lookupArmed = false; }
+        /** 已注入的找出所屬 session 失敗次數。 */
+        int lookupHits() { return lookupHits.get(); }
     }
 
     /**
