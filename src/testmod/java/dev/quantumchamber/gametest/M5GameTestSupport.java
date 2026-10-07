@@ -929,12 +929,15 @@ final class M5GameTestSupport {
         LOGGER.info("M5_PROJECTION_AUTHORITY_REBUILT bytes={}", bytes.length);
     }
 
-    /** spec §9.1 的預載範圍，由 test 依 spec 自己算出（不讀 production 的 {@code CollapseService.preloadChunks}）：艙體 bbox 水平外擴 2 格涵蓋的 chunk。 */
+    /**
+     * spec §9.1 的預載範圍，由 test 自己逐格算出（不讀 production 的 {@code CollapseService.preloadChunks}）。F5-1（F4b-2 spec S-M1，spec 的 errata 交給 F7）起，預載與傳送時的
+     * FULL 檢查同一個推導：艙體 bbox（整格的連續座標）水平外擴 1 格，再像 FULL 檢查一樣外擴 2 格，所以是 x 從 {@code minX − 3} 到 {@code maxX + 4}（z 同理）每一格的 chunk。
+     */
     static Set<ChunkPos> preloadArea(ChamberFrame frame) {
         var bounds = ChamberGeometry.bounds(frame);
         var chunks = new java.util.HashSet<ChunkPos>();
-        for (int x = bounds.getMinX() - 2; x <= bounds.getMaxX() + 2; x++)
-            for (int z = bounds.getMinZ() - 2; z <= bounds.getMaxZ() + 2; z++) chunks.add(new ChunkPos(new BlockPos(x, 0, z)));
+        for (int x = bounds.getMinX() - 3; x <= bounds.getMaxX() + 4; x++)
+            for (int z = bounds.getMinZ() - 3; z <= bounds.getMaxZ() + 4; z++) chunks.add(new ChunkPos(new BlockPos(x, 0, z)));
         return Set.copyOf(chunks);
     }
 

@@ -1357,7 +1357,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F4b-2（spec §9.1、§7.3；plan Step 1 第 1 組）：DORMANT NEW 收據 → RESOLVE 物化宇宙 U → 下一個 tick 閘門成立（P 在艙內、已供電），進入 PREPARE：
      * <ul>
-     * <li>預載：塌縮流程在 U 對「艙體 bbox 水平外擴 2 格」涵蓋的每個 chunk 加上自己的 ticket（{@code quantumchamber_destination}，argument 是 session，
+     * <li>預載：塌縮流程在 U 對預載範圍（F5-1 起與傳送時的 FULL 檢查同一個推導：艙體 bbox 水平外擴 1 格、再外擴 2 格，{@code M5GameTestSupport.preloadArea}）涵蓋的每個 chunk 加上自己的 ticket（{@code quantumchamber_destination}，argument 是 session，
      *     level 33＝FULL；涵蓋範圍由 test 依 spec 自己算出）。之後以非建立模式查詢：預載完成的 INFO 記下等了幾個 tick，至少 1（同一個 tick 加 ticket、
      *     又在 server thread 上阻塞載入的話是 0），完成時每個 chunk 都是 FULL。</li>
      * <li>投影（spec §6.5、§9.2；plan Step 1 第 2 組「checkpoint 之後才 COMPLETE」；補充第 1 點第 7 步）：checked 寫入 PENDING、第一次寫入、目的 volume 的 chunks
@@ -1396,7 +1396,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             whenTicks(context, resolved + 1, 20, () -> !M5GameTestSupport.destinationTickets(universe, sid).isEmpty(), ticketed -> {
                 var tickets = M5GameTestSupport.destinationTickets(universe, sid);
                 witness.put("enteredPrepareOnce", entered(capture, sid) == 1);
-                witness.put("ticketsCoverTheBoxPlusTwoAtFull", tickets.keySet().equals(area) && tickets.values().stream().allMatch(level -> level == 33));
+                witness.put("ticketsCoverThePreloadAreaAtFull", tickets.keySet().equals(area) && tickets.values().stream().allMatch(level -> level == 33));
                 whenTicks(context, ticketed, 400, () -> !prepared(capture, sid).isEmpty(), ready -> {
                     witness.put("preloadWaitedAtLeastOneTick", preloadWaitedTicks(capture, sid) >= 1);
                     witness.put("everyPreloadChunkFull", area.stream().allMatch(chunk -> universe.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null));

@@ -20,9 +20,9 @@ import org.junit.jupiter.api.Test;
  * M5 F5-1（plan 決策 4）：{@link TransferSafety#M3_SAFE_LANDING} 就是 F5-1 之前 {@code UniverseTransferService.targetSafety} 的決策（M3 的 test 不改，這裡補上
  * 它的決策表），以及 FULL 檢查共用的 chunk 推導（{@link TransferSafety#fullChunkRange}）。{@link FakeSite} 也給 collapse package 的 {@code PassageTransferPolicyTest} 用。
  */
-class TransferSafetyTest {
+public class TransferSafetyTest {
     /** 站在 (0, 64, 0) 這塊地板上的玩家 bbox（0.6×1.8，腳底恰在 y=65）。 */
-    static Box standing(double x, double y, double z) {
+    public static Box standing(double x, double y, double z) {
         return new Box(x - 0.3, y, z - 0.3, x + 0.3, y + 1.8, z + 0.3);
     }
 

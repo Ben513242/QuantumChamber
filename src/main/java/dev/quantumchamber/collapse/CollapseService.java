@@ -28,7 +28,6 @@ import dev.quantumchamber.superposition.SuperpositionSessionManager;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseLifecycleService;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -130,8 +129,6 @@ public final class CollapseService {
      * radius 0（level FULL）：只讓預載範圍的 chunk 到達 FULL，不讓它們 tick。
      */
     private static final ChunkTicketType<UUID> DESTINATION_TICKET = ChunkTicketType.create("quantumchamber_destination", Comparator.comparing(UUID::toString));
-    /** spec §9.1：預載涵蓋艙體 bbox 水平外擴的格數（涵蓋傳送時「玩家 bbox 外擴 2 格」的 FULL 檢查）。 */
-    static final int PRELOAD_MARGIN = 2;
     private static final Map<MinecraftServer, CollapseService> INSTANCES = new ConcurrentHashMap<>();
     private static boolean initialized;
 
@@ -500,7 +497,7 @@ public final class CollapseService {
     /**
      * PREPARE 的一個 tick（UNIVERSE，F4b-2）。每個 tick 依序推導、可以在任一步中斷，重啟之後依同一份推導續做，不另存進度（spec §9、§6.5，F4b-1 交下的呼叫順序）：
      * <ol>
-     * <li>預載（§9.1）：對目的世界涵蓋「艙體 bbox 外擴 {@value #PRELOAD_MARGIN} 格」的每個 chunk 加上 M5 的 chunk ticket，之後以非建立模式查詢，不在
+     * <li>預載（§9.1）：對目的世界 {@link #preloadChunks} 的每個 chunk（與傳送時的 FULL 檢查同一個推導，F5-1 S-M1）加上 M5 的 chunk ticket，之後以非建立模式查詢，不在
      *     server thread 上阻塞載入。</li>
      * <li>退化（§9.3）：投影保護索引已退化時（projection ledger 不健康），以它的原因進 SEALED。這一步不需要 chunk，所以在預載完成之前就檢查。</li>
      * <li>預載還沒全部 FULL：等下一個 tick。之後的步驟見 {@link #project}。</li>
@@ -778,13 +775,12 @@ public final class CollapseService {
         return true;
     }
 
-    /** §9.1 預載涵蓋的 chunk：艙體 bbox 水平外擴 {@value #PRELOAD_MARGIN} 格，依 x、z 遞增的順序。 */
+    /**
+     * §9.1 預載涵蓋的 chunk，依 x、z 遞增的順序：與傳送時的 FULL 檢查同一個推導（{@link PassageTransferPolicy#preloadChunks}；F5-1，F4b-2 spec S-M1：原本是艙體 bbox
+     * 外擴 2 格，可能比跨越時玩家 bbox 外擴 2 格的 FULL 檢查少 1 格 chunk）。
+     */
     static List<ChunkPos> preloadChunks(ChamberFrame frame) {
-        var bounds = ChamberGeometry.bounds(frame);
-        var chunks = new ArrayList<ChunkPos>();
-        for (int x = (bounds.getMinX() - PRELOAD_MARGIN) >> 4; x <= (bounds.getMaxX() + PRELOAD_MARGIN) >> 4; x++)
-            for (int z = (bounds.getMinZ() - PRELOAD_MARGIN) >> 4; z <= (bounds.getMaxZ() + PRELOAD_MARGIN) >> 4; z++) chunks.add(new ChunkPos(x, z));
-        return List.copyOf(chunks);
+        return PassageTransferPolicy.preloadChunks(frame);
     }
 
     /** PREPARE 的等待（§9.1）：下一個 tick 再試；從進入 PREPARE 起超過 {@value #WAIT_WARN_TICKS} ticks 還沒準備完成時記一次 WARN，然後繼續等。 */

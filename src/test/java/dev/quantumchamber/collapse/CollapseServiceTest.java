@@ -135,28 +135,52 @@ class CollapseServiceTest {
     }
 
     /**
-     * F4b-2（spec §9.1）：預載涵蓋「艙體 bbox 水平外擴 2 格」的每個 chunk，不多也不少。期望值由 test 逐格算出（每一格的 chunk），四個朝向、跨 chunk 邊界與負座標
-     * 都一樣；外擴 2 格讓 bbox 貼著 chunk 邊界時多涵蓋鄰 chunk（例如 bbox 從 x=16 開始時含 chunk x=0）。
+     * F4b-2（spec §9.1）＋F5-1（F4b-2 spec S-M1）：預載的 chunk 由傳送時 FULL 檢查的推導算出（{@code TransferSafety.fullChunkRange}）：艙體 bbox（整格的連續座標）水平外擴
+     * {@code PassageTransferPolicy.REACH}＝1 格，再外擴 2 格，所以 x 從 {@code minX − 3} 到 {@code maxX + 4} 的每一格（max 側多 1 格是連續座標的 max 加 1）。期望值由 test
+     * 逐格算出（每一格的 chunk），四個朝向、跨 chunk 邊界與負座標都一樣；沒有重複。
      */
-    @Test void preloadCoversTheChamberBoxPlusTwoBlocks() {
+    @Test void preloadIsTheTransferFullCheckDerivationOfTheChamberReach() {
         var cases = new ArrayList<Executable>();
         for (var controller : List.of(new BlockPos(7, 70, 9), new BlockPos(-17, 70, -2), new BlockPos(19, 64, 33), new BlockPos(-1, 80, 15)))
             for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
                 var frame = new ChamberFrame(controller, facing);
                 var bounds = dev.quantumchamber.chamber.ChamberGeometry.bounds(frame);
                 var expected = new java.util.HashSet<net.minecraft.util.math.ChunkPos>();
-                for (int x = bounds.getMinX() - 2; x <= bounds.getMaxX() + 2; x++)
-                    for (int z = bounds.getMinZ() - 2; z <= bounds.getMaxZ() + 2; z++) expected.add(new net.minecraft.util.math.ChunkPos(new BlockPos(x, 0, z)));
+                for (int x = bounds.getMinX() - 3; x <= bounds.getMaxX() + 4; x++)
+                    for (int z = bounds.getMinZ() - 3; z <= bounds.getMaxZ() + 4; z++) expected.add(new net.minecraft.util.math.ChunkPos(new BlockPos(x, 0, z)));
                 var actual = CollapseService.preloadChunks(frame);
                 cases.add(() -> assertEquals(expected, Set.copyOf(actual), controller + " " + facing));
                 cases.add(() -> assertEquals(actual.size(), Set.copyOf(actual).size(), "沒有重複：" + controller + " " + facing));
             }
-        cases.add(() -> assertEquals(2, CollapseService.PRELOAD_MARGIN, "外擴 2 格（spec §9.1）"));
-        // bbox 從 x=16 開始（左邊界貼著 chunk 邊界）：外擴 2 格會涵蓋 chunk x=0。
+        cases.add(() -> assertEquals(1, PassageTransferPolicy.REACH, "艙體 bbox 外擴 1 格，再由 FULL 檢查的推導外擴 2 格"));
+        // bbox 從 x=16 開始（左邊界貼著 chunk 邊界）：外擴之後涵蓋 chunk x=0。
         var edge = new ChamberFrame(new BlockPos(19, 64, 40), Direction.NORTH);
         cases.add(() -> assertEquals(16, dev.quantumchamber.chamber.ChamberGeometry.bounds(edge).getMinX(), "fixture：bbox 的 minX 貼著 chunk 邊界"));
         cases.add(() -> assertTrue(CollapseService.preloadChunks(edge).stream().anyMatch(chunk -> chunk.x == 0), "外擴之後涵蓋鄰 chunk"));
         assertAll(cases);
+    }
+
+    /**
+     * F5-1（F4b-2 spec S-M1）：跨越時玩家的 bbox（腳在門口 local x∈[1,6)、y=1，local z 從 0.5 往外到 −0.69，也就是上一個 tick 還在中線內側、這個 tick 往外少於 1.2 格；−0.7 恰在邊界上，浮點誤差會讓 bbox 的邊超出一點）
+     * 由傳送的 FULL 檢查（{@code TransferSafety.fullChunkRange}）要求的每一個 chunk，都在預載範圍內。掃過 controller 的 x、z 在 −18..18 的每一格與四個朝向，所以 bbox 的
+     * 每一個邊都貼過 chunk 邊界；F4b-2 的「艙體 bbox 外擴 2 格」在這裡會漏掉 chunk（S-M1 的 RED）。
+     */
+    @Test void preloadCoversTheTransferFullCheckOfEveryCrossingBox() {
+        var missing = new ArrayList<String>();
+        for (int cx = -18; cx <= 18; cx++) for (int cz = -18; cz <= 18; cz++)
+            for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
+                var frame = new ChamberFrame(new BlockPos(cx, 70, cz), facing);
+                var preloaded = Set.copyOf(CollapseService.preloadChunks(frame));
+                for (double x : new double[] {1.0, 1.3, 3.5, 5.7, 5.999}) for (double z : new double[] {0.499, 0.2, 0.0, -0.3, -0.69}) {
+                    var feet = dev.quantumchamber.chamber.ChamberSpaceCoordinates.position(frame, x, 1, z);
+                    var box = new net.minecraft.util.math.Box(feet.x - 0.3, feet.y, feet.z - 0.3, feet.x + 0.3, feet.y + 1.8, feet.z + 0.3);
+                    var range = dev.quantumchamber.universe.TransferSafety.fullChunkRange(box);
+                    for (int chunkX = range.minX(); chunkX <= range.maxX(); chunkX++) for (int chunkZ = range.minZ(); chunkZ <= range.maxZ(); chunkZ++)
+                        if (!preloaded.contains(new net.minecraft.util.math.ChunkPos(chunkX, chunkZ)) && missing.size() < 10)
+                            missing.add(frame + " local(" + x + ",1," + z + ") 少 chunk (" + chunkX + "," + chunkZ + ")");
+                }
+            }
+        assertTrue(missing.isEmpty(), "預載沒有涵蓋跨越時 FULL 檢查要求的 chunk：" + missing);
     }
 
     /**
