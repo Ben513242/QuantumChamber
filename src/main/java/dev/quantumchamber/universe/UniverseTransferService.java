@@ -16,10 +16,12 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.chunk.ChunkStatus;
 
-/** 低階、同步的 server-thread transfer gate；不註冊任何 gameplay 入口。 */
+/**
+ * 低階、同步的 server-thread transfer gate；不註冊任何 gameplay 入口。落點的安全政策是 {@link TransferSafety}：M3 的入口一律是
+ * {@link TransferSafety#M3_SAFE_LANDING}；M5 的 passage 經 {@link #moveToUniverse(ServerPlayerEntity, UniverseWorldDescriptor, TransferSafety)} 帶自己的政策（plan 決策 4）。
+ */
 public final class UniverseTransferService {
     @FunctionalInterface
     public interface NativeMove {
@@ -62,8 +64,18 @@ public final class UniverseTransferService {
         }
     }
 
+    /** M3 的移動（spec M3 §8）：以 {@link TransferSafety#M3_SAFE_LANDING} 委派給 {@link #moveToUniverse(ServerPlayerEntity, UniverseWorldDescriptor, TransferSafety)}，行為不變。 */
     public UniverseTransferResult moveToUniverse(ServerPlayerEntity player, UniverseWorldDescriptor descriptor) {
+        return moveToUniverse(player, descriptor, TransferSafety.M3_SAFE_LANDING);
+    }
+
+    /**
+     * 以 {@code safety} 的落點政策移動（M5 plan 決策 4）：移動之前的前置檢查、移動之後的驗證與回滾資格都用同一個 {@code safety}；exact 身分、FULL 之外的
+     * 其他前置條件、原生移動、逐欄位核對位置、速度、yaw、pitch 與 bbox，以及回滾，都與 M3 相同。
+     */
+    public UniverseTransferResult moveToUniverse(ServerPlayerEntity player, UniverseWorldDescriptor descriptor, TransferSafety safety) {
         Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(safety, "safety");
         var server = player.getServer();
         var preflight = preflight(server != null && server.isOnThread(), () -> observe(player, server));
         if (preflight.decision() != ALLOW) return preflight.rejectedResult();
@@ -102,8 +114,8 @@ public final class UniverseTransferService {
         var destination = new UniverseTransferPoint(descriptor.worldKey(), source.position(),
                 source.velocity(), source.yaw(), source.pitch());
         var expectedBox = player.getBoundingBox();
-        var safety = inspectSafety(target, player, expectedBox);
-        if (safety.decision() != ALLOW) return rejected(player, server, source, safety.decision(), safety.detail());
+        var landing = inspectSafety(safety, target, player, expectedBox);
+        if (landing.decision() != ALLOW) return rejected(player, server, source, landing.decision(), landing.detail());
         var sourceToken = worldToken(sourceWorld);
         var targetToken = worldToken(target);
 
@@ -112,7 +124,7 @@ public final class UniverseTransferService {
             if (move.outcome() == NativeOutcome.REPORTED_SUCCESS
                     && exactWorld(server, sourceWorld)
                     && backend.resolveActive(server, descriptor).orElse(null) == target
-                    && verified(player, server, target, destination, expectedBox, playerId)) {
+                    && verified(safety, player, server, target, destination, expectedBox, playerId)) {
                 var receipt = new UniverseTransferReceipt(playerId, universeId, source, destination,
                         descriptor.worldKey(), sourceToken, targetToken);
                 return success(Outcome.MOVED, source, move, receipt);
@@ -120,7 +132,7 @@ public final class UniverseTransferService {
         } catch (RuntimeException failure) {
             move = new MoveEvidence(move.outcome(), observe(player, server), move.detail() + "；驗證：" + failure);
         }
-        return recover(player, server, sourceWorld, source, expectedBox, playerId, move);
+        return recover(safety, player, server, sourceWorld, source, expectedBox, playerId, move);
     }
 
     /** source 是這次返還呼叫的 departure 快照；目標 home pose 來自 receipt.source。 */
@@ -144,20 +156,22 @@ public final class UniverseTransferService {
         }
         var departureBox = player.getBoundingBox();
         var expectedBox = departureBox.offset(receipt.source().position().subtract(departure.position()));
-        var safety = inspectSafety(home, player, expectedBox);
-        if (safety.decision() != ALLOW) return rejected(player, server, departure, safety.decision(), safety.detail());
+        // M3 的返還一律是 M3 的安全落點（M5 的 passage 沒有返還，plan 決策 4 只有 moveToUniverse 的多載）。
+        var safety = TransferSafety.M3_SAFE_LANDING;
+        var landing = inspectSafety(safety, home, player, expectedBox);
+        if (landing.decision() != ALLOW) return rejected(player, server, departure, landing.decision(), landing.detail());
 
         var move = attempt(player, server, home, receipt.source());
         try {
             if (move.outcome() == NativeOutcome.REPORTED_SUCCESS
                     && matchesToken(home, receipt.sourceInstanceId())
-                    && verified(player, server, home, receipt.source(), expectedBox, receipt.playerId())) {
+                    && verified(safety, player, server, home, receipt.source(), expectedBox, receipt.playerId())) {
                 return success(Outcome.RETURNED, departure, move, null);
             }
         } catch (RuntimeException failure) {
             move = new MoveEvidence(move.outcome(), observe(player, server), move.detail() + "；返還驗證：" + failure);
         }
-        return recover(player, server, departureWorld, departure, departureBox, receipt.playerId(), move);
+        return recover(safety, player, server, departureWorld, departure, departureBox, receipt.playerId(), move);
     }
 
     private UniverseTransferAuthority.Decision commonAuthority(ServerPlayerEntity player, MinecraftServer server,
@@ -180,7 +194,7 @@ public final class UniverseTransferService {
         }
     }
 
-    private UniverseTransferResult recover(ServerPlayerEntity player, MinecraftServer server,
+    private UniverseTransferResult recover(TransferSafety safety, ServerPlayerEntity player, MinecraftServer server,
             ServerWorld sourceWorld, UniverseTransferPoint source, Box sourceBox, UUID playerId, MoveEvidence move) {
         RollbackEvidence rollback;
         if (!exactWorld(server, sourceWorld)) {
@@ -188,9 +202,9 @@ public final class UniverseTransferService {
         } else if (!playerId.equals(player.getUuid()) || !exactPlayer(server, player)) {
             rollback = skippedRollback(RollbackOutcome.PLAYER_IDENTITY_LOST, player, server, "玩家 exact identity 已失效");
         } else {
-            var safety = inspectSafety(sourceWorld, player, sourceBox);
-            if (safety.decision() != ALLOW) {
-                rollback = skippedRollback(RollbackOutcome.SOURCE_UNSAFE, player, server, safety.detail());
+            var landing = inspectSafety(safety, sourceWorld, player, sourceBox);
+            if (landing.decision() != ALLOW) {
+                rollback = skippedRollback(RollbackOutcome.SOURCE_UNSAFE, player, server, landing.detail());
                 return recoveryResult(source, move, rollback);
             }
             var rollbackMove = attempt(player, server, sourceWorld, source);
@@ -198,7 +212,7 @@ public final class UniverseTransferService {
             String detail = rollbackMove.detail();
             try {
                 restored = rollbackMove.outcome() == NativeOutcome.REPORTED_SUCCESS
-                        && verified(player, server, sourceWorld, source, sourceBox, playerId);
+                        && verified(safety, player, server, sourceWorld, source, sourceBox, playerId);
             } catch (RuntimeException failure) {
                 restored = false;
                 detail += "；回滾驗證：" + failure;
@@ -234,11 +248,11 @@ public final class UniverseTransferService {
                 new RollbackEvidence(RollbackOutcome.NOT_ATTEMPTED, NativeOutcome.NOT_ATTEMPTED, actual, ""), null, detail);
     }
 
-    private static boolean verified(ServerPlayerEntity player, MinecraftServer server, ServerWorld expectedWorld,
+    private static boolean verified(TransferSafety safety, ServerPlayerEntity player, MinecraftServer server, ServerWorld expectedWorld,
             UniverseTransferPoint expected, Box expectedBox, UUID expectedId) {
         return expectedId.equals(player.getUuid()) && player.getServerWorld() == expectedWorld
                 && observe(player, server).matches(expected) && sameBox(player.getBoundingBox(), expectedBox)
-                && targetSafety(expectedWorld, player, player.getBoundingBox()) == ALLOW;
+                && safety.check(site(expectedWorld, player), player.getBoundingBox()) == ALLOW;
     }
 
     private static boolean sameBox(Box actual, Box expected) {
@@ -264,42 +278,34 @@ public final class UniverseTransferService {
                 worldExact && world.getEntity(player.getUuid()) == player);
     }
 
-    private static SafetyCheck inspectSafety(ServerWorld world, ServerPlayerEntity player, Box box) {
+    private static SafetyCheck inspectSafety(TransferSafety safety, ServerWorld world, ServerPlayerEntity player, Box box) {
         try {
-            return new SafetyCheck(targetSafety(world, player, box), "位置必須位於高度／邊界內，且 FULL、無碰撞／液體及完整地板支撐");
+            return new SafetyCheck(safety.check(site(world, player), box), safety.requirement());
         } catch (RuntimeException failure) {
             return new SafetyCheck(REJECT_TARGET_UNSAFE, "安全檢查失敗：" + failure);
         }
     }
 
-    /** 碰撞迭代器含 epsilon 與一格外圈，預查兩格避免邊界讀取未知 chunk；一律 create=false。 */
-    private static UniverseTransferAuthority.Decision targetSafety(ServerWorld world, ServerPlayerEntity player, Box box) {
-        if (!Double.isFinite(box.minX) || !Double.isFinite(box.minY) || !Double.isFinite(box.minZ)
-                || !Double.isFinite(box.maxX) || !Double.isFinite(box.maxY) || !Double.isFinite(box.maxZ)) return REJECT_TARGET_UNSAFE;
-        int minChunkX = MathHelper.floor(box.minX - 2) >> 4;
-        int maxChunkX = MathHelper.floor(box.maxX + 2) >> 4;
-        int minChunkZ = MathHelper.floor(box.minZ - 2) >> 4;
-        int maxChunkZ = MathHelper.floor(box.maxZ + 2) >> 4;
-        if (maxChunkX - minChunkX > 4 || maxChunkZ - minChunkZ > 4) return REJECT_TARGET_UNSAFE;
-        for (int x = minChunkX; x <= maxChunkX; x++) {
-            for (int z = minChunkZ; z <= maxChunkZ; z++) {
-                if (world.getChunkManager().getChunk(x, z, ChunkStatus.FULL, false) == null) return REJECT_TARGET_NOT_FULL;
+    /**
+     * 政策讀世界的介面（{@link TransferSafety.Site}）：F5-1 之前 {@code targetSafety} 直接對 {@code world} 與 {@code player} 做的查詢，逐一對應、一律 create=false。
+     * 碰撞迭代器含 epsilon 與一格外圈，所以 FULL 檢查預查兩格（{@link TransferSafety#fullChunkRange}），避免邊界讀取未知 chunk。
+     */
+    private static TransferSafety.Site site(ServerWorld world, ServerPlayerEntity player) {
+        return new TransferSafety.Site() {
+            @Override public boolean chunkFull(int chunkX, int chunkZ) { return world.getChunkManager().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false) != null; }
+            @Override public int bottomY() { return world.getBottomY(); }
+            @Override public int topY() { return world.getTopY(); }
+            @Override public double borderWest() { return world.getWorldBorder().getBoundWest(); }
+            @Override public double borderEast() { return world.getWorldBorder().getBoundEast(); }
+            @Override public double borderNorth() { return world.getWorldBorder().getBoundNorth(); }
+            @Override public double borderSouth() { return world.getWorldBorder().getBoundSouth(); }
+            @Override public boolean spaceEmpty(Box box) { return world.isSpaceEmpty(player, box); }
+            @Override public boolean containsFluid(Box box) { return world.containsFluid(box); }
+            @Override public boolean floorSupports(int x, int y, int z) {
+                var pos = new BlockPos(x, y, z);
+                return world.getBlockState(pos).isSideSolidFullSquare(world, pos, Direction.UP);
             }
-        }
-        var border = world.getWorldBorder();
-        if (box.minY < world.getBottomY() || box.maxY > world.getTopY()
-                || box.minX < border.getBoundWest() || box.maxX > border.getBoundEast()
-                || box.minZ < border.getBoundNorth() || box.maxZ > border.getBoundSouth()
-                || !world.isSpaceEmpty(player, box) || world.containsFluid(box)) return REJECT_TARGET_UNSAFE;
-        int floorY = MathHelper.floor(box.minY - 1e-7);
-        if (floorY < world.getBottomY() || Math.abs(box.minY - (floorY + 1.0)) > 1e-6) return REJECT_TARGET_UNSAFE;
-        for (int x = MathHelper.floor(box.minX + 1e-7); x <= MathHelper.floor(box.maxX - 1e-7); x++) {
-            for (int z = MathHelper.floor(box.minZ + 1e-7); z <= MathHelper.floor(box.maxZ - 1e-7); z++) {
-                var pos = new BlockPos(x, floorY, z);
-                if (!world.getBlockState(pos).isSideSolidFullSquare(world, pos, Direction.UP)) return REJECT_TARGET_UNSAFE;
-            }
-        }
-        return ALLOW;
+        };
     }
 
     private UUID worldToken(ServerWorld world) {
