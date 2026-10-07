@@ -8,6 +8,7 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.moveInside;
 import static dev.quantumchamber.gametest.M5GameTestSupport.moveOutside;
 import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
 
+import com.sun.jna.Platform;
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.chamber.ChamberCollapsePort;
@@ -39,6 +40,7 @@ import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.gametest.M5GameTestSupport.DormantOrigin;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModBlocks;
+import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
@@ -87,6 +89,8 @@ import net.minecraft.block.entity.ChestBlockEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.vehicle.MinecartEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtElement;
@@ -105,6 +109,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
@@ -2558,6 +2563,804 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 }, () -> "排入的關門沒有套用、也沒有被取消：witness=" + witness, hooks);
             }, () -> "模擬重啟之後沒有排入重新套用：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
         });
+    }
+
+    // ---- F5-1：通道本體（PASSAGE_READY、跨越、passage 傳送、結束） ----
+
+    /**
+     * F5-1（spec §10.2、§10.3、§10.6 (b)、§10.8；plan Step 1 F5-1 的跨越、「艙內有非參與者時仍能提交 READY」、§15「非參與者與騎乘中的參與者不觸發傳送」、F4b-2 交下的
+     * {@code releaseDestination} 測試）：DORMANT NEW 收據、參與者 P；非參與者 N 在 RESOLVE 之後、第一次閘門評估之前進艙。
+     * <ul>
+     * <li>PREPARE 期間 N 在艙內：門維持一般開門（不套用 sealed 量子膜），準備照常完成，PASSAGE_READY 照樣提交（expires＝opened＋1200、Crossed 是空的），門改為 passable 量子膜；
+     *     「量子通道已開啟」只給艙內的參與者 P，N 沒有收到。</li>
+     * <li>N 由門板中線內側走到外側（穿過量子膜）：什麼都不觸發，N 留在原世界、Crossed 仍是空的。</li>
+     * <li>P 在越過中線的同一個 tick 騎上礦車：不觸發傳送，留在原世界。</li>
+     * <li>P 下來之後由中線內側越到外側：傳送到宇宙 U 的同 XYZ、同 yaw、pitch，站在目的投影艙的門口（同一個 local 座標，門是 {@code open=true}＋{@code membrane=none}），
+     *     Crossed＝[P]，INFO「已穿過量子通道」一則。</li>
+     * <li>下一個 tick (b) 全員都已跨過：checked 終局（INFO (b) 一則），門改為一般開門，目的世界的 ticket 已釋放（{@code releaseDestination}），runtime 與來源 ticket 都已釋放、
+     *     presence 回到 NONE；P 在 U 收到「量子通道已關閉」。這個 session 沒有任何 WARN／ERROR。</li>
+     * </ul>
+     * catalog 增量 1（U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_cross", tickLimit = 900)
+    public void passage_participant_crosses_to_the_same_pose_while_non_participants_and_riders_stay(TestContext context) {
+        begin(context, "passage_participant_crosses_to_the_same_pose_while_non_participants_and_riders_stay");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        ConnectedGameTestPlayer outsider;
+        try {
+            outsider = new ConnectedGameTestPlayer(world);
+            hooks.add(outsider::close);
+            outsider.player().setNoGravity(true);
+            moveOutside(outsider.player(), frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var n = outsider.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            moveInside(n, frame);
+            M5GameTestSupport.overlayKeys(origin.connection); M5GameTestSupport.overlayKeys(outsider);
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                var ready = journal.flushedRecords().get(sid);
+                witness.put("plainOpenWhilePreparingWithANonParticipantInside", membraneInfos(capture, sid, "原艙門維持一般開門") == 1
+                        && membraneInfos(capture, sid, "原艙門套用 sealed 量子膜") == 0);
+                witness.put("readyCommittedWithTheNonParticipantInside", passageOpened(capture, sid) == 1 && ready.collapse().crossed().isEmpty()
+                        && ready.collapse().passageExpiresAtGameTime() == ready.collapse().passageOpenedAtGameTime() + 1200);
+                witness.put("passableMembrane", M5GameTestSupport.doorPassable(world, frame));
+                witness.put("openedMessageOnlyToTheParticipantInside", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_OPENED)
+                        && !M5GameTestSupport.overlayKeys(outsider).contains(CollapseService.MESSAGE_PASSAGE_OPENED));
+                MinecartEntity[] cart = {null};
+                at(context, readyAt + 1, hooks, () -> {
+                    M5GameTestSupport.standInDoorway(n, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                    M5GameTestSupport.standInDoorway(p, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                });
+                at(context, readyAt + 2, hooks, () -> {
+                    // N 穿過量子膜；P 越過中線的同一個 tick 騎上一台不受重力的礦車。
+                    M5GameTestSupport.standInDoorway(n, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO);
+                    M5GameTestSupport.standInDoorway(p, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO);
+                    cart[0] = EntityType.MINECART.create(world);
+                    if (cart[0] == null) throw new IllegalStateException("建不出礦車");
+                    var cartPos = ChamberSpaceCoordinates.position(frame, 4.5, 1, 0.3);
+                    cart[0].refreshPositionAndAngles(cartPos.x, cartPos.y, cartPos.z, 0, 0);
+                    cart[0].setNoGravity(true);
+                    hooks.add(cart[0]::discard);
+                    witness.put("ridingFixture", world.spawnEntity(cart[0]) && p.startRiding(cart[0], true) && p.hasVehicle());
+                });
+                at(context, readyAt + 3, hooks, () -> {
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("nonParticipantStaysInTheOriginalWorld", n.getServerWorld() == world && record.collapse().crossed().isEmpty());
+                    witness.put("riderStaysInTheOriginalWorld", p.getServerWorld() == world && record.collapse().crossed().isEmpty() && crossedInfos(capture, sid) == 0);
+                    p.stopRiding();
+                    cart[0].discard();
+                });
+                float yaw = 37.5f, pitch = -12.25f;
+                var expected = ChamberSpaceCoordinates.position(frame, 3.5, 1, 0.3);
+                at(context, readyAt + 4, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, yaw, pitch, Vec3d.ZERO));
+                at(context, readyAt + 5, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, yaw, pitch, new Vec3d(0.05, 0, -0.12)));
+                at(context, readyAt + 6, hooks, () -> {
+                    var crossed = journal.flushedRecords().get(sid);
+                    witness.put("crossedToTheUniverse", p.getServerWorld() == universe && universe.getEntity(p.getUuid()) == p);
+                    witness.put("sameXyz", p.getPos().squaredDistanceTo(expected) < 1e-12);
+                    witness.put("sameYawAndPitch", Math.abs(MathHelper.wrapDegrees(p.getYaw() - yaw)) < 1e-4 && Math.abs(p.getPitch() - pitch) < 1e-4);
+                    witness.put("inTheProjectedDoorway", ChamberSpaceCoordinates.localPosition(frame, p.getPos()).squaredDistanceTo(new Vec3d(3.5, 1, 0.3)) < 1e-12
+                            && doorAll(universe, frame, true, MembraneState.NONE));
+                    witness.put("crossedRecorded", crossed != null && crossed.collapse().crossed().equals(List.of(p.getUuid())));
+                    witness.put("oneCrossingInfo", crossedInfos(capture, sid) == 1);
+                });
+                whenTicks(context, readyAt + 7, 10, () -> !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), ended -> {
+                    witness.put("endedWhenEveryoneCrossed", passageEnded(capture, sid, "(b) 全員都已跨過") == 1);
+                    witness.put("plainOpenAfterTheEnd", doorAll(world, frame, true, MembraneState.NONE));
+                    witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                    witness.put("runtimeAndSourceTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                    witness.put("closedMessageToTheCrossedParticipant", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                    LOGGER.info("M5_PASSAGE_CROSS ready={} ended={} position={}", readyAt, ended, p.getPos());
+                    releaseThenComplete(context, hooks, witness, "通道的跨越：" + witness, 20, () -> true);
+                }, () -> "全員跨過之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.6 (c)、§7.3「門狀態的重新套用」；§15「兩人：一人跨過、一人留下 → 到期後門恢復一般開門、record 已移除 → 同一座艙可以開新 session」）：參與者 P、B 都在艙內。
+     * <ul>
+     * <li>PASSAGE_READY 之後，模擬重啟之後的第一次觀察（{@code simulateDoorStartup}）並把門寫成一般開門（重啟留下的舊狀態）：觀察到的那個 tick 只排入、不寫門，下一個 tick 依
+     *     collapse view 重新套用 passable 量子膜（INFO 記下的排入 tick 與套用 tick 相同），只有一次。</li>
+     * <li>P 越過中線、傳送到 U；B 留在艙內。到期之前 record 一直是 PASSAGE_READY、Crossed＝[P]。</li>
+     * <li>game time 到 expires（opened＋1200）時 (c) 結束：checked 終局（INFO (c) 一則），門改為一般開門，目的世界的 ticket、runtime 與來源 ticket 都已釋放，presence NONE；
+     *     P（在 U）與 B（在艙內）都收到「量子通道已關閉」。</li>
+     * <li>同一座艙可以開新 session：B 有 Buff、在艙內，以 bulkhead 關上門就重新入場（新的 session）。等它真入場（走廊發布 358 扇側門）之後斷電，等這個 M2 session 依一般的 OFF 流程把 B 返還、移除 record 才完成。M2 入場
+     *     需要 Windows 原生 checkpoint，所以名稱以 {@code _windows} 結尾；到期本身另由 {@code crossed_write_failure_pauses_the_passage_until_it_converges_then_expires} 在各平台覆蓋。</li>
+     * </ul>
+     * catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_expire", tickLimit = 45000)
+    public void passage_expires_after_one_of_two_crossed_and_the_chamber_opens_a_new_session_windows(TestContext context) {
+        if (!Platform.isWindows()) { context.complete(); return; }
+        begin(context, "passage_expires_after_one_of_two_crossed_and_the_chamber_opens_a_new_session_windows");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        ConnectedGameTestPlayer second;
+        try {
+            second = new ConnectedGameTestPlayer(world);
+            hooks.add(second::close);
+            second.player().setNoGravity(true);
+            moveOutside(second.player(), frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var b = second.player();
+        collapsedToUniverse(context, origin, hooks, List.of(b.getUuid()), (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            moveInside(b, frame);
+            M5GameTestSupport.overlayKeys(origin.connection); M5GameTestSupport.overlayKeys(second);
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                long expires = journal.flushedRecords().get(sid).collapse().passageExpiresAtGameTime();
+                witness.put("openedMessageToBothInside", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_OPENED)
+                        && M5GameTestSupport.overlayKeys(second).contains(CollapseService.MESSAGE_PASSAGE_OPENED));
+                at(context, readyAt + 1, hooks, () -> {
+                    M5GameTestSupport.writeDoor(world, frame, true, MembraneState.NONE);
+                    M5GameTestSupport.simulateDoorStartup(server, sid);
+                });
+                whenTicks(context, readyAt + 2, 10, () -> !reapplyQueuedTicks(capture, sid).isEmpty(), queuedAt -> {
+                    witness.put("notWrittenWhenObserved", doorAll(world, frame, true, MembraneState.NONE));
+                    whenTicks(context, queuedAt + 1, 5, () -> !reappliedTicks(capture, sid).isEmpty(), appliedAt -> {
+                        witness.put("passableReappliedOnTheQueuedTick", M5GameTestSupport.doorPassable(world, frame)
+                                && reappliedTicks(capture, sid).equals(reapplyQueuedTicks(capture, sid)) && reapplyCauses(capture, sid).equals(List.of("重啟之後第一次載入")));
+                        at(context, appliedAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO));
+                        at(context, appliedAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                        at(context, appliedAt + 4, hooks, () -> {
+                            var record = journal.flushedRecords().get(sid);
+                            witness.put("oneCrossedOneStayed", p.getServerWorld() == universe && b.getServerWorld() == world && record != null
+                                    && record.state() == SessionState.PASSAGE_READY && record.collapse().crossed().equals(List.of(p.getUuid())));
+                            witness.put("reappliedOnlyOnce", reapplyQueuedTicks(capture, sid).size() == 1 && reappliedTicks(capture, sid).size() == 1);
+                        });
+                        whenTicks(context, appliedAt + 5, 1300, () -> !journal.flushedRecords().containsKey(sid), ended -> {
+                            witness.put("endedByExpiry", passageEnded(capture, sid, "(c) game time 已到 PassageExpiresAtGameTime") == 1
+                                    && server.getOverworld().getTime() >= expires);
+                            witness.put("plainOpenAfterTheExpiry", doorAll(world, frame, true, MembraneState.NONE));
+                            witness.put("everythingReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && !M4CandidateTestAccess.runtimeHeld(sid)
+                                    && !M4CandidateTestAccess.sourceTicketHeld(sid));
+                            witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                            witness.put("closedMessageToBoth", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED)
+                                    && M5GameTestSupport.overlayKeys(second).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                            witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid));
+                            // 同一座艙可以開新 session：B 有 Buff、在艙內，關上門就重新入場。
+                            b.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
+                            witness.put("doorClosedByB", interact(world, local(frame, 3, 3, 0), b).isAccepted());
+                            var next = journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).findFirst();
+                            witness.put("newSessionStarted", next.isPresent() && !next.get().sessionUuid().equals(sid));
+                            context.assertTrue(!witness.containsValue(false), "通道到期與新的 session：" + witness);
+                            // 收尾：等新的 session 真入場（走廊發布 358 扇側門，同 NetherChamber.whenEntered），才斷電走一般的 M2 返還。入場途中（ARMING）斷電的返還另由 M2 的 test 覆蓋。
+                            var nextSid = next.get().sessionUuid();
+                            var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);
+                            whenTicks(context, ended + 1, 20000, () -> Optional.ofNullable(journal.flushedRecords().get(nextSid))
+                                    .filter(record -> record.state() == SessionState.SUPERPOSITION).isPresent()
+                                    && pages.currentMappings(nextSid).epoch() == 1 && pages.selectableDoors(nextSid).size() == 358, entered -> {
+                                context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                                whenTicks(context, entered + 1, 20000, () -> journal.flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(chamber))
+                                        && ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE, gone -> {
+                                    witness.put("newSessionReturnedB", b.getServerWorld() == world);
+                                    LOGGER.info("M5_PASSAGE_EXPIRE ready={} expires={} ended={} newSession={} entered={} gone={}", readyAt, expires, ended, nextSid, entered, gone);
+                                    releaseThenComplete(context, hooks, witness, "通道到期：" + witness, 20, () -> true);
+                                }, () -> "新的 M2 session 斷電之後沒有結束：records=" + journal.flushedRecords().values().stream()
+                                        .filter(record -> record.chamberUuid().equals(chamber)).map(record -> record.state().name()).toList(), hooks);
+                            }, () -> "新的 M2 session 沒有真入場：record=" + M5GameTestSupport.state(journal, nextSid), hooks);
+                        }, () -> "到期之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " time=" + server.getOverworld().getTime() + " expires=" + expires
+                                + " witness=" + witness, hooks);
+                    }, () -> "排入之後沒有重新套用 passable：applied=" + reappliedTicks(capture, sid) + " witness=" + witness, hooks);
+                }, () -> "模擬重啟之後沒有排入重新套用：witness=" + witness, hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.5、§10.6 (a)、§10.8）：PASSAGE_READY 之後，非參與者 N 在艙外以 bulkhead、在艙內以 Controller 開關門：都被拒（ActionResult 不是 accepted），門仍是 passable、
+     * record 仍是 PASSAGE_READY。參與者 P 在原艙這一側以 bulkhead 關門：先 checked 終局（INFO (a) 一則），再把門改為關閉（門口沒有 entity），目的世界的 ticket 已釋放、presence NONE；
+     * P 收到「量子通道已關閉」；之後門一直關著。這個 session 沒有任何 WARN／ERROR。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_close", tickLimit = 900)
+    public void passage_participant_closing_the_door_ends_it_and_non_participants_are_refused(TestContext context) {
+        begin(context, "passage_participant_closing_the_door_ends_it_and_non_participants_are_refused");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        ServerPlayerEntity n;
+        try {
+            var outsider = new ConnectedGameTestPlayer(world);
+            hooks.add(outsider::close);
+            n = outsider.player();
+            n.setNoGravity(true);
+            moveOutside(n, frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var doorCell = local(frame, 3, 3, 0);
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                M5GameTestSupport.overlayKeys(origin.connection);
+                witness.put("outsiderRefusedAtTheBulkhead", !interact(world, doorCell, n).isAccepted() && M5GameTestSupport.doorPassable(world, frame));
+                moveInside(n, frame);
+                witness.put("insiderRefusedAtTheController", !interact(world, frame.controllerPos(), n).isAccepted() && M5GameTestSupport.doorPassable(world, frame));
+                witness.put("stillReady", M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY") && passageEnded(capture, sid, "量子通道已結束") == 0);
+                moveOutside(n, frame);
+                at(context, readyAt + 1, hooks, () -> {
+                    witness.put("participantClosesTheDoor", interact(world, doorCell, p).isAccepted());
+                    witness.put("terminatedAtOnce", !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid));
+                    witness.put("endedByTheParticipant", passageEnded(capture, sid, "(a) 參與者在原艙這一側開關原艙門") == 1);
+                    witness.put("doorClosedAfterTheTerminal", doorAll(world, frame, false, MembraneState.NONE));
+                    witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                    witness.put("closedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                    witness.put("notTransferred", p.getServerWorld() == world && crossedInfos(capture, sid) == 0);
+                });
+                at(context, readyAt + 5, hooks, () -> {
+                    witness.put("staysClosed", doorAll(world, frame, false, MembraneState.NONE));
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                    releaseThenComplete(context, hooks, witness, "通道期間的開關門：" + witness, 20, () -> true);
+                });
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.6 (d)、§7「已供電」是即時紅石輸入、§10.7 的 OFF 流程）：PASSAGE_READY 之後斷電：下一個 tick checked 終局（INFO (d)「來源艙沒有供電」一則；不經
+     * {@code returnToOrigin}），門改為一般開門（不是關門），目的世界的 ticket 釋放，presence NONE，之後 registry 的 power state 依一般的 OFF 流程是 OFF。P 在艙內沒有被傳送，
+     * 收到「量子通道已關閉」。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_power", tickLimit = 900)
+    public void passage_ends_with_a_plain_open_door_when_the_source_loses_power(TestContext context) {
+        begin(context, "passage_ends_with_a_plain_open_door_when_the_source_loses_power");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                M5GameTestSupport.overlayKeys(origin.connection);
+                context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                whenTicks(context, readyAt + 1, 5, () -> !journal.flushedRecords().containsKey(sid), ended -> {
+                    witness.put("endedNextTick", ended == readyAt + 1);
+                    witness.put("endedByPowerLoss", passageEnded(capture, sid, "(d) 來源艙沒有供電") == 1);
+                    witness.put("plainOpenNotClosed", doorAll(world, frame, true, MembraneState.NONE));
+                    witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                    witness.put("notTransferred", p.getServerWorld() == world);
+                    witness.put("closedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                    whenTicks(context, ended + 1, 20, () -> ChamberRegistryState.get(server).registry().records().get(chamber).powerState()
+                            == dev.quantumchamber.chamber.ChamberPowerState.OFF, off -> {
+                        witness.put("offFlow", true);
+                        witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid));
+                        releaseThenComplete(context, hooks, witness, "斷電結束通道：" + witness, 20, () -> true);
+                    }, () -> "終局之後沒有走一般的 OFF 流程：power=" + ChamberRegistryState.get(server).registry().records().get(chamber).powerState(), hooks);
+                }, () -> "斷電之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid), hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §15「EXISTING：…另一座艙的 session 也能到達同一個宇宙（基本重逢）」、§10.2 的 EXISTING 再驗）：D1 是原艙 A 上的 DORMANT NEW 收據，參與者 P 穿過通道到宇宙 U，
+     * (b) 結束。之後 overworld 遠處的另一座原艙 B（{@code RemoteOrigin}）寫入選中 EXISTING U 的 D2，參與者 Q 由艙外進入：RESOLVE 只重驗（不寫 allocation、discovery）→ PREPARE
+     * （把 B 投影到 U 的同座標，第一次寫入）→ PASSAGE_READY 之前再驗一次 EXISTING（通過）→ Q 穿過通道：Q 與 P 在同一個宇宙 U 的世界，Q 在 B 的投影艙門口。catalog 增量 1（只有 U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_existing", tickLimit = 1500)
+    public void existing_passage_brings_a_second_chamber_to_the_same_universe(TestContext context) {
+        begin(context, "existing_passage_brings_a_second_chamber_to_the_same_universe");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        M5GameTestSupport.RemoteOrigin remote;
+        ServerPlayerEntity q;
+        var owned = new ArrayList<UUID>();
+        try {
+            remote = M5GameTestSupport.RemoteOrigin.open(context, new BlockPos(30203, 100, 30203), hooks);
+            var connection = new ConnectedGameTestPlayer(world);
+            hooks.add(connection::close);
+            q = connection.player();
+            q.setNoGravity(true);
+            moveOutside(q, remote.frame);
+            hooks.add(() -> cleanupFixtures(server, owned));
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var far = remote.frame;
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid1).equals("PASSAGE_READY"), readyAt -> {
+                at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO));
+                at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                whenTicks(context, readyAt + 3, 10, () -> !journal.flushedRecords().containsKey(sid1), firstEnded -> {
+                    witness.put("pInTheUniverse", p.getServerWorld() == universe);
+                    var allocationBefore = allocationEntries(server, id);
+                    remote.whenRegistered((registered, chamberB) -> {
+                        var second = M5GameTestSupport.existingReceipt(server, remote.authority(chamberB), Map.of(q.getUuid(), true), id);
+                        owned.add(second.sessionUuid());
+                        journal.put(second); journal.flush(server);
+                        var sid2 = second.sessionUuid();
+                        at(context, registered + 1, hooks, () -> moveInside(q, far));
+                        whenTicks(context, registered + 2, 600, () -> M5GameTestSupport.state(journal, sid2).equals("PASSAGE_READY"), secondReady -> {
+                            witness.put("revalidatedWithoutWriting", allocationEntries(server, id) == allocationBefore
+                                    && capture.matching(Level.INFO, "目的地已確定", sid2.toString()).size() == 1);
+                            witness.put("secondChamberProjected", M5GameTestSupport.projectionMismatches(universe, far, false).isEmpty()
+                                    && CollapseAuthorities.get(server).projection(chamberB, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
+                            at(context, secondReady + 1, hooks, () -> M5GameTestSupport.standInDoorway(q, far, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
+                            at(context, secondReady + 2, hooks, () -> M5GameTestSupport.standInDoorway(q, far, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                            whenTicks(context, secondReady + 3, 10, () -> !journal.flushedRecords().containsKey(sid2), secondEnded -> {
+                                witness.put("reunitedInTheSameUniverse", q.getServerWorld() == universe && p.getServerWorld() == universe);
+                                witness.put("qInTheSecondProjectionDoorway", ChamberSpaceCoordinates.localPosition(far, q.getPos())
+                                        .squaredDistanceTo(new Vec3d(2.5, 1, 0.3)) < 1e-12);
+                                witness.put("bothEndedWhenEveryoneCrossed", passageEnded(capture, sid1, "(b) 全員都已跨過") == 1 && passageEnded(capture, sid2, "(b) 全員都已跨過") == 1);
+                                witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid1) && M5GameTestSupport.noWarnOrError(capture, sid2));
+                                LOGGER.info("M5_PASSAGE_EXISTING first={} second={}", firstEnded, secondEnded);
+                                releaseThenComplete(context, hooks, witness, "EXISTING 的基本重逢：" + witness, 20, () -> true);
+                            }, () -> "Q 跨過之後 D2 沒有結束：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
+                        }, () -> "D2 沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
+                    });
+                }, () -> "P 跨過之後 D1 沒有結束：record=" + M5GameTestSupport.state(journal, sid1), hooks);
+            }, () -> "D1 沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid1), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.2「EXISTING 再次通過 §8.1 的重驗」、§8.1、§11.2）：D1（原艙 A 上的 DORMANT NEW）建立宇宙 U、提交 PASSAGE_READY 之後以收尾的終局 API 移除。同一座艙寫入選中
+     * EXISTING U 的 D2，P 由艙外進入：RESOLVE 重驗通過（INFO「目的地已確定」）之後、PASSAGE_READY 之前，把 catalog 的 U 改為 DISABLED（test 以 checked API 寫入）→ 準備完成時
+     * 的再驗不通過：SEALED(EXISTING_INELIGIBLE)（永久，ERROR 一則），沒有提交 PASSAGE_READY，門改為關閉（門口沒有 entity），目的世界的 ticket 已釋放。收尾時（hooks，失敗路徑也是）
+     * catalog 改回 EAGER_ENABLED。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_existing_recheck", tickLimit = 1200)
+    public void existing_ready_revalidation_seals_when_the_universe_became_ineligible(TestContext context) {
+        begin(context, "existing_ready_revalidation_seals_when_the_universe_became_ineligible");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var authorities = CollapseAuthorities.get(server);
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid1).equals("PASSAGE_READY"), firstReady -> {
+                cleanupFixtures(server, List.of(sid1));
+                moveOutside(p, frame);
+                var second = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
+                        Map.of(p.getUuid(), true), id));
+                var sid2 = second.sessionUuid();
+                at(context, firstReady + 1, hooks, () -> moveInside(p, frame));
+                whenTicks(context, firstReady + 2, 40, () -> capture.matching(Level.INFO, "目的地已確定", sid2.toString()).size() == 1, revalidated -> {
+                    hooks.add(() -> authorities.changeCatalogAvailability(id, DesiredAvailability.EAGER_ENABLED, CollapseAuthorities.WriteDirection.RESTORE));
+                    var disabled = authorities.changeCatalogAvailability(id, DesiredAvailability.DISABLED, CollapseAuthorities.WriteDirection.ROLL_FORWARD);
+                    witness.put("catalogDisabledAfterTheResolve", disabled.succeeded() && M5GameTestSupport.state(journal, sid2).equals("COLLAPSING"));
+                    whenTicks(context, revalidated + 1, 400, () -> M5GameTestSupport.state(journal, sid2).equals("SEALED"), sealedAt -> {
+                        witness.put("sealedExistingIneligible", sealedWith(journal, sid2, SealedReason.EXISTING_INELIGIBLE));
+                        witness.put("revalidatedAtReady", prepared(capture, sid2).size() == 1 && passageOpened(capture, sid2) == 0);
+                        witness.put("onePermanentAdminError", capture.marked(Level.ERROR, CollapseService.LOG_MARKER.getName(), "SEALED(EXISTING_INELIGIBLE)", "需要管理員處理",
+                                sid2.toString()).size() == 1);
+                        witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid2).isEmpty());
+                        at(context, sealedAt + 2, hooks, () -> {
+                            witness.put("doorClosed", doorAll(world, frame, false, MembraneState.NONE));
+                            releaseThenComplete(context, hooks, witness, "READY 之前的 EXISTING 再驗：" + witness, 40, () -> authorities.catalogRecord(id).value()
+                                    .filter(record -> record.desiredAvailability() == DesiredAvailability.EAGER_ENABLED).isPresent());
+                        });
+                    }, () -> "再驗不通過卻沒有封存：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
+                }, () -> "D2 沒有完成 RESOLVE：record=" + M5GameTestSupport.state(journal, sid2), hooks);
+            }, () -> "D1 沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid1), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.3 的 {@code FAILED_ROLLED_BACK}；plan Step 1 F5-1）：P 越過中線，往宇宙 U 的原生移動被拒（testmod {@code SessionTransferFaultMixin}，前 2 次），回滾回原世界
+     * 成功：P 仍在原世界、在越過中線的那個位置，收到「通道傳送失敗，你仍在原世界。」，通道仍開著（record 仍是 PASSAGE_READY、Crossed 是空的），WARN 一則。P 回到中線內側再越過：
+     * 同一個原因再被拒一次，actionbar 再一次、WARN 仍是一則（依原因去重）。第三次越過：注入用完，傳送成功、Crossed＝[P]、(b) 結束。注入的次數由 fault 記下（2 次往 U，回滾 0 次）。
+     * catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_rolled_back", tickLimit = 900)
+    public void passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once(TestContext context) {
+        begin(context, "passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                var fault = M5GameTestSupport.installNativeMoveFault(context, p.getUuid(), universe.getRegistryKey(), 2, 0, hooks);
+                M5GameTestSupport.overlayKeys(origin.connection);
+                var crossingAt = ChamberSpaceCoordinates.position(frame, 3.5, 1, 0.3);
+                Runnable inside = () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                Runnable outside = () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO);
+                sequence(context, readyAt + 1, hooks, List.of(inside, outside, () -> {
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("firstRejectedAndRolledBack", fault.destinationHits() == 1 && fault.otherHits() == 0 && p.getServerWorld() == world
+                            && p.getPos().squaredDistanceTo(crossingAt) < 1e-12);
+                    witness.put("passageStillOpen", record != null && record.state() == SessionState.PASSAGE_READY && record.collapse().crossed().isEmpty()
+                            && M5GameTestSupport.doorPassable(world, frame));
+                    witness.put("failureMessage", M5GameTestSupport.overlayKeys(origin.connection).equals(List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED)));
+                    witness.put("oneWarn", transferWarnings(capture, sid) == 1);
+                    inside.run();
+                }, outside, () -> {
+                    witness.put("secondRejectedTooButWarnedOnce", fault.destinationHits() == 2 && p.getServerWorld() == world && transferWarnings(capture, sid) == 1
+                            && M5GameTestSupport.overlayKeys(origin.connection).equals(List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED)));
+                    inside.run();
+                }, outside));
+                whenTicks(context, readyAt + 8, 10, () -> !journal.flushedRecords().containsKey(sid), ended -> {
+                    witness.put("thirdCrossed", p.getServerWorld() == universe && fault.destinationHits() == 2 && fault.hits() == 2 && crossedInfos(capture, sid) == 1);
+                    witness.put("endedWhenEveryoneCrossed", passageEnded(capture, sid, "(b) 全員都已跨過") == 1);
+                    witness.put("stillOneWarnAndNoError", transferWarnings(capture, sid) == 1 && capture.matching(Level.WARN, sid.toString()).size() == 1
+                            && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                    releaseThenComplete(context, hooks, witness, "通道傳送失敗並回滾：" + witness, 20, () -> true);
+                }, () -> "第三次越過之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " hits=" + fault.hits() + " witness=" + witness, hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.3 的 {@code FAILED_RECOVERY_REQUIRED}、§5 的 PASSAGE_READY→SEALED(TRR)、§11.2；plan Review Focus 1）：參與者 P1、P2。P1 先穿過通道（Crossed＝[P1]）。P2 越過中線時，
+     * 往 U 的原生移動與回滾都被拒（testmod {@code SessionTransferFaultMixin}，各 1 次）→ {@code FAILED_RECOVERY_REQUIRED}。第一次的 SEALED(TRR) 寫入在 journal 的 put 就被拒
+     * （testmod {@code SessionJournalPutFaultMixin}，1 次；防禦性的被拒路徑）：通道在記憶體內關閉（record 仍是 PASSAGE_READY，P2 再越過中線也不傳送），ERROR 一則；per-session
+     * 退避之後重試寫入成功：
+     * <ul>
+     * <li>record 是 SEALED(TRANSFER_RECOVERY_REQUIRED)、RecoveryRequired＝[P2]、Crossed＝[P1]、opened／expires 與 participants 都保留，沒有終局（record 還在）；</li>
+     * <li>ERROR 帶著 transfer result 的移動與回滾證據（{@code move=}、{@code rollback=}），「需要管理員處理」；</li>
+     * <li>門依 §11.2：P2 在門口，所以改為一般開門（不關門）；目的世界的 ticket 已釋放；兩人都收到「量子通道無法開啟，已封存。」；</li>
+     * <li>之後 P2 再越過中線：沒有任何原生移動（不再自動移動他，也不重試），也不重試封存。</li>
+     * </ul>
+     * SEALED(TRR) 是永久的 recovery authority，收尾時留在 journal（{@code M5GameTestSupport.removeFixture}）。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_recovery", tickLimit = 1200)
+    public void passage_transfer_recovery_required_seals_and_keeps_the_crossed_receipt(TestContext context) {
+        begin(context, "passage_transfer_recovery_required_seals_and_keeps_the_crossed_receipt");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p1 = origin.player();
+        ConnectedGameTestPlayer second;
+        try {
+            second = new ConnectedGameTestPlayer(world);
+            hooks.add(second::close);
+            second.player().setNoGravity(true);
+            moveOutside(second.player(), frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var p2 = second.player();
+        collapsedToUniverse(context, origin, hooks, List.of(p2.getUuid()), (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            moveInside(p2, frame);
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                var ready = journal.flushedRecords().get(sid);
+                at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
+                at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                at(context, readyAt + 3, hooks, () -> {
+                    witness.put("p1Crossed", p1.getServerWorld() == universe && journal.flushedRecords().get(sid).collapse().crossed().equals(List.of(p1.getUuid())));
+                    M5GameTestSupport.overlayKeys(origin.connection); M5GameTestSupport.overlayKeys(second);
+                });
+                M5TestHooks.NativeMoveFault[] fault = {null};
+                M5TestHooks.JournalPutFault[] reject = {null};
+                at(context, readyAt + 4, hooks, () -> {
+                    fault[0] = M5GameTestSupport.installNativeMoveFault(context, p2.getUuid(), universe.getRegistryKey(), 1, 1, hooks);
+                    reject[0] = M5GameTestSupport.installJournalPutFault(context, sid, SessionState.SEALED, 1, hooks);
+                    M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                });
+                at(context, readyAt + 5, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                at(context, readyAt + 6, hooks, () -> {
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("recoveryRequiredWithBothMovesRefused", fault[0].destinationHits() == 1 && fault[0].otherHits() == 1 && p2.getServerWorld() == world);
+                    witness.put("sealWriteRejectedOnce", reject[0].hits() == 1 && record.state() == SessionState.PASSAGE_READY && record.equals(journal.records().get(sid)));
+                    witness.put("oneRejectedError", capture.marked(Level.ERROR, CollapseService.LOG_MARKER.getName(), "的寫入被拒", "需要管理員處理", sid.toString()).size() == 1);
+                    // 在記憶體內關閉：P2 再越過中線也不傳送。
+                    M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                });
+                at(context, readyAt + 7, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                at(context, readyAt + 8, hooks, () -> witness.put("closedInMemoryWhileRejected", fault[0].hits() == 2 && p2.getServerWorld() == world
+                        && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY")));
+                whenTicks(context, readyAt + 9, 260, () -> M5GameTestSupport.state(journal, sid).equals("SEALED"), sealedAt -> {
+                    var sealed = journal.flushedRecords().get(sid);
+                    witness.put("sealedTransferRecoveryRequired", sealedWith(journal, sid, SealedReason.TRANSFER_RECOVERY_REQUIRED)
+                            && sealed.collapse().recoveryRequired().equals(List.of(p2.getUuid())));
+                    witness.put("crossedOpenedExpiresAndParticipantsKept", sealed.collapse().crossed().equals(List.of(p1.getUuid()))
+                            && sealed.collapse().passageOpenedAtGameTime() == ready.collapse().passageOpenedAtGameTime()
+                            && sealed.collapse().passageExpiresAtGameTime() == ready.collapse().passageExpiresAtGameTime()
+                            && sealed.participants().equals(ready.participants()) && sealed.candidateSelection().equals(ready.candidateSelection()));
+                    witness.put("retriedAfterTheBackoff", sealedAt - readyAt >= 200);
+                    witness.put("noTerminal", journal.flushedRecords().containsKey(sid) && passageEnded(capture, sid, "量子通道已結束") == 0);
+                    var errors = capture.marked(Level.ERROR, CollapseService.LOG_MARKER.getName(), "塌縮進入 SEALED(TRANSFER_RECOVERY_REQUIRED)", "需要管理員處理", sid.toString());
+                    witness.put("oneAdminErrorWithTheEvidence", errors.size() == 1 && errors.getFirst().message().contains("FAILED_RECOVERY_REQUIRED")
+                            && errors.getFirst().message().contains("move=") && errors.getFirst().message().contains("rollback="));
+                    witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    witness.put("sealedMessageToBoth", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_SEALED)
+                            && M5GameTestSupport.overlayKeys(second).contains(CollapseService.MESSAGE_SEALED));
+                    at(context, sealedAt + 2, hooks, () -> {
+                        witness.put("plainOpenWithP2InTheDoorway", doorAll(world, frame, true, MembraneState.NONE));
+                        M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                    });
+                    at(context, sealedAt + 3, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                    at(context, sealedAt + 5, hooks, () -> {
+                        witness.put("neverMovedAgain", fault[0].hits() == 2 && p2.getServerWorld() == world && sealedWith(journal, sid, SealedReason.TRANSFER_RECOVERY_REQUIRED));
+                        LOGGER.info("M5_PASSAGE_RECOVERY ready={} sealed={} error={}", readyAt, sealedAt, errors.isEmpty() ? "" : errors.getFirst().message());
+                        releaseThenComplete(context, hooks, witness, "通道傳送無法回滾：" + witness, 20, () -> true);
+                    });
+                }, () -> "退避之後沒有寫入 SEALED(TRR)：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.3 :571、§6 的 collapse view；plan Review Focus 1 的第二半）：參與者 P1、P2，P2 的原生移動與回滾都被拒（各 1 次）→ {@code FAILED_RECOVERY_REQUIRED}；SEALED(TRR)
+     * 的 journal 寫出在 flush 開頭受控失敗（roll-forward）：寫入本身那一次，以及下一個 tick recovery 的 RETRY_FLUSH（recovery 的退避從它自己的寫出失敗才開始，之後 200 ticks 才再試）。
+     * flushed 仍是 PASSAGE_READY，collapse view 已是 SEALED，通道立即關閉——presence 是 COLLAPSE、P1 越過中線也不傳送、門依 §11.2（P2 在門口：一般開門）、目的世界的 ticket 已釋放、
+     * 沒有終局。之後另一個 session 的 checked 寫入（suspend 的 fixture，put＋flush）的 flush 帶著這筆 SEALED，flushed 變成 SEALED(TRR)（早於 recovery 的下一次 RETRY_FLUSH）。以
+     * {@code afterAutosaveClear} 的窗口確認期間沒有繞過探針的寫出。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_recovery_pending", tickLimit = 1500)
+    public void passage_recovery_seal_write_failure_closes_the_passage_until_another_flush(TestContext context) {
+        begin(context, "passage_recovery_seal_write_failure_closes_the_passage_until_another_flush");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p1 = origin.player();
+        ConnectedGameTestPlayer second;
+        try {
+            second = new ConnectedGameTestPlayer(world);
+            hooks.add(second::close);
+            second.player().setNoGravity(true);
+            moveOutside(second.player(), frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var p2 = second.player();
+        collapsedToUniverse(context, origin, hooks, List.of(p2.getUuid()), (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            moveInside(p2, frame);
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                M5GameTestSupport.afterAutosaveClear(context, readyAt + 1, "passage_recovery_pending", 60, (start, window) -> {
+                    var flush = M5GameTestSupport.installFlushProbe(context, new M5GameTestSupport.FlushFault(server, "F5-1 GameTest 受控：SEALED(TRR) 的 journal 寫出失敗", 2,
+                            state -> Optional.ofNullable(state.records().get(sid)).filter(record -> record.state() == SessionState.SEALED).isPresent()
+                                    && Optional.ofNullable(state.flushedRecords().get(sid)).filter(record -> record.state() == SessionState.PASSAGE_READY).isPresent()), hooks);
+                    var fault = M5GameTestSupport.installNativeMoveFault(context, p2.getUuid(), universe.getRegistryKey(), 1, 1, hooks);
+                    M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                    at(context, start + 1, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                    at(context, start + 2, hooks, () -> {
+                        var flushed = journal.flushedRecords().get(sid);
+                        var view = journal.collapseView(sid).orElseThrow();
+                        witness.put("recoveryRequired", fault.destinationHits() == 1 && fault.otherHits() == 1);
+                        witness.put("sealWriteFailed", flush.failures() >= 1 && flushed.state() == SessionState.PASSAGE_READY && journal.rollForwardPending(sid));
+                        witness.put("collapseViewSealed", view.state() == SessionState.SEALED && view.collapse().sealedReason().equals(Optional.of(SealedReason.TRANSFER_RECOVERY_REQUIRED))
+                                && view.collapse().recoveryRequired().equals(List.of(p2.getUuid())));
+                        witness.put("presenceCollapse", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.COLLAPSE);
+                        witness.put("destinationTicketReleasedAtOnce", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                        M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                    });
+                    at(context, start + 3, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                    at(context, start + 4, hooks, () -> {
+                        witness.put("p1NotTransferred", p1.getServerWorld() == world && fault.hits() == 2 && crossedInfos(capture, sid) == 0);
+                        witness.put("plainOpenWithP2InTheDoorway", doorAll(world, frame, true, MembraneState.NONE));
+                        witness.put("noTerminal", journal.flushedRecords().containsKey(sid) && passageEnded(capture, sid, "量子通道已結束") == 0);
+                        witness.put("stillPendingBeforeTheOtherFlush", journal.rollForwardPending(sid) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY")
+                                && flush.failures() == 2);
+                        // 另一個 session 的 checked 寫入：它的 flush 帶著這筆 SEALED。
+                        var other = M5GameTestSupport.collapseFixture(server, M4CandidateTestAccess.origin(UUID.randomUUID(), frame.controllerPos().add(97, 0, 0)),
+                                Map.of(UUID.randomUUID(), true), List.of(), true, SessionState.COLLAPSING, true);
+                        origin.owned.add(other.sessionUuid());
+                        witness.put("writtenByTheOtherFlush", sealedWith(journal, sid, SealedReason.TRANSFER_RECOVERY_REQUIRED) && !journal.rollForwardPending(sid)
+                                && flush.retries().size() >= 1);
+                        var writes = window.journalWrites(server, flush.ticks(), List.of(sid, other.sessionUuid()));
+                        witness.put("onlyProbedJournalWrites", writes.onlyProbed());
+                        LOGGER.info("M5_PASSAGE_RECOVERY_PENDING start={} flushes={} problems={}", start, flush.ticks(), writes.problems());
+                        releaseThenComplete(context, hooks, witness, "SEALED(TRR) 的寫出失敗：" + witness + " problems=" + writes.problems(), 20, () -> true);
+                    });
+                }, hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §7 開頭「Crossed 落盤失敗時不傳送、不終局、不評估結束條件、拒絕關門」、§6 的 collapse view、§10.6 (c)；plan Step 1 F5-1 的「Crossed 落盤失敗」）：參與者 P1、P2。
+     * P1 穿過通道之後，加入 Crossed 的 journal 寫出在 flush 開頭受控失敗（之後 recovery 的三次 RETRY_FLUSH 也失敗：下一個 tick、退避 200、400 ticks 之後；共 4 次）：
+     * <ul>
+     * <li>P1 已在 U、collapse view 的 Crossed＝[P1]（flushed 仍是空的），WARN「寫入 Crossed」一則；</li>
+     * <li>未確認期間：P2 越過中線不傳送；P2 關門被拒、門仍是 passable；game time 過了 expires 也沒有終局（結束條件不評估，record 仍是 PASSAGE_READY）；</li>
+     * <li>第 5 次寫出（RETRY_FLUSH，800 ticks 的退避之後）成功：Crossed 確認，這時已到期，依 (c) 結束（INFO (c) 一則），門改為一般開門。</li>
+     * </ul>
+     * 通道的 60 秒從 PASSAGE_READY 起算，所以先以 {@code holdReady} 暫緩提交，等到 {@code afterAutosaveClear} 的窗口開始才放行；窗口內確認沒有繞過探針的寫出（原生 autosave 會把未確認的
+     * Crossed 直接寫出）。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_crossed_pending", tickLimit = 4500)
+    public void crossed_write_failure_pauses_the_passage_until_it_converges_then_expires(TestContext context) {
+        begin(context, "crossed_write_failure_pauses_the_passage_until_it_converges_then_expires");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p1 = origin.player();
+        ConnectedGameTestPlayer second;
+        try {
+            second = new ConnectedGameTestPlayer(world);
+            hooks.add(second::close);
+            second.player().setNoGravity(true);
+            moveOutside(second.player(), frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var p2 = second.player();
+        var doorCell = local(frame, 3, 3, 0);
+        collapsedToUniverse(context, origin, hooks, List.of(p2.getUuid()), (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            moveInside(p2, frame);
+            // 通道的 60 秒從 PASSAGE_READY 起算，而等原生 autosave 的窗口最久要等一整個窗口：先暫緩提交，窗口開始之後才放行。
+            var hold = M5GameTestSupport.holdReady(context, sid, hooks);
+            M5GameTestSupport.afterAutosaveClear(context, resolved + 1, "passage_crossed_pending", 1800, (start, window) -> {
+                var flush = M5GameTestSupport.installFlushProbe(context, new M5GameTestSupport.FlushFault(server, "F5-1 GameTest 受控：Crossed 的 journal 寫出失敗", 4,
+                        state -> Optional.ofNullable(state.records().get(sid)).filter(record -> record.collapse().crossed().contains(p1.getUuid())).isPresent()
+                                && Optional.ofNullable(state.flushedRecords().get(sid)).filter(record -> record.collapse().crossed().isEmpty()).isPresent()), hooks);
+                hold.release();
+                whenTicks(context, start + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                    long expires = journal.flushedRecords().get(sid).collapse().passageExpiresAtGameTime();
+                    at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
+                    at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                    at(context, readyAt + 3, hooks, () -> {
+                        var view = journal.collapseView(sid).orElseThrow();
+                        witness.put("p1Crossed", p1.getServerWorld() == universe && crossedInfos(capture, sid) == 1);
+                        witness.put("crossedPendingInTheCollapseView", journal.rollForwardPending(sid) && view.collapse().crossed().equals(List.of(p1.getUuid()))
+                                && journal.flushedRecords().get(sid).collapse().crossed().isEmpty() && flush.failures() == 1);
+                        witness.put("oneCrossedWriteWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 Crossed", sid.toString()).size() == 1);
+                        M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                    });
+                    at(context, readyAt + 4, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                    at(context, readyAt + 5, hooks, () -> {
+                        witness.put("p2NotTransferredWhilePending", p2.getServerWorld() == world && crossedInfos(capture, sid) == 1);
+                        moveInside(p2, frame);
+                        witness.put("p2CloseRefusedDoorUnchanged", !interact(world, doorCell, p2).isAccepted() && M5GameTestSupport.doorPassable(world, frame)
+                                && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
+                    });
+                    whenTicks(context, readyAt + 6, 1600, () -> server.getOverworld().getTime() > expires + 5, expired -> {
+                        witness.put("notEndedAfterTheExpiryWhilePending", journal.rollForwardPending(sid) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY")
+                                && passageEnded(capture, sid, "量子通道已結束") == 0 && flush.failures() == 4);
+                        whenTicks(context, expired + 1, 1000, () -> !journal.flushedRecords().containsKey(sid), ended -> {
+                            witness.put("convergedOnTheFifthWrite", flush.failures() == 4 && flush.retries().size() >= 1);
+                            witness.put("thenEndedByExpiry", passageEnded(capture, sid, "(c) game time 已到 PassageExpiresAtGameTime") == 1);
+                            witness.put("plainOpenAfterTheEnd", doorAll(world, frame, true, MembraneState.NONE));
+                            var writes = window.journalWrites(server, flush.ticks(), List.of(sid));
+                            witness.put("onlyProbedJournalWrites", writes.onlyProbed());
+                            LOGGER.info("M5_PASSAGE_CROSSED_PENDING start={} expires={} ended={} flushes={} problems={}", start, expires, ended, flush.ticks(), writes.problems());
+                            releaseThenComplete(context, hooks, witness, "Crossed 的寫出失敗：" + witness + " problems=" + writes.problems(), 20, () -> true);
+                        }, () -> "收斂之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " flushes=" + flush.ticks() + " witness=" + witness, hooks);
+                    }, () -> "沒有等到 expires：time=" + server.getOverworld().getTime() + " expires=" + expires, hooks);
+                }, () -> "放行之後沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+            }, hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.4、§15「危險目的地：在水、岩漿、石頭地形的 fixture 中，以及在門口跳躍時，照樣抵達，不被判為失敗」）：PASSAGE_READY 之後，在宇宙 U 的投影艙門外一格
+     * （local z=−1）放石頭、水、岩漿；四位（創造模式、不受重力的）參與者在同一個 tick 越過中線：腳在 local z=0.2 時 bbox 伸進門外那一格，所以 M3 的安全落點會因碰撞（石頭）或流體
+     * （水、岩漿）拒絕；第四位在半空（腳在 local y=1.42，M3 的地板檢查會拒絕）。passage 的政策不看這些：四位都抵達 U 的同 XYZ，Crossed 有四位，(b) 結束，沒有任何傳送失敗的
+     * WARN。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_hazards", tickLimit = 900)
+    public void passage_crossings_arrive_in_stone_water_lava_and_mid_jump(TestContext context) {
+        begin(context, "passage_crossings_arrive_in_stone_water_lava_and_mid_jump");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var players = new ArrayList<ServerPlayerEntity>();
+        players.add(origin.player());
+        try {
+            for (int i = 0; i < 3; i++) {
+                var connection = new ConnectedGameTestPlayer(world);
+                hooks.add(connection::close);
+                connection.player().setNoGravity(true);
+                moveOutside(connection.player(), frame);
+                players.add(connection.player());
+            }
+            for (var player : players) player.changeGameMode(GameMode.CREATIVE);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        double[] columns = {1.5, 2.5, 5.5, 3.5};
+        double[] heights = {1, 1, 1, 1.42};
+        collapsedToUniverse(context, origin, hooks, players.subList(1, 4).stream().map(ServerPlayerEntity::getUuid).toList(), (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            for (var player : players.subList(1, 4)) moveInside(player, frame);
+            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                ChamberProtectionService.get().authorizedMutation(() -> {
+                    universe.setBlockState(outside(frame, 1, 1, -1), Blocks.STONE.getDefaultState());
+                    universe.setBlockState(outside(frame, 2, 1, -1), Blocks.WATER.getDefaultState());
+                    universe.setBlockState(outside(frame, 5, 1, -1), Blocks.LAVA.getDefaultState());
+                });
+                witness.put("hazardsPlaced", universe.getBlockState(outside(frame, 1, 1, -1)).isOf(Blocks.STONE)
+                        && universe.getFluidState(outside(frame, 2, 1, -1)).isIn(net.minecraft.registry.tag.FluidTags.WATER)
+                        && universe.getFluidState(outside(frame, 5, 1, -1)).isIn(net.minecraft.registry.tag.FluidTags.LAVA));
+                at(context, readyAt + 1, hooks, () -> {
+                    for (int i = 0; i < 4; i++) M5GameTestSupport.standInDoorway(players.get(i), frame, columns[i], heights[i], 0.7, 0, 0, Vec3d.ZERO);
+                });
+                at(context, readyAt + 2, hooks, () -> {
+                    for (int i = 0; i < 4; i++) M5GameTestSupport.standInDoorway(players.get(i), frame, columns[i], heights[i], 0.2, 0, 0, Vec3d.ZERO);
+                });
+                at(context, readyAt + 3, hooks, () -> {
+                    var record = journal.flushedRecords().get(sid);
+                    var names = List.of("stone", "water", "lava", "midJump");
+                    for (int i = 0; i < 4; i++) {
+                        var player = players.get(i);
+                        var expected = ChamberSpaceCoordinates.position(frame, columns[i], heights[i], 0.2);
+                        witness.put(names.get(i) + ".arrived", player.getServerWorld() == universe && player.getPos().squaredDistanceTo(expected) < 1e-12);
+                    }
+                    witness.put("boxesReachTheHazards", !universe.isSpaceEmpty(players.get(0), players.get(0).getBoundingBox())
+                            && universe.containsFluid(players.get(1).getBoundingBox()) && universe.containsFluid(players.get(2).getBoundingBox()));
+                    witness.put("allFourCrossed", record != null && record.collapse().crossed().size() == 4);
+                });
+                whenTicks(context, readyAt + 4, 10, () -> !journal.flushedRecords().containsKey(sid), ended -> {
+                    witness.put("endedWhenEveryoneCrossed", passageEnded(capture, sid, "(b) 全員都已跨過") == 1);
+                    witness.put("noTransferWarnOrError", transferWarnings(capture, sid) == 0 && M5GameTestSupport.noWarnOrError(capture, sid));
+                    releaseThenComplete(context, hooks, witness, "危險的目的地：" + witness, 20, () -> true);
+                }, () -> "四位都跨過之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F5-1（spec §10.2 的提交是 restore 類、§6「journal 寫入失敗時的 session 行為」、§11.2 的 per-session 退避）：準備完成時提交 PASSAGE_READY 的 journal 寫出在 flush 開頭受控失敗
+     * 一次：record 留在 COLLAPSING（current 還原、flushed 不變），WARN「提交 PASSAGE_READY」一則，PREPARE 暫停、原艙門由 sealed 量子膜改為一般開門（INFO 一則）；退避期（200 ticks）
+     * 之內不重試、門維持一般開門；退避期過後只重試這筆提交：PASSAGE_READY、門改為 passable。探針在 RESOLVE 之後、PREPARE 之前就裝上；它只計「current 是 PASSAGE_READY、flushed
+     * 是 COLLAPSING」的 flush，這只會出現在提交本身的 flush 裡（restore 類寫入失敗之後 current 已還原），所以原生 autosave 不會讓計數誤判，不需要 {@code afterAutosaveClear}
+     * 的窗口。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_ready_fault", tickLimit = 2000)
+    public void ready_write_failure_restores_backs_off_and_opens_the_door_plainly(TestContext context) {
+        begin(context, "ready_write_failure_restores_backs_off_and_opens_the_door_plainly");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var flush = M5GameTestSupport.installFlushProbe(context, new M5GameTestSupport.FlushFault(server, "F5-1 GameTest 受控：提交 PASSAGE_READY 的 journal 寫出失敗", 1,
+                    state -> Optional.ofNullable(state.records().get(sid)).filter(record -> record.state() == SessionState.PASSAGE_READY).isPresent()
+                            && Optional.ofNullable(state.flushedRecords().get(sid)).filter(record -> record.state() == SessionState.COLLAPSING).isPresent()), hooks);
+            whenTicks(context, resolved + 1, 500, () -> flush.failures() == 1, failedAt -> {
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("readyRestored", record.state() == SessionState.COLLAPSING && record.equals(journal.records().get(sid)) && passageOpened(capture, sid) == 0);
+                    witness.put("oneReadyWriteWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "提交 PASSAGE_READY", sid.toString()).size() == 1);
+                    witness.put("pauseInfo", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "提交 PASSAGE_READY 沒有完成，PREPARE 暫停", sid.toString()).size() == 1);
+                    witness.put("plainOpenWhilePaused", doorAll(world, frame, true, MembraneState.NONE));
+                    at(context, failedAt + 150, hooks, () -> witness.put("noRetryWithinTheBackoff", flush.ticks().size() == 1
+                            && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && doorAll(world, frame, true, MembraneState.NONE)));
+                    whenTicks(context, failedAt + 151, 300, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                        witness.put("retriedAfterTheBackoff", readyAt - failedAt >= 195 && flush.ticks().size() == 2 && passageOpened(capture, sid) == 1);
+                        witness.put("passableAfterTheRetry", M5GameTestSupport.doorPassable(world, frame));
+                        LOGGER.info("M5_PASSAGE_READY_FAULT failed={} ready={} flushes={}", failedAt, readyAt, flush.ticks());
+                        releaseThenComplete(context, hooks, witness, "提交 PASSAGE_READY 的寫出失敗：" + witness, 20, () -> true);
+                    }, () -> "退避之後沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid) + " flushes=" + flush.ticks() + " witness=" + witness, hooks);
+                }, () -> "提交 PASSAGE_READY 的寫出沒有被注入失敗：record=" + M5GameTestSupport.state(journal, sid) + " flushes=" + flush.ticks(), hooks);
+        });
+    }
+
+    /**
+     * F5-1：從 {@code tick} 起每個 tick 依序執行一步（第 i 步在 {@code tick + i}）。每一步的 callback 只排下一步這一項：在一個 callback 裡一次排很多項 {@code runAtTick}，原版
+     * 迭代表的途中插入多項有 rehash 的風險（README「新增 M5 GameTest」的前提）。例外或斷言失敗時先釋放 hooks（{@link M5GameTestSupport#at}）。
+     */
+    private static void sequence(TestContext context, int tick, M2CorridorGameTests.TestHooks hooks, List<Runnable> steps) {
+        if (steps.isEmpty()) return;
+        at(context, tick, hooks, () -> {
+            steps.getFirst().run();
+            sequence(context, tick + 1, hooks, steps.subList(1, steps.size()));
+        });
+    }
+
+    /** 這個 session「參與者已穿過量子通道」的 INFO 數（帶 LOG_MARKER，F5-1）。 */
+    private static int crossedInfos(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "參與者已穿過量子通道", sid.toString()).size();
+    }
+
+    /** 這個 session「量子通道已結束」的 INFO 中含 {@code fragment} 的則數（帶 LOG_MARKER，F5-1；例如結束原因的字句）。 */
+    private static int passageEnded(LogCapture capture, UUID sid, String fragment) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "量子通道已結束", fragment, sid.toString()).size();
+    }
+
+    /** 這個 session 通道傳送沒有完成（玩家仍在原世界）的 WARN 數（帶 LOG_MARKER，F5-1）。 */
+    private static int transferWarnings(LogCapture capture, UUID sid) {
+        return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "塌縮流程的通道傳送沒有完成", sid.toString()).size();
     }
 
     /** 這個 session「SEALED 的原艙門被玩家照一般方式使用：取消還沒套用的關門」的 INFO 數（帶 LOG_MARKER；F4b-3 fix round 1）。 */

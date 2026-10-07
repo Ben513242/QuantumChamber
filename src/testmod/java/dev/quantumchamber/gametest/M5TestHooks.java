@@ -51,11 +51,15 @@ import org.slf4j.LoggerFactory;
  * <li>原艙門攔截的失敗（{@link #DOOR_USE_FAULT}，F5-0，F4b-3 quality M-2、spec m-1）：{@code OriginDoorUseFaultMixin} 在 {@code OriginDoors.endByParticipant}（PREPARE 期間參與者
  *     開關門的處置）的開頭呼叫 {@link #beforeParticipantDoorUse}、在 {@code OriginDoors.sessionAt}（找出所屬 session）的開頭呼叫 {@link #beforeDoorSessionLookup}，注入時丟出例外，
  *     攔截因此在處置途中或找出所屬 session 時失敗（拒絕、記 WARN）。由 {@code M5GameTestSupport.installDoorUseFault} 安裝。</li>
+ * <li>通道的原生移動被拒（{@link #NATIVE_MOVE_FAULT}，F5-1）：{@code SessionTransferFaultMixin} 在 {@code SessionTransferService.move(ServerPlayerEntity, …)} 的開頭呼叫
+ *     {@link #rejectNativeMove}，注入時那次原生移動回 false（玩家沒有移動）：移動被拒、回滾成功就是 {@code FAILED_ROLLED_BACK}；回滾也被拒就是
+ *     {@code FAILED_RECOVERY_REQUIRED}。由 {@code M5GameTestSupport.installNativeMoveFault} 安裝。</li>
  * <li>PASSAGE_READY 的提交暫緩（{@link #READY_HOLD}，F5-1）：{@code CollapseReadyHoldMixin} 在 {@code CollapseService.ready}（準備完成之後提交 PASSAGE_READY）的開頭呼叫
  *     {@link #readyHeld}，裝著時這個 session 不提交、PREPARE 照常（原艙門每個 tick 依條件判斷），等同 production 可以到達的「PASSAGE_READY 的前置條件還沒成立」，只是時間
- *     拉長。給「準備完成之後仍在 PREPARE」的原艙門 test 用（F4b-3 的 T-MEM、T-FAIL；F5-1 之前它們停在 READY stub）。由 {@code M5GameTestSupport.holdReady} 安裝。</li>
+ *     拉長。給「準備完成之後仍在 PREPARE」的原艙門 test（F4b-3 的 T-MEM、T-FAIL；F5-1 之前它們停在 READY stub），以及要控制通道起算時點的 test（F5-1 的
+ *     {@code m5_universe_passage_crossed_pending}）用。由 {@code M5GameTestSupport.holdReady} 安裝。</li>
  * </ul>
- * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核、五個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截）與 PASSAGE_READY 的
+ * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核、六個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動）與 PASSAGE_READY 的
  * 提交暫緩各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
@@ -80,6 +84,8 @@ public final class M5TestHooks {
     static final Slot<JournalPutFault> JOURNAL_PUT_FAULT = new Slot<>("journal put 拒絕注入");
     /** 原艙門攔截的失敗注入（F5-0，{@code M5GameTestSupport.installDoorUseFault}）。 */
     static final Slot<DoorUseFault> DOOR_USE_FAULT = new Slot<>("原艙門攔截的失敗注入");
+    /** 通道的原生移動被拒（F5-1，{@code M5GameTestSupport.installNativeMoveFault}）。 */
+    static final Slot<NativeMoveFault> NATIVE_MOVE_FAULT = new Slot<>("通道的原生移動被拒注入");
     /** PASSAGE_READY 的提交暫緩（F5-1，{@code M5GameTestSupport.holdReady}）。 */
     static final Slot<ReadyHold> READY_HOLD = new Slot<>("PASSAGE_READY 的提交暫緩");
 
@@ -170,6 +176,15 @@ public final class M5TestHooks {
     public static void beforeDoorSessionLookup(dev.quantumchamber.chamber.ChamberFrame frame) {
         var fault = DOOR_USE_FAULT.get();
         if (fault != null) fault.interceptSessionLookup(frame);
+    }
+
+    /**
+     * {@code SessionTransferFaultMixin}：{@code SessionTransferService.move(ServerPlayerEntity, …)} 的開頭呼叫（F5-1）。回 true 時那次原生移動回 false、玩家不移動。只在
+     * server thread 上（原生移動本身只在 server thread 上）。
+     */
+    public static boolean rejectNativeMove(net.minecraft.server.network.ServerPlayerEntity player, ServerWorld target) {
+        var fault = NATIVE_MOVE_FAULT.get();
+        return fault != null && fault.intercept(player, target);
     }
 
     /** {@code CollapseReadyHoldMixin}：{@code CollapseService.ready} 的開頭呼叫（F5-1）。回 true 時這次不提交 PASSAGE_READY。 */
@@ -520,6 +535,44 @@ public final class M5TestHooks {
             ids.removeIf(id -> Objects.equals(current.get(id), flushed.get(id)));
             return ids;
         }
+    }
+
+    /**
+     * 通道的原生移動被拒（F5-1，{@link #NATIVE_MOVE_FAULT}）：{@code player} 往 {@code destination} 的原生移動前 {@code destinationFailures} 次被拒，往其他世界（回滾回來源）
+     * 的原生移動前 {@code otherFailures} 次被拒。{@code destinationFailures}＝1、{@code otherFailures}＝0 是 {@code FAILED_ROLLED_BACK}；兩者都是 1 是
+     * {@code FAILED_RECOVERY_REQUIRED}。{@code hits()}／{@code destinationHits()} 是已注入的次數（README：以 mixin 注入的 test 必須有 hits 一類的 witness）。
+     */
+    static final class NativeMoveFault {
+        private final UUID player;
+        private final RegistryKey<World> destination;
+        private int destinationFailures, otherFailures;
+        private final AtomicInteger destinationHits = new AtomicInteger(), otherHits = new AtomicInteger();
+
+        NativeMoveFault(UUID player, RegistryKey<World> destination, int destinationFailures, int otherFailures) {
+            this.player = Objects.requireNonNull(player, "player"); this.destination = Objects.requireNonNull(destination, "destination");
+            this.destinationFailures = destinationFailures; this.otherFailures = otherFailures;
+        }
+
+        synchronized boolean intercept(net.minecraft.server.network.ServerPlayerEntity moving, ServerWorld target) {
+            if (!moving.getUuid().equals(player)) return false;
+            if (target.getRegistryKey().equals(destination)) {
+                if (destinationFailures <= 0) return false;
+                destinationFailures--;
+                destinationHits.incrementAndGet();
+                return true;
+            }
+            if (otherFailures <= 0) return false;
+            otherFailures--;
+            otherHits.incrementAndGet();
+            return true;
+        }
+
+        /** 往目的世界的原生移動已被拒的次數。 */
+        int destinationHits() { return destinationHits.get(); }
+        /** 往其他世界（回滾）的原生移動已被拒的次數。 */
+        int otherHits() { return otherHits.get(); }
+        /** 已注入的總次數。 */
+        int hits() { return destinationHits.get() + otherHits.get(); }
     }
 
     /**

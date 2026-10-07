@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * 僅 testmod（M5 F5-1）：PASSAGE_READY 的提交暫緩。{@code CollapseService.ready}（準備完成之後，§10.2 的前置條件與提交）的開頭問 {@link M5TestHooks#readyHeld}，裝著時這次
  * 不提交，PREPARE 照常（原艙門每個 tick 依條件判斷），等同 production 可以到達的「PASSAGE_READY 的前置條件還沒成立」，只是時間拉長。只給「準備完成之後仍在 PREPARE」的
- * 原艙門 test 用（F4b-3 的 T-MEM、T-FAIL）；hook 是 {@code M5TestHooks.Slot}，只由 {@code M5GameTestSupport.holdReady} 安裝，沒有裝時不做任何事。
+ * 原艙門 test（F4b-3 的 T-MEM、T-FAIL），以及要控制通道起算時點的 test（F5-1 的 {@code m5_universe_passage_crossed_pending}）用；hook 是 {@code M5TestHooks.Slot}，只由 {@code M5GameTestSupport.holdReady} 安裝，沒有裝時不做任何事。
  * {@code CollapseService} 是 public，所以直接指定 class（不是 {@code targets}），{@code require=1}：方法改名或簽名改變時開服即失敗；package-private 的 {@code Track}、
  * {@code Prepare} 參數以 {@link Coerce} 收成 {@code Object}。
  */

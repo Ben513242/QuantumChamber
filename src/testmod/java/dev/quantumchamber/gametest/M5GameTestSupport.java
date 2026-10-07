@@ -412,6 +412,12 @@ final class M5GameTestSupport {
      */
     private static void removeFixture(MinecraftServer server, SessionRecoveryRecord record) {
         var journal = SessionRecoveryState.get(server); var sid = record.sessionUuid();
+        if (record.state() == SessionState.SEALED && record.collapse().sealedReason().filter(reason -> reason == SealedReason.TRANSFER_RECOVERY_REQUIRED).isPresent()) {
+            // F5-1：SEALED(TRANSFER_RECOVERY_REQUIRED) 是永久的 recovery authority（spec §10.3、§11.2）：沒有任何 API 可以終局或重試它（SEALED→COLLAPSING 被 journal 拒絕），
+            // 所以留在這個 run 的 journal。它的原參與者都已返還、不佔用任何人；原艙是這個 test 自己的，之後的 test 不會用到。
+            LOGGER.info("M5 fixture 收尾：SEALED(TRANSFER_RECOVERY_REQUIRED) 是永久的 recovery authority，留在 journal、不移除：session={}", sid);
+            return;
+        }
         M4CandidateTestAccess.removeSpaceForTeardown(CorridorPageManager.forServer(server), sid);
         if (record.state().collapseState()) M4CandidateTestAccess.terminateCollapseFixture(server, sid);
         else if (record.state() == SessionState.MEASURED) M4CandidateTestAccess.removeMeasuredForTeardown(server, sid);
@@ -840,13 +846,36 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F5-1：通道的原生移動被拒（{@link M5TestHooks#NATIVE_MOVE_FAULT}，testmod {@code SessionTransferFaultMixin}）：{@code player} 往 {@code destination} 的原生移動前
+     * {@code destinationFailures} 次被拒（玩家不動），往其他世界（回滾回來源）的前 {@code otherFailures} 次被拒。1／0 是 {@code FAILED_ROLLED_BACK}，1／1 是
+     * {@code FAILED_RECOVERY_REQUIRED}。安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.NativeMoveFault installNativeMoveFault(TestContext context, UUID player, RegistryKey<World> destination, int destinationFailures,
+            int otherFailures, M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.NativeMoveFault(player, destination, destinationFailures, otherFailures);
+        installHook(context, M5TestHooks.NATIVE_MOVE_FAULT, fault, hooks);
+        return fault;
+    }
+
+    /**
      * F5-1：這個 session 準備完成之後不提交 PASSAGE_READY（{@link M5TestHooks#READY_HOLD}，testmod {@code CollapseReadyHoldMixin}），PREPARE 照常：給「準備完成之後仍在
-     * PREPARE」的原艙門 test 用（F5-1 之前它們停在 READY stub）。{@code hits()} 證明暫緩真的發生。安裝、占用與移除的規則見 {@link #installHook}。
+     * PREPARE」的原艙門 test 用（F5-1 之前它們停在 READY stub），以及要控制通道起算時點的 test（例如等原生 autosave 的窗口開始才放行，{@link M5TestHooks.ReadyHold#release}）。
+     * {@code hits()} 證明暫緩真的發生。安裝、占用與移除的規則見 {@link #installHook}。
      */
     static M5TestHooks.ReadyHold holdReady(TestContext context, UUID session, M2CorridorGameTests.TestHooks hooks) {
         var hold = new M5TestHooks.ReadyHold(session);
         installHook(context, M5TestHooks.READY_HOLD, hold, hooks);
         return hold;
+    }
+
+    /**
+     * F5-1：把玩家放到來源艙的門口（腳在區域座標 ({@code x}, {@code y}, {@code z})，同一個世界），朝向 {@code yaw}、{@code pitch}，速度設為 {@code velocity}。z ≥ 0.5 是
+     * 門板中線的內側，z &lt; 0.5 是外側；跨越是「上一個 tick 在內側、這個 tick 在外側」，而且腳在門口（x∈[1,6)、y∈[1,6)；spec §10.3）。
+     */
+    static void standInDoorway(ServerPlayerEntity player, ChamberFrame frame, double x, double y, double z, float yaw, float pitch, Vec3d velocity) {
+        var position = ChamberSpaceCoordinates.position(frame, x, y, z);
+        player.teleport(player.getServerWorld(), position.x, position.y, position.z, Set.of(), yaw, pitch);
+        player.setVelocity(velocity);
     }
 
     // ---- 投影（F4b-1） ----
