@@ -3083,6 +3083,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>門依 §11.2：P2 在門口，所以改為一般開門（不關門）；目的世界的 ticket 已釋放；兩人都收到「量子通道無法開啟，已封存。」；</li>
      * <li>之後 P2 再越過中線：沒有任何原生移動（不再自動移動他，也不重試），也不重試封存。</li>
      * </ul>
+     * 比較器（F5-2，spec §10.7、§15「比較器 11」）：通道開著時 15；寫入被拒、通道在記憶體內關閉的期間仍是 15（presence 仍是 PASSAGE，已知限制）；SEALED(TRR) 之後 11。F4a M-3：
+     * 進入 SEALED 的探針（{@code installSealProbe}）記到 {@code sealCommitted} 的開頭是 15、RETURN 是 11（P2 在門口，關門是 UNCHANGED，不經門服務的刷新，所以 11 只來自
+     * 「進入 SEALED 之後刷新 Controller」）。
      * SEALED(TRR) 是永久的 recovery authority，收尾時留在 journal（{@code M5GameTestSupport.removeFixture}）。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_recovery", tickLimit = 1200)
@@ -3106,6 +3109,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
             moveInside(p2, frame);
             whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
                 var ready = journal.flushedRecords().get(sid);
+                // F5-2（spec §10.7）：通道開著（已供電、enabled）時比較器 15。
+                witness.put("comparatorFifteenWhileReady", controllerSignal(world, frame, ChamberState.PASSAGE, 15));
                 at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
                 at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
                 at(context, readyAt + 3, hooks, () -> {
@@ -3114,9 +3119,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 });
                 M5TestHooks.NativeMoveFault[] fault = {null};
                 M5TestHooks.JournalPutFault[] reject = {null};
+                M5TestHooks.SealProbe[] probe = {null};
                 at(context, readyAt + 4, hooks, () -> {
                     fault[0] = M5GameTestSupport.installNativeMoveFault(context, p2.getUuid(), universe.getRegistryKey(), 1, 1, hooks);
                     reject[0] = M5GameTestSupport.installJournalPutFault(context, sid, SessionState.SEALED, 1, hooks);
+                    // F5-2（F4a M-3）：記下 sealCommitted 開頭與 RETURN 那一刻的比較器。
+                    probe[0] = M5GameTestSupport.installSealProbe(context, sid, world, frame.controllerPos(), hooks);
                     M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
                 });
                 at(context, readyAt + 5, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
@@ -3127,6 +3135,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("oneRejectedError", capture.marked(Level.ERROR, CollapseService.LOG_MARKER.getName(), "的寫入被拒", "需要管理員處理", sid.toString()).size() == 1);
                     // fix round 1（spec review S-m3）：通道在記憶體內關閉，原艙門不再是 passable，改為一般開門（比照 PREPARE 中寫入被拒時）。
                     witness.put("plainOpenWhileTheSealIsRejected", doorAll(world, frame, true, MembraneState.NONE));
+                    // F5-2（補充第 4 點，已知限制）：journal 沒有改變，collapse view 仍是 PASSAGE_READY，所以 presence 仍是 PASSAGE、比較器 15（短暫誤報，到寫入成功為止）。
+                    witness.put("comparatorFifteenWhileClosedInMemory", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.PASSAGE
+                            && controllerSignal(world, frame, ChamberState.PASSAGE, 15));
                     // 在記憶體內關閉：P2 再越過中線也不傳送。
                     M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
                 });
@@ -3164,6 +3175,17 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     witness.put("sealedMessageToBoth", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_SEALED)
                             && M5GameTestSupport.overlayKeys(second).contains(CollapseService.MESSAGE_SEALED));
+                    // F5-2（補充第 4 點、spec §15「比較器 11」）：SEALED(TRR) 的 presence 是 COLLAPSE，比較器 11。
+                    witness.put("comparatorElevenAfterTheSeal", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.COLLAPSE
+                            && controllerSignal(world, frame, ChamberState.ARMED, 11));
+                    // F5-2（F4a M-3）：SEALED 前後的比較器不同（15 → 11），而且 sealCommitted 自己刷新了 Controller：RETURN 那一刻已是 11。進入 SEALED 時 P2 在門口、門已是一般開門，
+                    // 關門是 UNCHANGED（不經門服務的刷新），所以拿掉「進入 SEALED 之後刷新 Controller」時 RETURN 仍是 15。
+                    var seen = probe[0];
+                    witness.put("sealProbeHitOnce", seen.hits() == 1 && seen.before().size() == 1);
+                    witness.put("comparatorFifteenWhenTheSealCommitted", seen.before().size() == 1 && seen.before().getFirst().comparator() == 15
+                            && seen.before().getFirst().state().equals("PASSAGE"));
+                    witness.put("sealCommittedRefreshedTheControllerToEleven", seen.after().size() == 1 && seen.after().getFirst().comparator() == 11
+                            && seen.after().getFirst().state().equals("ARMED"));
                     at(context, sealedAt + 2, hooks, () -> {
                         witness.put("plainOpenWithP2InTheDoorway", doorAll(world, frame, true, MembraneState.NONE));
                         M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
@@ -3171,7 +3193,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     at(context, sealedAt + 3, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
                     at(context, sealedAt + 5, hooks, () -> {
                         witness.put("neverMovedAgain", fault[0].hits() == 2 && p2.getServerWorld() == world && sealedWith(journal, sid, SealedReason.TRANSFER_RECOVERY_REQUIRED));
-                        LOGGER.info("M5_PASSAGE_RECOVERY ready={} sealed={} error={}", readyAt, sealedAt, errors.isEmpty() ? "" : errors.getFirst().message());
+                        LOGGER.info("M5_PASSAGE_RECOVERY ready={} sealed={} sealProbe before={} after={} error={}", readyAt, sealedAt, seen.before(), seen.after(),
+                                errors.isEmpty() ? "" : errors.getFirst().message());
                         releaseThenComplete(context, hooks, witness, "通道傳送無法回滾：" + witness, 20, () -> true);
                     });
                 }, () -> "退避之後沒有寫入 SEALED(TRR)：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
@@ -3576,6 +3599,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
             steps.getFirst().run();
             sequence(context, tick + 1, hooks, steps.subList(1, steps.size()));
         });
+    }
+
+    /** 來源 Controller 目前是 {@code state}，而且比較器輸出是 {@code signal}（F5-2：spec §10.7 的比較器）。 */
+    private static boolean controllerSignal(ServerWorld world, ChamberFrame frame, ChamberState state, int signal) {
+        var pos = frame.controllerPos();
+        return world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller && controller.chamberState() == state
+                && world.getBlockState(pos).getComparatorOutput(world, pos) == signal;
     }
 
     /** 這個 session「參與者已穿過量子通道」的 INFO 數（帶 LOG_MARKER，F5-1）。 */

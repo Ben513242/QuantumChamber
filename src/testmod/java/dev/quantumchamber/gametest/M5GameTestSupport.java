@@ -881,6 +881,18 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F5-2（F4a M-3）：進入 SEALED 的 Controller 探針（{@link M5TestHooks#SEAL_PROBE}，testmod {@code CollapseSealProbeMixin}）：這個 session 每一次
+     * {@code CollapseService.sealCommitted} 的開頭與 RETURN 各記一次 {@code world} 裡 {@code controller} 的比較器與 {@code ChamberState}。用來鎖住「進入 SEALED 之後刷新
+     * Controller」：SEALED 前後比較器的數值不同（例如通道開著的 15 → SEALED(TRANSFER_RECOVERY_REQUIRED) 的 11），而 RETURN 那一刻還沒有任何排程刷新。test 以
+     * {@code hits()} 當 witness。安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.SealProbe installSealProbe(TestContext context, UUID session, ServerWorld world, BlockPos controller, M2CorridorGameTests.TestHooks hooks) {
+        var probe = new M5TestHooks.SealProbe(session, world, controller);
+        installHook(context, M5TestHooks.SEAL_PROBE, probe, hooks);
+        return probe;
+    }
+
+    /**
      * F5-1：把玩家放到來源艙的門口（腳在區域座標 ({@code x}, {@code y}, {@code z})，同一個世界），朝向 {@code yaw}、{@code pitch}，速度設為 {@code velocity}。z ≥ 0.5 是
      * 門板中線的內側，z &lt; 0.5 是外側；跨越是「上一個 tick 在內側、這個 tick 在外側」，而且腳在門口（x∈[1,6)、y∈[1,6)；spec §10.3）。
      */

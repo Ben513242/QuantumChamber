@@ -62,9 +62,12 @@ import org.slf4j.LoggerFactory;
  *     純查詢），裝著、還沒放行時這個 session 的
  *     {@code CollapseService.step} 一開始就取消；與 collapse-suspended 的集合不同，可以撤銷。給「這個 session 的推進被略過幾個 tick、之後恢復」的 test 用（F5-1 fix round 1 的
  *     {@code m5_universe_passage_stale}）。由 {@code M5GameTestSupport.installStepPause} 安裝。</li>
+ * <li>進入 SEALED 的 Controller 探針（{@link #SEAL_PROBE}，F5-2，F4a M-3）：{@code CollapseSealProbeMixin} 在 {@code CollapseService.sealCommitted}（進入 SEALED 之後的共同步驟）
+ *     的開頭與每一個 RETURN 呼叫 {@link #aroundSealCommitted}，記下那一刻來源 Controller 的比較器與 {@code ChamberState}：RETURN 的值證明 {@code sealCommitted} 自己刷新了
+ *     Controller（之後的排程刷新不在同一刻）。由 {@code M5GameTestSupport.installSealProbe} 安裝。</li>
  * </ul>
- * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核、六個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動）、PASSAGE_READY 的
- * 提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、六個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動）、PASSAGE_READY 的
+ * 提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {
@@ -94,6 +97,8 @@ public final class M5TestHooks {
     static final Slot<ReadyHold> READY_HOLD = new Slot<>("PASSAGE_READY 的提交暫緩");
     /** 塌縮流程推進的暫停（F5-1 fix round 1，可撤銷；{@code M5GameTestSupport.installStepPause}）。 */
     static final Slot<StepPause> STEP_PAUSE = new Slot<>("塌縮流程推進的暫停");
+    /** 進入 SEALED 的 Controller 探針（F5-2，F4a M-3；{@code M5GameTestSupport.installSealProbe}）。 */
+    static final Slot<SealProbe> SEAL_PROBE = new Slot<>("進入 SEALED 的 Controller 探針");
 
     /**
      * 這個 session 是否被暫停（純查詢，不計數；F5-2 Step 0，F5-1 fix round 1 quality re-review R-m2）：system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部；
@@ -213,6 +218,15 @@ public final class M5TestHooks {
     public static boolean readyHeld(UUID session) {
         var hold = READY_HOLD.get();
         return hold != null && hold.holds(session);
+    }
+
+    /**
+     * {@code CollapseSealProbeMixin}：{@code CollapseService.sealCommitted} 的開頭（{@code returned} 為假）與每一個 RETURN（為真）呼叫（F5-2，F4a M-3）。只在 server thread 上
+     * （塌縮流程的 tick 裡）；不丟出例外。
+     */
+    public static void aroundSealCommitted(dev.quantumchamber.persistence.SessionRecoveryRecord view, boolean returned) {
+        var probe = SEAL_PROBE.get();
+        if (probe != null) probe.observe(view, returned);
     }
 
     /**
@@ -650,5 +664,48 @@ public final class M5TestHooks {
 
         /** 之後不再暫停（仍裝著，hooks 釋放時移除）。 */
         void release() { released = true; }
+    }
+
+    /**
+     * 進入 SEALED 的 Controller 探針（F5-2，F4a M-3；{@link #SEAL_PROBE}）：{@code session} 每一次 {@code CollapseService.sealCommitted} 的開頭（{@link #before}）與 RETURN
+     * （{@link #after}）各記一次 {@code world} 裡 {@code controller} 那一格的比較器輸出與 Controller 的 {@code ChamberState}。RETURN 的值是 {@code sealCommitted} 自己的
+     * 「進入 SEALED 之後刷新 Controller」之後的值：同一刻沒有其他刷新（Controller 每 20 tick 的排程刷新在 world 的 tick 裡，不在塌縮流程的 tick 中途）。{@code hits()} 是記到的
+     * RETURN 次數（證明 mixin 真的套用）。讀取失敗只記成 {@code -1}／{@code "?"}，不丟出。
+     */
+    static final class SealProbe {
+        /** 一次觀察：server tick、比較器輸出、Controller 的 ChamberState 名稱。 */
+        record Observation(int tick, int comparator, String state) { }
+
+        private final UUID session;
+        private final ServerWorld world;
+        private final net.minecraft.util.math.BlockPos controller;
+        private final List<Observation> before = new CopyOnWriteArrayList<>(), after = new CopyOnWriteArrayList<>();
+
+        SealProbe(UUID session, ServerWorld world, net.minecraft.util.math.BlockPos controller) {
+            this.session = Objects.requireNonNull(session, "session"); this.world = Objects.requireNonNull(world, "world");
+            this.controller = Objects.requireNonNull(controller, "controller").toImmutable();
+        }
+
+        void observe(dev.quantumchamber.persistence.SessionRecoveryRecord view, boolean returned) {
+            if (!view.sessionUuid().equals(session)) return;
+            int comparator;
+            String state;
+            try {
+                comparator = world.getBlockState(controller).getComparatorOutput(world, controller);
+                state = world.getBlockEntity(controller) instanceof dev.quantumchamber.chamber.ChamberControllerBlockEntity entity ? entity.chamberState().name() : "?";
+            } catch (RuntimeException failure) {
+                LOGGER.error("M5_SEAL_PROBE_FAILED session={}", session, failure);
+                comparator = -1;
+                state = "?";
+            }
+            (returned ? after : before).add(new Observation(world.getServer().getTicks(), comparator, state));
+        }
+
+        /** 每一次 {@code sealCommitted} 開頭的觀察（依發生順序）。 */
+        List<Observation> before() { return List.copyOf(before); }
+        /** 每一次 {@code sealCommitted} RETURN 的觀察（依發生順序）。 */
+        List<Observation> after() { return List.copyOf(after); }
+        /** 記到的 RETURN 次數。 */
+        int hits() { return after.size(); }
     }
 }
