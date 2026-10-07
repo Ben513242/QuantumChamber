@@ -50,7 +50,8 @@ import org.slf4j.LoggerFactory;
  * 尚未確認時拒絕，參與者結束通道（{@link DoorAction#END_PASSAGE} → {@link PassageService#endByParticipant}：先終局、再改門），非參與者拒絕；{@code CollapseService.useDoor}
  * 與 port 不必改。通道結束 (a)–(d) 的改門由 {@link PassageService} 排入 {@link #queueDoor}（(a) {@link DoorGoal#CLOSE_AFTER_TERMINAL}，(b)(c)(d)
  * {@link DoorGoal#OPEN_AFTER_TERMINAL}）。重啟或來源 chunk 重新載入之後，執行期間的 PASSAGE_READY 依 collapse view 重新套用 passable（{@link #watchDoor}）；開服時就是
- * PASSAGE_READY 的由 §12 在第一個 tick 終局、門改為一般開門，不重新套用 passable。
+ * PASSAGE_READY 的由 §12 在第一個 tick 終局、門改為一般開門，不重新套用 passable。SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉的期間，{@link PassageService}
+ * 排入一般開門（{@link DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}；比照 PREPARE 中被拒時把門交還為一般開門，F5-1 fix round 1，spec review S-m3），重新套用也是一般開門。
  * <p><b>F5-2 的接點</b>（spec §10.6 :613）：找不到所屬 session 的量子膜，在 {@code ChamberPowerCoordinator} 刷新該艙時排入下一個 tick 正規化為一般開門。待套用的門以 chamber
  * 為 key（{@link #doors}），但 {@link PendingDoor} 帶著 session、{@link DoorGoal#NORMALIZE} 要求 collapse view 是 COLLAPSING，所以沒有 session 的正規化要另一個目標；條件見
  * M5 note F4b-3「補充第 8 點」。有 COLLAPSING／SEALED 的 session 時由 {@link #watchDoor} 與待套用的門處理，兩者不要同時寫門；SEALED 帶著量子膜時，{@link #cancelSealedClose}
@@ -192,7 +193,8 @@ final class OriginDoors {
      *     的門改為一般開門（一般狀態的階段不得留下有碰撞的膜；PREPARE 則由 {@link #prepareDoor} 每個 tick 重新判斷）。已經有待套用的門（例如閘門失效時排入、chunk
      *     不是 FULL 而一直等著）時只把它延到下一個 tick。一直載入著的 session 不會再觸發：SEALED 的門被玩家打開之後不會被關回去（§11.2、§7.3 :404）。</li>
      * <li>PASSAGE_READY（F5-1）：重新套用 passable 量子膜（{@link DoorGoal#PASSABLE}），collapse view 已是 SEALED（例如 roll-forward 中的 SEALED(TRANSFER_RECOVERY_REQUIRED)）
-     *     時照 SEALED 關門，不會被套回 passable。開服時就是 PASSAGE_READY 的（{@code CollapseService.startupPassages}）不看：§12 在第一個 tick 就終局、門改為一般開門。
+     *     時照 SEALED 關門，不會被套回 passable；SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉時是一般開門（{@link DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}，
+     *     F5-1 fix round 1，S-m3）。開服時就是 PASSAGE_READY 的（{@code CollapseService.startupPassages}）不看：§12 在第一個 tick 就終局、門改為一般開門。
      *     來源 ticket 涵蓋 COLLAPSING 的來源艙，提交 PASSAGE_READY 之後也持有到終局，所以兩者在同一個 instance 內都不會卸載；觸發只來自重啟（或以 testmod 模擬重啟）。</li>
      * <li>隔離中、而上一次推導在 PREPARE：PREPARE 暫停，原艙門交還為一般開門（一次，{@link #releasePrepareDoor}）。隔離解除之後依原進度續做，{@link #prepareDoor}
      *     重新判斷量子膜。</li>
@@ -215,7 +217,7 @@ final class OriginDoors {
             releasePrepareDoor(view, track);
             LOGGER.info(LOG_MARKER, "session 隔離中（H3 的收斂），PREPARE 暫停：原艙門改為一般開門，隔離解除之後依原進度續做：session={} chamber={}", sid, view.chamberUuid());
         }
-        if (reloaded) reapplyDoor(view, cause);
+        if (reloaded) reapplyDoor(view, cause, track.pendingRecovery != null);
     }
 
     /**
@@ -240,20 +242,29 @@ final class OriginDoors {
      * 重新套用的目標（純函式）：SEALED 是關門（門口有 entity 時一般開門）；COLLAPSING 是把帶著量子膜的門改為一般開門；PASSAGE_READY 是 passable 量子膜（F5-1）。
      */
     static DoorGoal reapplyGoal(SessionState viewState) {
+        return reapplyGoal(viewState, false);
+    }
+
+    /**
+     * 同 {@link #reapplyGoal(SessionState)}，另看通道是否在記憶體內關閉（純函式，F5-1 fix round 1，spec review S-m3）：PASSAGE_READY 而 SEALED(TRANSFER_RECOVERY_REQUIRED) 的
+     * 寫入被拒、待重試（{@link CollapseService.Track#pendingRecovery}）時是一般開門（{@link DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}），不套回 passable。其他狀態不看它。
+     */
+    static DoorGoal reapplyGoal(SessionState viewState, boolean passageClosedInMemory) {
         return switch (viewState) {
             case SEALED -> DoorGoal.CLOSE_ON_SEALED;
             case COLLAPSING -> DoorGoal.NORMALIZE;
-            case PASSAGE_READY -> DoorGoal.PASSABLE;
+            case PASSAGE_READY -> passageClosedInMemory ? DoorGoal.OPEN_WHILE_PASSAGE_CLOSED : DoorGoal.PASSABLE;
             case ARMING, SUPERPOSITION, RETURNING, MEASURED -> throw new IllegalArgumentException("只有 COLLAPSING、SEALED 與 PASSAGE_READY 由塌縮流程重新套用原艙門："
                     + viewState);
         };
     }
 
     /**
-     * 排入下一個 tick 的重新套用（{@link #watchDoor}；{@code cause} 是 {@link #reapplyCause} 的字句）；已有待套用的門時只把它延到下一個 tick。排入（或延後）記 INFO：
-     * 它記下的「下一個 tick（tick N）」是「不在 chunk 載入的當下寫方塊」的證據（GameTest 以它比對套用的 tick）；完成時只有實際改了門（APPLIED）才記 INFO（{@link #applyDoor}）。
+     * 排入下一個 tick 的重新套用（{@link #watchDoor}；{@code cause} 是 {@link #reapplyCause} 的字句，{@code passageClosedInMemory} 見 {@link #reapplyGoal(SessionState, boolean)}）；
+     * 已有待套用的門時只把它延到下一個 tick。排入（或延後）記 INFO：它記下的「下一個 tick（tick N）」是「不在 chunk 載入的當下寫方塊」的證據（GameTest 以它比對套用的 tick）；
+     * 完成時只有實際改了門（APPLIED）才記 INFO（{@link #applyDoor}）。
      */
-    private void reapplyDoor(SessionRecoveryRecord view, String cause) {
+    private void reapplyDoor(SessionRecoveryRecord view, String cause, boolean passageClosedInMemory) {
         var existing = doors.get(view.chamberUuid());
         if (existing != null) {
             existing.deferTo(service.now + 1);
@@ -262,7 +273,7 @@ final class OriginDoors {
                     existing.goal, service.now + 1, view.sessionUuid(), view.chamberUuid());
             return;
         }
-        var goal = reapplyGoal(view.state());
+        var goal = reapplyGoal(view.state(), passageClosedInMemory);
         queueDoor(view, 1, goal).reapplied = true;
         LOGGER.info(LOG_MARKER, "來源艙{}：下一個 tick（tick {}）依 collapse view 重新套用原艙門（{}），不在 chunk 載入的當下寫方塊：session={} chamber={} 狀態={}", cause, service.now + 1,
                 goal, view.sessionUuid(), view.chamberUuid(), view.state());
@@ -541,6 +552,7 @@ final class OriginDoors {
      *     等待期間不寫入、不退避。</li>
      * <li>PREPARE 結束或暫停之後的一般開門（F4b-3）：一律套用（沒有碰撞）；PREPARE 再次擁有門時由 {@link #prepareDoor} 移除。</li>
      * <li>PASSAGE_READY 的 passable 量子膜（F5-1）：這個 session 的 collapse view 已不是 PASSAGE_READY 時不再套用；一律套用（沒有碰撞）。</li>
+     * <li>通道在記憶體內關閉期間的一般開門（F5-1 fix round 1，S-m3）：同上，collapse view 已不是 PASSAGE_READY 時不再套用；一律套用（沒有碰撞）。</li>
      * <li>重新套用的量子膜正規化（F4b-3）：COLLAPSING 已不是這個 session 的 collapse view 時不再套用；門沒有量子膜時不寫入、完成；有時改為一般開門。</li>
      * </ul>
      * 由重新套用排入（或延後）的門（{@code reapplied}）完成時另記一則 INFO（目標的結果與 tick），作為「不在 chunk 載入的當下寫方塊」的證據。
@@ -572,11 +584,18 @@ final class OriginDoors {
             LOGGER.info(LOG_MARKER, "session 已不是 PASSAGE_READY，不再套用 passable 量子膜：chamber={} session={}", door.chamber, door.session);
             return;
         }
+        if (door.goal == DoorGoal.OPEN_WHILE_PASSAGE_CLOSED
+                && service.journal.collapseView(door.session).filter(view -> view.state() == SessionState.PASSAGE_READY).isEmpty()) {
+            // 被拒的 SEALED(TRR) 寫入之後已寫入（SEALED 的關門取代這扇門），或 session 已不在：不再套用。
+            doors.remove(door.chamber);
+            LOGGER.info(LOG_MARKER, "session 已不是 PASSAGE_READY，不再套用通道在記憶體內關閉時的一般開門：chamber={} session={}", door.chamber, door.session);
+            return;
+        }
         var world = service.server.getWorld(door.world);
         if (world == null) return;
         ChamberDoorService.DoorState target;
         switch (door.goal) {
-            case OPEN_AFTER_TERMINAL, OPEN_ON_LEAVE -> target = ChamberDoorService.DoorState.OPEN;
+            case OPEN_AFTER_TERMINAL, OPEN_ON_LEAVE, OPEN_WHILE_PASSAGE_CLOSED -> target = ChamberDoorService.DoorState.OPEN;
             case PASSABLE -> target = ChamberDoorService.DoorState.passable(door.frame.outwardFacing());
             case CLOSE_ON_SEALED, CLOSE_AFTER_TERMINAL -> {
                 if (!doorwayEntitiesLoaded(world, door.frame)) return;
@@ -692,7 +711,7 @@ final class OriginDoors {
     /**
      * 待套用門的目標：終局之後的一般開門，進入 SEALED 時的關門（門口有 entity 時一般開門）；F4b-3 另加參與者關門的終局之後的關門（F5-1 起也用於通道期間的 (a)）、PREPARE
      * 結束或暫停之後的一般開門、重新套用時的量子膜正規化，以及 PREPARE 每個 tick 的原艙門（{@link CollapseService.Track#membrane}，不排入待套用的門）；F5-1 另加 PASSAGE_READY
-     * 的 passable 量子膜。{@code pending}／{@code done} 是 log 的字句。
+     * 的 passable 量子膜，F5-1 fix round 1 另加通道在記憶體內關閉期間的一般開門。{@code pending}／{@code done} 是 log 的字句。
      */
     enum DoorGoal {
         OPEN_AFTER_TERMINAL("終局之後原艙門還沒改為一般開門", "原艙門已改為一般開門"),
@@ -701,7 +720,10 @@ final class OriginDoors {
         OPEN_ON_LEAVE("PREPARE 結束或暫停之後原艙門還沒改為一般開門", "PREPARE 結束或暫停之後原艙門已改為一般開門"),
         NORMALIZE("重新套用：原艙門的量子膜還沒改為一般開門", "重新套用：原艙門的量子膜已改為一般開門"),
         PREPARE_MEMBRANE("PREPARE 的原艙門還沒套用（sealed 量子膜，或門口有人、艙內有非參與者時的一般開門）", "PREPARE 的原艙門已套用"),
-        PASSABLE("提交 PASSAGE_READY 之後原艙門還沒改為 passable 量子膜", "提交 PASSAGE_READY 之後原艙門已改為 passable 量子膜");
+        PASSABLE("提交 PASSAGE_READY 之後原艙門還沒改為 passable 量子膜", "提交 PASSAGE_READY 之後原艙門已改為 passable 量子膜"),
+        /** F5-1 fix round 1（spec review S-m3）：SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉的期間，原艙門改為一般開門（{@link PassageService}）。 */
+        OPEN_WHILE_PASSAGE_CLOSED("通道在記憶體內關閉（SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒）：原艙門還沒改為一般開門",
+                "通道在記憶體內關閉（SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒）：原艙門已改為一般開門");
 
         final String pending, done;
 

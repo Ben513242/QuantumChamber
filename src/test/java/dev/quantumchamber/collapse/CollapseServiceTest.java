@@ -702,6 +702,12 @@ class CollapseServiceTest {
         cases.add(() -> assertEquals(OriginDoors.DoorGoal.PASSABLE, OriginDoors.reapplyGoal(SessionState.PASSAGE_READY), "PASSAGE_READY：passable 量子膜（F5-1）"));
         for (var state : List.of(SessionState.ARMING, SessionState.SUPERPOSITION, SessionState.RETURNING, SessionState.MEASURED))
             cases.add(() -> assertThrows(IllegalArgumentException.class, () -> OriginDoors.reapplyGoal(state), state + " 不由塌縮流程重新套用"));
+        // F5-1 fix round 1（spec review S-m3）：SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉時，PASSAGE_READY 的門是一般開門；其他狀態不看它。
+        cases.add(() -> assertEquals(OriginDoors.DoorGoal.OPEN_WHILE_PASSAGE_CLOSED, OriginDoors.reapplyGoal(SessionState.PASSAGE_READY, true),
+                "PASSAGE_READY、通道在記憶體內關閉：一般開門"));
+        cases.add(() -> assertEquals(OriginDoors.DoorGoal.PASSABLE, OriginDoors.reapplyGoal(SessionState.PASSAGE_READY, false), "PASSAGE_READY、通道開著：passable"));
+        cases.add(() -> assertEquals(OriginDoors.DoorGoal.CLOSE_ON_SEALED, OriginDoors.reapplyGoal(SessionState.SEALED, true), "SEALED 不看通道是否在記憶體內關閉"));
+        cases.add(() -> assertEquals(OriginDoors.DoorGoal.NORMALIZE, OriginDoors.reapplyGoal(SessionState.COLLAPSING, true), "COLLAPSING 不看通道是否在記憶體內關閉"));
         assertAll(cases);
     }
 

@@ -343,7 +343,9 @@ final class PassageService {
     /**
      * {@code FAILED_RECOVERY_REQUIRED}：checked（roll-forward）PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)，RecoveryRequired 記下那位玩家。寫出沒有確認時 current 保留
      * SEALED 並保持 dirty（§10.3 :571），依 collapse view 照樣生效；之後與其他原因進入 SEALED 相同（{@link CollapseService#sealCommitted}，ERROR 的 cause 是證據）。寫入在
-     * 前置檢查就被拒時（journal 沒有改變；防禦性），通道在記憶體內關閉（{@link Track#pendingRecovery}），依 per-session 退避只重試這筆寫入。
+     * 前置檢查就被拒時（journal 沒有改變；防禦性），通道在記憶體內關閉（{@link Track#pendingRecovery}）、原艙門改為一般開門（第一次被拒時排入
+     * {@link OriginDoors.DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}，比照 PREPARE 中寫入被拒時的門；F5-1 fix round 1，spec review S-m3），依 per-session 退避只重試這筆寫入；寫入成功時
+     * 由 {@code sealCommitted} 的關門取代它。presence 與比較器在這段期間仍是 PASSAGE（屬 F5-2）。
      */
     private void recoveryRequired(SessionRecoveryRecord current, Track track, UUID player, IllegalStateException cause) {
         var sid = current.sessionUuid();
@@ -353,9 +355,13 @@ final class PassageService {
             boolean first = track.pendingRecovery == null;
             track.pendingRecovery = new PendingRecovery(player, cause);
             track.backoff.failed(service.now);
-            if (first) LOGGER.error(LOG_MARKER, "通道傳送無法回滾，但 SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒：通道在記憶體內關閉（不跨越、不終局、不評估結束條件），"
-                    + "依 per-session 退避只重試這筆寫入；需要管理員處理：session={} chamber={} 玩家={}：{}", sid, current.chamberUuid(), player,
-                    FailureText.describe(cause), cause);
+            if (first) {
+                // F5-1 fix round 1（spec review S-m3）：比照 PREPARE 中寫入被拒時把門交還為一般開門：通道已在記憶體內關閉，原艙門不再是 passable（presence 與比較器屬 F5-2）。
+                service.originDoors.queueDoor(current, 0, OriginDoors.DoorGoal.OPEN_WHILE_PASSAGE_CLOSED);
+                LOGGER.error(LOG_MARKER, "通道傳送無法回滾，但 SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒：通道在記憶體內關閉（不跨越、不終局、不評估結束條件，原艙門改為一般開門），"
+                        + "依 per-session 退避只重試這筆寫入；需要管理員處理：session={} chamber={} 玩家={}：{}", sid, current.chamberUuid(), player,
+                        FailureText.describe(cause), cause);
+            }
             service.warn(sid, RECOVERY_WRITE, commit.failure().orElseThrow(), commit.status().name(), "依 per-session 退避只重試這筆寫入");
             return;
         }

@@ -3074,8 +3074,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F5-1（spec §10.3 的 {@code FAILED_RECOVERY_REQUIRED}、§5 的 PASSAGE_READY→SEALED(TRR)、§11.2；plan Review Focus 1）：參與者 P1、P2。P1 先穿過通道（Crossed＝[P1]）。P2 越過中線時，
      * 往 U 的原生移動與回滾都被拒（testmod {@code SessionTransferFaultMixin}，各 1 次）→ {@code FAILED_RECOVERY_REQUIRED}。第一次的 SEALED(TRR) 寫入在 journal 的 put 就被拒
-     * （testmod {@code SessionJournalPutFaultMixin}，1 次；防禦性的被拒路徑）：通道在記憶體內關閉（record 仍是 PASSAGE_READY，P2 再越過中線也不傳送），ERROR 一則；per-session
-     * 退避之後重試寫入成功：
+     * （testmod {@code SessionJournalPutFaultMixin}，1 次；防禦性的被拒路徑）：通道在記憶體內關閉（record 仍是 PASSAGE_READY，P2 再越過中線也不傳送；原艙門由 passable 改為一般開門，
+     * F5-1 fix round 1，spec review S-m3），ERROR 一則；per-session 退避之後重試寫入成功：
      * <ul>
      * <li>record 是 SEALED(TRANSFER_RECOVERY_REQUIRED)、RecoveryRequired＝[P2]、Crossed＝[P1]、opened／expires 與 participants 都保留，沒有終局（record 還在）；</li>
      * <li>ERROR 帶著 transfer result 的移動與回滾證據（{@code move=}、{@code rollback=}），「需要管理員處理」；</li>
@@ -3124,6 +3124,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("recoveryRequiredWithBothMovesRefused", fault[0].destinationHits() == 1 && fault[0].otherHits() == 1 && p2.getServerWorld() == world);
                     witness.put("sealWriteRejectedOnce", reject[0].hits() == 1 && record.state() == SessionState.PASSAGE_READY && record.equals(journal.records().get(sid)));
                     witness.put("oneRejectedError", capture.marked(Level.ERROR, CollapseService.LOG_MARKER.getName(), "的寫入被拒", "需要管理員處理", sid.toString()).size() == 1);
+                    // fix round 1（spec review S-m3）：通道在記憶體內關閉，原艙門不再是 passable，改為一般開門（比照 PREPARE 中寫入被拒時）。
+                    witness.put("plainOpenWhileTheSealIsRejected", doorAll(world, frame, true, MembraneState.NONE));
                     // 在記憶體內關閉：P2 再越過中線也不傳送。
                     M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
                 });

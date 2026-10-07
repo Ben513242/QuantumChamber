@@ -1414,7 +1414,7 @@ public final class CollapseService {
         final Map<UUID, PassageService.ObservedZ> passageZ = new HashMap<>();
         /**
          * {@code FAILED_RECOVERY_REQUIRED} 之後 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入在前置檢查就被拒（journal 沒有改變；F5-1，防禦性）：通道在記憶體內
-         * 關閉（不跨越、不評估結束條件、不終局、參與者關門被拒），依 per-session 退避只重試這筆寫入（{@link PassageService}）。
+         * 關閉（不跨越、不評估結束條件、不終局、參與者關門被拒；原艙門改為一般開門，重新套用也是，F5-1 fix round 1，S-m3），依 per-session 退避只重試這筆寫入（{@link PassageService}）。
          */
         PassageService.PendingRecovery pendingRecovery;
         /** RESOLVE 連續等待的起點（-1 表示不在等待）與這次等待是否已記過 WARN。 */
