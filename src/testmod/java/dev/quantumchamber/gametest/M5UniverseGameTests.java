@@ -3239,10 +3239,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>未確認期間：P2 越過中線不傳送；P2 關門被拒、門仍是 passable；game time 過了 expires 也沒有終局（結束條件不評估，record 仍是 PASSAGE_READY）；</li>
      * <li>第 5 次寫出（RETRY_FLUSH，800 ticks 的退避之後）成功：Crossed 確認，這時已到期，依 (c) 結束（INFO (c) 一則），門改為一般開門。</li>
      * </ul>
-     * 通道的 60 秒從 PASSAGE_READY 起算，所以先以 {@code holdReady} 暫緩提交，等到 {@code afterAutosaveClear} 的窗口開始才放行；窗口內確認沒有繞過探針的寫出（原生 autosave 會把未確認的
-     * Crossed 直接寫出）。catalog 增量 1。
+     * 通道的 60 秒從 PASSAGE_READY 起算，所以先以 {@code holdReady} 暫緩提交：等暫緩真的發生（{@code readyHeldInPrepare}，{@code hits()>0}；準備完成之後才會呼叫提交）之後才等
+     * {@code afterAutosaveClear} 的窗口，窗口開始時才放行；窗口內確認沒有繞過探針的寫出（原生 autosave 會把未確認的 Crossed 直接寫出）。
+     * <p>有界等待的總長度（F5-1 fix round 1，quality Q-m5；README「新增 M5 GameTest」的前提）：{@code resolved}（{@code whenRegistered} 的 3＋40 與 RESOLVE 的 2＋20，最多 65）
+     * ＋暫緩 1＋800＋窗口 1＋1802（{@code afterAutosaveClear} 最多等 window＋2）＋提交 1＋40＋6＋到期 1300＋1＋收斂與結束 400＋完成 20＝4437，小於 tickLimit 5000。F5-1 的
+     * run-all 實測：到期的判斷約在提交之後 1206 ticks、收斂（第 5 次寫出）約 1403 ticks。catalog 增量 1。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_crossed_pending", tickLimit = 4500)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_crossed_pending", tickLimit = 5000)
     public void crossed_write_failure_pauses_the_passage_until_it_converges_then_expires(TestContext context) {
         begin(context, "crossed_write_failure_pauses_the_passage_until_it_converges_then_expires");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
@@ -3262,47 +3265,52 @@ public final class M5UniverseGameTests implements FabricGameTest {
         collapsedToUniverse(context, origin, hooks, List.of(p2.getUuid()), (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             moveInside(p2, frame);
-            // 通道的 60 秒從 PASSAGE_READY 起算，而等原生 autosave 的窗口最久要等一整個窗口：先暫緩提交，窗口開始之後才放行。
+            // 通道的 60 秒從 PASSAGE_READY 起算，而等原生 autosave 的窗口最久要等一整個窗口：先暫緩提交；暫緩真的發生（準備完成）之後才等窗口，窗口開始之後才放行
+            // （F5-1 fix round 1，quality Q-m5：原本的窗口可能在準備完成之前就開始，暫緩沒有發生，hits() 是 0）。
             var hold = M5GameTestSupport.holdReady(context, sid, hooks);
-            M5GameTestSupport.afterAutosaveClear(context, resolved + 1, "passage_crossed_pending", 1800, (start, window) -> {
-                var flush = M5GameTestSupport.installFlushProbe(context, new M5GameTestSupport.FlushFault(server, "F5-1 GameTest 受控：Crossed 的 journal 寫出失敗", 4,
-                        state -> Optional.ofNullable(state.records().get(sid)).filter(record -> record.collapse().crossed().contains(p1.getUuid())).isPresent()
-                                && Optional.ofNullable(state.flushedRecords().get(sid)).filter(record -> record.collapse().crossed().isEmpty()).isPresent()), hooks);
-                hold.release();
-                whenTicks(context, start + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
-                    long expires = journal.flushedRecords().get(sid).collapse().passageExpiresAtGameTime();
-                    at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
-                    at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
-                    at(context, readyAt + 3, hooks, () -> {
-                        var view = journal.collapseView(sid).orElseThrow();
-                        witness.put("p1Crossed", p1.getServerWorld() == universe && crossedInfos(capture, sid) == 1);
-                        witness.put("crossedPendingInTheCollapseView", journal.rollForwardPending(sid) && view.collapse().crossed().equals(List.of(p1.getUuid()))
-                                && journal.flushedRecords().get(sid).collapse().crossed().isEmpty() && flush.failures() == 1);
-                        witness.put("oneCrossedWriteWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 Crossed", sid.toString()).size() == 1);
-                        M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
-                    });
-                    at(context, readyAt + 4, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
-                    at(context, readyAt + 5, hooks, () -> {
-                        witness.put("p2NotTransferredWhilePending", p2.getServerWorld() == world && crossedInfos(capture, sid) == 1);
-                        moveInside(p2, frame);
-                        witness.put("p2CloseRefusedDoorUnchanged", !interact(world, doorCell, p2).isAccepted() && M5GameTestSupport.doorPassable(world, frame)
-                                && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
-                    });
-                    whenTicks(context, readyAt + 6, 1600, () -> server.getOverworld().getTime() > expires + 5, expired -> {
-                        witness.put("notEndedAfterTheExpiryWhilePending", journal.rollForwardPending(sid) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY")
-                                && passageEnded(capture, sid, "量子通道已結束") == 0 && flush.failures() == 4);
-                        whenTicks(context, expired + 1, 1000, () -> !journal.flushedRecords().containsKey(sid), ended -> {
-                            witness.put("convergedOnTheFifthWrite", flush.failures() == 4 && flush.retries().size() >= 1);
-                            witness.put("thenEndedByExpiry", passageEnded(capture, sid, "(c) game time 已到 PassageExpiresAtGameTime") == 1);
-                            witness.put("plainOpenAfterTheEnd", doorAll(world, frame, true, MembraneState.NONE));
-                            var writes = window.journalWrites(server, flush.ticks(), List.of(sid));
-                            witness.put("onlyProbedJournalWrites", writes.onlyProbed());
-                            LOGGER.info("M5_PASSAGE_CROSSED_PENDING start={} expires={} ended={} flushes={} problems={}", start, expires, ended, flush.ticks(), writes.problems());
-                            releaseThenComplete(context, hooks, witness, "Crossed 的寫出失敗：" + witness + " problems=" + writes.problems(), 20, () -> true);
-                        }, () -> "收斂之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " flushes=" + flush.ticks() + " witness=" + witness, hooks);
-                    }, () -> "沒有等到 expires：time=" + server.getOverworld().getTime() + " expires=" + expires, hooks);
-                }, () -> "放行之後沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
-            }, hooks);
+            whenTicks(context, resolved + 1, 800, () -> hold.hits() > 0, held -> {
+                witness.put("readyHeldInPrepare", hold.hits() > 0 && M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                M5GameTestSupport.afterAutosaveClear(context, held + 1, "passage_crossed_pending", 1800, (start, window) -> {
+                    var flush = M5GameTestSupport.installFlushProbe(context, new M5GameTestSupport.FlushFault(server, "F5-1 GameTest 受控：Crossed 的 journal 寫出失敗", 4,
+                            state -> Optional.ofNullable(state.records().get(sid)).filter(record -> record.collapse().crossed().contains(p1.getUuid())).isPresent()
+                                    && Optional.ofNullable(state.flushedRecords().get(sid)).filter(record -> record.collapse().crossed().isEmpty()).isPresent()), hooks);
+                    hold.release();
+                    whenTicks(context, start + 1, 40, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                        long expires = journal.flushedRecords().get(sid).collapse().passageExpiresAtGameTime();
+                        at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
+                        at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                        at(context, readyAt + 3, hooks, () -> {
+                            var view = journal.collapseView(sid).orElseThrow();
+                            witness.put("p1Crossed", p1.getServerWorld() == universe && crossedInfos(capture, sid) == 1);
+                            witness.put("crossedPendingInTheCollapseView", journal.rollForwardPending(sid) && view.collapse().crossed().equals(List.of(p1.getUuid()))
+                                    && journal.flushedRecords().get(sid).collapse().crossed().isEmpty() && flush.failures() == 1);
+                            witness.put("oneCrossedWriteWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 Crossed", sid.toString()).size() == 1);
+                            M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+                        });
+                        at(context, readyAt + 4, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                        at(context, readyAt + 5, hooks, () -> {
+                            witness.put("p2NotTransferredWhilePending", p2.getServerWorld() == world && crossedInfos(capture, sid) == 1);
+                            moveInside(p2, frame);
+                            witness.put("p2CloseRefusedDoorUnchanged", !interact(world, doorCell, p2).isAccepted() && M5GameTestSupport.doorPassable(world, frame)
+                                    && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
+                        });
+                        whenTicks(context, readyAt + 6, 1300, () -> server.getOverworld().getTime() > expires + 5, expired -> {
+                            witness.put("notEndedAfterTheExpiryWhilePending", journal.rollForwardPending(sid) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY")
+                                    && passageEnded(capture, sid, "量子通道已結束") == 0 && flush.failures() == 4);
+                            whenTicks(context, expired + 1, 400, () -> !journal.flushedRecords().containsKey(sid), ended -> {
+                                witness.put("convergedOnTheFifthWrite", flush.failures() == 4 && flush.retries().size() >= 1);
+                                witness.put("thenEndedByExpiry", passageEnded(capture, sid, "(c) game time 已到 PassageExpiresAtGameTime") == 1);
+                                witness.put("plainOpenAfterTheEnd", doorAll(world, frame, true, MembraneState.NONE));
+                                var writes = window.journalWrites(server, flush.ticks(), List.of(sid));
+                                witness.put("onlyProbedJournalWrites", writes.onlyProbed());
+                                LOGGER.info("M5_PASSAGE_CROSSED_PENDING held={} start={} expires={} ended={} flushes={} problems={}", held, start, expires, ended, flush.ticks(),
+                                        writes.problems());
+                                releaseThenComplete(context, hooks, witness, "Crossed 的寫出失敗：" + witness + " problems=" + writes.problems(), 20, () -> true);
+                            }, () -> "收斂之後通道沒有結束：record=" + M5GameTestSupport.state(journal, sid) + " flushes=" + flush.ticks() + " witness=" + witness, hooks);
+                        }, () -> "沒有等到 expires：time=" + server.getOverworld().getTime() + " expires=" + expires, hooks);
+                    }, () -> "放行之後沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid), hooks);
+                }, hooks);
+            }, () -> "準備完成之前就逾時（暫緩沒有發生）：record=" + M5GameTestSupport.state(journal, sid) + " hits=" + hold.hits(), hooks);
         });
     }
 
