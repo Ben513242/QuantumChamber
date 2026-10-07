@@ -3442,6 +3442,61 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
+     * F5-2 Step 0（F5-1 fix round 1 quality re-review R-m1；spec §6 :260、§7.3、§11.2 的 per-session 退避）：提交 PASSAGE_READY 的 journal 寫出受控失敗一次（同 T-READY-FAULT），
+     * PREPARE 在退避期內暫停、原艙門是一般開門。退避期內斷電：閘門失效、退回 WAITING（這一段的 Prepare 丟棄）；恢復供電之後 P 由艙外再進入，回到 PREPARE（「進入 PREPARE」第 2 則）。
+     * 這時仍在同一段 per-session 退避期內：
+     * <ul>
+     * <li>原艙門維持一般開門，不套用 sealed 量子膜（修正之前暫停綁在 Prepare 上，新的 Prepare 不暫停，門改為 sealed）；</li>
+     * <li>P 以 bulkhead 關門、再開門，都照一般門的邏輯完成，record 仍是 COLLAPSING（修正之前 PREPARE 擁有門，P 關門要終局，卻被退避擋下而拒絕：困在 sealed 量子膜後面）。</li>
+     * </ul>
+     * 退避期過後 PREPARE 恢復（INFO「退避期已過，PREPARE 恢復」一則）並重試提交：PASSAGE_READY、門改為 passable。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_ready_fault_reenter", tickLimit = 1500)
+    public void ready_write_failure_keeps_the_door_plain_when_the_prepare_reenters_within_the_backoff(TestContext context) {
+        begin(context, "ready_write_failure_keeps_the_door_plain_when_the_prepare_reenters_within_the_backoff");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        var doorCell = local(frame, 3, 3, 0);
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            var flush = M5GameTestSupport.installFlushProbe(context, new M5GameTestSupport.FlushFault(server, "F5-2 GameTest 受控：提交 PASSAGE_READY 的 journal 寫出失敗", 1,
+                    state -> Optional.ofNullable(state.records().get(sid)).filter(record -> record.state() == SessionState.PASSAGE_READY).isPresent()
+                            && Optional.ofNullable(state.flushedRecords().get(sid)).filter(record -> record.state() == SessionState.COLLAPSING).isPresent()), hooks);
+            whenTicks(context, resolved + 1, 500, () -> flush.failures() == 1, failedAt -> {
+                witness.put("pausedWithAPlainDoor", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && doorAll(world, frame, true, MembraneState.NONE));
+                at(context, failedAt + 2, hooks, () -> context.setBlockState(DormantOrigin.POWER, Blocks.AIR));
+                whenTicks(context, failedAt + 3, 20, () -> capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "退回 WAITING", sid.toString()).size() == 1, left -> {
+                    witness.put("leftThePrepareWithinTheBackoff", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && flush.ticks().size() == 1);
+                    context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
+                    at(context, left + 2, hooks, () -> moveOutside(p, frame));
+                    at(context, left + 3, hooks, () -> moveInside(p, frame));
+                    whenTicks(context, left + 4, 40, () -> entered(capture, sid) == 2, reentered -> {
+                        at(context, reentered + 2, hooks, () -> {
+                            witness.put("plainDoorAfterReenteringWithinTheBackoff", doorAll(world, frame, true, MembraneState.NONE) && !M5GameTestSupport.doorSealed(world, frame));
+                            witness.put("stillWithinTheBackoff", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && flush.ticks().size() == 1
+                                    && capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "退避期已過，PREPARE 恢復", sid.toString()).isEmpty());
+                            witness.put("participantClosesThePlainDoorWithinTheBackoff", interact(world, doorCell, p).isAccepted()
+                                    && doorAll(world, frame, false, MembraneState.NONE));
+                        });
+                        at(context, reentered + 3, hooks, () -> witness.put("participantReopensThePlainDoorWithinTheBackoff", interact(world, doorCell, p).isAccepted()
+                                && doorAll(world, frame, true, MembraneState.NONE) && M5GameTestSupport.state(journal, sid).equals("COLLAPSING")));
+                        whenTicks(context, reentered + 4, 300, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                            witness.put("resumedAfterTheBackoffAndCommitted", readyAt - failedAt >= 195 && flush.ticks().size() == 2 && passageOpened(capture, sid) == 1
+                                    && capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "退避期已過，PREPARE 恢復", sid.toString()).size() == 1);
+                            witness.put("passableAfterTheRetry", M5GameTestSupport.doorPassable(world, frame));
+                            LOGGER.info("M5_PASSAGE_READY_FAULT_REENTER failed={} left={} reentered={} ready={} flushes={}", failedAt, left, reentered, readyAt, flush.ticks());
+                            releaseThenComplete(context, hooks, witness, "提交 PASSAGE_READY 失敗之後在退避期內再進入 PREPARE：" + witness, 20, () -> true);
+                        }, () -> "退避之後沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid) + " flushes=" + flush.ticks() + " witness=" + witness, hooks);
+                    }, () -> "恢復供電、P 再進入之後沒有回到 PREPARE：entered=" + entered(capture, sid) + " witness=" + witness, hooks);
+                }, () -> "斷電之後沒有退回 WAITING：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+            }, () -> "提交 PASSAGE_READY 的寫出沒有被注入失敗：record=" + M5GameTestSupport.state(journal, sid) + " flushes=" + flush.ticks(), hooks);
+        });
+    }
+
+    /**
      * F5-1 fix round 1（spec review S-m1；spec §10.3「上一個 tick 還在中線內側」）：PASSAGE_READY 之後，P 站在門板中線內側（local z=0.7）被觀察一次，之後這個 session 的塌縮流程
      * 推進暫停 3 個 tick（{@code installStepPause}；等同 production 中推進被略過的 tick：journal 有未 checked 的 authority、隔離中、整個 tick 無法執行），期間 P 走到中線外側
      * （z=0.3）。恢復之後的第一個 tick：記下的內側觀察不是上一個 tick 的，不觸發跨越，P 留在原世界、Crossed 是空的（修正之前這個 tick 會把 P 傳送走）。之後 P 回到內側、再越過中線：

@@ -540,8 +540,8 @@ public final class CollapseService {
         // 推導回傳 PREPARE 時，進入的那個 tick 已由 enterPrepare 建立 Prepare，之後一直保留到離開（Track#preparing 的不變式）。
         var progress = Objects.requireNonNull(track.prepare, "PREPARE 的簿記應已由 enterPrepare 建立");
         if (!track.readyPaused(now)) {
-            if (progress.readyFailed) {
-                progress.readyFailed = false;
+            if (track.readyRetryPending) {
+                track.readyRetryPending = false;
                 LOGGER.info(LOG_MARKER, "提交 PASSAGE_READY 失敗之後的退避期已過，PREPARE 恢復：原艙門依套用量子膜的條件判斷，並重試提交：session={} chamber={}",
                         view.sessionUuid(), view.chamberUuid());
             }
@@ -820,8 +820,8 @@ public final class CollapseService {
             track.backoff.failed(now);
             warn(sid, READY_WRITE, result.failure().orElseThrow(), result.status().name(), "record 留在 COLLAPSING；依 per-session 退避（" + track.backoff.delayTicks()
                     + " ticks 後，tick " + track.backoff.retryAtTick() + "）重試這筆提交，退避期內 PREPARE 暫停、原艙門改為一般開門");
-            if (!progress.readyFailed) {
-                progress.readyFailed = true;
+            if (!track.readyRetryPending) {
+                track.readyRetryPending = true;
                 if (!track.doorReleased) originDoors.releasePrepareDoor(view, track);
                 LOGGER.info(LOG_MARKER, "提交 PASSAGE_READY 沒有完成，PREPARE 暫停到 per-session 退避期結束：原艙門改為一般開門（開關照一般門的邏輯），退避期過後恢復 PREPARE 的門"
                         + "並重試這筆提交（目的世界的 ticket 繼續持有）：session={} chamber={}", sid, view.chamberUuid());
@@ -835,6 +835,7 @@ public final class CollapseService {
         track.prepare = null;
         track.membrane = null;
         track.doorReleased = false;
+        track.readyRetryPending = false;
         LOGGER.info(LOG_MARKER, "量子通道已開啟（checked PASSAGE_READY）：session={} chamber={} 目的地={} opened={} expires={}", sid, view.chamberUuid(),
                 describe(next.collapse().destination()), next.collapse().passageOpenedAtGameTime(), next.collapse().passageExpiresAtGameTime());
         originDoors.openPassage(next);
@@ -1375,7 +1376,20 @@ public final class CollapseService {
         return destination instanceof CollapseDestination.Universe universe ? "UNIVERSE " + universe.id().value() : "SOURCE";
     }
 
-    /** 每個 session 在本 server instance 的塌縮簿記（不持久化）。package-private 只為了 JUnit 直接驗證它的方法（F4a fix round 2）。 */
+    /**
+     * 每個 session 在本 server instance 的塌縮簿記（不持久化）。package-private 只為了 JUnit 直接驗證它的方法（F4a fix round 2）。
+     * <p><b>重設時點</b>（F5-2 Step 0，F5-1 fix round 1 quality re-review R-m3）：整個 Track 在終局（{@link CollapseService#terminated}）或 session 離開 journal（{@code tick} 的
+     * {@code retainAll}）時移除。{@link #resetGate}（提交 COLLAPSING、進入 SEALED、SEALED→COLLAPSING 的重試）只重設閘門與 PREPARE 的部分（{@code entry}、{@code gateEvaluated}、
+     * {@code preparing}、{@code prepare}、{@code membrane}、{@code doorReleased}）。刻意不隨它重設的：
+     * <table>
+     * <tr><th>欄位</th><th>重設時點</th><th>理由</th></tr>
+     * <tr><td>{@code doorLoaded}、{@code doorSeenLoaded}</td><td>不重設</td><td>來源艙載入的觀察，在 SEALED 與重試之間仍有效</td></tr>
+     * <tr><td>{@code projectionUncheckpointed}</td><td>checkpoint 之後的再驗乾淨時</td><td>寫過的投影方塊跨 PREPARE 的段落仍沒有 checkpoint</td></tr>
+     * <tr><td>{@code readyRetryPending}</td><td>提交 PASSAGE_READY 成功，或退避期過後 PREPARE 恢復時</td><td>暫停跟著 per-session 退避，閘門失效之後再進入 PREPARE 仍有效</td></tr>
+     * <tr><td>{@code backoff}、{@code resolved}、{@code restartRetryConsumed}、{@code pendingSeal}、{@code pendingRecovery}、{@code passageZ}、{@code waitSince}</td>
+     *     <td>見各自的說明</td><td>不屬於閘門或 PREPARE 的一段</td></tr>
+     * </table>
+     */
     static final class Track {
         /**
          * 提交失敗、restore 類寫入（終局、SEALED 的重試）失敗、進入 SEALED 的寫入在前置檢查就被拒（{@link #sealRejected}）、以可重試的原因進入 SEALED
@@ -1407,6 +1421,12 @@ public final class CollapseService {
          * 不持久化：重啟之前沒有存到的修復，重啟之後的修復會再寫一次（寫了方塊就做 checkpoint）。
          */
         boolean projectionUncheckpointed;
+        /**
+         * 提交 PASSAGE_READY 的寫入沒有完成過、PREPARE 還沒恢復（restore 類，F5-1；F5-2 Step 0 由 {@code Prepare.readyFailed} 移到這裡，F5-1 fix round 1 quality re-review R-m1）：
+         * per-session 退避期內 PREPARE 暫停（{@link #readyPaused}）。綁在 Track 上，與退避同一個生命週期：退避期內閘門失效（{@code leavePrepare} 丟棄 {@link Prepare}）、參與者再進入
+         * PREPARE 時仍然暫停，原艙門維持一般開門、開關照一般門的邏輯（綁在 Prepare 上時會套用 sealed 量子膜，而參與者關門被退避擋下，等於被困住）。退避期過後 PREPARE 恢復時與提交成功時清除。
+         */
+        boolean readyRetryPending;
         /**
          * PASSAGE_READY 的跨越判定（§10.3，F5-1）：每位參與者最近一次觀察到的腳在來源艙的 local z 與那個 server tick（{@link PassageService#observe}）；不在來源世界或觀察不到時
          * 沒有這個鍵。推進有執行的每個 PASSAGE_READY 的 tick 都更新（roll-forward 未確認、結束條件成立的 tick 也一樣）；推進被略過的 tick（未 checked 的 authority、隔離、例外）
@@ -1465,12 +1485,12 @@ public final class CollapseService {
         }
 
         /**
-         * PREPARE 因提交 PASSAGE_READY 沒有完成而暫停（F5-1 fix round 1，spec review S-m2、quality Q-m2）：這一段 PREPARE 的提交失敗過（{@link Prepare#readyFailed}），而且還在
+         * PREPARE 因提交 PASSAGE_READY 沒有完成而暫停（F5-1 fix round 1，spec review S-m2、quality Q-m2）：提交失敗過、還沒恢復（{@link #readyRetryPending}），而且還在
          * per-session 退避期內。spec §6 :260：restore 類失敗時 PREPARE 中的門依 §7.3 閘門失效的處理改為一般開門，所以這段期間 PREPARE 不判斷門、也不擁有門（開關照一般門的邏輯，
          * {@link OriginDoors#door}）；退避期過後恢復每個 PREPARE tick 的門（§7.3）與提交的重試。
          */
         boolean readyPaused(int now) {
-            return prepare != null && prepare.readyFailed && !backoff.ready(now);
+            return readyRetryPending && !backoff.ready(now);
         }
 
         /** 進入 SEALED 的寫入沒有被拒（已確認，或 roll-forward 未確認、交給 recovery）：不再有待重試的寫入。 */
@@ -1519,13 +1539,8 @@ public final class CollapseService {
         boolean repairLogged;
         /** 這一段 PREPARE 已記過「套用 sealed 量子膜」／「維持一般開門」的 INFO（{@link OriginDoors#prepareDoor}，各一次，F4b-3）。 */
         boolean sealedLogged, openLogged;
-        /** 準備完成（預載與投影都已完成）；之後只等 PASSAGE_READY 的前置條件（{@link #ready}）。 */
+        /** 準備完成（預載與投影都已完成）；之後只等 PASSAGE_READY 的前置條件（{@link #ready}）。提交失敗之後的暫停在 {@link Track#readyRetryPending}（F5-2 Step 0，R-m1）。 */
         boolean ready;
-        /**
-         * 提交 PASSAGE_READY 的寫入沒有完成（restore 類，F5-1）：per-session 退避期內 PREPARE 暫停（原艙門已改為一般開門，{@link Track#readyPaused}）。F5-1 fix round 1（S-m2／Q-m2）
-         * 起不再是整段 PREPARE 的單向閂：退避期過後 {@link CollapseService#prepareUniverse} 清除它，PREPARE 恢復。
-         */
-        boolean readyFailed;
 
         Prepare(int since) { this.since = since; }
     }

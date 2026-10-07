@@ -503,23 +503,30 @@ class CollapseServiceTest {
 
     /**
      * F5-1 fix round 1（spec review S-m2、quality Q-m2；spec §6 :260、§7.3）：提交 PASSAGE_READY 沒有完成之後，PREPARE 只在 per-session 退避期內暫停（不判斷、也不擁有原艙門）；
-     * 退避期一過就恢復，不是整段 PREPARE 的單向閂。沒有 PREPARE、提交沒有失敗過時都不暫停。
+     * 退避期一過就恢復，不是整段 PREPARE 的單向閂。沒有 PREPARE、提交沒有失敗過時都不暫停。F5-2 Step 0（F5-1 fix round 1 quality re-review R-m1）：暫停綁在 Track 上、跟著
+     * per-session 退避，退避期內閘門失效（丟棄 Prepare）、再進入 PREPARE（新的 Prepare）時仍然暫停。
      */
     @Test void readyFailurePausesThePrepareOnlyDuringTheBackoff() {
         var track = new CollapseService.Track();
         boolean noPrepare = track.readyPaused(100);
         track.prepare = new CollapseService.Prepare(100);
         boolean notFailed = track.readyPaused(100);
-        track.prepare.readyFailed = true;
+        track.readyRetryPending = true;
         track.backoff.failed(100);
         boolean withinTheBackoff = track.readyPaused(299);
+        track.prepare = null;
+        boolean afterLeavingThePrepare = track.readyPaused(150);
+        track.prepare = new CollapseService.Prepare(160);
+        boolean afterReenteringThePrepare = track.readyPaused(160);
         boolean afterTheBackoff = track.readyPaused(300);
         track.backoff.failed(300);
         boolean failedAgain = track.readyPaused(301);
         assertAll(
-                () -> assertFalse(noPrepare, "沒有 PREPARE"),
+                () -> assertFalse(noPrepare, "沒有 PREPARE、提交也沒有失敗過"),
                 () -> assertFalse(notFailed, "提交沒有失敗過"),
                 () -> assertTrue(withinTheBackoff, "失敗之後的退避期內暫停"),
+                () -> assertTrue(afterLeavingThePrepare, "退避期內閘門失效、Prepare 已丟棄：仍暫停（R-m1）"),
+                () -> assertTrue(afterReenteringThePrepare, "退避期內再進入 PREPARE（新的 Prepare）：仍暫停，不套用 sealed 量子膜（R-m1）"),
                 () -> assertFalse(afterTheBackoff, "退避期一過就恢復"),
                 () -> assertTrue(failedAgain, "重試再失敗：再暫停一段退避期（400 ticks）"));
     }
