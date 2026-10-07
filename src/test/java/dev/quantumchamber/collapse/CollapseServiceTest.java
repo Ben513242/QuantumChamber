@@ -269,22 +269,22 @@ class CollapseServiceTest {
     /**
      * F3d fix round 2（quality m-2）：待套用門的處置。ROLLED_BACK／ROLLBACK_FAILED 第一次立即重試、再被拒才退避；DOOR_INCOMPLETE 一律退避；
      * NOT_LOADED 只等待；APPLIED／UNCHANGED 完成。WARN 依原因去重：同一原因只記一次，原因改變時再記。
-     * <p>F4a-0（quality re-review m-3）與 fix round 1（spec m-2）：再以 production 的 {@link CollapseService#applyOutcome}、
-     * {@link CollapseService#applyFailure}（{@code applyDoor} 與兩處套用例外的 catch 實際呼叫的同一份接線）驅動一扇真的 {@code PendingDoor} 走過一串
+     * <p>F4a-0（quality re-review m-3）與 fix round 1（spec m-2）：再以 production 的 {@link OriginDoors#applyOutcome}、
+     * {@link OriginDoors#applyFailure}（{@code applyDoor} 與兩處套用例外的 catch 實際呼叫的同一份接線）驅動一扇真的 {@code PendingDoor} 走過一串
      * 結果，並擷取 {@code quantumchamber} logger 的 log，鎖住實際的記錄行為：只有 {@code DoorStep.warn()} 為真的那幾次記 WARN（帶 {@code LOG_MARKER}、
      * chamber 與 session，套用例外附 stack），門記下的原因決定下一次的去重，退避照 {@code backOff}；完成時回 true，之前記過 WARN 才記一則 INFO。
      */
     @Test void pendingDoorRetriesOnceThenBacksOffAndDedupesWarnings() {
         var rejected = "門的寫入被拒（ROLLED_BACK）";
         var thrownReason = "套用失敗：java.lang.IllegalStateException: x";
-        var first = CollapseService.doorStep(Outcome.ROLLED_BACK, false, null);
-        var second = CollapseService.doorStep(Outcome.ROLLED_BACK, first.retried(), first.reason());
-        var third = CollapseService.doorStep(Outcome.ROLLBACK_FAILED, second.retried(), second.reason());
-        var incomplete = CollapseService.doorStep(Outcome.DOOR_INCOMPLETE, false, null);
+        var first = OriginDoors.doorStep(Outcome.ROLLED_BACK, false, null);
+        var second = OriginDoors.doorStep(Outcome.ROLLED_BACK, first.retried(), first.reason());
+        var third = OriginDoors.doorStep(Outcome.ROLLBACK_FAILED, second.retried(), second.reason());
+        var incomplete = OriginDoors.doorStep(Outcome.DOOR_INCOMPLETE, false, null);
         var frame = new ChamberFrame(new BlockPos(7, 70, 9), Direction.NORTH);
-        var door = new CollapseService.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, frame, 0);
+        var door = new OriginDoors.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, frame, 0);
         // 沒有記過 WARN 就完成的門：不記 INFO。
-        var quiet = new CollapseService.PendingDoor(B, A, World.OVERWORLD, frame, 0);
+        var quiet = new OriginDoors.PendingDoor(B, A, World.OVERWORLD, frame, 0);
         var warned = new ArrayList<Integer>();
         var reasons = new ArrayList<String>();
         var doneBeforeApplied = new ArrayList<Boolean>();
@@ -294,32 +294,32 @@ class CollapseServiceTest {
             for (var outcome : List.of(Outcome.ROLLED_BACK, Outcome.ROLLED_BACK, Outcome.ROLLBACK_FAILED, Outcome.NOT_LOADED, Outcome.DOOR_INCOMPLETE,
                     Outcome.DOOR_INCOMPLETE)) {
                 int before = capture.count(Level.WARN);
-                doneBeforeApplied.add(CollapseService.applyOutcome(door, outcome, 100));
+                doneBeforeApplied.add(OriginDoors.applyOutcome(door, outcome, 100));
                 warned.add(capture.count(Level.WARN) - before);
                 reasons.add(door.warned);
             }
             // 套用丟出例外（tick 與 openDoor 的 catch）：同一原因去重、一律退避。
             for (int i = 0; i < 2; i++) {
                 int before = capture.count(Level.WARN);
-                CollapseService.applyFailure(door, new IllegalStateException("x"), 100);
+                OriginDoors.applyFailure(door, new IllegalStateException("x"), 100);
                 warned.add(capture.count(Level.WARN) - before);
                 reasons.add(door.warned);
             }
-            appliedDone = CollapseService.applyOutcome(door, Outcome.APPLIED, 100);
-            quietDone = CollapseService.applyOutcome(quiet, Outcome.UNCHANGED, 100);
+            appliedDone = OriginDoors.applyOutcome(door, Outcome.APPLIED, 100);
+            quietDone = OriginDoors.applyOutcome(quiet, Outcome.UNCHANGED, 100);
             logs = capture.entries();
         }
         var warnings = logs.stream().filter(entry -> entry.level() == Level.WARN).toList();
         var infos = logs.stream().filter(entry -> entry.level() == Level.INFO).toList();
         assertAll(
-                () -> assertEquals(new CollapseService.DoorStep(false, rejected, true, false, true), first, "第一次被拒：記 WARN、不退避、下一個 tick 重試"),
-                () -> assertEquals(new CollapseService.DoorStep(false, rejected, false, true, true), second, "再被拒：退避，同一原因不再記 WARN"),
-                () -> assertEquals(new CollapseService.DoorStep(false, "門的寫入被拒（ROLLBACK_FAILED）", true, true, true), third, "原因改變：再記一次"),
-                () -> assertEquals(new CollapseService.DoorStep(false, "門板不是完整的 25 格 bulkhead，等結構恢復", true, true, false), incomplete, "結構性：退避"),
-                () -> assertFalse(CollapseService.doorStep(Outcome.DOOR_INCOMPLETE, false, incomplete.reason()).warn(), "結構性的同一原因去重"),
-                () -> assertEquals(new CollapseService.DoorStep(false, null, false, false, true), CollapseService.doorStep(Outcome.NOT_LOADED, true, rejected), "未載入：只等待"),
-                () -> assertTrue(CollapseService.doorStep(Outcome.APPLIED, true, rejected).done()),
-                () -> assertTrue(CollapseService.doorStep(Outcome.UNCHANGED, false, null).done()),
+                () -> assertEquals(new OriginDoors.DoorStep(false, rejected, true, false, true), first, "第一次被拒：記 WARN、不退避、下一個 tick 重試"),
+                () -> assertEquals(new OriginDoors.DoorStep(false, rejected, false, true, true), second, "再被拒：退避，同一原因不再記 WARN"),
+                () -> assertEquals(new OriginDoors.DoorStep(false, "門的寫入被拒（ROLLBACK_FAILED）", true, true, true), third, "原因改變：再記一次"),
+                () -> assertEquals(new OriginDoors.DoorStep(false, "門板不是完整的 25 格 bulkhead，等結構恢復", true, true, false), incomplete, "結構性：退避"),
+                () -> assertFalse(OriginDoors.doorStep(Outcome.DOOR_INCOMPLETE, false, incomplete.reason()).warn(), "結構性的同一原因去重"),
+                () -> assertEquals(new OriginDoors.DoorStep(false, null, false, false, true), OriginDoors.doorStep(Outcome.NOT_LOADED, true, rejected), "未載入：只等待"),
+                () -> assertTrue(OriginDoors.doorStep(Outcome.APPLIED, true, rejected).done()),
+                () -> assertTrue(OriginDoors.doorStep(Outcome.UNCHANGED, false, null).done()),
                 () -> assertEquals(List.of(1, 0, 1, 0, 1, 0, 1, 0), warned,
                         "production 只在 DoorStep.warn() 為真時記 WARN：被拒、再被拒、原因改變、未載入、結構性、結構性、套用例外、同一例外"),
                 () -> assertEquals(Arrays.asList(rejected, rejected, "門的寫入被拒（ROLLBACK_FAILED）", "門的寫入被拒（ROLLBACK_FAILED）",
@@ -404,11 +404,11 @@ class CollapseServiceTest {
      */
     @Test void sealedDoorClosesUnlessTheDoorwayIsOccupied() {
         var cases = new ArrayList<Executable>();
-        cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.CLOSED, CollapseService.sealedDoor(false), "門口沒有 entity：關門"));
-        cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.sealedDoor(true), "門口有 entity：一般開門"));
+        cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.CLOSED, OriginDoors.sealedDoor(false), "門口沒有 entity：關門"));
+        cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, OriginDoors.sealedDoor(true), "門口有 entity：一般開門"));
         for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
             var frame = new ChamberFrame(new BlockPos(7, 70, 9), facing);
-            var box = CollapseService.doorwayBox(frame);
+            var box = OriginDoors.doorwayBox(frame);
             cases.add(() -> assertEquals(25.0, box.getLengthX() * box.getLengthY() * box.getLengthZ(), 1e-9, facing + "：恰為 25 格"));
             for (int x = 1; x <= 5; x++) for (int y = 1; y <= 5; y++) {
                 var cell = dev.quantumchamber.chamber.ChamberGeometry.localToWorld(frame, x, y, 0);
@@ -425,11 +425,11 @@ class CollapseServiceTest {
     /** F4a：進入 SEALED 的待套用門與終局之後的門共用同一套處置，log 的字句依目標區分（帶 LOG_MARKER、chamber 與 session）。 */
     @Test void sealedPendingDoorUsesItsOwnWording() {
         var frame = new ChamberFrame(new BlockPos(7, 70, 9), Direction.NORTH);
-        var door = new CollapseService.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, frame, 0, CollapseService.DoorGoal.CLOSE_ON_SEALED);
+        var door = new OriginDoors.PendingDoor(CHAMBER, SESSION, World.OVERWORLD, frame, 0, OriginDoors.DoorGoal.CLOSE_ON_SEALED);
         List<CollapseLogCapture.Entry> logs;
         try (var capture = new CollapseLogCapture()) {
-            CollapseService.applyOutcome(door, Outcome.ROLLED_BACK, 100);
-            CollapseService.applyOutcome(door, Outcome.APPLIED, 100);
+            OriginDoors.applyOutcome(door, Outcome.ROLLED_BACK, 100);
+            OriginDoors.applyOutcome(door, Outcome.APPLIED, 100);
             logs = capture.entries();
         }
         assertAll(
@@ -448,36 +448,36 @@ class CollapseServiceTest {
     @Test void doorActionFollowsThePrepareDoorRules() {
         var cases = new ArrayList<Executable>();
         for (var state : SessionState.values()) for (boolean universe : new boolean[] {false, true}) for (boolean pending : new boolean[] {false, true})
-            for (boolean owns : new boolean[] {false, true}) for (var user : CollapseService.DoorUser.values()) {
-                CollapseService.DoorAction expected;
-                if (state == SessionState.PASSAGE_READY) expected = pending ? CollapseService.DoorAction.REFUSE : CollapseService.DoorAction.PASS;
-                else if (state != SessionState.COLLAPSING || !universe || !owns) expected = CollapseService.DoorAction.PASS;
-                else if (pending) expected = CollapseService.DoorAction.REFUSE;
+            for (boolean owns : new boolean[] {false, true}) for (var user : OriginDoors.DoorUser.values()) {
+                OriginDoors.DoorAction expected;
+                if (state == SessionState.PASSAGE_READY) expected = pending ? OriginDoors.DoorAction.REFUSE : OriginDoors.DoorAction.PASS;
+                else if (state != SessionState.COLLAPSING || !universe || !owns) expected = OriginDoors.DoorAction.PASS;
+                else if (pending) expected = OriginDoors.DoorAction.REFUSE;
                 else expected = switch (user) {
-                    case PARTICIPANT -> CollapseService.DoorAction.END_AND_CLOSE;
-                    case INSIDER -> CollapseService.DoorAction.OPEN_FOR_INSIDER;
-                    case OUTSIDER -> CollapseService.DoorAction.REFUSE;
+                    case PARTICIPANT -> OriginDoors.DoorAction.END_AND_CLOSE;
+                    case INSIDER -> OriginDoors.DoorAction.OPEN_FOR_INSIDER;
+                    case OUTSIDER -> OriginDoors.DoorAction.REFUSE;
                 };
                 var row = state + " universe=" + universe + " rollForwardPending=" + pending + " prepareOwnsDoor=" + owns + " " + user;
                 var want = expected;
-                cases.add(() -> assertEquals(want, CollapseService.doorAction(state, universe, pending, owns, user), row));
+                cases.add(() -> assertEquals(want, OriginDoors.doorAction(state, universe, pending, owns, user), row));
             }
         // 規則本身的幾個錨點（上面的期望值是同一條規則的另一種寫法，這幾列直接寫死）。
-        cases.add(() -> assertEquals(CollapseService.DoorAction.END_AND_CLOSE,
-                CollapseService.doorAction(SessionState.COLLAPSING, true, false, true, CollapseService.DoorUser.PARTICIPANT), "PREPARE 期間參與者關門"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.END_AND_CLOSE,
+                OriginDoors.doorAction(SessionState.COLLAPSING, true, false, true, OriginDoors.DoorUser.PARTICIPANT), "PREPARE 期間參與者關門"));
         // F4b-3 fix round 1（Nit N-1）：COLLAPSING＋UNIVERSE＋PREPARE 擁有原艙門時的另外兩種身分，以及 PREPARE 不擁有原艙門時的參與者。
-        cases.add(() -> assertEquals(CollapseService.DoorAction.OPEN_FOR_INSIDER,
-                CollapseService.doorAction(SessionState.COLLAPSING, true, false, true, CollapseService.DoorUser.INSIDER), "PREPARE 期間艙內的非參與者一般開門"));
-        cases.add(() -> assertEquals(CollapseService.DoorAction.REFUSE,
-                CollapseService.doorAction(SessionState.COLLAPSING, true, false, true, CollapseService.DoorUser.OUTSIDER), "PREPARE 期間艙外的非參與者被拒"));
-        cases.add(() -> assertEquals(CollapseService.DoorAction.PASS,
-                CollapseService.doorAction(SessionState.COLLAPSING, true, false, false, CollapseService.DoorUser.PARTICIPANT), "PREPARE 不擁有原艙門時參與者照一般門的邏輯"));
-        cases.add(() -> assertEquals(CollapseService.DoorAction.REFUSE,
-                CollapseService.doorAction(SessionState.COLLAPSING, true, true, true, CollapseService.DoorUser.PARTICIPANT), "roll-forward 尚未確認時 PREPARE 一律拒絕"));
-        cases.add(() -> assertEquals(CollapseService.DoorAction.PASS,
-                CollapseService.doorAction(SessionState.COLLAPSING, true, true, false, CollapseService.DoorUser.OUTSIDER), "一般狀態的階段照一般門的邏輯"));
-        cases.add(() -> assertEquals(CollapseService.DoorAction.PASS,
-                CollapseService.doorAction(SessionState.SEALED, true, true, true, CollapseService.DoorUser.OUTSIDER), "SEALED 任何玩家都可以照一般方式開門"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.OPEN_FOR_INSIDER,
+                OriginDoors.doorAction(SessionState.COLLAPSING, true, false, true, OriginDoors.DoorUser.INSIDER), "PREPARE 期間艙內的非參與者一般開門"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.REFUSE,
+                OriginDoors.doorAction(SessionState.COLLAPSING, true, false, true, OriginDoors.DoorUser.OUTSIDER), "PREPARE 期間艙外的非參與者被拒"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.PASS,
+                OriginDoors.doorAction(SessionState.COLLAPSING, true, false, false, OriginDoors.DoorUser.PARTICIPANT), "PREPARE 不擁有原艙門時參與者照一般門的邏輯"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.REFUSE,
+                OriginDoors.doorAction(SessionState.COLLAPSING, true, true, true, OriginDoors.DoorUser.PARTICIPANT), "roll-forward 尚未確認時 PREPARE 一律拒絕"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.PASS,
+                OriginDoors.doorAction(SessionState.COLLAPSING, true, true, false, OriginDoors.DoorUser.OUTSIDER), "一般狀態的階段照一般門的邏輯"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.PASS,
+                OriginDoors.doorAction(SessionState.SEALED, true, true, true, OriginDoors.DoorUser.OUTSIDER), "SEALED 任何玩家都可以照一般方式開門"));
         assertAll(cases);
     }
 
@@ -485,12 +485,12 @@ class CollapseServiceTest {
     @Test void membraneIsSealedOnlyWithAClearDoorwayAndNoNonParticipantInside() {
         var cases = new ArrayList<Executable>();
         for (var facing : List.of(Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)) {
-            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.sealed(facing), CollapseService.membraneTarget(facing, true, false),
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.sealed(facing), OriginDoors.membraneTarget(facing, true, false),
                     facing + "：門口沒有人、艙內沒有非參與者 → sealed"));
-            cases.add(() -> assertTrue(CollapseService.membraneTarget(facing, true, false).membrane().fits(facing), facing + "：量子膜的軸符合門的朝向"));
-            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.membraneTarget(facing, false, false), facing + "：門口有 entity"));
-            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.membraneTarget(facing, true, true), facing + "：艙內有非參與者"));
-            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, CollapseService.membraneTarget(facing, false, true), facing + "：兩者都有"));
+            cases.add(() -> assertTrue(OriginDoors.membraneTarget(facing, true, false).membrane().fits(facing), facing + "：量子膜的軸符合門的朝向"));
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, OriginDoors.membraneTarget(facing, false, false), facing + "：門口有 entity"));
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, OriginDoors.membraneTarget(facing, true, true), facing + "：艙內有非參與者"));
+            cases.add(() -> assertEquals(dev.quantumchamber.chamber.ChamberDoorService.DoorState.OPEN, OriginDoors.membraneTarget(facing, false, true), facing + "：兩者都有"));
         }
         assertAll(cases);
     }
@@ -508,21 +508,21 @@ class CollapseServiceTest {
         var cases = new ArrayList<Executable>();
         for (int i = 0; i < loaded.length; i++) {
             int at = i;
-            cases.add(() -> assertEquals(runtime[at], CollapseService.doorReloaded(previous[at], loaded[at], false), "執行期間的 session，第 " + at + " 次觀察"));
+            cases.add(() -> assertEquals(runtime[at], OriginDoors.doorReloaded(previous[at], loaded[at], false), "執行期間的 session，第 " + at + " 次觀察"));
         }
-        cases.add(() -> assertTrue(CollapseService.doorReloaded(null, true, true), "開服時就在的 session：第一次觀察到已載入"));
-        cases.add(() -> assertFalse(CollapseService.doorReloaded(null, false, true), "開服時就在的 session：第一次觀察還沒載入"));
-        cases.add(() -> assertTrue(CollapseService.doorReloaded(false, true, true), "開服時就在的 session：之後才載入"));
-        cases.add(() -> assertFalse(CollapseService.doorReloaded(true, true, true), "開服時就在的 session：已觀察過、一直載入"));
+        cases.add(() -> assertTrue(OriginDoors.doorReloaded(null, true, true), "開服時就在的 session：第一次觀察到已載入"));
+        cases.add(() -> assertFalse(OriginDoors.doorReloaded(null, false, true), "開服時就在的 session：第一次觀察還沒載入"));
+        cases.add(() -> assertTrue(OriginDoors.doorReloaded(false, true, true), "開服時就在的 session：之後才載入"));
+        cases.add(() -> assertFalse(OriginDoors.doorReloaded(true, true, true), "開服時就在的 session：已觀察過、一直載入"));
         // F4b-3 fix round 1（Nit N-4）：log 的原因區分「重啟之後第一次載入」與「重新載入」。開服時就在的 session 第一次觀察還沒載入、之後才載入，也是重啟之後第一次載入。
-        cases.add(() -> assertTrue(CollapseService.reapplyCause(true, false).startsWith("重啟之後第一次載入"), "開服時就在、本 instance 還沒看過已載入"));
-        cases.add(() -> assertTrue(CollapseService.reapplyCause(true, true).startsWith("重新載入"), "開服時就在、看過已載入之後卸載再載入"));
-        cases.add(() -> assertTrue(CollapseService.reapplyCause(false, false).startsWith("重新載入"), "執行期間才出現、卸載之後載入"));
-        cases.add(() -> assertTrue(CollapseService.reapplyCause(false, true).startsWith("重新載入"), "執行期間才出現、看過已載入之後卸載再載入"));
-        cases.add(() -> assertEquals(CollapseService.DoorGoal.CLOSE_ON_SEALED, CollapseService.reapplyGoal(SessionState.SEALED), "SEALED：關門（門口有 entity 時一般開門）"));
-        cases.add(() -> assertEquals(CollapseService.DoorGoal.NORMALIZE, CollapseService.reapplyGoal(SessionState.COLLAPSING), "COLLAPSING：量子膜改為一般開門"));
+        cases.add(() -> assertTrue(OriginDoors.reapplyCause(true, false).startsWith("重啟之後第一次載入"), "開服時就在、本 instance 還沒看過已載入"));
+        cases.add(() -> assertTrue(OriginDoors.reapplyCause(true, true).startsWith("重新載入"), "開服時就在、看過已載入之後卸載再載入"));
+        cases.add(() -> assertTrue(OriginDoors.reapplyCause(false, false).startsWith("重新載入"), "執行期間才出現、卸載之後載入"));
+        cases.add(() -> assertTrue(OriginDoors.reapplyCause(false, true).startsWith("重新載入"), "執行期間才出現、看過已載入之後卸載再載入"));
+        cases.add(() -> assertEquals(OriginDoors.DoorGoal.CLOSE_ON_SEALED, OriginDoors.reapplyGoal(SessionState.SEALED), "SEALED：關門（門口有 entity 時一般開門）"));
+        cases.add(() -> assertEquals(OriginDoors.DoorGoal.NORMALIZE, OriginDoors.reapplyGoal(SessionState.COLLAPSING), "COLLAPSING：量子膜改為一般開門"));
         for (var state : List.of(SessionState.ARMING, SessionState.SUPERPOSITION, SessionState.RETURNING, SessionState.MEASURED, SessionState.PASSAGE_READY))
-            cases.add(() -> assertThrows(IllegalArgumentException.class, () -> CollapseService.reapplyGoal(state), state + " 不由塌縮流程重新套用"));
+            cases.add(() -> assertThrows(IllegalArgumentException.class, () -> OriginDoors.reapplyGoal(state), state + " 不由塌縮流程重新套用"));
         assertAll(cases);
     }
 
