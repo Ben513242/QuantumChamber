@@ -51,7 +51,8 @@ import org.slf4j.LoggerFactory;
  * 與 port 不必改。通道結束 (a)–(d) 的改門由 {@link PassageService} 排入 {@link #queueDoor}（(a) {@link DoorGoal#CLOSE_AFTER_TERMINAL}，(b)(c)(d)
  * {@link DoorGoal#OPEN_AFTER_TERMINAL}）。重啟或來源 chunk 重新載入之後，執行期間的 PASSAGE_READY 依 collapse view 重新套用 passable（{@link #watchDoor}）；開服時就是
  * PASSAGE_READY 的由 §12 在第一個 tick 終局、門改為一般開門，不重新套用 passable。SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉的期間，{@link PassageService}
- * 排入一般開門（{@link DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}；比照 PREPARE 中被拒時把門交還為一般開門，F5-1 fix round 1，spec review S-m3），重新套用也是一般開門。
+ * 排入一般開門（{@link DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}；比照 PREPARE 中被拒時把門交還為一般開門，F5-1 fix round 1，spec review S-m3），重新套用也是一般開門；這段期間的開關門照一般門
+ * 的邏輯（{@link #doorAction(SessionState, boolean, boolean, boolean, boolean, DoorUser)} 回 PASS，F5-2，spec re-review n-2）。
  * <p><b>F5-2 的接點</b>（spec §10.6 :613）：找不到所屬 session 的量子膜，在 {@code ChamberPowerCoordinator} 刷新該艙時排入下一個 tick 正規化為一般開門。待套用的門以 chamber
  * 為 key（{@link #doors}），但 {@link PendingDoor} 帶著 session、{@link DoorGoal#NORMALIZE} 要求 collapse view 是 COLLAPSING，所以沒有 session 的正規化要另一個目標；條件見
  * M5 note F4b-3「補充第 8 點」。有 COLLAPSING／SEALED 的 session 時由 {@link #watchDoor} 與待套用的門處理，兩者不要同時寫門；SEALED 帶著量子膜時，{@link #cancelSealedClose}
@@ -313,11 +314,27 @@ final class OriginDoors {
      *     非參與者 → 拒絕（不論在艙內或艙外：passable 量子膜沒有碰撞，艙內的人可以直接走出去）。roll-forward 中的 SEALED（collapse view 是 SEALED）照 SEALED 的規則。</li>
      * <li>其他（SEALED、門本來就是一般狀態的階段、SOURCE、M1–M4 的狀態）→ 照一般門的邏輯（§11.2：SEALED 時任何玩家都可以照一般方式開門；§3 詮釋 3）。</li>
      * </ul>
+     * 這是 {@code passageClosedInMemory} 為假的版本（{@link #doorAction(SessionState, boolean, boolean, boolean, boolean, DoorUser)}）。
      */
     static DoorAction doorAction(SessionState viewState, boolean universe, boolean rollForwardPending, boolean prepareOwnsDoor, DoorUser user) {
+        return doorAction(viewState, universe, rollForwardPending, prepareOwnsDoor, false, user);
+    }
+
+    /**
+     * 同 {@link #doorAction(SessionState, boolean, boolean, boolean, DoorUser)}，另看通道是否在記憶體內關閉（純函式，F5-2，F5-1 spec re-review n-2）：PASSAGE_READY 而
+     * SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、待重試（{@link CollapseService.Track#pendingRecovery}）的期間，原艙門已改為一般開門（{@link DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}），
+     * 塌縮流程不擁有它：任何人（參與者與非參與者）照一般門的邏輯開關（PASS），比照 PREPARE 中被拒而待重試的寫入（{@code prepareOwnsDoor} 為假）。這個判斷排在 roll-forward 的拒絕之前，
+     * 也與 PREPARE 相同（實際上兩者不會同時成立：roll-forward 尚未確認時通道只收斂，不會走到無法回滾的傳送）。之後寫入成功時由 {@code sealCommitted} 的關門處理（門口有人時一般開門）。
+     * 其他狀態不看它。
+     */
+    static DoorAction doorAction(SessionState viewState, boolean universe, boolean rollForwardPending, boolean prepareOwnsDoor, boolean passageClosedInMemory,
+            DoorUser user) {
         Objects.requireNonNull(viewState, "viewState");
         Objects.requireNonNull(user, "user");
-        if (viewState == SessionState.PASSAGE_READY) return !rollForwardPending && user == DoorUser.PARTICIPANT ? DoorAction.END_PASSAGE : DoorAction.REFUSE;
+        if (viewState == SessionState.PASSAGE_READY) {
+            if (passageClosedInMemory) return DoorAction.PASS;
+            return !rollForwardPending && user == DoorUser.PARTICIPANT ? DoorAction.END_PASSAGE : DoorAction.REFUSE;
+        }
         if (viewState != SessionState.COLLAPSING || !universe || !prepareOwnsDoor) return DoorAction.PASS;
         if (rollForwardPending) return DoorAction.REFUSE;
         return switch (user) {
@@ -366,9 +383,11 @@ final class OriginDoors {
             boolean owns = track != null && track.preparing && !track.readyPaused(service.now) && track.pendingSeal == null
                     && !service.journal.quarantinedSessions().contains(sid);
             boolean universe = view.state().collapseState() && view.collapse().destination() instanceof CollapseDestination.Universe;
+            // F5-2（n-2）：SEALED(TRR) 的寫入被拒、通道在記憶體內關閉的期間，門已是一般開門，照一般門的邏輯（比照 PREPARE 被拒時 owns=false）。
+            boolean passageClosedInMemory = track != null && track.pendingRecovery != null;
             var user = participates(view, player.getUuid()) ? DoorUser.PARTICIPANT
                     : !player.isSpectator() && player.getBoundingBox().intersects(ChamberGeometry.interiorBox(frame)) ? DoorUser.INSIDER : DoorUser.OUTSIDER;
-            action = doorAction(view.state(), universe, service.journal.rollForwardPending(sid), owns, user);
+            action = doorAction(view.state(), universe, service.journal.rollForwardPending(sid), owns, passageClosedInMemory, user);
             var use = switch (action) {
                 case PASS -> {
                     if (view.state() == SessionState.SEALED) cancelSealedClose(view, world, frame, player);

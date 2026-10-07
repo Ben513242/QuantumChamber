@@ -3075,7 +3075,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F5-1（spec §10.3 的 {@code FAILED_RECOVERY_REQUIRED}、§5 的 PASSAGE_READY→SEALED(TRR)、§11.2；plan Review Focus 1）：參與者 P1、P2。P1 先穿過通道（Crossed＝[P1]）。P2 越過中線時，
      * 往 U 的原生移動與回滾都被拒（testmod {@code SessionTransferFaultMixin}，各 1 次）→ {@code FAILED_RECOVERY_REQUIRED}。第一次的 SEALED(TRR) 寫入在 journal 的 put 就被拒
      * （testmod {@code SessionJournalPutFaultMixin}，1 次；防禦性的被拒路徑）：通道在記憶體內關閉（record 仍是 PASSAGE_READY，P2 再越過中線也不傳送；原艙門由 passable 改為一般開門，
-     * F5-1 fix round 1，spec review S-m3），ERROR 一則；per-session 退避之後重試寫入成功：
+     * F5-1 fix round 1，spec review S-m3），ERROR 一則；這段期間門照一般門的邏輯（F5-2，spec re-review n-2）：P2 在艙內以 Controller 關門、再開門都照一般門切換（Controller 的
+     * 訊息是 {@code controller_passage}），之後回到門口。per-session 退避之後重試寫入成功：
      * <ul>
      * <li>record 是 SEALED(TRANSFER_RECOVERY_REQUIRED)、RecoveryRequired＝[P2]、Crossed＝[P1]、opened／expires 與 participants 都保留，沒有終局（record 還在）；</li>
      * <li>ERROR 帶著 transfer result 的移動與回滾證據（{@code move=}、{@code rollback=}），「需要管理員處理」；</li>
@@ -3132,7 +3133,22 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 at(context, readyAt + 7, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
                 at(context, readyAt + 8, hooks, () -> witness.put("closedInMemoryWhileRejected", fault[0].hits() == 2 && p2.getServerWorld() == world
                         && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY")));
-                whenTicks(context, readyAt + 9, 260, () -> M5GameTestSupport.state(journal, sid).equals("SEALED"), sealedAt -> {
+                // F5-2（spec re-review n-2）：通道在記憶體內關閉的期間，門已是一般開門，照一般門的邏輯（比照 PREPARE 被拒時 PREPARE 不擁有門）：參與者 P2 在艙內以 Controller
+                // 關門、再開門都照一般門切換，record 不變；Controller 的訊息是 PASSAGE 的（補充第 3 點的顯示：presence 仍是 PASSAGE）。
+                at(context, readyAt + 9, hooks, () -> {
+                    moveInside(p2, frame);
+                    M5GameTestSupport.overlayKeys(second);
+                    witness.put("participantClosesThePlainDoorWhileClosedInMemory", interact(world, frame.controllerPos(), p2).isAccepted()
+                            && doorAll(world, frame, false, MembraneState.NONE) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
+                    witness.put("controllerPassageMessage", M5GameTestSupport.overlayKeys(second).equals(List.of(CONTROLLER_PASSAGE_KEY)));
+                });
+                at(context, readyAt + 10, hooks, () -> {
+                    witness.put("participantReopensThePlainDoorWhileClosedInMemory", interact(world, frame.controllerPos(), p2).isAccepted()
+                            && doorAll(world, frame, true, MembraneState.NONE) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
+                    // 放回門口（中線外側）：進入 SEALED 時門口有人，關門改為一般開門（plainOpenWithP2InTheDoorway）。
+                    M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO);
+                });
+                whenTicks(context, readyAt + 11, 260, () -> M5GameTestSupport.state(journal, sid).equals("SEALED"), sealedAt -> {
                     var sealed = journal.flushedRecords().get(sid);
                     witness.put("sealedTransferRecoveryRequired", sealedWith(journal, sid, SealedReason.TRANSFER_RECOVERY_REQUIRED)
                             && sealed.collapse().recoveryRequired().equals(List.of(p2.getUuid())));
@@ -3871,6 +3887,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
 
     /** spec §10.8「進入 SEALED」（以字面值斷言，不信任 production 常數）。 */
     private static final String SEALED_KEY = "message.quantumchamber.m5.sealed";
+    /** F5-2：Controller 開關門時，比較器是 PASSAGE（15）的訊息 key（以字面值斷言，不信任 production 常數）。 */
+    private static final String CONTROLLER_PASSAGE_KEY = "message.quantumchamber.m5.controller_passage";
 
     private static boolean receiptStillSealed(SessionRecoveryState journal, UUID sid) {
         var record = journal.flushedRecords().get(sid);

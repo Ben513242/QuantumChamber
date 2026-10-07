@@ -204,7 +204,7 @@ final class PassageService {
     /**
      * (a)：通道期間參與者在原艙這一側開關原艙門（{@link OriginDoors#door} 的 {@code END_PASSAGE}；roll-forward 尚未確認時已在 {@link OriginDoors#doorAction} 拒絕）。先 checked
      * 終局、再改門（關閉；門口有 entity 時一般開門）。寫入前的條件與終局沒有完成時的處置見 {@link OriginDoors#terminateByDoor}；另外通道不得在記憶體內關閉
-     * （{@link Track#pendingRecovery}），否則拒絕、不改門。
+     * （{@link Track#pendingRecovery}），否則拒絕、不改門。F5-2（n-2）起這段期間的開關門在 {@link OriginDoors#doorAction} 就照一般門的邏輯（PASS），不會走到這裡；這個檢查保留作防禦。
      */
     ChamberCollapsePort.DoorUse endByParticipant(SessionRecoveryRecord view, Track known, PlayerEntity player) {
         var track = known != null ? known : service.track(view.sessionUuid());
@@ -379,7 +379,13 @@ final class PassageService {
      * SEALED 並保持 dirty（§10.3 :571），依 collapse view 照樣生效；之後與其他原因進入 SEALED 相同（{@link CollapseService#sealCommitted}，ERROR 的 cause 是證據）。寫入在
      * 前置檢查就被拒時（journal 沒有改變；防禦性），通道在記憶體內關閉（{@link Track#pendingRecovery}）、原艙門改為一般開門（第一次被拒時排入
      * {@link OriginDoors.DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}，比照 PREPARE 中寫入被拒時的門；F5-1 fix round 1，spec review S-m3），依 per-session 退避只重試這筆寫入；寫入成功時
-     * 由 {@code sealCommitted} 的關門取代它。presence 與比較器在這段期間仍是 PASSAGE（屬 F5-2）。
+     * 由 {@code sealCommitted} 的關門取代它。這段期間（F5-2）：
+     * <ul>
+     * <li>門照一般門的邏輯開關（{@link OriginDoors#doorAction} 回 PASS，spec re-review n-2；比照 PREPARE 被拒時 PREPARE 不擁有門）。</li>
+     * <li>presence 維持 PASSAGE、比較器 15（已供電而且 enabled 時；spec §10.7）：journal 沒有改變，collapse view 仍是 PASSAGE_READY，presence 只依它推導（不改
+     *     {@code SuperpositionSessionManager} 與 port）。通道其實已在記憶體內關閉，所以這是短暫誤報的 15，到寫入成功（SEALED，11）為止；只在前置檢查被拒的防禦路徑出現（M5 note
+     *     F5-2，已知限制）。</li>
+     * </ul>
      */
     private void recoveryRequired(SessionRecoveryRecord current, Track track, UUID player, IllegalStateException cause) {
         var sid = current.sessionUuid();
@@ -390,7 +396,7 @@ final class PassageService {
             track.pendingRecovery = new PendingRecovery(player, cause);
             track.backoff.failed(service.now);
             if (first) {
-                // F5-1 fix round 1（spec review S-m3）：比照 PREPARE 中寫入被拒時把門交還為一般開門：通道已在記憶體內關閉，原艙門不再是 passable（presence 與比較器屬 F5-2）。
+                // F5-1 fix round 1（spec review S-m3）：比照 PREPARE 中寫入被拒時把門交還為一般開門：通道已在記憶體內關閉，原艙門不再是 passable（之後照一般門的邏輯開關；presence 與比較器見上方 Javadoc）。
                 service.originDoors.queueDoor(current, 0, OriginDoors.DoorGoal.OPEN_WHILE_PASSAGE_CLOSED);
                 LOGGER.error(LOG_MARKER, "通道傳送無法回滾，但 SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒：通道在記憶體內關閉（不跨越、不終局、不評估結束條件，原艙門改為一般開門），"
                         + "依 per-session 退避只重試這筆寫入；需要管理員處理：session={} chamber={} 玩家={}：{}", sid, current.chamberUuid(), player,

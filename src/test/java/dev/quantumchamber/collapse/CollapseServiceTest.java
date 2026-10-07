@@ -624,15 +624,16 @@ class CollapseServiceTest {
     /**
      * F4b-3（spec §7 :336、§7.3「PREPARE 期間的開關門」、§11.2、§3 詮釋 3；補充第 2 點）：原艙門的攔截規則。只有 COLLAPSING、目的地是 UNIVERSE、PREPARE 擁有原艙門時
      * 才依身分處置（參與者終局再關門、艙內的非參與者一般開門、艙外的非參與者拒絕），roll-forward 尚未確認時一律拒絕；SEALED、一般狀態的階段、SOURCE 與 M1–M4 的狀態一律
-     * 照一般門的邏輯。F5-1（§10.5、§7 :336）：PASSAGE_READY 時參與者結束通道（END_PASSAGE），非參與者（艙內或艙外）與 roll-forward 尚未確認時一律拒絕。
+     * 照一般門的邏輯。F5-1（§10.5、§7 :336）：PASSAGE_READY 時參與者結束通道（END_PASSAGE），非參與者（艙內或艙外）與 roll-forward 尚未確認時一律拒絕。F5-2（spec re-review n-2）：
+     * PASSAGE_READY 而通道在記憶體內關閉（SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、待重試）時，門是一般開門，任何人都照一般門的邏輯（PASS）；其他狀態不看它。
      */
     @Test void doorActionFollowsThePrepareDoorRules() {
         var cases = new ArrayList<Executable>();
         for (var state : SessionState.values()) for (boolean universe : new boolean[] {false, true}) for (boolean pending : new boolean[] {false, true})
-            for (boolean owns : new boolean[] {false, true}) for (var user : OriginDoors.DoorUser.values()) {
+            for (boolean owns : new boolean[] {false, true}) for (boolean closed : new boolean[] {false, true}) for (var user : OriginDoors.DoorUser.values()) {
                 OriginDoors.DoorAction expected;
-                if (state == SessionState.PASSAGE_READY) expected = !pending && user == OriginDoors.DoorUser.PARTICIPANT ? OriginDoors.DoorAction.END_PASSAGE
-                        : OriginDoors.DoorAction.REFUSE;
+                if (state == SessionState.PASSAGE_READY) expected = closed ? OriginDoors.DoorAction.PASS
+                        : !pending && user == OriginDoors.DoorUser.PARTICIPANT ? OriginDoors.DoorAction.END_PASSAGE : OriginDoors.DoorAction.REFUSE;
                 else if (state != SessionState.COLLAPSING || !universe || !owns) expected = OriginDoors.DoorAction.PASS;
                 else if (pending) expected = OriginDoors.DoorAction.REFUSE;
                 else expected = switch (user) {
@@ -640,9 +641,11 @@ class CollapseServiceTest {
                     case INSIDER -> OriginDoors.DoorAction.OPEN_FOR_INSIDER;
                     case OUTSIDER -> OriginDoors.DoorAction.REFUSE;
                 };
-                var row = state + " universe=" + universe + " rollForwardPending=" + pending + " prepareOwnsDoor=" + owns + " " + user;
+                var row = state + " universe=" + universe + " rollForwardPending=" + pending + " prepareOwnsDoor=" + owns + " passageClosedInMemory=" + closed + " " + user;
                 var want = expected;
-                cases.add(() -> assertEquals(want, OriginDoors.doorAction(state, universe, pending, owns, user), row));
+                cases.add(() -> assertEquals(want, OriginDoors.doorAction(state, universe, pending, owns, closed, user), row));
+                // 5 個參數的版本是 passageClosedInMemory 為假。
+                if (!closed) cases.add(() -> assertEquals(want, OriginDoors.doorAction(state, universe, pending, owns, user), "5 個參數：" + row));
             }
         // 規則本身的幾個錨點（上面的期望值是同一條規則的另一種寫法，這幾列直接寫死）。
         cases.add(() -> assertEquals(OriginDoors.DoorAction.END_AND_CLOSE,
@@ -669,6 +672,12 @@ class CollapseServiceTest {
                 OriginDoors.doorAction(SessionState.PASSAGE_READY, true, false, false, OriginDoors.DoorUser.OUTSIDER), "通道期間艙外的非參與者被拒"));
         cases.add(() -> assertEquals(OriginDoors.DoorAction.REFUSE,
                 OriginDoors.doorAction(SessionState.PASSAGE_READY, true, true, false, OriginDoors.DoorUser.PARTICIPANT), "Crossed 未確認時參與者關門被拒（§7）"));
+        // F5-2（n-2）：通道在記憶體內關閉的期間，門是一般開門、塌縮流程不擁有它。
+        for (var user : OriginDoors.DoorUser.values())
+            cases.add(() -> assertEquals(OriginDoors.DoorAction.PASS,
+                    OriginDoors.doorAction(SessionState.PASSAGE_READY, true, false, false, true, user), "通道在記憶體內關閉：照一般門的邏輯（" + user + "）"));
+        cases.add(() -> assertEquals(OriginDoors.DoorAction.END_AND_CLOSE,
+                OriginDoors.doorAction(SessionState.COLLAPSING, true, false, true, true, OriginDoors.DoorUser.PARTICIPANT), "PREPARE 不看通道是否在記憶體內關閉"));
         assertAll(cases);
     }
 
