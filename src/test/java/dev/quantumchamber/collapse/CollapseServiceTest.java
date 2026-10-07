@@ -495,6 +495,29 @@ class CollapseServiceTest {
         assertAll(cases);
     }
 
+    /**
+     * F5-1 fix round 1（spec review S-m2、quality Q-m2；spec §6 :260、§7.3）：提交 PASSAGE_READY 沒有完成之後，PREPARE 只在 per-session 退避期內暫停（不判斷、也不擁有原艙門）；
+     * 退避期一過就恢復，不是整段 PREPARE 的單向閂。沒有 PREPARE、提交沒有失敗過時都不暫停。
+     */
+    @Test void readyFailurePausesThePrepareOnlyDuringTheBackoff() {
+        var track = new CollapseService.Track();
+        boolean noPrepare = track.readyPaused(100);
+        track.prepare = new CollapseService.Prepare(100);
+        boolean notFailed = track.readyPaused(100);
+        track.prepare.readyFailed = true;
+        track.backoff.failed(100);
+        boolean withinTheBackoff = track.readyPaused(299);
+        boolean afterTheBackoff = track.readyPaused(300);
+        track.backoff.failed(300);
+        boolean failedAgain = track.readyPaused(301);
+        assertAll(
+                () -> assertFalse(noPrepare, "沒有 PREPARE"),
+                () -> assertFalse(notFailed, "提交沒有失敗過"),
+                () -> assertTrue(withinTheBackoff, "失敗之後的退避期內暫停"),
+                () -> assertFalse(afterTheBackoff, "退避期一過就恢復"),
+                () -> assertTrue(failedAgain, "重試再失敗：再暫停一段退避期（400 ticks）"));
+    }
+
     /** F5-1（spec §10.2「相關權威都不在未確認狀態」）：PASSAGE_READY 之前要確認的權威；NEW 另加 allocation ledger。 */
     @Test void readyWaitsForTheRelevantAuthorities() {
         var common = Set.of(CollapseAuthorities.Authority.CATALOG, CollapseAuthorities.Authority.DISCOVERY, CollapseAuthorities.Authority.PROJECTION_LEDGER);

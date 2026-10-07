@@ -3373,9 +3373,15 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F5-1（spec §10.2 的提交是 restore 類、§6「journal 寫入失敗時的 session 行為」、§11.2 的 per-session 退避）：準備完成時提交 PASSAGE_READY 的 journal 寫出在 flush 開頭受控失敗
      * 一次：record 留在 COLLAPSING（current 還原、flushed 不變），WARN「提交 PASSAGE_READY」一則，PREPARE 暫停、原艙門由 sealed 量子膜改為一般開門（INFO 一則）；退避期（200 ticks）
-     * 之內不重試、門維持一般開門；退避期過後只重試這筆提交：PASSAGE_READY、門改為 passable。探針在 RESOLVE 之後、PREPARE 之前就裝上；它只計「current 是 PASSAGE_READY、flushed
-     * 是 COLLAPSING」的 flush，這只會出現在提交本身的 flush 裡（restore 類寫入失敗之後 current 已還原），所以原生 autosave 不會讓計數誤判，不需要 {@code afterAutosaveClear}
-     * 的窗口。catalog 增量 1。
+     * 之內不重試、門維持一般開門。探針在 RESOLVE 之後、PREPARE 之前就裝上；它只計「current 是 PASSAGE_READY、flushed 是 COLLAPSING」的 flush，這只會出現在提交本身的 flush 裡
+     * （restore 類寫入失敗之後 current 已還原），所以原生 autosave 不會讓計數誤判，不需要 {@code afterAutosaveClear} 的窗口。
+     * <p>F5-1 fix round 1（spec review S-m2、quality Q-m2；§6 :260、§7.3）：
+     * <ul>
+     * <li>退避期內 PREPARE 不擁有原艙門：參與者 P 以 bulkhead 關門、再開門，都照一般門的邏輯完成（不被拒），record 仍是 COLLAPSING。</li>
+     * <li>退避期快結束時以 {@code holdReady} 讓之後的提交暫緩（重試的結果不是提交，等同前置條件還沒成立）：退避期過後 PREPARE 恢復，原艙門照每個 PREPARE tick 的條件改回 sealed
+     *     量子膜（修正之前會一直維持一般開門），提交仍沒有發生。放行之後重試這筆提交：PASSAGE_READY、門改為 passable。</li>
+     * </ul>
+     * catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_ready_fault", tickLimit = 2000)
     public void ready_write_failure_restores_backs_off_and_opens_the_door_plainly(TestContext context) {
@@ -3384,6 +3390,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        var doorCell = local(frame, 3, 3, 0);
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             var flush = M5GameTestSupport.installFlushProbe(context, new M5GameTestSupport.FlushFault(server, "F5-1 GameTest 受控：提交 PASSAGE_READY 的 journal 寫出失敗", 1,
@@ -3395,9 +3403,25 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("oneReadyWriteWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "提交 PASSAGE_READY", sid.toString()).size() == 1);
                     witness.put("pauseInfo", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "提交 PASSAGE_READY 沒有完成，PREPARE 暫停", sid.toString()).size() == 1);
                     witness.put("plainOpenWhilePaused", doorAll(world, frame, true, MembraneState.NONE));
-                    at(context, failedAt + 150, hooks, () -> witness.put("noRetryWithinTheBackoff", flush.ticks().size() == 1
-                            && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && doorAll(world, frame, true, MembraneState.NONE)));
-                    whenTicks(context, failedAt + 151, 300, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                    // fix round 1（S-m2 (a)）：退避期內 PREPARE 不擁有原艙門，參與者照一般門的邏輯開關。
+                    at(context, failedAt + 10, hooks, () -> witness.put("participantClosesThePlainDoorWhilePaused", interact(world, doorCell, p).isAccepted()
+                            && doorAll(world, frame, false, MembraneState.NONE)));
+                    at(context, failedAt + 11, hooks, () -> witness.put("participantReopensThePlainDoorWhilePaused", interact(world, doorCell, p).isAccepted()
+                            && doorAll(world, frame, true, MembraneState.NONE) && M5GameTestSupport.state(journal, sid).equals("COLLAPSING")));
+                    M5TestHooks.ReadyHold[] hold = {null};
+                    at(context, failedAt + 150, hooks, () -> {
+                        witness.put("noRetryWithinTheBackoff", flush.ticks().size() == 1
+                                && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && doorAll(world, frame, true, MembraneState.NONE));
+                        // fix round 1（S-m2 (b)）：退避期過後的重試不是提交（暫緩，等同前置條件還沒成立）。
+                        hold[0] = M5GameTestSupport.holdReady(context, sid, hooks);
+                    });
+                    at(context, failedAt + 215, hooks, () -> {
+                        witness.put("prepareDoorResumesAfterTheBackoff", M5GameTestSupport.doorSealed(world, frame) && hold[0].hits() > 0
+                                && M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && flush.ticks().size() == 1);
+                        witness.put("oneResumeInfo", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "退避期已過，PREPARE 恢復", sid.toString()).size() == 1);
+                        hold[0].release();
+                    });
+                    whenTicks(context, failedAt + 216, 300, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
                         witness.put("retriedAfterTheBackoff", readyAt - failedAt >= 195 && flush.ticks().size() == 2 && passageOpened(capture, sid) == 1);
                         witness.put("passableAfterTheRetry", M5GameTestSupport.doorPassable(world, frame));
                         LOGGER.info("M5_PASSAGE_READY_FAULT failed={} ready={} flushes={}", failedAt, readyAt, flush.ticks());

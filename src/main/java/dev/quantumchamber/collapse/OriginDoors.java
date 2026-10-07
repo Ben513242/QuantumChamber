@@ -294,7 +294,8 @@ final class OriginDoors {
 
     /**
      * 原艙門的攔截規則（純函式；spec §7 :336、§7.3「PREPARE 期間的開關門」，F4b-3 補充第 2 點）。{@code prepareOwnsDoor} 是上一次推導在 PREPARE，而且 PREPARE 沒有
-     * 暫停（沒有被拒而待重試的 SEALED 寫入、沒有隔離）：
+     * 暫停（沒有被拒而待重試的 SEALED 寫入、沒有隔離、不在提交 PASSAGE_READY 失敗之後的退避期內：§6 :260，restore 類失敗時 PREPARE 中的門依 §7.3 閘門失效的處理，開關照一般門的
+     * 邏輯；F5-1 fix round 1，S-m2／Q-m2）：
      * <ul>
      * <li>COLLAPSING、目的地是 UNIVERSE、PREPARE 擁有原艙門：roll-forward 尚未確認 → 拒絕；參與者 → 終局再關門；艙內的非參與者 → 一般開門；艙外的非參與者 → 拒絕。</li>
      * <li>PASSAGE_READY（§10.5，F5-1）：roll-forward 尚未確認 → 拒絕、不改門（§7 :336：{@code Crossed} 未確認時參與者關門也被拒）；參與者 → 結束通道（先終局、再改門）；
@@ -350,7 +351,9 @@ final class OriginDoors {
             if (!service.refreshContext()) return ChamberCollapsePort.DoorUse.PASS;
             var sid = view.sessionUuid();
             var track = service.tracks.get(sid);
-            boolean owns = track != null && track.preparing && track.pendingSeal == null && !service.journal.quarantinedSessions().contains(sid);
+            // F5-1 fix round 1（S-m2／Q-m2）：提交 PASSAGE_READY 失敗之後的退避期內（readyPaused）PREPARE 不擁有原艙門，與被拒而待重試的 SEALED 寫入、隔離相同。
+            boolean owns = track != null && track.preparing && !track.readyPaused(service.now) && track.pendingSeal == null
+                    && !service.journal.quarantinedSessions().contains(sid);
             boolean universe = view.state().collapseState() && view.collapse().destination() instanceof CollapseDestination.Universe;
             var user = participates(view, player.getUuid()) ? DoorUser.PARTICIPANT
                     : !player.isSpectator() && player.getBoundingBox().intersects(ChamberGeometry.interiorBox(frame)) ? DoorUser.INSIDER : DoorUser.OUTSIDER;
