@@ -106,10 +106,10 @@ M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（
 
 - spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.3），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
 - 進度（2026-10-05）：
-  - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）、F4b-1（投影元件，以及 F4a 的 Step 0）、F4b-2（PREPARE 的目的宇宙側，含 fix round 1）、F4b-3（PREPARE 期間的原艙門，含 fix round 1）。F4b 的三個子 task 都已完成。F5 依 plan 拆成 F5-0（抽出原艙門）、F5-1（通道本體）、F5-2（比較器與 membrane 正規化）；F5-0 已完成。
+  - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）、F4b-1（投影元件，以及 F4a 的 Step 0）、F4b-2（PREPARE 的目的宇宙側，含 fix round 1）、F4b-3（PREPARE 期間的原艙門，含 fix round 1）。F4b 的三個子 task 都已完成。F5 依 plan 拆成 F5-0（抽出原艙門）、F5-1（通道本體）、F5-2（比較器與 membrane 正規化）；F5-0、F5-1 已完成。
   - T0：controller 執行的 clean-clone 基線，不改程式。
   - F1b：controller 代操作的真 client 驗證，四項通過，經獨立 docs review 與 re-review。
-  - F4b 依 plan 拆成三個子 task：F4b-1（投影元件）、F4b-2（PREPARE 的目的宇宙側）、F4b-3（PREPARE 期間的原艙門）。下一個是 F5-1（通道本體）。開工時先做 note F5-0「交給後續」中 F5-1 的 Step 0。之後依序是 F5-2 → F6 → F7 → milestone 收尾。
+  - F4b 依 plan 拆成三個子 task：F4b-1（投影元件）、F4b-2（PREPARE 的目的宇宙側）、F4b-3（PREPARE 期間的原艙門）。下一個是 F5-2（比較器與 membrane 正規化）。開工時先做 note F5-0、F5-1 兩節「交給後續」中 F5-2 的 Step 0，其中 F5-1 的 R-m1 是必修。之後依序是 F6 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

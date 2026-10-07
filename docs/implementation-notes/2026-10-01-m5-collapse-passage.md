@@ -4420,6 +4420,26 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
   - 本節由其後的 docs commit `docs: record F5-1 passage in the M5 note` 加入。
 - Code range `ffb800c..fd0a2cd`。沒有改 `chamber/`（含 `ChamberCollapsePort`、`ChamberState`、`ChamberStatusSignal`、`ChamberPowerCoordinator`、`ChamberControllerBlock`）、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`ProjectionProtectionIndex`、`CollapsePhase`、`SuperpositionSessionManager`、`SessionRecoveryState`、`SessionRecoveryManager`、`UniverseRegistryState`、`ChamberRegistryState`、`UniverseLifecycleService`、`CorridorPageManager`、`gates.ps1`、`build.gradle`、`.github/`，也沒有改 M3 的 test 檔（`UniverseTransferAuthorityTest` 與 M3 的 GameTest／probe）。journal 沒有新 API：`Crossed`、`RecoveryRequired` 與 SEALED(TRR) 都用 F2a 已有的 `CollapseFields.withCrossed`／`transferRecoveryRequired` 與 `commitRollForward`。
 - Review：spec review ✅（Critical 0、Important 0、Minor 6：S-m1～S-m6）；quality review Approved（Critical 0、Important 0、Minor 7：Q-m1～Q-m7）。偏離 a–k 都判定符合 spec，controller 正式接受。controller 開窄範圍的 fix round 1，處理會影響行為的 Minor（S-m1～S-m3、Q-m1、Q-m2）與 F5-1 自己程式中的小項（S-m4、S-m5、Q-m4、Q-m5、Q-m7）；Q-m3、Q-m6、S-m6 與 S-m4 的比較器寫進「交給後續」。處置見本節末的「Fix round 1」。
+- 最終 review（controller 補）：
+  - fix round 1 的 spec re-review ✅（Critical 0、Important 0、Minor 2）。S-m2 的讀法（§6 :260 的期間就是 per-session 退避期）與 S-m3 都判定符合 spec，controller 正式接受。兩則 Minor：
+    - n-1：`projectionUncheckpointed` 只在同一個 session 內有效 → 交給 F6；
+    - n-2：TRR 被拒的期間，門是一般開門但無法開關 → 交給 F5-2。
+  - fix round 1 的 quality re-review Approved（Critical 0、Important 0、Minor 3：R-m1～R-m3）。三則都交給 F5-2 的 Step 0，見「交給後續」；其中 R-m1 列為必修。
+  - **F5-1 完成**：range `ffb800c..0985659`，之後是 controller 的 docs commit。
+    - code：`1b8784d`、`75cd2c3`、`0e620fe`、`1a4f504`、`4b42a9d`、`5b3a98e`、`fd0a2cd`、`1f37e36`、`d1cc049`、`f793776`、`5f7dd12`、`ff9dd0a`、`67f7eb2`、`7726da9`。
+    - docs：`f894bdd`、`0985659`。
+    - 最終 run-all：`run-all-e844190b062a4f34ba920d1ebcfcf99f`，`END ALL exit=0`（`7726da9`）。Full 那一輪多了一則已知偶發，所以 Full 改以 `gate-fix1-full-rerun-304a81ae…` 重跑的結果為準。
+
+      | 項目 | 結果 |
+      | --- | --- |
+      | default | 174/174 |
+      | M5 | 52/52 |
+      | JUnit | 648 |
+      | release | 427／380 |
+      | sources | 221 |
+      | Full WARN／ERROR | 54／28 |
+      | M3 | 4＋5 |
+      | M5 WARN／ERROR | 33／10 |
 - 行號以 `fd0a2cd` 為準。`PS` 指 `collapse/PassageService.java`、`PTP` 指 `collapse/PassageTransferPolicy.java`、`TS` 指 `universe/TransferSafety.java`、`UTS` 指 `universe/UniverseTransferService.java`、`PTPT`／`TST` 是它們的 JUnit、`RHM` 指 testmod 的 `mixin/CollapseReadyHoldMixin.java`、`TF` 指 testmod 的 `mixin/SessionTransferFaultMixin.java`；`CS`、`OD`、`ODF`、`CST`、`M5U`、`SUP`、`HK` 同前面各節。新增的 12 個 `@GameTest`（M5 run，各自一個 batch，catalog 增量都是 1）：
   - T-CROSS `M5U:2587` `passage_participant_crosses_to_the_same_pose_while_non_participants_and_riders_stay`（`m5_universe_passage_cross`，tickLimit 900）
   - T-EXPIRE `M5U:2685` `passage_expires_after_one_of_two_crossed_and_the_chamber_opens_a_new_session_windows`（`m5_universe_passage_expire`，tickLimit 45000；`_windows`：最後一段要真的 M2 入場）
@@ -4580,7 +4600,21 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
   - （fix round 1 追加）SEALED(TRR) 的寫入被拒、通道在記憶體內關閉的期間（`Track.pendingRecovery`）的 presence 與比較器：門已改為一般開門（fix round 1 的 S-m3），presence 仍是 PASSAGE；以及 SEALED(TRR) 的比較器（§15：比較器 11），含 T-TRR 的「比較器 11」（spec review S-m4）。
   - （fix round 1 追加，quality Q-m6）重複的程式：`PS:209` 起的 `endByParticipant` 與 `OD:474` 起的 `endByParticipant`（行號以 `7726da9` 為準）抽成共用的「門觸發終局」helper（F5-2 會改 `OD`）；`PS:128`（`observe`）與 `PS:292`（`cross`）各算一次「exact 且在來源世界」。
   - （fix round 1 追加）`scripts/verification/README.md`「新增 M5 GameTest」一節（本輪不在允許的路徑）：補上 fix round 1 的 helper `installStepPause`（`M5TestHooks.STEP_PAUSE`：可撤銷的推進暫停，經既有的 `CollapseSuspendMixin` 讀 `collapseSuspended`；test 以 `hits()` 當 witness），以及 T-CROSSED-RF 的作法：`holdReady` 要先等暫緩真的發生（`hits()>0`）才開始等 `afterAutosaveClear` 的窗口。若 F5-2 不改 README，交給 F7。
+  - **Step 0（controller 補，F5-1 fix round 1 的 quality re-review 與 spec re-review）**。行號以 `7726da9` 為準：
+    - **R-m1（必修）**：`readyPaused`（`CS:1473`）綁在 `Prepare` 上，per-session 退避卻綁在 Track 上。
+      - 失敗情境：
+        1. 提交失敗之後進入退避；
+        2. 退避期內閘門失效，`leavePrepare` 丟棄 `Prepare`；
+        3. 參與者由艙外再進入，新的 `Prepare` 的 `readyFailed` 是假，所以 `readyPaused` 為假，sealed 量子膜被套用；
+        4. 參與者關門時走 `END_AND_CLOSE`，在 `OD:478` 的退避檢查被拒，直到退避期結束（最長 12000 ticks）都出不去，等於被困在艙內。
+      - 修正：把旗標移到 Track（例如 `readyRetryPending`，提交成功或退避期過後才清除），以 RED 證明。
+    - R-m2：`STEP_PAUSE` 讓 `collapseSuspended` 有了副作用（每次查詢都讓 `hits` 加一），而 `M5CollapseGameTests:1167` 把它當純查詢使用。修正：
+      - mixin 改為呼叫會計數的入口（例如 `cancelStep(sid)`），`collapseSuspended` 維持純查詢；
+      - 更新 `CollapseSuspendMixin` 的 Javadoc。這個 mixin 已列入 F5-2 的允許路徑。
+    - R-m3：在 Track 的 Javadoc 補一張「重設時點」表，列出 `resetGate` 刻意不重設的欄位（`doorLoaded`、`doorSeenLoaded`、`projectionUncheckpointed`，以及 R-m1 的新欄位）。把 Track 依階段拆成小 holder 的工作交給 F6 或之後。
+    - spec n-2：TRR 被拒、通道在記憶體內關閉的期間，門是一般開門，但參與者被 `pendingRecovery` 擋下、非參與者被拒，門無法開關。和補充第 4 點的 presence 一起決定這段期間的門由誰擁有（比照 PREPARE 被拒時 `owns=false`）。
 - F6：
+  - （controller 補，F5-1 fix round 1 spec re-review n-1）`Track.projectionUncheckpointed` 只在同一個 session 內有效。D2 修復寫了方塊，在 checkpoint 之前以 PREPARE 期間關門終局；之後同艙的 D3 以 EXISTING 回到同一個 U，修復寫 0 格，就會在沒有 checkpoint 的情況下提交 READY。只有在原生 autosave 之前 crash，修復才會遺失。重啟矩陣的 W6／W7 加上這個變體；若不改程式，就寫進 F7 的已知限制。
   - 重啟矩陣：PASSAGE_READY 提交之後、passable 套用之前 crash（重啟之後 §12 終局、一般開門）；`Crossed` 寫出未確認時 crash；SEALED(TRR) 跨重啟仍是永久原因、不重試；PASSAGE_READY→SEALED(TRR) 的寫出未確認時 crash（重啟之後 flushed 是 PASSAGE_READY，§12 會把它終局：要確認這是不是期望的行為，因為 TRR 的證據只在 current）。
   - （fix round 1 追加，quality Q-m3）SEALED(TRR) 的寫入被拒（REJECTED，`Track.pendingRecovery`）期間重啟：`RecoveryRequired` 沒有落盤，開服之後依 §12 以 PASSAGE_ENDED 終局，只剩 log 證據。
   - `build.yml` 的明列清單可加 T-EXPIRE（`_windows`）；P-NEW 改名不影響（動態掃描）。
