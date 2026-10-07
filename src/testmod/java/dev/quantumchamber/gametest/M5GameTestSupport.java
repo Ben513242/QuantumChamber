@@ -757,19 +757,14 @@ final class M5GameTestSupport {
     }
 
     /**
-     * F4b-3 fix round 1（quality Q-I1）：讓 PREPARE 期間參與者關門的處置每次都丟出例外（持續性的處置失敗）。以反射把塌縮流程這個 session 的 {@code Track.backoff}
-     * （本 mod 自己的 final 欄位，不經 remap）換成 null：處置在退避檢查丟 {@link NullPointerException}。準備完成之後的 PREPARE tick 不讀它（只判斷原艙門），
-     * 所以塌縮流程照常。回傳還原的動作（也登記在 hooks）；只在 server thread、準備完成之後呼叫。
+     * F5-0（F4b-3 quality M-2，取代以反射把 {@code Track.backoff} 換成 null 的 {@code breakParticipantDoorUse}）：讓這個 session 的 PREPARE 期間參與者開關門的處置
+     * 每次都在開頭丟出例外（持續性的處置失敗；{@link M5TestHooks#DOOR_USE_FAULT}，testmod {@code OriginDoorUseFaultMixin}）。安裝時就武裝；{@code disarm()}／{@code arm()}
+     * 在同一個 test 內切換，{@code hits()} 是已注入的次數。安裝、占用與移除的規則見 {@link #installHook}。
      */
-    @SuppressWarnings("unchecked")
-    static Runnable breakParticipantDoorUse(MinecraftServer server, UUID sid, M2CorridorGameTests.TestHooks hooks) {
-        var track = ((Map<UUID, ?>) M4CandidateTestAccess.get(collapseService(server), "tracks")).get(sid);
-        if (track == null) throw new IllegalStateException("塌縮流程沒有這個 session 的簿記：" + sid);
-        var backoff = M4CandidateTestAccess.get(track, "backoff");
-        Runnable restore = () -> M4CandidateTestAccess.set(track, "backoff", backoff);
-        hooks.add(restore);
-        M4CandidateTestAccess.set(track, "backoff", null);
-        return restore;
+    static M5TestHooks.DoorUseFault installDoorUseFault(TestContext context, UUID session, M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.DoorUseFault(session);
+        installHook(context, M5TestHooks.DOOR_USE_FAULT, fault, hooks);
+        return fault;
     }
 
     /**

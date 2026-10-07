@@ -2401,8 +2401,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <ul>
      * <li>判斷途中的例外（S-M2）：判斷身分時丟例外的非參與者（{@code M5GameTestSupport.lookupFailingPlayer}）直接呼叫 port 兩次：兩次都 REFUSED（不交給門服務），
      *     門不變，WARN「原艙門的攔截」只多一則。</li>
-     * <li>處置途中的持續性例外（Q-I1）：{@code M5GameTestSupport.breakParticipantDoorUse} 讓 P 的關門處置每次都丟例外；P 以 bulkhead 連點兩次：都被拒，門仍是 sealed、
-     *     record 仍是 COLLAPSING、沒有終局，WARN 只多一則。</li>
+     * <li>處置途中的持續性例外（Q-I1）：{@code M5GameTestSupport.installDoorUseFault}（F5-0 起；testmod 的 fault mixin，取代以反射弄壞 {@code Track.backoff}）讓 P 的關門處置
+     *     每次都丟例外；P 以 bulkhead 連點兩次：都被拒，門仍是 sealed、record 仍是 COLLAPSING、沒有終局，WARN 只多一則。</li>
      * <li>成功之後同一原因再失敗會再記一次：艙內的非參與者 N 開門（處置成功）；N 離開、門重新套用 sealed 之後 P 再點一次 → WARN 再多一則。</li>
      * <li>recovery 寫入不安全（Q-M1）：還原 P 的處置；journal 有一筆未 checked 的 authority（{@code M5GameTestSupport.putUncheckedAuthority}）時 P 關門 → 被拒、
      *     不終局、門不變、那筆 authority 沒有被寫出，也沒有 WARN；移除之後 P 關門 → checked 終局、門關上。</li>
@@ -2436,7 +2436,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         && M5GameTestSupport.useDoor(world, frame, faulty) == ChamberCollapsePort.DoorUse.REFUSED);
                 witness.put("lookupFailureWarnedOnce", doorUseWarnings(capture, sid) - before == 1);
                 witness.put("sealedAfterTheLookupFailures", M5GameTestSupport.doorSealed(world, frame));
-                var restore = M5GameTestSupport.breakParticipantDoorUse(server, sid, hooks);
+                var fault = M5GameTestSupport.installDoorUseFault(context, sid, hooks);
                 int beforeHandling = doorUseWarnings(capture, sid);
                 witness.put("failingCloseRefusedTwice", !interact(world, doorCell, p).isAccepted() && !interact(world, doorCell, p).isAccepted());
                 witness.put("oneWarnForTwoFailingCloses", doorUseWarnings(capture, sid) - beforeHandling == 1);
@@ -2450,6 +2450,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     int beforeAgain = doorUseWarnings(capture, sid);
                     witness.put("failingCloseRefusedAgain", !interact(world, doorCell, p).isAccepted() && M5GameTestSupport.doorSealed(world, frame));
                     witness.put("warnedAgainAfterASuccess", doorUseWarnings(capture, sid) - beforeAgain == 1);
+                    // F5-0（quality M-2）：三次失敗的關門都是注入的處置失敗（fault mixin），不是別的原因。
+                    witness.put("closeFailuresWereInjected", fault.hits() == 3);
                     // 門改不了時（25 格之一暫時不是 bulkhead → DOOR_INCOMPLETE），艙內的非參與者被拒；同一個 callback 內放回原方塊（中間沒有 tick）。
                     var corner = local(frame, 1, 1, 0);
                     var cornerState = world.getBlockState(corner);
@@ -2459,7 +2461,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     ChamberProtectionService.get().authorizedMutation(() -> world.setBlockState(corner, cornerState));
                     moveOutside(n, frame);
                     witness.put("sealedAfterTheIncompleteDoor", M5GameTestSupport.doorSealed(world, frame));
-                    restore.run();
+                    fault.disarm();
                     var unchecked = M5GameTestSupport.putUncheckedAuthority(server, hooks);
                     witness.put("recoveryWritesUnsafe", !journal.recoveryWritesSafe());
                     int beforeUnsafe = doorUseWarnings(capture, sid);
