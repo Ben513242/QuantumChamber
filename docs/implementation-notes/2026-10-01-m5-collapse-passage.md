@@ -4722,6 +4722,29 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
   - 只改了派工允許的路徑（含 controller 追加的 `M4CandidateDoorGameTests.java`，只有 `m5_f3a_presence_reconcile` 一個 test）：`chamber/` 的 `ChamberState`、`ChamberStatusSignal`、`ChamberPowerCoordinator`（reconcile、R2 M5、:613）、`ChamberControllerBlock`（只有訊息 switch）、`ChamberCollapsePort`（只有 `Membranes`）；`collapse/` 的 `CollapseService`、`OriginDoors`、`PassageService`；語言檔（1 個 key）；JUnit `ChamberPowerCoordinatorTest`、`ChamberStatusSignalTest`、`CollapseServiceTest`；testmod `M5UniverseGameTests`、`M5GameTestSupport`、`M5TestHooks`、`mixin/CollapseSuspendMixin`（只有 R-m2）、新的 `mixin/CollapseSealProbeMixin` 與 `quantumchamber-test.mixins.json` 的登記；README「新增 M5 GameTest」一節。
   - 沒有改 `ChamberControllerBlockEntity`（INVALID fallback 不需要改，見補充第 1 點）、`ChamberDoorService`、`QuantumBulkheadBlock`、`WorldChamberDoorAdapter`、`SuperpositionSessionManager`、`SessionRecoveryState`、`SessionRecoveryManager`、`UniverseRegistryState`、`ChamberRegistryState`、`UniverseLifecycleService`、`UniverseTransferService`、`CorridorPageManager`、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`ProjectionProtectionIndex`、`ChamberCollapseDependencyGuardTest`、`CollapseLogMarkerGuardTest`、`M5CollapseGameTests`、`gates.ps1`、`build.gradle`、`.github/`。
 - 範圍是 plan Task F5「拆分」的 F5-2：§10.7 全部、§10.6 :613、F4a M-3、Review Focus 5，加上 F5-0、F5-1「交給後續」中屬於 F5-2 的 Step 0（Q-m6、R-m1～R-m3、README、spec n-2）。F5-2 完成之後 F5 完成。
+- Review 與最終 review（controller 補）：
+  - 第一位 implementer 做完 Step 0 之後，在路徑邊界停下：default run 的 F3a test `m5_f3a_presence_reconcile` 把 PASSAGE_READY 寫死成 11，與 spec §10.7 的 15 衝突，這是 controller 派工時漏列的。controller 核准把允許路徑擴充到 `M4CandidateDoorGameTests.java`，只限該 test 的 PASSAGE_READY 列與它的 Javadoc。同時核准補充第 4、5、7 點與 n-2 的預定作法。
+  - 第一位 implementer 的 context 超過上限，於是完成 C4 之後寫好 `f5/f52/STATUS.md` 停下；由第二位 implementer 從 `73d6d0b` 接手，前一位的 commit 沒有改動。
+  - spec review ✅（Critical 0、Important 0、Minor 3、Nit 1）。8 項「請判定」都判定符合 spec，controller 正式接受。
+  - quality review Approved（Critical 0、Important 0、Minor 2、Nit 5），也沒有發現 spec reviewer 漏掉的正確性缺陷。
+  - controller 不再開 fix round，Minor 與 Nit 都寫進「交給後續」（F6 Step 0、F7）。另外更正一處：spec review 的 Nit 指出，`mut-c6-collapse-fifteen` 實際上讓兩個 witness 為 false，分別是 `comparatorElevenAfterTheSeal` 與 `sealCommittedRefreshedTheControllerToEleven`；兩者都屬「SEALED 之後是 11」的目標。
+  - **F5-2 完成**：range `aba3d01..8342a81`，之後接 controller 的 docs commit。
+    - code：`d309965`、`a1a6905`、`0b784db`、`73d6d0b`、`f2309e5`、`8461d63`、`121447c`、`0645798`、`1418e81`。
+    - docs：`998386a`、`8342a81`。
+    - 最終 run-all：`run-all-3d68909b010d452da0dd98eeca17c65c`，`END ALL exit=0`（`998386a`）。
+
+      | 項目 | 數值 |
+      | --- | --- |
+      | default | 174/174 |
+      | M5 | 55/55 |
+      | JUnit | 654 |
+      | release | 429／382 |
+      | sources | 221 |
+      | Full WARN／ERROR | 54／28 |
+      | M3 | 4＋5 |
+      | M5 WARN／ERROR | 34／10 |
+
+  - **F5（F5-0、F5-1、F5-2）全部完成**。
 - 行號以 `998386a` 為準（code 與 `1418e81` 相同）。`CPC` 指 `chamber/ChamberPowerCoordinator.java`、`CCP` 指 `chamber/ChamberCollapsePort.java`、`CCB` 指 `chamber/ChamberControllerBlock.java`、`CHS` 指 `chamber/ChamberState.java`、`CSS` 指 `chamber/ChamberStatusSignal.java`、`CPCT`／`CSST` 是它們的 JUnit、`M4C` 指 testmod 的 `M4CandidateDoorGameTests.java`、`CSM` 指 testmod 的 `mixin/CollapseSuspendMixin.java`、`SPM` 指 testmod 的 `mixin/CollapseSealProbeMixin.java`；`CS`、`OD`、`PS`、`CST`、`M5U`、`SUP`、`HK` 同前面各節。新增的 3 個 `@GameTest`（M5 run，各自一個 batch，名稱不以 `_windows` 結尾，各平台都執行）：
   - T-REENTER `M5U:3494` `ready_write_failure_keeps_the_door_plain_when_the_prepare_reenters_within_the_backoff`（`m5_universe_passage_ready_fault_reenter`，tickLimit 1500，catalog 增量 1；第一位）
   - T-CMP `M5U:3609` `dormant_passage_reaches_comparator_fifteen_and_survives_refreshes_after_a_waiting_power_cut`（`m5_universe_passage_comparator`，tickLimit 1200，catalog 增量 1）
@@ -4851,7 +4874,21 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
   - `build.yml` 的明列清單另加 T-REENTER（controller 已裁示）、T-CMP、T-OWN（都不是 `_windows`）。
   - 重啟矩陣：「終局之後、改門之前 crash」的跨 JVM 版本（重啟之後 Controller 的 load-sync 刷新排入正規化、門在下一個 tick 改為一般開門；T-OWN 第 2 段以同一個 JVM 模擬）；PASSAGE_READY 在開服時終局之後的比較器（重啟之前存下的 PASSAGE／15，開服之後的第一次刷新依 presence NONE 重新評估，R2 M5 的記號不持久化）。
   - （第一位，R-m3）Track 依階段拆成小 holder。
+  - **Step 0（controller 補，F5-2 的 spec review 與 quality review 留下的 Minor 與 Nit）**。F6 派工時，要把 `chamber/ChamberPowerCoordinator.java`、`ChamberControllerBlockEntity.java`、`ChamberCollapsePort.java`、`collapse/OriginDoors.java`、testmod 的 `M5TestHooks.java`、`mixin/CollapseSealProbeMixin.java` 中下列各點列入允許路徑。行號以 `998386a` 為準。
+    - spec S-M2＋quality：`ARMED_BY_START`（`CPC:22-27`）是整個 JVM 共用的 static。「重啟之後一律重新評估」在同一個 JVM 內重開 server 時不成立；它也讓 reconcile 的結果依賴參數以外的歷史。改成 `ChamberControllerBlockEntity` 上不寫入 NBT 的欄位，經 `SessionActions` 傳入、傳出（比照 `activationBlocked`）；或在 `SERVER_STOPPED` 時清空，並修正 Javadoc。production 目前這個集合恆為空，以 JUnit 證明行為不變。
+    - quality Minor 1：`CPC:173` 的 reconcile Javadoc 寫「純函式」，但它會寫入 registry 的 power state，也會呼叫 `SessionActions`。改正敘述。
+    - quality Minor 2：`doorHasMembrane` 在 `CPC:164-170` 與 `OD:180-186` 各有一份，迴圈逐字相同。收斂成 chamber 端的一個 public static，OD 改呼叫它。
+    - quality Nit：
+      - `CPC:183` 的區域變數 `armedByStart` 與同名方法衝突，改名為 `heldByStart`；
+      - `CPC:141` 重複讀取 presence；
+      - `CPC:158` 的 false 分支只有 JUnit 會走到；
+      - `M5TestHooks:108`、`:118` 的條件重複；
+      - `CollapseSealProbeMixin:24`、`:31` 的 descriptor 重複；
+      - `CCP:80` 的 `Membranes` Javadoc 漏了「艙體的 chunk 已載入」這個條件。
+    - CS 已有 1590 行，只剩約 10 行餘裕。F6 若會改到 CS，先依 F5-0 交接的條件，評估是否把 PREPARE 抽出。
 - F7：
+  - （controller 補，F5-2 spec S-M1）R2 M5 的人工重驗範圍：整合審查延後清單（`2026-09-29-m1-m4-integration-review.md:254`）要求，修正前確認 B-1a、B-3c、C-1b、C-2a 的重驗範圍。spec reviewer 依程式判斷四項都不受影響：B-3c、C-1b、C-2a 都從 IDLE 或 INVALID 起步；B-1a 走 pending 路徑時，`current` 會被設成 INVALID，所以不經過 `:222`。F7 把這個判斷寫進延後清單的處置，並決定 milestone 的人工 smoke 是否抽驗其中一項。
+  - （controller 補，F5-2 spec S-M3）已知限制：Controller 的 PASSAGE 訊息在 production 中只會在 n-2 期間出現，也就是通道已在記憶體內關閉的那段時間，而訊息卻寫「已開啟」。與比較器短暫誤報 15 列在同一條。
   - 已知限制（補充第 4 點）：SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉的期間，比較器仍是 15（短暫誤報），到寫入成功為止；這段期間原艙門照一般門的邏輯開關（n-2）。
   - spec errata：§10.7 的 Controller PASSAGE 訊息字句；§10.6 :613 的實作細節（排入下一個 tick、套用時再排除有 M5 session 的艙、MEASURED／DORMANT 也包含在內、不看供電、sealed 與 passable 都改為一般開門）；n-2 的門（若接受）。
   - README「預期結果」的數字以最新的 run-all 為準（F5-2 之後：M5 55、JUnit 654、release 429／382、sources 221）。
