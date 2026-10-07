@@ -832,6 +832,23 @@ final class M5GameTestSupport {
         return doorAll(world, frame, true, MembraneState.sealedFor(frame.outwardFacing()));
     }
 
+    // ---- 通道（F5-1） ----
+
+    /** 25 格門都是朝向的 passable 量子膜（{@code open=true}＋{@code passable_<axis>}；PASSAGE_READY 的門）。 */
+    static boolean doorPassable(ServerWorld world, ChamberFrame frame) {
+        return doorAll(world, frame, true, MembraneState.passableFor(frame.outwardFacing()));
+    }
+
+    /**
+     * F5-1：這個 session 準備完成之後不提交 PASSAGE_READY（{@link M5TestHooks#READY_HOLD}，testmod {@code CollapseReadyHoldMixin}），PREPARE 照常：給「準備完成之後仍在
+     * PREPARE」的原艙門 test 用（F5-1 之前它們停在 READY stub）。{@code hits()} 證明暫緩真的發生。安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.ReadyHold holdReady(TestContext context, UUID session, M2CorridorGameTests.TestHooks hooks) {
+        var hold = new M5TestHooks.ReadyHold(session);
+        installHook(context, M5TestHooks.READY_HOLD, hold, hooks);
+        return hold;
+    }
+
     // ---- 投影（F4b-1） ----
 
     /** {@link #forceProjectionChunks} 在投影的 7×7×7 外再水平外擴的格數：涵蓋紅石讀取（±3）、門的套用（±3）與 test 在投影外放的方塊。 */

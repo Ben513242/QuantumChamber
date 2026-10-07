@@ -1,6 +1,7 @@
 package dev.quantumchamber.collapse;
 
 import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
 import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
@@ -84,8 +85,11 @@ import org.slf4j.MarkerFactory;
  *     SOURCE 進入 PREPARE 即走 §7.4 的 fast path：先 checked 終局、再把門改為一般開門、再顯示訊息；終局之後釋放 runtime 與來源 ticket（spec §5）。
  *     UNIVERSE 的 PREPARE（F4b-2，目的宇宙這一側，§9、§6.5）：預載目的世界（M5 的 chunk ticket，非建立模式查詢）→ 退化時進 SEALED → projection ledger
  *     （§6.5 的實體交叉檢查、既有 entry 的 site 驗證）→ §9.2 的衝突 → checked PENDING → 寫投影（第一次寫入或修復）→ 原生存檔 checkpoint → 再驗不變量 cell
- *     → checked COMPLETE → 準備完成，停在 F5 之前（不提交 PASSAGE_READY，每個 session 記一次 WARN「通道尚未實作」）。閘門在 PREPARE 進行到一半時不再成立就
- *     釋放目的世界的 ticket、退回 WAITING。目的世界的 ticket 在閘門失效、進入 SEALED、終局時釋放（通道結束屬 F5）。</li>
+ *     → checked COMPLETE（修復寫了任何一格時也先做 checkpoint，F5-1 的 S-M2）→ 準備完成 → §10.2 的前置條件都成立時 checked 提交 PASSAGE_READY（restore 類，
+ *     {@link #ready}；F5-1）。閘門在 PREPARE 進行到一半時不再成立就釋放目的世界的 ticket、退回 WAITING。目的世界的 ticket 在閘門失效、進入 SEALED、終局時釋放，
+ *     PASSAGE_READY 期間繼續持有，通道結束時隨終局釋放。</li>
+ * <li>PASSAGE_READY（§10.2，F5-1）：提交之後門改為 passable 量子膜、刷新 Controller、對艙內的參與者顯示「量子通道已開啟」。跨越、傳送與通道的結束（§10.3–§10.6）
+ *     尚未實作：執行期間提交的 PASSAGE_READY 停在這裡，目的世界的 ticket 繼續持有。</li>
  * <li>PREPARE 期間的原艙門（F4b-3，§7 開頭、§7.3；F5-0 起在 {@link OriginDoors}）：每個 PREPARE 的 tick 依「套用量子膜的條件」（門口沒有 entity、艙內沒有非參與者玩家）在 sealed 量子膜與
  *     一般開門之間選一個（{@link OriginDoors#prepareDoor}，門口有人時絕不套用有碰撞的門）；離開或暫停 PREPARE（閘門失效、SEALED 的寫入被拒、隔離）時門改回一般開門。
  *     玩家開關原艙門先經 {@code ChamberCollapsePort} 交給這裡（{@link #useDoor} → {@link OriginDoors#door}，排在 {@code ChamberDoorService} 之前）：PREPARE 期間參與者開關門 →
@@ -116,10 +120,14 @@ public final class CollapseService {
     public static final String MESSAGE_COLLAPSED = "message.quantumchamber.m5.collapsed";
     /** spec §10.8「進入 SEALED」：執行期間進入 SEALED 時對參與者顯示（F4a）。 */
     public static final String MESSAGE_SEALED = "message.quantumchamber.m5.sealed";
+    /** spec §10.8「通道開啟」：提交 PASSAGE_READY 之後對在艙內的參與者顯示（§10.2 第 3 步，F5-1）。 */
+    public static final String MESSAGE_PASSAGE_OPENED = "message.quantumchamber.m5.passage_opened";
     /** spec §6.2：RESOLVE 的等待（catalog 或 discovery 有未確認的寫入）持續超過這個 tick 數時記一次 WARN。 */
     static final int WAIT_WARN_TICKS = 600;
     /** {@link #warn} 的寫入種類：進入 SEALED 的 journal 寫入、SEALED→COLLAPSING 的重試。 */
     private static final String SEAL_WRITE = "寫入 SEALED", RETRY = "重試 SEALED→COLLAPSING";
+    /** {@link #warn} 的寫入種類：提交 PASSAGE_READY（restore 類，F5-1）。 */
+    private static final String READY_WRITE = "提交 PASSAGE_READY";
     /** {@link #sideEffect} 的種類：提交 COLLAPSING 與 SEALED→COLLAPSING 重試之後取得來源 ticket（兩處共用同一個去重鍵），與失敗之後實際會發生的事。 */
     private static final String ACQUIRE_TICKET = "取得來源 ticket", ACQUIRE_TICKET_NEXT = "本 server instance 不重試，開服 attach 時會為 COLLAPSING 重新取得";
     /** 進入 SEALED 的 WARN／ERROR 的去重鍵前綴（後接原因）；RESOLVE 成功時清除。 */
@@ -140,14 +148,17 @@ public final class CollapseService {
      * （{@link OriginDoors#doorReloaded} 的「重啟之後第一次觀察」與 {@link OriginDoors#reapplyCause}，§7.3，F4b-3）。
      */
     final Set<UUID> startupSessions;
-    /** 開服時就是 PASSAGE_READY 的 session（§12）；F5 之前執行期間不會產生 PASSAGE_READY。 */
-    private final Set<UUID> startupPassages;
+    /**
+     * 開服時就是 PASSAGE_READY 的 session（§12）：第一個 tick 直接終局（執行期間提交的 PASSAGE_READY 不在這裡）。package-private：
+     * {@link OriginDoors#watchDoor} 不為它們重新套用 passable 量子膜（F5-1）。
+     */
+    final Set<UUID> startupPassages;
     final Map<UUID, Track> tracks = new HashMap<>();
     /** 這個 server instance 的原艙門（F4b-3 的攔截、PREPARE 期間的門、重新套用與待套用的門；F5-0 從這裡抽出，行為不變）。 */
     private final OriginDoors originDoors = new OriginDoors(this);
     /**
-     * 每個 session 在目的世界持有的預載 ticket（§9.1，以 session 為 key，不持久化）。在 PREPARE 期間結束（閘門失效）、進入 SEALED、終局時釋放；通道結束屬 F5
-     * （{@link #releaseDestination(MinecraftServer, UUID)}）。終局不論由誰執行，下一個 tick 看到 session 已不在 journal 時都會釋放。
+     * 每個 session 在目的世界持有的預載 ticket（§9.1，以 session 為 key，不持久化）。在 PREPARE 期間結束（閘門失效）、進入 SEALED、終局時釋放；PASSAGE_READY 期間繼續持有（F5-1）；
+     * 通道結束屬 F5（{@link #releaseDestination(MinecraftServer, UUID)}）。終局不論由誰執行，下一個 tick 看到 session 已不在 journal 時都會釋放。
      */
     private final Map<UUID, DestinationTicket> destinations = new HashMap<>();
     private String tickWarning, tickWarningText;
@@ -264,6 +275,7 @@ public final class CollapseService {
         switch (record.state()) {
             case MEASURED -> measured(record);
             case COLLAPSING -> collapsing(record);
+            // §12：開服時就是 PASSAGE_READY 的直接終局。執行期間提交的（F5-1）：跨越與通道的結束尚未實作，停在 PASSAGE_READY。
             case PASSAGE_READY -> { if (startupPassages.contains(sid)) endStartupPassage(record); }
             // SEALED 只處理重試（§11.2）；它的 roll-forward 寫出由 recovery 重試。其餘不是塌縮流程的狀態。
             case SEALED -> sealed(record);
@@ -502,16 +514,17 @@ public final class CollapseService {
      * <li>退化（§9.3）：投影保護索引已退化時（projection ledger 不健康），以它的原因進 SEALED。這一步不需要 chunk，所以在預載完成之前就檢查。</li>
      * <li>預載還沒全部 FULL：等下一個 tick。之後的步驟見 {@link #project}。</li>
      * </ol>
-     * 等待（預載、玩家擋住寫入、checkpoint 未就緒）從進入 PREPARE 起超過 {@value #WAIT_WARN_TICKS} ticks 時記一次 WARN，然後繼續等（§9.1：沒有劇情上的
-     * 逾時、不重抽）。準備完成之後停在 F5 之前（{@link #prepared}），之後的 tick 只判斷原艙門（見下一段），目的世界的 ticket 繼續持有。
+     * 等待（預載、玩家擋住寫入、checkpoint 未就緒、PASSAGE_READY 的前置條件）從進入 PREPARE 起超過 {@value #WAIT_WARN_TICKS} ticks 時記一次 WARN，然後繼續等
+     * （§9.1：沒有劇情上的逾時、不重抽）。準備完成（{@link #prepared}）之後的 tick 不再預載或投影，只判斷原艙門（見下一段），並在 §10.2 的前置條件都成立時提交
+     * PASSAGE_READY（{@link #ready}，F5-1）；目的世界的 ticket 繼續持有。
      * <p>每個 PREPARE 的 tick 先判斷原艙門（{@link OriginDoors#prepareDoor}：「套用量子膜的條件」，§7.3；F4b-3），再看準備是否已完成：判斷插在
-     * {@code if (progress.ready) return;} 之前（F4b-2 fix round 1，quality Q-M4），所以準備完成之後的 tick 也每個 tick 重新判斷門。
+     * {@code if (progress.ready)} 之前（F4b-2 fix round 1，quality Q-M4），所以準備完成之後的 tick 也每個 tick 重新判斷門。提交 PASSAGE_READY 的寫入沒有完成時，PREPARE
+     * 暫停（{@link Prepare#readyFailed}）：不再判斷門（門已改為一般開門），退避期過後只重試提交。
      */
     private void prepareUniverse(SessionRecoveryRecord view, Track track) {
         // 推導回傳 PREPARE 時，進入的那個 tick 已由 enterPrepare 建立 Prepare，之後一直保留到離開（Track#preparing 的不變式）。
         var progress = Objects.requireNonNull(track.prepare, "PREPARE 的簿記應已由 enterPrepare 建立");
-        originDoors.prepareDoor(view, track, progress);
-        if (progress.ready) return;
+        if (!progress.readyFailed) originDoors.prepareDoor(view, track, progress);
         var id = ((CollapseDestination.Universe) view.collapse().destination()).id();
         var world = UniverseLifecycleService.resolveActive(server, id).orElse(null);
         if (world == null) {
@@ -521,6 +534,10 @@ public final class CollapseService {
             track.resolved = false;
             LOGGER.warn(LOG_MARKER, "PREPARE 的目的世界不是 ACTIVE（不應發生），回到 RESOLVE 重新確認；之後與閘門失效相同，依原參與者由艙外進入的邊緣觸發續做："
                     + "session={} chamber={} 目的地={}", view.sessionUuid(), view.chamberUuid(), describe(view.collapse().destination()));
+            return;
+        }
+        if (progress.ready) {
+            ready(view, track, progress, world, id);
             return;
         }
         var frame = new ChamberFrame(view.origin().controllerPos(), view.origin().facing());
@@ -556,8 +573,9 @@ public final class CollapseService {
      *     既有 PENDING 是 {@code UNCHANGED}（照第一次寫入），既有 COMPLETE 是 {@code ALREADY_COMPLETE}（只修復）；site 不符是 {@code AUTHORITY_CORRUPT}。
      *     寫入沒有確認（含讀回失敗）就進 SEALED，不寫任何方塊（§6 收斂規則第 2 點）。確認之後以寫入結果登記到投影保護索引（只供辨識）。</li>
      * <li>寫方塊（{@link ProjectionWriter}）：第一次寫入（PENDING）或修復（COMPLETE）。玩家擋住、volume 的 chunk 不是都 FULL：下一個 tick 再試；
-     *     驗證或寫入失敗：{@code PROJECTION_FAILED}，以結果帶的 failure 當 root cause。修復完成就是準備完成（不寫 ledger、不做 checkpoint）。</li>
-     * <li>第一次寫入之後：目的 volume 的 chunks 先問 {@link ChunkSaveCheckpoint#ready}（未就緒等下一個 tick）。</li>
+     *     驗證或寫入失敗：{@code PROJECTION_FAILED}，以結果帶的 failure 當 root cause。修復一格都沒有寫，就是準備完成（方塊沒有改變，不寫 ledger、不做 checkpoint）；
+     *     修復寫了任何一格時，與第一次寫入一樣要先做下面的 checkpoint 才算準備完成（F5-1，F4b-2 spec S-M2），只是不寫 COMPLETE（ledger 已是 COMPLETE）。</li>
+     * <li>寫了方塊之後：目的 volume 的 chunks 先問 {@link ChunkSaveCheckpoint#ready}（未就緒等下一個 tick）。</li>
      * <li>checkpoint 之前，以修復模式再驗一次不變量 cell（F4b-1 交下的未保護窗口：PENDING 期間不變量 cell 不受保護，第一次寫入之後可能被改動）。修復了任何一格，
      *     或被擋住（玩家站在要修復的格上、chunk 不是 FULL）：不做 checkpoint，下一個 tick 再驗（F4b-2 fix round 1，quality Q-I1：不變量 cell 一直被改動時不會每個
      *     tick 都存檔；這是等待，併入 §9.1 的 600 ticks WARN，「已修復」的 INFO 每一段 PREPARE 只記一次）。</li>
@@ -565,7 +583,7 @@ public final class CollapseService {
      * <li>checkpoint 之後、寫 COMPLETE 之前，以修復模式再驗一次：這次修復寫了任何一格，checkpoint 就沒有涵蓋它，不寫 COMPLETE，下一個 tick 從 checkpoint 之前的
      *     再驗重來。同一個 tick 內，checkpoint、這次驗證與 COMPLETE 的寫入之間沒有任何遊戲邏輯執行，所以驗證通過時寫下的 COMPLETE 對應的就是 checkpoint 存下的
      *     方塊；只有 checkpoint 本身改動方塊時這次驗證才會修復（GameTest 以 checkpoint 探針模擬）。</li>
-     * <li>checked 寫入 COMPLETE（沒有確認就進 SEALED），確認之後登記到索引（不變量 cell 從這時起受保護），準備完成。</li>
+     * <li>第一次寫入：checked 寫入 COMPLETE（沒有確認就進 SEALED），確認之後登記到索引（不變量 cell 從這時起受保護）。之後（修復則直接）準備完成。</li>
      * </ol>
      */
     private void project(SessionRecoveryRecord view, Track track, Prepare progress, ServerWorld world, ChamberFrame frame, UniverseId id,
@@ -615,14 +633,16 @@ public final class CollapseService {
             progress.registered = entry;
         }
         var mode = writeMode(pending.status());
-        if (mode == ProjectionWriter.Mode.REPAIR) {
-            var repaired = ProjectionWriter.write(world, frame, mode);
-            if (proceeds(view, track, progress, repaired)) prepared(view, track, progress, mode, repaired.written());
-            return;
-        }
         if (!progress.written) {
             var first = ProjectionWriter.write(world, frame, mode);
             if (!proceeds(view, track, progress, first)) return;
+            if (mode == ProjectionWriter.Mode.REPAIR && first.written() == 0) {
+                // 修復一格都沒有寫：方塊與已完成的投影相同，不需要 checkpoint（F4b-2「偏離」第 2 條）。
+                prepared(view, track, progress, mode, 0, world, id);
+                return;
+            }
+            // 寫了方塊（第一次寫入，或修復寫了任何一格）：READY 之前要有原生存檔 checkpoint（F5-1，F4b-2 spec S-M2：修復之後、存檔之前 crash 時，
+            // 修復會遺失而 READY 已提交）。checkpoint 之前與之後的再驗、只在再驗乾淨時存檔，都與第一次寫入相同（不會每個 tick 存檔，F4b-2 Q-I1）。
             progress.written = true;
             progress.writtenCells = first.written();
         }
@@ -651,14 +671,16 @@ public final class CollapseService {
             repairedBeforeComplete(view, progress, verify.written());
             return;
         }
-        var complete = authorities.writeProjection(entry.withStatus(ProjectionLedger.Entry.Status.COMPLETE));
-        if (!complete.succeeded()) {
-            seal(view, track, complete.sealedReason().orElseThrow(), complete.failure().orElseThrow());
-            return;
+        if (mode == ProjectionWriter.Mode.FIRST_WRITE) {
+            var complete = authorities.writeProjection(entry.withStatus(ProjectionLedger.Entry.Status.COMPLETE));
+            if (!complete.succeeded()) {
+                seal(view, track, complete.sealedReason().orElseThrow(), complete.failure().orElseThrow());
+                return;
+            }
+            index.confirmed(complete);
+            progress.registered = complete.entry().orElseThrow();
         }
-        index.confirmed(complete);
-        progress.registered = complete.entry().orElseThrow();
-        prepared(view, track, progress, mode, progress.writtenCells);
+        prepared(view, track, progress, mode, progress.writtenCells, world, id);
     }
 
     /**
@@ -668,25 +690,130 @@ public final class CollapseService {
     private void repairedBeforeComplete(SessionRecoveryRecord view, Prepare progress, int written) {
         if (!progress.repairLogged) {
             progress.repairLogged = true;
-            LOGGER.info(LOG_MARKER, "投影的不變量 cell 在第一次寫入之後被改動，已修復 {} 格；要等再驗沒有改動才做 checkpoint，之後才寫 COMPLETE（這一段 PREPARE 只記一次）："
-                    + "session={} chamber={}", written, view.sessionUuid(), view.chamberUuid());
+            LOGGER.info(LOG_MARKER, "投影的不變量 cell 在寫入之後被改動，已修復 {} 格；要等再驗沒有改動才做 checkpoint，之後才寫 COMPLETE（修復時不寫）、準備完成"
+                    + "（這一段 PREPARE 只記一次）：session={} chamber={}", written, view.sessionUuid(), view.chamberUuid());
         }
         prepareWait(view, progress, "投影的不變量 cell 在第一次寫入之後一直被改動（每次再驗都要修復，checkpoint 要等再驗沒有改動才做）");
     }
 
     /**
-     * 準備完成（預載與投影都已完成；F4b-2 的停點，比照 F4a 的 PREPARE stub）：不提交 PASSAGE_READY（F5）。記一則 INFO；每個 session 在本 instance 只記一次
-     * WARN「通道尚未實作（F5）」。目的世界的 ticket 繼續持有，直到閘門失效、SEALED 或終局。之後的 PREPARE tick 不再預載或投影，只判斷原艙門（{@link OriginDoors#prepareDoor}，
-     * F4b-3）：每個 tick 依套用量子膜的條件，門是 sealed 量子膜，或（門口有人、艙內有非參與者時）一般開門。
+     * 準備完成（預載與投影都已完成）：記一則 INFO，同一個 tick 就嘗試提交 PASSAGE_READY（{@link #ready}，F5-1；取代 F4b-2 的停點與「通道尚未實作（F5）」的 WARN）。
+     * 之後的 PREPARE tick 不再預載或投影，只判斷原艙門（{@link OriginDoors#prepareDoor}，F4b-3），並在前置條件不成立時重試提交。目的世界的 ticket 繼續持有。
      */
-    private void prepared(SessionRecoveryRecord view, Track track, Prepare progress, ProjectionWriter.Mode mode, int written) {
+    private void prepared(SessionRecoveryRecord view, Track track, Prepare progress, ProjectionWriter.Mode mode, int written, ServerWorld world, UniverseId id) {
         progress.ready = true;
         LOGGER.info(LOG_MARKER, "準備完成（預載與投影都已完成）：session={} chamber={} 目的地={} 投影={}（寫入 {} 格），PREPARE 共 {} ticks", view.sessionUuid(),
                 view.chamberUuid(), describe(view.collapse().destination()), mode, written, now - progress.since);
-        if (track.readyWarned) return;
-        track.readyWarned = true;
-        LOGGER.warn(LOG_MARKER, "通道尚未實作（F5）：準備完成，COLLAPSING 停在準備完成、不提交 PASSAGE_READY；目的世界的 ticket 繼續持有，直到閘門失效、SEALED 或終局："
-                + "session={} chamber={} 目的地={}", view.sessionUuid(), view.chamberUuid(), describe(view.collapse().destination()));
+        ready(view, track, progress, world, id);
+    }
+
+    /**
+     * spec §10.2：準備完成之後，前置條件全部成立時 checked 提交 PASSAGE_READY（restore 類，§6；opened＝現在的 game time，expires＝opened＋1200）。每個 PREPARE 的 tick
+     * （準備完成之後）重新判斷，不成立時依原因：
+     * <ul>
+     * <li><b>等待</b>（不進 SEALED、不退回 WAITING，併入 §9.1 的 600 ticks WARN）：預載的 chunk 不是都 FULL；相關權威（{@link #readyAuthorities}）有尚未確認的寫入
+     *     （spec §6 收斂共通第 2 點：收斂之前不做新決策；先 {@code convergeIfNeeded}）；EXISTING 的重驗回 WAIT（catalog 或 discovery 未確認、lifecycle 沒有 ready 的
+     *     context）。</li>
+     * <li><b>SEALED</b>（§8.4：準備的失敗進 SEALED、保留同一個 Destination）：EXISTING 再次通過 §8.1 的重驗失敗（{@code DestinationResolver.resolve} 的 EXISTING 分支只讀
+     *     不寫：不符為 {@code EXISTING_INELIGIBLE}，§8.1、§11.2 的永久原因；權威讀不到或損壞時是它的原因）；投影的 COMPLETE entry 不在、或 NEW 的 discovery record 不在或
+     *     不是 gameplay-eligible（已確認的寫入不見了，§6 的「確定遺失」：{@code AUTHORITY_CORRUPT}）；查詢失敗時用權威帶的原因。</li>
+     * <li><b>退回 WAITING</b>：來源艙已載入、結構合法、已供電、enabled 是 PREPARE 的閘門（§7.3）。這個 tick 的推導已以它確認（{@link PrepareGate#stillOpen}），不成立時推導
+     *     本身就離開 PREPARE（{@link #leavePrepare}），不會走到這裡。目的世界不是 ACTIVE 由 {@link #prepareUniverse} 在這之前處理（回到 RESOLVE）。</li>
+     * </ul>
+     * 提交之後依序：門改為 passable 量子膜（{@link OriginDoors#openPassage}；passable 沒有碰撞，§7.3「門口有人時的規則」只適用於會讓門變成有碰撞的轉換，所以不看門口；
+     * 艙內有非參與者時也照樣提交）→ 刷新 Controller（§10.7）→ 對在艙內的參與者顯示「量子通道已開啟」（§10.2 第 3 步）。PREPARE 的簿記丟棄。
+     * 提交沒有完成時依 §6「journal 寫入失敗時的 session 行為」：record 留在上一份已確認的 COLLAPSING，per-session 退避（§11.2），PREPARE 暫停、原艙門改為一般開門
+     * （與 §7.3 閘門失效時的門相同：sealed 量子膜有碰撞，不能在重試期間把人困在艙內），退避期過後只重試這筆提交。
+     */
+    private void ready(SessionRecoveryRecord view, Track track, Prepare progress, ServerWorld world, UniverseId id) {
+        var sid = view.sessionUuid();
+        if (!track.backoff.ready(now)) return;
+        var frame = new ChamberFrame(view.origin().controllerPos(), view.origin().facing());
+        if (!preload(sid, world, frame)) {
+            prepareWait(view, progress, "PASSAGE_READY 的前置條件：預載目的世界（chunk 還沒全部 FULL）");
+            return;
+        }
+        var authorities = CollapseAuthorities.get(server);
+        boolean created = view.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New;
+        for (var authority : readyAuthorities(created)) {
+            authorities.convergeIfNeeded(authority);
+            if (authorities.unconfirmed(authority)) {
+                prepareWait(view, progress, "PASSAGE_READY 的前置條件：" + authority + " 有尚未確認的寫入（收斂之前不提交）");
+                return;
+            }
+        }
+        var projection = authorities.projection(view.chamberUuid(), id);
+        if (!projection.succeeded()) {
+            seal(view, track, projection.sealedReason().orElseThrow(), projection.failure().orElseThrow());
+            return;
+        }
+        if (projection.value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isEmpty()) {
+            seal(view, track, SealedReason.AUTHORITY_CORRUPT, new IllegalStateException("準備完成之後，projection ledger 沒有這座艙在這個宇宙的 COMPLETE entry"
+                    + "（已確認的寫入不見了，spec §6）：" + projection.status()));
+            return;
+        }
+        if (created) {
+            var discovered = authorities.discovery(id);
+            if (discovered.status() == CollapseAuthorities.Lookup.Status.WAIT) {
+                prepareWait(view, progress, "PASSAGE_READY 的前置條件：discovery 有尚未確認的寫入（收斂之前不提交）");
+                return;
+            }
+            if (!discovered.succeeded()) {
+                seal(view, track, discovered.sealedReason().orElseThrow(), discovered.failure().orElseThrow());
+                return;
+            }
+            if (discovered.value().filter(UniverseDiscoveryRecord::gameplayEligible).isEmpty()) {
+                seal(view, track, SealedReason.AUTHORITY_CORRUPT, new IllegalStateException("NEW 的 discovery record 在 RESOLVE 已確認，PASSAGE_READY 之前卻不在或不是"
+                        + " gameplay-eligible（spec §6.4、§10.2）：" + discovered.status()));
+                return;
+            }
+        } else {
+            switch (DestinationResolver.forServer(server).resolve(view)) {
+                case ResolveResult.Wait wait -> {
+                    prepareWait(view, progress, "PASSAGE_READY 之前 EXISTING 的重驗：" + wait.reason());
+                    return;
+                }
+                case ResolveResult.Sealed sealed -> {
+                    seal(view, track, sealed.reason(), sealed.failure());
+                    return;
+                }
+                case ResolveResult.Resolved resolved -> { }
+            }
+        }
+        var next = view.withCollapse(SessionState.PASSAGE_READY, view.collapse().withPassage(server.getOverworld().getTime()));
+        var result = journal.commitRestore(server, view, next);
+        if (!result.committed()) {
+            track.backoff.failed(now);
+            warn(sid, READY_WRITE, result.failure().orElseThrow(), result.status().name(), "record 留在 COLLAPSING；依 per-session 退避（" + track.backoff.delayTicks()
+                    + " ticks 後，tick " + track.backoff.retryAtTick() + "）只重試這筆提交，期間 PREPARE 暫停、原艙門改為一般開門");
+            if (!progress.readyFailed) {
+                progress.readyFailed = true;
+                if (!track.doorReleased) originDoors.releasePrepareDoor(view, track);
+                LOGGER.info(LOG_MARKER, "提交 PASSAGE_READY 沒有完成，PREPARE 暫停：原艙門改為一般開門，依 per-session 退避只重試這筆提交（目的世界的 ticket 繼續持有）："
+                        + "session={} chamber={}", sid, view.chamberUuid());
+            }
+            return;
+        }
+        track.warnings.remove(READY_WRITE);
+        track.backoff.reset();
+        // PREPARE 的簿記到這裡結束：之後是 PASSAGE_READY（PREPARE 的門不再執行）。
+        track.preparing = false;
+        track.prepare = null;
+        track.membrane = null;
+        track.doorReleased = false;
+        LOGGER.info(LOG_MARKER, "量子通道已開啟（checked PASSAGE_READY）：session={} chamber={} 目的地={} opened={} expires={}", sid, view.chamberUuid(),
+                describe(next.collapse().destination()), next.collapse().passageOpenedAtGameTime(), next.collapse().passageExpiresAtGameTime());
+        originDoors.openPassage(next);
+        refresh(next, "提交 PASSAGE_READY 之後刷新 Controller");
+        notifyInside(next, MESSAGE_PASSAGE_OPENED);
+    }
+
+    /** PASSAGE_READY 之前必須都已確認的權威（spec §10.2「相關權威」，純函式）：catalog、discovery、projection ledger，NEW 另加 allocation ledger。 */
+    static List<CollapseAuthorities.Authority> readyAuthorities(boolean created) {
+        var common = List.of(CollapseAuthorities.Authority.CATALOG, CollapseAuthorities.Authority.DISCOVERY, CollapseAuthorities.Authority.PROJECTION_LEDGER);
+        if (!created) return common;
+        return List.of(CollapseAuthorities.Authority.CATALOG, CollapseAuthorities.Authority.DISCOVERY, CollapseAuthorities.Authority.PROJECTION_LEDGER,
+                CollapseAuthorities.Authority.ALLOCATION_LEDGER);
     }
 
     /** {@link ProjectionWriter.Result} 的下一步（純函式）。 */
@@ -1101,6 +1228,14 @@ public final class CollapseService {
         }
     }
 
+    /** 只對在來源艙內的參與者（{@link #inside}）顯示 actionbar（spec §10.2 第 3 步「對在艙內的參與者」）。 */
+    private void notifyInside(SessionRecoveryRecord record, String key) {
+        for (var id : inside(record)) {
+            var player = server.getPlayerManager().getPlayer(id);
+            if (player != null && !player.isRemoved()) player.sendMessage(Text.translatable(key), true);
+        }
+    }
+
     /** 讓比較器與 registry 的 power state 立即反映終局（presence 回到 NONE）；Controller 所在 chunk 沒載入時由之後的載入協調處理。 */
     void refresh(SessionRecoveryRecord record) {
         refresh(record, "終局之後刷新 Controller");
@@ -1209,8 +1344,6 @@ public final class CollapseService {
         boolean restartRetryConsumed;
         /** UNIVERSE 這一段 PREPARE 的記憶體內進度（進入 PREPARE 時建立，離開、進入 SEALED、重試時丟棄；不持久化，重啟之後重新推導）。 */
         Prepare prepare;
-        /** 「通道尚未實作（F5）」的 WARN 已記過（每個 session 在本 instance 一次）。 */
-        boolean readyWarned;
         /** RESOLVE 連續等待的起點（-1 表示不在等待）與這次等待是否已記過 WARN。 */
         long waitSince = -1;
         boolean waitWarned;
@@ -1303,8 +1436,10 @@ public final class CollapseService {
         boolean repairLogged;
         /** 這一段 PREPARE 已記過「套用 sealed 量子膜」／「維持一般開門」的 INFO（{@link OriginDoors#prepareDoor}，各一次，F4b-3）。 */
         boolean sealedLogged, openLogged;
-        /** 準備完成（F5 之前的停點）。 */
+        /** 準備完成（預載與投影都已完成）；之後只等 PASSAGE_READY 的前置條件（{@link #ready}）。 */
         boolean ready;
+        /** 提交 PASSAGE_READY 的寫入沒有完成（restore 類）：PREPARE 暫停（原艙門已改為一般開門），退避期過後只重試提交（F5-1）。 */
+        boolean readyFailed;
 
         Prepare(int since) { this.since = since; }
     }

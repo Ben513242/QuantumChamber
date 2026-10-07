@@ -382,6 +382,27 @@ class CollapseServiceTest {
                 () -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
     }
 
+    /** F5-1（spec §10.8）：通道開啟的訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 逐字等於 spec，en_us 有翻譯。 */
+    @Test void passageMessagesExistInBothLanguages() throws Exception {
+        var zh = lang("zh_tw"); var en = lang("en_us");
+        var cases = new ArrayList<Executable>();
+        for (var row : List.of(List.of(CollapseService.MESSAGE_PASSAGE_OPENED, "message.quantumchamber.m5.passage_opened", "量子通道已開啟：穿過門口的量子膜即可前往。"))) {
+            cases.add(() -> assertEquals(row.get(1), row.get(0)));
+            cases.add(() -> assertEquals(row.get(2), text(zh, row.get(0))));
+            cases.add(() -> assertFalse(text(en, row.get(0)).isBlank(), "en_us 有翻譯：" + row.get(0)));
+        }
+        cases.add(() -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
+        assertAll(cases);
+    }
+
+    /** F5-1（spec §10.2「相關權威都不在未確認狀態」）：PASSAGE_READY 之前要確認的權威；NEW 另加 allocation ledger。 */
+    @Test void readyWaitsForTheRelevantAuthorities() {
+        var common = Set.of(CollapseAuthorities.Authority.CATALOG, CollapseAuthorities.Authority.DISCOVERY, CollapseAuthorities.Authority.PROJECTION_LEDGER);
+        assertAll(
+                () -> assertEquals(common, Set.copyOf(CollapseService.readyAuthorities(false)), "EXISTING"),
+                () -> assertEquals(union(common, Set.of(CollapseAuthorities.Authority.ALLOCATION_LEDGER)), Set.copyOf(CollapseService.readyAuthorities(true)), "NEW"));
+    }
+
     /** F4a（spec §10.8）：「進入 SEALED」的訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 逐字等於 spec，en_us 有翻譯。 */
     @Test void sealedMessageExistsInBothLanguages() throws Exception {
         var zh = lang("zh_tw"); var en = lang("en_us");
@@ -522,7 +543,7 @@ class CollapseServiceTest {
     /**
      * F4b-3（spec §7.3「門狀態的重新套用」；補充第 5 點的一次性觸發）：只有「看過沒有載入、這次已載入」（來源 chunk 重新載入），或開服時就在 journal 的 session 的第一次
      * 觀察（重啟之後）才觸發；執行期間才出現、一直載入著的 session 不觸發，所以 SEALED 的門被玩家打開之後不會被關回去。目標依 collapse view：SEALED 關門、COLLAPSING
-     * 把量子膜正規化。
+     * 把量子膜正規化、PASSAGE_READY 是 passable 量子膜（F5-1）。
      */
     @Test void doorReapplicationTriggersOnlyAfterAnUnloadOrOnTheFirstStartupObservation() {
         // 一個執行期間才出現的 session 依序的觀察：第一次（已載入）、一直載入、卸載、重新載入、再一直載入。
@@ -545,7 +566,8 @@ class CollapseServiceTest {
         cases.add(() -> assertTrue(OriginDoors.reapplyCause(false, true).startsWith("重新載入"), "執行期間才出現、看過已載入之後卸載再載入"));
         cases.add(() -> assertEquals(OriginDoors.DoorGoal.CLOSE_ON_SEALED, OriginDoors.reapplyGoal(SessionState.SEALED), "SEALED：關門（門口有 entity 時一般開門）"));
         cases.add(() -> assertEquals(OriginDoors.DoorGoal.NORMALIZE, OriginDoors.reapplyGoal(SessionState.COLLAPSING), "COLLAPSING：量子膜改為一般開門"));
-        for (var state : List.of(SessionState.ARMING, SessionState.SUPERPOSITION, SessionState.RETURNING, SessionState.MEASURED, SessionState.PASSAGE_READY))
+        cases.add(() -> assertEquals(OriginDoors.DoorGoal.PASSABLE, OriginDoors.reapplyGoal(SessionState.PASSAGE_READY), "PASSAGE_READY：passable 量子膜（F5-1）"));
+        for (var state : List.of(SessionState.ARMING, SessionState.SUPERPOSITION, SessionState.RETURNING, SessionState.MEASURED))
             cases.add(() -> assertThrows(IllegalArgumentException.class, () -> OriginDoors.reapplyGoal(state), state + " 不由塌縮流程重新套用"));
         assertAll(cases);
     }

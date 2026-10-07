@@ -1366,17 +1366,16 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     再驗修復這一格（INFO「已修復 1 格」）、不寫 COMPLETE，下一個 tick 重做 checkpoint，之後才寫 COMPLETE。所以 checkpoint 恰好兩次、兩次都看到 PENDING，
      *     涵蓋的是 volume 的 chunks；最後 343 格都是 spec 的目標（test 自己寫出），COMPLETE 的 site 就是原艙的位置，不變量 cell 受保護、interior 不受保護，
      *     Controller 辨識為投影。</li>
-     * <li>準備完成（F4b-2 的停點）：INFO「準備完成」一則；WARN「通道尚未實作（F5）」恰一則、帶 session，這個 session 沒有其他 WARN／ERROR；record 仍是
-     *     COLLAPSING（沒有 PASSAGE_READY）。之後幾個 tick 不再重做（「準備完成」仍是一則），目的世界的 ticket 繼續持有；原艙門在準備完成時與之後都是 sealed 量子膜
-     *     （F4b-3：門口沒有 entity、艙內只有參與者 P；F4b-2 時這裡斷言 P 照一般方式開關門，F4b-3 起那是 PREPARE 期間參與者關門的終局，見
-     *     {@code prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept}）。</li>
+     * <li>準備完成：INFO「準備完成」一則；F5-1 起同一個 tick 就 checked 提交 PASSAGE_READY（spec §10.2，取代 F4b-2 的停點與「通道尚未實作（F5）」的 WARN）：record 是
+     *     PASSAGE_READY、expires＝opened＋1200，INFO「量子通道已開啟」一則；原艙門由 sealed 量子膜改為 passable 量子膜，艙內的參與者 P 收到「量子通道已開啟」；這個 session
+     *     沒有任何 WARN／ERROR。之後幾個 tick 不再重做（「準備完成」仍是一則、checkpoint 仍是兩次），目的世界的 ticket 繼續持有（PASSAGE_READY 期間持有），門維持 passable。</li>
      * <li>終局之後（收尾的終局 API），下一個 tick 塌縮流程看到 session 已不在 journal，釋放目的世界的 ticket（完成條件）。</li>
      * </ul>
-     * catalog 增量 1（U）。
+     * catalog 增量 1（U）。F5-1 改名（原本是 {@code prepare_new_runs_the_destination_side_then_stops_before_the_passage}，batch 不變）。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_new", tickLimit = 900)
-    public void prepare_new_runs_the_destination_side_then_stops_before_the_passage(TestContext context) {
-        begin(context, "prepare_new_runs_the_destination_side_then_stops_before_the_passage");
+    public void prepare_new_runs_the_destination_side_then_opens_the_passage(TestContext context) {
+        begin(context, "prepare_new_runs_the_destination_side_then_opens_the_passage");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = openOrigin(context, hooks);
@@ -1415,17 +1414,19 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             && !ProjectionProtectionIndex.protectedCell(server, key, local(frame, 3, 3, 3)));
                     witness.put("controllerRecognized", ProjectionProtectionIndex.projectionControllerAt(server, key, frame.controllerPos()));
                     witness.put("oneReadyInfo", prepared(capture, sid).size() == 1);
-                    witness.put("oneReadyStubWarn", readyStubWarnings(capture, sid) == 1);
-                    witness.put("onlyTheReadyStubWarnAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 1
-                            && capture.matching(Level.ERROR, sid.toString()).isEmpty());
-                    witness.put("stillCollapsing", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                    var record = journal.flushedRecords().get(sid);
+                    witness.put("readyCommittedOnce", record != null && record.state() == SessionState.PASSAGE_READY
+                            && record.collapse().passageExpiresAtGameTime() == record.collapse().passageOpenedAtGameTime() + 1200
+                            && passageOpened(capture, sid) == 1);
+                    witness.put("openedMessageToTheParticipantInside", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_OPENED));
                     LOGGER.info("M5_PREPARE_NEW tickets={} area={} waited={} checkpoints={}", tickets.size(), area.size(), preloadWaitedTicks(capture, sid), calls);
-                    witness.put("sealedMembraneWhenPrepared", M5GameTestSupport.doorSealed(world, frame));
+                    witness.put("passableMembraneWhenReady", M5GameTestSupport.doorPassable(world, frame));
                     at(context, ready + 5, hooks, () -> {
-                        witness.put("holdsAtTheStub", prepared(capture, sid).size() == 1 && probe.calls().size() == 2
+                        witness.put("holdsTheTicketWhileReady", prepared(capture, sid).size() == 1 && probe.calls().size() == 2
                                 && M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area)
-                                && M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
-                        witness.put("sealedMembraneHeldAfterThePreparation", M5GameTestSupport.doorSealed(world, frame));
+                                && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
+                        witness.put("passableMembraneHeld", M5GameTestSupport.doorPassable(world, frame));
                         // 收尾：終局 API 移除 record；下一個 tick 塌縮流程釋放目的世界的 ticket（完成條件）。
                         releaseThenComplete(context, hooks, witness, "PREPARE 的目的宇宙側：" + witness + " tickets=" + tickets.keySet() + " area=" + area
                                 + " checkpoints=" + probe.calls(), 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
@@ -1487,8 +1488,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     moveOutside(p, frame);
                 });
                 at(context, ticketed + 6, hooks, () -> moveInside(p, frame));
+                // 回到 PREPARE 的那個 tick 重新套用 sealed（F5-1 起準備完成的同一個 tick 就提交 PASSAGE_READY、門改為 passable，所以在準備完成之前看）。
+                whenTicks(context, ticketed + 7, 400, () -> entered(capture, sid) == 2, reentered -> witness.put("sealedAgainAfterTheEdge",
+                        M5GameTestSupport.doorSealed(context.getWorld(), frame)),
+                        () -> "邊緣觸發之後沒有回到 PREPARE：entered=" + entered(capture, sid), hooks);
                 whenTicks(context, ticketed + 7, 400, () -> entered(capture, sid) == 2 && prepared(capture, sid).size() == 1, resumed -> {
-                    witness.put("sealedAgainAfterTheEdge", M5GameTestSupport.doorSealed(context.getWorld(), frame));
                     witness.put("resumedWithTheSameTickets", M5GameTestSupport.destinationTickets(universe, sid).keySet().equals(area));
                     witness.put("onePreloadCompletedAfterTheEdge", preloaded(capture, sid).size() == 1);
                     witness.put("projectedAfterTheEdge", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty()
@@ -1507,8 +1511,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * 投影艙 interior 放一塊石頭（玩家的修改，interior 不受保護），以授權寫入把一格 shell 損壞成 AIR、把 25 格門關上（COMPLETE 的不變量 cell 受保護），再以
      * 終局 API 移除 D1。同一座原艙寫入選中 EXISTING U 的 D2，P 由艙外進入 → RESOLVE 只重驗 → PREPARE：ledger 已有本艙在 U 的 COMPLETE，PENDING 的寫入回
      * ALREADY_COMPLETE（site 已驗證）→ 修復：只寫 26 格不變量 cell（1 格 shell＋25 格門，門回到開啟），interior 的石頭保留；不寫 ledger（projection 檔的
-     * bytes 不變）、不做 checkpoint（spec §9.2 的修復沒有要求；COMPLETE 已在 ledger），準備完成（INFO 記 REPAIR）。D2 的 WARN 只有「通道尚未實作」一則。
-     * catalog 增量 1（只有 D1 的 U）。
+     * bytes 不變），準備完成（INFO 記 REPAIR）。F5-1（F4b-2 spec S-M2）起修復寫了方塊，READY 之前要有一次原生存檔 checkpoint：checkpoint 恰一次、當下 D2 仍是
+     * COLLAPSING，之後才提交 PASSAGE_READY（F4b-2 時修復不做 checkpoint）。D2 沒有任何 WARN／ERROR。catalog 增量 1（只有 D1 的 U）。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_revisit", tickLimit = 1200)
     public void existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior(TestContext context) {
@@ -1534,10 +1538,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 cleanupFixtures(server, List.of(sid1));
                 moveOutside(p, frame);
                 var ledgerBefore = bytes(data, ProjectionLedger.FILE_NAME);
-                var probe = M5GameTestSupport.installChunkCheckpointProbe(context, universe.getRegistryKey(), 0, call -> "", hooks);
                 var second = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
                         Map.of(p.getUuid(), true), id));
                 var sid2 = second.sessionUuid();
+                var probe = M5GameTestSupport.installChunkCheckpointProbe(context, universe.getRegistryKey(), 0, call -> M5GameTestSupport.state(journal, sid2), hooks);
                 at(context, first + 1, hooks, () -> moveInside(p, frame));
                 whenTicks(context, first + 2, 400, () -> !prepared(capture, sid2).isEmpty(), revisited -> {
                     witness.put("invariantCellsRepairedDoorOpen", M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty()
@@ -1545,11 +1549,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("interiorKept", universe.getBlockState(stone).isOf(Blocks.STONE));
                     witness.put("repairWroteOnlyTheDamagedInvariantCells", prepared(capture, sid2).getFirst().message().contains("投影=REPAIR（寫入 26 格）"));
                     witness.put("ledgerUntouched", Arrays.equals(ledgerBefore, bytes(data, ProjectionLedger.FILE_NAME)));
-                    witness.put("noCheckpointForTheRepair", probe.calls().isEmpty());
+                    witness.put("oneCheckpointBeforeTheReady", probe.calls().size() == 1 && probe.calls().getFirst().observed().equals("COLLAPSING")
+                            && probe.calls().getFirst().chunks().equals(volumeChunks(frame)) && M5GameTestSupport.state(journal, sid2).equals("PASSAGE_READY"));
                     witness.put("completeKept", authorities.projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE
                             && entry.controllerPos().equals(frame.controllerPos()) && entry.outwardFacing() == frame.outwardFacing()).isPresent());
-                    witness.put("onlyTheReadyStubWarn", capture.matching(Level.WARN, sid2.toString()).size() == 1 && readyStubWarnings(capture, sid2) == 1
-                            && capture.matching(Level.ERROR, sid2.toString()).isEmpty());
+                    witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid2));
                     LOGGER.info("M5_PREPARE_REVISIT ready={}", prepared(capture, sid2).getFirst().message());
                     releaseThenComplete(context, hooks, witness, "EXISTING 再次造訪：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid2).isEmpty());
                 }, () -> "D2 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
@@ -1974,8 +1978,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             witness.put("complete", authorities.projection(chamber, id).value()
                                     .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
                             witness.put("stillOneRepairInfoAndOneWaitWarn", repairedInfos(capture, sid) == 1 && prepareWaitWarnings(capture, sid).size() == 1);
-                            witness.put("onlyTheWaitAndReadyStubWarnsAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 2
-                                    && readyStubWarnings(capture, sid) == 1 && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                            witness.put("onlyTheWaitWarnAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 1
+                                    && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                             LOGGER.info("M5_PREPARE_RECHECK firstCheckpoint={} changing={} ready={} checkpoints={}", firstCheckpoint - enteredAt,
                                     changing - enteredAt, ready - enteredAt, calls);
                             releaseThenComplete(context, hooks, witness, "checkpoint 之前的再驗：" + witness + " checkpoints=" + calls, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
@@ -2009,7 +2013,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var q = connection.player();
             q.changeGameMode(GameMode.CREATIVE); q.setNoGravity(true);
             standAt(q, universe, frame, 3.5, 1, 3.5);
-            BooleanSupplier noSeal = () -> M5GameTestSupport.state(journal, sid).equals("COLLAPSING")
+            // F5-1 起準備完成的同一個 tick 就提交 PASSAGE_READY：「沒有封存」是不是 SEALED、沒有封存的 WARN／ERROR。
+            BooleanSupplier noSeal = () -> !M5GameTestSupport.state(journal, sid).equals("SEALED")
                     && capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "塌縮進入 SEALED", sid.toString()).isEmpty()
                     && capture.matching(Level.ERROR, sid.toString()).isEmpty();
             whenTicks(context, resolved + 1, 400, () -> authorities.projection(chamber, id).value()
@@ -2036,7 +2041,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         witness.put("preparedAfterTheConvergence", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty()
                                 && authorities.projection(chamber, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
                         witness.put("otherPendingKept", authorities.projection(other.chamberUuid(), id).value().filter(other::equals).isPresent());
-                        witness.put("stillNoSeal", noSeal.getAsBoolean() && readyStubWarnings(capture, sid) == 1);
+                        witness.put("stillNoSealAndReady", noSeal.getAsBoolean() && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
                         LOGGER.info("M5_PREPARE_UNCONFIRMED converged={} ready={}", converged - pendingAt, ready - pendingAt);
                         releaseThenComplete(context, hooks, witness, "另一座艙的寫入未確認時：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     }, () -> "Q 離開之後沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
@@ -2053,11 +2058,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <ul>
      * <li>RESOLVE 之後、第一次閘門評估之前，非參與者 N 進艙：進入 PREPARE 時門維持一般開門（不套用量子膜），準備照常在背景進行（目的世界的 ticket）。N 離開之後下一個
      *     tick 套用 sealed 量子膜；N 改成旁觀者再進艙，不影響（不含旁觀者）。</li>
-     * <li>準備完成之後（READY stub 的 return 之前仍每個 tick 判斷）：門口出現 entity（盔甲座）→ 一般開門；移走之後 → sealed。</li>
+     * <li>準備完成之後（仍每個 tick 判斷；F5-1 起以 {@code holdReady} 暫緩 PASSAGE_READY 的提交，留在 PREPARE）：門口出現 entity（盔甲座）→ 一般開門；移走之後 → sealed。</li>
      * <li>sealed 期間以傳送（等同指令）把 N 送進艙內、在同一個 tick 開門：門當場改為一般開門，塌縮不結束（record 仍是 COLLAPSING、ticket 照樣持有、沒有終局的 INFO）；
      *     N 離開之後下一個 tick 重新套用 sealed。</li>
      * <li>艙外的 N 以 bulkhead 或 Controller 開關門：都被拒（ActionResult 不是 accepted），門不變。</li>
-     * <li>log：「套用 sealed 量子膜」與「維持一般開門」的 INFO 這一段 PREPARE 各一則；這個 session 除了「通道尚未實作」之外沒有 WARN／ERROR。</li>
+     * <li>log：「套用 sealed 量子膜」與「維持一般開門」的 INFO 這一段 PREPARE 各一則；這個 session 沒有 WARN／ERROR（F4b-3 時另有「通道尚未實作」一則）。</li>
      * </ul>
      * catalog 增量 1。
      */
@@ -2079,6 +2084,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var doorCell = local(frame, 3, 3, 0);
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
+            // F5-1：準備完成之後仍要驗 PREPARE 的門（F4b-3 時停在 READY stub），所以暫緩 PASSAGE_READY 的提交。
+            var hold = M5GameTestSupport.holdReady(context, sid, hooks);
             moveInside(n, frame);
             whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1, prepareAt -> {
                 witness.put("plainOpenWithANonParticipantInside", doorAll(world, frame, true, MembraneState.NONE));
@@ -2116,8 +2123,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         witness.put("stillCollapsing", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && endedByADoor(capture, sid) == 0);
                         witness.put("oneSealedAndOneOpenInfo", membraneInfos(capture, sid, "原艙門套用 sealed 量子膜") == 1
                                 && membraneInfos(capture, sid, "原艙門維持一般開門") == 1);
-                        witness.put("onlyTheReadyStubWarnAndNoError", capture.matching(Level.WARN, sid.toString()).size() == 1 && readyStubWarnings(capture, sid) == 1
-                                && capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                        witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid));
+                        witness.put("readyHeldInPrepare", hold.hits() > 0 && M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
                         releaseThenComplete(context, hooks, witness, "量子膜的套用條件與非參與者的門：" + witness, 20,
                                 () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     });
@@ -2282,8 +2289,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     });
                     at(context, appliedAt + 6, hooks, () -> moveInside(p, frame));
                     whenTicks(context, appliedAt + 7, 40, () -> entered(capture, sid) == 1 && M5GameTestSupport.doorSealed(world, frame), resealed -> {
-                        witness.put("noWarnOrErrorBesidesTheReadyStub", capture.matching(Level.ERROR, sid.toString()).isEmpty()
-                                && capture.matching(Level.WARN, sid.toString()).size() == readyStubWarnings(capture, sid));
+                        witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid));
                         LOGGER.info("M5_DOOR_STARTUP queued={} applied={}", reapplyQueuedTicks(capture, sid), reappliedTicks(capture, sid));
                         releaseThenComplete(context, hooks, witness, "重啟之後的原艙門：" + witness + " queued=" + reapplyQueuedTicks(capture, sid) + " applied="
                                 + reappliedTicks(capture, sid), 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
@@ -2413,7 +2419,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <li>找出所屬 session 之前的例外（F5-0，spec m-1）：讓這座艙的攔截在找出所屬 session 時丟例外，P 直接呼叫 port 一次 → REFUSED、門不變；WARN 沒有 session 可帶，
      *     帶 tick 層級的 marker（{@code TICK_LOG_MARKER}，不算進這個 session 的 WARN）。之後 P 關門 → checked 終局、門關上。</li>
      * </ul>
-     * 這個 session 的 WARN 只有上面三則與「通道尚未實作」，沒有 ERROR。catalog 增量 1。
+     * 這個 session 的 WARN 只有上面三則（F4b-3 時另有「通道尚未實作」一則），沒有 ERROR。F5-1 起以 {@code holdReady} 暫緩 PASSAGE_READY 的提交，準備完成之後仍在 PREPARE。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_refusal", tickLimit = 1200)
     public void prepare_door_use_failures_refuse_and_warn_once_per_cause_until_recovery_writes_are_safe(TestContext context) {
@@ -2434,8 +2440,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var doorCell = local(frame, 3, 3, 0);
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
+            // F5-1：準備完成之後仍要驗 PREPARE 期間的門（F4b-3 時停在 READY stub），所以暫緩 PASSAGE_READY 的提交。
+            var hold = M5GameTestSupport.holdReady(context, sid, hooks);
             whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid).isEmpty(), ready -> {
                 witness.put("sealedWhenPrepared", M5GameTestSupport.doorSealed(world, frame));
+                witness.put("readyHeldInPrepare", hold.hits() > 0 && M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
                 int before = doorUseWarnings(capture, sid);
                 var faulty = M5GameTestSupport.lookupFailingPlayer(world);
                 witness.put("lookupFailureRefusedTwice", M5GameTestSupport.useDoor(world, frame, faulty) == ChamberCollapsePort.DoorUse.REFUSED
@@ -2495,7 +2504,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("closesOnceSafe", interact(world, doorCell, p).isAccepted() && !journal.records().containsKey(sid)
                             && !journal.flushedRecords().containsKey(sid) && endedByADoor(capture, sid) == 1 && doorAll(world, frame, false, MembraneState.NONE));
                     witness.put("onlyTheseWarnsAndNoError", doorUseWarnings(capture, sid) == 3
-                            && capture.matching(Level.WARN, sid.toString()).size() == 3 + readyStubWarnings(capture, sid) && readyStubWarnings(capture, sid) == 1
+                            && capture.matching(Level.WARN, sid.toString()).size() == 3
                             && capture.matching(Level.ERROR, sid.toString()).isEmpty());
                     releaseThenComplete(context, hooks, witness, "原艙門的攔截失敗與不安全的終局：" + witness + " warnings=" + doorUseWarnings(capture, sid), 20, () -> true);
                 });
@@ -2652,9 +2661,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
         return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "準備完成（預載與投影都已完成）", sid.toString());
     }
 
-    /** 這個 session「通道尚未實作（F5）」的 WARN 數（帶 LOG_MARKER）。 */
-    private static int readyStubWarnings(LogCapture capture, UUID sid) {
-        return capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "通道尚未實作（F5）", sid.toString()).size();
+    /** 這個 session「量子通道已開啟（checked PASSAGE_READY）」的 INFO 數（帶 LOG_MARKER，F5-1）。 */
+    private static int passageOpened(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "量子通道已開啟（checked PASSAGE_READY）", sid.toString()).size();
     }
 
     /** 投影的 7×7×7 涵蓋的 chunk（test 自己算，不讀 production）。 */

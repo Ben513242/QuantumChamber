@@ -8,5 +8,6 @@
   "item.minecraft.tipped_arrow.effect.quantum_state": "量子態之箭",
   "message.quantumchamber.m5.collapsed": "量子態塌縮。",
   "message.quantumchamber.m5.dimension_door_unavailable": "此維度的宇宙門尚未開放。",
+  "message.quantumchamber.m5.passage_opened": "量子通道已開啟：穿過門口的量子膜即可前往。",
   "message.quantumchamber.m5.sealed": "量子通道無法開啟，已封存。"
 }

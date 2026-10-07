@@ -51,9 +51,12 @@ import org.slf4j.LoggerFactory;
  * <li>原艙門攔截的失敗（{@link #DOOR_USE_FAULT}，F5-0，F4b-3 quality M-2、spec m-1）：{@code OriginDoorUseFaultMixin} 在 {@code OriginDoors.endByParticipant}（PREPARE 期間參與者
  *     開關門的處置）的開頭呼叫 {@link #beforeParticipantDoorUse}、在 {@code OriginDoors.sessionAt}（找出所屬 session）的開頭呼叫 {@link #beforeDoorSessionLookup}，注入時丟出例外，
  *     攔截因此在處置途中或找出所屬 session 時失敗（拒絕、記 WARN）。由 {@code M5GameTestSupport.installDoorUseFault} 安裝。</li>
+ * <li>PASSAGE_READY 的提交暫緩（{@link #READY_HOLD}，F5-1）：{@code CollapseReadyHoldMixin} 在 {@code CollapseService.ready}（準備完成之後提交 PASSAGE_READY）的開頭呼叫
+ *     {@link #readyHeld}，裝著時這個 session 不提交、PREPARE 照常（原艙門每個 tick 依條件判斷），等同 production 可以到達的「PASSAGE_READY 的前置條件還沒成立」，只是時間
+ *     拉長。給「準備完成之後仍在 PREPARE」的原艙門 test 用（F4b-3 的 T-MEM、T-FAIL；F5-1 之前它們停在 READY stub）。由 {@code M5GameTestSupport.holdReady} 安裝。</li>
  * </ul>
- * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核與五個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截）各是一個 {@link Slot}（F4a-0 fix round 1，
- * quality Q1；F4b-3 fix round 1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 兩個探針（journal flush、原生存檔 checkpoint）、寫出稽核、五個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截）與 PASSAGE_READY 的
+ * 提交暫緩各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {
@@ -77,6 +80,8 @@ public final class M5TestHooks {
     static final Slot<JournalPutFault> JOURNAL_PUT_FAULT = new Slot<>("journal put 拒絕注入");
     /** 原艙門攔截的失敗注入（F5-0，{@code M5GameTestSupport.installDoorUseFault}）。 */
     static final Slot<DoorUseFault> DOOR_USE_FAULT = new Slot<>("原艙門攔截的失敗注入");
+    /** PASSAGE_READY 的提交暫緩（F5-1，{@code M5GameTestSupport.holdReady}）。 */
+    static final Slot<ReadyHold> READY_HOLD = new Slot<>("PASSAGE_READY 的提交暫緩");
 
     /** {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。 */
     public static boolean collapseSuspended(UUID session) {
@@ -165,6 +170,12 @@ public final class M5TestHooks {
     public static void beforeDoorSessionLookup(dev.quantumchamber.chamber.ChamberFrame frame) {
         var fault = DOOR_USE_FAULT.get();
         if (fault != null) fault.interceptSessionLookup(frame);
+    }
+
+    /** {@code CollapseReadyHoldMixin}：{@code CollapseService.ready} 的開頭呼叫（F5-1）。回 true 時這次不提交 PASSAGE_READY。 */
+    public static boolean readyHeld(UUID session) {
+        var hold = READY_HOLD.get();
+        return hold != null && hold.holds(session);
     }
 
     /**
@@ -509,5 +520,28 @@ public final class M5TestHooks {
             ids.removeIf(id -> Objects.equals(current.get(id), flushed.get(id)));
             return ids;
         }
+    }
+
+    /**
+     * PASSAGE_READY 的提交暫緩（F5-1，{@link #READY_HOLD}）：{@code session} 在裝著、還沒 {@link #release} 的期間不提交；{@code hits()} 是暫緩的次數（證明 mixin 真的套用）。
+     */
+    static final class ReadyHold {
+        private final UUID session;
+        private final AtomicInteger hits = new AtomicInteger();
+        private volatile boolean released;
+
+        ReadyHold(UUID session) { this.session = Objects.requireNonNull(session, "session"); }
+
+        boolean holds(UUID candidate) {
+            if (released || !session.equals(candidate)) return false;
+            hits.incrementAndGet();
+            return true;
+        }
+
+        /** 已暫緩的提交次數。 */
+        int hits() { return hits.get(); }
+
+        /** 之後不再暫緩（仍裝著，hooks 釋放時移除）。 */
+        void release() { released = true; }
     }
 }
