@@ -85,7 +85,7 @@ import org.slf4j.MarkerFactory;
  *     SOURCE 進入 PREPARE 即走 §7.4 的 fast path：先 checked 終局、再把門改為一般開門、再顯示訊息；終局之後釋放 runtime 與來源 ticket（spec §5）。
  *     UNIVERSE 的 PREPARE（F4b-2，目的宇宙這一側，§9、§6.5）：預載目的世界（M5 的 chunk ticket，非建立模式查詢）→ 退化時進 SEALED → projection ledger
  *     （§6.5 的實體交叉檢查、既有 entry 的 site 驗證）→ §9.2 的衝突 → checked PENDING → 寫投影（第一次寫入或修復）→ 原生存檔 checkpoint → 再驗不變量 cell
- *     → checked COMPLETE（修復寫了任何一格時也先做 checkpoint，F5-1 的 S-M2）→ 準備完成 → §10.2 的前置條件都成立時 checked 提交 PASSAGE_READY（restore 類，
+ *     → checked COMPLETE（修復寫了任何一格，或之前的段落寫過的方塊還沒有 checkpoint 時，也先做 checkpoint，F5-1 的 S-M2 與 fix round 1 的 Q-m1）→ 準備完成 → §10.2 的前置條件都成立時 checked 提交 PASSAGE_READY（restore 類，
  *     {@link #ready}；F5-1）。閘門在 PREPARE 進行到一半時不再成立就釋放目的世界的 ticket、退回 WAITING。目的世界的 ticket 在閘門失效、進入 SEALED、終局時釋放，
  *     PASSAGE_READY 期間繼續持有，通道結束時隨終局釋放。</li>
  * <li>PASSAGE_READY（§10.2–§10.6，F5-1）：提交之後門改為 passable 量子膜、刷新 Controller、對艙內的參與者顯示「量子通道已開啟」；之後每個 tick 由 {@link PassageService}
@@ -584,8 +584,10 @@ public final class CollapseService {
      *     既有 PENDING 是 {@code UNCHANGED}（照第一次寫入），既有 COMPLETE 是 {@code ALREADY_COMPLETE}（只修復）；site 不符是 {@code AUTHORITY_CORRUPT}。
      *     寫入沒有確認（含讀回失敗）就進 SEALED，不寫任何方塊（§6 收斂規則第 2 點）。確認之後以寫入結果登記到投影保護索引（只供辨識）。</li>
      * <li>寫方塊（{@link ProjectionWriter}）：第一次寫入（PENDING）或修復（COMPLETE）。玩家擋住、volume 的 chunk 不是都 FULL：下一個 tick 再試；
-     *     驗證或寫入失敗：{@code PROJECTION_FAILED}，以結果帶的 failure 當 root cause。修復一格都沒有寫，就是準備完成（方塊沒有改變，不寫 ledger、不做 checkpoint）；
-     *     修復寫了任何一格時，與第一次寫入一樣要先做下面的 checkpoint 才算準備完成（F5-1，F4b-2 spec S-M2），只是不寫 COMPLETE（ledger 已是 COMPLETE）。</li>
+     *     驗證或寫入失敗：{@code PROJECTION_FAILED}，以結果帶的 failure 當 root cause。修復一格都沒有寫，而且這個 session 之前寫過的方塊都已有 checkpoint，就是準備完成
+     *     （方塊沒有改變，不寫 ledger、不做 checkpoint）；修復寫了任何一格時，與第一次寫入一樣要先做下面的 checkpoint 才算準備完成（F5-1，F4b-2 spec S-M2），只是不寫 COMPLETE
+     *     （ledger 已是 COMPLETE）。「之前寫過的方塊還沒有 checkpoint」跨 PREPARE 的段落記在 {@link Track#projectionUncheckpointed}（F5-1 fix round 1，quality Q-m1：上一段修復了
+     *     方塊、checkpoint 之前閘門失效時，下一段的修復寫 0 格也要先做 checkpoint）。</li>
      * <li>寫了方塊之後：目的 volume 的 chunks 先問 {@link ChunkSaveCheckpoint#ready}（未就緒等下一個 tick）。</li>
      * <li>checkpoint 之前，以修復模式再驗一次不變量 cell（F4b-1 交下的未保護窗口：PENDING 期間不變量 cell 不受保護，第一次寫入之後可能被改動）。修復了任何一格，
      *     或被擋住（玩家站在要修復的格上、chunk 不是 FULL）：不做 checkpoint，下一個 tick 再驗（F4b-2 fix round 1，quality Q-I1：不變量 cell 一直被改動時不會每個
@@ -648,14 +650,21 @@ public final class CollapseService {
             var first = ProjectionWriter.write(world, frame, mode);
             if (!proceeds(view, track, progress, first)) return;
             if (mode == ProjectionWriter.Mode.REPAIR && first.written() == 0) {
-                // 修復一格都沒有寫：方塊與已完成的投影相同，不需要 checkpoint（F4b-2「偏離」第 2 條）。
-                prepared(view, track, progress, mode, 0, world, id);
-                return;
+                if (!track.projectionUncheckpointed) {
+                    // 修復一格都沒有寫，而且這個 session 寫過的方塊都已有 checkpoint：方塊與已完成的投影相同，不需要 checkpoint（F4b-2「偏離」第 2 條）。
+                    prepared(view, track, progress, mode, 0, world, id);
+                    return;
+                }
+                // F5-1 fix round 1（quality Q-m1）：上一段 PREPARE 寫過的方塊（例如修復之後、checkpoint 之前閘門失效）還沒有 checkpoint 涵蓋：這次修復一格都沒有寫，READY
+                // 之前仍走下面同一條 checkpoint 的流程（每段 PREPARE 只會到這裡一次）。
+                LOGGER.info(LOG_MARKER, "這次修復一格都沒有寫，但這個 session 之前寫過的投影方塊還沒有原生存檔 checkpoint（例如上一段 PREPARE 在 checkpoint 之前中斷）："
+                        + "READY 之前仍先做 checkpoint：session={} chamber={}", view.sessionUuid(), view.chamberUuid());
             }
-            // 寫了方塊（第一次寫入，或修復寫了任何一格）：READY 之前要有原生存檔 checkpoint（F5-1，F4b-2 spec S-M2：修復之後、存檔之前 crash 時，
-            // 修復會遺失而 READY 已提交）。checkpoint 之前與之後的再驗、只在再驗乾淨時存檔，都與第一次寫入相同（不會每個 tick 存檔，F4b-2 Q-I1）。
+            // 寫了方塊（第一次寫入，或修復寫了任何一格），或之前寫過的方塊還沒有 checkpoint：READY 之前要有原生存檔 checkpoint（F5-1，F4b-2 spec S-M2：修復之後、存檔之前
+            // crash 時，修復會遺失而 READY 已提交）。checkpoint 之前與之後的再驗、只在再驗乾淨時存檔，都與第一次寫入相同（不會每個 tick 存檔，F4b-2 Q-I1）。
             progress.written = true;
             progress.writtenCells = first.written();
+            track.projectionUncheckpointed = true;
         }
         var chunks = volumeChunks(frame);
         if (!ChunkSaveCheckpoint.ready(world, chunks)) {
@@ -682,6 +691,8 @@ public final class CollapseService {
             repairedBeforeComplete(view, progress, verify.written());
             return;
         }
+        // checkpoint 存下的就是目前的方塊（之後的再驗沒有改動）：這個 session 寫過的方塊都已有 checkpoint（F5-1 fix round 1，Q-m1）。
+        track.projectionUncheckpointed = false;
         if (mode == ProjectionWriter.Mode.FIRST_WRITE) {
             var complete = authorities.writeProjection(entry.withStatus(ProjectionLedger.Entry.Status.COMPLETE));
             if (!complete.succeeded()) {
@@ -1377,6 +1388,13 @@ public final class CollapseService {
         boolean restartRetryConsumed;
         /** UNIVERSE 這一段 PREPARE 的記憶體內進度（進入 PREPARE 時建立，離開、進入 SEALED、重試時丟棄；不持久化，重啟之後重新推導）。 */
         Prepare prepare;
+        /**
+         * 這個 session 寫過的投影方塊（第一次寫入或修復）還沒有被原生存檔 checkpoint 涵蓋（F5-1 fix round 1，quality Q-m1）：寫了方塊時設定，checkpoint 之後的再驗乾淨時清除
+         * （{@link CollapseService#project}）。跨 PREPARE 的段落保留：不隨 {@link #resetGate} 重設，閘門失效、進入 SEALED 與重試之間也保留。修復一格都沒有寫時，它為真就仍要先做 checkpoint 才準備
+         * 完成（F4b-2 spec S-M2 原本只在單一一段 PREPARE 內成立：上一段修復了方塊、checkpoint 之前閘門失效，下一段的修復寫 0 格就沒有 checkpoint 地提交 PASSAGE_READY）。
+         * 不持久化：重啟之前沒有存到的修復，重啟之後的修復會再寫一次（寫了方塊就做 checkpoint）。
+         */
+        boolean projectionUncheckpointed;
         /**
          * PASSAGE_READY 的跨越判定（§10.3，F5-1）：每位參與者最近一次觀察到的腳在來源艙的 local z 與那個 server tick（{@link PassageService#observe}）；不在來源世界或觀察不到時
          * 沒有這個鍵。推進有執行的每個 PASSAGE_READY 的 tick 都更新（roll-forward 未確認、結束條件成立的 tick 也一樣）；推進被略過的 tick（未 checked 的 authority、隔離、例外）

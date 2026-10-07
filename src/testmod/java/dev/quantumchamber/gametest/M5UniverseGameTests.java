@@ -1567,6 +1567,73 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
+     * F5-1 fix round 1（quality Q-m1；F4b-2 spec S-M2 跨 PREPARE 段落的版本）：同 {@code existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior} 的前段（D1 把原艙投影到
+     * 宇宙 U、準備完成之後，以授權寫入損壞一格 shell、關上 25 格門，再以終局 API 移除 D1；D2 選中 EXISTING U）。
+     * <ul>
+     * <li>第一段 PREPARE：修復寫了 26 格；第一次原生存檔 checkpoint 存檔之前（checkpoint 探針）再把那格 shell 改成 AIR，checkpoint 之後的再驗修復它（INFO「已修復 1 格」），還沒準備完成
+     *     （checkpoint 存下的是損壞的那一格）。下一個 tick 斷電：閘門失效、退回 WAITING，這一段的修復沒有 checkpoint 涵蓋。</li>
+     * <li>恢復供電、P 由艙外再進入 → 第二段 PREPARE：修復一格都沒有寫，但這個 session 之前寫過的方塊還沒有 checkpoint，所以 READY 之前先做一次 checkpoint（當下 D2 仍是 COLLAPSING），
+     *     之後才提交 PASSAGE_READY（修正之前這一段直接提交，沒有 checkpoint）。</li>
+     * </ul>
+     * D2 沒有 WARN／ERROR。catalog 增量 1（只有 D1 的 U）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_revisit_interrupted", tickLimit = 1500)
+    public void existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint(TestContext context) {
+        begin(context, "existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            whenTicks(context, resolved + 1, 400, () -> !prepared(capture, sid1).isEmpty(), first -> {
+                var hole = local(frame, 0, 3, 3);
+                ChamberProtectionService.get().authorizedMutation(() -> {
+                    universe.setBlockState(hole, Blocks.AIR.getDefaultState());
+                    for (var cell : M5GameTestSupport.door(frame)) universe.setBlockState(cell, QuantumBulkheadBlock.withOpen(universe.getBlockState(cell), false));
+                });
+                cleanupFixtures(server, List.of(sid1));
+                moveOutside(p, frame);
+                var second = origin.own(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()),
+                        Map.of(p.getUuid(), true), id));
+                var sid2 = second.sessionUuid();
+                // 第一次 checkpoint 存檔之前把那格 shell 再改成 AIR（checkpoint 存下損壞的狀態，之後的再驗修復它）；之後的 checkpoint 不改動。
+                var probe = M5GameTestSupport.installChunkCheckpointProbe(context, universe.getRegistryKey(), 0, call -> {
+                    if (call == 0) ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(hole, Blocks.AIR.getDefaultState()));
+                    return M5GameTestSupport.state(journal, sid2);
+                }, hooks);
+                at(context, first + 1, hooks, () -> moveInside(p, frame));
+                whenTicks(context, first + 2, 400, () -> probe.calls().size() == 1, checkpointed -> {
+                    witness.put("firstSegmentRepairedAfterItsCheckpoint", repairedInfos(capture, sid2) == 1 && prepared(capture, sid2).isEmpty()
+                            && M5GameTestSupport.state(journal, sid2).equals("COLLAPSING"));
+                    // 這個 tick 的推導就看到斷電：閘門失效，這一段的修復沒有 checkpoint 涵蓋。
+                    context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                    at(context, checkpointed + 1, hooks, () -> {
+                        witness.put("backToWaitingWithoutACleanCheckpoint", capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "退回 WAITING",
+                                sid2.toString()).size() == 1 && probe.calls().size() == 1 && prepared(capture, sid2).isEmpty());
+                        context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
+                        moveOutside(p, frame);
+                    });
+                    at(context, checkpointed + 3, hooks, () -> moveInside(p, frame));
+                    whenTicks(context, checkpointed + 4, 400, () -> !prepared(capture, sid2).isEmpty(), done -> {
+                        var calls = probe.calls();
+                        witness.put("secondSegmentRepairedNothing", entered(capture, sid2) == 2
+                                && prepared(capture, sid2).getFirst().message().contains("投影=REPAIR（寫入 0 格）"));
+                        witness.put("checkpointBeforeTheReadyInTheSecondSegment", calls.size() == 2 && calls.get(1).observed().equals("COLLAPSING")
+                                && calls.get(1).chunks().equals(volumeChunks(frame)) && M5GameTestSupport.state(journal, sid2).equals("PASSAGE_READY"));
+                        witness.put("invariantCellsAreTheTarget", M5GameTestSupport.projectionMismatches(universe, frame, true).isEmpty());
+                        witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid2));
+                        LOGGER.info("M5_PREPARE_REVISIT_INTERRUPTED checkpointed={} done={} checkpoints={}", checkpointed, done, calls);
+                        releaseThenComplete(context, hooks, witness, "修復之後、checkpoint 之前中斷的 EXISTING 再次造訪：" + witness + " checkpoints=" + calls, 20,
+                                () -> M5GameTestSupport.destinationTickets(universe, sid2).isEmpty());
+                    }, () -> "第二段 PREPARE 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid2) + " checkpoints=" + probe.calls() + " witness=" + witness, hooks);
+                }, () -> "D2 沒有做第一次 checkpoint：record=" + M5GameTestSupport.state(journal, sid2) + " checkpoints=" + probe.calls(), hooks);
+            }, () -> "D1 沒有準備完成：record=" + M5GameTestSupport.state(journal, sid1), hooks);
+        });
+    }
+
+    /**
      * F4b-2（spec §9.2 的既有 entity、§9.1；plan Step 1 第 6 組的流程）：RESOLVE 之後、進入 PREPARE 之前，一位（創造模式、不受重力的）玩家 Q 站進宇宙 U 的投影
      * volume。第一次寫入每個 tick 都被 Q 擋住：一格都不寫（Controller 位置一直沒有 Controller），也不移動 Q；PENDING 已確認。從進入 PREPARE 起超過 600 ticks 時
      * 記一則 WARN（帶 session，寫明玩家擋住寫入與 Q），之前沒有；Q 再擋 5 個 tick 也不再記（去重）。Q 離開 volume 之後寫入、checkpoint、COMPLETE，準備完成，
