@@ -656,6 +656,36 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 
 **範圍：** spec §10.2–§10.8。
 
+**拆分（controller 2026-10-07，比照 F4b）：** 先處理 F4b-3 交下的必要 Step 0（`CollapseService` 約 1950 行），再接通道。共拆成三個子 task，各自走完 implementer → spec review → quality review；三個都完成，才算 F5 完成。檔案清單與 Step 1 的 RED 不變，分配如下：
+
+- **F5-0：Step 0（行為不變的整理）。** 內容見 note F4b-3「交給後續」的 F5 Step 0：
+  - 把原艙門的程式抽成 package-private 類別（例如 `OriginDoors`）；
+  - 決定 PREPARE 要不要抽出（F4b-2 的交接）；
+  - 處理 F4b-3 最終 review 留下的 Minor 與 Nit。
+
+  允許的路徑是 `collapse/` 的新類別、`CollapseService.java`、CST，以及 testmod 的 M5 檔、新的 testmod fault mixin 與 README。不得改變任何行為，只有那幾項 Minor 例外。
+- **F5-1：通道本體。** 範圍是 §10.2–§10.6 與 §10.8：
+  - READY 的前置條件與提交，含 EXISTING 再驗，以及 F4b-2 的 S-M2：修復之後的 checkpoint；
+  - 門改為 passable；
+  - §10.3 的跨越判定；
+  - §10.4 的 `TransferSafety`、`PassageTransferPolicy`，以及 `UniverseTransferService` 的多載（決策 4）。F4b-2 的 S-M1：預載與 FULL 檢查的 chunk 推導要一致；
+  - `Crossed`，以及兩種傳送失敗（`FAILED_ROLLED_BACK`、`FAILED_RECOVERY_REQUIRED`→SEALED(TRR)）；
+  - §10.5 通道期間的開關門，接在 `doorAction`；
+  - §10.6 的結束條件 (a)–(d) 與結束的順序，含 `releaseDestination`；
+  - §10.8 的訊息。
+
+  Step 1 中屬於它的 RED：
+  - 跨越幾何、policy 的決策表、`FAILED_ROLLED_BACK`；
+  - TRR 與 SEALED 落盤失敗（Review Focus 1）；
+  - `Crossed` 落盤失敗；
+  - 結束條件、兩人一人跨過、同艙可開新 session、EXISTING 的基本重逢、艙內有非參與者時仍能提交 READY。
+- **F5-2：比較器與 membrane 正規化。** 範圍是 §10.7 與 §10.6 :613：
+  - `ChamberState.PASSAGE`→15、`ChamberStatusSignal`、R2 M5、`ChamberControllerBlock` 的訊息 switch；
+  - 找不到所屬 session 的 membrane 正規化，含 F4b-3 spec m-2：SEALED 帶著量子膜的情況；
+  - F4a M-3：SEALED 前後的比較器數值不同時，鎖住 Controller 的刷新。
+
+  Step 1 中屬於它的 RED：`presence()` 與 `reconcile` 的那一組、Review Focus 5（沒有 runtime 的 DORMANT 續行到 READY、比較器 15）、membrane 正規化。
+
 - [ ] **Step 1: RED。**
   - `presence()` 與 `reconcile`：`PASSAGE`＋供電＋enabled → 15；`COLLAPSE`／`PASSAGE` 不呼叫 `returnToOrigin`；registry 已是 RETURNING 時仍能到 15；斷電時 power state 為 RETURNING、輸出 11；終局後恢復；R2 M5。
   - 沒有 runtime 的 DORMANT 續行到 READY、比較器 15，撐過強制 refresh 與 membrane 的 neighbor update；WAITING 期間斷電再恢復後，READY 不被結束（Review Focus 5）。
