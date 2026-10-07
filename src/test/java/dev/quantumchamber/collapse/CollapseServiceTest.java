@@ -681,6 +681,26 @@ class CollapseServiceTest {
         assertAll(cases);
     }
 
+    /**
+     * F5-2（spec §10.6 :613）：找不到所屬 session 的量子膜，套用時依序：艙體外擴 3 格的 chunk 還沒都 FULL 就等（不退避）；這座艙在 collapse view 中有 COLLAPSING、SEALED、
+     * PASSAGE_READY 的 session 就丟棄（門由它負責）；門已沒有量子膜就完成；否則改為一般開門。MEASURED（含 DORMANT）與 M1–M4 的狀態不排除。
+     */
+    @Test void ownerlessMembraneWaitsForChunksSkipsAnOwnedDoorAndOpensTheRest() {
+        var cases = new ArrayList<Executable>();
+        for (var owner : SessionState.values()) for (boolean membrane : new boolean[] {false, true}) {
+            var expected = owner.collapseState() ? OriginDoors.OwnerlessStep.OWNED : membrane ? OriginDoors.OwnerlessStep.OPEN : OriginDoors.OwnerlessStep.DONE;
+            cases.add(() -> assertEquals(expected, OriginDoors.ownerlessStep(true, owner, membrane), "owner=" + owner + " membrane=" + membrane));
+            cases.add(() -> assertEquals(OriginDoors.OwnerlessStep.WAIT, OriginDoors.ownerlessStep(false, owner, membrane), "chunk 未載入：owner=" + owner + " membrane=" + membrane));
+        }
+        cases.add(() -> assertEquals(OriginDoors.OwnerlessStep.OPEN, OriginDoors.ownerlessStep(true, null, true), "沒有 session、門帶著量子膜：改為一般開門"));
+        cases.add(() -> assertEquals(OriginDoors.OwnerlessStep.DONE, OriginDoors.ownerlessStep(true, null, false), "沒有 session、門已沒有量子膜：完成"));
+        cases.add(() -> assertEquals(OriginDoors.OwnerlessStep.WAIT, OriginDoors.ownerlessStep(false, null, true), "chunk 未載入：等之後的 tick"));
+        for (var owned : List.of(SessionState.COLLAPSING, SessionState.SEALED, SessionState.PASSAGE_READY))
+            cases.add(() -> assertEquals(OriginDoors.OwnerlessStep.OWNED, OriginDoors.ownerlessStep(true, owned, true), owned + " 自己擁有門"));
+        cases.add(() -> assertEquals(OriginDoors.OwnerlessStep.OPEN, OriginDoors.ownerlessStep(true, SessionState.MEASURED, true), "MEASURED（含 DORMANT）也正規化"));
+        assertAll(cases);
+    }
+
     /** F4b-3（spec §7.3「套用量子膜的條件」；補充第 1、6 點）：門口沒有 entity、艙內沒有非參與者時才是 sealed 量子膜（軸依朝向），否則一般開門。 */
     @Test void membraneIsSealedOnlyWithAClearDoorwayAndNoNonParticipantInside() {
         var cases = new ArrayList<Executable>();

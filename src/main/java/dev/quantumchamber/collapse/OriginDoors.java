@@ -53,10 +53,12 @@ import org.slf4j.LoggerFactory;
  * PASSAGE_READY 的由 §12 在第一個 tick 終局、門改為一般開門，不重新套用 passable。SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉的期間，{@link PassageService}
  * 排入一般開門（{@link DoorGoal#OPEN_WHILE_PASSAGE_CLOSED}；比照 PREPARE 中被拒時把門交還為一般開門，F5-1 fix round 1，spec review S-m3），重新套用也是一般開門；這段期間的開關門照一般門
  * 的邏輯（{@link #doorAction(SessionState, boolean, boolean, boolean, boolean, DoorUser)} 回 PASS，F5-2，spec re-review n-2）。
- * <p><b>F5-2 的接點</b>（spec §10.6 :613）：找不到所屬 session 的量子膜，在 {@code ChamberPowerCoordinator} 刷新該艙時排入下一個 tick 正規化為一般開門。待套用的門以 chamber
- * 為 key（{@link #doors}），但 {@link PendingDoor} 帶著 session、{@link DoorGoal#NORMALIZE} 要求 collapse view 是 COLLAPSING，所以沒有 session 的正規化要另一個目標；條件見
- * M5 note F4b-3「補充第 8 點」。有 COLLAPSING／SEALED 的 session 時由 {@link #watchDoor} 與待套用的門處理，兩者不要同時寫門；SEALED 帶著量子膜時，{@link #cancelSealedClose}
- * 不取消還沒套用的關門（F5-0，F4b-3 spec m-2），所以正規化可以繼續排除有 SEALED session 的艙。
+ * <p><b>找不到所屬 session 的量子膜</b>（spec §10.6 :613，F5-2；條件見 M5 note F4b-3「補充第 8 點」）：{@code ChamberPowerCoordinator} 在 ORIGIN 分支協調完、門帶著量子膜、presence 不是
+ * {@code COLLAPSE}／{@code PASSAGE} 時，經 {@code ChamberCollapsePort.Membranes}（{@code CollapseService.normalizeOwnerless}）交給 {@link #queueOwnerless}：排入下一個 tick 的
+ * {@link DoorGoal#NORMALIZE_OWNERLESS}（session 為 null；這座艙已有待套用的門時不排，session 的門優先）。套用時（{@link #ownerlessStep}）先等艙體外擴 3 格的 chunk 都 FULL（不退避），
+ * 再排除仍有 COLLAPSING、SEALED、PASSAGE_READY session 的艙（那些艙由該 session 的 {@link #watchDoor} 與待套用的門負責，兩者不同時寫門），門已沒有量子膜就完成，否則 sealed 與
+ * passable 都改為一般開門（{@code DoorState.OPEN}，結果依 {@link #applyOutcome}）。MEASURED（含 DORMANT）的艙也包含在內。SEALED 帶著量子膜時，{@link #cancelSealedClose}
+ * 不取消還沒套用的關門（F5-0，F4b-3 spec m-2），所以正規化可以繼續排除有 SEALED session 的艙。排入與完成各記一則 INFO（帶 {@link CollapseService#TICK_LOG_MARKER}：不屬於任何 session）。
  * <p>每個 session 的門狀態（{@code doorLoaded}、{@code doorSeenLoaded}、{@code membrane}、{@code doorReleased}）留在 {@link CollapseService.Track}：它們的生命週期（第一次
  * 推進時建立、只保留 journal 裡的 session、終局時移除、{@code resetGate} 重設 PREPARE 的部分）就是 Track 的，而這裡本來就要讀 Track 的 {@code preparing}、
  * {@code pendingSeal}、{@code backoff} 與 {@code warnings}。
@@ -76,7 +78,8 @@ final class OriginDoors {
     /**
      * 還沒套用成功的原艙門（以 chamber 為 key，{@link DoorGoal}）：終局之後的一般開門（{@code OPEN_AFTER_TERMINAL}）、進入 SEALED 時（含重新套用）的關門
      * （{@code CLOSE_ON_SEALED}）、PREPARE 期間參與者關門的終局之後的關門（{@code CLOSE_AFTER_TERMINAL}）、PREPARE 結束或暫停之後的一般開門（{@code OPEN_ON_LEAVE}）、
-     * 重新套用時的量子膜正規化（{@code NORMALIZE}）。PREPARE 每個 tick 的原艙門不在這裡（{@link CollapseService.Track#membrane}）。
+     * 重新套用時的量子膜正規化（{@code NORMALIZE}）、找不到所屬 session 的量子膜的正規化（{@code NORMALIZE_OWNERLESS}，F5-2；session 為 null）等。PREPARE 每個 tick 的原艙門
+     * 不在這裡（{@link CollapseService.Track#membrane}）。
      */
     private final Map<UUID, PendingDoor> doors = new LinkedHashMap<>();
 
@@ -263,11 +266,12 @@ final class OriginDoors {
     /**
      * 排入下一個 tick 的重新套用（{@link #watchDoor}；{@code cause} 是 {@link #reapplyCause} 的字句，{@code passageClosedInMemory} 見 {@link #reapplyGoal(SessionState, boolean)}）；
      * 已有待套用的門時只把它延到下一個 tick。排入（或延後）記 INFO：它記下的「下一個 tick（tick N）」是「不在 chunk 載入的當下寫方塊」的證據（GameTest 以它比對套用的 tick）；
-     * 完成時只有實際改了門（APPLIED）才記 INFO（{@link #applyDoor}）。
+     * 完成時只有實際改了門（APPLIED）才記 INFO（{@link #applyDoor}）。這座艙待套用的門是找不到所屬 session 的正規化（{@link DoorGoal#NORMALIZE_OWNERLESS}，F5-2）時，以這個 session
+     * 的目標取代它（session 的門優先；它在套用時也會因為這個 session 而被排除）。
      */
     private void reapplyDoor(SessionRecoveryRecord view, String cause, boolean passageClosedInMemory) {
         var existing = doors.get(view.chamberUuid());
-        if (existing != null) {
+        if (existing != null && existing.goal != DoorGoal.NORMALIZE_OWNERLESS) {
             existing.deferTo(service.now + 1);
             existing.reapplied = true;
             LOGGER.info(LOG_MARKER, "來源艙{}：已有待套用的原艙門（{}），延到下一個 tick（tick {}）套用，不在 chunk 載入的當下寫方塊：session={} chamber={}", cause,
@@ -572,6 +576,77 @@ final class OriginDoors {
     }
 
     /**
+     * 找不到所屬 session、卻帶著量子膜的原艙門（spec §10.6 :613，F5-2；{@code CollapseService.normalizeOwnerless} 在 {@code ChamberPowerCoordinator} 刷新該艙時呼叫，server thread
+     * 上）：排入下一個 tick 的 {@link DoorGoal#NORMALIZE_OWNERLESS}（session 為 null），不在刷新的當下寫門（刷新可能就在 chunk 載入的 load-sync 裡）。這座艙已有待套用的門時不排：
+     * session 的門優先（例如 SEALED 的關門），已排入的正規化也不重複排、不重複記 log。排入時只讀 server tick（{@code service.now} 與 journal 在第一個 tick 之前還沒有取得）。
+     * 排入記一則 INFO，記下「下一個 tick（tick N）」。
+     */
+    void queueOwnerless(ServerWorld world, ChamberFrame frame, UUID chamber) {
+        if (!service.server.isOnThread() || doors.containsKey(chamber)) return;
+        int next = service.server.getTicks() + 1;
+        doors.put(chamber, new PendingDoor(chamber, null, world.getRegistryKey(), frame, next, DoorGoal.NORMALIZE_OWNERLESS));
+        LOGGER.info(TICK_LOG_MARKER, "找不到所屬 session、卻帶著量子膜的原艙門：下一個 tick（tick {}）正規化為一般開門（spec §10.6），不在刷新的當下寫方塊：chamber={}", next, chamber);
+    }
+
+    /** 找不到所屬 session 的量子膜，這一次套用的處置（{@link #ownerlessStep}）。 */
+    enum OwnerlessStep {
+        /** 艙體外擴 3 格的 chunk 還沒都 FULL：等之後的 tick（不退避、不載入）。 */
+        WAIT,
+        /** 這座艙有 COLLAPSING、SEALED 或 PASSAGE_READY 的 session（collapse view）：門由它負責，丟棄這次正規化。 */
+        OWNED,
+        /** 門已沒有量子膜：不寫入、完成。 */
+        DONE,
+        /** 改為一般開門（sealed 與 passable 都是）。 */
+        OPEN
+    }
+
+    /**
+     * 找不到所屬 session 的量子膜的處置（純函式，F5-2）：依序看 chunk 是否都 FULL、這座艙在 collapse view 中有沒有 M5 塌縮狀態的 session（{@code owner} 是它的狀態，沒有時為
+     * null）、門還有沒有量子膜。
+     */
+    static OwnerlessStep ownerlessStep(boolean neighborhoodLoaded, SessionState owner, boolean doorHasMembrane) {
+        if (!neighborhoodLoaded) return OwnerlessStep.WAIT;
+        if (owner != null && owner.collapseState()) return OwnerlessStep.OWNED;
+        return doorHasMembrane ? OwnerlessStep.OPEN : OwnerlessStep.DONE;
+    }
+
+    /** 套用找不到所屬 session 的量子膜的正規化（{@link #applyDoor} 的 {@link DoorGoal#NORMALIZE_OWNERLESS}；處置見 {@link #ownerlessStep}）。 */
+    private void applyOwnerless(PendingDoor door) {
+        var world = service.server.getWorld(door.world);
+        if (world == null) return;
+        boolean loaded = CollapseService.neighborhoodLoaded(world, door.frame);
+        var owner = loaded ? collapseOwner(door.chamber) : null;
+        switch (ownerlessStep(loaded, owner == null ? null : owner.state(), loaded && doorHasMembrane(world, door.frame))) {
+            case WAIT -> { }
+            case OWNED -> {
+                doors.remove(door.chamber);
+                LOGGER.info(LOG_MARKER, "原艙門由塌縮流程的 session 負責（{}），不再正規化找不到所屬 session 的量子膜：chamber={} session={}", owner.state(), door.chamber,
+                        owner.sessionUuid());
+            }
+            case DONE -> {
+                doors.remove(door.chamber);
+                LOGGER.debug(TICK_LOG_MARKER, "原艙門已沒有量子膜，不需要正規化（tick {}）：chamber={}", service.now, door.chamber);
+            }
+            case OPEN -> {
+                var result = new ChamberDoorService().applyTarget(world, door.frame, ChamberDoorService.DoorState.OPEN);
+                if (!applyOutcome(door, result.outcome(), service.now)) return;
+                doors.remove(door.chamber);
+                LOGGER.info(TICK_LOG_MARKER, "找不到所屬 session 的量子膜已正規化為一般開門（{}，tick {}）：chamber={}", result.outcome(), service.now, door.chamber);
+            }
+        }
+    }
+
+    /** 這座艙在 collapse view 中 M5 塌縮狀態（COLLAPSING、SEALED、PASSAGE_READY）的 session（flushed 的 record 依 chamber 找；沒有時為 null）。 */
+    private SessionRecoveryRecord collapseOwner(UUID chamber) {
+        for (var record : service.journal.flushedRecords().values()) {
+            if (!record.chamberUuid().equals(chamber)) continue;
+            var view = service.journal.collapseView(record.sessionUuid()).orElse(record);
+            if (view.state().collapseState()) return view;
+        }
+        return null;
+    }
+
+    /**
      * 依 {@link ChamberDoorService.ApplyResult.Outcome} 處理：APPLIED／UNCHANGED 完成；NOT_LOADED 等之後的 tick（不強制載入）；DOOR_INCOMPLETE
      * 是結構性的，記一次並退避、等結構恢復；ROLLED_BACK／ROLLBACK_FAILED 下一個 tick 重試一次，再失敗才退避（ROLLBACK_FAILED 已設
      * activationBlocked 並記 ERROR，之後一次 APPLIED 會解除）。
@@ -586,11 +661,16 @@ final class OriginDoors {
      * <li>PASSAGE_READY 的 passable 量子膜（F5-1）：這個 session 的 collapse view 已不是 PASSAGE_READY 時不再套用；一律套用（沒有碰撞）。</li>
      * <li>通道在記憶體內關閉期間的一般開門（F5-1 fix round 1，S-m3）：同上，collapse view 已不是 PASSAGE_READY 時不再套用；一律套用（沒有碰撞）。</li>
      * <li>重新套用的量子膜正規化（F4b-3）：COLLAPSING 已不是這個 session 的 collapse view 時不再套用；門沒有量子膜時不寫入、完成；有時改為一般開門。</li>
+     * <li>找不到所屬 session 的量子膜的正規化（F5-2）：見 {@link #applyOwnerless}。</li>
      * </ul>
      * 由重新套用排入（或延後）的門（{@code reapplied}）完成時另記一則 INFO（目標的結果與 tick），作為「不在 chunk 載入的當下寫方塊」的證據。
      */
     private void applyDoor(PendingDoor door) {
         if (service.now < door.notBefore || !door.backoff.ready(service.now)) return;
+        if (door.goal == DoorGoal.NORMALIZE_OWNERLESS) {
+            applyOwnerless(door);
+            return;
+        }
         if ((door.goal == DoorGoal.OPEN_AFTER_TERMINAL || door.goal == DoorGoal.CLOSE_AFTER_TERMINAL)
                 && service.sessions.presence(service.server, door.chamber) != ChamberSessionGateway.Presence.NONE) {
             doors.remove(door.chamber);
@@ -684,7 +764,11 @@ final class OriginDoors {
     static boolean applyOutcome(PendingDoor door, ChamberDoorService.ApplyResult.Outcome outcome, int now) {
         var step = doorStep(outcome, door.retried, door.warned);
         if (step.done()) {
-            if (door.warned != null) LOGGER.info(LOG_MARKER, "{}（先前：{}）：chamber={}", door.goal.done, door.warned, door.chamber);
+            if (door.warned != null) {
+                // F5-2：沒有所屬 session 的門（NORMALIZE_OWNERLESS）帶 tick 層級的子 marker。
+                if (door.session == null) LOGGER.info(TICK_LOG_MARKER, "{}（先前：{}）：chamber={}", door.goal.done, door.warned, door.chamber);
+                else LOGGER.info(LOG_MARKER, "{}（先前：{}）：chamber={}", door.goal.done, door.warned, door.chamber);
+            }
             return true;
         }
         recordDoorStep(door, step, null, now);
@@ -701,7 +785,10 @@ final class OriginDoors {
      * 判定）；原因與「已立即重試過一次」交給 door 記下；{@code step.backOff()} 時退避。
      */
     private static void recordDoorStep(PendingDoor door, DoorStep step, Throwable failure, int now) {
-        if (step.warn()) LOGGER.warn(LOG_MARKER, "{}，之後重試：chamber={} session={}：{}", door.goal.pending, door.chamber, door.session,
+        // F5-2：沒有所屬 session 的門（NORMALIZE_OWNERLESS）沒有 session= 可帶，帶 tick 層級的子 marker。
+        if (step.warn() && door.session == null) LOGGER.warn(TICK_LOG_MARKER, "{}，之後重試：chamber={}（沒有所屬 session）：{}", door.goal.pending, door.chamber,
+                step.reason(), failure);
+        else if (step.warn()) LOGGER.warn(LOG_MARKER, "{}，之後重試：chamber={} session={}：{}", door.goal.pending, door.chamber, door.session,
                 step.reason(), failure);
         door.remember(step.reason(), step.retried());
         if (step.backOff()) door.backoff.failed(now);
@@ -743,7 +830,7 @@ final class OriginDoors {
     /**
      * 待套用門的目標：終局之後的一般開門，進入 SEALED 時的關門（門口有 entity 時一般開門）；F4b-3 另加參與者關門的終局之後的關門（F5-1 起也用於通道期間的 (a)）、PREPARE
      * 結束或暫停之後的一般開門、重新套用時的量子膜正規化，以及 PREPARE 每個 tick 的原艙門（{@link CollapseService.Track#membrane}，不排入待套用的門）；F5-1 另加 PASSAGE_READY
-     * 的 passable 量子膜，F5-1 fix round 1 另加通道在記憶體內關閉期間的一般開門。{@code pending}／{@code done} 是 log 的字句。
+     * 的 passable 量子膜，F5-1 fix round 1 另加通道在記憶體內關閉期間的一般開門，F5-2 另加找不到所屬 session 的量子膜的正規化。{@code pending}／{@code done} 是 log 的字句。
      */
     enum DoorGoal {
         OPEN_AFTER_TERMINAL("終局之後原艙門還沒改為一般開門", "原艙門已改為一般開門"),
@@ -755,7 +842,9 @@ final class OriginDoors {
         PASSABLE("提交 PASSAGE_READY 之後原艙門還沒改為 passable 量子膜", "提交 PASSAGE_READY 之後原艙門已改為 passable 量子膜"),
         /** F5-1 fix round 1（spec review S-m3）：SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉的期間，原艙門改為一般開門（{@link PassageService}）。 */
         OPEN_WHILE_PASSAGE_CLOSED("通道在記憶體內關閉（SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒）：原艙門還沒改為一般開門",
-                "通道在記憶體內關閉（SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒）：原艙門已改為一般開門");
+                "通道在記憶體內關閉（SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒）：原艙門已改為一般開門"),
+        /** F5-2（spec §10.6 :613）：找不到所屬 session、卻帶著量子膜的原艙門改為一般開門（{@link #queueOwnerless}；{@link PendingDoor#session} 為 null）。 */
+        NORMALIZE_OWNERLESS("找不到所屬 session 的量子膜：原艙門還沒正規化為一般開門", "找不到所屬 session 的量子膜：原艙門已正規化為一般開門");
 
         final String pending, done;
 
@@ -767,6 +856,7 @@ final class OriginDoors {
      * 依 {@link DoorStep#warn} 決定。
      */
     static final class PendingDoor {
+        /** {@code session} 只有找不到所屬 session 的正規化（{@link DoorGoal#NORMALIZE_OWNERLESS}，F5-2）是 null；其他目標一律是排入它的 session。 */
         final UUID chamber, session;
         final RegistryKey<World> world;
         final ChamberFrame frame;

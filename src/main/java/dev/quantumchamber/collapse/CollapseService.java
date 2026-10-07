@@ -209,6 +209,8 @@ public final class CollapseService {
         ServerLifecycleEvents.SERVER_STOPPED.register(DestinationResolver::release);
         // F4b-3：原艙門的攔截（spec §7、§7.3）經 chamber 定義的 port 交給這裡，排在 ChamberDoorService 之前（chamber 不 import collapse）。
         ChamberCollapsePort.installDoors(CollapseService::useDoor);
+        // F5-2：找不到所屬 session 的量子膜（spec §10.6 :613），ChamberPowerCoordinator 刷新原艙時經同一個 port 交給這裡排入下一個 tick。
+        ChamberCollapsePort.installMembranes(CollapseService::normalizeOwnerless);
     }
 
     private static void onStarted(MinecraftServer server) {
@@ -1183,6 +1185,20 @@ public final class CollapseService {
     private static ChamberCollapsePort.DoorUse useDoor(ServerWorld world, ChamberFrame frame, PlayerEntity player) {
         var service = INSTANCES.get(world.getServer());
         return service == null ? ChamberCollapsePort.DoorUse.PASS : service.originDoors.door(world, frame, player);
+    }
+
+    /**
+     * {@link ChamberCollapsePort.Membranes} 的實作（{@link #initialize} 註冊；spec §10.6 :613，F5-2）：交給這個 server 的原艙門排入下一個 tick 的正規化
+     * （{@link OriginDoors#queueOwnerless}）。這個 server 沒有塌縮流程時不做事。不丟出例外：排入時的非預期例外記 tick 層級的 WARN（沒有 session 可帶），下一次刷新再試。
+     */
+    private static void normalizeOwnerless(ServerWorld world, ChamberFrame frame, UUID chamber) {
+        var service = INSTANCES.get(world.getServer());
+        if (service == null) return;
+        try {
+            service.originDoors.queueOwnerless(world, frame, chamber);
+        } catch (RuntimeException failure) {
+            LOGGER.warn(TICK_LOG_MARKER, "找不到所屬 session 的量子膜沒有排入正規化（非預期的例外），下一次刷新再試：chamber={}：{}", chamber, FailureText.describe(failure), failure);
+        }
     }
 
     // ---- 共用（package-private 的幾個也由 OriginDoors 與 PassageService 呼叫：terminated、terminalFailed、neighborhoodLoaded、refresh(record)、warn、track、describe；

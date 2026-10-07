@@ -123,7 +123,50 @@ public final class ChamberPowerCoordinator {
                 && registry.findOrigin(world.getRegistryKey().getValue(), role.get(), frame)
                         .filter(record -> record.chamberUuid().equals(controller.chamberUuid())).isPresent()) {
             ChamberProtectionService.get().completeReconciliation(registry, controller.chamberUuid());
+            if (loaded) normalizeOwnerlessMembrane(world, frame, controller.chamberUuid(), gateway);
         }
+    }
+
+    /**
+     * M5 spec §10.6 :613（F5-2）：找不到所屬 session、卻帶著量子膜的原艙門（例如終局之後、改門之前 crash），在協調完這座原艙之後交給塌縮流程，排入下一個 tick 正規化為一般開門
+     * （{@link ChamberCollapsePort.Membranes}；chamber 不 import collapse）。只在 ORIGIN 分支、艙體的 chunk 都已載入（{@code loaded}）時讀門；門的 25 格有任何一格帶著量子膜，而且
+     * presence 不是 M5 的塌縮狀態（{@link #normalizesOwnerless}）時才交出。MEASURED（含 DORMANT）的艙也包含在內（presence 是 ACTIVE 或 UNKNOWN）。有 COLLAPSING、SEALED、
+     * PASSAGE_READY 的艙由該 session 的門邏輯負責，這裡不交出，塌縮流程套用時也再排除一次。排入、套用與 log 都在塌縮流程；這裡不寫門、不丟出例外（刷新在 Controller 的排程刻與
+     * neighbor update 裡）：presence 讀不到時（{@link #reconcile} 已以同一個原因記 WARN）略過，下一次刷新再判斷。
+     */
+    private static void normalizeOwnerlessMembrane(ServerWorld world, ChamberFrame frame, UUID chamber, ChamberSessionGateway gateway) {
+        if (!doorHasMembrane(world, frame)) return;
+        ChamberSessionGateway.Presence presence;
+        try {
+            presence = Objects.requireNonNull(gateway.presence(world.getServer(), chamber), "presence");
+        } catch (RuntimeException failure) {
+            LOGGER.debug("艙體 {} 的量子膜正規化略過：讀不到 presence，下一次刷新再判斷", chamber, failure);
+            return;
+        }
+        if (!normalizesOwnerless(presence, true)) return;
+        try {
+            ChamberCollapsePort.membranes().normalizeOwnerless(world, frame, chamber);
+        } catch (RuntimeException failure) {
+            LOGGER.warn("艙體 {} 的量子膜正規化沒有排入（塌縮流程丟出例外），下一次刷新再試", chamber, failure);
+        }
+    }
+
+    /**
+     * M5 spec §10.6 :613 的條件（純函式，F5-2）：門帶著量子膜，而且 presence 不是 {@code COLLAPSE}／{@code PASSAGE}（COLLAPSING、SEALED、PASSAGE_READY 的 session 自己擁有門）
+     * 時，才交給塌縮流程正規化。
+     */
+    static boolean normalizesOwnerless(ChamberSessionGateway.Presence presence, boolean doorHasMembrane) {
+        Objects.requireNonNull(presence, "presence");
+        return doorHasMembrane && presence != ChamberSessionGateway.Presence.COLLAPSE && presence != ChamberSessionGateway.Presence.PASSAGE;
+    }
+
+    /** 原艙門的 25 格（區域 x、y 1..5，z 0）有任何一格是帶著量子膜的 bulkhead；呼叫前艙體的 chunk 必須已載入（只查詢、不載入）。 */
+    private static boolean doorHasMembrane(ServerWorld world, ChamberFrame frame) {
+        for (int y = 1; y <= 5; y++) for (int x = 1; x <= 5; x++) {
+            var state = world.getBlockState(ChamberGeometry.localToWorld(frame, x, y, 0));
+            if (state.isOf(ModBlocks.QUANTUM_BULKHEAD) && QuantumBulkheadBlock.membrane(state).isMembrane()) return true;
+        }
+        return false;
     }
 
     /**
