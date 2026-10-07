@@ -2306,8 +2306,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     （INFO 一則），entity storage 載入之後門仍開著，沒有第三次套用。三次排入的 INFO 原因都是「重新載入」。</li>
      * </ul>
      * catalog 增量 0（SEALED 收據不配置宇宙）。
+     * <p>有界等待的總和（README「前提」；F5-0，F4b-3 quality Nit）：註冊最晚 tick 43；第一次載入之後套用最晚 registered＋605＝648；第二次最晚 closedAt＋642＝1290；第三次排入最晚
+     * openedAt＋602＝1892，entity storage 最晚再 300＝2192；最後 2 tick 之後收斂最多 20 tick，共 2214，所以 tickLimit 是 2300（原本 2000 不夠）。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_reload", tickLimit = 2000)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_reload", tickLimit = 2300)
     public void sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it(TestContext context) {
         begin(context, "sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
