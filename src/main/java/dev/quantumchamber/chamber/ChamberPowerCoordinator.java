@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
@@ -18,6 +19,12 @@ public final class ChamberPowerCoordinator {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
     private static final ThreadLocal<Deferred> DEFERRED = new ThreadLocal<>();
     private static final ThreadLocal<Set<RefreshTarget>> REFRESHING = ThreadLocal.withInitial(LinkedHashSet::new);
+    /**
+     * R2 M5（M5 spec §10.7 :634）：目前的 ARMED 是上一次 {@link #reconcile} 由 {@code start} 回 ARMED_ONLY／STARTED 留下的原艙（presence 一直是 NONE；M1.2 的 adapter 與 test
+     * 的 fake gateway）。每次協調先取出，只有再由 start 留下 ARMED（或依記號保持）時才重新記下，所以 presence 一旦不是 NONE、或結果不是這種 ARMED 就不再保持。不持久化：重啟之後
+     * Controller 存下的 ARMED 一律重新評估。production 的 session gateway 的 {@code start} 只回 STAGING／REJECTED，不會記下任何一座艙。
+     */
+    private static final Set<UUID> ARMED_BY_START = ConcurrentHashMap.newKeySet();
     private final ChamberActivationService activation = new ChamberActivationService();
 
     public void refresh(ServerWorld world, BlockPos controllerPos) {
@@ -119,17 +126,27 @@ public final class ChamberPowerCoordinator {
         }
     }
 
+    /**
+     * 一座原艙的協調（純函式，除了 {@link #ARMED_BY_START}）。M5 的塌縮狀態（spec §10.7）：presence 為 {@code COLLAPSE} 或 {@code PASSAGE} 時不走 pending／needsReturn、不呼叫
+     * {@code returnToOrigin}；power state 只設 POWERED（已供電而且 enabled）或 RETURNING（不設 OFF，保護維持）；比較器是 {@code PASSAGE}＋已供電＋enabled 時 {@link ChamberState#PASSAGE}
+     * （15），其餘 {@link ChamberState#ARMED}（11）。
+     * <p>R2 M5（spec §10.7 :634）：presence 為 NONE、目前是 ARMED 時，只有這座艙上一次協調由 {@code start} 回 ARMED_ONLY／STARTED 留下的 ARMED（M1.2 的 adapter：沒有 session，
+     * 持續高電位不重複啟動）才保持。其他 ARMED（活動 session、M5 的 COLLAPSE、返還未完成或協調失敗時的保護）在 presence 回到 NONE 之後都已過時——例如 M5 的終局不經這裡的返還
+     * 路徑——比照明確返還成功之後重新評估資格，不再卡在 11。
+     */
     static ChamberState reconcile(ChamberRegistry registry, UUID uuid, boolean powered, ChamberState current,
                                   Supplier<ArmAttemptResult> readiness, SessionActions sessions) {
+        // R2 M5：先取出上一次的記號，這一次只有再由 start 回 ARMED_ONLY／STARTED（或依記號保持）時才重新記下。
+        boolean armedByStart = ARMED_BY_START.remove(uuid);
         var record = registry.records().get(uuid);
         if (record == null || record.destroyed() || record.instanceKind() != ChamberInstanceKind.ORIGIN) return ChamberState.INVALID;
         try {
             var presence = Objects.requireNonNull(sessions.presence(), "presence");
             if (presence == ChamberSessionGateway.Presence.COLLAPSE || presence == ChamberSessionGateway.Presence.PASSAGE) {
                 // M5 塌縮狀態（spec §10.7）：不走 pending／needsReturn、不呼叫 returnToOrigin（斷電等即時訊號由塌縮流程處理）。
-                // power state 只設 POWERED 或 RETURNING（不設 OFF，保護維持）；比較器暫時一律 ARMED（11），PASSAGE→15 留給 F5。
-                registry.setPowerState(uuid, powered && record.enabled() ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING);
-                return ChamberState.ARMED;
+                boolean poweredAndEnabled = powered && record.enabled();
+                registry.setPowerState(uuid, poweredAndEnabled ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING);
+                return presence == ChamberSessionGateway.Presence.PASSAGE && poweredAndEnabled ? ChamberState.PASSAGE : ChamberState.ARMED;
             }
             boolean pending = record.powerState() == ChamberPowerState.RETURNING
                     || record.powerState() == ChamberPowerState.UNKNOWN
@@ -159,9 +176,9 @@ public final class ChamberPowerCoordinator {
             var preview = readiness.get();
             if (!preview.accepted()) return preview.readiness();
             if (sessions.activationBlocked()) return ChamberState.IDLE;
-            if (current == ChamberState.ARMED) return current;
+            if (current == ChamberState.ARMED && armedByStart) return armedByStart(uuid);
             return switch (Objects.requireNonNull(sessions.start(preview.participantUuids()), "start result")) {
-                case ARMED_ONLY, STARTED -> ChamberState.ARMED;
+                case ARMED_ONLY, STARTED -> armedByStart(uuid);
                 case STAGING -> ChamberState.READY;
                 case REJECTED -> ChamberState.READY;
             };
@@ -170,6 +187,12 @@ public final class ChamberPowerCoordinator {
             LOGGER.warn("艙體 {} 的 session 協調失敗，保留返還保護", uuid, failure);
             return ChamberState.ARMED;
         }
+    }
+
+    /** R2 M5：記下這座艙的 ARMED 來自 start（{@link #ARMED_BY_START}），回 ARMED。 */
+    private static ChamberState armedByStart(UUID uuid) {
+        ARMED_BY_START.add(uuid);
+        return ChamberState.ARMED;
     }
 
     /** 最外層交易結束後才依最終世界狀態合併刷新，finally 保證巢狀 guard 釋放。 */

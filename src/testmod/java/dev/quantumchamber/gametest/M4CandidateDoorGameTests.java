@@ -1691,7 +1691,8 @@ public final class M4CandidateDoorGameTests {
     /**
      * F3a（spec §10.7、§13.2）：真的原艙（已註冊、已供電）上的三種 M5 fixture——COLLAPSING（SOURCE）、PASSAGE_READY 與 SEALED（NEW）。
      * presence 只依 collapse view 推導；returnToOrigin 沒有副作用並回 false；requestMeasuredRecovery 不丟例外也不改任何東西；reconcile 不走返還，
-     * 已供電且 enabled 時設 POWERED、斷電時設 RETURNING（保護維持），比較器一律 11。每種 fixture 以終局 API 收尾後，原艙回到一般流程。
+     * 已供電且 enabled 時設 POWERED、斷電時設 RETURNING（保護維持）。比較器：COLLAPSING、SEALED 是 11；PASSAGE_READY（已供電且 enabled）是 15
+     * （M5 F5-2，spec §10.7；F3a 時一律 11 是暫時值）。每種 fixture 以終局 API 收尾後，原艙回到一般流程。
      * 不需要原生玩家，各平台都執行。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_f3a_presence_reconcile",tickLimit=100000)
@@ -1736,7 +1737,12 @@ public final class M4CandidateDoorGameTests {
                             && M4CandidateTestAccess.space(CorridorPageManager.forServer(server),sid)==null);
                     witness.put(phase+".returnedParticipantNotBlocked",!SessionRecoveryManager.blocks(player,server));
                     coordinator.refresh(world,frame.controllerPos());
-                    witness.put(phase+".poweredArmed11",armedSignal(context,frame) && registry.records().get(chamber).powerState()
+                    // M5 F5-2（spec §10.7）：PASSAGE_READY＋已供電＋enabled 的比較器是 PASSAGE（15）；COLLAPSING、SEALED 仍是 ARMED（11）。F3a 時一律 11 是暫時值（決策 11）。
+                    boolean signal=phase==SessionState.PASSAGE_READY
+                            ? controller.chamberState()==dev.quantumchamber.chamber.ChamberState.PASSAGE
+                                    && world.getBlockState(frame.controllerPos()).getComparatorOutput(world,frame.controllerPos())==15
+                            : armedSignal(context,frame);
+                    witness.put(phase+(phase==SessionState.PASSAGE_READY ? ".poweredPassage15" : ".poweredArmed11"),signal && registry.records().get(chamber).powerState()
                             ==dev.quantumchamber.chamber.ChamberPowerState.POWERED && before.equals(journalView(server,journal,sid)));
                     if(phase==SessionState.COLLAPSING) {
                         context.setBlockState(power,net.minecraft.block.Blocks.AIR); coordinator.refresh(world,frame.controllerPos());

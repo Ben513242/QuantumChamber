@@ -86,14 +86,17 @@ public final class ChamberControllerBlock extends BlockWithEntity implements Blo
             return ActionResult.FAIL;
         }
         if (world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller) {
-            String message = !controller.wasPowered() ? "艙門已切換；目前未供電。"
+            Text message = !controller.wasPowered() ? Text.literal("艙門已切換；目前未供電。")
                     : switch (controller.chamberState()) {
-                        case INVALID -> "艙門已切換；量子功能已停用或結構無效。";
-                        case IDLE -> "已供電保護；請關門、進艙並讓全員取得 QuantumState。";
-                        case READY -> "條件已齊，等待啟動。";
-                        case ARMED -> "艙體已進入量子準備、活動或安全返還狀態。";
+                        case INVALID -> Text.literal("艙門已切換；量子功能已停用或結構無效。");
+                        case IDLE -> Text.literal("已供電保護；請關門、進艙並讓全員取得 QuantumState。");
+                        case READY -> Text.literal("條件已齊，等待啟動。");
+                        case ARMED -> Text.literal("艙體已進入量子準備、活動或安全返還狀態。");
+                        // M5 spec §10.7：比較器 15（PASSAGE_READY、已供電、enabled）。spec 沒有定字句：依上面各狀態的寫法描述艙體的狀態，「量子通道已開啟」同 §10.8；
+                        // 新的 M5 訊息一律是 translatable（plan Global Constraints）。
+                        case PASSAGE -> Text.translatable("message.quantumchamber.m5.controller_passage");
                     };
-            player.sendMessage(Text.literal(message), true);
+            player.sendMessage(message, true);
         }
         return ActionResult.SUCCESS;
     }

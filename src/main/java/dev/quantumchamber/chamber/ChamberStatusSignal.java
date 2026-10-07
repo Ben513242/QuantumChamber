@@ -10,6 +10,8 @@ public final class ChamberStatusSignal {
             case IDLE -> 3;
             case READY -> 7;
             case ARMED -> 11;
+            // M5 spec §10.7：量子通道開啟中。
+            case PASSAGE -> 15;
         };
     }
 }

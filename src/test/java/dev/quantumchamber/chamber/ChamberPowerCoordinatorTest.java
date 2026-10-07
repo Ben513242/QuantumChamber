@@ -137,8 +137,8 @@ class ChamberPowerCoordinatorTest {
 
     /**
      * spec §10.7（決策 11）：COLLAPSE 與 PASSAGE 不走 pending／needsReturn、不呼叫 returnToOrigin、不開新 session；power state 只設 POWERED
-     * （已供電且 enabled）或 RETURNING（不設 OFF，保護維持）；比較器暫時一律 ARMED（11），PASSAGE→15 留給 F5。涵蓋 registry 的每個
-     * power state（含 M4 DORMANT 留下的 RETURNING）、供電與 enabled 的四種組合，以及每個目前的 ChamberState。
+     * （已供電且 enabled）或 RETURNING（不設 OFF，保護維持）；比較器是 PASSAGE＋已供電＋enabled 時 PASSAGE（15，F5-2），其餘 ARMED（11）。涵蓋 registry 的每個
+     * power state（含 M4 DORMANT 留下的 RETURNING：已是 RETURNING 時仍能到達 15）、供電與 enabled 的四種組合，以及每個目前的 ChamberState（含 PASSAGE）。
      */
     @Test void collapseAndPassagePresenceNeverReturnOrStartAndOnlySetPoweredOrReturning() {
         var cases = new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
@@ -151,7 +151,9 @@ class ChamberPowerCoordinatorTest {
                     var next = refresh(powered, current, true);
                     var power = registry.records().get(uuid).powerState();
                     int returns = backend.returns, starts = backend.starts;
-                    cases.add(() -> assertEquals(ChamberState.ARMED, next, label));
+                    var expected = presence == ChamberSessionGateway.Presence.PASSAGE && powered && enabled ? ChamberState.PASSAGE : ChamberState.ARMED;
+                    cases.add(() -> assertEquals(expected, next, label));
+                    cases.add(() -> assertEquals(expected == ChamberState.PASSAGE ? 15 : 11, ChamberStatusSignal.forState(next), "比較器：" + label));
                     cases.add(() -> assertEquals(0, returns, "不呼叫 returnToOrigin：" + label));
                     cases.add(() -> assertEquals(0, starts, "不開新 session：" + label));
                     cases.add(() -> assertEquals(powered && enabled ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING, power, label));
@@ -175,6 +177,74 @@ class ChamberPowerCoordinatorTest {
         assertEquals(ChamberState.INVALID, refresh(false, ChamberState.ARMED, false));
         assertEquals(ChamberPowerState.OFF, registry.records().get(uuid).powerState());
         assertEquals(0, backend.starts);
+    }
+
+    /**
+     * spec §10.7、§15 的 reconcile 列（F5-2）：一次塌縮的比較器。COLLAPSE（已供電）11、POWERED → 斷電 11、RETURNING（保護不解除）→ 通道開啟（PASSAGE）而 registry 仍是 RETURNING、
+     * 已恢復供電：15、POWERED → 通道期間斷電：11、RETURNING → 終局（presence NONE）之後依既有流程：先經 returnToOrigin 確認，斷電中是 OFF、INVALID；恢復供電、沒有資格時 IDLE。
+     * 整段沒有開新 session，M5 presence 的期間也沒有呼叫 returnToOrigin。
+     */
+    @Test void passageReachesFifteenFromAReturningRegistryAndTheTerminalResumesTheExistingFlow() {
+        registry.setPowerState(uuid, ChamberPowerState.POWERED);
+        backend.presence = ChamberSessionGateway.Presence.COLLAPSE;
+        var collapsing = refresh(true, ChamberState.IDLE, false);
+        var collapsingPower = registry.records().get(uuid).powerState();
+        var cut = refresh(false, collapsing, false);
+        var cutPower = registry.records().get(uuid).powerState();
+        backend.presence = ChamberSessionGateway.Presence.PASSAGE;
+        var opened = refresh(true, cut, false);
+        var openedPower = registry.records().get(uuid).powerState();
+        var openedUnpowered = refresh(false, opened, false);
+        var openedUnpoweredPower = registry.records().get(uuid).powerState();
+        int returnsDuringM5 = backend.returns;
+        backend.presence = ChamberSessionGateway.Presence.NONE;
+        var ended = refresh(false, openedUnpowered, false);
+        var endedPower = registry.records().get(uuid).powerState();
+        var repowered = refresh(true, ended, false);
+        assertAll(
+                () -> assertEquals(ChamberState.ARMED, collapsing), () -> assertEquals(ChamberPowerState.POWERED, collapsingPower),
+                () -> assertEquals(ChamberState.ARMED, cut), () -> assertEquals(ChamberPowerState.RETURNING, cutPower, "斷電：保護不解除"),
+                () -> assertEquals(ChamberState.PASSAGE, opened, "registry 是 RETURNING 時仍能到達 15"),
+                () -> assertEquals(15, ChamberStatusSignal.forState(opened)), () -> assertEquals(ChamberPowerState.POWERED, openedPower),
+                () -> assertEquals(ChamberState.ARMED, openedUnpowered, "通道期間斷電：11"), () -> assertEquals(ChamberPowerState.RETURNING, openedUnpoweredPower),
+                () -> assertEquals(0, returnsDuringM5, "M5 presence 期間不呼叫 returnToOrigin"),
+                () -> assertEquals(ChamberState.INVALID, ended), () -> assertEquals(ChamberPowerState.OFF, endedPower, "終局之後：既有流程解除為 OFF"),
+                () -> assertEquals(1, backend.returns, "既有流程：RETURNING 先經 returnToOrigin 確認"),
+                () -> assertEquals(ChamberState.IDLE, repowered), () -> assertEquals(0, backend.starts));
+    }
+
+    /**
+     * R2 M5（spec §10.7 :634，F5-2）：presence 為 NONE、目前是 ARMED，而這個 ARMED 不是 start 留下的（M5 的 COLLAPSE 已終局、活動 session 不經這裡的返還路徑就結束，或重啟之前存下的
+     * ARMED）時，不再卡在 11：已供電、enabled、有資格就依 M2 規則開新 session（spec §10.6「通道結束之後，若關了門、而且全員仍有 Buff，依 M2 規則會自動開始新的 session」）。
+     * start 回 ARMED_ONLY 留下的 ARMED 仍然保持、不重複啟動（M1.2；{@code poweredWithoutEligibilityProtectsAndThenArmsOnlyOnce}），但 presence 一旦不是 NONE，這個記號就不再有效。
+     */
+    @Test void armedLeftWithoutTheSessionThatHeldItIsReevaluatedAndOnlyAStartedArmedHolds() {
+        registry.setPowerState(uuid, ChamberPowerState.POWERED);
+        backend.presence = ChamberSessionGateway.Presence.COLLAPSE;
+        var collapse = refresh(true, ChamberState.IDLE, true);
+        backend.presence = ChamberSessionGateway.Presence.NONE;
+        var afterTheTerminal = refresh(true, collapse, true);
+        int startsAfterTheTerminal = backend.starts;
+        var held = refresh(true, afterTheTerminal, true);
+        int startsWhileHeld = backend.starts;
+        backend.presence = ChamberSessionGateway.Presence.ACTIVE;
+        var active = refresh(true, held, true);
+        backend.presence = ChamberSessionGateway.Presence.NONE;
+        var afterTheActiveSession = refresh(true, active, true);
+        int startsAfterTheActiveSession = backend.starts;
+        var restored = new ChamberRegistry();
+        var restoredUuid = restored.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, new ChamberFrame(new BlockPos(64, 70, 64), Direction.NORTH)).chamberUuid();
+        restored.setPowerState(restoredUuid, ChamberPowerState.POWERED);
+        var restart = ChamberPowerCoordinator.reconcile(restored, restoredUuid, true, ChamberState.ARMED,
+                () -> new ArmAttemptResult(true, ChamberState.READY, participants, Set.of()), backend);
+        int startsAfterARestart = backend.starts;
+        assertAll(
+                () -> assertEquals(ChamberState.ARMED, collapse),
+                () -> assertEquals(ChamberState.ARMED, afterTheTerminal), () -> assertEquals(1, startsAfterTheTerminal, "COLLAPSE 終局之後：開新 session，不卡在 11"),
+                () -> assertEquals(ChamberState.ARMED, held), () -> assertEquals(1, startsWhileHeld, "start 留下的 ARMED：持續高電位不重複啟動"),
+                () -> assertEquals(ChamberState.ARMED, active),
+                () -> assertEquals(ChamberState.ARMED, afterTheActiveSession), () -> assertEquals(2, startsAfterTheActiveSession, "活動 session 不經返還路徑結束之後：重新評估"),
+                () -> assertEquals(ChamberState.ARMED, restart), () -> assertEquals(3, startsAfterARestart, "重啟之前存下的 ARMED：重新評估"));
     }
 
     @Test void nestedDeferralReleasesAfterException() {
