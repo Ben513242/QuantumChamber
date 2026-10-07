@@ -135,7 +135,8 @@ public final class CollapseService {
     private static final Map<MinecraftServer, CollapseService> INSTANCES = new ConcurrentHashMap<>();
     private static boolean initialized;
 
-    // server、startupSessions、tracks 與下方 context 的四個欄位是 package-private：同一個 server instance 的 OriginDoors 直接讀寫（F5-0，行為不變）。
+    // server、startupSessions、tracks 與下方 context 中的 journal、sessions、now 是 package-private：同一個 server instance 的 OriginDoors 直接讀寫（F5-0，行為不變）。
+    // context 的 pages 仍是 private（OriginDoors 不用它）。
     final MinecraftServer server;
     /**
      * 開服 attach 當下已在 journal 的 session：DORMANT 與 SEALED 重試的「開服之後第一次觀察到原參與者在艙內」只對它們成立（§7.1、§11.2）；原艙門的重新套用也用它

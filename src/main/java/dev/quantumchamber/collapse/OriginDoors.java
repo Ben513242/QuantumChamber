@@ -47,7 +47,7 @@ import org.slf4j.LoggerFactory;
  * </ul>
  * <p><b>F5-1 的接點</b>（spec §10.2–§10.6）：PASSAGE_READY 期間的開關門（§10.5：參與者結束通道，先終局、再改門；非參與者拒絕）接在 {@link #doorAction} 的 PASSAGE_READY
  * 分支（roll-forward 尚未確認時已拒絕）與 {@link #door} 的處置 switch，{@code CollapseService.useDoor} 與 port 不必改。提交 PASSAGE_READY 時的 passable 量子膜經
- * {@code ChamberDoorService.applyTarget}；{@link #prepareDoor} 只在 PREPARE 擁有原艙門時執行，READY 之後不會把它改回 sealed。通道結束 (a)–(d) 的改門排入
+ * {@code ChamberDoorService.applyTarget}；{@link #prepareDoor} 只在 PREPARE 擁有原艙門時執行，提交 PASSAGE_READY 之後不會把它改回 sealed。通道結束 (a)–(d) 的改門排入
  * {@link #queueDoor}（例如 {@link DoorGoal#OPEN_AFTER_TERMINAL}）。{@link #watchDoor} 目前不看 PASSAGE_READY（開服時的通道由 §12 在第一個 tick 終局）。
  * <p><b>F5-2 的接點</b>（spec §10.6 :613）：找不到所屬 session 的量子膜，在 {@code ChamberPowerCoordinator} 刷新該艙時排入下一個 tick 正規化為一般開門。待套用的門以 chamber
  * 為 key（{@link #doors}），但 {@link PendingDoor} 帶著 session、{@link DoorGoal#NORMALIZE} 要求 collapse view 是 COLLAPSING，所以沒有 session 的正規化要另一個目標；條件見
@@ -312,7 +312,7 @@ final class OriginDoors {
      * <li>其他非預期的例外（找出所屬 session 之後的判斷，或處置途中的終局、改門）一律拒絕、不改門，不交給門服務（PREPARE 擁有原艙門時不得經
      *     {@code ChamberDoorService.toggle}），以 {@link CollapseService#warn} 依 (session, 處置, 原因) 去重記 WARN（{@link #doorUseKey}；判斷途中的例外記成「判斷」）；
      *     這個 session 之後以同一個處置沒有例外地完成時，只清除這個處置的去重鍵（F5-0，F4b-3 quality M-1：別人以別的處置成功，例如艙內的非參與者開門，不讓參與者的處置
-     *     失敗再記一次），所以同一個處置同一原因「失敗 → 成功 → 再失敗」會再記一次。「判斷」沒有對應的處置，它的鍵不會被處置的成功清除，同一原因只記一次（不同原因照常各記一次），
+     *     失敗再記一次），所以同一個處置同一原因「失敗 → 成功 → 再失敗」會再記一次。「判斷」沒有對應的處置，它的鍵不會被處置的成功清除，連續同一原因只記一次（去重只和上一次記下的鍵比較，{@link CollapseService#firstWarning}；不同原因照常各記一次），
      *     直到這個 session 的簿記移除。PREPARE 的門仍由每個 tick 的 {@link #prepareDoor} 維持（艙內有非參與者時照樣改為一般開門）。</li>
      * <li>找出所屬 session 之前的例外（journal 健康時 {@link #sessionAt} 只讀記憶體內的 record，不會發生）：沒有 session 可以歸屬，也無法判斷門是否屬於塌縮流程，
      *     拒絕並記 WARN（不去重；沒有 {@code session=}，所以帶子 marker {@link CollapseService#TICK_LOG_MARKER}，F5-0，F4b-3 spec m-1）。</li>
