@@ -4260,6 +4260,26 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
   - 本節由其後的 docs commit `docs: record F5-0 door extraction in the M5 note` 加入。
 - Code range `fd96305..306b76a`。沒有改 `chamber/`（含 `ChamberCollapsePort`，port 的介面不變）、`CollapseAuthorities`、`DestinationResolver`、`ProjectionWriter`、`ProjectionProtectionIndex`、`CollapsePhase`、`universe/`、`superposition/`、`persistence/`、`corridor/`、語言檔、`gates.ps1`、`build.gradle`、`.github/`。`ChamberCollapseDependencyGuardTest`、`CollapseLogMarkerGuardTest` 也沒有改：守門掃描整個 collapse package，`OD` 以 static import 使用 `CollapseService` 的兩個 marker、logger 是 `LoggerFactory.getLogger("quantumchamber")`，每一輪 JUnit 都 PASS，不需要調整。
 - 範圍是 plan Task F5「拆分」的 F5-0：note F4b-3「交給後續」的 F5 Step 0（必要）與它的追加項目，以及 F4b-2「交給後續」的「評估抽出 PREPARE」。沒有任何通道（F5-1）、比較器與 membrane 正規化（F5-2）的行為。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 3）。reviewer 以原始碼逐行比對加上 javap 抽查，確認純搬移；6 項需要裁示都判定可接受或符合 spec，controller 正式接受。3 項 Minor 的處理：
+    - S-m1：commit 3～5 沒有跑 default 的 21 個 batch。controller 接受，理由是最終 code 與 run-all 相同，Full 為 174/174。
+    - S-m2：F7 errata 與第 3 點 m-2 的分析自相矛盾。controller 已改寫「交給後續」的 F7。
+    - S-m3：plan F5-2 的條目已由 controller 改寫。
+  - quality review Approved（Critical 0、Important 0、Minor 4，含 Nit）。4 項 Minor 都是 Javadoc 或 README 的字句，交給 F5-1 的 Step 0（見「交給後續」）。
+  - **F5-0 完成**：range `fd96305..6e0dfee`，之後是 controller 的 docs commit。
+    - code：`b49ed3e`、`2ab39ad`、`010f79c`、`8785510`、`5560d04`、`306b76a`。
+    - docs：`b971f2d`、`6e0dfee`。
+    - 最終 run-all：`run-all-be78e13beeb94f628f8132f8226f2508`，`END ALL exit=0`（`b971f2d`）。結果如下：
+
+      | 項目 | 結果 |
+      | --- | --- |
+      | default | 174/174 |
+      | M5 | 38/38 |
+      | JUnit | 636 |
+      | release | 412／365 |
+      | sources | 218 |
+      | Full WARN／ERROR | 54／28 |
+      | M5 WARN／ERROR | 37／6 |
 - 行號以 `b971f2d` 為準（code 與 `306b76a` 相同）。`OD` 指 `collapse/OriginDoors.java`，`ODF` 指 testmod 的 `mixin/OriginDoorUseFaultMixin.java`；`CS`、`CST`、`M5U`、`SUP`、`HK` 同前面各節。新增的 1 個 `@GameTest`（M5 run，自己一個 batch，名稱不以 `_windows` 結尾，各平台都執行）：
   - T-SMEM `M5U:2518` `sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it`（`m5_universe_door_sealed_membrane`，tickLimit 300，catalog 增量 0：SEALED 收據不配置宇宙）
 
@@ -4371,11 +4391,18 @@ M-1 的原版 WARN：GREEN 的 GT-P 每次恰好多一則 `(Minecraft) Trying to
   - §10.5 接在 `OD:293` `doorAction` 的 PASSAGE_READY 分支與 `OD` `door` 的處置 switch；新的處置自動有自己的去重鍵（`doorUseKey`）；處置途中的失敗可以比照 T-FAIL 以 `installDoorUseFault` 的方式加注入位置（`ODF`、`HK.DoorUseFault`）。
   - passable 量子膜由 `OD` 套用（`prepareDoor` 只在 PREPARE 擁有原艙門時執行）；通道結束的改門排入 `OD.queueDoor`；`watchDoor` 目前不看 PASSAGE_READY，F5-1 決定 PASSAGE_READY 期間的重新套用（開服時的 PASSAGE_READY 由 §12 在第一個 tick 終局）。
   - PREPARE 沒有抽出：`CS:684` `prepared` 的 READY 提交、`releaseDestination` 都還在 `CS`（第 2 點）。
+  - **Step 0（controller 補，F5-0 quality review 的 Minor）**。以 `6e0dfee` 為準：
+    - m-1：`CS:138` 的註解寫「context 的四個欄位」是 package-private，實際上 `pages`（`CS:157`）仍是 private，只有 `journal`、`sessions`、`now` 是 package-private。修正註解，並同步 note「偏離」第 1 條的說法。
+    - m-2：`ODF:25`、`:27` 與 README `:96`：`@Mixin(targets=…)` 找不到 class 時，Mixin 只記 WARN、不套用（sponge-mixin 的 `strict` 預設關閉）；`require=1` 只保護方法選擇器。在 mixin 的 Javadoc 與 README 補上這一點，並寫明規則：用這種寫法的注入，test 必須有 `hits()` 一類的 witness。
+    - m-3：`OD:315` 的「同一原因只記一次」改為「連續同一原因只記一次」：`firstWarning` 只和上一次記下的鍵比較。
+    - m-4：`OD:50` 的「READY 之後」改為「提交 PASSAGE_READY 之後」，避免和 `Prepare.ready` 混淆。
+  - （controller 補，F5-0 quality review 的建議）`PassageService` 若獨立成類別，它是第二個需要每個 tick context 的協作者。這時把 OD 與它共用的 context 收斂成一個小介面或 record，例如 `TickContext(server, journal, sessions, now)`，加上 track、warn、terminated、terminalFailed、refresh。`originDoors` 在 CS 是 private，PassageService 要排門時，F5-1 要先定好路徑。
 - F5-2：
   - §10.6 :613 的正規化照 F4b-3「補充第 8 點」的四個條件；SEALED 帶著量子膜的情況已由 F5-0 處理（第 3 點 m-2），正規化繼續排除有 COLLAPSING／SEALED 的艙。沒有所屬 session 的量子膜要另一個待套用的目標（`PendingDoor` 帶著 session、`NORMALIZE` 要求 COLLAPSING）。
+  - （controller 補，F5-0 quality review 的建議）Step 0 的條件：F5-1 之後，若 CS 超過約 1600 行，或 `PassageService` 需要直接碰 `destinations`、`Prepare`、`releaseDestination`，就先把 PREPARE 的目的地側抽成 package-private 類別，以純搬移的獨立 commit 完成。範圍是 enterPrepare、leavePrepare、prepareUniverse、project、prepared、preload*、releaseDestination*，約 360 行。目的是讓 F6 的重啟矩陣在最終結構上跑。若決定不抽，寫明理由。
 - F6：
   - `build.yml` 的明列清單另加 T-SMEM `sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it`（不是 `_windows`）。
   - 重啟矩陣可以加上「SEALED、門帶著量子膜時重啟」的跨 JVM 版本（T-SMEM 以 `simulateDoorStartup` 模擬）。
 - F7：
   - README「預期結果」的數字以最新的 run-all 為準更新（F5-0 之後：M5 38、JUnit 636、release 412／365、sources 218）。
-  - spec errata：§7.3 :404「玩家打開之後不會被關回去」的例外：SEALED 的門還帶著量子膜時，玩家使用門不取消還沒套用的關門（第 3 點 m-2）。
+  - spec errata（controller 依 spec review S-m2 改寫）：SEALED 的門還帶著量子膜時，玩家使用門不會取消還沒套用的關門（第 3 點 m-2）。量子膜門的切換本身就是關門，所以這不構成 §7.3 :404 的例外：玩家打開的門仍不會被關回去。

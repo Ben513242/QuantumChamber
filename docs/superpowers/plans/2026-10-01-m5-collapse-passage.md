@@ -681,7 +681,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
   - 結束條件、兩人一人跨過、同艙可開新 session、EXISTING 的基本重逢、艙內有非參與者時仍能提交 READY。
 - **F5-2：比較器與 membrane 正規化。** 範圍是 §10.7 與 §10.6 :613：
   - `ChamberState.PASSAGE`→15、`ChamberStatusSignal`、R2 M5、`ChamberControllerBlock` 的訊息 switch；
-  - 找不到所屬 session 的 membrane 正規化，含 F4b-3 spec m-2：SEALED 帶著量子膜的情況；
+  - 找不到所屬 session 的 membrane 正規化（F4b-3 spec m-2「SEALED 帶著量子膜」已由 F5-0 處理：門還有量子膜時保留待套用的關門；正規化繼續排除有 COLLAPSING／SEALED 的艙）；
   - F4a M-3：SEALED 前後的比較器數值不同時，鎖住 Controller 的刷新。
 
   Step 1 中屬於它的 RED：`presence()` 與 `reconcile` 的那一組、Review Focus 5（沒有 runtime 的 DORMANT 續行到 READY、比較器 15）、membrane 正規化。
