@@ -46,10 +46,17 @@ import org.slf4j.LoggerFactory;
  * （{@link #tick}，執行期間提交的 PASSAGE_READY；開服時就是 PASSAGE_READY 的由 {@code CollapseService} 依 §12 直接終局）或原艙門的攔截（{@link #endByParticipant}）呼叫，
  * 共用它每個 tick 取得的 context（journal、session manager、server tick）與每個 session 的簿記（{@link CollapseService.Track}），比照 {@link OriginDoors}。
  * <ul>
- * <li><b>只收斂</b>（§7 開頭）：roll-forward 尚未確認（{@code Crossed}、SEALED(TRANSFER_RECOVERY_REQUIRED)）時，寫出由 recovery 的 RETRY_FLUSH 以 journal 為單位帶退避
- *     重試；這裡不跨越、不傳送、不評估結束條件、不終局（參與者關門由 {@link OriginDoors#doorAction} 拒絕）。確認之後恢復，這時若已到期，依 (c) 結束。</li>
- * <li><b>結束條件</b>（§10.6，{@link #endCondition}）：(b) 全員都在 Crossed 中；(c) game time 已到 {@code PassageExpiresAtGameTime}；(d) 來源艙沒有供電、Origin 被停用或結構
- *     失效，依即時訊號（{@link CollapseService#sourceSignal}：Controller 的紅石輸入、registry 的 enabled、結構驗證），不經 {@code ChamberPowerCoordinator.returnToOrigin}。
+ * <li><b>只收斂</b>（§7 開頭）：roll-forward 尚未確認時，寫出由 recovery 的 RETRY_FLUSH 以 journal 為單位帶退避重試，這裡只收斂。兩種寫入確認之後的走向不同
+ *     （F5-1 fix round 1，quality Q-m4）：
+ *     <ul>
+ *     <li>加入 {@code Crossed}：collapse view 的 Crossed 已含那位玩家；不跨越、不傳送、不評估結束條件、不終局（參與者關門由 {@link OriginDoors#doorAction} 拒絕）。確認之後通道
+ *         恢復，這時若已到期，依 (c) 結束。</li>
+ *     <li>PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)：collapse view 已是 SEALED，通道已關閉（§10.3 :571：門依 §11.2、目的世界的 ticket 已釋放、presence 為 COLLAPSE）；
+ *         flushed 仍是 PASSAGE_READY 的期間這裡只收斂（{@code step} 依 flushed 交給這裡）。確認之後 flushed 是 SEALED，由 {@code CollapseService} 的 SEALED 分支處理（TRR 是
+ *         永久原因，不重試），通道不會恢復。</li>
+ *     </ul></li>
+ * <li><b>結束條件</b>（§10.6，{@link #endCondition}）：(b) 全員都在 Crossed 中；(c) game time 已到 {@code PassageExpiresAtGameTime}；(d) 來源艙沒有供電、Origin 被停用（含 registry
+ *     讀不到）或結構失效，依即時訊號（{@link CollapseService#sourceSignal}：Controller 的紅石輸入、registry 的 enabled、結構驗證），不經 {@code ChamberPowerCoordinator.returnToOrigin}。
  *     (a) 參與者在原艙這一側開關原艙門（bulkhead 或 Controller）由攔截處理（{@link #endByParticipant}）。結束的順序：checked 終局（{@code PASSAGE_ENDED}）→ 釋放 runtime、
  *     來源 ticket 與目的世界的 ticket（{@link CollapseService#terminated}：之後 presence 才是 NONE，終局之後的門才不會被當成新 session 的門而放棄）→ 門：(a) 改為關閉（門口有
  *     entity 時一般開門），(b)(c)(d) 一般開門 → 「量子通道已關閉」→ 刷新 Controller（原艙解除封鎖；尚未處理的 LOW 由 {@code reconcile} 接著走一般的 OFF 流程）。全部記 INFO。
@@ -145,7 +152,8 @@ final class PassageService {
         ALL_CROSSED("(b) 全員都已跨過"),
         EXPIRED("(c) game time 已到 PassageExpiresAtGameTime"),
         SOURCE_LOW("(d) 來源艙沒有供電"),
-        SOURCE_DISABLED("(d) Origin 被停用"),
+        /** registry 讀不到時也是這一個（{@link CollapseService#sourceSignal} 歸為 DISABLED；F5-1 fix round 1，quality Q-m4 補上字句）。 */
+        SOURCE_DISABLED("(d) Origin 被停用或 registry 讀不到"),
         SOURCE_INVALID("(d) 結構失效");
 
         final String text;
