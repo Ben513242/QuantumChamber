@@ -3500,7 +3500,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F5-1 fix round 1（spec review S-m1；spec §10.3「上一個 tick 還在中線內側」）：PASSAGE_READY 之後，P 站在門板中線內側（local z=0.7）被觀察一次，之後這個 session 的塌縮流程
      * 推進暫停 3 個 tick（{@code installStepPause}；等同 production 中推進被略過的 tick：journal 有未 checked 的 authority、隔離中、整個 tick 無法執行），期間 P 走到中線外側
      * （z=0.3）。恢復之後的第一個 tick：記下的內側觀察不是上一個 tick 的，不觸發跨越，P 留在原世界、Crossed 是空的（修正之前這個 tick 會把 P 傳送走）。之後 P 回到內側、再越過中線：
-     * 這次上一個 tick 有內側的觀察，傳送到 U，(b) 結束。這個 session 沒有任何 WARN／ERROR。catalog 增量 1。
+     * 這次上一個 tick 有內側的觀察，傳送到 U，(b) 結束。這個 session 沒有任何 WARN／ERROR。F5-2 Step 0（R-m2）：暫停期間 test 以 {@code M5TestHooks.collapseSuspended} 查詢兩次，
+     * {@code hits()} 不變（查詢沒有副作用；只有 mixin 取消推進時計數）。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_stale", tickLimit = 900)
     public void passage_crossing_needs_the_previous_tick_observation_after_skipped_ticks(TestContext context) {
@@ -3522,7 +3523,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         // readyAt+2～+4：推進暫停；+3 時 P 走到中線外側（沒有被觀察）。
                         () -> pause[0] = M5GameTestSupport.installStepPause(context, sid, hooks),
                         outside,
-                        () -> { },
+                        () -> {
+                            // F5-2 Step 0（F5-1 fix round 1 quality re-review R-m2）：test 以 collapseSuspended 查詢不計數，只有 mixin 取消推進時計數。
+                            int before = pause[0].hits();
+                            witness.put("queryDoesNotCount", M5TestHooks.collapseSuspended(sid) && M5TestHooks.collapseSuspended(sid) && pause[0].hits() == before);
+                        },
                         // readyAt+5：放行，這個 tick 的推進照常；上一次的觀察是 readyAt+1 的內側。
                         () -> pause[0].release(),
                         () -> {

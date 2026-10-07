@@ -12,14 +12,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 僅 testmod（plan 決策 7、spec §13.1）：collapse-suspended hook。被 hook 的 session，{@code CollapseService} 在它的每 tick 推進
  * （{@code step}）一開始就取消：完全不嘗試提交、不觸發 fallback、不終局。等同 production 可以到達的「live MEASURED、guard 未閒置時延後
  * 提交」，只是時間拉長；M4 的 GameTest 與 recovery probe 因此維持「MEASURED 會一直等待」的原斷言。
- * 依 testmod 的靜態集合（{@link M5TestHooks#suspendCollapse}，同一個 JVM 內不清除）或 system property
- * {@code quantumchamber.test.collapseSuspended=all}（{@code m4Recovery} run）判定。testmod 的 mixin 設定沒有 defaultRequire，所以明寫
+ * 依 testmod 的靜態集合（{@link M5TestHooks#suspendCollapse}，同一個 JVM 內不清除）、system property
+ * {@code quantumchamber.test.collapseSuspended=all}（{@code m4Recovery} run），或可撤銷的推進暫停（{@code M5TestHooks.STEP_PAUSE}，F5-1 fix round 1）判定。
+ * 呼叫的是會計數的入口 {@link M5TestHooks#cancelStep}（推進暫停取消一次就計一次 {@code hits()}）；{@link M5TestHooks#collapseSuspended} 是同一個判斷的純查詢，
+ * test 的程式用它（F5-2 Step 0，F5-1 fix round 1 quality re-review R-m2）。testmod 的 mixin 設定沒有 defaultRequire，所以明寫
  * {@code require=1}：target 改名時開服即失敗，而不是默默失去暫停。
  */
 @Mixin(value=CollapseService.class,remap=false)
 abstract class CollapseSuspendMixin {
     @Inject(method="step(Ldev/quantumchamber/persistence/SessionRecoveryRecord;)V",at=@At("HEAD"),cancellable=true,remap=false,require=1)
     private void quantumchamberTest$suspend(SessionRecoveryRecord record,CallbackInfo callback) {
-        if(M5TestHooks.collapseSuspended(record.sessionUuid())) callback.cancel();
+        if(M5TestHooks.cancelStep(record.sessionUuid())) callback.cancel();
     }
 }

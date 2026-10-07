@@ -870,8 +870,9 @@ final class M5GameTestSupport {
 
     /**
      * F5-1 fix round 1（spec review S-m1）：暫停這個 session 的塌縮流程推進（{@link M5TestHooks#STEP_PAUSE}，testmod {@code CollapseSuspendMixin} 經
-     * {@link M5TestHooks#collapseSuspended} 讀它），{@code release()} 之後恢復；與不可撤銷的 {@link M5TestHooks#suspendCollapse} 不同。用來造出 production 中這個 session 的
-     * 推進被略過的 tick（journal 有未 checked 的 authority、隔離中、整個 tick 無法執行）。{@code hits()} 證明暫停真的發生。安裝、占用與移除的規則見 {@link #installHook}。
+     * {@link M5TestHooks#cancelStep} 讀它），{@code release()} 之後恢復；與不可撤銷的 {@link M5TestHooks#suspendCollapse} 不同。用來造出 production 中這個 session 的
+     * 推進被略過的 tick（journal 有未 checked 的 authority、隔離中、整個 tick 無法執行）。{@code hits()} 證明暫停真的發生，只計 mixin 取消的推進；test 以
+     * {@link M5TestHooks#collapseSuspended} 查詢時不計數（F5-2 Step 0，R-m2）。安裝、占用與移除的規則見 {@link #installHook}。
      */
     static M5TestHooks.StepPause installStepPause(TestContext context, UUID session, M2CorridorGameTests.TestHooks hooks) {
         var pause = new M5TestHooks.StepPause(session);

@@ -58,7 +58,8 @@ import org.slf4j.LoggerFactory;
  *     {@link #readyHeld}，裝著時這個 session 不提交、PREPARE 照常（原艙門每個 tick 依條件判斷），等同 production 可以到達的「PASSAGE_READY 的前置條件還沒成立」，只是時間
  *     拉長。給「準備完成之後仍在 PREPARE」的原艙門 test（F4b-3 的 T-MEM、T-FAIL；F5-1 之前它們停在 READY stub），以及要控制通道起算時點的 test（F5-1 的
  *     {@code m5_universe_passage_crossed_pending}）用。由 {@code M5GameTestSupport.holdReady} 安裝。</li>
- * <li>塌縮流程推進的暫停（{@link #STEP_PAUSE}，F5-1 fix round 1）：{@code CollapseSuspendMixin} 經 {@link #collapseSuspended} 讀它，裝著、還沒放行時這個 session 的
+ * <li>塌縮流程推進的暫停（{@link #STEP_PAUSE}，F5-1 fix round 1）：{@code CollapseSuspendMixin} 經 {@link #cancelStep} 讀它（F5-2 Step 0 起；{@link #collapseSuspended} 是不計數的
+ *     純查詢），裝著、還沒放行時這個 session 的
  *     {@code CollapseService.step} 一開始就取消；與 collapse-suspended 的集合不同，可以撤銷。給「這個 session 的推進被略過幾個 tick、之後恢復」的 test 用（F5-1 fix round 1 的
  *     {@code m5_universe_passage_stale}）。由 {@code M5GameTestSupport.installStepPause} 安裝。</li>
  * </ul>
@@ -95,13 +96,24 @@ public final class M5TestHooks {
     static final Slot<StepPause> STEP_PAUSE = new Slot<>("塌縮流程推進的暫停");
 
     /**
-     * {@code CollapseSuspendMixin}：這個 session 是否被暫停（system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部）。不可撤銷的集合
-     * （{@link #suspendCollapse}）之外，另看可撤銷的推進暫停（{@link #STEP_PAUSE}，F5-1 fix round 1）。
+     * 這個 session 是否被暫停（純查詢，不計數；F5-2 Step 0，F5-1 fix round 1 quality re-review R-m2）：system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部；
+     * 不可撤銷的集合（{@link #suspendCollapse}）之外，另看可撤銷的推進暫停（{@link #STEP_PAUSE}，F5-1 fix round 1）。test 的程式可以直接用它判斷；取消推進並計數的入口是
+     * {@link #cancelStep}（只由 {@code CollapseSuspendMixin} 呼叫）。
      */
     public static boolean collapseSuspended(UUID session) {
         if ("all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session)) return true;
         var pause = STEP_PAUSE.get();
-        return pause != null && pause.holds(session);
+        return pause != null && pause.pausing(session);
+    }
+
+    /**
+     * {@code CollapseSuspendMixin}：{@code CollapseService.step} 的開頭呼叫，回 true 時取消這個 session 這一次的推進（判斷同 {@link #collapseSuspended}）。由可撤銷的推進暫停
+     * （{@link #STEP_PAUSE}）取消時另計一次 {@link StepPause#hits}（F5-2 Step 0，R-m2：計數只在這個入口，查詢沒有副作用）。
+     */
+    public static boolean cancelStep(UUID session) {
+        if ("all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session)) return true;
+        var pause = STEP_PAUSE.get();
+        return pause != null && pause.cancel(session);
     }
 
     /** 暫停這個 session 的塌縮流程（不可撤銷）。 */
@@ -611,7 +623,8 @@ public final class M5TestHooks {
     /**
      * 塌縮流程推進的暫停（F5-1 fix round 1，spec review S-m1；{@link #STEP_PAUSE}）：{@code session} 在裝著、還沒 {@link #release} 的期間，{@code CollapseSuspendMixin} 在
      * {@code CollapseService.step} 的開頭取消它的推進（與 collapse-suspended 相同，但可撤銷），等同 production 中這個 session 的推進被略過的 tick（journal 有未 checked 的
-     * authority、隔離中、整個 tick 無法執行）。{@code hits()} 是被取消的推進次數（證明 mixin 真的套用）。
+     * authority、隔離中、整個 tick 無法執行）。{@code hits()} 是被取消的推進次數（證明 mixin 真的套用）；只有 mixin 經 {@link #cancelStep} 取消時計數，{@link #collapseSuspended}
+     * 的查詢不計數（F5-2 Step 0，R-m2）。
      */
     static final class StepPause {
         private final UUID session;
@@ -620,8 +633,14 @@ public final class M5TestHooks {
 
         StepPause(UUID session) { this.session = Objects.requireNonNull(session, "session"); }
 
-        boolean holds(UUID candidate) {
-            if (released || !session.equals(candidate)) return false;
+        /** 這個 session 目前被暫停（裝著、還沒放行）；純查詢。 */
+        boolean pausing(UUID candidate) {
+            return !released && session.equals(candidate);
+        }
+
+        /** 暫停中時取消這一次推進並計數（{@link #cancelStep}）。 */
+        boolean cancel(UUID candidate) {
+            if (!pausing(candidate)) return false;
             hits.incrementAndGet();
             return true;
         }
