@@ -3589,6 +3589,76 @@ public final class M5UniverseGameTests implements FabricGameTest {
         });
     }
 
+    // ---- F5-2：比較器 15 與 membrane 正規化 ----
+
+    /**
+     * F5-2（plan Review Focus 5、spec §10.7、§15「沒有 runtime 的 DORMANT 續行（以 M4 receipt fixture 開始）到達 READY、比較器 15，而且撐過強制的 Controller 刷新與 membrane
+     * 造成的 neighbor update；WAITING 期間斷電再恢復之後，READY 不會被結束」）：原艙上的 DORMANT NEW 收據（沒有 runtime），參與者 P 由艙外進入 → COLLAPSING → RESOLVE（不需要供電）。
+     * <ul>
+     * <li>RESOLVE 之後、第一次閘門評估之前斷電：閘門不成立，停在 WAITING（沒有進入 PREPARE）；Controller 協調之後 registry 的 power state 是 RETURNING（保護不解除）、比較器 11
+     *     （presence 是 COLLAPSE）。</li>
+     * <li>恢復供電：registry 回到 POWERED，仍在 WAITING、比較器仍是 11（P 一直在艙內，沒有新的邊緣）。P 出艙再進艙（§7.1 的邊緣觸發）→ PREPARE → PASSAGE_READY：Controller 是
+     *     PASSAGE、比較器 15，門是 passable 量子膜。</li>
+     * <li>強制刷新 Controller（{@code ChamberControllerBlock.refreshState}）、門板頂排中間那格對 Controller 的 neighbor update（門板改 membrane 時的那一種，spec §10.7），以及之後
+     *     25 ticks（跨過一次每 20 tick 的排程刷新）：一直是 PASSAGE／15，record 一直是 PASSAGE_READY，沒有「量子通道已結束」，門仍是 passable。</li>
+     * <li>P 在原艙這一側以 bulkhead 關門：(a) 結束通道（checked 終局），門關上，Controller 依一般流程回到 IDLE（比較器 3；P 沒有 Buff），registry 是 POWERED。</li>
+     * </ul>
+     * 這個 session 沒有任何 WARN／ERROR。catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_comparator", tickLimit = 1200)
+    public void dormant_passage_reaches_comparator_fifteen_and_survives_refreshes_after_a_waiting_power_cut(TestContext context) {
+        begin(context, "dormant_passage_reaches_comparator_fifteen_and_survives_refreshes_after_a_waiting_power_cut");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            java.util.function.Supplier<dev.quantumchamber.chamber.ChamberPowerState> power =
+                    () -> ChamberRegistryState.get(server).registry().records().get(chamber).powerState();
+            witness.put("dormantWithoutRuntime", !M4CandidateTestAccess.runtimeHeld(sid));
+            // RESOLVE 之後、第一次閘門評估之前斷電（這個 callback 早於那一次評估）。
+            context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+            whenTicks(context, resolved + 1, 60, () -> power.get() == dev.quantumchamber.chamber.ChamberPowerState.RETURNING, cut -> {
+                witness.put("waitingWithoutPower", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && entered(capture, sid) == 0);
+                witness.put("comparatorElevenWhileUnpowered", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.COLLAPSE
+                        && controllerSignal(world, frame, ChamberState.ARMED, 11));
+                context.setBlockState(DormantOrigin.POWER, Blocks.REDSTONE_BLOCK);
+                whenTicks(context, cut + 1, 60, () -> power.get() == dev.quantumchamber.chamber.ChamberPowerState.POWERED, repowered -> {
+                    witness.put("stillWaitingAfterTheRepower", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && entered(capture, sid) == 0
+                            && controllerSignal(world, frame, ChamberState.ARMED, 11));
+                    // §7.1 的邊緣觸發：P 出艙（兩個塌縮流程的 tick 看到他在艙外）再進艙。
+                    at(context, repowered + 1, hooks, () -> moveOutside(p, frame));
+                    at(context, repowered + 3, hooks, () -> moveInside(p, frame));
+                    whenTicks(context, repowered + 4, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+                        witness.put("comparatorFifteenWhenReady", controllerSignal(world, frame, ChamberState.PASSAGE, 15));
+                        witness.put("passableMembrane", M5GameTestSupport.doorPassable(world, frame));
+                        ChamberControllerBlock.refreshState(world, frame.controllerPos());
+                        witness.put("fifteenAfterAForcedRefresh", controllerSignal(world, frame, ChamberState.PASSAGE, 15));
+                        world.updateNeighbors(local(frame, 3, 5, 0), ModBlocks.QUANTUM_BULKHEAD);
+                        witness.put("fifteenAfterTheMembraneNeighborUpdate", controllerSignal(world, frame, ChamberState.PASSAGE, 15));
+                        at(context, readyAt + 25, hooks, () -> {
+                            witness.put("fifteenAcrossAScheduledRefresh", controllerSignal(world, frame, ChamberState.PASSAGE, 15));
+                            witness.put("readyNotEnded", M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY") && passageEnded(capture, sid, "量子通道已結束") == 0
+                                    && M5GameTestSupport.doorPassable(world, frame));
+                            witness.put("participantClosesTheDoor", interact(world, local(frame, 3, 3, 0), p).isAccepted());
+                            witness.put("endedByTheParticipant", !journal.flushedRecords().containsKey(sid)
+                                    && passageEnded(capture, sid, "(a) 參與者在原艙這一側開關原艙門") == 1);
+                            witness.put("doorClosed", doorAll(world, frame, false, MembraneState.NONE));
+                            witness.put("idleAfterTheTerminal", controllerSignal(world, frame, ChamberState.IDLE, 3)
+                                    && power.get() == dev.quantumchamber.chamber.ChamberPowerState.POWERED);
+                            witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                            LOGGER.info("M5_PASSAGE_COMPARATOR resolved={} cut={} repowered={} ready={} after={} power={}", resolved, cut, repowered, readyAt,
+                                    M5GameTestSupport.controller(world, frame).chamberState(), power.get());
+                            releaseThenComplete(context, hooks, witness, "比較器 15（Review Focus 5）：" + witness, 20, () -> true);
+                        });
+                    }, () -> "恢復供電、P 再進艙之後沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
+                }, () -> "恢復供電之後 registry 沒有回到 POWERED：power=" + power.get() + " witness=" + witness, hooks);
+            }, () -> "斷電之後 registry 沒有改為 RETURNING：power=" + power.get() + " record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
     /**
      * F5-1：從 {@code tick} 起每個 tick 依序執行一步（第 i 步在 {@code tick + i}）。每一步的 callback 只排下一步這一項：在一個 callback 裡一次排很多項 {@code runAtTick}，原版
      * 迭代表的途中插入多項有 rehash 的風險（README「新增 M5 GameTest」的前提）。例外或斷言失敗時先釋放 hooks（{@link M5GameTestSupport#at}）。
