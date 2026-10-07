@@ -124,8 +124,8 @@ final class PassageService {
         var frame = frame(record);
         for (var person : record.participants()) {
             var id = person.playerUuid();
-            var player = service.server.getPlayerManager().getPlayer(id);
-            if (world != null && player != null && !player.isRemoved() && player.getServerWorld() == world && world.getEntity(id) == player) {
+            var player = online(id);
+            if (player != null && inSourceWorld(player, world)) {
                 track.passageZ.put(id, new ObservedZ(ChamberSpaceCoordinates.localPosition(frame, player.getPos()).z, service.now));
             } else {
                 track.passageZ.remove(id);
@@ -203,26 +203,13 @@ final class PassageService {
 
     /**
      * (a)：通道期間參與者在原艙這一側開關原艙門（{@link OriginDoors#door} 的 {@code END_PASSAGE}；roll-forward 尚未確認時已在 {@link OriginDoors#doorAction} 拒絕）。先 checked
-     * 終局、再改門（關閉；門口有 entity 時一般開門）。寫入前 journal 不得有未 checked 的 authority、current 必須等於 flushed、要在 per-session 退避期之外，而且通道沒有在記憶體內
-     * 關閉（{@link Track#pendingRecovery}）；不符時拒絕、不改門（記 DEBUG）。終局沒有完成時記 WARN、退避，拒絕、不改門（§5）。
+     * 終局、再改門（關閉；門口有 entity 時一般開門）。寫入前的條件與終局沒有完成時的處置見 {@link OriginDoors#terminateByDoor}；另外通道不得在記憶體內關閉
+     * （{@link Track#pendingRecovery}），否則拒絕、不改門。
      */
     ChamberCollapsePort.DoorUse endByParticipant(SessionRecoveryRecord view, Track known, PlayerEntity player) {
-        var sid = view.sessionUuid();
-        var journal = service.journal;
-        var track = known != null ? known : service.track(sid);
-        var wait = !journal.recoveryWritesSafe() ? "journal 有未 checked 的 authority（終局的寫出會把它帶出去）"
-                : !view.equals(journal.records().get(sid)) ? "current 不等於 flushed"
-                : track.pendingRecovery != null ? "通道傳送無法回滾的封存還沒寫入（通道在記憶體內已關閉）"
-                : !track.backoff.ready(service.now) ? "在 per-session 退避期內" : null;
-        if (wait != null) {
-            LOGGER.debug(LOG_MARKER, "通道期間參與者關門，但{}：這次拒絕、不改門：session={} 玩家={}", wait, sid, player.getUuid());
-            return ChamberCollapsePort.DoorUse.REFUSED;
-        }
-        var result = journal.terminate(service.server, view, TerminalOrigin.PASSAGE_ENDED);
-        if (!result.removed()) {
-            service.terminalFailed(view, track, "通道期間參與者關門的終局", result);
-            return ChamberCollapsePort.DoorUse.REFUSED;
-        }
+        var track = known != null ? known : service.track(view.sessionUuid());
+        var blocked = track.pendingRecovery != null ? "通道傳送無法回滾的封存還沒寫入（通道在記憶體內已關閉）" : null;
+        if (!service.originDoors.terminateByDoor(view, track, player, TerminalOrigin.PASSAGE_ENDED, "通道期間", blocked)) return ChamberCollapsePort.DoorUse.REFUSED;
         closed(view, PassageEnd.PARTICIPANT_CLOSED, OriginDoors.DoorGoal.CLOSE_AFTER_TERMINAL);
         return ChamberCollapsePort.DoorUse.HANDLED;
     }
@@ -287,9 +274,9 @@ final class PassageService {
         var current = record;
         for (var person : record.participants()) {
             var id = person.playerUuid();
-            var player = service.server.getPlayerManager().getPlayer(id);
-            boolean exact = player != null && !player.isRemoved() && player.isAlive();
-            boolean inSource = exact && player.getServerWorld() == world && world.getEntity(id) == player;
+            var player = online(id);
+            boolean exact = player != null && player.isAlive();
+            boolean inSource = exact && inSourceWorld(player, world);
             var candidate = Candidate.builder()
                     .participant(true)
                     .alreadyCrossed(current.collapse().crossed().contains(id))
@@ -439,6 +426,20 @@ final class PassageService {
 
     private ServerWorld sourceWorld(SessionRecoveryRecord record) {
         return service.server.getWorld(RegistryKey.of(RegistryKeys.WORLD, record.origin().worldKey()));
+    }
+
+    /** {@code id} 在線的玩家 instance（不在線或已移除時為 null）。{@link #observe} 與 {@link #cross} 共用（F5-2 Step 0，F5-1 quality Q-m6）。 */
+    private ServerPlayerEntity online(UUID id) {
+        var player = service.server.getPlayerManager().getPlayer(id);
+        return player != null && !player.isRemoved() ? player : null;
+    }
+
+    /**
+     * {@code player} 位在 exact 的來源 world instance（§10.3）：他所在的世界就是 {@code world}，而且 {@code world} 依 UUID 找到的 entity 就是他（{@code world} 為 null 時為假）。
+     * {@link #observe} 與 {@link #cross} 共用同一個判斷（F5-2 Step 0，F5-1 quality Q-m6）。
+     */
+    private static boolean inSourceWorld(ServerPlayerEntity player, ServerWorld world) {
+        return world != null && player.getServerWorld() == world && world.getEntity(player.getUuid()) == player;
     }
 
     private static ChamberFrame frame(SessionRecoveryRecord record) {

@@ -468,29 +468,42 @@ final class OriginDoors {
     /**
      * PREPARE 期間參與者在原艙這一側開關門（§7.3、設計 §20.4）：先 checked 終局（{@code PREPARE_DOOR_CLOSED}；不重抽，目的宇宙在 RESOLVE 已配置、物化並 discovered），
      * 再把門改為關閉（門口有 entity 時一般開門，{@link DoorGoal#CLOSE_AFTER_TERMINAL}），之後刷新 Controller。終局之後釋放 runtime、來源與目的世界的 ticket
-     * （{@link CollapseService#terminated}）。寫入前 journal 不得有未 checked 的 authority（{@code recoveryWritesSafe()}，比照 {@link CollapseService#tick}：終局的寫出會把它一併帶出去；F4b-3 fix
-     * round 1，quality Q-M1），current 必須等於 flushed，也要在 per-session 退避期之外；不符時拒絕、不改門（記 DEBUG）。終局沒有完成時記 WARN、退避，拒絕、不改門（§5）。
+     * （{@link CollapseService#terminated}）。寫入前的條件與終局沒有完成時的處置見 {@link #terminateByDoor}。
      */
     private ChamberCollapsePort.DoorUse endByParticipant(SessionRecoveryRecord view, Track track, PlayerEntity player) {
-        var sid = view.sessionUuid();
-        var wait = !service.journal.recoveryWritesSafe() ? "journal 有未 checked 的 authority（終局的寫出會把它帶出去）"
-                : !view.equals(service.journal.records().get(sid)) ? "current 不等於 flushed"
-                : !track.backoff.ready(service.now) ? "在 per-session 退避期內" : null;
-        if (wait != null) {
-            LOGGER.debug(LOG_MARKER, "PREPARE 期間參與者關門，但{}：這次拒絕、不改門：session={} 玩家={}", wait, sid, player.getUuid());
-            return ChamberCollapsePort.DoorUse.REFUSED;
-        }
-        var result = service.journal.terminate(service.server, view, TerminalOrigin.PREPARE_DOOR_CLOSED);
-        if (!result.removed()) {
-            service.terminalFailed(view, track, "PREPARE 期間參與者關門的終局", result);
-            return ChamberCollapsePort.DoorUse.REFUSED;
-        }
+        if (!terminateByDoor(view, track, player, TerminalOrigin.PREPARE_DOOR_CLOSED, "PREPARE 期間", null)) return ChamberCollapsePort.DoorUse.REFUSED;
         service.terminated(view);
-        LOGGER.info(LOG_MARKER, "PREPARE 期間參與者關門，塌縮已結束（checked 終局，正常結束；不重抽，目的宇宙保留）：session={} chamber={} 目的地={} 玩家={}", sid,
-                view.chamberUuid(), CollapseService.describe(view.collapse().destination()), player.getUuid());
+        LOGGER.info(LOG_MARKER, "PREPARE 期間參與者關門，塌縮已結束（checked 終局，正常結束；不重抽，目的宇宙保留）：session={} chamber={} 目的地={} 玩家={}",
+                view.sessionUuid(), view.chamberUuid(), CollapseService.describe(view.collapse().destination()), player.getUuid());
         queueDoor(view, 0, DoorGoal.CLOSE_AFTER_TERMINAL);
         service.refresh(view);
         return ChamberCollapsePort.DoorUse.HANDLED;
+    }
+
+    /**
+     * 門觸發的終局（PREPARE 期間與通道期間參與者在原艙這一側開關門的共同前段，{@link #endByParticipant} 與 {@link PassageService#endByParticipant}；F5-2 Step 0，F5-1 quality
+     * Q-m6）。寫入前 journal 不得有未 checked 的 authority（{@code recoveryWritesSafe()}，比照 {@link CollapseService#tick}：終局的寫出會把它一併帶出去；F4b-3 fix round 1，quality
+     * Q-M1）、current 必須等於 flushed、呼叫端沒有另外的拒絕原因（{@code blocked} 為 null），也要在 per-session 退避期之外；不符時拒絕、不改門（記 DEBUG）。之後 checked 終局
+     * （{@code origin}）；沒有完成時記 WARN、退避，拒絕、不改門（§5）。回傳終局是否完成：完成之後的釋放、門與刷新由呼叫端依各自的順序執行。{@code phase} 是 log 的字句
+     * （「PREPARE 期間」「通道期間」）。
+     */
+    boolean terminateByDoor(SessionRecoveryRecord view, Track track, PlayerEntity player, TerminalOrigin origin, String phase, String blocked) {
+        var sid = view.sessionUuid();
+        var journal = service.journal;
+        var wait = !journal.recoveryWritesSafe() ? "journal 有未 checked 的 authority（終局的寫出會把它帶出去）"
+                : !view.equals(journal.records().get(sid)) ? "current 不等於 flushed"
+                : blocked != null ? blocked
+                : !track.backoff.ready(service.now) ? "在 per-session 退避期內" : null;
+        if (wait != null) {
+            LOGGER.debug(LOG_MARKER, "{}參與者關門，但{}：這次拒絕、不改門：session={} 玩家={}", phase, wait, sid, player.getUuid());
+            return false;
+        }
+        var result = journal.terminate(service.server, view, origin);
+        if (!result.removed()) {
+            service.terminalFailed(view, track, phase + "參與者關門的終局", result);
+            return false;
+        }
+        return true;
     }
 
     // ---- 待套用的門（F3d 起；F4a 加上 SEALED 的關門，F4b-3 加上 PREPARE 期間的目標與重新套用） ----
