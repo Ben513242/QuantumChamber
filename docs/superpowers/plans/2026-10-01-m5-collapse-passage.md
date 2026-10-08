@@ -758,7 +758,38 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - 投影 chunk 從磁碟載入時的辨識；
     - W6／W7 的 EXISTING 再造訪版本；
     - 開服時投影 ledger 遺失（P-DEGRADED 的跨 JVM 版本）。
-- **F6-2：W7～W12，以及額外的 phase。**
+- **F6-1 的再拆分（controller 2026-10-08）：** 拆成 F6-1 Step 0 與 F6-1 本體兩次派工。Step 0 處理 F6-0、F5-3 留下的 Minor；本體由四位 implementer 接力完成（見 note F6-1 一節）。
+- **F6-2：W7～W12，以及額外的 phase。** controller 2026-10-08 依 F6-1 的 review 再拆成五個子 task，各自走完 implementer → spec review → quality review：
+  - **F6-2a：probe 重構與 harness 逾時。**
+    - 行為不變的重構：拆檔、窗口的預期改成資料、參與者改成清單、在 probe 內安裝 fault。
+    - 卡住時自動 jstack，只結束 startupNonce 相符的 JVM。
+    - F6-1 review 留下的 Minor（見 note F6-1 一節）。
+    - 回歸條件：18 phases GREEN，各 chain 的具名斷言數不少於 F6-1。
+  - **F6-2b：停服卡住的根因調查**（note F6-1「觀察」第 1 條，可穩定重現）。改 production 之前先回報 controller。
+  - **F6-2c：通道與終局的重啟。**
+    - W7；
+    - 開服時 PASSAGE_READY 終局之後的比較器；
+    - 終局之後、改門之前 crash；
+    - PASSAGE_READY 提交之後、passable 套用之前 crash；
+    - `Crossed` 寫出未確認時 crash；
+    - TRR 跨重啟，含 `pendingRecovery` 期間；
+    - `projectionUncheckpointed` 跨 session；
+    - 隔離的跨 JVM 版本，是否需要由派工決定。
+  - **F6-2d：SEALED、門與重試。**
+    - W8；
+    - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
+    - `AUTHORITY_UNREADABLE` 重啟後重試；
+    - sealed 量子膜期間 crash → WAITING、一般開門；
+    - SEALED 開服後只關門一次；
+    - PREPARE 中重啟的重新套用；
+    - SEALED 帶著量子膜時重啟。
+  - **F6-2e：schema 3 與 fault 注入。**
+    - W10；
+    - W11；
+    - W12；
+    - 評估 F6-1 spec review 的 Minor 3（W4b 之後、COMPLETE 之前的子狀態）與 Minor 5（PREPARE 期間 crash、P 在艙內重新加入）。
+  - F6-2c～e 若要改 CS，先依 F5-0 交接的條件評估是否把 PREPARE 抽出。
+  - 原本列在下面的內容維持不變，作為五個子 task 的總清單。
   - 窗口：W7、W8、W9（含 F4a I-1 的跨重啟版本）、W10（非 DORMANT 的 schema 3 Nether／End fixture）、W11、W12。
   - 額外 phase：
     - `AUTHORITY_UNREADABLE` 重啟後重試；

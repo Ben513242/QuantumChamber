@@ -5400,6 +5400,52 @@ mutation（`chain-mut.log`）：每個都在 GREEN 的工作樹上套用、跑 M
   - `scripts/verification/`：新 `m5-collapse-probe.ps1`；`run-all.ps1` 只加 M5 probe 的步驟與 summary；README 的「M5 collapse probe」一節與 run-all 的說明。
   - **沒有改** `src/main/`、`gates.ps1`、`main-oracle.ps1`、`ci-rule-check.ps1`、`m4-recovery-probe.ps1`、`probe.init.gradle`、`runtime.init.gradle`（兩個 init 都已涵蓋 `runM5Collapse`）、`.github/`、`ProbeEvidenceOwner`、既有的 GameTest 與 probe 類別、JUnit、語言檔。沒有新增 `@GameTest`。
 - 行號以 `177b576` 為準。`PR`＝`M5CollapseRecoveryProbe`，`DE`＝`M5CollapseDiskEvidence`，`HK`＝`M5TestHooks`，`MP`＝`m5-collapse-probe.ps1`，`RA`＝`run-all.ps1`。
+- Review 與最終 review（controller 補）：
+  - 第一位 implementer 只讀背景就用掉約 54 萬 context，所以只交出設計（`f6/f61/STATUS.md`）。controller 接受設計中的兩個判斷，也就是下方「設計判斷」的 W4／W4b 與 degraded，之後拆成 A、B1、B2 三段接力。每段只讀 STATUS.md 與必要的行，最後只做一次 spec review 與 quality review。
+  - spec review ✅（Critical 0、Important 0、Minor 7）。
+    - 5 項設計判斷都判定符合 spec：
+      - hook 位置都落在 §12 的「X 之後、Y 之前」；
+      - W4＋W4b 涵蓋兩種磁碟狀態；
+      - degraded 正常停服；
+      - ticket 持有到 JVM 結束之後，W6 的「從磁碟載入」仍然成立；
+      - 位準觸發符合 spec §7.1 :349-351。
+    - 「需要裁示」第 1 條判定足夠：`refreshNow` 走 foreign 還是投影分支，只由索引決定。controller 接受。
+    - trapped、interior 兩個 mutation 的改法都判定有效。
+    - Minor：
+      1. W4、W6「從磁碟載入、本 JVM 才辨識」只記在 receipt，沒有 `expect`（`PR:873`、`:880-881`）。
+      2. degraded 的 CONSUMED 不能證明 refresh 越過了提早 return（`PR:1359`）。
+      3. W4b 之後、COMPLETE 之前的子狀態沒有 chain：checkpoint 已存、磁碟上是完整投影＋PENDING，重啟後走「FIRST_WRITE 寫 0 格」。spec 沒有列為窗口。
+      4. note 沒有寫 plan:759「W6／W7 的 EXISTING 再造訪版本」怎麼滿足。controller 補在下方「設計判斷」之後。
+      5. DORMANT chain 的 P 一律在艙外重新加入。
+      6. `guarded` 的 catch 裡呼叫 `event("failure")`（`PR:365`），IO 失敗時可能從 `END_SERVER_TICK` 拋出。
+      7. 「RED 與 mutation」一節的「crash phase 都照常 halt」對 `mut-interior` 不成立。controller 已在該處更正。
+  - quality review Approved（Critical 0、Important 0、新的 Minor 7），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Minor：
+      1. halt phase 最常見的失敗，ps1 的訊息看不到原因（`MP:115-119`）；
+      2. halt 沒有「乾淨」的守門：`hit≠1`、`failure()` 不是 null，或 `failures` 不是空的時仍會 halt，ps1 與 run-all 也不檢查；
+      3. `DE:58-80` 自己解 allocation／projection ledger 的 NBT，而且寬鬆：沒有檢查 `SchemaVersion`，「應為空」的斷言在格式漂移時會恆真；
+      4. 正常的 restart 沒有斷言「這個 session 沒有 ERROR」；
+      5. 四處 Javadoc 與程式不一致（`HK:78`、`:332`、`PR:108-109`、`:465`）；
+      6. ps1 與 `m4-recovery-probe.ps1` 大量重複，M5 對 `classload-*.log`、`latest.log` 是存在才複製；
+      7. 小項：`crossedRecorded` 可以收緊；catalog 增量的運算式重複 6 處；`discoveredOnce` 有兩種語意。
+    - 給 F6-2 的建議：開工前先做一次行為不變的重構：
+      - 拆檔：runner、窗口表、fixture、各 chain；
+      - 窗口的預期改成資料；
+      - 終局的 §12 斷言參數化；
+      - 參與者改成清單；
+      - 在 probe 內安裝 fault（`stop()` 逐一移除已安裝的 slot；注意 `ProjectionWriteFaultMixin`、`MaterializeFaultMixin` 的 `setReturnValue` 可能讓排在後面的 crash 窗口 callback 被跳過）；
+      - 逾時處理提前到 F6-2 之前；
+      - ps1 核對 receipt 的 `ending` 與 phase 集合；
+      - README「新增 phase」再補三點。
+  - controller 處置：不開 fix round。
+    - spec Minor 1、2、6，quality Minor 1～5、7，以及給 F6-2 的建議，都交給 **F6-2a**（probe 重構與 harness 逾時）。原本排在 F6-3 的逾時處理也提前到 F6-2a。
+    - spec Minor 3、5 交給 **F6-2e** 評估：加 chain，或寫明不涵蓋。
+    - quality Minor 6 的 ps1 共用模組交給 **F6-3**。
+    - F6-2 的拆分見 plan Task F6「拆分」。
+  - **F6-1 本體完成**：range `b6a4863..ff41814`，之後接 controller 的 docs commit。
+    - code：`9fb923d`、`68c5f9e`、`4c00a2a`、`f6c50c2`、`8453ab0`、`665a836`、`299fcaa`、`88b49e3`、`177b576`；
+    - docs：`ec59949`、`50df82b`、`dd288d8`、`ff41814`；
+    - 最終 run-all：`run-all-2b8ef81d574947ba860dab8b43f1ed8f`，`END ALL exit=0`（`177b576`）。
 
 ### 基礎建設
 
@@ -5462,9 +5508,14 @@ GREEN（`177b576`，工作樹乾淨，`b2-green-1`：runId `6da98bcea1954991a0d1
     - `CrashPoint` 的動作是 `ObjIntConsumer<Object>`（detail, 第幾次 hit）。
 12. **B2 對 A、B1 結構的小改動**：`Phase` 改在 `onInitialize` 建立（原本在 `started`），多了 `beforeStart`、`afterStop` 兩個可省略的欄位；`writeCrashReceipt` 拆出 `recordReceipt`（W1 的收據不再 put）；`readCrashReceipt` 的 `window` 可為 null；W6x 的前半段抽成 `firstPassageSteps`、restart 的後半段抽成 `passageSteps`，`holdProjectionChunk` 收斂三處載入投影 chunk 的寫法。A、B1 的 chain 在 `177b576` 的 GREEN 都照舊 PASS，具名斷言數與 B1 的 GREEN 相同（w4 45、w4b 40、w6 44、w6x 42、w2／w3／w5 37）。
 
+- （controller 補，spec review Minor 4）plan:759 的「W6／W7 的 EXISTING 再造訪版本」：
+  - W6 這一側由 W6x 滿足，也就是修復之後、READY 之前重啟。
+  - W7 這一側擔心的是 READY 之後修復遺失。W6x 在 READY 時以 raw MCA 斷言 `repairCheckpointedBeforeReady`，修復在 READY 之前就已存到磁碟，所以 READY 之後的 crash 不會讓修復遺失；W7 不需要另做 EXISTING 版本。
+  - 例外是跨 session 的 `projectionUncheckpointed`（F5-1 n-1），屬於 F6-2c。
+
 ### RED 與 mutation
 
-每個都在 GREEN 的工作樹上套用（`f6/f61/red.ps1`＋`adapter.py`，adapter 表 `adapters_f61.py`；`old` 在檔內必須恰好出現一次），以 `-Only` 只跑相關的 chain，跑完還原並以 `git hash-object` 核對（`<label>-restored-state.txt` 的 porcelain 都是空的）。crash phase 都照常 halt（77），只有 restart 失敗；failures 都只有一則。
+每個都在 GREEN 的工作樹上套用（`f6/f61/red.ps1`＋`adapter.py`，adapter 表 `adapters_f61.py`；`old` 在檔內必須恰好出現一次），以 `-Only` 只跑相關的 chain，跑完還原並以 `git hash-object` 核對（`<label>-restored-state.txt` 的 porcelain 都是空的）。crash phase 都照常 halt（77），只有 restart 失敗；failures 都只有一則。（controller 依 spec review Minor 7 更正：`mut-interior` 跑的是 degraded chain，第一個 phase `deg-setup` 是正常停止、exit 0，不是 halt。）
 
 | mutation | 改動 | Root（runId） | 失敗的目標斷言 |
 | --- | --- | --- | --- |
@@ -5536,6 +5587,7 @@ GREEN（`177b576`，工作樹乾淨，`b2-green-1`：runId `6da98bcea1954991a0d1
   - W7～W12 與額外 phase 沿用本節的基礎建設：新窗口加 `CrashWindow` 的值與 hook mixin；`restartStarted` 的 switch 依窗口加 case；需要開服前的準備用 `Phase` 的 `beforeStart`、停服之後的檢查用 `afterStop`；setup 正常停止時 `readCrashReceipt(setupPhase, null)`。新增 chain 時，`m5-collapse-probe.ps1` 的 `$chains` 與 `run-all.ps1` 的 `$expectedCollapse` 都要改，`m5collapse=` 的數字隨之改變。
   - `M5CollapseRecoveryProbe` 已 1644 行；加 W7～W12 之前，評估依 chain 拆成幾個 package-private 的類別（phase 表、crash 點與 receipt、fixture、各 chain）。
 - **F6-3**（harness）：
-  - `m5-collapse-probe.ps1` 的 phase 逾時（8 分鐘）只 throw，JVM 不結束，要人工核對 commandline 再結束（B1 有 2 次在逾時之後、1 次在逾時之前人工結束）。評估逾時時自動 jstack、核對 startupNonce 之後只結束該 JVM，並記錄在 phase evidence。
+  - `m5-collapse-probe.ps1` 的 phase 逾時（8 分鐘）只 throw，JVM 不結束，要人工核對 commandline 再結束（B1 有 2 次在逾時之後、1 次在逾時之前人工結束）。評估逾時時自動 jstack、核對 startupNonce 之後只結束該 JVM，並記錄在 phase evidence。（controller 補：這一項提前到 F6-2a。）
+  - （controller 補，quality Minor 6）`m5-collapse-probe.ps1` 與 `m4-recovery-probe.ps1` 抽出 dot-sourced 的共用模組（`Resolve-Evidence`、`New-OwnedRoot`、`Invoke-OwnedPhase`）。M5 的改進（以 handle 判斷結束）回到 M4；`classload-*.log`、`latest.log` 缺少時，要記在 `launcher.json` 或判 FAIL。
   - M5 collapse probe 只在本機的 run-all 執行，`build.yml` 沒有它（不是 GameTest，不在明列清單的範圍）；是否要進 CI 由 F6-3 評估。
 - **F7**：README「預期結果」的數字以最新的 run-all 為準：本節之後 default 175（`_windows` 89）、legacy 1、M5 60、per-test 52＋1、JUnit 656、release 429／382、sources 221、M3 4＋5、M4 recovery 24 都不變，新增 M5 collapse probe 18 phases（8 halt、10 stop；README 已加這一列）。README「執行」一節的 run-all 耗時目前指向本節，改寫為約 20 分鐘（實測 19 分 32 秒）。

@@ -111,7 +111,8 @@ M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（
   - F1b：controller 代操作的真 client 驗證，四項通過，經獨立 docs review 與 re-review。
   - F4b 依 plan 拆成三個子 task：F4b-1（投影元件）、F4b-2（PREPARE 的目的宇宙側）、F4b-3（PREPARE 期間的原艙門）。
   - F5-3（到達目的宇宙的提示）已完成（2026-10-08）。這是 controller 依使用者 2026-10-08 的裁示插入的小 task，排在 F6-0 之後、F6-1 之前，見 plan Task F5-3。
-  - F6-1 由 controller 再拆成兩次派工：F6-1 Step 0（F6-0 與 F5-3 留下的 Minor）已完成（2026-10-08）；下一個是 F6-1 本體（跨 JVM probe 的基礎建設、W1～W6、W4b），同時帶入各節交給 F6-1 的事項（grep `F6`）。再依序是 F6-2、F6-3 → F7 → milestone 收尾。
+  - F6-1 由 controller 再拆成兩次派工：F6-1 Step 0（F6-0 與 F5-3 留下的 Minor）與 F6-1 本體（跨 JVM probe 的基礎建設、W1～W6、W4b），兩者都已完成（2026-10-08）。
+  - 下一個是 F6-2，依 plan 再拆成 F6-2a～F6-2e：a 是 probe 重構與 harness 逾時，b 是停服卡住的根因調查，c、d、e 是其餘的重啟窗口。再依序是 F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
