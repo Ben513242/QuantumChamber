@@ -5233,6 +5233,26 @@ mutation（`chain-mut.log`）：每個都在 GREEN 的工作樹上套用、跑 M
   - 只改了派工允許的路徑：`chamber/ChamberPowerCoordinator`（第 1～3 點）、`collapse/OriginDoors`（第 5 點）、`collapse/CollapseService` 與 `collapse/PassageService`（第 8 點，只有 Javadoc 與註解）、JUnit `CollapseServiceTest`（第 7 點）、testmod `M5UniverseGameTests`（第 4、6 點）、`M5GameTestSupport`（第 9 點的 Javadoc）、README「新增 M5 GameTest」一節、本節。
   - **沒有改** `ChamberPowerCoordinatorTest`（abstract 之後 `Backend` 本來就實作了全部方法）、`M5TestHooks`（第 6 點用既有的 `installJournalPutFault` 就夠，不需要新的 fault 或 helper）、`PassageService` 的 `arrivalKey`（已是 package-private static 純函式，WARN 在呼叫端 `arrived`），也沒有改 `build.gradle`、`gates.ps1`、`run-all.ps1`、`.github/`、`fabric.mod.json`、語言檔，以及派工「不得修改」所列的類別。testmod 沒有 `SessionActions` 的實作，不需要補 override。
   - 行數：`CS` 1590 → 1591（第 8 點）；`OD` 886 → 883；`CPC` 301 → 310；`PS` 531 → 536；`M5U` 4568 → 4719。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 1）。6 項偏離都判定符合：
+    - `SessionActions` 全 abstract：實作只有兩個，javap 只有 `CPC$SessionActions` 不同；
+    - 拆成三個 test：精確比對，5 個 mutation 都只打中目標；
+    - CS 多一行；PS 沒有改；
+    - Full 55／29 是 `m2_task4_no_entrance` 的 AccessDeniedException（已知偶發）；
+    - 部分 stage 的內容一致。
+    - Minor 1：既有 test 的 D1 預載等待 `whenTicks(resolved+1, 400, …)`（`M5U:1536`、`:1592`、`:1830`）餘裕偏小，實測 D1 為 128～376 ticks。不採計的 `gate-mut-g-ad-all-92ac72f…` 就是在這裡逾時，與本 task 無關。
+  - quality review Approved（Critical 0、Important 0、Minor 3、Nit 2），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Minor 1：T-REJARR 在跨越之後等了約 1200 ticks 才到 (c)，中間沒有清封包，違反同一輪新寫的 README `:124` 規則。
+    - Minor 2：`endWithOneCrossed` 以裸 boolean 參數化，呼叫點看不出 (a)／(d)。
+    - Minor 3：`458ece5` 的 commit message 寫「the only cross-package static import in main」，不正確，因為 `collapse/PassageTransferPolicy.java:3-4` 也有。程式不受影響；依規則不改寫歷史，controller 在此更正。這個說法沿用自 F6-0 quality Nit（F6-0 一節「交給後續」的 F6-1 Step 0），那一處同樣不精確。
+    - Nit 4：T-ENDD 的 Javadoc 寫了「下一個 tick 依 (d) 結束」，但 test 沒有鎖這個時序（已由 T-POWER 鎖住）。
+    - Nit 5：CPC、PS 的 Javadoc 夾帶修訂歷史與會過期的行數。reviewer 判定符合 repo 慣例、不阻擋，controller 不另外處理。
+    - quality 另外列出 F6-3 拆 M5U 時要注意的耦合，見「交給後續」。
+  - controller 處置：不開 fix round。spec Minor 1，以及 quality Minor 1、2 與 Nit 4，都交給 **F6-3**：它要拆 M5U，會動到這些 test。
+  - **F6-1 Step 0 完成**：range `d4eb4ef..1526998`，之後接 controller 的 docs commit。
+    - code：`af52f08`、`458ece5`、`71aa573`、`f505574`、`3721ec7`、`da58ad6`、`5ac340e`；
+    - docs：`1526998`；
+    - 最終 run-all：`run-all-cb17be2a880941c38c3e132a74c17c22`，`END ALL exit=0`（`5ac340e`）。
 - 行號以 `5ac340e` 為準。`CPC`、`CPCT`、`OD`、`CS`、`PS`、`CST`、`M5U`、`SUP`、`HK` 同前面各節。新增的 3 個 `@GameTest`（M5 run，各自一個 batch，catalog 增量各 1，都不是 `_windows`）：
   - T-REJARR `M5U:3952` `crossed_write_rejected_still_shows_the_arrival_title_and_the_closed_message_at_the_expiry`（`m5_universe_passage_crossed_rejected`，tickLimit 2000）
   - T-ENDA `M5U:4011` `passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed`（`m5_universe_passage_close_crossed`，tickLimit 900）
@@ -5339,5 +5359,14 @@ mutation（`chain-mut.log`）：每個都在 GREEN 的工作樹上套用、跑 M
 - F6-3：
   - `build.yml` 的明列清單另加本節新增的 3 個 test：T-REJARR、T-ENDA、T-ENDD（M5 run，都不是 `_windows`）。
   - Windows 原子移動的 `AccessDeniedException`：本節遇到 2 次，catalog 一次（`gate-mut-g-closed-source-only-3fefc17ee9d54372ae6da7731d1620d1`，連鎖失敗）、journal 一次（run-all 的 default run，沒有失敗），見「Gate 與證據」。
+  - （controller 補，spec Minor 1）既有 test 的 D1 預載等待 `whenTicks(resolved+1, 400, …)`（`M5U:1536`、`:1592`、`:1830`）餘裕偏小，實測 D1 為 128～376 ticks，負載高時會逾時。評估加大餘裕，或改成以預載完成的事件為準。
+  - （controller 補，quality Minor 1、2 與 Nit 4，拆 M5U 時一併處理）
+    - T-REJARR（`M5U:3981`、`:3992-3993`）：在開放期間（`at(readyAt+100)`）先讀一次 `hud`，加一個 witness 斷言開放期間什麼都沒收到；或在 README 補上例外規則。
+    - `endWithOneCrossed`（`M5U:4013`、`:4023`、`:4031`）：裸 boolean 改用 private enum，例如 `BY_PARTICIPANT`／`POWER_LOSS`，帶 INFO 字句、結束動作與門的終局狀態。
+    - T-ENDD（`M5U:4016`）：補一個 `ended == readyAt+5` 的 witness，或在 Javadoc 註明時序由 T-POWER 鎖住。
+  - （controller 補，quality 列出的 M5U 拆檔耦合）
+    - `endWithOneCrossed` 與 T-REJARR 依賴的 M5U private static helper：`openOrigin`、`collapsedToUniverse`（經 `newCollapse`／`ResolvedUniverse`）、`sequence`、`passageEnded`、`crossedInfos`、`local`、`releaseThenComplete`、`begin`、`asTestFailure`、`ARRIVED_NEW_KEY`。拆檔時要移到共用的 package-private support。
+    - 「第二位參與者」的 fixture 有 5 份（`M5U:2903`、`:3274`、`:3400`、`:3476`、`:4039`），兩步跨越（`standInDoorway(…0.7…)`→`(…0.3…)`）有 7 處以上。可以抽成 `secondParticipant(…)`、`crossMidline(…)`。
+    - README「新增 M5 GameTest」第 1 點規定 `m5_universe*` batch 都要在 M5U，三個新 batch 也受此約束；拆檔時要同時改 gate 的 class 檢查。
 - F6-1 本體／F6-2：F5-3「交給後續」的「如果要補 test，處理需要裁示第 1 條（Crossed 寫入被拒時的到達提示與已關閉）」已由 T-REJARR 完成，不必再做。
 - F7：README「預期結果」的數字以最新的 run-all 為準（F6-1 Step 0 之後：JUnit 656、M5 60；default 175（`_windows` 89）、per-test 52＋1、release 429／382、sources 221 不變）。
