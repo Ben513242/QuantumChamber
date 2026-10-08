@@ -5089,6 +5089,25 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
   - 本節由其後的 docs commit `docs: record F5-3 in the M5 note` 加入。
 - Code range `0be1bfd..01933a1`。只改了派工允許的路徑。沒有改 `CollapseService`（`notifyParticipants` 與 `MESSAGE_*` 常數不變）、`OriginDoors`、`DestinationResolver`、`CollapseAuthorities`、chamber 套件、`CollapseServiceTest`、`build.gradle`、`gates.ps1`、`run-all.ps1`、`.github/`、`fabric.mod.json`、README。沒有新增 `@GameTest`（M5 仍是 57）。
 - 行號以 `01933a1` 為準。`PS` 指 `collapse/PassageService.java`；`SUP`、`M5U`、`CS` 同前面各節。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 2）。implementer 提出的 5 項都判定符合 spec。
+    - 提示放在 `crossed(...)` 之後：reviewer 追過 `crossed` 與 `commitRollForward`，已 MOVED 卻收不到提示的路徑只剩 JVM Error 類。這個位置讓「MOVED 到寫入之間沒有任何程式」直接成立。
+    - 候選不是 New／Existing 時只記 WARN：`SessionRecoveryRecord.validateCollapse` 保證走不到。
+    - `hud()` 也把 `OverlayMessageS2CPacket` 算成 actionbar：判定有效，沒有讓斷言變弱。
+    - m-1：Crossed 寫入被拒那一支，以及 (a)(d) 結束時「已跨過的人不收到已關閉」，都沒有直接的 GameTest。
+    - m-2：`CS:129` 的 Javadoc 過時。
+  - quality review Approved（Critical 0、Important 0、Minor 4），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - n-1：兩個新 key 的語言檔字句沒有 JUnit 鎖住，偏離 `CollapseServiceTest` 每則 §10.8 訊息都有 test 的慣例。
+    - n-2：`CS:1205` 的段落註解過時；`MESSAGE_*` 常數分在 CS 與 PS 兩處，CS 沒有指向 PS。
+    - n-3：「語言檔」一列的換行描述與 commit 內容不符。controller 已在下方直接更正。
+    - n-4：以 javap 補確認：`DownloadingTerrainScreen.shouldPause()` 是 false，title 會在載入畫面期間倒數。載入超過約 5 秒時，玩家會看不到 title。
+  - controller 處置：不開 fix round。
+    - m-1、m-2、n-1、n-2 寫進「交給後續」的 F6-1 Step 0（「需要裁示」第 1 條的歸屬由此決定）。
+    - n-4 交給 F7 的 required manual smoke。若 smoke 發現看不到，修正方向是改在 client 確認 teleport 之後才送，或延後幾個 tick 再送，需要改 spec。
+  - **F5-3 完成**：range `0be1bfd..f58e5c0`，之後接 controller 的 docs commit。
+    - code：`01933a1`；
+    - docs：`f58e5c0`；
+    - 最終 run-all：`run-all-da22c04e66334a88879034903317bad0`，`END ALL exit=0`（`01933a1`）。
 
 ### 實作位置
 
@@ -5100,7 +5119,7 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
 | 不是 New／Existing（不應發生） | 不顯示、不丟例外，記一則帶 `LOG_MARKER` 與 `session=` 的 WARN（`PS:398`）；沒有用 `orElseThrow`。理由：PASSAGE_READY 的 record 建構時就驗證 Destination 是 UNIVERSE、而且對應被選中的候選（`SessionRecoveryRecord` 的驗證），只有 EXISTING 與 NEW 對得上，所以走不到。丟例外不會讓 Crossed 的寫入變得更正確（寫入已經處理），只會讓這個 tick 之後的參與者不被檢查；改用其中一則，則會顯示錯的字面 |
 | 「量子通道已關閉」的對象 | `PS:208` `closed` 改呼叫 `PS:223` `notifyNotCrossed`：跳過 `record.collapse().crossed()` 中的參與者；在線的判斷沿用 `online`（`getPlayer(uuid)` 不是 null，而且 `!isRemoved()`），與 `CollapseService.notifyParticipants` 相同。`record` 都是結束時那筆：(b)(c)(d) 是 `finish` 那個 tick 的 flushed（roll-forward 未確認或 current≠flushed 時，`tick` 已先 return）；(a) 是攔截時的 view（roll-forward 未確認時，`OriginDoors#doorAction` 已經拒絕）。「進入 SEALED」仍經 `CollapseService.notifyParticipants` 發給所有參與者（§20.9「不受影響的部分」） |
 | Javadoc | `PS:48` 類別說明的開頭、`:65` 結束條件、`:72-75` 傳送結果；`:80-83` 訊息的對象，原文寫「顯示給在線的每一位參與者……跨過的人也需要知道」，改為 v5.5 的對象與理由；`closed` 的 Javadoc |
-| 語言檔 | `zh_tw.json`、`en_us.json` 各新增 2 個 key，依字母排在 `collapsed` 之前；換行與既有內容同為 CRLF。zh_tw 是「你已進入新的宇宙。」／「你已進入另一個宇宙。」，en_us 是「You have entered a new universe.」／「You have entered another universe.」 |
+| 語言檔 | `zh_tw.json`、`en_us.json` 各新增 2 個 key，依字母排在 `collapsed` 之前；換行與既有內容相同：index 是 LF，Windows 工作樹 checkout 時是 CRLF（controller 依 quality n-3 更正，原文寫「同為 CRLF」）。zh_tw 是「你已進入新的宇宙。」／「你已進入另一個宇宙。」，en_us 是「You have entered a new universe.」／「You have entered another universe.」 |
 | testmod helper | `SUP:1083` `hud(connection)` 以 `drainOutbound(Object.class)` 一次讀完，回傳 `SUP:1104` `Hud(overlays, titles)`。overlays 是 actionbar 的 key（overlay 的 `GameMessageS2CPacket` 與 `OverlayMessageS2CPacket`）；titles 是 title 系列封包依送出順序的描述（`fade 10/70/20`、`title <key>`、`subtitle <key>`、`clear`／`reset`）。`SUP:1107` `arrivalTitle(key)`＝`["fade 10/70/20", "title " + key]`（字面值）。`overlayKeys` 沒有改，語意不變 |
 
 ### 測試
@@ -5170,10 +5189,29 @@ mutation（`chain-mut.log`）：每個都在 GREEN 的工作樹上套用、跑 M
 ### 交給後續
 
 - F6-1／F6-2：如果要補 test，處理需要裁示第 1 條（Crossed 寫入被拒時的到達提示與「已關閉」）。
+- **F6-1 Step 0（controller 補，F5-3 的 spec review 與 quality review 留下的 Minor）**，與 F6-0 留下的 F6-1 Step 0 一起做。F6-1 派工時，要把下列路徑列入允許路徑：
+  - `collapse/CollapseService.java`：只限 Javadoc 與註解，不改行為；CS 1590 行，不增加行數為佳；
+  - `collapse/PassageService.java`：只限 `arrivalKey` 為了 JUnit 調整可見性；
+  - JUnit `CollapseServiceTest.java`；
+  - testmod `M5UniverseGameTests.java`：新增一個跨平台的 `@GameTest`。
+
+  行號以 `01933a1` 為準。
+  - spec m-1：新增 GameTest，鎖住兩件事。
+    - Crossed 寫入被拒（REJECTED）時：被拒的人仍收到到達的 title；通道依 (c) 結束時，他不在 `Crossed` 中，仍收到「量子通道已關閉。」。可以在 PASSAGE_READY 的 Crossed put 以 `installJournalPutFault` 注入拒絕。
+    - (a) 或 (d) 結束時，已跨過的人不收到「已關閉」，還沒跨過的人收到。
+    - 要以 mutation 證明「被拒時不顯示」與「(a)(d) 也發給已跨過的人」都會 FAIL。新 test 要加入 F6-3 的 `build.yml` 明列清單。
+  - quality n-1：在 `CollapseServiceTest.passageMessagesExistInBothLanguages`（約 `:543`）加兩列：`PassageService.MESSAGE_ARRIVED_NEW`、`MESSAGE_ARRIVED_EXISTING` 的 key 字面值，zh_tw 逐字等於 spec，en_us 不是空白。另加 `arrivalKey` 的 New、Existing、Source、空四個 case。
+  - spec m-2＋quality n-2：
+    - `CS:129` 的 `MESSAGE_PASSAGE_CLOSED` Javadoc 改為「只對在線、而且不在 Crossed 中的參與者」；
+    - `CS:1205` 的段落註解拿掉 PS 已不再使用的 `notifyParticipants`；
+    - CS 的 `MESSAGE_*` 區塊加一行，指向 `PassageService.MESSAGE_ARRIVED_*`；
+    - PS 常數的 Javadoc 說明為何放在 PS。
+    - 三段同形的通知迴圈（`PS:223`、`CS:1297`、`CS:1305`）不必收斂，各約 5 行，可以接受。
 - F6-3：`build.yml` 的明列清單不需要因 F5-3 增減（沒有新增 test）。若 F6-3 會改 README，在「新增 M5 GameTest」補上 `hud`／`arrivalTitle` 與觀察第 2 條的陷阱。
 - F7：
   - 玩家說明：到達時畫面中央會出現「你已進入新的宇宙。」或「你已進入另一個宇宙。」（約 5 秒）。已跨過的人不會再收到「量子通道已關閉。」，只有還沒跨過的參與者會收到。
   - required manual smoke：親眼確認 title 在跨維度的載入畫面之後仍看得到（觀察第 3 條），NEW 與 EXISTING 各一次；單人時 (b) 結束之後，actionbar 沒有「量子通道已關閉。」；兩人時，留下的人收到。
   - en_us 的字句「You have entered a new universe.」／「You have entered another universe.」請一併審閱。
-  - `CS:129` 的 Javadoc（觀察第 1 條）留給下一個允許改 `CS` 的 task。
+  - `CS:129` 的 Javadoc（觀察第 1 條）留給下一個允許改 `CS` 的 task。（controller 補：已排入上方的 F6-1 Step 0。）
+  - （controller 補，quality n-4）smoke 若看不到 title：原因是 title 在 `DownloadingTerrainScreen` 期間就開始倒數（`shouldPause()` 為 false）。修正方向是改在 client 確認 teleport（`TeleportConfirmC2SPacket`）之後才送，或延後幾個 tick 再送，需要改 spec。
   - README「預期結果」的數字：F5-3 之後與 F6-0 相同（JUnit 655、M5 57、default 175（`_windows` 89）、per-test 52＋1、release 429／382、sources 221）。
