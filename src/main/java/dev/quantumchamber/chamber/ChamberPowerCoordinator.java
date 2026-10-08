@@ -131,9 +131,10 @@ public final class ChamberPowerCoordinator {
      * presence 不是 M5 的塌縮狀態（{@link #normalizesOwnerless}）時才交出。MEASURED（含 DORMANT）的艙也包含在內（presence 是 ACTIVE 或 UNKNOWN）。有 COLLAPSING、SEALED、
      * PASSAGE_READY 的艙由該 session 的門邏輯負責，這裡不交出，塌縮流程套用時也再排除一次。排入、套用與 log 都在塌縮流程；這裡不寫門、不丟出例外（刷新在 Controller 的排程刻與
      * neighbor update 裡）。
-     * <p>{@code presence} 是同一次 {@link #reconcile} 最後讀到的值（F6-0，F5-2 quality Nit：不再讀第二次）。協調裡的 {@code start}、{@code returnToOrigin} 只會讓 presence 在 NONE、
-     * ARMING、ACTIVE、RETURNING 之間改變，不會變成或離開 COLLAPSE／PASSAGE，所以用它判斷與協調之後再讀一次的結果相同。讀不到時（{@code null}；{@link #reconcile} 已以同一個原因記
-     * WARN）略過，下一次刷新再判斷。
+     * <p>{@code presence} 是同一次 {@link #reconcile} 最後讀到的值（F6-0，F5-2 quality Nit：不再讀第二次）。協調裡的 {@code start}、{@code returnToOrigin} 只會讓 presence 在非塌縮的
+     * presence（NONE、ARMING、ACTIVE、RETURNING、UNKNOWN）之間改變，不會變成或離開 COLLAPSE／PASSAGE，所以用它判斷與協調之後再讀一次的結果相同（F6-1 Step 0 補上 UNKNOWN，F6-0
+     * quality Minor 2：durable 是 ARMING 但沒有 runtime 時、DORMANT 的 MEASURED 都是 UNKNOWN）。讀不到時（{@code null}；{@link #reconcile} 已以同一個原因記 WARN）略過，下一次
+     * 刷新再判斷。
      */
     private static void normalizeOwnerlessMembrane(ServerWorld world, ChamberFrame frame, UUID chamber, ChamberSessionGateway.Presence presence) {
         boolean membrane = doorHasMembrane(world, frame);
@@ -171,12 +172,14 @@ public final class ChamberPowerCoordinator {
     }
 
     /**
-     * 一座原艙的協調，回傳 Controller 該顯示的 {@link ChamberState}。不讀世界、不改 Controller、不寫門（資格由 {@code readiness} 提供），但有下列副作用（F6-0 更正，F5-2 quality
-     * Minor 1：原本寫「純函式」）：
+     * 一座原艙的協調，回傳 Controller 該顯示的 {@link ChamberState}。reconcile 本身不直接讀世界、不直接改 Controller、不寫門；它自己寫 registry，經 {@code readiness} 與
+     * {@link SessionActions} 的副作用如下（F6-0 更正，F5-2 quality Minor 1：原本寫「純函式」；F6-1 Step 0 再更正，F6-0 spec N-1：原本寫「不讀世界、不改 Controller」，但 production
+     * 的 {@code readiness} 會讀世界，{@code setHeldByStart} 寫的是 Controller 的 block entity）：
      * <ul>
      * <li>registry 的 power state：依下方規則以 {@code setPowerState} 寫入 POWERED、RETURNING 或 OFF（協調失敗時一律 RETURNING）。</li>
+     * <li>{@code readiness}：資格的預覽，只在需要時呼叫（production 讀世界評估資格，{@code ChamberActivationService.evaluateReadiness}）。</li>
      * <li>{@link SessionActions}：讀 {@code presence}（返還成功之後再讀一次）、{@code activationBlocked} 與 {@code heldByStart}；呼叫 {@code returnToOrigin} 與 {@code start}
-     *     （會讓 session 返還或開始）；寫回 {@code heldByStart} 記號（見下方 R2 M5）。</li>
+     *     （會讓 session 返還或開始）；寫回 {@code heldByStart} 記號（production 寫在 Controller 的 block entity，見下方 R2 M5）。</li>
      * <li>協調丟出例外時記一則 WARN（保留返還保護，回 ARMED）。</li>
      * </ul>
      * M5 的塌縮狀態（spec §10.7）：presence 為 {@code COLLAPSE} 或 {@code PASSAGE} 時不走 pending／needsReturn、不呼叫 {@code returnToOrigin}；power state 只設 POWERED（已供電而且
@@ -283,15 +286,21 @@ public final class ChamberPowerCoordinator {
         world.updateComparators(controller.getPos(), ModBlocks.CHAMBER_CONTROLLER);
     }
 
+    /**
+     * {@link #reconcile} 對一座原艙的 session 與 Controller 的讀寫。實作只有 {@code refreshNow} 的 Controller 接線與 JUnit 的 fake；每個方法都是 abstract（F6-1 Step 0，F6-0
+     * quality Minor 1：原本 {@code activationBlocked}、{@code heldByStart}、{@code setHeldByStart} 是回 false、什麼都不做的 default 方法，拿掉接線的 override 仍能編譯、JUnit 也
+     * 全綠），漏接任何一個都在編譯期失敗。
+     */
     interface SessionActions {
-        default boolean activationBlocked() { return false; }
+        /** Controller 是否因門切換的 rollback 失敗而禁止啟動（production 經 {@link ChamberControllerBlockEntity#activationBlocked}，寫入 NBT）。 */
+        boolean activationBlocked();
         /**
          * R2 M5 的記號（{@link #reconcile}）：目前的 ARMED 是上一次協調由 {@code start} 回 ARMED_ONLY／STARTED 留下的。production 經 Controller 的 block entity 讀寫
-         * （{@link ChamberControllerBlockEntity#heldByStart}，不寫入 NBT）；沒有實作時一律 false，等同每次都是新的 block entity。
+         * （{@link ChamberControllerBlockEntity#heldByStart}，不寫入 NBT）；新的 block entity 是 false。
          */
-        default boolean heldByStart() { return false; }
+        boolean heldByStart();
         /** 寫回 {@link #heldByStart}（每次協調先寫 false，只有 start 留下或依記號保持 ARMED 時寫 true）。 */
-        default void setHeldByStart(boolean held) { }
+        void setHeldByStart(boolean held);
         ChamberSessionGateway.Presence presence();
         ChamberSessionGateway.StartResult start(List<UUID> participants);
         boolean returnToOrigin();
