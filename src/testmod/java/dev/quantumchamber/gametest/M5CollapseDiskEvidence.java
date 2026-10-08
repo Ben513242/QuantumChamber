@@ -2,6 +2,7 @@ package dev.quantumchamber.gametest;
 
 import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
+import dev.quantumchamber.collapse.CollapseLedgerTestAccess;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.persistence.SessionJournalStore;
@@ -19,7 +20,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,10 +36,11 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 
 /**
- * 僅 testmod（M5 F6-1）：{@code M5CollapseRecoveryProbe} 讀磁碟上的 M5 權威（{@code world/data} 的正式檔），不經 production 的記憶體狀態。只讀，不寫任何檔。
- * allocation 與 projection ledger 直接讀 NBT（production 的 strict decode 是 package-private），catalog 經 {@link UniverseRegistryState#fromNbt}，journal 經
- * {@link SessionJournalStore#read}＋{@link SessionRecoveryState#fromNbt}，discovery 經 {@link UniverseDiscoveryState#load}。檔案不存在時回空的結果。投影的方塊以
- * raw MCA 讀（{@link #block}）。
+ * 僅 testmod（M5 F6-1）：跨 JVM 的塌縮 probe 讀磁碟上的 M5 權威（{@code world/data} 的正式檔），不經 production 的記憶體狀態。只讀，不寫任何檔。
+ * 每一份都以 production 的嚴格 decode 讀：allocation 與 projection ledger 經 {@link CollapseLedgerTestAccess}（F6-2a：package-private 的 {@code fromNbt}，exact keys、
+ * {@code SchemaVersion}、筆數上限；格式不符時丟出，不會讀成空的 ledger），catalog 經 {@link UniverseRegistryState#fromNbt}，journal 經
+ * {@link SessionJournalStore#read}＋{@link SessionRecoveryState#fromNbt}，discovery 經 {@link UniverseDiscoveryState#load}。檔案不存在時回空的結果（還沒有寫過）。
+ * 投影的方塊以 raw MCA 讀（{@link #block}）。
  */
 final class M5CollapseDiskEvidence {
     static final String JOURNAL = SessionRecoveryState.STATE_ID + ".dat";
@@ -55,28 +56,20 @@ final class M5CollapseDiskEvidence {
     /** projection ledger 的一筆。 */
     record Projection(UUID chamber, UUID universeId, String status) {}
 
+    /** 磁碟上的 allocation ledger（嚴格 decode；檔案不存在時是空的）。 */
     static List<Allocation> allocations(Path data) throws IOException {
-        var result = new ArrayList<Allocation>();
         var file = data.resolve(UniverseAllocationLedger.FILE_NAME);
-        if (!Files.exists(file)) return result;
-        var entries = NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()).getList("Entries", NbtElement.COMPOUND_TYPE);
-        for (int i = 0; i < entries.size(); i++) {
-            var row = entries.getCompound(i);
-            result.add(new Allocation(HexFormat.of().formatHex(row.getByteArray("AllocationToken")), row.getUuid("UniverseId")));
-        }
-        return result;
+        if (!Files.exists(file)) return List.of();
+        return CollapseLedgerTestAccess.allocations(NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes())).stream()
+                .map(entry -> new Allocation(HexFormat.of().formatHex(entry.allocationToken().bytes()), entry.universeId().value())).toList();
     }
 
+    /** 磁碟上的 projection ledger（嚴格 decode；檔案不存在時是空的）。 */
     static List<Projection> projections(Path data) throws IOException {
-        var result = new ArrayList<Projection>();
         var file = data.resolve(ProjectionLedger.FILE_NAME);
-        if (!Files.exists(file)) return result;
-        var entries = NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()).getList("Entries", NbtElement.COMPOUND_TYPE);
-        for (int i = 0; i < entries.size(); i++) {
-            var row = entries.getCompound(i);
-            result.add(new Projection(row.getUuid("ChamberUuid"), row.getUuid("UniverseId"), row.getString("Status")));
-        }
-        return result;
+        if (!Files.exists(file)) return List.of();
+        return CollapseLedgerTestAccess.projections(NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes())).stream()
+                .map(entry -> new Projection(entry.chamberUuid(), entry.universeId().value(), entry.status().name())).toList();
     }
 
     static Map<UniverseId, UniverseRecord> catalog(Path data) throws IOException {
