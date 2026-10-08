@@ -5077,3 +5077,103 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
 - F7：
   - README「預期結果」的數字以最新的 run-all 為準（F6-0 之後：JUnit 655、M5 57、default 175（`_windows` 89）、per-test receipt 52＋1；release 429／382、sources 221 不變）。
   - spec errata：§13.2／§7.3 RELEASE_GEOMETRY 的 H2 checkpoint 之前，先等相關 chunks（來源艙與走廊 lease）都已載入、entity storage 也已載入，未就緒時下一個 tick 再試、不算失敗（F6-0 第 2 點）；§10.7 :634 R2 M5 的記號在 Controller 的 block entity 上、不持久化（F6-0 第 1 點）。
+
+## F5-3：到達目的宇宙的提示（title）與通道已關閉的對象
+
+- 一位 implementer 完成（controller 的派工 scratchpad `f53-prompt.md`）。開工時 HEAD 是 `0be1bfd`、工作樹乾淨；`7df2b6b..0be1bfd` 只有 controller 的 docs commit，code 與 F6-0 完成時相同。
+- 使用者 2026-10-08 的兩次裁示（SDD ledger 的 Rulings 09:51、12:14）：
+  1. spec v5.4（§20.8，`7b78aea`）：跨越成功之後，對到達的那位玩家顯示到達提示，依候選種類區分：NEW「你已進入新的宇宙。」，EXISTING「你已進入另一個宇宙。」。只在傳送結果是 MOVED、玩家已在目的世界時顯示；不顯示 Universe ID；用 `Text.translatable`、key 放在 `message.quantumchamber.m5.*`，兩份語言檔都要有；`FAILED_ROLLED_BACK` 與 `FAILED_RECOVERY_REQUIRED` 不顯示。
+  2. spec v5.5（§20.9，`822c6d0`）：controller 寫派工時發現，最後一位參與者跨過的下一個 tick，(b) 結束的「量子通道已關閉。」會在 actionbar 蓋掉到達提示。使用者選「兩個都做」：到達提示改用 title（只送 title、不送 subtitle；先明確送出原版預設的淡入、停留、淡出 10／70／20 ticks）；「量子通道已關閉。」只發給在線、而且不在 `Crossed` 中的參與者（依結束時那筆 record）。
+- Commits：
+  - `01933a1` `feat: tell a crossing participant which universe they entered`（parent `0be1bfd`）：`PS`、兩份語言檔、testmod `SUP`（只新增 helper）、`M5U`（只改派工列出的 8 個 test 與兩個 key 常數）。commit 之前的工作樹 state 在 `f5/f53/commit-main-state.txt`；committed 的 blob 與 RED（testmod 兩檔）、GREEN 與 mutation 基底的 blob 逐檔相同（`red-m5-state.txt`、`green-m5-state.txt`）。
+  - 本節由其後的 docs commit `docs: record F5-3 in the M5 note` 加入。
+- Code range `0be1bfd..01933a1`。只改了派工允許的路徑。沒有改 `CollapseService`（`notifyParticipants` 與 `MESSAGE_*` 常數不變）、`OriginDoors`、`DestinationResolver`、`CollapseAuthorities`、chamber 套件、`CollapseServiceTest`、`build.gradle`、`gates.ps1`、`run-all.ps1`、`.github/`、`fabric.mod.json`、README。沒有新增 `@GameTest`（M5 仍是 57）。
+- 行號以 `01933a1` 為準。`PS` 指 `collapse/PassageService.java`；`SUP`、`M5U`、`CS` 同前面各節。
+
+### 實作位置
+
+| 項目 | 處置與位置 |
+| --- | --- |
+| key 與淡入淡出的常數 | `PS:90` `MESSAGE_ARRIVED_NEW`、`PS:92` `MESSAGE_ARRIVED_EXISTING`、`PS:94` `ARRIVAL_FADE_IN`／`ARRIVAL_STAY`／`ARRIVAL_FADE_OUT`＝10／70／20，Javadoc 引用 §10.8、§20.8、§20.9。`PassageService` 本身是 package-private，所以常數也是；testmod 以字面值斷言（比照既有的 `SEALED_KEY`） |
+| 到達提示（title） | `PS:395` `arrived`：先 `player.networkHandler.sendPacket(new TitleFadeS2CPacket(10, 70, 20))`，再 `sendPacket(new TitleS2CPacket(Text.translatable(key)))`；不送 subtitle、不用 actionbar。`PS:407` `arrivalKey`（純函式）：`selectedCandidate()` 是 `QuantumCandidate.New` → NEW、`Existing` → EXISTING、`Source` 或空 → 空。對 sealed interface 做 exhaustive switch，沒有 default，新增 permitted subtype 時編譯就失敗 |
+| 呼叫點 | `PS:323-329` `cross` 的 MOVED 分支：在 `crossed(...)` 之後、`if (next == null) return` 之前呼叫 `arrived`，所以 Crossed 的三種寫入結果（COMMITTED、ROLL_FORWARD_PENDING、被拒）都會顯示。`FAILED_ROLLED_BACK`、`REJECTED_BEFORE_MOVE`、`RETURNED`、`FAILED_RECOVERY_REQUIRED`，以及 descriptor 讀不到（`transfer` 回 null）都不經過這裡 |
+| 不是 New／Existing（不應發生） | 不顯示、不丟例外，記一則帶 `LOG_MARKER` 與 `session=` 的 WARN（`PS:398`）；沒有用 `orElseThrow`。理由：PASSAGE_READY 的 record 建構時就驗證 Destination 是 UNIVERSE、而且對應被選中的候選（`SessionRecoveryRecord` 的驗證），只有 EXISTING 與 NEW 對得上，所以走不到。丟例外不會讓 Crossed 的寫入變得更正確（寫入已經處理），只會讓這個 tick 之後的參與者不被檢查；改用其中一則，則會顯示錯的字面 |
+| 「量子通道已關閉」的對象 | `PS:208` `closed` 改呼叫 `PS:223` `notifyNotCrossed`：跳過 `record.collapse().crossed()` 中的參與者；在線的判斷沿用 `online`（`getPlayer(uuid)` 不是 null，而且 `!isRemoved()`），與 `CollapseService.notifyParticipants` 相同。`record` 都是結束時那筆：(b)(c)(d) 是 `finish` 那個 tick 的 flushed（roll-forward 未確認或 current≠flushed 時，`tick` 已先 return）；(a) 是攔截時的 view（roll-forward 未確認時，`OriginDoors#doorAction` 已經拒絕）。「進入 SEALED」仍經 `CollapseService.notifyParticipants` 發給所有參與者（§20.9「不受影響的部分」） |
+| Javadoc | `PS:48` 類別說明的開頭、`:65` 結束條件、`:72-75` 傳送結果；`:80-83` 訊息的對象，原文寫「顯示給在線的每一位參與者……跨過的人也需要知道」，改為 v5.5 的對象與理由；`closed` 的 Javadoc |
+| 語言檔 | `zh_tw.json`、`en_us.json` 各新增 2 個 key，依字母排在 `collapsed` 之前；換行與既有內容同為 CRLF。zh_tw 是「你已進入新的宇宙。」／「你已進入另一個宇宙。」，en_us 是「You have entered a new universe.」／「You have entered another universe.」 |
+| testmod helper | `SUP:1083` `hud(connection)` 以 `drainOutbound(Object.class)` 一次讀完，回傳 `SUP:1104` `Hud(overlays, titles)`。overlays 是 actionbar 的 key（overlay 的 `GameMessageS2CPacket` 與 `OverlayMessageS2CPacket`）；titles 是 title 系列封包依送出順序的描述（`fade 10/70/20`、`title <key>`、`subtitle <key>`、`clear`／`reset`）。`SUP:1107` `arrivalTitle(key)`＝`["fade 10/70/20", "title " + key]`（字面值）。`overlayKeys` 沒有改，語意不變 |
+
+### 測試
+
+M5U 的 8 個既有 test，沒有新增 `@GameTest`。每一處都精確比對：title 比對整份 titles 清單，「有收到」比對整份 overlays 清單，「沒有收到」斷言清單為空或不含該 key。
+
+| test | 新增或改寫的 witness |
+| --- | --- |
+| T-CROSS `M5U:2786` | `noTitleForTheRider`（騎乘時越過中線）；`arrivalTitleForTheCrossedParticipant`（titles＝`arrivalTitle(NEW)`）、`arrivalNotOnTheActionbar`（同一次讀取的 overlays 為空）；原本 `:2860` 的 `closedMessageToTheCrossedParticipant` 依 §20.9 反轉為 `noClosedMessageToTheCrossedParticipant`（(b) 結束之後 overlays、titles 都是空的）；`noTitleForTheNonParticipant` |
+| 兩人逾時 `M5U:2893`（`_windows`） | `arrivalTitleOnlyForTheOneWhoCrossed`（P 的 titles＝NEW，B 為空）；原本 `:2931` 的 `closedMessageToBoth` 改為 `closedMessageOnlyToTheOneWhoStayed`（P 的 overlays 為空，B＝`[passage_closed]`） |
+| (a) `M5U:2987` | `closedMessage` 由 `contains` 改為 overlays＝`[passage_closed]`、titles 為空 |
+| (d) `M5U:3039` | 同上 |
+| EXISTING `M5U:3079` | `newArrivalTitleForP`（D1）、`existingArrivalTitleForQ`（D2 的 Q：titles＝`arrivalTitle(EXISTING)`）、`noClosedMessageToQ`、`noTitleForPFromTheSecondPassage`。Q 的連線另存為 `qConnection` |
+| rolled back `M5U:3197` | 兩次被拒都在同一次讀取裡斷言 actionbar（`failureMessage`、`secondRejectedTooButWarnedOnce` 原本的精確比對不變），並加上 `noTitleOnTheFirstFailure`／`noTitleOnTheSecondFailure`；第三次是 `arrivalTitleOnTheThirdCrossing`、`noClosedMessageAfterTheThirdCrossing`（overlays 為空：既沒有「已關閉」，也沒有放到 actionbar 的到達提示） |
+| recovery required `M5U:3265` | `arrivalTitleForP1`（P1 的成功跨越，作為對照）、`noTitleForTheRecoveryRequired`（P2 的 `FAILED_RECOVERY_REQUIRED` 之後的下一個 tick）、`noTitleWhileClosedInMemory`（通道在記憶體內關閉期間再越過；取代原本只用來清空封包的 `overlayKeys(second)`） |
+| Crossed 寫入失敗 `M5U:3467` | `arrivalTitleWhileTheCrossedWriteIsPending`；另加 (c) 結束時的 `closedMessageOnlyToTheOneWhoStayed`（到期時先清空兩人的封包；P1 已在 Crossed 中，overlays 為空；P2＝`[passage_closed]`） |
+
+- 數字：M5 57、JUnit 655、default 175 都不變（`f5/f53/cmp-junit.txt`：JUnit 集合與 F6-0 逐一相同）。
+
+### RED、GREEN 與 mutation
+
+逐輪的 state、console 與摘要都在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f5/f53/`。`state.ps1`、`gate.ps1`、`chain.ps1`、`adapter.py`、`junit*.ps1`、`junitsum.py`、`setcmp.py`、`wbcmp.py`、`jarcmp.py`、`runall-compare.ps1` 由 `f6/f60/` 複製，只改了註解、adapter 表的模組（`f5/f53/adapters_f53.py`）與 `runall-compare.ps1` 的基準；`f6/f60/` 下既有的檔案沒有改動。gate root 都在 `.superpowers/verification/`。
+
+| 輪次 | 工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| RED | HEAD `0be1bfd`，只加 testmod 的 `SUP`、`M5U`；blob 與 `01933a1` 相同（`red-m5-state.txt`） | `gate-red-m5-615ef02e9a0b4e4582bbcc5633d551cb`（M5 全部） | 51/57。FAIL 的 6 個 test，false 的都只有目標 witness：T-CROSS 的 `arrivalTitleForTheCrossedParticipant`、`noClosedMessageToTheCrossedParticipant`；兩人逾時的 `arrivalTitleOnlyForTheOneWhoCrossed`、`closedMessageOnlyToTheOneWhoStayed`；EXISTING 的 `newArrivalTitleForP`、`existingArrivalTitleForQ`、`noClosedMessageToQ`；rolled back 的 `arrivalTitleOnTheThirdCrossing`、`noClosedMessageAfterTheThirdCrossing`；recovery 的 `arrivalTitleForP1`；Crossed 寫入失敗的 `arrivalTitleWhileTheCrossedWriteIsPending`、`closedMessageOnlyToTheOneWhoStayed`。(a)(d) 的精確比對在舊程式上就成立（PASS），符合「還沒跨過的人仍收到」 |
+| GREEN | `0be1bfd`＋全部改動（＝`01933a1`） | `gate-green-m5-85ef061a59ba41a8b9f62ceef70a954c` | 57/57，gate exit 0（M5 oracle PASS） |
+| JUnit | 同上 | `green-junit-all.txt` | 655 個，failures 0、skipped 2，集合與 F6-0 逐一相同；`CollapseLogMarkerGuardTest` 也 PASS（新的 WARN 帶 `LOG_MARKER`） |
+
+mutation（`chain-mut.log`）：每個都在 GREEN 的工作樹上套用、跑 M5 全部，跑完還原，並以 `git hash-object` 核對還原後的 blob（`adapters/*/manifest.restored.json`）。
+
+| mutation | 改動 | Root | 結果 |
+| --- | --- | --- | --- |
+| `mut-actionbar` | title 改成 `player.sendMessage(Text.translatable(key), true)` | `gate-mut-actionbar-99a99bd07a0a445989b835428a577b40` | 51/57。6 個到達提示的 witness 都是 false；T-CROSS 的 `arrivalNotOnTheActionbar` 與 rolled back 的 `noClosedMessageAfterTheThirdCrossing` 也是 false（actionbar 多了到達提示） |
+| `mut-swap` | NEW 與 EXISTING 對調 | `gate-mut-swap-20eb8f789dc244fbac3e1f02b2263b89` | 51/57。同樣 6 個 test 的到達提示 witness 是 false（EXISTING test 的兩個都是 false） |
+| `mut-closed-all` | `closed` 改回 `service.notifyParticipants` | `gate-mut-closed-all-f2bcef8cb6f64c2c851f3773a7b4d49b` | 52/57。false 的是 T-CROSS 的 `noClosedMessageToTheCrossedParticipant`、兩人逾時與 Crossed 寫入失敗的 `closedMessageOnlyToTheOneWhoStayed`、EXISTING 的 `noClosedMessageToQ`、rolled back 的 `noClosedMessageAfterTheThirdCrossing`；到達提示的 witness 都成立 |
+| `mut-committed-only` | `arrived` 移到 `if (next == null) return` 之後（只在 COMMITTED 時顯示） | `gate-mut-committed-only-91a33fd195394838b555837bf2d2e225` | 56/57。只有 Crossed 寫入失敗的 `arrivalTitleWhileTheCrossedWriteIsPending` 是 false |
+| `mut-no-fade` | 拿掉 `TitleFadeS2CPacket` | `gate-mut-no-fade-78de5db2fedf4116b1262427bceba580` | 51/57。6 個到達提示的 witness 是 false（titles 只有 `title <key>`） |
+
+### run-all
+
+- 在 `01933a1` 上執行，工作樹乾淨（`STATUS` 是空的）：`run-all-da22c04e66334a88879034903317bad0`（Full `gate-full-aa5be9de010b4be3b61aca2a72554f4e`；M5 `gate-m5-gametest-b937f54b7a4c494692ec28c767e8bf52`；console 在 `f5/f53/run-all-console.txt`）。結果 `END ALL exit=0 HEAD=01933a1`，`SUMMARY default=175/175 windows=89 legacy=1/1 m5=57/57 perTest=52+1 junit=655 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=429entries/382classes sources=221 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`。`.ps1`／`.gradle`（以及 README）的 `HARNESS` 雜湊與基準逐一相同，C＝`01933a1`。
+- 與基準 `run-all-7b4f55e363934019b575c2e031149ce7`（`771f14c`）逐項比較（`f5/f53/runall-compare.ps1`）：
+  - default 175/175（`_windows` 89）、M5 57/57、legacy 1/1：testcase 集合與結果都與基準逐一相同（XML 比對）。M5 oracle PASS，57 個增量逐一串接；`M3_UNIVERSE_STOPPED_VERIFIED worlds=46 runtimeReceipts=46` 不變。
+  - perTest 52＋1、JUnit 655、M3 4＋5、M4 recovery 24、mainOnly PASS、testmodHits 0、CI 兩個平台 PASS：不變。
+  - release JAR 429 entries（382 classes）不變（`jarcmp-release-run-all.txt`）：沒有新增或刪除的 entry。內容不同的是兩份語言檔，以及 `PassageService` 與它的 nested class（同一個原始檔重新編譯，行號表改變）；`arrivalKey` 的 pattern switch 與 lambda 沒有產生新的 class。sources 221 不變，內容不同的只有兩份語言檔與 `PassageService.java`。
+  - log（`wbcmp-*-run-all.txt`）：Full 54／28，與基準逐行相同；legacy 0／0；M5 37／10，則數相同，兩行差異是 F6-0 已記錄的數值格式（`PistonBlockEntity` 的 object hash、通道傳送 WARN 的座標寫法）。新的 WARN（候選不是 NEW／EXISTING）沒有出現。
+- 失敗或不採計的 root：只有刻意的 RED 與 5 個 mutation。沒有遇到派工列出的已知偶發。
+
+### 偏離派工字面之處
+
+1. **到達提示放在 `crossed(...)` 之後**：派工寫「MOVED 之後、`crossed(...)` 之前不得有會丟例外的程式」。放在寫入之後，這段就完全沒有程式，Crossed 的寫入不受提示影響；寫入的三種結果都會走到 `arrived`（被拒或未確認時，`crossed` 回 null，之後才 return）。玩家看到的時點相同，都在同一個 server tick。
+2. **多加的斷言**：recovery 的 test 另加 P1 的到達提示（對照組），以及通道在記憶體內關閉期間的再越過；Crossed 寫入失敗的 test 另加 (c) 結束時「已關閉」的對象，這樣各平台都有覆蓋（兩人逾時的 test 是 `_windows`）。都在派工列出的 test 裡。
+3. **`hud` 把 `OverlayMessageS2CPacket` 也算成 actionbar**：production 的 actionbar 都經 `sendMessage(…, true)`（`GameMessageS2CPacket`）。一併計入，是為了讓改用 `/title actionbar` 那種封包的改動也看得到。`overlayKeys` 不變。
+4. **沒有新增 JUnit**：`arrivalKey` 的 NEW、EXISTING 兩支由 GameTest 精確比對（`mut-swap` 會失敗）；SOURCE 與空的分支走不到（record 驗證），沒有另寫 JUnit，JUnit 仍是 655。
+
+### 需要裁示
+
+1. Crossed 寫入「被拒」這一支沒有 GameTest（被拒指 `commitRollForward` 回 REJECTED，journal 沒有改變）。要造出它，得在 PASSAGE_READY→PASSAGE_READY 的 put 注入拒絕；被拒的人不在 Crossed 中，(b) 不會成立，通道要等 (c) 的 1200 ticks。派工列出的 test 受 tick 上限與既有 witness 限制，放不進去，派工也不新增 `@GameTest`。目前靠兩點：程式結構（`arrived` 在 `crossed` 回傳之後呼叫，不看回傳值），以及 `mut-committed-only` 經 ROLL_FORWARD_PENDING 失敗。但「只在 COMMITTED 與 PENDING 時顯示、被拒時不顯示」的 mutation 會存活。§20.9 邊界情況的「被拒的人仍收到已關閉」，同樣只由 `notifyNotCrossed` 的語意保證。是否另開 test（例如在 F6-2），由 controller 決定。
+
+### 觀察（未修改）
+
+1. `CS:129` 的 `MESSAGE_PASSAGE_CLOSED` Javadoc 寫「通道結束 (a)–(d) 時對在線的參與者顯示（F5-1；對象的判斷見 PassageService）」。括號已指向 `PassageService`，但「對在線的參與者」少了「不在 Crossed 中」。派工不允許改 `CS`。
+2. README「新增 M5 GameTest」的 fixture 一點只提到 `overlayKeys`。`hud`／`arrivalTitle`，以及「`drainOutbound` 會讀掉所有型別，同一時點要同時看 actionbar 與 title 時用 `hud`」這個陷阱，都還沒寫進 README（README 不在允許路徑）。
+3. 以 javap 查 Yarn 1.21+build.9 的 client jar：client 的 `InGameHud.clear()` 只在 `MinecraftClient.disconnect` 與 `enterReconfiguration` 呼叫；跨維度的 `onPlayerRespawn`（`joinWorld`／`startWorldLoading` → `DownloadingTerrainScreen`）不清除 title，而且 title 在 respawn 封包之後才送到。不過 `MinecraftClient.tick` 會呼叫 `InGameHud.tick`，title 的 100 ticks 可能在載入畫面期間就開始倒數（沒有逐條件確認），所以實際看不看得到要人工確認。
+
+### 交給後續
+
+- F6-1／F6-2：如果要補 test，處理需要裁示第 1 條（Crossed 寫入被拒時的到達提示與「已關閉」）。
+- F6-3：`build.yml` 的明列清單不需要因 F5-3 增減（沒有新增 test）。若 F6-3 會改 README，在「新增 M5 GameTest」補上 `hud`／`arrivalTitle` 與觀察第 2 條的陷阱。
+- F7：
+  - 玩家說明：到達時畫面中央會出現「你已進入新的宇宙。」或「你已進入另一個宇宙。」（約 5 秒）。已跨過的人不會再收到「量子通道已關閉。」，只有還沒跨過的參與者會收到。
+  - required manual smoke：親眼確認 title 在跨維度的載入畫面之後仍看得到（觀察第 3 條），NEW 與 EXISTING 各一次；單人時 (b) 結束之後，actionbar 沒有「量子通道已關閉。」；兩人時，留下的人收到。
+  - en_us 的字句「You have entered a new universe.」／「You have entered another universe.」請一併審閱。
+  - `CS:129` 的 Javadoc（觀察第 1 條）留給下一個允許改 `CS` 的 task。
+  - README「預期結果」的數字：F5-3 之後與 F6-0 相同（JUnit 655、M5 57、default 175（`_windows` 89）、per-test 52＋1、release 429／382、sources 221）。
