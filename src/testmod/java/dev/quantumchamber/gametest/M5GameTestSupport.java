@@ -20,6 +20,7 @@ import dev.quantumchamber.corridor.CorridorGeometry;
 import dev.quantumchamber.corridor.CorridorPageManager;
 import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.gametest.mixin.MinecraftServerAutosaveTestAccessor;
+import dev.quantumchamber.gametest.mixin.TestContextStateTestAccessor;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.persistence.SessionSemantics;
@@ -218,17 +219,11 @@ final class M5GameTestSupport {
     }
 
     /**
-     * 原版 {@code TestContext} 背後的 {@code GameTestState}：欄位名稱是 Yarn 1.21+build.9 的 {@code TestContext.test}（GameTest 只在 Loom 的開發
-     * runtime 以 named 名稱執行；{@code M5UniverseGameTests.scheduledCount} 讀同一個欄位）。讀不到時丟 IllegalStateException。
+     * 原版 {@code TestContext} 背後的 {@code GameTestState}（{@code TestContext.test}），經 testmod 的 accessor mixin {@code TestContextStateTestAccessor} 讀取（F6-0，F4a-0 quality
+     * re-review Minor 3：原本這裡與 {@code M5UniverseGameTests.scheduledCount} 各以反射讀一次）。欄位改名時開服即失敗（accessor 套用不上），不是等到呼叫才丟出。
      */
     static GameTestState gameTestState(TestContext context) {
-        try {
-            var field = TestContext.class.getDeclaredField("test");
-            field.setAccessible(true);
-            return (GameTestState) field.get(context);
-        } catch (ReflectiveOperationException failure) {
-            throw new IllegalStateException("讀不到原版 TestContext 的 GameTestState", failure);
-        }
+        return Objects.requireNonNull(((TestContextStateTestAccessor) context).quantumchamberTest$getTest(), "TestContext.test");
     }
 
     /**

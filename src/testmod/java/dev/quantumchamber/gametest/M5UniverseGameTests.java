@@ -39,6 +39,7 @@ import dev.quantumchamber.collapse.ResolveResult;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.gametest.M5GameTestSupport.DormantOrigin;
+import dev.quantumchamber.gametest.mixin.GameTestStateRunnablesTestAccessor;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.registry.ModEffects;
@@ -4261,21 +4262,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
-     * 原版 {@code GameTestState} 的 runAtTick 表（{@code ticksByRunnables}）目前的項目數，只讀。欄位名稱是 Yarn 1.21+build.9 的
-     * {@code TestContext.test} 與 {@code GameTestState.ticksByRunnables}；GameTest 只在 Loom 的開發 runtime（named 名稱）執行。
+     * 原版 {@code GameTestState} 的 runAtTick 表（{@code ticksByRunnables}）目前的項目數，只讀。{@code GameTestState} 經 {@code M5GameTestSupport.gameTestState}、表經 testmod 的
+     * accessor mixin {@code GameTestStateRunnablesTestAccessor} 取得（F6-0，F4a-0 quality re-review Minor 3：讀 {@code TestContext.test} 的反射收斂成一處）。
      */
     private static int scheduledCount(TestContext context) {
-        try {
-            var testField = TestContext.class.getDeclaredField("test");
-            testField.setAccessible(true);
-            var state = testField.get(context);
-            var mapField = state.getClass().getDeclaredField("ticksByRunnables");
-            mapField.setAccessible(true);
-            return ((Map<?, ?>) mapField.get(state)).size();
-        } catch (ReflectiveOperationException failure) {
-            // 丟 RuntimeException：runAtTick 的迴圈只攔 Exception，Error 會讓 GameTest server 崩潰。
-            throw new IllegalStateException("讀不到原版的 runAtTick 表", failure);
-        }
+        return ((GameTestStateRunnablesTestAccessor) M5GameTestSupport.gameTestState(context)).quantumchamberTest$getTicksByRunnables().size();
     }
 
     /**
