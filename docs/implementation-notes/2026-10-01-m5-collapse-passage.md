@@ -4909,6 +4909,19 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
 - Code range `7b78aea..5e1d0d7`；docs `771f14c` 與本節的 docs commit。
   - 只改了派工允許的路徑：`chamber/` 的 `ChamberPowerCoordinator`、`ChamberControllerBlockEntity`、`ChamberCollapsePort`（只有 Javadoc）；`collapse/OriginDoors`（只有第 1 點）；`corridor/CorridorPageManager`（只有 measured release 的 ready 檢查）；`persistence/MeasuredWorldSaveCheckpoint`；JUnit `ChamberPowerCoordinatorTest`；testmod `M4CandidateDoorGameTests`（只新增一個 test）、`M5UniverseGameTests`、`M5GameTestSupport`、`M5TestHooks`、`mixin/CollapseSealProbeMixin`（只有 Nit）、4 個新的 mixin 與它們的登記；README「新增 M5 GameTest」一節；本節。
   - **沒有改 `CollapseService`**（第 3、4 點都不需要可測性調整；仍是 1590 行）。也沒有改 `ChamberCollapseDependencyGuardTest`（守門每一輪都 PASS）、`CollapseServiceTest`、`build.gradle`、`gates.ps1`、`run-all.ps1`、`.github/`、`fabric.mod.json`、語言檔，以及派工「不得修改」所列的類別。
+- Review 與最終 review（controller 補）：
+  - implementer 列出兩項「需要裁示」，controller 交給 spec reviewer 判定。
+  - spec review ✅（Critical 0、Important 0、Minor 1、Nit 1）。reviewer 自己跑了 focused JUnit，比對兩次 run-all 的 GameTest 集合，也重跑了 Full 的 log 比對（54／28，逐行相同）。
+    - 「需要裁示」第 1 條：production 不受影響。production 的 gateway 是 SSM，`SSM.start` 只回 REJECTED 或 STAGING，走不到 `holdArmed`。只有 M1.2 的預設 adapter 與 fake gateway 會在 chunk 重新載入時多呼叫一次 start，那次 start 沒有副作用，符合 M1.2 spec §4。controller 接受 block entity 的作法。
+    - 「需要裁示」第 2 條：不違反 spec，而且等待有界。RELEASE_GEOMETRY 期間來源艙一直有 `SOURCE_TICKET`（radius 2）；只有原版的 entity 讀取失敗時才不會就緒，而這種情況修正前也不會收斂。controller 裁示：不加長時間等待的 WARN（spec 沒有要求）。
+    - Minor M-1：「需要裁示」第 2 條與「交給後續」F6-3 的同一條，以「來源 chunk 卸載」說明一直不就緒，與 `SOURCE_TICKET` 的事實不符。controller 已在下方兩處直接更正。
+  - quality review Approved（Critical 0、Important 0、Minor 2、Nit 2），沒有發現 spec reviewer 漏掉的正確性缺陷。
+  - controller 不再開 fix round。spec 的 Nit，以及 quality 的 Minor 與 Nit，都寫進「交給後續」的 F6-1 Step 0。
+  - **F6-0 完成**：range `7b78aea..7df2b6b`，之後接 controller 的 docs commit。
+    - code：`9590e7e`、`9e70ede`、`fa9bdba`、`63581bc`、`9e94c34`、`5e1d0d7`；
+    - docs：`771f14c`、`7df2b6b`；
+    - 最終 run-all：`run-all-7b4f55e363934019b575c2e031149ce7`，`END ALL exit=0`（`771f14c`）。
+  - F6-0 review 期間，controller 另外 commit 了只改 spec 與 plan 的 `822c6d0`（spec v5.5：到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 F5-3）。
 - 行號以 `771f14c` 為準（code 與 `5e1d0d7` 相同）。`BE` 指 `chamber/ChamberControllerBlockEntity.java`、`CPM` 指 `corridor/CorridorPageManager.java`、`MWSC` 指 `persistence/MeasuredWorldSaveCheckpoint.java`、`M4C` 指 testmod 的 `M4CandidateDoorGameTests.java`、`CSEM`／`QCFM` 見上；`CPC`、`CCP`、`OD`、`CPCT`、`CS`、`M5U`、`SUP`、`HK`、`SPM` 同前面各節。新增的 3 個 `@GameTest`（各自一個 batch）：
   - T-SRC-ENT `M4C:672` `native_measured_release_waits_for_the_source_entity_storage_windows`（default run，`m5_f60_source_entity_storage`，`_windows`，per-test Universe receipt ＋1）
   - T-QUAR `M5U:2340` `quarantined_prepare_hands_the_origin_door_back_open_and_reseals_it_after_converging`（M5 run，`m5_universe_door_quarantine`，tickLimit 1000，catalog 增量 1，不是 `_windows`）
@@ -5033,7 +5046,9 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
 ### 需要裁示
 
 1. 第 1 點的二擇一（block entity 上不寫入 NBT 的欄位）：與 F5-2 的差別是同一個 server instance 內 Controller 的 chunk 重新載入時，存下的 ARMED 會重新評估一次（呼叫 start）。production 的 gateway 不會回 ARMED_ONLY／STARTED，所以只影響 M1.2 的 adapter 與 test 的 fake gateway；若要保留「chunk 重新載入時仍保持」，要改回以 chamber UUID 為 key、在 `SERVER_STOPPED` 清空的作法（需要另一個生命週期註冊點）。
-2. 第 2 點的等待沒有 log：來源 chunk 一直不就緒時（例如玩家返還之後離開、來源 chunk 卸載），清理會無聲地等待，與 `leaseReady` 不就緒時相同；修改前是 checkpoint 失敗的 WARN（去重）加上退避。若要在長時間等待時記一次 WARN（比照 RESOLVE 的 600 ticks），交給 F6-3 或 F7 決定（`CPM` 只在本 task 的允許路徑內，本 task 沒有加）。
+2. 第 2 點的等待沒有 log：來源 chunk 一直不就緒時，清理會無聲地等待，與 `leaseReady` 不就緒時相同；修改前是 checkpoint 失敗的 WARN（去重）加上退避。若要在長時間等待時記一次 WARN（比照 RESOLVE 的 600 ticks），交給 F6-3 或 F7 決定（`CPM` 只在本 task 的允許路徑內，本 task 沒有加）。
+   - controller 依 spec review M-1 更正：原文以「玩家返還之後離開、來源 chunk 卸載」舉例，這不會發生。RELEASE_GEOMETRY 期間來源艙一直有 `SOURCE_TICKET`，chunk 保持 FULL。唯一不會就緒的情況是原版的 entity 讀取失敗（原版會記 ERROR「Failed to read chunk」），修正前也不會收斂。
+   - controller 裁示：不加長時間等待的 WARN（spec 沒有要求），F6-3 與 F7 都不需要處理。
 
 ### 觀察（未修改）
 
@@ -5046,10 +5061,19 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
 - F6-1／F6-2：
   - 重啟矩陣中與 R2 M5 相關的版本（F5-2 交給 F6 的「PASSAGE_READY 在開服時終局之後的比較器」）：記號在 block entity 上、不寫入 NBT，所以跨 JVM 與同一個 JVM 內重開 server 都是 false；跨 JVM 的 phase 可以直接斷言開服之後的第一次刷新依 presence NONE 重新評估。
   - 隔離的跨 JVM 版本（如果需要）：隔離只在記憶體裡，重啟之後 recovery 依 §12 收斂；同一個 instance 的版本已由 T-QUAR 鎖住。
+  - **F6-1 Step 0（controller 補，F6-0 的 spec review 與 quality review 留下的 Minor 與 Nit）**。F6-1 派工時，要把 `chamber/ChamberPowerCoordinator.java`、`collapse/OriginDoors.java`、JUnit `ChamberPowerCoordinatorTest.java`，以及 testmod `M5UniverseGameTests.java` 中下列各點列入允許路徑。行號以 `7df2b6b` 為準。
+    - quality Minor 1：production 的 BE 接線沒有 test 或 mutation 鎖住。`CPC:106-107` 的兩個 override 刪掉之後仍能編譯，JUnit 也全綠，因為 `SessionActions` 的 `heldByStart`／`setHeldByStart` 是回 false、什麼都不做的 default 方法（`CPC:292-294`），而 JUnit 以 `Backend` 取代 `refreshNow` 的匿名實作。二擇一，寫明理由：
+      - 把這兩個方法改成 abstract，讓漏接在編譯期失敗。`SessionActions` 只有兩個實作；`activationBlocked` 仍是 default，要說明兩者為何不同，或一併改。
+      - 或補一個「拿掉兩個 override」的 mutation，對 default run 跑一次。若它存活，在 note 寫明這是接受的覆蓋缺口。
+    - quality Minor 2：`CPC:134-135` 的 Javadoc 寫 start／returnToOrigin「只會讓 presence 在 NONE、ARMING、ACTIVE、RETURNING 之間改變」，漏了 UNKNOWN（durable 是 ARMING 但沒有 runtime 時是 UNKNOWN；DORMANT 的 MEASURED 一直是 UNKNOWN）。改為「只在非塌縮的 presence（NONE、ARMING、ACTIVE、RETURNING、UNKNOWN）之間改變」。
+    - spec N-1：`CPC:174` 的 reconcile Javadoc 開頭寫「不讀世界、不改 Controller」，但 `setHeldByStart` 寫的是 Controller 的 block entity，production 的 `readiness` 也會讀世界。改為「reconcile 本身不直接讀世界、不直接改 Controller；經 `readiness` 與 `SessionActions` 的副作用如下」。
+    - quality Nit：
+      - `M5U:2438` 寫死「200 ticks 後」，同一行的 tick 卻用 `CollapseBackoff.INITIAL_TICKS` 計算，改成都用常數；
+      - `OD:3` 的 static import 是 main 裡第一個跨 package 的 static import，讓三個呼叫點（`:437`、`:612`、`:711`）讀起來像本地方法。`:11` 的一般 import 只供 `:430` 的 Javadoc 使用，`:179` 還留著標示原方法位置的 tombstone 註解。擇一處理：改成明確呼叫 `ChamberPowerCoordinator.doorHasMembrane(...)` 並刪掉 tombstone；或保留 static import，只刪 tombstone。
 - F6-3：
   - `build.yml` 的明列清單另加本 task 新增的 3 個 test：T-SRC-ENT（default run，`_windows`）、T-QUAR、T-SEALRETRY（M5 run，都不是 `_windows`）。
   - Windows 原子移動的 `AccessDeniedException`：除了 journal，catalog（`quantumchamber_universes.dat`）也會遇到（`gate-c2-m5-…`）；本 task 4 次的 root 見「Gate 與證據」。
-  - （需要裁示第 2 條）measured release 等待來源 chunk 就緒時是否記一次長時間等待的 WARN。
+  - ~~（需要裁示第 2 條）measured release 等待來源 chunk 就緒時是否記一次長時間等待的 WARN。~~ controller 已裁示不加，見「需要裁示」第 2 條的更正。
 - F7：
   - README「預期結果」的數字以最新的 run-all 為準（F6-0 之後：JUnit 655、M5 57、default 175（`_windows` 89）、per-test receipt 52＋1；release 429／382、sources 221 不變）。
   - spec errata：§13.2／§7.3 RELEASE_GEOMETRY 的 H2 checkpoint 之前，先等相關 chunks（來源艙與走廊 lease）都已載入、entity storage 也已載入，未就緒時下一個 tick 再試、不算失敗（F6-0 第 2 點）；§10.7 :634 R2 M5 的記號在 Controller 的 block entity 上、不持久化（F6-0 第 1 點）。

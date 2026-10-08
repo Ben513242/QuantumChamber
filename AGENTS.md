@@ -104,12 +104,13 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 
 M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（2026-10-05 核對；實際狀態以遠端 ref 為準）。
 
-- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.3），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
-- 進度（2026-10-05）：
-  - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）、F4b-1（投影元件，以及 F4a 的 Step 0）、F4b-2（PREPARE 的目的宇宙側，含 fix round 1）、F4b-3（PREPARE 期間的原艙門，含 fix round 1）。F4b 的三個子 task 都已完成。F5 依 plan 拆成 F5-0（抽出原艙門）、F5-1（通道本體）、F5-2（比較器與 membrane 正規化）；F5-0、F5-1、F5-2 都已完成，F5 完成。
+- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.5；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
+- 進度（2026-10-08）：
+  - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）、F4b-1（投影元件，以及 F4a 的 Step 0）、F4b-2（PREPARE 的目的宇宙側，含 fix round 1）、F4b-3（PREPARE 期間的原艙門，含 fix round 1）。F4b 的三個子 task 都已完成。F5 依 plan 拆成 F5-0（抽出原艙門）、F5-1（通道本體）、F5-2（比較器與 membrane 正規化）；F5-0、F5-1、F5-2 都已完成，F5 完成。F6 依 plan 拆成 F6-0（F5-2 的 Step 0、G-NLIVE 的根因與測試缺口）、F6-1（跨 JVM probe 的基礎建設與 W1～W6）、F6-2（W7～W12 與額外的 phase）、F6-3（harness 與 CI）；F6-0 已完成（2026-10-08）。
   - T0：controller 執行的 clean-clone 基線，不改程式。
   - F1b：controller 代操作的真 client 驗證，四項通過，經獨立 docs review 與 re-review。
-  - F4b 依 plan 拆成三個子 task：F4b-1（投影元件）、F4b-2（PREPARE 的目的宇宙側）、F4b-3（PREPARE 期間的原艙門）。下一個是 F6（重啟矩陣、跨 JVM probe 與 harness）。開工時先做 note F5-2「交給後續」中 F6 的 Step 0，同時帶入各節交給 F6 的事項（grep `F6`）。之後依序是 F7 → milestone 收尾。
+  - F4b 依 plan 拆成三個子 task：F4b-1（投影元件）、F4b-2（PREPARE 的目的宇宙側）、F4b-3（PREPARE 期間的原艙門）。
+  - 下一個是 F5-3（到達目的宇宙的提示）。這是 controller 依使用者 2026-10-08 的裁示插入的小 task，排在 F6-0 之後、F6-1 之前，見 plan Task F5-3。之後是 F6-1，開工時先做 note F6-0「交給後續」中的 F6-1 Step 0，同時帶入各節交給 F6 的事項（grep `F6`）；再依序是 F6-2、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
