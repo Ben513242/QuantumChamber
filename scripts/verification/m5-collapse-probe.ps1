@@ -6,14 +6,19 @@
 # 兩種結束都核對 PID／StartTime／startupNonce 與 receipt 相符、JVM 已不存在、world/session.lock 可獨占開啟；同一條 chain 的 PID@StartTime 與 startupNonce 都不同。
 # 三份表的一致性（F6-2a）：receipt 的 ending 必須等於這裡 chain 表的預期結束，receipt 的 phaseTable（probe 的 phase 表）必須與 chain 表的全部 phase 依序相同。
 # 任何失敗都 throw（訊息先附上 final.json／halt.json 的 status 與 failures），保留 root 與 phase evidence，禁止在同 root 重跑。
+# 逾時（F6-2a）：找到 JVM 之後，latest.log 與 Gradle 輸出都超過 -IdleSeconds 秒沒有新內容，或整個 phase 超過 -PhaseMinutes 分鐘，就先以 jstack 取 thread dump
+# （phase evidence 的 jstack-<pid>.txt），再只結束 commandline 含本次 startupNonce、StartTime 相符的那一個 java PID（不碰 Gradle daemon），寫 timeout.json
+# （原因、PID、jstack 檔名、最後的 log 行），判 FAIL。
 # 參數：
 #   -Only          只跑指定 chain（例如 -Only w2,w3；以 pwsh -File 呼叫時也接受逗號分隔的單一字串）；未指定時跑全部
 #   -EvidenceRoot  彙整 collapse-run-<runId>.json 的位置；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle        gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
+#   -IdleSeconds   JVM 沒有任何新輸出多久判為卡住；預設 90（正常 phase 的 log 間隔最長約 6 秒）
+#   -PhaseMinutes  一個 phase 的總上限；預設 8
 # phase receipt 位置由 testmod M5CollapseRecoveryProbe 固定為 <repo>/.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/<phase>，不受 -EvidenceRoot 影響。
 # 新增 phase：testmod 的 M5CollapseRecoveryProbe.phases() 加 entry，這裡的 $chains 加同名的 phase 與預期的結束（README「M5 collapse probe」）。
 # 結構比照 m4-recovery-probe.ps1（owned root、phase evidence、launcher.json、彙整 JSON）。
-param([string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '')
+param([string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8)
 $ErrorActionPreference = 'Stop'
 $taskProject = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 foreach ($marker in 'build.gradle', 'settings.gradle') { if (-not (Test-Path -LiteralPath (Join-Path $taskProject $marker) -PathType Leaf)) { throw "repo root 缺少 ${marker}：$taskProject" } }
@@ -84,6 +89,59 @@ function Get-ReceiptNote([string]$PhaseEvidence) {
     return ($notes -join '；')
 }
 
+# 以共用讀取開啟（log4j 與 Gradle 仍開著寫入）讀檔案長度；不存在或讀不到時回 -1。長度以 handle 讀，不用目錄項（寫入中的檔案，目錄項的大小可能過期）。
+function Get-SharedLength([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return -1 }
+    try { $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete) } catch { return -1 }
+    try { return $stream.Length } finally { $stream.Dispose() }
+}
+
+# 檔案最後 $Count 個非空行（共用讀取）；不存在時回空陣列。
+function Get-SharedTail([string]$Path, [int]$Count) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        try { $text = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8).ReadToEnd() } finally { $stream.Dispose() }
+        return @($text -split "`r?`n" | Where-Object { $_ -ne '' } | Select-Object -Last $Count)
+    } catch { return @("（讀不出來：$_）") }
+}
+
+# phase 逾時的處置：核對 PID 仍是本次的 JVM（commandline 含 startupNonce、StartTime 相符）之後先 jstack，再只結束那一個 java PID；Gradle（daemon 與 client）不結束，
+# JVM 結束之後由 Gradle 自行收尾。寫 timeout.json 之後 throw（判 FAIL）。JVM 還沒有找到時（例如 Gradle 還在編譯）只記錄、不結束任何程序。
+function Stop-TimedOutPhase([string]$Reason, [string]$Phase, [string]$PhaseEvidence, [string]$Root, [string]$StartupNonce, $JavaProcess, $JavaId, $JavaStart, $Launcher,
+        [DateTimeOffset]$Started, $LastActivity) {
+    $now = [DateTimeOffset]::UtcNow
+    $record = [ordered]@{ phase=$Phase; reason=$Reason; idleLimitSeconds=$IdleSeconds; phaseLimitMinutes=$PhaseMinutes; timeUtc=$now.ToString('o')
+        elapsedSeconds=[Math]::Round(($now - $Started).TotalSeconds, 1); idleSeconds=$(if ($null -ne $LastActivity) { [Math]::Round(($now - $LastActivity).TotalSeconds, 1) } else { $null })
+        root=$Root; startupNonce=$StartupNonce; pid=$JavaId; javaStartTimeUtc=$(if ($null -ne $JavaStart) { $JavaStart.ToString('o') } else { $null })
+        commandLineMatched=$false; jstack=$null; jstackExitCode=$null; killed=$false; javaExited=$null; javaExitCode=$null; launcherExited=$null; launcherExitCode=$null
+        lastLogLines=@(); lastGradleLines=@() }
+    if ($null -ne $JavaId -and -not $JavaProcess.HasExited) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$JavaId"
+        $sameStart = ([DateTimeOffset]$JavaProcess.StartTime).ToUniversalTime() -eq $JavaStart
+        $matched = $null -ne $process -and $process.Name -eq 'java.exe' -and $process.CommandLine -like "*quantumchamber.m5collapse.startupNonce=$StartupNonce*" -and $sameStart
+        $record.commandLineMatched = [bool]$matched
+        if ($matched) {
+            $jstack = Join-Path (Split-Path -Parent $process.ExecutablePath) 'jstack.exe'
+            if (Test-Path -LiteralPath $jstack -PathType Leaf) {
+                $dump = Join-Path $PhaseEvidence "jstack-$JavaId.txt"
+                $dumper = Start-Process -FilePath $jstack -ArgumentList @('-l', "$JavaId") -RedirectStandardOutput $dump -RedirectStandardError "$dump.err" -WindowStyle Hidden -PassThru
+                if ($dumper.WaitForExit(60000)) { $record.jstack = Split-Path -Leaf $dump; $record.jstackExitCode = $dumper.ExitCode } else { $record.jstack = 'TIMEOUT（60 秒沒有結束）' }
+            } else { $record.jstack = "沒有 jstack：$jstack" }
+            Stop-Process -Id $JavaId -Force
+            $record.killed = $true
+            $record.javaExited = $JavaProcess.WaitForExit(30000)
+            if ($record.javaExited) { $record.javaExitCode = $JavaProcess.ExitCode }
+        }
+    }
+    $record.launcherExited = $Launcher.WaitForExit(60000)
+    if ($record.launcherExited) { $record.launcherExitCode = $Launcher.ExitCode }
+    $record.lastLogLines = Get-SharedTail (Join-Path $Root 'logs/latest.log') 20
+    $record.lastGradleLines = Get-SharedTail (Join-Path $PhaseEvidence 'stdout.log') 20
+    $record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $PhaseEvidence 'timeout.json') -Encoding UTF8
+    throw "owned phase 逾時（$Reason）：pid=$JavaId commandLineMatched=$($record.commandLineMatched) jstack=$($record.jstack) killed=$($record.killed)；timeout.json 在 $PhaseEvidence；禁止同 root 重跑：$Root phase=$Phase"
+}
+
 function Invoke-OwnedPhase([string]$Nonce, [string]$Phase, [string]$Root, [string]$Ending, [string]$Window) {
     $phaseEvidence = Join-Path $probeOwner "collapse-$Nonce/$Phase"
     if (Test-Path -LiteralPath $phaseEvidence) { throw "phase evidence 已存在，禁止重跑：$phaseEvidence" }
@@ -95,7 +153,10 @@ function Invoke-OwnedPhase([string]$Nonce, [string]$Phase, [string]$Root, [strin
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $stdout = Join-Path $phaseEvidence 'stdout.log'; $stderr = Join-Path $phaseEvidence 'stderr.log'
     $launcher = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-EncodedCommand', $encoded) -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(8)
+    $started = [DateTimeOffset]::UtcNow
+    $deadline = $started.AddMinutes($PhaseMinutes)
+    $lastActivity = $null
+    $lastSizes = ''
     $javaId = $null
     $javaStart = $null
     $javaProcess = $null
@@ -112,7 +173,16 @@ function Invoke-OwnedPhase([string]$Nonce, [string]$Phase, [string]$Root, [strin
                 [ordered]@{pid=$javaId;startTime=([DateTimeOffset]$javaProcess.StartTime).ToString('o');commandLine=$candidate.CommandLine} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $phaseEvidence 'process.json') -Encoding UTF8
             }
         }
-        if ([DateTimeOffset]::UtcNow -gt $deadline) { throw "owned phase 逾時；禁止同 root 重跑：$Root phase=$Phase" }
+        $now = [DateTimeOffset]::UtcNow
+        if ($null -ne $javaId) {
+            # 有新內容就是還在動：latest.log（server 的 log）與 Gradle 的輸出（JVM 的 stdout 經 Gradle 轉出）任一變長。
+            $sizes = "$(Get-SharedLength (Join-Path $Root 'logs/latest.log'))/$(Get-SharedLength $stdout)/$(Get-SharedLength $stderr)"
+            if ($null -eq $lastActivity -or $sizes -ne $lastSizes) { $lastActivity = $now; $lastSizes = $sizes }
+            if (($now - $lastActivity).TotalSeconds -gt $IdleSeconds) {
+                Stop-TimedOutPhase "idle：$IdleSeconds 秒沒有新的 log" $Phase $phaseEvidence $Root $startupNonce $javaProcess $javaId $javaStart $launcher $started $lastActivity
+            }
+        }
+        if ($now -gt $deadline) { Stop-TimedOutPhase "total：超過 $PhaseMinutes 分鐘" $Phase $phaseEvidence $Root $startupNonce $javaProcess $javaId $javaStart $launcher $started $lastActivity }
         Start-Sleep -Milliseconds 250
         $launcher.Refresh()
     }
