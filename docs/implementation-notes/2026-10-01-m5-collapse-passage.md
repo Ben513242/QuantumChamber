@@ -5851,7 +5851,40 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
   - 以 testmod 固定 (M)（讀檔留到停服開始才完成）之後 3/3 卡住；拿掉 (Z) 是 0/2；在空轉裡執行 main thread 的工作是 0/2。
 - **「移除與預載之間的 tick 差」不是決定因素**：它只決定 (Z) 是否成立（要在 server 追上排程之前再載入），(M) 取決於停服時載入的進度。F6-2a reviewer 量的「PREPARE 等待 tick 數」只是代理指標，本節的資料不支持它能預測卡住。
 - **production 的暴露面低，但不是零**。需要：server 落後排程（開服之後的追趕、重的 tick、持續過載）、同一個 chunk 在佇列排空之前卸載又載回，以及停服時仍在載入。flush 存檔會清掉殭屍（下方 vr-flush）。
+  - （controller 依 F6-2b review Important 1 更正）「flush 會清掉殭屍」只在沒有 (M) 的條件下有證據：vr-flush 的基底沒有 hold，不是單一變因的對照。
+  - `save(true)` 本身也有同一個無上限的排空（見「原版的機制」第 7 點）。所以殭屍＋(M) 時，flush 自己理論上也會 livelock。
+  - production 在遊戲進行中做的 checkpoint flush 都走這條路：`ChunkSaveCheckpoint`、`MeasuredWorldSaveCheckpoint`、`Minecraft121DynamicDimensionBackend` 的 `world.save(null,true,false)`。也就是說，**遊戲進行中理論上也有凍結點，不只停服**。這一點未驗證、機率很低；選項 A 同時涵蓋這條路徑。
 - **建議**：另開 hardening task，以 production mixin 讓 `tryUnloadChunk` 遇到已被取回的 holder 時不再重排（下方選項 A）。在 testmod 以同一個條件做的實驗 2/2 解開。M5 本身不需要為此改 production；probe 維持 exp-c（ticket 持有到 JVM 結束）。
+
+### Review（controller 補）
+
+- 調查 task，由一位獨立 reviewer 核對結論（派工 scratchpad `f62b-review.md`）。
+- 結論：**根因「成立」**（Critical 0、Important 1、Minor 4）。
+  - reviewer 逐行對照原版 1.21 的反編譯原始碼，確認因果鏈每一步都對得上，「livelock」的說法成立。反編譯原始碼在 worktree 的 `.gradle/loom-cache/minecraftMaven/…/minecraft-common-…-sources.jar`，不在 `~/.gradle`。
+  - 「殭屍是必要條件」「(M) 是必要條件」都可以由程式推出，實驗是佐證。
+  - 抽查的 evidence 數字都與本節一致：rep-2、vr-hold 1～3、drained、rescue、fix-exp。28 個 runId 一一對上 `runs.txt`。
+  - Important 1：flush 的結論證據不足，而且漏了「flush 自己也會卡」的風險（遊戲進行中的 checkpoint flush 也是理論上的凍結點）。
+  - Minor：
+    1. 3/3 與 1/5 的差異沒有解釋；
+    2. (Z) 的成因寫得太窄；
+    3. 三處用詞；
+    4. genSources 之後的行號。
+  - controller 在本節各處直接更正，都標明「controller 依 F6-2b review …」，並請同一位 reviewer 複核。
+- 選項 A 的判定：**安全，語意等價**。
+  - `chunksToUnload` 唯一的 `put` 後面緊接著 `tryUnloadChunk`。被取回的 holder 的舊工作，在原版裡永遠不會卸載或存檔它。
+  - cancel 之後，holder 仍在 `currentChunkHolders` 與 `unloadedChunks`，refCount 歸零之後會重新 `put`、建立新的工作，不會漏卸載、漏存檔，也不會變成孤兒。
+  - 風險清單：
+    1. 重寫 chunk 系統的 mod（例如 C2ME）可能衝突；
+    2. `require=1` 在簽章改變時會讓啟動失敗；
+    3. 實作要用物件同一性（`get(pos) != holder`），不能用 `containsKey`；
+    4. 正式的 RED 依賴 testmod 的讀檔 hold，要遵守 artifact oracle；
+    5. 一般 tick 不再空轉，屬正面影響；
+    6. A 不處理其他停服卡住的成因，例如 savingFuture 永遠不完成。
+- reviewer 同意「M5 不改 production，另開 hardening task」，附三個條件：
+  1. note 依 Important 1 修正；
+  2. hardening task 以 A 實作，排在 M5 之後的第一優先；
+  3. 已知問題記錄玩家可見的症狀：關閉世界時停在 `Saving worlds`。
+- 要不要修、排在哪裡，由使用者裁示。
 
 ### 原版的機制（Yarn 1.21+build.9，`genCommonSourcesWithVineflower` 的反編譯原始碼）
 
@@ -5876,6 +5909,7 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
 7. flush 存檔（`ServerChunkLoadingManager.save(true)`，`server.save(false,true,true)` 與 production 的 `ChunkSaveCheckpoint` 都走這裡）：
    - 先對每個 accessible 的 holder `mainThreadExecutor.runTasks(holder::isSavable)`（推進 main thread 的工作直到可存），再 `unloadChunks(() -> true)`。
    - 所以 flush 存檔會清掉殭屍。autosave 的 `save(false)` 不排空佇列。
+   - （controller 依 F6-2b review Important 1 更正）上一句是有條件的。`runTasks(holder::isSavable)` 只對 accessible 旗標為真的 holder 推進 main thread 的工作，之後的 `unloadChunks(() -> true)` 一樣是無上限的排空。持有殭屍 refCount 的 `ChunkLoader`，若在等的不是任何 accessible、還不能存的 holder，flush 就推進不了它，自己也會在排空迴圈 livelock。這一點是推測，未驗證。
 
 ### 重現與證據
 
@@ -5920,6 +5954,13 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
      - **0/2 卡住**：沒有殭屍，每個 holder 只處理一次。
    - **vr-hold-rescue**：與 vr-hold 相同，但卡住時在空轉的迴圈裡執行 main thread 的排隊工作（2157 個）。**0/2 卡住**：之後涵蓋 C 的 pending future 歸零，約 4 秒內 `All dimensions are saved`。這證明 main thread 回不來是閉環的一環。
    - **vr-flush**：殭屍＋載入中時（再載入的下一個 tick）做一次 `server.save(false,true,true)`。**0/2 卡住**：存檔約 5 秒，之後佇列 0、存活 `ChunkLoader` 0，停服時沒有空轉。
+     - （controller 依 F6-2b review Important 1 更正）**這不是一次只改一個條件的對照**。vr-flush 的基底是 vr-big-s2，沒有 hold（`adapters_f62b.py:108-118`，兩次的 log 都沒有 `hold armed`），而 vr-big-s2 本身就沒卡住：0/1，空轉 10743 輪後解開。
+     - 所以 vr-flush 只證明：沒有 (M) 時，flush 之後佇列與 `ChunkLoader` 都歸零。它不能證明 flush 在確定性的條件下有效。
+   - （controller 依 F6-2b review Minor 3 補充）
+     - rescue 呼叫的 `executeQueuedTasks()` 除了 main thread 的排隊工作，也會執行 `updateChunks()` 與 `lightingProvider.tick()`。
+     - 第 3 點 vr-s*／vr-big 的「(M) 不成立」，依據是 SHUTDOWN-C 列出的 12 個 `ChunkLoader` 樣本，加上「最後解開」的結果，不是完整列舉。
+     - 選項 A 的 fix-exp「每個 holder 的卸載只處理 2 次」，實際是被取回的 200 個 holder 各 2 次、其餘 1 次（totalTryUnload 2562＝2362＋200）。
+   - （controller 依 F6-2b review Minor 1 補充）F6-1 的 3/3 與 HEAD 的 1/5（F6-2a 是 0/2），在這個機制下的解釋是推測：exp-a 五次 (Z)、(R) 都成立（殭屍 529、停服時佇列 529），差別只在停服當下是否還有要等 main thread 的載入，也就是 (M)；這取決於讀檔與 deserialize 的進度。F6-1 卡住的 3 次，預載等待是 4、8、12 tick，偏短，與「停服時仍在載入」相容。exp-a 的 diag 沒有 SHUTDOWN-C，(M) 沒有量測。
 6. 結束過的 PID：
    - 32092（rep-2）、34528、26528、16164（vr-hold-1～3）；
    - 全部由 `m5-collapse-probe.ps1` 的逾時處置結束（idle 90 秒、commandLineMatched、jstack、只結束該 PID）；
@@ -5928,6 +5969,10 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
 ### production 的暴露面
 
 (Z) 需要同一個 chunk 「移除 ticket → 卸載（落後排程的 tick）→ 在佇列排空之前又被另一個 ticket 載回」，而且這段時間 chunk 上沒有其他 ticket 或玩家。(M) 需要停服時還在載入。之後若有 flush 存檔，殭屍就會被清掉（vr-flush）。
+
+（controller 依 F6-2b review 更正與補充）
+- Minor 2：(Z) 的成因不只「落後排程」。排空迴圈每一輪都檢查 `shouldKeepTicking`，所以時間預算用完、還有剩餘工作就結束的任何 tick 都可能形成殭屍；在大於 2000 的規則下，佇列最多也會留下 2000 條工作。之後再載入同一個 chunk，就會形成殭屍。
+- Important 1：上一段的「之後若有 flush 存檔，殭屍就會被清掉」只在沒有 (M) 的條件下有證據。殭屍加上 (M) 時，flush 自己理論上也會 livelock，見「結論」與「原版的機制」第 7 點的更正。所以下表「flush 存檔」一欄的「會排空佇列」，同樣只在沒有 (M) 時成立。
 
 | 路徑 | 移除 | 同一個 chunk 再載入 | 之間或之後的 flush 存檔 | 玩家會不會遇到 |
 | --- | --- | --- | --- | --- |
@@ -5959,7 +6004,7 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
     - compat 說明。
 - **B. 停服開始時先做一次 flush 存檔**：
   - 做法：mixin 在 `MinecraftServer.shutdown` 的 HEAD 執行 `save(false,true,true)`，必須在任何 `SERVER_STOPPING` listener 移除 ticket 之前。
-  - 證據：vr-flush 0/2，flush 會推進 main thread 的工作，直到 holder 可存，再排空佇列。
+  - 證據：vr-flush 0/2，flush 會推進 main thread 的工作，直到 holder 可存，再排空佇列。（controller 依 F6-2b review Important 1 更正：vr-flush 沒有 (M)，所以這個證據不足以證明 B 在確定性的條件下有效；而且 flush 自己也有同一個無上限的排空，理論上可能卡在同一處。B 的建議度因此再降低。）
   - 缺點：
     - 每次停服多一次完整 flush（載入中時約 5 秒）；
     - 依賴與其他 mod 的 `SERVER_STOPPING` 的順序；
@@ -5977,7 +6022,7 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
 - M5 不為此改 production：
   - M5 的流程本身不會「移除後立刻載回」同一個無人 chunk；
   - 已知的觸發都需要追趕中的 ticket 變動加上載入中停服；
-  - 中途的 checkpoint flush 也會清掉殭屍。
+  - 中途的 checkpoint flush 也會清掉殭屍。（controller 依 F6-2b review Important 1 更正：只在沒有 (M) 時成立。checkpoint flush 本身也是理論上的凍結點，選項 A 同時涵蓋它。）
 - 以選項 A 開獨立的 hardening task（需要使用者或 controller 裁示是否排入 M5 之後的計畫）。理由：
   - A 直接移除 livelock 的必要條件；
   - 語意不變；
@@ -5996,7 +6041,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 | 確定性的重現 | `diag release-method vr-hold` | `a63540ca5ed74810ac985c5350cf85c6`、`0f588324f3924fa7a5013fef68b21c9a`、`2ff098ada78d4bd889bb1c47e066b7a7` | 3/3 卡住（PID 34528、26528、16164） |
 | 對照：沒有殭屍 | `diag release-method vr-hold-drained` | `9513d42502ed4070b443aa4620d25289`、`ca51abf3c5c44528b68fdd0ad6842dcc` | 0/2 |
 | 對照：空轉中執行 main thread 的工作 | `diag release-method vr-hold rescue` | `6af3a4726df14a4891403da5a540d91f`、`c4d40c10afdc47f1be8f6ea30eda4a60` | 0/2 |
-| 暴露面：殭屍＋載入中時 flush 存檔 | `diag release-method vr-flush` | `d184927d676c4ddf8e10a2d05e44a8d1`、`ac39a0041a6241cfba9f03071aec4b2a` | 0/2 |
+| 暴露面：殭屍時 flush 存檔（沒有 hold，也就是沒有 (M)；controller 依 review 更正名稱） | `diag release-method vr-flush` | `d184927d676c4ddf8e10a2d05e44a8d1`、`ac39a0041a6241cfba9f03071aec4b2a` | 0/2 |
 | 修正選項 A 的實驗 | `diag fix-exp release-method vr-hold` | `643540a972b449f18985e6449a18a86a`、`c0e7fbe9e9d24ef89218035d516e411f` | 0/2 |
 
 ### 偏離派工字面之處
@@ -6004,6 +6049,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 1. **確定性的條件不是 tick 差**：派工建議把「ticket 移除」與「預載」之間的 tick 差做成可設定並掃描（已做，gap-D）。掃描顯示 tick 差只決定 (Z)；(M) 由停服時載入的進度決定。所以另以 testmod 把讀檔留到停服開始（vr-hold）來固定 (M)，並以一次只改一個條件的對照（drained、rescue）證明。
 2. **修正選項做了 testmod 的實驗**：派工要求修正選項不實作。選項 A 只在 testmod 的診斷 mixin 以暫時改動驗證效果（`fix-exp`，已還原），沒有寫入 production。
 3. **genSources**：為了讀原版原始碼跑了一次 `genCommonSourcesWithVineflower`（只寫 worktree 的 `.gradle/loom-cache`，gitignored）。之後 runtime jar 的行號改為反編譯原始碼的行號，本節 jstack 的行號（`unloadChunks:494`、`tick:447`）與 F6-1（`:483`、`:441`）不同，指的是同一行。
+   - （controller 依 F6-2b review Minor 4 補充）沒有任何 gate 依賴原版的行號或 MC jar 的 hash。但之後這個 worktree 的 jstack 行號會與 F6-1 的紀錄、CI 及其他 worktree 不同，Loom cache 重建之後又會變回去。之後比對已知偶發的 stack 時，**請用方法 frame，不要用行號**。
 4. **沒有以 probe 驅動「移除也由 production 執行」的路徑**，理由見上方「production 的暴露面」。
 
 ### 交給後續
@@ -6015,3 +6061,4 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - compat 說明。
   - `f6/f62b/adapters_f62b.py` 的 `vr-hold`、`fix-exp` 與 `diag/` 可作為起點。
 - **M4 recovery 的 `dormant-reentry`**：若要確認是否同一個成因，可以在那個 phase 套用本節的 `diag`（`F62B HANG` 會指出被取回的 holder 與持有它的 `ChunkLoader`）。
+- （controller 補，依 F6-2b review）**F7**：已知問題要記錄玩家可見的症狀：關閉世界時停在 `Saving worlds`；遊戲進行中的 checkpoint 存檔理論上也可能凍結。也要寫明這是原版 1.21 的機制，以及 hardening task 的狀態。若使用者裁示在 M5 內修，這一條改寫為已修正。
