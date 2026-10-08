@@ -10,7 +10,11 @@ import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseRecord;
 import dev.quantumchamber.universe.UniverseRegistryState;
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -22,15 +26,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtSizeTracker;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
 
 /**
  * 僅 testmod（M5 F6-1）：{@code M5CollapseRecoveryProbe} 讀磁碟上的 M5 權威（{@code world/data} 的正式檔），不經 production 的記憶體狀態。只讀，不寫任何檔。
  * allocation 與 projection ledger 直接讀 NBT（production 的 strict decode 是 package-private），catalog 經 {@link UniverseRegistryState#fromNbt}，journal 經
- * {@link SessionJournalStore#read}＋{@link SessionRecoveryState#fromNbt}，discovery 經 {@link UniverseDiscoveryState#load}。檔案不存在時回空的結果。
+ * {@link SessionJournalStore#read}＋{@link SessionRecoveryState#fromNbt}，discovery 經 {@link UniverseDiscoveryState#load}。檔案不存在時回空的結果。投影的方塊以
+ * raw MCA 讀（{@link #block}）。
  */
 final class M5CollapseDiskEvidence {
     static final String JOURNAL = SessionRecoveryState.STATE_ID + ".dat";
@@ -94,6 +103,79 @@ final class M5CollapseDiskEvidence {
     static int journalSchema(Path data) throws IOException {
         var file = data.resolve(JOURNAL);
         return Files.exists(file) ? SessionJournalStore.read(file).getCompound("data").getInt("SchemaVersion") : -1;
+    }
+
+    /** {@link #block} 的結果在磁碟上沒有這一格（region 檔、chunk 或 section 不存在）時的值。 */
+    static final String ABSENT = "ABSENT";
+
+    /** raw MCA 讀到的一格：palette 的 {@code Name} 與 {@code Properties}（SNBT），以及那一格的 block entity id；沒有 block entity 時為 {@link #ABSENT}。 */
+    record DiskBlock(String name, String properties, String blockEntity) {
+        static final DiskBlock MISSING = new DiskBlock(ABSENT, ABSENT, ABSENT);
+    }
+
+    /**
+     * 以 raw MCA 讀 {@code dimension}（世界的存檔目錄，例如 {@code DimensionType.getSaveDirectory} 的結果）裡 {@code pos} 這一格，不經 world、chunk 或 IO worker 的
+     * 記憶體快取（比照 {@code M4RecoveryDiskEvidence}）。region 檔、chunk 或 section 不存在時回 {@link DiskBlock#MISSING}；檔案損壞或格式不支援時丟出。
+     */
+    static DiskBlock block(Path dimension, BlockPos pos) throws IOException {
+        var chunk = chunk(dimension.resolve("region"), new ChunkPos(pos));
+        if (chunk.isEmpty()) return DiskBlock.MISSING;
+        var nbt = chunk.get();
+        String blockEntity = ABSENT;
+        for (var raw : nbt.getList("block_entities", NbtElement.COMPOUND_TYPE)) {
+            var entity = (NbtCompound) raw;
+            if (entity.getInt("x") == pos.getX() && entity.getInt("y") == pos.getY() && entity.getInt("z") == pos.getZ()) blockEntity = entity.getString("id");
+        }
+        for (var raw : nbt.getList("sections", NbtElement.COMPOUND_TYPE)) {
+            var section = (NbtCompound) raw;
+            if (section.getByte("Y") != (pos.getY() >> 4)) continue;
+            if (!section.contains("block_states", NbtElement.COMPOUND_TYPE)) return new DiskBlock(ABSENT, ABSENT, blockEntity);
+            var states = section.getCompound("block_states");
+            var palette = states.getList("palette", NbtElement.COMPOUND_TYPE);
+            if (palette.isEmpty()) throw new IOException("磁碟 section 沒有 block palette：" + pos.toShortString());
+            int index = 0;
+            if (palette.size() > 1) {
+                int bits = Math.max(4, 32 - Integer.numberOfLeadingZeros(palette.size() - 1)), perLong = 64 / bits;
+                int cell = ((pos.getY() & 15) << 8) | ((pos.getZ() & 15) << 4) | (pos.getX() & 15);
+                var packed = states.getLongArray("data");
+                if (cell / perLong >= packed.length) throw new IOException("磁碟 block data 長度不足：" + pos.toShortString());
+                index = (int) ((packed[cell / perLong] >>> ((cell % perLong) * bits)) & ((1L << bits) - 1));
+            }
+            if (index >= palette.size()) throw new IOException("磁碟 palette index 超出範圍：" + pos.toShortString());
+            var state = palette.getCompound(index);
+            return new DiskBlock(state.getString("Name"), state.contains("Properties") ? state.getCompound("Properties").toString() : "{}", blockEntity);
+        }
+        return new DiskBlock(ABSENT, ABSENT, blockEntity);
+    }
+
+    private static Optional<NbtCompound> chunk(Path region, ChunkPos pos) throws IOException {
+        var file = region.resolve("r." + (pos.x >> 5) + "." + (pos.z >> 5) + ".mca");
+        if (!Files.exists(file)) return Optional.empty();
+        try (var input = new RandomAccessFile(file.toFile(), "r")) {
+            if (input.length() < 8192) return Optional.empty();
+            input.seek(4L * ((pos.x & 31) + (pos.z & 31) * 32));
+            int location = input.readInt();
+            int sector = location >>> 8, count = location & 255;
+            if (location == 0) return Optional.empty();
+            if (sector < 2 || count == 0) throw new IOException("MCA 的 chunk 位置不合法：" + pos);
+            input.seek(sector * 4096L);
+            int size = input.readInt(), compression = input.readUnsignedByte();
+            if (size <= 1 || size > count * 4096 - 4 || (compression & 128) != 0) throw new IOException("不支援或損壞的 MCA entry：" + pos);
+            var payload = new byte[size - 1];
+            input.readFully(payload);
+            InputStream stream = new ByteArrayInputStream(payload);
+            stream = switch (compression) {
+                case 1 -> new GZIPInputStream(stream);
+                case 2 -> new InflaterInputStream(stream);
+                case 3 -> stream;
+                default -> throw new IOException("不支援的 MCA compression " + compression + "：" + pos);
+            };
+            try (var data = new DataInputStream(stream)) {
+                var nbt = NbtIo.readCompound(data, NbtSizeTracker.of(16L * 1024 * 1024));
+                if (nbt.getInt("xPos") != pos.x || nbt.getInt("zPos") != pos.z) throw new IOException("MCA 的 chunk 座標不符：" + pos);
+                return Optional.of(nbt);
+            }
+        }
     }
 
     static String sha256(Path file) throws IOException {

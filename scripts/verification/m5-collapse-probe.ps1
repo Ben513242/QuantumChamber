@@ -28,6 +28,14 @@ $chains = [ordered]@{
     'w3' = @(@{phase='w3-crash'; ending='halt'; window='CATALOG_ALLOCATED'}, @{phase='w3-restart'; ending='stop'; window=''})
     # W5：discovery 追加之後、投影之前。
     'w5' = @(@{phase='w5-crash'; ending='halt'; window='DISCOVERY_APPENDED'}, @{phase='w5-restart'; ending='stop'; window=''})
+    # W4：投影寫到 Controller 那一格（halt 前刻意存檔：磁碟上是寫到一半的投影）。
+    'w4' = @(@{phase='w4-crash'; ending='halt'; window='PROJECTION_CELL_WRITTEN'}, @{phase='w4-restart'; ending='stop'; window=''})
+    # W4b：投影寫完、目的 chunks 的 checkpoint 之前（ledger PENDING、磁碟上沒有投影）。
+    'w4b' = @(@{phase='w4b-crash'; ending='halt'; window='DESTINATION_CHECKPOINT'}, @{phase='w4b-restart'; ending='stop'; window=''})
+    # W6：projection ledger 寫入 COMPLETE 之後、PASSAGE_READY 之前。
+    'w6' = @(@{phase='w6-crash'; ending='halt'; window='PROJECTION_COMPLETE'}, @{phase='w6-restart'; ending='stop'; window=''})
+    # W6 的 EXISTING 再造訪：REPAIR 寫了格之後、checkpoint 之前。
+    'w6x' = @(@{phase='w6x-crash'; ending='halt'; window='PROJECTION_REPAIRED'}, @{phase='w6x-restart'; ending='stop'; window=''})
 }
 $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($name in $Only) { if (-not $chains.Contains($name)) { throw "未知的 chain：$name（可用：$($chains.Keys -join ', ')）" } }
