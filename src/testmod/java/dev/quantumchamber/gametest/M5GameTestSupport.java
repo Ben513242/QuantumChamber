@@ -1065,7 +1065,10 @@ final class M5GameTestSupport {
 
     // ---- 原艙與玩家 ----
 
-    /** 讀掉玩家目前收到的 actionbar 訊息，回傳翻譯 key（不是翻譯訊息時為文字）；先呼叫一次可以清掉之前的封包。 */
+    /**
+     * 讀掉玩家目前收到的 actionbar 訊息，回傳翻譯 key（不是翻譯訊息時為文字）；先呼叫一次可以清掉之前的封包。{@link ConnectedGameTestPlayer#drainOutbound} 會讀掉並釋放所有型別的
+     * 封包，所以這裡也會讀掉 title 等其他封包（F6-1 Step 0，F5-3 quality n-4 附帶）：同一個時點還要看 title 時，改用 {@link #hud} 一次讀完，不要先呼叫這個。
+     */
     static List<String> overlayKeys(ConnectedGameTestPlayer connection) {
         var keys = new ArrayList<String>();
         for (var message : connection.drainOutbound(net.minecraft.network.packet.s2c.play.GameMessageS2CPacket.class)) {
