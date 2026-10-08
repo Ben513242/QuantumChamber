@@ -24,11 +24,11 @@ M5 的 gate 擴充也放在這裡。M5 F3c 新增 M5 GameTest run（M5 plan 決�
 | `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；fixture 同時放 default 與 M5 兩份 GameTest XML。可加 XML／原始碼 mutation 證明規則會失敗 |
 | `runtime.init.gradle` | 所有 gate 的 Gradle 呼叫都以 `-I` 載入：run* 接 stdin、寫 `classload-<pid>.log` |
 | `probe.init.gradle` | M3 gate 另外載入：把 `-Ptask9.*` 轉成 probe 的 system property |
-| `run-all.ps1` | 依序跑 Full、Legacy、M5 GameTest、Main＋oracle、M3、M4 recovery、CI 綠燈規則（Windows／Ubuntu 兩個 step），最後以唯讀 summary 核對 |
+| `run-all.ps1` | 依序跑 Full、Legacy、M5 GameTest、Main＋oracle、M3、M4 recovery、M5 collapse probe、CI 綠燈規則（Windows／Ubuntu 兩個 step），最後以唯讀 summary 核對 |
 
 ## 執行
 
-全部 gates（約 15 分鐘；以下指令在 repo 根目錄執行，腳本本身依檔案位置找 repo root）：
+全部 gates（M5 F3c 時約 15 分鐘；F6-1 加上 M5 collapse probe 之後的實測耗時記在 M5 implementation note 的 F6-1 段；以下指令在 repo 根目錄執行，腳本本身依檔案位置找 repo root）：
 
 ```powershell
 pwsh -NoProfile -File scripts/verification/run-all.ps1
@@ -166,6 +166,7 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 
 | chain | phases | crash 窗口 | restart 開服時的窗口斷言 |
 | --- | --- | --- | --- |
+| `w1` | `w1-crash`（halt）→ `w1-restart`（stop） | `COLLAPSING_COMMITTED`：live session 選門之後，MEASURED→COLLAPSING 提交之後、返還之前（磁碟上 P 未返還、lease 還在，P 的 playerdata 在走廊） | P 還沒有返還、走廊 space 已重建、沒有保留式 recovery 的請求；allocation、catalog、discovery、projection 都還沒有 U |
 | `w2` | `w2-crash`（halt）→ `w2-restart`（stop） | `ALLOCATION_APPENDED`：allocation ledger flush 之後、catalog flush 之前 | catalog 還沒有 U、U 沒有物化、discovery 沒有 U |
 | `w3` | `w3-crash`（halt）→ `w3-restart`（stop） | `CATALOG_ALLOCATED`：catalog flush 之後、物化之前 | catalog 恰多 U 一筆（`EAGER_ENABLED`），開服 bootstrap 已物化 U；discovery 沒有 U |
 | `w5` | `w5-crash`（halt）→ `w5-restart`（stop） | `DISCOVERY_APPENDED`：discovery 追加之後、投影之前 | catalog 有 U、已物化、discovery 已有 U |
@@ -173,30 +174,34 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 | `w4b` | `w4b-crash`（halt）→ `w4b-restart`（stop） | `DESTINATION_CHECKPOINT`：投影寫完並驗證、目的 chunks 的原生存檔 checkpoint 之前 | projection ledger 仍是 PENDING，磁碟上沒有投影方塊 |
 | `w6` | `w6-crash`（halt）→ `w6-restart`（stop） | `PROJECTION_COMPLETE`：projection ledger 寫入 COMPLETE 之後、PASSAGE_READY 之前 | projection ledger 是 COMPLETE、Controller 在磁碟上；JOIN 之前載入，辨識為 inert 的 PROJECTION，不變量 cell 受保護、interior 不受 |
 | `w6x` | `w6x-crash`（halt）→ `w6x-restart`（stop） | `PROJECTION_REPAIRED`（EXISTING 再造訪）：REPAIR 寫了格之後、checkpoint 之前 | catalog 不變；磁碟上被改壞的 shell 仍是玻璃、interior 的金塊標記在 |
+| `degraded` | `deg-setup`（stop）→ `deg-restart`（stop） | 不是 crash 窗口：開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本）。setup 提交 COLLAPSING 的同一個 tick 正常停服，restart 開服前移走 ledger | 初始化判定 LOST（ERROR 一則，`AUTHORITY_CORRUPT`）、本 instance 不提交新的 COLLAPSING、投影保護索引退化；ledger 不存在、interior 的金塊標記在磁碟上 |
 
 `w2`、`w3`、`w5`、`w4`、`w4b`、`w6` 的 crash phase 相同：fresh 世界蓋原艙（Controller 在 (8,70,8)、朝北）、連線參與者 P 並移到艙外，寫 DORMANT 的 NEW 收據（P 已返還、沒有 lease），原生存檔之後裝上 crash 點，P 由艙外進入觸發塌縮，RESOLVE 或 PREPARE 走到窗口時 halt。`w6x-crash` 先以同樣的方式塌縮到 PASSAGE_READY（U 的投影 COMPLETE），拿掉 Controller 上方的紅石塊讓通道以 (d) 來源艙沒有供電結束，P 移到艙外、恢復供電；之後把 U 的投影改壞一格 shell（玻璃）、在 interior 放金塊標記，寫 DORMANT 的 EXISTING 收據（同一個 U）、原生存檔，P 由艙外進入，PREPARE 以 REPAIR 修好那一格之後、checkpoint 之前 halt。
 
-restart phase 讀回 crash phase 的 `halt.json` 與 `receipt.nbt`（crash 前的 MEASURED 收據），之後 P 真 JOIN（在艙外）、RESOLVE、P 進入艙內、PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE）、P 越過門板中線到 U、(b) 全員都已跨過的終局。投影的 chain 另斷言 PREPARE 怎麼完成（「準備完成」INFO 的模式與格數，READY 時以 raw MCA 確認 checkpoint 已存下）：`w4`、`w4b` 照第一次寫入重寫；`w6` 修復 0 格；`w6x` 再修復那一格、interior 的標記保留。spec §12 的四件事是共同斷言：
+`w1-crash` 是 live session（比照 M4 recovery probe 的 build／arm）：P 在艙內，以真實的 LOW→HIGH 供電與 Buff 啟動，SUPERPOSITION、358 扇側門發布之後原生存檔（P 的 playerdata 存在走廊），P 以原生互動選一扇 NEW 候選門；下一個 tick 塌縮流程提交 MEASURED→COLLAPSING，`SessionRecoveryState.commitRestore` 讀回確認時 halt。`deg-setup` 先走 `w6x-crash` 的前半段（U 的投影 COMPLETE、通道以斷電結束），在 U 的 interior 放金塊標記，寫 DORMANT 的 EXISTING 收據、原生存檔，P 由艙外進入，看到 flushed COLLAPSING 的同一個 tick 正常停服（RESOLVE 在下一個 tick），所以停服時 P 在艙內。
+
+restart phase 讀回 crash phase 的 `halt.json` 與 `receipt.nbt`（crash 前的 MEASURED 收據），之後 P 真 JOIN（在艙外）、RESOLVE、P 進入艙內、PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE）、P 越過門板中線到 U、(b) 全員都已跨過的終局。投影的 chain 另斷言 PREPARE 怎麼完成（「準備完成」INFO 的模式與格數，READY 時以 raw MCA 確認 checkpoint 已存下）：`w4`、`w4b` 照第一次寫入重寫；`w6` 修復 0 格；`w6x` 再修復那一格、interior 的標記保留。`w1-restart` 的 P JOIN 在走廊、被 recovery 攔截，不經請求就返還到來源世界，清 lease、space 釋放（SETTLED）之後才 RESOLVE；JOIN 之後超過 100 tick 仍在走廊就判為被困住（`notTrappedInTheCorridor`）。`deg-restart` 讀回 `deg-setup` 的 `final.json`：投影 Controller 載入後走 foreign 的分支（索引不認得它；退化的保護另加同位置的不變量 cell），RESOLVE 進 SEALED(AUTHORITY_CORRUPT)（永久原因的 ERROR 一則、沒有 PREPARE），interior 沒有被重寫、ledger 沒有被重建（停服之後也是），P JOIN 在艙內、照一般方式開門，record 仍是 SEALED。spec §12 的四件事是共同斷言：
 
 - 同一個 UniverseId：journal 的 Destination、allocation entry、catalog、discovery、projection entry 與 ACTIVE 的 world key 全部相同；每個 tick 都斷言 catalog 只出現 Destination 的 UniverseId。
 - catalog 最多只多 1 筆：NEW 恰多 1 筆，EXISTING 不變。
 - 沒有重抽：候選的 context、ledger、selection 與 crash 前的收據 exact 相同，allocation ledger 恰一筆這個 token。
-- 沒有人被困住：JOIN 之後參與者在來源世界或 U，之後到 PASSAGE_READY、跨越成功、Crossed、通道以 (b) 終局。
+- 沒有人被困住：JOIN 之後參與者在來源世界或 U（`w1` 返還之前可以在走廊），之後到 PASSAGE_READY、跨越成功、Crossed、通道以 (b) 終局；`degraded` 是 P 照一般方式開門。
 
 ### 新增 phase
 
 1. 需要新的 crash 窗口時：在 `M5TestHooks.CrashWindow` 選既有的值或新增，在窗口成立的程式點加 hook mixin（呼叫 `M5TestHooks.reachedCrashWindow(window, detail)`，`remap=false`、`require=1`），登記在 `quantumchamber-test.mixins.json`。
-2. 在 `M5CollapseRecoveryProbe.phases()` 加 entry：phase 名稱 → `PhaseFactory`，回傳 `Phase(ending, started, everyTick, steps)`。`started` 在 `SERVER_STARTED` 執行，`everyTick` 每個 tick 在 step 之前執行，每個 `Step(name, maxTicks, run)` 回 true 才進下一個 step，`maxTicks` 個 tick 內沒完成就 FAIL；整個 phase 另以 3600 tick 為界。
+2. 在 `M5CollapseRecoveryProbe.phases()` 加 entry：phase 名稱 → `PhaseFactory`（在 `onInitialize` 呼叫），回傳 `Phase(ending, started, everyTick, steps)`。`started` 在 `SERVER_STARTED` 執行，`everyTick` 每個 tick 在 step 之前執行，每個 `Step(name, maxTicks, run)` 回 true 才進下一個 step，`maxTicks` 個 tick 內沒完成就 FAIL；整個 phase 另以 3600 tick 為界。需要開服前的準備（例如移走權威檔）或停服之後的檢查時，用 `Phase(ending, beforeStart, started, everyTick, steps, afterStop)`：`beforeStart` 在 `onInitialize` 執行，`afterStop` 在 `SERVER_STOPPED` 寫 `final.json` 之前執行，失敗都記在 `failures`。
    - crash phase：以 `armWindow(window)` 裝上 crash 點，最後一個 step 不會完成（等 halt）。窗口的條件（hook 交來的 detail 是否就是那一刻）與 halt 之前的取證（寫進 `halt.json` 的 `atHalt`）在 `armWindow` 依窗口指定，底層是 `armCrash(window, condition, evidence)`；取證失敗時不 halt，phase 照常停止並 FAIL。
-   - restart phase：以 `readCrashReceipt(crashPhase, window)` 讀回 crash phase 的收據。
+   - restart phase：以 `readCrashReceipt(crashPhase, window)` 讀回 crash phase 的收據；前一個 phase 是正常停止的 setup 時，`window` 傳 null（改讀 `final.json`）。
    - 斷言用 `expect(名稱, 條件, 細節)`：失敗訊息以名稱開頭，RED 依名稱判定是否失敗在目標斷言。
 3. 在 `m5-collapse-probe.ps1` 的 `$chains` 加同名的 phase、預期的結束（`stop`／`halt`）與 halt 的窗口。chain 名稱就是 `-Only` 的值。
-4. 以 `-Only <新 chain>` 跑 GREEN，並以暫時的 production mutation 證明 restart 會失敗在目標斷言（RED）。每次執行都建立新的 runId 與 root，失敗的 root 與 evidence 都保留。
+4. 以 `-Only <新 chain>` 跑 GREEN，並以暫時的 mutation（production，或 probe 自己的比較對象）證明 restart 會失敗在目標斷言（RED）。每次執行都建立新的 runId 與 root，失敗的 root 與 evidence 都保留。
+5. `run-all.ps1` 的 summary 以固定的清單核對 chain、phase、預期的結束與窗口（`$expectedCollapse`），新增 phase 時一併更新。
 
 ## Evidence 位置
 
 - `-EvidenceRoot`：預設 `<repo>/.superpowers/verification/`（gitignored）。只接受 repo 內、路徑無 reparse point、且被 gitignore 的目錄，否則在建立任何東西之前就拒絕。
-- `run-all.ps1` 每次建立新的 `run-all-<GUID>/`，內含 `console.log`、`gate-<label>-<GUID>/`、`recovery-run-<runId>.json`、`ci-<label>-<GUID>/` 與 `summary.json`。個別腳本直接在 `-EvidenceRoot` 下建立自己的 root。
+- `run-all.ps1` 每次建立新的 `run-all-<GUID>/`，內含 `console.log`、`gate-<label>-<GUID>/`、`recovery-run-<runId>.json`、`collapse-run-<runId>.json`、`ci-<label>-<GUID>/` 與 `summary.json`。個別腳本直接在 `-EvidenceRoot` 下建立自己的 root。
 - 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`；M5 collapse probe（`M5CollapseRecoveryProbe`）的 receipt 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/`。目錄不存在時依程式應由 harness 建立，但還沒在沒有 `.superpowers/` 的 clean clone 上實跑。M3 gate root 另存每個 phase 的 receipt 複本。
 - `run/` 內：GameTest 與 main-only 把 `run/gametest/world`、`run/gametest-legacy/world`、`run/gametest-m5/world`、`run/server` 移到 `<原路徑>.task9-backup-<GUID>-<tag>`，跑完後把 fresh 結果移進 gate root 的 `*-fresh/`，再把原檔移回並逐檔比對 hash（結果在 `<tag>-restore.json`）。M3 與 M4 recovery 每次新建 `run/m3-universe-m4-task9-<GUID>`、`run/m3-transfer-m4-task9-<GUID>`、`run/m4-recovery-<GUID>-<scenario>`，跑完保留。
 - 失敗時保留全部 root 與 receipt，修正後以新的 root 重跑，不在失敗 root 上改判。若 restore 失敗，原檔仍在 `.task9-backup-*`，先查明原因再手動移回，不要刪除。
@@ -216,6 +221,7 @@ M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為
 | main-only oracle | PASS（三層 testmod 命中 0、world keys exact、exact restore） |
 | M3 | lifecycle 4＋transfer 5 receipts PASS |
 | M4 recovery | 24/24 phases，各自獨立 JVM |
+| M5 collapse probe（M5 F6-1 起；SUMMARY 的 `m5collapse=`） | 9 條 chain、18 phases，各自獨立 JVM：9 個 halt（JVM exit 77、`halt.json` 的窗口與 chain 表相符）、9 個 stop（exit 0、`final.json` PASS）；receipt 的 hash 對上 launcher |
 | CI 綠燈規則 | Windows、Ubuntu 兩個 step 都 PASS（讀 default 與 M5 兩份 XML） |
 | JAR | release 359 entries（312 classes）、sources 210；testmod／gametest／probe 命中 0（`dev/quantumchamber/compat/ModPresenceProbe` 是合法的 production class） |
 
@@ -231,7 +237,7 @@ M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為
 | `ci-rule-check.ps1` | `ifix3-ci-rule-check.ps1`（取代 `ifix2-ci-rule-check.ps1`） | `279b7b9f46d729ec78bfe72de0e201c09d84a772c50d99751c6e0614f4ded808` | root 改為 `-EvidenceRoot`；輸出標記 `CI_RULE`；注入的失敗訊息改為「CI 規則檢查刻意注入的失敗」；`-Label` 加輸入驗證。M5 F3c：必填 `-M5GameTestXml`，fixture 同時寫入兩份 XML；新增 `-MutationXml` 與 `-SourceMutation rename-windows` |
 | `runtime.init.gradle` | `task9-runtime.init.gradle` | `40cccdea23acc6520e92ab03198acd2881132b54962dfca53216e4679dbe75e0` | 只加註解 |
 | `probe.init.gradle` | `task9-probe.init.gradle` | `3d14ca4f399a8cc75797b12f4d38c73b02ca149500ef024c53f212634e3c678d` | 只加註解 |
-| `run-all.ps1` | `ifix4-final-green.ps1`＋`ifix3-build-summary.ps1` §1–§8 | `dcdc2bbbd7c7461cea3712c0f4bc3e67c91d033437c6ee8f2d82464ffdd2b53d`／`63de6da09187a39a4f4b2f472daa2143bca78ff36ae98d6b0daa5b659fab7bc5` | 原本以名稱前綴在 SDD 目錄取最新建立的 root，改為在本次 run root 內要求恰一個；CI 綠燈結果改為 `verdict` 非 PASS 即失敗；summary 去掉該輪固定數量與一次性 RED/GREEN 核對，只保留通用不變式並輸出數字；核對執行前後 HEAD 相同。原 summary 另有幾項核對沒有保留：tracked 變更即失敗（改為 `STATUS` 行與上方採計規則）、workflow 必須等於 HEAD 版本、`M4CandidateDoorGameTests` 每個 `@GameTest` 都呼叫 begin、非 Windows gate 的案例白名單、`Set-StrictMode`。M5 F3c：新增 M5 GameTest 步驟；CI 規則同時讀 M5 XML；summary 加上 M5 XML、三個 run 的 batch 範圍與 M5 oracle。F3c fix round 1：CI 綠燈結果必須沒有 mutation／sourceMutation；summary 加上 suite 結束的核對 |
+| `run-all.ps1` | `ifix4-final-green.ps1`＋`ifix3-build-summary.ps1` §1–§8 | `dcdc2bbbd7c7461cea3712c0f4bc3e67c91d033437c6ee8f2d82464ffdd2b53d`／`63de6da09187a39a4f4b2f472daa2143bca78ff36ae98d6b0daa5b659fab7bc5` | 原本以名稱前綴在 SDD 目錄取最新建立的 root，改為在本次 run root 內要求恰一個；CI 綠燈結果改為 `verdict` 非 PASS 即失敗；summary 去掉該輪固定數量與一次性 RED/GREEN 核對，只保留通用不變式並輸出數字；核對執行前後 HEAD 相同。原 summary 另有幾項核對沒有保留：tracked 變更即失敗（改為 `STATUS` 行與上方採計規則）、workflow 必須等於 HEAD 版本、`M4CandidateDoorGameTests` 每個 `@GameTest` 都呼叫 begin、非 Windows gate 的案例白名單、`Set-StrictMode`。M5 F3c：新增 M5 GameTest 步驟；CI 規則同時讀 M5 XML；summary 加上 M5 XML、三個 run 的 batch 範圍與 M5 oracle。F3c fix round 1：CI 綠燈結果必須沒有 mutation／sourceMutation；summary 加上 suite 結束的核對。M5 F6-1：新增 M5 collapse probe 步驟；summary 加上 collapse 彙整的核對（chain、phase、預期的結束與窗口，獨立 JVM，receipt hash） |
 
 ## 未 tracked 的腳本
 

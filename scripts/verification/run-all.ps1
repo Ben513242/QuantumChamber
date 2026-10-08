@@ -1,14 +1,15 @@
 # run-all.ps1：在目前 HEAD 依序 fresh 執行全部 automated gates（Full、Legacy、M5 GameTest、Main＋main-only oracle、M3、M4 recovery、
-# CI 綠燈規則 Windows／Ubuntu 兩個 step），最後以唯讀 summary 彙整並核對數字；任何步驟失敗即停止，保留所有 root。
+# M5 collapse probe、CI 綠燈規則 Windows／Ubuntu 兩個 step），最後以唯讀 summary 彙整並核對數字；任何步驟失敗即停止，保留所有 root。
 # M5 GameTest（M5 F3c，plan 決策 6）：獨立的 fresh 世界執行 batch 前綴 m5_universe 的 test；CI 規則同時讀 default 與 M5 兩份 XML。
-# 本次 run root＝<EvidenceRoot>/run-all-<GUID>，console.log、各 gate root、recovery 彙整、CI root 與 summary.json 都在其中。
+# M5 collapse probe（M5 F6-1）：跨 JVM 的塌縮 crash／restart probe，全部 chain；summary 核對每個 phase 依 chain 表的預期結束（halt／stop）。
+# 本次 run root＝<EvidenceRoot>/run-all-<GUID>，console.log、各 gate root、recovery 與 collapse 彙整、CI root 與 summary.json 都在其中。
 # 結束時印 END ALL exit=0 HEAD=<sha>。
 # 來源：.superpowers/sdd/2026-09-21-m4-candidate-doors/ifix4-final-green.ps1（SHA-256 dcdc2bbbd7c7461cea3712c0f4bc3e67c91d033437c6ee8f2d82464ffdd2b53d）；
 # summary 改寫自同目錄 ifix3-build-summary.ps1（SHA-256 63de6da09187a39a4f4b2f472daa2143bca78ff36ae98d6b0daa5b659fab7bc5）§1–§8，
 # 移除該輪固定數量、RED/GREEN、pre-commit CI、舊 workflow 對照與 evidence manifest 等一次性核對；預期數字見 README。
 # 參數：
 #   -EvidenceRoot  run root 的上層；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
-#   -Gradle        傳給 gates.ps1／m4-recovery-probe.ps1（空字串＝各自預設）
+#   -Gradle        傳給 gates.ps1／m4-recovery-probe.ps1／m5-collapse-probe.ps1（空字串＝各自預設）
 param([string]$EvidenceRoot='',[string]$Gradle='')
 $ErrorActionPreference='Stop'
 # 不設定 onlyBatches（先移除 JAVA_TOOL_OPTIONS），default／legacy 皆為完整 suite。
@@ -90,6 +91,7 @@ Step 'main-oracle' {
 }
 Step 'm3' { & $gates -Mode M3 -Label m3 -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'recovery' { & (Join-Path $PSScriptRoot 'm4-recovery-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
+Step 'm5-collapse' { & (Join-Path $PSScriptRoot 'm5-collapse-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'ci-rule' {
     $full=One 'gate-full-'; $m5=One 'gate-m5-gametest-'
     $xml=Join-Path $full 'result-build/gametest-results.xml'; $junit=Join-Path $full 'result-build/test-results/test'
@@ -105,7 +107,7 @@ Step 'summary' {
     # 唯讀：只讀本次 run root 的原始 XML／receipt／JAR／oracle／CI 結果，任何不符直接 throw；不改寫任何 gate root。
     $head=(git -C $repo rev-parse HEAD).Trim()
     if($head -cne $startHead){throw "HEAD 在執行期間改變：$startHead -> $head"}
-    $full=One 'gate-full-'; $legacy=One 'gate-legacy-'; $m5=One 'gate-m5-gametest-'; $main=One 'gate-main-only-'; $m3=One 'gate-m3-'; $recoveryFile=One 'recovery-run-' '.json'
+    $full=One 'gate-full-'; $legacy=One 'gate-legacy-'; $m5=One 'gate-m5-gametest-'; $main=One 'gate-main-only-'; $m3=One 'gate-m3-'; $recoveryFile=One 'recovery-run-' '.json'; $collapseFile=One 'collapse-run-' '.json'
     foreach($gate in @([pscustomobject]@{root=$full;mode='Full'},[pscustomobject]@{root=$legacy;mode='Legacy'},[pscustomobject]@{root=$m5;mode='M5GameTest'},[pscustomobject]@{root=$main;mode='Main'},[pscustomobject]@{root=$m3;mode='M3'})) {
         $g=Read-Json (Join-Path $gate.root 'gate.json'); if($g.status -ne 'PASS' -or $g.mode -ne $gate.mode){throw "gate 狀態不符：$($gate.root)"}
     }
@@ -209,6 +211,27 @@ Step 'summary' {
         $receipt=Read-Json $phase.receipt
         if($receipt.status -ne 'PASS' -or (Hash $phase.receipt) -ne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -ne $phase.startupNonce -or $receipt.runtimeScope -ne 'testmod-present'){throw "recovery receipt 不符：$($phase.receipt)"}
     }
+    # 7b. M5 collapse probe：全部 chain 的 phases 依 chain 表的預期結束（halt＝JVM exit 77＋halt.json 窗口相符；stop＝exit 0＋final.json PASS）、
+    #     各自獨立 JVM（PID@StartTime 與 startupNonce 都不同）、receipt hash 對上 launcher。
+    $collapse=Read-Json $collapseFile
+    if($collapse.status -ne 'PASS' -or @($collapse.only).Count -ne 0){throw 'M5 collapse summary 不是完整 PASS'}
+    $collapsePhases=@($collapse.phases)
+    $expectedCollapse=@('w1:w1-crash:halt:COLLAPSING_COMMITTED','w1:w1-restart:stop:','w2:w2-crash:halt:ALLOCATION_APPENDED','w2:w2-restart:stop:',
+        'w3:w3-crash:halt:CATALOG_ALLOCATED','w3:w3-restart:stop:','w5:w5-crash:halt:DISCOVERY_APPENDED','w5:w5-restart:stop:',
+        'w4:w4-crash:halt:PROJECTION_CELL_WRITTEN','w4:w4-restart:stop:','w4b:w4b-crash:halt:DESTINATION_CHECKPOINT','w4b:w4b-restart:stop:',
+        'w6:w6-crash:halt:PROJECTION_COMPLETE','w6:w6-restart:stop:','w6x:w6x-crash:halt:PROJECTION_REPAIRED','w6x:w6x-restart:stop:',
+        'degraded:deg-setup:stop:','degraded:deg-restart:stop:')
+    $observedCollapse=@($collapsePhases | ForEach-Object {($_.nonce -replace '^[0-9a-f]{32}-','')+':'+$_.phase+':'+$_.ending+':'+$_.window})
+    if(($observedCollapse -join ',') -cne ($expectedCollapse -join ',')){throw "M5 collapse phases 不符：$($observedCollapse -join ',')"}
+    if(@($collapsePhases | ForEach-Object {"$($_.javaPid)@$($_.javaStartTimeUtc)"} | Sort-Object -Unique).Count -ne $collapsePhases.Count){throw 'M5 collapse phases 必須各自使用不同 JVM (PID, StartTime)'}
+    if(@($collapsePhases | ForEach-Object startupNonce | Sort-Object -Unique).Count -ne $collapsePhases.Count){throw 'M5 collapse phases 必須各自使用不同 startupNonce'}
+    foreach($phase in $collapsePhases) {
+        $receipt=Read-Json $phase.receipt
+        if((Hash $phase.receipt) -ne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -ne $phase.startupNonce -or $receipt.runtimeScope -ne 'testmod-present' -or $receipt.phase -cne $phase.phase){throw "M5 collapse receipt 不符：$($phase.receipt)"}
+        $halted=$phase.ending -eq 'halt' -and $receipt.status -eq 'HALT' -and $receipt.window -ceq $phase.window -and $phase.javaExitCode -eq 77 -and $phase.gradleExitCode -ne 0 -and (Split-Path -Leaf $phase.receipt) -eq 'halt.json'
+        $stopped=$phase.ending -eq 'stop' -and $receipt.status -eq 'PASS' -and $phase.javaExitCode -eq 0 -and $phase.gradleExitCode -eq 0 -and (Split-Path -Leaf $phase.receipt) -eq 'final.json'
+        if(-not ($halted -or $stopped)){throw "M5 collapse phase 沒有依預期結束：$($phase.phase) ending=$($phase.ending) status=$($receipt.status) javaExit=$($phase.javaExitCode)"}
+    }
     # 8. CI 綠燈規則：以 HEAD workflow 原文逐字執行，對本次 full gate XML。
     $workflowHash=(Get-FileHash -LiteralPath (Join-Path $repo '.github/workflows/build.yml') -Algorithm SHA256).Hash
     $ci=[ordered]@{}
@@ -221,9 +244,10 @@ Step 'summary' {
         gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
         jars=$jars;mainOnly=[ordered]@{status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
-        m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count};ci=$ci
+        m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
+        m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;legacy=$legacy;m5=$m5;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
-    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
+    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
 }
 Say "END ALL exit=0 HEAD=$((git -C $repo rev-parse HEAD).Trim())"
