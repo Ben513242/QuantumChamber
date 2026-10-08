@@ -70,10 +70,14 @@ import org.slf4j.LoggerFactory;
  *     {@code M5GameTestSupport.holdEntityStorage} 安裝。</li>
  * <li>隔離 session 的收斂失敗（{@link #CONVERGE_FAULT}，F6-0，F4b-3 spec S-M1）：{@code QuarantineConvergeFaultMixin} 在 {@code SessionRecoveryState.convergeQuarantined} 的開頭呼叫
  *     {@link #beforeConvergeQuarantined}，注入時丟出例外，session 因此一直隔離著。由 {@code M5GameTestSupport.installConvergeFault} 安裝。</li>
+ * <li>跨 JVM 的 crash 點（{@link #CRASH_POINT}，F6-1，spec §12 的 crash 窗口）：每個窗口的 hook mixin（例如 {@code CollapseAuthoritiesCrashWindowMixin}）在窗口剛成立的那一刻
+ *     呼叫 {@link #reachedCrashWindow}；裝著的 {@link CrashPoint} 的窗口與條件都符合時執行它的動作。只給 {@code M5CollapseRecoveryProbe} 用：它的動作寫出 halt receipt 之後以
+ *     {@code Runtime.halt} 結束 JVM（不經正常停止，等同 crash）。probe 不是 GameTest，所以安裝時沒有 {@link GameTestState}（{@code install(value, null)}），JVM 結束之前不移除。</li>
  * </ul>
  * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、八個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
  * entity storage 就緒保留、隔離 session 的收斂）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
- * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
+ * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。跨 JVM 的 crash 點也是一個 {@link Slot}，但只由
+ * {@code M5CollapseRecoveryProbe} 安裝（F6-1）。
  */
 public final class M5TestHooks {
     private M5TestHooks() {}
@@ -108,6 +112,8 @@ public final class M5TestHooks {
     static final Slot<EntityStorageHold> ENTITY_STORAGE_HOLD = new Slot<>("checkpoint 的 entity storage 就緒保留");
     /** 隔離 session 的收斂失敗（F6-0，F4b-3 spec S-M1；{@code M5GameTestSupport.installConvergeFault}）。 */
     static final Slot<ConvergeFault> CONVERGE_FAULT = new Slot<>("隔離 session 的收斂失敗注入");
+    /** 跨 JVM 的 crash 點（F6-1；只由 {@code M5CollapseRecoveryProbe} 安裝）。 */
+    static final Slot<CrashPoint> CRASH_POINT = new Slot<>("跨 JVM 的 crash 點");
 
     /**
      * 這個 session 是否被暫停（純查詢，不計數；F5-2 Step 0，F5-1 fix round 1 quality re-review R-m2）：system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部；
@@ -263,6 +269,39 @@ public final class M5TestHooks {
     public static void beforeConvergeQuarantined(UUID session) {
         var fault = CONVERGE_FAULT.get();
         if (fault != null) fault.intercept(session);
+    }
+
+    /**
+     * spec §12 的跨 JVM crash 窗口（F6-1）：每個值是「窗口剛成立」的那一個程式點，由該點的 hook mixin 呼叫 {@link #reachedCrashWindow}。F6-1 A 段起
+     * {@code CollapseAuthoritiesCrashWindowMixin} 涵蓋 {@link #ALLOCATION_APPENDED}、{@link #CATALOG_ALLOCATED}、{@link #DISCOVERY_APPENDED}；其他值還沒有呼叫端時，裝著它的
+     * crash 點不會觸發。
+     */
+    public enum CrashWindow {
+        /** W1：{@code SessionRecoveryState.commitRestore} 把 MEASURED 提交為 COLLAPSING 之後（返還之前）。 */
+        COLLAPSING_COMMITTED,
+        /** W2：{@code CollapseAuthorities.lookupOrAppendAllocation} 回傳 {@code APPENDED}（allocation ledger 已 checked 寫出，catalog 還沒有配置）。 */
+        ALLOCATION_APPENDED,
+        /** W3：{@code CollapseAuthorities.allocateOrVerifyCatalog} 回傳 {@code APPENDED}（catalog 已 checked 寫出，還沒有物化）。 */
+        CATALOG_ALLOCATED,
+        /** W4：{@code ProjectionWriter} 寫完一格（投影寫到一半，ledger 為 PENDING）。 */
+        PROJECTION_CELL_WRITTEN,
+        /** W4b：目的世界 chunks 的原生存檔 checkpoint 開始之前（投影方塊已寫完並驗證，COMPLETE 還沒有寫入）。 */
+        DESTINATION_CHECKPOINT,
+        /** W5：{@code CollapseAuthorities.appendDiscovery} 回傳 {@code APPENDED}（discovery 已 checked 追加，投影還沒有開始）。 */
+        DISCOVERY_APPENDED,
+        /** W6：{@code CollapseAuthorities.writeProjection} 寫入 COMPLETE 之後（PASSAGE_READY 之前）。 */
+        PROJECTION_COMPLETE,
+        /** W6 的 EXISTING 再造訪：{@code ProjectionWriter.write} 以 REPAIR 修復之後（checkpoint 之前）。 */
+        PROJECTION_REPAIRED
+    }
+
+    /**
+     * crash 窗口的 hook mixin：窗口剛成立時呼叫（F6-1）。{@code detail} 是那一刻的值（例如 {@code CollapseAuthorities.Lookup}），交給裝著的 {@link CrashPoint} 判斷。沒有裝時
+     * 不做任何事。crash 點的條件或動作丟出例外時記 ERROR、留在 crash 點上（{@link CrashPoint#failure}），不往 production 的呼叫端丟。
+     */
+    public static void reachedCrashWindow(CrashWindow window, Object detail) {
+        var point = CRASH_POINT.get();
+        if (point != null) point.reach(window, detail);
     }
 
     /**
@@ -804,5 +843,45 @@ public final class M5TestHooks {
 
         /** 之後的收斂照常（仍裝著，hooks 釋放時移除）。 */
         void release() { released = true; }
+    }
+
+    /**
+     * 跨 JVM 的 crash 點（F6-1；{@link #CRASH_POINT}）：{@code window} 的 hook 每呼叫一次記一次 {@link #reached}；{@code matches} 為真時記一次 {@link #hits}，以
+     * （detail, 第幾次 hit）呼叫 {@code action}。{@code M5CollapseRecoveryProbe} 的動作寫出 halt receipt 之後以 {@code Runtime.halt} 結束 JVM，所以通常不會回來；
+     * 動作也可以依 hit 次數決定這次不 crash 而回傳。條件或動作丟出的例外記在 {@link #failure}、記 ERROR，不往 production 丟。
+     */
+    static final class CrashPoint {
+        final CrashWindow window;
+        private final java.util.function.Predicate<Object> matches;
+        private final java.util.function.ObjIntConsumer<Object> action;
+        private final AtomicInteger reached = new AtomicInteger();
+        private final AtomicInteger hits = new AtomicInteger();
+        private volatile Throwable failure;
+
+        CrashPoint(CrashWindow window, java.util.function.Predicate<Object> matches, java.util.function.ObjIntConsumer<Object> action) {
+            this.window = Objects.requireNonNull(window, "window");
+            this.matches = Objects.requireNonNull(matches, "matches");
+            this.action = Objects.requireNonNull(action, "action");
+        }
+
+        void reach(CrashWindow at, Object detail) {
+            if (at != window) return;
+            reached.incrementAndGet();
+            try {
+                if (matches.test(detail)) action.accept(detail, hits.incrementAndGet());
+            } catch (RuntimeException | Error problem) {
+                failure = problem;
+                LOGGER.error("F6-1 crash 點的條件或動作失敗：window={}", window, problem);
+            }
+        }
+
+        /** 這個窗口的 hook 被呼叫的次數（不論條件）。 */
+        int reached() { return reached.get(); }
+
+        /** 條件成立的次數。 */
+        int hits() { return hits.get(); }
+
+        /** 條件或動作丟出的例外；沒有時為 null。 */
+        Throwable failure() { return failure; }
     }
 }
