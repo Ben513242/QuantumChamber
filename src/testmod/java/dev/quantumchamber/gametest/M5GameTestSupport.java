@@ -904,6 +904,17 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F6-0（F4b-3 spec S-M1）：隔離 session 的收斂失敗（{@link M5TestHooks#CONVERGE_FAULT}，testmod {@code QuarantineConvergeFaultMixin}）：裝著、還沒 {@code release()} 的期間，
+     * {@code session} 的每一次收斂都失敗，它一直隔離著（test 自己以 {@code SessionRecoveryState.quarantine} 隔離它）。test 以 {@code hits()} 當 witness。安裝、占用與移除的規則見
+     * {@link #installHook}；hooks 釋放（移除注入）之後，下一個 tick 的 recovery 就把仍隔離著的 session 收斂。
+     */
+    static M5TestHooks.ConvergeFault installConvergeFault(TestContext context, UUID session, M2CorridorGameTests.TestHooks hooks) {
+        var fault = new M5TestHooks.ConvergeFault(session);
+        installHook(context, M5TestHooks.CONVERGE_FAULT, fault, hooks);
+        return fault;
+    }
+
+    /**
      * F5-1：把玩家放到來源艙的門口（腳在區域座標 ({@code x}, {@code y}, {@code z})，同一個世界），朝向 {@code yaw}、{@code pitch}，速度設為 {@code velocity}。z ≥ 0.5 是
      * 門板中線的內側，z &lt; 0.5 是外側；跨越是「上一個 tick 在內側、這個 tick 在外側」，而且腳在門口（x∈[1,6)、y∈[1,6)；spec §10.3）。
      */

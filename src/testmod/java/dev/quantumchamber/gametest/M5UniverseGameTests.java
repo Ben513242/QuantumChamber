@@ -2325,6 +2325,67 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
+     * F6-0（F4b-3 fix round 1 的 spec S-M1；spec §6 :260「restore 類失敗時 PREPARE 中的門依 §7.3 閘門失效的處理改為一般開門」、§7.3）：隔離中的 PREPARE 交還原艙門
+     * （{@code OriginDoors.watchDoor} 的隔離分支）。PREPARE 的 sealed 量子膜套用之後，test 以 {@code SessionRecoveryState.quarantine} 隔離這個 session，並讓它的收斂一直失敗
+     * （testmod {@code QuarantineConvergeFaultMixin}；recovery 的收斂排在塌縮流程之前，沒有這個注入時同一個 tick 就收斂、塌縮流程看不到隔離）。
+     * <ul>
+     * <li>隔離的那個 tick：原艙門由 sealed 量子膜改為一般開門，INFO「session 隔離中…PREPARE 暫停」一則；record 仍是 COLLAPSING、目的世界的 ticket 繼續持有（F4b-2 Q-M4）。</li>
+     * <li>隔離期間 PREPARE 不擁有原艙門：參與者開關門照一般門的邏輯（攔截回 PASS）；門一直是一般開門，交還只做一次；recovery 的「尚無法收斂」WARN 一則。</li>
+     * <li>收斂恢復之後（注入停止，下一個 tick 收斂）：PREPARE 依原進度續做，原艙門重新套用 sealed 量子膜；準備完成之後以 {@code holdReady} 留在 PREPARE。塌縮流程沒有 WARN／ERROR。</li>
+     * </ul>
+     * catalog 增量 1。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_door_quarantine", tickLimit = 1000)
+    public void quarantined_prepare_hands_the_origin_door_back_open_and_reseals_it_after_converging(TestContext context) {
+        begin(context, "quarantined_prepare_hands_the_origin_door_back_open_and_reseals_it_after_converging");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            // 收斂恢復之後要看 PREPARE 重新套用量子膜：準備完成之後暫緩 PASSAGE_READY 的提交，留在 PREPARE。
+            var hold = M5GameTestSupport.holdReady(context, sid, hooks);
+            whenTicks(context, resolved + 1, 20, () -> entered(capture, sid) == 1 && M5GameTestSupport.doorSealed(world, frame), prepareAt -> {
+                var fault = M5GameTestSupport.installConvergeFault(context, sid, hooks);
+                witness.put("quarantinedByTheTest", journal.quarantine(sid));
+                at(context, prepareAt + 1, hooks, () -> {
+                    witness.put("stillQuarantined", journal.quarantinedSessions().contains(sid) && fault.hits() >= 1);
+                    witness.put("plainOpenWhileQuarantined", doorAll(world, frame, true, MembraneState.NONE));
+                    witness.put("onePauseInfo", quarantinePauses(capture, sid) == 1);
+                    witness.put("stillCollapsing", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                    witness.put("destinationTicketKept", !M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                    witness.put("participantUsePassesWhileQuarantined", M5GameTestSupport.useDoor(world, frame, p) == ChamberCollapsePort.DoorUse.PASS);
+                });
+                at(context, prepareAt + 20, hooks, () -> {
+                    witness.put("plainOpenThroughTheQuarantine", doorAll(world, frame, true, MembraneState.NONE) && journal.quarantinedSessions().contains(sid));
+                    witness.put("handedBackOnlyOnce", quarantinePauses(capture, sid) == 1);
+                    witness.put("convergenceKeptFailing", fault.hits() >= 19);
+                    witness.put("oneConvergeWarn", capture.matching(Level.WARN, "隔離 session 尚無法收斂", sid.toString()).size() == 1);
+                    fault.release();
+                });
+                whenTicks(context, prepareAt + 21, 600, () -> !journal.quarantinedSessions().contains(sid) && M5GameTestSupport.doorSealed(world, frame)
+                        && hold.hits() > 0, resealed -> {
+                    witness.put("convergedOnceTheFaultStopped", capture.matching(Level.INFO, "未 checked authority 已收斂", sid.toString()).size() == 1);
+                    witness.put("stillCollapsingAfterTheQuarantine", M5GameTestSupport.state(journal, sid).equals("COLLAPSING"));
+                    witness.put("resealedByThePrepare", M5GameTestSupport.doorSealed(world, frame));
+                    witness.put("handedBackStillOnce", quarantinePauses(capture, sid) == 1);
+                    witness.put("noCollapseWarn", M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
+                    LOGGER.info("M5_DOOR_QUARANTINE prepare={} resealed={} convergeFaults={} readyHolds={}", prepareAt, resealed, fault.hits(), hold.hits());
+                    releaseThenComplete(context, hooks, witness, "隔離中的 PREPARE 的原艙門：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
+                }, () -> "收斂恢復之後沒有重新套用量子膜：record=" + M5GameTestSupport.state(journal, sid) + " quarantined=" + journal.quarantinedSessions().contains(sid)
+                        + " witness=" + witness, hooks);
+            }, () -> "RESOLVE 之後沒有進入 PREPARE、套用量子膜：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /** 這個 session「隔離中…PREPARE 暫停」的 INFO（帶 LOG_MARKER；{@code OriginDoors.watchDoor} 的隔離分支，F6-0）。 */
+    private static int quarantinePauses(LogCapture capture, UUID sid) {
+        return capture.marked(Level.INFO, CollapseService.LOG_MARKER.getName(), "session 隔離中", "PREPARE 暫停", sid.toString()).size();
+    }
+
+    /**
      * F6-0（F4a fix round 2 的 spec S2-mB；F4b-3 交給 F6 的 PJF）：經 {@code collapsing()} 驅動的「進入 SEALED 的寫入在前置檢查就被拒」的重試（spec §6「journal 寫入失敗時的
      * session 行為」、§11.2 的 per-session 退避、§8.4）。DORMANT NEW 收據的 RESOLVE 物化失敗（testmod {@code MaterializeFaultMixin}）→ SEALED(MATERIALIZE_FAILED) 的寫入被拒兩次
      * （testmod {@code SessionJournalPutFaultMixin}）。塌縮流程只依 per-session 退避重試這一筆寫入：

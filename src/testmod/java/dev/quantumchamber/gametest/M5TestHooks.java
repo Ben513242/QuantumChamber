@@ -68,9 +68,11 @@ import org.slf4j.LoggerFactory;
  * <li>原生存檔 checkpoint 的 entity storage 就緒保留（{@link #ENTITY_STORAGE_HOLD}，F6-0，G-NLIVE 的根因）：{@code ChunkSaveCheckpointEntityHoldMixin} 在
  *     {@code ChunkSaveCheckpoint} 判斷 chunk 與 entity storage 都已載入的開頭呼叫 {@link #entityStorageHeld}，保留中的 chunk 回「尚未載入」。由
  *     {@code M5GameTestSupport.holdEntityStorage} 安裝。</li>
+ * <li>隔離 session 的收斂失敗（{@link #CONVERGE_FAULT}，F6-0，F4b-3 spec S-M1）：{@code QuarantineConvergeFaultMixin} 在 {@code SessionRecoveryState.convergeQuarantined} 的開頭呼叫
+ *     {@link #beforeConvergeQuarantined}，注入時丟出例外，session 因此一直隔離著。由 {@code M5GameTestSupport.installConvergeFault} 安裝。</li>
  * </ul>
- * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、七個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
- * entity storage 就緒保留）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、八個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
+ * entity storage 就緒保留、隔離 session 的收斂）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {
@@ -104,6 +106,8 @@ public final class M5TestHooks {
     static final Slot<SealProbe> SEAL_PROBE = new Slot<>("進入 SEALED 的 Controller 探針");
     /** 原生存檔 checkpoint 的 entity storage 就緒保留（F6-0，G-NLIVE 的根因；{@code M5GameTestSupport.holdEntityStorage}）。 */
     static final Slot<EntityStorageHold> ENTITY_STORAGE_HOLD = new Slot<>("checkpoint 的 entity storage 就緒保留");
+    /** 隔離 session 的收斂失敗（F6-0，F4b-3 spec S-M1；{@code M5GameTestSupport.installConvergeFault}）。 */
+    static final Slot<ConvergeFault> CONVERGE_FAULT = new Slot<>("隔離 session 的收斂失敗注入");
 
     /**
      * 這個 session 是否被暫停（純查詢，不計數；F5-2 Step 0，F5-1 fix round 1 quality re-review R-m2）：system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部；
@@ -249,6 +253,16 @@ public final class M5TestHooks {
     public static boolean entityStorageHeld(ServerWorld world, ChunkPos pos) {
         var hold = ENTITY_STORAGE_HOLD.get();
         return hold != null && world.getServer().isOnThread() && hold.holds(world, pos);
+    }
+
+    /**
+     * {@code QuarantineConvergeFaultMixin}：{@code SessionRecoveryState.convergeQuarantined}（recovery 每個 tick 對隔離中的 session 的收斂）的開頭呼叫（F6-0）。注入時丟
+     * {@link IllegalStateException}：recovery 依原因去重記 WARN「隔離 session 尚無法收斂」、維持隔離，下一個 tick 再試（production 的 validateOwnership 一直失敗時的路徑）。
+     * 只在 server thread 上（收斂只在 server thread 上執行）。
+     */
+    public static void beforeConvergeQuarantined(UUID session) {
+        var fault = CONVERGE_FAULT.get();
+        if (fault != null) fault.intercept(session);
     }
 
     /**
@@ -765,6 +779,30 @@ public final class M5TestHooks {
         int hits() { return hits.get(); }
 
         /** 之後不再保留（仍裝著，hooks 釋放時移除）。 */
+        void release() { released = true; }
+    }
+
+    /**
+     * 隔離 session 的收斂失敗（F6-0，F4b-3 spec S-M1；{@link #CONVERGE_FAULT}）：裝著、還沒 {@link #release} 的期間，{@code session} 的每一次收斂都在開頭失敗，所以它一直隔離著
+     * （recovery 的收斂排在塌縮流程之前，沒有這個注入時，test 造出的隔離在同一個 tick 就被收斂、塌縮流程看不到）。{@code hits()} 是注入的次數。
+     */
+    static final class ConvergeFault {
+        private final UUID session;
+        private final AtomicInteger hits = new AtomicInteger();
+        private volatile boolean released;
+
+        ConvergeFault(UUID session) { this.session = Objects.requireNonNull(session, "session"); }
+
+        void intercept(UUID target) {
+            if (released || !session.equals(target)) return;
+            hits.incrementAndGet();
+            throw new IllegalStateException("F6-0 GameTest 受控：隔離 session 的收斂失敗（session=" + session + "）");
+        }
+
+        /** 已注入的收斂失敗次數。 */
+        int hits() { return hits.get(); }
+
+        /** 之後的收斂照常（仍裝著，hooks 釋放時移除）。 */
         void release() { released = true; }
     }
 }
