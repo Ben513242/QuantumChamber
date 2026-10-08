@@ -28,6 +28,7 @@ import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.chamber.QuantumBulkheadBlock;
 import dev.quantumchamber.collapse.CollapseAuthorities;
+import dev.quantumchamber.collapse.CollapseBackoff;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.collapse.CollapseService;
 import dev.quantumchamber.collapse.DestinationResolver;
@@ -2320,6 +2321,74 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     }, () -> "退避之後沒有進 SEALED：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
                 }, () -> "SEALED 的寫入沒有被拒：record=" + M5GameTestSupport.state(journal, sid) + " write=" + write.hits() + " put=" + put.hits(), hooks);
             }, () -> "RESOLVE 之後沒有進入 PREPARE：record=" + M5GameTestSupport.state(journal, sid), hooks);
+        });
+    }
+
+    /**
+     * F6-0（F4a fix round 2 的 spec S2-mB；F4b-3 交給 F6 的 PJF）：經 {@code collapsing()} 驅動的「進入 SEALED 的寫入在前置檢查就被拒」的重試（spec §6「journal 寫入失敗時的
+     * session 行為」、§11.2 的 per-session 退避、§8.4）。DORMANT NEW 收據的 RESOLVE 物化失敗（testmod {@code MaterializeFaultMixin}）→ SEALED(MATERIALIZE_FAILED) 的寫入被拒兩次
+     * （testmod {@code SessionJournalPutFaultMixin}）。塌縮流程只依 per-session 退避重試這一筆寫入：
+     * <ul>
+     * <li>被拒的 server tick 恰為 [R, R+200]（不是每個 tick；第二次被拒之後退避加倍），第三次在 R+200+400 寫入成功（{@code installSealProbe} 記下 {@code sealCommitted} 的 tick）；</li>
+     * <li>重試期間 record 一直是 COLLAPSING（current＝flushed）、來源 ticket 繼續持有；被拒的 WARN 恰一則，寫明 200 ticks 之後、tick R+200 重試；</li>
+     * <li>不重跑 RESOLVE：backend 只物化一次，沒有「目的地已確定」，進入 SEALED 的 WARN 帶的是 RESOLVE 判定的原因與 cause（「物化失敗，catalog 已改為 DISABLED」），不是重跑時
+     *     resolver 回的「本 server instance 已用掉…」；</li>
+     * <li>寫入成功之後：SEALED(MATERIALIZE_FAILED)、來源 ticket 釋放。</li>
+     * </ul>
+     * catalog 增量 1（DISABLED）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_seal_rejected_retry", tickLimit = 1300)
+    public void rejected_seal_write_is_retried_on_the_per_session_backoff_without_rerunning_resolve(TestContext context) {
+        begin(context, "rejected_seal_write_is_retried_on_the_per_session_backoff_without_rerunning_resolve");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = openOrigin(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        origin.whenRegistered((registered, chamber) -> {
+            var dormant = origin.own(origin.receipt(chamber, Map.of(p.getUuid(), true), true));
+            var sid = dormant.sessionUuid();
+            var id = UniverseAllocationLedger.deriveUniverseId(((QuantumCandidate.New) dormant.selectedCandidate().orElseThrow()).intent().allocationToken());
+            var materialize = M5GameTestSupport.installMaterializeFault(context, id, hooks);
+            var put = M5GameTestSupport.installJournalPutFault(context, sid, SessionState.SEALED, 2, hooks);
+            var probe = M5GameTestSupport.installSealProbe(context, sid, world, frame.controllerPos(), hooks);
+            var witness = new LinkedHashMap<String, Boolean>();
+            at(context, registered + 1, hooks, () -> moveInside(p, frame));
+            // 提交在 registered+1、RESOLVE（物化失敗 → 進入 SEALED 的寫入被拒）在 registered+2 的 END_SERVER_TICK。
+            whenTicks(context, registered + 3, 20, () -> put.hits() == 1, rejectedAt -> {
+                at(context, rejectedAt + 100, hooks, () -> {
+                    witness.put("collapsingWithinTheFirstBackoff", M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && put.hits() == 1
+                            && journal.flushedRecords().get(sid).equals(journal.records().get(sid)));
+                    witness.put("sourceTicketKeptWhileRejected", M4CandidateTestAccess.sourceTicketHeld(sid));
+                });
+                whenTicks(context, rejectedAt + 101, 300, () -> put.hits() == 2, secondAt -> {
+                    at(context, secondAt + 100, hooks, () -> witness.put("collapsingWithinTheDoubledBackoff",
+                            M5GameTestSupport.state(journal, sid).equals("COLLAPSING") && put.hits() == 2));
+                    whenTicks(context, secondAt + 101, 500, () -> sealedWith(journal, sid, SealedReason.MATERIALIZE_FAILED), sealed -> {
+                        var rejected = put.ticks();
+                        var commits = probe.after();
+                        witness.put("rejectedOnlyOnThePerSessionBackoff", rejected.size() == 2 && rejected.get(1) - rejected.get(0) == CollapseBackoff.INITIAL_TICKS);
+                        witness.put("committedAfterTheDoubledBackoff", put.hits() == 2 && commits.size() == 1 && rejected.size() == 2
+                                && commits.getFirst().tick() - rejected.get(1) == 2 * CollapseBackoff.INITIAL_TICKS);
+                        // 只數被拒（REJECTED）的那一則：寫入成功的那一次若遇到落盤失敗（ROLL_FORWARD_PENDING）會另記一則「寫入 SEALED」WARN，不屬於這個 witness。
+                        var rejectedWarns = capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 SEALED沒有完成（REJECTED）", sid.toString());
+                        witness.put("oneRejectedWarnWithTheFirstBackoff", rejectedWarns.size() == 1 && !rejected.isEmpty()
+                                && rejectedWarns.getFirst().message().contains("200 ticks 後，tick " + (rejected.getFirst() + CollapseBackoff.INITIAL_TICKS)));
+                        witness.put("materializedOnce", materialize.calls() == 1);
+                        var sealedWarns = capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "SEALED(MATERIALIZE_FAILED)", sid.toString());
+                        // 不重跑 RESOLVE 的 witness：重跑時 resolver 看到本 instance 已用掉物化額度，回同一個原因、但 cause 是「已用掉…」，寫入成功時的 WARN 就帶它。
+                        witness.put("sealedWithTheOriginalResolveCause", sealedWarns.size() == 1
+                                && sealedWarns.getFirst().message().contains("物化失敗，catalog 已改為 DISABLED") && !sealedWarns.getFirst().message().contains("已用掉"));
+                        witness.put("neverResolved", capture.matching(Level.INFO, "目的地已確定", sid.toString()).isEmpty());
+                        witness.put("sourceTicketReleasedOnceSealed", !M4CandidateTestAccess.sourceTicketHeld(sid));
+                        witness.put("noError", capture.matching(Level.ERROR, sid.toString()).isEmpty());
+                        LOGGER.info("M5_SEAL_REJECTED_RETRY rejected={} committed={} materialize={}", rejected,
+                                commits.stream().map(M5TestHooks.SealProbe.Observation::tick).toList(), materialize.calls());
+                        releaseThenComplete(context, hooks, witness, "進入 SEALED 的寫入被拒之後的重試：" + witness + " rejected=" + rejected + " committed="
+                                + commits.stream().map(M5TestHooks.SealProbe.Observation::tick).toList(), 20, () -> true);
+                    }, () -> "第二次被拒之後沒有寫入 SEALED：record=" + M5GameTestSupport.state(journal, sid) + " rejected=" + put.ticks() + " witness=" + witness, hooks);
+                }, () -> "退避之後沒有再重試：record=" + M5GameTestSupport.state(journal, sid) + " rejected=" + put.ticks(), hooks);
+            }, () -> "進入 SEALED 的寫入沒有被拒：record=" + M5GameTestSupport.state(journal, sid) + " materialize=" + materialize.calls(), hooks);
         });
     }
 

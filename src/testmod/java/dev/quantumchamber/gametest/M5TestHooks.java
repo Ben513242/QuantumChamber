@@ -405,15 +405,18 @@ public final class M5TestHooks {
 
     /**
      * journal put 的拒絕（F4b-3）：裝著的期間，{@code session} 的 put 中狀態為 {@code state} 的前 {@code failures} 次丟 {@link IllegalStateException}（決定性的驗證失敗；
-     * journal 沒有改變），之後照常。其他 session、其他狀態照常。
+     * journal 沒有改變），之後照常。其他 session、其他狀態照常。F6-0 另記下每一次拒絕的 server tick（{@link #ticks}），讓 test 斷言重試的間隔（per-session 退避）。
      */
     static final class JournalPutFault {
+        private final MinecraftServer server;
         private final UUID session;
         private final dev.quantumchamber.superposition.SessionState state;
         private int remaining;
         private final AtomicInteger hits = new AtomicInteger();
+        private final List<Integer> ticks = new CopyOnWriteArrayList<>();
 
-        JournalPutFault(UUID session, dev.quantumchamber.superposition.SessionState state, int failures) {
+        JournalPutFault(MinecraftServer server, UUID session, dev.quantumchamber.superposition.SessionState state, int failures) {
+            this.server = Objects.requireNonNull(server, "server");
             this.session = Objects.requireNonNull(session, "session"); this.state = Objects.requireNonNull(state, "state"); this.remaining = failures;
         }
 
@@ -421,11 +424,15 @@ public final class M5TestHooks {
             if (!record.sessionUuid().equals(session) || record.state() != state || remaining <= 0) return;
             remaining--;
             hits.incrementAndGet();
+            ticks.add(server.getTicks());
             throw new IllegalStateException("F4b-3 GameTest 受控：journal 拒絕寫入 " + state + "（session=" + session + "）");
         }
 
         /** 已注入拒絕的次數。 */
         int hits() { return hits.get(); }
+
+        /** 每一次拒絕的 server tick（依發生順序，F6-0）。 */
+        List<Integer> ticks() { return List.copyOf(ticks); }
     }
 
     /**

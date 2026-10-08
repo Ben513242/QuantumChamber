@@ -713,11 +713,11 @@ final class M5GameTestSupport {
 
     /**
      * F4b-3：journal put 的拒絕（{@link M5TestHooks#JOURNAL_PUT_FAULT}）：{@code session} 寫成 {@code state} 的前 {@code failures} 次 put 被拒（checked 提交回 REJECTED）；
-     * 安裝、占用與移除的規則見 {@link #installHook}。
+     * 每一次拒絕的 server tick 在 {@code ticks()}（F6-0）。安裝、占用與移除的規則見 {@link #installHook}。
      */
     static M5TestHooks.JournalPutFault installJournalPutFault(TestContext context, UUID session, SessionState state, int failures,
             M2CorridorGameTests.TestHooks hooks) {
-        var fault = new M5TestHooks.JournalPutFault(session, state, failures);
+        var fault = new M5TestHooks.JournalPutFault(context.getWorld().getServer(), session, state, failures);
         installHook(context, M5TestHooks.JOURNAL_PUT_FAULT, fault, hooks);
         return fault;
     }
