@@ -700,6 +700,27 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 
 ---
 
+### Task F5-3: 到達目的宇宙的提示（controller 2026-10-08 依使用者裁示插入，spec v5.4 §10.8／§20.8）
+
+在 F6-0 之後、F6-1 之前執行，走完 implementer → spec review → quality review。
+
+**Files：**
+- Modify：`src/main/java/dev/quantumchamber/collapse/PassageService.java`，只限傳送結果為 MOVED 時，對到達的玩家顯示提示。
+- Modify：兩份語言檔。
+- Test：`M5UniverseGameTests.java`，擴充既有的跨越 test：NEW（例如 T-CROSS）、EXISTING（例如 T-EXIST），以及 `FAILED_ROLLED_BACK`。必要時一併改 `CollapseServiceTest.java`。
+
+**RED：**
+- NEW 跨越成功之後，到達的玩家收到「你已進入新的宇宙。」；
+- EXISTING 收到「你已進入另一個宇宙。」；
+- `FAILED_ROLLED_BACK` 與 `FAILED_RECOVERY_REQUIRED` 不顯示這則提示；
+- 其他參與者不會收到。
+
+**完整回歸：** `run-all.ps1`。
+
+**Commit：** `feat: tell a crossing participant which universe they entered`
+
+---
+
 ### Task F6: 重啟矩陣、跨 JVM probe 與 harness
 
 **Files:**

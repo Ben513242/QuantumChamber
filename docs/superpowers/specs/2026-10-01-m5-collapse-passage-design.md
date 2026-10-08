@@ -2,7 +2,7 @@
 
 日期：2026-10-01。基準：`main`＝`a7e1be2`（code 等同 `ba854e8`），分支 `feature/m5-collapse`。下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `a7e1be2` 為準。
 
-狀態：v5.3。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。Spec review 共五輪（含第五輪的 re-review）：
+狀態：v5.4。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。Spec review 共五輪（含第五輪的 re-review）：
 - v1 的 Critical 1、Important 8 由 v2 處理。
 - re-review 在 v2 新發現的 Critical 1、Important 2（N1–N3）與 Minor m1–m8 由 v3 處理。
 - 第三輪在 v3 新發現的 Important 1（N4）與 4 項 Minor，已在 v3 修正。
@@ -641,6 +641,7 @@ actionbar 使用 zh_tw，en_us 另附翻譯：
 | --- | --- |
 | 塌縮 | 「量子態塌縮。」 |
 | 通道開啟 | 「量子通道已開啟：穿過門口的量子膜即可前往。」 |
+| 跨越成功、到達目的宇宙（只對該玩家，v5.4） | 候選是 NEW：「你已進入新的宇宙。」；候選是 EXISTING：「你已進入另一個宇宙。」 |
 | 傳送失敗 | 「通道傳送失敗，你仍在原世界。」 |
 | 通道結束 | 「量子通道已關閉。」 |
 | 進入 SEALED | 「量子通道無法開啟，已封存。」 |
@@ -1080,3 +1081,16 @@ v5.1 的輕量確認：Critical 0、Important 0、Minor 5（p1–p5），control
 | --- | --- |
 | Important：§4 H2「無關 chunk 的存檔失敗不再阻擋」在原版語意下不是無條件成立。原版 flush 時仍 pending 的寫入失敗，會由 `completeAll().join()` 讓 `server.save` 直接丟例外（javap 驗證 `ServerWorld.save`、`MinecraftServer.save` 沒有 catch） | §4 H2 改為明列「不再阻擋」與「仍 fail-closed」兩類，並把原版 pending 寫入記為界線；F4b 投影沿用同一元件與界線 |
 | Minor：region 檔 header 由同一 region 的 chunks 共用，無關 chunk 寫 header 失敗可能波及相關 chunk | §4 H2 把判定單位改為「同一 storage 的同一個 region 檔」，偏 fail-closed |
+
+### 20.8 使用者裁示：到達目的宇宙的提示（v5.3 → v5.4，2026-10-08）
+
+- 背景：使用者實際試玩時，穿過量子膜後已經被傳送到目的宇宙，但地形與原世界相同（§2 :44），身邊也沒有任何提示，所以看不出自己已經換了世界。
+- 裁示：跨越成功之後，對**到達的那位玩家**以 actionbar 顯示到達提示，並依候選種類區分：
+  - NEW：「你已進入新的宇宙。」
+  - EXISTING：「你已進入另一個宇宙。」使用者選擇區分這兩種，這樣重逢到既有宇宙時，字面也正確。
+- 規則：
+  - 只在傳送結果是 MOVED、而且玩家已在目的世界時顯示；
+  - 不顯示 Universe ID；
+  - 用 `Text.translatable`，key 放在 `message.quantumchamber.m5.*`，zh_tw 與 en_us 兩份語言檔都要有；
+  - `FAILED_ROLLED_BACK` 與 `FAILED_RECOVERY_REQUIRED` 不顯示這則提示。
+- 不受影響的部分：其他參與者的訊息與比較器。
