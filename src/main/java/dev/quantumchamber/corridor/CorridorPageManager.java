@@ -916,6 +916,9 @@ public final class CorridorPageManager {
                 else if(server.getTicks()<space.checkpointRetryTick) return;
             }
             if(space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty())) return;
+            // M5 F6-0（G-NLIVE 的根因）：checkpoint 的相關範圍還有來源艙的 chunks，leaseReady 只看走廊。要做 checkpoint 時先問同一份範圍的 ready：未就緒（例如來源 chunk
+            // 的 entity storage 還在非同步載入）時下一個 tick 再試，不清除、不掃描、不存檔，也不算 checkpoint 失敗（不記 WARN、不退避）。
+            if(space.finalizing==null && !MeasuredWorldSaveCheckpoint.ready(server,record)) return;
             for(var lease : space.leases.values()) if(!clear(space,lease.slotId(),lease.bounds())) return;
             // 清除 iterator 完成後再查完整範圍；不能把曾寫 AIR 當成目前已清空。
             for(var lease : space.leases.values()) {

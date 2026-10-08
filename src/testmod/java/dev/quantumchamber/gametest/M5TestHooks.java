@@ -65,9 +65,12 @@ import org.slf4j.LoggerFactory;
  * <li>進入 SEALED 的 Controller 探針（{@link #SEAL_PROBE}，F5-2，F4a M-3）：{@code CollapseSealProbeMixin} 在 {@code CollapseService.sealCommitted}（進入 SEALED 之後的共同步驟）
  *     的開頭與每一個 RETURN 呼叫 {@link #aroundSealCommitted}，記下那一刻來源 Controller 的比較器與 {@code ChamberState}：RETURN 的值證明 {@code sealCommitted} 自己刷新了
  *     Controller（之後的排程刷新不在同一刻）。由 {@code M5GameTestSupport.installSealProbe} 安裝。</li>
+ * <li>原生存檔 checkpoint 的 entity storage 就緒保留（{@link #ENTITY_STORAGE_HOLD}，F6-0，G-NLIVE 的根因）：{@code ChunkSaveCheckpointEntityHoldMixin} 在
+ *     {@code ChunkSaveCheckpoint} 判斷 chunk 與 entity storage 都已載入的開頭呼叫 {@link #entityStorageHeld}，保留中的 chunk 回「尚未載入」。由
+ *     {@code M5GameTestSupport.holdEntityStorage} 安裝。</li>
  * </ul>
- * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、六個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動）、PASSAGE_READY 的
- * 提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
+ * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、七個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
+ * entity storage 就緒保留）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。
  */
 public final class M5TestHooks {
@@ -99,6 +102,8 @@ public final class M5TestHooks {
     static final Slot<StepPause> STEP_PAUSE = new Slot<>("塌縮流程推進的暫停");
     /** 進入 SEALED 的 Controller 探針（F5-2，F4a M-3；{@code M5GameTestSupport.installSealProbe}）。 */
     static final Slot<SealProbe> SEAL_PROBE = new Slot<>("進入 SEALED 的 Controller 探針");
+    /** 原生存檔 checkpoint 的 entity storage 就緒保留（F6-0，G-NLIVE 的根因；{@code M5GameTestSupport.holdEntityStorage}）。 */
+    static final Slot<EntityStorageHold> ENTITY_STORAGE_HOLD = new Slot<>("checkpoint 的 entity storage 就緒保留");
 
     /**
      * 這個 session 是否被暫停（純查詢，不計數；F5-2 Step 0，F5-1 fix round 1 quality re-review R-m2）：system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部；
@@ -235,6 +240,15 @@ public final class M5TestHooks {
     public static void aroundSealCommitted(dev.quantumchamber.persistence.SessionRecoveryRecord view, boolean returned) {
         var probe = SEAL_PROBE.get();
         if (probe != null) probe.observe(view, returned);
+    }
+
+    /**
+     * {@code ChunkSaveCheckpointEntityHoldMixin}：{@code ChunkSaveCheckpoint} 判斷一個 chunk「已載入為 WorldChunk，而且 entity storage 已載入」（{@code ready} 與 {@code save} 的前置條件
+     * 共用的 {@code loaded}）的開頭呼叫（F6-0）。回 true 時那次判斷回「尚未載入」。只在 server thread 上（checkpoint 只在 server thread 上執行）。
+     */
+    public static boolean entityStorageHeld(ServerWorld world, ChunkPos pos) {
+        var hold = ENTITY_STORAGE_HOLD.get();
+        return hold != null && world.getServer().isOnThread() && hold.holds(world, pos);
     }
 
     /**
@@ -715,5 +729,35 @@ public final class M5TestHooks {
         List<Observation> after() { return List.copyOf(after); }
         /** 記到的 RETURN 次數。 */
         int hits() { return after.size(); }
+    }
+
+    /**
+     * 原生存檔 checkpoint 的 entity storage 就緒保留（F6-0，G-NLIVE 的根因；{@link #ENTITY_STORAGE_HOLD}）：裝著、還沒 {@link #release} 的期間，{@code world} 的 {@code chunks} 在
+     * {@code ChunkSaveCheckpoint} 的就緒判斷裡回「entity storage 尚未載入」，等同 entity storage 非同步載入還沒完成（G-NLIVE 實際遇到的狀態；真正的載入時間無法決定性重現）。
+     * 只影響 checkpoint 的判斷（{@code ChunkSaveCheckpoint.ready} 與 {@code save} 的前置條件），不影響原版的 entity 管理與其他就緒判斷（例如走廊的 {@code leaseReady}）。
+     * {@code hits()} 是保留生效的次數（README：以 mixin 注入的 test 必須有 hits 一類的 witness）。
+     */
+    static final class EntityStorageHold {
+        private final RegistryKey<World> world;
+        private final Set<ChunkPos> chunks;
+        private final AtomicInteger hits = new AtomicInteger();
+        private volatile boolean released;
+
+        EntityStorageHold(RegistryKey<World> world, Set<ChunkPos> chunks) {
+            this.world = Objects.requireNonNull(world, "world"); this.chunks = Set.copyOf(chunks);
+            if (this.chunks.isEmpty()) throw new IllegalArgumentException("至少要保留一個 chunk");
+        }
+
+        boolean holds(ServerWorld target, ChunkPos pos) {
+            if (released || !target.getRegistryKey().equals(world) || !chunks.contains(pos)) return false;
+            hits.incrementAndGet();
+            return true;
+        }
+
+        /** 保留生效的次數。 */
+        int hits() { return hits.get(); }
+
+        /** 之後不再保留（仍裝著，hooks 釋放時移除）。 */
+        void release() { released = true; }
     }
 }

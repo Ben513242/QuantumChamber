@@ -661,6 +661,70 @@ public final class M4CandidateDoorGameTests {
             },() -> "MEASURED checkpoint 未被呼叫",hooks);
         });
     }
+    /**
+     * M5 F6-0（G-NLIVE 的根因，F4b-2 裁示第 3 條）：MEASURED 清理的原生存檔 checkpoint 涵蓋來源艙與走廊 lease 的 chunks，清理在 checkpoint 之前只對走廊的 lease 問
+     * leaseReady，來源艙的 chunks 沒有人先問 {@code ChunkSaveCheckpoint.ready}。以 testmod 讓來源艙 Controller 所在 chunk 在 checkpoint 的就緒判斷裡回「entity storage 尚未載入」
+     * （{@code M5GameTestSupport.holdEntityStorage}；G-NLIVE 實際遇到的狀態，真正的非同步載入時間無法決定性重現）。清理必須等它就緒：期間不呼叫 checkpoint、不記 WARN、
+     * 保留 lease（玩家已返還）；解除之後完成 DORMANT，checkpoint 恰一次而且被承認，沒有「checkpoint 已恢復」的 INFO（沒有失敗過）。修改前：checkpoint 照樣呼叫、丟
+     * 「相關 chunk／entity storage 尚未完整載入」、記「MEASURED 保留 receipt 等待安全返還」WARN 並進入 checkpoint 的退避。GameTest server 不以 20 TPS 節流，故以 server tick 計數。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_f60_source_entity_storage",tickLimit=100000)
+    public void native_measured_release_waits_for_the_source_entity_storage_windows(TestContext context) {
+        if(!Platform.isWindows()) { platformSkip(context,"native_measured_release_waits_for_the_source_entity_storage_windows"); return; }
+        M4PerTestUniverseProbe.begin(context,"native_measured_release_waits_for_the_source_entity_storage_windows");
+        nativeCandidates(context,1,(fixture,tick) -> {
+            var sid=fixture.record().sessionUuid(); var view=fixture.pages.currentMappings(sid).instances().getFirst();
+            var player=fixture.players.getFirst().player();
+            var selected=use(fixture,cell(view,new DoorKey(sid,1,DoorKey.DoorWallSide.NEGATIVE_LATERAL),1,1),player);
+            context.assertTrue(selected.isAccepted() && fixture.record().state()==SessionState.MEASURED,"真側門 checked SELECTED 後才進入 MEASURED 清理");
+            var journal=SessionRecoveryState.get(fixture.server);
+            // checkpoint 計數探針（不注入失敗）、entity storage 的保留與 log capture 是本測試專用 hook：任一段等待逾時或斷言失敗都必須移除。
+            var hooks=new M2CorridorGameTests.TestHooks();
+            var probe=new CheckpointFaultProbe(sid); probe.armed=false; checkpointFaultProbe=probe;
+            hooks.add(() -> { if(checkpointFaultProbe==probe) checkpointFaultProbe=null; });
+            LogCapture capture; M5TestHooks.EntityStorageHold hold;
+            try {
+                capture=new LogCapture("quantumchamber"); hooks.add(capture::close);
+                hold=M5GameTestSupport.holdEntityStorage(context,context.getWorld(),Set.of(new net.minecraft.util.math.ChunkPos(fixture.frame.controllerPos())),hooks);
+                player.removeStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE);
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            var witness=new LinkedHashMap<String,Boolean>();
+            // 清理走到 checkpoint 之前的就緒判斷（保留真的生效）之後，再觀察 100 個 server tick（修改前的 checkpoint 退避 20→40 會在這段期間重試）。
+            whenWithin(context,tick+1,120,() -> hold.hits()>0,held -> {
+                int start=fixture.server.getTicks();
+                whenWithin(context,held+1,120,() -> fixture.server.getTicks()>=start+100,observed -> {
+                    var receipt=journal.flushedRecords().get(sid);
+                    witness.put("sourceChunkHeld",hold.hits()>0);
+                    witness.put("noCheckpointWhileNotReady",probe.calls.isEmpty());
+                    witness.put("noWarnWhileNotReady",capture.matching(org.apache.logging.log4j.Level.WARN,"MEASURED 保留 receipt 等待安全返還",sid.toString()).isEmpty());
+                    witness.put("returnedWithLeasesKept",receipt!=null && receipt.state()==SessionState.MEASURED && !receipt.spaceLeases().isEmpty()
+                            && receipt.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned));
+                    witness.put("playerReturnedToSource",player.getServerWorld()==context.getWorld());
+                    hold.release();
+                    whenWithin(context,observed+1,120,() -> fixture.pages.measuredRecoveryComplete(sid),dormant -> {
+                        var finalReceipt=journal.flushedRecords().get(sid);
+                        witness.put("dormantOnceReady",finalReceipt!=null && MeasuredRecoveryPhase.from(finalReceipt)==MeasuredRecoveryPhase.DORMANT);
+                        witness.put("selectionReceiptKept",finalReceipt!=null && finalReceipt.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected);
+                        witness.put("oneAcceptedCheckpoint",probe.calls.size()==1);
+                        witness.put("neverWarned",capture.matching(org.apache.logging.log4j.Level.WARN,sid.toString()).isEmpty()
+                                && capture.matching(org.apache.logging.log4j.Level.ERROR,sid.toString()).isEmpty());
+                        witness.put("noCheckpointRecovery",capture.matching(org.apache.logging.log4j.Level.INFO,"原生存檔 checkpoint 已恢復",sid.toString()).isEmpty());
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M5_F60_SOURCE_ENTITY_STORAGE held={} observed={} dormant={} holdHits={} calls={}",
+                                held,observed,dormant,hold.hits(),probe.calls);
+                        hooks.release();
+                        context.assertTrue(!witness.containsValue(false),"MEASURED 清理等來源 chunk 的 entity storage 就緒："+witness+" calls="+probe.calls
+                                +" holdHits="+hold.hits());
+                        // DORMANT receipt 是本案例自建；取證後移除，避免封鎖後續 batch 的玩家與 Chamber。
+                        M4CandidateTestAccess.removeMeasuredForTeardown(fixture.server,sid);
+                        if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+                        whenWithin(context,dormant+1,30,() -> ChamberProtectionService.get().mayMutate(context.getWorld(),fixture.frame.controllerPos()),done -> {
+                            fixture.close(); M4PerTestUniverseProbe.complete(context);
+                        },() -> "DORMANT receipt 移除並 LOW 後來源保護未解除");
+                    },() -> "解除保留之後未完成 DORMANT："+witness+" calls="+probe.calls,hooks);
+                },() -> "觀察窗口逾時："+witness,hooks);
+            },() -> "MEASURED 清理沒有走到 checkpoint 的就緒判斷：calls="+probe.calls,hooks);
+        });
+    }
     private static CheckpointFaultProbe checkpointFaultProbe;
     /** testmod mixin 在 MeasuredWorldSaveCheckpoint.save 開頭呼叫；只對 own SID 記錄 tick，故障窗口內受控失敗。 */
     public static void beforeMeasuredCheckpoint(MinecraftServer server,SessionRecoveryRecord record) {

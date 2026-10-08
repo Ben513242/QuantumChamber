@@ -893,6 +893,17 @@ final class M5GameTestSupport {
     }
 
     /**
+     * F6-0（G-NLIVE 的根因）：原生存檔 checkpoint 的 entity storage 就緒保留（{@link M5TestHooks#ENTITY_STORAGE_HOLD}，testmod {@code ChunkSaveCheckpointEntityHoldMixin}）：裝著、
+     * 還沒 {@code release()} 的期間，{@code world} 的 {@code chunks} 在 {@code ChunkSaveCheckpoint} 的就緒判斷裡回「entity storage 尚未載入」。test 以 {@code hits()} 當 witness。
+     * 安裝、占用與移除的規則見 {@link #installHook}。
+     */
+    static M5TestHooks.EntityStorageHold holdEntityStorage(TestContext context, ServerWorld world, Set<ChunkPos> chunks, M2CorridorGameTests.TestHooks hooks) {
+        var hold = new M5TestHooks.EntityStorageHold(world.getRegistryKey(), chunks);
+        installHook(context, M5TestHooks.ENTITY_STORAGE_HOLD, hold, hooks);
+        return hold;
+    }
+
+    /**
      * F5-1：把玩家放到來源艙的門口（腳在區域座標 ({@code x}, {@code y}, {@code z})，同一個世界），朝向 {@code yaw}、{@code pitch}，速度設為 {@code velocity}。z ≥ 0.5 是
      * 門板中線的內側，z &lt; 0.5 是外側；跨越是「上一個 tick 在內側、這個 tick 在外側」，而且腳在門口（x∈[1,6)、y∈[1,6)；spec §10.3）。
      */
