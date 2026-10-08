@@ -22,6 +22,12 @@ $taskGradle = $Gradle
 
 # chain 表：chain 名稱 → 依序執行的 phase（名稱必須與 M5CollapseRecoveryProbe.phases() 相同）、預期的結束與 halt 的窗口。
 $chains = [ordered]@{
+    # W2：allocation ledger flush 之後、catalog flush 之前。
+    'w2' = @(@{phase='w2-crash'; ending='halt'; window='ALLOCATION_APPENDED'}, @{phase='w2-restart'; ending='stop'; window=''})
+    # W3：catalog flush 之後、物化之前（重啟時由 EAGER_ENABLED 物化）。
+    'w3' = @(@{phase='w3-crash'; ending='halt'; window='CATALOG_ALLOCATED'}, @{phase='w3-restart'; ending='stop'; window=''})
+    # W5：discovery 追加之後、投影之前。
+    'w5' = @(@{phase='w5-crash'; ending='halt'; window='DISCOVERY_APPENDED'}, @{phase='w5-restart'; ending='stop'; window=''})
 }
 $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($name in $Only) { if (-not $chains.Contains($name)) { throw "未知的 chain：$name（可用：$($chains.Keys -join ', ')）" } }

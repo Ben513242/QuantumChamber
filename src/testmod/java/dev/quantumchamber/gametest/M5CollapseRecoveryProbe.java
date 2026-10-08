@@ -160,7 +160,16 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
 
     private static Map<String, PhaseFactory> phases() {
         var table = new LinkedHashMap<String, PhaseFactory>();
+        // W2、W3、W5（spec §12）：DORMANT 的 NEW 收據，參與者由艙外進入觸發塌縮，在窗口 crash；重啟之後推進到 PASSAGE_READY、跨越與 (b) 終局。
+        dormantNewChain(table, "w2", CrashWindow.ALLOCATION_APPENDED);
+        dormantNewChain(table, "w3", CrashWindow.CATALOG_ALLOCATED);
+        dormantNewChain(table, "w5", CrashWindow.DISCOVERY_APPENDED);
         return Collections.unmodifiableMap(table);
+    }
+
+    private static void dormantNewChain(Map<String, PhaseFactory> table, String chain, CrashWindow window) {
+        table.put(chain + "-crash", probe -> probe.dormantNewCrash(window));
+        table.put(chain + "-restart", probe -> probe.dormantNewRestart(window, chain + "-crash"));
     }
 
     // ---- 生命週期 ----
@@ -430,6 +439,177 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
                 "haltStartupNonce", text(halt, "startupNonce"), "haltStartTimeUtc", text(halt, "startTimeUtc")));
         proof.put("universeId", universe.value().toString());
         return halt;
+    }
+
+    // ---- DORMANT NEW 的 crash／restart（W2、W3、W5） ----
+
+    /**
+     * crash phase：fresh 世界蓋原艙、連線參與者 P 並移到艙外 → 原艙註冊之後寫 DORMANT 的 NEW 收據（P 已返還、沒有 lease）、原生存檔（原艙、registry、journal、
+     * P 的 playerdata 都在磁碟上；P 存在艙外），再裝上 {@code window} 的 crash 點 → P 由艙外進入 → 塌縮提交 COLLAPSING → RESOLVE 走到窗口時 halt。
+     */
+    private Phase dormantNewCrash(CrashWindow window) {
+        return new Phase(Ending.HALT, this::requireFreshWorld, this::crashPointHealthy, List.of(
+                new Step("build", 1, () -> { buildOrigin(); return true; }),
+                new Step("registered", 200, () -> {
+                    if (!M5GameTestSupport.registeredIdle(source, FRAME)) return false;
+                    chamber = M5GameTestSupport.controller(source, FRAME).chamberUuid();
+                    return true;
+                }),
+                new Step("receipt", 1, () -> { writeDormantNewReceipt(); armCrash(window); return true; }),
+                new Step("enter", 1, () -> { M5GameTestSupport.moveInside(participantPlayer(), FRAME); return true; }),
+                new Step("committed", 40, () -> {
+                    var record = journal.flushedRecords().get(sid);
+                    if (record == null || record.state() != SessionState.COLLAPSING) return false;
+                    expect("committedToTheDerivedUniverse", destination(record).equals(Optional.of(universe)), () -> "Destination=" + record.collapse().destination());
+                    return true;
+                }),
+                new Step("halt", 200, () -> false)));
+    }
+
+    /**
+     * restart phase：讀回 crash phase 的 halt receipt 與 MEASURED 收據，開服時斷言窗口的磁碟狀態（W3、W5 另斷言 bootstrap 已物化 {@code EAGER_ENABLED} 的 U）；
+     * 之後 P 真 JOIN（在艙外、來源世界）→ RESOLVE 完成 → P 由艙外進入 → PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE）→ P 越過門板中線、傳送到 U →
+     * (b) 全員都已跨過的終局。每個 tick 斷言 catalog 只出現 Destination 的 UniverseId、record 的 Destination 與候選不變。
+     */
+    private Phase dormantNewRestart(CrashWindow window, String crashPhase) {
+        return new Phase(Ending.STOP, () -> restartStarted(window, crashPhase), this::restartInvariants, List.of(
+                new Step("join", 1, () -> { joinParticipant(); return true; }),
+                new Step("resolved", 400, this::resolvedThenEnter),
+                new Step("ready", 600, this::passageReady),
+                new Step("doorway", 1, () -> {
+                    M5GameTestSupport.standInDoorway(participantPlayer(), FRAME, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO);
+                    return true;
+                }),
+                new Step("crossed", 10, this::crossed),
+                new Step("ended", 40, this::endedByEveryoneCrossing)));
+    }
+
+    /** restart 的開服檢查：窗口在 RESOLVE 的哪一步（halt 當下是否已物化）、record 仍是 COLLAPSING 且 Destination 與候選不變、allocation 恰一筆，以及窗口各自的磁碟狀態。 */
+    private void restartStarted(CrashWindow window, String crashPhase) throws Exception {
+        var halt = readCrashReceipt(crashPhase, window);
+        // 窗口的位置：W2、W3 在物化之前 crash，W5 在物化之後（RESOLVE 的第 3 步）。
+        boolean activeAtHalt = halt.get("universeActiveAtHalt").getAsBoolean();
+        expect(window == CrashWindow.DISCOVERY_APPENDED ? "materializedBeforeTheCrash" : "notMaterializedBeforeTheCrash",
+                activeAtHalt == (window == CrashWindow.DISCOVERY_APPENDED), () -> "halt 當下 U 的物化狀態=" + activeAtHalt);
+        var current = journal.flushedRecords().get(sid);
+        expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(journal, sid));
+        expect("sameDestination", destination(current).equals(Optional.of(universe)), () -> "Destination=" + current.collapse().destination());
+        expect("noRedraw", sameCandidate(receipt, current), () -> "候選 context、ledger 或 selection 與 crash 前不同");
+        expect("oneAllocationForTheToken", M5CollapseDiskEvidence.allocations(data()).equals(List.of(allocation())), () -> "allocation ledger=" + allocationsOrError());
+        var catalog = UniverseRegistryState.get(server).flushedRecords();
+        boolean discovered = M5CollapseDiskEvidence.discovery(saveRoot()).stream().anyMatch(record -> record.universeId().equals(universe));
+        boolean active = universeWorld().isPresent();
+        switch (window) {
+            case ALLOCATION_APPENDED -> {
+                expect("catalogNotYetAllocated", catalog.size() == catalogBefore && !catalog.containsKey(universe), () -> "catalog=" + catalog.keySet());
+                expect("notYetMaterialized", !active, () -> "U 已物化");
+                expect("notYetDiscovered", !discovered, () -> "discovery 已有 U");
+            }
+            case CATALOG_ALLOCATED, DISCOVERY_APPENDED -> {
+                expect("catalogAllocatedOnce", catalog.size() == catalogBefore + 1 && eagerEnabled(catalog.get(universe)), () -> "catalog=" + catalog);
+                // spec §12 W3：重啟時由 EAGER_ENABLED 物化（UniverseLifecycleService 的開服 bootstrap，早於這個 SERVER_STARTED 的 AFTER phase）。
+                expect("bootstrapMaterializedEagerEnabled", active, () -> "開服 bootstrap 沒有物化 U");
+                if (window == CrashWindow.DISCOVERY_APPENDED) expect("alreadyDiscovered", discovered, () -> "discovery 沒有 U");
+                else expect("notYetDiscovered", !discovered, () -> "discovery 已有 U");
+            }
+            default -> throw new IllegalArgumentException("dormant NEW chain 不支援的窗口：" + window);
+        }
+        expect("noProjectionYet", M5CollapseDiskEvidence.projections(data()).isEmpty(), () -> "projection ledger 不是空的");
+        proof.put("startedDisk", M5CollapseDiskEvidence.summary(saveRoot(), sid));
+    }
+
+    /** 每個 tick（spec §12 的共同斷言）：catalog 只出現 Destination 的 UniverseId、最多多 1 筆；record 在時 Destination 與候選不變；參與者在來源世界或 U。 */
+    private void restartInvariants() {
+        var catalogIds = UniverseRegistryState.get(server).records().keySet();
+        expect("catalogOnlyDestination", catalogIds.stream().allMatch(universe::equals), () -> "Destination 是 " + universe.value() + "，catalog 有 " + catalogIds);
+        expect("catalogAtMostOneMore", catalogIds.size() <= catalogBefore + 1, () -> "catalog " + catalogIds.size() + " 筆，crash 前 " + catalogBefore);
+        var current = journal.flushedRecords().get(sid);
+        if (current != null) {
+            expect("sameDestination", destination(current).equals(Optional.of(universe)), () -> "Destination=" + current.collapse().destination());
+            expect("noRedraw", sameCandidate(receipt, current), () -> "候選 context、ledger 或 selection 與 crash 前不同");
+        }
+        var player = onlinePlayer();
+        if (player != null) {
+            var world = player.getServerWorld();
+            expect("participantInSourceOrUniverse", world == source || world == universeWorld().orElse(null), () -> "參與者在 " + world.getRegistryKey().getValue());
+        }
+    }
+
+    private void joinParticipant() {
+        var connection = connect(new GameProfile(participant, "m5-" + participant.toString().substring(0, 8)));
+        var player = connection.player();
+        expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
+        expect("joinedInTheSourceWorld", player.getServerWorld() == source, () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
+        expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
+        expect("participantNotBlocked", !SessionRecoveryManager.blocks(participant, server), () -> "已返還的參與者被 recovery 攔截");
+    }
+
+    private boolean resolvedThenEnter() throws Exception {
+        if (capture.matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid.toString()).isEmpty()) return false;
+        expect("materialized", universeWorld().isPresent(), () -> "RESOLVE 完成但 U 沒有物化");
+        var catalog = UniverseRegistryState.get(server).flushedRecords();
+        expect("catalogExactlyOneMore", catalog.size() == catalogBefore + 1 && eagerEnabled(catalog.get(universe)), () -> "catalog=" + catalog);
+        expect("discoveredOnce", M5CollapseDiskEvidence.discovery(saveRoot()).stream().filter(record -> record.universeId().equals(universe)).count() == 1,
+                () -> "discovery 沒有恰一筆 U");
+        M5GameTestSupport.moveInside(participantPlayer(), FRAME);
+        return true;
+    }
+
+    /** PASSAGE_READY 之後最多再等 5 個 tick，讓門與 Controller 的刷新落地，再斷言 passable、比較器 15 與投影 COMPLETE；之後 P 站到門板中線內側。 */
+    private boolean passageReady() throws Exception {
+        var record = journal.flushedRecords().get(sid);
+        if (record == null || record.state() != SessionState.PASSAGE_READY) return false;
+        readyTicks++;
+        boolean door = M5GameTestSupport.doorPassable(source, FRAME), comparator = controllerSignal(ChamberState.PASSAGE, 15);
+        if (!(door && comparator) && readyTicks < 5) return false;
+        expect("noOneCrossedYet", record.collapse().crossed().isEmpty(), () -> "Crossed=" + record.collapse().crossed());
+        expect("doorPassable", door, () -> "PASSAGE_READY 之後門不是 passable 量子膜");
+        expect("comparatorFifteen", comparator, () -> "PASSAGE_READY 之後 Controller 不是 PASSAGE／比較器 15");
+        expect("projectionComplete", M5CollapseDiskEvidence.projections(data()).equals(List.of(projection())), () -> "projection ledger=" + projectionsOrError());
+        M5GameTestSupport.standInDoorway(participantPlayer(), FRAME, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+        return true;
+    }
+
+    private boolean crossed() {
+        var world = universeWorld().orElseThrow();
+        var player = participantPlayer();
+        if (player.getServerWorld() != world) return false;
+        var record = journal.flushedRecords().get(sid);
+        expect("crossedRecorded", record == null || record.collapse().crossed().equals(List.of(participant)), () -> "Crossed=" + record.collapse().crossed());
+        expect("oneCrossingInfo", capture.matching(Level.INFO, "參與者已穿過量子通道", sid.toString()).size() == 1, () -> "「參與者已穿過量子通道」不是恰一則");
+        return true;
+    }
+
+    private boolean endedByEveryoneCrossing() throws Exception {
+        if (journal.flushedRecords().containsKey(sid) || journal.records().containsKey(sid)) return false;
+        expect("endedByEveryoneCrossing", capture.matching(Level.INFO, "量子通道已結束", "(b) 全員都已跨過", sid.toString()).size() == 1,
+                () -> "沒有恰一則 (b) 的結束 INFO");
+        expect("plainOpenAfterTheEnd", M5GameTestSupport.doorAll(source, FRAME, true, MembraneState.NONE), () -> "終局之後原艙門不是一般開門");
+        sameUniverseEverywhere();
+        return true;
+    }
+
+    /** spec §12：同一個 UniverseId（Destination、allocation entry、catalog、discovery、projection entry、ACTIVE world key），catalog 恰多 1 筆，P 在 U。 */
+    private void sameUniverseEverywhere() throws Exception {
+        var catalog = UniverseRegistryState.get(server).flushedRecords();
+        var record = catalog.get(universe);
+        expect("catalogExactlyOneMore", catalog.size() == catalogBefore + 1 && eagerEnabled(record), () -> "catalog=" + catalog);
+        expect("catalogOnDisk", M5CollapseDiskEvidence.catalog(data()).keySet().equals(catalog.keySet()), () -> "磁碟上的 catalog 與 flushed 不同");
+        expect("oneAllocationForTheToken", M5CollapseDiskEvidence.allocations(data()).equals(List.of(allocation())), () -> "allocation ledger=" + allocationsOrError());
+        var discovery = M5CollapseDiskEvidence.discovery(saveRoot());
+        expect("discoveredOnce", discovery.size() == 1 && discovery.getFirst().universeId().equals(universe) && discovery.getFirst().gameplayEligible(),
+                () -> "discovery=" + discovery);
+        expect("projectionComplete", M5CollapseDiskEvidence.projections(data()).equals(List.of(projection())), () -> "projection ledger=" + projectionsOrError());
+        var world = universeWorld();
+        var descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
+        expect("activeWorldKeyIsTheDestination", world.isPresent() && descriptor != null && world.get().getRegistryKey().equals(descriptor.worldKey()),
+                () -> "ACTIVE world 與 catalog 的 world key 不同");
+        long universeWorlds = StreamSupport.stream(server.getWorlds().spliterator(), false)
+                .filter(candidate -> UniverseRegistryState.get(server).findByWorldKey(candidate.getRegistryKey()).isPresent()).count();
+        expect("oneUniverseWorld", universeWorlds == 1, () -> "Universe world 有 " + universeWorlds + " 個");
+        var player = participantPlayer();
+        expect("participantInTheUniverse", player.getServerWorld() == world.orElseThrow(), () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue());
+        proof.put("finalDisk", M5CollapseDiskEvidence.summary(saveRoot(), sid));
     }
 
     // ---- 共用 ----
