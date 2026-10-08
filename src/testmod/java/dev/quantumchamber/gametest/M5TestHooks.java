@@ -106,7 +106,7 @@ public final class M5TestHooks {
      * {@link #cancelStep}（只由 {@code CollapseSuspendMixin} 呼叫）。
      */
     public static boolean collapseSuspended(UUID session) {
-        if ("all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session)) return true;
+        if (suspendedForGood(session)) return true;
         var pause = STEP_PAUSE.get();
         return pause != null && pause.pausing(session);
     }
@@ -116,9 +116,17 @@ public final class M5TestHooks {
      * （{@link #STEP_PAUSE}）取消時另計一次 {@link StepPause#hits}（F5-2 Step 0，R-m2：計數只在這個入口，查詢沒有副作用）。
      */
     public static boolean cancelStep(UUID session) {
-        if ("all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session)) return true;
+        if (suspendedForGood(session)) return true;
         var pause = STEP_PAUSE.get();
         return pause != null && pause.cancel(session);
+    }
+
+    /**
+     * 不可撤銷的暫停（{@link #collapseSuspended} 與 {@link #cancelStep} 共用的前半，F6-0，F5-2 quality Nit）：system property {@code quantumchamber.test.collapseSuspended=all}，或
+     * 已加入 {@link #suspendCollapse} 的集合。
+     */
+    private static boolean suspendedForGood(UUID session) {
+        return "all".equals(System.getProperty("quantumchamber.test.collapseSuspended")) || COLLAPSE_SUSPENDED.contains(session);
     }
 
     /** 暫停這個 session 的塌縮流程（不可撤銷）。 */

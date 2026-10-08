@@ -21,15 +21,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(value=CollapseService.class,remap=false)
 abstract class CollapseSealProbeMixin {
-    @Inject(method="sealCommitted(Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/collapse/CollapseService$Track;Ldev/quantumchamber/collapse/SealedReason;Ljava/lang/RuntimeException;Ldev/quantumchamber/persistence/SessionRecoveryState$CommitResult;)V",
-            at=@At("HEAD"),remap=false,require=1)
+    /** {@code sealCommitted} 的完整 descriptor（HEAD 與 RETURN 兩處共用，F6-0，F5-2 quality Nit）。 */
+    private static final String SEAL_COMMITTED="sealCommitted(Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/collapse/CollapseService$Track;"
+            +"Ldev/quantumchamber/collapse/SealedReason;Ljava/lang/RuntimeException;Ldev/quantumchamber/persistence/SessionRecoveryState$CommitResult;)V";
+
+    @Inject(method=SEAL_COMMITTED,at=@At("HEAD"),remap=false,require=1)
     private void quantumchamberTest$beforeSeal(SessionRecoveryRecord view,@Coerce Object track,SealedReason reason,RuntimeException cause,
             SessionRecoveryState.CommitResult result,CallbackInfo callback) {
         M5TestHooks.aroundSealCommitted(view,false);
     }
 
-    @Inject(method="sealCommitted(Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/collapse/CollapseService$Track;Ldev/quantumchamber/collapse/SealedReason;Ljava/lang/RuntimeException;Ldev/quantumchamber/persistence/SessionRecoveryState$CommitResult;)V",
-            at=@At("RETURN"),remap=false,require=1)
+    @Inject(method=SEAL_COMMITTED,at=@At("RETURN"),remap=false,require=1)
     private void quantumchamberTest$afterSeal(SessionRecoveryRecord view,@Coerce Object track,SealedReason reason,RuntimeException cause,
             SessionRecoveryState.CommitResult result,CallbackInfo callback) {
         M5TestHooks.aroundSealCommitted(view,true);
