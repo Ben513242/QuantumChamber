@@ -126,8 +126,9 @@ public final class CollapseService {
     public static final String MESSAGE_PASSAGE_OPENED = "message.quantumchamber.m5.passage_opened";
     /** spec §10.8「傳送失敗」：通道傳送沒有完成、玩家仍在原世界時對那位玩家顯示（§10.3，F5-1）。 */
     public static final String MESSAGE_PASSAGE_TRANSFER_FAILED = "message.quantumchamber.m5.passage_transfer_failed";
-    /** spec §10.8「通道結束」：通道結束 (a)–(d) 時對在線的參與者顯示（F5-1；對象的判斷見 {@link PassageService}）。 */
+    /** spec §10.8「通道結束」：通道結束 (a)–(d) 時只對在線、而且不在 Crossed 中的參與者顯示（F5-1；對象依 v5.5 的 §20.9，F5-3；判斷見 {@link PassageService}）。 */
     public static final String MESSAGE_PASSAGE_CLOSED = "message.quantumchamber.m5.passage_closed";
+    // 到達目的宇宙的 title（spec §10.8、§20.8、§20.9，F5-3）只由 PassageService 送出，key 在那裡：PassageService.MESSAGE_ARRIVED_NEW／MESSAGE_ARRIVED_EXISTING。
     /** spec §6.2：RESOLVE 的等待（catalog 或 discovery 有未確認的寫入）持續超過這個 tick 數時記一次 WARN。 */
     static final int WAIT_WARN_TICKS = 600;
     /** {@link #warn} 的寫入種類：進入 SEALED 的 journal 寫入、SEALED→COLLAPSING 的重試。 */
@@ -1202,7 +1203,7 @@ public final class CollapseService {
     }
 
     // ---- 共用（package-private 的幾個也由 OriginDoors 與 PassageService 呼叫：terminated、terminalFailed、neighborhoodLoaded、refresh(record)、warn、track、describe；
-    // PassageService 另用 sealCommitted、sourceSignal、notifyParticipants） ----
+    // PassageService 另用 sealCommitted、sourceSignal） ----
 
     /** checked 終局讀回確認之後：釋放 runtime 與來源 ticket（spec §5）與目的世界的 ticket（§9.1），不再追蹤這個 session。 */
     void terminated(SessionRecoveryRecord record) {

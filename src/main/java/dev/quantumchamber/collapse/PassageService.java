@@ -86,7 +86,12 @@ final class PassageService {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
     /** §10.3：門板中線的 local z（門板那一格的中央）。 */
     static final double MIDLINE = 0.5;
-    /** spec §10.8「跨越成功、到達目的宇宙」（§20.8、§20.9，F5-3）：候選是 NEW 時的到達提示，以 title 只對到達的那位玩家顯示（{@link #arrived}）。 */
+    /**
+     * spec §10.8「跨越成功、到達目的宇宙」（§20.8、§20.9，F5-3）：候選是 NEW 時的到達提示，以 title 只對到達的那位玩家顯示（{@link #arrived}）。
+     * <p>到達提示的 key 與淡入、停留、淡出放在這裡，不放在 {@link CollapseService} 的 {@code MESSAGE_*} 區塊（那裡有一行指向這裡）：只有 PassageService 送出，而且 F5-3 依
+     * plan 不改 CollapseService（已約 1590 行）。代價是常數跟著這個類別是 package-private：testmod 看不到，以字面值斷言（{@code M5UniverseGameTests} 的
+     * {@code ARRIVED_NEW_KEY}／{@code ARRIVED_EXISTING_KEY}）；同 package 的 JUnit（{@code CollapseServiceTest}）直接引用。
+     */
     static final String MESSAGE_ARRIVED_NEW = "message.quantumchamber.m5.arrived_new";
     /** 同 {@link #MESSAGE_ARRIVED_NEW}，候選是 EXISTING 時（重逢到既有的宇宙）。 */
     static final String MESSAGE_ARRIVED_EXISTING = "message.quantumchamber.m5.arrived_existing";
