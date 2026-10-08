@@ -112,6 +112,8 @@ final class M5CollapseRun {
     // ---- 狀態 ----
 
     final M5CollapseRecoveryProbe.Configuration config;
+    /** entrypoint 的 phase 表的全部 phase 名稱（依表的順序）：寫進 receipt 的 {@code phaseTable}，harness 與 chain 表比對。 */
+    private final List<String> phaseTable;
     final Map<String, Object> proof = new LinkedHashMap<>();
     final List<String> failures = new ArrayList<>();
     /** 已完成的 step：名稱 → 完成的 server tick 與花了幾個 tick。 */
@@ -138,8 +140,9 @@ final class M5CollapseRun {
     private boolean finished, passed;
     private M5TestHooks.CrashPoint crashPoint;
 
-    M5CollapseRun(M5CollapseRecoveryProbe.Configuration config) {
+    M5CollapseRun(M5CollapseRecoveryProbe.Configuration config, List<String> phaseTable) {
         this.config = config;
+        this.phaseTable = List.copyOf(phaseTable);
     }
 
     /** chain 的 fixture 在建構時登記（診斷與 halt 當下的事實）。 */
@@ -153,6 +156,7 @@ final class M5CollapseRun {
     void start(M5CollapseRecoveryProbe.PhaseFactory factory) {
         proof.put("producer", "M5CollapseRecoveryProbe");
         proof.put("phase", config.phase());
+        proof.put("phaseTable", phaseTable);
         proof.put("nonce", config.nonce());
         proof.put("startupNonce", config.startupNonce());
         proof.put("pid", ProcessHandle.current().pid());

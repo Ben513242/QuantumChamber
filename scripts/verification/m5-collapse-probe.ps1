@@ -4,7 +4,8 @@
 #   halt：Gradle 非 0、JVM exit code 77（以 JVM 的 process handle 讀取，另以 Gradle 輸出的 "finished with non-zero exit value 77" 交叉核對）、
 #         halt.json status HALT 且窗口相符、乾淨（hit 1、failures 空、crashPointFailure none），沒有 final.json。
 # 兩種結束都核對 PID／StartTime／startupNonce 與 receipt 相符、JVM 已不存在、world/session.lock 可獨占開啟；同一條 chain 的 PID@StartTime 與 startupNonce 都不同。
-# 任何失敗都 throw，保留 root 與 phase evidence，禁止在同 root 重跑。
+# 三份表的一致性（F6-2a）：receipt 的 ending 必須等於這裡 chain 表的預期結束，receipt 的 phaseTable（probe 的 phase 表）必須與 chain 表的全部 phase 依序相同。
+# 任何失敗都 throw（訊息先附上 final.json／halt.json 的 status 與 failures），保留 root 與 phase evidence，禁止在同 root 重跑。
 # 參數：
 #   -Only          只跑指定 chain（例如 -Only w2,w3；以 pwsh -File 呼叫時也接受逗號分隔的單一字串）；未指定時跑全部
 #   -EvidenceRoot  彙整 collapse-run-<runId>.json 的位置；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
@@ -41,6 +42,8 @@ $chains = [ordered]@{
     # 開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本，不是 crash 窗口）：setup 提交 COLLAPSING 的同一個 tick 正常停服，restart 開服前移走 ledger。
     'degraded' = @(@{phase='deg-setup'; ending='stop'; window=''}, @{phase='deg-restart'; ending='stop'; window=''})
 }
+# chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
+$tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })
 $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($name in $Only) { if (-not $chains.Contains($name)) { throw "未知的 chain：$name（可用：$($chains.Keys -join ', ')）" } }
 
@@ -63,6 +66,23 @@ $EvidenceRoot = Resolve-Evidence $EvidenceRoot
 $probeOwner = Resolve-Evidence (Join-Path $taskProject '.superpowers/sdd/2026-10-01-m5-collapse-passage')
 $taskRunId = [guid]::NewGuid().ToString('N')
 $taskResults = [System.Collections.Generic.List[object]]::new()
+
+# phase evidence 裡 receipt 的摘要（status 與 failures；halt.json 另有 hit、crashPointFailure、refused），附在失敗訊息上：不論哪一項檢查失敗，都先看得到 probe 判定的原因。
+function Get-ReceiptNote([string]$PhaseEvidence) {
+    $notes = @()
+    foreach ($name in 'final.json', 'halt.json') {
+        $path = Join-Path $PhaseEvidence $name
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        try {
+            $r = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String
+            $note = "$name status=$($r.status) failures=[$(@($r.failures) -join ' | ')]"
+            if ($name -eq 'halt.json') { $note += " hit=$($r.hit) crashPointFailure=$($r.crashPointFailure) refused=[$(@($r.refused) -join ' | ')]" }
+            $notes += $note
+        } catch { $notes += "$name 讀不出來：$_" }
+    }
+    if ($notes.Count -eq 0) { return '沒有 final.json 也沒有 halt.json' }
+    return ($notes -join '；')
+}
 
 function Invoke-OwnedPhase([string]$Nonce, [string]$Phase, [string]$Root, [string]$Ending, [string]$Window) {
     $phaseEvidence = Join-Path $probeOwner "collapse-$Nonce/$Phase"
@@ -103,21 +123,20 @@ function Invoke-OwnedPhase([string]$Nonce, [string]$Phase, [string]$Root, [strin
     $gradleOutput = (Get-Content -LiteralPath $stdout -Raw) + (Get-Content -LiteralPath $stderr -Raw)
     $finalPath = Join-Path $phaseEvidence 'final.json'
     $haltPath = Join-Path $phaseEvidence 'halt.json'
+    $note = Get-ReceiptNote $phaseEvidence
     if ($Ending -eq 'stop') {
-        if ($launcher.ExitCode -ne 0) { throw "Gradle 非零退出：$($launcher.ExitCode)；保留 root：$Root" }
-        if ($javaExit -ne 0) { throw "JVM exit code $javaExit（預期正常停止的 0）；保留 root：$Root" }
-        if (Test-Path -LiteralPath $haltPath) { throw "預期正常停止的 phase 留下 halt receipt：$haltPath" }
+        if ($launcher.ExitCode -ne 0) { throw "Gradle 非零退出：$($launcher.ExitCode)（$note）；保留 root：$Root" }
+        if ($javaExit -ne 0) { throw "JVM exit code $javaExit（預期正常停止的 0；$note）；保留 root：$Root" }
+        if (Test-Path -LiteralPath $haltPath) { throw "預期正常停止的 phase 留下 halt receipt（$note）：$haltPath" }
         if (-not (Test-Path -LiteralPath $finalPath)) { throw "未產生正常 stop receipt：$phaseEvidence" }
         $receiptPath = $finalPath
         $receipt = Get-Content -LiteralPath $finalPath -Raw | ConvertFrom-Json -DateKind String
         if ($receipt.status -ne 'PASS' -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested) { throw "probe 未通過：$phaseEvidence failures=$($receipt.failures -join ' | ')" }
     } elseif ($Ending -eq 'halt') {
-        if ($launcher.ExitCode -eq 0) { throw "預期 halt 的 phase 以 Gradle exit 0 結束；保留 root：$Root" }
-        if (Test-Path -LiteralPath $finalPath) {
-            $failed = Get-Content -LiteralPath $finalPath -Raw | ConvertFrom-Json -DateKind String
-            throw "預期 halt 的 phase 正常停止了（final.json status=$($failed.status) failures=$($failed.failures -join ' | ')）：$phaseEvidence"
-        }
-        if ($javaExit -ne 77) { throw "JVM exit code $javaExit（預期 halt 的 77）；保留 root：$Root" }
+        # 先看 final.json：halt phase 最常見的失敗是窗口沒有到達或斷言失敗，probe 照常停止並寫 FAIL 的 final.json（這時 Gradle 是 exit 0）。
+        if (Test-Path -LiteralPath $finalPath) { throw "預期 halt 的 phase 正常停止了（$note）：$phaseEvidence" }
+        if ($launcher.ExitCode -eq 0) { throw "預期 halt 的 phase 以 Gradle exit 0 結束（$note）；保留 root：$Root" }
+        if ($javaExit -ne 77) { throw "JVM exit code $javaExit（預期 halt 的 77；$note）；保留 root：$Root" }
         if ($gradleOutput -notmatch 'finished with non-zero exit value 77') { throw "Gradle 輸出沒有 'finished with non-zero exit value 77'：$phaseEvidence" }
         if (-not (Test-Path -LiteralPath $haltPath)) { throw "未產生 halt receipt：$phaseEvidence" }
         $receiptPath = $haltPath
@@ -126,6 +145,14 @@ function Invoke-OwnedPhase([string]$Nonce, [string]$Phase, [string]$Root, [strin
         # 乾淨的 halt（F6-2a）：crash 點的第一次 hit、crash 點沒有記下失敗、failures 是空的（probe 端也守門：不乾淨時不以 77 結束）。
         if ($receipt.hit -ne 1 -or @($receipt.failures).Count -ne 0 -or $receipt.crashPointFailure -ne 'none') { throw "halt 不乾淨：hit=$($receipt.hit) failures=$(@($receipt.failures) -join ' | ') crashPointFailure=$($receipt.crashPointFailure)：$phaseEvidence" }
     } else { throw "未知的結束方式：$Ending" }
+    # 三份表的一致性：receipt 的 ending 是 probe 的 phase 宣告的結束；phaseTable 是 probe 的整張 phase 表。
+    if ($receipt.ending -cne $Ending.ToUpperInvariant()) { throw "receipt 的 ending=$($receipt.ending) 與 chain 表的 $Ending 不同：$receiptPath" }
+    $receiptTable = @($receipt.phaseTable)
+    if (($receiptTable -join ',') -cne ($tablePhases -join ',')) {
+        $onlyJava = @($receiptTable | Where-Object { $_ -cnotin $tablePhases })
+        $onlyTable = @($tablePhases | Where-Object { $_ -cnotin $receiptTable })
+        throw "probe 的 phase 表與 chain 表不一致（順序也必須相同）：只在 probe=[$($onlyJava -join ',')] 只在 chain 表=[$($onlyTable -join ',')]：$receiptPath"
+    }
     if ($receipt.runtimeScope -ne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds) { throw 'collapse receipt 必須明確標示 testmod runtime，不能冒充 main-only' }
     if ($javaId -ne $receipt.pid -or $receipt.startupNonce -ne $startupNonce) { throw 'JVM identity receipt 不符' }
     $recordedStart = [DateTimeOffset]::Parse($receipt.startTimeUtc)

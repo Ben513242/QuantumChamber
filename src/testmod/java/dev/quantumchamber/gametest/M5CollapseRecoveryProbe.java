@@ -32,7 +32,8 @@ import net.fabricmc.api.ModInitializer;
  * </ul>
  * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
- * 「M5 collapse probe」）。
+ * 「M5 collapse probe」）。receipt 記下這張表的全部 phase 名稱（{@code phaseTable}）與這個 phase 的結束（{@code ending}），{@code m5-collapse-probe.ps1} 逐一與
+ * {@code $chains} 比對，任何一邊多出或少了 phase、或結束不同都判 FAIL。
  */
 public final class M5CollapseRecoveryProbe implements ModInitializer {
     /** phase 表：phase 名稱 → 建立這個 phase 的 factory（依 chain 的順序）。 */
@@ -71,7 +72,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     @Override public void onInitialize() {
         var config = Configuration.read(PHASES.keySet());
         if (config == null) return;
-        new M5CollapseRun(config).start(PHASES.get(config.phase()));
+        new M5CollapseRun(config, List.copyOf(PHASES.keySet())).start(PHASES.get(config.phase()));
     }
 
     /** probe 的設定（system property {@code quantumchamber.m5collapse.*}，由 build.gradle 的 m5Collapse run 從 {@code -Pm5Collapse*} 轉入）。 */
