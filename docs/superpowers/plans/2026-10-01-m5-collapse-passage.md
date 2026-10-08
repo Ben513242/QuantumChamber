@@ -712,6 +712,50 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 
 **範圍：** spec §12（矩陣與 W1–W12）、§11.2 的重啟後重試（`MATERIALIZE_FAILED`、`AUTHORITY_UNREADABLE`）、§15 Cross-JVM、CI 清單。另加 phase：`AUTHORITY_UNREADABLE`（注入 IO）→ SEALED → 重啟 → 重試成功（spec §15）；sealed 量子膜期間 crash → 重啟後停在 WAITING，門是一般開門，沒有留下有碰撞的膜（spec §7.3）。
 
+**拆分（controller 2026-10-08，比照 F4b、F5）：** 各 task 交給 F6 的事項有 60 多條，另有 F5-2 的 Step 0。所以拆成四個子 task，各自走完 implementer → spec review → quality review；四個都完成才算 F6 完成。檔案清單與 Step 1～3 不變。分配如下：
+
+- **F6-0：Step 0 與遊戲行為的測試缺口。**
+  - F5-2「交給後續」的 F6 Step 0：
+    - `ARMED_BY_START` 改為 BE 上不寫入 NBT 的欄位；
+    - 修正 reconcile 的 Javadoc；
+    - `doorHasMembrane` 重複的程式收斂成一份；
+    - 處理 Nit。
+  - G-NLIVE 偶發的根因：measured release 的來源 chunks 在 save 之前沒有先問 `ChunkSaveCheckpoint.ready`（F4b-2 裁示第 3 條）。
+  - F4a 的 S2-mB：`sealRetryDue` 接線的 CS 驅動 test，用 journal put 的 fault Slot。
+  - F4b-3 的 spec S-M1：隔離期間原艙門交還的 test 或 mutation。
+  - F4a-0 的小幅重複：讀取 `TestContext.test` 的反射有兩份。
+- **F6-1：跨 JVM probe 的基礎建設，以及 W1～W6、W4b。**
+  - `build.gradle` 的 `m5Collapse` run、testmod 的 `M5CollapseRecoveryProbe` 與 `fabric.mod.json`、`m5-collapse-probe.ps1`，以及納入 `run-all.ps1` 與 summary。
+  - 窗口：W1、W2、W3、W4、W4b、W5、W6。
+  - 相關的重啟變體：
+    - W1：走廊 space 已重建、不經請求就完成返還；
+    - PENDING 寫到一半時重啟；
+    - 投影 chunk 從磁碟載入時的辨識；
+    - W6／W7 的 EXISTING 再造訪版本；
+    - 開服時投影 ledger 遺失（P-DEGRADED 的跨 JVM 版本）。
+- **F6-2：W7～W12，以及額外的 phase。**
+  - 窗口：W7、W8、W9（含 F4a I-1 的跨重啟版本）、W10（非 DORMANT 的 schema 3 Nether／End fixture）、W11、W12。
+  - 額外 phase：
+    - `AUTHORITY_UNREADABLE` 重啟後重試；
+    - sealed 量子膜期間 crash → WAITING、一般開門；
+    - SEALED 開服後只關門一次；
+    - TRR 跨重啟，含 `pendingRecovery` 期間重啟；
+    - 終局之後、改門之前 crash → 正規化；
+    - 開服時 PASSAGE_READY 的比較器；
+    - SEALED 帶著量子膜時重啟；
+    - `projectionUncheckpointed` 跨 session（F5-1 n-1）。
+  - 其餘各節「交給後續」中的重啟變體。
+  - 若 §12 矩陣需要改 production（`CollapseService`、`SessionRecoveryManager`），先回報 controller。CS 已約 1590 行，會改到 CS 時，先依 F5-0 交接的條件評估是否把 PREPARE 抽出。
+- **F6-3：harness 與 CI。**
+  - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
+  - boundary oracle 以 PID 挑 receipt 時的碰撞。
+  - Windows journal 原子移動偶發的 `AccessDeniedException`。
+  - `main-oracle.ps1` 與 run-all 的 JAR 檢查納入 clientProbe。
+  - README 的更正：clean clone 那一句；以重導輸出呼叫 run-all 時，外層要等 daemon 結束。
+  - `M5UniverseGameTests` 拆檔：連同 `gates.ps1:242-243` 與 `fabric.mod.json`，額外玩家的 fixture 也在這裡抽出；test 集合必須相同。
+  - `ci-rule-check.ps1` 兩個 step 都要 PASS。
+- 延後到 M5 之後：Track 依階段拆成小 holder（F5-1 R-m3）。這是可維護性的改善，不改變行為，由 F7 寫入延後清單。
+
 - [ ] **Step 1: RED。** 每個 W 窗口一個 phase；先以 mutation 證明 probe 能偵測失敗（例如故意讓 W2 重新推導不同的 UniverseId）。
 - [ ] **Step 2: GREEN。** 每個 phase 證明：同一個 UniverseId、catalog 最多多 1 筆、沒有重抽、沒有人被困。
 - [ ] **Step 3:** `run-all.ps1` 全綠（含新 probe 與 summary）；`ci-rule-check.ps1` 兩個 step PASS。
