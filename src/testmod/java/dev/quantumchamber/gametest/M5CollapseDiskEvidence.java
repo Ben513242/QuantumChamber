@@ -148,6 +148,29 @@ final class M5CollapseDiskEvidence {
         return new DiskBlock(ABSENT, ABSENT, blockEntity);
     }
 
+    /**
+     * 以 raw MCA 讀 {@code dimension} 裡 {@code pos} 這一格的 block entity 的字串欄位 {@code key}（例如 Controller 的 {@code InstanceKind}）。region 檔、chunk 或
+     * block entity 不存在時回 {@link #ABSENT}。
+     */
+    static String blockEntityString(Path dimension, BlockPos pos, String key) throws IOException {
+        var chunk = chunk(dimension.resolve("region"), new ChunkPos(pos));
+        if (chunk.isEmpty()) return ABSENT;
+        for (var raw : chunk.get().getList("block_entities", NbtElement.COMPOUND_TYPE)) {
+            var entity = (NbtCompound) raw;
+            if (entity.getInt("x") == pos.getX() && entity.getInt("y") == pos.getY() && entity.getInt("z") == pos.getZ()) {
+                return entity.contains(key, NbtElement.STRING_TYPE) ? entity.getString(key) : ABSENT;
+            }
+        }
+        return ABSENT;
+    }
+
+    /** 磁碟上這位玩家的 playerdata（{@code playerdata/<uuid>.dat}）記的世界（{@code Dimension}）；檔案不存在時回 {@link #ABSENT}。 */
+    static String playerDimension(Path saveRoot, UUID player) throws IOException {
+        var file = saveRoot.resolve("playerdata").resolve(player + ".dat");
+        if (!Files.exists(file)) return ABSENT;
+        return NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()).getString("Dimension");
+    }
+
     private static Optional<NbtCompound> chunk(Path region, ChunkPos pos) throws IOException {
         var file = region.resolve("r." + (pos.x >> 5) + "." + (pos.z >> 5) + ".mca");
         if (!Files.exists(file)) return Optional.empty();

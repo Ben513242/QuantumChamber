@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import dev.quantumchamber.candidate.CandidateBytes;
 import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.chamber.ChamberActivationService;
 import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberControllerLoadSyncQueue;
@@ -23,17 +24,23 @@ import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionProtectionIndex;
 import dev.quantumchamber.collapse.ProjectionWriter;
+import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
+import dev.quantumchamber.corridor.CorridorPageManager;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Allocation;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.DiskBlock;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Projection;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
+import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
+import dev.quantumchamber.persistence.PlayerCheckpointStore;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModBlockEntities;
 import dev.quantumchamber.registry.ModBlocks;
+import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
+import dev.quantumchamber.superposition.SuperpositionWorld;
 import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseId;
@@ -68,6 +75,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.Blocks;
+import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtSizeTracker;
@@ -76,6 +84,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.ActionResult;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.WorldSavePath;
 import net.minecraft.util.math.BlockPos;
@@ -94,8 +103,9 @@ import org.slf4j.LoggerFactory;
  * <p>每個 phase 一個 JVM，由 {@code scripts/verification/m5-collapse-probe.ps1} 經 Gradle 的 {@code runM5Collapse} 啟動。root 是 nonce-owned 的
  * {@code run/m5-collapse-<nonce>}，必須等於 cwd；evidence 固定在 {@code <repo>/.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/<phase>}，
  * 已有 receipt 時拒絕（禁止在同一個 evidence 重跑）。
- * <p>phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}。factory 產生一個 {@link Phase}：開服時（{@code SERVER_STARTED}）的檢查、每個 tick 的不變量，
- * 與依序執行的 {@link Step}（每個 step 有上限 tick，整個 phase 另以 {@link #PHASE_TICK_LIMIT} 為界）。新增 phase 只要在 {@link #phases} 加 entry，並在
+ * <p>phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}。factory（在 {@code onInitialize} 呼叫）產生一個 {@link Phase}：開服前（{@code onInitialize}）的準備、
+ * 開服時（{@code SERVER_STARTED}）的檢查、每個 tick 的不變量、依序執行的 {@link Step}（每個 step 有上限 tick，整個 phase 另以 {@link #PHASE_TICK_LIMIT} 為界），
+ * 與停服之後（{@code SERVER_STOPPED}）的檢查。新增 phase 只要在 {@link #phases} 加 entry，並在
  * {@code m5-collapse-probe.ps1} 的 chain 表加上同名的 phase 與預期的結束（{@code scripts/verification/README.md}「M5 collapse probe」）。phase 的結束有兩種
  * （{@link Ending}）：
  * <ul>
@@ -104,7 +114,8 @@ import org.slf4j.LoggerFactory;
  *     {@code Runtime.halt(77)} 結束 JVM：不經正常停止、不存檔，等同 crash。窗口沒有到達、或任何斷言失敗時，照常停止並寫 FAIL 的 {@code final.json}。</li>
  * </ul>
  * 斷言失敗的訊息以斷言名稱開頭（例如 {@code catalogOnlyDestination}），記在 receipt 的 {@code failures}，之後正常停止；例外不會從 {@code END_SERVER_TICK}
- * 拋出。各 restart phase 的共同斷言是 spec §12 的四件事：同一個 UniverseId、catalog 最多只多 1 筆、沒有重抽、沒有人被困住。
+ * 拋出。各 restart phase 的共同斷言是 spec §12 的四件事：同一個 UniverseId、catalog 最多只多 1 筆、沒有重抽、沒有人被困住。另有一條不是 crash 窗口的 chain：
+ * 開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本），setup 正常停止，restart 開服前移走 ledger。
  */
 public final class M5CollapseRecoveryProbe implements ModInitializer {
     static final String OWNER = ".superpowers/sdd/2026-10-01-m5-collapse-passage";
@@ -114,6 +125,8 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     static final int HALT_RECEIPT_FAILED_EXIT = 78;
     /** 整個 phase 的上限 tick 數。 */
     static final int PHASE_TICK_LIMIT = 3600;
+    /** W1 的 restart：參與者 JOIN 之後最多在走廊幾個 tick（之後仍在走廊就是被困住）。 */
+    static final int RETURN_TICK_LIMIT = 100;
     /** crash phase 寫出的 MEASURED 收據（單筆 journal 的 NBT），restart phase 以它比對「沒有重抽」。 */
     static final String RECEIPT_NBT = "receipt.nbt";
     private static final Gson JSON = new Gson();
@@ -152,16 +165,33 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     private ChamberControllerBlockEntity projectionController;
     private ChamberLoadSyncTestAccess.Observation loadSync;
     private LogCapture loadSyncLog;
+    // W1 的 restart：JOIN 的 tick（phase 的第幾個 tick），與參與者是否已由走廊返還。
+    private int joinedAt = -1;
+    private boolean returned;
+    // 退化的 restart：開服前就開始收的 log（初始化的 ERROR 在 SERVER_STARTED 的 default phase），與磁碟上投影 Controller 的 InstanceKind。
+    private LogCapture startupLog;
+    private String diskInstanceKind;
 
     // ---- phase 表 ----
 
-    /** 一個 phase：開服時的檢查、每個 tick 的不變量（在 step 之前執行）與依序執行的 step；{@code ending} 是預期的結束方式（與 m5-collapse-probe.ps1 的 chain 表一致）。 */
-    record Phase(Ending ending, Checked started, Checked everyTick, List<Step> steps) {
+    /**
+     * 一個 phase：開服前的準備（{@code onInitialize}，例如移走權威檔）、開服時的檢查、每個 tick 的不變量（在 step 之前執行）、依序執行的 step，與停服之後的檢查
+     * （{@code SERVER_STOPPED}，寫 {@code final.json} 之前）；{@code ending} 是預期的結束方式（與 m5-collapse-probe.ps1 的 chain 表一致）。開服前的準備或停服之後的
+     * 檢查失敗時，記在 receipt 的 {@code failures}，phase 判 FAIL。
+     */
+    record Phase(Ending ending, Checked beforeStart, Checked started, Checked everyTick, List<Step> steps, Checked afterStop) {
         Phase {
             steps = List.copyOf(steps);
             if (steps.isEmpty()) throw new IllegalArgumentException("phase 至少要有一個 step");
         }
+
+        /** 沒有開服前的準備與停服之後的檢查。 */
+        Phase(Ending ending, Checked started, Checked everyTick, List<Step> steps) {
+            this(ending, NOTHING, started, everyTick, steps, NOTHING);
+        }
     }
+
+    private static final Checked NOTHING = () -> { };
 
     /** phase 預期的結束：正常停止（{@code final.json}），或在 crash 窗口 halt（{@code halt.json}、exit code {@link #HALT_EXIT}）。 */
     enum Ending { STOP, HALT }
@@ -181,6 +211,9 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
 
     private static Map<String, PhaseFactory> phases() {
         var table = new LinkedHashMap<String, PhaseFactory>();
+        // W1（spec §12）：live session 選門之後，MEASURED→COLLAPSING 剛提交、返還之前 crash；重啟之後走廊 space 已重建，不經請求就返還、清 lease，再推進到終局。
+        table.put("w1-crash", M5CollapseRecoveryProbe::liveCrash);
+        table.put("w1-restart", probe -> probe.liveRestart("w1-crash"));
         // W2、W3、W5（spec §12）：DORMANT 的 NEW 收據，參與者由艙外進入觸發塌縮，在 RESOLVE 的窗口 crash；重啟之後推進到 PASSAGE_READY、跨越與 (b) 終局。
         dormantNewChain(table, "w2", CrashWindow.ALLOCATION_APPENDED);
         dormantNewChain(table, "w3", CrashWindow.CATALOG_ALLOCATED);
@@ -192,6 +225,9 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         // W6 的 EXISTING 再造訪：先以 NEW 建好 U 的投影，之後 EXISTING 收據，在 REPAIR 寫了格、checkpoint 之前 crash。
         table.put("w6x-crash", M5CollapseRecoveryProbe::existingRevisitCrash);
         table.put("w6x-restart", probe -> probe.dormantNewRestart(CrashWindow.PROJECTION_REPAIRED, "w6x-crash"));
+        // P-DEGRADED 的跨 JVM 版本（不是 crash 窗口）：EXISTING 再造訪提交 COLLAPSING 的同一個 tick 正常停服；下一次開服前移走 projection ledger。
+        table.put("deg-setup", M5CollapseRecoveryProbe::degradedSetup);
+        table.put("deg-restart", probe -> probe.degradedRestart("deg-setup"));
         return Collections.unmodifiableMap(table);
     }
 
@@ -222,6 +258,14 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         if (properties.stream().anyMatch(argument -> argument.contains("collapseSuspended")) || System.getProperty("quantumchamber.test.collapseSuspended") != null) {
             failures.add("noCollapseSuspended：JVM 參數不得有 quantumchamber.test.collapseSuspended：" + properties);
         }
+        phase = PHASES.get(config.phase()).create(this);
+        try {
+            phase.beforeStart().run();
+        } catch (Exception | Error failure) {
+            // 開服前的準備失敗：不丟出（JVM 照常開服），SERVER_STARTED 的檢查因 failures 不是空的而 FAIL、正常停止。
+            failures.add(failure.toString());
+            LOGGER.error("M5 collapse probe 開服前的準備失敗：phase={}", config.phase(), failure);
+        }
         event("initialized");
         ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
         ServerLifecycleEvents.SERVER_STARTED.register(AFTER, this::started);
@@ -241,7 +285,6 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
             journal = SessionRecoveryState.get(owner);
             capture = new LogCapture("quantumchamber");
             require(failures.isEmpty(), "啟動前的檢查失敗：" + failures);
-            phase = PHASES.get(config.phase()).create(this);
             proof.put("ending", phase.ending().name());
             proof.put("steps", phase.steps().stream().map(Step::name).toList());
             phase.started().run();
@@ -284,6 +327,12 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     private void stopped(MinecraftServer owner) {
         if (owner != server) return;
         proof.put("stoppedSeen", true);
+        try {
+            phase.afterStop().run();
+        } catch (Exception | Error failure) {
+            failures.add(failure.toString());
+            LOGGER.error("M5 collapse probe 停服之後的檢查失敗：phase={}", config.phase(), failure);
+        }
         proof.put("witness", witness);
         proof.put("observed", observed);
         proof.put("ticks", ticks);
@@ -296,6 +345,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         event("stopped");
         if (capture != null) capture.close();
         if (loadSyncLog != null) loadSyncLog.close();
+        if (startupLog != null) startupLog.close();
     }
 
     private void stop() {
@@ -327,6 +377,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     /** 依窗口裝上 crash 點：每個窗口的條件（detail 是否就是那一刻）與 halt 之前的取證。 */
     private void armWindow(CrashWindow window) {
         switch (window) {
+            case COLLAPSING_COMMITTED -> armCrash(window, this::collapsingCommitted, this::committedBeforeTheReturn);
             case ALLOCATION_APPENDED, CATALOG_ALLOCATED, DISCOVERY_APPENDED -> armCrash(window, M5CollapseRecoveryProbe::appended, NO_EVIDENCE);
             case PROJECTION_CELL_WRITTEN -> armCrash(window, this::controllerCellWritten, this::savedHalfWrittenProjection);
             case DESTINATION_CHECKPOINT -> armCrash(window, this::destinationCheckpoint, this::projectionOnlyInMemory);
@@ -356,6 +407,12 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         return detail instanceof CollapseAuthorities.Lookup<?> lookup && lookup.status() == CollapseAuthorities.Lookup.Status.APPENDED;
     }
 
+    /** W1：這個 session 的 MEASURED→COLLAPSING 已提交（checked 讀回確認）。 */
+    private boolean collapsingCommitted(Object detail) {
+        return detail instanceof M5TestHooks.CollapsingCommit commit && commit.result().committed() && commit.expected().state() == SessionState.MEASURED
+                && commit.next().state() == SessionState.COLLAPSING && commit.next().sessionUuid().equals(sid);
+    }
+
     /** W4：第一次寫入剛寫完 U 的 Controller 那一格（targets 依 x→y→z：Controller 之前與目標不同的格已寫，之後的還沒有）。 */
     private boolean controllerCellWritten(Object detail) {
         return detail instanceof M5TestHooks.ProjectionCell cell && cell.mode() == ProjectionWriter.Mode.FIRST_WRITE
@@ -378,6 +435,23 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     private boolean repairWroteCells(Object detail) {
         return detail instanceof M5TestHooks.ProjectionWrite write && write.mode() == ProjectionWriter.Mode.REPAIR
                 && write.result().status() == ProjectionWriter.Status.WRITTEN && write.result().written() > 0 && isUniverse(write.world());
+    }
+
+    /**
+     * W1 的 halt 之前：磁碟上的 journal 已是 COLLAPSING（Destination 是推導出的 U），P 還沒有返還、lease 還在；P 的 playerdata 存在走廊（選門之前的原生存檔）；
+     * allocation ledger 還是空的（RESOLVE 還沒有開始）。
+     */
+    private void committedBeforeTheReturn(Object detail, Map<String, Object> evidence) throws Exception {
+        var onDisk = M5CollapseDiskEvidence.journalRecord(data(), sid).orElse(null);
+        evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
+        expect("journalCollapsingAtHalt", onDisk != null && onDisk.state() == SessionState.COLLAPSING && destination(onDisk).equals(Optional.of(universe)),
+                () -> "磁碟上的 journal 是 " + (onDisk == null ? "ABSENT" : onDisk.state() + " Destination=" + onDisk.collapse().destination()));
+        expect("notReturnedAtHalt", onDisk.participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned) && !onDisk.spaceLeases().isEmpty(),
+                () -> "磁碟上的參與者或 lease：" + onDisk.participants() + " leases=" + onDisk.spaceLeases());
+        var dimension = M5CollapseDiskEvidence.playerDimension(saveRoot(), participant);
+        evidence.put("playerDimensionOnDisk", dimension);
+        expect("playerDataInTheCorridorAtHalt", SuperpositionWorld.KEY.getValue().toString().equals(dimension), () -> "磁碟上 P 的 playerdata 在 " + dimension);
+        expect("noAllocationAtHalt", M5CollapseDiskEvidence.allocations(data()).isEmpty(), () -> "allocation ledger=" + allocationsOrError());
     }
 
     /**
@@ -466,6 +540,8 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
 
     private static String describe(Object detail) {
         return switch (detail) {
+            case M5TestHooks.CollapsingCommit commit -> "edge=" + commit.expected().state() + "→" + commit.next().state() + " session=" + commit.next().sessionUuid()
+                    + " status=" + commit.result().status();
             case CollapseAuthorities.Lookup<?> lookup -> "status=" + lookup.status() + " value=" + lookup.value().map(String::valueOf).orElse("-");
             case CollapseAuthorities.WriteResult result -> "status=" + result.status() + " entry=" + result.entry().map(String::valueOf).orElse("-");
             case M5TestHooks.ProjectionCell cell -> "world=" + cell.world().getRegistryKey().getValue() + " mode=" + cell.mode() + " pos=" + cell.pos().toShortString()
@@ -541,6 +617,13 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
      */
     private void writeCrashReceipt(SessionRecoveryRecord measured) throws Exception {
         putReceipt(measured);
+        recordReceipt();
+        expect("nativeSaveBeforeTrigger", server.saveAll(false, true, true), () -> "saveAll 回 false");
+    }
+
+    /** 這條 chain 的 MEASURED 收據（{@link #receipt}，已 flushed）：記下 crash 前的 catalog 筆數，寫出 {@link #RECEIPT_NBT}，摘要記在 receipt 的 {@code receipt}。 */
+    private void recordReceipt() throws Exception {
+        var measured = receipt;
         catalogBefore = UniverseRegistryState.get(server).flushedRecords().size();
         var file = config.evidence().resolve(RECEIPT_NBT);
         require(!Files.exists(file), "receipt NBT 已存在：" + file);
@@ -561,7 +644,6 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         evidence.put("receiptNbtSha256", M5CollapseDiskEvidence.sha256(file));
         evidence.put("candidateSha256", M5CollapseDiskEvidence.sha256(wrapped));
         proof.put("receipt", evidence);
-        expect("nativeSaveBeforeTrigger", server.saveAll(false, true, true), () -> "saveAll 回 false");
     }
 
     /**
@@ -593,15 +675,24 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     /**
      * restart phase 的開頭：讀回 crash phase（{@code crashPhase}）的 {@code halt.json} 與 {@link #RECEIPT_NBT}，核對 halt receipt 的 status、窗口、phase、nonce，
      * startupNonce 與這個 JVM 不同，receipt NBT 的 SHA-256 與 halt receipt 記的相同；再以收據設定這條 chain 的 fixture（session、原艙、參與者、UniverseId、
-     * crash 前的 catalog 筆數）。回傳 halt receipt。
+     * crash 前的 catalog 筆數）。回傳 halt receipt。{@code window} 為 null 時，前一個 phase 是正常停止的 setup（退化的 chain）：改讀它的 {@code final.json}，
+     * 核對 status PASS、ending STOP、phase、nonce，其餘相同。
      */
     private JsonObject readCrashReceipt(String crashPhase, CrashWindow window) throws Exception {
         var crashEvidence = config.evidence().resolveSibling(crashPhase);
-        var haltPath = crashEvidence.resolve("halt.json");
-        expect("crashReceiptPresent", Files.exists(haltPath) && !Files.exists(crashEvidence.resolve("final.json")), () -> "crash phase 沒有 halt receipt：" + crashEvidence);
-        JsonObject halt = JsonParser.parseString(Files.readString(haltPath)).getAsJsonObject();
-        expect("crashReceiptMatches", "HALT".equals(text(halt, "status")) && window.name().equals(text(halt, "window")) && crashPhase.equals(text(halt, "phase"))
-                && config.nonce().equals(text(halt, "nonce")), () -> "halt receipt 不符：status=" + text(halt, "status") + " window=" + text(halt, "window"));
+        var haltPath = crashEvidence.resolve(window == null ? "final.json" : "halt.json");
+        JsonObject halt;
+        if (window == null) {
+            expect("setupReceiptPresent", Files.exists(haltPath) && !Files.exists(crashEvidence.resolve("halt.json")), () -> "setup phase 沒有正常停止的 receipt：" + crashEvidence);
+            halt = JsonParser.parseString(Files.readString(haltPath)).getAsJsonObject();
+            expect("setupReceiptMatches", "PASS".equals(text(halt, "status")) && Ending.STOP.name().equals(text(halt, "ending")) && crashPhase.equals(text(halt, "phase"))
+                    && config.nonce().equals(text(halt, "nonce")), () -> "setup receipt 不符：status=" + text(halt, "status") + " ending=" + text(halt, "ending"));
+        } else {
+            expect("crashReceiptPresent", Files.exists(haltPath) && !Files.exists(crashEvidence.resolve("final.json")), () -> "crash phase 沒有 halt receipt：" + crashEvidence);
+            halt = JsonParser.parseString(Files.readString(haltPath)).getAsJsonObject();
+            expect("crashReceiptMatches", "HALT".equals(text(halt, "status")) && window.name().equals(text(halt, "window")) && crashPhase.equals(text(halt, "phase"))
+                    && config.nonce().equals(text(halt, "nonce")), () -> "halt receipt 不符：status=" + text(halt, "status") + " window=" + text(halt, "window"));
+        }
         expect("differentStartupNonce", !config.startupNonce().equals(text(halt, "startupNonce")), () -> "與 crash phase 相同的 startupNonce");
         var noted = halt.getAsJsonObject("receipt");
         var receiptFile = crashEvidence.resolve(RECEIPT_NBT);
@@ -622,8 +713,9 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         catalogBefore = noted.get("catalogBefore").getAsInt();
         expect("receiptIdentity", universe.value().toString().equals(text(noted, "universeId")) && participant.toString().equals(text(noted, "participant")),
                 () -> "receipt NBT 與 halt receipt 的 UniverseId 或參與者不同");
-        proof.put("crashReceipt", Map.of("phase", crashPhase, "haltSha256", M5CollapseDiskEvidence.sha256(haltPath), "haltPid", halt.get("pid").getAsLong(),
-                "haltStartupNonce", text(halt, "startupNonce"), "haltStartTimeUtc", text(halt, "startTimeUtc")));
+        String prefix = window == null ? "final" : "halt";
+        proof.put(window == null ? "setupReceipt" : "crashReceipt", Map.of("phase", crashPhase, prefix + "Sha256", M5CollapseDiskEvidence.sha256(haltPath),
+                prefix + "Pid", halt.get("pid").getAsLong(), prefix + "StartupNonce", text(halt, "startupNonce"), prefix + "StartTimeUtc", text(halt, "startTimeUtc")));
         proof.put("universeId", universe.value().toString());
         return halt;
     }
@@ -668,8 +760,14 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         var steps = new ArrayList<Step>();
         // W4、W6：參與者 JOIN 之前，磁碟上的投影 Controller 經 load-sync 辨識為 inert 的 PROJECTION（不記 log）。
         if (window == CrashWindow.PROJECTION_CELL_WRITTEN || window == CrashWindow.PROJECTION_COMPLETE) steps.add(new Step("recognized", 60, this::projectionRecognized));
-        steps.addAll(List.of(
-                new Step("join", 1, () -> { joinParticipant(); return true; }),
+        steps.add(new Step("join", 1, () -> { joinParticipant(); return true; }));
+        steps.addAll(passageSteps());
+        return new Phase(Ending.STOP, () -> restartStarted(window, crashPhase), this::restartInvariants, steps);
+    }
+
+    /** restart 由 RESOLVE 推進到終局的 step（各 restart 共用）：RESOLVE 完成 → P 進入艙內 → PASSAGE_READY → P 越過門板中線、傳送到 U → (b) 全員都已跨過的終局。 */
+    private List<Step> passageSteps() {
+        return List.of(
                 new Step("resolved", 400, this::resolvedThenEnter),
                 new Step("ready", 600, this::passageReady),
                 new Step("doorway", 1, () -> {
@@ -677,16 +775,19 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
                     return true;
                 }),
                 new Step("crossed", 10, this::crossed),
-                new Step("ended", 40, this::endedByEveryoneCrossing)));
-        return new Phase(Ending.STOP, () -> restartStarted(window, crashPhase), this::restartInvariants, steps);
+                new Step("ended", 40, this::endedByEveryoneCrossing));
     }
 
-    /** restart 的開服檢查：窗口在 RESOLVE 的哪一步（halt 當下是否已物化）、record 仍是 COLLAPSING 且 Destination 與候選不變、allocation 恰一筆，以及窗口各自的磁碟狀態。 */
+    /**
+     * restart 的開服檢查：窗口在 RESOLVE 的哪一步（halt 當下是否已物化）、record 仍是 COLLAPSING 且 Destination 與候選不變、allocation 恰一筆（W1 還沒有），以及窗口
+     * 各自的磁碟狀態；W1 另斷言參與者還沒有返還、走廊 space 已重建、沒有保留式 recovery 的請求。
+     */
     private void restartStarted(CrashWindow window, String crashPhase) throws Exception {
         restartWindow = window;
         var halt = readCrashReceipt(crashPhase, window);
-        // 窗口的位置：W2、W3 在物化之前 crash，W5 在物化之後（RESOLVE 的第 3 步），W4、W4b、W6、W6x 在 PREPARE。
-        boolean materializedWindow = window != CrashWindow.ALLOCATION_APPENDED && window != CrashWindow.CATALOG_ALLOCATED;
+        // 窗口的位置：W1 在 RESOLVE 之前（返還之前），W2、W3 在物化之前 crash，W5 在物化之後（RESOLVE 的第 3 步），W4、W4b、W6、W6x 在 PREPARE。
+        boolean live = window == CrashWindow.COLLAPSING_COMMITTED;
+        boolean materializedWindow = !live && window != CrashWindow.ALLOCATION_APPENDED && window != CrashWindow.CATALOG_ALLOCATED;
         boolean activeAtHalt = halt.get("universeActiveAtHalt").getAsBoolean();
         expect(materializedWindow ? "materializedBeforeTheCrash" : "notMaterializedBeforeTheCrash",
                 activeAtHalt == materializedWindow, () -> "halt 當下 U 的物化狀態=" + activeAtHalt);
@@ -694,11 +795,20 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(journal, sid));
         expect("sameDestination", destination(current).equals(Optional.of(universe)), () -> "Destination=" + current.collapse().destination());
         expect("noRedraw", sameCandidate(receipt, current), () -> "候選 context、ledger 或 selection 與 crash 前不同");
-        expect("oneAllocationForTheToken", M5CollapseDiskEvidence.allocations(data()).equals(List.of(allocation())), () -> "allocation ledger=" + allocationsOrError());
+        if (live) {
+            // W1（spec §13.2）：未返還的 COLLAPSING 在 attach 時重建走廊 space，返還由 receipt 推導、不經 requestMeasuredRecovery。
+            expect("notReturnedAtRestart", current.participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned) && !current.spaceLeases().isEmpty()
+                    && MeasuredRecoveryPhase.from(current) == MeasuredRecoveryPhase.RETURN_PLAYERS, () -> "參與者 " + current.participants() + " leases=" + current.spaceLeases());
+            expect("spaceRestored", spaceExists(), () -> "開服之後沒有這個 session 的走廊 space");
+            expect("noMeasuredRecoveryRequest", !pages().measuredRecoveryRequested(sid), () -> "COLLAPSING 的 space 標記為已請求保留式 recovery");
+            expect("noAllocationYet", M5CollapseDiskEvidence.allocations(data()).isEmpty(), () -> "allocation ledger=" + allocationsOrError());
+        } else {
+            expect("oneAllocationForTheToken", M5CollapseDiskEvidence.allocations(data()).equals(List.of(allocation())), () -> "allocation ledger=" + allocationsOrError());
+        }
         var catalog = UniverseRegistryState.get(server).flushedRecords();
         boolean discovered = M5CollapseDiskEvidence.discovery(saveRoot()).stream().anyMatch(record -> record.universeId().equals(universe));
         boolean active = universeWorld().isPresent();
-        if (window == CrashWindow.ALLOCATION_APPENDED) {
+        if (live || window == CrashWindow.ALLOCATION_APPENDED) {
             expect("catalogNotYetAllocated", catalog.size() == catalogBefore && !catalog.containsKey(universe), () -> "catalog=" + catalog.keySet());
             expect("notYetMaterialized", !active, () -> "U 已物化");
             expect("notYetDiscovered", !discovered, () -> "discovery 已有 U");
@@ -715,7 +825,8 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         }
         var projections = M5CollapseDiskEvidence.projections(data());
         switch (window) {
-            case ALLOCATION_APPENDED, CATALOG_ALLOCATED, DISCOVERY_APPENDED -> expect("noProjectionYet", projections.isEmpty(), () -> "projection ledger=" + projections);
+            case COLLAPSING_COMMITTED, ALLOCATION_APPENDED, CATALOG_ALLOCATED, DISCOVERY_APPENDED ->
+                    expect("noProjectionYet", projections.isEmpty(), () -> "projection ledger=" + projections);
             case PROJECTION_CELL_WRITTEN -> {
                 expect("projectionStillPending", projections.equals(List.of(projection("PENDING"))), () -> "projection ledger=" + projections);
                 var disk = diskBlock(universeWorld().orElseThrow(), FRAME.controllerPos());
@@ -760,8 +871,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         loadSyncLog = new LogCapture(ChamberControllerLoadSyncQueue.class.getName());
         var chunk = new ChunkPos(FRAME.controllerPos());
         proof.put("projectionChunkLoadedAtStart", world.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null);
-        world.getChunkManager().addTicket(ProbeTicket.TYPE, chunk, 0, chunk);
-        world.getChunk(chunk.x, chunk.z);
+        holdProjectionChunk(world);
         if (!(world.getBlockEntity(FRAME.controllerPos()) instanceof ChamberControllerBlockEntity controller)) {
             throw new AssertionError("projectionControllerLoaded：載入之後 U 的 Controller 位置沒有 Controller block entity：" + world.getBlockState(FRAME.controllerPos()));
         }
@@ -813,6 +923,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
 
     /**
      * 每個 tick（spec §12 的共同斷言）：catalog 只出現 Destination 的 UniverseId、NEW 最多多 1 筆（EXISTING 不變）；record 在時 Destination 與候選不變；參與者在來源世界或 U。
+     * W1 的參與者 JOIN 在走廊（playerdata 存在走廊），返還之前可以在走廊，但 JOIN 之後超過 {@link #RETURN_TICK_LIMIT} 個 tick 仍在走廊就是被困住。
      */
     private void restartInvariants() {
         var catalogIds = UniverseRegistryState.get(server).records().keySet();
@@ -827,16 +938,29 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         var player = onlinePlayer();
         if (player != null) {
             var world = player.getServerWorld();
-            expect("participantInSourceOrUniverse", world == source || world == universeWorld().orElse(null), () -> "參與者在 " + world.getRegistryKey().getValue());
+            if (restartWindow == CrashWindow.COLLAPSING_COMMITTED && !returned && world == corridor()) {
+                expect("notTrappedInTheCorridor", ticks - joinedAt <= RETURN_TICK_LIMIT, () -> "JOIN 之後 " + (ticks - joinedAt) + " 個 tick 仍在走廊：" + diagnostic());
+            } else {
+                expect("participantInSourceOrUniverse", world == source || world == universeWorld().orElse(null), () -> "參與者在 " + world.getRegistryKey().getValue());
+            }
         }
     }
 
     private void joinParticipant() {
+        joinParticipant(false);
+    }
+
+    /**
+     * 參與者真 JOIN，在來源世界、沒有被 recovery 攔截。crash phase 的 playerdata 是觸發之前存的（P 在艙外）；退化的 setup 是在 P 進入艙內之後正常停服，所以 P JOIN 在艙內
+     * （{@code insideExpected}）。
+     */
+    private void joinParticipant(boolean insideExpected) {
         var connection = connect(new GameProfile(participant, "m5-" + participant.toString().substring(0, 8)));
         var player = connection.player();
         expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
         expect("joinedInTheSourceWorld", player.getServerWorld() == source, () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
-        expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
+        if (insideExpected) expect("joinedInsideTheChamber", inside(player), () -> "參與者 JOIN 在艙外：" + player.getPos());
+        else expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
         expect("participantNotBlocked", !SessionRecoveryManager.blocks(participant, server), () -> "已返還的參與者被 recovery 攔截");
     }
 
@@ -949,7 +1073,26 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
      * 原生存檔 → 裝上 crash 點 → P 由艙外進入 → RESOLVE（EXISTING）→ PREPARE 以 REPAIR 修好那一格之後、checkpoint 之前 halt。
      */
     private Phase existingRevisitCrash() {
-        return new Phase(Ending.HALT, this::requireFreshWorld, this::crashPointHealthy, List.of(
+        var steps = new ArrayList<>(firstPassageSteps());
+        steps.addAll(List.of(
+                new Step("existingReceipt", 1, () -> {
+                    damageProjection();
+                    writeCrashReceipt(existingReceiptForTheUniverse());
+                    armWindow(CrashWindow.PROJECTION_REPAIRED);
+                    return true;
+                }),
+                new Step("enter", 1, () -> { M5GameTestSupport.moveInside(participantPlayer(), FRAME); return true; }),
+                new Step("committed", 40, this::committed),
+                new Step("halt", 400, () -> false)));
+        return new Phase(Ending.HALT, this::requireFreshWorld, this::crashPointHealthy, steps);
+    }
+
+    /**
+     * EXISTING 再造訪的前半段（W6x 與退化的 setup 共用）：與 {@link #dormantNewCrash} 相同的原艙與 DORMANT NEW 收據 → P 由艙外進入 → 塌縮到 PASSAGE_READY（U 的投影
+     * COMPLETE）→ 拿掉 Controller 上方的紅石塊，通道以 (d) 來源艙沒有供電結束 → P 移到艙外、恢復供電，原艙回到 IDLE。
+     */
+    private List<Step> firstPassageSteps() {
+        return List.of(
                 new Step("build", 1, () -> { buildOrigin(); return true; }),
                 new Step("registered", 200, () -> {
                     if (!M5GameTestSupport.registeredIdle(source, FRAME)) return false;
@@ -961,17 +1104,12 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
                 new Step("firstCommitted", 40, this::committed),
                 new Step("firstReady", 600, this::firstPassageReady),
                 new Step("endedByPowerLoss", 60, this::endedByPowerLoss),
-                new Step("repowered", 200, () -> M5GameTestSupport.registeredIdle(source, FRAME) && M5GameTestSupport.controller(source, FRAME).wasPowered()),
-                new Step("existingReceipt", 1, () -> {
-                    damageProjection();
-                    writeCrashReceipt(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), Map.of(participant, true),
-                            universe));
-                    armWindow(CrashWindow.PROJECTION_REPAIRED);
-                    return true;
-                }),
-                new Step("enter", 1, () -> { M5GameTestSupport.moveInside(participantPlayer(), FRAME); return true; }),
-                new Step("committed", 40, this::committed),
-                new Step("halt", 400, () -> false)));
+                new Step("repowered", 200, () -> M5GameTestSupport.registeredIdle(source, FRAME) && M5GameTestSupport.controller(source, FRAME).wasPowered()));
+    }
+
+    /** DORMANT 的 EXISTING 收據（P 已返還、沒有 lease），候選是 NEW 那一段建立的 U。只建立，不寫入。 */
+    private SessionRecoveryRecord existingReceiptForTheUniverse() {
+        return M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), Map.of(participant, true), universe);
     }
 
     /** NEW 那一段到 PASSAGE_READY：U 的投影 COMPLETE；之後拿掉 Controller 上方的紅石塊（斷電）。 */
@@ -996,9 +1134,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     /** U 的投影（COMPLETE）改壞一格 shell（授權寫入玻璃），interior 放金塊標記（interior 不受保護，一般寫入）。投影的 chunk 以 probe 的 ticket 載入。 */
     private void damageProjection() {
         var world = universeWorld().orElseThrow(() -> new AssertionError("universeActive：EXISTING 收據之前 U 不是 ACTIVE"));
-        var chunk = new ChunkPos(FRAME.controllerPos());
-        world.getChunkManager().addTicket(ProbeTicket.TYPE, chunk, 0, chunk);
-        world.getChunk(chunk.x, chunk.z);
+        holdProjectionChunk(world);
         expect("projectionIntactBeforeDamage", world.getBlockState(damagedShell()).isOf(Blocks.BEDROCK) && world.getBlockState(interiorMarker()).isAir(),
                 () -> "shell=" + world.getBlockState(damagedShell()) + " interior=" + world.getBlockState(interiorMarker()));
         expect("shellProtectedBeforeDamage", !ChamberProtectionService.get().mayMutate(world, damagedShell()), () -> "COMPLETE 投影的 shell 不受保護");
@@ -1009,7 +1145,301 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         proof.put("interiorMarker", interiorMarker().toShortString());
     }
 
+    // ---- live session 的 crash／restart（W1） ----
+
+    /**
+     * crash phase（W1）：fresh 世界蓋原艙、連線參與者 P 並移到艙內 → 原艙註冊之後以真實的 LOW→HIGH 供電與 Buff 啟動（比照 M4 recovery probe 的 build／arm）→
+     * SUPERPOSITION、358 扇側門發布、P 在走廊 → 原生存檔（P 的 playerdata 存在走廊）→ P 以原生互動選一扇 NEW 候選門（checked SELECTED，MEASURED）、寫出
+     * {@link #RECEIPT_NBT}、裝上 crash 點 → 下一個 tick 塌縮流程在 operation guard 之內提交 MEASURED→COLLAPSING，提交讀回確認時 halt（返還與清理都還沒有開始）。
+     */
+    private Phase liveCrash() {
+        return new Phase(Ending.HALT, this::requireFreshWorld, this::crashPointHealthy, List.of(
+                new Step("build", 1, () -> {
+                    buildOrigin();
+                    M5GameTestSupport.moveInside(participantPlayer(), FRAME);
+                    return true;
+                }),
+                new Step("armed", 200, this::armed),
+                new Step("superposition", 400, this::superposition),
+                new Step("selected", 1, this::selectNewDoor),
+                new Step("halt", 400, () -> false)));
+    }
+
+    /**
+     * 原艙註冊之後，比照 M4 recovery probe 的 arm：拿掉紅石塊（LOW）、給 P Buff，readiness 通過之後存 P 的 checkpoint 與原生存檔，再放回紅石塊（HIGH）→ 必須立即有
+     * checked ARMING。readiness 還沒有通過時下一個 tick 再試。
+     */
+    private boolean armed() throws Exception {
+        if (!M5GameTestSupport.registeredIdle(source, FRAME)) return false;
+        var controller = M5GameTestSupport.controller(source, FRAME);
+        chamber = controller.chamberUuid();
+        var player = participantPlayer();
+        source.setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
+        if (!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
+        if (!new ChamberActivationService().evaluateReadiness(source, controller).accepted()) return false;
+        PlayerCheckpointStore.saveAndVerify(server, player, Optional.empty());
+        expect("nativeSaveBeforeArming", server.save(false, true, true), () -> "原生存檔失敗");
+        source.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
+        var arming = journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).toList();
+        expect("armingFlushed", arming.size() == 1 && arming.getFirst().state() == SessionState.ARMING,
+                () -> "供電之後這座艙的 flushed record：" + arming.stream().map(record -> record.state().name()).toList());
+        sid = arming.getFirst().sessionUuid();
+        return true;
+    }
+
+    /** SUPERPOSITION、358 扇側門都已發布、P 在走廊。 */
+    private boolean superposition() {
+        var record = journal.flushedRecords().get(sid);
+        if (record == null || record.state() != SessionState.SUPERPOSITION || pages().selectableDoors(sid).size() != 358) return false;
+        return participantPlayer().getServerWorld() == corridor();
+    }
+
+    /** 選門之前原生存檔（P 的 playerdata 存在走廊）；P 以原生互動選一扇 NEW 候選門，checked SELECTED 之後寫出收據、裝上 W1 的 crash 點。 */
+    private boolean selectNewDoor() throws Exception {
+        expect("nativeSaveInTheCorridor", server.saveAll(false, true, true), () -> "saveAll 回 false");
+        var door = M5GameTestSupport.candidateDoor(pages(), corridor(), sid, QuantumCandidate.New.class);
+        var result = M5GameTestSupport.interact(corridor(), door.cell(), participantPlayer());
+        var measured = journal.flushedRecords().get(sid);
+        expect("newDoorSelected", result == ActionResult.SUCCESS && measured != null && measured.state() == SessionState.MEASURED
+                && measured.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New, () -> "選門結果 " + result + "，record=" + M5GameTestSupport.state(journal, sid));
+        expect("notReturnedOnSelection", !pages().measuredRecoveryRequested(sid), () -> "正常測量不應立即返還");
+        adopt(measured);
+        recordReceipt();
+        armWindow(CrashWindow.COLLAPSING_COMMITTED);
+        return true;
+    }
+
+    /**
+     * restart phase（W1）：讀回 crash phase 的收據，開服時斷言還沒有返還、走廊 space 已重建、沒有保留式 recovery 的請求、RESOLVE 還沒有開始（{@link #restartStarted}）→
+     * P 真 JOIN（在走廊、被 recovery 攔截）→ 不經請求返還到來源世界 → 清 lease、space 釋放（SETTLED）→ RESOLVE → PASSAGE_READY → 跨越 → (b) 終局。
+     */
+    private Phase liveRestart(String crashPhase) {
+        var steps = new ArrayList<Step>(List.of(
+                new Step("join", 1, this::joinIntoTheCorridor),
+                new Step("returned", 200, this::returnedFromTheCorridor),
+                new Step("settled", 200, this::settled)));
+        steps.addAll(passageSteps());
+        return new Phase(Ending.STOP, () -> restartStarted(CrashWindow.COLLAPSING_COMMITTED, crashPhase), this::restartInvariants, steps);
+    }
+
+    private boolean joinIntoTheCorridor() {
+        var connection = connect(new GameProfile(participant, "m5-" + participant.toString().substring(0, 8)));
+        var player = connection.player();
+        expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
+        expect("joinedInTheCorridor", player.getServerWorld() == corridor(), () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
+        expect("participantBlockedUntilReturned", SessionRecoveryManager.blocks(participant, server), () -> "尚未返還的參與者沒有被 recovery 攔截");
+        joinedAt = ticks;
+        return true;
+    }
+
+    /** P 回到來源世界，flushed record 記為已返還；record 仍是 COLLAPSING，沒有經過保留式 recovery 的請求。 */
+    private boolean returnedFromTheCorridor() {
+        var player = participantPlayer();
+        var record = journal.flushedRecords().get(sid);
+        if (player.getServerWorld() != source || record == null || record.participants().stream().anyMatch(person -> !person.returned())) return false;
+        expect("returnedWhileCollapsing", record.state() == SessionState.COLLAPSING, () -> "state=" + record.state());
+        expect("returnedWithoutRequest", !pages().measuredRecoveryRequested(sid), () -> "COLLAPSING 的返還經過了 requestMeasuredRecovery");
+        expect("participantUnblocked", !SessionRecoveryManager.blocks(participant, server), () -> "已返還的參與者仍被 recovery 攔截");
+        proof.put("returnedInsideTheChamber", inside(player));
+        returned = true;
+        return true;
+    }
+
+    /** 清 lease、走廊 space 釋放（{@code measuredRecoveryComplete}：SETTLED）；在那之前 record 一直是 COLLAPSING。 */
+    private boolean settled() {
+        var record = journal.flushedRecords().get(sid);
+        expect("collapsingUntilSettled", record != null && record.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(journal, sid));
+        if (!pages().measuredRecoveryComplete(sid)) return false;
+        expect("leaseCleared", record.spaceLeases().isEmpty() && MeasuredRecoveryPhase.from(record) == MeasuredRecoveryPhase.SETTLED && !spaceExists(),
+                () -> "leases=" + record.spaceLeases() + " phase=" + MeasuredRecoveryPhase.from(record));
+        return true;
+    }
+
+    // ---- 開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本） ----
+
+    /**
+     * setup phase（正常停止，不是 crash 窗口）：EXISTING 再造訪的前半段（{@link #firstPassageSteps}：U 的投影 COMPLETE）→ U 的投影 interior 放金塊標記 → EXISTING 收據、
+     * 原生存檔 → P 由艙外進入 → 看到 flushed COLLAPSING 的同一個 tick 正常停服（RESOLVE 在下一個 tick，所以停服時還沒有 RESOLVE）。
+     */
+    private Phase degradedSetup() {
+        var steps = new ArrayList<>(firstPassageSteps());
+        steps.addAll(List.of(
+                new Step("existingReceipt", 1, () -> {
+                    placeInteriorMarker();
+                    writeCrashReceipt(existingReceiptForTheUniverse());
+                    return true;
+                }),
+                new Step("enter", 1, () -> { M5GameTestSupport.moveInside(participantPlayer(), FRAME); return true; }),
+                new Step("committed", 40, () -> {
+                    if (!committed()) return false;
+                    proof.put("diskAtStop", M5CollapseDiskEvidence.summary(saveRoot(), sid));
+                    return true;
+                })));
+        return new Phase(Ending.STOP, this::requireFreshWorld, NOTHING, steps);
+    }
+
+    /** U 的投影（COMPLETE）interior 放金塊標記（interior 不受保護，一般寫入）。投影的 chunk 以 probe 的 ticket 載入。 */
+    private void placeInteriorMarker() {
+        var world = universeWorld().orElseThrow(() -> new AssertionError("universeActive：EXISTING 收據之前 U 不是 ACTIVE"));
+        holdProjectionChunk(world);
+        expect("interiorEmptyBeforeMarker", world.getBlockState(interiorMarker()).isAir(), () -> "interior=" + world.getBlockState(interiorMarker()));
+        expect("interiorMarkerPlaced", world.setBlockState(interiorMarker(), Blocks.GOLD_BLOCK.getDefaultState(), 3), () -> "interior 的標記放不上去");
+        proof.put("interiorMarker", interiorMarker().toShortString());
+    }
+
+    /**
+     * restart phase（退化）：開服前（{@code onInitialize}）把 projection ledger 移到 evidence → 開服時斷言初始化判定 LOST（{@code AUTHORITY_CORRUPT}）、本 instance 不提交新的
+     * COLLAPSING、投影保護索引退化、record 仍是 COLLAPSING 且候選不變，以 probe 的 ticket 載入投影 chunk → 磁碟上的 Controller 走 foreign 的分支 → RESOLVE 進
+     * SEALED(AUTHORITY_CORRUPT)，interior 沒有被重寫、ledger 沒有被重建 → P 真 JOIN（在艙內：setup 停服時 P 在艙內）→ P 從艙內照一般方式開門（沒有人被困在封存的艙裡）。
+     * 停服之後再確認 ledger 沒有被重建。
+     */
+    private Phase degradedRestart(String setupPhase) {
+        return new Phase(Ending.STOP, this::removeProjectionLedgerBeforeStart, () -> degradedStarted(setupPhase), this::restartInvariants, List.of(
+                new Step("foreign", 60, this::projectionControllerForeign),
+                new Step("sealed", 400, this::sealedAsCorrupt),
+                new Step("join", 1, () -> { joinParticipant(true); return true; }),
+                new Step("doorOpens", 1, this::doorOpensNormally)),
+                () -> expect("ledgerNotRecreatedAfterStop", !Files.exists(worldData().resolve(ProjectionLedger.FILE_NAME)), () -> "停服之後 projection ledger 被重建"));
+    }
+
+    /** 開服前：先開始收 {@code quantumchamber} 的 log（初始化的 ERROR 在 {@code SERVER_STARTED} 的 default phase），再把 projection ledger 移到這個 phase 的 evidence。 */
+    private void removeProjectionLedgerBeforeStart() throws Exception {
+        startupLog = new LogCapture("quantumchamber");
+        var ledger = worldData().resolve(ProjectionLedger.FILE_NAME);
+        expect("projectionLedgerOnDiskBeforeStart", Files.isRegularFile(ledger), () -> "開服前沒有 projection ledger：" + ledger);
+        var moved = config.evidence().resolve("moved-" + ProjectionLedger.FILE_NAME);
+        var sha256 = M5CollapseDiskEvidence.sha256(ledger);
+        Files.move(ledger, moved);
+        expect("projectionLedgerMovedBeforeStart", !Files.exists(ledger) && sha256.equals(M5CollapseDiskEvidence.sha256(moved)), () -> "projection ledger 沒有移走：" + ledger);
+        proof.put("movedProjectionLedger", Map.of("from", ledger.toString(), "to", moved.toString(), "sha256", sha256));
+    }
+
+    private void degradedStarted(String setupPhase) throws Exception {
+        readCrashReceipt(setupPhase, null);
+        var initErrors = startupLog.matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
+        expect("initializationLost", initErrors.size() == 1 && initErrors.getFirst().contains("projection=LOST") && initErrors.getFirst().contains("allocation=LOADED"),
+                () -> "初始化的 ERROR：" + initErrors);
+        var authorities = CollapseAuthorities.get(server);
+        expect("authorityCorrupt", !authorities.initialized()
+                && authorities.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER).equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
+                () -> "initialized=" + authorities.initialized() + " unhealthy=" + authorities.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER));
+        expect("noNewCollapsingThisInstance", !journal.m5ReadyThisInstance(), () -> "初始化失敗但 m5ReadyThisInstance 為真");
+        expect("indexDegraded", ProjectionProtectionIndex.get(server).degradation().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
+                () -> "索引的退化=" + ProjectionProtectionIndex.get(server).degradation());
+        var current = journal.flushedRecords().get(sid);
+        expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(journal, sid));
+        expect("sameDestination", destination(current).equals(Optional.of(universe)), () -> "Destination=" + current.collapse().destination());
+        expect("noRedraw", sameCandidate(receipt, current), () -> "候選 context、ledger 或 selection 與停服前不同");
+        expect("oneAllocationForTheToken", M5CollapseDiskEvidence.allocations(data()).equals(List.of(allocation())), () -> "allocation ledger=" + allocationsOrError());
+        var catalog = UniverseRegistryState.get(server).flushedRecords();
+        expect("catalogUnchanged", catalog.size() == catalogBefore && eagerEnabled(catalog.get(universe)), () -> "catalog=" + catalog);
+        expect("bootstrapMaterializedEagerEnabled", universeWorld().isPresent(), () -> "開服 bootstrap 沒有物化 U");
+        expect("alreadyDiscovered", M5CollapseDiskEvidence.discovery(saveRoot()).stream().anyMatch(record -> record.universeId().equals(universe)), () -> "discovery 沒有 U");
+        expect("ledgerMissingAtStart", !Files.exists(data().resolve(ProjectionLedger.FILE_NAME)), () -> "開服時 projection ledger 存在（被重建）");
+        var world = universeWorld().orElseThrow();
+        var marker = diskBlock(world, interiorMarker());
+        expect("interiorMarkerOnDisk", GOLD_BLOCK.equals(marker.name()), () -> "磁碟上的 interior 標記是 " + marker);
+        var controller = diskBlock(world, FRAME.controllerPos());
+        expect("controllerOnDiskAtRestart", controllerBlock(controller), () -> "磁碟上的 Controller 位置是 " + controller);
+        diskInstanceKind = M5CollapseDiskEvidence.blockEntityString(dimensionDirectory(world), FRAME.controllerPos(), "InstanceKind");
+        proof.put("projectionControllerKindOnDisk", diskInstanceKind);
+        proof.put("startedDisk", M5CollapseDiskEvidence.summary(saveRoot(), sid));
+        loadProjection();
+    }
+
+    /**
+     * 退化時投影保護索引不認得磁碟上的 Controller：load-sync 處理（CONSUMED、refresh 過）之後走動態世界的 foreign 分支（{@code ChamberPowerCoordinator} 的
+     * 「不是投影、不是原生世界」：INVALID、比較器 0、沒有 chamber UUID），instanceKind 不寫回，維持磁碟上的值。setup 時這個 Controller 已 refresh 過並存檔，磁碟上
+     * 已是 PROJECTION、INVALID，所以 block entity 的結果與投影的分支相同，兩者的區別是索引不認得它（{@code projectionControllerAt} 為假）。退化的保護另加同位置的
+     * 不變量 cell。
+     */
+    private boolean projectionControllerForeign() {
+        var world = universeWorld().orElseThrow();
+        var controller = projectionController;
+        if (!loadSync.outcomes().contains(ChamberLoadSyncOutcome.CONSUMED) || !controller.powerInitialized()) return false;
+        var pos = FRAME.controllerPos();
+        expect("indexDoesNotKnowTheController", !ProjectionProtectionIndex.projectionControllerAt(server, world.getRegistryKey(), pos), () -> "退化的索引認得這個 Controller");
+        expect("foreignBranch", !controller.isRemoved() && world.getBlockEntity(pos) == controller && controller.chamberState() == ChamberState.INVALID
+                && controller.chamberUuid() == null && world.getBlockState(pos).getComparatorOutput(world, pos) == 0
+                && controller.instanceKind().name().equals(diskInstanceKind),
+                () -> "Controller：state=" + controller.chamberState() + " uuid=" + controller.chamberUuid() + " kind=" + controller.instanceKind() + "（磁碟上 " + diskInstanceKind + "）");
+        // spec §9.3 的退化：保護另加登記中的 Origin 艙在每個動態 Overworld 同位置的不變量 cell（Controller、shell、門），interior 不受保護。
+        var protection = ChamberProtectionService.get();
+        expect("degradedIndexProtectsTheSite", !protection.mayMutate(world, pos) && !protection.mayMutate(world, local(0, 0, 0))
+                && !protection.mayMutate(world, local(3, 3, 0)) && protection.mayMutate(world, local(3, 3, 3)), () -> "退化時同位置的 Controller、shell、門應受保護，interior 不應受保護");
+        proof.put("loadSyncOutcomes", loadSync.outcomes().stream().map(Enum::name).toList());
+        closeLoadSync();
+        return true;
+    }
+
+    /** RESOLVE 進 SEALED(AUTHORITY_CORRUPT)：永久原因的 ERROR 一則、沒有 PREPARE、interior 沒有被重寫（記憶體與磁碟）、ledger 沒有被重建、原艙門關著。 */
+    private boolean sealedAsCorrupt() throws Exception {
+        var record = journal.flushedRecords().get(sid);
+        if (record == null || record.state() != SessionState.SEALED) return false;
+        expect("sealedAuthorityCorrupt", record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)) && record.equals(journal.records().get(sid)),
+                () -> "SEALED 的原因=" + record.collapse().sealedReason());
+        var errors = capture.matching(Level.ERROR, sid.toString()).stream().map(LogCapture.Entry::message).toList();
+        expect("onePermanentAdminError", errors.size() == 1 && errors.getFirst().contains("SEALED(AUTHORITY_CORRUPT)") && errors.getFirst().contains("需要管理員處理"),
+                () -> "這個 session 的 ERROR：" + errors);
+        expect("neverPrepared", capture.matching(Level.INFO, "準備完成", sid.toString()).isEmpty(), () -> "退化之後仍有「準備完成」");
+        var world = universeWorld().orElseThrow();
+        var marker = diskBlock(world, interiorMarker());
+        expect("interiorNotRewritten", world.getBlockState(interiorMarker()).isOf(Blocks.GOLD_BLOCK) && GOLD_BLOCK.equals(marker.name()),
+                () -> "interior 標記：記憶體 " + world.getBlockState(interiorMarker()) + "，磁碟 " + marker);
+        expect("ledgerNotRecreated", !Files.exists(data().resolve(ProjectionLedger.FILE_NAME)), () -> "projection ledger 被重建");
+        expect("doorClosedOnSeal", M5GameTestSupport.doorAll(source, FRAME, false, MembraneState.NONE), () -> "SEALED 之後原艙門不是關著");
+        return true;
+    }
+
+    /** SEALED 之後 P 從艙內照一般方式開門（spec §11.2）；record 仍是 SEALED(AUTHORITY_CORRUPT)，spec §12 的四件事（退化版：沒有 projection entry）。 */
+    private boolean doorOpensNormally() throws Exception {
+        var player = participantPlayer();
+        var result = M5GameTestSupport.interact(source, local(3, 3, 0), player);
+        expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(source, FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
+        var record = journal.flushedRecords().get(sid);
+        expect("stillSealed", record != null && record.state() == SessionState.SEALED && record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
+                () -> "state=" + M5GameTestSupport.state(journal, sid));
+        var catalog = UniverseRegistryState.get(server).flushedRecords();
+        expect("catalogUnchanged", catalog.size() == catalogBefore && eagerEnabled(catalog.get(universe)), () -> "catalog=" + catalog);
+        expect("oneAllocationForTheToken", M5CollapseDiskEvidence.allocations(data()).equals(List.of(allocation())), () -> "allocation ledger=" + allocationsOrError());
+        var discovery = M5CollapseDiskEvidence.discovery(saveRoot());
+        expect("discoveredOnce", discovery.size() == 1 && discovery.getFirst().universeId().equals(universe), () -> "discovery=" + discovery);
+        expect("ledgerNotRecreated", !Files.exists(data().resolve(ProjectionLedger.FILE_NAME)), () -> "projection ledger 被重建");
+        expect("participantInTheSourceWorld", player.getServerWorld() == source, () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue());
+        proof.put("finalDisk", M5CollapseDiskEvidence.summary(saveRoot(), sid));
+        return true;
+    }
+
     // ---- 共用 ----
+
+    /** 以 probe 的 ticket（{@link ProbeTicket}，持有到 JVM 結束）載入投影所在的 chunk。 */
+    private void holdProjectionChunk(ServerWorld world) {
+        var chunk = new ChunkPos(FRAME.controllerPos());
+        world.getChunkManager().addTicket(ProbeTicket.TYPE, chunk, 0, chunk);
+        world.getChunk(chunk.x, chunk.z);
+    }
+
+    private CorridorPageManager pages() { return CorridorPageManager.forServer(server); }
+
+    private ServerWorld corridor() { return server.getWorld(SuperpositionWorld.KEY); }
+
+    /** 這個 session 有走廊 space（{@code currentMappings} 對沒有 space 的 session 丟 {@link IllegalArgumentException}）。 */
+    private boolean spaceExists() {
+        try {
+            pages().currentMappings(sid);
+            return true;
+        } catch (IllegalArgumentException missing) {
+            return false;
+        }
+    }
+
+    /** {@code world} 的存檔目錄（raw MCA 的上層）。 */
+    private Path dimensionDirectory(ServerWorld world) {
+        return DimensionType.getSaveDirectory(world.getRegistryKey(), saveRoot());
+    }
+
+    /** 開服前就能用的 {@code world/data}（root 是 cwd，level-name 由 harness 固定為 {@code world}）。 */
+    private Path worldData() { return config.root().resolve("world").resolve("data"); }
 
     /**
      * probe 自己的 chunk ticket（level FULL、不持久化；只在需要時建立，probe 關閉時不碰 ChunkTicketType）。加上之後一直持有到 JVM 結束，不移除：

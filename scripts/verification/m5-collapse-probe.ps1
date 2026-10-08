@@ -22,6 +22,8 @@ $taskGradle = $Gradle
 
 # chain 表：chain 名稱 → 依序執行的 phase（名稱必須與 M5CollapseRecoveryProbe.phases() 相同）、預期的結束與 halt 的窗口。
 $chains = [ordered]@{
+    # W1：live session 選門之後，MEASURED→COLLAPSING 提交之後、返還之前（重啟時走廊 space 重建、不經請求就返還）。
+    'w1' = @(@{phase='w1-crash'; ending='halt'; window='COLLAPSING_COMMITTED'}, @{phase='w1-restart'; ending='stop'; window=''})
     # W2：allocation ledger flush 之後、catalog flush 之前。
     'w2' = @(@{phase='w2-crash'; ending='halt'; window='ALLOCATION_APPENDED'}, @{phase='w2-restart'; ending='stop'; window=''})
     # W3：catalog flush 之後、物化之前（重啟時由 EAGER_ENABLED 物化）。
@@ -36,6 +38,8 @@ $chains = [ordered]@{
     'w6' = @(@{phase='w6-crash'; ending='halt'; window='PROJECTION_COMPLETE'}, @{phase='w6-restart'; ending='stop'; window=''})
     # W6 的 EXISTING 再造訪：REPAIR 寫了格之後、checkpoint 之前。
     'w6x' = @(@{phase='w6x-crash'; ending='halt'; window='PROJECTION_REPAIRED'}, @{phase='w6x-restart'; ending='stop'; window=''})
+    # 開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本，不是 crash 窗口）：setup 提交 COLLAPSING 的同一個 tick 正常停服，restart 開服前移走 ledger。
+    'degraded' = @(@{phase='deg-setup'; ending='stop'; window=''}, @{phase='deg-restart'; ending='stop'; window=''})
 }
 $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($name in $Only) { if (-not $chains.Contains($name)) { throw "未知的 chain：$name（可用：$($chains.Keys -join ', ')）" } }
