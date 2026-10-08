@@ -2435,7 +2435,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         // 只數被拒（REJECTED）的那一則：寫入成功的那一次若遇到落盤失敗（ROLL_FORWARD_PENDING）會另記一則「寫入 SEALED」WARN，不屬於這個 witness。
                         var rejectedWarns = capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 SEALED沒有完成（REJECTED）", sid.toString());
                         witness.put("oneRejectedWarnWithTheFirstBackoff", rejectedWarns.size() == 1 && !rejected.isEmpty()
-                                && rejectedWarns.getFirst().message().contains("200 ticks 後，tick " + (rejected.getFirst() + CollapseBackoff.INITIAL_TICKS)));
+                                && rejectedWarns.getFirst().message().contains(CollapseBackoff.INITIAL_TICKS + " ticks 後，tick " + (rejected.getFirst() + CollapseBackoff.INITIAL_TICKS)));
                         witness.put("materializedOnce", materialize.calls() == 1);
                         var sealedWarns = capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "SEALED(MATERIALIZE_FAILED)", sid.toString());
                         // 不重跑 RESOLVE 的 witness：重跑時 resolver 看到本 instance 已用掉物化額度，回同一個原因、但 cause 是「已用掉…」，寫入成功時的 WARN 就帶它。
