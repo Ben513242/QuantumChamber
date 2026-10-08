@@ -4892,3 +4892,164 @@ GameTest 的 RED 有兩種，都在最終的 testmod 上跑：`red-c4-passage` �
   - 已知限制（補充第 4 點）：SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒、通道在記憶體內關閉的期間，比較器仍是 15（短暫誤報），到寫入成功為止；這段期間原艙門照一般門的邏輯開關（n-2）。
   - spec errata：§10.7 的 Controller PASSAGE 訊息字句；§10.6 :613 的實作細節（排入下一個 tick、套用時再排除有 M5 session 的艙、MEASURED／DORMANT 也包含在內、不看供電、sealed 與 passable 都改為一般開門）；n-2 的門（若接受）。
   - README「預期結果」的數字以最新的 run-all 為準（F5-2 之後：M5 55、JUnit 654、release 429／382、sources 221）。
+
+## F6-0：F5-2 的 Step 0、G-NLIVE 的根因與測試缺口
+
+- 一位 implementer 完成（controller 的派工 scratchpad `f60-prompt.md`）。開工時 HEAD 是 `aa84c07`、工作樹乾淨；途中 controller commit 了只改 spec 與 plan 的 `7b78aea`（spec v5.4，§10.8 的到達提示，與本 task 無關），本 task 的 commit 都接在它之後，沒有動那兩個檔。
+- 範圍是 plan Task F6「拆分」的 F6-0：F5-2「交給後續」的 F6 Step 0、G-NLIVE 偶發的根因（F4b-2 裁示第 3 條）、F4a 的 S2-mB（`sealRetryDue` 接線）、F4b-3 的 spec S-M1（隔離期間原艙門的交還）、F4a-0 的小幅重複（讀取 `TestContext.test` 的反射）。不碰 probe、`build.gradle`、`gates.ps1`、`.github/`。
+- Commits（依序；每個 commit 只 stage 自己的檔案，commit 之前的工作樹 state 記在 `f6/f60/commit-c1-state.txt`～`commit-c5-state.txt`，c1 涵蓋前兩個 commit）：
+  - `9590e7e` `fix: keep the start-held ARMED on the controller and share the door membrane check`（parent `7b78aea`）：第 1 點的 production 與 JUnit。`CPC`、`BE`、`CCP`（只有 `Membranes` 的 Javadoc）、`OD`、`CPCT`。
+  - `9e70ede` `test: share the permanent suspension check and the seal probe descriptor`（parent `9590e7e`）：第 1 點的 testmod Nit。`HK`、`SPM`。
+  - `fa9bdba` `fix: wait for the source chunks before the measured release checkpoint`（parent `9e70ede`）：第 2 點。`CPM`（只有 measured release 的 ready 檢查）、`MWSC`；testmod `M4C`（新增 T-SRC-ENT）、`SUP`（`holdEntityStorage`）、`HK`（`ENTITY_STORAGE_HOLD`）、新增 `mixin/ChunkSaveCheckpointEntityHoldMixin.java`（`CSEM`）與它在 `quantumchamber-test.mixins.json` 的登記。
+  - `63581bc` `test: drive the rejected SEALED write retry through the collapse tick`（parent `fa9bdba`）：第 3 點。testmod `HK`（`JournalPutFault.ticks()`）、`SUP`、`M5U`（新增 T-SEALRETRY）。
+  - `9e94c34` `test: hand the prepare door back open while the session is quarantined`（parent `63581bc`）：第 4 點。testmod `HK`（`CONVERGE_FAULT`）、`SUP`（`installConvergeFault`）、`M5U`（新增 T-QUAR）、新增 `mixin/QuarantineConvergeFaultMixin.java`（`QCFM`）與登記。
+  - `5e1d0d7` `test: read the GameTest state through accessor mixins`（parent `9e94c34`）：第 5 點。testmod `SUP`、`M5U`、新增 `mixin/TestContextStateTestAccessor.java`、`mixin/GameTestStateRunnablesTestAccessor.java` 與登記。
+  - `771f14c` `docs: describe the F6-0 checkpoint hold, convergence fault and accessors in the GameTest guide`（parent `5e1d0d7`）：`scripts/verification/README.md`「新增 M5 GameTest」一節。
+  - 本節由其後的 docs commit `docs: record F6-0 in the M5 note` 加入。
+- Code range `7b78aea..5e1d0d7`；docs `771f14c` 與本節的 docs commit。
+  - 只改了派工允許的路徑：`chamber/` 的 `ChamberPowerCoordinator`、`ChamberControllerBlockEntity`、`ChamberCollapsePort`（只有 Javadoc）；`collapse/OriginDoors`（只有第 1 點）；`corridor/CorridorPageManager`（只有 measured release 的 ready 檢查）；`persistence/MeasuredWorldSaveCheckpoint`；JUnit `ChamberPowerCoordinatorTest`；testmod `M4CandidateDoorGameTests`（只新增一個 test）、`M5UniverseGameTests`、`M5GameTestSupport`、`M5TestHooks`、`mixin/CollapseSealProbeMixin`（只有 Nit）、4 個新的 mixin 與它們的登記；README「新增 M5 GameTest」一節；本節。
+  - **沒有改 `CollapseService`**（第 3、4 點都不需要可測性調整；仍是 1590 行）。也沒有改 `ChamberCollapseDependencyGuardTest`（守門每一輪都 PASS）、`CollapseServiceTest`、`build.gradle`、`gates.ps1`、`run-all.ps1`、`.github/`、`fabric.mod.json`、語言檔，以及派工「不得修改」所列的類別。
+- 行號以 `771f14c` 為準（code 與 `5e1d0d7` 相同）。`BE` 指 `chamber/ChamberControllerBlockEntity.java`、`CPM` 指 `corridor/CorridorPageManager.java`、`MWSC` 指 `persistence/MeasuredWorldSaveCheckpoint.java`、`M4C` 指 testmod 的 `M4CandidateDoorGameTests.java`、`CSEM`／`QCFM` 見上；`CPC`、`CCP`、`OD`、`CPCT`、`CS`、`M5U`、`SUP`、`HK`、`SPM` 同前面各節。新增的 3 個 `@GameTest`（各自一個 batch）：
+  - T-SRC-ENT `M4C:672` `native_measured_release_waits_for_the_source_entity_storage_windows`（default run，`m5_f60_source_entity_storage`，`_windows`，per-test Universe receipt ＋1）
+  - T-QUAR `M5U:2340` `quarantined_prepare_hands_the_origin_door_back_open_and_reseals_it_after_converging`（M5 run，`m5_universe_door_quarantine`，tickLimit 1000，catalog 增量 1，不是 `_windows`）
+  - T-SEALRETRY `M5U:2403` `rejected_seal_write_is_retried_on_the_per_session_backoff_without_rerunning_resolve`（M5 run，`m5_universe_seal_rejected_retry`，tickLimit 1300，catalog 增量 1，不是 `_windows`）
+
+### 第 1 點：F5-2 的 Step 0
+
+| 項目 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| spec S-M2＋quality：`ARMED_BY_START` 是整個 JVM 共用的 static | **二擇一採「`ChamberControllerBlockEntity` 上不寫入 NBT 的欄位，經 `SessionActions` 傳入、傳出」**。`BE:29` `heldByStart`（不讀寫 NBT、不 `markDirty`，`BE:104`／`:109` package-private 的 getter／setter）；`CPC:286` `SessionActions` 加 `heldByStart()`／`setHeldByStart(boolean)` 兩個 default 方法（沒有實作時恆為 false，等同每次都是新的 block entity），`refreshNow` 的實作讀寫 Controller（`CPC:106-107`）。`CPC:194` 每次協調先讀出並清除，`CPC:234`／`:236` 只有依記號保持或 start 回 ARMED_ONLY／STARTED 時才經 `CPC:248` `holdArmed` 寫回 true。static 集合與 `ConcurrentHashMap` 的 import 移除。理由：(1) reconcile 的結果只依參數（含傳入的 SessionActions），不再依賴參數以外的 JVM 歷史（quality 的疑慮）；(2) 記號的生命週期就是 block entity 的：重啟、chunk 重新載入、同一個 JVM 內重開 server 時 block entity 都重新建立，「存下的 ARMED 一律重新評估」在同一個 JVM 內也成立（S-M2），不必另外註冊 `SERVER_STOPPED`（chamber 沒有自己的生命週期註冊點，`QuantumSuperpositionMod` 與 `ChamberProtectionService` 都不在允許路徑）；(3) 比照既有的 `activationBlocked` 與 `loadSyncPending`（不跨載入保存的 runtime 欄位）。與 F5-2 的差別只在「同一個 server instance 內 Controller 的 chunk 重新載入」：舊的 static 集合會保留記號，現在會重新評估一次（呼叫 start）。production 的 session gateway 的 `start` 只回 STAGING／REJECTED，記號恆為 false，所以只影響 M1.2 的 adapter 與 test 的 fake gateway；default run 中重建 Controller block entity 的 test（`M1ChamberGameTests` 的 5 處與 `M2CorridorGameTests` 的 2 處 `removeBlockEntity`）都不是「start 留下 ARMED 之後重建、再數 start 的次數」：M1 的在重建之前是 READY、OFF、故障封鎖或尚未同步，M2 的走 production 的 gateway（start 不回 ARMED_ONLY／STARTED）（逐一核對原始碼；default run 174 個既有 test 不變） | JUnit `CPCT:257` `heldByStartLivesOnTheBlockEntitySoANewOneReevaluatesTheSameChamber`（同一個 block entity 持續高電位不重複啟動；同一座艙的新 block entity 重新評估；活動 session 與協調失敗的 ARMED 清除記號）。既有的 `armedLeftWithoutTheSessionThatHeldItIsReevaluatedAndOnlyAStartedArmedHolds` 的「重啟」改以新的 `Backend`（新的 block entity）協調，斷言由「累計 3 次 start」改為「新的 block entity 1 次 start」，強度相同。RED `red-armed-by-start-static`（記號回到 F5-2 的 static 集合）→ 只有新 test FAIL。F5-2 的 4 個 JUnit mutation 在新的程式上仍有效（`adapted-junit-summary.txt`）：`mut-junit-passage-eleven` → 2 個 FAIL（同 F5-2）；`mut-junit-r2m5-short-circuit` → R2 M5 的 test 與新 test FAIL；`mut-junit-r2m5-no-hold` → `poweredWithoutEligibilityProtectsAndThenArmsOnlyOnce`、R2 M5 的 test 與新 test FAIL；`mut-junit-signal-eleven` → 3 個 FAIL（同 F5-2）。新的 `mut-junit-held-not-cleared`（不先清除記號）→ R2 M5 的 test 與新 test FAIL |
+| quality Minor 1：`CPC:173` 的 reconcile Javadoc 寫「純函式」 | `CPC:173-190`：改為「不讀世界、不改 Controller、不寫門，但有下列副作用」，逐項列出 registry 的 power state（`setPowerState`：POWERED、RETURNING、OFF；失敗時 RETURNING）、`SessionActions`（讀 presence、activationBlocked、heldByStart；呼叫 returnToOrigin 與 start；寫回 heldByStart 記號）與失敗時的 WARN；R2 M5 一段改寫記號的位置與生命週期 | 只有 Javadoc |
+| quality Minor 2：`doorHasMembrane` 在 `CPC` 與 `OD` 各一份 | `CPC:165` 改為 `public static`（Javadoc 寫明 chamber 與 collapse 共用、collapse 可以 import chamber），`OD:3` 以 static import 使用；`OD` 的私有複本與不再使用的 `ModBlocks` import 刪除，三個呼叫點不變 | `ChamberCollapseDependencyGuardTest` 每一輪 PASS（chamber 不 import collapse）；M5 全部、default 全部與 F5-2 逐一相同（見「Gate 與證據」） |
+| Nit：`CPC:183` 的區域變數 `armedByStart` 與同名方法衝突 | 區域變數改名 `heldByStart`（`CPC:194`），方法改名 `holdArmed`（`CPC:248`），兩者不再同名 | 編譯；JUnit |
+| Nit：`CPC:141` 重複讀取 presence | `refreshNow` 的 `SessionActions` 記下同一次協調最後讀到的 presence（`CPC:100`、`:109-110`；讀取丟出或回 null 時是 null），`normalizeOwnerlessMembrane`（`CPC:138`）沿用它，不再呼叫 `gateway.presence`。協調裡的 start 與 returnToOrigin 只會讓 presence 在 NONE、ARMING、ACTIVE、RETURNING 之間改變，不會變成或離開 COLLAPSE／PASSAGE，所以 :613 的判斷與再讀一次相同（Javadoc 寫明）；讀不到時仍是 DEBUG、略過，下一次刷新再判斷 | T-OWN（`m5_universe_membrane_ownerless`）在 `green-c1-m5` PASS；F5-2 的 `mut-c8-chamber-ignores-presence`（anchor 沒變，`mut-c1-presence-ignored`）在新的程式上仍讓 T-OWN FAIL |
+| Nit：`CPC:158` 的 false 分支只有 JUnit 會走到 | `normalizeOwnerlessMembrane` 先讀門（`doorHasMembrane`），以實際的值呼叫 `normalizesOwnerless(presence, membrane)`（`CPC:156`）：門沒有量子膜的那一半成為每次刷新的 production 路徑（不再以「沒有量子膜就 return」繞過純函式）。因為 presence 不再另外讀取，先讀門不會多一次 presence 的讀取 | `mut-c1-door-ignored`（production 以 `true` 呼叫，不看門）→ T-OWN FAIL（沒有量子膜的艙也排入正規化，`queuedForTheNextTickWithoutWriting` 等 6 個 witness false） |
+| Nit：`HK:108`、`:118` 的條件重複 | `HK:137` `suspendedForGood`（system property 或不可撤銷的集合），`collapseSuspended` 與 `cancelStep` 共用 | T-STALE（`m5_universe_passage_stale`）PASS（`queryDoesNotCount` 與 `stepPausedForThreeTicks` 都在） |
+| Nit：`SPM:24`、`:31` 的 descriptor 重複 | `SPM` 以 private static final `SEAL_COMMITTED` 宣告一次，HEAD 與 RETURN 兩個 `@Inject` 共用（`require=1` 不變） | T-TRR（`m5_universe_passage_recovery`）PASS（`sealProbeHitOnce` 等） |
+| Nit：`CCP:80` 的 `Membranes` Javadoc 漏了「艙體的 chunk 已載入」 | 補上（`CCP:80-81`） | 只有 Javadoc |
+
+### 第 2 點：G-NLIVE 偶發的根因
+
+- **查證**（`f6/f60/` 的 `red-c2-*`、`green-c2-*` 與兩個舊 root 的 log）：
+  1. 兩次 G-NLIVE 的失敗（`gate-f4a0-green-focused-c8dc9fc71cd84ec082c6892f21846eca`、`gate-fix1-final-focused-e9914a241dc04973914d38eaaf0a5677` 的 `latest.log`）都是同一則 WARN「MEASURED 保留 receipt 等待安全返還」，cause「相關 chunk／entity storage 尚未完整載入」，堆疊是 `ChunkSaveCheckpoint.context:73` ← `ChunkSaveCheckpoint.save:46` ← `MeasuredWorldSaveCheckpoint.save:29` ← `CPM.tickMeasuredRelease:929`，緊接在「走廊幾何完成」與 §11.3 的「不提交 COLLAPSING，先以保留式 recovery 返還與清理」之後；之後各有一則「MEASURED 原生存檔 checkpoint 已恢復…先前連續失敗 3 次」與「…4 次」，也就是退避 20→40→80（→160）之後就緒，是暫時性的未就緒。
+  2. checkpoint 的相關範圍（`MWSC` 的 `relevant`）是**來源艙**的 chunks（`ChamberGeometry.bounds`）加上走廊 lease 的 chunks。同一次 `tickMeasuredRelease` 在 checkpoint 之前（`CPM:918`）對每一個走廊 lease 問 `leaseReady`：`getWorldChunk != null`、`world.isChunkLoaded(packed)`、`shouldTick`。javap（Yarn 1.21+build.9）：`ServerWorld.isChunkLoaded(long)` 就是 `entityManager.isLoaded(long)`，與 `ChunkSaveCheckpoint.loaded` 的 entity storage 檢查是同一個判斷（F4b-2 補充第 9 點的結論，這次重新確認）。`durable()` 要求 `leasesEqual(record.spaceLeases(), space.leases)`，所以 checkpoint 的走廊 chunks 恰好是 `leaseReady` 剛確認過的那些；兩者之間只有同一個 server tick 內的同步方塊寫入與 AIR 掃描，不會處理 chunk 卸載。所以丟出的一定是來源世界（G-NLIVE 是 Nether）的 chunk，而 measured release 在 save 之前沒有對它們問 `ChunkSaveCheckpoint.ready`。
+  3. 決定性的重現：T-SRC-ENT 讓來源艙 Controller 所在 chunk 在 checkpoint 的就緒判斷裡回「entity storage 尚未載入」（下方的 fixture），修改前的程式（`red-c2-old-release`：`CPM`、`MWSC` 換回 HEAD）重現了 G-NLIVE 完全相同的 log：同一則 WARN、同一個 cause 與堆疊、退避 20→40→80、解除之後「已恢復…先前連續失敗 3 次」。
+  - **結論：根因就是這一個**（派工第 2 點的假設成立），沒有停下。來源 chunk 的 entity storage 為什麼會晚到 checkpoint（入場之後約 800 tick）才載入完成，沒有再追查：GameTest server 不以 20 TPS 節流（G-NLIVE 的走廊幾何 768 tick 只花 304 ms），entity storage 的非同步讀取只要幾十到幾百毫秒，就是數百個 tick；不論原因，呼叫端都要先問 ready。
+- **修正**：`MWSC:29` 新增 `ready(server, record)`，與 `save`（`MWSC:22`）共用 `MWSC:32` `relevant`（守門、來源艙與走廊 lease 的 chunks 都同一份；`save` 的行為不變）；`CPM:921` 在 `leaseReady` 之後、清除之前：要做 checkpoint（`space.finalizing==null`）時先問 `MWSC.ready`，未就緒就 return，下一個 tick 再試，不清除、不掃描、不存檔，也不算 checkpoint 失敗（不記 WARN、不進 checkpoint 的退避）。放在清除之前而不是緊接著 save：等待期間不做整段 AIR 掃描（lease 約 7 萬格），與 checkpoint 退避期間的作法一致；清除可能跨好幾個 tick，但 ready 每個 tick 都在同一次呼叫裡、save 之前判斷，中間沒有非同步的變化。`space.finalizing!=null`（checkpoint 已承認、journal 的寫出還沒確認）的重試不做 checkpoint，所以不問。
+- **fixture**（`HK:761` `EntityStorageHold`、`HK:108` `ENTITY_STORAGE_HOLD`、`SUP:895` `holdEntityStorage`、`CSEM`）：testmod mixin 掛在 `ChunkSaveCheckpoint.loaded`（`ready` 與 `save` 的前置條件共用的「已載入為 WorldChunk，而且 entity storage 已載入」）的開頭，保留中的 chunk 回 false。只改 checkpoint 自己的判斷，原版的 entity 管理、`ServerWorld.isChunkLoaded` 與 `leaseReady` 都不受影響。真正的非同步載入時間無法決定性重現（重新載入來源 chunk 也不行：MEASURED 清理期間玩家已返還、來源艙有 ticket），所以以這個判斷造出 G-NLIVE 實際遇到的狀態；`hits()` 是 witness。
+- **T-SRC-ENT**（`M4C:672`，比照 `m4_ifix1_checkpoint_backoff` 的 `nativeCandidates`：真入場、真側門 checked SELECTED → MEASURED，移除效果讓玩家返還、開始清理；不注入 checkpoint 失敗的 `CheckpointFaultProbe` 只計數）：保留生效之後再觀察 100 個 server tick：`sourceChunkHeld`、`noCheckpointWhileNotReady`、`noWarnWhileNotReady`、`returnedWithLeasesKept`（MEASURED、玩家都已返還、lease 還在）、`playerReturnedToSource`；解除之後：`dormantOnceReady`、`selectionReceiptKept`、`oneAcceptedCheckpoint`、`neverWarned`（這個 sid 沒有 WARN／ERROR）、`noCheckpointRecovery`（沒有「checkpoint 已恢復」INFO）。
+- **RED／GREEN／mutation**：
+
+  | 輪次 | 工作樹 | Root | 結果 |
+  | --- | --- | --- | --- |
+  | RED（第一次） | `9e70ede`＋testmod 的 T-SRC-ENT 與 hook（production 是 HEAD；`red-c2-source-entity-state.txt`） | `gate-red-c2-source-entity-8416e25ef2154e5d9c18c2cd33f49552` | FAIL：`noCheckpointWhileNotReady`、`noWarnWhileNotReady`、`oneAcceptedCheckpoint`、`neverWarned`、`noCheckpointRecovery` false；checkpoint 在 server tick [1146, 1166, 1206, 1286]（退避 20、40、80），holdHits=3；log 與 G-NLIVE 相同（上方查證第 3 點） |
+  | GREEN（相關 batch） | 修正之後 | `gate-green-c2-source-entity-1174ed8bf30148688daef48c0319ea9f` | T-SRC-ENT、`m4_ifix1_checkpoint_backoff`、`m5_h2_checkpoint_scope`、G-NLIVE 4/4 PASS |
+  | `chain-c2`（測試加上 `M5_F60_SOURCE_ENTITY_STORAGE` log 之後重跑） | `fa9bdba` 的工作樹 | `gate-green-c2b-source-entity-0d4c91a77ed34564b99764ca22a00f47`；`gate-red-c2b-old-release-f66ccd3ff3fc48108afd39107eae6032`；`gate-mut-c2-ready-corridor-only-c8d6f28635014c7fabcc14c9156a9f02` | GREEN PASS：`holdHits=101`（100 tick 的觀察期間每個 tick 一次）、checkpoint 只有解除之後的一次、整個 batch 沒有 WARN／ERROR。RED（`CPM`、`MWSC` 換回 HEAD）FAIL，witness 同第一次。mutation（`ready` 只看走廊）FAIL，witness 同 RED：來源艙的那一半就是修正的關鍵 |
+
+- **M2、M4 既有行為不變**：default run 全部（`gate-c2-default-a9c898ff469744eba25bb96ccd582775`）175/175，比 F5-2 的 `gate-c8-default` 多的只有 T-SRC-ENT；WARN／ERROR 54／28 與 `gate-c8-default` 逐行相同（`wbcmp-c2-default.txt`；T-SRC-ENT 沒有 WARN）。M4 recovery probe（`recovery-run-19f095ab7332423390f68a04b9cbb96a.json`）24/24。
+
+### 第 3 點：`sealRetryDue` 接線的 test（F4a S2-mB）
+
+- **先查證「現況」**：F4a 寫下「把接線改成每個 tick 都呼叫 `seal` 的 mutation 會存活」時還沒有 PJF。F4b-3 加上 PJF 與 T-REJ（`m5_universe_door_rejected`）之後，這個 mutation（`mut-c3-seal-every-tick`）已經會讓 T-REJ FAIL：`stillPlainOpenDuringTheBackoff=false`（被拒之後下一個 tick 就重試成功、進 SEALED，退避期間的 +100 tick 已不是 COLLAPSING；`gate-mut-c3-seal-every-tick-a837d735a404473ba287c309baa2cccd`）。所以派工所說「mutation 會存活」已經過時；但 T-REJ 只間接看狀態，沒有斷言重試的間隔與「不重跑 RESOLVE」，仍依派工補了 T-SEALRETRY。
+- **T-SEALRETRY**（`M5U:2403`）：DORMANT NEW 收據的 RESOLVE 物化失敗（`installMaterializeFault`）→ SEALED(MATERIALIZE_FAILED) 的寫入被 PJF 拒兩次（`installJournalPutFault(…, SEALED, 2, …)`；`HK:449` `ticks()` 記下每一次拒絕的 server tick）；`installSealProbe` 記下 `sealCommitted` 的 tick。witness：
+  - 依 per-session 退避、不是每個 tick：`rejectedOnlyOnThePerSessionBackoff`（兩次拒絕恰好相隔 `CollapseBackoff.INITIAL_TICKS`）、`committedAfterTheDoubledBackoff`（第三次在第二次之後 400 tick 寫入）、`collapsingWithinTheFirstBackoff`／`collapsingWithinTheDoubledBackoff`（期間 COLLAPSING、current＝flushed、拒絕次數不變）、`sourceTicketKeptWhileRejected`、`oneRejectedWarnWithTheFirstBackoff`（「寫入 SEALED沒有完成（REJECTED）」恰一則，寫明「200 ticks 後，tick R+200」）。
+  - 不重跑 RESOLVE：`materializedOnce`、`neverResolved`（沒有「目的地已確定」）、`sealedWithTheOriginalResolveCause`（進入 SEALED 的 WARN 帶 RESOLVE 判定的 cause「物化失敗，catalog 已改為 DISABLED」；重跑 RESOLVE 時 resolver 看到本 instance 已用掉物化額度，回同一個原因、cause 是「…已用掉…」）。
+  - 最後寫入成功：`sealedWith(MATERIALIZE_FAILED)`（whenTicks 的完成條件）、`sourceTicketReleasedOnceSealed`、`noError`。
+  - GREEN（最終版，`gate-green-c3c-seal-retry-b6df6c7ca7624ef99319937457e19af7`）：`M5_SEAL_REJECTED_RETRY`（`green-c3-seal-retry` 的 run）`rejected=[318, 518] committed=[918] materialize=1`。
+- **mutation**（`chain-c3c.log`，最終版的 test）：
+
+  | mutation | 改動 | 結果 |
+  | --- | --- | --- |
+  | `mut-c3-seal-every-tick`（S2-mB） | `CS:436` 不看 `sealRetryDue`，每個 tick 都重試 | FAIL：rejected=[56, 57]、committed=[58]；退避的 5 個 witness false（`gate-mut-c3c-seal-every-tick-4b8b585acb3c4158a7b89145717db01a`） |
+  | `mut-c3-rerun-resolve` | 退避期過後丟掉待重試的寫入、照常推導（重跑 RESOLVE） | FAIL：只有 `sealedWithTheOriginalResolveCause=false`（間隔與次數都相同：rejected=[61, 261]、committed=[661]），證明「不重跑 RESOLVE」要靠 cause 的 witness（`gate-mut-c3c-rerun-resolve-eeb409688e864f48be5f5d0f1306d76a`） |
+  | `mut-c3-reject-no-backoff`（F4a MS-2 的 GameTest 版本） | `Track.sealRejected` 不記退避 | FAIL：rejected=[54, 55]、committed=[56]；退避與 WARN 字句的 6 個 witness false（`gate-mut-c3c-reject-no-backoff-3ad724921d3d474fb0aa8a91feb118a1`） |
+
+- 被拒 WARN 的篩選字句：第一版以「寫入 SEALED」計數，`gate-c3-m5-f5d26a298da74e3cafaabaf108315467`（M5 全部）中寫入成功的那一次遇到 journal 原子移動的 `AccessDeniedException`（已知偶發），多記一則 ROLL_FORWARD_PENDING 的「寫入 SEALED」WARN，`oneRejectedWarnWithTheFirstBackoff=false`，其餘 witness 都成立。這則 WARN 不屬於「被拒」的 witness，所以改以「寫入 SEALED沒有完成（REJECTED）」篩選，保留那個 root、以新的 label 重跑（`gate-c3-m5-rerun-cc5c6c9dd52c4b79abdf3bb30482a0d2`，56/56）。
+
+### 第 4 點：隔離期間原艙門的交還（F4b-3 spec S-M1）
+
+- **GameTest 造得出來**：F4b-3「觀察」第 3 條指出隔離只在塌縮流程自己造成的那個 tick 看得到，因為 recovery 的 `convergeUnchecked` 排在塌縮流程之前、每個 tick 都收斂。所以 T-QUAR 以 public 的 `SessionRecoveryState.quarantine(sid)` 隔離 PREPARE 中的 session，另以新的 testmod Slot（`HK:110` `CONVERGE_FAULT`、`HK:789` `ConvergeFault`、`SUP:906` `installConvergeFault`、`QCFM` 掛在 `SessionRecoveryState.convergeQuarantined` 的開頭）讓它的收斂一直失敗（production 中 `validateOwnership` 一直失敗時的路徑：recovery 依原因去重記一則「隔離 session 尚無法收斂」WARN、維持隔離），塌縮流程因此看得到隔離中的 PREPARE。不需要 JUnit 測純函式，也不需要改 `OD`。
+- **T-QUAR**（`M5U:2340`）：`collapsedToUniverse`＋`holdReady`（收斂恢復之後留在 PREPARE）。PREPARE 套用 sealed 量子膜之後隔離：
+  - 下一個 tick：`stillQuarantined`（注入 ≥1 次）、`plainOpenWhileQuarantined`、`onePauseInfo`（`OD:213` 的 INFO「session 隔離中…PREPARE 暫停」一則）、`stillCollapsing`、`destinationTicketKept`（F4b-2 Q-M4：隔離不釋放目的世界的 ticket）、`participantUsePassesWhileQuarantined`（`useDoor` 回 PASS：隔離中的 PREPARE 不擁有原艙門）。
+  - +20 tick：`plainOpenThroughTheQuarantine`、`handedBackOnlyOnce`、`convergenceKeptFailing`（≥19 次）、`oneConvergeWarn`；之後停止注入。
+  - 收斂恢復：`convergedOnceTheFaultStopped`（「未 checked authority 已收斂…checked COLLAPSING」一則）、`stillCollapsingAfterTheQuarantine`、`resealedByThePrepare`、`handedBackStillOnce`、`noCollapseWarn`（`collapseFlowNeverWarned`）。
+  - GREEN `gate-green-c4-quarantine-8921802e329a4cc1b09869d911830382`：`M5_DOOR_QUARANTINE prepare=7 resealed=28 convergeFaults=20 readyHolds=1`。
+- **mutation**（`chain-c4.log`）：`mut-c4-no-release`（派工的例子：拿掉 `OD:214` 的 `releasePrepareDoor`）→ `plainOpenWhileQuarantined`、`plainOpenThroughTheQuarantine`、`handedBackOnlyOnce`、`handedBackStillOnce` false（`doorReleased` 不再設定，INFO 每個 tick 一則）；`mut-c4-release-every-tick`（不看 `doorReleased`）→ `handedBackOnlyOnce`、`handedBackStillOnce` false；`mut-c4-owns-while-quarantined`（`OD.door` 的 `owns` 不看隔離）→ `participantUsePassesWhileQuarantined=false`、`noCollapseWarn=false`（參與者的開關門走 `END_AND_CLOSE`，終局被隔離拒絕，記 WARN、回 REFUSED）。三個都只在目標 witness 上失敗。
+
+### 第 5 點：讀取 `TestContext.test` 的反射有兩份（F4a-0 quality re-review Minor 3）
+
+- 改成 accessor mixin：`mixin/TestContextStateTestAccessor`（`@Accessor("test")`）與 `mixin/GameTestStateRunnablesTestAccessor`（`@Accessor("ticksByRunnables")`，`Object2LongMap<Runnable>`，javap 確認型別），登記在 `quantumchamber-test.mixins.json`。`SUP:225` `gameTestState` 經前者讀取；`M5U` 的 `scheduledCount` 經 `gameTestState` 與後者讀取。兩處的反射都刪除；欄位改名時開服即失敗（accessor 套用不上），不是等到呼叫才丟出。
+- test 集合與結果不變：M5 全部 `gate-c5-m5-b787d90f12274289942a62da1e16d8d8` 57/57 與 `gate-c4-m5` 逐一相同（`cmp-c5-m5.txt`；`harness_await_inside_a_scheduled_callback_keeps_other_scheduled_checks` 讀 `scheduledCount`）；default 全部 `gate-c5-default-rerun2-8b7b709080e842778ca378238bb49462` 175/175 與 `gate-c2-default` 逐一相同（`cmp-c5-default-rerun2.txt`；`installHook` 經 `gameTestState`）。
+
+### 測試
+
+- JUnit 654 → 655：`CPCT` 15 → 16（`heldByStartLivesOnTheBlockEntitySoANewOneReevaluatesTheSameChamber`；`armedLeftWithoutTheSessionThatHeldItIsReevaluatedAndOnlyAStartedArmedHolds` 的「重啟」改用新的 block entity，見第 1 點）。與基準 run-all 的 JUnit 集合比對只多這一個（`cmp-c1-junit.txt`）。
+- M5 GameTest 55 → 57：新增 T-QUAR、T-SEALRETRY（catalog 增量各 1；名稱、batch 都不和其他 test 共用，不是 `_windows`）。既有 test 沒有改名、改 batch 或改增量；T-REJ、T-TRR 只因 `JournalPutFault` 的建構子多了 server 而重新編譯（`installJournalPutFault` 的簽名不變）。
+- default GameTest 174 → 175（`_windows` 88 → 89）：新增 T-SRC-ENT（`_windows`，`nativeCandidates` 需要 Windows 原生玩家 checkpoint）。per-test Universe receipt 51 → 52（T-SRC-ENT 以 `M4PerTestUniverseProbe` 開始與完成）。legacy 1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24 不變。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f60/`（以下簡稱 `f60/`）：`state.ps1`、`gate.ps1`、`junit.ps1`、`junit-all.ps1`、`adapted-junit.ps1`、`chain.ps1`、`adapter.py`、`junitsum.py`、`setcmp.py`、`wbcmp.py`、`jarcmp.py`、`runall-compare.ps1` 由 `f5/f52/` 複製，只改註解、adapter 表的模組（`f60/adapters_f60.py`）與 `runall-compare.ps1` 的基準（F5-2 的 run-all）；`f5/f52/` 下既有的檔案沒有改動。每個 adapter 跑完都還原，還原後的 blob 與套用前相同（`adapter.py` 以 `git hash-object` 核對，`adapters/*/manifest.restored.json`）。每次 RED、GREEN、mutation 的 state 記 HEAD、porcelain 與逐檔 blob（`f60/<label>-state.txt`）。gate root 在 `.superpowers/verification/`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| 第 1 點 JUnit | `7b78aea`＋第 1 點（＝`9590e7e`＋`9e70ede`） | `c1a`（`CPCT` 16、`CSST` 3、`CST` 29、兩個守門 2＋2）；`adapted-junit-summary.txt` 的 6 個 adapter；`c1`（JUnit 全部） | PASS；RED 與 mutation 6/6 FAIL；655（多 1 個，其餘與基準逐一相同） |
+| 第 1 點 GameTest | 同上 | `chain-c1.log`：`gate-green-c1-m5-63dafb067f304b9a9f3841aabbad8502`（T-OWN、T-TRR、T-STALE）、`gate-mut-c1-door-ignored-c97e6df2d6cd4281be0072f321373d09`、`gate-mut-c1-presence-ignored-04a24a131977496a85305c0c6f823de1`；`gate-c1-m5-333fe9945ba6479cb3811285f9626866`（M5 全部）；`gate-c1-default-3fa8baad18104ea7a6426ce296b5b2c0`（default 全部）；`chain-c1split.log`：`gate-split-c1a-m5-5ac00b48eb784e21911538bd8440affe`（testmod 的 Nit 換回 HEAD，＝`9590e7e`） | 3/3；mutation 2/2 FAIL；M5 55/55、default 174/174，都與 F5-2 的 `gate-c8-*` 逐一相同；split 3/3 |
+| 第 2 點 | `9e70ede`＋…（＝`fa9bdba`） | 見第 2 點的表；`gate-c2-default-a9c898ff469744eba25bb96ccd582775`；`gate-c2-m5-rerun-d5d2d054edbf4cdb95fffb4733dc05c7`；`f60/c2-recovery.log`（`recovery-run-19f095ab7332423390f68a04b9cbb96a.json`）；`c2`（JUnit 全部） | default 175/175（WARN／ERROR 54／28 與 F5-2 逐行相同）；M5 55/55；M4 recovery 24/24；JUnit 655 不變 |
+| 第 3 點 | `fa9bdba`＋…（＝`63581bc`） | `chain-c3.log`、`chain-c3b.log`、`chain-c3c.log`；`gate-c3-m5-rerun-cc5c6c9dd52c4b79abdf3bb30482a0d2` | 見第 3 點；M5 56/56 |
+| 第 4 點 | `63581bc`＋…（＝`9e94c34`） | `chain-c4.log`；`gate-c4-m5-ec3de3b26abf4118aa401dac0d176346` | 見第 4 點；M5 57/57 |
+| 第 5 點 | `9e94c34`＋…（＝`5e1d0d7`） | `gate-c5-m5-b787d90f12274289942a62da1e16d8d8`；`gate-c5-default-rerun2-8b7b709080e842778ca378238bb49462` | M5 57/57、default 175/175，與上一輪逐一相同 |
+| run-all | `771f14c`，工作樹乾淨（`STATUS` 是空的） | `run-all-7b4f55e363934019b575c2e031149ce7`（Full：`gate-full-ee2d248ca5a240c6886dce29e6874afd`；M5：`gate-m5-gametest-b55d0c8cf7fe4c67bf082a0551932437`；`f60/run-all-console.txt`） | `END ALL exit=0 HEAD=771f14c`。`SUMMARY default=175/175 windows=89 legacy=1/1 m5=57/57 perTest=52+1 junit=655 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=429entries/382classes sources=221 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`。`.ps1`／`.gradle` 的 `HARNESS` 雜湊與基準 run-all 逐一相同（只有 README 不同，不在採計條件內），C＝`771f14c` |
+
+- 與基準 run-all（`run-all-3d68909b010d452da0dd98eeca17c65c`，`998386a`）逐項比較（`f60/runall-compare.ps1`）：
+  - default 174 → 175（`_windows` 88 → 89）、perTest 51＋1 → 52＋1：只多 T-SRC-ENT。Full 與 legacy 的 boundary oracle PASS。
+  - M5 55 → 57：T-QUAR、T-SEALRETRY。M5 oracle PASS（`m5-oracle.json`）：57 個 test 的 catalog 增量逐一串接（兩個新 test 各 1），每個都 converged、preserved；suite 結束時 51 → 53 筆。`M3_UNIVERSE_STOPPED_VERIFIED worlds=46 runtimeReceipts=46`（45 → 46：T-QUAR 物化的宇宙；T-SEALRETRY 物化失敗，沒有 world）。run-all 中兩個新 test 的實測：`M5_DOOR_QUARANTINE prepare=7 resealed=111 convergeFaults=20 readyHolds=1`、`M5_SEAL_REJECTED_RETRY rejected=[16584, 16784] committed=[17184] materialize=1`；T-SRC-ENT `holdHits=101`、checkpoint 一次。
+  - JUnit 654 → 655（「測試」）。legacy 1、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly PASS、testmodHits 0、CI 兩個平台 PASS，都不變。
+  - release JAR 429 entries（382 classes）不變（`f60/jarcmp-release-run-all.txt`）：沒有新增或刪除的 entry；內容不同的是 `ChamberControllerBlockEntity`、`ChamberPowerCoordinator`、`OriginDoors`、`CorridorPageManager`、`MeasuredWorldSaveCheckpoint` 與它們的 nested class（同一個原始檔重新編譯）；`ChamberCollapsePort` 只改 Javadoc，class 相同。testmod 命中 0（4 個新 mixin 與新的 hook 類別只在 testmod）。
+  - sources JAR 221 不變（`f60/jarcmp-sources-run-all.txt`）：內容不同的只有上面 5 個原始檔與 `ChamberCollapsePort.java`。
+  - log（以 `/WARN]`、`/ERROR]` 計行，UUID 與數字正規化、排序之後比對，`f60/wbcmp-*-run-all.txt`）：
+    - Full 54／28，與基準逐行相同（T-SRC-ENT 沒有 WARN／ERROR；這次沒有遇到 `m2_task4_disconnect_io` 的偶發）。
+    - legacy 0／0。
+    - M5 WARN 34 → 37、ERROR 10 不變：多出的 3 則都是新 test 注入的故障本身——T-SEALRETRY 的「寫入 SEALED沒有完成（REJECTED）」（兩次被拒、同一原因去重成一則）與「塌縮進入 SEALED(MATERIALIZE_FAILED)」，T-QUAR 的「隔離 session 尚無法收斂」；test 都以 witness 斷言它們的則數。其餘兩行差異（`PistonBlockEntity` 的 object hash、F5-1 通道傳送 WARN 的座標寫法）只是正規化之後仍不同的數值格式，則數不變。
+
+- 失敗或不採計的 root（都保留）：
+  - 已知偶發：Windows 原子移動的 `AccessDeniedException`（owner F6-3），本 task 遇到 4 次，都以新的 label 重跑：
+    - `gate-c2-m5-c19c0283c3f741b7aa5360e8f54efb0e`（M5 46/55）：T-REJ 的 RESOLVE 在 catalog 的原子移動被拒（`quantumchamber_universes.dat`），進 SEALED(ALLOCATION_IO_FAILED)、有界等待逾時，之後 8 個 test 因開始時權威沒有收斂而失敗。重跑 `c2-m5-rerun` 55/55。
+    - `gate-c3-m5-f5d26a298da74e3cafaabaf108315467`（M5 55/56）：見第 3 點（journal）。重跑 `c3-m5-rerun` 56/56。
+    - `gate-c5-default-9faa7b87607145eca8b3daa7329b03b9`（default 161/175）：`m2_remote_mapping` 的頁面移動在 journal 的原子移動被拒，session 保留所有租約，之後的 test 遇到「局部實例／完整 AABB 容量不足」等連鎖失敗。
+    - `gate-c5-default-rerun-4bcc2aba98cc40628bd3b780d05d364a`（default 169/175）：`m2_native_shared_east` 的候選 checked 提交與 `m2_final_flush` 的寫出在 journal 的原子移動被拒，連鎖失敗。第二次重跑 `c5-default-rerun2` 175/175。
+  - 其餘失敗的 root 都是刻意的 RED 或 mutation。沒有遇到派工列出的其他已知偶發（G-NLIVE 本身、H2 多一則原生 ERROR／WARN、`m2_task4_disconnect_io` 多一則 WARN、`unloadChunks` 停服卡住、boundary oracle 挑到舊 receipt）。
+
+### 偏離派工字面之處
+
+1. **第 1 點的 presence 與 false 分支一起處理**：派工把「`CPC:141` 重複讀取 presence」與「`CPC:158` 的 false 分支」列為兩個 Nit。作法是讓 `normalizeOwnerlessMembrane` 沿用同一次協調讀到的 presence，再以門實際的量子膜呼叫純函式；不再讀第二次 presence，所以先讀門也不增加讀取，false 分支成為 production 的路徑。純函式、它的 JUnit 與 null 的守門都沒有改。
+2. **`OD` 以 static import 呼叫 `CPC.doorHasMembrane`**：派工寫「OD 改呼叫它」；static import 讓三個呼叫點不變，`OD` 不留轉呼叫的私有方法。
+3. **第 2 點的 ready 放在清除之前**：派工寫「在 save 之前補上 ready 的檢查」。放在 `leaseReady` 之後、清除之前（仍在 save 之前、同一次呼叫裡），理由見第 2 點的「修正」：等待期間不做 AIR 掃描，與 checkpoint 退避的作法一致；只在要做 checkpoint（`finalizing==null`）時問。
+4. **第 2 點的 fixture 以 checkpoint 的就緒判斷造出未載入**：不是讓原版的 entity storage 真的延後載入（MEASURED 清理期間來源 chunk 卸載不了、非同步載入的時間無法決定性重現）。理由見第 2 點的「fixture」。
+5. **第 3 點的現況與 RESOLVE 路徑**：T-REJ 已經擋住 S2-mB 的 mutation（見第 3 點）。新 test 選 RESOLVE 的物化失敗，而不是 PREPARE：「不重跑 RESOLVE」只有在 RESOLVE 判定的原因與 cause 才看得出來（`mut-c3-rerun-resolve` 只在 cause 的 witness 上失敗）。
+6. **第 4 點用 GameTest，不用 JUnit**：以 public 的 `quarantine` 與收斂失敗的 Slot 造出隔離中的 PREPARE，不需要純函式的 JUnit，`OD` 也不必為了可測性改動。
+7. **`CollapseService` 沒有改**：派工允許第 3、4 點的可測性調整，兩點都不需要。
+
+### 需要裁示
+
+1. 第 1 點的二擇一（block entity 上不寫入 NBT 的欄位）：與 F5-2 的差別是同一個 server instance 內 Controller 的 chunk 重新載入時，存下的 ARMED 會重新評估一次（呼叫 start）。production 的 gateway 不會回 ARMED_ONLY／STARTED，所以只影響 M1.2 的 adapter 與 test 的 fake gateway；若要保留「chunk 重新載入時仍保持」，要改回以 chamber UUID 為 key、在 `SERVER_STOPPED` 清空的作法（需要另一個生命週期註冊點）。
+2. 第 2 點的等待沒有 log：來源 chunk 一直不就緒時（例如玩家返還之後離開、來源 chunk 卸載），清理會無聲地等待，與 `leaseReady` 不就緒時相同；修改前是 checkpoint 失敗的 WARN（去重）加上退避。若要在長時間等待時記一次 WARN（比照 RESOLVE 的 600 ticks），交給 F6-3 或 F7 決定（`CPM` 只在本 task 的允許路徑內，本 task 沒有加）。
+
+### 觀察（未修改）
+
+1. **Windows 原子移動的 `AccessDeniedException` 今天很頻繁**：本 task 4 次（3 次 journal、1 次 catalog），而且一次就會讓同一個 run 後面的 test 連鎖失敗（權威沒有收斂、走廊容量不足）。之前的 task 很少遇到；本 task 的改動不增加 journal 或 catalog 的寫出（第 2 點只多讀取、第 3～5 點只有 testmod）。
+2. **T-REJ 早已擋住 S2-mB 的 mutation**（第 3 點）：F4a 交下的「mutation 會存活」從 F4b-3 起就不成立。
+3. **`CS` 仍是 1590 行**：本 task 沒有改它，F5-0 交接的「約 1600 行時評估抽出 PREPARE」的條件仍由 F6-2 判斷。
+
+### 交給後續
+
+- F6-1／F6-2：
+  - 重啟矩陣中與 R2 M5 相關的版本（F5-2 交給 F6 的「PASSAGE_READY 在開服時終局之後的比較器」）：記號在 block entity 上、不寫入 NBT，所以跨 JVM 與同一個 JVM 內重開 server 都是 false；跨 JVM 的 phase 可以直接斷言開服之後的第一次刷新依 presence NONE 重新評估。
+  - 隔離的跨 JVM 版本（如果需要）：隔離只在記憶體裡，重啟之後 recovery 依 §12 收斂；同一個 instance 的版本已由 T-QUAR 鎖住。
+- F6-3：
+  - `build.yml` 的明列清單另加本 task 新增的 3 個 test：T-SRC-ENT（default run，`_windows`）、T-QUAR、T-SEALRETRY（M5 run，都不是 `_windows`）。
+  - Windows 原子移動的 `AccessDeniedException`：除了 journal，catalog（`quantumchamber_universes.dat`）也會遇到（`gate-c2-m5-…`）；本 task 4 次的 root 見「Gate 與證據」。
+  - （需要裁示第 2 條）measured release 等待來源 chunk 就緒時是否記一次長時間等待的 WARN。
+- F7：
+  - README「預期結果」的數字以最新的 run-all 為準（F6-0 之後：JUnit 655、M5 57、default 175（`_windows` 89）、per-test receipt 52＋1；release 429／382、sources 221 不變）。
+  - spec errata：§13.2／§7.3 RELEASE_GEOMETRY 的 H2 checkpoint 之前，先等相關 chunks（來源艙與走廊 lease）都已載入、entity storage 也已載入，未就緒時下一個 tick 再試、不算失敗（F6-0 第 2 點）；§10.7 :634 R2 M5 的記號在 Controller 的 block entity 上、不持久化（F6-0 第 1 點）。
