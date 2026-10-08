@@ -106,6 +106,21 @@ loom {
                 if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m4recovery.${key}=${providers.gradleProperty(property).get()}"
             }
         }
+        // M5 F6-1：跨 JVM 的塌縮 crash／restart probe（M5CollapseRecoveryProbe，spec §12 的 crash 窗口）。每個 phase 一個 JVM，root 由
+        // scripts/verification/m5-collapse-probe.ps1 建立。刻意不帶 -Dquantumchamber.test.collapseSuspended=all：這個 probe 要讓塌縮流程真的推進到
+        // crash 窗口、重啟之後再推進到 PASSAGE_READY 與終局；probe 也會斷言 JVM 參數裡沒有它。
+        m5Collapse {
+            server()
+            name 'M5 Collapse Recovery Probe'
+            source sourceSets.testmod
+            def nonce = providers.gradleProperty('m5CollapseNonce').getOrElse('disabled')
+            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M5 collapse nonce 只能包含小寫英數與連字號')
+            runDir "run/m5-collapse-${nonce}"
+            ['phase', 'nonce', 'startupNonce', 'root'].each { key ->
+                def property = 'm5Collapse' + key.capitalize()
+                if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m5collapse.${key}=${providers.gradleProperty(property).get()}"
+            }
+        }
         gameTest {
             server()
             name 'M1 Game Test'
