@@ -1,5 +1,6 @@
 package dev.quantumchamber.gametest;
 
+import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.MaterializeResult;
@@ -23,6 +24,7 @@ import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTestState;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
@@ -272,8 +274,16 @@ public final class M5TestHooks {
     }
 
     /**
-     * spec §12 的跨 JVM crash 窗口（F6-1）：每個值是「窗口剛成立」的那一個程式點，由該點的 hook mixin 呼叫 {@link #reachedCrashWindow}。F6-1 A 段起
-     * {@code CollapseAuthoritiesCrashWindowMixin} 涵蓋 {@link #ALLOCATION_APPENDED}、{@link #CATALOG_ALLOCATED}、{@link #DISCOVERY_APPENDED}；其他值還沒有呼叫端時，裝著它的
+     * spec §12 的跨 JVM crash 窗口（F6-1）：每個值是「窗口剛成立」的那一個程式點，由該點的 hook mixin 呼叫 {@link #reachedCrashWindow}。呼叫端與交給 crash 點的 detail：
+     * <ul>
+     * <li>{@code CollapseAuthoritiesCrashWindowMixin}：{@link #ALLOCATION_APPENDED}、{@link #CATALOG_ALLOCATED}、{@link #DISCOVERY_APPENDED}（回傳的
+     *     {@code CollapseAuthorities.Lookup}），{@link #PROJECTION_COMPLETE}（{@code writeProjection} 回傳的 {@code CollapseAuthorities.WriteResult}，每次寫入都呼叫，
+     *     PENDING 與 COMPLETE 都是）；</li>
+     * <li>{@code ProjectionWriterCrashWindowMixin}：{@link #PROJECTION_CELL_WRITTEN}（每寫一格，{@link ProjectionCell}）、{@link #PROJECTION_REPAIRED}（每次
+     *     {@code write} 回傳，兩種模式都是，{@link ProjectionWrite}）；</li>
+     * <li>{@code ChunkSaveCheckpointCrashWindowMixin}：{@link #DESTINATION_CHECKPOINT}（每次原生存檔 checkpoint 開始之前，任何世界，{@link ChunkCheckpoint}）。</li>
+     * </ul>
+     * 所以 detail 是否就是那個窗口（例如 {@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。{@link #COLLAPSING_COMMITTED} 還沒有呼叫端：裝著它的
      * crash 點不會觸發。
      */
     public enum CrashWindow {
@@ -303,6 +313,15 @@ public final class M5TestHooks {
         var point = CRASH_POINT.get();
         if (point != null) point.reach(window, detail);
     }
+
+    /** {@link CrashWindow#PROJECTION_CELL_WRITTEN} 的 detail：{@code ProjectionWriter} 剛寫完的一格（世界、艙、模式、位置，與這一格是否改變）。 */
+    public record ProjectionCell(ServerWorld world, ChamberFrame frame, ProjectionWriter.Mode mode, BlockPos pos, boolean changed) {}
+
+    /** {@link CrashWindow#PROJECTION_REPAIRED} 的 detail：{@code ProjectionWriter.write} 的一次呼叫（世界、艙、模式）與它的結果。 */
+    public record ProjectionWrite(ServerWorld world, ChamberFrame frame, ProjectionWriter.Mode mode, ProjectionWriter.Result result) {}
+
+    /** {@link CrashWindow#DESTINATION_CHECKPOINT} 的 detail：{@code ChunkSaveCheckpoint.save} 這一次要存的世界與 chunks。 */
+    public record ChunkCheckpoint(Map<ServerWorld, Set<ChunkPos>> relevant) {}
 
     /**
      * mixin 讀取的一個靜態 hook 位置（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者。安裝與移除只經 {@code M5GameTestSupport}
