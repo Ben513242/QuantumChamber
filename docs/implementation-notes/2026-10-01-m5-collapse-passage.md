@@ -5591,3 +5591,185 @@ GREEN（`177b576`，工作樹乾淨，`b2-green-1`：runId `6da98bcea1954991a0d1
   - （controller 補，quality Minor 6）`m5-collapse-probe.ps1` 與 `m4-recovery-probe.ps1` 抽出 dot-sourced 的共用模組（`Resolve-Evidence`、`New-OwnedRoot`、`Invoke-OwnedPhase`）。M5 的改進（以 handle 判斷結束）回到 M4；`classload-*.log`、`latest.log` 缺少時，要記在 `launcher.json` 或判 FAIL。
   - M5 collapse probe 只在本機的 run-all 執行，`build.yml` 沒有它（不是 GameTest，不在明列清單的範圍）；是否要進 CI 由 F6-3 評估。
 - **F7**：README「預期結果」的數字以最新的 run-all 為準：本節之後 default 175（`_windows` 89）、legacy 1、M5 60、per-test 52＋1、JUnit 656、release 429／382、sources 221、M3 4＋5、M4 recovery 24 都不變，新增 M5 collapse probe 18 phases（8 halt、10 stop；README 已加這一列）。README「執行」一節的 run-all 耗時目前指向本節，改寫為約 20 分鐘（實測 19 分 32 秒）。
+
+## F6-2a：M5 collapse probe 的重構與 harness 逾時
+
+- 一位 implementer 完成（controller 的派工 scratchpad `f62a-prompt.md`；取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62a/`，以下簡稱 `f62a/`，`STATUS.md` 是交接摘要）。開工時 HEAD 是 `a7abee3`、工作樹乾淨（`ff41814..a7abee3` 只有 controller 的 docs commit）。範圍是 F6-1 review 交給 F6-2a 的 quality「給 F6-2 的建議」第 1～4、6、7 點、提前的 harness 逾時、spec Minor 1、2、6 與 quality Minor 1～5、7。**沒有新增任何窗口或 chain**（仍是 9 條 chain、18 個 phase）。
+- Commits（依序；每個 commit 只 stage 自己的檔案，每個都能編譯；重構與行為改變分開）：
+  - `6833aad` `test: split the M5 collapse probe into a runner, a window table, a fixture and chains`（行為不變的重構）
+  - `c4fdae6` `test: read the collapse ledgers with the strict production decoders`
+  - `da27711` `test: tighten the M5 collapse probe assertions`
+  - `2e3fd99` `test: refuse an unclean halt in the M5 collapse probe`
+  - `9ace44f` `test: check the collapse receipts against the chain table`
+  - `30ea4bf` `test: dump and stop a stuck M5 collapse phase`（只改 `MP`）
+  - `f51abcf` `docs: describe the restructured M5 collapse probe`（README「M5 collapse probe」一節；另更正 entrypoint 的 Javadoc 一句）
+  - 本節由其後的 docs commit `docs: record F6-2a in the M5 note` 加入。
+- 中間 commit 的編譯與執行：每個 commit 之前都先在工作樹編譯（`f62a/c1-`～`c7-compile-*.log`，都 BUILD SUCCESSFUL），再以那個工作樹跑 probe（`c1-dev1` 全部 18 phases、`c2-dev1` w4b＋w6、`c3-dev1` 全部、`c4-dev1` w2、`c5-dev1` w2，都 PASS）。這些 run 的 `*-probe-state.txt` 記下的每個變更檔的 blob，都與對應 commit 的 blob 相同（`f62a/commit-vs-dev-blobs.txt`，25／25），所以它們就是那幾個 commit 的內容。`30ea4bf` 只改 `MP`，由之後的實驗與 GREEN 執行；`f51abcf` 是 GREEN 與 run-all 的 HEAD。
+- 只改了派工允許的路徑：
+  - testmod：`M5CollapseRecoveryProbe` 拆成 9 個類別（下一節）；`M5CollapseDiskEvidence`；新的 split-package accessor `src/testmod/java/dev/quantumchamber/collapse/CollapseLedgerTestAccess.java`；`M5TestHooks` 只改 `CRASH_POINT`、`Slot` 與類別說明的 Javadoc。
+  - `scripts/verification/`：`m5-collapse-probe.ps1`；`run-all.ps1` 只改 M5 collapse 的 summary 核對（一行條件、一行註解）；README 只改「M5 collapse probe」一節。
+  - **沒有改** `src/main/`、`build.gradle`、`fabric.mod.json`（entrypoint 仍是 `M5CollapseRecoveryProbe`）、crash window mixin、`M5GameTestSupport`（probe 端安裝 fault 不需要抽取，見下）、`gates.ps1`、`main-oracle.ps1`、`ci-rule-check.ps1`、`m4-recovery-probe.ps1`、`.github/`、既有的 GameTest、M4 probe、JUnit、語言檔。probe 的 ticket 仍持有到 JVM 結束（`FIX:507`、`:519`，與 `665a836` 相同）。
+- 行號以 `f51abcf` 為準。`PR`＝`M5CollapseRecoveryProbe`，`RUN`＝`M5CollapseRun`，`WIN`＝`M5CollapseWindows`，`FIX`＝`M5CollapseFixture`，`PAS`＝`M5CollapsePassage`，`REV`＝`M5CollapseRevisitChains`，`PL`＝`M5CollapseProjectionLoad`，`DE`＝`M5CollapseDiskEvidence`，`HK`＝`M5TestHooks`，`MP`＝`m5-collapse-probe.ps1`，`RA`＝`run-all.ps1`。
+
+### 拆檔
+
+F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類別（都在 `src/testmod/java/dev/quantumchamber/gametest/`；合計 2354 行，多出的是 Javadoc 與本節新增的斷言、守門）：
+
+| 類別 | 行數 | 內容 |
+| --- | --- | --- |
+| `PR`（entrypoint，public） | 108 | phase 表（`PR:45` `phases()`）、`PhaseFactory`、`Configuration`。phase 屬性不存在時 `onInitialize` 在讀設定之後就 return，不建立 runner 與 chain |
+| `RUN`（runner） | 458 | `Phase`／`Step`／`Ending`（`RUN:68`）、生命週期（`RUN:156` `start` 起）、`guarded`、`expect`、`halt.json`／`final.json`、crash 點（`RUN:319` `armCrash`）、probe 端安裝的 hook（`RUN:306` `install`）、`startupLog`、診斷 |
+| `WIN`（窗口表） | 404 | 每個 crash 窗口一列（`WIN:106` `table()`）：條件、halt 前取證、`AtRestart`、`Prepared`；`expectAtRestart`（`WIN:280`）與 `expectPrepared`（`WIN:360`）依這一列斷言 |
+| `FIX`（fixture） | 537 | 原艙、參與者清單、收據（`readCrashReceipt` `FIX:314`）、這條 chain 的 id、共用的查詢與收斂的斷言（`expectCatalog` `FIX:379`、`expectOneAllocation` `FIX:391`）、probe 的 ticket |
+| `PAS` | 196 | restart 共用的 step（`PAS:70`）、每個 tick 的不變量（`PAS:44`）、spec §12 的終局（`PAS:157` `expectEnd`） |
+| `M5CollapseDormantChains` | 99 | DORMANT 收據的 crash（W2～W6）與 restart（W2～W6x）、W4／W6 的 `recognized` step |
+| `M5CollapseLiveChain` | 160 | W1 的 crash 與 restart（`joinedAt`、`returned`） |
+| `REV` | 304 | EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart（`diskInstanceKind`、投影的載入） |
+| `PL` | 88 | restart 在 JOIN 之前載入投影 Controller、load-sync 的觀察與載入時的值 |
+
+- F6-1 放在同一個物件上的 chain 專用狀態（`PR:157-173` 的約 10 個欄位）都移到持有它的類別：收據與 id 到 `FIX`；`restartWindow`→`M5CollapseDormantChains.window`；`projectionController`、`loadSync`、`loadSyncLog`→`PL`（各 chain 各自持有一個 `PL`）；`joinedAt`、`returned`→`M5CollapseLiveChain`；`startupLog`→`RUN`（F6-2a 起所有 phase 都有）；`diskInstanceKind`→`REV`；`readyTicks`→`PAS`。
+- 拆法的理由：runner 與窗口表是 F6-2c～e 最常碰的地方，要能只讀它們；fixture 與 passage 是每條 chain 共用的；chain family 依「觸發的方式」分（DORMANT 收據、live session、EXISTING 再造訪），新的 chain 多半只要在既有的 family 加 phase，或照樣新增一個 family 類別。runner 不認得任何 chain：它只經 `RUN.Context`（`FIX` 實作）取診斷與 halt 當下的事實。
+- `onStopping`／`onStopped`：連線、load-sync 的觀察與 log 的收集改成依登記順序關閉（F6-1 寫死在 `stopping`／`stopped`）；登記的順序與 F6-1 的關閉順序相同（投影的載入在 JOIN 之前）。
+- **重構的回歸**：`6833aad` 的工作樹（`c1-dev1`，runId `14f0f228cbcc4991ab5cfe22f8627dcd`）18/18，每個 phase 的具名斷言集合與 step 清單都與 F6-1 GREEN `6da98bcea1954991a0d16d9870662c62` **完全相同**（`f62a/c1-dev1-names-compare.txt`：missing、added 都是空的）。
+
+### 窗口表、終局 helper、多名參與者、probe 端的 fault
+
+- **窗口表**（`WIN:106`）：F6-1 的 `armWindow`、`restartStarted`（以窗口推出 `live`、`materializedWindow`、catalog、discovery）、`preparedAsTheWindowRequires` 三個 switch 改成每個窗口一列 `Window(id, condition, beforeHalt, atRestart, prepared)`：
+  - `AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin)`：`returned` 是參與者在 crash 前是否已返還（W1 為 false，另斷言走廊 space 已重建、沒有保留式 recovery 的請求）；`resolved`（`Resolved.NOTHING`／`ALLOCATION`／`CATALOG`／`DISCOVERY`）是 RESOLVE 在 halt 之前完成到哪一步，由它推出 halt 當下是否已物化（`DISCOVERY` 才是）、allocation、catalog 與 discovery 的預期；`projection` 是 projection ledger 的狀態（null、PENDING、COMPLETE）；`disk` 是窗口自己的磁碟檢查；`recognizeBeforeJoin` 是 JOIN 之前是否先載入並辨識投影 Controller（COMPLETE 時另斷言不變量 cell 受保護）。
+  - `Prepared(name, mode, cells, afterReady)`：「準備完成」INFO 的模式與格數（`ANY_CELLS`＝不是 0 格），與 READY 時的磁碟檢查；不檢查時為 null。
+  - 斷言的名稱、順序與條件都與 F6-1 相同（`c1-dev1` 的比對）。F6-2c～e 加窗口只要加一列（另要有 hook mixin 與 `CrashWindow` 的值）。
+- **終局 helper**（`PAS:157`）：`End(catalogGrowth, projection, participants, sessionErrors, authorityInitialized)`。正常的 restart 是 `End.crossed(fixture)`（NEW 1／EXISTING 0、COMPLETE、U、0、true）；退化的 restart 改用同一個 helper（`End(0, LEDGER_ABSENT, SOURCE, 1, false)`），不再另寫一份（F6-1 的 `PR:1402-1408`）。
+  - 「catalog 恰多 1 筆／不變」的運算式（F6-1 的 6 處）收斂到 `FIX:379` `expectCatalog(grownName[, growth])`，名稱在增量為 0 時一律 `catalogUnchanged`；`oneAllocationForTheToken`（4 處）收斂到 `FIX:391` `expectOneAllocation()`。名稱不變（`catalogAllocatedOnce`、`catalogExactlyOneMore`、`catalogUnchanged`、`oneAllocationForTheToken`）。
+- **多名參與者**：`FIX` 的參與者是清單（第一位是選門者，`selector()`）。`buildOrigin(n)` 建立並連線 n 位、`moveInside`／`moveOutside`、`joinAll`、`players()`，收據以清單順序建立 cohort（`FIX:223`），restart 由收據讀回清單；W1 的 arm（每位都給 Buff、存 checkpoint）、走廊、JOIN、返還，passage 的 doorway、`crossedRecorded`、`oneCrossingInfo`、每個 tick 的位置斷言與終局的位置斷言都對每一位。receipt 的 `receipt.participant` 改成 `participants`（清單），W1 的 halt 前取證 `playerDimensionOnDisk` 改成「參與者 → 世界」的對照。現有的 chain 都只用一人。
+- **probe 端安裝 fault**：`RUN:306` `install(slot, value)` 以 `slot.install(value, null)` 安裝（probe 不是 GameTest，沒有 `GameTestState`；被占用時丟出、不覆蓋），並記在清單；`stop()` 在請求停服之前依安裝的相反順序全部移除（F6-1 只移除單一的 `crashPoint`）。crash 點也經它安裝。既有的 fault 類別（`MaterializeFault`、`CheckedReadFault`、`JournalPutFault`、`ProjectionWriteFault` 等）的建構子在同一個 package，probe 直接 `new`，所以 **`M5GameTestSupport` 不需要抽取**：`install*` 多做的只有 GameTest 的 hooks 與 `TestListener` 登記。
+
+### mixin 順序的實驗（第 5 點，不是正式的 chain）
+
+- 問題：`ProjectionWriteFaultMixin` 與 `ProjectionWriterCrashWindowMixin` 都掛在 `ProjectionWriter.write` 的 RETURN，前者會 `setReturnValue`（即取消），而且在 `quantumchamber-test.mixins.json` 排在前面。
+- 實驗（adapter `exp-mixin-order`：暫時在 `M5CollapseDormantChains` 加一個 phase，`MP` 加一條 chain，跑完還原；runId `e5ea539ba8bb4ee894bf9752cf807581`，PASS）：在來源世界 (200,80,200) 直接呼叫 `ProjectionWriter.write`，以 `run.install` 裝上 `PROJECTION_REPAIRED` 的 crash 點（只計數、不 halt）。
+  - 沒有 fault 的 FIRST_WRITE（WRITTEN／219 格）：hook 呼叫 1 次。
+  - 裝上 `ProjectionWriteFault`（同一世界、REPAIR、1 次）之後改壞一格再 REPAIR：結果換成 WRITE_FAILED（fault hits 1），**hook 呼叫 0 次**。
+  - fault 用完之後再改壞、再 REPAIR（WRITTEN／1）：hook 又呼叫 1 次。hook 看到的只有 `FIRST_WRITE=WRITTEN`、`REPAIR=WRITTEN`。
+  - 停服之後 `CRASH_POINT`、`PROJECTION_WRITE_FAULT` 兩個 slot 都是 null（`install` 的清單逐一移除）。
+- 結論：同一個 RETURN 上，排在前面的 cancellable callback 取消之後，排在後面的 crash 窗口 callback 不會執行。F6-2d／e 若要「投影寫入失敗之後」的窗口，不能用 `PROJECTION_REPAIRED` 觀察，要選之後的程式點（例如 SEALED 的提交）；改 mixin 的 priority 也許能讓 crash 窗口排在前面，但沒有驗證。`MaterializeFaultMixin` 掛在 `Minecraft121DynamicDimensionBackend.materialize` 的 HEAD，那個方法上沒有 crash 窗口的 hook，不受影響（以程式比對判定，沒有另做實驗）。README「新增 phase」第 5 點已寫入。
+
+### harness 逾時（第 8 點，原排在 F6-3）
+
+- `MP:111` `Stop-TimedOutPhase`、`MP:93` `Get-SharedLength`：找到 JVM 之後，`latest.log`、Gradle 的 stdout 與 stderr 三個檔的長度（以共用讀取開啟、以 handle 讀長度；寫入中的檔案，目錄項的大小可能過期）超過 `-IdleSeconds`（預設 90）秒都沒有變，或整個 phase 超過 `-PhaseMinutes`（預設 8）分鐘，就逾時：
+  1. 核對 PID 仍是本次的 JVM：`Win32_Process` 的 Name 是 `java.exe`、commandline 含本次的 `quantumchamber.m5collapse.startupNonce`、StartTime 與找到時相同；
+  2. 以同一個 JDK（JVM 的 `ExecutablePath` 的目錄）的 `jstack -l` 把 thread dump 存到 phase evidence 的 `jstack-<pid>.txt`（60 秒上限）；
+  3. `Stop-Process` 只結束那一個 PID，等它結束、等 Gradle client 收尾（不碰 Gradle daemon）；
+  4. 寫 `timeout.json`：原因、上限、elapsed 與 idle 秒數、root、startupNonce、PID、StartTime、`commandLineMatched`、jstack 檔名與 exit code、`killed`、JVM 與 Gradle 的 exit code、最後 20 行 `latest.log` 與 Gradle 輸出；
+  5. throw（判 FAIL；root 保留、禁止重跑）。JVM 還沒有找到時（例如 Gradle 還在編譯）只記錄，不結束任何程序。
+- 為什麼並用「沒有新 log」：F6-1 的停服卡住都是 log 停在 `Saving worlds` 之後的忙等；只靠 8 分鐘總上限，每次要等 8 分鐘。以 F6-1 留下的 107 份 phase `latest.log` 量，正常 phase 相鄰兩行 log 的間隔最長 6 秒（都在開服時的 mod 偵測），所以 90 秒（15 倍）不會誤判，卡住時約 1.5 分鐘就會處置。
+- 實驗：
+  - 先照派工重用 F6-1 B1 的 exp-a（adapter `exp-stuck`：W6 restart 在 `recognized` 之後移除 probe 的 ticket）：**在目前的程式碼上沒有重現**，`w6-restart` 兩次都正常停服（runId `3ec2a3c7a24145dfb2bc5180b31be6e3`、`c695b34daf5d4ac8b18ec24751d4d7fc`，0/2；log 照常到 `M3_UNIVERSE_STOPPED_VERIFIED`）。沒有調查原因（交給 F6-2b，見「觀察」）。
+  - 改用刻意的卡住（adapter `exp-hang`：`RUN.stopping` 在 `SERVER_STOPPING` 裡每秒 sleep、不再回來、不記 log），`-Only w2`（runId `56bda7bbb7b34a48a5e68abfc3c2d646`）：`w2-crash` 照常 halt；`w2-restart` 的 log 停在「走廊 STOPPING 票已對稱移除」之後，idle 90.1 秒（elapsed 104.3 秒）時逾時：`commandLineMatched=true`、`jstack-18168.txt`（exit 0；`Server thread` 在 `M5CollapseRun.stopping` 的 `Thread.sleep`，經 `MinecraftServer.shutdown`）、只結束 PID 18168（exit −1）、Gradle client 以 1 結束、寫出 `timeout.json`，`MP` 以「owned phase 逾時（idle：90 秒沒有新的 log）」判 FAIL。之後的 java 程序只剩實驗前就存在的 Gradle daemon（PID 29200）。紀錄在 `f62a/kills.txt`。
+
+### F6-1 review Minor 的處置（第 9～17 點）
+
+| 點 | 處置 |
+| --- | --- |
+| 9（spec Minor 1） | `PL:50` `projectionChunkNotLoadedAtStart`（probe 的 ticket 之前投影的 chunk 沒有載入）；W4、W6 另有 `WIN:326` `unrecognizedWhenLoaded`（剛載入時 ORIGIN、power 未初始化、load-sync 在佇列）。`projectionControllerAtLoad` 另記 `wasPowered`。 |
+| 10（spec Minor 2） | refresh witness：`deg-setup` 看到 COLLAPSING 的同一個 tick，在 U 的投影 Controller 正上方（投影的 7×7×7 之外）以 `NOTIFY_LISTENERS \| FORCE_STATE` 放紅石塊（`REV:155`；不觸發鄰格更新，Controller 不 refresh，之後同一個 tick 停服存檔，不會再有 scheduled tick；`refreshWitnessPlaced` 斷言放上之後 WasPowered 仍是 false、電源讀得到）。`deg-restart`：`refreshWitnessOnDisk`（raw MCA）、`loadedAsOnDisk`（剛載入時 InstanceKind 是磁碟上的值、WasPowered false、pending），CONSUMED 之後 `refreshedThisInstance`（WasPowered 變成 true：`ChamberPowerCoordinator.refreshNow` 在提早 return 之後才 `setWasPowered`）。磁碟上的 PowerInitialized 在 setup 時就已是 true（F6-1 的等待條件因此不能證明 refresh），所以改看 WasPowered。 |
+| 11（spec Minor 6） | `RUN:439` `event` 不再丟出：寫不出來時記 ERROR、加進 `failures`（phase 因此 FAIL）。它在 `guarded` 的 catch 與 `SERVER_STOPPED` 裡都安全。 |
+| 12（quality Minor 1） | `MP:76` `Get-ReceiptNote`：JVM 結束之後的每一項檢查失敗時，訊息都附上 `final.json`／`halt.json` 的 status 與 failures（halt 另有 hit、crashPointFailure、refused）；halt 的 phase 先看 `final.json`，再看 exit code。 |
+| 13（quality Minor 2） | 乾淨的守門（`RUN:350` `halt`）：`hit≠1`、crash 點記下失敗、`failures` 不是空的，任何一項時 status `HALT_REFUSED`（`refused` 列出原因）、以 78（`HALT_FAILED_EXIT`，原 `HALT_RECEIPT_FAILED_EXIT`）結束。`halt.json` 記 `crashPointFailure`（乾淨時 `none`）。`MP:216`、`RA:231`、restart 的 `crashReceiptClean`（`FIX:330`）都核對三項。mutation 見下。 |
+| 14（quality Minor 3） | `CollapseLedgerTestAccess`（testmod 的 `dev.quantumchamber.collapse`，比照 `ChamberLoadSyncTestAccess`）呼叫 package-private 的嚴格 `UniverseAllocationLedger.fromNbt`、`ProjectionLedger.fromNbt`；`DE:60`、`:68` 改用它（檔案不存在仍是空的 ledger）。讀 ledger 的具名斷言改用 `RUN` 的 lambda 版 `expect`，讀取失敗也算該斷言失敗。release／sources JAR 不含它（run-all 一節）。 |
+| 15（quality Minor 4） | `RUN` 在 `onInitialize` 起開始收 `quantumchamber` logger（`startupLog`，含開服時 default phase 的初始化）。終局 helper 斷言這個 session 的 ERROR 則數：正常的 restart `noSessionError`（0 則）；退化 `noFurtherSessionError`（恰為永久原因那一則）。非退化的另斷言 `noAuthorityInitializationFailure`。退化的 restart 改用同一個 `startupLog`（F6-1 自己開一個）。 |
+| 16（quality Minor 5） | `HK` 類別說明的 CRASH_POINT 一段與 `Slot` 的 Javadoc：安裝與移除也可以經 probe 的 `M5CollapseRun.install`（`owner` 為 null），probe 請求停服之前移除；`CRASH_POINT` 欄位的說明同步。entrypoint 的類別說明列出三份表（含 `run-all.ps1` 的 `$expectedCollapse`）。W4 的 halt 前取證 `cellsWrittenThroughTheController` 改名 `writeCellCallsThroughTheController`，註解寫明是 `writeCell` 的呼叫次數（只有 `needsWrite` 的格才呼叫）。 |
+| 17（quality Minor 7） | `crossedRecorded` 要求跨越的那個 tick record 仍在，Crossed 恰為每位參與者各一次（`record == null ||` 拿掉）。`discoveredOnce` 拆成 `universeDiscoveredOnce`（RESOLVE 完成時：U 恰一筆）與 `onlyTheDestinationDiscovered`（終局：discovery 恰一筆、是 U、gameplay eligible）。 |
+
+- 第 6 點（三份表）：receipt 多記 `phaseTable`（`PR` 的整張 phase 表，依表的順序）；`MP:51` 取 `$chains` 的全部 phase，`MP:219` 起要求 receipt 的 `ending` 等於 chain 表的預期結束、`phaseTable` 與 `$chains` 依序相同，任何一邊多出或少了都判 FAIL（訊息列出「只在 probe」「只在 chain 表」）。
+
+### 斷言名稱的比對（F6-1 → 本節）
+
+以 `f62a/names.py`（讀 receipt 的 `observed`）比對 F6-1 GREEN `6da98bcea1954991a0d16d9870662c62` 與本節的 GREEN（`f62a/green-<runId>-names-compare.txt`，改名表 `f62a/renames-f62a.json`）：
+
+- F6-1 的每一個具名斷言，名稱都仍然存在、都成立（missing 全部是空的），step 清單相同。
+- 改名：`discoveredOnce` → `universeDiscoveredOnce`（RESOLVE 完成時）＋`onlyTheDestinationDiscovered`（終局）；`deg-restart` 的 `discoveredOnce` 是終局的那一個 → `onlyTheDestinationDiscovered`。
+- 新增：
+  - 8 個非退化的 restart：`crashReceiptClean`、`noSessionError`、`noAuthorityInitializationFailure`；`w4-restart`、`w6-restart` 另有 `projectionChunkNotLoadedAtStart`、`unrecognizedWhenLoaded`。
+  - `deg-setup`：`refreshWitnessPlaced`。
+  - `deg-restart`：`refreshWitnessOnDisk`、`projectionChunkNotLoadedAtStart`、`loadedAsOnDisk`、`refreshedThisInstance`，與改用終局 helper 帶進來的 `catalogOnDisk`、`activeWorldKeyIsTheDestination`、`oneUniverseWorld`、`noFurtherSessionError`。
+  - crash phase 沒有新的具名斷言（乾淨的守門在 receipt 的欄位，不是 `expect`）。
+- 具名斷言數（`f62a/green-1-details.txt`）：restart 41（w2、w3、w5）／49（w1）／51（w4）／44（w4b）／50（w6）／46（w6x）／53（deg-restart）；crash 與 setup 不變，`deg-setup` 12。
+
+### mutation
+
+都套在 GREEN 的工作樹上（`f62a/mutations.ps1` → `red.ps1`＋`adapter.py`，adapter 表 `f62a/adapters_f62a.py`；`old` 在檔內必須恰好出現一次），以 `-Only` 只跑相關的 chain，跑完還原並以 `git hash-object` 核對（`<label>-restored-state.txt` 的 porcelain 都是空的）。摘要在 `f62a/f62a-<adapter>-mutsum.txt`。
+
+| mutation | 改動 | runId | 結果 |
+| --- | --- | --- | --- |
+| `red-w2-rederive`（F6-1） | production `DestinationResolver`（原樣沿用） | `23d2ec6c0b7d45039f94fe63c0d8f2ff` | `w2-restart` `catalogOnlyDestination` |
+| `mut-catalog-two`（F6-1） | production `DestinationResolver`（原樣） | `5703cab275bc47f78a5994458df2ca80` | `w5-restart` `catalogAllocatedOnce` |
+| `mut-redraw`（F6-1） | probe：改到 `FIX.readCrashReceipt`（比較對象換成多一筆 ledger entry 的收據） | `703ab1533c8148118e778475db9a3d1f` | `w2-restart` `noRedraw` |
+| `mut-trapped`（F6-1） | production `SessionRecoveryManager`（原樣） | `51a02b4ccc204a0188935c91d1ffc774` | `w1-restart` `notTrappedInTheCorridor`（JOIN 之後 101 tick） |
+| `mut-interior`（F6-1） | probe：改到 `REV.projectionControllerForeign` 的 `foreignBranch` 之後 | `37290a165dc04c05899f91eb0ab84191` | `deg-restart` `interiorNotRewritten` |
+| `mut-halt-failures` | probe：W2 crash 在裝上 crash 點之後記下一則失敗、不停服 | `550d3a54fb2b4bdd8e66bb817c91e595` | `w2-crash` status `HALT_REFUSED`（refused＝failures）、JVM exit 78；`MP` 判 FAIL，訊息帶出 halt.json 的 status、failures、refused |
+| `mut-halt-nogate` | 同上，另拿掉 probe 端的守門（一律 77） | `c8c4ddd58a174c89b5b4951921afe23d` | `w2-crash` exit 77、status HALT；`MP` 判 FAIL「halt 不乾淨：hit=1 failures=…」（腳本自己的守門也抓得到） |
+| `mut-halt-hit2` | probe：W4 的條件也接受第一格 (0,0,0)，那一次的取證丟出 | `2ac78e67eeff4c66878c13ef014c67eb` | `w4-crash` status `HALT_REFUSED`（hit=2、crashPointFailure＝取證失敗）、exit 78；`MP` 判 FAIL。沒有守門時這是取證成功、exit 77 的 halt |
+| `mut-strict2` | probe：restart 開服時（projection 斷言之前）把 projection ledger 覆寫成 SchemaVersion 2、Entries 空 | `895ab628c1734325b8c91907a0d44e51` | `w2-restart` `noProjectionYet：讀取失敗：IllegalArgumentException: 不支援的 projection ledger schema` |
+| `mut-strict-lenient2`（對照） | 同上，`DE` 換回 F6-1（`a7abee3`）的寬鬆解析 | `5d72cc84b41441b7a19ca6368af451c0` | `w2-restart` PASS、`noProjectionYet` 成立：寬鬆解析把格式不符的 ledger 讀成空的（F6-1 quality Minor 3 的情境） |
+| `mut-session-error` | production `CollapseService`：RESOLVE 完成時多記一則提到 session 的 ERROR | `bb5bb2dea1564037aaa90d4198ec6018` | `w2-restart` 終局 `noSessionError` |
+| `mut-phase-table` | probe：phase 表多一個 `w2x-crash`（chain 表沒有） | `16dc37ae01e64f19aea7055293d2c1b2` | `w2-crash` halt 77 之後 `MP` 判 FAIL「probe 的 phase 表與 chain 表不一致：只在 probe=[w2x-crash]」 |
+
+- F6-1 的 5 個 mutation 都仍然失敗在原本的目標斷言（名稱沒有改），production 的 3 個 adapter 原樣沿用，probe 的 2 個只改插入的位置。
+- 不採計：`mut-strict`（`d0e906a39fab455d920abc36466d0a83`）與 `mut-strict-lenient`（`1ff305106bd344b491b56db0d1bbdf73`）的第一版只在檔案不存在時寫入，但 restart 開服時已有 Entries 為空的正式 projection ledger，所以沒有寫入、兩者都 PASS；改成一律覆寫（`mut-strict2`、`mut-strict-lenient2`）重跑。
+
+### run-all
+
+- `f51abcf`，工作樹乾淨（`STATUS` 是空的）：`run-all-6377619e81164901a8f144d9038e6c6c`（Full `gate-full-35e38a4dbdcf4af088ac4026b2abd3fc`；M5 `gate-m5-gametest-208a02f094a0466caa926052208609cb`；M5 collapse 彙整 `collapse-run-fb3d4e172f014775b35a818cb125b3cc.json`；console `f62a/run-all-console.txt`）。全程 19 分 36 秒（20:47:33～21:07:09），其中 M5 collapse 步驟 4 分 31 秒。
+- `END ALL exit=0 HEAD=f51abcfdb6b28b4ee2bdf1ffd2f15513d8c6ce33`。`SUMMARY default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=656 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=429entries/382classes sources=221 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=18 ci=win:PASS,ubuntu:PASS`。`RA` 的 M5 collapse 核對已包含本節的乾淨 halt 條件（`RA:231`）。
+- run-all 內的 M5 collapse：18 phases（8 halt＝77、10 stop＝0）；halt 的 server tick w1 52、w2／w3／w5 6、w4 42、w4b 42、w6 43、w6x 34；具名斷言數與 GREEN 相同，名稱比對 OK（`f62a/run-all-collapse-details.txt`、`run-all-names-compare.txt`）。
+- 與基準 `run-all-2b8ef81d574947ba860dab8b43f1ed8f`（F6-1，`177b576`）逐項比較（`f62a/runall-compare.ps1`，輸出 `f62a/runall-*.txt`）：
+  - default 175/175（`_windows` 89）、M5 60/60：testcase 集合與結果都與基準相同（`runall-default-setcmp.txt`、`runall-m5-setcmp.txt`：identical=True）。legacy 1/1、perTest 52＋1、JUnit 656（skipped 2）、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly PASS、CI 兩個 step PASS、m5collapse 18（halts 8）都不變。
+  - release 429 entries（382 classes），SHA-256 與基準相同（`7b1ced1c…`）；sources 221，沒有新增、刪除或內容不同的 entry（`runall-jarcmp-*.txt` 的 only-old／only-new 都是空的），只有 zip 的中繼資料不同。兩個 JAR 都沒有 `CollapseLedgerTestAccess` 或任何 `M5Collapse*`。
+  - log（`runall-wbcmp-*.txt`）：Full WARN 54／54；ERROR 28 → 31，多出的 3 行是 `m5_` H2 的受控 region write 失敗（「M5 H2 GameTest 受控 region write 失敗」）多重試了一輪：`Failed to store chunk`、`Failed to save chunk`、`Failed to store entity chunk` 各多一則（7／7／4 對基準的 6／6／3）。這是派工列出的已知偶發（H2 偶爾多一則原生 ERROR），沒有調查。legacy 0／0；M5 38／10 不變（一行差異是 F6-0 已記錄的 `PistonBlockEntity` object hash）。
+  - default run 的 classload（`gate-full` 的 `classload-15080.log`）有 `M5CollapseRecoveryProbe`（與它的 `$Configuration`、`$PhaseFactory`、lambda）、`M5CollapseRun`、`M5CollapseRun$Phase`（phase 表的 lambda 的 method type 讓 JVM 解析這兩個型別），沒有 fixture、窗口表、chain、`ProbeTicket` 或 `CollapseLedgerTestAccess`；phase 屬性不存在時都不建立、不註冊 listener（`latest.log` 沒有 m5collapse 字樣）。
+
+### Gate 與證據
+
+| 輪次 | HEAD／工作樹 | Root（runId 或 gate root） | 結果 |
+| --- | --- | --- | --- |
+| 重構的回歸 | `6833aad` 的內容（commit 前的工作樹，blob 相同） | `14f0f228cbcc4991ab5cfe22f8627dcd` | 18/18；具名斷言與 step 與 F6-1 GREEN 完全相同 |
+| 各 commit 的工作樹 | `c4fdae6`、`da27711`、`2e3fd99`、`9ace44f` 的內容 | `44b6706211b7406bae2cdc37e6bd6db5`（w4b、w6）、`f5896e62c1a3485d9b8a458c1bfe9b18`（全部）、`da76341564744f19814d2ccd03533f69`（w2）、`aa1dd6993ac04d078094f81c0a2996ca`（w2） | 都 PASS |
+| **GREEN green-1** | `f51abcf`，乾淨 | `8d898477d7624f70a6bbd4725685c929` | 18/18（8 halt＝77、10 stop＝0）；名稱比對 OK |
+| **GREEN green-2（穩定性）** | `f51abcf`，乾淨 | `b7f3ee465a9e4891ae2dd3f0b7d470a2` | 18/18；名稱比對 OK，新增的名稱與 green-1 相同 |
+| mutation | `30ea4bf`＋adapter | 上一節 | 都失敗在目標斷言或目標檢查 |
+| 實驗 | `30ea4bf`＋adapter | `e5ea539ba8bb4ee894bf9752cf807581`（mixin 順序）、`56bda7bbb7b34a48a5e68abfc3c2d646`（逾時）、`3ec2a3c7…`、`c695b34d…`（exp-a 沒有重現） | 見上 |
+| run-all | `f51abcf`，乾淨 | `run-all-6377619e81164901a8f144d9038e6c6c`（M5 collapse runId `fb3d4e172f014775b35a818cb125b3cc`） | `END ALL exit=0`、`m5collapse=18`；與基準只差 Full ERROR 28→31（已知的 H2 偶發） |
+
+- halt 的 server tick（green-1）：w1 52、w2／w3／w5 6、w4 42、w4b 44、w6 43、w6x 35（F6-1 GREEN 是 39／6／41／44／40／35；W1 的 tick 取決於 SUPERPOSITION 何時完成，不是本節的行為改變）。
+- JUnit、M4 recovery、default 與 M5 GameTest：沒有另外跑，以 run-all 的同一次結果採計（run-all 依序跑 Full、Legacy、M5 GameTest、Main、M3、M4 recovery、M5 collapse、CI 規則；下一節）。
+- 失敗或不採計的 root（都保留）：開發中的 `c1-dev1`～`c5-dev1` 見上表（blob 與 commit 相同，但不算 GREEN）；`mut-strict`、`mut-strict-lenient` 的第一版（上一節）；其餘失敗的 root 都是刻意的 mutation 或實驗。
+- 結束過的 JVM：只有 `exp-hang` 的 PID 18168，由 `MP` 的逾時處置在核對 commandline（本次的 startupNonce）與 StartTime、jstack 之後結束（`f62a/kills.txt`）。沒有結束 Gradle daemon。
+- 取證腳本（`f62a/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`、`gate.ps1`、`junit-all.ps1`、`junitsum.py`、`setcmp.py`、`xmlsum.py`、`jarcmp.py`、`wbcmp.py`、`phasedetail.py`、`commitcheck2.ps1`、`runall-compare.ps1` 由 `f6/f61/` 複製（只改註解、adapter 表的模組與 run-all 的基準）；新寫 `names.py`（具名斷言的比對）、`mutations.ps1`、`mutsum.py`、`adapters_f62a.py`。`f6/f61/` 下既有的檔案沒有改動。
+
+### 偏離派工字面之處
+
+1. **逾時的實驗改用刻意的卡住**：派工建議重用 F6-1 B1 的 exp-a；在目前的程式碼上 0/2 重現（w6-restart 正常停服），所以另做 `exp-hang`（停服時 `SERVER_STOPPING` 的 listener 不再回來）證明自動 jstack、只結束該 PID、`timeout.json`、判 FAIL。exp-a 的兩次 root 保留。
+2. **`M5GameTestSupport` 沒有改**：fault 的建構子在同一個 package，probe 以 `run.install` 直接安裝；`install*` 多做的 GameTest 登記對 probe 沒有意義，所以不抽取。
+3. **乾淨的守門用「不 halt，以 78 結束」，沒有另外「第一次失敗就移除 crash 點」**：拒絕時仍寫 `halt.json`（status `HALT_REFUSED`、`refused` 列出原因），harness 以 exit 78 與 status 判 FAIL；F6-1 的 `stop()` 本來就會在 `guarded` 的失敗時移除 crash 點。
+4. **JUnit、M4 recovery、default 與 M5 run 以 run-all 的同一次結果採計**，沒有在 run-all 之外另跑一次。
+5. **`f51abcf` 的 docs commit 也改了 entrypoint 的 Javadoc 一句**：原寫「不載入 runner 與 chain 的類別」，但 phase 表的 lambda 的 method handle 會讓 JVM 解析 `M5CollapseRun` 等型別，所以改成「不建立 runner 與 chain」（只改註解）。
+
+### 需要裁示
+
+1. **exp-a 在目前的程式碼上沒有重現**（「觀察」第 1 條）：F6-2b 的根因調查原本預期以 exp-a 穩定重現。本節沒有調查；F6-2b 可能需要先找回重現條件（例如在 `177b576` 或 `50df82b` 上重跑 exp-a），請 controller 決定 F6-2b 的起點。
+
+### 觀察（未修改）
+
+1. **exp-a 0/2 重現**：`30ea4bf` 上以 adapter `exp-stuck`（W6 restart 在 `recognized` 之後以半徑 0 移除 probe 的 ticket，與 F6-1 exp-a 相同的位置與半徑）跑 `-Only w6` 兩次，`w6-restart` 都在 28～30 tick 完成、正常停服（`Saving worlds` 之後照常 `All dimensions are saved`、`M3_UNIVERSE_STOPPED_VERIFIED`）。F6-1 在 `50df82b` 上 3/3 卡住。兩者在 W6 restart 的 chunk 與 ticket 操作相同（載入、移除、PREPARE 的預載、修復 0 格）；差異在 `665a836` 之後的 commit（W1 的 hook mixin、degraded chain、本節的重構與斷言），哪一個造成差別沒有查。
+
+### 交給後續
+
+- **F6-2b**（停服卡住的根因）：先以 `177b576`（或 `50df82b`）重跑 exp-a，確認重現條件仍在；`m5-collapse-probe.ps1` 現在會在 90 秒沒有新 log 時自動 jstack、只結束該 JVM、寫 `timeout.json`，不必人工結束。
+- **F6-2c～e**（W7～W12 與額外的 phase）：
+  - 加窗口：`CrashWindow` 的值、hook mixin、`WIN.table()` 一列；restart 的開服預期與 PREPARE 的預期都寫在那一列。
+  - 加 chain：`PR.phases()`、`MP` 的 `$chains`、`RA` 的 `$expectedCollapse` 三份表一起改（`phaseTable` 不一致時 `MP` 判 FAIL）；`m5collapse=` 的數字隨之改變。
+  - 多名參與者（W7）：`fixture.buildOrigin(n)`；W1 類的 live chain 已對每一位 arm、JOIN、返還。`crossedRecorded` 以集合比對，跨越順序不同也成立。
+  - probe 內的 fault：`run.install(slot, new …Fault(...))`；`ProjectionWriteFault` 生效的那一次 `PROJECTION_REPAIRED` 的 hook 不會被呼叫（上方的實驗）。
+  - spec Minor 3（W4b 之後、COMPLETE 之前的子狀態）與 5（DORMANT chain 的參與者一律在艙外重新加入）仍是 F6-2e 的評估項目，本節沒有動。
+- **F6-3**：`m5-collapse-probe.ps1` 與 `m4-recovery-probe.ps1` 的共用模組（quality Minor 6）；本節的逾時處置（`Stop-TimedOutPhase`、`Get-SharedLength`、`Get-SharedTail`）與 `Get-ReceiptNote` 也可以一併移到共用模組，讓 M4 recovery 用同樣的逾時。
+- **F7**：README「預期結果」中 M5 collapse probe 那一列（「halt.json 的窗口與 chain 表相符」）可以補「乾淨的 halt」；派工只允許改「M5 collapse probe」一節，本節沒有動那一列。
