@@ -7,7 +7,7 @@ M5 的 gate 擴充也放在這裡。M5 F3c 新增 M5 GameTest run（M5 plan 決�
 ## 環境需求
 
 - Windows，repo 位於本機固定 NTFS 磁碟（Windows checkpoint 只接受本機固定 NTFS，`_windows` GameTest 與 checkpoint JUnit 都依賴它）。
-- PowerShell 7（`pwsh`）；`git` 在 PATH。`m4-recovery-probe.ps1` 另以 Windows PowerShell（`powershell.exe`）啟動 Gradle。
+- PowerShell 7（`pwsh`）；`git` 在 PATH。`m4-recovery-probe.ps1` 與 `m5-collapse-probe.ps1` 另以 Windows PowerShell（`powershell.exe`）啟動 Gradle。
 - Java 21。本機驗證使用 Eclipse Adoptium `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot`（`JAVA_HOME`）。
 - Gradle 8.8：預設 `C:/Users/Ben/.gradle/wrapper/dists/gradle-8.8-bin/dl7vupf4psengwqhwktix4v1/gradle-8.8/bin/gradle.bat`，不存在時改用 repo 的 `gradlew.bat`（這條 fallback 尚未實跑；第一次執行需要網路下載 Gradle）；也可用 `-Gradle` 指定絕對路徑。兩者都不存在時直接失敗。
 - 執行期間不得有 Minecraft client／server 或其他 Java 程序使用 `run/`。harness 會檢查 live owner 與 `session.lock`，有就拒絕。
@@ -20,6 +20,7 @@ M5 的 gate 擴充也放在這裡。M5 F3c 新增 M5 GameTest run（M5 plan 決�
 | `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`M5GameTest`（`runGameTestM5`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`）。三個 GameTest run（default、legacy、M5）都核對 XML 是本次 run 寫出的，而且 testcase 集合恰好等於原始碼依 batch 前綴矩陣屬於該 run 的宣告（`scope.json`）：`m4_legacy_runtime` 屬 legacy run，前綴 `m5_universe` 屬 M5 run，其餘屬 default run。default 與 legacy 另核對 M4 boundary oracle；M5 run 不註冊 boundary probe，改核對每個 M5 test 自己斷言的 catalog 增量、增量之間的串接（筆數與 digest），以及 suite 結束時（`SERVER_STOPPED`）的 catalog 等於最後一個 test 的結果（`m5-oracle.json`） |
 | `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod；另核對 world keys、正常停止與 exact restore |
 | `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，24 phases，每個 phase 一個 JVM |
+| `m5-collapse-probe.ps1` | M5 塌縮的跨 JVM crash／restart probe（spec §12 的 crash 窗口），每個 phase 一個 JVM；見「M5 collapse probe」 |
 | `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；fixture 同時放 default 與 M5 兩份 GameTest XML。可加 XML／原始碼 mutation 證明規則會失敗 |
 | `runtime.init.gradle` | 所有 gate 的 Gradle 呼叫都以 `-I` 載入：run* 接 stdin、寫 `classload-<pid>.log` |
 | `probe.init.gradle` | M3 gate 另外載入：把 `-Ptask9.*` 轉成 probe 的 system property |
@@ -54,6 +55,7 @@ $v = 'scripts/verification'
 & "$v/main-oracle.ps1" -Gate <Main 的 GATE_ROOT>
 & "$v/gates.ps1" -Mode M3 -Label m3                # -Only universe 或 -Only transfer 只跑一條
 & "$v/m4-recovery-probe.ps1"                       # -Only chain,low 只跑指定 chain／scenario
+& "$v/m5-collapse-probe.ps1"                       # -Only w2,w3 只跑指定 chain
 & "$v/ci-rule-check.ps1" -Label win-green -Workflow .github/workflows/build.yml `
     -Step '確認 Windows 原生案例確實執行' -GameTestXml <Full gate>/result-build/gametest-results.xml `
     -M5GameTestXml <M5GameTest gate>/result-build/gametest-m5-results.xml `
@@ -144,11 +146,52 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 
 「哪些 test 屬於哪個 run」有三份實作：`gates.ps1` 的 `Batch-Scope`／`Declared-GameTests`，以及 `.github/workflows/build.yml` 的兩個檢查 step（「確認 Windows 原生案例確實執行」「確認非 Windows 跨平台案例確實執行」）。CI step 只能是 workflow 內的 `run: |` 原文（`ci-rule-check.ps1` 逐字抽出執行），沒辦法共用腳本，所以三處必須同步：都掃描 `src/testmod/java` 下全部 `*.java`；掃描前先去掉註解行（去掉前導空白後以 `//`、`/*`、`*` 開頭的行，含 Javadoc 內的 `{@code @GameTest}`）；嚴格掃描是 `@GameTest(...)` 緊接 `public void <名稱>(TestContext`；前綴規則是 `m4_legacy_runtime` 屬 legacy run、前綴 `m5_universe` 屬 M5 run、其餘屬 default run（與 testmod 的 `M4LegacyGameTestFilterMixin` 相同）。改其中一處時，三處與 filter 一起改，並以 `ci-rule-check.ps1` 與 M5 gate 重跑。
 
+## M5 collapse probe
+
+`m5-collapse-probe.ps1` 是 M5 塌縮的跨 JVM crash／restart probe（M5 F6-1；spec §12 的 crash 窗口）。JVM 內的部分是 testmod 的 `M5CollapseRecoveryProbe`：沒有 system property `quantumchamber.m5collapse.phase` 時不註冊任何 listener，其他 run 不受影響；屬性存在但設定不合法時開服前就失敗。
+
+```powershell
+& scripts/verification/m5-collapse-probe.ps1               # 全部 chain
+& scripts/verification/m5-collapse-probe.ps1 -Only w2,w3   # 只跑指定 chain（RED 用）；以 pwsh -File 呼叫時也接受 "w2,w3"
+```
+
+- 每條 chain 建一個新的 owned root `run/m5-collapse-<runId>-<chain>`，每個 phase 一個 JVM：Gradle `runM5Collapse`，也就是 `build.gradle` 的 `m5Collapse` run。這個 run 刻意不帶 `-Dquantumchamber.test.collapseSuspended=all`（M4 recovery 用的全域暫停），probe 也斷言 JVM 參數裡沒有它。
+- phase evidence 由 testmod 固定在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/<phase>/`，不受 `-EvidenceRoot` 影響；彙整在 `-EvidenceRoot` 的 `collapse-run-<runId>.json`。phase evidence 已存在時拒絕執行（禁止重跑）。
+- chain 表的每個 phase 標記預期的結束：
+  - `stop`：Gradle exit 0、JVM exit code 0、`final.json` 的 status 為 `PASS`（另有 `stoppingSeen`、`stoppedSeen`、`stopRequested`），沒有 `halt.json`。
+  - `halt`：JVM 在 crash 窗口寫出 `halt.json`（CREATE_NEW＋force）之後以 `Runtime.halt(77)` 結束，不經正常停止、不存檔，等同 crash。腳本要求：Gradle 非 0、JVM exit code 77（找到 JVM 時先取得 process handle，結束之後以它讀 exit code）、Gradle 輸出有 `finished with non-zero exit value 77`、`halt.json` 的 status 為 `HALT` 而且窗口相符、沒有 `final.json`。窗口沒有到達或斷言失敗時，probe 正常停止並寫 FAIL 的 `final.json`，腳本判 FAIL。
+- 兩種結束都核對：receipt 的 PID、StartTime、startupNonce 與實際的 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可以獨占開啟。同一條 chain 的每個 phase，PID@StartTime 與 startupNonce 都不同。
+
+目前的 chain：
+
+| chain | phases | crash 窗口 | restart 開服時的窗口斷言 |
+| --- | --- | --- | --- |
+| `w2` | `w2-crash`（halt）→ `w2-restart`（stop） | `ALLOCATION_APPENDED`：allocation ledger flush 之後、catalog flush 之前 | catalog 還沒有 U、U 沒有物化、discovery 沒有 U |
+| `w3` | `w3-crash`（halt）→ `w3-restart`（stop） | `CATALOG_ALLOCATED`：catalog flush 之後、物化之前 | catalog 恰多 U 一筆（`EAGER_ENABLED`），開服 bootstrap 已物化 U；discovery 沒有 U |
+| `w5` | `w5-crash`（halt）→ `w5-restart`（stop） | `DISCOVERY_APPENDED`：discovery 追加之後、投影之前 | catalog 有 U、已物化、discovery 已有 U |
+
+三條 chain 的 crash phase 相同：fresh 世界蓋原艙（Controller 在 (8,70,8)、朝北）、連線參與者 P 並移到艙外，寫 DORMANT 的 NEW 收據（P 已返還、沒有 lease），原生存檔之後裝上 crash 點，P 由艙外進入觸發塌縮，RESOLVE 走到窗口時 halt。restart phase 讀回 crash phase 的 `halt.json` 與 `receipt.nbt`（crash 前的 MEASURED 收據），之後 P 真 JOIN（在艙外）、RESOLVE、P 進入艙內、PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE）、P 越過門板中線到 U、(b) 全員都已跨過的終局。spec §12 的四件事是共同斷言：
+
+- 同一個 UniverseId：journal 的 Destination、allocation entry、catalog、discovery、projection entry 與 ACTIVE 的 world key 全部相同；每個 tick 都斷言 catalog 只出現 Destination 的 UniverseId。
+- catalog 最多只多 1 筆：NEW 恰多 1 筆。
+- 沒有重抽：候選的 context、ledger、selection 與 crash 前的收據 exact 相同，allocation ledger 恰一筆這個 token。
+- 沒有人被困住：JOIN 之後參與者在來源世界或 U，之後到 PASSAGE_READY、跨越成功、Crossed、通道以 (b) 終局。
+
+### 新增 phase
+
+1. 需要新的 crash 窗口時：在 `M5TestHooks.CrashWindow` 選既有的值或新增，在窗口成立的程式點加 hook mixin（呼叫 `M5TestHooks.reachedCrashWindow(window, detail)`，`remap=false`、`require=1`），登記在 `quantumchamber-test.mixins.json`。
+2. 在 `M5CollapseRecoveryProbe.phases()` 加 entry：phase 名稱 → `PhaseFactory`，回傳 `Phase(ending, started, everyTick, steps)`。`started` 在 `SERVER_STARTED` 執行，`everyTick` 每個 tick 在 step 之前執行，每個 `Step(name, maxTicks, run)` 回 true 才進下一個 step，`maxTicks` 個 tick 內沒完成就 FAIL；整個 phase 另以 3600 tick 為界。
+   - crash phase：以 `armCrash(window)`（或自訂條件與動作的 `M5TestHooks.CrashPoint`）裝上 crash 點，最後一個 step 不會完成（等 halt）。
+   - restart phase：以 `readCrashReceipt(crashPhase, window)` 讀回 crash phase 的收據。
+   - 斷言用 `expect(名稱, 條件, 細節)`：失敗訊息以名稱開頭，RED 依名稱判定是否失敗在目標斷言。
+3. 在 `m5-collapse-probe.ps1` 的 `$chains` 加同名的 phase、預期的結束（`stop`／`halt`）與 halt 的窗口。chain 名稱就是 `-Only` 的值。
+4. 以 `-Only <新 chain>` 跑 GREEN，並以暫時的 production mutation 證明 restart 會失敗在目標斷言（RED）。每次執行都建立新的 runId 與 root，失敗的 root 與 evidence 都保留。
+
 ## Evidence 位置
 
 - `-EvidenceRoot`：預設 `<repo>/.superpowers/verification/`（gitignored）。只接受 repo 內、路徑無 reparse point、且被 gitignore 的目錄，否則在建立任何東西之前就拒絕。
 - `run-all.ps1` 每次建立新的 `run-all-<GUID>/`，內含 `console.log`、`gate-<label>-<GUID>/`、`recovery-run-<runId>.json`、`ci-<label>-<GUID>/` 與 `summary.json`。個別腳本直接在 `-EvidenceRoot` 下建立自己的 root。
-- 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`。目錄不存在時依程式應由 harness 建立，但還沒在沒有 `.superpowers/` 的 clean clone 上實跑。M3 gate root 另存每個 phase 的 receipt 複本。
+- 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`；M5 collapse probe（`M5CollapseRecoveryProbe`）的 receipt 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/`。目錄不存在時依程式應由 harness 建立，但還沒在沒有 `.superpowers/` 的 clean clone 上實跑。M3 gate root 另存每個 phase 的 receipt 複本。
 - `run/` 內：GameTest 與 main-only 把 `run/gametest/world`、`run/gametest-legacy/world`、`run/gametest-m5/world`、`run/server` 移到 `<原路徑>.task9-backup-<GUID>-<tag>`，跑完後把 fresh 結果移進 gate root 的 `*-fresh/`，再把原檔移回並逐檔比對 hash（結果在 `<tag>-restore.json`）。M3 與 M4 recovery 每次新建 `run/m3-universe-m4-task9-<GUID>`、`run/m3-transfer-m4-task9-<GUID>`、`run/m4-recovery-<GUID>-<scenario>`，跑完保留。
 - 失敗時保留全部 root 與 receipt，修正後以新的 root 重跑，不在失敗 root 上改判。若 restore 失敗，原檔仍在 `.task9-backup-*`，先查明原因再手動移回，不要刪除。
 
