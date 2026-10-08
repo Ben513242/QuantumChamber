@@ -700,20 +700,24 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 
 ---
 
-### Task F5-3: 到達目的宇宙的提示（controller 2026-10-08 依使用者裁示插入，spec v5.4 §10.8／§20.8）
+### Task F5-3: 到達目的宇宙的提示（controller 2026-10-08 依使用者裁示插入，spec v5.5 §10.8／§20.8／§20.9）
 
 在 F6-0 之後、F6-1 之前執行，走完 implementer → spec review → quality review。
 
 **Files：**
-- Modify：`src/main/java/dev/quantumchamber/collapse/PassageService.java`，只限傳送結果為 MOVED 時，對到達的玩家顯示提示。
+- Modify：`src/main/java/dev/quantumchamber/collapse/PassageService.java`，只限兩件事：
+  - 傳送結果為 MOVED 時，以 title 對到達的玩家顯示提示（v5.5，§20.9 第 1 點）。key 的常數放在 PassageService，不改 `CollapseService`。
+  - 「量子通道已關閉。」只發給在線、而且不在 `Crossed` 中的參與者（§20.9 第 2 點）。
 - Modify：兩份語言檔。
-- Test：`M5UniverseGameTests.java`，擴充既有的跨越 test：NEW（例如 T-CROSS）、EXISTING（例如 T-EXIST），以及 `FAILED_ROLLED_BACK`。必要時一併改 `CollapseServiceTest.java`。
+- Modify：`M5GameTestSupport.java`，只限新增讀取 title 封包的 helper（比照 `overlayKeys`）。
+- Test：`M5UniverseGameTests.java`。擴充既有的跨越 test：NEW（例如 T-CROSS）、EXISTING（例如 T-EXIST）、`FAILED_ROLLED_BACK`、`FAILED_RECOVERY_REQUIRED`、Crossed 寫入失敗，以及兩人的 test。斷言「量子通道已關閉。」的地方，要依 §20.9 改成精確的新預期，不得改弱。必要時一併改 `CollapseServiceTest.java`。
 
 **RED：**
-- NEW 跨越成功之後，到達的玩家收到「你已進入新的宇宙。」；
-- EXISTING 收到「你已進入另一個宇宙。」；
+- NEW 跨越成功之後，到達的玩家收到 title「你已進入新的宇宙。」，淡入淡出時間是 10／70／20；
+- EXISTING 收到 title「你已進入另一個宇宙。」；
 - `FAILED_ROLLED_BACK` 與 `FAILED_RECOVERY_REQUIRED` 不顯示這則提示；
-- 其他參與者不會收到。
+- 其他參與者與非參與者不會收到；
+- (b) 結束時，已跨過去的人不會收到「量子通道已關閉。」；(a)(c)(d) 結束時，只有還沒跨過去的參與者收到。
 
 **完整回歸：** `run-all.ps1`。
 
