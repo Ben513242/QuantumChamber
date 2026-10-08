@@ -1,5 +1,6 @@
 package dev.quantumchamber.collapse;
 
+import static dev.quantumchamber.chamber.ChamberPowerCoordinator.doorHasMembrane;
 import static dev.quantumchamber.collapse.CollapseService.LOG_MARKER;
 import static dev.quantumchamber.collapse.CollapseService.TICK_LOG_MARKER;
 
@@ -7,15 +8,14 @@ import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberDoorService;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberGeometry;
+import dev.quantumchamber.chamber.ChamberPowerCoordinator;
 import dev.quantumchamber.chamber.ChamberSessionGateway;
-import dev.quantumchamber.chamber.QuantumBulkheadBlock;
 import dev.quantumchamber.collapse.CollapseService.Prepare;
 import dev.quantumchamber.collapse.CollapseService.Track;
 import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.persistence.SessionRecoveryState.TerminalOrigin;
-import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.superposition.SessionState;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -176,14 +176,7 @@ final class OriginDoors {
         return true;
     }
 
-    /** 25 格門裡有任何一格帶著量子膜（{@code open=true}＋sealed 或 passable）；呼叫前門的 chunk 必須已載入。 */
-    private static boolean doorHasMembrane(ServerWorld world, ChamberFrame frame) {
-        for (int y = 1; y <= 5; y++) for (int x = 1; x <= 5; x++) {
-            var state = world.getBlockState(ChamberGeometry.localToWorld(frame, x, y, 0));
-            if (state.isOf(ModBlocks.QUANTUM_BULKHEAD) && QuantumBulkheadBlock.membrane(state).isMembrane()) return true;
-        }
-        return false;
-    }
+    // 25 格門裡有任何一格帶著量子膜：與 chamber 端 :613 的判斷是同一份（static import 的 ChamberPowerCoordinator.doorHasMembrane；F6-0，F5-2 quality Minor 2）。
 
     // ---- 重新套用與攔截（F4b-3；spec §7 開頭、§7.3） ----
 
@@ -434,7 +427,7 @@ final class OriginDoors {
      * 還沒套用的關門（{@link DoorGoal#CLOSE_ON_SEALED}：進入 SEALED 時排入，或 chunk 重新載入之後的重新套用；例如還在等門口的 entity storage 載入、chunk 不是 FULL、
      * 或在退避中）。之後的門由玩家照一般方式開關；只有下一次真的重新載入（{@link #watchDoor}）才再依 collapse view 關門一次。在門切換之前呼叫：門切換本身被拒時
      * （例如門板不完整），門維持原狀，同樣不再由塌縮流程關上。
-     * <p>例外（F5-0，F4b-3 spec m-2）：門還帶著量子膜（{@link #doorHasMembrane}；例如進入 SEALED 時 PREPARE 的 sealed 量子膜還沒被關門取代）時不取消。之後的門切換若被拒或
+     * <p>例外（F5-0，F4b-3 spec m-2）：門還帶著量子膜（{@link ChamberPowerCoordinator#doorHasMembrane}；例如進入 SEALED 時 PREPARE 的 sealed 量子膜還沒被關門取代）時不取消。之後的門切換若被拒或
      * rollback，門仍是量子膜，排入的關門照樣把它清掉，SEALED 的艙不會一直留著有碰撞的膜（§10.6 :613 的正規化不涵蓋有 SEALED session 的艙）；門切換成功時，量子膜門的切換就是
      * 關門（{@code withOpen(false)} 同時清掉量子膜），排入的關門是 UNCHANGED。玩家接著再開門時，門已沒有量子膜，照上一段取消，所以玩家打開的門仍不會被關回去。
      */

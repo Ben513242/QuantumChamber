@@ -77,8 +77,8 @@ public final class ChamberCollapsePort {
     }
 
     /**
-     * 找不到所屬 session、卻帶著量子膜的原艙門（spec §10.6 :613；例如終局之後、改門之前 crash）的正規化：{@link ChamberPowerCoordinator} 在 ORIGIN 分支協調完、門的 25 格有任何一格帶著
-     * 量子膜、而且 presence 不是 {@code COLLAPSE}／{@code PASSAGE} 時，在 server thread 上呼叫。實作只排入下一個 tick 的正規化（不在刷新的當下寫門：刷新可能就在 chunk 載入的
+     * 找不到所屬 session、卻帶著量子膜的原艙門（spec §10.6 :613；例如終局之後、改門之前 crash）的正規化：{@link ChamberPowerCoordinator} 在 ORIGIN 分支協調完、艙體的 chunk 都已載入、
+     * 門的 25 格有任何一格帶著量子膜、而且 presence 不是 {@code COLLAPSE}／{@code PASSAGE} 時，在 server thread 上呼叫（F6-0 補上 chunk 的條件，F5-2 quality Nit）。實作只排入下一個 tick 的正規化（不在刷新的當下寫門：刷新可能就在 chunk 載入的
      * load-sync 裡），套用時再確認沒有 M5 塌縮狀態的 session 擁有這扇門（有 COLLAPSING、SEALED、PASSAGE_READY 時由該 session 的門邏輯負責）。實作不得丟出例外。
      */
     @FunctionalInterface

@@ -235,16 +235,52 @@ class ChamberPowerCoordinatorTest {
         var restored = new ChamberRegistry();
         var restoredUuid = restored.registerOrigin(World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, new ChamberFrame(new BlockPos(64, 70, 64), Direction.NORTH)).chamberUuid();
         restored.setPowerState(restoredUuid, ChamberPowerState.POWERED);
+        // F6-0：記號在 Controller 的 block entity 上（不寫入 NBT），重啟之後的 Controller 是新的 block entity（新的 SessionActions）。
+        var restarted = new Backend();
         var restart = ChamberPowerCoordinator.reconcile(restored, restoredUuid, true, ChamberState.ARMED,
-                () -> new ArmAttemptResult(true, ChamberState.READY, participants, Set.of()), backend);
-        int startsAfterARestart = backend.starts;
+                () -> new ArmAttemptResult(true, ChamberState.READY, participants, Set.of()), restarted);
+        int startsAfterARestart = restarted.starts;
         assertAll(
                 () -> assertEquals(ChamberState.ARMED, collapse),
                 () -> assertEquals(ChamberState.ARMED, afterTheTerminal), () -> assertEquals(1, startsAfterTheTerminal, "COLLAPSE 終局之後：開新 session，不卡在 11"),
                 () -> assertEquals(ChamberState.ARMED, held), () -> assertEquals(1, startsWhileHeld, "start 留下的 ARMED：持續高電位不重複啟動"),
                 () -> assertEquals(ChamberState.ARMED, active),
                 () -> assertEquals(ChamberState.ARMED, afterTheActiveSession), () -> assertEquals(2, startsAfterTheActiveSession, "活動 session 不經返還路徑結束之後：重新評估"),
-                () -> assertEquals(ChamberState.ARMED, restart), () -> assertEquals(3, startsAfterARestart, "重啟之前存下的 ARMED：重新評估"));
+                () -> assertEquals(ChamberState.ARMED, restart), () -> assertEquals(1, startsAfterARestart, "重啟之前存下的 ARMED：重新評估"));
+    }
+
+    /**
+     * F6-0（F5-2 spec S-M2、quality）：R2 M5 的記號在 Controller 的 block entity 上（{@code SessionActions.heldByStart}，不寫入 NBT），不是整個 JVM 共用、以 chamber UUID 為 key
+     * 的集合，所以 reconcile 的結果只依參數（含傳入的 SessionActions）。同一座艙換了一個 block entity（重啟、chunk 重新載入、同一個 JVM 內重開 server）時，存下的 ARMED 重新評估；
+     * 同一個 block entity 持續高電位仍不重複啟動（M1.2）。每次協調都先清除記號：之後回的 ARMED 不是 start 留下的（活動 session、協調失敗）時，記號不再保持。
+     */
+    @Test void heldByStartLivesOnTheBlockEntitySoANewOneReevaluatesTheSameChamber() {
+        registry.setPowerState(uuid, ChamberPowerState.POWERED);
+        var armed = refresh(true, ChamberState.IDLE, true);
+        var sustained = refresh(true, armed, true);
+        int startsOnTheFirst = backend.starts;
+        boolean heldOnTheFirst = backend.held;
+        var reloaded = new Backend();
+        var afterTheReload = refresh(reloaded, true, ChamberState.ARMED, true);
+        int startsOnTheReloaded = reloaded.starts;
+        boolean heldOnTheReloaded = reloaded.held;
+        var sustainedAfterTheReload = refresh(reloaded, true, afterTheReload, true);
+        int startsOnTheReloadedWhileHeld = reloaded.starts;
+        backend.presence = ChamberSessionGateway.Presence.ACTIVE;
+        var active = refresh(true, sustained, true);
+        boolean heldAfterAnActiveArmed = backend.held;
+        reloaded.throwOnPresence = true;
+        var failed = refresh(reloaded, true, sustainedAfterTheReload, true);
+        boolean heldAfterAFailure = reloaded.held;
+        assertAll(
+                () -> assertEquals(ChamberState.ARMED, armed), () -> assertEquals(ChamberState.ARMED, sustained),
+                () -> assertEquals(1, startsOnTheFirst, "同一個 block entity：持續高電位不重複啟動（M1.2）"), () -> assertTrue(heldOnTheFirst),
+                () -> assertEquals(ChamberState.ARMED, afterTheReload),
+                () -> assertEquals(1, startsOnTheReloaded, "新的 block entity（同一座艙）：存下的 ARMED 重新評估，不沿用別的 block entity 的記號"),
+                () -> assertTrue(heldOnTheReloaded, "重新評估之後 start 又留下 ARMED"),
+                () -> assertEquals(ChamberState.ARMED, sustainedAfterTheReload), () -> assertEquals(1, startsOnTheReloadedWhileHeld, "新的 block entity 之後同樣不重複啟動"),
+                () -> assertEquals(ChamberState.ARMED, active), () -> assertFalse(heldAfterAnActiveArmed, "活動 session 的 ARMED 不是 start 留下的：記號清除"),
+                () -> assertEquals(ChamberState.ARMED, failed), () -> assertFalse(heldAfterAFailure, "協調失敗（保留返還保護的 ARMED）：記號清除"));
     }
 
     /**
@@ -281,22 +317,35 @@ class ChamberPowerCoordinatorTest {
     }
 
     private ChamberState refresh(boolean powered, ChamberState current, boolean eligible) {
-        return ChamberPowerCoordinator.reconcile(registry, uuid, powered, current,
-                () -> new ArmAttemptResult(eligible, eligible ? ChamberState.READY : ChamberState.IDLE,
-                        eligible ? participants : List.of(), Set.of()), backend);
+        return refresh(backend, powered, current, eligible);
     }
 
+    /** 以 {@code target}（一個 Controller block entity 的 SessionActions）協調同一座艙（F6-0）。 */
+    private ChamberState refresh(Backend target, boolean powered, ChamberState current, boolean eligible) {
+        return ChamberPowerCoordinator.reconcile(registry, uuid, powered, current,
+                () -> new ArmAttemptResult(eligible, eligible ? ChamberState.READY : ChamberState.IDLE,
+                        eligible ? participants : List.of(), Set.of()), target);
+    }
+
+    /** 一個 Controller block entity 的 SessionActions：{@code held} 是 block entity 上 R2 M5 的記號（F6-0；不寫入 NBT，新的 Backend 就是新的 block entity）。 */
     private final class Backend implements ChamberPowerCoordinator.SessionActions {
         ChamberSessionGateway.Presence presence = ChamberSessionGateway.Presence.NONE;
         boolean returned = true;
         boolean throwOnReturn;
+        boolean throwOnPresence;
+        boolean held;
         int starts;
         int returns;
         boolean blocked;
         List<UUID> startedParticipants;
         ChamberSessionGateway.StartResult startResult = ChamberSessionGateway.StartResult.ARMED_ONLY;
-        @Override public ChamberSessionGateway.Presence presence() { return presence; }
+        @Override public ChamberSessionGateway.Presence presence() {
+            if (throwOnPresence) throw new IllegalStateException("presence 讀取失敗");
+            return presence;
+        }
         @Override public boolean activationBlocked() { return blocked; }
+        @Override public boolean heldByStart() { return held; }
+        @Override public void setHeldByStart(boolean value) { held = value; }
         @Override public ChamberSessionGateway.StartResult start(List<UUID> ids) {
             assertEquals(ChamberPowerState.POWERED, registry.records().get(uuid).powerState());
             starts++;
