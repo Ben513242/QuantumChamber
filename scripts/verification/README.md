@@ -148,7 +148,18 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 
 ## M5 collapse probe
 
-`m5-collapse-probe.ps1` 是 M5 塌縮的跨 JVM crash／restart probe（M5 F6-1；spec §12 的 crash 窗口）。JVM 內的部分是 testmod 的 `M5CollapseRecoveryProbe`：沒有 system property `quantumchamber.m5collapse.phase` 時不註冊任何 listener，其他 run 不受影響；屬性存在但設定不合法時開服前就失敗。
+`m5-collapse-probe.ps1` 是 M5 塌縮的跨 JVM crash／restart probe（M5 F6-1；spec §12 的 crash 窗口）。JVM 內的部分是 testmod 的 `M5CollapseRecoveryProbe`（entrypoint 與 phase 表）：沒有 system property `quantumchamber.m5collapse.phase` 時不註冊任何 listener、不建立 runner 與 chain，其他 run 不受影響；屬性存在但設定不合法時開服前就失敗。F6-2a 把 probe 拆成幾個 package-private 類別（都在 `src/testmod/java/dev/quantumchamber/gametest/`）：
+
+| 類別 | 內容 |
+| --- | --- |
+| `M5CollapseRecoveryProbe` | entrypoint、phase 表（`phases()`）、設定 |
+| `M5CollapseRun` | runner：生命週期、`Phase`／`Step`、`guarded`、`expect`、`halt.json`／`final.json`、crash 點與 probe 端安裝的 hook（`install`） |
+| `M5CollapseWindows` | 窗口表：每個 crash 窗口一列（條件、halt 前取證、restart 開服時的預期、PREPARE 的預期） |
+| `M5CollapseFixture` | 原艙、參與者清單、收據、這條 chain 的 id、共用的查詢 |
+| `M5CollapsePassage` | restart 共用的 RESOLVE → 跨越 → 終局 step、每個 tick 的不變量、spec §12 的終局 helper（`expectEnd`） |
+| `M5CollapseDormantChains`、`M5CollapseLiveChain`、`M5CollapseRevisitChains` | chain：DORMANT 收據（W2～W6；restart 也用於 W6x）、live session（W1）、EXISTING 再造訪（W6x 的 crash、退化的 setup 與 restart） |
+| `M5CollapseProjectionLoad` | restart 在 JOIN 之前載入投影 Controller、觀察 load-sync |
+| `M5CollapseDiskEvidence` | 讀磁碟上的權威；allocation 與 projection ledger 經 `dev.quantumchamber.collapse.CollapseLedgerTestAccess`（testmod 的 split-package accessor）用 production 的嚴格 `fromNbt`，格式不符時丟出，不會讀成空的 ledger |
 
 ```powershell
 & scripts/verification/m5-collapse-probe.ps1               # 全部 chain
@@ -160,7 +171,11 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 - chain 表的每個 phase 標記預期的結束：
   - `stop`：Gradle exit 0、JVM exit code 0、`final.json` 的 status 為 `PASS`（另有 `stoppingSeen`、`stoppedSeen`、`stopRequested`），沒有 `halt.json`。
   - `halt`：JVM 在 crash 窗口寫出 `halt.json`（CREATE_NEW＋force）之後以 `Runtime.halt(77)` 結束，不經正常停止、不存檔，等同 crash。腳本要求：Gradle 非 0、JVM exit code 77（找到 JVM 時先取得 process handle，結束之後以它讀 exit code）、Gradle 輸出有 `finished with non-zero exit value 77`、`halt.json` 的 status 為 `HALT` 而且窗口相符、沒有 `final.json`。窗口沒有到達或斷言失敗時，probe 正常停止並寫 FAIL 的 `final.json`，腳本判 FAIL。
+  - halt 必須乾淨（F6-2a）：crash 點的第一次 hit（`hit` 1）、crash 點沒有記下失敗（`crashPointFailure` 為 `none`）、`failures` 是空的。任何一項不成立時 probe 不當成 crash：status `HALT_REFUSED`（`refused` 列出原因）、exit 78。腳本、`run-all.ps1` 與 restart 讀回 halt receipt 時（`crashReceiptClean`）也都核對這三項。
 - 兩種結束都核對：receipt 的 PID、StartTime、startupNonce 與實際的 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可以獨占開啟。同一條 chain 的每個 phase，PID@StartTime 與 startupNonce 都不同。
+- 三份表的一致性（F6-2a）：receipt 的 `ending` 必須等於 chain 表的預期結束；receipt 的 `phaseTable`（probe 的整張 phase 表）必須與 `$chains` 的全部 phase 依序相同，任何一邊多出或少了 phase 都判 FAIL。第三份表是 `run-all.ps1` 的 `$expectedCollapse`。
+- 失敗訊息：JVM 結束之後的每一項檢查失敗時，訊息都附上 `final.json`／`halt.json` 的 status 與 failures（halt 另有 hit、crashPointFailure、refused）；halt 的 phase 先看 `final.json`，所以「窗口沒有到達、斷言失敗而正常停止」直接看得到原因。
+- 逾時（F6-2a）：找到 JVM 之後，`latest.log` 與 Gradle 的輸出都超過 `-IdleSeconds`（預設 90；正常 phase 的 log 間隔最長約 6 秒）秒沒有新內容，或整個 phase 超過 `-PhaseMinutes`（預設 8）分鐘時，腳本核對 PID 仍是本次的 JVM（commandline 含本次的 startupNonce、StartTime 相符），以同一個 JDK 的 `jstack -l` 把 thread dump 存到 phase evidence 的 `jstack-<pid>.txt`，再只結束那一個 java PID（不碰 Gradle daemon），等 Gradle 收尾，寫 `timeout.json`（原因、PID、commandline 是否相符、jstack 檔名、最後 20 行 log 與 Gradle 輸出），判 FAIL。root 保留，禁止重跑。
 
 目前的 chain：
 
@@ -170,33 +185,39 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 | `w2` | `w2-crash`（halt）→ `w2-restart`（stop） | `ALLOCATION_APPENDED`：allocation ledger flush 之後、catalog flush 之前 | catalog 還沒有 U、U 沒有物化、discovery 沒有 U |
 | `w3` | `w3-crash`（halt）→ `w3-restart`（stop） | `CATALOG_ALLOCATED`：catalog flush 之後、物化之前 | catalog 恰多 U 一筆（`EAGER_ENABLED`），開服 bootstrap 已物化 U；discovery 沒有 U |
 | `w5` | `w5-crash`（halt）→ `w5-restart`（stop） | `DISCOVERY_APPENDED`：discovery 追加之後、投影之前 | catalog 有 U、已物化、discovery 已有 U |
-| `w4` | `w4-crash`（halt）→ `w4-restart`（stop） | `PROJECTION_CELL_WRITTEN`：第一次寫入剛寫完 Controller 那一格；halt 之前刻意把 U 存檔，磁碟上是寫到一半的投影（raw MCA 確認 Controller 在、最後一格還沒寫） | projection ledger 仍是 PENDING、Controller 在磁碟上；JOIN 之前以 probe 的 ticket 載入投影 chunk，load-sync（CONSUMED）之後是 inert 的 PROJECTION、沒有 log 提到它的座標、不受保護 |
+| `w4` | `w4-crash`（halt）→ `w4-restart`（stop） | `PROJECTION_CELL_WRITTEN`：第一次寫入剛寫完 Controller 那一格；halt 之前刻意把 U 存檔，磁碟上是寫到一半的投影（raw MCA 確認 Controller 在、最後一格還沒寫） | projection ledger 仍是 PENDING、Controller 在磁碟上；JOIN 之前以 probe 的 ticket 載入投影 chunk（之前沒有載入；剛載入時是 ORIGIN、power 未初始化、load-sync 在佇列），load-sync（CONSUMED）之後是 inert 的 PROJECTION、沒有 log 提到它的座標、不受保護 |
 | `w4b` | `w4b-crash`（halt）→ `w4b-restart`（stop） | `DESTINATION_CHECKPOINT`：投影寫完並驗證、目的 chunks 的原生存檔 checkpoint 之前 | projection ledger 仍是 PENDING，磁碟上沒有投影方塊 |
-| `w6` | `w6-crash`（halt）→ `w6-restart`（stop） | `PROJECTION_COMPLETE`：projection ledger 寫入 COMPLETE 之後、PASSAGE_READY 之前 | projection ledger 是 COMPLETE、Controller 在磁碟上；JOIN 之前載入，辨識為 inert 的 PROJECTION，不變量 cell 受保護、interior 不受 |
+| `w6` | `w6-crash`（halt）→ `w6-restart`（stop） | `PROJECTION_COMPLETE`：projection ledger 寫入 COMPLETE 之後、PASSAGE_READY 之前 | projection ledger 是 COMPLETE、Controller 在磁碟上；JOIN 之前載入（同 `w4`：本 JVM 由磁碟載入、辨識），辨識為 inert 的 PROJECTION，不變量 cell 受保護、interior 不受 |
 | `w6x` | `w6x-crash`（halt）→ `w6x-restart`（stop） | `PROJECTION_REPAIRED`（EXISTING 再造訪）：REPAIR 寫了格之後、checkpoint 之前 | catalog 不變；磁碟上被改壞的 shell 仍是玻璃、interior 的金塊標記在 |
-| `degraded` | `deg-setup`（stop）→ `deg-restart`（stop） | 不是 crash 窗口：開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本）。setup 提交 COLLAPSING 的同一個 tick 正常停服，restart 開服前移走 ledger | 初始化判定 LOST（ERROR 一則，`AUTHORITY_CORRUPT`）、本 instance 不提交新的 COLLAPSING、投影保護索引退化；ledger 不存在、interior 的金塊標記在磁碟上 |
+| `degraded` | `deg-setup`（stop）→ `deg-restart`（stop） | 不是 crash 窗口：開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本）。setup 提交 COLLAPSING 的同一個 tick 在 U 的投影 Controller 正上方放紅石塊（不觸發更新，refresh witness）、正常停服，restart 開服前移走 ledger | 初始化判定 LOST（ERROR 一則，`AUTHORITY_CORRUPT`）、本 instance 不提交新的 COLLAPSING、投影保護索引退化；ledger 不存在、interior 的金塊標記與紅石塊在磁碟上；剛載入時 WasPowered 為 false，CONSUMED 之後為 true（`refreshedThisInstance`：refresh 越過了提早 return） |
 
 `w2`、`w3`、`w5`、`w4`、`w4b`、`w6` 的 crash phase 相同：fresh 世界蓋原艙（Controller 在 (8,70,8)、朝北）、連線參與者 P 並移到艙外，寫 DORMANT 的 NEW 收據（P 已返還、沒有 lease），原生存檔之後裝上 crash 點，P 由艙外進入觸發塌縮，RESOLVE 或 PREPARE 走到窗口時 halt。`w6x-crash` 先以同樣的方式塌縮到 PASSAGE_READY（U 的投影 COMPLETE），拿掉 Controller 上方的紅石塊讓通道以 (d) 來源艙沒有供電結束，P 移到艙外、恢復供電；之後把 U 的投影改壞一格 shell（玻璃）、在 interior 放金塊標記，寫 DORMANT 的 EXISTING 收據（同一個 U）、原生存檔，P 由艙外進入，PREPARE 以 REPAIR 修好那一格之後、checkpoint 之前 halt。
 
-`w1-crash` 是 live session（比照 M4 recovery probe 的 build／arm）：P 在艙內，以真實的 LOW→HIGH 供電與 Buff 啟動，SUPERPOSITION、358 扇側門發布之後原生存檔（P 的 playerdata 存在走廊），P 以原生互動選一扇 NEW 候選門；下一個 tick 塌縮流程提交 MEASURED→COLLAPSING，`SessionRecoveryState.commitRestore` 讀回確認時 halt。`deg-setup` 先走 `w6x-crash` 的前半段（U 的投影 COMPLETE、通道以斷電結束），在 U 的 interior 放金塊標記，寫 DORMANT 的 EXISTING 收據、原生存檔，P 由艙外進入，看到 flushed COLLAPSING 的同一個 tick 正常停服（RESOLVE 在下一個 tick），所以停服時 P 在艙內。
+`w1-crash` 是 live session（比照 M4 recovery probe 的 build／arm）：P 在艙內，以真實的 LOW→HIGH 供電與 Buff 啟動，SUPERPOSITION、358 扇側門發布之後原生存檔（P 的 playerdata 存在走廊），P 以原生互動選一扇 NEW 候選門；下一個 tick 塌縮流程提交 MEASURED→COLLAPSING，`SessionRecoveryState.commitRestore` 讀回確認時 halt。`deg-setup` 先走 `w6x-crash` 的前半段（U 的投影 COMPLETE、通道以斷電結束），在 U 的 interior 放金塊標記，寫 DORMANT 的 EXISTING 收據、原生存檔，P 由艙外進入，看到 flushed COLLAPSING 的同一個 tick 放上 refresh witness、正常停服（RESOLVE 在下一個 tick），所以停服時 P 在艙內。
 
-restart phase 讀回 crash phase 的 `halt.json` 與 `receipt.nbt`（crash 前的 MEASURED 收據），之後 P 真 JOIN（在艙外）、RESOLVE、P 進入艙內、PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE）、P 越過門板中線到 U、(b) 全員都已跨過的終局。投影的 chain 另斷言 PREPARE 怎麼完成（「準備完成」INFO 的模式與格數，READY 時以 raw MCA 確認 checkpoint 已存下）：`w4`、`w4b` 照第一次寫入重寫；`w6` 修復 0 格；`w6x` 再修復那一格、interior 的標記保留。`w1-restart` 的 P JOIN 在走廊、被 recovery 攔截，不經請求就返還到來源世界，清 lease、space 釋放（SETTLED）之後才 RESOLVE；JOIN 之後超過 100 tick 仍在走廊就判為被困住（`notTrappedInTheCorridor`）。`deg-restart` 讀回 `deg-setup` 的 `final.json`：投影 Controller 載入後走 foreign 的分支（索引不認得它；退化的保護另加同位置的不變量 cell），RESOLVE 進 SEALED(AUTHORITY_CORRUPT)（永久原因的 ERROR 一則、沒有 PREPARE），interior 沒有被重寫、ledger 沒有被重建（停服之後也是），P JOIN 在艙內、照一般方式開門，record 仍是 SEALED。spec §12 的四件事是共同斷言：
+restart phase 讀回 crash phase 的 `halt.json` 與 `receipt.nbt`（crash 前的 MEASURED 收據），之後 P 真 JOIN（在艙外）、RESOLVE、P 進入艙內、PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE）、P 越過門板中線到 U、(b) 全員都已跨過的終局。投影的 chain 另斷言 PREPARE 怎麼完成（「準備完成」INFO 的模式與格數，READY 時以 raw MCA 確認 checkpoint 已存下）：`w4`、`w4b` 照第一次寫入重寫；`w6` 修復 0 格；`w6x` 再修復那一格、interior 的標記保留。`w1-restart` 的 P JOIN 在走廊、被 recovery 攔截，不經請求就返還到來源世界，清 lease、space 釋放（SETTLED）之後才 RESOLVE；JOIN 之後超過 100 tick 仍在走廊就判為被困住（`notTrappedInTheCorridor`）。`deg-restart` 讀回 `deg-setup` 的 `final.json`：投影 Controller 載入後走 foreign 的分支（索引不認得它；退化的保護另加同位置的不變量 cell），RESOLVE 進 SEALED(AUTHORITY_CORRUPT)（永久原因的 ERROR 一則、沒有 PREPARE），interior 沒有被重寫、ledger 沒有被重建（停服之後也是），P JOIN 在艙內、照一般方式開門，record 仍是 SEALED。spec §12 的四件事是共同斷言，終局由 `M5CollapsePassage.expectEnd` 一次斷言（退化的 chain 也用它，參數不同）：
 
-- 同一個 UniverseId：journal 的 Destination、allocation entry、catalog、discovery、projection entry 與 ACTIVE 的 world key 全部相同；每個 tick 都斷言 catalog 只出現 Destination 的 UniverseId。
+- 同一個 UniverseId：journal 的 Destination、allocation entry、catalog、discovery（`onlyTheDestinationDiscovered`）、projection entry 與 ACTIVE 的 world key 全部相同；每個 tick 都斷言 catalog 只出現 Destination 的 UniverseId。
 - catalog 最多只多 1 筆：NEW 恰多 1 筆，EXISTING 不變。
 - 沒有重抽：候選的 context、ledger、selection 與 crash 前的收據 exact 相同，allocation ledger 恰一筆這個 token。
-- 沒有人被困住：JOIN 之後參與者在來源世界或 U（`w1` 返還之前可以在走廊），之後到 PASSAGE_READY、跨越成功、Crossed、通道以 (b) 終局；`degraded` 是 P 照一般方式開門。
+- 沒有人被困住：JOIN 之後參與者在來源世界或 U（`w1` 返還之前可以在走廊），之後到 PASSAGE_READY、跨越成功、跨越的那個 tick 結束時 record 仍在而且 Crossed 恰為每位參與者各一次（`crossedRecorded`）、通道以 (b) 終局；`degraded` 是參與者照一般方式開門、在來源世界。
+- 另外（F6-2a）：這個 session 從 `onInitialize` 起沒有任何 ERROR（`noSessionError`；`degraded` 恰為永久原因那一則，`noFurtherSessionError`），非退化的 chain 沒有「M5 authority 初始化失敗」（`noAuthorityInitializationFailure`）。
 
 ### 新增 phase
 
 1. 需要新的 crash 窗口時：在 `M5TestHooks.CrashWindow` 選既有的值或新增，在窗口成立的程式點加 hook mixin（呼叫 `M5TestHooks.reachedCrashWindow(window, detail)`，`remap=false`、`require=1`），登記在 `quantumchamber-test.mixins.json`。
-2. 在 `M5CollapseRecoveryProbe.phases()` 加 entry：phase 名稱 → `PhaseFactory`（在 `onInitialize` 呼叫），回傳 `Phase(ending, started, everyTick, steps)`。`started` 在 `SERVER_STARTED` 執行，`everyTick` 每個 tick 在 step 之前執行，每個 `Step(name, maxTicks, run)` 回 true 才進下一個 step，`maxTicks` 個 tick 內沒完成就 FAIL；整個 phase 另以 3600 tick 為界。需要開服前的準備（例如移走權威檔）或停服之後的檢查時，用 `Phase(ending, beforeStart, started, everyTick, steps, afterStop)`：`beforeStart` 在 `onInitialize` 執行，`afterStop` 在 `SERVER_STOPPED` 寫 `final.json` 之前執行，失敗都記在 `failures`。
-   - crash phase：以 `armWindow(window)` 裝上 crash 點，最後一個 step 不會完成（等 halt）。窗口的條件（hook 交來的 detail 是否就是那一刻）與 halt 之前的取證（寫進 `halt.json` 的 `atHalt`）在 `armWindow` 依窗口指定，底層是 `armCrash(window, condition, evidence)`；取證失敗時不 halt，phase 照常停止並 FAIL。
-   - restart phase：以 `readCrashReceipt(crashPhase, window)` 讀回 crash phase 的收據；前一個 phase 是正常停止的 setup 時，`window` 傳 null（改讀 `final.json`）。
-   - 斷言用 `expect(名稱, 條件, 細節)`：失敗訊息以名稱開頭，RED 依名稱判定是否失敗在目標斷言。
-3. 在 `m5-collapse-probe.ps1` 的 `$chains` 加同名的 phase、預期的結束（`stop`／`halt`）與 halt 的窗口。chain 名稱就是 `-Only` 的值。
-4. 以 `-Only <新 chain>` 跑 GREEN，並以暫時的 mutation（production，或 probe 自己的比較對象）證明 restart 會失敗在目標斷言（RED）。每次執行都建立新的 runId 與 root，失敗的 root 與 evidence 都保留。
-5. `run-all.ps1` 的 summary 以固定的清單核對 chain、phase、預期的結束與窗口（`$expectedCollapse`），新增 phase 時一併更新。
+2. 在窗口表（`M5CollapseWindows.table()`）加一列 `row(rows, window, condition, beforeHalt, atRestart, prepared)`。restart 的窗口預期都寫在這一列，不必改 restart 的程式：
+   - `condition(fixture, detail)`：hook 交來的 detail 是不是那一刻；`beforeHalt(run, fixture, detail, evidence)`：halt 之前的取證（寫進 `halt.json` 的 `atHalt`；丟出時不 halt，phase 照常停止並 FAIL）。
+   - `AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin)`：參與者在 crash 前是否已返還（W1 為 false：另斷言走廊 space 已重建、沒有保留式 recovery 的請求）；RESOLVE 在 halt 之前完成到哪一步（`Resolved.NOTHING`／`ALLOCATION`／`CATALOG`／`DISCOVERY`，由它推出 halt 當下是否已物化，以及 allocation、catalog、discovery 的預期）；projection ledger 的狀態（null、PENDING、COMPLETE）；窗口自己的磁碟檢查；JOIN 之前是否先載入並辨識投影 Controller。`M5CollapseWindows.expectAtRestart` 依這一列斷言。
+   - `Prepared(name, mode, cells, afterReady)`：PREPARE 怎麼完成（「準備完成」INFO 的模式與格數，`ANY_CELLS` 為不是 0 格即可）與 READY 時的磁碟檢查；不檢查時為 null。
+3. 在 `M5CollapseRecoveryProbe.phases()` 加 entry：phase 名稱 → `PhaseFactory`（在 `onInitialize` 呼叫），通常是 `run -> new <chain 類別>(run).crash(window)` 或 `.restart(window, crashPhase)`。新的 chain family 自己持有自己的狀態，建構時 `new M5CollapseFixture(run)`、`new M5CollapsePassage(run, fixture)`，回傳 `Phase(ending, started, everyTick, steps)`（或 6 個參數的版本：另有開服前的 `beforeStart` 與停服之後的 `afterStop`）。每個 `Step(name, maxTicks, run)` 回 true 才進下一個 step，`maxTicks` 個 tick 內沒完成就 FAIL；整個 phase 另以 3600 tick 為界。
+   - crash phase：以 `M5CollapseWindows.arm(run, fixture, window)` 裝上 crash 點，最後一個 step 不會完成（等 halt）。
+   - restart phase：以 `fixture.readCrashReceipt(crashPhase, window)` 讀回 crash phase 的收據（前一個 phase 是正常停止的 setup 時 `window` 傳 null，改讀 `final.json`），開服時 `M5CollapseWindows.expectAtRestart`，之後接 `passage.steps(prepared)`，每個 tick `passage.invariants(...)`；終局以 `passage.expectEnd(End)` 斷言（參數：catalog 增量、projection 的預期、參與者在哪裡、這個 session 的 ERROR 則數、authority 是否初始化成功）。
+   - 斷言用 `run.expect(名稱, 條件, 細節)`：失敗訊息以名稱開頭，RED 依名稱判定是否失敗在目標斷言。條件本身會讀磁碟（可能丟出）時用 lambda 版本 `run.expect(名稱, () -> ..., 細節)`，讀取失敗也算這個斷言失敗。
+4. 多名參與者（W7 起）：`fixture.buildOrigin(n)` 建立並連線 n 位參與者（移到艙外），清單的第一位是選門者（`fixture.selector()`）；`moveInside`／`moveOutside`、`joinAll`、`players()`、跨越（`passage` 的 doorway、`crossedRecorded`、`oneCrossingInfo`）、每個 tick 的位置斷言、`expectEnd` 的位置斷言都對清單裡的每一位。收據（`dormantNewReceipt`、`existingReceiptForTheUniverse`）以清單順序建立 cohort，restart 由收據讀回清單。目前的 chain 都只用一人。
+5. 在 probe 內安裝 fault：`run.install(slot, value)` 把既有的故障注入裝進 `M5TestHooks` 的 Slot（例如 `run.install(M5TestHooks.JOURNAL_PUT_FAULT, new M5TestHooks.JournalPutFault(run.server, sid, SessionState.COLLAPSING, 1))`、`MATERIALIZE_FAULT`、`CHECKED_READ_FAULT`、`PROJECTION_WRITE_FAULT`；建構子與 `M5GameTestSupport.install*` 相同，只是沒有 `TestContext`）。crash 點也經它安裝；probe 請求停服之前依安裝的相反順序全部移除（halt 時 JVM 直接結束）。注意 mixin 的順序（F6-2a 實驗，`f6/f62a/`）：`ProjectionWriteFaultMixin` 與 `ProjectionWriterCrashWindowMixin` 都掛在 `ProjectionWriter.write` 的 RETURN，前者在 `quantumchamber-test.mixins.json` 排在前面；fault 把結果換掉（`setReturnValue`，即取消）的那一次，`PROJECTION_REPAIRED` 的 crash 窗口 hook **不會被呼叫**（實測：沒有 fault 時呼叫 1 次，fault 生效的那一次 0 次，fault 用完之後又是 1 次）。所以「投影寫入失敗之後」的窗口不能用 `PROJECTION_REPAIRED` 觀察，要選之後的程式點（例如 SEALED 的提交）。`MaterializeFaultMixin` 掛在 `Minecraft121DynamicDimensionBackend.materialize` 的 HEAD，那個方法上沒有 crash 窗口的 hook，不受影響。
+6. 在 `m5-collapse-probe.ps1` 的 `$chains` 加同名的 phase、預期的結束（`stop`／`halt`）與 halt 的窗口（chain 名稱就是 `-Only` 的值），並更新 `run-all.ps1` 的 `$expectedCollapse`。receipt 的 `phaseTable` 與 `$chains` 不一致時腳本判 FAIL。
+7. 以 `-Only <新 chain>` 跑 GREEN，並以暫時的 mutation（production，或 probe 自己的比較對象）證明 restart 會失敗在目標斷言（RED）。每次執行都建立新的 runId 與 root，失敗的 root 與 evidence 都保留。
 
 ## Evidence 位置
 
