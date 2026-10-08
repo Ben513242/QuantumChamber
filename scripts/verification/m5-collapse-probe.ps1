@@ -2,7 +2,7 @@
 # run/m5-collapse-<runId>-<chain>，每個 phase 一個獨立 JVM。chain 表的每個 phase 標記預期的結束：
 #   stop：Gradle exit 0、JVM exit code 0、final.json status PASS（stoppingSeen／stoppedSeen／stopRequested），沒有 halt.json；
 #   halt：Gradle 非 0、JVM exit code 77（以 JVM 的 process handle 讀取，另以 Gradle 輸出的 "finished with non-zero exit value 77" 交叉核對）、
-#         halt.json status HALT 且窗口相符，沒有 final.json。
+#         halt.json status HALT 且窗口相符、乾淨（hit 1、failures 空、crashPointFailure none），沒有 final.json。
 # 兩種結束都核對 PID／StartTime／startupNonce 與 receipt 相符、JVM 已不存在、world/session.lock 可獨占開啟；同一條 chain 的 PID@StartTime 與 startupNonce 都不同。
 # 任何失敗都 throw，保留 root 與 phase evidence，禁止在同 root 重跑。
 # 參數：
@@ -123,6 +123,8 @@ function Invoke-OwnedPhase([string]$Nonce, [string]$Phase, [string]$Root, [strin
         $receiptPath = $haltPath
         $receipt = Get-Content -LiteralPath $haltPath -Raw | ConvertFrom-Json -DateKind String
         if ($receipt.status -ne 'HALT' -or $receipt.window -ne $Window -or $receipt.phase -ne $Phase) { throw "halt receipt 不符：status=$($receipt.status) window=$($receipt.window)（預期 $Window）" }
+        # 乾淨的 halt（F6-2a）：crash 點的第一次 hit、crash 點沒有記下失敗、failures 是空的（probe 端也守門：不乾淨時不以 77 結束）。
+        if ($receipt.hit -ne 1 -or @($receipt.failures).Count -ne 0 -or $receipt.crashPointFailure -ne 'none') { throw "halt 不乾淨：hit=$($receipt.hit) failures=$(@($receipt.failures) -join ' | ') crashPointFailure=$($receipt.crashPointFailure)：$phaseEvidence" }
     } else { throw "未知的結束方式：$Ending" }
     if ($receipt.runtimeScope -ne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds) { throw 'collapse receipt 必須明確標示 testmod runtime，不能冒充 main-only' }
     if ($javaId -ne $receipt.pid -or $receipt.startupNonce -ne $startupNonce) { throw 'JVM identity receipt 不符' }

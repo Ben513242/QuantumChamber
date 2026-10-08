@@ -211,7 +211,7 @@ Step 'summary' {
         $receipt=Read-Json $phase.receipt
         if($receipt.status -ne 'PASS' -or (Hash $phase.receipt) -ne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -ne $phase.startupNonce -or $receipt.runtimeScope -ne 'testmod-present'){throw "recovery receipt 不符：$($phase.receipt)"}
     }
-    # 7b. M5 collapse probe：全部 chain 的 phases 依 chain 表的預期結束（halt＝JVM exit 77＋halt.json 窗口相符；stop＝exit 0＋final.json PASS）、
+    # 7b. M5 collapse probe：全部 chain 的 phases 依 chain 表的預期結束（halt＝JVM exit 77＋halt.json 窗口相符且乾淨：hit 1、failures 空、crash 點沒有失敗；stop＝exit 0＋final.json PASS）、
     #     各自獨立 JVM（PID@StartTime 與 startupNonce 都不同）、receipt hash 對上 launcher。
     $collapse=Read-Json $collapseFile
     if($collapse.status -ne 'PASS' -or @($collapse.only).Count -ne 0){throw 'M5 collapse summary 不是完整 PASS'}
@@ -228,7 +228,7 @@ Step 'summary' {
     foreach($phase in $collapsePhases) {
         $receipt=Read-Json $phase.receipt
         if((Hash $phase.receipt) -ne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -ne $phase.startupNonce -or $receipt.runtimeScope -ne 'testmod-present' -or $receipt.phase -cne $phase.phase){throw "M5 collapse receipt 不符：$($phase.receipt)"}
-        $halted=$phase.ending -eq 'halt' -and $receipt.status -eq 'HALT' -and $receipt.window -ceq $phase.window -and $phase.javaExitCode -eq 77 -and $phase.gradleExitCode -ne 0 -and (Split-Path -Leaf $phase.receipt) -eq 'halt.json'
+        $halted=$phase.ending -eq 'halt' -and $receipt.status -eq 'HALT' -and $receipt.window -ceq $phase.window -and $phase.javaExitCode -eq 77 -and $phase.gradleExitCode -ne 0 -and (Split-Path -Leaf $phase.receipt) -eq 'halt.json' -and $receipt.hit -eq 1 -and @($receipt.failures).Count -eq 0 -and $receipt.crashPointFailure -ceq 'none'
         $stopped=$phase.ending -eq 'stop' -and $receipt.status -eq 'PASS' -and $phase.javaExitCode -eq 0 -and $phase.gradleExitCode -eq 0 -and (Split-Path -Leaf $phase.receipt) -eq 'final.json'
         if(-not ($halted -or $stopped)){throw "M5 collapse phase 沒有依預期結束：$($phase.phase) ending=$($phase.ending) status=$($receipt.status) javaExit=$($phase.javaExitCode)"}
     }

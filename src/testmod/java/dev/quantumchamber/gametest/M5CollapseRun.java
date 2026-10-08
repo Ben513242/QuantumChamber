@@ -36,7 +36,8 @@ import org.slf4j.LoggerFactory;
  * <ul>
  * <li>{@code STOP}：全部 step 完成之後正常停止，{@code SERVER_STOPPED} 時寫 {@code final.json}（status PASS 或 FAIL）。</li>
  * <li>{@code HALT}：在指定的 crash 窗口（{@link CrashWindow}，{@link M5TestHooks#CRASH_POINT}）寫出 {@code halt.json}（CREATE_NEW＋{@code force}）之後以
- *     {@code Runtime.halt(77)} 結束 JVM：不經正常停止、不存檔，等同 crash。窗口沒有到達、或任何斷言失敗時，照常停止並寫 FAIL 的 {@code final.json}。</li>
+ *     {@code Runtime.halt(77)} 結束 JVM：不經正常停止、不存檔，等同 crash。只有乾淨的 halt 才是 77（crash 點的第一次 hit、crash 點沒有記下失敗、{@code failures}
+ *     是空的；否則 status {@code HALT_REFUSED}、exit 78）。窗口沒有到達、或任何斷言失敗時，照常停止並寫 FAIL 的 {@code final.json}。</li>
  * </ul>
  * 斷言一律 {@link #expect}：失敗訊息以斷言名稱開頭（例如 {@code catalogOnlyDestination}），記在 receipt 的 {@code failures}，之後正常停止；成立的記在
  * {@code observed}。例外不會從 {@code END_SERVER_TICK} 拋出（{@link #guarded}）。probe 端安裝的 hook（crash 點與 fault，{@link #install}）在 {@link #stop}
@@ -46,8 +47,8 @@ final class M5CollapseRun {
     static final String OWNER = ".superpowers/sdd/2026-10-01-m5-collapse-passage";
     /** 預期 crash 的 exit code：{@code m5-collapse-probe.ps1} 以它分辨 crash 窗口與其他非零結束。 */
     static final int HALT_EXIT = 77;
-    /** halt receipt 寫不出來時的 exit code（不是預期的 crash；harness 判 FAIL）。 */
-    static final int HALT_RECEIPT_FAILED_EXIT = 78;
+    /** 不是乾淨的 crash 時的 exit code（harness 判 FAIL）：halt receipt 寫不出來，或乾淨的守門拒絕（{@link #halt}）。 */
+    static final int HALT_FAILED_EXIT = 78;
     /** 整個 phase 的上限 tick 數。 */
     static final int PHASE_TICK_LIMIT = 3600;
     /** crash phase 寫出的 MEASURED 收據（單筆 journal 的 NBT），restart phase 以它比對「沒有重抽」。 */
@@ -337,15 +338,26 @@ final class M5CollapseRun {
         if (point != null) expect("crashPointHealthy", point.failure() == null, () -> "crash 點失敗：" + point.failure());
     }
 
-    /** crash：寫出 {@code halt.json}（CREATE_NEW＋force）之後 {@code Runtime.halt}。receipt 寫不出來時以 {@link #HALT_RECEIPT_FAILED_EXIT} 結束。 */
+    /**
+     * crash：寫出 {@code halt.json}（CREATE_NEW＋force）之後 {@code Runtime.halt}。乾淨的守門（F6-2a）：這是 crash 點的第一次 hit、crash 點沒有記下失敗
+     * （{@code crashPointFailure} 為 {@code none}）、receipt 的 {@code failures} 是空的，才是 status {@code HALT}、以 {@link #HALT_EXIT} 結束；任何一項不成立時
+     * 不當成 crash：status {@code HALT_REFUSED}（{@code refused} 列出原因），以 {@link #HALT_FAILED_EXIT} 結束。receipt 寫不出來時也以 {@link #HALT_FAILED_EXIT} 結束。
+     */
     private void halt(CrashWindow window, Object detail, int hit, Map<String, Object> atHalt) {
-        int exit = HALT_EXIT;
+        var point = crashPoint;
+        var refused = new ArrayList<String>();
+        if (hit != 1) refused.add("hit=" + hit);
+        if (point.failure() != null) refused.add("crashPointFailure=" + point.failure());
+        if (!failures.isEmpty()) refused.add("failures=" + failures);
+        int exit = refused.isEmpty() ? HALT_EXIT : HALT_FAILED_EXIT;
         try {
             var halt = new LinkedHashMap<String, Object>(proof);
-            halt.put("status", "HALT");
+            halt.put("status", refused.isEmpty() ? "HALT" : "HALT_REFUSED");
+            halt.put("refused", refused);
             halt.put("window", window.name());
             halt.put("hit", hit);
-            halt.put("reached", crashPoint.reached());
+            halt.put("reached", point.reached());
+            halt.put("crashPointFailure", point.failure() == null ? "none" : point.failure().toString());
             halt.put("detail", M5CollapseWindows.describe(detail));
             halt.put("haltServerTick", server.getTicks());
             halt.put("universeActiveAtHalt", context.universeActive());
@@ -359,8 +371,9 @@ final class M5CollapseRun {
             event("halt " + window.name());
         } catch (Exception | Error failure) {
             LOGGER.error("M5 collapse probe：halt receipt 寫不出來", failure);
-            exit = HALT_RECEIPT_FAILED_EXIT;
+            exit = HALT_FAILED_EXIT;
         }
+        if (exit != HALT_EXIT) LOGGER.error("M5 collapse probe：不是乾淨的 halt（{}），以 {} 結束", refused, exit);
         Runtime.getRuntime().halt(exit);
     }
 

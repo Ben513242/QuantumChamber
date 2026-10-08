@@ -307,7 +307,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /**
      * restart phase 的開頭：讀回 crash phase（{@code crashPhase}）的 {@code halt.json} 與 {@link M5CollapseRun#RECEIPT_NBT}，核對 halt receipt 的 status、窗口、
-     * phase、nonce，startupNonce 與這個 JVM 不同，receipt NBT 的 SHA-256 與 halt receipt 記的相同；再以收據設定這條 chain 的 fixture（session、原艙、參與者、
+     * phase、nonce，乾淨的 halt（第一次 hit、crash 點沒有失敗、failures 是空的），startupNonce 與這個 JVM 不同，receipt NBT 的 SHA-256 與 halt receipt 記的相同；再以收據設定這條 chain 的 fixture（session、原艙、參與者、
      * UniverseId、crash 前的 catalog 筆數）。回傳 halt receipt。{@code window} 為 null 時，前一個 phase 是正常停止的 setup（退化的 chain）：改讀它的
      * {@code final.json}，核對 status PASS、ending STOP、phase、nonce，其餘相同。
      */
@@ -327,6 +327,9 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
             run.expect("crashReceiptMatches", "HALT".equals(M5CollapseRun.text(halt, "status")) && window.name().equals(M5CollapseRun.text(halt, "window"))
                     && crashPhase.equals(M5CollapseRun.text(halt, "phase")) && run.config.nonce().equals(M5CollapseRun.text(halt, "nonce")),
                     () -> "halt receipt 不符：status=" + M5CollapseRun.text(halt, "status") + " window=" + M5CollapseRun.text(halt, "window"));
+            run.expect("crashReceiptClean", halt.has("hit") && halt.get("hit").getAsInt() == 1 && halt.has("failures") && halt.getAsJsonArray("failures").isEmpty()
+                    && "none".equals(M5CollapseRun.text(halt, "crashPointFailure")),
+                    () -> "halt 不乾淨：hit=" + halt.get("hit") + " failures=" + halt.get("failures") + " crashPointFailure=" + M5CollapseRun.text(halt, "crashPointFailure"));
         }
         run.expect("differentStartupNonce", !run.config.startupNonce().equals(M5CollapseRun.text(halt, "startupNonce")), () -> "與 crash phase 相同的 startupNonce");
         var noted = halt.getAsJsonObject("receipt");
