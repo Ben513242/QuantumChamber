@@ -5215,3 +5215,129 @@ mutation（`chain-mut.log`）：每個都在 GREEN 的工作樹上套用、跑 M
   - `CS:129` 的 Javadoc（觀察第 1 條）留給下一個允許改 `CS` 的 task。（controller 補：已排入上方的 F6-1 Step 0。）
   - （controller 補，quality n-4）smoke 若看不到 title：原因是 title 在 `DownloadingTerrainScreen` 期間就開始倒數（`shouldPause()` 為 false）。修正方向是改在 client 確認 teleport（`TeleportConfirmC2SPacket`）之後才送，或延後幾個 tick 再送，需要改 spec。
   - README「預期結果」的數字：F5-3 之後與 F6-0 相同（JUnit 655、M5 57、default 175（`_windows` 89）、per-test 52＋1、release 429／382、sources 221）。
+
+## F6-1 Step 0：F6-0 與 F5-3 留下的 Minor
+
+- 一位 implementer 完成（controller 的派工 scratchpad `f61s0-prompt.md`）。開工時 HEAD 是 `d4eb4ef`、工作樹乾淨；code 與 `01933a1`（F5-3）相同。
+- 範圍是 controller 把 F6-1 拆成兩次派工的第一次：F6-0「交給後續」的 F6-1 Step 0（第 1～5 點）、F5-3「交給後續」的 F6-1 Step 0（第 6～8 點），以及 controller 由 F6-3 移到這裡的 README 與 helper 提醒（第 9 點）。不碰 probe、`build.gradle`、`gates.ps1`、`run-all.ps1`、`.github/`、`fabric.mod.json`、語言檔。
+- Commits（依序；每個 commit 只 stage 自己的檔案，commit 之前的工作樹 state 在 `f6/f61s0/commit-c1-state.txt`～`commit-c7-state.txt`）：
+  - `af52f08` `refactor: make the reconcile session actions abstract and correct its Javadoc`（parent `d4eb4ef`）：第 1～3 點。`CPC`。
+  - `458ece5` `refactor: call doorHasMembrane through ChamberPowerCoordinator in OriginDoors`：第 5 點。`OD`。
+  - `71aa573` `docs: say who gets the passage-closed message and where the arrival keys live`：第 8 點。`CS`、`PS`（只有 Javadoc 與註解）。
+  - `f505574` `test: lock the arrival message wording and the arrival key choice`：第 7 點。`CST`。
+  - `3721ec7` `test: derive the rejected seal retry wording from the backoff constant`：第 4 點。`M5U` 的一行：同一個檔還有第 6 點的改動，所以以 `f61s0/stage_c5.py`（HEAD 的 blob 加上這一行，`git hash-object -w` 之後 `git update-index --cacheinfo`，工作樹不動）只 stage 這一行；staged blob `2e081c3` 與 `c5-seal-retry-state.txt` 記下的 blob 相同。
+  - `da58ad6` `test: lock the arrival title and the closed message for a rejected Crossed write and an early end`：第 6 點。`M5U`（新增 3 個 `@GameTest` 與共用的本體）。
+  - `5ac340e` `docs: describe hud, arrivalTitle and the drain trap in the GameTest guide`：第 9 點。`scripts/verification/README.md`「新增 M5 GameTest」一節、`SUP`（只有 `overlayKeys` 的 Javadoc）。
+  - 本節由其後的 docs commit `docs: record the F6-1 Step 0 in the M5 note` 加入。
+- Code range `d4eb4ef..5ac340e`（docs `71aa573`、`5ac340e` 與本節的 docs commit）。
+  - 只改了派工允許的路徑：`chamber/ChamberPowerCoordinator`（第 1～3 點）、`collapse/OriginDoors`（第 5 點）、`collapse/CollapseService` 與 `collapse/PassageService`（第 8 點，只有 Javadoc 與註解）、JUnit `CollapseServiceTest`（第 7 點）、testmod `M5UniverseGameTests`（第 4、6 點）、`M5GameTestSupport`（第 9 點的 Javadoc）、README「新增 M5 GameTest」一節、本節。
+  - **沒有改** `ChamberPowerCoordinatorTest`（abstract 之後 `Backend` 本來就實作了全部方法）、`M5TestHooks`（第 6 點用既有的 `installJournalPutFault` 就夠，不需要新的 fault 或 helper）、`PassageService` 的 `arrivalKey`（已是 package-private static 純函式，WARN 在呼叫端 `arrived`），也沒有改 `build.gradle`、`gates.ps1`、`run-all.ps1`、`.github/`、`fabric.mod.json`、語言檔，以及派工「不得修改」所列的類別。testmod 沒有 `SessionActions` 的實作，不需要補 override。
+  - 行數：`CS` 1590 → 1591（第 8 點）；`OD` 886 → 883；`CPC` 301 → 310；`PS` 531 → 536；`M5U` 4568 → 4719。
+- 行號以 `5ac340e` 為準。`CPC`、`CPCT`、`OD`、`CS`、`PS`、`CST`、`M5U`、`SUP`、`HK` 同前面各節。新增的 3 個 `@GameTest`（M5 run，各自一個 batch，catalog 增量各 1，都不是 `_windows`）：
+  - T-REJARR `M5U:3952` `crossed_write_rejected_still_shows_the_arrival_title_and_the_closed_message_at_the_expiry`（`m5_universe_passage_crossed_rejected`，tickLimit 2000）
+  - T-ENDA `M5U:4011` `passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed`（`m5_universe_passage_close_crossed`，tickLimit 900）
+  - T-ENDD `M5U:4021` `passage_power_loss_skips_the_one_who_crossed`（`m5_universe_passage_power_crossed`，tickLimit 900）
+
+### 處置與位置
+
+| 點 | 處置與位置 | 證據 |
+| --- | --- | --- |
+| 1（F6-0 quality Minor 1：BE 接線） | **二擇一採「改成 abstract」，`activationBlocked` 一併改**。`CPC:294` `SessionActions` 不再有 default 方法：`activationBlocked`（`:296`）、`heldByStart`（`:301`）、`setHeldByStart`（`:303`）都是 abstract，介面的 Javadoc 寫明理由。理由：(1) 漏接在編譯期就失敗，永久有效，不必另跑一次 mutation、也不必在 note 留下「接受的覆蓋缺口」；(2) 實作只有兩個（`refreshNow` 的匿名類別與 `CPCT` 的 `Backend`），兩者原本就 override 全部方法，所以不需要改其他檔（testmod 沒有實作）；(3) `activationBlocked` 與 `heldByStart` 同性質（Controller block entity 的狀態，經 `SessionActions` 傳入，default 回 false），在 `d4eb4ef` 上拿掉它的 override 同樣能編譯、`CPCT` 16 個全綠，所以一併改，介面不留 default。沒有選 mutation 路線，所以沒有為第 1 點另跑 default run（default run 由 run-all 涵蓋） | 在 `d4eb4ef` 上重現 quality 的發現：`mut-head-no-held-overrides`（拿掉 `CPC:106-107`）、`mut-head-no-blocked-override`（拿掉 `:105`）都能編譯，`CPCT` 16/16 PASS（`adapted-junit-summary.txt`）。改成 abstract 之後同樣的改動：`mut-no-held-overrides` 編譯失敗「`<anonymous …ChamberPowerCoordinator$1>` is not abstract and does not override abstract method setHeldByStart(boolean) in SessionActions」，`mut-no-blocked-override` 編譯失敗（activationBlocked()）（`*-compile-summary.txt`）。javap：只有 `ChamberPowerCoordinator$SessionActions` 不同（三個方法由 default 變成 abstract，`javap-sessionactions.diff`），`CPC` 本身與匿名類別逐字相同 |
+| 2（F6-0 quality Minor 2） | `CPC:134-137`：start／returnToOrigin「只會讓 presence 在非塌縮的 presence（NONE、ARMING、ACTIVE、RETURNING、UNKNOWN）之間改變」，並寫明 UNKNOWN 何時出現 | 只有 Javadoc（javap 相同） |
+| 3（F6-0 spec N-1） | `CPC:175-182`：開頭改為「reconcile 本身不直接讀世界、不直接改 Controller、不寫門；它自己寫 registry，經 `readiness` 與 `SessionActions` 的副作用如下」，清單另加一列 `readiness`（production 讀世界評估資格），`SessionActions` 一列寫明 heldByStart 寫在 Controller 的 block entity | 只有 Javadoc（javap 相同） |
+| 4（F6-0 quality Nit） | `M5U:2438`：「200 ticks 後」改為 `CollapseBackoff.INITIAL_TICKS + " ticks 後，tick "`，與同一行的 tick 用同一個常數 | 重構。T-SEALRETRY 在 `3721ec7` 的工作樹（`rev-c5-m5u`：`M5U`、`SUP` 換成那個 commit 的版本）上 PASS（`gate-c5-seal-retry-e347c27fccbf4ef6bbd86b47fd4d5b87`），在最終的 M5 全部也 PASS |
+| 5（F6-0 quality Nit） | **擇一採「明確呼叫、刪掉 tombstone」**：`OD:434`、`:609`、`:708` 改為 `ChamberPowerCoordinator.doorHasMembrane(...)`，刪掉 static import 與 tombstone 註解（`d4eb4ef` 的 `OD:3`、`:179`，連同其後的空行）。理由：`OD` 呼叫其他類別的方法都寫類別名（例如 `CollapseService.neighborhoodLoaded`、`CollapseService.describe`），檔內的 static import 只剩同 package 的兩個 log marker；原本只供 Javadoc（`OD:427`）使用的一般 import（`OD:10`）現在也供程式使用 | 重構。javap：`OriginDoors` 與它的 nested class 逐字相同（只有 LineNumberTable 不同，`javap-compare.txt`） |
+| 6（F5-3 spec m-1） | **拆成三個 test**（見下一節）：T-REJARR 鎖住「Crossed 寫入被拒」；T-ENDA、T-ENDD 共用 `M5U:4031` `endWithOneCrossed`，各自 `begin` 自己的方法名稱。理由：(c) 與 (a)／(d) 是同一段通道互斥的結束方式，放不進同一個 test；(a) 經 `PS.endByParticipant`、(d) 經 `PS.finish` 進入 `closed`，兩條路各有一個 test，依原因分開的 mutation（`mut-g-a-all`、`mut-g-d-all`）都各自被抓到，只做其中一個時另一個會存活。(b) 由 T-CROSS、(c) 由 `crossed_write_failure_pauses_…`（各平台）與 `passage_expires_…_windows` 已經覆蓋。tickLimit 與 batch 比照既有的通道 test：T-REJARR 比照 `crossed_write_failure_pauses_…` 在 Javadoc 寫出有界等待的總長度（1887 < 2000；put 的拒絕不留下未確認的寫入，不需要等原生 autosave 的窗口），T-ENDA、T-ENDD 比照 `passage_close`／`passage_power`（900）。全部以 `M5GameTestSupport.hud()` 精確比對 | 見下一節的 mutation |
+| 7（F5-3 quality n-1） | `CST:390` `passageMessagesExistInBothLanguages` 加兩列（`PassageService.MESSAGE_ARRIVED_NEW`、`MESSAGE_ARRIVED_EXISTING`：key 的字面值、zh_tw 逐字等於 spec §10.8、en_us 不是空白，寫法同既有各列；派工寫「約 `:543`」，這個方法在 `d4eb4ef` 是 `:387`，以方法名稱為準）；`CST:410` `arrivalKeyFollowsTheSelectedCandidate`：New、Existing、Source、空四個 case（候選由既有的 `measured` fixture 取得）。`PS:412` `arrivalKey` 已是 package-private static 純函式（`F5-3` 起），WARN 在呼叫端 `arrived`，所以 `PS` 不必為此改動 | mutation 6/6 只讓目標 test FAIL（`adapted-junit-summary.txt`）：`mut-j-key-literal`（常數改成 `…arrived_neww`）、`mut-j-zh-text`（zh_tw 少了句號；語言檔只在 mutation 期間改，跑完還原並核對 blob）、`mut-j-en-blank`（en_us 改成空白）→ `passageMessagesExistInBothLanguages` FAIL；`mut-j-swap`（NEW 與 EXISTING 對調）、`mut-j-source-new`（Source 回 NEW）、`mut-j-empty-new`（空回 NEW）→ `arrivalKeyFollowsTheSelectedCandidate` FAIL |
+| 8（F5-3 spec m-2＋quality n-2） | `CS:129` 改為「只對在線、而且不在 Crossed 中的參與者」；`CS:131` 在 `MESSAGE_*` 區塊加一行註解，指向 `PassageService.MESSAGE_ARRIVED_NEW／MESSAGE_ARRIVED_EXISTING`；`CS:1206` 的段落註解拿掉 `notifyParticipants`（`PS` 已不呼叫它）；`PS:89-94` 常數的 Javadoc 說明為何放在 `PS`（只有 `PS` 送出、F5-3 依 plan 不改 `CS`；代價是常數是 package-private，testmod 以字面值斷言，同 package 的 JUnit 直接引用）。三段同形的通知迴圈不收斂（派工）。**`CS` 1590 → 1591**：多出的一行就是派工要求的指向行；`:1205-1206` 的段落註解併成一行會約 200 字元，超過檔內最長的 171 字元，所以維持兩行，沒有其他可以合併而不改寫內容的地方 | 只有 Javadoc 與註解。javap：`CollapseService`、`PassageService` 與它們的 nested class 逐字相同 |
+| 9（F5-3 觀察第 2 條＋quality n-4 附帶） | README「新增 M5 GameTest」一節 fixture 一點之下加兩點（README `:123-124`）：`hud`／`Hud`／`arrivalTitle` 的用法與精確比對的規則，以及陷阱「`drainOutbound` 會讀掉並釋放所有型別的封包，`overlayKeys` 也會讀掉 title；同一時點要同時看 actionbar 與 title 時只呼叫一次 `hud`；長時間等待之後要斷言結束時的訊息，先清一次」。`SUP:1068-1071` `overlayKeys` 的 Javadoc 補上反向的提醒並指向 `hud` | 只有文件（testmod 的 javap 不比；M5 全部 PASS） |
+
+### 第 6 點：三個新的 `@GameTest`
+
+- **T-REJARR**（`M5U:3952`，參與者 P）：PASSAGE_READY 提交之後才以 `installJournalPutFault(context, sid, PASSAGE_READY, 1, hooks)` 安裝（READY 的提交本身也是寫成 PASSAGE_READY 的 put，所以在它之後；之後這個 session 寫成 PASSAGE_READY 的 put 只有 Crossed）。P 越過中線：
+  - 跨越的下一個 tick：`crossedToTheUniverse`、`crossedWriteRejected`（注入 1 次；flushed＝current、Crossed 是空的、沒有待確認的 roll-forward）、`oneRejectedCrossedWarn`（「寫入 Crossed沒有完成（REJECTED）」一則）、`arrivalTitleForTheRejectedCrossing`（titles＝`arrivalTitle(NEW)`）、`nothingOnTheActionbarAtTheCrossing`。
+  - +100 tick：`stillOpenWithoutTheRejectedOne`（仍是 PASSAGE_READY、Crossed 是空的、P 在 U、沒有終局）。
+  - (c) 結束：`endedByExpiry`、`plainOpenAfterTheEnd`、`stillInTheUniverse`、`closedMessageToTheRejectedOne`（overlays＝`[passage_closed]`、titles 為空）、`onlyTheRejectedWarn`（這個 sid 的 WARN 只有那一則，沒有 ERROR）。
+  - GREEN 的實測：`M5_PASSAGE_CROSSED_REJECTED ready=182 expires=8233 ended=1382 rejected=[7036]`（到期在 READY 之後恰好 1200 ticks）。
+- **T-ENDA／T-ENDD**（`M5U:4011`／`:4021`，共用 `:4031` `endWithOneCrossed`；參與者 P、Q 都在艙內）：P 越過中線（Crossed＝[P]），Q 留在艙內；之後 Q 以 bulkhead 關門（(a)），或斷電（(d)）。
+  - 跨越之後：`oneCrossedOneStayed`、`arrivalTitleForTheOneWhoCrossed`（titles＝`arrivalTitle(NEW)`、overlays 為空）、`nothingForTheOneWhoStayedBeforeTheEnd`；(a) 另有 `closedByTheOneWhoStayed`。
+  - 結束：`endedAsExpected`（INFO 的原因字句恰一則）、`doorAfterTheTerminal`（(a) 關閉、(d) 一般開門）、`destinationTicketReleased`、`presenceNone`、`nothingForTheOneWhoCrossed`（P 的 overlays、titles 都是空的）、`closedMessageOnlyToTheOneWhoStayed`（Q 的 overlays＝`[passage_closed]`、titles 為空）、`noWarnOrError`。
+- **mutation**（`chain-mut.log`、`chain-mut-rerun.log`；每個都在 GREEN 的工作樹上套用、跑 M5 全部，跑完還原並以 `git hash-object` 核對，`adapters/*/manifest.restored.json`）：
+
+  | mutation | 改動 | Root | 結果 |
+  | --- | --- | --- | --- |
+  | `mut-g-rejected-no-title`（派工：「被拒時不顯示」） | `PS.cross` 的 MOVED：`arrived` 只在 `next != null`（COMMITTED）或 roll-forward 未確認（PENDING）時呼叫 | `gate-mut-g-rejected-no-title-84bbbab1ee594c84bb4f45c46a977d5f` | 59/60：只有 T-REJARR FAIL，false 的只有 `arrivalTitleForTheRejectedCrossing`（`crossed_write_failure_pauses_…` 的 PENDING 仍 PASS） |
+  | `mut-g-ad-all`（派工：「(a)(d) 也發給已跨過的人」） | `PS.closed`：(a) 與 (d) 的三種原因改回 `service.notifyParticipants`（F5-1 的行為），(b)(c) 不變 | `gate-mut-g-ad-all-rerun-4e63615eb8b140c28ea6935f28f2c885` | 58/60：只有 T-ENDA、T-ENDD FAIL，false 的都只有 `nothingForTheOneWhoCrossed`。既有的 (a)／(d) 單人 test 仍 PASS（P 還沒跨過） |
+  | `mut-g-a-all` | 同上，只有 (a) | `gate-mut-g-a-all-e78b6699c9714cf2bfa95862ae6bd00c` | 59/60：只有 T-ENDA FAIL（`nothingForTheOneWhoCrossed`） |
+  | `mut-g-d-all` | 同上，只有 (d) | `gate-mut-g-d-all-564651f7f33343f8a31376e95df9f78b` | 59/60：只有 T-ENDD FAIL（`nothingForTheOneWhoCrossed`） |
+  | `mut-g-closed-source-only` | `PS.notifyNotCrossed`：只發給還在來源世界的參與者 | `gate-mut-g-closed-source-only-rerun-72f3952eadfe490c8190a5b7c99f5b1c` | 59/60：只有 T-REJARR FAIL，false 的只有 `closedMessageToTheRejectedOne`（被拒的人在 U、不在 Crossed 中，仍要收到） |
+
+- 沒有另做 RED：三個 test 只補覆蓋（production 在 F5-3 已經正確），依派工以 mutation 證明鎖得住。
+
+### 測試數字
+
+- JUnit 655 → 656：`CST` 29 → 30（`arrivalKeyFollowsTheSelectedCandidate`）；`passageMessagesExistInBothLanguages` 只多了斷言。與 F5-3 的 JUnit 集合比對只多這一個（`cmp-junit.txt`）。
+- M5 GameTest 57 → 60：新增 T-REJARR、T-ENDA、T-ENDD（catalog 增量各 1；名稱、batch 都不和其他 test 共用，不是 `_windows`）。既有 test 沒有改名、改 batch 或改增量；T-SEALRETRY 只改了 WARN 字句的寫法（第 4 點）。
+- default 175（`_windows` 89）、legacy 1、windowsCheckpoint 17、per-test 52＋1、M3 4＋5、M4 recovery 24 不變。
+
+### Gate 與證據
+
+逐輪的 state、console 與摘要在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f61s0/`（以下簡稱 `f61s0/`）：`state.ps1`、`gate.ps1`、`chain.ps1`、`adapter.py`、`junit.ps1`、`junit-all.ps1`、`junitsum.py`、`setcmp.py`、`wbcmp.py`、`jarcmp.py`、`runall-compare.ps1` 由 `f5/f53/` 複製，`adapted-junit.ps1` 由 `f6/f60/` 複製，只加了一行註解、改了 adapter 表的模組（`adapters_f61s0.py`）與 `runall-compare.ps1` 的基準（F5-3 的 run-all）；新寫的 `compile.ps1`（編譯、選擇性的 javap 傾印）與 `commitcheck.ps1`（把工作樹暫時換成某個 commit，編譯全部 source set 並跑 focused JUnit，跑完逐檔還原並核對 blob）。`f5/f53/`、`f6/f60/` 下既有的檔案沒有改動。每次 RED、GREEN、mutation 的 state 記 HEAD、porcelain 與逐檔 blob（`f61s0/<label>-state.txt`）。gate root 在 `.superpowers/verification/`。
+
+| 輪次 | HEAD／工作樹 | Root | 結果 |
+| --- | --- | --- | --- |
+| 基準 javap | `d4eb4ef`，乾淨 | `base-head-compile-summary.txt`、`base-head-javap/` | 33 個 class 的 `javap -c -p` |
+| 第 1 點的重現 | `d4eb4ef`＋adapter | `mut-head-no-held-overrides`、`mut-head-no-blocked-override` | 都能編譯，`CPCT` 16/16 PASS（mutation 存活，即 quality 的發現） |
+| 第 1 點 | `d4eb4ef`＋全部改動 | `mut-no-held-overrides`、`mut-no-blocked-override` | 都編譯失敗 |
+| 第 7 點 | 同上 | `adapted-junit-summary.txt` 的 6 個 `mut-j-*` | 6/6 只讓目標 test FAIL |
+| JUnit focused | 同上 | `green-focused-junit-summary.txt` | `CST` 30、`CPCT` 16、`CollapseLogMarkerGuardTest` 2 PASS |
+| GREEN（M5 全部） | 同上（blob 與 `5ac340e` 逐檔相同，`green-m5-state.txt`） | `gate-green-m5-f2836d2611ae4cf9ac46fd83afe087bc` | 60/60，gate exit 0（M5 oracle PASS） |
+| 第 6 點 mutation | 同上＋adapter | 見上一節 | 5/5 只讓目標 test FAIL |
+| javap 比對 | 同上 | `after-all-javap/`、`javap-compare.txt` | 33 個中 32 個逐字相同，只有 `ChamberPowerCoordinator$SessionActions`（第 1 點）不同 |
+| JUnit 全部 | 同上 | `green-junit-all.txt`、`cmp-junit.txt` | 656，failures 0、skipped 2；與 F5-3 只多 `arrivalKeyFollowsTheSelectedCandidate` |
+| 中間 commit | `af52f08`、`458ece5`、`71aa573`、`f505574`、`3721ec7`、`da58ad6` | `c1`～`c6-commitcheck-summary.txt`；`gate-c5-seal-retry-e347c27fccbf4ef6bbd86b47fd4d5b87` | 每個都能編譯（compileJava、compileTestJava、compileTestmodJava）；focused：`c1` `CPCT` 16＋`ChamberCollapseDependencyGuardTest` 2，`c2` `CST` 29＋兩個守門 2＋2，`c3` `CST` 29＋`CollapseLogMarkerGuardTest` 2，`c4` `CST` 30，全部 PASS；`3721ec7` 的 T-SEALRETRY PASS |
+| run-all | `5ac340e`，工作樹乾淨（`STATUS` 是空的） | `run-all-cb17be2a880941c38c3e132a74c17c22`（Full：`gate-full-f7200ce411824e0b9a3cefadad865cfb`；M5：`gate-m5-gametest-831ae315049e454ca611c3b26ba9a59f`；`f61s0/run-all-console.txt`） | `END ALL exit=0 HEAD=5ac340e`。`SUMMARY default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=656 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=429entries/382classes sources=221 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 ci=win:PASS,ubuntu:PASS`。`.ps1`／`.gradle` 的 `HARNESS` 雜湊與基準逐一相同（只有 README 不同，不在採計條件內），C＝`5ac340e` |
+
+- 與基準 run-all（`run-all-da22c04e66334a88879034903317bad0`，`01933a1`）逐項比較（`f61s0/runall-compare.ps1`、`xmlcmp-run-all.txt`）：
+  - default 175/175（`_windows` 89）、legacy 1/1：testcase 集合與結果都與基準相同（XML 比對）。perTest 52＋1。Full 與 legacy 的 boundary oracle PASS。
+  - M5 57 → 60：只多 T-REJARR、T-ENDA、T-ENDD，其餘 57 個的集合與結果與基準相同（XML 比對）。M5 oracle PASS：60 個 test 的 catalog 增量逐一串接（三個新 test 各 1），suite 結束時 53 → 56 筆；`M3_UNIVERSE_STOPPED_VERIFIED worlds=49 runtimeReceipts=49`（46 → 49：三個新 test 各物化一個宇宙）。run-all 中三個新 test 的實測：`M5_PASSAGE_CROSSED_REJECTED ready=182 expires=7594 ended=1382 rejected=[6397]`；`M5_PASSAGE_END_WITH_ONE_CROSSED` 的 (a) `ready=123 ended=128`、(d) `ready=21 ended=26`。
+  - JUnit 655 → 656（「測試數字」）。windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly PASS、testmodHits 0、CI 兩個平台 PASS，都不變。
+  - release JAR 429 entries（382 classes）不變（`f61s0/jarcmp-release-run-all.txt`）：沒有新增或刪除的 entry；內容不同的是 `ChamberPowerCoordinator`、`CollapseService`、`OriginDoors`、`PassageService` 與它們的 nested class（同一個原始檔重新編譯，行號表改變；bytecode 的差異只有 `ChamberPowerCoordinator$SessionActions`，見 javap 比對）。testmod 命中 0。
+  - sources JAR 221 不變（`f61s0/jarcmp-sources-run-all.txt`）：內容不同的只有上面 4 個原始檔。
+  - log（以 `/WARN]`、`/ERROR]` 計行，UUID 與數字正規化、排序之後比對，`f61s0/wbcmp-*-run-all.txt`）：
+    - Full 54／28 → 55／29：多出的一組都屬於 `m2_task4_no_entrance` 的 session `4d2735c9…`：journal 原子移動的 `AccessDeniedException`（派工列出的已知偶發，owner F6-3）讓候選的 checked 提交失敗，記一則 WARN「候選 checked 提交失敗…AccessDeniedException…quantumchamber_sessions.dat」與緊接的 ERROR「走廊保留租約等待安全返還」（與同一個 run 中注入 flush 失敗的 test 相同的一組）；test 仍 PASS。其餘各行與基準相同。本 task 沒有改 default run 會走到的行為（`CPC` 只有 `SessionActions` 由 default 改成 abstract）。
+    - legacy 0／0。
+    - M5 WARN 37 → 38、ERROR 10 不變：多出的 1 則是 T-REJARR 注入的拒絕本身（「寫入 Crossed沒有完成（REJECTED）」，test 以 `oneRejectedCrossedWarn`、`onlyTheRejectedWarn` 斷言則數）；T-ENDA、T-ENDD 沒有 WARN／ERROR。其餘兩行差異（`PistonBlockEntity` 的 object hash、F5-1 通道傳送 WARN 的座標寫法）是 F6-0 已記錄的數值格式，則數不變。
+
+- 失敗或不採計的 root（都保留）：
+  - 刻意的 mutation 之外，兩個 mutation root 另有與 mutation 無關的失敗，都以新的 label 重跑（上表用重跑的 root）：
+    - `gate-mut-g-closed-source-only-3fefc17ee9d54372ae6da7731d1620d1`（37/60）：目標 T-REJARR 照預期 FAIL（`closedMessageToTheRejectedOne`）之後，catalog 原子移動遇到 `AccessDeniedException`（`quantumchamber_universes.dat`，派工列出的已知偶發，owner F6-3），`projection_invariant_cells_…` 的 RESOLVE 進 SEALED、有界等待逾時，之後 21 個 test 因開始時權威沒有收斂而失敗。重跑 `mut-g-closed-source-only-rerun` 59/60。
+    - `gate-mut-g-ad-all-92ac72f102794ece9827622e78a84346`（57/60）：兩個目標照預期 FAIL，另有 `existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint`「有界等待逾時（至 tick 407）：D1 沒有準備完成」：D1 的目的世界預載在 400 tick 內沒有完成（同一個 run 其他 test 的預載是 282～335 ticks；mutation 只改「量子通道已關閉」的對象，與 D1 的 PREPARE 無關）。派工沒有列出這個偶發，沒有追查，見「觀察」第 1 條。重跑 `mut-g-ad-all-rerun` 58/60。
+  - run-all 本身 `END ALL exit=0`、沒有失敗的 test；default run 遇到一次 journal 的 `AccessDeniedException`（上方 log 比較），test 仍 PASS，沒有重跑。
+  - 其餘失敗的 root 都是刻意的 mutation（第 1 點的兩個編譯失敗、第 7 點的 6 個 JUnit、第 6 點的 5 個 GameTest）。沒有遇到派工列出的其他已知偶發（H2 多一則原生 ERROR／WARN、`m2_task4_disconnect_io` 多一則 WARN、`unloadChunks` 停服卡住、boundary oracle 挑到舊 receipt）。
+
+### 偏離派工字面之處
+
+1. **第 1 點的 `activationBlocked` 一併改成 abstract**：派工允許「或一併改」，理由見處置表。
+2. **第 6 點拆成三個 test**：派工寫「可以拆成兩個 test，或合併成一個」。(a) 與 (d) 進入 `closed` 的路不同，只覆蓋其中一個時，依原因分開的 mutation 會存活；兩個 test 共用一份本體，程式只多兩個 wrapper。
+3. **第 7 點沒有改 `PS`**：`arrivalKey` 已是 package-private static 純函式，WARN 在呼叫端。
+4. **第 7 點的行號**：派工寫「約 `:543`」，`passageMessagesExistInBothLanguages` 實際在 `CST:387`（`d4eb4ef`），`:543` 是 `sealedMessageExistsInBothLanguages`；依方法名稱處理。
+5. **第 8 點 `CS` 多一行**：派工要求「加一行」也要求「盡量不增加行數」；理由見處置表。
+6. **第 4 點的 commit 以 `git update-index --cacheinfo` 只 stage 一行**：同一個檔還有第 6 點的改動，不用互動式的 `git add -p`。
+
+### 需要裁示
+
+（沒有。）
+
+### 觀察（未修改）
+
+1. **`existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint` 的 D1 等待可能不夠**：它以 `whenTicks(…, 400, …)` 等 D1 準備完成；GameTest server 不以 20 TPS 節流，目的世界的預載（非同步的 chunk 產生）以 tick 計的長度會隨機器負載變動（這次 mutation run 超過 400 ticks）。只在一個 mutation root 遇到一次，GREEN、重跑與 run-all 都 PASS。要不要放寬（或改為不以 tick 計），由 controller 決定歸屬。
+2. **第 1 點之後 `SessionActions` 沒有 default 方法**：之後新增方法時，兩個實作都要補，這是刻意的。
+
+### 交給後續
+
+- F6-3：
+  - `build.yml` 的明列清單另加本節新增的 3 個 test：T-REJARR、T-ENDA、T-ENDD（M5 run，都不是 `_windows`）。
+  - Windows 原子移動的 `AccessDeniedException`：本節遇到 2 次，catalog 一次（`gate-mut-g-closed-source-only-3fefc17ee9d54372ae6da7731d1620d1`，連鎖失敗）、journal 一次（run-all 的 default run，沒有失敗），見「Gate 與證據」。
+- F6-1 本體／F6-2：F5-3「交給後續」的「如果要補 test，處理需要裁示第 1 條（Crossed 寫入被拒時的到達提示與已關閉）」已由 T-REJARR 完成，不必再做。
+- F7：README「預期結果」的數字以最新的 run-all 為準（F6-1 Step 0 之後：JUnit 656、M5 60；default 175（`_windows` 89）、per-test 52＋1、release 429／382、sources 221 不變）。
