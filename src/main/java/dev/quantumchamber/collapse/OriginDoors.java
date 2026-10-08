@@ -1,6 +1,5 @@
 package dev.quantumchamber.collapse;
 
-import static dev.quantumchamber.chamber.ChamberPowerCoordinator.doorHasMembrane;
 import static dev.quantumchamber.collapse.CollapseService.LOG_MARKER;
 import static dev.quantumchamber.collapse.CollapseService.TICK_LOG_MARKER;
 
@@ -175,8 +174,6 @@ final class OriginDoors {
                 if (world.getChunkManager().getWorldChunk(x, z) == null || !world.isChunkLoaded(ChunkPos.toLong(x, z))) return false;
         return true;
     }
-
-    // 25 格門裡有任何一格帶著量子膜：與 chamber 端 :613 的判斷是同一份（static import 的 ChamberPowerCoordinator.doorHasMembrane；F6-0，F5-2 quality Minor 2）。
 
     // ---- 重新套用與攔截（F4b-3；spec §7 開頭、§7.3） ----
 
@@ -434,7 +431,7 @@ final class OriginDoors {
     private void cancelSealedClose(SessionRecoveryRecord view, ServerWorld world, ChamberFrame frame, PlayerEntity player) {
         var pending = doors.get(view.chamberUuid());
         if (pending == null || pending.goal != DoorGoal.CLOSE_ON_SEALED || !pending.session.equals(view.sessionUuid())) return;
-        if (doorHasMembrane(world, frame)) {
+        if (ChamberPowerCoordinator.doorHasMembrane(world, frame)) {
             LOGGER.debug(LOG_MARKER, "SEALED 的原艙門被玩家使用，但門還帶著量子膜：保留還沒套用的關門（{}），門切換被拒時由它清掉量子膜：session={} chamber={} 玩家={}",
                     pending.reapplied ? "chunk 重新載入之後的重新套用" : "進入 SEALED 時排入", view.sessionUuid(), view.chamberUuid(), player.getUuid());
             return;
@@ -609,7 +606,7 @@ final class OriginDoors {
         if (world == null) return;
         boolean loaded = CollapseService.neighborhoodLoaded(world, door.frame);
         var owner = loaded ? collapseOwner(door.chamber) : null;
-        switch (ownerlessStep(loaded, owner == null ? null : owner.state(), loaded && doorHasMembrane(world, door.frame))) {
+        switch (ownerlessStep(loaded, owner == null ? null : owner.state(), loaded && ChamberPowerCoordinator.doorHasMembrane(world, door.frame))) {
             case WAIT -> { }
             case OWNED -> {
                 doors.remove(door.chamber);
@@ -708,7 +705,7 @@ final class OriginDoors {
             }
             case NORMALIZE -> {
                 if (!CollapseService.neighborhoodLoaded(world, door.frame)) return;
-                if (!doorHasMembrane(world, door.frame)) {
+                if (!ChamberPowerCoordinator.doorHasMembrane(world, door.frame)) {
                     doors.remove(door.chamber);
                     if (door.reapplied) LOGGER.debug(LOG_MARKER, "原艙門的重新套用不需要改門（{}：門沒有量子膜，tick {}）：chamber={} session={}", door.goal, service.now,
                             door.chamber, door.session);
