@@ -75,12 +75,14 @@ import org.slf4j.LoggerFactory;
  *     {@link #beforeConvergeQuarantined}，注入時丟出例外，session 因此一直隔離著。由 {@code M5GameTestSupport.installConvergeFault} 安裝。</li>
  * <li>跨 JVM 的 crash 點（{@link #CRASH_POINT}，F6-1，spec §12 的 crash 窗口）：每個窗口的 hook mixin（例如 {@code CollapseAuthoritiesCrashWindowMixin}）在窗口剛成立的那一刻
  *     呼叫 {@link #reachedCrashWindow}；裝著的 {@link CrashPoint} 的窗口與條件都符合時執行它的動作。只給 {@code M5CollapseRecoveryProbe} 用：它的動作寫出 halt receipt 之後以
- *     {@code Runtime.halt} 結束 JVM（不經正常停止，等同 crash）。probe 不是 GameTest，所以安裝時沒有 {@link GameTestState}（{@code install(value, null)}），JVM 結束之前不移除。</li>
+ *     {@code Runtime.halt} 結束 JVM（不經正常停止，等同 crash）。probe 不是 GameTest，所以安裝時沒有 {@link GameTestState}（{@code install(value, null)}，經
+ *     {@code M5CollapseRun.install}）；halt 時 JVM 直接結束，窗口沒有到達或斷言失敗而正常停服時，probe 在請求停服之前移除（F6-2a 更正）。</li>
  * </ul>
  * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、八個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
  * entity storage 就緒保留、隔離 session 的收斂）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
- * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。跨 JVM 的 crash 點也是一個 {@link Slot}，但只由
- * {@code M5CollapseRecoveryProbe} 安裝（F6-1）。
+ * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。跨 JVM 的 crash 點也是一個 {@link Slot}，但只由跨 JVM 的
+ * probe 安裝（F6-1）；probe 也可以在自己的 JVM 裡把既有的故障注入裝進上面的 Slot（F6-2a：{@code M5CollapseRun.install}，沒有 {@link GameTestState}，停服之前依安裝的
+ * 相反順序移除）。
  */
 public final class M5TestHooks {
     private M5TestHooks() {}
@@ -115,7 +117,7 @@ public final class M5TestHooks {
     static final Slot<EntityStorageHold> ENTITY_STORAGE_HOLD = new Slot<>("checkpoint 的 entity storage 就緒保留");
     /** 隔離 session 的收斂失敗（F6-0，F4b-3 spec S-M1；{@code M5GameTestSupport.installConvergeFault}）。 */
     static final Slot<ConvergeFault> CONVERGE_FAULT = new Slot<>("隔離 session 的收斂失敗注入");
-    /** 跨 JVM 的 crash 點（F6-1；只由 {@code M5CollapseRecoveryProbe} 安裝）。 */
+    /** 跨 JVM 的 crash 點（F6-1；只由跨 JVM 的 probe 經 {@code M5CollapseRun.install} 安裝）。 */
     static final Slot<CrashPoint> CRASH_POINT = new Slot<>("跨 JVM 的 crash 點");
 
     /**
@@ -329,8 +331,9 @@ public final class M5TestHooks {
     public record ChunkCheckpoint(Map<ServerWorld, Set<ChunkPos>> relevant) {}
 
     /**
-     * mixin 讀取的一個靜態 hook 位置（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者。安裝與移除只經 {@code M5GameTestSupport}
-     * （先在 hooks 登記移除、再登記 test 結束時的移除，最後才安裝）；mixin 只讀 {@link #get}。安裝與移除在 server thread 上。
+     * mixin 讀取的一個靜態 hook 位置（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者。GameTest 的安裝與移除只經 {@code M5GameTestSupport}
+     * （先在 hooks 登記移除、再登記 test 結束時的移除，最後才安裝）；跨 JVM 的 probe（crash 點與 probe 內的故障注入）經 {@code M5CollapseRun.install} 安裝
+     * （{@code owner} 為 null），probe 請求停服之前移除（F6-1、F6-2a）。mixin 只讀 {@link #get}。安裝與移除在 server thread 上。
      */
     static final class Slot<T> {
         final String name;

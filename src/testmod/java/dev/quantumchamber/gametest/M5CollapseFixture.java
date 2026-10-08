@@ -104,7 +104,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         run.expect("freshJournal", run.journal.flushedRecords().isEmpty(), () -> "journal=" + run.journal.flushedRecords().keySet());
         run.expect("freshCatalog", UniverseRegistryState.get(run.server).flushedRecords().isEmpty(),
                 () -> "catalog=" + UniverseRegistryState.get(run.server).flushedRecords().keySet());
-        run.expect("freshAllocationLedger", M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger 不是空的");
+        run.expect("freshAllocationLedger", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger 不是空的");
     }
 
     /** 蓋原艙，連線 {@code count} 位參與者並移到艙外。 */
@@ -385,8 +385,8 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     }
 
     /** allocation ledger（磁碟）恰一筆：這條 chain 的 token → UniverseId（沒有重抽）。 */
-    void expectOneAllocation() throws IOException {
-        run.expect("oneAllocationForTheToken", M5CollapseDiskEvidence.allocations(run.data()).equals(List.of(allocation())),
+    void expectOneAllocation() {
+        run.expect("oneAllocationForTheToken", () -> M5CollapseDiskEvidence.allocations(run.data()).equals(List.of(allocation())),
                 () -> "allocation ledger=" + allocationsOrError());
     }
 

@@ -10,6 +10,7 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.interiorMarker;
 import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
 import com.google.gson.JsonObject;
+import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionWriter;
@@ -206,7 +207,7 @@ final class M5CollapseWindows {
         evidence.put("playerDimensionOnDisk", dimensions);
         run.expect("playerDataInTheCorridorAtHalt", dimensions.values().stream().allMatch(SuperpositionWorld.KEY.getValue().toString()::equals),
                 () -> "磁碟上參與者的 playerdata 在 " + dimensions);
-        run.expect("noAllocationAtHalt", M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger=" + fixture.allocationsOrError());
+        run.expect("noAllocationAtHalt", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger=" + fixture.allocationsOrError());
     }
 
     /**
@@ -216,8 +217,8 @@ final class M5CollapseWindows {
     private static void savedHalfWrittenProjection(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var cell = (M5TestHooks.ProjectionCell) detail;
         evidence.put("cellChanged", cell.changed());
-        // 這一段第一次寫入到 Controller 為止（含）寫了幾格：寫到一半。
-        evidence.put("cellsWrittenThroughTheController", run.crashPoint().reached());
+        // writeCell 的 hook 到 Controller 為止（含）被呼叫幾次（crash 點的 reached）：只有與目標不同的格（needsWrite）才呼叫 writeCell，所以這是寫到一半的格數，不是全部 189 格。
+        evidence.put("writeCellCallsThroughTheController", run.crashPoint().reached());
         cell.world().save(null, true, false);
         var controller = fixture.diskBlock(cell.world(), FRAME.controllerPos());
         var first = fixture.diskBlock(cell.world(), local(0, 0, 0));
@@ -227,7 +228,7 @@ final class M5CollapseWindows {
         evidence.put("lastCellOnDisk", last.toString());
         run.expect("controllerOnDiskBeforeHalt", controllerBlock(controller), () -> "存檔之後磁碟上的 Controller 位置是 " + controller);
         run.expect("halfWrittenOnDisk", BEDROCK.equals(first.name()) && !BEDROCK.equals(last.name()), () -> "第一格 " + first + "，最後一格 " + last);
-        run.expect("projectionPendingAtHalt", M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection("PENDING"))),
+        run.expect("projectionPendingAtHalt", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection("PENDING"))),
                 () -> "projection ledger=" + fixture.projectionsOrError());
     }
 
@@ -241,7 +242,7 @@ final class M5CollapseWindows {
         run.expect("projectionWrittenInMemory", world.getBlockState(FRAME.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER)
                 && world.getBlockState(local(6, 6, 6)).isOf(Blocks.BEDROCK), () -> "U 的投影方塊還沒有寫入");
         run.expect("projectionNotOnDiskAtHalt", !controllerBlock(disk), () -> "checkpoint 之前磁碟上已有 Controller：" + disk);
-        run.expect("projectionPendingAtHalt", M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection("PENDING"))),
+        run.expect("projectionPendingAtHalt", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection("PENDING"))),
                 () -> "projection ledger=" + fixture.projectionsOrError());
     }
 
@@ -251,7 +252,7 @@ final class M5CollapseWindows {
         var disk = fixture.diskBlock(world, FRAME.controllerPos());
         evidence.put("controllerOnDisk", disk.toString());
         run.expect("controllerOnDiskBeforeHalt", controllerBlock(disk), () -> "checkpoint 之後磁碟上的 Controller 位置是 " + disk);
-        run.expect("projectionCompleteAtHalt", M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
+        run.expect("projectionCompleteAtHalt", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                 () -> "projection ledger=" + fixture.projectionsOrError());
         var state = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).map(record -> record.state().name()).orElse("ABSENT");
         run.expect("journalCollapsingAtHalt", SessionState.COLLAPSING.name().equals(state), () -> "磁碟上的 journal 是 " + state);
@@ -297,7 +298,7 @@ final class M5CollapseWindows {
         if (at.resolved().allocated()) {
             fixture.expectOneAllocation();
         } else {
-            run.expect("noAllocationYet", M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger=" + fixture.allocationsOrError());
+            run.expect("noAllocationYet", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger=" + fixture.allocationsOrError());
         }
         var catalog = UniverseRegistryState.get(run.server).flushedRecords();
         boolean discovered = M5CollapseDiskEvidence.discovery(run.saveRoot()).stream().anyMatch(record -> record.universeId().equals(fixture.universe()));
@@ -312,16 +313,19 @@ final class M5CollapseWindows {
         }
         if (at.resolved().discovered()) run.expect("alreadyDiscovered", discovered, () -> "discovery 沒有 U");
         else run.expect("notYetDiscovered", !discovered, () -> "discovery 已有 U");
-        var projections = M5CollapseDiskEvidence.projections(run.data());
-        if (at.projection() == null) {
-            run.expect("noProjectionYet", projections.isEmpty(), () -> "projection ledger=" + projections);
-        } else if (at.projection() == ProjectionLedger.Entry.Status.PENDING) {
-            run.expect("projectionStillPending", projections.equals(List.of(fixture.projection("PENDING"))), () -> "projection ledger=" + projections);
-        } else {
-            run.expect("projectionCompleteOnDisk", projections.equals(List.of(fixture.projection())), () -> "projection ledger=" + projections);
-        }
+        var expectedProjections = at.projection() == null ? List.<M5CollapseDiskEvidence.Projection>of() : List.of(fixture.projection(at.projection().name()));
+        var projectionName = at.projection() == null ? "noProjectionYet"
+                : at.projection() == ProjectionLedger.Entry.Status.PENDING ? "projectionStillPending" : "projectionCompleteOnDisk";
+        run.expect(projectionName, () -> M5CollapseDiskEvidence.projections(run.data()).equals(expectedProjections), () -> "projection ledger=" + fixture.projectionsOrError());
         at.disk().check(run, fixture);
-        var load = at.recognizeBeforeJoin() ? M5CollapseProjectionLoad.start(run, fixture) : null;
+        M5CollapseProjectionLoad load = null;
+        if (at.recognizeBeforeJoin()) {
+            load = M5CollapseProjectionLoad.start(run, fixture);
+            // spec Minor（F6-2a）：辨識是本 JVM 做的：剛由磁碟載入時是 ORIGIN、power 還沒有初始化、load-sync 還在佇列（checkpoint 存下的是 refresh 之前的 block entity）。
+            var atLoad = load.atLoad();
+            run.expect("unrecognizedWhenLoaded", atLoad.instanceKind() == ChamberInstanceKind.ORIGIN && !atLoad.powerInitialized() && atLoad.loadSyncPending(),
+                    () -> "載入時的 Controller：" + atLoad);
+        }
         run.proof.put("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
         return load;
     }

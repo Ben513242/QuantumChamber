@@ -4,12 +4,15 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
+import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseRegistryState;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
 import java.util.stream.StreamSupport;
@@ -80,8 +83,8 @@ final class M5CollapsePassage {
         if (run.capture.matching(Level.INFO, "目的地已確定（RESOLVE 完成）", fixture.sid().toString()).isEmpty()) return false;
         run.expect("materialized", fixture.universeWorld().isPresent(), () -> "RESOLVE 完成但 U 沒有物化");
         fixture.expectCatalog("catalogExactlyOneMore");
-        run.expect("discoveredOnce", M5CollapseDiskEvidence.discovery(run.saveRoot()).stream().filter(record -> record.universeId().equals(fixture.universe())).count() == 1,
-                () -> "discovery 沒有恰一筆 U");
+        run.expect("universeDiscoveredOnce", () -> M5CollapseDiskEvidence.discovery(run.saveRoot()).stream()
+                .filter(record -> record.universeId().equals(fixture.universe())).count() == 1, () -> "discovery 沒有恰一筆 U");
         fixture.moveInside();
         return true;
     }
@@ -96,7 +99,7 @@ final class M5CollapsePassage {
         run.expect("noOneCrossedYet", record.collapse().crossed().isEmpty(), () -> "Crossed=" + record.collapse().crossed());
         run.expect("doorPassable", door, () -> "PASSAGE_READY 之後門不是 passable 量子膜");
         run.expect("comparatorFifteen", comparator, () -> "PASSAGE_READY 之後 Controller 不是 PASSAGE／比較器 15");
-        run.expect("projectionComplete", M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
+        run.expect("projectionComplete", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                 () -> "projection ledger=" + fixture.projectionsOrError());
         M5CollapseWindows.expectPrepared(run, fixture, prepared);
         for (var player : fixture.players()) M5GameTestSupport.standInDoorway(player, FRAME, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO);
@@ -107,9 +110,12 @@ final class M5CollapsePassage {
         var world = fixture.universeWorld().orElseThrow();
         var players = fixture.players();
         if (players.stream().anyMatch(player -> player.getServerWorld() != world)) return false;
+        // 跨越的那個 tick 結束時 record 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為每位參與者各一次。
         var record = run.journal.flushedRecords().get(fixture.sid());
         var participants = fixture.participants();
-        run.expect("crossedRecorded", record == null || record.collapse().crossed().equals(participants), () -> "Crossed=" + record.collapse().crossed());
+        run.expect("crossedRecorded", record != null && record.collapse().crossed().size() == participants.size()
+                        && Set.copyOf(record.collapse().crossed()).equals(Set.copyOf(participants)),
+                () -> "Crossed=" + (record == null ? "（record 已移除）" : record.collapse().crossed()));
         run.expect("oneCrossingInfo", run.capture.matching(Level.INFO, "參與者已穿過量子通道", fixture.sid().toString()).size() == participants.size(),
                 () -> "「參與者已穿過量子通道」不是每位參與者恰一則");
         return true;
@@ -121,24 +127,32 @@ final class M5CollapsePassage {
         run.expect("endedByEveryoneCrossing", run.capture.matching(Level.INFO, "量子通道已結束", "(b) 全員都已跨過", sid.toString()).size() == 1,
                 () -> "沒有恰一則 (b) 的結束 INFO");
         run.expect("plainOpenAfterTheEnd", M5GameTestSupport.doorAll(run.source, FRAME, true, MembraneState.NONE), () -> "終局之後原艙門不是一般開門");
-        expectEnd(new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, Place.UNIVERSE));
+        expectEnd(End.crossed(fixture));
         return true;
     }
 
     // ---- 終局（spec §12） ----
 
-    /** 終局時 projection ledger 的預期：這座艙在 U 的 entry 是 COMPLETE。 */
-    enum ProjectionAtEnd { COMPLETE }
+    /** 終局時 projection ledger 的預期：這座艙在 U 的 entry 是 COMPLETE，或 ledger 不存在（退化：開服時遺失、沒有被重建）。 */
+    enum ProjectionAtEnd { COMPLETE, LEDGER_ABSENT }
 
-    /** 終局時參與者在哪裡：U（跨越成功）。 */
-    enum Place { UNIVERSE }
+    /** 終局時參與者在哪裡：U（跨越成功），或來源世界（退化：照一般方式開門）。 */
+    enum Place { UNIVERSE, SOURCE }
 
-    /** 終局的 spec §12 斷言的參數：catalog 相對於 crash 前的增量（NEW 1、EXISTING 0）、projection ledger 的預期、參與者在哪裡。 */
-    record End(int catalogGrowth, ProjectionAtEnd projection, Place participants) {}
+    /**
+     * 終局的 spec §12 斷言的參數：catalog 相對於 crash 前的增量（NEW 1、EXISTING 0）、projection ledger 的預期、參與者在哪裡、這個 session 從 {@code onInitialize}
+     * 起的 ERROR 恰有幾則（正常的 restart 為 0），以及 M5 authority 是否在本 instance 初始化成功（沒有「M5 authority 初始化失敗」的 ERROR）。
+     */
+    record End(int catalogGrowth, ProjectionAtEnd projection, Place participants, int sessionErrors, boolean authorityInitialized) {
+        /** 正常的 restart：(b) 全員都已跨過，參與者在 U，沒有這個 session 的 ERROR，authority 初始化成功。 */
+        static End crossed(M5CollapseFixture fixture) {
+            return new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, Place.UNIVERSE, 0, true);
+        }
+    }
 
     /**
      * spec §12 的終局：同一個 UniverseId（Destination、allocation entry、catalog、discovery、projection entry、ACTIVE world key），catalog 的增量（NEW 恰多 1 筆、
-     * EXISTING 不變），每位參與者在 {@code end.participants()}。
+     * EXISTING 不變），每位參與者在 {@code end.participants()}；另斷言這個 session 的 ERROR 恰為 {@code end.sessionErrors()} 則，與 authority 的初始化。
      */
     void expectEnd(End end) throws Exception {
         var universe = fixture.universe();
@@ -148,10 +162,14 @@ final class M5CollapsePassage {
         run.expect("catalogOnDisk", M5CollapseDiskEvidence.catalog(run.data()).keySet().equals(catalog.keySet()), () -> "磁碟上的 catalog 與 flushed 不同");
         fixture.expectOneAllocation();
         var discovery = M5CollapseDiskEvidence.discovery(run.saveRoot());
-        run.expect("discoveredOnce", discovery.size() == 1 && discovery.getFirst().universeId().equals(universe) && discovery.getFirst().gameplayEligible(),
+        run.expect("onlyTheDestinationDiscovered", discovery.size() == 1 && discovery.getFirst().universeId().equals(universe) && discovery.getFirst().gameplayEligible(),
                 () -> "discovery=" + discovery);
-        run.expect("projectionComplete", M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
-                () -> "projection ledger=" + fixture.projectionsOrError());
+        if (end.projection() == ProjectionAtEnd.COMPLETE) {
+            run.expect("projectionComplete", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
+                    () -> "projection ledger=" + fixture.projectionsOrError());
+        } else {
+            run.expect("ledgerNotRecreated", !Files.exists(run.data().resolve(ProjectionLedger.FILE_NAME)), () -> "projection ledger 被重建");
+        }
         var world = fixture.universeWorld();
         var descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
         run.expect("activeWorldKeyIsTheDestination", world.isPresent() && descriptor != null && world.get().getRegistryKey().equals(descriptor.worldKey()),
@@ -160,7 +178,18 @@ final class M5CollapsePassage {
                 .filter(candidate -> UniverseRegistryState.get(run.server).findByWorldKey(candidate.getRegistryKey()).isPresent()).count();
         run.expect("oneUniverseWorld", universeWorlds == 1, () -> "Universe world 有 " + universeWorlds + " 個");
         for (var player : fixture.players()) {
-            run.expect("participantInTheUniverse", player.getServerWorld() == world.orElseThrow(), () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue());
+            if (end.participants() == Place.UNIVERSE) {
+                run.expect("participantInTheUniverse", player.getServerWorld() == world.orElseThrow(), () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue());
+            } else {
+                run.expect("participantInTheSourceWorld", player.getServerWorld() == run.source, () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue());
+            }
+        }
+        // quality Minor（F6-2a）：這個 session 從 onInitialize 起的 ERROR（quantumchamber logger），正常的 restart 一則都沒有；退化的只有永久原因那一則。
+        var errors = run.startupLog.matching(Level.ERROR, fixture.sid().toString()).stream().map(LogCapture.Entry::message).toList();
+        run.expect(end.sessionErrors() == 0 ? "noSessionError" : "noFurtherSessionError", errors.size() == end.sessionErrors(), () -> "這個 session 的 ERROR：" + errors);
+        if (end.authorityInitialized()) {
+            var initErrors = run.startupLog.matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
+            run.expect("noAuthorityInitializationFailure", initErrors.isEmpty(), () -> "初始化的 ERROR：" + initErrors);
         }
         run.proof.put("finalDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
     }

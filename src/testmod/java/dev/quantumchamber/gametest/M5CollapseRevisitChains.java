@@ -6,6 +6,7 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.damagedShell;
 import static dev.quantumchamber.gametest.M5CollapseFixture.interiorMarker;
 import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
+import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberLoadSyncOutcome;
 import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.chamber.ChamberState;
@@ -24,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import org.apache.logging.log4j.Level;
 
@@ -36,10 +38,11 @@ final class M5CollapseRevisitChains {
     private final M5CollapseRun run;
     private final M5CollapseFixture fixture;
     private final M5CollapsePassage passage;
-    /** 退化的 restart：JOIN 之前載入的投影 Controller、開服前就開始收的 log，與磁碟上投影 Controller 的 InstanceKind。 */
+    /** 退化的 restart：JOIN 之前載入的投影 Controller，與磁碟上投影 Controller 的 InstanceKind。 */
     private M5CollapseProjectionLoad load;
-    private LogCapture startupLog;
     private String diskInstanceKind;
+    /** 退化的 refresh witness：U 的投影 Controller 正上方的紅石塊（setup 時放上、不觸發更新；restart 的 refresh 讀到它才會讓 WasPowered 變成 true）。 */
+    private static final String REDSTONE_BLOCK = "minecraft:redstone_block";
 
     M5CollapseRevisitChains(M5CollapseRun run) {
         this.run = run;
@@ -88,7 +91,7 @@ final class M5CollapseRevisitChains {
     private boolean firstPassageReady() throws Exception {
         var record = run.journal.flushedRecords().get(fixture.sid());
         if (record == null || record.state() != SessionState.PASSAGE_READY) return false;
-        run.expect("firstProjectionComplete", M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
+        run.expect("firstProjectionComplete", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                 () -> "projection ledger=" + fixture.projectionsOrError());
         run.source.setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
         return true;
@@ -123,7 +126,8 @@ final class M5CollapseRevisitChains {
 
     /**
      * setup phase（正常停止，不是 crash 窗口）：前半段（{@link #firstPassageSteps}：U 的投影 COMPLETE）→ U 的投影 interior 放金塊標記 → EXISTING 收據、原生存檔 →
-     * 參與者由艙外進入 → 看到 flushed COLLAPSING 的同一個 tick 正常停服（RESOLVE 在下一個 tick，所以停服時還沒有 RESOLVE）。
+     * 參與者由艙外進入 → 看到 flushed COLLAPSING 的同一個 tick 放上 refresh witness（{@link #placeRefreshWitness}）、正常停服（RESOLVE 在下一個 tick，所以停服時
+     * 還沒有 RESOLVE）。
      */
     Phase degradedSetup() {
         var steps = new ArrayList<>(firstPassageSteps());
@@ -136,10 +140,26 @@ final class M5CollapseRevisitChains {
                 new Step("enter", 1, () -> { fixture.moveInside(); return true; }),
                 new Step("committed", 40, () -> {
                     if (!fixture.committed()) return false;
+                    placeRefreshWitness();
                     run.proof.put("diskAtStop", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
                     return true;
                 })));
         return new Phase(Ending.STOP, fixture::requireFreshWorld, M5CollapseRun.NOTHING, steps);
+    }
+
+    /**
+     * spec Minor（F6-2a）：退化的 restart 要證明 load-sync 的 refresh 越過了 {@code ChamberPowerCoordinator.refreshNow} 的提早 return（CONSUMED 本身不能證明；磁碟上的
+     * PowerInitialized 在 setup 時就已是 true）。在 U 的投影 Controller 正上方（投影的 7×7×7 之外）放紅石塊，以 {@code NOTIFY_LISTENERS | FORCE_STATE} 寫入：不觸發
+     * 鄰格更新，Controller 不 refresh，WasPowered 仍是 false；之後同一個 tick 停服存檔（不會再有 scheduled tick）。restart 的 refresh 讀到電源，WasPowered 才會變成 true。
+     */
+    private void placeRefreshWitness() {
+        var world = fixture.universeWorld().orElseThrow(() -> new AssertionError("universeActive：停服之前 U 不是 ACTIVE"));
+        var controller = world.getBlockEntity(FRAME.controllerPos()) instanceof ChamberControllerBlockEntity entity ? entity : null;
+        boolean before = controller != null && !controller.wasPowered();
+        boolean placed = world.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), Block.NOTIFY_LISTENERS | Block.FORCE_STATE);
+        run.expect("refreshWitnessPlaced", before && placed && !controller.wasPowered() && world.isReceivingRedstonePower(FRAME.controllerPos()),
+                () -> "Controller=" + controller + " placed=" + placed + " wasPowered=" + (controller == null ? "-" : controller.wasPowered()));
+        run.proof.put("refreshWitness", FRAME.controllerPos().up().toShortString());
     }
 
     /** U 的投影（COMPLETE）interior 放金塊標記（interior 不受保護，一般寫入）。投影的 chunk 以 probe 的 ticket 載入。 */
@@ -153,9 +173,9 @@ final class M5CollapseRevisitChains {
 
     /**
      * restart phase（退化）：開服前（{@code onInitialize}）把 projection ledger 移到 evidence → 開服時斷言初始化判定 LOST（{@code AUTHORITY_CORRUPT}）、本 instance 不提交新的
-     * COLLAPSING、投影保護索引退化、record 仍是 COLLAPSING 且候選不變，以 probe 的 ticket 載入投影 chunk → 磁碟上的 Controller 走 foreign 的分支 → RESOLVE 進
-     * SEALED(AUTHORITY_CORRUPT)，interior 沒有被重寫、ledger 沒有被重建 → 參與者真 JOIN（在艙內：setup 停服時參與者在艙內）→ 從艙內照一般方式開門（沒有人被困在
-     * 封存的艙裡）。停服之後再確認 ledger 沒有被重建。
+     * COLLAPSING、投影保護索引退化、record 仍是 COLLAPSING 且候選不變，以 probe 的 ticket 載入投影 chunk → 磁碟上的 Controller 本 JVM refresh 過（refresh witness）、
+     * 走 foreign 的分支 → RESOLVE 進 SEALED(AUTHORITY_CORRUPT)，interior 沒有被重寫、ledger 沒有被重建 → 參與者真 JOIN（在艙內：setup 停服時參與者在艙內）→ 從艙內
+     * 照一般方式開門（沒有人被困在封存的艙裡），spec §12 的終局（退化版：ledger 不存在、參與者在來源世界）。停服之後再確認 ledger 沒有被重建。
      */
     Phase degradedRestart(String setupPhase) {
         return new Phase(Ending.STOP, this::removeProjectionLedgerBeforeStart, () -> degradedStarted(setupPhase), () -> passage.invariants(null), List.of(
@@ -166,10 +186,8 @@ final class M5CollapseRevisitChains {
                 () -> run.expect("ledgerNotRecreatedAfterStop", !Files.exists(run.worldData().resolve(ProjectionLedger.FILE_NAME)), () -> "停服之後 projection ledger 被重建"));
     }
 
-    /** 開服前：先開始收 {@code quantumchamber} 的 log（初始化的 ERROR 在 {@code SERVER_STARTED} 的 default phase），再把 projection ledger 移到這個 phase 的 evidence。 */
+    /** 開服前：把 projection ledger 移到這個 phase 的 evidence（runner 已在這之前開始收 {@code quantumchamber} 的 log：初始化的 ERROR 在 {@code SERVER_STARTED} 的 default phase）。 */
     private void removeProjectionLedgerBeforeStart() throws Exception {
-        startupLog = new LogCapture("quantumchamber");
-        run.onStopped(startupLog);
         var ledger = run.worldData().resolve(ProjectionLedger.FILE_NAME);
         run.expect("projectionLedgerOnDiskBeforeStart", Files.isRegularFile(ledger), () -> "開服前沒有 projection ledger：" + ledger);
         var moved = run.config.evidence().resolve("moved-" + ProjectionLedger.FILE_NAME);
@@ -181,7 +199,7 @@ final class M5CollapseRevisitChains {
 
     private void degradedStarted(String setupPhase) throws Exception {
         fixture.readCrashReceipt(setupPhase, null);
-        var initErrors = startupLog.matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
+        var initErrors = run.startupLog.matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
         run.expect("initializationLost", initErrors.size() == 1 && initErrors.getFirst().contains("projection=LOST") && initErrors.getFirst().contains("allocation=LOADED"),
                 () -> "初始化的 ERROR：" + initErrors);
         var authorities = CollapseAuthorities.get(run.server);
@@ -207,10 +225,16 @@ final class M5CollapseRevisitChains {
         run.expect("interiorMarkerOnDisk", GOLD_BLOCK.equals(marker.name()), () -> "磁碟上的 interior 標記是 " + marker);
         var controller = fixture.diskBlock(world, FRAME.controllerPos());
         run.expect("controllerOnDiskAtRestart", M5CollapseFixture.controllerBlock(controller), () -> "磁碟上的 Controller 位置是 " + controller);
+        var witness = fixture.diskBlock(world, FRAME.controllerPos().up());
+        run.expect("refreshWitnessOnDisk", REDSTONE_BLOCK.equals(witness.name()), () -> "磁碟上 Controller 正上方是 " + witness);
         diskInstanceKind = M5CollapseDiskEvidence.blockEntityString(fixture.dimensionDirectory(world), FRAME.controllerPos(), "InstanceKind");
         run.proof.put("projectionControllerKindOnDisk", diskInstanceKind);
         run.proof.put("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
         load = M5CollapseProjectionLoad.start(run, fixture);
+        // 剛由磁碟載入時是磁碟上的值：InstanceKind 是 setup 時寫回的 PROJECTION、WasPowered 仍是 false（refresh witness 放上時沒有 refresh）、load-sync 還在佇列。
+        var atLoad = load.atLoad();
+        run.expect("loadedAsOnDisk", atLoad.instanceKind().name().equals(diskInstanceKind) && !atLoad.wasPowered() && atLoad.loadSyncPending(),
+                () -> "載入時的 Controller：" + atLoad + "（磁碟上 " + diskInstanceKind + "）");
     }
 
     /**
@@ -224,6 +248,9 @@ final class M5CollapseRevisitChains {
         var controller = load.controller();
         if (!load.outcomes().contains(ChamberLoadSyncOutcome.CONSUMED) || !controller.powerInitialized()) return false;
         var pos = FRAME.controllerPos();
+        // spec Minor（F6-2a）：CONSUMED 之後 WasPowered 由載入時的 false 變成 true：這次 refresh 越過了提早 return，讀到 refresh witness 的電源。
+        run.expect("refreshedThisInstance", controller.wasPowered() && !load.atLoad().wasPowered(), () -> "WasPowered：載入時 " + load.atLoad().wasPowered()
+                + "，現在 " + controller.wasPowered());
         run.expect("indexDoesNotKnowTheController", !ProjectionProtectionIndex.projectionControllerAt(run.server, world.getRegistryKey(), pos),
                 () -> "退化的索引認得這個 Controller");
         run.expect("foreignBranch", !controller.isRemoved() && world.getBlockEntity(pos) == controller && controller.chamberState() == ChamberState.INVALID
@@ -259,7 +286,10 @@ final class M5CollapseRevisitChains {
         return true;
     }
 
-    /** SEALED 之後參與者從艙內照一般方式開門（spec §11.2）；record 仍是 SEALED(AUTHORITY_CORRUPT)，spec §12 的四件事（退化版：沒有 projection entry）。 */
+    /**
+     * SEALED 之後參與者從艙內照一般方式開門（spec §11.2）；record 仍是 SEALED(AUTHORITY_CORRUPT)，spec §12 的終局（{@link M5CollapsePassage#expectEnd}，退化版：catalog
+     * 不變、projection ledger 不存在、參與者在來源世界、這個 session 的 ERROR 只有永久原因那一則，authority 本 instance 初始化失敗）。
+     */
     private boolean doorOpensNormally() throws Exception {
         var player = fixture.selector();
         var result = M5GameTestSupport.interact(run.source, local(3, 3, 0), player);
@@ -268,15 +298,7 @@ final class M5CollapseRevisitChains {
         var record = run.journal.flushedRecords().get(sid);
         run.expect("stillSealed", record != null && record.state() == SessionState.SEALED && record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
                 () -> "state=" + M5GameTestSupport.state(run.journal, sid));
-        fixture.expectCatalog("catalogUnchanged");
-        fixture.expectOneAllocation();
-        var discovery = M5CollapseDiskEvidence.discovery(run.saveRoot());
-        run.expect("discoveredOnce", discovery.size() == 1 && discovery.getFirst().universeId().equals(fixture.universe()), () -> "discovery=" + discovery);
-        run.expect("ledgerNotRecreated", !Files.exists(run.data().resolve(ProjectionLedger.FILE_NAME)), () -> "projection ledger 被重建");
-        for (var each : fixture.players()) {
-            run.expect("participantInTheSourceWorld", each.getServerWorld() == run.source, () -> "參與者在 " + each.getServerWorld().getRegistryKey().getValue());
-        }
-        run.proof.put("finalDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
+        passage.expectEnd(new M5CollapsePassage.End(fixture.catalogGrowth(), M5CollapsePassage.ProjectionAtEnd.LEDGER_ABSENT, M5CollapsePassage.Place.SOURCE, 1, false));
         return true;
     }
 }

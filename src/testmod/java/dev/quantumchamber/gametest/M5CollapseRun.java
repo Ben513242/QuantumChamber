@@ -5,7 +5,6 @@ import com.google.gson.JsonObject;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -91,6 +90,9 @@ final class M5CollapseRun {
 
     @FunctionalInterface interface Checked { void run() throws Exception; }
 
+    /** 會丟出例外的條件（例如讀磁碟上的權威）；給 {@link #expect(String, Condition, Supplier)}。 */
+    @FunctionalInterface interface Condition { boolean holds() throws Exception; }
+
     /** halt 之前的取證（或刻意的準備，例如 W4 的存檔）：寫進 halt receipt 的 {@code atHalt}。丟出時不 halt，crash 點記下失敗，phase 在下一個 tick FAIL。 */
     @FunctionalInterface interface HaltEvidence { void collect(Object detail, Map<String, Object> evidence) throws Exception; }
 
@@ -125,7 +127,10 @@ final class M5CollapseRun {
     MinecraftServer server;
     ServerWorld source;
     SessionRecoveryState journal;
+    /** {@code quantumchamber} logger 從 {@code SERVER_STARTED} 的 AFTER phase 起的 log。 */
     LogCapture capture;
+    /** {@code quantumchamber} logger 從 {@code onInitialize} 起的 log（含開服時 default phase 的初始化，例如「M5 authority 初始化失敗」）。 */
+    LogCapture startupLog;
     private Phase phase;
     int ticks;
     private int stepIndex, stepTicks;
@@ -162,6 +167,8 @@ final class M5CollapseRun {
         if (properties.stream().anyMatch(argument -> argument.contains("collapseSuspended")) || System.getProperty("quantumchamber.test.collapseSuspended") != null) {
             failures.add("noCollapseSuspended：JVM 參數不得有 quantumchamber.test.collapseSuspended：" + properties);
         }
+        startupLog = new LogCapture("quantumchamber");
+        onStopped(startupLog);
         phase = factory.create(this);
         try {
             phase.beforeStart().run();
@@ -365,6 +372,17 @@ final class M5CollapseRun {
         observed.put(name, true);
     }
 
+    /** 同 {@link #expect(String, boolean, Supplier)}，條件本身可能丟出（例如嚴格 decode 磁碟上的 ledger）：丟出時也是這個斷言失敗（訊息以名稱開頭）。 */
+    void expect(String name, Condition condition, Supplier<String> detail) {
+        boolean holds;
+        try {
+            holds = condition.holds();
+        } catch (Exception failure) {
+            throw new AssertionError(name + "：讀取失敗：" + failure, failure);
+        }
+        expect(name, holds, detail);
+    }
+
     static void require(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
     }
@@ -397,13 +415,18 @@ final class M5CollapseRun {
         return value == null || value.isJsonNull() ? null : value.getAsString();
     }
 
+    /**
+     * 在 {@code events.jsonl} 追加一行。不丟出（它也在 {@link #guarded} 的 catch 與 {@code SERVER_STOPPED} 裡呼叫，例外不能從 {@code END_SERVER_TICK} 或 listener 拋出）：
+     * 寫不出來時記 ERROR、記在 receipt 的 {@code failures}（phase 因此 FAIL）。
+     */
     private void event(String name) {
         try {
             Files.writeString(config.evidence().resolve("events.jsonl"), JSON.toJson(Map.of("event", name, "timeUtc", Instant.now().toString(),
                     "startupNonce", config.startupNonce(), "pid", ProcessHandle.current().pid())) + System.lineSeparator(),
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (IOException failure) {
-            throw new UncheckedIOException(failure);
+        } catch (IOException | RuntimeException failure) {
+            failures.add("event：" + name + " 寫不出來：" + failure);
+            LOGGER.error("M5 collapse probe：event {} 寫不出來", name, failure);
         }
     }
 
