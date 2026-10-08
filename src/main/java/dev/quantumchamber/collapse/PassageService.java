@@ -2,6 +2,7 @@ package dev.quantumchamber.collapse;
 
 import static dev.quantumchamber.collapse.CollapseService.LOG_MARKER;
 
+import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
@@ -31,6 +32,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.network.packet.s2c.play.TitleFadeS2CPacket;
+import net.minecraft.network.packet.s2c.play.TitleS2CPacket;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.MinecraftServer;
@@ -42,7 +45,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 量子通道（PASSAGE_READY；spec §10.3–§10.6、§10.8，F5-1）。每個 server instance 一個，由 {@link CollapseService} 建立並持有；只在 server thread 上、經它的 tick
+ * 量子通道（PASSAGE_READY；spec §10.3–§10.6、§10.8，F5-1；到達提示與「量子通道已關閉」的對象，F5-3）。每個 server instance 一個，由 {@link CollapseService} 建立並持有；只在 server thread 上、經它的 tick
  * （{@link #tick}，執行期間提交的 PASSAGE_READY；開服時就是 PASSAGE_READY 的由 {@code CollapseService} 依 §12 直接終局）或原艙門的攔截（{@link #endByParticipant}）呼叫，
  * 共用它每個 tick 取得的 context（journal、session manager、server tick）與每個 session 的簿記（{@link CollapseService.Track}），比照 {@link OriginDoors}。
  * <ul>
@@ -59,26 +62,36 @@ import org.slf4j.LoggerFactory;
  *     讀不到）或結構失效，依即時訊號（{@link CollapseService#sourceSignal}：Controller 的紅石輸入、registry 的 enabled、結構驗證），不經 {@code ChamberPowerCoordinator.returnToOrigin}。
  *     (a) 參與者在原艙這一側開關原艙門（bulkhead 或 Controller）由攔截處理（{@link #endByParticipant}）。結束的順序：checked 終局（{@code PASSAGE_ENDED}）→ 釋放 runtime、
  *     來源 ticket 與目的世界的 ticket（{@link CollapseService#terminated}：之後 presence 才是 NONE，終局之後的門才不會被當成新 session 的門而放棄）→ 門：(a) 改為關閉（門口有
- *     entity 時一般開門），(b)(c)(d) 一般開門 → 「量子通道已關閉」→ 刷新 Controller（原艙解除封鎖；尚未處理的 LOW 由 {@code reconcile} 接著走一般的 OFF 流程）。全部記 INFO。
+ *     entity 時一般開門），(b)(c)(d) 一般開門 → 「量子通道已關閉」（只對在線、而且不在結束時那筆 record 的 Crossed 中的參與者，{@link #notifyNotCrossed}；spec §20.9）
+ *     → 刷新 Controller（原艙解除封鎖；尚未處理的 LOW 由 {@code reconcile} 接著走一般的 OFF 流程）。全部記 INFO。
  *     終局沒有完成時記 WARN、per-session 退避，不改門，也不再跨越（結束條件仍成立）。</li>
  * <li><b>跨越</b>（§10.3，{@link #crosses}）：每個 tick 逐一檢查參與者，七個條件全部成立才觸發：參與者、還不在 Crossed；在線、exact 的玩家 instance、存活、非旁觀；
  *     位在 exact 的來源 world instance；沒有騎乘；沒有被其他 session 佔用（§5）；腳在門口（local x∈[1,6)、y∈[1,6)）；local z 已越過門板中線往外（z&lt;0.5）而上一個 tick
  *     還在中線內側（z≥0.5；只認上一個 tick 的觀察，更舊的不算，{@link #previousTick}，fix round 1）。觸發之後以 {@link PassageTransferPolicy} 傳送到目的世界的同 XYZ、yaw、pitch 與速度（{@code UniverseTransferService} 的 plan 決策 4 多載）。
  *     非參與者不在檢查的對象裡：穿過量子膜只會走進原世界。</li>
- * <li><b>傳送結果</b>（§10.3 的表）：成功 → checked（roll-forward）加入 Crossed；{@code FAILED_ROLLED_BACK}（以及移動之前就被拒的 {@code REJECTED_BEFORE_MOVE}，玩家同樣
- *     留在原世界）→ actionbar「通道傳送失敗，你仍在原世界。」、依原因去重記一次 WARN，通道仍開著，可以再試；{@code FAILED_RECOVERY_REQUIRED} → 不移除 record，checked
+ * <li><b>傳送結果</b>（§10.3 的表）：成功（MOVED）→ checked（roll-forward）加入 Crossed，之後對到達的那位玩家以 title 顯示到達提示（NEW「你已進入新的宇宙。」、EXISTING
+ *     「你已進入另一個宇宙。」；先送淡入、停留、淡出 10／70／20；§10.8、§20.8、§20.9，{@link #arrived}）——寫入確認、roll-forward 未確認、被拒時都顯示，因為他都已在目的世界；
+ *     {@code FAILED_ROLLED_BACK}（以及移動之前就被拒的 {@code REJECTED_BEFORE_MOVE}，玩家同樣留在原世界；這些與下一種都不顯示到達提示）→ actionbar
+ *     「通道傳送失敗，你仍在原世界。」、依原因去重記一次 WARN，通道仍開著，可以再試；{@code FAILED_RECOVERY_REQUIRED} → 不移除 record，checked
  *     （roll-forward）PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)、RecoveryRequired 記下那位玩家（保留 participants、Crossed、opened／expires 與收據），記 ERROR（含移動與
  *     回滾的證據），之後與其他原因進入 SEALED 相同（{@link CollapseService#sealCommitted}：門依 §11.2、釋放目的世界的 ticket）；不再自動移動他，也不重試。Crossed 的寫入沒有
  *     確認時，這個 tick 其他參與者不傳送（§7）。</li>
  * </ul>
- * 「量子通道已關閉」顯示給在線的每一位參與者（不論他在原艙、已跨到目的宇宙或在別處）：§10.8 只寫時機「通道結束」，而跨過的人也需要知道通道已經關上、沒有正規回程（§2），
- * 這與「進入 SEALED」的訊息對所有參與者顯示相同；「量子通道已開啟」只對艙內的參與者（§10.2 第 3 步）。這裡的每一則 log 都帶 {@link CollapseService#LOG_MARKER}，能歸屬到
- * session 的 WARN／ERROR 帶 {@code session=}。
+ * 訊息的對象（§10.8）：「量子通道已關閉」只顯示給在線、而且不在結束時那筆 record 的 Crossed 中的參與者（v5.5，§20.9；不論他在原艙或別處）。已跨過的人不再收到：(b) 在最後
+ * 一位跨過的下一個 tick 結束，兩則都在 actionbar 時會蓋掉他的到達提示（F5-1 原本對每一位在線的參與者顯示）。「進入 SEALED」仍對所有參與者顯示（含
+ * PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED)，§20.9「不受影響的部分」）；「量子通道已開啟」只對艙內的參與者（§10.2 第 3 步）。這裡的每一則 log 都帶
+ * {@link CollapseService#LOG_MARKER}，能歸屬到 session 的 WARN／ERROR 帶 {@code session=}。
  */
 final class PassageService {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
     /** §10.3：門板中線的 local z（門板那一格的中央）。 */
     static final double MIDLINE = 0.5;
+    /** spec §10.8「跨越成功、到達目的宇宙」（§20.8、§20.9，F5-3）：候選是 NEW 時的到達提示，以 title 只對到達的那位玩家顯示（{@link #arrived}）。 */
+    static final String MESSAGE_ARRIVED_NEW = "message.quantumchamber.m5.arrived_new";
+    /** 同 {@link #MESSAGE_ARRIVED_NEW}，候選是 EXISTING 時（重逢到既有的宇宙）。 */
+    static final String MESSAGE_ARRIVED_EXISTING = "message.quantumchamber.m5.arrived_existing";
+    /** spec §20.9：到達提示的淡入、停留、淡出（ticks），原版的預設值；送 title 之前先明確送出，不沿用 client 先前的設定。 */
+    static final int ARRIVAL_FADE_IN = 10, ARRIVAL_STAY = 70, ARRIVAL_FADE_OUT = 20;
     /** {@link CollapseService#warn} 的寫入種類：傳送沒有完成、玩家仍在原世界（成功時清除）；Crossed 的寫入；TRANSFER_RECOVERY_REQUIRED 的寫入。 */
     private static final String TRANSFER = "通道傳送", CROSSED_WRITE = "寫入 Crossed", RECOVERY_WRITE = "寫入 SEALED(TRANSFER_RECOVERY_REQUIRED)";
     private final CollapseService service;
@@ -189,7 +202,8 @@ final class PassageService {
     }
 
     /**
-     * 終局已讀回確認之後：釋放 runtime、來源 ticket 與目的世界的 ticket（{@link CollapseService#terminated}）→ INFO → 門（{@code door}）→「量子通道已關閉」→ 刷新 Controller。
+     * 終局已讀回確認之後：釋放 runtime、來源 ticket 與目的世界的 ticket（{@link CollapseService#terminated}）→ INFO → 門（{@code door}）→「量子通道已關閉」（只對還沒跨過的參與者，
+     * {@link #notifyNotCrossed}）→ 刷新 Controller。
      */
     private void closed(SessionRecoveryRecord record, PassageEnd end, OriginDoors.DoorGoal door) {
         service.terminated(record);
@@ -197,8 +211,22 @@ final class PassageService {
                 door == OriginDoors.DoorGoal.CLOSE_AFTER_TERMINAL ? "改為關閉（門口有 entity 時一般開門）" : "改為一般開門", record.sessionUuid(), record.chamberUuid(),
                 record.collapse().crossed().size(), record.participants().size());
         service.originDoors.queueDoor(record, 0, door);
-        service.notifyParticipants(record, CollapseService.MESSAGE_PASSAGE_CLOSED);
+        notifyNotCrossed(record, CollapseService.MESSAGE_PASSAGE_CLOSED);
         service.refresh(record);
+    }
+
+    /**
+     * 對在線、而且不在 {@code record}（結束時那筆）的 Crossed 中的參與者顯示 actionbar（spec §10.8「通道結束」、§20.9 第 2 點；在線的判斷與
+     * {@link CollapseService#notifyParticipants} 相同，{@link #online}）。已跨過的人不再收到：(b) 在最後一位跨過的下一個 tick 結束，這則不會接在他的到達提示之後；先跨過的人也不會
+     * 因之後的 (a)(c)(d) 再收到。Crossed 的寫入被拒、沒有記下的人已在目的世界，但不在 Crossed 中，所以仍會收到（到達提示是 title，這則是 actionbar，不會互相蓋掉）。
+     */
+    private void notifyNotCrossed(SessionRecoveryRecord record, String key) {
+        var crossed = record.collapse().crossed();
+        for (var person : record.participants()) {
+            if (crossed.contains(person.playerUuid())) continue;
+            var player = online(person.playerUuid());
+            if (player != null) player.sendMessage(Text.translatable(key), true);
+        }
     }
 
     /**
@@ -294,6 +322,8 @@ final class PassageService {
             switch (result.outcome()) {
                 case MOVED -> {
                     var next = crossed(current, track, player);
+                    // 到達提示排在 Crossed 的寫入之後：寫入的三種結果（確認、roll-forward 未確認、被拒）他都已在目的世界，都顯示（spec §20.9 的邊界情況）；提示不會妨礙寫入。
+                    arrived(current, player);
                     if (next == null) return;
                     current = next;
                 }
@@ -352,6 +382,34 @@ final class PassageService {
                 return null;
             }
         }
+    }
+
+    /**
+     * 跨越成功（MOVED）之後，對到達的那位玩家以 title 顯示到達提示（spec §10.8、§20.8、§20.9）：先明確送出淡入、停留、淡出（{@link #ARRIVAL_FADE_IN}／{@link #ARRIVAL_STAY}／
+     * {@link #ARRIVAL_FADE_OUT}，不沿用 client 先前的設定），再送 title；不送 subtitle、不用 actionbar，不顯示 Universe ID。只有 MOVED 走到這裡
+     * （{@code FAILED_ROLLED_BACK}、{@code REJECTED_BEFORE_MOVE}、{@code RETURNED}、{@code FAILED_RECOVERY_REQUIRED} 與 descriptor 讀不到時玩家不在目的世界，不顯示）。
+     * <p>選中的候選不是 NEW 或 EXISTING 時不顯示，記一則 WARN：不應發生——PASSAGE_READY 的 record 建構時就要求 Destination 是 UNIVERSE、而且對應被選中的候選，只有 EXISTING
+     * 與 NEW 對得上（{@code SessionRecoveryRecord} 的驗證）。不丟例外：玩家已在目的世界、Crossed 的寫入也已處理，丟出只會讓這個 tick 之後的參與者不被檢查（例外由
+     * {@code CollapseService.step} 依 session 隔離）。也不改用其中一則：錯的字面（「新的」或「另一個」）比沒有提示更誤導。
+     */
+    private void arrived(SessionRecoveryRecord record, ServerPlayerEntity player) {
+        var key = arrivalKey(record.selectedCandidate());
+        if (key.isEmpty()) {
+            LOGGER.warn(LOG_MARKER, "到達提示沒有顯示：選中的候選不是 NEW 或 EXISTING（不應發生，PASSAGE_READY 的 record 建構時已驗證）：session={} chamber={} 玩家={} 候選={}",
+                    record.sessionUuid(), record.chamberUuid(), player.getUuid(), record.selectedCandidate().map(chosen -> chosen.getClass().getSimpleName()).orElse("（沒有）"));
+            return;
+        }
+        player.networkHandler.sendPacket(new TitleFadeS2CPacket(ARRIVAL_FADE_IN, ARRIVAL_STAY, ARRIVAL_FADE_OUT));
+        player.networkHandler.sendPacket(new TitleS2CPacket(Text.translatable(key.get())));
+    }
+
+    /** 到達提示的 key（純函式，spec §20.8）：NEW「你已進入新的宇宙。」、EXISTING「你已進入另一個宇宙。」；SOURCE 或沒有選中的候選為空（見 {@link #arrived}）。 */
+    static Optional<String> arrivalKey(Optional<QuantumCandidate> selected) {
+        return selected.flatMap(chosen -> switch (chosen) {
+            case QuantumCandidate.New ignored -> Optional.of(MESSAGE_ARRIVED_NEW);
+            case QuantumCandidate.Existing ignored -> Optional.of(MESSAGE_ARRIVED_EXISTING);
+            case QuantumCandidate.Source ignored -> Optional.empty();
+        });
     }
 
     /** {@code FAILED_ROLLED_BACK}、{@code REJECTED_BEFORE_MOVE}：玩家仍在原世界，通道仍開著；actionbar 提示，WARN 依原因去重（成功傳送時清除）。 */

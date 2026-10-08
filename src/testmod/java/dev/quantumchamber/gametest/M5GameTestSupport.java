@@ -49,6 +49,12 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.network.packet.s2c.play.ClearTitleS2CPacket;
+import net.minecraft.network.packet.s2c.play.GameMessageS2CPacket;
+import net.minecraft.network.packet.s2c.play.OverlayMessageS2CPacket;
+import net.minecraft.network.packet.s2c.play.SubtitleS2CPacket;
+import net.minecraft.network.packet.s2c.play.TitleFadeS2CPacket;
+import net.minecraft.network.packet.s2c.play.TitleS2CPacket;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -57,6 +63,8 @@ import net.minecraft.test.GameTestState;
 import net.minecraft.test.TestContext;
 import net.minecraft.test.TestListener;
 import net.minecraft.test.TestRunContext;
+import net.minecraft.text.Text;
+import net.minecraft.text.TranslatableTextContent;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
@@ -78,7 +86,7 @@ import org.slf4j.LoggerFactory;
  * <li>原生 autosave 的窗口與 journal 寫出稽核：{@link #afterAutosaveClear}、{@link AutosaveWindow#journalWrites}。</li>
  * <li>塌縮 fixture：{@link #collapseFixture}、{@link #cleanupFixtures}；真原艙＋DORMANT 收據＋玩家在艙外：{@link DormantOrigin}；
  *     Nether 的真原艙＋真玩家：{@link NetherChamber}；選中 EXISTING 的收據：{@link #existingReceipt}（F4a）。</li>
- * <li>玩家收到的 actionbar 訊息：{@link #overlayKeys}（F4a）。</li>
+ * <li>玩家收到的 actionbar 訊息：{@link #overlayKeys}（F4a）；同一次讀取的 actionbar 與 title：{@link #hud}、{@link #arrivalTitle}（F5-3）。</li>
  * <li>候選門：{@link CandidateDoor}、{@link #candidateDoor}、{@link #sourceDoor}。</li>
  * <li>log：{@link #captureLogs}（建立 capture 並登記關閉）、{@link #noWarnOrError}（這個 sid 沒有 WARN／ERROR）、
  *     {@link #collapseFlowNeverWarned}（依 marker）。</li>
@@ -1066,6 +1074,42 @@ final class M5GameTestSupport {
                     ? translatable.getKey() : message.content().getString());
         }
         return keys;
+    }
+
+    /**
+     * 一次讀掉玩家目前收到的全部封包，回傳其中的 actionbar 與 title 系列封包（F5-3）。{@link ConnectedGameTestPlayer#drainOutbound} 會讀掉並釋放所有型別的封包，
+     * 所以同一個時點要同時看 actionbar 與 title 時只呼叫這一個：先呼叫 {@link #overlayKeys} 再讀 title 會讀不到。先呼叫一次可以清掉之前的封包。
+     */
+    static Hud hud(ConnectedGameTestPlayer connection) {
+        var overlays = new ArrayList<String>();
+        var titles = new ArrayList<String>();
+        for (var packet : connection.drainOutbound(Object.class)) {
+            switch (packet) {
+                case GameMessageS2CPacket message when message.overlay() -> overlays.add(textKey(message.content()));
+                case OverlayMessageS2CPacket overlay -> overlays.add(textKey(overlay.text()));
+                case TitleFadeS2CPacket fade -> titles.add("fade " + fade.getFadeInTicks() + "/" + fade.getStayTicks() + "/" + fade.getFadeOutTicks());
+                case TitleS2CPacket title -> titles.add("title " + textKey(title.text()));
+                case SubtitleS2CPacket subtitle -> titles.add("subtitle " + textKey(subtitle.text()));
+                case ClearTitleS2CPacket clear -> titles.add(clear.shouldReset() ? "reset" : "clear");
+                default -> { }
+            }
+        }
+        return new Hud(List.copyOf(overlays), List.copyOf(titles));
+    }
+
+    /**
+     * {@link #hud} 讀到的封包：{@code overlays} 是 actionbar 的翻譯 key（overlay 的 {@code GameMessageS2CPacket} 與 {@code OverlayMessageS2CPacket}；不是翻譯訊息時為文字），
+     * {@code titles} 是 title 系列封包的描述（{@code fade <淡入>/<停留>/<淡出>}、{@code title <key>}、{@code subtitle <key>}、{@code clear}、{@code reset}）；兩者都依送出順序。
+     */
+    record Hud(List<String> overlays, List<String> titles) { }
+
+    /** spec §20.9 的到達提示依送出順序的 title 封包：先明確送出淡入、停留、淡出 10／70／20 ticks，再送 title，沒有 subtitle（以字面值斷言，不信任 production 常數）。 */
+    static List<String> arrivalTitle(String key) {
+        return List.of("fade 10/70/20", "title " + key);
+    }
+
+    private static String textKey(Text text) {
+        return text.getContent() instanceof TranslatableTextContent translatable ? translatable.getKey() : text.getString();
     }
 
     /** 以玩家的身分使用 {@code pos} 的方塊（門、側門）。 */

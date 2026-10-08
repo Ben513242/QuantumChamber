@@ -6,6 +6,8 @@
   "item.minecraft.splash_potion.effect.quantum_state": "Splash Potion of Quantum State",
   "item.minecraft.lingering_potion.effect.quantum_state": "Lingering Potion of Quantum State",
   "item.minecraft.tipped_arrow.effect.quantum_state": "Arrow of Quantum State",
+  "message.quantumchamber.m5.arrived_existing": "You have entered another universe.",
+  "message.quantumchamber.m5.arrived_new": "You have entered a new universe.",
   "message.quantumchamber.m5.collapsed": "The quantum state has collapsed.",
   "message.quantumchamber.m5.controller_passage": "The chamber's quantum passage is open; the origin chamber stays locked.",
   "message.quantumchamber.m5.dimension_door_unavailable": "Universe doors are not yet open in this dimension.",

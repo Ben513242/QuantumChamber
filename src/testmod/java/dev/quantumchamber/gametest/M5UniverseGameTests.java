@@ -2773,11 +2773,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     「量子通道已開啟」只給艙內的參與者 P，N 沒有收到。</li>
      * <li>N 由門板中線內側走到外側（穿過量子膜）：什麼都不觸發，N 留在原世界、Crossed 仍是空的。</li>
      * <li>P 在越過中線的同一個 tick 騎上礦車：不觸發傳送，留在原世界。礦車浮在 local y=2（不受重力），騎乘時腳仍在門口、中線外側（礦車的乘坐點比礦車低，礦車放在
-     *     y=1 時腳會低於門口），所以只有「沒有騎乘」這個條件擋下跨越（{@code riderInTheDoorwayPastTheMidline}）。</li>
+     *     y=1 時腳會低於門口），所以只有「沒有騎乘」這個條件擋下跨越（{@code riderInTheDoorwayPastTheMidline}）；這時 P 沒有收到 title（F5-3）。</li>
      * <li>P 下來之後由中線內側越到外側：傳送到宇宙 U 的同 XYZ、同 yaw、pitch，站在目的投影艙的門口（同一個 local 座標，門是 {@code open=true}＋{@code membrane=none}），
-     *     Crossed＝[P]，INFO「已穿過量子通道」一則。</li>
+     *     Crossed＝[P]，INFO「已穿過量子通道」一則。F5-3（spec §10.8、§20.8、§20.9）：P 收到 NEW 的到達提示 title（先送淡入、停留、淡出 10／70／20，沒有 subtitle），
+     *     actionbar 沒有任何訊息。</li>
      * <li>下一個 tick (b) 全員都已跨過：checked 終局（INFO (b) 一則），門改為一般開門，目的世界的 ticket 已釋放（{@code releaseDestination}），runtime 與來源 ticket 都已釋放、
-     *     presence 回到 NONE；P 在 U 收到「量子通道已關閉」。這個 session 沒有任何 WARN／ERROR。</li>
+     *     presence 回到 NONE；P 已在 Crossed 中，不再收到「量子通道已關閉」（F5-3，spec §20.9；F5-1 時是收到）。非參與者 N 沒有收到 title。這個 session 沒有任何 WARN／ERROR。</li>
      * </ul>
      * catalog 增量 1（U）。
      */
@@ -2834,6 +2835,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("riderInTheDoorwayPastTheMidline", p.hasVehicle() && riderLocal.x >= 1 && riderLocal.x < 6 && riderLocal.y >= 1 && riderLocal.y < 6
                             && riderLocal.z < 0.5);
                     witness.put("riderStaysInTheOriginalWorld", p.getServerWorld() == world && record.collapse().crossed().isEmpty() && crossedInfos(capture, sid) == 0);
+                    // F5-3：沒有傳送就沒有到達提示（騎乘時越過中線）。
+                    witness.put("noTitleForTheRider", M5GameTestSupport.hud(origin.connection).titles().isEmpty());
                     p.stopRiding();
                     cart[0].discard();
                 });
@@ -2850,6 +2853,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             && doorAll(universe, frame, true, MembraneState.NONE));
                     witness.put("crossedRecorded", crossed != null && crossed.collapse().crossed().equals(List.of(p.getUuid())));
                     witness.put("oneCrossingInfo", crossedInfos(capture, sid) == 1);
+                    // F5-3（spec §10.8、§20.8、§20.9）：到達的那位玩家收到 NEW 的 title，先送淡入、停留、淡出 10／70／20，沒有 subtitle，也不在 actionbar。
+                    var arrival = M5GameTestSupport.hud(origin.connection);
+                    witness.put("arrivalTitleForTheCrossedParticipant", arrival.titles().equals(M5GameTestSupport.arrivalTitle(ARRIVED_NEW_KEY)));
+                    witness.put("arrivalNotOnTheActionbar", arrival.overlays().isEmpty());
                 });
                 whenTicks(context, readyAt + 7, 10, () -> !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), ended -> {
                     witness.put("endedWhenEveryoneCrossed", passageEnded(capture, sid, "(b) 全員都已跨過") == 1);
@@ -2857,7 +2864,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                     witness.put("runtimeAndSourceTicketReleased", !M4CandidateTestAccess.runtimeHeld(sid) && !M4CandidateTestAccess.sourceTicketHeld(sid));
-                    witness.put("closedMessageToTheCrossedParticipant", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                    // F5-3（spec §20.9）：已跨過的人不再收到「量子通道已關閉」（到達提示之後什麼都沒有收到）；非參與者 N 沒有收到 title。
+                    var afterEnd = M5GameTestSupport.hud(origin.connection);
+                    witness.put("noClosedMessageToTheCrossedParticipant", afterEnd.overlays().isEmpty() && afterEnd.titles().isEmpty());
+                    witness.put("noTitleForTheNonParticipant", M5GameTestSupport.hud(outsider).titles().isEmpty());
                     witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid) && M5GameTestSupport.collapseFlowNeverWarned(capture, sid));
                     LOGGER.info("M5_PASSAGE_CROSS ready={} ended={} position={}", readyAt, ended, p.getPos());
                     releaseThenComplete(context, hooks, witness, "通道的跨越：" + witness, 20, () -> true);
@@ -2871,9 +2881,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <ul>
      * <li>PASSAGE_READY 之後，模擬重啟之後的第一次觀察（{@code simulateDoorStartup}）並把門寫成一般開門（重啟留下的舊狀態）：觀察到的那個 tick 只排入、不寫門，下一個 tick 依
      *     collapse view 重新套用 passable 量子膜（INFO 記下的排入 tick 與套用 tick 相同），只有一次。</li>
-     * <li>P 越過中線、傳送到 U；B 留在艙內。到期之前 record 一直是 PASSAGE_READY、Crossed＝[P]。</li>
+     * <li>P 越過中線、傳送到 U；B 留在艙內。到期之前 record 一直是 PASSAGE_READY、Crossed＝[P]。只有 P 收到到達提示的 title（F5-3）。</li>
      * <li>game time 到 expires（opened＋1200）時 (c) 結束：checked 終局（INFO (c) 一則），門改為一般開門，目的世界的 ticket、runtime 與來源 ticket 都已釋放，presence NONE；
-     *     P（在 U）與 B（在艙內）都收到「量子通道已關閉」。</li>
+     *     只有 B（在艙內、不在 Crossed 中）收到「量子通道已關閉」，P（在 U、已在 Crossed 中）沒有收到（F5-3，spec §20.9；F5-1 時兩人都收到）。</li>
      * <li>同一座艙可以開新 session：B 有 Buff、在艙內，以 bulkhead 關上門就重新入場（新的 session）。等它真入場（走廊發布 358 扇側門）之後斷電，等這個 M2 session 依一般的 OFF 流程把 B 返還、移除 record 才完成。M2 入場
      *     需要 Windows 原生 checkpoint，所以名稱以 {@code _windows} 結尾；到期本身另由 {@code crossed_write_failure_pauses_the_passage_until_it_converges_then_expires} 在各平台覆蓋。</li>
      * </ul>
@@ -2920,6 +2930,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             witness.put("oneCrossedOneStayed", p.getServerWorld() == universe && b.getServerWorld() == world && record != null
                                     && record.state() == SessionState.PASSAGE_READY && record.collapse().crossed().equals(List.of(p.getUuid())));
                             witness.put("reappliedOnlyOnce", reapplyQueuedTicks(capture, sid).size() == 1 && reappliedTicks(capture, sid).size() == 1);
+                            // F5-3（spec §20.8、§20.9）：只有跨過的 P 收到到達提示的 title，留下的 B 沒有。
+                            var crossedHud = M5GameTestSupport.hud(origin.connection);
+                            var stayedHud = M5GameTestSupport.hud(second);
+                            witness.put("arrivalTitleOnlyForTheOneWhoCrossed", crossedHud.titles().equals(M5GameTestSupport.arrivalTitle(ARRIVED_NEW_KEY))
+                                    && stayedHud.titles().isEmpty());
                         });
                         whenTicks(context, appliedAt + 5, 1300, () -> !journal.flushedRecords().containsKey(sid), ended -> {
                             witness.put("endedByExpiry", passageEnded(capture, sid, "(c) game time 已到 PassageExpiresAtGameTime") == 1
@@ -2928,8 +2943,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             witness.put("everythingReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty() && !M4CandidateTestAccess.runtimeHeld(sid)
                                     && !M4CandidateTestAccess.sourceTicketHeld(sid));
                             witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
-                            witness.put("closedMessageToBoth", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED)
-                                    && M5GameTestSupport.overlayKeys(second).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                            // F5-3（spec §20.9）：(c) 結束時只有不在 Crossed 中的 B 收到「量子通道已關閉」，已跨過的 P 沒有收到。
+                            var crossedAtEnd = M5GameTestSupport.hud(origin.connection);
+                            var stayedAtEnd = M5GameTestSupport.hud(second);
+                            witness.put("closedMessageOnlyToTheOneWhoStayed", crossedAtEnd.overlays().isEmpty()
+                                    && stayedAtEnd.overlays().equals(List.of(CollapseService.MESSAGE_PASSAGE_CLOSED)));
                             witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid));
                             // 同一座艙可以開新 session：B 有 Buff、在艙內，關上門就重新入場。
                             b.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
@@ -2963,7 +2981,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F5-1（spec §10.5、§10.6 (a)、§10.8）：PASSAGE_READY 之後，非參與者 N 在艙外以 bulkhead、在艙內以 Controller 開關門：都被拒（ActionResult 不是 accepted），門仍是 passable、
      * record 仍是 PASSAGE_READY。參與者 P 在原艙這一側以 bulkhead 關門：先 checked 終局（INFO (a) 一則），再把門改為關閉（門口沒有 entity），目的世界的 ticket 已釋放、presence NONE；
-     * P 收到「量子通道已關閉」；之後門一直關著。這個 session 沒有任何 WARN／ERROR。catalog 增量 1。
+     * 還沒跨過的 P 收到「量子通道已關閉」（F5-3 起精確比對：恰一則 actionbar、沒有 title，spec §20.9）；之後門一直關著。這個 session 沒有任何 WARN／ERROR。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_close", tickLimit = 900)
     public void passage_participant_closing_the_door_ends_it_and_non_participants_are_refused(TestContext context) {
@@ -2998,7 +3016,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("doorClosedAfterTheTerminal", doorAll(world, frame, false, MembraneState.NONE));
                     witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
-                    witness.put("closedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                    // F5-3（spec §20.9）：還沒跨過的參與者仍收到「量子通道已關閉」（恰一則 actionbar，沒有 title）。
+                    var atClose = M5GameTestSupport.hud(origin.connection);
+                    witness.put("closedMessage", atClose.overlays().equals(List.of(CollapseService.MESSAGE_PASSAGE_CLOSED)) && atClose.titles().isEmpty());
                     witness.put("notTransferred", p.getServerWorld() == world && crossedInfos(capture, sid) == 0);
                 });
                 at(context, readyAt + 5, hooks, () -> {
@@ -3013,7 +3033,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * F5-1（spec §10.6 (d)、§7「已供電」是即時紅石輸入、§10.7 的 OFF 流程）：PASSAGE_READY 之後斷電：下一個 tick checked 終局（INFO (d)「來源艙沒有供電」一則；不經
      * {@code returnToOrigin}），門改為一般開門（不是關門），目的世界的 ticket 釋放，presence NONE，之後 registry 的 power state 依一般的 OFF 流程是 OFF。P 在艙內沒有被傳送，
-     * 收到「量子通道已關閉」。catalog 增量 1。
+     * 收到「量子通道已關閉」（F5-3 起精確比對：恰一則 actionbar、沒有 title，spec §20.9）。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_power", tickLimit = 900)
     public void passage_ends_with_a_plain_open_door_when_the_source_loses_power(TestContext context) {
@@ -3035,7 +3055,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                     witness.put("notTransferred", p.getServerWorld() == world);
-                    witness.put("closedMessage", M5GameTestSupport.overlayKeys(origin.connection).contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                    // F5-3（spec §20.9）：還沒跨過的參與者仍收到「量子通道已關閉」（恰一則 actionbar，沒有 title）。
+                    var atEnd = M5GameTestSupport.hud(origin.connection);
+                    witness.put("closedMessage", atEnd.overlays().equals(List.of(CollapseService.MESSAGE_PASSAGE_CLOSED)) && atEnd.titles().isEmpty());
                     whenTicks(context, ended + 1, 20, () -> ChamberRegistryState.get(server).registry().records().get(chamber).powerState()
                             == dev.quantumchamber.chamber.ChamberPowerState.OFF, off -> {
                         witness.put("offFlow", true);
@@ -3051,6 +3073,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F5-1（spec §15「EXISTING：…另一座艙的 session 也能到達同一個宇宙（基本重逢）」、§10.2 的 EXISTING 再驗）：D1 是原艙 A 上的 DORMANT NEW 收據，參與者 P 穿過通道到宇宙 U，
      * (b) 結束。之後 overworld 遠處的另一座原艙 B（{@code RemoteOrigin}）寫入選中 EXISTING U 的 D2，參與者 Q 由艙外進入：RESOLVE 只重驗（不寫 allocation、discovery）→ PREPARE
      * （把 B 投影到 U 的同座標，第一次寫入）→ PASSAGE_READY 之前再驗一次 EXISTING（通過）→ Q 穿過通道：Q 與 P 在同一個宇宙 U 的世界，Q 在 B 的投影艙門口。catalog 增量 1（只有 U）。
+     * F5-3（spec §10.8、§20.8、§20.9）：P 收到 NEW 的到達提示 title，Q 收到 EXISTING 的；Q 在 (b) 結束時沒有收到「量子通道已關閉」，P 沒有收到 D2 的 title。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_existing", tickLimit = 1500)
     public void existing_passage_brings_a_second_chamber_to_the_same_universe(TestContext context) {
@@ -3062,11 +3085,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var p = origin.player();
         M5GameTestSupport.RemoteOrigin remote;
         ServerPlayerEntity q;
+        ConnectedGameTestPlayer qConnection;
         var owned = new ArrayList<UUID>();
         try {
             remote = M5GameTestSupport.RemoteOrigin.open(context, new BlockPos(30203, 100, 30203), hooks);
             var connection = new ConnectedGameTestPlayer(world);
             hooks.add(connection::close);
+            qConnection = connection;
             q = connection.player();
             q.setNoGravity(true);
             moveOutside(q, remote.frame);
@@ -3080,6 +3105,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO));
                 whenTicks(context, readyAt + 3, 10, () -> !journal.flushedRecords().containsKey(sid1), firstEnded -> {
                     witness.put("pInTheUniverse", p.getServerWorld() == universe);
+                    // F5-3（spec §20.8）：D1 選的是 NEW，P 收到 NEW 的到達提示。
+                    witness.put("newArrivalTitleForP", M5GameTestSupport.hud(origin.connection).titles().equals(M5GameTestSupport.arrivalTitle(ARRIVED_NEW_KEY)));
                     var allocationBefore = allocationEntries(server, id);
                     remote.whenRegistered((registered, chamberB) -> {
                         var second = M5GameTestSupport.existingReceipt(server, remote.authority(chamberB), Map.of(q.getUuid(), true), id);
@@ -3099,6 +3126,11 @@ public final class M5UniverseGameTests implements FabricGameTest {
                                 witness.put("qInTheSecondProjectionDoorway", ChamberSpaceCoordinates.localPosition(far, q.getPos())
                                         .squaredDistanceTo(new Vec3d(2.5, 1, 0.3)) < 1e-12);
                                 witness.put("bothEndedWhenEveryoneCrossed", passageEnded(capture, sid1, "(b) 全員都已跨過") == 1 && passageEnded(capture, sid2, "(b) 全員都已跨過") == 1);
+                                // F5-3（spec §20.8、§20.9）：D2 選的是 EXISTING，Q 收到 EXISTING 的到達提示，(b) 結束時不再收到「量子通道已關閉」；不是 D2 參與者的 P 沒有收到 title。
+                                var qHud = M5GameTestSupport.hud(qConnection);
+                                witness.put("existingArrivalTitleForQ", qHud.titles().equals(M5GameTestSupport.arrivalTitle(ARRIVED_EXISTING_KEY)));
+                                witness.put("noClosedMessageToQ", !qHud.overlays().contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
+                                witness.put("noTitleForPFromTheSecondPassage", M5GameTestSupport.hud(origin.connection).titles().isEmpty());
                                 witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid1) && M5GameTestSupport.noWarnOrError(capture, sid2));
                                 LOGGER.info("M5_PASSAGE_EXISTING first={} second={}", firstEnded, secondEnded);
                                 releaseThenComplete(context, hooks, witness, "EXISTING 的基本重逢：" + witness, 20, () -> true);
@@ -3159,7 +3191,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F5-1（spec §10.3 的 {@code FAILED_ROLLED_BACK}；plan Step 1 F5-1）：P 越過中線，往宇宙 U 的原生移動被拒（testmod {@code SessionTransferFaultMixin}，前 2 次），回滾回原世界
      * 成功：P 仍在原世界、在越過中線的那個位置，收到「通道傳送失敗，你仍在原世界。」，通道仍開著（record 仍是 PASSAGE_READY、Crossed 是空的），WARN 一則。P 回到中線內側再越過：
      * 同一個原因再被拒一次，actionbar 再一次、WARN 仍是一則（依原因去重）。第三次越過：注入用完，傳送成功、Crossed＝[P]、(b) 結束。注入的次數由 fault 記下（2 次往 U，回滾 0 次）。
-     * catalog 增量 1。
+     * F5-3（spec §20.8、§20.9）：被拒的兩次都沒有 title，第三次才收到 NEW 的到達提示 title；(b) 結束時 P 已跨過，沒有收到「量子通道已關閉」。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_rolled_back", tickLimit = 900)
     public void passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once(TestContext context) {
@@ -3183,16 +3215,25 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             && p.getPos().squaredDistanceTo(crossingAt) < 1e-12);
                     witness.put("passageStillOpen", record != null && record.state() == SessionState.PASSAGE_READY && record.collapse().crossed().isEmpty()
                             && M5GameTestSupport.doorPassable(world, frame));
-                    witness.put("failureMessage", M5GameTestSupport.overlayKeys(origin.connection).equals(List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED)));
+                    // F5-3：actionbar 與 title 在同一次讀取（spec §20.8：FAILED_ROLLED_BACK 不顯示到達提示）。
+                    var first = M5GameTestSupport.hud(origin.connection);
+                    witness.put("failureMessage", first.overlays().equals(List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED)));
+                    witness.put("noTitleOnTheFirstFailure", first.titles().isEmpty());
                     witness.put("oneWarn", transferWarnings(capture, sid) == 1);
                     inside.run();
                 }, outside, () -> {
+                    var again = M5GameTestSupport.hud(origin.connection);
                     witness.put("secondRejectedTooButWarnedOnce", fault.destinationHits() == 2 && p.getServerWorld() == world && transferWarnings(capture, sid) == 1
-                            && M5GameTestSupport.overlayKeys(origin.connection).equals(List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED)));
+                            && again.overlays().equals(List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED)));
+                    witness.put("noTitleOnTheSecondFailure", again.titles().isEmpty());
                     inside.run();
                 }, outside));
                 whenTicks(context, readyAt + 8, 10, () -> !journal.flushedRecords().containsKey(sid), ended -> {
                     witness.put("thirdCrossed", p.getServerWorld() == universe && fault.destinationHits() == 2 && fault.hits() == 2 && crossedInfos(capture, sid) == 1);
+                    // F5-3（spec §20.8、§20.9）：第三次（成功）才有 NEW 的到達提示；(b) 結束時已跨過，不再收到「量子通道已關閉」。
+                    var third = M5GameTestSupport.hud(origin.connection);
+                    witness.put("arrivalTitleOnTheThirdCrossing", third.titles().equals(M5GameTestSupport.arrivalTitle(ARRIVED_NEW_KEY)));
+                    witness.put("noClosedMessageAfterTheThirdCrossing", third.overlays().isEmpty());
                     witness.put("endedWhenEveryoneCrossed", passageEnded(capture, sid, "(b) 全員都已跨過") == 1);
                     witness.put("stillOneWarnAndNoError", transferWarnings(capture, sid) == 1 && capture.matching(Level.WARN, sid.toString()).size() == 1
                             && capture.matching(Level.ERROR, sid.toString()).isEmpty());
@@ -3218,6 +3259,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * 進入 SEALED 的探針（{@code installSealProbe}）記到 {@code sealCommitted} 的開頭是 15、RETURN 是 11（P2 在門口，關門是 UNCHANGED，不經門服務的刷新，所以 11 只來自
      * 「進入 SEALED 之後刷新 Controller」）。
      * SEALED(TRR) 是永久的 recovery authority，收尾時留在 journal（{@code M5GameTestSupport.removeFixture}）。catalog 增量 1。
+     * F5-3（spec §20.8）：P1 的跨越有 NEW 的到達提示 title；P2 的 {@code FAILED_RECOVERY_REQUIRED} 與通道在記憶體內關閉期間的再越過都沒有 title。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_recovery", tickLimit = 1200)
     public void passage_transfer_recovery_required_seals_and_keeps_the_crossed_receipt(TestContext context) {
@@ -3246,7 +3288,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
                 at(context, readyAt + 3, hooks, () -> {
                     witness.put("p1Crossed", p1.getServerWorld() == universe && journal.flushedRecords().get(sid).collapse().crossed().equals(List.of(p1.getUuid())));
-                    M5GameTestSupport.overlayKeys(origin.connection); M5GameTestSupport.overlayKeys(second);
+                    // F5-3：P1 的跨越成功，有 NEW 的到達提示（對照下方 P2 的 FAILED_RECOVERY_REQUIRED 沒有）。這次讀取同時清掉之前的封包。
+                    witness.put("arrivalTitleForP1", M5GameTestSupport.hud(origin.connection).titles().equals(M5GameTestSupport.arrivalTitle(ARRIVED_NEW_KEY)));
+                    M5GameTestSupport.overlayKeys(second);
                 });
                 M5TestHooks.NativeMoveFault[] fault = {null};
                 M5TestHooks.JournalPutFault[] reject = {null};
@@ -3262,6 +3306,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 at(context, readyAt + 6, hooks, () -> {
                     var record = journal.flushedRecords().get(sid);
                     witness.put("recoveryRequiredWithBothMovesRefused", fault[0].destinationHits() == 1 && fault[0].otherHits() == 1 && p2.getServerWorld() == world);
+                    // F5-3（spec §20.8）：FAILED_RECOVERY_REQUIRED 不顯示到達提示。
+                    witness.put("noTitleForTheRecoveryRequired", M5GameTestSupport.hud(second).titles().isEmpty());
                     witness.put("sealWriteRejectedOnce", reject[0].hits() == 1 && record.state() == SessionState.PASSAGE_READY && record.equals(journal.records().get(sid)));
                     witness.put("oneRejectedError", capture.marked(Level.ERROR, CollapseService.LOG_MARKER.getName(), "的寫入被拒", "需要管理員處理", sid.toString()).size() == 1);
                     // fix round 1（spec review S-m3）：通道在記憶體內關閉，原艙門不再是 passable，改為一般開門（比照 PREPARE 中寫入被拒時）。
@@ -3279,7 +3325,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 // 關門、再開門都照一般門切換，record 不變；Controller 的訊息是 PASSAGE 的（補充第 3 點的顯示：presence 仍是 PASSAGE）。
                 at(context, readyAt + 9, hooks, () -> {
                     moveInside(p2, frame);
-                    M5GameTestSupport.overlayKeys(second);
+                    // F5-3：通道在記憶體內關閉時再越過中線（readyAt+7）也沒有傳送、沒有 title。這次讀取同時清掉之前的封包。
+                    witness.put("noTitleWhileClosedInMemory", M5GameTestSupport.hud(second).titles().isEmpty());
                     witness.put("participantClosesThePlainDoorWhileClosedInMemory", interact(world, frame.controllerPos(), p2).isAccepted()
                             && doorAll(world, frame, false, MembraneState.NONE) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"));
                     witness.put("controllerPassageMessage", M5GameTestSupport.overlayKeys(second).equals(List.of(CONTROLLER_PASSAGE_KEY)));
@@ -3405,9 +3452,10 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F5-1（spec §7 開頭「Crossed 落盤失敗時不傳送、不終局、不評估結束條件、拒絕關門」、§6 的 collapse view、§10.6 (c)；plan Step 1 F5-1 的「Crossed 落盤失敗」）：參與者 P1、P2。
      * P1 穿過通道之後，加入 Crossed 的 journal 寫出在 flush 開頭受控失敗（之後 recovery 的三次 RETRY_FLUSH 也失敗：下一個 tick、退避 200、400 ticks 之後；共 4 次）：
      * <ul>
-     * <li>P1 已在 U、collapse view 的 Crossed＝[P1]（flushed 仍是空的），WARN「寫入 Crossed」一則；</li>
+     * <li>P1 已在 U、collapse view 的 Crossed＝[P1]（flushed 仍是空的），WARN「寫入 Crossed」一則；P1 照常收到 NEW 的到達提示 title（F5-3，spec §20.9 邊界情況）；</li>
      * <li>未確認期間：P2 越過中線不傳送；P2 關門被拒、門仍是 passable；game time 過了 expires 也沒有終局（結束條件不評估，record 仍是 PASSAGE_READY）；</li>
-     * <li>第 5 次寫出（RETRY_FLUSH，800 ticks 的退避之後）成功：Crossed 確認，這時已到期，依 (c) 結束（INFO (c) 一則），門改為一般開門。</li>
+     * <li>第 5 次寫出（RETRY_FLUSH，800 ticks 的退避之後）成功：Crossed 確認，這時已到期，依 (c) 結束（INFO (c) 一則），門改為一般開門。只有還沒跨過的 P2 收到
+     *     「量子通道已關閉」，已在 Crossed 中的 P1 沒有收到（F5-3，spec §20.9）。</li>
      * </ul>
      * 通道的 60 秒從 PASSAGE_READY 起算，所以先以 {@code holdReady} 暫緩提交：等暫緩真的發生（{@code readyHeldInPrepare}，{@code hits()>0}；準備完成之後才會呼叫提交）之後才等
      * {@code afterAutosaveClear} 的窗口，窗口開始時才放行；窗口內確認沒有繞過探針的寫出（原生 autosave 會把未確認的 Crossed 直接寫出）。
@@ -3455,6 +3503,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             witness.put("crossedPendingInTheCollapseView", journal.rollForwardPending(sid) && view.collapse().crossed().equals(List.of(p1.getUuid()))
                                     && journal.flushedRecords().get(sid).collapse().crossed().isEmpty() && flush.failures() == 1);
                             witness.put("oneCrossedWriteWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "寫入 Crossed", sid.toString()).size() == 1);
+                            // F5-3（spec §20.9 邊界情況）：Crossed 的寫入沒有確認，P1 仍已在目的世界，照常收到 NEW 的到達提示。
+                            witness.put("arrivalTitleWhileTheCrossedWriteIsPending", M5GameTestSupport.hud(origin.connection).titles()
+                                    .equals(M5GameTestSupport.arrivalTitle(ARRIVED_NEW_KEY)));
                             M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.7, 0, 0, Vec3d.ZERO);
                         });
                         at(context, readyAt + 4, hooks, () -> M5GameTestSupport.standInDoorway(p2, frame, 4.5, 1, 0.3, 0, 0, Vec3d.ZERO));
@@ -3467,9 +3518,16 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         whenTicks(context, readyAt + 6, 1300, () -> server.getOverworld().getTime() > expires + 5, expired -> {
                             witness.put("notEndedAfterTheExpiryWhilePending", journal.rollForwardPending(sid) && M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY")
                                     && passageEnded(capture, sid, "量子通道已結束") == 0 && flush.failures() == 4);
+                            // F5-3：清掉兩人之前的封包，結束時只看 (c) 的訊息。
+                            M5GameTestSupport.hud(origin.connection); M5GameTestSupport.hud(second);
                             whenTicks(context, expired + 1, 400, () -> !journal.flushedRecords().containsKey(sid), ended -> {
                                 witness.put("convergedOnTheFifthWrite", flush.failures() == 4 && flush.retries().size() >= 1);
                                 witness.put("thenEndedByExpiry", passageEnded(capture, sid, "(c) game time 已到 PassageExpiresAtGameTime") == 1);
+                                // F5-3（spec §20.9）：(c) 結束時 P1 已在 Crossed 中（第 5 次寫出已確認），不再收到「量子通道已關閉」；還沒跨過的 P2 收到。
+                                var p1AtEnd = M5GameTestSupport.hud(origin.connection);
+                                var p2AtEnd = M5GameTestSupport.hud(second);
+                                witness.put("closedMessageOnlyToTheOneWhoStayed", p1AtEnd.overlays().isEmpty()
+                                        && p2AtEnd.overlays().equals(List.of(CollapseService.MESSAGE_PASSAGE_CLOSED)));
                                 witness.put("plainOpenAfterTheEnd", doorAll(world, frame, true, MembraneState.NONE));
                                 var writes = window.journalWrites(server, flush.ticks(), List.of(sid));
                                 witness.put("onlyProbedJournalWrites", writes.onlyProbed());
@@ -4225,6 +4283,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static final String SEALED_KEY = "message.quantumchamber.m5.sealed";
     /** F5-2：Controller 開關門時，比較器是 PASSAGE（15）的訊息 key（以字面值斷言，不信任 production 常數）。 */
     private static final String CONTROLLER_PASSAGE_KEY = "message.quantumchamber.m5.controller_passage";
+    /** F5-3（spec §10.8、§20.8）：到達目的宇宙的 title，候選是 NEW 與 EXISTING（以字面值斷言，不信任 production 常數）。 */
+    private static final String ARRIVED_NEW_KEY = "message.quantumchamber.m5.arrived_new", ARRIVED_EXISTING_KEY = "message.quantumchamber.m5.arrived_existing";
 
     private static boolean receiptStillSealed(SessionRecoveryState journal, UUID sid) {
         var record = journal.flushedRecords().get(sid);
