@@ -5834,3 +5834,184 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
   - spec Minor 3（W4b 之後、COMPLETE 之前的子狀態）與 5（DORMANT chain 的參與者一律在艙外重新加入）仍是 F6-2e 的評估項目，本節沒有動。
 - **F6-3**：`m5-collapse-probe.ps1` 與 `m4-recovery-probe.ps1` 的共用模組（quality Minor 6）；本節的逾時處置（`Stop-TimedOutPhase`、`Get-SharedLength`、`Get-SharedTail`）與 `Get-ReceiptNote` 也可以一併移到共用模組，讓 M4 recovery 用同樣的逾時。
 - **F7**：README「預期結果」中 M5 collapse probe 那一列（「halt.json 的窗口與 chain 表相符」）可以補「乾淨的 halt」；派工只允許改「M5 collapse probe」一節，本節沒有動那一列。
+
+## F6-2b：停服卡在 unloadChunks 的根因調查
+
+調查 task，不改 production（`src/main/` 沒有任何變更）。開工與結束的 HEAD 都是 `36cdad5`（只多本節的 docs commit）。全部實驗以 adapter 暫時改 testmod（`f6/f62b/adapter.py`、`adapters_f62b.py`），每次跑完還原並以 `git hash-object` 核對（`<label>-probe-state.txt`、`<label>-restored-state.txt`）。取證在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62b/`（gitignored），進度與 root 一覽在 `f6/f62b/STATUS.md`。
+
+### 結論
+
+- **根因是原版 1.21 的 livelock，不是 QuantumChamber 的程式**：
+  - holder 的卸載工作（`tryUnloadChunk`）還在 `unloadTaskQueue` 時，同一個 chunk 又被另一個 ticket 載回，`setLevel` 由 `chunksToUnload` 取回同一個 holder。這條卸載工作從此只會重排自己，以下稱「殭屍」。
+  - 停服時，`unloadChunks(() -> true)` 無上限地排空佇列。殭屍的 holder 的 refCount 由 `ChunkLoader` 持有，而這些 `ChunkLoader` 在等 main thread executor 的工作。main thread 卻困在排空迴圈，永遠回不到 `runTasksTillTickEnd`。
+- **確定性的條件**（3 個同時成立才卡住）：
+  - (Z) 卸載發生在 server 落後排程的 tick，佇列沒有排空，之後再載入，形成殭屍；
+  - (R) 停服時殭屍的 refCount > 0；
+  - (M) 持有它的 `ChunkLoader` 有進行中、要等 main thread 的載入。
+  - 以 testmod 固定 (M)（讀檔留到停服開始才完成）之後 3/3 卡住；拿掉 (Z) 是 0/2；在空轉裡執行 main thread 的工作是 0/2。
+- **「移除與預載之間的 tick 差」不是決定因素**：它只決定 (Z) 是否成立（要在 server 追上排程之前再載入），(M) 取決於停服時載入的進度。F6-2a reviewer 量的「PREPARE 等待 tick 數」只是代理指標，本節的資料不支持它能預測卡住。
+- **production 的暴露面低，但不是零**。需要：server 落後排程（開服之後的追趕、重的 tick、持續過載）、同一個 chunk 在佇列排空之前卸載又載回，以及停服時仍在載入。flush 存檔會清掉殭屍（下方 vr-flush）。
+- **建議**：另開 hardening task，以 production mixin 讓 `tryUnloadChunk` 遇到已被取回的 holder 時不再重排（下方選項 A）。在 testmod 以同一個條件做的實驗 2/2 解開。M5 本身不需要為此改 production；probe 維持 exp-c（ticket 持有到 JVM 結束）。
+
+### 原版的機制（Yarn 1.21+build.9，`genCommonSourcesWithVineflower` 的反編譯原始碼）
+
+1. `ServerChunkLoadingManager.unloadChunks(shouldKeepTicking)`：
+   - 對 `unloadedChunks` 中 refCount 為 0 的 holder，由 `currentChunkHolders` 移到 `chunksToUnload`，並呼叫 `tryUnloadChunk`。`shouldKeepTicking` 為 false 時，每次最多移 200 個。
+   - 接著排空 `unloadTaskQueue`：`while ((shouldKeepTicking.getAsBoolean() || j > 0) && (runnable = poll()) != null) runnable.run()`，其中 `j = max(0, size - 2000)`。
+2. `tryUnloadChunk(pos, holder)`：`holder.getSavingFuture().thenRunAsync(task, unloadTaskQueue::add)`。task 在 `!holder.isSavable()` 時再呼叫 `tryUnloadChunk`，否則做 `chunksToUnload.remove(pos, holder)` 與存檔、卸載。
+   - `isSavable()` ＝ refCount 為 0 而且 `savingFuture` 已完成。
+   - `savingFuture` 已完成時，重排會立刻再加入佇列。所以 refCount > 0 時，這條工作在排空迴圈裡無限循環。
+3. `setLevel`：chunk 再次可存取、而 `currentChunkHolders` 沒有它時，先 `chunksToUnload.remove(pos)` 取回同一個 holder。舊的卸載工作仍在佇列裡。holder 被取回之後，那條工作的 else 分支因 `remove(pos, holder)` 失敗而什麼都不做，只剩重排。
+4. `ChunkLoader.create` 對整個生成區域（FULL 的半徑 11）的 holder `acquire`，使 refCount 加 1；`dispose` 時 `release`。
+   - `dispose` 只在 `run()` 發現 pending future 都已完成時才發生。
+   - chunk 讀檔（`loadChunk`）的 deserialize 是 `thenApplyAsync(..., mainThreadExecutor)`，要 main thread 執行。
+5. `MinecraftServer.shutdown`：
+   - 迴圈 `while (shouldDelayShutdown) { removePersistentTickets(); chunkManager.tick(() -> true, false); runTasksTillTickEnd(); }`。
+   - `removePersistentTickets` 移除 UNKNOWN 與 POST_TELEPORT 以外的全部 ticket。
+   - 有殭屍、而且它的 refCount 要等 main thread 才會降下來時，第一個 `tick` 就回不來。
+6. `shouldKeepTicking()` ＝ `hasRunningTasks() || now < (waitingForNextTick ? tickEndTimeNanos : tickStartTimeNanos)`。
+   - tick 內比較的是下一個 tick 的預定開始時間，所以 server 落後排程時為 false：這個 tick 不排空卸載佇列。
+   - tick 之間的 `runTasksTillTickEnd` 仍有至少約 50 ms 執行 chunk 的 main thread 工作。
+   - `SERVER_STARTED` 的 listener 在 `tickStartTimeNanos` 設定之後才執行，所以開服時的工作會讓前幾十個 tick 都在追趕。probe 開服時落後 0.5～1.3 秒（`behindMs`），每個 tick 追回約 45 ms，約 15～30 tick 才追上。
+7. flush 存檔（`ServerChunkLoadingManager.save(true)`，`server.save(false,true,true)` 與 production 的 `ChunkSaveCheckpoint` 都走這裡）：
+   - 先對每個 accessible 的 holder `mainThreadExecutor.runTasks(holder::isSavable)`（推進 main thread 的工作直到可存），再 `unloadChunks(() -> true)`。
+   - 所以 flush 存檔會清掉殭屍。autosave 的 `save(false)` 不排空佇列。
+
+### 重現與證據
+
+診斷（adapter `diag`，被動，只讀原版狀態）：
+- mixin 在 `tryUnloadChunk` 的 HEAD 計數；停服後同一個 holder 達 200000 次時，印一次完整狀態（`F62B HANG`）。
+- `ChunkLoader` 的 create／dispose 維護存活集合。
+- probe 移除 ticket 之後，每個 tick 結束時印一行：所看 chunk 的 holder 在哪裡、level、refCount、`savingFuture`、ticket，以及佇列、存活 `ChunkLoader`、main thread 排隊工作數與 `behindMs`。
+- 停服後第一次處理那個 chunk 的卸載時，印一次狀態（`F62B SHUTDOWN-C`）。
+
+1. **HEAD 上的 exp-a**（W6 restart 在 `recognized` 之後以半徑 0 移除 probe 的 ticket，adapter `diag exp-a`）連跑 5 次，**1/5 卡住**（rep-2）。
+   - 五次都在 tick 1 移除，DESTINATION ticket 都在 tick 4 首見（tick 差 3）。三個 tick 內 529 個 holder 都移到 `chunksToUnload`（200、200、129），佇列一直是 529，沒有排空；tick 5 C 的 holder 被取回（同一個物件），refCount 4。
+   - 停服時佇列仍是 529。rep-4、rep-5 停服時空轉 29、3563 輪後解開。
+   - rep-2 的 `F62B HANG`：
+     - C 的 holder 在 `currentChunkHolders`（已被取回），refCount 33；
+     - 涵蓋它的存活 `ChunkLoader` 33 個（＝全部存活的 `ChunkLoader`）；列出的 12 個都是 `disposal=true`、還有 pending future（target FULL、loading EMPTY）；
+     - main thread 排隊工作 248；
+     - 529 個殭屍都達 200000 次。
+   - jstack：
+     - `Server thread` 在 `MinecraftServer.shutdown → ServerChunkManager.tick → ServerChunkLoadingManager.tick → unloadChunks → Completion.run → UniRun.tryFire → method_60440`（`tryUnloadChunk` 的 lambda）`→ tryUnloadChunk`；
+     - 其餘 Worker-Main thread 都閒置。與 F6-1 的 stack 相同（行號因 genSources 的行號對應而改變）。
+2. **tick 差的掃描**（adapter `gap-D`：`recognized` 之後多等 D 個 tick 才 JOIN），D＝1、2、4、8、16、32 各一次，**0/6 卡住**。
+   - tick 差 4～19（D≤16）：殭屍 529 都存在。
+     - gap1、gap4、gap8：停服前佇列已排空（server 追上排程，refCount 已歸零）；
+     - gap2、gap16：停服時仍有殭屍，空轉約 2700 輪後解開。
+   - tick 差 35（D＝32）：佇列在 tick 19～23 server 追上排程時排空，C 的 holder 已不在；再載入是由磁碟重新載入，沒有殭屍。
+   - 對照 F6-2a：PREPARE 等待的 tick 數（ready 的 stepTicks）在本節沒卡住的 run 是 6～22。卡住的 rep-2 沒有 `final.json`；由逐 tick 的紀錄，它在 tick 19 停服，落在沒卡住的 run 的範圍（tick 16～50）之內。這個數字不能預測卡住。
+3. **原版的最小重現**（adapter `release-method vr-*`）：
+   - W6 restart 不 JOIN，production 在 U 不動作，只以 testmod 的 ticket 操作投影所在的 chunk C：tick 2 移除 probe 的 ticket，tick 3 以另一種 testmod ticket 再載入，之後停服。
+   - 停服時點、再載入的半徑與條件不同的 6 次都沒卡住（vr-hang、vr-hang2、vr-s2、vr-s4、vr-big-s1、vr-big-s2）。
+   - 停服時都有殭屍、refCount > 0，空轉 26～17939 輪後解開。vr-s2、vr-s4、vr-big-s1、vr-big-s2 的 SHUTDOWN-C 列出的涵蓋 C 的 `ChunkLoader` 都已沒有 pending future：停服的等級下降把它們等的狀態 future 以 UNLOADED 完成，它們在 worker thread 上 dispose。也就是 (Z)、(R) 成立，但 (M) 不成立。
+4. **確定性的重現**（adapter `vr-hold`）：
+   - 同 3，以半徑 8 再載入。
+   - 另以 testmod mixin 把距 C ≥ 12 的 chunk 讀檔（`getUpdatedChunkNbt`）留到 server 不再 running 之後 200 ms 才完成，模擬停服時仍在進行中的載入。
+   - 再載入之後 2 tick 停服。**3/3 卡住**，三次的數字一致：
+     - C 的 refCount ＝ 存活 `ChunkLoader` 數 ＝ 涵蓋 C、還有 pending future 的 `ChunkLoader` 數（185、184、168）；
+     - main thread 排隊工作由 170 變成 1162（＝170＋釋放的 992 個讀檔）。
+5. **對照**（一次只改一個條件）：
+   - **vr-hold-drained**：
+     - 先等 server 追上排程（連續 20 tick 在預定時間內）才移除；
+     - 佇列排空、C 的 holder 已不在才再載入；
+     - 同樣的 hold，同樣提早停服。
+     - **0/2 卡住**：沒有殭屍，每個 holder 只處理一次。
+   - **vr-hold-rescue**：與 vr-hold 相同，但卡住時在空轉的迴圈裡執行 main thread 的排隊工作（2157 個）。**0/2 卡住**：之後涵蓋 C 的 pending future 歸零，約 4 秒內 `All dimensions are saved`。這證明 main thread 回不來是閉環的一環。
+   - **vr-flush**：殭屍＋載入中時（再載入的下一個 tick）做一次 `server.save(false,true,true)`。**0/2 卡住**：存檔約 5 秒，之後佇列 0、存活 `ChunkLoader` 0，停服時沒有空轉。
+6. 結束過的 PID：
+   - 32092（rep-2）、34528、26528、16164（vr-hold-1～3）；
+   - 全部由 `m5-collapse-probe.ps1` 的逾時處置結束（idle 90 秒、commandLineMatched、jstack、只結束該 PID）；
+   - 紀錄在 `f6/f62b/kills.txt`。之後的 java 程序只剩實驗前就存在的 Gradle daemon（PID 29200）。
+
+### production 的暴露面
+
+(Z) 需要同一個 chunk 「移除 ticket → 卸載（落後排程的 tick）→ 在佇列排空之前又被另一個 ticket 載回」，而且這段時間 chunk 上沒有其他 ticket 或玩家。(M) 需要停服時還在載入。之後若有 flush 存檔，殭屍就會被清掉（vr-flush）。
+
+| 路徑 | 移除 | 同一個 chunk 再載入 | 之間或之後的 flush 存檔 | 玩家會不會遇到 |
+| --- | --- | --- | --- | --- |
+| 目的地預載（`CollapseService` 的 `DESTINATION_TICKET`，半徑 0） | 終局（`releaseTerminatedDestinations`）、SEALED、換世界 | EXISTING 再造訪的下一次 PREPARE（修復 0 格時沒有投影 checkpoint） | 下一次 session 在 PREPARE 之前會經過走廊清理的原生存檔 checkpoint（`MeasuredWorldSaveCheckpoint`，flush），會排空佇列 | 很低：正常終局時參與者都在 U 的站點，player ticket 讓 chunk 不卸載；SEALED 之後要再走一次完整的塌縮才再載入，通常早已排空 |
+| 走廊（`CorridorPageManager` 的 `TICKET`，半徑 2，依 space） | 返還完成、放棄、lease slot 變更；STOPPING 時全部移除 | 同一座艙很快再入場、新的 space 用到同一頁的 chunk；同一個 space 的 slot 先釋放再取得 | 走廊清理的原生存檔 checkpoint 在釋放 space（移除 ticket）之前，不能清掉之後形成的殭屍 | 低：參與者離開走廊後 chunk 才卸載，要在 server 追趕中（例如剛做完 checkpoint 的長 tick 之後）立刻再入場，並在載入完成前關閉世界。STOPPING 的移除本身發生在 `shutdown` 開頭，不是成因 |
+| 來源（`SuperpositionSessionManager` 的 `SOURCE_TICKET`，半徑 2） | 放棄入場、MEASURED 的保留式清理完成、返還完成、終局或 SEALED；STOPPING | 同一座艙的下一個 session；開服 recovery 的 DORMANT 續行 | 依流程而定 | 很低：開始 session 需要玩家在艙旁，player ticket 讓來源 chunk 不卸載；只有沒有玩家在附近的 recovery 例外 |
+| 原版自己的 ticket（玩家視距、傳送門、POST_TELEPORT，或對未載入 chunk 的同步讀取（`getBlockEntity` 等）留下的 1 tick UNKNOWN ticket） | 到期或玩家離開 | 玩家折返、另一個 ticket | — | 與本 mod 無關的原版風險：server 持續過載時佇列只在超過 2000 時排空，風險較高 |
+| probe（測試用，已處理） | F6-1 B1 在 load-sync 之後移除 | PREPARE 的預載 | 沒有 | 只有測試；exp-c（持有到 JVM 結束）之後不會發生 |
+
+- M4 recovery 的 `dormant-reentry` 偶爾卡住，stack 相同（`unloadChunks → tryUnloadChunk → thenRunAsync`）。log 中的「走廊 STOPPING 票已對稱移除」發生在 `SERVER_STOPPING`，也就是 `shutdown` 的開頭，不會造成殭屍。較可能的成因是開服追趕期間，走廊或來源 ticket 先釋放、再取得（未驗證，本節沒有讀 M4 probe 的流程）。
+- 不改 production 重現 production 的路徑：rep-2 就是 production 的 PREPARE 預載把 probe 卸載中的 chunk 載回而卡住（1/5）。「移除」也由 production 執行的路徑（走廊再入場、EXISTING 再造訪）要以 probe 驅動完整的返還與再入場，本節沒有做；理由是條件已由 vr-hold 與對照完整確定，走廊與目的地的路徑只差在誰加、誰移除 ticket，原版的機制與 ticket 類型無關（probe 的 ticket、testmod 的第二種 ticket、production 的 DESTINATION 都一樣）。
+
+### 修正選項（不實作）
+
+- **A. production mixin：`tryUnloadChunk` 遇到已被取回的 holder 不再重排**（建議）。
+  - 做法：在 `tryUnloadChunk` 的 HEAD，`chunksToUnload.get(pos) != holder` 時 cancel。
+  - 為什麼語意不變：
+    - `unloadChunks` 第一次呼叫前剛 `put`，所以第一次呼叫一定通過；
+    - 已被取回的 holder，舊工作的 else 分支一定什麼都不做（`remove(pos, holder)` 失敗），只會空轉；
+    - 之後再卸載時，`unloadChunks` 會建立新的工作。
+  - 影響：所有世界（含原版自己造成的殭屍），也消除一般 tick 內殭屍在剩餘時間的空轉。
+  - 證據：在 testmod 以同一段判斷做的實驗（adapter `fix-exp`，`vr-hold-fixexp-1、2`），確定性重現的條件下 **0/2 卡住**。丟棄了 200 條殭屍，每個 holder 的卸載只處理 2 次。
+  - 風險：
+    - 改原版 chunk 系統的私有方法，與重寫 chunk 系統的 mod（例如 C2ME、Moonrise）可能衝突；
+    - 基線固定 1.21，`require=1` 會在目標改名時讓啟動失敗。
+  - 需要：
+    - spec 新增「停服安全」的一條需求；
+    - plan 開一個 hardening task（mixin、以 vr-hold 的確定性重現當 RED→GREEN 的 probe 或 GameTest、run-all）；
+    - compat 說明。
+- **B. 停服開始時先做一次 flush 存檔**：
+  - 做法：mixin 在 `MinecraftServer.shutdown` 的 HEAD 執行 `save(false,true,true)`，必須在任何 `SERVER_STOPPING` listener 移除 ticket 之前。
+  - 證據：vr-flush 0/2，flush 會推進 main thread 的工作，直到 holder 可存，再排空佇列。
+  - 缺點：
+    - 每次停服多一次完整 flush（載入中時約 5 秒）；
+    - 依賴與其他 mod 的 `SERVER_STOPPING` 的順序；
+    - 理論上不涵蓋只被「不涵蓋任何 accessible holder」的 `ChunkLoader` 持有的殭屍；
+    - 不消除一般 tick 內的空轉。
+  - 需要 spec 與 plan 變更，同 A。
+- **C. ticket 移除之前先存檔**：無效。殭屍形成於移除之後、再載入之時，移除前的 flush 不能阻止。只有「再載入之後、停服之前」的 flush 有效，但 production 無從得知何時有殭屍。不建議。
+- **D. 延後移除（例如改用會到期的 ticket 類型）**：只把移除的時點往後移，追趕期間的「移除後又載回」仍可能發生；chunk 留在記憶體更久。只能降低機率，不建議單獨採用。
+- **E. 換成 production 已有的 ticket 類型**：無效。機制與 ticket 類型無關（exp-a 的 probe ticket、vr 的第二種 testmod ticket、production 的 DESTINATION 都重現或形成殭屍）；停服時保留的只有 UNKNOWN 與 POST_TELEPORT。
+- **F. 停服前主動處理**：即 B；或在 STOPPING 推進 main thread 的工作，直到佇列中沒有被取回的 holder。效果同 B，侵入性較高。
+- **G. 測試端**：維持 probe 的 exp-c（ticket 持有到 JVM 結束，F6-1 `665a836`），已生效。之後的 probe 或 GameTest 若要移除 ticket 再讓 production 載回，應先等卸載佇列排空，或在停服前做一次 flush 存檔。
+
+建議：
+
+- M5 不為此改 production：
+  - M5 的流程本身不會「移除後立刻載回」同一個無人 chunk；
+  - 已知的觸發都需要追趕中的 ticket 變動加上載入中停服；
+  - 中途的 checkpoint flush 也會清掉殭屍。
+- 以選項 A 開獨立的 hardening task（需要使用者或 controller 裁示是否排入 M5 之後的計畫）。理由：
+  - A 直接移除 livelock 的必要條件；
+  - 語意不變；
+  - 已有確定性的 RED（vr-hold 3/3）與實驗 GREEN（fix-exp 2/2）可直接轉成正式測試；
+  - B 的成本與順序依賴較高。
+
+### root（全部保留）
+
+phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-w6/`，run root 在 `run/m5-collapse-<runId>-w6`，逐次的數字在 `f6/f62b/all-runs-analysis.txt`。
+
+| 用途 | adapter | runId | 結果 |
+| --- | --- | --- | --- |
+| HEAD 上的 exp-a | `diag exp-a` | rep-1 `7e320770c91d42b0924b6ccb6f27e958`、rep-2 `d324277f6a3b416b9f4ae39c3a25d41f`、rep-3 `55e12d68bcb14b93ab474a50d475362b`、rep-4 `7ff73b3d65d4428584613e5b70c3e40f`、rep-5 `d251c9c4ca3f4c4182361aa8728d8ac5` | 1/5 卡住（rep-2，PID 32092） |
+| tick 差的掃描 | `diag exp-a gap-D` | gap1 `d89342df81ff48309a4d66d7f4efe77a`、gap2 `7eed7d742d9842aa8b8f36658536e162`、gap4 `3138feecb0f942baa9ef079efeb440ed`、gap8 `d5336581fce240f98ed3c94af247ed28`、gap16 `648c5c8360e746abb29406b89c03d4cf`、gap32 `fb15043f47ca4e52bddc25209eef3da5` | 0/6 |
+| 原版的最小重現（沒有進行中的載入） | `diag release-method vr-*` | vr-hang `78e475510ece4179bf084832d9a4462b`、vr-hang2 `7ce612449a584bbeb48aa1fa861371c3`、vr-s2 `c462ba3b9448493caf2dcbcb993e8d4a`、vr-s4 `e4d9306ba4484904aea41e027311810b`、vr-big-s1 `5ffc81cfd1184bb097c9efa530fe8f99`、vr-big-s2 `293d41355dd646bb8c3c60c409df6439` | 0/6（暫時的空轉後解開） |
+| 確定性的重現 | `diag release-method vr-hold` | `a63540ca5ed74810ac985c5350cf85c6`、`0f588324f3924fa7a5013fef68b21c9a`、`2ff098ada78d4bd889bb1c47e066b7a7` | 3/3 卡住（PID 34528、26528、16164） |
+| 對照：沒有殭屍 | `diag release-method vr-hold-drained` | `9513d42502ed4070b443aa4620d25289`、`ca51abf3c5c44528b68fdd0ad6842dcc` | 0/2 |
+| 對照：空轉中執行 main thread 的工作 | `diag release-method vr-hold rescue` | `6af3a4726df14a4891403da5a540d91f`、`c4d40c10afdc47f1be8f6ea30eda4a60` | 0/2 |
+| 暴露面：殭屍＋載入中時 flush 存檔 | `diag release-method vr-flush` | `d184927d676c4ddf8e10a2d05e44a8d1`、`ac39a0041a6241cfba9f03071aec4b2a` | 0/2 |
+| 修正選項 A 的實驗 | `diag fix-exp release-method vr-hold` | `643540a972b449f18985e6449a18a86a`、`c0e7fbe9e9d24ef89218035d516e411f` | 0/2 |
+
+### 偏離派工字面之處
+
+1. **確定性的條件不是 tick 差**：派工建議把「ticket 移除」與「預載」之間的 tick 差做成可設定並掃描（已做，gap-D）。掃描顯示 tick 差只決定 (Z)；(M) 由停服時載入的進度決定。所以另以 testmod 把讀檔留到停服開始（vr-hold）來固定 (M)，並以一次只改一個條件的對照（drained、rescue）證明。
+2. **修正選項做了 testmod 的實驗**：派工要求修正選項不實作。選項 A 只在 testmod 的診斷 mixin 以暫時改動驗證效果（`fix-exp`，已還原），沒有寫入 production。
+3. **genSources**：為了讀原版原始碼跑了一次 `genCommonSourcesWithVineflower`（只寫 worktree 的 `.gradle/loom-cache`，gitignored）。之後 runtime jar 的行號改為反編譯原始碼的行號，本節 jstack 的行號（`unloadChunks:494`、`tick:447`）與 F6-1（`:483`、`:441`）不同，指的是同一行。
+4. **沒有以 probe 驅動「移除也由 production 執行」的路徑**，理由見上方「production 的暴露面」。
+
+### 交給後續
+
+- **修正選項 A 的 hardening task**（需要裁示是否排入、排在哪個 milestone）：
+  - spec 補停服安全的需求；
+  - production mixin；
+  - 以 vr-hold 的條件做成正式的 probe 或 GameTest，當 RED→GREEN；
+  - compat 說明。
+  - `f6/f62b/adapters_f62b.py` 的 `vr-hold`、`fix-exp` 與 `diag/` 可作為起點。
+- **M4 recovery 的 `dormant-reentry`**：若要確認是否同一個成因，可以在那個 phase 套用本節的 `diag`（`F62B HANG` 會指出被取回的 holder 與持有它的 `ChunkLoader`）。
