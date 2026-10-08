@@ -750,8 +750,9 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     }
 
     /**
-     * W4、W6 的 restart（JOIN 之前）：以 probe 的 ticket（半徑 2，Controller 的 chunk 會 ticking，排程的 refresh 才會執行）載入投影所在的 chunk，開始觀察磁碟上這個
-     * Controller 的 load-sync（{@code SERVER_STARTED} 的 AFTER phase：開服 bootstrap 已載入時，佇列也要到 tick 1 才處理，所以觀察得到）。
+     * W4、W6 的 restart（JOIN 之前）：以 probe 的 ticket（{@link ProbeTicket}）載入投影所在的 chunk，開始觀察磁碟上這個 Controller 的 load-sync
+     * （{@code SERVER_STARTED} 的 AFTER phase：開服 bootstrap 已載入時，佇列也要到 tick 1 才處理，所以觀察得到）。load-sync 處理時就同步 refresh
+     * （{@code REDSTONE.onLoad}），讀電位的 ±3 格都在同一個 chunk，所以 level FULL 就夠，不必 ticking。
      */
     private void loadProjection() {
         var world = universeWorld().orElseThrow();
@@ -759,7 +760,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         loadSyncLog = new LogCapture(ChamberControllerLoadSyncQueue.class.getName());
         var chunk = new ChunkPos(FRAME.controllerPos());
         proof.put("projectionChunkLoadedAtStart", world.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null);
-        world.getChunkManager().addTicket(ProbeTicket.TYPE, chunk, 2, chunk);
+        world.getChunkManager().addTicket(ProbeTicket.TYPE, chunk, 0, chunk);
         world.getChunk(chunk.x, chunk.z);
         if (!(world.getBlockEntity(FRAME.controllerPos()) instanceof ChamberControllerBlockEntity controller)) {
             throw new AssertionError("projectionControllerLoaded：載入之後 U 的 Controller 位置沒有 Controller block entity：" + world.getBlockState(FRAME.controllerPos()));
@@ -773,7 +774,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
 
     /**
      * W4、W6：load-sync 處理（CONSUMED）之後，磁碟上的 Controller 是 inert 的 PROJECTION（spec §9.3：依投影保護索引，INVALID、比較器 0、沒有 chamber UUID），整段沒有任何
-     * log 提到它的座標，參與者還沒有 JOIN。W6（COMPLETE）的不變量 cell 受保護、interior 不受；W4（PENDING）只辨識、不保護。之後移除 probe 的 ticket。
+     * log 提到它的座標，參與者還沒有 JOIN。W6（COMPLETE）的不變量 cell 受保護、interior 不受；W4（PENDING）只辨識、不保護。probe 的 ticket 不移除（{@link ProbeTicket}）。
      */
     private boolean projectionRecognized() {
         var world = universeWorld().orElseThrow();
@@ -796,8 +797,6 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         }
         proof.put("loadSyncOutcomes", loadSync.outcomes().stream().map(Enum::name).toList());
         closeLoadSync();
-        var chunk = new ChunkPos(pos);
-        world.getChunkManager().removeTicket(ProbeTicket.TYPE, chunk, 2, chunk);
         return true;
     }
 
@@ -967,8 +966,6 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
                     damageProjection();
                     writeCrashReceipt(M5GameTestSupport.existingReceipt(server, M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), Map.of(participant, true),
                             universe));
-                    var chunk = new ChunkPos(FRAME.controllerPos());
-                    universeWorld().orElseThrow().getChunkManager().removeTicket(ProbeTicket.TYPE, chunk, 2, chunk);
                     armWindow(CrashWindow.PROJECTION_REPAIRED);
                     return true;
                 }),
@@ -1000,7 +997,7 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     private void damageProjection() {
         var world = universeWorld().orElseThrow(() -> new AssertionError("universeActive：EXISTING 收據之前 U 不是 ACTIVE"));
         var chunk = new ChunkPos(FRAME.controllerPos());
-        world.getChunkManager().addTicket(ProbeTicket.TYPE, chunk, 2, chunk);
+        world.getChunkManager().addTicket(ProbeTicket.TYPE, chunk, 0, chunk);
         world.getChunk(chunk.x, chunk.z);
         expect("projectionIntactBeforeDamage", world.getBlockState(damagedShell()).isOf(Blocks.BEDROCK) && world.getBlockState(interiorMarker()).isAir(),
                 () -> "shell=" + world.getBlockState(damagedShell()) + " interior=" + world.getBlockState(interiorMarker()));
@@ -1014,7 +1011,12 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
 
     // ---- 共用 ----
 
-    /** probe 自己的 chunk ticket（不持久化；只在需要時建立，probe 關閉時不碰 ChunkTicketType）。 */
+    /**
+     * probe 自己的 chunk ticket（level FULL、不持久化；只在需要時建立，probe 關閉時不碰 ChunkTicketType）。加上之後一直持有到 JVM 結束，不移除：
+     * 開發時在 W6 的 restart 於 load-sync 之後移除，之後 PREPARE 的預載又以 production 的 ticket 載入同一個 chunk，而這個 phase 沒有任何 flush 存檔（修復 0 格，
+     * 不做 checkpoint）；停服時原版的 {@code MinecraftServer.shutdown → ServerChunkLoadingManager.unloadChunks} 每次都忙等卡住（半徑 2 與 0 都是），不加 ticket 時則
+     * 正常停服。持有到底就沒有這個卸載再載入的循環，也不影響 production 的判斷（PREPARE 只以 {@code getWorldChunk} 查 FULL）。
+     */
     private static final class ProbeTicket {
         static final ChunkTicketType<ChunkPos> TYPE = ChunkTicketType.create("quantumchamber_m5_collapse_probe", Comparator.comparingLong(ChunkPos::toLong));
     }
