@@ -221,7 +221,7 @@ M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為
 | main-only oracle | PASS（三層 testmod 命中 0、world keys exact、exact restore） |
 | M3 | lifecycle 4＋transfer 5 receipts PASS |
 | M4 recovery | 24/24 phases，各自獨立 JVM |
-| M5 collapse probe（M5 F6-1 起；SUMMARY 的 `m5collapse=`） | 9 條 chain、18 phases，各自獨立 JVM：9 個 halt（JVM exit 77、`halt.json` 的窗口與 chain 表相符）、9 個 stop（exit 0、`final.json` PASS）；receipt 的 hash 對上 launcher |
+| M5 collapse probe（M5 F6-1 起；SUMMARY 的 `m5collapse=`） | 9 條 chain、18 phases，各自獨立 JVM：8 個 halt（8 條 crash chain 的 crash phase；JVM exit 77、`halt.json` 的窗口與 chain 表相符）、10 個 stop（8 個 restart 與 `degraded` 的兩個 phase；exit 0、`final.json` PASS）；receipt 的 hash 對上 launcher |
 | CI 綠燈規則 | Windows、Ubuntu 兩個 step 都 PASS（讀 default 與 M5 兩份 XML） |
 | JAR | release 359 entries（312 classes）、sources 210；testmod／gametest／probe 命中 0（`dev/quantumchamber/compat/ModPresenceProbe` 是合法的 production class） |
 
