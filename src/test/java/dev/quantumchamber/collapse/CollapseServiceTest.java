@@ -383,19 +383,37 @@ class CollapseServiceTest {
                 () -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
     }
 
-    /** F5-1（spec §10.8）：通道開啟、傳送失敗與通道結束的訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 逐字等於 spec，en_us 有翻譯。 */
+    /**
+     * F5-1（spec §10.8）：通道開啟、傳送失敗與通道結束的訊息，key 在 {@code message.quantumchamber.m5.*}，zh_tw 逐字等於 spec，en_us 有翻譯。F6-1 Step 0（F5-3 quality n-1）
+     * 加上到達目的宇宙的 title（§10.8、§20.8：NEW、EXISTING 各一則；常數在 {@link PassageService}）。
+     */
     @Test void passageMessagesExistInBothLanguages() throws Exception {
         var zh = lang("zh_tw"); var en = lang("en_us");
         var cases = new ArrayList<Executable>();
         for (var row : List.of(List.of(CollapseService.MESSAGE_PASSAGE_OPENED, "message.quantumchamber.m5.passage_opened", "量子通道已開啟：穿過門口的量子膜即可前往。"),
                 List.of(CollapseService.MESSAGE_PASSAGE_TRANSFER_FAILED, "message.quantumchamber.m5.passage_transfer_failed", "通道傳送失敗，你仍在原世界。"),
-                List.of(CollapseService.MESSAGE_PASSAGE_CLOSED, "message.quantumchamber.m5.passage_closed", "量子通道已關閉。"))) {
+                List.of(CollapseService.MESSAGE_PASSAGE_CLOSED, "message.quantumchamber.m5.passage_closed", "量子通道已關閉。"),
+                List.of(PassageService.MESSAGE_ARRIVED_NEW, "message.quantumchamber.m5.arrived_new", "你已進入新的宇宙。"),
+                List.of(PassageService.MESSAGE_ARRIVED_EXISTING, "message.quantumchamber.m5.arrived_existing", "你已進入另一個宇宙。"))) {
             cases.add(() -> assertEquals(row.get(1), row.get(0)));
             cases.add(() -> assertEquals(row.get(2), text(zh, row.get(0))));
             cases.add(() -> assertFalse(text(en, row.get(0)).isBlank(), "en_us 有翻譯：" + row.get(0)));
         }
         cases.add(() -> assertEquals(zh.keySet(), en.keySet(), "兩個語言檔的 key 集合相同"));
         assertAll(cases);
+    }
+
+    /**
+     * F6-1 Step 0（F5-3 quality n-1，spec §20.8）：到達提示的 key 依選中的候選（{@code PassageService.arrivalKey}，純函式）：NEW「你已進入新的宇宙。」、EXISTING「你已進入另一個宇宙。」；
+     * SOURCE 與沒有選中的候選為空（{@code arrived} 不顯示、記 WARN；PASSAGE_READY 的 record 驗證讓 production 走不到）。
+     */
+    @Test void arrivalKeyFollowsTheSelectedCandidate() {
+        assertAll(
+                () -> assertEquals(Optional.of(PassageService.MESSAGE_ARRIVED_NEW), PassageService.arrivalKey(measured(DimensionRole.OVERWORLD, NEW).selectedCandidate()), "NEW"),
+                () -> assertEquals(Optional.of(PassageService.MESSAGE_ARRIVED_EXISTING), PassageService.arrivalKey(measured(DimensionRole.OVERWORLD, EXISTING).selectedCandidate()),
+                        "EXISTING"),
+                () -> assertEquals(Optional.empty(), PassageService.arrivalKey(measured(DimensionRole.OVERWORLD, SOURCE).selectedCandidate()), "SOURCE"),
+                () -> assertEquals(Optional.empty(), PassageService.arrivalKey(Optional.empty()), "沒有選中的候選"));
     }
 
     /**
