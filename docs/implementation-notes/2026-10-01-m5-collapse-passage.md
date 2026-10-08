@@ -5845,13 +5845,16 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
   - holder 的卸載工作（`tryUnloadChunk`）還在 `unloadTaskQueue` 時，同一個 chunk 又被另一個 ticket 載回，`setLevel` 由 `chunksToUnload` 取回同一個 holder。這條卸載工作從此只會重排自己，以下稱「殭屍」。
   - 停服時，`unloadChunks(() -> true)` 無上限地排空佇列。殭屍的 holder 的 refCount 由 `ChunkLoader` 持有，而這些 `ChunkLoader` 在等 main thread executor 的工作。main thread 卻困在排空迴圈，永遠回不到 `runTasksTillTickEnd`。
 - **確定性的條件**（3 個同時成立才卡住）：
-  - (Z) 卸載發生在 server 落後排程的 tick，佇列沒有排空，之後再載入，形成殭屍；
+  - (Z) 卸載發生在 server 落後排程的 tick，佇列沒有排空，之後再載入，形成殭屍（成因不只落後排程，見「production 的暴露面」開頭的 Minor 2 補充）；
   - (R) 停服時殭屍的 refCount > 0；
   - (M) 持有它的 `ChunkLoader` 有進行中、要等 main thread 的載入。
   - 以 testmod 固定 (M)（讀檔留到停服開始才完成）之後 3/3 卡住；拿掉 (Z) 是 0/2；在空轉裡執行 main thread 的工作是 0/2。
 - **「移除與預載之間的 tick 差」不是決定因素**：它只決定 (Z) 是否成立（要在 server 追上排程之前再載入），(M) 取決於停服時載入的進度。F6-2a reviewer 量的「PREPARE 等待 tick 數」只是代理指標，本節的資料不支持它能預測卡住。
 - **production 的暴露面低，但不是零**。需要：server 落後排程（開服之後的追趕、重的 tick、持續過載）、同一個 chunk 在佇列排空之前卸載又載回，以及停服時仍在載入。flush 存檔會清掉殭屍（下方 vr-flush）。
   - （controller 依 F6-2b review Important 1 更正）「flush 會清掉殭屍」只在沒有 (M) 的條件下有證據：vr-flush 的基底沒有 hold，不是單一變因的對照。
+    - 這裡與下文的「沒有 (M)」，精確的意思是：沒有「flush 當下推不動、要等到之後才會完成的載入」。
+    - vr-flush 在 flush 當下其實有進行中的載入（tick 4 的 refCount 470、487，`savingDone=false`），只是這些載入由 flush 自己推進完成。
+    - vr-hold 以 hold 固定的，是要等到停服才會完成的載入。
   - `save(true)` 本身也有同一個無上限的排空（見「原版的機制」第 7 點）。所以殭屍＋(M) 時，flush 自己理論上也會 livelock。
   - production 在遊戲進行中做的 checkpoint flush 都走這條路：`ChunkSaveCheckpoint`、`MeasuredWorldSaveCheckpoint`、`Minecraft121DynamicDimensionBackend` 的 `world.save(null,true,false)`。也就是說，**遊戲進行中理論上也有凍結點，不只停服**。這一點未驗證、機率很低；選項 A 同時涵蓋這條路徑。
 - **建議**：另開 hardening task，以 production mixin 讓 `tryUnloadChunk` 遇到已被取回的 holder 時不再重排（下方選項 A）。在 testmod 以同一個條件做的實驗 2/2 解開。M5 本身不需要為此改 production；probe 維持 exp-c（ticket 持有到 JVM 結束）。
@@ -5884,6 +5887,8 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
   1. note 依 Important 1 修正；
   2. hardening task 以 A 實作，排在 M5 之後的第一優先；
   3. 已知問題記錄玩家可見的症狀：關閉世界時停在 `Saving worlds`。
+- reviewer 另外提到：選項 A 可能也會消除 M4 `dormant-reentry` 的偶發卡住（未驗證）。
+- controller 依 note 更正之後請同一位 reviewer 複核：Important 1 已關閉。複核指出的 4 個措辭缺口也已補上：(M) 的精確意思、選項 B、C、G 的條件，以及 (Z) 的指向。
 - 要不要修、排在哪裡，由使用者裁示。
 
 ### 原版的機制（Yarn 1.21+build.9，`genCommonSourcesWithVineflower` 的反編譯原始碼）
@@ -6008,14 +6013,14 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
   - 缺點：
     - 每次停服多一次完整 flush（載入中時約 5 秒）；
     - 依賴與其他 mod 的 `SERVER_STOPPING` 的順序；
-    - 理論上不涵蓋只被「不涵蓋任何 accessible holder」的 `ChunkLoader` 持有的殭屍；
+    - 殭屍的 refCount 若由「不涵蓋任何 accessible holder」的 `ChunkLoader` 持有，flush 推進不了它，flush 本身就會卡在同一個排空迴圈（controller 依 review 複核改寫：原文寫「理論上不涵蓋」）；
     - 不消除一般 tick 內的空轉。
   - 需要 spec 與 plan 變更，同 A。
-- **C. ticket 移除之前先存檔**：無效。殭屍形成於移除之後、再載入之時，移除前的 flush 不能阻止。只有「再載入之後、停服之前」的 flush 有效，但 production 無從得知何時有殭屍。不建議。
+- **C. ticket 移除之前先存檔**：無效。殭屍形成於移除之後、再載入之時，移除前的 flush 不能阻止。只有「再載入之後、停服之前」的 flush 有效，但 production 無從得知何時有殭屍。不建議。（controller 依 review 複核補註：「flush 有效」同樣只在沒有 flush 推不動的載入時成立，見 Important 1 的更正。）
 - **D. 延後移除（例如改用會到期的 ticket 類型）**：只把移除的時點往後移，追趕期間的「移除後又載回」仍可能發生；chunk 留在記憶體更久。只能降低機率，不建議單獨採用。
 - **E. 換成 production 已有的 ticket 類型**：無效。機制與 ticket 類型無關（exp-a 的 probe ticket、vr 的第二種 testmod ticket、production 的 DESTINATION 都重現或形成殭屍）；停服時保留的只有 UNKNOWN 與 POST_TELEPORT。
 - **F. 停服前主動處理**：即 B；或在 STOPPING 推進 main thread 的工作，直到佇列中沒有被取回的 holder。效果同 B，侵入性較高。
-- **G. 測試端**：維持 probe 的 exp-c（ticket 持有到 JVM 結束，F6-1 `665a836`），已生效。之後的 probe 或 GameTest 若要移除 ticket 再讓 production 載回，應先等卸載佇列排空，或在停服前做一次 flush 存檔。
+- **G. 測試端**：維持 probe 的 exp-c（ticket 持有到 JVM 結束，F6-1 `665a836`），已生效。之後的 probe 或 GameTest 若要移除 ticket 再讓 production 載回，應先等卸載佇列排空，或在停服前做一次 flush 存檔。（controller 依 review 複核補註：flush 只在沒有 flush 推不動的載入時有效；等佇列排空較可靠。）
 
 建議：
 
