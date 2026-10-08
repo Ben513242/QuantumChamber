@@ -2,6 +2,7 @@ package dev.quantumchamber.gametest;
 
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.collapse.ProjectionWriter;
+import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.MaterializeResult;
 import dev.quantumchamber.universe.UniverseWorldDescriptor;
@@ -276,6 +277,8 @@ public final class M5TestHooks {
     /**
      * spec §12 的跨 JVM crash 窗口（F6-1）：每個值是「窗口剛成立」的那一個程式點，由該點的 hook mixin 呼叫 {@link #reachedCrashWindow}。呼叫端與交給 crash 點的 detail：
      * <ul>
+     * <li>{@code SessionRecoveryStateCrashWindowMixin}：{@link #COLLAPSING_COMMITTED}（每次 {@code commitRestore} 回傳，任何 restore 類的邊與結果都是，
+     *     {@link CollapsingCommit}）；</li>
      * <li>{@code CollapseAuthoritiesCrashWindowMixin}：{@link #ALLOCATION_APPENDED}、{@link #CATALOG_ALLOCATED}、{@link #DISCOVERY_APPENDED}（回傳的
      *     {@code CollapseAuthorities.Lookup}），{@link #PROJECTION_COMPLETE}（{@code writeProjection} 回傳的 {@code CollapseAuthorities.WriteResult}，每次寫入都呼叫，
      *     PENDING 與 COMPLETE 都是）；</li>
@@ -283,8 +286,7 @@ public final class M5TestHooks {
      *     {@code write} 回傳，兩種模式都是，{@link ProjectionWrite}）；</li>
      * <li>{@code ChunkSaveCheckpointCrashWindowMixin}：{@link #DESTINATION_CHECKPOINT}（每次原生存檔 checkpoint 開始之前，任何世界，{@link ChunkCheckpoint}）。</li>
      * </ul>
-     * 所以 detail 是否就是那個窗口（例如 {@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。{@link #COLLAPSING_COMMITTED} 還沒有呼叫端：裝著它的
-     * crash 點不會觸發。
+     * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
     public enum CrashWindow {
         /** W1：{@code SessionRecoveryState.commitRestore} 把 MEASURED 提交為 COLLAPSING 之後（返還之前）。 */
@@ -313,6 +315,9 @@ public final class M5TestHooks {
         var point = CRASH_POINT.get();
         if (point != null) point.reach(window, detail);
     }
+
+    /** {@link CrashWindow#COLLAPSING_COMMITTED} 的 detail：{@code SessionRecoveryState.commitRestore} 的一次呼叫（變更前、變更後的 record）與它的結果。 */
+    public record CollapsingCommit(SessionRecoveryRecord expected, SessionRecoveryRecord next, SessionRecoveryState.CommitResult result) {}
 
     /** {@link CrashWindow#PROJECTION_CELL_WRITTEN} 的 detail：{@code ProjectionWriter} 剛寫完的一格（世界、艙、模式、位置，與這一格是否改變）。 */
     public record ProjectionCell(ServerWorld world, ChamberFrame frame, ProjectionWriter.Mode mode, BlockPos pos, boolean changed) {}
