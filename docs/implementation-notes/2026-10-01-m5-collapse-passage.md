@@ -5610,6 +5610,63 @@ GREEN（`177b576`，工作樹乾淨，`b2-green-1`：runId `6da98bcea1954991a0d1
   - `scripts/verification/`：`m5-collapse-probe.ps1`；`run-all.ps1` 只改 M5 collapse 的 summary 核對（一行條件、一行註解）；README 只改「M5 collapse probe」一節。
   - **沒有改** `src/main/`、`build.gradle`、`fabric.mod.json`（entrypoint 仍是 `M5CollapseRecoveryProbe`）、crash window mixin、`M5GameTestSupport`（probe 端安裝 fault 不需要抽取，見下）、`gates.ps1`、`main-oracle.ps1`、`ci-rule-check.ps1`、`m4-recovery-probe.ps1`、`.github/`、既有的 GameTest、M4 probe、JUnit、語言檔。probe 的 ticket 仍持有到 JVM 結束（`FIX:507`、`:519`，與 `665a836` 相同）。
 - 行號以 `f51abcf` 為準。`PR`＝`M5CollapseRecoveryProbe`，`RUN`＝`M5CollapseRun`，`WIN`＝`M5CollapseWindows`，`FIX`＝`M5CollapseFixture`，`PAS`＝`M5CollapsePassage`，`REV`＝`M5CollapseRevisitChains`，`PL`＝`M5CollapseProjectionLoad`，`DE`＝`M5CollapseDiskEvidence`，`HK`＝`M5TestHooks`，`MP`＝`m5-collapse-probe.ps1`，`RA`＝`run-all.ps1`。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 4）。
+    - reviewer 自己寫了比對腳本：
+      - `6da98bce` → `14f0f228`：18 個 phase 的斷言名稱、數目、順序、step、witness 的 key 完全相同；
+      - `6da98bce` → `8d898477`／`b7f3ee46`：F6-1 的名稱全部仍在、全部成立；改名的兩個至少一樣嚴格，對 degraded 更嚴。
+    - F6-1 的 5 個 mutation 在重構後仍失敗在目標；新守門的 6 個 mutation 與對照組都成立；不採計的兩個 root 理由成立。
+    - 逾時：自己量了 224 份 log，最大間隔 6 秒，門檻約有 15 倍餘裕。
+    - Full ERROR +3 確認是 H2 受控 region write 的已知偶發；release、sources JAR 都不含 `CollapseLedgerTestAccess`。
+    - **exp-a 不再重現**：reviewer 量了 PREPARE 預載的等待 tick 數。F6-1 卡住的 3 次是 4、12、8 tick；本節沒卡住的 2 次是 21、23 tick。證據比較支持「卸載與預載之間的 race，時序本來就不穩」，不是重構改掉了重現條件。
+    - Minor：
+      1. 拆檔與 probe 端 fault 之後，有幾處 Javadoc 過期：
+         - `HK:877`；
+         - 4 個 crash window mixin 的「只由 `M5CollapseRecoveryProbe` 安裝」；
+         - `ProjectionWriteFaultMixin:15`／`MaterializeFaultMixin:17`；
+         - 最重要的是 `ProjectionWriterCrashWindowMixin:23`，沒有寫出「fault 取消的那一次，這個 hook 不會被呼叫」。
+      2. `MP:121` 的 `$sameStart` 是恆真比較。PID 的身分實際上靠 handle、`HasExited` 與 commandline 保證，但文件把它寫成一項獨立的核對。
+      3. `MP:104` 以 UTF-8 讀 cp950 的 Gradle stdout，`timeout.json` 的 `lastGradleLines` 是亂碼。
+      4. 「觀察」第 1 條不精確。controller 已在該處補充。
+  - quality review Approved（Critical 0、Important 0、Minor 9），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Minor：
+      1. 「加一列就好」只對 COLLAPSING 中、RESOLVE／PREPARE 期間的窗口（W1～W6x）成立：
+         - `expectAtRestart` 把 `restartedCollapsing` 寫死（`WIN:288`）；
+         - catalog 一律要求 EAGER_ENABLED（`WIN:306-313`）；
+         - `passage.steps` 先等 RESOLVE 的 INFO（`PAS:82-83`）；
+         - `End.participants` 只有單一的 `Place`（`PAS:146`）；
+         - `expectEnd` 無條件斷言 allocation、discovery 與 ACTIVE world（`PAS:163-176`）。
+
+         W7、W9、W10 都表達不了。
+      2. `FIX:294` 的 `adopt` 遇到 SOURCE 候選會丟 ClassCastException，W10 會踩到。
+      3. `End.authorityInitialized=false` 的意思是「不檢查」，不是「預期初始化失敗」，W11 容易誤用。`End.catalogGrowth` 與每個 tick 的值重複。
+      4. 依賴有兩個循環：RUN↔WIN（`RUN:365`）、RUN↔PR（`RUN:114`、`:143`、`:156`）；`RUN:130-139` 是 package 可見的可變欄位。
+      5. `Phase` 的 4 參數與 6 參數建構子，`Checked` 參數都是同型別，互換位置也能編譯（`RUN:68`、`:75`）。
+      6. 命名衝突：`M5CollapseRun.Condition` 對上 `M5CollapseWindows.Condition`，`HaltEvidence` 對上 `Evidence`。
+      7. `RUN:149` 的 `context()` 重複登記時會靜默覆蓋。
+      8. `Stop-TimedOutPhase` 有 11 個位置參數；JVM 找到之前觸發總上限時，launcher 不會被結束（`MP:119`、`:137`、`:142`）。
+      9. `MP:214` 的訊息沒有附 `$note`；`window` 用不分大小寫的 `-ne`，RA 卻用 `-ceq`。
+    - 給 F6-2c～e 的建議：
+      - W7：`AtRestart` 加 `stateAtHalt`、`crossedAtHalt`；`passage.steps` 拆成可選的三段；`End.participants` 逐人指定。
+      - W9：availability 與 sealed 原因。
+      - W10、W11：
+        - 「由檔案載入收據」的路徑；
+        - `catalogOnlyDestination` 假設 catalog 只有 Destination；
+        - catalog 的 key set 比對；
+        - `End.projection` 加 `NO_ENTRY`。
+      - 多人：選門者由 `candidateSelection.selectedBy` 推導；`receiptIdentity` 比集合。
+      - `stopping()` 先移除所有 hook；`halt()` 在 `stoppingSeen` 時拒絕。
+      - README 補一句「COLLAPSING 以外的窗口要先擴充 `AtRestart`／`End`」。
+  - controller 處置：不開 fix round。
+    - quality Minor 1，以及給 W7 與多人的建議，交給 **F6-2c**：先擴充窗口表與 `End`，並更正 README 與 note「加一列就好」的說法。
+    - quality Minor 2、3，以及給 W10、W11 的建議，交給 **F6-2e**。
+    - quality Minor 4～7、spec Minor 1，以及 `stopping()`／`halt()` 的兩道防線，交給 **F6-2c 的 Step 0**，在加新 phase 之前先做。
+    - spec Minor 2、3，以及 quality Minor 8、9，交給 **F6-3** 的 ps1 共用模組。
+    - spec Minor 4 由 controller 在「觀察」第 1 條更正。
+  - **F6-2a 完成**：range `a7abee3..b44e0f2`，之後接 controller 的 docs commit。
+    - code：`6833aad`、`c4fdae6`、`da27711`、`2e3fd99`、`9ace44f`、`30ea4bf`；
+    - docs：`f51abcf`、`b44e0f2`；
+    - 最終 run-all：`run-all-6377619e81164901a8f144d9038e6c6c`，`END ALL exit=0`（`f51abcf`）。
 
 ### 拆檔
 
@@ -5761,10 +5818,14 @@ F6-1 的 `M5CollapseRecoveryProbe`（1644 行）拆成下列 package-private 類
 ### 觀察（未修改）
 
 1. **exp-a 0/2 重現**：`30ea4bf` 上以 adapter `exp-stuck`（W6 restart 在 `recognized` 之後以半徑 0 移除 probe 的 ticket，與 F6-1 exp-a 相同的位置與半徑）跑 `-Only w6` 兩次，`w6-restart` 都在 28～30 tick 完成、正常停服（`Saving worlds` 之後照常 `All dimensions are saved`、`M3_UNIVERSE_STOPPED_VERIFIED`）。F6-1 在 `50df82b` 上 3/3 卡住。兩者在 W6 restart 的 chunk 與 ticket 操作相同（載入、移除、PREPARE 的預載、修復 0 格）；差異在 `665a836` 之後的 commit（W1 的 hook mixin、degraded chain、本節的重構與斷言），哪一個造成差別沒有查。
+   - controller 依 spec review Minor 4 補充：
+     - 「F6-1 在 `50df82b` 上 3/3 卡住」不精確。F6-1 的三次分別是：dev1，在 `ec59949` 加上未提交的改動；green-b1-1，在 `50df82b`；exp-a，在 `50df82b` 加上半徑 0（`f6/f61/STATUS.md:43-46`）。
+     - spec reviewer 量了 PREPARE 預載的等待 tick 數：卡住的三次是 4、12、8 tick（`4d964650`、`f113f560`、`105a8d93`）；本節沒卡住的兩次是 21、23 tick（`3ec2a3c7`、`c695b34d`）。
+     - 推論（未證實）：這是 race。ticket 移除之後的卸載還沒完成，預載就把同一個 chunk 載回來，才會卡住。重構不一定改掉了重現條件。
 
 ### 交給後續
 
-- **F6-2b**（停服卡住的根因）：先以 `177b576`（或 `50df82b`）重跑 exp-a，確認重現條件仍在；`m5-collapse-probe.ps1` 現在會在 90 秒沒有新 log 時自動 jstack、只結束該 JVM、寫 `timeout.json`，不必人工結束。
+- **F6-2b**（停服卡住的根因）：（controller 補：依 spec review 的建議，順序改為：先在 HEAD 連跑 exp-stuck，每次記錄預載的 tick 差；重現率低時，把「ticket 移除」與「預載」之間的 tick 差做成可設定，掃描找出確定性的條件；都不行時，才在本 worktree 以暫時改動回到舊寫法。依 AGENTS，不另開 worktree。）原文：先以 `177b576`（或 `50df82b`）重跑 exp-a，確認重現條件仍在；`m5-collapse-probe.ps1` 現在會在 90 秒沒有新 log 時自動 jstack、只結束該 JVM、寫 `timeout.json`，不必人工結束。
 - **F6-2c～e**（W7～W12 與額外的 phase）：
   - 加窗口：`CrashWindow` 的值、hook mixin、`WIN.table()` 一列；restart 的開服預期與 PREPARE 的預期都寫在那一列。
   - 加 chain：`PR.phases()`、`MP` 的 `$chains`、`RA` 的 `$expectedCollapse` 三份表一起改（`phaseTable` 不一致時 `MP` 判 FAIL）；`m5collapse=` 的數字隨之改變。
