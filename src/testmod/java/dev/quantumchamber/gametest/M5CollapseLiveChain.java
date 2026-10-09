@@ -1,22 +1,14 @@
 package dev.quantumchamber.gametest;
 
-import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
-
 import dev.quantumchamber.candidate.QuantumCandidate;
-import dev.quantumchamber.chamber.ChamberActivationService;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
-import dev.quantumchamber.persistence.PlayerCheckpointStore;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
-import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
-import net.minecraft.block.Blocks;
-import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.util.ActionResult;
 
 /**
@@ -75,25 +67,13 @@ final class M5CollapseLiveChain {
     }
 
     /**
-     * 原艙註冊之後，比照 M4 recovery probe 的 arm：拿掉紅石塊（LOW）、給參與者 Buff，readiness 通過之後存參與者的 checkpoint 與原生存檔，再放回紅石塊（HIGH）→
-     * 必須立即有 checked ARMING。readiness 還沒有通過時下一個 tick 再試。
+     * 原艙註冊之後，比照 M4 recovery probe 的 arm（{@link M5CollapseFixture#arm}：拿掉紅石塊（LOW）、給參與者 Buff，readiness 通過之後存參與者的 checkpoint 與原生存檔，
+     * 再放回紅石塊（HIGH）→ 必須立即有 checked ARMING）。readiness 還沒有通過時下一個 tick 再試。ARMING 的 session 就是這條 chain 的 session。
      */
     private boolean armed() throws Exception {
-        var controller = fixture.registeredController();
-        if (controller == null) return false;
-        var players = fixture.players();
-        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
-        for (var player : players) {
-            if (!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
-        }
-        if (!new ChamberActivationService().evaluateReadiness(run.source(), controller).accepted()) return false;
-        for (var player : players) PlayerCheckpointStore.saveAndVerify(run.server(), player, Optional.empty());
-        run.expect("nativeSaveBeforeArming", run.server().save(false, true, true), () -> "原生存檔失敗");
-        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
-        var arming = run.journal().flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(fixture.chamber())).toList();
-        run.expect("armingFlushed", arming.size() == 1 && arming.getFirst().state() == SessionState.ARMING,
-                () -> "供電之後這座艙的 flushed record：" + arming.stream().map(record -> record.state().name()).toList());
-        fixture.session(arming.getFirst().sessionUuid());
+        var arming = fixture.arm(M5CollapseFixture.EVERYONE);
+        if (arming == null) return false;
+        fixture.session(arming.sessionUuid());
         return true;
     }
 

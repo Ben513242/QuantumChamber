@@ -7,6 +7,7 @@ import dev.quantumchamber.candidate.CandidateBytes;
 import dev.quantumchamber.candidate.CandidateSelection;
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberControllerBlock;
+import dev.quantumchamber.chamber.ChamberActivationService;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberGeometry;
@@ -21,11 +22,15 @@ import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Allocation;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.DiskBlock;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Projection;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
+import dev.quantumchamber.gametest.mixin.ChunkTicketArgumentTestAccessor;
+import dev.quantumchamber.gametest.mixin.ChunkTicketManagerTestAccessor;
+import dev.quantumchamber.persistence.PlayerCheckpointStore;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModBlockEntities;
 import dev.quantumchamber.registry.ModBlocks;
+import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.superposition.SuperpositionWorld;
 import dev.quantumchamber.universe.DesiredAvailability;
@@ -47,6 +52,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import net.minecraft.block.Blocks;
+import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtSizeTracker;
@@ -208,15 +214,52 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
      * 所以 JOIN 在艙內（{@code insideExpected}）。
      */
     void joinAll(boolean insideExpected) {
+        joinAll(NOBODY, insideExpected);
+    }
+
+    /**
+     * 同 {@link #joinAll(boolean)}，但 {@code inUniverse} 的每一位 JOIN 在 U（F6-2c：已跨過、playerdata 存在 U 的參與者，spec §12 的「已跨過的人在目的世界重新加入」）；
+     * 其餘在來源世界，依 {@code insideExpected} 斷言在不在艙內。
+     */
+    void joinAll(Who inUniverse, boolean insideExpected) {
+        var crossed = members(inUniverse);
         for (var id : participants) {
             var connection = connect(id);
             var player = connection.player();
             run.expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
-            run.expect("joinedInTheSourceWorld", player.getServerWorld() == run.source(), () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
-            if (insideExpected) run.expect("joinedInsideTheChamber", inside(player), () -> "參與者 JOIN 在艙外：" + player.getPos());
-            else run.expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
+            if (crossed.contains(id)) {
+                run.expect("joinedInTheUniverse", isUniverse(player.getServerWorld()), () -> "已跨過的參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
+            } else {
+                run.expect("joinedInTheSourceWorld", player.getServerWorld() == run.source(), () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
+                if (insideExpected) run.expect("joinedInsideTheChamber", inside(player), () -> "參與者 JOIN 在艙外：" + player.getPos());
+                else run.expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
+            }
             run.expect("participantNotBlocked", !SessionRecoveryManager.blocks(id, run.server()), () -> "已返還的參與者被 recovery 攔截");
         }
+    }
+
+    /**
+     * 原艙註冊（IDLE）之後，比照 M4 recovery probe 的 arm（F6-2c 由 {@code M5CollapseLiveChain} 搬來，W1 與 W7 共用）：拿掉 Controller 上方的紅石塊（LOW）、給
+     * {@code who} Buff，readiness 通過之後存他們的 checkpoint 與原生存檔，再放回紅石塊（HIGH）→ 必須立即有這座艙的 checked ARMING（{@code armingFlushed}：這座艙恰一筆
+     * flushed record，是 ARMING）。回傳 ARMING 的 record；原艙還不是 IDLE、readiness 還沒有通過時回 null（下一個 tick 再試）。不改這條 chain 的 session。
+     */
+    SessionRecoveryRecord arm(Who who) throws Exception {
+        var controller = registeredController();
+        if (controller == null) return null;
+        var arming = members(who);
+        var players = participants.stream().filter(arming::contains).map(this::player).toList();
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
+        for (var player : players) {
+            if (!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
+        }
+        if (!new ChamberActivationService().evaluateReadiness(run.source(), controller).accepted()) return null;
+        for (var player : players) PlayerCheckpointStore.saveAndVerify(run.server(), player, Optional.empty());
+        run.expect("nativeSaveBeforeArming", run.server().save(false, true, true), () -> "原生存檔失敗");
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
+        var records = run.journal().flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).toList();
+        run.expect("armingFlushed", records.size() == 1 && records.getFirst().state() == SessionState.ARMING,
+                () -> "供電之後這座艙的 flushed record：" + records.stream().map(record -> record.state().name()).toList());
+        return records.getFirst();
     }
 
     /** 參與者在線上時回傳它的玩家；不在線上時回 null。 */
@@ -508,6 +551,38 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     static boolean inside(ServerPlayerEntity player) {
         var local = ChamberSpaceCoordinates.localPosition(FRAME, player.getPos());
         return local.x >= 1 && local.x < 6 && local.y >= 1 && local.y < 6 && local.z >= 1 && local.z < 6;
+    }
+
+    /**
+     * {@code world} 的原生 ticket 表中，類型名稱是 {@code type}、argument 是 {@code argument} 的 ticket 所在的 chunk（F6-2c：終局之後不得殘留的來源 ticket
+     * {@code quantumchamber_source} 與目的世界的 {@code quantumchamber_destination}；唯讀，比照 {@code M5GameTestSupport.destinationTickets}）。
+     */
+    List<ChunkPos> tickets(ServerWorld world, String type, Object argument) {
+        var manager = world.getChunkManager().chunkLoadingManager.getTicketManager();
+        var entries = ((ChunkTicketManagerTestAccessor) manager).quantumchamberTest$getTicketsByPosition();
+        var result = new ArrayList<ChunkPos>();
+        for (var entry : entries.long2ObjectEntrySet()) for (var ticket : entry.getValue()) {
+            if (!type.equals(ticket.getType().toString())) continue;
+            if (argument.equals(((ChunkTicketArgumentTestAccessor) (Object) ticket).quantumchamberTest$getArgument())) result.add(new ChunkPos(entry.getLongKey()));
+        }
+        return result;
+    }
+
+    /**
+     * {@code record} 的塌縮相關欄位的文字摘要（F6-2c：halt 當下與 restart 開服時比對相同）：狀態、Collapse 的每個欄位（Destination、opened／expires、Crossed、
+     * RecoveryRequired、SEALED 的原因）、每位參與者的 UUID 與是否已返還、lease 的筆數。候選的 context、ledger 與 selection 另由 {@link #sameCandidate} 比對。
+     * 不經 journal 的 NBT：塌縮狀態的 record 放不進一份新的 journal（M5 authority 尚未初始化時拒絕），{@code toNbt} 也不是 public。
+     */
+    static String recordDigest(SessionRecoveryRecord record) {
+        return record.state() + " " + record.collapse() + " participants=" + record.participants().stream().map(person -> person.playerUuid() + ":" + person.returned()).toList()
+                + " leases=" + record.spaceLeases().size();
+    }
+
+    /** 這個 session 從 {@code SERVER_STARTED} 起有沒有 {@code level} 而且含有全部 {@code fragments} 的 log（{@code quantumchamber} logger）。 */
+    boolean sessionLogged(org.apache.logging.log4j.Level level, String... fragments) {
+        var all = java.util.Arrays.copyOf(fragments, fragments.length + 1);
+        all[fragments.length] = sid.toString();
+        return !run.capture().matching(level, all).isEmpty();
     }
 
     /** 來源 Controller 目前是 {@code state}，而且比較器輸出是 {@code signal}（spec §10.7）。 */
