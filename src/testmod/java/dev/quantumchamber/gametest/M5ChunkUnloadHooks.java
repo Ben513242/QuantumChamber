@@ -77,7 +77,7 @@ public final class M5ChunkUnloadHooks {
      * chunk 讀檔的保留（H5；{@link #CHUNK_READ_HOLD}）：{@code world} 裡與 {@code center} 的 Chebyshev 距離在 [{@code minDistance}, {@code maxDistance}] 之間的 chunk 讀檔
      * （{@code getUpdatedChunkNbt}），讀檔本身照常進行，結果留到 {@link #release} 才交出：等同停服開始時仍在進行中、之後要等 main thread 才能完成的 chunk 載入（F6-2b 的條件
      * (M)；真正的磁碟延遲無法決定性重現，F6-2b 的 {@code vr-hold}）。server thread 自己的讀檔（例如存 proto chunk 時 {@code isLevelChunk} 的同步 {@code join}）不保留，否則
-     * server thread 會卡在自己的 join。放行之後的讀檔照常。{@link #releaseAfterStop} 另開一條 daemon thread，在 server 不再 running 之後放行（停服開始時仍保留）。
+     * server thread 會卡在自己的 join。放行之後的讀檔照常。{@link #releaseAfterStop} 另開一條 daemon thread，在停服開始之後放行（停服開始時仍保留）。
      * {@code hits()} 是保留過的讀檔數（README：以 mixin 注入的 test 必須有 hits 一類的 witness）。
      */
     static final class ChunkReadHold {
@@ -126,11 +126,15 @@ public final class M5ChunkUnloadHooks {
             releases.forEach(Runnable::run);
         }
 
-        /** 另開一條 daemon thread：{@code server} 不再 running（停服開始）之後再等 {@code delayMillis} 毫秒才 {@link #release}。 */
+        /**
+         * 另開一條 daemon thread：停服開始之後再等 {@code delayMillis} 毫秒才 {@link #release}。停服開始有兩種：請求停服（{@code stop} 把 {@code running} 設為 false），
+         * 或 crash report 的路徑（{@code runServer} 的 catch 之後只把 {@code stopped} 設為 true 就進 {@code shutdown}，{@code running} 仍是 true；F6-2c Step 0，H5 quality
+         * Minor 1：原本只看 {@code running}，這條路徑永遠不放行，只能等 harness 的逾時）。兩者都在 {@code shutdown} 之前，所以放行仍在停服開始之後。
+         */
         void releaseAfterStop(MinecraftServer server, long delayMillis) {
             var thread = new Thread(() -> {
                 try {
-                    while (server.isRunning()) Thread.sleep(10);
+                    while (server.isRunning() && !server.isStopped()) Thread.sleep(10);
                     Thread.sleep(delayMillis);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
