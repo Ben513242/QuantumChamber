@@ -24,6 +24,7 @@ import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Projection;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.gametest.mixin.ChunkTicketArgumentTestAccessor;
 import dev.quantumchamber.gametest.mixin.ChunkTicketManagerTestAccessor;
+import dev.quantumchamber.gametest.mixin.ServerChunkLoadingManagerTestAccessor;
 import dev.quantumchamber.persistence.PlayerCheckpointStore;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
@@ -222,8 +223,18 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
      * 其餘在來源世界，依 {@code insideExpected} 斷言在不在艙內。
      */
     void joinAll(Who inUniverse, boolean insideExpected) {
+        join(EVERYONE, inUniverse, insideExpected);
+    }
+
+    /**
+     * 同 {@link #joinAll(Who, boolean)}，但只有 {@code who} 的每一位 JOIN（依清單順序；F6-2c fix round 1：已跨過的人與沒跨過的人分開 JOIN，見
+     * {@code M5CollapsePassageChains} 的 restart）。
+     */
+    void join(Who who, Who inUniverse, boolean insideExpected) {
+        var joining = members(who);
         var crossed = members(inUniverse);
         for (var id : participants) {
+            if (!joining.contains(id)) continue;
             var connection = connect(id);
             var player = connection.player();
             run.expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
@@ -647,6 +658,21 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
             if (world.getChunkManager().getWorldChunk(center.x + x, center.z + z) == null) return false;
         }
         return true;
+    }
+
+    /**
+     * F6-2c fix round 1：{@code world} 的 chunk 生成狀態的摘要：載入中的 chunk holder 數，與每個 holder 已完成的最高狀態（{@code getLatestStatus}，沒有時 −1）的索引加總。
+     * 生成或載入在進行時它會變；連續幾個 tick 不變就表示這個世界的生成已停下（{@code M5CollapsePassageChains} 的 {@code sourceSettled}）。唯讀
+     * （{@link ServerChunkLoadingManagerTestAccessor}）。
+     */
+    long generationSignature(ServerWorld world) {
+        var holders = ((ServerChunkLoadingManagerTestAccessor) world.getChunkManager().chunkLoadingManager).quantumchamberTest$currentChunkHolders();
+        long sum = 0;
+        for (var holder : holders.values()) {
+            var latest = holder.getLatestStatus();
+            sum += latest == null ? -1 : latest.getIndex();
+        }
+        return ((long) holders.size() << 32) + sum;
     }
 
     /**
