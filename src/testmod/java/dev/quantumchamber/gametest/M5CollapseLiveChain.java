@@ -109,7 +109,8 @@ final class M5CollapseLiveChain {
         run.expect("nativeSaveInTheCorridor", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
         var sid = fixture.sid();
         var door = M5GameTestSupport.candidateDoor(fixture.pages(), fixture.corridor(), sid, QuantumCandidate.New.class);
-        var result = M5GameTestSupport.interact(fixture.corridor(), door.cell(), fixture.selector());
+        // 選門之前還沒有收據：由第一位參與者去選門（F6-2c 起 fixture.selector() 由收據的 selection 推導，選門之後才有）。
+        var result = M5GameTestSupport.interact(fixture.corridor(), door.cell(), fixture.player(fixture.participants().getFirst()));
         var measured = run.journal().flushedRecords().get(sid);
         run.expect("newDoorSelected", result == ActionResult.SUCCESS && measured != null && measured.state() == SessionState.MEASURED
                 && measured.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New, () -> "選門結果 " + result + "，record=" + M5GameTestSupport.state(run.journal(), sid));

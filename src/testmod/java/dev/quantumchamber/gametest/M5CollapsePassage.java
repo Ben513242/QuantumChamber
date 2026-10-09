@@ -11,8 +11,11 @@ import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -82,21 +85,11 @@ final class M5CollapsePassage {
     List<Step> steps(M5CollapseWindows.Prepared prepared) {
         var steps = new ArrayList<Step>();
         steps.add(resolve());
-        steps.add(ready(prepared, EVERYONE));
-        steps.addAll(cross(EVERYONE));
+        steps.add(ready(prepared, M5CollapseFixture.EVERYONE));
+        steps.addAll(cross(M5CollapseFixture.EVERYONE));
         steps.add(new Step("ended", 40, this::endedByEveryoneCrossing));
         return List.copyOf(steps);
     }
-
-    /**
-     * 參與者的子集，在 step 執行時才由 fixture 決定（restart 的參與者在開服時才由收據讀回，建立 step 的 {@code onInitialize} 時還不知道）。結果必須都是這條 chain 的參與者。
-     */
-    @FunctionalInterface interface Who { Set<UUID> of(M5CollapseFixture fixture); }
-
-    /** 全部參與者。 */
-    static final Who EVERYONE = fixture -> Set.copyOf(fixture.participants());
-    /** 沒有人（例如 PASSAGE_READY 之後不讓任何人靠近門口）。 */
-    static final Who NOBODY = fixture -> Set.of();
 
     /** resolve 段（step {@code resolved}）：「目的地已確定（RESOLVE 完成）」INFO 之後，U 已物化、catalog 恰多 1 筆、discovery 恰一筆 U；之後全員進入艙內。 */
     Step resolve() {
@@ -107,10 +100,10 @@ final class M5CollapsePassage {
      * ready 段（step {@code ready}）：PASSAGE_READY 之後最多再等 5 個 tick，讓門與 Controller 的刷新落地，再斷言還沒有人跨過、passable、比較器 15 與投影 COMPLETE（與
      * PREPARE 怎麼完成）；之後 {@code approaching} 站到門板中線內側（下一個 tick 由 {@link #cross} 越過中線）。等待的 tick 數跟著這一段（每次呼叫各自計算）。
      */
-    Step ready(M5CollapseWindows.Prepared prepared, Who approaching) {
+    Step ready(M5CollapseWindows.Prepared prepared, M5CollapseFixture.Who approaching) {
         Objects.requireNonNull(approaching, "approaching");
         int[] readyTicks = {-1};
-        return new Step("ready", 600, () -> passageReady(prepared, members(approaching), readyTicks));
+        return new Step("ready", 600, () -> passageReady(prepared, fixture.members(approaching), readyTicks));
     }
 
     /**
@@ -118,23 +111,16 @@ final class M5CollapsePassage {
      * 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為到目前為止各 cross 段的參與者各一次（{@code crossedRecorded}），「參與者已穿過量子通道」INFO 也是這幾位各一則
      * （{@code oneCrossingInfo}）。
      */
-    List<Step> cross(Who crossing) {
+    List<Step> cross(M5CollapseFixture.Who crossing) {
         Objects.requireNonNull(crossing, "crossing");
         return List.of(
                 new Step("doorway", 1, () -> {
-                    var who = members(crossing);
+                    var who = fixture.members(crossing);
                     if (who.isEmpty()) throw new IllegalArgumentException("cross 段至少要有一位參與者");
                     for (var id : fixture.participants()) if (who.contains(id)) standInDoorway(id, 0.3);
                     return true;
                 }),
-                new Step("crossed", 10, () -> crossed(members(crossing))));
-    }
-
-    /** {@code who} 這時的成員（都必須是這條 chain 的參與者）。 */
-    Set<UUID> members(Who who) {
-        var ids = Set.copyOf(who.of(fixture));
-        if (!fixture.participants().containsAll(ids)) throw new IllegalArgumentException("不是這條 chain 的參與者：" + ids + "（參與者 " + fixture.participants() + "）");
-        return ids;
+                new Step("crossed", 10, () -> crossed(fixture.members(crossing))));
     }
 
     /** 參與者 {@code id} 站在門口（local x 依清單順序錯開，y 1，z 為 {@code z}；朝向與速度歸零）。 */
@@ -204,47 +190,68 @@ final class M5CollapsePassage {
     /** 終局時 projection ledger 的預期：這座艙在 U 的 entry 是 COMPLETE，或 ledger 不存在（退化：開服時遺失、沒有被重建）。 */
     enum ProjectionAtEnd { COMPLETE, LEDGER_ABSENT }
 
-    /** 終局時參與者在哪裡：U（跨越成功），或來源世界（退化：照一般方式開門）。 */
+    /** 終局時參與者在哪裡：U（跨越成功），或來源世界（沒有跨過：退化時照一般方式開門、通道結束時還沒有跨過）。 */
     enum Place { UNIVERSE, SOURCE }
 
     /**
-     * 終局的 spec §12 斷言的參數：catalog 相對於 crash 前的增量（NEW 1、EXISTING 0）、projection ledger 的預期、參與者在哪裡、這個 session 從 {@code onInitialize}
+     * 終局的 spec §12 斷言的參數：catalog 相對於 crash 前的增量（NEW 1、EXISTING 0）、projection ledger 的預期、每位參與者在哪裡、這個 session 從 {@code onInitialize}
      * 起的 ERROR 恰有幾則（正常的 restart 為 0），以及 M5 authority 是否在本 instance 初始化成功（沒有「M5 authority 初始化失敗」的 ERROR）。
-     * <p>F6-2c（F6-2c Step 0 quality 給 F6-2c 本體的建議）：不提供位置參數的建構子（兩個 int 互換位置也能編譯），以具名的 factory 建立（{@link #crossed}、{@link #degraded}）。
+     * <p>F6-2c（F6-2c Step 0 quality 給 F6-2c 本體的建議）：不提供位置參數的建構子（兩個 int 互換位置也能編譯），以具名的 factory 建立（{@link #crossed}、{@link #degraded}），
+     * 再以 {@link #placed} 逐人改位置（F6-2a quality 給 W7 的建議：參與者在哪裡由全員一個 {@link Place} 改為逐人指定）。在 step 執行時建立（參與者在開服時才由收據讀回）。
      */
     static final class End {
         private final int catalogGrowth;
         private final ProjectionAtEnd projection;
-        private final Place participants;
+        private final Map<UUID, Place> places;
         private final int sessionErrors;
         private final boolean authorityInitialized;
 
-        private End(int catalogGrowth, ProjectionAtEnd projection, Place participants, int sessionErrors, boolean authorityInitialized) {
+        private End(int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, int sessionErrors, boolean authorityInitialized) {
             this.catalogGrowth = catalogGrowth;
             this.projection = Objects.requireNonNull(projection, "projection");
-            this.participants = Objects.requireNonNull(participants, "participants");
+            this.places = Collections.unmodifiableMap(new LinkedHashMap<>(places));
             this.sessionErrors = sessionErrors;
             this.authorityInitialized = authorityInitialized;
         }
 
-        /** 正常的 restart：(b) 全員都已跨過，參與者在 U，沒有這個 session 的 ERROR，authority 初始化成功。 */
+        /** 每位參與者（依清單順序）都在 {@code place}。 */
+        private static Map<UUID, Place> everyone(M5CollapseFixture fixture, Place place) {
+            var result = new LinkedHashMap<UUID, Place>();
+            for (var id : fixture.participants()) result.put(id, place);
+            if (result.isEmpty()) throw new IllegalStateException("End：這條 chain 還沒有參與者（參與者在開服時才由收據讀回，End 要在 step 執行時建立）");
+            return result;
+        }
+
+        /** 正常的 restart：(b) 全員都已跨過，參與者都在 U，沒有這個 session 的 ERROR，authority 初始化成功。 */
         static End crossed(M5CollapseFixture fixture) {
-            return new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, Place.UNIVERSE, 0, true);
+            return new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.UNIVERSE), 0, true);
         }
 
         /**
-         * 退化的 restart（開服時 projection ledger 遺失，{@code M5CollapseRevisitChains}）：ledger 不存在、參與者照一般方式開門而在來源世界，這個 session 的 ERROR
+         * 退化的 restart（開服時 projection ledger 遺失，{@code M5CollapseRevisitChains}）：ledger 不存在、參與者照一般方式開門而都在來源世界，這個 session 的 ERROR
          * 只有永久原因那一則，authority 本 instance 初始化失敗。
          */
         static End degraded(M5CollapseFixture fixture) {
-            return new End(fixture.catalogGrowth(), ProjectionAtEnd.LEDGER_ABSENT, Place.SOURCE, 1, false);
+            return new End(fixture.catalogGrowth(), ProjectionAtEnd.LEDGER_ABSENT, everyone(fixture, Place.SOURCE), 1, false);
+        }
+
+        /** 同這一份，只有 {@code who} 的每一位改在 {@code place}（{@code who} 的成員都必須是參與者）。 */
+        End placed(M5CollapseFixture fixture, M5CollapseFixture.Who who, Place place) {
+            Objects.requireNonNull(place, "place");
+            var next = new LinkedHashMap<>(places);
+            for (var id : fixture.members(who)) {
+                if (!next.containsKey(id)) throw new IllegalArgumentException("End 沒有這位參與者：" + id);
+                next.put(id, place);
+            }
+            return new End(catalogGrowth, projection, next, sessionErrors, authorityInitialized);
         }
 
         int catalogGrowth() { return catalogGrowth; }
 
         ProjectionAtEnd projection() { return projection; }
 
-        Place participants() { return participants; }
+        /** 每位參與者在哪裡（依清單順序）。 */
+        Map<UUID, Place> places() { return places; }
 
         int sessionErrors() { return sessionErrors; }
 
@@ -253,7 +260,7 @@ final class M5CollapsePassage {
 
     /**
      * spec §12 的終局：同一個 UniverseId（Destination、allocation entry、catalog、discovery、projection entry、ACTIVE world key），catalog 的增量（NEW 恰多 1 筆、
-     * EXISTING 不變），每位參與者在 {@code end.participants()}；另斷言這個 session 的 ERROR 恰為 {@code end.sessionErrors()} 則，與 authority 的初始化。
+     * EXISTING 不變），每位參與者在 {@code end.places()} 指定的地方；另斷言這個 session 的 ERROR 恰為 {@code end.sessionErrors()} 則，與 authority 的初始化。
      */
     void expectEnd(End end) throws Exception {
         var universe = fixture.universe();
@@ -278,8 +285,10 @@ final class M5CollapsePassage {
         long universeWorlds = StreamSupport.stream(run.server().getWorlds().spliterator(), false)
                 .filter(candidate -> UniverseRegistryState.get(run.server()).findByWorldKey(candidate.getRegistryKey()).isPresent()).count();
         run.expect("oneUniverseWorld", universeWorlds == 1, () -> "Universe world 有 " + universeWorlds + " 個");
-        for (var player : fixture.players()) {
-            if (end.participants() == Place.UNIVERSE) {
+        if (!end.places().keySet().equals(Set.copyOf(fixture.participants()))) throw new IllegalArgumentException("End 的參與者與這條 chain 不同：" + end.places().keySet());
+        for (var entry : end.places().entrySet()) {
+            var player = fixture.player(entry.getKey());
+            if (entry.getValue() == Place.UNIVERSE) {
                 run.expect("participantInTheUniverse", player.getServerWorld() == world.orElseThrow(), () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue());
             } else {
                 run.expect("participantInTheSourceWorld", player.getServerWorld() == run.source(), () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue());

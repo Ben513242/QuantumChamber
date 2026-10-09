@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.ChunkPos;
 import org.apache.logging.log4j.Level;
@@ -37,11 +38,13 @@ import org.apache.logging.log4j.Level;
  * <ul>
  * <li>crash 點的條件（hook 交來的 detail 是否就是那一刻）與 halt 之前的取證（寫進 {@code halt.json} 的 {@code atHalt}；丟出時不 halt）；</li>
  * <li>restart 開服時的預期（{@link AtRestart}：參與者是否已返還、RESOLVE 在 halt 之前完成到哪一步（因此 halt 當下是否已物化、allocation、catalog、discovery
- *     的預期）、projection ledger 的狀態、窗口自己的磁碟檢查、JOIN 之前是否先載入並辨識投影 Controller）；</li>
+ *     的預期）、projection ledger 的狀態、窗口自己的磁碟檢查、JOIN 之前是否先載入並辨識投影 Controller、halt 當下磁碟上的 record 狀態與 Crossed）；</li>
  * <li>PREPARE 怎麼完成（{@link Prepared}：「準備完成」INFO 的模式與格數，與 READY 時的磁碟檢查；不檢查時為 null）。</li>
  * </ul>
- * 新增窗口只要在 {@link #table} 加一列（另要有 hook mixin 與 {@code CrashWindow} 的值，見 {@code scripts/verification/README.md}「M5 collapse probe」）。
- * {@link #expectAtRestart} 與 {@link M5CollapsePassage} 依這一列斷言。
+ * {@link #expectAtRestart} 與 {@link M5CollapsePassage} 依這一列斷言。COLLAPSING 中、RESOLVE／PREPARE 期間的窗口（W1～W6x），新增時只要在 {@link #table} 加一列
+ * （另要有 hook mixin 與 {@code CrashWindow} 的值，見 {@code scripts/verification/README.md}「M5 collapse probe」），restart 照 {@code M5CollapsePassage.steps} 推進到
+ * (b) 終局。其他窗口（F6-2c：PASSAGE_READY 期間、終局之後）另以 {@link AtRestart} 的 {@code stateAtHalt}、{@code crossedAtHalt} 表達開服時的 record，restart 的
+ * step 與終局（{@code M5CollapsePassage.End} 的逐人位置）由 chain 自己組。
  */
 final class M5CollapseWindows {
     private M5CollapseWindows() {}
@@ -88,6 +91,10 @@ final class M5CollapseWindows {
      * <li>{@link #withDisk}：窗口自己的磁碟檢查；預設 {@link #NO_CHECK}。</li>
      * <li>{@link #recognizingBeforeJoin}：JOIN 之前以 probe 的 ticket 載入投影 Controller，等它經 load-sync 辨識為 inert 的 PROJECTION（COMPLETE 時另斷言不變量 cell
      *     受保護）；預設不載入。</li>
+     * <li>{@link #withStateAtHalt}：halt 當下磁碟上這個 session 的 record 狀態（restart 開服時 flushed 就是它）；預設 COLLAPSING（{@code restartedCollapsing}）。
+     *     {@link #terminatedAtHalt} 為終局已落盤、record 已不在（{@code terminatedOnDisk}）。F6-2c 起取代 {@code expectAtRestart} 寫死的 {@code restartedCollapsing}。</li>
+     * <li>{@link #withCrossedAtHalt}：halt 當下磁碟上的 Crossed（參與者的子集，開服時才由收據決定是哪幾位）；預設沒有人。只在狀態是 PASSAGE_READY 或 SEALED 時斷言
+     *     （{@code crossedAtRestart}）。</li>
      * </ul>
      */
     static final class AtRestart {
@@ -96,31 +103,59 @@ final class M5CollapseWindows {
         private final ProjectionLedger.Entry.Status projection;
         private final DiskCheck disk;
         private final boolean recognizeBeforeJoin;
+        private final SessionState stateAtHalt;
+        private final M5CollapseFixture.Who crossedAtHalt;
 
-        private AtRestart(boolean returned, Resolved resolved, ProjectionLedger.Entry.Status projection, DiskCheck disk, boolean recognizeBeforeJoin) {
+        private AtRestart(boolean returned, Resolved resolved, ProjectionLedger.Entry.Status projection, DiskCheck disk, boolean recognizeBeforeJoin,
+                SessionState stateAtHalt, M5CollapseFixture.Who crossedAtHalt) {
             this.returned = returned;
             this.resolved = Objects.requireNonNull(resolved, "resolved");
             this.projection = projection;
             this.disk = Objects.requireNonNull(disk, "disk");
             this.recognizeBeforeJoin = recognizeBeforeJoin;
+            this.stateAtHalt = stateAtHalt;
+            this.crossedAtHalt = Objects.requireNonNull(crossedAtHalt, "crossedAtHalt");
         }
 
-        /** RESOLVE 在 halt 之前完成到 {@code resolved}；其餘欄位是預設值（已返還、沒有 projection entry、不檢查磁碟、JOIN 之前不載入投影）。 */
-        static AtRestart resolved(Resolved resolved) { return new AtRestart(true, resolved, null, NO_CHECK, false); }
+        /**
+         * RESOLVE 在 halt 之前完成到 {@code resolved}；其餘欄位是預設值（已返還、沒有 projection entry、不檢查磁碟、JOIN 之前不載入投影、磁碟上是 COLLAPSING、沒有人跨過）。
+         */
+        static AtRestart resolved(Resolved resolved) {
+            return new AtRestart(true, resolved, null, NO_CHECK, false, SessionState.COLLAPSING, M5CollapseFixture.NOBODY);
+        }
 
         /** 參與者在 crash 前還沒有返還（W1）。 */
-        AtRestart notReturned() { return new AtRestart(false, resolved, projection, disk, recognizeBeforeJoin); }
+        AtRestart notReturned() { return new AtRestart(false, resolved, projection, disk, recognizeBeforeJoin, stateAtHalt, crossedAtHalt); }
 
         /** projection ledger 這座艙在 U 的狀態是 {@code status}。 */
         AtRestart withProjection(ProjectionLedger.Entry.Status status) {
-            return new AtRestart(returned, resolved, Objects.requireNonNull(status, "status"), disk, recognizeBeforeJoin);
+            return new AtRestart(returned, resolved, Objects.requireNonNull(status, "status"), disk, recognizeBeforeJoin, stateAtHalt, crossedAtHalt);
         }
 
         /** 窗口自己的磁碟檢查。 */
-        AtRestart withDisk(DiskCheck check) { return new AtRestart(returned, resolved, projection, check, recognizeBeforeJoin); }
+        AtRestart withDisk(DiskCheck check) { return new AtRestart(returned, resolved, projection, check, recognizeBeforeJoin, stateAtHalt, crossedAtHalt); }
 
         /** JOIN 之前載入並辨識投影 Controller。 */
-        AtRestart recognizingBeforeJoin() { return new AtRestart(returned, resolved, projection, disk, true); }
+        AtRestart recognizingBeforeJoin() { return new AtRestart(returned, resolved, projection, disk, true, stateAtHalt, crossedAtHalt); }
+
+        /** halt 當下磁碟上的 record 是 {@code state}（PASSAGE_READY、SEALED；COLLAPSING 是預設）。 */
+        AtRestart withStateAtHalt(SessionState state) {
+            return new AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin, Objects.requireNonNull(state, "state"), crossedAtHalt);
+        }
+
+        /** halt 當下終局已落盤：restart 開服時 journal 沒有這個 session。 */
+        AtRestart terminatedAtHalt() { return new AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin, null, crossedAtHalt); }
+
+        /** halt 當下磁碟上的 Crossed 恰為 {@code crossed}。 */
+        AtRestart withCrossedAtHalt(M5CollapseFixture.Who crossed) {
+            return new AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin, stateAtHalt, crossed);
+        }
+
+        /** halt 當下磁碟上的 record 狀態；null 為終局已落盤。 */
+        SessionState stateAtHalt() { return stateAtHalt; }
+
+        /** halt 當下磁碟上的 Crossed。 */
+        M5CollapseFixture.Who crossedAtHalt() { return crossedAtHalt; }
 
         /** 參與者在 crash 前是否已返還。 */
         boolean returned() { return returned; }
@@ -334,9 +369,10 @@ final class M5CollapseWindows {
     // ---- restart 開服時 ----
 
     /**
-     * restart 的開服檢查（W1 與 DORMANT 的 restart 共用）：窗口在 RESOLVE 的哪一步（halt 當下是否已物化）、record 仍是 COLLAPSING 且 Destination 與候選不變；
-     * 參與者還沒有返還的窗口（W1）另斷言走廊 space 已重建、沒有保留式 recovery 的請求；allocation、catalog（與開服 bootstrap 的物化）、discovery、projection 依
-     * 這一列的預期，再做窗口自己的磁碟檢查。{@code recognizeBeforeJoin} 的窗口在這裡以 probe 的 ticket 載入投影 Controller、開始觀察 load-sync，回傳它；否則回 null。
+     * restart 的開服檢查（W1、DORMANT 與通道的 restart 共用）：窗口在 RESOLVE 的哪一步（halt 當下是否已物化）；record 是這一列的 {@code stateAtHalt}（預設 COLLAPSING）且
+     * Destination 與候選不變（PASSAGE_READY、SEALED 另斷言 Crossed 是 {@code crossedAtHalt}；終局已落盤時改斷言 journal 沒有這個 session）；參與者還沒有返還的窗口（W1）另斷言
+     * 走廊 space 已重建、沒有保留式 recovery 的請求；allocation、catalog（與開服 bootstrap 的物化）、discovery、projection 依這一列的預期，再做窗口自己的磁碟檢查。
+     * {@code recognizeBeforeJoin} 的窗口在這裡以 probe 的 ticket 載入投影 Controller、開始觀察 load-sync，回傳它；否則回 null。
      */
     static M5CollapseProjectionLoad expectAtRestart(M5CollapseRun run, M5CollapseFixture fixture, Window window, JsonObject halt) throws Exception {
         var at = window.atRestart();
@@ -346,9 +382,20 @@ final class M5CollapseWindows {
                 activeAtHalt == materializedWindow, () -> "halt 當下 U 的物化狀態=" + activeAtHalt);
         var sid = fixture.sid();
         var current = run.journal().flushedRecords().get(sid);
-        run.expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
-        run.expect("sameDestination", M5CollapseFixture.destination(current).equals(Optional.of(fixture.universe())), () -> "Destination=" + current.collapse().destination());
-        run.expect("noRedraw", M5CollapseFixture.sameCandidate(fixture.receipt(), current), () -> "候選 context、ledger 或 selection 與 crash 前不同");
+        var state = at.stateAtHalt();
+        if (state == null) {
+            run.expect("terminatedOnDisk", current == null && !run.journal().records().containsKey(sid), () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
+        } else {
+            run.expect(restartedAs(state), current != null && current.state() == state, () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
+            run.expect("sameDestination", M5CollapseFixture.destination(current).equals(Optional.of(fixture.universe())),
+                    () -> "Destination=" + current.collapse().destination());
+            run.expect("noRedraw", M5CollapseFixture.sameCandidate(fixture.receipt(), current), () -> "候選 context、ledger 或 selection 與 crash 前不同");
+            if (state != SessionState.COLLAPSING) {
+                var crossed = fixture.members(at.crossedAtHalt());
+                run.expect("crossedAtRestart", current.collapse().crossed().size() == crossed.size() && Set.copyOf(current.collapse().crossed()).equals(crossed),
+                        () -> "Crossed=" + current.collapse().crossed() + "，預期 " + crossed);
+            }
+        }
         if (!at.returned()) {
             // W1（spec §13.2）：未返還的 COLLAPSING 在 attach 時重建走廊 space，返還由 receipt 推導、不經 requestMeasuredRecovery。
             run.expect("notReturnedAtRestart", current.participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned) && !current.spaceLeases().isEmpty()
@@ -389,6 +436,16 @@ final class M5CollapseWindows {
         }
         run.proof.put("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
         return load;
+    }
+
+    /** {@code stateAtHalt} 的斷言名稱：COLLAPSING 沿用 {@code restartedCollapsing}（F6-1 起的名稱），其餘依狀態。 */
+    private static String restartedAs(SessionState state) {
+        return switch (state) {
+            case COLLAPSING -> "restartedCollapsing";
+            case PASSAGE_READY -> "restartedPassageReady";
+            case SEALED -> "restartedSealed";
+            default -> throw new IllegalArgumentException("窗口表的 stateAtHalt 只能是塌縮狀態：" + state);
+        };
     }
 
     /** W4、W6 的開服：磁碟上 U 的 Controller 位置是 Controller（寫到一半或 COMPLETE 的投影）。 */

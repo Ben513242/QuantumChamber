@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import dev.quantumchamber.candidate.CandidateBytes;
+import dev.quantumchamber.candidate.CandidateSelection;
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberControllerBlock;
 import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
@@ -42,7 +43,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import net.minecraft.block.Blocks;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtIo;
@@ -58,8 +61,9 @@ import net.minecraft.world.dimension.DimensionType;
 
 /**
  * 僅 testmod（M5 F6-2a，由 F6-1 的 {@code M5CollapseRecoveryProbe} 拆出）：一條 chain 的 fixture。原艙（Controller 在 (8,70,8)、朝北）、參與者（清單；
- * 目前的 chain 都只用一人，W7 起可以多人：建立、JOIN、移動、跨越與位置的斷言都對清單裡的每一位）、MEASURED 收據，與這條 chain 的 id（session、原艙、
+ * 可以多人：建立、JOIN、移動、跨越與位置的斷言都對清單裡的每一位，或對 {@link Who} 指定的子集）、MEASURED 收據，與這條 chain 的 id（session、原艙、
  * UniverseId、allocation token、crash 前的 catalog 筆數）。crash phase 建立這些值，restart phase 由 crash phase 的 receipt 讀回（{@link #readCrashReceipt}）。
+ * 選門者由收據的 selection 推導（{@link #selectorId}，F6-2c），不依清單順序；清單的順序只用在收據的 cohort 與 {@code receiptIdentity} 的比對。
  * 另有各 chain 共用的查詢（U、走廊、磁碟上的方塊與權威）與兩個收斂的斷言（{@link #expectCatalog}、{@link #expectOneAllocation}）。
  */
 final class M5CollapseFixture implements M5CollapseRun.Context {
@@ -92,8 +96,40 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     int catalogBefore() { return catalogBefore; }
 
-    /** 參與者（建立或讀回的順序；第一位是選門者）。 */
+    /** 參與者（建立或讀回的順序；收據的 cohort 也是這個順序）。選門者不依這個順序，見 {@link #selectorId}。 */
     List<UUID> participants() { return List.copyOf(participants); }
+
+    /**
+     * 參與者的子集，在 step 執行時才決定（F6-2c：restart 的參與者與選門者在開服時才由收據讀回，建立 step 的 {@code onInitialize} 時還不知道）。結果都必須是這條 chain 的
+     * 參與者（{@link #members}）。
+     */
+    @FunctionalInterface interface Who { Set<UUID> of(M5CollapseFixture fixture); }
+
+    /** 全部參與者。 */
+    static final Who EVERYONE = fixture -> Set.copyOf(fixture.participants());
+    /** 沒有人。 */
+    static final Who NOBODY = fixture -> Set.of();
+    /** 選門者（收據的 selection）。 */
+    static final Who SELECTOR = fixture -> Set.of(fixture.selectorId());
+    /** 選門者以外的參與者。 */
+    static final Who OTHERS = fixture -> fixture.participants().stream().filter(id -> !id.equals(fixture.selectorId())).collect(Collectors.toUnmodifiableSet());
+
+    /** {@code who} 這時的成員；有不是這條 chain 參與者的 UUID 時丟出。 */
+    Set<UUID> members(Who who) {
+        var ids = Set.copyOf(who.of(this));
+        if (!participants.containsAll(ids)) throw new IllegalArgumentException("不是這條 chain 的參與者：" + ids + "（參與者 " + participants + "）");
+        return ids;
+    }
+
+    /**
+     * 選門者：收據的 selection（{@code CandidateSelection.Selected.selectedBy}；F6-2c，F6-2a quality 給多人的建議）。還沒有收據，或收據沒有選中的候選時丟出：選門之前
+     * （W1 的 crash phase）由 chain 自己決定誰去選門。
+     */
+    UUID selectorId() {
+        if (receipt == null) throw new IllegalStateException("selector：這條 chain 還沒有收據（選門之前由 chain 決定誰去選門）");
+        return receipt.candidateSelection().filter(CandidateSelection.Selected.class::isInstance).map(selection -> ((CandidateSelection.Selected) selection).selectedBy())
+                .orElseThrow(() -> new IllegalStateException("selector：收據沒有選中的候選：" + receipt.candidateSelection()));
+    }
 
     /** live session（W1）：供電之後 checked ARMING 的 session。 */
     void session(UUID session) { sid = session; }
@@ -204,9 +240,9 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         return participants.stream().map(this::player).toList();
     }
 
-    /** 第一位參與者（選門者）的玩家。 */
+    /** 選門者（{@link #selectorId}：收據的 selection）的玩家。 */
     ServerPlayerEntity selector() {
-        return player(participants.getFirst());
+        return player(selectorId());
     }
 
     void moveInside() {
