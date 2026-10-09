@@ -15,7 +15,6 @@ import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionProtectionIndex;
 import dev.quantumchamber.collapse.SealedReason;
-import dev.quantumchamber.gametest.M5CollapseRun.Ending;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
@@ -68,7 +67,7 @@ final class M5CollapseRevisitChains {
                 new Step("enter", 1, () -> { fixture.moveInside(); return true; }),
                 new Step("committed", 40, fixture::committed),
                 new Step("halt", 400, () -> false)));
-        return new Phase(Ending.HALT, fixture::requireFreshWorld, run::crashPointHealthy, steps);
+        return Phase.halt(steps).started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy);
     }
 
     /**
@@ -144,7 +143,7 @@ final class M5CollapseRevisitChains {
                     run.proof.put("diskAtStop", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
                     return true;
                 })));
-        return new Phase(Ending.STOP, fixture::requireFreshWorld, M5CollapseRun.NOTHING, steps);
+        return Phase.stop(steps).started(fixture::requireFreshWorld);
     }
 
     /**
@@ -178,12 +177,13 @@ final class M5CollapseRevisitChains {
      * 照一般方式開門（沒有人被困在封存的艙裡），spec §12 的終局（退化版：ledger 不存在、參與者在來源世界）。停服之後再確認 ledger 沒有被重建。
      */
     Phase degradedRestart(String setupPhase) {
-        return new Phase(Ending.STOP, this::removeProjectionLedgerBeforeStart, () -> degradedStarted(setupPhase), () -> passage.invariants(null), List.of(
+        return Phase.stop(List.of(
                 new Step("foreign", 60, this::projectionControllerForeign),
                 new Step("sealed", 400, this::sealedAsCorrupt),
                 new Step("join", 1, () -> { fixture.joinAll(true); return true; }),
-                new Step("doorOpens", 1, this::doorOpensNormally)),
-                () -> run.expect("ledgerNotRecreatedAfterStop", !Files.exists(run.worldData().resolve(ProjectionLedger.FILE_NAME)), () -> "停服之後 projection ledger 被重建"));
+                new Step("doorOpens", 1, this::doorOpensNormally)))
+                .beforeStart(this::removeProjectionLedgerBeforeStart).started(() -> degradedStarted(setupPhase)).everyTick(() -> passage.invariants(null))
+                .afterStop(() -> run.expect("ledgerNotRecreatedAfterStop", !Files.exists(run.worldData().resolve(ProjectionLedger.FILE_NAME)), () -> "停服之後 projection ledger 被重建"));
     }
 
     /** 開服前：把 projection ledger 移到這個 phase 的 evidence（runner 已在這之前開始收 {@code quantumchamber} 的 log：初始化的 ERROR 在 {@code SERVER_STARTED} 的 default phase）。 */

@@ -67,16 +67,50 @@ final class M5CollapseRun {
      * 一個 phase：開服前的準備（{@code onInitialize}，例如移走權威檔）、開服時的檢查、每個 tick 的不變量（在 step 之前執行）、依序執行的 step，與停服之後的檢查
      * （{@code SERVER_STOPPED}，寫 {@code final.json} 之前）；{@code ending} 是預期的結束方式（與 m5-collapse-probe.ps1 的 chain 表一致）。開服前的準備或停服之後的
      * 檢查失敗時，記在 receipt 的 {@code failures}，phase 判 FAIL。
+     * <p>建立方式（F6-2c Step 0，F6-2a quality Minor 5：四個動作都是 {@link Checked}，位置參數互換也能編譯，所以不提供位置參數的建構子）：以結束方式的 factory
+     * （{@link #stop}、{@link #halt}）帶 step，再以具名的方法加上需要的動作，例如 {@code Phase.halt(steps).started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy)}。
+     * 沒有指定的動作是 {@link #NOTHING}；每個動作只能指定一次（再指定時丟出）。
      */
-    record Phase(Ending ending, Checked beforeStart, Checked started, Checked everyTick, List<Step> steps, Checked afterStop) {
-        Phase {
-            steps = List.copyOf(steps);
-            if (steps.isEmpty()) throw new IllegalArgumentException("phase 至少要有一個 step");
+    static final class Phase {
+        private final Ending ending;
+        private final List<Step> steps;
+        private final Checked beforeStart, started, everyTick, afterStop;
+
+        private Phase(Ending ending, List<Step> steps, Checked beforeStart, Checked started, Checked everyTick, Checked afterStop) {
+            this.ending = ending;
+            this.steps = List.copyOf(steps);
+            if (this.steps.isEmpty()) throw new IllegalArgumentException("phase 至少要有一個 step");
+            this.beforeStart = beforeStart;
+            this.started = started;
+            this.everyTick = everyTick;
+            this.afterStop = afterStop;
         }
 
-        /** 沒有開服前的準備與停服之後的檢查。 */
-        Phase(Ending ending, Checked started, Checked everyTick, List<Step> steps) {
-            this(ending, NOTHING, started, everyTick, steps, NOTHING);
+        /** 全部 step 完成之後正常停止（{@code final.json}）的 phase。 */
+        static Phase stop(List<Step> steps) { return new Phase(Ending.STOP, steps, NOTHING, NOTHING, NOTHING, NOTHING); }
+
+        /** 在 crash 窗口 halt（{@code halt.json}）的 phase：最後一個 step 不會完成。 */
+        static Phase halt(List<Step> steps) { return new Phase(Ending.HALT, steps, NOTHING, NOTHING, NOTHING, NOTHING); }
+
+        /** 開服前（{@code onInitialize}）的準備。 */
+        Phase beforeStart(Checked action) { return new Phase(ending, steps, once("beforeStart", beforeStart, action), started, everyTick, afterStop); }
+
+        /** 開服時（{@code SERVER_STARTED} 的 AFTER phase）的檢查。 */
+        Phase started(Checked action) { return new Phase(ending, steps, beforeStart, once("started", started, action), everyTick, afterStop); }
+
+        /** 每個 tick 的不變量（在 step 之前執行）。 */
+        Phase everyTick(Checked action) { return new Phase(ending, steps, beforeStart, started, once("everyTick", everyTick, action), afterStop); }
+
+        /** 停服之後（{@code SERVER_STOPPED}，寫 {@code final.json} 之前）的檢查。 */
+        Phase afterStop(Checked action) { return new Phase(ending, steps, beforeStart, started, everyTick, once("afterStop", afterStop, action)); }
+
+        Ending ending() { return ending; }
+
+        List<Step> steps() { return steps; }
+
+        private static Checked once(String name, Checked current, Checked next) {
+            if (current != NOTHING) throw new IllegalStateException("phase 的 " + name + " 已經指定過");
+            return java.util.Objects.requireNonNull(next, name);
         }
     }
 
@@ -234,7 +268,7 @@ final class M5CollapseRun {
         onStopped(startupLog);
         phase = factory.create(this);
         try {
-            phase.beforeStart().run();
+            phase.beforeStart.run();
         } catch (Exception | Error failure) {
             // 開服前的準備失敗：不丟出（JVM 照常開服），SERVER_STARTED 的檢查因 failures 不是空的而 FAIL、正常停止。
             failures.add(failure.toString());
@@ -261,7 +295,7 @@ final class M5CollapseRun {
             require(failures.isEmpty(), "啟動前的檢查失敗：" + failures);
             proof.put("ending", phase.ending().name());
             proof.put("steps", phase.steps().stream().map(Step::name).toList());
-            phase.started().run();
+            phase.started.run();
             event("started");
         });
     }
@@ -270,7 +304,7 @@ final class M5CollapseRun {
         if (owner != server || finished || phase == null) return;
         guarded(() -> {
             require(++ticks <= PHASE_TICK_LIMIT, "phaseBounded：phase " + config.phase() + " 在 " + PHASE_TICK_LIMIT + " 個 tick 內沒有結束；" + diagnostic());
-            phase.everyTick().run();
+            phase.everyTick.run();
             var step = phase.steps().get(stepIndex);
             stepTicks++;
             if (!step.run().run()) {
@@ -299,7 +333,7 @@ final class M5CollapseRun {
         if (owner != server) return;
         proof.put("stoppedSeen", true);
         try {
-            phase.afterStop().run();
+            phase.afterStop.run();
         } catch (Exception | Error failure) {
             failures.add(failure.toString());
             LOGGER.error("M5 collapse probe 停服之後的檢查失敗：phase={}", config.phase(), failure);

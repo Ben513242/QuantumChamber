@@ -4,7 +4,6 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberActivationService;
-import dev.quantumchamber.gametest.M5CollapseRun.Ending;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
@@ -45,7 +44,7 @@ final class M5CollapseLiveChain {
      * {@link M5CollapseRun#RECEIPT_NBT}、裝上 crash 點 → 下一個 tick 塌縮流程在 operation guard 之內提交 MEASURED→COLLAPSING，提交讀回確認時 halt（返還與清理都還沒有開始）。
      */
     Phase crash() {
-        return new Phase(Ending.HALT, fixture::requireFreshWorld, run::crashPointHealthy, List.of(
+        return Phase.halt(List.of(
                 new Step("build", 1, () -> {
                     fixture.buildOrigin(1);
                     fixture.moveInside();
@@ -54,7 +53,8 @@ final class M5CollapseLiveChain {
                 new Step("armed", 200, this::armed),
                 new Step("superposition", 400, this::superposition),
                 new Step("selected", 1, this::selectNewDoor),
-                new Step("halt", 400, () -> false)));
+                new Step("halt", 400, () -> false)))
+                .started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy);
     }
 
     /**
@@ -70,8 +70,8 @@ final class M5CollapseLiveChain {
                 new Step("settled", 200, this::settled)));
         steps.addAll(passage.steps(window.prepared()));
         var allowance = new M5CollapsePassage.CorridorAllowance(() -> !returned, () -> joinedAt, RETURN_TICK_LIMIT);
-        return new Phase(Ending.STOP, () -> M5CollapseWindows.expectAtRestart(run, fixture, window, fixture.readCrashReceipt(crashPhase, window.id())),
-                () -> passage.invariants(allowance), steps);
+        return Phase.stop(steps).started(() -> M5CollapseWindows.expectAtRestart(run, fixture, window, fixture.readCrashReceipt(crashPhase, window.id())))
+                .everyTick(() -> passage.invariants(allowance));
     }
 
     /**

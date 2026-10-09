@@ -89,11 +89,11 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
                 new Step("loadedAgain", 2400, this::loadedAgainThenReleased),
                 new Step("unloaded", UNLOAD_WAIT_TICKS + 1, this::unloadedAfterTakeBack),
                 new Step("staleTaskSeen", 1, this::staleTaskSeen)));
-        return new Phase(Ending.STOP, M5CollapseRun.NOTHING, () -> {
+        return Phase.stop(steps).started(() -> {
             expectFresh("freshTakeBackChunk", MARKER);
             expectFresh("freshLivelockChunk", LIVELOCK.getBlockPos(8, 300, 8));
             installWitness();
-        }, M5CollapseRun.NOTHING, steps, () -> afterStop(false));
+        }).afterStop(() -> afterStop(false));
     }
 
     /** {@code unload-shutdown}：讀回 C1 的修改；C2 形成殭屍、載入仍在進行時停服，必須正常結束。 */
@@ -101,12 +101,12 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         chunk = LIVELOCK;
         var steps = new ArrayList<>(zombieSteps());
         steps.add(new Step("stop", 4, this::readyToStop));
-        return new Phase(Ending.STOP, M5CollapseRun.NOTHING, () -> {
+        return Phase.stop(steps).started(() -> {
             readTakeBackReceipt(takeBackPhase);
             expectMarkerOnDisk();
             expectFresh("freshLivelockChunk", LIVELOCK.getBlockPos(8, 300, 8));
             installWitness();
-        }, M5CollapseRun.NOTHING, steps, () -> afterStop(true));
+        }).afterStop(() -> afterStop(true));
     }
 
     /** 兩個 phase 共用：C 載入、穩定 → 移除 ticket 並讓 server 落後排程 → C 的 holder 在 {@code chunksToUnload} 時裝上讀檔保留、以另一種 ticket 再載入 → 取回同一個 holder。 */

@@ -7,7 +7,6 @@ import dev.quantumchamber.chamber.ChamberLoadSyncOutcome;
 import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionProtectionIndex;
-import dev.quantumchamber.gametest.M5CollapseRun.Ending;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
@@ -39,7 +38,7 @@ final class M5CollapseDormantChains {
      * 參與者的 playerdata 都在磁碟上；參與者存在艙外），再依窗口表裝上 {@code id} 的 crash 點 → 參與者由艙外進入 → 塌縮提交 COLLAPSING → RESOLVE 或 PREPARE 走到窗口時 halt。
      */
     Phase crash(CrashWindow id) {
-        return new Phase(Ending.HALT, fixture::requireFreshWorld, run::crashPointHealthy, List.of(
+        return Phase.halt(List.of(
                 new Step("build", 1, () -> { fixture.buildOrigin(1); return true; }),
                 new Step("registered", 200, fixture::registered),
                 new Step("receipt", 1, () -> {
@@ -49,7 +48,8 @@ final class M5CollapseDormantChains {
                 }),
                 new Step("enter", 1, () -> { fixture.moveInside(); return true; }),
                 new Step("committed", 40, fixture::committed),
-                new Step("halt", 400, () -> false)));
+                new Step("halt", 400, () -> false)))
+                .started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy);
     }
 
     /**
@@ -65,8 +65,8 @@ final class M5CollapseDormantChains {
         if (window.atRestart().recognizeBeforeJoin()) steps.add(new Step("recognized", 60, this::projectionRecognized));
         steps.add(new Step("join", 1, () -> { fixture.joinAll(false); return true; }));
         steps.addAll(passage.steps(window.prepared()));
-        return new Phase(Ending.STOP, () -> load = M5CollapseWindows.expectAtRestart(run, fixture, window, fixture.readCrashReceipt(crashPhase, id)),
-                () -> passage.invariants(null), steps);
+        return Phase.stop(steps).started(() -> load = M5CollapseWindows.expectAtRestart(run, fixture, window, fixture.readCrashReceipt(crashPhase, id)))
+                .everyTick(() -> passage.invariants(null));
     }
 
     /**
