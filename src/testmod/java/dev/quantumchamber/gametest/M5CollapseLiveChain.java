@@ -54,7 +54,7 @@ final class M5CollapseLiveChain {
                 new Step("superposition", 400, this::superposition),
                 new Step("selected", 1, this::selectNewDoor),
                 new Step("halt", 400, () -> false)))
-                .started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy);
+                .started(fixture::requireFreshWorld);
     }
 
     /**

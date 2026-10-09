@@ -273,6 +273,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
 
     private void installWitness() {
         witness = new M5ChunkUnloadHooks.UnloadTaskWitness(run.source(), List.of(chunk));
+        // 不經 run.install：那裡的 hook 在停服一開始就被移除，witness 要觀察停服的 unloadChunks，所以直接以 Slot 安裝、在 afterStop 移除（F6-2c，F6-2c Step 0 quality Minor 1）。
         M5ChunkUnloadHooks.UNLOAD_TASK_WITNESS.install(witness, null);
         run.onStopping(() -> stoppingNanos = System.nanoTime());
     }

@@ -49,7 +49,7 @@ final class M5CollapseDormantChains {
                 new Step("enter", 1, () -> { fixture.moveInside(); return true; }),
                 new Step("committed", 40, fixture::committed),
                 new Step("halt", 400, () -> false)))
-                .started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy);
+                .started(fixture::requireFreshWorld);
     }
 
     /**

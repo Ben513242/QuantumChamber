@@ -72,8 +72,9 @@ final class M5CollapseRun {
      * （{@code SERVER_STOPPED}，寫 {@code final.json} 之前）；{@code ending} 是預期的結束方式（與 m5-collapse-probe.ps1 的 chain 表一致）。開服前的準備或停服之後的
      * 檢查失敗時，記在 receipt 的 {@code failures}，phase 判 FAIL。
      * <p>建立方式（F6-2c Step 0，F6-2a quality Minor 5：四個動作都是 {@link Checked}，位置參數互換也能編譯，所以不提供位置參數的建構子）：以結束方式的 factory
-     * （{@link #stop}、{@link #halt}）帶 step，再以具名的方法加上需要的動作，例如 {@code Phase.halt(steps).started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy)}。
-     * 沒有指定的動作是 {@link #NOTHING}；每個動作只能指定一次（再指定時丟出）。
+     * （{@link #stop}、{@link #halt}）帶 step，再以具名的方法加上需要的動作，例如 {@code Phase.halt(steps).started(fixture::requireFreshWorld)}。
+     * 沒有指定的動作是 {@link #NOTHING}；每個動作只能指定一次（再指定時丟出）。crash 點的健康檢查（{@link #crashPointHealthy}）不經 {@code everyTick}：runner 每個 tick 在
+     * {@code everyTick} 之前自動呼叫（F6-2c，F6-2c Step 0 quality Minor 2），{@code everyTick} 留給 chain 自己的不變量。
      */
     static final class Phase {
         private final Ending ending;
@@ -102,7 +103,7 @@ final class M5CollapseRun {
         /** 開服時（{@code SERVER_STARTED} 的 AFTER phase）的檢查。 */
         Phase started(Checked action) { return new Phase(ending, steps, beforeStart, once("started", started, action), everyTick, afterStop); }
 
-        /** 每個 tick 的不變量（在 step 之前執行）。 */
+        /** 每個 tick 的不變量（在 crash 點的健康檢查之後、step 之前執行）。 */
         Phase everyTick(Checked action) { return new Phase(ending, steps, beforeStart, started, once("everyTick", everyTick, action), afterStop); }
 
         /** 停服之後（{@code SERVER_STOPPED}，寫 {@code final.json} 之前）的檢查。 */
@@ -217,8 +218,11 @@ final class M5CollapseRun {
     private int ticks;
     private int stepIndex, stepTicks;
     private boolean finished, passed;
-    /** {@code SERVER_STOPPING} 已開始（{@link #stoppingBegins}）；{@link #halt} 讀它（crash 窗口的 hook 可能不在 server thread 上，所以是 volatile）。 */
-    private volatile boolean stopping;
+    /**
+     * {@code SERVER_STOPPING} 已開始（{@link #stoppingBegins}；receipt 的鍵也是 {@code stoppingSeen}，F6-2c 由 {@code stopping} 改名，F6-2c Step 0 quality Minor 4）；
+     * {@link #halt} 讀它（crash 窗口的 hook 可能不在 server thread 上，所以是 volatile）。
+     */
+    private volatile boolean stoppingSeen;
     private M5TestHooks.CrashPoint crashPoint;
 
     M5CollapseRun(Configuration config, List<String> phaseTable) {
@@ -299,7 +303,7 @@ final class M5CollapseRun {
         ServerLifecycleEvents.SERVER_STOPPING.addPhaseOrdering(BEFORE, Event.DEFAULT_PHASE);
         ServerLifecycleEvents.SERVER_STOPPING.register(BEFORE, this::stoppingBegins);
         ServerLifecycleEvents.SERVER_STOPPING.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
-        ServerLifecycleEvents.SERVER_STOPPING.register(AFTER, this::stopping);
+        ServerLifecycleEvents.SERVER_STOPPING.register(AFTER, this::afterProductionStopping);
         ServerLifecycleEvents.SERVER_STOPPED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
         ServerLifecycleEvents.SERVER_STOPPED.register(AFTER, this::stopped);
     }
@@ -323,6 +327,8 @@ final class M5CollapseRun {
         if (owner != server || finished || phase == null) return;
         guarded(() -> {
             require(++ticks <= PHASE_TICK_LIMIT, "phaseBounded：phase " + config.phase() + " 在 " + PHASE_TICK_LIMIT + " 個 tick 內沒有結束；" + diagnostic());
+            // F6-2c（F6-2c Step 0 quality Minor 2）：crash 點的健康檢查由 runner 每個 tick 在 everyTick 之前呼叫（原本是三個 HALT phase 各自的 everyTick）；還沒有裝 crash 點時不做事。
+            crashPointHealthy();
             phase.everyTick.run();
             var step = phase.steps().get(stepIndex);
             stepTicks++;
@@ -348,13 +354,16 @@ final class M5CollapseRun {
      */
     private void stoppingBegins(MinecraftServer owner) {
         if (owner != server) return;
-        stopping = true;
+        stoppingSeen = true;
         proof.put("stoppingSeen", true);
         removeInstalled();
     }
 
-    /** {@code SERVER_STOPPING} 的 AFTER phase（production 的 listener 之後）：依登記順序執行 {@link #onStopping} 的動作（參與者的連線、load-sync 的觀察）。 */
-    private void stopping(MinecraftServer owner) {
+    /**
+     * {@code SERVER_STOPPING} 的 AFTER phase（production 的 listener 之後）：依登記順序執行 {@link #onStopping} 的動作（參與者的連線、load-sync 的觀察）。F6-2c 由
+     * {@code stopping} 改名（與欄位 {@code stoppingSeen} 分開；F6-2c Step 0 quality Minor 4）。
+     */
+    private void afterProductionStopping(MinecraftServer owner) {
         if (owner != server) return;
         for (var action : onStopping) action.run();
         onStopping.clear();
@@ -425,6 +434,8 @@ final class M5CollapseRun {
      * 把 {@code value} 裝進 {@code slot}（{@link M5TestHooks.Slot#install}：probe 不是 GameTest，沒有 {@code GameTestState}；被占用時丟出、不覆蓋），並記下來，
      * {@link #stop} 或停服一開始（{@link #stoppingBegins}）時依安裝的相反順序移除。crash 點（{@link #armCrash}）與 probe 內的 fault（例如 {@code new M5TestHooks.JournalPutFault(...)} 裝進
      * {@link M5TestHooks#JOURNAL_PUT_FAULT}）都經這裡。回傳 {@code value}。
+     * <p>F6-2c（F6-2c Step 0 quality Minor 1）：經這裡的 hook 在 {@code SERVER_STOPPING} 一開始（早於 production 的 listener）就被移除，所以<b>停服期間要保留的 hook 不得經這裡</b>，
+     * 要由 chain 自己以 {@link M5TestHooks.Slot#install} 安裝、在 {@code SERVER_STOPPED} 之後移除（例如 unload chain 的卸載工作 witness，它要觀察停服的 {@code unloadChunks}）。
      */
     <T> T install(M5TestHooks.Slot<T> slot, T value) {
         slot.install(value, null);
@@ -468,8 +479,8 @@ final class M5CollapseRun {
         return crashPoint;
     }
 
-    /** crash phase 每個 tick 的不變量：crash 點的條件或動作沒有丟出過例外。 */
-    void crashPointHealthy() {
+    /** crash phase 每個 tick 的不變量：crash 點的條件或動作沒有丟出過例外。runner 每個 tick 在 {@code everyTick} 之前呼叫（F6-2c）；還沒有裝 crash 點時不做事。 */
+    private void crashPointHealthy() {
         var point = crashPoint;
         if (point != null) expect("crashPointHealthy", point.failure() == null, () -> "crash 點失敗：" + point.failure());
     }
@@ -486,7 +497,7 @@ final class M5CollapseRun {
         if (hit != 1) refused.add("hit=" + hit);
         if (point.failure() != null) refused.add("crashPointFailure=" + point.failure());
         if (!failures.isEmpty()) refused.add("failures=" + failures);
-        if (stopping) refused.add("stoppingSeen：停服已開始（SERVER_STOPPING），不是 crash");
+        if (stoppingSeen) refused.add("stoppingSeen：停服已開始（SERVER_STOPPING），不是 crash");
         int exit = refused.isEmpty() ? HALT_EXIT : HALT_FAILED_EXIT;
         try {
             var halt = new LinkedHashMap<String, Object>(proof);

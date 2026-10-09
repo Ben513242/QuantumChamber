@@ -67,7 +67,7 @@ final class M5CollapseRevisitChains {
                 new Step("enter", 1, () -> { fixture.moveInside(); return true; }),
                 new Step("committed", 40, fixture::committed),
                 new Step("halt", 400, () -> false)));
-        return Phase.halt(steps).started(fixture::requireFreshWorld).everyTick(run::crashPointHealthy);
+        return Phase.halt(steps).started(fixture::requireFreshWorld);
     }
 
     /**
