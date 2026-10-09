@@ -766,6 +766,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - F6-1 review 留下的 Minor（見 note F6-1 一節）。
     - 回歸條件：18 phases GREEN，各 chain 的具名斷言數不少於 F6-1。
   - **F6-2b：停服卡住的根因調查**（note F6-1「觀察」第 1 條，可穩定重現）。改 production 之前先回報 controller。
+    - 已完成（2026-10-09）。根因是原版 1.21 的 livelock。使用者裁示在 M5 內修，見下方 **Task H5**（spec v5.6 §4 H5、§20.10）。H5 排在 F6-2b 之後、F6-2c 之前。
   - **F6-2c：通道與終局的重啟。**
     - W7；
     - 開服時 PASSAGE_READY 終局之後的比較器；
@@ -816,6 +817,35 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 - [ ] **Step 2: GREEN。** 每個 phase 證明：同一個 UniverseId、catalog 最多多 1 筆、沒有重抽、沒有人被困。
 - [ ] **Step 3:** `run-all.ps1` 全綠（含新 probe 與 summary）；`ci-rule-check.ps1` 兩個 step PASS。
 - [ ] **Step 4: Commit** `test: add the M5 cross-JVM collapse probe to the gates`
+
+---
+
+### Task H5: chunk 卸載的 livelock 防護（controller 2026-10-09 依使用者裁示插入，spec v5.6 §4 H5、§20.10）
+
+在 F6-2b 之後、F6-2c 之前執行，走完 implementer → spec review → quality review。根因、確定性的重現與修正選項，見 implementation note 的 F6-2b 一節。
+
+**Files：**
+- Create：`src/main/java/dev/quantumchamber/mixin/` 下一個新的 mixin，掛在 `ServerChunkLoadingManager.tryUnloadChunk` 的 HEAD。
+- Modify：`src/main/resources/quantumchamber.mixins.json`，登記這個 mixin。
+- testmod：
+  - 確定性的重現，做成正式的回歸測試。建議做成 M5 collapse probe 的一條新 chain（停服必須正常結束；修正前會由 probe 的逾時處置判 FAIL），也可以用其他可重跑的形式，寫明理由。
+  - 需要的 hook mixin，例如把部分 chunk 讀檔留到停服開始的 hold，以及它在 `quantumchamber-test.mixins.json` 的登記。一律走 `Slot`。
+  - `M5CollapseRecoveryProbe` 的 phase 表、chain 類別、`m5-collapse-probe.ps1` 的 `$chains`、`run-all.ps1` 的 `$expectedCollapse`。
+- `scripts/verification/README.md`：M5 collapse probe 一節。
+- 可以沿用的起點：`f6/f62b/adapters_f62b.py` 的 `vr-hold`、`fix-exp` 與 `diag/`。
+
+**RED：**
+- 修正前，確定性的重現在停服時卡在 `unloadChunks`，probe 的逾時處置判 FAIL；
+- 另外要有「被取回之後，refCount 歸零時仍會正常卸載、存檔」的斷言，修正後也必須成立。
+
+**GREEN：**
+- 修正後正常停服；
+- 被取回的 holder 的舊工作被丟棄，有計數的 witness；
+- 之後同一個 chunk 照常卸載與存檔。
+
+**完整回歸：** `run-all.ps1`。這個修正影響所有世界的 chunk 卸載，所以 default、legacy、M5、M3、M4 recovery、M5 collapse 都要與基準相同；另外記錄 M4 `dormant-reentry` 的結果。
+
+**Commit：** `fix: drop the stale unload task of a chunk holder taken back before it ran`
 
 ---
 

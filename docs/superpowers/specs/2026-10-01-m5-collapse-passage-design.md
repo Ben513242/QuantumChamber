@@ -2,7 +2,7 @@
 
 日期：2026-10-01。基準：`main`＝`a7e1be2`（code 等同 `ba854e8`），分支 `feature/m5-collapse`。下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `a7e1be2` 為準。
 
-狀態：v5.5。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。Spec review 共五輪（含第五輪的 re-review）：
+狀態：v5.6。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。v5.6（2026-10-09）依使用者裁示，在 §4 新增 H5（chunk 卸載的 livelock 防護），見 §20.10。Spec review 共五輪（含第五輪的 re-review）：
 - v1 的 Critical 1、Important 8 由 v2 處理。
 - re-review 在 v2 新發現的 Critical 1、Important 2（N1–N3）與 Minor m1–m8 由 v3 處理。
 - 第三輪在 v3 新發現的 Important 1（N4）與 4 項 Minor，已在 v3 修正。
@@ -113,6 +113,21 @@ hardening 的順序依使用者 2026-09-29 的指定。每項都是獨立 task�
   - 測試品質子項（與位置修正本身無關）：
     - testmod `M2CorridorGameTests.java:1591` 改用原始 float 比較。
     - testmod `fabric.mod.json` 的名稱改為「QuantumChamber 原生驗證 testmod」。
+- **H5 chunk 卸載的 livelock 防護**（v5.6，2026-10-09 依使用者裁示加入，見 §20.10；根因見 implementation note 的 F6-2b 一節）：
+  - 背景：原版 1.21 的 `ServerChunkLoadingManager` 有一個 livelock。
+    - holder 的卸載工作（`tryUnloadChunk`）還在佇列時，同一個 chunk 被另一個 ticket 載回，`setLevel` 由 `chunksToUnload` 取回同一個 holder；
+    - 這條舊工作從此在 refCount > 0 時只會重排自己；
+    - 停服（`MinecraftServer.shutdown` 的 `tick(() -> true)`）或 flush 存檔（`save(true)`）會無上限地排空佇列；
+    - 若持有 refCount 的 `ChunkLoader` 在等 main thread 的工作，main thread 就永遠回不來。
+    - 玩家看到的是：關閉世界時停在 `Saving worlds`。M5 在遊戲進行中做的 checkpoint flush（§4 H2、§9.2），理論上也可能在同一處凍結。
+  - 要求：
+    - production mixin 掛在 `ServerChunkLoadingManager.tryUnloadChunk` 的 HEAD。`chunksToUnload.get(pos)` 不是同一個 holder 物件時 cancel。
+    - 判斷一律用物件同一性，不能用 `containsKey`。
+    - 這等於不再重排已被取回的 holder 的舊工作。原版裡這條工作永遠不會卸載或存檔它：refCount > 0 時重排，可存時 `remove(pos, holder)` 失敗、什麼都不做。holder 之後再卸載時，`unloadChunks` 會建立新的工作。所以語意不變。
+    - 適用於所有世界，包括原版自己的 ticket 造成的同一種情況。
+    - `require=1`；目標的簽章改變時啟動失敗（M5 基線固定 1.21）。
+    - 測試：以確定性的重現當 RED→GREEN。作法是 testmod 把部分 chunk 讀檔留到停服開始才完成，並讓同一個 chunk 在卸載佇列排空之前被載回。修正前停服必定卡住，修正後正常停服；同時要有「被取回之後，refCount 歸零時仍會正常卸載、存檔」的斷言。
+    - 相容性：與重寫 chunk 系統的 mod（例如 C2ME）可能衝突，寫進 compatibility 說明（F7）。
 
 ## 5. 狀態機與 journal schema 4
 
@@ -1106,3 +1121,15 @@ v5.1 的輕量確認：Critical 0、Important 0、Minor 5（p1–p5），control
   - Crossed 的寫入被拒、沒有記下時，玩家其實已經在目的世界。到達提示照常顯示；通道結束時，因為他不在 `Crossed` 中，仍會收到「量子通道已關閉。」。這時兩則一個在 title、一個在 actionbar，不會互相蓋掉。
   - 多人時，先跨過去的人不會再收到通道之後因 (a)(c)(d) 關閉的通知。
 - 不受影響的部分：其他訊息，包括 PASSAGE_READY→SEALED(`TRANSFER_RECOVERY_REQUIRED`) 的「量子通道無法開啟，已封存。」仍發給全體參與者，也不改比較器。
+
+### 20.10 使用者裁示：在 M5 內修正 chunk 卸載的 livelock（v5.5 → v5.6，2026-10-09）
+
+- 背景：
+  - F6-2b 的調查確認，一直列為「已知偶發」的停服卡住，是原版 1.21 的 livelock（§4 H5）。
+  - 獨立 reviewer 逐行對照原版程式，判定根因成立，也判定修正選項 A「安全，語意等價」。
+  - review 另外指出：flush 存檔本身也有同一個無上限的排空。所以 M5 在遊戲進行中做的 checkpoint flush，理論上也是凍結點。
+- 裁示：使用者經 AskUserQuestion 選擇「M5 內修」。
+  - 其他選項是「M5 之後第一優先」（investigator 與 reviewer 原本的建議）與「不修，只記錄」。
+  - controller 推薦 M5 內修，理由有兩點：M5 自己的 checkpoint flush 增加了暴露面；修法小，而且已有確定性的重現。
+- 作法：§4 H5，plan Task H5。排在 F6-2b 之後、F6-2c 之前，讓之後的重啟矩陣在修正後的行為上跑。
+- 不受影響的部分：M5 的狀態機、權威、訊息、比較器。probe 的 ticket 仍持有到 JVM 結束（F6-1 的 exp-c）。
