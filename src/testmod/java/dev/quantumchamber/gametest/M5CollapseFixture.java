@@ -637,6 +637,19 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     }
 
     /**
+     * F6-2c fix round 1：以 probe 的 ticket（{@link ProbeTicket}，持有到 JVM 結束）讓 {@code world} 以原艙（投影）所在的 chunk 為中心、半徑 {@code radius} 的 chunk 都載入到 FULL
+     * （生成時連同它們需要的較低狀態的外圈）；回傳是否已全部 FULL。同一個 ticket 重複加入不會多一張（ticket 以類型、等級與 argument 比對）。
+     */
+    boolean loadedAroundTheChamber(ServerWorld world, int radius) {
+        var center = new ChunkPos(FRAME.controllerPos());
+        world.getChunkManager().addTicket(ProbeTicket.TYPE, center, radius, center);
+        for (int x = -radius; x <= radius; x++) for (int z = -radius; z <= radius; z++) {
+            if (world.getChunkManager().getWorldChunk(center.x + x, center.z + z) == null) return false;
+        }
+        return true;
+    }
+
+    /**
      * probe 自己的 chunk ticket（level FULL、不持久化；只在需要時建立，probe 關閉時不碰 ChunkTicketType）。加上之後一直持有到 JVM 結束，不移除：
      * 開發時在 W6 的 restart 於 load-sync 之後移除，之後 PREPARE 的預載又以 production 的 ticket 載入同一個 chunk，而這個 phase 沒有任何 flush 存檔（修復 0 格，
      * 不做 checkpoint）；停服時原版的 {@code MinecraftServer.shutdown → ServerChunkLoadingManager.unloadChunks} 每次都忙等卡住（半徑 2 與 0 都是），不加 ticket 時則

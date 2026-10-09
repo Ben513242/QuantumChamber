@@ -108,22 +108,39 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * W7：兩人，選門者是清單的第二位（spec review M-4）；PASSAGE_READY 之後原生存檔一次（{@code nativeSaveDuringThePassage}：passable 的門、PASSAGE／15 的 Controller、
-     * 兩人在來源世界的 playerdata 都在磁碟上，模擬跨越之前有過一次 autosave），選門者越過中線，Crossed 的寫入確認的那個 tick 結束時 halt（F6-2c fix round 1：之間只有
-     * production 自己在 Crossed 確認之後的 playerdata 存檔，spec v5.7 §10.3；見窗口表）。
+     * W7：兩人，選門者是清單的第二位（spec review M-4）；PASSAGE_READY 之後讓 U 在原艙附近生成（{@link #universeGeneratedAroundTheChamber}），再原生存檔一次
+     * （{@code nativeSaveDuringThePassage}：passable 的門、PASSAGE／15 的 Controller、兩人在來源世界的 playerdata 都在磁碟上，模擬跨越之前有過一次 autosave），選門者越過
+     * 中線，Crossed 的寫入確認的那個 tick 結束時 halt（F6-2c fix round 1：之間只有 production 自己在 Crossed 確認之後的 playerdata 存檔，spec v5.7 §10.3；見窗口表）。
      */
     Phase w7Crash() {
         var steps = new ArrayList<>(untilResolved(2, CrashWindow.CROSSED_COMMITTED, SelectedBy.SECOND));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
+        steps.add(universeGeneratedAroundTheChamber());
         steps.add(nativeSaveDuringThePassage());
         steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
         return crashPhase(steps, fixture);
     }
 
-    /** PASSAGE_READY 期間原生存檔一次（step {@code saved}；W7、F6-2-13）。 */
+    /** PASSAGE_READY 期間原生存檔一次（step {@code saved}；W7、F6-2-12、F6-2-13）。 */
     private Step nativeSaveDuringThePassage() {
         return new Step("saved", 1, () -> {
             run.expect("nativeSaveDuringThePassage", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
+            return true;
+        });
+    }
+
+    /**
+     * W7、F6-2-12（F6-2c fix round 1）：跨越之前，以 probe 的 ticket 讓 U 在原艙附近（半徑是 view distance＋2）的 chunk 都生成到 FULL（step {@code universeGenerated}），
+     * 接著的 {@code saved} 把它們連同較低狀態的外圈一起存到磁碟。restart 時已跨過的人 JOIN 在 U，需要的 chunk 因此由磁碟載入，不在 restart 生成。沒有這一步時，U 在 restart
+     * 才從頭生成原艙附近的結構（U 與來源世界共用 seed）：trr 的 restart 6 次中 3 次（只在跨越之前存檔時 4 次中 1 次）在 U 的 structure_starts 撞上原版
+     * {@code StructureTemplate.PalettedBlockInfoList} 快取（HashMap）的 ConcurrentModificationException（「Exception generating new chunk」，chunk 12,11），之後停服卡住、
+     * 由逾時處置結束（見 implementation note）。
+     */
+    private Step universeGeneratedAroundTheChamber() {
+        return new Step("universeGenerated", 600, () -> {
+            int radius = run.server().getPlayerManager().getViewDistance() + 2;
+            if (!fixture.loadedAroundTheChamber(fixture.universeWorld().orElseThrow(), radius)) return false;
+            run.proof.put("universeGeneratedRadius", radius);
             return true;
         });
     }
@@ -170,14 +187,14 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * F6-2-12：兩人；PASSAGE_READY 之後原生存檔一次（同 W7：跨越之前，兩人的 playerdata 都在來源世界）→ 選門者照常跨過（Crossed＝[選門者]）→ 另一位的原生移動往 U 與回滾都被拒
-     * （{@code FAILED_RECOVERY_REQUIRED}）→ PASSAGE_READY→SEALED(TRR) 的寫入確認時 halt。跨越之後 probe 不存檔：選門者的 playerdata 由 production 在他的 Crossed 確認時
-     * 存下（spec v5.7 §10.3）。跨越之前的存檔也讓 restart 開服時來源世界的 chunk 都已在磁碟上（F6-2c fix round 1：沒有它時，restart 的 JOIN 讓來源世界與共用 seed 的 U 同時
-     * 生成同一個結構，2／2 撞上原版 {@code StructureTemplate} 快取的 ConcurrentModificationException，見 implementation note）。
+     * F6-2-12：兩人；PASSAGE_READY 之後同 W7 讓 U 在原艙附近生成、原生存檔一次（跨越之前，兩人的 playerdata 都在來源世界；見 {@link #universeGeneratedAroundTheChamber}）→
+     * 選門者照常跨過（Crossed＝[選門者]）→ 另一位的原生移動往 U 與回滾都被拒（{@code FAILED_RECOVERY_REQUIRED}）→ PASSAGE_READY→SEALED(TRR) 的寫入確認時 halt。跨越之後
+     * probe 不存檔：選門者的 playerdata 由 production 在他的 Crossed 確認時存下（spec v5.7 §10.3）。
      */
     Phase trrCrash() {
         var steps = new ArrayList<>(untilResolved(2, CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
+        steps.add(universeGeneratedAroundTheChamber());
         steps.add(nativeSaveDuringThePassage());
         steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
         steps.add(new Step("recoveryFault", 1, () -> {
