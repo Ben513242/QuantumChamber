@@ -48,8 +48,11 @@ final class M5CollapseWindows {
     /** crash 點的條件：{@code detail} 是不是這個窗口的那一刻（同一個 hook 每次呼叫都交出 detail）。 */
     @FunctionalInterface interface Condition { boolean test(M5CollapseFixture fixture, Object detail); }
 
-    /** halt 之前的取證（或刻意的準備）：寫進 {@code evidence}（{@code halt.json} 的 {@code atHalt}）；丟出時不 halt。 */
-    @FunctionalInterface interface Evidence { void collect(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception; }
+    /**
+     * halt 之前的取證（或刻意的準備）：寫進 {@code evidence}（{@code halt.json} 的 {@code atHalt}）；丟出時不 halt。F6-2c Step 0 由 {@code Evidence} 改名（與這一列的欄位
+     * {@code beforeHalt} 同名），避免與 runner 的 {@code M5CollapseRun.HaltEvidence} 混淆。
+     */
+    @FunctionalInterface interface BeforeHalt { void collect(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception; }
 
     /** restart 的磁碟檢查（開服時，或 READY 時）。 */
     @FunctionalInterface interface DiskCheck { void check(M5CollapseRun run, M5CollapseFixture fixture) throws Exception; }
@@ -93,10 +96,10 @@ final class M5CollapseWindows {
     static final int ANY_CELLS = -1;
 
     /** 窗口表的一列。 */
-    record Window(CrashWindow id, Condition condition, Evidence beforeHalt, AtRestart atRestart, Prepared prepared) {}
+    record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {}
 
     static final DiskCheck NO_CHECK = (run, fixture) -> { };
-    private static final Evidence NO_EVIDENCE = (run, fixture, detail, evidence) -> { };
+    private static final BeforeHalt NO_EVIDENCE = (run, fixture, detail, evidence) -> { };
     /** W4、W4b 的 restart：照第一次寫入重寫（PENDING），READY 時 checkpoint 已把方塊存到磁碟。 */
     private static final Prepared FIRST_WRITE_AGAIN = new Prepared("rewrittenAsFirstWrite", ProjectionWriter.Mode.FIRST_WRITE, ANY_CELLS,
             M5CollapseWindows::checkpointedBeforeReady);
@@ -134,7 +137,7 @@ final class M5CollapseWindows {
         return Collections.unmodifiableMap(rows);
     }
 
-    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, Evidence beforeHalt, AtRestart atRestart, Prepared prepared) {
+    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {
         if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared)) != null) throw new IllegalStateException("窗口表重複：" + id);
     }
 

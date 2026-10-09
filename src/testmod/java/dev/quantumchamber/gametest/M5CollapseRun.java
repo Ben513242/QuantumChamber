@@ -128,8 +128,11 @@ final class M5CollapseRun {
 
     @FunctionalInterface interface Checked { void run() throws Exception; }
 
-    /** 會丟出例外的條件（例如讀磁碟上的權威）；給 {@link #expect(String, Condition, Supplier)}。 */
-    @FunctionalInterface interface Condition { boolean holds() throws Exception; }
+    /**
+     * 會丟出例外的條件（例如讀磁碟上的權威）；給 {@link #expect(String, CheckedCondition, Supplier)}。名稱比照 {@link Checked}（可以丟出 checked 例外；F6-2c Step 0 由 {@code Condition}
+     * 改名，避免與窗口表的 {@code M5CollapseWindows.Condition} 同名）。
+     */
+    @FunctionalInterface interface CheckedCondition { boolean holds() throws Exception; }
 
     /** halt 之前的取證（或刻意的準備，例如 W4 的存檔）：寫進 halt receipt 的 {@code atHalt}。丟出時不 halt，crash 點記下失敗，phase 在下一個 tick FAIL。 */
     @FunctionalInterface interface HaltEvidence { void collect(Object detail, Map<String, Object> evidence) throws Exception; }
@@ -485,7 +488,7 @@ final class M5CollapseRun {
     }
 
     /** 同 {@link #expect(String, boolean, Supplier)}，條件本身可能丟出（例如嚴格 decode 磁碟上的 ledger）：丟出時也是這個斷言失敗（訊息以名稱開頭）。 */
-    void expect(String name, Condition condition, Supplier<String> detail) {
+    void expect(String name, CheckedCondition condition, Supplier<String> detail) {
         boolean holds;
         try {
             holds = condition.holds();
