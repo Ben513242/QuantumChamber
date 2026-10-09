@@ -17,7 +17,8 @@ import org.spongepowered.asm.mixin.injection.At;
  * 僅 testmod（M5 H5）：卸載工作的被動 witness。不改變任何行為：兩個 {@code WrapOperation} 都恰好呼叫原本的方法一次、參數不變。
  * <ul>
  * <li>{@code tryUnloadChunk} 的 lambda（{@code method_60440}：holder 還不能存時再呼叫 {@code tryUnloadChunk} 重排自己）：這次重排的 holder 已不在 {@code chunksToUnload}
- *     （已被取回，以物件同一性判斷）時，在呼叫的前後通知 {@link M5ChunkUnloadHooks#aroundStaleReschedule}。</li>
+ *     （已被取回，以物件同一性判斷）時，交給 {@link M5ChunkUnloadHooks#staleReschedule} 呼叫原本的方法（恰好一次），它比對呼叫前後本體的進入次數，一次記下丟棄或照原版重排
+ *     （F6-2c Step 0，H5 quality Minor 3）。</li>
  * <li>{@code tryUnloadChunk} 的本體（第一個指令 {@code holder.getSavingFuture()}）：通知 {@link M5ChunkUnloadHooks#unloadTaskBody}。production 的
  *     {@code ServerChunkLoadingManagerStaleUnloadMixin} 在 HEAD 取消時，本體不會執行。</li>
  * </ul>
@@ -37,12 +38,7 @@ abstract class ChunkUnloadTaskWitnessMixin {
             original.call(manager,pos,holder);
             return;
         }
-        M5ChunkUnloadHooks.aroundStaleReschedule(world,pos,true);
-        try {
-            original.call(manager,pos,holder);
-        } finally {
-            M5ChunkUnloadHooks.aroundStaleReschedule(world,pos,false);
-        }
+        M5ChunkUnloadHooks.staleReschedule(world,pos,() -> original.call(manager,pos,holder));
     }
 
     @WrapOperation(method="tryUnloadChunk(JLnet/minecraft/server/world/ChunkHolder;)V",at=@At(value="INVOKE",

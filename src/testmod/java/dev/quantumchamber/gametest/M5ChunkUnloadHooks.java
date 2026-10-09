@@ -23,8 +23,8 @@ import org.slf4j.LoggerFactory;
  * <li>chunk 讀檔的保留（{@link #CHUNK_READ_HOLD}，F6-2b 的 {@code vr-hold}）：{@code ChunkReadHoldMixin} 在 {@code ServerChunkLoadingManager.getUpdatedChunkNbt} 回傳時呼叫
  *     {@link #heldChunkRead}，指定範圍的讀檔結果留到放行才交出，重現「停服開始時仍有要等 main thread 的 chunk 載入」。經 {@code M5CollapseRun.install} 安裝（probe 請求停服之前
  *     移除；已保留的讀檔由它自己的 thread 在停服開始之後放行）。</li>
- * <li>卸載工作的 witness（{@link #UNLOAD_TASK_WITNESS}）：{@code ChunkUnloadTaskWitnessMixin} 在 {@code tryUnloadChunk} 的 lambda 重排被取回的 holder 的前後
- *     （{@link #aroundStaleReschedule}）與 {@code tryUnloadChunk} 的本體（{@link #unloadTaskBody}）呼叫，被動計數被丟棄與照原版重排的工作。開服時安裝、
+ * <li>卸載工作的 witness（{@link #UNLOAD_TASK_WITNESS}）：{@code ChunkUnloadTaskWitnessMixin} 把 {@code tryUnloadChunk} 的 lambda 對被取回的 holder 的重排交給
+ *     {@link #staleReschedule}（由它呼叫原本的方法），{@code tryUnloadChunk} 的本體另呼叫 {@link #unloadTaskBody}，被動計數被丟棄與照原版重排的工作。開服時安裝、
  *     停服之後（{@code SERVER_STOPPED}）移除，所以停服期間的丟棄也計入。</li>
  * </ul>
  */
@@ -54,12 +54,17 @@ public final class M5ChunkUnloadHooks {
 
     /**
      * {@code ChunkUnloadTaskWitnessMixin}：卸載工作（{@code tryUnloadChunk} 的 lambda）因 holder 還不能存而重排、而且這個 holder 已不在 {@code chunksToUnload}（已被取回）時，
-     * 在呼叫 {@code tryUnloadChunk} 之前（{@code before} 為真）與之後呼叫（H5）。之間沒有進入 {@code tryUnloadChunk} 的本體，就是這次重排被丟棄。只在 server thread 上。
+     * 由這裡呼叫 {@code original}（原本的 {@code tryUnloadChunk}，恰好一次；H5）。裝著的 witness 比對呼叫前後 {@code tryUnloadChunk} 本體的進入次數
+     * （{@link #unloadTaskBody}），一次記下這條重排是被丟棄（沒有進入本體）或照原版重排（進入了本體），兩者都以同一個 {@code pos} 計數（F6-2c Step 0，H5 quality Minor 3：
+     * 取代呼叫前後各通知一次、靠跨呼叫的狀態配對的寫法）。沒有裝 witness，或不是它的世界時，只呼叫 {@code original}。
      */
-    public static void aroundStaleReschedule(ServerWorld world, long pos, boolean before) {
+    public static void staleReschedule(ServerWorld world, long pos, Runnable original) {
         var witness = UNLOAD_TASK_WITNESS.get();
-        if (witness == null || witness.world != world) return;
-        if (before) witness.beforeStaleReschedule(pos); else witness.afterStaleReschedule(pos);
+        if (witness == null || witness.world != world) {
+            original.run();
+            return;
+        }
+        witness.staleReschedule(pos, original);
     }
 
     /** {@code ChunkUnloadTaskWitnessMixin}：進入 {@code tryUnloadChunk} 的本體（第一個指令 {@code getSavingFuture}）時呼叫（H5）。 */
@@ -151,15 +156,14 @@ public final class M5ChunkUnloadHooks {
      * 在卸載工作執行之前被另一個 ticket 載回）。原版的這條重排會一直重排自己（F6-2b 的殭屍）；production 的 {@code ServerChunkLoadingManagerStaleUnloadMixin} 在
      * {@code tryUnloadChunk} 的 HEAD 取消它。witness 以「這次呼叫有沒有進入 {@code tryUnloadChunk} 的本體」區分：沒有進入是被丟棄（{@link #dropped}），進入了是照原版重排
      * （{@link #rescheduled}），所以不依賴 testmod 與 production 在同一個 HEAD 的注入順序。{@code watched} 的 chunk 另外分開計數。卸載佇列只在 server thread 上執行，
-     * 「進行中的重排」只在 server thread 上記錄（其他 thread 的呼叫只計入 {@link #offThread}，不判斷丟棄與否）。
+     * 判斷只在 server thread 上做，也只比對 server thread 上的本體次數（其他 thread 的重排只計入 {@link #offThread}，不判斷丟棄與否）。
      */
     static final class UnloadTaskWitness {
         final ServerWorld world;
         private final Set<Long> watched;
-        /** 進行中的被取回 holder 的重排與它的 chunk（只在 server thread 上讀寫）。 */
-        private boolean pending;
-        private long pendingPos;
         private final AtomicLong dropped = new AtomicLong(), rescheduled = new AtomicLong(), bodies = new AtomicLong(), offThread = new AtomicLong();
+        /** server thread 上進入 {@code tryUnloadChunk} 本體的次數（只在 server thread 上讀寫）：{@link #staleReschedule} 比對它的前後。 */
+        private long serverThreadBodies;
         private final Map<Long, AtomicLong> droppedAt = new ConcurrentHashMap<>(), rescheduledAt = new ConcurrentHashMap<>();
 
         UnloadTaskWitness(ServerWorld world, Collection<ChunkPos> watched) {
@@ -167,26 +171,28 @@ public final class M5ChunkUnloadHooks {
             this.watched = watched.stream().map(ChunkPos::toLong).collect(java.util.stream.Collectors.toUnmodifiableSet());
         }
 
-        void beforeStaleReschedule(long pos) {
+        /**
+         * 被取回 holder 的一次重排（{@code pos}）：呼叫 {@code original} 恰好一次，之間進入了本體就是照原版重排，沒有就是被丟棄。{@code original} 丟出時照樣判斷、計數，
+         * 再往外丟。不在 server thread 上時只計入 {@link #offThread}。
+         */
+        void staleReschedule(long pos, Runnable original) {
             if (!world.getServer().isOnThread()) {
                 offThread.incrementAndGet();
+                original.run();
                 return;
             }
-            pending = true;
-            pendingPos = pos;
+            long before = serverThreadBodies;
+            try {
+                original.run();
+            } finally {
+                if (serverThreadBodies > before) count(rescheduled, rescheduledAt, pos);
+                else count(dropped, droppedAt, pos);
+            }
         }
 
         void bodyEntered() {
             bodies.incrementAndGet();
-            if (!pending || !world.getServer().isOnThread()) return;
-            pending = false;
-            count(rescheduled, rescheduledAt, pendingPos);
-        }
-
-        void afterStaleReschedule(long pos) {
-            if (!pending || !world.getServer().isOnThread()) return;
-            pending = false;
-            count(dropped, droppedAt, pos);
+            if (world.getServer().isOnThread()) serverThreadBodies++;
         }
 
         private void count(AtomicLong total, Map<Long, AtomicLong> at, long pos) {
