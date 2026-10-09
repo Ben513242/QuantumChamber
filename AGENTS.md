@@ -102,7 +102,7 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 - M1–M4 的歷程（逐 task 與整分支 review、integration fix rounds 1–4、人工驗收、合併、harness tracked 化與 worktree 退役）記在 `docs/implementation-notes/2026-09-21-m4-candidate-doors.md`、`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md` 與 `scripts/verification/README.md`。M1–M4 的 SDD ledger 只在外部備份：`C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\superpowers\sdd\2026-09-21-m4-candidate-doors\progress.md`（只讀）。
 - `scripts/verification/` 的 harness 原始檔（`task9-gates.ps1` 等）與 M1–M4 evidence，也都在同一份外部備份的 `superpowers\sdd\2026-09-21-m4-candidate-doors\`。M3 probe 與 M4 recovery 的 receipt 位置由 testmod 固定在 repo 內的 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`；依程式，tracked harness 在該目錄不存在時會自行建立；M5 T0（2026-10-01，HEAD `2c24d51`）已在 clean clone 實跑確認，見 M5 note 的「T0」。
 
-M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（2026-10-05 核對；實際狀態以遠端 ref 為準）。
+M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使用者指示，第一次把 feature 分支 push 到 `origin`，讓使用者在另一台電腦 pull 下來試玩；當時的 HEAD 是 `5ba8b47`，停在 F6-2c fix round 1 的中途。實際狀態以遠端 ref 為準。
 
 - spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.7；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
 - 進度（2026-10-09）：
