@@ -1521,7 +1521,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * bytes 不變），準備完成（INFO 記 REPAIR）。F5-1（F4b-2 spec S-M2）起修復寫了方塊，READY 之前要有一次原生存檔 checkpoint：checkpoint 恰一次、當下 D2 仍是
      * COLLAPSING，之後才提交 PASSAGE_READY（F4b-2 時修復不做 checkpoint）。D2 沒有任何 WARN／ERROR。catalog 增量 1（只有 D1 的 U）。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_revisit", tickLimit = 1200)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_revisit", tickLimit = 1400)
     public void existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior(TestContext context) {
         begin(context, "existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
@@ -1533,7 +1533,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             var authorities = CollapseAuthorities.get(server);
-            whenTicks(context, resolved + 1, 400, () -> !prepared(capture, sid1).isEmpty(), first -> {
+            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
+            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
+            whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid1).isEmpty(), first -> {
                 var stone = local(frame, 2, 1, 2); var hole = local(frame, 0, 3, 3);
                 universe.setBlockState(stone, Blocks.STONE.getDefaultState());
                 witness.put("interiorChangeAllowed", universe.getBlockState(stone).isOf(Blocks.STONE));
@@ -1579,7 +1581,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * </ul>
      * D2 沒有 WARN／ERROR。catalog 增量 1（只有 D1 的 U）。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_revisit_interrupted", tickLimit = 1500)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_revisit_interrupted", tickLimit = 1700)
     public void existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint(TestContext context) {
         begin(context, "existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
@@ -1589,7 +1591,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
-            whenTicks(context, resolved + 1, 400, () -> !prepared(capture, sid1).isEmpty(), first -> {
+            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
+            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
+            whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid1).isEmpty(), first -> {
                 var hole = local(frame, 0, 3, 3);
                 ChamberProtectionService.get().authorizedMutation(() -> {
                     universe.setBlockState(hole, Blocks.AIR.getDefaultState());
@@ -1814,7 +1818,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * 最後以 testmod 的重建 hook 寫回 ledger 檔、解除遺失與退化（README 的隔離規則；batch 的順序不固定，之後的 batch 才不受影響），權威回到健康。
      * 真正重啟之後的遺失判定（初始化時 schema 4、檔案不存在）屬 F6 的重啟矩陣。catalog 增量 1。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_degraded", tickLimit = 1200)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_degraded", tickLimit = 1400)
     public void deleting_the_projection_ledger_after_complete_degrades_and_seals_without_rewriting_the_interior(TestContext context) {
         begin(context, "deleting_the_projection_ledger_after_complete_degrades_and_seals_without_rewriting_the_interior");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
@@ -1827,7 +1831,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var witness = new LinkedHashMap<String, Boolean>();
             var authorities = CollapseAuthorities.get(server);
             var index = ProjectionProtectionIndex.get(server);
-            whenTicks(context, resolved + 1, 400, () -> !prepared(capture, sid1).isEmpty(), first -> {
+            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
+            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
+            whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid1).isEmpty(), first -> {
                 var stone = local(frame, 2, 1, 2); var hole = local(frame, 0, 3, 3);
                 universe.setBlockState(stone, Blocks.STONE.getDefaultState());
                 ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(hole, Blocks.AIR.getDefaultState()));
@@ -3035,7 +3041,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * {@code returnToOrigin}），門改為一般開門（不是關門），目的世界的 ticket 釋放，presence NONE，之後 registry 的 power state 依一般的 OFF 流程是 OFF。P 在艙內沒有被傳送，
      * 收到「量子通道已關閉」（F5-3 起精確比對：恰一則 actionbar、沒有 title，spec §20.9）。catalog 增量 1。
      */
-    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_power", tickLimit = 900)
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_power", tickLimit = 1100)
     public void passage_ends_with_a_plain_open_door_when_the_source_loses_power(TestContext context) {
         begin(context, "passage_ends_with_a_plain_open_door_when_the_source_loses_power");
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
@@ -3045,7 +3051,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
-            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
+            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
+            whenTicks(context, resolved + 1, 600, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
                 M5GameTestSupport.overlayKeys(origin.connection);
                 context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
                 whenTicks(context, readyAt + 1, 5, () -> !journal.flushedRecords().containsKey(sid), ended -> {
