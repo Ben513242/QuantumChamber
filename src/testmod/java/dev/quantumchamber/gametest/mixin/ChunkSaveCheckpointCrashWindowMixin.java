@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 僅 testmod（M5 F6-1）：跨 JVM probe 的 crash 窗口 W4b（spec §12）。在 {@code ChunkSaveCheckpoint.save} 的開頭（守門與存檔之前）把這一次要存的世界與 chunks
  * （{@code M5TestHooks.ChunkCheckpoint}）交給 {@link M5TestHooks#reachedCrashWindow}，窗口是 {@code DESTINATION_CHECKPOINT}：投影方塊已寫完並驗證、還沒有存檔，
  * projection ledger 仍是 PENDING。每一次 checkpoint 都呼叫（任何世界、任何呼叫端），是否是目的世界的 checkpoint 由 crash 點的條件判斷。hook 是
- * {@code M5TestHooks.Slot}，只由 {@code M5CollapseRecoveryProbe} 安裝；沒有裝時不做任何事。既有的 {@code ChunkSaveCheckpointProbeMixin} 也掛在這裡（GameTest 的探針與
+ * {@code M5TestHooks.Slot}，只由 M5 collapse probe 安裝（{@code M5CollapseRun.armCrash} 經 {@code M5CollapseRun.install}；F6-2c Step 0 更正，F6-2a 拆檔起不在 {@code M5CollapseRecoveryProbe}）；沒有裝時不做任何事。既有的 {@code ChunkSaveCheckpointProbeMixin} 也掛在這裡（GameTest 的探針與
  * 失敗注入）；這裡只讀，不丟出。{@code ChunkSaveCheckpoint} 是 public，以 class 指定 target，{@code require=1}：方法改名或簽名改變時，套用 mixin 就失敗。
  */
 @Mixin(value=ChunkSaveCheckpoint.class,remap=false)

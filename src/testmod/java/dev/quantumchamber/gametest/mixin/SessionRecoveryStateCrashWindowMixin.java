@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * 變更前、變更後的 record 與結果（{@code M5TestHooks.CollapsingCommit}）交給 {@link M5TestHooks#reachedCrashWindow}，窗口是 {@code COLLAPSING_COMMITTED}：
  * live 的 MEASURED→COLLAPSING 已 checked 落盤、返還與清理還沒有開始（{@code CollapseService} 在 session 的 operation guard 之內提交）。每次回傳都呼叫
  * （READY、SEALED→COLLAPSING 等其他 restore 類的邊，與提交失敗的結果也是），是否是窗口由 crash 點的條件判斷。只讀，不改結果、不丟出。hook 是
- * {@code M5TestHooks.Slot}，只由 {@code M5CollapseRecoveryProbe} 安裝；沒有裝時不做任何事。{@code SessionRecoveryState} 是 public，以 class 指定 target，
+ * {@code M5TestHooks.Slot}，只由 M5 collapse probe 安裝（{@code M5CollapseRun.armCrash} 經 {@code M5CollapseRun.install}；F6-2c Step 0 更正，F6-2a 拆檔起不在 {@code M5CollapseRecoveryProbe}）；沒有裝時不做任何事。{@code SessionRecoveryState} 是 public，以 class 指定 target，
  * 完整描述子加 {@code require=1}（只掛 public 的 server 版本，不掛 package-private 的 {@code Runnable} 版本）：方法改名或簽名改變時，套用 mixin 就失敗。
  */
 @Mixin(value=SessionRecoveryState.class,remap=false)

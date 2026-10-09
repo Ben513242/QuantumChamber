@@ -34,7 +34,9 @@ import net.minecraft.world.dimension.DimensionType;
  * <li>{@code unload-shutdown}（stop）：開服時以 raw MCA 讀回 C1 的標記（{@code takenBackChunkSavedOnDisk}：上一個 JVM 在卸載時存下了修改；C1 已卸載，停服時的存檔不會再存它）→
  *     C2 形成殭屍、取回同一個 holder，讀檔保留到停服開始之後才放行（條件 (M)）→ 2 個 tick 之後停服。修正前停服時 {@code unloadChunks(() -> true)} 無上限地排空佇列，殭屍在
  *     refCount &gt; 0 時一直重排自己，持有 refCount 的 {@code ChunkLoader} 要等 main thread 的 deserialize：livelock，由 {@code m5-collapse-probe.ps1} 的逾時處置判 FAIL
- *     （{@code timeout.json}、jstack 停在 {@code unloadChunks → tryUnloadChunk}）。修正後正常停服，停服之後斷言 C2 的舊工作被丟棄、沒有任何被取回的 holder 的工作照原版重排
+ *     （{@code timeout.json}；jstack 的 server thread 停在 {@code MinecraftServer.shutdown → … → unloadChunks} 的卸載佇列排空迴圈，取樣可能落在
+ *     {@code method_60440 → tryUnloadChunk}，也可能落在 {@code CompletableFuture} 完成之後的 {@code postFire}；F6-2c Step 0 依 H5 的兩次 {@code timeout.json} 與取樣更正）。
+ *     修正後正常停服，停服之後斷言 C2 的舊工作被丟棄、沒有任何被取回的 holder 的工作照原版重排
  *     （{@code staleUnloadTaskDropped}）。</li>
  * </ul>
  * witness：被丟棄的舊工作數（{@code M5ChunkUnloadHooks.UnloadTaskWitness}，testmod 被動計數，不在 production 加 test seam）、停服的耗時（{@code SERVER_STOPPING} 到

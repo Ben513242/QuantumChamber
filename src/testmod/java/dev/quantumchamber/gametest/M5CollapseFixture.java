@@ -511,6 +511,9 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
      * 開發時在 W6 的 restart 於 load-sync 之後移除，之後 PREPARE 的預載又以 production 的 ticket 載入同一個 chunk，而這個 phase 沒有任何 flush 存檔（修復 0 格，
      * 不做 checkpoint）；停服時原版的 {@code MinecraftServer.shutdown → ServerChunkLoadingManager.unloadChunks} 每次都忙等卡住（半徑 2 與 0 都是），不加 ticket 時則
      * 正常停服。持有到底就沒有這個卸載再載入的循環，也不影響 production 的判斷（PREPARE 只以 {@code getWorldChunk} 查 FULL）。
+     * <p>上面寫的是 H5（{@code f25a37d}）之前的行為：這個忙等是原版 chunk 卸載的 livelock（根因見 implementation note 的 F6-2b 一節），H5 的 production mixin
+     * {@code ServerChunkLoadingManagerStaleUnloadMixin} 已修正，回歸測試是 {@link M5CollapseUnloadChain}。ticket 仍持有到 JVM 結束，是為了不改變既有 phase 的條件
+     * （F6-2c Step 0，H5 quality Minor 5）。
      */
     private static final class ProbeTicket {
         static final ChunkTicketType<ChunkPos> TYPE = ChunkTicketType.create("quantumchamber_m5_collapse_probe", Comparator.comparingLong(ChunkPos::toLong));

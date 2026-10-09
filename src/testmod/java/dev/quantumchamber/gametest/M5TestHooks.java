@@ -74,9 +74,11 @@ import org.slf4j.LoggerFactory;
  * <li>隔離 session 的收斂失敗（{@link #CONVERGE_FAULT}，F6-0，F4b-3 spec S-M1）：{@code QuarantineConvergeFaultMixin} 在 {@code SessionRecoveryState.convergeQuarantined} 的開頭呼叫
  *     {@link #beforeConvergeQuarantined}，注入時丟出例外，session 因此一直隔離著。由 {@code M5GameTestSupport.installConvergeFault} 安裝。</li>
  * <li>跨 JVM 的 crash 點（{@link #CRASH_POINT}，F6-1，spec §12 的 crash 窗口）：每個窗口的 hook mixin（例如 {@code CollapseAuthoritiesCrashWindowMixin}）在窗口剛成立的那一刻
- *     呼叫 {@link #reachedCrashWindow}；裝著的 {@link CrashPoint} 的窗口與條件都符合時執行它的動作。只給 {@code M5CollapseRecoveryProbe} 用：它的動作寫出 halt receipt 之後以
+ *     呼叫 {@link #reachedCrashWindow}；裝著的 {@link CrashPoint} 的窗口與條件都符合時執行它的動作。只給 M5 collapse probe 用（{@code M5CollapseRun.armCrash}；F6-2c Step 0
+ *     更正，F6-2a 拆檔起不在 {@code M5CollapseRecoveryProbe}）：它的動作寫出 halt receipt 之後以
  *     {@code Runtime.halt} 結束 JVM（不經正常停止，等同 crash）。probe 不是 GameTest，所以安裝時沒有 {@link GameTestState}（{@code install(value, null)}，經
- *     {@code M5CollapseRun.install}）；halt 時 JVM 直接結束，窗口沒有到達或斷言失敗而正常停服時，probe 在請求停服之前移除（F6-2a 更正）。</li>
+ *     {@code M5CollapseRun.install}）；halt 時 JVM 直接結束，窗口沒有到達或斷言失敗而正常停服時，probe 在請求停服之前移除（F6-2a 更正），停服一開始也再移除一次
+ *     （F6-2c Step 0）。</li>
  * </ul>
  * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、八個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
  * entity storage 就緒保留、隔離 session 的收斂）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
@@ -874,8 +876,10 @@ public final class M5TestHooks {
 
     /**
      * 跨 JVM 的 crash 點（F6-1；{@link #CRASH_POINT}）：{@code window} 的 hook 每呼叫一次記一次 {@link #reached}；{@code matches} 為真時記一次 {@link #hits}，以
-     * （detail, 第幾次 hit）呼叫 {@code action}。{@code M5CollapseRecoveryProbe} 的動作寫出 halt receipt 之後以 {@code Runtime.halt} 結束 JVM，所以通常不會回來；
-     * 動作也可以依 hit 次數決定這次不 crash 而回傳。條件或動作丟出的例外記在 {@link #failure}、記 ERROR，不往 production 丟。
+     * （detail, 第幾次 hit）呼叫 {@code action}。M5 collapse probe 的動作（{@code M5CollapseRun.armCrash}；F6-2a 拆檔起不在 entrypoint）先做 halt 之前的取證，再寫出
+     * halt receipt、以 {@code Runtime.halt} 結束 JVM，不會回來：乾淨的 halt 是 77；第 2 次以後的 hit、crash 點記下過失敗、receipt 的 failures 不是空的，或停服已開始時是
+     * {@code HALT_REFUSED}、78（F6-2a、F6-2c Step 0）。取證丟出時不 halt：例外記在 {@link #failure}，phase 之後 FAIL。條件或動作丟出的例外都記在 {@link #failure}、
+     * 記 ERROR，不往 production 丟。
      */
     static final class CrashPoint {
         final CrashWindow window;

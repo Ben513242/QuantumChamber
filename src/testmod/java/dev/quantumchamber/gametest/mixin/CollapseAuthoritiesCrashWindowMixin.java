@@ -21,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * <li>{@code writeProjection} → {@code PROJECTION_COMPLETE}（W6：projection ledger 已 checked 寫入 COMPLETE、PASSAGE_READY 還沒有提交；回傳的
  *     {@code WriteResult}，PENDING 的寫入也會呼叫）。</li>
  * </ul>
- * 每個回傳點都呼叫，是否是窗口（{@code APPENDED}、寫入的是 COMPLETE）由 crash 點的條件判斷。hook 是 {@code M5TestHooks.Slot}，只由 {@code M5CollapseRecoveryProbe} 安裝；沒有裝時不做任何事。
+ * 每個回傳點都呼叫，是否是窗口（{@code APPENDED}、寫入的是 COMPLETE）由 crash 點的條件判斷。hook 是 {@code M5TestHooks.Slot}，只由 M5 collapse probe 安裝（{@code M5CollapseRun.armCrash} 經 {@code M5CollapseRun.install}；F6-2c Step 0 更正，F6-2a 拆檔起不在 {@code M5CollapseRecoveryProbe}）；沒有裝時不做任何事。
  * {@code CollapseAuthorities} 是 public，所以直接指定 class，{@code require=1}：方法改名或簽名改變時開服即失敗。
  */
 @Mixin(value=CollapseAuthorities.class,remap=false)
