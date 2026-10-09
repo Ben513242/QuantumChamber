@@ -228,6 +228,14 @@ final class M5CollapsePassage {
         }
 
         /**
+         * 沒有人跨過的終局（F6-2c，{@code M5CollapsePassageChains}：通道在開服時結束、SEALED(TRR)）：參與者都在來源世界，投影 COMPLETE，沒有這個 session 的 ERROR，authority
+         * 初始化成功。已跨過的人另以 {@link #placed} 改為 U。
+         */
+        static End inTheSourceWorld(M5CollapseFixture fixture) {
+            return new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.SOURCE), 0, true);
+        }
+
+        /**
          * 退化的 restart（開服時 projection ledger 遺失，{@code M5CollapseRevisitChains}）：ledger 不存在、參與者照一般方式開門而都在來源世界，這個 session 的 ERROR
          * 只有永久原因那一則，authority 本 instance 初始化失敗。
          */

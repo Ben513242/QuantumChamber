@@ -220,7 +220,11 @@ Step 'summary' {
         'w3:w3-crash:halt:CATALOG_ALLOCATED','w3:w3-restart:stop:','w5:w5-crash:halt:DISCOVERY_APPENDED','w5:w5-restart:stop:',
         'w4:w4-crash:halt:PROJECTION_CELL_WRITTEN','w4:w4-restart:stop:','w4b:w4b-crash:halt:DESTINATION_CHECKPOINT','w4b:w4b-restart:stop:',
         'w6:w6-crash:halt:PROJECTION_COMPLETE','w6:w6-restart:stop:','w6x:w6x-crash:halt:PROJECTION_REPAIRED','w6x:w6x-restart:stop:',
-        'degraded:deg-setup:stop:','degraded:deg-restart:stop:','unload:unload-takeback:stop:','unload:unload-shutdown:stop:')
+        'degraded:deg-setup:stop:','degraded:deg-restart:stop:','unload:unload-takeback:stop:','unload:unload-shutdown:stop:',
+        'w7:w7-crash:halt:CROSSED_COMMITTED','w7:w7-restart:stop:','readycommit:readycommit-crash:halt:READY_COMMITTED','readycommit:readycommit-restart:stop:',
+        'terminaldoor:terminaldoor-crash:halt:PASSAGE_TERMINATED','terminaldoor:terminaldoor-restart:stop:','crossedpending:crossedpending-crash:halt:CROSSED_UNCONFIRMED',
+        'crossedpending:crossedpending-restart:stop:','trr:trr-crash:halt:RECOVERY_SEALED','trr:trr-restart:stop:','trrpending:trrpending-crash:halt:RECOVERY_REJECTED',
+        'trrpending:trrpending-restart:stop:')
     $observedCollapse=@($collapsePhases | ForEach-Object {($_.nonce -replace '^[0-9a-f]{32}-','')+':'+$_.phase+':'+$_.ending+':'+$_.window})
     if(($observedCollapse -join ',') -cne ($expectedCollapse -join ',')){throw "M5 collapse phases 不符：$($observedCollapse -join ',')"}
     if(@($collapsePhases | ForEach-Object {"$($_.javaPid)@$($_.javaStartTimeUtc)"} | Sort-Object -Unique).Count -ne $collapsePhases.Count){throw 'M5 collapse phases 必須各自使用不同 JVM (PID, StartTime)'}

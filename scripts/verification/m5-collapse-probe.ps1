@@ -48,6 +48,17 @@ $chains = [ordered]@{
     'degraded' = @(@{phase='deg-setup'; ending='stop'; window=''}, @{phase='deg-restart'; ending='stop'; window=''})
     # H5（不是 crash 窗口）：chunk 卸載的 livelock 防護。takeback：被取回的 holder 照常卸載、存檔；shutdown：raw MCA 讀回修改，殭屍＋停服時仍在載入，必須正常停服。
     'unload' = @(@{phase='unload-takeback'; ending='stop'; window=''}, @{phase='unload-shutdown'; ending='stop'; window=''})
+    # F6-2c：通道與終局的重啟窗口。W7：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已確認，halt 前存檔）；重啟之後通道在開服時結束，同一個 server 內原艙再開新 session。
+    'w7' = @(@{phase='w7-crash'; ending='halt'; window='CROSSED_COMMITTED'}, @{phase='w7-restart'; ending='stop'; window=''})
+    # F6-2-16：PASSAGE_READY 提交之後、門改為 passable 之前（halt 前存檔：sealed 的門與艙內的參與者在磁碟上）。
+    'readycommit' = @(@{phase='readycommit-crash'; ending='halt'; window='READY_COMMITTED'}, @{phase='readycommit-restart'; ending='stop'; window=''})
+    # F6-2-13：通道的終局之後、改門之前（磁碟上的門帶著量子膜，重啟之後由 load-sync 的刷新排入正規化）。
+    'terminaldoor' = @(@{phase='terminaldoor-crash'; ending='halt'; window='PASSAGE_TERMINATED'}, @{phase='terminaldoor-restart'; ending='stop'; window=''})
+    # F6-2-17：玩家已在目的世界、Crossed 的寫出沒有確認。
+    'crossedpending' = @(@{phase='crossedpending-crash'; ending='halt'; window='CROSSED_UNCONFIRMED'}, @{phase='crossedpending-restart'; ending='stop'; window=''})
+    # F6-2-12：SEALED(TRANSFER_RECOVERY_REQUIRED) 跨重啟；以及 TRR 的寫入被拒（pendingRecovery）期間重啟。
+    'trr' = @(@{phase='trr-crash'; ending='halt'; window='RECOVERY_SEALED'}, @{phase='trr-restart'; ending='stop'; window=''})
+    'trrpending' = @(@{phase='trrpending-crash'; ending='halt'; window='RECOVERY_REJECTED'}, @{phase='trrpending-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

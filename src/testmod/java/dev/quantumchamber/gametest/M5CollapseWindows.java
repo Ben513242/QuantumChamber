@@ -11,12 +11,16 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
 import com.google.gson.JsonObject;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
+import dev.quantumchamber.chamber.ChamberState;
+import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionWriter;
+import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
+import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModBlocks;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.superposition.SuperpositionWorld;
@@ -29,7 +33,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import net.minecraft.block.Blocks;
+import net.minecraft.registry.Registries;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
 import org.apache.logging.log4j.Level;
 
@@ -226,8 +233,36 @@ final class M5CollapseWindows {
         row(rows, CrashWindow.PROJECTION_REPAIRED, M5CollapseWindows::repairWroteCells, M5CollapseWindows::repairOnlyInMemory,
                 AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withDisk(M5CollapseWindows::repairLostWithTheCrash),
                 new Prepared("repairedAgain", ProjectionWriter.Mode.REPAIR, 1, M5CollapseWindows::repairCheckpointedBeforeReady));
+        // ---- F6-2c：PASSAGE_READY 期間與終局的窗口（chain 在 M5CollapsePassageChains；RESOLVE、PREPARE 都已在 halt 之前完成，投影 COMPLETE） ----
+        var afterReady = AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE);
+        // W7（spec §12）：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已 checked 寫入）；halt 之前原生存檔（模擬 crash 之前有過一次 autosave）。
+        row(rows, CrashWindow.CROSSED_COMMITTED, (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED),
+                M5CollapseWindows::savedWithTheSelectorAcross,
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
+        // F6-2-16：COLLAPSING→PASSAGE_READY 已 checked 提交、門改為 passable 之前；halt 之前原生存檔（PREPARE 的 sealed 量子膜、參與者在艙內都在磁碟上）。
+        row(rows, CrashWindow.READY_COMMITTED, M5CollapseWindows::readyCommitted, M5CollapseWindows::savedBeforePassable,
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::sealedDoorOnDiskAtRestart), null);
+        // F6-2-13：通道以 (d) 結束的 checked 終局已讀回確認、改門之前（chain 在 PASSAGE_READY 期間存過檔：磁碟上的門是 passable、Controller 是 PASSAGE）。
+        row(rows, CrashWindow.PASSAGE_TERMINATED, M5CollapseWindows::passageTerminated, M5CollapseWindows::terminatedBeforeTheDoor,
+                afterReady.terminatedAtHalt().withDisk(M5CollapseWindows::passageOnDiskAtRestart), null);
+        // F6-2-17：Crossed 的寫出沒有確認（ROLL_FORWARD_PENDING）：玩家已 MOVED，磁碟上的 Crossed 沒有他，playerdata 也沒有存到 U。
+        row(rows, CrashWindow.CROSSED_UNCONFIRMED, (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING),
+                M5CollapseWindows::movedButNotOnDisk,
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
+        // F6-2-12：PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 已 checked 寫入（Crossed＝選門者、RecoveryRequired＝另一位），之後的釋放、門與 ERROR 之前。
+        row(rows, CrashWindow.RECOVERY_SEALED, (fixture, detail) -> recoveryWrite(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED),
+                M5CollapseWindows::recoverySealedOnDisk,
+                afterReady.withStateAtHalt(SessionState.SEALED).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::recoveryRequiredKeptAtRestart), null);
+        // F6-2-12 的 pendingRecovery：TRR 的寫入被拒（ERROR 已記、通道在記憶體內關閉）之後，退避期過後的重試又被拒；磁碟仍是 PASSAGE_READY。
+        row(rows, CrashWindow.RECOVERY_REJECTED, (fixture, detail) -> recoveryWrite(fixture, detail, SessionRecoveryState.CommitResult.Status.REJECTED)
+                        && fixture.sessionLogged(Level.ERROR, REJECTED_RECOVERY_ERROR),
+                M5CollapseWindows::recoveryOnlyInTheLog,
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
         return Collections.unmodifiableMap(rows);
     }
+
+    /** {@code PassageService.recoveryRequired} 第一次被拒時的 ERROR 的字句（F6-2-12 的 pendingRecovery）。 */
+    static final String REJECTED_RECOVERY_ERROR = "SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒";
 
     private static void row(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {
         if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared)) != null) throw new IllegalStateException("窗口表重複：" + id);
@@ -282,6 +317,32 @@ final class M5CollapseWindows {
     private static boolean repairWroteCells(M5CollapseFixture fixture, Object detail) {
         return detail instanceof M5TestHooks.ProjectionWrite write && write.mode() == ProjectionWriter.Mode.REPAIR
                 && write.result().status() == ProjectionWriter.Status.WRITTEN && write.result().written() > 0 && fixture.isUniverse(write.world());
+    }
+
+    /** F6-2-16：這個 session 的 COLLAPSING→PASSAGE_READY 已提交（checked 讀回確認）。 */
+    private static boolean readyCommitted(M5CollapseFixture fixture, Object detail) {
+        return detail instanceof M5TestHooks.CollapsingCommit commit && commit.result().committed() && commit.expected().state() == SessionState.COLLAPSING
+                && commit.next().state() == SessionState.PASSAGE_READY && commit.next().sessionUuid().equals(fixture.sid());
+    }
+
+    /** W7、F6-2-17：這個 session 的 PASSAGE_READY 加入 Crossed 的 roll-forward 寫入，結果是 {@code status}，寫入之後的 Crossed 恰為選門者。 */
+    private static boolean selectorCrossing(M5CollapseFixture fixture, Object detail, SessionRecoveryState.CommitResult.Status status) {
+        return detail instanceof M5TestHooks.RollForwardWrite write && write.result().status() == status && write.expected().state() == SessionState.PASSAGE_READY
+                && write.next().state() == SessionState.PASSAGE_READY && write.next().sessionUuid().equals(fixture.sid())
+                && write.next().collapse().crossed().equals(List.of(fixture.selectorId()));
+    }
+
+    /** F6-2-12：這個 session 的 PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 的 roll-forward 寫入，結果是 {@code status}。 */
+    private static boolean recoveryWrite(M5CollapseFixture fixture, Object detail, SessionRecoveryState.CommitResult.Status status) {
+        return detail instanceof M5TestHooks.RollForwardWrite write && write.result().status() == status && write.expected().state() == SessionState.PASSAGE_READY
+                && write.next().state() == SessionState.SEALED && write.next().sessionUuid().equals(fixture.sid())
+                && write.next().collapse().sealedReason().equals(Optional.of(SealedReason.TRANSFER_RECOVERY_REQUIRED));
+    }
+
+    /** F6-2-13：這個 session 的通道終局（PASSAGE_ENDED）已讀回確認不在 journal。 */
+    private static boolean passageTerminated(M5CollapseFixture fixture, Object detail) {
+        return detail instanceof M5TestHooks.Termination termination && termination.origin() == SessionRecoveryState.TerminalOrigin.PASSAGE_ENDED
+                && termination.result().removed() && termination.expected().sessionUuid().equals(fixture.sid());
     }
 
     // ---- halt 之前的取證 ----
@@ -364,6 +425,145 @@ final class M5CollapseWindows {
         run.expect("repairedInMemory", world.getBlockState(damagedShell()).isOf(Blocks.BEDROCK) && world.getBlockState(interiorMarker()).isOf(Blocks.GOLD_BLOCK),
                 () -> "shell=" + world.getBlockState(damagedShell()) + " marker=" + world.getBlockState(interiorMarker()));
         run.expect("repairNotOnDiskAtHalt", GLASS.equals(disk.name()), () -> "checkpoint 之前磁碟上的 shell 是 " + disk);
+    }
+
+    /**
+     * 通道的窗口（F6-2c）：磁碟上這個 session 的 record exact 是 {@code expected}（名稱 {@code name}），並把它的摘要（{@link M5CollapseFixture#recordDigest}）記在
+     * {@code atHalt} 的 {@code recordAtHalt}（restart 開服時比對相同：opened／expires、Crossed、RecoveryRequired 都沒有變）。
+     */
+    private static void recordOnDisk(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence, SessionRecoveryRecord expected, String name) throws Exception {
+        var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
+        evidence.put("recordAtHalt", M5CollapseFixture.recordDigest(expected));
+        evidence.put("doorCenterOnDisk", doorCenterOnDisk(run, fixture));
+        run.expect(name, expected.equals(onDisk), () -> "磁碟上的 record=" + (onDisk == null ? "ABSENT" : onDisk.state() + " crossed=" + onDisk.collapse().crossed()));
+    }
+
+    /** 每位參與者的 playerdata 在磁碟上記的世界（寫進 {@code atHalt} 的 {@code playerDimensionOnDisk}）。 */
+    private static Map<UUID, String> playerDimensions(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence) throws Exception {
+        var dimensions = new LinkedHashMap<UUID, String>();
+        for (var id : fixture.participants()) dimensions.put(id, M5CollapseDiskEvidence.playerDimension(run.saveRoot(), id));
+        var shown = new LinkedHashMap<String, String>();
+        dimensions.forEach((id, dimension) -> shown.put(id.toString(), dimension));
+        evidence.put("playerDimensionOnDisk", shown);
+        return dimensions;
+    }
+
+    /** {@code who} 的每一位的 playerdata 都在 {@code world}（磁碟）。 */
+    private static boolean playerDataIn(M5CollapseRun run, M5CollapseFixture fixture, M5CollapseFixture.Who who, ServerWorld world) throws Exception {
+        for (var id : fixture.members(who)) {
+            if (!world.getRegistryKey().getValue().toString().equals(M5CollapseDiskEvidence.playerDimension(run.saveRoot(), id))) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 原生存檔（刻意的準備，比照 W4 的 halt 前存檔）：模擬 crash 之前剛好有過一次 autosave，之後到 crash 都沒有任何寫出。磁碟上因此有這一刻的 playerdata、原艙門與
+     * Controller。playerdata 只在原生 autosave、登出與停服時存，production 跨越時也不存（M3 的 transfer 只移動、不存檔），所以沒有這一步時 crash 之後玩家回到上一次存檔的
+     * 位置（F6-2-17 的判定）。chunk 則另有原版的逐步存檔（{@code ServerChunkLoadingManager.unloadChunks}：tick 有餘裕時每個 tick 最多 20 個變更過的 chunk、同一個 chunk
+     * 至少隔 10 秒），沒有這一步時磁碟上的門與 Controller 是 crash 之前最後一次存下的樣子，不固定。
+     */
+    private static void nativeSaveAtHalt(M5CollapseRun run) {
+        run.expect("nativeSaveAtHalt", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
+    }
+
+    /**
+     * W7 的 halt 之前：磁碟上的 record 是 Crossed＝[選門者] 的 PASSAGE_READY；選門者在 U，另一位在原艙內。原生存檔（{@link #nativeSaveAtHalt}）之後，選門者的 playerdata
+     * 存在 U、另一位存在來源世界；原艙門 passable、Controller 是 PASSAGE（比較器 15）都在磁碟上。
+     */
+    private static void savedWithTheSelectorAcross(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        var write = (M5TestHooks.RollForwardWrite) detail;
+        recordOnDisk(run, fixture, evidence, write.next(), "crossedOnDiskAtHalt");
+        var universe = fixture.universeWorld().orElseThrow();
+        run.expect("selectorInTheUniverseAtHalt", fixture.selector().getServerWorld() == universe, () -> "選門者在 " + fixture.selector().getServerWorld().getRegistryKey().getValue());
+        for (var id : fixture.members(M5CollapseFixture.OTHERS)) {
+            var player = fixture.player(id);
+            run.expect("othersInsideTheChamberAtHalt", player.getServerWorld() == run.source() && M5CollapseFixture.inside(player), () -> "另一位在 " + player.getPos());
+        }
+        nativeSaveAtHalt(run);
+        playerDimensions(run, fixture, evidence);
+        run.expect("selectorPlayerDataInTheUniverseAtHalt", playerDataIn(run, fixture, M5CollapseFixture.SELECTOR, universe), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
+        run.expect("othersPlayerDataInTheSourceAtHalt", playerDataIn(run, fixture, M5CollapseFixture.OTHERS, run.source()), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
+        run.expect("passableDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.passableFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 passable");
+        var controller = controllerStateOnDisk(run, fixture);
+        evidence.put("controllerStateOnDisk", controller);
+        run.expect("passageControllerOnDiskAtHalt", ChamberState.PASSAGE.name().equals(controller), () -> "磁碟上的 Controller 是 " + controller);
+    }
+
+    /**
+     * F6-2-16 的 halt 之前：磁碟上的 record 是剛提交的 PASSAGE_READY，門還是 PREPARE 的 sealed 量子膜（還沒有改為 passable）。原生存檔之後，sealed 的門與參與者在艙內的
+     * playerdata 都在磁碟上（沒有在下一個 tick 正規化就會把人關在艙內）。
+     */
+    private static void savedBeforePassable(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        var commit = (M5TestHooks.CollapsingCommit) detail;
+        recordOnDisk(run, fixture, evidence, commit.next(), "readyOnDiskAtHalt");
+        run.expect("sealedDoorBeforePassable", M5GameTestSupport.doorSealed(run.source(), FRAME), () -> "READY 提交的那一刻原艙門不是 PREPARE 的 sealed 量子膜");
+        for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
+        nativeSaveAtHalt(run);
+        playerDimensions(run, fixture, evidence);
+        run.expect("playerDataInTheSourceAtHalt", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
+        run.expect("sealedDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.sealedFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 sealed 量子膜");
+    }
+
+    /**
+     * F6-2-13 的 halt 之前：終局已落盤（磁碟上沒有這個 session），原艙門還是 passable（改門之前）。chain 在 PASSAGE_READY 期間存過檔，所以磁碟上的門也是 passable、
+     * Controller 是 PASSAGE（重啟之後找不到所屬 session 的量子膜）。
+     */
+    private static void terminatedBeforeTheDoor(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid());
+        evidence.put("journalStateOnDisk", onDisk.map(record -> record.state().name()).orElse("ABSENT"));
+        run.expect("terminatedOnDiskAtHalt", onDisk.isEmpty(), () -> "磁碟上仍有這個 session：" + evidence.get("journalStateOnDisk"));
+        run.expect("doorStillPassableAtHalt", M5GameTestSupport.doorPassable(run.source(), FRAME), () -> "改門之前原艙門已不是 passable");
+        run.expect("passableDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.passableFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 passable");
+        var controller = controllerStateOnDisk(run, fixture);
+        evidence.put("controllerStateOnDisk", controller);
+        run.expect("passageControllerOnDiskAtHalt", ChamberState.PASSAGE.name().equals(controller), () -> "磁碟上的 Controller 是 " + controller);
+    }
+
+    /**
+     * F6-2-17 的 halt 之前：磁碟上的 record 仍是寫入之前的 PASSAGE_READY（Crossed 是空的），collapse view 的 Crossed 有他、roll-forward 未確認；他已在 U，但 playerdata
+     * 沒有存到 U（磁碟上仍是來源世界，production 跨越時不存 playerdata）。
+     */
+    private static void movedButNotOnDisk(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        var write = (M5TestHooks.RollForwardWrite) detail;
+        recordOnDisk(run, fixture, evidence, write.expected(), "crossedNotOnDiskAtHalt");
+        var sid = fixture.sid();
+        var view = run.journal().collapseView(sid).orElse(null);
+        run.expect("crossedPendingInTheCollapseView", run.journal().rollForwardPending(sid) && view != null && view.collapse().crossed().equals(List.of(fixture.selectorId())),
+                () -> "collapse view=" + (view == null ? "ABSENT" : view.collapse().crossed()));
+        var universe = fixture.universeWorld().orElseThrow();
+        run.expect("movedToTheUniverseAtHalt", fixture.selector().getServerWorld() == universe, () -> "玩家在 " + fixture.selector().getServerWorld().getRegistryKey().getValue());
+        playerDimensions(run, fixture, evidence);
+        run.expect("playerDataNotInTheUniverseAtHalt", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
+    }
+
+    /** F6-2-12 的 halt 之前：磁碟上的 record 是 SEALED(TRR)，Crossed＝[選門者]、RecoveryRequired＝另一位；另一位沒有被移動（仍在來源世界）。不存檔。 */
+    private static void recoverySealedOnDisk(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        var write = (M5TestHooks.RollForwardWrite) detail;
+        recordOnDisk(run, fixture, evidence, write.next(), "recoverySealedOnDiskAtHalt");
+        var others = fixture.members(M5CollapseFixture.OTHERS);
+        run.expect("recoveryRequiredForTheOther", Set.copyOf(write.next().collapse().recoveryRequired()).equals(others)
+                        && write.next().collapse().crossed().equals(List.of(fixture.selectorId())),
+                () -> "RecoveryRequired=" + write.next().collapse().recoveryRequired() + " Crossed=" + write.next().collapse().crossed());
+        for (var id : others) {
+            var player = fixture.player(id);
+            run.expect("recoveryPlayerInTheSourceAtHalt", player.getServerWorld() == run.source(), () -> "無法回滾的玩家在 " + player.getServerWorld().getRegistryKey().getValue());
+        }
+    }
+
+    /**
+     * F6-2-12 的 pendingRecovery，halt 之前：磁碟與 current 都仍是 PASSAGE_READY（寫入被拒，journal 沒有改變、沒有待確認的 roll-forward）；被拒的 ERROR 恰一則（之後只剩這一則
+     * log 證據，寫進 {@code atHalt} 的 {@code recoveryError}）；通道在記憶體內關閉，原艙門是一般開門。
+     */
+    private static void recoveryOnlyInTheLog(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        var write = (M5TestHooks.RollForwardWrite) detail;
+        recordOnDisk(run, fixture, evidence, write.expected(), "passageReadyOnDiskAtHalt");
+        var sid = fixture.sid();
+        run.expect("journalUnchangedAtHalt", write.expected().equals(run.journal().records().get(sid)) && !run.journal().rollForwardPending(sid),
+                () -> "current=" + M5GameTestSupport.state(run.journal(), sid));
+        var errors = run.capture().matching(Level.ERROR, REJECTED_RECOVERY_ERROR, sid.toString()).stream().map(LogCapture.Entry::message).toList();
+        evidence.put("recoveryError", errors.isEmpty() ? "-" : errors.getFirst());
+        run.expect("oneRejectedRecoveryError", errors.size() == 1 && errors.getFirst().contains("需要管理員處理"), () -> "被拒的 ERROR：" + errors);
+        run.expect("plainOpenWhilePassageClosedAtHalt", M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "通道在記憶體內關閉時原艙門不是一般開門");
     }
 
     // ---- restart 開服時 ----
@@ -472,6 +672,64 @@ final class M5CollapseWindows {
         run.expect("interiorMarkerOnDisk", GOLD_BLOCK.equals(marker.name()), () -> "磁碟上的 interior 標記是 " + marker);
     }
 
+    /** F6-2-13 的開服（W7 也用）：磁碟上的原艙門是 passable 量子膜、Controller 是 PASSAGE（重啟之前存下的是 PASSAGE／15，R2 M5）。 */
+    private static void passageOnDiskAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
+        run.expect("passableDoorOnDiskAtRestart", doorOnDisk(run, fixture, true, MembraneState.passableFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 passable");
+        var controller = controllerStateOnDisk(run, fixture);
+        run.expect("passageControllerOnDiskAtRestart", ChamberState.PASSAGE.name().equals(controller), () -> "磁碟上的 Controller 是 " + controller);
+    }
+
+    /** W7 的開服：{@link #passageOnDiskAtRestart}，另外選門者的 playerdata 在 U、另一位在來源世界。 */
+    private static void selectorAcrossOnDiskAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
+        passageOnDiskAtRestart(run, fixture);
+        var universe = fixture.universeWorld().orElseThrow();
+        run.expect("selectorPlayerDataInTheUniverse", playerDataIn(run, fixture, M5CollapseFixture.SELECTOR, universe), () -> "選門者的 playerdata 不在 U");
+        run.expect("othersPlayerDataInTheSource", playerDataIn(run, fixture, M5CollapseFixture.OTHERS, run.source()), () -> "另一位的 playerdata 不在來源世界");
+    }
+
+    /** F6-2-16 的開服：磁碟上的原艙門是 PREPARE 的 sealed 量子膜，參與者的 playerdata 在來源世界（艙內）。 */
+    private static void sealedDoorOnDiskAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
+        run.expect("sealedDoorOnDiskAtRestart", doorOnDisk(run, fixture, true, MembraneState.sealedFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 sealed 量子膜");
+        playerDataInTheSourceAtRestart(run, fixture);
+    }
+
+    /** F6-2-17、F6-2-12 的 pendingRecovery 的開服：參與者的 playerdata 在來源世界（跨越或嘗試跨越之後沒有存過檔）。 */
+    private static void playerDataInTheSourceAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
+        run.expect("playerDataInTheSourceWorld", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "參與者的 playerdata 不在來源世界");
+    }
+
+    /** F6-2-12 的開服：record 仍是 SEALED(TRANSFER_RECOVERY_REQUIRED)，RecoveryRequired 仍是另一位（永久原因，收據保留）。 */
+    private static void recoveryRequiredKeptAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
+        var current = run.journal().flushedRecords().get(fixture.sid());
+        run.expect("recoveryRequiredKept", current.collapse().sealedReason().equals(Optional.of(SealedReason.TRANSFER_RECOVERY_REQUIRED))
+                        && Set.copyOf(current.collapse().recoveryRequired()).equals(fixture.members(M5CollapseFixture.OTHERS)),
+                () -> "SEALED 的原因=" + current.collapse().sealedReason() + " RecoveryRequired=" + current.collapse().recoveryRequired());
+    }
+
+    /** 磁碟上（raw MCA）原艙門的 25 格都是 bulkhead，而且 open 與 membrane 都符合。 */
+    private static boolean doorOnDisk(M5CollapseRun run, M5CollapseFixture fixture, boolean open, MembraneState membrane) throws Exception {
+        var directory = fixture.dimensionDirectory(run.source());
+        var bulkhead = Registries.BLOCK.getId(ModBlocks.QUANTUM_BULKHEAD).toString();
+        for (var pos : M5GameTestSupport.door(FRAME)) {
+            var disk = M5CollapseDiskEvidence.block(directory, pos);
+            if (!bulkhead.equals(disk.name()) || !disk.properties().contains("open:\"" + open + "\"") || !disk.properties().contains("membrane:\"" + membrane.asString() + "\"")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 磁碟上（raw MCA）原艙門正中那一格（區域 (3,3,0)）的方塊與屬性（取證用）。 */
+    static String doorCenterOnDisk(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
+        var disk = M5CollapseDiskEvidence.block(fixture.dimensionDirectory(run.source()), local(3, 3, 0));
+        return disk.name() + disk.properties();
+    }
+
+    /** 磁碟上（raw MCA）原艙 Controller 的 {@code ChamberState}。 */
+    private static String controllerStateOnDisk(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
+        return M5CollapseDiskEvidence.blockEntityString(fixture.dimensionDirectory(run.source()), FRAME.controllerPos(), "ChamberState");
+    }
+
     // ---- PREPARE 怎麼完成 ----
 
     /** PASSAGE_READY 時：「準備完成」INFO 恰一則、符合這一列的模式與格數，再做 READY 時的磁碟檢查。{@code prepared} 為 null 時不檢查。 */
@@ -508,6 +766,11 @@ final class M5CollapseWindows {
         return switch (detail) {
             case M5TestHooks.CollapsingCommit commit -> "edge=" + commit.expected().state() + "→" + commit.next().state() + " session=" + commit.next().sessionUuid()
                     + " status=" + commit.result().status();
+            case M5TestHooks.RollForwardWrite write -> "edge=" + write.expected().state() + "→" + write.next().state() + " session=" + write.next().sessionUuid()
+                    + " status=" + write.result().status() + " crossed=" + write.next().collapse().crossed() + " recoveryRequired=" + write.next().collapse().recoveryRequired()
+                    + " sealed=" + write.next().collapse().sealedReason().map(Enum::name).orElse("-");
+            case M5TestHooks.Termination termination -> "origin=" + termination.origin() + " from=" + termination.expected().state() + " session="
+                    + termination.expected().sessionUuid() + " status=" + termination.result().status();
             case CollapseAuthorities.Lookup<?> lookup -> "status=" + lookup.status() + " value=" + lookup.value().map(String::valueOf).orElse("-");
             case CollapseAuthorities.WriteResult result -> "status=" + result.status() + " entry=" + result.entry().map(String::valueOf).orElse("-");
             case M5TestHooks.ProjectionCell cell -> "world=" + cell.world().getRegistryKey().getValue() + " mode=" + cell.mode() + " pos=" + cell.pos().toShortString()

@@ -57,6 +57,23 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         // H5（spec §4 H5，不是 crash 窗口）：chunk 卸載的 livelock 防護。被取回的 holder 在 refCount 歸零之後照常卸載、存檔（下一個 JVM 以 raw MCA 讀回）；殭屍＋停服時仍在載入，必須正常停服。
         table.put("unload-takeback", run -> new M5CollapseUnloadChain(run).takeBack());
         table.put("unload-shutdown", run -> new M5CollapseUnloadChain(run).shutdown("unload-takeback"));
+        // F6-2c：通道與終局的重啟窗口（M5CollapsePassageChains）。W7（spec §12）：PASSAGE_READY 期間兩人中選門者已跨過，重啟之後通道在開服時結束，同一個 server 內原艙再開新 session。
+        table.put("w7-crash", run -> new M5CollapsePassageChains(run).w7Crash());
+        table.put("w7-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.CROSSED_COMMITTED, "w7-crash"));
+        // F6-2-16：PASSAGE_READY 提交之後、門改為 passable 之前 crash。
+        table.put("readycommit-crash", run -> new M5CollapsePassageChains(run).readyCommitCrash());
+        table.put("readycommit-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.READY_COMMITTED, "readycommit-crash"));
+        // F6-2-13：通道的終局之後、改門之前 crash；重啟之後 load-sync 的刷新排入找不到所屬 session 的量子膜的正規化。
+        table.put("terminaldoor-crash", run -> new M5CollapsePassageChains(run).terminalDoorCrash());
+        table.put("terminaldoor-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.PASSAGE_TERMINATED, "terminaldoor-crash"));
+        // F6-2-17：玩家已在目的世界、Crossed 的寫出沒有確認時 crash。
+        table.put("crossedpending-crash", run -> new M5CollapsePassageChains(run).crossedPendingCrash());
+        table.put("crossedpending-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.CROSSED_UNCONFIRMED, "crossedpending-crash"));
+        // F6-2-12：SEALED(TRANSFER_RECOVERY_REQUIRED) 跨重啟（永久原因、不重試），與 TRR 的寫入被拒（pendingRecovery）期間重啟。
+        table.put("trr-crash", run -> new M5CollapsePassageChains(run).trrCrash());
+        table.put("trr-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.RECOVERY_SEALED, "trr-crash"));
+        table.put("trrpending-crash", run -> new M5CollapsePassageChains(run).trrPendingCrash());
+        table.put("trrpending-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.RECOVERY_REJECTED, "trrpending-crash"));
         return Collections.unmodifiableMap(table);
     }
 
