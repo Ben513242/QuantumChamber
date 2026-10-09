@@ -1,12 +1,9 @@
 package dev.quantumchamber.gametest;
 
-import com.google.gson.JsonParser;
-import dev.quantumchamber.gametest.M5CollapseRun.Ending;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.mixin.ChunkTicketManagerTestAccessor;
 import dev.quantumchamber.gametest.mixin.ServerChunkLoadingManagerTestAccessor;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -241,16 +238,10 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         return true;
     }
 
-    /** 讀回 {@code unload-takeback} 的 {@code final.json}：PASS、ending STOP、phase 與 nonce 相符，startupNonce 與這個 JVM 不同。 */
+    /** 讀回 {@code unload-takeback} 的 {@code final.json}（{@link M5CollapseRun#readStoppedReceipt}：PASS、ending STOP、phase 與 nonce 相符，startupNonce 與這個 JVM 不同）。 */
     private void readTakeBackReceipt(String phase) throws Exception {
-        var evidence = run.phaseEvidence(phase);
-        var path = evidence.resolve("final.json");
-        run.expect("takeBackReceiptPresent", Files.exists(path) && !Files.exists(evidence.resolve("halt.json")), () -> "沒有正常停止的 receipt：" + evidence);
-        var receipt = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
-        run.expect("takeBackReceiptMatches", "PASS".equals(M5CollapseRun.text(receipt, "status")) && Ending.STOP.name().equals(M5CollapseRun.text(receipt, "ending"))
-                && phase.equals(M5CollapseRun.text(receipt, "phase")) && run.config.nonce().equals(M5CollapseRun.text(receipt, "nonce")),
-                () -> "receipt 不符：status=" + M5CollapseRun.text(receipt, "status") + " ending=" + M5CollapseRun.text(receipt, "ending"));
-        run.expect("differentStartupNonce", !run.config.startupNonce().equals(M5CollapseRun.text(receipt, "startupNonce")), () -> "與上一個 phase 相同的 startupNonce");
+        var receipt = run.readStoppedReceipt(phase, "takeBack");
+        var path = run.phaseEvidence(phase).resolve("final.json");
         run.proof.put("takeBackReceipt", Map.of("phase", phase, "finalSha256", M5CollapseDiskEvidence.sha256(path), "finalPid", receipt.get("pid").getAsLong(),
                 "finalStartupNonce", M5CollapseRun.text(receipt, "startupNonce")));
     }

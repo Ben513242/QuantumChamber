@@ -2,6 +2,7 @@ package dev.quantumchamber.gametest;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import java.io.IOException;
@@ -524,6 +525,28 @@ final class M5CollapseRun {
 
     /** 同一條 chain 前一個 phase（{@code phase}）的 evidence 目錄。 */
     Path phaseEvidence(String phase) { return config.evidence().resolveSibling(phase); }
+
+    /**
+     * 讀回同一條 chain 前一個正常停止的 phase（{@code phase}）的 {@code final.json}（F6-2c Step 0，H5 quality Minor 4：fixture 讀 setup、unload chain 讀 takeback 共用）：
+     * {@code <name>ReceiptPresent}（有 {@code final.json}、沒有 {@code halt.json}）、{@code <name>ReceiptMatches}（status PASS、ending STOP、phase 與 nonce 相符），
+     * 再 {@link #expectDifferentStartupNonce}。回傳 receipt。
+     */
+    JsonObject readStoppedReceipt(String phase, String name) throws IOException {
+        var evidence = phaseEvidence(phase);
+        var path = evidence.resolve("final.json");
+        expect(name + "ReceiptPresent", Files.exists(path) && !Files.exists(evidence.resolve("halt.json")), () -> phase + " 沒有正常停止的 receipt：" + evidence);
+        var receipt = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+        expect(name + "ReceiptMatches", "PASS".equals(text(receipt, "status")) && Ending.STOP.name().equals(text(receipt, "ending"))
+                && phase.equals(text(receipt, "phase")) && config.nonce().equals(text(receipt, "nonce")),
+                () -> phase + " 的 receipt 不符：status=" + text(receipt, "status") + " ending=" + text(receipt, "ending"));
+        expectDifferentStartupNonce(receipt);
+        return receipt;
+    }
+
+    /** 前一個 phase 的 receipt（{@code final.json} 或 {@code halt.json}）是另一個 JVM 寫的：startupNonce 與這個 JVM 不同（{@code differentStartupNonce}）。 */
+    void expectDifferentStartupNonce(JsonObject receipt) {
+        expect("differentStartupNonce", !config.startupNonce().equals(text(receipt, "startupNonce")), () -> "與前一個 phase 相同的 startupNonce：" + text(receipt, "startupNonce"));
+    }
 
     static String text(JsonObject object, String key) {
         var value = object.get(key);
