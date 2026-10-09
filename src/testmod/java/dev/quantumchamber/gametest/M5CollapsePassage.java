@@ -10,10 +10,13 @@ import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
 import java.util.stream.StreamSupport;
@@ -23,12 +26,17 @@ import org.apache.logging.log4j.Level;
 /**
  * 僅 testmod（M5 F6-2a，由 F6-1 的 {@code M5CollapseRecoveryProbe} 拆出）：restart 由 RESOLVE 推進到終局的共用部分：step（RESOLVE 完成 → 參與者進入艙內 →
  * PASSAGE_READY → 越過門板中線、傳送到 U → (b) 全員都已跨過的終局）、每個 tick 的不變量（spec §12 的共同斷言），與終局的 spec §12 斷言（{@link #expectEnd}）。
+ * <p>F6-2c（F6-2a quality Minor 1 與給 W7 的建議）：step 拆成可選的三段，chain 只取需要的段：{@link #resolve}（RESOLVE 完成、進入艙內）、{@link #ready}（PASSAGE_READY；
+ * 之後讓要跨越的參與者站到門板中線內側）、{@link #cross}（指定的參與者越過中線、傳送到 U；可以只是參與者的子集，也可以分幾次）。{@link #steps} 是三段全員跨越、再接
+ * (b) 終局的完整版本（既有的 restart 都用它，行為與拆段之前相同）。
  */
 final class M5CollapsePassage {
+    /** 門口的 local x（依參與者在清單中的順序；第一位與拆段之前相同，在門口正中）。兩人以上時錯開，不站在同一格。 */
+    private static final double[] DOORWAY_X = {3.5, 1.5, 5.5};
     private final M5CollapseRun run;
     private final M5CollapseFixture fixture;
-    /** PASSAGE_READY 之後等了幾個 tick（門與 Controller 的刷新落地）。 */
-    private int readyTicks = -1;
+    /** 到目前為止各 cross 段已確認跨過的參與者（依跨越的順序）：{@code crossedRecorded} 要求 Crossed 恰為這些人。 */
+    private final Set<UUID> crossedSoFar = new LinkedHashSet<>();
 
     M5CollapsePassage(M5CollapseRun run, M5CollapseFixture fixture) {
         this.run = run;
@@ -67,17 +75,77 @@ final class M5CollapsePassage {
         }
     }
 
-    /** restart 由 RESOLVE 推進到終局的 step（各 restart 共用）；{@code prepared} 是窗口表裡 PREPARE 的預期（null：不檢查）。 */
+    /**
+     * restart 由 RESOLVE 推進到終局的 step（各 restart 共用）：{@link #resolve} → {@link #ready}（全員站到中線內側）→ {@link #cross}（全員）→ (b) 全員都已跨過的終局。
+     * {@code prepared} 是窗口表裡 PREPARE 的預期（null：不檢查）。
+     */
     List<Step> steps(M5CollapseWindows.Prepared prepared) {
+        var steps = new ArrayList<Step>();
+        steps.add(resolve());
+        steps.add(ready(prepared, EVERYONE));
+        steps.addAll(cross(EVERYONE));
+        steps.add(new Step("ended", 40, this::endedByEveryoneCrossing));
+        return List.copyOf(steps);
+    }
+
+    /**
+     * 參與者的子集，在 step 執行時才由 fixture 決定（restart 的參與者在開服時才由收據讀回，建立 step 的 {@code onInitialize} 時還不知道）。結果必須都是這條 chain 的參與者。
+     */
+    @FunctionalInterface interface Who { Set<UUID> of(M5CollapseFixture fixture); }
+
+    /** 全部參與者。 */
+    static final Who EVERYONE = fixture -> Set.copyOf(fixture.participants());
+    /** 沒有人（例如 PASSAGE_READY 之後不讓任何人靠近門口）。 */
+    static final Who NOBODY = fixture -> Set.of();
+
+    /** resolve 段（step {@code resolved}）：「目的地已確定（RESOLVE 完成）」INFO 之後，U 已物化、catalog 恰多 1 筆、discovery 恰一筆 U；之後全員進入艙內。 */
+    Step resolve() {
+        return new Step("resolved", 400, this::resolvedThenEnter);
+    }
+
+    /**
+     * ready 段（step {@code ready}）：PASSAGE_READY 之後最多再等 5 個 tick，讓門與 Controller 的刷新落地，再斷言還沒有人跨過、passable、比較器 15 與投影 COMPLETE（與
+     * PREPARE 怎麼完成）；之後 {@code approaching} 站到門板中線內側（下一個 tick 由 {@link #cross} 越過中線）。等待的 tick 數跟著這一段（每次呼叫各自計算）。
+     */
+    Step ready(M5CollapseWindows.Prepared prepared, Who approaching) {
+        Objects.requireNonNull(approaching, "approaching");
+        int[] readyTicks = {-1};
+        return new Step("ready", 600, () -> passageReady(prepared, members(approaching), readyTicks));
+    }
+
+    /**
+     * cross 段（step {@code doorway}、{@code crossed}）：{@code crossing}（參與者的子集，至少一位，要已在中線內側）越過門板中線 → 傳送到 U。跨越的那個 tick 結束時 record
+     * 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為到目前為止各 cross 段的參與者各一次（{@code crossedRecorded}），「參與者已穿過量子通道」INFO 也是這幾位各一則
+     * （{@code oneCrossingInfo}）。
+     */
+    List<Step> cross(Who crossing) {
+        Objects.requireNonNull(crossing, "crossing");
         return List.of(
-                new Step("resolved", 400, this::resolvedThenEnter),
-                new Step("ready", 600, () -> passageReady(prepared)),
                 new Step("doorway", 1, () -> {
-                    for (var player : fixture.players()) M5GameTestSupport.standInDoorway(player, FRAME, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO);
+                    var who = members(crossing);
+                    if (who.isEmpty()) throw new IllegalArgumentException("cross 段至少要有一位參與者");
+                    for (var id : fixture.participants()) if (who.contains(id)) standInDoorway(id, 0.3);
                     return true;
                 }),
-                new Step("crossed", 10, this::crossed),
-                new Step("ended", 40, this::endedByEveryoneCrossing));
+                new Step("crossed", 10, () -> crossed(members(crossing))));
+    }
+
+    /** {@code who} 這時的成員（都必須是這條 chain 的參與者）。 */
+    Set<UUID> members(Who who) {
+        var ids = Set.copyOf(who.of(fixture));
+        if (!fixture.participants().containsAll(ids)) throw new IllegalArgumentException("不是這條 chain 的參與者：" + ids + "（參與者 " + fixture.participants() + "）");
+        return ids;
+    }
+
+    /** 參與者 {@code id} 站在門口（local x 依清單順序錯開，y 1，z 為 {@code z}；朝向與速度歸零）。 */
+    void standInDoorway(UUID id, double z) {
+        M5GameTestSupport.standInDoorway(fixture.player(id), FRAME, doorwayX(id), 1, z, 0, 0, Vec3d.ZERO);
+    }
+
+    private double doorwayX(UUID id) {
+        int index = fixture.participants().indexOf(id);
+        if (index < 0 || index >= DOORWAY_X.length) throw new IllegalArgumentException("門口只排得下 " + DOORWAY_X.length + " 位參與者：" + id);
+        return DOORWAY_X[index];
     }
 
     private boolean resolvedThenEnter() throws Exception {
@@ -90,35 +158,34 @@ final class M5CollapsePassage {
         return true;
     }
 
-    /** PASSAGE_READY 之後最多再等 5 個 tick，讓門與 Controller 的刷新落地，再斷言 passable、比較器 15 與投影 COMPLETE；之後參與者站到門板中線內側。 */
-    private boolean passageReady(M5CollapseWindows.Prepared prepared) throws Exception {
+    /** PASSAGE_READY 之後最多再等 5 個 tick，讓門與 Controller 的刷新落地，再斷言 passable、比較器 15 與投影 COMPLETE；之後 {@code approaching} 站到門板中線內側。 */
+    private boolean passageReady(M5CollapseWindows.Prepared prepared, Set<UUID> approaching, int[] readyTicks) throws Exception {
         var record = run.journal().flushedRecords().get(fixture.sid());
         if (record == null || record.state() != SessionState.PASSAGE_READY) return false;
-        readyTicks++;
+        readyTicks[0]++;
         boolean door = M5GameTestSupport.doorPassable(run.source(), FRAME), comparator = fixture.controllerSignal(ChamberState.PASSAGE, 15);
-        if (!(door && comparator) && readyTicks < 5) return false;
+        if (!(door && comparator) && readyTicks[0] < 5) return false;
         run.expect("noOneCrossedYet", record.collapse().crossed().isEmpty(), () -> "Crossed=" + record.collapse().crossed());
         run.expect("doorPassable", door, () -> "PASSAGE_READY 之後門不是 passable 量子膜");
         run.expect("comparatorFifteen", comparator, () -> "PASSAGE_READY 之後 Controller 不是 PASSAGE／比較器 15");
         run.expect("projectionComplete", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                 () -> "projection ledger=" + fixture.projectionsOrError());
         M5CollapseWindows.expectPrepared(run, fixture, prepared);
-        for (var player : fixture.players()) M5GameTestSupport.standInDoorway(player, FRAME, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO);
+        for (var id : fixture.participants()) if (approaching.contains(id)) standInDoorway(id, 0.7);
         return true;
     }
 
-    private boolean crossed() {
+    private boolean crossed(Set<UUID> crossing) {
         var world = fixture.universeWorld().orElseThrow();
-        var players = fixture.players();
-        if (players.stream().anyMatch(player -> player.getServerWorld() != world)) return false;
-        // 跨越的那個 tick 結束時 record 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為每位參與者各一次。
+        if (crossing.stream().anyMatch(id -> fixture.player(id).getServerWorld() != world)) return false;
+        // 跨越的那個 tick 結束時 record 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為到目前為止跨過的參與者各一次。
+        for (var id : fixture.participants()) if (crossing.contains(id)) crossedSoFar.add(id);
         var record = run.journal().flushedRecords().get(fixture.sid());
-        var participants = fixture.participants();
-        run.expect("crossedRecorded", record != null && record.collapse().crossed().size() == participants.size()
-                        && Set.copyOf(record.collapse().crossed()).equals(Set.copyOf(participants)),
-                () -> "Crossed=" + (record == null ? "（record 已移除）" : record.collapse().crossed()));
-        run.expect("oneCrossingInfo", run.capture().matching(Level.INFO, "參與者已穿過量子通道", fixture.sid().toString()).size() == participants.size(),
-                () -> "「參與者已穿過量子通道」不是每位參與者恰一則");
+        run.expect("crossedRecorded", record != null && record.collapse().crossed().size() == crossedSoFar.size()
+                        && Set.copyOf(record.collapse().crossed()).equals(crossedSoFar),
+                () -> "Crossed=" + (record == null ? "（record 已移除）" : record.collapse().crossed()) + "，預期 " + crossedSoFar);
+        run.expect("oneCrossingInfo", run.capture().matching(Level.INFO, "參與者已穿過量子通道", fixture.sid().toString()).size() == crossedSoFar.size(),
+                () -> "「參與者已穿過量子通道」不是每位跨過的參與者恰一則");
         return true;
     }
 
