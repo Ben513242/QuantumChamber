@@ -158,6 +158,7 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 | `M5CollapseFixture` | 原艙、參與者清單、收據、這條 chain 的 id、共用的查詢 |
 | `M5CollapsePassage` | restart 共用的 RESOLVE → 跨越 → 終局 step、每個 tick 的不變量、spec §12 的終局 helper（`expectEnd`） |
 | `M5CollapseDormantChains`、`M5CollapseLiveChain`、`M5CollapseRevisitChains` | chain：DORMANT 收據（W2～W6；restart 也用於 W6x）、live session（W1）、EXISTING 再造訪（W6x 的 crash、退化的 setup 與 restart） |
+| `M5CollapseUnloadChain` | chain：chunk 卸載的 livelock 防護（H5，`unload`；不經塌縮流程） |
 | `M5CollapseProjectionLoad` | restart 在 JOIN 之前載入投影 Controller、觀察 load-sync |
 | `M5CollapseDiskEvidence` | 讀磁碟上的權威；allocation 與 projection ledger 經 `dev.quantumchamber.collapse.CollapseLedgerTestAccess`（testmod 的 split-package accessor）用 production 的嚴格 `fromNbt`，格式不符時丟出，不會讀成空的 ledger |
 
@@ -190,6 +191,7 @@ M5 的 GameTest 分在兩個類別：`M5CollapseGameTests`（default run，只�
 | `w6` | `w6-crash`（halt）→ `w6-restart`（stop） | `PROJECTION_COMPLETE`：projection ledger 寫入 COMPLETE 之後、PASSAGE_READY 之前 | projection ledger 是 COMPLETE、Controller 在磁碟上；JOIN 之前載入（同 `w4`：本 JVM 由磁碟載入、辨識），辨識為 inert 的 PROJECTION，不變量 cell 受保護、interior 不受 |
 | `w6x` | `w6x-crash`（halt）→ `w6x-restart`（stop） | `PROJECTION_REPAIRED`（EXISTING 再造訪）：REPAIR 寫了格之後、checkpoint 之前 | catalog 不變；磁碟上被改壞的 shell 仍是玻璃、interior 的金塊標記在 |
 | `degraded` | `deg-setup`（stop）→ `deg-restart`（stop） | 不是 crash 窗口：開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本）。setup 提交 COLLAPSING 的同一個 tick 在 U 的投影 Controller 正上方放紅石塊（不觸發更新，refresh witness）、正常停服，restart 開服前移走 ledger | 初始化判定 LOST（ERROR 一則，`AUTHORITY_CORRUPT`）、本 instance 不提交新的 COLLAPSING、投影保護索引退化；ledger 不存在、interior 的金塊標記與紅石塊在磁碟上；剛載入時 WasPowered 為 false，CONSUMED 之後為 true（`refreshedThisInstance`：refresh 越過了提早 return） |
+| `unload` | `unload-takeback`（stop）→ `unload-shutdown`（stop） | 不是 crash 窗口：chunk 卸載的 livelock 防護（H5，spec §4 H5；根因見 M5 implementation note 的 F6-2b 一節）。takeback：overworld 的 C1 形成殭屍（卸載工作還在佇列時被另一個 ticket 取回同一個 holder），refCount 歸零之後放金塊標記、移除全部 ticket，holder 照常卸載 | 開服時以 raw MCA 讀回 C1 的標記（`takenBackChunkSavedOnDisk`，結果另寫 `marker-on-disk.json`）；之後 C2 形成殭屍、讀檔保留到停服開始之後，2 tick 後停服，必須正常停服（修正前在這裡 livelock，由逾時處置判 FAIL） |
 
 `w2`、`w3`、`w5`、`w4`、`w4b`、`w6` 的 crash phase 相同：fresh 世界蓋原艙（Controller 在 (8,70,8)、朝北）、連線參與者 P 並移到艙外，寫 DORMANT 的 NEW 收據（P 已返還、沒有 lease），原生存檔之後裝上 crash 點，P 由艙外進入觸發塌縮，RESOLVE 或 PREPARE 走到窗口時 halt。`w6x-crash` 先以同樣的方式塌縮到 PASSAGE_READY（U 的投影 COMPLETE），拿掉 Controller 上方的紅石塊讓通道以 (d) 來源艙沒有供電結束，P 移到艙外、恢復供電；之後把 U 的投影改壞一格 shell（玻璃）、在 interior 放金塊標記，寫 DORMANT 的 EXISTING 收據（同一個 U）、原生存檔，P 由艙外進入，PREPARE 以 REPAIR 修好那一格之後、checkpoint 之前 halt。
 
@@ -202,6 +204,12 @@ restart phase 讀回 crash phase 的 `halt.json` 與 `receipt.nbt`（crash 前�
 - 沒有重抽：候選的 context、ledger、selection 與 crash 前的收據 exact 相同，allocation ledger 恰一筆這個 token。
 - 沒有人被困住：JOIN 之後參與者在來源世界或 U（`w1` 返還之前可以在走廊），之後到 PASSAGE_READY、跨越成功、跨越的那個 tick 結束時 record 仍在而且 Crossed 恰為每位參與者各一次（`crossedRecorded`）、通道以 (b) 終局；`degraded` 是參與者照一般方式開門、在來源世界。
 - 另外（F6-2a）：這個 session 從 `onInitialize` 起沒有任何 ERROR（`noSessionError`；`degraded` 恰為永久原因那一則，`noFurtherSessionError`），非退化的 chain 沒有「M5 authority 初始化失敗」（`noAuthorityInitializationFailure`）。
+
+`unload`（M5 H5）不經塌縮流程（原版的機制與 ticket 的類型無關），在 fresh 世界的 overworld，以 testmod 自己的兩種 ticket 操作遠離 spawn 的 chunk（C1＝chunk (-64,64)、C2＝chunk (64,-64)），類別是 `M5CollapseUnloadChain`。殭屍的確定性做法：C 載入、穩定之後，在一個 tick 結束時移除它的 ticket，並讓 server thread 睡 1 秒，之後的 tick 都落後排程（`unloadChunks` 每個 tick 最多移 200 個 holder、不排空卸載佇列）。C 的 holder 出現在 `chunksToUnload` 的那個 tick，以第二種 ticket（半徑 8）再載入，下一個 tick 取回同一個 holder 物件（`sameHolderTakenBack`）。再載入之前裝上 chunk 讀檔的保留（`M5TestHooks.CHUNK_READ_HOLD`：與 C 距離 12～19 的讀檔，結果留到放行才交出；F6-2b 的 `vr-hold`），C 的 refCount 因此大於 0。
+
+- `unload-takeback`：等殭屍在 refCount > 0 時執行過 → 放行讀檔 → C1 回到 FULL、refCount 歸零 → 放金塊標記，同一個 tick 移除全部 ticket → holder 不在 `currentChunkHolders`、也不在 `chunksToUnload`，chunk 已卸載（`unloadedAfterTakeBack`）→ 殭屍確實在 refCount > 0 時執行過（`staleTaskSeenWhileHeld`，刻意放在卸載的斷言之後）。修正前後都成立；production mixin 改成無條件 cancel 時失敗在 `unloadedAfterTakeBack`（之後停服也會卡住）。
+- `unload-shutdown`：開服時以 raw MCA 讀回 C1 的標記（`takenBackChunkSavedOnDisk`；結果另寫 `marker-on-disk.json`，因為修正前這個 phase 不會寫出 `final.json`）。C2 的讀檔保留到停服開始之後 200 ms，取回之後 2 tick 停服。修正前，停服的 `unloadChunks(() -> true)` 一直重排殭屍、main thread 回不來，由逾時處置判 FAIL（`timeout.json`，jstack 停在 `unloadChunks → tryUnloadChunk`）。修正後正常停服，`SERVER_STOPPED` 時斷言 C2 被取回的 holder 的舊工作被丟棄、沒有任何被取回的 holder 的工作照原版重排（`staleUnloadTaskDropped`）。
+- receipt 的 witness：`zombie`（holder 的物件 id、各步驟的 tick、refCount、卸載佇列的長度、保留的讀檔數）、`unloadTaskWitness`（`M5TestHooks.UNLOAD_TASK_WITNESS`：被丟棄與照原版重排的工作數，全部與 C 分開記；testmod 以「重排的前後之間有沒有進入 `tryUnloadChunk` 的本體」被動計數，不在 production 加 test seam）、`shutdownMillis`（`SERVER_STOPPING` 到 `SERVER_STOPPED`）。witness 開服時安裝、停服之後移除；讀檔保留經 `run.install`，請求停服之前移除，已保留的讀檔由它自己的 thread 在停服開始之後放行。
 
 ### 新增 phase
 

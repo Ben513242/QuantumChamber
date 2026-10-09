@@ -28,7 +28,7 @@ import net.fabricmc.api.ModInitializer;
  *     不變量與 spec §12 的終局斷言。</li>
  * <li>chain：{@link M5CollapseDormantChains}（DORMANT NEW 收據，W2～W6；restart 也用於 W6x）、{@link M5CollapseLiveChain}（W1）、
  *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）；投影 chunk 的載入與 load-sync 的觀察在
- *     {@link M5CollapseProjectionLoad}。</li>
+ *     {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。</li>
  * </ul>
  * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
@@ -61,6 +61,9 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         // P-DEGRADED 的跨 JVM 版本（不是 crash 窗口）：EXISTING 再造訪提交 COLLAPSING 的同一個 tick 正常停服；下一次開服前移走 projection ledger。
         table.put("deg-setup", run -> new M5CollapseRevisitChains(run).degradedSetup());
         table.put("deg-restart", run -> new M5CollapseRevisitChains(run).degradedRestart("deg-setup"));
+        // H5（spec §4 H5，不是 crash 窗口）：chunk 卸載的 livelock 防護。被取回的 holder 在 refCount 歸零之後照常卸載、存檔（下一個 JVM 以 raw MCA 讀回）；殭屍＋停服時仍在載入，必須正常停服。
+        table.put("unload-takeback", run -> new M5CollapseUnloadChain(run).takeBack());
+        table.put("unload-shutdown", run -> new M5CollapseUnloadChain(run).shutdown("unload-takeback"));
         return Collections.unmodifiableMap(table);
     }
 

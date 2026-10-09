@@ -46,6 +46,8 @@ $chains = [ordered]@{
     'w6x' = @(@{phase='w6x-crash'; ending='halt'; window='PROJECTION_REPAIRED'}, @{phase='w6x-restart'; ending='stop'; window=''})
     # 開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本，不是 crash 窗口）：setup 提交 COLLAPSING 的同一個 tick 正常停服，restart 開服前移走 ledger。
     'degraded' = @(@{phase='deg-setup'; ending='stop'; window=''}, @{phase='deg-restart'; ending='stop'; window=''})
+    # H5（不是 crash 窗口）：chunk 卸載的 livelock 防護。takeback：被取回的 holder 照常卸載、存檔；shutdown：raw MCA 讀回修改，殭屍＋停服時仍在載入，必須正常停服。
+    'unload' = @(@{phase='unload-takeback'; ending='stop'; window=''}, @{phase='unload-shutdown'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

@@ -8,7 +8,9 @@ import dev.quantumchamber.universe.MaterializeResult;
 import dev.quantumchamber.universe.UniverseWorldDescriptor;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -16,9 +18,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import net.minecraft.registry.RegistryKey;
@@ -77,12 +81,18 @@ import org.slf4j.LoggerFactory;
  *     呼叫 {@link #reachedCrashWindow}；裝著的 {@link CrashPoint} 的窗口與條件都符合時執行它的動作。只給 {@code M5CollapseRecoveryProbe} 用：它的動作寫出 halt receipt 之後以
  *     {@code Runtime.halt} 結束 JVM（不經正常停止，等同 crash）。probe 不是 GameTest，所以安裝時沒有 {@link GameTestState}（{@code install(value, null)}，經
  *     {@code M5CollapseRun.install}）；halt 時 JVM 直接結束，窗口沒有到達或斷言失敗而正常停服時，probe 在請求停服之前移除（F6-2a 更正）。</li>
+ * <li>chunk 讀檔的保留（{@link #CHUNK_READ_HOLD}，H5，F6-2b 的 {@code vr-hold}）：{@code ChunkReadHoldMixin} 在 {@code ServerChunkLoadingManager.getUpdatedChunkNbt} 回傳時呼叫
+ *     {@link #heldChunkRead}，指定範圍的讀檔結果留到放行才交出，重現「停服開始時仍有要等 main thread 的 chunk 載入」。只由 M5 collapse probe 的 unload chain 經
+ *     {@code M5CollapseRun.install} 安裝（probe 請求停服之前移除；已保留的讀檔由它自己的 thread 在停服開始之後放行）。</li>
+ * <li>卸載工作的 witness（{@link #UNLOAD_TASK_WITNESS}，H5）：{@code ChunkUnloadTaskWitnessMixin} 在 {@code tryUnloadChunk} 的 lambda 重排被取回的 holder 的前後
+ *     （{@link #aroundStaleReschedule}）與 {@code tryUnloadChunk} 的本體（{@link #unloadTaskBody}）呼叫，被動計數被丟棄與照原版重排的工作。只由 unload chain 在開服時安裝、
+ *     停服之後（{@code SERVER_STOPPED}）移除，所以停服期間的丟棄也計入。</li>
  * </ul>
  * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、八個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
  * entity storage 就緒保留、隔離 session 的收斂）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。跨 JVM 的 crash 點也是一個 {@link Slot}，但只由跨 JVM 的
  * probe 安裝（F6-1）；probe 也可以在自己的 JVM 裡把既有的故障注入裝進上面的 Slot（F6-2a：{@code M5CollapseRun.install}，沒有 {@link GameTestState}，停服之前依安裝的
- * 相反順序移除）。
+ * 相反順序移除）。H5 的 chunk 讀檔保留與卸載工作的 witness 也是 {@link Slot}，只由 M5 collapse probe 的 unload chain 安裝。
  */
 public final class M5TestHooks {
     private M5TestHooks() {}
@@ -119,6 +129,10 @@ public final class M5TestHooks {
     static final Slot<ConvergeFault> CONVERGE_FAULT = new Slot<>("隔離 session 的收斂失敗注入");
     /** 跨 JVM 的 crash 點（F6-1；只由跨 JVM 的 probe 經 {@code M5CollapseRun.install} 安裝）。 */
     static final Slot<CrashPoint> CRASH_POINT = new Slot<>("跨 JVM 的 crash 點");
+    /** chunk 讀檔的保留（H5；只由 M5 collapse probe 的 unload chain 經 {@code M5CollapseRun.install} 安裝）。 */
+    static final Slot<ChunkReadHold> CHUNK_READ_HOLD = new Slot<>("chunk 讀檔的保留");
+    /** 卸載工作的被動 witness（H5；只由 M5 collapse probe 的 unload chain 安裝，停服之後移除）。 */
+    static final Slot<UnloadTaskWitness> UNLOAD_TASK_WITNESS = new Slot<>("卸載工作的 witness");
 
     /**
      * 這個 session 是否被暫停（純查詢，不計數；F5-2 Step 0，F5-1 fix round 1 quality re-review R-m2）：system property {@code quantumchamber.test.collapseSuspended=all} 暫停全部；
@@ -316,6 +330,37 @@ public final class M5TestHooks {
     public static void reachedCrashWindow(CrashWindow window, Object detail) {
         var point = CRASH_POINT.get();
         if (point != null) point.reach(window, detail);
+    }
+
+    /**
+     * {@code ChunkReadHoldMixin}：{@code ServerChunkLoadingManager.getUpdatedChunkNbt}（chunk 讀檔）回傳時呼叫（H5）。裝著的 {@link ChunkReadHold} 符合時回傳一個延後完成的
+     * future（讀檔本身照常進行，只是結果留到 {@link ChunkReadHold#release} 才交出）；沒有裝或不符合時原樣回傳 {@code original}。不丟出例外。
+     */
+    public static <T> CompletableFuture<T> heldChunkRead(ServerWorld world, ChunkPos pos, CompletableFuture<T> original) {
+        var hold = CHUNK_READ_HOLD.get();
+        return hold == null ? original : hold.hold(world, pos, original);
+    }
+
+    /** {@code ChunkUnloadTaskWitnessMixin}：這個世界是否裝著卸載工作的 witness（沒有時 mixin 不做任何判斷，直接呼叫原本的方法）。 */
+    public static boolean watchingUnloadTasks(ServerWorld world) {
+        var witness = UNLOAD_TASK_WITNESS.get();
+        return witness != null && witness.world == world;
+    }
+
+    /**
+     * {@code ChunkUnloadTaskWitnessMixin}：卸載工作（{@code tryUnloadChunk} 的 lambda）因 holder 還不能存而重排、而且這個 holder 已不在 {@code chunksToUnload}（已被取回）時，
+     * 在呼叫 {@code tryUnloadChunk} 之前（{@code before} 為真）與之後呼叫（H5）。之間沒有進入 {@code tryUnloadChunk} 的本體，就是這次重排被丟棄。只在 server thread 上。
+     */
+    public static void aroundStaleReschedule(ServerWorld world, long pos, boolean before) {
+        var witness = UNLOAD_TASK_WITNESS.get();
+        if (witness == null || witness.world != world) return;
+        if (before) witness.beforeStaleReschedule(pos); else witness.afterStaleReschedule(pos);
+    }
+
+    /** {@code ChunkUnloadTaskWitnessMixin}：進入 {@code tryUnloadChunk} 的本體（第一個指令 {@code getSavingFuture}）時呼叫（H5）。 */
+    public static void unloadTaskBody(ServerWorld world) {
+        var witness = UNLOAD_TASK_WITNESS.get();
+        if (witness != null && witness.world == world) witness.bodyEntered();
     }
 
     /** {@link CrashWindow#COLLAPSING_COMMITTED} 的 detail：{@code SessionRecoveryState.commitRestore} 的一次呼叫（變更前、變更後的 record）與它的結果。 */
@@ -910,5 +955,170 @@ public final class M5TestHooks {
 
         /** 條件或動作丟出的例外；沒有時為 null。 */
         Throwable failure() { return failure; }
+    }
+
+    /**
+     * chunk 讀檔的保留（H5；{@link #CHUNK_READ_HOLD}）：{@code world} 裡與 {@code center} 的 Chebyshev 距離在 [{@code minDistance}, {@code maxDistance}] 之間的 chunk 讀檔
+     * （{@code getUpdatedChunkNbt}），讀檔本身照常進行，結果留到 {@link #release} 才交出：等同停服開始時仍在進行中、之後要等 main thread 才能完成的 chunk 載入（F6-2b 的條件
+     * (M)；真正的磁碟延遲無法決定性重現，F6-2b 的 {@code vr-hold}）。server thread 自己的讀檔（例如存 proto chunk 時 {@code isLevelChunk} 的同步 {@code join}）不保留，否則
+     * server thread 會卡在自己的 join。放行之後的讀檔照常。{@link #releaseAfterStop} 另開一條 daemon thread，在 server 不再 running 之後放行（停服開始時仍保留）。
+     * {@code hits()} 是保留過的讀檔數（README：以 mixin 注入的 test 必須有 hits 一類的 witness）。
+     */
+    static final class ChunkReadHold {
+        private final ServerWorld world;
+        private final ChunkPos center;
+        private final int minDistance, maxDistance;
+        private final List<Runnable> held = new ArrayList<>();
+        private int hits;
+        private boolean released;
+
+        ChunkReadHold(ServerWorld world, ChunkPos center, int minDistance, int maxDistance) {
+            this.world = Objects.requireNonNull(world, "world");
+            this.center = Objects.requireNonNull(center, "center");
+            if (minDistance < 1 || maxDistance < minDistance) throw new IllegalArgumentException("保留的距離不合法：" + minDistance + ".." + maxDistance);
+            this.minDistance = minDistance;
+            this.maxDistance = maxDistance;
+        }
+
+        <T> CompletableFuture<T> hold(ServerWorld target, ChunkPos pos, CompletableFuture<T> original) {
+            if (target != world || world.getServer().isOnThread()) return original;
+            int distance = pos.getChebyshevDistance(center);
+            if (distance < minDistance || distance > maxDistance) return original;
+            var delayed = new CompletableFuture<T>();
+            Runnable release = () -> original.whenComplete((value, failure) -> {
+                if (failure != null) delayed.completeExceptionally(failure);
+                else delayed.complete(value);
+            });
+            synchronized (this) {
+                if (released) return original;
+                held.add(release);
+                hits++;
+            }
+            return delayed;
+        }
+
+        /** 交出保留中的讀檔結果，之後不再保留（可以重複呼叫）。 */
+        void release() {
+            List<Runnable> releases;
+            synchronized (this) {
+                if (released) return;
+                released = true;
+                releases = List.copyOf(held);
+                held.clear();
+            }
+            LOGGER.info("H5 chunk 讀檔的保留放行：reads={}", releases.size());
+            releases.forEach(Runnable::run);
+        }
+
+        /** 另開一條 daemon thread：{@code server} 不再 running（停服開始）之後再等 {@code delayMillis} 毫秒才 {@link #release}。 */
+        void releaseAfterStop(MinecraftServer server, long delayMillis) {
+            var thread = new Thread(() -> {
+                try {
+                    while (server.isRunning()) Thread.sleep(10);
+                    Thread.sleep(delayMillis);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                release();
+            }, "quantumchamber-h5-read-hold");
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        /** 保留過的讀檔數。 */
+        synchronized int hits() { return hits; }
+
+        /** 還沒有交出的讀檔數。 */
+        synchronized int pending() { return held.size(); }
+
+        synchronized boolean released() { return released; }
+    }
+
+    /**
+     * 卸載工作的被動 witness（H5；{@link #UNLOAD_TASK_WITNESS}）：只計數，不改變原版或 production 的行為（mixin 照常呼叫原本的方法一次）。「被取回之後的重排」是
+     * {@code tryUnloadChunk} 的 lambda 因 holder 還不能存（refCount &gt; 0）而再呼叫 {@code tryUnloadChunk}，而且當時 {@code chunksToUnload} 裡已不是這個 holder（同一個 chunk
+     * 在卸載工作執行之前被另一個 ticket 載回）。原版的這條重排會一直重排自己（F6-2b 的殭屍）；production 的 {@code ServerChunkLoadingManagerStaleUnloadMixin} 在
+     * {@code tryUnloadChunk} 的 HEAD 取消它。witness 以「這次呼叫有沒有進入 {@code tryUnloadChunk} 的本體」區分：沒有進入是被丟棄（{@link #dropped}），進入了是照原版重排
+     * （{@link #rescheduled}），所以不依賴 testmod 與 production 在同一個 HEAD 的注入順序。{@code watched} 的 chunk 另外分開計數。卸載佇列只在 server thread 上執行，
+     * 「進行中的重排」只在 server thread 上記錄（其他 thread 的呼叫只計入 {@link #offThread}，不判斷丟棄與否）。
+     */
+    static final class UnloadTaskWitness {
+        final ServerWorld world;
+        private final Set<Long> watched;
+        /** 進行中的被取回 holder 的重排與它的 chunk（只在 server thread 上讀寫）。 */
+        private boolean pending;
+        private long pendingPos;
+        private final AtomicLong dropped = new AtomicLong(), rescheduled = new AtomicLong(), bodies = new AtomicLong(), offThread = new AtomicLong();
+        private final Map<Long, AtomicLong> droppedAt = new ConcurrentHashMap<>(), rescheduledAt = new ConcurrentHashMap<>();
+
+        UnloadTaskWitness(ServerWorld world, Collection<ChunkPos> watched) {
+            this.world = Objects.requireNonNull(world, "world");
+            this.watched = watched.stream().map(ChunkPos::toLong).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        }
+
+        void beforeStaleReschedule(long pos) {
+            if (!world.getServer().isOnThread()) {
+                offThread.incrementAndGet();
+                return;
+            }
+            pending = true;
+            pendingPos = pos;
+        }
+
+        void bodyEntered() {
+            bodies.incrementAndGet();
+            if (!pending || !world.getServer().isOnThread()) return;
+            pending = false;
+            count(rescheduled, rescheduledAt, pendingPos);
+        }
+
+        void afterStaleReschedule(long pos) {
+            if (!pending || !world.getServer().isOnThread()) return;
+            pending = false;
+            count(dropped, droppedAt, pos);
+        }
+
+        private void count(AtomicLong total, Map<Long, AtomicLong> at, long pos) {
+            total.incrementAndGet();
+            if (watched.contains(pos)) at.computeIfAbsent(pos, key -> new AtomicLong()).incrementAndGet();
+        }
+
+        /** 被丟棄的重排（全部 chunk）。 */
+        long dropped() { return dropped.get(); }
+
+        /** 照原版重排的被取回 holder 的工作（全部 chunk）。 */
+        long rescheduled() { return rescheduled.get(); }
+
+        /** 進入 {@code tryUnloadChunk} 本體的次數（全部 chunk，含第一次呼叫）。 */
+        long bodies() { return bodies.get(); }
+
+        /** 不在 server thread 上的被取回 holder 的重排（沒有判斷丟棄與否；原版不會發生）。 */
+        long offThread() { return offThread.get(); }
+
+        /** {@code pos}（必須是 watched）被丟棄的重排。 */
+        long dropped(ChunkPos pos) { return at(droppedAt, pos); }
+
+        /** {@code pos}（必須是 watched）照原版重排的次數。 */
+        long rescheduled(ChunkPos pos) { return at(rescheduledAt, pos); }
+
+        private long at(Map<Long, AtomicLong> counts, ChunkPos pos) {
+            if (!watched.contains(pos.toLong())) throw new IllegalArgumentException("沒有分開計數的 chunk：" + pos);
+            var count = counts.get(pos.toLong());
+            return count == null ? 0 : count.get();
+        }
+
+        /** 摘要（寫進 receipt）。 */
+        Map<String, Object> summary() {
+            var out = new LinkedHashMap<String, Object>();
+            out.put("dropped", dropped());
+            out.put("rescheduled", rescheduled());
+            out.put("bodies", bodies());
+            out.put("offThread", offThread());
+            for (long pos : watched) {
+                var chunk = new ChunkPos(pos);
+                out.put(chunk.x + "," + chunk.z, Map.of("dropped", dropped(chunk), "rescheduled", rescheduled(chunk)));
+            }
+            return out;
+        }
     }
 }
