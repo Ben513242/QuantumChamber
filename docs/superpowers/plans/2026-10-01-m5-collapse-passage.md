@@ -776,6 +776,12 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - TRR 跨重啟，含 `pendingRecovery` 期間；
     - `projectionUncheckpointed` 跨 session；
     - 隔離的跨 JVM 版本，是否需要由派工決定。
+    - fix round 1（controller 2026-10-09 依使用者裁示，spec v5.7 §20.11）：
+      - production：`PassageService` 在 Crossed 的寫入確認之後，立即存那位玩家的 playerdata；
+      - `w7` 改成不在 halt 前存檔，驗證真正 crash 的情況；`trr` 的預期隨之調整；
+      - 處理 spec review 的 Minor。
+      - 這次會改到 `src/main/` 的 `PassageService`，範圍只限上述的存檔。
+      - 投影修復遺失（F6-2-15）依同一個裁示，列為 F7 的已知限制。
   - **F6-2d：SEALED、門與重試。**
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；

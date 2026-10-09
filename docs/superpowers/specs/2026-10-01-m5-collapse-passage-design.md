@@ -2,7 +2,7 @@
 
 日期：2026-10-01。基準：`main`＝`a7e1be2`（code 等同 `ba854e8`），分支 `feature/m5-collapse`。下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `a7e1be2` 為準。
 
-狀態：v5.6。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。v5.6（2026-10-09）依使用者裁示，在 §4 新增 H5（chunk 卸載的 livelock 防護），見 §20.10。Spec review 共五輪（含第五輪的 re-review）：
+狀態：v5.7。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。v5.6（2026-10-09）依使用者裁示，在 §4 新增 H5（chunk 卸載的 livelock 防護），見 §20.10。v5.7（同日）依使用者裁示，跨越的 Crossed 確認之後立即存下該玩家的 playerdata（§10.3、§12），見 §20.11。Spec review 共五輪（含第五輪的 re-review）：
 - v1 的 Critical 1、Important 8 由 v2 處理。
 - re-review 在 v2 新發現的 Critical 1、Important 2（N1–N3）與 Minor m1–m8 由 v3 處理。
 - 第三輪在 v3 新發現的 Important 1（N4）與 4 項 Minor，已在 v3 修正。
@@ -579,7 +579,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 
 | 傳送結果 | 處理 |
 | --- | --- |
-| 成功 | checked 把該玩家加入 `Crossed` |
+| 成功 | checked 把該玩家加入 `Crossed`；寫入確認（COMMITTED）之後，立即存下該玩家的 playerdata（v5.7，§20.11）。寫入沒有確認時不存。存檔失敗只記 WARN，不影響通道 |
 | `FAILED_ROLLED_BACK` | 顯示 actionbar「通道傳送失敗，你仍在原世界。」，WARN 只記一次；通道仍開著，可以再試 |
 | `FAILED_RECOVERY_REQUIRED` | 不移除 record。checked PASSAGE_READY→SEALED(`TRANSFER_RECOVERY_REQUIRED`)，`RecoveryRequired` 記下該玩家，保留 participants、`Crossed`、opened／expires 與收據，作為需要人工處理的 recovery authority；記 ERROR（含 transfer result 的移動與回滾證據）。通道對所有人關閉，門依 §11.2 處理，釋放目的世界的 ticket。不再自動移動該玩家，也不重試 |
 
@@ -721,7 +721,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 | MEASURED，Nether／End，NEW／EXISTING | 依 §11.3：保留式 recovery → DORMANT → 取消 | 沿用 M4 |
 | DORMANT | 等 §7.1 的邊緣觸發 | 不影響 |
 | COLLAPSING | 依推導階段續做。門的狀態在下一個 tick 重新套用。ledger、catalog、物化、投影都是 idempotent | 未返還的人斷線：照舊凍結；重新加入時，在 JOIN 之後的下一個 tick 返還到原艙（沿用 M2／M4 機制）。已返還的人斷線：沒有影響 |
-| PASSAGE_READY | 開服時直接結束通道：checked 終局；門在下一個 tick 正規化為一般開門。已跨過的人在目的地，沒跨過的人在原艙 | 未跨過的人斷線：沒有影響，重新加入後若通道仍開著可以再試。已跨過的人：在目的世界重新加入（開服時已物化） |
+| PASSAGE_READY | 開服時直接結束通道：checked 終局；門在下一個 tick 正規化為一般開門。已跨過的人在目的地，沒跨過的人在原艙。crash 時，已跨過的人依 §10.3 在 Crossed 確認時存下的 playerdata 出現在目的地（v5.7）；Crossed 沒有確認或 playerdata 存檔失敗時，以最後一次存下的位置為準，不會被困住 | 未跨過的人斷線：沒有影響，重新加入後若通道仍開著可以再試。已跨過的人：在目的世界重新加入（開服時已物化） |
 | SEALED | 保留；開服後第一次觸發即可重試（可重試的原因）。`TRANSFER_RECOVERY_REQUIRED` 與其他永久原因不重試 | 不影響 |
 | allocation／projection ledger 或 discovery 損壞或遺失（journal 已是 schema 4，§6） | UNIVERSE 目的地進 SEALED(`AUTHORITY_CORRUPT`)，不配置任何東西 | — |
 | 存檔第一次用 M5 開啟（journal schema 1–3 或不存在） | M5 authority 初始化補建缺少的空 ledger；journal 已 `candidateInitialized` 時，之後第一次 checked 寫入升為 schema 4（空 journal 或只有 legacy record 時仍寫 2，§5） | 不變 |
@@ -1133,3 +1133,13 @@ v5.1 的輕量確認：Critical 0、Important 0、Minor 5（p1–p5），control
   - controller 推薦 M5 內修，理由有兩點：M5 自己的 checkpoint flush 增加了暴露面；修法小，而且已有確定性的重現。
 - 作法：§4 H5，plan Task H5。排在 F6-2b 之後、F6-2c 之前，讓之後的重啟矩陣在修正後的行為上跑。
 - 不受影響的部分：M5 的狀態機、權威、訊息、比較器。probe 的 ticket 仍持有到 JVM 結束（F6-1 的 exp-c）。
+
+### 20.11 使用者裁示：跨越之後立即存 playerdata，以及投影修復遺失的處置（v5.6 → v5.7，2026-10-09）
+
+- 背景：F6-2c 的跨 JVM 重啟測試發現兩件事。
+  1. 跨越成功時，production 不存 playerdata。所以 crash 之後，已跨過的人會回到最後一次存檔的位置，通常是原艙；原版每 5 分鐘才自動存一次。即使 Crossed 已確認也是如此，這與 §12 PASSAGE_READY 列「已跨過的人在目的地」不一致。不會有人被困住，但這次的單向跨越等於白費，因為通道在開服時就結束了。
+  2. EXISTING 再造訪的修復有一個窗口：上一個 session 的修復在 checkpoint 之前就終局，下一個 session 修復寫 0 格，沒有 checkpoint 就提交 READY；之後若在原版存到那個 chunk 之前 crash，修復會遺失。這需要不變量 cell 先被改壞，而它受保護，只有指令或外部工具能改。下一次 EXISTING 再造訪的修復會自動補回。
+- 裁示（使用者經 AskUserQuestion 選擇）：
+  1. 「跨過就立刻存檔」（controller 推薦；獨立 reviewer 原本建議列為已知限制並改 spec）。作法見 §10.3 傳送結果表的「成功」列：Crossed 的寫入確認之後立即存那位玩家的 playerdata；寫入沒有確認時不存，所以磁碟上的 Crossed 與 playerdata 一致；存檔失敗只記 WARN。
+  2. 「列為已知限制」（controller 與 reviewer 都推薦）。寫進 F7 的已知限制，不改程式。
+- 不受影響的部分：通道的其他行為、訊息、比較器。
