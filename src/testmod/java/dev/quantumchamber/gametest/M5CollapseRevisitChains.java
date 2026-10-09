@@ -298,7 +298,7 @@ final class M5CollapseRevisitChains {
         var record = run.journal().flushedRecords().get(sid);
         run.expect("stillSealed", record != null && record.state() == SessionState.SEALED && record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
                 () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
-        passage.expectEnd(new M5CollapsePassage.End(fixture.catalogGrowth(), M5CollapsePassage.ProjectionAtEnd.LEDGER_ABSENT, M5CollapsePassage.Place.SOURCE, 1, false));
+        passage.expectEnd(M5CollapsePassage.End.degraded(fixture));
         return true;
     }
 }

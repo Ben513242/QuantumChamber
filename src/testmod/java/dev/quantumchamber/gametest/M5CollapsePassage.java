@@ -11,6 +11,7 @@ import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
@@ -142,12 +143,45 @@ final class M5CollapsePassage {
     /**
      * 終局的 spec §12 斷言的參數：catalog 相對於 crash 前的增量（NEW 1、EXISTING 0）、projection ledger 的預期、參與者在哪裡、這個 session 從 {@code onInitialize}
      * 起的 ERROR 恰有幾則（正常的 restart 為 0），以及 M5 authority 是否在本 instance 初始化成功（沒有「M5 authority 初始化失敗」的 ERROR）。
+     * <p>F6-2c（F6-2c Step 0 quality 給 F6-2c 本體的建議）：不提供位置參數的建構子（兩個 int 互換位置也能編譯），以具名的 factory 建立（{@link #crossed}、{@link #degraded}）。
      */
-    record End(int catalogGrowth, ProjectionAtEnd projection, Place participants, int sessionErrors, boolean authorityInitialized) {
+    static final class End {
+        private final int catalogGrowth;
+        private final ProjectionAtEnd projection;
+        private final Place participants;
+        private final int sessionErrors;
+        private final boolean authorityInitialized;
+
+        private End(int catalogGrowth, ProjectionAtEnd projection, Place participants, int sessionErrors, boolean authorityInitialized) {
+            this.catalogGrowth = catalogGrowth;
+            this.projection = Objects.requireNonNull(projection, "projection");
+            this.participants = Objects.requireNonNull(participants, "participants");
+            this.sessionErrors = sessionErrors;
+            this.authorityInitialized = authorityInitialized;
+        }
+
         /** 正常的 restart：(b) 全員都已跨過，參與者在 U，沒有這個 session 的 ERROR，authority 初始化成功。 */
         static End crossed(M5CollapseFixture fixture) {
             return new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, Place.UNIVERSE, 0, true);
         }
+
+        /**
+         * 退化的 restart（開服時 projection ledger 遺失，{@code M5CollapseRevisitChains}）：ledger 不存在、參與者照一般方式開門而在來源世界，這個 session 的 ERROR
+         * 只有永久原因那一則，authority 本 instance 初始化失敗。
+         */
+        static End degraded(M5CollapseFixture fixture) {
+            return new End(fixture.catalogGrowth(), ProjectionAtEnd.LEDGER_ABSENT, Place.SOURCE, 1, false);
+        }
+
+        int catalogGrowth() { return catalogGrowth; }
+
+        ProjectionAtEnd projection() { return projection; }
+
+        Place participants() { return participants; }
+
+        int sessionErrors() { return sessionErrors; }
+
+        boolean authorityInitialized() { return authorityInitialized; }
     }
 
     /**

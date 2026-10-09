@@ -26,6 +26,7 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.ChunkPos;
@@ -78,11 +79,64 @@ final class M5CollapseWindows {
     }
 
     /**
-     * restart 開服時（{@code SERVER_STARTED} 的 AFTER phase）的預期。{@code returned}：參與者在 crash 前是否已返還（W1 為 false：走廊 space 已重建、沒有保留式
-     * recovery 的請求）。{@code projection}：projection ledger 這座艙在 U 的狀態（null 為沒有 entry）。{@code disk}：窗口自己的磁碟檢查（{@link #NO_CHECK} 不檢查）。
-     * {@code recognizeBeforeJoin}：JOIN 之前以 probe 的 ticket 載入投影 Controller，等它經 load-sync 辨識為 inert 的 PROJECTION（COMPLETE 時另斷言不變量 cell 受保護）。
+     * restart 開服時（{@code SERVER_STARTED} 的 AFTER phase）的預期。F6-2c（F6-2a quality Minor 1、F6-2c Step 0 quality 給 F6-2c 本體的建議）：原本是 5 個位置參數的
+     * record（兩個 boolean 互換位置也能編譯），改成具名的 factory 與 wither，沒有指定的欄位是預設值。以 {@link #resolved} 建立，再以 {@code with…} 改需要的欄位：
+     * <ul>
+     * <li>{@code resolved}：RESOLVE 在 halt 之前完成到哪一步（由它推出 halt 當下是否已物化，以及 allocation、catalog、discovery 的預期）。</li>
+     * <li>{@link #notReturned}：參與者在 crash 前還沒有返還（W1：另斷言走廊 space 已重建、沒有保留式 recovery 的請求）；預設已返還。</li>
+     * <li>{@link #withProjection}：projection ledger 這座艙在 U 的狀態；預設沒有 entry（null）。</li>
+     * <li>{@link #withDisk}：窗口自己的磁碟檢查；預設 {@link #NO_CHECK}。</li>
+     * <li>{@link #recognizingBeforeJoin}：JOIN 之前以 probe 的 ticket 載入投影 Controller，等它經 load-sync 辨識為 inert 的 PROJECTION（COMPLETE 時另斷言不變量 cell
+     *     受保護）；預設不載入。</li>
+     * </ul>
      */
-    record AtRestart(boolean returned, Resolved resolved, ProjectionLedger.Entry.Status projection, DiskCheck disk, boolean recognizeBeforeJoin) {}
+    static final class AtRestart {
+        private final boolean returned;
+        private final Resolved resolved;
+        private final ProjectionLedger.Entry.Status projection;
+        private final DiskCheck disk;
+        private final boolean recognizeBeforeJoin;
+
+        private AtRestart(boolean returned, Resolved resolved, ProjectionLedger.Entry.Status projection, DiskCheck disk, boolean recognizeBeforeJoin) {
+            this.returned = returned;
+            this.resolved = Objects.requireNonNull(resolved, "resolved");
+            this.projection = projection;
+            this.disk = Objects.requireNonNull(disk, "disk");
+            this.recognizeBeforeJoin = recognizeBeforeJoin;
+        }
+
+        /** RESOLVE 在 halt 之前完成到 {@code resolved}；其餘欄位是預設值（已返還、沒有 projection entry、不檢查磁碟、JOIN 之前不載入投影）。 */
+        static AtRestart resolved(Resolved resolved) { return new AtRestart(true, resolved, null, NO_CHECK, false); }
+
+        /** 參與者在 crash 前還沒有返還（W1）。 */
+        AtRestart notReturned() { return new AtRestart(false, resolved, projection, disk, recognizeBeforeJoin); }
+
+        /** projection ledger 這座艙在 U 的狀態是 {@code status}。 */
+        AtRestart withProjection(ProjectionLedger.Entry.Status status) {
+            return new AtRestart(returned, resolved, Objects.requireNonNull(status, "status"), disk, recognizeBeforeJoin);
+        }
+
+        /** 窗口自己的磁碟檢查。 */
+        AtRestart withDisk(DiskCheck check) { return new AtRestart(returned, resolved, projection, check, recognizeBeforeJoin); }
+
+        /** JOIN 之前載入並辨識投影 Controller。 */
+        AtRestart recognizingBeforeJoin() { return new AtRestart(returned, resolved, projection, disk, true); }
+
+        /** 參與者在 crash 前是否已返還。 */
+        boolean returned() { return returned; }
+
+        /** RESOLVE 在 halt 之前完成到哪一步。 */
+        Resolved resolved() { return resolved; }
+
+        /** projection ledger 這座艙在 U 的狀態（null 為沒有 entry）。 */
+        ProjectionLedger.Entry.Status projection() { return projection; }
+
+        /** 窗口自己的磁碟檢查（{@link #NO_CHECK} 不檢查）。 */
+        DiskCheck disk() { return disk; }
+
+        /** JOIN 之前是否載入並辨識投影 Controller。 */
+        boolean recognizeBeforeJoin() { return recognizeBeforeJoin; }
+    }
 
     /** PREPARE 怎麼完成：「準備完成」INFO 恰一則，模式是 {@code mode}、寫入 {@code cells} 格（{@link #ANY_CELLS}：不是 0 格即可），之後 READY 時的磁碟檢查。 */
     record Prepared(String name, ProjectionWriter.Mode mode, int cells, DiskCheck afterReady) {
@@ -110,29 +164,32 @@ final class M5CollapseWindows {
         var rows = new EnumMap<CrashWindow, Window>(CrashWindow.class);
         // W1：live session 的 MEASURED→COLLAPSING 剛提交、返還之前（RESOLVE 還沒有開始）。
         row(rows, CrashWindow.COLLAPSING_COMMITTED, M5CollapseWindows::collapsingCommitted, M5CollapseWindows::committedBeforeTheReturn,
-                new AtRestart(false, Resolved.NOTHING, null, NO_CHECK, false), null);
+                AtRestart.resolved(Resolved.NOTHING).notReturned(), null);
         // W2：allocation ledger 寫出之後、catalog 之前。
         row(rows, CrashWindow.ALLOCATION_APPENDED, M5CollapseWindows::appended, NO_EVIDENCE,
-                new AtRestart(true, Resolved.ALLOCATION, null, NO_CHECK, false), null);
+                AtRestart.resolved(Resolved.ALLOCATION), null);
         // W3：catalog 寫出之後、物化之前（重啟時由 EAGER_ENABLED 物化）。
         row(rows, CrashWindow.CATALOG_ALLOCATED, M5CollapseWindows::appended, NO_EVIDENCE,
-                new AtRestart(true, Resolved.CATALOG, null, NO_CHECK, false), null);
+                AtRestart.resolved(Resolved.CATALOG), null);
         // W5：discovery 追加之後、投影之前。
         row(rows, CrashWindow.DISCOVERY_APPENDED, M5CollapseWindows::appended, NO_EVIDENCE,
-                new AtRestart(true, Resolved.DISCOVERY, null, NO_CHECK, false), null);
+                AtRestart.resolved(Resolved.DISCOVERY), null);
         // W4：第一次寫入剛寫完 Controller 那一格（halt 前存檔：磁碟上是寫到一半的投影）。
         row(rows, CrashWindow.PROJECTION_CELL_WRITTEN, M5CollapseWindows::controllerCellWritten, M5CollapseWindows::savedHalfWrittenProjection,
-                new AtRestart(true, Resolved.DISCOVERY, ProjectionLedger.Entry.Status.PENDING, M5CollapseWindows::controllerOnDiskAtRestart, true), FIRST_WRITE_AGAIN);
+                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.PENDING).withDisk(M5CollapseWindows::controllerOnDiskAtRestart)
+                        .recognizingBeforeJoin(), FIRST_WRITE_AGAIN);
         // W4b：投影寫完並驗證、目的 chunks 的 checkpoint 之前（磁碟上沒有投影）。
         row(rows, CrashWindow.DESTINATION_CHECKPOINT, M5CollapseWindows::destinationCheckpoint, M5CollapseWindows::projectionOnlyInMemory,
-                new AtRestart(true, Resolved.DISCOVERY, ProjectionLedger.Entry.Status.PENDING, M5CollapseWindows::noProjectionOnDiskAtRestart, false), FIRST_WRITE_AGAIN);
+                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.PENDING).withDisk(M5CollapseWindows::noProjectionOnDiskAtRestart),
+                FIRST_WRITE_AGAIN);
         // W6：projection ledger 寫入 COMPLETE 之後、PASSAGE_READY 之前（重啟之後修復 0 格）。
         row(rows, CrashWindow.PROJECTION_COMPLETE, M5CollapseWindows::projectionCompleted, M5CollapseWindows::completeOnDisk,
-                new AtRestart(true, Resolved.DISCOVERY, ProjectionLedger.Entry.Status.COMPLETE, M5CollapseWindows::controllerOnDiskAtRestart, true),
+                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withDisk(M5CollapseWindows::controllerOnDiskAtRestart)
+                        .recognizingBeforeJoin(),
                 new Prepared("repairedNothing", ProjectionWriter.Mode.REPAIR, 0, NO_CHECK));
         // W6 的 EXISTING 再造訪：REPAIR 寫了格之後、checkpoint 之前（重啟之後再修復那一格，interior 的標記保留）。
         row(rows, CrashWindow.PROJECTION_REPAIRED, M5CollapseWindows::repairWroteCells, M5CollapseWindows::repairOnlyInMemory,
-                new AtRestart(true, Resolved.DISCOVERY, ProjectionLedger.Entry.Status.COMPLETE, M5CollapseWindows::repairLostWithTheCrash, false),
+                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withDisk(M5CollapseWindows::repairLostWithTheCrash),
                 new Prepared("repairedAgain", ProjectionWriter.Mode.REPAIR, 1, M5CollapseWindows::repairCheckpointedBeforeReady));
         return Collections.unmodifiableMap(rows);
     }
