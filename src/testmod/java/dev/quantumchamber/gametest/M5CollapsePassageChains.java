@@ -170,12 +170,15 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * F6-2-12：兩人；選門者照常跨過（Crossed＝[選門者]）→ 另一位的原生移動往 U 與回滾都被拒（{@code FAILED_RECOVERY_REQUIRED}）→ PASSAGE_READY→SEALED(TRR) 的寫入確認時
-     * halt。probe 不存檔（選門者的 playerdata 由 production 在他的 Crossed 確認時存下，spec v5.7 §10.3）。
+     * F6-2-12：兩人；PASSAGE_READY 之後原生存檔一次（同 W7：跨越之前，兩人的 playerdata 都在來源世界）→ 選門者照常跨過（Crossed＝[選門者]）→ 另一位的原生移動往 U 與回滾都被拒
+     * （{@code FAILED_RECOVERY_REQUIRED}）→ PASSAGE_READY→SEALED(TRR) 的寫入確認時 halt。跨越之後 probe 不存檔：選門者的 playerdata 由 production 在他的 Crossed 確認時
+     * 存下（spec v5.7 §10.3）。跨越之前的存檔也讓 restart 開服時來源世界的 chunk 都已在磁碟上（F6-2c fix round 1：沒有它時，restart 的 JOIN 讓來源世界與共用 seed 的 U 同時
+     * 生成同一個結構，2／2 撞上原版 {@code StructureTemplate} 快取的 ConcurrentModificationException，見 implementation note）。
      */
     Phase trrCrash() {
         var steps = new ArrayList<>(untilResolved(2, CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
+        steps.add(nativeSaveDuringThePassage());
         steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
         steps.add(new Step("recoveryFault", 1, () -> {
             installRecoveryFault();
@@ -253,8 +256,8 @@ final class M5CollapsePassageChains {
                 steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
             }
             case RECOVERY_SEALED -> {
-                // F6-2c fix round 1（spec v5.7 §10.3）：選門者跨越、Crossed 確認時已存下 playerdata，JOIN 在 U；無法回滾的另一位 JOIN 在來源世界的艙外（觸發之前存的）。
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, false); return true; }));
+                // F6-2c fix round 1（spec v5.7 §10.3）：選門者跨越、Crossed 確認時已存下 playerdata，JOIN 在 U；無法回滾的另一位 JOIN 在來源世界的艙內（跨越之前存的）。
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, true); return true; }));
                 steps.add(new Step("inside", 1, () -> { fixture.moveInside(M5CollapseFixture.OTHERS); return true; }));
                 steps.add(new Step("notRetried", SEALED_WATCH_TICKS + 5, this::sealedNotRetried));
                 steps.add(new Step("doorOpens", 1, this::sealedDoorOpensNormally));
