@@ -289,6 +289,10 @@ public final class M5TestHooks {
      * <li>{@code ProjectionWriterCrashWindowMixin}：{@link #PROJECTION_CELL_WRITTEN}（每寫一格，{@link ProjectionCell}）、{@link #PROJECTION_REPAIRED}（每次
      *     {@code write} 回傳，兩種模式都是，{@link ProjectionWrite}）；</li>
      * <li>{@code ChunkSaveCheckpointCrashWindowMixin}：{@link #DESTINATION_CHECKPOINT}（每次原生存檔 checkpoint 開始之前，任何世界，{@link ChunkCheckpoint}）。</li>
+     * <li>{@code SessionRecoveryStateCrashWindowMixin}（F6-2c 加的注入點）：{@link #READY_COMMITTED}（與 {@link #COLLAPSING_COMMITTED} 同一個回傳點，{@link CollapsingCommit}）；
+     *     {@link #CROSSED_COMMITTED}、{@link #CROSSED_UNCONFIRMED}、{@link #RECOVERY_SEALED}、{@link #RECOVERY_REJECTED}（每次 {@code commitRollForward} 回傳，依序以這四個值
+     *     呼叫，任何 roll-forward 的邊與結果都是，{@link RollForwardWrite}）；{@link #PASSAGE_TERMINATED}（每次 {@code terminate} 回傳，任何起點與結果都是，{@link Termination}）。
+     *     窗口表以 {@code CrashWindow} 為 key、一個值一列，所以同一個程式點上條件不同的窗口各有一個值。</li>
      * </ul>
      * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
@@ -308,7 +312,22 @@ public final class M5TestHooks {
         /** W6：{@code CollapseAuthorities.writeProjection} 寫入 COMPLETE 之後（PASSAGE_READY 之前）。 */
         PROJECTION_COMPLETE,
         /** W6 的 EXISTING 再造訪：{@code ProjectionWriter.write} 以 REPAIR 修復之後（checkpoint 之前）。 */
-        PROJECTION_REPAIRED
+        PROJECTION_REPAIRED,
+        /**
+         * F6-2-16（F6-2c）：{@code SessionRecoveryState.commitRestore} 把 COLLAPSING 提交為 PASSAGE_READY 之後（門改為 passable 之前）。與 {@link #COLLAPSING_COMMITTED}
+         * 同一個回傳點，detail 也是 {@link CollapsingCommit}。
+         */
+        READY_COMMITTED,
+        /** W7（F6-2c）：{@code SessionRecoveryState.commitRollForward} 把一位參與者加入 Crossed，讀回已確認（PASSAGE_READY 期間，已有人跨過）。 */
+        CROSSED_COMMITTED,
+        /** F6-2-17（F6-2c）：{@code commitRollForward} 加入 Crossed 的寫出沒有確認（ROLL_FORWARD_PENDING：玩家已在目的世界，磁碟上的 Crossed 沒有他）。 */
+        CROSSED_UNCONFIRMED,
+        /** F6-2-12（F6-2c）：{@code commitRollForward} 把 PASSAGE_READY 寫成 SEALED(TRANSFER_RECOVERY_REQUIRED)，讀回已確認（之後的釋放、門與 ERROR 之前）。 */
+        RECOVERY_SEALED,
+        /** F6-2-12 的 pendingRecovery（F6-2c）：{@code commitRollForward} 的 SEALED(TRANSFER_RECOVERY_REQUIRED) 寫入在前置檢查被拒（REJECTED；磁碟與 current 仍是 PASSAGE_READY）。 */
+        RECOVERY_REJECTED,
+        /** F6-2-13（F6-2c）：{@code SessionRecoveryState.terminate} 的通道終局（PASSAGE_ENDED）讀回已確認之後（改門之前）。 */
+        PASSAGE_TERMINATED
     }
 
     /**
@@ -331,6 +350,15 @@ public final class M5TestHooks {
 
     /** {@link CrashWindow#DESTINATION_CHECKPOINT} 的 detail：{@code ChunkSaveCheckpoint.save} 這一次要存的世界與 chunks。 */
     public record ChunkCheckpoint(Map<ServerWorld, Set<ChunkPos>> relevant) {}
+
+    /**
+     * {@link CrashWindow#CROSSED_COMMITTED}、{@link CrashWindow#CROSSED_UNCONFIRMED}、{@link CrashWindow#RECOVERY_SEALED}、{@link CrashWindow#RECOVERY_REJECTED} 的 detail
+     * （F6-2c）：{@code SessionRecoveryState.commitRollForward} 的一次呼叫（變更前、變更後的 record）與它的結果。
+     */
+    public record RollForwardWrite(SessionRecoveryRecord expected, SessionRecoveryRecord next, SessionRecoveryState.CommitResult result) {}
+
+    /** {@link CrashWindow#PASSAGE_TERMINATED} 的 detail（F6-2c）：{@code SessionRecoveryState.terminate} 的一次呼叫（終局的 record 與起點）與它的結果。 */
+    public record Termination(SessionRecoveryRecord expected, SessionRecoveryState.TerminalOrigin origin, SessionRecoveryState.TerminalResult result) {}
 
     /**
      * mixin 讀取的一個靜態 hook 位置（F4a-0 fix round 1，quality Q1）：同一時間只有一個持有者。GameTest 的安裝與移除只經 {@code M5GameTestSupport}
