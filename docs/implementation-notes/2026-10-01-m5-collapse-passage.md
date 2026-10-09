@@ -6393,3 +6393,157 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 - 結束過的 JVM：18980（no-mixin）、15224（cancel-all）、3888（sim-crash-old），全部由 `m5-collapse-probe.ps1` 的逾時處置在核對 commandline（本次的 startupNonce）、jstack 之後結束（`f62cs0/kills.txt`）。沒有結束 Gradle daemon。
 - 取證腳本（`f62cs0/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`、`gate-adapted.ps1`、`runall-compare.ps1`、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py` 由 `f6/h5/` 複製（只加註解；`adapter.py` 的 adapter 表改 `adapters_f62cs0.py`；`runall-compare.ps1` 的基準改為 `run-all-35096bebd2e84f51a9bc7ace0dbbab27`，`base-*-summary.txt` 是同一次 run-all 的 `f6/h5/runall-*-summary.txt`）；`names.py`、`mutsum.py`、`commitcheck2.ps1` 由 `f6/f62a/` 複製（只改註解與 label 前綴；`names.py`、`commitcheck2.ps1` 最後沒有用到：比對改用 `names2.py`，各 commit 的編譯改在 commit 之前的工作樹做）；新寫 `adapters_f62cs0.py`、`mutations.ps1`、`names2.py`。`f6/h5/`、`f6/f62a/` 下既有的檔案沒有改動。
+
+## F6-2c：通道與終局的重啟窗口
+
+- 一位 implementer 完成（controller 的派工 scratchpad `f62c-prompt.md`；取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62c/`，以下簡稱 `f62c/`，`STATUS.md` 是交接摘要）。開工時 HEAD 是 `a52d65d`、工作樹乾淨。範圍：A 段先擴充結構（第 1～6 點：F6-2a quality Minor 1 與給 W7、多人的建議，F6-2c Step 0 quality Minor 1、2、4 與給 F6-2c 本體的建議，spec Minor 3），B 段的窗口與重啟變體（第 7～14 點：F6-2-01、F6-2-12～F6-2-18），C 段的三份表、mutation、README 與本節。新增 6 條 chain、12 個 phase（共 16 條 chain、32 個 phase）。**沒有改 `src/main/`**；第 13 點（F6-2-15）的修復會遺失，依派工不改程式，保留 root、在「需要裁示」回報。
+- Commits（依序；每個 commit 只 stage 自己的檔案；結構擴充與新 chain 分開）：
+  - 結構（行為不變）：
+    - `3a6a359` `test: build the M5 collapse restart expectations and the end with named factories`（第 1 點前半、第 3 點前半）
+    - `58cbcb4` `test: split the M5 collapse passage steps into resolve, ready and cross segments`（第 2 點）
+    - `fc93357` `test: name the state, the crossed and each participant's place in the M5 collapse restart`（第 1 點後半、第 3 點後半、第 4 點）
+    - `c8486df` `test: check the crash point in the M5 collapse runner and name the stopping listener apart`（第 5 點）
+  - hook 與 fixture：
+    - `8cb5f05` `test: add the passage and terminal crash windows to the M5 test hooks`（`CrashWindow` 的 6 個新值、2 個 detail record、`SessionRecoveryStateCrashWindowMixin` 的 3 個注入點）
+    - `0a3caa4` `test: share the arming and the per-participant join in the M5 collapse fixture`（W1 的 arm 搬到 fixture，W7 共用；`joinAll(Who, inside)`、`tickets`、`recordDigest`、`sessionLogged`）
+  - 新 chain：`eef3b1e` `test: add W7 and the passage and terminal restart chains to the M5 collapse probe`（第 7～12、15 點）
+  - 文件：`bdbc567` `docs: describe the passage and terminal restart chains in the verification README`（第 6、17 點）。
+  - 只改註解：`a77b3fb` `test: list the passage chains in the M5 collapse probe Javadoc`（entrypoint 的類別說明補上 `M5CollapsePassageChains`；run-all-1 之後才發現，見「run-all」）。
+  - 本節由其後的 docs commit `docs: record F6-2c in the M5 note` 加入。
+- 中間 commit 的編譯與執行：
+  - `3a6a359`～`c8486df` 在 commit 之前以工作樹編譯 `compileJava compileTestJava compileTestmodJava compileClientProbeJava`（`f62c/c1-`～`c4-compile.log`，都 BUILD SUCCESSFUL）。`8cb5f05`、`0a3caa4` 在 commit 之後以 `f62c/commitcheck2.ps1` 把變更檔換成那個 commit 的版本編譯、再逐檔還原並核對 blob（`cc-8cb5f05`、`cc-0a3caa4`，都 BUILD SUCCESSFUL）；`eef3b1e` 是 `c10-compile` 的工作樹。
+  - 開發 run（不算 GREEN）：`dev-a` `8b8e037987b14c88aec5cac81039aecf`（全部 20 phases PASS，`*-probe-state.txt` 的 blob 與 `c8486df` 相同）；`dev-b4` `13ff9c40e849498d9f36d3662f1e0bb1`（新 chain 12/12 PASS，blob 與 `eef3b1e` 相同，`f62c/devb4-vs-eef3b1e-blobs.txt` 10/10）。
+- 只改了派工允許的路徑：
+  - testmod：probe 的 `M5CollapseRun`、`M5CollapseRecoveryProbe`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassage`、`M5CollapseDormantChains`、`M5CollapseLiveChain`、`M5CollapseRevisitChains`、`M5CollapseUnloadChain`（只加一行註解）與新檔 `M5CollapsePassageChains`；`M5TestHooks` 只有 `CrashWindow` 的新值與 Javadoc、兩個 detail record；`SessionRecoveryStateCrashWindowMixin` 加注入點（既有的 mixin，`quantumchamber-test.mixins.json` 不用改）。
+  - `scripts/verification/`：`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；README 只改「M5 collapse probe」一節。
+  - **沒有改** `src/main/`、`build.gradle`、`fabric.mod.json`、mixin 的登記檔、其他 ps1、`.github/`、既有的 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。
+- 行號以 `bdbc567` 為準。`RUN`＝`M5CollapseRun`，`WIN`＝`M5CollapseWindows`，`FIX`＝`M5CollapseFixture`，`PAS`＝`M5CollapsePassage`，`PCH`＝`M5CollapsePassageChains`，`HK`＝`M5TestHooks`，`SRM`＝`SessionRecoveryStateCrashWindowMixin`，`UC`＝`M5CollapseUnloadChain`，`MP`＝`m5-collapse-probe.ps1`，`RA`＝`run-all.ps1`。
+
+### 結構的擴充（A 段）
+
+| 點 | 處置 |
+| --- | --- |
+| 1（`AtRestart`） | 由 5 個位置參數的 record 改成 private 建構子的 final class（`WIN:107`）：`AtRestart.resolved(Resolved)`（`WIN:130`）建立，`notReturned()`、`withProjection(status)`、`withDisk(check)`、`recognizingBeforeJoin()` 改欄位，沒有指定的是預設值；既有 8 列改寫成具名的形式（`3a6a359`，行為不變）。之後加 `stateAtHalt`（`withStateAtHalt`，`WIN:149`；預設 COLLAPSING）、`terminatedAtHalt()`（`WIN:154`：終局已落盤）與 `crossedAtHalt`（`withCrossedAtHalt`，`WIN:157`；預設沒有人），既有 8 列不必改。`expectAtRestart`（`WIN:577`）把寫死的 `restartedCollapsing` 換成 `restartedAs(state)`（`WIN:642`：COLLAPSING 仍是 `restartedCollapsing`，另有 `restartedPassageReady`、`restartedSealed`），終局已落盤時改斷言 `terminatedOnDisk`，狀態不是 COLLAPSING 時另斷言 `crossedAtRestart`。`crossedAtHalt` 的型別是 `FIX.Who`（下一列），不是 `Set<UUID>`：窗口表是靜態的，參與者在 restart 開服時才由收據讀回。 |
+| 2（`passage.steps`） | 拆成可選的三段（`PAS:95` `resolve()`、`PAS:103` `ready(prepared, who)`、`PAS:114` `cross(who)`），`steps(prepared)`（`PAS:85`）是三段全員跨越、再接 (b) 終局的完整版本，既有的 restart 照用、step 名稱與順序不變。`readyTicks` 跟著 ready 段（每次呼叫各自的計數）。cross 段接受參與者的子集、可以分幾次：`crossedRecorded` 要求 Crossed 恰為到目前為止各 cross 段的參與者（`PAS:42` `crossedSoFar`），`oneCrossingInfo` 也是這幾位各一則。門口的 local x 依清單順序錯開（`PAS:38`：3.5、1.5、5.5；第一位與拆段之前相同）。 |
+| 3（`End`） | 先把 `Revisit:301` 的位置參數建構改成 `End.degraded(fixture)`（`PAS:242`），`End` 改成 private 建構子的 final class（`PAS:202`；`crossed`、`degraded`，F6-2c 另加 `inTheSourceWorld`，`PAS:234`）。之後 `participants` 改成逐人的 `Map<UUID, Place>`（`places()`），以 `placed(fixture, who, place)`（`PAS:247`）逐人改；`expectEnd`（`PAS:273`）依 map 逐人斷言（名稱仍是 `participantInTheUniverse`／`participantInTheSourceWorld`），map 的參與者與 chain 不同時丟出。 |
+| 4（多名參與者） | 選門者由收據的 selection 推導（`FIX:134` `selectorId()`：`CandidateSelection.Selected.selectedBy`；沒有收據或沒有選中的候選時丟出），`selector()` 改用它；W1 選門之前還沒有收據，由 chain 指定第一位參與者去選門（註解寫明）。`receiptIdentity`（清單順序的比對）保留、與選門者分開。參與者的子集是 `FIX.Who`（`FIX:112`，在 step 執行時才決定）：`EVERYONE`、`NOBODY`、`SELECTOR`、`OTHERS`（`FIX:115`～`:121`），`members(who)`（`FIX:124`）核對都是參與者。 |
+| 5（runner） | `install` 的 Javadoc 寫明「停服期間要保留的 hook 不得經這裡」（`RUN:437`），`UC:276` 加一行說明 witness 為什麼直接用 `Slot.install`（不另提供 `installUntilStopped`）。HALT phase 的 `everyTick(run::crashPointHealthy)` 三處拿掉，改由 runner 每個 tick 在 `phase.everyTick` 之前呼叫（`RUN:331`；`crashPointHealthy` 改成 private），`everyTick` 留給 chain。欄位 `stopping` 改名 `stoppingSeen`（`RUN:225`），AFTER phase 的 listener 改名 `afterProductionStopping`（`RUN:366`）。 |
+| 6（README） | README :227 的範例改成 `run.server()`；「加窗口只要加一列」限定在 COLLAPSING 中、RESOLVE／PREPARE 期間的窗口（W1～W6x），寫明其他窗口要以 `AtRestart` 的 `stateAtHalt`、`crossedAtHalt` 表達開服時的 record，restart 的 step 與 `End` 由 chain 自己組。`WIN` 的類別說明同步。**更正**（本節不改既有各節）：F6-2a 一節與 README 的「新增窗口只要加一列」，只對 W1～W6x 這一型成立。 |
+
+- 斷言名稱的比對（`f62c/names2.py`，由 `f62cs0/` 複製）：F6-2c Step 0 GREEN `40b260448d74471b9050fdf15a1bb95e` 的 20 個 phase → 本節 green-1、green-2：**名稱、數目、順序與 step 完全相同**，全部成立，沒有改名、沒有新增（`f62c/green-*-vs-f62cs0-names.txt`，RESULT=OK）。新 chain 的 12 個 phase green-1 與 green-2 也相同（`f62c/green-2-vs-green-1-names.txt`）。
+
+### 每條新 chain（B 段）
+
+crash phase 都從 DORMANT 的 NEW 收據開始（與 `w2` 等相同：參與者由艙外進入 → COLLAPSING → RESOLVE），之後依窗口推進。restart 的開服檢查走窗口表（`expectAtRestart`），另比對 record 的塌縮欄位（狀態、Collapse 的每個欄位、參與者與返還、lease 數）與 halt 當下相同（`recordKeptAcrossTheRestart`；`FIX:576` `recordDigest`：塌縮狀態的 record 放不進一份新的 journal、`toNbt` 也不是 public，所以不經 NBT）。每條 chain 都有 spec §12 的四件事：每個 tick 的 `catalogOnlyDestination`、`catalogAtMostOneMore`、`sameDestination`、`noRedraw`、`participantInSourceOrUniverse`，開服時的 `oneAllocationForTheToken`、`noRedraw`，終局的 `expectEnd`。
+
+| chain | 窗口（hook） | crash phase | restart 的目標斷言 |
+| --- | --- | --- | --- |
+| `w7`（F6-2-01，spec §12 W7；含 F6-2-14） | `CROSSED_COMMITTED`（`SRM` `commitRollForward` 的 RETURN） | 兩人；PASSAGE_READY 之後選門者越過中線，Crossed 的寫入讀回確認時 halt。halt 之前原生存檔（`nativeSaveAtHalt`，模擬 crash 之前有過一次 autosave；見第 11 點）：選門者的 playerdata 在 U、另一位在艙內，passable 的門與 PASSAGE 的 Controller 在磁碟上 | 開服時 record 是 PASSAGE_READY、Crossed＝[選門者]（`restartedPassageReady`、`crossedAtRestart`），磁碟上門 passable、Controller PASSAGE、playerdata 選門者在 U；第一個 tick checked 終局（`passageEndedAtStartup`、`endedOnTheFirstTick`），那個 tick 還沒有改門（`notYetOpenOnTheEndTick`），下一個 tick 一般開門（`plainOpenOnTheNextTick`）；比較器依 presence NONE 重新評估為 IDLE／3（`comparatorReevaluated`：F6-2-14，重啟前存下的是 PASSAGE／15），power state POWERED；選門者 JOIN 在 U（`joinedInTheUniverse`）、另一位在艙內；`expectEnd`（選門者 `placed` 在 U）；沒有殘留（`noRuntimeLeft`、`noSourceTicketLeft`、`noDestinationTicketLeft`、`notReturning`）；另一位照一般方式關門，同一個 server 內 LOW→HIGH 供電＋Buff → checked ARMING（`newSessionInTheSameServer`：新的 session UUID、參與者只有他） |
+| `readycommit`（F6-2-16） | `READY_COMMITTED`（`SRM` `commitRestore` 的 RETURN，與 W1 同一點的第二個注入） | 一人；COLLAPSING→PASSAGE_READY 的提交讀回確認時（`openPassage` 之前）halt；門還是 PREPARE 的 sealed 量子膜（`sealedDoorBeforePassable`）。halt 之前原生存檔（sealed 的門、艙內的參與者在磁碟上） | 開服時 PASSAGE_READY、沒有人跨過、磁碟上門是 sealed；同 `w7` 的開服時結束、下一個 tick 一般開門、比較器重新評估；參與者 JOIN 在艙內；`expectEnd`（`End.inTheSourceWorld`） |
+| `terminaldoor`（F6-2-13） | `PASSAGE_TERMINATED`（`SRM` `terminate` 的 RETURN） | 一人；PASSAGE_READY 時原生存檔（`nativeSaveDuringThePassage`），再拿掉紅石塊 → (d) 來源艙沒有供電 → checked 終局讀回確認時（`closed()` 的改門之前）halt | 開服時 journal 沒有這個 session（`terminatedOnDisk`），磁碟上門 passable、Controller PASSAGE；Controller 的 load-sync 刷新排入找不到所屬 session 的量子膜的正規化（INFO 記下「tick N」，`ownerlessQueuedByTheLoadSync`；green 兩次都在 tick 1 排入 tick 2），比較器 IDLE／3；tick N 門一般開門、INFO「已正規化為一般開門（…，tick N）」（`ownerlessNormalizedOnTheNextTick`）；參與者 JOIN 在艙內；`expectEnd` |
+| `crossedpending`（F6-2-17） | `CROSSED_UNCONFIRMED`（`commitRollForward` 的 RETURN，ROLL_FORWARD_PENDING） | 一人；PASSAGE_READY 之後裝上 journal 寫出的失敗（`FLUSH_PROBE`＋`M5GameTestSupport.FlushFault`：current 的 Crossed 不是空的、flushed 是空的時丟出），越過中線、傳送到 U，Crossed 的寫出沒有確認時 halt：磁碟上的 Crossed 是空的、collapse view 有他（`crossedPendingInTheCollapseView`），他在 U、playerdata 仍在來源世界（`playerDataNotInTheUniverseAtHalt`）。不存檔 | 開服時 PASSAGE_READY、Crossed 是空的；同 `w7` 的開服時結束；他 JOIN 在來源世界的艙外（上一次存檔的位置）；`expectEnd`（`End.inTheSourceWorld`）。判定見第 11 點 |
+| `trr`（F6-2-12） | `RECOVERY_SEALED`（`commitRollForward` 的 RETURN，COMMITTED、PASSAGE_READY→SEALED(TRR)） | 兩人；選門者照常跨過（cross 段，`crossedRecorded`）→ 另一位的原生移動往 U 與回滾都被拒（`NATIVE_MOVE_FAULT`，1／1：`FAILED_RECOVERY_REQUIRED`）→ SEALED(TRR) 的寫入確認時（`sealCommitted` 之前）halt：Crossed＝[選門者]、RecoveryRequired＝另一位。不存檔 | 開服時 SEALED、Crossed＝[選門者]（`restartedSealed`、`crossedAtRestart`）、RecoveryRequired 與原因保留（`recoveryRequiredKept`）、record 與 halt 當下相同；參與者 JOIN（來源世界艙外）、移到艙內，觀察 40 tick：record 不變（`sealedUnchanged`）、沒有重試的 INFO 與這個 session 的 WARN（`trrNotRetried`）、presence COLLAPSE、比較器 ARMED／11；選門者照一般方式開門（`doorOpensNormally`、`stillSealed`）；`expectEnd` |
+| `trrpending`（F6-2-12 的 pendingRecovery） | `RECOVERY_REJECTED`（`commitRollForward` 的 RETURN，REJECTED，而且被拒的 ERROR 已記） | 一人；`NATIVE_MOVE_FAULT` 1／1，另以 `JOURNAL_PUT_FAULT` 拒絕這個 session 寫成 SEALED 的 put → 第一次被拒（ERROR 一則、通道在記憶體內關閉、門一般開門）→ 退避 200 tick 之後的重試又被拒時 halt（`journalUnchangedAtHalt`、`oneRejectedRecoveryError`，ERROR 的全文寫進 `atHalt.recoveryError`） | 開服時 PASSAGE_READY、沒有 RecoveryRequired，TRR 只剩前一個 JVM 的 log（`recoveryOnlyInThePreviousLog`）；同 `w7` 的開服時結束（PASSAGE_ENDED）；參與者 JOIN 在來源世界艙外；`expectEnd`，這個 JVM 沒有這個 session 的 ERROR（`noSessionError`） |
+
+- crash phase 的共同前半段在 `PCH` 的 `untilResolved`，restart 的 step 依窗口在 `PCH.restart`；三份表：phase 表（`M5CollapseRecoveryProbe.phases()`，接在 `unload` 之後）、`MP` 的 `$chains`、`RA` 的 `$expectedCollapse` 一起加 12 個 phase。
+- 窗口表以 `CrashWindow` 為 key、一個值一列，所以 `commitRollForward` 的回傳點有四個值（`CROSSED_COMMITTED`、`CROSSED_UNCONFIRMED`、`RECOVERY_SEALED`、`RECOVERY_REJECTED`，`HK:320`～`:330`），`SRM` 在同一個注入點依序以四個值呼叫（只有裝著的 crash 點的那個值會被處理）；`READY_COMMITTED` 是 `commitRestore` 回傳點的第二個注入（detail 與 W1 相同的 `CollapsingCommit`）；detail record 是 `RollForwardWrite`（`HK:358`）與 `Termination`（`HK:361`）。
+- 等待的 step 以具名斷言結束（不是 `stepBounded`）：`passageEndedAtStartup` 最多等 3 個 tick、`ownerlessQueuedByTheLoadSync` 10 個 tick、`plainOpenOnTheNextTick` 到終局之後第 3 個 tick，所以 mutation 讓行為改變時失敗在目標斷言。
+- `notYetOpenOnTheEndTick` 只在開服時門不是一般開門時斷言（`PCH` 的 `doorPlainAtStart`）：沒有在 halt 之前存檔的窗口，磁碟上的門是 crash 之前最後一次存下的樣子（見「觀察」第 1 條；`trrpending` 的門在 halt 之前已被逐步存成一般開門）。
+
+### 第 11、12、13、14 點的結論
+
+- **第 11 點（F6-2-17，Crossed 寫出未確認時 crash）**：
+  - spec 的預期：Crossed 的加入是 §6 的 roll-forward，寫出失敗時 current 保留並保持 dirty，之後任何寫出都帶著它；在任何一次寫出成功之前就 crash 時，磁碟仍是 Crossed 沒有他的 PASSAGE_READY，重啟依 §12 的 PASSAGE_READY 列在開服時結束通道（與 §10.3 :586 對 TRR 的說法同型）。實測相同：開服時 Crossed 是空的、第一個 tick checked 終局、門下一個 tick 一般開門。
+  - 玩家的位置：**playerdata 沒有存到目的世界**。production 跨越時不存 playerdata（M3 的 `UniverseTransferService` 與 `SessionTransferService` 只移動，兩個檔都沒有存檔的呼叫），原版只在 autosave、登出與停服時存 playerdata。halt 當下磁碟上他的 `Dimension` 是 `minecraft:overworld`，重啟之後他 JOIN 在上一次存檔的位置（來源世界、艙外）。這與 spec「沒跨過的人在原艙」一致（磁碟上他沒有跨過），沒有人被困住。
+  - 若 crash 之前剛好有 autosave 存下他的 playerdata、但 journal 的寫出仍失敗（例如只有 journal 的檔案 IO 壞了），他會 JOIN 在 U（開服 bootstrap 已物化 `EAGER_ENABLED` 的 U），Crossed 沒有他、通道照樣結束，也不會被困住；本節沒有另做這個變體。
+  - **沒有 production 的缺陷**。但 W7 的同一個現象要裁示，見「需要裁示」第 2 條。
+- **第 12 點（F6-2-12）**：SEALED(TRR) 跨重啟之後仍是永久原因、不重試，`RecoveryRequired`、`Crossed`、opened／expires 與收據都保留（`trr`）。`pendingRecovery` 期間重啟（`trrpending`）：依 spec §10.3 :586 斷言——磁碟仍是 PASSAGE_READY，開服時依 §12 以 PASSAGE_ENDED 終局，只剩前一個 JVM 的 log 證據。另一個子情況「READY→TRR 的寫出未確認（ROLL_FORWARD_PENDING）時 crash」與 `trrpending` 的磁碟狀態相同（PASSAGE_READY、沒有 RecoveryRequired），重啟的路徑也相同，沒有另做 chain。
+- **第 13 點（F6-2-15，`projectionUncheckpointed` 跨 session）**：**修復會遺失**（2／2）。依派工不改程式，chain 不 commit（實驗以 adapter 的 NEW 檔加入、跑完刪除，`f62c/adapters_f62c.py` 的 `exp-uncheckpointed`、`f62c/exp-uncheckpointed/`）：
+  - 實驗：NEW 建好 U 的投影 → U 的 shell 改壞一格（玻璃）、原生存檔（磁碟上是玻璃）→ D2（EXISTING）的 REPAIR 修好那一格，checkpoint 以 entity storage 的保留（`ENTITY_STORAGE_HOLD`）擋住、參與者在 PREPARE 期間關門終局（`d2EndedByTheDoorBeforeTheCheckpoint`）→ D3（EXISTING，同一個 U）的 REPAIR 寫 0 格（「投影=REPAIR（寫入 0 格）」，沒有「之前寫過的投影方塊還沒有原生存檔 checkpoint」的 INFO），沒有 checkpoint 就提交 READY → 提交讀回確認時 halt。投影的 chunk 以 probe 的 ticket 一直載入（比照 W6x）。
+  - 結果：`6f1bf770b9984216805f8292fbaf6014`、`b2d40e86e36f4ac2846d260bd0c900cb`：每一步記下的磁碟上那一格都是玻璃（記憶體是基岩；D2 修復到 D3 的 READY 約 300 ms），restart 開服時磁碟上仍是玻璃、載入之後記憶體也是玻璃（`repairLostAcrossSessions` true）。COMPLETE 的投影因此在磁碟上缺了一格不變量 cell，直到下一次 PREPARE 的 REPAIR。
+  - 遺失的窗口：原版的逐步存檔（「觀察」第 1 條）會在 tick 有餘裕、而且那個 chunk 距上一次逐步存檔超過 10 秒時存下修復，所以實際的窗口是「修復之後到下一次逐步存檔或 autosave 之前」，不是到 autosave 為止；實驗的整段在 1 秒內，落在窗口裡。
+- **第 14 點（F6-2-18，隔離的跨 JVM 版本）**：依 controller 判定不做。隔離只在記憶體裡，重啟之後 recovery 依 §12 的一般列收斂；同一個 instance 的版本已由 T-QUAR 鎖住（F6-0）。本節沒有做跨 JVM 的版本。
+
+### RED 與 mutation
+
+都套在 `eef3b1e`（乾淨）上（`f62c/mutations.ps1` → `red.ps1`＋`adapter.py`，adapter 表 `f62c/adapters_f62c.py`；`old` 在檔內必須恰好出現一次），全部是 production 的暫時改動，以 `-Only` 只跑那一條 chain，跑完還原並以 `git hash-object` 核對（`f62c/f62c-<adapter>-<chain>-restored-state.txt` 的 porcelain 都是空的）。摘要在 `f62c/f62c-*-mutsum.txt`。crash phase 都是乾淨的 halt（77），restart 失敗在目標斷言：
+
+| mutation | 改動 | chain | runId | 失敗的斷言 |
+| --- | --- | --- | --- | --- |
+| `mut-startup-resume` | `CollapseService.onStarted` 不把開服時就是 PASSAGE_READY 的 session 放進 `startupPassages`（通道在重啟之後繼續） | `w7` | `3fef6d0a939043c4b6799ce917d436d1` | `passageEndedAtStartup`（開服之後 3 個 tick 仍是 PASSAGE_READY） |
+| 同上 | 同上 | `readycommit` | `ca4852c185a14746af91049b71380b9b` | `passageEndedAtStartup` |
+| 同上 | 同上 | `crossedpending` | `27c59ac65c724456ae38297aeed7dc4a` | `passageEndedAtStartup` |
+| 同上 | 同上 | `trrpending` | `c05f16d5fb2b4ba09ea6c8b41b493fc3` | `passageEndedAtStartup` |
+| `mut-comparator-kept` | `ChamberPowerCoordinator.reconcile` 在 presence NONE、目前是 PASSAGE 時保留 PASSAGE（比較器不重新評估） | `w7` | `befc47282e2546d8a95357feba3cc172` | `comparatorReevaluated`（終局之後 PASSAGE／15） |
+| 同上 | 同上 | `terminaldoor` | `d754288614404ed8a9f0223f578d6061` | `comparatorReevaluated`（load-sync 刷新之後 PASSAGE／15） |
+| `mut-close-after-startup-end` | `endStartupPassage` 的「下一個 tick 一般開門」換成「下一個 tick 關門」（門沒有正規化為一般開門） | `readycommit` | `82feaf0664ae483ebc623372b07f9cd8` | `plainOpenOnTheNextTick`（tick 4 仍不是一般開門） |
+| `mut-no-ownerless` | `ChamberPowerCoordinator.normalizesOwnerless` 一律 false | `terminaldoor` | `a42318d21f9d4d0a9aa32ca916911921` | `ownerlessQueuedByTheLoadSync`（10 個 tick 沒有排入） |
+| `mut-trr-retryable` | `SealedReason.TRANSFER_RECOVERY_REQUIRED` 改成可重試 | `trr` | `1c5f72c3945a4bf6a0bffd2370bdeb23` | `trrNotRetried`（這個 session 的 WARN「塌縮流程的推進沒有完成…IllegalArgumentException: COLLAPSING 的 Collapse 欄位組合不合法」：重試在建 COLLAPSING 的 record 時就被 record 的驗證拒絕，journal 層級的拒絕沒有走到；record 沒有變，`sealedUnchanged` 成立） |
+| `mut-ticket-left` | 開服 attach 也為 PASSAGE_READY 取得來源 ticket，而且 `endStartupPassage` 不呼叫 `terminated`（兩處一起改：production 的 attach 不為 PASSAGE_READY 建 ticket，只拿掉 `terminated` 時沒有殘留可抓） | `w7` | `8f2179ef29ac48dc855d6cbe83d1f5c3` | `noSourceTicketLeft`（來源 ticket 在 chunk (0,0)） |
+
+- 每條新 chain 至少一個 mutation：`w7` 3、`readycommit` 2、`terminaldoor` 2、`crossedpending` 1、`trr` 1、`trrpending` 1。
+
+### run-all
+
+- `bdbc567`，工作樹乾淨（`f62c/run-all-1-state.txt` 的 porcelain 是空的）：`run-all-dfe4d32e35e94ba884a33a1b72ffe5c9`（Full `gate-full-bc30cfd71b7248d181b2c57cd6863a17`；M5 `gate-m5-gametest-4606ed18c72841948f04cf4b13061e66`；M4 recovery 彙整 `recovery-run-708f00ad4ae242099e53b2bcdac64dcc`；M5 collapse 彙整 `collapse-run-fa33c7ba64a843d4a074e0c1bbc02a73`）。
+- `END ALL exit=0 HEAD=bdbc56767b9345dbae751dc89856c47251eb3db0`。`SUMMARY default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=656 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=430entries/383classes sources=222 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=32 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-fa41f4617e64406fb964e742a2de2ba7`（F6-2c Step 0，`8aafd99`）逐項比較（`f62c/runall-compare.ps1`，輸出 `f62c/runall-*.txt`）：
+  - default 175/175（`_windows` 89）、M5 60/60：testcase 集合與結果都與基準相同（`runall-default-setcmp.txt`、`runall-m5-setcmp.txt`：identical=True）。legacy 1/1、perTest 52＋1、JUnit 656（skipped 2）、windowsCheckpoint 17、M3 4＋5、recovery 24、mainOnly PASS、CI 兩個 step PASS，都相同。
+  - release 430 entries／383 classes，**SHA-256 與基準相同**（`2a5d764d…`）；sources 222，沒有新增、刪除或內容不同的 entry（`runall-jarcmp-*.txt`），SHA-256 不同只是 zip 的中繼資料。`testmodHits=0`。
+  - m5collapse 20 → 32（halt 8 → 14）：**預期的差異**。run-all 內的 32 phases 都 PASS，具名斷言與 step 與本節的 green-1、F6-2c Step 0 的 GREEN 比對都 OK（`runall-vs-green1-names.txt`、`runall-vs-f62cs0-names.txt`）。
+  - log（`runall-wbcmp-*.txt`）：M5 WARN／ERROR 38／10 與基準相同（一行差異是已知的 `PistonBlockEntity` object hash）；legacy 0／0。**Full ERROR 28 → 31**（WARN 54 不變）：多的 3 行是同一次「Failed to store chunk」「Failed to save chunk」「Failed to store entity chunk」，都來自 default run 的 H2 受控 region write（`M4CandidateDoorGameTests.beforeScopedRegionWrite`；「受控 region write 失敗」24 → 29 行），是已知偶發「H2 多一則原生 log」（F6-2a 一節的 run-all 也是 +3），不經 M5 collapse probe，也沒有讓任何 gate 失敗。
+- `a77b3fb`（只改 entrypoint 的 Javadoc）與本節的 docs commit 都在 run-all-1 之後，所以本節的 docs commit 之後再跑一次 run-all（run-all-2），結果記在 `f62c/STATUS.md` 與最終回報。
+
+### Gate 與證據
+
+| 輪次 | HEAD／工作樹 | Root（runId 或 gate root） | 結果 |
+| --- | --- | --- | --- |
+| 開發 | `c8486df` 的內容（commit 前的工作樹，blob 相同） | `8b8e037987b14c88aec5cac81039aecf`（全部） | 20/20（不算 GREEN） |
+| 開發 | `eef3b1e` 之前的工作樹 | `1cc6144c9d394582ba462bf661bf3b5c`（新 chain） | 不採計：`w7-crash` 的 halt 前取證失敗（第一版以 `SessionRecoveryState.put` 求 record 的 SHA-256，塌縮狀態的 record 被拒「M5 authority 尚未初始化」），phase 正常停止 FAIL；改成 `recordDigest` |
+| 開發 | 同上 | `b82bae8eb96a441ca78200bbcacc9aa2`、`29681e144ddf404dbcbd30c438155192`（`-Only trrpending`） | 不採計：11/12，`trrpending-restart` 失敗在 `notYetOpenOnTheEndTick`（開服時門已是一般開門：逐步存檔，「觀察」第 1 條）；改成只在開服時門不是一般開門時斷言 |
+| 開發 | `eef3b1e` 的內容（blob 相同） | `13ff9c40e849498d9f36d3662f1e0bb1`（新 chain） | 12/12（不算 GREEN） |
+| **GREEN green-1** | `eef3b1e`，乾淨 | `606bf92ec4f643ac93e199663cb14e7a` | 32/32（14 halt＝77、18 stop＝0） |
+| **GREEN green-2** | `eef3b1e`，乾淨 | `8a0a751f2dbf4a1297254e7f85030e43` | 32/32 |
+| mutation | `eef3b1e`＋adapter | 上表 10 個 | 都失敗在目標斷言 |
+| 第 13 點的實驗 | `eef3b1e`＋`exp-uncheckpointed` | `6f1bf770b9984216805f8292fbaf6014`、`b2d40e86e36f4ac2846d260bd0c900cb` | 2/2：修復遺失 |
+| run-all-1 | `bdbc567`，乾淨 | `run-all-dfe4d32e35e94ba884a33a1b72ffe5c9` | `END ALL exit=0`，`m5collapse=32` |
+
+- GREEN 的細節（`f62c/green-details.txt`）：halt 的 server tick green-1 `w7` 49、`readycommit` 43、`terminaldoor` 51、`crossedpending` 46、`trr` 52、`trrpending` 236（green-2：52／36／44／46／53／249），`refused` 都是空的；`w7` 的新 session 在 restart 的第 6 個 tick checked ARMING；`terminaldoor` 兩次都在 tick 1 排入、tick 2 正規化；`trr` 觀察 40 tick 沒有重試。開服時磁碟上的門：`w7` passable、`readycommit`／`crossedpending`／`trr` sealed_x、`terminaldoor` passable、`trrpending` 一般開門（兩次相同）。
+
+### 偏離派工字面之處
+
+- 第 1 點：`AtRestart` 與 `End` 改成 private 建構子的 final class（不是 record），比照 F6-2c Step 0 的 `Phase`，位置參數的建構子不能呼叫。`crossedAtHalt` 的型別是 `Who`（不是 `Set<UUID>`），理由同上表。
+- 第 5 點：只寫 Javadoc 與 `UC:276` 的註解，沒有另外提供 `installUntilStopped`（目前只有 unload 的 witness 需要）。
+- 第 7 點：W7 的窗口用「Crossed 寫入確認之後」，halt 之前另做原生存檔（刻意的準備，比照 W4）。不存檔時已跨過的人回到上一次存檔的位置（第 11 點），驗不到派工的「已跨過的人在目的世界重新加入」；同一個存檔也讓「重啟前存下的是 PASSAGE／15」（第 8 點）成立，兩點併在 `w7`。
+- 第 9 點：終局用 (d) 來源艙沒有供電（不必有人跨過，參與者的位置也就不受 playerdata 的影響）。
+- 第 12 點：「READY→TRR 的寫出未確認時 crash」沒有另做 chain（理由見上）。
+- 第 13 點：chain 沒有 commit，改以 adapter 的實驗跑兩次（結果要裁示，而且依逐步存檔的時序可能不穩定）。
+- 新的 crash 窗口一個窗口一個值（共 6 個），不是一個 hook 一個值：窗口表以 `CrashWindow` 為 key。
+- chain 名稱：`w7`、`readycommit`、`terminaldoor`、`crossedpending`、`trr`、`trrpending`。
+- JUnit、M4 recovery、default 與 M5 的 GameTest 沒有另外單獨跑，以 run-all 的結果為準（run-all 內含這些 gate）。run-all 在 README commit（`bdbc567`）之後跑一次、記在本節；本節的 docs commit 之後再跑一次，結果記在 `f62c/STATUS.md`。
+
+### 需要裁示
+
+1. **第 13 點（F6-2-15）：EXISTING 再造訪的修復會隨 crash 遺失**（`exp-uncheckpointed` 2／2，上文）。`Track.projectionUncheckpointed` 只在同一個 session 內有效，跨 session 時 D3 的「修復寫 0 格」不做 checkpoint 就提交 READY。要 controller 決定：修正 production（例如修復寫 0 格時也比對磁碟上的不變量 cell，或在 D2 的 PREPARE 期間關門終局之前補 checkpoint），或寫進 F7 的已知限制（實際的窗口到下一次逐步存檔為止，約 10 秒）。root 都保留。
+2. **spec §12「已跨過的人在目的地」與 playerdata**：production 跨越時不存 playerdata，crash 在下一次 autosave（或登出、停服）之前時，已跨過的人回到上一次存檔的位置（來源世界），即使 Crossed 已確認。沒有人被困住，但與 spec 的字面不同。要決定：寫進 F7 的已知限制，或在 Crossed 確認之後存那位玩家的 playerdata（改 production）。`w7` 以 halt 之前的原生存檔驗證存檔之後的行為。
+
+### 觀察（未修改）
+
+1. **原版的逐步存檔**：`ServerChunkLoadingManager.unloadChunks` 在 tick 有餘裕（`shouldKeepTicking`）時，每個 tick 最多存 20 個變更過的 chunk，同一個 chunk 至少隔 10 秒（`chunkToNextSaveTimeMs`，wall clock；`saveAll` 的完整存檔不更新它）。所以沒有在 halt 之前存檔的窗口，磁碟上的方塊是 crash 之前最後一次存下的樣子，不固定：`trrpending` 的門在退避的 200 tick 內被存成一般開門，`crossedpending` 與 `trr` 仍是 PREPARE 的 checkpoint 存下的 sealed 量子膜。之後的窗口若要斷言磁碟上的方塊，要在 halt 之前存檔，或以 crash 點與寫入同一個 tick 排除逐步存檔。
+2. `trr` 的 restart：磁碟上的門是 sealed 量子膜（SEALED、門帶著量子膜時重啟，F6-2-11 的狀態）。本節只斷言參與者可以照一般方式開門，門在開服之後怎麼處理交給 F6-2d。
+3. `mut-trr-retryable`：TRR 被當成可重試時，重試以 `CollapseFields.retry()` 建 COLLAPSING 的 record，就被 record 的驗證拒絕（「COLLAPSING 的 Collapse 欄位組合不合法」：`retry()` 保留 Crossed 與 RecoveryRequired），由 `CollapseService.step` 收成 WARN；journal 層級的拒絕（`commitRestore`）沒有走到。production 目前由 `SealedReason` 的 retryable 擋住，這一層是第二道。
+4. 取證：`red.ps1` 的輸出若以 `Select-Object -First N` 截斷，pipeline 提前停止會讓 `finally` 裡還原之後的 `state.ps1` 沒有執行（`exp-uncheckpointed` 兩次沒有 `-restored-state.txt`）；還原本身已完成並核對 blob，之後另記 `f62c/f62c-exp-uncheckpointed-after-restore-state.txt`（porcelain 空）。
+
+### 交給後續
+
+- **F6-2d**（SEALED、門與重試）：沿用 `AtRestart.withStateAtHalt(SEALED)`、`End.inTheSourceWorld`／`placed`、`M5CollapsePassageChains` 的 `trr` 寫法；`trr` 開服時磁碟上的門是 sealed 量子膜（「觀察」第 2 條），F6-2-11 可以直接接這個狀態。窗口要斷言磁碟上的門時，注意「觀察」第 1 條。
+- **F6-2e**（schema 3 與 fault）：`Who`、`End` 的 factory 與 `AtRestart.terminatedAtHalt` 可以沿用；W10、W11 的「由檔案載入收據」仍要另做（F6-2a 的建議）。
+- **F6-3**：ps1 的共用模組（既有）；`notYetOpenOnTheEndTick` 這類依磁碟狀態的條件斷言的寫法；取證腳本的 pipeline 截斷（「觀察」第 4 條）。
+- **F7**：「需要裁示」兩條的結論若是已知限制，寫進 F7。
+
+### root（全部保留）
+
+phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`；gate root 在 `.superpowers/verification/`。逐次的數字與 state 在 `f62c/`（`*-probe-summary.txt`、`*-state.txt`、`*-mutsum.txt`、`green-*-names.txt`、`runall-*.txt`）。
+
+- 結束過的 JVM：沒有（沒有逾時，沒有手動結束任何 JVM）；沒有結束 Gradle daemon。
+- 取證腳本（`f62c/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`、`names2.py`、`mutsum.py`、`gate-adapted.ps1`、`runall-compare.ps1`、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`commitcheck2.ps1` 由 `f6/f62cs0/` 複製（只加註解；`adapter.py` 的 adapter 表改 `adapters_f62c.py`；`mutsum.py` 的 label 前綴改 `f62c-`；`runall-compare.ps1` 的基準改為 `run-all-fa41f4617e64406fb964e742a2de2ba7`，`base-*-summary.txt` 是同一次 run-all 的 `f6/f62cs0/runall-*-summary.txt`）；新寫 `compile.ps1`、`adapters_f62c.py`、`mutations.ps1`、`exp-uncheckpointed/M5CollapseUncheckpointedExperiment.java`。`f6/f62cs0/` 下既有的檔案沒有改動。
