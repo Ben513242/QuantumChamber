@@ -43,7 +43,8 @@ import org.apache.logging.log4j.Level;
 /**
  * 僅 testmod（M5 F6-2a，由 F6-1 的 {@code M5CollapseRecoveryProbe} 拆出）：窗口表。每個 crash 窗口（{@link CrashWindow}）一列 {@link Window}：
  * <ul>
- * <li>crash 點的條件（hook 交來的 detail 是否就是那一刻）與 halt 之前的取證（寫進 {@code halt.json} 的 {@code atHalt}；丟出時不 halt）；</li>
+ * <li>crash 點的條件（hook 交來的 detail 是否就是那一刻）、halt 的時點（{@link M5CollapseRun.HaltAt}：那一刻，或那個 tick 結束時；F6-2c fix round 1）與 halt 之前的取證
+ *     （寫進 {@code halt.json} 的 {@code atHalt}；丟出時不 halt）；</li>
  * <li>restart 開服時的預期（{@link AtRestart}：參與者是否已返還、RESOLVE 在 halt 之前完成到哪一步（因此 halt 當下是否已物化、allocation、catalog、discovery
  *     的預期）、projection ledger 的狀態、窗口自己的磁碟檢查、JOIN 之前是否先載入並辨識投影 Controller、halt 當下磁碟上的 record 狀態與 Crossed）；</li>
  * <li>PREPARE 怎麼完成（{@link Prepared}：「準備完成」INFO 的模式與格數，與 READY 時的磁碟檢查；不檢查時為 null）。</li>
@@ -191,8 +192,8 @@ final class M5CollapseWindows {
 
     static final int ANY_CELLS = -1;
 
-    /** 窗口表的一列。 */
-    record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {}
+    /** 窗口表的一列。{@code haltAt} 是 halt 的時點（F6-2c fix round 1；預設 {@link M5CollapseRun.HaltAt#WINDOW}，{@code beforeHalt} 也在那一刻執行）。 */
+    record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared, M5CollapseRun.HaltAt haltAt) {}
 
     static final DiskCheck NO_CHECK = (run, fixture) -> { };
     private static final BeforeHalt NO_EVIDENCE = (run, fixture, detail, evidence) -> { };
@@ -235,9 +236,10 @@ final class M5CollapseWindows {
                 new Prepared("repairedAgain", ProjectionWriter.Mode.REPAIR, 1, M5CollapseWindows::repairCheckpointedBeforeReady));
         // ---- F6-2c：PASSAGE_READY 期間與終局的窗口（chain 在 M5CollapsePassageChains；RESOLVE、PREPARE 都已在 halt 之前完成，投影 COMPLETE） ----
         var afterReady = AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE);
-        // W7（spec §12）：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已 checked 寫入）；halt 之前原生存檔（模擬 crash 之前有過一次 autosave）。
-        row(rows, CrashWindow.CROSSED_COMMITTED, (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED),
-                M5CollapseWindows::savedWithTheSelectorAcross,
+        // W7（spec §12）：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已 checked 寫入）。F6-2c fix round 1（spec v5.7 §10.3）：crash 在 Crossed 確認的那個 tick 結束時
+        // （production 在確認之後存下選門者的 playerdata），halt 之前不存檔；chain 在跨越之前（PASSAGE_READY 期間）存過一次檔。
+        row(rows, CrashWindow.CROSSED_COMMITTED, M5CollapseRun.HaltAt.TICK_END,
+                (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED), M5CollapseWindows::selectorAcrossAtTheTickEnd,
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
         // F6-2-16：COLLAPSING→PASSAGE_READY 已 checked 提交、門改為 passable 之前；halt 之前原生存檔（PREPARE 的 sealed 量子膜、參與者在艙內都在磁碟上）。
         row(rows, CrashWindow.READY_COMMITTED, M5CollapseWindows::readyCommitted, M5CollapseWindows::savedBeforePassable,
@@ -245,11 +247,13 @@ final class M5CollapseWindows {
         // F6-2-13：通道以 (d) 結束的 checked 終局已讀回確認、改門之前（chain 在 PASSAGE_READY 期間存過檔：磁碟上的門是 passable、Controller 是 PASSAGE）。
         row(rows, CrashWindow.PASSAGE_TERMINATED, M5CollapseWindows::passageTerminated, M5CollapseWindows::terminatedBeforeTheDoor,
                 afterReady.terminatedAtHalt().withDisk(M5CollapseWindows::passageOnDiskAtRestart), null);
-        // F6-2-17：Crossed 的寫出沒有確認（ROLL_FORWARD_PENDING）：玩家已 MOVED，磁碟上的 Crossed 沒有他，playerdata 也沒有存到 U。
-        row(rows, CrashWindow.CROSSED_UNCONFIRMED, (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING),
-                M5CollapseWindows::movedButNotOnDisk,
+        // F6-2-17：Crossed 的寫出沒有確認（ROLL_FORWARD_PENDING）：玩家已 MOVED，磁碟上的 Crossed 沒有他，playerdata 也沒有存到 U。F6-2c fix round 1：crash 在那個 tick
+        // 結束時（spec v5.7 §10.3：寫入沒有確認時 production 不存 playerdata，halt 時磁碟上仍在來源世界）。
+        row(rows, CrashWindow.CROSSED_UNCONFIRMED, M5CollapseRun.HaltAt.TICK_END,
+                (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING), M5CollapseWindows::movedButNotOnDisk,
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
-        // F6-2-12：PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 已 checked 寫入（Crossed＝選門者、RecoveryRequired＝另一位），之後的釋放、門與 ERROR 之前。
+        // F6-2-12：PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 已 checked 寫入（Crossed＝選門者、RecoveryRequired＝另一位），之後的釋放、門與 ERROR 之前。選門者的
+        // playerdata 在他跨越、Crossed 確認時已存在 U（spec v5.7 §10.3），另一位仍是觸發之前存的來源世界。
         row(rows, CrashWindow.RECOVERY_SEALED, (fixture, detail) -> recoveryWrite(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED),
                 M5CollapseWindows::recoverySealedOnDisk,
                 afterReady.withStateAtHalt(SessionState.SEALED).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::recoveryRequiredKeptAtRestart), null);
@@ -265,7 +269,15 @@ final class M5CollapseWindows {
     static final String REJECTED_RECOVERY_ERROR = "SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒";
 
     private static void row(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {
-        if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared)) != null) throw new IllegalStateException("窗口表重複：" + id);
+        row(rows, id, M5CollapseRun.HaltAt.WINDOW, condition, beforeHalt, atRestart, prepared);
+    }
+
+    /** 同上，halt 的時點由這一列指定（F6-2c fix round 1：{@code TICK_END} 的列，{@code beforeHalt} 在窗口成立的那個 tick 結束時執行）。 */
+    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, M5CollapseRun.HaltAt haltAt, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart,
+            Prepared prepared) {
+        if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared, Objects.requireNonNull(haltAt, "haltAt"))) != null) {
+            throw new IllegalStateException("窗口表重複：" + id);
+        }
     }
 
     /** 這個窗口的一列；表裡沒有時丟出。 */
@@ -275,10 +287,10 @@ final class M5CollapseWindows {
         return window;
     }
 
-    /** 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}；halt receipt 的 detail 以 {@link #describe} 描述）。 */
+    /** 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}，halt 的時點是這一列的 {@code haltAt}；halt receipt 的 detail 以 {@link #describe} 描述）。 */
     static void arm(M5CollapseRun run, M5CollapseFixture fixture, CrashWindow id) {
         var window = of(id);
-        run.armCrash(id, detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
+        run.armCrash(id, window.haltAt(), detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
                 (detail, evidence) -> window.beforeHalt().collect(run, fixture, detail, evidence));
     }
 
@@ -458,19 +470,21 @@ final class M5CollapseWindows {
 
     /**
      * 原生存檔（刻意的準備，比照 W4 的 halt 前存檔）：模擬 crash 之前剛好有過一次 autosave，之後到 crash 都沒有任何寫出。磁碟上因此有這一刻的 playerdata、原艙門與
-     * Controller。playerdata 只在原生 autosave、登出與停服時存，production 跨越時也不存（M3 的 transfer 只移動、不存檔），所以沒有這一步時 crash 之後玩家回到上一次存檔的
-     * 位置（F6-2-17 的判定）。chunk 則另有原版的逐步存檔（{@code ServerChunkLoadingManager.unloadChunks}：tick 有餘裕時每個 tick 最多 20 個變更過的 chunk、同一個 chunk
-     * 至少隔 10 秒），沒有這一步時磁碟上的門與 Controller 是 crash 之前最後一次存下的樣子，不固定。
+     * Controller。playerdata 只在原生 autosave、登出與停服時存；production 另外只在跨越的 Crossed 確認之後存那位玩家（spec v5.7 §10.3，F6-2c fix round 1），所以沒有這一步時
+     * crash 之後沒跨過的玩家回到上一次存檔的位置（F6-2-17 的判定）。chunk 則另有原版的逐步存檔（{@code ServerChunkLoadingManager.unloadChunks}：tick 有餘裕時每個 tick
+     * 最多 20 個變更過的 chunk、同一個 chunk 至少隔 10 秒），沒有這一步時磁碟上的門與 Controller 是 crash 之前最後一次存下的樣子，不固定。
      */
     private static void nativeSaveAtHalt(M5CollapseRun run) {
         run.expect("nativeSaveAtHalt", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
     }
 
     /**
-     * W7 的 halt 之前：磁碟上的 record 是 Crossed＝[選門者] 的 PASSAGE_READY；選門者在 U，另一位在原艙內。原生存檔（{@link #nativeSaveAtHalt}）之後，選門者的 playerdata
-     * 存在 U、另一位存在來源世界；原艙門 passable、Controller 是 PASSAGE（比較器 15）都在磁碟上。
+     * W7 的 halt 之前（F6-2c fix round 1：Crossed 確認的那個 tick 結束時，{@link M5CollapseRun.HaltAt#TICK_END}；halt 之前不存檔）：磁碟上的 record 是 Crossed＝[選門者] 的
+     * PASSAGE_READY；選門者在 U，另一位在原艙內。chain 在跨越之前（PASSAGE_READY 期間）存過一次檔，所以另一位的 playerdata 在來源世界、原艙門 passable、Controller 是
+     * PASSAGE（比較器 15）都在磁碟上。選門者的 playerdata 只記下（{@code playerDimensionOnDisk}），不在這裡斷言：它是這個窗口的目標，由 restart 開服時的磁碟檢查
+     * （{@code selectorPlayerDataInTheUniverse}）與 JOIN（{@code joinedInTheUniverse}）斷言，所以沒有 production 的存檔時 crash 照常、restart 失敗在目標斷言。
      */
-    private static void savedWithTheSelectorAcross(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+    private static void selectorAcrossAtTheTickEnd(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var write = (M5TestHooks.RollForwardWrite) detail;
         recordOnDisk(run, fixture, evidence, write.next(), "crossedOnDiskAtHalt");
         var universe = fixture.universeWorld().orElseThrow();
@@ -479,9 +493,7 @@ final class M5CollapseWindows {
             var player = fixture.player(id);
             run.expect("othersInsideTheChamberAtHalt", player.getServerWorld() == run.source() && M5CollapseFixture.inside(player), () -> "另一位在 " + player.getPos());
         }
-        nativeSaveAtHalt(run);
         playerDimensions(run, fixture, evidence);
-        run.expect("selectorPlayerDataInTheUniverseAtHalt", playerDataIn(run, fixture, M5CollapseFixture.SELECTOR, universe), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
         run.expect("othersPlayerDataInTheSourceAtHalt", playerDataIn(run, fixture, M5CollapseFixture.OTHERS, run.source()), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
         run.expect("passableDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.passableFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 passable");
         var controller = controllerStateOnDisk(run, fixture);
@@ -520,8 +532,9 @@ final class M5CollapseWindows {
     }
 
     /**
-     * F6-2-17 的 halt 之前：磁碟上的 record 仍是寫入之前的 PASSAGE_READY（Crossed 是空的），collapse view 的 Crossed 有他、roll-forward 未確認；他已在 U，但 playerdata
-     * 沒有存到 U（磁碟上仍是來源世界，production 跨越時不存 playerdata）。
+     * F6-2-17 的 halt 之前（F6-2c fix round 1：那個 tick 結束時，{@link M5CollapseRun.HaltAt#TICK_END}）：磁碟上的 record 仍是寫入之前的 PASSAGE_READY（Crossed 是空的），
+     * collapse view 的 Crossed 有他、roll-forward 未確認；他已在 U，但 playerdata 沒有存到 U（磁碟上仍是來源世界：spec v5.7 §10.3，寫入沒有確認時 production 不存，
+     * 磁碟上的 Crossed 與 playerdata 一致）。
      */
     private static void movedButNotOnDisk(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var write = (M5TestHooks.RollForwardWrite) detail;
@@ -679,11 +692,20 @@ final class M5CollapseWindows {
         run.expect("passageControllerOnDiskAtRestart", ChamberState.PASSAGE.name().equals(controller), () -> "磁碟上的 Controller 是 " + controller);
     }
 
-    /** W7 的開服：{@link #passageOnDiskAtRestart}，另外選門者的 playerdata 在 U、另一位在來源世界。 */
+    /**
+     * W7 的開服：{@link #passageOnDiskAtRestart}（跨越之前存下的），另外選門者的 playerdata 在 U（spec v5.7 §10.3：production 在 Crossed 確認之後存下，halt 之前沒有其他
+     * 存檔）、另一位在來源世界（{@link #crossedPlayerDataAtRestart}）。
+     */
     private static void selectorAcrossOnDiskAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
         passageOnDiskAtRestart(run, fixture);
+        crossedPlayerDataAtRestart(run, fixture);
+    }
+
+    /** W7、F6-2-12 的開服：已跨過的選門者的 playerdata 在 U（Crossed 確認時存下，spec v5.7 §10.3），其餘參與者在來源世界（沒有跨過，playerdata 是之前存的）。 */
+    private static void crossedPlayerDataAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
         var universe = fixture.universeWorld().orElseThrow();
-        run.expect("selectorPlayerDataInTheUniverse", playerDataIn(run, fixture, M5CollapseFixture.SELECTOR, universe), () -> "選門者的 playerdata 不在 U");
+        var selector = M5CollapseDiskEvidence.playerDimension(run.saveRoot(), fixture.selectorId());
+        run.expect("selectorPlayerDataInTheUniverse", universe.getRegistryKey().getValue().toString().equals(selector), () -> "選門者的 playerdata 在 " + selector);
         run.expect("othersPlayerDataInTheSource", playerDataIn(run, fixture, M5CollapseFixture.OTHERS, run.source()), () -> "另一位的 playerdata 不在來源世界");
     }
 
@@ -693,17 +715,24 @@ final class M5CollapseWindows {
         playerDataInTheSourceAtRestart(run, fixture);
     }
 
-    /** F6-2-17、F6-2-12 的 pendingRecovery 的開服：參與者的 playerdata 在來源世界（跨越或嘗試跨越之後沒有存過檔）。 */
+    /**
+     * F6-2-17、F6-2-12 的 pendingRecovery 的開服：參與者的 playerdata 在來源世界（沒有人的 Crossed 確認過，production 不存：F6-2-17 的寫出沒有確認，pendingRecovery 的
+     * 傳送無法回滾、沒有加入 Crossed）。
+     */
     private static void playerDataInTheSourceAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
         run.expect("playerDataInTheSourceWorld", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "參與者的 playerdata 不在來源世界");
     }
 
-    /** F6-2-12 的開服：record 仍是 SEALED(TRANSFER_RECOVERY_REQUIRED)，RecoveryRequired 仍是另一位（永久原因，收據保留）。 */
+    /**
+     * F6-2-12 的開服：record 仍是 SEALED(TRANSFER_RECOVERY_REQUIRED)，RecoveryRequired 仍是另一位（永久原因，收據保留）；已跨過的選門者的 playerdata 在 U、另一位在來源世界
+     * （{@link #crossedPlayerDataAtRestart}，F6-2c fix round 1）。
+     */
     private static void recoveryRequiredKeptAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
         var current = run.journal().flushedRecords().get(fixture.sid());
         run.expect("recoveryRequiredKept", current.collapse().sealedReason().equals(Optional.of(SealedReason.TRANSFER_RECOVERY_REQUIRED))
                         && Set.copyOf(current.collapse().recoveryRequired()).equals(fixture.members(M5CollapseFixture.OTHERS)),
                 () -> "SEALED 的原因=" + current.collapse().sealedReason() + " RecoveryRequired=" + current.collapse().recoveryRequired());
+        crossedPlayerDataAtRestart(run, fixture);
     }
 
     /** 磁碟上（raw MCA）原艙門的 25 格都是 bulkhead，而且 open 與 membrane 都符合。 */

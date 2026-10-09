@@ -292,6 +292,12 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         for (var player : players()) M5GameTestSupport.moveInside(player, FRAME);
     }
 
+    /** 只把 {@code who} 移到艙內（依清單順序；F6-2c fix round 1：已跨過的人在 U，不能跟著移，{@code M5GameTestSupport.moveInside} 在玩家目前的世界移動）。 */
+    void moveInside(Who who) {
+        var moving = members(who);
+        for (var id : participants) if (moving.contains(id)) M5GameTestSupport.moveInside(player(id), FRAME);
+    }
+
     void moveOutside() {
         for (var player : players()) M5GameTestSupport.moveOutside(player, FRAME);
     }
@@ -305,9 +311,22 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         return people;
     }
 
-    /** DORMANT 的 NEW 收據（參與者都已返還、沒有 lease）。只建立，不寫入。 */
+    /** DORMANT 的 NEW 收據（參與者都已返還、沒有 lease）。選門者是清單的第一位（{@code M4CandidateTestAccess.measuredReceipt}）。只建立，不寫入。 */
     SessionRecoveryRecord dormantNewReceipt() {
         return M4CandidateTestAccess.measuredReceipt(run.server(), M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), everyone(true), List.of(), true);
+    }
+
+    /**
+     * 同 {@link #dormantNewReceipt}，但選門者（{@code CandidateSelection.Selected.selectedBy}）是清單的<b>第二位</b>（F6-2c fix round 1，spec review M-4：chain 實際驗到
+     * 選門者由收據推導、不依清單順序；{@code measuredReceipt} 一律以第一位為選門者，所以只換 selection 的 {@code selectedBy}，其餘欄位不變）。至少要有兩位參與者。只建立，不寫入。
+     */
+    SessionRecoveryRecord dormantNewReceiptSelectedByTheSecond() {
+        if (participants.size() < 2) throw new IllegalStateException("選門者是第二位的收據至少要有兩位參與者：" + participants);
+        var first = dormantNewReceipt();
+        var selected = (CandidateSelection.Selected) first.candidateSelection().orElseThrow();
+        var bySecond = new CandidateSelection.Selected(selected.doorKey(), selected.candidateId(), participants.get(1), selected.selectedAtGameTime(), selected.selectionRevision());
+        return new SessionRecoveryRecord(first.sessionUuid(), first.chamberUuid(), first.origin(), first.participants(), first.spaceLeases(), first.state(),
+                first.restoreEntryEffectOnReturn(), first.semantics(), first.candidateContext(), first.candidateLedger(), Optional.of(bySecond));
     }
 
     /** DORMANT 的 EXISTING 收據（參與者都已返還、沒有 lease），候選是 NEW 那一段建立的 U。只建立，不寫入。 */

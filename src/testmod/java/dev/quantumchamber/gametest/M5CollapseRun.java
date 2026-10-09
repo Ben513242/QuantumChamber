@@ -42,7 +42,8 @@ import org.slf4j.LoggerFactory;
  * <li>{@code STOP}：全部 step 完成之後正常停止，{@code SERVER_STOPPED} 時寫 {@code final.json}（status PASS 或 FAIL）。</li>
  * <li>{@code HALT}：在指定的 crash 窗口（{@link CrashWindow}，{@link M5TestHooks#CRASH_POINT}）寫出 {@code halt.json}（CREATE_NEW＋{@code force}）之後以
  *     {@code Runtime.halt(77)} 結束 JVM：不經正常停止、不存檔，等同 crash。只有乾淨的 halt 才是 77（crash 點的第一次 hit、crash 點沒有記下失敗、{@code failures}
- *     是空的、停服還沒有開始；否則 status {@code HALT_REFUSED}、exit 78）。窗口沒有到達、或任何斷言失敗時，照常停止並寫 FAIL 的 {@code final.json}。</li>
+ *     是空的、停服還沒有開始；否則 status {@code HALT_REFUSED}、exit 78）。窗口沒有到達、或任何斷言失敗時，照常停止並寫 FAIL 的 {@code final.json}。halt 的時點有兩種
+ *     （{@link HaltAt}，F6-2c fix round 1）：窗口成立的那一刻（hook 裡），或窗口成立的那個 tick 結束時。</li>
  * </ul>
  * 斷言一律 {@link #expect}：失敗訊息以斷言名稱開頭（例如 {@code catalogOnlyDestination}），記在 receipt 的 {@code failures}，之後正常停止；成立的記在
  * {@code observed}。例外不會從 {@code END_SERVER_TICK} 拋出（{@link #guarded}）。probe 端安裝的 hook（crash 點與 fault，{@link #install}）在 {@link #stop}
@@ -122,6 +123,19 @@ final class M5CollapseRun {
     /** phase 預期的結束：正常停止（{@code final.json}），或在 crash 窗口 halt（{@code halt.json}、exit code {@link #HALT_EXIT}）。 */
     enum Ending { STOP, HALT }
 
+    /** crash 點的 halt 時點（{@link #armCrash}；F6-2c fix round 1）。halt receipt 記在 {@code haltAt}，另記窗口成立的 server tick（{@code windowServerTick}）。 */
+    enum HaltAt {
+        /** 窗口成立的那一刻：hook 裡就取證、寫 halt receipt、halt（F6-1 起的行為），production 在那一刻之後的程式都不會執行。 */
+        WINDOW,
+        /**
+         * 窗口第一次成立的那個 tick 結束時：hook 只記下 detail，runner 在同一個 tick 的 {@code END_SERVER_TICK}（AFTER phase，晚於 production 在這個 tick 的全部
+         * {@code END_SERVER_TICK} 工作，例如 Crossed 確認之後的 playerdata 存檔與到達提示）一開始才取證、寫 halt receipt、halt；那個 tick 的 {@code everyTick} 與 step
+         * 不執行。窗口成立到 halt 之間 probe 不做任何事，原版也不存 playerdata（只在 autosave、登出與停服時存；autosave 在 {@code END_SERVER_TICK} 之前，間隔 6000 tick），
+         * 所以是「窗口成立的那個 tick 結束時 crash」。halt 不在窗口成立的那個 tick（不應發生）時 {@code HALT_REFUSED}。
+         */
+        TICK_END
+    }
+
     /** 一個 step：每個 tick 呼叫一次 {@code run}，回 true 時完成（記 witness，下一個 tick 進下一個 step）；{@code maxTicks} 個 tick 內沒有完成時 FAIL。 */
     record Step(String name, int maxTicks, Tick run) {
         Step {
@@ -139,7 +153,10 @@ final class M5CollapseRun {
      */
     @FunctionalInterface interface CheckedCondition { boolean holds() throws Exception; }
 
-    /** halt 之前的取證（或刻意的準備，例如 W4 的存檔）：寫進 halt receipt 的 {@code atHalt}。丟出時不 halt，crash 點記下失敗，phase 在下一個 tick FAIL。 */
+    /**
+     * halt 之前的取證（或刻意的準備，例如 W4 的存檔）：寫進 halt receipt 的 {@code atHalt}。丟出時不 halt：{@link HaltAt#WINDOW} 由 crash 點記下失敗，phase 在下一個 tick FAIL；
+     * {@link HaltAt#TICK_END} 在 runner 的 tick 裡丟出，phase 當場 FAIL。
+     */
     @FunctionalInterface interface HaltEvidence { void collect(Object detail, Map<String, Object> evidence) throws Exception; }
 
     /** 在 {@code onInitialize} 呼叫（entrypoint 的 phase 表，{@code M5CollapseRecoveryProbe.PHASES}）：建立這個 phase 的 chain，回傳它的 {@link Phase}。 */
@@ -224,6 +241,11 @@ final class M5CollapseRun {
      */
     private volatile boolean stoppingSeen;
     private M5TestHooks.CrashPoint crashPoint;
+    /** {@link HaltAt#TICK_END} 的 crash 點第一次成立時記下的 halt；還沒有成立時為 null（F6-2c fix round 1）。 */
+    private volatile PendingHalt pendingHalt;
+
+    /** {@link HaltAt#TICK_END}：窗口第一次成立時的 detail、那一刻的 server tick、detail 的描述與 halt 之前的取證。 */
+    private record PendingHalt(CrashWindow window, Object detail, int windowTick, Function<Object, String> describe, HaltEvidence evidence) {}
 
     M5CollapseRun(Configuration config, List<String> phaseTable) {
         this.config = config;
@@ -327,6 +349,11 @@ final class M5CollapseRun {
         if (owner != server || finished || phase == null) return;
         guarded(() -> {
             require(++ticks <= PHASE_TICK_LIMIT, "phaseBounded：phase " + config.phase() + " 在 " + PHASE_TICK_LIMIT + " 個 tick 內沒有結束；" + diagnostic());
+            // F6-2c fix round 1：TICK_END 的 crash 點在這個 tick 成立過時，這裡（production 的 END_SERVER_TICK 之後）取證、halt，不再執行 everyTick 與 step。
+            if (pendingHalt != null) {
+                haltAtTheTickEnd(pendingHalt);
+                return;
+            }
             // F6-2c（F6-2c Step 0 quality Minor 2）：crash 點的健康檢查由 runner 每個 tick 在 everyTick 之前呼叫（原本是三個 HALT phase 各自的 everyTick）；還沒有裝 crash 點時不做事。
             crashPointHealthy();
             phase.everyTick.run();
@@ -457,21 +484,41 @@ final class M5CollapseRun {
 
     /**
      * 裝上 crash 點：{@code window} 的 detail 符合 {@code condition} 的第一次，先 {@code evidence}，再寫 halt receipt（detail 的文字描述由 {@code describe} 提供，
-     * 呼叫端是窗口表）、halt。
+     * 呼叫端是窗口表）、halt。{@code at} 是 halt 的時點（{@link HaltAt}）：{@code WINDOW} 在 hook 裡就做；{@code TICK_END} 只記下第一次成立的 detail，取證與 halt 在
+     * 那個 tick 的 runner tick 一開始（{@link #haltAtTheTickEnd}；之後再成立的 hit 讓乾淨的守門以 {@code hit} 拒絕）。
      */
-    void armCrash(CrashWindow window, Predicate<Object> condition, Function<Object, String> describe, HaltEvidence evidence) {
+    void armCrash(CrashWindow window, HaltAt at, Predicate<Object> condition, Function<Object, String> describe, HaltEvidence evidence) {
+        Objects.requireNonNull(at, "at");
         var point = new M5TestHooks.CrashPoint(window, condition, (detail, hit) -> {
-            var atHalt = new LinkedHashMap<String, Object>();
-            try {
-                evidence.collect(detail, atHalt);
-            } catch (Exception failure) {
-                throw new IllegalStateException("haltEvidence：halt 之前的取證失敗：" + failure, failure);
+            if (at == HaltAt.TICK_END) {
+                if (pendingHalt == null) pendingHalt = new PendingHalt(window, detail, server.getTicks(), describe, evidence);
+                return;
             }
-            halt(window, detail, describe, hit, atHalt);
+            halt(window, detail, describe, hit, collect(evidence, detail), HaltAt.WINDOW, server.getTicks());
         });
         install(M5TestHooks.CRASH_POINT, point);
         crashPoint = point;
         proof.put("crashWindow", window.name());
+        proof.put("haltAt", at.name());
+    }
+
+    /** halt 之前的取證：寫進 {@code atHalt}。丟出的 checked 例外包成 {@code haltEvidence} 的 IllegalStateException；具名斷言的 AssertionError 原樣丟出。 */
+    private static Map<String, Object> collect(HaltEvidence evidence, Object detail) {
+        var atHalt = new LinkedHashMap<String, Object>();
+        try {
+            evidence.collect(detail, atHalt);
+        } catch (Exception failure) {
+            throw new IllegalStateException("haltEvidence：halt 之前的取證失敗：" + failure, failure);
+        }
+        return atHalt;
+    }
+
+    /**
+     * {@link HaltAt#TICK_END}：窗口成立的那個 tick 的 runner tick 一開始（production 的 {@code END_SERVER_TICK} 之後）取證、halt，hit 是到這時為止 crash 點成立的次數。取證丟出時
+     * 由 {@link #guarded} 收下（failures、正常停止並 FAIL），不 halt。
+     */
+    private void haltAtTheTickEnd(PendingHalt pending) {
+        halt(pending.window(), pending.detail(), pending.describe(), crashPoint.hits(), collect(pending.evidence(), pending.detail()), HaltAt.TICK_END, pending.windowTick());
     }
 
     /** 已裝上的 crash 點；還沒有裝時為 null。 */
@@ -489,15 +536,17 @@ final class M5CollapseRun {
      * crash：寫出 {@code halt.json}（CREATE_NEW＋force）之後 {@code Runtime.halt}。乾淨的守門（F6-2a；F6-2c Step 0 加上停服）：這是 crash 點的第一次 hit、crash 點沒有記下失敗
      * （{@code crashPointFailure} 為 {@code none}）、receipt 的 {@code failures} 是空的、停服還沒有開始（{@code stoppingSeen}：停服途中的 halt 會讓 restart 以為是
      * crash，其實已開始正常停止），才是 status {@code HALT}、以 {@link #HALT_EXIT} 結束；任何一項不成立時不當成 crash：status {@code HALT_REFUSED}（{@code refused}
-     * 列出原因），以 {@link #HALT_FAILED_EXIT} 結束。receipt 寫不出來時也以 {@link #HALT_FAILED_EXIT} 結束。
+     * 列出原因），以 {@link #HALT_FAILED_EXIT} 結束。receipt 寫不出來時也以 {@link #HALT_FAILED_EXIT} 結束。{@link HaltAt#TICK_END} 另要求 halt 在窗口成立的那個 tick
+     * （F6-2c fix round 1）。
      */
-    private void halt(CrashWindow window, Object detail, Function<Object, String> describe, int hit, Map<String, Object> atHalt) {
+    private void halt(CrashWindow window, Object detail, Function<Object, String> describe, int hit, Map<String, Object> atHalt, HaltAt at, int windowTick) {
         var point = crashPoint;
         var refused = new ArrayList<String>();
         if (hit != 1) refused.add("hit=" + hit);
         if (point.failure() != null) refused.add("crashPointFailure=" + point.failure());
         if (!failures.isEmpty()) refused.add("failures=" + failures);
         if (stoppingSeen) refused.add("stoppingSeen：停服已開始（SERVER_STOPPING），不是 crash");
+        if (at == HaltAt.TICK_END && server.getTicks() != windowTick) refused.add("haltTick：窗口在 tick " + windowTick + " 成立，halt 在 tick " + server.getTicks());
         int exit = refused.isEmpty() ? HALT_EXIT : HALT_FAILED_EXIT;
         try {
             var halt = new LinkedHashMap<String, Object>(proof);
@@ -508,6 +557,8 @@ final class M5CollapseRun {
             halt.put("reached", point.reached());
             halt.put("crashPointFailure", point.failure() == null ? "none" : point.failure().toString());
             halt.put("detail", describe.apply(detail));
+            halt.put("haltAt", at.name());
+            halt.put("windowServerTick", windowTick);
             halt.put("haltServerTick", server.getTicks());
             halt.put("universeActiveAtHalt", context.universeActive());
             halt.put("stepAtHalt", stepIndex < phase.steps().size() ? phase.steps().get(stepIndex).name() : "-");

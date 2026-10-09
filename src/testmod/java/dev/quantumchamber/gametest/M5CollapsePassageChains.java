@@ -30,13 +30,17 @@ import org.apache.logging.log4j.Level;
  * 開服檢查一律走窗口表（{@link M5CollapseWindows#expectAtRestart}：{@code stateAtHalt}、{@code crossedAtHalt} 與窗口自己的磁碟檢查），另比對 record 與 halt 當下 exact
  * 相同（{@code recordKeptAcrossTheRestart}）；之後的 step 與終局（{@link End} 的逐人位置）依窗口而不同：
  * <ul>
- * <li>{@code w7}（{@code CROSSED_COMMITTED}，spec §12 W7）：兩人，選門者已跨過；重啟之後通道在開服時結束（checked 終局），門在下一個 tick 一般開門、比較器重新評估；已跨過的人在
- *     U 重新加入、另一位在原艙；沒有殘留的 runtime、ticket 或 RETURNING，同一個 server 內原艙再開新 session（checked ARMING）。</li>
+ * <li>{@code w7}（{@code CROSSED_COMMITTED}，spec §12 W7）：兩人，選門者（清單的第二位，spec review M-4）已跨過；crash 在 Crossed 確認的那個 tick 結束時，halt 之前不存檔
+ *     （F6-2c fix round 1：已跨過的人在目的地，靠的是 production 在 Crossed 確認之後存下的 playerdata，spec v5.7 §10.3）；重啟之後通道在開服時結束（checked 終局），門在
+ *     下一個 tick 一般開門、比較器重新評估；已跨過的人在 U 重新加入、另一位在原艙；沒有殘留的 runtime、ticket 或 RETURNING，同一個 server 內原艙再開新 session
+ *     （checked ARMING）。</li>
  * <li>{@code readycommit}（{@code READY_COMMITTED}，F6-2-16）：PASSAGE_READY 已提交、門改為 passable 之前；重啟之後同 W7 的結束，參與者在艙內、門一般開門。</li>
  * <li>{@code terminaldoor}（{@code PASSAGE_TERMINATED}，F6-2-13）：(d) 終局已落盤、改門之前；重啟之後 Controller 的 load-sync 刷新排入找不到所屬 session 的量子膜的正規化，
  *     門在排入的下一個 tick 一般開門。</li>
- * <li>{@code crossedpending}（{@code CROSSED_UNCONFIRMED}，F6-2-17）：玩家已在 U、Crossed 的寫出沒有確認；重啟之後同 W7 的結束，他回到 playerdata 記的來源世界。</li>
- * <li>{@code trr}（{@code RECOVERY_SEALED}，F6-2-12）：SEALED(TRR) 已落盤；重啟之後仍是 SEALED、RecoveryRequired 與 Crossed 保留，參與者在艙內也不重試，照一般方式開門。</li>
+ * <li>{@code crossedpending}（{@code CROSSED_UNCONFIRMED}，F6-2-17）：玩家已在 U、Crossed 的寫出沒有確認（crash 在那個 tick 結束時；寫入沒有確認時 production 不存
+ *     playerdata）；重啟之後同 W7 的結束，他回到 playerdata 記的來源世界。</li>
+ * <li>{@code trr}（{@code RECOVERY_SEALED}，F6-2-12）：SEALED(TRR) 已落盤；重啟之後仍是 SEALED、RecoveryRequired 與 Crossed 保留，已跨過的選門者在 U 重新加入（Crossed
+ *     確認時存下的 playerdata），無法回滾的那位在艙內也不重試，照一般方式開門。</li>
  * <li>{@code trrpending}（{@code RECOVERY_REJECTED}，F6-2-12 的 pendingRecovery）：TRR 的寫入被拒、磁碟仍是 PASSAGE_READY；重啟之後同 W7 的結束，只剩前一個 JVM 的 log 證據。</li>
  * </ul>
  * spec §12 的四件事（同一個 UniverseId、catalog 最多多 1 筆、沒有重抽、沒有人被困住）：每個 tick 由 {@link M5CollapsePassage#invariants} 斷言，終局由
@@ -71,13 +75,20 @@ final class M5CollapsePassageChains {
 
     // ---- crash phase ----
 
-    /** crash phase 共用的前半段：fresh 世界蓋原艙、{@code people} 位參與者在艙外 → DORMANT 的 NEW 收據、原生存檔、裝上 {@code id} 的 crash 點 → 進入 → COLLAPSING → RESOLVE。 */
-    private List<Step> untilResolved(int people, CrashWindow id) {
+    /** 收據的選門者是清單的第幾位（F6-2c fix round 1，spec review M-4）。 */
+    private enum SelectedBy { FIRST, SECOND }
+
+    /**
+     * crash phase 共用的前半段：fresh 世界蓋原艙、{@code people} 位參與者在艙外 → DORMANT 的 NEW 收據（選門者是清單的 {@code selectedBy} 那一位）、原生存檔、裝上
+     * {@code id} 的 crash 點 → 進入 → COLLAPSING → RESOLVE。
+     */
+    private List<Step> untilResolved(int people, CrashWindow id, SelectedBy selectedBy) {
         return List.of(
                 new Step("build", 1, () -> { fixture.buildOrigin(people); return true; }),
                 new Step("registered", 200, fixture::registered),
                 new Step("receipt", 1, () -> {
-                    fixture.writeCrashReceipt(fixture.dormantNewReceipt());
+                    fixture.writeCrashReceipt(selectedBy == SelectedBy.SECOND ? fixture.dormantNewReceiptSelectedByTheSecond() : fixture.dormantNewReceipt());
+                    if (selectedBy == SelectedBy.SECOND) expectSelectorIsTheSecond();
                     M5CollapseWindows.arm(run, fixture, id);
                     return true;
                 }),
@@ -90,17 +101,36 @@ final class M5CollapsePassageChains {
         return Phase.halt(steps).started(fixture::requireFreshWorld);
     }
 
-    /** W7：兩人；PASSAGE_READY 之後選門者越過中線，Crossed 的寫入確認時 halt（halt 之前原生存檔，見窗口表）。 */
+    /** spec review M-4（F6-2c fix round 1）：這條 chain 的選門者（由收據推導）是清單的第二位，不是第一位。 */
+    private void expectSelectorIsTheSecond() {
+        run.expect("selectorIsTheSecondParticipant", fixture.participants().size() >= 2 && fixture.selectorId().equals(fixture.participants().get(1)),
+                () -> "選門者=" + fixture.selectorId() + " 參與者=" + fixture.participants());
+    }
+
+    /**
+     * W7：兩人，選門者是清單的第二位（spec review M-4）；PASSAGE_READY 之後原生存檔一次（{@code nativeSaveDuringThePassage}：passable 的門、PASSAGE／15 的 Controller、
+     * 兩人在來源世界的 playerdata 都在磁碟上，模擬跨越之前有過一次 autosave），選門者越過中線，Crossed 的寫入確認的那個 tick 結束時 halt（F6-2c fix round 1：之間只有
+     * production 自己在 Crossed 確認之後的 playerdata 存檔，spec v5.7 §10.3；見窗口表）。
+     */
     Phase w7Crash() {
-        var steps = new ArrayList<>(untilResolved(2, CrashWindow.CROSSED_COMMITTED));
+        var steps = new ArrayList<>(untilResolved(2, CrashWindow.CROSSED_COMMITTED, SelectedBy.SECOND));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
+        steps.add(nativeSaveDuringThePassage());
         steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
         return crashPhase(steps, fixture);
     }
 
+    /** PASSAGE_READY 期間原生存檔一次（step {@code saved}；W7、F6-2-13）。 */
+    private Step nativeSaveDuringThePassage() {
+        return new Step("saved", 1, () -> {
+            run.expect("nativeSaveDuringThePassage", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
+            return true;
+        });
+    }
+
     /** F6-2-16：一人；PREPARE 完成之後 COLLAPSING→PASSAGE_READY 的提交讀回確認時 halt（門還是 sealed 量子膜）。 */
     Phase readyCommitCrash() {
-        var steps = new ArrayList<>(untilResolved(1, CrashWindow.READY_COMMITTED));
+        var steps = new ArrayList<>(untilResolved(1, CrashWindow.READY_COMMITTED, SelectedBy.FIRST));
         steps.add(new Step("halt", 600, () -> false));
         return crashPhase(steps, fixture);
     }
@@ -110,12 +140,9 @@ final class M5CollapsePassageChains {
      * 供電結束，checked 終局讀回確認時 halt（改門之前）。
      */
     Phase terminalDoorCrash() {
-        var steps = new ArrayList<>(untilResolved(1, CrashWindow.PASSAGE_TERMINATED));
+        var steps = new ArrayList<>(untilResolved(1, CrashWindow.PASSAGE_TERMINATED, SelectedBy.FIRST));
         steps.add(passage.ready(null, M5CollapseFixture.NOBODY));
-        steps.add(new Step("saved", 1, () -> {
-            run.expect("nativeSaveDuringThePassage", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
-            return true;
-        }));
+        steps.add(nativeSaveDuringThePassage());
         steps.add(new Step("powerLoss", 1, () -> {
             run.source().setBlockState(FRAME.controllerPos().up(), net.minecraft.block.Blocks.AIR.getDefaultState(), 3);
             return true;
@@ -124,9 +151,12 @@ final class M5CollapsePassageChains {
         return crashPhase(steps, fixture);
     }
 
-    /** F6-2-17：一人；PASSAGE_READY 之後裝上 journal 寫出的失敗（Crossed 的寫入），越過中線、傳送到 U，Crossed 的寫出沒有確認時 halt。 */
+    /**
+     * F6-2-17：一人；PASSAGE_READY 之後裝上 journal 寫出的失敗（Crossed 的寫入），越過中線、傳送到 U，Crossed 的寫出沒有確認的那個 tick 結束時 halt（F6-2c fix round 1：
+     * production 處理完寫入沒有確認的結果之後；見窗口表）。
+     */
     Phase crossedPendingCrash() {
-        var steps = new ArrayList<>(untilResolved(1, CrashWindow.CROSSED_UNCONFIRMED));
+        var steps = new ArrayList<>(untilResolved(1, CrashWindow.CROSSED_UNCONFIRMED, SelectedBy.FIRST));
         steps.add(passage.ready(null, M5CollapseFixture.EVERYONE));
         steps.add(new Step("flushFault", 1, () -> {
             var sid = fixture.sid();
@@ -141,10 +171,10 @@ final class M5CollapsePassageChains {
 
     /**
      * F6-2-12：兩人；選門者照常跨過（Crossed＝[選門者]）→ 另一位的原生移動往 U 與回滾都被拒（{@code FAILED_RECOVERY_REQUIRED}）→ PASSAGE_READY→SEALED(TRR) 的寫入確認時
-     * halt。不存檔。
+     * halt。probe 不存檔（選門者的 playerdata 由 production 在他的 Crossed 確認時存下，spec v5.7 §10.3）。
      */
     Phase trrCrash() {
-        var steps = new ArrayList<>(untilResolved(2, CrashWindow.RECOVERY_SEALED));
+        var steps = new ArrayList<>(untilResolved(2, CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
         steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
         steps.add(new Step("recoveryFault", 1, () -> {
@@ -165,7 +195,7 @@ final class M5CollapsePassageChains {
      * halt（磁碟與 current 都仍是 PASSAGE_READY）。
      */
     Phase trrPendingCrash() {
-        var steps = new ArrayList<>(untilResolved(1, CrashWindow.RECOVERY_REJECTED));
+        var steps = new ArrayList<>(untilResolved(1, CrashWindow.RECOVERY_REJECTED, SelectedBy.FIRST));
         steps.add(passage.ready(null, M5CollapseFixture.EVERYONE));
         steps.add(new Step("recoveryFaults", 1, () -> {
             installRecoveryFault();
@@ -223,8 +253,9 @@ final class M5CollapsePassageChains {
                 steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
             }
             case RECOVERY_SEALED -> {
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(false); return true; }));
-                steps.add(new Step("inside", 1, () -> { fixture.moveInside(); return true; }));
+                // F6-2c fix round 1（spec v5.7 §10.3）：選門者跨越、Crossed 確認時已存下 playerdata，JOIN 在 U；無法回滾的另一位 JOIN 在來源世界的艙外（觸發之前存的）。
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, false); return true; }));
+                steps.add(new Step("inside", 1, () -> { fixture.moveInside(M5CollapseFixture.OTHERS); return true; }));
                 steps.add(new Step("notRetried", SEALED_WATCH_TICKS + 5, this::sealedNotRetried));
                 steps.add(new Step("doorOpens", 1, this::sealedDoorOpensNormally));
             }
@@ -240,6 +271,7 @@ final class M5CollapsePassageChains {
 
     private void started(String crashPhase) throws Exception {
         halt = fixture.readCrashReceipt(crashPhase, window.id());
+        if (window.id() == CrashWindow.CROSSED_COMMITTED) expectSelectorIsTheSecond();
         M5CollapseWindows.expectAtRestart(run, fixture, window, halt);
         atStart = run.journal().flushedRecords().get(fixture.sid());
         run.proof.put("doorCenterOnDiskAtStart", M5CollapseWindows.doorCenterOnDisk(run, fixture));
@@ -279,10 +311,10 @@ final class M5CollapsePassageChains {
         run.expect("passageEndedAtStartup", gone && run.capture().matching(Level.INFO, "開服時仍是 PASSAGE_READY 的量子通道已結束", sid.toString()).size() == 1,
                 () -> "開服之後 " + run.ticks() + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), sid) + "，沒有恰一則開服時結束通道的 INFO");
         run.expect("endedOnTheFirstTick", run.ticks() == 1, () -> "通道在 phase 的第 " + run.ticks() + " 個 tick 才結束");
-        // 「門在下一個 tick 正規化」：開服時門不是一般開門（帶著量子膜，或關著）時，終局的那個 tick 還沒有改門。
-        if (!doorPlainAtStart) {
-            run.expect("notYetOpenOnTheEndTick", !M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "終局的那個 tick 原艙門已是一般開門");
-        }
+        // 「門在下一個 tick 正規化」：開服時門不是一般開門（帶著量子膜，或關著）時，終局的那個 tick 還沒有改門；開服時已是一般開門（逐步存檔，見 doorPlainAtStart）時不適用。
+        // F6-2c fix round 1（spec review M-3）：每次都以同一個名稱斷言，具名斷言的集合不隨逐步存檔的時序變動。
+        boolean plainOnTheEndTick = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
+        run.expect("notYetOpenOnTheEndTick", doorPlainAtStart || !plainOnTheEndTick, () -> "開服時原艙門不是一般開門，終局的那個 tick 已是一般開門");
         run.expect("comparatorReevaluated", fixture.controllerSignal(ChamberState.IDLE, 3), () -> "終局之後的 Controller=" + controllerState());
         run.expect("poweredAfterTheEnd", powerState() == ChamberPowerState.POWERED, () -> "終局之後 registry 的 power state=" + powerState());
         return true;
@@ -357,13 +389,17 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * trr：參與者在艙內（開服之後第一次觀察到，可重試的原因這時就會重試）之後觀察 {@link #SEALED_WATCH_TICKS} 個 tick：record 一直與開服時 exact 相同；沒有「SEALED 重試」的
-     * INFO、也沒有這個 session 的 WARN（journal 層級也拒絕 TRR 的重試，嘗試過就會有 WARN）；presence 是 COLLAPSE、比較器 ARMED（11）。
+     * trr：沒有跨過的參與者（無法回滾的那位）在艙內（開服之後第一次觀察到，可重試的原因這時就會重試）之後觀察 {@link #SEALED_WATCH_TICKS} 個 tick：record 一直與開服時 exact
+     * 相同；沒有「SEALED 重試」的 INFO、也沒有這個 session 的 WARN（journal 層級也拒絕 TRR 的重試，嘗試過就會有 WARN）；presence 是 COLLAPSE、比較器 ARMED（11）。
+     * 已跨過的選門者在 U（F6-2c fix round 1，spec v5.7 §10.3），不在艙內。
      */
     private boolean sealedNotRetried() {
         var sid = fixture.sid();
         if (watched == 0) {
-            for (var player : fixture.players()) run.expect("participantsInsideWhileSealed", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
+            for (var id : fixture.members(M5CollapseFixture.OTHERS)) {
+                var player = fixture.player(id);
+                run.expect("participantsInsideWhileSealed", player.getServerWorld() == run.source() && M5CollapseFixture.inside(player), () -> "沒有跨過的參與者在 " + player.getPos());
+            }
         }
         run.expect("sealedUnchanged", atStart.equals(run.journal().flushedRecords().get(sid)) && atStart.equals(run.journal().records().get(sid)),
                 () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
@@ -377,13 +413,17 @@ final class M5CollapsePassageChains {
         return true;
     }
 
-    /** trr：SEALED 時任何玩家都可以照一般方式開門（spec §11.2）；record 仍與開服時 exact 相同；spec §12 的終局斷言（參與者都在來源世界）。 */
+    /**
+     * trr：SEALED 時任何玩家都可以照一般方式開門（spec §11.2；由艙內沒有跨過的那位開）；record 仍與開服時 exact 相同；spec §12 的終局斷言（已跨過的選門者在 U，F6-2c fix
+     * round 1；無法回滾的那位在來源世界）。
+     */
     private boolean sealedDoorOpensNormally() throws Exception {
-        var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), fixture.selector());
+        var other = fixture.player(fixture.members(M5CollapseFixture.OTHERS).iterator().next());
+        var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), other);
         run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
         var sid = fixture.sid();
         run.expect("stillSealed", atStart.equals(run.journal().flushedRecords().get(sid)), () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
-        passage.expectEnd(End.inTheSourceWorld(fixture));
+        passage.expectEnd(End.inTheSourceWorld(fixture).placed(fixture, M5CollapseFixture.SELECTOR, Place.UNIVERSE));
         return true;
     }
 
