@@ -6547,3 +6547,168 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 - 結束過的 JVM：沒有（沒有逾時，沒有手動結束任何 JVM）；沒有結束 Gradle daemon。
 - 取證腳本（`f62c/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`、`names2.py`、`mutsum.py`、`gate-adapted.ps1`、`runall-compare.ps1`、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`commitcheck2.ps1` 由 `f6/f62cs0/` 複製（只加註解；`adapter.py` 的 adapter 表改 `adapters_f62c.py`；`mutsum.py` 的 label 前綴改 `f62c-`；`runall-compare.ps1` 的基準改為 `run-all-fa41f4617e64406fb964e742a2de2ba7`，`base-*-summary.txt` 是同一次 run-all 的 `f6/f62cs0/runall-*-summary.txt`）；新寫 `compile.ps1`、`adapters_f62c.py`、`mutations.ps1`、`exp-uncheckpointed/M5CollapseUncheckpointedExperiment.java`。`f6/f62cs0/` 下既有的檔案沒有改動。
+
+## F6-2c fix round 1：跨越後存 playerdata
+
+- 兩位 implementer 完成（controller 的派工 scratchpad `f62c-fix1-prompt.md`）：第一位做到 production、RED 與 GREEN，中途依 controller 指示停下（worldgen 的 CME 調查，不跑 run-all）；第二位依 `f62c-fix1-resume.md` 接手，做 GREEN 兩次、mutation、README、本節與 run-all。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62c/fix1/`（以下簡稱 `fix1/`；`STATUS.md` 是交接摘要，`cme-evidence.txt` 是 CME 的原始摘錄）。開工時 HEAD 是 `8f9dc20`、工作樹乾淨（`e5e6760..8f9dc20` 只有 controller 的 docs commit：spec v5.7）。
+- 範圍：
+  - F6-2c spec review 的 Important I-1：跨越成功時 production 不存 playerdata，crash 之後已跨過的人回到最後一次存檔的位置，即使 Crossed 已確認，與 spec §12 PASSAGE_READY 列「已跨過的人在目的地」不一致；`w7` 在 halt 之前 `nativeSaveAtHalt`，只驗到「crash 前剛好存過檔」的情況。使用者 2026-10-09 裁示「跨過就立刻存檔」（spec v5.7 §10.3 傳送結果表的「成功」列、§12 PASSAGE_READY 列、§20.11）。
+  - spec review 的 Minor M-3、M-4。M-1、M-5 是 note 的敘述（controller 處理）；M-2（開服時永久 SEALED 的 ERROR）交給 F6-2d，本輪不做。F6-2-15（投影修復遺失）使用者裁示列為 F7 的已知限制，不改程式。
+- Commits（`8f9dc20..HEAD`，依序；每個 commit 只 stage 自己的檔案）：
+  - 第一位 implementer：
+    - `a397f35` `test: expect a crossed player in the universe after a crash in the M5 collapse probe`（RED：runner 的 `HaltAt.TICK_END`、`w7` 拿掉 halt 前存檔、選門者改為第二位、`crossedpending` 也在 tick 結束時 halt、`trr` 的新預期、M-3）
+    - `e03808e` `test: save once during the passage before the crossing in the trr chain`
+    - `7752b47` `fix: save a crossing player's data once Crossed commits`（production，本輪唯一的 `src/main/` 改動）
+    - `380488f` `test: generate U around the chamber before the crossing in w7 and trr`
+    - `ce943f7` `test: join the crossed selector after the source world settles in the w7 and trr restarts`
+  - controller 的 docs commit（只改 AGENTS.md）：`5ba8b47`、`6f7f97d`。
+  - 第二位 implementer：`e2a16cc` `docs: describe the crossed save and the split join of w7 and trr in the verification README`；本節由其後的 docs commit `docs: record the F6-2c fix round 1 in the M5 note` 加入。
+- 中間 commit 的編譯（`fix1/c*-compile.log`：`compileJava compileTestJava compileTestmodJava compileClientProbeJava`，都 BUILD SUCCESSFUL；`c*-compile-state.txt` 的 blob 已與各 commit 比對）：`c1` 是 `a397f35` 的內容；`c2` 是 `a397f35` 加上 `7752b47` 的 `PassageService`；`c3` 是 `e03808e`＋`7752b47` 的內容；`c5` 是 `380488f`；`c7` 是 `ce943f7`（`c4`、`c6` 是之間的工作樹）。`e03808e` 只改 testmod，沒有單獨編譯，與 `7752b47` 一起在 `c3` 編譯、在 green-1 執行。
+- 只改了派工允許的路徑：`src/main/` 只有 `PassageService`（`7752b47`）；testmod 只有 probe 的 `M5CollapseRun`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassageChains`；`scripts/verification/README.md` 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** `M5TestHooks`、mixin 與 `quantumchamber-test.mixins.json`（存檔失敗的注入改用 adapter，見「mutation」）、`build.gradle`、`fabric.mod.json`、所有 ps1、`.github/`、既有的 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。
+- 行號以 `e2a16cc` 為準；`PS`＝`PassageService`，其餘縮寫同 F6-2c 一節（`RUN`、`WIN`、`FIX`、`PCH`、`HK`、`MP`）。
+
+### production 的改動（`7752b47`）
+
+- `PS:381`～`:385` `crossed()` 的 COMMITTED 分支：`track.warnings.remove(CROSSED_WRITE)` 之後呼叫 `saveCrossedPlayerData(sid, track, player)`（`PS:383`），再回傳新的 record。ROLL_FORWARD_PENDING 與被拒的分支不變，不存。
+- `PS:410` `saveCrossedPlayerData`：以既有的 `((PlayerManagerSaveInvoker) service.server.getPlayerManager()).quantumchamber$savePlayerData(player)` 存，也就是原版 autosave 與登出用的同一個方法（連同 stats 與 advancements）；成功時清掉這個寫入種類的 WARN 去重。丟出 RuntimeException 時只記 WARN：`service.warn(sid, PLAYER_DATA_SAVE, …)`（`PS:107`，寫入種類「跨越之後的 playerdata 存檔」），帶 `LOG_MARKER` 與 `session=`、依原因去重，不往外丟，通道與其他參與者照常。不用 `PlayerCheckpointStore.saveAndVerify`（讀回驗證只支援 Windows，其他平台丟 IOException）。
+- Javadoc（`PS:399`～`:409`）寫明順序：先寫 journal，再寫 playerdata。只在 Crossed 已確認之後存，所以磁碟上的 Crossed 與 playerdata 一致：playerdata 在目的世界的人一定已在 Crossed 中。兩者之間 crash 時，就是 v5.7 之前的行為，也是 spec §12 的邊界情況：他以最後一次存下的位置重新加入，通道在開服時結束，不會被困住。類別 Javadoc 的「傳送結果」（`PS:73`）與寫入種類的說明（`PS:102`～`:107`）同步。
+- 原版的 playerdata 寫檔自己收下 IOException、只記它自己的 WARN（沒有 `session=`）；`saveCrossedPlayerData` 只收得到 RuntimeException（見「交給後續」）。
+
+### probe 的改動（第一位 implementer）
+
+| 項目 | 處置 |
+| --- | --- |
+| runner（`a397f35`） | `RUN:127` `HaltAt`：`WINDOW`（窗口成立的那一刻，F6-1 起的行為）與 `TICK_END`。`TICK_END` 的 crash 點成立時只記下第一次的 detail，在那個 tick 的 runner tick 一開始（production 的 `END_SERVER_TICK` 之後）才取證、halt（`RUN:520`）；halt receipt 記 `haltAt` 與 `windowServerTick`，halt 的 tick 與窗口成立的 tick 不同時 refused（`RUN:549`）。`CROSSED_COMMITTED` 的 hook 在 `commitRollForward` 的回傳點，早於 `saveCrossedPlayerData`，以 `WINDOW` halt 永遠看不到 production 的存檔，所以改用 `TICK_END`。 |
+| `w7`（`a397f35`、`380488f`、`ce943f7`） | 窗口表 `WIN:241` 改 `TICK_END`。halt 之前的取證 `WIN:487` `selectorAcrossAtTheTickEnd` 拿掉 `nativeSaveAtHalt` 與 `selectorPlayerDataInTheUniverseAtHalt`：選門者的 playerdata 只記下（`playerDimensionOnDisk`），不在 halt 之前斷言，因為它是目標；由 restart 斷言，所以沒有 production 的存檔時 crash 照常、restart 失敗在目標。crash phase（`PCH:117`）：PASSAGE_READY 之後 `universeGenerated`（`PCH:142`，`380488f`）→ `saved`（`PCH:127` `nativeSaveDuringThePassage`：passable 的門、PASSAGE／15 的 Controller、兩人在來源世界的 playerdata 都在磁碟上，取代原本 halt 前存檔為 F6-2-14 做的準備）→ 選門者跨越 → 那個 tick 結束時 halt。restart：開服時 `selectorPlayerDataInTheUniverse`（`WIN:705` `crossedPlayerDataAtRestart`；改以 `M5CollapseDiskEvidence.playerDimension` 讀選門者的 Dimension，失敗訊息帶實際的值）與 `othersPlayerDataInTheSource`；JOIN 改成 `joinTheCrossedLast`（下方「restart 分開 JOIN」）。 |
+| M-4（`a397f35`） | `w7` 的收據以 `FIX:334` `dormantNewReceiptSelectedByTheSecond()` 建立（selection 的 `selectedBy` 換成清單的第二位，其餘欄位相同），crash 與 restart 開服時都斷言 `selectorIsTheSecondParticipant`（`PCH:107`）。選門者由收據推導的路徑因此在 `w7` 的跨越、Crossed、playerdata、JOIN 與終局，都以第二位驗過。 |
+| `crossedpending`（`a397f35`） | 窗口表 `WIN:252` 也改 `TICK_END`：production 處理完 ROLL_FORWARD_PENDING 之後才 halt，`playerDataNotInTheUniverseAtHalt` 因此驗到「寫入沒有確認時不存」（`mut-save-unconfirmed` 失敗在這裡）。 |
+| `trr`（`a397f35`、`e03808e`、`380488f`、`ce943f7`） | crash phase（`PCH:197`）：PASSAGE_READY 之後同 `w7` 的 `universeGenerated`、`saved`（`e03808e` 先加存檔，`380488f` 再加生成），之後選門者跨越（production 存下他的 playerdata）、另一位 TRR、halt；跨越之後 probe 不存檔。restart：`recoveryRequiredKeptAtRestart`（`WIN:730`）另斷言 `crossedPlayerDataAtRestart`；JOIN 改成 `joinTheCrossedLast`；另一位 JOIN 在艙內（跨越之前存的位置，所以 `joinedOutsideTheChamber` 換成 `joinedInsideTheChamber`），選門者在 U；`moveInside(OTHERS)`（`FIX:307`）；`sealedNotRetried`（`PCH:440`）只看沒跨過的人；`sealedDoorOpensNormally`（`PCH:464`）由沒跨過的那位開門，終局的選門者 `placed` 在 U。 |
+| M-3（`a397f35`） | `PCH:361` 每次都以 `notYetOpenOnTheEndTick` 斷言「開服時已是一般開門，或終局的那個 tick 不是一般開門」，具名斷言的集合不隨逐步存檔的時序變動（`trrpending-restart` 因此多一個名稱）。 |
+| restart 分開 JOIN（`ce943f7`） | `PCH:302` `joinTheCrossedLast`：step `join`（沒跨過的人 JOIN 在來源世界的艙內，`FIX:233` `join(who, inUniverse, inside)`）→ `sourceSettled`（`FIX:668` `generationSignature`：來源世界 `currentChunkHolders` 的數目與每個 holder 最新狀態 index 的和，連續 `SETTLED_TICKS`＝20 tick 不變，最多等 400 tick）→ `joinCrossed`（已跨過的選門者 JOIN 在 U）。理由見「worldgen 的 CME」；controller 裁示保留這個時序調整，之後不再以 JOIN 的時序繞開。 |
+
+### 具名斷言的比對
+
+以 `fix1/names2.py` 與 F6-2c GREEN `606bf92ec4f643ac93e199663cb14e7a`（F6-2c 一節的 green-1）比對：green-6 是 `fix1/green-6-vs-f62c-names.txt`，green-7 的結果相同。32 個 phase 中 27 個的名稱、數目、順序與 step 完全相同。差異只在下列 5 個 phase，都是本輪預期的改動；沒有改名，`notTrue` 都是空的：
+
+| phase | 拿掉的斷言 | 新增的斷言 | step | 說明 |
+| --- | --- | --- | --- | --- |
+| `w7-crash` | `nativeSaveAtHalt`、`selectorPlayerDataInTheUniverseAtHalt` | `selectorIsTheSecondParticipant`、`nativeSaveDuringThePassage` | `ready` 與 `doorway` 之間多 `universeGenerated`、`saved` | halt 前不存檔；選門者的 playerdata 改由 restart 的 `selectorPlayerDataInTheUniverse` 斷言（基準的 restart 已有這個名稱） |
+| `w7-restart` | 無 | `selectorIsTheSecondParticipant` | `join` 之後多 `sourceSettled`、`joinCrossed` | 順序不同：`joinedInTheUniverse` 移到另一位的 JOIN 斷言之後（分開 JOIN）；終局的 `participantInTheSourceWorld`／`participantInTheUniverse` 依清單順序對調（選門者是第二位） |
+| `trr-crash` | 無 | `nativeSaveDuringThePassage` | 多 `universeGenerated`、`saved` | 跨越之前存檔 |
+| `trr-restart` | `joinedOutsideTheChamber` | `selectorPlayerDataInTheUniverse`、`othersPlayerDataInTheSource`、`joinedInsideTheChamber`、`joinedInTheUniverse`、`participantInTheUniverse` | `join` 之後多 `sourceSettled`、`joinCrossed` | 另一位改在艙內 JOIN（跨越之前存的位置），`joinedInsideTheChamber` 取代 `joinedOutsideTheChamber`；選門者的 playerdata 與 JOIN 在 U |
+| `trrpending-restart` | 無 | `notYetOpenOnTheEndTick` | 相同 | M-3 |
+
+- green-7 與 green-6：32 個 phase 的名稱、數目、順序與 step 完全相同（`fix1/green-7-vs-green-6-names.txt`，RESULT=OK）。green-5 與基準的差異也與上表相同（`fix1/green-5-vs-f62c-names.txt`）。
+
+### RED、GREEN 與開發 run
+
+| 輪次 | HEAD／工作樹 | runId | 結果 |
+| --- | --- | --- | --- |
+| RED red-w7 | `a397f35`，乾淨（沒有 production 的存檔） | `f89501ba76c84ef48a2342e34a56966b` | `w7-crash` 乾淨 halt（`TICK_END`，tick 51，halt 時兩人的 playerdata 都在 overworld）；`w7-restart` 失敗在 `selectorPlayerDataInTheUniverse`（「選門者的 playerdata 在 minecraft:overworld」） |
+| RED red-trr | 同上 | `d1fe127a1ba542e099f0282a45a001b4` | `trr-crash` 乾淨 halt；`trr-restart` 失敗在 `selectorPlayerDataInTheUniverse` |
+| green-1 | `7752b47`，乾淨 | `7175cde23afc4d16939fc837be181be3` | 32/32 |
+| green-2 | `7752b47`，乾淨 | `043fae6e3c614da69504e6cc3f2d4371` | 不採計：`trr-restart` 遇到 worldgen 的 CME、停服卡住、逾時（見下） |
+| green-3 | `380488f`，乾淨 | `835e4a3970664d418d380fa27811c1ac` | 32/32 |
+| green-4 | `380488f`，乾淨 | `10f848401dac4e27b780e36c890365cc` | 不採計：`trr-restart` CME |
+| green-5 | `ce943f7`，乾淨 | `f9b8721c99a14f98866f97a5a8c0fcb6` | 32/32 |
+| **GREEN green-6** | `6f7f97d`（code 與 `ce943f7` 相同），乾淨 | `5c84121ae4104bffa43d589f2f0234d9` | 32/32（14 halt＝77、18 stop＝0） |
+| **GREEN green-7** | `6f7f97d`，乾淨 | `bf2dbe40e55a45e9b733ea68d058e63a` | 32/32 |
+
+- green-6、green-7 是派工要求的「同一個 HEAD 連跑兩次」（green-5 的 code 也相同）。細節（`fix1/green-6-details.txt`、`green-7-details.txt`）：
+  - `w7`：halt 是 `TICK_END`，窗口與 halt 在同一個 tick（green-6 76、green-7 81），`refused` 是空的；halt 時磁碟上選門者的 playerdata 已在 U、另一位在 overworld；restart 開服時磁碟上的門 passable，第 1 個 tick 終局，新 session 照常 checked ARMING。
+  - `crossedpending`：也是 `TICK_END`（46、45），halt 時 playerdata 在 overworld。
+  - `trr`：開服時磁碟上的門是 `passable_x`（F6-2c 是 `sealed_x`，見「交給後續」）。
+  - 32 個 phase 的 latest.log 都沒有 `ConcurrentModificationException`，也沒有「跨越之後的 playerdata 存檔」的 WARN（`fix1/green-*-warncheck.txt`）。
+- 開發 run（不採計；`fix1/dev-*-probe-summary.txt`）：
+  - `dev-a`～`dev-c`：`8f9dc20` 加上 RED 之前的測試；`dev-a` 的 `trr-restart`、`dev-b` 的 `w7-restart` 失敗在目標，是 RED 的預演。
+  - `dev-d`、`dev-e`：`a397f35` 加上 production；`trr-restart` 遇到 CME、逾時。
+  - `dev-f`、`dev-g`：`e03808e`＋`7752b47` 的內容；`dev-h`～`dev-k`：`380488f` 之前的工作樹。都 PASS。
+  - `dev-l`：`ce943f7` 之前的工作樹，`sourceSettled` 第一版的判準不成立，step 逾時 FAIL。
+  - `dev-m`～`dev-p`：`ce943f7` 的內容（blob 相同），PASS。
+
+### mutation
+
+都套在乾淨的 `6f7f97d`（code 與 `ce943f7` 相同）上：`fix1/mutations.ps1` → `red.ps1`＋`adapter.py`，adapter 表 `fix1/adapters_fix1.py`（第一位 implementer 寫好，第二位執行）。全部是 `PassageService` 的暫時改動，以 `-Only` 只跑那一條 chain，跑完還原並以 `git hash-object` 核對：`fix1/fix1-<adapter>-<chain>-restored-state.txt` 的 porcelain 都是空的，最後 `PassageService` 的 blob `bd683fa…` 與 HEAD 相同。摘要在 `fix1/fix1-*-mutsum.txt`；`crossedpending` 兩次的 crash phase 沒有 halt，probe log 裡沒有 root，runId 之後由 phase evidence 補在 `*-mutsum2.txt`。
+
+| mutation | 改動 | chain | runId | 結果 |
+| --- | --- | --- | --- | --- |
+| `mut-no-save` | 拿掉 COMMITTED 分支的 `saveCrossedPlayerData`（等同修正之前） | `w7` | `bb038e830b0f49d1b71d6b962e6b0cf3` | crash 乾淨 halt；restart 失敗在 `selectorPlayerDataInTheUniverse`（playerdata 在 minecraft:overworld） |
+| 同上 | 同上 | `trr` | `0b15dd5c461b449ea65e877add2ea768` | 同上 |
+| `mut-save-throws` | `saveCrossedPlayerData` 在呼叫原版之前丟 `IllegalStateException`（受控的存檔失敗） | `w2` | `73c7435954854fa38c5058669b846bcb` | 全部 PASS（restart 的跨越與 (b) 終局照常）；`w2-restart` 的 log 恰多一則 WARN「塌縮流程的跨越之後的 playerdata 存檔沒有完成，不重試；…：玩家=…：session=…：java.lang.IllegalStateException…」：WARN 5 則（green-7 的同一個 phase 4 則），帶 `session=` 的只有這一則，ERROR 0 |
+| 同上 | 同上 | `trr` | `5a6e165d5c2e4aa8a968549782b90831` | crash 照常走到另一位的 TRR、乾淨 halt，`trr-crash` 的 log 恰多這一則 WARN（5 對 4）；restart 失敗在 `selectorPlayerDataInTheUniverse`：存檔失敗時以最後一次存下的位置為準（spec §12 的邊界情況） |
+| `mut-save-before-commit` | 拿掉 COMMITTED 之後的存檔，改在 `commitRollForward` 之前就存（違反「先 journal 後 playerdata」） | `crossedpending` | `c09cc1740edb451e8751308a3d6032b5` | crash phase 失敗在 `playerDataNotInTheUniverseAtHalt`（寫入沒有確認，playerdata 卻已在 U），沒有 halt，正常停止並 FAIL |
+| 同上 | 同上 | `w7` | `fbe7a0bb257947d9b76125ba1b233e55` | **全部 PASS：驗不出（預期，理由見下）** |
+| `mut-save-unconfirmed` | ROLL_FORWARD_PENDING 的分支也存（違反「寫入沒有確認時不存」） | `crossedpending` | `931d0b23647a44f293b8ce468b8c75bf` | crash phase 失敗在 `playerDataNotInTheUniverseAtHalt` |
+
+- 存檔丟例外的作法：adapter 在 `saveCrossedPlayerData` 呼叫原版的那一行之前插入 `throw new IllegalStateException(…)`。沒有另加 Slot 或 mixin，所以 `M5TestHooks` 與 mixin 的登記檔都沒有改。WARN 的比對在 `fix1/fix1-mut-save-throws-warn-compare.txt` 與 `fix1-mut-save-throws-*-warncheck.txt`。
+- 「在 COMMITTED 之前就存檔」：寫入確認時，兩種順序在 tick 結束時的磁碟上完全相同（Crossed 有他、playerdata 在 U），所以 `w7` 驗不出（`fbe7a0bb…` PASS）。要分辨，必須在 journal 寫入與存檔之間 crash，也就是 `CROSSED_COMMITTED` 以 `WINDOW` halt，並斷言 halt 時 playerdata 還不在 U；現有的 chain 沒有這個窗口（`w7` 為了驗存檔改成 `TICK_END`），本輪沒有新增。現有的 chain 只驗到這個 mutation 的另一面：寫入沒有確認時，playerdata 已在 U（`crossedpending`）。
+
+### worldgen 的 CME（待使用者裁示）
+
+不屬於本 fix round。controller 裁示：另案待使用者裁示；本輪不調查、不修，保留 `ce943f7` 的時序調整；之後的 run 若再遇到，保留 root、記錄，以新的 nonce 重跑。
+
+- 現象：`trr` 的 restart，在已跨過的選門者 JOIN 在 U、另一位 JOIN 在來源世界的同一個 tick，有時在原版 worldgen 丟 `ConcurrentModificationException`：server thread 記「Error executing task on Chunk source main thread executor for <world>」與 crash report「Exception generating new chunk」，之後停服卡住，由 probe 的逾時處置結束。
+- 證據（root 全部保留；`fix1/cme-evidence.txt`）：
+
+| run | runId | 例外出現在哪個世界的 executor | 執行緒 | 生成中的 chunk | 磁碟上的 (12,11)：來源世界／U |
+| --- | --- | --- | --- | --- | --- |
+| dev-d | `825e27dec5cc4b71bc8729b7d5556be4` | （stdout 只有 crash report，沒有 executor 那一行） | Worker-Main-19 | 12,11 `structure_starts` | absent／`structure_starts` |
+| dev-e | `4e3cea8a47f544a7a7b1f83564785eb8` | （同上） | Worker-Main-18 | 12,11 `structure_starts` | `structure_starts`／absent |
+| green-2 | `043fae6e3c614da69504e6cc3f2d4371` | `quantumchamber:universe/11abbed3-…/overworld`（U） | Worker-Main-5 | 12,11 `structure_starts` | `structure_starts`／absent |
+| green-4 | `10f848401dac4e27b780e36c890365cc` | `minecraft:overworld`（來源世界） | Worker-Main-27 | 12,11 `structure_starts` | absent／`structure_starts` |
+
+- 例外鏈（green-2、green-4 的 run root `logs/latest.log` :100 起；dev-d、dev-e 在 phase evidence 的 `stdout.log`）：`CrashException: Exception generating new chunk`（`ServerChunkLoadingManager.method_60445:640`）→ Caused by `java.util.ConcurrentModificationException`，`at HashMap.computeIfAbsent(HashMap.java:1229)` ← `StructureTemplate$PalettedBlockInfoList.getAllOf(StructureTemplate.java:808)` ← `StructureTemplate.getInfosForBlock:211` ← `SinglePoolElement.getStructureBlockInfos:119` ← `StructurePoolBasedGenerator$StructurePoolGenerator.generatePiece` ← `StructurePoolBasedGenerator.generate` ← `Structure.createStructureStart:100` ← `ChunkGenerator.trySetStructureStart:584` ← `ChunkGenerator.setStructureStarts:495` ← `ChunkGenerating.generateStructures:32` ← `ChunkLoader.load` ← worker（ForkJoin）。沒有其他 Caused by。
+- (12,11) 是 `minecraft:trial_chambers` 的 start（U 的 region 檔 NBT 有 `trial_chambers/chamber/slanted`、`…/reward/vault` 等 pool element）。
+- 判斷：
+  - 原版 1.21 的 `PalettedBlockInfoList.blockToInfos` 是 `Maps.newHashMap()`，`getAllOf` 在 worker thread 上 `computeIfAbsent`。`StructureTemplate` 由 server 共用的 `StructureTemplateManager` 快取，所有世界共用同一份，本身不是 thread-safe。
+  - M3 的 U 以來源世界的 `DimensionOptions`（同一個 `NoiseChunkGenerator` instance）與同一個 seed 建立（`Minecraft121ServerWorldFactory.create`，另傳入 `overworld.getRandomSequences()`），所以兩個世界在同一個座標生成同一個結構（這裡是 trial_chambers）。
+  - 只在「restart 的第一個 tick，一位參與者 JOIN 在 U、另一位 JOIN 在來源世界」時出現；只有一個世界在生成時（約 40 個 crash JVM 的開服與跨越、其他 chain 的 restart）一次都沒有。所以「兩個世界同時生成同一個區域」是必要條件的可能性很高。
+  - 不是 v5.7 的存檔造成的：v5.7 讓「已跨過的人在 U 重新加入」成真，restart 才出現這個組合。
+  - 未確認：另一個執行緒當下在做什麼（jstack 在 crash 之後約 90 秒才取，worker 都已 park），是同一個世界的其他工作還是另一個世界；原版單一世界是否也會發生。
+- 停服卡住：`MinecraftServer.shutdown:654` 的 `while (… shouldDelayShutdown())` 迴圈（`runTasksTillTickEnd`）。`currentChunkHolders` 不是空的等條件下 `shouldDelayShutdown` 為真，生成失敗的 holder 一直卸載不掉；worker 都在 park，沒有執行緒在做事。逾時處置結束了 PID 30300、34820、9064、9440（第一位 implementer 的 run；probe 先核對 commandline、存 jstack）。
+- 重現條件：seed 20260921、view-distance 2、原艙 Controller (8,70,8)；U 是 NEW（共用 seed）；trial_chambers 的 start 在 chunk (12,11)。restart JVM 的第 1 個 tick，同時有人在兩個世界 JOIN，而且其中一個世界的磁碟上沒有 (12,11)（flush 存檔只存到過 FULL 的 chunk，外圈的 proto chunk 不存）。
+- `trr` restart 的次數：沒有跨越之前的存檔 2／2（dev-d、dev-e）；`e03808e`（跨越之前存檔）1／4（dev-f、dev-g、green-1、green-2）；`380488f`（再加 U 的生成）1／6（dev-h～dev-k、green-3、green-4）；`ce943f7`（分開 JOIN）0／8（dev-m～dev-p、green-5、green-6、green-7、run-all-1r2 的 M5 collapse）。mutation 的兩次 `trr`（`mut-no-save`、`mut-save-throws`）選門者沒有存到 U，JOIN 都在來源世界，不算。
+- production 的影響：很可能是 production 會遇到的問題。一般多人遊玩時，有人在 U、有人在來源世界，兩邊同時生成同一個區域（例如重啟之後分別在兩個世界重新加入，或兩邊同時探索相同的座標附近），可能讓整個 server crash（crash report），並卡在停服、要從外部結束。`ce943f7` 只在 probe 裡錯開兩個世界的生成，production 沒有任何防護。
+- 第一位 implementer 建議的下一步：以 testmod hook 在 `getAllOf` 抓 CME 當下所有 worker 的 stack（或 JFR），確認另一個執行緒；做一個不經塌縮的最小重現（兩位玩家分別在 U 與來源世界的 (12,11) 附近同時 JOIN）。
+
+### run-all
+
+- `e2a16cc`（README commit 之後；code 與 `6f7f97d` 相同），工作樹乾淨（`fix1/run-all-1*-state.txt` 的 porcelain 都是空的）。前兩次是已知偶發，不採計；root 保留，以新的 root 重跑：
+  - run-all-1 `run-all-00cb24c27b0f4eb4bc9afcd3059c2fc0`（`fix1/run-all-1-console.txt`）：Full、legacy PASS；M5 GameTest gate（`gate-m5-gametest-beef30e217d0459eb601224b83cbcc43`）0/60。第一個 test `prepare_door_use_failures_refuse_and_warn_once_per_cause_until_recovery_writes_are_safe` 的 RESOLVE 遇到 allocation ledger 原子移動的 `AccessDeniedException`（`…allocations.dat.<n>.tmp -> …allocations.dat`），進 SEALED(ALLOCATION_IO_FAILED)、有界等待逾時；之後 59 個 test 因開始時權威沒有收斂（衛生規則）連帶失敗。這是 H5 一節記錄過的 Windows 原子移動偶發（owner F6-3）；那個 test 不經跨越，不會走到本輪的存檔。
+  - run-all-1r `run-all-1faa7eebaa90446db61bb0e514173456`（`fix1/run-all-1r-console.txt`）：Full PASS；legacy gate（`gate-legacy-47706e8994244abe9d07f3755936db38`）判「GameTest Universe boundary oracle 缺失或 FAIL」：Gradle exit 0，但 gate 以 PID 挑 `m4-boundary-*.json` 時挑到兩份（本次的 `1466a1d1…`，與 2026-10-08 留下的舊 receipt `13224329…`，PID 都是 42068，兩份都是 PASS）。這是 F4b-2 一節記錄過的「boundary oracle 挑到舊 receipt」偶發。
+  - run-all-1r2 `run-all-ed95df43ceb1413e980a7921a3dbe13d`（Full `gate-full-1792e1cb8e4a416aad8e62311e1d768d`；M5 `gate-m5-gametest-3981a2e272f048099a9bea2336a43225`；M4 recovery 彙整 `recovery-run-4ed577e30c94494ea0e3134bf7586394`；M5 collapse 彙整 `collapse-run-1ec0dcbf8dce4d93805ff3e1626b00bd`）：`END ALL exit=0 HEAD=e2a16cc78f2338bb1740d9bba9f9cc6d1a6eba02`。`SUMMARY default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=656 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=430entries/383classes sources=222 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=32 ci=win:PASS,ubuntu:PASS`。
+- run-all-1r2 與基準 `run-all-bb1a1b3e283e44c4a4c3d5b4463fde35`（F6-2c，`e5e6760`）逐項比較（`fix1/runall-compare.ps1`，輸出 `fix1/runall-*.txt`）：
+  - default 175/175（`_windows` 89）、M5 60/60：testcase 集合與結果都與基準相同（`runall-default-setcmp.txt`、`runall-m5-setcmp.txt`：identical=True），所以改到 `PassageService` 之後，M5 的通道 test 仍 60/60、集合相同。GameTest 沒有斷言 playerdata 的行為（testmod 唯一攔截 `savePlayerData` 的 `PlayerNativeSaveWindowFaultMixin` 只在 M2 persistence probe 啟用）。legacy 1/1、perTest 52＋1、JUnit 656（skipped 2）、windowsCheckpoint 17、M3 4＋5、M4 recovery 24、mainOnly PASS、testmodHits 0、CI 兩個 step PASS，都相同。
+  - release 430 entries／383 classes，entry 數不變；內容不同的 entry 只有 `PassageService` 與它的 7 個內部類別（`$1`、`$Candidate`、`$Candidate$Builder`、`$LifecycleView`、`$ObservedZ`、`$PassageEnd`、`$PendingRecovery`，都由同一個原始檔編出）；sources 222，只有 `PassageService.java` 不同（`runall-jarcmp-*.txt`）。SHA-256 因此不同（release `61e729dc…`，基準 `2a5d764d…`）。
+  - m5collapse 32（halt 14），與基準相同。32 phases 都 PASS，具名斷言與 step 與 green-7 完全相同（`runall-vs-green7-names.txt`，RESULT=OK），與基準的差異同「具名斷言的比對」的表（`runall-vs-f62c-names.txt`）。`trr` 的 restart 沒有 CME。
+  - log（以 `/WARN]`、`/ERROR]` 計行，`runall-wbcmp-*.txt`）：Full 54／28、legacy 0／0、M5 38／10，則數都與基準相同。M5 的兩行差異是 F6-0 已記錄的數值格式（`PistonBlockEntity` 的 object hash、通道傳送 WARN 的座標寫法），不是新的 WARN，所以沒有要歸屬的變化。四個 gate 的 latest.log 都沒有「跨越之後的 playerdata 存檔」，也沒有 `ConcurrentModificationException`。
+- 本節的 docs commit 在 run-all-1r2 之後，所以 docs commit 之後再跑一次 run-all（run-all-2），結果記在 `fix1/STATUS.md` 與最終回報。
+
+### 偏離派工字面之處
+
+- 第 1 點（存檔失敗的注入）：用 adapter 暫時改 production，沒有新增 Slot 或 mixin。
+- 第 4 點（「在 COMMITTED 之前就存檔」）：`w7` 驗不出，只在 `crossedpending` 驗到寫入沒有確認的那一面（理由見「mutation」）。
+- 第 2 點（`w7` 拿掉 `nativeSaveAtHalt`）：已拿掉；另在跨越之前（不是 halt 之前）讓 U 生成並存檔一次，`trr` 也是。選門者在 U 的 playerdata 仍只來自 production 的存檔（RED 與 `mut-no-save` 證明）。跨越之前的存檔讓 `trr` 開服時磁碟上的門與另一位的位置改變（門 `sealed_x` → `passable_x`，另一位在艙內 JOIN）。
+- `w7`、`trr` 的 restart 分開 JOIN（`ce943f7`），是為了避開 worldgen 的 CME；controller 裁示保留。
+- JUnit、M4 recovery、default 與 M5 的 GameTest 沒有另外單獨跑，以 run-all 的結果為準（run-all 內含這些 gate）。
+- 中途停下與接手：第一位 implementer 在 green-5 之後依 controller 指示停下；第二位 implementer 依接手指示，不調查也不修 CME、不再調整 JOIN 的時序。
+
+### 需要裁示
+
+1. **worldgen 的 CME**（上方「worldgen 的 CME」）：要不要修 production、怎麼修，或寫進已知限制。root 都保留。
+
+### 交給後續
+
+- **F6-2d**：
+  - `trr` 開服時磁碟上的門由 `sealed_x` 變成 `passable_x`（跨越之前存檔）。F6-2c 一節「觀察」第 2 條與「交給後續」F6-2d 那一條的前提已經改變：F6-2-11 不能直接接 `trr` 開服時的門，要讓 SEALED、門帶著量子膜的狀態自己落盤。
+  - M-2（開服時永久 SEALED 的 ERROR），依派工。
+- **F6-3**：`MP:51` 的註解（`w7`「halt 前存檔」）與 `M5TestHooks` CrashPoint 的 Javadoc（`HK:908`「不會回來」；`TICK_END` 時 hook 會回來，halt 在那個 tick 結束時）已經過時，依範圍沒改。
+- **F7**：原版吞下 playerdata 寫檔的 IOException，記的 WARN 不帶 `session=`；`saveCrossedPlayerData` 收不到，那位玩家 crash 之後回到最後一次存下的位置（與存檔丟 RuntimeException 的結果相同）。要不要列為已知限制由 F7 決定。
+- worldgen 的 CME：依使用者裁示。
+
+### root（全部保留）
+
+phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`；gate root 在 `.superpowers/verification/`。逐次的數字與 state 在 `fix1/`（`*-probe-summary.txt`、`*-state.txt`、`*-mutsum.txt`、`green-*-names.txt`、`green-*-details.txt`、`*-warncheck.txt`、`runall*-*.txt`）。
+
+- 結束過的 JVM：第一位 implementer 的 run 由 probe 的逾時處置結束 PID 30300、34820、9064、9440（CME 之後停服卡住，上方）；第二位 implementer 沒有結束任何 JVM。兩位都沒有結束 Gradle daemon（PID 4808）。
+- 取證腳本（`fix1/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`、`names2.py`、`mutsum.py`、`mutations.ps1`、`compile.ps1`、`runall-compare.ps1`、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py` 由 `f6/f62c/` 複製（只改 repo 的相對路徑與註解；`adapter.py` 的 adapter 表改 `adapters_fix1.py`；`mutsum.py` 的 label 前綴改 `fix1-`；`runall-compare.ps1` 的基準改為 `run-all-bb1a1b3e283e44c4a4c3d5b4463fde35`，`base-*-summary.txt` 是同一次 run-all 的 `f6/f62c/runall2-*-summary.txt`）。第一位新寫 `adapters_fix1.py`、`details.py`、`receipts.py`、`chunkstatus.py`；第二位新寫 `warncheck.py` 與 `runall2-compare.ps1`（由 `runall-compare.ps1` 複製，只改輸出檔名的前綴）。`f6/f62c/` 下既有的檔案沒有改動。
