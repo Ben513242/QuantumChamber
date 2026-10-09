@@ -23,6 +23,7 @@
     "ItemStackSuperpositionEntityMixin",
     "ServerWorldEntityAdmissionMixin",
     "EntitySuperpositionTeleportMixin",
-    "PlayerEntityShoulderSuperpositionMixin"
+    "PlayerEntityShoulderSuperpositionMixin",
+    "ServerChunkLoadingManagerStaleUnloadMixin"
   ]
 }
