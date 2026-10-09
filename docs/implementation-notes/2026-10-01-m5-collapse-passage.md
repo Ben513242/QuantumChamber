@@ -6227,3 +6227,134 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 - 結束過的 JVM：14092（開發）、27268（red-1）、36548（red-2）、29608（mutation），全部由 `m5-collapse-probe.ps1` 的逾時處置在核對 commandline（本次的 startupNonce）、jstack 之後結束（`h5/kills.txt`）。沒有結束 Gradle daemon。
 - 取證腳本（`h5/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py` 由 `f6/f62b/` 複製（只加註解、adapter 表改 `adapters_h5.py`）；`runall-compare.ps1`、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py` 由 `f6/f62a/` 複製（基準改為 `run-all-6377619e81164901a8f144d9038e6c6c`，`base-*-summary.txt` 是同一次 run-all 的 `f6/f62a/runall-*-summary.txt`）；新寫 `adapters_h5.py`、`sample-jstack.ps1`、`focused.ps1`、`gate-adapted.ps1`。
+
+## F6-2c Step 0：probe 與 testmod 的整理
+
+- 一位 implementer 完成（controller 的派工 scratchpad `f62cs0-prompt.md`；取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62cs0/`，以下簡稱 `f62cs0/`，`STATUS.md` 是交接摘要）。開工時 HEAD 是 `ce11545`、工作樹乾淨。範圍是 F6-2a 一節「Review 與最終 review」交給 F6-2c Step 0 的 quality Minor 4～7、spec Minor 1 與 `stopping()`／`halt()` 的兩道防線，H5 一節交下的 quality Minor 1～6 與 spec Minor 1，以及 M5 GameTest 的 wall-clock 窗口（H5 與 F6-1 Step 0 的交接）。**沒有新增窗口、chain 或 phase**（仍是 10 條 chain、20 個 phase），**沒有改 `src/main/`**。
+- Commits（依序；每個 commit 只 stage 自己的檔案；重構與行為改變分開）：
+  - 重構（行為不變）：
+    - `5a3eb61` `test: move the H5 chunk unload hooks out of M5TestHooks`（第 11 點後半）
+    - `37ad7ba` `test: break the dependency cycles of the M5 collapse runner`（第 1 點）
+    - `888be1e` `test: build M5 collapse phases with named factories`（第 2 點）
+    - `711b73f` `test: rename the clashing M5 collapse probe types`（第 3 點）
+    - `3ecac5c` `test: share the read of a stopped phase receipt in the M5 collapse probe`（第 10 點）
+    - `3ebe911` `test: report a stale unload reschedule in one witness call`（第 9 點）
+  - 行為改變：
+    - `5fc795b` `test: refuse a second context in the M5 collapse runner`（第 4 點）
+    - `58a96ad` `test: drop the probe hooks when stopping begins and refuse a halt after it`（第 5 點）
+    - `784ce48` `test: release the held chunk reads on the crash shutdown path too`（第 7 點）
+    - `57a3bad` `test: judge the unload after the take-back for real`（第 8 點）
+    - `aec5e1a` `test: bound four M5 PREPARE waits by the production WARN threshold`（第 13 點）
+  - 只改註解：`319d4b9` `test: correct stale Javadoc in the M5 collapse probe and its mixins`（第 6 點、第 11 點前半、第 12 點的 `UC:40`）
+  - 文件：`8aafd99` `docs: describe the F6-2c Step 0 probe clean-ups in the verification README`（README「M5 collapse probe」一節、第 12 點的 README:211，與「新增 M5 GameTest」一節的一條）；本節由其後的 docs commit `docs: record the F6-2c Step 0 in the M5 note` 加入。
+- 中間 commit 的編譯與執行：每個程式 commit 之前都先在工作樹編譯 `compileJava compileTestJava compileTestmodJava compileClientProbeJava`（`f62cs0/c1-`～`c12-compile.log`，都 BUILD SUCCESSFUL）。`3ebe911`（mixin 裡的 lambda）與 `57a3bad` 在 commit 之前另以工作樹跑過 `-Only unload`（`dev1-unload` `d00929d284814734a9e444ab66cb1356`、`dev2-unload` `e7a379a326084c399939905cf0b464f3`，都 2/2 PASS；`*-probe-state.txt` 記下的 blob 與 commit 相同，`f62cs0/commit-vs-dev-blobs.txt` 3/3，不算 GREEN）。
+- 只改了派工允許的路徑：testmod 的 probe 類別（`M5CollapseRun`、`M5CollapseRecoveryProbe`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapseDormantChains`、`M5CollapseLiveChain`、`M5CollapseRevisitChains`、`M5CollapsePassage`、`M5CollapseProjectionLoad`、`M5CollapseUnloadChain`；`Passage`、`ProjectionLoad` 只有 accessor 的機械替換）、`M5TestHooks`、新檔 `M5ChunkUnloadHooks`、mixin（`ChunkReadHoldMixin`、`ChunkUnloadTaskWitnessMixin` 的呼叫端與 Javadoc；四個 crash window mixin、`ProjectionWriteFaultMixin`、`MaterializeFaultMixin` 只改 Javadoc）、`M5UniverseGameTests`（只有第 13 點的四個 test）、`scripts/verification/README.md`（「M5 collapse probe」一節與「新增 M5 GameTest」一節的一條）。**沒有改** `src/main/`、`build.gradle`、`fabric.mod.json`、`quantumchamber-test.mixins.json`、ps1、`.github/`、其他 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。
+- 行號以 `8aafd99` 為準。`RUN`＝`M5CollapseRun`，`PR`＝`M5CollapseRecoveryProbe`，`WIN`＝`M5CollapseWindows`，`FIX`＝`M5CollapseFixture`，`UC`＝`M5CollapseUnloadChain`，`HK`＝`M5TestHooks`，`CUH`＝`M5ChunkUnloadHooks`，`WM`＝`ChunkUnloadTaskWitnessMixin`，`M5U`＝`M5UniverseGameTests`。
+
+### 處置與位置
+
+| 點 | 處置 |
+| --- | --- |
+| 1（F6-2a quality Minor 4） | RUN↔WIN：`RUN:451` `armCrash(window, condition, describe, evidence)` 多一個 `Function<Object, String> describe`，窗口表以 `M5CollapseWindows::describe` 傳入（`WIN:154`），runner 不再呼叫 `M5CollapseWindows`。RUN↔PR：`Configuration`（`RUN:163`，整段原樣搬移，只去掉 `M5CollapseRun.` 的前綴，`f62cs0` 以字串比對確認）與 `PhaseFactory`（`RUN:145`）移到 runner，PR 只剩 phase 表與 `onInitialize`（`PR:69`）。低優先的唯讀 accessor 也做了：`server`、`source`、`journal`、`capture`、`startupLog`、`ticks` 改成 private，另有 `server()`～`ticks()`（`RUN:232-247`）；chain 端的 126 處 `run.<欄位>` 以機械替換改成呼叫（只換 `run.` 開頭、後面沒有括號的，編譯器保證沒有漏）。改動面是 8 個檔、但只有呼叫形式，所以做了。 |
+| 2（quality Minor 5） | `Phase` 由 record 改成 private 建構子的 final class（`RUN:78`）：`Phase.stop(steps)`／`Phase.halt(steps)` 帶 step，`beforeStart(…)`、`started(…)`、`everyTick(…)`、`afterStop(…)` 以名稱加上動作，每個只能指定一次（再指定丟出），沒有指定的是 `NOTHING`。沒有位置參數的建構子可以呼叫，所以四個同型別的動作不會因換位置而靜默編譯。7 個呼叫端逐一改寫。 |
+| 3（quality Minor 6） | `RUN.Condition` → `CheckedCondition`（`RUN:139`，比照 `Checked`：可以丟出 checked 例外）；`WIN.Evidence` → `BeforeHalt`（`WIN:55`，與那一列的欄位 `beforeHalt` 同名）。`WIN.Condition` 與 `RUN.HaltEvidence` 保留，兩組都不再同名。 |
+| 4（quality Minor 7） | `RUN:253` `context()` 已有 Context 時丟出 `IllegalStateException`（不覆蓋）。fixture 在 `onInitialize` 的 phase factory 裡登記，所以重複登記讓開服之前就失敗（mutation 見下）。 |
+| 5（兩道防線） | 第一道：`SERVER_STOPPING` 另登記一個排在 default phase **之前**的 listener `stoppingBegins`（`RUN:349`，phase `BEFORE`，`RUN:65`）：記下 `stoppingSeen`、以 `removeInstalled()`（`RUN:440`，`stop()` 也改用它）移除 probe 端安裝的全部 hook。原本的 AFTER phase `stopping()` 只執行 `onStopping` 的動作。第二道：`halt()` 在停服已開始時把 `stoppingSeen：停服已開始（SERVER_STOPPING），不是 crash` 加進 `refused`（`RUN:489`），HALT_REFUSED、exit 78。為什麼放在 default phase 之前，而不是派工字面的 `stopping()`：production 的 `SERVER_STOPPING` listener（走廊、疊加、宇宙 lifecycle）在 default phase，AFTER phase 的 `stopping()` 之前執行；若在那裡才移除，production 的停服動作碰到 crash 窗口時 hook 還在、`stoppingSeen` 也還沒設，兩道防線都擋不到。`stoppingSeen` 改由這個 listener 寫，`final.json` 的意義不變。mutation 見下。 |
+| 6（F6-2a spec Minor 1） | `HK:879` CrashPoint 的 Javadoc：動作在 `M5CollapseRun.armCrash`，一律 halt（77 或 78），不會回來，取證丟出時不 halt；`HK` 類別說明的 crash 點一條同步。四個 crash window mixin 的「只由 `M5CollapseRecoveryProbe` 安裝」改成「只由 M5 collapse probe 安裝（`M5CollapseRun.armCrash` 經 `M5CollapseRun.install`）」。`ProjectionWriteFaultMixin:15`、`MaterializeFaultMixin:17`：GameTest 的 `M5GameTestSupport.install*` 或 probe 的 `M5CollapseRun.install`。`ProjectionWriterCrashWindowMixin:23-27`：寫明 F6-2a 的實測（runId `e5ea539b…`）——fault 取消的那一次，這個 hook（`PROJECTION_REPAIRED`）不會被呼叫；沒有 fault、fault 用完時照常呼叫一次。 |
+| 7（H5 quality Minor 1） | 選擇 `while (server.isRunning() && !server.isStopped())`（`CUH:137`），不改成 `run.onStopping` 延遲放行。理由：原版 `runServer` 的兩條停服路徑都在 `shutdown()` 之前把狀態改掉（請求停服：`stop()` 設 `running=false`；crash report：catch 之後 finally 設 `stopped=true`，`running` 仍是 true；反編譯原始碼 `MinecraftServer.java:700-701`、`:764-779`），一個條件就涵蓋兩條路徑，請求停服的時序（GREEN 的條件 (M)）完全不變；改成 `onStopping` 會讓放行改由 AFTER phase 的 listener 起算，GREEN 的時序也跟著變。crash 路徑以 adapter 模擬（下一節的 `sim-crash`）：讀檔放行、停服完成；換回舊條件（`sim-crash-old`）就卡住逾時。 |
+| 8（H5 quality Minor 2） | `UC:216` `unloadedAfterTakeBack`：成立或等滿 600 tick 時，以同一個條件 `run.expect("unloadedAfterTakeBack", unloaded, …)`（`UC:219`），比照 `staleTaskAwaited`；失敗訊息與原本手寫的 AssertionError 相同。step `staleTaskRan` 改名 `staleTaskAwaited`（`UC:184`）：它等滿 300 tick、沒有執行過也會完成（無條件 cancel 的 mutation 要失敗在 `unloadedAfterTakeBack`），是否真的執行過仍由放在卸載之後的 `staleTaskSeenWhileHeld` 判斷，所以不改成真正的判斷、只改名。cancel-all 的 mutation 仍失敗在 `unloadedAfterTakeBack`（下一節）。 |
+| 9（H5 quality Minor 3） | `WM:41` 把被取回 holder 的重排交給 `CUH:61` `staleReschedule(world, pos, original)`，由它呼叫原本的方法恰好一次；witness（`CUH:182`）比對呼叫前後 server thread 上的本體次數（`serverThreadBodies`，只在 server thread 上讀寫），一次記下 `dropped` 或 `rescheduled`，兩者都以同一個 `pos` 計數。取代原本 `aroundStaleReschedule(world, pos, before)` 的兩次呼叫與跨呼叫的 `pending`／`pendingPos`。等價性：不在 server thread 上時仍只計 `offThread`；原本 `bodyEntered` 只在 server thread 上配對，現在也只比 server thread 的次數；`original` 丟出時照樣計數。GREEN 的數字與 H5 相同（丟棄 400、C 1、照原版重排 0、`bodies` 2762）。 |
+| 10（H5 quality Minor 4） | `RUN:569` `readStoppedReceipt(phase, name)`：`<name>ReceiptPresent`、`<name>ReceiptMatches`、`differentStartupNonce`（`RUN:582` `expectDifferentStartupNonce`）。`FIX:319`（setup 分支）與 `UC:250` 共用；crash 分支在 `crashReceiptClean` 之後呼叫 `expectDifferentStartupNonce`（`FIX:329`），斷言的名稱與順序都不變（下一節的比對）。只有失敗訊息的文字統一。 |
+| 11（H5 quality Minor 5、6） | `FIX:514-516` `ProbeTicket` 的 Javadoc 補一段：上面寫的是 H5（`f25a37d`）之前的行為，忙等已由 `ServerChunkLoadingManagerStaleUnloadMixin` 修正，保留 ticket 是為了不改變既有 phase 的條件。`ChunkReadHold`、`UnloadTaskWitness`、兩個 Slot 與四個靜態入口原樣搬到 `CUH`（`5a3eb61`，`f62cs0` 以字串比對確認方法與類別的程式與 Javadoc 逐字相同），沿用 `M5TestHooks.Slot`；`HK` 去掉它們與 H5 加的 4 個 import，由 1124 行變成 914 行（`319d4b9` 的 Javadoc 之後 918 行）；`CUH` 245 行（`8aafd99`）。mixin 與 unload chain 的呼叫端一起改。 |
+| 12（H5 spec Minor 1） | README:211（`8aafd99` 是 :212）與 `UC:37-38`：jstack 的 server thread 停在 `shutdown → … → unloadChunks` 的卸載佇列排空迴圈，取樣可能落在 `method_60440 → tryUnloadChunk`，也可能落在 `CompletableFuture` 完成之後的 `postFire`。本輪的 RED（下一節）取樣正好落在前者。 |
+| 13（wall-clock 窗口） | 選擇「放寬到 production 的門檻」，不改成以預載完成起算：`M5U:3056`（T-POWER）、`:1538`、`:1596`、`:1836`（D1 的準備）的 400 tick 改成 600，`tickLimit` 各加 200（1100、1400、1700、1400），維持原本的餘裕。理由：PREPARE 從進入起超過 600 tick（`CollapseService.WAIT_WARN_TICKS`，§9.1）時 production 自己記一則 PREPARE 等待的 WARN，T-POWER 又斷言 `noWarnOrError`；超過 600 tick 的 test 本來就會失敗，再放寬沒有意義。以預載完成起算只把同一段等待切成兩段，總長仍要受同一個 WARN 限制，而且預載之後的 checkpoint 還要等 entity storage（也是 wall-clock），不能只靠「預載完成」切齊。600 是實測最大值（約 380 tick）的 1.6 倍。斷言與 test 集合都沒有改；其他 test 的 400 tick 窗口沒有動（派工只限這四處）。README「新增 M5 GameTest」一節加一條寫法（README:132）。 |
+
+### 斷言名稱的比對
+
+以 `f62cs0/names2.py`（新寫，比照 `f6/f62a/names.py`：只比基準有的 phase，斷言與 step 都可改名，另核對每個斷言值都是 true、順序與 step 清單）比對（`f62cs0/green-*-vs-*-names.txt`，改名表 `renames-f62cs0.json`）：
+
+- F6-2a GREEN `8d898477d7624f70a6bbd4725685c929`（18 phases）→ 本節 green-1、green-2：18 個 phase 的具名斷言**名稱、數目、順序與 step 完全相同**，全部成立，沒有新增。
+- H5 GREEN `81828f6416804ba58fedd6cc25c5e919`、`4486dcbc6bb24a42a63d8caeacbe88da`（unload 2 phases）→ 本節 green-1、green-2：斷言名稱、數目、順序相同、全部成立（takeback 9、shutdown 10）。改名只有 step：`unload-takeback` 的 `staleTaskRan` → `staleTaskAwaited`。
+- RESULT 四組（2 個 GREEN × F6-2a、H5 兩次）都是 OK。
+
+### RED、GREEN、mutation 與 crash 路徑的模擬
+
+都套在 `8aafd99`（乾淨）上（`f62cs0/mutations.ps1` → `red.ps1`＋`adapter.py`，adapter 表 `f62cs0/adapters_f62cs0.py`；`old` 在檔內必須恰好出現一次），以 `-Only` 只跑相關的 chain，跑完還原並以 `git hash-object` 核對（`f62cs0-<adapter>-restored-state.txt` 的 porcelain 都是空的）。摘要在 `f62cs0/f62cs0-<adapter>-mutsum.txt`。
+
+| 輪次 | 改動 | runId | 結果 |
+| --- | --- | --- | --- |
+| **GREEN green-1** | `8aafd99`，乾淨 | `40b260448d74471b9050fdf15a1bb95e` | 20/20（8 halt＝77、12 stop＝0） |
+| **GREEN green-2** | `8aafd99`，乾淨 | `b32876d1a15c42b7ad7c8ee47d9d25ed` | 20/20 |
+| H5 RED `no-mixin` | production：拿掉 `ServerChunkLoadingManagerStaleUnloadMixin` 的登記（原樣沿用 H5） | `b41a45f983ad4e33a954312839f1d375` | takeback PASS；shutdown 停服卡住，逾時處置（idle 90.3 秒，PID 18980，`commandLineMatched` true）判 FAIL。jstack 的 server thread：`MinecraftServer.shutdown → ServerChunkManager.tick → ServerChunkLoadingManager.tick → unloadChunks → CompletableFuture$Completion.run → UniRun.tryFire → method_60440 → (witness 的 wrapper) → CUH.staleReschedule → tryUnloadChunk → thenRunAsync`（cpu 89.8 秒／elapsed 95.6 秒，RUNNABLE）；log 停在 `Saving worlds` 與保留的放行（reads 337） |
+| 第 8 點 `cancel-all` | production mixin 無條件 cancel（原樣沿用 H5） | `15728d003c74414d90d4029226eeb509` | takeback 失敗在 `unloadedAfterTakeBack`（「移除全部 ticket 之後 600 個 tick，被取回的 holder 仍沒有卸載：current=null toUnload=holder@…」）；之後停服卡在 `shutdown → runTasksTillTickEnd`（`shouldDelayShutdown`），逾時處置（PID 15224）。`final.json` 沒有寫出，失敗在 `events.jsonl` 的 `failure` 與 run root 的 `latest.log` |
+| F6-1 `mut-redraw` | probe：`FIX.readCrashReceipt`（第 10 點改到的方法）比較對象換成多一筆 ledger entry 的收據（原樣沿用 F6-2a） | `ff0874d3bbc145afa7670a337556ef23` | w2-crash 77；w2-restart 失敗在 `noRedraw` |
+| 第 5 點 `mut-stop-halt2` | probe：拿掉第一道防線（`stoppingBegins` 不移除 hook）；W2 crash 裝上 crash 點之後不經 `stop()` 直接請求停服，`SERVER_STOPPING` 的 AFTER phase 以符合 W2 條件的 detail（APPENDED 的 `Lookup`）呼叫 crash 窗口 | `978120127e0b43e9885101f19dddb421` | w2-crash status `HALT_REFUSED`（`refused`＝`stoppingSeen：停服已開始…`，hit 1、failures 空）、exit 78；`MP` 判 FAIL |
+| 對照 `mut-stop-halt2-nogate` | 同上，另拿掉 `halt()` 的 stoppingSeen 守門 | `fd99d54150e347e79b5cfb53eb1299f1` | w2-crash exit 77、status HALT：`MP` 收下這個停服途中的 halt；w2-restart 才失敗在 `restartedCollapsing`（state=MEASURED：塌縮根本沒有提交）。所以這道守門是唯一擋得住的地方 |
+| 第一道防線 `mut-stop-hooks2` | 只加上同一個觸發（兩道防線都在） | `03a4f121aaec457187ca3f31e0d1f72e` | 停服一開始就移除 crash 點，觸發不到：沒有 `halt.json`，正常停止寫 FAIL 的 `final.json`（failures 空），`MP` 判 FAIL「預期 halt 的 phase 正常停止了」 |
+| 第 4 點 `mut-context-twice` | probe：unload chain 的建構子登記兩次 Context | `aee53b62e3dd4ed2bc790e4a9e2b4f0c` | `onInitialize` 丟出（`Could not execute entrypoint stage 'main'` ← `IllegalStateException: M5 collapse probe 的 runner 已有 Context（M5CollapseUnloadChain），不覆蓋`），開服之前就失敗，`MP` 判 FAIL（沒有 receipt） |
+| 第 7 點 `sim-crash` | probe：`unload-shutdown` 在取回之後 2 tick 不請求停服，改送一個 creationTicks 設在 10 tick 之前的 `ServerTask`，丟出 `AssertionError`（`ThreadExecutor.executeTask` 只接住 Exception；不從 `END_SERVER_TICK` 拋出），走原版的 crash report 路徑；step `stop` 的上限放寬到 40 tick | `60ad7358bf0e4420a75e1c30fb902b9b` | `Encountered an unexpected exception` → crash report → `Stopping server`、`Saving worlds` → 讀檔保留放行（reads 992）→ `All dimensions are saved`、`M3_UNIVERSE_STOPPED_VERIFIED`；`final.json` 寫出（`stoppingSeen`、`stoppedSeen` true，沒有 `stopRequested`，`shutdownMillis` 676，丟棄 400、C2 1），status FAIL（step 沒有完成，預期），沒有逾時 |
+| 第 7 點對照 `sim-crash-old` | 同上，另把 `CUH.releaseAfterStop` 換回只看 `isRunning` | `892fdc28ce654557bd0d42c75d1a6870` | 讀檔永遠不放行，log 停在 `Saving worlds`；server thread 停在 `shutdown → runTasksTillTickEnd → waitForTasks`（TIMED_WAITING）；逾時處置（PID 3888）判 FAIL |
+
+- GREEN 的細節（`f62cs0/green-details.txt`）：halt 的 server tick green-1 w1 51、w2／w3／w5 6、w4 41、w4b 42、w6 40、w6x 34（green-2：52／6／42／32／33／34），`refused` 都是空的。unload：takeback 丟棄 400、C1 1、照原版重排 0、`bodies` 2762、停服 656／699 ms；shutdown 丟棄 400、C2 1、照原版重排 0、停服 477／501 ms，停服時保留中的讀檔 300／277。
+- 不採計：`mut-stop-halt`、`mut-stop-halt-nogate`、`mut-stop-hooks` 的第一版（`7c7a2e690cf14f0fa3c79259e7a313ba`、`9bc8bfa7cc4045008dad889d5737c7a9`、`154dd143fc2a4fd59af01b2c8fa18fb2`）：adapter 以空的 value 建 APPENDED 的 `Lookup`，建構子丟出「只有 FOUND／APPENDED 帶 entry」，例外從 `SERVER_STOPPING` 的 listener 拋出、停服中止（`Exception stopping the server`），三次都沒有 receipt。改成 value 為這條 chain 的 UniverseId（`…2`）重跑。這是 adapter 的錯，不是被測的程式。
+
+### run-all
+
+- `8aafd99`，工作樹乾淨（`f62cs0/run-all-1-state.txt` 的 porcelain 是空的）：`run-all-fa41f4617e64406fb964e742a2de2ba7`（Full `gate-full-76bf0b98f98142b6b6b5b46916424965`；M5 `gate-m5-gametest-d6d87c7a25784e4fa45a8dfffe288ae1`；M4 recovery 彙整 `recovery-run-c524ab213ac945f3871bc37e2b743897.json`；M5 collapse 彙整 `collapse-run-912c40b6526b4c1588307bdabc1260cc.json`；console `f62cs0/run-all-1-console.txt`）。全程 21 分 11 秒（12:02:50～12:24:01），其中 M5 collapse 步驟 5 分 15 秒。
+- `END ALL exit=0 HEAD=8aafd996793f829029bad5796d984d9107a7d672`。`SUMMARY default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=656 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=430entries/383classes sources=222 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=20 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-35096bebd2e84f51a9bc7ace0dbbab27`（H5，`f25a37d`）逐項比較（`f62cs0/runall-compare.ps1`，輸出 `f62cs0/runall-*.txt`）：**沒有差異**。
+  - default 175/175（`_windows` 89）、M5 60/60：testcase 集合與結果都與基準相同（`runall-default-setcmp.txt`、`runall-m5-setcmp.txt`：identical=True）。legacy 1/1、perTest 52＋1、JUnit 656（skipped 2）、windowsCheckpoint 17、M3 4＋5、mainOnly PASS、CI 兩個 step PASS 都不變。M4 recovery 24：phase 的名稱與順序與基準相同，status PASS（`dormant-reentry` 也是）。m5collapse 20（halts 8）。
+  - release 430 entries／383 classes，**SHA-256 與基準相同**（`2a5d764d…`）；sources 222，沒有新增、刪除或內容不同的 entry（`runall-jarcmp-*.txt` 沒有 CHANGED），SHA-256 不同只是 zip 的中繼資料。`testmodHits=0`：兩個 JAR 都沒有 `M5ChunkUnloadHooks` 或任何 testmod 類別。
+  - log（`runall-wbcmp-*.txt`）：Full WARN／ERROR 54／28 與基準相同；legacy 0／0；M5 38／10 不變（一行差異是已知的 `PistonBlockEntity` object hash）。
+  - run-all 內的 M5 collapse：20 phases 都 PASS，具名斷言與 step 與本節的 green-1、F6-2a GREEN、H5 GREEN 比對都 OK（`runall-vs-*-names.txt`）；halt 的 server tick w1 54、w2／w3／w5 6、w4 46、w4b 31、w6 40、w6x 36；unload 丟棄 400、C 1、照原版重排 0，停服 676／462 ms（`runall-collapse-details.txt`）。M5 GameTest 的預載等待中位數 86、最大 221 tick。
+  - default run 的 classload（`gate-full` 的 `classload-30084.log`）：`M5CollapseRecoveryProbe`（與 phase 表的 lambda）、`M5CollapseRun`、`M5CollapseRun$Configuration`、`$Phase`、`$PhaseFactory`（F6-2a 時是 `M5CollapseRecoveryProbe$Configuration`、`$PhaseFactory`），另有 `M5ChunkUnloadHooks`（H5 的 mixin 在 default run 也會呼叫它的靜態入口，之前是同一個入口在 `M5TestHooks`）；沒有 fixture、窗口表、chain。phase 屬性不存在時都不建立、不註冊 listener。
+
+### Gate 與證據
+
+| 輪次 | HEAD／工作樹 | Root（runId 或 gate root） | 結果 |
+| --- | --- | --- | --- |
+| 開發 | `3ebe911`、`57a3bad` 的內容（commit 前的工作樹，blob 相同） | `d00929d284814734a9e444ab66cb1356`、`e7a379a326084c399939905cf0b464f3`（`-Only unload`） | 都 2/2 PASS（不算 GREEN） |
+| **GREEN green-1** | `8aafd99`，乾淨 | `40b260448d74471b9050fdf15a1bb95e` | 20/20；名稱比對 OK |
+| **GREEN green-2** | `8aafd99`，乾淨 | `b32876d1a15c42b7ad7c8ee47d9d25ed` | 20/20；名稱比對 OK |
+| M5 GameTest | `8aafd99`，乾淨 | `gate-f62cs0-m5-1-31614e15fd13457d90b27ae0e44cc04a`（**不採計**）、`gate-f62cs0-m5-2-3734c6810dae4230ad8075a10d6a132c` | 前者 FAIL（discovery ledger 的 AccessDenied，見「觀察」第 1 條）；重跑 60/60，集合與基準相同 |
+| RED／mutation／模擬 | `8aafd99`＋adapter（都已還原） | 上一節 | 都失敗在目標或符合預期 |
+| run-all | `8aafd99`，乾淨 | `run-all-fa41f4617e64406fb964e742a2de2ba7` | `END ALL exit=0`、`m5collapse=20`；與基準逐項相同 |
+
+- JUnit、M4 recovery、default 與 legacy GameTest：以 run-all 的同一次結果採計（JUnit 656、failures 0、errors 0、skipped 2；M4 recovery 24/24）。
+- 失敗或不採計的 root（都保留）：`gate-f62cs0-m5-1-…`；mut-stop 三個第一版（上一節）；其餘失敗的 root 都是刻意的 RED、mutation 或對照。
+
+### 偏離派工字面之處
+
+1. **第 5 點的第一道防線不在 `stopping()` 裡**：放在排在 default phase 之前的另一個 `SERVER_STOPPING` listener（理由見處置表）。`stopping()` 仍在 AFTER phase 執行 `onStopping` 的動作，順序不變。
+2. **第 8 點的 `staleTaskRan` 只改名**：改成真正的判斷（要求殭屍執行過）會讓 cancel-all 的 mutation 先失敗在這個 step，而不是派工要求的 `unloadedAfterTakeBack`；「是否執行過」已由 `staleTaskSeenWhileHeld` 在卸載的斷言之後判斷。
+3. **第 13 點用放寬，不用「以預載完成起算」**（理由見處置表）。
+4. **mutation 多做了對照組**：第 5 點另有 `-nogate`（證明只有這道守門擋得住）與 `mut-stop-hooks2`（第一道防線）；第 7 點另有 `sim-crash-old`（換回舊條件就卡住）；第 4 點也做了 mutation（行為改變的守門）。
+5. **JUnit、M4 recovery、default GameTest 以 run-all 的同一次結果採計**，沒有在 run-all 之外另跑（比照 F6-2a）；M5 GameTest 因為改了 `M5U`，另在 run-all 之前跑了一次（見「Gate 與證據」）。
+
+### 需要裁示
+
+- 無。
+
+### 觀察（未修改）
+
+1. **Windows 原子移動的 AccessDenied 這次落在 discovery ledger**：`gate-f62cs0-m5-1-31614e15fd13457d90b27ae0e44cc04a` 的 `ready_write_failure_restores_backs_off_and_opens_the_door_plainly`（本輪沒有改它）在 `CollapseAuthorities.appendDiscovery` 的 `quantumchamber_universe_discovery.dat.<n>.tmp -> …discovery.dat` 遇到 `AccessDeniedException`，RESOLVE 進 SEALED(ALLOCATION_IO_FAILED)，之後的 test 因衛生規則連帶失敗（54 個）。之前記錄過 journal（F4a-0）與 allocation ledger（H5），這是 discovery ledger 第一次；owner 是 F6-3。重跑 `gate-f62cs0-m5-2-3734c6810dae4230ad8075a10d6a132c` 60/60，testcase 集合與 H5 的基準相同（`m5-2-setcmp.txt`）。
+2. **M5 GameTest 的預載等待**（`f62cs0/m5-preload-waits.txt`）：m5-2 是 n=43、中位數 131、最大 323 tick，與 H5 的幾次（中位數 92～227.5、最大 251～384）同一個範圍。
+3. `stopping()` 執行 `onStopping` 的動作時不接例外（Javadoc 寫「action 自己收下失敗」）。不採計的第一版 mutation 就是 adapter 的動作丟出、停服中止、沒有 receipt；現有的動作（關閉連線、load-sync 的觀察、unload chain 的計時）都自己接住或不會丟出，所以沒有改。若 F6-2c 本體要在 `onStopping` 放會丟出的動作，應包在 `guarded` 類的 try 裡。
+4. 其他 test 也有以 RESOLVE 起算、400 tick 等 PASSAGE_READY 的窗口（`M5U:2811`、`:2919`、`:3011`、`:3111`、`:3170`、`:3214`、`:3291`、`:3417`、`:3583`、`:3752`、`:3969`、`:4058`，共 12 處），同樣吃 wall-clock 的預載；本輪只改派工列出的四處。
+
+### 交給後續
+
+- **F6-2c 本體**：
+  - 加窗口與 chain 照 README「新增 phase」：`Phase.stop(steps)`／`Phase.halt(steps)` 加具名的動作；前一個 phase 是正常停止時用 `run.readStoppedReceipt(phase, 名稱)`；chain 讀 runner 的狀態用 `run.server()` 等 accessor。
+  - F6-2a quality Minor 1 與給 W7、多人的建議（`AtRestart` 的擴充、`passage.steps` 拆段、`End.participants` 逐人）仍是 F6-2c 本體的範圍，本節沒有動。
+  - `onStopping` 的動作要自己接住例外（「觀察」第 3 條）。
+- **F6-2d、F6-2e**：`stoppingSeen` 之後的 halt 一律 HALT_REFUSED；需要「停服途中」的窗口時，不能用 crash 點，要另想做法（例如在停服之前的程式點 halt）。
+- **F6-3**：Windows 原子移動的 AccessDenied（「觀察」第 1 條，這次是 discovery ledger）；其他 test 的 400 tick 預載窗口（「觀察」第 4 條），可以比照本節改成 600 tick。
+- **F7**：README「預期結果」的 M5 collapse 列（H5 spec Minor 2）沒有動，仍交給 F7。
+
+### root（全部保留）
+
+phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`；gate root 在 `.superpowers/verification/`。逐次的數字與 state 在 `f62cs0/`（`*-probe-summary.txt`、`*-state.txt`、`*-mutsum.txt`、`green-*-names.txt`、`runall-*.txt`）。
+
+- 結束過的 JVM：18980（no-mixin）、15224（cancel-all）、3888（sim-crash-old），全部由 `m5-collapse-probe.ps1` 的逾時處置在核對 commandline（本次的 startupNonce）、jstack 之後結束（`f62cs0/kills.txt`）。沒有結束 Gradle daemon。
+- 取證腳本（`f62cs0/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`、`gate-adapted.ps1`、`runall-compare.ps1`、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py` 由 `f6/h5/` 複製（只加註解；`adapter.py` 的 adapter 表改 `adapters_f62cs0.py`；`runall-compare.ps1` 的基準改為 `run-all-35096bebd2e84f51a9bc7ace0dbbab27`，`base-*-summary.txt` 是同一次 run-all 的 `f6/h5/runall-*-summary.txt`）；`names.py`、`mutsum.py`、`commitcheck2.ps1` 由 `f6/f62a/` 複製（只改註解與 label 前綴；`names.py`、`commitcheck2.ps1` 最後沒有用到：比對改用 `names2.py`，各 commit 的編譯改在 commit 之前的工作樹做）；新寫 `adapters_f62cs0.py`、`mutations.ps1`、`names2.py`。`f6/h5/`、`f6/f62a/` 下既有的檔案沒有改動。
