@@ -81,7 +81,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         chunk = TAKE_BACK;
         var steps = new ArrayList<>(zombieSteps());
         steps.addAll(List.of(
-                new Step("staleTaskRan", STALE_WAIT_TICKS + 1, this::staleTaskRan),
+                new Step("staleTaskAwaited", STALE_WAIT_TICKS + 1, this::staleTaskAwaited),
                 new Step("readsReleased", 1, () -> { hold.release(); return true; }),
                 new Step("loadedAgain", 2400, this::loadedAgainThenReleased),
                 new Step("unloaded", UNLOAD_WAIT_TICKS + 1, this::unloadedAfterTakeBack),
@@ -174,8 +174,12 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
 
     // ---- unload-takeback ----
 
-    /** 殭屍在 refCount &gt; 0 時執行過（witness：被丟棄或照原版重排至少一次），或等滿 {@value #STALE_WAIT_TICKS} 個 tick。之後放行讀檔。 */
-    private boolean staleTaskRan() {
+    /**
+     * 等殭屍在 refCount &gt; 0 時執行過（witness：被丟棄或照原版重排至少一次），最多 {@value #STALE_WAIT_TICKS} 個 tick；等滿而沒有執行過時也完成（無條件 cancel 的
+     * mutation 沒有卸載工作，要讓它失敗在 {@code unloadedAfterTakeBack}）。是否真的執行過由 {@link #staleTaskSeen}（{@code staleTaskSeenWhileHeld}）在卸載的斷言之後判斷。
+     * 之後放行讀檔。F6-2c Step 0（H5 quality Minor 2）：step 由 {@code staleTaskRan} 改名為 {@code staleTaskAwaited}，名稱不再暗示一定執行過。
+     */
+    private boolean staleTaskAwaited() {
         long stale = witness.dropped(chunk) + witness.rescheduled(chunk);
         if (stale < 1 && ++waitedTicks < STALE_WAIT_TICKS) return false;
         staleAtRelease = (int) Math.min(Integer.MAX_VALUE, stale);
@@ -203,16 +207,17 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         return true;
     }
 
-    /** refCount 歸零、ticket 都移除之後，被取回的 holder 照常卸載：不在 {@code currentChunkHolders}、不在 {@code chunksToUnload}，chunk 已卸載。 */
+    /**
+     * refCount 歸零、ticket 都移除之後，被取回的 holder 照常卸載：不在 {@code currentChunkHolders}、不在 {@code chunksToUnload}，chunk 已卸載。成立，或等滿
+     * {@value #UNLOAD_WAIT_TICKS} 個 tick 時，以同一個條件斷言（F6-2c Step 0，H5 quality Minor 2：比照 {@link #staleTaskAwaited}，不再以寫死的 true 記下）。
+     */
     private boolean unloadedAfterTakeBack() {
-        if (current() == null && toUnload() == null && !run.source().getChunkManager().isChunkLoaded(chunk.x, chunk.z)) {
-            run.expect("unloadedAfterTakeBack", true, () -> "");
-            zombie.put("unloadedTick", run.server().getTicks());
-            return true;
-        }
-        if (++waitedTicks < UNLOAD_WAIT_TICKS) return false;
-        throw new AssertionError("unloadedAfterTakeBack：移除全部 ticket 之後 " + UNLOAD_WAIT_TICKS + " 個 tick，被取回的 holder 仍沒有卸載：current=" + identity(current())
+        boolean unloaded = current() == null && toUnload() == null && !run.source().getChunkManager().isChunkLoaded(chunk.x, chunk.z);
+        if (!unloaded && ++waitedTicks < UNLOAD_WAIT_TICKS) return false;
+        run.expect("unloadedAfterTakeBack", unloaded, () -> "移除全部 ticket 之後 " + UNLOAD_WAIT_TICKS + " 個 tick，被取回的 holder 仍沒有卸載：current=" + identity(current())
                 + " toUnload=" + identity(toUnload()) + " holder=" + identity(holder) + " refCount=" + holder.getRefCount() + " unloadQueue=" + queue().size());
+        zombie.put("unloadedTick", run.server().getTicks());
+        return true;
     }
 
     /** 放在「照常卸載」之後：殭屍確實在 refCount &gt; 0 時執行過（修正前是重排，修正後是被丟棄；witness 的分項另記在 receipt）。 */
