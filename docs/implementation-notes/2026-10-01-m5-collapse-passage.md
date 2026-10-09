@@ -6081,6 +6081,41 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - `scripts/verification/`：`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；README 只改「M5 collapse probe」一節。
   - **沒有改** `build.gradle`、`fabric.mod.json`、`gates.ps1`、`main-oracle.ps1`、`ci-rule-check.ps1`、`m4-recovery-probe.ps1`、`.github/`、既有的 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。probe 既有的 ticket 寫法維持 F6-1 的 exp-c（`M5CollapseFixture.holdProjectionChunk` 與 `ProbeTicket` 沒有變更）。main-only oracle 與 artifact 檢查不需要調整。
 - 行號以 `f25a37d` 為準。`MX`＝`ServerChunkLoadingManagerStaleUnloadMixin`，`UC`＝`M5CollapseUnloadChain`，`HK`＝`M5TestHooks`，`WM`＝`ChunkUnloadTaskWitnessMixin`，`HM`＝`ChunkReadHoldMixin`。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 5）。
+    - reviewer 逐一對照反編譯的原版：`tryUnloadChunk` 只有兩個呼叫點，`:483` 的 put 之後與 `:510` 的 lambda 重排，mixin 在兩處都語意不變。
+    - (Z)、(M) 都忠實重現：GREEN 保留的讀檔數 992，與 F6-2b vr-hold 相同。
+    - RED 失敗在目標：另做的取樣頂端是 `UnloadTaskWitness.count`，它只有殭屍重排時才會走到。
+    - takeback 在修正前後都成立；witness 不依賴注入順序；release 的 `if_acmpeq` 與 refmap 都正確。
+    - 兩次不採計的 M5 gate 失敗與修正無關。這是統計上的對照，不是因果證明。
+    - **`git checkout --` 沒有造成遺失**：blob 一一對上，RED、GREEN 的工作樹就是 commit 的內容。
+    - Minor：
+      1. README:211 與 `UC:40` 寫「jstack 停在 `unloadChunks → tryUnloadChunk`」，但兩次 `timeout.json` 實際停在 `postFire`；
+      2. README:253「預期結果」表的 M5 collapse 列沒有更新，也沒有 owner；
+      3. 下方 RED 表「開發」那一列的措辭；
+      4. 「不採計」那一段把 allocation ledger 的 AccessDenied 寫成「F4a-0 記錄過」；
+      5. 偏離要記錄。
+  - quality review Approved（Critical 0、Important 0、Minor 6），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - mixin 最小又正確：沒有 `@Overwrite`、`@Redirect`，也不依賴 local；掛在有名稱的方法上，不掛在 synthetic lambda。
+    - `Thread.sleep(1000)` 穩定：原版要落後超過 2 秒才會跳過 tick；實測再載入時仍落後約 860 ms。
+    - Minor：
+      1. `HK:1014-1024`：crash 路徑（`stopped=true` 但 `running` 仍是 true）永遠不放行保留的讀檔，只能等 90 秒逾時；
+      2. `UC:212` 的 `unloadedAfterTakeBack` 條件寫死成 `true`；step `staleTaskRan` 等滿 300 tick 時也會完成；
+      3. witness 的 API 用旗標參數加跨呼叫的 `pending` 狀態，`rescheduled` 與 `dropped` 的計數 key 不一致；
+      4. `UC:245-256` 的 `readTakeBackReceipt` 與 `M5CollapseFixture:318-334` 重複；
+      5. `M5CollapseFixture:512-517` 的 `ProbeTicket` Javadoc 沒有指回 H5；
+      6. `M5TestHooks` 增長到 1124 行，新的 hook 應另外成檔。
+  - **偏離紀錄**（spec Minor 5）：
+    - implementer 在開發中用過一次 `git checkout --`，違反 AGENTS 的長期規則。還原的是自己對 `quantumchamber.mixins.json` 的開發改動；那個檔開工時是乾淨的，reviewer 以 blob 核對，確認沒有遺失或錯誤。
+    - 之後的派工重申：不用 `git checkout --`。還原暫時改動時，用 adapter 加上 blob 核對，或用 Edit。
+  - controller 處置：不開 fix round。
+    - quality Minor 1～6 與 spec Minor 1 交給 **F6-2c 的 Step 0**，這些都是 probe／testmod 的整理。
+    - spec Minor 2 交給 **F7**，和 README 其他的預期數字一起更新。
+    - spec Minor 3、4 由 controller 在下方更正。
+  - **H5 完成**：range `da6e043..f1524a7`，之後接 controller 的 docs commit。
+    - code：`a6abec5`、`f25a37d`；
+    - docs：`f1524a7`；
+    - 最終 run-all：`run-all-35096bebd2e84f51a9bc7ace0dbbab27`，`END ALL exit=0`（`f25a37d`）。
 
 ### production mixin
 
@@ -6122,7 +6157,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 | **GREEN green-1** | `f25a37d`，乾淨 | `81828f6416804ba58fedd6cc25c5e919` | 2/2 PASS |
 | **GREEN green-2** | `f25a37d`，乾淨 | `4486dcbc6bb24a42a63d8caeacbe88da` | 2/2 PASS |
 | mutation cancel-all | `f25a37d`＋adapter（已還原，blob 核對） | `bc229ab8b26a4456aac19cd6b8104ba2` | takeback FAIL 在 `unloadedAfterTakeBack`；之後停服也卡住，逾時處置（PID 29608） |
-| 開發（不採計） | `da6e043`＋工作樹 | `f6dca8737876445380c15873a133320a`（只有測試）、`48f7c152126a4c1ebbb7534d12f03b25`（測試＋mixin） | 前者同 RED（PID 14092）；後者 2/2 PASS。之後把 witness 由 ThreadLocal 改成只在 server thread 上的欄位（前者的 jstack 取樣落在 ThreadLocal 裡），再 commit |
+| 開發（不採計） | `da6e043`＋工作樹 | `f6dca8737876445380c15873a133320a`（只有測試）、`48f7c152126a4c1ebbb7534d12f03b25`（測試＋mixin） | 前者同 RED（PID 14092）；後者 2/2 PASS。之後把 witness 由 ThreadLocal 改成只在 server thread 上的欄位（前者的 jstack 取樣落在 ThreadLocal 裡），再 commit（controller 依 spec review Minor 3 更正：改成欄位是在這兩次之間；後者的 state 已經是 commit 版的 blob） |
 
 - RED（舊程式，`a6abec5`）：
   - 「仍會正常卸載、存檔」在舊程式上成立：兩次的 `unload-takeback` 都 PASS（具名斷言 9 個全部成立），`unload-shutdown` 開服時的 `marker-on-disk.json` 都是 `minecraft:gold_block`，`events.jsonl` 走到 `step stop`。
@@ -6146,7 +6181,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 - M5 GameTest 的兩次失敗（都保留，不採計）：
   - `gate-f1-m5-…`：`passage_ends_with_a_plain_open_door_when_the_source_loses_power` 在 RESOLVE 之後 400 tick 內沒有到 PASSAGE_READY：PREPARE 的目的世界預載一直沒有完成（沒有「目的世界預載完成」）。預載是 wall-clock 的 chunk 載入，test 的窗口是 tick 數，而 GameTest server 的 tick 很快（60 個 test 約 17 秒）。同一份 log 裡其他 session 的預載等待中位數 227.5 tick（基準 run-all 是 92、最大 348），整體偏慢。
   - 以 adapter 拿掉 mixin 的登記做對照（`h5/gate-adapted.ps1`，`no-mixin`）：`gate-t-nofix-m5-0e4a512a20c84b1994fca886dbd8986c` 60/60，預載等待中位數 176、最大 384；同一時段有 mixin 的 `gate-t-fix-m5-e21d96be760d4bb898278831d4320a45` 中位數 207.5、最大 305（`h5/m5-preload-waits.txt`）。修正沒有系統性地改變預載的等待，差異來自機器當時的負載。
-  - `gate-t-fix-m5-…` 58/60：`passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once` 的 RESOLVE 因 allocation ledger 原子移動的 `AccessDeniedException`（`…allocations.dat.<n>.tmp -> …allocations.dat`）進 SEALED(ALLOCATION_IO_FAILED)，下一個 test 因衛生規則連帶失敗。這是 F4a-0 一節記錄過的 Windows 原子移動偶發，與 chunk 卸載無關。
+  - `gate-t-fix-m5-…` 58/60：`passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once` 的 RESOLVE 因 allocation ledger 原子移動的 `AccessDeniedException`（`…allocations.dat.<n>.tmp -> …allocations.dat`）進 SEALED(ALLOCATION_IO_FAILED)，下一個 test 因衛生規則連帶失敗。這是 F4a-0 一節記錄過的 Windows 原子移動偶發，與 chunk 卸載無關。（controller 依 spec review Minor 4 更正：F4a-0 記錄的是 journal `quantumchamber_sessions.dat`；allocation ledger 的 AccessDenied 是第一次記錄。兩者同屬 Windows 原子移動的偶發，owner 是 F6-3。）
 - 完整回歸（所有程式 commit 之後）：
   - `f25a37d`，工作樹乾淨（`STATUS` 是空的）：`run-all-35096bebd2e84f51a9bc7ace0dbbab27`（Full `gate-full-b93a2653d8404818ae32576b1a583699`；M5 `gate-m5-gametest-3ff5bd0f453245b99fc3cbb3554cb4df`；M4 recovery 彙整 `recovery-run-518b082d77654efc91a2fe3ea98fb9e2.json`；M5 collapse 彙整 `collapse-run-d7d0dd41d72849eea3f4e95c0d0ef022.json`；console `h5/run-all-1-console.txt`）。全程 20 分 26 秒（09:53:22～10:13:48），其中 M5 collapse 步驟 5 分 10 秒。
   - `END ALL exit=0 HEAD=f25a37df6a05d260281bb05e3f713e59a9c97cc2`。`SUMMARY default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=656 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=430entries/383classes sources=222 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=20 ci=win:PASS,ubuntu:PASS`。
@@ -6179,10 +6214,12 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - compatibility 說明：`ServerChunkLoadingManagerStaleUnloadMixin` 改原版 chunk 系統的私有方法 `tryUnloadChunk`；重寫 chunk 卸載或 holder 管理的 mod（C2ME、Moonrise 等）可能衝突；`require=1`，目標改變時開服即失敗（M5 基線固定 1.21）。
   - 已知問題的更新：F6-2b 列為「已知偶發」的停服卡住（關閉世界時停在 `Saving worlds`；遊戲進行中的 checkpoint flush 理論上的凍結點）已由 H5 修正（`f25a37d`），改寫成已修正；A 不處理其他停服卡住的成因（例如 `savingFuture` 永遠不完成，F6-2b review 的風險 6）。
   - README（`scripts/verification/README.md` 之外）的預期數字：`m5collapse=20`；release 的 entry／class 數各多 1（430 entries／383 classes），sources 多 1（222 entries）。
+  - （controller 補，spec review Minor 2）`scripts/verification/README.md:253`「預期結果」表的 M5 collapse 列仍寫 9 條 chain、18 phases、10 個 stop，應改為 10 條、20 phases、12 個 stop。和其他預期數字一起以最新的 run-all 更新。
 - **F6-2c～e、F6-3**：
   - 重啟矩陣在修正後的行為上跑；probe 既有的 ticket 仍持有到 JVM 結束（exp-c），不需要再迴避「移除後載回」。
   - M5 GameTest 的 tick 窗口與 wall-clock 的預載：`passage_ends_with_a_plain_open_door_when_the_source_loses_power` 的 400 tick 窗口在基準 run-all 已有 348 tick 的預載等待，機器忙時會超過（本輪一次）。是否放寬或改成以預載完成起算，交給有 owner 的 task（本 task 不改既有的 GameTest）。
   - `h5/sample-jstack.ps1` 的已知缺陷：開服時讀到上一個 phase 留在同一個 root 的 `latest.log`；要再用時應改成等 log 輪替（或比對 startupNonce）。
+  - （controller 補）**F6-2c Step 0**：處理 H5 quality Minor 1～6 與 spec Minor 1，清單見上方「Review 與最終 review」。T-POWER 的 400 tick 窗口也一併交給 F6-2c Step 0：放寬它，或改成以預載完成起算。
 
 ### root（全部保留）
 

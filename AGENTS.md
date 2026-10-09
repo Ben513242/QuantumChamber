@@ -116,8 +116,8 @@ M5（`feature/m5-collapse`）實作中，尚未 push，也尚未合併 `main`（
     - a 是 probe 重構與 harness 逾時，已完成（2026-10-08）；
     - b 是停服卡住的根因調查，已完成（2026-10-09），根因是原版 1.21 的 chunk 卸載 livelock；
     - c、d、e 是其餘的重啟窗口。
-  - 使用者 2026-10-09 裁示在 M5 內修正這個 livelock，也就是 plan 的 Task H5（spec v5.6 §4 H5）。
-  - 下一個是 H5，再依序是 F6-2c～e、F6-3 → F7 → milestone 收尾。
+  - 使用者 2026-10-09 裁示在 M5 內修正這個 livelock，也就是 plan 的 Task H5（spec v5.6 §4 H5），已完成（2026-10-09）。
+  - 下一個是 F6-2c。開工時先做 F6-2c Step 0，清單在 note F6-2a 與 H5 兩節的「Review 與最終 review」。之後依序是 F6-2d、F6-2e、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
