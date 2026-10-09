@@ -42,11 +42,11 @@ import org.slf4j.LoggerFactory;
  * <li>{@code STOP}：全部 step 完成之後正常停止，{@code SERVER_STOPPED} 時寫 {@code final.json}（status PASS 或 FAIL）。</li>
  * <li>{@code HALT}：在指定的 crash 窗口（{@link CrashWindow}，{@link M5TestHooks#CRASH_POINT}）寫出 {@code halt.json}（CREATE_NEW＋{@code force}）之後以
  *     {@code Runtime.halt(77)} 結束 JVM：不經正常停止、不存檔，等同 crash。只有乾淨的 halt 才是 77（crash 點的第一次 hit、crash 點沒有記下失敗、{@code failures}
- *     是空的；否則 status {@code HALT_REFUSED}、exit 78）。窗口沒有到達、或任何斷言失敗時，照常停止並寫 FAIL 的 {@code final.json}。</li>
+ *     是空的、停服還沒有開始；否則 status {@code HALT_REFUSED}、exit 78）。窗口沒有到達、或任何斷言失敗時，照常停止並寫 FAIL 的 {@code final.json}。</li>
  * </ul>
  * 斷言一律 {@link #expect}：失敗訊息以斷言名稱開頭（例如 {@code catalogOnlyDestination}），記在 receipt 的 {@code failures}，之後正常停止；成立的記在
  * {@code observed}。例外不會從 {@code END_SERVER_TICK} 拋出（{@link #guarded}）。probe 端安裝的 hook（crash 點與 fault，{@link #install}）在 {@link #stop}
- * 逐一移除。
+ * 逐一移除；不經 {@link #stop} 的停服（例如 crash report 的路徑）也在 {@code SERVER_STOPPING} 一開始移除（{@link #stoppingBegins}，F6-2c Step 0）。
  */
 final class M5CollapseRun {
     static final String OWNER = ".superpowers/sdd/2026-10-01-m5-collapse-passage";
@@ -61,6 +61,8 @@ final class M5CollapseRun {
     static final Gson JSON = new Gson();
     static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber-m5-collapse");
     private static final Identifier AFTER = Identifier.of("quantumchamber:m5_collapse_after");
+    /** {@code SERVER_STOPPING} 的 phase：排在 default phase（production 的 listener）之前（{@link #stoppingBegins}）。 */
+    private static final Identifier BEFORE = Identifier.of("quantumchamber:m5_collapse_before");
     static final Checked NOTHING = () -> { };
 
     // ---- phase 的型別 ----
@@ -215,6 +217,8 @@ final class M5CollapseRun {
     private int ticks;
     private int stepIndex, stepTicks;
     private boolean finished, passed;
+    /** {@code SERVER_STOPPING} 已開始（{@link #stoppingBegins}）；{@link #halt} 讀它（crash 窗口的 hook 可能不在 server thread 上，所以是 volatile）。 */
+    private volatile boolean stopping;
     private M5TestHooks.CrashPoint crashPoint;
 
     M5CollapseRun(Configuration config, List<String> phaseTable) {
@@ -292,6 +296,8 @@ final class M5CollapseRun {
         ServerLifecycleEvents.SERVER_STARTED.register(AFTER, this::started);
         ServerTickEvents.END_SERVER_TICK.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
         ServerTickEvents.END_SERVER_TICK.register(AFTER, this::tick);
+        ServerLifecycleEvents.SERVER_STOPPING.addPhaseOrdering(BEFORE, Event.DEFAULT_PHASE);
+        ServerLifecycleEvents.SERVER_STOPPING.register(BEFORE, this::stoppingBegins);
         ServerLifecycleEvents.SERVER_STOPPING.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
         ServerLifecycleEvents.SERVER_STOPPING.register(AFTER, this::stopping);
         ServerLifecycleEvents.SERVER_STOPPED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
@@ -335,9 +341,21 @@ final class M5CollapseRun {
         });
     }
 
+    /**
+     * {@code SERVER_STOPPING} 的最前面（{@link #BEFORE}，早於 production 的 listener；F6-2c Step 0，F6-2a quality 給 F6-2 的建議）：記下停服已開始
+     * （{@code stoppingSeen}），移除 probe 端安裝的全部 hook。之後 crash 窗口不會再觸發 crash 點；就算還有一次 halt（例如 hook 在移除之前已進入），{@link #halt} 也因
+     * {@code stoppingSeen} 拒絕。兩條停服路徑（請求停服、crash report）都會經過這裡；{@link #stop} 在請求停服之前已移除過時，這裡不做任何事。
+     */
+    private void stoppingBegins(MinecraftServer owner) {
+        if (owner != server) return;
+        stopping = true;
+        proof.put("stoppingSeen", true);
+        removeInstalled();
+    }
+
+    /** {@code SERVER_STOPPING} 的 AFTER phase（production 的 listener 之後）：依登記順序執行 {@link #onStopping} 的動作（參與者的連線、load-sync 的觀察）。 */
     private void stopping(MinecraftServer owner) {
         if (owner != server) return;
-        proof.put("stoppingSeen", true);
         for (var action : onStopping) action.run();
         onStopping.clear();
     }
@@ -373,7 +391,7 @@ final class M5CollapseRun {
 
     /** 移除 probe 端安裝的全部 hook，再請求正常停服（只請求一次）。 */
     private void stop() {
-        for (int index = installed.size() - 1; index >= 0; index--) installed.get(index).remove();
+        removeInstalled();
         if (finished) return;
         finished = true;
         proof.put("stopRequested", true);
@@ -405,7 +423,7 @@ final class M5CollapseRun {
 
     /**
      * 把 {@code value} 裝進 {@code slot}（{@link M5TestHooks.Slot#install}：probe 不是 GameTest，沒有 {@code GameTestState}；被占用時丟出、不覆蓋），並記下來，
-     * {@link #stop} 時依安裝的相反順序移除。crash 點（{@link #armCrash}）與 probe 內的 fault（例如 {@code new M5TestHooks.JournalPutFault(...)} 裝進
+     * {@link #stop} 或停服一開始（{@link #stoppingBegins}）時依安裝的相反順序移除。crash 點（{@link #armCrash}）與 probe 內的 fault（例如 {@code new M5TestHooks.JournalPutFault(...)} 裝進
      * {@link M5TestHooks#JOURNAL_PUT_FAULT}）都經這裡。回傳 {@code value}。
      */
     <T> T install(M5TestHooks.Slot<T> slot, T value) {
@@ -416,6 +434,12 @@ final class M5CollapseRun {
 
     private record Installed<T>(M5TestHooks.Slot<T> slot, T value) {
         void remove() { slot.remove(value); }
+    }
+
+    /** 依安裝的相反順序移除 probe 端安裝的全部 hook（{@link #stop} 與 {@link #stoppingBegins}）；之後清單是空的，重複呼叫不做任何事。 */
+    private void removeInstalled() {
+        for (int index = installed.size() - 1; index >= 0; index--) installed.get(index).remove();
+        installed.clear();
     }
 
     // ---- crash 點與 halt receipt ----
@@ -451,9 +475,10 @@ final class M5CollapseRun {
     }
 
     /**
-     * crash：寫出 {@code halt.json}（CREATE_NEW＋force）之後 {@code Runtime.halt}。乾淨的守門（F6-2a）：這是 crash 點的第一次 hit、crash 點沒有記下失敗
-     * （{@code crashPointFailure} 為 {@code none}）、receipt 的 {@code failures} 是空的，才是 status {@code HALT}、以 {@link #HALT_EXIT} 結束；任何一項不成立時
-     * 不當成 crash：status {@code HALT_REFUSED}（{@code refused} 列出原因），以 {@link #HALT_FAILED_EXIT} 結束。receipt 寫不出來時也以 {@link #HALT_FAILED_EXIT} 結束。
+     * crash：寫出 {@code halt.json}（CREATE_NEW＋force）之後 {@code Runtime.halt}。乾淨的守門（F6-2a；F6-2c Step 0 加上停服）：這是 crash 點的第一次 hit、crash 點沒有記下失敗
+     * （{@code crashPointFailure} 為 {@code none}）、receipt 的 {@code failures} 是空的、停服還沒有開始（{@code stoppingSeen}：停服途中的 halt 會讓 restart 以為是
+     * crash，其實已開始正常停止），才是 status {@code HALT}、以 {@link #HALT_EXIT} 結束；任何一項不成立時不當成 crash：status {@code HALT_REFUSED}（{@code refused}
+     * 列出原因），以 {@link #HALT_FAILED_EXIT} 結束。receipt 寫不出來時也以 {@link #HALT_FAILED_EXIT} 結束。
      */
     private void halt(CrashWindow window, Object detail, Function<Object, String> describe, int hit, Map<String, Object> atHalt) {
         var point = crashPoint;
@@ -461,6 +486,7 @@ final class M5CollapseRun {
         if (hit != 1) refused.add("hit=" + hit);
         if (point.failure() != null) refused.add("crashPointFailure=" + point.failure());
         if (!failures.isEmpty()) refused.add("failures=" + failures);
+        if (stopping) refused.add("stoppingSeen：停服已開始（SERVER_STOPPING），不是 crash");
         int exit = refused.isEmpty() ? HALT_EXIT : HALT_FAILED_EXIT;
         try {
             var halt = new LinkedHashMap<String, Object>(proof);
