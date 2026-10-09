@@ -20,11 +20,12 @@ import net.fabricmc.api.ModInitializer;
  * <li>{@link M5CollapseRun}：一個 phase 的生命週期（{@code Phase}、{@code Step}、{@code guarded}、{@code expect}）、receipt（{@code final.json}、{@code halt.json}）、
  *     crash 點與 probe 端安裝的 fault（停服時逐一移除）。</li>
  * <li>{@link M5CollapseWindows}：窗口表，每個 crash 窗口一列：crash 點的條件、halt 之前的取證、restart 開服時的預期與 PREPARE 怎麼完成。</li>
- * <li>{@link M5CollapseFixture}：原艙、參與者（清單）、收據與這條 chain 的 id；{@link M5CollapsePassage}：restart 共用的 RESOLVE → 跨越 → 終局 step、每個 tick 的
- *     不變量與 spec §12 的終局斷言。</li>
+ * <li>{@link M5CollapseFixture}：原艙、參與者（清單與它的子集 {@code Who}）、收據與這條 chain 的 id；{@link M5CollapsePassage}：restart 共用的 RESOLVE → 跨越 → 終局
+ *     step（F6-2c 起可以只取 resolve、ready、cross 其中幾段）、每個 tick 的不變量與 spec §12 的終局斷言。</li>
  * <li>chain：{@link M5CollapseDormantChains}（DORMANT NEW 收據，W2～W6；restart 也用於 W6x）、{@link M5CollapseLiveChain}（W1）、
- *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）；投影 chunk 的載入與 load-sync 的觀察在
- *     {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。</li>
+ *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）、{@link M5CollapsePassageChains}（F6-2c：通道與終局的重啟窗口，
+ *     W7 與其餘的重啟變體）；投影 chunk 的載入與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，
+ *     不經塌縮流程）。</li>
  * </ul>
  * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}（設定 {@code M5CollapseRun.Configuration} 與 factory 的型別都在 runner，F6-2c Step 0：runner 不依賴 entrypoint）。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
