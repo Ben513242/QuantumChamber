@@ -28,7 +28,7 @@ import net.minecraft.world.dimension.DimensionType;
  * <p>「殭屍」的確定性做法（F6-2b 的條件 (Z)）：chunk C 載入、穩定之後，在一個 tick 結束時移除它的 ticket，並讓 server thread 睡 {@value #LAG_MILLIS} ms，之後的 tick 都落後排程
  * （原版 {@code shouldKeepTicking} 為 false）：{@code unloadChunks} 每個 tick 只把最多 200 個 holder 移到 {@code chunksToUnload}、不排空卸載佇列。C 的 holder 出現在
  * {@code chunksToUnload}（同一個物件，卸載工作還沒執行）的那個 tick 結束時，以另一種 ticket（半徑 {@value #READD_RADIUS}）再載入；下一個 tick 的 {@code setLevel} 由
- * {@code chunksToUnload} 取回同一個 holder，舊的卸載工作留在佇列裡。再載入之前裝上 chunk 讀檔的保留（{@code M5TestHooks.ChunkReadHold}：與 C 距離
+ * {@code chunksToUnload} 取回同一個 holder，舊的卸載工作留在佇列裡。再載入之前裝上 chunk 讀檔的保留（{@code M5ChunkUnloadHooks.ChunkReadHold}：與 C 距離
  * {@value #HOLD_MIN}～{@value #HOLD_MAX} 的讀檔，F6-2b 的 {@code vr-hold}），涵蓋 C 的 {@code ChunkLoader} 因此一直等著，C 的 refCount 大於 0（條件 (R)）。
  * <ul>
  * <li>{@code unload-takeback}（stop）：C1 形成殭屍、取回同一個 holder → 等殭屍在 refCount &gt; 0 時執行過（原版是重排、修正後是被丟棄）→ 放行讀檔 → C1 回到 FULL、refCount 歸零 →
@@ -40,7 +40,7 @@ import net.minecraft.world.dimension.DimensionType;
  *     （{@code timeout.json}、jstack 停在 {@code unloadChunks → tryUnloadChunk}）。修正後正常停服，停服之後斷言 C2 的舊工作被丟棄、沒有任何被取回的 holder 的工作照原版重排
  *     （{@code staleUnloadTaskDropped}）。</li>
  * </ul>
- * witness：被丟棄的舊工作數（{@code M5TestHooks.UnloadTaskWitness}，testmod 被動計數，不在 production 加 test seam）、停服的耗時（{@code SERVER_STOPPING} 到
+ * witness：被丟棄的舊工作數（{@code M5ChunkUnloadHooks.UnloadTaskWitness}，testmod 被動計數，不在 production 加 test seam）、停服的耗時（{@code SERVER_STOPPING} 到
  * {@code SERVER_STOPPED}）、取回的是同一個 holder 物件（{@code sameHolderTakenBack}）。witness 在開服時安裝、停服之後移除；讀檔保留經 {@code M5CollapseRun.install}，請求停服之前移除
  * （已保留的讀檔由它自己的 thread 在停服開始之後 {@value #RELEASE_AFTER_STOP_MILLIS} ms 放行）。
  */
@@ -68,8 +68,8 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     private ChunkPos chunk;
     /** 被取回的 holder（移除第一個 ticket 時的物件，之後的斷言都以物件同一性比較）。 */
     private ChunkHolder holder;
-    private M5TestHooks.UnloadTaskWitness witness;
-    private M5TestHooks.ChunkReadHold hold;
+    private M5ChunkUnloadHooks.UnloadTaskWitness witness;
+    private M5ChunkUnloadHooks.ChunkReadHold hold;
     private int settledTicks, waitedTicks, staleAtRelease = -1;
     private long stopRequestedNanos, stoppingNanos;
     private final Map<String, Object> zombie = new LinkedHashMap<>();
@@ -157,7 +157,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         zombie.put("queuedTick", run.server.getTicks());
         zombie.put("unloadQueueAtReadd", queue().size());
         zombie.put("behindMillisAtReadd", behindMillis());
-        hold = run.install(M5TestHooks.CHUNK_READ_HOLD, new M5TestHooks.ChunkReadHold(run.source, chunk, HOLD_MIN, HOLD_MAX));
+        hold = run.install(M5ChunkUnloadHooks.CHUNK_READ_HOLD, new M5ChunkUnloadHooks.ChunkReadHold(run.source, chunk, HOLD_MIN, HOLD_MAX));
         hold.releaseAfterStop(run.server, RELEASE_AFTER_STOP_MILLIS);
         run.source.getChunkManager().addTicket(Tickets.SECOND, chunk, READD_RADIUS, chunk);
         return true;
@@ -274,8 +274,8 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     // ---- witness、停服 ----
 
     private void installWitness() {
-        witness = new M5TestHooks.UnloadTaskWitness(run.source, List.of(chunk));
-        M5TestHooks.UNLOAD_TASK_WITNESS.install(witness, null);
+        witness = new M5ChunkUnloadHooks.UnloadTaskWitness(run.source, List.of(chunk));
+        M5ChunkUnloadHooks.UNLOAD_TASK_WITNESS.install(witness, null);
         run.onStopping(() -> stoppingNanos = System.nanoTime());
     }
 
@@ -293,7 +293,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
                         () -> "witness=" + summary);
             }
         } finally {
-            if (witness != null) M5TestHooks.UNLOAD_TASK_WITNESS.remove(witness);
+            if (witness != null) M5ChunkUnloadHooks.UNLOAD_TASK_WITNESS.remove(witness);
         }
     }
 
