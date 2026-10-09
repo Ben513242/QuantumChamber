@@ -84,27 +84,27 @@ final class M5CollapseRevisitChains {
                 new Step("firstCommitted", 40, fixture::committed),
                 new Step("firstReady", 600, this::firstPassageReady),
                 new Step("endedByPowerLoss", 60, this::endedByPowerLoss),
-                new Step("repowered", 200, () -> M5GameTestSupport.registeredIdle(run.source, FRAME) && M5GameTestSupport.controller(run.source, FRAME).wasPowered()));
+                new Step("repowered", 200, () -> M5GameTestSupport.registeredIdle(run.source(), FRAME) && M5GameTestSupport.controller(run.source(), FRAME).wasPowered()));
     }
 
     /** NEW 那一段到 PASSAGE_READY：U 的投影 COMPLETE；之後拿掉 Controller 上方的紅石塊（斷電）。 */
     private boolean firstPassageReady() throws Exception {
-        var record = run.journal.flushedRecords().get(fixture.sid());
+        var record = run.journal().flushedRecords().get(fixture.sid());
         if (record == null || record.state() != SessionState.PASSAGE_READY) return false;
         run.expect("firstProjectionComplete", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                 () -> "projection ledger=" + fixture.projectionsOrError());
-        run.source.setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
         return true;
     }
 
     /** 通道以 (d) 來源艙沒有供電結束（record 已移除）之後，參與者移到艙外，再放回紅石塊恢復供電（參與者不在艙內，不會開始新的疊加）。 */
     private boolean endedByPowerLoss() {
         var sid = fixture.sid();
-        if (run.journal.flushedRecords().containsKey(sid) || run.journal.records().containsKey(sid)) return false;
-        run.expect("firstPassageEndedByPowerLoss", run.capture.matching(Level.INFO, "量子通道已結束", "(d) 來源艙沒有供電", sid.toString()).size() == 1,
+        if (run.journal().flushedRecords().containsKey(sid) || run.journal().records().containsKey(sid)) return false;
+        run.expect("firstPassageEndedByPowerLoss", run.capture().matching(Level.INFO, "量子通道已結束", "(d) 來源艙沒有供電", sid.toString()).size() == 1,
                 () -> "沒有恰一則 (d) 來源艙沒有供電的結束 INFO");
         fixture.moveOutside();
-        run.source.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
         return true;
     }
 
@@ -199,19 +199,19 @@ final class M5CollapseRevisitChains {
 
     private void degradedStarted(String setupPhase) throws Exception {
         fixture.readCrashReceipt(setupPhase, null);
-        var initErrors = run.startupLog.matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
+        var initErrors = run.startupLog().matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
         run.expect("initializationLost", initErrors.size() == 1 && initErrors.getFirst().contains("projection=LOST") && initErrors.getFirst().contains("allocation=LOADED"),
                 () -> "初始化的 ERROR：" + initErrors);
-        var authorities = CollapseAuthorities.get(run.server);
+        var authorities = CollapseAuthorities.get(run.server());
         run.expect("authorityCorrupt", !authorities.initialized()
                 && authorities.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER).equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
                 () -> "initialized=" + authorities.initialized() + " unhealthy=" + authorities.unhealthy(CollapseAuthorities.Authority.PROJECTION_LEDGER));
-        run.expect("noNewCollapsingThisInstance", !run.journal.m5ReadyThisInstance(), () -> "初始化失敗但 m5ReadyThisInstance 為真");
-        run.expect("indexDegraded", ProjectionProtectionIndex.get(run.server).degradation().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
-                () -> "索引的退化=" + ProjectionProtectionIndex.get(run.server).degradation());
+        run.expect("noNewCollapsingThisInstance", !run.journal().m5ReadyThisInstance(), () -> "初始化失敗但 m5ReadyThisInstance 為真");
+        run.expect("indexDegraded", ProjectionProtectionIndex.get(run.server()).degradation().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
+                () -> "索引的退化=" + ProjectionProtectionIndex.get(run.server()).degradation());
         var sid = fixture.sid();
-        var current = run.journal.flushedRecords().get(sid);
-        run.expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(run.journal, sid));
+        var current = run.journal().flushedRecords().get(sid);
+        run.expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
         run.expect("sameDestination", M5CollapseFixture.destination(current).equals(Optional.of(fixture.universe())), () -> "Destination=" + current.collapse().destination());
         run.expect("noRedraw", M5CollapseFixture.sameCandidate(fixture.receipt(), current), () -> "候選 context、ledger 或 selection 與停服前不同");
         fixture.expectOneAllocation();
@@ -251,7 +251,7 @@ final class M5CollapseRevisitChains {
         // spec Minor（F6-2a）：CONSUMED 之後 WasPowered 由載入時的 false 變成 true：這次 refresh 越過了提早 return，讀到 refresh witness 的電源。
         run.expect("refreshedThisInstance", controller.wasPowered() && !load.atLoad().wasPowered(), () -> "WasPowered：載入時 " + load.atLoad().wasPowered()
                 + "，現在 " + controller.wasPowered());
-        run.expect("indexDoesNotKnowTheController", !ProjectionProtectionIndex.projectionControllerAt(run.server, world.getRegistryKey(), pos),
+        run.expect("indexDoesNotKnowTheController", !ProjectionProtectionIndex.projectionControllerAt(run.server(), world.getRegistryKey(), pos),
                 () -> "退化的索引認得這個 Controller");
         run.expect("foreignBranch", !controller.isRemoved() && world.getBlockEntity(pos) == controller && controller.chamberState() == ChamberState.INVALID
                 && controller.chamberUuid() == null && world.getBlockState(pos).getComparatorOutput(world, pos) == 0
@@ -269,20 +269,20 @@ final class M5CollapseRevisitChains {
     /** RESOLVE 進 SEALED(AUTHORITY_CORRUPT)：永久原因的 ERROR 一則、沒有 PREPARE、interior 沒有被重寫（記憶體與磁碟）、ledger 沒有被重建、原艙門關著。 */
     private boolean sealedAsCorrupt() throws Exception {
         var sid = fixture.sid();
-        var record = run.journal.flushedRecords().get(sid);
+        var record = run.journal().flushedRecords().get(sid);
         if (record == null || record.state() != SessionState.SEALED) return false;
-        run.expect("sealedAuthorityCorrupt", record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)) && record.equals(run.journal.records().get(sid)),
+        run.expect("sealedAuthorityCorrupt", record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)) && record.equals(run.journal().records().get(sid)),
                 () -> "SEALED 的原因=" + record.collapse().sealedReason());
-        var errors = run.capture.matching(Level.ERROR, sid.toString()).stream().map(LogCapture.Entry::message).toList();
+        var errors = run.capture().matching(Level.ERROR, sid.toString()).stream().map(LogCapture.Entry::message).toList();
         run.expect("onePermanentAdminError", errors.size() == 1 && errors.getFirst().contains("SEALED(AUTHORITY_CORRUPT)") && errors.getFirst().contains("需要管理員處理"),
                 () -> "這個 session 的 ERROR：" + errors);
-        run.expect("neverPrepared", run.capture.matching(Level.INFO, "準備完成", sid.toString()).isEmpty(), () -> "退化之後仍有「準備完成」");
+        run.expect("neverPrepared", run.capture().matching(Level.INFO, "準備完成", sid.toString()).isEmpty(), () -> "退化之後仍有「準備完成」");
         var world = fixture.universeWorld().orElseThrow();
         var marker = fixture.diskBlock(world, interiorMarker());
         run.expect("interiorNotRewritten", world.getBlockState(interiorMarker()).isOf(Blocks.GOLD_BLOCK) && GOLD_BLOCK.equals(marker.name()),
                 () -> "interior 標記：記憶體 " + world.getBlockState(interiorMarker()) + "，磁碟 " + marker);
         run.expect("ledgerNotRecreated", !Files.exists(run.data().resolve(ProjectionLedger.FILE_NAME)), () -> "projection ledger 被重建");
-        run.expect("doorClosedOnSeal", M5GameTestSupport.doorAll(run.source, FRAME, false, MembraneState.NONE), () -> "SEALED 之後原艙門不是關著");
+        run.expect("doorClosedOnSeal", M5GameTestSupport.doorAll(run.source(), FRAME, false, MembraneState.NONE), () -> "SEALED 之後原艙門不是關著");
         return true;
     }
 
@@ -292,12 +292,12 @@ final class M5CollapseRevisitChains {
      */
     private boolean doorOpensNormally() throws Exception {
         var player = fixture.selector();
-        var result = M5GameTestSupport.interact(run.source, local(3, 3, 0), player);
-        run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source, FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
+        var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), player);
+        run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
         var sid = fixture.sid();
-        var record = run.journal.flushedRecords().get(sid);
+        var record = run.journal().flushedRecords().get(sid);
         run.expect("stillSealed", record != null && record.state() == SessionState.SEALED && record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),
-                () -> "state=" + M5GameTestSupport.state(run.journal, sid));
+                () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
         passage.expectEnd(new M5CollapsePassage.End(fixture.catalogGrowth(), M5CollapsePassage.ProjectionAtEnd.LEDGER_ABSENT, M5CollapsePassage.Place.SOURCE, 1, false));
         return true;
     }

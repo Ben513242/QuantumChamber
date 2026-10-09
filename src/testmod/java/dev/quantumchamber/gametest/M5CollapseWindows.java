@@ -145,10 +145,11 @@ final class M5CollapseWindows {
         return window;
     }
 
-    /** 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}）。 */
+    /** 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}；halt receipt 的 detail 以 {@link #describe} 描述）。 */
     static void arm(M5CollapseRun run, M5CollapseFixture fixture, CrashWindow id) {
         var window = of(id);
-        run.armCrash(id, detail -> window.condition().test(fixture, detail), (detail, evidence) -> window.beforeHalt().collect(run, fixture, detail, evidence));
+        run.armCrash(id, detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
+                (detail, evidence) -> window.beforeHalt().collect(run, fixture, detail, evidence));
     }
 
     // ---- crash 點的條件 ----
@@ -284,8 +285,8 @@ final class M5CollapseWindows {
         run.expect(materializedWindow ? "materializedBeforeTheCrash" : "notMaterializedBeforeTheCrash",
                 activeAtHalt == materializedWindow, () -> "halt 當下 U 的物化狀態=" + activeAtHalt);
         var sid = fixture.sid();
-        var current = run.journal.flushedRecords().get(sid);
-        run.expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(run.journal, sid));
+        var current = run.journal().flushedRecords().get(sid);
+        run.expect("restartedCollapsing", current != null && current.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
         run.expect("sameDestination", M5CollapseFixture.destination(current).equals(Optional.of(fixture.universe())), () -> "Destination=" + current.collapse().destination());
         run.expect("noRedraw", M5CollapseFixture.sameCandidate(fixture.receipt(), current), () -> "候選 context、ledger 或 selection 與 crash 前不同");
         if (!at.returned()) {
@@ -300,7 +301,7 @@ final class M5CollapseWindows {
         } else {
             run.expect("noAllocationYet", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger=" + fixture.allocationsOrError());
         }
-        var catalog = UniverseRegistryState.get(run.server).flushedRecords();
+        var catalog = UniverseRegistryState.get(run.server()).flushedRecords();
         boolean discovered = M5CollapseDiskEvidence.discovery(run.saveRoot()).stream().anyMatch(record -> record.universeId().equals(fixture.universe()));
         boolean active = fixture.universeWorld().isPresent();
         if (!at.resolved().cataloged()) {
@@ -359,7 +360,7 @@ final class M5CollapseWindows {
     /** PASSAGE_READY 時：「準備完成」INFO 恰一則、符合這一列的模式與格數，再做 READY 時的磁碟檢查。{@code prepared} 為 null 時不檢查。 */
     static void expectPrepared(M5CollapseRun run, M5CollapseFixture fixture, Prepared prepared) throws Exception {
         if (prepared == null) return;
-        var messages = run.capture.matching(Level.INFO, "準備完成（預載與投影都已完成）", fixture.sid().toString()).stream().map(LogCapture.Entry::message).toList();
+        var messages = run.capture().matching(Level.INFO, "準備完成（預載與投影都已完成）", fixture.sid().toString()).stream().map(LogCapture.Entry::message).toList();
         run.expect(prepared.name(), messages.size() == 1 && prepared.matches(messages.getFirst()), () -> "「準備完成」=" + messages);
         prepared.afterReady().check(run, fixture);
     }

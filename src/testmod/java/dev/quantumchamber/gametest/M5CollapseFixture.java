@@ -101,15 +101,15 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     // ---- fresh 世界、原艙、參與者 ----
 
     void requireFreshWorld() throws Exception {
-        run.expect("freshJournal", run.journal.flushedRecords().isEmpty(), () -> "journal=" + run.journal.flushedRecords().keySet());
-        run.expect("freshCatalog", UniverseRegistryState.get(run.server).flushedRecords().isEmpty(),
-                () -> "catalog=" + UniverseRegistryState.get(run.server).flushedRecords().keySet());
+        run.expect("freshJournal", run.journal().flushedRecords().isEmpty(), () -> "journal=" + run.journal().flushedRecords().keySet());
+        run.expect("freshCatalog", UniverseRegistryState.get(run.server()).flushedRecords().isEmpty(),
+                () -> "catalog=" + UniverseRegistryState.get(run.server()).flushedRecords().keySet());
         run.expect("freshAllocationLedger", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger 不是空的");
     }
 
     /** 蓋原艙，連線 {@code count} 位參與者並移到艙外。 */
     void buildOrigin(int count) {
-        run.source.getChunk(0, 0);
+        run.source().getChunk(0, 0);
         placeChamber();
         for (int index = 0; index < count; index++) {
             var id = UUID.randomUUID();
@@ -121,7 +121,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /** M4 recovery probe 的原艙寫法（基岩外殼、bulkhead 門、Controller、上方紅石塊），另把門外的通道清成空氣（參與者在門外等待，不能卡在地形裡）。 */
     private void placeChamber() {
-        var source = run.source;
+        var source = run.source();
         for (int x = -1; x <= 7; x++) for (int y = 0; y <= 9; y++) for (int z = -6; z < 0; z++) {
             source.setBlockState(ChamberSpaceCoordinates.block(FRAME, x, y, z), Blocks.AIR.getDefaultState(), 3);
         }
@@ -139,22 +139,22 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /** step：原艙已註冊、IDLE；記下 chamber UUID。 */
     boolean registered() {
-        if (!M5GameTestSupport.registeredIdle(run.source, FRAME)) return false;
-        chamber = M5GameTestSupport.controller(run.source, FRAME).chamberUuid();
+        if (!M5GameTestSupport.registeredIdle(run.source(), FRAME)) return false;
+        chamber = M5GameTestSupport.controller(run.source(), FRAME).chamberUuid();
         return true;
     }
 
     /** 原艙已註冊（{@link M5GameTestSupport#registeredIdle}）時記下 chamber UUID 並回傳 Controller；還沒有時回 null。 */
     ChamberControllerBlockEntity registeredController() {
-        if (!M5GameTestSupport.registeredIdle(run.source, FRAME)) return null;
-        var controller = M5GameTestSupport.controller(run.source, FRAME);
+        if (!M5GameTestSupport.registeredIdle(run.source(), FRAME)) return null;
+        var controller = M5GameTestSupport.controller(run.source(), FRAME);
         chamber = controller.chamberUuid();
         return controller;
     }
 
     /** 以 {@code id} 連線一位參與者（在來源世界；停服時關閉連線）。 */
     ConnectedGameTestPlayer connect(UUID id) {
-        var connection = new ConnectedGameTestPlayer(run.source, new GameProfile(id, "m5-" + id.toString().substring(0, 8)));
+        var connection = new ConnectedGameTestPlayer(run.source(), new GameProfile(id, "m5-" + id.toString().substring(0, 8)));
         run.onStopping(() -> {
             try {
                 connection.close();
@@ -176,16 +176,16 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
             var connection = connect(id);
             var player = connection.player();
             run.expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
-            run.expect("joinedInTheSourceWorld", player.getServerWorld() == run.source, () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
+            run.expect("joinedInTheSourceWorld", player.getServerWorld() == run.source(), () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
             if (insideExpected) run.expect("joinedInsideTheChamber", inside(player), () -> "參與者 JOIN 在艙外：" + player.getPos());
             else run.expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
-            run.expect("participantNotBlocked", !SessionRecoveryManager.blocks(id, run.server), () -> "已返還的參與者被 recovery 攔截");
+            run.expect("participantNotBlocked", !SessionRecoveryManager.blocks(id, run.server()), () -> "已返還的參與者被 recovery 攔截");
         }
     }
 
     /** 參與者在線上時回傳它的玩家；不在線上時回 null。 */
     ServerPlayerEntity onlinePlayer(UUID id) {
-        return run.server.getPlayerManager().getPlayer(id);
+        return run.server().getPlayerManager().getPlayer(id);
     }
 
     /** 沒有任何參與者在線上。 */
@@ -228,19 +228,19 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /** DORMANT 的 NEW 收據（參與者都已返還、沒有 lease）。只建立，不寫入。 */
     SessionRecoveryRecord dormantNewReceipt() {
-        return M4CandidateTestAccess.measuredReceipt(run.server, M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), everyone(true), List.of(), true);
+        return M4CandidateTestAccess.measuredReceipt(run.server(), M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), everyone(true), List.of(), true);
     }
 
     /** DORMANT 的 EXISTING 收據（參與者都已返還、沒有 lease），候選是 NEW 那一段建立的 U。只建立，不寫入。 */
     SessionRecoveryRecord existingReceiptForTheUniverse() {
-        return M5GameTestSupport.existingReceipt(run.server, M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), everyone(true), universe);
+        return M5GameTestSupport.existingReceipt(run.server(), M4CandidateTestAccess.origin(chamber, FRAME.controllerPos()), everyone(true), universe);
     }
 
     /** 收據 put＋flush、核對 flushed 與收據 exact 相同，再以它設定這條 chain 的 session、UniverseId 與 allocation token（{@link #adopt}）。 */
     void putReceipt(SessionRecoveryRecord measured) {
-        run.journal.put(measured);
-        run.journal.flush(run.server);
-        run.expect("receiptFlushed", measured.equals(run.journal.flushedRecords().get(measured.sessionUuid())), () -> "flushed 與收據不同");
+        run.journal().put(measured);
+        run.journal().flush(run.server());
+        run.expect("receiptFlushed", measured.equals(run.journal().flushedRecords().get(measured.sessionUuid())), () -> "flushed 與收據不同");
         adopt(measured);
     }
 
@@ -251,13 +251,13 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     void writeCrashReceipt(SessionRecoveryRecord measured) throws Exception {
         putReceipt(measured);
         recordReceipt();
-        run.expect("nativeSaveBeforeTrigger", run.server.saveAll(false, true, true), () -> "saveAll 回 false");
+        run.expect("nativeSaveBeforeTrigger", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
     }
 
     /** 這條 chain 的 MEASURED 收據（{@link #receipt}，已 flushed）：記下 crash 前的 catalog 筆數，寫出 {@link M5CollapseRun#RECEIPT_NBT}，摘要記在 receipt 的 {@code receipt}。 */
     void recordReceipt() throws Exception {
         var measured = receipt;
-        catalogBefore = UniverseRegistryState.get(run.server).flushedRecords().size();
+        catalogBefore = UniverseRegistryState.get(run.server()).flushedRecords().size();
         var file = run.config.evidence().resolve(M5CollapseRun.RECEIPT_NBT);
         M5CollapseRun.require(!Files.exists(file), "receipt NBT 已存在：" + file);
         var single = new SessionRecoveryState();
@@ -366,7 +366,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /** step：塌縮已提交 COLLAPSING（flushed），Destination 是這條 chain 的 UniverseId（NEW 是推導出的，EXISTING 是候選的）。 */
     boolean committed() {
-        var record = run.journal.flushedRecords().get(sid);
+        var record = run.journal().flushedRecords().get(sid);
         if (record == null || record.state() != SessionState.COLLAPSING) return false;
         run.expect(created() ? "committedToTheDerivedUniverse" : "committedToTheExistingUniverse", destination(record).equals(Optional.of(universe)),
                 () -> "Destination=" + record.collapse().destination());
@@ -382,7 +382,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /** 同 {@link #expectCatalog(String)}，增量由呼叫端指定（{@code growth} 為 0 時名稱一律 {@code catalogUnchanged}）。 */
     void expectCatalog(String grownName, int growth) {
-        var catalog = UniverseRegistryState.get(run.server).flushedRecords();
+        var catalog = UniverseRegistryState.get(run.server()).flushedRecords();
         run.expect(growth == 0 ? "catalogUnchanged" : grownName, catalog.size() == catalogBefore + growth && eagerEnabled(catalog.get(universe)),
                 () -> "catalog=" + catalog);
     }
@@ -395,9 +395,9 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     // ---- 查詢 ----
 
-    CorridorPageManager pages() { return CorridorPageManager.forServer(run.server); }
+    CorridorPageManager pages() { return CorridorPageManager.forServer(run.server()); }
 
-    ServerWorld corridor() { return run.server.getWorld(SuperpositionWorld.KEY); }
+    ServerWorld corridor() { return run.server().getWorld(SuperpositionWorld.KEY); }
 
     /** 這個 session 有走廊 space（{@code currentMappings} 對沒有 space 的 session 丟 {@link IllegalArgumentException}）。 */
     boolean spaceExists() {
@@ -410,7 +410,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     }
 
     Optional<ServerWorld> universeWorld() {
-        return UniverseLifecycleService.resolveActive(run.server, universe);
+        return UniverseLifecycleService.resolveActive(run.server(), universe);
     }
 
     boolean isUniverse(ServerWorld world) {
@@ -481,8 +481,8 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     /** 來源 Controller 目前是 {@code state}，而且比較器輸出是 {@code signal}（spec §10.7）。 */
     boolean controllerSignal(ChamberState state, int signal) {
         var pos = FRAME.controllerPos();
-        return run.source.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller && controller.chamberState() == state
-                && run.source.getBlockState(pos).getComparatorOutput(run.source, pos) == signal;
+        return run.source().getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller && controller.chamberState() == state
+                && run.source().getBlockState(pos).getComparatorOutput(run.source(), pos) == signal;
     }
 
     static Optional<UniverseId> destination(SessionRecoveryRecord record) {
@@ -523,8 +523,8 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     // ---- runner 的 Context ----
 
     @Override public String diagnostic() {
-        return "session=" + sid + " state=" + (sid == null ? "-" : M5GameTestSupport.state(run.journal, sid)) + " catalog="
-                + UniverseRegistryState.get(run.server).records().keySet();
+        return "session=" + sid + " state=" + (sid == null ? "-" : M5GameTestSupport.state(run.journal(), sid)) + " catalog="
+                + UniverseRegistryState.get(run.server()).records().keySet();
     }
 
     @Override public boolean universeActive() {

@@ -78,12 +78,12 @@ final class M5CollapseDormantChains {
         var controller = load.controller();
         if (!load.outcomes().contains(ChamberLoadSyncOutcome.CONSUMED) || !M5CollapseFixture.inertProjection(world, controller)) return false;
         var pos = FRAME.controllerPos();
-        var mentions = Stream.concat(run.capture.entries().stream(), load.log().entries().stream())
+        var mentions = Stream.concat(run.capture().entries().stream(), load.log().entries().stream())
                 .map(LogCapture.Entry::message).filter(message -> message.contains(pos.toShortString()) || message.contains(pos.toString())).toList();
         run.expect("noLogAboutTheProjectionController", mentions.isEmpty(), () -> "log 提到投影 Controller 的座標：" + mentions);
         run.expect("recognizedBeforeJoin", fixture.noneOnline(), () -> "參與者已 JOIN");
         var key = world.getRegistryKey();
-        run.expect("indexKnowsTheController", ProjectionProtectionIndex.projectionControllerAt(run.server, key, pos), () -> "投影保護索引不認得這個 Controller");
+        run.expect("indexKnowsTheController", ProjectionProtectionIndex.projectionControllerAt(run.server(), key, pos), () -> "投影保護索引不認得這個 Controller");
         var protection = ChamberProtectionService.get();
         if (window.atRestart().projection() == ProjectionLedger.Entry.Status.COMPLETE) {
             run.expect("invariantCellsProtected", !protection.mayMutate(world, pos) && !protection.mayMutate(world, local(0, 0, 0))

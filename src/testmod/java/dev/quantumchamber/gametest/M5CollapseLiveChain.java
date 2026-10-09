@@ -82,15 +82,15 @@ final class M5CollapseLiveChain {
         var controller = fixture.registeredController();
         if (controller == null) return false;
         var players = fixture.players();
-        run.source.setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
         for (var player : players) {
             if (!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
         }
-        if (!new ChamberActivationService().evaluateReadiness(run.source, controller).accepted()) return false;
-        for (var player : players) PlayerCheckpointStore.saveAndVerify(run.server, player, Optional.empty());
-        run.expect("nativeSaveBeforeArming", run.server.save(false, true, true), () -> "原生存檔失敗");
-        run.source.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
-        var arming = run.journal.flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(fixture.chamber())).toList();
+        if (!new ChamberActivationService().evaluateReadiness(run.source(), controller).accepted()) return false;
+        for (var player : players) PlayerCheckpointStore.saveAndVerify(run.server(), player, Optional.empty());
+        run.expect("nativeSaveBeforeArming", run.server().save(false, true, true), () -> "原生存檔失敗");
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
+        var arming = run.journal().flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(fixture.chamber())).toList();
         run.expect("armingFlushed", arming.size() == 1 && arming.getFirst().state() == SessionState.ARMING,
                 () -> "供電之後這座艙的 flushed record：" + arming.stream().map(record -> record.state().name()).toList());
         fixture.session(arming.getFirst().sessionUuid());
@@ -99,20 +99,20 @@ final class M5CollapseLiveChain {
 
     /** SUPERPOSITION、358 扇側門都已發布、參與者都在走廊。 */
     private boolean superposition() {
-        var record = run.journal.flushedRecords().get(fixture.sid());
+        var record = run.journal().flushedRecords().get(fixture.sid());
         if (record == null || record.state() != SessionState.SUPERPOSITION || fixture.pages().selectableDoors(fixture.sid()).size() != 358) return false;
         return fixture.players().stream().allMatch(player -> player.getServerWorld() == fixture.corridor());
     }
 
     /** 選門之前原生存檔（參與者的 playerdata 存在走廊）；選門者以原生互動選一扇 NEW 候選門，checked SELECTED 之後寫出收據、裝上 W1 的 crash 點。 */
     private boolean selectNewDoor() throws Exception {
-        run.expect("nativeSaveInTheCorridor", run.server.saveAll(false, true, true), () -> "saveAll 回 false");
+        run.expect("nativeSaveInTheCorridor", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
         var sid = fixture.sid();
         var door = M5GameTestSupport.candidateDoor(fixture.pages(), fixture.corridor(), sid, QuantumCandidate.New.class);
         var result = M5GameTestSupport.interact(fixture.corridor(), door.cell(), fixture.selector());
-        var measured = run.journal.flushedRecords().get(sid);
+        var measured = run.journal().flushedRecords().get(sid);
         run.expect("newDoorSelected", result == ActionResult.SUCCESS && measured != null && measured.state() == SessionState.MEASURED
-                && measured.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New, () -> "選門結果 " + result + "，record=" + M5GameTestSupport.state(run.journal, sid));
+                && measured.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New, () -> "選門結果 " + result + "，record=" + M5GameTestSupport.state(run.journal(), sid));
         run.expect("notReturnedOnSelection", !fixture.pages().measuredRecoveryRequested(sid), () -> "正常測量不應立即返還");
         fixture.adopt(measured);
         fixture.recordReceipt();
@@ -126,22 +126,22 @@ final class M5CollapseLiveChain {
             var player = connection.player();
             run.expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
             run.expect("joinedInTheCorridor", player.getServerWorld() == fixture.corridor(), () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
-            run.expect("participantBlockedUntilReturned", SessionRecoveryManager.blocks(id, run.server), () -> "尚未返還的參與者沒有被 recovery 攔截");
+            run.expect("participantBlockedUntilReturned", SessionRecoveryManager.blocks(id, run.server()), () -> "尚未返還的參與者沒有被 recovery 攔截");
         }
-        joinedAt = run.ticks;
+        joinedAt = run.ticks();
         return true;
     }
 
     /** 參與者都回到來源世界，flushed record 記為已返還；record 仍是 COLLAPSING，沒有經過保留式 recovery 的請求。 */
     private boolean returnedFromTheCorridor() {
         var players = fixture.players();
-        var record = run.journal.flushedRecords().get(fixture.sid());
-        if (players.stream().anyMatch(player -> player.getServerWorld() != run.source) || record == null
+        var record = run.journal().flushedRecords().get(fixture.sid());
+        if (players.stream().anyMatch(player -> player.getServerWorld() != run.source()) || record == null
                 || record.participants().stream().anyMatch(person -> !person.returned())) return false;
         run.expect("returnedWhileCollapsing", record.state() == SessionState.COLLAPSING, () -> "state=" + record.state());
         run.expect("returnedWithoutRequest", !fixture.pages().measuredRecoveryRequested(fixture.sid()), () -> "COLLAPSING 的返還經過了 requestMeasuredRecovery");
         for (var id : fixture.participants()) {
-            run.expect("participantUnblocked", !SessionRecoveryManager.blocks(id, run.server), () -> "已返還的參與者仍被 recovery 攔截");
+            run.expect("participantUnblocked", !SessionRecoveryManager.blocks(id, run.server()), () -> "已返還的參與者仍被 recovery 攔截");
         }
         run.proof.put("returnedInsideTheChamber", players.stream().allMatch(M5CollapseFixture::inside));
         returned = true;
@@ -150,8 +150,8 @@ final class M5CollapseLiveChain {
 
     /** 清 lease、走廊 space 釋放（{@code measuredRecoveryComplete}：SETTLED）；在那之前 record 一直是 COLLAPSING。 */
     private boolean settled() {
-        var record = run.journal.flushedRecords().get(fixture.sid());
-        run.expect("collapsingUntilSettled", record != null && record.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(run.journal, fixture.sid()));
+        var record = run.journal().flushedRecords().get(fixture.sid());
+        run.expect("collapsingUntilSettled", record != null && record.state() == SessionState.COLLAPSING, () -> "state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
         if (!fixture.pages().measuredRecoveryComplete(fixture.sid())) return false;
         run.expect("leaseCleared", record.spaceLeases().isEmpty() && MeasuredRecoveryPhase.from(record) == MeasuredRecoveryPhase.SETTLED && !fixture.spaceExists(),
                 () -> "leases=" + record.spaceLeases() + " phase=" + MeasuredRecoveryPhase.from(record));

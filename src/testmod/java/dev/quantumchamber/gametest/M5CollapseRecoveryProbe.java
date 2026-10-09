@@ -1,15 +1,11 @@
 package dev.quantumchamber.gametest;
 
+import dev.quantumchamber.gametest.M5CollapseRun.PhaseFactory;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import net.fabricmc.api.ModInitializer;
 
 /**
@@ -30,17 +26,14 @@ import net.fabricmc.api.ModInitializer;
  *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）；投影 chunk 的載入與 load-sync 的觀察在
  *     {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。</li>
  * </ul>
- * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
+ * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}（設定 {@code M5CollapseRun.Configuration} 與 factory 的型別都在 runner，F6-2c Step 0：runner 不依賴 entrypoint）。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
  * 「M5 collapse probe」）。receipt 記下這張表的全部 phase 名稱（{@code phaseTable}）與這個 phase 的結束（{@code ending}），{@code m5-collapse-probe.ps1} 逐一與
  * {@code $chains} 比對，任何一邊多出或少了 phase、或結束不同都判 FAIL。
  */
 public final class M5CollapseRecoveryProbe implements ModInitializer {
-    /** phase 表：phase 名稱 → 建立這個 phase 的 factory（依 chain 的順序）。 */
+    /** phase 表：phase 名稱 → 建立這個 phase 的 factory（{@link PhaseFactory}，依 chain 的順序）。 */
     static final Map<String, PhaseFactory> PHASES = phases();
-
-    /** 在 {@code onInitialize} 呼叫：建立這個 phase 的 chain，回傳它的 {@link M5CollapseRun.Phase}。 */
-    @FunctionalInterface interface PhaseFactory { M5CollapseRun.Phase create(M5CollapseRun run); }
 
     private static Map<String, PhaseFactory> phases() {
         var table = new LinkedHashMap<String, PhaseFactory>();
@@ -73,39 +66,8 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     }
 
     @Override public void onInitialize() {
-        var config = Configuration.read(PHASES.keySet());
+        var config = M5CollapseRun.Configuration.read(PHASES.keySet());
         if (config == null) return;
         new M5CollapseRun(config, List.copyOf(PHASES.keySet())).start(PHASES.get(config.phase()));
-    }
-
-    /** probe 的設定（system property {@code quantumchamber.m5collapse.*}，由 build.gradle 的 m5Collapse run 從 {@code -Pm5Collapse*} 轉入）。 */
-    record Configuration(String phase, String nonce, String startupNonce, Path root, Path evidence) {
-        /** 沒有 phase 屬性時回 null（probe 關閉）；有但不合法（含不在 {@code phases} 裡的 phase）時丟出。 */
-        static Configuration read(Set<String> phases) {
-            String prefix = "quantumchamber.m5collapse.";
-            String phase = System.getProperty(prefix + "phase");
-            if (phase == null) return null;
-            String nonce = System.getProperty(prefix + "nonce", ""), startup = System.getProperty(prefix + "startupNonce", "");
-            String supplied = System.getProperty(prefix + "root", "");
-            if (!phases.contains(phase) || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*") || nonce.equals("disabled") || !startup.matches("[0-9a-f]{32}") || supplied.isBlank()) {
-                throw new IllegalStateException("M5 collapse probe 的設定不合法：phase=" + phase + " nonce=" + nonce + " startupNonce=" + startup + " root=" + supplied);
-            }
-            try {
-                var given = Path.of(supplied);
-                var root = given.toRealPath();
-                if (!given.isAbsolute() || !root.equals(given.normalize()) || !root.equals(Path.of("").toRealPath())
-                        || !root.getFileName().toString().equals("m5-collapse-" + nonce) || !root.getParent().getFileName().toString().equals("run")) {
-                    throw new IllegalStateException("M5 collapse probe 的 root 必須是 cwd 的 run/m5-collapse-" + nonce + "：" + supplied);
-                }
-                var evidence = root.getParent().getParent().resolve(M5CollapseRun.OWNER).resolve("collapse-" + nonce).resolve(phase);
-                if (!evidence.toRealPath().equals(evidence)) throw new IllegalStateException("M5 collapse probe 的 evidence 必須是 canonical 路徑：" + evidence);
-                for (var existing : List.of("final.json", "halt.json", "events.jsonl", M5CollapseRun.RECEIPT_NBT)) {
-                    if (Files.exists(evidence.resolve(existing))) throw new IllegalStateException("phase evidence 已有 " + existing + "，禁止重跑：" + evidence);
-                }
-                return new Configuration(phase, nonce, startup, root, evidence);
-            } catch (IOException failure) {
-                throw new UncheckedIOException("M5 collapse probe 的 root 或 evidence 不存在：" + supplied, failure);
-            }
-        }
     }
 }

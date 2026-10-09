@@ -54,7 +54,7 @@ final class M5CollapseProjectionLoad {
                 () -> "載入之後 U 的 Controller 位置沒有 Controller block entity：" + world.getBlockState(FRAME.controllerPos()));
         var controller = (ChamberControllerBlockEntity) entity;
         var atLoad = new AtLoad(controller.instanceKind(), controller.chamberState().name(), controller.powerInitialized(), controller.wasPowered(),
-                ChamberLoadSyncTestAccess.hasPending(run.server, controller));
+                ChamberLoadSyncTestAccess.hasPending(run.server(), controller));
         run.proof.put("projectionControllerAtLoad", Map.of("instanceKind", atLoad.instanceKind().name(), "state", atLoad.state(),
                 "powerInitialized", atLoad.powerInitialized(), "wasPowered", atLoad.wasPowered(), "loadSyncPending", atLoad.loadSyncPending()));
         var load = new M5CollapseProjectionLoad(run, controller, atLoad, log, ChamberLoadSyncTestAccess.observe(world, controller));

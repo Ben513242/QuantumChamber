@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -16,6 +17,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.Event;
@@ -97,6 +100,9 @@ final class M5CollapseRun {
     /** halt 之前的取證（或刻意的準備，例如 W4 的存檔）：寫進 halt receipt 的 {@code atHalt}。丟出時不 halt，crash 點記下失敗，phase 在下一個 tick FAIL。 */
     @FunctionalInterface interface HaltEvidence { void collect(Object detail, Map<String, Object> evidence) throws Exception; }
 
+    /** 在 {@code onInitialize} 呼叫（entrypoint 的 phase 表，{@code M5CollapseRecoveryProbe.PHASES}）：建立這個 phase 的 chain，回傳它的 {@link Phase}。 */
+    @FunctionalInterface interface PhaseFactory { Phase create(M5CollapseRun run); }
+
     /** chain 的 fixture 提供給 runner 的診斷與 halt 當下的事實。 */
     interface Context {
         /** 診斷訊息的 chain 部分（session、record 的狀態、catalog）。 */
@@ -109,9 +115,43 @@ final class M5CollapseRun {
         Map<String, Object> diskSummary();
     }
 
+    /**
+     * probe 的設定（system property {@code quantumchamber.m5collapse.*}，由 build.gradle 的 m5Collapse run 從 {@code -Pm5Collapse*} 轉入；F6-2c Step 0 由
+     * {@code M5CollapseRecoveryProbe} 移到這裡，runner 不再依賴 entrypoint）。
+     */
+    record Configuration(String phase, String nonce, String startupNonce, Path root, Path evidence) {
+        /** 沒有 phase 屬性時回 null（probe 關閉）；有但不合法（含不在 {@code phases} 裡的 phase）時丟出。 */
+        static Configuration read(Set<String> phases) {
+            String prefix = "quantumchamber.m5collapse.";
+            String phase = System.getProperty(prefix + "phase");
+            if (phase == null) return null;
+            String nonce = System.getProperty(prefix + "nonce", ""), startup = System.getProperty(prefix + "startupNonce", "");
+            String supplied = System.getProperty(prefix + "root", "");
+            if (!phases.contains(phase) || !nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*") || nonce.equals("disabled") || !startup.matches("[0-9a-f]{32}") || supplied.isBlank()) {
+                throw new IllegalStateException("M5 collapse probe 的設定不合法：phase=" + phase + " nonce=" + nonce + " startupNonce=" + startup + " root=" + supplied);
+            }
+            try {
+                var given = Path.of(supplied);
+                var root = given.toRealPath();
+                if (!given.isAbsolute() || !root.equals(given.normalize()) || !root.equals(Path.of("").toRealPath())
+                        || !root.getFileName().toString().equals("m5-collapse-" + nonce) || !root.getParent().getFileName().toString().equals("run")) {
+                    throw new IllegalStateException("M5 collapse probe 的 root 必須是 cwd 的 run/m5-collapse-" + nonce + "：" + supplied);
+                }
+                var evidence = root.getParent().getParent().resolve(OWNER).resolve("collapse-" + nonce).resolve(phase);
+                if (!evidence.toRealPath().equals(evidence)) throw new IllegalStateException("M5 collapse probe 的 evidence 必須是 canonical 路徑：" + evidence);
+                for (var existing : List.of("final.json", "halt.json", "events.jsonl", RECEIPT_NBT)) {
+                    if (Files.exists(evidence.resolve(existing))) throw new IllegalStateException("phase evidence 已有 " + existing + "，禁止重跑：" + evidence);
+                }
+                return new Configuration(phase, nonce, startup, root, evidence);
+            } catch (IOException failure) {
+                throw new UncheckedIOException("M5 collapse probe 的 root 或 evidence 不存在：" + supplied, failure);
+            }
+        }
+    }
+
     // ---- 狀態 ----
 
-    final M5CollapseRecoveryProbe.Configuration config;
+    final Configuration config;
     /** entrypoint 的 phase 表的全部 phase 名稱（依表的順序）：寫進 receipt 的 {@code phaseTable}，harness 與 chain 表比對。 */
     private final List<String> phaseTable;
     final Map<String, Object> proof = new LinkedHashMap<>();
@@ -127,23 +167,41 @@ final class M5CollapseRun {
     /** {@code SERVER_STOPPED} 寫出 {@code final.json} 之後依登記順序關閉（log 的收集）。 */
     private final List<AutoCloseable> onStopped = new ArrayList<>();
     private Context context;
-    MinecraftServer server;
-    ServerWorld source;
-    SessionRecoveryState journal;
-    /** {@code quantumchamber} logger 從 {@code SERVER_STARTED} 的 AFTER phase 起的 log。 */
-    LogCapture capture;
-    /** {@code quantumchamber} logger 從 {@code onInitialize} 起的 log（含開服時 default phase 的初始化，例如「M5 authority 初始化失敗」）。 */
-    LogCapture startupLog;
+    private MinecraftServer server;
+    private ServerWorld source;
+    private SessionRecoveryState journal;
+    private LogCapture capture;
+    private LogCapture startupLog;
     private Phase phase;
-    int ticks;
+    private int ticks;
     private int stepIndex, stepTicks;
     private boolean finished, passed;
     private M5TestHooks.CrashPoint crashPoint;
 
-    M5CollapseRun(M5CollapseRecoveryProbe.Configuration config, List<String> phaseTable) {
+    M5CollapseRun(Configuration config, List<String> phaseTable) {
         this.config = config;
         this.phaseTable = List.copyOf(phaseTable);
     }
+
+    // ---- chain 與 fixture 讀的狀態（唯讀；F6-2c Step 0 由 package 可見的可變欄位改成 accessor） ----
+
+    /** 這個 phase 的 server（{@code SERVER_STARTED} 起；之前為 null）。 */
+    MinecraftServer server() { return server; }
+
+    /** 來源世界（overworld，{@code SERVER_STARTED} 起）。 */
+    ServerWorld source() { return source; }
+
+    /** session journal（{@code SERVER_STARTED} 起）。 */
+    SessionRecoveryState journal() { return journal; }
+
+    /** {@code quantumchamber} logger 從 {@code SERVER_STARTED} 的 AFTER phase 起的 log。 */
+    LogCapture capture() { return capture; }
+
+    /** {@code quantumchamber} logger 從 {@code onInitialize} 起的 log（含開服時 default phase 的初始化，例如「M5 authority 初始化失敗」）。 */
+    LogCapture startupLog() { return startupLog; }
+
+    /** 這個 phase 到目前為止的 tick 數（{@code END_SERVER_TICK} 的次數）。 */
+    int ticks() { return ticks; }
 
     /** chain 的 fixture 在建構時登記（診斷與 halt 當下的事實）。 */
     void context(Context fixture) {
@@ -153,7 +211,7 @@ final class M5CollapseRun {
     // ---- 生命週期 ----
 
     /** {@code onInitialize}：記下 JVM 的身分、建立 phase、執行開服前的準備，再註冊 listener。 */
-    void start(M5CollapseRecoveryProbe.PhaseFactory factory) {
+    void start(PhaseFactory factory) {
         proof.put("producer", "M5CollapseRecoveryProbe");
         proof.put("phase", config.phase());
         proof.put("phaseTable", phaseTable);
@@ -315,8 +373,11 @@ final class M5CollapseRun {
 
     // ---- crash 點與 halt receipt ----
 
-    /** 裝上 crash 點：{@code window} 的 detail 符合 {@code condition} 的第一次，先 {@code evidence}，再寫 halt receipt、halt。 */
-    void armCrash(CrashWindow window, Predicate<Object> condition, HaltEvidence evidence) {
+    /**
+     * 裝上 crash 點：{@code window} 的 detail 符合 {@code condition} 的第一次，先 {@code evidence}，再寫 halt receipt（detail 的文字描述由 {@code describe} 提供，
+     * 呼叫端是窗口表）、halt。
+     */
+    void armCrash(CrashWindow window, Predicate<Object> condition, Function<Object, String> describe, HaltEvidence evidence) {
         var point = new M5TestHooks.CrashPoint(window, condition, (detail, hit) -> {
             var atHalt = new LinkedHashMap<String, Object>();
             try {
@@ -324,7 +385,7 @@ final class M5CollapseRun {
             } catch (Exception failure) {
                 throw new IllegalStateException("haltEvidence：halt 之前的取證失敗：" + failure, failure);
             }
-            halt(window, detail, hit, atHalt);
+            halt(window, detail, describe, hit, atHalt);
         });
         install(M5TestHooks.CRASH_POINT, point);
         crashPoint = point;
@@ -347,7 +408,7 @@ final class M5CollapseRun {
      * （{@code crashPointFailure} 為 {@code none}）、receipt 的 {@code failures} 是空的，才是 status {@code HALT}、以 {@link #HALT_EXIT} 結束；任何一項不成立時
      * 不當成 crash：status {@code HALT_REFUSED}（{@code refused} 列出原因），以 {@link #HALT_FAILED_EXIT} 結束。receipt 寫不出來時也以 {@link #HALT_FAILED_EXIT} 結束。
      */
-    private void halt(CrashWindow window, Object detail, int hit, Map<String, Object> atHalt) {
+    private void halt(CrashWindow window, Object detail, Function<Object, String> describe, int hit, Map<String, Object> atHalt) {
         var point = crashPoint;
         var refused = new ArrayList<String>();
         if (hit != 1) refused.add("hit=" + hit);
@@ -362,7 +423,7 @@ final class M5CollapseRun {
             halt.put("hit", hit);
             halt.put("reached", point.reached());
             halt.put("crashPointFailure", point.failure() == null ? "none" : point.failure().toString());
-            halt.put("detail", M5CollapseWindows.describe(detail));
+            halt.put("detail", describe.apply(detail));
             halt.put("haltServerTick", server.getTicks());
             halt.put("universeActiveAtHalt", context.universeActive());
             halt.put("stepAtHalt", stepIndex < phase.steps().size() ? phase.steps().get(stepIndex).name() : "-");

@@ -112,7 +112,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     /** 兩個 phase 共用：C 載入、穩定 → 移除 ticket 並讓 server 落後排程 → C 的 holder 在 {@code chunksToUnload} 時裝上讀檔保留、以另一種 ticket 再載入 → 取回同一個 holder。 */
     private List<Step> zombieSteps() {
         return List.of(
-                new Step("load", 1, () -> { run.source.getChunkManager().addTicket(Tickets.FIRST, chunk, 0, chunk); return true; }),
+                new Step("load", 1, () -> { run.source().getChunkManager().addTicket(Tickets.FIRST, chunk, 0, chunk); return true; }),
                 new Step("settled", 1200, this::settled),
                 new Step("ticketRemoved", 1, this::removeFirstTicket),
                 new Step("queuedForUnload", 40, this::queuedForUnloadThenReadded),
@@ -124,7 +124,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     /** C 是 FULL、refCount 0，而且 server 連續 20 個 tick 在排程之內（開服的追趕已結束）。 */
     private boolean settled() {
         var current = current();
-        if (current == null || run.source.getChunkManager().getWorldChunk(chunk.x, chunk.z) == null || current.getRefCount() != 0 || !onSchedule()) {
+        if (current == null || run.source().getChunkManager().getWorldChunk(chunk.x, chunk.z) == null || current.getRefCount() != 0 || !onSchedule()) {
             settledTicks = 0;
             return false;
         }
@@ -133,10 +133,10 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
 
     private boolean removeFirstTicket() throws InterruptedException {
         holder = current();
-        run.source.getChunkManager().removeTicket(Tickets.FIRST, chunk, 0, chunk);
+        run.source().getChunkManager().removeTicket(Tickets.FIRST, chunk, 0, chunk);
         zombie.put("chunk", chunk.x + "," + chunk.z);
         zombie.put("holder", identity(holder));
-        zombie.put("ticketRemovedTick", run.server.getTicks());
+        zombie.put("ticketRemovedTick", run.server().getTicks());
         Thread.sleep(LAG_MILLIS);
         return true;
     }
@@ -154,12 +154,12 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
             return false;
         }
         run.expect("sameHolderQueuedForUnload", queued == holder && current == null, () -> "toUnload=" + identity(queued) + " current=" + identity(current) + " holder=" + identity(holder));
-        zombie.put("queuedTick", run.server.getTicks());
+        zombie.put("queuedTick", run.server().getTicks());
         zombie.put("unloadQueueAtReadd", queue().size());
         zombie.put("behindMillisAtReadd", behindMillis());
-        hold = run.install(M5ChunkUnloadHooks.CHUNK_READ_HOLD, new M5ChunkUnloadHooks.ChunkReadHold(run.source, chunk, HOLD_MIN, HOLD_MAX));
-        hold.releaseAfterStop(run.server, RELEASE_AFTER_STOP_MILLIS);
-        run.source.getChunkManager().addTicket(Tickets.SECOND, chunk, READD_RADIUS, chunk);
+        hold = run.install(M5ChunkUnloadHooks.CHUNK_READ_HOLD, new M5ChunkUnloadHooks.ChunkReadHold(run.source(), chunk, HOLD_MIN, HOLD_MAX));
+        hold.releaseAfterStop(run.server(), RELEASE_AFTER_STOP_MILLIS);
+        run.source().getChunkManager().addTicket(Tickets.SECOND, chunk, READD_RADIUS, chunk);
         return true;
     }
 
@@ -168,7 +168,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         var current = current();
         if (current == null) return false;
         run.expect("sameHolderTakenBack", current == holder && toUnload() == null, () -> "current=" + identity(current) + " toUnload=" + identity(toUnload()) + " holder=" + identity(holder));
-        zombie.put("takenBackTick", run.server.getTicks());
+        zombie.put("takenBackTick", run.server().getTicks());
         zombie.put("refCountAtTakeBack", holder.getRefCount());
         zombie.put("unloadQueueAtTakeBack", queue().size());
         run.proof.put("zombie", zombie);
@@ -187,7 +187,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         zombie.put("staleBeforeRelease", stale);
         zombie.put("droppedBeforeRelease", witness.dropped(chunk));
         zombie.put("heldReads", hold.hits());
-        zombie.put("releaseTick", run.server.getTicks());
+        zombie.put("releaseTick", run.server().getTicks());
         return true;
     }
 
@@ -195,22 +195,22 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
      * 放行之後 C1 回到 FULL、refCount 歸零（仍是同一個 holder）：放上金塊標記，同一個 tick 移除 C1 的全部 ticket（之間沒有 {@code unloadChunks}，所以標記不會先被增量存檔）。
      */
     private boolean loadedAgainThenReleased() {
-        if (current() != holder || run.source.getChunkManager().getWorldChunk(chunk.x, chunk.z) == null || holder.getRefCount() != 0) return false;
-        boolean placed = run.source.setBlockState(MARKER, Blocks.GOLD_BLOCK.getDefaultState(), Block.NOTIFY_ALL);
-        run.expect("markerPlaced", placed && run.source.getBlockState(MARKER).isOf(Blocks.GOLD_BLOCK), () -> "標記 " + MARKER.toShortString() + " 是 " + run.source.getBlockState(MARKER));
-        run.source.getChunkManager().removeTicket(Tickets.SECOND, chunk, READD_RADIUS, chunk);
+        if (current() != holder || run.source().getChunkManager().getWorldChunk(chunk.x, chunk.z) == null || holder.getRefCount() != 0) return false;
+        boolean placed = run.source().setBlockState(MARKER, Blocks.GOLD_BLOCK.getDefaultState(), Block.NOTIFY_ALL);
+        run.expect("markerPlaced", placed && run.source().getBlockState(MARKER).isOf(Blocks.GOLD_BLOCK), () -> "標記 " + MARKER.toShortString() + " 是 " + run.source().getBlockState(MARKER));
+        run.source().getChunkManager().removeTicket(Tickets.SECOND, chunk, READD_RADIUS, chunk);
         var left = tickets();
         run.expect("noTicketLeft", left.isEmpty(), () -> "C1 仍有 ticket：" + left);
-        zombie.put("markerTick", run.server.getTicks());
+        zombie.put("markerTick", run.server().getTicks());
         waitedTicks = 0;
         return true;
     }
 
     /** refCount 歸零、ticket 都移除之後，被取回的 holder 照常卸載：不在 {@code currentChunkHolders}、不在 {@code chunksToUnload}，chunk 已卸載。 */
     private boolean unloadedAfterTakeBack() {
-        if (current() == null && toUnload() == null && !run.source.getChunkManager().isChunkLoaded(chunk.x, chunk.z)) {
+        if (current() == null && toUnload() == null && !run.source().getChunkManager().isChunkLoaded(chunk.x, chunk.z)) {
             run.expect("unloadedAfterTakeBack", true, () -> "");
-            zombie.put("unloadedTick", run.server.getTicks());
+            zombie.put("unloadedTick", run.server().getTicks());
             return true;
         }
         if (++waitedTicks < UNLOAD_WAIT_TICKS) return false;
@@ -231,7 +231,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         if (++waitedTicks < 2) return false;
         run.expect("referencedAtStop", current() == holder && holder.getRefCount() > 0, () -> "current=" + identity(current()) + " refCount=" + holder.getRefCount());
         run.expect("readsHeldAtStop", hold.pending() > 0, () -> "hits=" + hold.hits() + " pending=" + hold.pending());
-        zombie.put("stopTick", run.server.getTicks());
+        zombie.put("stopTick", run.server().getTicks());
         zombie.put("refCountAtStop", holder.getRefCount());
         zombie.put("heldReadsAtStop", hold.pending());
         zombie.put("unloadQueueAtStop", queue().size());
@@ -274,7 +274,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     // ---- witness、停服 ----
 
     private void installWitness() {
-        witness = new M5ChunkUnloadHooks.UnloadTaskWitness(run.source, List.of(chunk));
+        witness = new M5ChunkUnloadHooks.UnloadTaskWitness(run.source(), List.of(chunk));
         M5ChunkUnloadHooks.UNLOAD_TASK_WITNESS.install(witness, null);
         run.onStopping(() -> stoppingNanos = System.nanoTime());
     }
@@ -300,7 +300,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     // ---- 查詢 ----
 
     private ServerChunkLoadingManagerTestAccessor manager() {
-        return (ServerChunkLoadingManagerTestAccessor) run.source.getChunkManager().chunkLoadingManager;
+        return (ServerChunkLoadingManagerTestAccessor) run.source().getChunkManager().chunkLoadingManager;
     }
 
     private ChunkHolder current() { return manager().quantumchamberTest$currentChunkHolders().get(chunk.toLong()); }
@@ -310,7 +310,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     private java.util.Queue<Runnable> queue() { return manager().quantumchamberTest$unloadTaskQueue(); }
 
     private List<String> tickets() {
-        var tickets = ((ChunkTicketManagerTestAccessor) run.source.getChunkManager().chunkLoadingManager.getTicketManager())
+        var tickets = ((ChunkTicketManagerTestAccessor) run.source().getChunkManager().chunkLoadingManager.getTicketManager())
                 .quantumchamberTest$getTicketsByPosition().get(chunk.toLong());
         var out = new ArrayList<String>();
         if (tickets != null) for (var ticket : tickets) out.add(ticket.toString());
@@ -318,11 +318,11 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     }
 
     /** 這個 tick 目前在排程之內（原版 {@code shouldKeepTicking} 的時間條件）。 */
-    private boolean onSchedule() { return Util.getMeasuringTimeNano() < run.server.getTimeReference(); }
+    private boolean onSchedule() { return Util.getMeasuringTimeNano() < run.server().getTimeReference(); }
 
-    private long behindMillis() { return (Util.getMeasuringTimeNano() - run.server.getTimeReference()) / 1_000_000L; }
+    private long behindMillis() { return (Util.getMeasuringTimeNano() - run.server().getTimeReference()) / 1_000_000L; }
 
-    private Path overworldDirectory() { return DimensionType.getSaveDirectory(run.source.getRegistryKey(), run.saveRoot()); }
+    private Path overworldDirectory() { return DimensionType.getSaveDirectory(run.source().getRegistryKey(), run.saveRoot()); }
 
     /** fresh 世界：{@code pos} 所在的 chunk 在磁碟上不存在。 */
     private void expectFresh(String name, BlockPos pos) throws Exception {
