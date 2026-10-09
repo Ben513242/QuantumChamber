@@ -8,6 +8,7 @@ import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.collapse.CollapseService.SourceSignal;
 import dev.quantumchamber.collapse.CollapseService.Track;
+import dev.quantumchamber.mixin.PlayerManagerSaveInvoker;
 import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
@@ -69,7 +70,8 @@ import org.slf4j.LoggerFactory;
  *     位在 exact 的來源 world instance；沒有騎乘；沒有被其他 session 佔用（§5）；腳在門口（local x∈[1,6)、y∈[1,6)）；local z 已越過門板中線往外（z&lt;0.5）而上一個 tick
  *     還在中線內側（z≥0.5；只認上一個 tick 的觀察，更舊的不算，{@link #previousTick}，fix round 1）。觸發之後以 {@link PassageTransferPolicy} 傳送到目的世界的同 XYZ、yaw、pitch 與速度（{@code UniverseTransferService} 的 plan 決策 4 多載）。
  *     非參與者不在檢查的對象裡：穿過量子膜只會走進原世界。</li>
- * <li><b>傳送結果</b>（§10.3 的表）：成功（MOVED）→ checked（roll-forward）加入 Crossed，之後對到達的那位玩家以 title 顯示到達提示（NEW「你已進入新的宇宙。」、EXISTING
+ * <li><b>傳送結果</b>（§10.3 的表）：成功（MOVED）→ checked（roll-forward）加入 Crossed，寫入確認之後立即存下他的 playerdata（v5.7，{@link #saveCrossedPlayerData}；
+ *     沒有確認時不存），之後對到達的那位玩家以 title 顯示到達提示（NEW「你已進入新的宇宙。」、EXISTING
  *     「你已進入另一個宇宙。」；先送淡入、停留、淡出 10／70／20；§10.8、§20.8、§20.9，{@link #arrived}）——寫入確認、roll-forward 未確認、被拒時都顯示，因為他都已在目的世界；
  *     {@code FAILED_ROLLED_BACK}（以及移動之前就被拒的 {@code REJECTED_BEFORE_MOVE}，玩家同樣留在原世界；這些與下一種都不顯示到達提示）→ actionbar
  *     「通道傳送失敗，你仍在原世界。」、依原因去重記一次 WARN，通道仍開著，可以再試；{@code FAILED_RECOVERY_REQUIRED} → 不移除 record，checked
@@ -97,8 +99,12 @@ final class PassageService {
     static final String MESSAGE_ARRIVED_EXISTING = "message.quantumchamber.m5.arrived_existing";
     /** spec §20.9：到達提示的淡入、停留、淡出（ticks），原版的預設值；送 title 之前先明確送出，不沿用 client 先前的設定。 */
     static final int ARRIVAL_FADE_IN = 10, ARRIVAL_STAY = 70, ARRIVAL_FADE_OUT = 20;
-    /** {@link CollapseService#warn} 的寫入種類：傳送沒有完成、玩家仍在原世界（成功時清除）；Crossed 的寫入；TRANSFER_RECOVERY_REQUIRED 的寫入。 */
-    private static final String TRANSFER = "通道傳送", CROSSED_WRITE = "寫入 Crossed", RECOVERY_WRITE = "寫入 SEALED(TRANSFER_RECOVERY_REQUIRED)";
+    /**
+     * {@link CollapseService#warn} 的寫入種類：傳送沒有完成、玩家仍在原世界（成功時清除）；Crossed 的寫入；TRANSFER_RECOVERY_REQUIRED 的寫入；Crossed 確認之後的 playerdata
+     * 存檔（v5.7，{@link #saveCrossedPlayerData}；成功時清除）。
+     */
+    private static final String TRANSFER = "通道傳送", CROSSED_WRITE = "寫入 Crossed", RECOVERY_WRITE = "寫入 SEALED(TRANSFER_RECOVERY_REQUIRED)",
+            PLAYER_DATA_SAVE = "跨越之後的 playerdata 存檔";
     private final CollapseService service;
     /** 原生移動（{@code UniverseTransferService} 的 NativeMove）；它自己以 entity 去重原生例外的 WARN。 */
     private final SessionTransferService transfers = new SessionTransferService();
@@ -374,6 +380,7 @@ final class PassageService {
         switch (commit.status()) {
             case COMMITTED -> {
                 track.warnings.remove(CROSSED_WRITE);
+                saveCrossedPlayerData(sid, track, player);
                 return next;
             }
             case ROLL_FORWARD_PENDING -> {
@@ -386,6 +393,27 @@ final class PassageService {
                 service.warn(sid, CROSSED_WRITE, commit.failure().orElseThrow(), commit.status().name(), "玩家已在目的世界，但 Crossed 沒有記下；通道之後依結束條件結束：玩家=" + id);
                 return null;
             }
+        }
+    }
+
+    /**
+     * Crossed 的寫入確認（COMMITTED）之後，立即存下這位玩家的 playerdata（spec v5.7：§10.3 傳送結果表的「成功」列、§12 PASSAGE_READY 列、§20.11）。之後 crash 時，他以這份
+     * playerdata 在目的世界重新加入（開服時已物化），不會回到最後一次原生存檔的位置：原版只在 autosave、登出與停服時存 playerdata，M3 的傳送只移動、不存檔。
+     * <p><b>順序：先寫 journal，再寫 playerdata。</b>只在 Crossed 已確認在磁碟上之後存，寫入沒有確認（ROLL_FORWARD_PENDING）或被拒時不經這裡、不存（{@link #crossed}），
+     * 所以磁碟上的 Crossed 與 playerdata 一致：playerdata 在目的世界的人一定已在 Crossed 中。兩者之間 crash 時（journal 已有他、playerdata 還沒有存），就是 v5.7 之前的行為，
+     * 也是 spec §12 的邊界情況：他以最後一次存下的位置重新加入，通道在開服時結束，不會被困住。
+     * <p>以 {@code PlayerManager.savePlayerData}（{@link PlayerManagerSaveInvoker}，原版 autosave 與登出用的同一個方法，連同 stats 與 advancements）存；不用
+     * {@code PlayerCheckpointStore.saveAndVerify}（M2 的 checkpoint，讀回驗證只支援 Windows，其他平台丟出）。原版自己收下寫檔的例外、記它自己的 WARN；從這裡丟出的
+     * RuntimeException 只記 WARN（{@link CollapseService#warn}：帶 {@link CollapseService#LOG_MARKER} 與 {@code session=}，依原因去重，存檔成功時清除），不往外丟：他已在
+     * 目的世界、Crossed 也已確認，通道與其他參與者照常。
+     */
+    private void saveCrossedPlayerData(UUID sid, Track track, ServerPlayerEntity player) {
+        try {
+            ((PlayerManagerSaveInvoker) service.server.getPlayerManager()).quantumchamber$savePlayerData(player);
+            track.warnings.remove(PLAYER_DATA_SAVE);
+        } catch (RuntimeException failure) {
+            service.warn(sid, PLAYER_DATA_SAVE, failure, null, "不重試；他仍在目的世界，通道照常，crash 時以最後一次存下的 playerdata 為準（spec §12），原版的 autosave、登出與"
+                    + "停服仍會存：玩家=" + player.getUuid());
         }
     }
 
