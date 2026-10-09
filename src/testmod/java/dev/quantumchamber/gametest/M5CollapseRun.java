@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -111,7 +112,7 @@ final class M5CollapseRun {
 
         private static Checked once(String name, Checked current, Checked next) {
             if (current != NOTHING) throw new IllegalStateException("phase 的 " + name + " 已經指定過");
-            return java.util.Objects.requireNonNull(next, name);
+            return Objects.requireNonNull(next, name);
         }
     }
 
@@ -241,8 +242,16 @@ final class M5CollapseRun {
     /** 這個 phase 到目前為止的 tick 數（{@code END_SERVER_TICK} 的次數）。 */
     int ticks() { return ticks; }
 
-    /** chain 的 fixture 在建構時登記（診斷與 halt 當下的事實）。 */
+    /**
+     * chain 的 fixture 在建構時登記（診斷與 halt 當下的事實）。一個 phase 只能有一個 Context：再登記時丟出、不覆蓋（F6-2c Step 0，F6-2a quality Minor 7；fixture 在
+     * {@code onInitialize} 的 phase factory 裡建立，所以重複登記讓開服之前就失敗）。
+     */
     void context(Context fixture) {
+        Objects.requireNonNull(fixture, "fixture");
+        if (context != null) {
+            throw new IllegalStateException("M5 collapse probe 的 runner 已有 Context（" + context.getClass().getSimpleName() + "），不覆蓋："
+                    + fixture.getClass().getSimpleName());
+        }
         context = fixture;
     }
 
