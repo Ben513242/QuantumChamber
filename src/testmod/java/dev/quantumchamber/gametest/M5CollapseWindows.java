@@ -116,7 +116,7 @@ final class M5CollapseWindows {
      * 要在狀態是 PASSAGE_READY 或 SEALED 之後（COLLAPSING 與終局不斷言 Crossed）；{@code notReturned} 只用在 COLLAPSING（W1）；{@code recognizingBeforeJoin} 要在
      * {@code withProjection} 之後。窗口表在 class init 時建好，entrypoint 在開服之前就初始化它（{@link M5CollapseWindows#windows}），所以不合法的列在開服之前就失敗。
      */
-    static final class AtRestart {
+    static final class AtRestart implements Cloneable {
         // F6-2d Step 0（F6-2c quality Minor 6）：欄位只在 copy（建立之後、交出之前）裡改，交出之後不再變動；窗口表在 class init 時建好，之後只讀。
         private boolean returned = true;
         private Resolved resolved;
@@ -138,17 +138,16 @@ final class M5CollapseWindows {
         }
 
         /**
-         * 這一份的複本，套用 {@code change} 之後交出（F6-2d Step 0，F6-2c quality Minor 6：取代每個 wither 各寫一次 7 個參數的建構子呼叫；之後加欄位只改這裡與預設值）。
+         * 這一份的複本，套用 {@code change} 之後交出（F6-2d Step 0，F6-2c quality Minor 6：取代每個 wither 各寫一次 7 個參數的建構子呼叫）。F6-2d-1（F6-2d Step 0 quality
+         * Minor 4）：複本以 {@code super.clone()} 建立（淺複製全部欄位），不再逐欄手抄：新增欄位時不會因為忘了抄而被之後的 wither 重設；加欄位只改宣告與預設值。
          */
         private AtRestart copy(java.util.function.Consumer<AtRestart> change) {
-            var next = new AtRestart();
-            next.returned = returned;
-            next.resolved = resolved;
-            next.projection = projection;
-            next.disk = disk;
-            next.recognizeBeforeJoin = recognizeBeforeJoin;
-            next.stateAtHalt = stateAtHalt;
-            next.crossedAtHalt = crossedAtHalt;
+            AtRestart next;
+            try {
+                next = (AtRestart) super.clone();
+            } catch (CloneNotSupportedException impossible) {
+                throw new AssertionError("AtRestart 是 Cloneable", impossible);
+            }
             change.accept(next);
             return next.validated();
         }
@@ -251,7 +250,7 @@ final class M5CollapseWindows {
 
     /**
      * 窗口表的一列。{@code haltTiming} 是 halt 的時點（F6-2c fix round 1；預設 {@link M5CollapseRun.HaltAt#WINDOW}，{@code beforeHalt} 也在那一刻執行；F6-2d Step 0 由
-     * {@code haltAt} 改名，與 halt receipt 的鍵相同）。
+     * {@code haltAt} 改名，與 halt receipt 的鍵相同）。F6-2d-1 起由建立這一列的 factory 決定：{@link #row} 是 {@code WINDOW}，{@link #tickEndRow} 是 {@code TICK_END}。
      */
     record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared, M5CollapseRun.HaltAt haltTiming,
             AtWindow atWindow) {}
@@ -302,7 +301,7 @@ final class M5CollapseWindows {
         // W7（spec §12）：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已 checked 寫入）。F6-2c fix round 1（spec v5.7 §10.3）：crash 在 Crossed 確認的那個 tick 結束時
         // （production 在確認之後存下選門者的 playerdata），halt 之前不存檔；chain 在跨越之前（PASSAGE_READY 期間）存過一次檔。
         // F6-2d Step 0（F6-2c fix round 1 spec re-review Minor 1）：Crossed 確認的那一刻另記選門者的 playerdata（selectorPlayerDataAtTheWindow），halt 時斷言它那時還不在 U。
-        row(rows, CrashWindow.CROSSED_COMMITTED, M5CollapseRun.HaltAt.TICK_END, M5CollapseWindows::selectorPlayerDataAtTheWindow,
+        tickEndRow(rows, CrashWindow.CROSSED_COMMITTED, M5CollapseWindows::selectorPlayerDataAtTheWindow,
                 (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED), M5CollapseWindows::selectorAcrossAtTheTickEnd,
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
         // F6-2-16：COLLAPSING→PASSAGE_READY 已 checked 提交、門改為 passable 之前；halt 之前原生存檔（PREPARE 的 sealed 量子膜、參與者在艙內都在磁碟上）。
@@ -313,7 +312,7 @@ final class M5CollapseWindows {
                 afterReady.terminatedAtHalt().withDisk(M5CollapseWindows::passageOnDiskAtRestart), null);
         // F6-2-17：Crossed 的寫出沒有確認（ROLL_FORWARD_PENDING）：玩家已 MOVED，磁碟上的 Crossed 沒有他，playerdata 也沒有存到 U。F6-2c fix round 1：crash 在那個 tick
         // 結束時（spec v5.7 §10.3：寫入沒有確認時 production 不存 playerdata，halt 時磁碟上仍在來源世界）。
-        row(rows, CrashWindow.CROSSED_UNCONFIRMED, M5CollapseRun.HaltAt.TICK_END,
+        tickEndRow(rows, CrashWindow.CROSSED_UNCONFIRMED,
                 (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING), M5CollapseWindows::movedButNotOnDisk,
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
         // F6-2-12：PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 已 checked 寫入（Crossed＝選門者、RecoveryRequired＝另一位），之後的釋放、門與 ERROR 之前。選門者的
@@ -332,29 +331,34 @@ final class M5CollapseWindows {
     /** {@code PassageService.recoveryRequired} 第一次被拒時的 ERROR 的字句（F6-2-12 的 pendingRecovery）。 */
     static final String REJECTED_RECOVERY_ERROR = "SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒";
 
+    /** {@code WINDOW} 的列（預設）：crash 點成立的那一刻（hook 裡）就取證（{@code beforeHalt}）、halt。 */
     private static void row(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {
-        row(rows, id, M5CollapseRun.HaltAt.WINDOW, condition, beforeHalt, atRestart, prepared);
-    }
-
-    /** 同上，halt 的時點由這一列指定（F6-2c fix round 1：{@code TICK_END} 的列，{@code beforeHalt} 在窗口成立的那個 tick 結束時執行）。 */
-    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, M5CollapseRun.HaltAt haltTiming, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart,
-            Prepared prepared) {
-        row(rows, id, haltTiming, NOTHING_AT_THE_WINDOW, condition, beforeHalt, atRestart, prepared);
+        put(rows, new Window(id, condition, beforeHalt, atRestart, prepared, M5CollapseRun.HaltAt.WINDOW, NOTHING_AT_THE_WINDOW));
     }
 
     /**
-     * 同上，另在窗口成立的那一刻取證（{@code atWindow}，F6-2d Step 0）。只用在 {@code TICK_END} 的列：{@code WINDOW} 的 {@code beforeHalt} 本來就在那一刻執行，另指定時丟出
-     * （窗口表在 class init 時建好，開服之前就失敗）。
+     * {@code TICK_END} 的列（F6-2c fix round 1：{@code beforeHalt} 在窗口成立的那個 tick 結束時執行）。F6-2d-1（F6-2d Step 0 quality 給本體的建議）：原本是多一個
+     * {@code haltTiming} 參數的 {@code row}，另在那一刻取證的版本只有 {@code TICK_END} 合法、要到 class init 才擋下；改成專用的 factory，halt 的時點由 factory 決定，誤用在編譯期擋下。
      */
-    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, M5CollapseRun.HaltAt haltTiming, AtWindow atWindow, Condition condition, BeforeHalt beforeHalt,
-            AtRestart atRestart, Prepared prepared) {
-        Objects.requireNonNull(haltTiming, "haltTiming");
-        if (atWindow != NOTHING_AT_THE_WINDOW && haltTiming != M5CollapseRun.HaltAt.TICK_END) {
-            throw new IllegalStateException("窗口表的 " + id + "：只有 TICK_END 的列另在窗口成立的那一刻取證（WINDOW 的 beforeHalt 已在那一刻）");
+    private static void tickEndRow(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {
+        tickEndRow(rows, id, NOTHING_AT_THE_WINDOW, condition, beforeHalt, atRestart, prepared);
+    }
+
+    /**
+     * 同上，另在窗口成立的那一刻取證（{@code atWindow}，F6-2d Step 0）。{@code WINDOW} 的 {@code beforeHalt} 本來就在那一刻執行，所以只有 {@code TICK_END} 的列有這個欄位
+     * （F6-2d-1 起由 factory 保證，{@link #put} 另做防守的檢查）。
+     */
+    private static void tickEndRow(Map<CrashWindow, Window> rows, CrashWindow id, AtWindow atWindow, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart,
+            Prepared prepared) {
+        put(rows, new Window(id, condition, beforeHalt, atRestart, prepared, M5CollapseRun.HaltAt.TICK_END, Objects.requireNonNull(atWindow, "atWindow")));
+    }
+
+    /** 加入一列；同一個窗口再加入時丟出（窗口表在 class init 時建好，開服之前就失敗）。 */
+    private static void put(Map<CrashWindow, Window> rows, Window window) {
+        if (window.atWindow() != NOTHING_AT_THE_WINDOW && window.haltTiming() != M5CollapseRun.HaltAt.TICK_END) {
+            throw new IllegalStateException("窗口表的 " + window.id() + "：只有 TICK_END 的列另在窗口成立的那一刻取證（WINDOW 的 beforeHalt 已在那一刻）");
         }
-        if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared, haltTiming, Objects.requireNonNull(atWindow, "atWindow"))) != null) {
-            throw new IllegalStateException("窗口表重複：" + id);
-        }
+        if (rows.put(window.id(), window) != null) throw new IllegalStateException("窗口表重複：" + window.id());
     }
 
     /**
