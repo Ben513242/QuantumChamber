@@ -106,57 +106,73 @@ final class M5CollapseWindows {
      * </ul>
      */
     static final class AtRestart {
-        private final boolean returned;
-        private final Resolved resolved;
-        private final ProjectionLedger.Entry.Status projection;
-        private final DiskCheck disk;
-        private final boolean recognizeBeforeJoin;
-        private final SessionState stateAtHalt;
-        private final M5CollapseFixture.Who crossedAtHalt;
+        // F6-2d Step 0（F6-2c quality Minor 6）：欄位只在 copy（建立之後、交出之前）裡改，交出之後不再變動；窗口表在 class init 時建好，之後只讀。
+        private boolean returned = true;
+        private Resolved resolved;
+        private ProjectionLedger.Entry.Status projection;
+        private DiskCheck disk = NO_CHECK;
+        private boolean recognizeBeforeJoin;
+        private SessionState stateAtHalt = SessionState.COLLAPSING;
+        private M5CollapseFixture.Who crossedAtHalt = M5CollapseFixture.NOBODY;
 
-        private AtRestart(boolean returned, Resolved resolved, ProjectionLedger.Entry.Status projection, DiskCheck disk, boolean recognizeBeforeJoin,
-                SessionState stateAtHalt, M5CollapseFixture.Who crossedAtHalt) {
-            this.returned = returned;
-            this.resolved = Objects.requireNonNull(resolved, "resolved");
-            this.projection = projection;
-            this.disk = Objects.requireNonNull(disk, "disk");
-            this.recognizeBeforeJoin = recognizeBeforeJoin;
-            this.stateAtHalt = stateAtHalt;
-            this.crossedAtHalt = Objects.requireNonNull(crossedAtHalt, "crossedAtHalt");
-        }
+        private AtRestart() {}
 
         /**
          * RESOLVE 在 halt 之前完成到 {@code resolved}；其餘欄位是預設值（已返還、沒有 projection entry、不檢查磁碟、JOIN 之前不載入投影、磁碟上是 COLLAPSING、沒有人跨過）。
          */
         static AtRestart resolved(Resolved resolved) {
-            return new AtRestart(true, resolved, null, NO_CHECK, false, SessionState.COLLAPSING, M5CollapseFixture.NOBODY);
+            var at = new AtRestart();
+            at.resolved = Objects.requireNonNull(resolved, "resolved");
+            return at;
+        }
+
+        /**
+         * 這一份的複本，套用 {@code change} 之後交出（F6-2d Step 0，F6-2c quality Minor 6：取代每個 wither 各寫一次 7 個參數的建構子呼叫；之後加欄位只改這裡與預設值）。
+         */
+        private AtRestart copy(java.util.function.Consumer<AtRestart> change) {
+            var next = new AtRestart();
+            next.returned = returned;
+            next.resolved = resolved;
+            next.projection = projection;
+            next.disk = disk;
+            next.recognizeBeforeJoin = recognizeBeforeJoin;
+            next.stateAtHalt = stateAtHalt;
+            next.crossedAtHalt = crossedAtHalt;
+            change.accept(next);
+            return next;
         }
 
         /** 參與者在 crash 前還沒有返還（W1）。 */
-        AtRestart notReturned() { return new AtRestart(false, resolved, projection, disk, recognizeBeforeJoin, stateAtHalt, crossedAtHalt); }
+        AtRestart notReturned() { return copy(next -> next.returned = false); }
 
         /** projection ledger 這座艙在 U 的狀態是 {@code status}。 */
         AtRestart withProjection(ProjectionLedger.Entry.Status status) {
-            return new AtRestart(returned, resolved, Objects.requireNonNull(status, "status"), disk, recognizeBeforeJoin, stateAtHalt, crossedAtHalt);
+            Objects.requireNonNull(status, "status");
+            return copy(next -> next.projection = status);
         }
 
         /** 窗口自己的磁碟檢查。 */
-        AtRestart withDisk(DiskCheck check) { return new AtRestart(returned, resolved, projection, check, recognizeBeforeJoin, stateAtHalt, crossedAtHalt); }
+        AtRestart withDisk(DiskCheck check) {
+            Objects.requireNonNull(check, "disk");
+            return copy(next -> next.disk = check);
+        }
 
         /** JOIN 之前載入並辨識投影 Controller。 */
-        AtRestart recognizingBeforeJoin() { return new AtRestart(returned, resolved, projection, disk, true, stateAtHalt, crossedAtHalt); }
+        AtRestart recognizingBeforeJoin() { return copy(next -> next.recognizeBeforeJoin = true); }
 
         /** halt 當下磁碟上的 record 是 {@code state}（PASSAGE_READY、SEALED；COLLAPSING 是預設）。 */
         AtRestart withStateAtHalt(SessionState state) {
-            return new AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin, Objects.requireNonNull(state, "state"), crossedAtHalt);
+            Objects.requireNonNull(state, "state");
+            return copy(next -> next.stateAtHalt = state);
         }
 
         /** halt 當下終局已落盤：restart 開服時 journal 沒有這個 session。 */
-        AtRestart terminatedAtHalt() { return new AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin, null, crossedAtHalt); }
+        AtRestart terminatedAtHalt() { return copy(next -> next.stateAtHalt = null); }
 
         /** halt 當下磁碟上的 Crossed 恰為 {@code crossed}。 */
         AtRestart withCrossedAtHalt(M5CollapseFixture.Who crossed) {
-            return new AtRestart(returned, resolved, projection, disk, recognizeBeforeJoin, stateAtHalt, crossed);
+            Objects.requireNonNull(crossed, "crossedAtHalt");
+            return copy(next -> next.crossedAtHalt = crossed);
         }
 
         /** halt 當下磁碟上的 record 狀態；null 為終局已落盤。 */
