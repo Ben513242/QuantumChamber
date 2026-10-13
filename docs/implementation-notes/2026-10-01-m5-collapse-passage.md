@@ -7050,3 +7050,117 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 - 結束過的 JVM：只有 `red-h6race` 的 PID 12792，由 probe 的逾時處置結束（commandline 含本次的 startupNonce `7c052c4a…`、先存 jstack）。沒有手動結束任何程序，沒有碰 Gradle daemon；沒有遇到失敗而重跑的 root。
 - 每個 commit 之前的編譯：`impl/c1`～`c3-compile.log`（`compileJava compileTestJava compileTestmodJava compileClientProbeJava`，都 BUILD SUCCESSFUL；`c*-compile-state.txt` 的 blob 已與 `1f22f03`、`f368ee2`、`61b1b2c` 比對相同）。
 - 取證腳本（`impl/`）：`state.ps1`、`probe.ps1`、`compile.ps1`、`gate.ps1`、`adapter.py` 由 `h6/step0/` 複製（只加註解、改 adapter 表的模組）；`junit.ps1` 由 `f6/f61s0/` 複製；`names2.py`、`warncheck.py`、`details.py`、`setcmp.py`、`jarcmp.py`、`wbcmp.py`、`xmlsum.py` 由 `f6/f62c/fix1/` 複製（只改 repo 的相對路徑與註解）；`runall-compare.ps1` 由 `fix1/runall2-compare.ps1` 改寫（基準、輸出前綴，加 legacy 與 JUnit 的集合比對）；新寫 `adapters_h6impl.py`、`adapted-junit.ps1`、`runall.ps1`、`junitset.py`、`wbbatch.py`。原版的程式以 Loom sources jar 讀（`impl/mcsrc/`）。
+
+## F6-2d Step 0：F6-2c 與 H6 review 留下的整理
+
+- 一位 implementer 完成（controller 的派工 scratchpad `f62ds0-prompt.md`；取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62ds0/`，以下簡稱 `f62ds0/`，`STATUS.md` 是交接摘要）。開工時 HEAD 是 `5c25bb4`、工作樹乾淨。
+- 範圍：F6-2c fix round 1 一節「Review 與最終 review」交給 F6-2d Step 0 的 quality Minor 1、2、4～8、給 F6-2d 的建議（`members(OTHERS).iterator().next()`），與 fix round 1 spec re-review Minor 1 的斷言；H6 一節交下的 spec Minor 1、quality Minor 1～3。**沒有新增窗口、chain 或 phase**（仍是 17 條 chain、33 個 phase）。`src/main/` 只有兩處：`PassageService.saveCrossedPlayerData` 改經 `CollapseService.sideEffect`（行為不變），與 H6 mixin 的 Javadoc（只改註解）。
+- Commits（`5c25bb4..HEAD`，依序；每個 commit 只 stage 自己的檔案；`src/main/` 的兩處各自一個 commit，重構與行為改變分開）：
+  - `28a22ec` `refactor: save a crossing player's data through the shared side effect helper`（第 1 點；`src/main/` 之一）
+  - `468e99b` `docs: say when the concurrent block info cache locks on a hit`（第 10 點；`src/main/` 之二，只改註解）
+  - `9b9c396` `test: keep the stack of other exceptions in the template cache race test`（第 13 點）
+  - `5a052a3` `test: join probe participants in the universe or the source by name`（第 3、8 點，重構）
+  - `63c97f6` `test: share the probe's passage crash and restart step sequences`（第 4 點，重構）
+  - `104fc6b` `test: share the ticket table lookup and keep the fixture in End`（第 7 點，重構）
+  - `61cfb24` `test: build the probe's AtRestart withers through one copy helper`（第 5 點的重構）
+  - `7612cec` `test: reject AtRestart combinations the restart would ignore`（第 5 點的行為）
+  - `16a6e94` `test: name the probe's halt timing haltTiming in the receipts`（第 6 點）
+  - `52bd479` `test: check the door on the end tick in both save timings`（第 2 點）
+  - `a5a9edf` `test: check w7's selector playerdata was not in the universe when Crossed committed`（第 9 點）
+  - `a25f06a` `test: hold the h6race tickets at the structure_starts level directly`（第 11 點）
+  - `47f26c3` `docs: note that find warms ancient_city's start template in h6race`（第 12 點，只改註解）
+  - `7ad305b` `docs: tidy the probe's comments on window evidence and list order`（只改註解；最後一個 code commit）
+  - `6aa4ad2` `docs: describe the F6-2d Step 0 probe changes in the verification README`
+  - 本節由其後的 docs commit `docs: record the F6-2d Step 0 in the M5 note` 加入。
+- 中間 commit 的編譯（`f62ds0/c1`～`c15-compile.log`：`compileJava compileTestJava compileTestmodJava compileClientProbeJava`，都 BUILD SUCCESSFUL；`c*-compile-state.txt` 記下編譯時工作樹的 blob）：每個 code commit 之前各一次，依序對應上面 `28a22ec`～`a5a9edf`（`c11`、`c12` 都是 `a5a9edf`，`c12` 只多一行類別 Javadoc）、`a25f06a`（`c13`）、`47f26c3`（`c14`）、`7ad305b`（`c15`）。
+- 只改了派工允許的路徑：`src/main/` 只有 `PassageService`（第 1 點）與 `PalettedBlockInfoListConcurrentCacheMixin` 的 Javadoc（第 10 點）；JUnit 只有 `StructureTemplateCacheConcurrencyTest`；testmod 只有 probe 的 `M5CollapseRun`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassage`、`M5CollapsePassageChains`、`M5CollapseDormantChains`、`M5CollapseRevisitChains`（後兩者只改 `joinAll` 的呼叫）、`M5CollapseRecoveryProbe`、`M5CollapseTemplateRaceChain`，與 `M5GameTestSupport` 的 `destinationTickets`／新的 `tickets`（第 7 點）；`scripts/verification/README.md` 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 其他 `src/main/`、`build.gradle`、`fabric.mod.json`、`quantumchamber.mixins.json`、`quantumchamber-test.mixins.json`、所有 ps1、`.github/`、其他 GameTest、M4 probe、其他 JUnit、語言檔、`M5TestHooks`、spec、plan、AGENTS。
+
+### 逐項處置
+
+行號以 `7ad305b` 為準。`PS`＝`PassageService`，`MX`＝`PalettedBlockInfoListConcurrentCacheMixin`，`UT`＝`StructureTemplateCacheConcurrencyTest`，`RUN`＝`M5CollapseRun`，`WIN`＝`M5CollapseWindows`，`FIX`＝`M5CollapseFixture`，`PSG`＝`M5CollapsePassage`，`PCH`＝`M5CollapsePassageChains`，`TR`＝`M5CollapseTemplateRaceChain`，`RP`＝`M5CollapseRecoveryProbe`，`GTS`＝`M5GameTestSupport`。
+
+| # | 來源 | 處置與位置 |
+| --- | --- | --- |
+| 1 | F6-2c quality Minor 1 | `PS:413`～`:417`：`saveCrossedPlayerData` 改呼叫 `CollapseService.sideEffect(track.warnings, () -> service.track(sid).warnings, sid, PLAYER_DATA_SAVE, next, save)`，不再自己寫 try/catch、去重與 WARN。行為逐項相同：仍只在 COMMITTED 分支、Crossed 確認之後呼叫（`crossed()` 沒有改）；成功時清 `track.warnings` 的 `PLAYER_DATA_SAVE`；失敗（`RuntimeException`）時以 `firstWarning` 在 `service.track(sid).warnings` 去重（原本 `service.warn` 用的同一份；`crossed()` 的 `track` 就是 `service.track(sid)` 取得的，`PS:119`），第一次才以同一個 `logWarn` 記一則帶 `LOG_MARKER` 與 `session=` 的 WARN（寫入種類 `跨越之後的 playerdata 存檔`、`next` 的字句逐字相同，status 為 null），不往外丟。失敗路徑的驗證**選 mutation**、不加 JUnit：`saveCrossedPlayerData` 要 live server 的 `PlayerManager` 與 `ServerPlayerEntity`，JUnit 沒有 Mockito（`build.gradle` 的 test 相依只有 JUnit 與 fabric-loader-junit），為了測它把存檔抽成新的 package-private 靜態方法只是再包一層，語意已由 `CollapseServiceTest.sideEffectWarningKeysAreClearedOnSuccess`（`:811` 起）涵蓋。mutation `mut-save-throws`（`w2`）見下表：通道照常、恰多一則帶 `session=` 的 WARN |
+| 2 | F6-2c quality Minor 2 | `PCH:327`：receipt 記 `doorPlainAtStart`。`PCH:366` `notYetOpenOnTheEndTick` 改為「終局的那個 tick 門與開服時相同」（`plainOnTheEndTick == doorPlainAtStart`）：開服時不是一般開門時同原本（這個 tick 還不是一般開門）；開服時已是一般開門時，斷言它在終局的那個 tick 仍是一般開門（原本這時恆真）。`PCH:381` `plainOpenOnTheNextTick` 的判準不變（下一個 tick 是一般開門；開服時已是一般開門時是「維持」，沒有正規化可驗），兩個斷言的失敗訊息都帶 `doorPlainAtStart`。**不依時序增減名稱**（F6-2c 的 M-3）：兩種時序都是同一組名稱，三次 GREEN 的 `trrpending` 都是 `doorPlainAtStart=true`（新的內容實際被檢查），`w7`、`readycommit`、`crossedpending` 都是 false |
+| 3 | F6-2c quality Minor 4 | `FIX:226` `enum Inside { INSIDE, OUTSIDE }`；`FIX:246` `joinInTheUniverse(Who)`、`FIX:255` `joinInTheSource(Who, Inside)`、`FIX:237` `joinAll(Inside)`（＝`joinInTheSource(EVERYONE, …)`）；拿掉 `join(Who, Who, boolean)`、`joinAll(boolean)`、`joinAll(Who, boolean)`。呼叫端：`joinAll(Inside.OUTSIDE／INSIDE)`（`M5CollapseDormantChains`、`M5CollapseRevisitChains`、`PCH` 的四個 restart）；`w7` 與 `trr` 的 `join` step 在同一個 step 裡先後呼叫兩個方法，順序寫成與清單順序相同（`w7` 的選門者是第二位：先 `joinInTheSource(OTHERS, INSIDE)`；`trr` 是第一位：先 `joinInTheUniverse(SELECTOR)`），所以 JOIN 的順序與斷言的先後都與改之前相同（names 比對 `order=same`） |
+| 4 | F6-2c quality Minor 5 | `PCH:129` `selectorCrossesAfterASave(id, selectedBy, beforeTheSave)`：`w7Crash` 與 `trrCrash` 共用的前半段（兩人 → PASSAGE_READY → `beforeTheSave` → `saved` → 選門者跨越）；`w7` 的 `beforeTheSave` 是 `universeGenerated`，`trr` 是空的（H6 已拿掉）。`PCH:314` `nobodyAcrossJoinsAndEnds(Inside)`：沒有人跨過的 restart 的 `join`＋`end`，`READY_COMMITTED`、`PASSAGE_TERMINATED`（`INSIDE`）與合併成一個 case 的 `CROSSED_UNCONFIRMED, RECOVERY_REJECTED`（`PCH:289`，`OUTSIDE`）共用。step 名稱與順序不變（names 比對 `steps=same`） |
+| 5 | F6-2c quality Minor 6＋給 F6-2d 的建議 | 重構（`61cfb24`）：`AtRestart` 的欄位改成只在私有的 `copy(change)`（`WIN:143`）裡改的非 final 欄位（預設值寫在欄位上），七個 wither 都經 `copy`，不再各寫一次 7 個參數的建構子。行為（`7612cec`）：`copy` 交出之前 `validated()`（`WIN:157`）：`withCrossedAtHalt` 要在狀態是 PASSAGE_READY 或 SEALED 之後（COLLAPSING 與終局不斷言 Crossed，原本靜默忽略）；`notReturned` 只用在 COLLAPSING（W1）；`recognizingBeforeJoin` 要在 `withProjection` 之後。`withStateAtHalt` 只接受 PASSAGE_READY、SEALED（原本其他狀態要到 restart 的 `restartedAs` 才丟出），`withStateAtHalt`／`terminatedAtHalt` 只能指定一次（`WIN:173`，不靜默覆蓋）。窗口表原本在第一次用到時才 class init（crash phase 是在 `receipt` step 裡），所以 `RP:93` 在 `onInitialize` 先呼叫 `M5CollapseWindows.windows()`（`WIN:364`），不合法的列讓每個 phase 的 JVM 在開服之前失敗。mutation `mut-crossed-on-terminal` 見下表 |
+| 6 | F6-2c quality Minor 7 | receipt 的鍵 `haltAt` → `haltTiming`（`RUN:519` 的 proof、`RUN:582` 的 halt receipt），窗口表一列的欄位也改名 `haltTiming`（`WIN:256`），enum `M5CollapseRun.HaltAt` 不變。**先確認**：`rg` 在 `scripts/`（`m5-collapse-probe.ps1`、`run-all.ps1` 與其他 ps1）、`.github/` 與 `src/` 都沒有讀這個鍵（只有 README 提到，已更新），所以可以改；沒有要交給 F6-3 的 ps1 改動。`f62ds0/details.py` 改讀 `haltTiming`（舊的鍵仍讀） |
+| 7 | F6-2c quality Minor 8 | `GTS:1000` 新的 `tickets(world, type, argument)`（原生 ticket 表的唯讀查詢，chunk → level，依 x、z 排序），`GTS:991` `destinationTickets` 改呼叫它（行為相同：同一個 TreeMap、同樣的比對與 `put`）；`FIX` 的 `tickets` 拿掉（連同兩個 accessor 的 import），`PCH:419` 的來源 ticket 檢查改用它（`isEmpty()` 的判準不變，失敗訊息改為 map）。`M5GameTestSupport` 只改這一處。`End` 記下建立它的 fixture（`PSG:204`），`placed(who, place)`（`PSG:250`）不再傳 fixture。`commitRestore` 與 `commitRollForward` 的注入點風格**不改**：兩者在 testmod 的 `SessionRecoveryStateCrashWindowMixin`（不在本輪允許的路徑）；`commitRestore` 是兩個 `@Inject`（`COLLAPSING_COMMITTED` 是 F6-1、`READY_COMMITTED` 是 F6-2c 加的），`commitRollForward` 是一個 `@Inject` 依序呼叫四個窗口（共用一個 detail），兩種寫法的行為相同（每次 `reachedCrashWindow` 互不影響，都有完整描述子與 `require=1`），統一只是風格，卻要重驗全部的 crash 窗口；F6-2d 本體若要在這個 mixin 加 W8、W9 的 hook，再一併統一 |
+| 8 | 給 F6-2d 的建議 | `FIX:131` `inListOrder(Who)`、`FIX:137` `first(Who)`（依參與者清單的順序；沒有人時丟出）。`PCH:252`（`installRecoveryFault`）、`PCH:428`（`closeTheDoorForTheNextSession`）、`PCH:476`（`sealedDoorOpensNormally`）改依清單順序取（目前 `OTHERS` 都只有一位，結果相同）。`DOORWAY_X` 最多三人、`selectorCrossing` 寫死 `crossed == [selector]`、`restart()` 的 switch 改成表：**本輪不做**（派工指定），留給 F6-2d 本體 |
+| 9 | fix round 1 spec re-review Minor 1 | 窗口表的一列新增 `atWindow`（`WIN:74` `interface AtWindow`，參數 `(run, fixture, evidence)`，與 `BeforeHalt` 的四個參數不同，互換位置不能編譯；只有 `TICK_END` 的列可以指定，`WINDOW` 的列指定時在開服之前丟出）。runner 的 `armCrash`（`RUN:502`）在 crash 點第一次成立的那一刻（hook 裡，`commitRollForward` 的回傳點、`saveCrossedPlayerData` 之前）收這份取證，halt receipt 記在 `atWindow`（`RUN:587`），halt 時以 `run.atWindow()`（`RUN:547`）讀。`W7` 的列（`WIN:305`）記下選門者的 `playerDimensionOnDisk`（`WIN:603`），halt 時斷言 `selectorPlayerDataNotInTheUniverseAtTheWindow`（`WIN:582`）：Crossed 確認的那一刻選門者的 playerdata 還不在 U。「halt 時已在 U」仍由既有的 restart 斷言 `selectorPlayerDataInTheUniverse` 驗（halt 不存檔，開服時的磁碟就是 halt 時的；halt receipt 的 `atHalt.playerDimensionOnDisk` 也記下 U），沒有另加 halt 時的斷言，`mut-no-save` 仍失敗在 restart 的目標斷言（F6-2c fix round 1 的設計）。`crossedpending` 的斷言不變（它的 `atWindow` 是空的）。mutation `mut-save-before-commit` 見下表 |
+| 10 | H6 spec Minor 1 | `MX:27`～`:29`：「命中時不加鎖」改為「JDK 21 的 `computeIfAbsent` 只有在 key 是所在 bin 的第一個節點時才不加鎖，其他情況命中也會鎖住那個 bin；這個 map 只有兩個 key，很少碰撞，不影響正確性」。只改註解（release JAR 的 class 只差行號資訊，見「完整回歸」） |
+| 11 | H6 quality Minor 1 | `TR:72` `LEVEL = ChunkLevels.getLevelFromStatus(ChunkStatus.STRUCTURE_STARTS)`；`TR:157`～`:158`、`:228`～`:229` 改用 `ChunkTicketManager.addTicketWithLevel`／`removeTicketWithLevel`（ticket manager 以 `chunkLoadingManager.getTicketManager()` 取得，同 `GTS.tickets`）。ticket 的 level 與改之前相同（原本 33 − 半徑＝這個 level）；不同的只是不再加進 `simulationDistanceTracker`（這個 level 高於 FULL，本來就不模擬）。H6 review 寫的是 `getLevelFromType(FULL)`，派工指定 `getLevelFromStatus(STRUCTURE_STARTS)`，依派工。GREEN 的 9 種結構、chunk 與列數與 H6 相同；拿掉 H6 mixin 的登記時仍 RED（下表） |
+| 12 | H6 quality Minor 2 | `TR:40`～`:44` 的 Javadoc 與 README 的 `load-*` 各補一句：`ancient_city` 有 `start_jigsaw_name`（`city_anchor`），`find-*` 的 `getValidStructurePosition` 在 server thread 上同步執行 `findStartingJigsawPos`，已替它的 start template 預熱快取（`StructurePoolBasedGenerator.java:80-82`）；只有這一個 template 不在兩個世界間 race，children 仍會。另以 Loom 的 JAR 核對 9 種結構的 JSON，只有 `ancient_city` 有 `start_jigsaw_name` |
+| 13 | H6 quality Minor 3 | `UT:89`：「其他例外」改為 `fail(msg, result.firstOther)`，第一個其他例外當成 cause，test report 保留它的 stack（訊息照舊含 `first=`）。`:148`（工作執行緒收下 Throwable 的地方）不用改：它已保留例外物件。JUnit 3/3 PASS；mutation `mut-hashmap` 仍 RED；另以 `mut-ut-other` 直接驗到 stack 被保留（下表） |
+
+### GREEN、mutation 與其他驗證
+
+- 33 個 phase：green-1 `eb1c1d54ccd74c2597f33e4fa1afe09e`（`47f26c3`，乾淨），之後的 `7ad305b` 只改註解，所以在最後的 code HEAD `7ad305b`（乾淨）再連跑兩次：green-2 `6f7d8bfed7c74353b86b0b41d9540586`、green-3 `85bfbb0a1c414c19a023b22c260d7981`。三次都是 33/33 PASS（14 halt＝77、19 stop＝0），33 個 phase 的 latest.log 都沒有 `ConcurrentModificationException`，也沒有「跨越之後的 playerdata 存檔」的 WARN（`f62ds0/green-*-warncheck.txt`）。
+- 具名斷言與 step，與 H6 的 green-2 `04aefb2ab2784dc7a1e5b86395dad206` 比對（`f62ds0/names2.py`，改名表為空；`green-*-vs-h6green2-names.txt`）：三次都是 RESULT=OK——33 個 phase 的名稱全部仍在、全部成立（`notTrue` 空）、順序與 step 相同，**沒有改名**；新增的只有 `w7-crash` 的 `selectorPlayerDataNotInTheUniverseAtTheWindow`（第 9 點）。green-3 與 green-2 互相比對也是 RESULT=OK（`green-3-vs-green-2-names.txt`）。三次的 `w7-crash` halt receipt：`haltTiming=TICK_END`、`atWindow.selectorPlayerDimensionOnDisk=minecraft:overworld`、`atHalt.playerDimensionOnDisk` 的選門者在 U（`green-*-details.txt`）；沒有任何 receipt 再有 `haltAt` 的鍵。
+
+| mutation | 套在 | root | 結果 |
+| --- | --- | --- | --- |
+| 第 9 點 `mut-save-before-commit`（`f62ds0/adapters_f62ds0.py`；字串由 fix round 1 的同名 adapter 複製、未改：COMMITTED 之後不存，改在 `commitRollForward` 之前就存）@`w7` | `7ad305b`＋adapter | runId `15007c8a5d0446d7bce0f8bec4c70206` | `w7-crash` FAIL（正常停止、`final.json` status FAIL，沒有 halt），**失敗在新斷言** `selectorPlayerDataNotInTheUniverseAtTheWindow`：Crossed 確認的那一刻選門者的 playerdata 已在 U（`atWindow`）。fix round 1 的同一個 mutation `fbe7a0bb…` 是 PASS |
+| 第 1 點 `mut-save-throws`（改寫：存檔在 `sideEffect` 的 lambda 裡丟 IllegalStateException；fix round 1 的 `INVOKE` 字串已不存在）@`w2` | 同上 | runId `bdb611d5cea04911b65269e840d27643` | `w2-crash` HALT、`w2-restart` PASS（跨越與 (b) 終局照常）。`w2-restart` 的 WARN 5 則，green-2、green-3 的同一個 phase 都是 4 則：**恰多一則帶 `session=` 的「跨越之後的 playerdata 存檔」WARN**，字句與 fix round 1 的 `73c74359…` 相同；ERROR 0（`f62ds0/f62ds0-mut-save-throws-w2-warncompare-vs-green*.txt`） |
+| 第 5 點 `mut-crossed-on-terminal`（`PASSAGE_TERMINATED` 的列在 `terminatedAtHalt()` 之後加 `withCrossedAtHalt(SELECTOR)`；改之前 restart 靜默忽略）@`terminaldoor` | 同上 | runId `4e1cd23dbf494f85b3b9e17453924e1a` | `terminaldoor-crash` 的 JVM 在 `onInitialize` 失敗：「Could not execute entrypoint stage 'main'」← `ExceptionInInitializerError` ← `AtRestart：withCrossedAtHalt 只在 halt 當下是 PASSAGE_READY 或 SEALED 時斷言（crossedAtRestart），stateAtHalt=終局已落盤`（`RP:93`），latest.log 沒有開服的紀錄、phase 沒有任何 receipt，ps1 判 FAIL。**開服之前就失敗** |
+| 第 11 點 `mut-no-h6-mixin`（`quantumchamber.mixins.json` 拿掉 `PalettedBlockInfoListConcurrentCacheMixin` 的登記）@`h6race` | 同上 | runId `87b62e0ea0c14369afc7fefb5164880f` | RED：第一個結構 village_plains（chunk (207,322)）丟 CME（`HashMap.computeIfAbsent:1229` ← `PalettedBlockInfoList.getAllOf:808`），之後停服卡住，probe 的逾時處置（idle 90 秒，共 108.4 秒）存 jstack、結束 PID 21488（`commandLineMatched: true`）、寫 `timeout.json`。與 H6 的 RED 相同 |
+| 第 13 點 `mut-hashmap`（由 H6 的 adapter 複製、未改）| `7ad305b`＋adapter，只跑 `UT` | `f62ds0/mut-hashmap-*` | 3/3 FAIL 在 CME（177／187／581 次），stdout 的快取是 `java.util.HashMap` |
+| 第 13 點 `mut-ut-other`（`UT` 的第一個工作執行緒每輪丟 IllegalStateException，受控）| 同上 | `f62ds0/mut-ut-other-*` | 3/3 FAIL 在「其他例外」（other=200），XML 的失敗內容有 `Caused by: java.lang.IllegalStateException: F6-2d Step 0 mutation…` 與它的 stack（`lambda$race$13(StructureTemplateCacheConcurrencyTest.java:144)`）：修正之前只看得到 `toString()` |
+
+- 每個 mutation 之後以 `adapter.py restore` 還原並以 `git hash-object` 核對 blob，還原之後 porcelain 空（`f62ds0/f62ds0-*-restored-state.txt`、`mut-*-restored-state.txt`）。
+- JUnit 全部（`f62ds0/junit-all-*`，`gradle test --rerun`，`7ad305b`）：659 個 test（PASS 657、SKIPPED 2），名稱與結果與 `run-all-76f45a…` 的 gate-full 完全相同（`junit-all-junitall-setcmp.txt`）。JUnit 沒有新增 test（第 1 點選 mutation）。
+- M5 GameTest（`f62ds0/m5gt-*`，`gates.ps1 -Mode M5GameTest`，`7ad305b`；因為改了 `M5GameTestSupport`）：60/60 PASS，testcase 集合與基準相同（`m5gt-setcmp.txt`，identical）。
+- M4 recovery：由 run-all 的 `recovery` 核對（24/24，見下）；本輪沒有改 M4 probe，M5 probe 的 entrypoint 在沒有 m5collapse 屬性時照舊直接 return（窗口表的初始化在那之後）。
+
+### 完整回歸（run-all）
+
+- `run-all-195e59a095d84e1abbcc5ed60fbdfefe`（`f62ds0/run-all-1-console.txt`），HEAD `6aa4ad2`，乾淨（所有 code 與 README commit 之後；其後只有本節的 docs commit），**`END ALL exit=0`**。
+- SUMMARY：`default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=659 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=431entries/384classes sources=223 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=33 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-76f45a496e1e41fbb60117280ca2a510`（`480918d`）逐項比較（`f62ds0/runall-compare.ps1`，輸出 `f62ds0/runall1-*.txt`）：
+
+| 項目 | 基準 | 本次 | 歸屬 |
+| --- | --- | --- | --- |
+| default GameTest | 175 | 175 | testcase 集合與結果相同（`runall1-default-setcmp.txt`，identical） |
+| M5 GameTest | 60 | 60 | 相同（`runall1-m5-setcmp.txt`） |
+| JUnit | 659（skipped 2） | 659（skipped 2） | 名稱與結果完全相同（`runall1-junit-setcmp.txt`）；本輪沒有新增 test |
+| release JAR | 431 entries／384 classes | 431／384 | entry 數不變；內容不同的只有 `PassageService.class`（bytecode 不同：`saveCrossedPlayerData` 改經 `sideEffect`，多兩個 lambda、其餘 lambda 重新編號）、`PassageService$LifecycleView.class`、`PassageService$PendingRecovery.class` 與 `PalettedBlockInfoListConcurrentCacheMixin.class`；後三者 `javap -c -p` 的輸出相同，**只差行號資訊**（`runall1-jarcmp-release.txt`、`runall1-javap-release.txt`，`f62ds0/javapcmp.py`） |
+| sources JAR | 223 | 223 | 只有 `PassageService.java` 與 `PalettedBlockInfoListConcurrentCacheMixin.java` 不同（`runall1-jarcmp-sources.txt`） |
+| Full WARN／ERROR | 54／28 | 55／28 | 依 batch 分組比對（`f62ds0/wbbatch.py`，`runall1-wbbatch-full.txt`）：只有 `m2_task4_disconnect_io` 多一則「艙體 … 的 session 協調失敗，保留返還保護」WARN，是已知偶發（F4a-0、F4a fix round 2、H6 已記錄）；其他 batch 完全相同 |
+| legacy | 1/1，WARN／ERROR 0／0 | 1/1，0／0 | 相同（`runall1-legacy-setcmp.txt`、`runall1-wbcmp-legacy.txt`） |
+| M5 WARN／ERROR | 38／10 | 38／10 | 相同（`runall1-wbcmp-m5-gametest.txt`） |
+| perTest、windows、windowsCheckpoint | 52+1、89、17 | 52+1、89、17 | 相同 |
+| M3、M4 recovery | 4＋5、24 | 4＋5、24 | 相同（run-all 核對 phase 名稱與 receipt） |
+| m5collapse | 33（halt 14） | 33（halt 14） | collapse runId `e4adfde338dd4ff2af832e7160b15292`：與 green-3 的 33 個 phase 名稱、數目、順序與 step 完全相同（`runall1-vs-green-3-names.txt`，RESULT=OK），與 H6 的 green-2 比只多 `w7-crash` 的新斷言（`runall1-vs-h6green2-names.txt`）；latest.log 都沒有 CME 與存檔 WARN（`runall1-warncheck.txt`） |
+| main-only、testmodHits、CI 規則 | PASS、0、win／ubuntu PASS | 相同 | — |
+
+### 偏離派工字面之處
+
+- GREEN「在乾淨的 HEAD 上連跑兩次」：green-1 跑在 `47f26c3`，之後發現兩處註解的措辭（`RUN` 的 `atWindow` 欄位說明寫成參數名 `atWindow`、`FIX` 的拆分說明），以只改註解的 `7ad305b` 修正，所以在 `7ad305b` 另跑 green-2、green-3 兩次；green-1 只作補充。mutation、JUnit、M5 GameTest 都在 `7ad305b`。
+- 第 1 點沒有加 JUnit（F6-2c 一節 controller 的處置寫「並補失敗路徑的 JUnit」，派工允許二選一，理由見逐項處置）。
+- 第 5 點的驗證比派工舉的兩個例子多：`notReturned`、`recognizingBeforeJoin` 的前提與狀態只能指定一次；目前的窗口表全部符合。驗證依呼叫順序（例如 `withCrossedAtHalt` 要在 `withStateAtHalt` 之後），目前的表都是這個順序。
+- 第 6 點另把窗口表一列的欄位 `haltAt` 改名 `haltTiming`（與 receipt 的鍵一致）；enum 名 `HaltAt` 不變。
+- 第 9 點：`atWindow` 是窗口表的一個新欄位（不是新的 CrashWindow），halt receipt 從此都有 `atWindow` 的鍵（除了 `w7` 都是空的）。
+- 第 11 點依派工用 `getLevelFromStatus(STRUCTURE_STARTS)`（H6 review 舉的是 `getLevelFromType(FULL)`）。
+- 第 1 點的 mutation adapter `mut-save-throws` 改寫（存檔改在 lambda 裡，fix round 1 的字串已不存在）；`mut-save-before-commit` 與 `mut-hashmap` 的字串未改。
+- M4 recovery 沒有另外單獨跑，以 run-all 的 `recovery=24` 為準。
+- run-all-1 在 README commit `6aa4ad2` 之後、本節的 docs commit 之前執行，結果寫在本節；本節的 commit 只改這份 note。
+
+### 需要裁示
+
+- 沒有必須裁示才能繼續的事項。
+
+### 交給後續
+
+- **F6-2d 本體**：`DOORWAY_X` 最多三人、`selectorCrossing` 寫死 `crossed == [selector]`（多人跨越窗口要以 `Who` 參數化）、`restart()` 的 switch 改成「窗口 → restart step builder」的表（第 8 點，本輪不做）；spec M-2（開服時永久 SEALED 的 ERROR，不變）。`AtRestart` 加欄位時只改 `copy` 與預設值，新的組合限制加在 `validated`；W8、W9 若是 `TICK_END` 的窗口、要分辨「那一刻」與「那個 tick 結束時」，用窗口表的 `atWindow`。`SessionRecoveryStateCrashWindowMixin` 的注入點風格（第 7 點）若 F6-2d 要在那裡加 hook，一併統一。
+- **F6-2e**：SEALED 之後的終局與 release／門／ERROR 之後的窗口可以直接用 `HaltAt.TICK_END`（F6-2c quality 的建議，不變）。
+- **F6-3**：`m5-collapse-probe.ps1:51` 的 `w7` 註解仍寫「Crossed 已確認，halt 前存檔」，F6-2c fix round 1 起 halt 之前不存檔（ps1 不在本輪的允許範圍）；`onInitialize` 失敗時 ps1 的訊息是「預期 halt 的 phase 以 Gradle exit 0 結束（沒有 final.json 也沒有 halt.json）」，判定正確，但看不出原因，可考慮附上 latest.log 的「Could not execute entrypoint」；H6 quality Minor 4（`idle` 2400 tick 大於 `IdleSeconds=90`）不變。
+- **F7**：沒有新增。
+
+### root（全部保留）
+
+- phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`。
+- GREEN：green-1 `eb1c1d54ccd74c2597f33e4fa1afe09e`（`47f26c3`）、green-2 `6f7d8bfed7c74353b86b0b41d9540586`、green-3 `85bfbb0a1c414c19a023b22c260d7981`（`7ad305b`）。mutation：`15007c8a5d0446d7bce0f8bec4c70206`（`mut-save-before-commit`@w7）、`bdb611d5cea04911b65269e840d27643`（`mut-save-throws`@w2）、`4e1cd23dbf494f85b3b9e17453924e1a`（`mut-crossed-on-terminal`@terminaldoor）、`87b62e0ea0c14369afc7fefb5164880f`（`mut-no-h6-mixin`@h6race，`timeout.json`）；JUnit 的 `mut-hashmap`、`mut-ut-other`（`f62ds0/` 的 XML 複本）。開發（不採計）：`dev-a` `08d97b77f77a43df8d1cff7718888dec`（`a25f06a` 的內容，h6race PASS）。JUnit 全部 `junit-all`、M5 GameTest `gate-m5gt-291358c1aec44454a3bd68d0b2e02845`。run-all：run-all-1 `run-all-195e59a095d84e1abbcc5ed60fbdfefe`（`6aa4ad2`，collapse `e4adfde338dd4ff2af832e7160b15292`）；本節的 commit 之後的 run-all-2 記在 `f62ds0/STATUS.md`。
+- 結束過的 JVM：只有 `mut-no-h6-mixin` 的 PID 21488，由 probe 的逾時處置結束（commandline 含本次的 startupNonce `6fc329c3…`、先存 jstack）。沒有手動結束任何程序，沒有碰 Gradle daemon；沒有遇到失敗而重跑的 root；已知偶發只有 run-all-1 的 `m2_task4_disconnect_io` WARN +1（root 保留，歸屬見「完整回歸」）。
+- 取證腳本（`f62ds0/`）：`state.ps1`、`compile.ps1`、`probe.ps1`、`junit.ps1`、`adapted-junit.ps1`、`gate.ps1`、`runall.ps1`、`names2.py`、`warncheck.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py` 由 `h6/impl/` 複製（只加一行註解）；`adapter.py`（adapter 表的模組）、`details.py`（`haltTiming`、`atWindow`）、`runall-compare.ps1`（基準改為 `run-all-76f45a…`）由 `h6/impl/` 複製並小改；`red.ps1`、`mutations.ps1`、`mutsum.py` 由 `f6/f62c/fix1/` 複製（label 前綴、相對路徑）；新寫 `adapters_f62ds0.py`、`warncompare.py`、`junitall.ps1`、`javapcmp.py`。
