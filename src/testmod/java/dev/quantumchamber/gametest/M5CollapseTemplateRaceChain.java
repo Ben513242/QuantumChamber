@@ -17,6 +17,7 @@ import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.world.ChunkHolder;
 import net.minecraft.server.world.ChunkLevels;
+import net.minecraft.server.world.ChunkTicketManager;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.structure.PoolStructurePiece;
@@ -51,7 +52,7 @@ import net.minecraft.world.gen.structure.Structure;
 final class M5CollapseTemplateRaceChain implements M5CollapseRun.Context {
     /** U 的 UUID（allocation ordinal 0；fresh 世界的 catalog 是空的）。 */
     private static final UUID UNIVERSE = UUID.fromString("6c1d2e3f-4a5b-4c6d-8e7f-0123456789ab");
-    /** testmod 自己的 ticket（level STRUCTURE_STARTS、不持久化；只在這條 chain 建立）。 */
+    /** testmod 自己的 ticket（level 是 {@link #LEVEL}、不持久化；只在這條 chain 建立）。 */
     private static final ChunkTicketType<ChunkPos> TICKET = ChunkTicketType.create("quantumchamber_h6race", Comparator.comparingLong(ChunkPos::toLong));
     /** 會在 structure_starts 計算 template 的 JIGSAW key 的 jigsaw 結構（H6 Step 0 的最小重現）。 */
     static final List<String> STRUCTURES = List.of("village_plains", "village_desert", "village_savanna", "village_snowy", "village_taiga",
@@ -60,8 +61,12 @@ final class M5CollapseTemplateRaceChain implements M5CollapseRun.Context {
     static final ChunkPos CENTER = new ChunkPos(256, 256);
     /** 找 start 的範圍：以 structure set 的 spacing 為單位的環數。 */
     private static final int MAX_RING = 24;
-    /** ticket 的半徑：ticket 的 level（33 − 半徑，33 是原版 FULL 的 level，{@code ChunkLevels.FULL} 是 private）等於 STRUCTURE_STARTS 的 level。 */
-    private static final int RADIUS = 33 - ChunkLevels.getLevelFromStatus(ChunkStatus.STRUCTURE_STARTS);
+    /**
+     * ticket 的 level：{@code STRUCTURE_STARTS} 的 level。F6-2d Step 0（H6 quality Minor 1）：以 public 的 {@code ChunkTicketManager.addTicketWithLevel}／{@code removeTicketWithLevel}
+     * 直接指定 level（{@link #ticketManager}，同 {@code M5GameTestSupport.tickets} 的取法），不再以負的「半徑」與寫死的 33 換算 {@code ServerChunkManager.addTicket}，也不加進
+     * {@code simulationDistanceTracker}（半徑的版本會加；這個 level 高於 FULL，本來就不模擬）。ticket 的 level 與改之前相同。
+     */
+    private static final int LEVEL = ChunkLevels.getLevelFromStatus(ChunkStatus.STRUCTURE_STARTS);
     /** 兩個世界的 holder 數與狀態連續幾個 tick 不變才算閒置。 */
     private static final int IDLE_TICKS = 40;
 
@@ -125,6 +130,11 @@ final class M5CollapseTemplateRaceChain implements M5CollapseRun.Context {
         return ((long) holders.size() << 32) + sum;
     }
 
+    /** {@code world} 的原生 ticket manager（{@code ServerChunkManager} 用的同一個）。 */
+    private static ChunkTicketManager ticketManager(ServerWorld world) {
+        return world.getChunkManager().chunkLoadingManager.getTicketManager();
+    }
+
     private static Long2ObjectLinkedOpenHashMap<ChunkHolder> holders(ServerWorld world) {
         return ((ServerChunkLoadingManagerTestAccessor) world.getChunkManager().chunkLoadingManager).quantumchamberTest$currentChunkHolders();
     }
@@ -141,8 +151,8 @@ final class M5CollapseTemplateRaceChain implements M5CollapseRun.Context {
         target = structure == null ? null : findStart(key, structure, result);
         run.expect("startFound", target != null, () -> name + "：" + result);
         result.put("chunk", target.x + "," + target.z);
-        run.source().getChunkManager().addTicket(TICKET, target, RADIUS, target);
-        universe.getChunkManager().addTicket(TICKET, target, RADIUS, target);
+        ticketManager(run.source()).addTicketWithLevel(TICKET, target, LEVEL, target);
+        ticketManager(universe).addTicketWithLevel(TICKET, target, LEVEL, target);
         return true;
     }
 
@@ -212,8 +222,8 @@ final class M5CollapseTemplateRaceChain implements M5CollapseRun.Context {
         result.put("pieces", sourcePieces.size());
         run.expect("sameStructureStartInBothWorlds", sourcePieces.equals(universePieces),
                 () -> STRUCTURES.get(index) + "：source=" + sourcePieces + " universe=" + universePieces);
-        source.getChunkManager().removeTicket(TICKET, target, RADIUS, target);
-        universe.getChunkManager().removeTicket(TICKET, target, RADIUS, target);
+        ticketManager(source).removeTicketWithLevel(TICKET, target, LEVEL, target);
+        ticketManager(universe).removeTicketWithLevel(TICKET, target, LEVEL, target);
         M5CollapseRun.LOGGER.info("H6RACE generated {}", result);
         return true;
     }
