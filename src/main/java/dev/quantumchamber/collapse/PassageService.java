@@ -404,17 +404,16 @@ final class PassageService {
      * 也是 spec §12 的邊界情況：他以最後一次存下的位置重新加入，通道在開服時結束，不會被困住。
      * <p>以 {@code PlayerManager.savePlayerData}（{@link PlayerManagerSaveInvoker}，原版 autosave 與登出用的同一個方法，連同 stats 與 advancements）存；不用
      * {@code PlayerCheckpointStore.saveAndVerify}（M2 的 checkpoint，讀回驗證只支援 Windows，其他平台丟出）。原版自己收下寫檔的例外、記它自己的 WARN；從這裡丟出的
-     * RuntimeException 只記 WARN（{@link CollapseService#warn}：帶 {@link CollapseService#LOG_MARKER} 與 {@code session=}，依原因去重，存檔成功時清除），不往外丟：他已在
-     * 目的世界、Crossed 也已確認，通道與其他參與者照常。
+     * RuntimeException 只記 WARN，不往外丟：他已在目的世界、Crossed 也已確認，通道與其他參與者照常。
+     * <p>F6-2d Step 0（F6-2c quality Minor 1）：存檔經 {@link CollapseService#sideEffect(java.util.Map, java.util.function.Supplier, UUID, String, String, Runnable)}
+     * （不重試的附帶動作的共用組合，JUnit {@code CollapseServiceTest.sideEffectWarningKeysAreClearedOnSuccess}），不再自己寫 try/catch、去重與 WARN：失敗時記一則帶
+     * {@link CollapseService#LOG_MARKER} 與 {@code session=} 的 WARN（寫入種類 {@link #PLAYER_DATA_SAVE}，字句與 {@link CollapseService#warn} 相同），依原因去重；成功時清掉去重鍵。
+     * 簿記與之前相同：成功時清的是這個 session 的 {@code track}，失敗時去重記在 {@code service.track(sid)}（{@code warn} 用的那一份；{@code track} 由它取得，是同一份）。
      */
     private void saveCrossedPlayerData(UUID sid, Track track, ServerPlayerEntity player) {
-        try {
-            ((PlayerManagerSaveInvoker) service.server.getPlayerManager()).quantumchamber$savePlayerData(player);
-            track.warnings.remove(PLAYER_DATA_SAVE);
-        } catch (RuntimeException failure) {
-            service.warn(sid, PLAYER_DATA_SAVE, failure, null, "不重試；他仍在目的世界，通道照常，crash 時以最後一次存下的 playerdata 為準（spec §12），原版的 autosave、登出與"
-                    + "停服仍會存：玩家=" + player.getUuid());
-        }
+        CollapseService.sideEffect(track.warnings, () -> service.track(sid).warnings, sid, PLAYER_DATA_SAVE,
+                "不重試；他仍在目的世界，通道照常，crash 時以最後一次存下的 playerdata 為準（spec §12），原版的 autosave、登出與停服仍會存：玩家=" + player.getUuid(),
+                () -> ((PlayerManagerSaveInvoker) service.server.getPlayerManager()).quantumchamber$savePlayerData(player));
     }
 
     /**
