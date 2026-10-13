@@ -293,6 +293,10 @@ public final class M5TestHooks {
      *     {@link #CROSSED_COMMITTED}、{@link #CROSSED_UNCONFIRMED}、{@link #RECOVERY_SEALED}、{@link #RECOVERY_REJECTED}（每次 {@code commitRollForward} 回傳，依序以這四個值
      *     呼叫，任何 roll-forward 的邊與結果都是，{@link RollForwardWrite}）；{@link #PASSAGE_TERMINATED}（每次 {@code terminate} 回傳，任何起點與結果都是，{@link Termination}）。
      *     窗口表以 {@code CrashWindow} 為 key、一個值一列，所以同一個程式點上條件不同的窗口各有一個值。</li>
+     * <li>F6-2d-1 加的：{@code SessionRecoveryStateCrashWindowMixin} 在 {@code commitRollForward} 的同一個回傳點另以 {@link #MATERIALIZE_SEALED} 呼叫（{@link RollForwardWrite}）；
+     *     {@code CollapseAuthoritiesCrashWindowMixin} 在 {@code changeCatalogAvailability} 的回傳點以 {@link #CATALOG_DISABLED} 呼叫（回傳的 {@code CollapseAuthorities.Lookup}，
+     *     兩個方向、任何結果都是）；{@code CollapseServiceCrashWindowMixin} 在 {@code CollapseService.step} 的開頭，依序以 {@link #DORMANT_STEP}、{@link #SEALED_STEP} 呼叫
+     *     （那一筆 flushed 的 {@link SessionRecoveryRecord}，每個 tick、每個 session、任何狀態都是）。</li>
      * </ul>
      * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
@@ -327,7 +331,20 @@ public final class M5TestHooks {
         /** F6-2-12 的 pendingRecovery（F6-2c）：{@code commitRollForward} 的 SEALED(TRANSFER_RECOVERY_REQUIRED) 寫入在前置檢查被拒（REJECTED；磁碟與 current 仍是 PASSAGE_READY）。 */
         RECOVERY_REJECTED,
         /** F6-2-13（F6-2c）：{@code SessionRecoveryState.terminate} 的通道終局（PASSAGE_ENDED）讀回已確認之後（改門之前）。 */
-        PASSAGE_TERMINATED
+        PASSAGE_TERMINATED,
+        /**
+         * W8（F6-2d-1）：{@code CollapseService.step} 開始處理一個 session 之前（detail 是那一筆 flushed 的 {@link SessionRecoveryRecord}）；窗口表的條件選這條 chain 的 DORMANT
+         * （MEASURED、已返還、沒有 lease）。
+         */
+        DORMANT_STEP,
+        /** F6-2-07（F6-2d-1）：與 {@link #DORMANT_STEP} 同一個程式點；窗口表的條件選這條 chain 的 SEALED(AUTHORITY_UNREADABLE)。 */
+        SEALED_STEP,
+        /** W9（F6-2d-1）：{@code commitRollForward} 把 COLLAPSING 寫成 SEALED(MATERIALIZE_FAILED)，讀回已確認（§8.3 的 DISABLED 已在這之前確認；之後的門、訊息與 WARN 之前）。 */
+        MATERIALIZE_SEALED,
+        /**
+         * W9 的變體 (b)（F6-2d-1）：{@code CollapseAuthorities.changeCatalogAvailability} 把 catalog 的這筆改為 DISABLED，讀回已確認（§8.3：物化失敗之後；SEALED 寫入之前）。
+         */
+        CATALOG_DISABLED
     }
 
     /**

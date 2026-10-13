@@ -24,21 +24,19 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *     同一個程式點上條件不同的四個窗口各有一個值，只有裝著的 crash 點的那個值會被處理。</li>
  * <li>{@code terminate(MinecraftServer, …)} 的回傳點以 {@code PASSAGE_TERMINATED} 呼叫（{@code M5TestHooks.Termination}；每次回傳都是，任何起點與結果）。</li>
  * </ul>
+ * <p>F6-2d-1：{@code commitRollForward} 的回傳點另以 {@code MATERIALIZE_SEALED}（W9：COLLAPSING→SEALED(MATERIALIZE_FAILED)）呼叫，排在原本的四個之後。注入點的寫法一併統一
+ * （F6-2c quality Minor 8，F6-2d Step 0 交給本體）：{@code commitRestore} 原本是兩個 {@code @Inject}（{@code COLLAPSING_COMMITTED} 與 {@code READY_COMMITTED} 各一個），改成與
+ * {@code commitRollForward} 相同的一個 {@code @Inject}，依原本的順序以兩個值呼叫、共用一個 detail（record 都是 immutable）。每次 {@code reachedCrashWindow} 互不影響，行為與拆開時相同。
  */
 @Mixin(value=SessionRecoveryState.class,remap=false)
 abstract class SessionRecoveryStateCrashWindowMixin {
     @Inject(method="commitRestore(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/persistence/SessionRecoveryRecord;)Ldev/quantumchamber/persistence/SessionRecoveryState$CommitResult;",
             at=@At("RETURN"),remap=false,require=1)
-    private void quantumchamberTest$collapsingWindow(MinecraftServer server,SessionRecoveryRecord expected,SessionRecoveryRecord next,
+    private void quantumchamberTest$restoreWindows(MinecraftServer server,SessionRecoveryRecord expected,SessionRecoveryRecord next,
             CallbackInfoReturnable<SessionRecoveryState.CommitResult> callback) {
-        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.COLLAPSING_COMMITTED,new M5TestHooks.CollapsingCommit(expected,next,callback.getReturnValue()));
-    }
-
-    @Inject(method="commitRestore(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/persistence/SessionRecoveryRecord;)Ldev/quantumchamber/persistence/SessionRecoveryState$CommitResult;",
-            at=@At("RETURN"),remap=false,require=1)
-    private void quantumchamberTest$readyWindow(MinecraftServer server,SessionRecoveryRecord expected,SessionRecoveryRecord next,
-            CallbackInfoReturnable<SessionRecoveryState.CommitResult> callback) {
-        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.READY_COMMITTED,new M5TestHooks.CollapsingCommit(expected,next,callback.getReturnValue()));
+        var detail=new M5TestHooks.CollapsingCommit(expected,next,callback.getReturnValue());
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.COLLAPSING_COMMITTED,detail);
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.READY_COMMITTED,detail);
     }
 
     @Inject(method="commitRollForward(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/persistence/SessionRecoveryRecord;)Ldev/quantumchamber/persistence/SessionRecoveryState$CommitResult;",
@@ -50,6 +48,7 @@ abstract class SessionRecoveryStateCrashWindowMixin {
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.CROSSED_UNCONFIRMED,detail);
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.RECOVERY_SEALED,detail);
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.RECOVERY_REJECTED,detail);
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.MATERIALIZE_SEALED,detail);
     }
 
     @Inject(method="terminate(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/persistence/SessionRecoveryState$TerminalOrigin;)Ldev/quantumchamber/persistence/SessionRecoveryState$TerminalResult;",

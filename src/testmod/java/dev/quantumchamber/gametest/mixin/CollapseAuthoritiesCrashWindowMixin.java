@@ -4,6 +4,7 @@ import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.gametest.M5TestHooks;
+import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.UniverseId;
 import java.util.UUID;
 import org.spongepowered.asm.mixin.Mixin;
@@ -21,7 +22,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * <li>{@code writeProjection} → {@code PROJECTION_COMPLETE}（W6：projection ledger 已 checked 寫入 COMPLETE、PASSAGE_READY 還沒有提交；回傳的
  *     {@code WriteResult}，PENDING 的寫入也會呼叫）。</li>
  * </ul>
- * 每個回傳點都呼叫，是否是窗口（{@code APPENDED}、寫入的是 COMPLETE）由 crash 點的條件判斷。hook 是 {@code M5TestHooks.Slot}，只由 M5 collapse probe 安裝（{@code M5CollapseRun.armCrash} 經 {@code M5CollapseRun.install}；F6-2c Step 0 更正，F6-2a 拆檔起不在 {@code M5CollapseRecoveryProbe}）；沒有裝時不做任何事。
+ * F6-2d-1 加的：{@code changeCatalogAvailability} → {@code CATALOG_DISABLED}（W9 的變體 (b)：§8.3 把 catalog 的這筆改為 DISABLED 已 checked 寫出、SEALED 還沒有寫入；回傳的
+ * {@code Lookup}，兩個方向（改為 DISABLED、改回 EAGER_ENABLED）與任何結果都呼叫）。
+ * 每個回傳點都呼叫，是否是窗口（{@code APPENDED}、寫入的是 COMPLETE、改成的是 DISABLED）由 crash 點的條件判斷。hook 是 {@code M5TestHooks.Slot}，只由 M5 collapse probe 安裝（{@code M5CollapseRun.armCrash} 經 {@code M5CollapseRun.install}；F6-2c Step 0 更正，F6-2a 拆檔起不在 {@code M5CollapseRecoveryProbe}）；沒有裝時不做任何事。
  * {@code CollapseAuthorities} 是 public，所以直接指定 class，{@code require=1}：方法改名或簽名改變時開服即失敗。
  */
 @Mixin(value=CollapseAuthorities.class,remap=false)
@@ -51,5 +54,12 @@ abstract class CollapseAuthoritiesCrashWindowMixin {
             at=@At("RETURN"),remap=false,require=1)
     private void quantumchamberTest$projectionWindow(ProjectionLedger.Entry entry,CallbackInfoReturnable<CollapseAuthorities.WriteResult> callback) {
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.PROJECTION_COMPLETE,callback.getReturnValue());
+    }
+
+    @Inject(method="changeCatalogAvailability(Ldev/quantumchamber/universe/UniverseId;Ldev/quantumchamber/universe/DesiredAvailability;Ldev/quantumchamber/collapse/CollapseAuthorities$WriteDirection;)Ldev/quantumchamber/collapse/CollapseAuthorities$Lookup;",
+            at=@At("RETURN"),remap=false,require=1)
+    private void quantumchamberTest$catalogDisabledWindow(UniverseId universeId,DesiredAvailability availability,CollapseAuthorities.WriteDirection direction,
+            CallbackInfoReturnable<CollapseAuthorities.Lookup<?>> callback) {
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.CATALOG_DISABLED,callback.getReturnValue());
     }
 }
