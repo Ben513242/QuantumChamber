@@ -256,9 +256,9 @@ class CollapseServiceTest {
     }
 
     @Test void entryWatchTriggersOnlyOnEntryEdges() {
-        var fresh = new CollapseService.EntryWatch(false);
-        var startup = new CollapseService.EntryWatch(true);
-        var primed = new CollapseService.EntryWatch(false);
+        var fresh = new EntryWatch(false);
+        var startup = new EntryWatch(true);
+        var primed = new EntryWatch(false);
         primed.prime(Set.of(A));
         assertAll(
                 () -> assertEquals(List.of(), fresh.observe(Set.of(A)), "執行期間才開始追蹤：第一次觀察只記下狀態，不觸發"),
