@@ -68,7 +68,8 @@ final class M5CollapsePassageChains {
     private int normalizeTick = -1;
     /**
      * restart 開服時原艙門是不是已經是一般開門（由磁碟載入的值）。原版會在 tick 有餘裕時逐步存下變更過的 chunk（{@code ServerChunkLoadingManager.unloadChunks} 每個 tick 最多
-     * 20 個、同一個 chunk 至少隔 10 秒），所以沒有在 halt 之前存檔的窗口，磁碟上的門是 crash 之前最後一次存下的樣子，不一定帶著量子膜。
+     * 20 個、同一個 chunk 至少隔 10 秒），所以沒有在 halt 之前存檔的窗口，磁碟上的門是 crash 之前最後一次存下的樣子，不一定帶著量子膜。receipt 的 {@code doorPlainAtStart}
+     * 記下它（F6-2d Step 0）；{@code notYetOpenOnTheEndTick}、{@code plainOpenOnTheNextTick} 在兩種情況下各自斷言有意義的內容。
      */
     private boolean doorPlainAtStart;
 
@@ -323,6 +324,7 @@ final class M5CollapsePassageChains {
         run.proof.put("doorCenterOnDiskAtStart", M5CollapseWindows.doorCenterOnDisk(run, fixture));
         run.proof.put("doorCenterAtStart", run.source().getBlockState(local(3, 3, 0)).toString());
         doorPlainAtStart = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
+        run.proof.put("doorPlainAtStart", doorPlainAtStart);
         var atHalt = halt.getAsJsonObject("atHalt");
         if (atStart != null) {
             String expected = M5CollapseRun.text(atHalt, "recordAtHalt");
@@ -357,20 +359,27 @@ final class M5CollapsePassageChains {
         run.expect("passageEndedAtStartup", gone && run.capture().matching(Level.INFO, "開服時仍是 PASSAGE_READY 的量子通道已結束", sid.toString()).size() == 1,
                 () -> "開服之後 " + run.ticks() + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), sid) + "，沒有恰一則開服時結束通道的 INFO");
         run.expect("endedOnTheFirstTick", run.ticks() == 1, () -> "通道在 phase 的第 " + run.ticks() + " 個 tick 才結束");
-        // 「門在下一個 tick 正規化」：開服時門不是一般開門（帶著量子膜，或關著）時，終局的那個 tick 還沒有改門；開服時已是一般開門（逐步存檔，見 doorPlainAtStart）時不適用。
-        // F6-2c fix round 1（spec review M-3）：每次都以同一個名稱斷言，具名斷言的集合不隨逐步存檔的時序變動。
+        // 「終局的那個 tick 還沒有改門」：終局的那個 tick 原艙門與開服時相同。開服時不是一般開門（帶著量子膜，或關著）時，這個 tick 還不是一般開門（下一個 tick 才正規化）；
+        // 開服時已是一般開門（逐步存檔，見 doorPlainAtStart）時，這個 tick 仍是一般開門（終局沒有把門關上或帶回量子膜）。F6-2d Step 0（F6-2c quality Minor 2）：原本後者恆真。
+        // F6-2c fix round 1（spec review M-3）：兩種時序都以同一個名稱斷言，具名斷言的集合不隨逐步存檔的時序變動。
         boolean plainOnTheEndTick = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
-        run.expect("notYetOpenOnTheEndTick", doorPlainAtStart || !plainOnTheEndTick, () -> "開服時原艙門不是一般開門，終局的那個 tick 已是一般開門");
+        run.expect("notYetOpenOnTheEndTick", plainOnTheEndTick == doorPlainAtStart,
+                () -> "doorPlainAtStart=" + doorPlainAtStart + "：終局的那個 tick 原艙門" + (plainOnTheEndTick ? "已是" : "不是") + "一般開門，與開服時不同");
         run.expect("comparatorReevaluated", fixture.controllerSignal(ChamberState.IDLE, 3), () -> "終局之後的 Controller=" + controllerState());
         run.expect("poweredAfterTheEnd", powerState() == ChamberPowerState.POWERED, () -> "終局之後 registry 的 power state=" + powerState());
         return true;
     }
 
+    /**
+     * 終局的下一個 tick 原艙門是一般開門：開服時不是一般開門時，是這個 tick 正規化的；開服時已是一般開門（{@code doorPlainAtStart}，receipt 也記下）時，是終局之後仍維持一般開門
+     * （F6-2d Step 0，F6-2c quality Minor 2：沒有正規化可驗，失敗訊息帶 {@code doorPlainAtStart}）。
+     */
     private boolean plainOpenOnTheNextTick() {
         boolean plain = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
         int now = run.server().getTicks();
         if (!plain && now < endTick + 3) return false;
-        run.expect("plainOpenOnTheNextTick", plain && now == endTick + 1, () -> "原艙門在 tick " + now + "（終局在 tick " + endTick + "）：一般開門=" + plain);
+        run.expect("plainOpenOnTheNextTick", plain && now == endTick + 1,
+                () -> "doorPlainAtStart=" + doorPlainAtStart + "：原艙門在 tick " + now + "（終局在 tick " + endTick + "）：一般開門=" + plain);
         return true;
     }
 
