@@ -47,6 +47,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -125,6 +126,19 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         var ids = Set.copyOf(who.of(this));
         if (!participants.containsAll(ids)) throw new IllegalArgumentException("不是這條 chain 的參與者：" + ids + "（參與者 " + participants + "）");
         return ids;
+    }
+
+    /** 同 {@link #members}，依參與者清單的順序（F6-2d Step 0，F6-2c quality 給 F6-2d 的建議：{@code Who} 的 Set 的迭代順序未定義）。 */
+    List<UUID> inListOrder(Who who) {
+        var ids = members(who);
+        return participants.stream().filter(ids::contains).toList();
+    }
+
+    /** {@code who} 依清單順序的第一位（F6-2d Step 0）；沒有人時丟出。 */
+    UUID first(Who who) {
+        var ids = inListOrder(who);
+        if (ids.isEmpty()) throw new IllegalArgumentException("這時沒有符合的參與者（參與者 " + participants + "）");
+        return ids.getFirst();
     }
 
     /**
@@ -209,43 +223,56 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         return connection;
     }
 
-    /**
-     * 每位參與者真 JOIN，在來源世界、沒有被 recovery 攔截。crash phase 的 playerdata 是觸發之前存的（參與者在艙外）；退化的 setup 是在參與者進入艙內之後正常停服，
-     * 所以 JOIN 在艙內（{@code insideExpected}）。
-     */
-    void joinAll(boolean insideExpected) {
-        joinAll(NOBODY, insideExpected);
+    /** 參與者在來源世界 JOIN 時，預期在艙內還是艙外（{@link #joinInTheSource}；F6-2d Step 0 由 boolean 改成 enum，呼叫端讀得出意思）。 */
+    enum Inside {
+        /** 在艙內（playerdata 是參與者進入艙內之後存的，例如 PASSAGE_READY 期間的存檔、退化的 setup）。 */
+        INSIDE,
+        /** 在艙外（playerdata 是觸發之前存的，參與者在艙外等待）。 */
+        OUTSIDE
     }
 
     /**
-     * 同 {@link #joinAll(boolean)}，但 {@code inUniverse} 的每一位 JOIN 在 U（F6-2c：已跨過、playerdata 存在 U 的參與者，spec §12 的「已跨過的人在目的世界重新加入」）；
-     * 其餘在來源世界，依 {@code insideExpected} 斷言在不在艙內。
+     * 全部參與者真 JOIN 在來源世界（{@link #joinInTheSource}，依清單順序）。crash phase 的 playerdata 多半是觸發之前存的（參與者在艙外，{@link Inside#OUTSIDE}）；PASSAGE_READY
+     * 期間存過檔的窗口與退化的 setup 是在艙內（{@link Inside#INSIDE}）。
      */
-    void joinAll(Who inUniverse, boolean insideExpected) {
-        join(EVERYONE, inUniverse, insideExpected);
+    void joinAll(Inside where) {
+        joinInTheSource(EVERYONE, where);
     }
 
     /**
-     * 同 {@link #joinAll(Who, boolean)}，但只有 {@code who} 的每一位 JOIN（依清單順序）。F6-2c fix round 1 為了讓已跨過的人與沒跨過的人分開 JOIN 而加入；H6 之後
-     * {@code M5CollapsePassageChains} 的 restart 改回同時 JOIN，目前只由 {@link #joinAll(Who, boolean)} 呼叫（拆分見 F6-2d Step 0）。
+     * {@code who} 的每一位（依清單順序）真 JOIN，斷言 JOIN 在 U（F6-2c：已跨過、playerdata 存在 U 的參與者，spec §12 的「已跨過的人在目的世界重新加入」）、沒有被 recovery
+     * 攔截。F6-2d Step 0（F6-2c quality Minor 4）：由 {@code join(Who, Who, boolean)} 拆出，兩個 {@code Who} 與 boolean 的位置參數換位置也能編譯；同一個 step 裡與
+     * {@link #joinInTheSource} 先後呼叫，就是同一個 tick JOIN。
      */
-    void join(Who who, Who inUniverse, boolean insideExpected) {
-        var joining = members(who);
-        var crossed = members(inUniverse);
-        for (var id : participants) {
-            if (!joining.contains(id)) continue;
-            var connection = connect(id);
-            var player = connection.player();
-            run.expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
-            if (crossed.contains(id)) {
-                run.expect("joinedInTheUniverse", isUniverse(player.getServerWorld()), () -> "已跨過的參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
-            } else {
-                run.expect("joinedInTheSourceWorld", player.getServerWorld() == run.source(), () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
-                if (insideExpected) run.expect("joinedInsideTheChamber", inside(player), () -> "參與者 JOIN 在艙外：" + player.getPos());
-                else run.expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
-            }
-            run.expect("participantNotBlocked", !SessionRecoveryManager.blocks(id, run.server()), () -> "已返還的參與者被 recovery 攔截");
+    void joinInTheUniverse(Who who) {
+        for (var id : inListOrder(who)) {
+            var player = joinOne(id);
+            run.expect("joinedInTheUniverse", isUniverse(player.getServerWorld()), () -> "已跨過的參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
+            expectNotBlocked(id);
         }
+    }
+
+    /** {@code who} 的每一位（依清單順序）真 JOIN，斷言 JOIN 在來源世界、在艙內或艙外（{@code where}），沒有被 recovery 攔截（F6-2d Step 0，同 {@link #joinInTheUniverse}）。 */
+    void joinInTheSource(Who who, Inside where) {
+        Objects.requireNonNull(where, "where");
+        for (var id : inListOrder(who)) {
+            var player = joinOne(id);
+            run.expect("joinedInTheSourceWorld", player.getServerWorld() == run.source(), () -> "參與者 JOIN 在 " + player.getServerWorld().getRegistryKey().getValue());
+            if (where == Inside.INSIDE) run.expect("joinedInsideTheChamber", inside(player), () -> "參與者 JOIN 在艙外：" + player.getPos());
+            else run.expect("joinedOutsideTheChamber", !inside(player), () -> "參與者 JOIN 在艙內：" + player.getPos());
+            expectNotBlocked(id);
+        }
+    }
+
+    /** 以 {@code id} 連線、觀察到 JOIN（{@code nativeJoin}），回傳玩家。 */
+    private ServerPlayerEntity joinOne(UUID id) {
+        var connection = connect(id);
+        run.expect("nativeJoin", connection.joinTick() >= 0, () -> "沒有觀察到 JOIN");
+        return connection.player();
+    }
+
+    private void expectNotBlocked(UUID id) {
+        run.expect("participantNotBlocked", !SessionRecoveryManager.blocks(id, run.server()), () -> "已返還的參與者被 recovery 攔截");
     }
 
     /**

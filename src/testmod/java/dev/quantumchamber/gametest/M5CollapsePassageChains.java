@@ -10,6 +10,7 @@ import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
+import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapsePassage.End;
 import dev.quantumchamber.gametest.M5CollapsePassage.Place;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
@@ -235,11 +236,14 @@ final class M5CollapsePassageChains {
         return crashPhase(steps, fixture);
     }
 
-    /** 選門者以外的參與者（trr）或唯一的參與者（trrpending）往 U 的原生移動被拒一次、回滾回來源世界也被拒一次：{@code FAILED_RECOVERY_REQUIRED}。 */
+    /**
+     * 選門者以外的參與者（trr；依清單順序的第一位，F6-2d Step 0）或唯一的參與者（trrpending）往 U 的原生移動被拒一次、回滾回來源世界也被拒一次：
+     * {@code FAILED_RECOVERY_REQUIRED}。
+     */
     private void installRecoveryFault() {
         var universe = fixture.universeWorld().orElseThrow().getRegistryKey();
-        var others = fixture.members(M5CollapseFixture.OTHERS);
-        var failing = others.isEmpty() ? fixture.selectorId() : others.iterator().next();
+        var others = fixture.inListOrder(M5CollapseFixture.OTHERS);
+        var failing = others.isEmpty() ? fixture.selectorId() : others.getFirst();
         run.install(M5TestHooks.NATIVE_MOVE_FAULT, new M5TestHooks.NativeMoveFault(failing, universe, 1, 1));
     }
 
@@ -252,8 +256,12 @@ final class M5CollapsePassageChains {
         switch (id) {
             case CROSSED_COMMITTED -> {
                 steps.addAll(endedAtStartup());
-                // 已跨過的選門者 JOIN 在 U、另一位在來源世界的艙內，同一個 tick（H6 之後改回，見類別說明）。
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, true); return true; }));
+                // 已跨過的選門者 JOIN 在 U、另一位在來源世界的艙內，同一個 tick（H6 之後改回，見類別說明）；依清單順序（選門者是第二位）。
+                steps.add(new Step("join", 1, () -> {
+                    fixture.joinInTheSource(M5CollapseFixture.OTHERS, Inside.INSIDE);
+                    fixture.joinInTheUniverse(M5CollapseFixture.SELECTOR);
+                    return true;
+                }));
                 steps.add(new Step("end", 1, () -> {
                     passage.expectEnd(End.inTheSourceWorld(fixture).placed(fixture, M5CollapseFixture.SELECTOR, Place.UNIVERSE));
                     expectNoResidue();
@@ -264,31 +272,35 @@ final class M5CollapsePassageChains {
             }
             case READY_COMMITTED -> {
                 steps.addAll(endedAtStartup());
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(true); return true; }));
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.INSIDE); return true; }));
                 steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
             }
             case PASSAGE_TERMINATED -> {
                 steps.add(new Step("ownerlessQueued", 20, this::ownerlessQueued));
                 steps.add(new Step("ownerlessNormalized", 20, this::ownerlessNormalizedOnTheNextTick));
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(true); return true; }));
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.INSIDE); return true; }));
                 steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
             }
             case CROSSED_UNCONFIRMED -> {
                 steps.addAll(endedAtStartup());
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(false); return true; }));
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.OUTSIDE); return true; }));
                 steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
             }
             case RECOVERY_SEALED -> {
                 // F6-2c fix round 1（spec v5.7 §10.3）：選門者跨越、Crossed 確認時已存下 playerdata，JOIN 在 U；無法回滾的另一位 JOIN 在來源世界的艙內（跨越之前存的）。
-                // 兩人在同一個 tick JOIN（H6 之後改回，見類別說明）。
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, true); return true; }));
+                // 兩人在同一個 tick JOIN（H6 之後改回，見類別說明）；依清單順序（選門者是第一位）。
+                steps.add(new Step("join", 1, () -> {
+                    fixture.joinInTheUniverse(M5CollapseFixture.SELECTOR);
+                    fixture.joinInTheSource(M5CollapseFixture.OTHERS, Inside.INSIDE);
+                    return true;
+                }));
                 steps.add(new Step("inside", 1, () -> { fixture.moveInside(M5CollapseFixture.OTHERS); return true; }));
                 steps.add(new Step("notRetried", SEALED_WATCH_TICKS + 5, this::sealedNotRetried));
                 steps.add(new Step("doorOpens", 1, this::sealedDoorOpensNormally));
             }
             case RECOVERY_REJECTED -> {
                 steps.addAll(endedAtStartup());
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(false); return true; }));
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.OUTSIDE); return true; }));
                 steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
             }
             default -> throw new IllegalArgumentException("通道的 chain 沒有這個窗口：" + id);
@@ -395,9 +407,9 @@ final class M5CollapsePassageChains {
         run.expect("notReturning", powerState() != ChamberPowerState.RETURNING, () -> "registry 的 power state=" + powerState());
     }
 
-    /** W7：沒跨過的人在艙內照一般方式關門（下一個 session 要門關著）。 */
+    /** W7：沒跨過的人（依清單順序的第一位，F6-2d Step 0）在艙內照一般方式關門（下一個 session 要門關著）。 */
     private boolean closeTheDoorForTheNextSession() {
-        var other = fixture.player(fixture.members(M5CollapseFixture.OTHERS).iterator().next());
+        var other = fixture.player(fixture.first(M5CollapseFixture.OTHERS));
         var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), other);
         run.expect("doorClosedForTheNextSession", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, false, MembraneState.NONE), () -> "互動結果 " + result);
         return true;
@@ -441,11 +453,11 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * trr：SEALED 時任何玩家都可以照一般方式開門（spec §11.2；由艙內沒有跨過的那位開）；record 仍與開服時 exact 相同；spec §12 的終局斷言（已跨過的選門者在 U，F6-2c fix
+     * trr：SEALED 時任何玩家都可以照一般方式開門（spec §11.2；由艙內沒有跨過的那位開，依清單順序的第一位）；record 仍與開服時 exact 相同；spec §12 的終局斷言（已跨過的選門者在 U，F6-2c fix
      * round 1；無法回滾的那位在來源世界）。
      */
     private boolean sealedDoorOpensNormally() throws Exception {
-        var other = fixture.player(fixture.members(M5CollapseFixture.OTHERS).iterator().next());
+        var other = fixture.player(fixture.first(M5CollapseFixture.OTHERS));
         var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), other);
         run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
         var sid = fixture.sid();
