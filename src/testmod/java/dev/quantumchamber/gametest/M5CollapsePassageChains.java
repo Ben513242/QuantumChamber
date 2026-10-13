@@ -45,12 +45,14 @@ import org.apache.logging.log4j.Level;
  * </ul>
  * spec §12 的四件事（同一個 UniverseId、catalog 最多多 1 筆、沒有重抽、沒有人被困住）：每個 tick 由 {@link M5CollapsePassage#invariants} 斷言，終局由
  * {@link M5CollapsePassage#expectEnd} 斷言。
+ * <p>{@code w7}、{@code trr} 的 restart：所有參與者在同一個 tick JOIN（step {@code join}：已跨過的選門者在 U、另一位在來源世界）。F6-2c fix round 1 曾改成先讓沒跨過的人
+ * JOIN、等來源世界的生成停下，才讓選門者 JOIN（{@code ce943f7}），以繞開原版 worldgen 的 ConcurrentModificationException；H6 的 production mixin
+ * {@code PalettedBlockInfoListConcurrentCacheMixin} 修正之後改回同時 JOIN，回歸由 {@code M5CollapseTemplateRaceChain}（{@code h6race}）與 JUnit 的
+ * {@code StructureTemplateCacheConcurrencyTest} 負責。
  */
 final class M5CollapsePassageChains {
     /** trr 的 restart：參與者在艙內之後觀察幾個 tick 不重試（可重試的原因在第一次觀察到參與者在艙內的那個 tick 就會重試）。 */
     static final int SEALED_WATCH_TICKS = 40;
-    /** W7、trr 的 restart：來源世界的 chunk 生成狀態連續幾個 tick 不變才算停下（{@code sourceSettled}，F6-2c fix round 1）。 */
-    static final int SETTLED_TICKS = 20;
     private static final String SOURCE_TICKET = "quantumchamber_source";
     private final M5CollapseRun run;
     private final M5CollapseFixture fixture;
@@ -132,12 +134,12 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * W7、F6-2-12（F6-2c fix round 1）：跨越之前，以 probe 的 ticket 讓 U 在原艙附近（半徑是 view distance＋2）的 chunk 都生成到 FULL（step {@code universeGenerated}），
-     * 接著的 {@code saved} 把它們連同較低狀態的外圈一起存到磁碟。restart 時已跨過的人 JOIN 在 U，需要的 chunk 因此由磁碟載入，不在 restart 生成。沒有這一步時，U 在 restart
-     * 才從頭生成原艙附近的結構（U 與來源世界共用 seed）：trr 的 restart 6 次中 3 次（只在跨越之前存檔時 4 次中 1 次）在 U 的 structure_starts 撞上原版
-     * {@code StructureTemplate.PalettedBlockInfoList} 快取（HashMap）的 ConcurrentModificationException（「Exception generating new chunk」，chunk 12,11），之後停服卡住、
-     * 由逾時處置結束（見 implementation note）。只有這一步時仍是 2 次中 1 次（這次是來源世界缺外圈的 chunk：flush 存檔不存從沒到過 FULL 的 chunk），restart 另外分開
-     * JOIN（{@link #joinTheCrossedLast}）。
+     * W7（F6-2c fix round 1）：跨越之前，以 probe 的 ticket 讓 U 在原艙附近（半徑是 view distance＋2）的 chunk 都生成到 FULL（step {@code universeGenerated}），接著的
+     * {@code saved} 把它們連同較低狀態的外圈一起存到磁碟。restart 時已跨過的人 JOIN 在 U，需要的 chunk 因此由磁碟載入。
+     * <p>這一步原本是為了繞開原版 worldgen 的 ConcurrentModificationException（U 在 restart 才從頭生成原艙附近的結構時，與來源世界同時第一次使用同一個
+     * {@code StructureTemplate.PalettedBlockInfoList} 快取；見 implementation note 的 F6-2c fix round 1 與 H6 Step 0 兩節）。H6 的 production mixin
+     * {@code PalettedBlockInfoListConcurrentCacheMixin} 修正之後不再需要；W7 保留它，讓 W7 的 restart 涵蓋「U 的 chunk 由磁碟載入」，F6-2-12（trr）則拿掉它，涵蓋「restart
+     * 時兩個世界同時生成原艙附近」（H6 的真實情境）。
      */
     private Step universeGeneratedAroundTheChamber() {
         return new Step("universeGenerated", 600, () -> {
@@ -190,14 +192,14 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * F6-2-12：兩人；PASSAGE_READY 之後同 W7 讓 U 在原艙附近生成、原生存檔一次（跨越之前，兩人的 playerdata 都在來源世界；見 {@link #universeGeneratedAroundTheChamber}）→
-     * 選門者照常跨過（Crossed＝[選門者]）→ 另一位的原生移動往 U 與回滾都被拒（{@code FAILED_RECOVERY_REQUIRED}）→ PASSAGE_READY→SEALED(TRR) 的寫入確認時 halt。跨越之後
-     * probe 不存檔：選門者的 playerdata 由 production 在他的 Crossed 確認時存下（spec v5.7 §10.3）。
+     * F6-2-12：兩人；PASSAGE_READY 之後原生存檔一次（跨越之前，兩人的 playerdata 都在來源世界）→ 選門者照常跨過（Crossed＝[選門者]）→ 另一位的原生移動往 U 與回滾都被拒
+     * （{@code FAILED_RECOVERY_REQUIRED}）→ PASSAGE_READY→SEALED(TRR) 的寫入確認時 halt。跨越之後 probe 不存檔：選門者的 playerdata 由 production 在他的 Crossed 確認時
+     * 存下（spec v5.7 §10.3）。H6 起不再像 W7 那樣在跨越之前讓 U 生成（見 {@link #universeGeneratedAroundTheChamber}）：U 在原艙附近的 chunk 多半不在磁碟上，restart 時
+     * 兩個世界同時生成原艙附近（restart 的斷言都不依賴 U 預先生成：開服時讀的是 journal、playerdata 與權威檔，之後的 step 只看玩家所在的世界與來源世界的原艙）。
      */
     Phase trrCrash() {
         var steps = new ArrayList<>(untilResolved(2, CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
-        steps.add(universeGeneratedAroundTheChamber());
         steps.add(nativeSaveDuringThePassage());
         steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
         steps.add(new Step("recoveryFault", 1, () -> {
@@ -250,7 +252,8 @@ final class M5CollapsePassageChains {
         switch (id) {
             case CROSSED_COMMITTED -> {
                 steps.addAll(endedAtStartup());
-                steps.addAll(joinTheCrossedLast());
+                // 已跨過的選門者 JOIN 在 U、另一位在來源世界的艙內，同一個 tick（H6 之後改回，見類別說明）。
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, true); return true; }));
                 steps.add(new Step("end", 1, () -> {
                     passage.expectEnd(End.inTheSourceWorld(fixture).placed(fixture, M5CollapseFixture.SELECTOR, Place.UNIVERSE));
                     expectNoResidue();
@@ -277,7 +280,8 @@ final class M5CollapsePassageChains {
             }
             case RECOVERY_SEALED -> {
                 // F6-2c fix round 1（spec v5.7 §10.3）：選門者跨越、Crossed 確認時已存下 playerdata，JOIN 在 U；無法回滾的另一位 JOIN 在來源世界的艙內（跨越之前存的）。
-                steps.addAll(joinTheCrossedLast());
+                // 兩人在同一個 tick JOIN（H6 之後改回，見類別說明）。
+                steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, true); return true; }));
                 steps.add(new Step("inside", 1, () -> { fixture.moveInside(M5CollapseFixture.OTHERS); return true; }));
                 steps.add(new Step("notRetried", SEALED_WATCH_TICKS + 5, this::sealedNotRetried));
                 steps.add(new Step("doorOpens", 1, this::sealedDoorOpensNormally));
@@ -290,27 +294,6 @@ final class M5CollapsePassageChains {
             default -> throw new IllegalArgumentException("通道的 chain 沒有這個窗口：" + id);
         }
         return Phase.stop(steps).started(() -> started(crashPhase)).everyTick(() -> passage.invariants(null));
-    }
-
-    /**
-     * W7、F6-2-12 的 restart 的 JOIN（F6-2c fix round 1）：先讓沒跨過的人 JOIN 在來源世界的艙內（step {@code join}，跨越之前存的 playerdata），等來源世界的 chunk 生成停下
-     * （{@code sourceSettled}：{@link M5CollapseFixture#generationSignature} 連續 {@link #SETTLED_TICKS} 個 tick 不變），再讓已跨過的選門者 JOIN 在 U（{@code joinCrossed}，
-     * spec v5.7 §10.3：Crossed 確認時存下的 playerdata）。兩人在同一個 tick JOIN 時，兩個世界在 restart 同時生成原艙附近（U 與來源世界共用 seed），trr 的 restart 撞上原版
-     * {@code StructureTemplate.PalettedBlockInfoList} 快取（HashMap）的 ConcurrentModificationException（跨越之前讓 U 生成並存檔之後仍是 2 次中 1 次，見 implementation note）；
-     * 分開 JOIN 之後，restart 一次只有一個世界在生成。
-     */
-    private List<Step> joinTheCrossedLast() {
-        long[] last = {Long.MIN_VALUE};
-        int[] stable = {0};
-        return List.of(
-                new Step("join", 1, () -> { fixture.join(M5CollapseFixture.OTHERS, M5CollapseFixture.NOBODY, true); return true; }),
-                new Step("sourceSettled", 400, () -> {
-                    long signature = fixture.generationSignature(run.source());
-                    stable[0] = signature == last[0] ? stable[0] + 1 : 0;
-                    last[0] = signature;
-                    return stable[0] >= SETTLED_TICKS;
-                }),
-                new Step("joinCrossed", 1, () -> { fixture.join(M5CollapseFixture.SELECTOR, M5CollapseFixture.SELECTOR, true); return true; }));
     }
 
     private void started(String crashPhase) throws Exception {
