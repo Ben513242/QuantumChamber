@@ -104,6 +104,10 @@ final class M5CollapseWindows {
      * <li>{@link #withCrossedAtHalt}：halt 當下磁碟上的 Crossed（參與者的子集，開服時才由收據決定是哪幾位）；預設沒有人。只在狀態是 PASSAGE_READY 或 SEALED 時斷言
      *     （{@code crossedAtRestart}）。</li>
      * </ul>
+     * <p>F6-2d Step 0（F6-2c quality Minor 6）：每個 wither 交出之前驗證組合（{@link #validated}），restart 會忽略、或要到開服之後才發現的組合當場丟出
+     * IllegalStateException：{@code withStateAtHalt} 只接受 PASSAGE_READY、SEALED，{@code withStateAtHalt}／{@code terminatedAtHalt} 只能指定一次；{@code withCrossedAtHalt}
+     * 要在狀態是 PASSAGE_READY 或 SEALED 之後（COLLAPSING 與終局不斷言 Crossed）；{@code notReturned} 只用在 COLLAPSING（W1）；{@code recognizingBeforeJoin} 要在
+     * {@code withProjection} 之後。窗口表在 class init 時建好，entrypoint 在開服之前就初始化它（{@link M5CollapseWindows#windows}），所以不合法的列在開服之前就失敗。
      */
     static final class AtRestart {
         // F6-2d Step 0（F6-2c quality Minor 6）：欄位只在 copy（建立之後、交出之前）裡改，交出之後不再變動；窗口表在 class init 時建好，之後只讀。
@@ -139,7 +143,30 @@ final class M5CollapseWindows {
             next.stateAtHalt = stateAtHalt;
             next.crossedAtHalt = crossedAtHalt;
             change.accept(next);
-            return next;
+            return next.validated();
+        }
+
+        /** 組合的驗證（見類別說明；F6-2d Step 0）：不合法時丟出 IllegalStateException，否則回傳這一份。 */
+        private AtRestart validated() {
+            boolean passage = stateAtHalt == SessionState.PASSAGE_READY || stateAtHalt == SessionState.SEALED;
+            if (crossedAtHalt != M5CollapseFixture.NOBODY && !passage) {
+                throw new IllegalStateException("AtRestart：withCrossedAtHalt 只在 halt 當下是 PASSAGE_READY 或 SEALED 時斷言（crossedAtRestart），stateAtHalt="
+                        + (stateAtHalt == null ? "終局已落盤" : stateAtHalt) + "；先 withStateAtHalt");
+            }
+            if (!returned && stateAtHalt != SessionState.COLLAPSING) {
+                throw new IllegalStateException("AtRestart：notReturned 只用在 halt 當下是 COLLAPSING 的窗口（W1），stateAtHalt=" + stateAtHalt);
+            }
+            if (recognizeBeforeJoin && projection == null) {
+                throw new IllegalStateException("AtRestart：recognizingBeforeJoin 要有 projection entry（先 withProjection）");
+            }
+            return this;
+        }
+
+        /** {@code withStateAtHalt} 與 {@code terminatedAtHalt} 只能指定一次（預設 COLLAPSING 之後再指定時丟出，不靜默覆蓋）。 */
+        private void stateNotYetSet(String name) {
+            if (stateAtHalt != SessionState.COLLAPSING) {
+                throw new IllegalStateException("AtRestart：" + name + " 之前已指定 stateAtHalt=" + (stateAtHalt == null ? "終局已落盤" : stateAtHalt));
+            }
         }
 
         /** 參與者在 crash 前還沒有返還（W1）。 */
@@ -160,14 +187,21 @@ final class M5CollapseWindows {
         /** JOIN 之前載入並辨識投影 Controller。 */
         AtRestart recognizingBeforeJoin() { return copy(next -> next.recognizeBeforeJoin = true); }
 
-        /** halt 當下磁碟上的 record 是 {@code state}（PASSAGE_READY、SEALED；COLLAPSING 是預設）。 */
+        /** halt 當下磁碟上的 record 是 {@code state}（PASSAGE_READY、SEALED；COLLAPSING 是預設，不經這裡；其他狀態丟出）。 */
         AtRestart withStateAtHalt(SessionState state) {
             Objects.requireNonNull(state, "state");
+            if (state != SessionState.PASSAGE_READY && state != SessionState.SEALED) {
+                throw new IllegalStateException("AtRestart：withStateAtHalt 只接受 PASSAGE_READY、SEALED（COLLAPSING 是預設）：" + state);
+            }
+            stateNotYetSet("withStateAtHalt(" + state + ")");
             return copy(next -> next.stateAtHalt = state);
         }
 
         /** halt 當下終局已落盤：restart 開服時 journal 沒有這個 session。 */
-        AtRestart terminatedAtHalt() { return copy(next -> next.stateAtHalt = null); }
+        AtRestart terminatedAtHalt() {
+            stateNotYetSet("terminatedAtHalt");
+            return copy(next -> next.stateAtHalt = null);
+        }
 
         /** halt 當下磁碟上的 Crossed 恰為 {@code crossed}。 */
         AtRestart withCrossedAtHalt(M5CollapseFixture.Who crossed) {
@@ -294,6 +328,14 @@ final class M5CollapseWindows {
         if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared, Objects.requireNonNull(haltAt, "haltAt"))) != null) {
             throw new IllegalStateException("窗口表重複：" + id);
         }
+    }
+
+    /**
+     * 窗口表的全部窗口（F6-2d Step 0）。{@code M5CollapseRecoveryProbe.onInitialize} 在開服之前呼叫，讓窗口表在那時建好（class init）：不合法的列（{@link AtRestart} 的組合、
+     * 重複的窗口）在開服之前就丟出，不等到 crash 點裝上或 restart 讀這一列的時候。
+     */
+    static Set<CrashWindow> windows() {
+        return TABLE.keySet();
     }
 
     /** 這個窗口的一列；表裡沒有時丟出。 */

@@ -11,7 +11,8 @@ import net.fabricmc.api.ModInitializer;
 /**
  * 僅 testmod（M5 F6-1；F6-2a 拆檔）：跨 JVM 的塌縮 crash／restart probe（spec §12 的 crash 窗口）的 entrypoint 與 phase 表。預設關閉：沒有 system property
  * {@code quantumchamber.m5collapse.phase} 時不註冊任何 listener、不記 log，也不建立 runner 與 chain；default、legacy、M5 GameTest、main-only 與 M4 recovery run
- * 都不受影響。屬性存在但設定不合法時，在 {@code onInitialize} 丟出（開服之前就失敗）。
+ * 都不受影響。屬性存在但設定不合法時，在 {@code onInitialize} 丟出（開服之前就失敗）；窗口表（{@link M5CollapseWindows}）也在這時建好，不合法的列同樣在開服之前失敗
+ * （F6-2d Step 0）。
  * <p>每個 phase 一個 JVM，由 {@code scripts/verification/m5-collapse-probe.ps1} 經 Gradle 的 {@code runM5Collapse} 啟動。root 是 nonce-owned 的
  * {@code run/m5-collapse-<nonce>}，必須等於 cwd；evidence 固定在 {@code <repo>/.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/<phase>}，
  * 已有 receipt 時拒絕（禁止在同一個 evidence 重跑）。
@@ -88,6 +89,8 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
     @Override public void onInitialize() {
         var config = M5CollapseRun.Configuration.read(PHASES.keySet());
         if (config == null) return;
+        // F6-2d Step 0（F6-2c quality Minor 6）：每個 phase 都在開服之前建好窗口表（class init），不合法的列在這裡就丟出（開服之前失敗），不等到 step 執行時。
+        M5CollapseWindows.windows();
         new M5CollapseRun(config, List.copyOf(PHASES.keySet())).start(PHASES.get(config.phase()));
     }
 }
