@@ -6417,6 +6417,13 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - testmod：probe 的 `M5CollapseRun`、`M5CollapseRecoveryProbe`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassage`、`M5CollapseDormantChains`、`M5CollapseLiveChain`、`M5CollapseRevisitChains`、`M5CollapseUnloadChain`（只加一行註解）與新檔 `M5CollapsePassageChains`；`M5TestHooks` 只有 `CrashWindow` 的新值與 Javadoc、兩個 detail record；`SessionRecoveryStateCrashWindowMixin` 加注入點（既有的 mixin，`quantumchamber-test.mixins.json` 不用改）。
   - `scripts/verification/`：`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；README 只改「M5 collapse probe」一節。
   - **沒有改** `src/main/`、`build.gradle`、`fabric.mod.json`、mixin 的登記檔、其他 ps1、`.github/`、既有的 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。
+- Review 與最終 review（controller 補）：
+  - spec review ❌（Critical 0、Important 1、Minor 5）。
+    - **I-1**：跨越成功時 production 不存 playerdata；`w7` 在 halt 之前存檔，只驗到「crash 前剛好存過檔」的情況，真正的 crash 組合（Crossed 在磁碟上、playerdata 卻在來源世界）沒有驗到；`trr` 也把已跨過的人斷言在來源世界。
+    - Minor：M-1（「每條 chain 都有 spec §12 的四件事」對 `terminaldoor` 的 restart 不精確）、M-2（`trr` 重啟之後 log 沒有說明永久的 SEALED）、M-3（`notYetOpenOnTheEndTick` 的名稱集合隨時序變動）、M-4（沒有 chain 驗到選門者不依清單順序）、M-5（本節缺 run-all-2 的紀錄）。
+    - 「需要裁示」兩點的判定：第 2 點是 spec 與實作的不一致，但沒有人被困住；第 1 點不違反 spec 條文。
+  - 使用者 2026-10-09 裁示（見「需要裁示」之後的補註）：第 2 點跨過就立刻存檔（spec v5.7 §10.3、§12、§20.11），第 1 點列為 F7 的已知限制。
+  - controller 處置：開 **fix round 1**（下一節），處理 I-1、M-3、M-4；M-1、M-5 由 controller 在本節更正（上文的補註）；M-2 交給 **F6-2d**。quality review 等 fix round 1 的 spec re-review 之後，對 F6-2c 整段（`a52d65d..98b907a`）一起做，結果記在下一節。
 - 行號以 `bdbc567` 為準。`RUN`＝`M5CollapseRun`，`WIN`＝`M5CollapseWindows`，`FIX`＝`M5CollapseFixture`，`PAS`＝`M5CollapsePassage`，`PCH`＝`M5CollapsePassageChains`，`HK`＝`M5TestHooks`，`SRM`＝`SessionRecoveryStateCrashWindowMixin`，`UC`＝`M5CollapseUnloadChain`，`MP`＝`m5-collapse-probe.ps1`，`RA`＝`run-all.ps1`。
 
 ### 結構的擴充（A 段）
@@ -6434,7 +6441,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 ### 每條新 chain（B 段）
 
-crash phase 都從 DORMANT 的 NEW 收據開始（與 `w2` 等相同：參與者由艙外進入 → COLLAPSING → RESOLVE），之後依窗口推進。restart 的開服檢查走窗口表（`expectAtRestart`），另比對 record 的塌縮欄位（狀態、Collapse 的每個欄位、參與者與返還、lease 數）與 halt 當下相同（`recordKeptAcrossTheRestart`；`FIX:576` `recordDigest`：塌縮狀態的 record 放不進一份新的 journal、`toNbt` 也不是 public，所以不經 NBT）。每條 chain 都有 spec §12 的四件事：每個 tick 的 `catalogOnlyDestination`、`catalogAtMostOneMore`、`sameDestination`、`noRedraw`、`participantInSourceOrUniverse`，開服時的 `oneAllocationForTheToken`、`noRedraw`，終局的 `expectEnd`。
+crash phase 都從 DORMANT 的 NEW 收據開始（與 `w2` 等相同：參與者由艙外進入 → COLLAPSING → RESOLVE），之後依窗口推進。restart 的開服檢查走窗口表（`expectAtRestart`），另比對 record 的塌縮欄位（狀態、Collapse 的每個欄位、參與者與返還、lease 數）與 halt 當下相同（`recordKeptAcrossTheRestart`；`FIX:576` `recordDigest`：塌縮狀態的 record 放不進一份新的 journal、`toNbt` 也不是 public，所以不經 NBT）。每條 chain 都有 spec §12 的四件事：每個 tick 的 `catalogOnlyDestination`、`catalogAtMostOneMore`、`sameDestination`、`noRedraw`、`participantInSourceOrUniverse`，開服時的 `oneAllocationForTheToken`、`noRedraw`，終局的 `expectEnd`。（controller 依 spec review M-1 更正：每個 tick 的 `sameDestination`、`noRedraw` 只在 journal 還有這個 session 的 record 時斷言（`PAS:63`）；`terminaldoor` 的 restart 開服時終局已落盤、record 已不在，所以 restart 的每個 tick 沒有這兩項，由開服時的 `oneAllocationForTheToken`、`noRedraw` 涵蓋。）
 
 | chain | 窗口（hook） | crash phase | restart 的目標斷言 |
 | --- | --- | --- | --- |
@@ -6493,6 +6500,7 @@ crash phase 都從 DORMANT 的 NEW 收據開始（與 `w2` 等相同：參與者
   - m5collapse 20 → 32（halt 8 → 14）：**預期的差異**。run-all 內的 32 phases 都 PASS，具名斷言與 step 與本節的 green-1、F6-2c Step 0 的 GREEN 比對都 OK（`runall-vs-green1-names.txt`、`runall-vs-f62cs0-names.txt`）。
   - log（`runall-wbcmp-*.txt`）：M5 WARN／ERROR 38／10 與基準相同（一行差異是已知的 `PistonBlockEntity` object hash）；legacy 0／0。**Full ERROR 28 → 31**（WARN 54 不變）：多的 3 行是同一次「Failed to store chunk」「Failed to save chunk」「Failed to store entity chunk」，都來自 default run 的 H2 受控 region write（`M4CandidateDoorGameTests.beforeScopedRegionWrite`；「受控 region write 失敗」24 → 29 行），是已知偶發「H2 多一則原生 log」（F6-2a 一節的 run-all 也是 +3），不經 M5 collapse probe，也沒有讓任何 gate 失敗。
 - `a77b3fb`（只改 entrypoint 的 Javadoc）與本節的 docs commit 都在 run-all-1 之後，所以本節的 docs commit 之後再跑一次 run-all（run-all-2），結果記在 `f62c/STATUS.md` 與最終回報。
+- （controller 依 spec review M-5 補）run-all-2：`e5e6760`，工作樹乾淨，所有 commit 之後：`run-all-bb1a1b3e283e44c4a4c3d5b4463fde35`，`END ALL exit=0 HEAD=e5e6760`。與基準逐項比較只有 m5collapse 20 → 32（halt 8 → 14）；Full WARN／ERROR 54／28、M5 38／10、release SHA-256 `2a5d764d…` 都與基準相同（`f62c/runall2-*.txt`）；collapse 的具名斷言與 green-1、F6-2c Step 0 的 GREEN 比對都 OK。這一次是 fix round 1 的比較基準。
 
 ### Gate 與證據
 
@@ -6526,6 +6534,8 @@ crash phase 都從 DORMANT 的 NEW 收據開始（與 `w2` 等相同：參與者
 
 1. **第 13 點（F6-2-15）：EXISTING 再造訪的修復會隨 crash 遺失**（`exp-uncheckpointed` 2／2，上文）。`Track.projectionUncheckpointed` 只在同一個 session 內有效，跨 session 時 D3 的「修復寫 0 格」不做 checkpoint 就提交 READY。要 controller 決定：修正 production（例如修復寫 0 格時也比對磁碟上的不變量 cell，或在 D2 的 PREPARE 期間關門終局之前補 checkpoint），或寫進 F7 的已知限制（實際的窗口到下一次逐步存檔為止，約 10 秒）。root 都保留。
 2. **spec §12「已跨過的人在目的地」與 playerdata**：production 跨越時不存 playerdata，crash 在下一次 autosave（或登出、停服）之前時，已跨過的人回到上一次存檔的位置（來源世界），即使 Crossed 已確認。沒有人被困住，但與 spec 的字面不同。要決定：寫進 F7 的已知限制，或在 Crossed 確認之後存那位玩家的 playerdata（改 production）。`w7` 以 halt 之前的原生存檔驗證存檔之後的行為。
+
+（controller 補）使用者 2026-10-09 裁示：第 1 點列為 F7 的已知限制，不改程式；第 2 點「跨過就立刻存檔」（spec v5.7），由 fix round 1 修正（下一節）。
 
 ### 觀察（未修改）
 
@@ -6565,6 +6575,32 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - 第二位 implementer：`e2a16cc` `docs: describe the crossed save and the split join of w7 and trr in the verification README`；本節由其後的 docs commit `docs: record the F6-2c fix round 1 in the M5 note` 加入。
 - 中間 commit 的編譯（`fix1/c*-compile.log`：`compileJava compileTestJava compileTestmodJava compileClientProbeJava`，都 BUILD SUCCESSFUL；`c*-compile-state.txt` 的 blob 已與各 commit 比對）：`c1` 是 `a397f35` 的內容；`c2` 是 `a397f35` 加上 `7752b47` 的 `PassageService`；`c3` 是 `e03808e`＋`7752b47` 的內容；`c5` 是 `380488f`；`c7` 是 `ce943f7`（`c4`、`c6` 是之間的工作樹）。`e03808e` 只改 testmod，沒有單獨編譯，與 `7752b47` 一起在 `c3` 編譯、在 green-1 執行。
 - 只改了派工允許的路徑：`src/main/` 只有 `PassageService`（`7752b47`）；testmod 只有 probe 的 `M5CollapseRun`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassageChains`；`scripts/verification/README.md` 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** `M5TestHooks`、mixin 與 `quantumchamber-test.mixins.json`（存檔失敗的注入改用 adapter，見「mutation」）、`build.gradle`、`fabric.mod.json`、所有 ps1、`.github/`、既有的 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。
+- Review 與最終 review（controller 補）：
+  - fix round 1 的 spec re-review ✅（Critical 0、Important 0、Minor 4）。**I-1 關閉**。
+    - 存檔只在 COMMITTED 分支、Crossed 寫入確認之後（`PS:381-385`），在同一個 tick 的 `END_SERVER_TICK` 同步執行，早於到達提示與下一位參與者的檢查，符合 spec v5.7 §10.3「成功」列、§12 PASSAGE_READY 列、§20.11；ROLL_FORWARD_PENDING 與被拒時不存。
+    - `w7` 真的驗到 crash：runner 的 halt 在 `END_SERVER_TICK` 的 AFTER phase，原版 autosave 在它之前、這個 tick 不會再有；逐步存檔只寫 chunk。RED `f89501ba…` 與 `mut-no-save` `bb038e83…` 的 halt receipt 中兩人的 playerdata 都在 overworld，所以沒有其他存檔路徑讓 `w7` 在沒有修正時 PASS。
+    - `trr` 的新預期符合 §11.2、§10.3、§12；門由 `sealed_x` 變成 `passable_x` 是 `e03808e` 跨越之前存檔所致，開服 tick 2 由 `CLOSE_ON_SEALED` 重新套用。
+    - `ce943f7` 的分開 JOIN 沒有少驗 spec 要求的行為（spec 沒有要求「同時重新加入」），可作為 H6 之前的暫時措施。reviewer 建議 H6 之後：`w7`、`trr` 改回同時 JOIN；至少 `trr` 拿掉跨越之前的 `universeGenerated`，讓 U 在 restart 才生成；`w7` 跨越之前的 `saved` 保留；probe 只能當機率性的整合回歸，H6 要另有確定性的重現。
+    - M-3、M-4 到位：`notYetOpenOnTheEndTick` 在 `w7`、`readycommit`、`crossedpending` 實際檢查；`w7` 的選門者是第二位，三次 GREEN 在 U 的都是清單的第二位。
+    - reviewer 獨立比對了具名斷言（green-6、green-7、run-all-2 的 `279046d7…` 與 `606bf92e…`）、release jar（只有 `PassageService` 與 7 個內部類別不同，內部類別的 bytecode 相同、只差行號資訊）與 test 集合，都與本節相同。
+    - Minor：1 是「mutation」一小節的說法（已在該處更正，斷言交給 F6-2d Step 0）；2 是 `scripts/verification/README.md:221` 的 CME 狀態過時；3、4 是本節的 run-all-2 與 CME 次數（已在各處補正）。
+  - F6-2c 整段（`a52d65d..98b907a`）的 quality review：**Approved**（Critical 0、Important 0、Minor 8），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Strengths：production 的修正只有一行呼叫，「先 journal、後 playerdata」由結構保證；`HaltAt.TICK_END` 的各種誤用（halt 不在窗口的 tick、同一個 tick 第二次成立、取證丟出、phase 已結束）都判 FAIL；`PHASE_TICK_LIMIT` 3600 小於原版第一次 autosave 的 6000 tick；`AtRestart`、`End` 的具名 factory 去掉了位置參數互換的風險；新 hook 有完整描述子與 `require=1`，production 改走別的方法時 crash phase 會判 FAIL，不會靜默失效。
+    - Minor：
+      1. `saveCrossedPlayerData`（`PS:410-418`）自己重寫了 `CollapseService.sideEffect`（`CS:1380`，package-private，`CollapseServiceTest:826-832` 已有 JUnit）的 try/catch、去重與 WARN，行為相同，但失敗路徑（WARN、不往外丟、去重）沒有測試。建議改呼叫 `sideEffect`。
+      2. `trrpending` 在最終 run 開服時門已是一般開門，`notYetOpenOnTheEndTick` 恆真；`plainOpenOnTheNextTick` 也沒有驗到正規化，卻記為 true（`PCH:361`、`:371`）。建議 `proof` 記下 `doorPlainAtStart`，這種情況改用另一個名稱或記為不適用。
+      3. 暫時措施沒有標記：`joinTheCrossedLast`、`generationSignature`、`SETTLED_TICKS` 沒有寫「H6 之後改回」；`sourceSettled` 逾時時看不到最後的 signature、holder 數與最長連續不變的 tick 數。判準本身可接受（誤判的後果是 CME 風險回來，不會誤判通過），拿掉只要改兩個呼叫點。
+      4. `join(Who who, Who inUniverse, boolean insideExpected)`（`FIX:233`）又是同型別的位置參數；`joinAll(false)` 看不出原因。建議拆成 `joinInTheUniverse(Who)` 與 `joinInTheSource(Who, Inside)`。
+      5. 可抽出的重複：`restart` 的 READY_COMMITTED、CROSSED_UNCONFIRMED、RECOVERY_REJECTED 三個 case 只差一個 boolean；`w7Crash` 與 `trrCrash` 共用四個 step 的前綴。
+      6. `AtRestart` 的 wither 不驗證組合（`withStateAtHalt` 要到 restart 才丟出；`withCrossedAtHalt` 在 COLLAPSING 或終局時被靜默忽略）；七個 wither 都重寫一次 7 個參數的建構子呼叫。
+      7. halt receipt 同時有 `haltAt`（時點）與 `atHalt`（取證），容易混淆；建議時點改名 `haltTiming`。
+      8. 小重複：`fixture.tickets` 與 `M5GameTestSupport.destinationTickets` 的迴圈相同；`End.placed(fixture, who, place)` 要再傳一次 fixture；`commitRestore` 與 `commitRollForward` 的注入點風格不一致。
+    - 給 F6-2d、F6-2e 的建議：`members(OTHERS).iterator().next()`（`PCH:240`、`:417`、`:465`）的順序未定義，改依清單順序取；`DOORWAY_X` 最多三人；`selectorCrossing` 寫死 `crossed == [selector]`，多人跨越窗口要以 `Who` 參數化；`restart()` 的 switch 可改成「窗口 → restart step builder」的表；`AtRestart` 加欄位之前先加私有的 copy helper（併第 6 點）；SEALED 之後的終局與 release／門／ERROR 之後的窗口可以直接用 `HaltAt.TICK_END`。
+  - controller 處置：不開 fix round 2。
+    - re-review Minor 2、quality Minor 3 → **H6**：H6 修好之後依 reviewer 的建議改回同時 JOIN，暫時措施一併拿掉；若保留，就加上標記與逾時的數值。README 的 CME 狀態一併更新。
+    - quality Minor 1、2、4～8、給 F6-2d／F6-2e 的建議，以及 re-review Minor 1 的斷言 → **F6-2d Step 0**（在 H6 之後、F6-2d 本體之前；quality Minor 1 是唯一的 `src/main/` 改動，範圍只限 `saveCrossedPlayerData` 改用 `sideEffect`，並補失敗路徑的 JUnit）。
+    - spec M-2 → F6-2d（不變）。
+  - **F6-2c 完成**：本體 `a52d65d..e5e6760`，fix round 1 `8f9dc20..98b907a`，之後接 controller 的 docs commit。最終 run-all：`run-all-2fe4175797894e97a7dea49ee84142a5`，`END ALL exit=0`（`98b907a`）。
 - 行號以 `e2a16cc` 為準；`PS`＝`PassageService`，其餘縮寫同 F6-2c 一節（`RUN`、`WIN`、`FIX`、`PCH`、`HK`、`MP`）。
 
 ### production 的改動（`7752b47`）
@@ -6642,8 +6678,11 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 - 存檔丟例外的作法：adapter 在 `saveCrossedPlayerData` 呼叫原版的那一行之前插入 `throw new IllegalStateException(…)`。沒有另加 Slot 或 mixin，所以 `M5TestHooks` 與 mixin 的登記檔都沒有改。WARN 的比對在 `fix1/fix1-mut-save-throws-warn-compare.txt` 與 `fix1-mut-save-throws-*-warncheck.txt`。
 - 「在 COMMITTED 之前就存檔」：寫入確認時，兩種順序在 tick 結束時的磁碟上完全相同（Crossed 有他、playerdata 在 U），所以 `w7` 驗不出（`fbe7a0bb…` PASS）。要分辨，必須在 journal 寫入與存檔之間 crash，也就是 `CROSSED_COMMITTED` 以 `WINDOW` halt，並斷言 halt 時 playerdata 還不在 U；現有的 chain 沒有這個窗口（`w7` 為了驗存檔改成 `TICK_END`），本輪沒有新增。現有的 chain 只驗到這個 mutation 的另一面：寫入沒有確認時，playerdata 已在 U（`crossedpending`）。
+- （controller 依 fix round 1 spec re-review Minor 1 更正）上一點「必須在 journal 寫入與存檔之間 crash」說得過強：要分辨兩種順序，只要在窗口成立的那一刻看磁碟上的 playerdata。`TICK_END` 的 hook 在 `commitRollForward` 的回傳點、`saveCrossedPlayerData` 之前執行（`RUN:493`）；在那裡多記一份 `playerDimensionOnDisk`，halt 時斷言「窗口當下選門者還不在 U」，`fbe7a0bb…` 就會失敗，不需要新的 CrashWindow。這個斷言交給 **F6-2d Step 0**（見本節「Review 與最終 review」）。
 
 ### worldgen 的 CME（待使用者裁示）
+
+（controller 補）**使用者 2026-10-13 已裁示**：讓結構範本的快取可以安全地同時使用，比照 H5 加一個小 mixin；改之前先做根因調查並確認。controller 另開 task **H6**，先做 Step 0（根因調查）。以下是撰寫當時的紀錄。
 
 不屬於本 fix round。controller 裁示：另案待使用者裁示；本輪不調查、不修，保留 `ce943f7` 的時序調整；之後的 run 若再遇到，保留 root、記錄，以新的 nonce 重跑。
 
@@ -6667,7 +6706,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - 未確認：另一個執行緒當下在做什麼（jstack 在 crash 之後約 90 秒才取，worker 都已 park），是同一個世界的其他工作還是另一個世界；原版單一世界是否也會發生。
 - 停服卡住：`MinecraftServer.shutdown:654` 的 `while (… shouldDelayShutdown())` 迴圈（`runTasksTillTickEnd`）。`currentChunkHolders` 不是空的等條件下 `shouldDelayShutdown` 為真，生成失敗的 holder 一直卸載不掉；worker 都在 park，沒有執行緒在做事。逾時處置結束了 PID 30300、34820、9064、9440（第一位 implementer 的 run；probe 先核對 commandline、存 jstack）。
 - 重現條件：seed 20260921、view-distance 2、原艙 Controller (8,70,8)；U 是 NEW（共用 seed）；trial_chambers 的 start 在 chunk (12,11)。restart JVM 的第 1 個 tick，同時有人在兩個世界 JOIN，而且其中一個世界的磁碟上沒有 (12,11)（flush 存檔只存到過 FULL 的 chunk，外圈的 proto chunk 不存）。
-- `trr` restart 的次數：沒有跨越之前的存檔 2／2（dev-d、dev-e）；`e03808e`（跨越之前存檔）1／4（dev-f、dev-g、green-1、green-2）；`380488f`（再加 U 的生成）1／6（dev-h～dev-k、green-3、green-4）；`ce943f7`（分開 JOIN）0／8（dev-m～dev-p、green-5、green-6、green-7、run-all-1r2 的 M5 collapse）。mutation 的兩次 `trr`（`mut-no-save`、`mut-save-throws`）選門者沒有存到 U，JOIN 都在來源世界，不算。
+- `trr` restart 的次數：沒有跨越之前的存檔 2／2（dev-d、dev-e）；`e03808e`（跨越之前存檔）1／4（dev-f、dev-g、green-1、green-2）；`380488f`（再加 U 的生成）1／6（dev-h～dev-k、green-3、green-4）；`ce943f7`（分開 JOIN）0／8（dev-m～dev-p、green-5、green-6、green-7、run-all-1r2 的 M5 collapse）。（controller 依 fix round 1 spec re-review Minor 3、4 更正：加上最終的 run-all-2，`ce943f7` 的 code 是 0／9。「`380488f` 1／6」的歸屬不精確：dev-h～dev-k 是 `380488f` 之前的工作樹（`M5CollapsePassageChains` 的 blob `a84d9bc`，不是 `380488f` 的 `079375c`），應寫成「`380488f` 1／2（green-3、green-4）；之前的工作樹 dev-h～dev-k 0／4」，與 testmod Javadoc（`PCH:139`、`:299`）的「2 次中 1 次」一致。）mutation 的兩次 `trr`（`mut-no-save`、`mut-save-throws`）選門者沒有存到 U，JOIN 都在來源世界，不算。
 - production 的影響：很可能是 production 會遇到的問題。一般多人遊玩時，有人在 U、有人在來源世界，兩邊同時生成同一個區域（例如重啟之後分別在兩個世界重新加入，或兩邊同時探索相同的座標附近），可能讓整個 server crash（crash report），並卡在停服、要從外部結束。`ce943f7` 只在 probe 裡錯開兩個世界的生成，production 沒有任何防護。
 - 第一位 implementer 建議的下一步：以 testmod hook 在 `getAllOf` 抓 CME 當下所有 worker 的 stack（或 JFR），確認另一個執行緒；做一個不經塌縮的最小重現（兩位玩家分別在 U 與來源世界的 (12,11) 附近同時 JOIN）。
 
@@ -6683,6 +6722,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - m5collapse 32（halt 14），與基準相同。32 phases 都 PASS，具名斷言與 step 與 green-7 完全相同（`runall-vs-green7-names.txt`，RESULT=OK），與基準的差異同「具名斷言的比對」的表（`runall-vs-f62c-names.txt`）。`trr` 的 restart 沒有 CME。
   - log（以 `/WARN]`、`/ERROR]` 計行，`runall-wbcmp-*.txt`）：Full 54／28、legacy 0／0、M5 38／10，則數都與基準相同。M5 的兩行差異是 F6-0 已記錄的數值格式（`PistonBlockEntity` 的 object hash、通道傳送 WARN 的座標寫法），不是新的 WARN，所以沒有要歸屬的變化。四個 gate 的 latest.log 都沒有「跨越之後的 playerdata 存檔」，也沒有 `ConcurrentModificationException`。
 - 本節的 docs commit 在 run-all-1r2 之後，所以 docs commit 之後再跑一次 run-all（run-all-2），結果記在 `fix1/STATUS.md` 與最終回報。
+- （controller 依 fix round 1 spec re-review Minor 3 補）run-all-2：`98b907a`，工作樹乾淨，所有 commit 之後：`run-all-2fe4175797894e97a7dea49ee84142a5`（M5 collapse 的 phase evidence `collapse-279046d7f4074972b299cc12e579e423-*`），`END ALL exit=0 HEAD=98b907a`，SUMMARY 與 run-all-1r2 相同。與基準 `bb1a1b3e…` 的比較也與 run-all-1r2 相同：release SHA-256 `61e729dc…`；WARN／ERROR Full 54／28、legacy 0／0、M5 38／10；collapse 與 green-7 RESULT=OK；沒有 CME，也沒有「跨越之後的 playerdata 存檔」的 WARN。這是 fix round 1 的最終回歸。
 
 ### 偏離派工字面之處
 
@@ -6695,7 +6735,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 ### 需要裁示
 
-1. **worldgen 的 CME**（上方「worldgen 的 CME」）：要不要修 production、怎麼修，或寫進已知限制。root 都保留。
+1. **worldgen 的 CME**（上方「worldgen 的 CME」）：要不要修 production、怎麼修，或寫進已知限制。root 都保留。（controller 補：使用者 2026-10-13 已裁示，task H6。）
 
 ### 交給後續
 

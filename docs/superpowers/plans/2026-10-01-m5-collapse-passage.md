@@ -782,7 +782,10 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - 處理 spec review 的 Minor。
       - 這次會改到 `src/main/` 的 `PassageService`，範圍只限上述的存檔。
       - 投影修復遺失（F6-2-15）依同一個裁示，列為 F7 的已知限制。
+    - 已完成（2026-10-13）：spec re-review ✅、整段 quality review Approved；Minor 的分派見 note F6-2c fix round 1 一節的「Review 與最終 review」。
+  - **H6：worldgen CME 的防護**（controller 2026-10-13 依使用者裁示插入）：讓 `StructureTemplate` 的快取可以安全地同時使用（比照 H5 的小 mixin），改之前先做根因調查。Step 0 調查完成、經 review 之後，controller 升 spec、在下方新增 Task H6 一節。排在 F6-2c 之後、F6-2d 之前。
   - **F6-2d：SEALED、門與重試。**
+    - 開工時先做 **Step 0**：F6-2c review 交下的 Minor（quality Minor 1、2、4～8，給 F6-2d／F6-2e 的建議，fix round 1 re-review Minor 1 的斷言），清單見 note F6-2c fix round 1 一節的「Review 與最終 review」。唯一的 `src/main/` 改動是 `saveCrossedPlayerData` 改用 `CollapseService.sideEffect`，並補失敗路徑的 JUnit。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；
