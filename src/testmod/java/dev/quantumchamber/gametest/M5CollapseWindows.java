@@ -242,8 +242,11 @@ final class M5CollapseWindows {
 
     static final int ANY_CELLS = -1;
 
-    /** 窗口表的一列。{@code haltAt} 是 halt 的時點（F6-2c fix round 1；預設 {@link M5CollapseRun.HaltAt#WINDOW}，{@code beforeHalt} 也在那一刻執行）。 */
-    record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared, M5CollapseRun.HaltAt haltAt) {}
+    /**
+     * 窗口表的一列。{@code haltTiming} 是 halt 的時點（F6-2c fix round 1；預設 {@link M5CollapseRun.HaltAt#WINDOW}，{@code beforeHalt} 也在那一刻執行；F6-2d Step 0 由
+     * {@code haltAt} 改名，與 halt receipt 的鍵相同）。
+     */
+    record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared, M5CollapseRun.HaltAt haltTiming) {}
 
     static final DiskCheck NO_CHECK = (run, fixture) -> { };
     private static final BeforeHalt NO_EVIDENCE = (run, fixture, detail, evidence) -> { };
@@ -323,9 +326,9 @@ final class M5CollapseWindows {
     }
 
     /** 同上，halt 的時點由這一列指定（F6-2c fix round 1：{@code TICK_END} 的列，{@code beforeHalt} 在窗口成立的那個 tick 結束時執行）。 */
-    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, M5CollapseRun.HaltAt haltAt, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart,
+    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, M5CollapseRun.HaltAt haltTiming, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart,
             Prepared prepared) {
-        if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared, Objects.requireNonNull(haltAt, "haltAt"))) != null) {
+        if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared, Objects.requireNonNull(haltTiming, "haltTiming"))) != null) {
             throw new IllegalStateException("窗口表重複：" + id);
         }
     }
@@ -345,10 +348,10 @@ final class M5CollapseWindows {
         return window;
     }
 
-    /** 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}，halt 的時點是這一列的 {@code haltAt}；halt receipt 的 detail 以 {@link #describe} 描述）。 */
+    /** 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}，halt 的時點是這一列的 {@code haltTiming}；halt receipt 的 detail 以 {@link #describe} 描述）。 */
     static void arm(M5CollapseRun run, M5CollapseFixture fixture, CrashWindow id) {
         var window = of(id);
-        run.armCrash(id, window.haltAt(), detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
+        run.armCrash(id, window.haltTiming(), detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
                 (detail, evidence) -> window.beforeHalt().collect(run, fixture, detail, evidence));
     }
 

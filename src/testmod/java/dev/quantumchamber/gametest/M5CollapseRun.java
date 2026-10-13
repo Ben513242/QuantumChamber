@@ -123,7 +123,10 @@ final class M5CollapseRun {
     /** phase 預期的結束：正常停止（{@code final.json}），或在 crash 窗口 halt（{@code halt.json}、exit code {@link #HALT_EXIT}）。 */
     enum Ending { STOP, HALT }
 
-    /** crash 點的 halt 時點（{@link #armCrash}；F6-2c fix round 1）。halt receipt 記在 {@code haltAt}，另記窗口成立的 server tick（{@code windowServerTick}）。 */
+    /**
+     * crash 點的 halt 時點（{@link #armCrash}；F6-2c fix round 1）。halt receipt 記在 {@code haltTiming}（F6-2d Step 0 由 {@code haltAt} 改名，F6-2c quality Minor 7：
+     * 避免與取證的 {@code atHalt} 混淆），另記窗口成立的 server tick（{@code windowServerTick}）。
+     */
     enum HaltAt {
         /** 窗口成立的那一刻：hook 裡就取證、寫 halt receipt、halt（F6-1 起的行為），production 在那一刻之後的程式都不會執行。 */
         WINDOW,
@@ -499,7 +502,7 @@ final class M5CollapseRun {
         install(M5TestHooks.CRASH_POINT, point);
         crashPoint = point;
         proof.put("crashWindow", window.name());
-        proof.put("haltAt", at.name());
+        proof.put("haltTiming", at.name());
     }
 
     /** halt 之前的取證：寫進 {@code atHalt}。丟出的 checked 例外包成 {@code haltEvidence} 的 IllegalStateException；具名斷言的 AssertionError 原樣丟出。 */
@@ -557,7 +560,7 @@ final class M5CollapseRun {
             halt.put("reached", point.reached());
             halt.put("crashPointFailure", point.failure() == null ? "none" : point.failure().toString());
             halt.put("detail", describe.apply(detail));
-            halt.put("haltAt", at.name());
+            halt.put("haltTiming", at.name());
             halt.put("windowServerTick", windowTick);
             halt.put("haltServerTick", server.getTicks());
             halt.put("universeActiveAtHalt", context.universeActive());
