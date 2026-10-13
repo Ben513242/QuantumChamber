@@ -118,12 +118,20 @@ final class M5CollapsePassageChains {
      * 中線，Crossed 的寫入確認的那個 tick 結束時 halt（F6-2c fix round 1：之間只有 production 自己在 Crossed 確認之後的 playerdata 存檔，spec v5.7 §10.3；見窗口表）。
      */
     Phase w7Crash() {
-        var steps = new ArrayList<>(untilResolved(2, CrashWindow.CROSSED_COMMITTED, SelectedBy.SECOND));
+        return crashPhase(selectorCrossesAfterASave(CrashWindow.CROSSED_COMMITTED, SelectedBy.SECOND, List.of(universeGeneratedAroundTheChamber())), fixture);
+    }
+
+    /**
+     * W7 與 F6-2-12 共用的前半段（F6-2d Step 0，F6-2c quality Minor 5）：{@link #untilResolved}（兩人）→ PASSAGE_READY（選門者站到中線內側）→ {@code beforeTheSave}
+     * （W7：讓 U 在原艙附近生成；F6-2-12 沒有）→ 原生存檔一次（{@link #nativeSaveDuringThePassage}）→ 選門者越過中線、傳送到 U。step 的順序與抽出之前相同。
+     */
+    private List<Step> selectorCrossesAfterASave(CrashWindow id, SelectedBy selectedBy, List<Step> beforeTheSave) {
+        var steps = new ArrayList<>(untilResolved(2, id, selectedBy));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
-        steps.add(universeGeneratedAroundTheChamber());
+        steps.addAll(beforeTheSave);
         steps.add(nativeSaveDuringThePassage());
         steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
-        return crashPhase(steps, fixture);
+        return steps;
     }
 
     /** PASSAGE_READY 期間原生存檔一次（step {@code saved}；W7、F6-2-12、F6-2-13）。 */
@@ -199,10 +207,7 @@ final class M5CollapsePassageChains {
      * 兩個世界同時生成原艙附近（restart 的斷言都不依賴 U 預先生成：開服時讀的是 journal、playerdata 與權威檔，之後的 step 只看玩家所在的世界與來源世界的原艙）。
      */
     Phase trrCrash() {
-        var steps = new ArrayList<>(untilResolved(2, CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST));
-        steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
-        steps.add(nativeSaveDuringThePassage());
-        steps.addAll(passage.cross(M5CollapseFixture.SELECTOR));
+        var steps = new ArrayList<>(selectorCrossesAfterASave(CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST, List.of()));
         steps.add(new Step("recoveryFault", 1, () -> {
             installRecoveryFault();
             for (var id : fixture.members(M5CollapseFixture.OTHERS)) passage.standInDoorway(id, 0.7);
@@ -272,19 +277,17 @@ final class M5CollapsePassageChains {
             }
             case READY_COMMITTED -> {
                 steps.addAll(endedAtStartup());
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.INSIDE); return true; }));
-                steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
+                steps.addAll(nobodyAcrossJoinsAndEnds(Inside.INSIDE));
             }
             case PASSAGE_TERMINATED -> {
                 steps.add(new Step("ownerlessQueued", 20, this::ownerlessQueued));
                 steps.add(new Step("ownerlessNormalized", 20, this::ownerlessNormalizedOnTheNextTick));
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.INSIDE); return true; }));
-                steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
+                steps.addAll(nobodyAcrossJoinsAndEnds(Inside.INSIDE));
             }
-            case CROSSED_UNCONFIRMED -> {
+            // F6-2-17 與 F6-2-12 的 pendingRecovery：playerdata 是觸發之前存的（艙外）。
+            case CROSSED_UNCONFIRMED, RECOVERY_REJECTED -> {
                 steps.addAll(endedAtStartup());
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.OUTSIDE); return true; }));
-                steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
+                steps.addAll(nobodyAcrossJoinsAndEnds(Inside.OUTSIDE));
             }
             case RECOVERY_SEALED -> {
                 // F6-2c fix round 1（spec v5.7 §10.3）：選門者跨越、Crossed 確認時已存下 playerdata，JOIN 在 U；無法回滾的另一位 JOIN 在來源世界的艙內（跨越之前存的）。
@@ -298,14 +301,18 @@ final class M5CollapsePassageChains {
                 steps.add(new Step("notRetried", SEALED_WATCH_TICKS + 5, this::sealedNotRetried));
                 steps.add(new Step("doorOpens", 1, this::sealedDoorOpensNormally));
             }
-            case RECOVERY_REJECTED -> {
-                steps.addAll(endedAtStartup());
-                steps.add(new Step("join", 1, () -> { fixture.joinAll(Inside.OUTSIDE); return true; }));
-                steps.add(new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
-            }
             default -> throw new IllegalArgumentException("通道的 chain 沒有這個窗口：" + id);
         }
         return Phase.stop(steps).started(() -> started(crashPhase)).everyTick(() -> passage.invariants(null));
+    }
+
+    /**
+     * 沒有人跨過的 restart 的後半段（F6-2d Step 0，F6-2c quality Minor 5：F6-2-16、F6-2-13、F6-2-17、F6-2-12 的 pendingRecovery 原本各寫一次，只差在艙內或艙外）：全員 JOIN
+     * 在來源世界（step {@code join}，{@code where}），再斷言全員在來源世界的 spec §12 終局（step {@code end}）。
+     */
+    private List<Step> nobodyAcrossJoinsAndEnds(Inside where) {
+        return List.of(new Step("join", 1, () -> { fixture.joinAll(where); return true; }),
+                new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
     }
 
     private void started(String crashPhase) throws Exception {
