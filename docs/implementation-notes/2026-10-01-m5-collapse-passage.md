@@ -6905,3 +6905,126 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 - 結束過的 JVM：都由 probe 的逾時處置結束（commandline 含本次的 startupNonce、先存 jstack）：m1-a 15648、m2-a 9488、m2-b 17708、m2-c 4100、m3-a 16180、m3-b 4872、m3-c 16112、m3-d 11296、m3-e 8932。沒有手動結束任何程序，沒有碰 Gradle daemon；gate 的 fresh world 由 `gates.ps1` 移走並 exact 還原（`world-restore.json` `exactRestored: true`）。
 - 取證腳本（`h6/step0/`）：`state.ps1`、`probe.ps1`、`compile.ps1` 由 `f6/f62c/` 複製、`adapter.py` 與 `chunkstatus.py` 由 `f6/f62c/fix1/` 複製、`gate.ps1` 由 `f4a/` 複製（只改 repo 的相對路徑與註解；`chunkstatus.py` 另加 (10,-13)）；新寫 `adapters_h6s0.py`、`loop.ps1`、`analyze.py`、`vanilla_summary.py`、`edit_witness_v3.py`、`edit_witness_v4.py`。反編譯（Vineflower 1.10.1）在 `h6/step0/mcsrc/`，欄位掃描在 `fieldscan-*.txt`。
+
+## H6：結構範本快取的同時使用
+
+- 一位 implementer 完成（controller 的派工 scratchpad `h6-prompt.md`；取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h6/impl/`，以下簡稱 `impl/`，`STATUS.md` 是交接摘要）。開工時 HEAD 是 `4e7ff77`、工作樹乾淨。範圍是 spec v5.8 §4 H6、§20.12 與 plan Task H6；根因、重現與修正選項見上方 H6 Step 0 一節。
+- Commits（依序；每個 commit 只 stage 自己的檔案）：
+  - `1f22f03` `test: race two threads and two worlds on a fresh structure template cache`（RED：JUnit 與 `h6race`，沒有 production 的修正）
+  - `f368ee2` `fix: let two worlds share a structure template's block info cache safely`（plan 指定的 message）
+  - `61b1b2c` `test: join w7 and trr restarts in the same tick again now that H6 is fixed`（放在 fix 之後：修正之前同時 JOIN 可能 CME）
+  - `7b23001` `docs: describe the h6race chain and the same-tick join of w7 and trr in the verification README`
+  - 本節由其後的 docs commit `docs: record H6 in the M5 note` 加入。
+- 只改了派工允許的路徑：
+  - production：新增 `src/main/java/dev/quantumchamber/mixin/PalettedBlockInfoListConcurrentCacheMixin.java`，在 `src/main/resources/quantumchamber.mixins.json` 登記（`mixins` 的最後一項）。其他 `src/main/` 檔案沒有變更。
+  - JUnit：新增 `src/test/java/dev/quantumchamber/universe/StructureTemplateCacheConcurrencyTest.java`（3 個 test）。
+  - testmod：新的 chain 類別 `M5CollapseTemplateRaceChain`；`M5CollapseRecoveryProbe` 的 phase 表（一列）與 Javadoc 的 chain 清單；`M5CollapsePassageChains` 與 `M5CollapseFixture` 只改 JOIN 改回的部分（含 `trr` 的 `universeGenerated`）。
+  - `scripts/verification/`：`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；README 只改「M5 collapse probe」一節。
+  - **沒有改** `build.gradle`、testmod 的 `fabric.mod.json` 與 `quantumchamber-test.mixins.json`（單元測試是 JUnit，不需要 GameTest 的登記）、`gates.ps1`、`main-oracle.ps1`、`ci-rule-check.ps1`、`m4-recovery-probe.ps1`、`.github/`、既有的 GameTest、M4 probe、既有的 JUnit、語言檔、`M5TestHooks`、spec、plan、AGENTS。main-only oracle、artifact 檢查與 CI 規則都不需要調整（都不寫死 mixin 或 test 的清單；run-all 全部通過，見「完整回歸」）。
+- 行號以 `7b23001` 為準。`MX`＝`PalettedBlockInfoListConcurrentCacheMixin`，`UT`＝`StructureTemplateCacheConcurrencyTest`，`TR`＝`M5CollapseTemplateRaceChain`，`PCH`＝`M5CollapsePassageChains`，`FIX`＝`M5CollapseFixture`。
+
+### production mixin
+
+- `MX:34`～`:41`：`@Mixin(StructureTemplate.PalettedBlockInfoList.class)`；`@Mutable @Shadow @Final private Map<Block, List<StructureTemplate.StructureBlockInfo>> blockToInfos`；`@Inject(method="<init>(Ljava/util/List;)V",at=@At("RETURN"),require=1)` 指派 `new ConcurrentHashMap<>()`。目標只有這一個建構子（H6 Step 0 的 review 已核對）；refmap 的對應是 `Lnet/minecraft/class_3499$class_5162;<init>(Ljava/util/List;)V`。寫法比照 H5 的 `ServerChunkLoadingManagerStaleUnloadMixin`（package-private 的 abstract class、`quantumchamber$` 前綴、預設 remap、`require=1`）；登記在 `mixins`，`defaultRequire: 1` 也涵蓋。
+- 名稱比照 H5 的「目標＋作用」：`PalettedBlockInfoList`（目標）＋`ConcurrentCache`（把快取換成可同時使用的 map）。
+- Javadoc（`MX:15`～`:33`）寫明：原版的 race（server 共用的 template manager、每個世界一個 worldgen mailbox、兩個 mailbox 在不同的 worker 上同時執行、同 seed 的 lockstep；不同 seed、Overworld 與 Nether 共用的 ruined portal、server thread 的 `/place`、`/locate` 是同一種情況）；單執行緒時語意不變（同一個方塊只計算一次、mapping function 只讀 `infos`、不碰這個 map、不回傳 null；唯一的差異是 null key 會 NPE，原版的呼叫端只傳 `JIGSAW`、`STRUCTURE_BLOCK`）；命中不加鎖；**不記 log**（沒有任何例外或分支）；相容性（C2ME 在同一個注入點換成 `Collections.synchronizedMap`，兩者不論先後都是 thread-safe；`@Overwrite` 了 `getAllOf` 的 mod 無害；假設欄位是 `HashMap` 的 mod 會 `ClassCastException`，目前不知道有這種 mod）；`require=1` 讓目標改變時開服即失敗。
+
+### 單元測試（JUnit）
+
+- 放在 JUnit（`UT`），沒有退回 GameTest：fabric-loader-junit 會套用 production mixin（同 `NativeSaveFailuresTest`），`Bootstrap.initialize()` 之後 `Blocks` 與 `StructureTemplate.readNbt` 都能用（比照 `MembraneStateTest`）。證據：RED 與 mutation 的 stdout 記下快取的實際型別是 `java.util.HashMap`，GREEN 是 `java.util.concurrent.ConcurrentHashMap`。兩個 CI job 的 `build` 都會跑；不阻塞 server thread。package 是 `dev.quantumchamber.universe`（race 的起因是 U 與來源世界共用 template；`dev.quantumchamber.mixin` 是 mixin package，Knot 不讓一般類別放在那裡）。
+- 作法（比照 H6 Step 0 的暫時 GameTest）：template 以 public 的 `readNbt` 由合成的 NBT 建立（64×2×64：70% stone，jigsaw、structure_block、glass、oak_planks 各 7.5%），每一輪一個新的 template（快取是空的）。工作執行緒以輪次的計數器 spin 等待，同一輪同時呼叫 `getInfosForBlock`（每個執行緒一個 key）；主執行緒等它們做完，再單執行緒核對五個 key。三個 test 各一個情境、各 200 輪（`UT:65`～`:78`）：jigsaw＋structure_block、jigsaw＋jigsaw、四個 key。
+- 判準（`UT:80` `expectSafe`，`assertAll`）：CME 0、內容錯誤（大小或方塊不符）0、其他例外 0、事後的單執行緒核對錯誤 0、逾時 0、做完 200 輪、工作執行緒都已結束。
+- 每個等待都有期限：主執行緒等一輪做完最多 10 秒（逾時就記下並結束這個情境，判 FAIL）；工作執行緒等下一輪最多 60 秒（逾時就自己結束並記為逾時）；結束之後每條工作執行緒 `join` 最多 5 秒（還活著就判 FAIL）。
+- 「兩個執行緒確實重疊」只是診斷：每一輪記下每個呼叫的開始與結束，有任兩個重疊就算一輪（`UT:198` `overlapped`），連同 `availableProcessors` 與快取的實際型別（`UT:208`，反射讀取，讀不到時記原因）輸出到 stdout（`H6_TEMPLATE_CACHE …`，test report 的 system-out），不當通過的條件。本機 `availableProcessors=28`。
+- 成本：整個類別約 0.5 秒（run-all 的 `time="0.491"`）。
+
+### 整合 chain `h6race`
+
+- 由 H6 Step 0 的 `files/H6RaceChain.java` 整理成正式的 `TR`，一個 stop phase `h6race-starts`（`M5CollapseRecoveryProbe:79`、`m5-collapse-probe.ps1:63`、`run-all.ps1:227`；三份表都加在最後，`m5collapse` 32 → 33）。不經塌縮：fresh 世界以 production 的 `UniverseRegistryState.allocateOverworld` 與 `UniverseLifecycleService.materializeAllocated` 物化一個 U（`TR:97`，`universeMaterialized`），兩個世界的 holder 數與狀態連續 40 tick 不變（`TR:110` `idle`），再對九種 jigsaw 結構依序：
+  - `find-*`（`TR:132`）：以 structure set 的 `RandomSpreadStructurePlacement` 與 `getValidStructurePosition` 在 chunk (256,256) 附近找 start（不生成任何 chunk；`startFound`），兩個世界都加 level `STRUCTURE_STARTS` 的 testmod ticket。
+  - `load-*`（`TR:180`）：同一個呼叫裡對兩邊的 holder `load(STRUCTURE_STARTS)`、各自 `updateChunks()`（`holdersExist`、`notGeneratedBeforeLoad`：兩邊在 load 之前都還沒有任何狀態）。
+  - `generated-*`（`TR:201`，600 tick 內）：兩邊都到 `STRUCTURE_STARTS`，兩邊都有這個結構的 start（`structureStartInBothWorlds`），而且相同（`sameStructureStartInBothWorlds`），之後移除 ticket。
+- 另比對兩個世界的 structure start（`TR:233` `pieces`：start 的 bounding box 一列，加上每個 piece 的類型、bounding box 與 pool element 各一列，依序比對）。理由：同 seed 的 lockstep 是這個 race 的前提，這個斷言確認兩邊真的生成了同一個 jigsaw 結構（也就真的走過 `getAllOf`），而不只是狀態到了 `STRUCTURE_STARTS`；同一個 server 內兩個世界的 `Structure` 是同一個 registry 物件，比對不受世界的差異影響。GREEN 的列數：76、91、121、81、57、8、18、80、192（village_plains … trial_chambers）。
+- 停服是 stop phase 的一般判準（`final.json` PASS、exit 0）。receipt 另記 `h6race`（每個結構的 chunk、找 start 的環數、比對的列數、tick）與 `availableProcessors`；每次 load 與完成各記一行 INFO（`H6RACE load …`、`H6RACE generated …`），RED 時看得出停在哪個結構。
+- Javadoc 寫明「原版的 worldgen worker pool 是邏輯核心數減 1、最少 1；只有一條 worker 的機器看不出 RED」，確定性的回歸是 `UT`。README 同步寫明。
+
+### `w7`、`trr` 改回同時 JOIN
+
+- `PCH:256`（w7）、`:284`（trr）：改回 `ce943f7` 之前的 `new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.SELECTOR, true); return true; })`：所有參與者在同一個 tick JOIN（已跨過的選門者在 U、另一位在來源世界的艙內）。拿掉 `joinTheCrossedLast`（含 step `sourceSettled`、`joinCrossed`）、`SETTLED_TICKS`，以及只給它用的 `FIX` 的 `generationSignature`（連同 `ServerChunkLoadingManagerTestAccessor` 的 import）。
+- `FIX:232` `join(Who, Who, boolean)` 保留（`joinAll(Who, boolean)` 仍經它 JOIN；派工指定不在 H6 改它的簽章，拆分是 F6-2d Step 0 的 quality Minor 4），只把 Javadoc 改成目前的用途。
+- 類別 Javadoc 與 `universeGeneratedAroundTheChamber`（`PCH:144`）、`trrCrash`（`PCH:200`）的 Javadoc 同步：分開 JOIN 與預先生成 U 原本是為了繞開原版的 CME，H6 修正之後改回。
+- `trr` 的 `universeGenerated`（`380488f`）：**拿掉**。先逐項確認 `trr-restart` 的斷言都不依賴 U 預先生成：開服時的窗口斷言（`recoveryRequiredKept` 讀 journal；`selectorPlayerDataInTheUniverse`、`othersPlayerDataInTheSource` 讀 playerdata 的 Dimension；`AtRestart` 的 allocation、catalog、discovery、projection 讀權威檔，投影所在的 chunk 由 PREPARE 的 checkpoint 存下，與這一步無關）；之後的 step（`joinedInTheUniverse` 只看玩家所在的世界、`inside`、`notRetried`、`doorOpens` 只看來源世界的原艙、`End` 的 `participantInTheUniverse` 只看世界、每個 tick 的 `invariants` 只看 catalog、journal 與玩家所在的世界）。這一步只記 `proof` 的 `universeGeneratedRadius`，沒有具名斷言。拿掉之後，restart 時兩個世界同時生成原艙附近，是 H6 的真實情境（F6-2c fix round 1 的 spec re-review 也建議至少 `trr` 拿掉）。`w7` 保留 `universeGenerated` 與跨越之前的 `saved`（派工指定 `saved` 保留；`universeGenerated` 不在派工的變更範圍），所以 `w7` 的 restart 涵蓋「U 的 chunk 由磁碟載入」、`trr` 涵蓋「restart 時生成」。
+- 開發 run `dev-a`（不採計：`61b1b2c` 之前的工作樹，blob 與 `61b1b2c` 相同）：`w7`、`trr` 4 個 phase 都 PASS。
+
+### RED、GREEN、mutation
+
+| 輪次 | HEAD／工作樹 | root | 結果 |
+| --- | --- | --- | --- |
+| RED 單元 `red-unit` | `1f22f03`，乾淨 | `impl/red-unit-*`（Gradle `test --tests`） | 3/3 FAIL，都失敗在 CME 的斷言（「PalettedBlockInfoList 的快取在同時第一次使用時丟出 ConcurrentModificationException」）：jigsaw＋jigsaw 178/200 輪、jigsaw＋structure_block 195/200、四個 key 200/200（575/800 次呼叫）；內容錯誤、其他例外、事後核對、逾時都是 0；快取 `java.util.HashMap` |
+| RED `red-h6race` | `1f22f03`，乾淨 | runId `929eaa998d07450ebe56c2046a113657` | FAIL：第一個結構 village_plains（chunk (207,322)，tick 44 load）在 U 的 `structure_starts` 丟 CME（Worker-Main-17；server thread 記「Error executing task on Chunk source main thread executor for quantumchamber:universe/6c1d2e3f-…/overworld」，crash report「Exception generating new chunk」，`HashMap.computeIfAbsent:1229` ← `PalettedBlockInfoList.getAllOf:808` ← `getInfosForBlock:211` ← `SinglePoolElement.getStructureBlockInfos:119` ← `StructurePoolGenerator.generatePiece:353`），之後停服卡住；probe 的逾時處置（idle 90 秒，共 105.4 秒）存 jstack、結束 PID 12792、寫 `timeout.json`（`commandLineMatched: true`）。jstack 的 server thread 停在 `MinecraftServer.shutdown:654 → runTasksTillTickEnd`，「Server Shutdown Thread」停在 `Thread.join`，與 H6 Step 0 相同 |
+| GREEN 單元 `green-unit` | `f368ee2`，乾淨 | `impl/green-unit-*` | 3/3 PASS，全部 0；快取 `java.util.concurrent.ConcurrentHashMap`；重疊的輪次 198、200、200 |
+| GREEN `green-h6race` | `f368ee2`，乾淨 | runId `829a7e3c70444b3793456311ba67498c` | PASS（99 tick；九種結構都在兩個世界到 `STRUCTURE_STARTS`、structure start 相同；latest.log 沒有 CME） |
+| mutation `mut-hashmap` | `f368ee2`＋adapter（`impl/adapters_h6impl.py`：`blockToInfos=new java.util.HashMap<>()`，欄位仍被替換，但不是 thread-safe） | `impl/mut-hashmap-*` | 3/3 FAIL，都失敗在 CME：185/200、187/200、200/200 輪；stdout 的快取是 `java.util.HashMap`（證明 mixin 有套用、測試驗的是 map 的性質）。還原之後 porcelain 空、`MX` 的 blob `fb53ba27…` 等於 HEAD（`impl/mut-hashmap-restored-state.txt`） |
+
+### 33 個 phase 與具名斷言
+
+- 在同一個乾淨的 HEAD `61b1b2c`（最後一個 code commit；之後只有 README 與本節）連跑兩次：green-1 `243791043af54705a035762eaac9a5c0`、green-2 `04aefb2ab2784dc7a1e5b86395dad206`，都是 33/33 PASS（14 halt＝77、19 stop＝0）。33 個 phase 的 latest.log 都沒有 `ConcurrentModificationException`（`impl/green-*-warncheck.txt`），各 run root 的 log 也沒有（`impl/green-*-details.txt`）。green-2 與 green-1 的 33 個 phase 名稱、數目、順序與 step 完全相同（`impl/green-2-vs-green-1-names.txt`，RESULT=OK）。
+- 與 F6-2c fix round 1 的 green-7 `bf2dbe40e55a45e9b733ea68d058e63a` 比對（`impl/names2.py`，`impl/green-1-vs-green7-names.txt`；green-2 相同）：32 個 phase 中 29 個完全相同；沒有任何斷言拿掉、新增或改名，`notTrue` 都是空的。差異只在：
+
+| phase | step | 斷言的順序 | 說明 |
+| --- | --- | --- | --- |
+| `w7-restart` | `join` 之後少 `sourceSettled`、`joinCrossed` | `joinedInTheUniverse` 移到下一個 tick 的 `participantInSourceOrUniverse` 之前 | 同一個 tick JOIN：選門者（清單的第二位）在另一位之後、同一個 step 裡 JOIN |
+| `trr-restart` | 同上 | `joinedInTheUniverse` 移到另一位的 `joinedInTheSourceWorld`、`joinedInsideTheChamber`、`participantNotBlocked` 之前 | 選門者是清單的第一位，`joinAll` 依清單順序先 JOIN 他 |
+| `trr-crash` | `ready` 與 `saved` 之間少 `universeGenerated` | 相同 | 拿掉 `380488f` 的預先生成 |
+| `h6race-starts`（新） | `materialize`、`idle`、九種結構各 `find-*`、`load-*`、`generated-*`（29 個） | — | 斷言 `universeMaterialized`、`startFound`、`holdersExist`、`notGeneratedBeforeLoad`、`structureStartInBothWorlds`、`sameStructureStartInBothWorlds` |
+
+### 完整回歸（run-all）
+
+- `run-all-16ba8687dc5e40a3a121b8a8c1d95939`（`impl/run-all-1-console.txt`），HEAD `7b23001`，乾淨（所有 code 與 README commit 之後；其後只有本節的 docs commit），**`END ALL exit=0`**。
+- SUMMARY：`default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=659 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=431entries/384classes sources=223 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=33 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-2fe4175797894e97a7dea49ee84142a5`（`98b907a`）逐項比較（`impl/runall-compare.ps1`，輸出 `impl/runall-*.txt`）：
+
+| 項目 | 基準 | 本次 | 歸屬 |
+| --- | --- | --- | --- |
+| default GameTest | 175 | 175 | testcase 集合與結果相同（`runall-default-setcmp.txt`，identical） |
+| M5 GameTest | 60 | 60 | 相同（`runall-m5-setcmp.txt`） |
+| legacy | 1/1，WARN／ERROR 0／0 | 1/1，0／0 | 相同（`runall-legacy-setcmp.txt`） |
+| JUnit | 656（skipped 2） | 659（skipped 2） | 只多 `UT` 的 3 個 test，其餘 656 個的名稱與結果相同（`runall-junit-setcmp.txt`） |
+| release JAR | 430 entries／383 classes | 431／384 | 只多 `PalettedBlockInfoListConcurrentCacheMixin.class`；內容改變的只有 `quantumchamber.mixins.json` 與 `quantumchamber-refmap.json`（新 mixin 的注入點）（`runall-jarcmp-release.txt`） |
+| sources JAR | 222 | 223 | 只多 `PalettedBlockInfoListConcurrentCacheMixin.java`；改變的只有 `quantumchamber.mixins.json`（`runall-jarcmp-sources.txt`） |
+| Full WARN／ERROR | 54／28 | 55／31 | 依 batch 分組比對（`impl/wbbatch.py`，`runall-wbbatch-full.txt`）：`m5_h2_checkpoint_scope` 的「Failed to store chunk」「Failed to save chunk」「Failed to store entity chunk」各多一則（已知偶發 H2 的 ERROR +3：被注入失敗的 chunk 多存了一次，test 照常通過）；`m2_task4_disconnect_io` 多一則「艙體 … 的 session 協調失敗，保留返還保護」WARN（已知偶發，F4a-0、F4a fix round 2 已記錄）。其他 batch 完全相同 |
+| M5 WARN／ERROR | 38／10 | 38／10 | 相同 |
+| perTest、windows、windowsCheckpoint | 52+1、89、17 | 52+1、89、17 | 相同 |
+| M3、M4 recovery | 4＋5、24 | 4＋5、24 | 相同（run-all 核對 phase 名稱與 receipt） |
+| m5collapse | 32（halt 14） | 33（halt 14） | 只多 `h6race-starts`（stop）；collapse runId `1ee0b2d51ad64ff98610e6cf022dbeee` 與 green-1 的 33 個 phase 名稱、數目、順序與 step 完全相同（`runall-vs-green-1-names.txt`，RESULT=OK），latest.log 都沒有 CME |
+| main-only、testmodHits、CI 規則 | PASS、0、win／ubuntu PASS | 相同 | — |
+
+### 偏離派工字面之處
+
+- run-all 在 README commit `7b23001` 之後、本節的 docs commit 之前執行，結果寫在本節；本節的 commit 只改這份 note（code、harness 與 README 與 run-all 時相同）。
+- JUnit 的新類別有 3 個 test（每個情境一個，失敗時看得出是哪一個情境），所以 JUnit 656 → 659。
+- `pieces` 的列數包含 start 的 bounding box 那一列（piece 數加 1）；只是 receipt 的診斷，比對的是整個列表。
+- `UT` 的 Javadoc 寫「只有一個處理器時看不出 RED」；README 寫「核心數很少時同樣不一定看得出 RED」，兩者一致（只有一個處理器時兩個工作執行緒幾乎不會真的同時執行）。
+- `scripts/verification/README.md` 的「預期結果（M5 F3c）」一節（`7b23001` 的 `:283`）仍寫 M5 collapse probe 是「9 條 chain、18 phases」，早已過時；不在派工允許的範圍（只限「M5 collapse probe」一節），沒有改，交給 F7。
+
+### 需要裁示
+
+- 沒有必須裁示才能繼續的事項。可選：`w7` 是否也拿掉 `universeGenerated`（本輪依派工保留；保留的效果是 `w7` 涵蓋「U 的 chunk 由磁碟載入」）。
+
+### 交給後續
+
+- **F7**：
+  - compatibility：C2ME（`c2me-fixes-worldgen-threading-issues`）在同一個注入點把 `blockToInfos` 換成 `synchronizedMap`，與本 mixin 不論先後都是 thread-safe；`@Overwrite` 了 `getAllOf` 的 mod 無害；假設欄位是 `HashMap` 的 mod 會 `ClassCastException`（未實測，目前不知道有這種 mod）。
+  - 已知問題：原版在同步生成步驟（`ChunkLoader.run` 裡）丟出例外之後，server 停服會卡住（`ChunkLoader` 沒有 `dispose`，holder 的 refCount 一直大於 0；H6 Step 0 一節）。H6 移除了 M5 的觸發點，沒有改原版的這條路。
+  - 只有一條 worldgen worker 的機器（`availableProcessors` ≤ 2）看不出 `h6race` 的 RED；JUnit 在處理器很少時也不一定看得出。
+  - `scripts/verification/README.md` 的「預期結果（M5 F3c）」的 M5 collapse probe 數字過時（見上）。
+- **F6-2d Step 0**：quality Minor 4 的 `join(Who, Who, boolean)` 拆分照舊（H6 保留了這個方法）；quality Minor 3（暫時措施沒有標記）與 re-review Minor 2（README 的 CME 狀態）已由 H6 處理（暫時措施拿掉、README 更新）。
+- **F6-3**：沒有。
+
+### root（全部保留）
+
+- phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`；JUnit 的 XML 複本在 `impl/<label>-TEST-dev.quantumchamber.universe.StructureTemplateCacheConcurrencyTest.xml`。
+- RED：`red-unit`（`1f22f03`）、`red-h6race` `929eaa998d07450ebe56c2046a113657`（`timeout.json`）。GREEN：`green-unit`（`f368ee2`）、`green-h6race` `829a7e3c70444b3793456311ba67498c`。mutation：`mut-hashmap`（`f368ee2`＋adapter）。開發（不採計）：`dev-a` `55a7fbc2f83545f69cb769ce19e67aca`。33 phase：green-1 `243791043af54705a035762eaac9a5c0`、green-2 `04aefb2ab2784dc7a1e5b86395dad206`（`61b1b2c`）。run-all：`run-all-16ba8687dc5e40a3a121b8a8c1d95939`（`7b23001`）。
+- 結束過的 JVM：只有 `red-h6race` 的 PID 12792，由 probe 的逾時處置結束（commandline 含本次的 startupNonce `7c052c4a…`、先存 jstack）。沒有手動結束任何程序，沒有碰 Gradle daemon；沒有遇到失敗而重跑的 root。
+- 每個 commit 之前的編譯：`impl/c1`～`c3-compile.log`（`compileJava compileTestJava compileTestmodJava compileClientProbeJava`，都 BUILD SUCCESSFUL；`c*-compile-state.txt` 的 blob 已與 `1f22f03`、`f368ee2`、`61b1b2c` 比對相同）。
+- 取證腳本（`impl/`）：`state.ps1`、`probe.ps1`、`compile.ps1`、`gate.ps1`、`adapter.py` 由 `h6/step0/` 複製（只加註解、改 adapter 表的模組）；`junit.ps1` 由 `f6/f61s0/` 複製；`names2.py`、`warncheck.py`、`details.py`、`setcmp.py`、`jarcmp.py`、`wbcmp.py`、`xmlsum.py` 由 `f6/f62c/fix1/` 複製（只改 repo 的相對路徑與註解）；`runall-compare.ps1` 由 `fix1/runall2-compare.ps1` 改寫（基準、輸出前綴，加 legacy 與 JUnit 的集合比對）；新寫 `adapters_h6impl.py`、`adapted-junit.ps1`、`runall.ps1`、`junitset.py`、`wbbatch.py`。原版的程式以 Loom sources jar 讀（`impl/mcsrc/`）。
