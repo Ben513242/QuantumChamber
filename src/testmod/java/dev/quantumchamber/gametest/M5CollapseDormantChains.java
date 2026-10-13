@@ -63,7 +63,7 @@ final class M5CollapseDormantChains {
         var steps = new ArrayList<Step>();
         // W4、W6：參與者 JOIN 之前，磁碟上的投影 Controller 經 load-sync 辨識為 inert 的 PROJECTION（不記 log）。
         if (window.atRestart().recognizeBeforeJoin()) steps.add(new Step("recognized", 60, this::projectionRecognized));
-        steps.add(new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.Inside.OUTSIDE); return true; }));
+        steps.add(new Step("join", 1, () -> { fixture.joinAllInTheSourceWorld(M5CollapseFixture.Inside.OUTSIDE); return true; }));
         steps.addAll(passage.steps(window.prepared()));
         return Phase.stop(steps).started(() -> load = M5CollapseWindows.expectAtRestart(run, fixture, window, fixture.readCrashReceipt(crashPhase, id)))
                 .everyTick(() -> passage.invariants(null));

@@ -125,8 +125,9 @@ final class M5CollapsePassageChains {
     /**
      * W7 與 F6-2-12 共用的前半段（F6-2d Step 0，F6-2c quality Minor 5）：{@link #untilResolved}（兩人）→ PASSAGE_READY（選門者站到中線內側）→ {@code beforeTheSave}
      * （W7：讓 U 在原艙附近生成；F6-2-12 沒有）→ 原生存檔一次（{@link #nativeSaveDuringThePassage}）→ 選門者越過中線、傳送到 U。step 的順序與抽出之前相同。
+     * 回傳的清單是新建的，呼叫端可以直接再加 step（F6-2d-1，F6-2d Step 0 quality nit：{@link #trrCrash} 不再複製一次）。
      */
-    private List<Step> selectorCrossesAfterASave(CrashWindow id, SelectedBy selectedBy, List<Step> beforeTheSave) {
+    private ArrayList<Step> selectorCrossesAfterASave(CrashWindow id, SelectedBy selectedBy, List<Step> beforeTheSave) {
         var steps = new ArrayList<>(untilResolved(2, id, selectedBy));
         steps.add(passage.ready(null, M5CollapseFixture.SELECTOR));
         steps.addAll(beforeTheSave);
@@ -208,7 +209,7 @@ final class M5CollapsePassageChains {
      * 兩個世界同時生成原艙附近（restart 的斷言都不依賴 U 預先生成：開服時讀的是 journal、playerdata 與權威檔，之後的 step 只看玩家所在的世界與來源世界的原艙）。
      */
     Phase trrCrash() {
-        var steps = new ArrayList<>(selectorCrossesAfterASave(CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST, List.of()));
+        var steps = selectorCrossesAfterASave(CrashWindow.RECOVERY_SEALED, SelectedBy.FIRST, List.of());
         steps.add(new Step("recoveryFault", 1, () -> {
             installRecoveryFault();
             for (var id : fixture.members(M5CollapseFixture.OTHERS)) passage.standInDoorway(id, 0.7);
@@ -264,7 +265,7 @@ final class M5CollapsePassageChains {
                 steps.addAll(endedAtStartup());
                 // 已跨過的選門者 JOIN 在 U、另一位在來源世界的艙內，同一個 tick（H6 之後改回，見類別說明）；依清單順序（選門者是第二位）。
                 steps.add(new Step("join", 1, () -> {
-                    fixture.joinInTheSource(M5CollapseFixture.OTHERS, Inside.INSIDE);
+                    fixture.joinInTheSourceWorld(M5CollapseFixture.OTHERS, Inside.INSIDE);
                     fixture.joinInTheUniverse(M5CollapseFixture.SELECTOR);
                     return true;
                 }));
@@ -295,7 +296,7 @@ final class M5CollapsePassageChains {
                 // 兩人在同一個 tick JOIN（H6 之後改回，見類別說明）；依清單順序（選門者是第一位）。
                 steps.add(new Step("join", 1, () -> {
                     fixture.joinInTheUniverse(M5CollapseFixture.SELECTOR);
-                    fixture.joinInTheSource(M5CollapseFixture.OTHERS, Inside.INSIDE);
+                    fixture.joinInTheSourceWorld(M5CollapseFixture.OTHERS, Inside.INSIDE);
                     return true;
                 }));
                 steps.add(new Step("inside", 1, () -> { fixture.moveInside(M5CollapseFixture.OTHERS); return true; }));
@@ -312,7 +313,7 @@ final class M5CollapsePassageChains {
      * 在來源世界（step {@code join}，{@code where}），再斷言全員在來源世界的 spec §12 終局（step {@code end}）。
      */
     private List<Step> nobodyAcrossJoinsAndEnds(Inside where) {
-        return List.of(new Step("join", 1, () -> { fixture.joinAll(where); return true; }),
+        return List.of(new Step("join", 1, () -> { fixture.joinAllInTheSourceWorld(where); return true; }),
                 new Step("end", 1, () -> { passage.expectEnd(End.inTheSourceWorld(fixture)); return true; }));
     }
 

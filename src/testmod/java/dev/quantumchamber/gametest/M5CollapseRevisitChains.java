@@ -180,7 +180,7 @@ final class M5CollapseRevisitChains {
         return Phase.stop(List.of(
                 new Step("foreign", 60, this::projectionControllerForeign),
                 new Step("sealed", 400, this::sealedAsCorrupt),
-                new Step("join", 1, () -> { fixture.joinAll(M5CollapseFixture.Inside.INSIDE); return true; }),
+                new Step("join", 1, () -> { fixture.joinAllInTheSourceWorld(M5CollapseFixture.Inside.INSIDE); return true; }),
                 new Step("doorOpens", 1, this::doorOpensNormally)))
                 .beforeStart(this::removeProjectionLedgerBeforeStart).started(() -> degradedStarted(setupPhase)).everyTick(() -> passage.invariants(null))
                 .afterStop(() -> run.expect("ledgerNotRecreatedAfterStop", !Files.exists(run.worldData().resolve(ProjectionLedger.FILE_NAME)), () -> "停服之後 projection ledger 被重建"));

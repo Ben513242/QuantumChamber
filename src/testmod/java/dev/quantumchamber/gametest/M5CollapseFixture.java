@@ -222,7 +222,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         return connection;
     }
 
-    /** 參與者在來源世界 JOIN 時，預期在艙內還是艙外（{@link #joinInTheSource}；F6-2d Step 0 由 boolean 改成 enum，呼叫端讀得出意思）。 */
+    /** 參與者在來源世界 JOIN 時，預期在艙內還是艙外（{@link #joinInTheSourceWorld}；F6-2d Step 0 由 boolean 改成 enum，呼叫端讀得出意思）。 */
     enum Inside {
         /** 在艙內（playerdata 是參與者進入艙內之後存的，例如 PASSAGE_READY 期間的存檔、退化的 setup）。 */
         INSIDE,
@@ -231,17 +231,18 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     }
 
     /**
-     * 全部參與者真 JOIN 在來源世界（{@link #joinInTheSource}，依清單順序）。crash phase 的 playerdata 多半是觸發之前存的（參與者在艙外，{@link Inside#OUTSIDE}）；PASSAGE_READY
-     * 期間存過檔的窗口與退化的 setup 是在艙內（{@link Inside#INSIDE}）。
+     * 全部參與者真 JOIN 在來源世界（{@link #joinInTheSourceWorld}，依清單順序）。crash phase 的 playerdata 多半是觸發之前存的（參與者在艙外，{@link Inside#OUTSIDE}）；PASSAGE_READY
+     * 期間存過檔的窗口與退化的 setup 是在艙內（{@link Inside#INSIDE}）。F6-2d-1（F6-2d Step 0 quality Minor 7）：由 {@code joinAll} 改名，與 {@code End.inTheSourceWorld}、
+     * 斷言名 {@code joinedInTheSourceWorld} 的用語一致，讀得出在哪個世界（{@code joinAllInTheSourceWorld(Inside.OUTSIDE)}）。
      */
-    void joinAll(Inside where) {
-        joinInTheSource(EVERYONE, where);
+    void joinAllInTheSourceWorld(Inside where) {
+        joinInTheSourceWorld(EVERYONE, where);
     }
 
     /**
      * {@code who} 的每一位（依清單順序）真 JOIN，斷言 JOIN 在 U（F6-2c：已跨過、playerdata 存在 U 的參與者，spec §12 的「已跨過的人在目的世界重新加入」）、沒有被 recovery
      * 攔截。F6-2d Step 0（F6-2c quality Minor 4）：由 {@code join(Who, Who, boolean)} 拆出（原本兩個 {@code Who} 換位置也能編譯，boolean 也看不出意思）；同一個 step 裡與
-     * {@link #joinInTheSource} 先後呼叫，就是同一個 tick JOIN。
+     * {@link #joinInTheSourceWorld} 先後呼叫，就是同一個 tick JOIN。
      */
     void joinInTheUniverse(Who who) {
         for (var id : inListOrder(who)) {
@@ -251,8 +252,11 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         }
     }
 
-    /** {@code who} 的每一位（依清單順序）真 JOIN，斷言 JOIN 在來源世界、在艙內或艙外（{@code where}），沒有被 recovery 攔截（F6-2d Step 0，同 {@link #joinInTheUniverse}）。 */
-    void joinInTheSource(Who who, Inside where) {
+    /**
+     * {@code who} 的每一位（依清單順序）真 JOIN，斷言 JOIN 在來源世界、在艙內或艙外（{@code where}），沒有被 recovery 攔截（F6-2d Step 0，同 {@link #joinInTheUniverse}；
+     * F6-2d-1 由 {@code joinInTheSource} 改名，同 {@link #joinAllInTheSourceWorld}）。
+     */
+    void joinInTheSourceWorld(Who who, Inside where) {
         Objects.requireNonNull(where, "where");
         for (var id : inListOrder(who)) {
             var player = joinOne(id);
