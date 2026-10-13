@@ -6921,6 +6921,28 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - testmod：新的 chain 類別 `M5CollapseTemplateRaceChain`；`M5CollapseRecoveryProbe` 的 phase 表（一列）與 Javadoc 的 chain 清單；`M5CollapsePassageChains` 與 `M5CollapseFixture` 只改 JOIN 改回的部分（含 `trr` 的 `universeGenerated`）。
   - `scripts/verification/`：`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；README 只改「M5 collapse probe」一節。
   - **沒有改** `build.gradle`、testmod 的 `fabric.mod.json` 與 `quantumchamber-test.mixins.json`（單元測試是 JUnit，不需要 GameTest 的登記）、`gates.ps1`、`main-oracle.ps1`、`ci-rule-check.ps1`、`m4-recovery-probe.ps1`、`.github/`、既有的 GameTest、M4 probe、既有的 JUnit、語言檔、`M5TestHooks`、spec、plan、AGENTS。main-only oracle、artifact 檢查與 CI 規則都不需要調整（都不寫死 mixin 或 test 的清單；run-all 全部通過，見「完整回歸」）。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 2）。
+    - mixin 符合 §4 H6：釋出 JAR 的 refmap 對應到 `Lnet/minecraft/class_3499$class_5162;<init>(Ljava/util/List;)V`，shadow 欄位 remap 成 `field_23914`（`mappings.tiny` 確認就是 `blockToInfos`），注入點沒有靜默落空。
+    - 單元測試真的驗到 mixin：RED 與 mutation 的快取是 `HashMap`、GREEN（含 run-all-2 的 7 份 XML）是 `ConcurrentHashMap`；測試只以反射讀這個 map、不寫入；工作執行緒的例外全部計數，template 為空時大小核對會判錯，不會恆真。唯一的盲點是單核心機器（已寫明）。
+    - `h6race` 符合「整合」，`sameStructureStartInBothWorlds` 要求兩邊都有 children，不會因兩邊都是空的而恆真；暫時措施沒有殘留，兩人在同一個 step JOIN；與 green-7 的差異只在 `trr-crash`、`w7-restart`、`trr-restart` 與新的 `h6race-starts`，沒有斷言增減或改名。
+    - 「需要裁示」的 `w7` 是否也拿掉 `universeGenerated`：reviewer 判定保留合理（`w7` 涵蓋「U 的 chunk 由磁碟載入」，`trr` 涵蓋 H6 的真實情境）。controller 採保留，不另裁示。
+    - Minor：
+      1. mixin Javadoc（`MX:27`）與本節「production mixin」的「命中不加鎖」不精確：JDK 21 的 `ConcurrentHashMap.computeIfAbsent` 只有在 key 是 bin 的第一個節點時才走不加鎖的快速路徑，其他情況命中時也會 `synchronized (f)`。只有兩個 key、很少碰撞，不影響正確性。本節以此更正；Javadoc 的措辭交給 F6-2d Step 0（只改註解）。
+      2. 最終 HEAD 的 run-all 只在 `STATUS.md`：見下一點。
+  - （controller 依 spec review Minor 2 補）所有 commit 之後的 run-all-2：`run-all-76f45a496e1e41fbb60117280ca2a510`，HEAD `480918d`、porcelain 空，`END ALL exit=0`；SUMMARY 與 run-all-1 相同，Full WARN／ERROR 54／28 與基準相同（run-all-1 的 +1／+3 是已知偶發，到這次就消失）。這是 H6 的最終回歸。
+  - quality review **Approved**（Critical 0、Important 0、Minor 4），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Strengths：mixin 寫法與 H5 一致，shadow 欄位改名在套用時失敗、建構子改變由 `require=1` 擋下，不會靜默失效；JUnit 的 happens-before 正確（`done.set(0)` 在 `round.set(i)` 之前）、工作執行緒是 daemon 並有 `stop` 旗標與 `workersAlive` 斷言；chain 的風格與 `M5CollapseUnloadChain` 一致、重用 `ServerChunkLoadingManagerTestAccessor`；RED 與 GREEN 落在同一個 chunk (207,322)；JOIN 逐字還原 `ce943f7` 之前的那一行；note 的行號逐一核對正確。
+    - Minor：
+      1. ticket 以負的「半徑」與寫死的 33 換算（`TR:63-64`、`:144-145`、`:215-216`）。`ChunkLevels.getLevelFromType(ChunkLevelType.FULL)` 是 public，`ChunkTicketManager.addTicketWithLevel`／`removeTicketWithLevel` 也是 public（既有程式已用 `getTicketManager()`，`FIX:590`、`M5GameTestSupport:992`）；radius 版本另會把 ticket 加進 `simulationDistanceTracker`。建議改用 `addTicketWithLevel(…, ChunkLevels.getLevelFromStatus(STRUCTURE_STARTS), …)`。
+      2. `find-*` 會在 server thread 上替 ancient_city 的 start template 預熱快取：它有 `start_jigsaw_name: city_anchor`，`getValidStructurePosition` 同步執行 `findStartingJigsawPos`，算出 start template 的 JIGSAW（`StructurePoolBasedGenerator.java:80-82`）；其他 8 種沒有。只有這一個 template 不會在兩個世界間 race，children 仍會，RED 也落在 village_plains，不影響判定。本節「整合 chain」的「同一批 template 第一次計算」對 ancient_city 的 start piece 不精確，以此更正；Javadoc 或 README 補一句。
+      3. JUnit 的「其他例外」只以 `toString()` 拼進失敗訊息（`UT:87`、`:148`），看不到 stack。建議 `fail(msg, cause)` 或印出 stack。
+      4. `idle` step 的上限 2400 tick（`TR:87`，約 120 秒）大於 `m5-collapse-probe.ps1` 的 `IdleSeconds=90`，整個 phase 的 step 上限總和也超過 `PHASE_TICK_LIMIT=3600`：世界一直不閒置時會先被 ps1 的逾時處置收掉，看不到 chain 自己的 `stepBounded: idle` 與診斷（實測 41 tick 就閒置；H5 的 `loadedAgain` 也是 2400）。建議降到約 1200 tick。
+  - controller 處置：不開 fix round。
+    - spec Minor 1 的 Javadoc 措辭、quality Minor 1、2、3 → **F6-2d Step 0**（與 F6-2c 交下的 Minor 一起做；`src/main/` 只改註解）。
+    - quality Minor 4（含 H5 `loadedAgain` 的同一個問題）→ **F6-3**。
+    - 「交給後續」的 F7 各條不變。
+  - **H6 完成**：range `4e7ff77..480918d`，之後接 controller 的 docs commit。最終 run-all：`run-all-76f45a496e1e41fbb60117280ca2a510`，`END ALL exit=0`（`480918d`）。
 - 行號以 `7b23001` 為準。`MX`＝`PalettedBlockInfoListConcurrentCacheMixin`，`UT`＝`StructureTemplateCacheConcurrencyTest`，`TR`＝`M5CollapseTemplateRaceChain`，`PCH`＝`M5CollapsePassageChains`，`FIX`＝`M5CollapseFixture`。
 
 ### production mixin
