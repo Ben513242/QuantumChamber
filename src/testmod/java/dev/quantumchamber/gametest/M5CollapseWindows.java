@@ -602,7 +602,8 @@ final class M5CollapseWindows {
      * （{@code selectorPlayerDataInTheUniverse}；halt 不存檔，開服時的磁碟就是 halt 時的）與 JOIN（{@code joinedInTheUniverse}）斷言，所以沒有 production 的存檔時 crash 照常、
      * restart 失敗在目標斷言。
      * <p>F6-2d Step 0（F6-2c fix round 1 spec re-review Minor 1）：Crossed 確認的那一刻（{@link #selectorPlayerDataAtTheWindow}）選門者的 playerdata 還不在 U
-     * （{@code selectorPlayerDataNotInTheUniverseAtTheWindow}）：存檔在 Crossed 寫入確認之後，不是之前。只看 halt 時的磁碟分不出這兩種順序（寫入確認時兩種順序在磁碟上的結果相同）。
+     * （{@code selectorPlayerDataNotInTheUniverseAtTheWindow}；F6-2d-1 起要求恰為來源世界，也就是跨越之前那一次存檔的位置）：存檔在 Crossed 寫入確認之後，不是之前。只看 halt
+     * 時的磁碟分不出這兩種順序（寫入確認時兩種順序在磁碟上的結果相同）。
      */
     private static void selectorAcrossAtTheTickEnd(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var write = (M5TestHooks.RollForwardWrite) detail;
@@ -610,8 +611,9 @@ final class M5CollapseWindows {
         var universe = fixture.universeWorld().orElseThrow();
         run.expect("selectorInTheUniverseAtHalt", fixture.selector().getServerWorld() == universe, () -> "選門者在 " + fixture.selector().getServerWorld().getRegistryKey().getValue());
         var atTheWindow = run.atWindow().get(SELECTOR_PLAYER_DIMENSION);
-        run.expect("selectorPlayerDataNotInTheUniverseAtTheWindow", atTheWindow != null && !universe.getRegistryKey().getValue().toString().equals(atTheWindow),
-                () -> "Crossed 確認的那一刻選門者的 playerdata 已在 " + atTheWindow + "（atWindow=" + run.atWindow() + "）");
+        // F6-2d-1（F6-2d Step 0 quality nit）：原本只要求「不是 U」（也接受 ABSENT）；那一刻的 playerdata 是跨越之前的存檔（saved），所以要求恰為來源世界。名稱不變。
+        run.expect("selectorPlayerDataNotInTheUniverseAtTheWindow", run.source().getRegistryKey().getValue().toString().equals(atTheWindow),
+                () -> "Crossed 確認的那一刻選門者的 playerdata 在 " + atTheWindow + "，不是來源世界（atWindow=" + run.atWindow() + "）");
         for (var id : fixture.members(M5CollapseFixture.OTHERS)) {
             var player = fixture.player(id);
             run.expect("othersInsideTheChamberAtHalt", player.getServerWorld() == run.source() && M5CollapseFixture.inside(player), () -> "另一位在 " + player.getPos());
