@@ -61,6 +61,16 @@ $chains = [ordered]@{
     'trrpending' = @(@{phase='trrpending-crash'; ending='halt'; window='RECOVERY_REJECTED'}, @{phase='trrpending-restart'; ending='stop'; window=''})
     # H6（不是 crash 窗口）：結構範本快取的同時使用。不經塌縮：物化一個 U，兩個世界在同一個呼叫裡生成同一批 jigsaw 結構的 start，必須都完成、正常停服。
     'h6race' = @(@{phase='h6race-starts'; ending='stop'; window=''})
+    # F6-2d-1：重試與續行跨重啟。W8：參與者在艙內、DORMANT 的收據沒有觸發時 crash；重啟之後開服的第一次觀察就提交，續行到 READY。
+    'w8' = @(@{phase='w8-crash'; ending='halt'; window='DORMANT_STEP'}, @{phase='w8-restart'; ending='stop'; window=''})
+    # W9：物化失敗 → DISABLED、SEALED(MATERIALIZE_FAILED) 已確認時 crash；重啟之後開服不停止、重試成功。
+    'w9' = @(@{phase='w9-crash'; ending='halt'; window='MATERIALIZE_SEALED'}, @{phase='w9-restart'; ending='stop'; window=''})
+    # W9 (a)：同 W9 的 crash；重啟之後的重試先因另一個 session 的 allocation 讀回失敗封存為 ALLOCATION_IO_FAILED，退避之後的重試仍改回 EAGER_ENABLED。
+    'w9io' = @(@{phase='w9io-crash'; ending='halt'; window='MATERIALIZE_SEALED'}, @{phase='w9io-restart'; ending='stop'; window=''})
+    # W9 (b)：§8.3 的 DISABLED 寫入之後、SEALED 之前 crash（開服時 COLLAPSING＋DISABLED）。
+    'w9cd' = @(@{phase='w9cd-crash'; ending='halt'; window='CATALOG_DISABLED'}, @{phase='w9cd-restart'; ending='stop'; window=''})
+    # F6-2-07：SEALED(AUTHORITY_UNREADABLE)，同一個 instance 內退避期過後的邊緣觸發也不重試之後 crash；重啟之後重試成功。
+    'unreadable' = @(@{phase='unreadable-crash'; ending='halt'; window='SEALED_STEP'}, @{phase='unreadable-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

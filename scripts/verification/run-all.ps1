@@ -224,7 +224,9 @@ Step 'summary' {
         'w7:w7-crash:halt:CROSSED_COMMITTED','w7:w7-restart:stop:','readycommit:readycommit-crash:halt:READY_COMMITTED','readycommit:readycommit-restart:stop:',
         'terminaldoor:terminaldoor-crash:halt:PASSAGE_TERMINATED','terminaldoor:terminaldoor-restart:stop:','crossedpending:crossedpending-crash:halt:CROSSED_UNCONFIRMED',
         'crossedpending:crossedpending-restart:stop:','trr:trr-crash:halt:RECOVERY_SEALED','trr:trr-restart:stop:','trrpending:trrpending-crash:halt:RECOVERY_REJECTED',
-        'trrpending:trrpending-restart:stop:','h6race:h6race-starts:stop:')
+        'trrpending:trrpending-restart:stop:','h6race:h6race-starts:stop:','w8:w8-crash:halt:DORMANT_STEP','w8:w8-restart:stop:',
+        'w9:w9-crash:halt:MATERIALIZE_SEALED','w9:w9-restart:stop:','w9io:w9io-crash:halt:MATERIALIZE_SEALED','w9io:w9io-restart:stop:',
+        'w9cd:w9cd-crash:halt:CATALOG_DISABLED','w9cd:w9cd-restart:stop:','unreadable:unreadable-crash:halt:SEALED_STEP','unreadable:unreadable-restart:stop:')
     $observedCollapse=@($collapsePhases | ForEach-Object {($_.nonce -replace '^[0-9a-f]{32}-','')+':'+$_.phase+':'+$_.ending+':'+$_.window})
     if(($observedCollapse -join ',') -cne ($expectedCollapse -join ',')){throw "M5 collapse phases 不符：$($observedCollapse -join ',')"}
     if(@($collapsePhases | ForEach-Object {"$($_.javaPid)@$($_.javaStartTimeUtc)"} | Sort-Object -Unique).Count -ne $collapsePhases.Count){throw 'M5 collapse phases 必須各自使用不同 JVM (PID, StartTime)'}

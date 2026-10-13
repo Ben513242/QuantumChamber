@@ -25,8 +25,9 @@ import net.fabricmc.api.ModInitializer;
  *     step（F6-2c 起可以只取 resolve、ready、cross 其中幾段）、每個 tick 的不變量與 spec §12 的終局斷言。</li>
  * <li>chain：{@link M5CollapseDormantChains}（DORMANT NEW 收據，W2～W6；restart 也用於 W6x）、{@link M5CollapseLiveChain}（W1）、
  *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）、{@link M5CollapsePassageChains}（F6-2c：通道與終局的重啟窗口，
- *     W7 與其餘的重啟變體）；投影 chunk 的載入與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，
- *     不經塌縮流程）。{@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。</li>
+ *     W7 與其餘的重啟變體）、{@link M5CollapseRetryChains}（F6-2d-1：重試與續行跨重啟，W8、W9 與它的兩個變體、AUTHORITY_UNREADABLE 的重啟後重試）；投影 chunk 的載入
+ *     與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。
+ *     {@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。</li>
  * </ul>
  * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}（設定 {@code M5CollapseRun.Configuration} 與 factory 的型別都在 runner，F6-2c Step 0：runner 不依賴 entrypoint）。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
@@ -78,6 +79,21 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         table.put("trrpending-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.RECOVERY_REJECTED, "trrpending-crash"));
         // H6（spec §4 H6，不是 crash 窗口）：結構範本快取的同時使用。物化一個 U，兩個世界在同一個呼叫裡把同一批 jigsaw 結構的 start chunk 推到 STRUCTURE_STARTS，必須都完成、正常停服。
         table.put("h6race-starts", run -> new M5CollapseTemplateRaceChain(run).phase());
+        // F6-2d-1：重試與續行跨重啟（M5CollapseRetryChains）。W8（spec §12）：DORMANT 的收據跨重啟續行到 READY（crash 前參與者在艙內、沒有觸發；restart 開服之後第一次觀察就提交）。
+        table.put("w8-crash", run -> new M5CollapseRetryChains(run).w8Crash());
+        table.put("w8-restart", run -> new M5CollapseRetryChains(run).w8Restart("w8-crash"));
+        // W9（spec §12）：物化失敗 → DISABLED、SEALED(MATERIALIZE_FAILED) → 重啟 → 開服不停止 → 重試成功。
+        table.put("w9-crash", run -> new M5CollapseRetryChains(run).materializeFailureCrash(CrashWindow.MATERIALIZE_SEALED));
+        table.put("w9-restart", run -> new M5CollapseRetryChains(run).w9Restart("w9-crash"));
+        // W9 的變體 (a)（F4a I-1 的跨重啟版）：重啟之後的重試先因另一個 session 的 allocation 讀回失敗封存為 ALLOCATION_IO_FAILED，之後的重試仍把 DISABLED 視為 §8.3 已完成。
+        table.put("w9io-crash", run -> new M5CollapseRetryChains(run).materializeFailureCrash(CrashWindow.MATERIALIZE_SEALED));
+        table.put("w9io-restart", run -> new M5CollapseRetryChains(run).w9AllocationRetryRestart("w9io-crash"));
+        // W9 的變體 (b)：§8.3 的 DISABLED 寫入之後、SEALED 之前 crash（開服時 COLLAPSING＋DISABLED），重啟之後的第一次 RESOLVE 就是 §8.3 的重試。
+        table.put("w9cd-crash", run -> new M5CollapseRetryChains(run).materializeFailureCrash(CrashWindow.CATALOG_DISABLED));
+        table.put("w9cd-restart", run -> new M5CollapseRetryChains(run).w9CollapsingDisabledRestart("w9cd-crash"));
+        // F6-2-07：discovery 讀取的 IO 失敗 → SEALED(AUTHORITY_UNREADABLE)，同一個 instance 內不重試 → 重啟之後重試成功。
+        table.put("unreadable-crash", run -> new M5CollapseRetryChains(run).unreadableCrash());
+        table.put("unreadable-restart", run -> new M5CollapseRetryChains(run).unreadableRestart("unreadable-crash"));
         return Collections.unmodifiableMap(table);
     }
 
