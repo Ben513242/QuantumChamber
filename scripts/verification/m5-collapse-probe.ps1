@@ -59,6 +59,8 @@ $chains = [ordered]@{
     # F6-2-12：SEALED(TRANSFER_RECOVERY_REQUIRED) 跨重啟；以及 TRR 的寫入被拒（pendingRecovery）期間重啟。
     'trr' = @(@{phase='trr-crash'; ending='halt'; window='RECOVERY_SEALED'}, @{phase='trr-restart'; ending='stop'; window=''})
     'trrpending' = @(@{phase='trrpending-crash'; ending='halt'; window='RECOVERY_REJECTED'}, @{phase='trrpending-restart'; ending='stop'; window=''})
+    # H6（不是 crash 窗口）：結構範本快取的同時使用。不經塌縮：物化一個 U，兩個世界在同一個呼叫裡生成同一批 jigsaw 結構的 start，必須都完成、正常停服。
+    'h6race' = @(@{phase='h6race-starts'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

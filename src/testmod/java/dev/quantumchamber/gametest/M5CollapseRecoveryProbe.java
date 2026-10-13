@@ -25,7 +25,7 @@ import net.fabricmc.api.ModInitializer;
  * <li>chain：{@link M5CollapseDormantChains}（DORMANT NEW 收據，W2～W6；restart 也用於 W6x）、{@link M5CollapseLiveChain}（W1）、
  *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）、{@link M5CollapsePassageChains}（F6-2c：通道與終局的重啟窗口，
  *     W7 與其餘的重啟變體）；投影 chunk 的載入與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，
- *     不經塌縮流程）。</li>
+ *     不經塌縮流程）。{@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。</li>
  * </ul>
  * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}（設定 {@code M5CollapseRun.Configuration} 與 factory 的型別都在 runner，F6-2c Step 0：runner 不依賴 entrypoint）。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
@@ -75,6 +75,8 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         table.put("trr-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.RECOVERY_SEALED, "trr-crash"));
         table.put("trrpending-crash", run -> new M5CollapsePassageChains(run).trrPendingCrash());
         table.put("trrpending-restart", run -> new M5CollapsePassageChains(run).restart(CrashWindow.RECOVERY_REJECTED, "trrpending-crash"));
+        // H6（spec §4 H6，不是 crash 窗口）：結構範本快取的同時使用。物化一個 U，兩個世界在同一個呼叫裡把同一批 jigsaw 結構的 start chunk 推到 STRUCTURE_STARTS，必須都完成、正常停服。
+        table.put("h6race-starts", run -> new M5CollapseTemplateRaceChain(run).phase());
         return Collections.unmodifiableMap(table);
     }
 
