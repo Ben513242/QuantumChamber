@@ -786,6 +786,9 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
   - **H6：worldgen CME 的防護**（controller 2026-10-13 依使用者裁示插入）：讓 `StructureTemplate` 的快取可以安全地同時使用（比照 H5 的小 mixin），改之前先做根因調查。Step 0 已完成（2026-10-13，經獨立 review ✅），spec 升為 v5.8，見下方 **Task H6**。排在 F6-2c 之後、F6-2d 之前。H6 已完成（2026-10-13，spec review ✅、quality review Approved）。
   - **F6-2d：SEALED、門與重試。**
     - 開工時先做 **Step 0**：F6-2c review 交下的 Minor（quality Minor 1、2、4～8，給 F6-2d／F6-2e 的建議，fix round 1 re-review Minor 1 的斷言），清單見 note F6-2c fix round 1 一節的「Review 與最終 review」。另加 H6 review 交下的 Minor（spec Minor 1 的 mixin Javadoc 措辭、quality Minor 1～3），清單見 note H6 一節的「Review 與最終 review」。`src/main/` 的改動只有兩處：`saveCrossedPlayerData` 改用 `CollapseService.sideEffect`（並補失敗路徑的 JUnit），以及 H6 mixin 的 Javadoc（只改註解）。已完成（2026-10-14，spec review ✅、quality review Approved）；它的 review 交給本體的 Minor，見 note F6-2d Step 0 一節的「Review 與最終 review」，在加 W8、W9 之前先做。
+    - controller 2026-10-14 把本體再拆成兩次派工，各自走完 implementer → spec review → quality review（理由：F6-2c 本體一次做完時，implementer 的 context 約 76 萬，超過接力的門檻）：
+      - **F6-2d-1：整理與重試。** F6-2d Step 0 review 交下的 Minor；W8；W9（含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`）；`AUTHORITY_UNREADABLE` 重啟後重試。交接清單 F6-2-02、F6-2-03、F6-2-07。
+      - **F6-2d-2：門與 SEALED。** sealed 量子膜期間 crash → WAITING、一般開門；SEALED 開服後只關門一次（含 SEALED 寫入與門之間 crash）；PREPARE 中重啟的重新套用；SEALED 帶著量子膜時重啟；spec review 的 M-2（永久 SEALED 開服時的 ERROR）。交接清單 F6-2-08～F6-2-11。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；
