@@ -2,7 +2,7 @@
 
 日期：2026-10-01。基準：`main`＝`a7e1be2`（code 等同 `ba854e8`），分支 `feature/m5-collapse`。下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `a7e1be2` 為準。
 
-狀態：v5.7。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。v5.6（2026-10-09）依使用者裁示，在 §4 新增 H5（chunk 卸載的 livelock 防護），見 §20.10。v5.7（同日）依使用者裁示，跨越的 Crossed 確認之後立即存下該玩家的 playerdata（§10.3、§12），見 §20.11。Spec review 共五輪（含第五輪的 re-review）：
+狀態：v5.8。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。v5.6（2026-10-09）依使用者裁示，在 §4 新增 H5（chunk 卸載的 livelock 防護），見 §20.10。v5.7（同日）依使用者裁示，跨越的 Crossed 確認之後立即存下該玩家的 playerdata（§10.3、§12），見 §20.11。v5.8（2026-10-13）依使用者裁示，在 §4 新增 H6（結構範本快取的同時使用），見 §20.12。Spec review 共五輪（含第五輪的 re-review）：
 - v1 的 Critical 1、Important 8 由 v2 處理。
 - re-review 在 v2 新發現的 Critical 1、Important 2（N1–N3）與 Minor m1–m8 由 v3 處理。
 - 第三輪在 v3 新發現的 Important 1（N4）與 4 項 Minor，已在 v3 修正。
@@ -128,6 +128,22 @@ hardening 的順序依使用者 2026-09-29 的指定。每項都是獨立 task�
     - `require=1`；目標的簽章改變時啟動失敗（M5 基線固定 1.21）。
     - 測試：以確定性的重現當 RED→GREEN。作法是 testmod 把部分 chunk 讀檔留到停服開始才完成，並讓同一個 chunk 在卸載佇列排空之前被載回。修正前停服必定卡住，修正後正常停服；同時要有「被取回之後，refCount 歸零時仍會正常卸載、存檔」的斷言。
     - 相容性：與重寫 chunk 系統的 mod（例如 C2ME）可能衝突，寫進 compatibility 說明（F7）。
+- **H6 結構範本快取的同時使用**（v5.8，2026-10-13 依使用者裁示加入，見 §20.12；根因見 implementation note 的 H6 Step 0 一節）：
+  - 背景：
+    - 原版的 `StructureTemplate` 由 server 共用的 `StructureTemplateManager` 快取，所有世界拿到同一個 instance。它的 `PalettedBlockInfoList.blockToInfos` 是 `HashMap`；`getAllOf` 在第一次用到某個方塊時，以 `computeIfAbsent` 在 worker thread 上計算並插入。
+    - 每個世界的 worldgen 在自己的 mailbox 裡序列執行，所以單一世界內不會同時呼叫；但兩個世界的 mailbox 會在不同的 worker 上同時執行。
+    - M3 的 U 與來源世界共用 generator 與 seed。兩個世界在同一區域生成同一個 jigsaw 結構時，會以同一個順序第一次用到同一批 template；兩個執行緒同時對同一個 template 的同一個方塊做第一次計算，後算完的一方丟 `ConcurrentModificationException`。server 因此 crash，並卡在停服。
+    - 玩家看到的是：一人在 U、一人在來源世界，兩邊同時生成同一區域（例如重啟之後同時重新加入）時，server 偶爾 crash 而且關不掉。不同 seed 的宇宙（M6）仍共用 template，只是機率低很多。
+  - 要求：
+    - production mixin 掛在 `StructureTemplate.PalettedBlockInfoList` 唯一的建構子結束時，以 `@Mutable @Shadow @Final` 把 `blockToInfos` 換成 `ConcurrentHashMap`。
+    - 單執行緒時的結果與原版相同：同一個方塊只計算一次，回傳同樣內容的 list。mapping function 只讀 `infos`，不碰這個 map，也不回傳 null。唯一的差異是 null key 會丟 NPE，原版的呼叫端不會傳 null。
+    - 適用於所有世界與所有呼叫端（worldgen、`/place`、`/locate`），也涵蓋原版 Overworld 與 Nether 共用 ruined portal template 的同一種情況。
+    - `require=1`；目標的簽章改變時啟動失敗（M5 基線固定 1.21）。
+    - 測試：
+      - 單元層級的 RED→GREEN：多個執行緒同時對新建的 template 呼叫 `getInfosForBlock`。修正前每輪約 86%～100% CME；修正後全部輪次 0 次 CME、內容正確。等待要有上限，逾時判 FAIL。
+      - 整合：M5 collapse probe 的一條 chain，讓來源世界與一個 U 同時把同一批 jigsaw 結構的 start chunk 推到 `structure_starts`。修正前 crash，由 probe 的逾時處置判 FAIL；修正後正常結束。原版的 worker 數是邏輯核心數減 1（最少 1），只有一條 worker 的機器看不出 RED。
+    - 不在本項：CME 之後停服卡住是原版行為。worker 的 uncaught handler 呼叫 `System.exit`，丟出例外的 `ChunkLoader` 沒有釋放 holder，任何同步生成步驟的例外都會這樣，與 M5 無關。修好 CME 就移除了 M5 的觸發點；這個原版行為寫進 F7 的已知問題，不另外修。
+    - 相容性：C2ME 在同一個注入點把同一個欄位換成 `synchronizedMap`；兩者不論哪個在後，結果都是 thread-safe 的 map。寫進 compatibility 說明（F7）。
 
 ## 5. 狀態機與 journal schema 4
 
@@ -1143,3 +1159,13 @@ v5.1 的輕量確認：Critical 0、Important 0、Minor 5（p1–p5），control
   1. 「跨過就立刻存檔」（controller 推薦；獨立 reviewer 原本建議列為已知限制並改 spec）。作法見 §10.3 傳送結果表的「成功」列：Crossed 的寫入確認之後立即存那位玩家的 playerdata；寫入沒有確認時不存，所以磁碟上的 Crossed 與 playerdata 一致；存檔失敗只記 WARN。
   2. 「列為已知限制」（controller 與 reviewer 都推薦）。寫進 F7 的已知限制，不改程式。
 - 不受影響的部分：通道的其他行為、訊息、比較器。
+
+### 20.12 使用者裁示：worldgen 的 ConcurrentModificationException（v5.7 → v5.8，2026-10-13）
+
+- 背景：
+  - F6-2c fix round 1 的 `trr` restart 偶爾在原版 worldgen 丟 `ConcurrentModificationException`，之後停服卡住。
+  - 使用者裁示修正方向：「讓結構範本快取可以安全地同時使用，比照 H5 加一個小 mixin；改之前先做根因調查並確認」。其他選項是「讓 U 不共用 generator」（要改 M3 的世界建立方式）與「列為已知限制」。
+  - H6 Step 0 確認根因（§4 H6）：不經塌縮的最小重現在原版時序下 5/5 CME，加上候選修正 5/5 正常。對 763 個 class 的靜態盤點顯示，兩個世界共用、又會在 worker 上被修改的狀態，只有這一個快取需要保護，所以沒有超出裁示的範圍。
+  - 獨立 reviewer 逐項對照原版程式與證據，判定根因與修正選項成立（Critical 0、Important 0）。它也同意 CME 之後的停服卡住是原版行為、不另外修。
+- 作法：§4 H6，plan Task H6。排在 F6-2c 之後、F6-2d 之前。
+- 不受影響的部分：M5 的狀態機、權威、訊息、比較器；M3 的世界建立方式。

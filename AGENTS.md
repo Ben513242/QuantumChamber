@@ -104,7 +104,7 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 
 M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使用者指示，把 feature 分支 push 到 `origin`，讓使用者在另一台電腦 pull 下來試玩：第一次是 `5ba8b47`，停在 F6-2c fix round 1 的中途；fix round 1 的實作完成之後再 push 一次。實際狀態以遠端 ref 為準。
 
-- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.7；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
+- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.8；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示，v5.8 是 2026-10-13 對 worldgen CME 的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
 - 進度（2026-10-13）：
   - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）、F4b-1（投影元件，以及 F4a 的 Step 0）、F4b-2（PREPARE 的目的宇宙側，含 fix round 1）、F4b-3（PREPARE 期間的原艙門，含 fix round 1）。F4b 的三個子 task 都已完成。F5 依 plan 拆成 F5-0（抽出原艙門）、F5-1（通道本體）、F5-2（比較器與 membrane 正規化）；F5-0、F5-1、F5-2 都已完成，F5 完成。F6 依 plan 拆成 F6-0（F5-2 的 Step 0、G-NLIVE 的根因與測試缺口）、F6-1（跨 JVM probe 的基礎建設與 W1～W6）、F6-2（W7～W12 與額外的 phase）、F6-3（harness 與 CI）；F6-0 已完成（2026-10-08）。
   - T0：controller 執行的 clean-clone 基線，不改程式。
@@ -126,7 +126,7 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
     - 完整回歸 `run-all-2fe4175797894e97a7dea49ee84142a5` 為 `END ALL exit=0`（`98b907a`）；
     - spec re-review ✅（I-1 關閉）；F6-2c 整段（`a52d65d..98b907a`）的 quality review Approved。Minor 交給 H6 與 F6-2d Step 0；
     - 細節見 note 的「F6-2c fix round 1」一節。**F6-2c 完成。**
-  - **worldgen CME**：一人在目的宇宙 U、一人在來源世界，兩個世界同時生成同一區域的 chunk 時，原版 worldgen 偶爾丟 `ConcurrentModificationException`（`StructureTemplate$PalettedBlockInfoList.getAllOf` 的 HashMap，structure_starts），之後停服卡住。一般多人遊玩也可能觸發。使用者 2026-10-13 裁示：讓結構範本的快取可以安全地同時使用（比照 H5 的小 mixin），改之前先做根因調查。controller 開 task **H6**，Step 0（根因調查）進行中；結果確認後才升 spec、寫 plan Task H6。
+  - **worldgen CME**：一人在目的宇宙 U、一人在來源世界，兩個世界同時生成同一區域的 chunk 時，原版 worldgen 偶爾丟 `ConcurrentModificationException`（`StructureTemplate$PalettedBlockInfoList.getAllOf` 的 HashMap，structure_starts），之後停服卡住。一般多人遊玩也可能觸發。使用者 2026-10-13 裁示：讓結構範本的快取可以安全地同時使用（比照 H5 的小 mixin），改之前先做根因調查。controller 開 task **H6**。Step 0（根因調查）已完成，經獨立 review ✅：兩個世界共用 server 的結構範本，範本的 `blockToInfos`（`HashMap`）被兩個世界的 worldgen 同時第一次寫入；只修這個快取就足夠。spec 升為 v5.8（§4 H6、§20.12），plan 新增 Task H6。CME 之後停服卡住是原版行為，不另外修，寫進 F7。
   - CI：M5 上 CI 之後，Windows `windows-native` 通過；Ubuntu `build` 的 M5 GameTest 在相同的 code 上失敗了三次：前兩次是同一個 test，第三次是另外 7 個 test 沒有完成。交給 F6-3。
   - 試玩回饋（2026-10-13）：使用者覺得還行，希望看到不同的宇宙生成。這屬於設計 §28 的 M6（random seed 等），不併入 M5。
   - 之後依序是：H6、F6-2d（先做 Step 0）、F6-2e、F6-3 → F7 → milestone 收尾。

@@ -783,7 +783,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - 這次會改到 `src/main/` 的 `PassageService`，範圍只限上述的存檔。
       - 投影修復遺失（F6-2-15）依同一個裁示，列為 F7 的已知限制。
     - 已完成（2026-10-13）：spec re-review ✅、整段 quality review Approved；Minor 的分派見 note F6-2c fix round 1 一節的「Review 與最終 review」。
-  - **H6：worldgen CME 的防護**（controller 2026-10-13 依使用者裁示插入）：讓 `StructureTemplate` 的快取可以安全地同時使用（比照 H5 的小 mixin），改之前先做根因調查。Step 0 調查完成、經 review 之後，controller 升 spec、在下方新增 Task H6 一節。排在 F6-2c 之後、F6-2d 之前。
+  - **H6：worldgen CME 的防護**（controller 2026-10-13 依使用者裁示插入）：讓 `StructureTemplate` 的快取可以安全地同時使用（比照 H5 的小 mixin），改之前先做根因調查。Step 0 已完成（2026-10-13，經獨立 review ✅），spec 升為 v5.8，見下方 **Task H6**。排在 F6-2c 之後、F6-2d 之前。
   - **F6-2d：SEALED、門與重試。**
     - 開工時先做 **Step 0**：F6-2c review 交下的 Minor（quality Minor 1、2、4～8，給 F6-2d／F6-2e 的建議，fix round 1 re-review Minor 1 的斷言），清單見 note F6-2c fix round 1 一節的「Review 與最終 review」。唯一的 `src/main/` 改動是 `saveCrossedPlayerData` 改用 `CollapseService.sideEffect`，並補失敗路徑的 JUnit。
     - W8；
@@ -855,6 +855,30 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 **完整回歸：** `run-all.ps1`。這個修正影響所有世界的 chunk 卸載，所以 default、legacy、M5、M3、M4 recovery、M5 collapse 都要與基準相同；另外記錄 M4 `dormant-reentry` 的結果。
 
 **Commit：** `fix: drop the stale unload task of a chunk holder taken back before it ran`
+
+---
+
+### Task H6: 結構範本快取的同時使用（controller 2026-10-13 依使用者裁示插入，spec v5.8 §4 H6、§20.12）
+
+在 F6-2c 之後、F6-2d 之前執行，走完 implementer → spec review → quality review。根因、重現、修正選項與驗證設計，見 implementation note 的 H6 Step 0 一節，以及其後 controller 補的「Review 與最終 review」。
+
+**Files：**
+- Create：`src/main/java/dev/quantumchamber/mixin/` 下一個新的 mixin，掛在 `StructureTemplate.PalettedBlockInfoList` 的建構子 RETURN。
+- Modify：`src/main/resources/quantumchamber.mixins.json`，登記這個 mixin。
+- 單元層級的回歸測試：優先放在 JUnit（`src/test/`；`fabric-loader-junit` 會套用 production mixin，見 `NativeSaveFailuresTest`；兩個 CI job 的 `build` 都會跑，也不必阻塞 server thread）。JUnit 做不到時，才放在 default run 的 GameTest（名稱不以 `_windows` 結尾、batch 不以 `m5_universe` 開頭），並寫明理由。等待要有上限，逾時判 FAIL；「兩個執行緒確實重疊」只當診斷記錄，不當 GREEN 的條件。
+- M5 collapse probe：
+  - 新 chain `h6race`（一個 stop phase，不經塌縮）：phase 表、chain 類別、`m5-collapse-probe.ps1` 的 `$chains`、`run-all.ps1` 的 `$expectedCollapse`、probe 的 Javadoc chain 清單；
+  - `w7`、`trr` 的 restart 改回所有參與者同一個 tick JOIN，拿掉 `ce943f7` 的暫時措施（`joinTheCrossedLast`、`generationSignature`、`SETTLED_TICKS` 等）。`trr` 跨越之前的 `universeGenerated`：先確認它的斷言不依賴 U 預先生成，再決定拿掉或保留，寫明理由；`w7` 跨越之前的 `saved` 保留。
+- `scripts/verification/README.md`：M5 collapse probe 一節，包括 chain 類別表（:161）、`h6race` 的說明、:221 的 CME 狀態、JOIN 的說明，以及「只有一條 worker 的機器看不出 RED」。
+- 可以沿用的起點：`h6/step0/files/` 的 `H6TemplateRaceGameTests.java`、`H6RaceChain.java`、`H6CandidateFixMixin.java`。
+
+**RED：** 測試先 commit。在沒有 production 修正的程式上：單元測試失敗在 CME；`h6race` 在第一個結構 crash，由 probe 的逾時處置判 FAIL。
+
+**GREEN：** 加上修正之後兩者都 PASS。單元測試全部輪次 0 次 CME、內容正確、事後的單執行緒核對一致。M5 collapse probe 的 33 個 phase 在同一個乾淨的 HEAD 上連跑兩次都 PASS；具名斷言與 F6-2c fix round 1 的 green-7（`bf2dbe40…`）比對，差異只在 `w7`、`trr` 的 JOIN 與新 chain。
+
+**完整回歸：** `run-all.ps1`。修正影響所有世界的結構生成，所以 default、legacy、M5、M3、M4 recovery、M5 collapse 都要與基準 `run-all-2fe4175797894e97a7dea49ee84142a5` 相同，除了預期的差異：單元測試多 1 個、`m5collapse` 33、release 與 sources 只多這個 mixin、`quantumchamber.mixins.json` 改變。
+
+**Commit：** `fix: let two worlds share a structure template's block info cache safely`
 
 ---
 

@@ -6757,6 +6757,27 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 調查 task，不改 production（`src/main/` 沒有任何變更）。開工 HEAD `30666c4`（porcelain 空）；之間 controller commit 了 `028cca0`（docs），本 task 的暫時改動沒有被 commit。全部實驗以 adapter 暫時改 testmod 與 `scripts/verification/m5-collapse-probe.ps1`（`h6/step0/adapter.py`、`adapters_h6s0.py`），用完還原並以 `git hash-object` 核對（下方「暫時改動與還原」）。取證在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h6/step0/`（`STATUS.md` 有逐步紀錄）。原版程式的行號引用 worktree 的 Loom sources jar（`.gradle/loom-cache/minecraftMaven/…/minecraft-common-…-sources.jar`；行號與 crash report 的 stack 一致，例如 `StructureTemplate.java:211`、`SinglePoolElement.java:119`、`StructurePoolBasedGenerator.java:306/353`、`Util.java:315`）。
 
+- Review 與最終 review（controller 補）：
+  - 獨立 reviewer：✅ 根因與建議成立（Critical 0、Important 0、Minor 5）。只讀，沒有跑 Gradle、probe 或 GameTest；原版程式以 Loom sources jar 與 `javap` 核對，取證以自寫的唯讀腳本讀 jsonl 與 region 檔（scratchpad `h6rev/py/`）。
+    - 根因成立：本節引用的原版行號都對。`structure_starts` 與 `features` 都同步回傳 `completedFuture`，經 `ChunkLoader.run` 在 mailbox 上執行；唯一不經 mailbox 的 worker 路徑是 noise／biomes 的 async，不碰 template。`getAllOf` 只由 `StructureTemplate.java:211` 呼叫。m2-a～c、m3-a～e、g1-a～e、u-red-1／u-green-1 的數字與本節一致；witness 共 38 個 JVM、22 次 run、908 次重疊，全部跨世界。
+    - `h6race-a` 代表 production：走原版的 `holder.load → ChunkLoader → mailbox` 路徑，只是把開始時間差壓到 µs 級。快取在 server 存活期間只算一次，所以 production 的風險窗口主要在開服（或 `/reload` 清空 `templates`）之後的第一次使用，正是重啟後同時 JOIN 的情境。
+    - 共用狀態的盤點成立，「只修 template 快取」足夠。另外補查 `RavineCarver`、`SinglePoolElement`、`WorldGenerationProgressLogger`、`RandomSequencesState` 與 M3 factory 傳入的物件，都安全。
+    - 修正選項 (a) 成立：`PalettedBlockInfoList` 只有一個建構子 `<init>(List)`，`blockToInfos` 只在建構子的 `putfield` 與 `getAllOf` 出現；不會 recursive update、value 不會是 null；呼叫端只讀回傳的 list；單執行緒時與原版相同，唯一的差異是 null key 會 NPE（原版的呼叫端不會傳 null）；與 C2ME 並存仍 thread-safe。(b) 也可接受，差距不大。
+    - CME 之後的停服卡住：鏈路成立，與 M5 無關，H5 的 mixin 不影響這條路。建議 H6 不處理，記入 F7 的已知問題；另開 hardening 要改原版 chunk 系統、超出裁示，效益也只是「crash 時多存一點」，而 M5 的 recovery 本來就以 crash 為前提。
+    - 驗證設計：RED 在多核心機器上可靠（GitHub runner 4 vCPU）；`build.yml`、`gates.ps1`、per-test receipt 都不寫死 test 或 mixin 清單，只要名稱不以 `_windows` 結尾、batch 不以 `m5_universe` 開頭；`h6race` 值得做成 tracked chain；**`w7`、`trr` 建議 H6 之後改回同時 JOIN**（修好之後不會再 CME，改回符合 F6-2c fix round 1 記錄的後續，也移除最多 400 tick 的等待），回歸由 `h6race` 與單元測試負責。
+    - Minor：
+      1. 「舊證據的磁碟狀態是事後的假象」沒有存成 receipt：`chunkstatus.py` 的座標沒有 (227,287)、(207,322)。reviewer 自己讀了 run root 的 region 檔，8 次 CME 都成立：CME 的世界在那個座標的 region 檔（`r.7.8.mca`／`r.6.10.mca`）是 0 byte，健康的世界是 `structure_starts`（m2-a、m2-c、m3-a、m3-c、m3-e 是 U 為 0 byte；m2-b、m3-b、m3-d 是來源世界為 0 byte）。另外「什麼都存不了」說得太滿：其他 holder 在停服迴圈裡照常卸載存檔，存不了的是卡住的那個 chunk，以及迴圈之後的 `save(false, true, false)`（`MinecraftServer.java:646-656`）。
+      2. 暫時版單元 GameTest 的等待沒有上限（`files/H6TemplateRaceGameTests.java:120`）；正式版要加 deadline。「兩個執行緒確實重疊」不要當成無條件的 GREEN 斷言，核心數少的機器會誤判。可以改成 JUnit：`fabric-loader-junit` 會套用 production mixin（`NativeSaveFailuresTest.java:182`），兩個 CI job 的 `build` 都會跑，也不必阻塞 server thread。
+      3. `h6race` 做成 tracked chain 時，除了三份表，還要更新 README:161 的 chain 類別表與 probe 的 Javadoc chain 清單。原版 worker pool 的大小是 `availableProcessors() - 1`、最少 1（`Util.java:201`）：只有一條 worker 的機器不會 CME，`h6race` 在那種機器上的 PASS 不能當成修正有效的證據，README 要寫明。
+      4. 「H6 的驗證設計」建議保留 `ce943f7`，與 F6-2c fix round 1 一節記錄的後續（改回同時 JOIN）不一致，應寫明是偏離、交給 controller 選擇。
+      5. 「`StructureStart.place`（`:375`）」的 `:375` 是呼叫端 `ChunkGenerator.java:375`。
+  - controller 處置：
+    - 修正採選項 (a)。spec 升為 v5.8（§4 H6、§20.12），plan 新增 Task H6。
+    - CME 之後的停服卡住不在 H6 處理，寫進 F7 的已知問題（原版：同步生成步驟丟出例外之後，server 停服會卡住）。
+    - `w7`、`trr` 依 F6-2c fix round 1 的 spec re-review 與本 review 的建議，**改回同時 JOIN**，拿掉 `ce943f7` 的暫時措施；`trr` 的 `universeGenerated` 由 H6 implementer 確認之後決定。
+    - Minor 1、4、5 是本節的敘述，以本區塊更正（Minor 1 的 region 檔核對以 reviewer 的讀取為準，root 都在）；Minor 2、3 寫進 plan Task H6。
+  - **H6 Step 0 完成**：docs `eb7a8ca`，之後接 controller 的 docs commit（spec v5.8、plan Task H6）。
+
 ### 結論
 
 - **根因**：來源世界與 U 共用 server 的 `StructureTemplateManager`，所以共用同一個 `StructureTemplate`、同一個 `PalettedBlockInfoList`。它的 `blockToInfos` 是 `HashMap`（`StructureTemplate.java:776`），`getAllOf` 以 `computeIfAbsent` 在第一次使用時計算並插入（`:786-788`）。每個世界的 `structure_starts`／`features` 都在自己的 worldgen mailbox 裡序列執行，但兩個世界各有一個 mailbox，會在不同的 worker 上同時執行。U 與來源世界共用 generator 與 seed，所以同一個 chunk 的結構 start 在兩邊**以同一個順序選同一批 template**（lockstep）。兩個世界在幾乎同一個時間生成同一個結構 start 時，兩個執行緒對同一個 template 的**同一個 key（JIGSAW）**同時做第一次計算；先算完的一方插入（`modCount` 改變），後算完的一方在 `HashMap.computeIfAbsent:1229` 丟 CME。
