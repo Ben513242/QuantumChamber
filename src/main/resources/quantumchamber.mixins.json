@@ -24,6 +24,7 @@
     "ServerWorldEntityAdmissionMixin",
     "EntitySuperpositionTeleportMixin",
     "PlayerEntityShoulderSuperpositionMixin",
-    "ServerChunkLoadingManagerStaleUnloadMixin"
+    "ServerChunkLoadingManagerStaleUnloadMixin",
+    "PalettedBlockInfoListConcurrentCacheMixin"
   ]
 }
