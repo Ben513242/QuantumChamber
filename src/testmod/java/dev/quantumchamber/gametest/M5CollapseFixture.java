@@ -22,8 +22,6 @@ import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Allocation;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.DiskBlock;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Projection;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
-import dev.quantumchamber.gametest.mixin.ChunkTicketArgumentTestAccessor;
-import dev.quantumchamber.gametest.mixin.ChunkTicketManagerTestAccessor;
 import dev.quantumchamber.persistence.PlayerCheckpointStore;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
@@ -607,21 +605,6 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     static boolean inside(ServerPlayerEntity player) {
         var local = ChamberSpaceCoordinates.localPosition(FRAME, player.getPos());
         return local.x >= 1 && local.x < 6 && local.y >= 1 && local.y < 6 && local.z >= 1 && local.z < 6;
-    }
-
-    /**
-     * {@code world} 的原生 ticket 表中，類型名稱是 {@code type}、argument 是 {@code argument} 的 ticket 所在的 chunk（F6-2c：終局之後不得殘留的來源 ticket
-     * {@code quantumchamber_source} 與目的世界的 {@code quantumchamber_destination}；唯讀，比照 {@code M5GameTestSupport.destinationTickets}）。
-     */
-    List<ChunkPos> tickets(ServerWorld world, String type, Object argument) {
-        var manager = world.getChunkManager().chunkLoadingManager.getTicketManager();
-        var entries = ((ChunkTicketManagerTestAccessor) manager).quantumchamberTest$getTicketsByPosition();
-        var result = new ArrayList<ChunkPos>();
-        for (var entry : entries.long2ObjectEntrySet()) for (var ticket : entry.getValue()) {
-            if (!type.equals(ticket.getType().toString())) continue;
-            if (argument.equals(((ChunkTicketArgumentTestAccessor) (Object) ticket).quantumchamberTest$getArgument())) result.add(new ChunkPos(entry.getLongKey()));
-        }
-        return result;
     }
 
     /**

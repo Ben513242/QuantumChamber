@@ -268,7 +268,7 @@ final class M5CollapsePassageChains {
                     return true;
                 }));
                 steps.add(new Step("end", 1, () -> {
-                    passage.expectEnd(End.inTheSourceWorld(fixture).placed(fixture, M5CollapseFixture.SELECTOR, Place.UNIVERSE));
+                    passage.expectEnd(End.inTheSourceWorld(fixture).placed(M5CollapseFixture.SELECTOR, Place.UNIVERSE));
                     expectNoResidue();
                     return true;
                 }));
@@ -407,7 +407,7 @@ final class M5CollapsePassageChains {
         var sid = fixture.sid();
         var presence = ChamberSessions.gateway().presence(run.server(), fixture.chamber());
         run.expect("noRuntimeLeft", presence == ChamberSessionGateway.Presence.NONE, () -> "presence=" + presence);
-        var source = fixture.tickets(run.source(), SOURCE_TICKET, sid);
+        var source = M5GameTestSupport.tickets(run.source(), SOURCE_TICKET, sid);
         run.expect("noSourceTicketLeft", source.isEmpty(), () -> "來源 ticket=" + source);
         var destination = M5GameTestSupport.destinationTickets(fixture.universeWorld().orElseThrow(), sid);
         run.expect("noDestinationTicketLeft", destination.isEmpty(), () -> "目的世界的 ticket=" + destination);
@@ -469,7 +469,7 @@ final class M5CollapsePassageChains {
         run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
         var sid = fixture.sid();
         run.expect("stillSealed", atStart.equals(run.journal().flushedRecords().get(sid)), () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
-        passage.expectEnd(End.inTheSourceWorld(fixture).placed(fixture, M5CollapseFixture.SELECTOR, Place.UNIVERSE));
+        passage.expectEnd(End.inTheSourceWorld(fixture).placed(M5CollapseFixture.SELECTOR, Place.UNIVERSE));
         return true;
     }
 

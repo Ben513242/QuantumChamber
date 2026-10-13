@@ -989,13 +989,23 @@ final class M5GameTestSupport {
      * 從原生 ticket 表唯讀取得（{@code ChunkTicketManagerTestAccessor}；不修改原生集合）。沒有時為空。
      */
     static Map<ChunkPos, Integer> destinationTickets(ServerWorld world, UUID sid) {
+        return tickets(world, DESTINATION_TICKET, sid);
+    }
+
+    /**
+     * {@code world} 的原生 ticket 表中，類型名稱是 {@code type}、argument 是 {@code argument} 的 ticket 所在的 chunk 與 level（依 x、z 排序；同一個 chunk 有幾張時記最後
+     * 讀到的那張），從原生 ticket 表唯讀取得（{@code ChunkTicketManagerTestAccessor}；不修改原生集合）。沒有時為空。F6-2d Step 0（F6-2c quality Minor 8）：由
+     * {@link #destinationTickets} 抽出，M5 collapse probe 查來源 ticket 也用它（原本是 {@code M5CollapseFixture.tickets} 的同一個迴圈）。
+     */
+    static Map<ChunkPos, Integer> tickets(ServerWorld world, String type, Object argument) {
+        Objects.requireNonNull(argument, "argument");
         var manager = world.getChunkManager().chunkLoadingManager.getTicketManager();
         var entries = ((dev.quantumchamber.gametest.mixin.ChunkTicketManagerTestAccessor) manager).quantumchamberTest$getTicketsByPosition();
         var result = new java.util.TreeMap<ChunkPos, Integer>(Comparator.comparingInt((ChunkPos chunk) -> chunk.x).thenComparingInt(chunk -> chunk.z));
         for (var entry : entries.long2ObjectEntrySet()) for (var ticket : entry.getValue()) {
-            if (!DESTINATION_TICKET.equals(ticket.getType().toString())) continue;
-            var argument = ((dev.quantumchamber.gametest.mixin.ChunkTicketArgumentTestAccessor) (Object) ticket).quantumchamberTest$getArgument();
-            if (sid.equals(argument)) result.put(new ChunkPos(entry.getLongKey()), ticket.getLevel());
+            if (!type.equals(ticket.getType().toString())) continue;
+            var held = ((dev.quantumchamber.gametest.mixin.ChunkTicketArgumentTestAccessor) (Object) ticket).quantumchamberTest$getArgument();
+            if (argument.equals(held)) result.put(new ChunkPos(entry.getLongKey()), ticket.getLevel());
         }
         return result;
     }

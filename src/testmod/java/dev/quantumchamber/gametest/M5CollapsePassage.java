@@ -198,15 +198,18 @@ final class M5CollapsePassage {
      * 起的 ERROR 恰有幾則（正常的 restart 為 0），以及 M5 authority 是否在本 instance 初始化成功（沒有「M5 authority 初始化失敗」的 ERROR）。
      * <p>F6-2c（F6-2c Step 0 quality 給 F6-2c 本體的建議）：不提供位置參數的建構子（兩個 int 互換位置也能編譯），以具名的 factory 建立（{@link #crossed}、{@link #degraded}），
      * 再以 {@link #placed} 逐人改位置（F6-2a quality 給 W7 的建議：參與者在哪裡由全員一個 {@link Place} 改為逐人指定）。在 step 執行時建立（參與者在開服時才由收據讀回）。
+     * F6-2d Step 0（F6-2c quality Minor 8）：記下建立它的 fixture，{@link #placed} 不必再傳一次。
      */
     static final class End {
+        private final M5CollapseFixture fixture;
         private final int catalogGrowth;
         private final ProjectionAtEnd projection;
         private final Map<UUID, Place> places;
         private final int sessionErrors;
         private final boolean authorityInitialized;
 
-        private End(int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, int sessionErrors, boolean authorityInitialized) {
+        private End(M5CollapseFixture fixture, int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, int sessionErrors, boolean authorityInitialized) {
+            this.fixture = Objects.requireNonNull(fixture, "fixture");
             this.catalogGrowth = catalogGrowth;
             this.projection = Objects.requireNonNull(projection, "projection");
             this.places = Collections.unmodifiableMap(new LinkedHashMap<>(places));
@@ -224,7 +227,7 @@ final class M5CollapsePassage {
 
         /** 正常的 restart：(b) 全員都已跨過，參與者都在 U，沒有這個 session 的 ERROR，authority 初始化成功。 */
         static End crossed(M5CollapseFixture fixture) {
-            return new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.UNIVERSE), 0, true);
+            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.UNIVERSE), 0, true);
         }
 
         /**
@@ -232,7 +235,7 @@ final class M5CollapsePassage {
          * 初始化成功。已跨過的人另以 {@link #placed} 改為 U。
          */
         static End inTheSourceWorld(M5CollapseFixture fixture) {
-            return new End(fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.SOURCE), 0, true);
+            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.SOURCE), 0, true);
         }
 
         /**
@@ -240,18 +243,18 @@ final class M5CollapsePassage {
          * 只有永久原因那一則，authority 本 instance 初始化失敗。
          */
         static End degraded(M5CollapseFixture fixture) {
-            return new End(fixture.catalogGrowth(), ProjectionAtEnd.LEDGER_ABSENT, everyone(fixture, Place.SOURCE), 1, false);
+            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.LEDGER_ABSENT, everyone(fixture, Place.SOURCE), 1, false);
         }
 
-        /** 同這一份，只有 {@code who} 的每一位改在 {@code place}（{@code who} 的成員都必須是參與者）。 */
-        End placed(M5CollapseFixture fixture, M5CollapseFixture.Who who, Place place) {
+        /** 同這一份，只有 {@code who} 的每一位改在 {@code place}（{@code who} 的成員都必須是參與者；以建立這一份的 fixture 決定）。 */
+        End placed(M5CollapseFixture.Who who, Place place) {
             Objects.requireNonNull(place, "place");
             var next = new LinkedHashMap<>(places);
             for (var id : fixture.members(who)) {
                 if (!next.containsKey(id)) throw new IllegalArgumentException("End 沒有這位參與者：" + id);
                 next.put(id, place);
             }
-            return new End(catalogGrowth, projection, next, sessionErrors, authorityInitialized);
+            return new End(fixture, catalogGrowth, projection, next, sessionErrors, authorityInitialized);
         }
 
         int catalogGrowth() { return catalogGrowth; }
