@@ -38,7 +38,10 @@ import net.minecraft.world.gen.structure.Structure;
  *     在遠離 spawn 的 chunk {@link #CENTER} 附近找一個 start chunk（不生成任何 chunk；{@code locateStructure} 會在來源世界同步生成，所以不用），兩個世界都加上 level 為
  *     {@code STRUCTURE_STARTS} 的 ticket（只讓 holder 存在：1.21 高於 FULL 的 ticket 不會自己排生成）。</li>
  * <li>{@code load-*}（下一個 tick）：<b>同一個呼叫裡</b>對兩個世界的 holder {@code load(STRUCTURE_STARTS)}，接著兩邊各自 {@code updateChunks()}，立即排入各自的
- *     worldgen mailbox。兩個世界的開始時間差在 µs 級，兩邊以同一個順序（同 seed）第一次計算同一批 template 的 JIGSAW key。</li>
+ *     worldgen mailbox。兩個世界的開始時間差在 µs 級，兩邊以同一個順序（同 seed）第一次計算同一批 template 的 JIGSAW key。例外（F6-2d Step 0，H6 quality Minor 2）：
+ *     {@code ancient_city} 有 {@code start_jigsaw_name}（{@code city_anchor}），{@code find-*} 的 {@code getValidStructurePosition} 在 server thread 上同步執行
+ *     {@code findStartingJigsawPos}，已替它的 start template 算過 JIGSAW、預熱了快取（{@code StructurePoolBasedGenerator.java:80-82}）：只有這一個 template 不在兩個世界間
+ *     race，它的 children 仍會；其他 8 種沒有 {@code start_jigsaw_name}。</li>
  * <li>{@code generated-*}：等兩個世界都到 {@code STRUCTURE_STARTS}（step 的上限之內沒有到達就 FAIL），比對兩邊的 structure start，移除 ticket。</li>
  * </ol>
  * 斷言：每一種結構都找到 start（{@code startFound}）、兩個世界在 load 之前都還沒有生成（{@code notGeneratedBeforeLoad}）、都到 {@code STRUCTURE_STARTS}（step
