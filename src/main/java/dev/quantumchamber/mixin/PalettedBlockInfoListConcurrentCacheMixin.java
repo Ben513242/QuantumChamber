@@ -24,8 +24,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 使用同一個 template，都是同一種情況。這個修正適用於所有世界與所有呼叫端。
  * <p><b>單執行緒時語意不變。</b>{@code ConcurrentHashMap.computeIfAbsent} 對同一個 key 是原子的：同一個方塊只計算一次（第二個執行緒等第一個算完，不重複計算），回傳同樣內容的
  * list。原版的 mapping function 只讀 {@code infos}、不碰這個 map（不會遞迴更新），回傳 {@code Collectors.toList()} 的結果，不會是 null；呼叫端只讀回傳的 list。唯一的差異是
- * null key 會丟 {@code NullPointerException}，原版的呼叫端只傳 {@code Blocks.JIGSAW}、{@code Blocks.STRUCTURE_BLOCK}，不會傳 null。命中時不加鎖；建構時多配置一個空的
- * {@code HashMap}（原版的初始值），可以忽略。
+ * null key 會丟 {@code NullPointerException}，原版的呼叫端只傳 {@code Blocks.JIGSAW}、{@code Blocks.STRUCTURE_BLOCK}，不會傳 null。命中時：JDK 21 的
+ * {@code computeIfAbsent} 只有在 key 是所在 bin 的第一個節點時才不加鎖，其他情況（同一個 bin 有其他 key）命中也會鎖住那個 bin；這個 map 只有上面兩個 key，很少碰撞，
+ * 不影響正確性。建構時多配置一個空的 {@code HashMap}（原版的初始值），可以忽略。
  * <p><b>不記 log。</b>這裡沒有任何例外或分支，只換掉欄位。回歸測試是 JUnit 的 {@code StructureTemplateCacheConcurrencyTest} 與 M5 collapse probe 的 {@code h6race} chain。
  * <p><b>相容性。</b>C2ME（{@code c2me-fixes-worldgen-threading-issues}）在同一個注入點把這個欄位換成 {@code Collections.synchronizedMap}；兩者不論哪一個在後，結果都是
  * thread-safe 的 map。{@code @Overwrite} 了 {@code getAllOf} 的 mod 會讓這個欄位不再被用到，無害；假設欄位是 {@code HashMap} 的 mod 會 {@code ClassCastException}（目前不知道
