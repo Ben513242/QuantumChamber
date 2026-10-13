@@ -248,7 +248,7 @@ final class M5CollapseRun {
     /** {@link HaltAt#TICK_END} 的 crash 點第一次成立時記下的 halt；還沒有成立時為 null（F6-2c fix round 1）。 */
     private volatile PendingHalt pendingHalt;
     /**
-     * crash 點第一次成立的那一刻（hook 裡）記下的取證（{@link #armCrash} 的 {@code atWindow}；還沒有成立時是空的）：寫進 halt receipt 的 {@code atWindow}，halt 時的取證以
+     * crash 點第一次成立的那一刻（hook 裡）記下的取證（{@link #armCrash} 的 {@code windowEvidence}；還沒有成立時是空的）：寫進 halt receipt 的 {@code atWindow}，halt 時的取證以
      * {@link #atWindow()} 讀它（F6-2d Step 0，F6-2c fix round 1 spec re-review Minor 1：{@link HaltAt#TICK_END} 的窗口要分辨「那一刻」與「那個 tick 結束時」的磁碟）。
      */
     private volatile Map<String, Object> atWindow = Map.of();

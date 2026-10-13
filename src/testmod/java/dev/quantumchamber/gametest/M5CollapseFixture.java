@@ -68,7 +68,8 @@ import net.minecraft.world.dimension.DimensionType;
  * 僅 testmod（M5 F6-2a，由 F6-1 的 {@code M5CollapseRecoveryProbe} 拆出）：一條 chain 的 fixture。原艙（Controller 在 (8,70,8)、朝北）、參與者（清單；
  * 可以多人：建立、JOIN、移動、跨越與位置的斷言都對清單裡的每一位，或對 {@link Who} 指定的子集）、MEASURED 收據，與這條 chain 的 id（session、原艙、
  * UniverseId、allocation token、crash 前的 catalog 筆數）。crash phase 建立這些值，restart phase 由 crash phase 的 receipt 讀回（{@link #readCrashReceipt}）。
- * 選門者由收據的 selection 推導（{@link #selectorId}，F6-2c），不依清單順序；清單的順序只用在收據的 cohort 與 {@code receiptIdentity} 的比對。
+ * 選門者由收據的 selection 推導（{@link #selectorId}，F6-2c），不依清單順序；清單的順序用在收據的 cohort 與 {@code receiptIdentity} 的比對，以及 JOIN、門口位置與
+ * {@link #first} 的順序（F6-2d Step 0：{@code Who} 的 Set 的迭代順序未定義，要依順序時經 {@link #inListOrder}）。
  * 另有各 chain 共用的查詢（U、走廊、磁碟上的方塊與權威）與兩個收斂的斷言（{@link #expectCatalog}、{@link #expectOneAllocation}）。
  */
 final class M5CollapseFixture implements M5CollapseRun.Context {
@@ -239,7 +240,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /**
      * {@code who} 的每一位（依清單順序）真 JOIN，斷言 JOIN 在 U（F6-2c：已跨過、playerdata 存在 U 的參與者，spec §12 的「已跨過的人在目的世界重新加入」）、沒有被 recovery
-     * 攔截。F6-2d Step 0（F6-2c quality Minor 4）：由 {@code join(Who, Who, boolean)} 拆出，兩個 {@code Who} 與 boolean 的位置參數換位置也能編譯；同一個 step 裡與
+     * 攔截。F6-2d Step 0（F6-2c quality Minor 4）：由 {@code join(Who, Who, boolean)} 拆出（原本兩個 {@code Who} 換位置也能編譯，boolean 也看不出意思）；同一個 step 裡與
      * {@link #joinInTheSource} 先後呼叫，就是同一個 tick JOIN。
      */
     void joinInTheUniverse(Who who) {
