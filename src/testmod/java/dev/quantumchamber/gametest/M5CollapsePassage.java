@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 import java.util.stream.StreamSupport;
 import net.minecraft.util.math.Vec3d;
 import org.apache.logging.log4j.Level;
@@ -31,7 +32,7 @@ import org.apache.logging.log4j.Level;
  * PASSAGE_READY → 越過門板中線、傳送到 U → (b) 全員都已跨過的終局）、每個 tick 的不變量（spec §12 的共同斷言），與終局的 spec §12 斷言（{@link #expectEnd}）。
  * <p>F6-2c（F6-2a quality Minor 1 與給 W7 的建議）：step 拆成可選的三段，chain 只取需要的段：{@link #resolve}（RESOLVE 完成、進入艙內）、{@link #ready}（PASSAGE_READY；
  * 之後讓要跨越的參與者站到門板中線內側）、{@link #cross}（指定的參與者越過中線、傳送到 U；可以只是參與者的子集，也可以分幾次）。{@link #steps} 是三段全員跨越、再接
- * (b) 終局的完整版本（既有的 restart 都用它，行為與拆段之前相同）。
+ * (b) 終局的完整版本（既有的 restart 都用它，行為與拆段之前相同）。F6-2d-1：(b) 終局的 step 也可以單獨取（{@link #ended}，終局的參數由 chain 交來）。
  */
 final class M5CollapsePassage {
     /** 門口的 local x（依參與者在清單中的順序；第一位與拆段之前相同，在門口正中）。兩人以上時錯開，不站在同一格。 */
@@ -61,7 +62,10 @@ final class M5CollapsePassage {
                 () -> "catalog " + catalogIds.size() + " 筆，crash 前 " + fixture.catalogBefore());
         var current = run.journal().flushedRecords().get(fixture.sid());
         if (current != null) {
-            run.expect("sameDestination", M5CollapseFixture.destination(current).equals(Optional.of(universe)), () -> "Destination=" + current.collapse().destination());
+            // F6-2d-1（W8）：DORMANT（MEASURED）的收據還沒有 Destination（提交 COLLAPSING 時才推導），只在塌縮狀態斷言。
+            if (current.state().collapseState()) {
+                run.expect("sameDestination", M5CollapseFixture.destination(current).equals(Optional.of(universe)), () -> "Destination=" + current.collapse().destination());
+            }
             run.expect("noRedraw", M5CollapseFixture.sameCandidate(fixture.receipt(), current), () -> "候選 context、ledger 或 selection 與 crash 前不同");
         }
         for (var id : fixture.participants()) {
@@ -87,8 +91,17 @@ final class M5CollapsePassage {
         steps.add(resolve());
         steps.add(ready(prepared, M5CollapseFixture.EVERYONE));
         steps.addAll(cross(M5CollapseFixture.EVERYONE));
-        steps.add(new Step("ended", 40, this::endedByEveryoneCrossing));
+        steps.add(ended(() -> End.crossed(fixture)));
         return List.copyOf(steps);
+    }
+
+    /**
+     * ended 段（step {@code ended}）：(b) 全員都已跨過的終局（record 已不在、「(b) 全員都已跨過」的 INFO 一則、原艙門一般開門），再以 {@code end} 的參數斷言 spec §12 的終局。
+     * {@code end} 在終局的那一刻才建立（參與者在開服時才由收據讀回）。F6-2d-1 由 {@link #steps} 拆出（終局的參數因窗口而不同，例如 allocation ledger 另有一筆的 w9io）。
+     */
+    Step ended(Supplier<End> end) {
+        Objects.requireNonNull(end, "end");
+        return new Step("ended", 40, () -> endedByEveryoneCrossing(end));
     }
 
     /** resolve 段（step {@code resolved}）：「目的地已確定（RESOLVE 完成）」INFO 之後，U 已物化、catalog 恰多 1 筆、discovery 恰一筆 U；之後全員進入艙內。 */
@@ -175,13 +188,13 @@ final class M5CollapsePassage {
         return true;
     }
 
-    private boolean endedByEveryoneCrossing() throws Exception {
+    private boolean endedByEveryoneCrossing(Supplier<End> end) throws Exception {
         var sid = fixture.sid();
         if (run.journal().flushedRecords().containsKey(sid) || run.journal().records().containsKey(sid)) return false;
         run.expect("endedByEveryoneCrossing", run.capture().matching(Level.INFO, "量子通道已結束", "(b) 全員都已跨過", sid.toString()).size() == 1,
                 () -> "沒有恰一則 (b) 的結束 INFO");
         run.expect("plainOpenAfterTheEnd", M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "終局之後原艙門不是一般開門");
-        expectEnd(End.crossed(fixture));
+        expectEnd(end.get());
         return true;
     }
 
@@ -207,14 +220,18 @@ final class M5CollapsePassage {
         private final Map<UUID, Place> places;
         private final int sessionErrors;
         private final boolean authorityInitialized;
+        /** allocation ledger 在這條 chain 的那一筆之後另有的 entry（F6-2d-1，w9io）；預設沒有。 */
+        private final List<M5CollapseDiskEvidence.Allocation> otherAllocations;
 
-        private End(M5CollapseFixture fixture, int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, int sessionErrors, boolean authorityInitialized) {
+        private End(M5CollapseFixture fixture, int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, int sessionErrors, boolean authorityInitialized,
+                List<M5CollapseDiskEvidence.Allocation> otherAllocations) {
             this.fixture = Objects.requireNonNull(fixture, "fixture");
             this.catalogGrowth = catalogGrowth;
             this.projection = Objects.requireNonNull(projection, "projection");
             this.places = Collections.unmodifiableMap(new LinkedHashMap<>(places));
             this.sessionErrors = sessionErrors;
             this.authorityInitialized = authorityInitialized;
+            this.otherAllocations = List.copyOf(otherAllocations);
         }
 
         /** 每位參與者（依清單順序）都在 {@code place}。 */
@@ -227,7 +244,7 @@ final class M5CollapsePassage {
 
         /** 正常的 restart：(b) 全員都已跨過，參與者都在 U，沒有這個 session 的 ERROR，authority 初始化成功。 */
         static End crossed(M5CollapseFixture fixture) {
-            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.UNIVERSE), 0, true);
+            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.UNIVERSE), 0, true, List.of());
         }
 
         /**
@@ -235,7 +252,7 @@ final class M5CollapsePassage {
          * 初始化成功。已跨過的人另以 {@link #placed} 改為 U。
          */
         static End inTheSourceWorld(M5CollapseFixture fixture) {
-            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.SOURCE), 0, true);
+            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.COMPLETE, everyone(fixture, Place.SOURCE), 0, true, List.of());
         }
 
         /**
@@ -243,7 +260,7 @@ final class M5CollapsePassage {
          * 只有永久原因那一則，authority 本 instance 初始化失敗。
          */
         static End degraded(M5CollapseFixture fixture) {
-            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.LEDGER_ABSENT, everyone(fixture, Place.SOURCE), 1, false);
+            return new End(fixture, fixture.catalogGrowth(), ProjectionAtEnd.LEDGER_ABSENT, everyone(fixture, Place.SOURCE), 1, false, List.of());
         }
 
         /** 同這一份，只有 {@code who} 的每一位改在 {@code place}（{@code who} 的成員都必須是參與者；以建立這一份的 fixture 決定）。 */
@@ -254,8 +271,20 @@ final class M5CollapsePassage {
                 if (!next.containsKey(id)) throw new IllegalArgumentException("End 沒有這位參與者：" + id);
                 next.put(id, place);
             }
-            return new End(fixture, catalogGrowth, projection, next, sessionErrors, authorityInitialized);
+            return new End(fixture, catalogGrowth, projection, next, sessionErrors, authorityInitialized, otherAllocations);
         }
+
+        /**
+         * 同這一份，allocation ledger 在這條 chain 的那一筆之後另有 {@code others}（依追加的順序；F6-2d-1，w9io：注入的另一個 session 的追加已落地，spec §6 roll-forward 不移除）。
+         * 終局改以 {@code oneAllocationForTheTokenWithTheOthers} 斷言 ledger。
+         */
+        End withOtherAllocations(List<M5CollapseDiskEvidence.Allocation> others) {
+            if (others.isEmpty()) throw new IllegalArgumentException("withOtherAllocations 至少要有一筆");
+            return new End(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, others);
+        }
+
+        /** allocation ledger 在這條 chain 的那一筆之後另有的 entry。 */
+        List<M5CollapseDiskEvidence.Allocation> otherAllocations() { return otherAllocations; }
 
         int catalogGrowth() { return catalogGrowth; }
 
@@ -279,7 +308,8 @@ final class M5CollapsePassage {
         var catalog = UniverseRegistryState.get(run.server()).flushedRecords();
         var record = catalog.get(universe);
         run.expect("catalogOnDisk", M5CollapseDiskEvidence.catalog(run.data()).keySet().equals(catalog.keySet()), () -> "磁碟上的 catalog 與 flushed 不同");
-        fixture.expectOneAllocation();
+        if (end.otherAllocations().isEmpty()) fixture.expectOneAllocation();
+        else fixture.expectAllocationsWithOthers(end.otherAllocations());
         var discovery = M5CollapseDiskEvidence.discovery(run.saveRoot());
         run.expect("onlyTheDestinationDiscovered", discovery.size() == 1 && discovery.getFirst().universeId().equals(universe) && discovery.getFirst().gameplayEligible(),
                 () -> "discovery=" + discovery);
