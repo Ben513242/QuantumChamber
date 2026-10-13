@@ -7072,6 +7072,31 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
   - `7ad305b` `docs: tidy the probe's comments on window evidence and list order`（只改註解；最後一個 code commit）
   - `6aa4ad2` `docs: describe the F6-2d Step 0 probe changes in the verification README`
   - 本節由其後的 docs commit `docs: record the F6-2d Step 0 in the M5 note` 加入。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 2）。
+    - 第 1 點行為不變：`attempt` 只捕捉 `RuntimeException`（與原本相同，都不捕捉 Error）；`firstWarning` 記在 `crossed()` 拿到的同一份 track；`logWarn`、`LOG_MARKER`、`session=` 與 `next` 的字串逐字相同；bytecode 只多兩個 lambda、`next` 提前組好（沒有副作用）。不加 JUnit 的理由成立（`build.gradle` 沒有 Mockito，存檔需要 live 的 `PlayerManager`；語意由 `CollapseServiceTest:811` 涵蓋）。
+    - 第 2 點沒有改弱：開服時門不是一般開門時，新判準等於原本的 `!plainOnTheEndTick`；已是一般開門時由恆真改成要求「仍是一般開門」。三次 GREEN 的 `trrpending-restart` 都是 `doorPlainAtStart=true`，新內容真的被檢查；名稱集合不變（M-3）。
+    - 第 5 點沒有誤擋（33/33）；mutation `4e1cd23d…` 以 `ExceptionInInitializerError` 在開服前失敗。觀察：mutation 只驗到五條規則中的一條。
+    - 第 9 點的取證在 `commitRollForward` 的 RETURN、早於 `saveCrossedPlayerData`；mutation `15007c8a…` 唯一的 failure 就是新斷言；GREEN 的 `atWindow` 是 `minecraft:overworld`，與 restart 的 `selectorPlayerDataInTheUniverse` 合起來驗到「先 journal、後 playerdata」。
+    - reviewer 獨立比對 33 個 phase 的 step 序列（全部相同）、五組 receipt 與 `04aefb2a…` 的名稱（都只多 `w7-crash` 的新斷言）、`javap -c -p`（只差行號資訊），並抽查 29 個行號都正確。
+    - Minor：1. 「偏離派工字面之處」把第 11 點誤列為偏離（已在該處更正）；2. 最終 HEAD 的 run-all-2 只在 `STATUS.md`（下一點補上）。
+  - （controller 依 spec review Minor 2 補）所有 commit 之後的 run-all-2：`run-all-9221b4e848ad44cf8cc2d2ef88053715`，HEAD `5838012`，`END ALL exit=0`，SUMMARY 與基準相同（collapse `5423c1f2…`）。Full WARN／ERROR 55／29：多出的 WARN 1、ERROR 1 是 `m2_task4_no_entrance` 的 `quantumchamber_sessions.dat` 原子移動 `AccessDeniedException`（已知偶發，test 照常 PASS）。這是本輪的最終回歸。
+  - quality review **Approved**（Critical 0、Important 0、Minor 7、nit 2），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Strengths：第 1 點逐條等價；`AtRestart` 的重複消除、不合法的組合在 `onInitialize` 就失敗；`AtWindow` 與 `BeforeHalt`、`Condition` 的參數個數不同，換位置不能編譯，`WINDOW` 的列指定 `atWindow` 時 class init 就丟出，hook 裡的例外由 `CrashPoint.reach` 收下；JOIN API 去掉了換位置也能編譯的風險；probe 已沒有 `.iterator().next()`；h6race 的 ticket level 不變、Javadoc 正確；`fail(msg, cause)` 保留 stack。
+    - Minor：
+      1. `notYetOpenOnTheEndTick`（`PCH:366`）的名稱與內容矛盾：`doorPlainAtStart=true` 時斷言的是「終局那個 tick 門仍是一般開門」，receipt 卻記「還沒開門 PASS」。建議改名（例如 `doorUnchangedOnTheEndTick`）並在 `names2.py` 加改名表；M-3 只要求兩種時序名稱相同，改名一次不違反。
+      2. `armCrash`（`RUN:502`；呼叫端 `WIN:379-380`）有兩個相鄰、同型別的 `HaltEvidence`，互換也能編譯；`crossedpending` 這類 `TICK_END` 列的取證時點會靜默改變。建議 runner 這一層改用不同的型別或一個 record。
+      3. `collect`（`RUN:528`，`:508`、`:513` 共用）的失敗標籤寫成「haltEvidence：halt 之前的取證失敗」，窗口那一刻的取證失敗時會誤導。建議加 label 參數。
+      4. `AtRestart.copy`（`WIN:143-154`）逐欄手抄：新增欄位時忘了抄也能編譯，之後的 wither 會把它重設；原建構子的 `requireNonNull` 不見了，`disk = NO_CHECK` 依賴 static 欄位的宣告順序。建議 `super.clone()`，或在 `validated()` 補 `requireNonNull`。
+      5. 驗證範圍小於 README（`:252`）的說法：通道列指定 `recognizingBeforeJoin` 或非 null 的 `Prepared` 時會被忽略（`PCH:322` 丟掉 `started` 的回傳值），目前沒有觸發，但 W8、W9 正是通道列。建議加規則「只用在 COLLAPSING 的列」，或縮小 README 的說法。
+      6. `PassageService.java:414-416` 的 `sideEffect` 呼叫偏重（6 個參數、兩個 handle 指向同一份 map）；`CollapseService` 其他呼叫端用 private 的 4 參數 overload（`CS:1369`）。建議下次 `CollapseService` 在允許範圍內時把 overload 改成 package-private；短期至少把 `next` 抽成區域變數。
+      7. JOIN 命名：`joinInTheSource` 對照既有的 `End.inTheSourceWorld` 與斷言名 `joinedInTheSourceWorld` 用語不一致；`joinAll(Inside)` 看不出在哪個世界。建議 `joinInTheSourceWorld`／`joinAllInTheSourceWorld`。
+      - nit：W7 的新斷言（`WIN:582`）也接受 `ABSENT`，可改成「等於來源世界」；`trrCrash` 對 `selectorCrossesAfterASave` 的回傳值多包了一次 `new ArrayList<>`。
+    - 給 F6-2d 本體的建議：跨欄位的組合規則改在 `row()` 以最終組合驗證一次、訊息帶窗口 id（wither 的呼叫順序不再有限制；「只能指定一次」留在 wither）；多人跨越時提供「依 record 的 Crossed、照清單順序逐人決定 JOIN 在 U 或來源世界」的 API；8 參數的 `row()` 中 `haltTiming` 只有 `TICK_END` 合法，可改成專用的 `tickEndRow(...)`；前半段 step 有變化時以組合 step 清單擴充 `selectorCrossesAfterASave`，不要再加 boolean；Minor 1 的改名、Minor 2 的型別與 W8、W9 的新斷言一起處理，names 改名表只更新一次。
+  - controller 處置：不開 fix round。
+    - quality Minor 1～5、7、兩則 nit、給 F6-2d 本體的建議 → **F6-2d 本體**（在加 W8、W9 之前先做，與新斷言一起處理改名表）。
+    - quality Minor 6（`CollapseService` 的 overload 可見性）→ F6-2d 本體若會改 `CollapseService` 就一併處理；否則寫進 F7 的延後清單。
+  - **F6-2d Step 0 完成**：range `5c25bb4..5838012`，之後接 controller 的 docs commit。最終 run-all：`run-all-9221b4e848ad44cf8cc2d2ef88053715`，`END ALL exit=0`（`5838012`）。
 - 中間 commit 的編譯（`f62ds0/c1`～`c15-compile.log`：`compileJava compileTestJava compileTestmodJava compileClientProbeJava`，都 BUILD SUCCESSFUL；`c*-compile-state.txt` 記下編譯時工作樹的 blob）：每個 code commit 之前各一次，依序對應上面 `28a22ec`～`a5a9edf`（`c11`、`c12` 都是 `a5a9edf`，`c12` 只多一行類別 Javadoc）、`a25f06a`（`c13`）、`47f26c3`（`c14`）、`7ad305b`（`c15`）。
 - 只改了派工允許的路徑：`src/main/` 只有 `PassageService`（第 1 點）與 `PalettedBlockInfoListConcurrentCacheMixin` 的 Javadoc（第 10 點）；JUnit 只有 `StructureTemplateCacheConcurrencyTest`；testmod 只有 probe 的 `M5CollapseRun`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassage`、`M5CollapsePassageChains`、`M5CollapseDormantChains`、`M5CollapseRevisitChains`（後兩者只改 `joinAll` 的呼叫）、`M5CollapseRecoveryProbe`、`M5CollapseTemplateRaceChain`，與 `M5GameTestSupport` 的 `destinationTickets`／新的 `tickets`（第 7 點）；`scripts/verification/README.md` 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 其他 `src/main/`、`build.gradle`、`fabric.mod.json`、`quantumchamber.mixins.json`、`quantumchamber-test.mixins.json`、所有 ps1、`.github/`、其他 GameTest、M4 probe、其他 JUnit、語言檔、`M5TestHooks`、spec、plan、AGENTS。
 
@@ -7142,7 +7167,7 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 - 第 5 點的驗證比派工舉的兩個例子多：`notReturned`、`recognizingBeforeJoin` 的前提與狀態只能指定一次；目前的窗口表全部符合。驗證依呼叫順序（例如 `withCrossedAtHalt` 要在 `withStateAtHalt` 之後），目前的表都是這個順序。
 - 第 6 點另把窗口表一列的欄位 `haltAt` 改名 `haltTiming`（與 receipt 的鍵一致）；enum 名 `HaltAt` 不變。
 - 第 9 點：`atWindow` 是窗口表的一個新欄位（不是新的 CrashWindow），halt receipt 從此都有 `atWindow` 的鍵（除了 `w7` 都是空的）。
-- 第 11 點依派工用 `getLevelFromStatus(STRUCTURE_STARTS)`（H6 review 舉的是 `getLevelFromType(FULL)`）。
+- 第 11 點依派工用 `getLevelFromStatus(STRUCTURE_STARTS)`（H6 review 舉的是 `getLevelFromType(FULL)`）。（controller 依 spec review Minor 1 更正：H6 quality Minor 1 的建議原文就是 `addTicketWithLevel(…, ChunkLevels.getLevelFromStatus(STRUCTURE_STARTS), …)`，`getLevelFromType(FULL)` 只是「有 public API 可以取代寫死的 33」的佐證，所以這不是偏離。逐項處置表第 11 列的同一句也依此理解。）
 - 第 1 點的 mutation adapter `mut-save-throws` 改寫（存檔改在 lambda 裡，fix round 1 的字串已不存在）；`mut-save-before-commit` 與 `mut-hashmap` 的字串未改。
 - M4 recovery 沒有另外單獨跑，以 run-all 的 `recovery=24` 為準。
 - run-all-1 在 README commit `6aa4ad2` 之後、本節的 docs commit 之前執行，結果寫在本節；本節的 commit 只改這份 note。

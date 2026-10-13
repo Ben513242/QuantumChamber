@@ -129,7 +129,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
   - **worldgen CME**：一人在目的宇宙 U、一人在來源世界，兩個世界同時生成同一區域的 chunk 時，原版 worldgen 偶爾丟 `ConcurrentModificationException`（`StructureTemplate$PalettedBlockInfoList.getAllOf` 的 HashMap，structure_starts），之後停服卡住。一般多人遊玩也可能觸發。使用者 2026-10-13 裁示：讓結構範本的快取可以安全地同時使用（比照 H5 的小 mixin），改之前先做根因調查。controller 開 task **H6**。Step 0（根因調查）已完成，經獨立 review ✅：兩個世界共用 server 的結構範本，範本的 `blockToInfos`（`HashMap`）被兩個世界的 worldgen 同時第一次寫入；只修這個快取就足夠。spec 升為 v5.8（§4 H6、§20.12），plan 新增 Task H6。CME 之後停服卡住是原版行為，不另外修，寫進 F7。**H6 已完成（2026-10-13）**：range `4e7ff77..480918d`；production 只新增 `PalettedBlockInfoListConcurrentCacheMixin`（把 `blockToInfos` 換成 `ConcurrentHashMap`）；回歸測試是 JUnit `StructureTemplateCacheConcurrencyTest` 與 probe chain `h6race`（`m5collapse=33`）；`w7`、`trr` 的 restart 改回同時 JOIN；spec review ✅、quality review Approved；完整回歸 `run-all-76f45a496e1e41fbb60117280ca2a510` 為 `END ALL exit=0`（`480918d`）。
   - CI：M5 上 CI 之後，Windows `windows-native` 通過；Ubuntu `build` 的 M5 GameTest 在相同的 code 上失敗了三次：前兩次是同一個 test，第三次是另外 7 個 test 沒有完成。交給 F6-3。
   - 試玩回饋（2026-10-13）：使用者覺得還行，希望看到不同的宇宙生成。這屬於設計 §28 的 M6（random seed 等），不併入 M5。
-  - 之後依序是：F6-2d（先做 Step 0）、F6-2e、F6-3 → F7 → milestone 收尾。
+  - F6-2d Step 0（F6-2c 與 H6 review 留下的整理，不新增窗口）已完成（2026-10-14）：range `5c25bb4..5838012`；`src/main/` 只有 `PassageService` 改經 `CollapseService.sideEffect`（行為不變）與 H6 mixin 的 Javadoc；spec review ✅、quality review Approved；完整回歸 `run-all-9221b4e848ad44cf8cc2d2ef88053715` 為 `END ALL exit=0`（`5838012`）。
+  - 之後依序是：F6-2d 本體、F6-2e、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
