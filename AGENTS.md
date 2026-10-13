@@ -104,7 +104,7 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 
 M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使用者指示，把 feature 分支 push 到 `origin`，讓使用者在另一台電腦 pull 下來試玩：第一次是 `5ba8b47`，停在 F6-2c fix round 1 的中途；fix round 1 的實作完成之後再 push 一次。實際狀態以遠端 ref 為準。
 
-- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.8；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示，v5.8 是 2026-10-13 對 worldgen CME 的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
+- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.9；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示，v5.8 是 2026-10-13 對 worldgen CME 的裁示，v5.9 是 2026-10-14 對重啟之後觸發的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
 - 進度（2026-10-13）：
   - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）、F4b-1（投影元件，以及 F4a 的 Step 0）、F4b-2（PREPARE 的目的宇宙側，含 fix round 1）、F4b-3（PREPARE 期間的原艙門，含 fix round 1）。F4b 的三個子 task 都已完成。F5 依 plan 拆成 F5-0（抽出原艙門）、F5-1（通道本體）、F5-2（比較器與 membrane 正規化）；F5-0、F5-1、F5-2 都已完成，F5 完成。F6 依 plan 拆成 F6-0（F5-2 的 Step 0、G-NLIVE 的根因與測試缺口）、F6-1（跨 JVM probe 的基礎建設與 W1～W6）、F6-2（W7～W12 與額外的 phase）、F6-3（harness 與 CI）；F6-0 已完成（2026-10-08）。
   - T0：controller 執行的 clean-clone 基線，不改程式。
@@ -130,7 +130,9 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
   - CI：M5 上 CI 之後，Windows `windows-native` 通過；Ubuntu `build` 的 M5 GameTest 在相同的 code 上失敗了三次：前兩次是同一個 test，第三次是另外 7 個 test 沒有完成。交給 F6-3。
   - 試玩回饋（2026-10-13）：使用者覺得還行，希望看到不同的宇宙生成。這屬於設計 §28 的 M6（random seed 等），不併入 M5。
   - F6-2d Step 0（F6-2c 與 H6 review 留下的整理，不新增窗口）已完成（2026-10-14）：range `5c25bb4..5838012`；`src/main/` 只有 `PassageService` 改經 `CollapseService.sideEffect`（行為不變）與 H6 mixin 的 Javadoc；spec review ✅、quality review Approved；完整回歸 `run-all-9221b4e848ad44cf8cc2d2ef88053715` 為 `END ALL exit=0`（`5838012`）。
-  - 之後依序是：F6-2d 本體、F6-2e、F6-3 → F7 → milestone 收尾。
+  - F6-2d 本體由 controller 拆成 F6-2d-1（整理與重試）與 F6-2d-2（門與 SEALED）。**F6-2d-1 已完成（2026-10-14）**：range `999e356..c0184f4`，新增 W8、W9（含兩個變體）與 `AUTHORITY_UNREADABLE` 的重啟窗口，`m5collapse=43`；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-ef32890a6e9f4791ae311f7777bde2b7` 為 `END ALL exit=0`（`c0184f4`）。
+  - F6-2d-1 發現：重啟之後玩家在 spawn chunks 以外的 DORMANT 原艙內登入時，原艙還沒載入，§7.1 的觸發會落空，要離開再進入（不困人，沒有訊息）。使用者 2026-10-14 裁示修正：spec v5.9 §7.1、§4 H7、§20.13，plan Task H7。
+  - 之後依序是：H7、F6-2d-2、F6-2e、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

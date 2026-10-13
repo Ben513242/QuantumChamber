@@ -7201,6 +7201,33 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
     - B 段：`35753c7` `test: add probe crash windows for the DORMANT and SEALED steps and the catalog DISABLED write`（hook）、`5a08583` `test: let the probe's window table describe DORMANT, DISABLED and materialized halts`（窗口表）、`b32bcc1` `test: add the W8, W9 and AUTHORITY_UNREADABLE restart chains to the collapse probe`（chain 與三份表；**最後一個 code commit**）。
   - 第二位 implementer：`c8c5aa7` `docs: describe the F6-2d-1 probe changes in the verification README`；本節由其後的 docs commit `docs: record F6-2d-1 in the M5 note` 加入。mutation 沒有找到要修 probe 的地方（兩個 adapter 寫錯，修 adapter 重跑；見下），所以沒有新的 code commit。
 - 只改了派工允許的路徑：testmod 的 probe（`M5CollapseRun`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassage`、`M5CollapsePassageChains`、`M5CollapseDormantChains`、`M5CollapseRevisitChains`、`M5CollapseRecoveryProbe`，與新的 `M5CollapseRetryChains`）；`M5TestHooks` 只加 4 個 `CrashWindow` 值與說明；mixin：新的 `CollapseServiceCrashWindowMixin`、既有的 `SessionRecoveryStateCrashWindowMixin`（加注入點、統一 `commitRestore`）與 `CollapseAuthoritiesCrashWindowMixin`（加注入點），以及 `quantumchamber-test.mixins.json` 的登記；`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；`scripts/verification/README.md` 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** `src/main/`、`build.gradle`、`fabric.mod.json`、其他 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5GameTestSupport`）、M4 probe、JUnit、語言檔、spec、plan、AGENTS。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 2、nit 1）。
+    - W8：crash 之前沒有 COLLAPSING（`notCommittedWithoutAnEdge`、`dormantOnDiskAtHalt`）；開服之後的第一次觀察來自 `EntryWatch(armedAtStartup)`（green 兩次都是 `committedAtPhaseTick=1`、沒有移動），不是 JOIN 的邊緣；三個 mutation 各打一個分支、互不重疊；`startupSessions` 由真的 attach 產生，取代了 `markStartup` 的模擬。
+    - W9：`w9io` 的注入確實造出「已落地、讀回失敗」（`lookupOrAppendAllocation` 只讀記憶體的 current，唯一的磁碟讀取是 checkedWrite 的讀回，`CheckedReadFault(FILE_NAME,0,1)` 正好打在這裡）；`w9cd` 的判定（開服的第一次 RESOLVE 就是 §8.3 的重試、不經 SEALED）依 §6 :283、§8.3 :479、§6.2 :318、§12 :739 成立，F4a 時也已接受這個讀法。每條都有 §12 的四件事。
+    - `AUTHORITY_UNREADABLE`：符合 §12 與 §11.2 :703；`082cca49…` 同時繞過兩層保護、有意義；`ec0dbfaf…` 不採計正確；`1e38e974…` 是等價變異（`sealCommitted` 對 restart-only 的原因設 `restartRetryConsumed=true`），`startupSession` 這一層因此沒有單獨被 cross-JVM 抓到，但它是冗餘的保護。
+    - A 段：43/43 GREEN、沒有誤擋；compile 與 class init 的 mutation 都核對過；`commitRestore` 統一後行為不變。
+    - **W8 的觀察**：字面符合 §7.1 :380-388（觸發當下要「來源艙已載入」，spec 沒有要求保留落空的觸發），不困人；**但與意圖有落差**：:382 的觸發是讓重啟時人在艙內的參與者不必再進出一次，而實際的 server 上玩家在開服之後才連線、chunk 在 JOIN 之後幾個 tick 才載入，原艙不在 spawn chunks 時這個觸發幾乎必定落空，而且沒有任何訊息。reviewer 讀 code 推論 `sealed()`（`CS:1082-1087`，SEALED 的重啟後重試）與 `PrepareGate.edge()`（`CS:1135-1143`，WAITING）也是同樣的寫法。建議問使用者是否另開 task 修 production，並給出最小作法：觸發的人已 `triggerReady`、但 `sourceSignal == NOT_LOADED` 時，以新的 `EntryWatch.forget(uuid)` 把他移出 `inside` 再 return；LOW／INVALID／DISABLED 仍消耗這次邊緣；`PrepareGate.edge()` 第一次評估遇到 `NOT_LOADED` 時不設 `gateEvaluated`。
+    - Minor：
+      1. 交接 F6-2-03 的子項「開服時 COLLAPSING＋`DISABLED` 的 I-1 變形」沒有寫處置。production 沒有開服特有的狀態（`startupCollapsing` 已在 F4a fix round 1 刪除；`DestinationResolver.java:159` 一律用 `MATERIALIZE_RETRY`；`materializeSpent` 只在嘗試物化時才記），所以這個組合由 `w9cd`（開服 COLLAPSING 的第一次 RESOLVE）、`w9io`（`ALLOCATION_IO_FAILED` 之後的重試）與同 JVM 的 DRT 涵蓋（controller 以此處置）。
+      2. `w9io` 的「另一個 session 的 allocation 追加」是以 API（隨機 intent 呼叫 `lookupOrAppendAllocation`）造出的 entry，journal 沒有對應的 record，之後也沒有重啟，所以沒有評估它；對 RESOLVE 第 1 步是等價的（gate 只看權威層級的未確認與退避）。本節「B 段」與「W9 兩個變體」中的說法以此為準；README 的措辭交給下一個改 README 的 task（H7）。
+      - nit：`f62d1/green-*-probe-summary.txt` 只有前 40 行，43 個 PASS 要看 `green-*-probe.log`（reviewer 已核對 43／0）。
+  - **使用者 2026-10-14 裁示**（AskUserQuestion）：W8 的觀察選「**修正：等艙載入再判斷**」（controller 推薦）。controller 另開 task **H7**（spec v5.9），排在 F6-2d-2 之前，讓門與 SEALED 的重啟窗口在修正後的行為上跑。上面「需要裁示」第一點以此結案，F7 不必寫成已知行為。
+  - quality review **Approved**（Critical 0、Important 0、Minor 5、nit 6），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Strengths：`M5CollapseRetryChains` 共用 `origin`、`crashPhase`、`restartPhase`、`arm`、`retried`、`reenabled`，終段接回 `M5CollapsePassage`；`requireNoProjectionLoad` 在 `onInitialize` 擋下不支援的列；三個 mixin 都有完整描述子、`require=1`、只讀，production 改了呼叫路徑時 crash phase 的 `halt` step 會逾時判 FAIL，不會靜默失效；`M5TestHooks` 只加 4 個值；等待都以 server tick 計，失敗都落在具名斷言；note 的 19 個行號抽查都正確。
+    - Minor：
+      1. 共用的可變計數器 `watched`（`RC:77`，由 `:168`、`:213`、`:360` 三個 step 共用，只在 `:356` 歸零），加上 `PCH:453` `sealedNotRetried` 的同一個模式；`WATCH_TICKS`（`RC:60`）與 `SEALED_WATCH_TICKS`（`PCH:56`）重複。同一個 phase 加第二段觀察卻忘了歸零時，第二段實際只觀察 1 tick、不會報錯。建議在 Passage 提供 `watch(stepName, ticks, eachTick)` factory（區域計數器，比照 `ready()`），共用一個常數。
+      2. step 組合重複：`w9AllocationRetryRestart`（`RC:396-399`）手抄一份 `passage.steps()` 只為換 `End`；`resolvedWithoutMoving`（`RC:327-335`）重複 `resolvedThenEnter`（`PSG:150`）的三個斷言。建議 `passage.steps(prepared, Supplier<End>)` overload 與 `passage.expectResolved()`。
+      3. `serverStartedWithTheDisabled` 分散在 `w9cd` 的 `withDisk`（`WIN:389`）與 `sealedKeptAtRestart` 的分支（`WIN:953`）；新增 DISABLED 的列卻沒指定 `withDisk` 時斷言會消失。建議移到 `expectAtRestart` 的 `catalogDisabledAtHalt()` 分支（`WIN:902`）。
+      4. `recordKeptAcrossTheRestart` 兩份語意不同（`RC:232-237` 只在 `atHalt` 有 `recordAtHalt` 時比對；`PCH:330-333` record 存在就一定比對）：`w8`、`w9cd` 的 halt 前取證沒有 digest，`w9cd` 跨重啟沒有逐欄位比對 COLLAPSING 的 record。建議抽成共用 helper，由窗口表的列宣告是否必比對。
+      5. runner 不檢查 step 名稱重複（`RUN:382` 的 `witness.put` 會覆蓋；`Phase.stop`／`halt` 不檢查），而新程式依賴名稱唯一（`retried()` 的 `retriedAgain`、`passage.cross()` 可分次呼叫）。dev-b1 的重名只靠人工發現。建議在 Phase 建構時檢查重名並丟出。
+      - nit：`M5TestHooks.java:371-375` `RollForwardWrite` 的 javadoc 沒有列 `MATERIALIZE_SEALED`（`:359` `CollapsingCommit` 也漏了 `READY_COMMITTED`）；`FIX:702` 重複 `addTicket`；`EvidenceWriter`（`RUN:532`）與 `WindowEvidence` 形狀相同可合併；`RC:454` 以 `retries == 0` 代表「預期沒有 SEALED WARN」；`RC:318` 的行內常數 `3`；`RC:65` `BACKOFF_TICKS = 205` 可指向 `CollapseBackoff.INITIAL_TICKS`；`RC:487` `otherAppendLanded` 與 `fixture.expectAllocationsWithOthers` 重複。
+    - 給 F6-2d-2、F6-2e 的建議：加門與 SEALED 的觀察之前先做 Minor 1、5；`M5CollapseRetryChains` 寫死一人（`joinedAt` 單一 `Vec3d`、`players().getFirst()`、`buildOrigin(1)`），多人要每人各記；掛在 `CollapseService.step` HEAD 的窗口在 `operationInProgress` 與隔離的判斷之前、每個 tick 每個 session 都會呼叫，條件要同時過濾 session、狀態與原因，「門已套用之後」的窗口要另選程式點；PREPARE 中 crash 不要靠時序，用 hold 類的 hook 讓 PREPARE 的長度確定；F6-2e 加 W10～W12 之前先做 Minor 2，再讓 retry chain 的 restart 讀窗口表的 `Prepared`。
+  - controller 處置：不開 fix round。
+    - spec Minor 1、2 以本區塊處置（README 的措辭交給 H7）。
+    - quality Minor 1～5、nit、給 F6-2d-2 的建議 → **F6-2d-2**（A 段先做，再加門與 SEALED 的窗口）；給 F6-2e 的建議 → F6-2e。
+    - H7 的 RED 以 `obs-w8-late-join` 的條件為起點，做成正式的 chain。
+  - **F6-2d-1 完成**：range `999e356..c0184f4`，之後接 controller 的 docs commit。最終 run-all：`run-all-ef32890a6e9f4791ae311f7777bde2b7`，`END ALL exit=0`（`c0184f4`）。
 
 ### A 段逐項處置
 

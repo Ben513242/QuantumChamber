@@ -789,6 +789,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - controller 2026-10-14 把本體再拆成兩次派工，各自走完 implementer → spec review → quality review（理由：F6-2c 本體一次做完時，implementer 的 context 約 76 萬，超過接力的門檻）：
       - **F6-2d-1：整理與重試。** F6-2d Step 0 review 交下的 Minor；W8；W9（含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`）；`AUTHORITY_UNREADABLE` 重啟後重試。交接清單 F6-2-02、F6-2-03、F6-2-07。
       - **F6-2d-2：門與 SEALED。** sealed 量子膜期間 crash → WAITING、一般開門；SEALED 開服後只關門一次（含 SEALED 寫入與門之間 crash）；PREPARE 中重啟的重新套用；SEALED 帶著量子膜時重啟；spec review 的 M-2（永久 SEALED 開服時的 ERROR）。交接清單 F6-2-08～F6-2-11。
+      - F6-2d-1 已完成（2026-10-14，spec review ✅、quality review Approved）。它的 quality Minor 1～5、nit 與給 F6-2d-2 的建議，由 F6-2d-2 先做（A 段），再加門與 SEALED 的窗口；清單見 note F6-2d-1 一節的「Review 與最終 review」。
+      - F6-2d-1 的 W8 觀察經使用者裁示修正，見下方 **Task H7**，排在 F6-2d-1 之後、F6-2d-2 之前。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；
@@ -882,6 +884,29 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 **完整回歸：** `run-all.ps1`。修正影響所有世界的結構生成，所以 default、legacy、M5、M3、M4 recovery、M5 collapse 都要與基準 `run-all-2fe4175797894e97a7dea49ee84142a5` 相同，除了預期的差異：單元測試多 1 個、`m5collapse` 33、release 與 sources 只多這個 mixin、`quantumchamber.mixins.json` 改變。
 
 **Commit：** `fix: let two worlds share a structure template's block info cache safely`
+
+---
+
+### Task H7: 重啟之後，觸發等來源艙載入（controller 2026-10-14 依使用者裁示插入，spec v5.9 §7.1、§4 H7、§20.13）
+
+在 F6-2d-1 之後、F6-2d-2 之前執行，走完 implementer → spec review → quality review。觀察、證據與最小作法，見 implementation note F6-2d-1 一節的「W8 的觀察」與「Review 與最終 review」。
+
+**Files：**
+- 先評估交接 F6-2-19：`CollapseService` 約 1591 行。這個修正若讓它超過約 1600 行，先以純搬移的獨立 commit 縮減（預設是 F6-2-19 列的 PREPARE 目的地側；較小的搬移要寫明理由），run-all 證明行為不變，再改行為。
+- Modify：`src/main/java/dev/quantumchamber/collapse/CollapseService.java`（`resumeDormant`、`sealed`、`PrepareGate.edge` 與 `EntryWatch`，以實際程式為準）。
+- JUnit：`EntryWatch` 或閘門的單元測試（若可以不經 server 測）。
+- M5 collapse probe：以 F6-2d-1 的 `obs-w8-late-join` 為起點，做成正式的 chain（開服時不預先載入原艙附近、原艙卸載之後才 JOIN 在艙內）。至少涵蓋 DORMANT 的續行；SEALED 的重試與 WAITING 的閘門，各以 RED 確認會落空之後，加 chain 或寫明為什麼不加。三份表、Javadoc chain 清單、README 的 chain 類別表一併更新。
+- `scripts/verification/README.md`：M5 collapse probe 一節；順便更正 F6-2d-1 spec review Minor 2 的措辭（`w9io` 的「另一個 session」是以 API 造出的 allocation entry）。
+
+**RED：** 測試先 commit。修正前，新 chain 在不離開再進入的情況下不提交（目標斷言失敗）。
+
+**GREEN：** 修正後不必再進出就續行；全部 phase 在同一個乾淨的 HEAD 上連跑兩次都 PASS；具名斷言與 F6-2d-1 的 green-2（`9155dea5…`）比對，差異只在新 chain。
+
+**mutation：** 未供電（或其他條件不成立）時也不消耗觸發 → 必須失敗在既有或新增的邊緣觸發斷言（例如 W8 的 `gateWaitsForAnEdge`）。
+
+**完整回歸：** `run-all.ps1`。修正影響 DORMANT、SEALED 與 WAITING 的觸發，所以 default、legacy、M5 GameTest 的集合與結果都要與基準 `run-all-ef32890a6e9f4791ae311f7777bde2b7` 相同；`m5collapse` 隨新 chain 增加；release 只有 `CollapseService`（與搬移出的類別）不同。
+
+**Commit：** `fix: keep a chamber trigger until the source chamber has loaded`
 
 ---
 
