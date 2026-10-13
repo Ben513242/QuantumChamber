@@ -2,6 +2,7 @@ package dev.quantumchamber.universe;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.util.ConcurrentModificationException;
 import java.util.List;
@@ -84,7 +85,8 @@ final class StructureTemplateCacheConcurrencyTest {
         assertAll(scenario,
                 () -> assertEquals(0, result.cme, () -> "PalettedBlockInfoList 的快取在同時第一次使用時丟出 ConcurrentModificationException：" + result),
                 () -> assertEquals(0, result.wrong, () -> "同時第一次使用時回傳的內容錯誤：" + result),
-                () -> assertEquals(0, result.other, () -> "同時第一次使用時丟出其他例外：" + result + " first=" + result.firstOther),
+                // F6-2d Step 0（H6 quality Minor 3）：第一個其他例外當成 cause 交給 fail，test report 保留它的 stack（不只 toString）。
+                () -> { if (result.other != 0) fail("同時第一次使用時丟出其他例外：" + result + " first=" + result.firstOther, result.firstOther); },
                 () -> assertEquals(0, result.postWrong, () -> "事後的單執行緒核對錯誤：" + result),
                 () -> assertEquals(0, result.timeouts, () -> "等待逾時：" + result),
                 () -> assertEquals(ROUNDS, result.rounds, () -> "沒有做完全部輪次：" + result),
