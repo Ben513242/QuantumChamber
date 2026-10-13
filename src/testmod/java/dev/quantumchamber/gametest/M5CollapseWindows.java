@@ -111,10 +111,16 @@ final class M5CollapseWindows {
      * <li>{@link #withCrossedAtHalt}：halt 當下磁碟上的 Crossed（參與者的子集，開服時才由收據決定是哪幾位）；預設沒有人。只在狀態是 PASSAGE_READY 或 SEALED 時斷言
      *     （{@code crossedAtRestart}）。</li>
      * </ul>
-     * <p>F6-2d Step 0（F6-2c quality Minor 6）：每個 wither 交出之前驗證組合（{@link #validated}），restart 會忽略、或要到開服之後才發現的組合當場丟出
-     * IllegalStateException：{@code withStateAtHalt} 只接受 PASSAGE_READY、SEALED，{@code withStateAtHalt}／{@code terminatedAtHalt} 只能指定一次；{@code withCrossedAtHalt}
-     * 要在狀態是 PASSAGE_READY 或 SEALED 之後（COLLAPSING 與終局不斷言 Crossed）；{@code notReturned} 只用在 COLLAPSING（W1）；{@code recognizingBeforeJoin} 要在
-     * {@code withProjection} 之後。窗口表在 class init 時建好，entrypoint 在開服之前就初始化它（{@link M5CollapseWindows#windows}），所以不合法的列在開服之前就失敗。
+     * <p>F6-2d Step 0（F6-2c quality Minor 6）起驗證組合，restart 會忽略、或要到開服之後才發現的組合丟出 IllegalStateException。F6-2d-1（F6-2d Step 0 quality Minor 4、5
+     * 與給本體的建議）：
+     * <ul>
+     * <li>只看一個 wither 的規則留在 wither：{@code withStateAtHalt} 只接受 PASSAGE_READY、SEALED，{@code withStateAtHalt}／{@code terminatedAtHalt} 只能指定一次。</li>
+     * <li>跨欄位的組合規則改由 {@link #validate} 在加入窗口表時（{@code put}）對最終組合驗證一次，訊息帶窗口 id，wither 的呼叫順序不再有限制：{@code withCrossedAtHalt} 只用在
+     *     狀態是 PASSAGE_READY 或 SEALED 的列（COLLAPSING 與終局不斷言 Crossed）；{@code notReturned} 只用在 COLLAPSING（W1）；{@code recognizingBeforeJoin} 要有
+     *     {@code withProjection}；{@code recognizingBeforeJoin} 與同一列非 null 的 {@link Prepared} 只用在 COLLAPSING 的列（通道與終局的 restart 不讀它們）；非 null 的欄位
+     *     再檢查一次 null（預設值依 static 欄位的宣告順序）。</li>
+     * </ul>
+     * 窗口表在 class init 時建好，entrypoint 在開服之前就初始化它（{@link M5CollapseWindows#windows}），所以不合法的列在開服之前就失敗。
      */
     static final class AtRestart implements Cloneable {
         // F6-2d Step 0（F6-2c quality Minor 6）：欄位只在 copy（建立之後、交出之前）裡改，交出之後不再變動；窗口表在 class init 時建好，之後只讀。
@@ -149,23 +155,40 @@ final class M5CollapseWindows {
                 throw new AssertionError("AtRestart 是 Cloneable", impossible);
             }
             change.accept(next);
-            return next.validated();
+            return next;
         }
 
-        /** 組合的驗證（見類別說明；F6-2d Step 0）：不合法時丟出 IllegalStateException，否則回傳這一份。 */
-        private AtRestart validated() {
+        /**
+         * 一列的最終組合的驗證（見類別說明）。F6-2d-1（F6-2d Step 0 quality Minor 4 與給本體的建議）：原本每個 wither 交出之前驗證（{@code validated}），組合規則因此依 wither
+         * 的呼叫順序；改由 {@link M5CollapseWindows#put} 對這一列的最終組合驗證一次，訊息帶窗口 id。{@code prepared} 是同一列的 PREPARE 預期（Minor 5 的規則）。不合法時丟出
+         * IllegalStateException。
+         */
+        void validate(CrashWindow id, Prepared prepared) {
+            String where = "窗口表的 " + id + "：AtRestart 的 ";
+            // F6-2d Step 0 quality Minor 4：預設值依 static 欄位的宣告順序（例如 disk = NO_CHECK，NO_CHECK 要在 TABLE 之前初始化），順序改變時這裡丟出，不靜默變成 null。
+            Objects.requireNonNull(resolved, where + "resolved");
+            Objects.requireNonNull(disk, where + "disk（NO_CHECK 還沒有初始化？）");
+            Objects.requireNonNull(crossedAtHalt, where + "crossedAtHalt（NOBODY 還沒有初始化？）");
+            String state = stateAtHalt == null ? "終局已落盤" : stateAtHalt.name();
             boolean passage = stateAtHalt == SessionState.PASSAGE_READY || stateAtHalt == SessionState.SEALED;
             if (crossedAtHalt != M5CollapseFixture.NOBODY && !passage) {
-                throw new IllegalStateException("AtRestart：withCrossedAtHalt 只在 halt 當下是 PASSAGE_READY 或 SEALED 時斷言（crossedAtRestart），stateAtHalt="
-                        + (stateAtHalt == null ? "終局已落盤" : stateAtHalt) + "；先 withStateAtHalt");
+                throw new IllegalStateException(where + "withCrossedAtHalt 只在 halt 當下是 PASSAGE_READY 或 SEALED 時斷言（crossedAtRestart），stateAtHalt=" + state);
             }
-            if (!returned && stateAtHalt != SessionState.COLLAPSING) {
-                throw new IllegalStateException("AtRestart：notReturned 只用在 halt 當下是 COLLAPSING 的窗口（W1），stateAtHalt=" + stateAtHalt);
+            boolean collapsing = stateAtHalt == SessionState.COLLAPSING;
+            if (!returned && !collapsing) {
+                throw new IllegalStateException(where + "notReturned 只用在 halt 當下是 COLLAPSING 的窗口（W1），stateAtHalt=" + state);
             }
             if (recognizeBeforeJoin && projection == null) {
-                throw new IllegalStateException("AtRestart：recognizingBeforeJoin 要有 projection entry（先 withProjection）");
+                throw new IllegalStateException(where + "recognizingBeforeJoin 要有 projection entry（withProjection）");
             }
-            return this;
+            // F6-2d Step 0 quality Minor 5：通道與終局的 restart（M5CollapsePassageChains）不讀這兩個欄位，指定了也會被忽略；只用在 halt 當下是 COLLAPSING 的列。
+            if (recognizeBeforeJoin && !collapsing) {
+                throw new IllegalStateException(where + "recognizingBeforeJoin 只用在 halt 當下是 COLLAPSING 的列（其他列的 restart 不載入投影），stateAtHalt=" + state);
+            }
+            if (prepared != null && !collapsing) {
+                throw new IllegalStateException("窗口表的 " + id + "：Prepared（" + prepared.name() + "）只用在 halt 當下是 COLLAPSING 的列（其他列的 restart 不檢查「準備完成」），stateAtHalt="
+                        + state);
+            }
         }
 
         /** {@code withStateAtHalt} 與 {@code terminatedAtHalt} 只能指定一次（預設 COLLAPSING 之後再指定時丟出，不靜默覆蓋）。 */
@@ -353,8 +376,12 @@ final class M5CollapseWindows {
         put(rows, new Window(id, condition, beforeHalt, atRestart, prepared, M5CollapseRun.HaltAt.TICK_END, Objects.requireNonNull(atWindow, "atWindow")));
     }
 
-    /** 加入一列；同一個窗口再加入時丟出（窗口表在 class init 時建好，開服之前就失敗）。 */
+    /**
+     * 加入一列：先驗證這一列的 {@link AtRestart} 與 {@link Prepared} 的最終組合（{@link AtRestart#validate}，F6-2d-1）；不合法、或同一個窗口再加入時丟出（窗口表在 class init 時
+     * 建好，開服之前就失敗）。
+     */
     private static void put(Map<CrashWindow, Window> rows, Window window) {
+        Objects.requireNonNull(window.atRestart(), "窗口表的 " + window.id() + "：atRestart").validate(window.id(), window.prepared());
         if (window.atWindow() != NOTHING_AT_THE_WINDOW && window.haltTiming() != M5CollapseRun.HaltAt.TICK_END) {
             throw new IllegalStateException("窗口表的 " + window.id() + "：只有 TICK_END 的列另在窗口成立的那一刻取證（WINDOW 的 beforeHalt 已在那一刻）");
         }
