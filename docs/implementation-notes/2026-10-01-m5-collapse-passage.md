@@ -6752,3 +6752,135 @@ phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<ru
 
 - 結束過的 JVM：第一位 implementer 的 run 由 probe 的逾時處置結束 PID 30300、34820、9064、9440（CME 之後停服卡住，上方）；第二位 implementer 沒有結束任何 JVM。兩位都沒有結束 Gradle daemon（PID 4808）。
 - 取證腳本（`fix1/`）：`state.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`、`names2.py`、`mutsum.py`、`mutations.ps1`、`compile.ps1`、`runall-compare.ps1`、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py` 由 `f6/f62c/` 複製（只改 repo 的相對路徑與註解；`adapter.py` 的 adapter 表改 `adapters_fix1.py`；`mutsum.py` 的 label 前綴改 `fix1-`；`runall-compare.ps1` 的基準改為 `run-all-bb1a1b3e283e44c4a4c3d5b4463fde35`，`base-*-summary.txt` 是同一次 run-all 的 `f6/f62c/runall2-*-summary.txt`）。第一位新寫 `adapters_fix1.py`、`details.py`、`receipts.py`、`chunkstatus.py`；第二位新寫 `warncheck.py` 與 `runall2-compare.ps1`（由 `runall-compare.ps1` 複製，只改輸出檔名的前綴）。`f6/f62c/` 下既有的檔案沒有改動。
+
+## H6 Step 0：worldgen CME 的根因調查
+
+調查 task，不改 production（`src/main/` 沒有任何變更）。開工 HEAD `30666c4`（porcelain 空）；之間 controller commit 了 `028cca0`（docs），本 task 的暫時改動沒有被 commit。全部實驗以 adapter 暫時改 testmod 與 `scripts/verification/m5-collapse-probe.ps1`（`h6/step0/adapter.py`、`adapters_h6s0.py`），用完還原並以 `git hash-object` 核對（下方「暫時改動與還原」）。取證在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h6/step0/`（`STATUS.md` 有逐步紀錄）。原版程式的行號引用 worktree 的 Loom sources jar（`.gradle/loom-cache/minecraftMaven/…/minecraft-common-…-sources.jar`；行號與 crash report 的 stack 一致，例如 `StructureTemplate.java:211`、`SinglePoolElement.java:119`、`StructurePoolBasedGenerator.java:306/353`、`Util.java:315`）。
+
+### 結論
+
+- **根因**：來源世界與 U 共用 server 的 `StructureTemplateManager`，所以共用同一個 `StructureTemplate`、同一個 `PalettedBlockInfoList`。它的 `blockToInfos` 是 `HashMap`（`StructureTemplate.java:776`），`getAllOf` 以 `computeIfAbsent` 在第一次使用時計算並插入（`:786-788`）。每個世界的 `structure_starts`／`features` 都在自己的 worldgen mailbox 裡序列執行，但兩個世界各有一個 mailbox，會在不同的 worker 上同時執行。U 與來源世界共用 generator 與 seed，所以同一個 chunk 的結構 start 在兩邊**以同一個順序選同一批 template**（lockstep）。兩個世界在幾乎同一個時間生成同一個結構 start 時，兩個執行緒對同一個 template 的**同一個 key（JIGSAW）**同時做第一次計算；先算完的一方插入（`modCount` 改變），後算完的一方在 `HashMap.computeIfAbsent:1229` 丟 CME。
+- **另一方已抓到**：最小重現（witness v4）3 次 CME，每次 `insertedDuringMyWindow` 都是另一個世界、同一個 chunk 的 `structure_starts`、同一個 template 的 JIGSAW（下方「重現」）。trr 的 restart 16 次（同一個 tick JOIN）0 次 CME，但 7 次有重疊，全部也是兩個世界的 `structure_starts|12,11` 對同一個 template 的 JIGSAW（都是 cache hit）。所有 run 裡 `features` 一次都沒有呼叫 `getAllOf`。
+- **controller 假設 3 不成立**：另一方不是 `features` 的 `getAllOf(STRUCTURE_BLOCK)`，而是另一個世界的同一個結構 start。舊證據「CME 的世界磁碟上沒有 (12,11)、另一個世界有 `structure_starts`」是事後的假象：兩個世界都在 restart 重新生成 (12,11)；CME 的世界停服卡住、什麼都存不了，健康的世界在停服迴圈的 `tick` 裡照常卸載並存下它（最小重現 m2-a：來源世界的 (227,287) 在磁碟上是 `structure_starts`，U 沒有可讀的 (227,287)）。
+- **只修 template 快取足夠**：對兩個世界共用、在 worker 上會被修改的狀態做了靜態盤點（下方），其餘都是每個世界一份、thread-safe，或冪等的 lazy 初始化；原版本來就跨維度共用的也不受影響。修正選項 (a) 的暫時候選（testmod）讓最小重現 5/5 PASS、單元重現 0/600 輪 CME。
+- **CME 之後的停服卡住是原版行為**：任何同步生成步驟的例外都會走同一條路（下方）。修好 CME 就不會觸發；是否另外處理由 controller 決定。
+- **建議**：修正選項 (a)：production mixin 在 `PalettedBlockInfoList` 的建構子結束時把 `blockToInfos` 換成 `ConcurrentHashMap`。
+
+### 重現
+
+| 重現 | 條件 | 結果 |
+| --- | --- | --- |
+| trr restart（同一個 tick JOIN，`join-together` 把 `ce943f7` 的分開 JOIN 暫時改回） | witness v1～v4，16 次（s1-a～f、s2-a～d、s3-a～f） | 0 CME；7 次 restart 有重疊（26、37、54、60、36、47、37 次），全部跨世界、雙方都是 `structure_starts|12,11`、同一個 template 的 JIGSAW、雙方都是 cache hit |
+| 最小重現 `h6race-a`（不經塌縮，下方） | witness v4，3 次（m2-a～c） | 3/3 CME（都在 village_taiga (227,287)） |
+| 同上 | 沒有 witness（原版時序），5 次（m3-a～e） | **5/5 CME**，都在第一個結構 village_plains (207,322)；CME 的世界依序 U、來源、U、來源、U |
+| 同上 ＋ 修正選項 (a) 的暫時候選 | 沒有 witness，5 次（g1-a～e） | 5/5 PASS，0 CME，9 種結構在兩個世界都生成完成 |
+| 單元層級（暫時 GameTest，下方） | 沒有修正（u-red-1） | 2 個 key：196/200 輪 CME；同一個 key：173/200；4 個 key：200/200 輪（585/800 次呼叫）；內容錯誤 0、其他例外 0 |
+| 同上 | 修正選項 (a) 的暫時候選（u-green-1） | 0/600 輪 CME，內容錯誤 0 |
+
+- **trr 的時序**（witness v3/v4 的 `contextSpan`）：fresh 世界開服時，spawn 的準備就在來源世界生成 (12,11) 的 trial_chambers（約 350 ms），所以 crash phase 的 JVM 裡 template 早已計算過，U 之後只會 hit。restart 時 (12,11) 不在任何一個世界的磁碟上（flush 存檔不存從沒到過 FULL 的外圈），JOIN 之後兩個世界都要生成它：來源世界先開始，領先約 195～485 ms；U 跑得較快，結束時只落後約 10～270 ms。兩邊在 lockstep 的序列上沒有交會時，U 遇到的每個 key 都已由來源世界算好；交會的那一刻剛好有一個 key 是第一次計算時才會 CME，所以 trr 的機率低（本輪 0/16；F6-2c fix round 1 的 `380488f` 是 1/6）。
+- **最小重現 `h6race-a`**（暫時的 probe phase，`files/H6RaceChain.java`，登記在 `M5CollapseRecoveryProbe` 的 phase 表與 probe 的 chain 表 `h6race`）：fresh 世界（seed 20260921、view-distance 2），以 production 的 `UniverseRegistryState.allocateOverworld` 與 `UniverseLifecycleService.materializeAllocated` 物化一個 U；兩個世界的 holder 連續 40 tick 不變之後，對 9 種 jigsaw 結構（village 五種、pillager_outpost、trail_ruins、ancient_city、trial_chambers）依序：以 structure set 的 `RandomSpreadStructurePlacement.getStartChunk`／`shouldGenerate` 與 `getValidStructurePosition` 在 chunk (256,256) 附近找 start（不生成 chunk）→ 兩個世界加 level `STRUCTURE_STARTS` 的 ticket（1.21 高於 FULL 的 ticket 只讓 holder 存在，不會自己排生成）→ 下一個 tick 在同一個呼叫裡對兩邊的 holder `load(STRUCTURE_STARTS)`，接著兩邊各自 `updateChunks()`。兩個世界的開始時間差 0～500 µs。原版時序下 5/5 在第一個結構就 CME。
+  - 開發時的兩次不採計：m1-a、m1-b 以 `locateStructure` 找 start，它在來源世界以 `getChunk(STRUCTURE_STARTS)` 同步生成，而 U 只有 ticket、沒有 loader（m1-a 逾時、m1-b FAIL）。
+  - witness v3 會在重疊時以 `Thread.getStackTrace` 取對方的 stack（對方停在 safepoint），兩邊的時序因此錯開：m1-c 有 172 次「計算中的重疊」卻 0 CME。v4 只在前 2 次重疊取 stack，之後 m2-a 第一次就 CME。結論是 witness 會干擾這個 race，原版的機率以沒有 witness 的 m3 為準。
+- **witness**（暫時的 testmod mixin，`files/`）：`getAllOf` 的 `@WrapMethod`（記錄進入時 key 是否已存在、同一個 list 上的其他執行緒、CME 時自己進入之後在同一個 list 插入的呼叫）；`ChunkGenerationStep.run` 的 `@WrapMethod`（ThreadLocal 記世界、步驟、chunk）；`StructureTemplate.getInfosForBlock` 的 `@WrapMethod`（template）；`StructureTemplateManager.getTemplate` 的 RETURN（template id）；`ServerChunkLoadingManager.shouldDelayShutdown` 的 RETURN（停服時每個條件分開記）。輸出在 run root 的 `h6-race-witness-<phase>-<pid>.jsonl`，複本在 `h6/step0/witness/<label>/`，彙整 `analyze.py`；沒有 witness 的 run 以 `vanilla_summary.py` 讀 phase evidence 的 `stdout.log`。
+- **CME 的雙方**（witness v4）：
+  - m2-a：U 的 Worker-Main-3（`structure_starts|227,287`）計算 `minecraft:village/taiga/houses/taiga_fletcher_house_1` 的 JIGSAW 時 CME；同一段時間在同一個 list 插入的是來源世界的 Worker-Main-23（`structure_starts|227,287`、JIGSAW）。
+  - m2-b：來源世界的 Worker-Main-22（`taiga_temple_1`）CME，插入的是 U 的 Worker-Main-26。
+  - m2-c：U 的 Worker-Main-3（`taiga_butcher_shop_1`）CME，插入的是來源世界的 Worker-Main-25。
+  - 例外鏈與 trr 的 4 次完全相同：`HashMap.computeIfAbsent:1229` ← `PalettedBlockInfoList.getAllOf:808` ← `getInfosForBlock:211` ← `SinglePoolElement.getStructureBlockInfos:119` ← `StructurePoolGenerator.generatePiece:306/353` ← … ← `ChunkGenerating.generateStructures` ← worker。
+
+### controller 假設的判定
+
+1. **成立**。worldgen mailbox 是每個世界一個：`ServerChunkLoadingManager.java:189`（`TaskExecutor.create(executor, "worldgen")`），`schedule`（`:654`）把 `ChunkLoader.run` 送進這個 mailbox；`TaskExecutor` 以 `compareAndSet` 確保同一時間只有一條執行緒在跑（`TaskExecutor.java:43`、`:71`）；`ChunkTaskPrioritySystem.enqueueExecution`（`:139`）一次取一批、做完才取下一批。`structure_starts`（`ChunkGenerating.java:27-44`）與 `features`（`:127-136`）都在 `ChunkLoader.run` 裡同步執行。witness 的 38 個 JVM（22 次 run）共 908 次重疊，全部是跨世界，沒有同一個世界內的重疊。
+2. **成立**。`StructureTemplateManager` 是 server 一份（`MinecraftServer` 建立，`ServerWorld` 建構子傳入，`ServerWorld.java:257`）；`templates` 是 concurrent map（`StructureTemplateManager.java:59`、`:94`），所以兩個世界拿到同一個 instance；`blockToInfos` 是 `Maps.newHashMap()`（`StructureTemplate.java:776`）。witness 在同一個 `PalettedBlockInfoList` 物件上觀察到兩個世界的呼叫。
+3. **不成立**（見「結論」）。另一方是另一個世界的 `structure_starts`、同一個 template、**同一個 key**。不同 key 的同時插入也會 CME（單元重現的 2 個 key 情境 98%），理論上 `features` 放置 pool piece（`SinglePoolElement.generate` → `getDataStructureBlocks`，STRUCTURE_BLOCK）對上另一個世界的 start 也可能，但沒有觀察到。
+4. **成立**，而且是決定性的因素：同 seed 讓兩個世界在同一個 chunk 生成同一個結構、以同一個順序第一次使用同一批 template（最小重現在原版時序下 5/5）。不同 seed 時結構的位置不同，lockstep 不存在，但 template 仍共用：兩個世界在接近的時間第一次使用同一個 template（例如開服後兩邊各自生成村莊）仍會 race，機率低很多（本輪沒有量測）。M6 的不同 seed 宇宙仍需要這個修正。
+5. **理論上成立、實際極少**。原版 Overworld 與 Nether 共用的 template 只有 ruined portal（`RuinedPortalStructure.java:34-46` 的 `ruined_portal/portal_1..10`、`giant_portal_1..3`；`ruined_portal_nether` 用同一個 structure type）；它們在 `features` 由 `SimpleStructurePiece.generate` 呼叫 `getInfosForBlock(STRUCTURE_BLOCK)`、`(JIGSAW)`（`SimpleStructurePiece.java:88`、`:97`）。兩個維度要在同一個 µs 級的時窗裡第一次使用同一個 template 才會 CME，而兩邊的位置不同、沒有 lockstep。另外，單一世界內 server thread 的 `/place structure`、`/place jigsaw`（`PlaceCommand.java:252`、`:240`）與 `/locate`（有 `start_jigsaw_name` 的結構會算 start template 的 JIGSAW）也可能與 worker 同時使用同一個 template。
+
+### `getAllOf` 的呼叫路徑
+
+`getAllOf` 只由 `StructureTemplate.getInfosForBlock`（`:211`）呼叫；`getInfosForBlock` 只由 `SinglePoolElement` 與 `SimpleStructurePiece` 呼叫（掃描 mapped jar 的 class 常數）。
+
+- `structure_starts`（`ChunkGenerating.generateStructures` → `ChunkGenerator.setStructureStarts`（`:485`）→ `trySetStructureStart` → `Structure.createStructureStart`（`:584`））：
+  - jigsaw 結構：`StructurePoolBasedGenerator.generate` 的 `findStartingJigsawPos`（`:161`，只在有 `start_jigsaw_name` 時，例如 ancient_city）與 `StructurePoolGenerator.generatePiece` 對已放的 piece（`:306`）與每一個候選 element（`:353`）呼叫 `SinglePoolElement.getStructureBlockInfos`（`:119`）→ **JIGSAW**。trial_chambers 的一個 start 約 29,064 次呼叫，第一次計算約 104 個 template。
+  - 非 jigsaw 結構（ruined portal、igloo、shipwreck、ocean ruin、mansion、end city、nether fossil）：建構 `SimpleStructurePiece` 時只算 bounding box，不呼叫 `getAllOf`。
+- `features`（`ChunkGenerating.generateFeatures` → `ChunkGenerator.generateFeatures` → `StructureStart.place`（`:375`））：
+  - `PoolStructurePiece` → `SinglePoolElement.generate` → `getDataStructureBlocks`（`:96`）→ **STRUCTURE_BLOCK**；
+  - `SimpleStructurePiece.generate` → **STRUCTURE_BLOCK**（`:88`）與 **JIGSAW**（`:97`）。
+  - 一般 feature（例如 fossil）只用 `place` → `getAll()`，不經快取。
+- worldgen 以外：server thread 的 `/place`、jigsaw block 的生成、`/locate` 與探險地圖（`StructureLocator` → `getValidStructurePosition`）。
+
+### 兩個世界共用、在 worker 上會被修改的狀態
+
+做法：U 由 `Minecraft121ServerWorldFactory.create` 以來源世界的 Overworld `DimensionOptions`（同一個 `NoiseChunkGenerator`）與同一個 seed 建立，另傳入 `overworld.getRandomSequences()`。對 `net/minecraft/structure/`、`world/gen/`、`world/biome/`、`util/math/noise|random/` 的 763 個 class 以 `javap -p` 掃描非 final 欄位與 collection 欄位（`h6/step0/fieldscan-candidates.txt`），再逐項讀程式。這是靜態盤點，不是證明；其他 mod 加的狀態不在範圍內。
+
+| 狀態 | 每個世界一份／共用 | thread-safe | M5 會不會遇到 |
+| --- | --- | --- | --- |
+| `PalettedBlockInfoList.blockToInfos`（`StructureTemplate.java:776`） | 共用（server 一份的 template） | **否**（`HashMap`，第一次使用時在 worker 上插入） | **會**（本節的根因） |
+| `StructureTemplateManager.templates`（`:59`） | 共用 | 是（concurrent map、`computeIfAbsent`） | 否 |
+| `StructureTemplate` 的 `blockInfoLists`／`entities`／`size` | 共用 | 載入時（`readNbt`，在 `computeIfAbsent` 裡）寫一次，之後唯讀；安全發布 | 否（structure block 在 server thread 存檔時改寫 template 是原版既有的情況，不在本範圍） |
+| `NoiseChunkGenerator`／`ChunkGenerator` 的欄位 | 共用（同一個 instance） | 是：`biomeSource`、`settings` 不變；`indexedFeaturesListSupplier`（`ChunkGenerator.java:100`）、`fluidLevelSampler`（`NoiseChunkGenerator.java:74`）是 `Suppliers.memoize`；其餘方法只用參數與區域變數。原版本來就在 worker pool 上同時跑多個 chunk 的 `populateBiomes`／`populateNoise` | 否 |
+| `MultiNoiseBiomeSource` | 共用 | 是：`biomes` 是 memoize（`BiomeSource.java:30`），搜尋樹的快取是 ThreadLocal | 否 |
+| `NoiseConfig` | 每個世界一份（`ServerChunkLoadingManager.java:178-183`） | 內部是 `ConcurrentHashMap`（`NoiseConfig.java:56-57`） | 否 |
+| `StructurePlacementCalculator` | 每個世界一份（`:185`） | `calculated` 不是 volatile，但在 `ServerWorld` 建構子（server thread）就算完（`ServerWorld.java:271`），之後唯讀 | 否 |
+| `StructureLocator`、`StructureAccessor` | 每個世界一份（`ServerWorld.java:282` 起） | 快取是一般 map（原版同一個世界內 server thread 與 worker 的既有情況） | 不因 U 而改變 |
+| `RandomSequencesState` | 共用（原版也讓所有維度共用 Overworld 的那一份：`MinecraftServer.java:428`） | 否（`Object2ObjectOpenHashMap`，`RandomSequencesState.java:24`、`:35`），但只經 `ServerWorld.getOrCreateRandom`（`:1913`）由 `LootContext.Builder`、`/random` 在 server thread 使用，worldgen 不用 | 否（與原版相同） |
+| `StructurePool.highestY`（`StructurePool.java:45`、`:84`） | 共用（registry 物件） | 非 volatile 的 lazy 快取，冪等（每次都算出同一個 int） | 會同時算，但無害 |
+| `RandomizedIntBlockStateProvider.property`（`:68`） | 共用 | 冪等的 lazy 快取；原版本來就跨維度共用 | 無害 |
+| `UniformHeightProvider.warnedEmptyHeightRanges`（`LongOpenHashSet`） | 共用 | 否，但只在高度範圍為空（資料設定錯誤）時寫入；原版資料不會觸發，原版也跨維度共用 | 原版資料下否 |
+| registry 物件（Structure、StructurePool、pool element、processor、feature） | 共用 | 載入之後不變；原版本來就跨維度同時使用 | 否 |
+
+- 結論：需要保護的只有 template 的 `blockToInfos`。「只修 template 快取」足以解決本節的 CME，不需要擴大到使用者裁示之外。
+- 參考：C2ME（`RelativityMC/C2ME-fabric`，branch `dev/1.21.3`，模組 `c2me-fixes-worldgen-threading-issues`）有同一個修正 `MixinStructurePalettedBlockInfoList`：`@Mutable @Shadow @Final blockToInfos`，在 `<init>` 的 RETURN 換成 `Collections.synchronizedMap(...)`（以 `gh api` 讀原始碼；C2ME 的動機是同一個世界內的平行生成）。它另把 `StructureTemplate` 的 list 包成 synchronized，那是為了它自己的平行模型，M5 不需要。沒有查到 Mojang 的 bug 編號或之後版本的修正（未驗證）。
+
+### CME 之後的停服卡住
+
+- **server 停止，但永遠停不完**。CME 由 `ServerChunkLoadingManager.generate` 包成 `CrashException`（`:616-645`，「Exception generating new chunk」），同時排一個在 main thread 丟同一個例外的工作（被 `ThreadExecutor.executeTask` 接住、記「Error executing task on …」，`ThreadExecutor.java:142`），並在 worker 上丟出。worker 的 uncaught handler（`Util.java:307-315`）印出 crash report 之後呼叫 `System.exit(-1)`；JVM 執行 shutdown hook「Server Shutdown Thread」（`Main.java:258-264`）→ `stop(true)` 等 server thread → `MinecraftServer.shutdown` 的迴圈（`:646`）等每個世界的 `shouldDelayShutdown()`（`ServerChunkLoadingManager.java:456`）變成 false。
+- **為什麼一直為真**：丟例外的 `ChunkLoader.run` 沒有走到 `dispose()`（`ChunkLoader.java:74-77`），它 acquire 的 holder 一直 refCount > 0；`unloadChunks` 跳過 refCount 不是 0 的 holder（`ServerChunkLoadingManager.java:475`），所以 `currentChunkHolders` 與 `unloadedChunks` 永遠不空。另外 `ChunkTaskPrioritySystem.createMessage` 的 `yield.send`（`:51`）沒有執行，這個世界的 worldgen actor 不再回到 idle，之後的生成全部停住。
+  - witness v4 的停服記錄：CME 的世界 `currentChunkHolders`=1、`unloadedChunks`=1、`holdersWithRefs`=1（`[227, 287]@minecraft:empty#1`）、優先佇列都是空的（`worldgen=[]`，idle actor 3 個中只有 2 個）、沒有 ticket；健康的世界第一筆之後就排空、不再出現。
+  - jstack（8 次 CME 都相同）：CME 的 worker 停在 `Util.uncaughtExceptionHandler → System.exit → ApplicationShutdownHooks.runHooks → Thread.join`；「Server Shutdown Thread」停在 `MinecraftServer.stop → Thread.join`；server thread 停在 `MinecraftServer.shutdown:654 → runTasksTillTickEnd`。
+- **與 M5 無關的原版行為**：任何在同步生成步驟（`ChunkLoader.run` 裡）丟出的例外都會走同一條路（`generate()` 把所有 `Exception` 包成 `CrashException` 丟出），dedicated server 會卡在停服、`System.exit` 也不會結束。M5 只是讓這個 CME 成為觸發點。選項（由 controller 決定）：(i) 不處理，修好 CME 就移除這個觸發點；(ii) 另開 hardening（例如生成失敗時釋放 loader 的 holder），會碰原版的 chunk 系統，超出使用者裁示，需要另問使用者。
+
+### 修正選項
+
+| 選項 | 作法 | 正確性 | 單執行緒時與原版相同 | 效能 | 與其他 mod 的相容（推論，未實測） |
+| --- | --- | --- | --- | --- | --- |
+| **(a)** `ConcurrentHashMap` | `@Mixin(StructureTemplate.PalettedBlockInfoList.class)`；`@Mutable @Shadow @Final private Map<Block, List<StructureBlockInfo>> blockToInfos;`；`@Inject(method = "<init>", at = @At("RETURN"))` 指派 `new ConcurrentHashMap<>()`。登記在 `quantumchamber.mixins.json` 的 `mixins`（`defaultRequire: 1` 涵蓋）。不能用 `@ModifyExpressionValue` 改 `Maps.newHashMap()`：回傳型別是 `HashMap` | `computeIfAbsent` 對同一個 key 是原子的；mapping function 只讀 `infos`、不碰這個 map（不會 recursive update）、回傳 `Collectors.toList()` 不會是 null；呼叫端的 key 是 `Blocks.JIGSAW`、`Blocks.STRUCTURE_BLOCK`，不是 null。同時修掉 value 的不安全發布 | 是（同樣的 list 內容；回傳的 list 物件一樣被共用、呼叫端只讀） | hit 不加鎖（CHM 的 fast path）；同一個 key 的第二個執行緒等第一個算完（不重複計算）；建構時多配置一個空 `HashMap`，可忽略 | C2ME 在同一個注入點換成 `synchronizedMap`：兩者的先後不論哪個在後，結果都是 thread-safe 的 map。`@Overwrite` 了 `getAllOf` 的 mod 會讓這個欄位不再被用到，但無害。假設欄位是 `HashMap` 的 mod 會 `ClassCastException`（未知有這種 mod） |
+| (b) 互斥 | `@WrapMethod`（Fabric Loader 0.17.2 內含 MixinExtras 0.5.0，`@WrapMethod` 自 0.4.0 起可用）在 `synchronized (this)` 裡呼叫原本的方法；或比照 C2ME 換成 `Collections.synchronizedMap` | 正確 | 是 | 每次呼叫（一個 trial_chambers start 約 2.9 萬次）都取一次 monitor；沒有競爭時很便宜，兩個世界同時生成時有短暫等待 | `@WrapMethod` 可以與其他 injector 疊加；與 C2ME 疊加時是雙重鎖，無害 |
+| (c) 預先計算 | 在 template 載入時（`loadTemplate`，在 `templates.computeIfAbsent` 裡）先算 JIGSAW 與 STRUCTURE_BLOCK，之後 `HashMap` 只剩讀取 | 只涵蓋這兩個 key；其他 key（mod 的呼叫）仍會 race；不經 manager 建立的 template 不涵蓋；依賴「沒有結構性修改時 `HashMap` 可同時讀」 | 是 | 每個 template 載入時多算兩次 | 脆弱，不建議 |
+| (d) 其他 | 讓 U 與來源世界共用 worldgen mailbox，或每個世界一份 template manager | 正確但侵入大、失去平行或加倍記憶體 | — | 差 | 不建議 |
+
+**建議 (a)**：最小的改動、修掉 CME 與不安全發布、hit 不加鎖，而且與 C2ME 的修正在同一個注入點、彼此相容。暫時候選（testmod 的 `H6CandidateFixMixin`，與上表 (a) 相同）讓最小重現 5/5 PASS、單元重現 0/600 輪 CME。(b) 也可行，差在每次 hit 都要取鎖。
+
+### H6 的驗證設計（給 plan）
+
+- **RED（單元層級）**：放在 default run 的 GameTest（例如新類別或既有 default run 的類別；batch 不能以 `m5_universe` 開頭，不碰 catalog 與 world keys，M4 boundary oracle 不受影響）。本輪的暫時版本 `files/H6TemplateRaceGameTests.java`：
+  - template 以 public 的 `StructureTemplate.readNbt`（或 `StructureTemplateManager.createTemplate`）由合成的 NBT 建立：64×2×64、8,192 個方塊（70% stone，其餘 jigsaw、structure_block、glass、oak_planks 各 7.5%）。不需要 accessor；`PalettedBlockInfoList` 的建構子是 package-private，若要省掉每輪的 `readNbt`，才需要 `@Invoker`。
+  - 每一輪一個新 template（快取是空的）；工作執行緒以 volatile 的輪次 spin 等待，同時呼叫 `getInfosForBlock(BlockPos.ORIGIN, new StructurePlacementData(), key)`；server thread spin 等它們做完，再單執行緒核對五個 key。三個情境各 200 輪：jigsaw＋structure_block、jigsaw＋jigsaw、四個 key。
+  - 成本：整個 test 約 0.5 秒（一輪約 1 ms，含 `readNbt`），在 server thread 上 join／spin 可行（u-red-1、u-green-1 都在 server thread 上阻塞約 0.5 秒，沒有逾時或 watchdog 的問題）。
+  - RED 的發生率（u-red-1）：98%、86.5%、100% 的輪次 CME。GREEN 的判準：全部輪次 CME 0、內容錯誤（大小或方塊不符）0、其他例外 0、事後單執行緒核對 0（u-green-1 符合）。沒有修正時單輪 CME 的機率至少 86.5%，連續 200 輪都沒有 CME 的機率可忽略；只在單核心機器上可能看不出 RED，可另斷言兩個執行緒的計算時間確實重疊。
+- **整合（建議）**：把最小重現做成 tracked 的 chain（例如 `h6race`，一個 stop phase）。原版時序下 5/5 在第一個結構就 CME（逾時處置約 110 秒、判 FAIL），修正之後約 20 秒 PASS。要同時改三份表：`M5CollapseRecoveryProbe.phases()`、`m5-collapse-probe.ps1` 的 `$chains`、`run-all.ps1` 的 `$expectedCollapse`；run-all 的 `m5collapse` 由 32 變 33。斷言建議：9 種結構都在兩個世界到 `STRUCTURE_STARTS`、正常停服；另可比對兩個世界產生的 structure start 相同（同 seed）。
+- **trr 是否改回同一個 tick JOIN**：可以改回以貼近真實情境，但它不是好的回歸：本輪 0/16、F6-2c fix round 1 是 1/6。建議保留 `ce943f7`（或改回之後只當作附帶的真實情境），以 `h6race` 當回歸。不論哪一種都不改 phase 數。
+
+### 暫時改動與還原
+
+- adapter（`adapters_h6s0.py`）：`diag`（witness，`files/` 的 `H6RaceWitness.java` 與 5 個 testmod mixin；v1→v4 的版本留在 `files/v2`、`v3`、`v4`）、`join-together`（`M5CollapsePassageChains` 的 trr restart）、`no-ugen`（定義了、沒有用）、`minrepro`（`H6RaceChain.java`、`M5CollapseRecoveryProbe` 的 phase 表、`m5-collapse-probe.ps1` 的 chain 表）、`unit`（`H6TemplateRaceGameTests.java`、testmod 的 `fabric.mod.json`）、`fix`（`H6CandidateFixMixin.java`，修正選項 (a) 的暫時候選，只在 testmod）。
+- 全部還原之後 porcelain 空；碰過的 tracked 檔的 blob 都等於 HEAD：`quantumchamber-test.mixins.json` `326461f2…`、`fabric.mod.json` `7090add6…`、`M5CollapsePassageChains.java` `eff596c1…`、`M5CollapseRecoveryProbe.java` `ae280213…`、`m5-collapse-probe.ps1` `cf40a451…`；新增的檔都已刪除，`build/classes` 沒有殘留的 H6 class（`c8-compile`）。
+
+### root（全部保留）
+
+phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`，witness 的複本在 `h6/step0/witness/<label>/`。
+
+| label | runId | 內容 | 結果 |
+| --- | --- | --- | --- |
+| s1-a～s1-f | `89b3bc70…`、`e57e342a…`、`f6d6b504…`、`0cdd9519…`、`db94f389…`、`df3ee725…` | trr、同一個 tick JOIN、witness v1（s1-a）／v2 | 6 PASS |
+| s2-a～s2-d | `b42f800a…`、`269c55c4…`、`9ceff95c…`、`3f51635e…` | 同上、witness v3 | 4 PASS |
+| s3-a～s3-f | `73c0538c…`、`efc948e0…`、`ef21d7fc…`、`b2bbcbae…`、`1558a90f…`、`bca5c3c1…` | 同上、witness v4 | 6 PASS |
+| m1-a、m1-b | `70b28baf…`、`bcdd96c8…` | 最小重現的開發版（不採計） | 逾時、FAIL |
+| m1-c | `d2d0f827…` | 最小重現、witness v3 | PASS（172 次計算中重疊、0 CME） |
+| m2-a～m2-c | `7b6c733e…`、`b0ff74f9…`、`52ce7f91…` | 最小重現、witness v4 | 3 CME（逾時） |
+| m3-a～m3-e | `b4c878ef…`、`ecd02d46…`、`0ae6a3ab…`、`695167e1…`、`10d3d197…` | 最小重現、沒有 witness | 5 CME（逾時） |
+| g1-a～g1-e | `e22ce0a7…`、`00efea68…`、`b968bad7…`、`2978cd8a…`、`3fe9336e…` | 最小重現＋修正候選 | 5 PASS |
+| u-red-1、u-green-1 | gate `gate-u-red-1-7ae24e54…`、`gate-u-green-1-c18cccd2…`（`.superpowers/verification/`） | 單元層級 GameTest（onlyBatches） | FAIL（RED）、PASS |
+
+- 結束過的 JVM：都由 probe 的逾時處置結束（commandline 含本次的 startupNonce、先存 jstack）：m1-a 15648、m2-a 9488、m2-b 17708、m2-c 4100、m3-a 16180、m3-b 4872、m3-c 16112、m3-d 11296、m3-e 8932。沒有手動結束任何程序，沒有碰 Gradle daemon；gate 的 fresh world 由 `gates.ps1` 移走並 exact 還原（`world-restore.json` `exactRestored: true`）。
+- 取證腳本（`h6/step0/`）：`state.ps1`、`probe.ps1`、`compile.ps1` 由 `f6/f62c/` 複製、`adapter.py` 與 `chunkstatus.py` 由 `f6/f62c/fix1/` 複製、`gate.ps1` 由 `f4a/` 複製（只改 repo 的相對路徑與註解；`chunkstatus.py` 另加 (10,-13)）；新寫 `adapters_h6s0.py`、`loop.ps1`、`analyze.py`、`vanilla_summary.py`、`edit_witness_v3.py`、`edit_witness_v4.py`。反編譯（Vineflower 1.10.1）在 `h6/step0/mcsrc/`，欄位掃描在 `fieldscan-*.txt`。
