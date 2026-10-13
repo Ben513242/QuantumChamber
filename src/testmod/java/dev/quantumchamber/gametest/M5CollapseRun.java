@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -158,7 +159,7 @@ final class M5CollapseRun {
 
     /**
      * halt 之前的取證（或刻意的準備，例如 W4 的存檔）：寫進 halt receipt 的 {@code atHalt}。丟出時不 halt：{@link HaltAt#WINDOW} 由 crash 點記下失敗，phase 在下一個 tick FAIL；
-     * {@link HaltAt#TICK_END} 在 runner 的 tick 裡丟出，phase 當場 FAIL。
+     * {@link HaltAt#TICK_END} 在 runner 的 tick 裡丟出，phase 當場 FAIL。{@link #armCrash} 另以同一個型別收窗口成立的那一刻的取證（寫進 {@code atWindow}；F6-2d Step 0）。
      */
     @FunctionalInterface interface HaltEvidence { void collect(Object detail, Map<String, Object> evidence) throws Exception; }
 
@@ -246,6 +247,11 @@ final class M5CollapseRun {
     private M5TestHooks.CrashPoint crashPoint;
     /** {@link HaltAt#TICK_END} 的 crash 點第一次成立時記下的 halt；還沒有成立時為 null（F6-2c fix round 1）。 */
     private volatile PendingHalt pendingHalt;
+    /**
+     * crash 點第一次成立的那一刻（hook 裡）記下的取證（{@link #armCrash} 的 {@code atWindow}；還沒有成立時是空的）：寫進 halt receipt 的 {@code atWindow}，halt 時的取證以
+     * {@link #atWindow()} 讀它（F6-2d Step 0，F6-2c fix round 1 spec re-review Minor 1：{@link HaltAt#TICK_END} 的窗口要分辨「那一刻」與「那個 tick 結束時」的磁碟）。
+     */
+    private volatile Map<String, Object> atWindow = Map.of();
 
     /** {@link HaltAt#TICK_END}：窗口第一次成立時的 detail、那一刻的 server tick、detail 的描述與 halt 之前的取證。 */
     private record PendingHalt(CrashWindow window, Object detail, int windowTick, Function<Object, String> describe, HaltEvidence evidence) {}
@@ -489,14 +495,22 @@ final class M5CollapseRun {
      * 裝上 crash 點：{@code window} 的 detail 符合 {@code condition} 的第一次，先 {@code evidence}，再寫 halt receipt（detail 的文字描述由 {@code describe} 提供，
      * 呼叫端是窗口表）、halt。{@code at} 是 halt 的時點（{@link HaltAt}）：{@code WINDOW} 在 hook 裡就做；{@code TICK_END} 只記下第一次成立的 detail，取證與 halt 在
      * 那個 tick 的 runner tick 一開始（{@link #haltAtTheTickEnd}；之後再成立的 hit 讓乾淨的守門以 {@code hit} 拒絕）。
+     * <p>{@code windowEvidence}（F6-2d Step 0）：第一次成立的那一刻在 hook 裡的取證，寫進 halt receipt 的 {@code atWindow}（{@link #atWindow()}）。{@code TICK_END} 用它記下 production
+     * 在那一刻之後的程式執行之前的事實（例如 W7 的 playerdata 存檔之前）；{@code WINDOW} 時與 {@code evidence} 是同一刻。丟出時由 crash 點記下失敗、不 halt（同
+     * {@link HaltEvidence}）。呼叫端只有窗口表（{@code M5CollapseWindows.arm}），兩個取證都由那一列的具名欄位交來。
      */
-    void armCrash(CrashWindow window, HaltAt at, Predicate<Object> condition, Function<Object, String> describe, HaltEvidence evidence) {
+    void armCrash(CrashWindow window, HaltAt at, Predicate<Object> condition, Function<Object, String> describe, HaltEvidence windowEvidence, HaltEvidence evidence) {
         Objects.requireNonNull(at, "at");
+        Objects.requireNonNull(windowEvidence, "windowEvidence");
         var point = new M5TestHooks.CrashPoint(window, condition, (detail, hit) -> {
             if (at == HaltAt.TICK_END) {
-                if (pendingHalt == null) pendingHalt = new PendingHalt(window, detail, server.getTicks(), describe, evidence);
+                if (pendingHalt == null) {
+                    atWindow = Collections.unmodifiableMap(collect(windowEvidence, detail));
+                    pendingHalt = new PendingHalt(window, detail, server.getTicks(), describe, evidence);
+                }
                 return;
             }
+            atWindow = Collections.unmodifiableMap(collect(windowEvidence, detail));
             halt(window, detail, describe, hit, collect(evidence, detail), HaltAt.WINDOW, server.getTicks());
         });
         install(M5TestHooks.CRASH_POINT, point);
@@ -527,6 +541,11 @@ final class M5CollapseRun {
     /** 已裝上的 crash 點；還沒有裝時為 null。 */
     M5TestHooks.CrashPoint crashPoint() {
         return crashPoint;
+    }
+
+    /** crash 點第一次成立的那一刻記下的取證（唯讀；還沒有成立時是空的；F6-2d Step 0）。halt 時的取證（{@code atHalt}）以它比對那一刻與 halt 時的差異。 */
+    Map<String, Object> atWindow() {
+        return atWindow;
     }
 
     /** crash phase 每個 tick 的不變量：crash 點的條件或動作沒有丟出過例外。runner 每個 tick 在 {@code everyTick} 之前呼叫（F6-2c）；還沒有裝 crash 點時不做事。 */
@@ -565,6 +584,7 @@ final class M5CollapseRun {
             halt.put("haltServerTick", server.getTicks());
             halt.put("universeActiveAtHalt", context.universeActive());
             halt.put("stepAtHalt", stepIndex < phase.steps().size() ? phase.steps().get(stepIndex).name() : "-");
+            halt.put("atWindow", atWindow);
             halt.put("atHalt", atHalt);
             halt.put("witness", new LinkedHashMap<>(witness));
             halt.put("observed", new LinkedHashMap<>(observed));

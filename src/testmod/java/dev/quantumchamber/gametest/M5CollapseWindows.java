@@ -44,7 +44,7 @@ import org.apache.logging.log4j.Level;
  * 僅 testmod（M5 F6-2a，由 F6-1 的 {@code M5CollapseRecoveryProbe} 拆出）：窗口表。每個 crash 窗口（{@link CrashWindow}）一列 {@link Window}：
  * <ul>
  * <li>crash 點的條件（hook 交來的 detail 是否就是那一刻）、halt 的時點（{@link M5CollapseRun.HaltAt}：那一刻，或那個 tick 結束時；F6-2c fix round 1）與 halt 之前的取證
- *     （寫進 {@code halt.json} 的 {@code atHalt}；丟出時不 halt）；</li>
+ *     （寫進 {@code halt.json} 的 {@code atHalt}；丟出時不 halt）；那個 tick 結束時才 halt 的列，另可在那一刻取證（{@link AtWindow}，{@code atWindow}；F6-2d Step 0）；</li>
  * <li>restart 開服時的預期（{@link AtRestart}：參與者是否已返還、RESOLVE 在 halt 之前完成到哪一步（因此 halt 當下是否已物化、allocation、catalog、discovery
  *     的預期）、projection ledger 的狀態、窗口自己的磁碟檢查、JOIN 之前是否先載入並辨識投影 Controller、halt 當下磁碟上的 record 狀態與 Crossed）；</li>
  * <li>PREPARE 怎麼完成（{@link Prepared}：「準備完成」INFO 的模式與格數，與 READY 時的磁碟檢查；不檢查時為 null）。</li>
@@ -65,6 +65,13 @@ final class M5CollapseWindows {
      * {@code beforeHalt} 同名），避免與 runner 的 {@code M5CollapseRun.HaltEvidence} 混淆。
      */
     @FunctionalInterface interface BeforeHalt { void collect(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception; }
+
+    /**
+     * {@link M5CollapseRun.HaltAt#TICK_END} 的列在窗口成立的那一刻（hook 裡，production 在那一刻之後的程式執行之前）的取證：寫進 {@code halt.json} 的 {@code atWindow}，
+     * halt 時的 {@link BeforeHalt} 以 {@code run.atWindow()} 讀它（F6-2d Step 0，F6-2c fix round 1 spec re-review Minor 1）。參數與 {@link BeforeHalt} 不同（不需要 detail），
+     * 窗口表的一列裡兩者互換位置時不能編譯。
+     */
+    @FunctionalInterface interface AtWindow { void record(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence) throws Exception; }
 
     /** restart 的磁碟檢查（開服時，或 READY 時）。 */
     @FunctionalInterface interface DiskCheck { void check(M5CollapseRun run, M5CollapseFixture fixture) throws Exception; }
@@ -246,10 +253,13 @@ final class M5CollapseWindows {
      * 窗口表的一列。{@code haltTiming} 是 halt 的時點（F6-2c fix round 1；預設 {@link M5CollapseRun.HaltAt#WINDOW}，{@code beforeHalt} 也在那一刻執行；F6-2d Step 0 由
      * {@code haltAt} 改名，與 halt receipt 的鍵相同）。
      */
-    record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared, M5CollapseRun.HaltAt haltTiming) {}
+    record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared, M5CollapseRun.HaltAt haltTiming,
+            AtWindow atWindow) {}
 
     static final DiskCheck NO_CHECK = (run, fixture) -> { };
     private static final BeforeHalt NO_EVIDENCE = (run, fixture, detail, evidence) -> { };
+    /** 窗口成立的那一刻不另取證（{@link AtWindow}；W7 以外的每一列）。 */
+    private static final AtWindow NOTHING_AT_THE_WINDOW = (run, fixture, evidence) -> { };
     /** W4、W4b 的 restart：照第一次寫入重寫（PENDING），READY 時 checkpoint 已把方塊存到磁碟。 */
     private static final Prepared FIRST_WRITE_AGAIN = new Prepared("rewrittenAsFirstWrite", ProjectionWriter.Mode.FIRST_WRITE, ANY_CELLS,
             M5CollapseWindows::checkpointedBeforeReady);
@@ -291,7 +301,8 @@ final class M5CollapseWindows {
         var afterReady = AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE);
         // W7（spec §12）：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已 checked 寫入）。F6-2c fix round 1（spec v5.7 §10.3）：crash 在 Crossed 確認的那個 tick 結束時
         // （production 在確認之後存下選門者的 playerdata），halt 之前不存檔；chain 在跨越之前（PASSAGE_READY 期間）存過一次檔。
-        row(rows, CrashWindow.CROSSED_COMMITTED, M5CollapseRun.HaltAt.TICK_END,
+        // F6-2d Step 0（F6-2c fix round 1 spec re-review Minor 1）：Crossed 確認的那一刻另記選門者的 playerdata（selectorPlayerDataAtTheWindow），halt 時斷言它那時還不在 U。
+        row(rows, CrashWindow.CROSSED_COMMITTED, M5CollapseRun.HaltAt.TICK_END, M5CollapseWindows::selectorPlayerDataAtTheWindow,
                 (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED), M5CollapseWindows::selectorAcrossAtTheTickEnd,
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
         // F6-2-16：COLLAPSING→PASSAGE_READY 已 checked 提交、門改為 passable 之前；halt 之前原生存檔（PREPARE 的 sealed 量子膜、參與者在艙內都在磁碟上）。
@@ -328,7 +339,20 @@ final class M5CollapseWindows {
     /** 同上，halt 的時點由這一列指定（F6-2c fix round 1：{@code TICK_END} 的列，{@code beforeHalt} 在窗口成立的那個 tick 結束時執行）。 */
     private static void row(Map<CrashWindow, Window> rows, CrashWindow id, M5CollapseRun.HaltAt haltTiming, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart,
             Prepared prepared) {
-        if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared, Objects.requireNonNull(haltTiming, "haltTiming"))) != null) {
+        row(rows, id, haltTiming, NOTHING_AT_THE_WINDOW, condition, beforeHalt, atRestart, prepared);
+    }
+
+    /**
+     * 同上，另在窗口成立的那一刻取證（{@code atWindow}，F6-2d Step 0）。只用在 {@code TICK_END} 的列：{@code WINDOW} 的 {@code beforeHalt} 本來就在那一刻執行，另指定時丟出
+     * （窗口表在 class init 時建好，開服之前就失敗）。
+     */
+    private static void row(Map<CrashWindow, Window> rows, CrashWindow id, M5CollapseRun.HaltAt haltTiming, AtWindow atWindow, Condition condition, BeforeHalt beforeHalt,
+            AtRestart atRestart, Prepared prepared) {
+        Objects.requireNonNull(haltTiming, "haltTiming");
+        if (atWindow != NOTHING_AT_THE_WINDOW && haltTiming != M5CollapseRun.HaltAt.TICK_END) {
+            throw new IllegalStateException("窗口表的 " + id + "：只有 TICK_END 的列另在窗口成立的那一刻取證（WINDOW 的 beforeHalt 已在那一刻）");
+        }
+        if (rows.put(id, new Window(id, condition, beforeHalt, atRestart, prepared, haltTiming, Objects.requireNonNull(atWindow, "atWindow"))) != null) {
             throw new IllegalStateException("窗口表重複：" + id);
         }
     }
@@ -352,6 +376,7 @@ final class M5CollapseWindows {
     static void arm(M5CollapseRun run, M5CollapseFixture fixture, CrashWindow id) {
         var window = of(id);
         run.armCrash(id, window.haltTiming(), detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
+                (detail, evidence) -> window.atWindow().record(run, fixture, evidence),
                 (detail, evidence) -> window.beforeHalt().collect(run, fixture, detail, evidence));
     }
 
@@ -542,14 +567,20 @@ final class M5CollapseWindows {
     /**
      * W7 的 halt 之前（F6-2c fix round 1：Crossed 確認的那個 tick 結束時，{@link M5CollapseRun.HaltAt#TICK_END}；halt 之前不存檔）：磁碟上的 record 是 Crossed＝[選門者] 的
      * PASSAGE_READY；選門者在 U，另一位在原艙內。chain 在跨越之前（PASSAGE_READY 期間）存過一次檔，所以另一位的 playerdata 在來源世界、原艙門 passable、Controller 是
-     * PASSAGE（比較器 15）都在磁碟上。選門者的 playerdata 只記下（{@code playerDimensionOnDisk}），不在這裡斷言：它是這個窗口的目標，由 restart 開服時的磁碟檢查
-     * （{@code selectorPlayerDataInTheUniverse}）與 JOIN（{@code joinedInTheUniverse}）斷言，所以沒有 production 的存檔時 crash 照常、restart 失敗在目標斷言。
+     * PASSAGE（比較器 15）都在磁碟上。選門者 halt 時的 playerdata 只記下（{@code playerDimensionOnDisk}），不在這裡斷言：它是這個窗口的目標，由 restart 開服時的磁碟檢查
+     * （{@code selectorPlayerDataInTheUniverse}；halt 不存檔，開服時的磁碟就是 halt 時的）與 JOIN（{@code joinedInTheUniverse}）斷言，所以沒有 production 的存檔時 crash 照常、
+     * restart 失敗在目標斷言。
+     * <p>F6-2d Step 0（F6-2c fix round 1 spec re-review Minor 1）：Crossed 確認的那一刻（{@link #selectorPlayerDataAtTheWindow}）選門者的 playerdata 還不在 U
+     * （{@code selectorPlayerDataNotInTheUniverseAtTheWindow}）：存檔在 Crossed 寫入確認之後，不是之前。只看 halt 時的磁碟分不出這兩種順序（寫入確認時兩種順序在磁碟上的結果相同）。
      */
     private static void selectorAcrossAtTheTickEnd(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var write = (M5TestHooks.RollForwardWrite) detail;
         recordOnDisk(run, fixture, evidence, write.next(), "crossedOnDiskAtHalt");
         var universe = fixture.universeWorld().orElseThrow();
         run.expect("selectorInTheUniverseAtHalt", fixture.selector().getServerWorld() == universe, () -> "選門者在 " + fixture.selector().getServerWorld().getRegistryKey().getValue());
+        var atTheWindow = run.atWindow().get(SELECTOR_PLAYER_DIMENSION);
+        run.expect("selectorPlayerDataNotInTheUniverseAtTheWindow", atTheWindow != null && !universe.getRegistryKey().getValue().toString().equals(atTheWindow),
+                () -> "Crossed 確認的那一刻選門者的 playerdata 已在 " + atTheWindow + "（atWindow=" + run.atWindow() + "）");
         for (var id : fixture.members(M5CollapseFixture.OTHERS)) {
             var player = fixture.player(id);
             run.expect("othersInsideTheChamberAtHalt", player.getServerWorld() == run.source() && M5CollapseFixture.inside(player), () -> "另一位在 " + player.getPos());
@@ -560,6 +591,17 @@ final class M5CollapseWindows {
         var controller = controllerStateOnDisk(run, fixture);
         evidence.put("controllerStateOnDisk", controller);
         run.expect("passageControllerOnDiskAtHalt", ChamberState.PASSAGE.name().equals(controller), () -> "磁碟上的 Controller 是 " + controller);
+    }
+
+    /** W7 的 {@code atWindow} 的鍵：Crossed 確認的那一刻選門者的 playerdata 在磁碟上記的世界。 */
+    private static final String SELECTOR_PLAYER_DIMENSION = "selectorPlayerDimensionOnDisk";
+
+    /**
+     * W7 在 Crossed 確認的那一刻（{@code commitRollForward} 的回傳點，production 的 {@code PassageService.saveCrossedPlayerData} 之前；F6-2d Step 0）：記下選門者的 playerdata
+     * 在磁碟上記的世界（{@code atWindow} 的 {@value #SELECTOR_PLAYER_DIMENSION}）。只記下；斷言在 halt 時（{@link #selectorAcrossAtTheTickEnd}）。
+     */
+    private static void selectorPlayerDataAtTheWindow(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence) throws Exception {
+        evidence.put(SELECTOR_PLAYER_DIMENSION, M5CollapseDiskEvidence.playerDimension(run.saveRoot(), fixture.selectorId()));
     }
 
     /**
