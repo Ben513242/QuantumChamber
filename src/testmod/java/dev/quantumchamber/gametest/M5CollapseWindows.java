@@ -376,7 +376,7 @@ final class M5CollapseWindows {
     static void arm(M5CollapseRun run, M5CollapseFixture fixture, CrashWindow id) {
         var window = of(id);
         run.armCrash(id, window.haltTiming(), detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
-                (detail, evidence) -> window.atWindow().record(run, fixture, evidence),
+                evidence -> window.atWindow().record(run, fixture, evidence),
                 (detail, evidence) -> window.beforeHalt().collect(run, fixture, detail, evidence));
     }
 

@@ -159,9 +159,16 @@ final class M5CollapseRun {
 
     /**
      * halt 之前的取證（或刻意的準備，例如 W4 的存檔）：寫進 halt receipt 的 {@code atHalt}。丟出時不 halt：{@link HaltAt#WINDOW} 由 crash 點記下失敗，phase 在下一個 tick FAIL；
-     * {@link HaltAt#TICK_END} 在 runner 的 tick 裡丟出，phase 當場 FAIL。{@link #armCrash} 另以同一個型別收窗口成立的那一刻的取證（寫進 {@code atWindow}；F6-2d Step 0）。
+     * {@link HaltAt#TICK_END} 在 runner 的 tick 裡丟出，phase 當場 FAIL。窗口成立的那一刻的取證是另一個型別 {@link WindowEvidence}（F6-2d-1）。
      */
     @FunctionalInterface interface HaltEvidence { void collect(Object detail, Map<String, Object> evidence) throws Exception; }
+
+    /**
+     * 窗口成立的那一刻（hook 裡）的取證：寫進 halt receipt 的 {@code atWindow}（F6-2d Step 0）。F6-2d-1（F6-2d Step 0 quality Minor 2）：原本與 {@link HaltEvidence} 同型別，
+     * {@link #armCrash} 的兩個取證參數互換也能編譯（{@code TICK_END} 的列的取證時點會靜默改變）；這個型別不收 detail，參數個數不同，互換位置不能編譯。丟出時同
+     * {@link HaltEvidence}（不 halt）。
+     */
+    @FunctionalInterface interface WindowEvidence { void collect(Map<String, Object> evidence) throws Exception; }
 
     /** 在 {@code onInitialize} 呼叫（entrypoint 的 phase 表，{@code M5CollapseRecoveryProbe.PHASES}）：建立這個 phase 的 chain，回傳它的 {@link Phase}。 */
     @FunctionalInterface interface PhaseFactory { Phase create(M5CollapseRun run); }
@@ -497,21 +504,23 @@ final class M5CollapseRun {
      * 那個 tick 的 runner tick 一開始（{@link #haltAtTheTickEnd}；之後再成立的 hit 讓乾淨的守門以 {@code hit} 拒絕）。
      * <p>{@code windowEvidence}（F6-2d Step 0）：第一次成立的那一刻在 hook 裡的取證，寫進 halt receipt 的 {@code atWindow}（{@link #atWindow()}）。{@code TICK_END} 用它記下 production
      * 在那一刻之後的程式執行之前的事實（例如 W7 的 playerdata 存檔之前）；{@code WINDOW} 時與 {@code evidence} 是同一刻。丟出時由 crash 點記下失敗、不 halt（同
-     * {@link HaltEvidence}）。呼叫端只有窗口表（{@code M5CollapseWindows.arm}），兩個取證都由那一列的具名欄位交來。
+     * {@link HaltEvidence}）。呼叫端只有窗口表（{@code M5CollapseWindows.arm}），兩個取證都由那一列的具名欄位交來。F6-2d-1：兩個取證是不同的型別（{@link WindowEvidence}、
+     * {@link HaltEvidence}），互換位置不能編譯；取證失敗的訊息寫明是哪一段（{@link #collect}）。
      */
-    void armCrash(CrashWindow window, HaltAt at, Predicate<Object> condition, Function<Object, String> describe, HaltEvidence windowEvidence, HaltEvidence evidence) {
+    void armCrash(CrashWindow window, HaltAt at, Predicate<Object> condition, Function<Object, String> describe, WindowEvidence windowEvidence, HaltEvidence evidence) {
         Objects.requireNonNull(at, "at");
         Objects.requireNonNull(windowEvidence, "windowEvidence");
+        Objects.requireNonNull(evidence, "evidence");
         var point = new M5TestHooks.CrashPoint(window, condition, (detail, hit) -> {
             if (at == HaltAt.TICK_END) {
                 if (pendingHalt == null) {
-                    atWindow = Collections.unmodifiableMap(collect(windowEvidence, detail));
+                    atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence::collect));
                     pendingHalt = new PendingHalt(window, detail, server.getTicks(), describe, evidence);
                 }
                 return;
             }
-            atWindow = Collections.unmodifiableMap(collect(windowEvidence, detail));
-            halt(window, detail, describe, hit, collect(evidence, detail), HaltAt.WINDOW, server.getTicks());
+            atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence::collect));
+            halt(window, detail, describe, hit, collect(AT_HALT, collected -> evidence.collect(detail, collected)), HaltAt.WINDOW, server.getTicks());
         });
         install(M5TestHooks.CRASH_POINT, point);
         crashPoint = point;
@@ -519,15 +528,26 @@ final class M5CollapseRun {
         proof.put("haltTiming", at.name());
     }
 
-    /** halt 之前的取證：寫進 {@code atHalt}。丟出的 checked 例外包成 {@code haltEvidence} 的 IllegalStateException；具名斷言的 AssertionError 原樣丟出。 */
-    private static Map<String, Object> collect(HaltEvidence evidence, Object detail) {
-        var atHalt = new LinkedHashMap<String, Object>();
+    /** {@link #collect} 的取證：把事實寫進 {@code evidence}（窗口成立的那一刻與 halt 之前兩段共用）。 */
+    @FunctionalInterface private interface EvidenceWriter { void into(Map<String, Object> evidence) throws Exception; }
+
+    /** {@link #collect} 的標籤：窗口成立的那一刻的取證（{@code atWindow}）。 */
+    private static final String AT_WINDOW = "atWindow：窗口成立的那一刻";
+    /** {@link #collect} 的標籤：halt 之前的取證（{@code atHalt}；訊息與 F6-2d-1 之前相同）。 */
+    private static final String AT_HALT = "haltEvidence：halt 之前";
+
+    /**
+     * 一段取證：寫進一份新的 map 回傳。丟出的 checked 例外包成以 {@code label} 開頭的 IllegalStateException（F6-2d-1，F6-2d Step 0 quality Minor 3：原本兩段都寫成
+     * 「halt 之前的取證失敗」，窗口那一刻的取證失敗時會誤導）；具名斷言的 AssertionError 原樣丟出。
+     */
+    private static Map<String, Object> collect(String label, EvidenceWriter writer) {
+        var evidence = new LinkedHashMap<String, Object>();
         try {
-            evidence.collect(detail, atHalt);
+            writer.into(evidence);
         } catch (Exception failure) {
-            throw new IllegalStateException("haltEvidence：halt 之前的取證失敗：" + failure, failure);
+            throw new IllegalStateException(label + "的取證失敗：" + failure, failure);
         }
-        return atHalt;
+        return evidence;
     }
 
     /**
@@ -535,7 +555,10 @@ final class M5CollapseRun {
      * 由 {@link #guarded} 收下（failures、正常停止並 FAIL），不 halt。
      */
     private void haltAtTheTickEnd(PendingHalt pending) {
-        halt(pending.window(), pending.detail(), pending.describe(), crashPoint.hits(), collect(pending.evidence(), pending.detail()), HaltAt.TICK_END, pending.windowTick());
+        // 與 F6-2d-1 之前相同的求值順序：先讀 hit，再取證。
+        int hits = crashPoint.hits();
+        var atHalt = collect(AT_HALT, collected -> pending.evidence().collect(pending.detail(), collected));
+        halt(pending.window(), pending.detail(), pending.describe(), hits, atHalt, HaltAt.TICK_END, pending.windowTick());
     }
 
     /** 已裝上的 crash 點；還沒有裝時為 null。 */
