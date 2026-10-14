@@ -16,6 +16,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +77,7 @@ final class M5CollapseRun {
      * <p>建立方式（F6-2c Step 0，F6-2a quality Minor 5：四個動作都是 {@link Checked}，位置參數互換也能編譯，所以不提供位置參數的建構子）：以結束方式的 factory
      * （{@link #stop}、{@link #halt}）帶 step，再以具名的方法加上需要的動作，例如 {@code Phase.halt(steps).started(fixture::requireFreshWorld)}。
      * 沒有指定的動作是 {@link #NOTHING}；每個動作只能指定一次（再指定時丟出）。crash 點的健康檢查（{@link #crashPointHealthy}）不經 {@code everyTick}：runner 每個 tick 在
-     * {@code everyTick} 之前自動呼叫（F6-2c，F6-2c Step 0 quality Minor 2），{@code everyTick} 留給 chain 自己的不變量。
+     * {@code everyTick} 之前自動呼叫（F6-2c，F6-2c Step 0 quality Minor 2），{@code everyTick} 留給 chain 自己的不變量。step 的名稱不得重複（F6-2d-2 Step 0：建立時丟出）。
      */
     static final class Phase {
         private final Ending ending;
@@ -87,6 +88,7 @@ final class M5CollapseRun {
             this.ending = ending;
             this.steps = List.copyOf(steps);
             if (this.steps.isEmpty()) throw new IllegalArgumentException("phase 至少要有一個 step");
+            requireUniqueStepNames(this.steps);
             this.beforeStart = beforeStart;
             this.started = started;
             this.everyTick = everyTick;
@@ -118,6 +120,18 @@ final class M5CollapseRun {
         private static Checked once(String name, Checked current, Checked next) {
             if (current != NOTHING) throw new IllegalStateException("phase 的 " + name + " 已經指定過");
             return Objects.requireNonNull(next, name);
+        }
+
+        /**
+         * step 的名稱不得重複（F6-2d-2 Step 0，F6-2d-1 quality Minor 5）：receipt 的 {@code witness} 以 step 名稱為鍵（{@link M5CollapseRun#tick} 的 {@code witness.put} 會覆蓋，
+         * 重名的 step 只留下最後一個），chain 也依名稱唯一（例如 {@code retried}／{@code retriedAgain}，{@code passage.cross} 在同一個 phase 只能取一次）。phase 在
+         * {@code onInitialize} 的 phase factory 裡建立，所以重名在開服之前就丟出（JVM 不開服、沒有 receipt，ps1 判 FAIL）；原本只靠人工發現（F6-2d-1 的 dev-b1）。
+         */
+        private static void requireUniqueStepNames(List<Step> steps) {
+            var names = new HashSet<String>();
+            for (var step : steps) {
+                if (!names.add(step.name())) throw new IllegalArgumentException("phase 的 step 名稱重複（receipt 的 witness 以名稱為鍵）：" + step.name());
+            }
         }
     }
 
