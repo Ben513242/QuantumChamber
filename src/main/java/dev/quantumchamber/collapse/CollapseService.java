@@ -1074,7 +1074,8 @@ public final class CollapseService {
         var reason = view.collapse().sealedReason().orElseThrow();
         var track = track(sid);
         if (sealedRetry(reason, startupSessions.contains(sid), track.restartRetryConsumed) == SealedRetry.NONE) return;
-        // §11.2：與 DORMANT 相同的邊緣觸發（§7.1，來源艙還沒載入時不消耗：EntryWatch#trigger，H7）；開服 attach 當下就在 journal 的 session，第一次觀察到原參與者在艙內也算。
+        // §11.2：與 DORMANT 相同的邊緣觸發（§7.1，來源艙還沒載入時不消耗，其他條件與退避期仍消耗：EntryWatch#trigger，H7）；開服 attach 當下就在 journal 的 session，
+        // 第一次觀察到原參與者在艙內也算。
         if (!track.entry(startupSessions.contains(sid)).trigger(inside(view), this::triggerReady, () -> sourceSignal(view))) return;
         if (!track.backoff.ready(now)) {
             LOGGER.debug(LOG_MARKER, "SEALED 的重試在退避期內，這次觸發不重試：session={} 下一次可在 tick {} 之後", sid, track.backoff.retryAtTick());
@@ -1113,8 +1114,12 @@ public final class CollapseService {
 
         PrepareGate(SessionRecoveryRecord view, Track track) { this.view = view; this.track = track; }
 
-        /** 進入 PREPARE 之後參與者在艙內不是持續條件：只看來源艙的條件，不成立就退回 WAITING。 */
-        @Override public boolean stillOpen() { return chamberGate(view); }
+        /**
+         * 進入 PREPARE 之後參與者在艙內不是持續條件：只看來源艙的條件（已載入、結構合法、已供電、Origin enabled：{@link #sourceSignal} 為 {@code OK}），不成立就退回 WAITING。
+         * F6-2d-2 Step 0 把只剩這個呼叫端的 {@code chamberGate} inline 到這裡（判斷不變）；§7.1 的 DORMANT 觸發、§7.3 進入 PREPARE 的評估與 §11.2 的重試觸發由
+         * {@link EntryWatch} 直接看 {@link #sourceSignal}，以分辨「還沒載入」（H7：不消耗觸發）。
+         */
+        @Override public boolean stillOpen() { return sourceSignal(view) == SourceSignal.OK; }
 
         /**
          * 本 server instance 第一次看到這個 session 走到閘門階段時立即以位準評估（live 塌縮返還之後通常立即成立；開服之後就是「第一次觀察」）；不成立就停在
@@ -1221,14 +1226,6 @@ public final class CollapseService {
     /** 觸發的參與者沒有被其他 session 佔用（spec §5 的唯一性規則；DORMANT 與已返還的塌縮參與者不佔用）。 */
     private boolean triggerReady(UUID player) {
         return journal.participantsAvailable(List.of(player));
-    }
-
-    /**
-     * 來源艙已載入、結構合法、已供電、Origin enabled（{@link #sourceSignal} 為 {@code OK}）：§7.3 PREPARE 進行中的閘門（{@link PrepareGate#stillOpen}）。§7.1 的 DORMANT
-     * 觸發、§7.3 進入 PREPARE 的評估與 §11.2 的重試觸發改由 {@link EntryWatch} 直接看 {@link #sourceSignal}，以分辨「還沒載入」（H7：不消耗觸發）。
-     */
-    private boolean chamberGate(SessionRecoveryRecord record) {
-        return sourceSignal(record) == SourceSignal.OK;
     }
 
     /**

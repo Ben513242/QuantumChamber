@@ -54,7 +54,10 @@ public enum CollapsePhase {
         /** 上一個 tick 在 PREPARE：來源艙的條件是否仍成立（參與者在艙內不是持續條件）。 */
         boolean stillOpen();
 
-        /** 上一個 tick 不在 PREPARE：這個 tick 是否有 §7.1 的邊緣觸發。評估會消耗一次邊緣觸發：同一個觸發只會讓一次評估成立。 */
+        /**
+         * 上一個 tick 不在 PREPARE：這個 tick 是否有 §7.1 的邊緣觸發。評估通常會消耗這次邊緣觸發（同一個觸發只會讓一次評估成立），只有來源艙還沒載入時不消耗
+         * （H7，spec v5.9 §7.3：觸發的人留到下一個 tick 再判斷，第一次以位準評估時也不算評估過；F6-2d-2 Step 0 更正，原本寫成一律消耗）。
+         */
         boolean edge();
     }
 
