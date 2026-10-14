@@ -121,7 +121,8 @@ final class M5CollapseWindows {
      * <li>{@link #withCrossedAtHalt}：halt 當下磁碟上的 Crossed（參與者的子集，開服時才由收據決定是哪幾位）；預設沒有人。只在狀態是 PASSAGE_READY 或 SEALED 時斷言
      *     （{@code crossedAtRestart}）。</li>
      * <li>{@link #withCatalogDisabledAtHalt}（F6-2d-1，W9）：halt 當下 catalog 的這筆已是 DISABLED（§8.3 已完成）；預設 EAGER_ENABLED。開服時改斷言 catalog 恰多它一筆而且是
-     *     DISABLED（{@code catalogDisabledOnce}）、開服 bootstrap 沒有物化它（{@code bootstrapSkippedTheDisabled}）。</li>
+     *     DISABLED（{@code catalogDisabledOnce}）、開服 bootstrap 沒有物化它（{@code bootstrapSkippedTheDisabled}）、開服沒有因它停止（{@code serverStartedWithTheDisabled}，
+     *     F6-2d-2 Step 0 起跟著這個欄位，不再由窗口自己的 {@code withDisk} 指定）。</li>
      * </ul>
      * {@code withStateAtHalt} 另接受 MEASURED（F6-2d-1，W8：DORMANT 的收據，{@code restartedDormant}；還沒有 Destination，開服時斷言 {@code dormantAtRestart}）。
      * <p>F6-2d Step 0（F6-2c quality Minor 6）起驗證組合，restart 會忽略、或要到開服之後才發現的組合丟出 IllegalStateException。F6-2d-1（F6-2d Step 0 quality Minor 4、5
@@ -386,7 +387,7 @@ final class M5CollapseWindows {
                         .withDisk((run, fixture) -> sealedKeptAtRestart(run, fixture, SealedReason.MATERIALIZE_FAILED, "materializeFailedAtRestart")), null);
         // W9 的變體 (b)：§8.3 的 DISABLED 已確認、SEALED 寫入之前（開服時是 COLLAPSING＋DISABLED）。
         row(rows, CrashWindow.CATALOG_DISABLED, M5CollapseWindows::catalogDisabled, M5CollapseWindows::disabledBeforeTheSeal,
-                AtRestart.resolved(Resolved.CATALOG).withCatalogDisabledAtHalt().withDisk(M5CollapseWindows::serverStartedWithTheDisabled), null);
+                AtRestart.resolved(Resolved.CATALOG).withCatalogDisabledAtHalt(), null);
         // F6-2-07：SEALED(AUTHORITY_UNREADABLE)，同一個 instance 內退避期過後的邊緣觸發也沒有重試之後，塌縮流程下一次處理它之前（allocation、catalog、物化都已完成）。
         row(rows, CrashWindow.SEALED_STEP, (fixture, detail) -> sessionStep(fixture, detail, SessionState.SEALED, SealedReason.AUTHORITY_UNREADABLE),
                 M5CollapseWindows::unreadableAtHalt,
@@ -903,6 +904,9 @@ final class M5CollapseWindows {
             // F6-2d-1（W9）：§8.3 已把這筆改為 DISABLED，開服 bootstrap 不物化它（spec §8.3：避免下次開服時 bootstrap 因這筆失敗而停服）。
             fixture.expectCatalogDisabled("catalogDisabledOnce");
             run.expect("bootstrapSkippedTheDisabled", !active, () -> "開服 bootstrap 物化了 DISABLED 的 U");
+            // F6-2d-2 Step 0（F6-2d-1 quality Minor 3）：開服沒有因 DISABLED 停止，跟著這一列的 withCatalogDisabledAtHalt 斷言；原本分散在 w9cd 的 withDisk 與
+            // sealedKeptAtRestart 的分支，新增 DISABLED 的列卻沒有指定 withDisk 時這個斷言會消失。
+            serverStartedWithTheDisabled(run, fixture);
         } else {
             fixture.expectCatalog("catalogAllocatedOnce");
             // spec §12 W3：重啟時由 EAGER_ENABLED 物化（UniverseLifecycleService 的開服 bootstrap，早於這個 SERVER_STARTED 的 AFTER phase）。
@@ -945,17 +949,19 @@ final class M5CollapseWindows {
         playerDataInTheSourceAtRestart(run, fixture);
     }
 
-    /** W9、F6-2-07 的開服（F6-2d-1）：record 仍是 SEALED({@code reason})（斷言名 {@code name}）；W9 另斷言開服沒有因 DISABLED 停止（{@link #serverStartedWithTheDisabled}）。 */
+    /**
+     * W9、F6-2-07 的開服（F6-2d-1）：record 仍是 SEALED({@code reason})（斷言名 {@code name}）。W9 的「開服沒有因 DISABLED 停止」（{@link #serverStartedWithTheDisabled}）
+     * F6-2d-2 Step 0 起由 {@link #expectAtRestart} 的 {@code catalogDisabledAtHalt} 分支斷言，不在這裡。
+     */
     private static void sealedKeptAtRestart(M5CollapseRun run, M5CollapseFixture fixture, SealedReason reason, String name) throws Exception {
         var current = run.journal().flushedRecords().get(fixture.sid());
         run.expect(name, current != null && current.collapse().sealedReason().equals(Optional.of(reason)),
                 () -> "SEALED 的原因=" + (current == null ? "ABSENT" : current.collapse().sealedReason()));
-        if (reason == SealedReason.MATERIALIZE_FAILED) serverStartedWithTheDisabled(run, fixture);
     }
 
     /**
      * W9 與變體 (b) 的開服（F6-2d-1，spec §12 W9「開服不停止」）：這個 phase 走到了 {@code SERVER_STARTED}（開服 bootstrap 沒有因 DISABLED 的這筆讓 server 停止），server 仍在執行，
-     * 從 {@code onInitialize} 起沒有提到 U 的 ERROR。
+     * 從 {@code onInitialize} 起沒有提到 U 的 ERROR。F6-2d-2 Step 0 起由 {@link #expectAtRestart} 對每個 {@code withCatalogDisabledAtHalt} 的列斷言。
      */
     private static void serverStartedWithTheDisabled(M5CollapseRun run, M5CollapseFixture fixture) {
         var errors = run.startupLog().matching(Level.ERROR, fixture.universe().value().toString()).stream().map(LogCapture.Entry::message).toList();
