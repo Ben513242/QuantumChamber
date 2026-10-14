@@ -1242,7 +1242,8 @@ public final class M5CollapseGameTests implements FabricGameTest {
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_retry_membrane", tickLimit = 400)
     public void sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting(TestContext context) {
-        sealedRetryAtStartup(context, "sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting", true);
+        M4PerTestUniverseProbe.begin(context,"sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting");
+        sealedRetryAtStartup(context, true);
     }
 
     /**
@@ -1251,12 +1252,15 @@ public final class M5CollapseGameTests implements FabricGameTest {
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_retry_closed_door", tickLimit = 400)
     public void sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten(TestContext context) {
-        sealedRetryAtStartup(context, "sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten", false);
+        M4PerTestUniverseProbe.begin(context,"sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten");
+        sealedRetryAtStartup(context, false);
     }
 
-    /** H9 (a) 的兩個 test 共用：{@code membrane} 為真時門上留著 sealed 量子膜，否則是關著的一般門。 */
-    private static void sealedRetryAtStartup(TestContext context, String name, boolean membrane) {
-        M4PerTestUniverseProbe.begin(context, name);
+    /**
+     * H9 (a) 的兩個 test 共用（呼叫端已以 {@code M4PerTestUniverseProbe.begin} 記下 per-test baseline：run-all 要求它是 test 方法的第一個敘述、名稱是字串常值）：
+     * {@code membrane} 為真時門上留著 sealed 量子膜，否則是關著的一般門。
+     */
+    private static void sealedRetryAtStartup(TestContext context, boolean membrane) {
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = DormantOrigin.open(context, hooks);
@@ -1323,7 +1327,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_startup_reminder", tickLimit = 400)
     public void permanently_sealed_sessions_at_startup_remind_the_admin_once(TestContext context) {
-        M4PerTestUniverseProbe.begin(context, "permanently_sealed_sessions_at_startup_remind_the_admin_once");
+        M4PerTestUniverseProbe.begin(context,"permanently_sealed_sessions_at_startup_remind_the_admin_once");
         var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
         var owned = new ArrayList<UUID>();
