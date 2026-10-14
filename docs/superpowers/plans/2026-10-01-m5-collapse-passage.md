@@ -793,6 +793,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - F6-2d-1 的 W8 觀察經使用者裁示修正，見下方 **Task H7**，排在 F6-2d-1 之後、F6-2d-2 之前。H7 已完成（2026-10-14，spec review ✅、quality review Approved）。
       - controller 2026-10-14 把 F6-2d-2 再拆成 **F6-2d-2 Step 0** 與本體：Step 0 集中處理 F6-2d-1 與 H7 的 review 交下的 Minor（清單見 note 這兩節的「Review 與最終 review」），不新增窗口；`src/main/` 只限 `EntryWatch`／`CollapseService`／`CollapsePhase` 中行為不變的整理（`gateEvaluated` 收進 `EntryWatch`、`SourceSignal` 提升為頂層 enum、Javadoc 與註解），並以 JUnit 確定性地測 WAITING 的接線與「退避期內照樣消耗」。本體再加門與 SEALED 的窗口。F6-2d-2 Step 0 已完成（2026-10-14，spec review 的文件缺口由 controller 更正、複審 ✅，quality review Approved）；它的 quality Minor 1～4、nit 與建議由本體先做（A 段），清單見 note F6-2d-2 Step 0 一節的「Review 與最終 review」。
       - F6-2d-2 本體的 A 段已完成（2026-10-14，`8ce281e..287d849`），implementer 在 context 門檻停下，B 段只留下設計（note F6-2d-2 一節）。它回報的三項觀察經使用者裁示修正，見下方 **Task H8**、**Task H9**（spec v5.10 §4 H8、H9、§20.14）。順序：A 段的 spec＋quality review（與 H8 並行，只讀）→ H8 → H9 → B 段（接力 implementer）。M-2 的斷言由 H9 一併做，B 段不再列；F6-2-11 在 H9 的行為上寫斷言。
+      - A 段的 review：spec ❌（I-1：`ChamberAtStart` 沒有讓矛盾的組合不能編譯）、quality Approved（Minor 5）。H8 當時正在乾淨的 HEAD 上驗證，所以 I-1 與 quality Minor 排在 **B 段的第一步**（A 段 fix round），之後複審 I-1；清單見 note F6-2d-2 一節的 review 區塊。
+      - H8 已完成（2026-10-14，spec review ✅、quality review Approved）。H8 的盤點另發現原版 `StrongholdGenerator` 的 static 可變狀態（H6 類別），使用者裁示**延到 M6** 一起修（spec §20.14 的追加），M5 只在 F7 寫進已知問題。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；

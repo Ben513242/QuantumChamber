@@ -1226,3 +1226,6 @@ v5.1 的輕量確認：Critical 0、Important 0、Minor 5（p1–p5），control
   3. 「修正」：先重現再修，重現不了就停下回報。其他選項是「先觀察再決定」與「列為已知限制」。
 - 作法：§4 H8、H9；§7.3、§11.2、§12 補充；plan Task H8、Task H9。排在 F6-2d-2 的 A 段之後、B 段之前，讓 B 段的 F6-2-11 在 H9 的行為上寫斷言。
 - 不受影響的部分：M5 的狀態機、權威、journal、訊息、比較器；SEALED 的重試條件與退避。
+- 追加（同日，H8 的盤點）：原版 `StrongholdGenerator` 把可抽的 piece 清單、總權重、目前的 piece 類型，以及各 piece 已生成的數量放在 static 欄位，`StrongholdStructure.addPieces` 每次生成都先重設再修改。這屬於 H6 的類別（共用、在 worker 上被修改），不是 H8 的 lazy init。M5 的 U 也是 Overworld 類型、也有 stronghold；兩個世界同時生成任一座 stronghold（不必是同一座）時會互相干擾，可能 crash 並卡在停服，或生成走樣的 stronghold。原版只有 Overworld 有 stronghold，平常不會發生，但 server thread 的 `/place` 或 datapack 讓其他維度生成 stronghold 時也會。還沒以 run 重現。
+  - 裁示：使用者經 AskUserQuestion 選「延到 M6 一起修」。其他選項是「一樣修正」（controller 推薦）與「列為已知限制」。
+  - 作法：M5 不改程式；F7 寫進已知問題；M6 處理多宇宙時，連同 `NetherFortressGenerator`、`EndCityGenerator` 的同類 static 狀態一起修（M5 只有一個 Nether、一個 End，不會在兩個世界同時執行）。

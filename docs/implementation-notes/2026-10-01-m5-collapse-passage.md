@@ -7697,6 +7697,19 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - 本節由其後的 docs commit `docs: record H8 in the M5 note` 加入。
 - 只改了派工允許的路徑：production 新增 `src/main/java/dev/quantumchamber/mixin/DirectionTransformationEagerMappingsMixin.java`，在 `src/main/resources/quantumchamber.mixins.json` 登記（`mixins` 的最後一項）；JUnit 新增 `src/test/java/dev/quantumchamber/universe/DirectionTransformationMappingsTest.java`（1 個 test）；`scripts/verification/README.md` 只在「M5 collapse probe」一節補一句（`w7`、`trr` 同時 JOIN 那一段的末尾）；本 note 只加本節。**沒有改** 其他 `src/main/` 檔案、`build.gradle`、`fabric.mod.json`、`quantumchamber-test.mixins.json`、任何 ps1、`.github/`、testmod（probe、GameTest、`M5TestHooks`）、M4 probe、其他 JUnit、語言檔、spec、plan、AGENTS。既有的 test 沒有因為修正而失敗。
 - 行號以 `8d639c5` 為準。`MX`＝`DirectionTransformationEagerMappingsMixin`，`UT`＝`DirectionTransformationMappingsTest`；原版的行號是 1.21 yarn sources（`h8/mcsrc/`，由 Loom 的 sources jar 解出），`DT`＝`DirectionTransformation.java`。
+- Review 與最終 review（controller 補）：
+  - 最終回歸（本節的 commit 之後，`aee674f`）：第一次 `run-all-79a3d7685d974f1db75b7da311353b24` FAIL，**不採計**，root 保留：已知偶發「boundary oracle 挑到同 PID 的舊 receipt」（`gate-full-…/execution/` 有兩份 pid=22216 的 receipt，都是 PASS：本次的 `893a703e…` 與 2026-10-09 來自 `run/gametest/` 的 `aa0de20f…`；`gates.ps1:183` 只以 PID 複製 receipt，`:290-291` 要求恰好一份；`world-restore.json` 為 `exactRestored=true`），與 H8 無關。以新的 root 重跑 `run-all-b47d7170fc874d379f85585871836f36`：**`END ALL exit=0`**，SUMMARY 與上方 run-all-1 相同（collapse runId `4f485e7d…`）。下方 root 一節「沒有遇到已知偶發」是在這兩次之前寫的，以本條為準。
+  - spec review ✅（Critical 0、Important 0、Minor 4）。reviewer 獨立核對：`<clinit>` 只有一個 return，TAIL 在 48 個常數、`$VALUES`、`COMBINATIONS`、`INVERSES` 之後；refmap `class_4990;<clinit>()V` 與 `mappings-base.tiny` 一致；`Direction`、`Axis`（含 `$1`～`$3`）、`AxisDirection`、`Type`、`AxisTransformation` 都不參照 `DirectionTransformation`；common 裡呼叫 `map` 的只有 `JigsawBlock`、`CrafterBlock`（最多 6 個常數），所以 RED 至少 42 個 null；盤點的「無害」判定與另以 grep 補掃都成立；偶發的歸屬如上；四個 collapse run（`d46ab3e3`、`18ee1d3b`、`1a9f0b57`、`7c650167`）49 個 phase、1392 個斷言的名稱、順序、step 完全相同。
+    - M-1：`h8/STATUS.md:14` 沒提到 run-all-3 的 collapse run `4f485e7d…` 中 `w8late-restart` 的 `participantInSourceOrUniverse` 與 `sameDestination` 順序對調（`h8/runall3-vs-green-1-names.txt:42`，`order=DIFF`、RESULT=OK）。這個順序在 H8 之前就會隨時序變動（`36882a48`、`8cce87b3`、`d663ae5c` 也對調），與 H8 無關。
+    - M-2：本節的 root 一節有時序落差，也沒有最終回歸的 root（已在上一條補記）。
+    - M-3：盤點對 `StrongholdGenerator` 的描述說得太絕對（已在盤點一段更正）。
+    - M-4：JUnit 放在 `dev/quantumchamber/universe/` 的理由沒寫：與 H6 的 `StructureTemplateCacheConcurrencyTest` 放在一起（同為「多個世界共用原版 worldgen 狀態」的回歸）。
+  - quality review **Approved**（Critical 0、Important 0、Minor 3，都是文字）：
+    1. `MX:19` 與本節「production 的修正」把可見性寫成「class 的初始化在初始化鎖之下執行」不精確：依 JLS 12.4.2，執行 static initializer 時（step 9）沒有持有初始化鎖 LC；可見性來自 step 10 在 LC 之下標記 fully initialized，其他執行緒經 LC（step 1／2）才能使用。結論不變。
+    2. `MX:29-30` 與「交給後續」的相容性說法過強：enum 一定有 `<clinit>`，`require = 1` 幾乎恆成立，能抓到語意漂移的是 `UT`（只在開發環境）；`@Overwrite` 了 `map` 的 mod，race 的防護改由該 mod 決定（逐方向 lazy 的覆寫只呼叫 `map(NORTH)` 不會建完 6 個方向；`<clinit>` 期間丟例外會變成開服時的 `ExceptionInInitializerError`）。
+    3. `UT:24-26`「與先跑了哪些 test 無關」依賴 repo 現況：之後若有 test 在同一個 JVM 先把 48 個常數全部 `map` 過，會遮住「mixin 沒有套用」的回歸；建議在 Javadoc 寫明這個維護前提。
+  - controller 處置：不開 fix round。spec Minor 1～4 在本區塊補記或更正；quality Minor 1～3 是 `src/main/` 與 JUnit 的註解，依「不順手修」交給 **F7**（與 `EW:17` 同類；F7 寫 compatibility 說明時一併以正確的說法）。`StrongholdGenerator` 依使用者裁示延到 M6（見下方「需要裁示」）。
+  - **H8 完成**：range `d8ba7a0..aee674f`。最終 run-all：`run-all-b47d7170fc874d379f85585871836f36`，`END ALL exit=0`（`aee674f`）。
 
 ### 盤點（第 0 點）
 
@@ -7730,7 +7743,7 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - **結論：同類而且成立的只有 `DirectionTransformation.mappings`**，沒有其他項目納入本 task。
 - **盤點時發現、不屬 H8 類別的問題（需要裁示，本 task 沒有處理）**：`StrongholdGenerator` 的 static 可變狀態。
   - `possiblePieces`、`activePieceType`、`totalWeight`（`StrongholdGenerator.java:63-65`），以及 static `ALL_PIECES`（`:40`）裡共用的 `PieceData.generatedCount`（`:972`）。`StrongholdStructure.addPieces`（`:22-30`）在 structure_starts（worker）呼叫 `init()`（`:68-77`）重設，`pickPiece`（`:132` 起）一邊迭代 `possiblePieces`（`:152`）一邊 `remove`（`:164`），並以 `random.nextInt(totalWeight)`（`:150`）抽選。
-  - M5 的 U 與來源世界共用 generator 與 seed，stronghold 的位置相同；兩邊同時生成同一個 stronghold 的 start 時（H6、H8 的 lockstep），兩條 worker 同時改這些 static 狀態，可能丟 `ConcurrentModificationException`、`IllegalArgumentException`（`totalWeight` 不是正數），或兩邊生成不同的 stronghold。前兩者會 crash 並卡在停服（與 H6 相同的原版行為）。原版只有一個 Overworld 生成 stronghold，所以原版不會遇到。
+  - M5 的 U 與來源世界共用 generator 與 seed，stronghold 的位置相同；兩邊同時生成同一個 stronghold 的 start 時（H6、H8 的 lockstep），兩條 worker 同時改這些 static 狀態，可能丟 `ConcurrentModificationException`、`IllegalArgumentException`（`totalWeight` 不是正數），或兩邊生成不同的 stronghold。前兩者會 crash 並卡在停服（與 H6 相同的原版行為）。原版只有一個 Overworld 生成 stronghold，所以原版不會遇到。（controller 依 spec review M-3 更正：上一句說得太絕對。server thread 的 `/place structure minecraft:stronghold` 與 worker 同時執行，或 datapack 讓其他維度生成 stronghold 時，原版也會 race；兩個世界同時生成的也不必是同一座 stronghold，任意兩座同時生成就會互相干擾。）
   - 這是 H6 的類別（共用、在 worker 上被修改，而且每次都會，不只第一次），不是 lazy init，不在 spec §4 H8 的範圍。H6 Step 0 的候選清單（`h6/step0/fieldscan-candidates.txt`）列出了這三個欄位，但表格與結論沒有討論。
   - C2ME（`dev/1.21.3`）以 ThreadLocal 修正：`MixinStrongholdGenerator`、`MixinStrongholdGeneratorPieceData`（`gh api` 讀原始碼）。
   - 同一類、只與 M6 有關：`NetherFortressGenerator` 的 static `ALL_BRIDGE_PIECES`／`ALL_CORRIDOR_PIECES` 的 `generatedCount`（`:29`、`:37`、`:1361`、`:1689-1696`）與 `EndCityGenerator` 的 static `Part` 的 `shipGenerated`（`:107-147`）。M5 只有一個 Nether 與一個 End，不會在兩個世界同時執行；M6 若有多個 Nether 或 End 類型的世界就會。
@@ -7826,6 +7839,7 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   1. 另開 task 修正（例如比照 C2ME 以 ThreadLocal 隔離這幾個欄位，或以一個 static 鎖把 `StrongholdStructure.addPieces` 序列化）；先以 JUnit 或 probe 確認 RED。
   2. 列為已知限制（寫進 F7）。
   - 盤點只確認了程式路徑，沒有以 run 重現。
+  - **裁示**（controller 補，2026-10-14）：controller 核對 sources 屬實（`StrongholdGenerator.java:63-65`、`:68-77`、`StrongholdStructure.java:29`）。使用者經 AskUserQuestion 選「**延到 M6 一起修**」（其他選項：一樣修正（controller 推薦）、列為已知限制）。M5 不改程式；F7 寫進已知問題；M6 連同 `NetherFortressGenerator`、`EndCityGenerator` 一起處理。記在 spec §20.14 的追加。
 
 ### 交給後續
 
@@ -7833,9 +7847,10 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - compatibility：C2ME 的 `MixinDirectionTransformation` 在每個常數的建構子 RETURN 呼叫 `map(Direction.UP)`；與本 mixin 並存時，`mappings` 在建構時就建好，本 mixin 的呼叫只走非 null 的分支，結果相同、不論先後（`compat-c2me` PASS）。`@Overwrite` 了 `map` 的 mod 會讓本 mixin 呼叫它的版本，不影響正確性。
   - 已知問題「同步生成步驟的例外之後停服卡住」已由 H6 記錄（見 H6 一節「交給後續」）；H8 的 NPE 走的是同一條路（「Exception generating new chunk」→ worker 的 uncaught handler → `System.exit` → 停服等不到 holder 釋放），這裡只補交叉引用。
   - `AffineTransformation` 的 lazy 分解（非 volatile 的旗標）不在 worldgen 路徑，C2ME 另有修正；是否寫進 compatibility 說明由 F7 決定。
-  - 若需要裁示的 `StrongholdGenerator` 列為已知限制，寫進 F7。
+  - 若需要裁示的 `StrongholdGenerator` 列為已知限制，寫進 F7。（controller 補：使用者裁示延到 M6，F7 寫進已知問題：U 與來源世界同時生成任意兩座 stronghold 時可能 crash 並卡在停服，或生成走樣的 stronghold；M6 修。）
+  - quality review Minor 1～3（`MX:19` 的 JLS 說法、`MX:29-30` 的 `require` 與 `@Overwrite` 說法、`UT:24-26` 的維護前提），見上方 review 區塊。
 - **H9、F6-2d-2 B 段、F6-3**：沒有。probe、testmod 與 harness 都沒有改；B 段的 10 個新 phase 照 F6-2d-2 一節的設計做，`m5collapse` 的基準仍是 49。
-- **M6**：`NetherFortressGenerator`、`EndCityGenerator` 的 static 可變狀態（上方盤點），有多個 Nether 或 End 類型的世界時會 race。
+- **M6**：`NetherFortressGenerator`、`EndCityGenerator` 的 static 可變狀態（上方盤點），有多個 Nether 或 End 類型的世界時會 race。（controller 補：`StrongholdGenerator` 依使用者裁示一併在 M6 修。）
 - 附帶的觀察（推論，沒有以 run 確認）：H6 的 `StructureTemplateCacheConcurrencyTest` 以多條執行緒同時對 JIGSAW 呼叫 `getInfosForBlock`，會同時第一次用到 `IDENTITY` 的 `map`；修正之前，它理論上可能因本節的 race 偶發地以「其他例外」（NPE）失敗。H8 之後不會。
 
 ### root（全部保留）
