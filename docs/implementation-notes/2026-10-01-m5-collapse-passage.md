@@ -7370,3 +7370,122 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - run-all：run-all-1 `run-all-d4ceec19fc944e93baaa5963d659ff77`（`c8c5aa7`，collapse `a7b594cca6ee4a8cb8a8c8e6270c9760`）；本節的 commit 之後的 run-all-2 記在 `f62d1/STATUS.md`。JUnit 全部 `f62d1/junit-all-*`。
 - 結束過的 JVM：沒有（沒有逾時，沒有手動結束任何程序，沒有碰 Gradle daemon）。沒有遇到已知偶發而重跑的 root（本輪的 run 沒有遇到已知偶發；基準 run-all 那一次的 `m2_task4_no_entrance` WARN／ERROR +1 見「完整回歸」）。
 - 取證腳本（`f62d1/`）：由 `f6/f62ds0/` 複製的 `state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`mutations.ps1`、`gate.ps1`、`junitall.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-9221b4e…`）、`adapter.py`（adapter 表的模組）、`mutsum.py`、`names2.py`、`details.py`、`warncheck.py`、`warncompare.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`javapcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`；新寫 `adapters_f62d1.py`、`cmpmut.ps1`、`renames.json`。
+
+## H7：重啟之後，觸發等來源艙載入
+
+- 一位 implementer 完成（controller 的派工 scratchpad `h7-prompt.md`；取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h7/impl/`，以下簡稱 `impl/`，`STATUS.md` 是交接摘要）。開工時 HEAD 是 `5684ee0`、工作樹乾淨（`impl/start-state.txt`）。範圍是 spec v5.9 §7.1「來源艙還沒載入時，這次觸發不消耗」、§7.3、§11.2、§4 H7、§20.13 與 plan Task H7。
+- Commits（`5684ee0..HEAD`，依序；每個 commit 只 stage 自己的檔案，code commit 之前都在工作樹編譯：`impl/c0`～`c3-compile.log`，都 BUILD SUCCESSFUL）：
+  - `c2e01d6` `refactor: move the collapse entry watch out of CollapseService`（第 0 點的純搬移）
+  - `6d647ed` `test: add the w8late and unreadablelate chains that join inside an unloaded source chamber`（RED：DORMANT、SEALED）
+  - `b8bf6ee` `test: add the waitinglate chain whose first gate evaluation meets an unloaded source chamber`（RED：WAITING；見下方「三處」）
+  - `3120bda` `fix: keep a chamber trigger until the source chamber has loaded`（production 與 JUnit；**最後一個 code commit**）
+  - `b422c8a` `docs: describe the H7 chains in the verification README`
+  - 本節由其後的 docs commit `docs: record H7 in the M5 note` 加入。
+- 只改了派工允許的路徑：production 是 `CollapseService`（三處觸發與兩段 Javadoc）與純搬移出的新檔 `collapse/EntryWatch.java`（之後的修正也在它裡面，見「偏離」）；JUnit 新增 `EntryWatchTest`（4 個 test），`CollapseServiceTest` 只因搬移拿掉 `CollapseService.` 的限定（3 處）；testmod 只改 `M5CollapseRetryChains` 與 `M5CollapseRecoveryProbe` 的 phase 表；`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；README 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 其他 `src/main/`、`build.gradle`、`fabric.mod.json`、mixin 與它們的登記、`M5TestHooks`、其他 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5GameTestSupport`）、M4 probe、語言檔、spec、plan、AGENTS。既有的 GameTest 與 JUnit 都沒有因為行為改變而失敗。
+
+### F6-2-19 的評估與搬移
+
+- 估計：`CollapseService` 1591 行；修正若留在原處（`EntryWatch` 加 `forget`、觸發的共用判斷與 Javadoc，兩個迴圈各少約 5 行）約 1600～1607 行，超過約 1600 的門檻。
+- 選擇較小的搬移：把 `CollapseService.EntryWatch`（static 巢狀類別，24 行）搬成同 package 的 `EntryWatch.java`（package-private，內容逐字相同，類別 Javadoc 加一句來源）。理由：
+  - H7 要改的正是它（觸發的語意集中在 §7.1 的邊緣觸發），而且它不依賴 `CollapseService` 的任何狀態，純搬移在機制上不可能改變行為；JUnit 可以直接測它。
+  - F6-2-19 預設的 PREPARE 目的地側（約 360 行）H7 完全不碰；它的另一個觸發條件（`PassageService` 要直接碰 `destinations`、`Prepare`、`releaseDestination`）也沒有發生。testmod 的 `CollapseReadyHoldMixin` 以描述子綁著 `CollapseService.ready(…, CollapseService$Prepare, …)`，GameTest 以反射讀 `tracks`、`startupSessions`，切分的邊界若動到它們就要改本 task 不得改的 testmod hook。所以 PREPARE 的抽出仍留在 F6-2-19（見「交給後續」）。
+- 行數：`CS` 1591 → 1567（搬移）→ 1555（修正）；`EntryWatch` 32 → 73。release JAR 的 class 數不變（`CollapseService$EntryWatch` 變成 `EntryWatch`）。
+- 搬移的驗證（`c2e01d6`，乾淨）：編譯（`impl/c0-compile.log`）；JUnit 全部 659（657＋2 skipped，與基準的集合相同，`impl/r0-junit-junitall-setcmp.txt`）；M5 GameTest 60/60 PASS（`impl/r0-m5-summary.txt`）；M5 collapse probe 全部 43 個 phase PASS（runId `42e514ddfb68468daa1912224275c5dd`），具名斷言與 step 和 F6-2d-1 的 green-2 `9155dea5…` 完全相同（`impl/r0-vs-green2-names.txt`，RESULT=OK）。
+
+### 三處的 RED 與處置
+
+| 處 | RED 的條件 | root | 結果 | 處置 |
+| --- | --- | --- | --- | --- |
+| DORMANT 的續行（§7.1、§11.1） | `w8late`（`6d647ed`）：crash 同 `w8`；restart 不預先載入、spawn chunks 半徑改為 0，原艙附近卸載（phase tick 1）之後才 JOIN 在艙內（tick 2，`chamberNotLoadedAtTheJoin`），原艙附近 tick 4 由玩家的 ticket 載入 | runId `36882a484da4413ab09d282ef7361402` | **落空**：`committedWithoutReentry` FAIL（JOIN 之後 20 tick 仍是 MEASURED、提交的 INFO 0、沒有移動） | 修正，`w8late` 是正式 chain |
+| SEALED 的重試（§11.2） | `unreadablelate`（`6d647ed`）：crash 同 `unreadable`，裝上 crash 點之前在參與者在艙內時原生存檔；restart 同上 | runId `725615f7617441c9a18c6cc333a7a84b` | **落空**：`retriedWithoutReentry` FAIL（20 tick 內 SEALED(AUTHORITY_UNREADABLE) 的重試 INFO 0、沒有移動） | 修正，`unreadablelate` 是正式 chain |
+| WAITING 的閘門（§7.3），W-i：「原艙卸載之後才 JOIN」 | 觀察 adapter `obs-waiting`（`impl/adapters_h7.py`，套在 `6d647ed`）的 `w3`：開服是 COLLAPSING，開服之後把半徑改為 0，觀察 200 tick | runId `240c7e0dd22742ec96b964b7995ff436`（`-w3`） | **條件不會成立**：原艙附近一直是 FULL（沒有 `h7LastNotLoadedTick`），來源 ticket 一直持有（attach 為 COLLAPSING 取得，`SuperpositionSessionManager.attachRecord`；提交與 SEALED 的重試之後也會取得） | — |
+| WAITING 的閘門，W-ii：開服的競態 | 同一個 adapter 的 `w5`：crash phase 在收據的存檔之前把半徑改為 0（level.dat 帶著它），restart 第一個 tick 之前參與者已在艙內 | 同上（`-w5`） | **落空**：開服時原艙附近沒有載入，RESOLVE 在 tick 1，閘門第一次評估的 tick 2 仍沒有載入（tick 3 才載入），200 tick 都沒有進 PREPARE（`h7PreparedWithoutMoving=false`），離開再進入之後才續行到終局 | 修正（第一次評估與之後的邊緣都不消耗），加 `waitinglate`（`b8bf6ee`）。正式 RED `red-waitinglate`（runId `8f520e53bca84e24891b0a464bccdde2`）這次 **PASS**：原艙附近在 tick 2 就載入，沒有碰到競態。這個競態由 attach 的 ticket 與第一次評估的先後決定，chain 驗不到時 GREEN 仍成立；確定性的回歸是 JUnit `EntryWatchTest` 的 `theFirstLevelEvaluationWaitsOnlyForAnUnloadedSourceChamber` |
+
+- 觀察 adapter 的第一次執行（`impl/red-chain-console.txt`）因 harness 的 `Select-Object -First 1` 在套用之後就中止了 pipeline（probe 沒有跑、`finally` 的還原沒有執行），以 `adapter.py restore` 手動還原並以 blob 核對（`9152c2f8…`，`impl/obs-waiting-aborted-restored-state.txt`），保存的原檔目錄改名為 `adapters/obs-waiting-aborted-1`；之後以 `obs-waiting-2` 重跑。同一個 console 的 RED probe 因 m5-collapse-probe.ps1 在第一個失敗就停止，`unreadablelate` 沒有跑，另以 `red-unreadablelate` 跑。
+
+### production 的修正（`3120bda`）
+
+- `EntryWatch`（spec v5.9 §7.1、§7.3、§11.2、§4 H7）：
+  - `forget(players)`：把這些人移出上一次的觀察，下一次觀察時仍在艙內就又是新進入（還沒觀察過時不做任何事）。
+  - `trigger(insideNow, ready, source)`：觀察一次；新進入、`ready`（沒有被其他 session 佔用）的人觸發，`source`（只在有這樣的人時才查詢）是 `OK` 才成立；`NOT_LOADED` 時 `forget` 他們，不消耗；其他原因（`INVALID`、`LOW`、`DISABLED`）與不符合參與者條件的人照樣消耗。呼叫端之後才看退避（退避期內也消耗）。
+  - `level(insideNow, ready, source)`：§7.3 閘門第一次以位準評估；有 `ready` 的人在艙內、但 `NOT_LOADED` 時回 `null`（不算評估過、不 prime），否則 prime 並回 `OK` 與否（沒有人時不查詢）。
+  - 類別 Javadoc 寫明為什麼不消耗（重啟之後在原艙內登入，原艙不在 spawn chunks 的話 chunk 在 JOIN 之後幾個 tick 才載入，否則要離開再進入、沒有訊息），以及其他條件仍消耗；只查詢、不寫入、不記 log。
+- `CollapseService`：`resumeDormant`、`sealed` 的迴圈改為一次 `track.entry(…).trigger(inside(…), this::triggerReady, () -> sourceSignal(…))`（之後的退避與 DEBUG log 不變）；`PrepareGate.edge` 評估過之後用 `trigger`、第一次用 `level`（回 `null` 時不設 `gateEvaluated`）；`chamberGate` 現在只給 `PrepareGate.stillOpen`，Javadoc 同步。沒有新增寫入、IO、log 或訊息；journal、權威、退避都不變。
+- 等價性（非 `NOT_LOADED`）：原本的迴圈在第一位 `triggerReady` 的人就決定（閘門不成立就 return、退避期內 DEBUG、否則提交），現在先篩出全部 `ready` 的人再決定一次，結果相同（`participantsAvailable` 只讀）；`PrepareGate` 原本的 `anyMatch(triggerReady) && chamberGate` 與 prime 的時點不變。
+
+### JUnit
+
+- `EntryWatchTest`（4 個 test，不經 server）：`forgottenPlayersEnterAgainOnTheNextObservation`（forget 之後下一次是邊緣、forget 別人或還沒觀察過時不影響、開服的第一次觀察被 forget 之後仍觸發）；`onlyAnUnloadedSourceChamberKeepsTheTrigger`（`SourceSignal` 的每一個值：只有 `NOT_LOADED` 讓一直在艙內的人之後再觸發）；`leavingWhileUnloadedDropsTheTriggerAndOthersStillConsumeIt`（未載入期間每個 tick 再判斷、離開就不算、不符合參與者條件的人被消耗、開服的第一次觀察）；`theFirstLevelEvaluationWaitsOnlyForAnUnloadedSourceChamber`（`level` 的每一個值、沒有人或只有不符合條件的人時不查詢來源艙）。沒有人觸發時以會丟出的 supplier 證明不查詢來源艙。
+- JUnit 依賴新的 API，放在 fix commit；RED 以「拿掉修正」的 mutation 取得（下表）。
+
+### RED、GREEN 與 mutation
+
+| 輪次 | HEAD／工作樹 | root | 結果 |
+| --- | --- | --- | --- |
+| GREEN `green-1` | `3120bda`，乾淨 | runId `7cbdb848155a4499b678a7dca6aa76d2` | 49/49 PASS（43＋6；halt 19 → 22） |
+| GREEN `green-2` | `3120bda`，乾淨 | runId `5cca91ba44ac4aa4bcf021c514e4db48` | 49/49 PASS；與 green-1 的具名斷言與 step 相同（`impl/green-2-vs-green-1-names.txt`，RESULT=OK） |
+| `mut-no-fix@w8late`（拿掉 `forget` 與 `level` 的 `null`，等同 RED） | `3120bda`＋adapter | runId `8cce87b346e9453c89f092aa6daf768e` | FAIL 在 `committedWithoutReentry` |
+| `mut-no-fix@unreadablelate` | 同上 | runId `5d8d3339596742a998d20a00502bd5f2` | FAIL 在 `retriedWithoutReentry` |
+| `mut-no-fix@waitinglate` | 同上 | runId `6249d6e9e7be4f9ea68a0dc7ea2224ec` | PASS（沒有碰到開服的競態，同 `red-waitinglate`） |
+| `mut-no-fix`（JUnit） | 同上 | `impl/jm-mut-no-fix-*` | 4 個中 3 個 FAIL（`onlyAnUnloaded…`、`leavingWhileUnloaded…`、`theFirstLevelEvaluation…`） |
+| `mut-other-kept`（`trigger` 的其他原因也不消耗） | 同上 | GameTest `impl/gm-mut-other-kept-*`（batch `m5_collapse_dormant_edge`）；JUnit `impl/jm-mut-other-kept-*`；probe `@w8` runId `43f86b5479c541ceabee7ab5805b38bf` | GameTest `dormant_source_receipt_resumes_only_on_a_powered_enabled_entry_edge` FAIL，第一個是 `stayingInsideIgnored`（停用時進入、啟用之後一直在艙內就提交）；JUnit `onlyAnUnloaded…` FAIL；`w8` **PASS**（見下） |
+| `mut-level-other`（第一次評估遇到其他原因也不算評估過） | 同上 | GameTest `impl/gm-mut-level-other-*`；JUnit `impl/jm-mut-level-other-*` | GameTest FAIL 在 `powerBackStillWaiting`（斷電時的第一次評估不算，恢復供電就自行進 PREPARE）；JUnit `theFirstLevelEvaluation…` FAIL |
+| `mut-forget-all`（也 forget 不符合參與者條件的人） | 同上 | JUnit `impl/jm-mut-forget-all-*` | `leavingWhileUnloaded…` FAIL |
+
+- 每個 mutation 之後都以 `adapter.py restore` 還原，porcelain 空、`EntryWatch` 的 blob `e63f7fa2…` 等於 HEAD（`impl/*-restored-state.txt`）。
+- `mut-other-kept@w8` PASS 的原因：`w8` 的斷電發生在 PREPARE 中（`stillOpen`），參與者從第一次評估起就一直在 `inside` 裡，恢復供電之後沒有「LOW 時的邊緣」可以消耗，所以 `gateWaitsForAnEdge` 驗的是「之後只看邊緣、不以位準重評」，不是「LOW 消耗觸發」。這個 mutation 由既有的 GameTest（DISABLED 的 `stayingInsideIgnored`）與 JUnit 抓到。
+
+### 具名斷言的比對
+
+- green-1、green-2 與 F6-2d-1 的 green-2 `9155dea5…` 比對（`impl/names2.py`，不用改名表；`impl/green-*-vs-f62d1green2-names.txt`）：43 個既有 phase 的具名斷言、順序與 step 完全相同，沒有拿掉、新增或改名（`unreadable-crash` 的 step 清單也相同：`unreadableSteps(false)` 不插入 `savedInside`）。差異只在 6 個新 phase：
+  - `w8late-crash`：同 `w8-crash`。`w8late-restart`：step `chamberUnloaded`、`join`、`committed`、`resolved`、`ready`、`doorway`、`crossed`、`ended`；新斷言 `chamberNotLoadedAtTheJoin`、`unchangedBeforeTheJoin`、`committedWithoutReentry`（開服時沒有 `chamberLoadedBeforeTheFirstTick`）。
+  - `unreadablelate-crash`：`unreadable-crash` 的 step 再加 `savedInside`（`insideWhenSaved`、`nativeSaveInside`）。`unreadablelate-restart`：同 `w8late-restart` 的形狀，`retried` 與 `retriedWithoutReentry`。
+  - `waitinglate-crash`：同 `w5-crash`。`waitinglate-restart`：`chamberNotLoadedAtStart`、`insideBeforeTheFirstTick`、step `prepared`（`preparedWithoutReentry`），之後同 `w5-restart`。
+- 時序（兩次 GREEN 相同）：`w8late`、`unreadablelate` 卸載 tick 1、JOIN tick 2、載入與提交／重試都在 tick 4；`waitinglate` RESOLVE tick 1、進入 PREPARE tick 2（原艙附近 tick 1～2 就載入，沒有碰到競態）。
+
+### 完整回歸（run-all）
+
+- `run-all-91c584900c6643139845b8d7b7062e16`（`impl/run-all-1-console.txt`），HEAD `b422c8a`，乾淨（所有 code 與 README commit 之後；其後只有本節的 docs commit），**`END ALL exit=0`**。
+- SUMMARY：`default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=663 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=431entries/384classes sources=224 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=49 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-ef32890a6e9f4791ae311f7777bde2b7`（`c0184f4`）逐項比較（`impl/runall-compare.ps1`，輸出 `impl/runall1-*.txt`）：
+
+| 項目 | 基準 | 本次 | 歸屬 |
+| --- | --- | --- | --- |
+| default GameTest | 175 | 175 | testcase 集合與結果相同（`runall1-default-setcmp.txt`，identical） |
+| M5 GameTest | 60 | 60 | 相同（`runall1-m5-setcmp.txt`） |
+| legacy | 1/1，WARN／ERROR 0／0 | 1/1，0／0 | 相同 |
+| JUnit | 659（skipped 2） | 663（skipped 2） | 只多 `EntryWatchTest` 的 4 個，其餘的名稱與結果相同（`runall1-junit-setcmp.txt`） |
+| release JAR | 431／384 | 431／384 | `CollapseService$EntryWatch.class` 換成 `EntryWatch.class`（class 數不變）；內容改變的只有 `CollapseService` 與它的內部類別（`runall1-jarcmp-release.txt`） |
+| sources JAR | 223 | 224 | 只多 `EntryWatch.java`；改變的只有 `CollapseService.java`（`runall1-jarcmp-sources.txt`） |
+| Full WARN／ERROR | 54／28 | 55／28 | 依 batch 比對（`runall1-wbbatch-full.txt`）：只有 `m2_task4_disconnect_io` 多一則「艙體 … 的 session 協調失敗，保留返還保護」WARN（已知偶發）；其他 batch 相同 |
+| M5 WARN／ERROR | 38／10 | 38／10 | 相同 |
+| perTest、windows、windowsCheckpoint | 52+1、89、17 | 相同 | — |
+| M3、M4 recovery | 4＋5、24 | 相同 | — |
+| m5collapse | 43（halt 19） | 49（halt 22） | 只多 H7 的 `w8late`、`unreadablelate`、`waitinglate`（各一個 halt、一個 stop） |
+| main-only、testmodHits、CI 規則 | PASS、0、win／ubuntu PASS | 相同 | — |
+
+### 偏離派工字面之處
+
+- 第 0 點選了較小的搬移（`EntryWatch`），理由見上；「collapse 下新的檔案只限純搬移」：修正本身也改了搬出的 `EntryWatch.java`（`forget`、`trigger`、`level`），這是派工第 2 點「新增 `EntryWatch.forget`」在搬移之後的位置。
+- RED 分兩個 test commit（`6d647ed`、`b8bf6ee`）：WAITING 的 RED 先以觀察 adapter 確認會落空，之後才加 chain。JUnit 依賴新 API，放在 fix commit。
+- WAITING 的修正也包含「評估過之後的邊緣」（`PrepareGate.edge` 改用 `trigger`），這一條沒有單獨重現（COLLAPSING 持有來源 ticket，只有開服的前幾個 tick 可能未載入）；理由是與 DORMANT、SEALED 共用同一個判斷，行為只在 `NOT_LOADED` 時不同，由 JUnit 涵蓋。
+- run-all 在 README commit 之後、本節的 docs commit 之前執行（本節的 commit 只改這份 note）。
+
+### 需要裁示
+
+- `waitinglate` 的 RED 不確定：開服的競態只在 attach 的來源 ticket 比閘門第一次評估晚載入時出現（觀察重現一次；正式 RED 與兩次 GREEN 都沒有碰到）。目前保留這條 chain（GREEN 一定成立，receipt 記下時序），確定性的回歸是 JUnit。若要讓 probe 穩定重現，需要一個延遲 chunk 載入的 testmod hook（另開 task）；或決定拿掉這條 chain。
+- `CollapsePhase.Gate.edge` 的 Javadoc「評估會消耗一次邊緣觸發」在 `NOT_LOADED` 時不再精確（派工不允許改 `CollapsePhase`）；交給下一個可以改 `src/main/` 註解的 task。
+
+### 交給後續
+
+- **F6-2d-2**：門與 SEALED 的重啟窗口在 H7 之後的行為上跑；`M5CollapseRetryChains` 的 `lateRestartPhase`、`chamberLoaded`（與 production 的 `neighborhoodLoaded` 相同的判斷）可以重用。F6-2d-1 quality Minor 1（共用計數器）：H7 的新 step 用自己的 `triggerWaited`，沒有新增共用。
+- **F6-2-19**：PREPARE 目的地側的抽出仍未做（`CS` 1555 行，有約 45 行的餘裕）。
+- **F7**：玩家說明——重啟之後在原艙內登入（DORMANT 的續行、SEALED 的重試、WAITING 的閘門）不必再進出；`CollapsePhase.Gate.edge` 的 Javadoc（上一節）。
+- **F6-3**：無。
+
+### root（全部保留）
+
+- phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`。
+- 搬移的驗證：probe `42e514ddfb68468daa1912224275c5dd`、M5 GameTest `gate-r0-m5-9cf5d23be5c24f449ee597450ec73c2a`、JUnit `impl/r0-junit-*`。RED：`36882a484da4413ab09d282ef7361402`（w8late）、`725615f7617441c9a18c6cc333a7a84b`（unreadablelate）、`8f520e53bca84e24891b0a464bccdde2`（waitinglate，PASS）。觀察：`240c7e0dd22742ec96b964b7995ff436`（obs-waiting-2；中止的第一次沒有 probe root）。GREEN：`7cbdb848155a4499b678a7dca6aa76d2`、`5cca91ba44ac4aa4bcf021c514e4db48`。mutation：`8cce87b346e9453c89f092aa6daf768e`、`5d8d3339596742a998d20a00502bd5f2`、`6249d6e9e7be4f9ea68a0dc7ea2224ec`、`43f86b5479c541ceabee7ab5805b38bf`、`gate-gm-mut-other-kept-849c6e39fc5343608d617257532698cb`、`gate-gm-mut-level-other-217dd4c543c54326a5123746d456e911`、`impl/jm-*`。run-all：`run-all-91c584900c6643139845b8d7b7062e16`（`b422c8a`）。
+- 沒有結束任何 JVM 或 Gradle daemon；沒有逾時；沒有遇到失敗而重跑的 root（第一次的 RED console 與中止的觀察見「三處」）。
+- 取證腳本（`impl/`）：由 `f6/f62d1/` 複製（只加註解、改 adapter 表的模組 `adapters_h7`、label 前綴 `h7-`、run-all 的基準 `run-all-ef32890a…`）；新寫 `adapters_h7.py`、`junitmut.ps1`、`gatemut.ps1`。
