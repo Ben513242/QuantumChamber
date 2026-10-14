@@ -81,19 +81,29 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * （halt 之前的取證與原生存檔在窗口表）。
      */
     Phase readyHeldCrash() {
-        return Phase.halt(List.of(
-                new Step("build", 1, () -> { fixture.buildOrigin(1); return true; }),
-                new Step("registered", 200, fixture::registered),
-                new Step("receipt", 1, () -> {
-                    fixture.writeCrashReceipt(fixture.dormantNewReceipt());
-                    run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid()));
-                    M5CollapseWindows.arm(run, fixture, CrashWindow.READY_HELD);
-                    return true;
-                }),
-                enter(),
-                new Step("committed", 40, fixture::committed),
-                new Step("halt", 600, () -> false)))
-                .started(fixture::requireFreshWorld);
+        return crash(List.of(), () -> run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid())), CrashWindow.READY_HELD, 600);
+    }
+
+    /**
+     * 這個類別的 crash phase 共用的骨架（F6-2d-2 B2：{@link #readyHeldCrash} 與 SEALED 的門窗口共用；step 的名稱、順序與上限與 B1 的 {@code readyHeldCrash} 相同）：fresh 世界蓋原艙、
+     * 一位參與者在艙外 → 原艙註冊 → {@code beforeReceipt}（收據之前的準備，例如開門、在門口放 entity）→ DORMANT 的 NEW 收據、原生存檔，{@code install} 裝上這條 chain 的 hook 或 fault，
+     * 再依窗口表裝上 {@code id} 的 crash 點 → 參與者由艙外進入 → COLLAPSING → 最多 {@code haltTicks} 個 tick 等到窗口 halt（halt 之前的取證在窗口表）。
+     */
+    private Phase crash(List<Step> beforeReceipt, M5CollapseRun.Checked install, CrashWindow id, int haltTicks) {
+        var steps = new ArrayList<Step>();
+        steps.add(new Step("build", 1, () -> { fixture.buildOrigin(1); return true; }));
+        steps.add(new Step("registered", 200, fixture::registered));
+        steps.addAll(beforeReceipt);
+        steps.add(new Step("receipt", 1, () -> {
+            fixture.writeCrashReceipt(fixture.dormantNewReceipt());
+            install.run();
+            M5CollapseWindows.arm(run, fixture, id);
+            return true;
+        }));
+        steps.add(enter());
+        steps.add(new Step("committed", 40, fixture::committed));
+        steps.add(new Step("halt", haltTicks, () -> false));
+        return Phase.halt(steps).started(fixture::requireFreshWorld);
     }
 
     // ---- waitingdoor（F6-2-08）----
