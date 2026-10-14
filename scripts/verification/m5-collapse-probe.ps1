@@ -76,6 +76,10 @@ $chains = [ordered]@{
     'unreadablelate' = @(@{phase='unreadablelate-crash'; ending='halt'; window='SEALED_STEP'}, @{phase='unreadablelate-restart'; ending='stop'; window=''})
     # H7 的 WAITING 版：crash 同 w5、level.dat 帶著半徑 0 的 spawn chunks；開服時原艙附近沒有載入、參與者已在艙內，不離開再進入就進 PREPARE。
     'waitinglate' = @(@{phase='waitinglate-crash'; ending='halt'; window='DISCOVERY_APPENDED'}, @{phase='waitinglate-restart'; ending='stop'; window=''})
+    # F6-2d-2 B1：PREPARE 的原艙門跨重啟（共用 READY_HELD：PASSAGE_READY 的提交被暫緩、門是 sealed 量子膜時 crash）。waitingdoor：重啟之後停在 WAITING、門改為一般開門；
+    # preparedoor：PREPARE 中重啟、艙內有非參與者時維持一般開門，他離開之後的下一個 tick 重新套用 sealed。
+    'waitingdoor' = @(@{phase='waitingdoor-crash'; ending='halt'; window='READY_HELD'}, @{phase='waitingdoor-restart'; ending='stop'; window=''})
+    'preparedoor' = @(@{phase='preparedoor-crash'; ending='halt'; window='READY_HELD'}, @{phase='preparedoor-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

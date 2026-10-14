@@ -228,7 +228,8 @@ Step 'summary' {
         'w9:w9-crash:halt:MATERIALIZE_SEALED','w9:w9-restart:stop:','w9io:w9io-crash:halt:MATERIALIZE_SEALED','w9io:w9io-restart:stop:',
         'w9cd:w9cd-crash:halt:CATALOG_DISABLED','w9cd:w9cd-restart:stop:','unreadable:unreadable-crash:halt:SEALED_STEP','unreadable:unreadable-restart:stop:',
         'w8late:w8late-crash:halt:DORMANT_STEP','w8late:w8late-restart:stop:','unreadablelate:unreadablelate-crash:halt:SEALED_STEP','unreadablelate:unreadablelate-restart:stop:',
-        'waitinglate:waitinglate-crash:halt:DISCOVERY_APPENDED','waitinglate:waitinglate-restart:stop:')
+        'waitinglate:waitinglate-crash:halt:DISCOVERY_APPENDED','waitinglate:waitinglate-restart:stop:',
+        'waitingdoor:waitingdoor-crash:halt:READY_HELD','waitingdoor:waitingdoor-restart:stop:','preparedoor:preparedoor-crash:halt:READY_HELD','preparedoor:preparedoor-restart:stop:')
     $observedCollapse=@($collapsePhases | ForEach-Object {($_.nonce -replace '^[0-9a-f]{32}-','')+':'+$_.phase+':'+$_.ending+':'+$_.window})
     if(($observedCollapse -join ',') -cne ($expectedCollapse -join ',')){throw "M5 collapse phases 不符：$($observedCollapse -join ',')"}
     if(@($collapsePhases | ForEach-Object {"$($_.javaPid)@$($_.javaStartTimeUtc)"} | Sort-Object -Unique).Count -ne $collapsePhases.Count){throw 'M5 collapse phases 必須各自使用不同 JVM (PID, StartTime)'}

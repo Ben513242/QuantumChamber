@@ -25,7 +25,8 @@ import net.fabricmc.api.ModInitializer;
  *     step（F6-2c 起可以只取 resolve、ready、cross 其中幾段）、每個 tick 的不變量與 spec §12 的終局斷言。</li>
  * <li>chain：{@link M5CollapseDormantChains}（DORMANT NEW 收據，W2～W6；restart 也用於 W6x）、{@link M5CollapseLiveChain}（W1）、
  *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）、{@link M5CollapsePassageChains}（F6-2c：通道與終局的重啟窗口，
- *     W7 與其餘的重啟變體）、{@link M5CollapseRetryChains}（F6-2d-1：重試與續行跨重啟，W8、W9 與它的兩個變體、AUTHORITY_UNREADABLE 的重啟後重試；H7 的 w8late、unreadablelate、waitinglate）；投影 chunk 的載入
+ *     W7 與其餘的重啟變體）、{@link M5CollapseRetryChains}（F6-2d-1：重試與續行跨重啟，W8、W9 與它的兩個變體、AUTHORITY_UNREADABLE 的重啟後重試；H7 的 w8late、unreadablelate、waitinglate）、
+ *     {@link M5CollapseDoorChains}（F6-2d-2 B1：PREPARE 的原艙門跨重啟，waitingdoor、preparedoor；與 RetryChains 共用基底 {@link M5CollapseRestartChains}）；投影 chunk 的載入
  *     與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。
  *     {@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。</li>
  * </ul>
@@ -102,6 +103,12 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         // H7 的 WAITING 版：開服時 COLLAPSING、原艙附近沒有載入、參與者已在艙內；閘門第一次評估遇到來源艙還沒載入時不算評估過，不離開再進入就進 PREPARE。
         table.put("waitinglate-crash", run -> new M5CollapseRetryChains(run).waitingLateCrash());
         table.put("waitinglate-restart", run -> new M5CollapseRetryChains(run).waitingLateRestart("waitinglate-crash"));
+        // F6-2d-2 B1：PREPARE 的原艙門跨重啟（M5CollapseDoorChains；兩條的 crash 相同，都在 READY_HELD：PASSAGE_READY 的提交被暫緩、門是 sealed 量子膜時 halt）。
+        // F6-2-08（waitingdoor）：重啟之後閘門不成立、停在 WAITING，下一個 tick 把帶量子膜的門改為一般開門。F6-2-10（preparedoor）：PREPARE 中重啟、艙內有非參與者時維持一般開門，他離開之後重新套用。
+        table.put("waitingdoor-crash", run -> new M5CollapseDoorChains(run).readyHeldCrash());
+        table.put("waitingdoor-restart", run -> new M5CollapseDoorChains(run).waitingDoorRestart("waitingdoor-crash"));
+        table.put("preparedoor-crash", run -> new M5CollapseDoorChains(run).readyHeldCrash());
+        table.put("preparedoor-restart", run -> new M5CollapseDoorChains(run).prepareDoorRestart("preparedoor-crash"));
         return Collections.unmodifiableMap(table);
     }
 

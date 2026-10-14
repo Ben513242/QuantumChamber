@@ -114,7 +114,7 @@ abstract class M5CollapseRestartChains {
     /** 這條 chain 的窗口不得要求 JOIN 之前載入投影（這裡的 restart 不做；窗口表的規則允許 COLLAPSING 的列指定它，w9cd 就是 COLLAPSING）。在 {@code onInitialize} 丟出。 */
     private static void requireNoProjectionLoad(CrashWindow id) {
         if (M5CollapseWindows.of(id).atRestart().recognizeBeforeJoin()) {
-            throw new IllegalStateException("M5CollapseRetryChains 的 restart 不在 JOIN 之前載入投影：" + id);
+            throw new IllegalStateException("M5CollapseRestartChains.restartPhase 不在 JOIN 之前載入投影：" + id);
         }
     }
 
