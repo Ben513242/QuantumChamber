@@ -60,7 +60,7 @@ import org.apache.logging.log4j.Level;
  *     還沒有載入、參與者在第一個 tick 之前已在艙內，閘門第一次評估時來源 ticket 的 chunk 還在載入；不離開再進入就進 PREPARE，續行到 (b) 終局。</li>
  * </ul>
  * restart 開服時都以 probe 的 ticket 同步載入原艙附近（{@link M5CollapseFixture#loadAroundTheChamberNow}；H7 的三條除外）：來源艙已載入是 §7.1／§11.2 觸發成立的條件之一，
- * 載入在第一次觀察之前完成，這幾條 chain 驗的是觸發之後的續行；載入晚於觸發的情況由 {@code w8late}、{@code unreadablelate}（{@link #unloadTheChamberAtStart}）與
+ * 載入在第一次觀察之前完成，這幾條 chain 驗的是觸發之後的續行；載入晚於觸發的情況由 {@code w8late}、{@code unreadablelate}（{@link ChamberAtStart#UNLOADED}）與
  * {@code waitinglate} 驗。
  * <p>放在新的類別（不併入 {@link M5CollapsePassageChains}）：這幾條 chain 的 halt 當下不是 PASSAGE_READY 或終局，而是 DORMANT、SEALED 或 COLLAPSING＋DISABLED，restart 都要先由
  * 觸發（或開服之後的第一次 RESOLVE）續行，再接 {@link M5CollapsePassage} 的 ready／cross／ended；通道的 chain 則是開服時就結束通道。
@@ -141,7 +141,7 @@ final class M5CollapseRetryChains {
     private Vec3d joinedAt;
     /** w9io 的 restart：另一個 session 已落地的 allocation entry（spec §6 roll-forward：不移除）。 */
     private M5CollapseDiskEvidence.Allocation otherAllocation;
-    /** H7 的 restart：開服時這個 session 的 record（JOIN 時斷言還沒有觸發）。 */
+    /** restart 開服時這個 session 的 record（{@link #started} 無條件記下，F6-2d-2 B1；H7 的 JOIN 時斷言還沒有觸發）。 */
     private SessionRecoveryRecord atStart;
 
     M5CollapseRetryChains(M5CollapseRun run) {
@@ -304,19 +304,26 @@ final class M5CollapseRetryChains {
 
     /**
      * restart 開服時（共用）：讀回 crash phase 的收據、依窗口表斷言磁碟上的狀態（窗口列宣告 {@code withRecordKept} 時，窗口表另比對開服時的 record 與 halt 當下的摘要相同，
-     * {@code recordKeptAcrossTheRestart}；F6-2d-2 Step 0 起由窗口表斷言，原本這裡只在 halt receipt 有摘要時比對）；之後依 {@code chamber}（{@link ChamberAtStart}）處理原艙附近：
-     * {@link ChamberAtStart#PRELOADED} 以 probe 的 ticket 同步載入（{@code chamberLoadedBeforeTheFirstTick}），{@link ChamberAtStart#UNLOADED} 讓它卸載
-     * （{@link #unloadTheChamberAtStart}），{@link ChamberAtStart#AS_SAVED} 不處理。
+     * {@code recordKeptAcrossTheRestart}；F6-2d-2 Step 0 起由窗口表斷言，原本這裡只在 halt receipt 有摘要時比對），記下開服時這個 session 的 record（{@link #atStart}；
+     * F6-2d-2 B1，A 段 quality Minor 2：原本只在 {@link ChamberAtStart#UNLOADED} 記）；之後依 {@code chamber}（{@link ChamberAtStart}）處理原艙附近：
+     * {@link ChamberAtStart#PRELOADED} 以 probe 的 ticket 同步載入（{@code chamberLoadedBeforeTheFirstTick}）；{@link ChamberAtStart#UNLOADED} 把 spawn chunks 的半徑改為 0
+     * （原版的 gamerule callback 移除 START ticket；fixture 的 Controller 在 spawn chunks 內，不這樣做原艙一直是載入的）；{@link ChamberAtStart#AS_SAVED} 不處理。
+     * <p>F6-2d-2 B1：A 段 quality Minor 1，改成 exhaustive 的 switch expression（新增 {@link ChamberAtStart} 的值卻忘了 case 時不能編譯；原本的 switch statement 照樣編譯、
+     * 執行時什麼都不做）。A 段 spec review I-1，卸載內聯在這裡的 case {@code UNLOADED}：原本的 {@code unloadTheChamberAtStart} 與 {@link M5CollapseRun.Checked} 同形，
+     * {@code restartPhase(..., PRELOADED, steps, this::unloadTheChamberAtStart)} 仍能編譯；現在沒有可交給 {@code afterStarted} 的卸載 helper，那樣寫編譯失敗。
      */
     private void started(String crashPhase, CrashWindow id, ChamberAtStart chamber) throws Exception {
         var window = M5CollapseWindows.of(id);
         var halt = fixture.readCrashReceipt(crashPhase, id);
         M5CollapseWindows.expectAtRestart(run, fixture, window, halt);
-        switch (chamber) {
-            case PRELOADED -> run.expect("chamberLoadedBeforeTheFirstTick", fixture.loadAroundTheChamberNow(run.source(), CHAMBER_LOAD_RADIUS), () -> "原艙附近沒有都載入到 FULL");
-            case UNLOADED -> unloadTheChamberAtStart();
-            case AS_SAVED -> { }
-        }
+        atStart = run.journal().flushedRecords().get(fixture.sid());
+        M5CollapseRun.Checked aroundTheChamber = switch (chamber) {
+            case PRELOADED -> () -> run.expect("chamberLoadedBeforeTheFirstTick", fixture.loadAroundTheChamberNow(run.source(), CHAMBER_LOAD_RADIUS),
+                    () -> "原艙附近沒有都載入到 FULL");
+            case UNLOADED -> () -> run.source().getGameRules().get(GameRules.SPAWN_CHUNK_RADIUS).set(0, run.server());
+            case AS_SAVED -> M5CollapseRun.NOTHING;
+        };
+        aroundTheChamber.run();
     }
 
     /** 這條 chain 的窗口不得要求 JOIN 之前載入投影（這裡的 restart 不做；窗口表的規則允許 COLLAPSING 的列指定它，w9cd 就是 COLLAPSING）。在 {@code onInitialize} 丟出。 */
@@ -337,26 +344,24 @@ final class M5CollapseRetryChains {
     }
 
     /**
-     * restart 開服時原艙附近怎麼處理（{@link #restartPhase}、{@link #started}；F6-2d-2，F6-2d-2 Step 0 quality Minor 4：取代位置參數 {@code boolean preload}。原本「預先載入」配
-     * {@code afterStarted} 為 {@link #unloadTheChamberAtStart} 的矛盾組合也能編譯；卸載改由這裡的 {@link #UNLOADED} 做，不再經 {@code afterStarted} 傳入，兩者不能同時指定）。
+     * restart 開服時原艙附近的 chunk 怎麼處理（{@link #restartPhase}、{@link #started}；F6-2d-2，F6-2d-2 Step 0 quality Minor 4：取代位置參數 {@code boolean preload}）。只管 chunk：
+     * 開服時的 record 由 {@link #started} 無條件記下（F6-2d-2 B1，A 段 quality Minor 2）。卸載只由 {@link #started} 的 case {@code UNLOADED} 做，沒有可交給 {@code afterStarted}
+     * 的卸載 helper，所以「預先載入又卸載」不能以 {@link #restartPhase} 的參數表達（F6-2d-2 B1，A 段 spec review I-1：F6-2d-2 的 {@code unloadTheChamberAtStart} 與
+     * {@link M5CollapseRun.Checked} 同形，{@code PRELOADED} 配它當 {@code afterStarted} 仍能編譯）。
      */
     private enum ChamberAtStart {
-        /** 以 probe 的 ticket 同步載入原艙附近（{@code chamberLoadedBeforeTheFirstTick}）：W8、W9 與它的兩個變體、F6-2-07。 */
+        /** 以 probe 的 ticket 同步載入原艙附近，在第一個 tick 之前完成（{@code chamberLoadedBeforeTheFirstTick}）：W8、W9 與它的兩個變體、F6-2-07。 */
         PRELOADED,
-        /** 把 spawn chunks 的半徑改為 0，讓原艙附近卸載（{@link #unloadTheChamberAtStart}）：H7 的 {@code w8late}、{@code unreadablelate}。 */
+        /**
+         * 把 spawn chunks 的半徑改為 0（原版的 gamerule callback 移除 START ticket）。只移除 spawn ticket：開服當下原艙附近仍載入，之後的 tick 才卸載（DORMANT 與 SEALED 沒有
+         * 來源 ticket），呼叫端要先等 {@code chamberUnloaded}。H7 的 {@code w8late}、{@code unreadablelate}。
+         */
         UNLOADED,
-        /** 不載入也不卸載（level.dat 已帶著半徑 0 的 spawn chunks，原艙附近只由 attach 的來源 ticket 載入）：H7 的 {@code waitinglate}。 */
+        /**
+         * 不載入也不卸載：原艙附近維持 level.dat 與 attach 留下的狀態（例如 {@code waitinglate} 的 level.dat 帶著半徑 0 的 spawn chunks，原艙附近只由 attach 為 COLLAPSING 取得
+         * 的來源 ticket 載入）。
+         */
         AS_SAVED
-    }
-
-    /**
-     * H7 的 restart（{@code w8late}、{@code unreadablelate}）的開服（{@link ChamberAtStart#UNLOADED}，{@link #started} 在窗口表的斷言之後呼叫）：把 spawn chunks 的半徑改為 0
-     * （原版的 gamerule callback 移除 START ticket；fixture 的 Controller 在 spawn chunks 內，不這樣做原艙一直是載入的），讓原艙附近卸載；不 JOIN。記下開服時這個 session 的
-     * record（JOIN 時斷言還沒有觸發）。DORMANT 與 SEALED 沒有來源 ticket，所以原艙附近會卸載。
-     */
-    private void unloadTheChamberAtStart() {
-        run.source().getGameRules().get(GameRules.SPAWN_CHUNK_RADIUS).set(0, run.server());
-        atStart = run.journal().flushedRecords().get(fixture.sid());
     }
 
     /**
@@ -394,7 +399,7 @@ final class M5CollapseRetryChains {
     }
 
     /**
-     * H7 的 {@code w8late} 的 restart（crash 同 {@link #w8Crash}）：開服時不預先載入原艙附近（{@link #unloadTheChamberAtStart}）→ 原艙附近卸載（{@code chamberUnloaded}）→
+     * H7 的 {@code w8late} 的 restart（crash 同 {@link #w8Crash}）：開服時不預先載入原艙附近（{@link ChamberAtStart#UNLOADED}）→ 原艙附近卸載（{@code chamberUnloaded}）→
      * 參與者 JOIN 在艙內，這時原艙附近還沒有載入 → 參與者<b>不離開再進入</b>，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內提交 COLLAPSING（{@code committedWithoutReentry}，spec
      * v5.9 §7.1：來源艙還沒載入時這次觸發不消耗）→ RESOLVE → PREPARE → PASSAGE_READY → 跨越 → (b) 終局（spec §12 的四件事由 {@link M5CollapsePassage} 斷言）。修正之前，JOIN
      * 的觸發在來源艙還沒載入時被消耗，要離開再進入才續行（F6-2d-1 的 {@code obs-w8-late-join}）。
@@ -408,7 +413,7 @@ final class M5CollapseRetryChains {
 
     /**
      * H7 的 {@code unreadablelate} 的 restart（crash 是 {@link #unreadableLateCrash}）：開服時（窗口表的斷言同 {@link #unreadableRestart}）不預先載入原艙附近
-     * （{@link #unloadTheChamberAtStart}）→ 原艙附近卸載 → 參與者 JOIN 在艙內，這時原艙附近還沒有載入 → 參與者<b>不離開再進入</b>，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內
+     * （{@link ChamberAtStart#UNLOADED}）→ 原艙附近卸載 → 參與者 JOIN 在艙內，這時原艙附近還沒有載入 → 參與者<b>不離開再進入</b>，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內
      * 由 SEALED(AUTHORITY_UNREADABLE) 重試一次（{@code retriedWithoutReentry}，spec §11.2：開服之後的第一次觸發，來源艙還沒載入時不消耗）→ RESOLVE 追加 discovery →
      * PASSAGE_READY → 跨越 → (b) 終局。
      */
