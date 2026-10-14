@@ -123,6 +123,9 @@ final class M5CollapseWindows {
      * <li>{@link #withCatalogDisabledAtHalt}（F6-2d-1，W9）：halt 當下 catalog 的這筆已是 DISABLED（§8.3 已完成）；預設 EAGER_ENABLED。開服時改斷言 catalog 恰多它一筆而且是
      *     DISABLED（{@code catalogDisabledOnce}）、開服 bootstrap 沒有物化它（{@code bootstrapSkippedTheDisabled}）、開服沒有因它停止（{@code serverStartedWithTheDisabled}，
      *     F6-2d-2 Step 0 起跟著這個欄位，不再由窗口自己的 {@code withDisk} 指定）。</li>
+     * <li>{@link #withRecordKept}（F6-2d-2 Step 0，F6-2d-1 quality Minor 4）：halt 之前的取證記下這個 session 的 record 的摘要（{@code atHalt} 的 {@code recordAtHalt}，
+     *     {@link M5CollapseFixture#recordDigest}），restart 開服時<b>必</b>比對開服時的 record 與它相同（{@code recordKeptAcrossTheRestart}，{@link #expectRecordKept}）；預設不比對。
+     *     原本由 {@code M5CollapseRetryChains} 與 {@code M5CollapsePassageChains} 各寫一份、語意不同（前者只在 halt receipt 有摘要時比對，後者 record 存在就比對）。</li>
      * </ul>
      * {@code withStateAtHalt} 另接受 MEASURED（F6-2d-1，W8：DORMANT 的收據，{@code restartedDormant}；還沒有 Destination，開服時斷言 {@code dormantAtRestart}）。
      * <p>F6-2d Step 0（F6-2c quality Minor 6）起驗證組合，restart 會忽略、或要到開服之後才發現的組合丟出 IllegalStateException。F6-2d-1（F6-2d Step 0 quality Minor 4、5
@@ -133,7 +136,7 @@ final class M5CollapseWindows {
      *     狀態是 PASSAGE_READY 或 SEALED 的列（COLLAPSING 與終局不斷言 Crossed）；{@code notReturned} 只用在 COLLAPSING（W1）；{@code recognizingBeforeJoin} 要有
      *     {@code withProjection}；{@code recognizingBeforeJoin} 與同一列非 null 的 {@link Prepared} 只用在 COLLAPSING 的列（通道與終局的 restart 不讀它們）；
      *     {@code withCatalogDisabledAtHalt} 只用在 {@code resolved(CATALOG)} 的列；MEASURED 的列是 {@code resolved(NOTHING)}、沒有 projection entry；非 null 的欄位
-     *     再檢查一次 null（預設值依 static 欄位的宣告順序）。</li>
+     *     再檢查一次 null（預設值依 static 欄位的宣告順序）。F6-2d-2 Step 0：{@code withRecordKept} 不用在終局已落盤的列（開服時沒有 record）。</li>
      * </ul>
      * 窗口表在 class init 時建好，entrypoint 在開服之前就初始化它（{@link M5CollapseWindows#windows}），所以不合法的列在開服之前就失敗。
      */
@@ -147,6 +150,7 @@ final class M5CollapseWindows {
         private SessionState stateAtHalt = SessionState.COLLAPSING;
         private M5CollapseFixture.Who crossedAtHalt = M5CollapseFixture.NOBODY;
         private boolean catalogDisabled;
+        private boolean recordKept;
 
         private AtRestart() {}
 
@@ -212,6 +216,10 @@ final class M5CollapseWindows {
             if (stateAtHalt == SessionState.MEASURED && (resolved != Resolved.NOTHING || projection != null)) {
                 throw new IllegalStateException(where + "halt 當下是 MEASURED（DORMANT）的列是 resolved(NOTHING)、沒有 projection entry，resolved=" + resolved + " projection=" + projection);
             }
+            // F6-2d-2 Step 0：終局已落盤時開服沒有 record 可比對。
+            if (recordKept && stateAtHalt == null) {
+                throw new IllegalStateException(where + "withRecordKept 不用在終局已落盤的列（開服時沒有 record）");
+            }
         }
 
         /** {@code withStateAtHalt} 與 {@code terminatedAtHalt} 只能指定一次（預設 COLLAPSING 之後再指定時丟出，不靜默覆蓋）。 */
@@ -266,6 +274,15 @@ final class M5CollapseWindows {
 
         /** halt 當下 catalog 的這筆是否已是 DISABLED。 */
         boolean catalogDisabledAtHalt() { return catalogDisabled; }
+
+        /**
+         * halt 之前的取證記下這個 session 的 record 的摘要（{@code recordAtHalt}），restart 開服時必比對（{@code recordKeptAcrossTheRestart}，{@link #expectRecordKept}；
+         * F6-2d-2 Step 0）。
+         */
+        AtRestart withRecordKept() { return copy(next -> next.recordKept = true); }
+
+        /** restart 開服時是否必比對 record 與 halt 當下的摘要。 */
+        boolean recordKept() { return recordKept; }
 
         /** halt 當下磁碟上的 record 狀態；null 為終局已落盤。 */
         SessionState stateAtHalt() { return stateAtHalt; }
@@ -349,16 +366,18 @@ final class M5CollapseWindows {
                 AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withDisk(M5CollapseWindows::repairLostWithTheCrash),
                 new Prepared("repairedAgain", ProjectionWriter.Mode.REPAIR, 1, M5CollapseWindows::repairCheckpointedBeforeReady));
         // ---- F6-2c：PASSAGE_READY 期間與終局的窗口（chain 在 M5CollapsePassageChains；RESOLVE、PREPARE 都已在 halt 之前完成，投影 COMPLETE） ----
+        // F6-2d-2 Step 0：halt 當下還有 record 的列都 withRecordKept（halt 之前的 recordOnDisk 記下摘要；原本 M5CollapsePassageChains.started 對有 record 的一律比對）。
         var afterReady = AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE);
         // W7（spec §12）：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已 checked 寫入）。F6-2c fix round 1（spec v5.7 §10.3）：crash 在 Crossed 確認的那個 tick 結束時
         // （production 在確認之後存下選門者的 playerdata），halt 之前不存檔；chain 在跨越之前（PASSAGE_READY 期間）存過一次檔。
         // F6-2d Step 0（F6-2c fix round 1 spec re-review Minor 1）：Crossed 確認的那一刻另記選門者的 playerdata（selectorPlayerDataAtTheWindow），halt 時斷言它那時還不在 U。
         tickEndRow(rows, CrashWindow.CROSSED_COMMITTED, M5CollapseWindows::selectorPlayerDataAtTheWindow,
                 (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED), M5CollapseWindows::selectorAcrossAtTheTickEnd,
-                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withRecordKept()
+                        .withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
         // F6-2-16：COLLAPSING→PASSAGE_READY 已 checked 提交、門改為 passable 之前；halt 之前原生存檔（PREPARE 的 sealed 量子膜、參與者在艙內都在磁碟上）。
         row(rows, CrashWindow.READY_COMMITTED, M5CollapseWindows::readyCommitted, M5CollapseWindows::savedBeforePassable,
-                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::sealedDoorOnDiskAtRestart), null);
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withRecordKept().withDisk(M5CollapseWindows::sealedDoorOnDiskAtRestart), null);
         // F6-2-13：通道以 (d) 結束的 checked 終局已讀回確認、改門之前（chain 在 PASSAGE_READY 期間存過檔：磁碟上的門是 passable、Controller 是 PASSAGE）。
         row(rows, CrashWindow.PASSAGE_TERMINATED, M5CollapseWindows::passageTerminated, M5CollapseWindows::terminatedBeforeTheDoor,
                 afterReady.terminatedAtHalt().withDisk(M5CollapseWindows::passageOnDiskAtRestart), null);
@@ -366,32 +385,34 @@ final class M5CollapseWindows {
         // 結束時（spec v5.7 §10.3：寫入沒有確認時 production 不存 playerdata，halt 時磁碟上仍在來源世界）。
         tickEndRow(rows, CrashWindow.CROSSED_UNCONFIRMED,
                 (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING), M5CollapseWindows::movedButNotOnDisk,
-                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withRecordKept().withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
         // F6-2-12：PASSAGE_READY→SEALED(TRANSFER_RECOVERY_REQUIRED) 已 checked 寫入（Crossed＝選門者、RecoveryRequired＝另一位），之後的釋放、門與 ERROR 之前。選門者的
         // playerdata 在他跨越、Crossed 確認時已存在 U（spec v5.7 §10.3），另一位仍是觸發之前存的來源世界。
         row(rows, CrashWindow.RECOVERY_SEALED, (fixture, detail) -> recoveryWrite(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED),
                 M5CollapseWindows::recoverySealedOnDisk,
-                afterReady.withStateAtHalt(SessionState.SEALED).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withDisk(M5CollapseWindows::recoveryRequiredKeptAtRestart), null);
+                afterReady.withStateAtHalt(SessionState.SEALED).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withRecordKept()
+                        .withDisk(M5CollapseWindows::recoveryRequiredKeptAtRestart), null);
         // F6-2-12 的 pendingRecovery：TRR 的寫入被拒（ERROR 已記、通道在記憶體內關閉）之後，退避期過後的重試又被拒；磁碟仍是 PASSAGE_READY。
         row(rows, CrashWindow.RECOVERY_REJECTED, (fixture, detail) -> recoveryWrite(fixture, detail, SessionRecoveryState.CommitResult.Status.REJECTED)
                         && fixture.sessionLogged(Level.ERROR, REJECTED_RECOVERY_ERROR),
                 M5CollapseWindows::recoveryOnlyInTheLog,
-                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withRecordKept().withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
         // ---- F6-2d-1：重試與續行跨重啟的窗口（chain 在 M5CollapseRetryChains；restart 由觸發續行，之後接 M5CollapsePassage 的 ready／cross／ended） ----
+        // F6-2d-2 Step 0：這四列都 withRecordKept。W9 與 F6-2-07 原本就記下摘要（M5CollapseRetryChains.started 只在有摘要時比對）；W8 與 W9 (b) 的 halt 之前也改為記下。
         // W8（spec §12）：參與者在艙內、DORMANT 的收據沒有觸發（執行期間的 session），塌縮流程下一次處理它之前；磁碟上是收據 exact、還沒有配置任何東西。
         row(rows, CrashWindow.DORMANT_STEP, (fixture, detail) -> sessionStep(fixture, detail, SessionState.MEASURED, null), M5CollapseWindows::dormantAtHalt,
-                AtRestart.resolved(Resolved.NOTHING).withStateAtHalt(SessionState.MEASURED).withDisk(M5CollapseWindows::dormantKeptAtRestart), null);
+                AtRestart.resolved(Resolved.NOTHING).withStateAtHalt(SessionState.MEASURED).withRecordKept().withDisk(M5CollapseWindows::dormantKeptAtRestart), null);
         // W9（spec §12）：物化失敗 → §8.3 的 DISABLED 已確認 → SEALED(MATERIALIZE_FAILED) 已確認時（之後的門、訊息與 WARN 之前）。w9 與 w9io 共用。
         row(rows, CrashWindow.MATERIALIZE_SEALED, M5CollapseWindows::materializeSealed, M5CollapseWindows::materializeSealedAtHalt,
-                AtRestart.resolved(Resolved.CATALOG).withCatalogDisabledAtHalt().withStateAtHalt(SessionState.SEALED)
+                AtRestart.resolved(Resolved.CATALOG).withCatalogDisabledAtHalt().withStateAtHalt(SessionState.SEALED).withRecordKept()
                         .withDisk((run, fixture) -> sealedKeptAtRestart(run, fixture, SealedReason.MATERIALIZE_FAILED, "materializeFailedAtRestart")), null);
         // W9 的變體 (b)：§8.3 的 DISABLED 已確認、SEALED 寫入之前（開服時是 COLLAPSING＋DISABLED）。
         row(rows, CrashWindow.CATALOG_DISABLED, M5CollapseWindows::catalogDisabled, M5CollapseWindows::disabledBeforeTheSeal,
-                AtRestart.resolved(Resolved.CATALOG).withCatalogDisabledAtHalt(), null);
+                AtRestart.resolved(Resolved.CATALOG).withCatalogDisabledAtHalt().withRecordKept(), null);
         // F6-2-07：SEALED(AUTHORITY_UNREADABLE)，同一個 instance 內退避期過後的邊緣觸發也沒有重試之後，塌縮流程下一次處理它之前（allocation、catalog、物化都已完成）。
         row(rows, CrashWindow.SEALED_STEP, (fixture, detail) -> sessionStep(fixture, detail, SessionState.SEALED, SealedReason.AUTHORITY_UNREADABLE),
                 M5CollapseWindows::unreadableAtHalt,
-                AtRestart.resolved(Resolved.MATERIALIZED).withStateAtHalt(SessionState.SEALED)
+                AtRestart.resolved(Resolved.MATERIALIZED).withStateAtHalt(SessionState.SEALED).withRecordKept()
                         .withDisk((run, fixture) -> sealedKeptAtRestart(run, fixture, SealedReason.AUTHORITY_UNREADABLE, "unreadableAtRestart")), null);
         return Collections.unmodifiableMap(rows);
     }
@@ -786,11 +807,12 @@ final class M5CollapseWindows {
 
     /**
      * W8 的 halt 之前（F6-2d-1）：磁碟上的 journal 是收據 exact（DORMANT，還沒有 Destination）；參與者在艙內、playerdata 在來源世界（收據之後的原生存檔，在艙內）；allocation 與
-     * catalog 都還沒有 U。
+     * catalog 都還沒有 U。F6-2d-2 Step 0（F6-2d-1 quality Minor 4）：另記下收據的摘要（{@code recordAtHalt}，restart 的 {@code recordKeptAcrossTheRestart}）。
      */
     private static void dormantAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
         evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
+        evidence.put("recordAtHalt", M5CollapseFixture.recordDigest(fixture.receipt()));
         run.expect("dormantOnDiskAtHalt", fixture.receipt().equals(onDisk), () -> "磁碟上的 journal 是 " + (onDisk == null ? "ABSENT" : onDisk.state()) + "，不是收據");
         for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
         playerDimensions(run, fixture, evidence);
@@ -823,10 +845,14 @@ final class M5CollapseWindows {
         disabledOnDiskAtHalt(run, fixture, evidence);
     }
 
-    /** W9 的變體 (b) 的 halt 之前（F6-2d-1）：磁碟上的 journal 仍是 COLLAPSING（SEALED 還沒有寫入，Destination 是 U），catalog 已是 DISABLED。 */
+    /**
+     * W9 的變體 (b) 的 halt 之前（F6-2d-1）：磁碟上的 journal 仍是 COLLAPSING（SEALED 還沒有寫入，Destination 是 U），catalog 已是 DISABLED。F6-2d-2 Step 0（F6-2d-1 quality
+     * Minor 4）：另記下磁碟上這筆 COLLAPSING 的摘要（{@code recordAtHalt}），restart 逐欄位比對（{@code recordKeptAcrossTheRestart}）。
+     */
     private static void disabledBeforeTheSeal(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
         evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
+        evidence.put("recordAtHalt", onDisk == null ? "ABSENT" : M5CollapseFixture.recordDigest(onDisk));
         run.expect("collapsingOnDiskAtHalt", onDisk != null && onDisk.state() == SessionState.COLLAPSING
                         && M5CollapseFixture.destination(onDisk).equals(Optional.of(fixture.universe())),
                 () -> "磁碟上的 journal 是 " + (onDisk == null ? "ABSENT" : onDisk.state() + " Destination=" + onDisk.collapse().destination()));
@@ -919,6 +945,7 @@ final class M5CollapseWindows {
                 : at.projection() == ProjectionLedger.Entry.Status.PENDING ? "projectionStillPending" : "projectionCompleteOnDisk";
         run.expect(projectionName, () -> M5CollapseDiskEvidence.projections(run.data()).equals(expectedProjections), () -> "projection ledger=" + fixture.projectionsOrError());
         at.disk().check(run, fixture);
+        expectRecordKept(run, fixture, window, halt);
         M5CollapseProjectionLoad load = null;
         if (at.recognizeBeforeJoin()) {
             load = M5CollapseProjectionLoad.start(run, fixture);
@@ -929,6 +956,20 @@ final class M5CollapseWindows {
         }
         run.proof.put("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
         return load;
+    }
+
+    /**
+     * restart 開服時（{@link #expectAtRestart}，窗口自己的磁碟檢查之後；F6-2d-2 Step 0，F6-2d-1 quality Minor 4：取代 {@code M5CollapseRetryChains.started} 與
+     * {@code M5CollapsePassageChains.started} 各寫一份、語意不同的比對）：這一列宣告 {@link AtRestart#withRecordKept} 時，開服時這個 session 的 record（flushed）與 halt 當下
+     * 記下的摘要（{@code atHalt.recordAtHalt}）逐欄位相同（{@code recordKeptAcrossTheRestart}）；halt receipt 沒有摘要、或開服時沒有 record 也是這個斷言失敗。沒有宣告的列
+     * 不比對。
+     */
+    private static void expectRecordKept(M5CollapseRun run, M5CollapseFixture fixture, Window window, JsonObject halt) {
+        if (!window.atRestart().recordKept()) return;
+        var expected = M5CollapseRun.text(halt.getAsJsonObject("atHalt"), "recordAtHalt");
+        var current = run.journal().flushedRecords().get(fixture.sid());
+        run.expect("recordKeptAcrossTheRestart", expected != null && current != null && M5CollapseFixture.recordDigest(current).equals(expected),
+                () -> "開服時的 record " + (current == null ? "ABSENT" : M5CollapseFixture.recordDigest(current)) + " 與 halt 當下不同：" + expected);
     }
 
     /** {@code stateAtHalt} 的斷言名稱：COLLAPSING 沿用 {@code restartedCollapsing}（F6-1 起的名稱），其餘依狀態。 */

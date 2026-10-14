@@ -29,7 +29,7 @@ import org.apache.logging.log4j.Level;
  * 僅 testmod（M5 F6-2c）：通道與終局的 crash／restart chain（spec §12 的 PASSAGE_READY 列、W7，與其餘的重啟變體）。crash phase 都從 DORMANT 的 NEW 收據開始（與
  * {@link M5CollapseDormantChains#crash} 相同的原艙與觸發：參與者由艙外進入 → COLLAPSING → RESOLVE），之後依窗口推進到 PASSAGE_READY 或通道期間的那一刻。restart 的
  * 開服檢查一律走窗口表（{@link M5CollapseWindows#expectAtRestart}：{@code stateAtHalt}、{@code crossedAtHalt} 與窗口自己的磁碟檢查），另比對 record 與 halt 當下 exact
- * 相同（{@code recordKeptAcrossTheRestart}）；之後的 step 與終局（{@link End} 的逐人位置）依窗口而不同：
+ * 相同（{@code recordKeptAcrossTheRestart}；F6-2d-2 Step 0 起由窗口表的 {@code withRecordKept} 宣告、窗口表斷言）；之後的 step 與終局（{@link End} 的逐人位置）依窗口而不同：
  * <ul>
  * <li>{@code w7}（{@code CROSSED_COMMITTED}，spec §12 W7）：兩人，選門者（清單的第二位，spec review M-4）已跨過；crash 在 Crossed 確認的那個 tick 結束時，halt 之前不存檔
  *     （F6-2c fix round 1：已跨過的人在目的地，靠的是 production 在 Crossed 確認之後存下的 playerdata，spec v5.7 §10.3）；重啟之後通道在開服時結束（checked 終局），門在
@@ -325,11 +325,7 @@ final class M5CollapsePassageChains {
         doorPlainAtStart = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
         run.proof.put("doorPlainAtStart", doorPlainAtStart);
         var atHalt = halt.getAsJsonObject("atHalt");
-        if (atStart != null) {
-            String expected = M5CollapseRun.text(atHalt, "recordAtHalt");
-            run.expect("recordKeptAcrossTheRestart", M5CollapseFixture.recordDigest(atStart).equals(expected),
-                    () -> "開服時的 record " + M5CollapseFixture.recordDigest(atStart) + " 與 halt 當下不同：" + expected);
-        }
+        // F6-2d-2 Step 0（F6-2d-1 quality Minor 4）：recordKeptAcrossTheRestart 由窗口表斷言（expectAtRestart；halt 當下還有 record 的列都 withRecordKept）。
         if (window.id() == CrashWindow.RECOVERY_REJECTED) {
             // spec §10.3：磁碟仍是 PASSAGE_READY、在任何一次寫出成功之前就 crash，重啟依 §12 的 PASSAGE_READY 列結束，TRR 只剩前一個 JVM 的 log 證據。
             var evidence = M5CollapseRun.text(atHalt, "recoveryError");

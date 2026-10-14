@@ -292,19 +292,14 @@ final class M5CollapseRetryChains {
     // ---- restart phase ----
 
     /**
-     * restart 開服時（共用）：讀回 crash phase 的收據、依窗口表斷言磁碟上的狀態；halt 當下記下了 record 的摘要時，另比對開服時的 record 與它相同
-     * （{@code recordKeptAcrossTheRestart}）；{@code preload} 時以 probe 的 ticket 同步載入原艙附近（{@code chamberLoadedBeforeTheFirstTick}；H7 的三條不載入，{@link #restartPhase} 的 {@code preload} 為 false）。
+     * restart 開服時（共用）：讀回 crash phase 的收據、依窗口表斷言磁碟上的狀態（窗口列宣告 {@code withRecordKept} 時，窗口表另比對開服時的 record 與 halt 當下的摘要相同，
+     * {@code recordKeptAcrossTheRestart}；F6-2d-2 Step 0 起由窗口表斷言，原本這裡只在 halt receipt 有摘要時比對）；{@code preload} 時以 probe 的 ticket 同步載入原艙附近
+     * （{@code chamberLoadedBeforeTheFirstTick}；H7 的三條不載入，{@link #restartPhase} 的 {@code preload} 為 false）。
      */
     private void started(String crashPhase, CrashWindow id, boolean preload) throws Exception {
         var window = M5CollapseWindows.of(id);
         var halt = fixture.readCrashReceipt(crashPhase, id);
         M5CollapseWindows.expectAtRestart(run, fixture, window, halt);
-        var expected = M5CollapseRun.text(halt.getAsJsonObject("atHalt"), "recordAtHalt");
-        if (expected != null) {
-            var current = run.journal().flushedRecords().get(fixture.sid());
-            run.expect("recordKeptAcrossTheRestart", current != null && M5CollapseFixture.recordDigest(current).equals(expected),
-                    () -> "開服時的 record " + (current == null ? "ABSENT" : M5CollapseFixture.recordDigest(current)) + " 與 halt 當下不同：" + expected);
-        }
         if (preload) run.expect("chamberLoadedBeforeTheFirstTick", fixture.loadAroundTheChamberNow(run.source(), CHAMBER_LOAD_RADIUS), () -> "原艙附近沒有都載入到 FULL");
     }
 
