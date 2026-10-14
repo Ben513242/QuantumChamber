@@ -1,10 +1,14 @@
 package dev.quantumchamber.gametest;
 
+import static dev.quantumchamber.gametest.M5CollapseDoors.APPLY_WAIT_TICKS;
+import static dev.quantumchamber.gametest.M5CollapseDoors.QUEUE_WAIT_TICKS;
+import static dev.quantumchamber.gametest.M5CollapseDoors.doorCenter;
+import static dev.quantumchamber.gametest.M5CollapseDoors.plainOpen;
+import static dev.quantumchamber.gametest.M5CollapseDoors.reapplied;
+import static dev.quantumchamber.gametest.M5CollapseDoors.reapplyQueued;
 import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
-import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
-import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapsePassage.End;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
@@ -14,7 +18,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import net.minecraft.server.network.ServerPlayerEntity;
 import org.apache.logging.log4j.Level;
 
@@ -33,25 +36,18 @@ import org.apache.logging.log4j.Level;
  *     閘門以位準評估 → PREPARE（同一個 tick 移除還在等的 NORMALIZE），艙內有非參與者，原艙門維持一般開門 → 準備完成、PASSAGE_READY 被暫緩，之後再 20 個 tick，每個 tick 都是
  *     一般開門 → 非參與者移到艙外 → 下一個 tick 是 sealed 量子膜 → 釋放暫緩 → PASSAGE_READY → 跨越 → (b) 終局。</li>
  * </ul>
- * 「本來關著的門保留關著」（F6-2-08 的另一半）不在這兩條：開服時門是關著的是 RESOLVE 期間的窗口（W2、W3、W5），斷言以 {@link #closedDoorKeptByTheReapply} 加在
+ * 「本來關著的門保留關著」（F6-2-08 的另一半）不在這兩條：開服時門是關著的是 RESOLVE 期間的窗口（W2、W3、W5），斷言以 {@link M5CollapseDoors#closedDoorKeptByTheReapply} 加在
  * {@link M5CollapseDormantChains#restart}。spec §12 的四件事每個 tick 由 {@link M5CollapsePassage#invariants} 斷言（{@link #restartPhase}），終局由 {@link M5CollapsePassage#expectEnd}。
  * <p>放在新的類別（不併入 {@link M5CollapseRetryChains}）：窗口條件與門的斷言共用，F6-2d-2 B2 的 SEALED 門窗口也放這裡；restart builder 與觸發之後的等法由基底
- * {@link M5CollapseRestartChains} 提供，不另寫一份。
+ * {@link M5CollapseRestartChains} 提供，不另寫一份。重新套用的 INFO 與門的狀態的查詢在 {@link M5CollapseDoors}（F6-2d-2 B2a 由這裡以純搬移抽出）。
  */
 final class M5CollapseDoorChains extends M5CollapseRestartChains {
-    /** 重新套用的排入最多等幾個 tick（重啟之後的第一次觀察在第一個 tick；超過時由具名斷言判 FAIL，不是 stepBounded：mutation 讓排入落空時失敗在目標斷言）。 */
-    private static final int QUEUE_WAIT_TICKS = 10;
-    /** 排入之後到套用最多等幾個 tick（排入時記下的 tick 是下一個 tick；之後再 2 個 tick 仍沒有改門就由具名斷言判 FAIL，比照 {@code terminaldoor} 的 {@code ownerlessNormalized}）。 */
-    private static final int APPLY_WAIT_TICKS = 3;
     /** preparedoor：PREPARE 準備完成、PASSAGE_READY 的提交第一次被暫緩之前最多等幾個 tick（預載、REPAIR 與 checkpoint；比照 {@code passage.ready} 的上限）。 */
     private static final int HELD_WAIT_TICKS = 600;
     /** preparedoor：PASSAGE_READY 的提交被暫緩之後，非參與者再留在艙內幾個 tick（每個 tick 都斷言一般開門）。 */
     private static final int VISITOR_WATCH_TICKS = 20;
     /** preparedoor：非參與者在艙內的位置（區域座標；參與者在正中 (3.5, 1, 3.5)，錯開、不碰到門口那一排）。 */
     private static final double VISITOR_X = 1.5, VISITOR_Z = 4.5;
-    /** 重新套用排入（或延後）時的 INFO（{@code OriginDoors.reapplyDoor}）的「下一個 tick（tick N）」；排入時另帶目標（延後時沒有）。 */
-    private static final Pattern QUEUED_TICK = Pattern.compile("下一個 tick（tick (\\d+)）");
-    private static final Pattern QUEUED_GOAL = Pattern.compile("依 collapse view 重新套用原艙門（([A-Z_]+)）");
 
     /** preparedoor 的 restart：開服時裝上的 PASSAGE_READY 提交暫緩（crash phase 的那一份隨 crash 結束）。 */
     private M5TestHooks.ReadyHold hold;
@@ -113,7 +109,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     /** waitingdoor 的開服（{@link #restartPhase} 的 {@code afterStarted}）：原艙門在記憶體裡是 sealed 量子膜（由磁碟載入），沒有人在線上、還沒有 tick。 */
     private void sealedWithNobodyOnline() {
-        run.expect("sealedDoorAtStart", M5GameTestSupport.doorSealed(run.source(), FRAME), () -> "開服時原艙門不是 sealed 量子膜：" + doorCenter());
+        run.expect("sealedDoorAtStart", M5GameTestSupport.doorSealed(run.source(), FRAME), () -> "開服時原艙門不是 sealed 量子膜：" + doorCenter(run));
         run.expect("nobodyOnlineAtStart", fixture.noneOnline() && run.ticks() == 0, () -> "開服時 tick=" + run.ticks() + " 有人在線上=" + !fixture.noneOnline());
     }
 
@@ -126,7 +122,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         boolean sealed = M5GameTestSupport.doorSealed(run.source(), FRAME);
         run.expect("normalizeQueuedOnTheFirstLoad", queued.size() == 1 && queued.getFirst().normalizeAfterARestart(),
                 () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued);
-        run.expect("notWrittenWhenObserved", sealed, () -> "排入的那個 tick 原艙門已不是 sealed 量子膜：" + doorCenter());
+        run.expect("notWrittenWhenObserved", sealed, () -> "排入的那個 tick 原艙門已不是 sealed 量子膜：" + doorCenter(run));
         normalizeTick = queued.getFirst().tick();
         run.proof.put("normalizeQueuedAtServerTick", run.server().getTicks());
         run.proof.put("normalizeTick", normalizeTick);
@@ -134,12 +130,12 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     /** step {@code normalized}：排入時記下的 tick（N）結束時，門是一般開門、套用的 INFO 恰一則而且記的是 tick N；之後 2 個 tick 仍不是一般開門就由這個具名斷言判 FAIL。 */
     private boolean normalizedOnTheQueuedTick(int tick) {
-        boolean plain = plainOpen();
+        boolean plain = plainOpen(run);
         int now = run.server().getTicks();
         if (!plain && now < normalizeTick + 2) return false;
         var applied = reapplied(run, fixture.sid());
         run.expect("appliedOnTheQueuedTick", plain && now == normalizeTick && applied.size() == 1 && applied.getFirst().contains("（NORMALIZE：APPLIED，tick " + normalizeTick + "）"),
-                () -> "原艙門在 tick " + now + "（排入的是 tick " + normalizeTick + "）：一般開門=" + plain + " 門正中=" + doorCenter() + " 套用的 INFO=" + applied);
+                () -> "原艙門在 tick " + now + "（排入的是 tick " + normalizeTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied);
         run.proof.put("normalizedAtServerTick", now);
         return true;
     }
@@ -147,11 +143,11 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** step {@code waitingWithThePlainDoor} 的每個 tick（{@code tick} 由 1 起）。 */
     private void plainOpenWhileWaiting(int tick) {
         var sid = fixture.sid();
-        boolean plain = plainOpen();
+        boolean plain = plainOpen(run);
         var record = run.journal().flushedRecords().get(sid);
         int prepares = prepares(), queued = reapplyQueued(run, sid).size(), applied = reapplied(run, sid).size();
         run.expect("plainOpenWhileWaiting", plain && prepares == 0 && collapsing(record) && queued == 1 && applied == 1 && fixture.noneOnline(),
-                () -> "套用之後第 " + tick + " 個 tick：一般開門=" + plain + " 門正中=" + doorCenter() + "「進入 PREPARE」=" + prepares + " state="
+                () -> "套用之後第 " + tick + " 個 tick：一般開門=" + plain + " 門正中=" + doorCenter(run) + "「進入 PREPARE」=" + prepares + " state="
                         + M5GameTestSupport.state(run.journal(), sid) + " 排入=" + queued + " 套用=" + applied + " 有人在線上=" + !fixture.noneOnline());
     }
 
@@ -209,7 +205,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         boolean participant = fixture.players().stream().allMatch(M5CollapseFixture::inside), outsider = M5CollapseFixture.inside(visitor);
         run.expect("bothInsideBeforeTheFirstTick", run.ticks() == 0 && participant && outsider && !fixture.participants().contains(visitor.getUuid())
                         && visitor.getServerWorld() == run.source() && M5GameTestSupport.doorSealed(run.source(), FRAME),
-                () -> "tick=" + run.ticks() + " 參與者在艙內=" + participant + " 非參與者在 " + visitor.getPos() + " 門正中=" + doorCenter());
+                () -> "tick=" + run.ticks() + " 參與者在艙內=" + participant + " 非參與者在 " + visitor.getPos() + " 門正中=" + doorCenter(run));
         run.proof.put("joinedAt", joinedAt.toString());
         run.proof.put("visitor", visitor.getUuid().toString());
     }
@@ -251,11 +247,11 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     private void plainOpenWhileTheVisitorIsInside(int tick) {
         var sid = fixture.sid();
-        boolean plain = plainOpen(), inside = M5CollapseFixture.inside(visitor);
+        boolean plain = plainOpen(run), inside = M5CollapseFixture.inside(visitor);
         var record = run.journal().flushedRecords().get(sid);
         int left = run.capture().matching(Level.INFO, "PREPARE 的閘門不再成立", sid.toString()).size();
         run.expect("plainOpenWhileTheVisitorIsInside", plain && inside && collapsing(record) && left == 0,
-                () -> "第 " + tick + " 個 tick：一般開門=" + plain + " 門正中=" + doorCenter() + " 非參與者在艙內=" + inside + " state=" + M5GameTestSupport.state(run.journal(), sid)
+                () -> "第 " + tick + " 個 tick：一般開門=" + plain + " 門正中=" + doorCenter(run) + " 非參與者在艙內=" + inside + " state=" + M5GameTestSupport.state(run.journal(), sid)
                         + " 退回 WAITING=" + left);
     }
 
@@ -272,80 +268,11 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var record = run.journal().flushedRecords().get(sid);
         int sealedInfo = run.capture().matching(Level.INFO, "PREPARE：原艙門套用 sealed 量子膜", sid.toString()).size();
         run.expect("resealedOnTheNextTick", sealed && outside && collapsing(record) && sealedInfo == 1,
-                () -> "非參與者離開之後第 " + tick + " 個 tick：sealed=" + sealed + " 門正中=" + doorCenter() + " 非參與者在艙外=" + outside + " state="
+                () -> "非參與者離開之後第 " + tick + " 個 tick：sealed=" + sealed + " 門正中=" + doorCenter(run) + " 非參與者在艙外=" + outside + " state="
                         + M5GameTestSupport.state(run.journal(), sid) + "「套用 sealed 量子膜」=" + sealedInfo);
         hold.release();
         run.proof.put("readyReleasedAtServerTick", run.server().getTicks());
         return true;
     }
 
-    // ---- 本來關著的門（F6-2-08 的另一半，M5CollapseDormantChains 用）----
-
-    /**
-     * F6-2-08 的另一半（spec §7.3「門狀態的重新套用」；F4b-3 偏離第 2 條：WAITING 等一般階段的 NORMALIZE 只把帶量子膜的門改為一般開門，本來關著的門保留關著）：開服時原艙門
-     * 是關著的 restart（{@link M5CollapseDormantChains#restart} 的 W2、W3、W5：RESOLVE 期間 crash，門沒有動過），在參與者 JOIN 之前插入兩個 step：重啟之後第一次載入的那個
-     * tick 排入一則 NORMALIZE，那時門是關著的（{@code normalizeQueuedForTheClosedDoor}）→ 排入時記下的 tick 結束時門仍關著、沒有「已依 collapse view 重新套用」的 INFO
-     * （{@code closedDoorKeptByTheReapply}；mutation：NORMALIZE 不看門有沒有量子膜時失敗在這裡）。
-     */
-    static List<Step> closedDoorKeptByTheReapply(M5CollapseRun run, M5CollapseFixture fixture) {
-        int[] queuedFor = {-1};
-        // F6-2d-2 B2a（B1 quality Minor 2）：closedNormalizeQueued 改用通用的 awaiting（之前是 counting 加手寫的等待；等待時間 QUEUE_WAIT_TICKS 與通過條件相同）。
-        return List.of(M5CollapsePassage.awaiting("closedNormalizeQueued", QUEUE_WAIT_TICKS, () -> !reapplyQueued(run, fixture.sid()).isEmpty(), (tick, happened) -> {
-                    var queued = reapplyQueued(run, fixture.sid());
-                    boolean closed = closed(run);
-                    run.expect("normalizeQueuedForTheClosedDoor", queued.size() == 1 && queued.getFirst().normalizeAfterARestart() && closed,
-                            () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued + " 門關著=" + closed);
-                    queuedFor[0] = queued.getFirst().tick();
-                    run.proof.put("closedNormalizeTick", queuedFor[0]);
-                }),
-                M5CollapsePassage.counting("closedDoorKept", APPLY_WAIT_TICKS, tick -> {
-                    int now = run.server().getTicks();
-                    if (now < queuedFor[0]) return false;
-                    boolean closed = closed(run);
-                    var applied = reapplied(run, fixture.sid());
-                    run.expect("closedDoorKeptByTheReapply", closed && now == queuedFor[0] && applied.isEmpty(),
-                            () -> "tick " + now + "（排入的是 tick " + queuedFor[0] + "）：門關著=" + closed + " 門正中=" + run.source().getBlockState(local(3, 3, 0)) + " 套用的 INFO=" + applied);
-                    return true;
-                }));
-    }
-
-    // ---- 共用的查詢 ----
-
-    /**
-     * 重新套用排入（或延後）的 INFO（{@code OriginDoors.reapplyDoor}，「…下一個 tick（tick N）…」）：這個 session 的每一則，依發生順序。{@code goal} 是排入時的目標（延後時為 null），
-     * {@code firstLoadAfterARestart} 是原因為「重啟之後第一次載入」。比照 GameTest 的 {@code reapplyQueuedTicks}（那裡是 private）。
-     */
-    record Queued(int tick, String goal, boolean firstLoadAfterARestart) {
-        /** 重啟之後第一次載入時排入的 NORMALIZE（COLLAPSING 的重新套用目標）。 */
-        boolean normalizeAfterARestart() { return "NORMALIZE".equals(goal) && firstLoadAfterARestart; }
-    }
-
-    static List<Queued> reapplyQueued(M5CollapseRun run, UUID sid) {
-        var result = new ArrayList<Queued>();
-        for (var entry : run.capture().matching(Level.INFO, "下一個 tick（tick ", "session=" + sid)) {
-            var tick = QUEUED_TICK.matcher(entry.message());
-            if (!tick.find()) continue;
-            var goal = QUEUED_GOAL.matcher(entry.message());
-            result.add(new Queued(Integer.parseInt(tick.group(1)), goal.find() ? goal.group(1) : null, entry.message().contains("來源艙重啟之後第一次載入")));
-        }
-        return result;
-    }
-
-    /** 重新套用完成的 INFO（{@code OriginDoors.applyDoor}，只在實際改了門時記：「原艙門已依 collapse view 重新套用（goal：APPLIED，tick N）」）：這個 session 的每一則。 */
-    static List<String> reapplied(M5CollapseRun run, UUID sid) {
-        return run.capture().matching(Level.INFO, "原艙門已依 collapse view 重新套用", "session=" + sid).stream().map(LogCapture.Entry::message).toList();
-    }
-
-    private static boolean closed(M5CollapseRun run) {
-        return M5GameTestSupport.doorAll(run.source(), FRAME, false, MembraneState.NONE);
-    }
-
-    private boolean plainOpen() {
-        return M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
-    }
-
-    /** 原艙門正中那一格（區域 (3,3,0)）的方塊狀態（失敗訊息用）。 */
-    private String doorCenter() {
-        return run.source().getBlockState(local(3, 3, 0)).toString();
-    }
 }

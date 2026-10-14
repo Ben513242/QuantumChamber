@@ -64,7 +64,8 @@ final class M5CollapseDormantChains {
      * 之前載入磁碟上的投影 Controller，等它經 load-sync 辨識為 inert 的 PROJECTION）；之後參與者真 JOIN（在艙外、來源世界）→ RESOLVE 完成 → 進入艙內 →
      * PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE；投影的窗口另斷言 PREPARE 怎麼完成）→ 越過門板中線、傳送到 U → (b) 全員都已跨過的終局。每個 tick 斷言
      * catalog 只出現 Destination 的 UniverseId、record 的 Destination 與候選不變。F6-2d-2 B1：開服時門是關著的窗口（{@link #CLOSED_DOOR_AT_RESTART}）在 JOIN 之前另斷言
-     * 重啟之後的重新套用不把關著的門打開（{@link M5CollapseDoorChains#closedDoorKeptByTheReapply}）。
+     * 重啟之後的重新套用不把關著的門打開（{@link M5CollapseDoors#closedDoorKeptByTheReapply}；F6-2d-2 B2a 起在共用的 {@link M5CollapseDoors}，不再依賴
+     * {@link M5CollapseDoorChains}）。
      */
     Phase restart(CrashWindow id, String crashPhase) {
         window = M5CollapseWindows.of(id);
@@ -72,7 +73,7 @@ final class M5CollapseDormantChains {
         // W4、W6：參與者 JOIN 之前，磁碟上的投影 Controller 經 load-sync 辨識為 inert 的 PROJECTION（不記 log）。
         if (window.atRestart().recognizeBeforeJoin()) steps.add(new Step("recognized", 60, this::projectionRecognized));
         // F6-2d-2 B1（F6-2-08 的另一半）：開服時原艙門是關著的窗口，參與者 JOIN 之前先斷言重新套用（NORMALIZE）之後門仍關著。
-        if (CLOSED_DOOR_AT_RESTART.contains(id)) steps.addAll(M5CollapseDoorChains.closedDoorKeptByTheReapply(run, fixture));
+        if (CLOSED_DOOR_AT_RESTART.contains(id)) steps.addAll(M5CollapseDoors.closedDoorKeptByTheReapply(run, fixture));
         steps.add(new Step("join", 1, () -> { fixture.joinAllInTheSourceWorld(M5CollapseFixture.Inside.OUTSIDE); return true; }));
         steps.addAll(passage.steps(window.prepared()));
         return Phase.stop(steps).started(() -> load = M5CollapseWindows.expectAtRestart(run, fixture, window, fixture.readCrashReceipt(crashPhase, id)))
