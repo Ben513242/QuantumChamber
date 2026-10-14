@@ -138,7 +138,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
   - **H8 已完成（2026-10-14）**：range `d8ba7a0..aee674f`；production 只新增 `DirectionTransformationEagerMappingsMixin`（`<clinit>` 結束時建好每個常數的 `mappings`）；回歸測試是 JUnit `DirectionTransformationMappingsTest`；spec review ✅、quality review Approved；完整回歸 `run-all-b47d7170fc874d379f85585871836f36` 為 `END ALL exit=0`（`aee674f`）。H8 的盤點另發現原版 `StrongholdGenerator` 的 static 可變狀態（兩個世界同時生成要塞會互相干擾），使用者裁示延到 M6 一起修，M5 只寫進已知問題（F7）。
   - F6-2d-2 A 段的 review：spec ❌（I-1：矛盾的 restart 組合仍能編譯）、quality Approved；I-1 與 quality Minor 排在 B 段的第一步。
   - **H9 已完成（2026-10-14）**：range `0600a1e..b217fb3`；production 是 `OriginDoors`（SEALED 重試丟棄關門時，帶量子膜的門改為一般開門）與 `CollapseService`（開服時就是永久原因 SEALED 的 session，每個 server instance 記一次提醒 ERROR）；三個新的 default run GameTest；probe `trr-restart` 改斷言這則提醒；spec review ✅、quality review Approved；完整回歸 `run-all-3e23abaf27da4abbb8ab21062e410aeb` 為 `END ALL exit=0`（`b217fb3`）。途中一次 run-all 的失敗歸為與 H9 無關的新已知偶發（default run 某個 test 不收尾 → 走廊 pin 上限連坐 → gate 逾時）。
-  - 之後依序是：F6-2d-2 B1（A 段 fix round＋PREPARE 的門窗口）→ B2（SEALED 的門窗口）、F6-2e、F6-3 → F7 → milestone 收尾。
+  - **F6-2d-2 B1 已完成（2026-10-14）**：range `81ec928..2aca627`；A 段 review 的修正（I-1 經複審關閉）、共用基底 `M5CollapseRestartChains`、新 chain `waitingdoor`、`preparedoor` 與 w2／w3／w5 的關門斷言（`m5collapse=53`）；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-f22f66b3ce5446509bce2230eee7baf5` 為 `END ALL exit=0`（`2aca627`）。
+  - 之後依序是：F6-2d-2 B2（B1 review 的整理＋SEALED 的門窗口）、F6-2e、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
