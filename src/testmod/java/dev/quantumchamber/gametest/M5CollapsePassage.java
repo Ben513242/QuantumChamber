@@ -33,8 +33,15 @@ import org.apache.logging.log4j.Level;
  * <p>F6-2c（F6-2a quality Minor 1 與給 W7 的建議）：step 拆成可選的三段，chain 只取需要的段：{@link #resolve}（RESOLVE 完成、進入艙內）、{@link #ready}（PASSAGE_READY；
  * 之後讓要跨越的參與者站到門板中線內側）、{@link #cross}（指定的參與者越過中線、傳送到 U；可以只是參與者的子集，也可以分幾次）。{@link #steps} 是三段全員跨越、再接
  * (b) 終局的完整版本（既有的 restart 都用它，行為與拆段之前相同）。F6-2d-1：(b) 終局的 step 也可以單獨取（{@link #ended}，終局的參數由 chain 交來）。
+ * <p>F6-2d-2 Step 0（F6-2d-1 quality Minor 1、2）：chain 共用的 step factory 也在這裡：{@link #counting}（區域計數器）、{@link #watch}（觀察固定 tick 數）、
+ * {@link #steps(M5CollapseWindows.Prepared, Supplier)}（換 (b) 終局的參數）與 RESOLVE 完成的斷言 {@link #expectResolved}。
  */
 final class M5CollapsePassage {
+    /**
+     * 觀察「沒有觸發」「沒有重試」「閘門只看邊緣」的 tick 數（{@link #watch}；F6-2d-2 Step 0，F6-2d-1 quality Minor 1：合併 {@code M5CollapseRetryChains.WATCH_TICKS} 與
+     * {@code M5CollapsePassageChains.SEALED_WATCH_TICKS}，兩者都是 40）。
+     */
+    static final int WATCH_TICKS = 40;
     /** 門口的 local x（依參與者在清單中的順序；第一位與拆段之前相同，在門口正中）。兩人以上時錯開，不站在同一格。 */
     private static final double[] DOORWAY_X = {3.5, 1.5, 5.5};
     private final M5CollapseRun run;
@@ -87,12 +94,57 @@ final class M5CollapsePassage {
      * {@code prepared} 是窗口表裡 PREPARE 的預期（null：不檢查）。
      */
     List<Step> steps(M5CollapseWindows.Prepared prepared) {
+        return steps(prepared, () -> End.crossed(fixture));
+    }
+
+    /**
+     * 同 {@link #steps(M5CollapseWindows.Prepared)}，(b) 終局以 {@code end} 斷言（F6-2d-2 Step 0，F6-2d-1 quality Minor 2：取代 w9io 為了換 {@link End} 手抄的一份；例如
+     * allocation ledger 另有一筆的 {@link End#withOtherAllocations}）。
+     */
+    List<Step> steps(M5CollapseWindows.Prepared prepared, Supplier<End> end) {
         var steps = new ArrayList<Step>();
         steps.add(resolve());
         steps.add(ready(prepared, M5CollapseFixture.EVERYONE));
         steps.addAll(cross(M5CollapseFixture.EVERYONE));
-        steps.add(ended(() -> End.crossed(fixture)));
+        steps.add(ended(end));
         return List.copyOf(steps);
+    }
+
+    /** {@link #counting} 的 step 本體：{@code tick} 是這個 step 的第幾個 tick（由 1 起）；回 true 時完成。 */
+    @FunctionalInterface interface Counted { boolean run(int tick) throws Exception; }
+
+    /** {@link #watch} 每個 tick 的觀察（具名斷言）：{@code watched} 是這個 tick 之前已觀察的 tick 數（第一個 tick 為 0）。 */
+    @FunctionalInterface interface Watching { void tick(int watched) throws Exception; }
+
+    /**
+     * step {@code name}（上限 {@code maxTicks}，同 {@link Step}）：每個 tick 以這是這個 step 的第幾個 tick 呼叫 {@code body}。計數器跟著這個 step（每次呼叫各自計算，比照
+     * {@link #ready}；F6-2d-2 Step 0，F6-2d-1 quality Minor 1：取代 chain 共用的可變計數器 {@code watched}、{@code waited}、{@code triggerWaited}，同一個 phase 再加一段時不會
+     * 因為忘了歸零而只觀察 1 個 tick）。
+     */
+    static Step counting(String name, int maxTicks, Counted body) {
+        Objects.requireNonNull(body, "body");
+        int[] tick = {0};
+        return new Step(name, maxTicks, () -> body.run(++tick[0]));
+    }
+
+    /** 觀察段（step {@code name}）：每個 tick 呼叫 {@code eachTick}，恰 {@code ticks} 個 tick 之後完成（{@link #watch(String, int, Watching, M5CollapseRun.Checked)}）。 */
+    static Step watch(String name, int ticks, Watching eachTick) {
+        return watch(name, ticks, eachTick, M5CollapseRun.NOTHING);
+    }
+
+    /**
+     * 觀察段（step {@code name}，上限 {@code ticks}＋5 tick）：每個 tick 呼叫 {@code eachTick}（具名斷言），第 {@code ticks} 個 tick 的 {@code eachTick} 之後再呼叫 {@code then}
+     * （觀察完之後的斷言或動作）、完成。計數器同 {@link #counting}。
+     */
+    static Step watch(String name, int ticks, Watching eachTick, M5CollapseRun.Checked then) {
+        Objects.requireNonNull(eachTick, "eachTick");
+        Objects.requireNonNull(then, "then");
+        return counting(name, ticks + 5, tick -> {
+            eachTick.tick(tick - 1);
+            if (tick < ticks) return false;
+            then.run();
+            return true;
+        });
     }
 
     /**
@@ -149,12 +201,21 @@ final class M5CollapsePassage {
 
     private boolean resolvedThenEnter() throws Exception {
         if (run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", fixture.sid().toString()).isEmpty()) return false;
+        expectResolved();
+        fixture.moveInside();
+        return true;
+    }
+
+    /**
+     * 「目的地已確定（RESOLVE 完成）」INFO 之後的斷言：U 已物化（{@code materialized}）、catalog 恰多 1 筆（{@code catalogExactlyOneMore}）、discovery 恰一筆 U
+     * （{@code universeDiscoveredOnce}）。{@link #resolve} 與 chain 共用（F6-2d-2 Step 0，F6-2d-1 quality Minor 2：原本 {@code M5CollapseRetryChains.resolvedWithoutMoving}
+     * 另寫一份）。
+     */
+    void expectResolved() throws Exception {
         run.expect("materialized", fixture.universeWorld().isPresent(), () -> "RESOLVE 完成但 U 沒有物化");
         fixture.expectCatalog("catalogExactlyOneMore");
         run.expect("universeDiscoveredOnce", () -> M5CollapseDiskEvidence.discovery(run.saveRoot()).stream()
                 .filter(record -> record.universeId().equals(fixture.universe())).count() == 1, () -> "discovery 沒有恰一筆 U");
-        fixture.moveInside();
-        return true;
     }
 
     /** PASSAGE_READY 之後最多再等 5 個 tick，讓門與 Controller 的刷新落地，再斷言 passable、比較器 15 與投影 COMPLETE；之後 {@code approaching} 站到門板中線內側。 */

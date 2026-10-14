@@ -52,8 +52,6 @@ import org.apache.logging.log4j.Level;
  * {@code StructureTemplateCacheConcurrencyTest} 負責。
  */
 final class M5CollapsePassageChains {
-    /** trr 的 restart：參與者在艙內之後觀察幾個 tick 不重試（可重試的原因在第一次觀察到參與者在艙內的那個 tick 就會重試）。 */
-    static final int SEALED_WATCH_TICKS = 40;
     private static final String SOURCE_TICKET = "quantumchamber_source";
     private final M5CollapseRun run;
     private final M5CollapseFixture fixture;
@@ -62,8 +60,8 @@ final class M5CollapsePassageChains {
     private M5CollapseWindows.Window window;
     private JsonObject halt;
     private SessionRecoveryRecord atStart;
-    /** restart：通道在開服時結束的 server tick；trr 觀察了幾個 tick。 */
-    private int endTick = -1, watched;
+    /** restart：通道在開服時結束的 server tick。trr 觀察的 tick 數改由 {@link M5CollapsePassage#watch} 的區域計數器計（F6-2d-2 Step 0）。 */
+    private int endTick = -1;
     /** terminaldoor 的 restart：load-sync 排入的正規化的 tick（INFO 的「tick N」）。 */
     private int normalizeTick = -1;
     /**
@@ -300,7 +298,7 @@ final class M5CollapsePassageChains {
                     return true;
                 }));
                 steps.add(new Step("inside", 1, () -> { fixture.moveInside(M5CollapseFixture.OTHERS); return true; }));
-                steps.add(new Step("notRetried", SEALED_WATCH_TICKS + 5, this::sealedNotRetried));
+                steps.add(M5CollapsePassage.watch("notRetried", M5CollapsePassage.WATCH_TICKS, this::sealedUnchanged, this::sealedNotRetried));
                 steps.add(new Step("doorOpens", 1, this::sealedDoorOpensNormally));
             }
             default -> throw new IllegalArgumentException("通道的 chain 沒有這個窗口：" + id);
@@ -446,11 +444,11 @@ final class M5CollapsePassageChains {
     }
 
     /**
-     * trr：沒有跨過的參與者（無法回滾的那位）在艙內（開服之後第一次觀察到，可重試的原因這時就會重試）之後觀察 {@link #SEALED_WATCH_TICKS} 個 tick：record 一直與開服時 exact
-     * 相同；沒有「SEALED 重試」的 INFO、也沒有這個 session 的 WARN（journal 層級也拒絕 TRR 的重試，嘗試過就會有 WARN）；presence 是 COLLAPSE、比較器 ARMED（11）。
-     * 已跨過的選門者在 U（F6-2c fix round 1，spec v5.7 §10.3），不在艙內。
+     * trr 的 step {@code notRetried}（{@link M5CollapsePassage#watch}）：沒有跨過的參與者（無法回滾的那位）在艙內（開服之後第一次觀察到，可重試的原因這時就會重試）之後觀察
+     * {@link M5CollapsePassage#WATCH_TICKS} 個 tick：record 一直與開服時 exact 相同（這裡，每個 tick；第一個 tick 另斷言沒有跨過的參與者在艙內）；觀察完之後
+     * {@link #sealedNotRetried}。已跨過的選門者在 U（F6-2c fix round 1，spec v5.7 §10.3），不在艙內。
      */
-    private boolean sealedNotRetried() {
+    private void sealedUnchanged(int watched) {
         var sid = fixture.sid();
         if (watched == 0) {
             for (var id : fixture.members(M5CollapseFixture.OTHERS)) {
@@ -460,14 +458,19 @@ final class M5CollapsePassageChains {
         }
         run.expect("sealedUnchanged", atStart.equals(run.journal().flushedRecords().get(sid)) && atStart.equals(run.journal().records().get(sid)),
                 () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
-        if (++watched < SEALED_WATCH_TICKS) return false;
+    }
+
+    /**
+     * trr：觀察完之後，沒有「SEALED 重試」的 INFO、也沒有這個 session 的 WARN（journal 層級也拒絕 TRR 的重試，嘗試過就會有 WARN）；presence 是 COLLAPSE、比較器 ARMED（11）。
+     */
+    private void sealedNotRetried() {
+        var sid = fixture.sid();
         var retried = run.capture().matching(Level.INFO, "SEALED 重試", sid.toString()).stream().map(LogCapture.Entry::message).toList();
         var warned = run.capture().matching(Level.WARN, sid.toString()).stream().map(LogCapture.Entry::message).toList();
         run.expect("trrNotRetried", retried.isEmpty() && warned.isEmpty(), () -> "重試的 INFO=" + retried + " WARN=" + warned);
         var presence = ChamberSessions.gateway().presence(run.server(), fixture.chamber());
         run.expect("presenceCollapse", presence == ChamberSessionGateway.Presence.COLLAPSE, () -> "presence=" + presence);
         run.expect("comparatorArmedWhileSealed", fixture.controllerSignal(ChamberState.ARMED, 11), () -> "Controller=" + controllerState());
-        return true;
     }
 
     /**
