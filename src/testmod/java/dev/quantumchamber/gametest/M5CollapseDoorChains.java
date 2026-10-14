@@ -9,8 +9,10 @@ import static dev.quantumchamber.gametest.M5CollapseDoors.reapplyQueued;
 import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
+import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.collapse.OriginDoorsTestAccess;
+import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapsePassage.End;
@@ -20,11 +22,14 @@ import dev.quantumchamber.gametest.M5CollapseWindows.DoorAtStart;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.superposition.SessionState;
+import dev.quantumchamber.universe.DimensionRole;
+import dev.quantumchamber.universe.UniverseKeys;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import net.minecraft.block.Blocks;
 import net.minecraft.server.network.ServerPlayerEntity;
 import org.apache.logging.log4j.Level;
 
@@ -45,12 +50,17 @@ import org.apache.logging.log4j.Level;
  * </ul>
  * 「本來關著的門保留關著」（F6-2-08 的另一半）不在這兩條：開服時門是關著的是 RESOLVE 期間的窗口（W2、W3、W5），斷言以 {@link M5CollapseDoors#closedDoorKeptByTheReapply} 加在
  * {@link M5CollapseDormantChains#restart}。spec §12 的四件事每個 tick 由 {@link M5CollapsePassage#invariants} 斷言（{@link #restartPhase}），終局由 {@link M5CollapsePassage#expectEnd}。
- * <p>F6-2d-2 B2：SEALED 的原艙門跨重啟（spec v5.10 §7.3「門狀態的重新套用」「門口有人時的規則」、§11.2、§12 的 SEALED 列；交接清單 F6-2-09）。crash 在進入 SEALED 的寫入已確認、
- * {@code sealCommitted} 排入關門之前（窗口表的 {@code UNREADABLE_SEALED}、{@code UNREADABLE_SEALED_DOORWAY}），restart 由「排入 → 套用」兩個 step 斷言重新套用的關門
+ * <p>F6-2d-2 B2：SEALED 的原艙門跨重啟（spec v5.10 §7.3「門狀態的重新套用」「門口有人時的規則」、§11.2、§12 的 SEALED 列；交接清單 F6-2-09、F6-2-11）。crash 在進入 SEALED 的寫入已確認、
+ * {@code sealCommitted} 排入關門之前（窗口表的 {@code UNREADABLE_SEALED}、{@code UNREADABLE_SEALED_DOORWAY}、{@code PROJECTION_SEALED}），restart 由「排入 → 套用」兩個 step 斷言重新套用的關門
  * （{@link #closeQueued}、{@link #closeApplied}），之後參與者由艙外進入、重試，續行到 (b) 終局：
  * <ul>
  * <li>{@code sealclose}：開服時門是參與者照一般方式開的一般開門 → 關上一次 → 參與者照一般方式打開之後不再被關回去（{@link #plainDoorSealedRestart}）。</li>
  * <li>{@code sealdoorway}：開服時門關著、門口有盔甲座 → 改為一般開門、不關在盔甲座上（{@link #doorwaySealedRestart}）。</li>
+ * <li>{@code sealmembrane}（F6-2-11 變體 (i)，窗口表的 {@code PROJECTION_SEALED}）：開服時門是 sealed 量子膜、沒有參與者 → 非參與者使用門時不取消關門 → 關上、量子膜清掉 → 參與者 JOIN
+ *     的邊緣觸發重試（{@link #membraneSealedRestart}）。</li>
+ * <li>{@code sealmembranejoined}（F6-2-11 變體 (ii)，H9 (a) 的跨 JVM 版本，同一列）：參與者開服時就在艙內 → 第一次觀察同時排入關門與重試 → 下一個 tick 關門由 NORMALIZE 取代、改為一般開門，
+ *     門一直沒有關上 → 斷電讓閘門保持不成立 → 恢復供電、參與者離開再進入（{@link #membraneSealedJoinedRestart}）。兩個變體是兩條 chain 共用一列（restart 讀 crash 的 root，一條 chain
+ *     的第二個 restart 會接在第一個改過的世界上）。</li>
  * </ul>
  * <p>放在新的類別（不併入 {@link M5CollapseRetryChains}）：窗口條件與門的斷言共用，F6-2d-2 B2 的 SEALED 門窗口也放這裡；restart builder 與觸發之後的等法由基底
  * {@link M5CollapseRestartChains} 提供，不另寫一份。重新套用的 INFO 與門的狀態的查詢在 {@link M5CollapseDoors}（F6-2d-2 B2a 由這裡以純搬移抽出）。
@@ -85,12 +95,16 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         ServerPlayerEntity visitor;
     }
 
-    /** SEALED 的門 chain（F6-2d-2 B2：{@code sealclose}、{@code sealdoorway}）的 restart 才用的狀態（同 {@link WaitingDoor}）。 */
+    /**
+     * SEALED 的門 chain（F6-2d-2 B2：{@code sealclose}、{@code sealdoorway}、{@code sealmembrane}、{@code sealmembranejoined}）的 restart 才用的狀態（同 {@link WaitingDoor}）。
+     */
     private static final class SealedDoor {
         /** 重新套用的關門（CLOSE_ON_SEALED）排入時記下的「下一個 tick」（N）。 */
         int queuedTick = -1;
         /** probe 第一次看到門口有 entity 的 server tick（{@code sealdoorway} 的盔甲座由磁碟非同步載入；-1：還沒有看到）。 */
         int doorwaySeenAt = -1;
+        /** {@code sealmembrane}：非參與者（不在收據裡，開服時才連線，在艙外）。 */
+        ServerPlayerEntity visitor;
     }
 
     private final WaitingDoor waiting = new WaitingDoor();
@@ -549,6 +563,221 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** {@code record} 存在而且是 SEALED。 */
     private static boolean sealed(SessionRecoveryRecord record) {
         return record != null && record.state() == SessionState.SEALED;
+    }
+
+    // ---- sealmembrane、sealmembranejoined（F6-2-11）----
+
+    /**
+     * {@code sealmembrane} 與 {@code sealmembranejoined} 共用的 crash（窗口表的 {@code PROJECTION_SEALED}）：DORMANT 的 NEW 收據、原生存檔 → 裝上 U 的第一次投影寫入失敗
+     * （{@code PROJECTION_WRITE_FAULT}，FIRST_WRITE、一次）→ 參與者由艙外進入 → COLLAPSING → RESOLVE → PREPARE 的第一個 tick 套用 sealed 量子膜 → 投影寫入失敗 →
+     * SEALED(PROJECTION_FAILED) 已確認、{@code sealCommitted} 的關門之前 halt（halt 之前原生存檔：sealed 的門與參與者在艙內的 playerdata 都在磁碟上）。
+     */
+    Phase membraneSealedCrash() {
+        return crash(List.of(), this::projectionWriteFails, CrashWindow.PROJECTION_SEALED, 600);
+    }
+
+    /** 收據之後（{@link #crash} 的 {@code install}）：U 的第一次投影寫入失敗一次（{@code CollapseService.project} 已先寫下 PENDING）。 */
+    private void projectionWriteFails() {
+        run.install(M5TestHooks.PROJECTION_WRITE_FAULT, new M5TestHooks.ProjectionWriteFault(UniverseKeys.world(fixture.universe(), DimensionRole.OVERWORLD),
+                ProjectionWriter.Mode.FIRST_WRITE, 1));
+    }
+
+    /**
+     * {@code sealmembrane} 的 restart（F6-2-11 變體 (i)：開服時沒有參與者；T-SMEM 的跨 JVM 版本）：開服時窗口表的斷言（SEALED(PROJECTION_FAILED) 與 halt 當下相同、projection ledger
+     * 仍是 PENDING、磁碟上的門是 sealed 量子膜：不成立就 FAIL），原艙附近同步載入、門在記憶體裡也是 sealed、沒有參與者在線上；非參與者 JOIN 之後移到艙外
+     * （{@link #visitorOutsideWithNobodyOnline}）。之後：
+     * <ol>
+     * <li>{@code closeQueued}：排入一則 CLOSE_ON_SEALED、門仍是 sealed（{@code closeQueuedOnTheFirstLoad}）；同一個 tick 非參與者以 port 使用門（{@code M5GameTestSupport.useDoor}，
+     *     不切換門）：PASS、門仍是 sealed、沒有「取消還沒套用的關門」的 INFO、待套用的仍是 CLOSE_ON_SEALED（{@code membraneKeptOnTheVisitorUse}：門還帶著量子膜時不取消關門）。</li>
+     * <li>{@code closeApplied}：門關上、量子膜清掉，套用的 INFO 恰一則，仍沒有取消關門的 INFO（{@code closedFromTheMembrane}）。</li>
+     * <li>{@code join}：參與者 JOIN 在艙內（halt 之前存的位置）。開服之後的第一次觀察沒有人在艙內，JOIN 之後出現在艙內就是邊緣（{@code stillSealedAtTheJoin}）。</li>
+     * <li>{@code retried}：PROJECTION_FAILED 是 EDGE_WITH_BACKOFF，開服之後的第一次觸發不受退避限制，重試一次（{@code retriedOnTheJoinEdge}）→ RESOLVE → 閘門第一次以位準評估 →
+     *     PREPARE → PASSAGE_READY → 跨越 → (b) 終局。</li>
+     * </ol>
+     */
+    Phase membraneSealedRestart(String crashPhase) {
+        var steps = new ArrayList<Step>();
+        steps.add(closeQueued(DoorAtStart.SEALED_MEMBRANE, this::visitorUsesTheMembraneDoor));
+        steps.add(closeApplied("closedFromTheMembrane", DoorAtStart.CLOSED, this::closeNotCancelled));
+        steps.add(new Step("join", 1, this::joinInsideOnTheEdge));
+        steps.add(retried("retried", "retriedOnTheJoinEdge", SealedReason.PROJECTION_FAILED, 1, Await.EDGE));
+        steps.addAll(passage.steps(null));
+        return restartPhase(crashPhase, CrashWindow.PROJECTION_SEALED, ChamberAtStart.PRELOADED, steps, this::visitorOutsideWithNobodyOnline);
+    }
+
+    /** sealmembrane 的開服：{@link #doorAtStartWithNobodyOnline}（sealed 量子膜）；非參與者（新的 UUID，不在收據裡）JOIN 之後移到艙外（{@code visitorOutsideAtStart}）。 */
+    private void visitorOutsideWithNobodyOnline() {
+        doorAtStartWithNobodyOnline(DoorAtStart.SEALED_MEMBRANE);
+        var visitor = sealedDoor.visitor = fixture.connect(UUID.randomUUID()).player();
+        M5GameTestSupport.moveOutside(visitor, FRAME);
+        boolean outside = !M5CollapseFixture.inside(visitor);
+        run.expect("visitorOutsideAtStart", outside && !fixture.participants().contains(visitor.getUuid()) && visitor.getServerWorld() == run.source() && fixture.noneOnline(),
+                () -> "非參與者在 " + visitor.getPos() + " 參與者在線上=" + !fixture.noneOnline());
+        run.proof.put("visitor", visitor.getUuid().toString());
+    }
+
+    /**
+     * sealmembrane 的 {@code closeQueued} 之後（同一個 tick）：非參與者以 port 使用門（直接呼叫攔截，不切換門）。SEALED 的門照一般門的邏輯（PASS），門還帶著量子膜，所以保留還沒套用的關門
+     * （只記 DEBUG）：門仍是 sealed、沒有「取消還沒套用的關門」的 INFO、待套用的仍是 CLOSE_ON_SEALED（{@code membraneKeptOnTheVisitorUse}）。
+     */
+    private void visitorUsesTheMembraneDoor() {
+        var sid = fixture.sid();
+        var use = M5GameTestSupport.useDoor(run.source(), FRAME, sealedDoor.visitor);
+        boolean sealedDoorNow = M5GameTestSupport.doorSealed(run.source(), FRAME);
+        int cancelled = M5CollapseDoors.cancelledCloses(run, sid);
+        var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
+        run.expect("membraneKeptOnTheVisitorUse", use == ChamberCollapsePort.DoorUse.PASS && sealedDoorNow && cancelled == 0 && pending.equals(Optional.of("CLOSE_ON_SEALED")),
+                () -> "非參與者使用門：" + use + " sealed=" + sealedDoorNow + " 門正中=" + doorCenter(run) + " 取消關門的 INFO=" + cancelled + " 待套用的門=" + pending.orElse("none"));
+        run.proof.put("visitorUsedTheDoorAtServerTick", run.server().getTicks());
+    }
+
+    /** sealmembrane 的 {@code closeApplied} 另要求：沒有「取消還沒套用的關門」的 INFO（非參與者使用門時沒有取消）。 */
+    private Verdict closeNotCancelled() {
+        int cancelled = M5CollapseDoors.cancelledCloses(run, fixture.sid());
+        return new Verdict(cancelled == 0, " 取消關門的 INFO=" + cancelled);
+    }
+
+    /** sealmembrane 的 step {@code join}：參與者 JOIN 在艙內（halt 之前存的位置），這時 record 仍是 SEALED、還沒有重試（{@code stillSealedAtTheJoin}）；記下 JOIN 的位置。 */
+    private boolean joinInsideOnTheEdge() {
+        var record = run.journal().flushedRecords().get(fixture.sid());
+        int retries = sealedRetries();
+        joinInside();
+        run.expect("stillSealedAtTheJoin", sealed(record) && retries == 0, () -> "JOIN 之前 state=" + M5GameTestSupport.state(run.journal(), fixture.sid()) + " 重試的 INFO=" + retries);
+        run.proof.put("joinedAtServerTick", run.server().getTicks());
+        return true;
+    }
+
+    /**
+     * {@code sealmembranejoined} 的 restart（F6-2-11 變體 (ii)，H9 (a) 的跨 JVM 版本）：開服時窗口表的斷言同 {@link #membraneSealedRestart}；第一個 tick 之前參與者 JOIN 在艙內
+     * （{@link #joinedBeforeTheFirstObservation}：JOIN 早於第一次觀察）。開服到 NORMALIZE 套用的每個 tick 原艙門都沒有關上（{@code doorNeverClosedAfterTheRestart}：sealed 或一般開門）。之後：
+     * <ol>
+     * <li>{@code firstObservation}：開服之後的第一次觀察（tick N-1）同時排入一則 CLOSE_ON_SEALED（tick N）、由 SEALED(PROJECTION_FAILED) 重試一次（參與者沒有移動；
+     *     {@code queuedAndRetriedOnTheFirstObservation}）。同一個 probe step 拿掉 Controller 上方的紅石塊：重試的觸發要求來源艙有電（§7.1），所以在重試的 tick 之後才斷電；斷電之後
+     *     閘門的第一次評估不成立。</li>
+     * <li>{@code normalized}：tick N「session 已不是 SEALED，不再套用封存時的原艙門」恰一則，關門由 COLLAPSING 的重新套用目標取代、立即套用：門改為一般開門、
+     *     「（NORMALIZE：APPLIED，tick N）」恰一則（{@code normalizedAfterTheRetry}）。</li>
+     * <li>{@code resolved}：RESOLVE 完成，這時沒有電、沒有進 PREPARE、參與者沒有移動（{@code resolvedWithoutPower}）。</li>
+     * <li>{@code waitingWithoutPower}：{@link M5CollapsePassage#WATCH_TICKS} 個 tick，每個 tick 一般開門、record 是 COLLAPSING、沒有「進入 PREPARE」、這個 session 沒有 ERROR（沒有開服時的
+     *     提醒）、沒有待套用的門、參與者沒有移動（{@code plainOpenWhileWaitingWithoutPower}；閘門走「來源艙沒有電」這條路徑保持不成立）；之後放回紅石塊。</li>
+     * <li>{@code left}：恢復供電之後的下一個 tick 仍沒有進 PREPARE（閘門已評估過，之後只看邊緣；{@code poweredWithoutAnEdge}），參與者離開艙內 → 由艙外進入（§7.1 的邊緣）→ PREPARE →
+     *     PASSAGE_READY → 跨越 → (b) 終局；終局時「進入 PREPARE」恰一則（{@code preparedOnlyAfterTheEdge}）。</li>
+     * </ol>
+     */
+    Phase membraneSealedJoinedRestart(String crashPhase) {
+        var steps = new ArrayList<Step>();
+        steps.add(M5CollapsePassage.awaiting("firstObservation", QUEUE_WAIT_TICKS, () -> {
+            doorNotClosedAfterTheRestart();
+            return !reapplyQueued(run, fixture.sid()).isEmpty() || sealedRetries() > 0;
+        }, this::queuedAndRetriedOnTheFirstObservation));
+        steps.add(M5CollapsePassage.counting("normalized", APPLY_WAIT_TICKS, this::normalizedAfterTheRetry));
+        steps.add(new Step("resolved", 400, this::resolvedWithoutPower));
+        steps.add(M5CollapsePassage.watch("waitingWithoutPower", M5CollapsePassage.WATCH_TICKS, this::plainOpenWhileWaitingWithoutPower, this::powerRestored));
+        steps.add(new Step("left", 1, this::poweredThenLeave));
+        steps.add(enter());
+        steps.add(passage.ready(null, M5CollapseFixture.EVERYONE));
+        steps.addAll(passage.cross(M5CollapseFixture.EVERYONE));
+        steps.add(passage.ended(() -> {
+            int prepares = prepares();
+            run.expect("preparedOnlyAfterTheEdge", prepares == 1, () -> "「進入 PREPARE」=" + prepares);
+            return End.crossed(fixture);
+        }));
+        return restartPhase(crashPhase, CrashWindow.PROJECTION_SEALED, ChamberAtStart.PRELOADED, steps, this::joinedBeforeTheFirstObservation);
+    }
+
+    /** sealmembranejoined 的開服（第一個 tick 之前）：門在記憶體裡是 sealed；參與者 JOIN 在艙內，這時 record 仍是 SEALED（{@code joinedBeforeTheFirstObservation}）；記下 JOIN 的位置。 */
+    private void joinedBeforeTheFirstObservation() {
+        doorInMemoryAtStart(DoorAtStart.SEALED_MEMBRANE);
+        joinInside();
+        var record = run.journal().flushedRecords().get(fixture.sid());
+        run.expect("joinedBeforeTheFirstObservation", run.ticks() == 0 && sealed(record), () -> "JOIN 時 tick=" + run.ticks() + " state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
+        run.proof.put("joinedAt", joinedAt.toString());
+    }
+
+    /** sealmembranejoined：開服之後到 NORMALIZE 套用，每個 tick 原艙門都沒有關上（25 格是 sealed 量子膜或一般開門；{@code doorNeverClosedAfterTheRestart}）。 */
+    private void doorNotClosedAfterTheRestart() {
+        boolean sealedDoorNow = M5GameTestSupport.doorSealed(run.source(), FRAME), plain = plainOpen(run);
+        run.expect("doorNeverClosedAfterTheRestart", sealedDoorNow || plain, () -> "tick " + run.server().getTicks() + "：門正中=" + doorCenter(run));
+    }
+
+    /** 這個 session「SEALED 重試」的 INFO 的則數（任何原因）。 */
+    private int sealedRetries() {
+        return run.capture().matching(Level.INFO, "SEALED 重試", fixture.sid().toString()).size();
+    }
+
+    /** sealmembranejoined 的 step {@code firstObservation}（{@code tick} 由 1 起）：見 {@link #membraneSealedJoinedRestart} 第 1 點；之後拿掉 Controller 上方的紅石塊。 */
+    private void queuedAndRetriedOnTheFirstObservation(int tick, boolean happened) {
+        var sid = fixture.sid();
+        var queued = reapplyQueued(run, sid);
+        int now = run.server().getTicks(), all = sealedRetries();
+        int fromProjection = run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + SealedReason.PROJECTION_FAILED + ")→COLLAPSING", sid.toString()).size();
+        var record = run.journal().flushedRecords().get(sid);
+        boolean still = notMovedSinceTheJoin(), sealedDoorNow = M5GameTestSupport.doorSealed(run.source(), FRAME);
+        run.expect("queuedAndRetriedOnTheFirstObservation", queued.size() == 1 && queued.getFirst().closeAfterARestart() && queued.getFirst().tick() == now + 1 && fromProjection == 1
+                        && all == 1 && collapsing(record) && still && sealedDoorNow,
+                () -> "開服之後 " + run.ticks() + " 個 tick（server tick " + now + "）：排入的 INFO=" + queued + " PROJECTION_FAILED 的重試=" + fromProjection + " 全部的重試=" + all + " state="
+                        + M5GameTestSupport.state(run.journal(), sid) + " 沒有移動=" + still + " sealed=" + sealedDoorNow);
+        sealedDoor.queuedTick = queued.getFirst().tick();
+        run.proof.put("firstObservationAtPhaseTick", run.ticks());
+        run.proof.put("closeQueuedTick", sealedDoor.queuedTick);
+        // 重試的觸發要求來源艙有電（source signal），所以在重試的 tick 之後才斷電；閘門在 RESOLVE 之後第一次以位準評估時不成立（WAITING）。
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
+    }
+
+    /** sealmembranejoined 的 step {@code normalized}：見 {@link #membraneSealedJoinedRestart} 第 2 點；排入的 tick 之後 2 個 tick 仍不是一般開門就由這個具名斷言判 FAIL。 */
+    private boolean normalizedAfterTheRetry(int tick) {
+        doorNotClosedAfterTheRestart();
+        boolean plain = plainOpen(run);
+        int now = run.server().getTicks(), queuedTick = sealedDoor.queuedTick;
+        if (!plain && now < queuedTick + 2) return false;
+        var sid = fixture.sid();
+        int dropped = run.capture().matching(Level.INFO, "session 已不是 SEALED，不再套用封存時的原艙門", "session=" + sid).size();
+        var applied = M5CollapseDoors.applied(run, sid);
+        run.expect("normalizedAfterTheRetry", plain && now == queuedTick && dropped == 1 && applied.equals(List.of(new M5CollapseDoors.Applied("NORMALIZE", queuedTick))),
+                () -> "tick " + now + "（排入的是 tick " + queuedTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + "「不再套用封存時的原艙門」=" + dropped + " 套用的 INFO="
+                        + applied);
+        run.proof.put("normalizedAtServerTick", now);
+        return true;
+    }
+
+    /** sealmembranejoined 的 step {@code resolved}：見 {@link #membraneSealedJoinedRestart} 第 3 點。 */
+    private boolean resolvedWithoutPower() throws Exception {
+        var sid = fixture.sid();
+        if (run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid.toString()).isEmpty()) return false;
+        passage.expectResolved();
+        boolean powered = run.source().isReceivingRedstonePower(FRAME.controllerPos()), plain = plainOpen(run), still = notMovedSinceTheJoin();
+        int prepares = prepares();
+        var record = run.journal().flushedRecords().get(sid);
+        run.expect("resolvedWithoutPower", !powered && prepares == 0 && plain && collapsing(record) && still,
+                () -> "RESOLVE 完成時：有電=" + powered + "「進入 PREPARE」=" + prepares + " 一般開門=" + plain + " state=" + M5GameTestSupport.state(run.journal(), sid) + " 沒有移動=" + still);
+        run.proof.put("resolvedAtServerTick", run.server().getTicks());
+        return true;
+    }
+
+    /** sealmembranejoined 的 step {@code waitingWithoutPower} 的每個 tick（{@code tick} 由 1 起）：見 {@link #membraneSealedJoinedRestart} 第 4 點。 */
+    private void plainOpenWhileWaitingWithoutPower(int tick) {
+        var sid = fixture.sid();
+        boolean plain = plainOpen(run), powered = run.source().isReceivingRedstonePower(FRAME.controllerPos()), still = notMovedSinceTheJoin();
+        int prepares = prepares(), errors = run.capture().matching(Level.ERROR, sid.toString()).size(), applied = reapplied(run, sid).size();
+        var record = run.journal().flushedRecords().get(sid);
+        var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
+        run.expect("plainOpenWhileWaitingWithoutPower", plain && !powered && prepares == 0 && collapsing(record) && errors == 0 && still && pending.isEmpty() && applied == 1,
+                () -> "RESOLVE 之後第 " + tick + " 個 tick：一般開門=" + plain + " 門正中=" + doorCenter(run) + " 有電=" + powered + "「進入 PREPARE」=" + prepares + " state="
+                        + M5GameTestSupport.state(run.journal(), sid) + " ERROR=" + errors + " 沒有移動=" + still + " 待套用的門=" + pending.orElse("none") + " 套用=" + applied);
+    }
+
+    /** {@code waitingWithoutPower} 觀察完之後：放回 Controller 上方的紅石塊。 */
+    private void powerRestored() {
+        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
+        run.proof.put("poweredAgainAtServerTick", run.server().getTicks());
+    }
+
+    /** sealmembranejoined 的 step {@code left}：見 {@link #membraneSealedJoinedRestart} 第 5 點（之後參與者離開艙內）。 */
+    private boolean poweredThenLeave() {
+        boolean powered = run.source().isReceivingRedstonePower(FRAME.controllerPos()), still = notMovedSinceTheJoin();
+        int prepares = prepares();
+        run.expect("poweredWithoutAnEdge", powered && prepares == 0 && still, () -> "恢復供電之後：有電=" + powered + "「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
+        fixture.moveOutside();
+        return true;
     }
 
 }
