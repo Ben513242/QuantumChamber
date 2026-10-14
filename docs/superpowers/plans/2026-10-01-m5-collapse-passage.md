@@ -795,6 +795,10 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - F6-2d-2 本體的 A 段已完成（2026-10-14，`8ce281e..287d849`），implementer 在 context 門檻停下，B 段只留下設計（note F6-2d-2 一節）。它回報的三項觀察經使用者裁示修正，見下方 **Task H8**、**Task H9**（spec v5.10 §4 H8、H9、§20.14）。順序：A 段的 spec＋quality review（與 H8 並行，只讀）→ H8 → H9 → B 段（接力 implementer）。M-2 的斷言由 H9 一併做，B 段不再列；F6-2-11 在 H9 的行為上寫斷言。
       - A 段的 review：spec ❌（I-1：`ChamberAtStart` 沒有讓矛盾的組合不能編譯）、quality Approved（Minor 5）。H8 當時正在乾淨的 HEAD 上驗證，所以 I-1 與 quality Minor 排在 **B 段的第一步**（A 段 fix round），之後複審 I-1；清單見 note F6-2d-2 一節的 review 區塊。
       - H8 已完成（2026-10-14，spec review ✅、quality review Approved）。H8 的盤點另發現原版 `StrongholdGenerator` 的 static 可變狀態（H6 類別），使用者裁示**延到 M6** 一起修（spec §20.14 的追加），M5 只在 F7 寫進已知問題。
+      - H9 已完成（2026-10-14，spec review ✅、quality review Approved）。
+      - controller 2026-10-14 把 B 段再拆成兩次派工，各自走完 implementer → spec review → quality review（理由：A 段的 implementer 讀完背景就接近 context 門檻）：
+        - **B1：A 段 fix round 與 PREPARE 的門窗口。** A 段的 I-1、quality Minor 1～5、nit；H9 quality Minor 6；B 段要重用的 restart builder 與 await step 以純搬移抽到共用位置；F6-2-08（sealed 量子膜期間 crash → WAITING、一般開門；本來關著的門保留關著）、F6-2-10（PREPARE 中重啟 → 依條件重新套用）。A 段 I-1 的複審併入 B1 的 spec review。
+        - **B2：SEALED 的門窗口。** F6-2-09（SEALED 開服後只關門一次、門口有人時一般開門）、F6-2-11（SEALED、門帶著量子膜時重啟：沒有參與者時關門，參與者開服時就在艙內時依 H9 (a) 改為一般開門）。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；
