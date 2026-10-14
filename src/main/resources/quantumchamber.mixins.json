@@ -25,6 +25,7 @@
     "EntitySuperpositionTeleportMixin",
     "PlayerEntityShoulderSuperpositionMixin",
     "ServerChunkLoadingManagerStaleUnloadMixin",
-    "PalettedBlockInfoListConcurrentCacheMixin"
+    "PalettedBlockInfoListConcurrentCacheMixin",
+    "DirectionTransformationEagerMappingsMixin"
   ]
 }
