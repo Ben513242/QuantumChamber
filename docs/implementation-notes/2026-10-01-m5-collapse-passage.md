@@ -7633,7 +7633,7 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 
 ## F6-2d-2：門與 SEALED 的重啟窗口
 
-本節由 controller 依 implementer 的 `STATUS.md` 寫成（implementer 在 context 門檻停下，沒有寫 note）。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62d2/`，以下簡稱 `f62d2/`。B 段由接力的 implementer 在 Task H8、H9 之後完成，寫在本節的「B 段」之下。
+本節由 controller 依 implementer 的 `STATUS.md` 寫成（implementer 在 context 門檻停下，沒有寫 note）。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62d2/`，以下簡稱 `f62d2/`。B 段由接力的 implementer 在 Task H8、H9 之後完成，另起一節寫在 note 末尾；本節的 review 區塊由 controller 在 A 段的 review 之後補上。
 
 ### A 段：F6-2d-2 Step 0 review 留下的整理
 
