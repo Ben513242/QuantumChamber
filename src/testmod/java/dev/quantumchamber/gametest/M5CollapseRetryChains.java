@@ -5,8 +5,8 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 import dev.quantumchamber.candidate.CandidateBytes;
 import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
-import dev.quantumchamber.chamber.ChamberGeometry;
 import dev.quantumchamber.collapse.CollapseAuthorities;
+import dev.quantumchamber.collapse.CollapseServiceTestAccess;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
@@ -71,7 +71,7 @@ final class M5CollapseRetryChains {
      * {@code registered + 2 + 205}）。
      */
     static final int BACKOFF_TICKS = 205;
-    /** restart 開服時以 probe 的 ticket 同步載入的半徑（chunk；原艙與 {@code chamberGate} 外擴的 3 格都在 Controller 所在 chunk 的半徑 1 之內）。 */
+    /** restart 開服時以 probe 的 ticket 同步載入的半徑（chunk；原艙與 {@code CollapseService.neighborhoodLoaded} 外擴的 3 格都在 Controller 所在 chunk 的半徑 1 之內）。 */
     private static final int CHAMBER_LOAD_RADIUS = 1;
     /** w8：PREPARE 等多少 tick（RESOLVE 之後閘門第一次以位準評估就該成立；超過時由具名斷言判 FAIL，不是 stepBounded）。 */
     private static final int PREPARE_WAIT_TICKS = 10;
@@ -304,17 +304,12 @@ final class M5CollapseRetryChains {
     }
 
     /**
-     * H7：原艙附近是否已載入，判斷與 production 的 {@code CollapseService.neighborhoodLoaded} 相同（艙體向水平各方向外擴 3 格的 chunk 都是 FULL；那個方法是
-     * package-private，testmod 讀不到）。只查詢，不加 ticket、不載入。
+     * H7：原艙附近是否已載入（艙體向水平各方向外擴 3 格的 chunk 都是 FULL）。F6-2d-2 Step 0（H7 quality Minor 2）起直接呼叫 production 的
+     * {@code CollapseService.neighborhoodLoaded}（package-private，經 testmod 的 split package {@link CollapseServiceTestAccess}；原本在這裡複製一份判斷，Javadoc 誤寫
+     * 「testmod 讀不到」）。只查詢，不加 ticket、不載入。
      */
     private boolean chamberLoaded() {
-        var bounds = ChamberGeometry.bounds(FRAME);
-        for (int x = (bounds.getMinX() - 3) >> 4; x <= (bounds.getMaxX() + 3) >> 4; x++) {
-            for (int z = (bounds.getMinZ() - 3) >> 4; z <= (bounds.getMaxZ() + 3) >> 4; z++) {
-                if (run.source().getChunkManager().getWorldChunk(x, z) == null) return false;
-            }
-        }
-        return true;
+        return CollapseServiceTestAccess.neighborhoodLoaded(run.source(), FRAME);
     }
 
     /** H7 的 step {@code chamberUnloaded}：原艙附近已不是全部 FULL（spawn chunks 的 ticket 移除之後）。 */
