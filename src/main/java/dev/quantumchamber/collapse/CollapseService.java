@@ -1118,15 +1118,11 @@ public final class CollapseService {
 
         /**
          * 本 server instance 第一次看到這個 session 走到閘門階段時立即以位準評估（live 塌縮返還之後通常立即成立；開服之後就是「第一次觀察」）；不成立就停在
-         * WAITING，之後只在 §7.1 的邊緣觸發（原參與者由艙外進入艙內）時再評估。來源艙還沒載入時兩者都不消耗（H7，spec v5.9 §7.3：{@link EntryWatch#level} 回 null 時不算評估過）。
+         * WAITING，之後只在 §7.1 的邊緣觸發（原參與者由艙外進入艙內）時再評估。來源艙還沒載入時兩者都不消耗（H7，spec v5.9 §7.3：第一次評估遇到 NOT_LOADED 時不算評估過）。
+         * 評估方式與「是否已評估過」都在 {@link EntryWatch#gate}（F6-2d-2 Step 0 由這裡與 {@code Track.gateEvaluated} 移過去，行為不變）。
          */
         @Override public boolean edge() {
-            var watch = track.entry(false);
-            if (track.gateEvaluated) return watch.trigger(inside(view), CollapseService.this::triggerReady, () -> sourceSignal(view));
-            var open = watch.level(inside(view), CollapseService.this::triggerReady, () -> sourceSignal(view));
-            if (open == null) return false;
-            track.gateEvaluated = true;
-            return open;
+            return track.entry(false).gate(inside(view), CollapseService.this::triggerReady, () -> sourceSignal(view));
         }
     }
 
@@ -1371,8 +1367,8 @@ public final class CollapseService {
     /**
      * 每個 session 在本 server instance 的塌縮簿記（不持久化）。package-private 只為了 JUnit 直接驗證它的方法（F4a fix round 2）。
      * <p><b>重設時點</b>（F5-2 Step 0，F5-1 fix round 1 quality re-review R-m3）：整個 Track 在終局（{@link CollapseService#terminated}）或 session 離開 journal（{@code tick} 的
-     * {@code retainAll}）時移除。{@link #resetGate}（提交 COLLAPSING、進入 SEALED、SEALED→COLLAPSING 的重試）只重設閘門與 PREPARE 的部分（{@code entry}、{@code gateEvaluated}、
-     * {@code preparing}、{@code prepare}、{@code membrane}、{@code doorReleased}）。刻意不隨它重設的：
+     * {@code retainAll}）時移除。{@link #resetGate}（提交 COLLAPSING、進入 SEALED、SEALED→COLLAPSING 的重試）只重設閘門與 PREPARE 的部分（{@code entry}，閘門是否已評估過
+     * 也在它裡面（F6-2d-2 Step 0 由 {@code gateEvaluated} 移進 {@link EntryWatch}）、{@code preparing}、{@code prepare}、{@code membrane}、{@code doorReleased}）。刻意不隨它重設的：
      * <table>
      * <tr><th>欄位</th><th>重設時點</th><th>理由</th></tr>
      * <tr><td>{@code doorLoaded}、{@code doorSeenLoaded}</td><td>不重設</td><td>來源艙載入的觀察，在 SEALED 與重試之間仍有效</td></tr>
@@ -1391,7 +1387,6 @@ public final class CollapseService {
         /** WARN 的去重：寫入種類 → 最近一次的 {@link FailureText#dedupeKey}；成功時移除。 */
         final Map<String, String> warnings = new HashMap<>();
         EntryWatch entry;
-        boolean gateEvaluated;
         /**
          * 上一個 tick 推導的階段是 PREPARE：只交給 {@link CollapsePhase#derive}（轉換與閘門的評估方式都由它決定，F4b-2 fix round 1，quality Q-M6）。UNIVERSE 時
          * 恆等於 {@code prepare != null}（進入時建立、離開時丟棄）；SOURCE 的 PREPARE 沒有 {@link Prepare}。
@@ -1498,7 +1493,6 @@ public final class CollapseService {
 
         void resetGate() {
             entry = null;
-            gateEvaluated = false;
             preparing = false;
             prepare = null;
             membrane = null;

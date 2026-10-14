@@ -14,7 +14,8 @@ import org.junit.jupiter.api.function.Executable;
 
 /**
  * H7（spec v5.9 §7.1、§7.3、§11.2、§4 H7）：{@link EntryWatch} 的「來源艙還沒載入時，這次觸發不消耗」，不經 server。{@code forget} 之後下一次觀察是邊緣；
- * {@code trigger} 與 {@code level} 只有 {@code NOT_LOADED} 不消耗，其他原因（INVALID、LOW、DISABLED）與不符合參與者條件的人照樣消耗；沒有人觸發時不查詢來源艙。
+ * {@code trigger} 與 {@code gate}（F6-2d-2 Step 0 起取代 {@code level}）只有 {@code NOT_LOADED} 不消耗，其他原因（INVALID、LOW、DISABLED）與不符合參與者條件的人照樣消耗；
+ * 沒有人觸發時不查詢來源艙。
  * <p>F6-2d-2 Step 0（H7 quality Minor 5）：同一個 {@link EntryWatch} 的有狀態動作改成循序斷言（前一步失敗時就停下，不會出現連鎖的誤導訊息）；{@code assertAll} 只用在
  * 彼此獨立的 case（每個 case 有自己的 {@link EntryWatch}）。§7.1 的邊緣觸發本身（{@link #entryWatchTriggersOnlyOnEntryEdges}）由 {@code CollapseServiceTest} 搬來。
  */
@@ -98,31 +99,53 @@ class EntryWatchTest {
         assertTrue(startup.trigger(Set.of(A), EVERYONE, () -> SourceSignal.OK), "載入之後，仍在艙內的 A 觸發");
     }
 
-    @Test void theFirstLevelEvaluationWaitsOnlyForAnUnloadedSourceChamber() {
+    /**
+     * §7.3 閘門的第一次評估（{@link EntryWatch#gate}；F6-2d-2 Step 0 由 H7 的 {@code level} 改測 {@code gate}）：以位準評估，只有 NOT_LOADED 不算評估過（下一個 tick 再以位準
+     * 評估）；評估過之後只看邊緣。沒有人、或只有不符合參與者條件的人時評估過、不查詢來源艙。
+     */
+    @Test void theFirstGateEvaluationWaitsOnlyForAnUnloadedSourceChamber() {
         var cases = new ArrayList<Executable>();
         for (var signal : SourceSignal.values()) {
             var watch = new EntryWatch(false);
             cases.add(() -> {
                 if (signal == SourceSignal.NOT_LOADED) {
-                    assertNull(watch.level(Set.of(A), EVERYONE, () -> signal), "NOT_LOADED：不算評估過");
-                    assertEquals(Boolean.TRUE, watch.level(Set.of(A), EVERYONE, () -> SourceSignal.OK), "下一個 tick 再以位準評估");
+                    assertFalse(watch.gate(Set.of(A), EVERYONE, () -> signal), "NOT_LOADED：不成立");
+                    assertTrue(watch.gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), "NOT_LOADED 不算評估過：下一個 tick 再以位準評估（A 沒有移動）");
                 } else {
-                    assertEquals(signal == SourceSignal.OK, watch.level(Set.of(A), EVERYONE, () -> signal), signal + "：以位準評估");
+                    assertEquals(signal == SourceSignal.OK, watch.gate(Set.of(A), EVERYONE, () -> signal), signal + "：以位準評估");
                 }
-                assertFalse(watch.trigger(Set.of(A), EVERYONE, NOT_QUERIED), signal + "：評估過之後只看邊緣（已 prime）");
+                assertFalse(watch.gate(Set.of(A), EVERYONE, NOT_QUERIED), signal + "：評估過之後只看邊緣（已 prime，A 一直在艙內）");
+                assertFalse(watch.gate(Set.of(), EVERYONE, NOT_QUERIED), signal + "：A 離開");
+                assertTrue(watch.gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), signal + "：A 由艙外再進入是邊緣");
             });
         }
         var nobody = new EntryWatch(false);
+        cases.add(() -> {
+            assertFalse(nobody.gate(Set.of(), EVERYONE, NOT_QUERIED), "沒有人在艙內：評估過、不查詢來源艙");
+            assertTrue(nobody.gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), "之後由艙外進入是邊緣");
+        });
         var busy = new EntryWatch(false);
         cases.add(() -> {
-            assertEquals(Boolean.FALSE, nobody.level(Set.of(), EVERYONE, NOT_QUERIED), "沒有人在艙內：評估過、不查詢來源艙");
-            assertTrue(nobody.trigger(Set.of(A), EVERYONE, () -> SourceSignal.OK), "之後由艙外進入");
-        });
-        cases.add(() -> {
-            assertEquals(Boolean.FALSE, busy.level(Set.of(B), id -> false, NOT_QUERIED), "只有不符合參與者條件的人：評估過、不查詢來源艙");
-            assertFalse(busy.trigger(Set.of(B), EVERYONE, NOT_QUERIED), "已 prime");
+            assertFalse(busy.gate(Set.of(B), id -> false, NOT_QUERIED), "只有不符合參與者條件的人：評估過、不查詢來源艙");
+            assertFalse(busy.gate(Set.of(B), EVERYONE, NOT_QUERIED), "已 prime：B 之後符合條件也不是邊緣");
         });
         assertAll(cases);
+    }
+
+    /**
+     * WAITING 的接線（F6-2d-2 Step 0，H7 spec Minor 1、quality Minor 1：原本「第一次評估遇到 NOT_LOADED 時不設 gateEvaluated」分在 {@code EntryWatch.level} 與
+     * {@code PrepareGate.edge} 兩處，沒有確定性的回歸）。{@code PrepareGate.edge} 只呼叫 {@code track.entry(false).gate(...)}：開服之後第一次評估時參與者已在艙內、來源艙
+     * 還沒載入（{@code waitinglate} 的情況），之後每個 tick 仍以位準評估，載入的那個 tick 就成立，參與者不必離開再進入；{@code resetGate}（提交、進入 SEALED、重試）之後
+     * 下一段又從第一次評估開始。
+     */
+    @Test void theWaitingGateEvaluatesOnTheLevelOnceTheSourceChamberLoads() {
+        var track = new CollapseService.Track();
+        assertFalse(track.entry(false).gate(Set.of(A), EVERYONE, () -> SourceSignal.NOT_LOADED), "開服之後第一次評估：來源艙還沒載入");
+        assertFalse(track.entry(false).gate(Set.of(A), EVERYONE, () -> SourceSignal.NOT_LOADED), "仍沒有載入：下一個 tick 再以位準評估");
+        assertTrue(track.entry(false).gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), "載入的那個 tick：參與者沒有移動就成立");
+        assertFalse(track.entry(false).gate(Set.of(A), EVERYONE, NOT_QUERIED), "評估過之後只看邊緣");
+        track.resetGate();
+        assertTrue(track.entry(false).gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), "resetGate 之後是新的一段：第一次評估又以位準評估");
     }
 
     private static Set<UUID> ordered(UUID... ids) {
