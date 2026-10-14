@@ -6,7 +6,6 @@ import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
-import dev.quantumchamber.collapse.CollapseService.SourceSignal;
 import dev.quantumchamber.collapse.CollapseService.Track;
 import dev.quantumchamber.mixin.PlayerManagerSaveInvoker;
 import dev.quantumchamber.persistence.FailureText;

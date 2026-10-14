@@ -1,6 +1,5 @@
 package dev.quantumchamber.collapse;
 
-import dev.quantumchamber.collapse.CollapseService.SourceSignal;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;

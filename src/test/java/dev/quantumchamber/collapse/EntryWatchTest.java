@@ -2,7 +2,6 @@ package dev.quantumchamber.collapse;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import dev.quantumchamber.collapse.CollapseService.SourceSignal;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;

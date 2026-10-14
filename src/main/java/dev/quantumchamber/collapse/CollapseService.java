@@ -1235,19 +1235,6 @@ public final class CollapseService {
         return sourceSignal(record) == SourceSignal.OK;
     }
 
-    /** 來源艙的即時訊號（{@link #sourceSignal}）：{@code OK} 之外的每一種都表示那一個條件不成立（依檢查順序，第一個不成立的）。 */
-    enum SourceSignal {
-        OK,
-        /** 來源世界或艙體向水平外擴 3 格的 chunk 沒有都 FULL（只查詢、不載入）。 */
-        NOT_LOADED,
-        /** 結構失效：Controller 的 block entity、方塊或朝向不符，或艙體驗證不通過。 */
-        INVALID,
-        /** 沒有供電：Controller 沒有即時紅石輸入。 */
-        LOW,
-        /** Origin 被停用：registry 讀不到、沒有這座原艙、已拆除，或不是 enabled。 */
-        DISABLED
-    }
-
     /**
      * 來源艙的即時訊號（F5-1 由原本的 {@code chamberGate} 拆出原因，判斷的條件與順序不變；§10.6 (d) 要分辨斷電、停用與結構失效）。一律依即時狀態：「已供電」是 Controller
      * 的即時紅石輸入（spec §7），不看 registry 的 {@code ChamberPowerState}；「已載入」涵蓋艙體向水平各方向外擴 3 格（紅石讀取與門的套用範圍）的 chunk，只查詢、不載入。

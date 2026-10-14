@@ -497,25 +497,25 @@ class CollapseServiceTest {
      * 計（恰好到 expires 就結束）。
      */
     @Test void passageEndConditionsFollowTheSpecOrder() {
-        var OK = CollapseService.SourceSignal.OK;
+        var OK = SourceSignal.OK;
         var cases = new ArrayList<Executable>();
         cases.add(() -> assertEquals(Optional.empty(), PassageService.endCondition(false, 100, 1300, OK), "沒有任何結束條件"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.ALL_CROSSED), PassageService.endCondition(true, 100, 1300, OK), "(b) 全員都已跨過"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.EXPIRED), PassageService.endCondition(false, 1300, 1300, OK), "(c) 恰好到期"));
         cases.add(() -> assertEquals(Optional.empty(), PassageService.endCondition(false, 1299, 1300, OK), "(c) 還差 1 tick"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.SOURCE_LOW),
-                PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.LOW), "(d) 沒有供電"));
+                PassageService.endCondition(false, 100, 1300, SourceSignal.LOW), "(d) 沒有供電"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.SOURCE_DISABLED),
-                PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.DISABLED), "(d) Origin 被停用"));
+                PassageService.endCondition(false, 100, 1300, SourceSignal.DISABLED), "(d) Origin 被停用"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.SOURCE_INVALID),
-                PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.INVALID), "(d) 結構失效"));
-        cases.add(() -> assertEquals(Optional.empty(), PassageService.endCondition(false, 100, 1300, CollapseService.SourceSignal.NOT_LOADED), "沒有載入：不判斷 (d)"));
+                PassageService.endCondition(false, 100, 1300, SourceSignal.INVALID), "(d) 結構失效"));
+        cases.add(() -> assertEquals(Optional.empty(), PassageService.endCondition(false, 100, 1300, SourceSignal.NOT_LOADED), "沒有載入：不判斷 (d)"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.EXPIRED),
-                PassageService.endCondition(false, 1300, 1300, CollapseService.SourceSignal.NOT_LOADED), "沒有載入時 (c) 照常"));
+                PassageService.endCondition(false, 1300, 1300, SourceSignal.NOT_LOADED), "沒有載入時 (c) 照常"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.ALL_CROSSED),
-                PassageService.endCondition(true, 1300, 1300, CollapseService.SourceSignal.LOW), "同時成立時回報 (b)"));
+                PassageService.endCondition(true, 1300, 1300, SourceSignal.LOW), "同時成立時回報 (b)"));
         cases.add(() -> assertEquals(Optional.of(PassageService.PassageEnd.EXPIRED),
-                PassageService.endCondition(false, 1300, 1300, CollapseService.SourceSignal.LOW), "(c)(d) 同時成立時回報 (c)"));
+                PassageService.endCondition(false, 1300, 1300, SourceSignal.LOW), "(c)(d) 同時成立時回報 (c)"));
         assertAll(cases);
     }
 
