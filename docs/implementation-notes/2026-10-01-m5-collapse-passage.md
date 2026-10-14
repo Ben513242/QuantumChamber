@@ -7535,6 +7535,26 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - 本節由其後的 docs commit `docs: record the F6-2d-2 Step 0 in the M5 note` 加入。
 - 中間 commit 的編譯（`f62d2s0/c1`～`c10-compile.log`：`compileJava compileTestJava compileTestmodJava compileClientProbeJava`，都 BUILD SUCCESSFUL；`c*-compile-state.txt` 記下編譯時工作樹的 blob）：每個 code commit 之前各一次，依序對應上面 `927ed87`～`e19b660`。`c2`、`c3` 另跑 `EntryWatchTest`＋`CollapseServiceTest`（`c*-focused-junit.log`）。
 - 只改了派工允許的路徑：`src/main/` 是 `EntryWatch`、`CollapseService`（第 6、12 點與第 13 點的搬移）、`CollapsePhase`（只改 `Gate.edge` 的 Javadoc）、新的 `SourceSignal` 與 `PassageService`（只拿掉 import）；JUnit 是 `EntryWatchTest` 與 `CollapseServiceTest`（第 11 點的搬移、第 13 點的限定名稱）；testmod 是 probe 的 `M5CollapseRun`、`M5CollapseWindows`、`M5CollapseFixture`、`M5CollapsePassage`、`M5CollapsePassageChains`、`M5CollapseRetryChains`，`M5TestHooks`（只改 nit 的 Javadoc），與新的 `src/testmod/java/dev/quantumchamber/collapse/CollapseServiceTestAccess.java`（第 8 點）；`scripts/verification/README.md` 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 其他 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、所有 ps1、`.github/`、其他 GameTest（含 `M5UniverseGameTests`、`M5GameTestSupport`）、M4 probe、其他 JUnit、語言檔、spec、plan、AGENTS。
+- Review 與最終 review（controller 補）：
+  - spec review ❌（Critical 0、Important 1、Minor 1），**都是文件**；程式面都經獨立核對成立：
+    - `src/main/` 行為不變：`gate()` 與 H7 版（`level`＋`Track.gateEvaluated`）逐條等價；reviewer 以 `javap -c -p` 正規化之後比較 collapse 套件 80 個 class，只有 `CollapseService`（少了 `chamberGate`）、`$PrepareGate`、`$Track`（少了欄位）、`EntryWatch` 不同，`PassageService*` 相同，`SourceSignal` 只差 "Compiled from"。
+    - 第 6 點的 JUnit 用真的 `CollapseService.Track` 測接線（`PrepareGate.edge` 本身只是一行轉呼叫，需要 server，README:243 與本節第 10 點都照實寫明）；`mut-gate-evaluated` 打在接線移過去的位置。
+    - 第 4、5、14 點：`w9cd` 的 `recordKeptAcrossTheRestart` 不是恆真；w9 系列的 `order=DIFF` 只是斷言移位；49 個 phase 的 step 序列與 H7 green-2 相同；等待上限逐一相同。
+    - **I-1**：第 7 點對 `mut-backoff-first` 為什麼抓不到的解釋，以及交給 F6-3 的建議情境不正確，照那個建議寫的測試仍殺不掉這個 mutation（SEALED 封存時換新的 watch；單人 DORMANT 的快照已含參與者）。
+    - **m-1**：README:242 殘留已移除的 `lateRestartPhase`。
+  - controller 核對 `CS:1010-1022` 與 `EntryWatch.java:28-62`，確認 I-1 屬實，比照 F6-2b 的先例由 controller 更正文件：docs `d8e8214`（逐項處置表第 7 列與「交給後續」F6-3 條目的更正、README:242）。
+  - spec 複審（`7106975..d8e8214`）✅：I-1、m-1 關閉。reviewer 補核 `CS:401-409`：DORMANT 的觸發提交失敗只 `backoff.failed`、不 `resetGate`，快照 `{A}` 留到退避結束，所以兩位參與者的 DORMANT 情境成立，能殺掉 `mut-backoff-first`。給 F6-3 的實作提醒：退避要由 DORMANT 的觸發提交失敗啟動（live 的提交失敗沒有 watch）；受控失敗只注入一次，後面「B 離開再進入才提交」才會成功。另外，F6-3 條目寫「這個 mutation 在 SEALED 上是等價的」，嚴格說是「幾乎等價」（恰好在退避結束那個 tick 進入時兩者不同，第 7 列已寫明），以本句為準。
+  - quality review **Approved**（Critical 0、Important 0、Minor 4、nit 3），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Strengths：`gate()` 拿掉了 nullable `Boolean` 三態，`gateEvaluated` 與 `inside` 同一個物件、同一個生命週期，`Track.entry`／`resetGate`、`sealCommitted`、`leavePrepare` 的 `prime` 逐處等價；`SourceSignal` 是乾淨的純搬移，沒有殘留的 `CollapseService.SourceSignal`；`CollapseServiceTestAccess` 比照 `CollapseLedgerTestAccess`，只暴露一個方法，由 `main-oracle.ps1:32` 自動納入檢查（`testmodHits=0`）；`counting`／`watch` 拿掉了「忘了歸零」的風險；`AtRestart.copy` 用 clone，新欄位會帶過後續的 wither；`EntryWatchTest` 的 `resetGate` 之後那一行斷言不是恆真。
+    - Minor：
+      1. `passage.cross` 的文件（`PSG:34`「也可以分幾次」、`PSG:49`／`:176` 的 `crossedSoFar`「各 cross 段」、README:274）與新的重名守門矛盾：`cross` 的 step 名稱固定是 `doorway`／`crossed`。多人窗口在同一個 phase 分兩批 `cross` 時，會在 `onInitialize` 丟 IAE，`crossedSoFar` 的累計形同死碼。建議 `cross(who, label)` 由 label 推出 step 名稱，或把文件改成「一個 phase 一次」。
+      2. `retried` 拒絕 `Await.FIRST_OBSERVATION`（`RC:655`），訊息又與 production 相反：`sealed()`（`CS:1078-1079`）以 `track.entry(startupSessions.contains(sid))`，開服 attach 的 session 第一次觀察到在艙內就算觸發。F6-2d-2「SEALED 帶量子膜時重啟」若先載入原艙、JOIN 在艙內，正好需要這個組合。建議拿掉這個檢查。
+      3. `recordKeptAcrossTheRestart` 只有 opt-in、沒有反向守門（`WIN:968`）：halt 取證寫了 `recordAtHalt`（`WIN:655`、`:815`、`:855`）卻忘了 `withRecordKept()` 時，比對會靜默消失（與第 3 點修掉的 `serverStartedWithTheDisabled` 同類）。建議 `!recordKept && recordAtHalt != null && stateAtHalt != null` 時判 FAIL。
+      4. `restartPhase(..., boolean preload, ...)`（`RC:327`）的位置 boolean 不好讀，`true` 配 `unloadTheChamberAtStart` 這種矛盾組合也能編譯。建議改成 enum。
+      - nit：`EW:17`「WAITING 的接線因此可以不經 server 測」說得比 README:243 滿；`Await.EDGE(10, 0)` 的 `waitTicks=0` 是沒用到的 sentinel、`watch` 的上限 `ticks + 5`（`PSG:142`）到不了；`Counted` 的 tick 從 1 起算、`Watching` 從 0 起算。
+    - 給 F6-2d-2 本體的建議：加窗口之前先以一個小的 commit 收掉 Minor 1～3（它們直接影響本體的多人分批跨越、SEALED 開服時第一次觀察就重試、新窗口列的 record 比對）；`counting` 重做了 runner 的 `stepTicks`（`RUN:392`），可考慮公開 `run.stepTicks()` 讓 `Step` 回到無狀態；`committedWithoutReentry`（`RC:473-488`）與 `retried` 的非 EDGE 分支可抽成通用的 await step；PREPARE 中重啟的窗口先補 `EntryWatch` 的循序 JUnit（`gate` → `prime` → `gate` 只看邊緣）；新的窗口列有 record 的一律 `withRecordKept()`、要計 tick 的一律 `counting`／`watch`。
+  - controller 處置：不開 fix round。quality Minor 1～4、nit 與給本體的建議 → **F6-2d-2 本體**（A 段，在加窗口之前）；「退避期內照樣消耗」的 RED（兩位參與者的 DORMANT）→ **F6-3**（不變）。
+  - **F6-2d-2 Step 0 完成**：range `cf09a97..7106975`，之後接 controller 的 docs commit `d8e8214` 與本區塊的 docs commit。最終 run-all：`run-all-915ef865f6d445d4a8649da27a4ebb95`，`END ALL exit=0`（`fbb2bd4`；其後只有 note 的 commit 與 controller 的 docs 更正）。
 
 ### 逐項處置
 
