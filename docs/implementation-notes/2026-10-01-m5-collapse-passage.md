@@ -7653,9 +7653,28 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - 驗證（乾淨的 HEAD `287d849`）：
   - JUnit 665 個（663 PASS、2 SKIPPED），與 `run-all-915ef865…` 相比只多 `EntryWatchTest.afterThePrimeOnLeavingPrepareTheGateWaitsForAnEdge`（`f62d2/a2-junitall-setcmp.txt`）。`a1-*` 是在 commit 之前的工作樹上開始、中途停掉的 JUnit，不採計。
   - probe：`green-a`（`710ef52f978d4b0ea218ce6a17df250b`）前 29 個 phase PASS，`trr-restart` 逾時（見下方「觀察」第 1 點），腳本在第一個失敗停下；`green-b`（`4a4550643ac04969aab1410de57b2e3a`，新的 root，`-Only` 剩下的 11 條 chain）21 個 phase 全部 PASS，含 `trr-restart`。兩次合起來 49 個 phase 都有，具名斷言與 F6-2d-2 Step 0 的 green-2（`d46ab3e3…`）相比數量、順序、step 都相同，沒有缺少、新增或改名（`f62d2/names-*.txt`）。
-  - mutation `mut-no-record-kept@unreadable`（`SEALED_STEP` 拿掉 `withRecordKept()`，root `collapse-d416e89f5e18463a95ed8864328b6ed0-unreadable`）：`unreadable-crash` 沒有 halt，FAIL 在 `recordKeptDeclared`；還原後 porcelain 為空。
+  - mutation `mut-no-record-kept@unreadable`（`SEALED_STEP` 拿掉 `withRecordKept()`，root `collapse-d416e89f5e18463a95ed8864328b6ed0-unreadable`）：`unreadable-crash` 沒有 halt，FAIL 在具名斷言 `crashPointHealthy`（原因鏈 `crash 點失敗：…haltEvidence：halt 之前的取證失敗：…recordKeptDeclared：窗口表的 SEALED_STEP …`；controller 依 spec review M-1 更正）；還原後 porcelain 為空。
   - 沒有做：同一個 HEAD 連跑兩次、M4 recovery、default／M5 run、run-all。這些在 Task H8 的乾淨 HEAD 上做（H8 的 GREEN 與完整回歸涵蓋 A 段）。
 - 結束過的 PID 只有 40232（`m5-collapse-probe.ps1` 的逾時處置，commandLine 相符、jstack 已存）。
+- A 段的「同一個乾淨的 HEAD 連跑兩次」由 Task H8 補上：H8 的 probe GREEN（`b1e25f3`，含 A 段）兩次都是 49/49，具名斷言與 `d46ab3e3…` 完全相同（見 `## H8` 一節）。
+- Review（controller 補）：
+  - spec review ❌（Critical 0、Important 1、Minor 2、nit 1）。程式行為、GREEN、具名斷言（reviewer 自寫腳本比對 49/49 相同）、mutation、中間 commit 的編譯、範圍都成立；`trr-restart` 的逾時與 A 段無關；把「連跑兩次」延到 H8 可以接受。
+    - **I-1**：Minor 4 的「矛盾的組合不能編譯」沒有達成。`private void unloadTheChamberAtStart()`（`RC:357`，`287d849`）的形狀與 `M5CollapseRun.Checked` 相同，`restartPhase(..., ChamberAtStart.PRELOADED, steps, this::unloadTheChamberAtStart)` 仍能編譯（`UNLOADED` 配同一個 `afterStarted` 也能），但 `RC:340-341`、README:162、本節 Minor 4 一條與 `02628cb` 的訊息都寫成已達成。目前 8 個呼叫端都正確，執行期沒有錯。controller 核對屬實。
+    - M-1：mutation 的失敗位置（已在上方更正）；`WIN:490`「訊息以 recordKeptDeclared 開頭」只對丟出的例外本身成立（`WINDOW` 列的 receipt 以 `crashPointHealthy` 開頭，`TICK_END` 列經 `guarded` 以 `haltEvidence：` 開頭）。
+    - M-2：`EW:17` 沒有列進「交給後續」（已補在下方）。
+    - nit：`f62d2/start-state.txt` 沒有記 porcelain；`mutsum` 的 `runId=` 是空的。
+  - quality review **Approved**（Critical 0、Important 0、Minor 5、nit 3），沒有發現 spec reviewer 漏掉的正確性缺陷：
+    1. `started` 的 `ChamberAtStart` switch 不是 exhaustive（`RC:315-319`）：新增值卻忘了 case 時照樣編譯、執行時什麼都不做；建議改成 switch expression。
+    2. `ChamberAtStart` 的語意不只 chunk：`UNLOADED` 經 `unloadTheChamberAtStart` 另記 `atStart`（`RC:359`，`joinInsideLate` 的 `unchangedBeforeTheJoin` 依賴它），開服當下其實仍載入、要等 `chamberUnloaded`；`AS_SAVED` 的 Javadoc（`RC:348`）把 `waitinglate` 的 level.dat 事實寫成這個值的語意。
+    3. 反向守門靠字串 key `"recordAtHalt"`（`WIN:494`、`:675`、`:835`、`:875`、`:989`）：新的取證換了 key 或拼錯，會同時繞過守門與 restart 的比對；建議常數加 `putRecordAtHalt` helper。
+    4. `Await` 只剩 `waitTicks` 有效：`FIRST_OBSERVATION`、`AFTER_THE_LOAD` 的 step 上限餘裕永遠到不了（`RC:106`、`:108`），也沒有 `waitTicks <= maxTicks` 的檢查；`counting("prepared", LATE_TRIGGER_TICKS + 5)`（`RC:451`）、`counting("preparedOnTheLevel", PREPARE_WAIT_TICKS + 5)`（`RC:541`）同形。
+    5. 新 JUnit 的 Javadoc 說得太滿（`EWT:152-154`）：test 直接呼叫 `prime`，`CS:513` 那一行由 GameTest P-POWER 的 `noReentryWithoutAnEntryEdge`（`M5U:1494`）鎖住；`EWT:160` 最可能的 mutation 會在 `NOT_QUERIED` 裡丟出，這一步自己的訊息不會出現。
+    - nit：`requireRecordKeptDeclared`（`WIN:492`）可改 private；README:270 的兩處描述（「`arm` 在取證之後丟出」、「halt 當下有 record」）與程式不符；`preparedWithoutReentry(int waited)`、`preparedOnTheLevel(int waited)`（`RC:476`、`:579`）的參數名與 `Watching` 的改名不一致。
+    - 給 B 段的建議：先以純搬移把 `restartPhase`／`started`／`ChamberAtStart`／`Await`／`retried`／`committedWithoutReentry`／`joinedAt` 抽到共用位置，再寫 `M5CollapseDoorChains`；通用 await step 以 `waitTicks` 為唯一上限、`still == null` 表示不斷言位置；`sealmembrane` 的參與者在 `closedFromTheMembrane` 之後才 JOIN，那是 JOIN 的**邊緣**（`PROJECTION_FAILED` 是 EDGE_WITH_BACKOFF，第一個 tick 已以空的 inside 建好 watch），不是 `FIRST_OBSERVATION`（`STATUS.md` 第 4 點的設計要改）；分批跨越的擴充方向寫進 `cross` 的 Javadoc（`crossedRecorded` 要含 `AtRestart.crossedAtHalt`）；新列的 record 摘要一律經 `recordOnDisk`；watch 的 tick 1 是前一個 step 完成之後的下一個 tick。
+  - controller 處置：不另開 fix round。H8 當時正在跑「同一個乾淨的 HEAD」的驗證，commit testmod 會干擾它的證據，所以 **I-1、quality Minor 1～5 與 nit 排在 B 段開工的第一步（A 段 fix round）**，I-1 修好之後由 spec reviewer 複審；給 B 段的建議併入 B 段的派工。M-1 在上方更正，M-2 補在下方。
+- 交給後續：
+  - **B 段第一步（A 段 fix round）**：I-1（把 `unloadTheChamberAtStart` 內聯進 `started` 的 `case UNLOADED`，或改成不符合 `Checked` 的簽名，讓既有的說法成立）、quality Minor 1～5、nit。
+  - **F7**：`EW:17`「WAITING 的接線因此可以不經 server 測」說得比 README:243 滿（`src/main/` 的註解，F6-2d-2 Step 0 quality nit）。
 
 ### 觀察與裁示
 
