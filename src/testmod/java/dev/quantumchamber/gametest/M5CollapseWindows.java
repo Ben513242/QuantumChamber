@@ -57,7 +57,8 @@ import org.apache.logging.log4j.Level;
  * （另要有 hook mixin 與 {@code CrashWindow} 的值，見 {@code scripts/verification/README.md}「M5 collapse probe」），restart 照 {@code M5CollapsePassage.steps} 推進到
  * (b) 終局。其他窗口（F6-2c：PASSAGE_READY 期間、終局之後）另以 {@link AtRestart} 的 {@code stateAtHalt}、{@code crossedAtHalt} 表達開服時的 record，restart 的
  * step 與終局（{@code M5CollapsePassage.End} 的逐人位置）由 chain 自己組。F6-2d-1：重試與續行跨重啟的窗口（W8 的 DORMANT、W9 的 SEALED(MATERIALIZE_FAILED) 與
- * COLLAPSING＋DISABLED、F6-2-07 的 SEALED(AUTHORITY_UNREADABLE)）也各一列，restart 的 step 由 {@code M5CollapseRetryChains} 組。
+ * COLLAPSING＋DISABLED、F6-2-07 的 SEALED(AUTHORITY_UNREADABLE)）也各一列，restart 的 step 由 {@code M5CollapseRetryChains} 組。F6-2d-2 B1：PREPARE 中、PASSAGE_READY 的提交被暫緩、
+ * 原艙門是 sealed 量子膜的那一刻（{@code READY_HELD}，F6-2-08、F6-2-10）一列，restart 的 step 由 {@code M5CollapseDoorChains} 組。
  */
 final class M5CollapseWindows {
     private M5CollapseWindows() {}
@@ -414,6 +415,12 @@ final class M5CollapseWindows {
                 M5CollapseWindows::unreadableAtHalt,
                 AtRestart.resolved(Resolved.MATERIALIZED).withStateAtHalt(SessionState.SEALED).withRecordKept()
                         .withDisk((run, fixture) -> sealedKeptAtRestart(run, fixture, SealedReason.AUTHORITY_UNREADABLE, "unreadableAtRestart")), null);
+        // ---- F6-2d-2 B1：PREPARE 的原艙門跨重啟（chain 在 M5CollapseDoorChains；waitingdoor 與 preparedoor 共用這一列） ----
+        // F6-2-08、F6-2-10：PREPARE 準備完成、PASSAGE_READY 的提交由 READY_HOLD 暫緩的那一刻（同一個 tick 的 prepareDoor 已套用 sealed 量子膜，projection ledger 已 COMPLETE）；
+        // halt 之前原生存檔（sealed 的門、參與者在艙內的 playerdata、COMPLETE 都在磁碟上）。重啟之後 PREPARE 只修復（0 格）。
+        row(rows, CrashWindow.READY_HELD, M5CollapseWindows::readyHeldWithTheMembrane, M5CollapseWindows::savedWhileReadyHeld,
+                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withRecordKept().withDisk(M5CollapseWindows::sealedDoorOnDiskAtRestart),
+                new Prepared("repairedNothing", ProjectionWriter.Mode.REPAIR, 0, NO_CHECK));
         return Collections.unmodifiableMap(rows);
     }
 
@@ -509,6 +516,15 @@ final class M5CollapseWindows {
     private static boolean collapsingCommitted(M5CollapseFixture fixture, Object detail) {
         return detail instanceof M5TestHooks.CollapsingCommit commit && commit.result().committed() && commit.expected().state() == SessionState.MEASURED
                 && commit.next().state() == SessionState.COLLAPSING && commit.next().sessionUuid().equals(fixture.sid());
+    }
+
+    /**
+     * F6-2-08、F6-2-10（F6-2d-2 B1）：這條 chain 的 session 在 PREPARE（COLLAPSING）中、PASSAGE_READY 的提交被暫緩，而且原艙門 25 格都是 sealed 量子膜（同一個 tick 的
+     * {@code prepareDoor} 已套用；門口有人或艙內有非參與者時不成立，不 halt）。
+     */
+    private static boolean readyHeldWithTheMembrane(M5CollapseFixture fixture, Object detail) {
+        return detail instanceof M5TestHooks.ReadyHeld held && held.view().sessionUuid().equals(fixture.sid()) && held.view().state() == SessionState.COLLAPSING
+                && M5GameTestSupport.doorSealed(fixture.source(), FRAME);
     }
 
     /** W4：第一次寫入剛寫完 U 的 Controller 那一格（targets 依 x→y→z：Controller 之前與目標不同的格已寫，之後的還沒有）。 */
@@ -907,6 +923,25 @@ final class M5CollapseWindows {
                 () -> "discovery 已有 U");
     }
 
+    /**
+     * F6-2-08、F6-2-10（F6-2d-2 B1）的 halt 之前：磁碟上的 record 是那一筆 PREPARE 中的 COLLAPSING（{@link #recordOnDisk}，detail 的 collapse view；摘要記在 {@code recordAtHalt}）；
+     * PASSAGE_READY 的提交至少被暫緩過一次、參與者在艙內、projection ledger 已 COMPLETE。原生存檔之後，參與者在艙內的 playerdata 與 sealed 量子膜的原艙門（raw MCA）都在磁碟上。
+     */
+    private static void savedWhileReadyHeld(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        var held = (M5TestHooks.ReadyHeld) detail;
+        recordOnDisk(run, fixture, evidence, held.view(), "collapsingOnDiskWhileReadyHeld");
+        var hold = M5TestHooks.READY_HOLD.get();
+        evidence.put("readyHeldTimes", hold == null ? 0 : hold.hits());
+        run.expect("readyHeldAtHalt", hold != null && hold.hits() >= 1, () -> "PASSAGE_READY 的提交沒有被暫緩：" + hold);
+        for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
+        run.expect("projectionCompleteAtHalt", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
+                () -> "projection ledger=" + fixture.projectionsOrError());
+        nativeSaveAtHalt(run);
+        playerDimensions(run, fixture, evidence);
+        run.expect("playerDataInTheSourceAtHalt", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
+        run.expect("sealedDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.sealedFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 sealed 量子膜");
+    }
+
     // ---- restart 開服時 ----
 
     /**
@@ -1183,6 +1218,7 @@ final class M5CollapseWindows {
                     + " sealed=" + write.next().collapse().sealedReason().map(Enum::name).orElse("-");
             case M5TestHooks.Termination termination -> "origin=" + termination.origin() + " from=" + termination.expected().state() + " session="
                     + termination.expected().sessionUuid() + " status=" + termination.result().status();
+            case M5TestHooks.ReadyHeld held -> "readyHeld session=" + held.view().sessionUuid() + " state=" + held.view().state();
             case SessionRecoveryRecord record -> "step session=" + record.sessionUuid() + " state=" + record.state()
                     + " sealed=" + record.collapse().sealedReason().map(Enum::name).orElse("-");
             case CollapseAuthorities.Lookup<?> lookup -> "status=" + lookup.status() + " value=" + lookup.value().map(String::valueOf).orElse("-");

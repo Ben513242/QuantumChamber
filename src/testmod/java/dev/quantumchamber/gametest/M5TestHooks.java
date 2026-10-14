@@ -297,6 +297,7 @@ public final class M5TestHooks {
      *     {@code CollapseAuthoritiesCrashWindowMixin} 在 {@code changeCatalogAvailability} 的回傳點以 {@link #CATALOG_DISABLED} 呼叫（回傳的 {@code CollapseAuthorities.Lookup}，
      *     兩個方向、任何結果都是）；{@code CollapseServiceCrashWindowMixin} 在 {@code CollapseService.step} 的開頭，依序以 {@link #DORMANT_STEP}、{@link #SEALED_STEP} 呼叫
      *     （那一筆 flushed 的 {@link SessionRecoveryRecord}，每個 tick、每個 session、任何狀態都是）。</li>
+     * <li>F6-2d-2 B1 加的：{@code CollapseReadyHoldMixin} 在 PASSAGE_READY 的提交被 {@link #READY_HOLD} 暫緩時以 {@link #READY_HELD} 呼叫（{@link ReadyHeld}，每次暫緩都是）。</li>
      * </ul>
      * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
@@ -344,7 +345,13 @@ public final class M5TestHooks {
         /**
          * W9 的變體 (b)（F6-2d-1）：{@code CollapseAuthorities.changeCatalogAvailability} 把 catalog 的這筆改為 DISABLED，讀回已確認（§8.3：物化失敗之後；SEALED 寫入之前）。
          */
-        CATALOG_DISABLED
+        CATALOG_DISABLED,
+        /**
+         * F6-2-08、F6-2-10（F6-2d-2 B1）：{@code CollapseService.ready}（PREPARE 準備完成之後提交 PASSAGE_READY）被 {@link #READY_HOLD} 暫緩的那一刻（{@code CollapseReadyHoldMixin} 在
+         * {@link #readyHeld} 回 true、取消這次提交之前呼叫，每次暫緩都是；detail 是 {@link ReadyHeld}）。同一個 tick 的 {@code prepareDoor} 已在 {@code ready} 之前執行，projection ledger
+         * 已 COMPLETE（準備完成之後才進 {@code ready}）；PREPARE 由暫緩保持，不靠時序。窗口表的條件另選這條 chain 的 session、COLLAPSING 與 sealed 量子膜。
+         */
+        READY_HELD
     }
 
     /**
@@ -361,6 +368,12 @@ public final class M5TestHooks {
      * （變更前、變更後的 record）與它的結果。
      */
     public record CollapsingCommit(SessionRecoveryRecord expected, SessionRecoveryRecord next, SessionRecoveryState.CommitResult result) {}
+
+    /**
+     * {@link CrashWindow#READY_HELD} 的 detail（F6-2d-2 B1）：PASSAGE_READY 的提交被 {@link #READY_HOLD} 暫緩的那一次 {@code CollapseService.ready} 收到的 collapse view
+     * （COLLAPSING，PREPARE 準備完成之後）。
+     */
+    public record ReadyHeld(SessionRecoveryRecord view) {}
 
     /** {@link CrashWindow#PROJECTION_CELL_WRITTEN} 的 detail：{@code ProjectionWriter} 剛寫完的一格（世界、艙、模式、位置，與這一格是否改變）。 */
     public record ProjectionCell(ServerWorld world, ChamberFrame frame, ProjectionWriter.Mode mode, BlockPos pos, boolean changed) {}

@@ -558,6 +558,9 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     ServerWorld corridor() { return run.server().getWorld(SuperpositionWorld.KEY); }
 
+    /** 來源世界（原艙所在；窗口表的條件只拿得到 fixture，F6-2d-2 B1 的 {@code READY_HELD} 要看原艙門）。 */
+    ServerWorld source() { return run.source(); }
+
     /** 這個 session 有走廊 space（{@code currentMappings} 對沒有 space 的 session 丟 {@link IllegalArgumentException}）。 */
     boolean spaceExists() {
         try {
