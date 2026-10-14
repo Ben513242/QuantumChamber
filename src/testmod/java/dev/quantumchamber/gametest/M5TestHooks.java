@@ -356,7 +356,10 @@ public final class M5TestHooks {
         if (point != null) point.reach(window, detail);
     }
 
-    /** {@link CrashWindow#COLLAPSING_COMMITTED} 的 detail：{@code SessionRecoveryState.commitRestore} 的一次呼叫（變更前、變更後的 record）與它的結果。 */
+    /**
+     * {@link CrashWindow#COLLAPSING_COMMITTED}、{@link CrashWindow#READY_COMMITTED}（F6-2c；F6-2d-2 Step 0 補上說明）的 detail：{@code SessionRecoveryState.commitRestore} 的一次呼叫
+     * （變更前、變更後的 record）與它的結果。
+     */
     public record CollapsingCommit(SessionRecoveryRecord expected, SessionRecoveryRecord next, SessionRecoveryState.CommitResult result) {}
 
     /** {@link CrashWindow#PROJECTION_CELL_WRITTEN} 的 detail：{@code ProjectionWriter} 剛寫完的一格（世界、艙、模式、位置，與這一格是否改變）。 */
@@ -369,8 +372,8 @@ public final class M5TestHooks {
     public record ChunkCheckpoint(Map<ServerWorld, Set<ChunkPos>> relevant) {}
 
     /**
-     * {@link CrashWindow#CROSSED_COMMITTED}、{@link CrashWindow#CROSSED_UNCONFIRMED}、{@link CrashWindow#RECOVERY_SEALED}、{@link CrashWindow#RECOVERY_REJECTED} 的 detail
-     * （F6-2c）：{@code SessionRecoveryState.commitRollForward} 的一次呼叫（變更前、變更後的 record）與它的結果。
+     * {@link CrashWindow#CROSSED_COMMITTED}、{@link CrashWindow#CROSSED_UNCONFIRMED}、{@link CrashWindow#RECOVERY_SEALED}、{@link CrashWindow#RECOVERY_REJECTED}（F6-2c）與
+     * {@link CrashWindow#MATERIALIZE_SEALED}（F6-2d-1；F6-2d-2 Step 0 補上說明）的 detail：{@code SessionRecoveryState.commitRollForward} 的一次呼叫（變更前、變更後的 record）與它的結果。
      */
     public record RollForwardWrite(SessionRecoveryRecord expected, SessionRecoveryRecord next, SessionRecoveryState.CommitResult result) {}
 

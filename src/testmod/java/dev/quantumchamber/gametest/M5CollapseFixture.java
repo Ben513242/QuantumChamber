@@ -532,10 +532,16 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
      * 這條 chain 的 token 恰一筆、推導出同一個 UniverseId（沒有重抽），其餘恰為 {@code others}。
      */
     void expectAllocationsWithOthers(List<Allocation> others) {
+        expectAllocationsWithOthers("oneAllocationForTheTokenWithTheOthers", others);
+    }
+
+    /**
+     * 同 {@link #expectAllocationsWithOthers(List)}，斷言名稱是 {@code name}（F6-2d-2 Step 0，F6-2d-1 quality nit：w9io 的 {@code otherAppendLanded} 原本另寫一份同樣的比對）。
+     */
+    void expectAllocationsWithOthers(String name, List<Allocation> others) {
         var expected = new ArrayList<Allocation>(List.of(allocation()));
         expected.addAll(others);
-        run.expect("oneAllocationForTheTokenWithTheOthers", () -> M5CollapseDiskEvidence.allocations(run.data()).equals(expected),
-                () -> "allocation ledger=" + allocationsOrError() + "，預期 " + expected);
+        run.expect(name, () -> M5CollapseDiskEvidence.allocations(run.data()).equals(expected), () -> "allocation ledger=" + allocationsOrError() + "，預期 " + expected);
     }
 
     /** catalog 相對於 crash 前恰多 U 一筆（NEW），而且 U 是 DISABLED（F6-2d-1，W9：§8.3 已完成；名稱是 {@code name}）。 */
@@ -685,23 +691,33 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
      * （生成時連同它們需要的較低狀態的外圈）；回傳是否已全部 FULL。同一個 ticket 重複加入不會多一張（ticket 以類型、等級與 argument 比對）。
      */
     boolean loadedAroundTheChamber(ServerWorld world, int radius) {
-        var center = new ChunkPos(FRAME.controllerPos());
-        world.getChunkManager().addTicket(ProbeTicket.TYPE, center, radius, center);
-        for (int x = -radius; x <= radius; x++) for (int z = -radius; z <= radius; z++) {
-            if (world.getChunkManager().getWorldChunk(center.x + x, center.z + z) == null) return false;
-        }
-        return true;
+        return fullAroundTheChamber(world, holdAroundTheChamber(world, radius), radius);
     }
 
     /**
      * F6-2d-1：同 {@link #loadedAroundTheChamber}（probe 的 ticket，持有到 JVM 結束），另在 server thread 上同步載入那些 chunk（{@code world.getChunk}），回傳是否已全部 FULL。
-     * restart 開服時（第一個 tick 之前）呼叫：塌縮流程第一次觀察時來源艙已載入（§7.1／§11.2 觸發成立的條件之一），觸發不會因為 chunk 還在載入而落空。
+     * restart 開服時（第一個 tick 之前）呼叫：塌縮流程第一次觀察時來源艙已載入（§7.1／§11.2 觸發成立的條件之一），觸發不會因為 chunk 還在載入而落空。F6-2d-2 Step 0
+     * （F6-2d-1 quality nit）：ticket 只在同步載入之前加一次（原本最後經 {@link #loadedAroundTheChamber} 再加一次同一張，是冗餘的呼叫；同一張 ticket 重複加入不會多一張）。
      */
     boolean loadAroundTheChamberNow(ServerWorld world, int radius) {
+        var center = holdAroundTheChamber(world, radius);
+        for (int x = -radius; x <= radius; x++) for (int z = -radius; z <= radius; z++) world.getChunk(center.x + x, center.z + z);
+        return fullAroundTheChamber(world, center, radius);
+    }
+
+    /** 加上 probe 的 ticket（以原艙所在的 chunk 為中心、半徑 {@code radius}，持有到 JVM 結束），回傳中心的 chunk。 */
+    private static ChunkPos holdAroundTheChamber(ServerWorld world, int radius) {
         var center = new ChunkPos(FRAME.controllerPos());
         world.getChunkManager().addTicket(ProbeTicket.TYPE, center, radius, center);
-        for (int x = -radius; x <= radius; x++) for (int z = -radius; z <= radius; z++) world.getChunk(center.x + x, center.z + z);
-        return loadedAroundTheChamber(world, radius);
+        return center;
+    }
+
+    /** 以 {@code center} 為中心、半徑 {@code radius} 的 chunk 在 {@code world} 是否都是 FULL（只查詢）。 */
+    private static boolean fullAroundTheChamber(ServerWorld world, ChunkPos center, int radius) {
+        for (int x = -radius; x <= radius; x++) for (int z = -radius; z <= radius; z++) {
+            if (world.getChunkManager().getWorldChunk(center.x + x, center.z + z) == null) return false;
+        }
+        return true;
     }
 
     /**

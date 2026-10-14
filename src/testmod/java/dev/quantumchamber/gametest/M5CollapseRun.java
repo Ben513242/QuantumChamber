@@ -166,7 +166,8 @@ final class M5CollapseRun {
     /**
      * 窗口成立的那一刻（hook 裡）的取證：寫進 halt receipt 的 {@code atWindow}（F6-2d Step 0）。F6-2d-1（F6-2d Step 0 quality Minor 2）：原本與 {@link HaltEvidence} 同型別，
      * {@link #armCrash} 的兩個取證參數互換也能編譯（{@code TICK_END} 的列的取證時點會靜默改變）；這個型別不收 detail，參數個數不同，互換位置不能編譯。丟出時同
-     * {@link HaltEvidence}（不 halt）。
+     * {@link HaltEvidence}（不 halt）。F6-2d-2 Step 0（F6-2d-1 quality nit）：它也是 runner 內部 {@link #collect} 收的形狀（原本另有同形狀的 {@code EvidenceWriter}）；
+     * halt 之前的取證以 lambda 綁上 detail 交給 {@link #collect}。
      */
     @FunctionalInterface interface WindowEvidence { void collect(Map<String, Object> evidence) throws Exception; }
 
@@ -514,12 +515,12 @@ final class M5CollapseRun {
         var point = new M5TestHooks.CrashPoint(window, condition, (detail, hit) -> {
             if (at == HaltAt.TICK_END) {
                 if (pendingHalt == null) {
-                    atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence::collect));
+                    atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence));
                     pendingHalt = new PendingHalt(window, detail, server.getTicks(), describe, evidence);
                 }
                 return;
             }
-            atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence::collect));
+            atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence));
             halt(window, detail, describe, hit, collect(AT_HALT, collected -> evidence.collect(detail, collected)), HaltAt.WINDOW, server.getTicks());
         });
         install(M5TestHooks.CRASH_POINT, point);
@@ -528,9 +529,6 @@ final class M5CollapseRun {
         proof.put("haltTiming", at.name());
     }
 
-    /** {@link #collect} 的取證：把事實寫進 {@code evidence}（窗口成立的那一刻與 halt 之前兩段共用）。 */
-    @FunctionalInterface private interface EvidenceWriter { void into(Map<String, Object> evidence) throws Exception; }
-
     /** {@link #collect} 的標籤：窗口成立的那一刻的取證（{@code atWindow}）。 */
     private static final String AT_WINDOW = "atWindow：窗口成立的那一刻";
     /** {@link #collect} 的標籤：halt 之前的取證（{@code atHalt}；訊息與 F6-2d-1 之前相同）。 */
@@ -538,12 +536,12 @@ final class M5CollapseRun {
 
     /**
      * 一段取證：寫進一份新的 map 回傳。丟出的 checked 例外包成以 {@code label} 開頭的 IllegalStateException（F6-2d-1，F6-2d Step 0 quality Minor 3：原本兩段都寫成
-     * 「halt 之前的取證失敗」，窗口那一刻的取證失敗時會誤導）；具名斷言的 AssertionError 原樣丟出。
+     * 「halt 之前的取證失敗」，窗口那一刻的取證失敗時會誤導）；具名斷言的 AssertionError 原樣丟出。兩段都以 {@link WindowEvidence} 的形狀交來（F6-2d-2 Step 0）。
      */
-    private static Map<String, Object> collect(String label, EvidenceWriter writer) {
+    private static Map<String, Object> collect(String label, WindowEvidence writer) {
         var evidence = new LinkedHashMap<String, Object>();
         try {
-            writer.into(evidence);
+            writer.collect(evidence);
         } catch (Exception failure) {
             throw new IllegalStateException(label + "的取證失敗：" + failure, failure);
         }

@@ -6,6 +6,7 @@ import dev.quantumchamber.candidate.CandidateBytes;
 import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.collapse.CollapseAuthorities;
+import dev.quantumchamber.collapse.CollapseBackoff;
 import dev.quantumchamber.collapse.CollapseServiceTestAccess;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
@@ -69,10 +70,10 @@ import org.apache.logging.log4j.Level;
  */
 final class M5CollapseRetryChains {
     /**
-     * 封存之後等多少 tick 再由艙外進入：per-session 的退避與 ledger 收斂的退避都是 200 ticks（spec §11.2），留 5 ticks 餘裕（比照 G-DISABLED 的
-     * {@code registered + 2 + 205}）。
+     * 封存之後等多少 tick 再由艙外進入：per-session 的退避與 ledger 收斂的退避的第一次延遲都是 {@link CollapseBackoff#INITIAL_TICKS}（spec §11.2 的 200 ticks），留 5 ticks 餘裕
+     * （比照 G-DISABLED 的 {@code registered + 2 + 205}）。F6-2d-2 Step 0（F6-2d-1 quality nit）：由寫死的 205 改為指向 production 的常數（值不變）。
      */
-    static final int BACKOFF_TICKS = 205;
+    static final int BACKOFF_TICKS = CollapseBackoff.INITIAL_TICKS + 5;
     /** restart 開服時以 probe 的 ticket 同步載入的半徑（chunk；原艙與 {@code CollapseService.neighborhoodLoaded} 外擴的 3 格都在 Controller 所在 chunk 的半徑 1 之內）。 */
     private static final int CHAMBER_LOAD_RADIUS = 1;
     /** w8：PREPARE 等多少 tick（RESOLVE 之後閘門第一次以位準評估就該成立；超過時由具名斷言判 FAIL，不是 stepBounded）。 */
@@ -115,6 +116,14 @@ final class M5CollapseRetryChains {
         boolean keepWaiting(boolean happened, int tick) {
             return !happened && (this == EDGE || tick < waitTicks);
         }
+    }
+
+    /** {@link #reenabled} 是否另斷言本 instance 沒有這個 session 的「塌縮進入 SEALED」WARN（F6-2d-2 Step 0，F6-2d-1 quality nit：原本以 {@code retries == 0} 代表）。 */
+    private enum SealWarns {
+        /** 本 instance 不應進過 SEALED（w9cd：開服時就是 COLLAPSING，第一次 RESOLVE 就改回）。 */
+        NONE_EXPECTED,
+        /** 不檢查（w9、w9io：開服時是 SEALED；w9io 在本 instance 另封存過一次）。 */
+        NOT_CHECKED
     }
 
     private final M5CollapseRun run;
@@ -592,7 +601,7 @@ final class M5CollapseRetryChains {
      */
     Phase w9Restart(String crashPhase) {
         var steps = new ArrayList<Step>(List.of(joinOutside(), enter(), retried("retried", "retriedOnceAfterTheRestart", SealedReason.MATERIALIZE_FAILED, 1, Await.EDGE),
-                new Step("reenabled", 400, () -> reenabled("disabledReenabledOnTheRetry", 1))));
+                new Step("reenabled", 400, () -> reenabled("disabledReenabledOnTheRetry", 1, SealWarns.NOT_CHECKED))));
         steps.addAll(untilTheEnd());
         return restartPhase(crashPhase, CrashWindow.MATERIALIZE_SEALED, true, steps, M5CollapseRun.NOTHING);
     }
@@ -608,7 +617,7 @@ final class M5CollapseRetryChains {
                 retried("retried", "retriedOnceAfterTheRestart", SealedReason.MATERIALIZE_FAILED, 1, Await.EDGE),
                 new Step("sealedOnTheAllocation", 20, this::sealedOnTheUnconfirmedAllocation), new Step("backoff", BACKOFF_TICKS + 10, this::backoffElapsedThenEnter),
                 retried("retriedAgain", "retriedAgainAfterTheBackoff", SealedReason.ALLOCATION_IO_FAILED, 2, Await.EDGE),
-                new Step("reenabled", 400, () -> reenabled("disabledReenabledAfterTheAllocationRetry", 2))));
+                new Step("reenabled", 400, () -> reenabled("disabledReenabledAfterTheAllocationRetry", 2, SealWarns.NOT_CHECKED))));
         // F6-2d-2 Step 0（F6-2d-1 quality Minor 2）：原本為了換 End 手抄一份 passage.steps()。
         steps.addAll(passage.steps(null, () -> End.crossed(fixture).withOtherAllocations(List.of(otherAllocation))));
         return restartPhase(crashPhase, CrashWindow.MATERIALIZE_SEALED, true, steps, M5CollapseRun.NOTHING);
@@ -620,7 +629,7 @@ final class M5CollapseRetryChains {
      * 跨越 → (b) 終局。
      */
     Phase w9CollapsingDisabledRestart(String crashPhase) {
-        var steps = new ArrayList<Step>(List.of(joinOutside(), new Step("reenabled", 400, () -> reenabled("firstResolveReenabledTheDisabled", 0))));
+        var steps = new ArrayList<Step>(List.of(joinOutside(), new Step("reenabled", 400, () -> reenabled("firstResolveReenabledTheDisabled", 0, SealWarns.NONE_EXPECTED))));
         steps.addAll(untilTheEnd());
         return restartPhase(crashPhase, CrashWindow.CATALOG_DISABLED, true, steps, M5CollapseRun.NOTHING);
     }
@@ -666,9 +675,10 @@ final class M5CollapseRetryChains {
     /**
      * RESOLVE 的結果（W9 與兩個變體共用）：等到「目的地已確定」，或重試之後又離開 COLLAPSING（修改前會進 SEALED(AUTHORITY_CORRUPT)）。斷言 {@code name}：目的地已確定恰一則、
      * record 是 COLLAPSING，catalog 的這筆已改回 EAGER_ENABLED、U 已物化，沒有 AUTHORITY_CORRUPT（這個 session 沒有 ERROR、也沒有提到它的 WARN），allocation ledger 已確認；
-     * 這個 session 的重試恰為 {@code retries} 次（w9cd 是 0：開服時就是 COLLAPSING，沒有經過 SEALED）。
+     * 這個 session 的重試恰為 {@code retries} 次（w9cd 是 0：開服時就是 COLLAPSING，沒有經過 SEALED）。{@code sealWarns} 是 {@link SealWarns#NONE_EXPECTED} 時，另斷言本 instance
+     * 沒有這個 session 的「塌縮進入 SEALED」WARN（F6-2d-2 Step 0，F6-2d-1 quality nit：原本以 {@code retries == 0} 代表這件事）。
      */
-    private boolean reenabled(String name, int retries) {
+    private boolean reenabled(String name, int retries, SealWarns sealWarns) {
         var sid = fixture.sid();
         var resolved = run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid.toString()).size();
         var record = run.journal().flushedRecords().get(sid);
@@ -677,7 +687,7 @@ final class M5CollapseRetryChains {
         var catalog = UniverseRegistryState.get(run.server()).flushedRecords().get(fixture.universe());
         var errors = run.capture().matching(Level.ERROR, sid.toString()).size();
         var corrupt = run.capture().matching(Level.WARN, "AUTHORITY_CORRUPT", sid.toString()).size();
-        var sealedWarns = retries == 0 ? run.capture().matching(Level.WARN, "塌縮進入 SEALED", sid.toString()).size() : 0;
+        var sealedWarns = sealWarns == SealWarns.NONE_EXPECTED ? run.capture().matching(Level.WARN, "塌縮進入 SEALED", sid.toString()).size() : 0;
         boolean confirmed = !CollapseAuthorities.get(run.server()).unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER);
         run.expect(name, resolved == 1 && retried == retries && record != null && record.state() == SessionState.COLLAPSING && M5CollapseFixture.eagerEnabled(catalog)
                         && fixture.universeWorld().isPresent() && errors == 0 && corrupt == 0 && sealedWarns == 0 && confirmed,
@@ -710,8 +720,7 @@ final class M5CollapseRetryChains {
         run.expect("otherAppendUnconfirmed", lookup.status() == CollapseAuthorities.Lookup.Status.WRITE_FAILED && readFault.hits() == 1
                         && authorities.unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER),
                 () -> "另一個 session 的追加=" + lookup.status() + " 注入次數=" + readFault.hits());
-        run.expect("otherAppendLanded", () -> M5CollapseDiskEvidence.allocations(run.data()).equals(List.of(fixture.allocation(), otherAllocation)),
-                () -> "allocation ledger=" + fixture.allocationsOrError());
+        fixture.expectAllocationsWithOthers("otherAppendLanded", List.of(otherAllocation));
         return true;
     }
 
