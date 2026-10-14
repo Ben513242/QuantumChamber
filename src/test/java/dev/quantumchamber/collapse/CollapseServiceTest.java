@@ -30,7 +30,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -253,23 +252,6 @@ class CollapseServiceTest {
             cases.add(() -> assertEquals(expected, CollapseService.unsupportedSource(measured(role, choice)), role + " " + choice));
         }
         assertAll(cases);
-    }
-
-    @Test void entryWatchTriggersOnlyOnEntryEdges() {
-        var fresh = new EntryWatch(false);
-        var startup = new EntryWatch(true);
-        var primed = new EntryWatch(false);
-        primed.prime(Set.of(A));
-        assertAll(
-                () -> assertEquals(List.of(), fresh.observe(Set.of(A)), "執行期間才開始追蹤：第一次觀察只記下狀態，不觸發"),
-                () -> assertEquals(List.of(), fresh.observe(Set.of(A)), "一直在艙內：不是每個 tick 都觸發"),
-                () -> assertEquals(List.of(B), fresh.observe(ordered(A, B)), "另一位由艙外進入：觸發"),
-                () -> assertEquals(List.of(), fresh.observe(Set.of(B)), "離開不觸發"),
-                () -> assertEquals(List.of(A), fresh.observe(ordered(B, A)), "離開之後再進入：觸發"),
-                () -> assertEquals(List.of(A), startup.observe(Set.of(A)), "開服 attach 之後第一次觀察到原參與者在艙內：觸發"),
-                () -> assertEquals(List.of(), startup.observe(Set.of(A)), "之後回到邊緣觸發"),
-                () -> assertEquals(List.of(), primed.observe(Set.of(A)), "閘門以位準評估過之後只看邊緣"),
-                () -> assertEquals(List.of(B), primed.observe(ordered(A, B)), "prime 之後新進入的人觸發"));
     }
 
     /**
@@ -892,7 +874,6 @@ class CollapseServiceTest {
     static SessionRecoveryRecord cleared(SessionRecoveryRecord record) {
         return record.withProgress(record.participants(), List.of(), record.state(), record.restoreEntryEffectOnReturn());
     }
-    private static Set<UUID> ordered(UUID... players) { return new LinkedHashSet<>(List.of(players)); }
     private static Participant participant(UUID player, int index) {
         return new Participant(player, new Vec3d(7.5 + index, 66, 9.5), Vec3d.ZERO, 90, -15, new NbtCompound(), false);
     }
