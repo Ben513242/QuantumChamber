@@ -441,12 +441,12 @@ final class M5CollapsePassageChains {
 
     /**
      * trr 的 step {@code notRetried}（{@link M5CollapsePassage#watch}）：沒有跨過的參與者（無法回滾的那位）在艙內（開服之後第一次觀察到，可重試的原因這時就會重試）之後觀察
-     * {@link M5CollapsePassage#WATCH_TICKS} 個 tick：record 一直與開服時 exact 相同（這裡，每個 tick；第一個 tick 另斷言沒有跨過的參與者在艙內）；觀察完之後
+     * {@link M5CollapsePassage#WATCH_TICKS} 個 tick：record 一直與開服時 exact 相同（這裡，每個 tick；第一個 tick（{@code tick} 由 1 起）另斷言沒有跨過的參與者在艙內）；觀察完之後
      * {@link #sealedNotRetried}。已跨過的選門者在 U（F6-2c fix round 1，spec v5.7 §10.3），不在艙內。
      */
-    private void sealedUnchanged(int watched) {
+    private void sealedUnchanged(int tick) {
         var sid = fixture.sid();
-        if (watched == 0) {
+        if (tick == 1) {
             for (var id : fixture.members(M5CollapseFixture.OTHERS)) {
                 var player = fixture.player(id);
                 run.expect("participantsInsideWhileSealed", player.getServerWorld() == run.source() && M5CollapseFixture.inside(player), () -> "沒有跨過的參與者在 " + player.getPos());

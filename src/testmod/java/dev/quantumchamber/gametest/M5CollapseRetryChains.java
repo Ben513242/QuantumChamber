@@ -65,7 +65,7 @@ import org.apache.logging.log4j.Level;
  * <p>放在新的類別（不併入 {@link M5CollapsePassageChains}）：這幾條 chain 的 halt 當下不是 PASSAGE_READY 或終局，而是 DORMANT、SEALED 或 COLLAPSING＋DISABLED，restart 都要先由
  * 觸發（或開服之後的第一次 RESOLVE）續行，再接 {@link M5CollapsePassage} 的 ready／cross／ended；通道的 chain 則是開服時就結束通道。
  * <p>F6-2d-2 Step 0（F6-2d-1 quality Minor 1、2，H7 quality 給 F6-2d-2 的建議）：觀察與等待的 tick 數由 {@link M5CollapsePassage#counting}／{@link M5CollapsePassage#watch}
- * 的區域計數器計（不再共用可變的 {@code watched}、{@code waited}、{@code triggerWaited}）；三個 restart builder 合成 {@link #restartPhase}（帶 {@code preload}）；不離開再進入
+ * 的區域計數器計（不再共用可變的 {@code watched}、{@code waited}、{@code triggerWaited}）；三個 restart builder 合成 {@link #restartPhase}（F6-2d-2 起以 {@link ChamberAtStart} 指定開服時原艙附近怎麼處理）；不離開再進入
  * 的提交與重試各合成一個參數化的 step（{@link #committedWithoutReentry}、{@link #retried}，等法由 {@link Await} 決定）。具名斷言與 step 的名稱都不變。
  */
 final class M5CollapseRetryChains {
@@ -93,13 +93,15 @@ final class M5CollapseRetryChains {
 
     /**
      * 觸發之後的 step 怎麼等（F6-2d-2 Step 0，H7 quality 給 F6-2d-2 的建議：{@code committedOnTheFirstObservation}／{@code committedWithoutReentry}、
-     * {@code retried(reason, count)}／{@code retriedWithoutReentry} 各合成一個參數化的 step，{@link #committedWithoutReentry}、{@link #retried}）。{@link #EDGE} 之外都是參與者
-     * JOIN 之後<b>不離開再進入</b>：最多等 {@code waitTicks} 個 tick，之後仍沒有發生就由具名斷言判 FAIL（不是 stepBounded：mutation 讓觸發落空時，失敗在目標斷言），另斷言
-     * 參與者沒有移動（{@link #notMovedSinceTheJoin}）、記下發生的 tick。{@code maxTicks} 是 step 的上限，與合併之前相同。
+     * {@code retried(reason, count)}／{@code retriedWithoutReentry} 各合成一個參數化的 step，{@link #committedWithoutReentry}、{@link #retried}）。每一種都最多等 {@code waitTicks}
+     * 個 tick，之後仍沒有發生就由具名斷言判 FAIL（不是 stepBounded：mutation 讓觸發落空時，失敗在目標斷言）。{@link #EDGE} 之外都是參與者 JOIN 之後<b>不離開再進入</b>：另斷言
+     * 參與者沒有移動（{@link #notMovedSinceTheJoin}）、記下發生的 tick。{@code maxTicks} 是 step 的上限，與合併之前相同。F6-2d-2（F6-2d-2 Step 0 quality nit）：{@link #EDGE}
+     * 原本是 {@code (10, 0)}、以 {@code this == EDGE} 另外處理（{@code waitTicks} 0 是沒用到的 sentinel，等到 stepBounded 為止）；改成 {@code waitTicks} 等於 {@code maxTicks}，
+     * 等待的時間相同，只是到時仍沒有發生時失敗在具名斷言。
      */
     private enum Await {
-        /** 由艙外進入（{@link #enter}）之後：等到發生為止（{@code maxTicks} 內沒有發生是 stepBounded），不斷言位置。 */
-        EDGE(10, 0),
+        /** 由艙外進入（{@link #enter}）之後：等到 step 的上限為止，不斷言位置。 */
+        EDGE(10, 10),
         /** W8：原艙在開服時已載入，開服之後的第一次觀察就觸發。 */
         FIRST_OBSERVATION(FIRST_OBSERVATION_TICKS + 2, FIRST_OBSERVATION_TICKS),
         /** H7：JOIN 時原艙附近還沒有載入，載入之後才觸發；另記下原艙附近載入完成的 tick（{@code chamberLoadedAtPhaseTick}）。 */
@@ -112,9 +114,9 @@ final class M5CollapseRetryChains {
             this.waitTicks = waitTicks;
         }
 
-        /** 還沒有發生、而且還在等待的時間內（{@code tick} 是這個 step 的第幾個 tick）：這個 tick 先不斷言。{@link #EDGE} 一直等到發生為止。 */
+        /** 還沒有發生、而且還在等待的時間內（{@code tick} 是這個 step 的第幾個 tick，由 1 起）：這個 tick 先不斷言。 */
         boolean keepWaiting(boolean happened, int tick) {
-            return !happened && (this == EDGE || tick < waitTicks);
+            return !happened && tick < waitTicks;
         }
     }
 
@@ -168,7 +170,7 @@ final class M5CollapseRetryChains {
         var steps = new ArrayList<>(origin());
         steps.add(new Step("inside", 1, () -> { fixture.moveInside(); return true; }));
         steps.add(new Step("receipt", 1, () -> { fixture.writeCrashReceipt(fixture.dormantNewReceipt()); return true; }));
-        steps.add(M5CollapsePassage.watch("notCommitted", M5CollapsePassage.WATCH_TICKS, watched -> notCommittedWithoutAnEdge()));
+        steps.add(M5CollapsePassage.watch("notCommitted", M5CollapsePassage.WATCH_TICKS, tick -> notCommittedWithoutAnEdge()));
         steps.add(arm(CrashWindow.DORMANT_STEP));
         steps.add(new Step("halt", 5, () -> false));
         return crashPhase(steps);
@@ -223,7 +225,7 @@ final class M5CollapseRetryChains {
         steps.add(new Step("committed", 40, fixture::committed));
         steps.add(new Step("sealed", 400, this::sealedUnreadable));
         steps.add(new Step("backoff", BACKOFF_TICKS + 10, this::backoffElapsedThenEnter));
-        steps.add(M5CollapsePassage.watch("notRetried", M5CollapsePassage.WATCH_TICKS, watched -> notRetriedInTheSameInstance()));
+        steps.add(M5CollapsePassage.watch("notRetried", M5CollapsePassage.WATCH_TICKS, tick -> notRetriedInTheSameInstance()));
         if (savedInside) steps.add(new Step("savedInside", 1, this::savedInside));
         steps.add(arm(CrashWindow.SEALED_STEP));
         steps.add(new Step("halt", 5, () -> false));
@@ -302,14 +304,19 @@ final class M5CollapseRetryChains {
 
     /**
      * restart 開服時（共用）：讀回 crash phase 的收據、依窗口表斷言磁碟上的狀態（窗口列宣告 {@code withRecordKept} 時，窗口表另比對開服時的 record 與 halt 當下的摘要相同，
-     * {@code recordKeptAcrossTheRestart}；F6-2d-2 Step 0 起由窗口表斷言，原本這裡只在 halt receipt 有摘要時比對）；{@code preload} 時以 probe 的 ticket 同步載入原艙附近
-     * （{@code chamberLoadedBeforeTheFirstTick}；H7 的三條不載入，{@link #restartPhase} 的 {@code preload} 為 false）。
+     * {@code recordKeptAcrossTheRestart}；F6-2d-2 Step 0 起由窗口表斷言，原本這裡只在 halt receipt 有摘要時比對）；之後依 {@code chamber}（{@link ChamberAtStart}）處理原艙附近：
+     * {@link ChamberAtStart#PRELOADED} 以 probe 的 ticket 同步載入（{@code chamberLoadedBeforeTheFirstTick}），{@link ChamberAtStart#UNLOADED} 讓它卸載
+     * （{@link #unloadTheChamberAtStart}），{@link ChamberAtStart#AS_SAVED} 不處理。
      */
-    private void started(String crashPhase, CrashWindow id, boolean preload) throws Exception {
+    private void started(String crashPhase, CrashWindow id, ChamberAtStart chamber) throws Exception {
         var window = M5CollapseWindows.of(id);
         var halt = fixture.readCrashReceipt(crashPhase, id);
         M5CollapseWindows.expectAtRestart(run, fixture, window, halt);
-        if (preload) run.expect("chamberLoadedBeforeTheFirstTick", fixture.loadAroundTheChamberNow(run.source(), CHAMBER_LOAD_RADIUS), () -> "原艙附近沒有都載入到 FULL");
+        switch (chamber) {
+            case PRELOADED -> run.expect("chamberLoadedBeforeTheFirstTick", fixture.loadAroundTheChamberNow(run.source(), CHAMBER_LOAD_RADIUS), () -> "原艙附近沒有都載入到 FULL");
+            case UNLOADED -> unloadTheChamberAtStart();
+            case AS_SAVED -> { }
+        }
     }
 
     /** 這條 chain 的窗口不得要求 JOIN 之前載入投影（這裡的 restart 不做；窗口表的規則允許 COLLAPSING 的列指定它，w9cd 就是 COLLAPSING）。在 {@code onInitialize} 丟出。 */
@@ -321,16 +328,29 @@ final class M5CollapseRetryChains {
 
     /**
      * 這個類別的 restart phase（F6-2d-2 Step 0，H7 quality 給 F6-2d-2 的建議：原本 {@code restartPhase}、H7 的 {@code lateRestartPhase} 與 {@code waitingLateRestart} 內嵌的
-     * 一份三個幾乎相同的 builder，合成這一個）：開服時 {@link #started}（{@code preload} 時以 probe 的 ticket 同步載入原艙附近；H7 的三條不載入），再 {@code afterStarted}；
+     * 一份三個幾乎相同的 builder，合成這一個）：開服時 {@link #started}（依 {@link ChamberAtStart} 處理原艙附近），再 {@code afterStarted}；
      * 每個 tick {@link M5CollapsePassage#invariants}。窗口不得要求 JOIN 之前載入投影（{@link #requireNoProjectionLoad}，在 {@code onInitialize} 丟出）。
      */
-    private Phase restartPhase(String crashPhase, CrashWindow id, boolean preload, List<Step> steps, M5CollapseRun.Checked afterStarted) {
+    private Phase restartPhase(String crashPhase, CrashWindow id, ChamberAtStart chamber, List<Step> steps, M5CollapseRun.Checked afterStarted) {
         requireNoProjectionLoad(id);
-        return Phase.stop(steps).started(() -> { started(crashPhase, id, preload); afterStarted.run(); }).everyTick(() -> passage.invariants(null));
+        return Phase.stop(steps).started(() -> { started(crashPhase, id, chamber); afterStarted.run(); }).everyTick(() -> passage.invariants(null));
     }
 
     /**
-     * H7 的 restart（{@code w8late}、{@code unreadablelate}）的開服（{@link #restartPhase} 的 {@code afterStarted}，{@code preload} 為 false）：把 spawn chunks 的半徑改為 0
+     * restart 開服時原艙附近怎麼處理（{@link #restartPhase}、{@link #started}；F6-2d-2，F6-2d-2 Step 0 quality Minor 4：取代位置參數 {@code boolean preload}。原本「預先載入」配
+     * {@code afterStarted} 為 {@link #unloadTheChamberAtStart} 的矛盾組合也能編譯；卸載改由這裡的 {@link #UNLOADED} 做，不再經 {@code afterStarted} 傳入，兩者不能同時指定）。
+     */
+    private enum ChamberAtStart {
+        /** 以 probe 的 ticket 同步載入原艙附近（{@code chamberLoadedBeforeTheFirstTick}）：W8、W9 與它的兩個變體、F6-2-07。 */
+        PRELOADED,
+        /** 把 spawn chunks 的半徑改為 0，讓原艙附近卸載（{@link #unloadTheChamberAtStart}）：H7 的 {@code w8late}、{@code unreadablelate}。 */
+        UNLOADED,
+        /** 不載入也不卸載（level.dat 已帶著半徑 0 的 spawn chunks，原艙附近只由 attach 的來源 ticket 載入）：H7 的 {@code waitinglate}。 */
+        AS_SAVED
+    }
+
+    /**
+     * H7 的 restart（{@code w8late}、{@code unreadablelate}）的開服（{@link ChamberAtStart#UNLOADED}，{@link #started} 在窗口表的斷言之後呼叫）：把 spawn chunks 的半徑改為 0
      * （原版的 gamerule callback 移除 START ticket；fixture 的 Controller 在 spawn chunks 內，不這樣做原艙一直是載入的），讓原艙附近卸載；不 JOIN。記下開服時這個 session 的
      * record（JOIN 時斷言還沒有觸發）。DORMANT 與 SEALED 沒有來源 ticket，所以原艙附近會卸載。
      */
@@ -383,7 +403,7 @@ final class M5CollapseRetryChains {
         var steps = new ArrayList<Step>(List.of(new Step("chamberUnloaded", UNLOAD_WAIT_TICKS, this::chamberUnloaded), joinInsideLate(),
                 committedWithoutReentry("committed", "committedWithoutReentry", Await.AFTER_THE_LOAD)));
         steps.addAll(untilTheEnd());
-        return restartPhase(crashPhase, CrashWindow.DORMANT_STEP, false, steps, this::unloadTheChamberAtStart);
+        return restartPhase(crashPhase, CrashWindow.DORMANT_STEP, ChamberAtStart.UNLOADED, steps, M5CollapseRun.NOTHING);
     }
 
     /**
@@ -396,7 +416,7 @@ final class M5CollapseRetryChains {
         var steps = new ArrayList<Step>(List.of(new Step("chamberUnloaded", UNLOAD_WAIT_TICKS, this::chamberUnloaded), joinInsideLate(),
                 retried("retried", "retriedWithoutReentry", SealedReason.AUTHORITY_UNREADABLE, 1, Await.AFTER_THE_LOAD)));
         steps.addAll(untilTheEnd());
-        return restartPhase(crashPhase, CrashWindow.SEALED_STEP, false, steps, this::unloadTheChamberAtStart);
+        return restartPhase(crashPhase, CrashWindow.SEALED_STEP, ChamberAtStart.UNLOADED, steps, M5CollapseRun.NOTHING);
     }
 
     /**
@@ -430,11 +450,11 @@ final class M5CollapseRetryChains {
         var id = CrashWindow.DISCOVERY_APPENDED;
         var steps = new ArrayList<Step>(List.of(M5CollapsePassage.counting("prepared", LATE_TRIGGER_TICKS + 5, this::preparedWithoutReentry)));
         steps.addAll(passage.steps(M5CollapseWindows.of(id).prepared()));
-        return restartPhase(crashPhase, id, false, steps, this::joinInsideBeforeTheFirstEvaluation);
+        return restartPhase(crashPhase, id, ChamberAtStart.AS_SAVED, steps, this::joinInsideBeforeTheFirstEvaluation);
     }
 
     /**
-     * {@code waitinglate} 的開服（{@link #restartPhase} 的 {@code afterStarted}，{@code preload} 為 false）：原艙附近還沒有載入（{@code chamberNotLoadedAtStart}），參與者 JOIN
+     * {@code waitinglate} 的開服（{@link #restartPhase} 的 {@code afterStarted}，{@link ChamberAtStart#AS_SAVED}）：原艙附近還沒有載入（{@code chamberNotLoadedAtStart}），參與者 JOIN
      * （艙外，crash 前存的位置）並移到艙內（{@code insideBeforeTheFirstTick}）；記下 JOIN 的位置。
      */
     private void joinInsideBeforeTheFirstEvaluation() {
@@ -529,7 +549,7 @@ final class M5CollapseRetryChains {
             run.expect("preparedAgainOnlyAfterTheEdge", prepares == 2, () -> "「進入 PREPARE」=" + prepares);
             return End.crossed(fixture);
         }));
-        return restartPhase(crashPhase, CrashWindow.DORMANT_STEP, true, steps, this::joinInsideBeforeTheFirstTick);
+        return restartPhase(crashPhase, CrashWindow.DORMANT_STEP, ChamberAtStart.PRELOADED, steps, this::joinInsideBeforeTheFirstTick);
     }
 
     /** W8 的開服：參與者 JOIN 在艙內（第一個 tick 之前），這時 record 仍是 DORMANT 的收據（{@code dormantWhenJoined}）；記下 JOIN 的位置。 */
@@ -578,14 +598,14 @@ final class M5CollapseRetryChains {
         return true;
     }
 
-    /** W8 的 step {@code gateWaitsForAnEdge}（{@link M5CollapsePassage#watch}；{@code watched} 是恢復供電之後已觀察的 tick 數）：每個 tick 都還沒有再進 PREPARE。 */
-    private void gateWaitsForAnEdge(int watched) {
+    /** W8 的 step {@code gateWaitsForAnEdge}（{@link M5CollapsePassage#watch}；{@code tick} 是恢復供電之後的第幾個 tick，由 1 起）：每個 tick 都還沒有再進 PREPARE。 */
+    private void gateWaitsForAnEdge(int tick) {
         var sid = fixture.sid();
         var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", sid.toString()).size();
         var record = run.journal().flushedRecords().get(sid);
         boolean still = notMovedSinceTheJoin();
         run.expect("gateWaitsForAnEdge", prepares == 1 && record != null && record.state() == SessionState.COLLAPSING && still,
-                () -> "恢復供電之後第 " + watched + " 個 tick：「進入 PREPARE」=" + prepares + " state=" + M5GameTestSupport.state(run.journal(), sid) + " 沒有移動=" + still);
+                () -> "恢復供電之後第 " + tick + " 個 tick：「進入 PREPARE」=" + prepares + " state=" + M5GameTestSupport.state(run.journal(), sid) + " 沒有移動=" + still);
     }
 
     /** W8：{@code gateWaitsForAnEdge} 觀察完之後，Controller 仍有紅石輸入（{@code poweredWhileWaiting}），參與者離開艙內。 */
@@ -603,7 +623,7 @@ final class M5CollapseRetryChains {
         var steps = new ArrayList<Step>(List.of(joinOutside(), enter(), retried("retried", "retriedOnceAfterTheRestart", SealedReason.MATERIALIZE_FAILED, 1, Await.EDGE),
                 new Step("reenabled", 400, () -> reenabled("disabledReenabledOnTheRetry", 1, SealWarns.NOT_CHECKED))));
         steps.addAll(untilTheEnd());
-        return restartPhase(crashPhase, CrashWindow.MATERIALIZE_SEALED, true, steps, M5CollapseRun.NOTHING);
+        return restartPhase(crashPhase, CrashWindow.MATERIALIZE_SEALED, ChamberAtStart.PRELOADED, steps, M5CollapseRun.NOTHING);
     }
 
     /**
@@ -620,7 +640,7 @@ final class M5CollapseRetryChains {
                 new Step("reenabled", 400, () -> reenabled("disabledReenabledAfterTheAllocationRetry", 2, SealWarns.NOT_CHECKED))));
         // F6-2d-2 Step 0（F6-2d-1 quality Minor 2）：原本為了換 End 手抄一份 passage.steps()。
         steps.addAll(passage.steps(null, () -> End.crossed(fixture).withOtherAllocations(List.of(otherAllocation))));
-        return restartPhase(crashPhase, CrashWindow.MATERIALIZE_SEALED, true, steps, M5CollapseRun.NOTHING);
+        return restartPhase(crashPhase, CrashWindow.MATERIALIZE_SEALED, ChamberAtStart.PRELOADED, steps, M5CollapseRun.NOTHING);
     }
 
     /**
@@ -631,7 +651,7 @@ final class M5CollapseRetryChains {
     Phase w9CollapsingDisabledRestart(String crashPhase) {
         var steps = new ArrayList<Step>(List.of(joinOutside(), new Step("reenabled", 400, () -> reenabled("firstResolveReenabledTheDisabled", 0, SealWarns.NONE_EXPECTED))));
         steps.addAll(untilTheEnd());
-        return restartPhase(crashPhase, CrashWindow.CATALOG_DISABLED, true, steps, M5CollapseRun.NOTHING);
+        return restartPhase(crashPhase, CrashWindow.CATALOG_DISABLED, ChamberAtStart.PRELOADED, steps, M5CollapseRun.NOTHING);
     }
 
     /**
@@ -641,7 +661,7 @@ final class M5CollapseRetryChains {
     Phase unreadableRestart(String crashPhase) {
         var steps = new ArrayList<Step>(List.of(joinOutside(), enter(), retried("retried", "retriedOnceAfterTheRestart", SealedReason.AUTHORITY_UNREADABLE, 1, Await.EDGE)));
         steps.addAll(untilTheEnd());
-        return restartPhase(crashPhase, CrashWindow.SEALED_STEP, true, steps, M5CollapseRun.NOTHING);
+        return restartPhase(crashPhase, CrashWindow.SEALED_STEP, ChamberAtStart.PRELOADED, steps, M5CollapseRun.NOTHING);
     }
 
     /**
@@ -649,10 +669,10 @@ final class M5CollapseRetryChains {
      * （具名斷言 {@code assertion}）；等法是 {@code await}（{@link Await}：{@link Await#EDGE} 是由艙外進入之後；{@link Await#AFTER_THE_LOAD} 是 H7 的
      * {@code retriedWithoutReentry}，另斷言參與者沒有移動、記下原艙附近載入完成與重試的 tick）。F6-2d-2 Step 0：{@code retried(reason, count)} 與
      * {@code retriedWithoutReentry} 合成這一個；step 名稱改由呼叫端給（F6-2d-1 quality Minor 5：原本由 {@code count} 推出 {@code retried}／{@code retriedAgain}，receipt 的
-     * witness 以 step 名稱為鍵，不能重複；runner 在建立 phase 時檢查重名）。
+     * witness 以 step 名稱為鍵，不能重複；runner 在建立 phase 時檢查重名）。F6-2d-2（F6-2d-2 Step 0 quality Minor 2）：也接受 {@link Await#FIRST_OBSERVATION}（開服 attach 的
+     * session 第一次觀察到原參與者在艙內就算觸發，production 的 {@code CollapseService.sealed} 以 {@code track.entry(startupSessions.contains(sid))} 實作）；原本拒絕它，訊息也與 production 相反。
      */
     private Step retried(String stepName, String assertion, SealedReason reason, int count, Await await) {
-        if (await == Await.FIRST_OBSERVATION) throw new IllegalArgumentException("SEALED 的重試沒有開服之後第一次觀察的等法：" + stepName);
         return M5CollapsePassage.counting(stepName, await.maxTicks, tick -> {
             var sid = fixture.sid().toString();
             var fromReason = run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + reason + ")→COLLAPSING", sid).size();

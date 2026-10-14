@@ -13,7 +13,6 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,7 +30,8 @@ import org.apache.logging.log4j.Level;
  * 僅 testmod（M5 F6-2a，由 F6-1 的 {@code M5CollapseRecoveryProbe} 拆出）：restart 由 RESOLVE 推進到終局的共用部分：step（RESOLVE 完成 → 參與者進入艙內 →
  * PASSAGE_READY → 越過門板中線、傳送到 U → (b) 全員都已跨過的終局）、每個 tick 的不變量（spec §12 的共同斷言），與終局的 spec §12 斷言（{@link #expectEnd}）。
  * <p>F6-2c（F6-2a quality Minor 1 與給 W7 的建議）：step 拆成可選的三段，chain 只取需要的段：{@link #resolve}（RESOLVE 完成、進入艙內）、{@link #ready}（PASSAGE_READY；
- * 之後讓要跨越的參與者站到門板中線內側）、{@link #cross}（指定的參與者越過中線、傳送到 U；可以只是參與者的子集，也可以分幾次）。{@link #steps} 是三段全員跨越、再接
+ * 之後讓要跨越的參與者站到門板中線內側）、{@link #cross}（指定的參與者越過中線、傳送到 U；可以只是參與者的子集。F6-2d-2：一個 phase 只取一次，step 名稱固定是 {@code doorway}／{@code crossed}，再取一次
+ * 會在 {@code onInitialize} 因 step 重名丟出）。{@link #steps} 是三段全員跨越、再接
  * (b) 終局的完整版本（既有的 restart 都用它，行為與拆段之前相同）。F6-2d-1：(b) 終局的 step 也可以單獨取（{@link #ended}，終局的參數由 chain 交來）。
  * <p>F6-2d-2 Step 0（F6-2d-1 quality Minor 1、2）：chain 共用的 step factory 也在這裡：{@link #counting}（區域計數器）、{@link #watch}（觀察固定 tick 數）、
  * {@link #steps(M5CollapseWindows.Prepared, Supplier)}（換 (b) 終局的參數）與 RESOLVE 完成的斷言 {@link #expectResolved}。
@@ -46,8 +46,6 @@ final class M5CollapsePassage {
     private static final double[] DOORWAY_X = {3.5, 1.5, 5.5};
     private final M5CollapseRun run;
     private final M5CollapseFixture fixture;
-    /** 到目前為止各 cross 段已確認跨過的參與者（依跨越的順序）：{@code crossedRecorded} 要求 Crossed 恰為這些人。 */
-    private final Set<UUID> crossedSoFar = new LinkedHashSet<>();
 
     M5CollapsePassage(M5CollapseRun run, M5CollapseFixture fixture) {
         this.run = run;
@@ -113,8 +111,11 @@ final class M5CollapsePassage {
     /** {@link #counting} 的 step 本體：{@code tick} 是這個 step 的第幾個 tick（由 1 起）；回 true 時完成。 */
     @FunctionalInterface interface Counted { boolean run(int tick) throws Exception; }
 
-    /** {@link #watch} 每個 tick 的觀察（具名斷言）：{@code watched} 是這個 tick 之前已觀察的 tick 數（第一個 tick 為 0）。 */
-    @FunctionalInterface interface Watching { void tick(int watched) throws Exception; }
+    /**
+     * {@link #watch} 每個 tick 的觀察（具名斷言）：{@code tick} 是這個 step 的第幾個 tick（由 1 起，與 {@link Counted} 相同；F6-2d-2，F6-2d-2 Step 0 quality nit：原本是
+     * 「這個 tick 之前已觀察的 tick 數」，由 0 起，兩者的起算點不同）。
+     */
+    @FunctionalInterface interface Watching { void tick(int tick) throws Exception; }
 
     /**
      * step {@code name}（上限 {@code maxTicks}，同 {@link Step}）：每個 tick 以這是這個 step 的第幾個 tick 呼叫 {@code body}。計數器跟著這個 step（每次呼叫各自計算，比照
@@ -133,14 +134,15 @@ final class M5CollapsePassage {
     }
 
     /**
-     * 觀察段（step {@code name}，上限 {@code ticks}＋5 tick）：每個 tick 呼叫 {@code eachTick}（具名斷言），第 {@code ticks} 個 tick 的 {@code eachTick} 之後再呼叫 {@code then}
-     * （觀察完之後的斷言或動作）、完成。計數器同 {@link #counting}。
+     * 觀察段（step {@code name}，上限恰為 {@code ticks}）：每個 tick 呼叫 {@code eachTick}（具名斷言），第 {@code ticks} 個 tick 的 {@code eachTick} 之後再呼叫 {@code then}
+     * （觀察完之後的斷言或動作）、完成。計數器同 {@link #counting}。F6-2d-2（F6-2d-2 Step 0 quality nit）：上限原本是 {@code ticks}＋5，但這一段一定在第 {@code ticks} 個 tick
+     * 完成（{@code eachTick} 丟出時當場 FAIL），多出的 5 tick 到不了。
      */
     static Step watch(String name, int ticks, Watching eachTick, M5CollapseRun.Checked then) {
         Objects.requireNonNull(eachTick, "eachTick");
         Objects.requireNonNull(then, "then");
-        return counting(name, ticks + 5, tick -> {
-            eachTick.tick(tick - 1);
+        return counting(name, ticks, tick -> {
+            eachTick.tick(tick);
             if (tick < ticks) return false;
             then.run();
             return true;
@@ -173,8 +175,9 @@ final class M5CollapsePassage {
 
     /**
      * cross 段（step {@code doorway}、{@code crossed}）：{@code crossing}（參與者的子集，至少一位，要已在中線內側）越過門板中線 → 傳送到 U。跨越的那個 tick 結束時 record
-     * 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為到目前為止各 cross 段的參與者各一次（{@code crossedRecorded}），「參與者已穿過量子通道」INFO 也是這幾位各一則
-     * （{@code oneCrossingInfo}）。
+     * 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為 {@code crossing} 各一次（{@code crossedRecorded}），「參與者已穿過量子通道」INFO 也是這幾位各一則
+     * （{@code oneCrossingInfo}）。一個 phase 只取一次（F6-2d-2，F6-2d-2 Step 0 quality Minor 1：step 名稱固定，第二次會因重名在 {@code onInitialize} 丟出；原本說可以分幾次、
+     * 以 {@code crossedSoFar} 累計，與重名的守門矛盾。目前沒有 chain 需要分批跨越）。
      */
     List<Step> cross(M5CollapseFixture.Who crossing) {
         Objects.requireNonNull(crossing, "crossing");
@@ -238,13 +241,12 @@ final class M5CollapsePassage {
     private boolean crossed(Set<UUID> crossing) {
         var world = fixture.universeWorld().orElseThrow();
         if (crossing.stream().anyMatch(id -> fixture.player(id).getServerWorld() != world)) return false;
-        // 跨越的那個 tick 結束時 record 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為到目前為止跨過的參與者各一次。
-        for (var id : fixture.participants()) if (crossing.contains(id)) crossedSoFar.add(id);
+        // 跨越的那個 tick 結束時 record 一定還在（全員都已跨過的終局在下一個 tick）：Crossed 恰為跨過的參與者各一次（一個 phase 只有一個 cross 段）。
         var record = run.journal().flushedRecords().get(fixture.sid());
-        run.expect("crossedRecorded", record != null && record.collapse().crossed().size() == crossedSoFar.size()
-                        && Set.copyOf(record.collapse().crossed()).equals(crossedSoFar),
-                () -> "Crossed=" + (record == null ? "（record 已移除）" : record.collapse().crossed()) + "，預期 " + crossedSoFar);
-        run.expect("oneCrossingInfo", run.capture().matching(Level.INFO, "參與者已穿過量子通道", fixture.sid().toString()).size() == crossedSoFar.size(),
+        run.expect("crossedRecorded", record != null && record.collapse().crossed().size() == crossing.size()
+                        && Set.copyOf(record.collapse().crossed()).equals(crossing),
+                () -> "Crossed=" + (record == null ? "（record 已移除）" : record.collapse().crossed()) + "，預期 " + crossing);
+        run.expect("oneCrossingInfo", run.capture().matching(Level.INFO, "參與者已穿過量子通道", fixture.sid().toString()).size() == crossing.size(),
                 () -> "「參與者已穿過量子通道」不是每位跨過的參與者恰一則");
         return true;
     }
