@@ -1312,6 +1312,80 @@ public final class M5CollapseGameTests implements FabricGameTest {
         });
     }
 
+    // ---- H9 (b)：開服時就是永久原因 SEALED 的提醒（spec v5.10 §4 H9、§11.2「永久原因」、§12 SEALED 列） ----
+
+    /**
+     * H9 (b)：開服 attach 當下就在 journal（{@code simulateDoorStartup}）、collapse view 是永久原因 SEALED 的 session，每個 server instance 記一次 ERROR 提醒「需要管理員處理」：
+     * 字句是開服時的提醒（{@link M5GameTestSupport#STARTUP_SEALED_REMINDER}，與進入 SEALED 時的「塌縮進入 SEALED」不同），帶 session=、chamber= 與目的地。三種能在 default run
+     * 移除的永久原因各一份（{@code TRANSFER_RECOVERY_REQUIRED} 無法移除，留給 M5 collapse probe 的 {@code trr-restart}）。對照組：四種可重試的原因（含只在重啟之後重試的兩種）
+     * 同樣標成開服時就在，以及一份沒有標成開服時就在的永久原因，都沒有這則 ERROR。原艙都在遠處（來源艙沒有載入）、參與者都是離線的隨機玩家：提醒不看這些（可重試的原因因此也不會
+     * 重試）。之後 100 個 tick 仍各恰好一則、沒有其他 ERROR 或 WARN；record 都沒有被改寫。catalog 不變（per-test baseline）。不需要原生 checkpoint，各平台都執行。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_startup_reminder", tickLimit = 400)
+    public void permanently_sealed_sessions_at_startup_remind_the_admin_once(TestContext context) {
+        M4PerTestUniverseProbe.begin(context, "permanently_sealed_sessions_at_startup_remind_the_admin_once");
+        var server = context.getWorld().getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var owned = new ArrayList<UUID>();
+        hooks.add(() -> cleanupFixtures(server, owned));
+        var capture = captureLogs(hooks);
+        var far = context.getAbsolutePos(BlockPos.ORIGIN).add(6000, 70, 6000);
+        var permanent = new LinkedHashMap<SealedReason, SessionRecoveryRecord>();
+        var retryable = new LinkedHashMap<SealedReason, SessionRecoveryRecord>();
+        SessionRecoveryRecord[] notAtStartup = {null};
+        at(context, 1, hooks, () -> {
+            int[] index = {0};
+            java.util.function.Function<SealedReason, SessionRecoveryRecord> sealedAt = reason -> {
+                var record = M5GameTestSupport.sealedFixture(server, M4CandidateTestAccess.origin(UUID.randomUUID(), far.add(32 * index[0]++, 0, 0)),
+                        Map.of(UUID.randomUUID(), true), reason);
+                owned.add(record.sessionUuid());
+                return record;
+            };
+            for (var reason : List.of(SealedReason.PROJECTION_CONFLICT, SealedReason.EXISTING_INELIGIBLE, SealedReason.AUTHORITY_CORRUPT))
+                permanent.put(reason, sealedAt.apply(reason));
+            for (var reason : List.of(SealedReason.PROJECTION_FAILED, SealedReason.ALLOCATION_IO_FAILED, SealedReason.MATERIALIZE_FAILED, SealedReason.AUTHORITY_UNREADABLE))
+                retryable.put(reason, sealedAt.apply(reason));
+            // 這個 tick 結束時塌縮流程第一次看到它們：標成開服 attach 當下就在 journal（不標的那一份是執行期間才出現的 session）。
+            for (var record : List.copyOf(permanent.values())) M5GameTestSupport.simulateDoorStartup(server, record.sessionUuid());
+            for (var record : List.copyOf(retryable.values())) M5GameTestSupport.simulateDoorStartup(server, record.sessionUuid());
+            notAtStartup[0] = sealedAt.apply(SealedReason.PROJECTION_CONFLICT);
+        });
+        whenTicks(context, 2, 20, () -> permanent.values().stream().allMatch(record -> !reminders(capture, record).isEmpty()), first -> {
+            at(context, first + 100, hooks, () -> {
+                var witness = new LinkedHashMap<String, Boolean>();
+                permanent.forEach((reason, record) -> {
+                    var sid = record.sessionUuid();
+                    var reminded = reminders(capture, record);
+                    var universe = ((CollapseDestination.Universe) record.collapse().destination()).id().value();
+                    witness.put(reason + ".remindedOnce", reminded.size() == 1
+                            && capture.matching(org.apache.logging.log4j.Level.ERROR, sid.toString()).size() == 1);
+                    witness.put(reason + ".namesTheSessionChamberAndDestination", reminded.size() == 1 && reminded.getFirst().contains("SEALED(" + reason + ")")
+                            && reminded.getFirst().contains("需要管理員處理") && reminded.getFirst().contains("chamber=" + record.chamberUuid())
+                            && reminded.getFirst().contains("目的地=UNIVERSE " + universe));
+                });
+                retryable.forEach((reason, record) -> witness.put(reason + ".notReminded",
+                        capture.matching(org.apache.logging.log4j.Level.ERROR, record.sessionUuid().toString()).isEmpty()));
+                witness.put("notAtStartupNotReminded", capture.matching(org.apache.logging.log4j.Level.ERROR, notAtStartup[0].sessionUuid().toString()).isEmpty());
+                var all = new ArrayList<SessionRecoveryRecord>(permanent.values()); all.addAll(retryable.values()); all.add(notAtStartup[0]);
+                witness.put("notTheEntryError", capture.matching(org.apache.logging.log4j.Level.ERROR, "塌縮進入 SEALED").stream()
+                        .noneMatch(entry -> all.stream().anyMatch(record -> entry.message().contains(record.sessionUuid().toString()))));
+                witness.put("noWarn", all.stream().allMatch(record -> capture.matching(org.apache.logging.log4j.Level.WARN, record.sessionUuid().toString()).isEmpty()));
+                witness.put("recordsUntouched", all.stream().allMatch(record -> record.equals(journal.flushedRecords().get(record.sessionUuid()))
+                        && record.equals(journal.records().get(record.sessionUuid()))));
+                LOGGER.info("M5_SEALED_STARTUP_REMINDER first={} reminders={}", first, permanent.values().stream().map(record -> reminders(capture, record).size()).toList());
+                context.assertTrue(!witness.containsValue(false), "開服時就是永久原因 SEALED 的提醒（H9 (b)）：" + witness);
+                hooks.release();
+                M4PerTestUniverseProbe.complete(context);
+            });
+        }, () -> "有上限的 tick 內沒有每一份永久原因 SEALED 都提醒：" + permanent.values().stream().map(record -> reminders(capture, record).size()).toList(), hooks);
+    }
+
+    /** 這份 record 的開服時的提醒（ERROR，含 {@link M5GameTestSupport#STARTUP_SEALED_REMINDER} 與 sid）的訊息。 */
+    private static List<String> reminders(LogCapture capture, SessionRecoveryRecord record) {
+        return capture.matching(org.apache.logging.log4j.Level.ERROR, M5GameTestSupport.STARTUP_SEALED_REMINDER, record.sessionUuid().toString()).stream()
+                .map(LogCapture.Entry::message).toList();
+    }
+
     /**
      * F4a-0 fix round 1（quality Q1）：mixin 讀取的兩個靜態 hook 位置（journal flush 探針、journal 寫出稽核）的安裝規則。(a) hooks 已釋放時安裝在
      * 登記移除時就丟出，位置不殘留；(b) 位置被占用時，第二次安裝立即丟 IllegalStateException、不覆蓋，訊息指出 hook、持有者與這次安裝的 test，

@@ -382,6 +382,22 @@ final class M5GameTestSupport {
                 Optional.of(new dev.quantumchamber.candidate.CandidateSelection.Selected(key, id, cohort.getFirst().playerUuid(), 0, 1)));
     }
 
+    /**
+     * H9 (b)：SEALED({@code reason}) 的 fixture（目的地 NEW；比照 {@link #collapseFixture} 的 SEALED，原因由呼叫端指定）：返還與清理都完成的 COLLAPSING 之後以 commitRollForward
+     * 進入 SEALED；{@code TRANSFER_RECOVERY_REQUIRED} 經 PASSAGE_READY 寫入（RecoveryRequired 是第一位參與者，Crossed 是空的；收尾時無法移除，見 {@link #removeFixture}）。
+     * 全部在同一個 callback 內完成（塌縮流程看不到中間狀態），最後確認 exact 落盤。
+     */
+    static SessionRecoveryRecord sealedFixture(MinecraftServer server, ChamberOriginAuthority origin, Map<UUID, Boolean> people, SealedReason reason) {
+        var journal = SessionRecoveryState.get(server);
+        boolean transfer = reason == SealedReason.TRANSFER_RECOVERY_REQUIRED;
+        var before = collapseFixture(server, origin, people, List.of(), true, transfer ? SessionState.PASSAGE_READY : SessionState.COLLAPSING, false);
+        var sealed = before.withCollapse(SessionState.SEALED, transfer
+                ? before.collapse().transferRecoveryRequired(before.participants().getFirst().playerUuid()) : before.collapse().sealed(reason));
+        requireCommitted(journal.commitRollForward(server, before, sealed), before.state() + "→SEALED(" + reason + ")");
+        if (!sealed.equals(journal.flushedRecords().get(sealed.sessionUuid()))) throw new IllegalStateException("M5 fixture 未 exact 落盤：SEALED(" + reason + ")");
+        return sealed;
+    }
+
     private static void requireCommitted(SessionRecoveryState.CommitResult result, String edge) {
         if (!result.committed()) throw new IllegalStateException("M5 fixture " + edge + " 未確認：" + result);
     }
@@ -453,6 +469,12 @@ final class M5GameTestSupport {
             throw failure;
         }
     }
+
+    /**
+     * H9 (b)：開服 attach 當下就是永久原因 SEALED 的 session，塌縮流程每個 server instance 記一次的 ERROR 的字句片段（spec v5.10 §11.2；與進入 SEALED 時的「塌縮進入 SEALED」
+     * 不同）。GameTest 與 M5 collapse probe（{@code trr-restart}）共用。
+     */
+    static final String STARTUP_SEALED_REMINDER = "開服時的提醒";
 
     /** capture 期間，訊息含這個 sid 的 WARN 與 ERROR 都沒有（不分 marker，塌縮流程以外的 log 也算）。 */
     static boolean noWarnOrError(LogCapture capture, UUID sid) {
