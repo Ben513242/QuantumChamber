@@ -132,7 +132,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
   - F6-2d Step 0（F6-2c 與 H6 review 留下的整理，不新增窗口）已完成（2026-10-14）：range `5c25bb4..5838012`；`src/main/` 只有 `PassageService` 改經 `CollapseService.sideEffect`（行為不變）與 H6 mixin 的 Javadoc；spec review ✅、quality review Approved；完整回歸 `run-all-9221b4e848ad44cf8cc2d2ef88053715` 為 `END ALL exit=0`（`5838012`）。
   - F6-2d 本體由 controller 拆成 F6-2d-1（整理與重試）與 F6-2d-2（門與 SEALED）。**F6-2d-1 已完成（2026-10-14）**：range `999e356..c0184f4`，新增 W8、W9（含兩個變體）與 `AUTHORITY_UNREADABLE` 的重啟窗口，`m5collapse=43`；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-ef32890a6e9f4791ae311f7777bde2b7` 為 `END ALL exit=0`（`c0184f4`）。
   - F6-2d-1 發現：重啟之後玩家在 spawn chunks 以外的 DORMANT 原艙內登入時，原艙還沒載入，§7.1 的觸發會落空，要離開再進入（不困人，沒有訊息）。使用者 2026-10-14 裁示修正：spec v5.9 §7.1、§4 H7、§20.13，plan Task H7。
-  - 之後依序是：H7、F6-2d-2、F6-2e、F6-3 → F7 → milestone 收尾。
+  - **H7 已完成（2026-10-14）**：range `5684ee0..1e73953`；production 是 `CollapseService` 的三處觸發與純搬移出的 `collapse/EntryWatch.java`（來源艙 `NOT_LOADED` 時不消耗觸發，其他條件照樣消耗）；新 chain `w8late`、`unreadablelate`、`waitinglate`（`m5collapse=49`），JUnit `EntryWatchTest`；spec review ✅、quality review Approved；完整回歸 `run-all-91c584900c6643139845b8d7b7062e16` 為 `END ALL exit=0`（`b422c8a`）。
+  - 之後依序是：F6-2d-2 Step 0（F6-2d-1 與 H7 review 的整理）、F6-2d-2 本體、F6-2e、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

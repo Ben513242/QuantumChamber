@@ -7382,6 +7382,32 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - `b422c8a` `docs: describe the H7 chains in the verification README`
   - 本節由其後的 docs commit `docs: record H7 in the M5 note` 加入。
 - 只改了派工允許的路徑：production 是 `CollapseService`（三處觸發與兩段 Javadoc）與純搬移出的新檔 `collapse/EntryWatch.java`（之後的修正也在它裡面，見「偏離」）；JUnit 新增 `EntryWatchTest`（4 個 test），`CollapseServiceTest` 只因搬移拿掉 `CollapseService.` 的限定（3 處）；testmod 只改 `M5CollapseRetryChains` 與 `M5CollapseRecoveryProbe` 的 phase 表；`m5-collapse-probe.ps1` 只改 `$chains`；`run-all.ps1` 只改 `$expectedCollapse`；README 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 其他 `src/main/`、`build.gradle`、`fabric.mod.json`、mixin 與它們的登記、`M5TestHooks`、其他 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5GameTestSupport`）、M4 probe、語言檔、spec、plan、AGENTS。既有的 GameTest 與 JUnit 都沒有因為行為改變而失敗。
+- Review 與最終 review（controller 補）：
+  - spec review ✅（Critical 0、Important 0、Minor 3、nit 2）。
+    - 修正逐條符合 v5.9：`EntryWatch.trigger` 先以 `ready` 篩出沒被其他 session 佔用的人（在線、存活、非旁觀、bbox 在 interior 內由 `inside()` 先過濾），只有 NOT_LOADED 時 `forget`；INVALID、LOW、DISABLED 與不符參與者條件的人照樣消耗；`resumeDormant`、`sealed` 先 `trigger` 再看退避，所以退避期內照樣消耗；`level` 遇到 NOT_LOADED 回 null、不 prime，`edge` 不設 `gateEvaluated`；沒有新增寫入或 IO（`neighborhoodLoaded` 用不載入的 `getWorldChunk`），非 NOT_LOADED 時與舊迴圈等價。
+    - `c2e01d6` 是純搬移；選 `EntryWatch` 而不選 PREPARE 目的地側的理由成立（`CollapseReadyHoldMixin.java:23` 以描述子綁死 `CollapseService$Prepare`）。
+    - RED：`w8late`、`unreadablelate` 的落空來自觸發被消耗（載入 tick 4 之後 20 tick 都沒有提交或重試）；W-i 不成立（`240c7e0d-w3`：來源 ticket 一直持有）、W-ii 會落空（`240c7e0d-w5`）；§4 H7 的 RED 要求由修正前的 `obs-waiting-2` 滿足，確定性的 RED 由 JUnit 以 `mut-no-fix` 取得。
+    - mutation 四個各有意義；`mut-other-kept` 在 `w8` PASS 的解釋成立（斷電在 PREPARE 中，沒有可消耗的邊緣）。
+    - Minor：
+      1. WAITING 閘門的接線（`CS:1123-1130`，`open == null` 時不設 `gateEvaluated`）沒有確定性的回歸：JUnit 只測 `EntryWatch.level`，`waitinglate` 四次都沒碰到開服競態。
+      2. `CollapsePhase.java:57` 的 Javadoc「評估會消耗一次邊緣觸發」在 NOT_LOADED 時不再成立。
+      3. 「退避期內照樣消耗」只由程式結構保證（`CS:386-390`、`:1078-1082`），沒有 mutation 或測試覆蓋（既有 GameTest 在退避期內進入之後就把人移出艙外，`M5U:606-611`）。
+      - nit：本節「F6-2-19 的評估與搬移」寫 `EntryWatch` 32 行，`c2e01d6` 的檔是 31 行；`impl/green-*-probe-summary.txt` 被 `Select-Object -First 40` 截斷（完整證據在 log 與 `collapse-run-<id>.json`，49 PASS）。
+    - 建議：**保留 `waitinglate`**（GREEN 一定成立；它是唯一驗「開服時是 COLLAPSING、spawn 半徑 0、參與者在艙內」走到終局的 chain）。
+  - quality review **Approved**（Critical 0、Important 0、Minor 5、nit 2），沒有發現 spec reviewer 漏掉的正確性缺陷。
+    - Strengths：`trigger` 把兩段重複的迴圈收成一次呼叫，行為等價（`participantsAvailable` 只讀）；退避的順序在 `EntryWatch.java:51-53` 與 `CS:385` 都有寫明；開服 armed 的第一次觀察、不 ready 的人、離開 interior、`resetGate`／`sealCommitted` 之後的情境都推演正確；NOT_LOADED 期間只有在有人觸發時才查詢，成本小而有上限；`EntryWatchTest` 以會丟例外的 `NOT_QUERIED` 證明沒有人觸發時不查詢、跑遍 `SourceSignal.values()`；chain 的等待都有上限、逾時由具名斷言判 FAIL，前提斷言 `chamberNotLoadedAtTheJoin`／`chamberNotLoadedAtStart` 確保量得到 H7 的情況。
+    - Minor：
+      1. `EntryWatch.level`（`:67`）回傳 nullable `Boolean`，呼叫端寫成 `if (watch.level(...))` 時會 NPE；「回 null 就不設 `gateEvaluated`」的約定分在 `EntryWatch` 與 `Track.gateEvaluated` 兩處，所以接線沒辦法以 JUnit 測。建議把 `gateEvaluated` 移進 `EntryWatch`，對外只給一個 `boolean gate(insideNow, ready, source)`（第一次以位準、之後看邊緣），`PrepareGate.edge` 只剩一行，接線也能以 JUnit 確定性地測（同時關閉 spec Minor 1）。
+      2. testmod 的 `chamberLoaded()`（`M5CRC:305-318`）複製了 production 的判斷，Javadoc 卻說「那個方法是 package-private，testmod 讀不到」，不正確（testmod 已有 split package 的先例 `collapse/CollapseLedgerTestAccess.java`）。production 若縮小外擴範圍，testmod 的複本仍判「未載入」而 production 判「已載入」，拿掉修正 chain 也會 PASS（false green）。建議以 test access 直接呼叫 `CollapseService.neighborhoodLoaded`，並更正 Javadoc（README:242 同）。
+      3. `EntryWatch.java:16` 的類別 Javadoc「純搬移，行為不變」與下一段描述的 H7 新行為矛盾。建議改成「先由巢狀類別純搬移出來（`c2e01d6`），再加上 `forget`／`trigger`／`level`」。
+      4. README:243 與本節「三處」表的 WAITING 列說「確定性的回歸是 JUnit `EntryWatchTest`」，說得太滿：JUnit 只涵蓋 `level`，沒有涵蓋 `CS:1127` 的接線。
+      5. `EntryWatchTest:31-41`、`:63-73` 在 `assertAll` 內混入有狀態的動作，前一步失敗時會出現連鎖的誤導訊息；`:64`、`:69` 沒有失敗訊息；舊的 `CollapseServiceTest.java:258 entryWatchTriggersOnlyOnEntryEdges` 還留在原處。
+      - nit：`CS:1077` 的註解沒有提到「退避期內仍消耗」（與 `CS:385` 不一致）；`chamberGate`（`CS:1234`）只剩 `stillOpen` 一個呼叫端，可以 inline。
+    - 給 F6-2d-2 的建議：重用 `chamberLoaded`／`lateRestartPhase` 之前先做 Minor 2；三個幾乎相同的 restart builder（`restartPhase` `M5CRC:287`、`lateRestartPhase` `:297`、`waitingLateRestart` 內嵌的 `:397-413`）合併成一個（帶 `preload` 參數）；以參數化 helper 消除 `committedWithoutReentry`／`committedOnTheFirstObservation`、`retriedWithoutReentry`／`retried(reason, count)` 的重複，以及第三個計數器 `triggerWaited`（與 F6-2d-1 quality Minor 1 一起處理）；下一個可以改 `src/main/` 的 task 一併處理 Minor 1、`SourceSignal` 提升為頂層 enum（`EntryWatch` 反向 import `CollapseService.SourceSignal`，有利於 F6-2-19）、spec Minor 2 與兩個 nit；把 `entryWatchTriggersOnlyOnEntryEdges` 移進 `EntryWatchTest`。
+  - controller 處置：不開 fix round。保留 `waitinglate`。
+    - 新開 **F6-2d-2 Step 0**（在 F6-2d-2 本體之前），集中處理：F6-2d-1 quality Minor 1～5、nit 與建議（見該節），本節 quality Minor 1～5、nit 與給 F6-2d-2 的建議，spec Minor 1～3。`src/main/` 的改動限於 `EntryWatch`／`CollapseService`／`CollapsePhase` 中這幾項（`gateEvaluated` 收進 `EntryWatch`、`SourceSignal` 提升、Javadoc 與註解、`chamberGate` inline），行為不變，以 JUnit 確定性地測 WAITING 的接線與「退避期內照樣消耗」。
+    - 這取代 spec review 時考慮的「WAITING 接線的確定性回歸交 F6-3」：改由 Minor 1 的重構讓它可以用 JUnit 測。
+  - **H7 完成**：range `5684ee0..1e73953`，之後接 controller 的 docs commit。最終 run-all：`run-all-91c584900c6643139845b8d7b7062e16`，`END ALL exit=0`（`b422c8a`；其後只有本節的 note commit）。
 
 ### F6-2-19 的評估與搬移
 

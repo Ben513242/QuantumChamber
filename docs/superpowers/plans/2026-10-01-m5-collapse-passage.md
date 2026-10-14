@@ -790,7 +790,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - **F6-2d-1：整理與重試。** F6-2d Step 0 review 交下的 Minor；W8；W9（含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`）；`AUTHORITY_UNREADABLE` 重啟後重試。交接清單 F6-2-02、F6-2-03、F6-2-07。
       - **F6-2d-2：門與 SEALED。** sealed 量子膜期間 crash → WAITING、一般開門；SEALED 開服後只關門一次（含 SEALED 寫入與門之間 crash）；PREPARE 中重啟的重新套用；SEALED 帶著量子膜時重啟；spec review 的 M-2（永久 SEALED 開服時的 ERROR）。交接清單 F6-2-08～F6-2-11。
       - F6-2d-1 已完成（2026-10-14，spec review ✅、quality review Approved）。它的 quality Minor 1～5、nit 與給 F6-2d-2 的建議，由 F6-2d-2 先做（A 段），再加門與 SEALED 的窗口；清單見 note F6-2d-1 一節的「Review 與最終 review」。
-      - F6-2d-1 的 W8 觀察經使用者裁示修正，見下方 **Task H7**，排在 F6-2d-1 之後、F6-2d-2 之前。
+      - F6-2d-1 的 W8 觀察經使用者裁示修正，見下方 **Task H7**，排在 F6-2d-1 之後、F6-2d-2 之前。H7 已完成（2026-10-14，spec review ✅、quality review Approved）。
+      - controller 2026-10-14 把 F6-2d-2 再拆成 **F6-2d-2 Step 0** 與本體：Step 0 集中處理 F6-2d-1 與 H7 的 review 交下的 Minor（清單見 note 這兩節的「Review 與最終 review」），不新增窗口；`src/main/` 只限 `EntryWatch`／`CollapseService`／`CollapsePhase` 中行為不變的整理（`gateEvaluated` 收進 `EntryWatch`、`SourceSignal` 提升為頂層 enum、Javadoc 與註解），並以 JUnit 確定性地測 WAITING 的接線與「退避期內照樣消耗」。本體再加門與 SEALED 的窗口。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；
