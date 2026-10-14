@@ -7667,3 +7667,162 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 ### B 段的設計（給接力的 implementer）
 
 完整設計在 `f62d2/STATUS.md` 的「B 段的設計」：新類別 `M5CollapseDoorChains`；三個新 `CrashWindow`（`READY_HELD`、`UNREADABLE_SEALED`、`PROJECTION_SEALED`）；五條 chain `waitingdoor`（F6-2-08）、`preparedoor`（F6-2-10）、`sealclose`／`sealdoorway`（F6-2-09）、`sealmembrane`（F6-2-11），共 10 個 phase，`m5collapse` 變成 59。其中第 5 點（M-2）改由 H9 處理；第 4 點的「要先觀察」由 H9 的 (a) 取代。
+
+## H8：方向轉換表的同時初始化
+
+- 一位 implementer 完成（controller 的派工 scratchpad `h8-prompt.md`；取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h8/`，以下簡稱 `h8/`，`STATUS.md` 是交接摘要）。開工時 HEAD 是 `d8ba7a0`、`git status --porcelain` 為空。範圍是 spec v5.10 §4 H8、§20.14 與 plan Task H8；觀察見上方 F6-2d-2 一節「觀察與裁示」第 1 點（root `run/m5-collapse-710ef52f978d4b0ea218ce6a17df250b-trr`，未動）。
+- Commits（`d8ba7a0..HEAD`，依序；每個 commit 只 stage 自己的檔案；code commit 之前都在工作樹編譯：`h8/c1`、`c2-compile.log`，`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL）：
+  - `3f2250d` `test: require every direction transformation's mappings to be built at class initialization`（RED）
+  - `b1e25f3` `fix: build every direction transformation's mappings before any thread reads them`（plan 指定的 message；**最後一個 code commit**）
+  - `8d639c5` `docs: mention the H8 worldgen null pointer in the verification README`
+  - 本節由其後的 docs commit `docs: record H8 in the M5 note` 加入。
+- 只改了派工允許的路徑：production 新增 `src/main/java/dev/quantumchamber/mixin/DirectionTransformationEagerMappingsMixin.java`，在 `src/main/resources/quantumchamber.mixins.json` 登記（`mixins` 的最後一項）；JUnit 新增 `src/test/java/dev/quantumchamber/universe/DirectionTransformationMappingsTest.java`（1 個 test）；`scripts/verification/README.md` 只在「M5 collapse probe」一節補一句（`w7`、`trr` 同時 JOIN 那一段的末尾）；本 note 只加本節。**沒有改** 其他 `src/main/` 檔案、`build.gradle`、`fabric.mod.json`、`quantumchamber-test.mixins.json`、任何 ps1、`.github/`、testmod（probe、GameTest、`M5TestHooks`）、M4 probe、其他 JUnit、語言檔、spec、plan、AGENTS。既有的 test 沒有因為修正而失敗。
+- 行號以 `8d639c5` 為準。`MX`＝`DirectionTransformationEagerMappingsMixin`，`UT`＝`DirectionTransformationMappingsTest`；原版的行號是 1.21 yarn sources（`h8/mcsrc/`，由 Loom 的 sources jar 解出），`DT`＝`DirectionTransformation.java`。
+
+### 盤點（第 0 點）
+
+- 做法：以 ASM 掃描原版 1.21（yarn named 的 common jar，`h8/mcbin/`）的 class，列出非 final 欄位，以及型別是可變 collection、map 或陣列的欄位（`h8/tools/FieldScan.java`；與 `javap -p` 的欄位清單相同，另記「在建構子／`<clinit>` 之外寫入這個欄位的方法」與「讀取這個欄位、同一個方法裡又呼叫常見 mutator 的方法」，只是篩選的線索），再逐項讀程式。範圍：
+  - `net/minecraft/util/**`（含 `util/math/`、`util/collection/`、`util/shape/`；`noise`、`random` 一併重掃）、`block/**`（含 `block/enums/`、`block/entity/`）、`state/**`、`fluid/**`：1036 個 class，候選 699（`h8/fieldscan-h8.txt`）。
+  - H6 Step 0 的 `structure/`、`world/gen/`、`world/biome/` 以「一次性的 lazy init」重新判讀：737 個 class，候選 329（`h8/fieldscan-h6pkgs.txt`）。
+  - 路徑上的 `world/chunk/`、`registry/`、`nbt/`、`ChunkRegion`：278 個 class，候選 183（`h8/fieldscan-extra.txt`）。
+  - rotate／mirror 路徑：原版 61 個方塊 class override 了 `rotate`／`mirror`，呼叫的只有 `state.get`／`with`（`withTable` 在 bootstrap 時建好）、`BlockRotation.rotate`、`BlockMirror.apply`／`getRotation`／`mirror`（都是 switch）、static 的 `FACING_PROPERTIES`（`<clinit>` 建好）與 `mapJigsawOrientation`。common 與 clientOnly 兩個 jar 之中，參照 `DirectionTransformation` 的 class 只有 `BlockRotation`、`BlockMirror`、`JigsawBlock`、`CrafterBlock`、`DirectionTransformation$1`（switch 表）與 client 的 `ModelRotation`；common 的程式只經 `JigsawBlock`、`CrafterBlock` 的 rotate／mirror（`JigsawBlock.java:42`、`:47`，`CrafterBlock.java:239`、`:244`）呼叫 `map`，用到的常數最多是 `BlockRotation`（`:10-13`）與 `BlockMirror`（`:9-11`）的 6 個。
+  - 這是靜態盤點，不是證明；其他 mod 加的狀態不在範圍內。
+- 判準：共用物件（enum 常數、static 欄位、registry 持有的 instance）上的 lazy init 或沒有同步的 memoize；會不會在不同世界的 worker 上同時第一次執行；結果是否冪等而且安全發布（無害），或先發布再填內容（有害）。
+
+| 狀態 | 共用 | 寫法 | 不同世界的 worker 同時第一次執行 | 判定 |
+| --- | --- | --- | --- | --- |
+| `DirectionTransformation.mappings`（`DT:69`，`map` `:149-164`） | enum 常數 | 先把空的 `EnumMap` 指定給欄位，再逐一 put（每次 put 都重新讀欄位，所以另一條執行緒換掉 map 時，put 也會寫進別人的 map） | **會**（structure_starts 的 `getInfosForBlock` → `JigsawBlock.rotate`；features 的 `StructureTemplate.place` 同） | **有害**：讀到已指定、還沒填完的 map，`get` 回 null（本節的根因） |
+| `VoxelShape.shapeCache`（`VoxelShape.java:22`，`getFace` `:200-217`） | static 的 shape 常數 | 先指定空陣列再填，但讀取端遇到 null 元素就自己算；元素是 `voxels` 為 final 的 shape，安全發布 | 會（features 的 `canPlaceAt`、`place` 的 `getStateForNeighborUpdate` → `isFaceFullSquare`） | 無害（最壞是重算一次） |
+| `Property.hashCodeCache`（`Property.java:26`、`:100-104`） | registry 持有 | 指定一個 `Integer`（immutable） | 會 | 無害（冪等） |
+| `Block.translationKey`、`cachedItem`（`Block.java:533-539`、`:701-707`）、`AbstractBlock.lootTableKey`（`:1080-1087`） | registry 的方塊 | 指定建好的 immutable 物件（`String`、registry 的 `Item`、`RegistryKey`） | 可能 | 無害（冪等） |
+| `StructurePool.highestY`、`RandomizedIntBlockStateProvider.property` | registry | H6 Step 0 已判定（`int`／冪等） | 會 | 無害 |
+| `StructurePoolElement.projection`（`:35`） | registry | `volatile`，只在載入時寫 | 否 | 無害 |
+| `CarvedPumpkinBlock`、`WitherSkullBlock`、`EndPortalFrameBlock` 的 `BlockPattern` | 方塊／static | 指定建好的物件，冪等 | 否（`onBlockAdded`、玩家操作，server thread） | 無害，不在 worldgen |
+| `InfestedBlock.REGULAR_TO_INFESTED_STATE`／`INFESTED_TO_REGULAR_STATE`（`:26-27`、`:80`） | static `IdentityHashMap` | 沒有同步的 `computeIfAbsent` | 否（呼叫端只有 `SilverfishEntity`，server thread） | 不在 worldgen |
+| `FlowableFluid.shapeCache`（`:51`、`:476`） | registry 的流體 | 沒有同步的 `computeIfAbsent`（`IdentityHashMap`） | 否（只經 `RaycastContext`，worldgen 不用） | 不在 worldgen |
+| `HopperBlockEntity.AVAILABLE_SLOTS_CACHE`（`:34`、`:175-176`） | static | lazy 陣列 | 否（漏斗，server thread） | 不在 worldgen |
+| `AffineTransformation` 的 `initialized` 與四個分解結果（`:38`、`init` `:94-104`） | `AffineTransformations.INVERTED_DIRECTION_ROTATIONS`（以矩陣建構，lazy）；`IDENTITY` 與 `DIRECTION_ROTATIONS` 建構時就已分解 | 先寫欄位、再設非 volatile 的旗標 | 否（`AffineTransformations` 在 common 沒有使用者，只給 client 的模型；common 的 `DisplayEntity` 用每個實體自己的 instance；原版結構不含 display entity） | 不在 worldgen；C2ME 另有修正（見下），列給 F7 |
+| `SimpleRegistry.tagToEntryList`（`:53`、`:282-295`） | registry | `volatile`＋鎖的 copy-on-write | — | 安全 |
+| `RegistryOps$CachedRegistryInfoGetter.cache`（`RegistryOps.java:91`） | — | `ConcurrentHashMap` | — | 安全 |
+| `CachedMapper`（`Util.cachedMapper`） | — | 沒有同步的 memoize | common 沒有呼叫端 | 不適用 |
+| `Orientation.BY_INDEX`、`AxisTransformation.COMBINATIONS`、`DirectionTransformation.COMBINATIONS`／`INVERSES`、`Direction` 的各個陣列 | static／enum | `<clinit>` 建好，之後唯讀 | — | 安全 |
+
+- `block/enums/` 沒有任何 lazy 欄位（只有 `Orientation.BY_INDEX`，`<clinit>` 建好）；`util/math/` 只有 `DirectionTransformation.mappings` 與 `AffineTransformation`。其餘標記（block entity、builder、per-chunk 的物件、bootstrap 時的註冊表，以及啟發式的誤判，例如只讀的 static 陣列）都不是共用物件上的 lazy init（原始輸出見 `h8/fieldscan-*.txt`）。
+- **結論：同類而且成立的只有 `DirectionTransformation.mappings`**，沒有其他項目納入本 task。
+- **盤點時發現、不屬 H8 類別的問題（需要裁示，本 task 沒有處理）**：`StrongholdGenerator` 的 static 可變狀態。
+  - `possiblePieces`、`activePieceType`、`totalWeight`（`StrongholdGenerator.java:63-65`），以及 static `ALL_PIECES`（`:40`）裡共用的 `PieceData.generatedCount`（`:972`）。`StrongholdStructure.addPieces`（`:22-30`）在 structure_starts（worker）呼叫 `init()`（`:68-77`）重設，`pickPiece`（`:132` 起）一邊迭代 `possiblePieces`（`:152`）一邊 `remove`（`:164`），並以 `random.nextInt(totalWeight)`（`:150`）抽選。
+  - M5 的 U 與來源世界共用 generator 與 seed，stronghold 的位置相同；兩邊同時生成同一個 stronghold 的 start 時（H6、H8 的 lockstep），兩條 worker 同時改這些 static 狀態，可能丟 `ConcurrentModificationException`、`IllegalArgumentException`（`totalWeight` 不是正數），或兩邊生成不同的 stronghold。前兩者會 crash 並卡在停服（與 H6 相同的原版行為）。原版只有一個 Overworld 生成 stronghold，所以原版不會遇到。
+  - 這是 H6 的類別（共用、在 worker 上被修改，而且每次都會，不只第一次），不是 lazy init，不在 spec §4 H8 的範圍。H6 Step 0 的候選清單（`h6/step0/fieldscan-candidates.txt`）列出了這三個欄位，但表格與結論沒有討論。
+  - C2ME（`dev/1.21.3`）以 ThreadLocal 修正：`MixinStrongholdGenerator`、`MixinStrongholdGeneratorPieceData`（`gh api` 讀原始碼）。
+  - 同一類、只與 M6 有關：`NetherFortressGenerator` 的 static `ALL_BRIDGE_PIECES`／`ALL_CORRIDOR_PIECES` 的 `generatedCount`（`:29`、`:37`、`:1361`、`:1689-1696`）與 `EndCityGenerator` 的 static `Part` 的 `shipGenerated`（`:107-147`）。M5 只有一個 Nether 與一個 End，不會在兩個世界同時執行；M6 若有多個 Nether 或 End 類型的世界就會。
+- 參考：C2ME 的 `c2me-fixes-worldgen-threading-issues`（`dev/1.21.3`）有 `mixin/threading/math/MixinDirectionTransformation`：在每個常數的建構子 RETURN 呼叫 `map(Direction.UP)`（註解「force load mapping to prevent further issues」）。同一個目錄另有 `MixinAffineTransformation`（建構子 RETURN 呼叫 `init()`）。沒有查到 Mojang 的 bug 編號或之後版本的修正（未查到）。
+
+### RED（`3f2250d`）
+
+- `UT` 是不變量，不靠時序：class 初始化之後（`values()` 只複製常數陣列，不呼叫 `map`），先以反射讀完 48 個常數的 `mappings`（`UT:39`），之後才做任何會呼叫 `map` 的事。判準（`UT:67` 的 `assertAll`）：
+  - 每個常數都已建立（`missing` 為空）；
+  - 每個都有 6 個方向，內容與原版的計算相同：`vanillaMapping`（`UT:75`）以原版的 `axisTransformation`（反射讀取）、`AxisTransformation.map`、`shouldFlipDirection` 與 `Direction.from` 逐步重算 `DT:154-160`；
+  - 之後 `map` 的回傳值也相同（`mapWrong` 為空）。
+  - 讀取之前就已建立的常數數目、map 的實際型別等只是診斷，輸出到 stdout（`H8_DIRECTION_TRANSFORMATION …`）。沒有任何等待（不需要逾時）。
+- 原版下失敗的原因：沒有用過的常數的 `mappings` 是 null（lazy init 本身）。「同一個 test JVM 裡先跑的 test 不會剛好用過 48 個」的確認：
+  - 靜態：common 的程式只經 `JigsawBlock`、`CrafterBlock` 的 rotate／mirror 呼叫 `map`，最多用到 6 個常數（上方盤點）；`src/main`、`src/test`、`src/testmod` 都沒有直接用 `DirectionTransformation`、`BlockRotation` 或 `BlockMirror`。所以不論順序，至少 42 個是 null。H6 的 `StructureTemplateCacheConcurrencyTest` 以預設的 `NONE` 旋轉呼叫 `getInfosForBlock`，只會建 `IDENTITY`。
+  - 實測：`red-unit`（只跑 `UT`）FAIL，`missing` 48/48，`wrong`、`mapWrong` 都是 0；`red-all`（`3f2250d` 上跑全部 JUnit，單一 test JVM，`build.gradle` 沒有 `forkEvery`）666 個 test 只有 `UT` FAIL，同樣 48/48（`builtBeforeRead=0`；這次 `UT` 排在 H6 的 test 之前）。
+- 機制的重現（診斷，不當 GREEN 的條件，不 commit）：暫時的 `h8/files/H8MappingsRaceDiagnosticTest.java`（adapter `diag-race` 以 NEW 加入、跑完刪除）每一輪以反射把一個常數的 `mappings` 設回 null，4 條執行緒以輪次的計數器 spin 等待、同時呼叫 `map`（每條執行緒依不同順序呼叫 6 個方向），之後再設回 null、單執行緒重建。等待都有上限（一輪 10 秒、工作執行緒 60 秒、join 5 秒）。
+  - `diag-race-red`（`3f2250d`，原版）：4000 輪中 749 輪回傳 null（共 2422 次），內容錯誤 0、例外 0、逾時 0（`availableProcessors=28`，174 ms）。觀察到的就是 trr 的現象：讀到還沒填完的表，`get` 回 null。
+  - `diag-race-green`（`b1e25f3`）：818 輪、2897 次 null。這個寫法把欄位設回 null，繞過了「class 初始化時建好」的修正，所以修正之後照樣 race；這正是它只能當診斷的原因。
+
+### production 的修正（`b1e25f3`）
+
+- `MX:32-38`：`@Mixin(DirectionTransformation.class)`；`@Inject(method="<clinit>",at=@At("TAIL"),require=1)` 的 static handler 對 `DirectionTransformation.values()` 的每個常數呼叫一次 `map(Direction.NORTH)`（一次呼叫就建好 6 個方向）。refmap 的對應是 `Lnet/minecraft/class_4990;<clinit>()V`（`mappings.tiny`：`class_4990` 就是 `DirectionTransformation`）。寫法比照 H5、H6 的 mixin（package-private 的 abstract class、`quantumchamber$` 前綴、預設 remap、`require=1`）；登記在 `mixins`，`defaultRequire: 1` 也涵蓋。名稱比照「目標＋作用」：`DirectionTransformation`＋`EagerMappings`。
+- 注入點與可見性：JLS 12.4.2 的 class 初始化在初始化鎖之下執行；初始化完成之後，其他執行緒使用這個 class 之前要經過同一個鎖，或 JVM 在省略鎖時保證「取得鎖時會有的 happens-before 仍然成立」。所以 `<clinit>` 裡的寫入（含 48 個 `EnumMap` 的內容）對之後使用這個 class 的任何執行緒都可見，不依賴特定 CPU 的記憶體模型。之後 `mappings` 都不是 null，`map` 的 lazy 分支不再執行，欄位與 map 都不再被寫入。TAIL 時常數、`COMBINATIONS`、`INVERSES` 都已建立（`javap -c`：`$VALUES`（yarn 名 `field_23298`）在 48 個常數建構之後立即指定，接著才是 `COMBINATIONS`、`INVERSES`）。呼叫的就是原版的 `map`，結果與原版相同（`UT` 的內容比對，及 mutation `mut-wrong-entry` 證明比對有效）。
+- class 初始化的循環或死結（第 2 點）：
+  - `javap -c -p`（`h8/javap-c-*.txt`）：`Direction`、`Direction$Axis`、`Direction$AxisDirection`、`Direction$Type`、`AxisTransformation` 的整個 class（含 `static {}`）沒有任何 `DirectionTransformation` 的參照；`DirectionTransformation$1` 的 `static {}` 只參照 `Direction$Axis`（`values`、`X`／`Y`／`Z`、`ordinal`）。
+  - 原版之中參照 `DirectionTransformation` 的 class 只有上方盤點列出的 6 個；要讓某個 class 的初始化等到 `DirectionTransformation`，它初始化時執行的程式必須參照 `DirectionTransformation`，也就是會經過這 6 個 class 之一（或以反射；原版沒有以字串參照它的地方）。
+  - `-Xlog:class+init` 的實測（`h8/tools/InitTrace.java`，原版 named jar＋函式庫＋Fabric API 的介面 jar，全新的 JVM，沒有 mixin；`h8/inittrace-*.txt`、`inittrace-summary.txt`）：
+    - 依序初始化 `Direction` 等 5 個 class 時，被初始化的原版 class 共 48 個（`Direction` 自己的依賴：`StringIdentifiable`、`Codecs`、`Uuids`、`Vec3i`、`ValueLists`、`PacketCodecs` 與其匿名類別；`AxisTransformation` 的依賴：`Util`、`MathHelper`、`random/*`），都在 main thread，沒有一個是那 6 個 class。
+    - 先初始化 `DirectionTransformation`（原版 `<clinit>` 初始化 11 個原版 class：自己、`AxisTransformation`、`Util` 等，這是原版既有的依賴），再對每個常數的每個方向呼叫 `map`（288 次）：期間新初始化的是 `Direction` 的同一批 37 個與 `DirectionTransformation$1`。這就是修正讓 `<clinit>` 多出的依賴，其中沒有任何 class 會回頭參照 `DirectionTransformation`。
+    - 所以兩條執行緒各自初始化 `DirectionTransformation` 與 `Direction` 這一側的某個 class 時，不會互等。實際的 server 上，`Direction` 在 bootstrap 時（main thread、worker 啟動之前）就已初始化。
+    - 另寫過一個保守的 ASM 可達性分析（`h8/tools/ClinitReach.java`，把 lambda 與錯誤路徑都算進去），結果經 `Util.throwOrPause` → `SharedConstants` → … → `Blocks` 擴張到 4123 個 class，過度近似，不採計（`h8/clinit-reach-direction.txt` 保留）。
+- Javadoc（`MX:9-30`）寫明根因、為什麼在 `<clinit>` 的 TAIL（JLS 12.4.2）、適用於所有世界與所有呼叫端、class 初始化的循環、不記 log、相容性與 `require=1`。
+
+### mutation 與相容性
+
+都套在乾淨的 `b1e25f3` 上，只跑 `UT`（`h8/adapted-junit.ps1`，adapter 表 `h8/adapters_h8.py`），跑完還原；之後 `MX` 的 blob 是 `2ff83f5b…`，與 `git rev-parse HEAD:<path>` 相同，porcelain 空（`h8/<label>-restored-state.txt`）。
+
+| 名稱 | 改動 | 結果 |
+| --- | --- | --- |
+| `mut-no-fix` | handler 不做事（mixin 仍套用；等同 RED） | FAIL：`missing` 48/48 |
+| `mut-half` | 只建 ordinal 為偶數的 24 個 | FAIL：`missing` 24/48 |
+| `mut-skip-last` | 漏掉最後一個常數（off-by-one） | FAIL：`missing` 1/48（`rot_90_ref_z_pos`） |
+| `mut-wrong-entry` | 建好之後把 `ROT_90_Y_POS` 的 UP 改成 DOWN | FAIL：`wrong` 與 `mapWrong` 各一筆（`rot_90_y_pos:up=down expected=up`） |
+| `compat-c2me`（不是 mutation） | 另加 C2ME 的寫法：每個常數的建構子 RETURN 呼叫 `map(Direction.UP)` | PASS：兩者並存時結果相同 |
+
+### GREEN
+
+- JUnit：
+  - `green-unit`（`b1e25f3`，乾淨）：`UT` PASS（`builtBeforeRead=48`、`missing=0`，map 是 `java.util.EnumMap`）；H6 的 `StructureTemplateCacheConcurrencyTest` 3/3 PASS（CME 0、其他例外 0）。
+  - `green-all`（`b1e25f3`，全部 JUnit）：666 個 test，664 PASS、2 SKIPPED；與基準 `run-all-915ef865…` 的 664 個相比，只多 F6-2d-2 A 段的 `EntryWatchTest.afterThePrimeOnLeavingPrepareTheGateWaitsForAnEdge` 與 `UT`，其餘的名稱與結果相同（`h8/green-all-junitall-setcmp.txt`）。
+- M5 collapse probe 的 49 個 phase，在同一個乾淨的 HEAD `b1e25f3`（最後一個 code commit；之後只有 README 與本節）連跑兩次：green-1 `18ee1d3b61914f7b866925f495ec16d7`、green-2 `1a9f0b579d164cff8c8d4b52cdd622a5`，都是 49/49 PASS（22 halt＝77、27 stop＝0；`h8/green-*-probe-state.txt` 的 HEAD 都是 `b1e25f3`、porcelain 空）。這也補上 F6-2d-2 A 段的「同一個 HEAD 連跑兩次」。
+- 兩次的 49 個 phase latest.log 與 25 個 run root 的 latest.log 都沒有「Exception generating new chunk」、`NullPointerException`、`"facing" is null` 或 `ConcurrentModificationException`（`h8/worldgencheck.py`，`h8/green-*-worldgencheck.txt`）。
+- 為什麼 probe 不新增 chain：這個 race 只在 JVM 裡第一次用到某個轉換的那一刻，而且要兩條 worker 剛好同時第一次用到同一個轉換，整合層級無法確定重現（`trr` 的 restart 在之前各輪的 probe 都 PASS，只有 F6-2d-2 的 green-a 撞上一次）。單元層級的不變量在原版下必定失敗、修正後必定通過，已足夠；README 同步寫明。
+
+### 具名斷言的比對
+
+- 與 F6-2d-2 Step 0 的 green-2 `d46ab3e322e84326b4d7a7182b748340` 比對（`h8/names2.py`）：green-1、green-2 的 49 個 phase 都 RESULT=OK，每個 phase 的斷言數、名稱、順序與 step 完全相同，沒有拿掉、新增或改名，`notTrue` 都是空的（`h8/green-1-vs-s0green2-names.txt`、`green-2-vs-s0green2-names.txt`）。green-2 與 green-1 互相比對也是 RESULT=OK（`h8/green-2-vs-green-1-names.txt`）。
+
+### 完整回歸（run-all）
+
+- `run-all-70998ec40f6a440093280dd5b7068d69`（`h8/run-all-1-console.txt`），HEAD `8d639c5`、乾淨（所有 code 與 README commit 之後；其後只有本節的 docs commit），**`END ALL exit=0`**。本節的 commit 之後，另跑一次 run-all 作為最終回歸，結果記在 `h8/STATUS.md` 與 implementer 的最終回報（本節的 commit 只改這份 note）。
+- SUMMARY：`default=175/175 windows=89 legacy=1/1 m5=60/60 perTest=52+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=49 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-915ef865f6d445d4a8649da27a4ebb95`（`fbb2bd4`）逐項比較（`h8/runall-compare.ps1`，輸出 `h8/runall1-*.txt`）：
+
+| 項目 | 基準 | 本次 | 歸屬 |
+| --- | --- | --- | --- |
+| default GameTest | 175 | 175 | testcase 集合與結果相同（`runall1-default-setcmp.txt`，identical） |
+| M5 GameTest | 60/60 | 60/60 | 相同（`runall1-m5-setcmp.txt`） |
+| legacy | 1/1，WARN／ERROR 0／0 | 1/1，0／0 | 相同（`runall1-legacy-setcmp.txt`、`runall1-wbcmp-legacy.txt`） |
+| JUnit | 664（662 PASS、2 SKIPPED） | 666（664 PASS、2 SKIPPED） | 只多 F6-2d-2 A 段的 `EntryWatchTest.afterThePrimeOnLeavingPrepareTheGateWaitsForAnEdge` 與 `UT`，其餘 664 個的名稱與結果相同（`runall1-junit-setcmp.txt`） |
+| release JAR | 431 entries／384 classes | 432／385 | 只多 `DirectionTransformationEagerMappingsMixin.class`；內容改變的只有 `quantumchamber.mixins.json` 與 `quantumchamber-refmap.json`（新 mixin 的注入點）（`runall1-jarcmp-release.txt`） |
+| sources JAR | 225 | 226 | 只多 `DirectionTransformationEagerMappingsMixin.java`；改變的只有 `quantumchamber.mixins.json`（`runall1-jarcmp-sources.txt`） |
+| Full WARN／ERROR | 54／28 | 54／28 | 正規化之後的排序 diff 沒有差異（`runall1-wbcmp-full.txt`）；依 batch 分組也相同（`runall1-wbbatch-full.txt`）。這次沒有出現已知偶發（H2 的 ERROR +3、`m2_task4_disconnect_io` 的 WARN +1） |
+| M5 WARN／ERROR | 38／10 | 38／10 | 數目相同；排序 diff 只有一則「Trying to set block entity … PistonBlockEntity@<hash>」，同一則訊息，差在 object hash 的字母與數字被正規化成不同的樣子（`runall1-wbcmp-m5-gametest.txt`） |
+| perTest、windows、windowsCheckpoint | 52+1、89、17 | 52+1、89、17 | 相同 |
+| M3、M4 recovery | 4＋5、24 | 4＋5、24 | 相同（run-all 核對 phase 名稱與 receipt） |
+| m5collapse | 49（halt 22） | 49（halt 22） | collapse runId `7c65016704dc4204959e07d863fe0295` 與 green-1、與 F6-2d-2 Step 0 的 green-2 比對都 RESULT=OK（`runall1-vs-green-1-names.txt`、`runall1-vs-s0green2-names.txt`）；49 個 phase 與 25 個 run root 的 log 都沒有 worldgen 的例外（`runall1-worldgencheck.txt`） |
+| main-only、testmodHits、CI 規則 | PASS、0、win／ubuntu PASS | 相同 | — |
+
+- 三個 gate（full、legacy、m5-gametest）的 latest.log 也都沒有 `NullPointerException`、`ConcurrentModificationException` 或「Exception generating new chunk」（基準同樣是 0）。
+
+### 偏離派工字面之處
+
+- 盤點以 ASM 讀 class 檔（`h8/tools/FieldScan.java`），不是逐一執行 `javap -p`；得到的欄位清單相同，另多了「寫入／修改的方法」作為篩選線索。class 初始化循環的檢查照派工以 `javap -c` 做，另加 `-Xlog:class+init` 的實測。
+- 盤點另把 H6 Step 0 的三個 package，以及 `world/chunk/`、`registry/`、`nbt/` 一併以 lazy init 的角度重掃（派工的範圍是「至少包括」）。
+- 機制的重現沒有 commit：它會把共用 enum 的欄位設回 null，而且修正之後照樣 race，留在 test 裡只會誤導；證據在 `h8/diag-race-*`。
+- `UT` 只有 1 個 test（三個判準在同一個 `assertAll`，失敗訊息分別寫明），所以 JUnit 的增量是 +1（另加 F6-2d-2 A 段的 +1）。
+- 盤點時讀了 C2ME 的 `StrongholdGenerator` 相關 mixin，以及 `NetherFortressGenerator`、`EndCityGenerator` 的程式，超出派工列的讀取範圍；只為了判定 `StrongholdGenerator` 這一項是否成立，沒有據此改程式。
+
+### 需要裁示
+
+- **`StrongholdGenerator` 的 static 可變狀態**（上方盤點）：M5 的 U 與來源世界同時生成同一個 stronghold 時，可能 crash 並卡在停服。它屬於 H6 的類別、不在 H8 的範圍，本 task 沒有處理。選項（由 controller／使用者決定）：
+  1. 另開 task 修正（例如比照 C2ME 以 ThreadLocal 隔離這幾個欄位，或以一個 static 鎖把 `StrongholdStructure.addPieces` 序列化）；先以 JUnit 或 probe 確認 RED。
+  2. 列為已知限制（寫進 F7）。
+  - 盤點只確認了程式路徑，沒有以 run 重現。
+
+### 交給後續
+
+- **F7**：
+  - compatibility：C2ME 的 `MixinDirectionTransformation` 在每個常數的建構子 RETURN 呼叫 `map(Direction.UP)`；與本 mixin 並存時，`mappings` 在建構時就建好，本 mixin 的呼叫只走非 null 的分支，結果相同、不論先後（`compat-c2me` PASS）。`@Overwrite` 了 `map` 的 mod 會讓本 mixin 呼叫它的版本，不影響正確性。
+  - 已知問題「同步生成步驟的例外之後停服卡住」已由 H6 記錄（見 H6 一節「交給後續」）；H8 的 NPE 走的是同一條路（「Exception generating new chunk」→ worker 的 uncaught handler → `System.exit` → 停服等不到 holder 釋放），這裡只補交叉引用。
+  - `AffineTransformation` 的 lazy 分解（非 volatile 的旗標）不在 worldgen 路徑，C2ME 另有修正；是否寫進 compatibility 說明由 F7 決定。
+  - 若需要裁示的 `StrongholdGenerator` 列為已知限制，寫進 F7。
+- **H9、F6-2d-2 B 段、F6-3**：沒有。probe、testmod 與 harness 都沒有改；B 段的 10 個新 phase 照 F6-2d-2 一節的設計做，`m5collapse` 的基準仍是 49。
+- **M6**：`NetherFortressGenerator`、`EndCityGenerator` 的 static 可變狀態（上方盤點），有多個 Nether 或 End 類型的世界時會 race。
+- 附帶的觀察（推論，沒有以 run 確認）：H6 的 `StructureTemplateCacheConcurrencyTest` 以多條執行緒同時對 JIGSAW 呼叫 `getInfosForBlock`，會同時第一次用到 `IDENTITY` 的 `map`；修正之前，它理論上可能因本節的 race 偶發地以「其他例外」（NPE）失敗。H8 之後不會。
+
+### root（全部保留）
+
+- RED：`red-unit`、`red-all`（`3f2250d`）。診斷：`diag-race-red`（`3f2250d`）、`diag-race-green`（`b1e25f3`）。GREEN：`green-unit`、`green-all`（`b1e25f3`）。mutation：`mut-no-fix`、`mut-half`、`mut-skip-last`、`mut-wrong-entry`、`compat-c2me`（`b1e25f3`＋adapter）。JUnit 的 XML 複本在 `h8/<label>-TEST-*.xml`，摘要在 `h8/<label>-junit-summary.txt`、`adapted-junit-summary.txt`。
+- probe：green-1 `18ee1d3b61914f7b866925f495ec16d7`、green-2 `1a9f0b579d164cff8c8d4b52cdd622a5`（`b1e25f3`）；phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`。
+- run-all：`run-all-70998ec40f6a440093280dd5b7068d69`（`8d639c5`）；最終回歸的 run-all（本節的 commit 之後）見 `h8/STATUS.md`。
+- 結束過的程序：只有本 session 自己的 ASM 分析程式 `ClinitReach`（PID 35368，java 的 source launcher；不是遊戲或 Gradle 的 JVM），以 TaskStop 結束背景 shell，之前核對過 commandline。沒有結束任何遊戲 JVM 或 Gradle daemon；probe 沒有遇到逾時處置。沒有遇到失敗而重跑的 root，也沒有遇到已知偶發（Windows 原子移動的 `AccessDeniedException`、boundary oracle、H2 的 ERROR +3、`m2_task4_disconnect_io` 的 WARN +1、本節的 NPE 都沒有出現）。
+- 取證腳本（`h8/`）：`state.ps1`、`junitall.ps1`、`compile.ps1`、`probe.ps1`、`runall.ps1`、`runall-compare.ps1`、`adapter.py`、`names2.py`、`junitset.py`、`setcmp.py`、`jarcmp.py`、`wbcmp.py`、`xmlsum.py`、`wbbatch.py`、`warncheck.py`、`details.py` 由 `f6/f62d2/` 複製，`junit.ps1`、`adapted-junit.ps1` 由 `h6/impl/` 複製（每檔第一行加本輪註解；repo 的相對路徑少一層；`adapter.py` 改 adapter 表的模組為 `adapters_h8`）；`base-default-summary.txt`、`base-m5-summary.txt` 是 `f6/f62d2s0/` 的 `runall1-*-summary.txt`（同一次基準 run-all）；新寫 `adapters_h8.py`、`worldgencheck.py`、`files/H8MappingsRaceDiagnosticTest.java`、`tools/FieldScan.java`、`tools/ClinitReach.java`、`tools/InitTrace.java`、`tools/inittrace_summary.py`。原版的程式以 Loom 的 sources jar 讀（`h8/mcsrc/`），class 檔解在 `h8/mcbin/`、`h8/mcbin-client/`。
