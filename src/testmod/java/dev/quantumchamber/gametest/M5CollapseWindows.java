@@ -820,6 +820,16 @@ final class M5CollapseWindows {
         recordOnDisk(run, fixture, evidence, commit.next(), "readyOnDiskAtHalt");
         run.expect("sealedDoorBeforePassable", M5GameTestSupport.doorSealed(run.source(), FRAME), () -> "READY 提交的那一刻原艙門不是 PREPARE 的 sealed 量子膜");
         for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
+        sealedDoorSavedAtHalt(run, fixture, evidence);
+    }
+
+    /**
+     * halt 之前門是 PREPARE 的 sealed 量子膜、參與者在艙內的窗口共用的尾段（F6-2d-2 B2a，B1 quality Minor 5：原本 {@link #savedBeforePassable} 與 {@link #savedWhileReadyHeld}
+     * 各寫一份）：原生存檔（{@code nativeSaveAtHalt}）→ 記下 playerdata 的世界 → 參與者的 playerdata 在來源世界（{@code playerDataInTheSourceAtHalt}）→ 磁碟上（raw MCA）的原艙門
+     * 是 sealed 量子膜（{@code sealedDoorOnDiskAtHalt}）。具名斷言的名稱與順序不變；{@code insideTheChamberAtHalt} 的迴圈留在呼叫端（兩者在它之前的斷言不同，放進來會改變
+     * {@link #savedWhileReadyHeld} 的斷言順序）。
+     */
+    private static void sealedDoorSavedAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence) throws Exception {
         nativeSaveAtHalt(run);
         playerDimensions(run, fixture, evidence);
         run.expect("playerDataInTheSourceAtHalt", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
@@ -969,10 +979,7 @@ final class M5CollapseWindows {
         for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
         run.expect("projectionCompleteAtHalt", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                 () -> "projection ledger=" + fixture.projectionsOrError());
-        nativeSaveAtHalt(run);
-        playerDimensions(run, fixture, evidence);
-        run.expect("playerDataInTheSourceAtHalt", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "playerdata=" + evidence.get("playerDimensionOnDisk"));
-        run.expect("sealedDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.sealedFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 sealed 量子膜");
+        sealedDoorSavedAtHalt(run, fixture, evidence);
     }
 
     // ---- restart 開服時 ----
@@ -1178,7 +1185,10 @@ final class M5CollapseWindows {
         run.expect("othersPlayerDataInTheSource", playerDataIn(run, fixture, M5CollapseFixture.OTHERS, run.source()), () -> "另一位的 playerdata 不在來源世界");
     }
 
-    /** F6-2-16 的開服：磁碟上的原艙門是 PREPARE 的 sealed 量子膜，參與者的 playerdata 在來源世界（艙內）。 */
+    /**
+     * halt 之前門是 PREPARE 的 sealed 量子膜、原生存檔過的窗口的開服：磁碟上的原艙門是 sealed 量子膜，參與者的 playerdata 在來源世界（艙內）。F6-2-16（{@code READY_COMMITTED}）
+     * 與 F6-2-08、F6-2-10（{@code READY_HELD}）共用（F6-2d-2 B2a，B1 quality Minor 5：原本只寫 F6-2-16；halt 之前的取證是 {@link #sealedDoorSavedAtHalt}）。
+     */
     private static void sealedDoorOnDiskAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
         run.expect("sealedDoorOnDiskAtRestart", doorOnDisk(run, fixture, true, MembraneState.sealedFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 sealed 量子膜");
         playerDataInTheSourceAtRestart(run, fixture);
