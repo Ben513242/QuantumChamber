@@ -149,17 +149,26 @@ class EntryWatchTest {
     }
 
     /**
-     * PREPARE 中途閘門失效之後（F6-2d-2，F6-2d-2 Step 0 quality 給本體的建議：PREPARE 中重啟的窗口之前先補）：{@code CollapseService.leavePrepare} 以目前在艙內的原參與者
-     * {@code prime}，之後的 {@code gate} 只看邊緣（經 {@code CollapseService.Track} 的接線）。第一次評估以位準進 PREPARE → PREPARE 期間 B 進入艙內（PREPARE 期間不評估閘門）→
-     * 閘門失效，prime（A、B 都在艙內）→ 兩人都沒有移動時不是邊緣、不查詢來源艙 → B 離開再進入才是邊緣。prime 不重設「已評估過」，之後不再以位準評估。
+     * PREPARE 中途閘門失效之後的 {@code prime}（F6-2d-2，F6-2d-2 Step 0 quality 給本體的建議：PREPARE 中重啟的窗口之前先補）。本 test 直接呼叫 {@code prime}，只鎖兩件事：
+     * {@code prime} 不重設「已評估過」（之後不再以位準評估），而且 {@code Track.entry(false)} 每次交出同一個 {@link EntryWatch}（prime 記下的快照在下一次 {@code gate} 時還在）。
+     * 第一次評估以位準進 PREPARE → prime（A、B 都在艙內；B 是 PREPARE 期間進艙的）→ 兩人都沒有移動時不是邊緣、不查詢來源艙 → B 離開再進入才是邊緣。
+     * {@code CollapseService.leavePrepare} 確實以目前在艙內的原參與者呼叫 {@code prime} 那一行不在本 test 的範圍，由 GameTest P-POWER 的 {@code noReentryWithoutAnEntryEdge}
+     * 鎖住（F6-2d-2 B1，A 段 quality Minor 5：原本的說明寫成本 test 經 {@code Track} 的接線驗了 {@code leavePrepare}）。不應查詢來源艙的兩步各以帶這一步說明的 supplier
+     * （{@link #notQueried}）表達，查詢時的失敗訊息看得出是哪一步。
      */
     @Test void afterThePrimeOnLeavingPrepareTheGateWaitsForAnEdge() {
         var track = new CollapseService.Track();
         assertTrue(track.entry(false).gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), "第一次評估：A 在艙內，以位準進 PREPARE");
         track.entry(false).prime(Set.of(A, B));
-        assertFalse(track.entry(false).gate(Set.of(A, B), EVERYONE, NOT_QUERIED), "prime 之後：A 與 PREPARE 期間進艙的 B 都沒有移動，不是邊緣");
-        assertFalse(track.entry(false).gate(Set.of(A), EVERYONE, NOT_QUERIED), "B 離開");
+        assertFalse(track.entry(false).gate(Set.of(A, B), EVERYONE, notQueried("prime 之後：A 與 PREPARE 期間進艙的 B 都沒有移動")),
+                "prime 之後：A 與 PREPARE 期間進艙的 B 都沒有移動，不是邊緣");
+        assertFalse(track.entry(false).gate(Set.of(A), EVERYONE, notQueried("B 離開")), "B 離開");
         assertTrue(track.entry(false).gate(Set.of(A, B), EVERYONE, () -> SourceSignal.OK), "B 由艙外再進入是邊緣");
+    }
+
+    /** 同 {@link #NOT_QUERIED}，失敗訊息另帶 {@code step}（查詢時看得出是哪一步；F6-2d-2 B1，A 段 quality Minor 5）。 */
+    private static Supplier<SourceSignal> notQueried(String step) {
+        return () -> { throw new AssertionError(step + "：沒有人觸發時不應查詢來源艙"); };
     }
 
     private static Set<UUID> ordered(UUID... ids) {
