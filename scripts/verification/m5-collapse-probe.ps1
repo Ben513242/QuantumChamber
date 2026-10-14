@@ -74,6 +74,8 @@ $chains = [ordered]@{
     # H7：開服時不預先載入原艙附近、原艙卸載之後才 JOIN 在艙內；不離開再進入就續行（w8late，DORMANT）／重試（unreadablelate，SEALED(AUTHORITY_UNREADABLE)）。
     'w8late' = @(@{phase='w8late-crash'; ending='halt'; window='DORMANT_STEP'}, @{phase='w8late-restart'; ending='stop'; window=''})
     'unreadablelate' = @(@{phase='unreadablelate-crash'; ending='halt'; window='SEALED_STEP'}, @{phase='unreadablelate-restart'; ending='stop'; window=''})
+    # H7 的 WAITING 版：crash 同 w5、level.dat 帶著半徑 0 的 spawn chunks；開服時原艙附近沒有載入、參與者已在艙內，不離開再進入就進 PREPARE。
+    'waitinglate' = @(@{phase='waitinglate-crash'; ending='halt'; window='DISCOVERY_APPENDED'}, @{phase='waitinglate-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

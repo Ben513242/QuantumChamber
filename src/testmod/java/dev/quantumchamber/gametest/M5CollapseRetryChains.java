@@ -55,9 +55,11 @@ import org.apache.logging.log4j.Level;
  *     卸載之後參與者才 JOIN 在艙內（實際的 server：玩家在開服之後才連線，原艙的 chunk 在 JOIN 之後幾個 tick 才載入）；不離開再進入就提交 COLLAPSING，續行到 (b) 終局。</li>
  * <li>{@code unreadablelate}（H7 的 SEALED 版，§11.2 的重試觸發）：crash 同 {@code unreadable}，另在參與者在艙內時原生存檔；restart 同 {@code w8late} 的條件，不離開再進入就
  *     重試一次，續行到 (b) 終局。</li>
+ * <li>{@code waitinglate}（H7 的 WAITING 版，§7.3 的閘門）：crash 同 {@code w5}（DISCOVERY_APPENDED），只是 level.dat 帶著半徑 0 的 spawn chunks；restart 開服時原艙附近
+ *     還沒有載入、參與者在第一個 tick 之前已在艙內，閘門第一次評估時來源 ticket 的 chunk 還在載入；不離開再進入就進 PREPARE，續行到 (b) 終局。</li>
  * </ul>
- * restart 開服時都以 probe 的 ticket 同步載入原艙附近（{@link M5CollapseFixture#loadAroundTheChamberNow}；{@code w8late}、{@code unreadablelate} 除外）：來源艙已載入是 §7.1／§11.2
- * 觸發成立的條件之一，載入在第一次觀察之前完成，這幾條 chain 驗的是觸發之後的續行；載入晚於觸發的情況由 {@code w8late}、{@code unreadablelate} 驗（{@link #lateRestartPhase}）。
+ * restart 開服時都以 probe 的 ticket 同步載入原艙附近（{@link M5CollapseFixture#loadAroundTheChamberNow}；H7 的三條除外）：來源艙已載入是 §7.1／§11.2 觸發成立的條件之一，
+ * 載入在第一次觀察之前完成，這幾條 chain 驗的是觸發之後的續行；載入晚於觸發的情況由 {@code w8late}、{@code unreadablelate}（{@link #lateRestartPhase}）與 {@code waitinglate} 驗。
  * <p>放在新的類別（不併入 {@link M5CollapsePassageChains}）：這幾條 chain 的 halt 當下不是 PASSAGE_READY 或終局，而是 DORMANT、SEALED 或 COLLAPSING＋DISABLED，restart 都要先由
  * 觸發（或開服之後的第一次 RESOLVE）續行，再接 {@link M5CollapsePassage} 的 ready／cross／ended；通道的 chain 則是開服時就結束通道。
  */
@@ -363,6 +365,67 @@ final class M5CollapseRetryChains {
                 new Step("retried", LATE_TRIGGER_TICKS + 5, this::retriedWithoutReentry)));
         steps.addAll(untilTheEnd());
         return lateRestartPhase(crashPhase, CrashWindow.SEALED_STEP, steps);
+    }
+
+    /**
+     * H7 的 {@code waitinglate} 的 crash（WAITING 的閘門）：同 {@link M5CollapseDormantChains#crash} 的 {@code DISCOVERY_APPENDED}（DORMANT 的 NEW 收據 → 參與者由艙外進入 →
+     * COLLAPSING → RESOLVE 追加 discovery 之後 halt），只是收據的原生存檔之前把 spawn chunks 的半徑改為 0（level.dat 帶著它：restart 開服時原艙附近沒有載入，只有 attach 為
+     * COLLAPSING 取得的來源 ticket 會載入它）。參與者在艙外附近，crash phase 的原艙一直由他的 ticket 載入。
+     */
+    Phase waitingLateCrash() {
+        var steps = new ArrayList<>(origin());
+        steps.add(new Step("receipt", 1, () -> {
+            run.source().getGameRules().get(GameRules.SPAWN_CHUNK_RADIUS).set(0, run.server());
+            fixture.writeCrashReceipt(fixture.dormantNewReceipt());
+            M5CollapseWindows.arm(run, fixture, CrashWindow.DISCOVERY_APPENDED);
+            return true;
+        }));
+        steps.add(enter());
+        steps.add(new Step("committed", 40, fixture::committed));
+        steps.add(new Step("halt", 400, () -> false));
+        return crashPhase(steps);
+    }
+
+    /**
+     * H7 的 {@code waitinglate} 的 restart（spec v5.9 §7.3：開服之後的第一次評估遇到來源艙還沒載入時，不算評估過）：開服時是 COLLAPSING（目的地的權威都已確認），原艙附近
+     * 沒有載入（{@code chamberNotLoadedAtStart}；來源 ticket 是 attach 剛加的）。第一個 tick 之前參與者 JOIN（艙外，crash 前存的位置）並移到艙內
+     * （{@code insideBeforeTheFirstTick}）；RESOLVE 在第一個 tick 重新確認，閘門在下一個 tick 第一次評估，這時來源 ticket 的 chunk 通常還在載入。參與者<b>不離開再進入</b>，在
+     * {@link #LATE_TRIGGER_TICKS} 個 tick 內進入 PREPARE（{@code preparedWithoutReentry}）→ PASSAGE_READY → 跨越 → (b) 終局。修正之前，第一次評估在來源艙還沒載入時就算評估過
+     * （記下在艙內的人），要離開再進入才進 PREPARE（H7 的觀察 {@code obs-waiting-2}）。來源艙載入得比閘門第一次評估早時，這條 chain 驗不到落空（GREEN 仍成立），所以
+     * 另記下 RESOLVE 完成、原艙附近載入完成與進入 PREPARE 的 tick。
+     */
+    Phase waitingLateRestart(String crashPhase) {
+        var id = CrashWindow.DISCOVERY_APPENDED;
+        requireNoProjectionLoad(id);
+        var steps = new ArrayList<Step>(List.of(new Step("prepared", LATE_TRIGGER_TICKS + 5, this::preparedWithoutReentry)));
+        steps.addAll(passage.steps(M5CollapseWindows.of(id).prepared()));
+        return Phase.stop(steps).started(() -> {
+            started(crashPhase, id, false);
+            boolean loaded = chamberLoaded();
+            fixture.joinAllInTheSourceWorld(Inside.OUTSIDE);
+            fixture.moveInside();
+            joinedAt = fixture.players().getFirst().getPos();
+            run.expect("chamberNotLoadedAtStart", !loaded, () -> "開服時原艙附近已載入，量不到「來源艙還沒載入時的第一次評估」");
+            run.expect("insideBeforeTheFirstTick", run.ticks() == 0 && fixture.players().stream().allMatch(M5CollapseFixture::inside),
+                    () -> "tick=" + run.ticks() + " 參與者在 " + joinedAt);
+            run.proof.put("joinedAt", joinedAt.toString());
+        }).everyTick(() -> passage.invariants(null));
+    }
+
+    /**
+     * {@code waitinglate}：參與者沒有移動，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內進入 PREPARE（「進入 PREPARE（閘門成立）」的 INFO 一則）；之後仍沒有就由這個具名斷言
+     * 判 FAIL。另記下 RESOLVE 完成、原艙附近載入完成與進入 PREPARE 的 tick（閘門第一次評估在 RESOLVE 完成的下一個 tick）。
+     */
+    private boolean preparedWithoutReentry() {
+        var sid = fixture.sid().toString();
+        if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
+        if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.proof.putIfAbsent("resolvedAtPhaseTick", run.ticks());
+        var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", sid).size();
+        if (prepares == 0 && ++triggerWaited < LATE_TRIGGER_TICKS) return false;
+        boolean still = notMovedSinceTheJoin();
+        run.expect("preparedWithoutReentry", prepares == 1 && still, () -> "開服之後 " + run.ticks() + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
+        run.proof.put("preparedAtPhaseTick", run.ticks());
+        return true;
     }
 
     /**
