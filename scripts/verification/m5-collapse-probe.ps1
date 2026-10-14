@@ -71,6 +71,9 @@ $chains = [ordered]@{
     'w9cd' = @(@{phase='w9cd-crash'; ending='halt'; window='CATALOG_DISABLED'}, @{phase='w9cd-restart'; ending='stop'; window=''})
     # F6-2-07：SEALED(AUTHORITY_UNREADABLE)，同一個 instance 內退避期過後的邊緣觸發也不重試之後 crash；重啟之後重試成功。
     'unreadable' = @(@{phase='unreadable-crash'; ending='halt'; window='SEALED_STEP'}, @{phase='unreadable-restart'; ending='stop'; window=''})
+    # H7：開服時不預先載入原艙附近、原艙卸載之後才 JOIN 在艙內；不離開再進入就續行（w8late，DORMANT）／重試（unreadablelate，SEALED(AUTHORITY_UNREADABLE)）。
+    'w8late' = @(@{phase='w8late-crash'; ending='halt'; window='DORMANT_STEP'}, @{phase='w8late-restart'; ending='stop'; window=''})
+    'unreadablelate' = @(@{phase='unreadablelate-crash'; ending='halt'; window='SEALED_STEP'}, @{phase='unreadablelate-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

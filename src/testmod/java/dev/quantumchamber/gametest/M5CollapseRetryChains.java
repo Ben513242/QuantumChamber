@@ -5,6 +5,7 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 import dev.quantumchamber.candidate.CandidateBytes;
 import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
+import dev.quantumchamber.chamber.ChamberGeometry;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Optional;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.GameRules;
 import org.apache.logging.log4j.Level;
 
 /**
@@ -49,9 +51,13 @@ import org.apache.logging.log4j.Level;
  *     就是 §8.3 的重試（spec §6「重啟後為什麼合法」：等同 §8.3 已完成；§12 COLLAPSING 列：依推導階段續做），不進 SEALED，改回 EAGER_ENABLED、物化。</li>
  * <li>{@code unreadable}（{@code SEALED_STEP}，F6-2-07）：discovery 的讀取注入 IO 例外 → SEALED(AUTHORITY_UNREADABLE)；同一個 instance 內退避期過後由艙外進入也不重試
  *     （restart-only），之後 crash。restart 之後參與者由艙外進入 → 重試一次 → PASSAGE_READY。</li>
+ * <li>{@code w8late}（H7，spec v5.9 §7.1「來源艙還沒載入時，這次觸發不消耗」、§4 H7）：crash 同 {@code w8}。restart 不預先載入原艙附近、spawn chunks 的半徑改為 0，等原艙附近
+ *     卸載之後參與者才 JOIN 在艙內（實際的 server：玩家在開服之後才連線，原艙的 chunk 在 JOIN 之後幾個 tick 才載入）；不離開再進入就提交 COLLAPSING，續行到 (b) 終局。</li>
+ * <li>{@code unreadablelate}（H7 的 SEALED 版，§11.2 的重試觸發）：crash 同 {@code unreadable}，另在參與者在艙內時原生存檔；restart 同 {@code w8late} 的條件，不離開再進入就
+ *     重試一次，續行到 (b) 終局。</li>
  * </ul>
- * restart 開服時都以 probe 的 ticket 同步載入原艙附近（{@link M5CollapseFixture#loadAroundTheChamberNow}）：來源艙已載入是 §7.1／§11.2 觸發成立的條件之一，載入要在第一次觀察
- * 之前完成，觸發才不會因為 chunk 還在載入而落空（落空時依 §7.1 要再進入一次，不是這裡要驗的東西）。
+ * restart 開服時都以 probe 的 ticket 同步載入原艙附近（{@link M5CollapseFixture#loadAroundTheChamberNow}；{@code w8late}、{@code unreadablelate} 除外）：來源艙已載入是 §7.1／§11.2
+ * 觸發成立的條件之一，載入在第一次觀察之前完成，這幾條 chain 驗的是觸發之後的續行；載入晚於觸發的情況由 {@code w8late}、{@code unreadablelate} 驗（{@link #lateRestartPhase}）。
  * <p>放在新的類別（不併入 {@link M5CollapsePassageChains}）：這幾條 chain 的 halt 當下不是 PASSAGE_READY 或終局，而是 DORMANT、SEALED 或 COLLAPSING＋DISABLED，restart 都要先由
  * 觸發（或開服之後的第一次 RESOLVE）續行，再接 {@link M5CollapsePassage} 的 ready／cross／ended；通道的 chain 則是開服時就結束通道。
  */
@@ -67,6 +73,13 @@ final class M5CollapseRetryChains {
     private static final int CHAMBER_LOAD_RADIUS = 1;
     /** w8：PREPARE 等多少 tick（RESOLVE 之後閘門第一次以位準評估就該成立；超過時由具名斷言判 FAIL，不是 stepBounded）。 */
     private static final int PREPARE_WAIT_TICKS = 10;
+    /** H7（{@code w8late}、{@code unreadablelate}）的 restart：等原艙附近卸載的上限（spawn chunks 的半徑改為 0 之後，原版在下一次 chunk 更新就把它降到 FULL 以下）。 */
+    private static final int UNLOAD_WAIT_TICKS = 400;
+    /**
+     * H7：參與者 JOIN 在艙內之後，最多等多少 tick 觸發（原艙附近在 JOIN 之後幾個 tick 才由玩家的 ticket 載入；超過時由具名斷言判 FAIL，不是 stepBounded：修正之前的
+     * RED 失敗在目標斷言）。
+     */
+    private static final int LATE_TRIGGER_TICKS = 20;
 
     private final M5CollapseRun run;
     private final M5CollapseFixture fixture;
@@ -81,6 +94,9 @@ final class M5CollapseRetryChains {
     private Vec3d joinedAt;
     /** w9io 的 restart：另一個 session 已落地的 allocation entry（spec §6 roll-forward：不移除）。 */
     private M5CollapseDiskEvidence.Allocation otherAllocation;
+    /** H7 的 restart：開服時這個 session 的 record（JOIN 時斷言還沒有觸發），與 JOIN 之後等觸發的 tick 數（只給 {@code committed}／{@code retried} 這一個 step 用）。 */
+    private SessionRecoveryRecord atStart;
+    private int triggerWaited;
 
     M5CollapseRetryChains(M5CollapseRun run) {
         this.run = run;
@@ -140,6 +156,19 @@ final class M5CollapseRetryChains {
      * restart-only）→ 裝上 crash 點，塌縮流程下一次處理這個 SEALED 之前 halt。
      */
     Phase unreadableCrash() {
+        return crashPhase(unreadableSteps(false));
+    }
+
+    /**
+     * H7 的 {@code unreadablelate} 的 crash：同 {@link #unreadableCrash}，裝上 crash 點之前另在參與者在艙內時原生存檔（{@code savedInside}：playerdata 在艙內，restart 才能
+     * JOIN 在艙內）。同一個 instance 內 AUTHORITY_UNREADABLE 不重試，所以存檔時仍是同一筆 SEALED。
+     */
+    Phase unreadableLateCrash() {
+        return crashPhase(unreadableSteps(true));
+    }
+
+    /** {@link #unreadableCrash} 與 {@link #unreadableLateCrash} 的 step；{@code savedInside} 時在裝上 crash 點之前插入 {@code savedInside}。 */
+    private List<Step> unreadableSteps(boolean savedInside) {
         var steps = new ArrayList<>(origin());
         steps.add(new Step("receipt", 1, () -> {
             fixture.writeCrashReceipt(fixture.dormantNewReceipt());
@@ -151,9 +180,17 @@ final class M5CollapseRetryChains {
         steps.add(new Step("sealed", 400, this::sealedUnreadable));
         steps.add(new Step("backoff", BACKOFF_TICKS + 10, this::backoffElapsedThenEnter));
         steps.add(new Step("notRetried", WATCH_TICKS + 5, this::notRetriedInTheSameInstance));
+        if (savedInside) steps.add(new Step("savedInside", 1, this::savedInside));
         steps.add(arm(CrashWindow.SEALED_STEP));
         steps.add(new Step("halt", 5, () -> false));
-        return crashPhase(steps);
+        return steps;
+    }
+
+    /** H7 的 {@code unreadablelate} 的 crash：參與者在艙內（{@code notRetried} 之後）時原生存檔，playerdata 在艙內。 */
+    private boolean savedInside() {
+        run.expect("insideWhenSaved", fixture.players().stream().allMatch(M5CollapseFixture::inside), () -> "存檔時參與者不在艙內");
+        run.expect("nativeSaveInside", run.server().saveAll(false, true, true), () -> "saveAll 回 false");
+        return true;
     }
 
     /** step：依窗口表裝上 {@code id} 的 crash 點（觀察完之後才裝，所以 halt 一定在觀察之後）。 */
@@ -223,9 +260,9 @@ final class M5CollapseRetryChains {
 
     /**
      * restart 開服時（共用）：讀回 crash phase 的收據、依窗口表斷言磁碟上的狀態；halt 當下記下了 record 的摘要時，另比對開服時的 record 與它相同
-     * （{@code recordKeptAcrossTheRestart}）；以 probe 的 ticket 同步載入原艙附近（{@code chamberLoadedBeforeTheFirstTick}）。
+     * （{@code recordKeptAcrossTheRestart}）；{@code preload} 時以 probe 的 ticket 同步載入原艙附近（{@code chamberLoadedBeforeTheFirstTick}；H7 的 {@link #lateRestartPhase} 不載入）。
      */
-    private void started(String crashPhase, CrashWindow id) throws Exception {
+    private void started(String crashPhase, CrashWindow id, boolean preload) throws Exception {
         var window = M5CollapseWindows.of(id);
         var halt = fixture.readCrashReceipt(crashPhase, id);
         M5CollapseWindows.expectAtRestart(run, fixture, window, halt);
@@ -235,7 +272,7 @@ final class M5CollapseRetryChains {
             run.expect("recordKeptAcrossTheRestart", current != null && M5CollapseFixture.recordDigest(current).equals(expected),
                     () -> "開服時的 record " + (current == null ? "ABSENT" : M5CollapseFixture.recordDigest(current)) + " 與 halt 當下不同：" + expected);
         }
-        run.expect("chamberLoadedBeforeTheFirstTick", fixture.loadAroundTheChamberNow(run.source(), CHAMBER_LOAD_RADIUS), () -> "原艙附近沒有都載入到 FULL");
+        if (preload) run.expect("chamberLoadedBeforeTheFirstTick", fixture.loadAroundTheChamberNow(run.source(), CHAMBER_LOAD_RADIUS), () -> "原艙附近沒有都載入到 FULL");
     }
 
     /** 這條 chain 的窗口不得要求 JOIN 之前載入投影（這裡的 restart 不做；窗口表的規則允許 COLLAPSING 的列指定它，w9cd 就是 COLLAPSING）。在 {@code onInitialize} 丟出。 */
@@ -247,7 +284,120 @@ final class M5CollapseRetryChains {
 
     private Phase restartPhase(String crashPhase, CrashWindow id, List<Step> steps, M5CollapseRun.Checked afterStarted) {
         requireNoProjectionLoad(id);
-        return Phase.stop(steps).started(() -> { started(crashPhase, id); afterStarted.run(); }).everyTick(() -> passage.invariants(null));
+        return Phase.stop(steps).started(() -> { started(crashPhase, id, true); afterStarted.run(); }).everyTick(() -> passage.invariants(null));
+    }
+
+    /**
+     * H7 的 restart（{@code w8late}、{@code unreadablelate}）：開服時同 {@link #started} 的窗口表斷言，但<b>不</b>以 probe 的 ticket 預先載入原艙附近，並把 spawn chunks 的
+     * 半徑改為 0（原版的 gamerule callback 移除 START ticket；fixture 的 Controller 在 spawn chunks 內，不這樣做原艙一直是載入的），讓原艙附近卸載；不 JOIN。記下開服時這個
+     * session 的 record（JOIN 時斷言還沒有觸發）。DORMANT 與 SEALED 沒有來源 ticket，所以原艙附近會卸載。
+     */
+    private Phase lateRestartPhase(String crashPhase, CrashWindow id, List<Step> steps) {
+        requireNoProjectionLoad(id);
+        return Phase.stop(steps).started(() -> {
+            started(crashPhase, id, false);
+            run.source().getGameRules().get(GameRules.SPAWN_CHUNK_RADIUS).set(0, run.server());
+            atStart = run.journal().flushedRecords().get(fixture.sid());
+        }).everyTick(() -> passage.invariants(null));
+    }
+
+    /**
+     * H7：原艙附近是否已載入，判斷與 production 的 {@code CollapseService.neighborhoodLoaded} 相同（艙體向水平各方向外擴 3 格的 chunk 都是 FULL；那個方法是
+     * package-private，testmod 讀不到）。只查詢，不加 ticket、不載入。
+     */
+    private boolean chamberLoaded() {
+        var bounds = ChamberGeometry.bounds(FRAME);
+        for (int x = (bounds.getMinX() - 3) >> 4; x <= (bounds.getMaxX() + 3) >> 4; x++) {
+            for (int z = (bounds.getMinZ() - 3) >> 4; z <= (bounds.getMaxZ() + 3) >> 4; z++) {
+                if (run.source().getChunkManager().getWorldChunk(x, z) == null) return false;
+            }
+        }
+        return true;
+    }
+
+    /** H7 的 step {@code chamberUnloaded}：原艙附近已不是全部 FULL（spawn chunks 的 ticket 移除之後）。 */
+    private boolean chamberUnloaded() {
+        if (chamberLoaded()) return false;
+        run.proof.put("chamberUnloadedAtPhaseTick", run.ticks());
+        return true;
+    }
+
+    /**
+     * H7 的 step {@code join}：參與者 JOIN 在艙內（crash 前存的位置），斷言 JOIN 時原艙附近還沒有載入（{@code chamberNotLoadedAtTheJoin}：否則量不到 H7 的情況），而且 record
+     * 與開服時相同（{@code unchangedBeforeTheJoin}：還沒有觸發）；記下 JOIN 的位置（之後斷言沒有移動）。
+     */
+    private Step joinInsideLate() {
+        return new Step("join", 1, () -> {
+            boolean loaded = chamberLoaded();
+            var record = run.journal().flushedRecords().get(fixture.sid());
+            fixture.joinAllInTheSourceWorld(Inside.INSIDE);
+            joinedAt = fixture.players().getFirst().getPos();
+            run.expect("chamberNotLoadedAtTheJoin", !loaded, () -> "JOIN 時原艙附近已載入，量不到「來源艙還沒載入時的觸發」");
+            run.expect("unchangedBeforeTheJoin", atStart != null && atStart.equals(record), () -> "JOIN 之前 state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
+            run.proof.put("joinedAtPhaseTick", run.ticks());
+            run.proof.put("joinedAt", joinedAt.toString());
+            return true;
+        });
+    }
+
+    /**
+     * H7 的 {@code w8late} 的 restart（crash 同 {@link #w8Crash}）：{@link #lateRestartPhase} 開服 → 原艙附近卸載（{@code chamberUnloaded}）→ 參與者 JOIN 在艙內，這時原艙附近
+     * 還沒有載入 → 參與者<b>不離開再進入</b>，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內提交 COLLAPSING（{@code committedWithoutReentry}，spec v5.9 §7.1：來源艙還沒載入時
+     * 這次觸發不消耗）→ RESOLVE → PREPARE → PASSAGE_READY → 跨越 → (b) 終局（spec §12 的四件事由 {@link M5CollapsePassage} 斷言）。修正之前，JOIN 的觸發在來源艙還沒載入時
+     * 被消耗，要離開再進入才續行（F6-2d-1 的 {@code obs-w8-late-join}）。
+     */
+    Phase w8LateRestart(String crashPhase) {
+        var steps = new ArrayList<Step>(List.of(new Step("chamberUnloaded", UNLOAD_WAIT_TICKS, this::chamberUnloaded), joinInsideLate(),
+                new Step("committed", LATE_TRIGGER_TICKS + 5, this::committedWithoutReentry)));
+        steps.addAll(untilTheEnd());
+        return lateRestartPhase(crashPhase, CrashWindow.DORMANT_STEP, steps);
+    }
+
+    /**
+     * H7 的 {@code unreadablelate} 的 restart（crash 是 {@link #unreadableLateCrash}）：{@link #lateRestartPhase} 開服（窗口表的斷言同 {@link #unreadableRestart}）→ 原艙附近卸載
+     * → 參與者 JOIN 在艙內，這時原艙附近還沒有載入 → 參與者<b>不離開再進入</b>，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內由 SEALED(AUTHORITY_UNREADABLE) 重試一次
+     * （{@code retriedWithoutReentry}，spec §11.2：開服之後的第一次觸發，來源艙還沒載入時不消耗）→ RESOLVE 追加 discovery → PASSAGE_READY → 跨越 → (b) 終局。
+     */
+    Phase unreadableLateRestart(String crashPhase) {
+        var steps = new ArrayList<Step>(List.of(new Step("chamberUnloaded", UNLOAD_WAIT_TICKS, this::chamberUnloaded), joinInsideLate(),
+                new Step("retried", LATE_TRIGGER_TICKS + 5, this::retriedWithoutReentry)));
+        steps.addAll(untilTheEnd());
+        return lateRestartPhase(crashPhase, CrashWindow.SEALED_STEP, steps);
+    }
+
+    /**
+     * {@code w8late}：JOIN 之後參與者沒有移動，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內提交 COLLAPSING（「觸發=DORMANT 續行」的 INFO 一則、Destination 是 U）；之後仍沒有
+     * 提交就由這個具名斷言判 FAIL。另記下原艙附近載入完成與提交的 tick。
+     */
+    private boolean committedWithoutReentry() {
+        var sid = fixture.sid();
+        var record = run.journal().flushedRecords().get(sid);
+        boolean committed = record != null && record.state() == SessionState.COLLAPSING;
+        if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
+        if (!committed && ++triggerWaited < LATE_TRIGGER_TICKS) return false;
+        var info = run.capture().matching(Level.INFO, "塌縮已提交", "觸發=DORMANT 續行", sid.toString()).size();
+        boolean still = notMovedSinceTheJoin();
+        run.expect("committedWithoutReentry", committed && info == 1 && still && M5CollapseFixture.destination(record).equals(Optional.of(fixture.universe())),
+                () -> "JOIN 之後 " + triggerWaited + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), sid) + " 提交的 INFO=" + info + " 沒有移動=" + still);
+        run.proof.put("committedAtPhaseTick", run.ticks());
+        return true;
+    }
+
+    /**
+     * {@code unreadablelate}：JOIN 之後參與者沒有移動，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內由 SEALED(AUTHORITY_UNREADABLE) 重試（這個原因的「SEALED 重試」INFO 恰一則，
+     * 也是全部的重試）；之後仍沒有重試就由這個具名斷言判 FAIL。另記下原艙附近載入完成與重試的 tick。
+     */
+    private boolean retriedWithoutReentry() {
+        var sid = fixture.sid().toString();
+        var fromReason = run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + SealedReason.AUTHORITY_UNREADABLE + ")→COLLAPSING", sid).size();
+        if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
+        if (fromReason == 0 && ++triggerWaited < LATE_TRIGGER_TICKS) return false;
+        var all = run.capture().matching(Level.INFO, "SEALED 重試", sid).size();
+        boolean still = notMovedSinceTheJoin();
+        run.expect("retriedWithoutReentry", fromReason == 1 && all == 1 && still,
+                () -> "JOIN 之後 " + triggerWaited + " 個 tick：SEALED(AUTHORITY_UNREADABLE) 的重試 INFO=" + fromReason + " 全部的重試 INFO=" + all + " 沒有移動=" + still);
+        run.proof.put("retriedAtPhaseTick", run.ticks());
+        return true;
     }
 
     /** step：參與者真 JOIN 在來源世界的艙外（playerdata 是觸發之前存的）。 */

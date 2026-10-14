@@ -25,7 +25,7 @@ import net.fabricmc.api.ModInitializer;
  *     step（F6-2c 起可以只取 resolve、ready、cross 其中幾段）、每個 tick 的不變量與 spec §12 的終局斷言。</li>
  * <li>chain：{@link M5CollapseDormantChains}（DORMANT NEW 收據，W2～W6；restart 也用於 W6x）、{@link M5CollapseLiveChain}（W1）、
  *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）、{@link M5CollapsePassageChains}（F6-2c：通道與終局的重啟窗口，
- *     W7 與其餘的重啟變體）、{@link M5CollapseRetryChains}（F6-2d-1：重試與續行跨重啟，W8、W9 與它的兩個變體、AUTHORITY_UNREADABLE 的重啟後重試）；投影 chunk 的載入
+ *     W7 與其餘的重啟變體）、{@link M5CollapseRetryChains}（F6-2d-1：重試與續行跨重啟，W8、W9 與它的兩個變體、AUTHORITY_UNREADABLE 的重啟後重試；H7 的 w8late、unreadablelate）；投影 chunk 的載入
  *     與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。
  *     {@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。</li>
  * </ul>
@@ -94,6 +94,11 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         // F6-2-07：discovery 讀取的 IO 失敗 → SEALED(AUTHORITY_UNREADABLE)，同一個 instance 內不重試 → 重啟之後重試成功。
         table.put("unreadable-crash", run -> new M5CollapseRetryChains(run).unreadableCrash());
         table.put("unreadable-restart", run -> new M5CollapseRetryChains(run).unreadableRestart("unreadable-crash"));
+        // H7（spec v5.9 §7.1、§4 H7）：開服時不預先載入原艙附近，原艙卸載之後參與者才 JOIN 在艙內；不離開再進入就續行（DORMANT）／重試（SEALED(AUTHORITY_UNREADABLE)）。
+        table.put("w8late-crash", run -> new M5CollapseRetryChains(run).w8Crash());
+        table.put("w8late-restart", run -> new M5CollapseRetryChains(run).w8LateRestart("w8late-crash"));
+        table.put("unreadablelate-crash", run -> new M5CollapseRetryChains(run).unreadableLateCrash());
+        table.put("unreadablelate-restart", run -> new M5CollapseRetryChains(run).unreadableLateRestart("unreadablelate-crash"));
         return Collections.unmodifiableMap(table);
     }
 
