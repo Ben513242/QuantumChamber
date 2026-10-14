@@ -4,6 +4,7 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
 import dev.quantumchamber.chamber.MembraneState;
+import dev.quantumchamber.collapse.OriginDoorsTestAccess;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,6 +36,9 @@ final class M5CollapseDoors {
      * 是關著的 restart（{@link M5CollapseDormantChains#restart} 的 W2、W3、W5：RESOLVE 期間 crash，門沒有動過），在參與者 JOIN 之前插入兩個 step：重啟之後第一次載入的那個
      * tick 排入一則 NORMALIZE，那時門是關著的（{@code normalizeQueuedForTheClosedDoor}）→ 排入時記下的 tick 結束時門仍關著、沒有「已依 collapse view 重新套用」的 INFO
      * （{@code closedDoorKeptByTheReapply}；mutation：NORMALIZE 不看門有沒有量子膜時失敗在這裡）。
+     * <p>F6-2d-2 B2a（B1 quality Minor 1）：{@code closedDoorKeptByTheReapply} 另要求排入的 INFO 仍恰一則、而且這座艙沒有待套用的門（production 的 {@code OriginDoors}，經
+     * testmod 的 {@link OriginDoorsTestAccess}）：那一則在 tick N 已被消耗。B1 的版本只看 tick N 的門與套用的 INFO，「延後到下一個 tick 才把關著的門打開」照樣 PASS
+     * （mutation {@code mut-normalize-defers-then-opens}）。JOIN 之前另以 {@link #closedDoorStillKeptAtTheJoin} 再驗一次。名稱不變、條件變嚴。
      */
     static List<Step> closedDoorKeptByTheReapply(M5CollapseRun run, M5CollapseFixture fixture) {
         int[] queuedFor = {-1};
@@ -52,10 +56,26 @@ final class M5CollapseDoors {
                     if (now < queuedFor[0]) return false;
                     boolean closed = closed(run);
                     var applied = reapplied(run, fixture.sid());
-                    run.expect("closedDoorKeptByTheReapply", closed && now == queuedFor[0] && applied.isEmpty(),
-                            () -> "tick " + now + "（排入的是 tick " + queuedFor[0] + "）：門關著=" + closed + " 門正中=" + run.source().getBlockState(local(3, 3, 0)) + " 套用的 INFO=" + applied);
+                    var queued = reapplyQueued(run, fixture.sid());
+                    var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
+                    run.expect("closedDoorKeptByTheReapply", closed && now == queuedFor[0] && applied.isEmpty() && queued.size() == 1 && pending.isEmpty(),
+                            () -> "tick " + now + "（排入的是 tick " + queuedFor[0] + "）：門關著=" + closed + " 門正中=" + run.source().getBlockState(local(3, 3, 0)) + " 套用的 INFO=" + applied
+                                    + " 排入的 INFO=" + queued + " 待套用的門=" + pending.orElse("none"));
                     return true;
                 }));
+    }
+
+    /**
+     * F6-2d-2 B2a（B1 quality Minor 1）：開服時門關著的 restart（{@link M5CollapseDormantChains#restart}）在參與者 JOIN 之前（{@code join} 的那個 step、JOIN 之前，JOIN 的 tick
+     * 不變）再驗一次 {@link #closedDoorKeptByTheReapply} 之後門仍關著：25 格 {@code open=false}＋{@code membrane=none}、沒有「已依 collapse view 重新套用」的 INFO、排入的 INFO
+     * 仍恰一則（{@code closedDoorStillKeptAtTheJoin}）。
+     */
+    static void closedDoorStillKeptAtTheJoin(M5CollapseRun run, M5CollapseFixture fixture) {
+        boolean closed = closed(run);
+        var applied = reapplied(run, fixture.sid());
+        var queued = reapplyQueued(run, fixture.sid());
+        run.expect("closedDoorStillKeptAtTheJoin", closed && applied.isEmpty() && queued.size() == 1,
+                () -> "JOIN 之前（tick " + run.server().getTicks() + "）：門關著=" + closed + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied + " 排入的 INFO=" + queued);
     }
 
     // ---- 共用的查詢 ----
