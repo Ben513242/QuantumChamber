@@ -1005,6 +1005,8 @@ public final class CollapseService {
     void sealCommitted(SessionRecoveryRecord view, Track track, SealedReason reason, RuntimeException cause, SessionRecoveryState.CommitResult result) {
         var sid = view.sessionUuid();
         track.sealWritten();
+        // H9 (b)：本 instance 自己封存的 session，進入時已依原因記 log（下方 sealedLog），不再記開服時的提醒（remindAtStartup）。
+        track.sealedReported = true;
         if (result.committed()) {
             track.warnings.remove(SEAL_WRITE);
         } else {
@@ -1073,6 +1075,7 @@ public final class CollapseService {
         if (view.state() != SessionState.SEALED || !view.equals(journal.records().get(sid))) return;
         var reason = view.collapse().sealedReason().orElseThrow();
         var track = track(sid);
+        remindAtStartup(view, track, reason);
         if (sealedRetry(reason, startupSessions.contains(sid), track.restartRetryConsumed) == SealedRetry.NONE) return;
         // §11.2：與 DORMANT 相同的邊緣觸發（§7.1，來源艙還沒載入時不消耗，其他條件與退避期仍消耗：EntryWatch#trigger，H7）；開服 attach 當下就在 journal 的 session，
         // 第一次觀察到原參與者在艙內也算。
@@ -1082,6 +1085,20 @@ public final class CollapseService {
             return;
         }
         retrySealed(view, track, reason);
+    }
+
+    /**
+     * 開服時的提醒（spec v5.10 §11.2「永久原因」、§12 SEALED 列，H9 (b)）：開服 attach 當下就在 journal（{@link #startupSessions}）、collapse view 是永久原因 SEALED 的 session，
+     * 每個 server instance 記一次 ERROR「需要管理員處理」，字句與進入時的不同。crash 在 SEALED 的寫入確認與 {@link #sealedLog} 之間時，兩個 JVM 都沒有進入時的 ERROR，開服之後的
+     * SEALED 也不再記，所以在這裡補記。本 instance 自己封存的（{@link #sealCommitted}，進入時已依原因記 log）不提醒，與提醒過的一起以 {@link Track#sealedReported} 去重；可重試的原因
+     * （含只在重啟之後重試的）不提醒。只記 log：不寫入、不做 IO，不看來源艙是否載入或玩家是否在線。roll-forward 尚未確認時（{@link #sealed} 在呼叫之前就 return）不記。
+     */
+    private void remindAtStartup(SessionRecoveryRecord view, Track track, SealedReason reason) {
+        var sid = view.sessionUuid();
+        if (reason.retryable() || track.sealedReported || !startupSessions.contains(sid)) return;
+        track.sealedReported = true;
+        LOGGER.error(LOG_MARKER, "開服時的提醒：session 仍是 SEALED({})，永久原因，需要管理員處理（不自動重試；原艙維持封鎖，任何玩家都可以照一般方式開門；每個 server instance "
+                + "提醒一次）：session={} chamber={} 目的地={}", reason, sid, view.chamberUuid(), describe(view.collapse().destination()));
     }
 
     /** checked SEALED→COLLAPSING（restore 類，§6），再取得來源 ticket；之後依推導階段重跑 RESOLVE（未確認的權威由 resolver 先收斂）。 */
@@ -1371,7 +1388,7 @@ public final class CollapseService {
      * <tr><td>{@code doorLoaded}、{@code doorSeenLoaded}</td><td>不重設</td><td>來源艙載入的觀察，在 SEALED 與重試之間仍有效</td></tr>
      * <tr><td>{@code projectionUncheckpointed}</td><td>checkpoint 之後的再驗乾淨時</td><td>寫過的投影方塊跨 PREPARE 的段落仍沒有 checkpoint</td></tr>
      * <tr><td>{@code readyRetryPending}</td><td>提交 PASSAGE_READY 成功，或退避期過後 PREPARE 恢復時</td><td>暫停跟著 per-session 退避，閘門失效之後再進入 PREPARE 仍有效</td></tr>
-     * <tr><td>{@code backoff}、{@code resolved}、{@code restartRetryConsumed}、{@code pendingSeal}、{@code pendingRecovery}、{@code passageZ}、{@code waitSince}</td>
+     * <tr><td>{@code backoff}、{@code resolved}、{@code restartRetryConsumed}、{@code sealedReported}、{@code pendingSeal}、{@code pendingRecovery}、{@code passageZ}、{@code waitSince}</td>
      *     <td>見各自的說明</td><td>不屬於閘門或 PREPARE 的一段</td></tr>
      * </table>
      */
@@ -1425,6 +1442,11 @@ public final class CollapseService {
         /** RESOLVE 連續等待的起點（-1 表示不在等待）與這次等待是否已記過 WARN。 */
         long waitSince = -1;
         boolean waitWarned;
+        /**
+         * 本 instance 已為這個 session 的 SEALED 記過 log：進入 SEALED 時（{@link CollapseService#sealCommitted}，依原因 WARN 或 ERROR），或開服時的提醒
+         * （{@link CollapseService#remindAtStartup}，H9 (b)）。開服時的提醒只在它為假時記：每個 server instance 最多一次，本 instance 自己封存的不提醒。不重設。
+         */
+        boolean sealedReported;
         /** 進入 SEALED 的寫入在前置檢查就被拒：退避期過後只重試這筆寫入（{@link #sealRejected}）。 */
         SealedReason pendingSeal;
         RuntimeException pendingSealCause;
