@@ -10,6 +10,7 @@ import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
+import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapsePassage.End;
 import dev.quantumchamber.gametest.M5CollapsePassage.Place;
@@ -472,7 +473,7 @@ final class M5CollapsePassageChains {
     /**
      * trr：SEALED 時任何玩家都可以照一般方式開門（spec §11.2；由艙內沒有跨過的那位開，依清單順序的第一位）；record 仍與開服時 exact 相同；spec §12 的終局斷言（已跨過的選門者在 U，F6-2c fix
      * round 1；無法回滾的那位在來源世界）。開服時就是永久原因 SEALED，這個 session 的 ERROR 恰為開服時的提醒那一則（{@code permanentSealedRemindedOnceAtStartup}，H9 (b)，
-     * F6-2d-2 spec review 的 M-2；原本是 {@code noSessionError}）。
+     * F6-2d-2 spec review 的 M-2；原本是 {@code noSessionError}）；F6-2d-2 B1 起另比對字句裡的 {@code SEALED(TRANSFER_RECOVERY_REQUIRED)} 與「需要管理員處理」。
      */
     private boolean sealedDoorOpensNormally() throws Exception {
         var other = fixture.player(fixture.first(M5CollapseFixture.OTHERS));
@@ -480,7 +481,7 @@ final class M5CollapsePassageChains {
         run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
         var sid = fixture.sid();
         run.expect("stillSealed", atStart.equals(run.journal().flushedRecords().get(sid)), () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
-        passage.expectEnd(End.inTheSourceWorld(fixture).placed(M5CollapseFixture.SELECTOR, Place.UNIVERSE).withStartupReminder());
+        passage.expectEnd(End.inTheSourceWorld(fixture).placed(M5CollapseFixture.SELECTOR, Place.UNIVERSE).withStartupReminder(SealedReason.TRANSFER_RECOVERY_REQUIRED));
         return true;
     }
 

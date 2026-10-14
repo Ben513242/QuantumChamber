@@ -5,6 +5,7 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.ProjectionLedger;
+import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DimensionRole;
@@ -310,9 +311,16 @@ final class M5CollapsePassage {
         private final boolean authorityInitialized;
         /** allocation ledger 在這條 chain 的那一筆之後另有的 entry（F6-2d-1，w9io）；預設沒有。 */
         private final List<M5CollapseDiskEvidence.Allocation> otherAllocations;
+        /** 開服時的提醒記的永久原因（F6-2d-2 B1）：恰在 {@link SessionErrors#STARTUP_REMINDER} 時不是 null。 */
+        private final SealedReason remindedReason;
 
         private End(M5CollapseFixture fixture, int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, SessionErrors sessionErrors,
                 boolean authorityInitialized, List<M5CollapseDiskEvidence.Allocation> otherAllocations) {
+            this(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, otherAllocations, null);
+        }
+
+        private End(M5CollapseFixture fixture, int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, SessionErrors sessionErrors,
+                boolean authorityInitialized, List<M5CollapseDiskEvidence.Allocation> otherAllocations, SealedReason remindedReason) {
             this.fixture = Objects.requireNonNull(fixture, "fixture");
             this.catalogGrowth = catalogGrowth;
             this.projection = Objects.requireNonNull(projection, "projection");
@@ -320,6 +328,10 @@ final class M5CollapsePassage {
             this.sessionErrors = Objects.requireNonNull(sessionErrors, "sessionErrors");
             this.authorityInitialized = authorityInitialized;
             this.otherAllocations = List.copyOf(otherAllocations);
+            if ((sessionErrors == SessionErrors.STARTUP_REMINDER) != (remindedReason != null)) {
+                throw new IllegalArgumentException("End：開服時的提醒的原因只跟著 STARTUP_REMINDER（sessionErrors=" + sessionErrors + " remindedReason=" + remindedReason + "）");
+            }
+            this.remindedReason = remindedReason;
         }
 
         /** 每位參與者（依清單順序）都在 {@code place}。 */
@@ -359,7 +371,7 @@ final class M5CollapsePassage {
                 if (!next.containsKey(id)) throw new IllegalArgumentException("End 沒有這位參與者：" + id);
                 next.put(id, place);
             }
-            return new End(fixture, catalogGrowth, projection, next, sessionErrors, authorityInitialized, otherAllocations);
+            return new End(fixture, catalogGrowth, projection, next, sessionErrors, authorityInitialized, otherAllocations, remindedReason);
         }
 
         /**
@@ -368,18 +380,24 @@ final class M5CollapsePassage {
          */
         End withOtherAllocations(List<M5CollapseDiskEvidence.Allocation> others) {
             if (others.isEmpty()) throw new IllegalArgumentException("withOtherAllocations 至少要有一筆");
-            return new End(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, others);
+            return new End(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, others, remindedReason);
         }
 
         /**
-         * 同這一份，但這個 session 開服時就是永久原因 SEALED（H9 (b)，spec v5.10 §11.2「永久原因」、§12 SEALED 列；F6-2d-2 spec review 的 M-2）：這個 session 從 {@code onInitialize}
-         * 起的 ERROR 恰為開服時的提醒那一則（{@link SessionErrors#STARTUP_REMINDER}，{@link M5GameTestSupport#STARTUP_SEALED_REMINDER}），以 {@code permanentSealedRemindedOnceAtStartup}
-         * 斷言，取代 {@code noSessionError}。只接在沒有其他 ERROR 的 End 之後（{@link SessionErrors#NONE}）。
+         * 同這一份，但這個 session 開服時就是永久原因 {@code reason} 的 SEALED（H9 (b)，spec v5.10 §11.2「永久原因」、§12 SEALED 列；F6-2d-2 spec review 的 M-2）：這個 session 從
+         * {@code onInitialize} 起的 ERROR 恰為開服時的提醒那一則（{@link SessionErrors#STARTUP_REMINDER}），以 {@code permanentSealedRemindedOnceAtStartup} 斷言，取代
+         * {@code noSessionError}。只接在沒有其他 ERROR 的 End 之後（{@link SessionErrors#NONE}）；{@code reason} 必須是永久原因（可重試的原因開服時不提醒）。F6-2d-2 B1（H9 spec
+         * review Minor 5 的可選補強、H9 quality 給 B 段的 API 方向）：帶原因，斷言另比對字句的關鍵部分（{@code SEALED(<原因>)} 與「需要管理員處理」），不只「開服時的提醒」。
          */
-        End withStartupReminder() {
+        End withStartupReminder(SealedReason reason) {
+            Objects.requireNonNull(reason, "reason");
+            if (reason.retryable()) throw new IllegalArgumentException("withStartupReminder 只用在永久原因（可重試的原因開服時不提醒）：" + reason);
             if (sessionErrors != SessionErrors.NONE) throw new IllegalStateException("withStartupReminder 只接在沒有其他 ERROR 的 End 之後：" + sessionErrors);
-            return new End(fixture, catalogGrowth, projection, places, SessionErrors.STARTUP_REMINDER, authorityInitialized, otherAllocations);
+            return new End(fixture, catalogGrowth, projection, places, SessionErrors.STARTUP_REMINDER, authorityInitialized, otherAllocations, reason);
         }
+
+        /** 開服時的提醒記的永久原因（只在 {@link SessionErrors#STARTUP_REMINDER} 時不是 null）。 */
+        SealedReason remindedReason() { return remindedReason; }
 
         /** allocation ledger 在這條 chain 的那一筆之後另有的 entry。 */
         List<M5CollapseDiskEvidence.Allocation> otherAllocations() { return otherAllocations; }
@@ -435,16 +453,23 @@ final class M5CollapsePassage {
             }
         }
         // quality Minor（F6-2a）：這個 session 從 onInitialize 起的 ERROR（quantumchamber logger），正常的 restart 一則都沒有；退化的只有永久原因那一則；開服時就是永久原因 SEALED
-        // 的只有開服時的提醒那一則（H9 (b)）。F6-2d-2 B1（H9 quality Minor 6）：依 SessionErrors 選具名斷言，名稱與條件都與之前相同。
+        // 的只有開服時的提醒那一則（H9 (b)）。F6-2d-2 B1（H9 quality Minor 6）：依 SessionErrors 選具名斷言，名稱不變；開服時的提醒另比對 SEALED(<原因>) 與「需要管理員處理」。
         var errors = run.startupLog().matching(Level.ERROR, fixture.sid().toString()).stream().map(LogCapture.Entry::message).toList();
         var expected = end.sessionErrors();
-        boolean holds = errors.size() == expected.count
-                && (expected != SessionErrors.STARTUP_REMINDER || errors.getFirst().contains(M5GameTestSupport.STARTUP_SEALED_REMINDER));
+        boolean holds = errors.size() == expected.count && (expected != SessionErrors.STARTUP_REMINDER || startupReminder(errors.getFirst(), end.remindedReason()));
         run.expect(expected.assertion, holds, () -> "這個 session 的 ERROR：" + errors);
         if (end.authorityInitialized()) {
             var initErrors = run.startupLog().matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
             run.expect("noAuthorityInitializationFailure", initErrors.isEmpty(), () -> "初始化的 ERROR：" + initErrors);
         }
         run.proof.put("finalDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
+    }
+
+    /**
+     * {@code message} 是 {@code reason} 的開服時的提醒（production 的 {@code CollapseService.remindAtStartup}：「開服時的提醒：session 仍是 SEALED(<原因>)，永久原因，需要管理員處理…」）：
+     * 字句的開頭片段、{@code SEALED(<原因>)} 與「需要管理員處理」都在（F6-2d-2 B1，H9 spec review Minor 5 的可選補強：原本只比對「開服時的提醒」）。
+     */
+    private static boolean startupReminder(String message, SealedReason reason) {
+        return message.contains(M5GameTestSupport.STARTUP_SEALED_REMINDER) && message.contains("SEALED(" + reason + ")") && message.contains("需要管理員處理");
     }
 }
