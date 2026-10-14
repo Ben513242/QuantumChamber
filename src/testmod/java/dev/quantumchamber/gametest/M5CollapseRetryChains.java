@@ -28,6 +28,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameRules;
@@ -495,21 +496,43 @@ final class M5CollapseRetryChains {
     /**
      * step {@code stepName}：參與者 JOIN 之後沒有移動，提交 COLLAPSING（「觸發=DORMANT 續行」的 INFO 一則、Destination 是 U，具名斷言 {@code assertion}），等法是 {@code await}
      * （{@link Await#FIRST_OBSERVATION}：W8 的 {@code committedOnTheFirstObservation}；{@link Await#AFTER_THE_LOAD}：H7 的 {@code committedWithoutReentry}，另記下原艙附近載入
-     * 完成的 tick）。記下提交的 tick。F6-2d-2 Step 0 由兩份合成（判斷、斷言與等待的 tick 數都不變）。
+     * 完成的 tick）。記下提交的 tick。F6-2d-2 Step 0 由兩份合成（判斷、斷言與等待的 tick 數都不變）；F6-2d-2 B1 起經通用的 {@link #awaited}。
      */
     private Step committedWithoutReentry(String stepName, String assertion, Await await) {
         if (await == Await.EDGE) throw new IllegalArgumentException("committedWithoutReentry 是不離開再進入的提交，不能用 EDGE：" + stepName);
+        return awaited(stepName, assertion, await, () -> collapsing(run.journal().flushedRecords().get(fixture.sid())), tick -> {
+            var record = run.journal().flushedRecords().get(fixture.sid());
+            var info = run.capture().matching(Level.INFO, "塌縮已提交", "觸發=DORMANT 續行", fixture.sid().toString()).size();
+            return new Verdict(collapsing(record) && info == 1 && M5CollapseFixture.destination(record).equals(Optional.of(fixture.universe())),
+                    "JOIN 之後 " + tick + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), fixture.sid()) + " 提交的 INFO=" + info);
+        }, this::notMovedSinceTheJoin, "committedAtPhaseTick");
+    }
+
+    private static boolean collapsing(SessionRecoveryRecord record) {
+        return record != null && record.state() == SessionState.COLLAPSING;
+    }
+
+    /** {@link #awaited} 等完之後（已發生，或等滿 {@link Await#waitTicks}）這一步的結果：{@code tick} 是這個 step 的第幾個 tick（由 1 起）。 */
+    @FunctionalInterface private interface Outcome { Verdict at(int tick) throws Exception; }
+
+    /** {@link Outcome} 的結果：具名斷言是否成立，與失敗時的細節（位置的部分由 {@link #awaited} 接上）。 */
+    private record Verdict(boolean holds, String detail) {}
+
+    /**
+     * 通用的 await step（F6-2d-2 B1，A 段 quality 給 B 段的建議：{@link #committedWithoutReentry} 與 {@link #retried} 原本各寫一份同樣的等法）：step {@code stepName} 每個 tick 問
+     * {@code happened}；還沒有發生、而且還在等待的時間內（{@link Await#keepWaiting}）就再等，否則斷言 {@code assertion}：已發生、{@code outcome} 成立，而且 {@code still} 不是 null
+     * 時參與者 JOIN 之後沒有移動（{@code still == null}：不斷言位置）。上限只有 {@link Await#waitTicks}（也是 step 的上限）。{@link Await#AFTER_THE_LOAD} 每個 tick 另記下原艙附近
+     * 載入完成的 tick（{@code chamberLoadedAtPhaseTick}）；{@code proofKey} 不是 null 時記下斷言的 tick。判斷、斷言、等待的 tick 數與記下的 proof 都與合併之前相同。
+     */
+    private Step awaited(String stepName, String assertion, Await await, BooleanSupplier happened, Outcome outcome, BooleanSupplier still, String proofKey) {
         return M5CollapsePassage.counting(stepName, await.waitTicks, tick -> {
-            var sid = fixture.sid();
-            var record = run.journal().flushedRecords().get(sid);
-            boolean committed = record != null && record.state() == SessionState.COLLAPSING;
+            boolean now = happened.getAsBoolean();
             if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
-            if (await.keepWaiting(committed, tick)) return false;
-            var info = run.capture().matching(Level.INFO, "塌縮已提交", "觸發=DORMANT 續行", sid.toString()).size();
-            boolean still = notMovedSinceTheJoin();
-            run.expect(assertion, committed && info == 1 && still && M5CollapseFixture.destination(record).equals(Optional.of(fixture.universe())),
-                    () -> "JOIN 之後 " + tick + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), sid) + " 提交的 INFO=" + info + " 沒有移動=" + still);
-            run.proof.put("committedAtPhaseTick", run.ticks());
+            if (await.keepWaiting(now, tick)) return false;
+            var verdict = outcome.at(tick);
+            boolean notMoved = still == null || still.getAsBoolean();
+            run.expect(assertion, now && verdict.holds() && notMoved, () -> verdict.detail() + (still == null ? "" : " 沒有移動=" + notMoved));
+            if (proofKey != null) run.proof.put(proofKey, run.ticks());
             return true;
         });
     }
@@ -681,25 +704,20 @@ final class M5CollapseRetryChains {
      * {@code retriedWithoutReentry} 合成這一個；step 名稱改由呼叫端給（F6-2d-1 quality Minor 5：原本由 {@code count} 推出 {@code retried}／{@code retriedAgain}，receipt 的
      * witness 以 step 名稱為鍵，不能重複；runner 在建立 phase 時檢查重名）。F6-2d-2（F6-2d-2 Step 0 quality Minor 2）：也接受 {@link Await#FIRST_OBSERVATION}（開服 attach 的
      * session 第一次觀察到原參與者在艙內就算觸發，production 的 {@code CollapseService.sealed} 以 {@code track.entry(startupSessions.contains(sid))} 實作）；原本拒絕它，訊息也與 production 相反。
+     * F6-2d-2 B1 起經通用的 {@link #awaited}：{@link Await#EDGE} 不斷言位置（{@code still} 為 null）、不記重試的 tick，其餘斷言參與者沒有移動、記下 {@code retriedAtPhaseTick}（與合併之前相同）。
      */
     private Step retried(String stepName, String assertion, SealedReason reason, int count, Await await) {
-        return M5CollapsePassage.counting(stepName, await.waitTicks, tick -> {
-            var sid = fixture.sid().toString();
-            var fromReason = run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + reason + ")→COLLAPSING", sid).size();
-            if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
-            if (await.keepWaiting(fromReason > 0, tick)) return false;
-            var all = run.capture().matching(Level.INFO, "SEALED 重試", sid).size();
-            if (await == Await.EDGE) {
-                run.expect(assertion, fromReason == 1 && all == count,
-                        () -> "SEALED(" + reason + ") 的重試 INFO=" + fromReason + " 全部的重試 INFO=" + all + "，預期第 " + count + " 次");
-                return true;
-            }
-            boolean still = notMovedSinceTheJoin();
-            run.expect(assertion, fromReason == 1 && all == count && still,
-                    () -> "JOIN 之後 " + tick + " 個 tick：SEALED(" + reason + ") 的重試 INFO=" + fromReason + " 全部的重試 INFO=" + all + "，預期第 " + count + " 次，沒有移動=" + still);
-            run.proof.put("retriedAtPhaseTick", run.ticks());
-            return true;
-        });
+        boolean edge = await == Await.EDGE;
+        return awaited(stepName, assertion, await, () -> retriesFrom(reason) > 0, tick -> {
+            int fromReason = retriesFrom(reason), all = run.capture().matching(Level.INFO, "SEALED 重試", fixture.sid().toString()).size();
+            return new Verdict(fromReason == 1 && all == count, (edge ? "" : "JOIN 之後 " + tick + " 個 tick：") + "SEALED(" + reason + ") 的重試 INFO=" + fromReason
+                    + " 全部的重試 INFO=" + all + "，預期第 " + count + " 次");
+        }, edge ? null : this::notMovedSinceTheJoin, edge ? null : "retriedAtPhaseTick");
+    }
+
+    /** 這個 session 由 SEALED({@code reason}) 重試的 INFO（「SEALED 重試：SEALED(reason)→COLLAPSING」）的則數。 */
+    private int retriesFrom(SealedReason reason) {
+        return run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + reason + ")→COLLAPSING", fixture.sid().toString()).size();
     }
 
     /**
