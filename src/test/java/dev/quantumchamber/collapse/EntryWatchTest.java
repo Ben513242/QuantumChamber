@@ -148,6 +148,20 @@ class EntryWatchTest {
         assertTrue(track.entry(false).gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), "resetGate 之後是新的一段：第一次評估又以位準評估");
     }
 
+    /**
+     * PREPARE 中途閘門失效之後（F6-2d-2，F6-2d-2 Step 0 quality 給本體的建議：PREPARE 中重啟的窗口之前先補）：{@code CollapseService.leavePrepare} 以目前在艙內的原參與者
+     * {@code prime}，之後的 {@code gate} 只看邊緣（經 {@code CollapseService.Track} 的接線）。第一次評估以位準進 PREPARE → PREPARE 期間 B 進入艙內（PREPARE 期間不評估閘門）→
+     * 閘門失效，prime（A、B 都在艙內）→ 兩人都沒有移動時不是邊緣、不查詢來源艙 → B 離開再進入才是邊緣。prime 不重設「已評估過」，之後不再以位準評估。
+     */
+    @Test void afterThePrimeOnLeavingPrepareTheGateWaitsForAnEdge() {
+        var track = new CollapseService.Track();
+        assertTrue(track.entry(false).gate(Set.of(A), EVERYONE, () -> SourceSignal.OK), "第一次評估：A 在艙內，以位準進 PREPARE");
+        track.entry(false).prime(Set.of(A, B));
+        assertFalse(track.entry(false).gate(Set.of(A, B), EVERYONE, NOT_QUERIED), "prime 之後：A 與 PREPARE 期間進艙的 B 都沒有移動，不是邊緣");
+        assertFalse(track.entry(false).gate(Set.of(A), EVERYONE, NOT_QUERIED), "B 離開");
+        assertTrue(track.entry(false).gate(Set.of(A, B), EVERYONE, () -> SourceSignal.OK), "B 由艙外再進入是邊緣");
+    }
+
     private static Set<UUID> ordered(UUID... ids) {
         return new LinkedHashSet<>(List.of(ids));
     }
