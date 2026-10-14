@@ -469,12 +469,32 @@ final class M5CollapseWindows {
         return window;
     }
 
-    /** 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}，halt 的時點是這一列的 {@code haltTiming}；halt receipt 的 detail 以 {@link #describe} 描述）。 */
+    /**
+     * 依窗口表裝上 {@code id} 的 crash 點（{@link M5CollapseRun#armCrash}，halt 的時點是這一列的 {@code haltTiming}；halt receipt 的 detail 以 {@link #describe} 描述）。halt 之前的取證
+     * 之後另做 {@link #requireRecordKeptDeclared}（F6-2d-2）。
+     */
     static void arm(M5CollapseRun run, M5CollapseFixture fixture, CrashWindow id) {
         var window = of(id);
         run.armCrash(id, window.haltTiming(), detail -> window.condition().test(fixture, detail), M5CollapseWindows::describe,
                 evidence -> window.atWindow().record(run, fixture, evidence),
-                (detail, evidence) -> window.beforeHalt().collect(run, fixture, detail, evidence));
+                (detail, evidence) -> {
+                    window.beforeHalt().collect(run, fixture, detail, evidence);
+                    requireRecordKeptDeclared(window, evidence);
+                });
+    }
+
+    /**
+     * {@link AtRestart#withRecordKept} 的反向守門（F6-2d-2，F6-2d-2 Step 0 quality Minor 3）：halt 之前的取證記下了這個 session 的 record 的摘要（{@code atHalt} 的
+     * {@code recordAtHalt}），而且這一列 halt 當下有 record（{@code stateAtHalt} 不是終局已落盤），這一列卻沒有宣告 {@code withRecordKept} 時丟出：restart 的比對
+     * （{@code recordKeptAcrossTheRestart}）會靜默消失（與 F6-2d-2 Step 0 修掉的 {@code serverStartedWithTheDisabled} 同類）。丟出時不 halt（{@link BeforeHalt}），crash phase 判 FAIL，
+     * 訊息以 {@code recordKeptDeclared} 開頭。成立時不記具名斷言（既有的 phase 的具名斷言不變）。哪些取證會記下摘要要執行才知道，所以在 halt 時檢查，不在建表時。
+     */
+    static void requireRecordKeptDeclared(Window window, Map<String, Object> evidence) {
+        var at = window.atRestart();
+        if (evidence.containsKey("recordAtHalt") && at.stateAtHalt() != null && !at.recordKept()) {
+            throw new IllegalStateException("recordKeptDeclared：窗口表的 " + window.id() + " 的 halt 之前的取證記下了 recordAtHalt（halt 當下有 record），這一列卻沒有宣告 withRecordKept，"
+                    + "restart 不會比對開服時的 record");
+        }
     }
 
     // ---- crash 點的條件 ----
