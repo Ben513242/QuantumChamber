@@ -741,6 +741,18 @@ final class M5GameTestSupport {
         M4CandidateTestAccess.set(track, "doorSeenLoaded", false);
     }
 
+    /**
+     * H9 (a)：以反射把塌縮流程對這個 session 的 {@code CollapseService.Track.resolved} 設為真（本 mod 自己的欄位，不經 remap），之後的推導略過 RESOLVE、直接評估 PREPARE 的閘門。
+     * default run 不得配置宇宙（plan 決策 6），而 NEW 的 RESOLVE 會配置；RESOLVE 不寫原艙門，所以略過它不改變門的觀察。呼叫端要讓閘門不成立（例如斷電）：PREPARE 需要已物化的
+     * 目的世界。SEALED→COLLAPSING 的重試會把它重設為假，所以在重試之後呼叫。只在 server thread、塌縮流程已有這個 session 的簿記之後呼叫。
+     */
+    @SuppressWarnings("unchecked")
+    static void skipResolve(MinecraftServer server, UUID sid) {
+        var track = ((Map<UUID, ?>) M4CandidateTestAccess.get(collapseService(server), "tracks")).get(sid);
+        if (track == null) throw new IllegalStateException("塌縮流程還沒有這個 session 的簿記：" + sid);
+        M4CandidateTestAccess.set(track, "resolved", true);
+    }
+
     /** 這個 server 的 {@code CollapseService}（反射；本 mod 自己的欄位，不經 remap）。 */
     @SuppressWarnings("unchecked")
     private static Object collapseService(MinecraftServer server) {

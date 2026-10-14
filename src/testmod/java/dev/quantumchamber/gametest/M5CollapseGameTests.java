@@ -1227,6 +1227,91 @@ public final class M5CollapseGameTests implements FabricGameTest {
         });
     }
 
+    // ---- H9 (a)：SEALED 的重試丟棄還沒套用的關門（spec v5.10 §4 H9、§7.3「門狀態的重新套用」、§12 SEALED 列） ----
+
+    /**
+     * H9 (a)：真原艙上的 SEALED(PROJECTION_FAILED) 收據（可重試；參與者 P 在艙內，原艙已供電、enabled），門上留著 sealed 量子膜（例如 PREPARE 期間進入 SEALED、crash
+     * 在關門套用之前）。模擬重啟之後的第一次觀察（{@code simulateDoorStartup}）：同一個 tick 排入下一個 tick 的關門（CLOSE_ON_SEALED），並因為 P 開服時就在艙內而重試成
+     * COLLAPSING。下一個 tick 斷電（閘門不成立），推導停在 WAITING：
+     * <ul>
+     * <li>關門不再套用（session 已不是 SEALED），依套用當下的 collapse view（COLLAPSING）改為一般開門：重試之後的下一個 tick 門是 {@code open=true}＋{@code membrane=none}；</li>
+     * <li>之後 WAITING 的 40 個 tick 一直是一般開門，record 一直是 COLLAPSING，沒有進入 PREPARE；這個 session 沒有 WARN／ERROR。</li>
+     * </ul>
+     * default run 不得配置宇宙（plan 決策 6），所以以 {@code skipResolve} 略過 RESOLVE（NEW 的 RESOLVE 會配置宇宙；RESOLVE 不寫原艙門）。真的 RESOLVE 之後停在 WAITING 的跨 JVM
+     * 版本是 F6-2d-2 B 段的 {@code sealmembrane}。catalog 不變（per-test baseline）。不需要原生 checkpoint，各平台都執行。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_retry_membrane", tickLimit = 400)
+    public void sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting(TestContext context) {
+        sealedRetryAtStartup(context, "sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting", true);
+    }
+
+    /**
+     * H9 (a)：同上，但門上沒有量子膜（關著：重啟之前 SEALED 的關門已套用，最常見的情況）。重試之後不寫門（spec v5.10 §4 H9「沒有量子膜時不寫入」），WAITING 期間一直是
+     * 關著的一般門。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_sealed_retry_closed_door", tickLimit = 400)
+    public void sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten(TestContext context) {
+        sealedRetryAtStartup(context, "sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten", false);
+    }
+
+    /** H9 (a) 的兩個 test 共用：{@code membrane} 為真時門上留著 sealed 量子膜，否則是關著的一般門。 */
+    private static void sealedRetryAtStartup(TestContext context, String name, boolean membrane) {
+        M4PerTestUniverseProbe.begin(context, name);
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = DormantOrigin.open(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var p = origin.player();
+        var initial = membrane ? MembraneState.sealedFor(frame.outwardFacing()) : MembraneState.NONE;
+        // 重試之後應有的門：帶著量子膜時是一般開門，沒有量子膜時不寫入（仍是關著的一般門）。
+        boolean expectedOpen = membrane;
+        origin.whenRegistered((registered, chamber) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            moveInside(p, frame);
+            var record = collapseFixture(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(p.getUuid(), true), List.of(), true,
+                    SessionState.SEALED, false);
+            var sid = record.sessionUuid();
+            origin.owned.add(sid);
+            M5GameTestSupport.writeDoor(world, frame, membrane, initial);
+            M5GameTestSupport.simulateDoorStartup(server, sid);
+            int observed = server.getTicks();
+            // 這個 tick 結束時（重啟之後的第一次觀察）：排入下一個 tick 的關門，並重試成 COLLAPSING。
+            at(context, registered + 1, hooks, () -> {
+                witness.put("closeQueuedForTheNextTick", capture.matching(org.apache.logging.log4j.Level.INFO,
+                        "（tick " + (observed + 1) + "）依 collapse view 重新套用原艙門（CLOSE_ON_SEALED）", sid.toString()).size() == 1);
+                witness.put("retriedInTheSameTick", state(journal, sid).equals("COLLAPSING")
+                        && capture.matching(org.apache.logging.log4j.Level.INFO, "SEALED 重試", sid.toString()).size() == 1);
+                witness.put("doorNotWrittenYet", doorAll(world, frame, membrane, initial));
+                context.assertTrue(!witness.containsValue(false), "重試的前提：" + witness);
+                M5GameTestSupport.skipResolve(server, sid);
+                // 閘門不成立：斷電，推導停在 WAITING。
+                context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+            });
+            // 重試之後的下一個 tick 結束時（關門的套用時點）。
+            at(context, registered + 2, hooks, () -> {
+                context.assertTrue(doorAll(world, frame, expectedOpen, MembraneState.NONE), (membrane
+                        ? "重試之後的下一個 tick，帶著量子膜的原艙門沒有改為一般開門：" : "重試之後的下一個 tick，沒有量子膜的原艙門被改寫：")
+                        + label(world.getBlockState(door(frame).get(12))));
+                witness.put("closeDropped", capture.matching(org.apache.logging.log4j.Level.INFO, "session 已不是 SEALED，不再套用封存時的原艙門", sid.toString()).size() == 1);
+                witness.put("normalizedOnlyWithAMembrane", capture.matching(org.apache.logging.log4j.Level.INFO,
+                        "原艙門已依 collapse view 重新套用（NORMALIZE：APPLIED，tick " + (observed + 1) + "）", sid.toString()).size() == (membrane ? 1 : 0));
+            });
+            boolean[] changed = {false};
+            whenTicks(context, registered + 3, 45, () -> {
+                if (!doorAll(world, frame, expectedOpen, MembraneState.NONE) || !state(journal, sid).equals("COLLAPSING")) changed[0] = true;
+                return context.getTick() >= registered + 42;
+            }, done -> {
+                witness.put("doorKeptWhileWaiting", !changed[0]);
+                witness.put("neverPrepared", capture.matching(org.apache.logging.log4j.Level.INFO, "進入 PREPARE", sid.toString()).isEmpty());
+                witness.put("stillCollapsing", state(journal, sid).equals("COLLAPSING"));
+                witness.put("noWarnOrError", noWarnOrError(capture, sid));
+                context.assertTrue(!witness.containsValue(false), "SEALED 的重試之後的原艙門（H9 (a)，" + (membrane ? "帶著量子膜" : "沒有量子膜") + "）：" + witness);
+                hooks.release();
+                M4PerTestUniverseProbe.complete(context);
+            }, () -> "WAITING 的觀察沒有結束：witness=" + witness, hooks);
+        });
+    }
+
     /**
      * F4a-0 fix round 1（quality Q1）：mixin 讀取的兩個靜態 hook 位置（journal flush 探針、journal 寫出稽核）的安裝規則。(a) hooks 已釋放時安裝在
      * 登記移除時就丟出，位置不殘留；(b) 位置被占用時，第二次安裝立即丟 IllegalStateException、不覆蓋，訊息指出 hook、持有者與這次安裝的 test，
