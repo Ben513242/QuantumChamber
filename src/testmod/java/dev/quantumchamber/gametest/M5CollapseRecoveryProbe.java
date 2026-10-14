@@ -26,7 +26,8 @@ import net.fabricmc.api.ModInitializer;
  * <li>chain：{@link M5CollapseDormantChains}（DORMANT NEW 收據，W2～W6；restart 也用於 W6x）、{@link M5CollapseLiveChain}（W1）、
  *     {@link M5CollapseRevisitChains}（EXISTING 再造訪：W6x 的 crash、退化的 setup 與 restart）、{@link M5CollapsePassageChains}（F6-2c：通道與終局的重啟窗口，
  *     W7 與其餘的重啟變體）、{@link M5CollapseRetryChains}（F6-2d-1：重試與續行跨重啟，W8、W9 與它的兩個變體、AUTHORITY_UNREADABLE 的重啟後重試；H7 的 w8late、unreadablelate、waitinglate）、
- *     {@link M5CollapseDoorChains}（F6-2d-2 B1：PREPARE 的原艙門跨重啟，waitingdoor、preparedoor；與 RetryChains 共用基底 {@link M5CollapseRestartChains}）；投影 chunk 的載入
+ *     {@link M5CollapseDoorChains}（F6-2d-2 B1：PREPARE 的原艙門跨重啟，waitingdoor、preparedoor；F6-2d-2 B2：SEALED 的原艙門跨重啟，sealclose、sealdoorway；與 RetryChains 共用基底
+ *     {@link M5CollapseRestartChains}）；投影 chunk 的載入
  *     與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。
  *     {@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。</li>
  * </ul>
@@ -109,6 +110,12 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         table.put("waitingdoor-restart", run -> new M5CollapseDoorChains(run).waitingDoorRestart("waitingdoor-crash"));
         table.put("preparedoor-crash", run -> new M5CollapseDoorChains(run).readyHeldCrash());
         table.put("preparedoor-restart", run -> new M5CollapseDoorChains(run).prepareDoorRestart("preparedoor-crash"));
+        // F6-2d-2 B2（F6-2-09）：SEALED(AUTHORITY_UNREADABLE) 的寫入已確認、sealCommitted 的關門之前 crash。sealclose：開服時門開著，重啟之後只關一次，參與者打開之後不再關回去；
+        // sealdoorway：門關著、門口有盔甲座，重啟之後改為一般開門、不關在盔甲座上。
+        table.put("sealclose-crash", run -> new M5CollapseDoorChains(run).plainDoorSealedCrash());
+        table.put("sealclose-restart", run -> new M5CollapseDoorChains(run).plainDoorSealedRestart("sealclose-crash"));
+        table.put("sealdoorway-crash", run -> new M5CollapseDoorChains(run).doorwaySealedCrash());
+        table.put("sealdoorway-restart", run -> new M5CollapseDoorChains(run).doorwaySealedRestart("sealdoorway-crash"));
         return Collections.unmodifiableMap(table);
     }
 

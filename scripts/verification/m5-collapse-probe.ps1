@@ -80,6 +80,9 @@ $chains = [ordered]@{
     # preparedoor：PREPARE 中重啟、艙內有非參與者時維持一般開門，他離開之後的下一個 tick 重新套用 sealed。
     'waitingdoor' = @(@{phase='waitingdoor-crash'; ending='halt'; window='READY_HELD'}, @{phase='waitingdoor-restart'; ending='stop'; window=''})
     'preparedoor' = @(@{phase='preparedoor-crash'; ending='halt'; window='READY_HELD'}, @{phase='preparedoor-restart'; ending='stop'; window=''})
+    # F6-2d-2 B2：SEALED(AUTHORITY_UNREADABLE) 的寫入已確認、關門之前 crash。sealclose：開服時門開著，重啟之後只關一次；sealdoorway：門口有盔甲座，重啟之後改為一般開門。
+    'sealclose' = @(@{phase='sealclose-crash'; ending='halt'; window='UNREADABLE_SEALED'}, @{phase='sealclose-restart'; ending='stop'; window=''})
+    'sealdoorway' = @(@{phase='sealdoorway-crash'; ending='halt'; window='UNREADABLE_SEALED_DOORWAY'}, @{phase='sealdoorway-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

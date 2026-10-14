@@ -10,13 +10,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.decoration.ArmorStandEntity;
 import org.apache.logging.log4j.Level;
 
 /**
  * 僅 testmod（M5 F6-2d-2 B2a，B1 quality nit）：跨重啟的原艙門斷言共用的查詢與 step，由 {@link M5CollapseDoorChains} 以純搬移抽出：重新套用的排入與套用的 INFO
  * （{@link Queued}、{@link #reapplyQueued}、{@link #reapplied}）、本來關著的門的兩個 step（{@link #closedDoorKeptByTheReapply}，{@link M5CollapseDormantChains#restart} 用）、
  * 門的狀態（{@link #closed}、{@link #plainOpen}、{@link #doorCenter}）與等待的 tick 數。{@link M5CollapseDormantChains} 因此不再依賴 {@link M5CollapseDoorChains}；F6-2d-2 B2b
- * 的 SEALED 門窗口也用這裡。只有 static；原本的 instance 方法 {@code plainOpen()}、{@code doorCenter()} 改收 {@code run}，其餘與搬移之前相同。
+ * 的 SEALED 門窗口也用這裡。只有 static；原本的 instance 方法 {@code plainOpen()}、{@code doorCenter()} 改收 {@code run}，其餘與搬移之前相同。F6-2d-2 B2 另加 SEALED 的門窗口用的
+ * 查詢（{@link Queued#closeAfterARestart}、{@link #applied}、{@link #cancelledCloses}、{@link #is}）與門口的盔甲座（{@link #spawnDoorwayStand}）。
  */
 final class M5CollapseDoors {
     /** 重新套用的排入最多等幾個 tick（重啟之後的第一次觀察在第一個 tick；超過時由具名斷言判 FAIL，不是 stepBounded：mutation 讓排入落空時失敗在目標斷言）。 */
@@ -26,6 +29,8 @@ final class M5CollapseDoors {
     /** 重新套用排入（或延後）時的 INFO（{@code OriginDoors.reapplyDoor}）的「下一個 tick（tick N）」；排入時另帶目標（延後時沒有）。 */
     private static final Pattern QUEUED_TICK = Pattern.compile("下一個 tick（tick (\\d+)）");
     private static final Pattern QUEUED_GOAL = Pattern.compile("依 collapse view 重新套用原艙門（([A-Z_]+)）");
+    /** 重新套用完成的 INFO（{@code OriginDoors.applyDoor}）的「（goal：APPLIED，tick N）」（F6-2d-2 B2）。 */
+    private static final Pattern APPLIED = Pattern.compile("（([A-Z_]+)：APPLIED，tick (\\d+)）");
 
     private M5CollapseDoors() {}
 
@@ -87,6 +92,9 @@ final class M5CollapseDoors {
     record Queued(int tick, String goal, boolean firstLoadAfterARestart) {
         /** 重啟之後第一次載入時排入的 NORMALIZE（COLLAPSING 的重新套用目標）。 */
         boolean normalizeAfterARestart() { return "NORMALIZE".equals(goal) && firstLoadAfterARestart; }
+
+        /** 重啟之後第一次載入時排入的 CLOSE_ON_SEALED（SEALED 的重新套用目標；F6-2d-2 B2）。 */
+        boolean closeAfterARestart() { return "CLOSE_ON_SEALED".equals(goal) && firstLoadAfterARestart; }
     }
 
     static List<Queued> reapplyQueued(M5CollapseRun run, UUID sid) {
@@ -103,6 +111,49 @@ final class M5CollapseDoors {
     /** 重新套用完成的 INFO（{@code OriginDoors.applyDoor}，只在實際改了門時記：「原艙門已依 collapse view 重新套用（goal：APPLIED，tick N）」）：這個 session 的每一則。 */
     static List<String> reapplied(M5CollapseRun run, UUID sid) {
         return run.capture().matching(Level.INFO, "原艙門已依 collapse view 重新套用", "session=" + sid).stream().map(LogCapture.Entry::message).toList();
+    }
+
+    /** 重新套用完成的 INFO（{@link #reapplied}）裡的目標與 tick（F6-2d-2 B2：「（goal：APPLIED，tick N）」）。 */
+    record Applied(String goal, int tick) {}
+
+    /** 這個 session 的重新套用完成的 INFO，逐則取出目標與 tick（依發生順序；格式不符的一則記為 {@code ("?", -1)}，比對因此失敗）。 */
+    static List<Applied> applied(M5CollapseRun run, UUID sid) {
+        var result = new ArrayList<Applied>();
+        for (var message : reapplied(run, sid)) {
+            var match = APPLIED.matcher(message);
+            result.add(match.find() ? new Applied(match.group(1), Integer.parseInt(match.group(2))) : new Applied("?", -1));
+        }
+        return result;
+    }
+
+    /** SEALED 的原艙門被玩家照一般方式使用、取消還沒套用的關門的 INFO（{@code OriginDoors.cancelSealedClose}）的則數（F6-2d-2 B2）。 */
+    static int cancelledCloses(M5CollapseRun run, UUID sid) {
+        return run.capture().matching(Level.INFO, "取消還沒套用的關門", "session=" + sid).size();
+    }
+
+    /** 原艙門 25 格是 {@code door}（F6-2d-2 B2；{@link M5CollapseWindows.DoorAtStart#UNSPECIFIED} 丟出）。 */
+    static boolean is(M5CollapseRun run, M5CollapseWindows.DoorAtStart door) {
+        return switch (door) {
+            case CLOSED -> closed(run);
+            case PLAIN_OPEN -> plainOpen(run);
+            case SEALED_MEMBRANE -> M5GameTestSupport.doorSealed(run.source(), FRAME);
+            case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
+        };
+    }
+
+    /**
+     * F6-2-09 的 {@code sealdoorway}（F6-2d-2 B2）：在門口（門格 local (3,1,0) 的中心、腳在那一格的底）放一座不受重力的盔甲座，比照 {@code M5GameTestSupport.doorwayEntity}（那個
+     * helper 要 GameTest 的 {@code TestHooks}；probe 的 crash phase 不移除它，restart 由 chain 移除）。
+     */
+    static ArmorStandEntity spawnDoorwayStand(M5CollapseRun run) {
+        var world = run.source();
+        var stand = EntityType.ARMOR_STAND.create(world);
+        if (stand == null) throw new IllegalStateException("建不出盔甲座");
+        var cell = local(3, 1, 0);
+        stand.refreshPositionAndAngles(cell.getX() + 0.5, cell.getY(), cell.getZ() + 0.5, 0, 0);
+        stand.setNoGravity(true);
+        if (!world.spawnEntity(stand)) throw new IllegalStateException("盔甲座沒有加入世界");
+        return stand;
     }
 
     static boolean closed(M5CollapseRun run) {
