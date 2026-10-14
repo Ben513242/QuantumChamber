@@ -411,12 +411,25 @@ final class M5CollapsePassage {
          * {@code onInitialize} 起的 ERROR 恰為開服時的提醒那一則（{@link SessionErrors#STARTUP_REMINDER}），以 {@code permanentSealedRemindedOnceAtStartup} 斷言，取代
          * {@code noSessionError}。只接在沒有其他 ERROR 的 End 之後（{@link SessionErrors#NONE}）；{@code reason} 必須是永久原因（可重試的原因開服時不提醒）。F6-2d-2 B1（H9 spec
          * review Minor 5 的可選補強、H9 quality 給 B 段的 API 方向）：帶原因，斷言另比對字句的關鍵部分（{@code SEALED(<原因>)} 與「需要管理員處理」），不只「開服時的提醒」。
+         * <p>F6-2d-2 B2a（B1 quality nit）：原因改由 {@link Reminder} 帶入，「必須是永久原因」在建立 {@link Reminder} 時就驗證：呼叫端在建立 phase 時（{@code onInitialize}）
+         * 建立它，誤用在那時丟出，不等到這個 End 在 step 執行時才建立。「只接在 {@link SessionErrors#NONE} 的 End 之後」要到 End 建立時才知道（End 在 step 執行時才建立：參與者
+         * 開服時才由收據讀回），仍在這裡丟出。
          */
-        End withStartupReminder(SealedReason reason) {
-            Objects.requireNonNull(reason, "reason");
-            if (reason.retryable()) throw new IllegalArgumentException("withStartupReminder 只用在永久原因（可重試的原因開服時不提醒）：" + reason);
+        End withStartupReminder(Reminder reminder) {
+            Objects.requireNonNull(reminder, "reminder");
             if (sessionErrors != SessionErrors.NONE) throw new IllegalStateException("withStartupReminder 只接在沒有其他 ERROR 的 End 之後：" + sessionErrors);
-            return new End(fixture, catalogGrowth, projection, places, SessionErrors.STARTUP_REMINDER, authorityInitialized, otherAllocations, reason);
+            return new End(fixture, catalogGrowth, projection, places, SessionErrors.STARTUP_REMINDER, authorityInitialized, otherAllocations, reminder.reason());
+        }
+
+        /**
+         * 開服時的提醒記的永久原因（{@link #withStartupReminder}；F6-2d-2 B2a，B1 quality nit）。建立時就驗證：{@code reason} 不是 null、而且是永久原因（可重試的原因開服時不提醒），
+         * 否則丟出 IllegalArgumentException。
+         */
+        record Reminder(SealedReason reason) {
+            Reminder {
+                Objects.requireNonNull(reason, "reason");
+                if (reason.retryable()) throw new IllegalArgumentException("開服時的提醒只用在永久原因（可重試的原因開服時不提醒）：" + reason);
+            }
         }
 
         /** 開服時的提醒記的永久原因（只在 {@link SessionErrors#STARTUP_REMINDER} 時不是 null）。 */

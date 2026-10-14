@@ -291,6 +291,8 @@ final class M5CollapsePassageChains {
                 steps.addAll(nobodyAcrossJoinsAndEnds(Inside.OUTSIDE));
             }
             case RECOVERY_SEALED -> {
+                // F6-2d-2 B2a（B1 quality nit）：開服時的提醒的原因在建立 phase 時（onInitialize）建立、驗證（永久原因），誤用在那時丟出。
+                var reminder = new End.Reminder(SealedReason.TRANSFER_RECOVERY_REQUIRED);
                 // F6-2c fix round 1（spec v5.7 §10.3）：選門者跨越、Crossed 確認時已存下 playerdata，JOIN 在 U；無法回滾的另一位 JOIN 在來源世界的艙內（跨越之前存的）。
                 // 兩人在同一個 tick JOIN（H6 之後改回，見類別說明）；依清單順序（選門者是第一位）。
                 steps.add(new Step("join", 1, () -> {
@@ -300,7 +302,7 @@ final class M5CollapsePassageChains {
                 }));
                 steps.add(new Step("inside", 1, () -> { fixture.moveInside(M5CollapseFixture.OTHERS); return true; }));
                 steps.add(M5CollapsePassage.watch("notRetried", M5CollapsePassage.WATCH_TICKS, this::sealedUnchanged, this::sealedNotRetried));
-                steps.add(new Step("doorOpens", 1, this::sealedDoorOpensNormally));
+                steps.add(new Step("doorOpens", 1, () -> sealedDoorOpensNormally(reminder)));
             }
             default -> throw new IllegalArgumentException("通道的 chain 沒有這個窗口：" + id);
         }
@@ -473,15 +475,16 @@ final class M5CollapsePassageChains {
     /**
      * trr：SEALED 時任何玩家都可以照一般方式開門（spec §11.2；由艙內沒有跨過的那位開，依清單順序的第一位）；record 仍與開服時 exact 相同；spec §12 的終局斷言（已跨過的選門者在 U，F6-2c fix
      * round 1；無法回滾的那位在來源世界）。開服時就是永久原因 SEALED，這個 session 的 ERROR 恰為開服時的提醒那一則（{@code permanentSealedRemindedOnceAtStartup}，H9 (b)，
-     * F6-2d-2 spec review 的 M-2；原本是 {@code noSessionError}）；F6-2d-2 B1 起另比對字句裡的 {@code SEALED(TRANSFER_RECOVERY_REQUIRED)} 與「需要管理員處理」。
+     * F6-2d-2 spec review 的 M-2；原本是 {@code noSessionError}）；F6-2d-2 B1 起另比對字句裡的 {@code SEALED(TRANSFER_RECOVERY_REQUIRED)} 與「需要管理員處理」。F6-2d-2 B2a：
+     * 提醒的原因（{@code reminder}）由 {@link #restart} 在建立 phase 時建立。
      */
-    private boolean sealedDoorOpensNormally() throws Exception {
+    private boolean sealedDoorOpensNormally(End.Reminder reminder) throws Exception {
         var other = fixture.player(fixture.first(M5CollapseFixture.OTHERS));
         var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), other);
         run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
         var sid = fixture.sid();
         run.expect("stillSealed", atStart.equals(run.journal().flushedRecords().get(sid)), () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
-        passage.expectEnd(End.inTheSourceWorld(fixture).placed(M5CollapseFixture.SELECTOR, Place.UNIVERSE).withStartupReminder(SealedReason.TRANSFER_RECOVERY_REQUIRED));
+        passage.expectEnd(End.inTheSourceWorld(fixture).placed(M5CollapseFixture.SELECTOR, Place.UNIVERSE).withStartupReminder(reminder));
         return true;
     }
 
