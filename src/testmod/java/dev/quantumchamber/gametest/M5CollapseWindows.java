@@ -488,10 +488,11 @@ final class M5CollapseWindows {
      * {@code recordAtHalt}），而且這一列 halt 當下有 record（{@code stateAtHalt} 不是終局已落盤），這一列卻沒有宣告 {@code withRecordKept} 時丟出：restart 的比對
      * （{@code recordKeptAcrossTheRestart}）會靜默消失（與 F6-2d-2 Step 0 修掉的 {@code serverStartedWithTheDisabled} 同類）。丟出時不 halt（{@link BeforeHalt}），crash phase 判 FAIL，
      * 訊息以 {@code recordKeptDeclared} 開頭。成立時不記具名斷言（既有的 phase 的具名斷言不變）。哪些取證會記下摘要要執行才知道，所以在 halt 時檢查，不在建表時。
+     * F6-2d-2 B1（A 段 quality Minor 3、nit）：鍵讀 {@link #RECORD_AT_HALT}（與寫入的 {@link #putRecordAtHalt}、restart 的 {@link #expectRecordKept} 同一個常數），改為 private。
      */
-    static void requireRecordKeptDeclared(Window window, Map<String, Object> evidence) {
+    private static void requireRecordKeptDeclared(Window window, Map<String, Object> evidence) {
         var at = window.atRestart();
-        if (evidence.containsKey("recordAtHalt") && at.stateAtHalt() != null && !at.recordKept()) {
+        if (evidence.containsKey(RECORD_AT_HALT) && at.stateAtHalt() != null && !at.recordKept()) {
             throw new IllegalStateException("recordKeptDeclared：窗口表的 " + window.id() + " 的 halt 之前的取證記下了 recordAtHalt（halt 當下有 record），這一列卻沒有宣告 withRecordKept，"
                     + "restart 不會比對開服時的 record");
         }
@@ -672,9 +673,23 @@ final class M5CollapseWindows {
      */
     private static void recordOnDisk(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence, SessionRecoveryRecord expected, String name) throws Exception {
         var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
-        evidence.put("recordAtHalt", M5CollapseFixture.recordDigest(expected));
+        putRecordAtHalt(evidence, expected);
         evidence.put("doorCenterOnDisk", doorCenterOnDisk(run, fixture));
         run.expect(name, expected.equals(onDisk), () -> "磁碟上的 record=" + (onDisk == null ? "ABSENT" : onDisk.state() + " crossed=" + onDisk.collapse().crossed()));
+    }
+
+    /**
+     * halt 之前的取證記下這個 session 的 record 的摘要的鍵（{@code atHalt} 的 {@value}）：寫入只經 {@link #putRecordAtHalt}，反向守門 {@link #requireRecordKeptDeclared} 與
+     * restart 的 {@link #expectRecordKept} 都讀這個常數（F6-2d-2 B1，A 段 quality Minor 3：原本五處各寫一次字串，新的取證換了鍵或拼錯時會同時繞過守門與 restart 的比對）。
+     */
+    private static final String RECORD_AT_HALT = "recordAtHalt";
+
+    /**
+     * halt 之前的取證：把 {@code record} 的摘要（{@link M5CollapseFixture#recordDigest}；null 記為 {@code ABSENT}，restart 的比對因此失敗）寫進 {@code evidence} 的
+     * {@link #RECORD_AT_HALT}。宣告 {@link AtRestart#withRecordKept} 的列的取證都經這裡（F6-2d-2 B1，A 段 quality Minor 3）。
+     */
+    private static void putRecordAtHalt(Map<String, Object> evidence, SessionRecoveryRecord record) {
+        evidence.put(RECORD_AT_HALT, record == null ? "ABSENT" : M5CollapseFixture.recordDigest(record));
     }
 
     /** 每位參與者的 playerdata 在磁碟上記的世界（寫進 {@code atHalt} 的 {@code playerDimensionOnDisk}）。 */
@@ -832,7 +847,7 @@ final class M5CollapseWindows {
     private static void dormantAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
         evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
-        evidence.put("recordAtHalt", M5CollapseFixture.recordDigest(fixture.receipt()));
+        putRecordAtHalt(evidence, fixture.receipt());
         run.expect("dormantOnDiskAtHalt", fixture.receipt().equals(onDisk), () -> "磁碟上的 journal 是 " + (onDisk == null ? "ABSENT" : onDisk.state()) + "，不是收據");
         for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
         playerDimensions(run, fixture, evidence);
@@ -872,7 +887,7 @@ final class M5CollapseWindows {
     private static void disabledBeforeTheSeal(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
         evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
-        evidence.put("recordAtHalt", onDisk == null ? "ABSENT" : M5CollapseFixture.recordDigest(onDisk));
+        putRecordAtHalt(evidence, onDisk);
         run.expect("collapsingOnDiskAtHalt", onDisk != null && onDisk.state() == SessionState.COLLAPSING
                         && M5CollapseFixture.destination(onDisk).equals(Optional.of(fixture.universe())),
                 () -> "磁碟上的 journal 是 " + (onDisk == null ? "ABSENT" : onDisk.state() + " Destination=" + onDisk.collapse().destination()));
@@ -986,7 +1001,7 @@ final class M5CollapseWindows {
      */
     private static void expectRecordKept(M5CollapseRun run, M5CollapseFixture fixture, Window window, JsonObject halt) {
         if (!window.atRestart().recordKept()) return;
-        var expected = M5CollapseRun.text(halt.getAsJsonObject("atHalt"), "recordAtHalt");
+        var expected = M5CollapseRun.text(halt.getAsJsonObject("atHalt"), RECORD_AT_HALT);
         var current = run.journal().flushedRecords().get(fixture.sid());
         run.expect("recordKeptAcrossTheRestart", expected != null && current != null && M5CollapseFixture.recordDigest(current).equals(expected),
                 () -> "開服時的 record " + (current == null ? "ABSENT" : M5CollapseFixture.recordDigest(current)) + " 與 halt 當下不同：" + expected);
