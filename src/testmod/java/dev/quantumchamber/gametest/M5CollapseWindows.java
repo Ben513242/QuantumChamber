@@ -980,7 +980,8 @@ final class M5CollapseWindows {
     /**
      * restart 的開服檢查（W1、DORMANT 與通道的 restart 共用）：窗口在 RESOLVE 的哪一步（halt 當下是否已物化）；record 是這一列的 {@code stateAtHalt}（預設 COLLAPSING）且
      * Destination 與候選不變（PASSAGE_READY、SEALED 另斷言 Crossed 是 {@code crossedAtHalt}；終局已落盤時改斷言 journal 沒有這個 session）；參與者還沒有返還的窗口（W1）另斷言
-     * 走廊 space 已重建、沒有保留式 recovery 的請求；allocation、catalog（與開服 bootstrap 的物化）、discovery、projection 依這一列的預期，再做窗口自己的磁碟檢查。
+     * 走廊 space 已重建、沒有保留式 recovery 的請求；allocation、catalog（與開服 bootstrap 的物化）、discovery、projection 依這一列的預期，再做窗口自己的磁碟檢查與開服時的門
+     * （{@link #expectDoorAtStart}，F6-2d-2 B2a）。
      * {@code recognizeBeforeJoin} 的窗口在這裡以 probe 的 ticket 載入投影 Controller、開始觀察 load-sync，回傳它；否則回 null。
      */
     static M5CollapseProjectionLoad expectAtRestart(M5CollapseRun run, M5CollapseFixture fixture, Window window, JsonObject halt) throws Exception {
@@ -1048,6 +1049,7 @@ final class M5CollapseWindows {
                 : at.projection() == ProjectionLedger.Entry.Status.PENDING ? "projectionStillPending" : "projectionCompleteOnDisk";
         run.expect(projectionName, () -> M5CollapseDiskEvidence.projections(run.data()).equals(expectedProjections), () -> "projection ledger=" + fixture.projectionsOrError());
         at.disk().check(run, fixture);
+        expectDoorAtStart(run, fixture, at.doorAtStart());
         expectRecordKept(run, fixture, window, halt);
         M5CollapseProjectionLoad load = null;
         if (at.recognizeBeforeJoin()) {
@@ -1073,6 +1075,22 @@ final class M5CollapseWindows {
         var current = run.journal().flushedRecords().get(fixture.sid());
         run.expect("recordKeptAcrossTheRestart", expected != null && current != null && M5CollapseFixture.recordDigest(current).equals(expected),
                 () -> "開服時的 record " + (current == null ? "ABSENT" : M5CollapseFixture.recordDigest(current)) + " 與 halt 當下不同：" + expected);
+    }
+
+    /**
+     * restart 開服時（{@link #expectAtRestart}，窗口自己的磁碟檢查之後；F6-2d-2 B2a，B1 quality Minor 4）：這一列宣告 {@link AtRestart#withDoorAtStart} 時，原艙門 25 格符合
+     * 它（{@code doorAsExpectedAtStart}，失敗訊息附門正中那一格）；{@link DoorAtStart#UNSPECIFIED} 不斷言。讀磁碟（raw MCA，{@link #doorOnDisk}），不讀記憶體：開服時原艙附近
+     * 不一定已載入（{@code waitinglate} 的 crash 也用 W5 的列，level.dat 帶著半徑 0 的 spawn chunks，那條 chain 斷言開服時原艙附近沒有載入，{@code chamberNotLoadedAtStart}），
+     * 在這裡讀方塊會把 chunk 同步載入、改變那條 chain 要量的情況。開服當下還沒有 tick，記憶體裡已載入的門就是由這份磁碟載入的；之後的 tick 在記憶體裡看門，由各 chain 的斷言
+     * 負責（例如 {@code normalizeQueuedForTheClosedDoor}）。
+     */
+    private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, DoorAtStart door) throws Exception {
+        if (door == DoorAtStart.UNSPECIFIED) return;
+        boolean open = door != DoorAtStart.CLOSED;
+        var membrane = door == DoorAtStart.SEALED_MEMBRANE ? MembraneState.sealedFor(FRAME.outwardFacing()) : MembraneState.NONE;
+        boolean holds = doorOnDisk(run, fixture, open, membrane);
+        String center = holds ? "" : doorCenterOnDisk(run, fixture);
+        run.expect("doorAsExpectedAtStart", holds, () -> "開服時磁碟上的原艙門不是 " + door + "（open=" + open + " membrane=" + membrane.asString() + "）：門正中=" + center);
     }
 
     /** {@code stateAtHalt} 的斷言名稱：COLLAPSING 沿用 {@code restartedCollapsing}（F6-1 起的名稱），其餘依狀態。 */
