@@ -127,6 +127,9 @@ final class M5CollapseWindows {
      * <li>{@link #withRecordKept}（F6-2d-2 Step 0，F6-2d-1 quality Minor 4）：halt 之前的取證記下這個 session 的 record 的摘要（{@code atHalt} 的 {@code recordAtHalt}，
      *     {@link M5CollapseFixture#recordDigest}），restart 開服時<b>必</b>比對開服時的 record 與它相同（{@code recordKeptAcrossTheRestart}，{@link #expectRecordKept}）；預設不比對。
      *     原本由 {@code M5CollapseRetryChains} 與 {@code M5CollapsePassageChains} 各寫一份、語意不同（前者只在 halt receipt 有摘要時比對，後者 record 存在就比對）。</li>
+     * <li>{@link #withDoorAtStart}（F6-2d-2 B2a，B1 quality Minor 4）：restart 開服時原艙門的預期（{@link DoorAtStart}）；預設 {@link DoorAtStart#UNSPECIFIED}。原本是
+     *     {@code M5CollapseDormantChains} 的 {@code CLOSED_DOOR_AT_RESTART}（開服時門關著的窗口，restart 在 JOIN 之前另斷言重新套用不把它打開）；F6-2d-2 B2 的 SEALED 門窗口
+     *     也以它宣告開服時的門。</li>
      * </ul>
      * {@code withStateAtHalt} 另接受 MEASURED（F6-2d-1，W8：DORMANT 的收據，{@code restartedDormant}；還沒有 Destination，開服時斷言 {@code dormantAtRestart}）。
      * <p>F6-2d Step 0（F6-2c quality Minor 6）起驗證組合，restart 會忽略、或要到開服之後才發現的組合丟出 IllegalStateException。F6-2d-1（F6-2d Step 0 quality Minor 4、5
@@ -152,6 +155,7 @@ final class M5CollapseWindows {
         private M5CollapseFixture.Who crossedAtHalt = M5CollapseFixture.NOBODY;
         private boolean catalogDisabled;
         private boolean recordKept;
+        private DoorAtStart doorAtStart = DoorAtStart.UNSPECIFIED;
 
         private AtRestart() {}
 
@@ -190,6 +194,7 @@ final class M5CollapseWindows {
             Objects.requireNonNull(resolved, where + "resolved");
             Objects.requireNonNull(disk, where + "disk（NO_CHECK 還沒有初始化？）");
             Objects.requireNonNull(crossedAtHalt, where + "crossedAtHalt（NOBODY 還沒有初始化？）");
+            Objects.requireNonNull(doorAtStart, where + "doorAtStart");
             String state = stateAtHalt == null ? "終局已落盤" : stateAtHalt.name();
             boolean passage = stateAtHalt == SessionState.PASSAGE_READY || stateAtHalt == SessionState.SEALED;
             if (crossedAtHalt != M5CollapseFixture.NOBODY && !passage) {
@@ -285,6 +290,18 @@ final class M5CollapseWindows {
         /** restart 開服時是否必比對 record 與 halt 當下的摘要。 */
         boolean recordKept() { return recordKept; }
 
+        /**
+         * restart 開服時原艙門是 {@code door}（F6-2d-2 B2a，B1 quality Minor 4）。{@link DoorAtStart#UNSPECIFIED} 是預設，不經這裡（指定它時丟出，不靜默當成沒有指定）。
+         */
+        AtRestart withDoorAtStart(DoorAtStart door) {
+            Objects.requireNonNull(door, "doorAtStart");
+            if (door == DoorAtStart.UNSPECIFIED) throw new IllegalStateException("AtRestart：withDoorAtStart 不接受 UNSPECIFIED（那是預設）");
+            return copy(next -> next.doorAtStart = door);
+        }
+
+        /** restart 開服時原艙門的預期。 */
+        DoorAtStart doorAtStart() { return doorAtStart; }
+
         /** halt 當下磁碟上的 record 狀態；null 為終局已落盤。 */
         SessionState stateAtHalt() { return stateAtHalt; }
 
@@ -305,6 +322,21 @@ final class M5CollapseWindows {
 
         /** JOIN 之前是否載入並辨識投影 Controller。 */
         boolean recognizeBeforeJoin() { return recognizeBeforeJoin; }
+    }
+
+    /**
+     * restart 開服時原艙門的預期（{@link AtRestart#withDoorAtStart}；F6-2d-2 B2a，B1 quality Minor 4：取代 {@code M5CollapseDormantChains} 的 {@code CLOSED_DOOR_AT_RESTART}）。
+     * 一列一個值：開服時門不同的窗口是不同的列。
+     */
+    enum DoorAtStart {
+        /** 不指定（預設）。 */
+        UNSPECIFIED,
+        /** 關著（25 格 {@code open=false}、{@code membrane=none}）：RESOLVE 期間 crash 的 W2、W3、W5，門沒有動過（fixture 蓋的門預設關著）。 */
+        CLOSED,
+        /** 一般開門（25 格 {@code open=true}、{@code membrane=none}）。 */
+        PLAIN_OPEN,
+        /** PREPARE 的 sealed 量子膜（25 格 {@code open=true}、朝外的 sealed {@code membrane}）。 */
+        SEALED_MEMBRANE
     }
 
     /** PREPARE 怎麼完成：「準備完成」INFO 恰一則，模式是 {@code mode}、寫入 {@code cells} 格（{@link #ANY_CELLS}：不是 0 格即可），之後 READY 時的磁碟檢查。 */
@@ -340,15 +372,16 @@ final class M5CollapseWindows {
         // W1：live session 的 MEASURED→COLLAPSING 剛提交、返還之前（RESOLVE 還沒有開始）。
         row(rows, CrashWindow.COLLAPSING_COMMITTED, M5CollapseWindows::collapsingCommitted, M5CollapseWindows::committedBeforeTheReturn,
                 AtRestart.resolved(Resolved.NOTHING).notReturned(), null);
-        // W2：allocation ledger 寫出之後、catalog 之前。
+        // W2：allocation ledger 寫出之後、catalog 之前。F6-2d-2 B2a：W2、W3、W5 是 RESOLVE 期間 crash，PREPARE 還沒有開始，開服時門是關著的（withDoorAtStart(CLOSED)，
+        // 原本是 M5CollapseDormantChains 的 CLOSED_DOOR_AT_RESTART）。W4、W4b、W6、W6x 在 PREPARE 中 crash，門帶著 sealed 量子膜，不在這裡。
         row(rows, CrashWindow.ALLOCATION_APPENDED, M5CollapseWindows::appended, NO_EVIDENCE,
-                AtRestart.resolved(Resolved.ALLOCATION), null);
+                AtRestart.resolved(Resolved.ALLOCATION).withDoorAtStart(DoorAtStart.CLOSED), null);
         // W3：catalog 寫出之後、物化之前（重啟時由 EAGER_ENABLED 物化）。
         row(rows, CrashWindow.CATALOG_ALLOCATED, M5CollapseWindows::appended, NO_EVIDENCE,
-                AtRestart.resolved(Resolved.CATALOG), null);
-        // W5：discovery 追加之後、投影之前。
+                AtRestart.resolved(Resolved.CATALOG).withDoorAtStart(DoorAtStart.CLOSED), null);
+        // W5：discovery 追加之後、投影之前（waitinglate 的 crash 也用這一列）。
         row(rows, CrashWindow.DISCOVERY_APPENDED, M5CollapseWindows::appended, NO_EVIDENCE,
-                AtRestart.resolved(Resolved.DISCOVERY), null);
+                AtRestart.resolved(Resolved.DISCOVERY).withDoorAtStart(DoorAtStart.CLOSED), null);
         // W4：第一次寫入剛寫完 Controller 那一格（halt 前存檔：磁碟上是寫到一半的投影）。
         row(rows, CrashWindow.PROJECTION_CELL_WRITTEN, M5CollapseWindows::controllerCellWritten, M5CollapseWindows::savedHalfWrittenProjection,
                 AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.PENDING).withDisk(M5CollapseWindows::controllerOnDiskAtRestart)

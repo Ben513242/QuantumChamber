@@ -11,9 +11,7 @@ import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -21,11 +19,6 @@ import java.util.stream.Stream;
  * 窗口的條件、halt 之前的取證與 restart 的預期都在窗口表（{@link M5CollapseWindows}）。
  */
 final class M5CollapseDormantChains {
-    /**
-     * restart 開服時原艙門是關著的窗口（F6-2d-2 B1，F6-2-08 的另一半）：RESOLVE 期間 crash 的 W2、W3、W5，PREPARE 還沒有開始，門沒有動過（fixture 蓋的門預設關著）。W4、W4b、W6、
-     * W6x 在 PREPARE 中 crash，門帶著 sealed 量子膜，不在這裡。
-     */
-    private static final Set<CrashWindow> CLOSED_DOOR_AT_RESTART = EnumSet.of(CrashWindow.ALLOCATION_APPENDED, CrashWindow.CATALOG_ALLOCATED, CrashWindow.DISCOVERY_APPENDED);
     private final M5CollapseRun run;
     private final M5CollapseFixture fixture;
     private final M5CollapsePassage passage;
@@ -63,7 +56,8 @@ final class M5CollapseDormantChains {
      * restart phase：讀回 crash phase 的 halt receipt 與 MEASURED 收據，開服時依窗口表斷言窗口的磁碟狀態（{@link M5CollapseWindows#expectAtRestart}；W4、W6 在 JOIN
      * 之前載入磁碟上的投影 Controller，等它經 load-sync 辨識為 inert 的 PROJECTION）；之後參與者真 JOIN（在艙外、來源世界）→ RESOLVE 完成 → 進入艙內 →
      * PASSAGE_READY（門 passable、比較器 15、投影 COMPLETE；投影的窗口另斷言 PREPARE 怎麼完成）→ 越過門板中線、傳送到 U → (b) 全員都已跨過的終局。每個 tick 斷言
-     * catalog 只出現 Destination 的 UniverseId、record 的 Destination 與候選不變。F6-2d-2 B1：開服時門是關著的窗口（{@link #CLOSED_DOOR_AT_RESTART}）在 JOIN 之前另斷言
+     * catalog 只出現 Destination 的 UniverseId、record 的 Destination 與候選不變。F6-2d-2 B1：開服時門是關著的窗口（窗口表的
+     * {@code withDoorAtStart(CLOSED)}；F6-2d-2 B2a 之前是這個類別的 {@code CLOSED_DOOR_AT_RESTART}）在 JOIN 之前另斷言
      * 重啟之後的重新套用不把關著的門打開（{@link M5CollapseDoors#closedDoorKeptByTheReapply}；F6-2d-2 B2a 起在共用的 {@link M5CollapseDoors}，不再依賴
      * {@link M5CollapseDoorChains}）。
      */
@@ -73,7 +67,7 @@ final class M5CollapseDormantChains {
         // W4、W6：參與者 JOIN 之前，磁碟上的投影 Controller 經 load-sync 辨識為 inert 的 PROJECTION（不記 log）。
         if (window.atRestart().recognizeBeforeJoin()) steps.add(new Step("recognized", 60, this::projectionRecognized));
         // F6-2d-2 B1（F6-2-08 的另一半）：開服時原艙門是關著的窗口，參與者 JOIN 之前先斷言重新套用（NORMALIZE）之後門仍關著。
-        if (CLOSED_DOOR_AT_RESTART.contains(id)) steps.addAll(M5CollapseDoors.closedDoorKeptByTheReapply(run, fixture));
+        if (window.atRestart().doorAtStart() == M5CollapseWindows.DoorAtStart.CLOSED) steps.addAll(M5CollapseDoors.closedDoorKeptByTheReapply(run, fixture));
         steps.add(new Step("join", 1, () -> { fixture.joinAllInTheSourceWorld(M5CollapseFixture.Inside.OUTSIDE); return true; }));
         steps.addAll(passage.steps(window.prepared()));
         return Phase.stop(steps).started(() -> load = M5CollapseWindows.expectAtRestart(run, fixture, window, fixture.readCrashReceipt(crashPhase, id)))
