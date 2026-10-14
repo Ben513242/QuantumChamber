@@ -129,6 +129,29 @@ final class M5CollapsePassage {
         return new Step(name, maxTicks, () -> body.run(++tick[0]));
     }
 
+    /**
+     * {@link #awaiting} 等完之後的判定：{@code tick} 是這個 step 的第幾個 tick（由 1 起），{@code happened} 是那個 tick 是否已發生（等滿 {@code waitTicks} 仍沒有發生時為 false）。
+     * 呼叫端以具名斷言判定，含「到時沒有發生」。
+     */
+    @FunctionalInterface interface Settled { void at(int tick, boolean happened) throws Exception; }
+
+    /**
+     * 通用的等待 step（F6-2d-2 B2a，B1 quality Minor 2）：step {@code name} 每個 tick 問 {@code happened}；還沒有發生、而且還沒有等滿 {@code waitTicks} 個 tick 就再等，否則以
+     * 這個 tick 與是否已發生呼叫 {@code settled}（具名斷言），完成。{@code waitTicks} 是唯一的上限：step 的上限就是它，而且第 {@code waitTicks} 個 tick 一定完成（runner 只在
+     * step 回 false 時檢查上限），所以到時仍沒有發生時失敗在 {@code settled} 的具名斷言，不是 stepBounded。原本每個呼叫端把 {@code waitTicks} 寫兩次（{@link #counting} 的上限與
+     * 「再等」的條件），兩者不同時多出的上限永遠到不了、或在具名斷言之前就 stepBounded。
+     */
+    static Step awaiting(String name, int waitTicks, M5CollapseRun.CheckedCondition happened, Settled settled) {
+        Objects.requireNonNull(happened, "happened");
+        Objects.requireNonNull(settled, "settled");
+        return counting(name, waitTicks, tick -> {
+            boolean now = happened.holds();
+            if (!now && tick < waitTicks) return false;
+            settled.at(tick, now);
+            return true;
+        });
+    }
+
     /** 觀察段（step {@code name}）：每個 tick 呼叫 {@code eachTick}，恰 {@code ticks} 個 tick 之後完成（{@link #watch(String, int, Watching, M5CollapseRun.Checked)}）。 */
     static Step watch(String name, int ticks, Watching eachTick) {
         return watch(name, ticks, eachTick, M5CollapseRun.NOTHING);

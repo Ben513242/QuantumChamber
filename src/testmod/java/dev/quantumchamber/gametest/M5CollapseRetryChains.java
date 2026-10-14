@@ -330,7 +330,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      */
     Phase waitingLateRestart(String crashPhase) {
         var id = CrashWindow.DISCOVERY_APPENDED;
-        var steps = new ArrayList<Step>(List.of(M5CollapsePassage.counting("prepared", LATE_TRIGGER_TICKS, this::preparedWithoutReentry)));
+        var steps = new ArrayList<Step>(List.of(M5CollapsePassage.awaiting("prepared", LATE_TRIGGER_TICKS, this::preparedRecordingTheTicks, this::preparedWithoutReentry)));
         steps.addAll(passage.steps(M5CollapseWindows.of(id).prepared()));
         return restartPhase(crashPhase, id, ChamberAtStart.AS_SAVED, steps, this::joinInsideBeforeTheFirstEvaluation);
     }
@@ -354,18 +354,23 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      * {@code waitinglate} 的 step {@code prepared}（{@code tick} 是這個 step 的第幾個 tick，由 1 起）：參與者沒有移動，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內進入 PREPARE
      * （「進入 PREPARE（閘門成立）」的 INFO 一則）；之後仍沒有就由這個具名斷言判 FAIL。另記下 RESOLVE 完成、原艙附近載入完成與進入 PREPARE 的 tick（閘門第一次評估在 RESOLVE
      * 完成的下一個 tick）。F6-2d-2 B1（A 段 quality Minor 4）：step 的上限由 {@code LATE_TRIGGER_TICKS + 5} 改為等於等待的上限（第 {@code LATE_TRIGGER_TICKS} 個 tick 一定完成，
-     * 多出的 5 tick 到不了）；參數名比照 {@link M5CollapsePassage.Watching} 改為 {@code tick}（A 段 quality nit）。
+     * 多出的 5 tick 到不了）；參數名比照 {@link M5CollapsePassage.Watching} 改為 {@code tick}（A 段 quality nit）。F6-2d-2 B2a（B1 quality Minor 2）：改用通用的
+     * {@link M5CollapsePassage#awaiting}（每個 tick 的查詢與記下的 tick 在 {@link #preparedRecordingTheTicks}，順序與之前相同；等待時間 {@link #LATE_TRIGGER_TICKS} 與通過條件
+     * 相同）。
      */
-    private boolean preparedWithoutReentry(int tick) {
-        var sid = fixture.sid().toString();
-        if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
-        if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.proof.putIfAbsent("resolvedAtPhaseTick", run.ticks());
-        var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", sid).size();
-        if (prepares == 0 && tick < LATE_TRIGGER_TICKS) return false;
+    private void preparedWithoutReentry(int tick, boolean happened) {
+        var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
         boolean still = notMovedSinceTheJoin();
         run.expect("preparedWithoutReentry", prepares == 1 && still, () -> "開服之後 " + run.ticks() + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
         run.proof.put("preparedAtPhaseTick", run.ticks());
-        return true;
+    }
+
+    /** {@code waitinglate} 的 step {@code prepared} 每個 tick 的查詢：記下原艙附近載入完成與 RESOLVE 完成的 tick（第一次），回傳是否已進入 PREPARE。只讀，不改世界。 */
+    private boolean preparedRecordingTheTicks() {
+        var sid = fixture.sid().toString();
+        if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
+        if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.proof.putIfAbsent("resolvedAtPhaseTick", run.ticks());
+        return !run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", sid).isEmpty();
     }
 
     /** RESOLVE 之後的共用部分：{@link M5CollapsePassage#steps} 的 resolve → ready → cross → ended（(b) 全員都已跨過）。 */
@@ -389,7 +394,8 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var steps = new ArrayList<Step>();
         steps.add(committedWithoutReentry("committedOnTheFirstObservation", "committedOnTheFirstObservation", Await.FIRST_OBSERVATION));
         steps.add(new Step("resolved", 400, this::resolvedWithoutMoving));
-        steps.add(M5CollapsePassage.counting("preparedOnTheLevel", PREPARE_WAIT_TICKS, this::preparedOnTheLevel));
+        steps.add(M5CollapsePassage.awaiting("preparedOnTheLevel", PREPARE_WAIT_TICKS,
+                () -> !run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).isEmpty(), this::preparedOnTheLevel));
         steps.add(new Step("leftPrepare", 40, this::leftPrepareWithoutPower));
         steps.add(M5CollapsePassage.watch("gateWaitsForAnEdge", M5CollapsePassage.WATCH_TICKS, this::gateWaitsForAnEdge, this::poweredThenLeave));
         steps.add(enter());
@@ -422,17 +428,16 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
 
     /**
      * W8 的 step {@code preparedOnTheLevel}（{@code tick} 是這個 step 的第幾個 tick，由 1 起）。F6-2d-2 B1（A 段 quality Minor 4、nit）：step 的上限由 {@code PREPARE_WAIT_TICKS + 5}
-     * 改為等於等待的上限（第 {@code PREPARE_WAIT_TICKS} 個 tick 一定完成）；參數名比照 {@link M5CollapsePassage.Watching} 改為 {@code tick}。
+     * 改為等於等待的上限（第 {@code PREPARE_WAIT_TICKS} 個 tick 一定完成）；參數名比照 {@link M5CollapsePassage.Watching} 改為 {@code tick}。F6-2d-2 B2a（B1 quality Minor 2）：
+     * 改用通用的 {@link M5CollapsePassage#awaiting}（等待時間 {@link #PREPARE_WAIT_TICKS} 與通過條件相同）。
      */
-    private boolean preparedOnTheLevel(int tick) {
+    private void preparedOnTheLevel(int tick, boolean happened) {
         var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
-        // 最多等 PREPARE_WAIT_TICKS 個 tick，之後仍沒有進 PREPARE 就由這個具名斷言判 FAIL（mutation：閘門第一次也只看邊緣時，失敗在這裡）。
-        if (prepares == 0 && tick < PREPARE_WAIT_TICKS) return false;
+        // 最多等 PREPARE_WAIT_TICKS 個 tick（awaiting），之後仍沒有進 PREPARE 就由這個具名斷言判 FAIL（mutation：閘門第一次也只看邊緣時，失敗在這裡）。
         boolean still = notMovedSinceTheJoin();
         run.expect("preparedWithoutAnEdge", prepares == 1 && still, () -> "RESOLVE 之後 " + tick + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
         // spec §7.3：PREPARE 進行到一半時閘門不再成立（來源艙沒有供電）就退回 WAITING。
         run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
-        return true;
     }
 
     private boolean leftPrepareWithoutPower() {

@@ -105,7 +105,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     Phase waitingDoorRestart(String crashPhase) {
         var steps = new ArrayList<Step>();
-        steps.add(M5CollapsePassage.counting("normalizeQueued", QUEUE_WAIT_TICKS, this::normalizeQueued));
+        steps.add(M5CollapsePassage.awaiting("normalizeQueued", QUEUE_WAIT_TICKS, () -> !reapplyQueued(run, fixture.sid()).isEmpty(), this::normalizeQueued));
         steps.add(M5CollapsePassage.counting("normalized", APPLY_WAIT_TICKS, this::normalizedOnTheQueuedTick));
         steps.add(M5CollapsePassage.watch("waitingWithThePlainDoor", M5CollapsePassage.WATCH_TICKS, this::plainOpenWhileWaiting, this::resolvedWhileWaiting));
         steps.add(new Step("join", 1, this::joinThenStepOutside));
@@ -119,10 +119,12 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.expect("nobodyOnlineAtStart", fixture.noneOnline() && run.ticks() == 0, () -> "開服時 tick=" + run.ticks() + " 有人在線上=" + !fixture.noneOnline());
     }
 
-    /** step {@code normalizeQueued}（{@code tick} 是這個 step 的第幾個 tick，由 1 起）。 */
-    private boolean normalizeQueued(int tick) {
+    /**
+     * step {@code normalizeQueued}（{@link M5CollapsePassage#awaiting}：排入的 INFO 出現、或等滿 {@link #QUEUE_WAIT_TICKS} 個 tick 時；{@code tick} 是這個 step 的第幾個 tick，
+     * 由 1 起）。到時沒有排入時由 {@code normalizeQueuedOnTheFirstLoad} 判 FAIL（F6-2d-2 B2a 之前是 {@code counting} 加手寫的等待，等待時間與通過條件相同）。
+     */
+    private void normalizeQueued(int tick, boolean happened) {
         var queued = reapplyQueued(run, fixture.sid());
-        if (queued.isEmpty() && tick < QUEUE_WAIT_TICKS) return false;
         boolean sealed = M5GameTestSupport.doorSealed(run.source(), FRAME);
         run.expect("normalizeQueuedOnTheFirstLoad", queued.size() == 1 && queued.getFirst().normalizeAfterARestart(),
                 () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued);
@@ -130,7 +132,6 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         normalizeTick = queued.getFirst().tick();
         run.proof.put("normalizeQueuedAtServerTick", run.server().getTicks());
         run.proof.put("normalizeTick", normalizeTick);
-        return true;
     }
 
     /** step {@code normalized}：排入時記下的 tick（N）結束時，門是一般開門、套用的 INFO 恰一則而且記的是 tick N；之後 2 個 tick 仍不是一般開門就由這個具名斷言判 FAIL。 */
@@ -187,7 +188,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     Phase prepareDoorRestart(String crashPhase) {
         var steps = new ArrayList<Step>();
-        steps.add(M5CollapsePassage.counting("preparedOnTheLevel", PREPARE_WAIT_TICKS, this::preparedWithTheVisitorInside));
+        steps.add(M5CollapsePassage.awaiting("preparedOnTheLevel", PREPARE_WAIT_TICKS, () -> prepares() > 0, this::preparedWithTheVisitorInside));
         steps.add(M5CollapsePassage.counting("heldWithTheVisitorInside", HELD_WAIT_TICKS, this::heldWithTheVisitorInside));
         steps.add(M5CollapsePassage.watch("visitorStillInside", VISITOR_WATCH_TICKS, this::plainOpenWhileTheVisitorIsInside, this::visitorLeaves));
         steps.add(M5CollapsePassage.counting("resealed", 1, this::resealedOnTheNextTick));
@@ -216,11 +217,13 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.proof.put("visitor", visitor.getUuid().toString());
     }
 
-    /** step {@code preparedOnTheLevel}（{@code tick} 由 1 起）：最多等 {@link #PREPARE_WAIT_TICKS} 個 tick 進 PREPARE，之後仍沒有就由 {@code enteredPrepareOnTheLevel} 判 FAIL。 */
-    private boolean preparedWithTheVisitorInside(int tick) throws Exception {
+    /**
+     * step {@code preparedOnTheLevel}（{@link M5CollapsePassage#awaiting}，{@code tick} 由 1 起）：最多等 {@link #PREPARE_WAIT_TICKS} 個 tick 進 PREPARE，之後仍沒有就由
+     * {@code enteredPrepareOnTheLevel} 判 FAIL（F6-2d-2 B2a 之前是 {@code counting} 加手寫的等待，等待時間與通過條件相同）。
+     */
+    private void preparedWithTheVisitorInside(int tick, boolean happened) throws Exception {
         var sid = fixture.sid();
         int prepares = prepares();
-        if (prepares == 0 && tick < PREPARE_WAIT_TICKS) return false;
         boolean still = notMovedSinceTheJoin();
         run.expect("enteredPrepareOnTheLevel", prepares == 1 && still, () -> "開服之後 " + run.ticks() + " 個 tick：「進入 PREPARE」=" + prepares + " 參與者沒有移動=" + still);
         // F6-2-10 的目標斷言（mutation：membraneTarget 不看 outsiderInside 時，進入 PREPARE 的這個 tick 就失敗在這裡）。
@@ -233,7 +236,6 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         passage.expectResolved();
         run.proof.put("plainDoorInfo", kept.getFirst());
         run.proof.put("preparedAtPhaseTick", run.ticks());
-        return true;
     }
 
     /** step {@code heldWithTheVisitorInside}：每個 tick 一般開門；PASSAGE_READY 的提交第一次被暫緩時（準備完成之後）斷言「準備完成」恰一則、完成。 */
@@ -290,15 +292,14 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     static List<Step> closedDoorKeptByTheReapply(M5CollapseRun run, M5CollapseFixture fixture) {
         int[] queuedFor = {-1};
-        return List.of(M5CollapsePassage.counting("closedNormalizeQueued", QUEUE_WAIT_TICKS, tick -> {
+        // F6-2d-2 B2a（B1 quality Minor 2）：closedNormalizeQueued 改用通用的 awaiting（之前是 counting 加手寫的等待；等待時間 QUEUE_WAIT_TICKS 與通過條件相同）。
+        return List.of(M5CollapsePassage.awaiting("closedNormalizeQueued", QUEUE_WAIT_TICKS, () -> !reapplyQueued(run, fixture.sid()).isEmpty(), (tick, happened) -> {
                     var queued = reapplyQueued(run, fixture.sid());
-                    if (queued.isEmpty() && tick < QUEUE_WAIT_TICKS) return false;
                     boolean closed = closed(run);
                     run.expect("normalizeQueuedForTheClosedDoor", queued.size() == 1 && queued.getFirst().normalizeAfterARestart() && closed,
                             () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued + " 門關著=" + closed);
                     queuedFor[0] = queued.getFirst().tick();
                     run.proof.put("closedNormalizeTick", queuedFor[0]);
-                    return true;
                 }),
                 M5CollapsePassage.counting("closedDoorKept", APPLY_WAIT_TICKS, tick -> {
                     int now = run.server().getTicks();
