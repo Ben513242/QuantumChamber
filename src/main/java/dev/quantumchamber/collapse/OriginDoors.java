@@ -642,7 +642,8 @@ final class OriginDoors {
      * activationBlocked 並記 ERROR，之後一次 APPLIED 會解除）。
      * <ul>
      * <li>終局之後的一般開門：原艙已開始新的 session（presence 不是 NONE）時，門屬於新的 session，不再套用。</li>
-     * <li>進入 SEALED 的關門（§11.2）：這個 session 的 collapse view 已不是 SEALED（重試回到 COLLAPSING，或已終局）時不再套用。每次嘗試都重新
+     * <li>進入 SEALED 的關門（§11.2）：這個 session 的 collapse view 已不是 SEALED（重試回到 COLLAPSING，或已終局）時不再套用；回到 COLLAPSING 時改以 COLLAPSING 的重新套用目標
+     *     處理（{@link #normalizeAfterRetry}，spec v5.10 §7.3，H9 (a)）。每次嘗試都重新
      *     檢查門口：25 格門內有任何 entity 的 bbox 時改為一般開門（§7.3），不把門關在任何人身上。</li>
      * <li>PREPARE 期間參與者關門的終局之後的關門（F4b-3）：同終局之後的一般開門，原艙已開始新的 session 時不再套用；門口的規則同上。</li>
      * <li>會讓門變成有碰撞的兩種關門（SEALED、終局之後），都要等門口的 entity storage 載入之後才判斷門口（重啟或 chunk 重新載入之後 entity 是非同步載入的）；
@@ -672,6 +673,7 @@ final class OriginDoors {
                 && service.journal.collapseView(door.session).filter(view -> view.state() == SessionState.SEALED).isEmpty()) {
             doors.remove(door.chamber);
             LOGGER.info(LOG_MARKER, "session 已不是 SEALED，不再套用封存時的原艙門：chamber={} session={}", door.chamber, door.session);
+            if (service.journal.collapseView(door.session).filter(view -> view.state() == SessionState.COLLAPSING).isPresent()) normalizeAfterRetry(door);
             return;
         }
         if (door.goal == DoorGoal.NORMALIZE
@@ -725,6 +727,24 @@ final class OriginDoors {
             LOGGER.info(LOG_MARKER, "原艙門已依 collapse view 重新套用（{}：{}，tick {}）：chamber={} session={}", door.goal, result.outcome(), service.now, door.chamber, door.session);
         } else {
             LOGGER.debug(LOG_MARKER, "原艙門的重新套用不需要改門（{}：{}，tick {}）：chamber={} session={}", door.goal, result.outcome(), service.now, door.chamber, door.session);
+        }
+    }
+
+    /**
+     * 排入的關門（{@link DoorGoal#CLOSE_ON_SEALED}）在套用之前，SEALED 的重試已回到 COLLAPSING（spec v5.10 §7.3「門狀態的重新套用」、§12 SEALED 列，H9 (a)）：例如重啟之後的
+     * 第一次觀察排入關門、同一個 tick 原參與者開服時就在艙內而重試；或關門還在等門口的 entity storage、chunk FULL 時重試。依套用當下的 collapse view，以 COLLAPSING 的重新套用目標
+     * 取代被丟棄的關門（{@link DoorGoal#NORMALIZE}，立即嘗試一次）：門還帶著量子膜時改為一般開門，沒有量子膜時不寫入；來源艙的 chunk 不是 FULL 時等之後的 tick。視同重新套用
+     * （{@code reapplied}）：改了門時記同一則完成的 INFO。之後進入 PREPARE 時由 {@link #prepareDoor} 移除它、依「套用量子膜的條件」重新判斷；終局之後的門取代它。
+     * 例外比照 {@link #queueDoor}：依這扇門記下的狀態記錄並退避，不丟出。
+     */
+    private void normalizeAfterRetry(PendingDoor dropped) {
+        var door = new PendingDoor(dropped.chamber, dropped.session, dropped.world, dropped.frame, service.now, DoorGoal.NORMALIZE);
+        door.reapplied = true;
+        doors.put(door.chamber, door);
+        try {
+            applyDoor(door);
+        } catch (RuntimeException failure) {
+            applyFailure(door, failure, service.now);
         }
     }
 
