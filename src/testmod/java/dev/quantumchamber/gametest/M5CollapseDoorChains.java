@@ -173,7 +173,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * <ol>
      * <li>{@code preparedOnTheLevel}：閘門以位準評估進 PREPARE（「進入 PREPARE」恰一則，參與者沒有移動：{@code enteredPrepareOnTheLevel}）；那個 tick 門已是一般開門
      *     （{@code plainOpenWhileTheVisitorIsInside}）、「艙內有非參與者玩家，原艙門維持一般開門」一則、NORMALIZE 排入一則而沒有套用的 INFO、RESOLVE 完成恰一則
-     *     （{@code preparedOnTheLevelWithTheVisitorInside}）。</li>
+     *     （{@code preparedOnTheLevelWithTheVisitorInside}）；進入 PREPARE 的 server tick 不晚於 NORMALIZE 排入時記下的 tick（{@code preparedBeforeTheQueuedNormalize}，這條 chain
+     *     的前提，見 {@link #preparedWithTheVisitorInside}）。</li>
      * <li>{@code heldWithTheVisitorInside}：每個 tick 一般開門，直到準備完成、PASSAGE_READY 的提交第一次被暫緩（{@code readyHeldWithTheVisitorInside}：「準備完成」恰一則）。</li>
      * <li>{@code visitorStillInside}：再 {@value #VISITOR_WATCH_TICKS} 個 tick，每個 tick 一般開門；之後非參與者移到艙外。</li>
      * <li>{@code resealed}：下一個 tick 原艙門是 sealed 量子膜、「套用 sealed 量子膜」恰一則（{@code resealedOnTheNextTick}）；之後釋放暫緩。</li>
@@ -213,6 +214,11 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /**
      * step {@code preparedOnTheLevel}（{@link M5CollapsePassage#awaiting}，{@code tick} 由 1 起）：最多等 {@link #PREPARE_WAIT_TICKS} 個 tick 進 PREPARE，之後仍沒有就由
      * {@code enteredPrepareOnTheLevel} 判 FAIL（F6-2d-2 B2a 之前是 {@code counting} 加手寫的等待，等待時間與通過條件相同）。
+     * <p>F6-2d-2 B2a（B1 quality Minor 3）：{@code preparedBeforeTheQueuedNormalize} 斷言這條 chain 的前提：進入 PREPARE 的 server tick ≤ 重新套用的 NORMALIZE 排入時記下的
+     * tick N（B1 的實測兩者都是 2）。同一個 server tick 裡塌縮流程的 session 推進（{@code prepareDoor}）在待套用的門（{@code applyPending}）之前，PREPARE 在 tick N 開始時，
+     * {@code prepareDoor} 先依「套用量子膜的條件」選門（艙內有非參與者 → 一般開門，「維持一般開門」的 INFO）並移除還在等的 NORMALIZE，所以那一刻的一般開門是 F6-2-10 的判斷。
+     * PREPARE 晚到 N+1 以後時，tick N 的 NORMALIZE 已先把 sealed 的門改為一般開門，{@code prepareDoor} 是 UNCHANGED、不記 INFO，一般開門就不能證明 PREPARE 的判斷。所以是
+     * 「≤ N」，不是派工字面的「早於排入的 tick」（排入的 INFO 本身在 tick N-1，PREPARE 在 tick N）。失敗訊息附兩個 tick。
      */
     private void preparedWithTheVisitorInside(int tick, boolean happened) throws Exception {
         var sid = fixture.sid();
@@ -222,10 +228,17 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         // F6-2-10 的目標斷言（mutation：membraneTarget 不看 outsiderInside 時，進入 PREPARE 的這個 tick 就失敗在這裡）。
         plainOpenWhileTheVisitorIsInside(tick);
         var kept = run.capture().matching(Level.INFO, "艙內有非參與者玩家", "原艙門維持一般開門", sid.toString()).stream().map(LogCapture.Entry::message).toList();
-        int queued = reapplyQueued(run, sid).size(), applied = reapplied(run, sid).size();
+        var queuedInfo = reapplyQueued(run, sid);
+        int queued = queuedInfo.size(), applied = reapplied(run, sid).size();
         int resolved = run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid.toString()).size();
         run.expect("preparedOnTheLevelWithTheVisitorInside", kept.size() == 1 && queued == 1 && applied == 0 && resolved == 1,
                 () -> "「維持一般開門」=" + kept + " 排入=" + queued + " 套用=" + applied + " RESOLVE 完成=" + resolved);
+        // F6-2d-2 B2a（B1 quality Minor 3）：這條 chain 的前提（見 Javadoc）：PREPARE 在 NORMALIZE 套用之前（同一個 tick 也算，prepareDoor 在 applyPending 之前）。
+        int preparedAt = run.server().getTicks(), normalizeAt = queuedInfo.getFirst().tick();
+        run.expect("preparedBeforeTheQueuedNormalize", preparedAt <= normalizeAt,
+                () -> "進入 PREPARE 的 server tick " + preparedAt + " 晚於 NORMALIZE 排入時記下的 tick " + normalizeAt);
+        run.proof.put("preparedAtServerTick", preparedAt);
+        run.proof.put("normalizeTick", normalizeAt);
         passage.expectResolved();
         run.proof.put("plainDoorInfo", kept.getFirst());
         run.proof.put("preparedAtPhaseTick", run.ticks());
