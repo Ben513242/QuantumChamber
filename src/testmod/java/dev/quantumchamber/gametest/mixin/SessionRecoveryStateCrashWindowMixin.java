@@ -27,6 +27,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * <p>F6-2d-1：{@code commitRollForward} 的回傳點另以 {@code MATERIALIZE_SEALED}（W9：COLLAPSING→SEALED(MATERIALIZE_FAILED)）呼叫，排在原本的四個之後。注入點的寫法一併統一
  * （F6-2c quality Minor 8，F6-2d Step 0 交給本體）：{@code commitRestore} 原本是兩個 {@code @Inject}（{@code COLLAPSING_COMMITTED} 與 {@code READY_COMMITTED} 各一個），改成與
  * {@code commitRollForward} 相同的一個 {@code @Inject}，依原本的順序以兩個值呼叫、共用一個 detail（record 都是 immutable）。每次 {@code reachedCrashWindow} 互不影響，行為與拆開時相同。
+ * <p>F6-2d-2 B2：{@code commitRollForward} 的回傳點另以 {@code UNREADABLE_SEALED}、{@code UNREADABLE_SEALED_DOORWAY}（F6-2-09：COLLAPSING→SEALED(AUTHORITY_UNREADABLE)，原艙門分別是
+ * 一般開門、關著而門口有 entity）與 {@code PROJECTION_SEALED}（F6-2-11：COLLAPSING→SEALED(PROJECTION_FAILED)，原艙門是 sealed 量子膜）呼叫，排在 {@code MATERIALIZE_SEALED} 之後。
+ * 這一點在 {@code CollapseService.seal} 的 {@code commitRollForward} 回傳之後、{@code sealCommitted} 排入關門與記 WARN 之前，所以 crash 時記憶體與磁碟上的門都還沒有動。
  */
 @Mixin(value=SessionRecoveryState.class,remap=false)
 abstract class SessionRecoveryStateCrashWindowMixin {
@@ -49,6 +52,9 @@ abstract class SessionRecoveryStateCrashWindowMixin {
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.RECOVERY_SEALED,detail);
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.RECOVERY_REJECTED,detail);
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.MATERIALIZE_SEALED,detail);
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.UNREADABLE_SEALED,detail);
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.UNREADABLE_SEALED_DOORWAY,detail);
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.PROJECTION_SEALED,detail);
     }
 
     @Inject(method="terminate(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/SessionRecoveryRecord;Ldev/quantumchamber/persistence/SessionRecoveryState$TerminalOrigin;)Ldev/quantumchamber/persistence/SessionRecoveryState$TerminalResult;",

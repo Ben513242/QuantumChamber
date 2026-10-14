@@ -14,6 +14,7 @@ import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.CollapseAuthorities;
+import dev.quantumchamber.collapse.OriginDoorsTestAccess;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.collapse.SealedReason;
@@ -58,7 +59,9 @@ import org.apache.logging.log4j.Level;
  * (b) 終局。其他窗口（F6-2c：PASSAGE_READY 期間、終局之後）另以 {@link AtRestart} 的 {@code stateAtHalt}、{@code crossedAtHalt} 表達開服時的 record，restart 的
  * step 與終局（{@code M5CollapsePassage.End} 的逐人位置）由 chain 自己組。F6-2d-1：重試與續行跨重啟的窗口（W8 的 DORMANT、W9 的 SEALED(MATERIALIZE_FAILED) 與
  * COLLAPSING＋DISABLED、F6-2-07 的 SEALED(AUTHORITY_UNREADABLE)）也各一列，restart 的 step 由 {@code M5CollapseRetryChains} 組。F6-2d-2 B1：PREPARE 中、PASSAGE_READY 的提交被暫緩、
- * 原艙門是 sealed 量子膜的那一刻（{@code READY_HELD}，F6-2-08、F6-2-10）一列，restart 的 step 由 {@code M5CollapseDoorChains} 組。
+ * 原艙門是 sealed 量子膜的那一刻（{@code READY_HELD}，F6-2-08、F6-2-10）一列，restart 的 step 由 {@code M5CollapseDoorChains} 組。F6-2d-2 B2：進入 SEALED 的寫入已確認、
+ * {@code sealCommitted} 的關門之前（F6-2-09 的 {@code UNREADABLE_SEALED}、{@code UNREADABLE_SEALED_DOORWAY}，F6-2-11 的 {@code PROJECTION_SEALED}）三列，restart 的 step 同樣由
+ * {@code M5CollapseDoorChains} 組。
  */
 final class M5CollapseWindows {
     private M5CollapseWindows() {}
@@ -454,6 +457,25 @@ final class M5CollapseWindows {
         row(rows, CrashWindow.READY_HELD, M5CollapseWindows::readyHeldWithTheMembrane, M5CollapseWindows::savedWhileReadyHeld,
                 AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withRecordKept().withDisk(M5CollapseWindows::sealedDoorOnDiskAtRestart),
                 new Prepared("repairedNothing", ProjectionWriter.Mode.REPAIR, 0, NO_CHECK));
+        // ---- F6-2d-2 B2：SEALED 的原艙門跨重啟（chain 在 M5CollapseDoorChains；三列都在 commitRollForward 回傳、sealCommitted 的關門與 WARN 之前） ----
+        // F6-2-09：RESOLVE 第 4 步讀 discovery 失敗 → COLLAPSING→SEALED(AUTHORITY_UNREADABLE) 已確認（allocation、catalog、物化都已完成）。halt 之前不存檔：收據的原生存檔之後原艙門
+        // 沒有再寫過（RESOLVE 不寫門），磁碟上的門就是收據存檔時的門。sealclose（門是參與者照一般方式開的一般開門）與 sealdoorway（門關著、門口有不受重力的盔甲座）開服時門的預期
+        // 不同（withDoorAtStart 一列一個值），所以是兩列。可重試的原因：restart 的終局斷言沒有「開服時的提醒」（End.crossed 的 noSessionError）。
+        var unreadableSealed = AtRestart.resolved(Resolved.MATERIALIZED).withStateAtHalt(SessionState.SEALED).withRecordKept()
+                .withDisk((run, fixture) -> sealedKeptAtRestart(run, fixture, SealedReason.AUTHORITY_UNREADABLE, "unreadableAtRestart"));
+        row(rows, CrashWindow.UNREADABLE_SEALED, M5CollapseWindows::unreadableSealedWithThePlainDoor, M5CollapseWindows::plainDoorSealedAtHalt,
+                unreadableSealed.withDoorAtStart(DoorAtStart.PLAIN_OPEN), null);
+        row(rows, CrashWindow.UNREADABLE_SEALED_DOORWAY, M5CollapseWindows::unreadableSealedWithTheDoorway, M5CollapseWindows::doorwaySealedAtHalt,
+                unreadableSealed.withDoorAtStart(DoorAtStart.CLOSED), null);
+        // F6-2-11：PREPARE 的第一個 tick 套用 sealed 量子膜、投影寫入失敗（ProjectionWriteFault）→ COLLAPSING→SEALED(PROJECTION_FAILED) 已確認。projection ledger 在寫入之前已是 PENDING
+        // （CollapseService.project 先 writeProjection(PENDING) 再 ProjectionWriter.write）。halt 之前原生存檔（sealed 的門、參與者在艙內的 playerdata 都在磁碟上）。開服時的 sealed 量子膜
+        // 由 withDoorAtStart(SEALED_MEMBRANE) 斷言（doorAsExpectedAtStart），所以 withDisk 不再用 sealedDoorOnDiskAtRestart（同一件事會斷言兩次）。sealmembrane 與 sealmembranejoined 共用。
+        row(rows, CrashWindow.PROJECTION_SEALED, M5CollapseWindows::projectionSealedWithTheMembrane, M5CollapseWindows::projectionSealedAtHalt,
+                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.PENDING).withStateAtHalt(SessionState.SEALED).withRecordKept()
+                        .withDoorAtStart(DoorAtStart.SEALED_MEMBRANE).withDisk((run, fixture) -> {
+                            sealedKeptAtRestart(run, fixture, SealedReason.PROJECTION_FAILED, "projectionFailedAtRestart");
+                            playerDataInTheSourceAtRestart(run, fixture);
+                        }), null);
         return Collections.unmodifiableMap(rows);
     }
 
@@ -622,9 +644,35 @@ final class M5CollapseWindows {
 
     /** W9（F6-2d-1）：這個 session 的 COLLAPSING→SEALED(MATERIALIZE_FAILED) 的 roll-forward 寫入已讀回確認。 */
     private static boolean materializeSealed(M5CollapseFixture fixture, Object detail) {
+        return sealedWrite(fixture, detail, SealedReason.MATERIALIZE_FAILED);
+    }
+
+    /**
+     * 這個 session 的 COLLAPSING→SEALED({@code reason}) 的 roll-forward 寫入已讀回確認（W9 與 F6-2d-2 B2 的三列共用；F6-2d-2 B2 由 {@link #materializeSealed} 抽出，條件不變）。
+     */
+    private static boolean sealedWrite(M5CollapseFixture fixture, Object detail, SealedReason reason) {
         return detail instanceof M5TestHooks.RollForwardWrite write && write.result().status() == SessionRecoveryState.CommitResult.Status.COMMITTED
                 && write.expected().state() == SessionState.COLLAPSING && write.next().state() == SessionState.SEALED && write.next().sessionUuid().equals(fixture.sid())
-                && write.next().collapse().sealedReason().equals(Optional.of(SealedReason.MATERIALIZE_FAILED));
+                && write.next().collapse().sealedReason().equals(Optional.of(reason));
+    }
+
+    /** F6-2-09 的 {@code sealclose}（F6-2d-2 B2）：SEALED(AUTHORITY_UNREADABLE) 已確認，而且原艙門 25 格是一般開門（參與者在收據之前照一般方式開的）。 */
+    private static boolean unreadableSealedWithThePlainDoor(M5CollapseFixture fixture, Object detail) {
+        return sealedWrite(fixture, detail, SealedReason.AUTHORITY_UNREADABLE) && M5GameTestSupport.doorAll(fixture.source(), FRAME, true, MembraneState.NONE);
+    }
+
+    /**
+     * F6-2-09 的 {@code sealdoorway}（F6-2d-2 B2）：SEALED(AUTHORITY_UNREADABLE) 已確認，而且原艙門 25 格關著、門口（production 的 {@code OriginDoors.doorwayOccupied}，經
+     * {@link OriginDoorsTestAccess}）有 entity。
+     */
+    private static boolean unreadableSealedWithTheDoorway(M5CollapseFixture fixture, Object detail) {
+        return sealedWrite(fixture, detail, SealedReason.AUTHORITY_UNREADABLE) && M5GameTestSupport.doorAll(fixture.source(), FRAME, false, MembraneState.NONE)
+                && OriginDoorsTestAccess.doorwayOccupied(fixture.source(), FRAME);
+    }
+
+    /** F6-2-11（F6-2d-2 B2）：SEALED(PROJECTION_FAILED) 已確認，而且原艙門是 PREPARE 的 sealed 量子膜（投影之前的 {@code prepareDoor} 已套用）。 */
+    private static boolean projectionSealedWithTheMembrane(M5CollapseFixture fixture, Object detail) {
+        return sealedWrite(fixture, detail, SealedReason.PROJECTION_FAILED) && M5GameTestSupport.doorSealed(fixture.source(), FRAME);
     }
 
     /** W9 的變體 (b)（F6-2d-1）：catalog 中這條 chain 的 U 已 checked 改為 DISABLED（{@code changeCatalogAvailability} 回 APPENDED）。 */
@@ -827,7 +875,7 @@ final class M5CollapseWindows {
      * halt 之前門是 PREPARE 的 sealed 量子膜、參與者在艙內的窗口共用的尾段（F6-2d-2 B2a，B1 quality Minor 5：原本 {@link #savedBeforePassable} 與 {@link #savedWhileReadyHeld}
      * 各寫一份）：原生存檔（{@code nativeSaveAtHalt}）→ 記下 playerdata 的世界 → 參與者的 playerdata 在來源世界（{@code playerDataInTheSourceAtHalt}）→ 磁碟上（raw MCA）的原艙門
      * 是 sealed 量子膜（{@code sealedDoorOnDiskAtHalt}）。具名斷言的名稱與順序不變；{@code insideTheChamberAtHalt} 的迴圈留在呼叫端（兩者在它之前的斷言不同，放進來會改變
-     * {@link #savedWhileReadyHeld} 的斷言順序）。
+     * {@link #savedWhileReadyHeld} 的斷言順序）。F6-2d-2 B2 的 {@code PROJECTION_SEALED}（{@link #projectionSealedAtHalt}）也用它。
      */
     private static void sealedDoorSavedAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence) throws Exception {
         nativeSaveAtHalt(run);
@@ -958,12 +1006,55 @@ final class M5CollapseWindows {
      * discovery 沒有 U。
      */
     private static void unreadableAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        recordOnDisk(run, fixture, evidence, (SessionRecoveryRecord) detail, "unreadableOnDiskAtHalt");
+        unreadableOnDiskAtHalt(run, fixture, (SessionRecoveryRecord) detail, evidence);
+    }
+
+    /**
+     * SEALED(AUTHORITY_UNREADABLE) 的窗口的 halt 之前（F6-2-07 的 {@code SEALED_STEP} 與 F6-2d-2 B2 的 {@code UNREADABLE_SEALED*} 共用；F6-2d-2 B2 由 {@link #unreadableAtHalt} 抽出，
+     * 具名斷言的名稱與順序不變）：磁碟上的 record 是 {@code sealed} exact（{@link #recordOnDisk}）；catalog 有 U（EAGER_ENABLED）、U 已物化；discovery 沒有 U。
+     */
+    private static void unreadableOnDiskAtHalt(M5CollapseRun run, M5CollapseFixture fixture, SessionRecoveryRecord sealed, Map<String, Object> evidence) throws Exception {
+        recordOnDisk(run, fixture, evidence, sealed, "unreadableOnDiskAtHalt");
         var record = M5CollapseDiskEvidence.catalog(run.data()).get(fixture.universe());
         run.expect("catalogEagerOnDiskAtHalt", M5CollapseFixture.eagerEnabled(record) && fixture.universeWorld().isPresent(),
                 () -> "磁碟上的 catalog 這筆=" + record + " U 已物化=" + fixture.universeWorld().isPresent());
         run.expect("noDiscoveryAtHalt", () -> M5CollapseDiskEvidence.discovery(run.saveRoot()).stream().noneMatch(entry -> entry.universeId().equals(fixture.universe())),
                 () -> "discovery 已有 U");
+    }
+
+    /**
+     * F6-2-09 的 {@code sealclose} 的 halt 之前（F6-2d-2 B2）：{@link #unreadableOnDiskAtHalt}（detail 的 {@code next}），磁碟上（raw MCA）的原艙門是一般開門
+     * （{@code plainOpenDoorOnDiskAtHalt}：收據的原生存檔時已是參與者開的門，之後沒有再寫過）。
+     */
+    private static void plainDoorSealedAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        unreadableOnDiskAtHalt(run, fixture, ((M5TestHooks.RollForwardWrite) detail).next(), evidence);
+        run.expect("plainOpenDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.NONE), () -> "磁碟上的原艙門不是一般開門：門正中=" + evidence.get("doorCenterOnDisk"));
+    }
+
+    /**
+     * F6-2-09 的 {@code sealdoorway} 的 halt 之前（F6-2d-2 B2）：{@link #unreadableOnDiskAtHalt}，磁碟上（raw MCA）的原艙門關著（{@code closedDoorOnDiskAtHalt}），記憶體裡門口仍有
+     * entity（{@code doorwayOccupiedAtHalt}：收據之前生成的盔甲座，收據的原生存檔把它存進 entity storage）。
+     */
+    private static void doorwaySealedAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        unreadableOnDiskAtHalt(run, fixture, ((M5TestHooks.RollForwardWrite) detail).next(), evidence);
+        run.expect("closedDoorOnDiskAtHalt", doorOnDisk(run, fixture, false, MembraneState.NONE), () -> "磁碟上的原艙門不是關著：門正中=" + evidence.get("doorCenterOnDisk"));
+        run.expect("doorwayOccupiedAtHalt", OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME), () -> "halt 當下門口沒有 entity");
+    }
+
+    /**
+     * F6-2-11 的 halt 之前（F6-2d-2 B2）：磁碟上的 record 是 SEALED(PROJECTION_FAILED) exact（{@link #recordOnDisk}）；投影寫入的失敗恰注入一次（{@code projectionWriteFailedOnce}）；
+     * projection ledger 是 PENDING（{@code projectionPendingAtHalt}：{@code CollapseService.project} 在寫入之前寫下）；參與者在艙內；原生存檔之後 sealed 量子膜的原艙門與參與者在艙內的
+     * playerdata 都在磁碟上（{@link #sealedDoorSavedAtHalt}）。
+     */
+    private static void projectionSealedAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
+        recordOnDisk(run, fixture, evidence, ((M5TestHooks.RollForwardWrite) detail).next(), "projectionSealedOnDiskAtHalt");
+        var fault = M5TestHooks.PROJECTION_WRITE_FAULT.get();
+        evidence.put("projectionWriteFaultHits", fault == null ? 0 : fault.hits());
+        run.expect("projectionWriteFailedOnce", fault != null && fault.hits() == 1, () -> "投影寫入失敗的注入次數=" + evidence.get("projectionWriteFaultHits"));
+        run.expect("projectionPendingAtHalt", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection(ProjectionLedger.Entry.Status.PENDING.name()))),
+                () -> "projection ledger=" + fixture.projectionsOrError());
+        for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
+        sealedDoorSavedAtHalt(run, fixture, evidence);
     }
 
     /**

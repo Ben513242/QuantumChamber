@@ -298,6 +298,8 @@ public final class M5TestHooks {
      *     兩個方向、任何結果都是）；{@code CollapseServiceCrashWindowMixin} 在 {@code CollapseService.step} 的開頭，依序以 {@link #DORMANT_STEP}、{@link #SEALED_STEP} 呼叫
      *     （那一筆 flushed 的 {@link SessionRecoveryRecord}，每個 tick、每個 session、任何狀態都是）。</li>
      * <li>F6-2d-2 B1 加的：{@code CollapseReadyHoldMixin} 在 PASSAGE_READY 的提交被 {@link #READY_HOLD} 暫緩時以 {@link #READY_HELD} 呼叫（{@link ReadyHeld}，每次暫緩都是）。</li>
+     * <li>F6-2d-2 B2 加的：{@code SessionRecoveryStateCrashWindowMixin} 在 {@code commitRollForward} 的同一個回傳點，{@link #MATERIALIZE_SEALED} 之後依序以
+     *     {@link #UNREADABLE_SEALED}、{@link #UNREADABLE_SEALED_DOORWAY}、{@link #PROJECTION_SEALED} 呼叫（{@link RollForwardWrite}）。</li>
      * </ul>
      * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
@@ -351,7 +353,20 @@ public final class M5TestHooks {
          * {@link #readyHeld} 回 true、取消這次提交之前呼叫，每次暫緩都是；detail 是 {@link ReadyHeld}）。同一個 tick 的 {@code prepareDoor} 已在 {@code ready} 之前執行，projection ledger
          * 已 COMPLETE（準備完成之後才進 {@code ready}）；PREPARE 由暫緩保持，不靠時序。窗口表的條件另選這條 chain 的 session、COLLAPSING 與 sealed 量子膜。
          */
-        READY_HELD
+        READY_HELD,
+        /**
+         * F6-2-09 的 {@code sealclose}（F6-2d-2 B2）：{@code commitRollForward} 把 COLLAPSING 寫成 SEALED(AUTHORITY_UNREADABLE)，讀回已確認（{@code CollapseService.sealCommitted} 的
+         * 門、訊息與 WARN 之前；detail 是 {@link RollForwardWrite}）。窗口表的條件另要求原艙門 25 格是一般開門（開服時門的預期與 {@link #UNREADABLE_SEALED_DOORWAY} 不同，所以是另一個值）。
+         */
+        UNREADABLE_SEALED,
+        /** F6-2-09 的 {@code sealdoorway}（F6-2d-2 B2）：與 {@link #UNREADABLE_SEALED} 同一個程式點與 detail；窗口表的條件另要求原艙門關著、門口有 entity。 */
+        UNREADABLE_SEALED_DOORWAY,
+        /**
+         * F6-2-11 的 {@code sealmembrane}、{@code sealmembranejoined}（F6-2d-2 B2）：{@code commitRollForward} 把 COLLAPSING 寫成 SEALED(PROJECTION_FAILED)，讀回已確認（PREPARE 的投影寫入
+         * 失敗之後；門、訊息與 WARN 之前；detail 是 {@link RollForwardWrite}）。窗口表的條件另要求原艙門是 sealed 量子膜。{@code ProjectionWriteFaultMixin} 生效的那一次寫入不會以
+         * {@link #PROJECTION_REPAIRED} 呼叫，所以窗口在 SEALED 的提交。
+         */
+        PROJECTION_SEALED
     }
 
     /**
@@ -386,7 +401,8 @@ public final class M5TestHooks {
 
     /**
      * {@link CrashWindow#CROSSED_COMMITTED}、{@link CrashWindow#CROSSED_UNCONFIRMED}、{@link CrashWindow#RECOVERY_SEALED}、{@link CrashWindow#RECOVERY_REJECTED}（F6-2c）與
-     * {@link CrashWindow#MATERIALIZE_SEALED}（F6-2d-1；F6-2d-2 Step 0 補上說明）的 detail：{@code SessionRecoveryState.commitRollForward} 的一次呼叫（變更前、變更後的 record）與它的結果。
+     * {@link CrashWindow#MATERIALIZE_SEALED}（F6-2d-1；F6-2d-2 Step 0 補上說明），以及 {@link CrashWindow#UNREADABLE_SEALED}、{@link CrashWindow#UNREADABLE_SEALED_DOORWAY}、
+     * {@link CrashWindow#PROJECTION_SEALED}（F6-2d-2 B2）的 detail：{@code SessionRecoveryState.commitRollForward} 的一次呼叫（變更前、變更後的 record）與它的結果。
      */
     public record RollForwardWrite(SessionRecoveryRecord expected, SessionRecoveryRecord next, SessionRecoveryState.CommitResult result) {}
 
