@@ -382,17 +382,13 @@ public final class CollapseService {
         var sid = record.sessionUuid();
         // M4 的保留式清理剛完成時，record 可能先於走廊 space 變成 DORMANT：等 space 真的釋放。
         if (!pages.measuredRecoveryComplete(sid)) return;
-        var entered = track.entry(startupSessions.contains(sid)).observe(inside(record));
-        for (var player : entered) {
-            if (!triggerReady(player)) continue;
-            if (!chamberGate(record)) return;
-            if (!track.backoff.ready(now)) {
-                LOGGER.debug(LOG_MARKER, "DORMANT 續行在退避期內，這次觸發不提交：session={} 下一次可在 tick {} 之後", sid, track.backoff.retryAtTick());
-                return;
-            }
-            commit(record, track, true);
+        // §7.1 的邊緣觸發；來源艙還沒載入時不消耗這次觸發，其他條件與退避期仍消耗（EntryWatch#trigger，H7）。
+        if (!track.entry(startupSessions.contains(sid)).trigger(inside(record), this::triggerReady, () -> sourceSignal(record))) return;
+        if (!track.backoff.ready(now)) {
+            LOGGER.debug(LOG_MARKER, "DORMANT 續行在退避期內，這次觸發不提交：session={} 下一次可在 tick {} 之後", sid, track.backoff.retryAtTick());
             return;
         }
+        commit(record, track, true);
     }
 
     private void commit(SessionRecoveryRecord record, Track track, boolean dormant) {
@@ -1078,18 +1074,13 @@ public final class CollapseService {
         var reason = view.collapse().sealedReason().orElseThrow();
         var track = track(sid);
         if (sealedRetry(reason, startupSessions.contains(sid), track.restartRetryConsumed) == SealedRetry.NONE) return;
-        // §11.2：與 DORMANT 相同的邊緣觸發（§7.1）；開服 attach 當下就在 journal 的 session，第一次觀察到原參與者在艙內也算。
-        var entered = track.entry(startupSessions.contains(sid)).observe(inside(view));
-        for (var player : entered) {
-            if (!triggerReady(player)) continue;
-            if (!chamberGate(view)) return;
-            if (!track.backoff.ready(now)) {
-                LOGGER.debug(LOG_MARKER, "SEALED 的重試在退避期內，這次觸發不重試：session={} 下一次可在 tick {} 之後", sid, track.backoff.retryAtTick());
-                return;
-            }
-            retrySealed(view, track, reason);
+        // §11.2：與 DORMANT 相同的邊緣觸發（§7.1，來源艙還沒載入時不消耗：EntryWatch#trigger，H7）；開服 attach 當下就在 journal 的 session，第一次觀察到原參與者在艙內也算。
+        if (!track.entry(startupSessions.contains(sid)).trigger(inside(view), this::triggerReady, () -> sourceSignal(view))) return;
+        if (!track.backoff.ready(now)) {
+            LOGGER.debug(LOG_MARKER, "SEALED 的重試在退避期內，這次觸發不重試：session={} 下一次可在 tick {} 之後", sid, track.backoff.retryAtTick());
             return;
         }
+        retrySealed(view, track, reason);
     }
 
     /** checked SEALED→COLLAPSING（restore 類，§6），再取得來源 ticket；之後依推導階段重跑 RESOLVE（未確認的權威由 resolver 先收斂）。 */
@@ -1127,19 +1118,15 @@ public final class CollapseService {
 
         /**
          * 本 server instance 第一次看到這個 session 走到閘門階段時立即以位準評估（live 塌縮返還之後通常立即成立；開服之後就是「第一次觀察」）；不成立就停在
-         * WAITING，之後只在 §7.1 的邊緣觸發（原參與者由艙外進入艙內）時再評估。
+         * WAITING，之後只在 §7.1 的邊緣觸發（原參與者由艙外進入艙內）時再評估。來源艙還沒載入時兩者都不消耗（H7，spec v5.9 §7.3：{@link EntryWatch#level} 回 null 時不算評估過）。
          */
         @Override public boolean edge() {
-            var insideNow = inside(view);
-            List<UUID> candidates;
-            if (!track.gateEvaluated) {
-                track.gateEvaluated = true;
-                track.entry(false).prime(insideNow);
-                candidates = List.copyOf(insideNow);
-            } else {
-                candidates = track.entry(false).observe(insideNow);
-            }
-            return candidates.stream().anyMatch(CollapseService.this::triggerReady) && chamberGate(view);
+            var watch = track.entry(false);
+            if (track.gateEvaluated) return watch.trigger(inside(view), CollapseService.this::triggerReady, () -> sourceSignal(view));
+            var open = watch.level(inside(view), CollapseService.this::triggerReady, () -> sourceSignal(view));
+            if (open == null) return false;
+            track.gateEvaluated = true;
+            return open;
         }
     }
 
@@ -1241,7 +1228,8 @@ public final class CollapseService {
     }
 
     /**
-     * 來源艙已載入、結構合法、已供電、Origin enabled（{@link #sourceSignal} 為 {@code OK}）：§7.1 的 DORMANT 觸發、§7.3 的閘門、§11.2 的重試觸發。
+     * 來源艙已載入、結構合法、已供電、Origin enabled（{@link #sourceSignal} 為 {@code OK}）：§7.3 PREPARE 進行中的閘門（{@link PrepareGate#stillOpen}）。§7.1 的 DORMANT
+     * 觸發、§7.3 進入 PREPARE 的評估與 §11.2 的重試觸發改由 {@link EntryWatch} 直接看 {@link #sourceSignal}，以分辨「還沒載入」（H7：不消耗觸發）。
      */
     private boolean chamberGate(SessionRecoveryRecord record) {
         return sourceSignal(record) == SourceSignal.OK;
