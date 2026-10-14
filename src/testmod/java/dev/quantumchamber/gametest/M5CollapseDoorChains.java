@@ -10,8 +10,6 @@ import dev.quantumchamber.gametest.M5CollapsePassage.End;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
-import dev.quantumchamber.persistence.SessionRecoveryRecord;
-import dev.quantumchamber.superposition.SessionState;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -204,8 +202,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     private void bothInsideBeforeTheFirstTick() {
         hold = run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid()));
-        fixture.joinAllInTheSourceWorld(Inside.INSIDE);
-        joinedAt = fixture.players().getFirst().getPos();
+        joinInside();
         visitor = fixture.connect(UUID.randomUUID()).player();
         var spot = ChamberSpaceCoordinates.position(FRAME, VISITOR_X, 1, VISITOR_Z);
         visitor.teleport(run.source(), spot.x, spot.y, spot.z, Set.of(), 0, 0);
@@ -345,14 +342,6 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     private boolean plainOpen() {
         return M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
-    }
-
-    private int prepares() {
-        return run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
-    }
-
-    private static boolean collapsing(SessionRecoveryRecord record) {
-        return record != null && record.state() == SessionState.COLLAPSING;
     }
 
     /** 原艙門正中那一格（區域 (3,3,0)）的方塊狀態（失敗訊息用）。 */

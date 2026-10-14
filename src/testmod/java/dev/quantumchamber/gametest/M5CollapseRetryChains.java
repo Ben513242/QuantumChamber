@@ -265,8 +265,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         return new Step("join", 1, () -> {
             boolean loaded = chamberLoaded();
             var record = run.journal().flushedRecords().get(fixture.sid());
-            fixture.joinAllInTheSourceWorld(Inside.INSIDE);
-            joinedAt = fixture.players().getFirst().getPos();
+            joinInside();
             run.expect("chamberNotLoadedAtTheJoin", !loaded, () -> "JOIN 時原艙附近已載入，量不到「來源艙還沒載入時的觸發」");
             run.expect("unchangedBeforeTheJoin", atStart != null && atStart.equals(record), () -> "JOIN 之前 state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
             run.proof.put("joinedAtPhaseTick", run.ticks());
@@ -359,7 +358,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      * 相同）。
      */
     private void preparedWithoutReentry(int tick, boolean happened) {
-        var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
+        var prepares = prepares();
         boolean still = notMovedSinceTheJoin();
         run.expect("preparedWithoutReentry", prepares == 1 && still, () -> "開服之後 " + run.ticks() + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
         run.proof.put("preparedAtPhaseTick", run.ticks());
@@ -370,7 +369,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var sid = fixture.sid().toString();
         if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
         if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.proof.putIfAbsent("resolvedAtPhaseTick", run.ticks());
-        return !run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", sid).isEmpty();
+        return prepares() > 0;
     }
 
     /** RESOLVE 之後的共用部分：{@link M5CollapsePassage#steps} 的 resolve → ready → cross → ended（(b) 全員都已跨過）。 */
@@ -394,15 +393,14 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var steps = new ArrayList<Step>();
         steps.add(committedWithoutReentry("committedOnTheFirstObservation", "committedOnTheFirstObservation", Await.FIRST_OBSERVATION));
         steps.add(new Step("resolved", 400, this::resolvedWithoutMoving));
-        steps.add(M5CollapsePassage.awaiting("preparedOnTheLevel", PREPARE_WAIT_TICKS,
-                () -> !run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).isEmpty(), this::preparedOnTheLevel));
+        steps.add(M5CollapsePassage.awaiting("preparedOnTheLevel", PREPARE_WAIT_TICKS, () -> prepares() > 0, this::preparedOnTheLevel));
         steps.add(new Step("leftPrepare", 40, this::leftPrepareWithoutPower));
         steps.add(M5CollapsePassage.watch("gateWaitsForAnEdge", M5CollapsePassage.WATCH_TICKS, this::gateWaitsForAnEdge, this::poweredThenLeave));
         steps.add(enter());
         steps.add(passage.ready(null, M5CollapseFixture.EVERYONE));
         steps.addAll(passage.cross(M5CollapseFixture.EVERYONE));
         steps.add(passage.ended(() -> {
-            var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
+            var prepares = prepares();
             run.expect("preparedAgainOnlyAfterTheEdge", prepares == 2, () -> "「進入 PREPARE」=" + prepares);
             return End.crossed(fixture);
         }));
@@ -411,8 +409,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
 
     /** W8 的開服：參與者 JOIN 在艙內（第一個 tick 之前），這時 record 仍是 DORMANT 的收據（{@code dormantWhenJoined}）；記下 JOIN 的位置。 */
     private void joinInsideBeforeTheFirstTick() {
-        fixture.joinAllInTheSourceWorld(Inside.INSIDE);
-        joinedAt = fixture.players().getFirst().getPos();
+        joinInside();
         run.expect("dormantWhenJoined", fixture.receipt().equals(run.journal().flushedRecords().get(fixture.sid())) && run.ticks() == 0,
                 () -> "JOIN 時 tick=" + run.ticks() + " state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
         run.proof.put("joinedAt", joinedAt.toString());
@@ -432,7 +429,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      * 改用通用的 {@link M5CollapsePassage#awaiting}（等待時間 {@link #PREPARE_WAIT_TICKS} 與通過條件相同）。
      */
     private void preparedOnTheLevel(int tick, boolean happened) {
-        var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
+        var prepares = prepares();
         // 最多等 PREPARE_WAIT_TICKS 個 tick（awaiting），之後仍沒有進 PREPARE 就由這個具名斷言判 FAIL（mutation：閘門第一次也只看邊緣時，失敗在這裡）。
         boolean still = notMovedSinceTheJoin();
         run.expect("preparedWithoutAnEdge", prepares == 1 && still, () -> "RESOLVE 之後 " + tick + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
@@ -445,7 +442,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var left = run.capture().matching(Level.INFO, "PREPARE 的閘門不再成立，退回 WAITING", sid.toString()).size();
         if (left == 0) return false;
         var record = run.journal().flushedRecords().get(sid);
-        run.expect("leftPrepareOnPowerLoss", left == 1 && record != null && record.state() == SessionState.COLLAPSING && notMovedSinceTheJoin(),
+        run.expect("leftPrepareOnPowerLoss", left == 1 && collapsing(record) && notMovedSinceTheJoin(),
                 () -> "退回 WAITING 的 INFO=" + left + " state=" + M5GameTestSupport.state(run.journal(), sid));
         run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
         return true;
@@ -454,10 +451,10 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
     /** W8 的 step {@code gateWaitsForAnEdge}（{@link M5CollapsePassage#watch}；{@code tick} 是恢復供電之後的第幾個 tick，由 1 起）：每個 tick 都還沒有再進 PREPARE。 */
     private void gateWaitsForAnEdge(int tick) {
         var sid = fixture.sid();
-        var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", sid.toString()).size();
+        var prepares = prepares();
         var record = run.journal().flushedRecords().get(sid);
         boolean still = notMovedSinceTheJoin();
-        run.expect("gateWaitsForAnEdge", prepares == 1 && record != null && record.state() == SessionState.COLLAPSING && still,
+        run.expect("gateWaitsForAnEdge", prepares == 1 && collapsing(record) && still,
                 () -> "恢復供電之後第 " + tick + " 個 tick：「進入 PREPARE」=" + prepares + " state=" + M5GameTestSupport.state(run.journal(), sid) + " 沒有移動=" + still);
     }
 
@@ -528,13 +525,13 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var resolved = run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid.toString()).size();
         var record = run.journal().flushedRecords().get(sid);
         var retried = run.capture().matching(Level.INFO, "SEALED 重試", sid.toString()).size();
-        if (resolved == 0 && (retried < retries || (record != null && record.state() == SessionState.COLLAPSING))) return false;
+        if (resolved == 0 && (retried < retries || collapsing(record))) return false;
         var catalog = UniverseRegistryState.get(run.server()).flushedRecords().get(fixture.universe());
         var errors = run.capture().matching(Level.ERROR, sid.toString()).size();
         var corrupt = run.capture().matching(Level.WARN, "AUTHORITY_CORRUPT", sid.toString()).size();
         var sealedWarns = sealWarns == SealWarns.NONE_EXPECTED ? run.capture().matching(Level.WARN, "塌縮進入 SEALED", sid.toString()).size() : 0;
         boolean confirmed = !CollapseAuthorities.get(run.server()).unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER);
-        run.expect(name, resolved == 1 && retried == retries && record != null && record.state() == SessionState.COLLAPSING && M5CollapseFixture.eagerEnabled(catalog)
+        run.expect(name, resolved == 1 && retried == retries && collapsing(record) && M5CollapseFixture.eagerEnabled(catalog)
                         && fixture.universeWorld().isPresent() && errors == 0 && corrupt == 0 && sealedWarns == 0 && confirmed,
                 () -> "目的地已確定=" + resolved + " 重試=" + retried + " state=" + M5GameTestSupport.state(run.journal(), sid) + " SEALED 的原因="
                         + (record == null ? "-" : record.collapse().sealedReason()) + " catalog=" + catalog + " ERROR=" + errors + " AUTHORITY_CORRUPT 的 WARN=" + corrupt

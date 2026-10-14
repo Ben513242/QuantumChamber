@@ -197,8 +197,29 @@ abstract class M5CollapseRestartChains {
         }, Position.NOT_MOVED_SINCE_THE_JOIN, "committedAtPhaseTick");
     }
 
-    private static boolean collapsing(SessionRecoveryRecord record) {
+    /**
+     * {@code record} 存在而且是 COLLAPSING。F6-2d-2 B2a（B1 quality nit）：原本這裡與 {@code M5CollapseDoorChains} 各有一份 private 的，{@code M5CollapseRetryChains} 另有同形的
+     * 行內寫法；收成這一份 package-private 的。
+     */
+    static boolean collapsing(SessionRecoveryRecord record) {
         return record != null && record.state() == SessionState.COLLAPSING;
+    }
+
+    /**
+     * 這個 session「進入 PREPARE（閘門成立）」的 INFO 的則數（F6-2d-2 B2a，B1 quality nit：原本 {@code M5CollapseRetryChains} 四處、{@code M5CollapseDoorChains} 一處各寫一次
+     * 同樣的查詢）。
+     */
+    int prepares() {
+        return run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
+    }
+
+    /**
+     * 參與者真 JOIN 在來源世界的艙內（crash 前存的位置），記下 JOIN 的位置（{@link #joinedAt}，之後以 {@link #notMovedSinceTheJoin} 斷言沒有移動）。F6-2d-2 B2a（B1 quality nit）：
+     * 原本 {@code M5CollapseRetryChains} 兩處、{@code M5CollapseDoorChains} 一處各寫一次這兩行。
+     */
+    void joinInside() {
+        fixture.joinAllInTheSourceWorld(Inside.INSIDE);
+        joinedAt = fixture.players().getFirst().getPos();
     }
 
     /** {@link #awaited} 等完之後（已發生，或等滿 {@link Await#waitTicks}）這一步的結果：{@code tick} 是這個 step 的第幾個 tick（由 1 起）。 */
