@@ -95,22 +95,23 @@ final class M5CollapseRetryChains {
      * 觸發之後的 step 怎麼等（F6-2d-2 Step 0，H7 quality 給 F6-2d-2 的建議：{@code committedOnTheFirstObservation}／{@code committedWithoutReentry}、
      * {@code retried(reason, count)}／{@code retriedWithoutReentry} 各合成一個參數化的 step，{@link #committedWithoutReentry}、{@link #retried}）。每一種都最多等 {@code waitTicks}
      * 個 tick，之後仍沒有發生就由具名斷言判 FAIL（不是 stepBounded：mutation 讓觸發落空時，失敗在目標斷言）。{@link #EDGE} 之外都是參與者 JOIN 之後<b>不離開再進入</b>：另斷言
-     * 參與者沒有移動（{@link #notMovedSinceTheJoin}）、記下發生的 tick。{@code maxTicks} 是 step 的上限，與合併之前相同。F6-2d-2（F6-2d-2 Step 0 quality nit）：{@link #EDGE}
-     * 原本是 {@code (10, 0)}、以 {@code this == EDGE} 另外處理（{@code waitTicks} 0 是沒用到的 sentinel，等到 stepBounded 為止）；改成 {@code waitTicks} 等於 {@code maxTicks}，
-     * 等待的時間相同，只是到時仍沒有發生時失敗在具名斷言。
+     * 參與者沒有移動（{@link #notMovedSinceTheJoin}）、記下發生的 tick。F6-2d-2（F6-2d-2 Step 0 quality nit）：{@link #EDGE} 原本是 {@code (10, 0)}、以 {@code this == EDGE}
+     * 另外處理（{@code waitTicks} 0 是沒用到的 sentinel，等到 stepBounded 為止）；改成 {@code waitTicks} 等於 step 的上限，等待的時間相同，只是到時仍沒有發生時失敗在具名斷言。
+     * <p>F6-2d-2 B1（A 段 quality Minor 4）：只留一個上限 {@code waitTicks}，step 的上限就是它。原本另有 {@code maxTicks}（{@code FIRST_OBSERVATION} 5、{@code AFTER_THE_LOAD} 25），
+     * 但 step 一定在第 {@code waitTicks} 個 tick 完成（{@link #keepWaiting} 為假時就斷言、回 true），多出的餘裕永遠到不了，兩者之間也沒有檢查。等待的 tick 數與通過條件都不變。
      */
     private enum Await {
-        /** 由艙外進入（{@link #enter}）之後：等到 step 的上限為止，不斷言位置。 */
-        EDGE(10, 10),
+        /** 由艙外進入（{@link #enter}）之後：最多等 10 個 tick，不斷言位置。 */
+        EDGE(10),
         /** W8：原艙在開服時已載入，開服之後的第一次觀察就觸發。 */
-        FIRST_OBSERVATION(FIRST_OBSERVATION_TICKS + 2, FIRST_OBSERVATION_TICKS),
+        FIRST_OBSERVATION(FIRST_OBSERVATION_TICKS),
         /** H7：JOIN 時原艙附近還沒有載入，載入之後才觸發；另記下原艙附近載入完成的 tick（{@code chamberLoadedAtPhaseTick}）。 */
-        AFTER_THE_LOAD(LATE_TRIGGER_TICKS + 5, LATE_TRIGGER_TICKS);
+        AFTER_THE_LOAD(LATE_TRIGGER_TICKS);
 
-        final int maxTicks, waitTicks;
+        /** 最多等幾個 tick（也是 step 的上限）：到第 {@code waitTicks} 個 tick 仍沒有發生時，由具名斷言判 FAIL。 */
+        final int waitTicks;
 
-        Await(int maxTicks, int waitTicks) {
-            this.maxTicks = maxTicks;
+        Await(int waitTicks) {
             this.waitTicks = waitTicks;
         }
 
@@ -453,7 +454,7 @@ final class M5CollapseRetryChains {
      */
     Phase waitingLateRestart(String crashPhase) {
         var id = CrashWindow.DISCOVERY_APPENDED;
-        var steps = new ArrayList<Step>(List.of(M5CollapsePassage.counting("prepared", LATE_TRIGGER_TICKS + 5, this::preparedWithoutReentry)));
+        var steps = new ArrayList<Step>(List.of(M5CollapsePassage.counting("prepared", LATE_TRIGGER_TICKS, this::preparedWithoutReentry)));
         steps.addAll(passage.steps(M5CollapseWindows.of(id).prepared()));
         return restartPhase(crashPhase, id, ChamberAtStart.AS_SAVED, steps, this::joinInsideBeforeTheFirstEvaluation);
     }
@@ -474,16 +475,17 @@ final class M5CollapseRetryChains {
     }
 
     /**
-     * {@code waitinglate} 的 step {@code prepared}（{@code waited} 是這個 step 的第幾個 tick）：參與者沒有移動，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內進入 PREPARE
+     * {@code waitinglate} 的 step {@code prepared}（{@code tick} 是這個 step 的第幾個 tick，由 1 起）：參與者沒有移動，在 {@link #LATE_TRIGGER_TICKS} 個 tick 內進入 PREPARE
      * （「進入 PREPARE（閘門成立）」的 INFO 一則）；之後仍沒有就由這個具名斷言判 FAIL。另記下 RESOLVE 完成、原艙附近載入完成與進入 PREPARE 的 tick（閘門第一次評估在 RESOLVE
-     * 完成的下一個 tick）。
+     * 完成的下一個 tick）。F6-2d-2 B1（A 段 quality Minor 4）：step 的上限由 {@code LATE_TRIGGER_TICKS + 5} 改為等於等待的上限（第 {@code LATE_TRIGGER_TICKS} 個 tick 一定完成，
+     * 多出的 5 tick 到不了）；參數名比照 {@link M5CollapsePassage.Watching} 改為 {@code tick}（A 段 quality nit）。
      */
-    private boolean preparedWithoutReentry(int waited) {
+    private boolean preparedWithoutReentry(int tick) {
         var sid = fixture.sid().toString();
         if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
         if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.proof.putIfAbsent("resolvedAtPhaseTick", run.ticks());
         var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", sid).size();
-        if (prepares == 0 && waited < LATE_TRIGGER_TICKS) return false;
+        if (prepares == 0 && tick < LATE_TRIGGER_TICKS) return false;
         boolean still = notMovedSinceTheJoin();
         run.expect("preparedWithoutReentry", prepares == 1 && still, () -> "開服之後 " + run.ticks() + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
         run.proof.put("preparedAtPhaseTick", run.ticks());
@@ -497,7 +499,7 @@ final class M5CollapseRetryChains {
      */
     private Step committedWithoutReentry(String stepName, String assertion, Await await) {
         if (await == Await.EDGE) throw new IllegalArgumentException("committedWithoutReentry 是不離開再進入的提交，不能用 EDGE：" + stepName);
-        return M5CollapsePassage.counting(stepName, await.maxTicks, tick -> {
+        return M5CollapsePassage.counting(stepName, await.waitTicks, tick -> {
             var sid = fixture.sid();
             var record = run.journal().flushedRecords().get(sid);
             boolean committed = record != null && record.state() == SessionState.COLLAPSING;
@@ -543,7 +545,7 @@ final class M5CollapseRetryChains {
         var steps = new ArrayList<Step>();
         steps.add(committedWithoutReentry("committedOnTheFirstObservation", "committedOnTheFirstObservation", Await.FIRST_OBSERVATION));
         steps.add(new Step("resolved", 400, this::resolvedWithoutMoving));
-        steps.add(M5CollapsePassage.counting("preparedOnTheLevel", PREPARE_WAIT_TICKS + 5, this::preparedOnTheLevel));
+        steps.add(M5CollapsePassage.counting("preparedOnTheLevel", PREPARE_WAIT_TICKS, this::preparedOnTheLevel));
         steps.add(new Step("leftPrepare", 40, this::leftPrepareWithoutPower));
         steps.add(M5CollapsePassage.watch("gateWaitsForAnEdge", M5CollapsePassage.WATCH_TICKS, this::gateWaitsForAnEdge, this::poweredThenLeave));
         steps.add(enter());
@@ -580,13 +582,16 @@ final class M5CollapseRetryChains {
         return true;
     }
 
-    /** W8 的 step {@code preparedOnTheLevel}（{@code waited} 是這個 step 的第幾個 tick）。 */
-    private boolean preparedOnTheLevel(int waited) {
+    /**
+     * W8 的 step {@code preparedOnTheLevel}（{@code tick} 是這個 step 的第幾個 tick，由 1 起）。F6-2d-2 B1（A 段 quality Minor 4、nit）：step 的上限由 {@code PREPARE_WAIT_TICKS + 5}
+     * 改為等於等待的上限（第 {@code PREPARE_WAIT_TICKS} 個 tick 一定完成）；參數名比照 {@link M5CollapsePassage.Watching} 改為 {@code tick}。
+     */
+    private boolean preparedOnTheLevel(int tick) {
         var prepares = run.capture().matching(Level.INFO, "進入 PREPARE（閘門成立）", fixture.sid().toString()).size();
         // 最多等 PREPARE_WAIT_TICKS 個 tick，之後仍沒有進 PREPARE 就由這個具名斷言判 FAIL（mutation：閘門第一次也只看邊緣時，失敗在這裡）。
-        if (prepares == 0 && waited < PREPARE_WAIT_TICKS) return false;
+        if (prepares == 0 && tick < PREPARE_WAIT_TICKS) return false;
         boolean still = notMovedSinceTheJoin();
-        run.expect("preparedWithoutAnEdge", prepares == 1 && still, () -> "RESOLVE 之後 " + waited + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
+        run.expect("preparedWithoutAnEdge", prepares == 1 && still, () -> "RESOLVE 之後 " + tick + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
         // spec §7.3：PREPARE 進行到一半時閘門不再成立（來源艙沒有供電）就退回 WAITING。
         run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
         return true;
@@ -678,7 +683,7 @@ final class M5CollapseRetryChains {
      * session 第一次觀察到原參與者在艙內就算觸發，production 的 {@code CollapseService.sealed} 以 {@code track.entry(startupSessions.contains(sid))} 實作）；原本拒絕它，訊息也與 production 相反。
      */
     private Step retried(String stepName, String assertion, SealedReason reason, int count, Await await) {
-        return M5CollapsePassage.counting(stepName, await.maxTicks, tick -> {
+        return M5CollapsePassage.counting(stepName, await.waitTicks, tick -> {
             var sid = fixture.sid().toString();
             var fromReason = run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + reason + ")→COLLAPSING", sid).size();
             if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
