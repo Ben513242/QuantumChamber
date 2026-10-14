@@ -49,12 +49,25 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** preparedoor：非參與者在艙內的位置（區域座標；參與者在正中 (3.5, 1, 3.5)，錯開、不碰到門口那一排）。 */
     private static final double VISITOR_X = 1.5, VISITOR_Z = 4.5;
 
-    /** preparedoor 的 restart：開服時裝上的 PASSAGE_READY 提交暫緩（crash phase 的那一份隨 crash 結束）。 */
-    private M5TestHooks.ReadyHold hold;
-    /** waitingdoor 的 restart：重新套用排入時記下的「下一個 tick」。 */
-    private int normalizeTick = -1;
-    /** preparedoor 的 restart：非參與者（不在收據裡，開服時才連線）。 */
-    private ServerPlayerEntity visitor;
+    /**
+     * waitingdoor 的 restart 才用的狀態（F6-2d-2 B2，B1 quality 的建議：只對一條 chain 有效的欄位依 chain 分組；原本是這個類別的欄位 {@code normalizeTick}）。一個 phase 一個
+     * {@link M5CollapseDoorChains}，所以每個 phase 各有一份。
+     */
+    private static final class WaitingDoor {
+        /** 重新套用排入時記下的「下一個 tick」。 */
+        int normalizeTick = -1;
+    }
+
+    /** preparedoor 的 restart 才用的狀態（F6-2d-2 B2，同 {@link WaitingDoor}；原本是這個類別的欄位 {@code hold}、{@code visitor}）。 */
+    private static final class PrepareDoor {
+        /** 開服時裝上的 PASSAGE_READY 提交暫緩（crash phase 的那一份隨 crash 結束）。 */
+        M5TestHooks.ReadyHold hold;
+        /** 非參與者（不在收據裡，開服時才連線）。 */
+        ServerPlayerEntity visitor;
+    }
+
+    private final WaitingDoor waiting = new WaitingDoor();
+    private final PrepareDoor prepare = new PrepareDoor();
 
     M5CollapseDoorChains(M5CollapseRun run) {
         super(run);
@@ -123,15 +136,15 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.expect("normalizeQueuedOnTheFirstLoad", queued.size() == 1 && queued.getFirst().normalizeAfterARestart(),
                 () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued);
         run.expect("notWrittenWhenObserved", sealed, () -> "排入的那個 tick 原艙門已不是 sealed 量子膜：" + doorCenter(run));
-        normalizeTick = queued.getFirst().tick();
+        waiting.normalizeTick = queued.getFirst().tick();
         run.proof.put("normalizeQueuedAtServerTick", run.server().getTicks());
-        run.proof.put("normalizeTick", normalizeTick);
+        run.proof.put("normalizeTick", waiting.normalizeTick);
     }
 
     /** step {@code normalized}：排入時記下的 tick（N）結束時，門是一般開門、套用的 INFO 恰一則而且記的是 tick N；之後 2 個 tick 仍不是一般開門就由這個具名斷言判 FAIL。 */
     private boolean normalizedOnTheQueuedTick(int tick) {
         boolean plain = plainOpen(run);
-        int now = run.server().getTicks();
+        int now = run.server().getTicks(), normalizeTick = waiting.normalizeTick;
         if (!plain && now < normalizeTick + 2) return false;
         var applied = reapplied(run, fixture.sid());
         run.expect("appliedOnTheQueuedTick", plain && now == normalizeTick && applied.size() == 1 && applied.getFirst().contains("（NORMALIZE：APPLIED，tick " + normalizeTick + "）"),
@@ -198,9 +211,9 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * 非參與者（新的 UUID，不在收據裡）JOIN 之後移到艙內、與參與者錯開。這時門在記憶體裡是 sealed（由磁碟載入）。
      */
     private void bothInsideBeforeTheFirstTick() {
-        hold = run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid()));
+        prepare.hold = run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid()));
         joinInside();
-        visitor = fixture.connect(UUID.randomUUID()).player();
+        var visitor = prepare.visitor = fixture.connect(UUID.randomUUID()).player();
         var spot = ChamberSpaceCoordinates.position(FRAME, VISITOR_X, 1, VISITOR_Z);
         visitor.teleport(run.source(), spot.x, spot.y, spot.z, Set.of(), 0, 0);
         boolean participant = fixture.players().stream().allMatch(M5CollapseFixture::inside), outsider = M5CollapseFixture.inside(visitor);
@@ -247,7 +260,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** step {@code heldWithTheVisitorInside}：每個 tick 一般開門；PASSAGE_READY 的提交第一次被暫緩時（準備完成之後）斷言「準備完成」恰一則、完成。 */
     private boolean heldWithTheVisitorInside(int tick) {
         plainOpenWhileTheVisitorIsInside(tick);
-        if (hold.hits() == 0) return false;
+        if (prepare.hold.hits() == 0) return false;
         int prepared = run.capture().matching(Level.INFO, "準備完成（預載與投影都已完成）", fixture.sid().toString()).size();
         run.expect("readyHeldWithTheVisitorInside", prepared == 1, () -> "PASSAGE_READY 的提交被暫緩時「準備完成」=" + prepared);
         run.proof.put("readyHeldAtPhaseTick", run.ticks());
@@ -260,7 +273,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     private void plainOpenWhileTheVisitorIsInside(int tick) {
         var sid = fixture.sid();
-        boolean plain = plainOpen(run), inside = M5CollapseFixture.inside(visitor);
+        boolean plain = plainOpen(run), inside = M5CollapseFixture.inside(prepare.visitor);
         var record = run.journal().flushedRecords().get(sid);
         int left = run.capture().matching(Level.INFO, "PREPARE 的閘門不再成立", sid.toString()).size();
         run.expect("plainOpenWhileTheVisitorIsInside", plain && inside && collapsing(record) && left == 0,
@@ -270,20 +283,20 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     /** {@code visitorStillInside} 觀察完之後：非參與者移到艙外（門外，不在門口那 25 格）。 */
     private void visitorLeaves() {
-        M5GameTestSupport.moveOutside(visitor, FRAME);
+        M5GameTestSupport.moveOutside(prepare.visitor, FRAME);
         run.proof.put("visitorLeftAtServerTick", run.server().getTicks());
     }
 
     /** step {@code resealed}（只有 1 個 tick：非參與者離開之後的下一個 tick）：原艙門是 sealed 量子膜；之後釋放 PASSAGE_READY 的提交暫緩。 */
     private boolean resealedOnTheNextTick(int tick) {
         var sid = fixture.sid();
-        boolean sealed = M5GameTestSupport.doorSealed(run.source(), FRAME), outside = !M5CollapseFixture.inside(visitor);
+        boolean sealed = M5GameTestSupport.doorSealed(run.source(), FRAME), outside = !M5CollapseFixture.inside(prepare.visitor);
         var record = run.journal().flushedRecords().get(sid);
         int sealedInfo = run.capture().matching(Level.INFO, "PREPARE：原艙門套用 sealed 量子膜", sid.toString()).size();
         run.expect("resealedOnTheNextTick", sealed && outside && collapsing(record) && sealedInfo == 1,
                 () -> "非參與者離開之後第 " + tick + " 個 tick：sealed=" + sealed + " 門正中=" + doorCenter(run) + " 非參與者在艙外=" + outside + " state="
                         + M5GameTestSupport.state(run.journal(), sid) + "「套用 sealed 量子膜」=" + sealedInfo);
-        hold.release();
+        prepare.hold.release();
         run.proof.put("readyReleasedAtServerTick", run.server().getTicks());
         return true;
     }
