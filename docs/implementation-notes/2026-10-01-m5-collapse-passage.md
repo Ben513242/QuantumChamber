@@ -7860,3 +7860,154 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - run-all：`run-all-70998ec40f6a440093280dd5b7068d69`（`8d639c5`）；最終回歸的 run-all（本節的 commit 之後）見 `h8/STATUS.md`。
 - 結束過的程序：只有本 session 自己的 ASM 分析程式 `ClinitReach`（PID 35368，java 的 source launcher；不是遊戲或 Gradle 的 JVM），以 TaskStop 結束背景 shell，之前核對過 commandline。沒有結束任何遊戲 JVM 或 Gradle daemon；probe 沒有遇到逾時處置。沒有遇到失敗而重跑的 root，也沒有遇到已知偶發（Windows 原子移動的 `AccessDeniedException`、boundary oracle、H2 的 ERROR +3、`m2_task4_disconnect_io` 的 WARN +1、本節的 NPE 都沒有出現）。
 - 取證腳本（`h8/`）：`state.ps1`、`junitall.ps1`、`compile.ps1`、`probe.ps1`、`runall.ps1`、`runall-compare.ps1`、`adapter.py`、`names2.py`、`junitset.py`、`setcmp.py`、`jarcmp.py`、`wbcmp.py`、`xmlsum.py`、`wbbatch.py`、`warncheck.py`、`details.py` 由 `f6/f62d2/` 複製，`junit.ps1`、`adapted-junit.ps1` 由 `h6/impl/` 複製（每檔第一行加本輪註解；repo 的相對路徑少一層；`adapter.py` 改 adapter 表的模組為 `adapters_h8`）；`base-default-summary.txt`、`base-m5-summary.txt` 是 `f6/f62d2s0/` 的 `runall1-*-summary.txt`（同一次基準 run-all）；新寫 `adapters_h8.py`、`worldgencheck.py`、`files/H8MappingsRaceDiagnosticTest.java`、`tools/FieldScan.java`、`tools/ClinitReach.java`、`tools/InitTrace.java`、`tools/inittrace_summary.py`。原版的程式以 Loom 的 sources jar 讀（`h8/mcsrc/`），class 檔解在 `h8/mcbin/`、`h8/mcbin-client/`。
+
+## H9：SEALED 重啟之後的兩個缺口
+
+- 兩位 implementer 完成：第一位做程式、focused 驗證與 run-all-1、run-all-2（controller 的派工 scratchpad `h9-prompt.md`），在 context 門檻停下；接力的 implementer（派工 `h9-relay-prompt.md`，不改程式）做 run-all-2 失敗的歸屬、之後的完整回歸與本節（取證以 `relay-` 為前綴）。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/h9/`，以下簡稱 `h9/`，`STATUS.md` 是交接摘要。開工時 HEAD 是 `0600a1e`、`git status --porcelain` 為空（`h9/start-state.txt`）。範圍是 spec v5.10 §4 H9、§7.3「門狀態的重新套用」、§11.2「永久原因」、§12 SEALED 列、§20.14 與 plan Task H9；觀察見上方 F6-2d-2 一節「觀察與裁示」第 2、3 點。
+- Commits（`0600a1e..HEAD`，依序；每個 commit 只 stage 自己的檔案；code 與 test commit 之前都在工作樹編譯：`h9/c1`～`c4-compile.log`，`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL）：
+  - `53ed945` `test: require a sealed retry at startup to open a membrane door while waiting`（(a) 的 RED）
+  - `9033859` `fix: open a membrane door when a sealed retry drops the pending close`（plan 指定的 message）
+  - `fac179a` `test: require one startup reminder for a permanently sealed session`（(b) 的 RED，含 probe 的 log 斷言）
+  - `86cb810` `fix: remind the admin of a permanently sealed session at startup`（plan 指定的 message；**最後一個 code commit**）
+  - `cb0ea08` `docs: describe the startup reminder assertion of trr in the verification README`
+  - `9c2c73b` `test: declare each H9 GameTest's per-test baseline the way run-all parses it`（只改三個新 test 的 `M4PerTestUniverseProbe.begin` 寫法，斷言不變；理由見「完整回歸」與「偏離派工字面之處」第 5 點）
+  - 本節由其後的 docs commit `docs: record H9 in the M5 note` 加入。
+- 只改了派工允許的路徑：production 只改 `OriginDoors.java`（(a)）與 `CollapseService.java`（(b)；1533 → 1555 行，沒有超過約 1600 行，所以沒有純搬移的 commit）；GameTest 加在 `M5CollapseGameTests`（既有測 SEALED 的 roll-forward 與重新套用之後正規化的 default run 類別，理由見「偏離派工字面之處」第 1 點），helper 只新增在 `M5GameTestSupport`（`skipResolve`、`sealedFixture`、`STARTUP_SEALED_REMINDER`）；probe 只改 `M5CollapsePassage`（`End` 的提醒旗標與 `expectEnd` 的分支）與 `M5CollapsePassageChains`（`trr-restart` 的終局斷言）；`scripts/verification/README.md` 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 其他 `src/main/` 檔案、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、任何 ps1、`.github/`、`M5UniverseGameTests`、M4 probe、JUnit、語言檔、spec、plan、AGENTS。既有的 GameTest、JUnit 與 probe 斷言都沒有因為行為改變而失敗（`trr-restart` 的 log 斷言是派工指定要改的；run-all-2 的 default run 失敗是與 H9 無關的偶發，見「完整回歸」）。
+- 行號以 HEAD `9c2c73b` 為準：`9c2c73b` 只改 `CGT`（三個新 test 的 `begin` 寫法；(a) 的共用 helper `sealedRetryAtStartup` 的簽名拿掉 `name`），其他檔案在 `86cb810` 之後沒有改（`cb0ea08` 只改 README），行號與 `86cb810` 相同。`OD`＝`OriginDoors`，`CS`＝`CollapseService`，`CGT`＝`M5CollapseGameTests`，`SUP`＝`M5GameTestSupport`，`PSG`＝`M5CollapsePassage`，`PCH`＝`M5CollapsePassageChains`。
+
+### (a) 重試時殘留的量子膜
+
+- **RED 的設計**（`CGT:1244` `sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting`，batch `m5_collapse_sealed_retry_membrane`；共用的流程在 `CGT:1263` `sealedRetryAtStartup`）：
+  1. `DormantOrigin` 的真原艙（已註冊、供電、enabled），連線的玩家 P 移到艙內；同一個 callback 寫入 SEALED(`PROJECTION_FAILED`) 的 fixture（`collapseFixture`，目的地 NEW，P 已返還），門以授權寫入寫成 sealed 量子膜（模擬 PREPARE 期間進入 SEALED、crash 在關門套用之前），再 `simulateDoorStartup`。
+  2. 這個 tick 結束時塌縮流程第一次看到它：`watchDoor` 排入下一個 tick 的 `CLOSE_ON_SEALED`，同一個 tick 的 `sealed()` 因為 P 開服時就在艙內而重試成 COLLAPSING（`CS:287` 在前、`:297` 在後）。下一個 test tick 先斷言這些前提（`closeQueuedForTheNextTick`：INFO 記下「（tick N+1）依 collapse view 重新套用原艙門（CLOSE_ON_SEALED）」；`retriedInTheSameTick`；`doorNotWrittenYet`），之後 `skipResolve`、斷電（閘門不成立）。
+  3. 重試之後的下一個 tick（關門的套用時點）結束時，**RED 的斷言**：門是 `open=true`＋`membrane=none`；另記 `closeDropped`（「session 已不是 SEALED，不再套用封存時的原艙門」一則）與 `normalizedOnlyWithAMembrane`（「原艙門已依 collapse view 重新套用（NORMALIZE：APPLIED，tick N+1）」恰一則）。
+  4. 之後 40 個 tick 每個 tick 都是一般開門、record 都是 COLLAPSING（`doorKeptWhileWaiting`），沒有「進入 PREPARE」（`neverPrepared`），這個 session 沒有 WARN／ERROR。收尾以終局 API 移除 fixture，per-test baseline 證明 catalog 與 runtime handle 不變。
+  - 第二個 test `CGT:1254` `sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten`（batch `m5_collapse_sealed_retry_closed_door`）：同樣的流程，門是關著的一般門（重啟之前 SEALED 的關門已套用，最常見的情況）；斷言重試之後不寫門（「沒有量子膜時不寫入」），WAITING 期間一直關著，沒有 NORMALIZE 的完成 INFO。它在修正前也會通過，是 mutation「連門沒有量子膜時也寫入」的守門。
+  - `skipResolve`（`SUP:772`）以反射把 `Track.resolved` 設為真，推導略過 RESOLVE、直接評估閘門而停在 WAITING。理由：default run 不得配置宇宙（plan 決策 6），NEW 的 RESOLVE 會配置；RESOLVE 不寫原艙門（`CS:460-478`），WAITING 也不寫（`CS:451`），重試之後到進入 PREPARE 之前，門只由待套用的門（`OD:528` `applyPending`）決定，所以略過 RESOLVE 不改變門的觀察。斷電讓閘門的第一次位準評估就不成立（`sourceSignal` 為 LOW），PREPARE 不會發生。
+- **重現的 root**：`red-a`（`53ed945`；gate root `.superpowers/verification/gate-red-a-e4f36c74504c454da35ed0bc99a7c199`）：membrane 的 test FAIL 在 RED 的斷言（「重試之後的下一個 tick，帶著量子膜的原艙門沒有改為一般開門：sealed_x」），前提的斷言都通過；closed 的 test PASS。latest.log 依序是「（tick 50）依 collapse view 重新套用原艙門（CLOSE_ON_SEALED）」、「SEALED 重試：SEALED(PROJECTION_FAILED)→COLLAPSING」、「session 已不是 SEALED，不再套用封存時的原艙門」，之後沒有任何改門，就是 F6-2d-2 一節「觀察與裁示」第 3 點推論的路徑。
+- **修正的位置與理由**（`9033859`）：`OD:676`，`applyDoor` 丟棄 `CLOSE_ON_SEALED` 的分支（INFO 照舊）在 collapse view 是 COLLAPSING 時呼叫 `normalizeAfterRetry`（`OD:740`）：以同一扇門的 chamber、session、world、frame 建立 `NORMALIZE` 的待套用門（`reapplied`），取代被丟棄的關門並立即嘗試一次（例外比照 `queueDoor` 以 `applyFailure` 記錄、退避，不丟出）。之後走既有的 `NORMALIZE` 分支（`OD:708-717`）：來源艙的 chunk 不是 FULL 時等之後的 tick；門沒有量子膜時不寫入（DEBUG）；有量子膜時改為一般開門，記既有的完成 INFO「原艙門已依 collapse view 重新套用（NORMALIZE：APPLIED，tick N）」。log 的字句都沒有改。
+  - 選這個位置而不是 `retrySealed` 排門：spec v5.10 §7.3 的新句子是「依套用當下的 collapse view 處理」，判斷就在丟棄關門的那一刻；它同時涵蓋「重啟之後的第一次觀察排入關門、同一個 tick 重試」與「關門還在等門口的 entity storage 或 chunk FULL 時重試」兩種情況，不必讓 `CollapseService` 知道門的待套用狀態；沒有待套用的關門時（門已在 SEALED 期間正常關上）也不會多排一扇門。`retrySealed` 本身不改。
+  - 套用的時點：RED 的情況（重啟之後的第一次觀察）關門排在下一個 tick，所以丟棄與 `NORMALIZE` 在重試的下一個 tick；「關門等待中重試」時，丟棄與 `NORMALIZE` 發生在重試的同一個 tick（`step` 之後的 `applyPending`，`CS:265`）；關門若正在退避（`OD:660` 的 `notBefore`／`backoff`），延到退避期過後。三者都是「依套用當下的 collapse view」。
+  - 終局之後的門不受影響：collapse view 不是 COLLAPSING（已終局時沒有 view）時只丟棄，與修正前相同；終局排入的 `OPEN_AFTER_TERMINAL`／`CLOSE_AFTER_TERMINAL` 以 chamber 為 key 取代這扇門。SEALED 期間的關門照舊（view 是 SEALED 時不進這個分支）。
+  - **PREPARE 之後仍由 `prepareDoor` 接手**：`prepareDoor` 一開始就 `doors.remove(view.chamberUuid())`（`OD:111`），移除還在等 chunk 的 `NORMALIZE`，之後依「套用量子膜的條件」重新判斷；同一個 tick 裡 `step` 的 `prepareDoor` 在 `applyPending`（`CS:265`）之前，所以進入 PREPARE 的那一個 tick 待套用的門已被移除，不會在同一個 tick 把 PREPARE 的量子膜改回一般開門。default run 不能走到 PREPARE（需要物化的目的世界），這一點以程式的順序論證；跨 JVM 的 RESOLVE→PREPARE 由 F6-2d-2 B 段的 `sealmembrane` 驗證（「交給後續」）。
+- GREEN：`green-a`（`9033859`，gate root `gate-green-a-60403aee1a34422ebabd1d65d83e1d69`）兩個 test 都 PASS；最後一個 code commit 上的 `green-b` 也是（見下方 GREEN）。
+
+### (b) 永久原因的 SEALED，開服時的 ERROR
+
+- **GameTest 的 RED**（`CGT:1329` `permanently_sealed_sessions_at_startup_remind_the_admin_once`，batch `m5_collapse_sealed_startup_reminder`）：同一個 callback 以 `sealedFixture`（`SUP:390`；COLLAPSING 之後 commitRollForward 進入 SEALED(reason)，最後確認 exact 落盤）建立 8 份 SEALED，原艙都在 test 結構 +6000 的遠處（來源艙沒有載入）、參與者都是離線的隨機玩家：
+  - 永久原因 `PROJECTION_CONFLICT`、`EXISTING_INELIGIBLE`、`AUTHORITY_CORRUPT` 各一份，以 `simulateDoorStartup` 標成開服 attach 當下就在 journal；
+  - 對照組：可重試的 `PROJECTION_FAILED`、`ALLOCATION_IO_FAILED` 與只在重啟之後重試的 `MATERIALIZE_FAILED`、`AUTHORITY_UNREADABLE` 各一份，同樣標成開服時就在（來源艙沒有載入，H7 的觸發不消耗，所以不會重試、不會配置宇宙）；以及一份沒有標成開服時就在的 `PROJECTION_CONFLICT`。
+  - `TRANSFER_RECOVERY_REQUIRED` 不在這裡：它無法以任何 API 移除（`SUP:434`），會留在 default run 的 journal；由 probe 的 `trr-restart` 涵蓋。
+  - 斷言：20 個 tick 內每一份永久原因都有開服時的提醒（有界等待）；之後 100 個 tick 每一份仍恰好一則、這個 sid 的 ERROR 也只有這一則（`<reason>.remindedOnce`），字句含 `SEALED(<reason>)`、「需要管理員處理」、`chamber=<UUID>`、`目的地=UNIVERSE <UniverseId>`（`<reason>.namesTheSessionChamberAndDestination`）；四份可重試的與沒有標成開服時就在的那一份都沒有 ERROR（`<reason>.notReminded`、`notAtStartupNotReminded`）；這些 sid 都沒有「塌縮進入 SEALED」的 ERROR（`notTheEntryError`）與 WARN（`noWarn`）；9 份 record 的 flushed 與 current 都與建立時 exact 相同（`recordsUntouched`）。
+  - RED：`red-b`（`fac179a`，gate root `gate-red-b-7d2ccae717a34c6ea6845a4a9c4dabae`）FAIL 在有界等待：「有界等待逾時（至 tick 22）：有上限的 tick 內沒有每一份永久原因 SEALED 都提醒：[0, 0, 0]」。
+- **probe 的 RED**：窗口表（`M5CollapseWindows.table()`）中 `stateAtHalt` 是 SEALED 的列只有 `RECOVERY_SEALED`（TRR，永久）、`MATERIALIZE_SEALED`（w9／w9io，restart-only）與 `SEALED_STEP`（unreadable，restart-only）；`deg-restart` 是開服之後才進入 SEALED(AUTHORITY_CORRUPT)；其他 chain 的 restart 開服時都不是 SEALED。所以開服時就是永久原因 SEALED 的 restart phase 只有 `trr-restart`。
+  - `PSG`：`End` 加上 `startupReminder` 旗標與 `withStartupReminder()`（`PSG:363`；sessionErrors 為 1，只接在沒有其他 ERROR 的 End 之後，`placed`／`withOtherAllocations` 保留旗標）；`expectEnd`（`PSG:426`）在旗標為真時以 **`permanentSealedRemindedOnceAtStartup`** 斷言「這個 session 從 `onInitialize` 起的 ERROR 恰為一則，而且是開服時的提醒（含 `STARTUP_SEALED_REMINDER`）」，取代 `noSessionError`。`PCH:483` 的 `trr-restart` 終局斷言改用它。這就是 F6-2d-2 spec review 的 M-2。
+  - RED：`red-b-trr`（`fac179a`，`-Only trr`，runId `5796d2faa3734316a96187e4bd6dc8be`）：`trr-crash` PASS（halt），`trr-restart` FAIL 在 `permanentSealedRemindedOnceAtStartup：這個 session 的 ERROR：[]`。
+- **修正**（`86cb810`）：
+  - 位置：`CS:1078`，`sealed()` 在確認 collapse view 是 SEALED、與 current 相同、取得 reason 與 Track 之後，在 `sealedRetry == NONE` 的 return 之前呼叫 `remindAtStartup`（`CS:1096`）。
+  - 條件：原因不可重試（`reason.retryable()` 為假；restart-only 的兩種是可重試的，不提醒），`startupSessions` 含這個 session，而且 `Track.sealedReported`（`CS:1449`）為假。
+  - 去重：`remindAtStartup` 記了就設 `sealedReported`；`sealCommitted`（`CS:1008-1009`）也設它：本 instance 自己封存的 session 進入時已依原因記 WARN／ERROR，不是「開服時就是 SEALED」的 session，不再提醒（開服時是 COLLAPSING、執行期間才進入永久 SEALED 的 `deg-restart` 因此仍只有一則）。Track 是每個 server instance 的簿記，所以每個 instance 最多一次；它不隨 `resetGate` 重設（Track 的重設時點表已加上）。
+  - 字句（ERROR，`LOG_MARKER`）：「開服時的提醒：session 仍是 SEALED({reason})，永久原因，需要管理員處理（不自動重試；原艙維持封鎖，任何玩家都可以照一般方式開門；每個 server instance 提醒一次）：session={} chamber={} 目的地={}」，與進入時的「塌縮進入 SEALED(…)，永久原因，需要管理員處理…」不同。
+  - 只記 log：不寫 journal、不做 IO，不改權威、玩家看到的訊息與重試條件。在任何「來源艙已載入」「原參與者在艙內」的判斷之前，所以來源艙沒有載入、沒有玩家在線時也會記（GameTest 的原艙都沒有載入、參與者都離線）。roll-forward 尚未確認時，`sealed()` 在 `CS:1073` 就 return，不會記；確認之後若 collapse view 仍是永久原因 SEALED 才記。隔離中或 journal 有未 checked 的 authority 時整個 step 不執行，提醒延到它們解除的那一個 tick。
+- **log 計數**：
+  - GameTest：`m5_collapse_sealed_startup_reminder` 每次 run 記 3 則提醒 ERROR（三種永久原因各一，`green-b` 的 latest.log：ERROR 3、WARN 0）；(a) 的兩個 test 沒有 WARN／ERROR。所以 default run（gate-full）的 ERROR 多 3 則、WARN 不變；M5 run 沒有開服時就在 journal 的 session（fresh 世界），沒有新增的 test，計數不變。
+  - probe：`trr-restart` 的這個 session 多一則（開服時的提醒）；其他 48 個 phase 的 log 斷言不變。
+
+### mutation
+
+都套在乾淨的 `86cb810` 上（`h9/chain1.ps1`；GameTest 經 `h9/gred.ps1`，probe 經 `h9/red.ps1`；adapter 表 `h9/adapters_h9.py`），跑完還原，`h9/<label>-restored-state.txt` 的 HEAD 都是 `86cb810`、porcelain 都是空的。
+
+| 名稱 | 改動 | 跑的 | 結果 |
+| --- | --- | --- | --- |
+| `mut-a-no-fix` | 拿掉 `OD:676` 的改排（等同 RED） | (a) 的兩個 test | membrane 的 test FAIL 在 RED 的斷言（`sealed_x`）；closed 的 PASS |
+| `mut-a-write-always` | 改排的目標換成一律寫一般開門的 `OPEN_ON_LEAVE` | 同上 | closed 的 test FAIL 在「沒有量子膜的原艙門被改寫：none」；membrane 的 FAIL 在 `normalizedOnlyWithAMembrane`（沒有 NORMALIZE 的完成 INFO） |
+| `mut-a-close` | `NORMALIZE` 的目標改成關門 | 同上 | membrane 的 test FAIL 在 RED 的斷言（`closed`）；closed 的 PASS（UNCHANGED） |
+| `mut-b-retryable-too` | 拿掉 `reason.retryable()` 的條件 | (b) 的 test | FAIL：四份可重試的 `*.notReminded` |
+| `mut-b-every-tick` | 拿掉 `remindAtStartup` 裡設旗標的那一行（不去重） | 同上 | FAIL：三份永久原因的 `remindedOnce`、`namesTheSessionChamberAndDestination` |
+| `mut-b-not-startup` | 拿掉 `startupSessions` 的條件 | 同上 | FAIL：`notAtStartupNotReminded` |
+| `mut-b-no-entry-flag` | 拿掉 `sealCommitted` 設旗標的那一行 | probe `-Only degraded`（runId `a8e51f6307b443c7bf5786e3789ec17d`） | `deg-restart` FAIL 在既有的 `onePermanentAdminError`（進入時那一則之後又多一則開服時的提醒）；`deg-setup` PASS |
+
+- gate root：`gate-mut-a-no-fix-eba59a746f604c448d84d77e89110042`、`gate-mut-a-write-always-0bfc95bef36d4b4cb0bdfe6c84617151`、`gate-mut-a-close-0406db92eced49009bbc54afeaf5ef10`、`gate-mut-b-retryable-too-87f01069157a480bb38996baeda40128`、`gate-mut-b-every-tick-0bd657e80c7347a8bbf11aae353ccd5c`、`gate-mut-b-not-startup-456c9851e83c4266a6bd8ffc23de1d67`；probe 的摘要在 `h9/h9-mut-b-no-entry-flag-degraded-mutsum.txt`。
+
+### GREEN
+
+- 最後一個 production commit `86cb810`、乾淨的工作樹（之後只有 README、`9c2c73b` 的 test 寫法與本節）：
+  - `green-b`（gate root `gate-green-b-2169eae720c64aaf847662f43deef33d`）：三個新 GameTest 都 PASS；`green-b-trr`（`-Only trr`，runId `9d90495161da4fb3968083ea729a9688`）兩個 phase 都 PASS。
+  - JUnit（`green-all`，`h9/green-all-junitall-setcmp.txt`）：666 個，664 PASS、2 SKIPPED，名稱與結果和基準 `run-all-b47d7170…` 完全相同（沒有新增 JUnit）。
+  - M5 GameTest run（`green-m5`，gate root `gate-green-m5-73046881db00402eb81d498fbfdc1eab`）：60/60 PASS。
+  - M5 collapse probe 的 49 個 phase 連跑兩次：green-1 `9b14539f11754d78b528ec62f0097735`、green-2 `06aa7038986a4961b5a81ee774fc8083`，都是 49/49 PASS（22 halt、27 stop；`h9/green-*-probe-state.txt` 的 HEAD 都是 `86cb810`、porcelain 空）。
+- probe 的 GREEN 與 mutation 跑在 `86cb810`，不是 HEAD `9c2c73b`：`9c2c73b` 只改 default run 的三個新 test（`M5CollapseGameTests`），probe 不執行它。最終 HEAD 上的 m5collapse 證據以下方「完整回歸」的 run-all（49/49）為準；三個新 GameTest 在 `9c2c73b` 的實跑也在那裡。
+
+### 具名斷言的比對
+
+- 與 H8 的 GREEN green-2 `1a9f0b579d164cff8c8d4b52cdd622a5` 比對（`h9/names2.py`）：
+  - 不帶改名表（`h9/green-*-vs-h8green2-names.txt`）：RESULT=DIFF，差異只有 `trr-restart` 一個 phase：`missing=['noSessionError'] added=['permanentSealedRemindedOnceAtStartup']`，斷言數 46 → 46、順序與 step 相同；其他 48 個 phase 完全相同。
+  - 帶改名表 `h9/renames-h9.json`（只有 `trr-restart` 的 `noSessionError → permanentSealedRemindedOnceAtStartup`）：RESULT=OK（`h9/green-*-vs-h8green2-renamed-names.txt`）。
+  - 每個 phase 的增減：`trr-restart` 改名 1（−`noSessionError`、+`permanentSealedRemindedOnceAtStartup`），其餘 0。
+- green-2 與 green-1 互相比對：RESULT=OK（`h9/green-2-vs-green-1-names.txt`）。
+
+### 完整回歸（run-all）
+
+- `run-all-1`＝`run-all-192a072a17f14c2190f341cd3f5a3bd2`（`h9/run-all-1-console.txt`，HEAD `cb0ea08`）：gate 都 exit=0（default 178/178），**summary FAIL**「per-test begin 呼叫 55 個，可解析的宣告 53 個」，不採計；修正是 `9c2c73b`（「偏離派工字面之處」第 5 點）。
+- `run-all-2`＝`run-all-385e8eb5b02542eb983edbe84a3183fa`（`h9/run-all-2-console.txt`，HEAD `9c2c73b`、乾淨）：**FAIL，停在 full**，不採計（見下方「run-all-2 的歸屬」）。
+- `run-all-3`＝`run-all-8edb91f61f9b4eca93d55bc47491a361`（接力的 implementer，`h9/relay-run-all-3-console.txt`；`relay-run-all-3-state.txt`：HEAD `9c2c73b`、porcelain 空；所有 code、test 與 README commit 之後，其後只有本節的 docs commit），**`END ALL exit=0`**。本節的 commit 之後另跑一次 run-all 作為最終回歸，結果記在 `h9/STATUS.md` 與接力 implementer 的最終回報（本節的 commit 只改這份 note）。
+- SUMMARY：`default=178/178 windows=89 legacy=1/1 m5=60/60 perTest=55+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=49 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-b47d7170fc874d379f85585871836f36`（H8 的最終回歸，`aee674f`）逐項比較（`h9/runall-compare.ps1`，輸出 `h9/relay-runall3-*.txt`）：
+
+| 項目 | 基準 | 本次 | 歸屬 |
+| --- | --- | --- | --- |
+| default GameTest | 175/175 | 178/178 | 只多本節的三個 test（都 PASS）；其餘 175 個的名稱與結果相同（`relay-runall3-default-setcmp.txt`） |
+| M5 GameTest | 60/60 | 60/60 | 相同（`relay-runall3-m5-setcmp.txt`，identical）；新 test 落在 default run（「偏離派工字面之處」第 1 點） |
+| legacy | 1/1，WARN／ERROR 0／0 | 1/1，0／0 | 相同（`relay-runall3-legacy-setcmp.txt`、`relay-runall3-wbcmp-legacy.txt`） |
+| JUnit | 666（664 PASS、2 SKIPPED） | 666（664 PASS、2 SKIPPED） | 名稱與結果相同（`relay-runall3-junit-setcmp.txt`） |
+| release JAR | 432 entries／385 classes | 432／385 | entry 集合相同；內容改變的只有 `CollapseService` 與它的內部類別（`$Track` 多了 `sealedReported`；`$DestinationTicket`、`$Prepare`、`$PrepareGate`、`$SealedRetry` 是同一個原始檔的行號位移）與 `OriginDoors` 與它的內部類別（`$DoorGoal`、`$DoorStep`、`$PendingDoor`，行號位移）（`relay-runall3-jarcmp-release.txt`） |
+| sources JAR | 226 | 226 | 改變的只有 `CollapseService.java`、`OriginDoors.java`（`relay-runall3-jarcmp-sources.txt`） |
+| Full WARN／ERROR | 54／28 | 54／31 | 排序 diff 只多三則 ERROR「開服時的提醒：session 仍是 SEALED(…)」（`AUTHORITY_CORRUPT`、`EXISTING_INELIGIBLE`、`PROJECTION_CONFLICT` 各一，`relay-runall3-wbcmp-full.txt`）；依 batch 分組也只有這三則，都在 `m5_collapse_sealed_startup_reminder`（`relay-runall3-wbbatch-full.txt`）。這次沒有出現已知偶發（H2 的 ERROR +3、`m2_task4_disconnect_io` 的 WARN +1） |
+| M5 WARN／ERROR | 38／10 | 38／10 | 數目相同；排序 diff 的兩組都是同一則訊息：「Trying to set block entity … PistonBlockEntity@<hash>」（object hash 正規化成不同的樣子），與「塌縮流程的通道傳送沒有完成，通道仍開著，可以再試」（各 1 則；位置是隨機的遠座標，這次 z 以科學記號 `1.15372123E7` 印出，正規化不同）（`relay-runall3-wbcmp-m5-gametest.txt`） |
+| perTest、windows、windowsCheckpoint | 52+1、89、17 | 55+1、89、17 | perTest 只多三個新 test 的 per-test receipt；windows 不變（新 test 不以 `_windows` 結尾） |
+| M3、M4 recovery | 4＋5、24 | 4＋5、24 | 相同（run-all 核對 phase 名稱與 receipt） |
+| m5collapse | 49（halt 22） | 49（halt 22） | collapse runId `44323ceec8db467ebd6cea12547a219e`：與 green-1 RESULT=OK（`relay-runall3-vs-green-1-names.txt`）；與 H8 的 green-2 不帶改名表時差異只有 `trr-restart` 的 `noSessionError → permanentSealedRemindedOnceAtStartup`（`relay-runall3-vs-h8green2-names.txt`），帶 `renames-h9.json` 時 RESULT=OK（`relay-runall3-vs-h8green2-renamed-names.txt`）；49 個 phase 與 25 個 run root 的 log 都沒有 worldgen 的例外（`relay-runall3-worldgencheck.txt`） |
+| main-only、testmodHits、CI 規則 | PASS、0、win／ubuntu PASS | 相同 | — |
+
+- 三個 gate（full、legacy、m5-gametest）的 latest.log 都沒有 `NullPointerException`、`ConcurrentModificationException` 或「Exception generating new chunk」（基準同樣是 0）。
+- gate-full 的 batch 順序與 `run-all-1`、`run-all-2` 相同（`relay-batchorder-3.txt`）；「全域 managed entity pin 已超過 256」「走廊保留租約等待安全返還」「recovery 寫出保留 pending」的計數是 4／9／4，與 `run-all-1`、基準相同，都在 T0 已記錄的位置（`relay-pincount-3.txt`）。
+
+#### run-all-2 的歸屬（偶發，與 H9 無關）
+
+- 現象：gate-full（`gate-full-26ba67a8d4b842bfa7a7761990287167`）的 default run 從 `m2_pin_capacity` 起每個 tick 記「全域 managed entity pin 已超過 256」（`CorridorPageManager.java:990`）與「走廊保留租約等待安全返還」ERROR（全 run 20270／5133 則；session 幾乎都是 `a66e2e0a…`），latest.log 31MB，`Invoke-Gradle` 逾時，`Restore-Root` 丟「root 有 live owner」。log 與 world 的分析在 `h9/relay-attribution.txt`（以 `relay-pincount.py`、`wbbatch.py`、`relay-nbtdump.py` 唯讀取得）；run-all-2 的 `run/gametest/logs/latest.log`、`debug.log` 在重跑之前原樣複製成 `h9/relay-run-all-2-gate-full-{latest,debug}.log`（gate 沒有把 runtime-logs 搬進 gate root）。
+- **batch 的順序不是原因**：`run-all-1`（`cb0ea08`）與 `run-all-2`（`9c2c73b`）前 84 個 batch 的名稱與順序完全相同；基準（H8）與 `run-all-1` 只在第 52、69、82 個位置插入三個新 batch，其餘相對順序不變（`relay-batchorder-{1,2,h8}.txt`）。`m2_pin_capacity`（#46）、`m2_powered_entry`（#47）與它們之前的 45 個 batch 在三次 run 的位置都相同，新 batch 最早在 #52。同樣的順序在 `run-all-1` 與 `run-all-3` 都 178/178。
+- **第一個分歧點**：#21 `m4_select_rejections`（`native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows`，M4 test）沒有 `M4_PER_TEST_END`，進度列第 21 格是 X（latest.log 2991 行）。失敗訊息沒有紀錄：XML 只在 run 結束時寫出，JVM 被結束了；log 沒有對應的例外。`.superpowers/verification/` 的 1694 份 default XML 中，這個 test 從未失敗。2991 行之前沒有任何 SEALED 字樣；H9 (a) 的新分支只在「session 已不是 SEALED，不再套用封存時的原艙門」之後執行（第一次在 19839 行，#52），(b) 的提醒第一次在 48700 行（#69），所以 H9 的程式在分歧點之前沒有執行過；它們也不碰走廊、pin 與 M2／M4 的 session。
+- **放大的機制**：#21 失敗不收尾之後，#22 多一個 session（`f7dc2bf0…`）佔走廊 slot 0，#24 到 #46 每個 test 的 slot 起點都比 `run-all-1` 多 1（#47 起 slot 0 才又被重用）（`m2_task4_reconnect` 自己的 session 是另一個，test 通過；`f7dc2bf0` 來自 #21 留在原地的 chamber 與玩家，這一點是推論：時間點與 slot 吻合，log 沒有寫出它的 chamber）。#46 `m2_pin_capacity` 因此在 `M2CorridorGameTests.java:2085` 的 `prepareRemap`（自己的 255 個 item＋1 個玩家＝256，test 斷言仍可準備）就丟出 pin 溢出：全域計數包含其他 protected lease 內的 entity。test 在這裡失敗，沒有走到把 255 個 item 移出走廊的 finally，它的 session `500f8ff3…` 停在 RETURNING（run-all-2 world 的 journal），item 永久留在 protected lease 內。之後全域 pin 一直超過 256：`m2_native_offline` 留下的 RETURNING session `a66e2e0a…` 每個 tick 重試 recovery 寫出都失敗，後續用到走廊的 test 大量失敗（進度列 84 格中 X 31 個；三個新 test 都通過）。
+- **與 T0 已知項目的關係**：`run-all-1`、`run-all-3` 與基準在 #46 也有同樣的 4 則 pin 溢出與 2 則等待安全返還（`m2_native_offline` 的 RETURNING 殘留與 `m2_pin_capacity` 自己的 session），之後消失；這就是 T0 記錄的「R2 M7 全域 pin 上限連坐」與「`m2_native_offline` 等只 `close()` 不收尾，session 以 RETURNING 留在共用 GameTest server（GameTest 順序依賴類）」。run-all-2 的放大機制就是這兩項；新的只是觸發點（一個走廊 test 失敗不收尾，打破 `m2_pin_capacity` 的「恰好 256」前提）。
+- **結論**：派工的 (i)。列為新的已知偶發類別「default run 的走廊 test 失敗不收尾 → `m2_pin_capacity` 放大成整個 run 的 R2 M7 連坐與 gate 逾時」，歸到既有延後項（R2 M7＋GameTest 順序依賴類），M5 範圍外（「交給後續」F7）。`m4_select_rejections` 失敗本身的原因不明，是否另查見「需要裁示」。處置：root 保留、不採計，以新的 root 跑 `run-all-3`。
+
+### 偏離派工字面之處
+
+1. **新 GameTest 放在 default run 的 `M5CollapseGameTests`，不是 M5 run**：派工指定「加在既有測 SEALED 門或重新套用的 GameTest 類別」，那些 test 多在 `M5UniverseGameTests`（例如 `m5_universe_door_sealed_membrane`），但它不在允許修改的範圍，而 `gates.ps1:242-243` 要求 batch 前綴 `m5_universe` 的 test 都宣告在 `M5UniverseGameTests`，所以新 test 不能進 M5 run。`M5CollapseGameTests` 有既有的 SEALED（`settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff`）與重新套用之後正規化（`startup_passage_ready_ends_and_normalizes_the_door_next_tick`）的 test。因此：default run 175 → 178、per-test receipt 52 → 55；M5 GameTest 的數目不變（派工預期的「M5 GameTest：新增的 test 數」改為落在 default）。沒有新增 GameTest 類別，也沒有改 `fabric.mod.json`。
+2. **(a) 的 RED 以 `skipResolve` 略過 RESOLVE**：派工寫「之後讓閘門不成立…停在 WAITING」。default run 不能讓 NEW 的 RESOLVE 配置宇宙，所以以反射把 `Track.resolved` 設為真，推導直接評估閘門（斷電）而停在 WAITING；RESOLVE 不寫門的論證見 (a) 的 RED 一段。真的 RESOLVE 之後的 WAITING 與 PREPARE 交給 F6-2d-2 B 段的 `sealmembrane`。
+3. **(b) 的 GameTest 不含 `TRANSFER_RECOVERY_REQUIRED`**：它在 default run 移除不了（會留下 M5 record），由 probe 的 `trr-restart` 涵蓋；GameTest 用其餘三種永久原因。`EXISTING_INELIGIBLE` 的 fixture 是 NEW 的目的地（record 的驗證只對 TRR 有額外要求，原因與目的地的種類不交叉檢查）；提醒只看原因，與目的地的種類無關。
+4. **mutation 多做了三項**：`mut-b-not-startup`（開服時就在的條件）、`mut-b-no-entry-flag`（`sealCommitted` 的旗標，以 probe 的 `deg-restart` 抓）與 `mut-a-close` 之外的 `mut-a-write-always` 兩項都做（派工的 (a) 第二項是「或」）。
+5. **commit 的順序多了一個 test commit**：`run-all-1` 在 summary 的 per-test 檢查失敗（`run-all.ps1:139-149`：每個 `M4PerTestUniverseProbe.begin` 必須是 `@GameTest` 方法的第一個敘述，寫成 `begin(context,"<方法名>")`；(a) 的兩個 test 經共用的 helper 以變數呼叫，(b) 的 test 逗號後多一個空格，所以 55 個呼叫只有 53 個可解析）。依「不 rebase」在 README 之後補 `9c2c73b`（只改這三處寫法），再以新的 root 跑 `run-all-2`（FAIL：停在 full，沒有跑到 m5collapse，不採計；歸屬見「完整回歸」），之後由接力的 implementer 以新的 root 跑 `run-all-3`。production 最後一次改動仍是 `86cb810`：probe 的兩次 GREEN 與 mutation 都在 `86cb810`；`9c2c73b` 只改 default run 的 GameTest 類別（probe 不執行它）。HEAD `9c2c73b` 上三個新 GameTest 的實跑與 49 個 phase 的 m5collapse，以 `run-all-3`（與 note commit 之後的最終回歸）為準。
+6. 沒有新增 JUnit：判斷都在 server 的 tick 上（`sealed()` 的位置、Track 的旗標、`applyDoor` 的分支），GameTest 與 probe 已覆蓋；JUnit 的集合與基準相同。
+
+### 需要裁示
+
+- 沒有。以下兩點請 reviewer 確認是否接受：「偏離派工字面之處」第 1 點（新 test 落在 default run）與第 2 點（以反射略過 RESOLVE）。
+- 請 controller 確認：`run-all-2` 的失敗歸為與 H9 無關的偶發（「完整回歸」的「run-all-2 的歸屬」），列為新的已知偶發類別、歸到既有延後項（R2 M7 全域 pin 上限連坐＋GameTest 順序依賴類）。觸發的 `m4_select_rejections` 失敗原因沒有紀錄（沒有 XML），是否另查由 controller 決定；本節沒有改任何 test。
+
+### 交給後續
+
+- **F6-2d-2 B 段**：`sealmembrane`（F6-2-11）以 H9 (a) 的行為寫跨 JVM 的斷言：重啟之後原參與者在艙內、SEALED(`PROJECTION_FAILED`) 的門帶著量子膜 → 第一個 tick 排入 `CLOSE_ON_SEALED` 並重試成 COLLAPSING → 下一個 tick「session 已不是 SEALED，不再套用封存時的原艙門」與「原艙門已依 collapse view 重新套用（NORMALIZE：APPLIED，tick N）」各一則、門是 `open=true`＋`membrane=none` → 真的 RESOLVE 之後停在 WAITING 時一直是一般開門 → 進入 PREPARE 時由 `prepareDoor` 依「套用量子膜的條件」重新套用 sealed 量子膜。原本設計的「要先觀察」由本節取代（F6-2d-2 一節「B 段的設計」）。注意 A 段 quality review 的建議：`sealmembrane` 的參與者是 JOIN 的邊緣，不是 `FIRST_OBSERVATION`。
+- **F6-3**：三個新的 default run GameTest（`m5collapsegametests.sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting`、`m5collapsegametests.sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten`、`m5collapsegametests.permanently_sealed_sessions_at_startup_remind_the_admin_once`）要列進 `build.yml` 的明列清單（都是跨平台，名稱不以 `_windows` 結尾）。
+- **F7**：管理員說明開服時的提醒這則 ERROR：開服 attach 當下就是永久原因 SEALED 的 session，每次開服記一則「開服時的提醒：session 仍是 SEALED(<原因>)，永久原因，需要管理員處理…」（帶 session、chamber、目的地）；與進入 SEALED 時的 ERROR 不同，同一個 instance 自己封存的不會再記；可重試的原因不記。原艙一直封鎖，處置方式與進入時那一則相同。
+  - 已知偶發清單補一則（「完整回歸」的「run-all-2 的歸屬」）：default run 的任一走廊 test 失敗而不收尾時，額外的 pin 留在 protected lease，`m2_pin_capacity` 的「恰好 256」前提被打破、它自己的清理也不執行，255 個 item 永久留在走廊，之後整個 run 因 R2 M7 連坐而大量失敗、log 洪流、gate 逾時（停在「root 有 live owner」）。處置：保留 root，結束卡住的 GameTest JVM（核對 commandline、存 jstack），比照 `Restore-Root` 處置世界，以新的 root 重跑。根治屬既有延後項（R2 M7＋GameTest 順序依賴類），M5 範圍外。
+
+### root（全部保留）
+
+- RED：`red-a`（`53ed945`，`gate-red-a-e4f36c74504c454da35ed0bc99a7c199`）、`red-b`（`fac179a`，`gate-red-b-7d2ccae717a34c6ea6845a4a9c4dabae`）、`red-b-trr`（`fac179a`，probe runId `5796d2faa3734316a96187e4bd6dc8be`）。
+- GREEN：`green-a`（`9033859`，`gate-green-a-60403aee1a34422ebabd1d65d83e1d69`）、`green-b`（`86cb810`，`gate-green-b-2169eae720c64aaf847662f43deef33d`）、`green-b-trr`（`9d90495161da4fb3968083ea729a9688`）、`green-all`（JUnit）、`green-m5`（`gate-green-m5-73046881db00402eb81d498fbfdc1eab`）、probe green-1 `9b14539f11754d78b528ec62f0097735`、green-2 `06aa7038986a4961b5a81ee774fc8083`。
+- mutation：見上表（`86cb810`＋adapter）。
+- gate root 在 `.superpowers/verification/`；probe 的 phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`。
+- run-all：`run-all-1`＝`run-all-192a072a17f14c2190f341cd3f5a3bd2`（`cb0ea08`，summary 的 per-test 解析 FAIL，不採計）；`run-all-2`＝`run-all-385e8eb5b02542eb983edbe84a3183fa`（`9c2c73b`，gate-full `gate-full-26ba67a8d4b842bfa7a7761990287167` 因 `Invoke-Gradle` 逾時與 live owner FAIL，不採計，歸屬見「完整回歸」；它的 per-test receipt 目錄 `run/gametest/m4-per-test-20512-56b9b94af2974178adc4e87449bc72e5` 留在原處）；`run-all-3`＝`run-all-8edb91f61f9b4eca93d55bc47491a361`（`9c2c73b`，`END ALL exit=0`，採計）；最終回歸的 run-all（本節的 commit 之後）見 `h9/STATUS.md`。
+- 結束過的程序：只有 `run-all-2` gate-full 的 GameTest server JVM **PID 20512**（第一位 implementer，2026-10-14 17:38:48）。gate 已因 `Invoke-Gradle` 逾時與 live owner 而 FAIL 之後，核對 gate 的 `execution/processes.json`（pid 20512、parent 21508、startTime 17:14:22）、per-test receipt 目錄 `m4-per-test-20512-56b9b94af2974178adc4e87449bc72e5` 與 commandline（`h9/stuck-20512-commandline.txt`；Gradle client 的是 `h9/stuck-30580-commandline.txt`），存 `h9/jstack-20512.txt`（Server thread RUNNABLE，在 `ChamberRegistry.records`）之後以 Stop-Process 結束（`h9/killed-processes.txt`）；Gradle client 30580 與這次 gate 自己起的 daemon 21508 隨之結束，沒有直接結束任何 Gradle daemon（7044 仍在）。世界比照 `Restore-Root` 處置：`run/gametest/world` 非 reparse、沒有 live owner、`session.lock` 可獨占，原本不存在（沒有 backup），只把 fresh world 移到 gate root 的 `world-fresh`，沒有刪除任何東西（gate root 的 `world-restore-manual.json`，`h9/run-all-2-world-restore-manual.json` 另存一份）。接力的 implementer 沒有結束任何程序（`run-all-3` 沒有遇到逾時）。probe 沒有遇到逾時處置。
+- 取證腳本（`h9/`）：`state.ps1`、`compile.ps1`、`probe.ps1`、`runall.ps1`、`junitall.ps1`（只改基準）、`runall-compare.ps1`（只改基準）、`adapter.py`（只改 adapter 表的模組）、`names2.py`、`junitset.py`、`setcmp.py`、`jarcmp.py`、`wbcmp.py`、`xmlsum.py`、`wbbatch.py`、`warncheck.py`、`details.py` 由 `h8/` 複製；`gate.ps1`、`red.ps1`、`mutsum.py` 由 `f6/f62d2/` 複製（每檔第一行加本輪註解）；新寫 `gred.ps1`、`adapters_h9.py`、`chain1.ps1`、`chain2.ps1`、`renames-h9.json`；`base-default-summary.txt`、`base-m5-summary.txt` 是 `h8/` 的 `runall3-*-summary.txt`（基準 run-all `b47d7170…`）。接力的 implementer：新寫 `relay-pincount.py`（log 依 batch 計數 pin 溢出與保留租約）、`relay-nbtdump.py`（唯讀印出 gzip NBT）；`relay-worldgencheck.py` 由 `h8/worldgencheck.py` 複製（第一行加本輪註解）；歸屬的摘要在 `h9/relay-attribution.txt`。
