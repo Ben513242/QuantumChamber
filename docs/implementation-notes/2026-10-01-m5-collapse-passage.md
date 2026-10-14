@@ -7630,3 +7630,40 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - 其他：gate root `gate-m5-b6c6552ac5744e1390b4ff660207b2c8`；run-all `run-all-915ef865f6d445d4a8649da27a4ebb95`（collapse `7820fc9decf548b68b301d0bcf82045c`）。
 - 沒有失敗或不採計的 root（mutation 的 root 是預期失敗），沒有遇到已知偶發，沒有逾時，沒有結束任何 JVM 或 Gradle daemon。
 - 取證腳本（`f62d2s0/`）：由 `h7/impl/` 複製（每檔第一行加本輪註解；label 前綴 `f62d2s0-`；adapter 表的模組 `adapters_f62d2s0`；`junitall.ps1`、`runall-compare.ps1` 的基準改為 `run-all-91c5…`，`base-*-summary.txt` 是 `h7/impl/` 的 `runall1-*-summary.txt`；`Select-Object -First N` 都拿掉或改成陣列索引，probe 的摘要不再截斷）；新寫 `adapters_f62d2s0.py`、`junitallmut.ps1`，`gatemut.ps1` 加 `-Mode`。
+
+## F6-2d-2：門與 SEALED 的重啟窗口
+
+本節由 controller 依 implementer 的 `STATUS.md` 寫成（implementer 在 context 門檻停下，沒有寫 note）。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62d2/`，以下簡稱 `f62d2/`。B 段由接力的 implementer 在 Task H8、H9 之後完成，寫在本節的「B 段」之下。
+
+### A 段：F6-2d-2 Step 0 review 留下的整理
+
+- 一位 implementer（controller 的派工 scratchpad `f62d2-prompt.md`）。開工 HEAD `8ce281e`，工作樹乾淨（`f62d2/start-state.txt`）。讀完必讀範圍之後 context 接近 50 萬，依派工的 context 規則只完成 A 段。
+- Commits（`8ce281e..287d849`；每個 code commit 在 commit 之前、只放該 commit 的內容編譯過，`f62d2/c1`～`c3-compile.log`）：
+  - `823c74f` `test: assert the gate waits for an edge after the prime on leaving PREPARE`（建議：`EntryWatch` 的循序 JUnit）
+  - `02628cb` `test: tidy the probe's F6-2d-2 Step 0 review items before the door windows`（Minor 1、2、4 與 nit，行為不變的重構）
+  - `7487f97` `test: fail a probe halt whose evidence records the record without withRecordKept`（Minor 3 的反向守門，行為改變；**最後一個 code commit**）
+  - `287d849` `docs: describe the F6-2d-2 probe tidying in the verification README`
+- 逐項處置：
+  - Minor 1：B 段的設計沒有需要分批跨越的 chain，所以改成「一個 phase 只跨一次」，`PSG` 的類別說明、`cross` 的 Javadoc 與 README 跟著改，拿掉累計的 `crossedSoFar`（只有一段時兩者相同，具名斷言不變）。
+  - Minor 2：拿掉 `retried` 對 `Await.FIRST_OBSERVATION` 的拒絕。
+  - Minor 3：`M5CollapseWindows.arm` 在 halt 之前的取證之後檢查：取證寫了 `recordAtHalt`、這一列的 `stateAtHalt` 不是終局、卻沒有 `withRecordKept()` 時丟出 `recordKeptDeclared`，不 halt，crash phase 判 FAIL。成立時不記具名斷言。
+  - Minor 4：`restartPhase` 的 `boolean preload` 改成 `ChamberAtStart`（`PRELOADED`／`UNLOADED`／`AS_SAVED`）；H7 的卸載由 `UNLOADED` 自己呼叫，「預先載入又卸載」寫不出來。
+  - nit：`Await.EDGE` 改成 `(10, 10)`、拿掉 sentinel；`watch` 的上限改成恰好 `ticks`；`Watching` 改成從 1 起算（與 `Counted` 相同）。`EW:17` 在 `src/main/`，依範圍不改，交給 F7。
+  - 建議：`EntryWatch` 的循序 JUnit 做了；`run.stepTicks()` 不做（`Step` 在 phase 裡只用一次，重名在建立時就擋下）；`retried`／`committedWithoutReentry` 抽成通用 await step，留給 B 段（那時才有重用的呼叫端）。
+- 驗證（乾淨的 HEAD `287d849`）：
+  - JUnit 665 個（663 PASS、2 SKIPPED），與 `run-all-915ef865…` 相比只多 `EntryWatchTest.afterThePrimeOnLeavingPrepareTheGateWaitsForAnEdge`（`f62d2/a2-junitall-setcmp.txt`）。`a1-*` 是在 commit 之前的工作樹上開始、中途停掉的 JUnit，不採計。
+  - probe：`green-a`（`710ef52f978d4b0ea218ce6a17df250b`）前 29 個 phase PASS，`trr-restart` 逾時（見下方「觀察」第 1 點），腳本在第一個失敗停下；`green-b`（`4a4550643ac04969aab1410de57b2e3a`，新的 root，`-Only` 剩下的 11 條 chain）21 個 phase 全部 PASS，含 `trr-restart`。兩次合起來 49 個 phase 都有，具名斷言與 F6-2d-2 Step 0 的 green-2（`d46ab3e3…`）相比數量、順序、step 都相同，沒有缺少、新增或改名（`f62d2/names-*.txt`）。
+  - mutation `mut-no-record-kept@unreadable`（`SEALED_STEP` 拿掉 `withRecordKept()`，root `collapse-d416e89f5e18463a95ed8864328b6ed0-unreadable`）：`unreadable-crash` 沒有 halt，FAIL 在 `recordKeptDeclared`；還原後 porcelain 為空。
+  - 沒有做：同一個 HEAD 連跑兩次、M4 recovery、default／M5 run、run-all。這些在 Task H8 的乾淨 HEAD 上做（H8 的 GREEN 與完整回歸涵蓋 A 段）。
+- 結束過的 PID 只有 40232（`m5-collapse-probe.ps1` 的逾時處置，commandLine 相符、jstack 已存）。
+
+### 觀察與裁示
+
+1. **新的 worldgen race**：`green-a` 的 `trr-restart` 開服約 2 秒後 `Exception generating new chunk`，`NullPointerException: ... "facing" is null`，堆疊 `Orientation.getIndex ← DirectionTransformation.mapJigsawOrientation ← JigsawBlock.rotate ← StructureTemplate.getInfosForBlock ← SinglePoolElement ← StructurePoolBasedGenerator`（`run/m5-collapse-710ef52f978d4b0ea218ce6a17df250b-trr/logs/latest.log:85-124`）；之後停服卡在 `runTasksTillTickEnd`，由逾時處置結束（`collapse-710ef52f…-trr/trr-restart/timeout.json`、`jstack-40232.txt`）。controller 核對 1.21 yarn sources：`DirectionTransformation.map`（:149-164）先把空的 `EnumMap` 指定給 `this.mappings` 再逐一 put，`mappings` 是這個 enum 唯一的 lazy 欄位。與 H6 同類，只在兩個世界同時第一次用到同一個轉換時發生。
+2. **M-2（永久 SEALED 開服時的 log）**：production 符合 §11.2 的字面（`sealedLog` 只在 `sealCommitted` 記；開服之後 `sealed()` 在 `sealedRetry == NONE` 時直接 return，`CS:1076`）。但 `trr` 的 crash 在 `commitRollForward` 的回傳點、`sealCommitted` 之前，所以那一則 ERROR 在兩個 JVM 都沒有記，管理員看不到需要處理。
+3. **F6-2-11 可能的 production 缺口**（implementer 設計時讀 code 推論，controller 核對 `OriginDoors.java:671-676` 與 `CollapseService.retrySealed`）：重啟之後原參與者開服時就在艙內，第一個 tick 同時排入 `CLOSE_ON_SEALED` 並重試成 COLLAPSING；下一個 tick `applyDoor` 因為 session 已不是 SEALED 丟棄這扇門，也沒有改排 `NORMALIZE`，`retrySealed` 也不排門。帶著量子膜的門因此在 RESOLVE 期間留著，之後若停在 WAITING 就一直留著。還沒以 run 重現。
+- 裁示（2026-10-14，使用者經 AskUserQuestion，三項都選 controller 推薦）：1「比照上次修」→ Task H8；2「開服時補記一次」與 3「修正（先重現再修，重現不了就停下回報）」→ Task H9。spec 升為 v5.10（§4 H8、H9，§7.3、§11.2、§12，§20.14）。M-2 的 probe 斷言由 H9 一併做；B 段的 F6-2-11 在 H9 的行為上寫斷言。
+
+### B 段的設計（給接力的 implementer）
+
+完整設計在 `f62d2/STATUS.md` 的「B 段的設計」：新類別 `M5CollapseDoorChains`；三個新 `CrashWindow`（`READY_HELD`、`UNREADABLE_SEALED`、`PROJECTION_SEALED`）；五條 chain `waitingdoor`（F6-2-08）、`preparedoor`（F6-2-10）、`sealclose`／`sealdoorway`（F6-2-09）、`sealmembrane`（F6-2-11），共 10 個 phase，`m5collapse` 變成 59。其中第 5 點（M-2）改由 H9 處理；第 4 點的「要先觀察」由 H9 的 (a) 取代。

@@ -134,7 +134,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
   - F6-2d-1 發現：重啟之後玩家在 spawn chunks 以外的 DORMANT 原艙內登入時，原艙還沒載入，§7.1 的觸發會落空，要離開再進入（不困人，沒有訊息）。使用者 2026-10-14 裁示修正：spec v5.9 §7.1、§4 H7、§20.13，plan Task H7。
   - **H7 已完成（2026-10-14）**：range `5684ee0..1e73953`；production 是 `CollapseService` 的三處觸發與純搬移出的 `collapse/EntryWatch.java`（來源艙 `NOT_LOADED` 時不消耗觸發，其他條件照樣消耗）；新 chain `w8late`、`unreadablelate`、`waitinglate`（`m5collapse=49`），JUnit `EntryWatchTest`；spec review ✅、quality review Approved；完整回歸 `run-all-91c584900c6643139845b8d7b7062e16` 為 `END ALL exit=0`（`b422c8a`）。
   - F6-2d-2 Step 0（F6-2d-1 與 H7 review 的整理，行為不變）已完成（2026-10-14）：range `cf09a97..7106975`，加上 controller 的文件更正 `d8e8214`；spec review（文件缺口更正後複審 ✅）、quality review Approved；完整回歸 `run-all-915ef865f6d445d4a8649da27a4ebb95` 為 `END ALL exit=0`（`fbb2bd4`）。
-  - 之後依序是：F6-2d-2 本體、F6-2e、F6-3 → F7 → milestone 收尾。
+  - F6-2d-2 本體的 A 段（Step 0 review 的整理）已 commit（`8ce281e..287d849`），review 進行中；implementer 在 context 門檻停下，B 段（門與 SEALED 的窗口）還沒實作。它回報的三項觀察，使用者 2026-10-14 裁示都修正：原版 `DirectionTransformation` 的 lazy init 在兩個世界同時生成 jigsaw 結構時 NPE（task **H8**，比照 H6）；永久原因的 SEALED 在開服時補記 ERROR，以及 SEALED 重試時殘留的量子膜改為一般開門（task **H9**）。spec 升為 v5.10（§4 H8、H9、§20.14）。
+  - 之後依序是：H8 → H9 → F6-2d-2 的 B 段、F6-2e、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

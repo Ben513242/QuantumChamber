@@ -2,7 +2,7 @@
 
 日期：2026-10-01。基準：`main`＝`a7e1be2`（code 等同 `ba854e8`），分支 `feature/m5-collapse`。下文的 `main/` 代表 `src/main/java/dev/quantumchamber/`，行號以 `a7e1be2` 為準。
 
-狀態：v5.9。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。v5.6（2026-10-09）依使用者裁示，在 §4 新增 H5（chunk 卸載的 livelock 防護），見 §20.10。v5.7（同日）依使用者裁示，跨越的 Crossed 確認之後立即存下該玩家的 playerdata（§10.3、§12），見 §20.11。v5.8（2026-10-13）依使用者裁示，在 §4 新增 H6（結構範本快取的同時使用），見 §20.12。v5.9（2026-10-14）依使用者裁示，§7.1 的觸發在來源艙還沒載入時不消耗（§4 H7），見 §20.13。Spec review 共五輪（含第五輪的 re-review）：
+狀態：v5.10。使用者已於 2026-10-01 決定 §3 所列事項，並指示依本文寫 spec。v5.4（2026-10-08）依使用者裁示，在 §10.8 新增「到達目的宇宙」的提示，見 §20.8。v5.5（同日）依使用者裁示，到達提示改用 title，「量子通道已關閉。」不再發給已跨過的參與者，見 §20.9。v5.6（2026-10-09）依使用者裁示，在 §4 新增 H5（chunk 卸載的 livelock 防護），見 §20.10。v5.7（同日）依使用者裁示，跨越的 Crossed 確認之後立即存下該玩家的 playerdata（§10.3、§12），見 §20.11。v5.8（2026-10-13）依使用者裁示，在 §4 新增 H6（結構範本快取的同時使用），見 §20.12。v5.9（2026-10-14）依使用者裁示，§7.1 的觸發在來源艙還沒載入時不消耗（§4 H7），見 §20.13。v5.10（同日）依使用者裁示，在 §4 新增 H8（方向轉換表的同時初始化）與 H9（SEALED 重啟之後的兩個缺口），§7.3、§11.2、§12 隨之補充，見 §20.14。Spec review 共五輪（含第五輪的 re-review）：
 - v1 的 Critical 1、Important 8 由 v2 處理。
 - re-review 在 v2 新發現的 Critical 1、Important 2（N1–N3）與 Minor m1–m8 由 v3 處理。
 - 第三輪在 v3 新發現的 Important 1（N4）與 4 項 Minor，已在 v3 修正。
@@ -155,6 +155,28 @@ hardening 的順序依使用者 2026-09-29 的指定。每項都是獨立 task�
       - M5 collapse probe 的 chain：開服時不預先載入原艙附近（例如 spawn chunks 的半徑為 0），等原艙卸載之後才讓參與者 JOIN 在艙內。修正前觸發落空，必須離開再進入；修正後不必再進出就續行。
       - 另以 mutation 證明：其他條件不成立時仍消耗觸發。
     - `CollapseService` 已超過約 1590 行；若這個修正讓它超過約 1600 行，先依交接 F6-2-19 以純搬移的獨立 commit 縮減，再改行為。
+- **H8 方向轉換表的同時初始化**（v5.10，2026-10-14 依使用者裁示加入，見 §20.14；觀察見 implementation note 的 F6-2d-2 一節）：
+  - 背景：
+    - 原版的 `DirectionTransformation` 是 enum，所有世界與執行緒共用同一組常數。`map(Direction)` 以 lazy init 建立 `mappings`：先把空的 `EnumMap` 指定給欄位，再逐一 put（1.21 的 yarn sources :149-164）。
+    - 兩條 worldgen worker 同時第一次用同一個轉換時，後到的一方可能看到還沒填完的 map，`get` 回 null。jigsaw 方塊的 `rotate`（`mapJigsawOrientation`）因此丟 NPE（`"facing" is null`），server crash，並卡在停服（與 H6 相同的原版行為）。
+    - F6-2d-2 的 `trr` restart（來源世界與 U 同時生成 jigsaw 結構）觀察到一次，root 保留。只有 JVM 裡第一次用到某個轉換的那一刻會發生，所以很少見；原版的 Overworld 與 Nether 同時生成 jigsaw 結構時也可能發生。
+    - H6 Step 0 的靜態盤點以「會在 worker 上被修改的共用狀態」為準，沒有涵蓋這種一次性的 lazy init。
+  - 要求：
+    - production mixin 讓每個常數的 `mappings` 在 class 初始化時就完整建立（例如在 `<clinit>` 結束時，對每個常數呼叫一次 `map`）。依 JLS 的 class 初始化保證，之後任何執行緒都看到完整的 map，不依賴特定 CPU 的記憶體模型。`map` 的結果與原版相同。
+    - `require=1`；目標的簽章改變時啟動失敗（M5 基線固定 1.21）。
+    - 先做針對性的盤點：worldgen 的 structure、jigsaw、feature 路徑上，共用物件（enum、static、registry 持有的 instance）的 lazy init，或沒有同步的 memoize。同類、而且會在不同世界的 worker 上同時第一次執行的，一併納入 H8，各自 RED→GREEN；不確定的停下回報。
+    - 測試：單元層級的 RED→GREEN，修正前在原版行為下失敗、修正後通過，不能只靠碰運氣的時序。等待要有上限，逾時判 FAIL。
+    - 相容性：寫進 compatibility 說明（F7）。
+- **H9 SEALED 重啟之後的兩個缺口**（v5.10，2026-10-14 依使用者裁示加入，見 §20.14；觀察見 implementation note 的 F6-2d-2 一節）：
+  - (a) 重試時殘留的量子膜：
+    - 背景：重啟之後，SEALED 的門依 §7.3 在下一個 tick 重新套用（關門）。原參與者開服時就在艙內時，第一個 tick 同時排入關門、並重試成 COLLAPSING（§11.2）；下一個 tick 套用時 session 已不是 SEALED，關門被丟棄，也沒有改為一般開門。門若帶著 sealed 量子膜（例如 PREPARE 期間進入 SEALED(`PROJECTION_FAILED`)），之後 RESOLVE 或閘門不成立而停在 WAITING 時，門會一直帶著有碰撞的量子膜。關門還在等門口的 entity storage 時重試，也是同樣的情況。
+    - 要求：重試回到 COLLAPSING 時，門若還帶著量子膜，依 §7.3「門狀態的重新套用」以 COLLAPSING 的目標處理：下一個 tick 改為一般開門（沒有量子膜時不寫入）。進入 PREPARE 之後，由 PREPARE 依「套用量子膜的條件」重新判斷。
+    - 測試：先以 RED 重現（GameTest 模擬重啟，或 M5 collapse probe 的真重啟）；重現不了時停下回報，不改 production。
+  - (b) 永久原因的 SEALED，開服時的 ERROR：
+    - 背景：§11.2 的永久原因在進入 SEALED 時記 ERROR「需要管理員處理」。crash 若發生在 SEALED 的寫入確認之後、這則 log 之前，兩個 JVM 都不會記；開服之後的 SEALED 也不再記，管理員就看不到。
+    - 要求：開服 attach 當下就在 journal、collapse view 是永久原因 SEALED 的 session，每個 server instance 記一次 ERROR，說明「需要管理員處理」。字句可以與進入 SEALED 時不同，要能看出是開服時的提醒。可重試的原因不加。不增加任何寫入或 IO。
+    - 測試：JUnit 或 GameTest 的 RED→GREEN；M5 collapse probe 開服時就是永久原因 SEALED 的 restart phase，斷言這則 ERROR 恰好一則（F6-2d-2 spec review 的 M-2）。
+  - `CollapseService` 若因此超過約 1600 行，先以純搬移的獨立 commit 縮減，再改行為（同 H7）。
 
 ## 5. 狀態機與 journal schema 4
 
@@ -439,7 +461,7 @@ COLLAPSING record 在提交時寫入 `Destination`：
   3. 退回 WAITING。
 
   已完成的 RESOLVE、投影都保留；閘門再次成立時，依 §7.1 的邊緣觸發續做。
-- **門狀態的重新套用**：門的方塊狀態由 §6 的 collapse view 投影出來（所以 roll-forward 中的 SEALED 不會在 chunk 重載時把門套回 passable）。重啟或 chunk 載入之後，排入下一個 tick 的佇列再套用，不在 chunk 載入事件當下呼叫 `setBlockState`。
+- **門狀態的重新套用**：門的方塊狀態由 §6 的 collapse view 投影出來（所以 roll-forward 中的 SEALED 不會在 chunk 重載時把門套回 passable）。重啟或 chunk 載入之後，排入下一個 tick 的佇列再套用，不在 chunk 載入事件當下呼叫 `setBlockState`。排入之後、套用之前 collapse view 改變時（例如 SEALED 的重試回到 COLLAPSING），依套用當下的 collapse view 處理：已不是 SEALED 的關門不再套用；collapse view 是 COLLAPSING 而門還帶著量子膜時，改為一般開門（v5.10，§4 H9）。
 - **PREPARE 期間的開關門**：
   - 參與者在原艙這一側開關原艙門（bulkhead 或 Controller）：依設計 §20.4 結束這次塌縮，checked 終局，門改為關閉。不重抽；PREPARE 一定在 RESOLVE 之後，所以目的宇宙已經配置、物化，也已經是 discovered。
   - 艙內的非參與者（bbox 在 interior 內）：門改為一般開門，讓他離開。這不結束塌縮、不改變階段；他離開之後，下一個 tick 依「套用量子膜的條件」重新套用。
@@ -723,7 +745,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
   - 每個 session 的退避從 200 ticks 開始，每次失敗加倍，上限 12000 ticks。
   - 開服之後的第一次觸發不受退避限制。
   - 重試時 checked SEALED→COLLAPSING，重跑 RESOLVE 與 PREPARE（未確認的權威先完成 §6 的收斂）；仍失敗就回到 SEALED。WARN 依原因去重。
-- **永久原因**：不再自動重試。記 ERROR，說明「需要管理員處理」，原艙會一直封鎖（§2）。
+- **永久原因**：不再自動重試。記 ERROR，說明「需要管理員處理」，原艙會一直封鎖（§2）。開服 attach 當下就是永久原因 SEALED 的 session，每個 server instance 再記一次 ERROR 提醒（v5.10，§4 H9）；crash 發生在 SEALED 的寫入確認與進入時的 log 之間時，管理員仍看得到。
 - 絕不重抽，也絕不取消。
 - §7.1 的「COLLAPSING 提交失敗」與 journal restore 類寫入失敗後的記憶體內退避，使用同一套 per-session 退避；§6 的權威收斂重試使用同一數列，但以權威為單位。
 
@@ -751,7 +773,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 | DORMANT | 等 §7.1 的邊緣觸發 | 不影響 |
 | COLLAPSING | 依推導階段續做。門的狀態在下一個 tick 重新套用。ledger、catalog、物化、投影都是 idempotent | 未返還的人斷線：照舊凍結；重新加入時，在 JOIN 之後的下一個 tick 返還到原艙（沿用 M2／M4 機制）。已返還的人斷線：沒有影響 |
 | PASSAGE_READY | 開服時直接結束通道：checked 終局；門在下一個 tick 正規化為一般開門。已跨過的人在目的地，沒跨過的人在原艙。crash 時，已跨過的人依 §10.3 在 Crossed 確認時存下的 playerdata 出現在目的地（v5.7）；Crossed 沒有確認或 playerdata 存檔失敗時，以最後一次存下的位置為準，不會被困住 | 未跨過的人斷線：沒有影響，重新加入後若通道仍開著可以再試。已跨過的人：在目的世界重新加入（開服時已物化） |
-| SEALED | 保留；開服後第一次觸發即可重試（可重試的原因）。`TRANSFER_RECOVERY_REQUIRED` 與其他永久原因不重試 | 不影響 |
+| SEALED | 保留；開服後第一次觸發即可重試（可重試的原因）。重試回到 COLLAPSING 時，帶著量子膜的門在下一個 tick 改為一般開門（v5.10）。`TRANSFER_RECOVERY_REQUIRED` 與其他永久原因不重試，開服時記一次 ERROR「需要管理員處理」（v5.10） | 不影響 |
 | allocation／projection ledger 或 discovery 損壞或遺失（journal 已是 schema 4，§6） | UNIVERSE 目的地進 SEALED(`AUTHORITY_CORRUPT`)，不配置任何東西 | — |
 | 存檔第一次用 M5 開啟（journal schema 1–3 或不存在） | M5 authority 初始化補建缺少的空 ledger；journal 已 `candidateInitialized` 時，之後第一次 checked 寫入升為 schema 4（空 journal 或只有 legacy record 時仍寫 2，§5） | 不變 |
 | allocation／projection ledger 或 discovery 讀取時 IO 例外 | UNIVERSE 目的地進 SEALED(`AUTHORITY_UNREADABLE`)；下次開服後重試一次 | — |
@@ -1191,3 +1213,16 @@ v5.1 的輕量確認：Critical 0、Important 0、Minor 5（p1–p5），control
 - 裁示：使用者經 AskUserQuestion 選擇「修正：等艙載入再判斷」（controller 推薦）。另一個選項是「列為已知行為」（不改程式，寫進玩家說明）。
 - 作法：§7.1 新增「來源艙還沒載入時，這次觸發不消耗」，§7.3、§11.2 引用；§4 H7，plan Task H7。排在 F6-2d-1 之後、F6-2d-2 之前，讓門與 SEALED 的重啟窗口在修正後的行為上跑。
 - 不受影響的部分：其他條件不成立時的邊緣觸發語意、退避、journal、權威、訊息、比較器。
+
+### 20.14 使用者裁示：F6-2d-2 的三項觀察（v5.9 → v5.10，2026-10-14）
+
+- 背景（F6-2d-2 implementer 回報，controller 對照原版 sources 與 production 程式碼確認）：
+  1. `trr` 的 restart 在原版 worldgen 丟 NPE（`"facing" is null`），之後停服卡住。根因是 `DirectionTransformation.map` 的 lazy init（§4 H8）。
+  2. spec review 的 M-2：production 符合 §11.2 的字面（ERROR 在進入 SEALED 時記），但 crash 發生在 SEALED 的寫入確認與這則 log 之間時，永久原因的 SEALED 從來沒有 ERROR。
+  3. 讀 code 推論：SEALED 的重試若在重新套用的關門之前回到 COLLAPSING，關門被丟棄，帶著量子膜的門也不會改為一般開門（`OriginDoors.applyDoor` 只丟棄、不改排）。還沒以 run 重現。
+- 裁示：三項使用者都經 AskUserQuestion 選了 controller 推薦的選項：
+  1. 「比照上次修」。另一個選項是「列為已知偶發」。
+  2. 「開服時補記一次」。另一個選項是「列為已知限制」。
+  3. 「修正」：先重現再修，重現不了就停下回報。其他選項是「先觀察再決定」與「列為已知限制」。
+- 作法：§4 H8、H9；§7.3、§11.2、§12 補充；plan Task H8、Task H9。排在 F6-2d-2 的 A 段之後、B 段之前，讓 B 段的 F6-2-11 在 H9 的行為上寫斷言。
+- 不受影響的部分：M5 的狀態機、權威、journal、訊息、比較器；SEALED 的重試條件與退避。

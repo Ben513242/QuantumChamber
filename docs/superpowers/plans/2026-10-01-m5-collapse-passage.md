@@ -792,6 +792,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - F6-2d-1 已完成（2026-10-14，spec review ✅、quality review Approved）。它的 quality Minor 1～5、nit 與給 F6-2d-2 的建議，由 F6-2d-2 先做（A 段），再加門與 SEALED 的窗口；清單見 note F6-2d-1 一節的「Review 與最終 review」。
       - F6-2d-1 的 W8 觀察經使用者裁示修正，見下方 **Task H7**，排在 F6-2d-1 之後、F6-2d-2 之前。H7 已完成（2026-10-14，spec review ✅、quality review Approved）。
       - controller 2026-10-14 把 F6-2d-2 再拆成 **F6-2d-2 Step 0** 與本體：Step 0 集中處理 F6-2d-1 與 H7 的 review 交下的 Minor（清單見 note 這兩節的「Review 與最終 review」），不新增窗口；`src/main/` 只限 `EntryWatch`／`CollapseService`／`CollapsePhase` 中行為不變的整理（`gateEvaluated` 收進 `EntryWatch`、`SourceSignal` 提升為頂層 enum、Javadoc 與註解），並以 JUnit 確定性地測 WAITING 的接線與「退避期內照樣消耗」。本體再加門與 SEALED 的窗口。F6-2d-2 Step 0 已完成（2026-10-14，spec review 的文件缺口由 controller 更正、複審 ✅，quality review Approved）；它的 quality Minor 1～4、nit 與建議由本體先做（A 段），清單見 note F6-2d-2 Step 0 一節的「Review 與最終 review」。
+      - F6-2d-2 本體的 A 段已完成（2026-10-14，`8ce281e..287d849`），implementer 在 context 門檻停下，B 段只留下設計（note F6-2d-2 一節）。它回報的三項觀察經使用者裁示修正，見下方 **Task H8**、**Task H9**（spec v5.10 §4 H8、H9、§20.14）。順序：A 段的 spec＋quality review（與 H8 並行，只讀）→ H8 → H9 → B 段（接力 implementer）。M-2 的斷言由 H9 一併做，B 段不再列；F6-2-11 在 H9 的行為上寫斷言。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；
@@ -908,6 +909,49 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 **完整回歸：** `run-all.ps1`。修正影響 DORMANT、SEALED 與 WAITING 的觸發，所以 default、legacy、M5 GameTest 的集合與結果都要與基準 `run-all-ef32890a6e9f4791ae311f7777bde2b7` 相同；`m5collapse` 隨新 chain 增加；release 只有 `CollapseService`（與搬移出的類別）不同。
 
 **Commit：** `fix: keep a chamber trigger until the source chamber has loaded`
+
+---
+
+### Task H8: 方向轉換表的同時初始化（controller 2026-10-14 依使用者裁示插入，spec v5.10 §4 H8、§20.14）
+
+在 F6-2d-2 的 A 段之後、Task H9 之前執行，走完 implementer → spec review → quality review。觀察與證據見 note F6-2d-2 一節（`trr` restart 的 NPE；root `run/m5-collapse-710ef52f978d4b0ea218ce6a17df250b-trr`，`timeout.json` 與 jstack 在 SDD workspace 的 `collapse-710ef52f978d4b0ea218ce6a17df250b-trr/trr-restart/`）。
+
+**Files：**
+- Create：`src/main/java/dev/quantumchamber/mixin/` 下一個新的 mixin，讓 `DirectionTransformation` 每個常數的 `mappings` 在 class 初始化時就完整建立（注入點以 JLS 保證可見性為準，寫明理由）。
+- Modify：`src/main/resources/quantumchamber.mixins.json`，登記這個 mixin。
+- JUnit：`src/test/`，比照 H6 的 `StructureTemplateCacheConcurrencyTest`（`fabric-loader-junit` 會套用 production mixin）。
+- §4 H8 的盤點：結果寫進 note。同類而且成立的一併納入，各自 RED→GREEN；不確定的停下回報。
+- `scripts/verification/README.md`：只在 probe 說明提到的 worldgen 已知問題需要更新時才改。
+
+**RED：** 測試先 commit；修正前在原版行為下失敗，不能只靠碰運氣的時序。
+
+**GREEN：** 修正後通過；M5 collapse probe 的 49 個 phase 在同一個乾淨的 HEAD 上連跑兩次都 PASS，具名斷言與 F6-2d-2 Step 0 的 green-2（`d46ab3e3…`）相同。
+
+**完整回歸：** `run-all.ps1`。基準 `run-all-915ef865f6d445d4a8649da27a4ebb95`（F6-2d-2 Step 0）；預期差異：JUnit 多出 F6-2d-2 A 段的 1 個與本 task 的新 test、release 與 sources 只多這個 mixin、`quantumchamber.mixins.json` 改變。
+
+**Commit：** `fix: build every direction transformation's mappings before any thread reads them`
+
+---
+
+### Task H9: SEALED 重啟之後的兩個缺口（controller 2026-10-14 依使用者裁示插入，spec v5.10 §4 H9、§7.3、§11.2、§12、§20.14）
+
+在 Task H8 之後、F6-2d-2 的 B 段之前執行，走完 implementer → spec review → quality review。
+
+**Files：**
+- (a) 殘留的量子膜：`src/main/java/dev/quantumchamber/collapse/OriginDoors.java`（丟棄 `CLOSE_ON_SEALED` 的地方，或重試回到 COLLAPSING 的地方，以實際程式為準）。
+- (b) 開服時的 ERROR：`src/main/java/dev/quantumchamber/collapse/CollapseService.java`（開服 attach，或 `sealed()` 的第一次觀察，以實際程式為準）。
+- 測試：(a) 以 GameTest 模擬重啟，或其他能確定重現的方式；(b) JUnit 或 GameTest，以 appender 計數 log。default run 的 GameTest 名稱規則同 H6。
+- M5 collapse probe：開服時就是永久原因 SEALED 的 restart phase（至少 `trr`）會因為 (b) 多一則 ERROR，現有的 `noSessionError` 要改成「恰好一則這個 ERROR、沒有其他 ERROR」（M-2）。只改這些 phase 的 log 斷言；新的窗口 chain 留給 B 段。README 的 M5 collapse probe 一節隨之更新。
+
+**RED：** 測試先 commit。(a) 修正前，重試之後停在 WAITING，門仍帶著量子膜；(b) 修正前，開服之後沒有這則 ERROR。(a) 重現不了時停下回報，不改 production。
+
+**GREEN：** (a) 下一個 tick 門改為一般開門，之後進入 PREPARE 時照「套用量子膜的條件」重新套用；(b) 恰好一則，可重試的原因沒有。probe 的 49 個 phase 在同一個乾淨的 HEAD 上連跑兩次都 PASS，具名斷言與 H8 的 GREEN 比對，差異只在 (b) 的 log 斷言。
+
+**mutation：** (a) 拿掉改排 → 失敗在 RED 的斷言；(b) 對可重試的原因也記 → 失敗。
+
+**完整回歸：** `run-all.ps1`，基準是 H8 的 run-all。
+
+**Commit：** 兩個 fix 分開 commit：`fix: open a membrane door when a sealed retry drops the pending close`、`fix: remind the admin of a permanently sealed session at startup`。
 
 ---
 
