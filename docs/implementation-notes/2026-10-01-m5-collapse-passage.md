@@ -8174,3 +8174,167 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - run-all：`run-all-1`＝`run-all-6113f46c011543449e7423a7b7eed623`（`57387e2`，`END ALL exit=0`，採計；接力的 implementer）；沒有不採計的 run-all。最終回歸的 run-all（本節的 commit 之後）見 `f62d2b1/STATUS.md`。
 - 結束過的程序：沒有。implementer 與接力的 implementer 都沒有結束任何程序（probe 沒有遇到逾時處置，run-all 沒有遇到逾時），也沒有手動處置任何世界。
 - 取證腳本（`f62d2b1/`）：`state.ps1`、`compile.ps1`、`probe.ps1`、`runall.ps1`、`junitall.ps1`、`runall-compare.ps1`（基準改為 `run-all-3e23abaf…`，`base-*-summary.txt` 是 `h9/relay-runallfinal-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f62d2b1`）、`mutsum.py`、`names2.py`、`red.ps1` 與比較用的 `wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`warncheck.py`、`details.py`、`wbbatch.py` 由 `h9/` 複製（每檔第一行加本輪註解；repo 與 phase evidence 的相對路徑多一層）；新寫 `ctest.ps1`（編譯測試）、`adapters_f62d2b1.py`、`move_restarts.py`（純搬移，依行號整段搬、先核對每段的首尾行）、`movecheck.py`、`mutations.ps1`。接力的 implementer：新寫 `relay-zipmeta.py`（兩個 zip 的中繼資料逐項比較）、`relay-fill.py`（填本節的占位）；`relay-worldgencheck.py`（phase evidence 與 repo 的相對路徑多一層）、`relay-pincount.py` 由 `h9/` 複製（第一行加本輪註解）。
+
+## F6-2d-2 B2：B1 review 的整理與 SEALED 的門窗口
+
+- 三位 implementer 依 controller 的派工完成（scratchpad `f62d2b2-prompt.md` 是 B2 的派工；B2a、B2b 是接力的派工）。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62d2b2/`，以下簡稱 `f62d2b2/`，`STATUS.md` 是交接摘要。第一位讀完範圍之後在 context 門檻停下，只寫下設計與讀程式確認的事實（`STATUS.md` 後半，沒有改檔、沒有 commit）；**B2a**（接力）做第 0 點 B1 fix round；**B2b**（第二位接力）做 F6-2-09、F6-2-11 的四條 chain、完整回歸與本節。開工時 HEAD：第一位與 B2a 都是 `d76b319`（`f62d2b2/start-state.txt` 是第一位記的）、B2b 是 `e28435d`，`git status --porcelain` 都是空的（B2b 以 `git rev-parse HEAD`／`git status --porcelain` 核對；`b-start-state.txt` 是改檔之後才記的，不採計為開工狀態）。
+- 範圍：上方 B1 一節 review 區塊的 quality Minor 1～5 與 nit（controller 把它們排為 B2 的第一步），以及 B 段剩下的 F6-2-09（`sealclose`、`sealdoorway`）、F6-2-11（`sealmembrane` 兩個變體）：spec v5.10 §7.3「門口有人時的規則」「門狀態的重新套用」、§11.2、§12 的 SEALED 列，與 H9 (a) 的跨 JVM 版本。
+- Commits（`d76b319..40804fa`，之後是本節的 docs commit；依序；每個 commit 只 stage 自己的檔案；每個 code commit 之前只放自己的內容編譯：`f62d2b2/a-c1`～`a-c9-compile.log`、`b-c1`～`b-c5-compile.log`，`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL，warning 都是既有的 6 則 mixin warning）：
+  - B2a（B1 fix round，`d76b319..e28435d`）：
+    - `5df3e09` `test: add a generic awaiting step to the collapse probe`（Minor 2，重構）
+    - `b51ac60` `test: share collapsing, prepares and joinInside in the restart chain base`（nit，重構）
+    - `d012a91` `test: move the probe's door queries and closed-door steps to M5CollapseDoors`（nit，純搬移）
+    - `115047c` `test: declare the restart door in the probe's window table`（Minor 4，重構）
+    - `34dd4c1` `test: assert the declared origin door when a probe restart starts`（Minor 4，新增斷言）
+    - `be0f2f6` `test: require the closed-door reapply to be consumed on its tick`（Minor 1，斷言變嚴＋新增）
+    - `29f62c7` `test: state the preparedoor premise that PREPARE starts by the NORMALIZE tick`（Minor 3，新增斷言）
+    - `28e427d` `test: share the sealed-door save at halt between the READY windows`（Minor 5，重構）
+    - `ecfe7e4` `test: validate the startup reminder reason when the probe phase is built`（nit）
+    - `e28435d` `docs: describe the B1 fix round in the probe section of the verification README`
+  - B2b（SEALED 的門窗口，`e28435d..40804fa`，之後是本節的 docs commit）：
+    - `5086382` `test: add the SEALED door crash windows for F6-2-09 and F6-2-11`
+    - `e9a2fb4` `refactor: group the per-chain door chain state`（重構）
+    - `10bdf74` `refactor: share the door chain crash skeleton`（重構）
+    - `4c893c8` `test: add the sealclose and sealdoorway chains (F6-2-09)`
+    - `de0f13b` `test: add the sealmembrane chains (F6-2-11)`（**最後一個 code commit**）
+    - `40804fa` `docs: describe the SEALED door chains in the collapse probe README`
+  - 本節由其後的 `docs: record F6-2d-2 B2 in the M5 note` 加入。
+- 只改了派工允許的路徑：testmod 的 `M5CollapseDoorChains`、`M5CollapseDormantChains`、`M5CollapsePassage`、`M5CollapsePassageChains`、`M5CollapseRestartChains`、`M5CollapseRetryChains`、`M5CollapseWindows`、`M5CollapseRecoveryProbe`，新的共用類別 `M5CollapseDoors`（B2a）與 split-package accessor `dev.quantumchamber.collapse.OriginDoorsTestAccess`（B2a 新增，B2b 加兩個只查詢的方法）；`M5TestHooks` 只加 `CrashWindow` 的三個值與 Javadoc；`SessionRecoveryStateCrashWindowMixin` 只在既有的 `commitRollForward` 注入點多三個呼叫（沒有新的 mixin，`quantumchamber-test.mixins.json` 不變）；`m5-collapse-probe.ps1` 的 `$chains`、`run-all.ps1` 的 `$expectedCollapse`、README「M5 collapse probe」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、其他 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5CollapseGameTests`、`M5GameTestSupport`）、M4 probe、JUnit、語言檔、spec、plan、AGENTS。
+- 行號以 HEAD `40804fa` 為準：`DC`＝`M5CollapseDoorChains`，`DRS`＝`M5CollapseDoors`，`DOR`＝`M5CollapseDormantChains`，`RC`＝`M5CollapseRetryChains`，`RCH`＝`M5CollapseRestartChains`，`WIN`＝`M5CollapseWindows`，`PSG`＝`M5CollapsePassage`，`OD`＝`OriginDoors`，`CS`＝`CollapseService`。
+- Review：B2a 與 B2b 一起 review（controller 補）。
+
+### B1 fix round（B2a，逐項處置）
+
+| 項目 | 處置 | 證據 |
+| --- | --- | --- |
+| quality Minor 1（`closedDoorKeptByTheReapply` 只看一個 tick） | 斷言變嚴、名稱不變：tick N 另要求排入的 INFO 仍恰一則、這座艙沒有待套用的門（production 的 `OriginDoors.doors`，經新的 testmod split-package accessor `OriginDoorsTestAccess.pendingGoal`，反射、只查詢）。`DOR.restart` 的 `join` step 在 JOIN 之前另斷言 `closedDoorStillKeptAtTheJoin`（門 25 格 `open=false`＋`none`、沒有套用、排入恰一則；JOIN 的 tick 不變）（`be0f2f6`） | mutation `mut-normalize-defers-then-opens`（NORMALIZE 對沒有量子膜的門先延後一個 tick、之後不看 `doorHasMembrane` 照樣打開）：`e28435d` 上 `-Only w5` FAIL 在 `closedDoorKeptByTheReapply`（root `252099d3de254719a730cd56889285eb`；「tick 2（排入的是 tick 2）：門關著=true … 待套用的門=NORMALIZE」）；B2b 在最終 HEAD 重跑一次（見「mutation」）。對照（dev run，不採計）：同一個 mutation 套在 B1 的 testmod 上 `w5-restart` PASS（`697b4a69fa844805bb576e46c7307af2`），B1 的版本抓不到 |
+| quality Minor 2（「最多等 N 個 tick」手寫 3 次、N 寫兩次） | 通用的 `PSG.awaiting(name, waitTicks, happened, settled)`（`Settled.at(tick, happened)`）：step 的上限就是 `waitTicks`，`!happened && tick < waitTicks` 時再等，否則交給具名斷言判定（含到時沒有發生）。改用它的：`DC` 的 `normalizeQueued`（10）、`preparedOnTheLevel`（10）、`closedNormalizeQueued`（10），同形的 `RC` waitinglate 的 `prepared`（20）與 W8 的 `preparedOnTheLevel`（10）；`RCH.awaited` 委派給它、拿掉 `Await.keepWaiting`；`still` 改成 enum `Position { UNCHECKED, NOT_MOVED_SINCE_THE_JOIN }`，與 `happened` 對調不能編譯（`5df3e09`） | 等待時間與通過條件逐一核對（`f62d2b2/STATUS.md` B2a 一節）；GREEN 的 step 與具名斷言不變 |
+| quality Minor 3（preparedoor 的隱含前提） | 新增 `preparedBeforeTheQueuedNormalize`：進入 PREPARE 的 server tick ≤ NORMALIZE 排入時記下的 tick N。派工字面是「早於排入的 tick」，但排入的 INFO 在 tick N-1、PREPARE 在 tick N，同一個 tick 裡 `prepareDoor`（`step`）在 `applyPending` 之前，前提其實是「≤ N」；Javadoc 寫明，失敗訊息附兩個 tick（`29f62c7`） | GREEN：PREPARE 與 NORMALIZE 都在 tick 2（proof `preparedAtServerTick`、`normalizeTick`） |
+| quality Minor 4（`CLOSED_DOOR_AT_RESTART` 是窗口表之外的第二份真相） | `AtRestart.withDoorAtStart(DoorAtStart)`（`UNSPECIFIED`／`CLOSED`／`PLAIN_OPEN`／`SEALED_MEMBRANE`，預設 `UNSPECIFIED`，指定它時丟出、`validate` 檢查非 null）取代它；W2、W3、W5 的列 `withDoorAtStart(CLOSED)`，`DOR` 改看這一列（重構 `115047c`）。`expectAtRestart` 在 `UNSPECIFIED` 以外斷言 `doorAsExpectedAtStart`（`34dd4c1`），**讀磁碟（raw MCA）而不讀記憶體**：`waitinglate` 的 crash 也用 W5 的列，開服時原艙附近沒有載入，讀方塊會同步載入 chunk、破壞那條 chain；開服當下還沒有 tick，已載入的門就是由這份磁碟載入的 | GREEN：`w2`／`w3`／`w5`／`waitinglate-restart` 各多 `doorAsExpectedAtStart` |
+| quality Minor 5（`savedWhileReadyHeld` 重複 `savedBeforePassable`） | 共同的尾段抽成 `sealedDoorSavedAtHalt`（`nativeSaveAtHalt` → `playerDimensions` → `playerDataInTheSourceAtHalt` → `sealedDoorOnDiskAtHalt`）；`insideTheChamberAtHalt` 的迴圈留在呼叫端（放進來會改變 `savedWhileReadyHeld` 的斷言順序）；更正 `sealedDoorOnDiskAtRestart` 的 Javadoc（`28e427d`） | 具名斷言的名稱與順序不變 |
+| nit | `collapsing(record)`、「進入 PREPARE」的計數 `prepares()`、`joinInside()`（JOIN 在艙內並記 `joinedAt`）各收成基底的一份（`b51ac60`）；`Queued`／`reapplyQueued`／`reapplied`／`closedDoorKeptByTheReapply`／`closed`／`plainOpen`／`doorCenter` 與等待的常數以純搬移移到新的 `M5CollapseDoors`，`DOR` 不再依賴 `DC`（`d012a91`；`plainOpen`、`doorCenter` 由 instance 方法改為收 `run` 的 static）；`End.withStartupReminder` 改收 `End.Reminder(SealedReason)`，可重試的原因在建立 phase 時丟出（`trr-restart` 在 `M5CollapsePassageChains.restart` 的 RECOVERY_SEALED 分支建立它；「只接在 `SessionErrors.NONE` 的 End 之後」要到 End 建立時才知道，仍在那時丟出）（`ecfe7e4`）；README（`e28435d`） | `f62d2b2/a-c3-movecheck.txt`：`RESULT=PURE`；GREEN |
+
+- B2a 的 GREEN：乾淨的 `e28435d` 上 53/53（`a-fr-green`，probe runId `6384dc0c3c7c4a83aef00536305762fb`）。對 B1 的 green-2（`d298e92a…`）以 `names2.py` 比對：53 個 phase 既有的斷言全部仍在、全部成立、順序相同，step 清單全部相同（`RESULT=OK`，`f62d2b2/a-fr-green-vs-b1green2-names.txt`）；新增 `w2`／`w3`／`w5-restart` 各 `doorAsExpectedAtStart`、`closedDoorStillKeptAtTheJoin`，`waitinglate-restart` 的 `doorAsExpectedAtStart`，`preparedoor-restart` 的 `preparedBeforeTheQueuedNormalize`。
+
+### 新的窗口與 hook（B2b）
+
+- 三個 `CrashWindow`（`M5TestHooks`）：`UNREADABLE_SEALED`、`UNREADABLE_SEALED_DOORWAY`（F6-2-09）、`PROJECTION_SEALED`（F6-2-11）。注入點是既有的 `SessionRecoveryStateCrashWindowMixin` 在 `commitRollForward(MinecraftServer, …)` 的回傳點，排在 `MATERIALIZE_SEALED` 之後依序呼叫（detail 是既有的 `RollForwardWrite`）。這一點在 `CS.seal` 的 `commitRollForward` 回傳之後、`sealCommitted` 排入關門（`queueDoor(view, 0, CLOSE_ON_SEALED)`）與記 WARN 之前，所以 crash 時記憶體與磁碟上的門都還沒有動。
+- 條件（`WIN:646-676`）都經 `sealedWrite(fixture, detail, reason)`（COMMITTED、COLLAPSING→SEALED(reason)、這條 chain 的 sid；由 W9 的 `materializeSealed` 抽出，條件不變），另看原艙門：`UNREADABLE_SEALED` 是 25 格一般開門；`UNREADABLE_SEALED_DOORWAY` 是關著而且門口有 entity（production 的 `OriginDoors.doorwayOccupied`，經 `OriginDoorsTestAccess`）；`PROJECTION_SEALED` 是 sealed 量子膜。
+- **兩列而不是一列**（派工設計第 3 點是 sealclose／sealdoorway 共用一列，controller 已接受調整）：開服時門的預期是第 0-4 點的 `withDoorAtStart`，一列一個值，sealclose 開服時門開著、sealdoorway 關著。
+- 列（`WIN:460-478`，都 `withRecordKept()`，摘要經 `recordOnDisk`）：
+  - `UNREADABLE_SEALED`／`UNREADABLE_SEALED_DOORWAY`：`AtRestart.resolved(MATERIALIZED).withStateAtHalt(SEALED).withRecordKept().withDisk(sealedKeptAtRestart(AUTHORITY_UNREADABLE, "unreadableAtRestart"))`，再各 `withDoorAtStart(PLAIN_OPEN)`／`(CLOSED)`。halt 之前（不存檔）：`unreadableOnDiskAtHalt`（由 `unreadableAtHalt` 抽出、收 record 的共用 helper，斷言名稱與順序不變：`unreadableOnDiskAtHalt`、`catalogEagerOnDiskAtHalt`、`noDiscoveryAtHalt`），再 `plainOpenDoorOnDiskAtHalt`（raw MCA）或 `closedDoorOnDiskAtHalt`＋`doorwayOccupiedAtHalt`。
+  - `PROJECTION_SEALED`：`AtRestart.resolved(DISCOVERY).withProjection(PENDING).withStateAtHalt(SEALED).withRecordKept().withDoorAtStart(SEALED_MEMBRANE).withDisk(sealedKeptAtRestart(PROJECTION_FAILED, "projectionFailedAtRestart")＋playerDataInTheSourceAtRestart)`。開服時的 sealed 量子膜由 `doorAsExpectedAtStart` 斷言（不成立就 FAIL），所以 `withDisk` 不再用 `sealedDoorOnDiskAtRestart`（同一件事會斷言兩次）。`withProjection(PENDING)`：`CS.project` 先 `writeProjection(PENDING)` 再 `ProjectionWriter.write`，`ProjectionWriteFault` 把 WRITTEN 換成 WRITE_FAILED 之後才 `seal(PROJECTION_FAILED)`，所以 ledger 有 PENDING entry（halt 之前 `projectionPendingAtHalt`、開服時 `projectionStillPending` 都成立）。halt 之前：`projectionSealedOnDiskAtHalt`（`recordOnDisk`）、`projectionWriteFailedOnce`（fault 恰命中一次）、`projectionPendingAtHalt`、`insideTheChamberAtHalt`、`sealedDoorSavedAtHalt`（第 0-5 點的 helper：原生存檔之後 sealed 量子膜與艙內的 playerdata 都在磁碟上）。`Prepared` 是 null（SEALED 的列不得指定）。`ProjectionWriteFaultMixin` 生效的那一次 `PROJECTION_REPAIRED` 不會被呼叫（README），所以窗口在 SEALED 的提交。
+
+### 四條 chain（B2b，`DC`）
+
+- crash 共用骨架 `crash(beforeReceipt, install, window, haltTicks)`（`DC:134`，重構 `10bdf74`；B1 的 `readyHeldCrash` 改用它，step 的名稱、順序與上限不變）：fresh 世界蓋原艙、一人在艙外 → 註冊 → `beforeReceipt` → DORMANT 的 NEW 收據、原生存檔 → `install`（hook 或 fault）→ arm → 由艙外進入 → COLLAPSING → 等到窗口 halt。只對一條 chain 有效的狀態依 chain 分組（重構 `e9a2fb4`）：`WaitingDoor`（`normalizeTick`）、`PrepareDoor`（`hold`、`visitor`）、`SealedDoor`（`queuedTick`、`doorwaySeenAt`、`visitor`）。
+- 「排入 → 套用」參數化（B1 quality 的建議）：`closeQueued(door[, then])`（`DC:477`，`awaiting` 10 tick）：排入恰一則 CLOSE_ON_SEALED、原因「重啟之後第一次載入」、那個 tick 門仍是開服時的 `door`、這座艙待套用的門是 CLOSE_ON_SEALED（`closeQueuedOnTheFirstLoad`），記下排入時記下的 tick N；`closeApplied(assertion, target, also)`（`DC:504`，`awaiting` 20 tick，要等門口的 entity storage）：門改為 `target`、套用的 INFO 恰一則是 CLOSE_ON_SEALED 而且記的 tick M ≥ N、排入仍恰一則、沒有待套用的門，再加上 `also`。restart 都以 `ChamberAtStart.PRELOADED` 開服；開服時（第一個 tick 之前）門在記憶體裡也是窗口列宣告的樣子（`doorInMemoryAtStart`），另記下門口的 entity storage 是否已載入（取證）。
+- `sealclose`（F6-2-09「SEALED 開服後只關門一次」）：crash 的 `beforeReceipt` 是參與者在艙外照一般方式開門（IDLE，照一般門；`openedBeforeTheReceipt`），收據之後裝 `CHECKED_READ_FAULT(discovery, 0, 1)`（收據的 candidate context 也讀 discovery，所以排在收據之後，同 F6-2-07）。**門開著時照樣提交 COLLAPSING**（STATUS 的風險；dev run 確認，crash 正常 halt）。restart（`DC:408`）：`doorAtStartWithNobodyOnline(PLAIN_OPEN)` → `closeQueued`（門仍開著）→ `closeApplied("closedOnceAfterTheRestart", CLOSED)` → 參與者 JOIN 在艙外（收據存檔時的位置）→ 照一般方式開門（`interact`：accepted、一般開門、record 仍是 SEALED、沒有取消關門的 INFO，`openedNormallyWhileSealed`）→ `watch` 40：每個 tick 門開著、排入與套用各一則、沒有待套用的門、record 仍是 SEALED（`closedOnlyOnce`：一直載入著的 session 不會再觸發）→ 由艙外進入 → `retried(…, AUTHORITY_UNREADABLE, 1, EDGE)`（restart-only，開服之後第一次觸發即重試，`retriedOnceAfterTheRestart`）→ `passage.steps(null)` → (b) 終局（`noSessionError`：可重試的原因沒有開服時的提醒）。
+- `sealdoorway`（F6-2-09「門口有人時一般開門」；也涵蓋 B1 交下的「重啟之後 entity storage 還沒載入也當成門口有人」）：crash 的 `beforeReceipt` 是在門口 local (3,1,0) 放一座不受重力的盔甲座（`DRS.spawnDoorwayStand`，比照 `M5GameTestSupport.doorwayEntity`；那個 helper 要 GameTest 的 `TestHooks`；`standInTheDoorwayBeforeTheReceipt`），收據的原生存檔把它存進 entity storage。restart（`DC:431`）：`closeQueued`（門仍關著）→ `closeApplied("plainOpenForTheDoorway", PLAIN_OPEN, standKeptInTheDoorway)`（另要求盔甲座仍在門口、套用的 tick 不早於 probe 第一次在門口看到它的 tick）→ 移走門口的 entity，恰是那一座（`standRemovedFromTheDoorway`，以 `M5GameTestSupport.discardDoorwayEntities`，與 production 的 `doorwayBox` 同一個範圍）→ JOIN 在艙外 → 由艙外進入 → 重試 → (b) 終局。
+- `sealmembrane`（F6-2-11 變體 (i)，T-SMEM 的跨 JVM 版本）：crash 的 `install` 是 `PROJECTION_WRITE_FAULT(UniverseKeys.world(U, OVERWORLD), FIRST_WRITE, 1)`；PREPARE 的第一個 tick `prepareDoor` 先套用 sealed 量子膜、投影寫入失敗 → SEALED(PROJECTION_FAILED)。restart（`DC:598`）：開服時沒有參與者，非參與者（新的 UUID）JOIN 之後移到艙外（`visitorOutsideAtStart`）→ `closeQueued(SEALED_MEMBRANE, …)`；同一個 tick 非參與者以 port 使用門（`M5GameTestSupport.useDoor`，不切換門）：PASS、門仍是 sealed、沒有「取消還沒套用的關門」的 INFO、待套用的仍是 CLOSE_ON_SEALED（`membraneKeptOnTheVisitorUse`；`OD.cancelSealedClose` 在門還帶著量子膜時只記 DEBUG、保留關門）→ `closeApplied("closedFromTheMembrane", CLOSED, closeNotCancelled)`（量子膜清掉、仍沒有取消的 INFO）→ 參與者 JOIN 在艙內（halt 之前存的位置；`stillSealedAtTheJoin`）→ `retried(…, PROJECTION_FAILED, 1, EDGE)`（`retriedOnTheJoinEdge`）→ `passage.steps(null)` → (b) 終局。
+  - **路徑**：開服之後的第一次觀察沒有人在艙內（參與者不在線上），所以 JOIN 之後出現在艙內就是 `EntryWatch` 的邊緣；PROJECTION_FAILED 是 EDGE_WITH_BACKOFF，開服之後的第一次觸發不受退避限制。派工寫「參與者由艙外進入」，這裡是「由不在觀察內的狀態出現在艙內」（A 段 quality 給 B 段的建議：JOIN 的邊緣，不是 `FIRST_OBSERVATION`）。之後 RESOLVE、閘門第一次以位準評估就成立（參與者在艙內、有電）→ PREPARE（sealed）。
+- `sealmembranejoined`（F6-2-11 變體 (ii)，H9 (a) 的跨 JVM 版本；與 `sealmembrane` 共用 `PROJECTION_SEALED` 一列，crash 相同）：restart（`DC:666`）：參與者在第一個 tick 之前 JOIN 在艙內（`joinedBeforeTheFirstObservation`：JOIN 早於第一次觀察）→ `firstObservation`（`awaiting` 10）：第一次觀察（tick N-1）同時排入一則 CLOSE_ON_SEALED（記下 tick N＝N-1＋1）、由 SEALED(PROJECTION_FAILED) 重試一次、參與者沒有移動、record 是 COLLAPSING、門仍是 sealed（`queuedAndRetriedOnTheFirstObservation`）；**同一個 probe step 拿掉 Controller 上方的紅石塊** → `normalized`（`counting` 3）：tick N「session 已不是 SEALED，不再套用封存時的原艙門」恰一則、門改為一般開門、套用的 INFO 恰為「（NORMALIZE：APPLIED，tick N）」一則、server tick 等於 N（`normalizedAfterTheRetry`；寫成 `== N`，不是保守的 ≥ N）；開服到 tick N 每個 tick 門都沒有關上（`doorNeverClosedAfterTheRestart`：sealed 或一般開門，在前兩個 step 的每個 tick 斷言）→ `resolved`：RESOLVE 完成時沒有電、沒有進 PREPARE、參與者沒有移動（`resolvedWithoutPower`）→ `watch` 40：每個 tick 一般開門、沒有電、COLLAPSING、沒有「進入 PREPARE」、這個 session 沒有 ERROR（沒有開服時的提醒）、沒有待套用的門、參與者沒有移動、套用恰一則（`plainOpenWhileWaitingWithoutPower`），之後放回紅石塊 → `left`：下一個 tick 仍沒有進 PREPARE（`poweredWithoutAnEdge`），參與者離開艙內 → 由艙外進入 → `passage.ready` → 跨越 → (b) 終局，「進入 PREPARE」恰一則（`preparedOnlyAfterTheEdge`）。
+  - **路徑**：重試的觸發要求來源艙有電（§7.1 的 source signal），所以斷電在重試的那個 tick 之後（controller 已接受）。閘門走「斷電」這條路徑保持不成立：RESOLVE 之後閘門第一次以位準評估時沒有電，不成立而算評估過，之後只看邊緣（`EntryWatch.gate`）；恢復供電本身不是邊緣（`poweredWithoutAnEdge`），參與者離開再進入（§7.1 的進入邊緣，比照 W8）才進 PREPARE。實測：重試與排入在 tick 1，RESOLVE 在 tick 2 的 `step`（`applyPending` 之前）完成，NORMALIZE 在 tick 2 套用。
+- 兩個變體是**兩條 chain 共用一列**（不是一條 chain 的兩個 restart）：runner 的 restart 讀 crash 的 root，第二個 restart 會接在第一個改過的世界上。
+- 三份表與 README：`M5CollapseRecoveryProbe` 的 phase 表與 Javadoc、`m5-collapse-probe.ps1` 的 `$chains`、`run-all.ps1` 的 `$expectedCollapse` 各加 8 個 phase（`sealclose-*`、`sealdoorway-*`、`sealmembrane-*`、`sealmembranejoined-*`；4 個 halt），`m5collapse` 53 → 61（halt 24 → 28）；README 的類別表、chain 表、SEALED 門 chain 的說明與 crash 點一行一起改（`40804fa`）。
+- 實測（`b-green-1` 的 restart `final.json`，`f62d2b2/b-green-1-newphases.txt`；server tick）：四條都在 tick 1 排入、記下 tick 2，tick 2 套用（`sealclose` 關門、`sealdoorway` 一般開門、`sealmembrane` 關門並清掉量子膜；`sealmembranejoined` 在 tick 2 以 NORMALIZE 改為一般開門）。門口的 entity storage 開服時（第一個 tick 之前）還沒有載入、排入的 tick 1 已載入，`sealdoorway` 的盔甲座在 tick 1 已看得到。`sealclose` 的參與者在 tick 4 開門；`sealmembrane` 的非參與者在 tick 1 使用門、參與者在 tick 3 JOIN；`sealmembranejoined` 的 RESOLVE 在 tick 2 完成（log），probe 在 tick 3 看到，tick 43 恢復供電。
+
+### mutation
+
+都套在最後一個 code commit 之後的乾淨工作樹（`40804fa`，code 同 `de0f13b`）上，以 `f62d2b2/adapter.py`＋`adapters_f62d2b2.py` 套用、跑 `-Only <chain>`、還原，`OriginDoors.java` 的 blob 還原為 `868562dd…`（等於 HEAD），restored 的 porcelain 都空（`f62d2b2/mutations.ps1`、`b-mutations-console.txt`、`b-<名稱>-mutsum.txt`、`b-<名稱>-restored-state.txt`）。crash phase 都 PASS（mutation 只影響重啟之後的路徑）：
+
+| mutation | 改動（`OD`） | chain | runId | 結果 |
+| --- | --- | --- | --- | --- |
+| `mut-reload-every-tick` | `doorReloaded`（`OD:223`）回 `loaded`（每個 tick 都觸發重新套用） | `sealclose` | `6b3b6e6be51747088772d130595b98d2` | FAIL 在 `closedOnceAfterTheRestart`（「tick 21（排入的是 tick 2）：門是 CLOSED=false … 套用的 INFO=[] 排入=21 待套用的門=CLOSE_ON_SEALED」：每個 tick 的觸發都把待套用的關門延到下一個 tick，見「偏離」第 3 點） |
+| `mut-sealed-ignores-doorway` | `sealedDoor`（`OD:753`）一律 CLOSED | `sealdoorway` | `73fd593059114707bfa6da9b9d581724` | FAIL 在 `plainOpenForTheDoorway`（「tick 21：門是 PLAIN_OPEN=false 門正中=…open=false … 套用的 INFO=[] … 門口有 entity=true 第一次看到門口的 entity 在 tick 1」：門關著，CLOSED 是 UNCHANGED，沒有改門） |
+| `mut-no-doorway-wait` | 拿掉 `OD:705` 的 `if (!doorwayEntitiesLoaded(world, door.frame)) return;` | `sealdoorway` | `c99343c5da5046608cba150f059215dd` | **存活**（2/2 PASS）。dev run（不採計）另以 STATUS 的備案試過：暫時把 `sealdoorway` 的 restart 改成 `UNLOADED` 開服（原艙先卸載、參與者 JOIN 之後才載入並排入；試完改回 `PRELOADED`），同樣存活（`dd80fd5197314a9aa75932363fc75927`；無 mutation 的對照 `c9b02ed2ab7445f094ce27fb3d0b8c89` 排入在 tick 4、那時已載入）；`PRELOADED` 的 dev run `60e288913a6146059ba1e53a82212ec4` 也存活。見「需要裁示」 |
+| `mut-watch-skips-sealed` | `watchDoor`（`OD:201`）不處理 SEALED | `sealmembrane` | `0f7d14dd2ed04074941bae1051e6dfbd` | FAIL 在 `closeQueuedOnTheFirstLoad`（「開服之後 10 個 tick，排入的 INFO：[] 門仍是 SEALED_MEMBRANE=true … 待套用的門=none」：門保留量子膜） |
+| `mut-sealed-goal-normalize` | `reapplyGoal(SEALED)`（`OD:248`）改為 NORMALIZE | `sealmembrane` | `e82fa820aeed47b29a1a68b6ecc5252e` | FAIL 在 `closeQueuedOnTheFirstLoad`（「排入的 INFO：[Queued[tick=2, goal=NORMALIZE, …]] … 待套用的門=NORMALIZE」） |
+| `mut-no-normalize-after-retry` | 拿掉 `OD:676` 的 `normalizeAfterRetry(door)`（H9 (a)） | `sealmembranejoined` | `9f967012402649da8dc95ff4e13b5213` | FAIL 在 `normalizedAfterTheRetry`（「tick 4（排入的是 tick 2）：一般開門=false 門正中=…membrane=sealed_x,open=true「不再套用封存時的原艙門」=1 套用的 INFO=[]」：關門被丟棄、門保留量子膜） |
+| `mut-normalize-defers-then-opens` | B2a 的 Minor 1（`OD:710`：NORMALIZE 對沒有量子膜的門先延後一個 tick、之後照樣打開） | `w5` | `409b09bffcca4bda9687819acb783ae0` | FAIL 在 `closedDoorKeptByTheReapply`（「tick 2（排入的是 tick 2）：門關著=true … 待套用的門=NORMALIZE」；與 B2a 在 `e28435d` 的 `252099d3…` 相同） |
+
+- dev run（未 commit 的工作樹，不採計）：`mut-reload-every-tick` 在 `sealclose` 的 `f8441316c7de4b9dac1b1f4b97adea32`，失敗訊息與上表相同。
+
+### GREEN
+
+- 開發中（工作樹未 commit，不採計）：`b-dev-f609`＝`32f0f33180bc43bc839d37103ddf4865`（sealclose、sealdoorway 4/4）、`b-dev-f611`＝`ec85682170b24376ac743cdadad514c3`（sealmembrane 兩條 4/4）；`mut-no-doorway-wait` 的兩次與 `mut-reload-every-tick` 的一次 dev run 見「mutation」。
+- 最後：同一個乾淨的 HEAD `40804fa`（最後一個 code commit `de0f13b` 之後只有 README）連跑兩次，都 61/61：`b-green-1` runId `0474032bb1d04e78ac4ea11d3d99d8b6`（23:09～23:25）、`b-green-2` runId `12349c6aa4f04fe9be33a58e3319cde3`（23:25～23:42）。兩次的 61 個 phase 與 31 個 run root 的 log 都沒有 worldgen 的例外（`f62d2b2/b-green-*-worldgencheck.txt`）。
+
+### 具名斷言的比對
+
+- 基準是 B2a 的 GREEN `6384dc0c3c7c4a83aef00536305762fb`（53 個 phase，`e28435d`）。兩次 GREEN 各以 `names2.py` 比對：既有的 53 個 phase 的斷言全部仍在、全部成立、順序相同，step 清單全部相同（`missing=[]`、`added=[]`、`notTrue=[]`，`RESULT=OK`；`f62d2b2/b-green-1-vs-afrgreen-names.txt`、`b-green-2-vs-afrgreen-names.txt`）。B2b 的重構（`sealedWrite`、`unreadableOnDiskAtHalt`、欄位分組、crash 骨架）沒有改變任何既有 phase 的具名斷言或 step。green-2 對 green-1：61/61 完全相同，`RESULT=OK`（`b-green-2-vs-green-1-names.txt`）。
+- 新增的只有 8 個新 phase（具名斷言的則數：`sealclose-crash` 12、`-restart` 53；`sealdoorway-crash` 13、`-restart` 52；`sealmembrane-crash` 14、`-restart` 55；`sealmembranejoined-crash` 14、`-restart` 56；`f62d2b2/b-green-1-newphases.txt`）。基準沒有的名稱共 28 個：
+  - crash：`openedBeforeTheReceipt`、`standInTheDoorwayBeforeTheReceipt`、`plainOpenDoorOnDiskAtHalt`、`closedDoorOnDiskAtHalt`、`doorwayOccupiedAtHalt`、`projectionSealedOnDiskAtHalt`、`projectionWriteFailedOnce`（其餘沿用既有的名稱：`unreadableOnDiskAtHalt`、`catalogEagerOnDiskAtHalt`、`noDiscoveryAtHalt`、`projectionPendingAtHalt`、`insideTheChamberAtHalt`、`nativeSaveAtHalt`、`playerDataInTheSourceAtHalt`、`sealedDoorOnDiskAtHalt` 等）。
+  - restart：`projectionFailedAtRestart`、`doorInMemoryAtStart`、`closeQueuedOnTheFirstLoad`、`closedOnceAfterTheRestart`、`openedNormallyWhileSealed`、`closedOnlyOnce`、`plainOpenForTheDoorway`、`standRemovedFromTheDoorway`、`visitorOutsideAtStart`、`membraneKeptOnTheVisitorUse`、`closedFromTheMembrane`、`stillSealedAtTheJoin`、`retriedOnTheJoinEdge`、`joinedBeforeTheFirstObservation`、`doorNeverClosedAfterTheRestart`、`queuedAndRetriedOnTheFirstObservation`、`normalizedAfterTheRetry`、`resolvedWithoutPower`、`plainOpenWhileWaitingWithoutPower`、`poweredWithoutAnEdge`、`preparedOnlyAfterTheEdge`（其餘沿用既有的名稱，例如 `unreadableAtRestart`、`doorAsExpectedAtStart`、`recordKeptAcrossTheRestart`、`nobodyOnlineAtStart`、`retriedOnceAfterTheRestart` 與 (b) 終局的斷言）。
+
+### 完整回歸（run-all）
+
+- `run-all-1`＝`run-all-1c06c0832e7e402f8348487c23f7d970`（`f62d2b2/b-run-all-1-console.txt`；HEAD `40804fa`、porcelain 空，所有 code、test 與 README commit 之後）：full、legacy exit=0，**m5-gametest FAIL**（`GameTest gate exit=1`，之後的 gate 沒有跑），**不採計**。歸屬：已知偶發「Windows 原子移動的 `AccessDeniedException`」。`passage_transfer_recovery_required_seals_and_keeps_the_crossed_receipt` 開始時 catalog 的 checked 寫出在 atomic move（`quantumchamber_universes.dat.<n>.tmp -> quantumchamber_universes.dat`）丟出 `AccessDeniedException`（gate 的 latest.log:1851、:1873）→ RESOLVE 進 SEALED(ALLOCATION_IO_FAILED)（:1882）→「有界等待逾時（至 tick 25）：RESOLVE 沒有建立宇宙：record=SEALED」；之後 36 個 test 都因衛生規則（catalog 沒有收斂）連坐 FAIL（60 個 test 中 37 個 FAIL）。root 保留，以新的 root 重跑。
+- `run-all-2`＝`run-all-31683ecd27c84052a9ecdd6f7038763e`（`b-run-all-2-console.txt`；同一個 HEAD、porcelain 空），**`END ALL exit=0`**。本節的 commit 之後另跑一次 run-all 作為最終回歸，結果記在 `f62d2b2/STATUS.md` 與最終回報（本節的 commit 只改這份 note）。
+- SUMMARY：`default=178/178 windows=89 legacy=1/1 m5=60/60 perTest=55+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=61 ci=win:PASS,ubuntu:PASS`。
+- 與基準 `run-all-f22f66b3ce5446509bce2230eee7baf5`（B1 的最終回歸，`2aca627`）逐項比較（`f62d2b2/runall-compare.ps1`，輸出 `f62d2b2/b-runall2-*.txt`）：
+
+| 項目 | 基準 | 本次 | 歸屬 |
+| --- | --- | --- | --- |
+| default GameTest | 178/178 | 178/178 | 名稱與結果相同（`b-runall2-default-setcmp.txt`，identical） |
+| M5 GameTest | 60/60 | 60/60 | 名稱與結果相同（`b-runall2-m5-setcmp.txt`，identical） |
+| legacy | 1/1，WARN／ERROR 0／0 | 1/1，0／0 | 相同（`b-runall2-legacy-setcmp.txt`、`b-runall2-wbcmp-legacy.txt`） |
+| JUnit | 666（664 PASS、2 SKIPPED） | 666（664 PASS、2 SKIPPED） | 名稱與結果相同（`b-runall2-junit-setcmp.txt`；本輪沒有改 JUnit） |
+| release JAR | 432 entries／385 classes，SHA-256 `c20bc00f…` | 432／385，SHA-256 相同 | 位元組相同（本輪沒有改 `src/main/`；`b-runall2-jarcmp-release.txt` 沒有 CHANGED）；`testmodHits=0`：B2a 新增的 `OriginDoorsTestAccess` 與 B2b 改過的 testmod 類別都不在 release／sources JAR |
+| sources JAR | 226，SHA-256 `c3f4e447…` | 226，SHA-256 `639f9f28…` | 226 個 entry 的內容全部相同（`b-runall2-jarcmp-sources.txt` 沒有 CHANGED）、順序與檔案大小（433407 bytes）相同；SHA-256 的差異只在 zip 的中繼資料：226 個 entry 的 `date_time` 與 extra（NTFS 時間戳）都是這次建置的時間（`b-runall2-zipmeta-sources.txt`） |
+| Full WARN／ERROR | 54／34 | 54／31 | ERROR −3：基準的 +3 是已知偶發「H2 的 Full ERROR +3」（`m5_h2_checkpoint_scope` 的「Failed to store chunk」「Failed to save chunk」「Failed to store entity chunk」各 +1），這次沒有出現，不含偶發的數字同為 54／31（`b-runall2-wbbatch-full-combined.txt`）。**比較用的 log 是兩段合併的**：full gate 在 23:59 開服、跨過午夜，原版 log4j 的 `TimeBasedTriggeringPolicy` 在 00:00:00 把當時的 latest.log 輪替成 `2026-10-14-7.log.gz`（gate 的 `execution/runtime-logs/` 有複本，SHA-256 `5dc961cf…`），latest.log 只剩午夜之後的部分（只看它時是 53／31、batch 110 個，少了午夜之前 7 個 batch，其中 `m2_ifix2_command_teleport` 那一則 cow 的 WARN）。合併（解壓的 `b-runall2-full-2026-10-14-7.log`＋latest.log，`b-runall2-full-combined.log`）之後 batch 117 個、WARN 54，排序 diff 只剩上述 ERROR −3（`b-runall2-wbcmp-full-combined.txt`） |
+| M5 WARN／ERROR | 38／10 | 38／10 | 數目相同；排序 diff 只有「Trying to set block entity … PistonBlockEntity@<hash>」的 object hash（同一則訊息的正規化差異，與 B1、H9 一節相同；`b-runall2-wbcmp-m5-gametest.txt`） |
+| perTest、windows、windowsCheckpoint | 55+1、89、17 | 55+1、89、17 | 相同（本輪沒有新的 GameTest） |
+| M3、M4 recovery | 4＋5、24 | 4＋5、24 | 相同（run-all 核對 phase 名稱與 receipt） |
+| m5collapse | 53（halt 24） | 61（halt 28） | 只多 B2 的 8 個 phase（`sealclose-*`、`sealdoorway-*`、`sealmembrane-*`、`sealmembranejoined-*`；4 個 crash 是 halt）。collapse runId `e0c2c905cf1b43bea2ff98fbdb42c69e`：與 `b-green-1` 61 個 phase 的具名斷言、step 與順序全部相同，`RESULT=OK`（`b-runall2-vs-green-1-names.txt`）；61 個 phase 與 31 個 run root 的 log 都沒有 worldgen 的例外（`b-runall2-worldgencheck.txt`） |
+| main-only、testmodHits、CI 規則 | PASS、0、win／ubuntu PASS | 相同 | — |
+
+- 三個 gate（full 以合併的 log、legacy、m5-gametest）都沒有 `NullPointerException`、`ConcurrentModificationException` 或「Exception generating new chunk」（`b-runall2-gatelogcheck.txt`）。
+- gate-full 117 個 batch；「全域 managed entity pin 已超過 256」「走廊保留租約等待安全返還」「recovery 寫出保留 pending」的計數是 4／9／4，與基準（`f62d2b1/relay-pincount-final.txt`）相同（`b-runall2-pincount.txt`，以合併的 log 計）。
+
+### 偏離派工字面之處
+
+1. **`sealclose` 與 `sealdoorway` 是兩列**（`UNREADABLE_SEALED`、`UNREADABLE_SEALED_DOORWAY`），不是設計第 3 點的共用一列：開服時門的預期用第 0-4 點的 `withDoorAtStart`，一列一個值（controller 已接受）。`sealmembrane` 的兩個變體是兩條 chain 共用 `PROJECTION_SEALED` 一列，合計 8 個新 phase。
+2. **`PROJECTION_SEALED` 的開服斷言只用 `doorAsExpectedAtStart`**，`withDisk` 不再接 `sealedDoorOnDiskAtRestart`（同一件事斷言兩次；STATUS 已預期「可以只用其一」），playerdata 的部分改接 `playerDataInTheSourceAtRestart`。
+3. **`mut-reload-every-tick` 失敗的機制與設計的預測不同**：設計預測「門被關兩次」；實際上 `watchDoor`（`CS.step`）在 `applyPending` 之前，每個 tick 的「重新載入」都把待套用的關門延到下一個 tick（`OD.reapplyDoor` 的「已有待套用的門時只延後」），門永遠關不上，失敗在 `closedOnceAfterTheRestart`（排入的 INFO 每個 tick 多一則）。這仍是 F6-2-09「只關一次」的目標斷言。
+4. **`mut-no-doorway-wait` 存活**（見「mutation」與「需要裁示」）：STATUS 的備案（改用 `UNLOADED` 開服）也試過，仍存活，所以 `sealdoorway` 維持 `PRELOADED`。
+5. **`sealmembrane` 的觸發是 JOIN 的邊緣**，不是派工字面的「由艙外進入」（見上方「路徑」）。
+6. **`normalizedAfterTheRetry` 寫成 `== N`**（派工允許保守的 ≥ N）：production 的 `normalizeAfterRetry` 在丟棄關門的同一個 tick 立即套用，實測也是 tick N。
+7. **mutation 的目標斷言比設計預測的更早**：`mut-sealed-goal-normalize` 讓排入的目標變成 NORMALIZE，`closeQueuedOnTheFirstLoad` 要求目標是 CLOSE_ON_SEALED，所以失敗在排入（設計預測在 `closedFromTheMembrane`）；`mut-watch-skips-sealed` 同樣失敗在排入。
+8. **加了兩個 STATUS 沒有列的重構 commit**（`e9a2fb4` 欄位分組、`10bdf74` crash 骨架），與新 chain 分開 commit；`OriginDoorsTestAccess` 加兩個只查詢的方法（production 的 `doorwayOccupied`、`doorwayEntitiesLoaded` 是 package-private），讓窗口條件與 chain 以 production 的同一個範圍判斷門口。
+9. **JUnit、M4 recovery、default run 與 M5 run 以 run-all 為準**（沒有另跑單獨的 gate）。
+
+### 需要裁示
+
+- **`mut-no-doorway-wait`（拿掉 `OD:705` 的 `doorwayEntitiesLoaded` 等待）存活**，跨 JVM 的 probe 量不到這一行：production 在來源艙附近變成 FULL 的那個 tick 排入關門、下一個 tick 套用；entity storage 在 FULL 之後的下一次 `entityManager.tick` 就載入，而塌縮流程在 `END_SERVER_TICK`（world tick 之後），所以 tick N 套用時門口的 entity storage 一定已載入。實測：`PRELOADED`（開服時同步載入）排入在 tick 1、那時已載入、盔甲座已看得到；`UNLOADED`（STATUS 的備案：原艙先卸載、由參與者 JOIN 再載入）排入在 tick 4、那時也已載入（dev run `c9b02ed2…`）。兩種開服加上 mutation 都 PASS（`60e28891…`、`dd80fd51…`）。可選的做法：(a) 接受，這一行的時序由 GameTest 鎖住（若既有的 GameTest 有「storage 還沒載入時不關門」的 test；本輪沒有查證，F6-2e／F7 決定）；(b) 新的 test hold（testmod mixin 延後原版 `ServerEntityManager` 對門口那個 chunk 的 entity 載入），讓 probe 量得到；需要新的 mixin 與 `M5TestHooks` 的 hold slot，超出本輪的範圍，沒有做。
+- 請 reviewer 確認：`sealclose`／`sealdoorway` 兩列、`sealmembrane` 兩條 chain 共用一列；`sealmembrane` 的 JOIN 邊緣；`sealmembranejoined` 的斷電路徑。
+
+### F6-2d-2 的總結
+
+| 段 | range | 內容 | `m5collapse` |
+| --- | --- | --- | --- |
+| A 段 | `8ce281e..287d849`（code 到 `7487f97`） | F6-2d-2 Step 0 review 留下的整理（`EntryWatch` 的循序 JUnit、`ChamberAtStart`、`withRecordKept` 的反向守門） | 49（halt 22，不變） |
+| （H8、H9） | `d8ba7a0..aee674f`、`0600a1e..b217fb3` | A 段的觀察 1～3 的 production 修正（另見那兩節） | 49 |
+| B1 | `81ec928..2aca627`（code 到 `57387e2`） | A 段 fix round、PREPARE 的門窗口（`waitingdoor`、`preparedoor`）、本來關著的門保留關著（`w2`、`w3`、`w5`） | 53（halt 24） |
+| B2 | `d76b319..40804fa`＋本節的 docs commit（B2a `d76b319..e28435d`；B2b `e28435d..40804fa`，code 到 `de0f13b`） | B1 fix round（B2a）；SEALED 的門窗口（`sealclose`、`sealdoorway`、`sealmembrane`、`sealmembranejoined`） | **61（halt 28）** |
+
+- 交接清單的 F6-2-08～F6-2-11 都有跨 JVM 的 chain：F6-2-08 `waitingdoor`＋`w2`／`w3`／`w5`、F6-2-09 `sealclose`／`sealdoorway`、F6-2-10 `preparedoor`、F6-2-11 `sealmembrane`／`sealmembranejoined`。沒有 production 與 spec 不符之處（`src/main/` 在 F6-2d-2 的 A、B1、B2 都沒有改；production 的修正在 H8、H9）。
+
+### 交給後續
+
+- **F6-2e**：hold 類的 crash 窗口可以沿用 `READY_HELD` 的做法；`commitRollForward` 回傳點的 SEALED 窗口（`sealedWrite` 加門的條件）可以再加原因；`M5CollapseDoorChains.crash` 的骨架與「排入 → 套用」兩個 step（`closeQueued`、`closeApplied`）可以給其他門的窗口用。`mut-no-doorway-wait` 的處置見「需要裁示」。
+- **F6-3**：沒有新的 GameTest、CI 明列清單不變（probe 不在 CI）。
+- **harness（F6-3 或 F7，由 controller 決定歸屬）**：gate 跨過午夜時，原版 log4j 的 `TimeBasedTriggeringPolicy` 在 00:00:00 把 latest.log 輪替成 `<date>-<n>.log.gz`，gate 的 `execution/runtime-logs/latest.log` 只剩午夜之後的部分（本輪 `run-all-2` 的 full gate）。gate 本身照樣 PASS，但以 latest.log 為準的比較（WARN／ERROR、batch 的歸屬、pin 計數）會漏掉前半段；本輪手動合併兩段。可以讓比較腳本或 `gates.ps1` 一併讀當次開服之後輪替的檔案。
+- **F7**：沒有新的 production 文件事項。觀察（不是缺陷）：`OD.reapplyDoor` 在已有待套用的門時只延到下一個 tick（INFO「延到下一個 tick」），每個 tick 都觸發時會一直延後（`mut-reload-every-tick` 的機制）；production 的 `doorReloaded` 只在載入狀態改變時觸發，所以不會發生。`cancelSealedClose` 在門還帶著量子膜時只記 DEBUG，維運時看不到「玩家用過門、關門保留」。
+
+### root（全部保留）
+
+- 各 commit 之前的編譯：B2a `f62d2b2/a-c1`～`a-c9-compile.log`（`a-c3-movecheck.txt`：純搬移 `RESULT=PURE`；`e28435d` 只改 README，沒有另外編譯）；B2b `b-c1`～`b-c5-compile.log`（`40804fa` 只改 README）；dev 的 `b-dev1`、`b-dev2-compile.log`。
+- probe（phase evidence 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<runId>-<chain>/`，run root 在 `run/m5-collapse-<runId>-<chain>`，摘要在 `.superpowers/verification/collapse-run-<runId>.json`）：
+  - B2a：GREEN `a-fr-green`＝`6384dc0c3c7c4a83aef00536305762fb`（`e28435d`，53/53）；mutation `252099d3de254719a730cd56889285eb`（`-Only w5`，預期的 FAIL）；對照 `697b4a69fa844805bb576e46c7307af2`（B1 的 testmod＋同一個 mutation，dev run，不採計）。
+  - B2b 的 dev run（工作樹，不採計）：`32f0f33180bc43bc839d37103ddf4865`（sealclose、sealdoorway）、`ec85682170b24376ac743cdadad514c3`（sealmembrane 兩條）、`60e288913a6146059ba1e53a82212ec4`（`mut-no-doorway-wait`，PRELOADED）、`c9b02ed2ab7445f094ce27fb3d0b8c89`（sealdoorway 的 UNLOADED 試作，無 mutation）、`dd80fd5197314a9aa75932363fc75927`（同上＋`mut-no-doorway-wait`）、`f8441316c7de4b9dac1b1f4b97adea32`（`mut-reload-every-tick`）。
+  - B2b 的 GREEN：`b-green-1`＝`0474032bb1d04e78ac4ea11d3d99d8b6`、`b-green-2`＝`12349c6aa4f04fe9be33a58e3319cde3`（`40804fa`，都 61/61）。
+  - B2b 的 mutation：見上表（7 個，`40804fa`）。
+- run-all：`run-all-1`＝`run-all-1c06c0832e7e402f8348487c23f7d970`（`40804fa`，m5-gametest FAIL，已知偶發，不採計）；`run-all-2`＝`run-all-31683ecd27c84052a9ecdd6f7038763e`（`40804fa`，`END ALL exit=0`，採計）。最終回歸的 run-all（本節的 commit 之後）見 `f62d2b2/STATUS.md`。
+- 結束過的程序：沒有。三位 implementer 都沒有結束任何程序（probe 沒有遇到逾時處置，run-all 沒有遇到逾時），也沒有手動處置任何世界。已知偶發：B2b 的 `run-all-1` 遇到一次「Windows 原子移動的 `AccessDeniedException`」（上方「完整回歸」），以新的 root 重跑；probe 沒有遇到已知偶發。
+- 取證腳本（`f62d2b2/`）：B2a 由 `f6/f62d2b1/` 複製 `state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`（adapter 表的模組 `adapters_f62d2b2`）、`mutsum.py`、`names2.py`，新寫 `movecheck.py`、`adapters_f62d2b2.py`；B2b 在 `adapters_f62d2b2.py` 加 6 個 mutation、`mutsum.py` 的 log 前綴改為 `b-`，由 `f6/f62d2b1/` 複製 `runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-f22f66b3…`，`base-*-summary.txt` 是 `f62d2b1/relay-runallfinal-*-summary.txt`）、`wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`wbbatch.py`、`relay-zipmeta.py`、`relay-worldgencheck.py`、`relay-pincount.py`（每檔第一行加本輪註解），新寫 `mutations.ps1`。
