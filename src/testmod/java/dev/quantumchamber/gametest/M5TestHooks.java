@@ -366,7 +366,12 @@ public final class M5TestHooks {
          * 失敗之後；門、訊息與 WARN 之前；detail 是 {@link RollForwardWrite}）。窗口表的條件另要求原艙門是 sealed 量子膜。{@code ProjectionWriteFaultMixin} 生效的那一次寫入不會以
          * {@link #PROJECTION_REPAIRED} 呼叫，所以窗口在 SEALED 的提交。
          */
-        PROJECTION_SEALED
+        PROJECTION_SEALED,
+        /**
+         * W10（F6-2e-1）：{@code CollapseService.step} 開始處理一個 session 之前（{@code CollapseServiceM4ReceiptWindowMixin}；detail 是那一筆 flushed 的 {@link SessionRecoveryRecord}），與
+         * {@link #DORMANT_STEP} 同一個程式點；窗口表的條件選 M4 時期的 Nether／End 收據（MEASURED、來源 role 不是 OVERWORLD）。
+         */
+        M4_RECEIPT_STEP
     }
 
     /**
