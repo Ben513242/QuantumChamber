@@ -8486,3 +8486,143 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - run-all：`run-all-1`＝`run-all-5227858a92614f4a86ca5e4874fd360e`（FAIL，不採計；sealdoorway 的 root `run/m5-collapse-bb9a961f3ee34ff39b5e0831d40bf3d9-sealdoorway`）、`run-all-2`＝`run-all-9b48182948d74404b9e58bcdda9027af`（FAIL，不採計）、`run-all-3`＝`run-all-e85eb51436a34d7fb86c788ae50cdcfd`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。
 - 結束過的程序：沒有（probe 沒有遇到逾時處置；沒有手動處置任何世界）。
 - 取證腳本（`f62es0/`，由 `f6/f62d2b2/` 複製的每檔第一行加本輪註解）：`state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-308601e65c4b40a69dd04cbec9a5bf87`，`base-*-summary.txt` 是 `f62d2b2/b-runallfinal-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f62es0`）、`mutsum.py`（probe log 的前綴 `m-`）、`names2.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-*.py`、`movecheck.py`；本輪新寫：`adapters_f62es0.py`、`mutations.ps1`、`compilemut.ps1`、`readme-patch.py`、`orderdiff.py`、`stepticks.py`、`w8late-history.py`、`entitylist.py`、`renames.json`。
+
+## F6-2e-1：Step 0 review 的整理與 W10
+
+- implementer 依 controller 的派工（scratchpad `f62e1-prompt.md`）完成程式、GREEN 與 mutation；完整回歸與本節的 commit 由接力的 implementer 依 `f62e1-relay-prompt.md` 完成，本節的草稿另依 spec review 的 M-1、M-2、M-7、M-8 更正。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f62e1/`，以下簡稱 `f62e1/`，`STATUS.md` 是交接摘要。開工時 HEAD 是 `d2f6dbb`、`git status --porcelain` 為空（`f62e1/start-state.txt`）。範圍：A 段是上方 F6-2e Step 0 一節 review 區塊交下的整理（含 run-all-1 的測試缺陷），B 段是 W10（交接清單 F6-2-04）。`m5collapse` 由 61（halt 28）變成 63（halt 29）。
+- Commits（`d2f6dbb..` 本節的 commit，依序；每個 commit 只 stage 自己的檔案；code 的 commit 之前都在工作樹編譯：`f62e1/c1`～`c5`、`b1`、`b2-dev3-compile.log`，`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL，警告只有既有的 `SessionTransferFaultMixin` 6 則）：
+  - `396d981` `test: clear worldgen mobs around the origin and count only the probe's doorway stands`（A 第 1 點，行為改變：測試缺陷的修正；RED 以 adapter 示範，見下方）
+  - `71baf5f` `test: declare the passable door at start with withDoorAtStart`（A 第 3 點的前半；**具名斷言改名**）
+  - `7940501` `refactor: read every probe door state through OriginDoorState`（A 第 3 點的後半與第 5 點的可選項）
+  - `8b1743c` `test: wait for the visitor's ready hold through awaiting`（A 第 4 點的程式部分；失敗方式改變）
+  - `8f9eb0a` `refactor: tidy the probe nits from the F6-2e Step 0 review`（A 第 2 點的 Javadoc、第 5 點）
+  - `600fcee` `docs: describe the F6-2e-1 probe tidy-up in the collapse probe README`（A 第 2、4、6 點的 README）
+  - `8a368ca` `test: add the M4_RECEIPT_STEP crash window for W10`
+  - `5b0e92c` `test: add the w10 chain for M4-era Nether/End receipts (F6-2-04)`（**最後一個 code commit**）
+  - `e31802a` `docs: describe the w10 chain in the collapse probe README`
+  - 本節由其後的 `docs: record F6-2e-1 in the M5 note` 加入。
+- 只改了派工允許的路徑：testmod 的 `M5CollapseFixture`、`M5CollapseDoors`、`M5CollapseDoorChains`、`M5CollapseWindows`、`M5CollapseRestartChains`、`M5CollapseRetryChains`、`M5CollapsePassage`、`M5CollapseDormantChains`（一行）、`M5CollapseRecoveryProbe`（phase 表與 Javadoc）、新的 `M5CollapseUnsupportedChain`；`M5TestHooks` 只加 `CrashWindow.M4_RECEIPT_STEP`；新的 test mixin `CollapseServiceM4ReceiptWindowMixin` 與它在 `quantumchamber-test.mixins.json` 的登記；split package test access `OriginDoorsTestAccess` 加 `doorwayBox`；`m5-collapse-probe.ps1` 只改 `$chains`、`run-all.ps1` 只改 `$expectedCollapse`、README 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、`quantumchamber.mixins.json`、其他 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5CollapseGameTests`、`M5GameTestSupport`）、M4 probe、所有 JUnit、語言檔、spec、plan、AGENTS。
+- 行號以 HEAD `e31802a` 為準：`RCH`＝`M5CollapseRestartChains`，`RC`＝`M5CollapseRetryChains`，`DC`＝`M5CollapseDoorChains`，`DRS`＝`M5CollapseDoors`，`WIN`＝`M5CollapseWindows`，`PSG`＝`M5CollapsePassage`，`FIX`＝`M5CollapseFixture`，`UC`＝`M5CollapseUnsupportedChain`。
+
+### A 段：逐項處置
+
+| 項目 | 處置 | 證據 |
+| --- | --- | --- |
+| 1. 測試缺陷：門口多出的非玩家 entity 被算進門口 | **來源**：Step 0 run-all-1 多出的第二個 entity 種類無法確認（Step 0 一節），可能是動物或蓋原艙時的掉落物：每條 chain 的清理都會移走 1 個 item（`green-1` 的 29 個 crash phase 裡，28 個的 `clearedAroundTheOrigin` 都是 `{minecraft:item: 1}`；`w10-crash` 記在 `clearedAroundTheNetherChambers`，兩座都是空的）。下方的修正移走所有非玩家 entity，兩種情況都涵蓋。**盤點**（production 的門口判斷 `OriginDoors.doorwayOccupied` 是門 25 格外框裡的任何已載入 entity）：門口出現非玩家 entity（動物或掉落物）時，production 正確地改為一般開門、不套用量子膜，會誤判的斷言是：sealdoorway 的 `standRemovedFromTheDoorway`（數門口的全部 entity，這次的失敗）與 `standKeptInTheDoorway`（以 production 的判斷代替「盔甲座仍在」）；sealclose 的 `closedOnceAfterTheRestart`、sealmembrane 的 `closedFromTheMembrane`（預期關門）；preparedoor 的 `resealedOnTheNextTick` 與所有要在 PREPARE 套用 sealed 量子膜的窗口（`READY_HELD`、`READY_COMMITTED`、`PROJECTION_SEALED` 的條件與它們之後的門斷言；門口有非玩家 entity 時窗口到不了或 PREPARE 一直是一般開門）。NORMALIZE（`w2`／`w3`／`w5` 的 `closedDoorKeptByTheReapply`、`waitingdoor`、`sealmembranejoined`）不看門口，不受影響。**修正**（`396d981`）：(a) `FIX.clearAroundTheOrigin(world, frame)`：`buildOrigin` 蓋好原艙之後、收據之前，移走 Controller 水平 ±32 格、y −16～+32 的非玩家 entity（涵蓋 production 的 `doorwayBox`、門外的通道、整座艙與參與者等待的位置；這時 probe 還沒有放任何 entity），依類型記在 proof 的 `clearedAroundTheOrigin`；(b) 門口的斷言只數 probe 自己放的盔甲座：`DRS.doorwayStands`（production 的 `doorwayBox`，經 `OriginDoorsTestAccess.doorwayBox`）。`standRemovedFromTheDoorway` 只移走、只數盔甲座（恰一座、之後沒有盔甲座、一般開門；production 的門口判斷記為 proof `doorwayOccupiedAfterTheStand`），`standKeptInTheDoorway` 要求恰一座盔甲座，crash 的 `standInTheDoorwayBeforeTheReceipt` 另要求恰一座盔甲座（名稱不變、條件變嚴）。**restart 不再清一次**：開服時門口的 entity storage 不一定已載入（sealdoorway 記下 `doorwayEntitiesLoadedAtStart`），之後的 tick 移除又會與 production 同一個 tick 的門口判斷交錯；crash phase 清過之後，存檔裡的門口只有 probe 自己放的 entity | **RED**：`red-pig`（`d2f6dbb`＋暫時的 adapter `red-doorway-pig`：`placeChamber` 的最後在門格 local (3,1,0) 的中心放一隻不動、不受重力、無敵的豬，模擬蓋原艙時門口就有的非玩家 entity），`-Only sealdoorway`，runId `a1186d6030b44e59940be3f46cf4e1c7`：`sealdoorway-restart` **FAIL 在 `standRemovedFromTheDoorway`**（「移走 2 個 entity，門口已清空=true 一般開門=true」，與 Step 0 run-all-1 相同）。**GREEN（RED 的情境）**：`redfixed-pig`（`396d981`＋同一個 adapter），runId `18a68b7e5dc8410f8140f72789a151a2`：兩個 phase PASS，crash 的 `clearedAroundTheOrigin`＝`{minecraft:item: 1, minecraft:pig: 1}`、restart 的 `doorwayOccupiedAfterTheStand`＝false。兩次都由 `red.ps1` 的 finally 還原、以 blob 核對：`red-pig` 還原成 `406d9fac…`（`d2f6dbb` 的 FIX，`red-pig-console.txt:7`）、`redfixed-pig` 還原成 `07c39c12…`（`396d981` 的 FIX，`redfixed-pig-console.txt:6`）；`*-restored-state.txt` 的 HEAD 各為 `d2f6dbb`、`396d981`，porcelain 都空 |
+| 2. quality Minor 1＋spec Minor-1（crash 骨架的前提） | `RCH.CrashSetup` 的 Javadoc 與 `crash` 的 Javadoc 改為：前提是「收據 → 參與者由艙外進入 → COLLAPSING → 窗口 halt」（收據之後的 `enter`、`committed` 寫死），W10 不套用（M4 時期的 journal（schema 3）裡的 Nether／End 收據由 §11.3 從 MEASURED 取消、不經 COLLAPSING），W11 也不套用（沒有收據，crash 在 M5 authority 初始化）；原本把 W10 寫成它的用例是錯的。README 的「新增 phase」crash phase 一條同樣更正（`8f9eb0a`、`600fcee`） | — |
+| 3. quality Minor 2（開服時門的預期的唯一宣告處） | (a) `OriginDoorState.PASSABLE_MEMBRANE`（`open=true`、朝外的 passable `membrane`；`WIN` 的兩個 exhaustive switch 各加一個 case）。W7（`CROSSED_COMMITTED`）與 `PASSAGE_TERMINATED` 兩列改為 `withDoorAtStart(PASSABLE_MEMBRANE)`，`passageOnDiskAtRestart` 拿掉 `passableDoorOnDiskAtRestart`（同一個 `doorOnDisk` 判斷），只留 `passageControllerOnDiskAtRestart`（`71baf5f`）。(b) `DRS.closed`／`plainOpen` 改經 `DRS.is(run, CLOSED／PLAIN_OPEN)`；DC 的 4 處 `M5GameTestSupport.doorSealed`（`resealedOnTheNextTick`、`sealmembrane` 與 `sealmembranejoined` 的 3 處）改為 `DRS.is(run, SEALED_MEMBRANE)`：三者原本都是同一個 `doorAll`（`doorSealed` 是 `doorAll(..., true, sealedFor(outward))`），判斷相同（`7940501`） | 具名斷言的改名對照見「具名斷言的比對」；GREEN |
+| 4. quality Minor 3（helper 的選擇規則） | README「新增 phase」第 3 點寫明：等某事、到時沒有發生要具名 FAIL → `awaiting`；觸發之後的提交／重試 → `untilTriggered`；固定觀察 N 個 tick → `watch`；其餘才用 `counting`（手寫等待的逾時是 stepBounded）。`PSG.counting` 的 Javadoc 導向這三個。`DC` 的 `heldWithTheVisitorInside` 改為 `awaiting("heldWithTheVisitorInside", HELD_WAIT_TICKS, eachTick＝plainOpenWhileTheVisitorIsInside, happened＝hold.hits() > 0, settled＝readyHeldWithTheVisitorInside)`（`8b1743c`） | **等待時間與通過條件不變**：原本 `counting(name, HELD_WAIT_TICKS, body)`，body 每個 tick 先斷言一般開門、`hits() == 0` 時回 false，第 `HELD_WAIT_TICKS` 個 tick 仍是 false 時 stepBounded；現在第 1～`HELD_WAIT_TICKS` 個 tick 同樣先斷言一般開門（`eachTick` 在 `happened` 之前，先後相同）、再問暫緩，發生的那個 tick 斷言「準備完成」恰一則（運算式相同，另與 `happened` 取 AND）、記下 `readyHeldAtPhaseTick`。唯一的差別：到時仍沒有被暫緩時由 `readyHeldWithTheVisitorInside` 判 FAIL（原本是 stepBounded）。GREEN 的 step 清單相同 |
+| 5. nit | (a) `RCH.doorAtStart(id)` → `requireDoorAtStart`（DC 的 7 處與 Javadoc）。(b) `RC.waitingLateCrash` 改用基底的 `crash`：`CrashSetup` 加第三個欄位 `beforeWrite`（step `receipt` 寫入收據之前執行；兩個參數的建構子給 `NOTHING`，`withBeforeWrite(action)` 換掉它），waitinglate 以 `dormantNewSetup().withBeforeWrite(spawn chunks 的半徑改為 0)` 表達；step 的名稱、順序與上限都不變（build 1、registered 200、receipt 1、enter 1、committed 40、halt 400），receipt 裡的順序也相同（gamerule → 收據與原生存檔 → 裝上 crash 點）。(c) 基底加 `buildAndRegister(origin)`（`crash` 的前兩步），`RC.origin()` 改由它給（`dormantNewSetup().origin()`）；`RC` unreadable 的行內 `enter` 改用基底的 `enter()`。(d) `untilTriggered` 的 `happened` 改為 `M5CollapseRun.CheckedCondition`（與 `awaiting` 同型別，拿掉 `BooleanSupplier`）。(e) README:162 的多餘空白。(f) `membraneSealedJoinedRestart` 在建立 step 之前讀 `requireDoorAtStart`（與其他 builder 一致；兩者都在 `onInitialize`）。(g) **可選項做了**：`OriginDoorState.UNSPECIFIED` 拿掉，「沒有宣告」改為 `AtRestart.doorAtStart()` 的空 `Optional`（`open()`／`membrane()` 對每個值都有定義；`withDoorAtStart` 不必再擋 `UNSPECIFIED`；`expectDoorAtStart`、`requireDoorAtStart`、`M5CollapseDormantChains` 的一處跟著改）。(a)～(f) 在 `8f9eb0a`，(g) 在 `7940501` | GREEN 的 step 清單全部相同（waitinglate、w8、unreadable 等由 `RC` 建的 crash 也相同） |
+| 6. README:216、:258、:260 | :216（`waitingdoor` 的 chain 表列）改為 `doorAsExpectedAtStart`（窗口列的 `withDoorAtStart(SEALED_MEMBRANE)`，註明 Step 0 之前的名稱），playerdata 的斷言名稱寫明 `playerDataInTheSourceWorld`；:258 寫明門由窗口列以 `withDoorAtStart` 宣告、chain 以 `requireDoorAtStart` 讀；:260 拿掉已移除的「套用的 tick 不早於看到它的 tick」，改寫只數 probe 的盔甲座（`600fcee`） | — |
+
+### A 段 GREEN
+
+- `a-green`（乾淨的 `600fcee`，`f62e1/a-green-probe-state.txt`）：runId `6241b6cc9b6e417a80c4df8f215cfb3d`，**61/61 PASS**（halt 28，12:47～13:05）。
+- 以 Step 0 的 green-2 `780cb55f3f8f4daa999afffae7261e92` 為基準、改名表 `f62e1/renames.json`，`names2.py`：`RESULT=OK`（`a-green-vs-s0green2-names.txt`）：61 個 phase 既有的斷言全部仍在、全部成立，step 清單全部相同，沒有新增的斷言。`order=DIFF` 的只有改名的兩個 phase，`orderdiff2.py` 核對拿掉改名的那一個之後其餘順序相同（`a-green-orderdiff.txt`：`doorAsExpectedAtStart` 在 `expectAtRestart` 的窗口磁碟檢查之後斷言，與 Step 0 的 READY 兩列相同）。
+
+### B 段：W10（`UC`，交接清單 F6-2-04）
+
+- **為什麼是專屬的 phase**：`RCH.crash`／`restartPhase` 的前提（收據 → 由艙外進入 → COLLAPSING；restart 的 `started` 讀單一 session 的窗口表預期）都不成立：W10 的收據不經 COLLAPSING，`expectAtRestart` 的 MEASURED 只表達 DORMANT 的單一 session。`UC` 不繼承基底；fixture 只持有 Nether 的 live NEW 那一筆（`connectParticipant`（新）、`adopt`（F6-2e-1 起也設原艙）、`recordReceipt`、`readCrashReceipt`），另兩筆由 `UC` 自己寫出、讀回 `w10-batch.nbt`。
+- **同一批 fixture（三筆，一份 journal）**：
+  - NEW：Nether 第一座原艙（Controller (8,70,8)、朝北）上真入場的 live session，在 operation guard 內直接經 ledger 選一扇 NEW 門（G-NLIVE 的寫法：M5 的側門互動拒絕 Nether 的新選擇，M4 沒有這條規則）。非 DORMANT：參與者在走廊、還沒有返還、有 lease（`liveNetherNewReceipt`，`RETURN_PLAYERS`、還沒有請求保留式 recovery）。這就是 M4 時期的 journal（schema 3）裡留在 Nether 的收據；重啟之後沒有 runtime。
+  - SOURCE：Nether 第二座原艙（Controller (24,70,8)）上的 DORMANT SOURCE 收據（G-NETHER 的寫法：參與者已返還、沒有 lease；參與者是真的玩家，restart 會 JOIN）。
+  - END：End 的 DORMANT NEW 收據（G-NDOR 的寫法：不蓋原艙、遠離主島 (5008,70,5008)，參與者是不會連線的 UUID、已返還）。
+- **crash（`w10-crash`，halt）**：`build`（關掉 `doMobSpawning`、以 probe 的 ticket 同步載入 Nether 的原艙附近、蓋兩座以石牆圍住的原艙（比照 `M5GameTestSupport.buildBunkerChamber`，隔開岩漿與地形）與紅石塊、`FIX.clearAroundTheOrigin`、連線兩位參與者並移到各自的門外）→ `registered` → `armed`（照 `FIX.arm` 在 Nether 以 LOW→HIGH 與 Buff 啟動，`armingFlushed`）→ `superposition`（358 扇側門、參與者在走廊）→ `receipts`（選 NEW 門、寫入另兩筆（`batchFlushed`：journal 恰為這三筆）、`recordReceipt`、`w10-batch.nbt`、原生存檔（`nativeSaveInTheCorridor`）、把 journal 換成 schema 3、裝上 `M4_RECEIPT_STEP`）→ `halt`。
+  - **schema 3 怎麼造、怎麼確認**：以全新的 `SessionRecoveryState`（只 put 這三筆：candidate 已初始化、沒有 M5 證據，production 的 `writtenSchema` 因此是 3；與 `recordReceipt` 的 receipt NBT 同一個寫法）寫出 envelope、加 DataVersion，寫到正式檔 `data/quantumchamber_sessions.dat`（同 legacy runner 的 `reloadEmptySchemaThree`，那裡是空的 schema 3）。確認：production 的 `SessionJournalStore.read` 讀回、`SessionRecoveryState.fromNbt` strict 解碼、`SchemaVersion`＝3、`m5Evidence()`＝false（production 自己判定不是 schema 4）、record exact（`schemaThreeJournalWritten`）；halt 之前再讀一次（`schemaThreeJournalAtHalt`，窗口表的 halt 之前取證：記憶體裡的 journal 已初始化 M5、寫出會是 schema 4，這證明這之間沒有任何寫出）；restart 開服時第三次（`schemaThreeJournalAtStart`：這次開服讀的就是 M4 時期的 journal）。
+  - **halt 而不是正常停服**：停服會存 playerdata、在 journal dirty 時重寫成 schema 4，probe 收下的連線也會斷線；halt 讓磁碟停在 fixture 寫完的那一刻。磁碟上是 M4 時期形式的只有 journal（schema 3）：allocation、projection、discovery 三個檔在 halt 時都已存在（JVM1 的 M5 初始化建立；`w10-crash/halt.json` 的 `disk.sha256`，catalog `quantumchamber_universes.dat` 不存在），W10 只關心 journal，ledger 缺檔的情況屬 W11。窗口 `M4_RECEIPT_STEP` 在 `CollapseService.step` 的開頭（新的 `CollapseServiceM4ReceiptWindowMixin`；既有的 `CollapseServiceCrashWindowMixin` 不改），條件是「MEASURED、來源 role 不是 OVERWORLD」（fresh 世界只有這一批）：probe 在塌縮流程那個 tick 之後才寫入，下一個 tick 塌縮流程開始處理其中任何一筆之前就 halt，所以 M5 從沒有處理過這批收據。窗口表的那一列只給條件與 halt 之前的取證，`AtRestart` 是 `resolved(NOTHING).withStateAtHalt(MEASURED)`（restart 不讀它，列的註解寫明）。halt 之前另斷言 NEW 的參與者的 playerdata 在走廊（`participantInTheCorridorOnDisk`）。
+- **restart（`w10-restart`，stop）**：開服時（第一個 tick 之前）：`readCrashReceipt`（乾淨的 halt、receipt NBT）＋`batchNbtIntact`、`batchDecoded`、`schemaThreeJournalAtStart`、`receiptsKeptAcrossTheRestart`（三筆 exact）、`recoveryRequestedByTheAttach`（NEW 沒有 runtime；attach 已重建走廊 space、`measuredRecoveryRequested`；參與者還沒有返還、有 lease、`RETURN_PLAYERS`）、`dormantReceiptsAtStart`、`nothingAllocatedAtStart`；裝上 journal 寫出的探針（同 G-NLIVE：NEW 是否寫出過 COLLAPSING、第一次寫成 DORMANT 的 tick；SOURCE 的 COLLAPSING 的 Destination）。之後：
+  1. `endCancelled`（`awaiting` 3 tick）：END 在開服之後的第一次觀察就取消（`dormantCancelledOnTheFirstObservation`：journal 與磁碟上都沒有、取消的 INFO 一則、沒有提交、沒有 WARN；§11.3 第 2 步「開服 attach 或執行期間皆同，不必等參與者」）。
+  2. `join`：NEW 的參與者 JOIN 在走廊、被攔截（`joinedInTheCorridor`、`participantBlockedUntilReturned`；拿掉 Buff，同 G-NLIVE）；SOURCE 的參與者 JOIN 在第二座艙外（`sourceParticipantJoinedOutside`）。
+  3. `returned`：M4 的保留式 recovery 返還到 Nether 的第一座艙內，record 仍是 MEASURED（`returnedWithoutCommitting`）。
+  4. `cancelled`：走廊清理、DORMANT 之後取消（`cancelledAfterTheRetainedRecovery`：磁碟上沒有、取消的 INFO 一則而且候選是 New、沒有「塌縮已提交」、從沒有寫出 COLLAPSING、先寫成 DORMANT）；原艙解除封鎖（`originUnblocked`，production 的判斷：presence NONE（`SuperpositionSessionManager.start` 拒絕新 session 的條件之一）、沒有 runtime 與來源 ticket、Controller 不是 ARMED、registry 的 power state 不是 RETURNING）；沒有人被困住（`nobodyTrappedAfterTheCancel`）。
+  5. `opened`：參與者在艙內照一般方式開門（`originDoorOpensNormally`：關著的門 → 一般開門）。
+  6. `sourceEntered`、`sourceCompleted`（`awaiting` 40 tick）：SOURCE 的參與者由艙外進入 → COLLAPSING（Destination SOURCE）→ SOURCE fast path → 終局（`sourceReceiptCompleted`：提交與「SOURCE 塌縮完成」各一則、沒有取消、門一般開門；`sourceChamberUnblocked`；`nobodyTrappedAtTheSource`）。
+  7. `end`：spec §12 的四件事（下一段）與 `noSessionError`（三個 session 從開服起沒有 WARN／ERROR）。
+  - 每個 tick：`catalogUnchangedEveryTick`、`newReceiptNeverCommitted`。
+  - **spec §12 的四件事**：同一個 UniverseId——NEW 與 END 取消、不配置宇宙，所以沒有任何 UniverseId（`nothingAllocated`：allocation ledger、projection ledger 空、discovery 與開服時相同、NEW 推導出的 U 沒有物化），SOURCE 的目的地是來源世界（`sourceReceiptCompleted` 的 Destination）；catalog 最多多 1 筆——恰為 0（`catalogUnchanged`、每個 tick 的 `catalogUnchangedEveryTick`）；沒有重抽——開服時三筆 exact、取消從不提交也不經 RESOLVE；沒有人被困住——兩位參與者都在各自的原艙、不被攔截，END 的參與者不會連線（收據裡已返還），不適用。
+  - **不以 probe 的 ticket 載入 Nether 的原艙**：NEW 的返還要來源 Controller 的 chunk 已載入（`SuperpositionSessionManager.sourceAuthority`），這由 attach 為它取得的來源 ticket 給（`newSourceTicketAtStart`＝true，proof；開服當下 chunk 還沒有載入，`newChamberLoadedAtStart`＝false）；SOURCE 的觸發靠參與者 JOIN 之後自己的 ticket。都是 production 的路徑。
+- dev run（未 commit 的工作樹，不採計，root 保留）：`dev-w10-1` runId `20a3b998577d45baada46f6c3acbd62c`（crash 的 `recordReceipt` NPE：W10 的原艙不經 `registered()`，fixture 的 chamber 是 null → `adopt` 也由收據設原艙）、`dev-w10-2` `3ea6a869fc6d4a63a9f97b0912166d43`（restart FAIL 在 `recoveryRequestedByTheAttach`：我原本也要求「沒有來源 ticket」，但 attach 會為 live MEASURED 取得來源 ticket（M4 的保留式 recovery 要它）→ 改為只記 proof，並拿掉原本以 probe 的 ticket 預先載入 Nether 的作法）、`dev-w10-3` `46e88fa1bc6e45ba9525d1df0ffd8821`（PASS）。這兩處是我的預期錯了，不是 production 與 spec 不符。
+
+### B 段 mutation（`e31802a`，乾淨的工作樹；`f62e1/mutations.ps1`、`mutations2.ps1`）
+
+| mutation（`adapters_f62e1.py`，`CollapseService`） | 改動（old 字串各恰一次） | 結果 |
+| --- | --- | --- |
+| `mut-no-unsupported-cancel` | `measuredAction` 不回 `CANCEL_UNSUPPORTED`（取消路徑整個不執行） | runId `acc65f5b34b346e3bb23c3f959eb20a0`：`w10-crash` HALT；`w10-restart` **FAIL 在 `newReceiptNeverCommitted`**（「NEW 寫出過 COLLAPSING=true state=COLLAPSING」：NEW 照常提交，在第一個 tick 的不變量就失敗，早於 END 的取消斷言） |
+| `mut-live-unsupported-commits` | 只有 DORMANT 的 Nether／End 收據走取消路徑（呼叫端多一個 `phase == DORMANT`），非 DORMANT 的照常提交 | runId `e2fe1dd21e8a4bfd8fa476e5f237a5f2`：**FAIL 在 `newReceiptNeverCommitted`**（同上的訊息） |
+| `mut-unsupported-stays-dormant`（補的第 4 個） | 取消路徑在 DORMANT 之後不終局（停在 DORMANT） | runId `a3f36b5752e64c8c852a7ebd92750cfd`：**FAIL 在 `dormantCancelledOnTheFirstObservation`**（「開服之後 3 個 tick：END 已取消=false 取消的 INFO=0」） |
+| `mut-source-cancelled` | `unsupportedSource` 把 SOURCE 也算進去 | runId `c2d6a1ab69244c20bd951a9e44ea1d0d`：**FAIL 在 `sourceReceiptCompleted`**（「進入之後 40 個 tick：已終局=false 提交=0 SOURCE 完成=0 取消=0」：取消路徑的 `terminate(UNSUPPORTED_SOURCE_CANCEL)` 被 journal 的終局起點檢查拒絕（WARN「終局起點不合法」、依退避重試），SOURCE 沒有完成） |
+
+- 四次都由 `red.ps1` 的 finally 以 `adapter.py restore` 還原、以 `git hash-object` 核對；`m-*-restored-state.txt` 的 HEAD 都是 `e31802a`、porcelain 空。摘要（含 runId）在 `m-*-mutsum.txt`。
+- `mut-no-unsupported-cancel` 失敗在每個 tick 的不變量（NEW 的「不提交 COLLAPSING」，§11.3 第 1 步），不在 END 的取消斷言，所以另補 `mut-unsupported-stays-dormant` 證明「停在 DORMANT」也失敗在取消的斷言。
+
+### GREEN
+
+- 乾淨的 `e31802a`（porcelain 空，`f62e1/green-*-probe-state.txt`）上連跑兩次，都是 **63/63 PASS**（halt 29）：
+  - `green-1`：runId `3a25a07857584eb4b9ca2409d35b31a6`（13:15～13:33）。
+  - `green-2`：runId `cc3922f38bf4441baef0b616fefcc2e1`（13:33～13:51）。
+- 新的兩個 phase 兩次都全部成立：`w10-crash` HALT（12 個斷言）、`w10-restart` PASS（32 個斷言）。
+
+### 具名斷言的比對
+
+- 以 Step 0 的 green-2 `780cb55f3f8f4daa999afffae7261e92` 為基準、改名表 `f62e1/renames.json`，`names2.py`：兩次都是 `RESULT=OK`（`green-1-vs-s0green2-names.txt`、`green-2-vs-s0green2-names.txt`）：61 個 phase 既有的斷言全部仍在、全部成立，**step 清單全部相同**，既有的 phase 沒有新增的斷言；多出的 phase 只有 `w10-crash`、`w10-restart`（不比較，見上一小節）。`green-2` 對 `green-1`（不用改名表，63 個 phase 都比）也是 `RESULT=OK`（`green-2-vs-green-1-names.txt`）。
+- **改名對照（A 第 3 點，`71baf5f`）**：
+
+  | phase | 基準 | 本節 | 理由 |
+  | --- | --- | --- | --- |
+  | `w7-restart`、`terminaldoor-restart` | `passableDoorOnDiskAtRestart`（`passageOnDiskAtRestart` 的一部分） | `doorAsExpectedAtStart`（`withDoorAtStart(PASSABLE_MEMBRANE)`） | 開服時門的預期只以 `withDoorAtStart` 宣告；判斷相同（同一個 `doorOnDisk`）。`passageControllerOnDiskAtRestart` 仍由 `passageOnDiskAtRestart` 斷言 |
+
+  順序：這兩個 phase 的 `order=DIFF` 只是這個斷言的位置（`orderdiff2.py` 的索引，由 0 起算；`w7-restart`：基準在索引 18（`projectionCompleteOnDisk` 之後）→ 本節在索引 21（`othersPlayerDataInTheSource` 之後）；`terminaldoor-restart`：索引 14 → 15（`passageControllerOnDiskAtRestart` 之後））；`orderdiff2.py` 核對拿掉它之後其餘順序相同（`relay-green-1-orderdiff.txt`、`relay-green-2-orderdiff.txt`：`RESULT=OK`；A 段 GREEN 的同一核對是 `a-green-orderdiff.txt`）。
+- `green-1` 另有 `w8late-restart` 的 `order=DIFF`（對基準；`green-2` 對 `green-1` 也只有它）：每個 tick 的不變量 `sameDestination` 與 `participantInSourceOrUniverse` 第一次斷言的先後對調，名稱與值都相同。這是 Step 0 一節記錄的 H7 已知 chunk 載入時序差異，不是本節的改動：B2b 的 green-2 `12349c6a…` 與 `green-1` 是 `participantInSourceOrUniverse` 在前（索引 27，`sameDestination` 在 28），Step 0 的 green-2 `780cb55f…`（本節的基準）與 `green-2` 是 `sameDestination` 在前（Step 0 一節記錄的較早提交的那一種）。
+
+### 完整回歸（run-all）
+
+- 所有 commit（README `e31802a`）之後，由接力的 implementer 在乾淨的 `e31802a`（`f62e1/relay-start-state.txt`、`relay-run-all-1-state.txt`）跑一次，第一次就通過：
+  - **`run-all-1`＝`run-all-c5ae8a9c99864711b4581bdb0dcbab2b`：`END ALL exit=0 HEAD=e31802a`**（13:55～14:30，`f62e1/relay-run-all-1-console.txt`），SUMMARY `default=178/178 windows=89 legacy=1/1 m5=60/60 perTest=55+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=63 ci=win:PASS,ubuntu:PASS`（m5-collapse 的 probe runId `3391f36d8aec411f864b7a44e2db5306`，63 PASS、halt 29）。
+- 與基準 `run-all-315106e8f9f94b0ba017dffa09c24f50`（Step 0 的 run-all-4，`9c184e8`）逐項比較（`f62e1/runall-compare.ps1 -Prefix relay-runall1-`，`relay-runall1-*.txt`）：
+
+  | 項目 | 基準 | run-all-1 | 判讀 |
+  | --- | --- | --- | --- |
+  | default／windows／legacy／M5 GameTest | 178/178、89、1/1、60/60 | 相同；testcase 集合 `identical=True`（`relay-runall1-default-setcmp.txt`、`-m5-setcmp`、`-legacy-setcmp`） | 相同 |
+  | perTest、JUnit | 55+1、666（664 PASS、2 SKIPPED） | 相同（`relay-runall1-junit-setcmp.txt`） | 相同 |
+  | windowsCheckpoint、M3、recovery | 17、4+5、24 | 相同 | 相同 |
+  | m5collapse | 61（halt 28） | **63（halt 29）** | 預期的差異：多出 `w10-crash`（halt）、`w10-restart`。具名斷言對 `green-1` `3a25a078…`（`names2.py`，不用改名表）：`RESULT=OK`，63 個 phase 的斷言與 step 清單全部相同、順序全部相同（`relay-runall1-vs-green1-names.txt`） |
+  | release JAR | 432 entries／385 classes、SHA-256 `c20bc00f…` | 相同、SHA-256 相同 | 相同（本節沒有改 `src/main/`）；`testmodHits=0`、`mainOnly=PASS`。本節新增的 `CollapseServiceM4ReceiptWindowMixin`、`M5CollapseUnsupportedChain` 與 split package 的 `OriginDoorsTestAccess` 在 release／sources JAR 都沒有出現（entry 名稱的檢查 0 筆；`relay-runall1-jarcmp-*.txt` 的 entry 集合也與基準相同） |
+  | sources JAR | 226、`b252baf1…` | 226、`66a9a11b…` | 內容相同：`contentDiffers=0`、順序相同，只有 226 筆的 `date_time`／`extra`（zip 中繼資料）不同（`relay-runall1-zipmeta-sources.txt`） |
+  | Full WARN／ERROR | 54／31 | 54／31 | 相同；排序後沒有差異（`relay-runall1-wbcmp-full.txt`） |
+  | legacy WARN／ERROR | 0／0 | 0／0 | 相同 |
+  | M5 WARN／ERROR | 38／10 | 38／10 | 相同；排序後的差異只有兩則訊息裡的物件位址與座標（`relay-runall1-wbcmp-m5-gametest.txt`） |
+  | pin 計數、worldgen | `pinOver=4 leaseWait=9 recoveryPending=4` | 相同，每個 batch 的計數也相同，只差行號與 session id（`relay-runall1-pincount.txt`、`-pincount-base.txt`）；probe 的 63 個 phase 與 32 個 root 沒有 chunk 生成的例外（`relay-runall1-worldgencheck.txt`） | 相同 |
+
+  預期的差異只有 `m5collapse` 的 61 → 63、halt 28 → 29，實際也只有它。沒有遇到已知偶發；run-all 沒有跨過午夜，不必合併輪替的 log。
+- 本節的 commit 之後再跑一次（新 label），結果記在 `f62e1/STATUS.md`。
+
+### 偏離派工字面之處
+
+1. **README 另改了類別表的幾列**（`M5CollapseFixture`、`M5CollapseWindows`、`M5CollapseRestartChains`、`M5CollapseDoorChains`、`M5CollapseDoors`），都在「M5 collapse probe」一節內，描述本節的改動。
+2. **A 第 5 點的可選項做了**（`UNSPECIFIED` → `Optional`），併在第 3 點的 refactor commit（同是門狀態的對應）。
+3. **`FIX.adopt` 也設原艙**（W10 的原艙不經 `registered()`）：其他 chain 在那之前已由 `registered()` 設成同一個值，restart 的 `readCrashReceipt` 原本就在 `adopt` 之後設它，行為不變。
+4. **mutation 多一個**（`mut-unsupported-stays-dormant`），理由見上。
+5. **`c3` 的編譯跑了兩次**：第一次之後拿掉 `M5CollapseDoors` 一個沒用的 import，我刪掉第一次的 log 以同一個 label 重寫（只是編譯取證，不是 gate／probe）；第二次的內容就是 `7940501`。
+
+### 有沒有 production 與 spec 不符之處
+
+- 沒有。W10 的 restart 照 §11.3：不提交 COLLAPSING、經 M4 的保留式 recovery 到 DORMANT、一觀察到 flushed DORMANT 就 checked 終局並記 INFO、不配置宇宙、原艙解除封鎖；開服 attach 時就是 DORMANT 的 END 也在第一次觀察就取消；SOURCE 照 §7.1／§7.4 完成。順帶觀察到的 production 行為（不是 spec 的要求，只記下）：attach 為 live MEASURED 取得來源 ticket；塌縮流程在 attach 已請求 recovery 時不記「不提交 COLLAPSING」的 INFO（`notCommittingInfo`＝0）；`terminate(UNSUPPORTED_SOURCE_CANCEL)` 拒絕 SOURCE 的收據（第二道防線，mutation `mut-source-cancelled` 看到）。
+
+### 需要裁示
+
+- 請 reviewer 確認：W10 的三筆設計（NEW 為 live、SOURCE 與 END 為 DORMANT，END 不蓋原艙）、halt 而不是正常停服、以全新的 `SessionRecoveryState` 寫出 schema 3 的作法；窗口表的 `M4_RECEIPT_STEP` 一列只給條件與取證（restart 不讀它的 `AtRestart`）；A 第 1 點 restart 不再清一次的理由。
+
+### 交給後續
+
+- **F6-2e-2**（W11、W12）：W11 也不套 `RCH.crash`（沒有收據）；W10 的 schema 3 寫法（全新的 `SessionRecoveryState` 寫出 envelope、`expectSchemaThreeOnDisk` 讀回）可以沿用，W11 另要讓 ledger 缺一個。W12 是 `crash(dormantNewSetup(), …)` 的典型用法。
+- **F6-3**：沒有新的 GameTest、CI 明列清單不變（probe 不在 CI）。偶發的 `passage_power_loss_skips_the_one_who_crossed` 預載逾時仍交 F6-3。
+- **F7**：沒有新的 production 文件事項。
+- **A 第 1 點的清理沒有涵蓋的情況**（spec review M-8，只記下）：`FIX.clearAroundTheOrigin` 之後才載入的 chunk 裡的 entity，以及之後從 ±32 格外走進來的動物，都不會被清到；spec review 判定實際風險低。
+
+### root（全部保留）
+
+- 編譯：`f62e1/c1`～`c5`、`b1`、`b2`、`b2-dev2`、`b2-dev3-compile.log`。
+- probe：RED `a1186d60…`（FAIL，預期）、RED 的情境修正後 `18a68b7e…`；A 段 GREEN `6241b6cc…`；dev run `20a3b998…`、`3ea6a869…`、`46e88fa1…`（不採計）；mutation 見上表；GREEN `green-1`＝`3a25a07857584eb4b9ca2409d35b31a6`、`green-2`＝`cc3922f38bf4441baef0b616fefcc2e1`（`e31802a`，63/63）。
+- run-all：`run-all-1`＝`run-all-c5ae8a9c99864711b4581bdb0dcbab2b`（`END ALL exit=0`，採計；接力的 implementer 跑）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
+- 結束過的程序：沒有（probe 沒有遇到逾時處置；沒有手動處置任何世界）。
+- 取證腳本（`f62e1/`，由 `f6/f62es0/` 複製的每檔第一行加本輪註解）：`state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-315106e8f9f94b0ba017dffa09c24f50`，`base-*-summary.txt` 是 `f62es0/runall4-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f62e1`）、`mutsum.py`、`names2.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-*.py`、`orderdiff.py`、`stepticks.py`、`entitylist.py`、`mutations.ps1`（改成本輪的 3 個）；本輪新寫：`adapters_f62e1.py`、`mutations2.ps1`、`orderdiff2.py`、`renames.json`。接力的 implementer 沒有新寫腳本，取證輸出以 `relay-` 為前綴（`relay-start-state.txt`、`relay-green-*-orderdiff.txt`、`relay-run-all-*`、`relay-runall1-*`、本節的工作稿 `relay-note-section.md`）。
