@@ -140,7 +140,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
   - **H9 已完成（2026-10-14）**：range `0600a1e..b217fb3`；production 是 `OriginDoors`（SEALED 重試丟棄關門時，帶量子膜的門改為一般開門）與 `CollapseService`（開服時就是永久原因 SEALED 的 session，每個 server instance 記一次提醒 ERROR）；三個新的 default run GameTest；probe `trr-restart` 改斷言這則提醒；spec review ✅、quality review Approved；完整回歸 `run-all-3e23abaf27da4abbb8ab21062e410aeb` 為 `END ALL exit=0`（`b217fb3`）。途中一次 run-all 的失敗歸為與 H9 無關的新已知偶發（default run 某個 test 不收尾 → 走廊 pin 上限連坐 → gate 逾時）。
   - **F6-2d-2 B1 已完成（2026-10-14）**：range `81ec928..2aca627`；A 段 review 的修正（I-1 經複審關閉）、共用基底 `M5CollapseRestartChains`、新 chain `waitingdoor`、`preparedoor` 與 w2／w3／w5 的關門斷言（`m5collapse=53`）；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-f22f66b3ce5446509bce2230eee7baf5` 為 `END ALL exit=0`（`2aca627`）。
   - **F6-2d-2 B2 已完成（2026-10-15），F6-2d-2 完成**：range `d76b319..80a0361`（兩次接力）；B1 review 的整理、新 chain `sealclose`、`sealdoorway`、`sealmembrane`、`sealmembranejoined`（`m5collapse=61`）；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-308601e65c4b40a69dd04cbec9a5bf87` 為 `END ALL exit=0`（`80a0361`）。「門口的 entity storage 還沒載入時不關門」跨 JVM 量不到，由同 JVM 的 F4b-3 GameTest 守住（以 mutation 實測確認）。
-  - 之後依序是：F6-2e（先做 Step 0：B2 review 的整理）、F6-3 → F7 → milestone 收尾。
+  - **F6-2e Step 0 已完成（2026-10-15）**：range `a747396..9c184e8`；B2 review 的整理（只改 testmod 與文件）；spec review ✅、quality review Approved；完整回歸 `run-all-315106e8f9f94b0ba017dffa09c24f50` 為 `END ALL exit=0`（`9c184e8`）。
+  - 之後依序是：F6-2e-1（Step 0 review 的整理＋W10）、F6-2e-2（W11、W12）、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

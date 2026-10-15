@@ -809,6 +809,10 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - PREPARE 中重啟的重新套用；
     - SEALED 帶著量子膜時重啟。
   - **F6-2e：schema 3 與 fault 注入。**
+    - controller 2026-10-15 拆成三次派工，各自走完 implementer → spec review → quality review：
+      - **F6-2e Step 0**：F6-2d-2 B2 review 留下的整理（crash 骨架移到基底、`OriginDoorState`、`awaiting` 的 `eachTick` 等），不新增窗口。已完成（2026-10-15，spec review ✅、quality review Approved）。
+      - **F6-2e-1**：Step 0 review 交下的整理（含 sealdoorway 把世界生成的動物也算進門口的測試缺陷、README 的過時說法），W10。
+      - **F6-2e-2**：W11、W12，評估 F6-1 spec review 的 Minor 3 與 Minor 5。
     - W10；
     - W11；
     - W12；
