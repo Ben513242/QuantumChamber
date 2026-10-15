@@ -341,6 +341,10 @@ final class M5CollapseRun {
         startupLog = new LogCapture("quantumchamber");
         onStopped(startupLog);
         phase = factory.create(this);
+        // F6-2e-2（W11）：結束方式與 step 清單在建立 phase 時就記下（原本在 started）：crash 點可以在開服之前裝上、窗口在 started 之前成立，halt receipt 也要有它們
+        // （m5-collapse-probe.ps1 比對 ending）。之前的 phase 的 receipt 內容不變，只是鍵的位置提前。
+        proof.put("ending", phase.ending().name());
+        proof.put("steps", phase.steps().stream().map(Step::name).toList());
         try {
             phase.beforeStart.run();
         } catch (Exception | Error failure) {
@@ -369,8 +373,6 @@ final class M5CollapseRun {
             journal = SessionRecoveryState.get(owner);
             capture = new LogCapture("quantumchamber");
             require(failures.isEmpty(), "啟動前的檢查失敗：" + failures);
-            proof.put("ending", phase.ending().name());
-            proof.put("steps", phase.steps().stream().map(Step::name).toList());
             phase.started.run();
             event("started");
         });

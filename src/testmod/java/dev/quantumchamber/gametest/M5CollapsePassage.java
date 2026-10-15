@@ -2,6 +2,7 @@ package dev.quantumchamber.gametest;
 
 import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
+import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.ProjectionLedger;
@@ -353,14 +354,17 @@ final class M5CollapsePassage {
         private final List<M5CollapseDiskEvidence.Allocation> otherAllocations;
         /** 開服時的提醒記的永久原因（F6-2d-2 B1）：恰在 {@link SessionErrors#STARTUP_REMINDER} 時不是 null。 */
         private final SealedReason remindedReason;
+        /** discovery 在 U 之前另有的 record（F6-2e-2，W11：M4 時期就有的 fixture）；預設沒有。 */
+        private final List<UniverseDiscoveryRecord> earlierDiscovery;
 
         private End(M5CollapseFixture fixture, int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, SessionErrors sessionErrors,
                 boolean authorityInitialized, List<M5CollapseDiskEvidence.Allocation> otherAllocations) {
-            this(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, otherAllocations, null);
+            this(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, otherAllocations, null, List.of());
         }
 
         private End(M5CollapseFixture fixture, int catalogGrowth, ProjectionAtEnd projection, Map<UUID, Place> places, SessionErrors sessionErrors,
-                boolean authorityInitialized, List<M5CollapseDiskEvidence.Allocation> otherAllocations, SealedReason remindedReason) {
+                boolean authorityInitialized, List<M5CollapseDiskEvidence.Allocation> otherAllocations, SealedReason remindedReason,
+                List<UniverseDiscoveryRecord> earlierDiscovery) {
             this.fixture = Objects.requireNonNull(fixture, "fixture");
             this.catalogGrowth = catalogGrowth;
             this.projection = Objects.requireNonNull(projection, "projection");
@@ -372,6 +376,7 @@ final class M5CollapsePassage {
                 throw new IllegalArgumentException("End：開服時的提醒的原因只跟著 STARTUP_REMINDER（sessionErrors=" + sessionErrors + " remindedReason=" + remindedReason + "）");
             }
             this.remindedReason = remindedReason;
+            this.earlierDiscovery = List.copyOf(earlierDiscovery);
         }
 
         /** 每位參與者（依清單順序）都在 {@code place}。 */
@@ -411,7 +416,7 @@ final class M5CollapsePassage {
                 if (!next.containsKey(id)) throw new IllegalArgumentException("End 沒有這位參與者：" + id);
                 next.put(id, place);
             }
-            return new End(fixture, catalogGrowth, projection, next, sessionErrors, authorityInitialized, otherAllocations, remindedReason);
+            return new End(fixture, catalogGrowth, projection, next, sessionErrors, authorityInitialized, otherAllocations, remindedReason, earlierDiscovery);
         }
 
         /**
@@ -420,8 +425,20 @@ final class M5CollapsePassage {
          */
         End withOtherAllocations(List<M5CollapseDiskEvidence.Allocation> others) {
             if (others.isEmpty()) throw new IllegalArgumentException("withOtherAllocations 至少要有一筆");
-            return new End(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, others, remindedReason);
+            return new End(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, others, remindedReason, earlierDiscovery);
         }
+
+        /**
+         * 同這一份，discovery 在 U 之前另有 {@code earlier}（依 ordinal；F6-2e-2，W11：M4 時期就有的 discovery record，spec §6「M4 時期 discovery 已經非空的存檔」）。終局改以
+         * {@code destinationDiscoveredAfterTheEarlier} 斷言 discovery：恰為 {@code earlier} 再接 U 一筆（gameplay eligible），取代 {@code onlyTheDestinationDiscovered}。
+         */
+        End withEarlierDiscovery(List<UniverseDiscoveryRecord> earlier) {
+            if (earlier.isEmpty()) throw new IllegalArgumentException("withEarlierDiscovery 至少要有一筆");
+            return new End(fixture, catalogGrowth, projection, places, sessionErrors, authorityInitialized, otherAllocations, remindedReason, earlier);
+        }
+
+        /** discovery 在 U 之前另有的 record（預設沒有）。 */
+        List<UniverseDiscoveryRecord> earlierDiscovery() { return earlierDiscovery; }
 
         /**
          * 同這一份，但這個 session 開服時就是永久原因 {@code reason} 的 SEALED（H9 (b)，spec v5.10 §11.2「永久原因」、§12 SEALED 列；F6-2d-2 spec review 的 M-2）：這個 session 從
@@ -435,7 +452,8 @@ final class M5CollapsePassage {
         End withStartupReminder(Reminder reminder) {
             Objects.requireNonNull(reminder, "reminder");
             if (sessionErrors != SessionErrors.NONE) throw new IllegalStateException("withStartupReminder 只接在沒有其他 ERROR 的 End 之後：" + sessionErrors);
-            return new End(fixture, catalogGrowth, projection, places, SessionErrors.STARTUP_REMINDER, authorityInitialized, otherAllocations, reminder.reason());
+            return new End(fixture, catalogGrowth, projection, places, SessionErrors.STARTUP_REMINDER, authorityInitialized, otherAllocations, reminder.reason(),
+                    earlierDiscovery);
         }
 
         /**
@@ -481,8 +499,15 @@ final class M5CollapsePassage {
         if (end.otherAllocations().isEmpty()) fixture.expectOneAllocation();
         else fixture.expectAllocationsWithOthers(end.otherAllocations());
         var discovery = M5CollapseDiskEvidence.discovery(run.saveRoot());
-        run.expect("onlyTheDestinationDiscovered", discovery.size() == 1 && discovery.getFirst().universeId().equals(universe) && discovery.getFirst().gameplayEligible(),
-                () -> "discovery=" + discovery);
+        var earlier = end.earlierDiscovery();
+        if (earlier.isEmpty()) {
+            run.expect("onlyTheDestinationDiscovered", discovery.size() == 1 && discovery.getFirst().universeId().equals(universe) && discovery.getFirst().gameplayEligible(),
+                    () -> "discovery=" + discovery);
+        } else {
+            // F6-2e-2（W11）：M4 時期就有的 record 之後恰多 U 一筆（不碰既有的 record）。
+            run.expect("destinationDiscoveredAfterTheEarlier", discovery.size() == earlier.size() + 1 && discovery.subList(0, earlier.size()).equals(earlier)
+                    && discovery.getLast().universeId().equals(universe) && discovery.getLast().gameplayEligible(), () -> "discovery=" + discovery + "，之前應有 " + earlier);
+        }
         if (end.projection() == ProjectionAtEnd.COMPLETE) {
             run.expect("projectionComplete", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                     () -> "projection ledger=" + fixture.projectionsOrError());

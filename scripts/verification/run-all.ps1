@@ -232,7 +232,8 @@ Step 'summary' {
         'waitingdoor:waitingdoor-crash:halt:READY_HELD','waitingdoor:waitingdoor-restart:stop:','preparedoor:preparedoor-crash:halt:READY_HELD','preparedoor:preparedoor-restart:stop:',
         'sealclose:sealclose-crash:halt:UNREADABLE_SEALED','sealclose:sealclose-restart:stop:','sealdoorway:sealdoorway-crash:halt:UNREADABLE_SEALED_DOORWAY','sealdoorway:sealdoorway-restart:stop:',
         'sealmembrane:sealmembrane-crash:halt:PROJECTION_SEALED','sealmembrane:sealmembrane-restart:stop:','sealmembranejoined:sealmembranejoined-crash:halt:PROJECTION_SEALED',
-        'sealmembranejoined:sealmembranejoined-restart:stop:','w10:w10-crash:halt:M4_RECEIPT_STEP','w10:w10-restart:stop:')
+        'sealmembranejoined:sealmembranejoined-restart:stop:','w10:w10-crash:halt:M4_RECEIPT_STEP','w10:w10-restart:stop:',
+        'w11:w11-setup:stop:','w11:w11-crash:halt:FIRST_LEDGER_CREATED','w11:w11-unreadable:stop:','w11:w11-restart:stop:')
     $observedCollapse=@($collapsePhases | ForEach-Object {($_.nonce -replace '^[0-9a-f]{32}-','')+':'+$_.phase+':'+$_.ending+':'+$_.window})
     if(($observedCollapse -join ',') -cne ($expectedCollapse -join ',')){throw "M5 collapse phases 不符：$($observedCollapse -join ',')"}
     if(@($collapsePhases | ForEach-Object {"$($_.javaPid)@$($_.javaStartTimeUtc)"} | Sort-Object -Unique).Count -ne $collapsePhases.Count){throw 'M5 collapse phases 必須各自使用不同 JVM (PID, StartTime)'}

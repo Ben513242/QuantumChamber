@@ -30,7 +30,8 @@ import net.fabricmc.api.ModInitializer;
  *     {@link M5CollapseRestartChains}）；投影 chunk 的載入
  *     與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。
  *     {@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。{@link M5CollapseUnsupportedChain}（F6-2e-1：W10，M4 時期的 Nether／End 收據跨真重啟；
- *     不經 {@link M5CollapseRestartChains} 的 crash 骨架）。</li>
+ *     不經 {@link M5CollapseRestartChains} 的 crash 骨架）。{@link M5CollapseInitChain}（F6-2e-2：W11，M4 時期的 schema 3 存檔第一次以 M5 開服、初始化只建立一個 ledger 就 crash；
+ *     setup、crash、兩次重啟四個 phase，也不經那份骨架）。</li>
  * </ul>
  * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}（設定 {@code M5CollapseRun.Configuration} 與 factory 的型別都在 runner，F6-2c Step 0：runner 不依賴 entrypoint）。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
@@ -127,6 +128,12 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         // restart：NEW 經 M4 的保留式 recovery → DORMANT → 取消，END 開服之後就取消，SOURCE 正常完成。
         table.put("w10-crash", run -> new M5CollapseUnsupportedChain(run).crash());
         table.put("w10-restart", run -> new M5CollapseUnsupportedChain(run).restart("w10-crash"));
+        // F6-2e-2（spec §12 W11，F6-2-05）：M4 時期的 schema 3 存檔（discovery 非空）第一次以 M5 開服，M5 authority 初始化只建立了 allocation ledger 就 crash；第一次重啟時讀既有的 ledger 失敗、
+        // 不建立缺少的那一個，第二次重啟補建、不被判為遺失，之後第一次 NEW 照常到達 READY、跨越、終局。
+        table.put(M5CollapseInitChain.SETUP, run -> new M5CollapseInitChain(run).setup());
+        table.put(M5CollapseInitChain.CRASH, run -> new M5CollapseInitChain(run).crash());
+        table.put(M5CollapseInitChain.UNREADABLE, run -> new M5CollapseInitChain(run).unreadable());
+        table.put(M5CollapseInitChain.RESTART, run -> new M5CollapseInitChain(run).restart());
         return Collections.unmodifiableMap(table);
     }
 

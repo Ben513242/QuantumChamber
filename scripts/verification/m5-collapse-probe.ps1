@@ -88,6 +88,8 @@ $chains = [ordered]@{
     'sealmembranejoined' = @(@{phase='sealmembranejoined-crash'; ending='halt'; window='PROJECTION_SEALED'}, @{phase='sealmembranejoined-restart'; ending='stop'; window=''})
     # F6-2e-1（W10）：M4 時期的 Nether／End 收據（schema 3 的 journal），M5 第一次處理之前 crash；restart 取消 NEW、完成 SOURCE。
     'w10' = @(@{phase='w10-crash'; ending='halt'; window='M4_RECEIPT_STEP'}, @{phase='w10-restart'; ending='stop'; window=''})
+    # F6-2e-2（W11）：M4 時期的 schema 3 存檔第一次以 M5 開服，初始化只建立 allocation ledger 就 crash；第一次重啟讀既有的 ledger 失敗、不補建，第二次重啟補建、不判為遺失，NEW 到達 READY。
+    'w11' = @(@{phase='w11-setup'; ending='stop'; window=''}, @{phase='w11-crash'; ending='halt'; window='FIRST_LEDGER_CREATED'}, @{phase='w11-unreadable'; ending='stop'; window=''}, @{phase='w11-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

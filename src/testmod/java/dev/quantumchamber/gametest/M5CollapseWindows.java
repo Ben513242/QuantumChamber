@@ -529,6 +529,10 @@ final class M5CollapseWindows {
         // NEW 的參與者的 playerdata 在走廊。W10 的 restart 是專屬的 phase，不經 expectAtRestart（它的開服斷言假設 DORMANT 或塌縮狀態的單一 session）：F6-2e-2 起這一列以 dedicatedRow
         // 加入、沒有 AtRestart（F6-2e-1 宣告的那一份 restart 不讀），開服時的斷言在 M5CollapseUnsupportedChain.started。
         dedicatedRow(rows, CrashWindow.M4_RECEIPT_STEP, M5CollapseUnsupportedChain::m4ReceiptStep, M5CollapseUnsupportedChain::m4ReceiptsAtHalt);
+        // ---- F6-2e-2：W11（chain 在 M5CollapseInitChain） ----
+        // M4 時期的 schema 3 存檔第一次以 M5 開服：M5 authority 初始化建立 allocation ledger 之後、建立 projection ledger 之前（開服時，早於任何 tick）。halt 之前只有 allocation ledger（空的）、
+        // journal 仍是 schema 3、discovery 沒有被碰過。restart 是專屬的 phase（w11-unreadable、w11-restart），不經 expectAtRestart。
+        dedicatedRow(rows, CrashWindow.FIRST_LEDGER_CREATED, M5CollapseInitChain::firstLedgerCreated, M5CollapseInitChain::oneLedgerAtHalt);
         return Collections.unmodifiableMap(rows);
     }
 
@@ -1433,6 +1437,7 @@ final class M5CollapseWindows {
             case M5TestHooks.Termination termination -> "origin=" + termination.origin() + " from=" + termination.expected().state() + " session="
                     + termination.expected().sessionUuid() + " status=" + termination.result().status();
             case M5TestHooks.ReadyHeld held -> "readyHeld session=" + held.view().sessionUuid() + " state=" + held.view().state();
+            case M5TestHooks.LedgerCreation creation -> "allocation=" + creation.allocation() + " projection=" + creation.projection();
             case SessionRecoveryRecord record -> "step session=" + record.sessionUuid() + " state=" + record.state()
                     + " sealed=" + record.collapse().sealedReason().map(Enum::name).orElse("-");
             case CollapseAuthorities.Lookup<?> lookup -> "status=" + lookup.status() + " value=" + lookup.value().map(String::valueOf).orElse("-");
