@@ -82,6 +82,13 @@ final class M5CollapseUnsupportedChain {
     private static final int FIRST_OBSERVATION_TICKS = 3;
     /** SOURCE 的參與者進入之後，最多等幾個 tick 到終局（同 G-NETHER 的 40）。 */
     private static final int SOURCE_WAIT_TICKS = 40;
+    /**
+     * NEW 的參與者 JOIN 之後，最多等幾個 tick 返還到 Nether 的原艙（step {@code returned}）。F6-2e-2（F6-2e-1 quality Minor 3）：原本是手寫等待的 {@code Step} 上限 200（到時是
+     * stepBounded），改經 {@link M5CollapsePassage#awaiting}，上限同為 200（第 1～200 個 tick 判斷、第 200 個 tick 仍沒有返還時由具名斷言判 FAIL）。
+     */
+    private static final int RETURN_WAIT_TICKS = 200;
+    /** 返還之後，最多等幾個 tick 取消（step {@code cancelled}）；同 {@link #RETURN_WAIT_TICKS}，原本是手寫等待的上限 400。 */
+    private static final int CANCEL_WAIT_TICKS = 400;
     /** 三筆收據（{@link SessionRecoveryState}，schema 3）的 evidence 檔；restart 讀回比對「沒有重抽」。 */
     static final String BATCH_NBT = "w10-batch.nbt";
     private static final String CANCELLED = "不支援的來源維度，已安全取消";
@@ -323,8 +330,8 @@ final class M5CollapseUnsupportedChain {
         return Phase.stop(List.of(
                         M5CollapsePassage.awaiting("endCancelled", FIRST_OBSERVATION_TICKS, () -> gone(endReceipt), this::dormantCancelledOnTheFirstObservation),
                         new Step("join", 1, this::joinBoth),
-                        new Step("returned", 200, this::returnedToTheNetherChamber),
-                        new Step("cancelled", 400, this::cancelledAfterTheRetainedRecovery),
+                        M5CollapsePassage.awaiting("returned", RETURN_WAIT_TICKS, this::returnedToTheNether, this::returnedWithoutCommitting),
+                        M5CollapsePassage.awaiting("cancelled", CANCEL_WAIT_TICKS, () -> gone(fixture.receipt()), this::cancelledAfterTheRetainedRecovery),
                         new Step("opened", 1, this::originDoorOpensNormally),
                         new Step("sourceEntered", 1, () -> { M5GameTestSupport.moveInside(fixture.player(sourcePlayer), SOURCE_FRAME); return true; }),
                         M5CollapsePassage.awaiting("sourceCompleted", SOURCE_WAIT_TICKS, () -> gone(sourceReceipt), this::sourceReceiptCompleted),
@@ -466,42 +473,59 @@ final class M5CollapseUnsupportedChain {
 
     /**
      * step {@code returned}：M4 的保留式 recovery 把 NEW 的參與者返還到 Nether 的第一座艙內，flushed record 記為已返還；record 仍是 MEASURED，參與者不再被攔截
-     * （{@code returnedWithoutCommitting}）。返還之後再拿掉一次 Buff（返還可能還原入場時的效果）。
+     * （{@code returnedWithoutCommitting}）。返還之後再拿掉一次 Buff（返還可能還原入場時的效果）。F6-2e-2（F6-2e-1 quality Minor 3）：經 {@link M5CollapsePassage#awaiting}：
+     * {@link #returnedToTheNether} 只讀，{@link #RETURN_WAIT_TICKS} 個 tick 仍沒有返還時由 {@code returnedWithoutCommitting} 判 FAIL（原本是 stepBounded）。
      */
-    private boolean returnedToTheNetherChamber() {
+    private boolean returnedToTheNether() {
+        var player = fixture.player(fixture.participants().getFirst());
+        var record = run.journal().flushedRecords().get(fixture.sid());
+        return player.getServerWorld() == nether() && record != null && record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
+    }
+
+    private void returnedWithoutCommitting(int tick, boolean happened) {
         var id = fixture.participants().getFirst();
         var player = fixture.player(id);
         var record = run.journal().flushedRecords().get(fixture.sid());
-        if (player.getServerWorld() != nether() || record == null || record.participants().stream().anyMatch(person -> !person.returned())) return false;
         boolean inside = M5CollapseFixture.inside(player), blocked = SessionRecoveryManager.blocks(id, run.server());
-        run.expect("returnedWithoutCommitting", record.state() == SessionState.MEASURED && inside && !blocked,
-                () -> "state=" + record.state() + " 在艙內=" + inside + " 仍被攔截=" + blocked + " 位置=" + player.getPos());
+        run.expect("returnedWithoutCommitting", happened && record.state() == SessionState.MEASURED && inside && !blocked,
+                () -> "JOIN 之後 " + tick + " 個 tick：已返還=" + happened + " state=" + (record == null ? "ABSENT" : record.state()) + " 在艙內=" + inside
+                        + " 仍被攔截=" + blocked + " 位置=" + player.getPos());
         run.proof.put("buffAfterTheReturn", player.hasStatusEffect(ModEffects.QUANTUM_STATE));
         player.removeStatusEffect(ModEffects.QUANTUM_STATE);
         run.proof.put("returnedAtServerTick", run.server().getTicks());
-        return true;
     }
 
     /**
-     * step {@code cancelled}：NEW 的 record 已不在 journal 時斷言：
+     * step {@code cancelled}（返還之後最多 {@value #CANCEL_WAIT_TICKS} 個 tick）：NEW 的 record 已不在 journal 時斷言：
      * <ul>
-     * <li>{@code cancelledAfterTheRetainedRecovery}：磁碟上也沒有它、「不支援的來源維度，已安全取消」恰一則（候選 New）、沒有「塌縮已提交」、從沒有寫出 COLLAPSING、在取消之前先 checked 寫成
-     *     DORMANT（spec §11.3 第 1、2 步）。「不提交 COLLAPSING」的 INFO（塌縮流程自己請求 recovery 時才記）的則數只記為 proof：這條路徑由 attach 請求。</li>
+     * <li>{@code cancelledAfterTheRetainedRecovery}：已取消（到時仍在 journal 也是這個斷言失敗）、磁碟上也沒有它、「不支援的來源維度，已安全取消」恰一則（候選 New）、沒有「塌縮已提交」、
+     *     從沒有寫出 COLLAPSING、在取消之前先 checked 寫成 DORMANT（spec §11.3 第 1、2 步）。「不提交 COLLAPSING」的 INFO（塌縮流程自己請求 recovery 時才記）的則數只記為 proof：這條路徑由
+     *     attach 請求。</li>
+     * <li>{@code newCancelledOnTheFirstDormantObservation}（F6-2e-2，F6-2e-1 spec M-4）：執行期間「一觀察到 flushed DORMANT 就取消」（spec §11.3 第 2 步）：取消的 tick（這個 step 觀察到
+     *     record 不在的 server tick，每個 tick 都看）距第一次 checked 寫成 DORMANT 的 tick（journal 寫出的探針）不超過 1。F6-2e-1 的 GREEN 與 run-all 都是同一個 tick（差 0）。</li>
+     * <li>{@code corridorSpaceReleasedAtTheCancel}（F6-2e-2，F6-2e-1 spec M-5）：§11.3 第 1 步的幾何清理：這個 session 的走廊 space 已釋放（{@link M5CollapseFixture#spaceExists}）。</li>
      * <li>{@code originUnblocked}（spec §11.3 第 3 步「原艙解除封鎖」，production 的判斷）：這座艙的 presence 是 NONE（{@code SuperpositionSessionManager.start} 拒絕新 session 的條件之一）、沒有
      *     runtime 與來源 ticket、Controller 不是 ARMED、registry 的 power state 不是 RETURNING。</li>
      * <li>{@code nobodyTrappedAfterTheCancel}：參與者在 Nether 的第一座艙內、不被攔截。</li>
      * </ul>
+     * F6-2e-2（F6-2e-1 quality Minor 3）：經 {@link M5CollapsePassage#awaiting}，等待的上限仍是 400（{@link #CANCEL_WAIT_TICKS}），到時沒有取消時失敗在 {@code cancelledAfterTheRetainedRecovery}
+     * （原本是 stepBounded）。
      */
-    private boolean cancelledAfterTheRetainedRecovery() throws Exception {
+    private void cancelledAfterTheRetainedRecovery(int tick, boolean happened) throws Exception {
         var sid = fixture.sid();
-        if (!gone(fixture.receipt())) return false;
         var chamber = fixture.receipt().chamberUuid();
+        int cancelledAt = run.server().getTicks();
         int cancelled = logged(Level.INFO, CANCELLED, sid), committed = logged(Level.INFO, "塌縮已提交", sid);
         var info = run.capture().matching(Level.INFO, CANCELLED, sid.toString());
         boolean newCandidate = info.size() == 1 && info.getFirst().message().contains("候選=New");
-        run.expect("cancelledAfterTheRetainedRecovery", () -> !M4CandidateTestAccess.diskRecords(run.server()).containsKey(sid) && cancelled == 1 && newCandidate && committed == 0
-                        && !newWroteCollapsing && newDormantAt >= 0,
-                () -> "取消的 INFO=" + cancelled + "（候選 New=" + newCandidate + "）提交=" + committed + " 寫出過 COLLAPSING=" + newWroteCollapsing + " 先寫成 DORMANT 的 tick=" + newDormantAt);
+        run.expect("cancelledAfterTheRetainedRecovery", () -> happened && !M4CandidateTestAccess.diskRecords(run.server()).containsKey(sid) && cancelled == 1 && newCandidate
+                        && committed == 0 && !newWroteCollapsing && newDormantAt >= 0,
+                () -> "返還之後 " + tick + " 個 tick：已取消=" + happened + " 取消的 INFO=" + cancelled + "（候選 New=" + newCandidate + "）提交=" + committed + " 寫出過 COLLAPSING="
+                        + newWroteCollapsing + " 先寫成 DORMANT 的 tick=" + newDormantAt);
+        run.expect("newCancelledOnTheFirstDormantObservation", cancelledAt - newDormantAt <= 1,
+                () -> "第一次寫成 DORMANT 在 tick " + newDormantAt + "，取消在 tick " + cancelledAt);
+        boolean space = fixture.spaceExists();
+        run.expect("corridorSpaceReleasedAtTheCancel", !space, () -> "取消之後這個 session 仍有走廊 space");
         var presence = ChamberSessions.gateway().presence(run.server(), chamber);
         boolean runtime = M4CandidateTestAccess.runtimeHeld(sid), ticket = M4CandidateTestAccess.sourceTicketHeld(sid);
         var state = M5GameTestSupport.controller(nether(), FRAME).chamberState();
@@ -514,8 +538,7 @@ final class M5CollapseUnsupportedChain {
         run.expect("nobodyTrappedAfterTheCancel", inside && !blocked, () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue() + " " + player.getPos() + " 被攔截=" + blocked);
         run.proof.put("notCommittingInfo", logged(Level.INFO, "不支援的來源維度：不提交 COLLAPSING", sid));
         run.proof.put("newDormantAtServerTick", newDormantAt);
-        run.proof.put("newCancelledAtServerTick", run.server().getTicks());
-        return true;
+        run.proof.put("newCancelledAtServerTick", cancelledAt);
     }
 
     /** step {@code opened}：取消之後參與者在艙內照一般方式開門（關著的門照一般門的邏輯改為一般開門；{@code originDoorOpensNormally}）。 */
