@@ -663,9 +663,9 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** sealmembrane 的 step {@code join}：參與者 JOIN 在艙內（halt 之前存的位置），這時 record 仍是 SEALED、還沒有重試（{@code stillSealedAtTheJoin}）；記下 JOIN 的位置。 */
     private boolean joinInsideOnTheEdge() {
         var record = run.journal().flushedRecords().get(fixture.sid());
-        int retries = sealedRetries();
+        int retried = retries(run, fixture.sid());
         joinInside();
-        run.expect("stillSealedAtTheJoin", sealed(record) && retries == 0, () -> "JOIN 之前 state=" + M5GameTestSupport.state(run.journal(), fixture.sid()) + " 重試的 INFO=" + retries);
+        run.expect("stillSealedAtTheJoin", sealed(record) && retried == 0, () -> "JOIN 之前 state=" + M5GameTestSupport.state(run.journal(), fixture.sid()) + " 重試的 INFO=" + retried);
         run.proof.put("joinedAtServerTick", run.server().getTicks());
         return true;
     }
@@ -694,7 +694,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var steps = new ArrayList<Step>();
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：每個 tick 的具名斷言 doorNeverClosedAfterTheRestart 由 happened 移到 eachTick；順序相同（先斷言再查詢）。
         steps.add(M5CollapsePassage.awaiting("firstObservation", QUEUE_WAIT_TICKS, tick -> doorNotClosedAfterTheRestart(),
-                () -> !reapplyQueued(run, fixture.sid()).isEmpty() || sealedRetries() > 0, this::queuedAndRetriedOnTheFirstObservation));
+                () -> !reapplyQueued(run, fixture.sid()).isEmpty() || retries(run, fixture.sid()) > 0, this::queuedAndRetriedOnTheFirstObservation));
         steps.add(M5CollapsePassage.awaiting("normalized", APPLY_WAIT_TICKS, tick -> doorNotClosedAfterTheRestart(), () -> plainOpen(run), this::normalizedAfterTheRetry));
         steps.add(new Step("resolved", 400, this::resolvedWithoutPower));
         steps.add(M5CollapsePassage.watch("waitingWithoutPower", M5CollapsePassage.WATCH_TICKS, this::plainOpenWhileWaitingWithoutPower, this::powerRestored));
@@ -728,17 +728,12 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.expect("doorNeverClosedAfterTheRestart", sealedDoorNow || plain, () -> "tick " + run.server().getTicks() + "：門正中=" + doorCenter(run));
     }
 
-    /** 這個 session「SEALED 重試」的 INFO 的則數（任何原因）。 */
-    private int sealedRetries() {
-        return run.capture().matching(Level.INFO, "SEALED 重試", fixture.sid().toString()).size();
-    }
-
     /** sealmembranejoined 的 step {@code firstObservation}（{@code tick} 由 1 起）：見 {@link #membraneSealedJoinedRestart} 第 1 點；之後拿掉 Controller 上方的紅石塊。 */
     private void queuedAndRetriedOnTheFirstObservation(int tick, boolean happened) {
         var sid = fixture.sid();
         var queued = reapplyQueued(run, sid);
-        int now = run.server().getTicks(), all = sealedRetries();
-        int fromProjection = run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + SealedReason.PROJECTION_FAILED + ")→COLLAPSING", sid.toString()).size();
+        int now = run.server().getTicks(), all = retries(run, sid);
+        int fromProjection = retriesFrom(run, sid, SealedReason.PROJECTION_FAILED);
         var record = run.journal().flushedRecords().get(sid);
         boolean still = notMovedSinceTheJoin(), sealedDoorNow = M5CollapseDoors.is(run, OriginDoorState.SEALED_MEMBRANE);
         run.expect("queuedAndRetriedOnTheFirstObservation", queued.size() == 1 && queued.getFirst().closeAfterARestart() && queued.getFirst().tick() == now + 1 && fromProjection == 1

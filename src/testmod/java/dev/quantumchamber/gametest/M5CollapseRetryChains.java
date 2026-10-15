@@ -237,7 +237,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      */
     private void notRetriedInTheSameInstance() {
         var sid = fixture.sid();
-        var retried = run.capture().matching(Level.INFO, "SEALED 重試", sid.toString()).size();
+        var retried = retries(run, sid);
         boolean inside = fixture.players().stream().allMatch(M5CollapseFixture::inside);
         run.expect("notRetriedInTheSameInstance", sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid))
                 && retried == 0 && inside, () -> "state=" + M5GameTestSupport.state(run.journal(), sid) + " 重試的 INFO=" + retried + " 在艙內=" + inside);
@@ -516,7 +516,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var sid = fixture.sid();
         var resolved = run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid.toString()).size();
         var record = run.journal().flushedRecords().get(sid);
-        var retried = run.capture().matching(Level.INFO, "SEALED 重試", sid.toString()).size();
+        var retried = retries(run, sid);
         if (resolved == 0 && (retried < retries || collapsing(record))) return false;
         var catalog = UniverseRegistryState.get(run.server()).flushedRecords().get(fixture.universe());
         var errors = run.capture().matching(Level.ERROR, sid.toString()).size();

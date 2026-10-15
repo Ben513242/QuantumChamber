@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.apache.logging.log4j.Level;
 
 /**
@@ -156,10 +157,18 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
      * 退避變長時也是）：SEALED(ALLOCATION_IO_FAILED) 的重試 INFO 共 2 則、全部的重試 INFO 也是 2（F6-3 Step 0，F6-2e-3 quality Minor 2）。
      */
     private Verdict retriedTwice(int tick) {
-        var sid = fixture.sid();
+        return twoRetries(run, fixture.sid(), "加倍的退避期過後進入之後 " + tick + " 個 tick：");
+    }
+
+    /**
+     * 兩次重試都已記下：SEALED(ALLOCATION_IO_FAILED) 的重試 INFO 共 2 則、全部的重試 INFO 也是 2（catalog、discovery 各封存一次之後各重試一次）；{@code when} 接在失敗訊息的開頭。
+     * step {@code retriedAgain}（{@link #retriedTwice}）與 halt 之前的 {@code retriedTwiceBeforeTheHalt}（{@link #convergedAtHalt}）共用（F6-3c-1，F6-3 Step 0 quality Minor 3：
+     * 原本兩處各寫一份相同的判斷式；判斷不變，失敗訊息合成同一句）。
+     */
+    private static Verdict twoRetries(M5CollapseRun run, UUID sid, String when) {
         int fromReason = retriesFrom(run, sid, SealedReason.ALLOCATION_IO_FAILED), all = retries(run, sid);
-        return new Verdict(fromReason == 2 && all == 2, "加倍的退避期過後進入之後 " + tick + " 個 tick：SEALED(ALLOCATION_IO_FAILED) 的重試 INFO=" + fromReason + " 全部的重試 INFO="
-                + all + "，預期第 2 次");
+        return new Verdict(fromReason == 2 && all == 2, when + "SEALED(ALLOCATION_IO_FAILED) 的重試 INFO=" + fromReason + " 全部的重試 INFO=" + all
+                + "（預期 2：catalog、discovery 各封存一次之後各重試一次）");
     }
 
     /**
@@ -323,9 +332,8 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
      * 已落地的 record 記在 {@code atHalt}（restart 以 {@link #landedRecordKeptAtRestart} 比對）。
      */
     static void convergedAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        int fromReason = retriesFrom(run, fixture.sid(), SealedReason.ALLOCATION_IO_FAILED), all = retries(run, fixture.sid());
-        run.expect("retriedTwiceBeforeTheHalt", fromReason == 2 && all == 2,
-                () -> "SEALED(ALLOCATION_IO_FAILED) 的重試 INFO=" + fromReason + " 全部的重試 INFO=" + all + "（預期 2：catalog、discovery 各封存一次之後各重試一次）");
+        var twice = twoRetries(run, fixture.sid(), "");
+        run.expect("retriedTwiceBeforeTheHalt", twice.holds(), twice::detail);
         var status = ((CollapseAuthorities.Lookup<?>) detail).status();
         var landed = String.valueOf(run.proof.get(LANDED_DISCOVERY));
         var disk = M5CollapseDiskEvidence.discovery(run.saveRoot());
