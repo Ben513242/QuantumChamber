@@ -147,6 +147,7 @@ loom {
             runDir 'run/gametest-m5'
             vmArg '-Dfabric-api.gametest'
             vmArg '-Dquantumchamber.gametest.m5Only=true'
+            vmArg '-Dquantumchamber.gametest.minTickMillis=10' // F6-3b：每個 tick 至少 10 ms（≤100 t/s），見 testmod 的 TestServerTickPaceMixin
             vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.file('gametest-m5-results.xml').get().asFile}"
         }
     }
