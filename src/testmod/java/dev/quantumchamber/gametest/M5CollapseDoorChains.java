@@ -101,7 +101,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     private static final class SealedDoor {
         /** 重新套用的關門（CLOSE_ON_SEALED）排入時記下的「下一個 tick」（N）。 */
         int queuedTick = -1;
-        /** probe 第一次看到門口有 entity 的 server tick（{@code sealdoorway} 的盔甲座由磁碟非同步載入；-1：還沒有看到）。 */
+        /** probe 第一次看到門口有 entity 的 server tick（{@code sealdoorway} 的盔甲座由磁碟非同步載入；-1：還沒有看到）。只當 proof（F6-2e Step 0 起不參與斷言）。 */
         int doorwaySeenAt = -1;
         /** {@code sealmembrane}：非參與者（不在收據裡，開服時才連線，在艙外）。 */
         ServerPlayerEntity visitor;
@@ -410,12 +410,14 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     }
 
     /**
-     * {@code sealdoorway} 的 restart（F6-2-09「門口有人時一般開門」；也涵蓋 B1 交下的「重啟之後 entity storage 還沒載入也當成門口有人」）：開服時窗口表的斷言（磁碟上的門關著），
-     * 門在記憶體裡也關著、沒有人在線上。之後：
+     * {@code sealdoorway} 的 restart（F6-2-09「門口有人時一般開門」）：開服時窗口表的斷言（磁碟上的門關著），門在記憶體裡也關著、沒有人在線上。B1 交下的「重啟之後 entity
+     * storage 還沒載入也當成門口有人」不在這條 chain（F6-2e Step 0 依 F6-2d-2 B2 spec review M-1 更正：原本寫「也涵蓋」）：跨 JVM 量不到門口 entity storage 還沒載入的情況（排入的
+     * tick 門口的 storage 已載入，取證 {@code doorwayEntitiesLoadedWhenQueued}），這一行由同 JVM 的 F4b-3 GameTest（{@code M5UniverseGameTests} 的
+     * {@code sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it}）守住。之後：
      * <ol>
      * <li>{@code closeQueued}：排入一則 CLOSE_ON_SEALED，門仍關著（{@code closeQueuedOnTheFirstLoad}）。</li>
-     * <li>{@code closeApplied}：門改為一般開門、不關在盔甲座上（{@code plainOpenForTheDoorway}：套用的 INFO 恰一則、記的 tick ≥ 排入時記下的 tick，而且 ≥ probe 第一次在門口看到盔甲座的
-     *     tick；盔甲座仍在門口）。</li>
+     * <li>{@code closeApplied}：門改為一般開門、不關在盔甲座上（{@code plainOpenForTheDoorway}：套用的 INFO 恰一則、記的 tick ≥ 排入時記下的 tick；盔甲座仍在門口。probe 第一次在
+     *     門口看到盔甲座的 tick 只記為 proof，見 {@link #standKeptInTheDoorway}）。</li>
      * <li>{@code standRemoved}：移走門口的盔甲座（恰一座，{@code standRemovedFromTheDoorway}）→ 參與者 JOIN 在艙外 → 由艙外進入 → 重試 → (b) 終局（同 {@link #plainDoorSealedRestart}）。</li>
      * </ol>
      */
@@ -512,12 +514,19 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         });
     }
 
-    /** sealdoorway 的 {@code closeApplied} 另要求：盔甲座仍在門口，套用的 tick 不早於 probe 第一次在門口看到它的 tick（關門等到門口的 entity storage 載入之後才判斷）。 */
+    /**
+     * sealdoorway 的 {@code closeApplied} 另要求：盔甲座仍在門口。
+     * <p>F6-2e Step 0（F6-2d-2 B2 quality Minor 4、spec review M-1）：拿掉子條件 {@code seen >= 0 && at >= seen}（「套用的 tick 不早於 probe 第一次在門口看到盔甲座的 tick」）。
+     * 它在結構上恆真：probe 以 {@code AFTER} 註冊，每個 tick 先記下門口（{@link #seeTheDoorway}，{@code eachTick}）再判斷門，與 production 用同一個門口判斷，所以驗不出「關門等到
+     * 門口的 entity storage 載入之後才判斷」。兩個 tick 仍記為 proof（{@code doorwaySeenAtServerTick}、{@code closeAppliedTick}）並附在失敗訊息。跨 JVM 量不到門口 entity storage
+     * 還沒載入的情況，這一行由同 JVM 的 F4b-3 GameTest（{@code M5UniverseGameTests} 的
+     * {@code sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it}）守住。
+     */
     private Verdict standKeptInTheDoorway() {
         boolean occupied = OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME);
         var applied = M5CollapseDoors.applied(run, fixture.sid());
         int at = applied.isEmpty() ? -1 : applied.getFirst().tick(), seen = sealedDoor.doorwaySeenAt;
-        return new Verdict(occupied && seen >= 0 && at >= seen, " 門口有 entity=" + occupied + " 第一次看到門口的 entity 在 tick " + seen);
+        return new Verdict(occupied, " 門口有 entity=" + occupied + " 第一次看到門口的 entity 在 tick " + seen + " 套用在 tick " + at);
     }
 
     /** sealdoorway 的 step {@code standRemoved}：移走門口的 entity，恰是那一座盔甲座；之後門口沒有 entity，門仍是一般開門（{@code standRemovedFromTheDoorway}）。 */
