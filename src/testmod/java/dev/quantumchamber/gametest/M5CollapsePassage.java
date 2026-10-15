@@ -122,6 +122,9 @@ final class M5CollapsePassage {
      * step {@code name}（上限 {@code maxTicks}，同 {@link Step}）：每個 tick 以這是這個 step 的第幾個 tick 呼叫 {@code body}。計數器跟著這個 step（每次呼叫各自計算，比照
      * {@link #ready}；F6-2d-2 Step 0，F6-2d-1 quality Minor 1：取代 chain 共用的可變計數器 {@code watched}、{@code waited}、{@code triggerWaited}，同一個 phase 再加一段時不會
      * 因為忘了歸零而只觀察 1 個 tick）。
+     * <p>F6-2e-1（F6-2e Step 0 quality Minor 3）：新的 step 先選專用的 factory，都不合用時才用這裡：等某件事、到時沒有發生要以具名斷言判 FAIL → {@link #awaiting}；觸發之後的提交或重試 →
+     * {@code M5CollapseRestartChains.untilTriggered}（與它的 {@code committedWithoutReentry}、{@code retried}）；固定觀察 N 個 tick → {@link #watch}。這裡加手寫的等待（{@code return false}
+     * 直到條件成立）時，到時沒有發生是 stepBounded，不是具名斷言。
      */
     static Step counting(String name, int maxTicks, Counted body) {
         Objects.requireNonNull(body, "body");

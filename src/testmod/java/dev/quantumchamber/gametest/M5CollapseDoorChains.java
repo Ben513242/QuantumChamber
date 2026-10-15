@@ -241,7 +241,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var door = doorAtStart(id);
         var steps = new ArrayList<Step>();
         steps.add(M5CollapsePassage.awaiting("preparedOnTheLevel", PREPARE_WAIT_TICKS, () -> prepares() > 0, this::preparedWithTheVisitorInside));
-        steps.add(M5CollapsePassage.counting("heldWithTheVisitorInside", HELD_WAIT_TICKS, this::heldWithTheVisitorInside));
+        steps.add(M5CollapsePassage.awaiting("heldWithTheVisitorInside", HELD_WAIT_TICKS, this::plainOpenWhileTheVisitorIsInside, () -> prepare.hold.hits() > 0,
+                this::readyHeldWithTheVisitorInside));
         steps.add(M5CollapsePassage.watch("visitorStillInside", VISITOR_WATCH_TICKS, this::plainOpenWhileTheVisitorIsInside, this::visitorLeaves));
         steps.add(M5CollapsePassage.counting("resealed", 1, this::resealedOnTheNextTick));
         steps.add(passage.ready(M5CollapseWindows.of(id).prepared(), M5CollapseFixture.EVERYONE));
@@ -302,14 +303,17 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.proof.put("preparedAtPhaseTick", run.ticks());
     }
 
-    /** step {@code heldWithTheVisitorInside}：每個 tick 一般開門；PASSAGE_READY 的提交第一次被暫緩時（準備完成之後）斷言「準備完成」恰一則、完成。 */
-    private boolean heldWithTheVisitorInside(int tick) {
-        plainOpenWhileTheVisitorIsInside(tick);
-        if (prepare.hold.hits() == 0) return false;
+    /**
+     * step {@code heldWithTheVisitorInside}（{@link M5CollapsePassage#awaiting}，最多 {@link #HELD_WAIT_TICKS} 個 tick）：每個 tick 一般開門（{@code eachTick}）；PASSAGE_READY 的提交第一次被
+     * 暫緩時（準備完成之後）斷言「準備完成」恰一則、完成。F6-2e-1（F6-2e Step 0 quality Minor 3）：原本是 {@code counting} 加手寫的等待（{@code hits() == 0} 時回 false，等滿就
+     * stepBounded）；等待時間（{@link #HELD_WAIT_TICKS} 個 tick）、每個 tick 的斷言與它和暫緩查詢的先後、通過條件都不變，只有到時仍沒有被暫緩時改由
+     * {@code readyHeldWithTheVisitorInside} 判 FAIL。
+     */
+    private void readyHeldWithTheVisitorInside(int tick, boolean held) {
         int prepared = run.capture().matching(Level.INFO, "準備完成（預載與投影都已完成）", fixture.sid().toString()).size();
-        run.expect("readyHeldWithTheVisitorInside", prepared == 1, () -> "PASSAGE_READY 的提交被暫緩時「準備完成」=" + prepared);
+        run.expect("readyHeldWithTheVisitorInside", held && prepared == 1,
+                () -> "第 " + tick + " 個 tick：PASSAGE_READY 的提交被暫緩=" + held + " 「準備完成」=" + prepared);
         run.proof.put("readyHeldAtPhaseTick", run.ticks());
-        return true;
     }
 
     /**
