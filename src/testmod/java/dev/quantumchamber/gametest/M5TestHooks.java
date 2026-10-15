@@ -300,6 +300,8 @@ public final class M5TestHooks {
      * <li>F6-2d-2 B1 加的：{@code CollapseReadyHoldMixin} 在 PASSAGE_READY 的提交被 {@link #READY_HOLD} 暫緩時以 {@link #READY_HELD} 呼叫（{@link ReadyHeld}，每次暫緩都是）。</li>
      * <li>F6-2d-2 B2 加的：{@code SessionRecoveryStateCrashWindowMixin} 在 {@code commitRollForward} 的同一個回傳點，{@link #MATERIALIZE_SEALED} 之後依序以
      *     {@link #UNREADABLE_SEALED}、{@link #UNREADABLE_SEALED_DOORWAY}、{@link #PROJECTION_SEALED} 呼叫（{@link RollForwardWrite}）。</li>
+     * <li>F6-2e-1 加的（F6-2e-2 起由既有的 mixin 派發）：{@code CollapseServiceCrashWindowMixin} 在 {@code CollapseService.step} 的開頭，{@link #SEALED_STEP} 之後以
+     *     {@link #M4_RECEIPT_STEP} 呼叫（那一筆 flushed 的 {@link SessionRecoveryRecord}）。</li>
      * </ul>
      * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
@@ -368,7 +370,7 @@ public final class M5TestHooks {
          */
         PROJECTION_SEALED,
         /**
-         * W10（F6-2e-1）：{@code CollapseService.step} 開始處理一個 session 之前（{@code CollapseServiceM4ReceiptWindowMixin}；detail 是那一筆 flushed 的 {@link SessionRecoveryRecord}），與
+         * W10（F6-2e-1）：{@code CollapseService.step} 開始處理一個 session 之前（{@code CollapseServiceCrashWindowMixin}，F6-2e-1 是另一個 mixin；detail 是那一筆 flushed 的 {@link SessionRecoveryRecord}），與
          * {@link #DORMANT_STEP} 同一個程式點；窗口表的條件選 M4 時期的 Nether／End 收據（MEASURED、來源 role 不是 OVERWORLD）。
          */
         M4_RECEIPT_STEP
