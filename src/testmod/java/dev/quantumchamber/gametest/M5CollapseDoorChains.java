@@ -144,7 +144,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     Phase waitingDoorRestart(String crashPhase) {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（READY_HELD 是 SEALED_MEMBRANE）。
         var id = CrashWindow.READY_HELD;
-        var door = doorAtStart(id);
+        var door = requireDoorAtStart(id);
         var steps = new ArrayList<Step>();
         steps.add(M5CollapsePassage.awaiting("normalizeQueued", QUEUE_WAIT_TICKS, () -> !reapplyQueued(run, fixture.sid()).isEmpty(),
                 (tick, happened) -> normalizeQueued(door, tick, happened)));
@@ -238,7 +238,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     Phase prepareDoorRestart(String crashPhase) {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（READY_HELD 是 SEALED_MEMBRANE）。
         var id = CrashWindow.READY_HELD;
-        var door = doorAtStart(id);
+        var door = requireDoorAtStart(id);
         var steps = new ArrayList<Step>();
         steps.add(M5CollapsePassage.awaiting("preparedOnTheLevel", PREPARE_WAIT_TICKS, () -> prepares() > 0, this::preparedWithTheVisitorInside));
         steps.add(M5CollapsePassage.awaiting("heldWithTheVisitorInside", HELD_WAIT_TICKS, this::plainOpenWhileTheVisitorIsInside, () -> prepare.hold.hits() > 0,
@@ -406,7 +406,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     Phase plainDoorSealedRestart(String crashPhase) {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（UNREADABLE_SEALED 是 PLAIN_OPEN），不在這裡再寫一份。
         var id = CrashWindow.UNREADABLE_SEALED;
-        var door = doorAtStart(id);
+        var door = requireDoorAtStart(id);
         var steps = new ArrayList<Step>();
         steps.add(closeQueued(door));
         steps.add(closeApplied("closedOnceAfterTheRestart", OriginDoorState.CLOSED, () -> NOTHING_MORE));
@@ -434,7 +434,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     Phase doorwaySealedRestart(String crashPhase) {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（UNREADABLE_SEALED_DOORWAY 是 CLOSED）。
         var id = CrashWindow.UNREADABLE_SEALED_DOORWAY;
-        var door = doorAtStart(id);
+        var door = requireDoorAtStart(id);
         var steps = new ArrayList<Step>();
         steps.add(closeQueued(door));
         steps.add(closeApplied("plainOpenForTheDoorway", OriginDoorState.PLAIN_OPEN, this::standKeptInTheDoorway));
@@ -449,7 +449,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /**
      * SEALED 的門 chain 的開服（{@link #restartPhase} 的 {@code afterStarted}，第一個 tick 之前）：原艙門在記憶體裡是 {@code door}（由磁碟載入；窗口表的
      * {@code doorAsExpectedAtStart} 讀磁碟），沒有人在線上、還沒有 tick；記下門口的 entity storage 是否已載入（{@code doorwayEntitiesLoadedAtStart}，取證）。F6-2e Step 0 起
-     * {@code door} 一律是窗口列宣告的值（{@link #doorAtStart}，呼叫端在建立 phase 時讀）。
+     * {@code door} 一律是窗口列宣告的值（{@link #requireDoorAtStart}，呼叫端在建立 phase 時讀）。
      */
     private void doorAtStartWithNobodyOnline(OriginDoorState door) {
         doorInMemoryAtStart(door);
@@ -618,7 +618,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     Phase membraneSealedRestart(String crashPhase) {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（PROJECTION_SEALED 是 SEALED_MEMBRANE）。
         var id = CrashWindow.PROJECTION_SEALED;
-        var door = doorAtStart(id);
+        var door = requireDoorAtStart(id);
         var steps = new ArrayList<Step>();
         steps.add(closeQueued(door, this::visitorUsesTheMembraneDoor));
         steps.add(closeApplied("closedFromTheMembrane", OriginDoorState.CLOSED, this::closeNotCancelled));
@@ -687,6 +687,10 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * </ol>
      */
     Phase membraneSealedJoinedRestart(String crashPhase) {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（與 sealmembrane 共用 PROJECTION_SEALED）。F6-2e-1（F6-2e Step 0 quality nit）：與其他 builder 一樣在建立
+        // step 之前讀（原本在最後；兩者都在 onInitialize，沒有宣告時同樣在開服之前丟出）。
+        var id = CrashWindow.PROJECTION_SEALED;
+        var door = requireDoorAtStart(id);
         var steps = new ArrayList<Step>();
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：每個 tick 的具名斷言 doorNeverClosedAfterTheRestart 由 happened 移到 eachTick；順序相同（先斷言再查詢）。
         steps.add(M5CollapsePassage.awaiting("firstObservation", QUEUE_WAIT_TICKS, tick -> doorNotClosedAfterTheRestart(),
@@ -703,9 +707,6 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
             run.expect("preparedOnlyAfterTheEdge", prepares == 1, () -> "「進入 PREPARE」=" + prepares);
             return End.crossed(fixture);
         }));
-        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（與 sealmembrane 共用 PROJECTION_SEALED）。
-        var id = CrashWindow.PROJECTION_SEALED;
-        var door = doorAtStart(id);
         return restartPhase(crashPhase, id, ChamberAtStart.PRELOADED, steps, () -> joinedBeforeTheFirstObservation(door));
     }
 

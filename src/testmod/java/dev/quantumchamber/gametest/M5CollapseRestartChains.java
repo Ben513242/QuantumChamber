@@ -16,7 +16,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.BooleanSupplier;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameRules;
 import org.apache.logging.log4j.Level;
@@ -116,12 +115,27 @@ abstract class M5CollapseRestartChains {
 
     /**
      * {@link #crash} 收據之前的原艙與收據（F6-2e Step 0，F6-2d-2 B2 quality Minor 2：原本寫死 {@code fixture.buildOrigin(1)} 與 {@code fixture.dormantNewReceipt()}）：
-     * {@code origin} 是 step {@code build} 的本體（fresh 世界蓋原艙與參與者），{@code receipt} 在 step {@code receipt} 建立要寫入的收據（例如 F6-2e 的 W10 的非 DORMANT 收據）。
+     * {@code origin} 是 step {@code build} 的本體（fresh 世界蓋原艙與參與者），{@code beforeWrite} 在 step {@code receipt} 寫入收據之前執行（F6-2e-1：H7 的 {@code waitinglate} 把 spawn
+     * chunks 的半徑改為 0，收據的原生存檔把它帶進 level.dat；沒有時是 {@link M5CollapseRun#NOTHING}），{@code receipt} 在同一個 step 建立要寫入的收據。
+     * <p>F6-2e-1（F6-2e Step 0 quality Minor 1、spec Minor-1）：{@link #crash} 的前提是「收據 → 參與者由艙外進入 → COLLAPSING → 窗口 halt」（收據之後的 step {@code enter} 與
+     * {@code committed} 寫死），換 {@code origin} 與收據只能改它之前的部分。W10 不套用它：M4 時期的 Nether／End 收據由 §11.3 的取消路徑從 MEASURED 取消，不經 COLLAPSING（專屬的
+     * {@code M5CollapseUnsupportedChain}）；W11 也不套用（沒有收據，crash 在 M5 authority 初始化）。原本這裡寫「例如 F6-2e 的 W10 的非 DORMANT 收據」，是錯的。
      */
-    record CrashSetup(M5CollapseRun.Checked origin, CrashReceipt receipt) {
+    record CrashSetup(M5CollapseRun.Checked origin, M5CollapseRun.Checked beforeWrite, CrashReceipt receipt) {
         CrashSetup {
             Objects.requireNonNull(origin, "origin");
+            Objects.requireNonNull(beforeWrite, "beforeWrite");
             Objects.requireNonNull(receipt, "receipt");
+        }
+
+        /** 收據寫入之前不另做事（{@code beforeWrite} 是 {@link M5CollapseRun#NOTHING}）。 */
+        CrashSetup(M5CollapseRun.Checked origin, CrashReceipt receipt) {
+            this(origin, M5CollapseRun.NOTHING, receipt);
+        }
+
+        /** 同一份原艙與收據，收據寫入之前改做 {@code action}（F6-2e-1）。 */
+        CrashSetup withBeforeWrite(M5CollapseRun.Checked action) {
+            return new CrashSetup(origin, action, receipt);
         }
     }
 
@@ -136,13 +150,14 @@ abstract class M5CollapseRestartChains {
      * {@link CrashSetup#origin}）→ 原艙註冊（{@code registered}）→ {@code beforeReceipt}（收據之前的準備，例如開門、在門口放 entity）→ {@code receipt}：寫入
      * {@link CrashSetup#receipt} 建立的收據、原生存檔，{@code install} 裝上這條 chain 的 hook 或 fault，再依窗口表裝上 {@code id} 的 crash 點 → 參與者由艙外進入（{@code enter}）→
      * COLLAPSING（{@code committed}）→ 最多 {@code haltTicks} 個 tick 等到窗口 halt（{@code halt}；halt 之前的取證在窗口表）。step 的名稱、順序與上限與移動之前的兩份相同。
+     * 前提見 {@link CrashSetup}（W10、W11 不套用）。F6-2e-1：step {@code receipt} 先做 {@link CrashSetup#beforeWrite}；前兩步由 {@link #buildAndRegister} 給（{@code M5CollapseRetryChains}
+     * 的其他 crash 也用）。
      */
     Phase crash(CrashSetup setup, List<Step> beforeReceipt, M5CollapseRun.Checked install, CrashWindow id, int haltTicks) {
-        var steps = new ArrayList<Step>();
-        steps.add(new Step("build", 1, () -> { setup.origin().run(); return true; }));
-        steps.add(new Step("registered", 200, fixture::registered));
+        var steps = new ArrayList<>(buildAndRegister(setup.origin()));
         steps.addAll(beforeReceipt);
         steps.add(new Step("receipt", 1, () -> {
+            setup.beforeWrite().run();
             fixture.writeCrashReceipt(setup.receipt().build());
             install.run();
             M5CollapseWindows.arm(run, fixture, id);
@@ -152,6 +167,14 @@ abstract class M5CollapseRestartChains {
         steps.add(new Step("committed", 40, fixture::committed));
         steps.add(new Step("halt", haltTicks, () -> false));
         return Phase.halt(steps).started(fixture::requireFreshWorld);
+    }
+
+    /**
+     * crash phase 的前兩步（F6-2e-1，F6-2e Step 0 quality nit：原本 {@link #crash} 與 {@code M5CollapseRetryChains.origin()} 各寫一份相同的）：fresh 世界蓋原艙與參與者（step
+     * {@code build}，1 tick，本體是 {@code origin}）→ 原艙註冊、IDLE（{@code registered}，最多 200 tick）。
+     */
+    List<Step> buildAndRegister(M5CollapseRun.Checked origin) {
+        return List.of(new Step("build", 1, () -> { origin.run(); return true; }), new Step("registered", 200, fixture::registered));
     }
 
     /**
@@ -191,8 +214,9 @@ abstract class M5CollapseRestartChains {
      * restart 開服時原艙門的預期（F6-2e Step 0，F6-2d-2 B2 quality Minor 1）：窗口表 {@code id} 那一列的 {@link M5CollapseWindows.AtRestart#withDoorAtStart}（開服時磁碟上的門由
      * 窗口表的 {@code doorAsExpectedAtStart} 斷言）。chain 在開服時與排入時斷言記憶體裡的門，一律從這裡讀，不在 chain 再寫一份（原本 SEALED 的四條 chain 有 7 處寫死與窗口列相同的值）。
      * 那一列沒有宣告（F6-2e-1 起是 {@code AtRestart.doorAtStart} 的空值，原本是 {@code UNSPECIFIED}）時丟出；chain 在建立 phase 時（{@code onInitialize}）呼叫，所以在開服之前失敗。
+     * F6-2e-1（F6-2e Step 0 quality nit）：由 {@code doorAtStart} 改名（與 {@code AtRestart.doorAtStart()} 同名、契約不同：那個回空值，這個丟出）。
      */
-    static OriginDoorState doorAtStart(CrashWindow id) {
+    static OriginDoorState requireDoorAtStart(CrashWindow id) {
         return M5CollapseWindows.of(id).atRestart().doorAtStart()
                 .orElseThrow(() -> new IllegalStateException("窗口表的 " + id + " 沒有宣告開服時的原艙門（withDoorAtStart）"));
     }
@@ -319,10 +343,11 @@ abstract class M5CollapseRestartChains {
      * {@code happened} 之後）；{@code happened} 只讀。順序因此改為先記 proof 再問 {@code happened}：兩者都只讀、在同一個 tick，記下的 tick 相同。F6-2d-2 B2 quality nit：
      * 由 {@code awaited} 改名（與 {@link M5CollapsePassage#awaiting} 太像），位置的斷言改由 {@link Await#position} 決定（原本是參數 {@code position}，呼叫端給的值與現在的欄位相同）。
      */
-    Step untilTriggered(String stepName, String assertion, Await await, BooleanSupplier happened, Outcome outcome, String proofKey) {
+    Step untilTriggered(String stepName, String assertion, Await await, M5CollapseRun.CheckedCondition happened, Outcome outcome, String proofKey) {
+        // F6-2e-1（F6-2e Step 0 quality nit）：happened 與 M5CollapsePassage.awaiting 同型別（原本是 BooleanSupplier，這裡再以 getAsBoolean 轉交）。
         return M5CollapsePassage.awaiting(stepName, await.waitTicks, tick -> {
             if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
-        }, happened::getAsBoolean, (tick, now) -> {
+        }, happened, (tick, now) -> {
             var verdict = outcome.at(tick);
             boolean checked = await.position == Position.NOT_MOVED_SINCE_THE_JOIN, notMoved = !checked || notMovedSinceTheJoin();
             run.expect(assertion, now && verdict.holds() && notMoved, () -> verdict.detail() + (checked ? " 沒有移動=" + notMoved : ""));

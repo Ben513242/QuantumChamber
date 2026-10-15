@@ -99,9 +99,12 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
 
     // ---- crash phase ----
 
-    /** 共用的前兩步：fresh 世界蓋原艙、一位參與者在艙外 → 原艙註冊。 */
+    /**
+     * 共用的前兩步：fresh 世界蓋原艙、一位參與者在艙外 → 原艙註冊。F6-2e-1（F6-2e Step 0 quality nit）：改由基底的 {@link #buildAndRegister} 給（原本這裡另寫一份與基底
+     * {@code crash} 相同的兩步），原艙是 {@code dormantNewSetup()} 的（{@code fixture.buildOrigin(1)}）；step 的名稱、上限與本體都不變。
+     */
     private List<Step> origin() {
-        return List.of(new Step("build", 1, () -> { fixture.buildOrigin(1); return true; }), new Step("registered", 200, fixture::registered));
+        return buildAndRegister(dormantNewSetup().origin());
     }
 
     private Phase crashPhase(List<Step> steps) {
@@ -160,7 +163,8 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
             readFault = discoveryReadFails();
             return true;
         }));
-        steps.add(new Step("enter", 1, () -> { fixture.moveInside(); return true; }));
+        // F6-2e-1（F6-2e Step 0 quality nit）：基底的 enter()（原本行內寫了一份相同的 step）。
+        steps.add(enter());
         steps.add(new Step("committed", 40, fixture::committed));
         steps.add(new Step("sealed", 400, this::sealedUnreadable));
         steps.add(new Step("backoff", BACKOFF_TICKS + 10, this::backoffElapsedThenEnter));
@@ -295,19 +299,13 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      * H7 的 {@code waitinglate} 的 crash（WAITING 的閘門）：同 {@link M5CollapseDormantChains#crash} 的 {@code DISCOVERY_APPENDED}（DORMANT 的 NEW 收據 → 參與者由艙外進入 →
      * COLLAPSING → RESOLVE 追加 discovery 之後 halt），只是收據的原生存檔之前把 spawn chunks 的半徑改為 0（level.dat 帶著它：restart 開服時原艙附近沒有載入，只有 attach 為
      * COLLAPSING 取得的來源 ticket 會載入它）。參與者在艙外附近，crash phase 的原艙一直由他的 ticket 載入。
+     * <p>F6-2e-1（F6-2e Step 0 quality nit）：改用基底的 crash 骨架（原本是第三份逐步寫的骨架，只差收據的 step 先改 spawn chunks 的 gamerule）：gamerule 由
+     * {@link CrashSetup#withBeforeWrite} 在同一個 step 寫入收據之前改（順序與之前相同：gamerule → 收據與原生存檔 → 裝上 crash 點）；step 的名稱、順序與上限都不變（build 1、registered 200、
+     * receipt 1、enter 1、committed 40、halt 400）。
      */
     Phase waitingLateCrash() {
-        var steps = new ArrayList<>(origin());
-        steps.add(new Step("receipt", 1, () -> {
-            run.source().getGameRules().get(GameRules.SPAWN_CHUNK_RADIUS).set(0, run.server());
-            fixture.writeCrashReceipt(fixture.dormantNewReceipt());
-            M5CollapseWindows.arm(run, fixture, CrashWindow.DISCOVERY_APPENDED);
-            return true;
-        }));
-        steps.add(enter());
-        steps.add(new Step("committed", 40, fixture::committed));
-        steps.add(new Step("halt", 400, () -> false));
-        return crashPhase(steps);
+        var setup = dormantNewSetup().withBeforeWrite(() -> run.source().getGameRules().get(GameRules.SPAWN_CHUNK_RADIUS).set(0, run.server()));
+        return crash(setup, List.of(), M5CollapseRun.NOTHING, CrashWindow.DISCOVERY_APPENDED, 400);
     }
 
     /**
