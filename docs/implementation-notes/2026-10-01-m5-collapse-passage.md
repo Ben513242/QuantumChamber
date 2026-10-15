@@ -9201,3 +9201,215 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - run-all：`run-all-1`＝`run-all-50d08c8ba6394ad59a3a9559628c93b7`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
 - 已知偶發：沒有遇到（`run-all-1` 的 Full WARN 54 是基準 55 少掉已知偶發 `m2_task4_disconnect_io` 的 +1；M5 的一行差異是 F6-0 已記錄的 `PistonBlockEntity` object hash）。結束過的程序：沒有（probe 沒有遇到逾時處置；沒有手動處置任何世界或 JVM）。
 - 取證腳本（`f63s0/`，由 `f6/f62e3/` 複製的每檔第一行加本輪註解）：`state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-01ba4701f6724869b82f6d76dd0ac58c`，`base-*-summary.txt` 是 `f62e3/runallfinal-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f63s0`）、`mutsum.py`、`names2.py`（另接受 `addedSteps`）、`orderdiff2.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-pincount.py`、`relay-worldgencheck.py`、`relay-zipmeta.py`、`mutations.ps1`（改成本輪的 5 個、runId 另由新建的目錄取得）、`driver.ps1`；本輪新寫：`adapters_f63s0.py`、`logcheck.py`、`names-table.json`、工作稿 `note-draft.md`、`readme-draft.md`。
+
+## F6-3b：GameTest 的 tick 節流、失敗不連坐與等待餘裕
+
+- implementer 依 controller 的派工（scratchpad `f63b-prompt.md`）完成。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63b/`，以下簡稱 `f63b/`，`STATUS.md` 是交接摘要。開工時 HEAD 是 `c3fb2ca`、`git status --porcelain` 為空（`f63b/start-state.txt`）。範圍：F6-3a 調查（scratchpad `f63a-findings.md`）A 段的 A3（M5 run 的 tick 節流）、B 段 B.4 的 B1（盤點 U6：一個 test 失敗不再連坐），以及 #09（有界等待的餘裕）。controller 的裁示：A3 的上限是 100 t/s（每個 tick 至少 10 ms）；B1 一起做；#09 改成「節流之後量測每個窗口的餘裕，不足 2 倍的才放寬」；不改 production（AccessDenied 的 production 重試 B4 由使用者裁示，不在本節）。F6-3 的其他事項（拆檔、CI 清單、harness）另外派工；本節沒有動 `.github/`。
+- Commits（`c3fb2ca..` 本節的 commit，依序；每個 commit 只 stage 自己的檔案；code 的 commit 之前都在工作樹編譯：`f63b/c1-dev1`、`c2`、`c3-compile.log`（`c1-dev1` 就是 `1b19457` 的內容，blob 相同），`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL，警告只有既有的 `SessionTransferFaultMixin` 6 則）：
+  - `1b19457` `test: pace the M5 GameTest server to at least 10 ms per tick`（A3：新的 test mixin `TestServerTickPaceMixin`、它的登記，與 `build.gradle` 的 `gameTestM5` run 的一個 vmArg）
+  - `2f79614` `test: let the next M5 test wait for the authorities to converge before it starts`（B1：新的 test mixin `M5ConvergenceHoldMixin`、它的登記，與 `M5UniverseGameTests` 的 `holdBeforeBegin`）
+  - `876a425` `test: ask the convergence hold only until it first releases the test`（B1 的修正，**最後一個 code commit**；見「B1」的 GREEN-1）
+  - `0ee3098` `docs: describe the M5 run tick pacing and the convergence hold in the verification README`
+  - 本節由其後的 `docs: record F6-3b in the M5 note` 加入。
+  - #09 沒有需要放寬的窗口，所以沒有「窗口」的 commit（見 #09 一段）。
+- 只改了派工允許的路徑：testmod 新增 `mixin/TestServerTickPaceMixin.java`、`mixin/M5ConvergenceHoldMixin.java` 與它們在 `quantumchamber-test.mixins.json` 的登記；`M5UniverseGameTests` 只加 B1（`HOLD_TICKS`、`holdBeforeBegin`、`unconfirmedAuthorities`，`begin` 的 Javadoc 與失敗訊息、類別說明的衛生規則一句）；`build.gradle` 只在 `gameTestM5` run 加一個 vmArg（同一行帶一段註解）；`scripts/verification/README.md` 只改「新增 M5 GameTest」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、其他 `build.gradle` 段落、`fabric.mod.json`、`quantumchamber.mixins.json`、所有 ps1、`.github/`、`M5GameTestSupport`、`M5CollapseGameTests`、M2／M4 的 GameTest、probe、JUnit、語言檔、spec、plan、AGENTS。
+- 行號：程式以 HEAD `0ee3098` 為準；#09 的窗口以量測時的 `1b19457`（`M5UniverseGameTests` 與 `c3fb2ca` 相同）為準，HEAD 的同一行要加 5（`HOLD_TICKS` 與它的 Javadoc 在 :159-163）。
+
+### A3：M5 run 的 tick 節流（`1b19457`）
+
+- 根因（F6-3a A 段，重點）：原版 `TestServer` 覆寫 `runTasksTillTickEnd()`，只做 `runTasks()`（反編譯 `TestServer.java:193-195`），不等到 tick 的結束時間就進下一個 tick。tick 速率只受每個 tick 的工作量限制：Ubuntu CI 600～1240 t/s、本機也有約 1100 t/s（基準 `run-all-50d08c8…` 的 m5-gametest，見下表）。以 tick 計的有界等待，等的卻是 wall-clock 才會完成的 PREPARE 預載，所以 tick 愈快愈容易逾時。只放寬窗口不夠：超過 600 tick 會碰到 production 以 tick 計的 PREPARE WARN（`CollapseService.java:133`、`:574`、`:948`），而 M5U 有 25 處斷言沒有 WARN。
+- 注入點：testmod 的 `TestServerTickPaceMixin`（`@Mixin(TestServer.class)`，`require=1`）。
+  - `TestServer.tick(BooleanSupplier)` 的 HEAD（`:50`）記下 `Util.getMeasuringTimeNano()`；
+  - `TestServer.runTasksTillTickEnd()` 的 TAIL（`:61`），也就是原版的 `runTasks()` 之後，以 `((MinecraftServer) this).runTasks(() -> 已到「tick 開始＋最短時間」)`（`:66`）等待。
+  - `runTasks(BooleanSupplier)` 與原版 `MinecraftServer.runTasksTillTickEnd` 的作法相同（反編譯 `MinecraftServer.java:860-863`）：等待期間照常執行 server task 與各 world 的 chunk manager 工作，沒有工作時原版每次 park 0.1 ms，**不是單純 sleep**。tick 本身已超過最短時間時，條件一開始就成立，不再等待。
+  - 開服的 `prepareStartRegion` 與停服時呼叫的 `runTasksTillTickEnd` 前面沒有 `tick`，記下的時間是 -1，不節流。
+- property：`quantumchamber.gametest.minTickMillis`，1～1000 的整數毫秒；不存在時完全不做事，不合法時開服即失敗（mixin 的 static 初始化丟出）。第一個節流的 tick 記一則 INFO「GameTest tick 節流：每個 tick 至少 10 ms」。
+- 範圍：`build.gradle` 只在 `gameTestM5` run 加 `-Dquantumchamber.gametest.minTickMillis=10`（`:150`）。default 與 legacy run 不加：default run（當時 175 個）在 Ubuntu 三次都通過（F6-3a A.1），它的等待不靠 PREPARE 的預載；legacy 只有 1 個。CI 的 Ubuntu 與 Windows job 都經 Gradle 跑 `runGameTestM5`，會自動帶到這個 vmArg，`.github/` 不必改。
+- 為什麼不是遮掩：真實伺服器是 20 TPS（每 tick 50 ms），節流之後的 ≤100 t/s 反而更接近實際情況；production 的 PREPARE 沒有劇情上的逾時（只記一次 600 tick 的 WARN），這個 WARN 在 20 TPS 上是 30 秒，是合理的門檻（F6-3a A.4）。
+
+#### A3 的 RED → GREEN
+
+RED 的 adapter `red-preload-delay`（`f63b/adapters_f63b.py`，不 commit）：`CollapseService.preload` 在這個 session 的目的世界 ticket 加上之後，另要求 wall-clock 已過 800 ms 才回報預載完成（約為 Ubuntu CI 觀察到最長的預載）。chunk 照常載入，只讓「預載完成」在 wall-clock 上晚一點，等同較慢的 chunk 載入或生成。
+
+| run | HEAD | 結果 | t/s（median／max） | PREPARE 的 tick 數 | gate root |
+| --- | --- | --- | --- | --- | --- |
+| RED `red-a3-1` | `c3fb2ca`（沒有節流）＋adapter | **36／60 失敗**，36 個都是「有界等待逾時（至 tick N）」（`沒有提交 PASSAGE_READY`、`沒有準備完成`、`沒有進 SEALED(…)` 等，與 Ubuntu CI 同類；35 個帶 `record=COLLAPSING`，另 1 個是 `tickets=4 checkpoints=[]`） | 1840／2900 | 沒有一個 PREPARE 在窗口內完成 | `gate-red-a3-1-8333845aac164512a8c1556b7b721937` |
+| GREEN `green-a3-1` | `1b19457`＋同一個 adapter | **60/60** | 80／100 | 73～77（設計成要等的 278、607、616 除外） | `gate-green-a3-1-5024a54781c947e1af627ab8f215614d` |
+
+- 兩次 adapter 的 blob 相同（`cda84ff6…`），restore 之後 `git hash-object` 核對、`*-restored-state.txt` 的 porcelain 都是空的（`f63b/red-a3-1-*`、`green-a3-1-*`）。
+- GREEN 的 M5 log 有「GameTest tick 節流：每個 tick 至少 10 ms」一則，t/s 的最大值是 100（上限）。
+
+#### 節流前後的 tick 速率與 M5 gate 耗時
+
+t/s 由 latest.log 的進度列估計（`TestServer.tick` 在 `getTime() % 20 == 0` 時印一列；每秒列數 ×20，log 的時間只到秒，所以是 20 的倍數）。gate 的耗時是 `execution.json` 的起訖（含 Gradle 啟動）。摘要由 `f63b/m5sum.py` 產生（`*-m5sum.txt`、`base*-m5gate-sum.txt`）。
+
+| run | HEAD | 結果 | gate 耗時 | suite（GAME TESTS COMPLETE IN） | 總 tick（約） | t/s（p25／median／p75／max） | PREPARE 的 tick 數（median／最大，設計成要等的 607、616 除外） |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 基準 `run-all-01ba4701…` 的 m5-gametest | `d0f56a8` | 60/60 | 45 s | 16.85 s | 21180 | 800／1040／1700／2860 | 163／430 |
+| 基準 `run-all-50d08c8…` 的 m5-gametest | `1c39fd9` | 60/60 | 44 s | 16.58 s | 20960 | 660／1140／1740／2340 | 215／422 |
+| 基準 `run-all-1b8a853…` 的 m5-gametest | `c3fb2ca` | 60/60 | 44 s | 16.47 s | 21120 | 620／1280／1720／3320 | 186／452 |
+| `m5g-1` | `0ee3098`（乾淨） | **60/60** | 2 m 33 s | 2.183 min | 11600 | 80／100／100／100 | 4／207 |
+| `m5g-2` | `0ee3098`（乾淨） | **60/60** | 2 m 33 s | 2.182 min | 11580 | 80／100／100／100 | 3／206 |
+| `m5g-3` | `0ee3098`（乾淨） | **60/60** | 2 m 33 s | 2.178 min | 11560 | 80／80／100／100 | 3／206 |
+
+- gate root：`m5g-1`＝`gate-m5g-1-9856a46898f84a2d8481c7a774c6e718`、`m5g-2`＝`gate-m5g-2-c8b51b5fc9c746e5ae88402a4893e375`、`m5g-3`＝`gate-m5g-3-80184e837b0246beb715b38463038de9`；三次的 state 都是 HEAD `0ee3098`、porcelain 空（`f63b/m5g-*-gate-state.txt`）。
+- 節流之後 suite 從約 16.5 s 變成約 2.2 min（gate 從約 44 s 變成約 2.5 min）；總 tick 從約 21000 降到約 11600（預載用掉的 tick 變少）。PREPARE 的中位數從 163～215 tick 降到 3～4 tick；207／206 是 `prepare_waits_while_another_projection_write_is_unconfirmed`（等另一座艙的 projection ledger 退避 200 tick 之後收斂，以 tick 計，與節流無關）。
+- PREPARE 600 tick 的 WARN 三次都是 2 則，都是設計成要等的那兩個 test（607、616）。
+- Ubuntu CI 的實際效果要 push 到 CI 才能驗收（見「交給後續」）：本機的 t/s 本來就與 Ubuntu CI 同一級（約 1100 t/s），節流之後也是 ≤100 t/s；Windows CI（100～180 t/s）幾乎不受影響。
+
+### #09：節流之後每個有界等待的餘裕
+
+- 量測（adapter，不 commit；`f63b/adapters_f63b.py` 的 `meas-waits`）：`M5GameTestSupport.whenTicks` 在條件成立、呼叫 ready 之前記一行 `F63B_WAIT site=<呼叫端的檔名:行> start= limit= used=`（呼叫端由 `StackWalker` 取得）；`awaitConvergedThenComplete` 在完成判定之前記一行 `F63B_CONVERGE name= limit= used=`。逾時不另記（XML 已有「有界等待逾時」）。彙整：`f63b/waits.py`，輸出 `waits-throttled.txt`（m1、m2）、`waits-delay.txt`（dl）、`waits-all.txt`（四次）；需要的窗口的表：`wintable.py` → `wintable-findings.md`。
+- 四次量測（都在 `1b19457`，`M5UniverseGameTests` 與 `c3fb2ca` 相同）：
+
+  | label | adapter | 結果 | gate root |
+  | --- | --- | --- | --- |
+  | `meas-1`（m1） | `meas-waits`（節流開著） | 60/60 | `gate-meas-1-96338f1965264dc1a6db4e68ff8de1fa` |
+  | `meas-2`（m2） | `meas-waits` | 60/60 | `gate-meas-2-632a9b169c5947388e3cb65b9c772cdd` |
+  | `meas-delay-1`（dl） | `meas-waits`＋`red-preload-delay`（節流＋預載慢 800 ms） | 60/60 | `gate-meas-delay-1-28ad51c449db41d39954bbb63296125a` |
+  | `meas-nothrottle-1`（nt，對照） | `meas-waits`＋`no-throttle`（拿掉 vmArg） | 58/60（自發的 catalog AccessDenied 與它的連坐，見 B1 一段；不採計） | `gate-meas-nothrottle-1-36bc4fd6758f4a0fa3ad36996c427c27` |
+
+- 117 個 site 都量到（含 `M5GameTestSupport` 內部的 3 個）。**判定只看節流開著的 m1、m2**（派工）；dl 用來看「預載再慢 800 ms」時的縱深。
+
+- F6-3a 列出的窗口（#09 的 18 處、F6-3a 加上的 `:1798`、`:1114`、`:1276`、`:1406`、`:2030`、`:2184`、`:2313`、`:3125`、`:3646`、`:3704`、`:3831`，以及 A.2 列為同樣風險的幾處；餘裕＝上限÷用掉的最大 tick，用掉 0 時記為 inf）：
+
+| M5U 行（`c3fb2ca`） | 上限 | 節流前（nt） | 節流（m1／m2） | 節流＋預載慢 800 ms（dl） | 餘裕：節流 | 餘裕：節流＋800 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| :1712 | 400 | 0~0 | 0~0／0~0 | 76~76 | inf | 5.3 |
+| :1759 | 400 | 137~137 | 3~3／3~3 | 76~76 | 133.3 | 5.3 |
+| :1798 | 400 | 152~152 | 4~4／3~3 | 76~76 | 100.0 | 5.3 |
+| :1895 | 400 | 135~135 | 4~4／3~3 | 76~76 | 100.0 | 5.3 |
+| :1928 | 400 | 129~129 | 4~4／2~2 | 76~76 | 100.0 | 5.3 |
+| :1964 | 400 | 273~273 | 3~3／3~3 | 76~76 | 133.3 | 5.3 |
+| :2100 | 400 | 153~153 | 5~5／5~5 | 76~76 | 80.0 | 5.3 |
+| :2811 | 400 | 123~123 | 3~3／3~3 | 76~76 | 133.3 | 5.3 |
+| :2919 | 400 | 238~238 | 3~3／3~3 | 75~75 | 133.3 | 5.3 |
+| :3011 | 400 | 269~269 | 4~4／2~2 | 75~75 | 100.0 | 5.3 |
+| :3111 | 400 | 126~126 | 4~4／2~2 | 75~75 | 100.0 | 5.3 |
+| :3170 | 400 | 134~134 | 4~4／4~4 | 75~75 | 100.0 | 5.3 |
+| :3214 | 400 | — | 3~3／3~3 | 76~76 | 133.3 | 5.3 |
+| :3291 | 400 | 141~141 | 3~3／3~3 | 76~76 | 133.3 | 5.3 |
+| :3417 | 400 | 114~114 | 3~3／3~3 | 75~75 | 133.3 | 5.3 |
+| :3583 | 400 | 118~118 | 4~4／2~2 | 76~76 | 100.0 | 5.3 |
+| :3752 | 400 | 285~285 | 4~4／2~2 | 76~76 | 100.0 | 5.3 |
+| :3969 | 400 | 158~158 | 4~4／2~2 | 75~75 | 100.0 | 5.3 |
+| :4058 | 400 | 171~174 | 4~4／3~3 | 74~75 | 100.0 | 5.3 |
+| :1114 | 200 | 8~8 | 1~1／1~1 | 1~1 | 200.0 | 200.0 |
+| :1276 | 200 | 11~11 | 1~1／1~1 | 1~1 | 200.0 | 200.0 |
+| :1406 | 400 | 123~123 | 4~4／2~2 | 74~74 | 100.0 | 5.4 |
+| :2030 | 400 | 217~217 | 3~3／2~2 | 74~74 | 133.3 | 5.4 |
+| :2184 | 500 | 111~111 | 0~0／0~0 | 71~71 | inf | 7.0 |
+| :2313 | 400 | 108~108 | 2~2／1~1 | 75~75 | 200.0 | 5.3 |
+| :3125 | 600 | 274~274 | 7~7／8~8 | 78~78 | 75.0 | 7.7 |
+| :3646 | 500 | 172~172 | 3~3／3~3 | 76~76 | 166.7 | 6.6 |
+| :3831 | 400 | 139~139 | 3~3／4~4 | 75~75 | 100.0 | 5.3 |
+| :3704 | 500 | 106~106 | 5~5／3~3 | 75~75 | 100.0 | 6.7 |
+| :942 | 200 | 10~10 | 0~0／0~0 | 0~0 | inf | inf |
+| :1499 | 400 | 0~0 | 0~0／0~0 | 0~0 | inf | inf |
+| :1502 | 400 | 105~105 | 3~3／3~3 | 74~74 | 133.3 | 5.4 |
+| :1538 | 600 | 108~108 | 3~3／4~4 | 76~76 | 150.0 | 7.9 |
+| :1596 | 600 | 133~133 | 2~2／4~4 | 75~75 | 150.0 | 8.0 |
+| :1836 | 600 | 265~265 | 4~4／2~2 | 75~75 | 150.0 | 8.0 |
+| :1981 | 400 | 14~14 | 3~3／3~3 | 77~77 | 133.3 | 5.2 |
+| :2375 | 600 | 50~50 | 0~0／0~0 | 55~55 | inf | 10.9 |
+| :3056 | 600 | 167~167 | 4~4／2~2 | 76~76 | 150.0 | 7.9 |
+| :3497 | 800 | 134~134 | 3~3／3~3 | 76~76 | 266.7 | 10.5 |
+| :3670 | 300 | 0~0 | 0~0／0~0 | 0~0 | inf | inf |
+| :3722 | 300 | 189~189 | 189~189／189~189 | 189~189 | 1.6 | 1.6 |
+
+- 判定（分類：`f63b/classify.py` → `waits-classify.txt`；117 個 site 中，四次量測用掉的 tick 會變的 52 個、完全相同的 65 個）：
+  - **會隨 wall-clock 改變的窗口都足夠**：節流之後（m1、m2）最小的餘裕是 50 倍（`:1216`，200 上限用 4；`:2037` 除外，見下）；PREPARE 的 400 tick 窗口都是 80 倍以上。預載另外慢 800 ms（dl）時，最小也有 5.2 倍（`:1981`，400 上限用 77）。
+  - 節流之後餘裕不足 2 倍的有 8 個 site 與 1 個 `awaitConvergedThenComplete`，**都不隨 wall-clock 改變**：四次量測（含沒有節流的 nt）用掉的 tick 完全相同，或依構造不會逾時：
+    - 等 production 以 tick 計的計時：`:2112`（300，用 199：另一座艙的 projection ledger 退避 200）、`:2435`（500，用 299：per-session 退避加倍為 400）、`:3348`（260，用 195：退避 200）、`:3722`（300，用 189：退避 200）、`:2945`、`:3526`、`:3994`（1300，用 1192／1199／1099：通道 1200 tick 的 game time 到期），與 `pending_write_failure_seals_without_writing_any_block` 的 `awaitConvergedThenComplete`（260，用 199：退避 200）。
+    - `:2037`（700）：等到 `enteredAt + 610`，起點是 `firstCheckpoint + 1`，上限 `firstCheckpoint + 701` 一定晚於 `enteredAt + 610`（`firstCheckpoint ≥ enteredAt`），依構造不會逾時；節流之後第一次 checkpoint 提早，所以用掉的 tick 反而變多（605／606，nt 是 391）。
+    - 另外 `:3531`（400，用 198）、`:2323`（260，用 100）、`:2432`（300，用 99）的餘裕在 2～5 倍，也是四次都相同的退避時點。`afterAutosaveClear`（`M5GameTestSupport.java:303`，三個呼叫端的上限是 window＋2＝42、62、1802）依構造最多等 window＋1 個 tick，等的是以 tick 計的 autosave 倒數；dl 的 1802 那一次用了 327（5.5 倍），其餘是 0。
+  - 所以**沒有放寬任何窗口**，也不必調整 `tickLimit`。600 tick 的 WARN 天花板仍在：要碰到它，預載要超過 6 秒（≤100 t/s）。
+  - 「以預載完成起算」的縱深（F6-3a A2，`:3125`、`:1114`、`:1276`）：**不採用**。節流之後這三處的餘裕是 75、200、200 倍（dl 是 7.7、200、200 倍）；`:1114`、`:1276` 等的是強制載入的投影 chunk 開始 block ticking（F4b-1 的 test 暫停了塌縮流程，不走 PREPARE 的預載），「以預載完成起算」對它們不適用；`:3125` 加上 wall-clock 預算會多一套等待機制，而它解決不了 600 tick 的 WARN（F6-3a A.5）。
+- 量測用的程式只在 adapter 裡，restore 之後核對（`*-restored-state.txt` 都是 `1b19457`、porcelain 空）。
+
+### B1：一個 test 失敗不再連坐（盤點 U6；`2f79614`、`876a425`）
+
+- 連坐的機制：test 在權威寫出失敗之後、收斂之前就失敗時，權威維持未確認（退避期內）。production 只在下一次使用之前呼叫 `convergeIfNeeded`（`CollapseAuthorities.java:812`；呼叫端在 RESOLVE、PREPARE 與 PASSAGE_READY 的前置條件），沒有人會替失敗的 test 收斂；原版又在 test 失敗的同一個 tick 開始下一個 batch（`TestRunContext.runBatch` 由 `onFailed` → `onFinished` 同步呼叫，反編譯 `TestRunContext.java:97-127`）。下一個 test 的 `begin` 立刻斷言 `converged` 失敗，之後每個 test 都一樣，直到 suite 結束（ledger）或原生 autosave（catalog）。
+- 做法：選派工的第二種（「在記 baseline 之前，有界地等權威收斂」），但等待放在原版初始化 test 之前，不是 `begin` 裡：
+  - testmod 的 `M5ConvergenceHoldMixin`（`@Mixin(GameTestState.class)`，`require=1`，只在 `m5Only` 時生效）在 `GameTestState.tick(TestRunContext)` 的 HEAD（`:32`），test 還沒初始化（`initialized` 為 false：結構還沒放、test 方法還沒執行、tick 計數與 tickLimit 都還沒開始）時問 `M5UniverseGameTests.holdBeforeBegin`（`:4547`），回 true 就取消這個 tick 的處理；回 false 之後這個 test 不再詢問（`876a425`）。
+  - `holdBeforeBegin`：M5 權威沒有初始化或四個權威都已收斂（`converged`，純查詢）時立刻放行，所以所有 test 都通過時行為與原版相同；否則每個 tick 以 `convergeAll` 對四個權威各呼叫一次 `convergeIfNeeded`（**退避照 production**，退避期內不重寫，不繞過），收斂之後放行。最多等 `HOLD_TICKS`＝3×`CollapseBackoff.INITIAL_TICKS`＝600 tick（`:163`）：第一次重試在退避 200 tick 之後、再失敗時加倍為 400，從失敗起算 600 tick 內有兩次重試。逾時仍未收斂、或判定丟出例外時放行，由 `begin` 照舊失敗（訊息另列未確認的權威與等待上限）。開始等待記一則 WARN、結束記一則 INFO（`converged`／`timeout`），都以 `M5_UNIVERSE_HOLD` 開頭。
+  - 失敗的那個 test 照常 FAIL：這裡只延後下一個 test 的初始化，不碰失敗的 test。
+- 為什麼不選第一種（`failDefinitely` 在確定失敗之前盡力收斂一次）：
+  - `failDefinitely`（`:4710`）只在 `complete`／`awaitConvergedThenComplete` 的路徑上；實際的連坐都從 `whenTicks` 或 `at` 的 callback 裡的失敗開始（例如下面 nt 的自發事件：catalog 的 AccessDenied → SEALED(ALLOCATION_IO_FAILED) → `whenTicks` 逾時「RESOLVE 沒有建立宇宙」），不經過 `failDefinitely`；那兩個 helper 在 `M5GameTestSupport`，default run 的 `M5CollapseGameTests`、`M4CandidateDoorGameTests` 也在用。
+  - 寫出失敗之後立刻「收斂一次」時，權威還在退避期內，`convergeIfNeeded` 不會重寫；要收斂就得繞過 production 的退避（以反射改 `CollapseAuthorities` 的私有狀態）。
+  - `begin` 是 test 方法的第一個敘述、同步執行，沒辦法跨 tick 等待；要在 `begin` 裡等，60 個 test 的寫法都要改成 callback。
+- RED → GREEN（adapter `red-b1-fail-in-backoff`，不 commit：`allocation_write_fault_seals_then_retries_after_the_backoff_with_one_universe` 在 registered+8，也就是 RESOLVE 寫 allocation entry 的讀回失敗之後、ALLOCATION_LEDGER 還在 200 tick 的退避期內，於 `at` 的 callback 裡 `assertTrue(false)`；hooks 照常由 `at` 釋放）：
+
+  | run | HEAD | 結果 | `M5_UNIVERSE_HOLD` | gate root |
+  | --- | --- | --- | --- | --- |
+  | RED `red-b1-1` | `1b19457`（節流，沒有 B1） | **56 失敗**：adapter 讓它失敗的 1 個，加上之後的 55 個都在 `begin` 失敗（「開始時 catalog 與 M5 權威必須已收斂（前一個 test 違反衛生規則）」）；只有排在它之前的 4 個通過 | — | `gate-red-b1-1-ac3f7339955c4bfdb641a009bd2e3906` |
+  | GREEN-1 `green-b1-1` | `2f79614` | **只有它自己失敗**（59/60） | 下一個 test 等 193 tick 之後收斂；但「converged」記了 21 次 | `gate-green-b1-1-7ac6b094a25640119b8122defd9346ae` |
+  | GREEN-2 `green-b1-2` | `876a425` | **只有它自己失敗**（59/60） | start 1 則（`unconfirmed=[ALLOCATION_LEDGER]`）、converged 1 則（`heldTicks=193`） | `gate-green-b1-2-f9e9b9b1d33e47e7b13469d54711f7ec` |
+  | 檢查 `check-b1-hold50-1` | `876a425`＋`b1-hold-50`（`HOLD_TICKS` 改為 50） | 4 失敗：它自己，加上之後 3 個各等 50 tick 逾時、在 `begin` 失敗（訊息「初始化之前最多等 50 tick」）；第 4 個等到收斂之後通過，其餘都通過 | start 4、timeout 3、converged 1 | `gate-check-b1-hold50-1-001357200e484e169990d67bf781d21b` |
+
+  - GREEN-1 找到的問題：放行之後，原版的 `initialDelay`（20 tick）期間 `initialized` 仍是 false，hold 每個 tick 再被問一次，記了 21 則 converged。`876a425` 讓 mixin 在第一次放行之後不再詢問；GREEN-2 只剩 2 則。
+  - 失敗的 test 都照常 FAIL；有 B1 的兩次 GREEN，gate 都因為那 1 個失敗而 exit=1（預期）。
+  - 四次的 restore 都以 `git hash-object` 核對，`*-restored-state.txt` 的 HEAD 分別是 `1b19457`、`2f79614`、`876a425`、`876a425`，porcelain 都是空的。
+- 真實事件（不採計，只當旁證）：對照組 `meas-nothrottle-1`（沒有節流、沒有 B1）的 `passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once` 在 RESOLVE 遇到自發的 `AccessDeniedException: …quantumchamber_universes.dat.<n>.tmp -> …quantumchamber_universes.dat`（catalog，不是受控注入）→ SEALED(ALLOCATION_IO_FAILED) → `whenTicks` 逾時；下一個（也是最後一個）test 在 `begin` 連坐。這是已知偶發「Windows 原子移動的 AccessDenied」，root 保留。
+
+### M5 GameTest gate 連跑三次
+
+- 最後一個 code commit（`876a425`）之後，在乾淨的 `0ee3098`（README commit，code 相同）連跑三次，都是 **60/60**，耗時與 t/s 見 A3 的表。三次都沒有 `M5_UNIVERSE_HOLD`（沒有需要等的收斂）。
+
+### 完整回歸（run-all）
+
+- 所有 commit（README `0ee3098`）之後，在乾淨的 `0ee3098`（`f63b/run-all-1-state.txt`）跑一次，第一次就通過：
+  - **`run-all-1`＝`run-all-8fbd7fae42844a98be1845a58e3c853a`：`END ALL exit=0 HEAD=0ee3098`**（01:18～01:54，`f63b/run-all-1-console.txt`），SUMMARY `default=178/178 windows=89 legacy=1/1 m5=60/60 perTest=55+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=69 ci=win:PASS,ubuntu:PASS`（m5-collapse 的 probe runId `2c4e35393d22478f8972d4af17d5f4d5`，69 PASS、halt 31）。
+- 與基準 `run-all-50d08c8ba6394ad59a3a9559628c93b7`（F6-3 Step 0 的 run-all-1，`1c39fd9`；之後的 `c3fb2ca` 只多了 docs）逐項比較（`f63b/runall-compare.ps1 -Prefix runall1-`，`runall1-*.txt`；基準的各項摘要是 `f63s0/runall1-*-summary.txt`）：
+
+  | 項目 | 基準 | run-all-1 | 判讀 |
+  | --- | --- | --- | --- |
+  | default／windows／legacy／M5 GameTest | 178/178、89、1/1、60/60 | 相同；testcase 集合 `identical=True`（`runall1-default-setcmp.txt`、`-m5-setcmp`、`-legacy-setcmp`） | 相同 |
+  | perTest、JUnit | 55+1、666（664 PASS、2 SKIPPED） | 相同（`runall1-junit-setcmp.txt`） | 相同 |
+  | windowsCheckpoint、M3、recovery | 17、4+5、24 | 相同 | 相同 |
+  | m5collapse | 69（halt 31） | 69（halt 31） | 相同。具名斷言對 F6-3 Step 0 的 green-2 `50ac3f71…`（`names2.py`，不用改名表）：`RESULT=OK`，69 個 phase 的斷言、step 清單與順序全部相同（`runall1-vs-s0green2-names.txt`） |
+  | release JAR | 432 entries／385 classes、SHA-256 `c20bc00f…` | 相同、SHA-256 相同 | 相同（本節沒有改 `src/main/`）；`testmodHits=0`（兩個新的 test mixin 不在 JAR）、`mainOnly=PASS`；entry 集合相同（`runall1-jarcmp-*.txt`） |
+  | sources JAR | 226、`b38c1ed7…` | 226、`4bc333eb…` | 內容相同：`contentDiffers=0`、順序與 comment 相同，只有 zip 中繼資料（date_time、extra）不同（`runall1-zipmeta-sources-result.txt`） |
+  | Full WARN／ERROR | 54／31 | **55**／31 | 多的一則是「艙體 … 的 session 協調失敗，保留返還保護」，在 `m2_task4_disconnect_io` batch（`runall1-wbbatch-full.txt`），即已知偶發 `m2_task4_disconnect_io` 的 WARN +1；default run 不受本節影響（沒有節流的 property，hold 只在 `m5Only` 時生效） |
+  | legacy WARN／ERROR | 0／0 | 0／0 | 相同 |
+  | M5 WARN／ERROR | 38／10 | 38／10 | 數目相同；兩行差異是同一則訊息的正規化差異（F6-0 已記錄的 `PistonBlockEntity` object hash，與通道傳送 WARN 的座標以科學記號印出；`runall1-wbcmp-m5-gametest.txt`）。PREPARE 600 tick 的 WARN 兩邊都是設計成要等的那 2 則：基準本機的自然預載最多約 450 tick，本來就沒有多出的 PREPARE WARN，所以這次沒有可以減少的 |
+  | m5-gametest gate | 44 s（suite 16.58 s，t/s median 1140） | **2 m 33 s**（suite 2.185 min，t/s median 80、max 100；`runall1-m5gate-sum.txt`） | 預期的增加（節流） |
+  | pin 計數、worldgen | `pinOver=4 leaseWait=9 recoveryPending=4` | 相同（`runall1-pincount.txt`）；probe 的 69 個 phase 與 34 個 root 沒有 chunk 生成的例外（`runall1-worldgencheck.txt`） | 相同 |
+
+  預期的差異：m5-gametest gate 變長（約 +1 m 50 s，整個 run-all 約 35 分半）；其餘相同。run-all 沒有跨過午夜。
+- 本節的 commit 之後再跑一次（新 label），結果記在 `f63b/STATUS.md`。
+
+### 偏離派工字面之處
+
+1. **B1 多了一個新的 test mixin**（`M5ConvergenceHoldMixin`）：派工允許的 test mixin 以 `TestServerTickPaceMixin` 為例，B1 預期在 `M5UniverseGameTests`／`M5GameTestSupport`。等待必須在原版初始化 test 之前（理由見 B1），只有 mixin 做得到；判定與收斂都放在 `M5UniverseGameTests.holdBeforeBegin`（沿用 `converged`、`convergeAll`），mixin 只負責「還沒初始化時問一次、回 true 就延後」。`M5GameTestSupport` 沒有改。
+2. **B1 的等待不在 `begin` 裡**，而在 test 初始化之前（第二種做法的變形）：`begin` 是同步的第一個敘述，原版又在失敗的同一個 tick 開始下一個 batch。效果與「`begin` 在記 baseline 之前有界地等」相同：baseline 記在收斂之後，等不到時 `begin` 照舊失敗。
+3. **B1 有一個修正 commit**（`876a425`）：GREEN-1 發現重複的 log；依「不 rebase」另起 commit，GREEN-2 在修正之後重跑。
+4. **B1 的 RED 用「在退避期內讓 test 失敗」**，沒有另外注入 AccessDenied：它重現的是同一個狀態（權威未確認、退避期內、test 已失敗）；AccessDenied 的真實版本在 nt 自發發生（不採計，見 B1）。另外加跑一次 `HOLD_TICKS`＝50 的檢查，確認逾時之後放行、`begin` 照舊失敗。
+5. **#09 沒有改任何窗口**，所以沒有「窗口」的 commit；量測另外記了 `awaitConvergedThenComplete` 的用量。
+6. `build.gradle` 的 vmArg 同一行帶一段註解（指向 `TestServerTickPaceMixin`），沒有另加行。
+
+### 有沒有 production 與 spec 不符之處
+
+- 沒有。節流之後 production 的 PREPARE、退避、通道的到期都照 tick 計（用掉的 tick 與節流之前相同，見 #09），600 tick 的 WARN 只出現在設計成要等的兩個 test。本節沒有改 `src/main/`；RED 的 `red-preload-delay` 只在 adapter 裡暫時改 `CollapseService.preload`，已還原。
+
+### 需要裁示
+
+- **push**：Ubuntu 的實際效果要 push 到 CI 才能驗收（**CI 驗收待 push**）。建議同一個 SHA 至少兩次 run 都綠，並從 artifact 確認 Ubuntu 的 t/s 中位數不超過 100、PREPARE 的最大 tick 數遠低於 400（F6-3a A.6）；Windows job 也要維持綠燈。push 與重跑 CI 都要使用者的明確指示。
+- 請 reviewer 確認「偏離派工字面之處」第 1、2 點（B1 的等待以新的 mixin 放在初始化之前）。
+
+### 交給後續
+
+- **F6-3 的其他事項**（拆檔、CI 清單、harness）：本節沒有碰。CI 的 M5 step 耗時會增加（本機 suite 約 16 s → 約 2.2 min；Ubuntu 預估相近，仍在 step 的 20 分鐘上限內）。
+- **B4（production 重試）**：仍由使用者裁示。B1 之後，自發的 AccessDenied 只讓遇到它的那個 test 失敗，不再連坐。
+- 本機偶發的 `passage_power_loss_skips_the_one_who_crossed` 預載逾時：同一個根因（F6-3a A.0），節流之後 `:4058` 只用 3～4 tick（dl 74～75）。
+
+### root（全部保留）
+
+- 編譯：`f63b/c1-dev1`（`1b19457` 的內容）、`c2`、`c3-compile.log`。
+- A3：RED `gate-red-a3-1-8333845aac164512a8c1556b7b721937`（36/60 失敗，採計）；GREEN `gate-green-a3-1-5024a54781c947e1af627ab8f215614d`（60/60）。
+- #09：`gate-meas-1-96338f1965264dc1a6db4e68ff8de1fa`、`gate-meas-2-632a9b169c5947388e3cb65b9c772cdd`、`gate-meas-delay-1-28ad51c449db41d39954bbb63296125a`（都 60/60，量測用 adapter）；`gate-meas-nothrottle-1-36bc4fd6758f4a0fa3ad36996c427c27`（58/60，**不採計**：自發的 catalog AccessDenied 與它的連坐，已知偶發「Windows 原子移動的 AccessDeniedException」；它的量測值只當節流之前的對照）。
+- B1：RED `gate-red-b1-1-ac3f7339955c4bfdb641a009bd2e3906`（56 失敗）；GREEN-1 `gate-green-b1-1-7ac6b094a25640119b8122defd9346ae`（59/60，找到重複的 log）；GREEN-2 `gate-green-b1-2-f9e9b9b1d33e47e7b13469d54711f7ec`（59/60）；檢查 `gate-check-b1-hold50-1-001357200e484e169990d67bf781d21b`（4 失敗，預期）。這幾個 gate 依設計 exit=1（adapter 讓一個 test 失敗），都採計為 RED／GREEN 的證據。
+- M5 gate 三次：`gate-m5g-1-9856a46898f84a2d8481c7a774c6e718`、`gate-m5g-2-c8b51b5fc9c746e5ae88402a4893e375`、`gate-m5g-3-80184e837b0246beb715b38463038de9`（`0ee3098`，都 60/60）。
+- run-all：`run-all-1`＝`run-all-8fbd7fae42844a98be1845a58e3c853a`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
+- 已知偶發：`meas-nothrottle-1` 的自發 AccessDenied（不採計，見上）；`run-all-1` 的 Full WARN +1（`m2_task4_disconnect_io`）。結束過的程序：沒有（沒有逾時處置，沒有手動處置任何世界或 JVM）。
+- 取證腳本（`f63b/`）：由 `f6/f63s0/` 複製、每檔第一行加本輪註解的 `state.ps1`、`compile.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-50d08c8…`，`base-*-summary.txt` 是 `f63s0/runall1-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f63b`）、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-pincount.py`、`relay-worldgencheck.py`、`relay-zipmeta.py`、`names2.py`、`orderdiff2.py`；由 scratchpad `f63a-tools/` 複製的 `tps.py`、`segments.py`；本輪新寫：`adapters_f63b.py`（`red-preload-delay`、`meas-waits`、`no-throttle`、`red-b1-fail-in-backoff`、`b1-hold-50`）、`m5gate.ps1`、`m5red.ps1`、`m5sum.py`、`waits.py`、`classify.py`、`wintable.py`，工作稿 `note-draft.md`。
