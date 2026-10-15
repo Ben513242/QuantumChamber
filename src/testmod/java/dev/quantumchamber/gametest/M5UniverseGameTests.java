@@ -3967,7 +3967,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * <ul>
      * <li>P 越過中線、傳送到 U；Crossed 沒有記下（REJECTED：flushed 與 current 相同、Crossed 是空的、沒有待確認的 roll-forward），WARN「寫入 Crossed沒有完成（REJECTED）」一則。
      *     P 照常收到 NEW 的到達提示 title（先送淡入、停留、淡出 10／70／20，沒有 subtitle），actionbar 沒有任何訊息。</li>
-     * <li>P 不在 Crossed 中，(b) 不成立：通道一直開著（+100 tick 時仍是 PASSAGE_READY），P 留在 U、不再被傳送。</li>
+     * <li>P 不在 Crossed 中，(b) 不成立：通道一直開著（+100 tick 時仍是 PASSAGE_READY），P 留在 U、不再被傳送。+100 tick 時先讀一次 {@code hud}：跨越之後到這時什麼都沒有收到
+     *     （{@code nothingWhileTheRejectedPassageIsOpen}，F6-3c-1 依 F6-1 Step 0 quality Minor 1 補上：原本跨越之後約 1200 tick 都沒有清封包，違反 README「新增 M5 GameTest」的
+     *     {@code hud} 規則；結束時的精確比對因此只涵蓋 +100 tick 之後到結束）。</li>
      * <li>game time 到 expires（opened＋1200）時 (c) 結束（INFO (c) 一則），門改為一般開門。P 在 U、不在 Crossed 中，所以收到「量子通道已關閉」（恰一則 actionbar，沒有 title）。</li>
      * </ul>
      * 這個 session 的 WARN 只有那一則被拒，沒有 ERROR。不是 {@code _windows}：只用 journal put 的拒絕，不需要原生 checkpoint。有界等待的總長度：{@code resolved}（最多 65，見
@@ -4007,6 +4009,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
                     var record = journal.flushedRecords().get(sid);
                     witness.put("stillOpenWithoutTheRejectedOne", record != null && record.state() == SessionState.PASSAGE_READY && record.collapse().crossed().isEmpty()
                             && p.getServerWorld() == universe && crossedInfos(capture, sid) == 1 && passageEnded(capture, sid, "量子通道已結束") == 0);
+                    // F6-3c-1（F6-1 Step 0 quality Minor 1）：開放期間先讀一次 hud（清掉跨越之後的封包），跨越之後到這時什麼都沒收到；結束時的精確比對只涵蓋這之後到結束。
+                    var open = M5GameTestSupport.hud(origin.connection);
+                    witness.put("nothingWhileTheRejectedPassageIsOpen", open.overlays().isEmpty() && open.titles().isEmpty());
                 });
                 whenTicks(context, readyAt + 101, 1300, () -> !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), ended -> {
                     witness.put("endedByExpiry", passageEnded(capture, sid, "(c) game time 已到 PassageExpiresAtGameTime") == 1
@@ -4039,8 +4044,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
-     * F6-1 Step 0（同上，§10.6 (d)）：P 穿過通道之後斷電，下一個 tick 依 (d)「來源艙沒有供電」結束（INFO (d) 一則），門改為一般開門。只有還沒跨過的 Q 收到「量子通道已關閉」；
-     * 已在 Crossed 中的 P 什麼都沒有收到。不是 {@code _windows}。catalog 增量 1。
+     * F6-1 Step 0（同上，§10.6 (d)）：P 穿過通道之後斷電，下一個 tick 依 (d)「來源艙沒有供電」結束（INFO (d) 一則；{@code endedNextTick}，F6-3c-1 依 F6-1 Step 0 quality Nit 4
+     * 補上，原本只寫在這裡、沒有斷言），門改為一般開門。只有還沒跨過的 Q 收到「量子通道已關閉」；已在 Crossed 中的 P 什麼都沒有收到。不是 {@code _windows}。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_power_crossed", tickLimit = 900)
     public void passage_power_loss_skips_the_one_who_crossed(TestContext context) {
@@ -4115,6 +4120,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         }));
                 whenTicks(context, readyAt + 5, 10, () -> !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), ended -> {
                     witness.put("endedAsExpected", passageEnded(capture, sid, end) == 1 && passageEnded(capture, sid, "量子通道已結束") == 1);
+                    // F6-3c-1（F6-1 Step 0 quality Nit 4）：(d) 在斷電（readyAt+4）的下一個 tick 結束，比照 passage_ends_with_a_plain_open_door_when_the_source_loses_power 的 endedNextTick。
+                    if (how == CrossedEnd.POWER_LOSS) witness.put("endedNextTick", ended == readyAt + 5);
                     witness.put("doorAfterTheTerminal", doorAll(world, frame, how.openAfterTheEnd, MembraneState.NONE));
                     witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
