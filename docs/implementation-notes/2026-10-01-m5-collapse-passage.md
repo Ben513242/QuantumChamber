@@ -9088,3 +9088,116 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 - run-all：`run-all-1`＝`run-all-916ec14a8c1c4a7885ffc89b7bf02f7b`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
 - 已知偶發：`run-all-1` 的 Full WARN +1（`m2_task4_disconnect_io`）。結束過的程序：沒有（probe 沒有遇到逾時處置；沒有手動處置任何世界）。
 - 取證腳本（`f62e3/`，由 `f6/f62e2/` 複製的每檔第一行加本輪註解）：`state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-2c90d61e10994d8c86d6c7782d068338`，`base-*-summary.txt` 是 `f62e2/runallfinal-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f62e3`）、`mutsum.py`、`names2.py`、`orderdiff2.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-pincount.py`、`relay-worldgencheck.py`、`relay-zipmeta.py`、`mutations.ps1`（改成本輪的 4 個）、`driver.ps1`；本輪新寫：`adapters_f62e3.py`、`mutations2.ps1`、本節的工作稿 `note-draft.md`、`b-section.md`、`tail-section.md`。一次性的編輯腳本與 W12 的原始檔草稿在 scratchpad 的 `w12/`（`apply_b.py`、`apply_readme.py`）。
+
+## F6-3 Step 0：F6-2e-3 review 的 probe 整理
+
+- implementer 依 controller 的派工（scratchpad `f63s0-prompt.md`）完成。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63s0/`，以下簡稱 `f63s0/`，`STATUS.md` 是交接摘要。開工時 HEAD 是 `2a333f3`、`git status --porcelain` 為空（`f63s0/start-state.txt`）。範圍：上方 F6-2e-3 一節 review 區塊交下的整理（spec M-1～M-3、quality Minor 1～6 與 nit 3 項），只改 testmod 的 probe 與 README。**沒有新的 chain 或 phase**，`m5collapse` 仍是 69（halt 31）。F6-3 本體（`build.yml`、gates、拆檔、偶發）由 controller 另外派工。
+- Commits（`2a333f3..` 本節的 commit，依序；每個 commit 只 stage 自己的檔案；code 的 commit 之前都在工作樹編譯：`f63s0/c1`、`c2`、`c3-compile.log`（`c3-dev1` 是 dev run 之前的同一份內容，blob 相同），`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL，警告只有既有的 `SessionTransferFaultMixin` 6 則）：
+  - `b1a57c7` `refactor: check the passable doors through M5CollapseDoors`（第 9 點的 `doorPassable`，**獨立的純 refactor**）
+  - `fe56e00` `refactor: share the crash receipt step, label the W12 readback faults and print unequal journal records`（第 5、6、7、8 點與第 9 點的 proof 鍵；不改判斷）
+  - `16201b6` `test: check both W12 retries, the doubled backoff and every backoff tick, and bound the W10 cancel tick`（第 1、2、3、4 點與第 9 點的 positive control；**判斷變嚴**；**最後一個 code commit**）
+  - `1c39fd9` `docs: describe the F6-3 Step 0 probe tidy-up in the collapse probe README`
+  - 本節由其後的 `docs: record F6-3 Step 0 in the M5 note` 加入。
+- 只改了派工允許的路徑：testmod 的 `M5CollapseConvergenceChain`、`M5CollapseRestartChains`、`M5CollapseDiskEvidence`、`M5CollapseUnsupportedChain`、`M5CollapsePassage`、`M5CollapseWindows`；`M5TestHooks` 只改 `CheckedReadFault`（第 8 點）；README 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、所有 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5CollapseGameTests`、`M5GameTestSupport`）、M4 probe、所有 JUnit、語言檔、spec、plan、AGENTS；test mixin 也沒有改。
+- 行號以 HEAD `2a333f3` 為準，簡稱同上一節（`CC`＝`M5CollapseConvergenceChain`、`UC`、`RCH`、`DE`、`PSG`、`WIN`）。
+
+### 逐項處置
+
+| 項目 | 處置 | 證據 |
+| --- | --- | --- |
+| 1. quality Minor 2（優先）：W12 的兩次重試與「退避加倍」 | 第一次重試改用基底的 `retried("retried", "retriedOnTheCatalog", ALLOCATION_IO_FAILED, 1, Await.EDGE)`（新 step `retried`；原本在 `sealedOnTheDiscovery` 只數「SEALED 重試」恰一則，**判斷變嚴**：另看原因、由艙外進入之後 10 tick 內，名稱不變）。第二次封存之後，在第一次的退避長度（`M5CollapseRetryChains.BACKOFF_TICKS`＝`INITIAL_TICKS`＋5）時先由艙外進入一次（新 step `backoffEarly`），之後 40 tick 每個 tick 斷言這次不重試（新 step `notRetriedEarly`、新斷言 **`notRetriedBeforeTheDoubledBackoff`**：全部的重試 INFO 仍是 1、record（flushed 與 current）與第二次封存時相同、參與者在艙內），觀察完離開；`2×INITIAL_TICKS`＋5 時進入（`backoffAgain`，同前）之後經基底的 `untilTriggered`（`Await.EDGE`）等第二次重試（新 step `retriedAgain`、新斷言 **`retriedAgainAfterTheDoubledBackoff`**：SEALED(ALLOCATION_IO_FAILED) 的重試 INFO 共 2 則、全部的也是 2，10 tick 內；到時沒有就失敗在這個具名斷言，不是 stepBounded）。`convergedAtHalt` 另斷言 **`retriedTwiceBeforeTheHalt`**（同樣的兩個計數都是 2）。所以第二次封存的延遲 d 滿足 `INITIAL_TICKS`＋6 < d ≤ 2×`INITIAL_TICKS`＋6（進入之後下一個 tick 才觀察到邊緣）。三次進入的 server tick 記在 proof：`reenteredAfterTheBackoffTick`、`reenteredBeforeTheDoubledBackoffTick`、`reenteredAfterTheDoubledBackoffTick`。退避的長度都由 `CollapseBackoff.INITIAL_TICKS` 推出。重試 INFO 的計數收成基底的 static `retriesFrom(run, sid, reason)`、`retries(run, sid)`（`retried` 也改用，查詢相同；`fe56e00`） | GREEN 兩次：重新進入 211／418／618，`retried` 在 212、`retriedAgain` 在 619，halt 在 620（與 F6-2e-3 相同）；production 的 debug log「SEALED 的重試在退避期內，這次觸發不重試…下一次可在 tick 613 之後」（第二次封存在 213，延遲 400；`green-*-w12-logcheck.txt`）；mutation 4 個（見下） |
+| 2. spec M-2、quality Minor 1 | `backoff` 的每個 tick（到由艙外進入的那個 tick、進入之前）斷言 `expectRolledForward` 與 `expectNotMaterialized`（新斷言 **`catalogRolledForwardInTheBackoff`**、**`notMaterializedInTheBackoff`**；`reenterAfter` 多一個 `eachTick`）。說法改成「封存當下、`unconfirmed` 的 40 tick 與 `backoff` 到由艙外進入為止的每個 tick」（`CC.sealedOnTheUnconfirmedDiscovery` 的 Javadoc、類別說明、README w12 列）。之後只隔重試的那一個 tick（step `retried`）不另斷言：production 每個 tick 每個 session 只推進一步（`CollapseService.step` 的 switch），那個 tick 只做 SEALED→COLLAPSING 的 checked 寫入與取得來源 ticket，RESOLVE（先收斂、再物化）在下一個 tick；同一個 tick 內的先後 probe 看不到。所以沒有寫成「確認之前每個 tick」 | mutation `mut-materialize-in-the-backoff` |
+| 3. spec M-1 | `CC` 類別說明的「halt 選在…」一段改寫：與 W3 等價的是 catalog 與 allocation ledger 的磁碟狀態（catalog 已有 U、EAGER_ENABLED，allocation 恰一筆；記憶體裡的未確認隨 JVM 消失，開服 bootstrap 由 EAGER_ENABLED 物化）；磁碟上的 journal 是 SEALED(ALLOCATION_IO_FAILED)、不是 W3 的 COLLAPSING；「重啟之後 SEALED 第一次觸發就重試」由 `w9-restart`（SEALED(MATERIALIZE_FAILED)）、`unreadable-restart`（SEALED(AUTHORITY_UNREADABLE)）涵蓋。README 沒有同一句（w12 列沒有寫 W3 的等價），不改 | — |
+| 4. spec M-3 | 選「加上限」：`newCancelledOnTheFirstDormantObservation` 另要求 `cancelledAt - removedAt <= 1`（這個 step 觀察到 NEW 已不在 flushed 與 staged 的 tick 減取消的寫出的 tick；**判斷變嚴**，名稱不變）。理由：只在 Javadoc 寫明「只比寫出的 tick」時，終局 flush 失敗、之後才確認的情況仍成立；加上限之後會失敗。容許 1：`cancelled` 這個 step 在 `returned` 完成的下一個 tick 才開始，取消若發生在 `returned` 完成的那個 tick，step 最早在下一個 tick 看到 | GREEN 的 `w10-restart`：`newDormantAtServerTick`／`newRemovedAtServerTick`／`newCancelledAtServerTick` 是 28／28／28（`green-1`）、32／32／32（`green-2`） |
+| 5. quality Minor 3 | 選「抽成基底方法」：`RCH.throughTheReceipt(setup, beforeReceipt, afterWrite)`（`buildAndRegister` → `beforeReceipt` → `receipt`：`setup.beforeWrite()` → 寫入 `setup.receipt().build()` 並原生存檔 → `afterWrite`），`crash(...)`（`afterWrite`＝`install`＋依窗口表裝上 crash 點，順序與原本相同）與 W12（`dormantNewSetup()`、`afterWrite`＝記下收據已寫入＋裝上 catalog 的 fault）都用它。理由：在 W12 手抄完整的 `dormantNewSetup()` 仍是第二份，之後改骨架時一樣會分岔（`fe56e00`） | 純重構：step 名稱、順序與上限不變 |
+| 6. quality Minor 4 | `DE.expectJournalOnDisk` 的失敗訊息另列兩邊不相等的 session，各印出完整的 record（沒有時是 ABSENT；都相等時是「無」，那時不相等的是 SchemaVersion）（`fe56e00`） | 只改訊息 |
+| 7. quality Minor 5 | `CC` 的 `CATALOG_CONVERGED`、`DISCOVERY_CONVERGED`（String）改名為 `CATALOG_CONVERGED_INFO`、`DISCOVERY_CONVERGED_INFO`（`fe56e00`） | 只改名 |
+| 8. quality Minor 6 | `CheckedReadFault` 多一個收例外字句的建構子；三參數的建構子保留 F4a 的「F4a GameTest 受控：讀取 … 失敗」（GameTest 與 probe 的讀取失敗都用它，字句不變）。W12 的兩個讀回 fault 給「M5 collapse probe 受控（W12）：<檔名> 寫出／追加之後的讀回失敗（atomic move 已完成）」。先以 grep 確認沒有斷言比對這段字句（repo 內只有 `DestinationResolverTest` 自己的 JUnit 字句，與它無關）（`fe56e00`） | GREEN 的 W12 log：兩個 WARN 的 cause 都是新的字句（`green-*-w12-logcheck.txt`） |
+| 9a. nit：`doorPassable` | `PSG.passageReady`（:270）、`WIN.terminatedBeforeTheDoor`（:982）改經 `M5CollapseDoors.is(run, PASSABLE_MEMBRANE)`（同一個 `doorAll(source, FRAME, true, passable)`），**獨立的純 refactor commit** `b1a57c7` | `r-green`：`RESULT=OK`、沒有改名（見下） |
+| 9b. nit：`expectNotMaterialized` 的 positive control | 抽出 `universeStorage()`（推導不變）；物化之後（`sealedOnTheDiscovery`）對同一個路徑以同一個 `Files.exists` 斷言存在（新斷言 **`storageExistsAfterTheMaterialization`**：U 已物化、目錄存在）。vanilla 建立 world 時（`ServerChunkManager` 建立 world 目錄下的 `data`）就建出它，所以物化之後一定存在；推導錯了時這個斷言失敗，「沒有物化」就不會因為看錯路徑而恆成立 | GREEN 兩次成立；`mut-materialize-in-the-backoff` 的失敗訊息也是「storage 目錄存在=true」（同一個路徑） |
+| 9c. nit：proof 鍵 `…SchemaFourSchema` | **保留**，理由寫在 `DE.expectJournalOnDisk` 的 Javadoc：鍵一律由斷言名稱機械地推出（`<name>Schema`，12 個呼叫端），由 receipt 找對應的斷言不需要另一張表；只有名稱本身含 Schema 的字面重複，為它們改成另一種推導只會讓規則不一致；斷言的名稱跨 run 比對，不為鍵改名；沒有程式讀這些鍵（grep） | — |
+
+### mutation（`1c39fd9`，乾淨的工作樹；`f63s0/mutations.ps1`）
+
+| mutation（`adapters_f63s0.py`，都跑 `-Only w12`） | 改動（old 字串各恰一次） | 結果 |
+| --- | --- | --- |
+| `mut-backoff-not-doubled` | `CollapseBackoff.failed` 不再加倍（每次都是 `INITIAL_TICKS`） | runId `b23ea5a7d5404082a0efca7254919ac3`：**FAIL 在 `notRetriedBeforeTheDoubledBackoff`**（提早進入之後第 1 個 tick、server tick 419：「全部的重試 INFO=2 … state=COLLAPSING」） |
+| `mut-retry-resets-the-backoff` | `retrySealed` 的 checked 寫入成功之後 `track.backoff.reset()` | runId `1b0f32053729436a9b3bbf8cbbb27372`：**FAIL 在 `notRetriedBeforeTheDoubledBackoff`**（同上，tick 419） |
+| `mut-backoff-tripled`（退避變長） | 每次失敗乘 3（第二次封存的延遲 600） | runId `54043a158def49aba7f2f1c3b9519685`：`notRetriedEarly` 照常成立，**FAIL 在 `retriedAgainAfterTheDoubledBackoff`**（加倍的退避期過後進入之後 10 個 tick、tick 628：「重試 INFO=1」；具名斷言，不是 stepBounded） |
+| `mut-second-retry-info-missing` | 「SEALED 重試」的 INFO 只在延遲不超過 `INITIAL_TICKS` 時記（第二次重試照常發生、不記） | runId `340d79f294214305bf1bf2ba80adbce4`：`retriedAgain` 還沒到 10 tick，下一個 tick（620）窗口成立，**FAIL 在 `convergedAtHalt` 的 `retriedTwiceBeforeTheHalt`**（「重試 INFO=1」；halt 之前的取證丟出，所以不 halt，runner 依慣例記為 `crashPointHealthy：crash 點失敗：…retriedTwiceBeforeTheHalt…`） |
+| `mut-materialize-in-the-backoff` | 第一次封存之後在 retryAt−100 的 tick 由 SEALED 的處理直接呼叫 `materializeAllocated`（lifecycle 與 `materializeChecked` 的前提改讀 current，同 F6-2e-3 `mut-materialize-unconfirmed-all` 的後兩層） | runId `3ac25aed2fe74d2b8adfca08c4cfbccb`：**FAIL 在 `notMaterializedInTheBackoff`**（tick 106＝封存 6＋100，`backoff` 的第 60 個 tick：「U 已物化=false storage 目錄存在=true」，物化已開始寫 U 的 storage） |
+
+- 五次都由 `red.ps1` 的 finally 以 `adapter.py restore` 還原、以 `git hash-object` 核對；`m-*-restored-state.txt` 的 HEAD 都是 `1c39fd9`、porcelain 空。摘要在 `m-*-mutsum.txt`（runId 已記下：probe log 的 regex 抓不到時，改取這一步開始之後新建的 `collapse-<runId>-w12` 目錄）。
+- 派工要求的都做到、都打中目標：退避不再加倍、`retrySealed` 重設退避 → 「這次不重試」的 `notRetriedBeforeTheDoubledBackoff`；退避變長 → 具名斷言 `retriedAgainAfterTheDoubledBackoff`；只有一則重試 INFO → `convergedAtHalt` 的計數；`backoff` 期間提早物化 → 新的 `notMaterializedInTheBackoff`。「第二次重試沒有發生」見「偏離派工字面之處」第 1 條。
+
+### GREEN
+
+- 第 9 點的純 refactor（`b1a57c7`）之後先單獨跑一次：`r-green` runId `2e41418fdc324226bd45ffeacc96f8e2`（乾淨的 `b1a57c7`，`f63s0/r-green-probe-state.txt`；22:00～22:20），**69/69 PASS**（halt 31）。
+- 最後一個 code commit 之後，乾淨的 `1c39fd9`（README commit，code 與 `16201b6` 相同；porcelain 空，`f63s0/green-*-probe-state.txt`）上連跑兩次，都是 **69/69 PASS**（halt 31）：
+  - `green-1`：runId `f78775a5b40a4f5d94a331870c74f29f`（22:31～22:49）。
+  - `green-2`：runId `50ac3f71be9646d7976096aeb63819de`（22:49～23:08）。
+- `w12-crash` 兩次都是 HALT（35 個斷言，`DISCOVERY_CONVERGED`，halt 在 server tick 620，與 F6-2e-3 相同）：封存在 6、213，重新進入在 211、418、618，`retried` 在 212、`retriedAgain` 在 619。
+- dev run（未 commit 的工作樹，不採計，root 保留）：`dev-w12-1` runId `a2d79794869d40dda409a3771794063f`（`-Only w12`，兩個 phase 都成立；用來先確認 positive control 的目錄在物化之後存在、各 step 的 tick）。
+
+### 具名斷言的比對
+
+- 以 F6-2e-3 的 green-2 `e7fdcd84d2f14ba08f9be8239641eee9` 為基準，`names2.py`（`f63s0/` 的版本另接受改名表的 `addedSteps`：先拿掉宣告的新 step，其餘 step 仍要求名稱與順序完全相同）：
+  - `r-green`（`b1a57c7`）不用改名表：**`RESULT=OK`**，69 個 phase 的斷言全部仍在、全部成立，step 清單與順序全部相同，**沒有新增、沒有改名**（`r-green-vs-e2e3green2-names.txt`）。所以第 9 點的純 refactor 單獨是 `RESULT=OK`、沒有改名。
+  - `green-1`、`green-2` 以 `names-table.json`（只有 `addedSteps: w12-crash: retried, backoffEarly, notRetriedEarly, retriedAgain`，沒有改名）：兩次都是 **`RESULT=OK`**（`green-1-vs-e2e3green2-names.txt`、`green-2-vs-e2e3green2-names.txt`）。既有的名稱全部仍在、全部成立；只有 `w12-crash` 多出 6 個斷言、4 個 step，其餘 68 個 phase 的斷言與 step 完全相同。`green-2` 對 `green-1` 不用改名表也是 `RESULT=OK`（`green-2-vs-green-1-names.txt`）。
+- **沒有改名**。新增的具名斷言（只在 `w12-crash`）：`catalogRolledForwardInTheBackoff`、`notMaterializedInTheBackoff`、`storageExistsAfterTheMaterialization`、`notRetriedBeforeTheDoubledBackoff`、`retriedAgainAfterTheDoubledBackoff`、`retriedTwiceBeforeTheHalt`。新增的 step：`retried`、`backoffEarly`、`notRetriedEarly`、`retriedAgain`。新的 proof 鍵（不是具名斷言）：`reenteredAfterTheBackoffTick`、`reenteredBeforeTheDoubledBackoffTick`、`reenteredAfterTheDoubledBackoffTick`。
+- **判斷變嚴、名稱不變**的兩個：`retriedOnTheCatalog`（另看原因、10 tick 內；位置由 `sealedOnTheDiscovery` 移到新 step `retried`，斷言之間的相對順序不變）、`newCancelledOnTheFirstDormantObservation`（另要求完成的 tick 最多晚 1）。
+
+### 完整回歸（run-all）
+
+- 所有 commit（README `1c39fd9`）之後，在乾淨的 `1c39fd9`（`f63s0/run-all-1-state.txt`）跑一次，第一次就通過：
+  - **`run-all-1`＝`run-all-50d08c8ba6394ad59a3a9559628c93b7`：`END ALL exit=0 HEAD=1c39fd9`**（23:11～23:45，`f63s0/run-all-1-console.txt`），SUMMARY `default=178/178 windows=89 legacy=1/1 m5=60/60 perTest=55+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=69 ci=win:PASS,ubuntu:PASS`（m5-collapse 的 probe runId `e90a77775a7a46c2bc4722f4219d4259`，69 PASS、halt 31）。
+- 與基準 `run-all-01ba4701f6724869b82f6d76dd0ac58c`（F6-2e-3 的最終回歸，`d0f56a8`）逐項比較（`f63s0/runall-compare.ps1 -Prefix runall1-`，`runall1-*.txt`）：
+
+  | 項目 | 基準 | run-all-1 | 判讀 |
+  | --- | --- | --- | --- |
+  | default／windows／legacy／M5 GameTest | 178/178、89、1/1、60/60 | 相同；testcase 集合 `identical=True`（`runall1-default-setcmp.txt`、`-m5-setcmp`、`-legacy-setcmp`） | 相同 |
+  | perTest、JUnit | 55+1、666（664 PASS、2 SKIPPED） | 相同（`runall1-junit-setcmp.txt`：666 筆） | 相同 |
+  | windowsCheckpoint、M3、recovery | 17、4+5、24 | 相同 | 相同 |
+  | m5collapse | 69（halt 31） | 69（halt 31） | 相同（沒有新的 phase）。具名斷言對 `green-2` `50ac3f71…`（`names2.py`，不用改名表）：`RESULT=OK`，69 個 phase 的斷言、step 清單與順序全部相同（`runall1-vs-green2-names.txt`）；`w12-crash` halt 在 620、重新進入 211／418／618，`w10-restart` 的 DORMANT／取消的寫出／取消完成是 34／34／34 |
+  | release JAR | 432 entries／385 classes、SHA-256 `c20bc00f…` | 相同、SHA-256 相同 | 相同（本節沒有改 `src/main/`）；`testmodHits=0`、`mainOnly=PASS`；entry 集合與基準相同（`runall1-jarcmp-*.txt`） |
+  | sources JAR | 226、`2f639cb8…` | 226、`b38c1ed7…` | 內容相同：`contentDiffers=0`、順序與 comment 相同，只有 zip 中繼資料（date_time、extra）不同（`runall1-zipmeta-sources-result.txt`） |
+  | Full WARN／ERROR | 55／31 | **54**／31 | 少掉的一則是基準裡已知偶發的「艙體 … 的 session 協調失敗，保留返還保護」（`m2_task4_disconnect_io` 的 WARN +1，F6-2e-3 歸屬）；這次沒有發生，54 即正常值（`runall1-wbcmp-full.txt`） |
+  | legacy WARN／ERROR | 0／0 | 0／0 | 相同 |
+  | M5 WARN／ERROR | 38／10 | 38／10 | 相同；一行差異是 F6-0 已記錄的 `PistonBlockEntity` object hash（`runall1-wbcmp-m5-gametest.txt`） |
+  | pin 計數、worldgen | `pinOver=4 leaseWait=9 recoveryPending=4` | 相同（`runall1-pincount.txt`）；probe 的 69 個 phase 與 34 個 root 沒有 chunk 生成的例外（`runall1-worldgencheck.txt`） | 相同 |
+
+  預期的差異：沒有（`m5collapse` 仍是 69、halt 31；release 與 sources 的內容不變）。run-all 沒有跨過午夜。
+- 本節的 commit 之後再跑一次（新 label），結果記在 `f63s0/STATUS.md`。
+
+### 偏離派工字面之處
+
+1. 第 1 點「第二次重試沒有發生 → FAIL 在 `convergedAtHalt` 的計數」：第二次重試沒有發生時就沒有 RESOLVE，窗口不成立、不會 halt，`convergedAtHalt` 不會執行。所以「沒有發生」（含退避變長）由新的 step `retriedAgain` 的具名斷言 `retriedAgainAfterTheDoubledBackoff` 判 FAIL（10 tick，不是 stepBounded）；「重試發生了、但只有一則重試 INFO」才由 `convergedAtHalt` 的 `retriedTwiceBeforeTheHalt` 判 FAIL。兩種都以 mutation 驗過（`mut-backoff-tripled`、`mut-second-retry-info-missing`）。
+2. 第 2 點：說法改成「封存當下、`unconfirmed` 的 40 tick 與 `backoff` 到由艙外進入為止的每個 tick」，沒有寫成「確認之前每個 tick」：之後還隔重試的那一個 tick（step `retried`），probe 不另斷言，理由見第 2 點。
+3. 第 8 點除了 `CATALOG_READBACK_FAULT`，W12 的 discovery 讀回 fault（`CHECKED_READ_FAULT`，放行 1、失敗 1）也改給讀回的字句：它失敗的那一次也是讀回，沿用「讀取 … 失敗」一樣容易誤判。只改 `CC`；`M5TestHooks` 的改動仍只有第 8 點。
+4. 第 9 點的 positive control 選「物化之後對同一路徑 `Files.exists` 為真」（同一個推導、同一個判斷式），沒有另比對 session 的 `getWorldDirectory`：vanilla 建立 world 時就建出這個目錄，存在性就是直接的 positive control。
+5. 重試 INFO 的兩個計數抽成基底的 static 方法（`RCH.retriesFrom(run, sid, reason)`、`retries(run, sid)`）：`convergedAtHalt` 是窗口表的 static 取證，拿不到 chain 的 instance；`retried` 改用它們，查詢相同。
+
+### 有沒有 production 與 spec 不符之處
+
+- 沒有。GREEN 的 W12：第二次封存的 per-session 退避是 400 tick（debug log「下一次可在 tick 613 之後」，第二次封存在 213），重試的 SEALED→COLLAPSING 不重設退避、提早的進入在退避期內被消耗而不重試，符合 spec §11.2；W10 的取消在第一次寫成 DORMANT 的同一個 tick 寫出、同一個 tick 完成。本節沒有改 `src/main/`。
+
+### 需要裁示
+
+- 請 reviewer 確認：
+  - 第 2 點只寫到「由艙外進入為止」，重試的那一個 tick 不另斷言的理由；
+  - 「第二次重試沒有發生」改由 `retriedAgainAfterTheDoubledBackoff` 判定（偏離第 1 條）；
+  - 第 4 點容許 1 tick 的理由；
+  - 第 9c 點保留 proof 鍵的理由。
+
+### 交給後續
+
+- **F6-3**：沒有新的 phase；`w12-crash` 的 halt 仍在 server tick 620（多出的觀察段落在第二次退避之內，不延長）。觀察中的 `passage_power_loss_skips_the_one_who_crossed` 預載逾時：本節的 GREEN、mutation 與 run-all 都沒有遇到。
+- **F7**：F6-2e-3 quality review「給 F7」的「W12 不驗證退避加倍」：本節起 W12 驗證第二次封存的延遲 d 滿足 `INITIAL_TICKS`＋6 < d ≤ 2×`INITIAL_TICKS`＋6，請 F7 依此更新說法（或拿掉這一條）。
+
+### root（全部保留）
+
+- 編譯：`f63s0/c1`、`c2`、`c3-dev1`、`c3-compile.log`。
+- probe：`r-green` `2e41418fdc324226bd45ffeacc96f8e2`（`b1a57c7`，69/69）；dev run `a2d79794869d40dda409a3771794063f`（不採計）；GREEN `green-1`＝`f78775a5b40a4f5d94a331870c74f29f`、`green-2`＝`50ac3f71be9646d7976096aeb63819de`（`1c39fd9`，69/69）；mutation 見上表（5 個 root，都採計）。
+- run-all：`run-all-1`＝`run-all-50d08c8ba6394ad59a3a9559628c93b7`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
+- 已知偶發：沒有遇到（`run-all-1` 的 Full WARN 54 是基準 55 少掉已知偶發 `m2_task4_disconnect_io` 的 +1；M5 的一行差異是 F6-0 已記錄的 `PistonBlockEntity` object hash）。結束過的程序：沒有（probe 沒有遇到逾時處置；沒有手動處置任何世界或 JVM）。
+- 取證腳本（`f63s0/`，由 `f6/f62e3/` 複製的每檔第一行加本輪註解）：`state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-01ba4701f6724869b82f6d76dd0ac58c`，`base-*-summary.txt` 是 `f62e3/runallfinal-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f63s0`）、`mutsum.py`、`names2.py`（另接受 `addedSteps`）、`orderdiff2.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-pincount.py`、`relay-worldgencheck.py`、`relay-zipmeta.py`、`mutations.ps1`（改成本輪的 5 個、runId 另由新建的目錄取得）、`driver.ps1`；本輪新寫：`adapters_f63s0.py`、`logcheck.py`、`names-table.json`、工作稿 `note-draft.md`、`readme-draft.md`。
