@@ -354,8 +354,7 @@ final class M5GameTestSupport {
             var ready = record.withCollapse(SessionState.PASSAGE_READY, record.collapse().withPassage(time));
             requireCommitted(journal.commitRestore(server, record, ready), "COLLAPSING→PASSAGE_READY"); record = ready;
         } else if (phase == SessionState.SEALED) {
-            var sealed = record.withCollapse(SessionState.SEALED, record.collapse().sealed(SealedReason.PROJECTION_FAILED));
-            requireCommitted(journal.commitRollForward(server, record, sealed), "COLLAPSING→SEALED"); record = sealed;
+            record = seal(server, record, SealedReason.PROJECTION_FAILED);
         }
         if (!record.equals(journal.flushedRecords().get(record.sessionUuid()))) throw new IllegalStateException("M5 fixture 未 exact 落盤：" + phase);
         return record;
@@ -388,10 +387,19 @@ final class M5GameTestSupport {
      * 全部在同一個 callback 內完成（塌縮流程看不到中間狀態），最後確認 exact 落盤。
      */
     static SessionRecoveryRecord sealedFixture(MinecraftServer server, ChamberOriginAuthority origin, Map<UUID, Boolean> people, SealedReason reason) {
-        var journal = SessionRecoveryState.get(server);
         boolean transfer = reason == SealedReason.TRANSFER_RECOVERY_REQUIRED;
         var before = collapseFixture(server, origin, people, List.of(), true, transfer ? SessionState.PASSAGE_READY : SessionState.COLLAPSING, false);
-        var sealed = before.withCollapse(SessionState.SEALED, transfer
+        return seal(server, before, reason);
+    }
+
+    /**
+     * fixture 的封存（F6-3c-1，H9 quality Minor 5：原本 {@link #collapseFixture} 的 SEALED 分支與 {@link #sealedFixture} 各寫一份）：{@code before}（COLLAPSING；
+     * {@code TRANSFER_RECOVERY_REQUIRED} 時是 PASSAGE_READY）以 commitRollForward 進入 SEALED({@code reason})（{@code TRANSFER_RECOVERY_REQUIRED} 的 RecoveryRequired 是第一位參與者），
+     * 確認 exact 落盤。
+     */
+    private static SessionRecoveryRecord seal(MinecraftServer server, SessionRecoveryRecord before, SealedReason reason) {
+        var journal = SessionRecoveryState.get(server);
+        var sealed = before.withCollapse(SessionState.SEALED, reason == SealedReason.TRANSFER_RECOVERY_REQUIRED
                 ? before.collapse().transferRecoveryRequired(before.participants().getFirst().playerUuid()) : before.collapse().sealed(reason));
         requireCommitted(journal.commitRollForward(server, before, sealed), before.state() + "→SEALED(" + reason + ")");
         if (!sealed.equals(journal.flushedRecords().get(sealed.sessionUuid()))) throw new IllegalStateException("M5 fixture 未 exact 落盤：SEALED(" + reason + ")");
