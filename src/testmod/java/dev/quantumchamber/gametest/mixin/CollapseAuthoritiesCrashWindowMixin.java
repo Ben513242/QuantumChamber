@@ -21,7 +21,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * <ul>
  * <li>{@code lookupOrAppendAllocation} → {@code ALLOCATION_APPENDED}（W2：allocation ledger 已 checked 寫出、catalog 還沒有配置）；</li>
  * <li>{@code allocateOrVerifyCatalog} → {@code CATALOG_ALLOCATED}（W3：catalog 已 checked 寫出、還沒有物化）；</li>
- * <li>{@code appendDiscovery} → {@code DISCOVERY_APPENDED}（W5：discovery 已 checked 追加、投影還沒有開始）；</li>
+ * <li>{@code appendDiscovery} → {@code DISCOVERY_APPENDED}（W5：discovery 已 checked 追加、投影還沒有開始），之後 {@code DISCOVERY_CONVERGED}（F6-2e-3，W12：讀回失敗之後的收斂、
+ *     查到既有的 record；同一個注入點依序派發）；</li>
  * <li>{@code writeProjection} → {@code PROJECTION_COMPLETE}（W6：projection ledger 已 checked 寫入 COMPLETE、PASSAGE_READY 還沒有提交；回傳的
  *     {@code WriteResult}，PENDING 的寫入也會呼叫）。</li>
  * </ul>
@@ -57,6 +58,7 @@ abstract class CollapseAuthoritiesCrashWindowMixin {
     private void quantumchamberTest$discoveryWindow(UniverseId universeId,long discoveredAtGameTime,UUID selectedBy,
             CallbackInfoReturnable<CollapseAuthorities.Lookup<?>> callback) {
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.DISCOVERY_APPENDED,callback.getReturnValue());
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.DISCOVERY_CONVERGED,callback.getReturnValue());
     }
 
     @Inject(method="writeProjection(Ldev/quantumchamber/collapse/ProjectionLedger$Entry;)Ldev/quantumchamber/collapse/CollapseAuthorities$WriteResult;",

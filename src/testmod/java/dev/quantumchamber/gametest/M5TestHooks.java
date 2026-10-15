@@ -46,6 +46,8 @@ import org.slf4j.LoggerFactory;
  *     {@link #beforeMaterialize}，注入時以 {@code FAILED_ROLLED_BACK} 取代那次物化。由 {@code M5GameTestSupport.installMaterializeFault} 安裝。</li>
  * <li>checked NBT 檔的讀取失敗（{@link #CHECKED_READ_FAULT}，F4a）：{@code CheckedNbtFileReadFaultMixin} 在 {@code CheckedNbtFile.readFile} 的開頭
  *     呼叫 {@link #beforeCheckedRead}，注入時丟 {@link IOException}。由 {@code M5GameTestSupport.installCheckedReadFault} 安裝。</li>
+ * <li>catalog 寫出的讀回失敗（{@link #CATALOG_READBACK_FAULT}，F6-2e-3，W12）：{@code UniverseCatalogStoreReadbackFaultMixin} 在 {@code UniverseCatalogStore.write} 的 atomic move 之後、
+ *     {@code Readback.read} 之前呼叫 {@link #beforeCatalogReadback}，注入時丟 {@link IOException}（「atomic move 已完成、讀回失敗」）。只由 M5 collapse probe 經 {@code M5CollapseRun.install} 安裝。</li>
  * <li>原生存檔 checkpoint 的探針（{@link #CHUNK_CHECKPOINT_PROBE}，F4b-2）：{@code ChunkSaveCheckpointProbeMixin} 在 {@code ChunkSaveCheckpoint.save} 的開頭
  *     呼叫 {@link #beforeChunkCheckpoint}，記下指定世界的每一次 checkpoint，前幾次可以受控失敗。由 {@code M5GameTestSupport.installChunkCheckpointProbe} 安裝。</li>
  * <li>投影寫入失敗（{@link #PROJECTION_WRITE_FAULT}，F4b-2）：{@code ProjectionWriteFaultMixin} 在 {@code ProjectionWriter.write} 回傳之前呼叫
@@ -81,7 +83,7 @@ import org.slf4j.LoggerFactory;
  *     {@code M5CollapseRun.install}）；halt 時 JVM 直接結束，窗口沒有到達或斷言失敗而正常停服時，probe 在請求停服之前移除（F6-2a 更正），停服一開始也再移除一次
  *     （F6-2c Step 0）。</li>
  * </ul>
- * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、八個故障注入（物化、checked NBT 讀取、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
+ * 三個探針（journal flush、原生存檔 checkpoint、進入 SEALED 的 Controller）、寫出稽核、九個故障注入（物化、checked NBT 讀取、catalog 寫出的讀回（F6-2e-3）、投影寫入、journal put、原艙門的攔截、通道的原生移動、checkpoint 的
  * entity storage 就緒保留、隔離 session 的收斂）、PASSAGE_READY 的提交暫緩與塌縮流程推進的暫停各是一個 {@link Slot}（F4a-0 fix round 1，quality Q1；F4b-3 fix round 1、F5-1、F5-1 fix round 1、F5-2、F6-0 更正數目）：同一時間只有一個持有者，被占用時再安裝會丟出、不覆蓋；持有者的 hooks 釋放時，
  * 或持有者的 test 結束時（含 tickLimit 逾時，這時 hooks 不會釋放），由 {@code M5GameTestSupport} 移除。跨 JVM 的 crash 點也是一個 {@link Slot}，但只由跨 JVM 的
  * probe 安裝（F6-1）；probe 也可以在自己的 JVM 裡把既有的故障注入裝進上面的 Slot（F6-2a：{@code M5CollapseRun.install}，沒有 {@link GameTestState}，停服之前依安裝的
@@ -100,6 +102,8 @@ public final class M5TestHooks {
     static final Slot<MaterializeFault> MATERIALIZE_FAULT = new Slot<>("物化失敗注入");
     /** checked NBT 檔的讀取失敗注入（{@code M5GameTestSupport.installCheckedReadFault}）。 */
     static final Slot<CheckedReadFault> CHECKED_READ_FAULT = new Slot<>("checked NBT 讀取失敗注入");
+    /** catalog 寫出的讀回失敗注入（F6-2e-3，W12；只由 M5 collapse probe 經 {@code M5CollapseRun.install} 安裝）。以檔名比對、計次的寫法同 {@link CheckedReadFault}。 */
+    static final Slot<CheckedReadFault> CATALOG_READBACK_FAULT = new Slot<>("catalog 讀回失敗注入");
     /** 原生存檔 checkpoint 的探針與失敗注入（F4b-2，{@code M5GameTestSupport.installChunkCheckpointProbe}）。 */
     static final Slot<ChunkCheckpointProbe> CHUNK_CHECKPOINT_PROBE = new Slot<>("原生存檔 checkpoint 探針");
     /** 投影寫入失敗的注入（F4b-2，{@code M5GameTestSupport.installProjectionWriteFault}）。 */
@@ -186,6 +190,12 @@ public final class M5TestHooks {
     /** {@code CheckedNbtFileReadFaultMixin}：checked NBT 檔每一次讀取的開頭呼叫；注入時丟 {@link IOException}，那次讀取因此失敗。 */
     public static void beforeCheckedRead(Path path) throws IOException {
         var fault = CHECKED_READ_FAULT.get();
+        if (fault != null) fault.intercept(path);
+    }
+
+    /** {@code UniverseCatalogStoreReadbackFaultMixin}（F6-2e-3）：catalog 每一次寫出的 atomic move 之後、讀回之前呼叫；注入時丟 {@link IOException}，那次讀回因此失敗（正式檔已是新內容）。 */
+    public static void beforeCatalogReadback(Path path) throws IOException {
+        var fault = CATALOG_READBACK_FAULT.get();
         if (fault != null) fault.intercept(path);
     }
 
@@ -305,6 +315,8 @@ public final class M5TestHooks {
      *     {@link #M4_RECEIPT_STEP} 呼叫（那一筆 flushed 的 {@link SessionRecoveryRecord}）。</li>
      * <li>F6-2e-2 加的：{@code CollapseAuthoritiesCrashWindowMixin} 在 {@code CollapseAuthorities.examine} 的第二次 {@code createIfAbsent} 之前以 {@link #FIRST_LEDGER_CREATED} 呼叫
      *     （{@link LedgerCreation}）。</li>
+     * <li>F6-2e-3 加的：{@code CollapseAuthoritiesCrashWindowMixin} 在 {@code appendDiscovery} 的回傳點，{@link #DISCOVERY_APPENDED} 之後以 {@link #DISCOVERY_CONVERGED} 呼叫（回傳的
+     *     {@code CollapseAuthorities.Lookup}，任何結果都是）。</li>
      * </ul>
      * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
@@ -383,7 +395,12 @@ public final class M5TestHooks {
          * （兩次 {@code createIfAbsent} 都在 {@code failures.isEmpty()} 之內）；窗口表的條件選 allocation 是 {@code CREATED}、projection 是 {@code NOT_CREATED}（兩個都不存在、剛建立第一個）。
          * 在 {@code SERVER_STARTED} 的 default phase，早於 probe 的 {@code started} 與任何 tick，所以 crash 點在開服之前裝上（{@code M5CollapseRun.armCrash} 允許）。
          */
-        FIRST_LEDGER_CREATED
+        FIRST_LEDGER_CREATED,
+        /**
+         * W12（F6-2e-3）：{@code CollapseAuthorities.appendDiscovery} 回傳（與 {@link #DISCOVERY_APPENDED} 同一個程式點與 detail）。窗口表的條件選 U 的成功回傳（FOUND 或 APPENDED）；crash 點在
+         * 讀回失敗之後的第二次重試之前才裝上，所以成立的是 RESOLVE 第 4 步收斂 discovery（以 current 重寫）之後的那一次（{@code M5CollapseConvergenceChain}）。
+         */
+        DISCOVERY_CONVERGED
     }
 
     /**
@@ -496,7 +513,8 @@ public final class M5TestHooks {
 
     /**
      * checked NBT 檔的讀取失敗（F4a）：檔名恰為 {@code fileName} 的讀取（暫存檔的名稱不同，不算），先放行 {@code skip} 次，之後的 {@code failures} 次
-     * 丟 {@link IOException}，再之後照常。對正式檔注入，在寫入時就是「atomic move 完成、讀回失敗」，在讀取時就是讀檔的 IO 例外。
+     * 丟 {@link IOException}，再之後照常。對正式檔注入，在寫入時就是「atomic move 完成、讀回失敗」，在讀取時就是讀檔的 IO 例外。F6-2e-3 起也裝在
+     * {@link #CATALOG_READBACK_FAULT}（只在 catalog 寫出的讀回呼叫，所以一律是「atomic move 完成、讀回失敗」）。
      */
     static final class CheckedReadFault {
         private final String fileName;
