@@ -397,7 +397,10 @@ final class M5CollapseWindows {
             return atRestart;
         }
 
-        /** restart 是專屬的 phase（{@link #dedicatedRow}），沒有 {@link AtRestart}。 */
+        /**
+         * restart 是專屬的 phase（{@link #dedicatedRow}），沒有 {@link AtRestart}。F6-2e-3（F6-2e-2 quality Minor 1）：只有 {@link #dedicatedRow} 會傳 null，{@link #row} 與
+         * {@link #tickEndRow} 以 {@code requireNonNull} 擋下誤傳的 null（窗口表在 class init 時建好，開服之前就丟出），所以 null 一定是專屬列，不會有列靜默變成專屬列。
+         */
         boolean dedicatedRestart() { return atRestart == null; }
     }
 
@@ -549,7 +552,7 @@ final class M5CollapseWindows {
 
     /** {@code WINDOW} 的列（預設）：crash 點成立的那一刻（hook 裡）就取證（{@code beforeHalt}）、halt。 */
     private static void row(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {
-        put(rows, new Window(id, condition, beforeHalt, atRestart, prepared, M5CollapseRun.HaltAt.WINDOW, NOTHING_AT_THE_WINDOW));
+        put(rows, new Window(id, condition, beforeHalt, requireAtRestart(id, atRestart), prepared, M5CollapseRun.HaltAt.WINDOW, NOTHING_AT_THE_WINDOW));
     }
 
     /**
@@ -566,7 +569,16 @@ final class M5CollapseWindows {
      */
     private static void tickEndRow(Map<CrashWindow, Window> rows, CrashWindow id, AtWindow atWindow, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart,
             Prepared prepared) {
-        put(rows, new Window(id, condition, beforeHalt, atRestart, prepared, M5CollapseRun.HaltAt.TICK_END, Objects.requireNonNull(atWindow, "atWindow")));
+        put(rows, new Window(id, condition, beforeHalt, requireAtRestart(id, atRestart), prepared, M5CollapseRun.HaltAt.TICK_END,
+                Objects.requireNonNull(atWindow, "atWindow")));
+    }
+
+    /**
+     * F6-2e-3（F6-2e-2 quality Minor 1）：{@link #row} 與 {@link #tickEndRow} 的 {@code atRestart} 不得是 null（null 代表專屬列，只由 {@link #dedicatedRow} 給）。原本 null 會靜默變成專屬列，
+     * 要等 restart 讀它時才丟出；現在在建表（class init）時丟出。
+     */
+    private static AtRestart requireAtRestart(CrashWindow id, AtRestart atRestart) {
+        return Objects.requireNonNull(atRestart, () -> "窗口表的 " + id + "：row／tickEndRow 的 atRestart 不得是 null（restart 是專屬 phase 的列用 dedicatedRow）");
     }
 
     /**

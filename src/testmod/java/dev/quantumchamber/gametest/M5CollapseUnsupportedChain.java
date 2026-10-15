@@ -102,6 +102,8 @@ final class M5CollapseUnsupportedChain {
     /** restart：NEW 的 session 是否寫出過 COLLAPSING、第一次 checked 寫成 DORMANT 的 server tick；SOURCE 第一次寫出 COLLAPSING 時的 Destination（journal 寫出的探針）。 */
     private volatile boolean newWroteCollapsing;
     private volatile int newDormantAt = -1;
+    /** restart：NEW 的取消（checked 終局）寫出的 server tick：journal 寫出時 NEW 已不在 staged records、仍在 flushed 的第一次（F6-2e-3，F6-2e-2 quality Minor 2）。 */
+    private volatile int newRemovedAt = -1;
     private volatile CollapseDestination sourceDestination;
     private int discoveryAtStart = -1;
 
@@ -421,8 +423,8 @@ final class M5CollapseUnsupportedChain {
     }
 
     /**
-     * journal 每次寫出的開頭（{@code FLUSH_PROBE}，在 production 的寫出裡呼叫，不得丟出）：NEW 是否寫出過 COLLAPSING、第一次 checked 寫成 DORMANT 的 server tick（同 G-NLIVE 的探針）；
-     * SOURCE 第一次寫出 COLLAPSING 時的 Destination。
+     * journal 每次寫出的開頭（{@code FLUSH_PROBE}，在 production 的寫出裡呼叫，不得丟出）：NEW 是否寫出過 COLLAPSING、第一次 checked 寫成 DORMANT 的 server tick（同 G-NLIVE 的探針）、
+     * 取消（checked 終局：已不在 staged records、仍在 flushed）寫出的 server tick（F6-2e-3）；SOURCE 第一次寫出 COLLAPSING 時的 Destination。
      */
     private void watchTheFlush(SessionRecoveryState state) {
         var sid = fixture.sid();
@@ -433,6 +435,9 @@ final class M5CollapseUnsupportedChain {
             boolean stagedDormant = staged.state() == SessionState.MEASURED && MeasuredRecoveryPhase.from(staged) == MeasuredRecoveryPhase.DORMANT;
             boolean durableDormant = durable != null && durable.state() == SessionState.MEASURED && MeasuredRecoveryPhase.from(durable) == MeasuredRecoveryPhase.DORMANT;
             if (newDormantAt < 0 && stagedDormant && !durableDormant) newDormantAt = run.server().getTicks();
+        } else if (durable != null && newRemovedAt < 0) {
+            // F6-2e-3：checked 終局先從 records 移除再 flush（SessionRecoveryState.terminate），所以這次寫出就是取消的寫出。
+            newRemovedAt = run.server().getTicks();
         }
         var source = sourceReceipt == null ? null : state.records().get(sourceReceipt.sessionUuid());
         if (source != null && source.state() == SessionState.COLLAPSING && sourceDestination == null) sourceDestination = source.collapse().destination();
@@ -527,8 +532,11 @@ final class M5CollapseUnsupportedChain {
      * <li>{@code cancelledAfterTheRetainedRecovery}：已取消（到時仍在 journal 也是這個斷言失敗）、磁碟上也沒有它、「不支援的來源維度，已安全取消」恰一則（候選 New）、沒有「塌縮已提交」、
      *     從沒有寫出 COLLAPSING、在取消之前先 checked 寫成 DORMANT（spec §11.3 第 1、2 步）。「不提交 COLLAPSING」的 INFO（塌縮流程自己請求 recovery 時才記）的則數只記為 proof：這條路徑由
      *     attach 請求。</li>
-     * <li>{@code newCancelledOnTheFirstDormantObservation}（F6-2e-2，F6-2e-1 spec M-4）：執行期間「一觀察到 flushed DORMANT 就取消」（spec §11.3 第 2 步）：取消的 tick（這個 step 觀察到
-     *     record 不在的 server tick，每個 tick 都看）距第一次 checked 寫成 DORMANT 的 tick（journal 寫出的探針）不超過 1。F6-2e-1 的 GREEN 與 run-all 都是同一個 tick（差 0）。</li>
+     * <li>{@code newCancelledOnTheFirstDormantObservation}（F6-2e-2，F6-2e-1 spec M-4）：執行期間「一觀察到 flushed DORMANT 就取消」（spec §11.3 第 2 步）：取消的寫出與第一次 checked
+     *     寫成 DORMANT 的寫出在同一個 server tick（兩者都由 journal 寫出的探針 {@link #watchTheFlush} 記下）。F6-2e-3（F6-2e-2 quality Minor 2）：原本取消的 tick 是這個 step 觀察到 record 不在
+     *     的 tick，與探針記下的 DORMANT 不是同一種量法，所以容許差 1，分不出「晚一個 tick 才取消」；改由探針記下取消的寫出、以相等比較（<b>判斷變嚴</b>）。相等是確定的：DORMANT 由走廊與
+     *     session 的 {@code END_SERVER_TICK}（保留式清理完成、space 已釋放）寫出，塌縮流程的 {@code END_SERVER_TICK} 註冊在它們之後（plan 決策 1），同一個 tick 就觀察到 flushed DORMANT 並取消；
+     *     F6-2e-1、F6-2e-2 的 GREEN 與 run-all 也都是差 0。</li>
      * <li>{@code corridorSpaceReleasedAtTheCancel}（F6-2e-2，F6-2e-1 spec M-5）：§11.3 第 1 步的幾何清理：這個 session 的走廊 space 已釋放（{@link M5CollapseFixture#spaceExists}）。</li>
      * <li>{@code originUnblocked}（spec §11.3 第 3 步「原艙解除封鎖」，production 的判斷）：這座艙的 presence 是 NONE（{@code SuperpositionSessionManager.start} 拒絕新 session 的條件之一）、沒有
      *     runtime 與來源 ticket、Controller 不是 ARMED、registry 的 power state 不是 RETURNING。</li>
@@ -548,8 +556,9 @@ final class M5CollapseUnsupportedChain {
                         && committed == 0 && !newWroteCollapsing && newDormantAt >= 0,
                 () -> "返還之後 " + tick + " 個 tick：已取消=" + happened + " 取消的 INFO=" + cancelled + "（候選 New=" + newCandidate + "）提交=" + committed + " 寫出過 COLLAPSING="
                         + newWroteCollapsing + " 先寫成 DORMANT 的 tick=" + newDormantAt);
-        run.expect("newCancelledOnTheFirstDormantObservation", cancelledAt - newDormantAt <= 1,
-                () -> "第一次寫成 DORMANT 在 tick " + newDormantAt + "，取消在 tick " + cancelledAt);
+        int removedAt = newRemovedAt;
+        run.expect("newCancelledOnTheFirstDormantObservation", newDormantAt >= 0 && removedAt == newDormantAt,
+                () -> "第一次寫成 DORMANT 在 tick " + newDormantAt + "，取消的寫出在 tick " + removedAt + "（這個 step 觀察到不在的 tick " + cancelledAt + "）");
         boolean space = fixture.spaceExists();
         run.expect("corridorSpaceReleasedAtTheCancel", !space, () -> "取消之後這個 session 仍有走廊 space");
         var presence = ChamberSessions.gateway().presence(run.server(), chamber);
@@ -565,6 +574,7 @@ final class M5CollapseUnsupportedChain {
         run.proof.put("notCommittingInfo", logged(Level.INFO, "不支援的來源維度：不提交 COLLAPSING", sid));
         run.proof.put("newDormantAtServerTick", newDormantAt);
         run.proof.put("newCancelledAtServerTick", cancelledAt);
+        run.proof.put("newRemovedAtServerTick", removedAt);
     }
 
     /** step {@code opened}：取消之後參與者在艙內照一般方式開門（關著的門照一般門的邏輯改為一般開門；{@code originDoorOpensNormally}）。 */

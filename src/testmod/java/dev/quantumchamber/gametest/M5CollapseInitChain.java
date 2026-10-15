@@ -11,7 +11,6 @@ import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
-import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import java.nio.file.Files;
@@ -377,14 +376,13 @@ final class M5CollapseInitChain {
 
     /**
      * step {@code committed}：COLLAPSING 已 checked 提交（{@code fixture.committed}，Destination 是推導出的 U）時，磁碟上的 journal 是 schema 4、這個 session 是 COLLAPSING
-     * （{@code schemaFourAtTheFirstCheckedWrite}；{@code join} 時仍是 schema 3、恰為收據，所以這是開服之後的第一次寫入）。
+     * （{@code schemaFourAtTheFirstCheckedWrite}；{@code join} 時仍是 schema 3、恰為收據，所以這是開服之後的第一次寫入）。F6-2e-3（F6-2e-2 quality Minor 6）：經
+     * {@link M5CollapseDiskEvidence#expectJournalOnDisk}，磁碟上的 record 必須與記憶體裡 flushed 的 exact 相同（{@code fixture.committed} 已確認 flushed 的這一筆是 COLLAPSING、Destination 是 U）；
+     * 原本只看這一筆的 state（<b>判斷變嚴</b>）。
      */
     private boolean committedAsSchemaFour() throws Exception {
         if (!fixture.committed()) return false;
-        var journal = M5CollapseDiskEvidence.journal(run.data());
-        var record = journal.map(disk -> disk.records().get(fixture.sid())).orElse(null);
-        run.expect("schemaFourAtTheFirstCheckedWrite", journal.isPresent() && journal.get().schema() == 4 && record != null && record.state() == SessionState.COLLAPSING,
-                () -> "提交之後的 journal：" + journal.map(disk -> "SchemaVersion=" + disk.schema() + " state=" + (record == null ? "ABSENT" : record.state())).orElse("ABSENT"));
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, run.data(), "schemaFourAtTheFirstCheckedWrite", 4, run.journal().flushedRecords());
         return true;
     }
 }
