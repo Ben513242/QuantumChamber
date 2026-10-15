@@ -69,7 +69,7 @@ final class M5CollapseDoors {
                     var queued = reapplyQueued(run, fixture.sid());
                     var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
                     run.expect("closedDoorKeptByTheReapply", closed && now == queuedFor[0] && applied.isEmpty() && queued.size() == 1 && pending.isEmpty(),
-                            () -> "tick " + now + "（排入的是 tick " + queuedFor[0] + "）：門關著=" + closed + " 門正中=" + run.source().getBlockState(local(3, 3, 0)) + " 套用的 INFO=" + applied
+                            () -> "tick " + now + "（排入的是 tick " + queuedFor[0] + "）：門關著=" + closed + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied
                                     + " 排入的 INFO=" + queued + " 待套用的門=" + pending.orElse("none"));
                 }));
     }
@@ -95,10 +95,10 @@ final class M5CollapseDoors {
      */
     record Queued(int tick, String goal, boolean firstLoadAfterARestart) {
         /** 重啟之後第一次載入時排入的 NORMALIZE（COLLAPSING 的重新套用目標）。 */
-        boolean normalizeAfterARestart() { return "NORMALIZE".equals(goal) && firstLoadAfterARestart; }
+        boolean normalizeAfterARestart() { return OriginDoorsTestAccess.NORMALIZE.equals(goal) && firstLoadAfterARestart; }
 
         /** 重啟之後第一次載入時排入的 CLOSE_ON_SEALED（SEALED 的重新套用目標；F6-2d-2 B2）。 */
-        boolean closeAfterARestart() { return "CLOSE_ON_SEALED".equals(goal) && firstLoadAfterARestart; }
+        boolean closeAfterARestart() { return OriginDoorsTestAccess.CLOSE_ON_SEALED.equals(goal) && firstLoadAfterARestart; }
     }
 
     static List<Queued> reapplyQueued(M5CollapseRun run, UUID sid) {

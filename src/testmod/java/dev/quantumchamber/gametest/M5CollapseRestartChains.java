@@ -24,7 +24,7 @@ import org.apache.logging.log4j.Level;
 /**
  * 僅 testmod（M5 F6-2d-2 B1）：由觸發（或開服之後的第一次 RESOLVE、閘門的第一次評估）續行的 restart chain 的共用基底，由 {@link M5CollapseRetryChains} 以純搬移抽出
  * （A 段 quality 給 B 段的建議第 1 點）：restart builder（{@link #restartPhase}，開服時 {@link #started} 依 {@link ChamberAtStart} 處理原艙附近）、觸發之後的等法
- * （{@link Await} 與通用的 {@link #awaited}，以及它的兩個用法 {@link #committedWithoutReentry}、{@link #retried}）、JOIN 的位置（{@link #joinedAt}、
+ * （{@link Await} 與通用的 {@link #untilTriggered}（F6-2e Step 0 之前叫 {@code awaited}），以及它的兩個用法 {@link #committedWithoutReentry}、{@link #retried}）、JOIN 的位置（{@link #joinedAt}、
  * {@link #notMovedSinceTheJoin}）、開服時的 record（{@link #atStart}）、原艙附近是否已載入（{@link #chamberLoaded}）與 JOIN／進入的 step。
  * <p>放在 abstract 基底（不是另一個以組合使用的類別，也不併入 {@link M5CollapsePassage}）：純搬移之後子類別的呼叫端一字不改（{@code joinedAt}、{@code atStart} 是每條 chain
  * 自己的狀態，由子類別的開服與 JOIN 寫入），restart builder 只有這一份（{@code M5CollapseDoorChains} 也繼承它，不另寫第二份）；{@link M5CollapsePassage} 是所有 chain
@@ -58,30 +58,38 @@ abstract class M5CollapseRestartChains {
      * 另外處理（{@code waitTicks} 0 是沒用到的 sentinel，等到 stepBounded 為止）；改成 {@code waitTicks} 等於 step 的上限，等待的時間相同，只是到時仍沒有發生時失敗在具名斷言。
      * <p>F6-2d-2 B1（A 段 quality Minor 4）：只留一個上限 {@code waitTicks}，step 的上限就是它。原本另有 {@code maxTicks}（{@code FIRST_OBSERVATION} 5、{@code AFTER_THE_LOAD} 25），
      * 但 step 一定在第 {@code waitTicks} 個 tick 完成（還在等的條件為假時就斷言、回 true），多出的餘裕永遠到不了，兩者之間也沒有檢查。等待的 tick 數與通過條件都不變。
-     * F6-2d-2 B2a（B1 quality Minor 2）：「還在等」的條件改由通用的 {@link M5CollapsePassage#awaiting} 判斷（{@link #awaited} 委派給它），拿掉這裡的 {@code keepWaiting}。
+     * F6-2d-2 B2a（B1 quality Minor 2）：「還在等」的條件改由通用的 {@link M5CollapsePassage#awaiting} 判斷（{@link #untilTriggered} 委派給它），拿掉這裡的 {@code keepWaiting}。
+     * <p>F6-2e Step 0（F6-2d-2 B2 quality nit）：等完之後要不要斷言位置（{@link Position}）改為這個 enum 的欄位（原本由呼叫端另給，{@code FIRST_OBSERVATION} 配
+     * {@link Position#UNCHECKED} 也能編譯，斷言會靜默變弱）；{@code awaited} 改名為 {@link #untilTriggered}（與 {@link M5CollapsePassage#awaiting} 太像）。
      */
     enum Await {
-        /** 由艙外進入（{@link #enter}）之後：最多等 10 個 tick，不斷言位置。 */
-        EDGE(10),
+        /**
+         * 邊緣之後：參與者由艙外進入（{@link #enter}），或開服之後的第一次觀察時沒有人在艙內、之後 JOIN 在艙內（{@code sealmembrane} 的 JOIN 的邊緣，F6-2d-2 B2）。最多等 10 個
+         * tick，不斷言位置（F6-2e Step 0 依 F6-2d-2 B2 quality nit 補上 JOIN 的邊緣：原本只寫「由艙外進入之後」）。
+         */
+        EDGE(10, Position.UNCHECKED),
         /** W8：原艙在開服時已載入，開服之後的第一次觀察就觸發。 */
-        FIRST_OBSERVATION(FIRST_OBSERVATION_TICKS),
+        FIRST_OBSERVATION(FIRST_OBSERVATION_TICKS, Position.NOT_MOVED_SINCE_THE_JOIN),
         /** H7：JOIN 時原艙附近還沒有載入，載入之後才觸發；另記下原艙附近載入完成的 tick（{@code chamberLoadedAtPhaseTick}）。 */
-        AFTER_THE_LOAD(LATE_TRIGGER_TICKS);
+        AFTER_THE_LOAD(LATE_TRIGGER_TICKS, Position.NOT_MOVED_SINCE_THE_JOIN);
 
         /** 最多等幾個 tick（也是 step 的上限）：到第 {@code waitTicks} 個 tick 仍沒有發生時，由具名斷言判 FAIL。 */
         final int waitTicks;
+        /** 等完之後要不要另斷言參與者的位置：{@link #EDGE} 不斷言，其餘斷言 JOIN 之後沒有移動。 */
+        final Position position;
 
-        Await(int waitTicks) {
+        Await(int waitTicks, Position position) {
             this.waitTicks = waitTicks;
+            this.position = position;
         }
     }
 
     /**
-     * {@link #awaited} 等完之後要不要另斷言參與者的位置（F6-2d-2 B2a，B1 quality nit：原本是可為 null 的 {@code BooleanSupplier still}，與 {@code happened} 同型別，兩者對調
-     * 也能編譯）。
+     * {@link #untilTriggered} 等完之後要不要另斷言參與者的位置（F6-2d-2 B2a，B1 quality nit：原本是可為 null 的 {@code BooleanSupplier still}，與 {@code happened} 同型別，兩者
+     * 對調也能編譯）。F6-2e Step 0 起是 {@link Await#position}，呼叫端不再另給。
      */
     enum Position {
-        /** 不斷言位置（{@link Await#EDGE}：由艙外進入之後）。 */
+        /** 不斷言位置（{@link Await#EDGE}：邊緣之後）。 */
         UNCHECKED,
         /** 參與者 JOIN 之後沒有移動（{@link #notMovedSinceTheJoin}）。 */
         NOT_MOVED_SINCE_THE_JOIN
@@ -256,16 +264,17 @@ abstract class M5CollapseRestartChains {
     /**
      * step {@code stepName}：參與者 JOIN 之後沒有移動，提交 COLLAPSING（「觸發=DORMANT 續行」的 INFO 一則、Destination 是 U，具名斷言 {@code assertion}），等法是 {@code await}
      * （{@link Await#FIRST_OBSERVATION}：W8 的 {@code committedOnTheFirstObservation}；{@link Await#AFTER_THE_LOAD}：H7 的 {@code committedWithoutReentry}，另記下原艙附近載入
-     * 完成的 tick）。記下提交的 tick。F6-2d-2 Step 0 由兩份合成（判斷、斷言與等待的 tick 數都不變）；F6-2d-2 B1 起經通用的 {@link #awaited}。
+     * 完成的 tick）。記下提交的 tick。F6-2d-2 Step 0 由兩份合成（判斷、斷言與等待的 tick 數都不變）；F6-2d-2 B1 起經通用的 {@link #untilTriggered}（位置的斷言跟著
+     * {@link Await#position}：兩者都是 {@link Position#NOT_MOVED_SINCE_THE_JOIN}，與之前呼叫端給的相同）。
      */
     Step committedWithoutReentry(String stepName, String assertion, Await await) {
         if (await == Await.EDGE) throw new IllegalArgumentException("committedWithoutReentry 是不離開再進入的提交，不能用 EDGE：" + stepName);
-        return awaited(stepName, assertion, await, () -> collapsing(run.journal().flushedRecords().get(fixture.sid())), tick -> {
+        return untilTriggered(stepName, assertion, await, () -> collapsing(run.journal().flushedRecords().get(fixture.sid())), tick -> {
             var record = run.journal().flushedRecords().get(fixture.sid());
             var info = run.capture().matching(Level.INFO, "塌縮已提交", "觸發=DORMANT 續行", fixture.sid().toString()).size();
             return new Verdict(collapsing(record) && info == 1 && M5CollapseFixture.destination(record).equals(Optional.of(fixture.universe())),
                     "JOIN 之後 " + tick + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), fixture.sid()) + " 提交的 INFO=" + info);
-        }, Position.NOT_MOVED_SINCE_THE_JOIN, "committedAtPhaseTick");
+        }, "committedAtPhaseTick");
     }
 
     /**
@@ -293,30 +302,30 @@ abstract class M5CollapseRestartChains {
         joinedAt = fixture.players().getFirst().getPos();
     }
 
-    /** {@link #awaited} 等完之後（已發生，或等滿 {@link Await#waitTicks}）這一步的結果：{@code tick} 是這個 step 的第幾個 tick（由 1 起）。 */
+    /** {@link #untilTriggered} 等完之後（已發生，或等滿 {@link Await#waitTicks}）這一步的結果：{@code tick} 是這個 step 的第幾個 tick（由 1 起）。 */
     @FunctionalInterface interface Outcome { Verdict at(int tick) throws Exception; }
 
-    /** {@link Outcome} 的結果：具名斷言是否成立，與失敗時的細節（位置的部分由 {@link #awaited} 接上）。 */
+    /** {@link Outcome} 的結果：具名斷言是否成立，與失敗時的細節（位置的部分由 {@link #untilTriggered} 接上）。 */
     record Verdict(boolean holds, String detail) {}
 
     /**
      * 通用的 await step（F6-2d-2 B1，A 段 quality 給 B 段的建議：{@link #committedWithoutReentry} 與 {@link #retried} 原本各寫一份同樣的等法）：step {@code stepName} 每個 tick 問
-     * {@code happened}；還沒有發生、而且還在等待的時間內就再等，否則斷言 {@code assertion}：已發生、{@code outcome} 成立，而且 {@code position} 是
+     * {@code happened}；還沒有發生、而且還在等待的時間內就再等，否則斷言 {@code assertion}：已發生、{@code outcome} 成立，而且 {@link Await#position} 是
      * {@link Position#NOT_MOVED_SINCE_THE_JOIN} 時參與者 JOIN 之後沒有移動（{@link Position#UNCHECKED}：不斷言位置）。上限只有 {@link Await#waitTicks}（也是 step 的上限）。
      * {@link Await#AFTER_THE_LOAD} 每個 tick 另記下原艙附近載入完成的 tick（{@code chamberLoadedAtPhaseTick}）；{@code proofKey} 不是 null 時記下斷言的 tick。判斷、斷言、等待的
      * tick 數與記下的 proof 都與合併之前相同。
      * <p>F6-2d-2 B2a（B1 quality Minor 2）：委派給通用的 {@link M5CollapsePassage#awaiting}（上限與「到時沒有發生」都是 {@link Await#waitTicks}，與之前的 {@code keepWaiting}
      * 相同）。B1 quality nit：{@code still} 改成 {@link Position}，與 {@code happened} 不同型別，對調不能編譯。
      * <p>F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：{@code chamberLoadedAtPhaseTick} 改由 {@code awaiting} 的 {@code eachTick} 記下（原本包在 {@code happened} 的查詢裡、排在
-     * {@code happened} 之後）；{@code happened} 只讀。順序因此改為先記 proof 再問 {@code happened}：兩者都只讀、在同一個 tick，記下的 tick 相同。
+     * {@code happened} 之後）；{@code happened} 只讀。順序因此改為先記 proof 再問 {@code happened}：兩者都只讀、在同一個 tick，記下的 tick 相同。F6-2d-2 B2 quality nit：
+     * 由 {@code awaited} 改名（與 {@link M5CollapsePassage#awaiting} 太像），位置的斷言改由 {@link Await#position} 決定（原本是參數 {@code position}，呼叫端給的值與現在的欄位相同）。
      */
-    Step awaited(String stepName, String assertion, Await await, BooleanSupplier happened, Outcome outcome, Position position, String proofKey) {
-        Objects.requireNonNull(position, "position");
+    Step untilTriggered(String stepName, String assertion, Await await, BooleanSupplier happened, Outcome outcome, String proofKey) {
         return M5CollapsePassage.awaiting(stepName, await.waitTicks, tick -> {
             if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
         }, happened::getAsBoolean, (tick, now) -> {
             var verdict = outcome.at(tick);
-            boolean checked = position == Position.NOT_MOVED_SINCE_THE_JOIN, notMoved = !checked || notMovedSinceTheJoin();
+            boolean checked = await.position == Position.NOT_MOVED_SINCE_THE_JOIN, notMoved = !checked || notMovedSinceTheJoin();
             run.expect(assertion, now && verdict.holds() && notMoved, () -> verdict.detail() + (checked ? " 沒有移動=" + notMoved : ""));
             if (proofKey != null) run.proof.put(proofKey, run.ticks());
         });
@@ -329,16 +338,16 @@ abstract class M5CollapseRestartChains {
      * {@code retriedWithoutReentry} 合成這一個；step 名稱改由呼叫端給（F6-2d-1 quality Minor 5：原本由 {@code count} 推出 {@code retried}／{@code retriedAgain}，receipt 的
      * witness 以 step 名稱為鍵，不能重複；runner 在建立 phase 時檢查重名）。F6-2d-2（F6-2d-2 Step 0 quality Minor 2）：也接受 {@link Await#FIRST_OBSERVATION}（開服 attach 的
      * session 第一次觀察到原參與者在艙內就算觸發，production 的 {@code CollapseService.sealed} 以 {@code track.entry(startupSessions.contains(sid))} 實作）；原本拒絕它，訊息也與 production 相反。
-     * F6-2d-2 B1 起經通用的 {@link #awaited}：{@link Await#EDGE} 不斷言位置（{@link Position#UNCHECKED}；F6-2d-2 B2a 之前是 {@code still} 為 null）、不記重試的 tick，其餘斷言
-     * 參與者沒有移動、記下 {@code retriedAtPhaseTick}（與合併之前相同）。
+     * F6-2d-2 B1 起經通用的 {@link #untilTriggered}：{@link Await#EDGE} 不斷言位置（{@link Position#UNCHECKED}；F6-2d-2 B2a 之前是 {@code still} 為 null）、不記重試的 tick，其餘斷言
+     * 參與者沒有移動、記下 {@code retriedAtPhaseTick}（與合併之前相同；F6-2e Step 0 起位置跟著 {@link Await#position}，值與之前的 {@code edge ? UNCHECKED : NOT_MOVED_SINCE_THE_JOIN} 相同）。
      */
     Step retried(String stepName, String assertion, SealedReason reason, int count, Await await) {
         boolean edge = await == Await.EDGE;
-        return awaited(stepName, assertion, await, () -> retriesFrom(reason) > 0, tick -> {
+        return untilTriggered(stepName, assertion, await, () -> retriesFrom(reason) > 0, tick -> {
             int fromReason = retriesFrom(reason), all = run.capture().matching(Level.INFO, "SEALED 重試", fixture.sid().toString()).size();
             return new Verdict(fromReason == 1 && all == count, (edge ? "" : "JOIN 之後 " + tick + " 個 tick：") + "SEALED(" + reason + ") 的重試 INFO=" + fromReason
                     + " 全部的重試 INFO=" + all + "，預期第 " + count + " 次");
-        }, edge ? Position.UNCHECKED : Position.NOT_MOVED_SINCE_THE_JOIN, edge ? null : "retriedAtPhaseTick");
+        }, edge ? null : "retriedAtPhaseTick");
     }
 
     /** 這個 session 由 SEALED({@code reason}) 重試的 INFO（「SEALED 重試：SEALED(reason)→COLLAPSING」）的則數。 */

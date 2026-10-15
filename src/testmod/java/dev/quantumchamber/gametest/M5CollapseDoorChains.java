@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.minecraft.block.Blocks;
 import net.minecraft.server.network.ServerPlayerEntity;
 import org.apache.logging.log4j.Level;
@@ -164,7 +165,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     }
 
     /**
-     * step {@code normalizeQueued}（{@link M5CollapsePassage#awaiting}：排入的 INFO 出現、或等滿 {@link #QUEUE_WAIT_TICKS} 個 tick 時；{@code tick} 是這個 step 的第幾個 tick，
+     * step {@code normalizeQueued}（{@link M5CollapsePassage#awaiting}：排入的 INFO 出現、或等滿 {@link M5CollapseDoors#QUEUE_WAIT_TICKS} 個 tick 時；{@code tick} 是這個 step 的第幾個 tick，
      * 由 1 起）。到時沒有排入時由 {@code normalizeQueuedOnTheFirstLoad} 判 FAIL（F6-2d-2 B2a 之前是 {@code counting} 加手寫的等待，等待時間與通過條件相同）。F6-2e Step 0：
      * 那個 tick 門仍是開服時的 {@code door}（窗口列，原本寫死 {@code doorSealed}；{@code notWrittenWhenObserved}，名稱不變）。
      */
@@ -188,7 +189,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     private void normalizedOnTheQueuedTick(int tick, boolean plain) {
         int now = run.server().getTicks(), normalizeTick = waiting.normalizeTick;
         var applied = reapplied(run, fixture.sid());
-        run.expect("appliedOnTheQueuedTick", plain && now == normalizeTick && applied.size() == 1 && applied.getFirst().contains("（NORMALIZE：APPLIED，tick " + normalizeTick + "）"),
+        run.expect("appliedOnTheQueuedTick", plain && now == normalizeTick && applied.size() == 1 && applied.getFirst().contains("（" + OriginDoorsTestAccess.NORMALIZE + "：APPLIED，tick " + normalizeTick + "）"),
                 () -> "原艙門在 tick " + now + "（排入的是 tick " + normalizeTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied);
         run.proof.put("normalizedAtServerTick", now);
     }
@@ -477,7 +478,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
             var queued = reapplyQueued(run, fixture.sid());
             boolean unchanged = M5CollapseDoors.is(run, door);
             var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
-            run.expect("closeQueuedOnTheFirstLoad", queued.size() == 1 && queued.getFirst().closeAfterARestart() && unchanged && pending.equals(Optional.of("CLOSE_ON_SEALED")),
+            run.expect("closeQueuedOnTheFirstLoad", queued.size() == 1 && queued.getFirst().closeAfterARestart() && unchanged && pending.equals(Optional.of(OriginDoorsTestAccess.CLOSE_ON_SEALED)),
                     () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued + " 門仍是 " + door + "=" + unchanged + " 門正中=" + doorCenter(run) + " 待套用的門="
                             + pending.orElse("none"));
             sealedDoor.queuedTick = queued.getFirst().tick();
@@ -496,7 +497,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * 目標是 CLOSE_ON_SEALED、記的 tick ≥ 排入時記下的 tick（同一個 tick 也算，套用在那個 tick 的 {@code applyPending}；之後的 tick 是等門口的 entity storage）、排入的 INFO 仍恰一則、
      * 這座艙沒有待套用的門，而且 {@code also} 成立（具名斷言 {@code assertion}）。到時門仍不是 {@code target} 時由同一個斷言判 FAIL。
      */
-    private Step closeApplied(String assertion, OriginDoorState target, java.util.function.Supplier<Verdict> also) {
+    private Step closeApplied(String assertion, OriginDoorState target, Supplier<Verdict> also) {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：seeTheDoorway（proof）由 happened 移到 eachTick；順序相同。
         return M5CollapsePassage.awaiting("closeApplied", CLOSE_APPLY_WAIT_TICKS, tick -> seeTheDoorway(), () -> M5CollapseDoors.is(run, target), (tick, reached) -> {
             var sid = fixture.sid();
@@ -504,7 +505,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
             int queued = reapplyQueued(run, sid).size(), now = run.server().getTicks();
             var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
             int at = applied.size() == 1 ? applied.getFirst().tick() : -1;
-            boolean once = applied.size() == 1 && "CLOSE_ON_SEALED".equals(applied.getFirst().goal()) && at >= sealedDoor.queuedTick;
+            boolean once = applied.size() == 1 && OriginDoorsTestAccess.CLOSE_ON_SEALED.equals(applied.getFirst().goal()) && at >= sealedDoor.queuedTick;
             var more = also.get();
             run.expect(assertion, reached && once && queued == 1 && pending.isEmpty() && more.holds(),
                     () -> "tick " + now + "（排入的是 tick " + sealedDoor.queuedTick + "）：門是 " + target + "=" + reached + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied
@@ -629,7 +630,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         boolean sealedDoorNow = M5GameTestSupport.doorSealed(run.source(), FRAME);
         int cancelled = M5CollapseDoors.cancelledCloses(run, sid);
         var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
-        run.expect("membraneKeptOnTheVisitorUse", use == ChamberCollapsePort.DoorUse.PASS && sealedDoorNow && cancelled == 0 && pending.equals(Optional.of("CLOSE_ON_SEALED")),
+        run.expect("membraneKeptOnTheVisitorUse", use == ChamberCollapsePort.DoorUse.PASS && sealedDoorNow && cancelled == 0 && pending.equals(Optional.of(OriginDoorsTestAccess.CLOSE_ON_SEALED)),
                 () -> "非參與者使用門：" + use + " sealed=" + sealedDoorNow + " 門正中=" + doorCenter(run) + " 取消關門的 INFO=" + cancelled + " 待套用的門=" + pending.orElse("none"));
         run.proof.put("visitorUsedTheDoorAtServerTick", run.server().getTicks());
     }
@@ -742,7 +743,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var sid = fixture.sid();
         int dropped = run.capture().matching(Level.INFO, "session 已不是 SEALED，不再套用封存時的原艙門", "session=" + sid).size();
         var applied = M5CollapseDoors.applied(run, sid);
-        run.expect("normalizedAfterTheRetry", plain && now == queuedTick && dropped == 1 && applied.equals(List.of(new M5CollapseDoors.Applied("NORMALIZE", queuedTick))),
+        run.expect("normalizedAfterTheRetry", plain && now == queuedTick && dropped == 1 && applied.equals(List.of(new M5CollapseDoors.Applied(OriginDoorsTestAccess.NORMALIZE, queuedTick))),
                 () -> "tick " + now + "（排入的是 tick " + queuedTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + "「不再套用封存時的原艙門」=" + dropped + " 套用的 INFO="
                         + applied);
         run.proof.put("normalizedAtServerTick", now);
