@@ -306,16 +306,15 @@ abstract class M5CollapseRestartChains {
      * {@link Await#AFTER_THE_LOAD} 每個 tick 另記下原艙附近載入完成的 tick（{@code chamberLoadedAtPhaseTick}）；{@code proofKey} 不是 null 時記下斷言的 tick。判斷、斷言、等待的
      * tick 數與記下的 proof 都與合併之前相同。
      * <p>F6-2d-2 B2a（B1 quality Minor 2）：委派給通用的 {@link M5CollapsePassage#awaiting}（上限與「到時沒有發生」都是 {@link Await#waitTicks}，與之前的 {@code keepWaiting}
-     * 相同）；{@code chamberLoadedAtPhaseTick} 包在 {@code happened} 的查詢裡，順序與之前相同（先問 {@code happened}，兩者都只讀）。B1 quality nit：{@code still} 改成
-     * {@link Position}，與 {@code happened} 不同型別，對調不能編譯。
+     * 相同）。B1 quality nit：{@code still} 改成 {@link Position}，與 {@code happened} 不同型別，對調不能編譯。
+     * <p>F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：{@code chamberLoadedAtPhaseTick} 改由 {@code awaiting} 的 {@code eachTick} 記下（原本包在 {@code happened} 的查詢裡、排在
+     * {@code happened} 之後）；{@code happened} 只讀。順序因此改為先記 proof 再問 {@code happened}：兩者都只讀、在同一個 tick，記下的 tick 相同。
      */
     Step awaited(String stepName, String assertion, Await await, BooleanSupplier happened, Outcome outcome, Position position, String proofKey) {
         Objects.requireNonNull(position, "position");
-        return M5CollapsePassage.awaiting(stepName, await.waitTicks, () -> {
-            boolean now = happened.getAsBoolean();
+        return M5CollapsePassage.awaiting(stepName, await.waitTicks, tick -> {
             if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
-            return now;
-        }, (tick, now) -> {
+        }, happened::getAsBoolean, (tick, now) -> {
             var verdict = outcome.at(tick);
             boolean checked = position == Position.NOT_MOVED_SINCE_THE_JOIN, notMoved = !checked || notMovedSinceTheJoin();
             run.expect(assertion, now && verdict.holds() && notMoved, () -> verdict.detail() + (checked ? " 沒有移動=" + notMoved : ""));

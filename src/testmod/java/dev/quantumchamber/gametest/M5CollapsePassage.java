@@ -114,7 +114,7 @@ final class M5CollapsePassage {
 
     /**
      * {@link #watch} 每個 tick 的觀察（具名斷言）：{@code tick} 是這個 step 的第幾個 tick（由 1 起，與 {@link Counted} 相同；F6-2d-2，F6-2d-2 Step 0 quality nit：原本是
-     * 「這個 tick 之前已觀察的 tick 數」，由 0 起，兩者的起算點不同）。
+     * 「這個 tick 之前已觀察的 tick 數」，由 0 起，兩者的起算點不同）。F6-2e Step 0 起也是 {@link #awaiting} 的 {@code eachTick}（每個 tick 的具名斷言與 proof）。
      */
     @FunctionalInterface interface Watching { void tick(int tick) throws Exception; }
 
@@ -136,21 +136,35 @@ final class M5CollapsePassage {
     @FunctionalInterface interface Settled { void at(int tick, boolean happened) throws Exception; }
 
     /**
-     * 通用的等待 step（F6-2d-2 B2a，B1 quality Minor 2）：step {@code name} 每個 tick 問 {@code happened}；還沒有發生、而且還沒有等滿 {@code waitTicks} 個 tick 就再等，否則以
-     * 這個 tick 與是否已發生呼叫 {@code settled}（具名斷言），完成。{@code waitTicks} 是唯一的上限：step 的上限就是它，而且第 {@code waitTicks} 個 tick 一定完成（runner 只在
-     * step 回 false 時檢查上限），所以到時仍沒有發生時失敗在 {@code settled} 的具名斷言，不是 stepBounded。原本每個呼叫端把 {@code waitTicks} 寫兩次（{@link #counting} 的上限與
-     * 「再等」的條件），兩者不同時多出的上限永遠到不了、或在具名斷言之前就 stepBounded。
+     * 通用的等待 step（F6-2d-2 B2a，B1 quality Minor 2）：step {@code name} 每個 tick 先呼叫 {@code eachTick}，再問 {@code happened}；還沒有發生、而且還沒有等滿 {@code waitTicks}
+     * 個 tick 就再等，否則以這個 tick 與是否已發生呼叫 {@code settled}（具名斷言），完成。{@code waitTicks} 是唯一的上限：step 的上限就是它，而且第 {@code waitTicks} 個 tick 一定
+     * 完成（runner 只在 step 回 false 時檢查上限），所以到時仍沒有發生時失敗在 {@code settled} 的具名斷言，不是 stepBounded。原本每個呼叫端把 {@code waitTicks} 寫兩次
+     * （{@link #counting} 的上限與「再等」的條件），兩者不同時多出的上限永遠到不了、或在具名斷言之前就 stepBounded。
+     * <p>F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：每個 tick 的具名斷言與 proof 放 {@code eachTick}（{@code tick} 由 1 起，同 {@link #watch}）；{@code happened} 只讀，不斷言、
+     * 不記 proof。原本沒有 {@code eachTick}，有呼叫端把 {@code happened} 當成每個 tick 的 hook（在裡面斷言、記 proof），這裡的說明卻寫成只讀的查詢。{@code eachTick} 在
+     * {@code happened} 之前，與那些呼叫端原本在 {@code happened} 裡的順序相同。{@code waitTicks} 至少 1，建立 step 時檢查（F6-2d-2 B2 quality nit）。
      */
-    static Step awaiting(String name, int waitTicks, M5CollapseRun.CheckedCondition happened, Settled settled) {
+    static Step awaiting(String name, int waitTicks, Watching eachTick, M5CollapseRun.CheckedCondition happened, Settled settled) {
+        if (waitTicks < 1) throw new IllegalArgumentException("awaiting " + name + "：waitTicks 至少要 1：" + waitTicks);
+        Objects.requireNonNull(eachTick, "eachTick");
         Objects.requireNonNull(happened, "happened");
         Objects.requireNonNull(settled, "settled");
         return counting(name, waitTicks, tick -> {
+            eachTick.tick(tick);
             boolean now = happened.holds();
             if (!now && tick < waitTicks) return false;
             settled.at(tick, now);
             return true;
         });
     }
+
+    /** {@link #awaiting(String, int, Watching, M5CollapseRun.CheckedCondition, Settled)} 不需要每個 tick 的斷言時（{@code eachTick} 什麼都不做）。 */
+    static Step awaiting(String name, int waitTicks, M5CollapseRun.CheckedCondition happened, Settled settled) {
+        return awaiting(name, waitTicks, NO_EACH_TICK, happened, settled);
+    }
+
+    /** {@link #awaiting} 沒有每個 tick 的斷言。 */
+    private static final Watching NO_EACH_TICK = tick -> { };
 
     /** 觀察段（step {@code name}）：每個 tick 呼叫 {@code eachTick}，恰 {@code ticks} 個 tick 之後完成（{@link #watch(String, int, Watching, M5CollapseRun.Checked)}）。 */
     static Step watch(String name, int ticks, Watching eachTick) {

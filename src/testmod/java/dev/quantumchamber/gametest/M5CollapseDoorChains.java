@@ -468,10 +468,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     /** 同 {@link #closeQueued(OriginDoorState)}，斷言之後在同一個 tick 再做 {@code then}（{@code sealmembrane}：非參與者使用門）。 */
     private Step closeQueued(OriginDoorState door, M5CollapseRun.Checked then) {
-        return M5CollapsePassage.awaiting("closeQueued", QUEUE_WAIT_TICKS, () -> {
-            seeTheDoorway();
-            return !reapplyQueued(run, fixture.sid()).isEmpty();
-        }, (tick, happened) -> {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：seeTheDoorway（proof）由 happened 移到 eachTick；順序相同（先記再查詢）。
+        return M5CollapsePassage.awaiting("closeQueued", QUEUE_WAIT_TICKS, tick -> seeTheDoorway(), () -> !reapplyQueued(run, fixture.sid()).isEmpty(), (tick, happened) -> {
             var queued = reapplyQueued(run, fixture.sid());
             boolean unchanged = M5CollapseDoors.is(run, door);
             var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
@@ -495,10 +493,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * 這座艙沒有待套用的門，而且 {@code also} 成立（具名斷言 {@code assertion}）。到時門仍不是 {@code target} 時由同一個斷言判 FAIL。
      */
     private Step closeApplied(String assertion, OriginDoorState target, java.util.function.Supplier<Verdict> also) {
-        return M5CollapsePassage.awaiting("closeApplied", CLOSE_APPLY_WAIT_TICKS, () -> {
-            seeTheDoorway();
-            return M5CollapseDoors.is(run, target);
-        }, (tick, reached) -> {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：seeTheDoorway（proof）由 happened 移到 eachTick；順序相同。
+        return M5CollapsePassage.awaiting("closeApplied", CLOSE_APPLY_WAIT_TICKS, tick -> seeTheDoorway(), () -> M5CollapseDoors.is(run, target), (tick, reached) -> {
             var sid = fixture.sid();
             var applied = M5CollapseDoors.applied(run, sid);
             int queued = reapplyQueued(run, sid).size(), now = run.server().getTicks();
@@ -661,10 +657,9 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     Phase membraneSealedJoinedRestart(String crashPhase) {
         var steps = new ArrayList<Step>();
-        steps.add(M5CollapsePassage.awaiting("firstObservation", QUEUE_WAIT_TICKS, () -> {
-            doorNotClosedAfterTheRestart();
-            return !reapplyQueued(run, fixture.sid()).isEmpty() || sealedRetries() > 0;
-        }, this::queuedAndRetriedOnTheFirstObservation));
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：每個 tick 的具名斷言 doorNeverClosedAfterTheRestart 由 happened 移到 eachTick；順序相同（先斷言再查詢）。
+        steps.add(M5CollapsePassage.awaiting("firstObservation", QUEUE_WAIT_TICKS, tick -> doorNotClosedAfterTheRestart(),
+                () -> !reapplyQueued(run, fixture.sid()).isEmpty() || sealedRetries() > 0, this::queuedAndRetriedOnTheFirstObservation));
         steps.add(M5CollapsePassage.counting("normalized", APPLY_WAIT_TICKS, this::normalizedAfterTheRetry));
         steps.add(new Step("resolved", 400, this::resolvedWithoutPower));
         steps.add(M5CollapsePassage.watch("waitingWithoutPower", M5CollapsePassage.WATCH_TICKS, this::plainOpenWhileWaitingWithoutPower, this::powerRestored));

@@ -320,7 +320,8 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      */
     Phase waitingLateRestart(String crashPhase) {
         var id = CrashWindow.DISCOVERY_APPENDED;
-        var steps = new ArrayList<Step>(List.of(M5CollapsePassage.awaiting("prepared", LATE_TRIGGER_TICKS, this::preparedRecordingTheTicks, this::preparedWithoutReentry)));
+        var steps = new ArrayList<Step>(List.of(M5CollapsePassage.awaiting("prepared", LATE_TRIGGER_TICKS, tick -> recordTheLoadAndTheResolve(), () -> prepares() > 0,
+                this::preparedWithoutReentry)));
         steps.addAll(passage.steps(M5CollapseWindows.of(id).prepared()));
         return restartPhase(crashPhase, id, ChamberAtStart.AS_SAVED, steps, this::joinInsideBeforeTheFirstEvaluation);
     }
@@ -345,8 +346,8 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      * （「進入 PREPARE（閘門成立）」的 INFO 一則）；之後仍沒有就由這個具名斷言判 FAIL。另記下 RESOLVE 完成、原艙附近載入完成與進入 PREPARE 的 tick（閘門第一次評估在 RESOLVE
      * 完成的下一個 tick）。F6-2d-2 B1（A 段 quality Minor 4）：step 的上限由 {@code LATE_TRIGGER_TICKS + 5} 改為等於等待的上限（第 {@code LATE_TRIGGER_TICKS} 個 tick 一定完成，
      * 多出的 5 tick 到不了）；參數名比照 {@link M5CollapsePassage.Watching} 改為 {@code tick}（A 段 quality nit）。F6-2d-2 B2a（B1 quality Minor 2）：改用通用的
-     * {@link M5CollapsePassage#awaiting}（每個 tick 的查詢與記下的 tick 在 {@link #preparedRecordingTheTicks}，順序與之前相同；等待時間 {@link #LATE_TRIGGER_TICKS} 與通過條件
-     * 相同）。
+     * {@link M5CollapsePassage#awaiting}（等待時間 {@link #LATE_TRIGGER_TICKS} 與通過條件相同）。F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：每個 tick 記下的 tick 改由
+     * {@code awaiting} 的 {@code eachTick}（{@link #recordTheLoadAndTheResolve}），{@code happened} 只問「已進入 PREPARE」；順序與之前相同（先記 proof 再查詢）。
      */
     private void preparedWithoutReentry(int tick, boolean happened) {
         var prepares = prepares();
@@ -355,12 +356,14 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         run.proof.put("preparedAtPhaseTick", run.ticks());
     }
 
-    /** {@code waitinglate} 的 step {@code prepared} 每個 tick 的查詢：記下原艙附近載入完成與 RESOLVE 完成的 tick（第一次），回傳是否已進入 PREPARE。只讀，不改世界。 */
-    private boolean preparedRecordingTheTicks() {
+    /**
+     * {@code waitinglate} 的 step {@code prepared} 每個 tick（{@code awaiting} 的 {@code eachTick}）：記下原艙附近載入完成與 RESOLVE 完成的 tick（第一次）。只讀，不改世界。
+     * F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：原本是 {@code preparedRecordingTheTicks}，在 {@code happened} 裡記 proof、再回傳是否已進入 PREPARE。
+     */
+    private void recordTheLoadAndTheResolve() {
         var sid = fixture.sid().toString();
         if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
         if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.proof.putIfAbsent("resolvedAtPhaseTick", run.ticks());
-        return prepares() > 0;
     }
 
     /** RESOLVE 之後的共用部分：{@link M5CollapsePassage#steps} 的 resolve → ready → cross → ended（(b) 全員都已跨過）。 */
