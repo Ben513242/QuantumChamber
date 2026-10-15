@@ -31,7 +31,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * {@code CollapseAuthorities} 是 public，所以直接指定 class，{@code require=1}：方法改名或簽名改變時開服即失敗。
  * <p>F6-2e-2 加的：開服時的 M5 authority 初始化（private 的 {@code examine}）裡第二次 {@code createIfAbsent}（projection ledger）的呼叫之前 → {@code FIRST_LEDGER_CREATED}（W11：第一個
  * ledger 已建立、第二個還沒有）。detail 是那時兩個 ledger 的結果（MixinExtras 的 {@code @Local}，依宣告順序：allocation、projection）；{@code ordinal=1} 的 INVOKE 與兩個 local 找不到時
- * 套用 mixin 就失敗（{@code require=1}）。前面的讀取或建立失敗時不會到這裡（第二次呼叫在 {@code failures.isEmpty()} 之內）。
+ * 套用 mixin 就失敗（{@code require=1}）。前面的讀取或建立失敗時不會到這裡（第二次呼叫在 {@code failures.isEmpty()} 之內）。F6-2e-3（F6-2e-2 quality Minor 3）：ordinal 或 local 的
+ * 順序錯位（例如 production 調換兩個 ledger 的建立順序、多一次 {@code createIfAbsent}）不會在套用時失敗，只要還找得到這個 INVOKE 與兩個同型別的 local；這時交出的 detail 不是預期的那一刻，
+ * 由窗口表的條件（{@code M5CollapseInitChain.firstLedgerCreated}：allocation 是 {@code CREATED}、projection 是 {@code NOT_CREATED}）與 halt 之前的取證
+ * （{@code M5CollapseInitChain.oneLedgerAtHalt}：磁碟上只有 allocation ledger、projection ledger 不存在）判 FAIL（條件不成立時開服之後由 {@code crashWindowReached} 判 FAIL）。
  */
 @Mixin(value=CollapseAuthorities.class,remap=false)
 abstract class CollapseAuthoritiesCrashWindowMixin {

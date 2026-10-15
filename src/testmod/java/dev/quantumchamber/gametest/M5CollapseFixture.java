@@ -236,7 +236,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
      * 移除 entity 又會與 production 同一個 tick 的門口判斷交錯；crash phase 清過之後，存檔裡的門口只有 probe 自己放的 entity。沒有涵蓋的情況（F6-2e-1 spec M-8）：這之後才載入的 chunk 裡的
      * entity，以及之後從範圍外走進來的動物。
      */
-    static Cleared clearAroundTheOrigin(ServerWorld world, ChamberFrame frame) {
+    private static Cleared clearAroundTheOrigin(ServerWorld world, ChamberFrame frame) {
         var center = frame.controllerPos();
         var box = new Box(center.getX() - CLEAR_RADIUS, center.getY() - CLEAR_BELOW, center.getZ() - CLEAR_RADIUS, center.getX() + CLEAR_RADIUS + 1,
                 center.getY() + CLEAR_ABOVE, center.getZ() + CLEAR_RADIUS + 1);
@@ -373,6 +373,9 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     /**
      * 同 {@link #arm(Who)}，原艙 {@link #FRAME} 在 {@code world}（F6-2e-2，F6-2e-1 quality Minor 1：W10 的原艙在 Nether，原本另以 {@code armed()} 寫一份幾乎相同的；
      * {@link #arm(Who)} 委派給這裡，在來源世界）。
+     * <p>F6-2e-3（F6-2e-2 quality Minor 7）：<b>只支援 {@link #FRAME}</b>，{@code world} 只決定這座艙在哪個世界。不改收 frame：這個 fixture 的原艙固定是 {@link #FRAME}，它的
+     * chamber UUID（{@code chamber}，{@link #registeredController(ServerWorld)} 記下）是這條 chain 的 session、收據與 {@code armingFlushed} 篩 record 的依據；另一座艙（例如 W10 的
+     * {@code SOURCE_FRAME}）的 arm 會改掉它。W10 的第二座艙不經 arm（SOURCE 收據以 {@code M4CandidateTestAccess.measuredReceipt} 直接建立）。
      */
     SessionRecoveryRecord arm(ServerWorld world, Who who) throws Exception {
         var controller = registeredController(world);

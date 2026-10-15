@@ -26,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
@@ -42,8 +43,8 @@ import net.minecraft.util.math.ChunkPos;
  * 每一份都以 production 的嚴格 decode 讀：allocation 與 projection ledger 經 {@link CollapseLedgerTestAccess}（F6-2a：package-private 的 {@code fromNbt}，exact keys、
  * {@code SchemaVersion}、筆數上限；格式不符時丟出，不會讀成空的 ledger），catalog 經 {@link UniverseRegistryState#fromNbt}，journal 經
  * {@link SessionJournalStore#read}＋{@link SessionRecoveryState#fromNbt}，discovery 經 {@link UniverseDiscoveryState#load}。檔案不存在時回空的結果（還沒有寫過）。
- * 投影的方塊以 raw MCA 讀（{@link #block}）。F6-2e-2 起另有 journal 的 envelope 的寫出（{@link #writeJournal}：fixture 與 evidence 的 NBT）與 schema 3 的讀回斷言
- * （{@link #expectSchemaThreeOnDisk}）；其餘只讀。
+ * 投影的方塊以 raw MCA 讀（{@link #block}）。F6-2e-2 起另有 journal 的 envelope 的寫出（{@link #writeJournal}：fixture 與 evidence 的 NBT）與 journal 的讀回斷言
+ * （{@link #expectJournalOnDisk}，F6-2e-3 起不限 schema 3）；其餘只讀。
  */
 final class M5CollapseDiskEvidence {
     static final String JOURNAL = SessionRecoveryState.STATE_ID + ".dat";
@@ -88,8 +89,11 @@ final class M5CollapseDiskEvidence {
         return UniverseDiscoveryState.load(saveRoot).records();
     }
 
-    /** 磁碟上的 journal（{@link #journal}）：envelope 的 {@code SchemaVersion} 與 flushed 的 record（以 session 為鍵）。 */
-    record JournalOnDisk(int schema, Map<UUID, SessionRecoveryRecord> records) {}
+    /**
+     * 磁碟上的 journal（{@link #journal}）：envelope 的 {@code SchemaVersion}、檔案的 {@code DataVersion}（沒有時是 -1；F6-2e-3，F6-2e-2 quality Minor 6：原本呼叫端要再讀一次檔）與
+     * flushed 的 record（以 session 為鍵）。
+     */
+    record JournalOnDisk(int schema, int dataVersion, Map<UUID, SessionRecoveryRecord> records) {}
 
     /**
      * F6-2e-2（F6-2e-1 quality Minor 2）：磁碟上的 journal（{@code data} 的 {@link #JOURNAL}），production 的 {@link SessionJournalStore#read} 讀回、{@link SessionRecoveryState#fromNbt}
@@ -98,10 +102,11 @@ final class M5CollapseDiskEvidence {
     static Optional<JournalOnDisk> journal(Path data) throws IOException {
         var file = data.resolve(JOURNAL);
         if (!Files.exists(file)) return Optional.empty();
-        var envelope = SessionJournalStore.read(file).getCompound("data");
+        var root = SessionJournalStore.read(file);
+        var envelope = root.getCompound("data");
         var decoded = SessionRecoveryState.fromNbt(envelope);
         decoded.requireHealthy();
-        return Optional.of(new JournalOnDisk(envelope.getInt("SchemaVersion"), decoded.flushedRecords()));
+        return Optional.of(new JournalOnDisk(envelope.getInt("SchemaVersion"), NbtHelper.getDataVersion(root, -1), decoded.flushedRecords()));
     }
 
     static Optional<SessionRecoveryRecord> journalRecord(Path data, UUID session) throws IOException {
@@ -109,17 +114,27 @@ final class M5CollapseDiskEvidence {
     }
 
     /**
-     * F6-2e-2（F6-2e-1 quality Minor 2）：{@code name}：磁碟上的 journal（{@link #journal}）的 {@code SchemaVersion} 是 3（M4 時期的 envelope），flushed 的 record 恰為 {@code expected}。
-     * 由 {@code M5CollapseUnsupportedChain} 搬來，{@code data} 改由呼叫端給（開服之前讀 {@link M5CollapseRun#worldData}）。F6-2e-1 的版本另要求 {@code !m5Evidence}，但
-     * production 的 {@code fromNbt} 只在讀到 schema 4 時設它（spec §5），{@code SchemaVersion}＝3 時恆為 false，沒有證明力，拿掉（F6-2e-1 spec review 的 nit）。
+     * F6-2e-2（F6-2e-1 quality Minor 2）：{@code name}：磁碟上的 journal（{@link #journal}）的 {@code SchemaVersion} 是 {@code schema}，flushed 的 record 恰為 {@code expected}；回傳讀到的
+     * journal（呼叫端要 DataVersion 時不必再讀一次檔）。proof 記 {@code <name>Schema}。由 {@code M5CollapseUnsupportedChain} 搬來，{@code data} 改由呼叫端給（開服之前讀
+     * {@link M5CollapseRun#worldData}）。F6-2e-1 的版本另要求 {@code !m5Evidence}，但 production 的 {@code fromNbt} 只在讀到 schema 4 時設它（spec §5），{@code SchemaVersion}＝3 時恆為
+     * false，沒有證明力，拿掉（F6-2e-1 spec review 的 nit）。F6-2e-3（F6-2e-2 quality Minor 6）：由 {@code expectSchemaThreeOnDisk} 一般化，schema 由呼叫端給（M4 時期的 envelope 是 3；
+     * {@code M5CollapseInitChain} 原本手寫 schema 4 的版本）。
      */
-    static void expectSchemaThreeOnDisk(M5CollapseRun run, Path data, String name, Map<UUID, SessionRecoveryRecord> expected) throws Exception {
+    static Optional<JournalOnDisk> expectJournalOnDisk(M5CollapseRun run, Path data, String name, int schema, Map<UUID, SessionRecoveryRecord> expected) throws Exception {
         var journal = journal(data);
-        int schema = journal.map(JournalOnDisk::schema).orElse(-1);
+        int actual = journal.map(JournalOnDisk::schema).orElse(-1);
         var records = journal.map(JournalOnDisk::records).orElse(Map.of());
-        run.expect(name, schema == 3 && records.equals(expected),
-                () -> "磁碟上的 journal：SchemaVersion=" + schema + " sessions=" + records.keySet() + "（預期 " + expected.keySet() + "）");
-        run.proof.put(name + "Schema", schema);
+        run.expect(name, actual == schema && records.equals(expected),
+                () -> "磁碟上的 journal：SchemaVersion=" + actual + " " + states(records) + "（預期 SchemaVersion=" + schema + " " + states(expected) + "）");
+        run.proof.put(name + "Schema", actual);
+        return journal;
+    }
+
+    /** 失敗訊息用：每個 session 的狀態。 */
+    private static Map<UUID, String> states(Map<UUID, SessionRecoveryRecord> records) {
+        var result = new LinkedHashMap<UUID, String>();
+        records.forEach((session, record) -> result.put(session, record.state().name()));
+        return result;
     }
 
     /**
@@ -128,24 +143,22 @@ final class M5CollapseDiskEvidence {
      * 寫 2，spec §5）。不加 DataVersion：evidence 的 receipt／batch NBT（原本 {@code M5CollapseFixture.recordReceipt}、{@code M5CollapseUnsupportedChain.writeBatch} 各寫一份）。
      */
     static NbtCompound writeJournal(Path file, Collection<SessionRecoveryRecord> records) throws IOException {
-        var wrapped = envelope(records);
-        NbtIo.writeCompressed(wrapped, file);
-        return wrapped;
+        return write(file, records, OptionalInt.empty());
     }
 
     /** 同 {@link #writeJournal(Path, Collection)}，另加 {@code DataVersion}＝{@code dataVersion}（正式檔 {@code data/}{@link #JOURNAL}，比照 legacy runner 的 {@code reloadEmptySchemaThree}）。 */
     static NbtCompound writeJournal(Path file, Collection<SessionRecoveryRecord> records, int dataVersion) throws IOException {
-        var wrapped = envelope(records);
-        NbtHelper.putDataVersion(wrapped, dataVersion);
-        NbtIo.writeCompressed(wrapped, file);
-        return wrapped;
+        return write(file, records, OptionalInt.of(dataVersion));
     }
 
-    private static NbtCompound envelope(Collection<SessionRecoveryRecord> records) {
+    /** 兩個 {@code writeJournal} 共用的寫出（F6-2e-3，F6-2e-2 quality Minor 6：原本兩個多載各寫一份）：envelope、有 {@code dataVersion} 時加上它，寫到 {@code file}。 */
+    private static NbtCompound write(Path file, Collection<SessionRecoveryRecord> records, OptionalInt dataVersion) throws IOException {
         var state = new SessionRecoveryState();
         records.forEach(state::put);
         var wrapped = new NbtCompound();
         wrapped.put("data", state.writeNbt(new NbtCompound()));
+        if (dataVersion.isPresent()) NbtHelper.putDataVersion(wrapped, dataVersion.getAsInt());
+        NbtIo.writeCompressed(wrapped, file);
         return wrapped;
     }
 

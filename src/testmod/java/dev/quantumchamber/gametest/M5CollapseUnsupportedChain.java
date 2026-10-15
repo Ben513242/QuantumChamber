@@ -298,12 +298,12 @@ final class M5CollapseUnsupportedChain {
     /**
      * 把磁碟上的 journal 換成 M4 時期的 schema 3：以正式的寫出建立 envelope（{@link M5CollapseDiskEvidence#writeJournal}：全新的 {@link SessionRecoveryState}，只 put 這三筆：candidate
      * 已初始化、沒有 M5 證據，{@code writtenSchema} 是 3；與 {@link M5CollapseFixture#recordReceipt} 的 receipt NBT 同一個寫法），加上本版的 DataVersion 寫到正式檔（同 legacy runner 的
-     * {@code reloadEmptySchemaThree}，那裡是空的 schema 3），再以 {@link M5CollapseDiskEvidence#expectSchemaThreeOnDisk} 讀回（{@code schemaThreeJournalWritten}）。記憶體裡的 journal
+     * {@code reloadEmptySchemaThree}，那裡是空的 schema 3），再以 {@link M5CollapseDiskEvidence#expectJournalOnDisk} 讀回（{@code schemaThreeJournalWritten}）。記憶體裡的 journal
      * （本 JVM 已初始化 M5 authority，寫出會是 schema 4）不再寫出：下一個 tick 就 halt，halt 之前再讀一次（窗口表的 {@code schemaThreeJournalAtHalt}）。
      */
     private void writeSchemaThreeJournal(Map<UUID, SessionRecoveryRecord> batch) throws Exception {
         M5CollapseDiskEvidence.writeJournal(run.data().resolve(M5CollapseDiskEvidence.JOURNAL), batch.values(), SharedConstants.getGameVersion().getSaveVersion().getId());
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalWritten", batch);
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, run.data(), "schemaThreeJournalWritten", 3, batch);
     }
 
     /** 三筆收據寫成 {@link #BATCH_NBT}（{@link M5CollapseDiskEvidence#writeJournal}，與 receipt NBT 同一個寫法），SHA-256 與三個 session 記在 proof 的 {@code batch}。 */
@@ -327,7 +327,7 @@ final class M5CollapseUnsupportedChain {
      * NEW 的參與者的 playerdata 在走廊（{@code participantInTheCorridorOnDisk}）。
      */
     static void m4ReceiptsAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalAtHalt", run.journal().flushedRecords());
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, run.data(), "schemaThreeJournalAtHalt", 3, run.journal().flushedRecords());
         var corridor = fixture.corridor().getRegistryKey().getValue().toString();
         for (var id : fixture.participants()) {
             var dimension = M5CollapseDiskEvidence.playerDimension(run.saveRoot(), id);
@@ -395,7 +395,7 @@ final class M5CollapseUnsupportedChain {
         var sid = fixture.sid();
         run.expect("batchDecoded", batch.size() == 3 && fixture.receipt().equals(batch.get(sid)) && sourceReceipt != null && endReceipt != null,
                 () -> "batch NBT 的 session：" + batch.keySet());
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalAtStart", batch);
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, run.data(), "schemaThreeJournalAtStart", 3, batch);
         var flushed = run.journal().flushedRecords();
         run.expect("receiptsKeptAcrossTheRestart", batch.keySet().stream().allMatch(id -> batch.get(id).equals(flushed.get(id))),
                 () -> "開服時的 record：" + batch.keySet().stream().map(id -> M5GameTestSupport.state(run.journal(), id)).toList());

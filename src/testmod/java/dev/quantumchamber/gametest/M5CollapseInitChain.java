@@ -1,5 +1,6 @@
 package dev.quantumchamber.gametest;
 
+import com.google.gson.JsonObject;
 import dev.quantumchamber.candidate.CandidateEntropyState;
 import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
@@ -10,17 +11,16 @@ import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
-import dev.quantumchamber.persistence.SessionJournalStore;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtList;
 import org.apache.logging.log4j.Level;
 
@@ -41,8 +41,11 @@ import org.apache.logging.log4j.Level;
  *     discovery 沒有被碰過（{@link #oneLedgerAtHalt}）。</li>
  * <li>{@link #unreadable}（{@code w11-unreadable}，stop）：第一次重啟，開服之前裝上 allocation ledger 讀取的 IO 失敗（{@code CHECKED_READ_FAULT}，一次）：初始化讀既有的 allocation ledger
  *     失敗（{@code UNREADABLE}）→ 不建立缺少的 projection ledger（{@code NOT_CREATED}，implementation note「初始化有任何讀取失敗時，不建立另一個缺少的 ledger」）→ 初始化失敗、ERROR 一則、
- *     原因是 IO 不是遺失、本 instance 不 ready；既有的 ledger 沒有被重寫；停服之後 journal 仍是 schema 3（spec §6「journal 也不會因此升到 schema 4」）。磁碟因此仍是 crash 當下的樣子。</li>
- * <li>{@link #restart}（{@code w11-restart}，stop）：第二次重啟，開服之前確認磁碟與 crash 當下相同（所以這次開服等同 crash 之後的第一次成功的重啟）。開服時：journal 仍是 schema 3、
+ *     原因是 IO 不是遺失、本 instance 不 ready；既有的 ledger 沒有被重寫；停服之後 journal 仍是 schema 3（spec §6「journal 也不會因此升到 schema 4」）。所以 M5 authority 初始化的輸入
+ *     （journal、兩個 ledger）與 discovery 仍是 crash 當下的樣子；{@code quantumchamber_chambers.dat}、{@code raids.dat} 等其他存檔由這次正常停服重寫，與 crash 當下不同（F6-2e-3，
+ *     F6-2e-2 spec review M-1）。</li>
+ * <li>{@link #restart}（{@code w11-restart}，stop）：第二次重啟，開服之前確認 M5 authority 初始化的輸入（journal、兩個 ledger）與 discovery 和 crash 當下相同（所以就 M5 的初始化而言，
+ *     這次開服等同 crash 之後的第一次成功的重啟；chamber registry 與 {@code raids.dat} 是 {@code w11-unreadable} 停服時寫出的，不比對，理由見 {@link #expectDiskAsAtTheCrash}）。開服時：journal 仍是 schema 3、
  *     既有的 allocation ledger 照常讀取（{@code LOADED}、不重寫）、補建 projection ledger（{@code CREATED}）、不被判為遺失（沒有初始化失敗、沒有 {@code AUTHORITY_CORRUPT}）。之後參與者
  *     JOIN 在艙外、由艙外進入 → COLLAPSING 的 checked 提交是這次開服之後的第一次寫入，journal 在這時升為 schema 4（spec §12「存檔第一次用 M5 開啟」一列）→ RESOLVE → PASSAGE_READY →
  *     跨越 → (b) 終局（spec §12 的四件事，discovery 是 M4 的那一筆之後恰多 U 一筆）。</li>
@@ -62,6 +65,12 @@ final class M5CollapseInitChain {
     static final String ALLOCATION_SHA256 = "allocationLedgerSha256", ALLOCATION_MODIFIED = "allocationLedgerModified";
     /** halt 之前記下的 journal 與 discovery 的 SHA-256（同上）。 */
     static final String JOURNAL_SHA256 = "journalSha256", DISCOVERY_SHA256 = "discoverySha256";
+    /**
+     * proof 的鍵（F6-2e-3，F6-2e-2 quality Minor 5：原本是字面字串或拼接）：setup 寫入的 discovery 的 SHA-256（crash 開服之前由 setup 的 receipt 讀回比對）、crash 開服之前的磁碟摘要與
+     * discovery 的 SHA-256（halt 之前的取證以它比對）。值與原本的字串相同。
+     */
+    private static final String M4_DISCOVERY_SHA256 = "m4DiscoverySha256", M4_SAVE_BEFORE_START = "m4SaveBeforeStart",
+            DISCOVERY_SHA256_BEFORE_START = DISCOVERY_SHA256 + "BeforeStart";
     /** w11-unreadable 的 watch 段的 tick 數。 */
     private static final int UNINITIALIZED_WATCH_TICKS = 20;
 
@@ -71,7 +80,7 @@ final class M5CollapseInitChain {
     /** w11-restart：開服之前（{@code beforeStart}）的 journal 正式檔的 SHA-256；之後只要它變了，schema 就必須是 4。 */
     private String journalAtStart;
     /** 兩次重啟：crash 的 halt receipt 的 {@code atHalt}（開服之前讀回，{@link #expectDiskAsAtTheCrash}）。 */
-    private com.google.gson.JsonObject atHalt;
+    private JsonObject atHalt;
 
     M5CollapseInitChain(M5CollapseRun run) {
         this.run = run;
@@ -103,7 +112,7 @@ final class M5CollapseInitChain {
         UniverseDiscoveryState.fromNbt(discoveryNbt(M4_DISCOVERY)).save(root);
         run.expect("m4DiscoveryWritten", () -> UniverseDiscoveryState.load(root).records().equals(List.of(M4_DISCOVERY)),
                 () -> "discovery 讀回不是 M4 的那一筆");
-        run.proof.put("m4DiscoverySha256", M5CollapseDiskEvidence.sha256(run.data().resolve(UniverseDiscoveryState.FILE_NAME)));
+        run.proof.put(M4_DISCOVERY_SHA256, M5CollapseDiskEvidence.sha256(run.data().resolve(UniverseDiscoveryState.FILE_NAME)));
         return true;
     }
 
@@ -153,10 +162,9 @@ final class M5CollapseInitChain {
         var receipt = fixture.receipt();
         var data = run.worldData();
         var journalFile = data.resolve(M5CollapseDiskEvidence.JOURNAL);
-        var setupJournal = M5CollapseDiskEvidence.journal(data);
-        run.expect("setupJournalSchemaFour", setupJournal.isPresent() && setupJournal.get().schema() == 4 && setupJournal.get().records().equals(Map.of(receipt.sessionUuid(), receipt)),
-                () -> "setup 停服之後的 journal：" + setupJournal.map(journal -> "SchemaVersion=" + journal.schema() + " sessions=" + journal.records().keySet()).orElse("ABSENT"));
-        int dataVersion = NbtHelper.getDataVersion(SessionJournalStore.read(journalFile), -1);
+        // F6-2e-3（F6-2e-2 quality Minor 6）：經 expectJournalOnDisk（判斷與原本手寫的相同），DataVersion 由同一次讀取帶回（原本另讀一次檔）。
+        var setupJournal = M5CollapseDiskEvidence.expectJournalOnDisk(run, data, "setupJournalSchemaFour", 4, Map.of(receipt.sessionUuid(), receipt));
+        int dataVersion = setupJournal.map(M5CollapseDiskEvidence.JournalOnDisk::dataVersion).orElse(-1);
         M5CollapseRun.require(dataVersion > 0, "setup 的 journal 沒有 DataVersion");
         run.expect("setupLedgersEmpty", () -> Files.isRegularFile(data.resolve(UniverseAllocationLedger.FILE_NAME)) && Files.isRegularFile(data.resolve(ProjectionLedger.FILE_NAME))
                         && M5CollapseDiskEvidence.allocations(data).isEmpty() && M5CollapseDiskEvidence.projections(data).isEmpty(),
@@ -170,16 +178,15 @@ final class M5CollapseInitChain {
             Files.move(ledger, removed.resolve(name));
             moved &= !Files.exists(ledger) && sha256.equals(M5CollapseDiskEvidence.sha256(removed.resolve(name)));
         }
-        boolean allMoved = moved;
-        run.expect("m5LedgersRemovedBeforeStart", allMoved, () -> "兩個 ledger 沒有移走：" + removed);
+        run.expect("m5LedgersRemovedBeforeStart", moved, () -> "兩個 ledger 沒有移走：" + removed);
         M5CollapseDiskEvidence.writeJournal(journalFile, List.of(receipt), dataVersion);
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, data, "schemaThreeJournalBeforeStart", Map.of(receipt.sessionUuid(), receipt));
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, data, "schemaThreeJournalBeforeStart", 3, Map.of(receipt.sessionUuid(), receipt));
         var discoverySha256 = M5CollapseDiskEvidence.sha256(data.resolve(UniverseDiscoveryState.FILE_NAME));
         run.expect("m4DiscoveryBeforeStart", () -> M5CollapseDiskEvidence.discovery(data.getParent()).equals(List.of(M4_DISCOVERY))
-                        && discoverySha256.equals(M5CollapseRun.text(setup, "m4DiscoverySha256")),
+                        && discoverySha256.equals(M5CollapseRun.text(setup, M4_DISCOVERY_SHA256)),
                 () -> "開服之前的 discovery 不是 setup 寫入的那一筆");
-        run.proof.put("m4SaveBeforeStart", M5CollapseDiskEvidence.summary(data.getParent(), receipt.sessionUuid()));
-        run.proof.put(DISCOVERY_SHA256 + "BeforeStart", discoverySha256);
+        run.proof.put(M4_SAVE_BEFORE_START, M5CollapseDiskEvidence.summary(data.getParent(), receipt.sessionUuid()));
+        run.proof.put(DISCOVERY_SHA256_BEFORE_START, discoverySha256);
         M5CollapseWindows.arm(run, fixture, CrashWindow.FIRST_LEDGER_CREATED);
     }
 
@@ -202,9 +209,9 @@ final class M5CollapseInitChain {
         run.expect("firstLedgerCreatedAtHalt", () -> Files.isRegularFile(allocation) && M5CollapseDiskEvidence.allocations(data).isEmpty(),
                 () -> "halt 時 allocation ledger 不是空檔：" + M5CollapseDiskEvidence.summary(data.getParent(), fixture.sid()));
         run.expect("secondLedgerAbsentAtHalt", !Files.exists(data.resolve(ProjectionLedger.FILE_NAME)), () -> "halt 時 projection ledger 已存在");
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, data, "schemaThreeJournalAtHalt", Map.of(fixture.sid(), fixture.receipt()));
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, data, "schemaThreeJournalAtHalt", 3, Map.of(fixture.sid(), fixture.receipt()));
         var discovery = M5CollapseDiskEvidence.sha256(data.resolve(UniverseDiscoveryState.FILE_NAME));
-        run.expect("discoveryUntouchedAtHalt", discovery.equals(run.proof.get(DISCOVERY_SHA256 + "BeforeStart")), () -> "halt 時的 discovery 與開服之前不同");
+        run.expect("discoveryUntouchedAtHalt", discovery.equals(run.proof.get(DISCOVERY_SHA256_BEFORE_START)), () -> "halt 時的 discovery 與開服之前不同");
         evidence.put(ALLOCATION_SHA256, M5CollapseDiskEvidence.sha256(allocation));
         evidence.put(ALLOCATION_MODIFIED, Files.getLastModifiedTime(allocation).toString());
         evidence.put(JOURNAL_SHA256, M5CollapseDiskEvidence.sha256(data.resolve(M5CollapseDiskEvidence.JOURNAL)));
@@ -214,9 +221,14 @@ final class M5CollapseInitChain {
     // ---- 之後的兩次重啟共用 ----
 
     /**
-     * 開服之前（{@code onInitialize}）：讀回 setup 的 receipt 與收據、crash 的 halt receipt（{@code readHaltReceipt}：乾淨的 halt），確認磁碟與 crash 當下相同：allocation ledger 的 SHA-256
-     * 與修改時間（{@code existingLedgerKeptSinceTheCrash}）、projection ledger 不存在（{@code secondLedgerStillAbsent}）、journal 的 SHA-256 而且仍是 schema 3、恰為那一筆收據
-     * （{@code schemaThreeJournalBeforeStart}）、discovery 的 SHA-256（{@code m4DiscoveryKeptSinceTheCrash}）。halt receipt 的 {@code atHalt} 記在 {@link #atHalt}。
+     * 開服之前（{@code onInitialize}）：讀回 setup 的 receipt 與收據、crash 的 halt receipt（{@code readHaltReceipt}：乾淨的 halt），確認 M5 authority 初始化的輸入與 discovery 和 crash
+     * 當下相同：allocation ledger 的 SHA-256 與修改時間（{@code existingLedgerKeptSinceTheCrash}）、projection ledger 不存在（{@code secondLedgerStillAbsent}）、journal 的 SHA-256 而且仍是
+     * schema 3、恰為那一筆收據（{@code schemaThreeJournalBeforeStart}）、discovery 的 SHA-256（{@code m4DiscoveryKeptSinceTheCrash}）。halt receipt 的 {@code atHalt} 記在 {@link #atHalt}。
+     * <p>F6-2e-3（F6-2e-2 spec review M-1）：比對的只有這幾項，不是整份磁碟。{@code quantumchamber_chambers.dat} 與 {@code raids.dat} 在 {@code w11-unreadable} 正常停服時重寫，與 crash 當下
+     * 不同（三次 run 的 {@code data-hashes.json} 都是如此），所以 {@code w11-restart} 的起點是那次停服寫出的 chamber registry。不另比對它們：(1) 與 crash 當下比一定不同；(2) 與
+     * {@code w11-unreadable} 停服時寫出的值比，兩個 JVM 之間沒有程序碰存檔（runner 依序跑 phase），恆成立、沒有證明力；(3) M5 authority 初始化只讀 journal 的 envelope 與兩個 ledger
+     * （{@code CollapseAuthorities.initialize}），W11 的判定（{@code missingLedgerNotTreatedAsLost} 等）不依賴它們；chamber registry 由之後的 step 以 production 的路徑使用（原艙
+     * 照常觸發、提交、到達 READY），內容有問題時會在那裡失敗。
      */
     private void expectDiskAsAtTheCrash() throws Exception {
         fixture.readCrashReceipt(SETUP, null);
@@ -227,13 +239,13 @@ final class M5CollapseInitChain {
         run.expect("secondLedgerStillAbsent", !Files.exists(data.resolve(ProjectionLedger.FILE_NAME)), () -> "開服之前已有 projection ledger");
         run.expect("journalKeptSinceTheCrash", M5CollapseDiskEvidence.sha256(data.resolve(M5CollapseDiskEvidence.JOURNAL)).equals(M5CollapseRun.text(atHalt, JOURNAL_SHA256)),
                 () -> "開服之前的 journal 與 crash 當下不同");
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, data, "schemaThreeJournalBeforeStart", Map.of(receipt.sessionUuid(), receipt));
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, data, "schemaThreeJournalBeforeStart", 3, Map.of(receipt.sessionUuid(), receipt));
         run.expect("m4DiscoveryKeptSinceTheCrash", M5CollapseDiskEvidence.sha256(data.resolve(UniverseDiscoveryState.FILE_NAME)).equals(M5CollapseRun.text(atHalt, DISCOVERY_SHA256)),
                 () -> "開服之前的 discovery 與 crash 當下不同");
     }
 
     /** {@code name}：allocation ledger 的 SHA-256 與修改時間與 crash 的 halt 之前記下的相同（初始化照常讀取、沒有重寫它；重寫空的 ledger 時內容相同，所以另比修改時間）。 */
-    private void expectExistingLedgerKept(com.google.gson.JsonObject atHalt, String name) throws Exception {
+    private void expectExistingLedgerKept(JsonObject atHalt, String name) throws Exception {
         var allocation = run.worldData().resolve(UniverseAllocationLedger.FILE_NAME);
         var sha256 = M5CollapseDiskEvidence.sha256(allocation);
         var modified = Files.exists(allocation) ? Files.getLastModifiedTime(allocation).toString() : "ABSENT";
@@ -264,7 +276,7 @@ final class M5CollapseInitChain {
                     fault[0] = run.install(M5TestHooks.CHECKED_READ_FAULT, new M5TestHooks.CheckedReadFault(UniverseAllocationLedger.FILE_NAME, 0, 1));
                 })
                 .started(() -> initializationFailedOnTheRead(fault[0]))
-                .afterStop(() -> M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.worldData(), "schemaThreeJournalAfterTheFailedStart",
+                .afterStop(() -> M5CollapseDiskEvidence.expectJournalOnDisk(run, run.worldData(), "schemaThreeJournalAfterTheFailedStart", 3,
                         Map.of(fixture.sid(), fixture.receipt())));
     }
 
@@ -290,7 +302,7 @@ final class M5CollapseInitChain {
                 () -> "初始化的 ERROR：" + failed + " initialized=" + initialized + " m5ReadyThisInstance=" + ready);
         run.expect("readFailureNotTreatedAsLoss", failed.size() == 1 && failed.getFirst().contains("SEALED(AUTHORITY_UNREADABLE)") && !failed.getFirst().contains("LOST")
                 && !failed.getFirst().contains("AUTHORITY_CORRUPT"), () -> "初始化的 ERROR：" + failed);
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalAtStart", Map.of(fixture.sid(), fixture.receipt()));
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, run.data(), "schemaThreeJournalAtStart", 3, Map.of(fixture.sid(), fixture.receipt()));
     }
 
     // ---- w11-restart ----
@@ -302,10 +314,10 @@ final class M5CollapseInitChain {
      * 不同就必須是 schema 4（{@code journalUpgradedOnTheFirstWrite}）。
      */
     Phase restart() {
-        var steps = new java.util.ArrayList<Step>();
+        var steps = new ArrayList<Step>();
         steps.add(new Step("join", 1, () -> {
             fixture.joinAllInTheSourceWorld(Inside.OUTSIDE);
-            M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalBeforeTheCommit", Map.of(fixture.sid(), fixture.receipt()));
+            M5CollapseDiskEvidence.expectJournalOnDisk(run, run.data(), "schemaThreeJournalBeforeTheCommit", 3, Map.of(fixture.sid(), fixture.receipt()));
             return true;
         }));
         steps.add(new Step("enter", 1, () -> { fixture.moveInside(); return true; }));
@@ -348,7 +360,7 @@ final class M5CollapseInitChain {
         expectExistingLedgerKept(atHalt, "existingLedgerKept");
         run.expect("missingLedgerCreated", () -> Files.isRegularFile(run.data().resolve(ProjectionLedger.FILE_NAME)) && M5CollapseDiskEvidence.projections(run.data()).isEmpty(),
                 () -> "projection ledger=" + fixture.projectionsOrError());
-        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalAtStart", Map.of(fixture.sid(), fixture.receipt()));
+        M5CollapseDiskEvidence.expectJournalOnDisk(run, run.data(), "schemaThreeJournalAtStart", 3, Map.of(fixture.sid(), fixture.receipt()));
         run.expect("nothingAllocatedAtStart", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty()
                         && !UniverseRegistryState.get(run.server()).flushedRecords().containsKey(fixture.universe()) && fixture.universeWorld().isEmpty(),
                 () -> "allocation=" + fixture.allocationsOrError() + " catalog=" + UniverseRegistryState.get(run.server()).flushedRecords().keySet());
