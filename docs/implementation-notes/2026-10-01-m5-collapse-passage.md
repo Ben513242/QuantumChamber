@@ -8503,6 +8503,62 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - 本節由其後的 `docs: record F6-2e-1 in the M5 note` 加入。
 - 只改了派工允許的路徑：testmod 的 `M5CollapseFixture`、`M5CollapseDoors`、`M5CollapseDoorChains`、`M5CollapseWindows`、`M5CollapseRestartChains`、`M5CollapseRetryChains`、`M5CollapsePassage`、`M5CollapseDormantChains`（一行）、`M5CollapseRecoveryProbe`（phase 表與 Javadoc）、新的 `M5CollapseUnsupportedChain`；`M5TestHooks` 只加 `CrashWindow.M4_RECEIPT_STEP`；新的 test mixin `CollapseServiceM4ReceiptWindowMixin` 與它在 `quantumchamber-test.mixins.json` 的登記；split package test access `OriginDoorsTestAccess` 加 `doorwayBox`；`m5-collapse-probe.ps1` 只改 `$chains`、`run-all.ps1` 只改 `$expectedCollapse`、README 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、`quantumchamber.mixins.json`、其他 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5CollapseGameTests`、`M5GameTestSupport`）、M4 probe、所有 JUnit、語言檔、spec、plan、AGENTS。
 - 行號以 HEAD `e31802a` 為準：`RCH`＝`M5CollapseRestartChains`，`RC`＝`M5CollapseRetryChains`，`DC`＝`M5CollapseDoorChains`，`DRS`＝`M5CollapseDoors`，`WIN`＝`M5CollapseWindows`，`PSG`＝`M5CollapsePassage`，`FIX`＝`M5CollapseFixture`，`UC`＝`M5CollapseUnsupportedChain`。
+- Review（controller 補；spec 與 quality 兩份審查並行、只讀，同時由接力的 implementer 跑 run-all-1）：
+  - spec review ✅（Critical 0、Important 0、Minor 8、nit 1）。reviewer 獨立核對的部分如下。
+    - 測試缺陷的盤點完整：production 用到門口判斷的只有 `OriginDoors.java:113`（PREPARE 的 sealed 量子膜）與 `:706`（CLOSE_ON_SEALED／CLOSE_AFTER_TERMINAL）。清理的時點在蓋好原艙之後、任何存檔與收據之前。restart 不再清的理由成立：開服時門口的 entity storage 可能還沒載入，之後再移除，會與 production 同一個 tick 的門口判斷交錯。
+    - RED `a1186d60…` 與修正後的 `18a68b7e…` 是同一個情境。只數盔甲座之後，`plainOpenForTheDoorway`、`standInTheDoorwayBeforeTheReceipt`、`standRemovedFromTheDoorway` 仍抓得到 production 的錯誤。
+    - `PASSABLE_MEMBRANE` 的判斷與原本的 `passableDoorOnDiskAtRestart` 完全相同。`awaiting` 改寫之後，等待時間、斷言順序與通過條件都相同。
+    - W10 的 schema 3 以 production 的 `writeNbt` 寫出、以 strict `fromNbt` 讀回，驗了三次。收據在 tick 24 寫入、halt 在 tick 25，M5 沒有處理過這批收據。NEW、END、SOURCE 的行為都照 §11.3。新窗口只有 UC 會裝，新 mixin 只在 testmod。
+    - mutation 4 個都打中目標，還原後 blob `27529fe1…` 等於 HEAD。GREEN 兩次都是 63/63。範圍、編譯與三份表都成立；`c3` log 的重寫不影響結論。三件「只記錄」的觀察，都沒有與 spec 衝突的條文。
+    - Minor：
+      - M-1：根因寫得比證據肯定。green-1 的 29 個 crash phase，`clearedAroundTheOrigin` 全部是 `{minecraft:item: 1}`，所以多出的 entity 也可能是蓋原艙時的掉落物。涉及 `FIX:205-211` 的 Javadoc 與 `396d981` 的訊息。
+      - M-2：草稿的 blob 寫錯：`redfixed-pig` 還原的 blob 是 `07c39c12…`。
+      - M-3：`7940501` 的標題寫 every，但 `WIN:620`、`:713`、`:907` 仍以 `M5GameTestSupport.doorSealed` 自己對應門的狀態。
+      - M-4：NEW 在執行期間「一觀察到 flushed DORMANT 就取消」沒有具名斷言（`UC:549-551`）。
+      - M-5：§11.3 第 1 步的幾何清理沒有直接斷言（`UC:542-566`）。
+      - M-6：`originUnblocked` 與 catalog 不變，都沒有對應的 mutation。
+      - M-7：`UC:73-74` 的「M4 時期的存檔」說得太滿。allocation、projection、discovery 三個檔已由 JVM1 的 M5 初始化建立，應改為「M4 時期的 journal（schema 3）」。
+      - M-8：清理的剩餘風險沒有寫明（`FIX:208`）。
+      - nit：`expectSchemaThreeOnDisk` 的 `!m5Evidence` 在 schema 3 時恆真。
+    - 另：spec:252 寫「attach 只為 COLLAPSING 建立來源 ticket」，上下文是 M5 的狀態。這與觀察 (1)（attach 為 live MEASURED 取得來源 ticket，沿用 M4）不衝突，F7 可以把措辭寫清楚。
+  - quality review **Approved**（Critical 0、Important 0、Minor 5、nit 7）。
+    - Strengths：
+      - UC 的 crash、窗口表與 restart 三段分開，三筆收據的斷言分在不同方法。
+      - schema 3 有三道讀回守門。production 的 `writtenSchema` 一旦改變，測試會直接 FAIL，不會靜默通過。
+      - 時序餘裕足夠：returned 在 tick 3～5，DORMANT 與取消在 tick 31～32。
+      - mixin 的寫法與既有的一致（HEAD、完整描述子、`require=1`、`remap=false`）。
+      - 拿掉 `UNSPECIFIED` 之後，兩個 switch 都是 exhaustive；`requireDoorAtStart` 讓 API 的契約清楚。
+      - `waitingLateCrash` 改用基底骨架之後，step 名稱、上限與順序都不變。
+    - 問題：
+      1. frame 與 world 寫死的 helper，在 UC 又複製了一份。`UC:192-209` 的 `armed()` 幾乎就是 `FIX:326-344` 的 `arm(Who)`；`UC:509-512` 的 `insideTheSourceChamber` 與 `FIX:680-683` 的 `inside` 相同。`UC:571`、`:573`、`:587` 的 `doorAll(…)` 是與 `OriginDoorState` 平行的另一份對應。根因是 `DRS.is` 寫死 `run.source()`＋`FRAME`（`DRS:142-144`）。
+      2. journal 的讀寫與 `M5CollapseDiskEvidence` 重複。路徑推導在 `UC:275-277`、`:300`；read＋decode 在 `UC:301-306`。把 `SessionRecoveryState` 包成 envelope 寫出有三份：`FIX:441-445`、`UC:286-289`、`UC:316-319`。
+      3. UC 沒有照本輪新增的 helper 選擇規則。`returned`（`UC:372-373`）與 `cancelled`（`UC:522`、`:544`）是手寫的等待。如果只有 NEW 在執行期間的取消路徑壞了，會在 400 tick 後以 stepBounded 失敗，而不是具名斷言。
+      4. mixin 的做法與慣例不一致。同一個注入點，既有的 `CollapseServiceCrashWindowMixin` 已依序派發 `DORMANT_STEP`、`SEALED_STEP`。`M5TestHooks.java:280-302` 的清單也沒有補上這一條。
+      5. `clearAroundTheOrigin` 的診斷力不足：y 範圍寫死（`FIX:215`）；proof 看不出被移走的 entity 是否在 `doorwayBox` 內；proof 的鍵名不一致（`UC:144`、`FIX:175`）。
+    - nit：
+      - `UC:495`、`:500` 兩次都叫 `nativeJoin`。
+      - `UC:387` 的縮排。
+      - `UC:199` 用了完整類名。
+      - batch 的 proof 鍵寫了兩次（`UC:322-326`、`:404-407`）。
+      - `WIN:515` 的 `M4_RECEIPT_STEP` 列宣告了 `AtRestart`，但 restart 不讀它。
+      - `CrashSetup.beforeWrite` 與 `crash` 的 `install` 位置不對稱。
+      - `expectDoorAtStart` 以 `Optional` 當參數（`WIN:1223`）。
+    - 對「需要裁示」：三筆收據放在同一份 journal、選 halt、以全新的 `SessionRecoveryState` 寫出 schema 3、restart 不再清，都同意。窗口列的 `AtRestart` 不被讀可以接受，建議加守門。
+  - controller 處置：
+    - 不開 fix round。
+    - 草稿依 spec M-1、M-2、M-7、M-8 更正後才 commit 本節。
+    - 程式面的事項 → **F6-2e-2 的 A 段**（scratchpad `f62e2-prompt.md`）：
+      - quality Minor 1～5 與 nit；
+      - spec M-1（`FIX:205-211` 的 Javadoc）、M-3～M-6、M-7（`UC:73-74`）與 nit。
+    - spec:252 的措辭 → **F7**。
+    - 「需要裁示」的四點，依兩份 review 接受。
+    - F6-2e 的其餘部分再拆成兩段：
+      - **F6-2e-2**＝本節 review 的整理＋W11；
+      - **F6-2e-3**＝W12，以及 F6-1 spec review Minor 3、5 的評估。
+  - 本節 commit 之後的最終回歸（接力的 implementer，`54daa4f`，乾淨的工作樹；細節在 `f62e1/STATUS.md`）：
+    - 第一次 `run-all-e7eeb5bdc6c642419cd2f5254c2dc05e`（label `relay-run-all-final`）不採計。probe `b49f00bf…` 停在 `terminaldoor-crash`：通道結束的終局落盤時，journal 的原子移動（`quantumchamber_sessions.dat.<n>.tmp` → `quantumchamber_sessions.dat`）發生 `AccessDeniedException`，依退避重試，halt step 的 60 tick 上限內沒有再試，狀態停在 PASSAGE_READY。root `run/m5-collapse-b49f00bf3dc047f18e3f1780f7bb28c0-terminaldoor` 保留，摘錄在 `f62e1/relay-run-all-final-flake.txt`。controller 核對 root 的 latest.log 之後，歸入已知偶發「Windows 原子移動的 `AccessDeniedException`」。
+    - 重跑的 `run-all-8a917630d0c845cd821e3b53cdb5b5c0`（label `relay-run-all-final-2`）`END ALL exit=0 HEAD=54daa4f`，SUMMARY 與 run-all-1 相同（probe `4a63203c…`，63 PASS、halt 29；具名斷言對 `green-1` `RESULT=OK`）。唯一的差異是 Full ERROR 31 → 33：兩則都在 `m5_h2_checkpoint_scope` 被注入失敗的 chunk，「Failed to store chunk」「Failed to save chunk」各多一次（`f62e1/relay-runallfinal2-wbbatch-full.txt`）。這與已知偶發「H2 的 Full ERROR +3」是同一個機制，只少了 entity chunk 那一則；controller 裁示歸入該偶發，採計，不重跑。
+  - **F6-2e-1 完成**：range `d2f6dbb..54daa4f`（code 到 `5b0e92c`）。最終 run-all：`run-all-8a917630d0c845cd821e3b53cdb5b5c0`（`54daa4f`）`END ALL exit=0`。
 
 ### A 段：逐項處置
 
