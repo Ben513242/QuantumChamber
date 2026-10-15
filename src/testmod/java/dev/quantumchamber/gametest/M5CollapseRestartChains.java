@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameRules;
 import org.apache.logging.log4j.Level;
@@ -155,17 +156,13 @@ abstract class M5CollapseRestartChains {
      * {@link CrashSetup#receipt} 建立的收據、原生存檔，{@code install} 裝上這條 chain 的 hook 或 fault，再依窗口表裝上 {@code id} 的 crash 點 → 參與者由艙外進入（{@code enter}）→
      * COLLAPSING（{@code committed}）→ 最多 {@code haltTicks} 個 tick 等到窗口 halt（{@code halt}；halt 之前的取證在窗口表）。step 的名稱、順序與上限與移動之前的兩份相同。
      * 前提見 {@link CrashSetup}（W10、W11 不套用）。F6-2e-1：step {@code receipt} 先做 {@link CrashSetup#beforeWrite}；前兩步由 {@link #buildAndRegister} 給（{@code M5CollapseRetryChains}
-     * 的其他 crash 也用）。
+     * 的其他 crash 也用）。F6-3 Step 0（F6-2e-3 quality Minor 3）：build 到 receipt 的前段抽成 {@link #throughTheReceipt}（W12 的 {@code M5CollapseConvergenceChain} 也用），
+     * 這裡的 {@code afterWrite} 是 {@code install} 再依窗口表裝上 {@code id} 的 crash 點（與抽出之前的順序相同）。
      */
     Phase crash(CrashSetup setup, List<Step> beforeReceipt, M5CollapseRun.Checked install, CrashWindow id, int haltTicks) {
-        var steps = new ArrayList<>(buildAndRegister(setup.origin()));
-        steps.addAll(beforeReceipt);
-        steps.add(new Step("receipt", 1, () -> {
-            setup.beforeWrite().run();
-            fixture.writeCrashReceipt(setup.receipt().build());
+        var steps = new ArrayList<>(throughTheReceipt(setup, beforeReceipt, () -> {
             install.run();
             M5CollapseWindows.arm(run, fixture, id);
-            return true;
         }));
         steps.add(enter());
         steps.add(new Step("committed", 40, fixture::committed));
@@ -179,6 +176,24 @@ abstract class M5CollapseRestartChains {
      */
     List<Step> buildAndRegister(M5CollapseRun.Checked origin) {
         return List.of(new Step("build", 1, () -> { origin.run(); return true; }), new Step("registered", 200, fixture::registered));
+    }
+
+    /**
+     * crash phase 由 build 到收據的前段（F6-3 Step 0，F6-2e-3 quality Minor 3：原本 {@link #crash} 寫一份，W12 的 {@code M5CollapseConvergenceChain.crash} 另寫一份、只用了
+     * {@link #dormantNewSetup} 的 {@code origin}，收據直接寫 {@code fixture.dormantNewReceipt()}、沒有 {@link CrashSetup#beforeWrite}，之後改骨架時會悄悄分岔）：{@link #buildAndRegister}
+     * （{@code build}、{@code registered}）→ {@code beforeReceipt} → {@code receipt}（1 tick）：先 {@link CrashSetup#beforeWrite}，再寫入 {@link CrashSetup#receipt} 建立的收據並原生存檔，
+     * 最後 {@code afterWrite}（這條 chain 在存檔之後才裝的 hook、fault 或 crash 點）。step 的名稱、順序與上限與抽出之前的兩份相同。
+     */
+    List<Step> throughTheReceipt(CrashSetup setup, List<Step> beforeReceipt, M5CollapseRun.Checked afterWrite) {
+        var steps = new ArrayList<>(buildAndRegister(setup.origin()));
+        steps.addAll(beforeReceipt);
+        steps.add(new Step("receipt", 1, () -> {
+            setup.beforeWrite().run();
+            fixture.writeCrashReceipt(setup.receipt().build());
+            afterWrite.run();
+            return true;
+        }));
+        return List.copyOf(steps);
     }
 
     /**
@@ -372,7 +387,7 @@ abstract class M5CollapseRestartChains {
     Step retried(String stepName, String assertion, SealedReason reason, int count, Await await) {
         boolean edge = await == Await.EDGE;
         return untilTriggered(stepName, assertion, await, () -> retriesFrom(reason) > 0, tick -> {
-            int fromReason = retriesFrom(reason), all = run.capture().matching(Level.INFO, "SEALED 重試", fixture.sid().toString()).size();
+            int fromReason = retriesFrom(reason), all = retries(run, fixture.sid());
             return new Verdict(fromReason == 1 && all == count, (edge ? "" : "JOIN 之後 " + tick + " 個 tick：") + "SEALED(" + reason + ") 的重試 INFO=" + fromReason
                     + " 全部的重試 INFO=" + all + "，預期第 " + count + " 次");
         }, edge ? null : "retriedAtPhaseTick");
@@ -380,6 +395,19 @@ abstract class M5CollapseRestartChains {
 
     /** 這個 session 由 SEALED({@code reason}) 重試的 INFO（「SEALED 重試：SEALED(reason)→COLLAPSING」）的則數。 */
     private int retriesFrom(SealedReason reason) {
-        return run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + reason + ")→COLLAPSING", fixture.sid().toString()).size();
+        return retriesFrom(run, fixture.sid(), reason);
+    }
+
+    /**
+     * {@code sid} 由 SEALED({@code reason}) 重試的 INFO 的則數（F6-3 Step 0：由 {@link #retriesFrom(SealedReason)} 抽出 static 的一份，窗口表的 halt 之前取證（只拿得到 run 與
+     * fixture）也用，例如 W12 的 {@code M5CollapseConvergenceChain.convergedAtHalt}；查詢與原本相同）。
+     */
+    static int retriesFrom(M5CollapseRun run, UUID sid, SealedReason reason) {
+        return run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + reason + ")→COLLAPSING", sid.toString()).size();
+    }
+
+    /** {@code sid} 全部的「SEALED 重試」INFO 的則數（F6-3 Step 0：原本 {@link #retried} 行內查詢，查詢相同）。 */
+    static int retries(M5CollapseRun run, UUID sid) {
+        return run.capture().matching(Level.INFO, "SEALED 重試", sid.toString()).size();
     }
 }

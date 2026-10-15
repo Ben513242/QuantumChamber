@@ -515,14 +515,23 @@ public final class M5TestHooks {
      * checked NBT 檔的讀取失敗（F4a）：檔名恰為 {@code fileName} 的讀取（暫存檔的名稱不同，不算），先放行 {@code skip} 次，之後的 {@code failures} 次
      * 丟 {@link IOException}，再之後照常。對正式檔注入，在寫入時就是「atomic move 完成、讀回失敗」，在讀取時就是讀檔的 IO 例外。F6-2e-3 起也裝在
      * {@link #CATALOG_READBACK_FAULT}（只在 catalog 寫出的讀回呼叫，所以一律是「atomic move 完成、讀回失敗」）。
+     * <p>F6-3 Step 0（F6-2e-3 quality Minor 6）：例外的字句可以由呼叫端給（{@link #CheckedReadFault(String, int, int, String)}）。{@code CATALOG_READBACK_FAULT} 原本沿用 F4a 的
+     * 「讀取 … 失敗」，看 log 時容易誤判為讀檔失敗；三個參數的建構子仍是 F4a 的字句（GameTest 與 probe 的讀取失敗都用它，字句不變；沒有斷言比對這段字句）。
      */
     static final class CheckedReadFault {
         private final String fileName;
+        private final String message;
         private int skip, remaining;
         private final AtomicInteger hits = new AtomicInteger();
 
         CheckedReadFault(String fileName, int skip, int failures) {
+            this(fileName, skip, failures, "F4a GameTest 受控：讀取 " + fileName + " 失敗");
+        }
+
+        /** 同上，注入時丟出的 {@link IOException} 的字句是 {@code message}（F6-3 Step 0：例如 W12 的「… 寫出之後的讀回失敗」）。 */
+        CheckedReadFault(String fileName, int skip, int failures, String message) {
             this.fileName = Objects.requireNonNull(fileName, "fileName"); this.skip = skip; this.remaining = failures;
+            this.message = Objects.requireNonNull(message, "message");
         }
 
         synchronized void intercept(Path path) throws IOException {
@@ -532,7 +541,7 @@ public final class M5TestHooks {
             if (remaining <= 0) return;
             remaining--;
             hits.incrementAndGet();
-            throw new IOException("F4a GameTest 受控：讀取 " + fileName + " 失敗");
+            throw new IOException(message);
         }
 
         /** 已注入失敗的次數。 */

@@ -23,10 +23,13 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.StringJoiner;
 import java.util.UUID;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
@@ -119,13 +122,18 @@ final class M5CollapseDiskEvidence {
      * {@link M5CollapseRun#worldData}）。F6-2e-1 的版本另要求 {@code !m5Evidence}，但 production 的 {@code fromNbt} 只在讀到 schema 4 時設它（spec §5），{@code SchemaVersion}＝3 時恆為
      * false，沒有證明力，拿掉（F6-2e-1 spec review 的 nit）。F6-2e-3（F6-2e-2 quality Minor 6）：由 {@code expectSchemaThreeOnDisk} 一般化，schema 由呼叫端給（M4 時期的 envelope 是 3；
      * {@code M5CollapseInitChain} 原本手寫 schema 4 的版本）。
+     * <p>F6-3 Step 0（F6-2e-3 quality Minor 4）：失敗訊息另列兩邊不相等的 session 的完整 record（{@link #unequal}；改成整份比對之後，state 以外的欄位不一致時原本的訊息無從診斷）。
+     * <p>F6-3 Step 0（F6-2e-3 quality nit「proof 鍵 {@code …SchemaFourSchema} 重複」）：proof 鍵<b>保留</b> {@code <name>Schema}。鍵一律由斷言名稱機械地推出（12 個呼叫端都是），由 receipt
+     * 找對應的斷言不需要另一張表；只有名稱本身含 Schema 的（{@code setupJournalSchemaFour}、{@code schemaFourAtTheFirstCheckedWrite}、{@code schemaThree…}）字面重複，為它們改成另一種
+     * 推導只會讓規則不一致；斷言的名稱跨 run 比對，不為鍵改名；沒有程式讀這些鍵。
      */
     static Optional<JournalOnDisk> expectJournalOnDisk(M5CollapseRun run, Path data, String name, int schema, Map<UUID, SessionRecoveryRecord> expected) throws Exception {
         var journal = journal(data);
         int actual = journal.map(JournalOnDisk::schema).orElse(-1);
         var records = journal.map(JournalOnDisk::records).orElse(Map.of());
         run.expect(name, actual == schema && records.equals(expected),
-                () -> "磁碟上的 journal：SchemaVersion=" + actual + " " + states(records) + "（預期 SchemaVersion=" + schema + " " + states(expected) + "）");
+                () -> "磁碟上的 journal：SchemaVersion=" + actual + " " + states(records) + "（預期 SchemaVersion=" + schema + " " + states(expected) + "）；不相等的 session："
+                        + unequal(records, expected));
         run.proof.put(name + "Schema", actual);
         return journal;
     }
@@ -135,6 +143,23 @@ final class M5CollapseDiskEvidence {
         var result = new LinkedHashMap<UUID, String>();
         records.forEach((session, record) -> result.put(session, record.state().name()));
         return result;
+    }
+
+    /**
+     * 失敗訊息用（F6-3 Step 0，F6-2e-3 quality Minor 4）：兩邊不相等的 session（磁碟上的在前、再補只在預期裡的），各印出兩邊完整的 record（沒有時是 ABSENT）；都相等時是「無」
+     * （那時不相等的是 SchemaVersion）。
+     */
+    private static String unequal(Map<UUID, SessionRecoveryRecord> actual, Map<UUID, SessionRecoveryRecord> expected) {
+        var sessions = new LinkedHashSet<>(actual.keySet());
+        sessions.addAll(expected.keySet());
+        var result = new StringJoiner(" | ");
+        for (var session : sessions) {
+            var onDisk = actual.get(session);
+            var wanted = expected.get(session);
+            if (Objects.equals(onDisk, wanted)) continue;
+            result.add(session + "：磁碟=" + (onDisk == null ? "ABSENT" : onDisk) + " 預期=" + (wanted == null ? "ABSENT" : wanted));
+        }
+        return result.length() == 0 ? "無" : result.toString();
     }
 
     /**

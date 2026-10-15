@@ -38,7 +38,8 @@ import org.apache.logging.log4j.Level;
  * </ul>
  * <p>不套用 {@link #crash(CrashSetup, List, M5CollapseRun.Checked, CrashWindow, int)} 的骨架：它在 {@code committed} 之後只等窗口 halt（step {@code halt} 是 {@code () -> false}），W12 在 halt 之前
  * 要觀察兩次 roll-forward、等兩次退避、由艙外再進入兩次，而且 crash 點要在第二次重試之前才裝上（之前的 {@code appendDiscovery} 回傳也會呼叫這個窗口）。前三步（{@code build}、{@code registered}、
- * 收據）與骨架相同（{@link #buildAndRegister}、{@link #dormantNewSetup}）。
+ * 收據）與骨架共用基底的 {@link #throughTheReceipt}（{@link #dormantNewSetup}：{@code beforeWrite} 與收據的建立都照骨架；F6-3 Step 0，F6-2e-3 quality Minor 3，原本只用了
+ * {@code dormantNewSetup().origin()}，收據直接寫 {@code fixture.dormantNewReceipt()}）。
  * <p>halt 選在「discovery 剛收斂」而不是「catalog 仍未確認」：roll-forward 與 restore 的差別要在同一個 JVM 的下一次寫出才看得到（restore 把 current 改回舊內容，下一次收斂的重寫才把已落地的
  * append 從磁碟移除；crash 時 current 隨 JVM 消失，重啟讀到的仍是已落地的新內容），所以兩次收斂都在 crash 之前，crash 只驗「收斂之後的磁碟跨重啟不變」。catalog 未確認時 crash 的重啟
  * （磁碟上已有 U）與 W3 的重啟相同（catalog 已寫出、物化之前，開服 bootstrap 由 EAGER_ENABLED 物化），不另寫一條。
@@ -53,7 +54,8 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
     static final int SECOND_BACKOFF_TICKS = 2 * CollapseBackoff.INITIAL_TICKS + 5;
     /** 已落地的 discovery record（{@code UniverseDiscoveryRecord.toString}）：proof 與 halt receipt 的 {@code atHalt} 的鍵。 */
     static final String LANDED_DISCOVERY = "landedDiscovery";
-    private static final String CATALOG_CONVERGED = "M5 CATALOG 收斂完成", DISCOVERY_CONVERGED = "M5 DISCOVERY 收斂完成";
+    /** 收斂完成的 INFO 的片段（F6-3 Step 0，F6-2e-3 quality Minor 5：由 {@code CATALOG_CONVERGED}、{@code DISCOVERY_CONVERGED} 改名，後者與 {@link CrashWindow#DISCOVERY_CONVERGED} 同名）。 */
+    private static final String CATALOG_CONVERGED_INFO = "M5 CATALOG 收斂完成", DISCOVERY_CONVERGED_INFO = "M5 DISCOVERY 收斂完成";
 
     private M5TestHooks.CheckedReadFault catalogFault, discoveryFault;
     /** 第一次封存之後的 record（之後觀察它沒有變）。 */
@@ -69,13 +71,12 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
 
     /** {@code w12-crash}（見類別說明）。每個 tick（收據之後）：{@code passage.invariants}（catalog 只有 U、最多多 1 筆、Destination 與候選不變）。 */
     Phase crash() {
-        var steps = new ArrayList<>(buildAndRegister(dormantNewSetup().origin()));
-        steps.add(new Step("receipt", 1, () -> {
-            fixture.writeCrashReceipt(fixture.dormantNewReceipt());
+        // F6-3 Step 0（F6-2e-3 quality Minor 3）：build 到 receipt 經基底的 throughTheReceipt（與 crash 骨架共用；原本只用了 dormantNewSetup 的 origin、收據另寫）。
+        var steps = new ArrayList<>(throughTheReceipt(dormantNewSetup(), List.of(), () -> {
             receiptWritten = true;
             // 收據的原生存檔之後才裝：之後第一次寫出 catalog 的就是 RESOLVE 第 2 步（catalog 沒有 dirty 時 save 不寫，UniverseRegistryState.save）。
-            catalogFault = run.install(M5TestHooks.CATALOG_READBACK_FAULT, new M5TestHooks.CheckedReadFault(M5CollapseDiskEvidence.CATALOG, 0, 1));
-            return true;
+            catalogFault = run.install(M5TestHooks.CATALOG_READBACK_FAULT, new M5TestHooks.CheckedReadFault(M5CollapseDiskEvidence.CATALOG, 0, 1,
+                    "M5 collapse probe 受控（W12）：" + M5CollapseDiskEvidence.CATALOG + " 寫出之後的讀回失敗（atomic move 已完成）"));
         }));
         steps.add(enter());
         steps.add(new Step("committed", 40, fixture::committed));
@@ -163,7 +164,8 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
      * 這時原艙被封存的 session 占著）。命中的是不是讀回，由 {@link #sealedOnTheUnconfirmedDiscovery} 的原因（讀取失敗會是 AUTHORITY_UNREADABLE）與磁碟上已有 U 判斷。
      */
     private void discoveryReadbackFails() {
-        discoveryFault = run.install(M5TestHooks.CHECKED_READ_FAULT, new M5TestHooks.CheckedReadFault(UniverseDiscoveryState.FILE_NAME, 1, 1));
+        discoveryFault = run.install(M5TestHooks.CHECKED_READ_FAULT, new M5TestHooks.CheckedReadFault(UniverseDiscoveryState.FILE_NAME, 1, 1,
+                "M5 collapse probe 受控（W12）：" + UniverseDiscoveryState.FILE_NAME + " 追加之後的讀回失敗（atomic move 已完成）"));
     }
 
     /**
@@ -185,7 +187,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
         run.expect("retriedOnTheCatalog", retries == 1, () -> "「SEALED 重試」=" + retries);
         var catalog = UniverseRegistryState.get(run.server());
         var flushed = catalog.flushedRecords();
-        int converged = run.capture().matching(Level.INFO, CATALOG_CONVERGED).size();
+        int converged = run.capture().matching(Level.INFO, CATALOG_CONVERGED_INFO).size();
         boolean dirty = catalog.isDirty(), unconfirmed = CollapseAuthorities.get(run.server()).unconfirmed(Authority.CATALOG);
         run.expect("catalogConvergedBeforeTheMaterialization", flushed.keySet().equals(Set.of(fixture.universe())) && M5CollapseFixture.eagerEnabled(flushed.get(fixture.universe()))
                         && !dirty && !unconfirmed && converged == 1 && fixture.universeWorld().isPresent(),
@@ -243,7 +245,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
         var disk = M5CollapseDiskEvidence.discovery(run.saveRoot());
         var authorities = CollapseAuthorities.get(run.server());
         boolean pending = authorities.unconfirmed(Authority.DISCOVERY);
-        int converged = run.capture().matching(Level.INFO, DISCOVERY_CONVERGED).size();
+        int converged = run.capture().matching(Level.INFO, DISCOVERY_CONVERGED_INFO).size();
         run.expect("landedRecordKeptByTheConvergence", status == CollapseAuthorities.Lookup.Status.FOUND && disk.size() == 1 && disk.getFirst().toString().equals(landed)
                         && !pending && converged == 1,
                 () -> "appendDiscovery=" + status + " discovery=" + disk + "（已落地的是 " + landed + "）unconfirmed=" + pending + " 收斂的 INFO=" + converged);
