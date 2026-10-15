@@ -4571,7 +4571,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * </ul>
      * 需要它，是因為 production 只在下一次使用之前收斂，沒有人會替失敗的 test 收斂；原版又在 test 失敗的同一個 tick 就開始下一個 batch（{@code TestRunContext} 的
      * {@code onFailed} → {@code runBatch}），而 {@code begin} 是 test 方法的第一個敘述，沒辦法跨 tick 等待。沒有這段等待時，後面每個 test 的 {@code begin} 都立刻失敗。
-     * 失敗的那個 test 照常失敗，這裡不吞掉任何失敗。開始等待記一行 WARN 或 ERROR（見上），結束（收斂、逾時或例外）記一行 INFO 或 WARN，都以 {@code M5_UNIVERSE_HOLD} 開頭。
+     * 失敗的那個 test 照常失敗，這裡不吞掉任何失敗。開始等待記一行 WARN 或 ERROR（見上），結束記一行：收斂是 INFO，逾時與例外是 WARN（逾時時仍未收斂：
+     * 除非原版 initialDelay 的 20 tick 內另有寫出讓它收斂，接下來的 begin 會失敗），都以 {@code M5_UNIVERSE_HOLD} 開頭。
      */
     public static boolean holdBeforeBegin(ServerWorld world, String test, int heldTicks) {
         var server = world.getServer();
@@ -4584,7 +4585,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
             }
             if (heldTicks == 0) startHold(test, unconfirmedAuthorities(authorities));
             if (heldTicks >= HOLD_TICKS) {
-                LOGGER.info("M5_UNIVERSE_HOLD timeout test={} heldTicks={} unconfirmed={}：放行，由 begin 判定", test, heldTicks, unconfirmedAuthorities(authorities));
+                LOGGER.warn("M5_UNIVERSE_HOLD timeout test={} heldTicks={} unconfirmed={}：放行，由 begin 判定（仍未收斂）", test, heldTicks,
+                        unconfirmedAuthorities(authorities));
                 return false;
             }
             if (convergeAll(server)) {
