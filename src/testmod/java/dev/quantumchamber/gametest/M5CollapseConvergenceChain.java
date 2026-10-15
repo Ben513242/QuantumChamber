@@ -31,10 +31,12 @@ import org.apache.logging.log4j.Level;
  * <li>{@link #crash}（{@code w12-crash}，halt）：DORMANT 的 NEW 收據、原生存檔之後裝上 catalog 的讀回失敗（{@code CATALOG_READBACK_FAULT}，一次；{@code UniverseCatalogStoreReadbackFaultMixin}
  *     注入 {@code UniverseCatalogStore.write} 裡 atomic move 之後的 {@code Readback.read}）→ 參與者由艙外進入 → COLLAPSING → RESOLVE 第 2 步的 catalog 寫出讀回失敗 → roll-forward（current 保留 U、
  *     維持 dirty；磁碟上已有 U）→ SEALED(ALLOCATION_IO_FAILED)（{@code sealedOnTheUnconfirmedCatalog}）→ 觀察 {@value M5CollapsePassage#WATCH_TICKS} 個 tick 仍未確認、沒有物化
- *     （{@code catalogStillUnconfirmed}），之後退避期到由艙外進入為止的每個 tick 也是（{@link #catalogUnconfirmedInTheBackoff}，F6-3 Step 0）→ 退避期過後裝上 discovery 的讀回失敗
+ *     （{@code catalogStillUnconfirmed}），之後退避期到由艙外進入為止的每個 tick 也是（{@link #catalogUnconfirmedInTheBackoff}，F6-3 Step 0；F6-3c-1 起另斷言 record 與封存時相同）
+ *     → 退避期過後裝上 discovery 的讀回失敗
  *     （{@code CHECKED_READ_FAULT}，放行一次：RESOLVE 第 4 步自己的讀取；失敗一次：追加之後的讀回）、由艙外進入 → 重試（基底的 {@link #retried}，{@code retriedOnTheCatalog}）→
  *     catalog 收斂（同一個 U、恰多 1 筆）→ 物化 → discovery 追加的讀回失敗 → roll-forward → 再次 SEALED(ALLOCATION_IO_FAILED)（{@code sealedOnTheUnconfirmedDiscovery}：已落地的 record 記下）→
- *     第一次的退避長度時先由艙外進入一次，這次不重試（{@link #notRetriedBeforeTheDoubledBackoff}，F6-3 Step 0）→ 加倍的退避期過後裝上 {@code DISCOVERY_CONVERGED} 的 crash 點、
+ *     第一次的退避長度時先由艙外進入一次，這次不重試（{@link #notRetriedBeforeTheDoubledBackoff}，F6-3 Step 0；這次進入之前與離開之後到再進入為止的每個 tick 也還沒有第二次重試：
+ *     {@link #notRetriedInTheDoubledBackoff}，F6-3c-1）→ 加倍的退避期過後裝上 {@code DISCOVERY_CONVERGED} 的 crash 點、
  *     由艙外進入 → 重試（{@code retriedAgainAfterTheDoubledBackoff}）→ RESOLVE 第 4 步先收斂（以 current 重寫）再查到既有的 record → {@code appendDiscovery} 回傳時 halt
  *     （{@link #convergedAtHalt}：磁碟上恰為那一筆已落地的 record；重試的 INFO 共 2 則）。</li>
  * <li>restart（{@code w12-restart}，stop）：{@code M5CollapseDormantChains.restart}（同 W5：COLLAPSING、目的地的權威都已確認、門關著），窗口表另以 {@link #landedRecordKeptAtRestart}
@@ -60,6 +62,9 @@ import org.apache.logging.log4j.Level;
  * 第二次重試的 RESOLVE 在下一個 tick 就 halt，所以 halt 之前（{@link #convergedAtHalt}）再斷言重試的 INFO 共 2 則（{@code retriedTwiceBeforeTheHalt}）。三次由艙外進入的 server tick
  * 記在 proof（{@code reenteredAfterTheBackoffTick}、{@code reenteredBeforeTheDoubledBackoffTick}、{@code reenteredAfterTheDoubledBackoffTick}，比照 {@code M5CollapseRetryChains}）。
  * 退避的長度都由 {@link CollapseBackoff#INITIAL_TICKS} 推出。
+ * <p>F6-3c-1（F6-3 Step 0 quality Minor 1）：兩段退避的每個 tick 都有具名斷言。第一段（step {@code backoff}）另斷言 record 與第一次封存時相同（{@code sealedKeptInTheBackoff}）；第二段的
+ * {@code backoffEarly} 與 {@code backoffAgain} 每個 tick 斷言還沒有第二次重試（{@code notRetriedInTheDoubledBackoff}）。production 改成退避一到期就重試、不等邊緣時，分別失敗在
+ * 這兩個斷言；原本第二段只有 {@code notRetriedEarly} 的 40 tick，第二次重試會在 crash 點裝上之前完成，最後是 step {@code halt} 的 stepBounded。
  */
 final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
     static final String CRASH = "w12-crash";
@@ -75,7 +80,10 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
     private static final String CATALOG_CONVERGED_INFO = "M5 CATALOG 收斂完成", DISCOVERY_CONVERGED_INFO = "M5 DISCOVERY 收斂完成";
 
     private M5TestHooks.CheckedReadFault catalogFault, discoveryFault;
-    /** 最近一次封存之後的 record（之後觀察它沒有變：第一次封存之後的 {@code unconfirmed}；F6-3 Step 0 起也是第二次封存之後的 {@code notRetriedEarly}）。 */
+    /**
+     * 最近一次封存之後的 record（之後觀察它沒有變：第一次封存之後的 {@code unconfirmed}；F6-3 Step 0 起也是第二次封存之後的 {@code notRetriedEarly}；F6-3c-1 起另有兩段退避的每個 tick：
+     * {@code backoff}、{@code backoffEarly}、{@code backoffAgain}）。
+     */
     private SessionRecoveryRecord sealedRecord;
     /** 最近一次封存的 server tick（之後等過退避期）。 */
     private int markTick = -1;
@@ -105,10 +113,12 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
         steps.add(retried("retried", "retriedOnTheCatalog", SealedReason.ALLOCATION_IO_FAILED, 1, Await.EDGE));
         steps.add(new Step("sealedOnTheDiscovery", 400, this::sealedOnTheUnconfirmedDiscovery));
         // F6-3 Step 0：「退避加倍」的證據：第一次的退避長度時先進入一次，這次不重試；觀察完離開，再等到加倍的退避期過後。
-        steps.add(reenterAfter("backoffEarly", M5CollapseRetryChains.BACKOFF_TICKS, tick -> { }, M5CollapseRun.NOTHING, "reenteredBeforeTheDoubledBackoffTick"));
+        // F6-3c-1（F6-3 Step 0 quality Minor 1）：第二次封存之後到再進入為止的每個 tick（backoffEarly、backoffAgain；notRetriedEarly 另有斷言）都還沒有第二次重試。
+        steps.add(reenterAfter("backoffEarly", M5CollapseRetryChains.BACKOFF_TICKS, this::notRetriedInTheDoubledBackoff, M5CollapseRun.NOTHING,
+                "reenteredBeforeTheDoubledBackoffTick"));
         steps.add(M5CollapsePassage.watch("notRetriedEarly", M5CollapsePassage.WATCH_TICKS, this::notRetriedBeforeTheDoubledBackoff, fixture::moveOutside));
-        steps.add(reenterAfter("backoffAgain", SECOND_BACKOFF_TICKS, tick -> { }, () -> M5CollapseWindows.arm(run, fixture, CrashWindow.DISCOVERY_CONVERGED),
-                "reenteredAfterTheDoubledBackoffTick"));
+        steps.add(reenterAfter("backoffAgain", SECOND_BACKOFF_TICKS, this::notRetriedInTheDoubledBackoff,
+                () -> M5CollapseWindows.arm(run, fixture, CrashWindow.DISCOVERY_CONVERGED), "reenteredAfterTheDoubledBackoffTick"));
         steps.add(untilTriggered("retriedAgain", "retriedAgainAfterTheDoubledBackoff", Await.EDGE, () -> retries(run, fixture.sid()) >= 2, this::retriedTwice, null));
         steps.add(new Step("halt", 400, () -> false));
         return Phase.halt(steps).started(fixture::requireFreshWorld).everyTick(() -> {
@@ -136,12 +146,31 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
 
     /**
      * step {@code backoff} 的每個 tick（到由艙外進入的那個 tick、進入之前；F6-3 Step 0，F6-2e-3 spec M-2、quality Minor 1：原本這一段約 165 tick 沒有斷言）：仍是 roll-forward 的狀態
-     * （{@code catalogRolledForwardInTheBackoff}）、沒有物化（{@code notMaterializedInTheBackoff}）。失敗訊息帶 step 的第幾個 tick 與 server tick（F6-3c-1）。
+     * （{@code catalogRolledForwardInTheBackoff}）、沒有物化（{@code notMaterializedInTheBackoff}）、record 與第一次封存時相同（{@code sealedKeptInTheBackoff}，F6-3c-1）。失敗訊息帶 step
+     * 的第幾個 tick 與 server tick（F6-3c-1）。
      */
     private void catalogUnconfirmedInTheBackoff(int tick) {
         var when = "退避期的第 " + tick + " 個 tick（server tick " + run.server().getTicks() + "）：";
         expectRolledForward("catalogRolledForwardInTheBackoff", when);
         expectNotMaterialized("notMaterializedInTheBackoff", when);
+        // F6-3c-1（F6-3 Step 0 quality Minor 1）：record（flushed 與 current）也與第一次封存時相同（unconfirmed 的 sealedKept 延伸到退避期）。
+        var sid = fixture.sid();
+        run.expect("sealedKeptInTheBackoff", sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid)),
+                () -> when + "state=" + M5GameTestSupport.state(run.journal(), sid) + " 全部的重試 INFO=" + retries(run, sid));
+    }
+
+    /**
+     * step {@code backoffEarly} 與 {@code backoffAgain} 的每個 tick（第二次封存之後到加倍的退避期過後由艙外進入為止，各含進入的那個 tick、進入之前；中間的 {@code notRetriedEarly} 由
+     * {@link #notRetriedBeforeTheDoubledBackoff} 斷言；F6-3c-1，F6-3 Step 0 quality Minor 1）：全部的「SEALED 重試」INFO 仍只有第一次的一則、record（flushed 與 current）與第二次封存時
+     * 相同（{@code notRetriedInTheDoubledBackoff}）。原本這兩段沒有逐 tick 的斷言：production 改成退避一到期就重試、不等邊緣時，第二次重試在 crash 點裝上之前就完成，
+     * {@code retriedAgain} 照樣成立，最後是 step {@code halt} 的 stepBounded；現在失敗在這個具名斷言。
+     */
+    private void notRetriedInTheDoubledBackoff(int tick) {
+        var sid = fixture.sid();
+        int all = retries(run, sid), now = run.server().getTicks();
+        boolean kept = sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid));
+        run.expect("notRetriedInTheDoubledBackoff", all == 1 && kept, () -> "第二次封存之後 " + (now - markTick) + " 個 tick（step 的第 " + tick + " 個 tick，server tick " + now
+                + "）：全部的重試 INFO=" + all + " record 與第二次封存時相同=" + kept + " state=" + M5GameTestSupport.state(run.journal(), sid));
     }
 
     /**
