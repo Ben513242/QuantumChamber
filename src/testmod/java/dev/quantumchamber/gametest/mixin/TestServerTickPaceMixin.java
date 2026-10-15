@@ -29,6 +29,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 第一次<b>實際等待</b>時（TAIL 執行而且還沒到期限）才記一則 INFO「GameTest tick 節流：…第一次實際等待」，停服時（{@code TestServer.exit} 的開頭）再記一則 INFO
  * 「GameTest tick 節流 結束：ticks=… waited=… waitedMs=… elapsedMs=… tps=… minTickMs=…」：TAIL 對前面有 {@code tick} 的 {@code runTasksTillTickEnd} 執行的次數、
  * 其中實際等待的次數與時間，以及由第一個這種 tick 的開始到最後一次 TAIL 結束的 wall-clock 估出的 t/s。gate 可以據此斷言節流生效（例如 waited 大於 0、tps 不超過上限）。
+ * {@code waitedMs} 是等待那幾段的 wall-clock，<b>包含</b>等待期間照常執行的 main-thread 工作（server task 與 chunk manager 的工作），不是閒置時間，不能當成「節流多花了多少時間」
+ * 讀（F6-3c-1，F6-3b fix round 1 quality Minor 2；統計本身不變）。
  */
 @Mixin(TestServer.class)
 abstract class TestServerTickPaceMixin {
@@ -38,7 +40,7 @@ abstract class TestServerTickPaceMixin {
     @Unique private long quantumchamberTest$tickStartNanos = -1L;
     /** TAIL 對前面有 {@code tick} 的 {@code runTasksTillTickEnd} 執行的次數（節流適用的 tick 數）。 */
     @Unique private long quantumchamberTest$ticks;
-    /** 其中到 TAIL 時還沒到期限、實際等待的次數與等待的總時間。 */
+    /** 其中到 TAIL 時還沒到期限、實際等待的次數與等待的總時間（wall-clock，包含等待期間執行的 main-thread 工作，不是閒置時間；F6-3c-1）。 */
     @Unique private long quantumchamberTest$waitedTicks;
     @Unique private long quantumchamberTest$waitedNanos;
     /** 第一個節流適用的 tick 的開始時間，與最後一次 TAIL 結束的時間；-1 表示還沒有。 */
