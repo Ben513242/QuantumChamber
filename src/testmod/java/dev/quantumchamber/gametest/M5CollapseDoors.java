@@ -24,7 +24,11 @@ import org.apache.logging.log4j.Level;
 final class M5CollapseDoors {
     /** 重新套用的排入最多等幾個 tick（重啟之後的第一次觀察在第一個 tick；超過時由具名斷言判 FAIL，不是 stepBounded：mutation 讓排入落空時失敗在目標斷言）。 */
     static final int QUEUE_WAIT_TICKS = 10;
-    /** 排入之後到套用最多等幾個 tick（排入時記下的 tick 是下一個 tick；之後再 2 個 tick 仍沒有改門就由具名斷言判 FAIL，比照 {@code terminaldoor} 的 {@code ownerlessNormalized}）。 */
+    /**
+     * 排入之後到套用最多等幾個 tick（排入時記下的 tick 是下一個 tick；之後再 2 個 tick 仍沒有改門就由具名斷言判 FAIL，比照 {@code terminaldoor} 的 {@code ownerlessNormalized}）。
+     * F6-2e Step 0（F6-2d-2 B2 quality Minor 3）：用它的 step（{@code closedDoorKept}、DC 的兩個 {@code normalized}）都經 {@link M5CollapsePassage#awaiting}，上限只寫這一次
+     * （原本另在條件寫 {@code now < N + 2} 或 {@code now < N}）：「排入」的 step 在 tick N-1 完成，所以等的 step 的第 1 個 tick 是 tick N、第 3 個 tick 是 N+2，與之前相同。
+     */
     static final int APPLY_WAIT_TICKS = 3;
     /** 重新套用排入（或延後）時的 INFO（{@code OriginDoors.reapplyDoor}）的「下一個 tick（tick N）」；排入時另帶目標（延後時沒有）。 */
     private static final Pattern QUEUED_TICK = Pattern.compile("下一個 tick（tick (\\d+)）");
@@ -56,9 +60,10 @@ final class M5CollapseDoors {
                     queuedFor[0] = queued.getFirst().tick();
                     run.proof.put("closedNormalizeTick", queuedFor[0]);
                 }),
-                M5CollapsePassage.counting("closedDoorKept", APPLY_WAIT_TICKS, tick -> {
+                // F6-2e Step 0（F6-2d-2 B2 quality Minor 3）：closedDoorKept 也改用 awaiting（之前是 counting 加手寫的 now < N；上限 APPLY_WAIT_TICKS 只寫一次）。等待的上限相同
+                // （3 個 tick），通過條件相同（第一個 now ≥ N 的 tick 斷言，要求 now == N）；到時仍沒有到 tick N 時由這個具名斷言判 FAIL（之前是 stepBounded）。
+                M5CollapsePassage.awaiting("closedDoorKept", APPLY_WAIT_TICKS, () -> run.server().getTicks() >= queuedFor[0], (tick, reached) -> {
                     int now = run.server().getTicks();
-                    if (now < queuedFor[0]) return false;
                     boolean closed = closed(run);
                     var applied = reapplied(run, fixture.sid());
                     var queued = reapplyQueued(run, fixture.sid());
@@ -66,7 +71,6 @@ final class M5CollapseDoors {
                     run.expect("closedDoorKeptByTheReapply", closed && now == queuedFor[0] && applied.isEmpty() && queued.size() == 1 && pending.isEmpty(),
                             () -> "tick " + now + "（排入的是 tick " + queuedFor[0] + "）：門關著=" + closed + " 門正中=" + run.source().getBlockState(local(3, 3, 0)) + " 套用的 INFO=" + applied
                                     + " 排入的 INFO=" + queued + " 待套用的門=" + pending.orElse("none"));
-                    return true;
                 }));
     }
 

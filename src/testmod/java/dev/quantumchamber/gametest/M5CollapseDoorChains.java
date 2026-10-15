@@ -147,7 +147,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var steps = new ArrayList<Step>();
         steps.add(M5CollapsePassage.awaiting("normalizeQueued", QUEUE_WAIT_TICKS, () -> !reapplyQueued(run, fixture.sid()).isEmpty(),
                 (tick, happened) -> normalizeQueued(door, tick, happened)));
-        steps.add(M5CollapsePassage.counting("normalized", APPLY_WAIT_TICKS, this::normalizedOnTheQueuedTick));
+        steps.add(M5CollapsePassage.awaiting("normalized", APPLY_WAIT_TICKS, () -> plainOpen(run), this::normalizedOnTheQueuedTick));
         steps.add(M5CollapsePassage.watch("waitingWithThePlainDoor", M5CollapsePassage.WATCH_TICKS, this::plainOpenWhileWaiting, this::resolvedWhileWaiting));
         steps.add(new Step("join", 1, this::joinThenStepOutside));
         steps.addAll(passage.steps(M5CollapseWindows.of(id).prepared()));
@@ -179,16 +179,18 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.proof.put("normalizeTick", waiting.normalizeTick);
     }
 
-    /** step {@code normalized}：排入時記下的 tick（N）結束時，門是一般開門、套用的 INFO 恰一則而且記的是 tick N；之後 2 個 tick 仍不是一般開門就由這個具名斷言判 FAIL。 */
-    private boolean normalizedOnTheQueuedTick(int tick) {
-        boolean plain = plainOpen(run);
+    /**
+     * step {@code normalized}（{@link M5CollapsePassage#awaiting}，最多 {@link M5CollapseDoors#APPLY_WAIT_TICKS} 個 tick，{@code plain} 是那個 tick 門是否已是一般開門）：排入時記下的
+     * tick（N）結束時，門是一般開門、套用的 INFO 恰一則而且記的是 tick N；之後 2 個 tick 仍不是一般開門就由這個具名斷言判 FAIL。F6-2e Step 0（F6-2d-2 B2 quality Minor 3）：
+     * 之前是 {@code counting} 加手寫的 {@code !plain && now < N + 2}（上限寫兩次）；step 的第 1 個 tick 是 tick N（{@code normalizeQueued} 在 N-1 完成），所以「再等」的條件
+     * {@code tick < 3} 與之前相同，通過條件不變。
+     */
+    private void normalizedOnTheQueuedTick(int tick, boolean plain) {
         int now = run.server().getTicks(), normalizeTick = waiting.normalizeTick;
-        if (!plain && now < normalizeTick + 2) return false;
         var applied = reapplied(run, fixture.sid());
         run.expect("appliedOnTheQueuedTick", plain && now == normalizeTick && applied.size() == 1 && applied.getFirst().contains("（NORMALIZE：APPLIED，tick " + normalizeTick + "）"),
                 () -> "原艙門在 tick " + now + "（排入的是 tick " + normalizeTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied);
         run.proof.put("normalizedAtServerTick", now);
-        return true;
     }
 
     /** step {@code waitingWithThePlainDoor} 的每個 tick（{@code tick} 由 1 起）。 */
@@ -660,7 +662,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 5）：每個 tick 的具名斷言 doorNeverClosedAfterTheRestart 由 happened 移到 eachTick；順序相同（先斷言再查詢）。
         steps.add(M5CollapsePassage.awaiting("firstObservation", QUEUE_WAIT_TICKS, tick -> doorNotClosedAfterTheRestart(),
                 () -> !reapplyQueued(run, fixture.sid()).isEmpty() || sealedRetries() > 0, this::queuedAndRetriedOnTheFirstObservation));
-        steps.add(M5CollapsePassage.counting("normalized", APPLY_WAIT_TICKS, this::normalizedAfterTheRetry));
+        steps.add(M5CollapsePassage.awaiting("normalized", APPLY_WAIT_TICKS, tick -> doorNotClosedAfterTheRestart(), () -> plainOpen(run), this::normalizedAfterTheRetry));
         steps.add(new Step("resolved", 400, this::resolvedWithoutPower));
         steps.add(M5CollapsePassage.watch("waitingWithoutPower", M5CollapsePassage.WATCH_TICKS, this::plainOpenWhileWaitingWithoutPower, this::powerRestored));
         steps.add(new Step("left", 1, this::poweredThenLeave));
@@ -720,12 +722,14 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
     }
 
-    /** sealmembranejoined 的 step {@code normalized}：見 {@link #membraneSealedJoinedRestart} 第 2 點；排入的 tick 之後 2 個 tick 仍不是一般開門就由這個具名斷言判 FAIL。 */
-    private boolean normalizedAfterTheRetry(int tick) {
-        doorNotClosedAfterTheRestart();
-        boolean plain = plainOpen(run);
+    /**
+     * sealmembranejoined 的 step {@code normalized}（{@link M5CollapsePassage#awaiting}，最多 {@link M5CollapseDoors#APPLY_WAIT_TICKS} 個 tick；每個 tick 先斷言
+     * {@code doorNeverClosedAfterTheRestart}，{@code plain} 是那個 tick 門是否已是一般開門）：見 {@link #membraneSealedJoinedRestart} 第 2 點；排入的 tick 之後 2 個 tick 仍不是一般開門
+     * 就由這個具名斷言判 FAIL。F6-2e Step 0（F6-2d-2 B2 quality Minor 3）：之前是 {@code counting} 加手寫的 {@code !plain && now < N + 2}；step 的第 1 個 tick 是 tick N
+     * （{@code firstObservation} 在 N-1 完成），所以等待時間與通過條件都不變。
+     */
+    private void normalizedAfterTheRetry(int tick, boolean plain) {
         int now = run.server().getTicks(), queuedTick = sealedDoor.queuedTick;
-        if (!plain && now < queuedTick + 2) return false;
         var sid = fixture.sid();
         int dropped = run.capture().matching(Level.INFO, "session 已不是 SEALED，不再套用封存時的原艙門", "session=" + sid).size();
         var applied = M5CollapseDoors.applied(run, sid);
@@ -733,7 +737,6 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
                 () -> "tick " + now + "（排入的是 tick " + queuedTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + "「不再套用封存時的原艙門」=" + dropped + " 套用的 INFO="
                         + applied);
         run.proof.put("normalizedAtServerTick", now);
-        return true;
     }
 
     /** sealmembranejoined 的 step {@code resolved}：見 {@link #membraneSealedJoinedRestart} 第 3 點。 */
