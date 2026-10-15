@@ -4532,8 +4532,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     /**
-     * F6-3b B1（盤點 U6）：一個 test 失敗不再讓後面的 test 連坐。由 testmod 的 {@code M5ConvergenceHoldMixin} 在 M5 run 的每個 test 由原版初始化之前（每個 tick）
-     * 呼叫，回 true 表示這個 tick 延後、不初始化（結構還沒放、test 方法還沒執行、tickLimit 還沒起算）。
+     * F6-3b B1（盤點 U6）：一個 test 失敗不再讓後面的 test 連坐。由 testmod 的 {@code M5ConvergenceHoldMixin} 在 M5 run 的每個 test 由原版初始化之前（每個 tick，直到第一次回
+     * false；之後這個 test 不再呼叫）呼叫，回 true 表示這個 tick 延後、不初始化（結構還沒放、test 方法還沒執行、tickLimit 還沒起算）。
      * <ul>
      * <li>M5 權威沒有初始化，或四個權威都已收斂（{@link #converged}，純查詢，不呼叫任何收斂）時立刻放行：前一個 test 通過時一定已收斂，行為與原版相同。</li>
      * <li>有未確認的寫入時（前一個 test 在權威寫出失敗之後、收斂之前就失敗，例如 Windows 原子移動的 AccessDenied）：每個 tick 以 {@link #convergeAll} 對四個權威各呼叫一次

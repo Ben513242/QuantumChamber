@@ -26,15 +26,19 @@ abstract class M5ConvergenceHoldMixin {
     @Shadow @Final private ServerWorld world;
     /** 這個 test 已經為了等收斂而延後的 tick 數。 */
     @Unique private int quantumchamberTest$heldTicks;
+    /** 已經放行：之後原版的 {@code initialDelay}（20 tick）期間 {@code initialized} 仍是 false，不再詢問，每個 test 最多等一次、結束只記一行。 */
+    @Unique private boolean quantumchamberTest$released;
 
     @Inject(method="tick(Lnet/minecraft/test/TestRunContext;)V",at=@At("HEAD"),cancellable=true,require=1)
     private void quantumchamberTest$holdBeforeBegin(TestRunContext context,CallbackInfo callback) {
-        if (!quantumchamberTest$M5_ONLY || initialized) return;
+        if (!quantumchamberTest$M5_ONLY || quantumchamberTest$released || initialized) return;
         var state = (GameTestState) (Object) this;
         if (state.isCompleted()) return;
         if (M5UniverseGameTests.holdBeforeBegin(world, state.getTemplatePath(), quantumchamberTest$heldTicks)) {
             quantumchamberTest$heldTicks++;
             callback.cancel();
+        } else {
+            quantumchamberTest$released = true;
         }
     }
 }
