@@ -86,6 +86,8 @@ $chains = [ordered]@{
     # F6-2d-2 B2：投影寫入失敗 → SEALED(PROJECTION_FAILED) 的寫入已確認、門是 sealed 量子膜時 crash。sealmembrane：開服時沒有參與者；sealmembranejoined：參與者開服時就在艙內。
     'sealmembrane' = @(@{phase='sealmembrane-crash'; ending='halt'; window='PROJECTION_SEALED'}, @{phase='sealmembrane-restart'; ending='stop'; window=''})
     'sealmembranejoined' = @(@{phase='sealmembranejoined-crash'; ending='halt'; window='PROJECTION_SEALED'}, @{phase='sealmembranejoined-restart'; ending='stop'; window=''})
+    # F6-2e-1（W10）：M4 時期的 Nether／End 收據（schema 3 的 journal），M5 第一次處理之前 crash；restart 取消 NEW、完成 SOURCE。
+    'w10' = @(@{phase='w10-crash'; ending='halt'; window='M4_RECEIPT_STEP'}, @{phase='w10-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })

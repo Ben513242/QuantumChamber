@@ -252,6 +252,16 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         return connection;
     }
 
+    /**
+     * F6-2e-1（W10）：以 {@code id} 連線一位參與者並加入清單（{@link #buildOrigin} 之外建立參與者：原艙不在來源世界的 chain，由 chain 自己把他移到原艙附近）。收據的 cohort、
+     * {@link #recordReceipt} 與 restart 的 {@code receiptIdentity} 都依這份清單。
+     */
+    ConnectedGameTestPlayer connectParticipant(UUID id) {
+        var connection = connect(id);
+        participants.add(id);
+        return connection;
+    }
+
     /** 參與者在來源世界 JOIN 時，預期在艙內還是艙外（{@link #joinInTheSourceWorld}；F6-2d Step 0 由 boolean 改成 enum，呼叫端讀得出意思）。 */
     enum Inside {
         /** 在艙內（playerdata 是參與者進入艙內之後存的，例如 PASSAGE_READY 期間的存檔、退化的 setup）。 */
@@ -454,6 +464,8 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     void adopt(SessionRecoveryRecord measured) {
         receipt = measured;
         sid = measured.sessionUuid();
+        // F6-2e-1（W10）：原艙也由收據設定（W10 的原艙在 Nether，不經 registered()）。其他 chain 在這之前已由 registered() 設成同一個值，restart 的 readCrashReceipt 原本就在這之後設成它。
+        chamber = measured.chamberUuid();
         var candidate = measured.selectedCandidate().orElseThrow();
         if (candidate instanceof QuantumCandidate.New created) {
             token = created.intent().allocationToken();

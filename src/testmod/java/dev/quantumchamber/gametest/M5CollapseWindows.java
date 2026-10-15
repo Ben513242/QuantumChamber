@@ -508,6 +508,12 @@ final class M5CollapseWindows {
                             sealedKeptAtRestart(run, fixture, SealedReason.PROJECTION_FAILED, "projectionFailedAtRestart");
                             playerDataInTheSourceAtRestart(run, fixture);
                         }), null);
+        // ---- F6-2e-1：W10（chain 在 M5CollapseUnsupportedChain） ----
+        // M4 時期的 Nether／End 收據（schema 3 的 journal，三筆都是 MEASURED）：塌縮流程第一次處理其中任何一筆之前。halt 之前磁碟上的 journal 仍是 schema 3（schemaThreeJournalAtHalt）、
+        // NEW 的參與者的 playerdata 在走廊。W10 的 restart 是專屬的 phase，不經 expectAtRestart（它的開服斷言假設 DORMANT 或塌縮狀態的單一 session）：這一列的 AtRestart 只表達 halt
+        // 當下是 MEASURED、什麼都還沒有配置（resolved(NOTHING)），restart 不讀它；開服時的斷言在 M5CollapseUnsupportedChain.started。
+        row(rows, CrashWindow.M4_RECEIPT_STEP, M5CollapseUnsupportedChain::m4ReceiptStep, M5CollapseUnsupportedChain::m4ReceiptsAtHalt,
+                AtRestart.resolved(Resolved.NOTHING).withStateAtHalt(SessionState.MEASURED), null);
         return Collections.unmodifiableMap(rows);
     }
 
