@@ -16,6 +16,7 @@ import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.collapse.CollapseDestination;
+import dev.quantumchamber.collapse.OriginDoorsTestAccess;
 import dev.quantumchamber.collapse.UniverseAllocationLedger;
 import dev.quantumchamber.corridor.CorridorPageManager;
 import dev.quantumchamber.gametest.M5CollapseDiskEvidence.Allocation;
@@ -165,13 +166,13 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     }
 
     /**
-     * 蓋原艙，移走原艙附近的非玩家 entity（{@link #clearAroundTheOrigin}，F6-2e-1；移走的數目依類型記在 proof 的 {@code clearedAroundTheOrigin}），再連線 {@code count} 位參與者並移到
-     * 艙外。
+     * 蓋原艙，移走原艙附近的非玩家 entity（{@link #clearAroundTheOrigin(M5CollapseRun, String, ServerWorld, ChamberFrame)}，F6-2e-1；記在 proof 的
+     * {@code clearedAroundTheOrigin.origin}），再連線 {@code count} 位參與者並移到艙外。
      */
     void buildOrigin(int count) {
         run.source().getChunk(0, 0);
         placeChamber();
-        run.proof.put("clearedAroundTheOrigin", clearAroundTheOrigin(run.source(), FRAME));
+        clearAroundTheOrigin(run, "origin", run.source(), FRAME);
         for (int index = 0; index < count; index++) {
             var id = UUID.randomUUID();
             var connection = connect(id);
@@ -200,25 +201,63 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /** {@link #clearAroundTheOrigin} 的水平半徑（格，以 Controller 為中心）。 */
     static final int CLEAR_RADIUS = 32;
+    /** {@link #clearAroundTheOrigin} 往下清的格數（以 Controller 的 y 為基準；F6-2e-2，F6-2e-1 quality Minor 5：原本寫死在範圍裡）。 */
+    static final int CLEAR_BELOW = 16;
+    /** {@link #clearAroundTheOrigin} 往上清的格數（同 {@link #CLEAR_BELOW}）。 */
+    static final int CLEAR_ABOVE = 32;
+    /**
+     * {@link #clearAroundTheOrigin(M5CollapseRun, String, ServerWorld, ChamberFrame)} 記在 proof 的鍵（F6-2e-2，F6-2e-1 quality Minor 5：原艙與 W10 的兩座艙同一個鍵，原本 W10 另叫
+     * {@code clearedAroundTheNetherChambers}）。
+     */
+    static final String CLEARED_PROOF = "clearedAroundTheOrigin";
 
     /**
-     * F6-2e-1（F6-2e Step 0 review 交下的測試缺陷）：移走 {@code world} 裡原艙 {@code frame} 附近的非玩家 entity（世界生成的被動生物等；原艙蓋好之後、收據之前呼叫，這時 probe 還沒有放任何
-     * entity），回傳移走的數目（依 entity 類型）。範圍是 Controller 水平 ±{@value #CLEAR_RADIUS} 格、y −16～+32：涵蓋 production 的門口（{@code OriginDoors.doorwayBox}：門 25 格的外框）、
-     * 門外的通道、整座艙與參與者等待的位置。只看已載入的 entity（fresh 世界的 spawn chunks 在這時已載入）。原本世界生成的動物留在門口時，restart 由存檔把它載回門口：sealdoorway 的
-     * {@code standRemovedFromTheDoorway} 把它算進門口（F6-2e Step 0 的 run-all-1，移走 2 個 entity）；production 在門口有 entity 時正確地改為一般開門、不套用量子膜，預期關門或量子膜的
-     * 斷言（例如 {@code closedOnceAfterTheRestart}、{@code closedFromTheMembrane}）也會誤判。restart 不再清一次：開服時門口的 entity storage 不一定已載入（sealdoorway 記下
-     * {@code doorwayEntitiesLoadedAtStart}），之後的 tick 移除 entity 又會與 production 同一個 tick 的門口判斷交錯；crash phase 清過之後，存檔裡的門口只有 probe 自己放的 entity。
+     * 移走的 entity（{@link #clearAroundTheOrigin}）：依類型的數目，以及其中 bounding box 與 production 的門口（{@code OriginDoors.doorwayBox}，經 {@link OriginDoorsTestAccess#doorwayBox}）
+     * 相交的那些（{@code 類型@x,y,z}；F6-2e-2，F6-2e-1 quality Minor 5：原本看不出移走的 entity 是不是在門口）。
      */
-    static Map<String, Integer> clearAroundTheOrigin(ServerWorld world, ChamberFrame frame) {
+    record Cleared(Map<String, Integer> byType, List<String> inTheDoorway) {
+        /** proof 裡的形狀（{@code byType}、{@code inTheDoorway}）。 */
+        Map<String, Object> proof() {
+            var result = new LinkedHashMap<String, Object>();
+            result.put("byType", byType);
+            result.put("inTheDoorway", inTheDoorway);
+            return result;
+        }
+    }
+
+    /**
+     * F6-2e-1（F6-2e Step 0 review 交下的測試缺陷）：移走 {@code world} 裡原艙 {@code frame} 附近的非玩家 entity（原艙蓋好之後、收據之前呼叫，這時 probe 還沒有放任何 entity），回傳移走了
+     * 什麼（{@link Cleared}）。範圍是 Controller 水平 ±{@value #CLEAR_RADIUS} 格、y −{@value #CLEAR_BELOW}～+{@value #CLEAR_ABOVE}：涵蓋 production 的門口（{@code OriginDoors.doorwayBox}：
+     * 門 25 格的外框）、門外的通道、整座艙與參與者等待的位置。只看已載入的 entity（fresh 世界的 spawn chunks 在這時已載入）。
+     * <p>根因（F6-2e-2 依 F6-2e-1 spec M-1 更正）：restart 時門口多出的是 probe 沒有放的非玩家 entity——動物，或蓋原艙時的掉落物（F6-2e-1 的 green-1 裡 28 個 crash phase 移走的都是
+     * {@code minecraft:item} 1 個，所以不能確定是哪一種）。restart 由存檔把它載回門口時，sealdoorway 的 {@code standRemovedFromTheDoorway} 把它算進門口（F6-2e Step 0 的 run-all-1，
+     * 移走 2 個 entity）；production 在門口有 entity 時正確地改為一般開門、不套用量子膜，預期關門或量子膜的斷言（例如 {@code closedOnceAfterTheRestart}、{@code closedFromTheMembrane}）
+     * 也會誤判。這裡移走所有非玩家 entity，兩種情況都涵蓋。restart 不再清一次：開服時門口的 entity storage 不一定已載入（sealdoorway 記下 {@code doorwayEntitiesLoadedAtStart}），之後的 tick
+     * 移除 entity 又會與 production 同一個 tick 的門口判斷交錯；crash phase 清過之後，存檔裡的門口只有 probe 自己放的 entity。沒有涵蓋的情況（F6-2e-1 spec M-8）：這之後才載入的 chunk 裡的
+     * entity，以及之後從範圍外走進來的動物。
+     */
+    static Cleared clearAroundTheOrigin(ServerWorld world, ChamberFrame frame) {
         var center = frame.controllerPos();
-        var box = new Box(center.getX() - CLEAR_RADIUS, center.getY() - 16, center.getZ() - CLEAR_RADIUS, center.getX() + CLEAR_RADIUS + 1, center.getY() + 32,
-                center.getZ() + CLEAR_RADIUS + 1);
+        var box = new Box(center.getX() - CLEAR_RADIUS, center.getY() - CLEAR_BELOW, center.getZ() - CLEAR_RADIUS, center.getX() + CLEAR_RADIUS + 1,
+                center.getY() + CLEAR_ABOVE, center.getZ() + CLEAR_RADIUS + 1);
+        var doorway = OriginDoorsTestAccess.doorwayBox(frame);
         var removed = new TreeMap<String, Integer>();
+        var inTheDoorway = new ArrayList<String>();
         for (var entity : world.getOtherEntities(null, box, entity -> !(entity instanceof PlayerEntity))) {
-            removed.merge(Registries.ENTITY_TYPE.getId(entity.getType()).toString(), 1, Integer::sum);
+            var type = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
+            removed.merge(type, 1, Integer::sum);
+            if (entity.getBoundingBox().intersects(doorway)) inTheDoorway.add(type + "@" + entity.getBlockPos().toShortString());
             entity.discard();
         }
-        return removed;
+        return new Cleared(removed, List.copyOf(inTheDoorway));
+    }
+
+    /** {@link #clearAroundTheOrigin(ServerWorld, ChamberFrame)}，結果記在 proof 的 {@value #CLEARED_PROOF}{@code .<label>}（一個 phase 可以清幾座艙，各一個 label）。 */
+    @SuppressWarnings("unchecked")
+    static void clearAroundTheOrigin(M5CollapseRun run, String label, ServerWorld world, ChamberFrame frame) {
+        var cleared = clearAroundTheOrigin(world, frame);
+        var all = (Map<String, Object>) run.proof.computeIfAbsent(CLEARED_PROOF, key -> new LinkedHashMap<String, Object>());
+        if (all.put(label, cleared.proof()) != null) throw new IllegalStateException("clearAroundTheOrigin 的 label 重複：" + label);
     }
 
     /** step：原艙已註冊、IDLE；記下 chamber UUID。 */

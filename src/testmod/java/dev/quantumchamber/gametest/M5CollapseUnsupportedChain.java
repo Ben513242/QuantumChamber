@@ -142,8 +142,8 @@ final class M5CollapseUnsupportedChain {
             buildBunker(nether, frame);
             nether.setBlockState(frame.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), Block.NOTIFY_ALL);
         }
-        run.proof.put("clearedAroundTheNetherChambers", Map.of("new", M5CollapseFixture.clearAroundTheOrigin(nether, FRAME),
-                "source", M5CollapseFixture.clearAroundTheOrigin(nether, SOURCE_FRAME)));
+        M5CollapseFixture.clearAroundTheOrigin(run, "new", nether, FRAME);
+        M5CollapseFixture.clearAroundTheOrigin(run, "source", nether, SOURCE_FRAME);
         intoTheNether(fixture.connectParticipant(UUID.randomUUID()).player(), FRAME);
         sourcePlayer = UUID.randomUUID();
         intoTheNether(fixture.connect(sourcePlayer).player(), SOURCE_FRAME);
