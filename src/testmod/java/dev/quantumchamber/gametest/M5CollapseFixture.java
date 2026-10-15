@@ -541,20 +541,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     JsonObject readCrashReceipt(String crashPhase, CrashWindow window) throws Exception {
         var crashEvidence = run.phaseEvidence(crashPhase);
         var haltPath = crashEvidence.resolve(window == null ? "final.json" : "halt.json");
-        JsonObject halt;
-        if (window == null) {
-            halt = run.readStoppedReceipt(crashPhase, "setup");
-        } else {
-            run.expect("crashReceiptPresent", Files.exists(haltPath) && !Files.exists(crashEvidence.resolve("final.json")), () -> "crash phase 沒有 halt receipt：" + crashEvidence);
-            halt = JsonParser.parseString(Files.readString(haltPath)).getAsJsonObject();
-            run.expect("crashReceiptMatches", "HALT".equals(M5CollapseRun.text(halt, "status")) && window.name().equals(M5CollapseRun.text(halt, "window"))
-                    && crashPhase.equals(M5CollapseRun.text(halt, "phase")) && run.config.nonce().equals(M5CollapseRun.text(halt, "nonce")),
-                    () -> "halt receipt 不符：status=" + M5CollapseRun.text(halt, "status") + " window=" + M5CollapseRun.text(halt, "window"));
-            run.expect("crashReceiptClean", halt.has("hit") && halt.get("hit").getAsInt() == 1 && halt.has("failures") && halt.getAsJsonArray("failures").isEmpty()
-                    && "none".equals(M5CollapseRun.text(halt, "crashPointFailure")),
-                    () -> "halt 不乾淨：hit=" + halt.get("hit") + " failures=" + halt.get("failures") + " crashPointFailure=" + M5CollapseRun.text(halt, "crashPointFailure"));
-            run.expectDifferentStartupNonce(halt);
-        }
+        var halt = window == null ? run.readStoppedReceipt(crashPhase, "setup") : readHaltReceipt(crashPhase, window);
         var noted = halt.getAsJsonObject("receipt");
         var receiptFile = crashEvidence.resolve(M5CollapseRun.RECEIPT_NBT);
         run.expect("receiptNbtIntact", M5CollapseDiskEvidence.sha256(receiptFile).equals(M5CollapseRun.text(noted, "receiptNbtSha256")),
@@ -584,6 +571,26 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
                 prefix + "Pid", halt.get("pid").getAsLong(), prefix + "StartupNonce", M5CollapseRun.text(halt, "startupNonce"),
                 prefix + "StartTimeUtc", M5CollapseRun.text(halt, "startTimeUtc")));
         run.proof.put("universeId", universe.value().toString());
+        return halt;
+    }
+
+    /**
+     * 讀回 crash phase（{@code crashPhase}）的 {@code halt.json}，核對 status、窗口、phase、nonce，乾淨的 halt（第一次 hit、crash 點沒有失敗、failures 是空的），startupNonce 與這個 JVM 不同
+     * （{@code crashReceiptPresent}、{@code crashReceiptMatches}、{@code crashReceiptClean}、{@code differentStartupNonce}）；回傳 halt receipt。F6-2e-2 由 {@link #readCrashReceipt} 以純搬移抽出
+     * （W11 的收據在 setup phase、halt 在另一個 phase，兩者分開讀）；只讀檔，開服之前也能呼叫。
+     */
+    JsonObject readHaltReceipt(String crashPhase, CrashWindow window) throws Exception {
+        var crashEvidence = run.phaseEvidence(crashPhase);
+        var haltPath = crashEvidence.resolve("halt.json");
+        run.expect("crashReceiptPresent", Files.exists(haltPath) && !Files.exists(crashEvidence.resolve("final.json")), () -> "crash phase 沒有 halt receipt：" + crashEvidence);
+        var halt = JsonParser.parseString(Files.readString(haltPath)).getAsJsonObject();
+        run.expect("crashReceiptMatches", "HALT".equals(M5CollapseRun.text(halt, "status")) && window.name().equals(M5CollapseRun.text(halt, "window"))
+                && crashPhase.equals(M5CollapseRun.text(halt, "phase")) && run.config.nonce().equals(M5CollapseRun.text(halt, "nonce")),
+                () -> "halt receipt 不符：status=" + M5CollapseRun.text(halt, "status") + " window=" + M5CollapseRun.text(halt, "window"));
+        run.expect("crashReceiptClean", halt.has("hit") && halt.get("hit").getAsInt() == 1 && halt.has("failures") && halt.getAsJsonArray("failures").isEmpty()
+                && "none".equals(M5CollapseRun.text(halt, "crashPointFailure")),
+                () -> "halt 不乾淨：hit=" + halt.get("hit") + " failures=" + halt.get("failures") + " crashPointFailure=" + M5CollapseRun.text(halt, "crashPointFailure"));
+        run.expectDifferentStartupNonce(halt);
         return halt;
     }
 
@@ -835,16 +842,19 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     // ---- runner 的 Context ----
 
+    // F6-2e-2（W11）：crash 點可以在開服之前裝上、窗口在 probe 的 started 之前成立（M5 authority 初始化），那時 run.server() 是 null：診斷只給 session，U 不算已物化，
+    // 磁碟摘要讀開服之前就能用的 world/data（M5CollapseRun.worldData）。開服之後與原本相同。
     @Override public String diagnostic() {
+        if (run.server() == null) return "（開服之前）session=" + sid;
         return "session=" + sid + " state=" + (sid == null ? "-" : M5GameTestSupport.state(run.journal(), sid)) + " catalog="
                 + UniverseRegistryState.get(run.server()).records().keySet();
     }
 
     @Override public boolean universeActive() {
-        return universe != null && universeWorld().isPresent();
+        return universe != null && run.server() != null && universeWorld().isPresent();
     }
 
     @Override public Map<String, Object> diskSummary() {
-        return M5CollapseDiskEvidence.summary(run.saveRoot(), sid);
+        return M5CollapseDiskEvidence.summary(run.server() == null ? run.worldData().getParent() : run.saveRoot(), sid);
     }
 }

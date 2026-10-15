@@ -530,12 +530,12 @@ final class M5CollapseRun {
             if (at == HaltAt.TICK_END) {
                 if (pendingHalt == null) {
                     atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence));
-                    pendingHalt = new PendingHalt(window, detail, server.getTicks(), describe, evidence);
+                    pendingHalt = new PendingHalt(window, detail, serverTick(), describe, evidence);
                 }
                 return;
             }
             atWindow = Collections.unmodifiableMap(collect(AT_WINDOW, windowEvidence));
-            halt(window, detail, describe, hit, collect(AT_HALT, collected -> evidence.collect(detail, collected)), HaltAt.WINDOW, server.getTicks());
+            halt(window, detail, describe, hit, collect(AT_HALT, collected -> evidence.collect(detail, collected)), HaltAt.WINDOW, serverTick());
         });
         install(M5TestHooks.CRASH_POINT, point);
         crashPoint = point;
@@ -573,6 +573,15 @@ final class M5CollapseRun {
         halt(pending.window(), pending.detail(), pending.describe(), hits, atHalt, HaltAt.TICK_END, pending.windowTick());
     }
 
+    /**
+     * 這時的 server tick（halt receipt 的 {@code windowServerTick}、{@code haltServerTick}）。F6-2e-2（W11）：crash 點可以在開服之前（{@code beforeStart}）裝上，窗口在 {@code SERVER_STARTED}
+     * 的 default phase 成立（M5 authority 初始化），那時 probe 的 {@code started} 還沒有執行、{@link #server()} 是 null：記為 -1。之前的窗口都在 tick 之內，值與原本的 {@code server.getTicks()}
+     * 相同。
+     */
+    private int serverTick() {
+        return server == null ? -1 : server.getTicks();
+    }
+
     /** 已裝上的 crash 點；還沒有裝時為 null。 */
     M5TestHooks.CrashPoint crashPoint() {
         return crashPoint;
@@ -603,7 +612,7 @@ final class M5CollapseRun {
         if (point.failure() != null) refused.add("crashPointFailure=" + point.failure());
         if (!failures.isEmpty()) refused.add("failures=" + failures);
         if (stoppingSeen) refused.add("stoppingSeen：停服已開始（SERVER_STOPPING），不是 crash");
-        if (at == HaltAt.TICK_END && server.getTicks() != windowTick) refused.add("haltTick：窗口在 tick " + windowTick + " 成立，halt 在 tick " + server.getTicks());
+        if (at == HaltAt.TICK_END && serverTick() != windowTick) refused.add("haltTick：窗口在 tick " + windowTick + " 成立，halt 在 tick " + serverTick());
         int exit = refused.isEmpty() ? HALT_EXIT : HALT_FAILED_EXIT;
         try {
             var halt = new LinkedHashMap<String, Object>(proof);
@@ -616,7 +625,7 @@ final class M5CollapseRun {
             halt.put("detail", describe.apply(detail));
             halt.put("haltTiming", at.name());
             halt.put("windowServerTick", windowTick);
-            halt.put("haltServerTick", server.getTicks());
+            halt.put("haltServerTick", serverTick());
             halt.put("universeActiveAtHalt", context.universeActive());
             halt.put("stepAtHalt", stepIndex < phase.steps().size() ? phase.steps().get(stepIndex).name() : "-");
             halt.put("atWindow", atWindow);

@@ -1,12 +1,15 @@
 package dev.quantumchamber.gametest.mixin;
 
+import com.llamalad7.mixinextras.sugar.Local;
 import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.gametest.M5TestHooks;
+import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.UniverseId;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -26,6 +29,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * {@code Lookup}，兩個方向（改為 DISABLED、改回 EAGER_ENABLED）與任何結果都呼叫）。
  * 每個回傳點都呼叫，是否是窗口（{@code APPENDED}、寫入的是 COMPLETE、改成的是 DISABLED）由 crash 點的條件判斷。hook 是 {@code M5TestHooks.Slot}，只由 M5 collapse probe 安裝（{@code M5CollapseRun.armCrash} 經 {@code M5CollapseRun.install}；F6-2c Step 0 更正，F6-2a 拆檔起不在 {@code M5CollapseRecoveryProbe}）；沒有裝時不做任何事。
  * {@code CollapseAuthorities} 是 public，所以直接指定 class，{@code require=1}：方法改名或簽名改變時開服即失敗。
+ * <p>F6-2e-2 加的：開服時的 M5 authority 初始化（private 的 {@code examine}）裡第二次 {@code createIfAbsent}（projection ledger）的呼叫之前 → {@code FIRST_LEDGER_CREATED}（W11：第一個
+ * ledger 已建立、第二個還沒有）。detail 是那時兩個 ledger 的結果（MixinExtras 的 {@code @Local}，依宣告順序：allocation、projection）；{@code ordinal=1} 的 INVOKE 與兩個 local 找不到時
+ * 套用 mixin 就失敗（{@code require=1}）。前面的讀取或建立失敗時不會到這裡（第二次呼叫在 {@code failures.isEmpty()} 之內）。
  */
 @Mixin(value=CollapseAuthorities.class,remap=false)
 abstract class CollapseAuthoritiesCrashWindowMixin {
@@ -54,6 +60,15 @@ abstract class CollapseAuthoritiesCrashWindowMixin {
             at=@At("RETURN"),remap=false,require=1)
     private void quantumchamberTest$projectionWindow(ProjectionLedger.Entry entry,CallbackInfoReturnable<CollapseAuthorities.WriteResult> callback) {
         M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.PROJECTION_COMPLETE,callback.getReturnValue());
+    }
+
+    @Inject(method="examine(Ljava/util/function/Supplier;)Ldev/quantumchamber/collapse/CollapseAuthorities$InitResult;",
+            at=@At(value="INVOKE",target="Ldev/quantumchamber/collapse/CollapseAuthorities;createIfAbsent(Ldev/quantumchamber/collapse/CollapseAuthorities$Slot;Ldev/quantumchamber/collapse/CollapseAuthorities$InitResult$Outcome;Ljava/util/List;)Ldev/quantumchamber/collapse/CollapseAuthorities$InitResult$Outcome;",
+                    ordinal=1),
+            remap=false,require=1)
+    private void quantumchamberTest$firstLedgerWindow(Supplier<SessionRecoveryState> journal,CallbackInfoReturnable<CollapseAuthorities.InitResult> callback,
+            @Local(ordinal=0) CollapseAuthorities.InitResult.Outcome allocation,@Local(ordinal=1) CollapseAuthorities.InitResult.Outcome projection) {
+        M5TestHooks.reachedCrashWindow(M5TestHooks.CrashWindow.FIRST_LEDGER_CREATED,new M5TestHooks.LedgerCreation(allocation,projection));
     }
 
     @Inject(method="changeCatalogAvailability(Ldev/quantumchamber/universe/UniverseId;Ldev/quantumchamber/universe/DesiredAvailability;Ldev/quantumchamber/collapse/CollapseAuthorities$WriteDirection;)Ldev/quantumchamber/collapse/CollapseAuthorities$Lookup;",

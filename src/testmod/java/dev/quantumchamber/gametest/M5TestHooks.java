@@ -1,6 +1,7 @@
 package dev.quantumchamber.gametest;
 
 import dev.quantumchamber.chamber.ChamberFrame;
+import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
@@ -302,6 +303,8 @@ public final class M5TestHooks {
      *     {@link #UNREADABLE_SEALED}、{@link #UNREADABLE_SEALED_DOORWAY}、{@link #PROJECTION_SEALED} 呼叫（{@link RollForwardWrite}）。</li>
      * <li>F6-2e-1 加的（F6-2e-2 起由既有的 mixin 派發）：{@code CollapseServiceCrashWindowMixin} 在 {@code CollapseService.step} 的開頭，{@link #SEALED_STEP} 之後以
      *     {@link #M4_RECEIPT_STEP} 呼叫（那一筆 flushed 的 {@link SessionRecoveryRecord}）。</li>
+     * <li>F6-2e-2 加的：{@code CollapseAuthoritiesCrashWindowMixin} 在 {@code CollapseAuthorities.examine} 的第二次 {@code createIfAbsent} 之前以 {@link #FIRST_LEDGER_CREATED} 呼叫
+     *     （{@link LedgerCreation}）。</li>
      * </ul>
      * 所以 detail 是否就是那個窗口（例如 MEASURED→COLLAPSING 已提交、{@code APPENDED}、寫的是 Controller、REPAIR 寫了格），由 crash 點的條件判斷。
      */
@@ -373,7 +376,14 @@ public final class M5TestHooks {
          * W10（F6-2e-1）：{@code CollapseService.step} 開始處理一個 session 之前（{@code CollapseServiceCrashWindowMixin}，F6-2e-1 是另一個 mixin；detail 是那一筆 flushed 的 {@link SessionRecoveryRecord}），與
          * {@link #DORMANT_STEP} 同一個程式點；窗口表的條件選 M4 時期的 Nether／End 收據（MEASURED、來源 role 不是 OVERWORLD）。
          */
-        M4_RECEIPT_STEP
+        M4_RECEIPT_STEP,
+        /**
+         * W11（F6-2e-2）：開服時的 M5 authority 初始化（{@code CollapseAuthorities.examine}）建立第一個 ledger（allocation）之後、建立第二個（projection）之前，也就是 {@code examine} 裡第二次
+         * {@code createIfAbsent} 的呼叫之前（{@code CollapseAuthoritiesCrashWindowMixin}；detail 是 {@link LedgerCreation}：那時兩個 ledger 的結果）。只在前面的讀取與建立都沒有失敗時經過
+         * （兩次 {@code createIfAbsent} 都在 {@code failures.isEmpty()} 之內）；窗口表的條件選 allocation 是 {@code CREATED}、projection 是 {@code NOT_CREATED}（兩個都不存在、剛建立第一個）。
+         * 在 {@code SERVER_STARTED} 的 default phase，早於 probe 的 {@code started} 與任何 tick，所以 crash 點在開服之前裝上（{@code M5CollapseRun.armCrash} 允許）。
+         */
+        FIRST_LEDGER_CREATED
     }
 
     /**
@@ -390,6 +400,12 @@ public final class M5TestHooks {
      * （變更前、變更後的 record）與它的結果。
      */
     public record CollapsingCommit(SessionRecoveryRecord expected, SessionRecoveryRecord next, SessionRecoveryState.CommitResult result) {}
+
+    /**
+     * {@link CrashWindow#FIRST_LEDGER_CREATED} 的 detail（F6-2e-2，W11）：M5 authority 初始化建立 projection ledger 之前，兩個 ledger 的結果（{@code CollapseAuthorities.InitResult.Outcome}；
+     * 第一個已建立時 allocation 是 {@code CREATED}）。
+     */
+    public record LedgerCreation(CollapseAuthorities.InitResult.Outcome allocation, CollapseAuthorities.InitResult.Outcome projection) {}
 
     /**
      * {@link CrashWindow#READY_HELD} 的 detail（F6-2d-2 B1）：PASSAGE_READY 的提交被 {@link #READY_HOLD} 暫緩的那一次 {@code CollapseService.ready} 收到的 collapse view
