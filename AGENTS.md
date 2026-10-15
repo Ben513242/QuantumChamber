@@ -142,7 +142,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
   - **F6-2d-2 B2 已完成（2026-10-15），F6-2d-2 完成**：range `d76b319..80a0361`（兩次接力）；B1 review 的整理、新 chain `sealclose`、`sealdoorway`、`sealmembrane`、`sealmembranejoined`（`m5collapse=61`）；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-308601e65c4b40a69dd04cbec9a5bf87` 為 `END ALL exit=0`（`80a0361`）。「門口的 entity storage 還沒載入時不關門」跨 JVM 量不到，由同 JVM 的 F4b-3 GameTest 守住（以 mutation 實測確認）。
   - **F6-2e Step 0 已完成（2026-10-15）**：range `a747396..9c184e8`；B2 review 的整理（只改 testmod 與文件）；spec review ✅、quality review Approved；完整回歸 `run-all-315106e8f9f94b0ba017dffa09c24f50` 為 `END ALL exit=0`（`9c184e8`）。
   - **F6-2e-1 已完成（2026-10-15）**：range `d2f6dbb..54daa4f`（code 到 `5b0e92c`）；Step 0 review 的整理（含門口斷言把非玩家 entity 也算進去的測試缺陷）與 W10（M4 時期的 Nether／End 收據，新 chain `w10`，`m5collapse=63`）；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-8a917630d0c845cd821e3b53cdb5b5c0` 為 `END ALL exit=0`（`54daa4f`）。
-  - 之後依序是：F6-2e-2（F6-2e-1 review 的整理＋W11）、F6-2e-3（W12，評估 F6-1 spec review 的 Minor 3、5）、F6-3 → F7 → milestone 收尾。
+  - **F6-2e-2 已完成（2026-10-15）**：range `9408985..7d09e9d`（code 到 `f839ae5`）；F6-2e-1 review 的整理與 W11（M4 時期的存檔第一次用 M5 開啟，初始化只建了一個 ledger 就 crash；新 chain `w11`，`m5collapse=67`）；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-2c90d61e10994d8c86d6c7782d068338` 為 `END ALL exit=0`（`7d09e9d`）。
+  - 之後依序是：F6-2e-3（F6-2e-2 review 的整理＋W12，評估 F6-1 spec review 的 Minor 3、5）、F6-3 → F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

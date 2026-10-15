@@ -812,8 +812,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - controller 2026-10-15 拆成四次派工（原本三次，F6-2e-1 完成後把 W12 移到 F6-2e-3），各自走完 implementer → spec review → quality review：
       - **F6-2e Step 0**：F6-2d-2 B2 review 留下的整理（crash 骨架移到基底、`OriginDoorState`、`awaiting` 的 `eachTick` 等），不新增窗口。已完成（2026-10-15，spec review ✅、quality review Approved）。
       - **F6-2e-1**：Step 0 review 交下的整理（含 sealdoorway 把門口的非玩家 entity 也算進去的測試缺陷、README 的過時說法），W10。已完成（2026-10-15，spec review ✅、quality review Approved；`m5collapse=63`）。
-      - **F6-2e-2**：F6-2e-1 review 交下的整理（journal 的讀寫抽到 `M5CollapseDiskEvidence`、門狀態與 helper 依 world／frame 參數化、W10 的等待改用 `awaiting`、`M4_RECEIPT_STEP` 併入既有的 crash window mixin 等），W11。
-      - **F6-2e-3**：W12，評估 F6-1 spec review 的 Minor 3 與 Minor 5。
+      - **F6-2e-2**：F6-2e-1 review 交下的整理（journal 的讀寫抽到 `M5CollapseDiskEvidence`、門狀態與 helper 依 world／frame 參數化、W10 的等待改用 `awaiting`、`M4_RECEIPT_STEP` 併入既有的 crash window mixin 等），W11。已完成（2026-10-15，spec review ✅、quality review Approved；`m5collapse=67`）。
+      - **F6-2e-3**：F6-2e-2 review 交下的整理（W11 的說法限定在初始化的輸入、專屬列的守門、W10 取消時點的精確比較、mixin 的 Javadoc、proof 鍵與 helper 的小整理；其餘 `doorAll` 的平行對應以獨立的純 refactor commit 處理），W12，評估 F6-1 spec review 的 Minor 3 與 Minor 5。
     - W10；
     - W11；
     - W12；

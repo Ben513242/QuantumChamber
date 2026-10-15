@@ -8700,6 +8700,67 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - 本節由其後的 `docs: record F6-2e-2 in the M5 note` 加入。
 - 只改了派工允許的路徑：testmod 的 `M5CollapseDiskEvidence`、`M5CollapseDoors`、`M5CollapseFixture`、`M5CollapsePassage`、`M5CollapseRecoveryProbe`（phase 表與 Javadoc）、`M5CollapseRestartChains`（Javadoc）、`M5CollapseRun`、`M5CollapseUnsupportedChain`、`M5CollapseWindows`、新的 `M5CollapseInitChain`；`M5TestHooks` 只加 `CrashWindow.FIRST_LEDGER_CREATED`、detail record `LedgerCreation` 與 Javadoc 清單；既有的 test mixin `CollapseAuthoritiesCrashWindowMixin` 加一個注入點、`CollapseServiceCrashWindowMixin` 多派發一個值；拿掉 F6-2e-1 的 `CollapseServiceM4ReceiptWindowMixin` 與它在 `quantumchamber-test.mixins.json` 的登記；`m5-collapse-probe.ps1` 只改 `$chains`、`run-all.ps1` 只改 `$expectedCollapse`、README 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、`quantumchamber.mixins.json`、其他 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5CollapseGameTests`、`M5GameTestSupport`）、M4 probe、所有 JUnit、語言檔、spec、plan、AGENTS。split package 的 test access 不必擴充（`OriginDoorsTestAccess.doorwayBox` 已有）。
 - 行號以 HEAD `9408985` 為準，簡稱同上一節（`UC`、`FIX`、`DRS`、`WIN`、`RCH`、`DE`＝`M5CollapseDiskEvidence`）。
+- Review（controller 補；spec 與 quality 兩份審查並行、只讀）：
+  - spec review ✅（Critical 0、Important 0、Minor 1、nit 1）。reviewer 獨立核對的部分如下。
+    - A 段 9 點都做到，偏離的理由成立：
+      - 等待上限仍是 `RETURN_WAIT_TICKS`＝200、`CANCEL_WAIT_TICKS`＝400，通過集合相同。
+      - `newCancelledOnTheFirstDormantObservation` 不是恆真：`cancelled` 在取消之前已輪詢 25／30／29 個 tick，`newDormantAt=-1` 時也會 FAIL。
+      - `corridorSpaceReleasedAtTheCancel` 量到的是真的狀態轉變：開服時 `UC:404` 先斷言 space 存在。
+      - `CrashPoint.reach` 遇到不是自己的窗口就直接 return，所以三個值共用一個注入點，等同分成兩個 mixin。
+      - 拿掉 `!m5Evidence` 沒有損失（`SessionRecoveryState.java:106`）。
+    - W11 符合 §12 W11、§6 與 F6-2-05：
+      - M4 存檔的造法成立。對照 tag `m1-m4`，`ChamberRegistryState`、`UniverseDiscoveryState` 的 schema 與欄位、`CandidateEntropyState`，都沒有 M5 才有的檔或欄位。
+      - DORMANT 的 NEW 收據，就是 M4 存檔裡靜止的 MEASURED。
+      - crash 由 hook 決定（`CollapseAuthorities.java:420` 的第二次 `createIfAbsent` 之前）。
+      - restart 的四項都成立；兩次 GREEN 的 `w11-restart` 都是 ERROR 0、`AUTHORITY_CORRUPT` 0。
+      - `w11-unreadable` 涵蓋 F6-2-05 的「讀取失敗時不建立、下次開服照常補建」與 §6。
+      - SHA-256 判斷的限制不影響結論：初始化成功之後，任何寫出都是 schema 4。
+    - runner 的改動不影響其他 chain。
+    - mutation：
+      - `mut-cancel-keeps-the-ticket` 存活的解釋屬實：`SuperpositionSessionManager` 會先為 flushed、`measuredRecoveryComplete` 的 MEASURED 釋放 ticket。附帶發現：W10 取消路徑的 `releaseAfterTerminal` 實際上沒有被單獨涵蓋。
+      - 組合 mutation FAIL 在 `originUnblocked`；其餘 4 個都打中目標。
+      - reviewer 自己套 adapter 重算 6 個 blob，都相同。
+    - GREEN、範圍、編譯、三份表（67、halt 30）與 note 都成立；production 與 spec 沒有不符之處。
+    - Minor：
+      - M-1：「restart 開服前磁碟與 crash 當下相同」超出證據。涉及 `M5CollapseInitChain.java:44-45`、`:217`，以及本節 B 段 `w11-restart` 一列與「偏離」第 2 點。
+        - `expectDiskAsAtTheCrash` 只比四項：allocation ledger（SHA-256 與修改時間）、projection ledger 不存在、journal、discovery。
+        - 三次 run 的 `data-hashes.json` 都顯示，`quantumchamber_chambers.dat` 與 `raids.dat` 在 `w11-unreadable` 之後與 crash 時不同，結果是確定的。
+        - M5 初始化只讀 journal envelope 與兩個 ledger（`CollapseAuthorities.java:403-447`），判定不受影響。但「第一次 NEW 到達 READY」的起點，是失敗初始化那個 JVM 停服時寫出的 chamber registry。
+      - nit：最終 run-all 的 sources JAR（`432cd5f8…`）沒有做內容比對。
+  - quality review **Approved**（Critical 0、Important 0、Minor 7）。
+    - Strengths：
+      - InitChain 的四個 phase 各管一件事，`toTheM4Save` 每一步都有具名斷言；兩次重啟共用 `expectDiskAsAtTheCrash`。
+      - mixin 的脆弱度會大聲失敗：`require=1`；ordinal 錯位時條件不成立，由 `crashWindowReached` 判 FAIL。
+      - `w11-unreadable` 的 fault 不會殘留：之前的取證不經 `CheckedNbtFile.readFile`、斷言 `hits()==1`、停服一開始就移除。
+      - runner 的改動很小。
+      - A 段的 helper 收斂到一處，`dedicatedRow` 取代了沒有人讀的 `AtRestart`。
+      - DRS 與 FIX 的分工合理。
+    - 問題：
+      1. `WIN:401`、`:551`、`:577` 由 `atRestart == null` 推斷是不是專屬列。拿掉 `requireNonNull` 之後，`row`／`tickEndRow` 誤傳 null 會靜默變成專屬列，要等 restart 讀它時才丟出。
+      2. `UC:551` 的 `<= 1` 是量測落差，分不出「晚一個 tick 才取消」。建議在 `watchTheFlush`（`UC:427-438`）記下 NEW 從 staged records 消失的那個 tick，改成相等比較；至少在 Javadoc 寫明。
+      3. `CollapseAuthoritiesCrashWindowMixin.java:32-34` 的 Javadoc 沒寫 ordinal 錯位由誰擋下。
+      4. `CollapseServiceCrashWindowMixin.java:12-16` 的開頭仍寫兩個值；W10 的 halt 時點說明只在 UC。
+      5. InitChain 的 proof 鍵（`:106`、`:179`、`:182`、`:207`）用字面字串或拼接。nit：`allMoved`（`:173`）多餘；`:74`、`:236`、`:305` 用了完整類名。
+      6. `DE.writeJournal` 的兩個多載重複了寫出的程式碼（`DE:130-142`）；`JournalOnDisk` 沒有帶 DataVersion，所以 `toTheM4Save:159` 要再讀一次檔。
+      7. `FIX.arm(world, who)` 收 world 卻固定用 `FRAME`（`FIX:377-389`），與 `is`／`inside` 不對稱，W10 可以接受。`clearAroundTheOrigin(ServerWorld, ChamberFrame)`（`FIX:239`）可以改成 private。
+    - 給 F6-2e-3：
+      - catalog 的讀回走 `UniverseCatalogStore.write(Path, NbtCompound, Readback)` 自己的 `Readback` port（`UniverseCatalogStore.java:31-55`），不經 `CheckedNbtFile`。要另寫 test mixin，注入 `write` 裡的 `INVOKE Readback.read`；不要放在 `read` 的 HEAD，因為開服載入也經過它。
+      - discovery 的 append 可以用 `CheckedNbtFile.write` 的讀回。但 fault 以檔名比對、用 skip 計次，RESOLVE 與 `DE.discovery` 都會吃掉它。所以要緊貼在 append 之前才安裝、斷言 `hits()==1`，fault 還裝著時不讀 `DE.discovery`。
+      - allocation 可以沿用 `RC` W9(a) 的寫法（`RC:535-541`）。
+      - `expectSchemaThreeOnDisk` 一般化為 `expectJournalOnDisk`；InitChain 的 `:370-377` 就是手寫的 schema 4 版本。
+      - 其餘 `doorAll` 的平行對應若要改，另開一個純 refactor commit。
+  - controller 處置：
+    - 不開 fix round。
+    - spec M-1：
+      - 本節 B 段 `w11-restart` 一列與「偏離」第 2 點，由 controller 更正為「M5 authority 初始化的輸入與 discovery 相同」。
+      - 程式的 Javadoc（`M5CollapseInitChain.java:44-45`、`:217`）→ F6-2e-3 的 A 段。
+      - 要不要在 `expectDiskAsAtTheCrash` 補比 chambers.dat，由 F6-2e-3 判定並寫明。
+    - spec nit：controller 補驗。最終 run-all 與基準 `run-all-c5ae8a9c…` 的 sources JAR 都是 226 個 entry、順序相同、`contentDiffers=0`，226 筆只差 zip 中繼資料。
+    - quality Minor 1～7 → F6-2e-3 的 A 段；「給 F6-2e-3」的建議寫進 F6-2e-3 的派工。
+    - spec review 附帶發現的「W10 取消路徑的 `releaseAfterTerminal` 沒有被單獨涵蓋」→ F6-2e-3 評估能否以 mutation 單獨證明，做不到就寫明。
+    - 「需要裁示」三點（setup 造 M4 存檔、`w11-unreadable`、SHA-256 判斷），依兩份 review 接受。
+    - 其餘 `doorAll` 的平行對應 → F6-2e-3，以獨立的純 refactor commit 處理（names2 須為 `RESULT=OK`）。
+  - **F6-2e-2 完成**：range `9408985..7d09e9d`（code 到 `f839ae5`）。最終 run-all：`run-all-2c90d61e10994d8c86d6c7782d068338`（`7d09e9d`）`END ALL exit=0`。
 
 ### A 段：逐項處置
 
@@ -8732,7 +8793,7 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - **halt 之前的取證**（`oneLedgerAtHalt`，讀開服之前就能用的 `run.worldData()`）：allocation ledger 存在而且是空的（`firstLedgerCreatedAtHalt`）、projection ledger 不存在（`secondLedgerAbsentAtHalt`）、journal 仍是 schema 3、恰為那一筆（`schemaThreeJournalAtHalt`）、discovery 與開服之前相同（`discoveryUntouchedAtHalt`）；allocation ledger 的 SHA-256 與修改時間、journal 與 discovery 的 SHA-256 記在 `atHalt`。halt receipt 的 `detail` 是 `allocation=CREATED projection=NOT_CREATED`、`haltServerTick` 是 -1、`stepAtHalt` 是唯一的 step `initialized`（窗口沒有到達時，開服之後的第一個 tick 由它判 FAIL，`crashWindowReached`）。
   - runner 與 fixture 為此的改動（`b9b1441`、`f839ae5`）：`M5CollapseRun` 的 halt 在 `server` 還是 null 時記 tick 為 -1（`serverTick()`；之前的窗口都在 tick 之內，值不變）；`ending` 與 `steps` 改在建立 phase 時記（原本在 `started`，開服之前的 halt 因此沒有 `ending`，dev run `dev-w11-1` 的 ps1 判 FAIL；之前的 phase 只是鍵的位置提前）；fixture 的 `Context` 在開服之前不讀 server（`diagnostic` 只給 session、U 不算已物化、磁碟摘要讀 `worldData`）；`FIX.readHaltReceipt` 由 `readCrashReceipt` 以純搬移抽出（W11 的收據在 setup、halt 在 crash，分開讀）。
 - **`w11-unreadable`（stop）**：第一次重啟。開服之前（`expectDiskAsAtTheCrash`）讀回 setup 的 receipt、crash 的乾淨 halt receipt，確認磁碟與 crash 當下相同（`existingLedgerKeptSinceTheCrash`、`secondLedgerStillAbsent`、`journalKeptSinceTheCrash`、`schemaThreeJournalBeforeStart`、`m4DiscoveryKeptSinceTheCrash`），裝上 allocation ledger 讀取的 IO 失敗（`CHECKED_READ_FAULT`，一次）。開服時：既有的 ledger 沒有被重寫（`existingLedgerKept`：SHA-256 與修改時間；重寫空的 ledger 時內容相同，所以另比修改時間）、缺少的 projection ledger 沒有被建立（`missingLedgerNotCreatedOnTheReadFailure`）、注入恰命中一次（`allocationReadFailedOnce`）、「M5 authority 初始化失敗」恰一則而且是 `allocation=UNREADABLE，projection=NOT_CREATED`、本 instance 沒有初始化、journal 不是 `m5ReadyThisInstance`（`initializationFailedOnTheRead`）、失敗分類是 IO（`SEALED(AUTHORITY_UNREADABLE)`，沒有 `LOST`、`AUTHORITY_CORRUPT`；`readFailureNotTreatedAsLoss`）、journal 仍是 schema 3（`schemaThreeJournalAtStart`）；觀察 20 個 tick 收據不變（`receiptKeptWhileUninitialized`）；停服之後 journal 仍是 schema 3（`schemaThreeJournalAfterTheFailedStart`，spec §6「journal 也不會因此升到 schema 4」）。這一段對應 implementation note 的「初始化有任何讀取失敗時，不建立另一個缺少的 ledger；下次開服照常補建」。
-- **`w11-restart`（stop）**：第二次重啟。開服之前同樣確認磁碟與 crash 當下相同（journal 的 SHA-256 也相同），所以這次開服等同 crash 之後的第一次成功的重啟；另讀回 `w11-unreadable` 的正常停止 receipt。開服時（`recreatedWithoutLoss`）：**`missingLedgerNotTreatedAsLost`**（目標）：沒有「M5 authority 初始化失敗」、「M5 authority 初始化完成」恰一則而且是 `allocation=LOADED（0 筆），projection=CREATED（0 筆），flushed journal 已是 schema 4=false`、本 instance 已初始化、`m5ReadyThisInstance`；`existingLedgerKept`；`missingLedgerCreated`（補建的空檔）；`schemaThreeJournalAtStart`（初始化不寫 journal）；`nothingAllocatedAtStart`。step：`join`（JOIN 在艙外；journal 仍是 schema 3、恰為收據，`schemaThreeJournalBeforeTheCommit`）→ `enter`（由艙外進入）→ `committed`（COLLAPSING 已 checked 提交、Destination 是推導出的 U；這時磁碟上的 journal 是 schema 4、這個 session 是 COLLAPSING：**`schemaFourAtTheFirstCheckedWrite`**，spec §12「存檔第一次用 M5 開啟」一列）→ `M5CollapsePassage` 的 resolve、ready、cross、(b) 終局。每個 tick：`passage.invariants`，以及 journal 正式檔只要與開服時不同就必須是 schema 4（`journalUpgradedOnTheFirstWrite`）。
+- **`w11-restart`（stop）**：第二次重啟。開服之前同樣確認 M5 authority 初始化的輸入（journal、兩個 ledger）與 discovery 和 crash 當下相同（journal 的 SHA-256 也相同），所以就 M5 的初始化而言，這次開服等同 crash 之後的第一次成功的重啟（`quantumchamber_chambers.dat`、`raids.dat` 不同，見本節開頭 review 區塊的 spec M-1）；另讀回 `w11-unreadable` 的正常停止 receipt。開服時（`recreatedWithoutLoss`）：**`missingLedgerNotTreatedAsLost`**（目標）：沒有「M5 authority 初始化失敗」、「M5 authority 初始化完成」恰一則而且是 `allocation=LOADED（0 筆），projection=CREATED（0 筆），flushed journal 已是 schema 4=false`、本 instance 已初始化、`m5ReadyThisInstance`；`existingLedgerKept`；`missingLedgerCreated`（補建的空檔）；`schemaThreeJournalAtStart`（初始化不寫 journal）；`nothingAllocatedAtStart`。step：`join`（JOIN 在艙外；journal 仍是 schema 3、恰為收據，`schemaThreeJournalBeforeTheCommit`）→ `enter`（由艙外進入）→ `committed`（COLLAPSING 已 checked 提交、Destination 是推導出的 U；這時磁碟上的 journal 是 schema 4、這個 session 是 COLLAPSING：**`schemaFourAtTheFirstCheckedWrite`**，spec §12「存檔第一次用 M5 開啟」一列）→ `M5CollapsePassage` 的 resolve、ready、cross、(b) 終局。每個 tick：`passage.invariants`，以及 journal 正式檔只要與開服時不同就必須是 schema 4（`journalUpgradedOnTheFirstWrite`）。
   - **spec §12 的四件事**（`expectEnd`，`End.crossed(fixture).withEarlierDiscovery([M4_DISCOVERY])`）：同一個 UniverseId（Destination、allocation entry、catalog、discovery、projection、ACTIVE world key）；catalog 恰多 1 筆；沒有重抽（`noRedraw`、allocation ledger 恰一筆這個 token）；沒有人被困住（參與者跨越、在 U）。discovery 是 M4 的那一筆之後恰多 U 一筆（新的 `destinationDiscoveredAfterTheEarlier`，取代 `onlyTheDestinationDiscovered`：M4 時期的 record 沒有被碰過）。另 `noSessionError`、`noAuthorityInitializationFailure`。
 - dev run（未 commit 的工作樹，不採計，root 保留）：`dev-w11-1` runId `1f05966f18d745baa8e3e8cb499c1fb3`（w11-crash 的 halt 乾淨、detail 正確，但 halt receipt 沒有 `ending` → runner 改在建立 phase 時記）、`dev-w11-2` `711bd4407874499cb959bff7d8b2abc1`（4 個 phase PASS）。
 
@@ -8788,7 +8849,7 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
 ### 偏離派工字面之處
 
 1. A 第 2 點：`inside`、`arm` 的多載放在 `FIX`（理由見 A 段表下方）。
-2. B 段多一個 phase（`w11-unreadable`）：派工的 W11 是「crash → 重啟補建」；為了以 fault 造出「初始化在讀取失敗時仍建立缺少的 ledger」的 mutation，第一次重啟先注入既有 ledger 的讀取失敗，第二次重啟才是補建。第二次重啟開服之前斷言磁碟與 crash 當下相同（ledger、journal、discovery 的 SHA-256，ledger 另比修改時間），所以它等同 crash 之後的第一次成功的重啟。
+2. B 段多一個 phase（`w11-unreadable`）：派工的 W11 是「crash → 重啟補建」；為了以 fault 造出「初始化在讀取失敗時仍建立缺少的 ledger」的 mutation，第一次重啟先注入既有 ledger 的讀取失敗，第二次重啟才是補建。第二次重啟開服之前斷言 M5 authority 初始化的輸入（journal、兩個 ledger）與 discovery 和 crash 當下相同（ledger、journal、discovery 的 SHA-256，ledger 另比修改時間），所以就 M5 的初始化而言，它等同 crash 之後的第一次成功的重啟。（controller 依 spec review M-1 更正：原本寫「磁碟與 crash 當下相同」。`quantumchamber_chambers.dat` 與 `raids.dat` 不在比對範圍，`w11-unreadable` 停服時會重寫，與 crash 當下確實不同。）
 3. B 段的 runner 改動（`M5CollapseRun` 的 `serverTick()` 與 `ending`／`steps` 的記錄時點）、`FIX.readHaltReceipt` 的抽出與 `M5CollapsePassage.End.withEarlierDiscovery`：都在允許的 `M5Collapse*.java`，是開服之前的 halt 與非空 discovery 的終局斷言所需。
 4. `ending` 的修正併在 W11 chain 的 commit（`f839ae5`），不是另一個 commit：它只在開服之前的 halt 才有差別，與 chain 同時驗證（`dev-w11-2`）；`f839ae5` 之前在工作樹編譯的內容就是這個 commit（`b2b-compile.log`）。
 
