@@ -9662,3 +9662,106 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
 - run-all：`run-all-1`＝`run-all-ebf53140e93a469d9986f5581ce88ce2`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
 - 已知偶發：沒有遇到。結束過的程序：沒有（沒有逾時處置，沒有手動處置任何世界或 JVM）。
 - 取證腳本（`fix1/`）：由 `f6/f63b/` 複製、每檔第一行加本輪註解、repo 與 phase evidence 的相對路徑多一層的 `state.ps1`、`compile.ps1`、`m5gate.ps1`、`m5red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-25af51ea…`，`base-*-summary.txt` 是 `f63b/runall2-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_fix1`）、`m5sum.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-pincount.py`、`relay-zipmeta.py`、`relay-worldgencheck.py`、`names2.py`、`tps.py`、`segments.py`（複製用的程式在 scratchpad `fix1tools/copytools.py`）；本輪新寫：`adapters_fix1.py`（`fix1-red-after-pass`；`red-b1-fail-in-backoff`、`b1-hold-50` 由 `f63b/adapters_f63b.py` 原樣複製）。
+
+## F6-3c-1：probe 與 GameTest 的小整理
+
+- implementer 依 controller 的派工（scratchpad `f63c1-prompt.md`）完成。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63c1/`，以下簡稱 `f63c1/`，`STATUS.md` 是交接摘要。開工時 HEAD 是 `30f1a2b`、`git status --porcelain` 為空（`f63c1/start-state.txt`）。範圍：原本 F6-3c 拆成兩次的第一次（累積的小整理，不搬檔）：F6-3 Step 0 review 的 spec M-1、nit 與 quality Minor 1～4（probe），F6-3b fix round 1 quality Minor 1、2，以及盤點 #08、#10、#11（GameTest）。**不拆檔、不新增 test 或 phase**：test 集合與 `m5collapse=69`（halt 31）都不變。拆 `M5UniverseGameTests`、抽 fixture 與 #12 的 RED 是 F6-3c-2。
+- Commits（`30f1a2b..` 本節的 commit，依序；每個 commit 只 stage 自己的檔案；code 的 commit 之前都只放該 commit 的內容在工作樹編譯：`f63c1/c1`～`c10-compile.log`，每份 state 的 blob 都等於對應 commit 的檔案；`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL，警告只有既有的 `SessionTransferFaultMixin` 6 則）：
+  - `1985be3` `refactor: count the SEALED retries through the restart chain base in every probe chain`（第 5 點，**獨立的純 refactor**）
+  - `645d5f3` `docs: correct the W12 probe Javadoc on the backoff bound, the retry tick and the reentries`（第 1、2、4 點，只有 Javadoc）
+  - `707859d` `refactor: give the W12 reentry its own step factory with a ticked per-tick check`（第 6 點）
+  - `5a2007a` `test: check every tick of both W12 backoffs for an early retry`（第 3 點，**判斷變嚴**）
+  - `a8ace47` `refactor: name the D1 PREPARE wait and the way the passage with one crossed ends`（第 10 點與第 9 點的 enum，純 refactor）
+  - `91b91c9` `test: witness the quiet open passage after a rejected crossing and the next-tick power-loss end`（第 9 點的兩個 witness，**判斷變嚴**）
+  - `a1e20c8` `test: report the hold outcome and the held ticks in the after-pass failure`（第 7 點，只改訊息）
+  - `0c29262` `docs: say that the M5 tick pacing's waitedMs includes the work done while waiting`（第 8 點，只有註解）
+  - `ab631d5` `refactor: share the SEALED step of the M5 GameTest fixtures`（第 11 點的後半，純 refactor）
+  - `ed41eac` `test: own the H9 GameTest fixtures before writing them`（第 11 點的前半，**最後一個 code commit**）
+  - `db1680a` `docs: describe the F6-3c-1 GameTest and probe tidy-up in the verification README`
+  - 本節由其後的 `docs: record F6-3c-1 in the M5 note` 加入。
+- 只改了派工允許的路徑：probe 的 `M5CollapseConvergenceChain`、`M5CollapseRestartChains`（只有 `retries` 的 Javadoc）、`M5CollapseDoorChains`、`M5CollapseRetryChains`；`M5UniverseGameTests` 只動第 7、9、10 點；`M5CollapseGameTests` 與 `M5GameTestSupport` 只動第 11 點；`TestServerTickPaceMixin` 只改第 8 點的文字；`scripts/verification/README.md` 只改「新增 M5 GameTest」（:133、:135、:145）與「M5 collapse probe」（:169、:233）兩節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、所有 ps1、`.github/`、其他 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。`M5CollapsePassage` 沒有改（`Watching`、`counting` 照原樣使用）。
+- 行號以 HEAD `db1680a` 為準（code 與 `ed41eac` 相同）。簡稱同前面各節：`CC`＝`M5CollapseConvergenceChain`、`RCH`＝`M5CollapseRestartChains`、`DC`＝`M5CollapseDoorChains`、`RC`＝`M5CollapseRetryChains`、`M5U`、`CGT`＝`M5CollapseGameTests`、`SUP`＝`M5GameTestSupport`、`TSP`＝`TestServerTickPaceMixin`。
+
+### 逐項處置
+
+| 點 | 處置與位置 | 判斷 | 證據 |
+| --- | --- | --- | --- |
+| 1（spec M-1） | `CC` 類別說明（:57-61）：兩次進入在第二次封存之後第 `BACKOFF_TICKS`（`INITIAL_TICKS`＋5）與 `SECOND_BACKOFF_TICKS`（2×`INITIAL_TICKS`＋5）個 tick，production 在進入的下一個 tick 才觀察到邊緣，所以 `INITIAL_TICKS`＋6 < d ≤ 2×`INITIAL_TICKS`＋6，與本 note F6-3 Step 0 一節相同（`645d5f3`） | 只有 Javadoc | — |
+| 2（spec nit） | `CC.sealedOnTheUnconfirmedDiscovery` 的 Javadoc（:304-307）：重試的那個 tick（F6-3 Step 0 GREEN 的 212）probe 看得到（runner 掛在 production 之後），只是沒有另斷言；只有 RESOLVE 的那個 tick（213）內先收斂、再物化的先後 probe 看不到（`645d5f3`）。README 沒有這一句，不改 | 只有 Javadoc | — |
+| 3（quality Minor 1） | (a) `backoff` 的 `catalogUnconfirmedInTheBackoff`（`CC:152`）另斷言 record（flushed 與 current）與第一次封存時相同：**新增 `sealedKeptInTheBackoff`**。(b) 第二次封存之後的 `backoffEarly` 與 `backoffAgain` 都以 `CC:168` `notRetriedInTheDoubledBackoff` 為 `eachTick`：全部的重試 INFO 仍是 1、record 與第二次封存時相同（**新增 `notRetriedInTheDoubledBackoff`**；失敗訊息帶「第二次封存之後幾個 tick」、step 的 tick 與 server tick）。派工只寫 `backoffAgain`；`backoffEarly`（第二次封存到第一次進入，約 205 tick）同樣沒有逐 tick 斷言，用同一個斷言補上，第二段退避因此每個 tick 都有具名斷言（中間的 `notRetriedEarly` 照舊由 `notRetriedBeforeTheDoubledBackoff` 斷言）。既有斷言的名稱、條件與順序都不變（`5a2007a`） | **變嚴**（新增 2 個斷言，沒有改名） | mutation 3 個（見下）；GREEN 兩次成立 |
+| 4（quality Minor 2） | `CC` 類別說明（:46）「再進入兩次」改為三次（`645d5f3`） | 只有 Javadoc | — |
+| 5（quality Minor 3） | `DC:666`、`:697`、`:735-736` 與 `RC:240`、`:519` 改用 `RCH` 的 `retries(run, sid)`／`retriesFrom(run, sid, reason)`（`DC` 刪掉 private 的 `sealedRetries`，`DC:666` 的區域變數由 `retries` 改名為 `retried`，避免與方法同名）；`CC` 的 `retriedTwice` 與 `convergedAtHalt` 的兩份相同判斷式合成 `CC:205` `twoRetries(run, sid, when)`（條件同為 `fromReason == 2 && all == 2`；`retriedAgain` 的失敗訊息改用 halt 的那一句，前面接 tick）；`RCH:410-413` `retries` 的 Javadoc 補一句（`1985be3`） | **純 refactor**：查詢字串與條件逐字相同 | `r-green`（`1985be3` 乾淨）：69/69 PASS，對 F6-3 Step 0 的 green-2 `RESULT=OK`、沒有改名、沒有新增；唯一的 `order=DIFF` 是 `w8late-restart` 已知的 `participantInSourceOrUniverse`／`sameDestination` 對調（`f63c1/r-green-w8late-order.txt`，同一組名稱，F6-2e Step 0 等各節已說明與時序有關） |
+| 6（quality Minor 4） | `CC:136` `reenterAfter(String stepName, int ticks, M5CollapsePassage.Watching eachTick, M5CollapseRun.Checked before, String proofKey)` 回傳 step（以 `M5CollapsePassage.counting` 建立，上限仍是 `ticks`＋10）；`eachTick` 收到這個 step 的第幾個 tick。`catalogUnconfirmedInTheBackoff(int tick)` 的失敗訊息帶 step 的 tick 與 server tick（`expectRolledForward`、`expectNotMaterialized` 多一個訊息前綴參數，三個呼叫端都帶入時點）（`707859d`） | refactor：名稱、上限、條件不變，只改訊息 | 編譯檢查 `c3-swap`：`backoff` 的 `eachTick` 與 `before` 對調後 `compileTestmodJava` 失敗（`CC:102: error: incompatible types: invalid method reference`），還原後 blob 等於 `c3` 的 state（`0309dc03…`）（`f63c1/c3-swap-compile.log`） |
+| 7（F6-3b fix1 quality Minor 1） | after-pass 的原因改在 hold 放行時才寫成：`startHold`（`M5U:4647`）只記下前半段（新的 static `afterPassStarted`，`M5U:187`），`holdBeforeBegin` 開始之後的每個出口（converged 兩處、timeout、error）呼叫 `M5U:4666` `endHold(outcome, heldTicks)`，補上「hold 的結果：converged｜timeout（仍未收斂：[…]）｜error（<例外>），heldTicks=N」，寫成 `afterPassFailure`（已有一個還沒被 begin 取走時保留最早的那個，與原本相同）。ERROR 行與 Javadoc（類別說明、`afterPassFailure`、`begin`、`holdBeforeBegin`）的「照常收斂」改為「照常嘗試收斂」。hold 的判斷、log 行的開頭與 begin 的失敗本身都不變（`a1e20c8`） | 只改訊息 | 檢查 run（adapter，不採計為 GREEN）：`ap-converged-1`（`fix1-red-after-pass`）59/60，失敗的那一個訊息是「…照常嘗試收斂、不連坐；hold 的結果：converged，heldTicks=199）；… 因此在 begin 失敗」；`ap-timeout-1`（再加 `b1-hold-50`）57/60，第一個是「…hold 的結果：timeout（仍未收斂：[CATALOG]），heldTicks=50）」，後兩個是既有的「開始時 … 必須已收斂」（與 F6-3b fix1 的 `fix1-hold50-1` 同型）。兩次還原後 blob 都等於 `a1e20c8` 的 `3d69c103…` |
+| 8（F6-3b fix1 quality Minor 2） | `TSP` 類別說明（:32-33）與 `waitedTicks`／`waitedNanos` 的欄位說明（:43）寫明 `waitedMs` 是等待那幾段的 wall-clock，**包含**等待期間照常執行的 main-thread 工作，不是閒置時間；README :133 同（`0c29262`、`db1680a`）。統計不變 | 只有文字 | — |
+| 9a（#08，F6-1 Step 0 quality Minor 1） | **二擇一採 witness**：T-REJARR 在 `at(readyAt+100)`（`M5U:4012-4019`）先讀一次 `hud`，**新增 witness `nothingWhileTheRejectedPassageIsOpen`**（跨越之後到這時 actionbar 與 title 都是空的）；Javadoc 同步（`M5U:3974-3976`）。理由：(1) 它讓 T-REJARR 合乎 README 的 `hud` 規則（跨很多 tick 的等待之後斷言結束時恰好收到哪些），不必為一個 test 在通用規則裡開例外；(2) 它比例外規則嚴：開放期間「什麼都沒收到」變成具名的 witness，結束時的精確比對也只涵蓋 +100 之後到結束；(3) 不影響時序（只讀封包）。+100 之後到結束之間沒有再清一次：結束的時點由 `whenTicks` 等到，事先不知道；那一段仍由結束時的精確比對涵蓋（有任何多的封包就失敗）（`91b91c9`） | **變嚴**（新增 1 個 witness） | M5 gate 兩次 60/60 |
+| 9b（#08，Minor 2） | `M5U:4064` private enum `CrossedEnd`（`BY_PARTICIPANT`、`POWER_LOSS`），帶 INFO 的原因字句（`reason`）與終局之後門是否一般開門（`openAfterTheEnd`）；結束的動作在 `endWithOneCrossed` 以 switch 分派（`a8ace47`） | 純 refactor | M5 gate 兩次 60/60 |
+| 9c（#08，Nit 4） | **二擇一採 witness**：T-ENDD 的 `endWithOneCrossed` 在 `POWER_LOSS` 時**新增 witness `endedNextTick`**：`ended == readyAt + 5`（斷電在 `sequence` 的第 4 步，也就是 readyAt＋4；名稱與 T-POWER 的同一個主張相同）（`M5U:4127-4128`），T-ENDD 的 Javadoc 註明。理由：T-POWER 鎖的是沒有人跨過時的 (d)；T-ENDD 有一位參與者已在 Crossed 中，終局的路徑不同，只在 Javadoc 寫「由 T-POWER 鎖住」並不精確（`91b91c9`） | **變嚴**（新增 1 個 witness） | M5 gate 兩次 60/60；`m5g-1` 的 log：`M5_PASSAGE_END_WITH_ONE_CROSSED end=(d) … ready=9 ended=14`（(a) 是 11／16） |
+| 10（#10，F6-2c Step 0 quality Minor 5） | `M5U:173` `PREPARE_WAIT_TICKS = 600`，原本四處相同的兩行註解收成它的 Javadoc 一份（另註明 F6-2c Step 0 時 tick 還沒節流、F6-3b 起 M5 run 節流；`CollapseService.WAIT_WARN_TICKS` 是 package-private，testmod 看不到）。四處 `whenTicks(context, resolved + 1, 600, …)` 改用它：`M5U:1561`、`:1617`、`:1855`、`:3073`（派工寫 :1537、:1595、:1835、:3055，以實際行號為準）。`M5U:2672` 另一個 `prepared` 的 600（F5-1 的 `holdReady` 那個 test）不是這段註解的一份，不改（`a8ace47`） | 純 refactor | M5 gate 兩次 60/60 |
+| 11（#11，H9 quality Minor 5） | (a) 純 refactor（`ab631d5`）：`SUP:419` private `seal(server, before, reason)`（commitRollForward 進入 SEALED(reason)、TRR 時 RecoveryRequired 是第一位參與者，再確認 exact 落盤），`collapseFixture` 的 SEALED 分支（`PROJECTION_FAILED`）與 `sealedFixture` 都經它；寫入與檢查相同，`collapseFixture` 的 SEALED 失敗訊息改帶原因。(b)（`ed41eac`）：`SUP:344` 新的 overload `collapseFixture(…, Collection<UUID> owned)` 與 `sealedFixture(…, reason, owned)`（`SUP:407`；唯一的呼叫端是 `CGT`）在 MEASURED 收據建好、任何寫入之前就 `owned.add(sid)`（`SUP:364`，經 private 的本體 `collapseFixture(…, long time, Consumer<UUID> owner)`；既有的兩個 overload 傳空的 owner，其他 test 不受影響）。`CGT:1277`、`:1344` 改用它們，刪掉建好之後才 `add` 的兩處。SEALED 的寫入失敗時，已確認的 COLLAPSING 已在 owned 裡，由 `cleanupFixtures` 收尾 | refactor（失敗路徑的收尾變完整，判斷不變） | default run 178/178（run-all-1）；沒有另做 RED（派工沒有要求；改動是寫入之前就加入 owned 的順序，可由 diff 直接核對） |
+
+### mutation（`db1680a`，乾淨的工作樹；`f63c1/mutations.ps1`）
+
+| mutation（`adapters_f63c1.py`，都跑 `-Only w12`） | 改動 | 結果 |
+| --- | --- | --- |
+| `mut-retry-at-expiry` | `CollapseService.sealed` 在邊緣判斷之後多一個出口：SEALED(ALLOCATION_IO_FAILED) 的退避一到期就重試，不等由艙外進入的邊緣 | `w12-crash` FAIL 在新的 **`sealedKeptInTheBackoff`**：「退避期的第 160 個 tick（server tick 206）：state=COLLAPSING 全部的重試 INFO=1」（第一次封存在 6，退避 200，probe 的再進入在 211） |
+| `mut-retry-at-the-doubled-expiry` | 同上，只在退避已加倍時（`delayTicks() > INITIAL_TICKS`）；第一次重試照常等邊緣 | `w12-crash` FAIL 在新的 **`notRetriedInTheDoubledBackoff`**：「第二次封存之後 400 個 tick（step 的第 155 個 tick，server tick 613）：全部的重試 INFO=2 record 與第二次封存時相同=false state=COLLAPSING」（`backoffAgain` 裡；probe 的再進入在 618） |
+| `base-cc`＋`mut-retry-at-the-doubled-expiry`（對照） | `CC` 整檔換回 `30f1a2b` 的版本（blob `09595c99…`＝`git rev-parse 30f1a2b:…`），再套用上一列 | `w12-crash` FAIL 在 **`stepBounded：step halt 在 400 個 tick 內沒有完成`**（state=PASSAGE_READY、crash 點 `reached=0 hits=0`）：重現 quality Minor 1 的缺口，第二次重試在 crash 點裝上之前就完成，`retriedAgain` 照樣成立 |
+
+- 三次都在 ps1 判 FAIL（預期 halt 的 phase 正常停止），沒有 launcher.json。每次還原之後 `git status --porcelain` 為空，`CollapseService` 的 blob 回到 `27529fe1…`、`CC` 回到 `562082ad…`（`m-*-restored-state.txt`、`m-mutations-console.txt`）。runId：`831baf0c2c4b41ae989a0d070a9b274c`、`683707d8b6fa4541b3c7d81cf07e18e5`、`20f0b53d3cfe4b78bf2a0085fd36e947`（摘要 `m-*-mutsum.txt`）。
+
+### probe 的 GREEN
+
+- `r-green`（`1985be3` 乾淨，第 5 點的純 refactor 之後）：`collapse-run-47adef79e6fc4ce980ac5349a38fc42b`，69/69 PASS（halt 31）。對 F6-3 Step 0 的 green-2 `50ac3f71be9646d7976096aeb63819de`：`RESULT=OK`，沒有改名、沒有新增、step 都相同；`w8late-restart` 的 `order=DIFF` 是已知的時序對調（見上）（`f63c1/r-green-vs-s0green2-names.txt`）。
+- `green-1`、`green-2`（`db1680a` 乾淨，最後一個 code commit 之後）：`collapse-run-59d8c96b48f54e5b9983b1f12ef124ac`、`collapse-run-1cd9829d34da4417946d1a1c62b44d7e`，都是 69/69 PASS（halt 31），exit 0。對同一個基準兩次都 `RESULT=OK`：既有的名稱全部仍在、全部成立，step 序列 69 個 phase 都相同，**沒有改名**；**新增**的只有 `w12-crash` 的 `sealedKeptInTheBackoff`、`notRetriedInTheDoubledBackoff`（35 → 37）。這兩次沒有 `order=DIFF`；`green-2` 對 `green-1` 也 `RESULT=OK`（`f63c1/green-*-vs-*-names.txt`）。
+- `w12-crash` 的時序與 F6-3 Step 0 相同（`f63c1/w12ticks.py`）：再進入 211／418／618，`retried` 在 212、`sealedOnTheDiscovery` 在 213，窗口與 halt 都在 620。所以逐 tick 的斷言涵蓋：`backoff` 47～211（165 tick）、`backoffEarly` 214～418（205 tick）、`notRetriedEarly` 419～458、`backoffAgain` 459～618。
+- dev run（不採計）：`dev-w12-1`（`5a2007a` 乾淨，`-Only w12`）`collapse-run-9a897513070c40c5b9e96061fc9957a6`，兩個 phase PASS。
+
+### M5 GameTest gate 連跑兩次（`db1680a` 乾淨）
+
+- `gate-m5g-1-96046933080343e89979a83132099ea6`、`gate-m5g-2-b1b5e2475368439b88f8f1517009a611`：都是 60/60、exit 0，**沒有任何 `M5_UNIVERSE_HOLD` 行**，`M5_UNIVERSE_BEGIN` 60 則；節流結束列 `tps=88.3`、`88.4`（`f63c1/m5g-*-m5sum.txt`）。新增的兩個 witness 都成立（test 通過）；`m5g-1` 的 `M5_PASSAGE_END_WITH_ONE_CROSSED`：(d) `ready=9 ended=14`、(a) `ready=11 ended=16`。
+- after-pass 訊息的檢查 run（adapter，不採計為 GREEN）：`gate-ap-converged-1-56720ad4ebe949b89d6e99adeb1e4811`（59/60）、`gate-ap-timeout-1-dc4c395ba5b04518b533407cb9dab5db`（57/60），見第 7 點。
+
+### 完整回歸（run-all）
+
+- `run-all-1`＝`run-all-e8c655f2090340188bc103e3df0b3954`（乾淨的 `db1680a`，`f63c1/run-all-1-state.txt`；06:38～07:14）：**`END ALL exit=0 HEAD=db1680a`**。SUMMARY `default=178/178 windows=89 legacy=1/1 m5=60/60 perTest=55+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=69 ci=win:PASS,ubuntu:PASS`，與基準 `run-all-ebf53140e93a469d9986f5581ce88ce2`（F6-3b fix round 1 的 run-all-1，`c905ec4`）相同（`runall1-summary-compare.txt`）。
+  - testcase 集合：default 178、M5 60、legacy 1 都 `identical=True`；JUnit 666（PASS 664、SKIPPED 2）相同（`runall1-*-setcmp.txt`）。
+  - release JAR 的 SHA-256 不變（`c20bc00f…`，432／385）。sources JAR 226 個 entry、`contentDiffers=0`，只有時間戳的 metadata 不同（SHA `8b3931da…`，基準 `dbe3a284…`；`runall1-zipmeta-sources-result.txt`）。
+  - WARN／ERROR：Full 54／31（sorted diff 空，batch 別的計數也相同：`runall1-wbbatch-full.txt`）、legacy 0／0、M5 38／10。M5 的 sorted diff 只有兩行，都不是行為差異：`PistonBlockEntity` 的 object hash（同前幾節），以及通道傳送失敗那一則 WARN 的玩家位置：這次 test 結構的 x 是 −12790799.5，`Double.toString` 在 |x| ≥ 10⁷ 時用科學記號（`-1.27907995E7`），正規化之後的樣式不同；基準是 `4448209.5`。同一則 WARN、同一個 test。
+  - M5 run：60/60，沒有 `M5_UNIVERSE_HOLD`，節流結束列 `tps=88.4`（`runall1-m5gate-sum.txt`）。pin 的計數與基準相同（只有行號與 session UUID 不同；`runall1-pincount.txt`）。collapse run `0d24df5a1be54655940c12b781b6d267`：worldgen 的例外 0（`runall1-worldgencheck.txt`）；對 F6-3 Step 0 的 green-2 `RESULT=OK`，新增的只有 `w12-crash` 的兩個斷言（`runall1-vs-s0green2-names.txt`）。
+  - 與基準的差異：**沒有**（派工的預期）。
+- 本節 commit 之後的 run-all-2：見 `f63c1/STATUS.md`（由 controller 補記）。
+
+### 偏離派工字面之處
+
+1. 第 3 點：派工只寫 `backoffAgain` 加 `eachTick`；`backoffEarly`（第二次封存到第一次進入，205 tick）也同樣沒有逐 tick 的斷言，所以用同一個 `notRetriedInTheDoubledBackoff` 一起補上，第二段退避因此每個 tick 都有具名斷言。成本是每個 tick 一次 log 查詢與兩次 record 比較，與既有的 `notRetriedBeforeTheDoubledBackoff` 同級。
+2. 第 3 點的 mutation：派工要求「退避到期就重試、不等邊緣」至少一個。這個改動對兩段退避都生效時，第一段就會失敗（`sealedKeptInTheBackoff`），測不到第二段，所以另跑只在退避已加倍時生效的版本（`notRetriedInTheDoubledBackoff`），並以 `30f1a2b` 的 `CC` 跑同一個 mutation 當對照（stepBounded），證明 quality Minor 1 描述的缺口確實存在、也已關閉。
+3. 第 6 點：`eachTick` 拿到的是這個 step 的第幾個 tick（同 `M5CollapsePassage.watch`），失敗訊息另帶 server tick；`expectRolledForward`、`expectNotMaterialized` 因此多一個訊息前綴參數，三個呼叫端（封存當下、`unconfirmed`、`backoff`）都帶入時點。
+4. 第 5 點：`CC` 的兩份判斷式合成一份之後，`retriedAgain` 的失敗訊息改用 halt 的那一句（原本是「，預期第 2 次」）。條件不變。
+5. 第 9 點：T-REJARR 與 T-ENDD 都選 witness，理由見表；README 沒有加例外規則。
+6. 第 10 點：派工的行號（:1537、:1595、:1835、:3055）是 F6-2c Step 0 一節寫成時的；實際是 :1561、:1617、:1855、:3073（常數與它的 Javadoc 在 :166-173）。
+7. 第 11 點：沒有另做 RED（派工的驗證清單沒有要求；改動是「寫入之前就加入 owned」的順序，可由 diff 直接核對，default run 178/178 照常通過）。
+8. 第 7 點的檢查 run 沿用 F6-3b fix round 1 的兩個 adapter（`fix1-red-after-pass`、`b1-hold-50`，原樣複製），不是 GREEN，只用來看訊息。
+
+### 有沒有 production 與 spec 不符之處
+
+- 沒有。本輪沒有改 `src/main/`；mutation 只在取證期間暫時改 `CollapseService`，還原後以 blob 核對。
+
+### 需要裁示
+
+- 沒有。
+
+### 交給後續
+
+- F6-3c-2：拆 `M5UniverseGameTests`，抽 fixture 與 #12 的 RED（派工已定）。本輪新增的 `CrossedEnd`、`PREPARE_WAIT_TICKS`、`afterPassStarted`／`endHold` 都在 `M5UniverseGameTests` 裡，拆檔時跟著 hold 一族與 `endWithOneCrossed` 移動。
+- F6-3e（不變）：SUITE_END 核對四個權威、全部 PASS 的 M5 run 不得出現 `M5_UNIVERSE_HOLD`，以及節流結束列的斷言（用「恰一行、`waited>0`、`tps≤100.0`」，不用 `waitedMs`；`waitedMs` 的語意本輪已寫明）。
+
+### root（全部保留）
+
+- 編譯：`f63c1/c1`～`c10-compile.log`（都 BUILD SUCCESSFUL）；編譯檢查 `c3-swap-compile.log`（預期失敗）。
+- probe：`r-green` `47adef79e6fc4ce980ac5349a38fc42b`（`1985be3`）；`green-1` `59d8c96b48f54e5b9983b1f12ef124ac`、`green-2` `1cd9829d34da4417946d1a1c62b44d7e`（`db1680a`）；dev `dev-w12-1` `9a897513070c40c5b9e96061fc9957a6`（`5a2007a`，不採計）。
+- mutation：`m-mut-retry-at-expiry` `831baf0c2c4b41ae989a0d070a9b274c`、`m-mut-retry-at-the-doubled-expiry` `683707d8b6fa4541b3c7d81cf07e18e5`、`m-base-cc+mut-retry-at-the-doubled-expiry` `20f0b53d3cfe4b78bf2a0085fd36e947`。
+- M5 gate：`gate-m5g-1-96046933080343e89979a83132099ea6`、`gate-m5g-2-b1b5e2475368439b88f8f1517009a611`；檢查 run `gate-ap-converged-1-56720ad4ebe949b89d6e99adeb1e4811`、`gate-ap-timeout-1-dc4c395ba5b04518b533407cb9dab5db`（不採計為 GREEN）。
+- run-all：`run-all-e8c655f2090340188bc103e3df0b3954`（`db1680a`）。
+- 已知偶發：沒有遇到。不採計的 root：只有上面標明的 dev 與檢查 run。結束過的程序：沒有。
+- 取證腳本（`f63c1/`）：由 `f6/f63s0/` 複製（同深度）、每檔第一行加本輪註解的 `state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`（adapter 表改為 `adapters_f63c1`）、`mutsum.py`、`names2.py`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-ebf53140…`）與比較用的 `wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`wbbatch.py`、`relay-*.py`；由 `f6/f63b/fix1/` 複製的 `m5gate.ps1`（相對路徑少一層）、`m5red.ps1`、`m5sum.py`；`mutations.ps1` 由 `f6/f63s0/` 改寫（本輪的 3 個 mutation）；新寫的 `adapters_f63c1.py`、`swapcheck.ps1`、`w12ticks.py`。基準摘要 `base-default-summary.txt`、`base-m5-summary.txt` 是 `f6/f63b/fix1/runall1-*-summary.txt` 的複本。
