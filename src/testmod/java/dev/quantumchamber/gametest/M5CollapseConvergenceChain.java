@@ -41,7 +41,7 @@ import org.apache.logging.log4j.Level;
  *     確認 discovery 仍恰為那一筆已落地的 record；之後 RESOLVE 只查到既有的 record → PASSAGE_READY → 跨越 → (b) 終局（spec §12 的四件事，discovery 恰一筆 U）。</li>
  * </ul>
  * <p>不套用 {@link #crash(CrashSetup, List, M5CollapseRun.Checked, CrashWindow, int)} 的骨架：它在 {@code committed} 之後只等窗口 halt（step {@code halt} 是 {@code () -> false}），W12 在 halt 之前
- * 要觀察兩次 roll-forward、等兩次退避、由艙外再進入兩次，而且 crash 點要在第二次重試之前才裝上（之前的 {@code appendDiscovery} 回傳也會呼叫這個窗口）。前三步（{@code build}、{@code registered}、
+ * 要觀察兩次 roll-forward、等兩次退避、由艙外再進入三次（F6-3c-1 依 F6-3 Step 0 quality Minor 2 更正：F6-3 Step 0 起第二次封存之後多一次進入），而且 crash 點要在第二次重試之前才裝上（之前的 {@code appendDiscovery} 回傳也會呼叫這個窗口）。前三步（{@code build}、{@code registered}、
  * 收據）與骨架共用基底的 {@link #throughTheReceipt}（{@link #dormantNewSetup}：{@code beforeWrite} 與收據的建立都照骨架；F6-3 Step 0，F6-2e-3 quality Minor 3，原本只用了
  * {@code dormantNewSetup().origin()}，收據直接寫 {@code fixture.dormantNewReceipt()}）。
  * <p>halt 選在「discovery 剛收斂」而不是「catalog 仍未確認」：roll-forward 與 restore 的差別要在同一個 JVM 的下一次寫出才看得到（restore 把 current 改回舊內容，下一次收斂的重寫才把已落地的
@@ -52,8 +52,11 @@ import org.apache.logging.log4j.Level;
  * （SEALED(AUTHORITY_UNREADABLE)）涵蓋，重試之後的 RESOLVE 就是 W3 的重啟那一段。
  * <p>F6-3 Step 0（F6-2e-3 quality Minor 2）：兩次重試都有具名斷言，「退避加倍」也有證據。第一次重試經基底的 {@link #retried}（SEALED(ALLOCATION_IO_FAILED) 的重試 INFO 恰一則，由艙外進入之後
  * 10 tick 內）；第二次封存之後，在第一次的退避長度（{@link M5CollapseRetryChains#BACKOFF_TICKS}）時先由艙外進入一次，{@value M5CollapsePassage#WATCH_TICKS} 個 tick 都不重試
- * （{@code notRetriedBeforeTheDoubledBackoff}），離開之後在 {@link #SECOND_BACKOFF_TICKS} 時再進入，10 tick 內重試（{@code retriedAgainAfterTheDoubledBackoff}）。所以第二次封存的
- * 延遲大於第一次的退避長度、不大於 {@link #SECOND_BACKOFF_TICKS}：退避沒有加倍或 {@code retrySealed} 重設退避時失敗在前者，退避變長時失敗在後者（都是具名斷言，不是 stepBounded）。
+ * （{@code notRetriedBeforeTheDoubledBackoff}），離開之後在 {@link #SECOND_BACKOFF_TICKS} 時再進入，10 tick 內重試（{@code retriedAgainAfterTheDoubledBackoff}）。兩次進入在第二次
+ * 封存之後第 {@link M5CollapseRetryChains#BACKOFF_TICKS}（{@link CollapseBackoff#INITIAL_TICKS}＋5）與 {@link #SECOND_BACKOFF_TICKS}（2×{@link CollapseBackoff#INITIAL_TICKS}＋5）個 tick，
+ * production 在進入的下一個 tick 才觀察到邊緣，所以第二次封存的延遲 d 滿足 {@code INITIAL_TICKS}＋6 < d ≤ 2×{@code INITIAL_TICKS}＋6（F6-3c-1 依 F6-3 Step 0 spec review M-1 更正：
+ * 原本寫「大於第一次的退避長度、不大於 SECOND_BACKOFF_TICKS」，少算了觀察邊緣的那一個 tick）：退避沒有加倍或 {@code retrySealed} 重設退避時失敗在前者，退避變長時失敗在後者
+ * （都是具名斷言，不是 stepBounded）。
  * 第二次重試的 RESOLVE 在下一個 tick 就 halt，所以 halt 之前（{@link #convergedAtHalt}）再斷言重試的 INFO 共 2 則（{@code retriedTwiceBeforeTheHalt}）。三次由艙外進入的 server tick
  * 記在 proof（{@code reenteredAfterTheBackoffTick}、{@code reenteredBeforeTheDoubledBackoffTick}、{@code reenteredAfterTheDoubledBackoffTick}，比照 {@code M5CollapseRetryChains}）。
  * 退避的長度都由 {@link CollapseBackoff#INITIAL_TICKS} 推出。
@@ -261,8 +264,10 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
      * <li>{@code catalogConvergedBeforeTheMaterialization}：catalog 已收斂（flushed 只有 U、EAGER_ENABLED、沒有 dirty、不是未確認；「M5 CATALOG 收斂完成」恰一則），U 已物化；catalog 恰多 1 筆
      *     （{@code catalogExactlyOneMore}）、allocation ledger 恰一筆。確認之前沒有物化的證據（F6-3 Step 0 依 F6-2e-3 spec M-2、quality Minor 1 改寫，原本寫「之前的每個 tick 都斷言沒有物化」）：
      *     封存當下（{@code notMaterializedBeforeTheConfirmation}）、{@code unconfirmed} 的 {@value M5CollapsePassage#WATCH_TICKS} 個 tick（{@code stillNotMaterialized}）與 {@code backoff} 到由艙外
-     *     進入為止的每個 tick（{@code notMaterializedInTheBackoff}）。之後只隔重試的那一個 tick（step {@code retried}）不另斷言：production 每個 tick 每個 session 只推進一步
-     *     （{@code CollapseService.step}），那個 tick 只做 SEALED→COLLAPSING 的 checked 寫入與取得來源 ticket，RESOLVE（先收斂、再物化）在下一個 tick；同一個 tick 內的先後 probe 看不到。</li>
+     *     進入為止的每個 tick（{@code notMaterializedInTheBackoff}）。之後只隔重試的那一個 tick（step {@code retried}；F6-3 Step 0 的 GREEN 是 tick 212）不另斷言：production 每個
+     *     tick 每個 session 只推進一步（{@code CollapseService.step}），那個 tick 只做 SEALED→COLLAPSING 的 checked 寫入與取得來源 ticket，不會物化；runner 掛在 production 之後，
+     *     那個 tick 的狀態 probe 看得到，只是沒有另斷言。RESOLVE（先收斂、再物化）在下一個 tick（GREEN 是 tick 213），只有這個 tick 內的先後 probe 看不到：probe 只看到收斂與物化
+     *     都完成之後的狀態（F6-3c-1 依 F6-3 Step 0 spec review nit 改寫，原本寫成「同一個 tick 內的先後 probe 看不到」，像是兩個 tick 都適用）。</li>
      * <li>{@code storageExistsAfterTheMaterialization}：{@link #expectStorageExists}（「沒有物化」的路徑的 positive control，F6-3 Step 0）。</li>
      * <li>{@code discoveryReadbackFailedOnce}：discovery 的注入恰命中一次（放行的那一次已用掉）。</li>
      * <li>{@code discoveryLandedOnDisk}：磁碟上的 discovery 恰為 U 一筆（atomic move 已完成；fault 已用完才讀），{@code unconfirmed(DISCOVERY)}；這一筆記為已落地的 record。</li>
