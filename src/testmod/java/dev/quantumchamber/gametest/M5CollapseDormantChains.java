@@ -67,7 +67,7 @@ final class M5CollapseDormantChains {
         // W4、W6：參與者 JOIN 之前，磁碟上的投影 Controller 經 load-sync 辨識為 inert 的 PROJECTION（不記 log）。
         if (window.atRestart().recognizeBeforeJoin()) steps.add(new Step("recognized", 60, this::projectionRecognized));
         // F6-2d-2 B1（F6-2-08 的另一半）：開服時原艙門是關著的窗口，參與者 JOIN 之前先斷言重新套用（NORMALIZE）之後門仍關著。
-        boolean closedAtStart = window.atRestart().doorAtStart() == M5CollapseWindows.DoorAtStart.CLOSED;
+        boolean closedAtStart = window.atRestart().doorAtStart() == M5CollapseWindows.OriginDoorState.CLOSED;
         if (closedAtStart) steps.addAll(M5CollapseDoors.closedDoorKeptByTheReapply(run, fixture));
         steps.add(new Step("join", 1, () -> {
             // F6-2d-2 B2a（B1 quality Minor 1）：開服時門關著的窗口，JOIN 之前（同一個 step，JOIN 的 tick 不變）再驗門仍關著、沒有套用、排入仍恰一則。

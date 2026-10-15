@@ -17,7 +17,7 @@ import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapsePassage.End;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
-import dev.quantumchamber.gametest.M5CollapseWindows.DoorAtStart;
+import dev.quantumchamber.gametest.M5CollapseWindows.OriginDoorState;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.superposition.SessionState;
@@ -381,15 +381,15 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     Phase plainDoorSealedRestart(String crashPhase) {
         var steps = new ArrayList<Step>();
-        steps.add(closeQueued(DoorAtStart.PLAIN_OPEN));
-        steps.add(closeApplied("closedOnceAfterTheRestart", DoorAtStart.CLOSED, () -> NOTHING_MORE));
+        steps.add(closeQueued(OriginDoorState.PLAIN_OPEN));
+        steps.add(closeApplied("closedOnceAfterTheRestart", OriginDoorState.CLOSED, () -> NOTHING_MORE));
         steps.add(joinOutside());
         steps.add(new Step("opened", 1, this::openedNormallyWhileSealed));
         steps.add(M5CollapsePassage.watch("openWhileSealed", M5CollapsePassage.WATCH_TICKS, this::closedOnlyOnce));
         steps.add(enter());
         steps.add(retried("retried", "retriedOnceAfterTheRestart", SealedReason.AUTHORITY_UNREADABLE, 1, Await.EDGE));
         steps.addAll(passage.steps(null));
-        return restartPhase(crashPhase, CrashWindow.UNREADABLE_SEALED, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(DoorAtStart.PLAIN_OPEN));
+        return restartPhase(crashPhase, CrashWindow.UNREADABLE_SEALED, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(OriginDoorState.PLAIN_OPEN));
     }
 
     /**
@@ -404,27 +404,27 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     Phase doorwaySealedRestart(String crashPhase) {
         var steps = new ArrayList<Step>();
-        steps.add(closeQueued(DoorAtStart.CLOSED));
-        steps.add(closeApplied("plainOpenForTheDoorway", DoorAtStart.PLAIN_OPEN, this::standKeptInTheDoorway));
+        steps.add(closeQueued(OriginDoorState.CLOSED));
+        steps.add(closeApplied("plainOpenForTheDoorway", OriginDoorState.PLAIN_OPEN, this::standKeptInTheDoorway));
         steps.add(new Step("standRemoved", 1, this::standRemovedFromTheDoorway));
         steps.add(joinOutside());
         steps.add(enter());
         steps.add(retried("retried", "retriedOnceAfterTheRestart", SealedReason.AUTHORITY_UNREADABLE, 1, Await.EDGE));
         steps.addAll(passage.steps(null));
-        return restartPhase(crashPhase, CrashWindow.UNREADABLE_SEALED_DOORWAY, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(DoorAtStart.CLOSED));
+        return restartPhase(crashPhase, CrashWindow.UNREADABLE_SEALED_DOORWAY, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(OriginDoorState.CLOSED));
     }
 
     /**
      * SEALED 的門 chain 的開服（{@link #restartPhase} 的 {@code afterStarted}，第一個 tick 之前）：原艙門在記憶體裡是 {@code door}（由磁碟載入；窗口表的
      * {@code doorAsExpectedAtStart} 讀磁碟），沒有人在線上、還沒有 tick；記下門口的 entity storage 是否已載入（{@code doorwayEntitiesLoadedAtStart}，取證）。
      */
-    private void doorAtStartWithNobodyOnline(DoorAtStart door) {
+    private void doorAtStartWithNobodyOnline(OriginDoorState door) {
         doorInMemoryAtStart(door);
         run.expect("nobodyOnlineAtStart", fixture.noneOnline() && run.ticks() == 0, () -> "開服時 tick=" + run.ticks() + " 有人在線上=" + !fixture.noneOnline());
     }
 
     /** 開服時（第一個 tick 之前）原艙門在記憶體裡是 {@code door}（{@code doorInMemoryAtStart}）；記下門口的 entity storage 是否已載入與 probe 是否已看到門口的 entity。 */
-    private void doorInMemoryAtStart(DoorAtStart door) {
+    private void doorInMemoryAtStart(OriginDoorState door) {
         run.expect("doorInMemoryAtStart", M5CollapseDoors.is(run, door), () -> "開服時記憶體裡的原艙門不是 " + door + "：門正中=" + doorCenter(run));
         run.proof.put("doorwayEntitiesLoadedAtStart", OriginDoorsTestAccess.doorwayEntitiesLoaded(run.source(), FRAME));
         seeTheDoorway();
@@ -443,12 +443,12 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * 那個 tick 排入恰一則 CLOSE_ON_SEALED（原因「重啟之後第一次載入」），那個 tick 原艙門仍是開服時的 {@code door}，這座艙待套用的門是 CLOSE_ON_SEALED（production 的 {@code OriginDoors}，經
      * {@link OriginDoorsTestAccess}；{@code closeQueuedOnTheFirstLoad}）。記下排入時記下的 tick（N）；另記下那個 tick 門口的 entity storage 是否已載入（取證）。
      */
-    private Step closeQueued(DoorAtStart door) {
+    private Step closeQueued(OriginDoorState door) {
         return closeQueued(door, M5CollapseRun.NOTHING);
     }
 
-    /** 同 {@link #closeQueued(DoorAtStart)}，斷言之後在同一個 tick 再做 {@code then}（{@code sealmembrane}：非參與者使用門）。 */
-    private Step closeQueued(DoorAtStart door, M5CollapseRun.Checked then) {
+    /** 同 {@link #closeQueued(OriginDoorState)}，斷言之後在同一個 tick 再做 {@code then}（{@code sealmembrane}：非參與者使用門）。 */
+    private Step closeQueued(OriginDoorState door, M5CollapseRun.Checked then) {
         return M5CollapsePassage.awaiting("closeQueued", QUEUE_WAIT_TICKS, () -> {
             seeTheDoorway();
             return !reapplyQueued(run, fixture.sid()).isEmpty();
@@ -475,7 +475,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * 目標是 CLOSE_ON_SEALED、記的 tick ≥ 排入時記下的 tick（同一個 tick 也算，套用在那個 tick 的 {@code applyPending}；之後的 tick 是等門口的 entity storage）、排入的 INFO 仍恰一則、
      * 這座艙沒有待套用的門，而且 {@code also} 成立（具名斷言 {@code assertion}）。到時門仍不是 {@code target} 時由同一個斷言判 FAIL。
      */
-    private Step closeApplied(String assertion, DoorAtStart target, java.util.function.Supplier<Verdict> also) {
+    private Step closeApplied(String assertion, OriginDoorState target, java.util.function.Supplier<Verdict> also) {
         return M5CollapsePassage.awaiting("closeApplied", CLOSE_APPLY_WAIT_TICKS, () -> {
             seeTheDoorway();
             return M5CollapseDoors.is(run, target);
@@ -571,8 +571,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      */
     Phase membraneSealedRestart(String crashPhase) {
         var steps = new ArrayList<Step>();
-        steps.add(closeQueued(DoorAtStart.SEALED_MEMBRANE, this::visitorUsesTheMembraneDoor));
-        steps.add(closeApplied("closedFromTheMembrane", DoorAtStart.CLOSED, this::closeNotCancelled));
+        steps.add(closeQueued(OriginDoorState.SEALED_MEMBRANE, this::visitorUsesTheMembraneDoor));
+        steps.add(closeApplied("closedFromTheMembrane", OriginDoorState.CLOSED, this::closeNotCancelled));
         steps.add(new Step("join", 1, this::joinInsideOnTheEdge));
         steps.add(retried("retried", "retriedOnTheJoinEdge", SealedReason.PROJECTION_FAILED, 1, Await.EDGE));
         steps.addAll(passage.steps(null));
@@ -581,7 +581,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     /** sealmembrane 的開服：{@link #doorAtStartWithNobodyOnline}（sealed 量子膜）；非參與者（新的 UUID，不在收據裡）JOIN 之後移到艙外（{@code visitorOutsideAtStart}）。 */
     private void visitorOutsideWithNobodyOnline() {
-        doorAtStartWithNobodyOnline(DoorAtStart.SEALED_MEMBRANE);
+        doorAtStartWithNobodyOnline(OriginDoorState.SEALED_MEMBRANE);
         var visitor = sealedDoor.visitor = fixture.connect(UUID.randomUUID()).player();
         M5GameTestSupport.moveOutside(visitor, FRAME);
         boolean outside = !M5CollapseFixture.inside(visitor);
@@ -660,7 +660,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     /** sealmembranejoined 的開服（第一個 tick 之前）：門在記憶體裡是 sealed；參與者 JOIN 在艙內，這時 record 仍是 SEALED（{@code joinedBeforeTheFirstObservation}）；記下 JOIN 的位置。 */
     private void joinedBeforeTheFirstObservation() {
-        doorInMemoryAtStart(DoorAtStart.SEALED_MEMBRANE);
+        doorInMemoryAtStart(OriginDoorState.SEALED_MEMBRANE);
         joinInside();
         var record = run.journal().flushedRecords().get(fixture.sid());
         run.expect("joinedBeforeTheFirstObservation", run.ticks() == 0 && sealed(record), () -> "JOIN 時 tick=" + run.ticks() + " state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));

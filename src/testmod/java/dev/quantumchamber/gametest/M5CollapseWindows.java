@@ -130,7 +130,7 @@ final class M5CollapseWindows {
      * <li>{@link #withRecordKept}（F6-2d-2 Step 0，F6-2d-1 quality Minor 4）：halt 之前的取證記下這個 session 的 record 的摘要（{@code atHalt} 的 {@code recordAtHalt}，
      *     {@link M5CollapseFixture#recordDigest}），restart 開服時<b>必</b>比對開服時的 record 與它相同（{@code recordKeptAcrossTheRestart}，{@link #expectRecordKept}）；預設不比對。
      *     原本由 {@code M5CollapseRetryChains} 與 {@code M5CollapsePassageChains} 各寫一份、語意不同（前者只在 halt receipt 有摘要時比對，後者 record 存在就比對）。</li>
-     * <li>{@link #withDoorAtStart}（F6-2d-2 B2a，B1 quality Minor 4）：restart 開服時原艙門的預期（{@link DoorAtStart}）；預設 {@link DoorAtStart#UNSPECIFIED}。原本是
+     * <li>{@link #withDoorAtStart}（F6-2d-2 B2a，B1 quality Minor 4）：restart 開服時原艙門的預期（{@link OriginDoorState}）；預設 {@link OriginDoorState#UNSPECIFIED}。原本是
      *     {@code M5CollapseDormantChains} 的 {@code CLOSED_DOOR_AT_RESTART}（開服時門關著的窗口，restart 在 JOIN 之前另斷言重新套用不把它打開）；F6-2d-2 B2 的 SEALED 門窗口
      *     也以它宣告開服時的門。</li>
      * </ul>
@@ -158,7 +158,7 @@ final class M5CollapseWindows {
         private M5CollapseFixture.Who crossedAtHalt = M5CollapseFixture.NOBODY;
         private boolean catalogDisabled;
         private boolean recordKept;
-        private DoorAtStart doorAtStart = DoorAtStart.UNSPECIFIED;
+        private OriginDoorState doorAtStart = OriginDoorState.UNSPECIFIED;
 
         private AtRestart() {}
 
@@ -294,16 +294,16 @@ final class M5CollapseWindows {
         boolean recordKept() { return recordKept; }
 
         /**
-         * restart 開服時原艙門是 {@code door}（F6-2d-2 B2a，B1 quality Minor 4）。{@link DoorAtStart#UNSPECIFIED} 是預設，不經這裡（指定它時丟出，不靜默當成沒有指定）。
+         * restart 開服時原艙門是 {@code door}（F6-2d-2 B2a，B1 quality Minor 4）。{@link OriginDoorState#UNSPECIFIED} 是預設，不經這裡（指定它時丟出，不靜默當成沒有指定）。
          */
-        AtRestart withDoorAtStart(DoorAtStart door) {
+        AtRestart withDoorAtStart(OriginDoorState door) {
             Objects.requireNonNull(door, "doorAtStart");
-            if (door == DoorAtStart.UNSPECIFIED) throw new IllegalStateException("AtRestart：withDoorAtStart 不接受 UNSPECIFIED（那是預設）");
+            if (door == OriginDoorState.UNSPECIFIED) throw new IllegalStateException("AtRestart：withDoorAtStart 不接受 UNSPECIFIED（那是預設）");
             return copy(next -> next.doorAtStart = door);
         }
 
         /** restart 開服時原艙門的預期。 */
-        DoorAtStart doorAtStart() { return doorAtStart; }
+        OriginDoorState doorAtStart() { return doorAtStart; }
 
         /** halt 當下磁碟上的 record 狀態；null 為終局已落盤。 */
         SessionState stateAtHalt() { return stateAtHalt; }
@@ -331,7 +331,7 @@ final class M5CollapseWindows {
      * restart 開服時原艙門的預期（{@link AtRestart#withDoorAtStart}；F6-2d-2 B2a，B1 quality Minor 4：取代 {@code M5CollapseDormantChains} 的 {@code CLOSED_DOOR_AT_RESTART}）。
      * 一列一個值：開服時門不同的窗口是不同的列。
      */
-    enum DoorAtStart {
+    enum OriginDoorState {
         /** 不指定（預設）。 */
         UNSPECIFIED,
         /** 關著（25 格 {@code open=false}、{@code membrane=none}）：RESOLVE 期間 crash 的 W2、W3、W5，門沒有動過（fixture 蓋的門預設關著）。 */
@@ -378,13 +378,13 @@ final class M5CollapseWindows {
         // W2：allocation ledger 寫出之後、catalog 之前。F6-2d-2 B2a：W2、W3、W5 是 RESOLVE 期間 crash，PREPARE 還沒有開始，開服時門是關著的（withDoorAtStart(CLOSED)，
         // 原本是 M5CollapseDormantChains 的 CLOSED_DOOR_AT_RESTART）。W4、W4b、W6、W6x 在 PREPARE 中 crash，門帶著 sealed 量子膜，不在這裡。
         row(rows, CrashWindow.ALLOCATION_APPENDED, M5CollapseWindows::appended, NO_EVIDENCE,
-                AtRestart.resolved(Resolved.ALLOCATION).withDoorAtStart(DoorAtStart.CLOSED), null);
+                AtRestart.resolved(Resolved.ALLOCATION).withDoorAtStart(OriginDoorState.CLOSED), null);
         // W3：catalog 寫出之後、物化之前（重啟時由 EAGER_ENABLED 物化）。
         row(rows, CrashWindow.CATALOG_ALLOCATED, M5CollapseWindows::appended, NO_EVIDENCE,
-                AtRestart.resolved(Resolved.CATALOG).withDoorAtStart(DoorAtStart.CLOSED), null);
+                AtRestart.resolved(Resolved.CATALOG).withDoorAtStart(OriginDoorState.CLOSED), null);
         // W5：discovery 追加之後、投影之前（waitinglate 的 crash 也用這一列）。
         row(rows, CrashWindow.DISCOVERY_APPENDED, M5CollapseWindows::appended, NO_EVIDENCE,
-                AtRestart.resolved(Resolved.DISCOVERY).withDoorAtStart(DoorAtStart.CLOSED), null);
+                AtRestart.resolved(Resolved.DISCOVERY).withDoorAtStart(OriginDoorState.CLOSED), null);
         // W4：第一次寫入剛寫完 Controller 那一格（halt 前存檔：磁碟上是寫到一半的投影）。
         row(rows, CrashWindow.PROJECTION_CELL_WRITTEN, M5CollapseWindows::controllerCellWritten, M5CollapseWindows::savedHalfWrittenProjection,
                 AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.PENDING).withDisk(M5CollapseWindows::controllerOnDiskAtRestart)
@@ -464,15 +464,15 @@ final class M5CollapseWindows {
         var unreadableSealed = AtRestart.resolved(Resolved.MATERIALIZED).withStateAtHalt(SessionState.SEALED).withRecordKept()
                 .withDisk((run, fixture) -> sealedKeptAtRestart(run, fixture, SealedReason.AUTHORITY_UNREADABLE, "unreadableAtRestart"));
         row(rows, CrashWindow.UNREADABLE_SEALED, M5CollapseWindows::unreadableSealedWithThePlainDoor, M5CollapseWindows::plainDoorSealedAtHalt,
-                unreadableSealed.withDoorAtStart(DoorAtStart.PLAIN_OPEN), null);
+                unreadableSealed.withDoorAtStart(OriginDoorState.PLAIN_OPEN), null);
         row(rows, CrashWindow.UNREADABLE_SEALED_DOORWAY, M5CollapseWindows::unreadableSealedWithTheDoorway, M5CollapseWindows::doorwaySealedAtHalt,
-                unreadableSealed.withDoorAtStart(DoorAtStart.CLOSED), null);
+                unreadableSealed.withDoorAtStart(OriginDoorState.CLOSED), null);
         // F6-2-11：PREPARE 的第一個 tick 套用 sealed 量子膜、投影寫入失敗（ProjectionWriteFault）→ COLLAPSING→SEALED(PROJECTION_FAILED) 已確認。projection ledger 在寫入之前已是 PENDING
         // （CollapseService.project 先 writeProjection(PENDING) 再 ProjectionWriter.write）。halt 之前原生存檔（sealed 的門、參與者在艙內的 playerdata 都在磁碟上）。開服時的 sealed 量子膜
         // 由 withDoorAtStart(SEALED_MEMBRANE) 斷言（doorAsExpectedAtStart），所以 withDisk 不再用 sealedDoorOnDiskAtRestart（同一件事會斷言兩次）。sealmembrane 與 sealmembranejoined 共用。
         row(rows, CrashWindow.PROJECTION_SEALED, M5CollapseWindows::projectionSealedWithTheMembrane, M5CollapseWindows::projectionSealedAtHalt,
                 AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.PENDING).withStateAtHalt(SessionState.SEALED).withRecordKept()
-                        .withDoorAtStart(DoorAtStart.SEALED_MEMBRANE).withDisk((run, fixture) -> {
+                        .withDoorAtStart(OriginDoorState.SEALED_MEMBRANE).withDisk((run, fixture) -> {
                             sealedKeptAtRestart(run, fixture, SealedReason.PROJECTION_FAILED, "projectionFailedAtRestart");
                             playerDataInTheSourceAtRestart(run, fixture);
                         }), null);
@@ -1177,15 +1177,15 @@ final class M5CollapseWindows {
 
     /**
      * restart 開服時（{@link #expectAtRestart}，窗口自己的磁碟檢查之後；F6-2d-2 B2a，B1 quality Minor 4）：這一列宣告 {@link AtRestart#withDoorAtStart} 時，原艙門 25 格符合
-     * 它（{@code doorAsExpectedAtStart}，失敗訊息附門正中那一格）；{@link DoorAtStart#UNSPECIFIED} 不斷言。讀磁碟（raw MCA，{@link #doorOnDisk}），不讀記憶體：開服時原艙附近
+     * 它（{@code doorAsExpectedAtStart}，失敗訊息附門正中那一格）；{@link OriginDoorState#UNSPECIFIED} 不斷言。讀磁碟（raw MCA，{@link #doorOnDisk}），不讀記憶體：開服時原艙附近
      * 不一定已載入（{@code waitinglate} 的 crash 也用 W5 的列，level.dat 帶著半徑 0 的 spawn chunks，那條 chain 斷言開服時原艙附近沒有載入，{@code chamberNotLoadedAtStart}），
      * 在這裡讀方塊會把 chunk 同步載入、改變那條 chain 要量的情況。開服當下還沒有 tick，記憶體裡已載入的門就是由這份磁碟載入的；之後的 tick 在記憶體裡看門，由各 chain 的斷言
      * 負責（例如 {@code normalizeQueuedForTheClosedDoor}）。
      */
-    private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, DoorAtStart door) throws Exception {
-        if (door == DoorAtStart.UNSPECIFIED) return;
-        boolean open = door != DoorAtStart.CLOSED;
-        var membrane = door == DoorAtStart.SEALED_MEMBRANE ? MembraneState.sealedFor(FRAME.outwardFacing()) : MembraneState.NONE;
+    private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, OriginDoorState door) throws Exception {
+        if (door == OriginDoorState.UNSPECIFIED) return;
+        boolean open = door != OriginDoorState.CLOSED;
+        var membrane = door == OriginDoorState.SEALED_MEMBRANE ? MembraneState.sealedFor(FRAME.outwardFacing()) : MembraneState.NONE;
         boolean holds = doorOnDisk(run, fixture, open, membrane);
         String center = holds ? "" : doorCenterOnDisk(run, fixture);
         run.expect("doorAsExpectedAtStart", holds, () -> "開服時磁碟上的原艙門不是 " + door + "（open=" + open + " membrane=" + membrane.asString() + "）：門正中=" + center);

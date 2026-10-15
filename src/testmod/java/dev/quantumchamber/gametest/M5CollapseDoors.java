@@ -131,8 +131,8 @@ final class M5CollapseDoors {
         return run.capture().matching(Level.INFO, "取消還沒套用的關門", "session=" + sid).size();
     }
 
-    /** 原艙門 25 格是 {@code door}（F6-2d-2 B2；{@link M5CollapseWindows.DoorAtStart#UNSPECIFIED} 丟出）。 */
-    static boolean is(M5CollapseRun run, M5CollapseWindows.DoorAtStart door) {
+    /** 原艙門 25 格是 {@code door}（F6-2d-2 B2；{@link M5CollapseWindows.OriginDoorState#UNSPECIFIED} 丟出）。 */
+    static boolean is(M5CollapseRun run, M5CollapseWindows.OriginDoorState door) {
         return switch (door) {
             case CLOSED -> closed(run);
             case PLAIN_OPEN -> plainOpen(run);
