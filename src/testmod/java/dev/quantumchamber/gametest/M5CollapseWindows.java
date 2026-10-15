@@ -740,7 +740,7 @@ final class M5CollapseWindows {
 
     /** F6-2-09 的 {@code sealclose}（F6-2d-2 B2）：SEALED(AUTHORITY_UNREADABLE) 已確認，而且原艙門 25 格是一般開門（參與者在收據之前照一般方式開的）。 */
     private static boolean unreadableSealedWithThePlainDoor(M5CollapseFixture fixture, Object detail) {
-        return sealedWrite(fixture, detail, SealedReason.AUTHORITY_UNREADABLE) && M5GameTestSupport.doorAll(fixture.source(), FRAME, true, MembraneState.NONE);
+        return sealedWrite(fixture, detail, SealedReason.AUTHORITY_UNREADABLE) && M5CollapseDoors.is(fixture.source(), FRAME, OriginDoorState.PLAIN_OPEN);
     }
 
     /**
@@ -748,7 +748,7 @@ final class M5CollapseWindows {
      * {@link OriginDoorsTestAccess}）有 entity。
      */
     private static boolean unreadableSealedWithTheDoorway(M5CollapseFixture fixture, Object detail) {
-        return sealedWrite(fixture, detail, SealedReason.AUTHORITY_UNREADABLE) && M5GameTestSupport.doorAll(fixture.source(), FRAME, false, MembraneState.NONE)
+        return sealedWrite(fixture, detail, SealedReason.AUTHORITY_UNREADABLE) && M5CollapseDoors.is(fixture.source(), FRAME, OriginDoorState.CLOSED)
                 && OriginDoorsTestAccess.doorwayOccupied(fixture.source(), FRAME);
     }
 
@@ -1026,7 +1026,7 @@ final class M5CollapseWindows {
         var errors = run.capture().matching(Level.ERROR, REJECTED_RECOVERY_ERROR, sid.toString()).stream().map(LogCapture.Entry::message).toList();
         evidence.put("recoveryError", errors.isEmpty() ? "-" : errors.getFirst());
         run.expect("oneRejectedRecoveryError", errors.size() == 1 && errors.getFirst().contains("需要管理員處理"), () -> "被拒的 ERROR：" + errors);
-        run.expect("plainOpenWhilePassageClosedAtHalt", M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "通道在記憶體內關閉時原艙門不是一般開門");
+        run.expect("plainOpenWhilePassageClosedAtHalt", M5CollapseDoors.plainOpen(run), () -> "通道在記憶體內關閉時原艙門不是一般開門");
     }
 
     /**

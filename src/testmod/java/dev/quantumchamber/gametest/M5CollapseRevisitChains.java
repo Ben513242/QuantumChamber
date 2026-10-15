@@ -10,7 +10,6 @@ import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberLoadSyncOutcome;
 import dev.quantumchamber.chamber.ChamberProtectionService;
 import dev.quantumchamber.chamber.ChamberState;
-import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionProtectionIndex;
@@ -282,7 +281,7 @@ final class M5CollapseRevisitChains {
         run.expect("interiorNotRewritten", world.getBlockState(interiorMarker()).isOf(Blocks.GOLD_BLOCK) && GOLD_BLOCK.equals(marker.name()),
                 () -> "interior 標記：記憶體 " + world.getBlockState(interiorMarker()) + "，磁碟 " + marker);
         run.expect("ledgerNotRecreated", !Files.exists(run.data().resolve(ProjectionLedger.FILE_NAME)), () -> "projection ledger 被重建");
-        run.expect("doorClosedOnSeal", M5GameTestSupport.doorAll(run.source(), FRAME, false, MembraneState.NONE), () -> "SEALED 之後原艙門不是關著");
+        run.expect("doorClosedOnSeal", M5CollapseDoors.closed(run), () -> "SEALED 之後原艙門不是關著");
         return true;
     }
 
@@ -293,7 +292,7 @@ final class M5CollapseRevisitChains {
     private boolean doorOpensNormally() throws Exception {
         var player = fixture.selector();
         var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), player);
-        run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
+        run.expect("doorOpensNormally", result.isAccepted() && M5CollapseDoors.plainOpen(run), () -> "互動結果 " + result);
         var sid = fixture.sid();
         var record = run.journal().flushedRecords().get(sid);
         run.expect("stillSealed", record != null && record.state() == SessionState.SEALED && record.collapse().sealedReason().equals(Optional.of(SealedReason.AUTHORITY_CORRUPT)),

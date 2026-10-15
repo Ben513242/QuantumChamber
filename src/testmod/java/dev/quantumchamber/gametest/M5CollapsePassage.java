@@ -4,7 +4,6 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
 import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
 import dev.quantumchamber.chamber.ChamberState;
-import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
@@ -298,7 +297,7 @@ final class M5CollapsePassage {
         if (run.journal().flushedRecords().containsKey(sid) || run.journal().records().containsKey(sid)) return false;
         run.expect("endedByEveryoneCrossing", run.capture().matching(Level.INFO, "量子通道已結束", "(b) 全員都已跨過", sid.toString()).size() == 1,
                 () -> "沒有恰一則 (b) 的結束 INFO");
-        run.expect("plainOpenAfterTheEnd", M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "終局之後原艙門不是一般開門");
+        run.expect("plainOpenAfterTheEnd", M5CollapseDoors.plainOpen(run), () -> "終局之後原艙門不是一般開門");
         expectEnd(end.get());
         return true;
     }

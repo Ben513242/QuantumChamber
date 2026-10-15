@@ -9,7 +9,6 @@ import dev.quantumchamber.chamber.ChamberRegistryState;
 import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.ChamberState;
-import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapsePassage.End;
@@ -325,7 +324,7 @@ final class M5CollapsePassageChains {
         atStart = run.journal().flushedRecords().get(fixture.sid());
         run.proof.put("doorCenterOnDiskAtStart", M5CollapseWindows.doorCenterOnDisk(run, fixture));
         run.proof.put("doorCenterAtStart", run.source().getBlockState(local(3, 3, 0)).toString());
-        doorPlainAtStart = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
+        doorPlainAtStart = M5CollapseDoors.plainOpen(run);
         run.proof.put("doorPlainAtStart", doorPlainAtStart);
         var atHalt = halt.getAsJsonObject("atHalt");
         // F6-2d-2 Step 0（F6-2d-1 quality Minor 4）：recordKeptAcrossTheRestart 由窗口表斷言（expectAtRestart；halt 當下還有 record 的列都 withRecordKept）。
@@ -361,7 +360,7 @@ final class M5CollapsePassageChains {
         // 開服時已是一般開門（逐步存檔，見 doorPlainAtStart）時，這個 tick 仍是一般開門（終局沒有把門關上或帶回量子膜）。F6-2d Step 0（F6-2c quality Minor 2）：原本後者恆真。
         // F6-2c fix round 1（spec review M-3）：兩種時序都以同一個名稱斷言，具名斷言的集合不隨逐步存檔的時序變動。F6-2d-1（F6-2d Step 0 quality Minor 1）：由
         // notYetOpenOnTheEndTick 改名（開服時已是一般開門時，斷言的是「仍是一般開門」，原名與內容矛盾）；兩種時序仍是同一個名稱。
-        boolean plainOnTheEndTick = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
+        boolean plainOnTheEndTick = M5CollapseDoors.plainOpen(run);
         run.expect("doorUnchangedOnTheEndTick", plainOnTheEndTick == doorPlainAtStart,
                 () -> "doorPlainAtStart=" + doorPlainAtStart + "：終局的那個 tick 原艙門" + (plainOnTheEndTick ? "已是" : "不是") + "一般開門，與開服時不同");
         run.expect("comparatorReevaluated", fixture.controllerSignal(ChamberState.IDLE, 3), () -> "終局之後的 Controller=" + controllerState());
@@ -374,7 +373,7 @@ final class M5CollapsePassageChains {
      * （F6-2d Step 0，F6-2c quality Minor 2：沒有正規化可驗，失敗訊息帶 {@code doorPlainAtStart}）。
      */
     private boolean plainOpenOnTheNextTick() {
-        boolean plain = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
+        boolean plain = M5CollapseDoors.plainOpen(run);
         int now = run.server().getTicks();
         if (!plain && now < endTick + 3) return false;
         run.expect("plainOpenOnTheNextTick", plain && now == endTick + 1,
@@ -401,7 +400,7 @@ final class M5CollapsePassageChains {
     }
 
     private boolean ownerlessNormalizedOnTheNextTick() {
-        boolean plain = M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
+        boolean plain = M5CollapseDoors.plainOpen(run);
         int now = run.server().getTicks();
         if (!plain && now < normalizeTick + 2) return false;
         var normalized = run.startupLog().matching(Level.INFO, "找不到所屬 session 的量子膜已正規化為一般開門", "tick " + normalizeTick, fixture.chamber().toString());
@@ -426,7 +425,7 @@ final class M5CollapsePassageChains {
     private boolean closeTheDoorForTheNextSession() {
         var other = fixture.player(fixture.first(M5CollapseFixture.OTHERS));
         var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), other);
-        run.expect("doorClosedForTheNextSession", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, false, MembraneState.NONE), () -> "互動結果 " + result);
+        run.expect("doorClosedForTheNextSession", result.isAccepted() && M5CollapseDoors.closed(run), () -> "互動結果 " + result);
         return true;
     }
 
@@ -481,7 +480,7 @@ final class M5CollapsePassageChains {
     private boolean sealedDoorOpensNormally(End.Reminder reminder) throws Exception {
         var other = fixture.player(fixture.first(M5CollapseFixture.OTHERS));
         var result = M5GameTestSupport.interact(run.source(), local(3, 3, 0), other);
-        run.expect("doorOpensNormally", result.isAccepted() && M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE), () -> "互動結果 " + result);
+        run.expect("doorOpensNormally", result.isAccepted() && M5CollapseDoors.plainOpen(run), () -> "互動結果 " + result);
         var sid = fixture.sid();
         run.expect("stillSealed", atStart.equals(run.journal().flushedRecords().get(sid)), () -> "state=" + M5GameTestSupport.state(run.journal(), sid));
         passage.expectEnd(End.inTheSourceWorld(fixture).placed(M5CollapseFixture.SELECTOR, Place.UNIVERSE).withStartupReminder(reminder));
