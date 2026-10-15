@@ -536,7 +536,9 @@ final class M5CollapseUnsupportedChain {
      *     寫成 DORMANT 的寫出在同一個 server tick（兩者都由 journal 寫出的探針 {@link #watchTheFlush} 記下）。F6-2e-3（F6-2e-2 quality Minor 2）：原本取消的 tick 是這個 step 觀察到 record 不在
      *     的 tick，與探針記下的 DORMANT 不是同一種量法，所以容許差 1，分不出「晚一個 tick 才取消」；改由探針記下取消的寫出、以相等比較（<b>判斷變嚴</b>）。相等是確定的：DORMANT 由走廊與
      *     session 的 {@code END_SERVER_TICK}（保留式清理完成、space 已釋放）寫出，塌縮流程的 {@code END_SERVER_TICK} 註冊在它們之後（plan 決策 1），同一個 tick 就觀察到 flushed DORMANT 並取消；
-     *     F6-2e-1、F6-2e-2 的 GREEN 與 run-all 也都是差 0。</li>
+     *     F6-2e-1、F6-2e-2 的 GREEN 與 run-all 也都是差 0。F6-3 Step 0（F6-2e-3 spec M-3）：只比寫出的 tick 時，「完成的 tick」沒有上限（{@code newRemovedAt} 記的是第一次 staged 已移除的
+     *     寫出；那次終局 flush 失敗、之後才確認時仍成立），所以另要求這個 step 觀察到 NEW 已不在 flushed 與 staged 的 tick 最多晚取消的寫出 1 tick（<b>判斷變嚴</b>，名稱不變）。容許 1：
+     *     這個 step 在 {@code returned} 完成的下一個 tick 才開始，取消若發生在那個 tick，最早在下一個 tick 看到；F6-2e-3 起記下取消的寫出的 run（GREEN、mutation、run-all）都是差 0。</li>
      * <li>{@code corridorSpaceReleasedAtTheCancel}（F6-2e-2，F6-2e-1 spec M-5）：§11.3 第 1 步的幾何清理：這個 session 的走廊 space 已釋放（{@link M5CollapseFixture#spaceExists}）。</li>
      * <li>{@code originUnblocked}（spec §11.3 第 3 步「原艙解除封鎖」，production 的判斷）：這座艙的 presence 是 NONE（{@code SuperpositionSessionManager.start} 拒絕新 session 的條件之一）、沒有
      *     runtime 與來源 ticket、Controller 不是 ARMED、registry 的 power state 不是 RETURNING。</li>
@@ -557,8 +559,9 @@ final class M5CollapseUnsupportedChain {
                 () -> "返還之後 " + tick + " 個 tick：已取消=" + happened + " 取消的 INFO=" + cancelled + "（候選 New=" + newCandidate + "）提交=" + committed + " 寫出過 COLLAPSING="
                         + newWroteCollapsing + " 先寫成 DORMANT 的 tick=" + newDormantAt);
         int removedAt = newRemovedAt;
-        run.expect("newCancelledOnTheFirstDormantObservation", newDormantAt >= 0 && removedAt == newDormantAt,
-                () -> "第一次寫成 DORMANT 在 tick " + newDormantAt + "，取消的寫出在 tick " + removedAt + "（這個 step 觀察到不在的 tick " + cancelledAt + "）");
+        // F6-3 Step 0（F6-2e-3 spec M-3）：另要求完成的 tick（這個 step 觀察到 flushed 與 staged 都沒有 NEW）最多晚取消的寫出 1 tick（判斷變嚴）。
+        run.expect("newCancelledOnTheFirstDormantObservation", newDormantAt >= 0 && removedAt == newDormantAt && cancelledAt - removedAt <= 1,
+                () -> "第一次寫成 DORMANT 在 tick " + newDormantAt + "，取消的寫出在 tick " + removedAt + "，這個 step 觀察到不在的 tick " + cancelledAt + "（最多晚 1 tick）");
         boolean space = fixture.spaceExists();
         run.expect("corridorSpaceReleasedAtTheCancel", !space, () -> "取消之後這個 session 仍有走廊 space");
         var presence = ChamberSessions.gateway().presence(run.server(), chamber);
