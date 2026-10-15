@@ -2,6 +2,7 @@ package dev.quantumchamber.gametest;
 
 import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
+import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.collapse.CollapseServiceTestAccess;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
@@ -10,6 +11,7 @@ import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.superposition.SessionState;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -27,6 +29,9 @@ import org.apache.logging.log4j.Level;
  * 自己的狀態，由子類別的開服與 JOIN 寫入），restart builder 只有這一份（{@code M5CollapseDoorChains} 也繼承它，不另寫第二份）；{@link M5CollapsePassage} 是所有 chain
  * （含開服時就結束通道、不經觸發的 {@code M5CollapsePassageChains} 與 {@code M5CollapseDormantChains}）共用的 RESOLVE 之後的段與終局斷言，不放只給觸發續行的 restart 用的狀態。
  * 子類別要用的成員由 private 改為 package-private，其餘與搬移之前相同。
+ * <p>F6-2e Step 0（F6-2d-2 B2 quality Minor 2）：crash phase 的共用骨架（{@link #crash}，原艙與收據由 {@link CrashSetup} 給）與「discovery 的讀取失敗一次」
+ * （{@link #discoveryReadFails}）也在這裡：原本 {@code M5CollapseDoorChains} 的 private {@code crash} 與 {@code M5CollapseRetryChains.materializeFailureCrash} 每一步都相同、
+ * discovery 的 fault 兩邊各寫一次。
  */
 abstract class M5CollapseRestartChains {
     /** restart 開服時以 probe 的 ticket 同步載入的半徑（chunk；原艙與 {@code CollapseService.neighborhoodLoaded} 外擴的 3 格都在 Controller 所在 chunk 的半徑 1 之內）。 */
@@ -93,6 +98,60 @@ abstract class M5CollapseRestartChains {
         this.run = run;
         fixture = new M5CollapseFixture(run);
         passage = new M5CollapsePassage(run, fixture);
+    }
+
+    // ---- crash phase（F6-2e Step 0，F6-2d-2 B2 quality Minor 2）----
+
+    /** crash phase 在 step {@code receipt} 寫入並原生存檔的收據（{@link CrashSetup#receipt}）：只建立，不寫入。 */
+    @FunctionalInterface interface CrashReceipt { SessionRecoveryRecord build() throws Exception; }
+
+    /**
+     * {@link #crash} 收據之前的原艙與收據（F6-2e Step 0，F6-2d-2 B2 quality Minor 2：原本寫死 {@code fixture.buildOrigin(1)} 與 {@code fixture.dormantNewReceipt()}）：
+     * {@code origin} 是 step {@code build} 的本體（fresh 世界蓋原艙與參與者），{@code receipt} 在 step {@code receipt} 建立要寫入的收據（例如 F6-2e 的 W10 的非 DORMANT 收據）。
+     */
+    record CrashSetup(M5CollapseRun.Checked origin, CrashReceipt receipt) {
+        CrashSetup {
+            Objects.requireNonNull(origin, "origin");
+            Objects.requireNonNull(receipt, "receipt");
+        }
+    }
+
+    /** F6-2d-2 的 crash phase 都用的 {@link CrashSetup}：一位參與者在艙外（{@code fixture.buildOrigin(1)}）、DORMANT 的 NEW 收據（{@code fixture.dormantNewReceipt()}）。 */
+    CrashSetup dormantNewSetup() {
+        return new CrashSetup(() -> fixture.buildOrigin(1), fixture::dormantNewReceipt);
+    }
+
+    /**
+     * crash phase 的共用骨架（F6-2e Step 0，F6-2d-2 B2 quality Minor 2：原本是 {@code M5CollapseDoorChains} 的 private {@code crash}，{@code M5CollapseRetryChains} 的
+     * {@code materializeFailureCrash} 另有一份每一步都相同的；移到這裡、改為 package-private，原艙與收據改由 {@code setup} 給）：fresh 世界蓋原艙（{@code build}，
+     * {@link CrashSetup#origin}）→ 原艙註冊（{@code registered}）→ {@code beforeReceipt}（收據之前的準備，例如開門、在門口放 entity）→ {@code receipt}：寫入
+     * {@link CrashSetup#receipt} 建立的收據、原生存檔，{@code install} 裝上這條 chain 的 hook 或 fault，再依窗口表裝上 {@code id} 的 crash 點 → 參與者由艙外進入（{@code enter}）→
+     * COLLAPSING（{@code committed}）→ 最多 {@code haltTicks} 個 tick 等到窗口 halt（{@code halt}；halt 之前的取證在窗口表）。step 的名稱、順序與上限與移動之前的兩份相同。
+     */
+    Phase crash(CrashSetup setup, List<Step> beforeReceipt, M5CollapseRun.Checked install, CrashWindow id, int haltTicks) {
+        var steps = new ArrayList<Step>();
+        steps.add(new Step("build", 1, () -> { setup.origin().run(); return true; }));
+        steps.add(new Step("registered", 200, fixture::registered));
+        steps.addAll(beforeReceipt);
+        steps.add(new Step("receipt", 1, () -> {
+            fixture.writeCrashReceipt(setup.receipt().build());
+            install.run();
+            M5CollapseWindows.arm(run, fixture, id);
+            return true;
+        }));
+        steps.add(enter());
+        steps.add(new Step("committed", 40, fixture::committed));
+        steps.add(new Step("halt", haltTicks, () -> false));
+        return Phase.halt(steps).started(fixture::requireFreshWorld);
+    }
+
+    /**
+     * 收據之後（例如 {@link #crash} 的 {@code install}）：discovery 的下一次 checked 讀取失敗一次（RESOLVE 第 4 步，SEALED(AUTHORITY_UNREADABLE)；建立收據的 candidate context 也讀
+     * discovery，所以排在收據之後）。回傳裝上的 fault（命中次數）。F6-2e Step 0（F6-2d-2 B2 quality Minor 2）：原本 {@code M5CollapseDoorChains} 與
+     * {@code M5CollapseRetryChains} 的 F6-2-07 crash 各寫一次。
+     */
+    M5TestHooks.CheckedReadFault discoveryReadFails() {
+        return run.install(M5TestHooks.CHECKED_READ_FAULT, new M5TestHooks.CheckedReadFault(UniverseDiscoveryState.FILE_NAME, 0, 1));
     }
 
     /**

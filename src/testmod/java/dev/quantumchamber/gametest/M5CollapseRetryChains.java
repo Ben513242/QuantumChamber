@@ -4,7 +4,6 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
 import dev.quantumchamber.candidate.CandidateBytes;
 import dev.quantumchamber.candidate.NewUniverseIntent;
-import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.collapse.CollapseAuthorities;
 import dev.quantumchamber.collapse.CollapseBackoff;
 import dev.quantumchamber.collapse.SealedReason;
@@ -130,17 +129,9 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      * （{@code MATERIALIZE_SEALED}：W9 與 (a) 在這裡 halt）。
      */
     Phase materializeFailureCrash(CrashWindow id) {
-        var steps = new ArrayList<>(origin());
-        steps.add(new Step("receipt", 1, () -> {
-            fixture.writeCrashReceipt(fixture.dormantNewReceipt());
-            run.install(M5TestHooks.MATERIALIZE_FAULT, new M5TestHooks.MaterializeFault(UniverseKeys.world(fixture.universe(), DimensionRole.OVERWORLD)));
-            M5CollapseWindows.arm(run, fixture, id);
-            return true;
-        }));
-        steps.add(new Step("enter", 1, () -> { fixture.moveInside(); return true; }));
-        steps.add(new Step("committed", 40, fixture::committed));
-        steps.add(new Step("halt", 400, () -> false));
-        return crashPhase(steps);
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 2）：改用基底的 crash 骨架（原本這裡逐步寫了一份相同的 step：名稱、順序與上限都不變）。
+        return crash(dormantNewSetup(), List.of(),
+                () -> run.install(M5TestHooks.MATERIALIZE_FAULT, new M5TestHooks.MaterializeFault(UniverseKeys.world(fixture.universe(), DimensionRole.OVERWORLD))), id, 400);
     }
 
     /**
@@ -166,7 +157,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var steps = new ArrayList<>(origin());
         steps.add(new Step("receipt", 1, () -> {
             fixture.writeCrashReceipt(fixture.dormantNewReceipt());
-            readFault = run.install(M5TestHooks.CHECKED_READ_FAULT, new M5TestHooks.CheckedReadFault(UniverseDiscoveryState.FILE_NAME, 0, 1));
+            readFault = discoveryReadFails();
             return true;
         }));
         steps.add(new Step("enter", 1, () -> { fixture.moveInside(); return true; }));

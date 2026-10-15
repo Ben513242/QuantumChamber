@@ -8,7 +8,6 @@ import static dev.quantumchamber.gametest.M5CollapseDoors.reapplied;
 import static dev.quantumchamber.gametest.M5CollapseDoors.reapplyQueued;
 import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 
-import dev.quantumchamber.candidate.UniverseDiscoveryState;
 import dev.quantumchamber.chamber.ChamberCollapsePort;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.collapse.OriginDoorsTestAccess;
@@ -63,7 +62,8 @@ import org.apache.logging.log4j.Level;
  *     的第二個 restart 會接在第一個改過的世界上）。</li>
  * </ul>
  * <p>放在新的類別（不併入 {@link M5CollapseRetryChains}）：窗口條件與門的斷言共用，F6-2d-2 B2 的 SEALED 門窗口也放這裡；restart builder 與觸發之後的等法由基底
- * {@link M5CollapseRestartChains} 提供，不另寫一份。重新套用的 INFO 與門的狀態的查詢在 {@link M5CollapseDoors}（F6-2d-2 B2a 由這裡以純搬移抽出）。
+ * {@link M5CollapseRestartChains} 提供，不另寫一份。重新套用的 INFO 與門的狀態的查詢在 {@link M5CollapseDoors}（F6-2d-2 B2a 由這裡以純搬移抽出）。F6-2e Step 0（F6-2d-2 B2
+ * quality Minor 2）：crash phase 的骨架（{@code crash}）與 discovery 的讀取失敗（{@code discoveryReadFails}）移到基底，這裡的 crash 都以 {@code dormantNewSetup()} 呼叫它。
  */
 final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** preparedoor：PREPARE 準備完成、PASSAGE_READY 的提交第一次被暫緩之前最多等幾個 tick（預載、REPAIR 與 checkpoint；比照 {@code passage.ready} 的上限）。 */
@@ -123,29 +123,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * （halt 之前的取證與原生存檔在窗口表）。
      */
     Phase readyHeldCrash() {
-        return crash(List.of(), () -> run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid())), CrashWindow.READY_HELD, 600);
-    }
-
-    /**
-     * 這個類別的 crash phase 共用的骨架（F6-2d-2 B2：{@link #readyHeldCrash} 與 SEALED 的門窗口共用；step 的名稱、順序與上限與 B1 的 {@code readyHeldCrash} 相同）：fresh 世界蓋原艙、
-     * 一位參與者在艙外 → 原艙註冊 → {@code beforeReceipt}（收據之前的準備，例如開門、在門口放 entity）→ DORMANT 的 NEW 收據、原生存檔，{@code install} 裝上這條 chain 的 hook 或 fault，
-     * 再依窗口表裝上 {@code id} 的 crash 點 → 參與者由艙外進入 → COLLAPSING → 最多 {@code haltTicks} 個 tick 等到窗口 halt（halt 之前的取證在窗口表）。
-     */
-    private Phase crash(List<Step> beforeReceipt, M5CollapseRun.Checked install, CrashWindow id, int haltTicks) {
-        var steps = new ArrayList<Step>();
-        steps.add(new Step("build", 1, () -> { fixture.buildOrigin(1); return true; }));
-        steps.add(new Step("registered", 200, fixture::registered));
-        steps.addAll(beforeReceipt);
-        steps.add(new Step("receipt", 1, () -> {
-            fixture.writeCrashReceipt(fixture.dormantNewReceipt());
-            install.run();
-            M5CollapseWindows.arm(run, fixture, id);
-            return true;
-        }));
-        steps.add(enter());
-        steps.add(new Step("committed", 40, fixture::committed));
-        steps.add(new Step("halt", haltTicks, () -> false));
-        return Phase.halt(steps).started(fixture::requireFreshWorld);
+        return crash(dormantNewSetup(), List.of(), () -> run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid())), CrashWindow.READY_HELD, 600);
     }
 
     // ---- waitingdoor（F6-2-08）----
@@ -361,7 +339,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * 艙外進入 → COLLAPSING → RESOLVE 第 4 步讀 discovery 失敗 → SEALED(AUTHORITY_UNREADABLE) 已確認、{@code sealCommitted} 的關門之前 halt（halt 之前不存檔）。
      */
     Phase plainDoorSealedCrash() {
-        return crash(List.of(new Step("opened", 1, this::openedBeforeTheReceipt)), this::discoveryReadFails, CrashWindow.UNREADABLE_SEALED, 400);
+        return crash(dormantNewSetup(), List.of(new Step("opened", 1, this::openedBeforeTheReceipt)), this::discoveryReadFails, CrashWindow.UNREADABLE_SEALED, 400);
     }
 
     /**
@@ -369,7 +347,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * （{@code standInTheDoorwayBeforeTheReceipt}；收據的原生存檔把它存進 entity storage）。
      */
     Phase doorwaySealedCrash() {
-        return crash(List.of(new Step("stand", 1, this::standInTheDoorwayBeforeTheReceipt)), this::discoveryReadFails, CrashWindow.UNREADABLE_SEALED_DOORWAY, 400);
+        return crash(dormantNewSetup(), List.of(new Step("stand", 1, this::standInTheDoorwayBeforeTheReceipt)), this::discoveryReadFails, CrashWindow.UNREADABLE_SEALED_DOORWAY,
+                400);
     }
 
     /** sealclose 的 crash：參與者（艙外）照一般方式開門，這時原艙是 IDLE（沒有 session），門照一般門切換為一般開門。 */
@@ -386,11 +365,6 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         boolean occupied = OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME), closed = M5CollapseDoors.closed(run);
         run.expect("standInTheDoorwayBeforeTheReceipt", occupied && closed, () -> "門口有 entity=" + occupied + " 門關著=" + closed + " 門正中=" + doorCenter(run));
         return true;
-    }
-
-    /** 收據之後（{@link #crash} 的 {@code install}）：discovery 的下一次 checked 讀取失敗一次（RESOLVE 第 4 步，SEALED(AUTHORITY_UNREADABLE)）。 */
-    private void discoveryReadFails() {
-        run.install(M5TestHooks.CHECKED_READ_FAULT, new M5TestHooks.CheckedReadFault(UniverseDiscoveryState.FILE_NAME, 0, 1));
     }
 
     /**
@@ -573,7 +547,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * SEALED(PROJECTION_FAILED) 已確認、{@code sealCommitted} 的關門之前 halt（halt 之前原生存檔：sealed 的門與參與者在艙內的 playerdata 都在磁碟上）。
      */
     Phase membraneSealedCrash() {
-        return crash(List.of(), this::projectionWriteFails, CrashWindow.PROJECTION_SEALED, 600);
+        return crash(dormantNewSetup(), List.of(), this::projectionWriteFails, CrashWindow.PROJECTION_SEALED, 600);
     }
 
     /** 收據之後（{@link #crash} 的 {@code install}）：U 的第一次投影寫入失敗一次（{@code CollapseService.project} 已先寫下 PENDING）。 */
