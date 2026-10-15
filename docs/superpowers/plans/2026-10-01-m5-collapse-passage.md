@@ -813,7 +813,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - **F6-2e Step 0**：F6-2d-2 B2 review 留下的整理（crash 骨架移到基底、`OriginDoorState`、`awaiting` 的 `eachTick` 等），不新增窗口。已完成（2026-10-15，spec review ✅、quality review Approved）。
       - **F6-2e-1**：Step 0 review 交下的整理（含 sealdoorway 把門口的非玩家 entity 也算進去的測試缺陷、README 的過時說法），W10。已完成（2026-10-15，spec review ✅、quality review Approved；`m5collapse=63`）。
       - **F6-2e-2**：F6-2e-1 review 交下的整理（journal 的讀寫抽到 `M5CollapseDiskEvidence`、門狀態與 helper 依 world／frame 參數化、W10 的等待改用 `awaiting`、`M4_RECEIPT_STEP` 併入既有的 crash window mixin 等），W11。已完成（2026-10-15，spec review ✅、quality review Approved；`m5collapse=67`）。
-      - **F6-2e-3**：F6-2e-2 review 交下的整理（W11 的說法限定在初始化的輸入、專屬列的守門、W10 取消時點的精確比較、mixin 的 Javadoc、proof 鍵與 helper 的小整理；其餘 `doorAll` 的平行對應以獨立的純 refactor commit 處理），W12，評估 F6-1 spec review 的 Minor 3 與 Minor 5。
+      - **F6-2e-3**：F6-2e-2 review 交下的整理（W11 的說法限定在初始化的輸入、專屬列的守門、W10 取消時點的精確比較、mixin 的 Javadoc、proof 鍵與 helper 的小整理；其餘 `doorAll` 的平行對應以獨立的純 refactor commit 處理），W12，評估 F6-1 spec review 的 Minor 3 與 Minor 5。已完成（2026-10-15，spec review ✅、quality review Approved；`m5collapse=69`；Minor 3 判定不需要、Minor 5 判定已涵蓋）。**F6-2e 完成，F6-2 完成。**
     - W10；
     - W11；
     - W12；
@@ -833,6 +833,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
   - 其餘各節「交給後續」中的重啟變體。
   - 若 §12 矩陣需要改 production（`CollapseService`、`SessionRecoveryManager`），先回報 controller。CS 已約 1590 行，會改到 CS 時，先依 F5-0 交接的條件評估是否把 PREPARE 抽出。
 - **F6-3：harness 與 CI。**
+  - 開工時先做 **Step 0**：F6-2e-3 review 交下的 probe 整理，只改 testmod 的 probe 與 README，清單見 note F6-2e-3 一節的 review 區塊。其中 W12 第二次重試的斷言與「退避加倍」的證據（quality Minor 2）優先。
   - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
   - boundary oracle 以 PID 挑 receipt 時的碰撞。
   - Windows journal 原子移動偶發的 `AccessDeniedException`。
