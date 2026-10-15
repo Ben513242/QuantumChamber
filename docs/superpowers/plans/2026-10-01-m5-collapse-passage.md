@@ -800,6 +800,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
         - **B1：A 段 fix round 與 PREPARE 的門窗口。** A 段的 I-1、quality Minor 1～5、nit；H9 quality Minor 6；B 段要重用的 restart builder 與 await step 以純搬移抽到共用位置；F6-2-08（sealed 量子膜期間 crash → WAITING、一般開門；本來關著的門保留關著）、F6-2-10（PREPARE 中重啟 → 依條件重新套用）。A 段 I-1 的複審併入 B1 的 spec review。
         - **B2：SEALED 的門窗口。** F6-2-09（SEALED 開服後只關門一次、門口有人時一般開門）、F6-2-11（SEALED、門帶著量子膜時重啟：沒有參與者時關門，參與者開服時就在艙內時依 H9 (a) 改為一般開門）。
         - B1 已完成（2026-10-14，spec review ✅（A 段 I-1 經複審關閉）、quality review Approved；`m5collapse=53`）。B1 的 quality Minor 1～5 與 nit 排在 B2 的第一步（B1 fix round）。
+        - B2 已完成（2026-10-15，由兩次接力完成：B2a＝B1 fix round，B2b＝SEALED 的門窗口；spec review ✅、quality review Approved；`m5collapse=61`）。**F6-2d-2 完成**。B2 的 quality Minor 1～5、nit 與 spec M-1 的 Javadoc 排在 **F6-2e Step 0**（加 W10～W12 之前）；清單見 note「## F6-2d-2 B2」一節的 review 區塊。
     - W8；
     - W9，含 I-1 的跨重啟版與開服時 COLLAPSING＋`DISABLED`；
     - `AUTHORITY_UNREADABLE` 重啟後重試；
