@@ -230,8 +230,13 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
 
     /** 原艙已註冊（{@link M5GameTestSupport#registeredIdle}）時記下 chamber UUID 並回傳 Controller；還沒有時回 null。 */
     ChamberControllerBlockEntity registeredController() {
-        if (!M5GameTestSupport.registeredIdle(run.source(), FRAME)) return null;
-        var controller = M5GameTestSupport.controller(run.source(), FRAME);
+        return registeredController(run.source());
+    }
+
+    /** 同 {@link #registeredController()}，原艙 {@link #FRAME} 在 {@code world}（F6-2e-2，{@link #arm(ServerWorld, Who)} 用）。 */
+    private ChamberControllerBlockEntity registeredController(ServerWorld world) {
+        if (!M5GameTestSupport.registeredIdle(world, FRAME)) return null;
+        var controller = M5GameTestSupport.controller(world, FRAME);
         chamber = controller.chamberUuid();
         return controller;
     }
@@ -323,18 +328,26 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
      * flushed record，是 ARMING）。回傳 ARMING 的 record；原艙還不是 IDLE、readiness 還沒有通過時回 null（下一個 tick 再試）。不改這條 chain 的 session。
      */
     SessionRecoveryRecord arm(Who who) throws Exception {
-        var controller = registeredController();
+        return arm(run.source(), who);
+    }
+
+    /**
+     * 同 {@link #arm(Who)}，原艙 {@link #FRAME} 在 {@code world}（F6-2e-2，F6-2e-1 quality Minor 1：W10 的原艙在 Nether，原本另以 {@code armed()} 寫一份幾乎相同的；
+     * {@link #arm(Who)} 委派給這裡，在來源世界）。
+     */
+    SessionRecoveryRecord arm(ServerWorld world, Who who) throws Exception {
+        var controller = registeredController(world);
         if (controller == null) return null;
         var arming = members(who);
         var players = participants.stream().filter(arming::contains).map(this::player).toList();
-        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
+        world.setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
         for (var player : players) {
             if (!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
         }
-        if (!new ChamberActivationService().evaluateReadiness(run.source(), controller).accepted()) return null;
+        if (!new ChamberActivationService().evaluateReadiness(world, controller).accepted()) return null;
         for (var player : players) PlayerCheckpointStore.saveAndVerify(run.server(), player, Optional.empty());
         run.expect("nativeSaveBeforeArming", run.server().save(false, true, true), () -> "原生存檔失敗");
-        run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
+        world.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
         var records = run.journal().flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).toList();
         run.expect("armingFlushed", records.size() == 1 && records.getFirst().state() == SessionState.ARMING,
                 () -> "供電之後這座艙的 flushed record：" + records.stream().map(record -> record.state().name()).toList());
@@ -671,9 +684,17 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         try { return M5CollapseDiskEvidence.projections(run.data()).toString(); } catch (IOException | RuntimeException failure) { return "UNREADABLE: " + failure; }
     }
 
-    /** 參與者在艙內（區域座標 1..6 的內部空間）。 */
+    /** 參與者在 probe 的原艙 {@link #FRAME} 內（{@link #inside(ChamberFrame, ServerPlayerEntity)}）。 */
     static boolean inside(ServerPlayerEntity player) {
-        var local = ChamberSpaceCoordinates.localPosition(FRAME, player.getPos());
+        return inside(FRAME, player);
+    }
+
+    /**
+     * 參與者在 {@code frame} 這座艙內（區域座標 1..6 的內部空間）。F6-2e-2（F6-2e-1 quality Minor 1）：原本寫死 {@link #FRAME}，W10 的第二座艙因此另寫一份同樣的判斷
+     * （{@code insideTheSourceChamber}）；改收 frame，{@link #inside(ServerPlayerEntity)} 委派給這裡。
+     */
+    static boolean inside(ChamberFrame frame, ServerPlayerEntity player) {
+        var local = ChamberSpaceCoordinates.localPosition(frame, player.getPos());
         return local.x >= 1 && local.x < 6 && local.y >= 1 && local.y < 6 && local.z >= 1 && local.z < 6;
     }
 

@@ -10,6 +10,7 @@ import static dev.quantumchamber.gametest.M5CollapseFixture.interiorMarker;
 import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
 import com.google.gson.JsonObject;
+import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
@@ -357,12 +358,15 @@ final class M5CollapseWindows {
             };
         }
 
-        /** 25 格門的 {@code membrane}（probe 的原艙 {@code FRAME}，sealed 量子膜朝外）；同 {@link #open}，exhaustive。 */
-        MembraneState membrane() {
+        /**
+         * {@code frame} 這座艙的 25 格門的 {@code membrane}（量子膜朝 {@code frame} 的外側）；同 {@link #open}，exhaustive。F6-2e-2（F6-2e-1 quality Minor 1）：原本寫死 probe 的原艙
+         * {@code FRAME}，W10 的另一座艙（{@code M5CollapseUnsupportedChain.SOURCE_FRAME}）因此另以 {@code M5GameTestSupport.doorAll} 寫一份對應；改收 frame。
+         */
+        MembraneState membrane(ChamberFrame frame) {
             return switch (this) {
                 case CLOSED, PLAIN_OPEN -> MembraneState.NONE;
-                case SEALED_MEMBRANE -> MembraneState.sealedFor(FRAME.outwardFacing());
-                case PASSABLE_MEMBRANE -> MembraneState.passableFor(FRAME.outwardFacing());
+                case SEALED_MEMBRANE -> MembraneState.sealedFor(frame.outwardFacing());
+                case PASSABLE_MEMBRANE -> MembraneState.passableFor(frame.outwardFacing());
             };
         }
     }
@@ -617,7 +621,7 @@ final class M5CollapseWindows {
      */
     private static boolean readyHeldWithTheMembrane(M5CollapseFixture fixture, Object detail) {
         return detail instanceof M5TestHooks.ReadyHeld held && held.view().sessionUuid().equals(fixture.sid()) && held.view().state() == SessionState.COLLAPSING
-                && M5GameTestSupport.doorSealed(fixture.source(), FRAME);
+                && M5CollapseDoors.is(fixture.source(), FRAME, OriginDoorState.SEALED_MEMBRANE);
     }
 
     /** W4：第一次寫入剛寫完 U 的 Controller 那一格（targets 依 x→y→z：Controller 之前與目標不同的格已寫，之後的還沒有）。 */
@@ -710,7 +714,7 @@ final class M5CollapseWindows {
 
     /** F6-2-11（F6-2d-2 B2）：SEALED(PROJECTION_FAILED) 已確認，而且原艙門是 PREPARE 的 sealed 量子膜（投影之前的 {@code prepareDoor} 已套用）。 */
     private static boolean projectionSealedWithTheMembrane(M5CollapseFixture fixture, Object detail) {
-        return sealedWrite(fixture, detail, SealedReason.PROJECTION_FAILED) && M5GameTestSupport.doorSealed(fixture.source(), FRAME);
+        return sealedWrite(fixture, detail, SealedReason.PROJECTION_FAILED) && M5CollapseDoors.is(fixture.source(), FRAME, OriginDoorState.SEALED_MEMBRANE);
     }
 
     /** W9 的變體 (b)（F6-2d-1）：catalog 中這條 chain 的 U 已 checked 改為 DISABLED（{@code changeCatalogAvailability} 回 APPENDED）。 */
@@ -904,7 +908,7 @@ final class M5CollapseWindows {
     private static void savedBeforePassable(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
         var commit = (M5TestHooks.CollapsingCommit) detail;
         recordOnDisk(run, fixture, evidence, commit.next(), "readyOnDiskAtHalt");
-        run.expect("sealedDoorBeforePassable", M5GameTestSupport.doorSealed(run.source(), FRAME), () -> "READY 提交的那一刻原艙門不是 PREPARE 的 sealed 量子膜");
+        run.expect("sealedDoorBeforePassable", M5CollapseDoors.is(run, OriginDoorState.SEALED_MEMBRANE), () -> "READY 提交的那一刻原艙門不是 PREPARE 的 sealed 量子膜");
         for (var player : fixture.players()) run.expect("insideTheChamberAtHalt", M5CollapseFixture.inside(player), () -> "參與者在 " + player.getPos());
         sealedDoorSavedAtHalt(run, fixture, evidence);
     }
@@ -1225,7 +1229,7 @@ final class M5CollapseWindows {
         var door = declared.get();
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：對應改由 enum 給（與 M5CollapseDoors.is 共用）。
         boolean open = door.open();
-        var membrane = door.membrane();
+        var membrane = door.membrane(FRAME);
         boolean holds = doorOnDisk(run, fixture, open, membrane);
         String center = holds ? "" : doorCenterOnDisk(run, fixture);
         run.expect("doorAsExpectedAtStart", holds, () -> "開服時磁碟上的原艙門不是 " + door + "（open=" + open + " membrane=" + membrane.asString() + "）：門正中=" + center);

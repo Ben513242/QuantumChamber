@@ -14,14 +14,13 @@ import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.chamber.ChamberState;
-import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.chamber.QuantumBulkheadBlock;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
+import dev.quantumchamber.gametest.M5CollapseWindows.OriginDoorState;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
-import dev.quantumchamber.persistence.PlayerCheckpointStore;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
@@ -35,7 +34,6 @@ import java.nio.file.Files;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -44,7 +42,6 @@ import net.minecraft.SharedConstants;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
-import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtSizeTracker;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -183,25 +180,16 @@ final class M5CollapseUnsupportedChain {
     }
 
     /**
-     * step：比照 {@link M5CollapseFixture#arm}（那裡固定在來源世界）在 Nether 的第一座艙啟動：拿掉紅石塊（LOW）、參與者移到艙內並給 Buff，readiness 通過之後存他的 checkpoint 與原生存檔，
-     * 再放回紅石塊（HIGH）→ 這座艙必須立即有 checked ARMING（{@code armingFlushed}），它就是這條 chain 的 session。readiness 還沒有通過時下一個 tick 再試。
+     * step：參與者移到 Nether 的第一座艙內，再以 {@link M5CollapseFixture#arm(ServerWorld, M5CollapseFixture.Who)} 啟動（拿掉紅石塊（LOW）、給 Buff，readiness 通過之後存他的 checkpoint
+     * 與原生存檔，再放回紅石塊（HIGH）→ 這座艙必須立即有 checked ARMING，{@code armingFlushed}），ARMING 就是這條 chain 的 session。readiness 還沒有通過時下一個 tick 再試。
+     * F6-2e-2（F6-2e-1 quality Minor 1）：原本這裡另寫一份幾乎相同的 arm（fixture 的版本寫死來源世界）；移到艙內仍在 arm 之前（同一個 tick，原本是拿掉紅石塊之後），其餘順序與斷言相同。
      */
     private boolean armed() throws Exception {
-        var nether = nether();
-        var controller = M5GameTestSupport.controller(nether, FRAME);
         var player = fixture.player(fixture.participants().getFirst());
-        nether.setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
         if (!M5CollapseFixture.inside(player)) M5GameTestSupport.moveInside(player, FRAME);
-        if (!player.hasStatusEffect(ModEffects.QUANTUM_STATE)) player.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 1_000_000));
-        if (!new dev.quantumchamber.chamber.ChamberActivationService().evaluateReadiness(nether, controller).accepted()) return false;
-        PlayerCheckpointStore.saveAndVerify(run.server(), player, Optional.empty());
-        run.expect("nativeSaveBeforeArming", run.server().save(false, true, true), () -> "原生存檔失敗");
-        nether.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), Block.NOTIFY_ALL);
-        var chamber = controller.chamberUuid();
-        var records = run.journal().flushedRecords().values().stream().filter(record -> record.chamberUuid().equals(chamber)).toList();
-        run.expect("armingFlushed", records.size() == 1 && records.getFirst().state() == SessionState.ARMING,
-                () -> "供電之後這座艙的 flushed record：" + records.stream().map(record -> record.state().name()).toList());
-        fixture.session(records.getFirst().sessionUuid());
+        var arming = fixture.arm(nether(), M5CollapseFixture.EVERYONE);
+        if (arming == null) return false;
+        fixture.session(arming.sessionUuid());
         return true;
     }
 
@@ -471,10 +459,9 @@ final class M5CollapseUnsupportedChain {
         return true;
     }
 
-    /** SOURCE 的參與者在第二座艙內（區域座標 1..6 的內部空間）。 */
+    /** SOURCE 的參與者在第二座艙內（{@link M5CollapseFixture#inside(ChamberFrame, ServerPlayerEntity)}；F6-2e-2 起不再另寫一份同樣的判斷）。 */
     private static boolean insideTheSourceChamber(ServerPlayerEntity player) {
-        var local = ChamberSpaceCoordinates.localPosition(SOURCE_FRAME, player.getPos());
-        return local.x >= 1 && local.x < 6 && local.y >= 1 && local.y < 6 && local.z >= 1 && local.z < 6;
+        return M5CollapseFixture.inside(SOURCE_FRAME, player);
     }
 
     /**
@@ -534,9 +521,9 @@ final class M5CollapseUnsupportedChain {
     /** step {@code opened}：取消之後參與者在艙內照一般方式開門（關著的門照一般門的邏輯改為一般開門；{@code originDoorOpensNormally}）。 */
     private boolean originDoorOpensNormally() {
         var nether = nether();
-        boolean closedBefore = M5GameTestSupport.doorAll(nether, FRAME, false, MembraneState.NONE);
+        boolean closedBefore = M5CollapseDoors.is(nether, FRAME, OriginDoorState.CLOSED);
         var result = M5GameTestSupport.interact(nether, M5CollapseFixture.local(3, 3, 0), fixture.player(fixture.participants().getFirst()));
-        boolean plain = M5GameTestSupport.doorAll(nether, FRAME, true, MembraneState.NONE);
+        boolean plain = M5CollapseDoors.is(nether, FRAME, OriginDoorState.PLAIN_OPEN);
         run.expect("originDoorOpensNormally", closedBefore && result.isAccepted() && plain,
                 () -> "開門之前關著=" + closedBefore + " 結果=" + result + " 一般開門=" + plain + " 門正中=" + nether.getBlockState(M5CollapseFixture.local(3, 3, 0)));
         return true;
@@ -550,7 +537,7 @@ final class M5CollapseUnsupportedChain {
     private void sourceReceiptCompleted(int tick, boolean happened) {
         var sid = sourceReceipt.sessionUuid();
         int committed = logged(Level.INFO, "塌縮已提交", sid), completed = logged(Level.INFO, "SOURCE 塌縮完成", sid), cancelled = logged(Level.INFO, "不支援的來源維度", sid);
-        boolean plain = M5GameTestSupport.doorAll(nether(), SOURCE_FRAME, true, MembraneState.NONE);
+        boolean plain = M5CollapseDoors.is(nether(), SOURCE_FRAME, OriginDoorState.PLAIN_OPEN);
         var destination = sourceDestination;
         run.expect("sourceReceiptCompleted", () -> happened && !M4CandidateTestAccess.diskRecords(run.server()).containsKey(sid) && committed == 1 && completed == 1 && cancelled == 0
                         && destination instanceof CollapseDestination.Source && plain,

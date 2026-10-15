@@ -3,6 +3,7 @@ package dev.quantumchamber.gametest;
 import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
+import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.collapse.OriginDoorsTestAccess;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import java.util.ArrayList;
@@ -11,6 +12,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.decoration.ArmorStandEntity;
+import net.minecraft.server.world.ServerWorld;
 import org.apache.logging.log4j.Level;
 
 /**
@@ -140,7 +142,16 @@ final class M5CollapseDoors {
      * switch 是 {@link #closed}、{@link #plainOpen} 與 {@code M5GameTestSupport.doorSealed}，三者都是同一個 {@code doorAll}，判斷相同。
      */
     static boolean is(M5CollapseRun run, M5CollapseWindows.OriginDoorState door) {
-        return M5GameTestSupport.doorAll(run.source(), FRAME, door.open(), door.membrane());
+        return is(run.source(), FRAME, door);
+    }
+
+    /**
+     * F6-2e-2（F6-2e-1 quality Minor 1、spec M-3）：{@code world} 裡 {@code frame} 這座艙的 25 格門是 {@code door}。{@link #is(M5CollapseRun, M5CollapseWindows.OriginDoorState)} 寫死
+     * 來源世界與 probe 的原艙 {@code FRAME}，所以 W10（Nether 的兩座艙）與窗口表的條件（只拿得到 fixture）原本各以 {@code M5GameTestSupport.doorAll}／{@code doorSealed} 自己對應門的狀態；
+     * 都改經這裡，{@code open}／{@code membrane} 只由 {@link M5CollapseWindows.OriginDoorState} 給。
+     */
+    static boolean is(ServerWorld world, ChamberFrame frame, M5CollapseWindows.OriginDoorState door) {
+        return M5GameTestSupport.doorAll(world, frame, door.open(), door.membrane(frame));
     }
 
     /**
