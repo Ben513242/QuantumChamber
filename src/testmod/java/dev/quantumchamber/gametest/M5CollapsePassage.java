@@ -267,7 +267,8 @@ final class M5CollapsePassage {
         var record = run.journal().flushedRecords().get(fixture.sid());
         if (record == null || record.state() != SessionState.PASSAGE_READY) return false;
         readyTicks[0]++;
-        boolean door = M5GameTestSupport.doorPassable(run.source(), FRAME), comparator = fixture.controllerSignal(ChamberState.PASSAGE, 15);
+        // F6-3 Step 0（F6-2e-3 quality nit）：經 M5CollapseDoors.is（原本 M5GameTestSupport.doorPassable(run.source(), FRAME)，同一個 doorAll(…, true, passable)，判斷相同）。
+        boolean door = M5CollapseDoors.is(run, M5CollapseWindows.OriginDoorState.PASSABLE_MEMBRANE), comparator = fixture.controllerSignal(ChamberState.PASSAGE, 15);
         if (!(door && comparator) && readyTicks[0] < 5) return false;
         run.expect("noOneCrossedYet", record.collapse().crossed().isEmpty(), () -> "Crossed=" + record.collapse().crossed());
         run.expect("doorPassable", door, () -> "PASSAGE_READY 之後門不是 passable 量子膜");

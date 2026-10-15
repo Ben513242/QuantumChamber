@@ -979,7 +979,8 @@ final class M5CollapseWindows {
         var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid());
         evidence.put("journalStateOnDisk", onDisk.map(record -> record.state().name()).orElse("ABSENT"));
         run.expect("terminatedOnDiskAtHalt", onDisk.isEmpty(), () -> "磁碟上仍有這個 session：" + evidence.get("journalStateOnDisk"));
-        run.expect("doorStillPassableAtHalt", M5GameTestSupport.doorPassable(run.source(), FRAME), () -> "改門之前原艙門已不是 passable");
+        // F6-3 Step 0（F6-2e-3 quality nit）：經 M5CollapseDoors.is（原本 M5GameTestSupport.doorPassable(run.source(), FRAME)，同一個 doorAll(…, true, passable)，判斷相同）。
+        run.expect("doorStillPassableAtHalt", M5CollapseDoors.is(run, OriginDoorState.PASSABLE_MEMBRANE), () -> "改門之前原艙門已不是 passable");
         run.expect("passableDoorOnDiskAtHalt", doorOnDisk(run, fixture, true, MembraneState.passableFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 passable");
         var controller = controllerStateOnDisk(run, fixture);
         evidence.put("controllerStateOnDisk", controller);
