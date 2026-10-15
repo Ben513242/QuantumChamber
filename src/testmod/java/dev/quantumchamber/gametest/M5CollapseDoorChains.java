@@ -335,7 +335,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** step {@code resealed}（只有 1 個 tick：非參與者離開之後的下一個 tick）：原艙門是 sealed 量子膜；之後釋放 PASSAGE_READY 的提交暫緩。 */
     private boolean resealedOnTheNextTick(int tick) {
         var sid = fixture.sid();
-        boolean sealed = M5GameTestSupport.doorSealed(run.source(), FRAME), outside = !M5CollapseFixture.inside(prepare.visitor);
+        boolean sealed = M5CollapseDoors.is(run, OriginDoorState.SEALED_MEMBRANE), outside = !M5CollapseFixture.inside(prepare.visitor);
         var record = run.journal().flushedRecords().get(sid);
         int sealedInfo = run.capture().matching(Level.INFO, "PREPARE：原艙門套用 sealed 量子膜", sid.toString()).size();
         run.expect("resealedOnTheNextTick", sealed && outside && collapsing(record) && sealedInfo == 1,
@@ -642,7 +642,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     private void visitorUsesTheMembraneDoor() {
         var sid = fixture.sid();
         var use = M5GameTestSupport.useDoor(run.source(), FRAME, sealedDoor.visitor);
-        boolean sealedDoorNow = M5GameTestSupport.doorSealed(run.source(), FRAME);
+        boolean sealedDoorNow = M5CollapseDoors.is(run, OriginDoorState.SEALED_MEMBRANE);
         int cancelled = M5CollapseDoors.cancelledCloses(run, sid);
         var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
         run.expect("membraneKeptOnTheVisitorUse", use == ChamberCollapsePort.DoorUse.PASS && sealedDoorNow && cancelled == 0 && pending.equals(Optional.of(OriginDoorsTestAccess.CLOSE_ON_SEALED)),
@@ -719,7 +719,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
 
     /** sealmembranejoined：開服之後到 NORMALIZE 套用，每個 tick 原艙門都沒有關上（25 格是 sealed 量子膜或一般開門；{@code doorNeverClosedAfterTheRestart}）。 */
     private void doorNotClosedAfterTheRestart() {
-        boolean sealedDoorNow = M5GameTestSupport.doorSealed(run.source(), FRAME), plain = plainOpen(run);
+        boolean sealedDoorNow = M5CollapseDoors.is(run, OriginDoorState.SEALED_MEMBRANE), plain = plainOpen(run);
         run.expect("doorNeverClosedAfterTheRestart", sealedDoorNow || plain, () -> "tick " + run.server().getTicks() + "：門正中=" + doorCenter(run));
     }
 
@@ -735,7 +735,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         int now = run.server().getTicks(), all = sealedRetries();
         int fromProjection = run.capture().matching(Level.INFO, "SEALED 重試：SEALED(" + SealedReason.PROJECTION_FAILED + ")→COLLAPSING", sid.toString()).size();
         var record = run.journal().flushedRecords().get(sid);
-        boolean still = notMovedSinceTheJoin(), sealedDoorNow = M5GameTestSupport.doorSealed(run.source(), FRAME);
+        boolean still = notMovedSinceTheJoin(), sealedDoorNow = M5CollapseDoors.is(run, OriginDoorState.SEALED_MEMBRANE);
         run.expect("queuedAndRetriedOnTheFirstObservation", queued.size() == 1 && queued.getFirst().closeAfterARestart() && queued.getFirst().tick() == now + 1 && fromProjection == 1
                         && all == 1 && collapsing(record) && still && sealedDoorNow,
                 () -> "開服之後 " + run.ticks() + " 個 tick（server tick " + now + "）：排入的 INFO=" + queued + " PROJECTION_FAILED 的重試=" + fromProjection + " 全部的重試=" + all + " state="

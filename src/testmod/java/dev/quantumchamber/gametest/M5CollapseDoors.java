@@ -3,7 +3,6 @@ package dev.quantumchamber.gametest;
 import static dev.quantumchamber.gametest.M5CollapseFixture.FRAME;
 import static dev.quantumchamber.gametest.M5CollapseFixture.local;
 
-import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.OriginDoorsTestAccess;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import java.util.ArrayList;
@@ -136,7 +135,7 @@ final class M5CollapseDoors {
     }
 
     /**
-     * 原艙門 25 格是 {@code door}（F6-2d-2 B2；{@link M5CollapseWindows.OriginDoorState#UNSPECIFIED} 丟出）。F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：{@code open}／{@code membrane}
+     * 原艙門 25 格是 {@code door}（F6-2d-2 B2；F6-2e-1 起 enum 沒有「未宣告」的值，每個值都有定義）。F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：{@code open}／{@code membrane}
      * 的對應改由 enum 給（{@link M5CollapseWindows.OriginDoorState#open}、{@link M5CollapseWindows.OriginDoorState#membrane}，與窗口表的 {@code doorAsExpectedAtStart} 共用）；原本這裡的
      * switch 是 {@link #closed}、{@link #plainOpen} 與 {@code M5GameTestSupport.doorSealed}，三者都是同一個 {@code doorAll}，判斷相同。
      */
@@ -167,12 +166,17 @@ final class M5CollapseDoors {
         return run.source().getEntitiesByClass(ArmorStandEntity.class, OriginDoorsTestAccess.doorwayBox(FRAME), stand -> true);
     }
 
+    /**
+     * 原艙門關著（{@link #is} 的 {@code CLOSED}）。F6-2e-1（F6-2e Step 0 quality Minor 2）：原本與 {@link #plainOpen} 各自呼叫 {@code M5GameTestSupport.doorAll}，是與
+     * {@link M5CollapseWindows.OriginDoorState} 平行的第二份對應（判斷相同）；改經 {@link #is}，門的 {@code open}／{@code membrane} 只由 enum 給。
+     */
     static boolean closed(M5CollapseRun run) {
-        return M5GameTestSupport.doorAll(run.source(), FRAME, false, MembraneState.NONE);
+        return is(run, M5CollapseWindows.OriginDoorState.CLOSED);
     }
 
+    /** 原艙門是一般開門（{@link #is} 的 {@code PLAIN_OPEN}；F6-2e-1 起經 {@link #is}，同 {@link #closed}）。 */
     static boolean plainOpen(M5CollapseRun run) {
-        return M5GameTestSupport.doorAll(run.source(), FRAME, true, MembraneState.NONE);
+        return is(run, M5CollapseWindows.OriginDoorState.PLAIN_OPEN);
     }
 
     /** 原艙門正中那一格（區域 (3,3,0)）的方塊狀態（失敗訊息用）。 */

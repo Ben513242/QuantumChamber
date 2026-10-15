@@ -130,7 +130,7 @@ final class M5CollapseWindows {
      * <li>{@link #withRecordKept}（F6-2d-2 Step 0，F6-2d-1 quality Minor 4）：halt 之前的取證記下這個 session 的 record 的摘要（{@code atHalt} 的 {@code recordAtHalt}，
      *     {@link M5CollapseFixture#recordDigest}），restart 開服時<b>必</b>比對開服時的 record 與它相同（{@code recordKeptAcrossTheRestart}，{@link #expectRecordKept}）；預設不比對。
      *     原本由 {@code M5CollapseRetryChains} 與 {@code M5CollapsePassageChains} 各寫一份、語意不同（前者只在 halt receipt 有摘要時比對，後者 record 存在就比對）。</li>
-     * <li>{@link #withDoorAtStart}（F6-2d-2 B2a，B1 quality Minor 4）：restart 開服時原艙門的預期（{@link OriginDoorState}）；預設 {@link OriginDoorState#UNSPECIFIED}。原本是
+     * <li>{@link #withDoorAtStart}（F6-2d-2 B2a，B1 quality Minor 4）：restart 開服時原艙門的預期（{@link OriginDoorState}）；預設未宣告（F6-2e-1 起是 {@link #doorAtStart} 的空值，原本是 {@code UNSPECIFIED}）。原本是
      *     {@code M5CollapseDormantChains} 的 {@code CLOSED_DOOR_AT_RESTART}（開服時門關著的窗口，restart 在 JOIN 之前另斷言重新套用不把它打開）；F6-2d-2 B2 的 SEALED 門窗口
      *     也以它宣告開服時的門。F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時門的預期<b>只</b>以它宣告（READY_COMMITTED、READY_HELD 原本另以 {@code withDisk} 的
      *     {@code sealedDoorOnDiskAtRestart} 表達，已改寫），restart chain 要斷言記憶體裡的門時也由這一列讀（{@code M5CollapseRestartChains.doorAtStart}），不在 chain 再寫一份。</li>
@@ -159,7 +159,8 @@ final class M5CollapseWindows {
         private M5CollapseFixture.Who crossedAtHalt = M5CollapseFixture.NOBODY;
         private boolean catalogDisabled;
         private boolean recordKept;
-        private OriginDoorState doorAtStart = OriginDoorState.UNSPECIFIED;
+        /** null：這一列沒有宣告開服時的門（{@link #doorAtStart} 回空的；F6-2e-1 之前是 {@code OriginDoorState.UNSPECIFIED}）。 */
+        private OriginDoorState doorAtStart;
 
         private AtRestart() {}
 
@@ -198,7 +199,6 @@ final class M5CollapseWindows {
             Objects.requireNonNull(resolved, where + "resolved");
             Objects.requireNonNull(disk, where + "disk（NO_CHECK 還沒有初始化？）");
             Objects.requireNonNull(crossedAtHalt, where + "crossedAtHalt（NOBODY 還沒有初始化？）");
-            Objects.requireNonNull(doorAtStart, where + "doorAtStart");
             String state = stateAtHalt == null ? "終局已落盤" : stateAtHalt.name();
             boolean passage = stateAtHalt == SessionState.PASSAGE_READY || stateAtHalt == SessionState.SEALED;
             if (crossedAtHalt != M5CollapseFixture.NOBODY && !passage) {
@@ -295,16 +295,16 @@ final class M5CollapseWindows {
         boolean recordKept() { return recordKept; }
 
         /**
-         * restart 開服時原艙門是 {@code door}（F6-2d-2 B2a，B1 quality Minor 4）。{@link OriginDoorState#UNSPECIFIED} 是預設，不經這裡（指定它時丟出，不靜默當成沒有指定）。
+         * restart 開服時原艙門是 {@code door}（F6-2d-2 B2a，B1 quality Minor 4）。預設是未宣告（{@link #doorAtStart} 是空的）。F6-2e-1（F6-2e Step 0 quality nit）：「未宣告」不再是
+         * enum 的值 {@code UNSPECIFIED}（它讓 {@link OriginDoorState#open}、{@link OriginDoorState#membrane} 只對部分值有定義，這裡另要擋下以它指定），改為 {@link Optional} 的空值。
          */
         AtRestart withDoorAtStart(OriginDoorState door) {
             Objects.requireNonNull(door, "doorAtStart");
-            if (door == OriginDoorState.UNSPECIFIED) throw new IllegalStateException("AtRestart：withDoorAtStart 不接受 UNSPECIFIED（那是預設）");
             return copy(next -> next.doorAtStart = door);
         }
 
-        /** restart 開服時原艙門的預期。 */
-        OriginDoorState doorAtStart() { return doorAtStart; }
+        /** restart 開服時原艙門的預期；這一列沒有宣告時是空的。 */
+        Optional<OriginDoorState> doorAtStart() { return Optional.ofNullable(doorAtStart); }
 
         /** halt 當下磁碟上的 record 狀態；null 為終局已落盤。 */
         SessionState stateAtHalt() { return stateAtHalt; }
@@ -333,8 +333,6 @@ final class M5CollapseWindows {
      * 一列一個值：開服時門不同的窗口是不同的列。
      */
     enum OriginDoorState {
-        /** 不指定（預設）。{@link #open}、{@link #membrane} 丟出。 */
-        UNSPECIFIED,
         /** 關著（25 格 {@code open=false}、{@code membrane=none}）：RESOLVE 期間 crash 的 W2、W3、W5，門沒有動過（fixture 蓋的門預設關著）。 */
         CLOSED,
         /** 一般開門（25 格 {@code open=true}、{@code membrane=none}）。 */
@@ -349,24 +347,22 @@ final class M5CollapseWindows {
 
         /**
          * 25 格門的 {@code open}（F6-2e Step 0，F6-2d-2 B2 quality Minor 1：原本 {@link M5CollapseDoors#is} 與 {@code expectDoorAtStart} 各寫一份對應，後者的
-         * {@code open = door != CLOSED} 不是 exhaustive）。exhaustive 的 switch expression：新增值卻沒有對應時不能編譯。{@link #UNSPECIFIED} 丟出（同 {@link M5CollapseDoors#is} 原本的訊息）。
+         * {@code open = door != CLOSED} 不是 exhaustive）。exhaustive 的 switch expression：新增值卻沒有對應時不能編譯。F6-2e-1 起每個值都有定義（「未宣告」改為 {@link AtRestart#doorAtStart} 的空值，原本的 {@code UNSPECIFIED} 在這裡丟出）。
          * F6-2e Step 0 之前這個 enum 叫 {@code DoorAtStart}（給 F6-2e 的建議：它也是 chain 斷言記憶體裡的門用的狀態，不只是開服時）。
          */
         boolean open() {
             return switch (this) {
                 case CLOSED -> false;
                 case PLAIN_OPEN, SEALED_MEMBRANE, PASSABLE_MEMBRANE -> true;
-                case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
             };
         }
 
-        /** 25 格門的 {@code membrane}（probe 的原艙 {@code FRAME}，sealed 量子膜朝外）；同 {@link #open}，exhaustive、{@link #UNSPECIFIED} 丟出。 */
+        /** 25 格門的 {@code membrane}（probe 的原艙 {@code FRAME}，sealed 量子膜朝外）；同 {@link #open}，exhaustive。 */
         MembraneState membrane() {
             return switch (this) {
                 case CLOSED, PLAIN_OPEN -> MembraneState.NONE;
                 case SEALED_MEMBRANE -> MembraneState.sealedFor(FRAME.outwardFacing());
                 case PASSABLE_MEMBRANE -> MembraneState.passableFor(FRAME.outwardFacing());
-                case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
             };
         }
     }
@@ -1213,13 +1209,14 @@ final class M5CollapseWindows {
 
     /**
      * restart 開服時（{@link #expectAtRestart}，窗口自己的磁碟檢查之後；F6-2d-2 B2a，B1 quality Minor 4）：這一列宣告 {@link AtRestart#withDoorAtStart} 時，原艙門 25 格符合
-     * 它（{@code doorAsExpectedAtStart}，失敗訊息附門正中那一格）；{@link OriginDoorState#UNSPECIFIED} 不斷言。讀磁碟（raw MCA，{@link #doorOnDisk}），不讀記憶體：開服時原艙附近
+     * 它（{@code doorAsExpectedAtStart}，失敗訊息附門正中那一格）；沒有宣告（空的）時不斷言。讀磁碟（raw MCA，{@link #doorOnDisk}），不讀記憶體：開服時原艙附近
      * 不一定已載入（{@code waitinglate} 的 crash 也用 W5 的列，level.dat 帶著半徑 0 的 spawn chunks，那條 chain 斷言開服時原艙附近沒有載入，{@code chamberNotLoadedAtStart}），
      * 在這裡讀方塊會把 chunk 同步載入、改變那條 chain 要量的情況。開服當下還沒有 tick，記憶體裡已載入的門就是由這份磁碟載入的；之後的 tick 在記憶體裡看門，由各 chain 的斷言
      * 負責（例如 {@code normalizeQueuedForTheClosedDoor}）。
      */
-    private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, OriginDoorState door) throws Exception {
-        if (door == OriginDoorState.UNSPECIFIED) return;
+    private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, Optional<OriginDoorState> declared) throws Exception {
+        if (declared.isEmpty()) return;
+        var door = declared.get();
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：對應改由 enum 給（與 M5CollapseDoors.is 共用）。
         boolean open = door.open();
         var membrane = door.membrane();
