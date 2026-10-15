@@ -103,6 +103,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
+import net.minecraft.test.GameTestState;
 import net.minecraft.test.TestContext;
 import net.minecraft.util.Hand;
 import net.minecraft.util.WorldSavePath;
@@ -139,7 +140,8 @@ import org.slf4j.LoggerFactory;
  *     的 {@code M4GameTestBoundaryProbe}，改用這些逐 test 的增量。</li>
  * <li>衛生規則：test 完成前，catalog 與四個 M5 權威都必須已收斂（catalog 不 dirty、current 等於 flushed，沒有未確認的寫入）。注入失敗的
  *     test 要等收斂之後才完成；catalog 一直 dirty 的話，之後所有 NEW 配置都會一直 WAIT。{@link #begin} 也檢查開始時已收斂，失敗時列出
- *     還沒通過的 test。F6-3b 起，一個 test 在收斂之前失敗時，下一個 test 由原版初始化之前先經 {@link #holdBeforeBegin} 有界地等收斂，不再連坐。</li>
+ *     還沒通過的 test。F6-3b 起，一個 test 在收斂之前失敗時，下一個 test 由原版初始化之前先經 {@link #holdBeforeBegin} 有界地等收斂，不再連坐。
+ *     F6-3b fix round 1 起，前一個 test <b>通過</b>之後才留下未確認的寫入時，hold 一樣收斂，但下一個 test 的 {@link #begin} 以此失敗，不會被吞掉。</li>
  * </ul>
  */
 public final class M5UniverseGameTests implements FabricGameTest {
@@ -161,6 +163,17 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * 400 tick，所以從失敗起算 600 tick 內有兩次重試。等待在前一個 test 失敗之後才開始，實際涵蓋得更寬。
      */
     private static final int HOLD_TICKS = 3 * CollapseBackoff.INITIAL_TICKS;
+    /**
+     * 最後一個呼叫 {@link #begin} 的 test（F6-3b fix round 1）。{@link #holdBeforeBegin} 以它在原版的結果（{@code GameTestState.isPassed()}）判斷「前一個 test」
+     * 是否通過，不以 {@link #finish} 寫出的 PASS 為準：finish 之後的同一個 tick，原版仍可能因 tickLimit 或其他 callback 判它失敗。平台略過的
+     * {@code _windows} test 不呼叫 begin，不會取代它。所有存取都在 server thread。
+     */
+    private static Begun lastBegun;
+    /**
+     * {@link #holdBeforeBegin} 發現「前一個 test 通過之後仍留下未確認的權威」時記下的失敗原因（F6-3b fix round 1）。下一個呼叫 {@link #begin} 的 test 取走它，
+     * 並以它失敗（通常就是 hold 等的那個 test；它是平台略過的 test 時，是再下一個）。
+     */
+    private static String afterPassFailure;
 
     /**
      * F3c sanity：M5 run 可以配置 catalog。比照 M3 的 DISABLED fixture（{@code M3UniverseLifecycleGameTests}）：配置一筆 OVERWORLD、
@@ -4515,15 +4528,23 @@ public final class M5UniverseGameTests implements FabricGameTest {
 
     /**
      * 每個 M5 Universe test 的第一個動作：確認在 M5 run、權威已初始化而且已收斂，再記下 catalog baseline。F6-3b 起，原版初始化這個 test 之前，
-     * {@link #holdBeforeBegin} 已有界地等過前一個 test 留下的未確認寫入收斂；等不到時這裡照舊失敗。
+     * {@link #holdBeforeBegin} 已有界地等過前一個 test 留下的未確認寫入收斂；等不到時這裡照舊失敗。F6-3b fix round 1 起，hold 發現前一個 test <b>通過</b>之後
+     * 仍留下未確認的權威時（{@link #afterPassFailure}），這裡以那個原因失敗；hold 照常收斂，所以再下一個 test 不受影響。這個 test 在 M5 run 的判定之後、其他斷言之前先記為
+     * {@link #lastBegun}：它在這裡失敗時，下一個 test 的 hold 把它當成失敗的前一個 test，不會再指控一次。
      */
     private static void begin(TestContext context, String name) {
         // 決策 6：default run 不得執行這個類別的 test。被誤放進 default run 時，在碰 catalog 之前就失敗。
         context.assertTrue(Boolean.getBoolean("quantumchamber.gametest.m5Only"), "M5 Universe GameTest 只能在 gameTestM5 run 執行：" + name);
+        lastBegun = new Begun(name, M5GameTestSupport.gameTestState(context));
+        String afterPass = afterPassFailure;
+        afterPassFailure = null;
         context.assertTrue(!ACTIVE.containsKey(context), "M5 catalog baseline 不可重複：" + name + "；還沒通過的 test：" + unfinished());
         var server = context.getWorld().getServer();
         var authorities = CollapseAuthorities.get(server);
         context.assertTrue(authorities.initialized(), "M5 run 的世界必須有已初始化的 M5 authority：" + name);
+        if (afterPass != null) {
+            throw new GameTestException(afterPass + "；" + name + " 因此在 begin 失敗（目前未確認：" + unconfirmedAuthorities(authorities) + "）");
+        }
         context.assertTrue(converged(authorities), "開始時 catalog 與 M5 權威必須已收斂（前一個 test 違反衛生規則；初始化之前最多等 " + HOLD_TICKS
                 + " tick）：" + name + "；未確認：" + unconfirmedAuthorities(authorities) + "；還沒通過的 test：" + unfinished());
         var records = UniverseRegistryState.get(server).records();
@@ -4535,14 +4556,22 @@ public final class M5UniverseGameTests implements FabricGameTest {
      * F6-3b B1（盤點 U6）：一個 test 失敗不再讓後面的 test 連坐。由 testmod 的 {@code M5ConvergenceHoldMixin} 在 M5 run 的每個 test 由原版初始化之前（每個 tick，直到第一次回
      * false；之後這個 test 不再呼叫）呼叫，回 true 表示這個 tick 延後、不初始化（結構還沒放、test 方法還沒執行、tickLimit 還沒起算）。
      * <ul>
-     * <li>M5 權威沒有初始化，或四個權威都已收斂（{@link #converged}，純查詢，不呼叫任何收斂）時立刻放行：前一個 test 通過時一定已收斂，行為與原版相同。</li>
-     * <li>有未確認的寫入時（前一個 test 在權威寫出失敗之後、收斂之前就失敗，例如 Windows 原子移動的 AccessDenied）：每個 tick 以 {@link #convergeAll} 對四個權威各呼叫一次
-     *     {@code convergeIfNeeded}（退避照 production，退避期內不重寫），收斂之後才放行，之後 {@link #begin} 照舊斷言已收斂、記下 baseline。最多等 {@link #HOLD_TICKS}
-     *     個 tick；逾時仍未收斂、或判定丟出例外時放行，由 {@code begin} 照舊失敗。</li>
+     * <li>M5 權威沒有初始化，或四個權威都已收斂（{@link #converged}，純查詢，不呼叫任何收斂）時立刻放行，行為與原版相同。前一個 test 通過時，它在 {@link #finish}
+     *     完成的那一刻一定已收斂（PASS 的條件含收斂）；但那之後到這裡之間（同一個 tick 其他的收尾、batch 結束時取消強制載入、之後 tick 的 production）仍可能留下
+     *     未確認的寫入，這一點沒有被強制，所以由下一點的第二種情況把它判為失敗。</li>
+     * <li>有未確認的寫入時：每個 tick 以 {@link #convergeAll} 對四個權威各呼叫一次 {@code convergeIfNeeded}（退避照 production，退避期內不重寫），收斂之後才放行，
+     *     之後 {@link #begin} 照舊斷言已收斂、記下 baseline。最多等 {@link #HOLD_TICKS} 個 tick；逾時仍未收斂、或判定丟出例外時放行，由 {@code begin} 照舊失敗。
+     *     開始等待時依前一個 test（{@link #lastBegun}）在原版的結果分成兩種：
+     *     <ul>
+     *     <li>前一個 test 失敗（例如在權威寫出失敗之後、收斂之前就失敗，像 Windows 原子移動的 AccessDenied），或沒有前一個 test：記一行 WARN（{@code start}）。
+     *         收斂之後這個 test 照常執行，不連坐。</li>
+     *     <li>前一個 test <b>通過</b>（F6-3b fix round 1）：那是它完成之後才留下的未確認寫入，不能被吞掉。記一行 ERROR（{@code after-pass}），照常收斂（不連坐：
+     *         再下一個 test 不受影響），並記下 {@link #afterPassFailure}，讓下一個 {@link #begin}（通常就是這個 test）以「前一個 test（…）通過之後仍留下未確認的權威」失敗。</li>
+     *     </ul></li>
      * </ul>
      * 需要它，是因為 production 只在下一次使用之前收斂，沒有人會替失敗的 test 收斂；原版又在 test 失敗的同一個 tick 就開始下一個 batch（{@code TestRunContext} 的
      * {@code onFailed} → {@code runBatch}），而 {@code begin} 是 test 方法的第一個敘述，沒辦法跨 tick 等待。沒有這段等待時，後面每個 test 的 {@code begin} 都立刻失敗。
-     * 失敗的那個 test 照常失敗，這裡不吞掉任何失敗。開始等待記一行 WARN，結束（收斂、逾時或例外）記一行 INFO 或 WARN，都以 {@code M5_UNIVERSE_HOLD} 開頭。
+     * 失敗的那個 test 照常失敗，這裡不吞掉任何失敗。開始等待記一行 WARN 或 ERROR（見上），結束（收斂、逾時或例外）記一行 INFO 或 WARN，都以 {@code M5_UNIVERSE_HOLD} 開頭。
      */
     public static boolean holdBeforeBegin(ServerWorld world, String test, int heldTicks) {
         var server = world.getServer();
@@ -4553,10 +4582,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
                 if (heldTicks > 0) LOGGER.info("M5_UNIVERSE_HOLD converged test={} heldTicks={}", test, heldTicks);
                 return false;
             }
-            if (heldTicks == 0) {
-                LOGGER.warn("M5_UNIVERSE_HOLD start test={} unconfirmed={} unfinished={}：前一個 test 留下未確認的寫入，初始化之前最多等 {} tick 收斂",
-                        test, unconfirmedAuthorities(authorities), unfinished(), HOLD_TICKS);
-            }
+            if (heldTicks == 0) startHold(test, unconfirmedAuthorities(authorities));
             if (heldTicks >= HOLD_TICKS) {
                 LOGGER.info("M5_UNIVERSE_HOLD timeout test={} heldTicks={} unconfirmed={}：放行，由 begin 判定", test, heldTicks, unconfirmedAuthorities(authorities));
                 return false;
@@ -4570,6 +4596,25 @@ public final class M5UniverseGameTests implements FabricGameTest {
             LOGGER.warn("M5_UNIVERSE_HOLD error test={} heldTicks={}：放行，由 begin 判定", test, heldTicks, failure);
             return false;
         }
+    }
+
+    /**
+     * {@link #holdBeforeBegin} 開始等待時記一行（F6-3b fix round 1）：前一個 test（{@link #lastBegun}）在原版是通過的，記 ERROR 並記下 {@link #afterPassFailure}
+     * （已有一個還沒被 begin 取走時保留最早的那個）；否則記 WARN。
+     */
+    private static void startHold(String test, List<CollapseAuthorities.Authority> unconfirmed) {
+        var previous = lastBegun;
+        if (previous != null && previous.state().isPassed()) {
+            if (afterPassFailure == null) {
+                afterPassFailure = "前一個 test（" + previous.name() + "）通過之後仍留下未確認的權威：" + unconfirmed + "（hold 在 " + test + " 初始化之前發現，照常收斂、不連坐）";
+            }
+            LOGGER.error("M5_UNIVERSE_HOLD after-pass test={} previous={} unconfirmed={}：前一個 test 通過之後仍留下未確認的權威；照常收斂（不連坐），初始化之前最多等 {} tick，"
+                    + "下一個 begin 以此失敗", test, previous.name(), unconfirmed, HOLD_TICKS);
+            return;
+        }
+        String described = previous == null ? "none" : previous.name() + "(" + (previous.state().isCompleted() ? "FAIL" : "RUNNING") + ")";
+        LOGGER.warn("M5_UNIVERSE_HOLD start test={} previous={} unconfirmed={} unfinished={}：前一個 test 留下未確認的寫入，初始化之前最多等 {} tick 收斂",
+                test, described, unconfirmed, unfinished(), HOLD_TICKS);
     }
 
     /** 有未確認寫入的權威（診斷用）。 */
@@ -4778,4 +4823,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     }
 
     private record Baseline(String name, Map<UniverseId, UniverseRecord> records, String digest) { }
+
+    /** 呼叫過 {@link #begin} 的 test：名稱與它在原版的 {@code GameTestState}（F6-3b fix round 1，{@link #lastBegun}）。 */
+    private record Begun(String name, GameTestState state) { }
 }
