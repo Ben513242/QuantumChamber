@@ -141,7 +141,8 @@ import org.slf4j.LoggerFactory;
  * <li>衛生規則：test 完成前，catalog 與四個 M5 權威都必須已收斂（catalog 不 dirty、current 等於 flushed，沒有未確認的寫入）。注入失敗的
  *     test 要等收斂之後才完成；catalog 一直 dirty 的話，之後所有 NEW 配置都會一直 WAIT。{@link #begin} 也檢查開始時已收斂，失敗時列出
  *     還沒通過的 test。F6-3b 起，一個 test 在收斂之前失敗時，下一個 test 由原版初始化之前先經 {@link #holdBeforeBegin} 有界地等收斂，不再連坐。
- *     F6-3b fix round 1 起，前一個 test <b>通過</b>之後才留下未確認的寫入時，hold 一樣收斂，但下一個 test 的 {@link #begin} 以此失敗，不會被吞掉。</li>
+ *     F6-3b fix round 1 起，前一個 test <b>通過</b>之後才留下未確認的寫入時，hold 一樣嘗試收斂，但下一個 test 的 {@link #begin} 以此失敗（F6-3c-1 起訊息帶 hold 的結果與
+ *     heldTicks），不會被吞掉。</li>
  * </ul>
  */
 public final class M5UniverseGameTests implements FabricGameTest {
@@ -178,9 +179,12 @@ public final class M5UniverseGameTests implements FabricGameTest {
     private static Begun lastBegun;
     /**
      * {@link #holdBeforeBegin} 發現「前一個 test 通過之後仍留下未確認的權威」時記下的失敗原因（F6-3b fix round 1）。下一個呼叫 {@link #begin} 的 test 取走它，
-     * 並以它失敗（通常就是 hold 等的那個 test；它是平台略過的 test 時，是再下一個）。
+     * 並以它失敗（通常就是 hold 等的那個 test；它是平台略過的 test 時，是再下一個）。F6-3c-1（F6-3b fix round 1 quality Minor 1）：原因在 hold <b>結束</b>時才寫成，帶 hold 的結果
+     * （converged、timeout 或 error）與 heldTicks（{@link #endHold}）；原本在 hold 開始時就組好，看不到結果，逾時時「照常收斂」也不成立。
      */
     private static String afterPassFailure;
+    /** 這次 hold 開始時發現 after-pass 的前半段原因（{@link #startHold}）；hold 結束時由 {@link #endHold} 補上結果、移到 {@link #afterPassFailure}。沒有時為 null（F6-3c-1）。 */
+    private static String afterPassStarted;
 
     /**
      * F3c sanity：M5 run 可以配置 catalog。比照 M3 的 DISABLED fixture（{@code M3UniverseLifecycleGameTests}）：配置一筆 OVERWORLD、
@@ -4558,7 +4562,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     /**
      * 每個 M5 Universe test 的第一個動作：確認在 M5 run、權威已初始化而且已收斂，再記下 catalog baseline。F6-3b 起，原版初始化這個 test 之前，
      * {@link #holdBeforeBegin} 已有界地等過前一個 test 留下的未確認寫入收斂；等不到時這裡照舊失敗。F6-3b fix round 1 起，hold 發現前一個 test <b>通過</b>之後
-     * 仍留下未確認的權威時（{@link #afterPassFailure}），這裡以那個原因失敗；hold 照常收斂，所以再下一個 test 不受影響。這個 test 在 M5 run 的判定之後、其他斷言之前先記為
+     * 仍留下未確認的權威時（{@link #afterPassFailure}，F6-3c-1 起帶 hold 的結果與 heldTicks），這裡以那個原因失敗；hold 照常嘗試收斂，收斂的話再下一個 test 不受影響。這個 test 在 M5 run 的判定之後、其他斷言之前先記為
      * {@link #lastBegun}：它在這裡失敗時，下一個 test 的 hold 把它當成失敗的前一個 test，不會再指控一次。
      */
     private static void begin(TestContext context, String name) {
@@ -4594,8 +4598,9 @@ public final class M5UniverseGameTests implements FabricGameTest {
      *     <ul>
      *     <li>前一個 test 失敗（例如在權威寫出失敗之後、收斂之前就失敗，像 Windows 原子移動的 AccessDenied），或沒有前一個 test：記一行 WARN（{@code start}）。
      *         收斂之後這個 test 照常執行，不連坐。</li>
-     *     <li>前一個 test <b>通過</b>（F6-3b fix round 1）：那是它完成之後才留下的未確認寫入，不能被吞掉。記一行 ERROR（{@code after-pass}），照常收斂（不連坐：
-     *         再下一個 test 不受影響），並記下 {@link #afterPassFailure}，讓下一個 {@link #begin}（通常就是這個 test）以「前一個 test（…）通過之後仍留下未確認的權威」失敗。</li>
+     *     <li>前一個 test <b>通過</b>（F6-3b fix round 1）：那是它完成之後才留下的未確認寫入，不能被吞掉。記一行 ERROR（{@code after-pass}），照常嘗試收斂（不連坐：
+     *         收斂的話再下一個 test 不受影響），並在 hold 結束時記下 {@link #afterPassFailure}（帶 hold 的結果與 heldTicks，F6-3c-1），讓下一個 {@link #begin}（通常就是這個 test）
+     *         以「前一個 test（…）通過之後仍留下未確認的權威」失敗。</li>
      *     </ul></li>
      * </ul>
      * 需要它，是因為 production 只在下一次使用之前收斂，沒有人會替失敗的 test 收斂；原版又在 test 失敗的同一個 tick 就開始下一個 batch（{@code TestRunContext} 的
@@ -4609,43 +4614,59 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var authorities = CollapseAuthorities.get(server);
             if (!authorities.initialized()) return false;
             if (converged(authorities)) {
-                if (heldTicks > 0) LOGGER.info("M5_UNIVERSE_HOLD converged test={} heldTicks={}", test, heldTicks);
+                if (heldTicks > 0) {
+                    LOGGER.info("M5_UNIVERSE_HOLD converged test={} heldTicks={}", test, heldTicks);
+                    endHold("converged", heldTicks);
+                }
                 return false;
             }
             if (heldTicks == 0) startHold(test, unconfirmedAuthorities(authorities));
             if (heldTicks >= HOLD_TICKS) {
                 LOGGER.warn("M5_UNIVERSE_HOLD timeout test={} heldTicks={} unconfirmed={}：放行，由 begin 判定（仍未收斂）", test, heldTicks,
                         unconfirmedAuthorities(authorities));
+                endHold("timeout（仍未收斂：" + unconfirmedAuthorities(authorities) + "）", heldTicks);
                 return false;
             }
             if (convergeAll(server)) {
                 LOGGER.info("M5_UNIVERSE_HOLD converged test={} heldTicks={}", test, heldTicks);
+                endHold("converged", heldTicks);
                 return false;
             }
             return true;
         } catch (RuntimeException failure) {
             LOGGER.warn("M5_UNIVERSE_HOLD error test={} heldTicks={}：放行，由 begin 判定", test, heldTicks, failure);
+            endHold("error（" + failure + "）", heldTicks);
             return false;
         }
     }
 
     /**
-     * {@link #holdBeforeBegin} 開始等待時記一行（F6-3b fix round 1）：前一個 test（{@link #lastBegun}）在原版是通過的，記 ERROR 並記下 {@link #afterPassFailure}
-     * （已有一個還沒被 begin 取走時保留最早的那個）；否則記 WARN。
+     * {@link #holdBeforeBegin} 開始等待時記一行（F6-3b fix round 1）：前一個 test（{@link #lastBegun}）在原版是通過的，記 ERROR 並記下 after-pass 的前半段原因
+     * （{@link #afterPassStarted}，hold 結束時由 {@link #endHold} 寫成 {@link #afterPassFailure}；已有一個還沒被 begin 取走時保留最早的那個）；否則記 WARN。
      */
     private static void startHold(String test, List<CollapseAuthorities.Authority> unconfirmed) {
         var previous = lastBegun;
         if (previous != null && previous.state().isPassed()) {
             if (afterPassFailure == null) {
-                afterPassFailure = "前一個 test（" + previous.name() + "）通過之後仍留下未確認的權威：" + unconfirmed + "（hold 在 " + test + " 初始化之前發現，照常收斂、不連坐）";
+                afterPassStarted = "前一個 test（" + previous.name() + "）通過之後仍留下未確認的權威：" + unconfirmed + "（hold 在 " + test + " 初始化之前發現，照常嘗試收斂、不連坐";
             }
-            LOGGER.error("M5_UNIVERSE_HOLD after-pass test={} previous={} unconfirmed={}：前一個 test 通過之後仍留下未確認的權威；照常收斂（不連坐），初始化之前最多等 {} tick，"
+            LOGGER.error("M5_UNIVERSE_HOLD after-pass test={} previous={} unconfirmed={}：前一個 test 通過之後仍留下未確認的權威；照常嘗試收斂（不連坐），初始化之前最多等 {} tick，"
                     + "下一個 begin 以此失敗", test, previous.name(), unconfirmed, HOLD_TICKS);
             return;
         }
         String described = previous == null ? "none" : previous.name() + "(" + (previous.state().isCompleted() ? "FAIL" : "RUNNING") + ")";
         LOGGER.warn("M5_UNIVERSE_HOLD start test={} previous={} unconfirmed={} unfinished={}：前一個 test 留下未確認的寫入，初始化之前最多等 {} tick 收斂",
                 test, described, unconfirmed, unfinished(), HOLD_TICKS);
+    }
+
+    /**
+     * {@link #holdBeforeBegin} 放行時（hold 開始之後的每個出口：converged、timeout、error；F6-3c-1，F6-3b fix round 1 quality Minor 1）：這次 hold 開始時發現了 after-pass
+     * （{@link #afterPassStarted}）的話，補上 hold 的結果與 heldTicks，寫成 {@link #afterPassFailure}（已有一個還沒被 begin 取走時保留最早的那個）。結束的那一行 log 照舊。
+     */
+    private static void endHold(String outcome, int heldTicks) {
+        if (afterPassStarted == null) return;
+        if (afterPassFailure == null) afterPassFailure = afterPassStarted + "；hold 的結果：" + outcome + "，heldTicks=" + heldTicks + "）";
+        afterPassStarted = null;
     }
 
     /** 有未確認寫入的權威（診斷用）。 */
