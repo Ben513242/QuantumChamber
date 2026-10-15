@@ -340,7 +340,12 @@ final class M5CollapseWindows {
         /** 一般開門（25 格 {@code open=true}、{@code membrane=none}）。 */
         PLAIN_OPEN,
         /** PREPARE 的 sealed 量子膜（25 格 {@code open=true}、朝外的 sealed {@code membrane}）。 */
-        SEALED_MEMBRANE;
+        SEALED_MEMBRANE,
+        /**
+         * PASSAGE_READY 的 passable 量子膜（25 格 {@code open=true}、朝外的 passable {@code membrane}）。F6-2e-1（F6-2e Step 0 quality Minor 2）：W7（{@code CROSSED_COMMITTED}）與
+         * F6-2-13（{@code PASSAGE_TERMINATED}）開服時的門原本在 {@code withDisk} 以 {@code passableDoorOnDiskAtRestart} 斷言，改由 {@link AtRestart#withDoorAtStart} 宣告。
+         */
+        PASSABLE_MEMBRANE;
 
         /**
          * 25 格門的 {@code open}（F6-2e Step 0，F6-2d-2 B2 quality Minor 1：原本 {@link M5CollapseDoors#is} 與 {@code expectDoorAtStart} 各寫一份對應，後者的
@@ -350,7 +355,7 @@ final class M5CollapseWindows {
         boolean open() {
             return switch (this) {
                 case CLOSED -> false;
-                case PLAIN_OPEN, SEALED_MEMBRANE -> true;
+                case PLAIN_OPEN, SEALED_MEMBRANE, PASSABLE_MEMBRANE -> true;
                 case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
             };
         }
@@ -360,6 +365,7 @@ final class M5CollapseWindows {
             return switch (this) {
                 case CLOSED, PLAIN_OPEN -> MembraneState.NONE;
                 case SEALED_MEMBRANE -> MembraneState.sealedFor(FRAME.outwardFacing());
+                case PASSABLE_MEMBRANE -> MembraneState.passableFor(FRAME.outwardFacing());
                 case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
             };
         }
@@ -434,15 +440,17 @@ final class M5CollapseWindows {
         tickEndRow(rows, CrashWindow.CROSSED_COMMITTED, M5CollapseWindows::selectorPlayerDataAtTheWindow,
                 (fixture, detail) -> selectorCrossing(fixture, detail, SessionRecoveryState.CommitResult.Status.COMMITTED), M5CollapseWindows::selectorAcrossAtTheTickEnd,
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withRecordKept()
-                        .withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
+                        .withDoorAtStart(OriginDoorState.PASSABLE_MEMBRANE).withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
         // F6-2-16：COLLAPSING→PASSAGE_READY 已 checked 提交、門改為 passable 之前；halt 之前原生存檔（PREPARE 的 sealed 量子膜、參與者在艙內都在磁碟上）。
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的 sealed 量子膜改以 withDoorAtStart 宣告（doorAsExpectedAtStart；原本 withDisk 的 sealedDoorOnDiskAtRestart，同一個判斷）。
         row(rows, CrashWindow.READY_COMMITTED, M5CollapseWindows::readyCommitted, M5CollapseWindows::savedBeforePassable,
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withRecordKept().withDoorAtStart(OriginDoorState.SEALED_MEMBRANE)
                         .withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
         // F6-2-13：通道以 (d) 結束的 checked 終局已讀回確認、改門之前（chain 在 PASSAGE_READY 期間存過檔：磁碟上的門是 passable、Controller 是 PASSAGE）。
+        // F6-2e-1（F6-2e Step 0 quality Minor 2）：這一列與 W7 開服時的 passable 門改以 withDoorAtStart(PASSABLE_MEMBRANE) 宣告（doorAsExpectedAtStart；原本 withDisk 的
+        // passableDoorOnDiskAtRestart，同一個判斷）。
         row(rows, CrashWindow.PASSAGE_TERMINATED, M5CollapseWindows::passageTerminated, M5CollapseWindows::terminatedBeforeTheDoor,
-                afterReady.terminatedAtHalt().withDisk(M5CollapseWindows::passageOnDiskAtRestart), null);
+                afterReady.terminatedAtHalt().withDoorAtStart(OriginDoorState.PASSABLE_MEMBRANE).withDisk(M5CollapseWindows::passageOnDiskAtRestart), null);
         // F6-2-17：Crossed 的寫出沒有確認（ROLL_FORWARD_PENDING）：玩家已 MOVED，磁碟上的 Crossed 沒有他，playerdata 也沒有存到 U。F6-2c fix round 1：crash 在那個 tick
         // 結束時（spec v5.7 §10.3：寫入沒有確認時 production 不存 playerdata，halt 時磁碟上仍在來源世界）。
         tickEndRow(rows, CrashWindow.CROSSED_UNCONFIRMED,
@@ -1281,9 +1289,11 @@ final class M5CollapseWindows {
         run.expect("interiorMarkerOnDisk", GOLD_BLOCK.equals(marker.name()), () -> "磁碟上的 interior 標記是 " + marker);
     }
 
-    /** F6-2-13 的開服（W7 也用）：磁碟上的原艙門是 passable 量子膜、Controller 是 PASSAGE（重啟之前存下的是 PASSAGE／15，R2 M5）。 */
+    /**
+     * F6-2-13 的開服（W7 也用）：磁碟上的 Controller 是 PASSAGE（重啟之前存下的是 PASSAGE／15，R2 M5）。F6-2e-1（F6-2e Step 0 quality Minor 2）：磁碟上的 passable 門改由窗口列的
+     * {@code withDoorAtStart(PASSABLE_MEMBRANE)} 斷言（{@code doorAsExpectedAtStart}；原本這裡的 {@code passableDoorOnDiskAtRestart}，同一個 {@link #doorOnDisk} 判斷）。
+     */
     private static void passageOnDiskAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
-        run.expect("passableDoorOnDiskAtRestart", doorOnDisk(run, fixture, true, MembraneState.passableFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 passable");
         var controller = controllerStateOnDisk(run, fixture);
         run.expect("passageControllerOnDiskAtRestart", ChamberState.PASSAGE.name().equals(controller), () -> "磁碟上的 Controller 是 " + controller);
     }
