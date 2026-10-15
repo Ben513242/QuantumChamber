@@ -9451,3 +9451,145 @@ t/s 由 latest.log 的進度列估計（`TestServer.tick` 在 `getTime() % 20 ==
 - run-all：`run-all-1`＝`run-all-8fbd7fae42844a98be1845a58e3c853a`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
 - 已知偶發：`meas-nothrottle-1` 的自發 AccessDenied（不採計，見上）；`run-all-1` 的 Full WARN +1（`m2_task4_disconnect_io`）。結束過的程序：沒有（沒有逾時處置，沒有手動處置任何世界或 JVM）。
 - 取證腳本（`f63b/`）：由 `f6/f63s0/` 複製、每檔第一行加本輪註解的 `state.ps1`、`compile.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-50d08c8…`，`base-*-summary.txt` 是 `f63s0/runall1-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_f63b`）、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-pincount.py`、`relay-worldgencheck.py`、`relay-zipmeta.py`、`names2.py`、`orderdiff2.py`；由 scratchpad `f63a-tools/` 複製的 `tps.py`、`segments.py`；本輪新寫：`adapters_f63b.py`（`red-preload-delay`、`meas-waits`、`no-throttle`、`red-b1-fail-in-backoff`、`b1-hold-50`）、`m5gate.ps1`、`m5red.ps1`、`m5sum.py`、`waits.py`、`classify.py`、`wintable.py`，工作稿 `note-draft.md`。
+
+## F6-3b fix round 1：hold 不再掩蓋通過的 test 留下的未確認寫入
+
+- implementer 依 controller 的派工（scratchpad `f63b-fix1-prompt.md`）完成。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63b/fix1/`，以下簡稱 `fix1/`，`STATUS.md` 是交接摘要。開工時 HEAD 是 `a798592`（`a964745` 之後只多了 controller 的 docs commit）、`git status --porcelain` 為空（`fix1/start-state.txt`）。範圍：F6-3b spec review 與 quality review 共同的 Important I-1、spec Minor m-1，以及 quality Minor 1～3。
+- Commits（`a798592..` 本節的 commit，依序；每個 commit 只 stage 自己的檔案；code 的 commit 之前都只放該 commit 的內容在工作樹編譯：`fix1/fix1-c1`、`fix1-c2b`、`fix1-c3-compile.log`，blob 分別等於 `9fe2902`、`e438810`、`92f7c64` 的檔案（`42cea5bf…`、`e7311108…`、`cac03794…`）；`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL，警告只有既有的 `SessionTransferFaultMixin` 6 則。`fix1-c2` 是 Javadoc 換行之前的版本，保留不用）：
+  - `9fe2902` `test: fail the next M5 test when a passed test leaves an unconfirmed authority behind`（I-1 的行為改變與 M5U 的 Javadoc 更正）
+  - `e438810` `test: log the convergence hold timeout as a warning`（quality Minor 1）
+  - `92f7c64` `test: report how often the M5 GameTest tick pacing actually waited`（quality Minor 3，**最後一個 code commit**）
+  - `c905ec4` `docs: describe the after-pass hold and the pacing report in the verification README`（I-1、spec m-1、Minor 1、Minor 3 的 README）
+  - 本節由其後的 `docs: record F6-3b fix round 1 in the M5 note` 加入。
+- 只改了派工允許的路徑：`M5UniverseGameTests` 只動 hold、`begin` 這一族與相關的 Javadoc（新增 `lastBegun`、`afterPassFailure` 兩個 static 欄位、`startHold`、record `Begun`，以及它需要的 `import net.minecraft.test.GameTestState`；類別說明的衛生規則一句；`finish` 沒有改）；`TestServerTickPaceMixin`；`scripts/verification/README.md` 只改 F6-3b 改過的「新增 M5 GameTest」一節（節流一段與第 4 點的 B1）；本 note 只加本節。**沒有改** `M5ConvergenceHoldMixin`（hold 的簽名不變）、任何 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、所有 ps1、`.github/`、其他 GameTest、probe、JUnit、spec、plan、AGENTS。
+- 行號以 HEAD `c905ec4` 為準（code 與 `92f7c64` 相同）。原版的行號是 scratchpad `h8rev/all/net/minecraft/test/` 的反編譯。
+
+### I-1：前一個 test 通過時，hold 不再吞掉未確認的寫入（`9fe2902`）
+
+- 問題（兩份 review）：通過的 test 只在 `finish` 完成的那一刻保證已收斂（PASS 的條件含 `converged`）；之後仍可能留下未確認的寫入（同一個 tick 其他的收尾、batch 結束時取消強制載入（`TestRunContext.java:98-105`）、之後 tick 的 production）。F6-3b 之前，下一個 test 的 `begin` 會以衛生規則 FAIL；F6-3b 的 hold 不分前一個 test 的成敗都收斂後放行，只留一則 WARN，gate 與 CI 都不判讀。M5U 的 Javadoc 與 README 的「前一個 test 通過時一定已收斂」沒有被強制。
+- 做法（採 spec review 的方向，判斷依據改用原版的結果）：
+  - `begin`（`:4535`）在 M5 run 的判定之後、其他斷言之前，把自己記為 `lastBegun`（`:171`、`:4538`；名稱與原版的 `GameTestState`），並取走 `afterPassFailure`（`:176`）。
+  - hold 需要等待（`converged` 為 false）的第一個 tick，`startHold`（`:4607`）看 `lastBegun` 在原版的結果：`GameTestState.isPassed()`（`:4609`；`completed && throwable == null`，`GameTestState.java:205-207`）。
+    - **通過**：記一則 ERROR `M5_UNIVERSE_HOLD after-pass test=… previous=… unconfirmed=[…]`，記下 `afterPassFailure`（已有一個還沒被取走時保留最早的那個），之後照常收斂（不連坐）。下一個 `begin` 在權威初始化的斷言之後（`:4545`）以「前一個 test（`<名稱>`）通過之後仍留下未確認的權威：[…]（hold 在 … 初始化之前發現，照常收斂、不連坐）；`<名稱>` 因此在 begin 失敗（目前未確認：[…]）」失敗。
+    - 失敗，或沒有前一個 test：與 F6-3b 相同，只是 start WARN 多帶 `previous=<名稱>(FAIL)`（或 `none`）。
+  - 為什麼不用派工建議的「`finish` 在 PASS 時記 `lastPassed`」：`finish` 寫出 PASS 並 `context.complete()`（`TestContext.java:754-755` → `completeIfSuccessful`）之後，同一個 tick 原版仍可能判 test 失敗：之後的 `runAtTick` callback 丟出（`GameTestState.java:126-139`）、`tick > tickLimit`（`:141-149`，即使已 complete 也會 `fail`），或先前排定的 `failDefinitely` runner（`:151`）。以 `finish` 為準時，這些 test 會被當成「通過」，之後若有未確認的寫入，下一個 test 會被錯誤指控（連坐）；以 `isPassed()` 為準就沒有這個問題，也不必在 `finish` 的失敗路徑上保證「不記 `lastPassed`」。
+  - 判斷時點的正確性：下一個 test 的 hold 最早在下一個 server tick 才被呼叫。`TestManager.tick` 迭代的是 `CopyOnWriteArrayList` 的快照（`TestManager.java:37-41`），onPassed／onFailed → `runBatch` → `manager.start` 新增的 state（`TestRunContext.java:97-133`）不會在同一個 tick 被 tick；已完成的 state 不再被 tick（`GameTestState.java:95`），所以那時前一個 test 的 `throwable` 已經定案。
+  - batch 之間：M5 run 一個 test 一個 batch（gate 強制）；batch 結束時的 `afterBatchFunction` 與取消強制載入，就在「通過之後」的窗口內，算在通過的那個 test 上（正是 review 指出的來源之一）。
+  - retry（`GameTestState.copy()`）：原版只在 flaky（`maxAttempts > 1`，`TestFunction.java:45-46`；`@GameTest` 預設 1，`GameTest.java:32`）或 attempt config 要求多次時重試（`StructureTestListener.java:60-98`），M5 test 都沒有設，所以不會重試。萬一重試，copy 是新的 state：hold 的計數是 mixin 的 instance 欄位，copy 從 0 開始；copy 的 `begin` 讓它成為 `lastBegun`。
+  - 第一個 test：`lastBegun` 為 null，`previous=none`，走 F6-3b 的做法。
+  - 在 `begin` 失敗的 test（例如以 after-pass 失敗）已經是 `lastBegun`：下一個 test 的 hold 把它當成失敗的前一個 test，不會再指控一次（見下面 `fix1-hold50-1` 的 `previous=…(FAIL)`）。
+  - 平台略過的 `_windows` test 不呼叫 `begin`：不會成為 `lastBegun`；hold 等它時記下的 `afterPassFailure` 由再下一個呼叫 `begin` 的 test 取走並失敗（訊息寫明前一個 test 與 hold 發現時等的是哪個 test）。限制：發現之後的 test 若全部都是平台略過的（只有唯一的 `_windows` test 排在最後、又在非 Windows 時才可能；目前它是第 8 個），就沒有 test 取走它，只剩那則 ERROR。這留給 F6-3e 的 gate 斷言（見「交給後續」）。
+- M5U 的說法更正：類別說明的衛生規則一句、`lastBegun`／`afterPassFailure` 的說明、`begin`（`:4529-4534`）與 `holdBeforeBegin`（`:4555-4576`）的 Javadoc：不再寫「前一個 test 通過時一定已收斂」，改成「只在 `finish` 完成的那一刻成立，之後的未確認寫入由 after-pass 判為失敗」，並寫明每一行 log 的等級。
+
+#### I-1 的 RED → GREEN
+
+adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finish` 在 `context.complete()` 之後（test 已經以 PASS 完成），只對 M5 run 的第 2 個 test `dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge` 做一次：裝上一次性的 catalog 讀回失敗（`M5TestHooks.CATALOG_READBACK_FAULT`，與 W12 同一種「atomic move 已完成、讀回失敗」）、把 catalog 標成 dirty、呼叫一次 `convergeIfNeeded(CATALOG)`，寫出因此未確認、進入 200 tick 的退避，之後立刻移除 fault。catalog 的 record 沒有改變，所以 gate 的 digest 串接不受影響。log 另記一行 `F63B_FIX1_RED injected … hits=1 unconfirmed=[CATALOG]`（三次都有），production 照常記一則「M5 CATALOG 的 checked 寫出未確認…200 ticks 後才重試收斂」WARN，hold 收斂時記「M5 CATALOG 收斂完成」。
+
+| run | HEAD | 結果 | `M5_UNIVERSE_HOLD` | gate root |
+| --- | --- | --- | --- | --- |
+| RED `fix1-red-1` | `a798592`（F6-3b）＋adapter | **60/60、gate exit=0**：下一個 test `ready_write_failure_keeps_the_door_plain_when_the_prepare_reenters_within_the_backoff` 由 hold 等過退避之後照常 PASS，問題被掩蓋 | WARN start（`unconfirmed=[CATALOG] unfinished=[]`）、INFO converged（`heldTicks=199`） | `gate-fix1-red-1-81db1c8a194d4771bbbe36226485311f` |
+| GREEN `fix1-green-1` | `9fe2902`＋同一個 adapter | **59/60**：只有上述的下一個 test 在 `begin` 失敗，訊息「前一個 test（`dormant_new_receipt_…`）通過之後仍留下未確認的權威：[CATALOG]（…）；… 因此在 begin 失敗（目前未確認：[]）」；再下一個 test（`prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept`）與其餘都 PASS | ERROR after-pass（`previous=dormant_new_…`）、INFO converged（`heldTicks=199`） | `gate-fix1-green-1-8b9d2865e5f24fa59fa63f1c43c91bc3` |
+| GREEN-2 `fix1-green-2` | `c905ec4`（最後的 code）＋同一個 adapter | 與 GREEN 相同（59/60，同一個 test、同一段訊息） | 同上 | `gate-fix1-green-2-06c0938d82a543599e4ab7c53d9d9509` |
+
+- 三次套用的是同一段 adapter 字串；底下的檔案不同，所以套用之後的 blob 不同（`d84c8ff0…`、`b392af98…`、`cafa2d7a…`）。restore 之後以 `git hash-object` 核對，`*-restored-state.txt` 的 HEAD 分別是 `a798592`、`9fe2902`、`c905ec4`，porcelain 都是空的。
+- GREEN 的 `M5_UNIVERSE_BEGIN` 是 59 行：失敗的 test 在記 baseline 之前就失敗。RED 與 GREEN 的 gate 都依設計判讀（RED exit=0 正是 I-1 的掩蓋；GREEN exit=1 是預期）。
+
+#### 前一個 test FAIL 的路徑不變（F6-3b 的 B1 RED 情境）
+
+| run | HEAD | 結果 | `M5_UNIVERSE_HOLD` | gate root |
+| --- | --- | --- | --- | --- |
+| `fix1-b1-1` | `c905ec4`＋`red-b1-fail-in-backoff`（由 `f63b/adapters_f63b.py` 原樣複製，Python 比對相等） | **只有它自己失敗**（59/60），與 F6-3b 的 GREEN-2 相同 | WARN start（`previous=allocation_write_fault_seals_then_retries_after_the_backoff_with_one_universe(FAIL) unconfirmed=[ALLOCATION_LEDGER]`）、INFO converged（`heldTicks=193`，與 F6-3b 相同） | `gate-fix1-b1-1-75027c5f114446b4a014f798810dbba3` |
+| 檢查 `fix1-hold50-1` | `c905ec4`＋`red-b1-fail-in-backoff`＋`b1-hold-50`（`HOLD_TICKS`＝50，同樣原樣複製） | 4 失敗，與 F6-3b 的 `check-b1-hold50-1` 相同：它自己，加上之後 3 個各等 50 tick 逾時、在 `begin` 以衛生規則失敗；第 4 個收斂之後通過 | start 4（`previous=` 依序是前一個失敗的 test，都是 `(FAIL)`，沒有 after-pass）、**timeout 3 則都是 WARN**、converged 1 | `gate-fix1-hold50-1-55b7a342bc27405a8b6c8dbe96e84931` |
+
+- 兩次的 restore 都以 `git hash-object` 核對，`*-restored-state.txt` 的 HEAD 是 `c905ec4`、porcelain 空。
+
+### quality Minor 1：逾時改記 WARN（`e438810`）
+
+- `holdBeforeBegin` 的逾時（`:4588`）由 INFO 改為 WARN，訊息加「（仍未收斂）」：逾時代表仍未收斂，除非原版 `initialDelay` 的 20 tick 內另有寫出讓它收斂，接下來的 `begin` 會失敗。Javadoc 與 README 都列出每一行的等級：開始是 WARN `start`（前一個 test 通過時是 ERROR `after-pass`），結束是 INFO `converged`、WARN `timeout`、WARN `error`（spec m-1：例外路徑本來就是 WARN，README 漏寫）。實際的 WARN 見 `fix1-hold50-1`。
+
+### quality Minor 2：同一組權威逾時之後不再等滿 600 tick——不做
+
+- 理由：
+  - 代價有上限，而且只出現在已經失敗的 run：每個 test 最多多等 600 tick（≤100 t/s 下約 6 秒以上）。
+  - 「同一組權威逾時過一次」不代表收斂不了：退避會加倍（200 → 400 → 800 …），一個 hold 窗口等不到，下一個 test 的 hold 可能就等到了（F6-3b 的 `check-b1-hold50-1` 與本輪的 `fix1-hold50-1` 都是第 4 個 test 等到收斂）。不等的話，那些 test 會在 `begin` 失敗，等於把 B1 要消除的連坐加回來；只剩一次 `convergeAll` 的折衷也一樣。
+  - 真正卡住（例如 fault hook 沒有釋放）時，不論等不等，之後的 test 都會失敗；省下的只是時間。
+
+### quality Minor 3：看得到節流確實生效（`92f7c64`）
+
+- `TestServerTickPaceMixin`：
+  - 「GameTest tick 節流：每個 tick 至少 10 ms（…）；第 N 個 tick 第一次實際等待」INFO 由 `tick` 的 HEAD 移到第一次**實際等待**時（`:78`；TAIL 執行而且還沒到期限），證明 `runTasksTillTickEnd` 的 TAIL 確實執行並且等了。`tick` 的 HEAD（`:62`）只記時間。
+  - 新增 `TestServer.exit()` 的 HEAD（`:92`，`require=1`）：停服時記一則 INFO `GameTest tick 節流 結束：ticks=… waited=… waitedMs=… elapsedMs=… tps=… minTickMs=10`。`ticks` 是 TAIL 對前面有 `tick` 的 `runTasksTillTickEnd` 執行的次數，`waited`／`waitedMs` 是其中實際等待的次數與時間，`tps` 由第一個這種 tick 的開始到最後一次 TAIL 結束的 wall-clock 估計（沒有時是 `n/a`）。沒有 property 時不記（default、legacy run 不受影響）。
+  - 計數都是 instance 欄位、只在 server thread 存取；等待本身的作法（`runTasks(() -> 已到期限)`）沒有改。
+- 本輪的實測（都是 `minTickMs=10`）：
+
+  | run | ticks | waited | waitedMs | elapsedMs | tps |
+  | --- | --- | --- | --- | --- | --- |
+  | `fix1-m5g-1` | 11544 | 11250 | 115222 | 130711 | 88.3 |
+  | `fix1-m5g-2` | 11562 | 11277 | 115634 | 131366 | 88.0 |
+  | `run-all-1` 的 m5-gametest | 11577 | 11294 | 115780 | 131370 | 88.1 |
+
+  第一次實際等待都在第 2 個 tick。這也是 F6-3e 在 gate 加斷言的依據（例如恰一行結束列、`waited > 0`、`tps` 不超過 100）；本輪沒有改 ps1。
+- commit 之前另以工作樹（HEAD `e438810`＋未 commit 的 mixin，blob `cac03794…` 與 `92f7c64` 相同）跑過一次 M5 gate `fix1-dev-c3`（`gate-fix1-dev-c3-75c74e658a374185bfd73542c14e24de`，60/60，`ticks=11535 waited=11242 tps=88.0`），只用來確認新的 `exit()` 注入在 runtime 套用得上；dirty tree 的 dev run，**不採計**為 GREEN。
+
+### M5 GameTest gate 連跑兩次
+
+- 在乾淨的 `c905ec4`（README commit，code 與 `92f7c64` 相同；`fix1/fix1-m5g-*-gate-state.txt` 的 porcelain 都是空的）連跑兩次，都是 **60/60**，**都沒有任何 `M5_UNIVERSE_HOLD` 行**：
+  - `fix1-m5g-1`＝`gate-fix1-m5g-1-931f6b2c9fc14eb68aff20cc30a341f2`：gate 2 m 32 s、suite 2.178 min、t/s median 80、max 100、PREPARE 的 600 tick WARN 2 則（設計成要等的 607、616）。
+  - `fix1-m5g-2`＝`gate-fix1-m5g-2-cd49f419c06a450f9e19e129cf146fe5`：gate 2 m 33 s、suite 2.189 min、t/s median 100、max 100、PREPARE WARN 2 則。
+
+### 完整回歸（run-all）
+
+- 所有 commit（README `c905ec4`）之後，在乾淨的 `c905ec4`（`fix1/fix1-run-all-1-state.txt`）跑一次，第一次就通過：
+  - **`run-all-1`＝`run-all-ebf53140e93a469d9986f5581ce88ce2`：`END ALL exit=0 HEAD=c905ec4`**（03:23～04:00，`fix1/fix1-run-all-1-console.txt`），SUMMARY `default=178/178 windows=89 legacy=1/1 m5=60/60 perTest=55+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=69 ci=win:PASS,ubuntu:PASS`（m5-collapse 的 probe runId `7d4e0e14826d4c2ba27ea396cc8134eb`，69 PASS、halt 31）。
+- 與基準 `run-all-25af51eac0b54a9f8755b206d647cf67`（F6-3b 的 run-all-2，`a964745`）逐項比較（`fix1/runall-compare.ps1 -Prefix runall1-`，`runall1-*.txt`；基準的各項摘要是 `f63b/runall2-*-summary.txt`）。**預期的差異：沒有；實際也沒有**：
+
+  | 項目 | 基準 | run-all-1 | 判讀 |
+  | --- | --- | --- | --- |
+  | SUMMARY | 見上（與 F6-3 Step 0 的 run-all-1 相同） | 逐字相同 | 相同 |
+  | testcase 集合 | default 178、M5 60、legacy 1、JUnit 666（664 PASS、2 SKIPPED） | `identical=True`（`runall1-default-setcmp.txt`、`-m5-setcmp`、`-legacy-setcmp`、`-junit-setcmp`） | 相同 |
+  | release JAR | 432 entries／385 classes、SHA-256 `c20bc00f…` | 相同、SHA-256 相同 | 相同（沒有改 `src/main/`）；`testmodHits=0`、`mainOnly=PASS`；entry 集合相同（`runall1-jarcmp-*.txt`） |
+  | sources JAR | 226、`919c5493…` | 226、`dbe3a284…` | 內容相同：`contentDiffers=0`、順序與 comment 相同，只有 zip 中繼資料（date_time、extra）不同（`runall1-zipmeta-sources-result.txt`） |
+  | Full WARN／ERROR | 54／31 | 54／31 | 相同，sorted diff 空（`runall1-wbcmp-full.txt`；batch 分布 `runall1-wbbatch-full.txt`） |
+  | legacy WARN／ERROR | 0／0 | 0／0 | 相同 |
+  | M5 WARN／ERROR | 38／10 | 38／10 | 數目相同；一行差異是 F6-0 已記錄的 `PistonBlockEntity` object hash 的正規化差異（`runall1-wbcmp-m5-gametest.txt`）。沒有 `M5_UNIVERSE_HOLD`（`runall1-m5gate-sum-2.txt`） |
+  | m5-gametest gate | 2 m 33 s（suite 2.182 min、t/s median 80、max 100） | 2 m 33 s（suite 2.189 min、t/s median 80、max 100；結束列 `tps=88.1`） | 相同 |
+  | pin 計數、worldgen | `pinOver=4 leaseWait=9 recoveryPending=4` | 相同；每個 batch 的計數相同，只有 log 行號與 session UUID 不同（`runall1-pincount.txt`）；probe 的 69 個 phase 與 34 個 root 沒有 chunk 生成的例外（`runall1-worldgencheck.txt`） | 相同 |
+  | m5collapse | 69（halt 31），probe `44ad35f2…` | 69（halt 31） | 相同：具名斷言對 F6-3b run-all-2 的 probe `44ad35f2…`（`names2.py`，不用改名表）`RESULT=OK`，69 個 phase 的斷言、step 清單與順序全部相同（`runall1-vs-f63brunall2-names.txt`） |
+
+  run-all 沒有跨過午夜。
+- 取證的小失誤（不影響判定）：第一次跑 m5-gametest 的摘要時，shell 變數沒有加引號（路徑含空白），`runall1-m5gate-sum.txt` 寫成「gate=（空）、xml missing」，保留不刪；正確的摘要在 `runall1-m5gate-sum-2.txt`。同一次的 zipmeta、pincount、wbbatch 當時讀不到檔、沒有寫出，之後以正確的路徑寫出上表引用的檔。
+- 本節的 commit 之後再跑一次（新 label），結果記在 `fix1/STATUS.md`。
+
+### 偏離派工字面之處
+
+1. **I-1 不用「`finish` 記 `lastPassed`」**，改成 `begin` 記 `lastBegun`、hold 以原版的 `GameTestState.isPassed()` 判斷（理由見 I-1：`finish` 的 PASS 之後同一個 tick 原版仍可能判它失敗）。效果與派工要求相同：前一個 test 通過而 hold 發現未收斂時，照常收斂、這個 test 的 `begin` 以明確的訊息失敗、同時記一則 ERROR；前一個 test 失敗時維持 F6-3b 的做法。
+2. `M5UniverseGameTests` 為此多一行 `import net.minecraft.test.GameTestState`、一個 record `Begun` 與一個 helper `startHold`，都只給 hold／`begin` 用。
+3. 另外加跑了 `fix1-green-2`（最後的 code 上再跑一次 I-1 的 GREEN）與 `fix1-hold50-1`（Minor 1 的 WARN 在 runtime 的確認），以及 Minor 3 commit 之前的 dev run `fix1-dev-c3`（不採計）。
+4. Minor 2 沒有做（理由見上）。
+
+### 有沒有 production 與 spec 不符之處
+
+- 沒有。本節沒有改 `src/main/`；RED 的 adapter 只在 testmod 的 `finish` 暫時注入，已還原。
+
+### 需要裁示
+
+- **push**：仍是 **CI 驗收待 push**（F6-3b 的事項不變）。push 與重跑 CI 都要使用者的明確指示。
+- 請 reviewer 確認「偏離派工字面之處」第 1 點（以原版的結果判斷前一個 test）與 Minor 2 不做的理由。
+
+### 交給後續
+
+- **F6-3e（gate／harness）**：
+  - 全部 PASS 的 M5 run 不得出現任何 `M5_UNIVERSE_HOLD` 行（兩份 review 的建議）；這也蓋住 I-1 唯一的限制（after-pass 之後的 test 全部平台略過，沒有 `begin` 取走它時，只剩那則 ERROR）。
+  - 節流的結束列：恰一行、`waited > 0`、`tps` 不超過上限（Minor 3）。
+- **F6-3c（拆檔）**：quality review 列的同一個單元，再加上本節的 `lastBegun`、`afterPassFailure`、`startHold`、`Begun`；它們與 `ACTIVE` 一樣是 static 狀態，要一起搬。
+
+### root（全部保留）
+
+- 編譯：`fix1/fix1-c1`、`fix1-c2`（Javadoc 換行之前，不用）、`fix1-c2b`、`fix1-c3-compile.log`。
+- I-1：RED `gate-fix1-red-1-81db1c8a194d4771bbbe36226485311f`（60/60、exit=0，採計為「被掩蓋」的證據）；GREEN `gate-fix1-green-1-8b9d2865e5f24fa59fa63f1c43c91bc3`、GREEN-2 `gate-fix1-green-2-06c0938d82a543599e4ab7c53d9d9509`（都 59/60，依設計 exit=1，採計）。
+- 前一個 test FAIL 的路徑：`gate-fix1-b1-1-75027c5f114446b4a014f798810dbba3`（59/60）；檢查 `gate-fix1-hold50-1-55b7a342bc27405a8b6c8dbe96e84931`（4 失敗，預期）。
+- dev run：`gate-fix1-dev-c3-75c74e658a374185bfd73542c14e24de`（60/60，**不採計**：dirty tree）。
+- M5 gate 兩次：`gate-fix1-m5g-1-931f6b2c9fc14eb68aff20cc30a341f2`、`gate-fix1-m5g-2-cd49f419c06a450f9e19e129cf146fe5`（`c905ec4`，都 60/60）。
+- run-all：`run-all-1`＝`run-all-ebf53140e93a469d9986f5581ce88ce2`（`END ALL exit=0`，採計）；本節的 commit 之後的一次見 `STATUS.md`。沒有不採計的 run-all root。
+- 已知偶發：沒有遇到。結束過的程序：沒有（沒有逾時處置，沒有手動處置任何世界或 JVM）。
+- 取證腳本（`fix1/`）：由 `f6/f63b/` 複製、每檔第一行加本輪註解、repo 與 phase evidence 的相對路徑多一層的 `state.ps1`、`compile.ps1`、`m5gate.ps1`、`m5red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-25af51ea…`，`base-*-summary.txt` 是 `f63b/runall2-*-summary.txt`）、`adapter.py`（adapter 表的模組 `adapters_fix1`）、`m5sum.py`、`wbcmp.py`、`wbbatch.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`relay-pincount.py`、`relay-zipmeta.py`、`relay-worldgencheck.py`、`names2.py`、`tps.py`、`segments.py`（複製用的程式在 scratchpad `fix1tools/copytools.py`）；本輪新寫：`adapters_fix1.py`（`fix1-red-after-pass`；`red-b1-fail-in-backoff`、`b1-hold-50` 由 `f63b/adapters_f63b.py` 原樣複製）。
