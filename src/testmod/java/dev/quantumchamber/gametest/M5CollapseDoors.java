@@ -131,14 +131,13 @@ final class M5CollapseDoors {
         return run.capture().matching(Level.INFO, "取消還沒套用的關門", "session=" + sid).size();
     }
 
-    /** 原艙門 25 格是 {@code door}（F6-2d-2 B2；{@link M5CollapseWindows.OriginDoorState#UNSPECIFIED} 丟出）。 */
+    /**
+     * 原艙門 25 格是 {@code door}（F6-2d-2 B2；{@link M5CollapseWindows.OriginDoorState#UNSPECIFIED} 丟出）。F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：{@code open}／{@code membrane}
+     * 的對應改由 enum 給（{@link M5CollapseWindows.OriginDoorState#open}、{@link M5CollapseWindows.OriginDoorState#membrane}，與窗口表的 {@code doorAsExpectedAtStart} 共用）；原本這裡的
+     * switch 是 {@link #closed}、{@link #plainOpen} 與 {@code M5GameTestSupport.doorSealed}，三者都是同一個 {@code doorAll}，判斷相同。
+     */
     static boolean is(M5CollapseRun run, M5CollapseWindows.OriginDoorState door) {
-        return switch (door) {
-            case CLOSED -> closed(run);
-            case PLAIN_OPEN -> plainOpen(run);
-            case SEALED_MEMBRANE -> M5GameTestSupport.doorSealed(run.source(), FRAME);
-            case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
-        };
+        return M5GameTestSupport.doorAll(run.source(), FRAME, door.open(), door.membrane());
     }
 
     /**

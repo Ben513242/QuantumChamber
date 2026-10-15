@@ -8,6 +8,7 @@ import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.gametest.M5CollapseFixture.Inside;
 import dev.quantumchamber.gametest.M5CollapseRun.Phase;
 import dev.quantumchamber.gametest.M5CollapseRun.Step;
+import dev.quantumchamber.gametest.M5CollapseWindows.OriginDoorState;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.superposition.SessionState;
@@ -176,6 +177,17 @@ abstract class M5CollapseRestartChains {
             case AS_SAVED -> M5CollapseRun.NOTHING;
         };
         aroundTheChamber.run();
+    }
+
+    /**
+     * restart 開服時原艙門的預期（F6-2e Step 0，F6-2d-2 B2 quality Minor 1）：窗口表 {@code id} 那一列的 {@link M5CollapseWindows.AtRestart#withDoorAtStart}（開服時磁碟上的門由
+     * 窗口表的 {@code doorAsExpectedAtStart} 斷言）。chain 在開服時與排入時斷言記憶體裡的門，一律從這裡讀，不在 chain 再寫一份（原本 SEALED 的四條 chain 有 7 處寫死與窗口列相同的值）。
+     * 那一列沒有宣告（{@link OriginDoorState#UNSPECIFIED}）時丟出；chain 在建立 phase 時（{@code onInitialize}）呼叫，所以在開服之前失敗。
+     */
+    static OriginDoorState doorAtStart(CrashWindow id) {
+        var door = M5CollapseWindows.of(id).atRestart().doorAtStart();
+        if (door == OriginDoorState.UNSPECIFIED) throw new IllegalStateException("窗口表的 " + id + " 沒有宣告開服時的原艙門（withDoorAtStart）");
+        return door;
     }
 
     /** 這條 chain 的窗口不得要求 JOIN 之前載入投影（這裡的 restart 不做；窗口表的規則允許 COLLAPSING 的列指定它，w9cd 就是 COLLAPSING）。在 {@code onInitialize} 丟出。 */

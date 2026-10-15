@@ -380,8 +380,11 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * </ol>
      */
     Phase plainDoorSealedRestart(String crashPhase) {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（UNREADABLE_SEALED 是 PLAIN_OPEN），不在這裡再寫一份。
+        var id = CrashWindow.UNREADABLE_SEALED;
+        var door = doorAtStart(id);
         var steps = new ArrayList<Step>();
-        steps.add(closeQueued(OriginDoorState.PLAIN_OPEN));
+        steps.add(closeQueued(door));
         steps.add(closeApplied("closedOnceAfterTheRestart", OriginDoorState.CLOSED, () -> NOTHING_MORE));
         steps.add(joinOutside());
         steps.add(new Step("opened", 1, this::openedNormallyWhileSealed));
@@ -389,7 +392,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         steps.add(enter());
         steps.add(retried("retried", "retriedOnceAfterTheRestart", SealedReason.AUTHORITY_UNREADABLE, 1, Await.EDGE));
         steps.addAll(passage.steps(null));
-        return restartPhase(crashPhase, CrashWindow.UNREADABLE_SEALED, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(OriginDoorState.PLAIN_OPEN));
+        return restartPhase(crashPhase, id, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(door));
     }
 
     /**
@@ -403,20 +406,24 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * </ol>
      */
     Phase doorwaySealedRestart(String crashPhase) {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（UNREADABLE_SEALED_DOORWAY 是 CLOSED）。
+        var id = CrashWindow.UNREADABLE_SEALED_DOORWAY;
+        var door = doorAtStart(id);
         var steps = new ArrayList<Step>();
-        steps.add(closeQueued(OriginDoorState.CLOSED));
+        steps.add(closeQueued(door));
         steps.add(closeApplied("plainOpenForTheDoorway", OriginDoorState.PLAIN_OPEN, this::standKeptInTheDoorway));
         steps.add(new Step("standRemoved", 1, this::standRemovedFromTheDoorway));
         steps.add(joinOutside());
         steps.add(enter());
         steps.add(retried("retried", "retriedOnceAfterTheRestart", SealedReason.AUTHORITY_UNREADABLE, 1, Await.EDGE));
         steps.addAll(passage.steps(null));
-        return restartPhase(crashPhase, CrashWindow.UNREADABLE_SEALED_DOORWAY, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(OriginDoorState.CLOSED));
+        return restartPhase(crashPhase, id, ChamberAtStart.PRELOADED, steps, () -> doorAtStartWithNobodyOnline(door));
     }
 
     /**
      * SEALED 的門 chain 的開服（{@link #restartPhase} 的 {@code afterStarted}，第一個 tick 之前）：原艙門在記憶體裡是 {@code door}（由磁碟載入；窗口表的
-     * {@code doorAsExpectedAtStart} 讀磁碟），沒有人在線上、還沒有 tick；記下門口的 entity storage 是否已載入（{@code doorwayEntitiesLoadedAtStart}，取證）。
+     * {@code doorAsExpectedAtStart} 讀磁碟），沒有人在線上、還沒有 tick；記下門口的 entity storage 是否已載入（{@code doorwayEntitiesLoadedAtStart}，取證）。F6-2e Step 0 起
+     * {@code door} 一律是窗口列宣告的值（{@link #doorAtStart}，呼叫端在建立 phase 時讀）。
      */
     private void doorAtStartWithNobodyOnline(OriginDoorState door) {
         doorInMemoryAtStart(door);
@@ -570,18 +577,21 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * </ol>
      */
     Phase membraneSealedRestart(String crashPhase) {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（PROJECTION_SEALED 是 SEALED_MEMBRANE）。
+        var id = CrashWindow.PROJECTION_SEALED;
+        var door = doorAtStart(id);
         var steps = new ArrayList<Step>();
-        steps.add(closeQueued(OriginDoorState.SEALED_MEMBRANE, this::visitorUsesTheMembraneDoor));
+        steps.add(closeQueued(door, this::visitorUsesTheMembraneDoor));
         steps.add(closeApplied("closedFromTheMembrane", OriginDoorState.CLOSED, this::closeNotCancelled));
         steps.add(new Step("join", 1, this::joinInsideOnTheEdge));
         steps.add(retried("retried", "retriedOnTheJoinEdge", SealedReason.PROJECTION_FAILED, 1, Await.EDGE));
         steps.addAll(passage.steps(null));
-        return restartPhase(crashPhase, CrashWindow.PROJECTION_SEALED, ChamberAtStart.PRELOADED, steps, this::visitorOutsideWithNobodyOnline);
+        return restartPhase(crashPhase, id, ChamberAtStart.PRELOADED, steps, () -> visitorOutsideWithNobodyOnline(door));
     }
 
-    /** sealmembrane 的開服：{@link #doorAtStartWithNobodyOnline}（sealed 量子膜）；非參與者（新的 UUID，不在收據裡）JOIN 之後移到艙外（{@code visitorOutsideAtStart}）。 */
-    private void visitorOutsideWithNobodyOnline() {
-        doorAtStartWithNobodyOnline(OriginDoorState.SEALED_MEMBRANE);
+    /** sealmembrane 的開服：{@link #doorAtStartWithNobodyOnline}（{@code door} 是窗口列的 sealed 量子膜）；非參與者（新的 UUID，不在收據裡）JOIN 之後移到艙外（{@code visitorOutsideAtStart}）。 */
+    private void visitorOutsideWithNobodyOnline(OriginDoorState door) {
+        doorAtStartWithNobodyOnline(door);
         var visitor = sealedDoor.visitor = fixture.connect(UUID.randomUUID()).player();
         M5GameTestSupport.moveOutside(visitor, FRAME);
         boolean outside = !M5CollapseFixture.inside(visitor);
@@ -655,12 +665,18 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
             run.expect("preparedOnlyAfterTheEdge", prepares == 1, () -> "「進入 PREPARE」=" + prepares);
             return End.crossed(fixture);
         }));
-        return restartPhase(crashPhase, CrashWindow.PROJECTION_SEALED, ChamberAtStart.PRELOADED, steps, this::joinedBeforeTheFirstObservation);
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（與 sealmembrane 共用 PROJECTION_SEALED）。
+        var id = CrashWindow.PROJECTION_SEALED;
+        var door = doorAtStart(id);
+        return restartPhase(crashPhase, id, ChamberAtStart.PRELOADED, steps, () -> joinedBeforeTheFirstObservation(door));
     }
 
-    /** sealmembranejoined 的開服（第一個 tick 之前）：門在記憶體裡是 sealed；參與者 JOIN 在艙內，這時 record 仍是 SEALED（{@code joinedBeforeTheFirstObservation}）；記下 JOIN 的位置。 */
-    private void joinedBeforeTheFirstObservation() {
-        doorInMemoryAtStart(OriginDoorState.SEALED_MEMBRANE);
+    /**
+     * sealmembranejoined 的開服（第一個 tick 之前）：門在記憶體裡是 {@code door}（窗口列的 sealed 量子膜）；參與者 JOIN 在艙內，這時 record 仍是 SEALED
+     * （{@code joinedBeforeTheFirstObservation}）；記下 JOIN 的位置。
+     */
+    private void joinedBeforeTheFirstObservation(OriginDoorState door) {
+        doorInMemoryAtStart(door);
         joinInside();
         var record = run.journal().flushedRecords().get(fixture.sid());
         run.expect("joinedBeforeTheFirstObservation", run.ticks() == 0 && sealed(record), () -> "JOIN 時 tick=" + run.ticks() + " state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));

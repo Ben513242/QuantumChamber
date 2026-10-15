@@ -332,14 +332,36 @@ final class M5CollapseWindows {
      * 一列一個值：開服時門不同的窗口是不同的列。
      */
     enum OriginDoorState {
-        /** 不指定（預設）。 */
+        /** 不指定（預設）。{@link #open}、{@link #membrane} 丟出。 */
         UNSPECIFIED,
         /** 關著（25 格 {@code open=false}、{@code membrane=none}）：RESOLVE 期間 crash 的 W2、W3、W5，門沒有動過（fixture 蓋的門預設關著）。 */
         CLOSED,
         /** 一般開門（25 格 {@code open=true}、{@code membrane=none}）。 */
         PLAIN_OPEN,
         /** PREPARE 的 sealed 量子膜（25 格 {@code open=true}、朝外的 sealed {@code membrane}）。 */
-        SEALED_MEMBRANE
+        SEALED_MEMBRANE;
+
+        /**
+         * 25 格門的 {@code open}（F6-2e Step 0，F6-2d-2 B2 quality Minor 1：原本 {@link M5CollapseDoors#is} 與 {@code expectDoorAtStart} 各寫一份對應，後者的
+         * {@code open = door != CLOSED} 不是 exhaustive）。exhaustive 的 switch expression：新增值卻沒有對應時不能編譯。{@link #UNSPECIFIED} 丟出（同 {@link M5CollapseDoors#is} 原本的訊息）。
+         * F6-2e Step 0 之前這個 enum 叫 {@code DoorAtStart}（給 F6-2e 的建議：它也是 chain 斷言記憶體裡的門用的狀態，不只是開服時）。
+         */
+        boolean open() {
+            return switch (this) {
+                case CLOSED -> false;
+                case PLAIN_OPEN, SEALED_MEMBRANE -> true;
+                case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
+            };
+        }
+
+        /** 25 格門的 {@code membrane}（probe 的原艙 {@code FRAME}，sealed 量子膜朝外）；同 {@link #open}，exhaustive、{@link #UNSPECIFIED} 丟出。 */
+        MembraneState membrane() {
+            return switch (this) {
+                case CLOSED, PLAIN_OPEN -> MembraneState.NONE;
+                case SEALED_MEMBRANE -> MembraneState.sealedFor(FRAME.outwardFacing());
+                case UNSPECIFIED -> throw new IllegalArgumentException("原艙門的預期不能是 UNSPECIFIED");
+            };
+        }
     }
 
     /** PREPARE 怎麼完成：「準備完成」INFO 恰一則，模式是 {@code mode}、寫入 {@code cells} 格（{@link #ANY_CELLS}：不是 0 格即可），之後 READY 時的磁碟檢查。 */
@@ -1184,8 +1206,9 @@ final class M5CollapseWindows {
      */
     private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, OriginDoorState door) throws Exception {
         if (door == OriginDoorState.UNSPECIFIED) return;
-        boolean open = door != OriginDoorState.CLOSED;
-        var membrane = door == OriginDoorState.SEALED_MEMBRANE ? MembraneState.sealedFor(FRAME.outwardFacing()) : MembraneState.NONE;
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：對應改由 enum 給（與 M5CollapseDoors.is 共用）。
+        boolean open = door.open();
+        var membrane = door.membrane();
         boolean holds = doorOnDisk(run, fixture, open, membrane);
         String center = holds ? "" : doorCenterOnDisk(run, fixture);
         run.expect("doorAsExpectedAtStart", holds, () -> "開服時磁碟上的原艙門不是 " + door + "（open=" + open + " membrane=" + membrane.asString() + "）：門正中=" + center);
