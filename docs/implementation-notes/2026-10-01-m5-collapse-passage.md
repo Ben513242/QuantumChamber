@@ -9252,6 +9252,39 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - #09 沒有需要放寬的窗口，所以沒有「窗口」的 commit（見 #09 一段）。
 - 只改了派工允許的路徑：testmod 新增 `mixin/TestServerTickPaceMixin.java`、`mixin/M5ConvergenceHoldMixin.java` 與它們在 `quantumchamber-test.mixins.json` 的登記；`M5UniverseGameTests` 只加 B1（`HOLD_TICKS`、`holdBeforeBegin`、`unconfirmedAuthorities`，`begin` 的 Javadoc 與失敗訊息、類別說明的衛生規則一句）；`build.gradle` 只在 `gameTestM5` run 加一個 vmArg（同一行帶一段註解）；`scripts/verification/README.md` 只改「新增 M5 GameTest」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、其他 `build.gradle` 段落、`fabric.mod.json`、`quantumchamber.mixins.json`、所有 ps1、`.github/`、`M5GameTestSupport`、`M5CollapseGameTests`、M2／M4 的 GameTest、probe、JUnit、語言檔、spec、plan、AGENTS。
 - 行號：程式以 HEAD `0ee3098` 為準；#09 的窗口以量測時的 `1b19457`（`M5UniverseGameTests` 與 `c3fb2ca` 相同）為準，HEAD 的同一行要加 5（`HOLD_TICKS` 與它的 Javadoc 在 :159-163）。
+- Review（controller 補；spec 與 quality 兩份審查並行，都只讀）：兩份都提出同一個 Important，因此開了下方的 fix round 1。
+  - spec review ❌（Critical 0、Important 1、Minor 1）。
+    - 已成立的部分：
+      - 節流只在 M5 run 生效：property 只在 `build.gradle:150`。
+      - release 的 SHA 與 `testmodHits=0` 不變。
+      - 等待期間照常執行 main-thread 的工作：`ThreadExecutor:119-136`，沒有工作時 park 0.1 ms。
+      - 開服、停服都不節流。
+      - 不會掩蓋 production 的缺陷：以 tick 計的 production 計時在 tick 上不變；每秒 100 tick 以內仍比真實的 20 TPS 快 5 倍。
+      - #09 的量測可信。
+      - RED 與 GREEN 是同一個情境。
+      - hold 在 `initialize()` 之前取消，不吃 tickLimit。
+      - 範圍與 note 都正確。
+    - I-1：B1 會掩蓋「通過的 test 完成之後才留下未收斂的權威」（`M5UniverseGameTests.java:4547-4574`、`:4538`、README `:144`）。
+      - 通過的 test 在 `finish` 那一刻一定已收斂。所以對「前一個 test 通過」的情況，`begin` 的衛生檢查唯一能抓的，是完成之後才發生的寫出失敗。
+      - hold 會把它收斂掉，只留下一則 WARN。`gates.ps1` 與 CI 都不判讀這則 WARN；CI 直接跑 `runGameTestM5`，連 digest 串接的檢查都沒有。
+    - m-1：README 漏了例外路徑的 WARN。
+  - quality review **Not approved**（Critical 0、Important 1、Minor 3）。
+    - Strengths：
+      - 兩個 mixin 都只在 testmod，`require=1`，都由 property 控制。
+      - 節流用原版的 `runTasks(BooleanSupplier)`，不是 busy-spin。
+      - 期限的比較不會溢位；開始時間是 instance 欄位。
+      - hold 的計數放在 per-`GameTestState`；上限 `HOLD_TICKS = 3*CollapseBackoff.INITIAL_TICKS`。
+    - I-1：與 spec 的 I-1 相同。另指出 `unfinished=` 只列從來沒通過的 test，所以看不出緊鄰的前一個 test 是否通過。
+    - Minor：
+      1. 逾時只記 INFO；
+      2. 權威一直收斂不了時，每個 test 都會等滿 600 tick；
+      3. 節流的 INFO 不能證明 TAIL 真的有執行。
+    - 給 F6-3c：hold 與 `begin` 這一族共用 static 的 ACTIVE，要當作一個單元搬到 support；mixin 的入口必須是 public；`m5Only` 的判斷有 4 處，可以集中。
+    - 給 F6-3e：全部 PASS 的 run 不得出現任何 `M5_UNIVERSE_HOLD`；加一條斷言，確認節流確實生效。
+  - controller 處置：開 **fix round 1**（下一節）。
+    - I-1 採用 spec 的建議：照常收斂、不連坐，但讓這個 test 以「前一個 test 通過之後仍留下未確認的權威」FAIL。
+    - 一併處理 spec m-1 與 quality Minor 1～3（Minor 2 可選）。
+    - gate 的斷言交給 F6-3e。
 
 ### A3：M5 run 的 tick 節流（`1b19457`）
 
@@ -9463,6 +9496,42 @@ t/s 由 latest.log 的進度列估計（`TestServer.tick` 在 `getTime() % 20 ==
   - 本節由其後的 `docs: record F6-3b fix round 1 in the M5 note` 加入。
 - 只改了派工允許的路徑：`M5UniverseGameTests` 只動 hold、`begin` 這一族與相關的 Javadoc（新增 `lastBegun`、`afterPassFailure` 兩個 static 欄位、`startHold`、record `Begun`，以及它需要的 `import net.minecraft.test.GameTestState`；類別說明的衛生規則一句；`finish` 沒有改）；`TestServerTickPaceMixin`；`scripts/verification/README.md` 只改 F6-3b 改過的「新增 M5 GameTest」一節（節流一段與第 4 點的 B1）；本 note 只加本節。**沒有改** `M5ConvergenceHoldMixin`（hold 的簽名不變）、任何 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、所有 ps1、`.github/`、其他 GameTest、probe、JUnit、spec、plan、AGENTS。
 - 行號以 HEAD `c905ec4` 為準（code 與 `92f7c64` 相同）。原版的行號是 scratchpad `h8rev/all/net/minecraft/test/` 的反編譯。
+- Re-review（controller 補；fresh 的 spec 與 quality re-reviewer 並行，都只讀）：
+  - spec re-review ✅（Critical 0、Important 0、Minor 1）。**I-1 關閉。**
+    - RED 與 GREEN 是同一個情境：reviewer 把 `fix1-red-after-pass` 套到 `a798592`、`9fe2902`、`c905ec4`，重算出的 blob 與三份 gate-state 完全相同。
+    - 不連坐：再下一個 test PASS，HOLD 行只有 2 則。
+    - 前一個 test FAIL 的路徑不變：`fix1-b1-1` 的 `heldTicks=193` 與 F6-3b 相同；`fix1-hold50-1` 都標 `(FAIL)`，沒有 after-pass。
+    - 以 `isPassed()` 判斷的偏離成立：
+      - `TestManager.tick` 迭代的是 `CopyOnWriteArrayList` 的快照（`TestManager:37-41`），新的 test 要到下一個 server tick 才被 tick；
+      - 已完成的 state 不再被 tick（`GameTestState:95`）；
+      - testmod 沒有在 tick 之外呼叫 `fail`；
+      - 用 `finish` 的 PASS 判斷會誤判（`GameTestState:126-151`）。
+    - `_windows` 的限制可以接受：
+      - 唯一的 `_windows` test 目前不在最後一個 batch，Windows 也不略過它；
+      - 若它日後排到最後，非 Windows 的 run 會漏掉，F6-3e 的「全部 PASS 的 M5 run 不得出現任何 `M5_UNIVERSE_HOLD`」可以蓋住；
+      - 另一個既有的缺口：最後一個 test 通過之後才留下 catalog 以外的未確認權威，目前抓不到，建議 F6-3e 讓 SUITE_END 核對四個權威。
+    - 說法與 README 的更正都已做到；範圍與 run-all-1 的比較屬實。
+    - m-1：本節寫成時 run-all-2 還沒跑，所以沒有涵蓋它（「本節的 commit 之後再跑一次」那一條，以及「已知偶發：沒有遇到」）。controller 在下方補記。
+  - quality re-review **Approved**（Critical 0、Important 0、Minor 2）。
+    - 已確認：
+      - 判斷時點；
+      - static 狀態的生命週期：在 m5Only 之後才寫入，跑完 suite 就 `System.exit`；
+      - 命名與 Javadoc；
+      - `TestServer.exit()V` 的 HEAD 注入有 `require=1`，每次 run 恰好一行；crash 時沒有這一行，正好讓 gate 斷言缺行時抓到；
+      - `tps` 由構造保證不超過 1000/minTickMs；
+      - 方便 F6-3c 整組搬到 support。
+    - Minor：
+      1. after-pass 的失敗訊息是在 hold 開始時組好的，看不到 hold 的結果與 heldTicks；逾時時「照常收斂」也不成立（`M5UniverseGameTests.java:4611`、`:4613-4614`、`:4546`）。
+      2. `waitedMs` 包含等待期間執行的工作，不是閒置時間，文字容易誤讀（`TestServerTickPaceMixin.java:184-187`、`:198-200`、README `:10`）。F6-3e 的斷言宜用「恰一行、`waited>0`、`tps≤100.0`」，不要用 `waitedMs`。
+  - controller 補記（spec re-review m-1）：
+    - 本節 commit 之後的 run-all-2 是 `run-all-818e5997081f44bb958adb0859b4ec39`，在乾淨的 `c4e4db5` 上 `END ALL exit=0`，SUMMARY 與基準 `run-all-25af51ea…` 相同。
+    - Full WARN 55，基準是 54。多出的一則在 default run 的 `m2_task4_native_low`：`quantumchamber_sessions.dat` 原子移動時的 `AccessDeniedException`，那個 test 照常通過，屬已知偶發。
+    - 兩次 M5 gate 與 run-all-2 的 M5 run，HOLD 行都是 0，tps 是 88.3、88.0、88.4。
+  - controller 處置：
+    - quality Minor 1、2 → **F6-3c**，拆檔時一起處理。
+    - spec 建議的「SUITE_END 核對四個權威」、「全部 PASS 的 M5 run 不得出現 `M5_UNIVERSE_HOLD`」，以及節流結束列的斷言 → **F6-3e**。
+    - Minor 2「不再等滿 600 tick」不做，依 implementer 的理由接受。
+  - **F6-3b 完成**：range `c3fb2ca..c4e4db5`。code 到 `92f7c64`；中間的 `a798592` 是 controller 的 docs commit。最終 run-all `run-all-818e5997081f44bb958adb0859b4ec39`（`c4e4db5`）`END ALL exit=0`。**Ubuntu CI 的實際效果要 push 之後才能驗收。**
 
 ### I-1：前一個 test 通過時，hold 不再吞掉未確認的寫入（`9fe2902`）
 

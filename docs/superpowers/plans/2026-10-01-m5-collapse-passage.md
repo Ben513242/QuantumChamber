@@ -835,7 +835,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 - **F6-3：harness 與 CI。**
   - 開工時先做 **Step 0**：F6-2e-3 review 交下的 probe 整理，只改 testmod 的 probe 與 README，清單見 note F6-2e-3 一節的 review 區塊。其中 W12 第二次重試的斷言與「退避加倍」的證據（quality Minor 2）優先。已完成（2026-10-16，spec review ✅、quality review Approved）。
   - controller 2026-10-16 的拆分：先盤點（scratchpad `f63-inventory.md`，32 項），再做只讀的根因調查 F6-3a（`f63a-findings.md`）。之後依序派工，每次都走完 implementer → spec review → quality review：
-    - **F6-3b**：GameTest server 的 tick 節流（M5 run 每個 tick 至少 10 ms）、一個 test 失敗不再連坐其他 test，以及有界等待的餘裕量測。F6-3a 查出 Ubuntu CI 的 M5 失敗與本機偶發的預載逾時，根因是 GameTest server 不依 20 TPS 節流，以 tick 計的等待因此在 tick 很快的機器上逾時。
+    - **F6-3b**：GameTest server 的 tick 節流（M5 run 每個 tick 至少 10 ms）、一個 test 失敗不再連坐其他 test，以及有界等待的餘裕量測。F6-3a 查出 Ubuntu CI 的 M5 失敗與本機偶發的預載逾時，根因是 GameTest server 不依 20 TPS 節流，以 tick 計的等待因此在 tick 很快的機器上逾時。已完成（2026-10-16，含 fix round 1：通過的 test 留下未確認的權威時，下一個 test FAIL，hold 不再掩蓋；spec re-review ✅、quality re-review Approved）。Ubuntu 的實際效果待 push 之後驗收。
     - **F6-3c**：Step 0 review 的整理、`M5UniverseGameTests` 拆檔與 fixture，以及 GameTest 的小整理。
     - **F6-3d**：harness 腳本與 README。
     - **F6-3e**：`build.yml` 的明列清單與 `ci-rule-check.ps1`。
