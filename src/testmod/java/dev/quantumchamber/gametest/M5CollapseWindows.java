@@ -132,7 +132,8 @@ final class M5CollapseWindows {
      *     原本由 {@code M5CollapseRetryChains} 與 {@code M5CollapsePassageChains} 各寫一份、語意不同（前者只在 halt receipt 有摘要時比對，後者 record 存在就比對）。</li>
      * <li>{@link #withDoorAtStart}（F6-2d-2 B2a，B1 quality Minor 4）：restart 開服時原艙門的預期（{@link OriginDoorState}）；預設 {@link OriginDoorState#UNSPECIFIED}。原本是
      *     {@code M5CollapseDormantChains} 的 {@code CLOSED_DOOR_AT_RESTART}（開服時門關著的窗口，restart 在 JOIN 之前另斷言重新套用不把它打開）；F6-2d-2 B2 的 SEALED 門窗口
-     *     也以它宣告開服時的門。</li>
+     *     也以它宣告開服時的門。F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時門的預期<b>只</b>以它宣告（READY_COMMITTED、READY_HELD 原本另以 {@code withDisk} 的
+     *     {@code sealedDoorOnDiskAtRestart} 表達，已改寫），restart chain 要斷言記憶體裡的門時也由這一列讀（{@code M5CollapseRestartChains.doorAtStart}），不在 chain 再寫一份。</li>
      * </ul>
      * {@code withStateAtHalt} 另接受 MEASURED（F6-2d-1，W8：DORMANT 的收據，{@code restartedDormant}；還沒有 Destination，開服時斷言 {@code dormantAtRestart}）。
      * <p>F6-2d Step 0（F6-2c quality Minor 6）起驗證組合，restart 會忽略、或要到開服之後才發現的組合丟出 IllegalStateException。F6-2d-1（F6-2d Step 0 quality Minor 4、5
@@ -435,8 +436,10 @@ final class M5CollapseWindows {
                 afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withCrossedAtHalt(M5CollapseFixture.SELECTOR).withRecordKept()
                         .withDisk(M5CollapseWindows::selectorAcrossOnDiskAtRestart), null);
         // F6-2-16：COLLAPSING→PASSAGE_READY 已 checked 提交、門改為 passable 之前；halt 之前原生存檔（PREPARE 的 sealed 量子膜、參與者在艙內都在磁碟上）。
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的 sealed 量子膜改以 withDoorAtStart 宣告（doorAsExpectedAtStart；原本 withDisk 的 sealedDoorOnDiskAtRestart，同一個判斷）。
         row(rows, CrashWindow.READY_COMMITTED, M5CollapseWindows::readyCommitted, M5CollapseWindows::savedBeforePassable,
-                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withRecordKept().withDisk(M5CollapseWindows::sealedDoorOnDiskAtRestart), null);
+                afterReady.withStateAtHalt(SessionState.PASSAGE_READY).withRecordKept().withDoorAtStart(OriginDoorState.SEALED_MEMBRANE)
+                        .withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart), null);
         // F6-2-13：通道以 (d) 結束的 checked 終局已讀回確認、改門之前（chain 在 PASSAGE_READY 期間存過檔：磁碟上的門是 passable、Controller 是 PASSAGE）。
         row(rows, CrashWindow.PASSAGE_TERMINATED, M5CollapseWindows::passageTerminated, M5CollapseWindows::terminatedBeforeTheDoor,
                 afterReady.terminatedAtHalt().withDisk(M5CollapseWindows::passageOnDiskAtRestart), null);
@@ -475,9 +478,11 @@ final class M5CollapseWindows {
                         .withDisk((run, fixture) -> sealedKeptAtRestart(run, fixture, SealedReason.AUTHORITY_UNREADABLE, "unreadableAtRestart")), null);
         // ---- F6-2d-2 B1：PREPARE 的原艙門跨重啟（chain 在 M5CollapseDoorChains；waitingdoor 與 preparedoor 共用這一列） ----
         // F6-2-08、F6-2-10：PREPARE 準備完成、PASSAGE_READY 的提交由 READY_HOLD 暫緩的那一刻（同一個 tick 的 prepareDoor 已套用 sealed 量子膜，projection ledger 已 COMPLETE）；
-        // halt 之前原生存檔（sealed 的門、參與者在艙內的 playerdata、COMPLETE 都在磁碟上）。重啟之後 PREPARE 只修復（0 格）。
+        // halt 之前原生存檔（sealed 的門、參與者在艙內的 playerdata、COMPLETE 都在磁碟上）。重啟之後 PREPARE 只修復（0 格）。F6-2e Step 0：開服時的 sealed 量子膜以 withDoorAtStart
+        // 宣告（同 READY_COMMITTED；waitingdoor、preparedoor 的開服斷言也由這一列讀，M5CollapseRestartChains.doorAtStart）。
         row(rows, CrashWindow.READY_HELD, M5CollapseWindows::readyHeldWithTheMembrane, M5CollapseWindows::savedWhileReadyHeld,
-                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withRecordKept().withDisk(M5CollapseWindows::sealedDoorOnDiskAtRestart),
+                AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.COMPLETE).withRecordKept().withDoorAtStart(OriginDoorState.SEALED_MEMBRANE)
+                        .withDisk(M5CollapseWindows::playerDataInTheSourceAtRestart),
                 new Prepared("repairedNothing", ProjectionWriter.Mode.REPAIR, 0, NO_CHECK));
         // ---- F6-2d-2 B2：SEALED 的原艙門跨重啟（chain 在 M5CollapseDoorChains；三列都在 commitRollForward 回傳、sealCommitted 的關門與 WARN 之前） ----
         // F6-2-09：RESOLVE 第 4 步讀 discovery 失敗 → COLLAPSING→SEALED(AUTHORITY_UNREADABLE) 已確認（allocation、catalog、物化都已完成）。halt 之前不存檔：收據的原生存檔之後原艙門
@@ -491,7 +496,8 @@ final class M5CollapseWindows {
                 unreadableSealed.withDoorAtStart(OriginDoorState.CLOSED), null);
         // F6-2-11：PREPARE 的第一個 tick 套用 sealed 量子膜、投影寫入失敗（ProjectionWriteFault）→ COLLAPSING→SEALED(PROJECTION_FAILED) 已確認。projection ledger 在寫入之前已是 PENDING
         // （CollapseService.project 先 writeProjection(PENDING) 再 ProjectionWriter.write）。halt 之前原生存檔（sealed 的門、參與者在艙內的 playerdata 都在磁碟上）。開服時的 sealed 量子膜
-        // 由 withDoorAtStart(SEALED_MEMBRANE) 斷言（doorAsExpectedAtStart），所以 withDisk 不再用 sealedDoorOnDiskAtRestart（同一件事會斷言兩次）。sealmembrane 與 sealmembranejoined 共用。
+        // 由 withDoorAtStart(SEALED_MEMBRANE) 斷言（doorAsExpectedAtStart），所以 withDisk 不再用 sealedDoorOnDiskAtRestart（同一件事會斷言兩次；F6-2e Step 0 起 READY 的兩列也這樣寫，
+        // sealedDoorOnDiskAtRestart 已拿掉）。sealmembrane 與 sealmembranejoined 共用。
         row(rows, CrashWindow.PROJECTION_SEALED, M5CollapseWindows::projectionSealedWithTheMembrane, M5CollapseWindows::projectionSealedAtHalt,
                 AtRestart.resolved(Resolved.DISCOVERY).withProjection(ProjectionLedger.Entry.Status.PENDING).withStateAtHalt(SessionState.SEALED).withRecordKept()
                         .withDoorAtStart(OriginDoorState.SEALED_MEMBRANE).withDisk((run, fixture) -> {
@@ -1300,17 +1306,10 @@ final class M5CollapseWindows {
     }
 
     /**
-     * halt 之前門是 PREPARE 的 sealed 量子膜、原生存檔過的窗口的開服：磁碟上的原艙門是 sealed 量子膜，參與者的 playerdata 在來源世界（艙內）。F6-2-16（{@code READY_COMMITTED}）
-     * 與 F6-2-08、F6-2-10（{@code READY_HELD}）共用（F6-2d-2 B2a，B1 quality Minor 5：原本只寫 F6-2-16；halt 之前的取證是 {@link #sealedDoorSavedAtHalt}）。
-     */
-    private static void sealedDoorOnDiskAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
-        run.expect("sealedDoorOnDiskAtRestart", doorOnDisk(run, fixture, true, MembraneState.sealedFor(FRAME.outwardFacing())), () -> "磁碟上的原艙門不是 sealed 量子膜");
-        playerDataInTheSourceAtRestart(run, fixture);
-    }
-
-    /**
      * F6-2-17、F6-2-12 的 pendingRecovery 的開服：參與者的 playerdata 在來源世界（沒有人的 Crossed 確認過，production 不存：F6-2-17 的寫出沒有確認，pendingRecovery 的
-     * 傳送無法回滾、沒有加入 Crossed）。
+     * 傳送無法回滾、沒有加入 Crossed）。halt 之前門是 PREPARE 的 sealed 量子膜、原生存檔過的窗口（F6-2-16 的 {@code READY_COMMITTED}、F6-2-08／F6-2-10 的 {@code READY_HELD}、
+     * F6-2-11 的 {@code PROJECTION_SEALED}）也用它（參與者在艙內存檔）。F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：那三列的 sealed 量子膜一律以
+     * {@code withDoorAtStart(SEALED_MEMBRANE)} 宣告（{@code doorAsExpectedAtStart}）；原本 READY 的兩列另以 {@code sealedDoorOnDiskAtRestart}（同一個 raw MCA 判斷）表達，已拿掉。
      */
     private static void playerDataInTheSourceAtRestart(M5CollapseRun run, M5CollapseFixture fixture) throws Exception {
         run.expect("playerDataInTheSourceWorld", playerDataIn(run, fixture, M5CollapseFixture.EVERYONE, run.source()), () -> "參與者的 playerdata 不在來源世界");

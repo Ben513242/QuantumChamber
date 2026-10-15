@@ -141,31 +141,39 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * </ol>
      */
     Phase waitingDoorRestart(String crashPhase) {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（READY_HELD 是 SEALED_MEMBRANE）。
+        var id = CrashWindow.READY_HELD;
+        var door = doorAtStart(id);
         var steps = new ArrayList<Step>();
-        steps.add(M5CollapsePassage.awaiting("normalizeQueued", QUEUE_WAIT_TICKS, () -> !reapplyQueued(run, fixture.sid()).isEmpty(), this::normalizeQueued));
+        steps.add(M5CollapsePassage.awaiting("normalizeQueued", QUEUE_WAIT_TICKS, () -> !reapplyQueued(run, fixture.sid()).isEmpty(),
+                (tick, happened) -> normalizeQueued(door, tick, happened)));
         steps.add(M5CollapsePassage.counting("normalized", APPLY_WAIT_TICKS, this::normalizedOnTheQueuedTick));
         steps.add(M5CollapsePassage.watch("waitingWithThePlainDoor", M5CollapsePassage.WATCH_TICKS, this::plainOpenWhileWaiting, this::resolvedWhileWaiting));
         steps.add(new Step("join", 1, this::joinThenStepOutside));
-        steps.addAll(passage.steps(M5CollapseWindows.of(CrashWindow.READY_HELD).prepared()));
-        return restartPhase(crashPhase, CrashWindow.READY_HELD, ChamberAtStart.PRELOADED, steps, this::sealedWithNobodyOnline);
+        steps.addAll(passage.steps(M5CollapseWindows.of(id).prepared()));
+        return restartPhase(crashPhase, id, ChamberAtStart.PRELOADED, steps, () -> sealedWithNobodyOnline(door));
     }
 
-    /** waitingdoor 的開服（{@link #restartPhase} 的 {@code afterStarted}）：原艙門在記憶體裡是 sealed 量子膜（由磁碟載入），沒有人在線上、還沒有 tick。 */
-    private void sealedWithNobodyOnline() {
-        run.expect("sealedDoorAtStart", M5GameTestSupport.doorSealed(run.source(), FRAME), () -> "開服時原艙門不是 sealed 量子膜：" + doorCenter(run));
+    /**
+     * waitingdoor 的開服（{@link #restartPhase} 的 {@code afterStarted}）：原艙門在記憶體裡是 {@code door}（窗口列的 sealed 量子膜，由磁碟載入），沒有人在線上、還沒有 tick。
+     * F6-2e Step 0：門由窗口列讀（原本寫死 {@code doorSealed}），名稱不變。
+     */
+    private void sealedWithNobodyOnline(OriginDoorState door) {
+        run.expect("sealedDoorAtStart", M5CollapseDoors.is(run, door), () -> "開服時原艙門不是 " + door + "：" + doorCenter(run));
         run.expect("nobodyOnlineAtStart", fixture.noneOnline() && run.ticks() == 0, () -> "開服時 tick=" + run.ticks() + " 有人在線上=" + !fixture.noneOnline());
     }
 
     /**
      * step {@code normalizeQueued}（{@link M5CollapsePassage#awaiting}：排入的 INFO 出現、或等滿 {@link #QUEUE_WAIT_TICKS} 個 tick 時；{@code tick} 是這個 step 的第幾個 tick，
-     * 由 1 起）。到時沒有排入時由 {@code normalizeQueuedOnTheFirstLoad} 判 FAIL（F6-2d-2 B2a 之前是 {@code counting} 加手寫的等待，等待時間與通過條件相同）。
+     * 由 1 起）。到時沒有排入時由 {@code normalizeQueuedOnTheFirstLoad} 判 FAIL（F6-2d-2 B2a 之前是 {@code counting} 加手寫的等待，等待時間與通過條件相同）。F6-2e Step 0：
+     * 那個 tick 門仍是開服時的 {@code door}（窗口列，原本寫死 {@code doorSealed}；{@code notWrittenWhenObserved}，名稱不變）。
      */
-    private void normalizeQueued(int tick, boolean happened) {
+    private void normalizeQueued(OriginDoorState door, int tick, boolean happened) {
         var queued = reapplyQueued(run, fixture.sid());
-        boolean sealed = M5GameTestSupport.doorSealed(run.source(), FRAME);
+        boolean sealed = M5CollapseDoors.is(run, door);
         run.expect("normalizeQueuedOnTheFirstLoad", queued.size() == 1 && queued.getFirst().normalizeAfterARestart(),
                 () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued);
-        run.expect("notWrittenWhenObserved", sealed, () -> "排入的那個 tick 原艙門已不是 sealed 量子膜：" + doorCenter(run));
+        run.expect("notWrittenWhenObserved", sealed, () -> "排入的那個 tick 原艙門已不是 " + door + "：" + doorCenter(run));
         waiting.normalizeTick = queued.getFirst().tick();
         run.proof.put("normalizeQueuedAtServerTick", run.server().getTicks());
         run.proof.put("normalizeTick", waiting.normalizeTick);
@@ -225,22 +233,26 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * </ol>
      */
     Phase prepareDoorRestart(String crashPhase) {
+        // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：開服時的門由窗口列讀（READY_HELD 是 SEALED_MEMBRANE）。
+        var id = CrashWindow.READY_HELD;
+        var door = doorAtStart(id);
         var steps = new ArrayList<Step>();
         steps.add(M5CollapsePassage.awaiting("preparedOnTheLevel", PREPARE_WAIT_TICKS, () -> prepares() > 0, this::preparedWithTheVisitorInside));
         steps.add(M5CollapsePassage.counting("heldWithTheVisitorInside", HELD_WAIT_TICKS, this::heldWithTheVisitorInside));
         steps.add(M5CollapsePassage.watch("visitorStillInside", VISITOR_WATCH_TICKS, this::plainOpenWhileTheVisitorIsInside, this::visitorLeaves));
         steps.add(M5CollapsePassage.counting("resealed", 1, this::resealedOnTheNextTick));
-        steps.add(passage.ready(M5CollapseWindows.of(CrashWindow.READY_HELD).prepared(), M5CollapseFixture.EVERYONE));
+        steps.add(passage.ready(M5CollapseWindows.of(id).prepared(), M5CollapseFixture.EVERYONE));
         steps.addAll(passage.cross(M5CollapseFixture.EVERYONE));
         steps.add(passage.ended(() -> End.crossed(fixture)));
-        return restartPhase(crashPhase, CrashWindow.READY_HELD, ChamberAtStart.PRELOADED, steps, this::bothInsideBeforeTheFirstTick);
+        return restartPhase(crashPhase, id, ChamberAtStart.PRELOADED, steps, () -> bothInsideBeforeTheFirstTick(door));
     }
 
     /**
      * preparedoor 的開服（{@link #restartPhase} 的 {@code afterStarted}，第一個 tick 之前）：裝上 PASSAGE_READY 的提交暫緩；參與者 JOIN 在艙內（crash 前存的位置）、記下位置；
-     * 非參與者（新的 UUID，不在收據裡）JOIN 之後移到艙內、與參與者錯開。這時門在記憶體裡是 sealed（由磁碟載入）。
+     * 非參與者（新的 UUID，不在收據裡）JOIN 之後移到艙內、與參與者錯開。這時門在記憶體裡是 {@code door}（窗口列的 sealed 量子膜，由磁碟載入；F6-2e Step 0 起由窗口列讀，原本寫死
+     * {@code doorSealed}）。
      */
-    private void bothInsideBeforeTheFirstTick() {
+    private void bothInsideBeforeTheFirstTick(OriginDoorState door) {
         prepare.hold = run.install(M5TestHooks.READY_HOLD, new M5TestHooks.ReadyHold(fixture.sid()));
         joinInside();
         var visitor = prepare.visitor = fixture.connect(UUID.randomUUID()).player();
@@ -248,7 +260,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         visitor.teleport(run.source(), spot.x, spot.y, spot.z, Set.of(), 0, 0);
         boolean participant = fixture.players().stream().allMatch(M5CollapseFixture::inside), outsider = M5CollapseFixture.inside(visitor);
         run.expect("bothInsideBeforeTheFirstTick", run.ticks() == 0 && participant && outsider && !fixture.participants().contains(visitor.getUuid())
-                        && visitor.getServerWorld() == run.source() && M5GameTestSupport.doorSealed(run.source(), FRAME),
+                        && visitor.getServerWorld() == run.source() && M5CollapseDoors.is(run, door),
                 () -> "tick=" + run.ticks() + " 參與者在艙內=" + participant + " 非參與者在 " + visitor.getPos() + " 門正中=" + doorCenter(run));
         run.proof.put("joinedAt", joinedAt.toString());
         run.proof.put("visitor", visitor.getUuid().toString());
