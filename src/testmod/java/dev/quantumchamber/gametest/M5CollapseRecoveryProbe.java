@@ -31,7 +31,8 @@ import net.fabricmc.api.ModInitializer;
  *     與 load-sync 的觀察在 {@link M5CollapseProjectionLoad}。{@link M5CollapseUnloadChain}（H5：chunk 卸載的 livelock 防護，不經塌縮流程）。
  *     {@link M5CollapseTemplateRaceChain}（H6：結構範本快取的同時使用，不經塌縮流程）。{@link M5CollapseUnsupportedChain}（F6-2e-1：W10，M4 時期的 Nether／End 收據跨真重啟；
  *     不經 {@link M5CollapseRestartChains} 的 crash 骨架）。{@link M5CollapseInitChain}（F6-2e-2：W11，M4 時期的 schema 3 存檔第一次以 M5 開服、初始化只建立一個 ledger 就 crash；
- *     setup、crash、兩次重啟四個 phase，也不經那份骨架）。</li>
+ *     setup、crash、兩次重啟四個 phase，也不經那份骨架）。{@link M5CollapseConvergenceChain}（F6-2e-3：W12，catalog 配置與 discovery 追加的讀回失敗在同一個 JVM 收斂之後 crash；
+ *     繼承 {@link M5CollapseRestartChains}，crash phase 另寫，restart 用 {@link M5CollapseDormantChains#restart}）。</li>
  * </ul>
  * phase 以 {@link #PHASES} 表示：名稱 → {@link PhaseFactory}（設定 {@code M5CollapseRun.Configuration} 與 factory 的型別都在 runner，F6-2c Step 0：runner 不依賴 entrypoint）。新增 phase 要同時改三份表：這裡的 {@link #phases}、{@code m5-collapse-probe.ps1} 的 chain 表
  * （{@code $chains}：同名的 phase、預期的結束與 halt 的窗口），以及 {@code run-all.ps1} 的 {@code $expectedCollapse}（{@code scripts/verification/README.md}
@@ -134,6 +135,10 @@ public final class M5CollapseRecoveryProbe implements ModInitializer {
         table.put(M5CollapseInitChain.CRASH, run -> new M5CollapseInitChain(run).crash());
         table.put(M5CollapseInitChain.UNREADABLE, run -> new M5CollapseInitChain(run).unreadable());
         table.put(M5CollapseInitChain.RESTART, run -> new M5CollapseInitChain(run).restart());
+        // F6-2e-3（spec §12 W12，F6-2-06）：catalog 配置的讀回失敗 → roll-forward、確認之前不物化 → 重試時收斂（同一個 U）→ discovery 追加的讀回失敗 → roll-forward → 重試時收斂、
+        // 已落地的 record 不移除 → 收斂之後 crash；restart 同 W5，續行到 READY、跨越、終局。
+        table.put(M5CollapseConvergenceChain.CRASH, run -> new M5CollapseConvergenceChain(run).crash());
+        table.put(M5CollapseConvergenceChain.RESTART, run -> new M5CollapseDormantChains(run).restart(CrashWindow.DISCOVERY_CONVERGED, M5CollapseConvergenceChain.CRASH));
         return Collections.unmodifiableMap(table);
     }
 

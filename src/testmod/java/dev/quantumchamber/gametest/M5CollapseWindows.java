@@ -536,6 +536,11 @@ final class M5CollapseWindows {
         // M4 時期的 schema 3 存檔第一次以 M5 開服：M5 authority 初始化建立 allocation ledger 之後、建立 projection ledger 之前（開服時，早於任何 tick）。halt 之前只有 allocation ledger（空的）、
         // journal 仍是 schema 3、discovery 沒有被碰過。restart 是專屬的 phase（w11-unreadable、w11-restart），不經 expectAtRestart。
         dedicatedRow(rows, CrashWindow.FIRST_LEDGER_CREATED, M5CollapseInitChain::firstLedgerCreated, M5CollapseInitChain::oneLedgerAtHalt);
+        // ---- F6-2e-3：W12（chain 在 M5CollapseConvergenceChain） ----
+        // catalog 與 discovery 的讀回失敗都已在同一個 JVM 收斂之後：第二次重試的 RESOLVE 第 4 步收斂 discovery、appendDiscovery 回傳時（halt 之前磁碟上恰為已落地的那一筆）。restart 同 W5
+        // （COLLAPSING、目的地的權威都已確認、門關著；M5CollapseDormantChains.restart），另以 withDisk 確認 discovery 仍是那一筆。
+        row(rows, CrashWindow.DISCOVERY_CONVERGED, M5CollapseConvergenceChain::discoveryConverged, M5CollapseConvergenceChain::convergedAtHalt,
+                AtRestart.resolved(Resolved.DISCOVERY).withDoorAtStart(OriginDoorState.CLOSED).withDisk(M5CollapseConvergenceChain::landedRecordKeptAtRestart), null);
         return Collections.unmodifiableMap(rows);
     }
 

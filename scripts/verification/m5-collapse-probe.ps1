@@ -90,6 +90,8 @@ $chains = [ordered]@{
     'w10' = @(@{phase='w10-crash'; ending='halt'; window='M4_RECEIPT_STEP'}, @{phase='w10-restart'; ending='stop'; window=''})
     # F6-2e-2（W11）：M4 時期的 schema 3 存檔第一次以 M5 開服，初始化只建立 allocation ledger 就 crash；第一次重啟讀既有的 ledger 失敗、不補建，第二次重啟補建、不判為遺失，NEW 到達 READY。
     'w11' = @(@{phase='w11-setup'; ending='stop'; window=''}, @{phase='w11-crash'; ending='halt'; window='FIRST_LEDGER_CREATED'}, @{phase='w11-unreadable'; ending='stop'; window=''}, @{phase='w11-restart'; ending='stop'; window=''})
+    # F6-2e-3（W12）：catalog 配置與 discovery 追加的「atomic move 已完成、讀回失敗」各一次，都在同一個 JVM 收斂（roll-forward、確認之前不物化、已落地的 record 不移除）之後 crash；restart 同 W5，續行到 READY。
+    'w12' = @(@{phase='w12-crash'; ending='halt'; window='DISCOVERY_CONVERGED'}, @{phase='w12-restart'; ending='stop'; window=''})
 }
 # chain 表的全部 phase（依 chain 的順序）：與每個 receipt 的 phaseTable（probe 的 phase 表）逐一比對，任何一邊多出或少了 phase 都判 FAIL。
 $tablePhases = @($chains.Values | ForEach-Object { $_ } | ForEach-Object { $_.phase })
