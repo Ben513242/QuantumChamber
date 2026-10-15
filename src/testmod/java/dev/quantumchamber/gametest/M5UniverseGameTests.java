@@ -164,6 +164,13 @@ public final class M5UniverseGameTests implements FabricGameTest {
      */
     private static final int HOLD_TICKS = 3 * CollapseBackoff.INITIAL_TICKS;
     /**
+     * D1 等進入 PREPARE（或 PASSAGE_READY）的上限（F6-2c Step 0；F6-3c-1 依 F6-2c Step 0 quality Minor 5 收成一個常數，原本四個 test 各寫一次 600 與同一段註解）。PREPARE 的預載是
+     * wall-clock 的 chunk 載入，機器忙時以 tick 計的等待會變長（F6-2c Step 0 時 GameTest 的 tick 還沒有節流，實測最多約 380 tick；F6-3b 起 M5 run 每個 tick 至少 10 ms）。等待以
+     * production 的 §9.1 門檻為界（{@code CollapseService.WAIT_WARN_TICKS}＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN；那個常數是 package-private，testmod 看不到），
+     * 用到它的 test 的 tickLimit 當時同步加了 200。
+     */
+    private static final int PREPARE_WAIT_TICKS = 600;
+    /**
      * 最後一個呼叫 {@link #begin} 的 test（F6-3b fix round 1）。{@link #holdBeforeBegin} 以它在原版的結果（{@code GameTestState.isPassed()}）判斷「前一個 test」
      * 是否通過，不以 {@link #finish} 寫出的 PASS 為準：finish 之後的同一個 tick，原版仍可能因 tickLimit 或其他 callback 判它失敗。平台略過的
      * {@code _windows} test 不呼叫 begin，不會取代它。所有存取都在 server thread。
@@ -1551,9 +1558,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             var authorities = CollapseAuthorities.get(server);
-            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
-            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
-            whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid1).isEmpty(), first -> {
+            whenTicks(context, resolved + 1, PREPARE_WAIT_TICKS, () -> !prepared(capture, sid1).isEmpty(), first -> {
                 var stone = local(frame, 2, 1, 2); var hole = local(frame, 0, 3, 3);
                 universe.setBlockState(stone, Blocks.STONE.getDefaultState());
                 witness.put("interiorChangeAllowed", universe.getBlockState(stone).isOf(Blocks.STONE));
@@ -1609,9 +1614,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
-            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
-            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
-            whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid1).isEmpty(), first -> {
+            whenTicks(context, resolved + 1, PREPARE_WAIT_TICKS, () -> !prepared(capture, sid1).isEmpty(), first -> {
                 var hole = local(frame, 0, 3, 3);
                 ChamberProtectionService.get().authorizedMutation(() -> {
                     universe.setBlockState(hole, Blocks.AIR.getDefaultState());
@@ -1849,9 +1852,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
             var witness = new LinkedHashMap<String, Boolean>();
             var authorities = CollapseAuthorities.get(server);
             var index = ProjectionProtectionIndex.get(server);
-            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
-            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
-            whenTicks(context, resolved + 1, 600, () -> !prepared(capture, sid1).isEmpty(), first -> {
+            whenTicks(context, resolved + 1, PREPARE_WAIT_TICKS, () -> !prepared(capture, sid1).isEmpty(), first -> {
                 var stone = local(frame, 2, 1, 2); var hole = local(frame, 0, 3, 3);
                 universe.setBlockState(stone, Blocks.STONE.getDefaultState());
                 ChamberProtectionService.get().authorizedMutation(() -> universe.setBlockState(hole, Blocks.AIR.getDefaultState()));
@@ -3069,9 +3070,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         var p = origin.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
-            // F6-2c Step 0：PREPARE 的預載是 wall-clock 的 chunk 載入，GameTest 的 tick 不節流，機器忙時以 tick 計的等待會變長（實測最多約 380 tick）。等待以 production 的
-            // §9.1 門檻為界（CollapseService.WAIT_WARN_TICKS＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN），tickLimit 同步加 200。
-            whenTicks(context, resolved + 1, 600, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
+            whenTicks(context, resolved + 1, PREPARE_WAIT_TICKS, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
                 M5GameTestSupport.overlayKeys(origin.connection);
                 context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
                 whenTicks(context, readyAt + 1, 5, () -> !journal.flushedRecords().containsKey(sid), ended -> {
@@ -4036,7 +4035,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_close_crossed", tickLimit = 900)
     public void passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed(TestContext context) {
         begin(context, "passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed");
-        endWithOneCrossed(context, true);
+        endWithOneCrossed(context, CrossedEnd.BY_PARTICIPANT);
     }
 
     /**
@@ -4046,15 +4045,36 @@ public final class M5UniverseGameTests implements FabricGameTest {
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_passage_power_crossed", tickLimit = 900)
     public void passage_power_loss_skips_the_one_who_crossed(TestContext context) {
         begin(context, "passage_power_loss_skips_the_one_who_crossed");
-        endWithOneCrossed(context, false);
+        endWithOneCrossed(context, CrossedEnd.POWER_LOSS);
     }
 
     /**
-     * {@link #passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed}（{@code byParticipant}：Q 以 bulkhead 關門，(a)）與
-     * {@link #passage_power_loss_skips_the_one_who_crossed}（斷電，(d)）的本體（F6-1 Step 0）。兩者只差在結束的方式、INFO 的原因與門的終局狀態（(a) 關閉，(d) 一般開門）。
-     * 有界等待的總長度：{@code resolved}（最多 65）＋提交 1＋400＋結束 5＋10＋完成 20＝501，小於 tickLimit 900。
+     * {@link #endWithOneCrossed} 的結束方式（F6-3c-1，F6-1 Step 0 quality Minor 2：原本是裸 boolean {@code byParticipant}，呼叫點看不出是 (a) 還是 (d)）：「量子通道已結束」INFO 的
+     * 原因字句與終局之後原艙門的狀態。結束的動作由 {@link #endWithOneCrossed} 依它分派。
      */
-    private static void endWithOneCrossed(TestContext context, boolean byParticipant) {
+    private enum CrossedEnd {
+        /** (a)：還沒跨過的 Q 在原艙這一側以 bulkhead 關門；終局之後門關著。 */
+        BY_PARTICIPANT("(a) 參與者在原艙這一側開關原艙門", false),
+        /** (d)：來源艙斷電；終局之後門改為一般開門。 */
+        POWER_LOSS("(d) 來源艙沒有供電", true);
+
+        /** 「量子通道已結束」INFO 的原因字句。 */
+        final String reason;
+        /** 終局之後原艙門是一般開門（否則關著）。 */
+        final boolean openAfterTheEnd;
+
+        CrossedEnd(String reason, boolean openAfterTheEnd) {
+            this.reason = reason;
+            this.openAfterTheEnd = openAfterTheEnd;
+        }
+    }
+
+    /**
+     * {@link #passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed}（{@link CrossedEnd#BY_PARTICIPANT}：Q 以 bulkhead 關門，(a)）與
+     * {@link #passage_power_loss_skips_the_one_who_crossed}（{@link CrossedEnd#POWER_LOSS}：斷電，(d)）的本體（F6-1 Step 0）。兩者只差在結束的方式、INFO 的原因與門的終局狀態
+     * （(a) 關閉，(d) 一般開門）。有界等待的總長度：{@code resolved}（最多 65）＋提交 1＋400＋結束 5＋10＋完成 20＝501，小於 tickLimit 900。
+     */
+    private static void endWithOneCrossed(TestContext context, CrossedEnd how) {
         var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = openOrigin(context, hooks);
@@ -4069,7 +4089,7 @@ public final class M5UniverseGameTests implements FabricGameTest {
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var q = second.player();
         var doorCell = local(frame, 3, 3, 0);
-        var end = byParticipant ? "(a) 參與者在原艙這一側開關原艙門" : "(d) 來源艙沒有供電";
+        var end = how.reason;
         collapsedToUniverse(context, origin, hooks, List.of(q.getUuid()), (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             moveInside(q, frame);
@@ -4088,12 +4108,14 @@ public final class M5UniverseGameTests implements FabricGameTest {
                             witness.put("nothingForTheOneWhoStayedBeforeTheEnd", stayed.overlays().isEmpty() && stayed.titles().isEmpty());
                         },
                         () -> {
-                            if (byParticipant) witness.put("closedByTheOneWhoStayed", interact(world, doorCell, q).isAccepted());
-                            else context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                            switch (how) {
+                                case BY_PARTICIPANT -> witness.put("closedByTheOneWhoStayed", interact(world, doorCell, q).isAccepted());
+                                case POWER_LOSS -> context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                            }
                         }));
                 whenTicks(context, readyAt + 5, 10, () -> !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), ended -> {
                     witness.put("endedAsExpected", passageEnded(capture, sid, end) == 1 && passageEnded(capture, sid, "量子通道已結束") == 1);
-                    witness.put("doorAfterTheTerminal", doorAll(world, frame, !byParticipant, MembraneState.NONE));
+                    witness.put("doorAfterTheTerminal", doorAll(world, frame, how.openAfterTheEnd, MembraneState.NONE));
                     witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
                     // spec §20.9：已在 Crossed 中的 P 不再收到「量子通道已關閉」（什麼都沒有收到）；還沒跨過的 Q 收到恰一則 actionbar，沒有 title。
