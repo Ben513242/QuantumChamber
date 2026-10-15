@@ -99,17 +99,16 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
         steps.add(new Step("committed", 40, fixture::committed));
         steps.add(new Step("sealedOnTheCatalog", 400, this::sealedOnTheUnconfirmedCatalog));
         steps.add(M5CollapsePassage.watch("unconfirmed", M5CollapsePassage.WATCH_TICKS, this::catalogStillUnconfirmed));
-        steps.add(new Step("backoff", M5CollapseRetryChains.BACKOFF_TICKS + 10, () -> reenterAfter(M5CollapseRetryChains.BACKOFF_TICKS, this::catalogUnconfirmedInTheBackoff,
-                this::discoveryReadbackFails, "reenteredAfterTheBackoffTick")));
+        steps.add(reenterAfter("backoff", M5CollapseRetryChains.BACKOFF_TICKS, this::catalogUnconfirmedInTheBackoff, this::discoveryReadbackFails,
+                "reenteredAfterTheBackoffTick"));
         // F6-3 Step 0（F6-2e-3 quality Minor 2）：第一次重試經基底的 retried（原本只在 sealedOnTheDiscovery 數「SEALED 重試」恰一則）。
         steps.add(retried("retried", "retriedOnTheCatalog", SealedReason.ALLOCATION_IO_FAILED, 1, Await.EDGE));
         steps.add(new Step("sealedOnTheDiscovery", 400, this::sealedOnTheUnconfirmedDiscovery));
         // F6-3 Step 0：「退避加倍」的證據：第一次的退避長度時先進入一次，這次不重試；觀察完離開，再等到加倍的退避期過後。
-        steps.add(new Step("backoffEarly", M5CollapseRetryChains.BACKOFF_TICKS + 10, () -> reenterAfter(M5CollapseRetryChains.BACKOFF_TICKS, M5CollapseRun.NOTHING,
-                M5CollapseRun.NOTHING, "reenteredBeforeTheDoubledBackoffTick")));
+        steps.add(reenterAfter("backoffEarly", M5CollapseRetryChains.BACKOFF_TICKS, tick -> { }, M5CollapseRun.NOTHING, "reenteredBeforeTheDoubledBackoffTick"));
         steps.add(M5CollapsePassage.watch("notRetriedEarly", M5CollapsePassage.WATCH_TICKS, this::notRetriedBeforeTheDoubledBackoff, fixture::moveOutside));
-        steps.add(new Step("backoffAgain", SECOND_BACKOFF_TICKS + 10, () -> reenterAfter(SECOND_BACKOFF_TICKS, M5CollapseRun.NOTHING,
-                () -> M5CollapseWindows.arm(run, fixture, CrashWindow.DISCOVERY_CONVERGED), "reenteredAfterTheDoubledBackoffTick")));
+        steps.add(reenterAfter("backoffAgain", SECOND_BACKOFF_TICKS, tick -> { }, () -> M5CollapseWindows.arm(run, fixture, CrashWindow.DISCOVERY_CONVERGED),
+                "reenteredAfterTheDoubledBackoffTick"));
         steps.add(untilTriggered("retriedAgain", "retriedAgainAfterTheDoubledBackoff", Await.EDGE, () -> retries(run, fixture.sid()) >= 2, this::retriedTwice, null));
         steps.add(new Step("halt", 400, () -> false));
         return Phase.halt(steps).started(fixture::requireFreshWorld).everyTick(() -> {
@@ -118,25 +117,31 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
     }
 
     /**
-     * 封存之後過了 {@code ticks} 個 tick：先 {@code before}，再由艙外進入艙內（邊緣觸發），把進入的 server tick 記在 proof 的 {@code proofKey}（F6-3 Step 0，比照
-     * {@code M5CollapseRetryChains} 的 {@code reenteredAfterTheBackoffTick}）。每個 tick（含進入的那個 tick、進入之前）先做 {@code eachTick}（F6-3 Step 0：{@code backoff} 的具名斷言）。
+     * step {@code stepName}（上限 {@code ticks}＋10）：最近一次封存之後過了 {@code ticks} 個 tick 時，先 {@code before}，再由艙外進入艙內（邊緣觸發），把進入的 server tick 記在 proof 的
+     * {@code proofKey}（F6-3 Step 0，比照 {@code M5CollapseRetryChains} 的 {@code reenteredAfterTheBackoffTick}）。每個 tick（含進入的那個 tick、進入之前）先以這是這個 step 的第幾個
+     * tick（由 1 起，同 {@link M5CollapsePassage#watch}）呼叫 {@code eachTick}（F6-3 Step 0：{@code backoff} 的具名斷言）。F6-3c-1（F6-3 Step 0 quality Minor 4）：{@code eachTick}
+     * 改為 {@link M5CollapsePassage.Watching}，與 {@code before}（{@link M5CollapseRun.Checked}）不同型別，兩者對調不能編譯，失敗訊息也拿得到 tick；step 也改由這裡以
+     * {@link M5CollapsePassage#counting} 建立（原本三個呼叫端各寫一次 {@code new Step(name, ticks + 10, ...)}，名稱、上限與每個 tick 的動作都與原本相同）。
      */
-    private boolean reenterAfter(int ticks, M5CollapseRun.Checked eachTick, M5CollapseRun.Checked before, String proofKey) throws Exception {
-        eachTick.run();
-        if (run.server().getTicks() < markTick + ticks) return false;
-        before.run();
-        fixture.moveInside();
-        run.proof.put(proofKey, run.server().getTicks());
-        return true;
+    private Step reenterAfter(String stepName, int ticks, M5CollapsePassage.Watching eachTick, M5CollapseRun.Checked before, String proofKey) {
+        return M5CollapsePassage.counting(stepName, ticks + 10, tick -> {
+            eachTick.tick(tick);
+            if (run.server().getTicks() < markTick + ticks) return false;
+            before.run();
+            fixture.moveInside();
+            run.proof.put(proofKey, run.server().getTicks());
+            return true;
+        });
     }
 
     /**
      * step {@code backoff} 的每個 tick（到由艙外進入的那個 tick、進入之前；F6-3 Step 0，F6-2e-3 spec M-2、quality Minor 1：原本這一段約 165 tick 沒有斷言）：仍是 roll-forward 的狀態
-     * （{@code catalogRolledForwardInTheBackoff}）、沒有物化（{@code notMaterializedInTheBackoff}）。
+     * （{@code catalogRolledForwardInTheBackoff}）、沒有物化（{@code notMaterializedInTheBackoff}）。失敗訊息帶 step 的第幾個 tick 與 server tick（F6-3c-1）。
      */
-    private void catalogUnconfirmedInTheBackoff() {
-        expectRolledForward("catalogRolledForwardInTheBackoff");
-        expectNotMaterialized("notMaterializedInTheBackoff");
+    private void catalogUnconfirmedInTheBackoff(int tick) {
+        var when = "退避期的第 " + tick + " 個 tick（server tick " + run.server().getTicks() + "）：";
+        expectRolledForward("catalogRolledForwardInTheBackoff", when);
+        expectNotMaterialized("notMaterializedInTheBackoff", when);
     }
 
     /**
@@ -193,8 +198,8 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
             var disk = M5CollapseDiskEvidence.catalog(run.data());
             return disk.keySet().equals(Set.of(fixture.universe())) && M5CollapseFixture.eagerEnabled(disk.get(fixture.universe()));
         }, () -> "磁碟上的 catalog 不是 U 一筆");
-        expectRolledForward("catalogRolledForward");
-        expectNotMaterialized("notMaterializedBeforeTheConfirmation");
+        expectRolledForward("catalogRolledForward", "封存當下：");
+        expectNotMaterialized("notMaterializedBeforeTheConfirmation", "封存當下：");
         fixture.expectOneAllocation();
         boolean discovered = discovered();
         run.expect("sealedOnTheUnconfirmedCatalog", record.collapse().sealedReason().equals(Optional.of(SealedReason.ALLOCATION_IO_FAILED)) && !discovered,
@@ -207,28 +212,31 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
 
     /** step {@code unconfirmed} 的每個 tick：仍是 roll-forward 的狀態（{@code catalogStillRolledForward}）、沒有物化（{@code stillNotMaterialized}）、record 與封存時相同（{@code sealedKept}）。 */
     private void catalogStillUnconfirmed(int tick) throws Exception {
-        expectRolledForward("catalogStillRolledForward");
-        expectNotMaterialized("stillNotMaterialized");
+        expectRolledForward("catalogStillRolledForward", "第 " + tick + " 個 tick：");
+        expectNotMaterialized("stillNotMaterialized", "第 " + tick + " 個 tick：");
         var sid = fixture.sid();
         run.expect("sealedKept", sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid)),
                 () -> "第 " + tick + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), sid));
     }
 
-    /** {@code name}：catalog 的 current 只有 U、維持 dirty，flushed 沒有 U，{@code unconfirmed(CATALOG)}（spec §6 roll-forward；restore 會把 current 改回沒有 U）。 */
-    private void expectRolledForward(String name) {
+    /**
+     * {@code name}：catalog 的 current 只有 U、維持 dirty，flushed 沒有 U，{@code unconfirmed(CATALOG)}（spec §6 roll-forward；restore 會把 current 改回沒有 U）。{@code when} 接在失敗訊息的
+     * 開頭（F6-3c-1：每個 tick 的呼叫端帶入 tick）。
+     */
+    private void expectRolledForward(String name, String when) {
         var catalog = UniverseRegistryState.get(run.server());
         var current = catalog.records().keySet();
         var flushed = catalog.flushedRecords().keySet();
         boolean dirty = catalog.isDirty(), unconfirmed = CollapseAuthorities.get(run.server()).unconfirmed(Authority.CATALOG);
         run.expect(name, current.equals(Set.of(fixture.universe())) && dirty && !flushed.contains(fixture.universe()) && unconfirmed,
-                () -> "catalog current=" + current + " flushed=" + flushed + " dirty=" + dirty + " unconfirmed=" + unconfirmed);
+                () -> when + "catalog current=" + current + " flushed=" + flushed + " dirty=" + dirty + " unconfirmed=" + unconfirmed);
     }
 
-    /** {@code name}：U 沒有物化：沒有 ACTIVE 的 world、U 的 storage 目錄（{@link #universeStorage}）不存在（沒有物化的寫入）。 */
-    private void expectNotMaterialized(String name) {
+    /** {@code name}：U 沒有物化：沒有 ACTIVE 的 world、U 的 storage 目錄（{@link #universeStorage}）不存在（沒有物化的寫入）。{@code when} 同 {@link #expectRolledForward}。 */
+    private void expectNotMaterialized(String name, String when) {
         var storage = universeStorage();
         boolean world = fixture.universeWorld().isPresent(), written = Files.exists(storage);
-        run.expect(name, !world && !written, () -> "U 已物化=" + world + " storage 目錄存在=" + written + "（" + storage + "）");
+        run.expect(name, !world && !written, () -> when + "U 已物化=" + world + " storage 目錄存在=" + written + "（" + storage + "）");
     }
 
     /**
