@@ -22,7 +22,6 @@ import dev.quantumchamber.gametest.M5CollapseRun.Step;
 import dev.quantumchamber.gametest.M5TestHooks.CrashWindow;
 import dev.quantumchamber.persistence.MeasuredRecoveryPhase;
 import dev.quantumchamber.persistence.PlayerCheckpointStore;
-import dev.quantumchamber.persistence.SessionJournalStore;
 import dev.quantumchamber.persistence.SessionRecoveryManager;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
@@ -33,7 +32,6 @@ import dev.quantumchamber.superposition.SuperpositionSessionManager;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.UniverseRegistryState;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,12 +40,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import net.minecraft.SharedConstants;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.effect.StatusEffectInstance;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtSizeTracker;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -271,53 +268,22 @@ final class M5CollapseUnsupportedChain {
         return batch;
     }
 
-    /** journal 正式檔的位置（{@code SessionRecoveryState} 的 {@code data/quantumchamber_sessions.dat}）。 */
-    private Path journalPath() {
-        return run.data().resolve(SessionRecoveryState.STATE_ID + ".dat");
-    }
-
     /**
-     * 把磁碟上的 journal 換成 M4 時期的 schema 3：以正式的寫出建立 envelope（全新的 {@link SessionRecoveryState}，只 put 這三筆：candidate 已初始化、沒有 M5 證據，{@code writtenSchema}
-     * 是 3；與 {@link M5CollapseFixture#recordReceipt} 的 receipt NBT 同一個寫法），加上 DataVersion 寫到正式檔（同 legacy runner 的 {@code reloadEmptySchemaThree}，那裡是空的 schema 3），
-     * 再以 {@link #expectSchemaThreeOnDisk} 讀回（{@code schemaThreeJournalWritten}）。記憶體裡的 journal（本 JVM 已初始化 M5 authority，寫出會是 schema 4）不再寫出：下一個 tick 就 halt，
-     * halt 之前再讀一次（窗口表的 {@code schemaThreeJournalAtHalt}）。
+     * 把磁碟上的 journal 換成 M4 時期的 schema 3：以正式的寫出建立 envelope（{@link M5CollapseDiskEvidence#writeJournal}：全新的 {@link SessionRecoveryState}，只 put 這三筆：candidate
+     * 已初始化、沒有 M5 證據，{@code writtenSchema} 是 3；與 {@link M5CollapseFixture#recordReceipt} 的 receipt NBT 同一個寫法），加上本版的 DataVersion 寫到正式檔（同 legacy runner 的
+     * {@code reloadEmptySchemaThree}，那裡是空的 schema 3），再以 {@link M5CollapseDiskEvidence#expectSchemaThreeOnDisk} 讀回（{@code schemaThreeJournalWritten}）。記憶體裡的 journal
+     * （本 JVM 已初始化 M5 authority，寫出會是 schema 4）不再寫出：下一個 tick 就 halt，halt 之前再讀一次（窗口表的 {@code schemaThreeJournalAtHalt}）。
      */
     private void writeSchemaThreeJournal(Map<UUID, SessionRecoveryRecord> batch) throws Exception {
-        var m4 = new SessionRecoveryState();
-        batch.values().forEach(m4::put);
-        var wrapped = new NbtCompound();
-        wrapped.put("data", m4.writeNbt(new NbtCompound()));
-        NbtHelper.putDataVersion(wrapped);
-        NbtIo.writeCompressed(wrapped, journalPath());
-        expectSchemaThreeOnDisk(run, "schemaThreeJournalWritten", batch);
+        M5CollapseDiskEvidence.writeJournal(run.data().resolve(M5CollapseDiskEvidence.JOURNAL), batch.values(), SharedConstants.getGameVersion().getSaveVersion().getId());
+        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalWritten", batch);
     }
 
-    /**
-     * {@code name}：磁碟上的 journal（production 的 {@link SessionJournalStore#read} 讀回、{@link SessionRecoveryState#fromNbt} strict 解碼）的 {@code SchemaVersion} 是 3、沒有 M5 證據
-     * （{@code m5Evidence} 為 false：production 自己判定它不是 schema 4），flushed 的 record 恰為 {@code expected}。
-     */
-    static void expectSchemaThreeOnDisk(M5CollapseRun run, String name, Map<UUID, SessionRecoveryRecord> expected) throws Exception {
-        var path = run.data().resolve(SessionRecoveryState.STATE_ID + ".dat");
-        var data = SessionJournalStore.read(path).getCompound("data");
-        int schema = data.getInt("SchemaVersion");
-        var decoded = SessionRecoveryState.fromNbt(data);
-        decoded.requireHealthy();
-        boolean m5Evidence = decoded.m5Evidence();
-        var records = decoded.flushedRecords();
-        run.expect(name, schema == 3 && !m5Evidence && records.equals(expected),
-                () -> "磁碟上的 journal：SchemaVersion=" + schema + " m5Evidence=" + m5Evidence + " sessions=" + records.keySet() + "（預期 " + expected.keySet() + "）");
-        run.proof.put(name + "Schema", schema);
-    }
-
-    /** 三筆收據寫成 {@link #BATCH_NBT}（{@link SessionRecoveryState}，與 receipt NBT 同一個寫法），SHA-256 與三個 session 記在 proof 的 {@code batch}。 */
+    /** 三筆收據寫成 {@link #BATCH_NBT}（{@link M5CollapseDiskEvidence#writeJournal}，與 receipt NBT 同一個寫法），SHA-256 與三個 session 記在 proof 的 {@code batch}。 */
     private void writeBatch(Map<UUID, SessionRecoveryRecord> batch) throws Exception {
         var file = run.config.evidence().resolve(BATCH_NBT);
         M5CollapseRun.require(!Files.exists(file), "batch NBT 已存在：" + file);
-        var state = new SessionRecoveryState();
-        batch.values().forEach(state::put);
-        var wrapped = new NbtCompound();
-        wrapped.put("data", state.writeNbt(new NbtCompound()));
-        NbtIo.writeCompressed(wrapped, file);
+        M5CollapseDiskEvidence.writeJournal(file, batch.values());
         var noted = new LinkedHashMap<String, Object>();
         noted.put("new", fixture.sid().toString());
         noted.put("source", sourceReceipt.sessionUuid().toString());
@@ -340,7 +306,7 @@ final class M5CollapseUnsupportedChain {
      * NEW 的參與者的 playerdata 在走廊（{@code participantInTheCorridorOnDisk}）。
      */
     static void m4ReceiptsAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        expectSchemaThreeOnDisk(run, "schemaThreeJournalAtHalt", run.journal().flushedRecords());
+        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalAtHalt", run.journal().flushedRecords());
         var corridor = fixture.corridor().getRegistryKey().getValue().toString();
         for (var id : fixture.participants()) {
             var dimension = M5CollapseDiskEvidence.playerDimension(run.saveRoot(), id);
@@ -408,7 +374,7 @@ final class M5CollapseUnsupportedChain {
         var sid = fixture.sid();
         run.expect("batchDecoded", batch.size() == 3 && fixture.receipt().equals(batch.get(sid)) && sourceReceipt != null && endReceipt != null,
                 () -> "batch NBT 的 session：" + batch.keySet());
-        expectSchemaThreeOnDisk(run, "schemaThreeJournalAtStart", batch);
+        M5CollapseDiskEvidence.expectSchemaThreeOnDisk(run, run.data(), "schemaThreeJournalAtStart", batch);
         var flushed = run.journal().flushedRecords();
         run.expect("receiptsKeptAcrossTheRestart", batch.keySet().stream().allMatch(id -> batch.get(id).equals(flushed.get(id))),
                 () -> "開服時的 record：" + batch.keySet().stream().map(id -> M5GameTestSupport.state(run.journal(), id)).toList());

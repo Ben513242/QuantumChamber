@@ -20,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,7 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.InflaterInputStream;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtSizeTracker;
 import net.minecraft.util.math.BlockPos;
@@ -40,7 +42,8 @@ import net.minecraft.util.math.ChunkPos;
  * 每一份都以 production 的嚴格 decode 讀：allocation 與 projection ledger 經 {@link CollapseLedgerTestAccess}（F6-2a：package-private 的 {@code fromNbt}，exact keys、
  * {@code SchemaVersion}、筆數上限；格式不符時丟出，不會讀成空的 ledger），catalog 經 {@link UniverseRegistryState#fromNbt}，journal 經
  * {@link SessionJournalStore#read}＋{@link SessionRecoveryState#fromNbt}，discovery 經 {@link UniverseDiscoveryState#load}。檔案不存在時回空的結果（還沒有寫過）。
- * 投影的方塊以 raw MCA 讀（{@link #block}）。
+ * 投影的方塊以 raw MCA 讀（{@link #block}）。F6-2e-2 起另有 journal 的 envelope 的寫出（{@link #writeJournal}：fixture 與 evidence 的 NBT）與 schema 3 的讀回斷言
+ * （{@link #expectSchemaThreeOnDisk}）；其餘只讀。
  */
 final class M5CollapseDiskEvidence {
     static final String JOURNAL = SessionRecoveryState.STATE_ID + ".dat";
@@ -85,12 +88,65 @@ final class M5CollapseDiskEvidence {
         return UniverseDiscoveryState.load(saveRoot).records();
     }
 
-    static Optional<SessionRecoveryRecord> journalRecord(Path data, UUID session) throws IOException {
+    /** 磁碟上的 journal（{@link #journal}）：envelope 的 {@code SchemaVersion} 與 flushed 的 record（以 session 為鍵）。 */
+    record JournalOnDisk(int schema, Map<UUID, SessionRecoveryRecord> records) {}
+
+    /**
+     * F6-2e-2（F6-2e-1 quality Minor 2）：磁碟上的 journal（{@code data} 的 {@link #JOURNAL}），production 的 {@link SessionJournalStore#read} 讀回、{@link SessionRecoveryState#fromNbt}
+     * strict 解碼、{@code requireHealthy}；檔案不存在時是空的。原本 {@link #journalRecord} 與 {@code M5CollapseUnsupportedChain} 各自推導路徑、各寫一份 read＋decode。
+     */
+    static Optional<JournalOnDisk> journal(Path data) throws IOException {
         var file = data.resolve(JOURNAL);
         if (!Files.exists(file)) return Optional.empty();
-        var decoded = SessionRecoveryState.fromNbt(SessionJournalStore.read(file).getCompound("data"));
+        var envelope = SessionJournalStore.read(file).getCompound("data");
+        var decoded = SessionRecoveryState.fromNbt(envelope);
         decoded.requireHealthy();
-        return Optional.ofNullable(decoded.flushedRecords().get(session));
+        return Optional.of(new JournalOnDisk(envelope.getInt("SchemaVersion"), decoded.flushedRecords()));
+    }
+
+    static Optional<SessionRecoveryRecord> journalRecord(Path data, UUID session) throws IOException {
+        return journal(data).map(journal -> journal.records().get(session));
+    }
+
+    /**
+     * F6-2e-2（F6-2e-1 quality Minor 2）：{@code name}：磁碟上的 journal（{@link #journal}）的 {@code SchemaVersion} 是 3（M4 時期的 envelope），flushed 的 record 恰為 {@code expected}。
+     * 由 {@code M5CollapseUnsupportedChain} 搬來，{@code data} 改由呼叫端給（開服之前讀 {@link M5CollapseRun#worldData}）。F6-2e-1 的版本另要求 {@code !m5Evidence}，但
+     * production 的 {@code fromNbt} 只在讀到 schema 4 時設它（spec §5），{@code SchemaVersion}＝3 時恆為 false，沒有證明力，拿掉（F6-2e-1 spec review 的 nit）。
+     */
+    static void expectSchemaThreeOnDisk(M5CollapseRun run, Path data, String name, Map<UUID, SessionRecoveryRecord> expected) throws Exception {
+        var journal = journal(data);
+        int schema = journal.map(JournalOnDisk::schema).orElse(-1);
+        var records = journal.map(JournalOnDisk::records).orElse(Map.of());
+        run.expect(name, schema == 3 && records.equals(expected),
+                () -> "磁碟上的 journal：SchemaVersion=" + schema + " sessions=" + records.keySet() + "（預期 " + expected.keySet() + "）");
+        run.proof.put(name + "Schema", schema);
+    }
+
+    /**
+     * F6-2e-2（F6-2e-1 quality Minor 2）：以正式的寫出把 {@code records} 寫成一份 journal 的 envelope（全新的 {@link SessionRecoveryState}，依序 put；{@code writtenSchema} 由 production
+     * 決定：沒有 M5 證據、有 candidate-aware 的 record 時是 3）到 {@code file}，回傳寫出的 NBT（{@code data} 之下是 {@code writeNbt} 的結果）。{@code records} 可以是空的（那時 production
+     * 寫 2，spec §5）。不加 DataVersion：evidence 的 receipt／batch NBT（原本 {@code M5CollapseFixture.recordReceipt}、{@code M5CollapseUnsupportedChain.writeBatch} 各寫一份）。
+     */
+    static NbtCompound writeJournal(Path file, Collection<SessionRecoveryRecord> records) throws IOException {
+        var wrapped = envelope(records);
+        NbtIo.writeCompressed(wrapped, file);
+        return wrapped;
+    }
+
+    /** 同 {@link #writeJournal(Path, Collection)}，另加 {@code DataVersion}＝{@code dataVersion}（正式檔 {@code data/}{@link #JOURNAL}，比照 legacy runner 的 {@code reloadEmptySchemaThree}）。 */
+    static NbtCompound writeJournal(Path file, Collection<SessionRecoveryRecord> records, int dataVersion) throws IOException {
+        var wrapped = envelope(records);
+        NbtHelper.putDataVersion(wrapped, dataVersion);
+        NbtIo.writeCompressed(wrapped, file);
+        return wrapped;
+    }
+
+    private static NbtCompound envelope(Collection<SessionRecoveryRecord> records) {
+        var state = new SessionRecoveryState();
+        records.forEach(state::put);
+        var wrapped = new NbtCompound();
+        wrapped.put("data", state.writeNbt(new NbtCompound()));
+        return wrapped;
     }
 
     static int journalSchema(Path data) throws IOException {
