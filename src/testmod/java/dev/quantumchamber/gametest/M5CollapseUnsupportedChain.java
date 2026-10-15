@@ -64,7 +64,7 @@ import org.apache.logging.log4j.Level;
  * </ul>
  * crash phase（{@link #crash}）：三筆收據都寫入之後，以正式的寫出（全新的 {@link SessionRecoveryState}，沒有 M5 證據，{@code writtenSchema} 是 3）把 journal 換成 schema 3 寫到磁碟、讀回核對，
  * 裝上 {@code M4_RECEIPT_STEP} 的 crash 點；塌縮流程第一次處理這批收據的任何一筆之前（下一個 tick 的 {@code CollapseService.step} 開頭）halt。所以 M5 在 crash 之前從沒有處理過它們，磁碟上的
- * journal 仍是 schema 3，restart 沒有 runtime（= M4 時期的存檔第一次被 M5 處理）。選 halt 而不是正常停服：正常停服會存 playerdata、在 journal dirty 時重寫它（schema 4），probe 收下
+ * journal 仍是 schema 3，restart 沒有 runtime（= M4 時期的 journal（schema 3）第一次被 M5 處理；allocation、projection、discovery 三個檔已由 crash phase 的 M5 初始化建立，ledger 缺檔屬 W11）。選 halt 而不是正常停服：正常停服會存 playerdata、在 journal dirty 時重寫它（schema 4），probe 收下
  * 的連線也會在停服時斷線；halt 讓磁碟停在 schema 3 的 fixture 寫完的那一刻。
  * <p>restart phase（{@link #restart}）：開服時 journal 仍是 schema 3、三筆收據 exact、NEW 的走廊 space 由 attach 重建並已請求 M4 的保留式 recovery、沒有 runtime，什麼都還沒有配置。
  * 之後（spec §11.3、§7.1／§7.4）：END 的 DORMANT 在開服之後的第一次觀察就取消 → NEW 的參與者 JOIN 在走廊 → M4 的保留式 recovery 返還到 Nether 的原艙、清理走廊 → DORMANT → 取消
@@ -256,6 +256,38 @@ final class M5CollapseUnsupportedChain {
         return true;
     }
 
+    /**
+     * halt receipt 的 {@value #PROOF}（F6-2e-2，F6-2e-1 quality nit：原本寫出與讀回各寫一次 6 個鍵）：三筆收據的 session、SOURCE 的參與者與原艙，以及 {@link #BATCH_NBT} 的 SHA-256。
+     * 寫出經 {@link #proof}、讀回經 {@link #read}，鍵只在這裡。
+     */
+    record Batch(UUID newSession, UUID source, UUID end, UUID sourceParticipant, UUID sourceChamber, String sha256) {
+        static final String PROOF = "batch";
+        private static final String NEW = "new", SOURCE = "source", END = "end", SOURCE_PARTICIPANT = "sourceParticipant", SOURCE_CHAMBER = "sourceChamber",
+                SHA256 = "batchNbtSha256";
+
+        Map<String, Object> proof() {
+            var noted = new LinkedHashMap<String, Object>();
+            noted.put(NEW, newSession.toString());
+            noted.put(SOURCE, source.toString());
+            noted.put(END, end.toString());
+            noted.put(SOURCE_PARTICIPANT, sourceParticipant.toString());
+            noted.put(SOURCE_CHAMBER, sourceChamber.toString());
+            noted.put(SHA256, sha256);
+            return noted;
+        }
+
+        /** crash phase 的 halt receipt 裡的 {@value #PROOF}。 */
+        static Batch read(com.google.gson.JsonObject halt) {
+            var noted = halt.getAsJsonObject(PROOF);
+            return new Batch(uuid(noted, NEW), uuid(noted, SOURCE), uuid(noted, END), uuid(noted, SOURCE_PARTICIPANT), uuid(noted, SOURCE_CHAMBER),
+                    M5CollapseRun.text(noted, SHA256));
+        }
+
+        private static UUID uuid(com.google.gson.JsonObject noted, String key) {
+            return UUID.fromString(M5CollapseRun.text(noted, key));
+        }
+    }
+
     /** NEW、SOURCE、END 三筆（依這個順序），以 session 為鍵。 */
     private Map<UUID, SessionRecoveryRecord> batch(SessionRecoveryRecord measured) {
         var batch = new LinkedHashMap<UUID, SessionRecoveryRecord>();
@@ -279,14 +311,8 @@ final class M5CollapseUnsupportedChain {
         var file = run.config.evidence().resolve(BATCH_NBT);
         M5CollapseRun.require(!Files.exists(file), "batch NBT 已存在：" + file);
         M5CollapseDiskEvidence.writeJournal(file, batch.values());
-        var noted = new LinkedHashMap<String, Object>();
-        noted.put("new", fixture.sid().toString());
-        noted.put("source", sourceReceipt.sessionUuid().toString());
-        noted.put("end", endReceipt.sessionUuid().toString());
-        noted.put("sourceParticipant", sourcePlayer.toString());
-        noted.put("sourceChamber", sourceChamber.toString());
-        noted.put("batchNbtSha256", M5CollapseDiskEvidence.sha256(file));
-        run.proof.put("batch", noted);
+        run.proof.put(Batch.PROOF, new Batch(fixture.sid(), sourceReceipt.sessionUuid(), endReceipt.sessionUuid(), sourcePlayer, sourceChamber,
+                M5CollapseDiskEvidence.sha256(file)).proof());
     }
 
     // ---- crash 點的條件與 halt 之前的取證（窗口表的 M4_RECEIPT_STEP 一列） ----
@@ -345,7 +371,7 @@ final class M5CollapseUnsupportedChain {
      * <ul>
      * <li>{@code schemaThreeJournalAtStart}：開服時磁碟上的 journal 仍是 schema 3、恰為這三筆（這次開服讀的就是 M4 時期的 journal；之後第一次 checked 寫入才升為 schema 4，spec §12）。</li>
      * <li>{@code receiptsKeptAcrossTheRestart}：flushed 的三筆與收據 exact 相同。</li>
-         * <li>{@code recoveryRequestedByTheAttach}：NEW 沒有 runtime；attach 已重建它的走廊 space，並已請求 M4 的保留式 recovery（{@code measuredRecoveryRequested}）；參與者還沒有返還、
+     * <li>{@code recoveryRequestedByTheAttach}：NEW 沒有 runtime；attach 已重建它的走廊 space，並已請求 M4 的保留式 recovery（{@code measuredRecoveryRequested}）；參與者還沒有返還、
      *     有 lease。attach 另為它取得來源 ticket（M4 的保留式 recovery 要來源 Controller 的 chunk 已載入，{@code SuperpositionSessionManager.sourceAuthority}；只記下：{@code newSourceTicketAtStart}、
      *     {@code newChamberLoadedAtStart}）。</li>
      * <li>{@code dormantReceiptsAtStart}：SOURCE 與 END 是 DORMANT。</li>
@@ -356,16 +382,16 @@ final class M5CollapseUnsupportedChain {
      */
     private void started(String crashPhase) throws Exception {
         var halt = fixture.readCrashReceipt(crashPhase, CrashWindow.M4_RECEIPT_STEP);
-        var noted = halt.getAsJsonObject("batch");
+        var noted = Batch.read(halt);
         var file = run.phaseEvidence(crashPhase).resolve(BATCH_NBT);
-        run.expect("batchNbtIntact", M5CollapseDiskEvidence.sha256(file).equals(M5CollapseRun.text(noted, "batchNbtSha256")), () -> "batch NBT 的 SHA-256 與 halt receipt 不同");
+        run.expect("batchNbtIntact", M5CollapseDiskEvidence.sha256(file).equals(noted.sha256()), () -> "batch NBT 的 SHA-256 與 halt receipt 不同");
         var decoded = SessionRecoveryState.fromNbt(NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes()).getCompound("data"));
         decoded.requireHealthy();
         var batch = decoded.flushedRecords();
-        sourceReceipt = batch.get(UUID.fromString(M5CollapseRun.text(noted, "source")));
-        endReceipt = batch.get(UUID.fromString(M5CollapseRun.text(noted, "end")));
-        sourcePlayer = UUID.fromString(M5CollapseRun.text(noted, "sourceParticipant"));
-        sourceChamber = UUID.fromString(M5CollapseRun.text(noted, "sourceChamber"));
+        sourceReceipt = batch.get(noted.source());
+        endReceipt = batch.get(noted.end());
+        sourcePlayer = noted.sourceParticipant();
+        sourceChamber = noted.sourceChamber();
         var sid = fixture.sid();
         run.expect("batchDecoded", batch.size() == 3 && fixture.receipt().equals(batch.get(sid)) && sourceReceipt != null && endReceipt != null,
                 () -> "batch NBT 的 session：" + batch.keySet());
@@ -458,7 +484,7 @@ final class M5CollapseUnsupportedChain {
         run.expect("participantBlockedUntilReturned", SessionRecoveryManager.blocks(id, run.server()), () -> "尚未返還的參與者沒有被 recovery 攔截");
         player.removeStatusEffect(ModEffects.QUANTUM_STATE);
         var source = fixture.connect(sourcePlayer);
-        run.expect("nativeJoin", source.joinTick() >= 0, () -> "SOURCE 的參與者沒有觀察到 JOIN");
+        run.expect("sourceNativeJoin", source.joinTick() >= 0, () -> "SOURCE 的參與者沒有觀察到 JOIN");
         var sourceAt = source.player();
         run.expect("sourceParticipantJoinedOutside", sourceAt.getServerWorld() == nether() && !insideTheSourceChamber(sourceAt) && !SessionRecoveryManager.blocks(sourcePlayer, run.server()),
                 () -> "SOURCE 的參與者 JOIN 在 " + sourceAt.getServerWorld().getRegistryKey().getValue() + " " + sourceAt.getPos());

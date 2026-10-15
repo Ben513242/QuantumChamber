@@ -119,7 +119,11 @@ abstract class M5CollapseRestartChains {
      * chunks 的半徑改為 0，收據的原生存檔把它帶進 level.dat；沒有時是 {@link M5CollapseRun#NOTHING}），{@code receipt} 在同一個 step 建立要寫入的收據。
      * <p>F6-2e-1（F6-2e Step 0 quality Minor 1、spec Minor-1）：{@link #crash} 的前提是「收據 → 參與者由艙外進入 → COLLAPSING → 窗口 halt」（收據之後的 step {@code enter} 與
      * {@code committed} 寫死），換 {@code origin} 與收據只能改它之前的部分。W10 不套用它：M4 時期的 Nether／End 收據由 §11.3 的取消路徑從 MEASURED 取消，不經 COLLAPSING（專屬的
-     * {@code M5CollapseUnsupportedChain}）；W11 也不套用（沒有收據，crash 在 M5 authority 初始化）。原本這裡寫「例如 F6-2e 的 W10 的非 DORMANT 收據」，是錯的。
+     * {@code M5CollapseUnsupportedChain}）；W11 也不套用（crash 在開服時的 M5 authority 初始化，早於任何 tick；收據由 setup phase 寫進 M4 時期的 journal，W11 的 chain
+     * 另寫）。原本這裡寫「例如 F6-2e 的 W10 的非 DORMANT 收據」，是錯的。
+     * <p>F6-2e-2（F6-2e-1 quality nit：{@code beforeWrite} 在這裡、{@code install} 卻是 {@link #crash} 的參數，位置不對稱）：保留，理由是兩者屬於不同的東西。{@code beforeWrite} 改變收據的原生存檔
+     * 帶進存檔的世界狀態（{@code waitinglate} 的 spawn chunks 半徑存進 level.dat），是「原艙與收據」的一部分，與 {@code origin}、{@code receipt} 一起決定 restart 開服時的磁碟；{@code install}
+     * 在存檔之後才裝上的 hook 或 fault（discovery 的讀取失敗、投影寫入失敗、暫緩）只活在 crash 的 JVM 裡，是這條 chain 的窗口怎麼到達，與窗口列（{@code id}）一起給。
      */
     record CrashSetup(M5CollapseRun.Checked origin, M5CollapseRun.Checked beforeWrite, CrashReceipt receipt) {
         CrashSetup {

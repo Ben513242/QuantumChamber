@@ -387,7 +387,19 @@ final class M5CollapseWindows {
      * {@code haltAt} 改名，與 halt receipt 的鍵相同）。F6-2d-1 起由建立這一列的 factory 決定：{@link #row} 是 {@code WINDOW}，{@link #tickEndRow} 是 {@code TICK_END}。
      */
     record Window(CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared, M5CollapseRun.HaltAt haltTiming,
-            AtWindow atWindow) {}
+            AtWindow atWindow) {
+        /**
+         * 這一列的 restart 開服時的預期。F6-2e-2（F6-2e-1 quality nit）：restart 是專屬 phase 的列（{@link #dedicatedRow}：W10 的 {@code M4_RECEIPT_STEP}）沒有 {@link AtRestart}，
+         * 讀它（{@link #expectAtRestart}、{@code M5CollapseRestartChains.requireDoorAtStart} 等）時丟出；原本那一列宣告了一份 restart 不讀的 {@code AtRestart}。
+         */
+        @Override public AtRestart atRestart() {
+            if (atRestart == null) throw new IllegalStateException("窗口表的 " + id + " 的 restart 是專屬的 phase（dedicatedRow），沒有 AtRestart，不經 expectAtRestart");
+            return atRestart;
+        }
+
+        /** restart 是專屬的 phase（{@link #dedicatedRow}），沒有 {@link AtRestart}。 */
+        boolean dedicatedRestart() { return atRestart == null; }
+    }
 
     static final DiskCheck NO_CHECK = (run, fixture) -> { };
     private static final BeforeHalt NO_EVIDENCE = (run, fixture, detail, evidence) -> { };
@@ -514,15 +526,22 @@ final class M5CollapseWindows {
                         }), null);
         // ---- F6-2e-1：W10（chain 在 M5CollapseUnsupportedChain） ----
         // M4 時期的 Nether／End 收據（schema 3 的 journal，三筆都是 MEASURED）：塌縮流程第一次處理其中任何一筆之前。halt 之前磁碟上的 journal 仍是 schema 3（schemaThreeJournalAtHalt）、
-        // NEW 的參與者的 playerdata 在走廊。W10 的 restart 是專屬的 phase，不經 expectAtRestart（它的開服斷言假設 DORMANT 或塌縮狀態的單一 session）：這一列的 AtRestart 只表達 halt
-        // 當下是 MEASURED、什麼都還沒有配置（resolved(NOTHING)），restart 不讀它；開服時的斷言在 M5CollapseUnsupportedChain.started。
-        row(rows, CrashWindow.M4_RECEIPT_STEP, M5CollapseUnsupportedChain::m4ReceiptStep, M5CollapseUnsupportedChain::m4ReceiptsAtHalt,
-                AtRestart.resolved(Resolved.NOTHING).withStateAtHalt(SessionState.MEASURED), null);
+        // NEW 的參與者的 playerdata 在走廊。W10 的 restart 是專屬的 phase，不經 expectAtRestart（它的開服斷言假設 DORMANT 或塌縮狀態的單一 session）：F6-2e-2 起這一列以 dedicatedRow
+        // 加入、沒有 AtRestart（F6-2e-1 宣告的那一份 restart 不讀），開服時的斷言在 M5CollapseUnsupportedChain.started。
+        dedicatedRow(rows, CrashWindow.M4_RECEIPT_STEP, M5CollapseUnsupportedChain::m4ReceiptStep, M5CollapseUnsupportedChain::m4ReceiptsAtHalt);
         return Collections.unmodifiableMap(rows);
     }
 
     /** {@code PassageService.recoveryRequired} 第一次被拒時的 ERROR 的字句（F6-2-12 的 pendingRecovery）。 */
     static final String REJECTED_RECOVERY_ERROR = "SEALED(TRANSFER_RECOVERY_REQUIRED) 的寫入被拒";
+
+    /**
+     * F6-2e-2（F6-2e-1 quality nit）：restart 是專屬 phase 的 {@code WINDOW} 列（只給條件與 halt 之前的取證）：沒有 {@link AtRestart}（讀它時丟出，{@link Window#atRestart}）、沒有
+     * {@link Prepared}。
+     */
+    private static void dedicatedRow(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt) {
+        put(rows, new Window(id, condition, beforeHalt, null, null, M5CollapseRun.HaltAt.WINDOW, NOTHING_AT_THE_WINDOW));
+    }
 
     /** {@code WINDOW} 的列（預設）：crash 點成立的那一刻（hook 裡）就取證（{@code beforeHalt}）、halt。 */
     private static void row(Map<CrashWindow, Window> rows, CrashWindow id, Condition condition, BeforeHalt beforeHalt, AtRestart atRestart, Prepared prepared) {
@@ -551,7 +570,7 @@ final class M5CollapseWindows {
      * 建好，開服之前就失敗）。
      */
     private static void put(Map<CrashWindow, Window> rows, Window window) {
-        Objects.requireNonNull(window.atRestart(), "窗口表的 " + window.id() + "：atRestart").validate(window.id(), window.prepared());
+        if (!window.dedicatedRestart()) window.atRestart().validate(window.id(), window.prepared());
         if (window.atWindow() != NOTHING_AT_THE_WINDOW && window.haltTiming() != M5CollapseRun.HaltAt.TICK_END) {
             throw new IllegalStateException("窗口表的 " + window.id() + "：只有 TICK_END 的列另在窗口成立的那一刻取證（WINDOW 的 beforeHalt 已在那一刻）");
         }
@@ -595,6 +614,11 @@ final class M5CollapseWindows {
      * F6-2d-2 B1（A 段 quality Minor 3、nit）：鍵讀 {@link #RECORD_AT_HALT}（與寫入的 {@link #putRecordAtHalt}、restart 的 {@link #expectRecordKept} 同一個常數），改為 private。
      */
     private static void requireRecordKeptDeclared(Window window, Map<String, Object> evidence) {
+        if (window.dedicatedRestart()) {
+            // 專屬 restart 的列（dedicatedRow）沒有 restart 會比對這份摘要。
+            if (evidence.containsKey(RECORD_AT_HALT)) throw new IllegalStateException("recordKeptDeclared：窗口表的 " + window.id() + " 的 restart 是專屬的 phase，halt 之前不記 recordAtHalt");
+            return;
+        }
         var at = window.atRestart();
         if (evidence.containsKey(RECORD_AT_HALT) && at.stateAtHalt() != null && !at.recordKept()) {
             throw new IllegalStateException("recordKeptDeclared：窗口表的 " + window.id() + " 的 halt 之前的取證記下了 recordAtHalt（halt 當下有 record），這一列卻沒有宣告 withRecordKept，"
@@ -1189,7 +1213,8 @@ final class M5CollapseWindows {
                 : at.projection() == ProjectionLedger.Entry.Status.PENDING ? "projectionStillPending" : "projectionCompleteOnDisk";
         run.expect(projectionName, () -> M5CollapseDiskEvidence.projections(run.data()).equals(expectedProjections), () -> "projection ledger=" + fixture.projectionsOrError());
         at.disk().check(run, fixture);
-        expectDoorAtStart(run, fixture, at.doorAtStart());
+        var door = at.doorAtStart();
+        if (door.isPresent()) expectDoorAtStart(run, fixture, door.get());
         expectRecordKept(run, fixture, window, halt);
         M5CollapseProjectionLoad load = null;
         if (at.recognizeBeforeJoin()) {
@@ -1219,14 +1244,12 @@ final class M5CollapseWindows {
 
     /**
      * restart 開服時（{@link #expectAtRestart}，窗口自己的磁碟檢查之後；F6-2d-2 B2a，B1 quality Minor 4）：這一列宣告 {@link AtRestart#withDoorAtStart} 時，原艙門 25 格符合
-     * 它（{@code doorAsExpectedAtStart}，失敗訊息附門正中那一格）；沒有宣告（空的）時不斷言。讀磁碟（raw MCA，{@link #doorOnDisk}），不讀記憶體：開服時原艙附近
+     * 它（{@code doorAsExpectedAtStart}，失敗訊息附門正中那一格）；沒有宣告（空的）時呼叫端不呼叫這裡（F6-2e-2，F6-2e-1 quality nit：原本以 {@code Optional} 當參數）。讀磁碟（raw MCA，{@link #doorOnDisk}），不讀記憶體：開服時原艙附近
      * 不一定已載入（{@code waitinglate} 的 crash 也用 W5 的列，level.dat 帶著半徑 0 的 spawn chunks，那條 chain 斷言開服時原艙附近沒有載入，{@code chamberNotLoadedAtStart}），
      * 在這裡讀方塊會把 chunk 同步載入、改變那條 chain 要量的情況。開服當下還沒有 tick，記憶體裡已載入的門就是由這份磁碟載入的；之後的 tick 在記憶體裡看門，由各 chain 的斷言
      * 負責（例如 {@code normalizeQueuedForTheClosedDoor}）。
      */
-    private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, Optional<OriginDoorState> declared) throws Exception {
-        if (declared.isEmpty()) return;
-        var door = declared.get();
+    private static void expectDoorAtStart(M5CollapseRun run, M5CollapseFixture fixture, OriginDoorState door) throws Exception {
         // F6-2e Step 0（F6-2d-2 B2 quality Minor 1）：對應改由 enum 給（與 M5CollapseDoors.is 共用）。
         boolean open = door.open();
         var membrane = door.membrane(FRAME);
