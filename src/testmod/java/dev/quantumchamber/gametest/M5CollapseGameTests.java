@@ -1272,10 +1272,10 @@ public final class M5CollapseGameTests implements FabricGameTest {
         origin.whenRegistered((registered, chamber) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             moveInside(p, frame);
+            // F6-3c-1（H9 quality Minor 5）：fixture 在任何寫入之前就把 session 加入 owned（原本在 fixture 建好之後才加入：SEALED 的寫入失敗時，已確認的 COLLAPSING 不在 owned 裡）。
             var record = collapseFixture(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(p.getUuid(), true), List.of(), true,
-                    SessionState.SEALED, false);
+                    SessionState.SEALED, false, origin.owned);
             var sid = record.sessionUuid();
-            origin.owned.add(sid);
             M5GameTestSupport.writeDoor(world, frame, membrane, initial);
             M5GameTestSupport.simulateDoorStartup(server, sid);
             int observed = server.getTicks();
@@ -1339,12 +1339,9 @@ public final class M5CollapseGameTests implements FabricGameTest {
         SessionRecoveryRecord[] notAtStartup = {null};
         at(context, 1, hooks, () -> {
             int[] index = {0};
-            java.util.function.Function<SealedReason, SessionRecoveryRecord> sealedAt = reason -> {
-                var record = M5GameTestSupport.sealedFixture(server, M4CandidateTestAccess.origin(UUID.randomUUID(), far.add(32 * index[0]++, 0, 0)),
-                        Map.of(UUID.randomUUID(), true), reason);
-                owned.add(record.sessionUuid());
-                return record;
-            };
+            // F6-3c-1（H9 quality Minor 5）：sealedFixture 在任何寫入之前就把 session 加入 owned（原本在 fixture 建好之後才加入）。
+            java.util.function.Function<SealedReason, SessionRecoveryRecord> sealedAt = reason -> M5GameTestSupport.sealedFixture(server,
+                    M4CandidateTestAccess.origin(UUID.randomUUID(), far.add(32 * index[0]++, 0, 0)), Map.of(UUID.randomUUID(), true), reason, owned);
             for (var reason : List.of(SealedReason.PROJECTION_CONFLICT, SealedReason.EXISTING_INELIGIBLE, SealedReason.AUTHORITY_CORRUPT))
                 permanent.put(reason, sealedAt.apply(reason));
             for (var reason : List.of(SealedReason.PROJECTION_FAILED, SealedReason.ALLOCATION_IO_FAILED, SealedReason.MATERIALIZE_FAILED, SealedReason.AUTHORITY_UNREADABLE))
