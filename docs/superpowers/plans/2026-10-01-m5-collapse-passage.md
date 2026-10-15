@@ -833,7 +833,13 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
   - 其餘各節「交給後續」中的重啟變體。
   - 若 §12 矩陣需要改 production（`CollapseService`、`SessionRecoveryManager`），先回報 controller。CS 已約 1590 行，會改到 CS 時，先依 F5-0 交接的條件評估是否把 PREPARE 抽出。
 - **F6-3：harness 與 CI。**
-  - 開工時先做 **Step 0**：F6-2e-3 review 交下的 probe 整理，只改 testmod 的 probe 與 README，清單見 note F6-2e-3 一節的 review 區塊。其中 W12 第二次重試的斷言與「退避加倍」的證據（quality Minor 2）優先。
+  - 開工時先做 **Step 0**：F6-2e-3 review 交下的 probe 整理，只改 testmod 的 probe 與 README，清單見 note F6-2e-3 一節的 review 區塊。其中 W12 第二次重試的斷言與「退避加倍」的證據（quality Minor 2）優先。已完成（2026-10-16，spec review ✅、quality review Approved）。
+  - controller 2026-10-16 的拆分：先盤點（scratchpad `f63-inventory.md`，32 項），再做只讀的根因調查 F6-3a（`f63a-findings.md`）。之後依序派工，每次都走完 implementer → spec review → quality review：
+    - **F6-3b**：GameTest server 的 tick 節流（M5 run 每個 tick 至少 10 ms）、一個 test 失敗不再連坐其他 test，以及有界等待的餘裕量測。F6-3a 查出 Ubuntu CI 的 M5 失敗與本機偶發的預載逾時，根因是 GameTest server 不依 20 TPS 節流，以 tick 計的等待因此在 tick 很快的機器上逾時。
+    - **F6-3c**：Step 0 review 的整理、`M5UniverseGameTests` 拆檔與 fixture，以及 GameTest 的小整理。
+    - **F6-3d**：harness 腳本與 README。
+    - **F6-3e**：`build.yml` 的明列清單與 `ci-rule-check.ps1`。
+    - 最後 push 到 CI 驗收。push 前先問使用者。
   - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
   - boundary oracle 以 PID 挑 receipt 時的碰撞。
   - Windows journal 原子移動偶發的 `AccessDeniedException`。

@@ -149,7 +149,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
     - F6-1 spec review Minor 3、5 的評估：前者不需要，後者已由既有測試涵蓋。
 
     `src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-01ba4701f6724869b82f6d76dd0ac58c` 為 `END ALL exit=0`（`d0f56a8`）。
-  - 之後依序是：F6-3（先做 Step 0：F6-2e-3 review 的 probe 整理）→ F7 → milestone 收尾。
+  - **F6-3 Step 0 已完成（2026-10-16）**：range `2a333f3..c3fb2ca`（code 到 `16201b6`）；F6-2e-3 review 的 probe 整理，W12 補上第二次重試的斷言與「退避加倍」的證據；`src/main/` 沒有變更；spec review ✅、quality review Approved；完整回歸 `run-all-1b8a853dc5cd467a944d54edecccd1ce` 為 `END ALL exit=0`（`c3fb2ca`）。
+  - F6-3 的其餘部分拆成 F6-3b～F6-3e（見 plan Task F6 的 F6-3）。F6-3b（M5 GameTest 的 tick 節流、失敗不連坐）的實作已完成，review 進行中。之後依序是 F6-3c → F6-3d → F6-3e → push 到 CI 驗收（push 前先問使用者）→ F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

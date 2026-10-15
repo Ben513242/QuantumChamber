@@ -9100,6 +9100,44 @@ controller 的決定：以 adapter 讓 W8 的 restart 不預先載入，記下�
   - 本節由其後的 `docs: record F6-3 Step 0 in the M5 note` 加入。
 - 只改了派工允許的路徑：testmod 的 `M5CollapseConvergenceChain`、`M5CollapseRestartChains`、`M5CollapseDiskEvidence`、`M5CollapseUnsupportedChain`、`M5CollapsePassage`、`M5CollapseWindows`；`M5TestHooks` 只改 `CheckedReadFault`（第 8 點）；README 只改「M5 collapse probe」一節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、所有 ps1、`.github/`、既有的 GameTest（含 `M5UniverseGameTests`、`M5CollapseGameTests`、`M5GameTestSupport`）、M4 probe、所有 JUnit、語言檔、spec、plan、AGENTS；test mixin 也沒有改。
 - 行號以 HEAD `2a333f3` 為準，簡稱同上一節（`CC`＝`M5CollapseConvergenceChain`、`UC`、`RCH`、`DE`、`PSG`、`WIN`）。
+- Review（controller 補；spec 與 quality 兩份審查並行，都只讀，同時由 F6-3b 的 implementer 跑 Gradle）：
+  - spec review ✅（Critical 0、Important 0、Minor 1、nit 1）。reviewer 獨立核對的部分如下。
+    - 第 1 點：
+      - production 的退避：`CollapseBackoff.failed` 第一次是 200，之後加倍；封存時 `CollapseService:1020` 呼叫 `failed`，只有 RESOLVE 完成才 `reset`（`:468`），`retrySealed` 不重設（`:1105-1121`）；退避期內的邊緣會被消耗（`:1082-1086`）。
+      - 實際時點：第二次封存在 213，早一次的進入是 419，`retryAt` 是 613。所以 `notRetriedBeforeTheDoubledBackoff` 證明 d > 206；不加倍或重設的話，`retryAt` 會是 413，在 419 就重試而 FAIL。
+      - markTick 晚 k 個 tick 也不會讓斷言恆真或恆假。
+      - 10 tick 只用來吸收邊緣的延遲（618 進入、619 重試），夠用，也不會太寬。
+      - 「第二次重試沒有發生」改由 `retriedAgainAfterTheDoubledBackoff` 判定，理由成立。
+    - 第 2 點：`reenterAfter` 先跑 `eachTick`，涵蓋 47～211，`unconfirmed` 涵蓋 7～46，所以 6～211 是連續的。不斷言 212 的理由成立：`CollapseService.tick`（`:250-252`）每筆 record 只呼叫一次 `step`，SEALED 那個 tick 只做 `retrySealed`。
+    - 第 4 點：`removedAt == newDormantAt` 證明一觀察到 DORMANT 就寫出終局；`cancelledAt - removedAt <= 1` 再證明這次 checked 終局當場確認（§11.3 第 2 步）。GREEN 與 run-all 的差都是 0。
+    - 第 5 點：`throughTheReceipt`（`RCH:187`）的順序與抽出前相同，step 名稱也相同。
+    - 第 9 點：判斷相同；`r-green` `RESULT=OK`；positive control 用同一個 `universeStorage()`。
+    - mutation：5 個都 FAIL 在目標；restore 之後的 blob 與 `1c39fd9` 相符。
+    - GREEN、範圍、編譯、note 都成立；reviewer 實算 release JAR 的 SHA-256，三份都是 `c20bc00f…`。
+    - production 與 spec 沒有不符：§11.2（:745）寫 200 起、每次失敗加倍，debug log「下一次可在 tick 613 之後」＝213＋400。「確認之前不物化」的條文在 §6.2（:350），不是派工寫的 §6.4。
+    - Minor：
+      - M-1：`M5CollapseConvergenceChain.java:55` 的 Javadoc 寫「205 < d ≤ 405」，實際能證明的是 206 < d ≤ 406。note 的 `INITIAL_TICKS＋6 < d ≤ 2×INITIAL_TICKS＋6` 才對。
+      - nit：第 2 點「同一個 tick 內的先後 probe 看不到」只適用於 tick 213。tick 212 看得到，因為 runner 掛在 production 之後。
+  - quality review **Approved**（Critical 0、Important 0、Minor 4）。
+    - Strengths：
+      - 三次進入各是一個 step，等待長度都由常數推出。
+      - 退避改變時都失敗在具名斷言。
+      - 第二次重試不能沿用 `retried`（它寫死 `fromReason == 1`），改用 `untilTriggered` 是恰當的選擇。
+      - `throughTheReceipt` 的抽出等價。
+      - `CheckedReadFault` 的兩個建構子語意清楚。
+      - 每個 tick 的斷言成本可以忽略，而且與 `unconfirmed` 前後接續。
+      - 上一輪的 Minor 1～6 與 nit 都已處理。
+    - Minor：
+      1. 第二次退避的後段（`notRetriedEarly` 結束到第二次進入，約 tick 458～618）沒有逐 tick 斷言（`CC:107-110`）。若 production 改成退避到期就重試、不等邊緣，會在窗口裝上之前就完成，最後是 `halt` 的 stepBounded。另外，`catalogUnconfirmedInTheBackoff`（`:133-136`）沒有 `sealedKept`。
+      2. `CC:43` 仍寫「再進入兩次」，README 已改成三次。
+      3. 新的 `retries`／`retriesFrom`（`RCH:405-412`）只遷移了一半：`M5CollapseDoorChains.java:731-734`、`:741` 與 `M5CollapseRetryChains.java:240`、`:519` 仍是同樣的查詢；`CC:158-163` 與 `:326-328` 是兩份相同的判斷式。
+      4. `reenterAfter(int, Checked eachTick, Checked before, String)`（`CC:120`）有兩個相鄰的同型別參數，對調也能編譯；`eachTick` 拿不到 tick 序號，失敗訊息裡沒有 tick。
+  - controller 處置：
+    - 不開 fix round。
+    - spec M-1、nit 與 quality Minor 1～4 → **F6-3c**（拆檔那一輪）的第一段，只改 probe。
+    - 交給 F7 的「W12 不驗證退避加倍」已不成立，改成「W12 驗證退避加倍，範圍 `INITIAL_TICKS＋6 < d ≤ 2×INITIAL_TICKS＋6`」。
+    - 「需要裁示」四點，依兩份 review 接受。
+  - **F6-3 Step 0 完成**：range `2a333f3..c3fb2ca`（code 到 `16201b6`）。最終 run-all `run-all-1b8a853dc5cd467a944d54edecccd1ce`（`c3fb2ca`）`END ALL exit=0`；Full WARN +1 是已知的 `m2_task4_disconnect_io` 偶發。
 
 ### 逐項處置
 
