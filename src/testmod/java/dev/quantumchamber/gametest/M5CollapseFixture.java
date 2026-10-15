@@ -48,10 +48,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtSizeTracker;
@@ -60,6 +62,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.dimension.DimensionType;
@@ -162,10 +165,14 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         run.expect("freshAllocationLedger", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty(), () -> "allocation ledger 不是空的");
     }
 
-    /** 蓋原艙，連線 {@code count} 位參與者並移到艙外。 */
+    /**
+     * 蓋原艙，移走原艙附近的非玩家 entity（{@link #clearAroundTheOrigin}，F6-2e-1；移走的數目依類型記在 proof 的 {@code clearedAroundTheOrigin}），再連線 {@code count} 位參與者並移到
+     * 艙外。
+     */
     void buildOrigin(int count) {
         run.source().getChunk(0, 0);
         placeChamber();
+        run.proof.put("clearedAroundTheOrigin", clearAroundTheOrigin(run.source(), FRAME));
         for (int index = 0; index < count; index++) {
             var id = UUID.randomUUID();
             var connection = connect(id);
@@ -190,6 +197,29 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
             source.setBlockState(FRAME.controllerPos(), ModBlocks.CHAMBER_CONTROLLER.getDefaultState().with(ChamberControllerBlock.FACING, Direction.NORTH), 3);
         });
         source.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
+    }
+
+    /** {@link #clearAroundTheOrigin} 的水平半徑（格，以 Controller 為中心）。 */
+    static final int CLEAR_RADIUS = 32;
+
+    /**
+     * F6-2e-1（F6-2e Step 0 review 交下的測試缺陷）：移走 {@code world} 裡原艙 {@code frame} 附近的非玩家 entity（世界生成的被動生物等；原艙蓋好之後、收據之前呼叫，這時 probe 還沒有放任何
+     * entity），回傳移走的數目（依 entity 類型）。範圍是 Controller 水平 ±{@value #CLEAR_RADIUS} 格、y −16～+32：涵蓋 production 的門口（{@code OriginDoors.doorwayBox}：門 25 格的外框）、
+     * 門外的通道、整座艙與參與者等待的位置。只看已載入的 entity（fresh 世界的 spawn chunks 在這時已載入）。原本世界生成的動物留在門口時，restart 由存檔把它載回門口：sealdoorway 的
+     * {@code standRemovedFromTheDoorway} 把它算進門口（F6-2e Step 0 的 run-all-1，移走 2 個 entity）；production 在門口有 entity 時正確地改為一般開門、不套用量子膜，預期關門或量子膜的
+     * 斷言（例如 {@code closedOnceAfterTheRestart}、{@code closedFromTheMembrane}）也會誤判。restart 不再清一次：開服時門口的 entity storage 不一定已載入（sealdoorway 記下
+     * {@code doorwayEntitiesLoadedAtStart}），之後的 tick 移除 entity 又會與 production 同一個 tick 的門口判斷交錯；crash phase 清過之後，存檔裡的門口只有 probe 自己放的 entity。
+     */
+    static Map<String, Integer> clearAroundTheOrigin(ServerWorld world, ChamberFrame frame) {
+        var center = frame.controllerPos();
+        var box = new Box(center.getX() - CLEAR_RADIUS, center.getY() - 16, center.getZ() - CLEAR_RADIUS, center.getX() + CLEAR_RADIUS + 1, center.getY() + 32,
+                center.getZ() + CLEAR_RADIUS + 1);
+        var removed = new TreeMap<String, Integer>();
+        for (var entity : world.getOtherEntities(null, box, entity -> !(entity instanceof PlayerEntity))) {
+            removed.merge(Registries.ENTITY_TYPE.getId(entity.getType()).toString(), 1, Integer::sum);
+            entity.discard();
+        }
+        return removed;
     }
 
     /** step：原艙已註冊、IDLE；記下 chamber UUID。 */

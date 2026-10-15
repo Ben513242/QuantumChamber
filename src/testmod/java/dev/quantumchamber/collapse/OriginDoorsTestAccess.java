@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.math.Box;
 
 /**
  * 僅 testmod（M5 F6-2d-2 B2a，B1 quality Minor 1）：讓跨 JVM 的塌縮 probe（{@code M5CollapseDoors}）查詢 production 的 {@link OriginDoors} 還沒套用的原艙門，證明重新套用
@@ -50,6 +51,11 @@ public final class OriginDoorsTestAccess {
      */
     public static boolean doorwayOccupied(ServerWorld world, ChamberFrame frame) {
         return OriginDoors.doorwayOccupied(world, frame);
+    }
+
+    /** F6-2e-1：production 的門口範圍（{@code OriginDoors.doorwayBox}：原艙門 25 格的外框）；probe 只數自己放在這裡的盔甲座。只計算，不查詢世界。 */
+    public static Box doorwayBox(ChamberFrame frame) {
+        return OriginDoors.doorwayBox(frame);
     }
 
     /**

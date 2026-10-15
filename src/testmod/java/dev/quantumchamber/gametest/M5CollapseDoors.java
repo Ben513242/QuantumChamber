@@ -159,6 +159,14 @@ final class M5CollapseDoors {
         return stand;
     }
 
+    /**
+     * F6-2e-1（F6-2e Step 0 review 的測試缺陷）：門口（production 的 {@code OriginDoors.doorwayBox}，經 {@link OriginDoorsTestAccess#doorwayBox}）裡的盔甲座，也就是 probe 自己以
+     * {@link #spawnDoorwayStand} 放的。門口的斷言只數它（世界生成的動物等其他 entity 不算；原艙附近的非玩家 entity 已在蓋原艙之後移走，{@code M5CollapseFixture.clearAroundTheOrigin}）。
+     */
+    static List<ArmorStandEntity> doorwayStands(M5CollapseRun run) {
+        return run.source().getEntitiesByClass(ArmorStandEntity.class, OriginDoorsTestAccess.doorwayBox(FRAME), stand -> true);
+    }
+
     static boolean closed(M5CollapseRun run) {
         return M5GameTestSupport.doorAll(run.source(), FRAME, false, MembraneState.NONE);
     }

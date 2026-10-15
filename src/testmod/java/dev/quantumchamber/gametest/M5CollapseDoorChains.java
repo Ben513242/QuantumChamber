@@ -374,11 +374,16 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         return true;
     }
 
-    /** sealdoorway 的 crash：門口放一座盔甲座，門仍關著。 */
+    /**
+     * sealdoorway 的 crash：門口放一座盔甲座，門仍關著。F6-2e-1（F6-2e Step 0 review 的測試缺陷）：另要求門口恰有一座盔甲座（{@link M5CollapseDoors#doorwayStands}，只數 probe 自己
+     * 放的）；production 的門口判斷（{@code doorwayOccupied}）仍要成立，那是 crash 窗口的前提。名稱不變、條件變嚴。
+     */
     private boolean standInTheDoorwayBeforeTheReceipt() {
         M5CollapseDoors.spawnDoorwayStand(run);
+        int stands = M5CollapseDoors.doorwayStands(run).size();
         boolean occupied = OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME), closed = M5CollapseDoors.closed(run);
-        run.expect("standInTheDoorwayBeforeTheReceipt", occupied && closed, () -> "門口有 entity=" + occupied + " 門關著=" + closed + " 門正中=" + doorCenter(run));
+        run.expect("standInTheDoorwayBeforeTheReceipt", stands == 1 && occupied && closed,
+                () -> "門口的盔甲座=" + stands + " 門口有 entity=" + occupied + " 門關著=" + closed + " 門正中=" + doorCenter(run));
         return true;
     }
 
@@ -522,19 +527,29 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
      * 門口的 entity storage 載入之後才判斷」。兩個 tick 仍記為 proof（{@code doorwaySeenAtServerTick}、{@code closeAppliedTick}）並附在失敗訊息。跨 JVM 量不到門口 entity storage
      * 還沒載入的情況，這一行由同 JVM 的 F4b-3 GameTest（{@code M5UniverseGameTests} 的
      * {@code sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it}）守住。
+     * <p>F6-2e-1（F6-2e Step 0 review 的測試缺陷）：「盔甲座仍在門口」只數 probe 自己放的盔甲座（{@link M5CollapseDoors#doorwayStands}，恰一座），不再以 production 的門口判斷代替（門口另有
+     * 世界生成的動物時那個判斷照樣成立）。production 的判斷附在失敗訊息。
      */
     private Verdict standKeptInTheDoorway() {
+        int stands = M5CollapseDoors.doorwayStands(run).size();
         boolean occupied = OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME);
         var applied = M5CollapseDoors.applied(run, fixture.sid());
         int at = applied.isEmpty() ? -1 : applied.getFirst().tick(), seen = sealedDoor.doorwaySeenAt;
-        return new Verdict(occupied, " 門口有 entity=" + occupied + " 第一次看到門口的 entity 在 tick " + seen + " 套用在 tick " + at);
+        return new Verdict(stands == 1, " 門口的盔甲座=" + stands + " 門口有 entity=" + occupied + " 第一次看到門口的 entity 在 tick " + seen + " 套用在 tick " + at);
     }
 
-    /** sealdoorway 的 step {@code standRemoved}：移走門口的 entity，恰是那一座盔甲座；之後門口沒有 entity，門仍是一般開門（{@code standRemovedFromTheDoorway}）。 */
+    /**
+     * sealdoorway 的 step {@code standRemoved}：移走門口的盔甲座（恰一座）；之後門口沒有盔甲座，門仍是一般開門（{@code standRemovedFromTheDoorway}）。F6-2e-1（F6-2e Step 0 review 的測試缺陷）：
+     * 原本以 {@code M5GameTestSupport.discardDoorwayEntities} 移走門口的所有 entity、要求恰一個，世界生成的動物也在門口時是「移走 2 個 entity」（F6-2e Step 0 的 run-all-1）；改為只移走、只數
+     * probe 自己放的盔甲座（{@link M5CollapseDoors#doorwayStands}）。移走之後 production 的門口判斷記為 proof（{@code doorwayOccupiedAfterTheStand}）。
+     */
     private boolean standRemovedFromTheDoorway() {
-        int removed = M5GameTestSupport.discardDoorwayEntities(run.source(), FRAME);
-        boolean clear = !OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME), plain = plainOpen(run);
-        run.expect("standRemovedFromTheDoorway", removed == 1 && clear && plain, () -> "移走 " + removed + " 個 entity，門口已清空=" + clear + " 一般開門=" + plain);
+        var stands = M5CollapseDoors.doorwayStands(run);
+        stands.forEach(net.minecraft.entity.Entity::discard);
+        int removed = stands.size(), left = M5CollapseDoors.doorwayStands(run).size();
+        boolean plain = plainOpen(run);
+        run.proof.put("doorwayOccupiedAfterTheStand", OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME));
+        run.expect("standRemovedFromTheDoorway", removed == 1 && left == 0 && plain, () -> "移走 " + removed + " 座盔甲座，門口仍有盔甲座=" + left + " 一般開門=" + plain);
         return true;
     }
 
