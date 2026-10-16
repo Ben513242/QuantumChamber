@@ -4108,6 +4108,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
             moveInside(q, frame);
             whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
                 M5GameTestSupport.hud(origin.connection); M5GameTestSupport.hud(second);
+                // POWER_LOSS 斷電的那個 test tick（F6-3c-2，F6-3c-1 quality nit：endedNextTick 不再寫死斷電在 sequence 的第幾步）；BY_PARTICIPANT 不用。
+                var poweredOffAt = new AtomicInteger(-1);
                 sequence(context, readyAt + 1, hooks, List.of(
                         () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO),
                         () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO),
@@ -4123,13 +4125,17 @@ public final class M5UniverseGameTests implements FabricGameTest {
                         () -> {
                             switch (how) {
                                 case BY_PARTICIPANT -> witness.put("closedByTheOneWhoStayed", interact(world, doorCell, q).isAccepted());
-                                case POWER_LOSS -> context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                                case POWER_LOSS -> {
+                                    poweredOffAt.set(Math.toIntExact(context.getTick()));
+                                    context.setBlockState(DormantOrigin.POWER, Blocks.AIR);
+                                }
                             }
                         }));
                 whenTicks(context, readyAt + 5, 10, () -> !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), ended -> {
                     witness.put("endedAsExpected", passageEnded(capture, sid, end) == 1 && passageEnded(capture, sid, "量子通道已結束") == 1);
-                    // F6-3c-1（F6-1 Step 0 quality Nit 4）：(d) 在斷電（readyAt+4）的下一個 tick 結束，比照 passage_ends_with_a_plain_open_door_when_the_source_loses_power 的 endedNextTick。
-                    if (how == CrossedEnd.POWER_LOSS) witness.put("endedNextTick", ended == readyAt + 5);
+                    // F6-3c-1（F6-1 Step 0 quality Nit 4）：(d) 在斷電的下一個 tick 結束，比照 passage_ends_with_a_plain_open_door_when_the_source_loses_power 的 endedNextTick。
+                    // F6-3c-2（F6-3c-1 quality nit）：以斷電那一步記下的 tick 判斷（斷電仍在 readyAt+4，判斷與原本的 ended == readyAt + 5 相同）。
+                    if (how == CrossedEnd.POWER_LOSS) witness.put("endedNextTick", ended == poweredOffAt.get() + 1);
                     witness.put("doorAfterTheTerminal", doorAll(world, frame, how.openAfterTheEnd, MembraneState.NONE));
                     witness.put("destinationTicketReleased", M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
