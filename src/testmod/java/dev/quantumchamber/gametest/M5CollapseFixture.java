@@ -694,7 +694,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
                 && String.valueOf(Registries.BLOCK_ENTITY_TYPE.getId(ModBlockEntities.CHAMBER_CONTROLLER)).equals(disk.blockEntity());
     }
 
-    /** inert 的 PROJECTION（比照 {@code M5UniverseGameTests}）：仍在世界上、PROJECTION、INVALID、比較器 0、沒有 chamber UUID。 */
+    /** inert 的 PROJECTION（比照 {@code M5UniverseProjectionGameTests}）：仍在世界上、PROJECTION、INVALID、比較器 0、沒有 chamber UUID。 */
     static boolean inertProjection(ServerWorld world, ChamberControllerBlockEntity controller) {
         return !controller.isRemoved() && world.getBlockEntity(controller.getPos()) == controller && controller.instanceKind() == ChamberInstanceKind.PROJECTION
                 && controller.chamberState() == ChamberState.INVALID && controller.chamberUuid() == null

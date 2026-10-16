@@ -77,7 +77,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * M5 GameTest 的共用支援（F4a-0）：default run 的 {@code M5CollapseGameTests}、M5 run 的 {@code M5UniverseGameTests}，以及
+ * M5 GameTest 的共用支援（F4a-0）：default run 的 {@code M5CollapseGameTests}、M5 run 的 {@code M5UniverseGameTests} 等四個 class（F6-3c-2 起），以及
  * {@code M4CandidateDoorGameTests} 中 M5 期間加入的 test 共用。用法見 {@code scripts/verification/README.md}「新增 M5 GameTest」。
  * <ul>
  * <li>排程：{@link #at}、{@link #whenTicks}（以 server tick 計的有界等待；失敗路徑先釋放 hooks）。</li>

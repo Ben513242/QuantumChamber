@@ -16,7 +16,7 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.WorldSavePath;
 
-/** default／legacy GameTest 的前後快照（M5 run 改註冊 M5UniverseGameTests 的 suite 結束紀錄）；此 receipt 明確屬於 testmod runtime。 */
+/** default／legacy GameTest 的前後快照（M5 run 改註冊 M5UniverseHold 的 suite 結束紀錄）；此 receipt 明確屬於 testmod runtime。 */
 final class M4GameTestBoundaryProbe {
     private static Map<String, Object> activeProof;
     private M4GameTestBoundaryProbe() { }
@@ -26,7 +26,7 @@ final class M4GameTestBoundaryProbe {
         // M5 run（plan 決策 6）刻意配置 Universe，不做 suite 前後的不變快照；改由每個 M5 test 自己斷言 catalog 增量，
         // suite 結束時再寫出 catalog 的最終狀態（gates.ps1 -Mode M5GameTest 核對）。
         if (Boolean.getBoolean("quantumchamber.gametest.m5Only")) {
-            M5UniverseGameTests.registerSuiteEnd();
+            M5UniverseHold.registerSuiteEnd();
             return;
         }
         String nonce = UUID.randomUUID().toString().replace("-", "");
