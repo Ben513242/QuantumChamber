@@ -231,7 +231,9 @@ function Assert-Scope([string]$xmlPath,[string]$scope) {
     if($status -ne 'PASS'){throw "GameTest run 範圍不符（$scope）：expected=$($expected.Count) actual=$($actual.Count) 缺 [$($missing -join ', ')] 多 [$($extra -join ', ')]"}
     return $expected
 }
-# M5 run 的 oracle（取代 default run 的 M4 boundary oracle）：JVM 帶 m5Only、沒有 boundary receipt；m5_universe 的 test 都宣告在 M5UniverseGameTests、
+# M5 run 的 GameTest class（F6-3c-2 由 M5UniverseGameTests 依主題拆成四個；testmod fabric.mod.json 的 fabric-gametest entrypoint 同步列出，README「新增 M5 GameTest」）。
+$M5RunClasses=@('M5UniverseGameTests','M5UniverseProjectionGameTests','M5UniverseDoorGameTests','M5UniversePassageGameTests')
+# M5 run 的 oracle（取代 default run 的 M4 boundary oracle）：JVM 帶 m5Only、沒有 boundary receipt；m5_universe 的 test 都宣告在 $M5RunClasses 的 class、
 # 各自一個 batch；每個 test 都留下恰一行 PASS 的 M5_UNIVERSE_CATALOG_DELTA。依 log 順序串接：fresh 世界從 0 筆開始，前一個 test 的 after（筆數與
 # digest）等於下一個 test 的 before；suite 結束時（SERVER_STOPPED）恰一行 M5_UNIVERSE_SUITE_END，筆數與 digest 等於最後一個 test 的 after、
 # converged=true、沒有還沒通過的 test（catalog 只在各 test 自己斷言的範圍內改變，最後一個 test 之後也沒有改變）。結果寫入 <gate>/m5-oracle.json。
@@ -239,8 +241,8 @@ function Assert-M5Run($server,$expected) {
     if(-not $server.commandLine.Contains('-Dquantumchamber.gametest.m5Only=true')){throw 'M5 run 的 server JVM 沒有 -Dquantumchamber.gametest.m5Only=true'}
     $boundary=@(Get-ChildItem -LiteralPath (Join-Path $gate 'execution') -Filter 'm4-boundary-*.json')
     if($boundary.Count){throw "M5 run 不得留下 M4 boundary receipt：$($boundary.Name -join ', ')"}
-    $outside=@($expected | Where-Object {$_.class -cne 'M5UniverseGameTests'})
-    if($outside.Count){throw "m5_universe batch 只能宣告在 M5UniverseGameTests：$(@($outside | ForEach-Object case) -join ', ')"}
+    $outside=@($expected | Where-Object {$_.class -cnotin $M5RunClasses})
+    if($outside.Count){throw "m5_universe batch 只能宣告在 M5 run 的 GameTest class（$($M5RunClasses -join '、')）：$(@($outside | ForEach-Object case) -join ', ')"}
     if((Distinct-Count @($expected | ForEach-Object batch)) -ne $expected.Count){throw 'M5 test 必須各自一個 batch（逐 test 的 catalog 增量才只屬於該 test）'}
     $stdout=Get-Content -LiteralPath (Join-Path $gate 'execution/stdout.log') -Raw
     $deltas=@([regex]::Matches($stdout,'M5_UNIVERSE_CATALOG_DELTA name=(?<name>\w+) before=(?<before>\d+) after=(?<after>\d+) expected=(?<expected>-?\d+) actual=(?<actual>-?\d+) converged=(?<converged>\w+) preserved=(?<preserved>\w+) beforeDigest=(?<beforeDigest>[0-9a-f]{64}) afterDigest=(?<afterDigest>[0-9a-f]{64}) status=(?<status>\w+)') | ForEach-Object {
