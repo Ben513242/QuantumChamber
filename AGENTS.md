@@ -156,7 +156,8 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
     - 一個 test 失敗不再連坐其他 test；通過的 test 留下未確認的權威時，下一個 test FAIL。
 
     只改 testmod、`build.gradle` 的 `gameTestM5` 一個 vmArg 與 README，`src/main/` 沒有變更。spec re-review ✅、quality re-review Approved；完整回歸 `run-all-818e5997081f44bb958adb0859b4ec39` 為 `END ALL exit=0`（`c4e4db5`）。Ubuntu 的實際效果要 push 之後才能驗收。
-  - 之後依序是 F6-3c → F6-3d → F6-3e → push 到 CI 驗收（push 前先問使用者）→ F7 → milestone 收尾。
+  - **F6-3c-1 已完成（2026-10-16）**：range `30f1a2b..92fe2b5`（code 到 `ed41eac`）。內容是 probe 與 GameTest 的小整理：W12 第二次退避的逐 tick 斷言、重試計數的 helper、T-REJARR 與 T-ENDD 的 witness、fixture 先登記 owned 等。只改 testmod 與 README；spec review ✅、quality review Approved；完整回歸 `run-all-89bbed4fe7ce4b08a15835c1de675572` 為 `END ALL exit=0`（`92fe2b5`）。
+  - 之後依序是 F6-3c-2（拆 `M5UniverseGameTests`）→ F6-3d → F6-3e → push 到 CI 驗收（push 前先問使用者）→ F7 → milestone 收尾。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

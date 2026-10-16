@@ -9681,6 +9681,56 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
   - 本節由其後的 `docs: record F6-3c-1 in the M5 note` 加入。
 - 只改了派工允許的路徑：probe 的 `M5CollapseConvergenceChain`、`M5CollapseRestartChains`（只有 `retries` 的 Javadoc）、`M5CollapseDoorChains`、`M5CollapseRetryChains`；`M5UniverseGameTests` 只動第 7、9、10 點；`M5CollapseGameTests` 與 `M5GameTestSupport` 只動第 11 點；`TestServerTickPaceMixin` 只改第 8 點的文字；`scripts/verification/README.md` 只改「新增 M5 GameTest」（:133、:135、:145）與「M5 collapse probe」（:169、:233）兩節；本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、`fabric.mod.json`、兩個 mixins.json、所有 ps1、`.github/`、其他 GameTest、M4 probe、JUnit、語言檔、spec、plan、AGENTS。`M5CollapsePassage` 沒有改（`Watching`、`counting` 照原樣使用）。
 - 行號以 HEAD `db1680a` 為準（code 與 `ed41eac` 相同）。簡稱同前面各節：`CC`＝`M5CollapseConvergenceChain`、`RCH`＝`M5CollapseRestartChains`、`DC`＝`M5CollapseDoorChains`、`RC`＝`M5CollapseRetryChains`、`M5U`、`CGT`＝`M5CollapseGameTests`、`SUP`＝`M5GameTestSupport`、`TSP`＝`TestServerTickPaceMixin`。
+- Review（controller 補；spec 與 quality 兩份審查並行，都只讀）：
+  - spec review ✅（Critical 0、Important 0、Minor 1、nit 1）。reviewer 獨立核對了以下各點。
+    - 11 點都做到，偏離的理由成立。
+      - 依常數重算：再進入在 418、618，`206 < d ≤ 406`。
+      - `backoffEarly` 也加上逐 tick 斷言，讓 214～618 每個 tick 都有具名斷言，屬於更嚴。
+    - 第 3 點的兩個 mutation 前後都在 `db1680a`，porcelain 為空，還原後 blob 一致。
+      - 對照組與 `mut-retry-at-the-doubled-expiry` 的 CollapseService blob 相同，CC 是 `30f1a2b` 的版本，只隔離了新斷言這一個變因。
+      - 失敗的 tick：206＝6＋200；613＝213＋400。
+    - T-REJARR 的 witness 不是恆真：跨越的那一步已經讀掉到達的 title，同一條連線也有正向對照。
+    - T-ENDD 的 `ended == readyAt+5` 鎖住「斷電之後第一次檢查就已結束」，與 spec §10.6、§7 :402 相符，寫法與 T-POWER 相同。「T-POWER 只鎖住沒有人跨過的 (d)」這個理由成立。
+    - 第 11 點前半：`owner.accept` 在 `suspendCollapse` 與 `journal.put` 之前（`SUP:364`），確實能避免 COLLAPSING 殘留。
+    - 純 refactor 的判斷都相同：
+      - 第 5 點：逐字相同，`r-green` RESULT=OK；
+      - 第 6 點：`c3-swap` 在 `CC:102` 編譯失敗；
+      - 第 10 點、第 9 點的 enum、第 11 點後半。
+    - 第 7 點：四個出口都經 `endHold`。
+    - 範圍與 note 都屬實。
+    - Minor 與 nit：
+      - M-1：本節「行號以 HEAD `db1680a` 為準」，但第 10 點與「偏離」第 6 點用了別的 commit 的行號（`a1e20c8` 在檔頭加了 4 行），controller 在下方更正。
+      - nit：`RCH:410-413` 的 Javadoc 與 README :169 寫「probe 各 chain 的重試計數都經這裡」，但 `M5CollapsePassageChains.java:466` 仍自己查詢。
+  - quality review **Approved**（Critical 0、Important 0、Minor 4、nit 1）。
+    - 已確認：
+      - 兩個新斷言的時間段沒有重疊，失敗訊息有足夠的診斷力；
+      - `Watching` 的寫法與 `watch`／`awaiting` 一致；
+      - `PREPARE_WAIT_TICKS` 與 production 的 `WAIT_WARN_TICKS`（`CollapseService.java:947`）相符；
+      - hold 開始之後的出口都會呼叫 `endHold`；
+      - `cleanupFixtures` 能處理不在 journal 的 sid（`SUP:436-442`），所以提前登記是安全的。
+    - Minor：
+      1. 「record 與封存時相同」的判斷式在 `CC:158`、`:171`、`:185`、`:247` 重複 4 次，`RC:242` 也有一份。
+      2. `RC:515`、`:520`：參數 `int retries` 與方法 `retries(run, sid)` 同名。
+      3. `M5U:168` 寫「D1 等進入 PREPARE」，實際等的是 PREPARE 完成；而且第四處（T-POWER）沒有 D1。
+      4. after-pass 的原因拆在 `startHold` 與 `endHold` 兩段字串（`M5U:4651`、`:4668`），括號的配對分散在兩個方法裡。
+      - nit：`ended == readyAt + 5` 寫死了 `sequence` 的位置，可以改成 `ended == poweredOffAt + 1`。
+    - 給 F6-3c-2：
+      - hold 的 static 狀態（`lastBegun`、`afterPassFailure`、`afterPassStarted`）、`startHold`、`endHold`、`begin` 與 `M5ConvergenceHoldMixin` 要整組搬進單一 owner；
+      - `startHold` 的守門要同時看 `afterPassStarted`；
+      - SUP 的 `collapseFixture` 有兩個 8 參數的 overload，只差最後一個參數，抽 fixture 時要改名；
+      - `CrossedEnd` 與 `PREPARE_WAIT_TICKS` 要跟著它們的 test 一起移動。
+  - controller 更正（spec M-1）：本節第 10 點與「偏離」第 6 點的 `M5U:1561`、`:1617`、`:1855`、`:3073` 是 `a8ace47` 的行號，在 `db1680a` 上是 `:1565`、`:1621`、`:1859`、`:3077`；`M5U:2672` 是 `30f1a2b` 的行號，在 `db1680a` 上是 `:2677`。
+  - controller 補記：本節 commit 之後的 run-all-2 是 `run-all-89bbed4fe7ce4b08a15835c1de675572`，在乾淨的 `92fe2b5` 上 `END ALL exit=0`，SUMMARY 與基準 `run-all-ebf53140…` 相同。
+    - testcase 集合：default、M5、legacy 都 `identical=True`。
+    - release SHA 相同；sources `contentDiffers=0`。
+    - WARN／ERROR：Full 54／31、legacy 0／0、M5 38／10。
+    - M5 run 沒有 `M5_UNIVERSE_HOLD`，`tps=88.3`。
+    - probe 對 F6-3 Step 0 的 green-2 `RESULT=OK`。
+    - 沒有遇到已知偶發。
+  - controller 處置：
+    - 不開 fix round。
+    - quality Minor 1～4、nit、「給 F6-3c-2」，以及 spec nit → **F6-3c-2**。
+  - **F6-3c-1 完成**：range `30f1a2b..92fe2b5`（code 到 `ed41eac`）。最終 run-all `run-all-89bbed4fe7ce4b08a15835c1de675572`（`92fe2b5`）`END ALL exit=0`。
 
 ### 逐項處置
 
