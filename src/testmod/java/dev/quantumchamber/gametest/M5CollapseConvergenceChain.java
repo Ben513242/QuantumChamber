@@ -155,7 +155,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
         expectNotMaterialized("notMaterializedInTheBackoff", when);
         // F6-3c-1（F6-3 Step 0 quality Minor 1）：record（flushed 與 current）也與第一次封存時相同（unconfirmed 的 sealedKept 延伸到退避期）。
         var sid = fixture.sid();
-        run.expect("sealedKeptInTheBackoff", sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid)),
+        run.expect("sealedKeptInTheBackoff", sealedRecordKept(run, sid, sealedRecord),
                 () -> when + "state=" + M5GameTestSupport.state(run.journal(), sid) + " 全部的重試 INFO=" + retries(run, sid));
     }
 
@@ -168,7 +168,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
     private void notRetriedInTheDoubledBackoff(int tick) {
         var sid = fixture.sid();
         int all = retries(run, sid), now = run.server().getTicks();
-        boolean kept = sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid));
+        boolean kept = sealedRecordKept(run, sid, sealedRecord);
         run.expect("notRetriedInTheDoubledBackoff", all == 1 && kept, () -> "第二次封存之後 " + (now - markTick) + " 個 tick（step 的第 " + tick + " 個 tick，server tick " + now
                 + "）：全部的重試 INFO=" + all + " record 與第二次封存時相同=" + kept + " state=" + M5GameTestSupport.state(run.journal(), sid));
     }
@@ -182,7 +182,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
     private void notRetriedBeforeTheDoubledBackoff(int tick) {
         var sid = fixture.sid();
         int all = retries(run, sid);
-        boolean kept = sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid));
+        boolean kept = sealedRecordKept(run, sid, sealedRecord);
         boolean inside = fixture.players().stream().allMatch(M5CollapseFixture::inside);
         run.expect("notRetriedBeforeTheDoubledBackoff", all == 1 && kept && inside,
                 () -> "第一次的退避長度時進入之後第 " + tick + " 個 tick：全部的重試 INFO=" + all + " record 與第二次封存時相同=" + kept + " state="
@@ -244,7 +244,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
         expectRolledForward("catalogStillRolledForward", "第 " + tick + " 個 tick：");
         expectNotMaterialized("stillNotMaterialized", "第 " + tick + " 個 tick：");
         var sid = fixture.sid();
-        run.expect("sealedKept", sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid)),
+        run.expect("sealedKept", sealedRecordKept(run, sid, sealedRecord),
                 () -> "第 " + tick + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), sid));
     }
 

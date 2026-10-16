@@ -239,8 +239,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var sid = fixture.sid();
         var retried = retries(run, sid);
         boolean inside = fixture.players().stream().allMatch(M5CollapseFixture::inside);
-        run.expect("notRetriedInTheSameInstance", sealedRecord.equals(run.journal().flushedRecords().get(sid)) && sealedRecord.equals(run.journal().records().get(sid))
-                && retried == 0 && inside, () -> "state=" + M5GameTestSupport.state(run.journal(), sid) + " 重試的 INFO=" + retried + " 在艙內=" + inside);
+        run.expect("notRetriedInTheSameInstance", sealedRecordKept(run, sid, sealedRecord) && retried == 0 && inside, () -> "state=" + M5GameTestSupport.state(run.journal(), sid) + " 重試的 INFO=" + retried + " 在艙內=" + inside);
     }
 
     // ---- restart phase ----

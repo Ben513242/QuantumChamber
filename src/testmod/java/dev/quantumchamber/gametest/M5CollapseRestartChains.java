@@ -413,4 +413,12 @@ abstract class M5CollapseRestartChains {
     static int retries(M5CollapseRun run, UUID sid) {
         return run.capture().matching(Level.INFO, "SEALED 重試", sid.toString()).size();
     }
+
+    /**
+     * {@code sid} 的 record（flushed 與 current）都與封存時的 {@code sealed} 相同（F6-3c-2，F6-3c-1 quality Minor 1：原本 {@code M5CollapseConvergenceChain} 的四處與
+     * {@code M5CollapseRetryChains} 的一處各寫一份相同的判斷式；判斷不變）。{@code sealed} 是 null 時丟出 NullPointerException，與原本相同。
+     */
+    static boolean sealedRecordKept(M5CollapseRun run, UUID sid, SessionRecoveryRecord sealed) {
+        return sealed.equals(run.journal().flushedRecords().get(sid)) && sealed.equals(run.journal().records().get(sid));
+    }
 }
