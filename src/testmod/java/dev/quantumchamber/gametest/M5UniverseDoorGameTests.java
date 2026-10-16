@@ -13,6 +13,7 @@ import static dev.quantumchamber.gametest.M5UniverseHold.begin;
 import static dev.quantumchamber.gametest.M5UniverseSupport.allocationEntries;
 import static dev.quantumchamber.gametest.M5UniverseSupport.collapsedToUniverse;
 import static dev.quantumchamber.gametest.M5UniverseSupport.entered;
+import static dev.quantumchamber.gametest.M5UniverseSupport.extraPlayer;
 import static dev.quantumchamber.gametest.M5UniverseSupport.local;
 import static dev.quantumchamber.gametest.M5UniverseSupport.membraneInfos;
 import static dev.quantumchamber.gametest.M5UniverseSupport.openOrigin;
@@ -98,14 +99,7 @@ public final class M5UniverseDoorGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
-        ServerPlayerEntity n;
-        try {
-            var outsider = new ConnectedGameTestPlayer(world);
-            hooks.add(outsider::close);
-            n = outsider.player();
-            n.setNoGravity(true);
-            moveOutside(n, frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var n = extraPlayer(context, hooks, frame).player();
         var doorCell = local(frame, 3, 3, 0);
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -583,14 +577,7 @@ public final class M5UniverseDoorGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
-        ServerPlayerEntity n;
-        try {
-            var insider = new ConnectedGameTestPlayer(world);
-            hooks.add(insider::close);
-            n = insider.player();
-            n.setNoGravity(true);
-            moveOutside(n, frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var n = extraPlayer(context, hooks, frame).player();
         var doorCell = local(frame, 3, 3, 0);
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();

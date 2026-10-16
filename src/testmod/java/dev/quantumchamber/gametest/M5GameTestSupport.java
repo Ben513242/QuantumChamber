@@ -340,8 +340,9 @@ final class M5GameTestSupport {
     /**
      * 同上（時間取 overworld 的 game time），另在任何寫入之前就把這份 fixture 的 session 加入 {@code owned}（F6-3c-1，H9 quality Minor 5）：之後任何一步失敗（例如 SEALED 的寫入沒有
      * 確認），已確認的中間狀態也由呼叫端的 {@link #cleanupFixtures} 收尾，不會以 COLLAPSING 留在共用 server 的 journal、之後被 RESOLVE 而連累後面的 test。
+     * F6-3c-2（F6-3c-1 quality review「給 F6-3c-2」）：由 {@code collapseFixture} 的 overload 改名；原本與 {@code long time} 的 overload 都是 8 個參數、只差最後一個的型別。
      */
-    static SessionRecoveryRecord collapseFixture(MinecraftServer server, ChamberOriginAuthority origin, Map<UUID, Boolean> people,
+    static SessionRecoveryRecord collapseFixtureOwnedBy(MinecraftServer server, ChamberOriginAuthority origin, Map<UUID, Boolean> people,
             List<SessionRecoveryRecord.SpaceLease> leases, boolean newCandidate, SessionState phase, boolean suspend, Collection<UUID> owned) {
         return collapseFixture(server, origin, people, leases, newCandidate, phase, suspend, server.getOverworld().getTime(), owned::add);
     }
@@ -401,13 +402,13 @@ final class M5GameTestSupport {
      * H9 (b)：SEALED({@code reason}) 的 fixture（目的地 NEW；比照 {@link #collapseFixture} 的 SEALED，原因由呼叫端指定）：返還與清理都完成的 COLLAPSING 之後以 commitRollForward
      * 進入 SEALED；{@code TRANSFER_RECOVERY_REQUIRED} 經 PASSAGE_READY 寫入（RecoveryRequired 是第一位參與者，Crossed 是空的；收尾時無法移除，見 {@link #removeFixture}）。
      * 全部在同一個 callback 內完成（塌縮流程看不到中間狀態），最後確認 exact 落盤。F6-3c-1（H9 quality Minor 5）：{@code owned} 在任何寫入之前就加入這份 fixture 的 session
-     * （同 {@link #collapseFixture(MinecraftServer, ChamberOriginAuthority, Map, List, boolean, SessionState, boolean, Collection)}；原本由呼叫端在 fixture 建好之後才加入，
+     * （同 {@link #collapseFixtureOwnedBy}；原本由呼叫端在 fixture 建好之後才加入，
      * SEALED 的寫入失敗時已確認的 COLLAPSING 不在 owned 裡）。
      */
     static SessionRecoveryRecord sealedFixture(MinecraftServer server, ChamberOriginAuthority origin, Map<UUID, Boolean> people, SealedReason reason,
             Collection<UUID> owned) {
         boolean transfer = reason == SealedReason.TRANSFER_RECOVERY_REQUIRED;
-        var before = collapseFixture(server, origin, people, List.of(), true, transfer ? SessionState.PASSAGE_READY : SessionState.COLLAPSING, false, owned);
+        var before = collapseFixtureOwnedBy(server, origin, people, List.of(), true, transfer ? SessionState.PASSAGE_READY : SessionState.COLLAPSING, false, owned);
         return seal(server, before, reason);
     }
 
@@ -1229,5 +1230,18 @@ final class M5GameTestSupport {
     static void moveOutside(PlayerEntity player, ChamberFrame frame) {
         var position = ChamberSpaceCoordinates.position(frame, 3.5, 1, -2.5);
         ((ServerPlayerEntity) player).teleport((ServerWorld) player.getWorld(), position.x, position.y, position.z, Set.of(), 0, 0);
+    }
+
+    /**
+     * 再連線一位玩家（額外的玩家：第二位參與者或非參與者；F6-3c-2，盤點 #07）：建立之後先在 {@code hooks} 登記關閉，再設為不受重力、移到 {@code frame} 的門外
+     * （{@link #moveOutside}）。例外照原樣丟出（不釋放 hooks、不轉換），由呼叫端依所在的 run 處理：M5 run 經 {@code M5UniverseSupport.extraPlayer} 轉成 test 失敗，
+     * default run 的呼叫端自己 {@code releaseAfter}。
+     */
+    static ConnectedGameTestPlayer connectOutside(TestContext context, M2CorridorGameTests.TestHooks hooks, ChamberFrame frame) {
+        var connection = new ConnectedGameTestPlayer(context.getWorld());
+        hooks.add(connection::close);
+        connection.player().setNoGravity(true);
+        moveOutside(connection.player(), frame);
+        return connection;
     }
 }

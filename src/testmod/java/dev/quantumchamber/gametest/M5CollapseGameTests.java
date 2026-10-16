@@ -6,6 +6,7 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.candidateDoor;
 import static dev.quantumchamber.gametest.M5GameTestSupport.captureLogs;
 import static dev.quantumchamber.gametest.M5GameTestSupport.cleanupFixtures;
 import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFixture;
+import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFixtureOwnedBy;
 import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFlowNeverWarned;
 import static dev.quantumchamber.gametest.M5GameTestSupport.controller;
 import static dev.quantumchamber.gametest.M5GameTestSupport.door;
@@ -1273,7 +1274,7 @@ public final class M5CollapseGameTests implements FabricGameTest {
             var witness = new LinkedHashMap<String, Boolean>();
             moveInside(p, frame);
             // F6-3c-1（H9 quality Minor 5）：fixture 在任何寫入之前就把 session 加入 owned（原本在 fixture 建好之後才加入：SEALED 的寫入失敗時，已確認的 COLLAPSING 不在 owned 裡）。
-            var record = collapseFixture(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(p.getUuid(), true), List.of(), true,
+            var record = collapseFixtureOwnedBy(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(p.getUuid(), true), List.of(), true,
                     SessionState.SEALED, false, origin.owned);
             var sid = record.sessionUuid();
             M5GameTestSupport.writeDoor(world, frame, membrane, initial);

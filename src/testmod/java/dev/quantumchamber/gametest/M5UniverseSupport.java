@@ -142,6 +142,16 @@ final class M5UniverseSupport {
     }
 
     /**
+     * 額外的一位玩家（第二位參與者或非參與者 N；F6-3c-2，盤點 #07：原本九處各寫一份）：{@link M5GameTestSupport#connectOutside}（在 hooks 登記關閉、不受重力、移到門外），
+     * 失敗時轉成 test 失敗（{@link M5UniverseHold#asTestFailure}；與原本相同，不另釋放 hooks）。通常接在 {@link #openOrigin} 之後。
+     */
+    static ConnectedGameTestPlayer extraPlayer(TestContext context, M2CorridorGameTests.TestHooks hooks, ChamberFrame frame) {
+        try {
+            return M5GameTestSupport.connectOutside(context, hooks, frame);
+        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+    }
+
+    /**
      * PREPARE 系列 test 共用的後段（F4b-3 Step 0，F4b-2 quality Q-M5）：釋放 hooks（收尾的終局 API 移除收據、關閉玩家與 log capture），斷言 {@code witness}
      * 全部成立（失敗訊息是 {@code message}），之後以 {@link M5UniverseHold#awaitConvergedThenComplete} 等權威收斂而且 {@code ready} 成立才完成，catalog 增量 1。
      */

@@ -13,6 +13,7 @@ import static dev.quantumchamber.gametest.M5UniverseSupport.PREPARE_WAIT_TICKS;
 import static dev.quantumchamber.gametest.M5UniverseSupport.allocationEntries;
 import static dev.quantumchamber.gametest.M5UniverseSupport.collapsedToUniverse;
 import static dev.quantumchamber.gametest.M5UniverseSupport.entered;
+import static dev.quantumchamber.gametest.M5UniverseSupport.extraPlayer;
 import static dev.quantumchamber.gametest.M5UniverseSupport.local;
 import static dev.quantumchamber.gametest.M5UniverseSupport.membraneInfos;
 import static dev.quantumchamber.gametest.M5UniverseSupport.openOrigin;
@@ -104,13 +105,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
-        ConnectedGameTestPlayer outsider;
-        try {
-            outsider = new ConnectedGameTestPlayer(world);
-            hooks.add(outsider::close);
-            outsider.player().setNoGravity(true);
-            moveOutside(outsider.player(), frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var outsider = extraPlayer(context, hooks, frame);
         var n = outsider.player();
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -212,13 +207,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
-        ConnectedGameTestPlayer second;
-        try {
-            second = new ConnectedGameTestPlayer(world);
-            hooks.add(second::close);
-            second.player().setNoGravity(true);
-            moveOutside(second.player(), frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var second = extraPlayer(context, hooks, frame);
         var b = second.player();
         collapsedToUniverse(context, origin, hooks, List.of(b.getUuid()), (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -237,8 +226,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
                     whenTicks(context, queuedAt + 1, 5, () -> !reappliedTicks(capture, sid).isEmpty(), appliedAt -> {
                         witness.put("passableReappliedOnTheQueuedTick", M5GameTestSupport.doorPassable(world, frame)
                                 && reappliedTicks(capture, sid).equals(reapplyQueuedTicks(capture, sid)) && reapplyCauses(capture, sid).equals(List.of("重啟之後第一次載入")));
-                        at(context, appliedAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO));
-                        at(context, appliedAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                        crossMidline(context, appliedAt + 1, hooks, p, frame, 3.5);
                         at(context, appliedAt + 4, hooks, () -> {
                             var record = journal.flushedRecords().get(sid);
                             witness.put("oneCrossedOneStayed", p.getServerWorld() == universe && b.getServerWorld() == world && record != null
@@ -305,14 +293,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
-        ServerPlayerEntity n;
-        try {
-            var outsider = new ConnectedGameTestPlayer(world);
-            hooks.add(outsider::close);
-            n = outsider.player();
-            n.setNoGravity(true);
-            moveOutside(n, frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var n = extraPlayer(context, hooks, frame).player();
         var doorCell = local(frame, 3, 3, 0);
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -403,20 +384,15 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var owned = new ArrayList<UUID>();
         try {
             remote = M5GameTestSupport.RemoteOrigin.open(context, new BlockPos(30203, 100, 30203), hooks);
-            var connection = new ConnectedGameTestPlayer(world);
-            hooks.add(connection::close);
-            qConnection = connection;
-            q = connection.player();
-            q.setNoGravity(true);
-            moveOutside(q, remote.frame);
+            qConnection = M5GameTestSupport.connectOutside(context, hooks, remote.frame);
+            q = qConnection.player();
             hooks.add(() -> cleanupFixtures(server, owned));
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
         var far = remote.frame;
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid1, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid1).equals("PASSAGE_READY"), readyAt -> {
-                at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.7, 0, 0, Vec3d.ZERO));
-                at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p, frame, 3.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                crossMidline(context, readyAt + 1, hooks, p, frame, 3.5);
                 whenTicks(context, readyAt + 3, 10, () -> !journal.flushedRecords().containsKey(sid1), firstEnded -> {
                     witness.put("pInTheUniverse", p.getServerWorld() == universe);
                     // F5-3（spec §20.8）：D1 選的是 NEW，P 收到 NEW 的到達提示。
@@ -433,8 +409,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
                                     && capture.matching(Level.INFO, "目的地已確定", sid2.toString()).size() == 1);
                             witness.put("secondChamberProjected", M5GameTestSupport.projectionMismatches(universe, far, false).isEmpty()
                                     && CollapseAuthorities.get(server).projection(chamberB, id).value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.COMPLETE).isPresent());
-                            at(context, secondReady + 1, hooks, () -> M5GameTestSupport.standInDoorway(q, far, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
-                            at(context, secondReady + 2, hooks, () -> M5GameTestSupport.standInDoorway(q, far, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                            crossMidline(context, secondReady + 1, hooks, q, far, 2.5);
                             whenTicks(context, secondReady + 3, 10, () -> !journal.flushedRecords().containsKey(sid2), secondEnded -> {
                                 witness.put("reunitedInTheSameUniverse", q.getServerWorld() == universe && p.getServerWorld() == universe);
                                 witness.put("qInTheSecondProjectionDoorway", ChamberSpaceCoordinates.localPosition(far, q.getPos())
@@ -583,13 +558,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p1 = origin.player();
-        ConnectedGameTestPlayer second;
-        try {
-            second = new ConnectedGameTestPlayer(world);
-            hooks.add(second::close);
-            second.player().setNoGravity(true);
-            moveOutside(second.player(), frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var second = extraPlayer(context, hooks, frame);
         var p2 = second.player();
         collapsedToUniverse(context, origin, hooks, List.of(p2.getUuid()), (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -598,8 +567,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
                 var ready = journal.flushedRecords().get(sid);
                 // F5-2（spec §10.7）：通道開著（已供電、enabled）時比較器 15。
                 witness.put("comparatorFifteenWhileReady", controllerSignal(world, frame, ChamberState.PASSAGE, 15));
-                at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
-                at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                crossMidline(context, readyAt + 1, hooks, p1, frame, 2.5);
                 at(context, readyAt + 3, hooks, () -> {
                     witness.put("p1Crossed", p1.getServerWorld() == universe && journal.flushedRecords().get(sid).collapse().crossed().equals(List.of(p1.getUuid())));
                     // F5-3：P1 的跨越成功，有 NEW 的到達提示（對照下方 P2 的 FAILED_RECOVERY_REQUIRED 沒有）。這次讀取同時清掉之前的封包。
@@ -709,13 +677,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p1 = origin.player();
-        ConnectedGameTestPlayer second;
-        try {
-            second = new ConnectedGameTestPlayer(world);
-            hooks.add(second::close);
-            second.player().setNoGravity(true);
-            moveOutside(second.player(), frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var second = extraPlayer(context, hooks, frame);
         var p2 = second.player();
         collapsedToUniverse(context, origin, hooks, List.of(p2.getUuid()), (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
@@ -785,13 +747,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p1 = origin.player();
-        ConnectedGameTestPlayer second;
-        try {
-            second = new ConnectedGameTestPlayer(world);
-            hooks.add(second::close);
-            second.player().setNoGravity(true);
-            moveOutside(second.player(), frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var second = extraPlayer(context, hooks, frame);
         var p2 = second.player();
         var doorCell = local(frame, 3, 3, 0);
         collapsedToUniverse(context, origin, hooks, List.of(p2.getUuid()), (resolved, universe, sid, chamber, id) -> {
@@ -809,8 +765,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
                     hold.release();
                     whenTicks(context, start + 1, 40, () -> M5GameTestSupport.state(journal, sid).equals("PASSAGE_READY"), readyAt -> {
                         long expires = journal.flushedRecords().get(sid).collapse().passageExpiresAtGameTime();
-                        at(context, readyAt + 1, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.7, 0, 0, Vec3d.ZERO));
-                        at(context, readyAt + 2, hooks, () -> M5GameTestSupport.standInDoorway(p1, frame, 2.5, 1, 0.3, 0, 0, Vec3d.ZERO));
+                        crossMidline(context, readyAt + 1, hooks, p1, frame, 2.5);
                         at(context, readyAt + 3, hooks, () -> {
                             var view = journal.collapseView(sid).orElseThrow();
                             witness.put("p1Crossed", p1.getServerWorld() == universe && crossedInfos(capture, sid) == 1);
@@ -873,11 +828,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         players.add(origin.player());
         try {
             for (int i = 0; i < 3; i++) {
-                var connection = new ConnectedGameTestPlayer(world);
-                hooks.add(connection::close);
-                connection.player().setNoGravity(true);
-                moveOutside(connection.player(), frame);
-                players.add(connection.player());
+                players.add(M5GameTestSupport.connectOutside(context, hooks, frame).player());
             }
             for (var player : players) player.changeGameMode(GameMode.CREATIVE);
         } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
@@ -1289,13 +1240,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
         var origin = openOrigin(context, hooks);
         var frame = origin.frame; var capture = origin.capture;
         var p = origin.player();
-        ConnectedGameTestPlayer second;
-        try {
-            second = new ConnectedGameTestPlayer(world);
-            hooks.add(second::close);
-            second.player().setNoGravity(true);
-            moveOutside(second.player(), frame);
-        } catch (RuntimeException failure) { throw asTestFailure(context, "fixture", failure); }
+        var second = extraPlayer(context, hooks, frame);
         var q = second.player();
         var doorCell = local(frame, 3, 3, 0);
         var end = how.reason;
@@ -1359,6 +1304,16 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
             steps.getFirst().run();
             sequence(context, tick + 1, hooks, steps.subList(1, steps.size()));
         });
+    }
+
+    /**
+     * 兩步跨越（F6-3c-2，盤點 #07：原本五處各寫兩行 {@code at}）：{@code tick} 時 {@code player} 站在門口區域座標 ({@code x}, 1, 0.7)（門板中線內側），下一個 tick 站在
+     * ({@code x}, 1, 0.3)（外側），朝向 0、0，速度為零（{@link M5GameTestSupport#standInDoorway}；跨越的定義見那裡）。兩步都經 {@link M5GameTestSupport#at}，例外時先釋放 hooks。
+     * 朝向、速度不同，或兩步之間另有動作的跨越不經這裡。
+     */
+    private static void crossMidline(TestContext context, int tick, M2CorridorGameTests.TestHooks hooks, ServerPlayerEntity player, ChamberFrame frame, double x) {
+        at(context, tick, hooks, () -> M5GameTestSupport.standInDoorway(player, frame, x, 1, 0.7, 0, 0, Vec3d.ZERO));
+        at(context, tick + 1, hooks, () -> M5GameTestSupport.standInDoorway(player, frame, x, 1, 0.3, 0, 0, Vec3d.ZERO));
     }
 
     /** 來源 Controller 目前是 {@code state}，而且比較器輸出是 {@code signal}（F5-2：spec §10.7 的比較器）。 */
