@@ -76,7 +76,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
     /** H7（{@code w8late}、{@code unreadablelate}）的 restart：等原艙附近卸載的上限（spawn chunks 的半徑改為 0 之後，原版在下一次 chunk 更新就把它降到 FULL 以下）。 */
     private static final int UNLOAD_WAIT_TICKS = 400;
 
-    /** {@link #reenabled} 是否另斷言本 instance 沒有這個 session 的「塌縮進入 SEALED」WARN（F6-2d-2 Step 0，F6-2d-1 quality nit：原本以 {@code retries == 0} 代表）。 */
+    /** {@link #reenabled} 是否另斷言本 instance 沒有這個 session 的「塌縮進入 SEALED」WARN（F6-2d-2 Step 0，F6-2d-1 quality nit：原本以 {@code expectedRetries == 0} 代表；F6-3c-2 之前參數名是 {@code retries}）。 */
     private enum SealWarns {
         /** 本 instance 不應進過 SEALED（w9cd：開服時就是 COLLAPSING，第一次 RESOLVE 就改回）。 */
         NONE_EXPECTED,
@@ -508,21 +508,22 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
     /**
      * RESOLVE 的結果（W9 與兩個變體共用）：等到「目的地已確定」，或重試之後又離開 COLLAPSING（修改前會進 SEALED(AUTHORITY_CORRUPT)）。斷言 {@code name}：目的地已確定恰一則、
      * record 是 COLLAPSING，catalog 的這筆已改回 EAGER_ENABLED、U 已物化，沒有 AUTHORITY_CORRUPT（這個 session 沒有 ERROR、也沒有提到它的 WARN），allocation ledger 已確認；
-     * 這個 session 的重試恰為 {@code retries} 次（w9cd 是 0：開服時就是 COLLAPSING，沒有經過 SEALED）。{@code sealWarns} 是 {@link SealWarns#NONE_EXPECTED} 時，另斷言本 instance
-     * 沒有這個 session 的「塌縮進入 SEALED」WARN（F6-2d-2 Step 0，F6-2d-1 quality nit：原本以 {@code retries == 0} 代表這件事）。
+     * 這個 session 的重試恰為 {@code expectedRetries} 次（w9cd 是 0：開服時就是 COLLAPSING，沒有經過 SEALED）。{@code sealWarns} 是 {@link SealWarns#NONE_EXPECTED} 時，另斷言本
+     * instance 沒有這個 session 的「塌縮進入 SEALED」WARN（F6-2d-2 Step 0，F6-2d-1 quality nit：原本以 {@code expectedRetries == 0} 代表這件事）。F6-3c-2（F6-3c-1 quality Minor 2）：
+     * 參數由 {@code retries} 改名，不再與計數的 {@code retries(run, sid)} 同名。
      */
-    private boolean reenabled(String name, int retries, SealWarns sealWarns) {
+    private boolean reenabled(String name, int expectedRetries, SealWarns sealWarns) {
         var sid = fixture.sid();
         var resolved = run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid.toString()).size();
         var record = run.journal().flushedRecords().get(sid);
         var retried = retries(run, sid);
-        if (resolved == 0 && (retried < retries || collapsing(record))) return false;
+        if (resolved == 0 && (retried < expectedRetries || collapsing(record))) return false;
         var catalog = UniverseRegistryState.get(run.server()).flushedRecords().get(fixture.universe());
         var errors = run.capture().matching(Level.ERROR, sid.toString()).size();
         var corrupt = run.capture().matching(Level.WARN, "AUTHORITY_CORRUPT", sid.toString()).size();
         var sealedWarns = sealWarns == SealWarns.NONE_EXPECTED ? run.capture().matching(Level.WARN, "塌縮進入 SEALED", sid.toString()).size() : 0;
         boolean confirmed = !CollapseAuthorities.get(run.server()).unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER);
-        run.expect(name, resolved == 1 && retried == retries && collapsing(record) && M5CollapseFixture.eagerEnabled(catalog)
+        run.expect(name, resolved == 1 && retried == expectedRetries && collapsing(record) && M5CollapseFixture.eagerEnabled(catalog)
                         && fixture.universeWorld().isPresent() && errors == 0 && corrupt == 0 && sealedWarns == 0 && confirmed,
                 () -> "目的地已確定=" + resolved + " 重試=" + retried + " state=" + M5GameTestSupport.state(run.journal(), sid) + " SEALED 的原因="
                         + (record == null ? "-" : record.collapse().sealedReason()) + " catalog=" + catalog + " ERROR=" + errors + " AUTHORITY_CORRUPT 的 WARN=" + corrupt
