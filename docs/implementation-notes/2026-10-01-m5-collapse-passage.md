@@ -9815,3 +9815,154 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
 - run-all：`run-all-e8c655f2090340188bc103e3df0b3954`（`db1680a`）。
 - 已知偶發：沒有遇到。不採計的 root：只有上面標明的 dev 與檢查 run。結束過的程序：沒有。
 - 取證腳本（`f63c1/`）：由 `f6/f63s0/` 複製（同深度）、每檔第一行加本輪註解的 `state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`adapter.py`（adapter 表改為 `adapters_f63c1`）、`mutsum.py`、`names2.py`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-ebf53140…`）與比較用的 `wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`setcmp.py`、`junitset.py`、`wbbatch.py`、`relay-*.py`；由 `f6/f63b/fix1/` 複製的 `m5gate.ps1`（相對路徑少一層）、`m5red.ps1`、`m5sum.py`；`mutations.ps1` 由 `f6/f63s0/` 改寫（本輪的 3 個 mutation）；新寫的 `adapters_f63c1.py`、`swapcheck.ps1`、`w12ticks.py`。基準摘要 `base-default-summary.txt`、`base-m5-summary.txt` 是 `f6/f63b/fix1/runall1-*-summary.txt` 的複本。
+
+## F6-3c-2：拆分 M5UniverseGameTests、fixture 與退避期內的觸發 RED
+
+- implementer 依 controller 的派工（scratchpad `f63c2-prompt.md`）完成。取證在 gitignored 的 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63c2/`，以下簡稱 `f63c2/`，`STATUS.md` 是交接摘要。開工時 HEAD 是 `48c5e4d`、`git status --porcelain` 為空（`f63c2/start-state.txt`）。範圍：F6-3c-1 review 留下的整理（A）、拆 `M5UniverseGameTests`（盤點 #06，B）、抽 fixture（#07，C）、#12 的 RED（D）與 U4／U8 的評估（E）。harness 腳本與 README 的其他部分是 F6-3d，`build.yml` 的明列清單與 gate 的新斷言是 F6-3e。
+- Commits（`48c5e4d..` 本節的 commit，依序；每個 commit 只 stage 自己的檔案；每個 commit 之前都只放該 commit 的內容在工作樹編譯：`f63c2/c1`～`c13-compile.log`，`compileJava compileTestJava compileTestmodJava compileClientProbeJava` 都 BUILD SUCCESSFUL，警告只有既有的 `SessionTransferFaultMixin` 6 則；`c7-try1`（缺 `FabricGameTest` 的 import）、`c10`（缺 `extraPlayer` 的 static import）是修正前的失敗編譯，保留）：
+  - `7f4fb14` `refactor: share the kept-sealed-record check of the probe chains`（A1）
+  - `a810420` `refactor: name the expected retry count of the probe's reenabled check`（A2）
+  - `d50329a` `docs: say that PREPARE_WAIT_TICKS bounds the wait for the end of PREPARE`（A3，只有 Javadoc）
+  - `d63ed24` `refactor: keep the pending after-pass as a record and word it once`（A4）
+  - `b7ea239` `refactor: time the T-ENDD next-tick end from the recorded power cut`（A5）
+  - `2b0bdd9` `docs: narrow the probe retry-count Javadoc to the chains that inherit it`（A6，只有 Javadoc）
+  - `bb0bb15` `refactor: split M5UniverseGameTests by topic with a shared support and the hold owner`（B 的**純搬移**）
+  - `9b2ed8c` `test: accept the four M5 run GameTest classes in the M5 run gate`（B 的 wiring：`gates.ps1`）
+  - `4b12569` `test: keep the earliest after-pass when a hold starts while one is pending`（B 的 `startHold` 守門，**判斷變嚴**）
+  - `be8ee23` `refactor: share the extra player and the two-step crossing of the M5 GameTests`（C，純 refactor）
+  - `e151595` `test: consume a DORMANT entry within the commit backoff without committing`（D，**最後一個 code commit**）
+  - `399335f` `docs: describe the split M5 run GameTest classes and shared fixtures in the verification README`
+  - 本節由其後的 `docs: record F6-3c-2 in the M5 note` 加入。
+- 只改了派工允許的路徑：testmod 的 `M5UniverseGameTests` 與新的 `M5UniverseProjectionGameTests`、`M5UniverseDoorGameTests`、`M5UniversePassageGameTests`、`M5UniverseSupport`、`M5UniverseHold`，`M5GameTestSupport`、`M5CollapseGameTests`，probe 的 `M5CollapseConvergenceChain`、`M5CollapseRestartChains`、`M5CollapseRetryChains`、`M5CollapseDoorChains`（只有兩處註解）、`M5CollapseFixture`（只有一處註解），mixin 的 `M5ConvergenceHoldMixin`，`M4GameTestBoundaryProbe`（見「偏離」第 1 點），testmod `fabric.mod.json` 的 `fabric-gametest` entrypoint，`gates.ps1` 的 M5 run class 規則與註解，`scripts/verification/README.md` 的「新增 M5 GameTest」（:69、:73、:81、:98、:104、:123、:125、:135、:140、:144）與「M5 collapse probe」（:169）兩節，本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、兩個 mixins.json、`.github/`、其他 ps1（`run-all.ps1`、`ci-rule-check.ps1` 沒有寫死 M5 的 class 前綴：`rg -n "m5universe|M5Universe" scripts/verification/*.ps1` 只命中 `gates.ps1`）、M2／M4 的 GameTest、`M4LegacyGameTestFilterMixin`、JUnit、語言檔、spec、plan、AGENTS。
+- 行號以 HEAD `399335f` 為準（code 與 `e151595` 相同）。簡稱同前面各節：`CC`、`RCH`、`DC`、`RC`、`CGT`、`SUP`；另 `M5U`＝`M5UniverseGameTests`、`UPJ`＝`M5UniverseProjectionGameTests`、`UDR`＝`M5UniverseDoorGameTests`、`UPS`＝`M5UniversePassageGameTests`、`USP`＝`M5UniverseSupport`、`UHD`＝`M5UniverseHold`。
+
+### 逐項處置
+
+| 點 | 處置與位置 | 判斷 | 證據 |
+| --- | --- | --- | --- |
+| A1（F6-3c-1 quality Minor 1） | `RCH:423` static `sealedRecordKept(run, sid, sealed)`（flushed 與 current 都等於 `sealed`），`CC` 的四處（`sealedKeptInTheBackoff`、`notRetriedInTheDoubledBackoff`、`notRetriedBeforeTheDoubledBackoff`、`sealedKept`）與 `RC` 的 `notRetriedInTheSameInstance` 改用它（`7f4fb14`）。`RC:198` 的 `notCommittedWithoutAnEdge` 比的是 DORMANT 收據、不是封存時的 record，不在派工列出的五處，不改 | 純 refactor | probe `a-green`（`2b0bdd9` 乾淨）69/69，對 F6-3c-1 green-2 `RESULT=OK` |
+| A2（Minor 2） | `RC:515` `reenabled(String name, int expectedRetries, SealWarns)`，條件兩處與 Javadoc（`:79`、`:511-514`）同步；Javadoc 裡「原本以 `retries == 0` 代表」也改用新名稱，並註明改名前的名稱（`a810420`） | 純 refactor | 同上 |
+| A3（Minor 3） | `PREPARE_WAIT_TICKS` 的 Javadoc（B 之後在 `USP:51-57`）改為「等 PREPARE 完成（「準備完成」INFO 或 PASSAGE_READY）的上限」，拿掉 D1（四處的條件：三處是 `prepared(…)` 非空、T-POWER 是 PASSAGE_READY）（`d50329a`） | 只有 Javadoc | — |
+| A4（Minor 4） | hold 在開始時改存 `private record AfterPass(previous, unconfirmed, test)`（B 之後 `UHD:408`；欄位 `afterPassStarted` 在 `UHD:68`），`endHold`（`UHD:195`）一次組成整句；字句與原本相同（`d63ed24`） | 純 refactor（訊息不變） | 檢查 run `ap-converged-b`（不採計為 GREEN）：與 F6-3c-1 的 `ap-converged-1` 同一個失敗訊息，去掉座標與 class 前綴後逐字相同（`f63c2/ap-converged-b-vs-c1.txt`） |
+| A5（nit） | T-ENDD：`endWithOneCrossed` 在 `POWER_LOSS` 那一步記下 test tick（`UPS:1253`、`:1270`），`endedNextTick` 改為 `ended == poweredOffAt.get() + 1`（`UPS:1279`）。斷電仍在 readyAt+4，判斷與原本的 `ended == readyAt + 5` 相同（`b7ea239`） | 純 refactor | M5 gate 四次 60/60（`m5g-b1`、`m5g-final-1`、`-2`、run-all） |
+| A6（spec nit） | **二擇一採改窄說法**：`RCH:409-414` 的 Javadoc 與 README :169 改為「繼承 `RCH` 的 chain（`DC`、`RC`、`CC`）的重試**計數**都經這裡」，並寫明不繼承它的 `M5CollapsePassageChains` 在 trr（`sealedNotRetried`，:466）的失敗訊息列出重試 INFO 的**內容本身**，仍自己查詢（`2b0bdd9`、`399335f`）。不採 `RCH.retries`：它只回則數，改用之後 trr 失敗時看不到是哪一則重試，診斷變差 | 只有文字 | — |
+| B（#06） | 見下方「B：拆分的結構」 | 純搬移＋wiring＋守門 | 見下方 |
+| C（#07） | 見下方「C：fixture」 | 純 refactor | M5 gate 三次 60/60、default run（run-all） |
+| D（#12） | 見下方「D：退避期內照樣消耗觸發」 | 新 test | RED／GREEN 見下方 |
+| E（U4、U8） | 見下方「E：U4 與 U8」 | 評估 | — |
+
+### B：拆分的結構
+
+- 切分依 batchId 的主題（也就是 spec 的段落）：
+
+  | class | test 數 | 內容（batchId） |
+  | --- | --- | --- |
+  | `M5UniverseGameTests` | 13 | catalog 的 harness 自我測試與 RESOLVE、目的地的確定（`sanity`、`harness_*`、`resolve_*`、`existing_*`、`materialize_failed`、`allocation_io`、`authority_unreadable`、`disabled_retry`、`sealed_pending`） |
+  | `M5UniverseProjectionGameTests` | 18 | 投影（F4b-1，`projection_*`）與 PREPARE（F4b-2 起，`prepare_*`） |
+  | `M5UniverseDoorGameTests` | 11 | 原艙門（`door_*`、`seal_rejected_retry`）與找不到所屬 session 的量子膜（`membrane_ownerless`） |
+  | `M5UniversePassageGameTests` | 18 | 量子通道（F5-1 起，`passage_*`） |
+
+  理由：(1) batchId 本來就以主題為前綴，切分可以機械判定、日後新增 test 也有明確的歸屬；(2) 四個 class 各約 840～1470 行，最大的比原本 4881 行小三倍以上；(3) 派工舉例的「recovery」不另成一類：會用到 recovery 的 test（`passage_recovery*`、`door_refusal` 的 `recoveryWritesSafe`）都是各自主題的一部分，拆出來反而要跨 class 共用更多 helper。
+- **純搬移的做法**（`bb0bb15`）：`f63c2/b1-split/split.py`（輸入是 `2b0bdd9` 的 `M5UniverseGameTests`，`input-M5UniverseGameTests.java`）把 class body 切成 161 個成員（Javadoc＋annotation＋宣告），逐字放進新的 class；每一個非空行恰屬於一個成員（腳本內斷言）。歸屬規則：test 依 batchId；hold 一族依明列的名稱進 `UHD`；其餘 helper 依使用者：只有一個 class 用到就放那個 class（`private` 不變），兩個以上、或被 support 用到就放 `USP`；同名的 overload 一起放。唯二的文字改動是：(a) 其他 class 用到的成員拿掉 `private`（32 個），(b) `{@link #x}` 指向新的 owner（例如 `{@link M5UniverseHold#begin}`）。`f63c2/b1-split/out/transform-diff.txt` 列出全部 37 行改動，另以腳本核對每一行都只差這兩種（`non-trivial 0`）。import 依各檔實際用到的簡單名稱（程式碼與 `{@link}`，不含 `{@code}`）挑選。新的 class Javadoc 是新寫的（`M5U` 的類別說明保留原文，前面多一段拆分的說明，`{@link}` 同 (b)）。
+- **hold 的 owner `M5UniverseHold`**（public，因為 mixin 在另一個 package）：狀態 `ACTIVE`／`UNMET`／`BROKEN`／`SUITE_END_REGISTERED`、`HOLD_TICKS`、`lastBegun`、`afterPassFailure`、`afterPassStarted`；方法 `registerSuiteEnd`（SUITE_END 的 listener，`UHD:75`）、`begin`（`:96`）、`holdBeforeBegin`（`:139`）、`startHold`、`endHold`、`unconfirmedAuthorities`、`complete`、`awaitConvergedThenComplete`×2、`asTestFailure`、`logFailedDelta`、`failDefinitely`、`finish`、`convergeAll`、`converged`、`digest`、`unfinished`；record `Baseline`、`Begun`、`AfterPass`。test 用到的（`begin`、`complete`、`awaitConvergedThenComplete`、`asTestFailure`、`converged`、`failDefinitely`）改為 package-private，其餘仍 private。`M5ConvergenceHoldMixin` 改呼叫 `M5UniverseHold.holdBeforeBegin`，`M4GameTestBoundaryProbe:29` 改呼叫 `M5UniverseHold.registerSuiteEnd`。
+- **support `M5UniverseSupport`**（package-private）：`PREPARE_WAIT_TICKS`（UPJ 三處、UPS 一處）、`collapsedToUniverse`×2、`newCollapse`、`ResolvedUniverse`、`openOrigin`、`releaseThenComplete`、`local`、`outside`、log 計數（`membraneInfos`、`reapply*`、`ticks`、`entered`、`preloaded`、`prepared`、`passageOpened`、`sealWriteWarnings`）、`receiptStillSealed`、`sealedWith`、`allocationEntries`、`bytes`（C 之後另有 `extraPlayer`）。`CrossedEnd`、`endWithOneCrossed`、`sequence`、`controllerSignal`、`ARRIVED_*`、`CONTROLLER_PASSAGE_KEY` 等只有通道 test 用，跟著進 `UPS`；`resolvedUniverse`、`visible`、`projectionProtection` 等進 `UPJ`；`quarantinePauses`、`ownerless*` 等進 `UDR`；`nextOrdinal`、`worldKeys`、`scheduledCount`、`SEALED_KEY`、四個 UUID 常數留在 `M5U`。
+- **同步修改**：testmod `fabric.mod.json` 的 `fabric-gametest` 在 `M5UniverseGameTests` 之後加上另外三個 class（`bb0bb15`）；`gates.ps1:234-245`：script 層級的 `$M5RunClasses`（四個 class），`Assert-M5Run` 的檢查改為 `-cnotin $M5RunClasses`、訊息列出清單（`9b2ed8c`）；README「新增 M5 GameTest」第 1 點（:140）改為四個 class 與它們的主題，新增 class 時同步改 `$M5RunClasses` 與 entrypoint（`399335f`）。註解的指向：`DC:425`、`:532`（`door_reload` 的 test 改在 `UDR`）、`M5CollapseFixture:697`（`inertProjection` 改在 `UPJ`）、`SUP:80`（類別說明）。
+- **`.github/workflows/build.yml` 不需要改**：Ubuntu 與 Windows 兩個 step 都以 batch 前綴 `m5_universe` 掃描 `src/testmod/java` 下全部的 `*.java`，testcase 名稱由檔名推導（`$file.BaseName.ToLowerInvariant()`），沒有任何 class 名稱、也沒有「M5U 唯一」的檢查或註解（`rg -n "M5Universe" .github/workflows/build.yml` 沒有命中）。以 ci-rule-check 與 mutation 證明（見下）。
+- **`startHold` 的守門**（`4b12569`，`UHD:177`）：改為 `afterPassFailure == null && afterPassStarted == null` 才記下新的 after-pass。原本只看 `afterPassFailure`：test 在 hold 期間就被原版判完成時，mixin 不再詢問、`endHold` 不會執行，下一次 hold 會蓋掉已記下的 after-pass。判斷變嚴（只影響這個少見的路徑；一般的 after-pass 由 `ap-converged-b` 核對訊息不變）。
+- **m5Only 的集中：不做**。四處讀 `quantumchamber.gametest.m5Only` 的位置在不同的載入情境：`M5ConvergenceHoldMixin` 的 `@Unique static final` 會被合併進原版 `GameTestState` 的 static 初始化，`M4LegacyGameTestFilterMixin` 掛在 `FabricGameTestHelper`（remap=false），另兩處在 testmod 的 entrypoint 與 `begin`。集中到 testmod 的 class 會讓原版 class 的初始化去載入一個 testmod class（`UHD` 會再帶出 `CollapseAuthorities` 等），收益只是少寫三次同一個字串；字串本身已由 gate 核對（`Assert-M5Run` 要求 JVM 帶 `-Dquantumchamber.gametest.m5Only=true`）。
+- 中間 commit 的狀態：`bb0bb15` 單獨存在時 `gates.ps1` 的舊規則（只認 `M5UniverseGameTests`）會讓 M5 gate 失敗，`9b2ed8c` 起才正確。兩者分開是派工的「純搬移與改 wiring 分開」。
+
+### B 的驗證
+
+- **M5 GameTest gate**（`4b12569` 乾淨，B 完成之後）：`gate-m5g-b1-abf9296363e741a1acffcaf06022f4cb` 60/60、exit 0、**沒有任何 `M5_UNIVERSE_HOLD` 行**、`M5_UNIVERSE_BEGIN` 60 則、PREPARE 600-tick WARN 2（與基準相同）（`f63c2/m5g-b1-m5sum.txt`）。
+- **testcase 集合**（`f63c2/m5cmp.py`，對 F6-3c-1 run-all-2 的 M5 XML，`f63c2/m5g-b1-vs-runall2.txt`）：以方法名稱比對 `methodSetIdentical=True`，60 個都 PASS；class 前綴 `m5universegametests=13`、`m5universeprojectiongametests=18`、`m5universedoorgametests=11`、`m5universepassagegametests=18`。每個 test 的 catalog 增量（expected、actual、status）**都相同**（`perTestIdentical=True`），最後 56 筆；`M3_UNIVERSE_STOPPED_VERIFIED worlds=49 runtimeReceipts=49 quarantine=0 contextDetached=true` 相同；`M5_UNIVERSE_SUITE_END` 56 筆、converged、unfinished 空（digest 每次 run 都不同，基準的兩次 gate 也不同，因為 UniverseId 由隨機的 allocation token 推導）。
+- **執行順序**：拆分之後有 4 對相鄰的 test 對調（第 15/16、42/44、45/46、57/58 個）。原版把 test 依 batchId 分組成 `HashMap`，迭代順序由 batchId 的 hash 決定，同一個 bucket 內才依登記順序；登記順序跟著 class 改變。拆分之後的順序是固定的（`m5g-final-1` 對 `m5g-b1` `order identical=True`）。SEALED(TRR) 的 `passage_transfer_recovery_required_…`（第 23 個）位置不變，排在它之後的 test 集合也不變（見 E）。
+- **after-pass 訊息**（A4＋B 的 hold 搬移＋B 的守門）：檢查 run `gate-ap-converged-b-a8bf560f14a749b5a9a8ffc5ef7622f7`（adapter `fix1-red-after-pass`，目標改為 `UHD`，錨點文字與原本相同；不採計為 GREEN）59/60，失敗的那一個訊息與 F6-3c-1 的 `ap-converged-1` 去掉座標與 class 前綴後逐字相同（「…照常嘗試收斂、不連坐；hold 的結果：converged，heldTicks=199）；… 因此在 begin 失敗」）。還原後 `UHD` 的 blob 回到 `e55f1972…`（`f63c2/ap-converged-b-restored-state.txt`）。
+- **ci-rule-check**（`f63c2/ci/`，default XML 與 JUnit 用 F6-3c-1 run-all-2 的 gate-full，M5 XML 用 `m5g-b1`，SourceRoot 是拆分之後的 `src/testmod/java`；`f63c2/ci-b-summary.txt`）：
+  - `b-win-green`、`b-ubuntu-green`：都 **PASS**。
+  - `-MutationXml m5` 的 drop：`b-ubuntu-drop-passage`（drop `m5universepassagegametests.passage_participant_crosses_…`）→ FAIL「必要 M5 GameTest 未實際通過」；`b-win-drop-door`（drop `m5universedoorgametests.sealed_door_closes_once_…`）→ FAIL；`b-win-drop-passage-windows`（drop `…passage_expires_…_windows`）→ FAIL（「Windows 原生 M5 _windows GameTest 缺席」與「必要 M5 GameTest 未實際通過」兩項）。動態規則都掃到了新的 class。
+- default run 的 testcase 集合：B 沒有改 default run 的 test；run-all-1 的 default XML 對基準只多 D 的一個（見下方「完整回歸」）。
+
+### C：fixture
+
+- **額外的一位玩家**（`be8ee23`）：`SUP:1240` `connectOutside(context, hooks, frame)`（連線一位玩家、在 hooks 登記關閉、不受重力、移到門外；例外照原樣丟出），`USP:148` `extraPlayer(context, hooks, frame)`（經 `connectOutside`，失敗時以 `asTestFailure(context, "fixture", …)` 轉成 test 失敗，與原本相同、不另釋放 hooks）。取代 `UDR` 兩處、`UPS` 七處的 `try { new ConnectedGameTestPlayer(world); hooks.add(…::close); setNoGravity(true); moveOutside(…, frame); } catch … asTestFailure`（共 9 處）；`UPS` 另有兩處在更大的 fixture try 之內建立玩家（`passage_existing` 的 Q、`passage_hazards` 的三位），直接改用 `connectOutside`。`UDR` 的 `door_reload`（`sealed_door_closes_once_…`；RemoteOrigin 的 Q，沒有移到門外）形狀不同，不改。名稱不用派工舉例的 `secondParticipant`：9 處裡有 4 處是非參與者 N。
+- **兩步跨越**：`UPS:1314` private `crossMidline(context, tick, hooks, player, frame, x)`（tick 時站在中線內側 z=0.7、下一個 tick 在外側 z=0.3，朝向 0、速度為零，兩步都經 `at`）取代五處成對的 `at(…standInDoorway(…0.7…)); at(…+1…standInDoorway(…0.3…))`（`passage_expire`、`passage_existing` 的 P 與 Q、`passage_recovery`、`passage_crossed_pending`），只有通道 test 用，所以放在 `UPS`。其他兩步跨越的形狀不同，不改：`sequence` 裡的兩步（T-REJARR、T-ENDD）、重複使用的 `Runnable inside／outside`（`passage_rolled_back`、`passage_stale`）、兩步之間另有動作或第一步不經 `at` 的（`passage_recovery`、`passage_recovery_pending`、`passage_crossed_pending` 的 P2 與 P1 其餘幾處）、兩位玩家同一步的（`passage_cross`）、帶朝向與速度的（`passage_cross` 的 P）。
+- **`collapseFixture` 的兩個 8 參數 overload**：`Collection<UUID> owned` 的那一個改名為 `collapseFixtureOwnedBy`（`SUP:345`；呼叫端 `CGT:1277` 與 `sealedFixture`）。不改 `long time` 的那一個：`M4CandidateDoorGameTests:2028` 呼叫它，M4 的 GameTest 不在允許修改的範圍。
+- 判斷都不變（純 refactor）：M5 gate 三次 60/60（`m5g-final-1`、`-2`、run-all-1）；default run（run-all-1）。
+
+### D：退避期內照樣消耗觸發（#12）
+
+- **位置**：default run 的 `CGT:806` `dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit`（batch `m5_collapse_dormant_backoff_edge`，tickLimit 1000，不是 `_windows`）。理由：情境用 DORMANT **SOURCE** 收據，不配置宇宙、結束時收據已由 SOURCE fast path 移除，符合 README 對 `M5CollapseGameTests`（default run）的條件；放在 M5 run 要經 `begin`／catalog 增量，也要一併處理 #02，沒有必要。default run 的 M4 boundary oracle（suite 前後的 catalog 快照）不受影響：test 以 `M4PerTestUniverseProbe.begin／complete` 包住，不寫 catalog（GREEN 的 gate exit 0，run-all-1 的 default run 全部通過）。
+- **設計**：兩位參與者 A、B 都已返還、都在線，起初都在艙外。FlushFault 只讓「提交 COLLAPSING 的寫出」（current 是 COLLAPSING、flushed 是 MEASURED）失敗**一次**。
+  1. registered+1：A 由艙外進入 → 觸發提交 → 寫出受控失敗、收據維持 DORMANT、啟動 200 tick 的退避（registered+2 斷言恰一次嘗試、`commitFailureWarnedOnce`）。
+  2. registered+3：B 由艙外進入（退避期內，觸發被消耗；`entryWithinTheBackoffNotCommitted`）。之後 A、B 都待在艙內。
+  3. 退避期（失敗的 server tick＋`CollapseBackoff.INITIAL_TICKS`，換算成 test tick）過後 20 tick：**目標斷言 `notCommittedPastTheBackoffWithoutANewEdge`**：提交的寫出仍只有失敗的那一次、`塌縮已提交` 0 則、record 仍是原本的收據、A、B 都在艙內。以 `context.assertTrue` 當場失敗，訊息帶失敗的 tick、所有寫出嘗試的 server tick 與 record。
+  4. B 離開再進入 → 這時才提交（第二次寫出、`塌縮已提交` 1 則）→ SOURCE fast path 結束（`SOURCE 塌縮完成` 1 則、門一般開門、presence NONE、ticket 釋放）。
+- **RED**（`e151595` 乾淨，adapter `mut-backoff-first`，由 F6-2d-2 Step 0 的 adapter 原樣複製：`resumeDormant` 與 `sealed` 都在 `trigger` 之前先看退避；`f63c2/dred.ps1`，default run `-Batches m5_collapse_dormant_backoff_edge`）：`gate-d-red-1-2e22f2f9f7694dcca5dafad7fd9e850f` **FAIL 在目標斷言**：「notCommittedPastTheBackoffWithoutANewEdge：退避期（server tick 44 起 200 tick）過後 20 tick，… 提交的寫出=[44, 244] 塌縮已提交=1 record=ABSENT 都在艙內=true」——mutation 在退避結束的那個 tick（244＝44＋200）就提交並結束。還原之後 `git status --porcelain` 為空，`CollapseService` 的 blob 回到 `27529fe1…`（`f63c2/d-red-1-restored-state.txt`）。
+- **GREEN**（`e151595` 乾淨，同一個 batch）：`gate-d-green-1-5d504a40045544b384ca580b7f0459b0` PASS、exit 0。dev run `gate-dev-d-1-596e0bd8…`（commit 之前的工作樹，不採計）也 PASS：log 有提交失敗的 WARN 一則（RESTORED）、之後才「塌縮已提交（觸發=DORMANT 續行）」與「SOURCE 塌縮完成」。
+- **給 F6-3e 的名稱**（default XML）：`m5collapsegametests.dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit`。跨平台（非 `_windows`），兩個平台都應實際通過；目前 `build.yml` Ubuntu step 的跨平台明列清單只有 M2 的兩個 test，這個 test 不在任何明列清單裡（兩個平台都只由 `runGameTest` 的結果涵蓋）。
+
+### E：U4 與 U8
+
+- **U4 判定 (b)：目前不需要處理**。
+  - 三個斷言（`busy_participant_start_rejected_before_any_reservation_windows` 的 `journalUnchanged`／`runtimeOwnership`、`dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows` 的 `runtimeOwnership`、`native_start_initial_flush_fault_rejects_without_residue_windows` 的 `recoveryWritesSafe`）都在 M4 的 default run test，各自一個 batch（`m4_busy_participant_start`、`m4_dormant_other_chamber`、`m4_start_flush_fault`）。原版的 batch 依序執行，所以只有「前面的 batch 留下、而且仍在變動的殘留」會讓它們誤判。
+  - T1 以來沒有再出過問題：之後每一次 run-all 的 default run 都是全部通過（F6-3b、F6-3c-1 的 run-all，本節的 run-all-1、run-all-2），note 裡沒有它們失敗的紀錄（`rg -n` 只命中 T1 的盤點與 H3 一節的改寫）。plan 決策 6 之後，default run 也不建立 Universe。
+  - 本節新增的 default run test（D）不留下會變動的殘留：收據由 SOURCE fast path 移除，第二位玩家與 flush 探針都由 hooks 收尾，受控失敗的提交是 restore 類（current 還原），沒有待重試的寫出。
+  - 風險仍在：日後若有 default run test 留下仍在變動的殘留，這三個會最先誤判；屆時的修正方向是把快照限定在 test 自己的 session 與原艙。
+- **U8**：SEALED(TRR)（`passage_transfer_recovery_required_…`）留在 M5 run 的 journal。拆分之後 M5 test 依 journal 筆數的斷言不受影響：M5 run 沒有比較 journal 總筆數的斷言（`rg -n "records\(\)\.size\(\)|flushedRecords\(\)\.size\(\)"` 只命中 catalog 的 baseline），涉及 journal 全體的只有 `UPJ` 的 `noSessionFromU`（依起點世界 U 篩選，TRR 的起點是原世界）、`UPS` 的 `passage_expires_…_windows`（依 chamber 篩選）與 `UDR` 的 `door_refusal`（`recoveryWritesSafe`，TRR 的 record 已收斂，不影響）。執行順序只有 4 對相鄰對調（見「B 的驗證」），TRR 的 test 位置不變、排在它之後的 test 集合也不變；M5 gate 四次都是 60/60。
+
+### probe 的 GREEN
+
+- `a-green`（`2b0bdd9` 乾淨，A 段之後）：`collapse-run-45a4a7c0c91c4adc8ba3c21c5a2e3622`，69/69 PASS（halt 31），exit 0。對 F6-3c-1 的 green-2 `1cd9829d34da4417946d1a1c62b44d7e`：**`RESULT=OK`**，沒有改名、沒有新增、step 都相同，也沒有 `order=DIFF`（`f63c2/a-green-vs-c1green2-names.txt`）。
+- `final-green`（`399335f` 乾淨，所有 commit 之後）：`collapse-run-2ddb482fccbc45439756537a10a956bd`，69/69 PASS，exit 0，對同一個基準 **`RESULT=OK`**（`f63c2/final-green-vs-c1green2-names.txt`）。
+
+### M5 GameTest gate 連跑兩次（`399335f` 乾淨）
+
+- `gate-m5g-final-1-c02f00ff7c99442588e4284a497cc767`、`gate-m5g-final-2-8a7a0dc71e2247cfab8b53aef42057c1`：都是 60/60、exit 0，**沒有任何 `M5_UNIVERSE_HOLD` 行**，`M5_UNIVERSE_BEGIN` 60 則（`f63c2/m5g-final-*-m5sum.txt`）。對 F6-3c-1 run-all-2：方法名稱的集合與結果相同、每個 test 的 catalog 增量相同、最後 56 筆、`M3_UNIVERSE_STOPPED_VERIFIED` 相同（`f63c2/m5g-final-*-vs-runall2.txt`）。D 在 default run，所以 M5 run 仍是 60。
+
+### 完整回歸（run-all）
+
+- `run-all-1` 被電腦關機中斷（**不採計**）：`run-all-ab3ab892ed74418fa891b44987d8498d`（乾淨的 `399335f`，`f63c2/run-all-1-state.txt`，09:24 開始）。full、legacy、m5-gametest、main、main-oracle、m3、recovery 都已 `END … exit=0`，停在 m5-collapse probe（runId `7df147fba8c34678aa34beb6b6478b5d`）的 `w11-crash`（`w11-setup` 是 PASS）。controller 唯讀核對：系統裡沒有 java 程序、中斷的 w11 root 裡沒有 `session.lock`、`run/` 底下沒有停在 move 中的世界（gametest／gametest-legacy／gametest-m5 在 09:31～09:32 正常寫入）。這個 root 與 `run/m5-collapse-7df147fba8c34678aa34beb6b6478b5d-*` 保留，以新的 label 重跑。
+- `run-all-1r`＝`run-all-d28b295673d240e1b890d80f5bf0149f`（乾淨的 `399335f`，`f63c2/run-all-1r-state.txt`；10:03～10:42）：**`END ALL exit=0 HEAD=399335f`**。SUMMARY `default=179/179 windows=89 legacy=1/1 m5=60/60 perTest=56+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=69 ci=win:PASS,ubuntu:PASS`。對基準 `run-all-89bbed4fe7ce4b08a15835c1de675572`（F6-3c-1 的 run-all-2，`92fe2b5`；`f63c2/runall1r-summary-compare.txt`）：
+  - **預期的差異**：`default` 178 → 179、`perTest` 55+1 → 56+1，都是 D 的新 test（它也經 `M4PerTestUniverseProbe`，多一份 per-test receipt）；M5 testcase 的 class 前綴。其餘（windows 89、legacy、m5 60、JUnit 666／skipped 2、windowsCheckpoint 17、recovery 24、m5collapse 69／halt 31、release、sources 226、main-only、m3、ci）都相同。
+  - testcase 集合：default 以完整名稱比對，**只多** `m5collapsegametests.dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit PASS`，其餘 178 個相同（`runall1r-default-setcmp.txt`）；M5 以方法名稱比對（`setcmp.py --method`）`identical=True`，前綴 13／18／11／18（`runall1r-m5-setcmp.txt`）；legacy 1 `identical=True`；JUnit 666（PASS 664、SKIPPED 2）相同。
+  - release JAR 的 SHA-256 不變（`c20bc00f…`，432／385）。sources JAR 226 個 entry、`contentDiffers=0`，只有時間戳的 metadata 不同（SHA `75ff0ebc…`，基準 `ccbece62…`；`runall1r-zipmeta-sources-result.txt`）。
+  - WARN／ERROR：Full 55／32（基準 54／31）。batch 別的差異只有兩則（`runall1r-wbbatch-full.txt`）：WARN +1 在 `m5_collapse_dormant_backoff_edge`，是 D 預期的受控提交失敗（RESTORED）；ERROR +1 在 `m2_task4_group_walk`，是 `Yggdrasil Key Fetcher` 的「Failed to request yggdrasil public key」（`api.minecraftservices.com` 讀不到，環境的網路；F5-2 一節的 `c4b-default` 也記過同一則），不是本輪的程式。legacy 0／0。M5 38／10，sorted diff 只有已知的兩行（PistonBlockEntity 的 object hash、通道傳送失敗 WARN 的座標科學記號）。
+  - M5 run：60/60，沒有 `M5_UNIVERSE_HOLD`，節流結束列 `tps=87.3`；每個 test 的 catalog 增量相同、最後 56 筆、`M3_UNIVERSE_STOPPED_VERIFIED` 相同（`runall1r-m5-vs-runall2.txt`）。pin 的計數與基準相同（多一個 batch，之後的 batch 序號加一；`runall1r-pincount.txt`）。collapse run `f462c52fc3ad42bbaf1a3a341a2ca058`：worldgen 的例外 0（`runall1r-worldgencheck.txt`）；對 F6-3c-1 的 green-2 `RESULT=OK`（`runall1r-vs-c1green2-names.txt`）。
+- 本節 commit 之後的 run-all-2：見 `f63c2/STATUS.md`（由 controller 補記）。
+
+### 偏離派工字面之處
+
+1. `M4GameTestBoundaryProbe`：派工只允許 `m5Only` 的集中，但也要求 SUITE_END 的 listener 搬進 hold 的 owner；它唯一的呼叫端在 `M4GameTestBoundaryProbe:29`，所以這一行（與 :19 的 Javadoc）改為 `M5UniverseHold.registerSuiteEnd()`。另一個做法是在 `M5U` 留一個轉呼叫的 `registerSuiteEnd`，那會讓 hold 一族不是「整組在單一 owner」。
+2. `M5CollapseDoorChains`（:425、:532）、`M5CollapseFixture`（:697）、`SUP:80` 的註解跟著改指向（都在允許的路徑內：probe 的 `M5Collapse*.java` 與 `SUP`）。`src/main/.../PassageService.java:93` 的註解仍寫「以字面值斷言（`M5UniverseGameTests` 的 `ARRIVED_NEW_KEY`／`ARRIVED_EXISTING_KEY`）」，常數現在在 `UPS`；`src/main` 不得修改，留給之後有權改它的 task。兩個 accessor mixin（`GameTestStateRunnablesTestAccessor`、`TestContextStateTestAccessor`）的註解提到 `M5UniverseGameTests.scheduledCount`，它仍在 `M5U`，不用改（也不在允許的路徑）。
+3. C 的名稱用 `extraPlayer`／`connectOutside`，不是 `secondParticipant`（理由見 C）；`crossMidline` 只取代五處同形的兩步跨越（其他形狀見 C）。
+4. `collapseFixture` 改名的是 `owned` 的 overload，不是 `long time` 的（理由見 C）。
+5. A6 選改窄說法（理由見表）。
+6. A2 的 Javadoc 裡「原本以 `retries == 0` 代表」這種歷史敘述也改用新名稱，並註明改名前的名稱：保留舊名稱就正是 Minor 2 所說的混淆。
+7. `build.yml` 沒有改（理由見 B）；派工允許的範圍內沒有需要改的地方。
+8. 驗證的比較腳本：`f63c2/setcmp.py` 加 `--method`（以方法名稱比對 M5 testcase；`runall-compare.ps1` 的 M5 比較改用它），另寫 `f63c2/m5cmp.py`（兩次 M5 gate 的方法名稱、catalog 增量、M3 收尾與順序）。default、legacy、JUnit 仍以完整名稱比對（class 前綴沒有改變）。
+
+### 有沒有 production 與 spec 不符之處
+
+- 沒有。本輪沒有改 `src/main/`；`mut-backoff-first` 只在取證期間暫時改 `CollapseService`，還原後以 blob 核對。
+
+### 需要裁示
+
+- 「偏離」第 1 點：`M4GameTestBoundaryProbe` 的那一行在派工字面的允許範圍之外（判定是 SUITE_END listener 搬家的必要結果）。
+
+### 交給後續
+
+- F6-3e：D 的 `m5collapsegametests.dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit` 要列進明列清單（跨平台）；M5 run 的四個 class 已由 `$M5RunClasses` 列出，明列清單若以 class 前綴寫 M5 testcase，要用四個前綴。F6-3e 原有的項目不變（SUITE_END 核對四個權威、全部 PASS 的 M5 run 不得出現 `M5_UNIVERSE_HOLD`、節流結束列的斷言）。
+- `PassageService.java:93` 的註解指向（「偏離」第 2 點），留給能改 `src/main` 的 task。
+- U4 的風險（見 E）：日後若出現，改為只比對 test 自己的 session 與原艙。
+
+### root（全部保留）
+
+- 編譯：`f63c2/c1`～`c13-compile.log`（`c7-try1`、`c10` 是修正前的失敗編譯，`c7-try2`、`c11` 是修正後的成功編譯，`c12-try1` 是 D 的 dev run 之前的編譯，都保留）。
+- probe：`a-green` `45a4a7c0c91c4adc8ba3c21c5a2e3622`（`2b0bdd9`）；`final-green` `2ddb482fccbc45439756537a10a956bd`（`399335f`）。
+- M5 gate：`gate-m5g-b1-abf9296363e741a1acffcaf06022f4cb`（`4b12569`）；`gate-m5g-final-1-c02f00ff7c99442588e4284a497cc767`、`gate-m5g-final-2-8a7a0dc71e2247cfab8b53aef42057c1`（`399335f`）；檢查 run `gate-ap-converged-b-a8bf560f14a749b5a9a8ffc5ef7622f7`（不採計為 GREEN）。
+- default run 的單一 batch：RED `gate-d-red-1-2e22f2f9f7694dcca5dafad7fd9e850f`、GREEN `gate-d-green-1-5d504a40045544b384ca580b7f0459b0`（`e151595`）；dev `gate-dev-d-1-596e0bd83535487a8af15adf4e939122`（commit 之前，不採計）。
+- ci-rule-check：`f63c2/ci/ci-b-win-green-1f34343b…`、`ci-b-ubuntu-green-84fdcf2f…`、`ci-b-ubuntu-drop-passage-50c5e9f0…`、`ci-b-win-drop-door-483ebf96…`、`ci-b-win-drop-passage-windows-f6083c54…`。第一次以陣列 splat 傳 mutation 參數的三次呼叫在參數綁定就失敗、沒有建立 root（`ci-b-summary.txt` 只記重跑的結果）。
+- run-all：`run-all-d28b295673d240e1b890d80f5bf0149f`（`run-all-1r`，`399335f`）；中斷、不採計的 `run-all-ab3ab892ed74418fa891b44987d8498d`（`run-all-1`，電腦關機）與它的 probe root `run/m5-collapse-7df147fba8c34678aa34beb6b6478b5d-*`
+- 已知偶發：沒有遇到派工列出的那幾種；`run-all-1r` 的 Full ERROR +1 是環境的 Yggdrasil 公鑰讀取失敗（見上），`run-all-1` 是電腦關機中斷。不採計的 root：只有上面標明的 dev 與檢查 run。結束過的程序：沒有。
+- 取證腳本（`f63c2/`）：由 `f6/f63c1/` 複製（同深度）、每檔第一行加本輪註解的 `state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`m5gate.ps1`、`m5red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-89bbed4f…`，M5 的 setcmp 加 `--method`）、`adapter.py`（adapter 表改為 `adapters_f63c2`）、`m5sum.py`、`names2.py`、`setcmp.py`（加 `--method`）與 `wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`junitset.py`、`wbbatch.py`、`relay-*.py`；由 `h9/` 複製的 `dgate.ps1`（repo 相對路徑多一層）、`dred.ps1`；新寫的 `adapters_f63c2.py`、`m5cmp.py`、`b1-split/split.py`。基準摘要 `base-default-summary.txt`、`base-m5-summary.txt` 是 `f6/f63c1/runall2-*-summary.txt` 的複本。
