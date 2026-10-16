@@ -165,7 +165,8 @@ public final class M5UniverseGameTests implements FabricGameTest {
      */
     private static final int HOLD_TICKS = 3 * CollapseBackoff.INITIAL_TICKS;
     /**
-     * D1 等進入 PREPARE（或 PASSAGE_READY）的上限（F6-2c Step 0；F6-3c-1 依 F6-2c Step 0 quality Minor 5 收成一個常數，原本四個 test 各寫一次 600 與同一段註解）。PREPARE 的預載是
+     * 等 PREPARE 完成（「準備完成」INFO 或 PASSAGE_READY）的上限（F6-2c Step 0；F6-3c-1 依 F6-2c Step 0 quality Minor 5 收成一個常數，原本四個 test 各寫一次 600 與同一段註解；
+     * F6-3c-2 依 F6-3c-1 quality Minor 3 更正：等的是 PREPARE 完成，不是進入 PREPARE，四處也不都是 D1）。PREPARE 的預載是
      * wall-clock 的 chunk 載入，機器忙時以 tick 計的等待會變長（F6-2c Step 0 時 GameTest 的 tick 還沒有節流，實測最多約 380 tick；F6-3b 起 M5 run 每個 tick 至少 10 ms）。等待以
      * production 的 §9.1 門檻為界（{@code CollapseService.WAIT_WARN_TICKS}＝600，從進入 PREPARE 起算；超過時 production 自己記 WARN；那個常數是 package-private，testmod 看不到），
      * 用到它的 test 的 tickLimit 當時同步加了 200。
