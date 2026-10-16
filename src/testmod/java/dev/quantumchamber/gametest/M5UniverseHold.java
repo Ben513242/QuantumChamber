@@ -171,12 +171,13 @@ public final class M5UniverseHold {
     /**
      * {@link #holdBeforeBegin} 開始等待時記一行（F6-3b fix round 1）：前一個 test（{@link #lastBegun}）在原版是通過的，記 ERROR 並記下這個 after-pass
      * （{@link #afterPassStarted}，結構化的 {@link AfterPass}，F6-3c-2；hold 結束時由 {@link #endHold} 寫成 {@link #afterPassFailure}；已有一個還沒被 begin 取走時保留最早的那個）；
-     * 否則記 WARN。
+     * 否則記 WARN。F6-3c-2（F6-3c-1 quality review「給 F6-3c-2」）：守門同時看 {@link #afterPassStarted}，還沒結束的 hold 已記下的 after-pass 也保留最早的那個（例如 test
+     * 在 hold 期間就被原版判完成，mixin 不再詢問、{@link #endHold} 沒有執行）；原本只看 {@link #afterPassFailure}，下一次 hold 會蓋掉它。
      */
     private static void startHold(String test, List<CollapseAuthorities.Authority> unconfirmed) {
         var previous = lastBegun;
         if (previous != null && previous.state().isPassed()) {
-            if (afterPassFailure == null) afterPassStarted = new AfterPass(previous.name(), unconfirmed, test);
+            if (afterPassFailure == null && afterPassStarted == null) afterPassStarted = new AfterPass(previous.name(), unconfirmed, test);
             LOGGER.error("M5_UNIVERSE_HOLD after-pass test={} previous={} unconfirmed={}：前一個 test 通過之後仍留下未確認的權威；照常嘗試收斂（不連坐），初始化之前最多等 {} tick，"
                     + "下一個 begin 以此失敗", test, previous.name(), unconfirmed, HOLD_TICKS);
             return;
