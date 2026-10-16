@@ -407,8 +407,10 @@ abstract class M5CollapseRestartChains {
     }
 
     /**
-     * {@code sid} 全部的「SEALED 重試」INFO 的則數（F6-3 Step 0：原本 {@link #retried} 行內查詢，查詢相同）。F6-3c-1（F6-3 Step 0 quality Minor 3）起，probe 各 chain 的重試計數
-     * 都經這裡與 {@link #retriesFrom(M5CollapseRun, UUID, SealedReason)}（{@code M5CollapseDoorChains}、{@code M5CollapseRetryChains} 原本各自寫同樣的查詢）。
+     * {@code sid} 全部的「SEALED 重試」INFO 的則數（F6-3 Step 0：原本 {@link #retried} 行內查詢，查詢相同）。F6-3c-1（F6-3 Step 0 quality Minor 3）起，繼承本類的 chain
+     * （{@code M5CollapseDoorChains}、{@code M5CollapseRetryChains}、{@code M5CollapseConvergenceChain}）的重試<b>計數</b>都經這裡與
+     * {@link #retriesFrom(M5CollapseRun, UUID, SealedReason)}（{@code M5CollapseDoorChains}、{@code M5CollapseRetryChains} 原本各自寫同樣的查詢）。F6-3c-2（F6-3c-1 spec nit）改窄：
+     * 不繼承本類的 {@code M5CollapsePassageChains}（trr 的 {@code sealedNotRetried}）要在失敗訊息列出重試 INFO 的內容本身，不是則數，仍自己查詢。
      */
     static int retries(M5CollapseRun run, UUID sid) {
         return run.capture().matching(Level.INFO, "SEALED 重試", sid.toString()).size();
