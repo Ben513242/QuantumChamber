@@ -8,6 +8,7 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.cleanupFixtures;
 import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFixture;
 import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFixtureOwnedBy;
 import static dev.quantumchamber.gametest.M5GameTestSupport.collapseFlowNeverWarned;
+import static dev.quantumchamber.gametest.M5GameTestSupport.connectOutside;
 import static dev.quantumchamber.gametest.M5GameTestSupport.controller;
 import static dev.quantumchamber.gametest.M5GameTestSupport.door;
 import static dev.quantumchamber.gametest.M5GameTestSupport.doorAll;
@@ -32,6 +33,7 @@ import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.ChamberPowerState;
 import dev.quantumchamber.chamber.ChamberSessions;
+import dev.quantumchamber.collapse.CollapseBackoff;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.CorridorPageManager;
@@ -81,6 +83,7 @@ import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.network.packet.s2c.play.GameMessageS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
@@ -781,6 +784,94 @@ public final class M5CollapseGameTests implements FabricGameTest {
                     });
                 });
             }, () -> "提交失敗之後沒有回到 DORMANT：record=" + state(journal, sid) + " attempts=" + fault.ticks(), hooks);
+        });
+    }
+
+    /**
+     * F6-3c-2（盤點 #12；spec §7.1 的邊緣觸發、§11.2 的退避）：DORMANT 續行的提交失敗之後，退避期內的觸發<b>照樣消耗</b>，退避期過後不會因為退避期內的進入而提交。
+     * 能殺掉 F6-2d-2 Step 0 的 mutation {@code mut-backoff-first}（{@code resumeDormant} 先看退避、再觀察 {@code EntryWatch}：退避期內完全不觀察，快照停在退避開始時，
+     * 退避期過後第一次觀察就把退避期內進入的人當成新的邊緣）。兩位參與者 A、B 的 DORMANT SOURCE 收據（都已返還、都在線，起初都在艙外）：
+     * <ol>
+     * <li>A 由艙外進入，觸發提交；提交 COLLAPSING 的 journal 寫出在 flush 開頭受控失敗<b>恰一次</b>（DORMANT 維持原狀，啟動 200 tick 的退避；只 {@code backoff.failed}、
+     *     不 {@code resetGate}，快照是 {A}）。</li>
+     * <li>B 在退避期內由艙外進入（這次觸發被消耗、不提交），之後 A、B 都一直待在艙內，直到退避期過後 20 tick：沒有新的邊緣，斷言<b>不提交</b>
+     *     （{@code notCommittedPastTheBackoffWithoutANewEdge}：提交的寫出仍只有失敗的那一次、record 仍是原本的 DORMANT 收據、沒有「塌縮已提交」）。</li>
+     * <li>B 離開再進入（新的邊緣、退避已過）：這時才提交，接著走 SOURCE fast path 結束，收據移除。</li>
+     * </ol>
+     * SEALED 與單人 DORMANT 不是這個 mutation 的載體（SEALED 封存時換新的 watch；單人 DORMANT 的快照已含那位參與者），見 M5 note F6-2d-2 Step 0 第 7 列的更正。
+     * 退避以 server tick 計、排程以 test tick 計，兩者每個 tick 都加一，差值固定（比照 {@code native_commit_failure_falls_back_to_dormant_and_backs_off_windows}）。
+     * 沒有玩家的原生移動（以傳送進出），各平台都執行；不配置宇宙（SOURCE），屬 default run。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_collapse_dormant_backoff_edge", tickLimit = 1000)
+    public void dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit(TestContext context) {
+        M4PerTestUniverseProbe.begin(context,"dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit");
+        var world = context.getWorld(); var server = world.getServer(); var journal = SessionRecoveryState.get(server);
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = DormantOrigin.open(context, hooks);
+        var frame = origin.frame; var capture = origin.capture;
+        var a = origin.player();
+        ServerPlayerEntity b;
+        try {
+            b = connectOutside(context, hooks, frame).player();
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        origin.whenRegistered((registered, chamber) -> {
+            var people = new LinkedHashMap<UUID, Boolean>();
+            people.put(a.getUuid(), true);
+            people.put(b.getUuid(), true);
+            var dormant = origin.receipt(chamber, people, false);
+            var sid = dormant.sessionUuid();
+            // 提交 COLLAPSING 的寫出（current 已是 COLLAPSING、flushed 仍是 MEASURED）：記下每次嘗試的 server tick，只有第一次受控失敗。
+            var fault = new FlushFault(server, "F6-3c-2 GameTest 受控：DORMANT 續行提交 COLLAPSING 的 journal 寫出失敗", 1, state -> {
+                var current = state.records().get(sid); var durable = state.flushedRecords().get(sid);
+                return current != null && durable != null && current.state() == SessionState.COLLAPSING && durable.state() == SessionState.MEASURED;
+            });
+            try {
+                installFlushProbe(context, fault, hooks);
+                origin.own(dormant);
+            } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            var witness = new LinkedHashMap<String, Boolean>();
+            // (1) A 由艙外進入：這個 tick 結束時觸發提交，寫出受控失敗一次，啟動退避。
+            at(context, registered + 1, hooks, () -> moveInside(a, frame));
+            at(context, registered + 2, hooks, () -> {
+                context.assertTrue(fault.ticks().size() == 1 && fault.failures() == 1 && dormant.equals(journal.flushedRecords().get(sid))
+                                && dormant.equals(journal.records().get(sid)),
+                        "A 進入之後應已嘗試提交一次（受控失敗），收據維持 DORMANT：attempts=" + fault.ticks() + " failures=" + fault.failures() + " record=" + state(journal, sid));
+                witness.put("commitFailureWarnedOnce", capture.matching(org.apache.logging.log4j.Level.WARN, "提交 MEASURED→COLLAPSING", sid.toString()).size() == 1);
+                // 退避以 server tick 計；排程以 test tick 計。兩者每個 tick 都加一，差值固定。
+                int offset = server.getTicks() - Math.toIntExact(context.getTick());
+                int failedAt = fault.ticks().getFirst();
+                int expired = failedAt + CollapseBackoff.INITIAL_TICKS - offset;
+                // (2) B 在退避期內由艙外進入：這次觸發被消耗，不提交。
+                at(context, registered + 3, hooks, () -> moveInside(b, frame));
+                at(context, registered + 5, hooks, () -> witness.put("entryWithinTheBackoffNotCommitted", fault.ticks().size() == 1
+                        && dormant.equals(journal.flushedRecords().get(sid)) && registered + 3 < expired));
+                // 退避期過後 20 tick：A、B 一直在艙內，沒有新的邊緣，仍不提交（目標斷言）。
+                at(context, expired + 20, hooks, () -> {
+                    boolean bothInside = ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame), a.getBoundingBox())
+                            && ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame), b.getBoundingBox());
+                    var committed = capture.matching(org.apache.logging.log4j.Level.INFO, "塌縮已提交", sid.toString()).size();
+                    context.assertTrue(fault.ticks().size() == 1 && committed == 0 && dormant.equals(journal.flushedRecords().get(sid))
+                                    && dormant.equals(journal.records().get(sid)) && bothInside,
+                            "notCommittedPastTheBackoffWithoutANewEdge：退避期（server tick " + failedAt + " 起 " + CollapseBackoff.INITIAL_TICKS
+                                    + " tick）過後 20 tick，B 在退避期內進入之後一直在艙內、沒有新的邊緣，不得提交：提交的寫出=" + fault.ticks() + " 塌縮已提交=" + committed
+                                    + " record=" + state(journal, sid) + " 都在艙內=" + bothInside + " witness=" + witness);
+                    // (3) B 離開再進入：新的邊緣、退避已過，這時才提交，接著走 SOURCE fast path 結束。
+                    moveOutside(b, frame);
+                });
+                at(context, expired + 22, hooks, () -> moveInside(b, frame));
+                whenTicks(context, expired + 23, 20, () -> !journal.flushedRecords().containsKey(sid) && !journal.records().containsKey(sid), gone -> {
+                    witness.put("committedOnlyAfterLeavingAndReentering", fault.ticks().size() == 2 && fault.ticks().get(1) >= failedAt + CollapseBackoff.INITIAL_TICKS
+                            && capture.matching(org.apache.logging.log4j.Level.INFO, "塌縮已提交", sid.toString()).size() == 1);
+                    witness.put("sourceFastPathEnded", capture.matching(org.apache.logging.log4j.Level.INFO, "SOURCE 塌縮完成", sid.toString()).size() == 1);
+                    witness.put("commitFailureStillWarnedOnce", capture.matching(org.apache.logging.log4j.Level.WARN, "提交 MEASURED→COLLAPSING", sid.toString()).size() == 1);
+                    witness.put("doorPlainOpen", doorAll(world, frame, true, MembraneState.NONE));
+                    witness.put("presenceNone", ChamberSessions.gateway().presence(server, chamber) == ChamberSessionGateway.Presence.NONE);
+                    witness.put("ticketReleased", !M4CandidateTestAccess.sourceTicketHeld(sid) && !M4CandidateTestAccess.runtimeHeld(sid));
+                    context.assertTrue(!witness.containsValue(false), "退避期內的觸發照樣消耗：" + witness + " attempts=" + fault.ticks() + " offset=" + offset);
+                    hooks.release();
+                    M4PerTestUniverseProbe.complete(context);
+                }, () -> "B 離開再進入之後沒有提交並結束：record=" + state(journal, sid) + " attempts=" + fault.ticks(), hooks);
+            });
         });
     }
 
