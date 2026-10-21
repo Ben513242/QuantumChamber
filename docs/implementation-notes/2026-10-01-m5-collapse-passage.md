@@ -10003,10 +10003,19 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
 - 本節的文件 commit 之後另跑第二次完整 run-all；其 root、結果與比較保存在 `fix1/STATUS.md`。本節寫成時，證據仍待全新乾淨 context 的 spec／quality re-review；其後兩份獨立複審已通過、I-1 關閉，見本節開頭 Review 區塊，並非 implementer 自評。沒有 push、merge、tag 或刪除 worktree。
 ## F6-3d-1：probe 資料封裝與有界等待
 
-- 狀態：本機實作與取證記錄；尚待 controller 派兩個全新 context 做 spec／quality review，不自評通過。GitHub CI、人工 smoke 與 milestone 整合狀態不由本段判定。
+- 狀態：本機實作、兩次完整回歸與兩份獨立 review 已完成（2026-10-21；spec ✅／quality Approved，兩者 Critical／Important／Minor 0）。本段僅結案 F6-3d-1，不代表 GitHub CI、人工 smoke 或 milestone 整合已完成。
 - 範圍：原盤點 #26～#29 與 F6-3c-2 M-1 單句；沒有 production、build、workflow、正式 verification 腳本、正常測試集合或 phase 的變更。F6-3d-2／d-3、F6-3e 仍是後續。
 - Commit：`cd7ea88` 純 API 封裝；`82f1984` 保留鍵拒絕；`5777365` 等待上限；`5d1209a` Javadoc；`0d47a8b` README；`b003ea3` 僅補正 TICK_END 的 atWindow／atHalt 措辭。
-- 行號以 `b003ea3` 為準：`M5CollapseRun.java`:242,243,320,329,335,341,350,357,367；`M5CollapseTemplateRaceChain.java`:95；`M5CollapseUnloadChain.java`:88；`M5TestHooks.java`:1007,1013；`M5ChunkUnloadHooks.java`:133,137；`scripts/verification/README.md`:306,307。此條目之後保留供 controller 插入獨立 Review 區塊。
+- 行號以 `b003ea3` 為準：`M5CollapseRun.java`:242,243,320,329,335,341,350,357,367；`M5CollapseTemplateRaceChain.java`:95；`M5CollapseUnloadChain.java`:88；`M5TestHooks.java`:1007,1013；`M5ChunkUnloadHooks.java`:133,137；`scripts/verification/README.md`:306,307。
+
+- **Review（2026-10-21，controller 核對後結案）**：
+  - spec ✅：`/root/f63d1_spec`；quality Approved：`/root/f63d1_quality`。兩者各自為全新獨立 context（fork none），先對固定版本唯讀預審，再於第二輪回歸完成後在原獨立 reviewer context 補核；沒有參與實作、改檔或跑 Gradle。兩份正式結論皆 Critical 0／Important 0／Minor 0，不需 fix round；原 F6-3c-2 M-1 已更正，沒有新增 Minor 要移交。
+  - 派工與結果在 SDD `f6/f63d1/review-20261021.md`、`review-preliminary-20261021.md`、`spec-review-final-20261021.md`、`quality-review-final-20261021.md`。預審沒有提前給通過，正式結論均在第二輪 END 後；這種安排只並行唯讀檢查，不增加 runtime。
+  - 完成 range `4527f265..c526b295`（7 commits）；code/README HEAD `b003ea3`，note HEAD `c526b295`。兩次完整回歸皆 END ALL exit0：`f63d1/runall1/run-all-a734d37c40a64806a742bef2a5fbfe1b`（18:32:07，b003ea3）與最終 `f63d1/runall2/run-all-833243ca0c104b8fb6b887dd96445a7a`（19:16:42，乾淨 c526b295）。source/harness pin 完全相同。
+  - 最終 SUMMARY 同基準：default179/179、windows89、legacy1/1、M560/60、perTest56+1、JUnit666（failures0/errors0/skipped2、windowsCheckpoint17）、release432entries/385classes、sources226、testmodHits0、mainOnlyPASS、M3 4+5、recovery24、collapse69/halts31、CI本機規則win/ubuntu兩PASS。這不代表GitHub runner驗收。
+  - Controller另直接核兩輪原始XML/JAR/69 receipts、第二輪107份log與最終5183檔SHA/大小；104 evidence roots、999861865 bytes均相符（不是重新hash所有runtime世界檔）。第一輪w8late-restart僅observed兩鍵順序交換；第二輪順序也同基準。名稱/真值/steps/schema不變；sources只差ZIP metadata，Full55/31、legacy0/0、M538/10限定欄位歸屬後remaining0，pin4/9/4、worldgen四類0。M5 tps第一輪85.9、第二輪85.3，HOLD皆0，suite records56/converged true/unfinished空。
+  - note提交後STATUS工具曾因兩種live.json資料形狀不同而KeyError，當時未啟第二輪；修正ignored工具並無runtime核對9份資料後才續行。`control-layer-errors.jsonl`／`status-schema-verification.json`保留此事，沒有重跑成功的第一輪或重複note提交。Spec reviewer一份舊stdout遇Get-FileHash分享模式限制，改用可共享唯讀串流後SHA吻合；不是runtime偶發，未停止程序。
+  - 本次文件同步只記錄review/接手狀態，驗證pin仍明列c526b295；F6-3d-1完成，下一步F6-3d-2。未push、merge、tag或執行人工smoke。
 
 ### 取證 API 與保留鍵
 
@@ -10055,7 +10064,7 @@ SUMMARY 同最新基準 `run-all-a8841a60e8b84bea8887c01992e4ca1f`（0ed3e62；�
 observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後順序在 `collapse-phase-compare.json`，不是改名或真值差異。UUID衍生catalog digest變動另存 `m5-catalog-digest-attribution.json`，60筆非digest增量契約與suite56筆收斂相同，不宣稱raw receipt逐字相同。M5節流／HOLD／停服列在 `m5-tps-hold-stop.json`。
 
 
-本 note commit 後還要在乾淨 HEAD 跑第二次完整 run-all；結果由本輪 STATUS／completion.json 記錄，再由獨立 reviewer 與 controller 核對。這句不是預先宣稱第二輪通過。
+本節原始 note commit `c526b295` 後，第二次完整 run-all 已於 2026-10-21 19:16:42 在乾淨 `c526b295` 得到 END ALL exit=0。最終原始證據由兩位獨立 reviewer 與 controller 核對，結論與 root 見本節開頭 Review；STATUS／completion.json／兩份 final manifest 已凍結。
 
 ### 失敗與不採計紀錄
 
