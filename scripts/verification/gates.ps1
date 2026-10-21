@@ -22,6 +22,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'gate-evidence.ps1')
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 foreach($marker in 'build.gradle','settings.gradle'){if(-not(Test-Path -LiteralPath (Join-Path $repo $marker) -PathType Leaf)){throw "repo root 缺少 ${marker}：$repo"}}
 if(-not $Gradle){$dist='C:/Users/Ben/.gradle/wrapper/dists/gradle-8.8-bin/dl7vupf4psengwqhwktix4v1/gradle-8.8/bin/gradle.bat';$Gradle=if(Test-Path -LiteralPath $dist -PathType Leaf){$dist}else{Join-Path $repo 'gradlew.bat'}}
@@ -180,7 +181,9 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     if(Test-Path -LiteralPath (Join-Path $runtimeRoot 'logs')){Copy-Item -LiteralPath (Join-Path $runtimeRoot 'logs') -Destination (Join-Path $evidence 'runtime-logs') -Recurse}
     # 只複製本次觀察到的 JVM（$known）產出的 classload／boundary；runDir 累積的舊檔不進 gate root（整合審查 R1）。
     foreach($file in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter 'classload-*.log' -File -ErrorAction SilentlyContinue)){if($file.Name -match '^classload-(\d+)\.log$' -and $known.ContainsKey($Matches[1])){Copy-Item -LiteralPath $file.FullName -Destination $evidence}}
-    foreach($file in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter 'm4-boundary-*.json' -File -ErrorAction SilentlyContinue)){$owner=[regex]::Match([string](Get-Content -LiteralPath $file.FullName -Raw),'"pid"\s*:\s*(\d+)');if($owner.Success -and $known.ContainsKey($owner.Groups[1].Value)){Copy-Item -LiteralPath $file.FullName -Destination $evidence}}
+    $boundaries=@(Get-GateBoundaryReceipt -Root $runtimeRoot -Processes @($known.Values))
+    Save-Json (Join-Path $evidence 'boundary-selection.json') ([ordered]@{receipts=@($boundaries | Select-Object path,matched,reason,startDeltaMilliseconds,toleranceMillisecondsExclusive)})
+    foreach($boundary in $boundaries | Where-Object matched){Copy-Item -LiteralPath $boundary.path -Destination $evidence}
     foreach($directory in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter 'm4-per-test-*' -Directory -ErrorAction SilentlyContinue)) {
         if($directory.Name -match '^m4-per-test-(\d+)-' -and $known.ContainsKey($Matches[1])) {Copy-Item -LiteralPath $directory.FullName -Destination $evidence -Recurse}
     }
@@ -283,13 +286,14 @@ function Fresh-Game([bool]$full,[string]$scope) {
         # 只認本次 run 寫出的 XML，不讀上一次留下的舊檔。
         $written=Join-Path $repo "build/$report"
         if(-not(Test-Path -LiteralPath $written -PathType Leaf) -or (Get-Item -LiteralPath $written).LastWriteTimeUtc -lt $runStart){throw "GameTest XML 不是本次 run 寫出的：$report"}
-        $server=@(Get-Content -LiteralPath (Join-Path $gate 'execution/processes.json') -Raw | ConvertFrom-Json | Where-Object {$_.commandLine -match 'net.fabricmc.devlaunchinjector.Main'})
+        $server=@(Get-Content -LiteralPath (Join-Path $gate 'execution/processes.json') -Raw | ConvertFrom-Json -DateKind String | Where-Object {$_.commandLine -match 'net.fabricmc.devlaunchinjector.Main'})
         if($scope -ceq 'm5') {
             if($server.Count -ne 1){throw "M5 run 必須恰有一個 server JVM（$($server.Count)）"}
             $expected=@(Assert-Scope (Join-Path $gate "result-build/$report") 'm5')
             Assert-M5Run $server[0] $expected
         } else {
-            $boundary=@(Get-ChildItem -LiteralPath (Join-Path $gate 'execution') -Filter 'm4-boundary-*.json' | ForEach-Object {Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json} | Where-Object {$_.pid -eq $server[0].pid})
+            if($server.Count -ne 1){throw "GameTest run 必須恰有一個 server JVM（$($server.Count)）"}
+            $boundary=@(Get-GateBoundaryReceipt -Root (Join-Path $gate 'execution') -Processes $server | Where-Object matched | ForEach-Object receipt)
             if($boundary.Count -ne 1 -or $boundary[0].status -ne 'PASS'){throw 'GameTest Universe boundary oracle 缺失或 FAIL'}
             Assert-Scope (Join-Path $gate "result-build/$report") $scope | Out-Null
         }
