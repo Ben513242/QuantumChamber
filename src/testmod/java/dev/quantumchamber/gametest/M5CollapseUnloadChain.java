@@ -85,7 +85,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         steps.addAll(List.of(
                 new Step("staleTaskAwaited", STALE_WAIT_TICKS + 1, this::staleTaskAwaited),
                 new Step("readsReleased", 1, () -> { hold.release(); return true; }),
-                new Step("loadedAgain", 2400, this::loadedAgainThenReleased),
+                new Step("loadedAgain", 1200, this::loadedAgainThenReleased),
                 new Step("unloaded", UNLOAD_WAIT_TICKS + 1, this::unloadedAfterTakeBack),
                 new Step("staleTaskSeen", 1, this::staleTaskSeen)));
         return Phase.stop(steps).started(() -> {

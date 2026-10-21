@@ -92,7 +92,7 @@ final class M5CollapseTemplateRaceChain implements M5CollapseRun.Context {
     Phase phase() {
         var steps = new ArrayList<Step>();
         steps.add(new Step("materialize", 200, this::materialize));
-        steps.add(new Step("idle", 2400, this::idle));
+        steps.add(new Step("idle", 1200, this::idle));
         for (var name : STRUCTURES) {
             steps.add(new Step("find-" + name, 1, this::find));
             steps.add(new Step("load-" + name, 1, this::load));
