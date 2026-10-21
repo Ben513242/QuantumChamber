@@ -57,15 +57,14 @@ function Save-GateRuntimeLog {
             $selected=$false
             if($prior.Count -eq 1 -and $prior[0].sha256 -ceq $file.sha256){$reason='unchanged-before-run'}
             elseif(@($Before|Where-Object {$_.contentSha256 -ceq $file.contentSha256}).Count){$reason='pre-run-content-rotated'}
-            elseif([DateTimeOffset]::Parse($file.lastWriteTimeUtc) -lt [DateTimeOffset]::Parse($Identity.start)){$reason='written-before-invocation'}
             else{$selected=$true;$reason='new-or-changed-content-during-invocation'}
             $pieceOrder=$null;if($selected){$pieceOrder=$order;$order+=1}
-            $piece=[ordered]@{name=$file.name;path=('runtime-logs/'+$file.name);selected=$selected;reason=$reason;order=$pieceOrder;length=$file.length;sha256=$file.sha256;contentSha256=$file.contentSha256;lastWriteTimeUtc=$file.lastWriteTimeUtc}
+            $piece=[ordered]@{name=$file.name;path=('runtime-logs/'+$file.name);selected=$selected;reason=$reason;order=$pieceOrder;length=$file.length;sha256=$file.sha256;contentSha256=$file.contentSha256;lastWriteTimeUtc=$file.lastWriteTimeUtc;writeDeltaMilliseconds=([DateTimeOffset]::Parse($file.lastWriteTimeUtc)-[DateTimeOffset]::Parse($Identity.start)).TotalMilliseconds}
             $pieces+=[pscustomobject]$piece
             if($selected){$bytes=Read-GateLogBytes (Join-Path $logRoot $file.name);$full.Write($bytes,0,$bytes.Length)}
         }
         $bytes=$full.ToArray();[IO.File]::WriteAllBytes((Join-Path $Evidence 'runtime-full.log'),$bytes)
-        $manifest=[ordered]@{schema=1;identity=$Identity;before=$Before;pieces=$pieces;selectedCount=$order;encoding='UTF-8; original expanded bytes concatenated without line filtering';fullPath='runtime-full.log';fullLength=$bytes.Length;fullSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))}
+        $manifest=[ordered]@{schema=1;selectionBasis='pre-run snapshot content delta; filesystem UTC is diagnostic because file clock can precede precise wall-clock';identity=$Identity;before=$Before;pieces=$pieces;selectedCount=$order;encoding='UTF-8; original expanded bytes concatenated without line filtering';fullPath='runtime-full.log';fullLength=$bytes.Length;fullSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))}
         $manifest|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $Evidence 'runtime-log.json') -Encoding utf8
     } finally {$full.Dispose()}
 }
@@ -103,7 +102,7 @@ function Save-GateFailureArtifacts {
         $row=[ordered]@{path=$file.path;sha256=$file.sha256;length=$file.length;lastWriteTimeUtc=$file.lastWriteTimeUtc;classification='stale';copied=$false;error=$null}
         try {
             $prior=@($Before|Where-Object {$_.path -ceq $file.path})
-            $fresh=([DateTimeOffset]::Parse($file.lastWriteTimeUtc) -ge [DateTimeOffset]::Parse($Identity.start) -and ($prior.Count -eq 0 -or $prior[0].sha256 -cne $file.sha256 -or $prior[0].lastWriteTimeUtc -cne $file.lastWriteTimeUtc))
+            $fresh=($prior.Count -eq 0 -or $prior[0].sha256 -cne $file.sha256 -or $prior[0].lastWriteTimeUtc -cne $file.lastWriteTimeUtc)
             if($fresh){$row.classification='current-complete'}
             try{[xml]$xml=Get-Content -LiteralPath (Join-Path $BuildRoot $file.path) -Raw;if(-not $xml.DocumentElement){throw 'missing document element'}}catch{$row.classification='incomplete'}
             $destination=Join-Path $Evidence ('failure-xml/'+$file.path);[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
