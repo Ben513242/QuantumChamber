@@ -9,6 +9,9 @@
 #   -Only                只跑指定 chain／scenario 名稱（RED 用）
 #   -EvidenceRoot        彙整 recovery-run-<runId>.json 的位置；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle              gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
+#   -IdleSeconds        JVM 無新 log 的上限；預設 90，與 M5 共用同一個 idle 契約
+#   -PhaseMinutes       phase 總上限；預設 8，保留原本的 8 分鐘
+#   -GradleCodePage     launcher stdout/stderr 的明確編碼；預設目前文化的 OEM code page（zh-TW 為 950）
 # phase receipt 位置由 testmod M4CandidateRecoveryProbe 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors/recovery-<nonce>/<phase>，不受 -EvidenceRoot 影響。
 param([switch]$ChainOnly, [switch]$NativeFailureOnly, [string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8, [int]$GradleCodePage = [Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
 # whole-branch fix1：-Only 可只跑指定 chain／scenario（RED 用）；未指定時跑全部 24 phases。

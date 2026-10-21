@@ -8,13 +8,15 @@
 # 任何失敗都 throw（訊息先附上 final.json／halt.json 的 status 與 failures），保留 root 與 phase evidence，禁止在同 root 重跑。
 # 逾時（F6-2a）：找到 JVM 之後，latest.log 與 Gradle 輸出都超過 -IdleSeconds 秒沒有新內容，或整個 phase 超過 -PhaseMinutes 分鐘，就先以 jstack 取 thread dump
 # （phase evidence 的 jstack-<pid>.txt），再只結束 commandline 含本次 startupNonce、StartTime 相符的那一個 java PID（不碰 Gradle daemon），寫 timeout.json
-# （原因、PID、jstack 檔名、最後的 log 行），判 FAIL。
+# （原因、PID、jstack 檔名、最後的 log 行），判 FAIL；最新 CIM CreationDate 獨立核對身分。
+# JVM 尚未找到時會重新查 nonce；確認沒有該 JVM 且 launcher 身分相符，才結束本次 launcher handle。
 # 參數：
 #   -Only          只跑指定 chain（例如 -Only w2,w3；以 pwsh -File 呼叫時也接受逗號分隔的單一字串）；未指定時跑全部
 #   -EvidenceRoot  彙整 collapse-run-<runId>.json 的位置；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle        gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 #   -IdleSeconds   JVM 沒有任何新輸出多久判為卡住；預設 90（正常 phase 的 log 間隔最長約 6 秒）
 #   -PhaseMinutes  一個 phase 的總上限；預設 8
+#   -GradleCodePage launcher stdout/stderr 的明確編碼；預設目前文化的 OEM code page（zh-TW 為 950），latest.log 固定 UTF-8
 # phase receipt 位置由 testmod M5CollapseRecoveryProbe 固定為 <repo>/.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/<phase>，不受 -EvidenceRoot 影響。
 # 新增 phase：testmod 的 M5CollapseRecoveryProbe.phases() 加 entry，這裡的 $chains 加同名的 phase 與預期的結束（README「M5 collapse probe」）。
 # 結構比照 m4-recovery-probe.ps1（owned root、phase evidence、launcher.json、彙整 JSON）。
@@ -48,7 +50,7 @@ $chains = [ordered]@{
     'degraded' = @(@{phase='deg-setup'; ending='stop'; window=''}, @{phase='deg-restart'; ending='stop'; window=''})
     # H5（不是 crash 窗口）：chunk 卸載的 livelock 防護。takeback：被取回的 holder 照常卸載、存檔；shutdown：raw MCA 讀回修改，殭屍＋停服時仍在載入，必須正常停服。
     'unload' = @(@{phase='unload-takeback'; ending='stop'; window=''}, @{phase='unload-shutdown'; ending='stop'; window=''})
-    # F6-2c：通道與終局的重啟窗口。W7：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已確認，halt 前存檔）；重啟之後通道在開服時結束，同一個 server 內原艙再開新 session。
+    # F6-2c：通道與終局的重啟窗口。W7：PASSAGE_READY 期間兩人中選門者已跨過（Crossed 已確認；probe 在 TICK_END 取 atHalt 後 halt，不額外存檔；production 仍依跨越流程存 playerdata）；重啟之後通道在開服時結束，同一個 server 內原艙再開新 session。
     'w7' = @(@{phase='w7-crash'; ending='halt'; window='CROSSED_COMMITTED'}, @{phase='w7-restart'; ending='stop'; window=''})
     # F6-2-16：PASSAGE_READY 提交之後、門改為 passable 之前（halt 前存檔：sealed 的門與艙內的參與者在磁碟上）。
     'readycommit' = @(@{phase='readycommit-crash'; ending='halt'; window='READY_COMMITTED'}, @{phase='readycommit-restart'; ending='stop'; window=''})
@@ -108,15 +110,7 @@ $taskRunId = [guid]::NewGuid().ToString('N')
 $probeContext.RunId=$taskRunId; $probeContext.EvidenceOwner=$probeOwner
 $taskResults = [System.Collections.Generic.List[object]]::new()
 
-# phase evidence 裡 receipt 的摘要（status 與 failures；halt.json 另有 hit、crashPointFailure、refused），附在失敗訊息上：不論哪一項檢查失敗，都先看得到 probe 判定的原因。
-
-# 以共用讀取開啟（log4j 與 Gradle 仍開著寫入）讀檔案長度；不存在或讀不到時回 -1。長度以 handle 讀，不用目錄項（寫入中的檔案，目錄項的大小可能過期）。
-
-# 檔案最後 $Count 個非空行（共用讀取）；不存在時回空陣列。
-
-# phase 逾時的處置：核對 PID 仍是本次的 JVM（commandline 含 startupNonce、StartTime 相符）之後先 jstack，再只結束那一個 java PID；Gradle（daemon 與 client）不結束，
-# JVM 結束之後由 Gradle 自行收尾。寫 timeout.json 之後 throw（判 FAIL）。JVM 還沒有找到時（例如 Gradle 還在編譯）只記錄、不結束任何程序。
-
+# 共用 launcher／timeout 在 probe-common.ps1；本 wrapper 保留 phase 表、receipt 與世界鎖 oracle。
 function Invoke-M5Phase([string]$Nonce, [string]$Phase, [string]$Root, [string]$Ending, [string]$Window) {
     $state=Invoke-OwnedPhase -Context $probeContext -Nonce $Nonce -Phase $Phase -Root $Root
     $phaseEvidence=$state.PhaseEvidence; $startupNonce=$state.StartupNonce; $launcher=$state.Launcher

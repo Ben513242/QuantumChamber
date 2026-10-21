@@ -19,6 +19,7 @@ M5 的 gate 擴充也放在這裡。M5 F3c 新增 M5 GameTest run（M5 plan 決�
 | --- | --- |
 | `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`M5GameTest`（`runGameTestM5`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`）。三個 GameTest run（default、legacy、M5）都核對 XML 是本次 run 寫出的，而且 testcase 集合恰好等於原始碼依 batch 前綴矩陣屬於該 run 的宣告（`scope.json`）：`m4_legacy_runtime` 屬 legacy run，前綴 `m5_universe` 屬 M5 run，其餘屬 default run。default 與 legacy 另核對 M4 boundary oracle；M5 run 不註冊 boundary probe，改核對每個 M5 test 自己斷言的 catalog 增量、增量之間的串接（筆數與 digest），以及 suite 結束時（`SERVER_STOPPED`）的 catalog 等於最後一個 test 的結果（`m5-oracle.json`） |
 | `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod；另核對 world keys、正常停止與 exact restore |
+| `probe-common.ps1` | M4/M5 共用 owned-phase 程序生命週期、具名 Context/State 與診斷；dot-source 本身沒有啟動或世界副作用 |
 | `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，24 phases，每個 phase 一個 JVM |
 | `m5-collapse-probe.ps1` | M5 塌縮的跨 JVM crash／restart probe（spec §12 的 crash 窗口），每個 phase 一個 JVM；見「M5 collapse probe」 |
 | `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；fixture 同時放 default 與 M5 兩份 GameTest XML。可加 XML／原始碼 mutation 證明規則會失敗 |
@@ -190,8 +191,13 @@ M5 的 GameTest 分在兩個 run：`M5CollapseGameTests`（default run，只用 
   - halt 必須乾淨（F6-2a）：crash 點的第一次 hit（`hit` 1）、crash 點沒有記下失敗（`crashPointFailure` 為 `none`）、`failures` 是空的，而且停服還沒有開始（F6-2c Step 0）。任何一項不成立時 probe 不當成 crash：status `HALT_REFUSED`（`refused` 列出原因；停服之後是 `stoppingSeen`）、exit 78。腳本、`run-all.ps1` 與 restart 讀回 halt receipt 時（`crashReceiptClean`）也都核對前三項。另外，`SERVER_STOPPING` 一開始（早於 production 的 listener）probe 就移除自己安裝的全部 hook，不經請求停服的停服（例如 crash report 的路徑）也不會再觸發 crash 點。
 - 兩種結束都核對：receipt 的 PID、StartTime、startupNonce 與實際的 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可以獨占開啟。同一條 chain 的每個 phase，PID@StartTime 與 startupNonce 都不同。
 - 三份表的一致性（F6-2a）：receipt 的 `ending` 必須等於 chain 表的預期結束；receipt 的 `phaseTable`（probe 的整張 phase 表）必須與 `$chains` 的全部 phase 依序相同，任何一邊多出或少了 phase 都判 FAIL。第三份表是 `run-all.ps1` 的 `$expectedCollapse`。
-- 失敗訊息：JVM 結束之後的每一項檢查失敗時，訊息都附上 `final.json`／`halt.json` 的 status 與 failures（halt 另有 hit、crashPointFailure、refused）；halt 的 phase 先看 `final.json`，所以「窗口沒有到達、斷言失敗而正常停止」直接看得到原因。
-- 逾時（F6-2a）：找到 JVM 之後，`latest.log` 與 Gradle 的輸出都超過 `-IdleSeconds`（預設 90；正常 phase 的 log 間隔最長約 6 秒）秒沒有新內容，或整個 phase 超過 `-PhaseMinutes`（預設 8）分鐘時，腳本核對 PID 仍是本次的 JVM（commandline 含本次的 startupNonce、StartTime 相符），以同一個 JDK 的 `jstack -l` 把 thread dump 存到 phase evidence 的 `jstack-<pid>.txt`，再只結束那一個 java PID（不碰 Gradle daemon），等 Gradle 收尾，寫 `timeout.json`（原因、PID、commandline 是否相符、jstack 檔名、最後 20 行 log 與 Gradle 輸出），判 FAIL。root 保留，禁止重跑。
+- 失敗訊息：主要 exit／receipt 檢查的錯誤訊息附上 `final.json`／`halt.json` 的 status 與 failures（halt 另有 hit、crashPointFailure、refused）；halt 的 phase 先看 `final.json`，所以「窗口沒有到達、斷言失敗而正常停止」直接看得到原因。
+- 共用程序管理（F6-3d-2）：`m4-recovery-probe.ps1`、`m5-collapse-probe.ps1` dot-source 小型 `probe-common.ps1`；每個 caller 明確傳入 Context/State，仍各自保留 phase 表、receipt oracle、world/session.lock 檢查。M4 改為以已持有的 handle 判斷退出，不會把仍可列舉的已退出程序物件誤判為 live JVM。
+- 逾時：兩個 wrapper 都使用 `-IdleSeconds`（預設 90）及 `-PhaseMinutes`（預設 8）；M4 的總上限維持原本 8 分鐘，新增 idle 預設與 M5 一致。找到 JVM 後，latest.log／stdout／stderr 任一長度變動都重設 idle；total 從 launcher 啟動時計算。逾時仍判 FAIL、保留 root，不可同 root 重跑。
+- 終止前同時核對已保存的 PID/handle/StartTime、nonce commandline，以及最新 CIM `CreationDate`（容許小於 1 ms 的時間精度差異）；jstack 取證後再核一次才以原 handle 終止 JVM。JVM 尚未找到時先重新查 nonce，確認當下沒有該 JVM才核對並結束本次 launcher handle；不掃殺子程序、不終止 Gradle daemon。查詢失敗或身分不符就保留程序與診斷，不推定沒有啟動；下一次執行前仍須核對原 root owner。
+- 編碼：`-GradleCodePage` 預設目前文化的 OEM code page（此 zh-TW 環境為 950）；launcher 明確設定自己的 console/output encoding，stdout/stderr 依該編碼讀取。server 的 latest.log 固定以 UTF-8 讀取，BOM 優先；不修改機器地區設定。`timeout.json` 的 `encodings` 與正常 `launcher.json` 的 `logEncodings` 記錄來源編碼。
+- 診斷：`timeout.json` 保留既有原因、exit、jstack 與最後 20 行，新增 `identityCheck`、`identityBeforeKill`、`discoveryError`、`launcherPid`、`launcherIdentity`、`launcherKilled`、`encodings`。正常 `launcher.json` 新增 `auxiliaryLogs`（classload/latest 各有 source/present/copied）與 `logEncodings`；輔助 log 缺少只記錄，不因此額外 FAIL，必要 receipt/identity/lock/oracle 仍照常守門。Java receipt 與彙整原欄位不變。
+- halt 的 `window` 大小寫必須精確相符，錯誤帶 receipt note。entrypoint 失敗時，錯誤附上 latest.log 的 `Could not execute entrypoint` 段（前 80 行及該段其餘 `Caused by:`），保留原本 exit/receipt 判定；log 只當資料，不執行其中內容。
 
 目前的 chain：
 
