@@ -316,15 +316,24 @@ final class M5CollapseRun {
         context = fixture;
     }
 
+    /** 共用 metadata、STOP／HALT 組裝的全部頂層鍵；chain 只能寫自己的取證，不能覆蓋 runner 的身分、斷言或結束事實。 */
+    private static final Set<String> RESERVED_PROOF_KEYS = Set.of(
+            "producer", "phase", "phaseTable", "nonce", "startupNonce", "pid", "startTimeUtc", "root", "runtimeScope", "loadedModIds", "jvmProperties",
+            "failures", "ending", "steps", "stoppingSeen", "stoppedSeen", "witness", "observed", "ticks", "status", "stopRequested", "crashWindow", "haltTiming",
+            "refused", "window", "hit", "reached", "crashPointFailure", "detail", "windowServerTick", "haltServerTick", "universeActiveAtHalt", "stepAtHalt",
+            "atWindow", "atHalt", "disk", "haltTimeUtc");
+
     // ---- chain 的取證（容器由 runner 持有，不提供可變的 map／list） ----
 
     /** 記下 chain 的取證；同鍵覆蓋與 null 的語意沿用原本的 Map.put。 */
     void recordProof(String key, Object value) {
+        requireChainProofKey(key);
         proof.put(key, value);
     }
 
     /** 只記下第一次非 null 的取證；沿用 Map.putIfAbsent 的 null 語意。 */
     void recordFirstProof(String key, Object value) {
+        requireChainProofKey(key);
         proof.putIfAbsent(key, value);
     }
 
@@ -339,8 +348,19 @@ final class M5CollapseRun {
      */
     @SuppressWarnings("unchecked")
     boolean recordProofEntry(String key, String entry, Object value) {
+        requireChainProofKey(key);
         var entries = (Map<String, Object>) proof.computeIfAbsent(key, ignored -> new LinkedHashMap<String, Object>());
         return entries.put(entry, value) == null;
+    }
+
+    /** 寫入前拒絕 runner 的保留鍵；先留下失敗與事件，即使呼叫端收下例外也不能把 phase 判 PASS／乾淨 HALT。 */
+    private void requireChainProofKey(String key) {
+        if (key == null || !RESERVED_PROOF_KEYS.contains(key)) return;
+        String failure = "reservedProofKey：chain 不得寫入 runner 的保留鍵：" + key;
+        failures.add(failure);
+        LOGGER.error("M5 collapse probe 取證被拒絕：phase={} {}", config.phase(), failure);
+        event(failure);
+        throw new IllegalArgumentException(failure);
     }
 
     /** 保留 chain 在清理等不能丟出例外的路徑記下的失敗；只允許追加。 */
