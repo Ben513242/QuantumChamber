@@ -10,7 +10,7 @@
 #   -EvidenceRoot        彙整 recovery-run-<runId>.json 的位置；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle              gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 # phase receipt 位置由 testmod M4CandidateRecoveryProbe 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors/recovery-<nonce>/<phase>，不受 -EvidenceRoot 影響。
-param([switch]$ChainOnly, [switch]$NativeFailureOnly, [string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '')
+param([switch]$ChainOnly, [switch]$NativeFailureOnly, [string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8)
 # whole-branch fix1：-Only 可只跑指定 chain／scenario（RED 用）；未指定時跑全部 24 phases。
 $ErrorActionPreference = 'Stop'
 $taskProject = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $Gradle -PathType Leaf)) { throw "找不到 Gra
 $taskGradle = $Gradle
 # evidence 目錄必須在 repo 內、路徑無 reparse，且被 gitignore（不得落在 tracked tree）。
 . (Join-Path $PSScriptRoot 'probe-common.ps1')
-$probeContext = [pscustomobject]@{Project=$taskProject; Gradle=$taskGradle; InitScript=(Join-Path $PSScriptRoot 'runtime.init.gradle'); RunId=''; RootPrefix='m4-recovery'; EvidencePrefix='recovery'; EvidenceOwner=''; Task='runM4Recovery'; PropertyPrefix='m4Recovery'; NonceProperty='quantumchamber.m4recovery.startupNonce'; IdleSeconds=90; PhaseMinutes=8}
+$probeContext = [pscustomobject]@{Project=$taskProject; Gradle=$taskGradle; InitScript=(Join-Path $PSScriptRoot 'runtime.init.gradle'); RunId=''; RootPrefix='m4-recovery'; EvidencePrefix='recovery'; EvidenceOwner=''; Task='runM4Recovery'; PropertyPrefix='m4Recovery'; NonceProperty='quantumchamber.m4recovery.startupNonce'; IdleSeconds=$IdleSeconds; PhaseMinutes=$PhaseMinutes}
 if (-not $EvidenceRoot) { $EvidenceRoot = Join-Path $taskProject '.superpowers/verification' }
 $EvidenceRoot = Resolve-Evidence -Context $probeContext -Path $EvidenceRoot
 $probeOwner = Resolve-Evidence -Context $probeContext -Path (Join-Path $taskProject '.superpowers/sdd/2026-09-21-m4-candidate-doors')
@@ -29,34 +29,9 @@ $probeContext.RunId=$taskRunId; $probeContext.EvidenceOwner=$probeOwner
 $taskResults = [System.Collections.Generic.List[object]]::new()
 
 function Invoke-M4Phase([string]$Nonce, [string]$Phase, [string]$Root) {
-    $phaseEvidence = Join-Path $probeOwner "recovery-$Nonce/$Phase"
-    if (Test-Path -LiteralPath $phaseEvidence) { throw "phase evidence 已存在，禁止重跑：$phaseEvidence" }
-    New-Item -ItemType Directory -Path $phaseEvidence | Out-Null
-    $startupNonce = [guid]::NewGuid().ToString('N')
-    $arguments = @('-I', (Join-Path $PSScriptRoot 'runtime.init.gradle'), 'runM4Recovery', "-Pm4RecoveryNonce=$Nonce", "-Pm4RecoveryPhase=$Phase", "-Pm4RecoveryStartupNonce=$startupNonce", "-Pm4RecoveryRoot=$Root", '--console=plain')
-    $quotedArguments = $arguments | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }
-    $command = "Set-Location -LiteralPath '" + $taskProject.Replace("'", "''") + "'; & '" + $taskGradle.Replace("'", "''") + "' " + ($quotedArguments -join ' ') + '; exit $LASTEXITCODE'
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-    $launcher = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-EncodedCommand', $encoded) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $phaseEvidence 'stdout.log') -RedirectStandardError (Join-Path $phaseEvidence 'stderr.log')
-    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(8)
-    $javaId = $null
-    $javaStart = $null
-    while (-not $launcher.HasExited) {
-        if ($null -eq $javaId) {
-            $candidate = Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like "*quantumchamber.m4recovery.startupNonce=$startupNonce*" }
-            if (@($candidate).Count -gt 1) { throw '同一 startupNonce 出現多個 JVM' }
-            if ($candidate) {
-                $javaId = [int]$candidate.ProcessId
-                $native = Get-Process -Id $javaId
-                $javaStart = ([DateTimeOffset]$native.StartTime).ToUniversalTime()
-                [ordered]@{pid=$javaId;startTime=([DateTimeOffset]$native.StartTime).ToString('o');commandLine=$candidate.CommandLine} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $phaseEvidence 'process.json') -Encoding UTF8
-            }
-        }
-        if ([DateTimeOffset]::UtcNow -gt $deadline) { throw "owned phase 逾時；禁止同 root 重跑：$Root phase=$Phase" }
-        Start-Sleep -Milliseconds 250
-        $launcher.Refresh()
-    }
-    $launcher.WaitForExit()
+    $state=Invoke-OwnedPhase -Context $probeContext -Nonce $Nonce -Phase $Phase -Root $Root
+    $phaseEvidence=$state.PhaseEvidence; $startupNonce=$state.StartupNonce; $launcher=$state.Launcher
+    $javaProcess=$state.JavaProcess; $javaId=$state.JavaId; $javaStart=$state.JavaStart
     if ($launcher.ExitCode -ne 0) { throw "Gradle 非零退出：$($launcher.ExitCode)；保留 root：$Root" }
     $finalPath = Join-Path $phaseEvidence 'final.json'
     if (-not (Test-Path -LiteralPath $finalPath)) { throw "未產生正常 stop receipt：$phaseEvidence" }
@@ -66,7 +41,8 @@ function Invoke-M4Phase([string]$Nonce, [string]$Phase, [string]$Root) {
     if ($null -eq $javaId -or $javaId -ne $receipt.pid -or $receipt.startupNonce -ne $startupNonce) { throw 'JVM identity receipt 不符' }
     $recordedStart = [DateTimeOffset]::Parse($receipt.startTimeUtc)
     if ([Math]::Abs(($recordedStart - $javaStart).TotalSeconds) -gt 1) { throw 'JVM StartTime receipt 不符' }
-    if (Get-Process -Id $javaId -ErrorAction SilentlyContinue) { throw '前一 JVM 尚未停止' }
+    if (-not $javaProcess.HasExited) { throw '前一 JVM 尚未停止' }
+    $javaProcess.Dispose()
     $lockPath = Join-Path $Root 'world/session.lock'
     $lock = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $lock.Dispose()
