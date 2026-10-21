@@ -10080,6 +10080,13 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - 範圍：盤點 #15～21；基準 `498d5e44476e4d2827dcf24d3d837c0a1c758a72`，code／README HEAD `640620852a7cc8fd0c073d2fd562a986f58732f6`，分支 `feature/m5-collapse`。只改兩個 probe wrapper、新增共用模組與 README；本節是其後的獨立 note commit。沒有改 production、testmod／測試 Java、build／Gradle、正式 init、gates／run-all、CI 或 spec／plan。
 - Commits：`b72e740`（純共用抽取與接線）、`2a3fac3`（M4 採 handle／timeout）、`8d34cee`（獨立身分、編碼與診斷）、`6406208`（W7 註解與 README）。M4 行為改變沒有混稱純搬移。
 - 行號：`scripts/verification/probe-common.ps1`：Resolve-Evidence :3、New-OwnedRoot :17、Get-OwnedIdentity :65、Get-PhaseFailureNote :81、Copy-OwnedLogs :98、Stop-TimedOutPhase :112、Invoke-OwnedPhase :170；M4 wrapper :34／:53；M5 wrapper :114／:140／:162、W7 :53；README :195–200。
+
+### 首輪獨立 review（本輪補證前）
+
+- 首輪 spec ❌／quality Not approved，兩份正式報告均 Critical 0／Important 1／Minor 0；共同 I-1 是 M4 total／idle 的舊 RED 取證無效，未發現已確認的正式程序管理 code 缺陷。
+- `b-red/timeout-error.txt` 與 `m4-idle-red/error.txt` 都是 `Cannot bind argument to parameter 'Path' because it is an empty string.`；動態 scriptblock 沒有供應舊函式的 `PSScriptRoot`，在 launcher／等待迴圈之前就失敗。原 oracle 未拒絕 setup error，因此這兩份 timeout RED 不採計；原 root／fixture／manifest 原封保留，retained exited-handle 的獨立 guard RED 不受影響。
+- 正式報告：SDD `f6/f63d2/spec-review-first.md`、`quality-review-first.md`。I-1 交下方 fix round 1 補證；此 note commit 尚未宣稱全新獨立複審通過。
+
 - 證據入口：SDD `f6/f63d2/STATUS.md`。本節提交時第一輪完整回歸已完成；第二輪在本節 commit 後執行，最終 root／END／SHA manifest 與獨立 review 由後續 STATUS／controller 記錄，不提前宣稱通過。
 
 ### 實作與邊界
@@ -10098,8 +10105,8 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 
 | 目標 | 本輪證據（相對 f6/f63d2） | 判定 |
 | --- | --- | --- |
-| M4 retained exited handle／total timeout | `b-red`、`b-green` | 正式 guard／wrapper 的純 fixture，舊行為拒絕 handle／缺診斷，新行為通過 |
-| M4 idle，未達 total | `m4-idle-red`、`m4-idle-green` | 只替換程序取得邊界為具名 fixture handle；idle=0 縮時、total=8 分鐘，GREEN reason=idle、僅 owned handle 被處置 |
+| M4 retained exited handle／total timeout（歷史取證） | `b-red`、`b-green` | retained exited-handle 獨立 guard RED 有效；舊 total RED 在空 `PSScriptRoot` setup 失敗，不採計 timeout 證據；有效補證見下方 fix round 1 |
+| M4 idle，未達 total（歷史取證） | `m4-idle-red`、`m4-idle-green` | 原 GREEN reason=idle；原 RED 在空 `PSScriptRoot` setup 失敗，不採計 idle 證據；有效補證見下方 fix round 1 |
 | fresh StartTime、cp950 bytes、window case／note、entrypoint、X4 helper | `c-red`、`c-green` | 七項目標 RED→GREEN；時間不符不得終止，cp950 原始 bytes 經正式 timeout 路徑精確讀回中文 |
 | JVM 前逾時 launcher | `prejava-red`、`prejava-green` | 共用 launcher 啟動受控 helper，舊版未終止、新版終止正確 handle；無關 sentinel 存活；phase 仍為預期 timeout FAIL |
 | entrypoint 最終錯誤 | `final-error-fixture` | 實際舊／新 halt 錯誤分支，最終 exception 必須包含 entrypoint 與受控 cause |
@@ -10122,3 +10129,18 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - `probe-common.ps1` 是預期新增 HARNESS pin；wrapper／README 是預期變更。第二輪須與第一輪全部 source/harness SHA 相同，只允許 note HEAD 差異。
 - 沒有失敗的正常 probe／完整回歸 root；預期 RED／timeout roots 全保留。初始 generator 缺換行（parser、未啟 runtime）、halt 77 在 stderr 的比較假設、M4 select 動態欄位分類、sources NTFS 時間戳記分類，都保留控制層原始紀錄，不拿它們當目標 RED，也沒有為此重跑成功 runtime。
 - 本節不宣稱獨立 review 通過；由 controller 另派全新 spec／quality context。未執行 GitHub CI 或人工 smoke，未 push／merge／tag／刪 worktree；F6-3d-3／F6-3e／F7／milestone 收尾仍依既定 routing。
+
+
+### F6-3d-2 fix round 1：M4 total／idle 目標 RED 補證
+
+- 基準與本輪 runtime HEAD：`399f4b415d286b56410574819f88e6fc310ffa8d`，分支 `feature/m5-collapse`，取證前與正常 runtime 期間 porcelain 空。沒有 production／testmod／正式 harness／README 變更，沒有 code commit；本輪只提交此 note。新證據入口為 SDD `f6/f63d2/fix1/STATUS.md`。
+- 方法：從 `b72e740` 抽取舊 `Invoke-M4Phase`，明確注入原 `scripts/verification` 路徑，修復 fixture 的空 `PSScriptRoot` 相依。total 的舊 8 分鐘與新 `PhaseMinutes` 同縮為 0.8 秒；idle 界線 0.2 秒、total 4 秒，兩版使用同一份情境與程序 mock。舊 total 分支只加觀察事件，沒有變更判斷；新 common 只將 `GetProcessById` 接到具名 mock。原文、adapter、逐行 diff、commit／blob／原始 SHA、當場 before／after blob／SHA 都保留，沒有暫改 tracked 檔案或需要檔案 restore。
+- `total-red-01`：launcher 被呼叫，進入等待迴圈並經 4 次 refresh；實測約 1.261 秒，跨過 0.8 秒後命中舊 total 分支，得到精確 `owned phase 逾時；禁止同 root 重跑`。沒有 timeout 診斷／owned 收尾；這項結論同時由分支事件、時間與精確例外證明，不是由缺檔單獨推定。
+- `idle-red-01`：launcher 與等待迴圈都有事件；固定 stdout 無後續輸出，5 次 refresh，實測約 1.477 秒，已跨 0.2 秒 idle 且低於 4 秒 total。舊流程仍未 idle 診斷或 owned 收尾，在 1.2 秒受控 launcher 退出後得到精確 missing stop receipt 例外；未命中舊 total。setup error 一律 fail-fast，不列為目標 RED。
+- `total-green-01`／`total-green-02`、`idle-green-01`／`idle-green-02`：同一乾淨 HEAD，各情境連續兩次新 root。正式新 wrapper／common 保持 timeout／idle 判斷；真正走到指定 reason=total 或 idle 的 timeout 路徑，`identityCheck` 與終止前再次核對均 matched，owned mock handle Kill 恰 1 次，其他 nonce 的 mock sentinel Kill 0 次；idle 診斷先於 total。這是純 CIM／handle 邊界 fixture，沒有啟動真程序，也沒有宣稱真 OS 終止或真 sentinel 存活已測；正式正常 runtime 由以下 focused／run-all 覆蓋。
+- 六根各有 `events.json`、完整 error／stack、`oracle.json`、原始／adapter source 與 before／after pins。`targeted-adapter-audit.json` 另核 launcher 後的實際時差及允許的最小 diff；`source-provenance-complete.json`、`comparison-tool-final-provenance.json` 保留來源。舊 `../b-red` 的 timeout 部分與 `../m4-idle-red` 仍保留但不採計。
+- 正常 focused：`focused1`、`focused2`，同乾淨 `399f4b4`、每輪同一 PowerShell host 依序 M4 `-ChainOnly` 與 M5 `w2`／`unload`；各 8 phases，共 16。原始 Gradle task／launcher log 保留。`final-focused-compare.json` 的 schema／具名集合／steps 為 RESULT=OK；`focused-chain-relations.json` 另核 receipt SHA／process 身分、同 chain nonce／manifest、獨立 JVM／startupNonce、entropy bytes 及 recover→verify journal 不變。
+- 第一輪完整回歸：`C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m5-collapse\.superpowers\sdd\2026-10-01-m5-collapse-passage\f6\f63d2\fix1\runall1\run-all-274351d14b764d4ba9e6cf34b31216f2`；`END ALL exit=0 HEAD=399f4b415d286b56410574819f88e6fc310ffa8d`。SUMMARY：default179/179、windows89、legacy1/1、M5=60/60、perTest56+1、JUnit666（failures0/errors0/skipped2）、windowsCheckpoint17、release432 entries/385 classes、sources226、testmodHits0、mainOnly PASS、M3 4+5、recovery24、collapse69（HALT31）、本機 CI 規則 Windows／Ubuntu PASS；不是 GitHub CI。
+- 與原 d-2 乾淨 `399f4b4` 的 `run-all-2ab81a1610fc41fe9b30a9f1b1a45bcb` 比較：帶 class 的 testcase／JUnit 集合、M4 24／M5 69 phase schema／具名斷言／steps 均 RESULT=OK；release SHA `c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08` 相同。sources226 內容／順序相同，ZIP metadata 差異逐項解碼；Full WARN/ERROR=55/31、legacy=0/0、M5=38/10，原始含時間排序 diff 與限定欄位歸屬保留、剩餘差異0，pin逐batch4/9/4，worldgen四類0。完整 source／harness pins 取證期間不變；動態 UUID／nonce／PID／digest／entropy／journal 與 ZIP 時間各保留原值，不冒稱 raw 全同。
+- 純讀控制層曾因複製 focused 比較工具的相對 baseline 路徑及 entropy 檔名假設失敗，記於 `control-layer-errors.txt`；只修本輪副本／audit，未重跑成功 focused 或完整 runtime，亦未當成目標 RED。
+- 第二輪完整回歸在此 note commit 後以新的 root 執行，最終 END／比較、兩輪 source／harness pins、所有 roots 與 SHA manifest 由 fix1 STATUS／completion 記錄。I-1 的正式關閉留給全新獨立 spec／quality 複審，不提前宣稱通過。未執行 GitHub CI／人工 smoke，未 push／merge／tag／PR／LICENSE／刪 worktree，也未進入 d-3。
