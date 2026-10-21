@@ -18,7 +18,8 @@ M5 的 gate 擴充也放在這裡。M5 F3c 新增 M5 GameTest run（M5 plan 決�
 | 檔案 | 用途 |
 | --- | --- |
 | `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`M5GameTest`（`runGameTestM5`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`）。三個 GameTest run（default、legacy、M5）都核對 XML 是本次 run 寫出的，而且 testcase 集合恰好等於原始碼依 batch 前綴矩陣屬於該 run 的宣告（`scope.json`）：`m4_legacy_runtime` 屬 legacy run，前綴 `m5_universe` 屬 M5 run，其餘屬 default run。default 與 legacy 另核對 M4 boundary oracle；M5 run 不註冊 boundary probe，改核對每個 M5 test 自己斷言的 catalog 增量、增量之間的串接（筆數與 digest），以及 suite 結束時（`SERVER_STOPPED`）的 catalog 等於最後一個 test 的結果（`m5-oracle.json`） |
-| `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod；另核對 world keys、正常停止與 exact restore |
+| `gate-evidence.ps1` | 共用唯讀身分、當次完整日誌與失敗 XML 取證；載入只定義函式，不啟動程序或操作世界 |
+| `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod／clientProbe；另核對 world keys、正常停止與 exact restore |
 | `probe-common.ps1` | M4/M5 共用 owned-phase 程序生命週期、具名 Context/State 與診斷；dot-source 本身沒有啟動或世界副作用 |
 | `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，24 phases，每個 phase 一個 JVM |
 | `m5-collapse-probe.ps1` | M5 塌縮的跨 JVM crash／restart probe（spec §12 的 crash 窗口），每個 phase 一個 JVM；見「M5 collapse probe」 |
@@ -36,6 +37,8 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 ```
 
 成功時最後一行是 `END ALL exit=0 HEAD=<sha>`，倒數第二步印出 `SUMMARY ...`。任何步驟失敗都會印 `END <step> FAIL <原因>` 並停止。
+
+重導 `run-all.ps1` 的輸出時，Gradle daemon 可能繼承外層管線，外層要等 daemon 結束才返回。以本次 `console.log` 的精確 `END ALL exit=0 HEAD=<sha>` 判完成；不能因外層仍等待而重跑已成功的 runtime，也不要為此終止 daemon。取證 pipeline 不使用 `Select-Object -First` 提前截斷執行中的腳本，否則 `finally` 可能無法完成。依本次 phase／run 的 receipt、nonce 與保存 root 定位日誌，不能讀前一 phase 的 `latest.log`。
 
 `run-all.ps1` 不會因工作樹有未提交的變更而拒絕執行，只會在 `console.log` 的 `STATUS` 行列出 tracked 變更。一次 run 要能採計，需同時滿足三個條件：
 
@@ -190,7 +193,7 @@ M5 的 GameTest 分在兩個 run：`M5CollapseGameTests`（default run，只用 
   - `halt`：JVM 在 crash 窗口寫出 `halt.json`（CREATE_NEW＋force）之後以 `Runtime.halt(77)` 結束，不經正常停止、不存檔，等同 crash。腳本要求：Gradle 非 0、JVM exit code 77（找到 JVM 時先取得 process handle，結束之後以它讀 exit code）、Gradle 輸出有 `finished with non-zero exit value 77`、`halt.json` 的 status 為 `HALT` 而且窗口相符、沒有 `final.json`。窗口沒有到達或斷言失敗時，probe 正常停止並寫 FAIL 的 `final.json`，腳本判 FAIL。
   - halt 必須乾淨（F6-2a）：crash 點的第一次 hit（`hit` 1）、crash 點沒有記下失敗（`crashPointFailure` 為 `none`）、`failures` 是空的，而且停服還沒有開始（F6-2c Step 0）。任何一項不成立時 probe 不當成 crash：status `HALT_REFUSED`（`refused` 列出原因；停服之後是 `stoppingSeen`）、exit 78。腳本、`run-all.ps1` 與 restart 讀回 halt receipt 時（`crashReceiptClean`）也都核對前三項。另外，`SERVER_STOPPING` 一開始（早於 production 的 listener）probe 就移除自己安裝的全部 hook，不經請求停服的停服（例如 crash report 的路徑）也不會再觸發 crash 點。
 - 兩種結束都核對：receipt 的 PID、StartTime、startupNonce 與實際的 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可以獨占開啟。同一條 chain 的每個 phase，PID@StartTime 與 startupNonce 都不同。
-- 三份表的一致性（F6-2a）：receipt 的 `ending` 必須等於 chain 表的預期結束；receipt 的 `phaseTable`（probe 的整張 phase 表）必須與 `$chains` 的全部 phase 依序相同，任何一邊多出或少了 phase 都判 FAIL。第三份表是 `run-all.ps1` 的 `$expectedCollapse`。
+- 三份表的一致性（F6-2a）：receipt 的 `ending` 必須等於 chain 表的預期結束；receipt 的 `phaseTable`（probe 的整張 phase 表）必須與 `$chains` 的全部 phase 依序相同，任何一邊多出或少了 phase 都判 FAIL。第三份表是 `run-all.ps1` 的 `$expectedCollapse`；run-all 會逐份 receipt 再核對 `phaseTable`，必須等於已核名稱／順序／ending／window 的本次 phases。
 - 失敗訊息：主要 exit／receipt 檢查的錯誤訊息附上 `final.json`／`halt.json` 的 status 與 failures（halt 另有 hit、crashPointFailure、refused）；halt 的 phase 先看 `final.json`，所以「窗口沒有到達、斷言失敗而正常停止」直接看得到原因。
 - 共用程序管理（F6-3d-2）：`m4-recovery-probe.ps1`、`m5-collapse-probe.ps1` dot-source 小型 `probe-common.ps1`；每個 caller 明確傳入 Context/State，仍各自保留 phase 表、receipt oracle、world/session.lock 檢查。M4 改為以已持有的 handle 判斷退出，不會把仍可列舉的已退出程序物件誤判為 live JVM。
 - 逾時：兩個 wrapper 都使用 `-IdleSeconds`（預設 90）及 `-PhaseMinutes`（預設 8）；M4 的總上限維持原本 8 分鐘，新增 idle 預設與 M5 一致。找到 JVM 後，latest.log／stdout／stderr 任一長度變動都重設 idle；total 從 launcher 啟動時計算。逾時仍判 FAIL、保留 root，不可同 root 重跑。
@@ -316,16 +319,31 @@ restart phase 讀回 crash phase 的 `halt.json` 與 `receipt.nbt`（crash 前�
    - 斷言用 `run.expect(名稱, 條件, 細節)`：失敗訊息以名稱開頭，RED 依名稱判定是否失敗在目標斷言。條件本身會讀磁碟（可能丟出）時用 lambda 版本 `run.expect(名稱, () -> ..., 細節)`，讀取失敗也算這個斷言失敗。
 4. 多名參與者（W7 起）：`fixture.buildOrigin(n)` 建立並連線 n 位參與者（移到艙外）。收據（`dormantNewReceipt`、`existingReceiptForTheUniverse`）以清單順序建立 cohort，restart 由收據讀回清單（`receiptIdentity` 比對清單順序）；選門者不依清單順序，由收據的 selection（`CandidateSelection.Selected.selectedBy`）推導（`fixture.selectorId()`、`fixture.selector()`；選門之前還沒有收據，W1 由 chain 自己決定誰去選門）。參與者的子集以 `M5CollapseFixture.Who` 表示（`EVERYONE`、`NOBODY`、`SELECTOR`、`OTHERS`，在 step 執行時才決定）：`passage.ready`／`passage.cross`、`fixture.arm(who)`（W1 與 W7 的 LOW→HIGH 供電與 Buff）、`fixture.joinInTheUniverse(who)`（JOIN 在 U，`joinedInTheUniverse`）與 `fixture.joinInTheSourceWorld(who, Inside.INSIDE／OUTSIDE)`（JOIN 在來源世界的艙內或艙外；全員是 `fixture.joinAllInTheSourceWorld(Inside…)`。F6-2d Step 0 由 `joinAll(inUniverse, boolean)`、`join(who, inUniverse, boolean)` 拆開，換位置不能編譯；F6-2d-1 由 `joinInTheSource`／`joinAll` 改名，與 `End.inTheSourceWorld`、斷言 `joinedInTheSourceWorld` 一致；同一個 step 裡先後呼叫就是同一個 tick JOIN）、`fixture.moveInside(who)`（F6-2c fix round 1）、`AtRestart.withCrossedAtHalt`、`End.placed` 都接受它。要從子集取一位時用 `fixture.first(who)`／`fixture.inListOrder(who)`（依清單順序；`Who` 的 Set 的迭代順序未定義）。要讓選門者不是清單的第一位時，以 `fixture.dormantNewReceiptSelectedByTheSecond()` 建立收據（`w7`）。門口的 local x 依清單順序錯開（3.5、1.5、5.5，最多三人；第一位與拆段之前相同）。`moveInside`／`moveOutside`、`players()`、每個 tick 的位置斷言仍對清單裡的每一位。`w7` 與 `trr` 用兩人，其餘的 chain 都只用一人。
 5. 在 probe 內安裝 fault：`run.install(slot, value)` 把既有的故障注入裝進 `M5TestHooks` 的 Slot（例如 `run.install(M5TestHooks.JOURNAL_PUT_FAULT, new M5TestHooks.JournalPutFault(run.server(), sid, SessionState.COLLAPSING, 1))`、`MATERIALIZE_FAULT`、`CHECKED_READ_FAULT`、`PROJECTION_WRITE_FAULT`、`NATIVE_MOVE_FAULT`、`FLUSH_PROBE`（`M5GameTestSupport.FlushFault`）；建構子與 `M5GameTestSupport.install*` 相同，只是沒有 `TestContext`）。crash 點也經它安裝；probe 請求停服之前依安裝的相反順序全部移除（halt 時 JVM 直接結束），停服一開始也再移除一次（F6-2c Step 0）。所以停服期間要保留的 hook 不得經 `run.install`，要由 chain 自己以 `Slot.install` 安裝、在 `SERVER_STOPPED` 之後移除（例如 `unload` 的卸載工作 witness，F6-2c 補上說明）。注意 mixin 的順序（F6-2a 實驗，`f6/f62a/`）：`ProjectionWriteFaultMixin` 與 `ProjectionWriterCrashWindowMixin` 都掛在 `ProjectionWriter.write` 的 RETURN，前者在 `quantumchamber-test.mixins.json` 排在前面；fault 把結果換掉（`setReturnValue`，即取消）的那一次，`PROJECTION_REPAIRED` 的 crash 窗口 hook **不會被呼叫**（實測：沒有 fault 時呼叫 1 次，fault 生效的那一次 0 次，fault 用完之後又是 1 次）。所以「投影寫入失敗之後」的窗口不能用 `PROJECTION_REPAIRED` 觀察，要選之後的程式點（例如 SEALED 的提交）。`MaterializeFaultMixin` 掛在 `Minecraft121DynamicDimensionBackend.materialize` 的 HEAD，那個方法上沒有 crash 窗口的 hook，不受影響。
-6. 在 `m5-collapse-probe.ps1` 的 `$chains` 加同名的 phase、預期的結束（`stop`／`halt`）與 halt 的窗口（chain 名稱就是 `-Only` 的值），並更新 `run-all.ps1` 的 `$expectedCollapse`。receipt 的 `phaseTable` 與 `$chains` 不一致時腳本判 FAIL。
+6. 在 `m5-collapse-probe.ps1` 的 `$chains` 加同名的 phase、預期的結束（`stop`／`halt`）與 halt 的窗口（chain 名稱就是 `-Only` 的值），並更新 `run-all.ps1` 的 `$expectedCollapse`。receipt 的 `phaseTable` 與 `$chains` 不一致時腳本判 FAIL；run-all 也逐份交叉核對，不只核對 receipt 的 SHA。
 7. 以 `-Only <新 chain>` 跑 GREEN，並以暫時的 mutation（production，或 probe 自己的比較對象）證明 restart 會失敗在目標斷言（RED）。每次執行都建立新的 runId 與 root，失敗的 root 與 evidence 都保留。
 
 ## Evidence 位置
 
 - `-EvidenceRoot`：預設 `<repo>/.superpowers/verification/`（gitignored）。只接受 repo 內、路徑無 reparse point、且被 gitignore 的目錄，否則在建立任何東西之前就拒絕。
 - `run-all.ps1` 每次建立新的 `run-all-<GUID>/`，內含 `console.log`、`gate-<label>-<GUID>/`、`recovery-run-<runId>.json`、`collapse-run-<runId>.json`、`ci-<label>-<GUID>/` 與 `summary.json`。個別腳本直接在 `-EvidenceRoot` 下建立自己的 root。
-- 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`；M5 collapse probe（`M5CollapseRecoveryProbe`）的 receipt 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/`。目錄不存在時依程式應由 harness 建立，但還沒在沒有 `.superpowers/` 的 clean clone 上實跑。M3 gate root 另存每個 phase 的 receipt 複本。
+- 由 testmod 固定、不受 `-EvidenceRoot` 影響的位置（`ProbeEvidenceOwner`、`M4CandidateRecoveryProbe` 只接受這個路徑）：M3 receipt 在 `.superpowers/sdd/2026-09-21-m4-candidate-doors/task-9-final-<nonce>/`、`transfer-final-<nonce>/`，M4 recovery receipt 在同目錄 `recovery-<nonce>/`；M5 collapse probe（`M5CollapseRecoveryProbe`）的 receipt 在 `.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/`。M5 T0（2026-10-01，`2c24d51`）已在沒有 `run/` 與 M3/M4 固定 evidence 目錄的 clean clone 實跑，確認當時的 M3/M4 目錄會自動建立。M5 collapse probe 是後來新增，這個 T0 結果不涵蓋它。M3 gate root 另存每個 phase 的 receipt 複本。
 - `run/` 內：GameTest 與 main-only 把 `run/gametest/world`、`run/gametest-legacy/world`、`run/gametest-m5/world`、`run/server` 移到 `<原路徑>.task9-backup-<GUID>-<tag>`，跑完後把 fresh 結果移進 gate root 的 `*-fresh/`，再把原檔移回並逐檔比對 hash（結果在 `<tag>-restore.json`）。M3 與 M4 recovery 每次新建 `run/m3-universe-m4-task9-<GUID>`、`run/m3-transfer-m4-task9-<GUID>`、`run/m4-recovery-<GUID>-<scenario>`，跑完保留。
 - 失敗時保留全部 root 與 receipt，修正後以新的 root 重跑，不在失敗 root 上改判。若 restore 失敗，原檔仍在 `.task9-backup-*`，先查明原因再手動移回，不要刪除。
+
+## 當次完整日誌與失敗取證
+
+`gates.ps1` 在每次 Invoke-Gradle 開始前保存 `logs-before.json`；結束時將原日誌保存在該 execution 的 `runtime-logs/`，另產生 `runtime-log.json` 與 `runtime-full.log`。manifest 帶啟停 UTC、launcher／觀察到的 JVM 身分、原 root、每個 piece 的原始／展開 SHA、順序與選入／排除理由。先排除未變檔與前次內容（包括開服時把前次 latest 輪替成新 archive），再按 archive 日期與數字序號、最後 latest 串接當次內容；不依時間戳逐行過濾，stack trace 的無時間行也會保留，原 latest 不改寫。
+
+```powershell
+. ./scripts/verification/gate-evidence.ps1
+$complete = Read-GateRuntimeLog -Evidence '<本次 gate>/execution'
+```
+
+reader 會重核 pieces、順序與完整輸出 SHA；run-all 的 per-test consumer 與 summary 也實際使用此入口。比較 WARN／ERROR 時以這份完整內容為來源，不能只讀殘缺 latest。Main gate 會還原原 `run/server`，所以持久入口是 gate 的 execution 保存副本，完成後不能以已還原的 `run/server/logs` 冒充當次。
+
+Invoke-Gradle 遇到 timeout／exception／非零 exit 時仍先 flush stdout／stderr，保存 `execution.json`、當次日誌與 `failure-artifacts.json`／`failure-xml/`。XML 依開始前 SHA／mtime 及能否完整解析分類為 `current-complete`、`stale`、`incomplete`；當次完整只代表取證完整，不代表失敗 run 通過。診斷或複製錯誤另記 `capture-errors.json`，不取代原 exception。停止、owner、鎖與世界還原契約不變。
+
+M5 collapse probe 維持本機 run-all，不加入 CI（既有 X2(a) 裁示）。它依賴 Windows `Win32_Process` 的 commandline／CreationDate 與 Java 21 `jstack`，69 個 phase 各啟一個 JVM，含 31 個預期 HALT；不能把單一測試的時間當成整條 chain 預算。`w12` 最後檢查到 tick620，在正常 20 TPS 約 31 秒，另加開服、worldgen、存檔與停服時間；每 phase 的 `PhaseMinutes=8`、`IdleSeconds=90` 分別限制總 wall-clock 與無進展時間，任一失敗就停止 chain。整輪正常實測時間以 note 的採計 run-all 為準；F7 再整理正式限制。歷史 `h5/sample-jstack.ps1`／`red.ps1` 保留為歷史取證，不追蹤化或修改。
 
 ## 預期結果（M5 F3c）
 
