@@ -130,6 +130,9 @@ public final class M5ChunkUnloadHooks {
          * 另開一條 daemon thread：停服開始之後再等 {@code delayMillis} 毫秒才 {@link #release}。停服開始有兩種：請求停服（{@code stop} 把 {@code running} 設為 false），
          * 或 crash report 的路徑（{@code runServer} 的 catch 之後只把 {@code stopped} 設為 true 就進 {@code shutdown}，{@code running} 仍是 true；F6-2c Step 0，H5 quality
          * Minor 1：原本只看 {@code running}，這條路徑永遠不放行，只能等 harness 的逾時）。兩者都在 {@code shutdown} 之前，所以放行仍在停服開始之後。
+         * <p>退出假設：一般請求停服會把 volatile 的 {@code running} 設為 false，worker 透過 {@code isRunning()} 觀察；crash report 路徑只改非 volatile 的
+         * {@code stopped}，{@code isStopped()} 的輪詢是 best effort，{@code Thread.sleep} 不建立 happens-before，也不保證在有限時間內看到該寫入。
+         * 這不是停服事件的同步協定；daemon 不阻止 JVM 退出，卡住時仍可能由外層 harness 逾時處置。讀檔的保留與放行清單本身以 synchronized 保護（{@link #hold}、{@link #release}）。
          */
         void releaseAfterStop(MinecraftServer server, long delayMillis) {
             var thread = new Thread(() -> {
