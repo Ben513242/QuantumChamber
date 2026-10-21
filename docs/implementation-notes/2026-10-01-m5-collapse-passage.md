@@ -9966,3 +9966,15 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
 - run-all：`run-all-d28b295673d240e1b890d80f5bf0149f`（`run-all-1r`，`399335f`）；中斷、不採計的 `run-all-ab3ab892ed74418fa891b44987d8498d`（`run-all-1`，電腦關機）與它的 probe root `run/m5-collapse-7df147fba8c34678aa34beb6b6478b5d-*`
 - 已知偶發：沒有遇到派工列出的那幾種；`run-all-1r` 的 Full ERROR +1 是環境的 Yggdrasil 公鑰讀取失敗（見上），`run-all-1` 是電腦關機中斷。不採計的 root：只有上面標明的 dev 與檢查 run。結束過的程序：沒有。
 - 取證腳本（`f63c2/`）：由 `f6/f63c1/` 複製（同深度）、每檔第一行加本輪註解的 `state.ps1`、`compile.ps1`、`probe.ps1`、`red.ps1`、`m5gate.ps1`、`m5red.ps1`、`runall.ps1`、`runall-compare.ps1`（基準改為 `run-all-89bbed4f…`，M5 的 setcmp 加 `--method`）、`adapter.py`（adapter 表改為 `adapters_f63c2`）、`m5sum.py`、`names2.py`、`setcmp.py`（加 `--method`）與 `wbcmp.py`、`jarcmp.py`、`xmlsum.py`、`junitset.py`、`wbbatch.py`、`relay-*.py`；由 `h9/` 複製的 `dgate.ps1`（repo 相對路徑多一層）、`dred.ps1`；新寫的 `adapters_f63c2.py`、`m5cmp.py`、`b1-split/split.py`。基準摘要 `base-default-summary.txt`、`base-m5-summary.txt` 是 `f6/f63c1/runall2-*-summary.txt` 的複本。
+
+### controller 補記（2026-10-21）
+
+- **run-all-2**（本節的 commit 之後；implementer 記在 `f63c2/STATUS.md`）：`run-all-cbf51c5a8afc4506a4a162a46f876e1c`，在乾淨的 `3e97dc9` 上 `END ALL exit=0`，SUMMARY 與 run-all-1r 相同。
+  - 對基準 `run-all-89bbed4f…` 的差異都是預期中的：
+    - default 178 → 179、perTest 55+1 → 56+1，都來自 D 段的新 test；
+    - M5 的 class 前綴改變：testcase 以方法名稱比對 `identical=True`；
+    - Full WARN 54 → 55：唯一多出的一則在 `m5_collapse_dormant_backoff_edge`，是 D 預期的受控提交失敗。
+  - run-all-1r 那一則 Yggdrasil ERROR 這次沒有出現。
+  - 其餘相同：release SHA；sources 的 `contentDiffers=0`；legacy 0／0；M5 38／10；M5 run 沒有 `M5_UNIVERSE_HOLD`，`tps=88.0`；collapse run `90498c8a…` 對 F6-3c-1 green-2 是 `RESULT=OK`。
+- **review 尚未進行**。使用者 2026-10-16 指示「F6-3c-2 implementer這個代理跑完就先停」，所以 spec review 與 quality review 都還沒派。
+- 2026-10-21 起，M5 收尾到 M6 交接給 Codex。接手入口是 `docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`，第一步就是本節的 review，重點列在該檔的 §3.1。

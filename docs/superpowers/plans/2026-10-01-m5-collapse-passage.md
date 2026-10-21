@@ -838,7 +838,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - **F6-3b**：GameTest server 的 tick 節流（M5 run 每個 tick 至少 10 ms）、一個 test 失敗不再連坐其他 test，以及有界等待的餘裕量測。F6-3a 查出 Ubuntu CI 的 M5 失敗與本機偶發的預載逾時，根因是 GameTest server 不依 20 TPS 節流，以 tick 計的等待因此在 tick 很快的機器上逾時。已完成（2026-10-16，含 fix round 1：通過的 test 留下未確認的權威時，下一個 test FAIL，hold 不再掩蓋；spec re-review ✅、quality re-review Approved）。Ubuntu 的實際效果待 push 之後驗收。
     - **F6-3c**：Step 0 review 的整理、`M5UniverseGameTests` 拆檔與 fixture，以及 GameTest 的小整理。controller 再拆成兩次：
       - **F6-3c-1**：小整理，不搬檔。已完成（2026-10-16，spec review ✅、quality review Approved）。
-      - **F6-3c-2**：拆檔、fixture、#12 的 RED。
+      - **F6-3c-2**：拆檔、fixture、#12 的 RED。實作已完成（2026-10-16，`48c5e4d..3e97dc9`），review 尚未進行。2026-10-21 起交接給 Codex，見 `docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`。
     - **F6-3d**：harness 腳本與 README。
     - **F6-3e**：`build.yml` 的明列清單與 `ci-rule-check.ps1`。
     - 最後 push 到 CI 驗收。push 前先問使用者。

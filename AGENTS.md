@@ -95,6 +95,12 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
+
+- 停點：F6-3c-2 的實作已完成（`48c5e4d..3e97dc9`），spec review 與 quality review 還沒進行（使用者 2026-10-16 的指示）。
+- 遠端仍是 `30666c4`，之後的 commit 都沒有 push。`main` 是 `a7e1be2`，tag `m5` 尚未建立。
+- 每次停下或交回時，更新該檔的「交回紀錄」與本節。
+
 M1–M4 已完成並合併（2026-10-01 核對）：
 
 - `main` 為 `a7e1be2`；annotated tag `m1-m4` 指向 `9bce72e`（記錄 M1–M4 人工驗收結果的 docs commit）。GitHub Actions run `36804549120`（`a7e1be2`）的 Ubuntu `build` 與 Windows `windows-native` 都是 success。實際狀態以 GitHub Actions、遠端 ref、`main` 與 tag 為準。
@@ -104,7 +110,7 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 
 M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使用者指示，把 feature 分支 push 到 `origin`，讓使用者在另一台電腦 pull 下來試玩：第一次是 `5ba8b47`，停在 F6-2c fix round 1 的中途；fix round 1 的實作完成之後再 push 一次。實際狀態以遠端 ref 為準。
 
-- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.9；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示，v5.8 是 2026-10-13 對 worldgen CME 的裁示，v5.9 是 2026-10-14 對重啟之後觸發的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
+- spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.10；v5.10 是使用者 2026-10-14 對 H8、H9 的裁示；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示，v5.8 是 2026-10-13 對 worldgen CME 的裁示，v5.9 是 2026-10-14 對重啟之後觸發的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
 - 進度（2026-10-13）：
   - 已完成，並都經過 spec review 與 code quality review：T1、H1–H4、F1a、F2a、F2b、F2c、F3a、F3b、F3c、F3d、F4a-0（controller 插入的前置整理，抽出 M5 GameTest 的共用支援）、F4a（RESOLVE 與 SEALED，含 fix round 1、2）、F4b-1（投影元件，以及 F4a 的 Step 0）、F4b-2（PREPARE 的目的宇宙側，含 fix round 1）、F4b-3（PREPARE 期間的原艙門，含 fix round 1）。F4b 的三個子 task 都已完成。F5 依 plan 拆成 F5-0（抽出原艙門）、F5-1（通道本體）、F5-2（比較器與 membrane 正規化）；F5-0、F5-1、F5-2 都已完成，F5 完成。F6 依 plan 拆成 F6-0（F5-2 的 Step 0、G-NLIVE 的根因與測試缺口）、F6-1（跨 JVM probe 的基礎建設與 W1～W6）、F6-2（W7～W12 與額外的 phase）、F6-3（harness 與 CI）；F6-0 已完成（2026-10-08）。
   - T0：controller 執行的 clean-clone 基線，不改程式。
@@ -157,7 +163,14 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
 
     只改 testmod、`build.gradle` 的 `gameTestM5` 一個 vmArg 與 README，`src/main/` 沒有變更。spec re-review ✅、quality re-review Approved；完整回歸 `run-all-818e5997081f44bb958adb0859b4ec39` 為 `END ALL exit=0`（`c4e4db5`）。Ubuntu 的實際效果要 push 之後才能驗收。
   - **F6-3c-1 已完成（2026-10-16）**：range `30f1a2b..92fe2b5`（code 到 `ed41eac`）。內容是 probe 與 GameTest 的小整理：W12 第二次退避的逐 tick 斷言、重試計數的 helper、T-REJARR 與 T-ENDD 的 witness、fixture 先登記 owned 等。只改 testmod 與 README；spec review ✅、quality review Approved；完整回歸 `run-all-89bbed4fe7ce4b08a15835c1de675572` 為 `END ALL exit=0`（`92fe2b5`）。
-  - 之後依序是 F6-3c-2（拆 `M5UniverseGameTests`）→ F6-3d → F6-3e → push 到 CI 驗收（push 前先問使用者）→ F7 → milestone 收尾。
+  - **F6-3c-2 已實作（2026-10-16），review 尚未進行**：range `48c5e4d..3e97dc9`（code 到 `e151595`）。內容：
+    - `M5UniverseGameTests` 依主題拆成 4 個 class，新增 `M5UniverseSupport` 與 `M5UniverseHold`；
+    - 抽出共用的 fixture；
+    - 新的 default test：退避期內的進入不會提交；
+    - `gates.ps1` 改用 `$M5RunClasses`。
+
+    `src/main/` 沒有變更。完整回歸 `run-all-cbf51c5a8afc4506a4a162a46f876e1c` 為 `END ALL exit=0`（`3e97dc9`），`default=179`。
+  - 之後依序是：F6-3c-2 的 review → F6-3d → F6-3e → push 到 CI 驗收（push 前先問使用者）→ F7 → milestone 收尾 → M6。細節見上方的 Codex 交接檔。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
