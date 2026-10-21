@@ -4,10 +4,10 @@
 
 接手者（Codex）在每一次停下、交回，或換對話之前，都要更新本檔末尾的「交回紀錄」。
 
-## 1. 目前狀態（2026-10-21）
+## 1. 初次交接快照（2026-10-21，44f6cb9；最新狀態見 §7）
 
 - Worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse`，branch `feature/m5-collapse`。
-- HEAD 是本檔所在的 docs commit，它的前一個是 `3e97dc9`（`docs: record F6-3c-2 in the M5 note`）。工作樹乾淨。
+- 初次交接 HEAD 為 `44f6cb9ca54545091e6d8296bee478370c574b6c`，前一個是 `3e97dc9`（`docs: record F6-3c-2 in the M5 note`）。當時工作樹乾淨；不要把這份歷史快照當成後續接手 HEAD，最新方式見 §7。
 - 遠端與 tag：
   - `origin/feature/m5-collapse` 仍是 `30666c4`（2026-10-09 試玩用的 push）。之後的 199 個以上 commit **都還沒 push**。
   - `main` 與 `origin/main` 都是 `a7e1be2`。
@@ -39,7 +39,9 @@
 
 ## 3. 剩下的工作（依序）
 
-### 3.1 F6-3c-2 的 review（下一步）
+### 3.1 F6-3c-2 的 review（已完成；原派工清單保留）
+
+2026-10-21 已完成首輪 review、I-1 的 fix round 1 補證，以及兩份全新獨立複審（Critical／Important 0）。下一步是 §3.2；本節以下保留原始範圍與判定題，結果見 note Review 區塊與 §7。
 
 - 範圍是 `48c5e4d..3e97dc9`，code 到 `e151595`。內容：
   - 把 `M5UniverseGameTests` 拆成 4 個 class，分別有 13／18／11／18 個 test；
@@ -58,7 +60,9 @@
 - 先把 `f63c2/STATUS.md` 的 run-all-2 補進 note。controller 已在本檔的同一個 commit 補記，請核對。
 - review 通過之後，在 note 的 F6-3c-2 一節寫 review 區塊，並更新 plan、AGENTS、ledger。
 
-### 3.2 F6-3d：harness 腳本與 README
+### 3.2 F6-3d：harness 腳本與 README（下一步）
+
+- Step 0：處理 F6-3c-2 spec Minor M-1，note 的 32 個跨類別可見成員中，實際只有 30 個移除 private；161 個成員數正確。
 
 - 範圍：盤點的 #13～#24、#26～#31。#25 只評估，已裁示 probe 不進 CI（X2 選 (a)）。
 - 已有的裁示（ledger 2026-10-16 22:05 一條）：
@@ -94,7 +98,7 @@
 - 先盤點：ledger 的「F7 待辦彙整」，加上 `rg -n "F7" docs/implementation-notes/2026-10-01-m5-collapse-passage.md` 的所有命中，再對照之後各節是否已處理或改派。
 - controller 已知、但還沒寫進「F7 待辦彙整」的事項：
   - 原版 `StrongholdGenerator` 的 static 可變狀態：寫成已知問題，修正延到 M6（spec §20.14）。
-  - Windows 原子移動的 `AccessDeniedException`：根因最可能是外部程序（Defender／索引器）。production 會 fail closed，並依退避重試。是否在 production 加短暫重試要由使用者裁示；controller 的建議是 M5 不改，列為已知限制。
+  - Windows 原子移動的 `AccessDeniedException`：根因最可能是外部程序（Defender／索引器）。production 會 fail closed，並依退避重試。使用者已於 2026-10-21 裁示：M5 維持現況，列為已知限制，不加入 production 短暫重試；外部程序的實際持有者仍未確認。
   - collapse probe 不進 CI，只在本機 run-all 執行。
   - F1a 的 smoke driver 與核對腳本沒有 tracked，記為不可重現（U5）。
   - `src/main/PassageService.java:93` 的註解。
@@ -143,7 +147,7 @@
 ## 4. 等待使用者裁示的事項
 
 - 每一次 push、合併 `main`、打 tag、刪除 worktree。
-- AccessDenied 是否在 production 加短暫重試（`f63a-findings.md` 的 B4）。另有可選的實驗 B3：把 `run/` 排除在 Defender 與索引之外，用來確認根因；這是使用者的機器設定。
+- AccessDenied 的 B4 **已裁示（2026-10-21）**：M5 維持現有 fail-closed 與退避、列已知限制，不加短暫重試。B3 機器設定實驗未授權、未執行；若日後需要才另請使用者決定。
 - M6 的範圍與優先序。
 - 只問真正需要使用者決定的事。其餘依文件與合理預設處理，並在 ledger 與回報中說明。
 
@@ -204,9 +208,25 @@
 - **`m2_task4_disconnect_io` 的 WARN +1**：「session 協調失敗，保留返還保護」。
 - **default run 某個 test 不收尾**：會使 `m2_pin_capacity` 的 entity pin 溢出 → R2 M7 連坐 → gate 逾時並停在「root 有 live owner」。處置見 note 的 H9 一節。
 - **gate 跨過午夜**：latest.log 會被輪替，比較時要合併兩段。
-- **尚未歸屬**：Yggdrasil 公鑰讀取失敗（F6-3c-2 的 `run-all-1r`，Full ERROR +1），交 F6-3c-2 review 判定。
 - **已查明根因**：M5 GameTest 在 PREPARE 預載之後的有界等待逾時，是原版 `TestServer` 不依 20 TPS 節流所致，由 F6-3b 修正。Ubuntu 上的效果要等 CI 驗收。
+
+### 已歸屬但未列為已知偶發
+
+- Yggdrasil 公鑰讀取失敗（F6-3c-2 的 `run-all-1r`，Full ERROR +1）：兩份首輪 review 已讀原 stack，cause 是 `UnknownHostException: api.minecraftservices.com`。歸屬該次外部名稱解析失敗；未證實發生頻率或外部根因，不因下一次未出現就自動視為已知偶發。
 
 ## 7. 交回紀錄（Codex 每次停下或交回時更新）
 
-- （尚無）
+### 2026-10-21：F6-3c-2 review 與 fix round 1 完成
+
+- **HEAD 與 porcelain**：完整回歸及兩份複審釘選 `0ed3e62180d34371bdf6a6aad888defa8b27dcef`（`feature/m5-collapse`），當時及文件同步前 porcelain 都空。這次同步本身是其後的 docs-only commit；接手時以 `git log -1 --format=%H -- docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md` 解析該提交，再核對 `git rev-parse HEAD`／porcelain。採這種寫法，避免提前寫入尚不存在的自身 commit hash；提交後的精確 HEAD／porcelain 另存 SDD 接手指引。相對 `0ed3e62` 不應有 source、build、workflow 或 harness 變更。
+- **實際 Git 狀態（2026-10-21 即時唯讀核對）**：origin feature=`30666c42c35e82c8938f13902d06af97f050e753`；本機 main 與 origin main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`；本機與遠端沒有 `m5` tag。本輪沒有 push、merge、tag 或刪除 worktree。
+- **完成範圍**：原 F6-3c-2 `48c5e4d..3e97dc9` 的兩份 review；fix round 1 補證 `44f6cb9..0ed3e62`（只有 note 11 行，沒有正式 code／test 變更）。controller 再以本 docs-only commit 同步交接狀態。F6-3d／F6-3e／F7／milestone 收尾／M6 都尚未開始。
+- **Review**：首輪 spec ❌ C0/I1/M1、quality Not approved C0/I1/M0，各為獨立 gpt-6-sol context。共同 I-1 是 pending after-pass 守門缺定向 RED／GREEN。補證後，由兩個全新獨立 gpt-6.1-sol context 複審：spec ✅、quality Approved，C0/I0/新增M0；I-1 關閉。reviewer 皆唯讀且沒有跑 Gradle；派工與結果在 SDD `f6/f63c2/codex-*-20261021.md`。
+- **接力**：原補證 implementer 因模型容量限制停止回報，既有 runtime 沒有中斷；新 context 只補既有 artifact 比對與 STATUS，未新跑或終止 runtime。這不是失敗 runtime root，不重跑改判。
+- **最終完整回歸**：`.superpowers/verification/run-all-a8841a60e8b84bea8887c01992e4ca1f`，乾淨 `0ed3e62`，2026-10-21 15:58:09（台灣）`END ALL exit=0`。前一次 `.superpowers/verification/run-all-2fa881c45802414fac0674ddfc37da6f` 在乾淨 `44f6cb9` 也全綠。
+- **SUMMARY**：default179/179 windows89 legacy1/1 m5=60/60 perTest56+1 junit666 failures0 errors0 skipped2 windowsCheckpoint17 release432entries/385classes sources226 testmodHits0 mainOnlyPASS m3=4+5 recovery24 m5collapse69（halt31）ci=win:PASS,ubuntu:PASS。這是本機 CI 規則，不代表 GitHub runner 驗收。
+- **差異歸屬**：案例集合、release SHA、sources226項內容相同（只差 zip metadata）；Full55/31、legacy0/0、M538/10，動態欄位歸屬後無剩餘差異；pin4/9/4、worldgen四類0、具名斷言與steps RESULT=OK。兩輪 w8late 的兩鍵順序交換不改名／真值／steps；catalog digest 隨UUID改變，60筆增量及suite56筆收斂相同。最終M5 tps85.5、HOLD0。完整證據與原始失敗RED保留在 SDD `f6/f63c2/fix1/STATUS.md` 及其指向的roots。
+- **未關閉 finding**：沒有 Critical／Important；原 spec M-1 計數文案交 F6-3d Step 0，不在本補證輪順手修。既有後續事項仍依 §3.2／§3.3／§3.5 排程。
+- **已裁示**：AccessDenied 在 M5 維持既有 fail-closed／退避，列已知限制，不加 production 短暫重試。
+- **仍待使用者裁示**：每一次 push、main fast-forward、建立 tag、刪除 worktree；代操作人工 smoke 的授權；M6 範圍與優先序。現在不需再次詢問 AccessDenied。
+- **下一步**：先以派工檔開始 F6-3d（含 M-1 Step 0）→ F6-3e → 取得單次 push 同意後驗收 GitHub CI → F7 → manual smoke／whole-branch review／milestone 收尾 → m5 合併並打 tag 後才開始 M6。沒有跳過任一門檻。

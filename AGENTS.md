@@ -97,7 +97,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 停點：F6-3c-2 的實作已完成（`48c5e4d..3e97dc9`），spec review 與 quality review 還沒進行（使用者 2026-10-16 的指示）。
+- 目前：F6-3c-2 已完成（2026-10-21，含 `44f6cb9..0ed3e62` 的 fix round 1 補證）。兩個全新獨立 context 複審 spec ✅／quality Approved，Critical／Important 0；下一步 **F6-3d**，其 Step 0 先處理拆分計數文案 Minor。最終完整回歸釘選 `0ed3e62`：`run-all-a8841a60e8b84bea8887c01992e4ca1f`，`END ALL exit=0`。
 - 遠端仍是 `30666c4`，之後的 commit 都沒有 push。`main` 是 `a7e1be2`，tag `m5` 尚未建立。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
@@ -163,14 +163,16 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
 
     只改 testmod、`build.gradle` 的 `gameTestM5` 一個 vmArg 與 README，`src/main/` 沒有變更。spec re-review ✅、quality re-review Approved；完整回歸 `run-all-818e5997081f44bb958adb0859b4ec39` 為 `END ALL exit=0`（`c4e4db5`）。Ubuntu 的實際效果要 push 之後才能驗收。
   - **F6-3c-1 已完成（2026-10-16）**：range `30f1a2b..92fe2b5`（code 到 `ed41eac`）。內容是 probe 與 GameTest 的小整理：W12 第二次退避的逐 tick 斷言、重試計數的 helper、T-REJARR 與 T-ENDD 的 witness、fixture 先登記 owned 等。只改 testmod 與 README；spec review ✅、quality review Approved；完整回歸 `run-all-89bbed4fe7ce4b08a15835c1de675572` 為 `END ALL exit=0`（`92fe2b5`）。
-  - **F6-3c-2 已實作（2026-10-16），review 尚未進行**：range `48c5e4d..3e97dc9`（code 到 `e151595`）。內容：
+  - **F6-3c-2 已完成（2026-10-21，含 fix round 1 補證）**：原始 range `48c5e4d..3e97dc9`（code 到 `e151595`），補證 range `44f6cb9..0ed3e62` 只有 note、沒有正式 code／test 變更。首輪 Important I-1（pending after-pass 守門缺 RED／GREEN）已由定向證據關閉；全新獨立 spec／quality 複審皆 Critical／Important 0。原始內容：
     - `M5UniverseGameTests` 依主題拆成 4 個 class，新增 `M5UniverseSupport` 與 `M5UniverseHold`；
     - 抽出共用的 fixture；
     - 新的 default test：退避期內的進入不會提交；
     - `gates.ps1` 改用 `$M5RunClasses`。
 
     `src/main/` 沒有變更。完整回歸 `run-all-cbf51c5a8afc4506a4a162a46f876e1c` 為 `END ALL exit=0`（`3e97dc9`），`default=179`。
-  - 之後依序是：F6-3c-2 的 review → F6-3d → F6-3e → push 到 CI 驗收（push 前先問使用者）→ F7 → milestone 收尾 → M6。細節見上方的 Codex 交接檔。
+  - 最新 note commit 後完整回歸：`run-all-a8841a60e8b84bea8887c01992e4ca1f`（乾淨 `0ed3e62`），`END ALL exit=0`；default179、M5=60、JUnit666、collapse69。原有 `run-all-cbf51c5a…` 保留為原始實作基準。
+  - 使用者 2026-10-21 裁示：M5 的 AccessDenied 維持現有 fail-closed／退避，列為已知限制；不加 production 短暫重試，不更動 Defender／索引設定。
+  - 之後依序是：F6-3d → F6-3e → push 到 CI 驗收（每次 push 前先問使用者）→ F7 → milestone 收尾 → M6。細節與目前 HEAD 的解析方式見上方的 Codex 交接檔 §7。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

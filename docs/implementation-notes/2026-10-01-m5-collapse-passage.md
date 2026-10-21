@@ -9836,6 +9836,18 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
 - 只改了派工允許的路徑：testmod 的 `M5UniverseGameTests` 與新的 `M5UniverseProjectionGameTests`、`M5UniverseDoorGameTests`、`M5UniversePassageGameTests`、`M5UniverseSupport`、`M5UniverseHold`，`M5GameTestSupport`、`M5CollapseGameTests`，probe 的 `M5CollapseConvergenceChain`、`M5CollapseRestartChains`、`M5CollapseRetryChains`、`M5CollapseDoorChains`（只有兩處註解）、`M5CollapseFixture`（只有一處註解），mixin 的 `M5ConvergenceHoldMixin`，`M4GameTestBoundaryProbe`（見「偏離」第 1 點），testmod `fabric.mod.json` 的 `fabric-gametest` entrypoint，`gates.ps1` 的 M5 run class 規則與註解，`scripts/verification/README.md` 的「新增 M5 GameTest」（:69、:73、:81、:98、:104、:123、:125、:135、:140、:144）與「M5 collapse probe」（:169）兩節，本 note 只加本節。**沒有改** 任何 `src/main/`、`build.gradle`、兩個 mixins.json、`.github/`、其他 ps1（`run-all.ps1`、`ci-rule-check.ps1` 沒有寫死 M5 的 class 前綴：`rg -n "m5universe|M5Universe" scripts/verification/*.ps1` 只命中 `gates.ps1`）、M2／M4 的 GameTest、`M4LegacyGameTestFilterMixin`、JUnit、語言檔、spec、plan、AGENTS。
 - 行號以 HEAD `399335f` 為準（code 與 `e151595` 相同）。簡稱同前面各節：`CC`、`RCH`、`DC`、`RC`、`CGT`、`SUP`；另 `M5U`＝`M5UniverseGameTests`、`UPJ`＝`M5UniverseProjectionGameTests`、`UDR`＝`M5UniverseDoorGameTests`、`UPS`＝`M5UniversePassageGameTests`、`USP`＝`M5UniverseSupport`、`UHD`＝`M5UniverseHold`。
 
+- Review（2026-10-21，Codex 接手；原始實作 `48c5e4d..3e97dc9`，fix round 1 補證 `44f6cb9..0ed3e62`）：
+  - 首輪兩個獨立乾淨 context（gpt-6-sol）：spec ❌（Critical 0／Important 1／Minor 1）、quality Not approved（Critical 0／Important 1／Minor 0）。共同 I-1 是 `4b12569` 的 pending after-pass 守門缺少定向 RED／GREEN，不是已證實的 production 缺陷。
+  - fix round 1 只補定向取證，沒有正式 code／test 變更。原 implementer 遇到模型容量限制後，由另一個 context 續接純取證；既有 runtime 持續完成，不重跑、不把模型容量問題當成 runtime 失敗。
+  - 兩個全新獨立 context（gpt-6.1-sol）複審：**spec ✅、quality Approved，Critical 0／Important 0／新增 Minor 0；I-1 關閉。** 全部 reviewer 都只讀、沒有跑 Gradle；controller 另核對 HEAD、porcelain、原始 XML／log／artifact。
+  - 原 spec M-1 交 **F6-3d Step 0**：本節「拿掉 private（32 個）」應改為「32 個需跨類別可見，其中 30 個移除 private」；161 個成員的敘述正確。本輪不順手更正原文，不另開 fix round。
+  - Controller ruling：`M4GameTestBoundaryProbe` 對 `M5UniverseHold.registerSuiteEnd` 的呼叫與 Javadoc，是 listener 搬入單一 owner 所需的最小 testmod wiring；接受此派工範圍例外，不擴大成 production 變更授權。`bb0bb15` 與 `9b2ed8c` 依原派工分開搬移與 wiring，保留前者單點 M5 gate 失敗的 bisect 成本，不重寫歷史。
+  - `run-all-1r` 的 Yggdrasil ERROR 已由兩份首輪 review 讀原 stack 歸屬：`UnknownHostException: api.minecraftservices.com`，是該次外部名稱解析失敗；頻率與外部根因未證實，不能只因重跑未出現就稱已證實偶發。
+  - 最終 note commit 後完整回歸：`run-all-a8841a60e8b84bea8887c01992e4ca1f`，乾淨 `0ed3e62180d34371bdf6a6aad888defa8b27dcef`，2026-10-21 15:58:09（台灣）`END ALL exit=0`；前一次 `run-all-2fa881c45802414fac0674ddfc37da6f` 也全綠。SUMMARY 均為 default179/179、windows89、legacy1/1、M5=60/60、perTest56+1、JUnit666（failures0/errors0/skipped2）、windowsCheckpoint17、release432entries/385classes、sources226、testmodHits0、mainOnlyPASS、M3 4+5、recovery24、collapse69（halt31）、本機 CI 規則 win/ubuntu PASS。
+  - 案例／JUnit 集合與 release SHA 相同；sources226項內容相同，只差 zip metadata。Full55/31、legacy0/0、M538/10；原始動態欄位差異保留，限定欄位正規化後無剩餘差異。pin4/9/4、worldgen四類0；69 phase 名稱／真值／steps `RESULT=OK`。兩次都只有 `w8late-restart` 的 `sameDestination`／`participantInSourceOrUniverse` JSON 鍵順序交換；catalog digest 隨 UUID 改變，60筆增量與 suite56筆收斂一致。最終 M5 tps85.5、HOLD0。
+  - 詳細證據與完整 root 在 `f63c2/fix1/STATUS.md`、`finish-*` 與 `finish-file-manifest.json`；派工／首輪／複審結果在 `f63c2/codex-*-20261021.md`。**F6-3c-2 完成；下一步 F6-3d。** 尚未進行本輪 GitHub CI 驗收或 required manual smoke，未 push／merge／tag。
+  - 使用者裁示（2026-10-21）：AccessDenied 在 M5 維持既有 fail-closed 與退避，列為已知限制，不加入 production 短暫重試；由 F7 同步說明。
+
 ### 逐項處置
 
 | 點 | 處置與位置 | 判斷 | 證據 |
@@ -9976,8 +9988,8 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
     - Full WARN 54 → 55：唯一多出的一則在 `m5_collapse_dormant_backoff_edge`，是 D 預期的受控提交失敗。
   - run-all-1r 那一則 Yggdrasil ERROR 這次沒有出現。
   - 其餘相同：release SHA；sources 的 `contentDiffers=0`；legacy 0／0；M5 38／10；M5 run 沒有 `M5_UNIVERSE_HOLD`，`tps=88.0`；collapse run `90498c8a…` 對 F6-3c-1 green-2 是 `RESULT=OK`。
-- **review 尚未進行**。使用者 2026-10-16 指示「F6-3c-2 implementer這個代理跑完就先停」，所以 spec review 與 quality review 都還沒派。
-- 2026-10-21 起，M5 收尾到 M6 交接給 Codex。接手入口是 `docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`，第一步就是本節的 review，重點列在該檔的 §3.1。
+- **當時狀態（44f6cb9）**：依使用者 2026-10-16 指示，當時尚未派 review；2026-10-21 已完成首輪 review、fix round 1 與兩份獨立複審，最新結論見本節開頭 Review 區塊。
+- 2026-10-21 起，M5 收尾到 M6 交接給 Codex。接手入口是 `docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`，接手當時的第一步是本節的 review，重點列在該檔的 §3.1。
 
 ### F6-3c-2 fix round 1：pending after-pass 的 RED／GREEN 補證
 
@@ -9988,4 +10000,4 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
 - adapter 的原始、fixture、RED blob：`M5UniverseHold.java` 為 `e55f197222647d21a0bf57a7572998754e4d4fba` → `548788d63be03e0e6f63cd2d3255f7fd20ae9428` → `aeb7364a3aa3437cd26c1176bb569f00ab3e27f3`；`M5UniversePassageGameTests.java` 為 `1f9711c68814faa82069a0c78ee4a8a1e63e6d0a` → fixture `9908160067199a90c30d4168e0113c77e6dcd10e`。RED restore 回到 fixture blob；fixture restore 後兩檔以 `git hash-object` 及與 adapter 備份逐 byte SHA-256 比對一致，porcelain 空（`fix1/restore-bytes.txt`）。短期 adapter 位於 gitignored 的 `f6/f63c2/fix1/`，`adapter.py` SHA-256 `5B034BD8D26CE76418A98FDD9A85898A93A18D837FFBEBE7F1254A86BA18D620`、`adapters_fix1.py` SHA-256 `2ACDA0F06039FFE7B712C7FCF5EDCCF8E75B36316B84EF4F7DA3A1F910C8233F`；它只作本次定向證據，沒有新增長期 gate。
 - 還原後在同一乾淨 HEAD 另跑正常 M5 gate 兩次：`gate-f63c2fix1-clean-20261021-a-1bd855413b264f36be6f10c145759239`、`gate-f63c2fix1-clean-20261021-b-60bb72fc5f874d52b79f4394c9de6b31`，均 exit=0、60/60、`M5_UNIVERSE_HOLD=0`。這些是完整正常 suite 回歸，與上面的受控 GREEN 分開。
 - 無 code commit，故先在乾淨的 `44f6cb9` 跑完整 `scripts/verification/run-all.ps1`：`run-all-2fa881c45802414fac0674ddfc37da6f`，`END ALL exit=0 HEAD=44f6cb9`。SUMMARY：default 179/179、windows 89、legacy 1/1、M5 60/60、perTest 56+1、JUnit 666（664 PASS、2 SKIPPED，failures/errors 0）、windowsCheckpoint 17、release 432 entries／385 classes、sources 226、testmodHits 0、mainOnly PASS、M3 4+5、recovery 24、M5 collapse 69、CI 規則 Windows／Ubuntu PASS。對前一次基準 `run-all-cbf51c5a8afc4506a4a162a46f876e1c`，上述數值、default／legacy／M5 testcase 與 JUnit 集合都相同；release SHA `c20bc00f...` 相同。sources SHA 不同，但 226 個項目的內容 `contentDiffers=0`、順序與 comment 相同，差異僅 zip `date_time`／`extra`。Full WARN／ERROR 55／31、legacy 0／0、M5 38／10；Full sorted diff 空，M5 原始 diff 是物件 hash、座標等動態欄位，限欄位正規化後無剩餘差異，不稱原始日誌逐字相同。pin 計數同為 4／9／4；worldgen 四類例外均 0；collapse probe `62953c067cdd4119928fa398d3dadf42` 對基準 `90498c8aabd44ed98a8b83ff481d968e` 的具名斷言與 step 比對 `RESULT=OK`。逐項輸出在 `fix1/runall1-*`。
-- 本節的文件 commit 之後另跑第二次完整 run-all；其 root、結果與比較保存在 `fix1/STATUS.md`。本輪證據待全新乾淨 context 的 spec／quality re-review，不在 implementer context 自評通過。沒有 push、merge、tag 或刪除 worktree。
+- 本節的文件 commit 之後另跑第二次完整 run-all；其 root、結果與比較保存在 `fix1/STATUS.md`。本節寫成時，證據仍待全新乾淨 context 的 spec／quality re-review；其後兩份獨立複審已通過、I-1 關閉，見本節開頭 Review 區塊，並非 implementer 自評。沒有 push、merge、tag 或刪除 worktree。
