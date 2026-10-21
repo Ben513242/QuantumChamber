@@ -1004,8 +1004,8 @@ public final class M5TestHooks {
     /**
      * 跨 JVM 的 crash 點（F6-1；{@link #CRASH_POINT}）：{@code window} 的 hook 每呼叫一次記一筆 {@link #reached}；{@code matches} 為真時記一筆 {@link #hits}，以
      * （detail、第幾次 hit）呼叫 {@code action}。M5 collapse probe 的動作由 {@code M5CollapseRun.armCrash} 安裝（F6-2a 拆檔起不在 entrypoint）。
-     * <p>{@code WINDOW} 在 hook 裡立即取證、寫 halt receipt，再以 {@code Runtime.halt} 結束 JVM，成功 halt 時不會回來；{@code TICK_END} 的動作只記下窗口與 detail，
-     * 會回到 production 繼續執行，直到同一個 tick 的 {@code END_SERVER_TICK}（runner 的 AFTER phase，晚於 production）才取證、寫 receipt、halt。
+     * <p>{@code WINDOW} 在 hook 裡立即取證、寫 halt receipt，再以 {@code Runtime.halt} 結束 JVM，成功 halt 時不會回來；{@code TICK_END} 先在 hook 收集 {@code atWindow}、記下窗口與 detail，
+     * 會回到 production 繼續執行，直到同一個 tick 的 {@code END_SERVER_TICK}（runner 的 AFTER phase，晚於 production）才收集 {@code atHalt}、寫 receipt、halt。
      * 兩種時點的乾淨 halt 都是 77；第 2 次以後的 hit、crash 點記下過失敗、receipt 的 failures 不是空的，或停服已開始時是 {@code HALT_REFUSED}、78（F6-2a、F6-2c Step 0）。
      * 取證丟出時不 halt：hook 裡的例外記在 {@link #failure}，phase 之後 FAIL；TICK_END 的取證由 runner 收下並讓 phase FAIL。
      * 條件或動作丟出的例外都記在 {@link #failure}、記 ERROR，不往 production 丟。
