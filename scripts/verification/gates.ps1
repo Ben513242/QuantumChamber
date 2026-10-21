@@ -125,9 +125,14 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     $known=@{};$baseline=@(Java-Processes);$baselineIds=@($baseline | ForEach-Object {$_.ProcessId})
     $outFile=[IO.StreamWriter]::new((Join-Path $evidence 'stdout.log'),$false,[Text.UTF8Encoding]::new($false))
     $errFile=[IO.StreamWriter]::new((Join-Path $evidence 'stderr.log'),$false,[Text.UTF8Encoding]::new($false))
-    [void]$process.Start();$start=[DateTimeOffset]::Now;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0
-    $stdout=$process.StandardOutput.ReadLineAsync();$stderr=$process.StandardError.ReadLineAsync();$outEnd=$false;$errEnd=$false
+    $logBefore=@(Get-GateLogSnapshot (Join-Path $runtimeRoot 'logs'))
+    $xmlBefore=@(Get-GateXmlSnapshot (Join-Path $repo 'build'))
+    Save-Json (Join-Path $evidence 'logs-before.json') $logBefore
+    Save-Json (Join-Path $evidence 'xml-before.json') $xmlBefore
+    $start=[DateTimeOffset]::Now;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0;$failure=$null;$exit=$null;$launcherPid=$null
     try {
+        [void]$process.Start();$launcherPid=$process.Id
+        $stdout=$process.StandardOutput.ReadLineAsync();$stderr=$process.StandardError.ReadLineAsync();$outEnd=$false;$errEnd=$false
         while(-not $process.HasExited -or -not $outEnd -or -not $errEnd) {
             while(-not $outEnd -and $stdout.IsCompleted) {
                 $line=$stdout.GetAwaiter().GetResult()
@@ -173,12 +178,25 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
             Start-Sleep -Milliseconds 100
         }
         $process.WaitForExit()
-    } finally {$outFile.Dispose();$errFile.Dispose()}
-    $exit=$process.ExitCode
-    Save-Json (Join-Path $evidence 'execution.json') ([ordered]@{exitCode=$exit;start=$start.ToString('o');end=[DateTimeOffset]::Now.ToString('o');command=$info.Arguments;launcherPid=$process.Id;doneSeen=($null-ne $done);stdinStop=$stopSent;nativeSaves=$debugCount;status=$(if($exit-eq 0){'EXIT_ZERO'}else{'FAIL'})})
-    Save-Json (Join-Path $evidence 'after.json') (Root-State $runtimeRoot)
-    Save-Json (Join-Path $evidence 'locks-after.json') @(Lock-State $runtimeRoot)
-    if(Test-Path -LiteralPath (Join-Path $runtimeRoot 'logs')){Copy-Item -LiteralPath (Join-Path $runtimeRoot 'logs') -Destination (Join-Path $evidence 'runtime-logs') -Recurse}
+        $exit=$process.ExitCode
+    } catch {$failure=$_;throw}
+    finally {
+        $outFile.Dispose();$errFile.Dispose()
+        $identity=[ordered]@{exitCode=$exit;start=$start.ToUniversalTime().ToString('o');end=[DateTimeOffset]::UtcNow.ToString('o');command=$info.Arguments;launcherPid=$launcherPid;processes=@($known.Values);runtimeRoot=$runtimeRoot;doneSeen=($null-ne $done);stdinStop=$stopSent;nativeSaves=$debugCount;status=$(if($null -eq $failure -and $exit -eq 0){'EXIT_ZERO'}else{'FAIL'});error=$(if($failure){$failure.Exception.Message}else{$null})}
+        $captureErrors=@()
+        foreach($capture in @(
+            {Save-Json (Join-Path $evidence 'execution.json') $identity},
+            {Save-Json (Join-Path $evidence 'after.json') (Root-State $runtimeRoot)},
+            {Save-Json (Join-Path $evidence 'locks-after.json') @(Lock-State $runtimeRoot)},
+            {if(Test-Path -LiteralPath (Join-Path $runtimeRoot 'logs')){Copy-Item -LiteralPath (Join-Path $runtimeRoot 'logs') -Destination (Join-Path $evidence 'runtime-logs') -Recurse}},
+            {Save-GateRuntimeLog -Evidence $evidence -Before $logBefore -Identity $identity;Read-GateRuntimeLog -Evidence $evidence | Out-Null},
+            {if($failure -or $exit -ne 0){Save-GateFailureArtifacts -Evidence $evidence -BuildRoot (Join-Path $repo 'build') -Before $xmlBefore -Identity $identity}}
+        )){try{& $capture}catch{$captureErrors+=$_.Exception.Message}}
+        if($captureErrors.Count){
+            try{Save-Json (Join-Path $evidence 'capture-errors.json') ([ordered]@{originalError=$identity.error;errors=$captureErrors})}catch{Write-Warning "取證診斷寫入失敗：$($_.Exception.Message)"}
+            if(-not $failure){throw ("gate 取證失敗："+($captureErrors -join '; '))}
+        }
+    }
     # 只複製本次觀察到的 JVM（$known）產出的 classload／boundary；runDir 累積的舊檔不進 gate root（整合審查 R1）。
     foreach($file in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter 'classload-*.log' -File -ErrorAction SilentlyContinue)){if($file.Name -match '^classload-(\d+)\.log$' -and $known.ContainsKey($Matches[1])){Copy-Item -LiteralPath $file.FullName -Destination $evidence}}
     $boundaries=@(Get-GateBoundaryReceipt -Root $runtimeRoot -Processes @($known.Values))

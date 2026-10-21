@@ -12,6 +12,7 @@
 #   -Gradle        傳給 gates.ps1／m4-recovery-probe.ps1／m5-collapse-probe.ps1（空字串＝各自預設）
 param([string]$EvidenceRoot='',[string]$Gradle='')
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'gate-evidence.ps1')
 # 不設定 onlyBatches（先移除 JAVA_TOOL_OPTIONS），default／legacy 皆為完整 suite。
 Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -67,7 +68,7 @@ function Receipts([string]$gate,$server,[string[]]$expected) {
     $befores=@(Get-ChildItem -LiteralPath $dirs[0].FullName -File -Filter '*.before.json')
     $names=@($finals | ForEach-Object {$_.BaseName} | Sort-Object)
     if(($names -join ',') -cne (($expected | Sort-Object) -join ',') -or $befores.Count -ne $expected.Count){throw "receipt 名稱集合不符：$gate"}
-    $stdout=Get-Content -LiteralPath (Join-Path $gate 'execution/stdout.log') -Raw
+    $stdout=Read-GateRuntimeLog -Evidence (Join-Path $gate 'execution')
     foreach($file in $finals | Sort-Object Name) {
         $r=Read-Json $file.FullName
         $b=Read-Json (Join-Path $dirs[0].FullName ($file.BaseName+'.before.json'))
@@ -114,6 +115,7 @@ Step 'summary' {
     foreach($swap in @([pscustomobject]@{root=$full;tag='world'},[pscustomobject]@{root=$legacy;tag='world'},[pscustomobject]@{root=$m5;tag='world'},[pscustomobject]@{root=$main;tag='server'})) {
         $r=Read-Json (Join-Path $swap.root "$($swap.tag)-restore.json"); if(-not $r.exactRestored -or $r.deleted){throw "restore 不符：$($swap.root)"}
     }
+    foreach($runtimeGate in @($full,$legacy,$m5,$main)){Read-GateRuntimeLog -Evidence (Join-Path $runtimeGate 'execution') | Out-Null}
     $fullExec=Read-Json (Join-Path $full 'execution/execution.json'); $legacyExec=Read-Json (Join-Path $legacy 'execution/execution.json'); $m5Exec=Read-Json (Join-Path $m5 'execution/execution.json')
     if($fullExec.exitCode -ne 0 -or $legacyExec.exitCode -ne 0 -or $m5Exec.exitCode -ne 0){throw 'gate exit 非0'}
     if($fullExec.command -notmatch '"clean" "test" "runGameTest" "build" "--rerun-tasks"' -or $legacyExec.command -notmatch '"runGameTestLegacy" "--rerun-tasks"' -or $m5Exec.command -notmatch '"runGameTestM5" "--rerun-tasks"'){throw 'gate 指令不符'}
