@@ -10074,3 +10074,51 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - 控制層改為固定 canonical worktree＋AGENTS.md／build.gradle markers、native 非零立即停止、try/finally bytes／blob 還原；真實 native exit37 的無 runtime 負向檢查證明 launch 分支不執行。guard-green-2 的 control hold 在建立 label／runtime 前停止；read-remaining 的 stdout cp950 列印失敗亦未啟 runtime。後續 Python 以 -X utf8／UTF8 subprocess 統一處理。
 - 補正文案前的兩次正常 focused（cf50221c0c67497aafd54cdb9d9d0f2d、f1d5a87e46254a3e961d9b02da09b28f）均有效且保留原 pin；最終兩次採用補正後 HEAD 的新 labels，不用舊 pin 冒充。
 - 所有原始失敗 root／receipt 保留；所有 adapter 有原 bytes、patch、HEAD／porcelain／blob 與 SHA-256 還原核對。沒有 push、merge、tag、PR、LICENSE 或刪除 worktree。
+
+## F6-3d-2：共用 owned-phase 與診斷
+
+- 範圍：盤點 #15～21；基準 `498d5e44476e4d2827dcf24d3d837c0a1c758a72`，code／README HEAD `640620852a7cc8fd0c073d2fd562a986f58732f6`，分支 `feature/m5-collapse`。只改兩個 probe wrapper、新增共用模組與 README；本節是其後的獨立 note commit。沒有改 production、testmod／測試 Java、build／Gradle、正式 init、gates／run-all、CI 或 spec／plan。
+- Commits：`b72e740`（純共用抽取與接線）、`2a3fac3`（M4 採 handle／timeout）、`8d34cee`（獨立身分、編碼與診斷）、`6406208`（W7 註解與 README）。M4 行為改變沒有混稱純搬移。
+- 行號：`scripts/verification/probe-common.ps1`：Resolve-Evidence :3、New-OwnedRoot :17、Get-OwnedIdentity :65、Get-PhaseFailureNote :81、Copy-OwnedLogs :98、Stop-TimedOutPhase :112、Invoke-OwnedPhase :170；M4 wrapper :34／:53；M5 wrapper :114／:140／:162、W7 :53；README :195–200。
+- 證據入口：SDD `f6/f63d2/STATUS.md`。本節提交時第一輪完整回歸已完成；第二輪在本節 commit 後執行，最終 root／END／SHA manifest 與獨立 review 由後續 STATUS／controller 記錄，不提前宣稱通過。
+
+### 實作與邊界
+
+- #15：沿用小型 dot-sourced PowerShell 模組，以具名 Context／State 傳遞 repo、probe 路徑、程序 handle 與 nonce；模組載入本身只定義函式。M4／M5 各自保留 phase 表、receipt、世界與 session.lock oracle。canonical evidence／gitignore／非 reparse／唯一新 root 的原有防線保留。
+- M4 總上限維持 8 分鐘，新增 idle 預設 90 秒，與 M5 一致；以持有的 handle 判斷退出，避免已退出但仍可列舉的程序物件被誤判為 live owner。其餘必要 receipt 與鎖守門不放寬。
+- X4：正常 `launcher.json` 新增 `auxiliaryLogs`，classload／latest 各記 source、present、copied；缺少輔助 log 只記錄，不額外 FAIL。兩個 caller 的實際 writer 均有落盤讀回 RED／GREEN。
+- #16：舊 F6-2a 的 sameStart 比較同一個已保存物件，不是獨立核對；舊 root 實際依 handle／HasExited 與 nonce commandline 提供身分證據。本輪新增最新 CIM CreationDate（小於 1 ms 精度容差），jstack 後再核一次才透過原 handle 終止；不回寫舊 root 為已有較強證據。
+- #17：launcher 明確設定自己的 console/output encoding；`-GradleCodePage` 預設目前文化的 OEM code page（此環境 950），stdout／stderr 依此讀取，latest.log 依 UTF-8（BOM 優先）。`logEncodings`／timeout `encodings` 明列來源。未改機器地區、Defender 或索引設定。
+- #18：Stop-TimedOutPhase 改收具名 Context／State。JavaId 尚未取得時在 timeout 再查 nonce；當下確認沒有該 JVM、且 launcher 的最新身分符合，才結束本次 launcher handle。身分不符／讀取失敗就保留程序與診斷，不猜 PID、不掃殺子程序或 daemon；下一次執行前仍需核 owner。
+- #19：halt window 改大小寫精確比對，錯誤帶 receipt note。#20：W7 註解區分 production 跨越後存 playerdata 與 probe 的 TICK_END／atHalt 取證；probe 不額外存檔。
+- #21：entrypoint 錯誤附 latest.log 的 Could not execute entrypoint 段及 Caused by（前 80 行，另保留該段後續 cause 行），原 exit／receipt 判定保留；log 只讀為資料。
+- timeout 原欄位保留，新增 identityCheck、identityBeforeKill、discoveryError、launcherPid、launcherIdentity、launcherKilled、encodings；正常 launcher 只新增 auxiliaryLogs／logEncodings。Java receipt schema 與原 launcher 欄位語意不變。
+
+### RED／GREEN 與正常 focused
+
+| 目標 | 本輪證據（相對 f6/f63d2） | 判定 |
+| --- | --- | --- |
+| M4 retained exited handle／total timeout | `b-red`、`b-green` | 正式 guard／wrapper 的純 fixture，舊行為拒絕 handle／缺診斷，新行為通過 |
+| M4 idle，未達 total | `m4-idle-red`、`m4-idle-green` | 只替換程序取得邊界為具名 fixture handle；idle=0 縮時、total=8 分鐘，GREEN reason=idle、僅 owned handle 被處置 |
+| fresh StartTime、cp950 bytes、window case／note、entrypoint、X4 helper | `c-red`、`c-green` | 七項目標 RED→GREEN；時間不符不得終止，cp950 原始 bytes 經正式 timeout 路徑精確讀回中文 |
+| JVM 前逾時 launcher | `prejava-red`、`prejava-green` | 共用 launcher 啟動受控 helper，舊版未終止、新版終止正確 handle；無關 sentinel 存活；phase 仍為預期 timeout FAIL |
+| entrypoint 最終錯誤 | `final-error-fixture` | 實際舊／新 halt 錯誤分支，最終 exception 必須包含 entrypoint 與受控 cause |
+| X4 真正落盤 | `x4-writer-fixture` | 兩個 caller 的原／新 writer 寫 launcher.json 後讀回；缺 log 的 present=false 必須存在於檔案 |
+
+- 純記憶體 adapter 不修改 tracked source；沒有 production／Java 暫改與檔案 restore。`fixture-provenance.json` 區分當場採集與依執行順序判定的來源，未補寫成當時已有 before snapshot。X4 補證另保存當場 commit/blob 與 before/after 工作樹雜湊。
+- 每個 code／註解 commit 前都有三份 parser 無 error、正式 M4 low 與 M5 w2 的正常 focused；Gradle compile tasks 與 launcher 原始 log 在 `a-precommit`～`d-precommit`（Java 未變，編譯 task 多為 UP-TO-DATE，不宣稱每次重新 javac）。
+- 全部 code／README 後，在同一乾淨 `640620852a7cc8fd0c073d2fd562a986f58732f6` 連跑兩次，每次同一 PowerShell host 依序 dot-source M4、M5：
+- `focused1`：M4 `710b407eb87c4a65bfdf5e6087e33fed`（4 phases）、M5 `976569f8c15249e397a96674d95b5e72`（w2＋unload，4 phases）。
+- `focused2`：M4 `9563ba71a3e049f38d43c5669128ead6`（4 phases）、M5 `9c5e8959a6224fe88378a33e4313e3bd`（w2＋unload，4 phases）。
+- `final-focused-compare.json`：16 phases 的 schema／具名欄位／steps RESULT=OK；`focused-chain-relations.json` 核同 root／nonce、4 個獨立 JVM/startupNonce、manifest 的 session/chamber 身分、四 phase entropy bytes、recover→verify journal 不變。原始差異在 `focused-m4-raw-differences.json`，沒有全域抹除任意 UUID。
+- `actual-normal-log-encoding.json` 另取正常 probe 的 stdout 原始 cp950 bytes，與 UTF-8 latest.log 的精確中文訊息逐字相同。
+
+### 第一輪完整回歸與差異歸屬
+
+- Root：`C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m5-collapse\.superpowers\sdd\2026-10-01-m5-collapse-passage\f6\f63d2\runall1\run-all-a4b41a90abbe406394a02ad54fbdd8e0`；`END ALL exit=0 HEAD=640620852a7cc8fd0c073d2fd562a986f58732f6`。runtime 與比較控制層分開記錄，原始 root 不覆寫。
+- SUMMARY：default179/179、windows89、legacy1/1、M5=60/60、perTest56+1、JUnit666（failures0/errors0/skipped2）、windowsCheckpoint17、release432 entries/385 classes、sources226、testmodHits0、mainOnly PASS、M3 4+5、recovery24、collapse69（halt31）、本機 CI 規則 Windows／Ubuntu PASS。
+- 與乾淨 d-1 `c526b295` 的 `run-all-833243ca0c104b8fb6b887dd96445a7a` 比較：帶 class 的 testcase／JUnit 集合、M4 24／M5 69 phase schema／具名斷言／steps相同；release SHA `c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08` 相同。sources226項內容／順序相同，ZIP DOS時間與 NTFS extra 0x000a 的三個 FILETIME 不同，完整欄位與原始 bytes 另存並逐項解碼歸屬。
+- Full WARN/ERROR=55/31、legacy=0/0、M5=38/10；原始含時間的 sorted diff 與限定欄位歸屬都保留，剩餘差異 0。pin逐batch4/9/4、worldgen四類0。UUID、nonce/PID、catalog digest、M4 save-level entropy／journal hash 與 observed 鍵列舉順序各自保留原值，不冒稱 raw bytes 全同。
+- `probe-common.ps1` 是預期新增 HARNESS pin；wrapper／README 是預期變更。第二輪須與第一輪全部 source/harness SHA 相同，只允許 note HEAD 差異。
+- 沒有失敗的正常 probe／完整回歸 root；預期 RED／timeout roots 全保留。初始 generator 缺換行（parser、未啟 runtime）、halt 77 在 stderr 的比較假設、M4 select 動態欄位分類、sources NTFS 時間戳記分類，都保留控制層原始紀錄，不拿它們當目標 RED，也沒有為此重跑成功 runtime。
+- 本節不宣稱獨立 review 通過；由 controller 另派全新 spec／quality context。未執行 GitHub CI 或人工 smoke，未 push／merge／tag／刪 worktree；F6-3d-3／F6-3e／F7／milestone 收尾仍依既定 routing。
