@@ -1246,7 +1246,7 @@ final class M5CollapseWindows {
             run.expect("unrecognizedWhenLoaded", atLoad.instanceKind() == ChamberInstanceKind.ORIGIN && !atLoad.powerInitialized() && atLoad.loadSyncPending(),
                     () -> "載入時的 Controller：" + atLoad);
         }
-        run.proof.put("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
+        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
         return load;
     }
 

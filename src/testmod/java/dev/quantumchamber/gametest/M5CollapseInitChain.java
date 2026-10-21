@@ -111,7 +111,7 @@ final class M5CollapseInitChain {
         UniverseDiscoveryState.fromNbt(discoveryNbt(M4_DISCOVERY)).save(root);
         run.expect("m4DiscoveryWritten", () -> UniverseDiscoveryState.load(root).records().equals(List.of(M4_DISCOVERY)),
                 () -> "discovery 讀回不是 M4 的那一筆");
-        run.proof.put(M4_DISCOVERY_SHA256, M5CollapseDiskEvidence.sha256(run.data().resolve(UniverseDiscoveryState.FILE_NAME)));
+        run.recordProof(M4_DISCOVERY_SHA256, M5CollapseDiskEvidence.sha256(run.data().resolve(UniverseDiscoveryState.FILE_NAME)));
         return true;
     }
 
@@ -184,8 +184,8 @@ final class M5CollapseInitChain {
         run.expect("m4DiscoveryBeforeStart", () -> M5CollapseDiskEvidence.discovery(data.getParent()).equals(List.of(M4_DISCOVERY))
                         && discoverySha256.equals(M5CollapseRun.text(setup, M4_DISCOVERY_SHA256)),
                 () -> "開服之前的 discovery 不是 setup 寫入的那一筆");
-        run.proof.put(M4_SAVE_BEFORE_START, M5CollapseDiskEvidence.summary(data.getParent(), receipt.sessionUuid()));
-        run.proof.put(DISCOVERY_SHA256_BEFORE_START, discoverySha256);
+        run.recordProof(M4_SAVE_BEFORE_START, M5CollapseDiskEvidence.summary(data.getParent(), receipt.sessionUuid()));
+        run.recordProof(DISCOVERY_SHA256_BEFORE_START, discoverySha256);
         M5CollapseWindows.arm(run, fixture, CrashWindow.FIRST_LEDGER_CREATED);
     }
 
@@ -210,7 +210,7 @@ final class M5CollapseInitChain {
         run.expect("secondLedgerAbsentAtHalt", !Files.exists(data.resolve(ProjectionLedger.FILE_NAME)), () -> "halt 時 projection ledger 已存在");
         M5CollapseDiskEvidence.expectJournalOnDisk(run, data, "schemaThreeJournalAtHalt", 3, Map.of(fixture.sid(), fixture.receipt()));
         var discovery = M5CollapseDiskEvidence.sha256(data.resolve(UniverseDiscoveryState.FILE_NAME));
-        run.expect("discoveryUntouchedAtHalt", discovery.equals(run.proof.get(DISCOVERY_SHA256_BEFORE_START)), () -> "halt 時的 discovery 與開服之前不同");
+        run.expect("discoveryUntouchedAtHalt", discovery.equals(run.proofText(DISCOVERY_SHA256_BEFORE_START)), () -> "halt 時的 discovery 與開服之前不同");
         evidence.put(ALLOCATION_SHA256, M5CollapseDiskEvidence.sha256(allocation));
         evidence.put(ALLOCATION_MODIFIED, Files.getLastModifiedTime(allocation).toString());
         evidence.put(JOURNAL_SHA256, M5CollapseDiskEvidence.sha256(data.resolve(M5CollapseDiskEvidence.JOURNAL)));
@@ -363,7 +363,7 @@ final class M5CollapseInitChain {
         run.expect("nothingAllocatedAtStart", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty()
                         && !UniverseRegistryState.get(run.server()).flushedRecords().containsKey(fixture.universe()) && fixture.universeWorld().isEmpty(),
                 () -> "allocation=" + fixture.allocationsOrError() + " catalog=" + UniverseRegistryState.get(run.server()).flushedRecords().keySet());
-        run.proof.put("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
+        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
     }
 
     /** 每個 tick：journal 正式檔與開服時不同（寫過）時，SchemaVersion 必須是 4（spec §12：初始化成功之後的第一次 checked 寫入升為 schema 4）。 */

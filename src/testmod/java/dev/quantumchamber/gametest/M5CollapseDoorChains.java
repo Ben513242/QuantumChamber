@@ -176,8 +176,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
                 () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued);
         run.expect("notWrittenWhenObserved", sealed, () -> "排入的那個 tick 原艙門已不是 " + door + "：" + doorCenter(run));
         waiting.normalizeTick = queued.getFirst().tick();
-        run.proof.put("normalizeQueuedAtServerTick", run.server().getTicks());
-        run.proof.put("normalizeTick", waiting.normalizeTick);
+        run.recordProof("normalizeQueuedAtServerTick", run.server().getTicks());
+        run.recordProof("normalizeTick", waiting.normalizeTick);
     }
 
     /**
@@ -191,7 +191,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var applied = reapplied(run, fixture.sid());
         run.expect("appliedOnTheQueuedTick", plain && now == normalizeTick && applied.size() == 1 && applied.getFirst().contains("（" + OriginDoorsTestAccess.NORMALIZE + "：APPLIED，tick " + normalizeTick + "）"),
                 () -> "原艙門在 tick " + now + "（排入的是 tick " + normalizeTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied);
-        run.proof.put("normalizedAtServerTick", now);
+        run.recordProof("normalizedAtServerTick", now);
     }
 
     /** step {@code waitingWithThePlainDoor} 的每個 tick（{@code tick} 由 1 起）。 */
@@ -215,7 +215,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     private boolean joinThenStepOutside() {
         fixture.joinAllInTheSourceWorld(Inside.INSIDE);
         fixture.moveOutside();
-        run.proof.put("joinedAtPhaseTick", run.ticks());
+        run.recordProof("joinedAtPhaseTick", run.ticks());
         return true;
     }
 
@@ -266,8 +266,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.expect("bothInsideBeforeTheFirstTick", run.ticks() == 0 && participant && outsider && !fixture.participants().contains(visitor.getUuid())
                         && visitor.getServerWorld() == run.source() && M5CollapseDoors.is(run, door),
                 () -> "tick=" + run.ticks() + " 參與者在艙內=" + participant + " 非參與者在 " + visitor.getPos() + " 門正中=" + doorCenter(run));
-        run.proof.put("joinedAt", joinedAt.toString());
-        run.proof.put("visitor", visitor.getUuid().toString());
+        run.recordProof("joinedAt", joinedAt.toString());
+        run.recordProof("visitor", visitor.getUuid().toString());
     }
 
     /**
@@ -296,11 +296,11 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         int preparedAt = run.server().getTicks(), normalizeAt = queuedInfo.getFirst().tick();
         run.expect("preparedBeforeTheQueuedNormalize", preparedAt <= normalizeAt,
                 () -> "進入 PREPARE 的 server tick " + preparedAt + " 晚於 NORMALIZE 排入時記下的 tick " + normalizeAt);
-        run.proof.put("preparedAtServerTick", preparedAt);
-        run.proof.put("normalizeTick", normalizeAt);
+        run.recordProof("preparedAtServerTick", preparedAt);
+        run.recordProof("normalizeTick", normalizeAt);
         passage.expectResolved();
-        run.proof.put("plainDoorInfo", kept.getFirst());
-        run.proof.put("preparedAtPhaseTick", run.ticks());
+        run.recordProof("plainDoorInfo", kept.getFirst());
+        run.recordProof("preparedAtPhaseTick", run.ticks());
     }
 
     /**
@@ -313,7 +313,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         int prepared = run.capture().matching(Level.INFO, "準備完成（預載與投影都已完成）", fixture.sid().toString()).size();
         run.expect("readyHeldWithTheVisitorInside", held && prepared == 1,
                 () -> "第 " + tick + " 個 tick：PASSAGE_READY 的提交被暫緩=" + held + " 「準備完成」=" + prepared);
-        run.proof.put("readyHeldAtPhaseTick", run.ticks());
+        run.recordProof("readyHeldAtPhaseTick", run.ticks());
     }
 
     /**
@@ -333,7 +333,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** {@code visitorStillInside} 觀察完之後：非參與者移到艙外（門外，不在門口那 25 格）。 */
     private void visitorLeaves() {
         M5GameTestSupport.moveOutside(prepare.visitor, FRAME);
-        run.proof.put("visitorLeftAtServerTick", run.server().getTicks());
+        run.recordProof("visitorLeftAtServerTick", run.server().getTicks());
     }
 
     /** step {@code resealed}（只有 1 個 tick：非參與者離開之後的下一個 tick）：原艙門是 sealed 量子膜；之後釋放 PASSAGE_READY 的提交暫緩。 */
@@ -346,7 +346,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
                 () -> "非參與者離開之後第 " + tick + " 個 tick：sealed=" + sealed + " 門正中=" + doorCenter(run) + " 非參與者在艙外=" + outside + " state="
                         + M5GameTestSupport.state(run.journal(), sid) + "「套用 sealed 量子膜」=" + sealedInfo);
         prepare.hold.release();
-        run.proof.put("readyReleasedAtServerTick", run.server().getTicks());
+        run.recordProof("readyReleasedAtServerTick", run.server().getTicks());
         return true;
     }
 
@@ -459,7 +459,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** 開服時（第一個 tick 之前）原艙門在記憶體裡是 {@code door}（{@code doorInMemoryAtStart}）；記下門口的 entity storage 是否已載入與 probe 是否已看到門口的 entity。 */
     private void doorInMemoryAtStart(OriginDoorState door) {
         run.expect("doorInMemoryAtStart", M5CollapseDoors.is(run, door), () -> "開服時記憶體裡的原艙門不是 " + door + "：門正中=" + doorCenter(run));
-        run.proof.put("doorwayEntitiesLoadedAtStart", OriginDoorsTestAccess.doorwayEntitiesLoaded(run.source(), FRAME));
+        run.recordProof("doorwayEntitiesLoadedAtStart", OriginDoorsTestAccess.doorwayEntitiesLoaded(run.source(), FRAME));
         seeTheDoorway();
     }
 
@@ -467,7 +467,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     private void seeTheDoorway() {
         if (sealedDoor.doorwaySeenAt < 0 && OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME)) {
             sealedDoor.doorwaySeenAt = run.server().getTicks();
-            run.proof.put("doorwaySeenAtServerTick", sealedDoor.doorwaySeenAt);
+            run.recordProof("doorwaySeenAtServerTick", sealedDoor.doorwaySeenAt);
         }
     }
 
@@ -491,9 +491,9 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
                     () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued + " 門仍是 " + door + "=" + unchanged + " 門正中=" + doorCenter(run) + " 待套用的門="
                             + pending.orElse("none"));
             sealedDoor.queuedTick = queued.getFirst().tick();
-            run.proof.put("closeQueuedAtServerTick", run.server().getTicks());
-            run.proof.put("closeQueuedTick", sealedDoor.queuedTick);
-            run.proof.put("doorwayEntitiesLoadedWhenQueued", OriginDoorsTestAccess.doorwayEntitiesLoaded(run.source(), FRAME));
+            run.recordProof("closeQueuedAtServerTick", run.server().getTicks());
+            run.recordProof("closeQueuedTick", sealedDoor.queuedTick);
+            run.recordProof("doorwayEntitiesLoadedWhenQueued", OriginDoorsTestAccess.doorwayEntitiesLoaded(run.source(), FRAME));
             then.run();
         });
     }
@@ -519,8 +519,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
             run.expect(assertion, reached && once && queued == 1 && pending.isEmpty() && more.holds(),
                     () -> "tick " + now + "（排入的是 tick " + sealedDoor.queuedTick + "）：門是 " + target + "=" + reached + " 門正中=" + doorCenter(run) + " 套用的 INFO=" + applied
                             + " 排入=" + queued + " 待套用的門=" + pending.orElse("none") + more.detail());
-            run.proof.put("closeAppliedTick", at);
-            run.proof.put("closeAppliedAtServerTick", now);
+            run.recordProof("closeAppliedTick", at);
+            run.recordProof("closeAppliedAtServerTick", now);
         });
     }
 
@@ -552,7 +552,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         stands.forEach(net.minecraft.entity.Entity::discard);
         int removed = stands.size(), left = M5CollapseDoors.doorwayStands(run).size();
         boolean plain = plainOpen(run);
-        run.proof.put("doorwayOccupiedAfterTheStand", OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME));
+        run.recordProof("doorwayOccupiedAfterTheStand", OriginDoorsTestAccess.doorwayOccupied(run.source(), FRAME));
         run.expect("standRemovedFromTheDoorway", removed == 1 && left == 0 && plain, () -> "移走 " + removed + " 座盔甲座，門口仍有盔甲座=" + left + " 一般開門=" + plain);
         return true;
     }
@@ -565,7 +565,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         int cancelled = M5CollapseDoors.cancelledCloses(run, sid);
         run.expect("openedNormallyWhileSealed", result.isAccepted() && plain && sealed && cancelled == 0,
                 () -> "參與者照一般方式開門：" + result + " 一般開門=" + plain + " 門正中=" + doorCenter(run) + " state=" + M5GameTestSupport.state(run.journal(), sid) + " 取消關門的 INFO=" + cancelled);
-        run.proof.put("openedAtServerTick", run.server().getTicks());
+        run.recordProof("openedAtServerTick", run.server().getTicks());
         return true;
     }
 
@@ -636,7 +636,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         boolean outside = !M5CollapseFixture.inside(visitor);
         run.expect("visitorOutsideAtStart", outside && !fixture.participants().contains(visitor.getUuid()) && visitor.getServerWorld() == run.source() && fixture.noneOnline(),
                 () -> "非參與者在 " + visitor.getPos() + " 參與者在線上=" + !fixture.noneOnline());
-        run.proof.put("visitor", visitor.getUuid().toString());
+        run.recordProof("visitor", visitor.getUuid().toString());
     }
 
     /**
@@ -651,7 +651,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var pending = OriginDoorsTestAccess.pendingGoal(run.server(), fixture.chamber());
         run.expect("membraneKeptOnTheVisitorUse", use == ChamberCollapsePort.DoorUse.PASS && sealedDoorNow && cancelled == 0 && pending.equals(Optional.of(OriginDoorsTestAccess.CLOSE_ON_SEALED)),
                 () -> "非參與者使用門：" + use + " sealed=" + sealedDoorNow + " 門正中=" + doorCenter(run) + " 取消關門的 INFO=" + cancelled + " 待套用的門=" + pending.orElse("none"));
-        run.proof.put("visitorUsedTheDoorAtServerTick", run.server().getTicks());
+        run.recordProof("visitorUsedTheDoorAtServerTick", run.server().getTicks());
     }
 
     /** sealmembrane 的 {@code closeApplied} 另要求：沒有「取消還沒套用的關門」的 INFO（非參與者使用門時沒有取消）。 */
@@ -666,7 +666,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         int retried = retries(run, fixture.sid());
         joinInside();
         run.expect("stillSealedAtTheJoin", sealed(record) && retried == 0, () -> "JOIN 之前 state=" + M5GameTestSupport.state(run.journal(), fixture.sid()) + " 重試的 INFO=" + retried);
-        run.proof.put("joinedAtServerTick", run.server().getTicks());
+        run.recordProof("joinedAtServerTick", run.server().getTicks());
         return true;
     }
 
@@ -719,7 +719,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         joinInside();
         var record = run.journal().flushedRecords().get(fixture.sid());
         run.expect("joinedBeforeTheFirstObservation", run.ticks() == 0 && sealed(record), () -> "JOIN 時 tick=" + run.ticks() + " state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
-        run.proof.put("joinedAt", joinedAt.toString());
+        run.recordProof("joinedAt", joinedAt.toString());
     }
 
     /** sealmembranejoined：開服之後到 NORMALIZE 套用，每個 tick 原艙門都沒有關上（25 格是 sealed 量子膜或一般開門；{@code doorNeverClosedAfterTheRestart}）。 */
@@ -741,8 +741,8 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
                 () -> "開服之後 " + run.ticks() + " 個 tick（server tick " + now + "）：排入的 INFO=" + queued + " PROJECTION_FAILED 的重試=" + fromProjection + " 全部的重試=" + all + " state="
                         + M5GameTestSupport.state(run.journal(), sid) + " 沒有移動=" + still + " sealed=" + sealedDoorNow);
         sealedDoor.queuedTick = queued.getFirst().tick();
-        run.proof.put("firstObservationAtPhaseTick", run.ticks());
-        run.proof.put("closeQueuedTick", sealedDoor.queuedTick);
+        run.recordProof("firstObservationAtPhaseTick", run.ticks());
+        run.recordProof("closeQueuedTick", sealedDoor.queuedTick);
         // 重試的觸發要求來源艙有電（source signal），所以在重試的 tick 之後才斷電；閘門在 RESOLVE 之後第一次以位準評估時不成立（WAITING）。
         run.source().setBlockState(FRAME.controllerPos().up(), Blocks.AIR.getDefaultState(), 3);
     }
@@ -761,7 +761,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         run.expect("normalizedAfterTheRetry", plain && now == queuedTick && dropped == 1 && applied.equals(List.of(new M5CollapseDoors.Applied(OriginDoorsTestAccess.NORMALIZE, queuedTick))),
                 () -> "tick " + now + "（排入的是 tick " + queuedTick + "）：一般開門=" + plain + " 門正中=" + doorCenter(run) + "「不再套用封存時的原艙門」=" + dropped + " 套用的 INFO="
                         + applied);
-        run.proof.put("normalizedAtServerTick", now);
+        run.recordProof("normalizedAtServerTick", now);
     }
 
     /** sealmembranejoined 的 step {@code resolved}：見 {@link #membraneSealedJoinedRestart} 第 3 點。 */
@@ -774,7 +774,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
         var record = run.journal().flushedRecords().get(sid);
         run.expect("resolvedWithoutPower", !powered && prepares == 0 && plain && collapsing(record) && still,
                 () -> "RESOLVE 完成時：有電=" + powered + "「進入 PREPARE」=" + prepares + " 一般開門=" + plain + " state=" + M5GameTestSupport.state(run.journal(), sid) + " 沒有移動=" + still);
-        run.proof.put("resolvedAtServerTick", run.server().getTicks());
+        run.recordProof("resolvedAtServerTick", run.server().getTicks());
         return true;
     }
 
@@ -793,7 +793,7 @@ final class M5CollapseDoorChains extends M5CollapseRestartChains {
     /** {@code waitingWithoutPower} 觀察完之後：放回 Controller 上方的紅石塊。 */
     private void powerRestored() {
         run.source().setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), 3);
-        run.proof.put("poweredAgainAtServerTick", run.server().getTicks());
+        run.recordProof("poweredAgainAtServerTick", run.server().getTicks());
     }
 
     /** sealmembranejoined 的 step {@code left}：見 {@link #membraneSealedJoinedRestart} 第 5 點（之後參與者離開艙內）。 */

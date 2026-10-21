@@ -139,7 +139,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
             if (run.server().getTicks() < markTick + ticks) return false;
             before.run();
             fixture.moveInside();
-            run.proof.put(proofKey, run.server().getTicks());
+            run.recordProof(proofKey, run.server().getTicks());
             return true;
         });
     }
@@ -332,7 +332,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
                 () -> "discovery=" + disk + " unconfirmed=" + pending);
         run.expect("sealedOnTheUnconfirmedDiscovery", record.collapse().sealedReason().equals(Optional.of(SealedReason.ALLOCATION_IO_FAILED)),
                 () -> "SEALED 的原因=" + record.collapse().sealedReason());
-        run.proof.put(LANDED_DISCOVERY, disk.getFirst().toString());
+        run.recordProof(LANDED_DISCOVERY, disk.getFirst().toString());
         sealedRecord = record;
         markTick = run.server().getTicks();
         fixture.moveOutside();
@@ -377,7 +377,7 @@ final class M5CollapseConvergenceChain extends M5CollapseRestartChains {
         var twice = twoRetries(run, fixture.sid(), "");
         run.expect("retriedTwiceBeforeTheHalt", twice.holds(), twice::detail);
         var status = ((CollapseAuthorities.Lookup<?>) detail).status();
-        var landed = String.valueOf(run.proof.get(LANDED_DISCOVERY));
+        var landed = String.valueOf(run.proofText(LANDED_DISCOVERY));
         var disk = M5CollapseDiskEvidence.discovery(run.saveRoot());
         var authorities = CollapseAuthorities.get(run.server());
         boolean pending = authorities.unconfirmed(Authority.DISCOVERY);

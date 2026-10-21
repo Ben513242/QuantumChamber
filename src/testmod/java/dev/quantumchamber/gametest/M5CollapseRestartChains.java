@@ -365,12 +365,12 @@ abstract class M5CollapseRestartChains {
     Step untilTriggered(String stepName, String assertion, Await await, M5CollapseRun.CheckedCondition happened, Outcome outcome, String proofKey) {
         // F6-2e-1（F6-2e Step 0 quality nit）：happened 與 M5CollapsePassage.awaiting 同型別（原本是 BooleanSupplier，這裡再以 getAsBoolean 轉交）。
         return M5CollapsePassage.awaiting(stepName, await.waitTicks, tick -> {
-            if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
+            if (await == Await.AFTER_THE_LOAD && chamberLoaded()) run.recordFirstProof("chamberLoadedAtPhaseTick", run.ticks());
         }, happened, (tick, now) -> {
             var verdict = outcome.at(tick);
             boolean checked = await.position == Position.NOT_MOVED_SINCE_THE_JOIN, notMoved = !checked || notMovedSinceTheJoin();
             run.expect(assertion, now && verdict.holds() && notMoved, () -> verdict.detail() + (checked ? " 沒有移動=" + notMoved : ""));
-            if (proofKey != null) run.proof.put(proofKey, run.ticks());
+            if (proofKey != null) run.recordProof(proofKey, run.ticks());
         });
     }
 

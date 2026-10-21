@@ -46,7 +46,7 @@ final class M5CollapseProjectionLoad {
         run.onStopped(log);
         var chunk = new ChunkPos(FRAME.controllerPos());
         boolean loadedAtStart = world.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null;
-        run.proof.put("projectionChunkLoadedAtStart", loadedAtStart);
+        run.recordProof("projectionChunkLoadedAtStart", loadedAtStart);
         run.expect("projectionChunkNotLoadedAtStart", !loadedAtStart, () -> "probe 的 ticket 之前投影的 chunk 已載入（不是本 JVM 由磁碟載入）");
         fixture.holdProjectionChunk(world);
         var entity = world.getBlockEntity(FRAME.controllerPos());
@@ -55,7 +55,7 @@ final class M5CollapseProjectionLoad {
         var controller = (ChamberControllerBlockEntity) entity;
         var atLoad = new AtLoad(controller.instanceKind(), controller.chamberState().name(), controller.powerInitialized(), controller.wasPowered(),
                 ChamberLoadSyncTestAccess.hasPending(run.server(), controller));
-        run.proof.put("projectionControllerAtLoad", Map.of("instanceKind", atLoad.instanceKind().name(), "state", atLoad.state(),
+        run.recordProof("projectionControllerAtLoad", Map.of("instanceKind", atLoad.instanceKind().name(), "state", atLoad.state(),
                 "powerInitialized", atLoad.powerInitialized(), "wasPowered", atLoad.wasPowered(), "loadSyncPending", atLoad.loadSyncPending()));
         var load = new M5CollapseProjectionLoad(run, controller, atLoad, log, ChamberLoadSyncTestAccess.observe(world, controller));
         run.onStopping(load::close);
@@ -82,7 +82,7 @@ final class M5CollapseProjectionLoad {
         try {
             current.close();
         } catch (RuntimeException | Error failure) {
-            run.failures.add("closeLoadSync：" + failure);
+            run.recordFailure("closeLoadSync：" + failure);
         }
     }
 }

@@ -134,7 +134,7 @@ final class M5CollapseDiskEvidence {
         run.expect(name, actual == schema && records.equals(expected),
                 () -> "磁碟上的 journal：SchemaVersion=" + actual + " " + states(records) + "（預期 SchemaVersion=" + schema + " " + states(expected) + "）；不相等的 session："
                         + unequal(records, expected));
-        run.proof.put(name + "Schema", actual);
+        run.recordProof(name + "Schema", actual);
         return journal;
     }
 

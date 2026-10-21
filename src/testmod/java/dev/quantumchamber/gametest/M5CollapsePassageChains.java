@@ -154,7 +154,7 @@ final class M5CollapsePassageChains {
         return new Step("universeGenerated", 600, () -> {
             int radius = run.server().getPlayerManager().getViewDistance() + 2;
             if (!fixture.loadedAroundTheChamber(fixture.universeWorld().orElseThrow(), radius)) return false;
-            run.proof.put("universeGeneratedRadius", radius);
+            run.recordProof("universeGeneratedRadius", radius);
             return true;
         });
     }
@@ -322,10 +322,10 @@ final class M5CollapsePassageChains {
         if (window.id() == CrashWindow.CROSSED_COMMITTED) expectSelectorIsTheSecond();
         M5CollapseWindows.expectAtRestart(run, fixture, window, halt);
         atStart = run.journal().flushedRecords().get(fixture.sid());
-        run.proof.put("doorCenterOnDiskAtStart", M5CollapseWindows.doorCenterOnDisk(run, fixture));
-        run.proof.put("doorCenterAtStart", run.source().getBlockState(local(3, 3, 0)).toString());
+        run.recordProof("doorCenterOnDiskAtStart", M5CollapseWindows.doorCenterOnDisk(run, fixture));
+        run.recordProof("doorCenterAtStart", run.source().getBlockState(local(3, 3, 0)).toString());
         doorPlainAtStart = M5CollapseDoors.plainOpen(run);
-        run.proof.put("doorPlainAtStart", doorPlainAtStart);
+        run.recordProof("doorPlainAtStart", doorPlainAtStart);
         var atHalt = halt.getAsJsonObject("atHalt");
         // F6-2d-2 Step 0（F6-2d-1 quality Minor 4）：recordKeptAcrossTheRestart 由窗口表斷言（expectAtRestart；halt 當下還有 record 的列都 withRecordKept）。
         if (window.id() == CrashWindow.RECOVERY_REJECTED) {
@@ -351,8 +351,8 @@ final class M5CollapsePassageChains {
         // 最多等 3 個 tick，之後仍在就由這個具名斷言判 FAIL（不是 stepBounded）：mutation 讓通道在開服之後繼續時，失敗在目標斷言。
         if (!gone && run.ticks() < 3) return false;
         endTick = run.server().getTicks();
-        run.proof.put("endTick", endTick);
-        run.proof.put("doorCenterOnTheEndTick", run.source().getBlockState(local(3, 3, 0)).toString());
+        run.recordProof("endTick", endTick);
+        run.recordProof("doorCenterOnTheEndTick", run.source().getBlockState(local(3, 3, 0)).toString());
         run.expect("passageEndedAtStartup", gone && run.capture().matching(Level.INFO, "開服時仍是 PASSAGE_READY 的量子通道已結束", sid.toString()).size() == 1,
                 () -> "開服之後 " + run.ticks() + " 個 tick：state=" + M5GameTestSupport.state(run.journal(), sid) + "，沒有恰一則開服時結束通道的 INFO");
         run.expect("endedOnTheFirstTick", run.ticks() == 1, () -> "通道在 phase 的第 " + run.ticks() + " 個 tick 才結束");
@@ -392,7 +392,7 @@ final class M5CollapsePassageChains {
         var matcher = java.util.regex.Pattern.compile("tick (\\d+)").matcher(queued.isEmpty() ? "" : queued.getFirst());
         run.expect("ownerlessQueuedByTheLoadSync", queued.size() == 1 && matcher.find(), () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued);
         normalizeTick = Integer.parseInt(matcher.group(1));
-        run.proof.put("ownerlessNormalizeTick", normalizeTick);
+        run.recordProof("ownerlessNormalizeTick", normalizeTick);
         run.expect("noSessionAtRestart", run.journal().flushedRecords().values().stream().noneMatch(record -> record.chamberUuid().equals(fixture.chamber())),
                 () -> "開服之後這座艙有 session");
         run.expect("comparatorReevaluated", fixture.controllerSignal(ChamberState.IDLE, 3), () -> "load-sync 刷新之後的 Controller=" + controllerState());
@@ -437,7 +437,7 @@ final class M5CollapsePassageChains {
         run.expect("newSessionInTheSameServer", !arming.sessionUuid().equals(fixture.sid())
                         && arming.participants().stream().map(SessionRecoveryRecord.Participant::playerUuid).collect(java.util.stream.Collectors.toSet()).equals(others),
                 () -> "新的 session=" + arming.sessionUuid() + " 參與者=" + arming.participants());
-        run.proof.put("newSession", arming.sessionUuid().toString());
+        run.recordProof("newSession", arming.sessionUuid().toString());
         return true;
     }
 

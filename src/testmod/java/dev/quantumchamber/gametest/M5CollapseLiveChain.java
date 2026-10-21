@@ -124,7 +124,7 @@ final class M5CollapseLiveChain {
         for (var id : fixture.participants()) {
             run.expect("participantUnblocked", !SessionRecoveryManager.blocks(id, run.server()), () -> "已返還的參與者仍被 recovery 攔截");
         }
-        run.proof.put("returnedInsideTheChamber", players.stream().allMatch(M5CollapseFixture::inside));
+        run.recordProof("returnedInsideTheChamber", players.stream().allMatch(M5CollapseFixture::inside));
         returned = true;
         return true;
     }

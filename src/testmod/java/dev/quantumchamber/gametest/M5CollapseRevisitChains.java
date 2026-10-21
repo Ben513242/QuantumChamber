@@ -116,8 +116,8 @@ final class M5CollapseRevisitChains {
         ChamberProtectionService.get().authorizedMutation(() -> world.setBlockState(damagedShell(), Blocks.GLASS.getDefaultState(), 3));
         run.expect("shellDamaged", world.getBlockState(damagedShell()).isOf(Blocks.GLASS), () -> "shell=" + world.getBlockState(damagedShell()));
         run.expect("interiorMarkerPlaced", world.setBlockState(interiorMarker(), Blocks.GOLD_BLOCK.getDefaultState(), 3), () -> "interior 的標記放不上去");
-        run.proof.put("damagedShell", damagedShell().toShortString());
-        run.proof.put("interiorMarker", interiorMarker().toShortString());
+        run.recordProof("damagedShell", damagedShell().toShortString());
+        run.recordProof("interiorMarker", interiorMarker().toShortString());
     }
 
     // ---- 開服時 projection ledger 遺失（P-DEGRADED 的跨 JVM 版本） ----
@@ -139,7 +139,7 @@ final class M5CollapseRevisitChains {
                 new Step("committed", 40, () -> {
                     if (!fixture.committed()) return false;
                     placeRefreshWitness();
-                    run.proof.put("diskAtStop", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
+                    run.recordProof("diskAtStop", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
                     return true;
                 })));
         return Phase.stop(steps).started(fixture::requireFreshWorld);
@@ -157,7 +157,7 @@ final class M5CollapseRevisitChains {
         boolean placed = world.setBlockState(FRAME.controllerPos().up(), Blocks.REDSTONE_BLOCK.getDefaultState(), Block.NOTIFY_LISTENERS | Block.FORCE_STATE);
         run.expect("refreshWitnessPlaced", before && placed && !controller.wasPowered() && world.isReceivingRedstonePower(FRAME.controllerPos()),
                 () -> "Controller=" + controller + " placed=" + placed + " wasPowered=" + (controller == null ? "-" : controller.wasPowered()));
-        run.proof.put("refreshWitness", FRAME.controllerPos().up().toShortString());
+        run.recordProof("refreshWitness", FRAME.controllerPos().up().toShortString());
     }
 
     /** U 的投影（COMPLETE）interior 放金塊標記（interior 不受保護，一般寫入）。投影的 chunk 以 probe 的 ticket 載入。 */
@@ -166,7 +166,7 @@ final class M5CollapseRevisitChains {
         fixture.holdProjectionChunk(world);
         run.expect("interiorEmptyBeforeMarker", world.getBlockState(interiorMarker()).isAir(), () -> "interior=" + world.getBlockState(interiorMarker()));
         run.expect("interiorMarkerPlaced", world.setBlockState(interiorMarker(), Blocks.GOLD_BLOCK.getDefaultState(), 3), () -> "interior 的標記放不上去");
-        run.proof.put("interiorMarker", interiorMarker().toShortString());
+        run.recordProof("interiorMarker", interiorMarker().toShortString());
     }
 
     /**
@@ -193,7 +193,7 @@ final class M5CollapseRevisitChains {
         var sha256 = M5CollapseDiskEvidence.sha256(ledger);
         Files.move(ledger, moved);
         run.expect("projectionLedgerMovedBeforeStart", !Files.exists(ledger) && sha256.equals(M5CollapseDiskEvidence.sha256(moved)), () -> "projection ledger 沒有移走：" + ledger);
-        run.proof.put("movedProjectionLedger", Map.of("from", ledger.toString(), "to", moved.toString(), "sha256", sha256));
+        run.recordProof("movedProjectionLedger", Map.of("from", ledger.toString(), "to", moved.toString(), "sha256", sha256));
     }
 
     private void degradedStarted(String setupPhase) throws Exception {
@@ -227,8 +227,8 @@ final class M5CollapseRevisitChains {
         var witness = fixture.diskBlock(world, FRAME.controllerPos().up());
         run.expect("refreshWitnessOnDisk", REDSTONE_BLOCK.equals(witness.name()), () -> "磁碟上 Controller 正上方是 " + witness);
         diskInstanceKind = M5CollapseDiskEvidence.blockEntityString(fixture.dimensionDirectory(world), FRAME.controllerPos(), "InstanceKind");
-        run.proof.put("projectionControllerKindOnDisk", diskInstanceKind);
-        run.proof.put("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
+        run.recordProof("projectionControllerKindOnDisk", diskInstanceKind);
+        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
         load = M5CollapseProjectionLoad.start(run, fixture);
         // 剛由磁碟載入時是磁碟上的值：InstanceKind 是 setup 時寫回的 PROJECTION、WasPowered 仍是 false（refresh witness 放上時沒有 refresh）、load-sync 還在佇列。
         var atLoad = load.atLoad();
@@ -260,7 +260,7 @@ final class M5CollapseRevisitChains {
         var protection = ChamberProtectionService.get();
         run.expect("degradedIndexProtectsTheSite", !protection.mayMutate(world, pos) && !protection.mayMutate(world, local(0, 0, 0))
                 && !protection.mayMutate(world, local(3, 3, 0)) && protection.mayMutate(world, local(3, 3, 3)), () -> "退化時同位置的 Controller、shell、門應受保護，interior 不應受保護");
-        run.proof.put("loadSyncOutcomes", load.outcomes().stream().map(Enum::name).toList());
+        run.recordProof("loadSyncOutcomes", load.outcomes().stream().map(Enum::name).toList());
         load.close();
         return true;
     }

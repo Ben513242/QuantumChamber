@@ -227,7 +227,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
     private boolean backoffElapsedThenEnter() {
         if (run.server().getTicks() < markTick + BACKOFF_TICKS) return false;
         fixture.moveInside();
-        run.proof.put("reenteredAfterTheBackoffTick", run.server().getTicks());
+        run.recordProof("reenteredAfterTheBackoffTick", run.server().getTicks());
         return true;
     }
 
@@ -247,7 +247,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
     /** H7 的 step {@code chamberUnloaded}：原艙附近已不是全部 FULL（spawn chunks 的 ticket 移除之後）。 */
     private boolean chamberUnloaded() {
         if (chamberLoaded()) return false;
-        run.proof.put("chamberUnloadedAtPhaseTick", run.ticks());
+        run.recordProof("chamberUnloadedAtPhaseTick", run.ticks());
         return true;
     }
 
@@ -262,8 +262,8 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
             joinInside();
             run.expect("chamberNotLoadedAtTheJoin", !loaded, () -> "JOIN 時原艙附近已載入，量不到「來源艙還沒載入時的觸發」");
             run.expect("unchangedBeforeTheJoin", atStart != null && atStart.equals(record), () -> "JOIN 之前 state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
-            run.proof.put("joinedAtPhaseTick", run.ticks());
-            run.proof.put("joinedAt", joinedAt.toString());
+            run.recordProof("joinedAtPhaseTick", run.ticks());
+            run.recordProof("joinedAt", joinedAt.toString());
             return true;
         });
     }
@@ -335,7 +335,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         run.expect("chamberNotLoadedAtStart", !loaded, () -> "開服時原艙附近已載入，量不到「來源艙還沒載入時的第一次評估」");
         run.expect("insideBeforeTheFirstTick", run.ticks() == 0 && fixture.players().stream().allMatch(M5CollapseFixture::inside),
                 () -> "tick=" + run.ticks() + " 參與者在 " + joinedAt);
-        run.proof.put("joinedAt", joinedAt.toString());
+        run.recordProof("joinedAt", joinedAt.toString());
     }
 
     /**
@@ -350,7 +350,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         var prepares = prepares();
         boolean still = notMovedSinceTheJoin();
         run.expect("preparedWithoutReentry", prepares == 1 && still, () -> "開服之後 " + run.ticks() + " 個 tick：「進入 PREPARE」=" + prepares + " 沒有移動=" + still);
-        run.proof.put("preparedAtPhaseTick", run.ticks());
+        run.recordProof("preparedAtPhaseTick", run.ticks());
     }
 
     /**
@@ -359,8 +359,8 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
      */
     private void recordTheLoadAndTheResolve() {
         var sid = fixture.sid().toString();
-        if (chamberLoaded()) run.proof.putIfAbsent("chamberLoadedAtPhaseTick", run.ticks());
-        if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.proof.putIfAbsent("resolvedAtPhaseTick", run.ticks());
+        if (chamberLoaded()) run.recordFirstProof("chamberLoadedAtPhaseTick", run.ticks());
+        if (!run.capture().matching(Level.INFO, "目的地已確定（RESOLVE 完成）", sid).isEmpty()) run.recordFirstProof("resolvedAtPhaseTick", run.ticks());
     }
 
     /** RESOLVE 之後的共用部分：{@link M5CollapsePassage#steps} 的 resolve → ready → cross → ended（(b) 全員都已跨過）。 */
@@ -403,7 +403,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         joinInside();
         run.expect("dormantWhenJoined", fixture.receipt().equals(run.journal().flushedRecords().get(fixture.sid())) && run.ticks() == 0,
                 () -> "JOIN 時 tick=" + run.ticks() + " state=" + M5GameTestSupport.state(run.journal(), fixture.sid()));
-        run.proof.put("joinedAt", joinedAt.toString());
+        run.recordProof("joinedAt", joinedAt.toString());
     }
 
     /** W8 的 step {@code resolved}：RESOLVE 完成（{@link M5CollapsePassage#expectResolved}），參與者仍沒有移動（{@code stillInsideSinceTheJoin}）。 */
@@ -550,7 +550,7 @@ final class M5CollapseRetryChains extends M5CollapseRestartChains {
         shown.put("token", otherAllocation.token());
         shown.put("universeId", otherAllocation.universeId().toString());
         shown.put("status", lookup.status().name());
-        run.proof.put("otherAllocation", shown);
+        run.recordProof("otherAllocation", shown);
         run.expect("otherAppendUnconfirmed", lookup.status() == CollapseAuthorities.Lookup.Status.WRITE_FAILED && readFault.hits() == 1
                         && authorities.unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER),
                 () -> "另一個 session 的追加=" + lookup.status() + " 注入次數=" + readFault.hits());

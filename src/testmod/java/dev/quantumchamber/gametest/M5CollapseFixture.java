@@ -253,11 +253,9 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     }
 
     /** {@link #clearAroundTheOrigin(ServerWorld, ChamberFrame)}，結果記在 proof 的 {@value #CLEARED_PROOF}{@code .<label>}（一個 phase 可以清幾座艙，各一個 label）。 */
-    @SuppressWarnings("unchecked")
     static void clearAroundTheOrigin(M5CollapseRun run, String label, ServerWorld world, ChamberFrame frame) {
         var cleared = clearAroundTheOrigin(world, frame);
-        var all = (Map<String, Object>) run.proof.computeIfAbsent(CLEARED_PROOF, key -> new LinkedHashMap<String, Object>());
-        if (all.put(label, cleared.proof()) != null) throw new IllegalStateException("clearAroundTheOrigin 的 label 重複：" + label);
+        if (!run.recordProofEntry(CLEARED_PROOF, label, cleared.proof())) throw new IllegalStateException("clearAroundTheOrigin 的 label 重複：" + label);
     }
 
     /** step：原艙已註冊、IDLE；記下 chamber UUID。 */
@@ -287,7 +285,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
             try {
                 connection.close();
             } catch (RuntimeException failure) {
-                run.failures.add("closePlayer：" + failure);
+                run.recordFailure("closePlayer：" + failure);
             }
         });
         connection.confirmTeleport();
@@ -504,7 +502,7 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         evidence.put("receiptNbt", M5CollapseRun.RECEIPT_NBT);
         evidence.put("receiptNbtSha256", M5CollapseDiskEvidence.sha256(file));
         evidence.put("candidateSha256", M5CollapseDiskEvidence.sha256(wrapped));
-        run.proof.put("receipt", evidence);
+        run.recordProof("receipt", evidence);
     }
 
     /**
@@ -570,10 +568,10 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
                         && participants.stream().map(UUID::toString).toList().equals(notedParticipants),
                 () -> "receipt NBT 與 halt receipt 的 UniverseId 或參與者不同");
         String prefix = window == null ? "final" : "halt";
-        run.proof.put(window == null ? "setupReceipt" : "crashReceipt", Map.of("phase", crashPhase, prefix + "Sha256", M5CollapseDiskEvidence.sha256(haltPath),
+        run.recordProof(window == null ? "setupReceipt" : "crashReceipt", Map.of("phase", crashPhase, prefix + "Sha256", M5CollapseDiskEvidence.sha256(haltPath),
                 prefix + "Pid", halt.get("pid").getAsLong(), prefix + "StartupNonce", M5CollapseRun.text(halt, "startupNonce"),
                 prefix + "StartTimeUtc", M5CollapseRun.text(halt, "startTimeUtc")));
-        run.proof.put("universeId", universe.value().toString());
+        run.recordProof("universeId", universe.value().toString());
         return halt;
     }
 

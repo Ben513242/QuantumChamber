@@ -98,8 +98,8 @@ final class M5CollapseTemplateRaceChain implements M5CollapseRun.Context {
             steps.add(new Step("load-" + name, 1, this::load));
             steps.add(new Step("generated-" + name, 600, this::generated));
         }
-        return Phase.stop(steps).started(() -> run.proof.put("availableProcessors", Runtime.getRuntime().availableProcessors()))
-                .afterStop(() -> run.proof.put("h6race", results));
+        return Phase.stop(steps).started(() -> run.recordProof("availableProcessors", Runtime.getRuntime().availableProcessors()))
+                .afterStop(() -> run.recordProof("h6race", results));
     }
 
     private boolean materialize() {

@@ -239,8 +239,8 @@ final class M5CollapseRun {
     final Configuration config;
     /** entrypoint 的 phase 表的全部 phase 名稱（依表的順序）：寫進 receipt 的 {@code phaseTable}，harness 與 chain 表比對。 */
     private final List<String> phaseTable;
-    final Map<String, Object> proof = new LinkedHashMap<>();
-    final List<String> failures = new ArrayList<>();
+    private final Map<String, Object> proof = new LinkedHashMap<>();
+    private final List<String> failures = new ArrayList<>();
     /** 已完成的 step：名稱 → 完成的 server tick 與花了幾個 tick。 */
     private final Map<String, Object> witness = new LinkedHashMap<>();
     /** 成立過的具名斷言（失敗的斷言直接丟出，不會留在這裡）。 */
@@ -314,6 +314,38 @@ final class M5CollapseRun {
                     + fixture.getClass().getSimpleName());
         }
         context = fixture;
+    }
+
+    // ---- chain 的取證（容器由 runner 持有，不提供可變的 map／list） ----
+
+    /** 記下 chain 的取證；同鍵覆蓋與 null 的語意沿用原本的 Map.put。 */
+    void recordProof(String key, Object value) {
+        proof.put(key, value);
+    }
+
+    /** 只記下第一次非 null 的取證；沿用 Map.putIfAbsent 的 null 語意。 */
+    void recordFirstProof(String key, Object value) {
+        proof.putIfAbsent(key, value);
+    }
+
+    /** 讀回 chain 先前記下的字串；不存在或值為 null 時回 null，不交出容器。 */
+    String proofText(String key) {
+        return (String) proof.get(key);
+    }
+
+    /**
+     * 累積同一份取證的具名 entry；回 true 表示原值為 null（含新鍵）。覆蓋與 null 的語意沿用原本的 Map.put，
+     * 呼叫端保留原有的重名診斷；巢狀 map 不交出 runner。
+     */
+    @SuppressWarnings("unchecked")
+    boolean recordProofEntry(String key, String entry, Object value) {
+        var entries = (Map<String, Object>) proof.computeIfAbsent(key, ignored -> new LinkedHashMap<String, Object>());
+        return entries.put(entry, value) == null;
+    }
+
+    /** 保留 chain 在清理等不能丟出例外的路徑記下的失敗；只允許追加。 */
+    void recordFailure(String failure) {
+        failures.add(failure);
     }
 
     // ---- 生命週期 ----

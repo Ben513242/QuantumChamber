@@ -170,7 +170,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         zombie.put("takenBackTick", run.server().getTicks());
         zombie.put("refCountAtTakeBack", holder.getRefCount());
         zombie.put("unloadQueueAtTakeBack", queue().size());
-        run.proof.put("zombie", zombie);
+        run.recordProof("zombie", zombie);
         return true;
     }
 
@@ -249,7 +249,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     private void readTakeBackReceipt(String phase) throws Exception {
         var receipt = run.readStoppedReceipt(phase, "takeBack");
         var path = run.phaseEvidence(phase).resolve("final.json");
-        run.proof.put("takeBackReceipt", Map.of("phase", phase, "finalSha256", M5CollapseDiskEvidence.sha256(path), "finalPid", receipt.get("pid").getAsLong(),
+        run.recordProof("takeBackReceipt", Map.of("phase", phase, "finalSha256", M5CollapseDiskEvidence.sha256(path), "finalPid", receipt.get("pid").getAsLong(),
                 "finalStartupNonce", M5CollapseRun.text(receipt, "startupNonce")));
     }
 
@@ -266,7 +266,7 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
         record.put("startupNonce", run.config.startupNonce());
         M5CollapseRun.writeDurably(run.config.evidence().resolve("marker-on-disk.json"), M5CollapseRun.JSON.toJson(record));
         run.expect("takenBackChunkSavedOnDisk", M5CollapseFixture.GOLD_BLOCK.equals(disk.name()), () -> "磁碟上的標記 " + MARKER.toShortString() + " 是 " + disk);
-        run.proof.put("markerOnDisk", record);
+        run.recordProof("markerOnDisk", record);
     }
 
     // ---- witness、停服 ----
@@ -282,11 +282,11 @@ final class M5CollapseUnloadChain implements M5CollapseRun.Context {
     private void afterStop(boolean shutdownPhase) {
         long stopped = System.nanoTime();
         try {
-            run.proof.put("shutdownMillis", stoppingNanos == 0 ? -1 : (stopped - stoppingNanos) / 1_000_000L);
-            run.proof.put("stopRequestToStoppedMillis", stopRequestedNanos == 0 ? -1 : (stopped - stopRequestedNanos) / 1_000_000L);
+            run.recordProof("shutdownMillis", stoppingNanos == 0 ? -1 : (stopped - stoppingNanos) / 1_000_000L);
+            run.recordProof("stopRequestToStoppedMillis", stopRequestedNanos == 0 ? -1 : (stopped - stopRequestedNanos) / 1_000_000L);
             if (witness == null) return;
             var summary = witness.summary();
-            run.proof.put("unloadTaskWitness", summary);
+            run.recordProof("unloadTaskWitness", summary);
             if (shutdownPhase) {
                 run.expect("staleUnloadTaskDropped", witness.dropped(chunk) >= 1 && witness.rescheduled(chunk) == 0 && witness.rescheduled() == 0 && witness.offThread() == 0,
                         () -> "witness=" + summary);

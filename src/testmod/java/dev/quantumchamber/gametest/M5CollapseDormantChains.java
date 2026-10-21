@@ -103,7 +103,7 @@ final class M5CollapseDormantChains {
         } else {
             run.expect("pendingNotProtected", protection.mayMutate(world, pos) && protection.mayMutate(world, local(0, 0, 0)), () -> "PENDING 的投影不應受保護");
         }
-        run.proof.put("loadSyncOutcomes", load.outcomes().stream().map(Enum::name).toList());
+        run.recordProof("loadSyncOutcomes", load.outcomes().stream().map(Enum::name).toList());
         load.close();
         return true;
     }

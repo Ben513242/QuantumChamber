@@ -540,7 +540,7 @@ final class M5CollapsePassage {
             var initErrors = run.startupLog().matching(Level.ERROR, "M5 authority 初始化失敗").stream().map(LogCapture.Entry::message).toList();
             run.expect("noAuthorityInitializationFailure", initErrors.isEmpty(), () -> "初始化的 ERROR：" + initErrors);
         }
-        run.proof.put("finalDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
+        run.recordProof("finalDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
     }
 
     /**

@@ -313,7 +313,7 @@ final class M5CollapseUnsupportedChain {
         var file = run.config.evidence().resolve(BATCH_NBT);
         M5CollapseRun.require(!Files.exists(file), "batch NBT 已存在：" + file);
         M5CollapseDiskEvidence.writeJournal(file, batch.values());
-        run.proof.put(Batch.PROOF, new Batch(fixture.sid(), sourceReceipt.sessionUuid(), endReceipt.sessionUuid(), sourcePlayer, sourceChamber,
+        run.recordProof(Batch.PROOF, new Batch(fixture.sid(), sourceReceipt.sessionUuid(), endReceipt.sessionUuid(), sourcePlayer, sourceChamber,
                 M5CollapseDiskEvidence.sha256(file)).proof());
     }
 
@@ -416,10 +416,10 @@ final class M5CollapseUnsupportedChain {
                         + UniverseRegistryState.get(run.server()).flushedRecords().keySet());
         discoveryAtStart = M5CollapseDiskEvidence.discovery(run.saveRoot()).size();
         // 不以 probe 的 ticket 載入 Nether 的原艙：NEW 的返還靠 attach 為它取得的來源 ticket（只記下），SOURCE 的觸發靠參與者 JOIN 之後自己的 ticket。
-        run.proof.put("newSourceTicketAtStart", ticket);
-        run.proof.put("newChamberLoadedAtStart", nether().getChunkManager().getWorldChunk(FRAME.controllerPos().getX() >> 4, FRAME.controllerPos().getZ() >> 4) != null);
+        run.recordProof("newSourceTicketAtStart", ticket);
+        run.recordProof("newChamberLoadedAtStart", nether().getChunkManager().getWorldChunk(FRAME.controllerPos().getX() >> 4, FRAME.controllerPos().getZ() >> 4) != null);
         run.install(M5TestHooks.FLUSH_PROBE, this::watchTheFlush);
-        run.proof.put("discoveryAtStart", discoveryAtStart);
+        run.recordProof("discoveryAtStart", discoveryAtStart);
     }
 
     /**
@@ -473,7 +473,7 @@ final class M5CollapseUnsupportedChain {
         run.expect("dormantCancelledOnTheFirstObservation", () -> happened && !M4CandidateTestAccess.diskRecords(run.server()).containsKey(sid) && cancelled == 1 && committed == 0
                         && warned == 0,
                 () -> "開服之後 " + tick + " 個 tick：END 已取消=" + happened + " 取消的 INFO=" + cancelled + " 提交=" + committed + " WARN=" + warned);
-        run.proof.put("endCancelledAtServerTick", run.server().getTicks());
+        run.recordProof("endCancelledAtServerTick", run.server().getTicks());
     }
 
     /**
@@ -493,7 +493,7 @@ final class M5CollapseUnsupportedChain {
         var sourceAt = source.player();
         run.expect("sourceParticipantJoinedOutside", sourceAt.getServerWorld() == nether() && !insideTheSourceChamber(sourceAt) && !SessionRecoveryManager.blocks(sourcePlayer, run.server()),
                 () -> "SOURCE 的參與者 JOIN 在 " + sourceAt.getServerWorld().getRegistryKey().getValue() + " " + sourceAt.getPos());
-        run.proof.put("joinedAtServerTick", run.server().getTicks());
+        run.recordProof("joinedAtServerTick", run.server().getTicks());
         return true;
     }
 
@@ -521,9 +521,9 @@ final class M5CollapseUnsupportedChain {
         run.expect("returnedWithoutCommitting", happened && record.state() == SessionState.MEASURED && inside && !blocked,
                 () -> "JOIN 之後 " + tick + " 個 tick：已返還=" + happened + " state=" + (record == null ? "ABSENT" : record.state()) + " 在艙內=" + inside
                         + " 仍被攔截=" + blocked + " 位置=" + player.getPos());
-        run.proof.put("buffAfterTheReturn", player.hasStatusEffect(ModEffects.QUANTUM_STATE));
+        run.recordProof("buffAfterTheReturn", player.hasStatusEffect(ModEffects.QUANTUM_STATE));
         player.removeStatusEffect(ModEffects.QUANTUM_STATE);
-        run.proof.put("returnedAtServerTick", run.server().getTicks());
+        run.recordProof("returnedAtServerTick", run.server().getTicks());
     }
 
     /**
@@ -574,10 +574,10 @@ final class M5CollapseUnsupportedChain {
         var player = fixture.player(id);
         boolean inside = player.getServerWorld() == nether() && M5CollapseFixture.inside(player), blocked = SessionRecoveryManager.blocks(id, run.server());
         run.expect("nobodyTrappedAfterTheCancel", inside && !blocked, () -> "參與者在 " + player.getServerWorld().getRegistryKey().getValue() + " " + player.getPos() + " 被攔截=" + blocked);
-        run.proof.put("notCommittingInfo", logged(Level.INFO, "不支援的來源維度：不提交 COLLAPSING", sid));
-        run.proof.put("newDormantAtServerTick", newDormantAt);
-        run.proof.put("newCancelledAtServerTick", cancelledAt);
-        run.proof.put("newRemovedAtServerTick", removedAt);
+        run.recordProof("notCommittingInfo", logged(Level.INFO, "不支援的來源維度：不提交 COLLAPSING", sid));
+        run.recordProof("newDormantAtServerTick", newDormantAt);
+        run.recordProof("newCancelledAtServerTick", cancelledAt);
+        run.recordProof("newRemovedAtServerTick", removedAt);
     }
 
     /** step {@code opened}：取消之後參與者在艙內照一般方式開門（關著的門照一般門的邏輯改為一般開門；{@code originDoorOpensNormally}）。 */
@@ -612,7 +612,7 @@ final class M5CollapseUnsupportedChain {
         var player = fixture.player(sourcePlayer);
         boolean inside = player.getServerWorld() == nether() && insideTheSourceChamber(player), blocked = SessionRecoveryManager.blocks(sourcePlayer, run.server());
         run.expect("nobodyTrappedAtTheSource", inside && !blocked, () -> "SOURCE 的參與者在 " + player.getPos() + " 被攔截=" + blocked);
-        run.proof.put("sourceCompletedAtServerTick", run.server().getTicks());
+        run.recordProof("sourceCompletedAtServerTick", run.server().getTicks());
     }
 
     /**

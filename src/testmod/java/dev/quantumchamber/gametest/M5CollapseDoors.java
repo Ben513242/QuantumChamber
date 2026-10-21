@@ -59,7 +59,7 @@ final class M5CollapseDoors {
                     run.expect("normalizeQueuedForTheClosedDoor", queued.size() == 1 && queued.getFirst().normalizeAfterARestart() && closed,
                             () -> "開服之後 " + run.ticks() + " 個 tick，排入的 INFO：" + queued + " 門關著=" + closed);
                     queuedFor[0] = queued.getFirst().tick();
-                    run.proof.put("closedNormalizeTick", queuedFor[0]);
+                    run.recordProof("closedNormalizeTick", queuedFor[0]);
                 }),
                 // F6-2e Step 0（F6-2d-2 B2 quality Minor 3）：closedDoorKept 也改用 awaiting（之前是 counting 加手寫的 now < N；上限 APPLY_WAIT_TICKS 只寫一次）。等待的上限相同
                 // （3 個 tick），通過條件相同（第一個 now ≥ N 的 tick 斷言，要求 now == N）；到時仍沒有到 tick N 時由這個具名斷言判 FAIL（之前是 stepBounded）。
