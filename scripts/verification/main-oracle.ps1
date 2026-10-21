@@ -19,12 +19,14 @@ if($server.Count -ne 1){throw 'main-only 必須恰有一個實際 server JVM'}
 $javaPid=$server[0].pid
 $mods=@([regex]::Matches($out,'(?m)^\s*[-|+\\ ]+\s+(?<id>[a-z0-9_-]+)\s+(?<version>[^\r\n ]+)\s*$') | ForEach-Object {$_.Groups['id'].Value})
 $loaded=$mods -contains 'quantumchamber-testmod'
+$clientProbeMods=@($mods | Where-Object {$_ -match '(?i)client[-_.]?probe'})
+$clientProbeLoaded=$clientProbeMods.Count -gt 0
 $stale=@([regex]::Matches($out,'(?m)^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] \[(?:main|Server thread)/WARN\] \(Minecraft\) Missing data pack quantumchamber-testmod(?=\r?$)') | ForEach-Object {$_.Value})
 $argFiles=@(Get-ChildItem -LiteralPath $evidence -Filter "process-$javaPid-*" -File)
 $cpText=$server[0].commandLine+"`n"+((@($argFiles | ForEach-Object {Get-Content -LiteralPath $_.FullName -Raw})) -join "`n")
 $launch=Join-Path $evidence 'loom-launch.cfg'
 if(Test-Path -LiteralPath $launch){$cpText+="`n"+(Get-Content -LiteralPath $launch -Raw)}
-$classpathHits=@([regex]::Matches($cpText,'(?i)[^\s";]*testmod[^\s";]*') | ForEach-Object {$_.Value} | Sort-Object -Unique)
+$classpathHits=@([regex]::Matches($cpText,'(?i)[^\s";]*(?:testmod|client[-_.]?probe)[^\s";]*') | ForEach-Object {$_.Value} | Sort-Object -Unique)
 $classFile=Join-Path $evidence "classload-$javaPid.log"
 if(-not(Test-Path -LiteralPath $classFile)){throw '缺少 exact server PID class-load log'}
 $classText=Get-Content -LiteralPath $classFile -Raw
@@ -34,11 +36,18 @@ foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'src/testmod/java')
     $package=[regex]::Match($source,'(?m)^package ([^;]+);').Groups[1].Value
     $testTypes+=$package+'.'+$file.BaseName
 }
+# clientProbe 的真實 source set 位於 src/testmod/clientprobe，與一般 testmod 分開保留計數。
+$clientProbeTypes=@()
+foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'src/testmod/clientprobe/java') -File -Recurse -Filter '*.java') {
+    $source=Get-Content -LiteralPath $file.FullName -Raw
+    $package=[regex]::Match($source,'(?m)^package ([^;]+);').Groups[1].Value
+    $clientProbeTypes+=$package+'.'+$file.BaseName
+}
 $classHits=@()
 foreach($line in $classText -split "`n") {
     if($line -match '\[class,load\]\s+(\S+)\s+source:\s+(.*)$') {
         $type=$Matches[1];$location=$Matches[2]
-        if($type.StartsWith('dev.quantumchamber.gametest.') -or @($testTypes | Where-Object {$type-eq $_ -or $type.StartsWith($_+'$')}).Count -gt 0 -or $location -match '(?i)testmod') {$classHits+=$line}
+        if($type.StartsWith('dev.quantumchamber.gametest.') -or @(($testTypes+$clientProbeTypes) | Where-Object {$type-eq $_ -or $type.StartsWith($_+'$')}).Count -gt 0 -or $location -match '(?i)testmod|client[-_.]?probe') {$classHits+=$line}
     }
 }
 $worldSnapshots=@()
@@ -58,7 +67,7 @@ $stopOk=$execution.exitCode -eq 0 -and $execution.doneSeen -and $execution.stdin
 $expectedKeys=@('minecraft:overworld','minecraft:the_end','minecraft:the_nether','quantumchamber:superposition')
 $worldOk=$worldSnapshots.Count-eq 2 -and (($worldSnapshots[0].worldKeys|ConvertTo-Json -Compress)-ceq ($expectedKeys|ConvertTo-Json -Compress)) -and (($worldSnapshots[1].worldKeys|ConvertTo-Json -Compress)-ceq ($expectedKeys|ConvertTo-Json -Compress)) -and (($shutdownKeys|ConvertTo-Json -Compress)-ceq ($expectedKeys|ConvertTo-Json -Compress))
 $catalogOk= -not $before.catalogExists -and -not $after.catalogExists
-$report=[ordered]@{status=$(if(-not $loaded -and $mods.Contains('quantumchamber') -and $classpathHits.Count-eq 0 -and $argFiles.Count-ge 1 -and $classHits.Count-eq 0 -and $stopOk -and $worldOk -and $catalogOk -and $restore.exactRestored){'PASS'}else{'FAIL'});server=$server[0];fabricLoadedModIds=$mods;layer1TestmodLoaded=$loaded;layer2RuntimePathHits=$classpathHits;layer2Argfiles=@($argFiles.Name);layer3ClassLoadHits=$classHits;testmodOnlyTypeCount=$testTypes.Count;staleDatapackWarnings=$stale;warningCount=$stale.Count;normalStop=$stopOk;worldSnapshots=$worldSnapshots;shutdownWorldKeys=$shutdownKeys;worldKeysExact=$worldOk;universeCatalogAbsentBeforeAfter=$catalogOk;catalogRecordsBefore=@();catalogRecordsAfter=@();catalogRecordsSha256='4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945';catalogRecordsEvidence='ABSENT catalog plus production bootstrap worlds=0; hash is canonical empty JSON array';exactRestore=$restore.exactRestored;classLogSha256=(Get-FileHash -LiteralPath $classFile -Algorithm SHA256).Hash}
+$report=[ordered]@{status=$(if(-not $loaded -and -not $clientProbeLoaded -and $mods.Contains('quantumchamber') -and $classpathHits.Count-eq 0 -and $argFiles.Count-ge 1 -and $classHits.Count-eq 0 -and $stopOk -and $worldOk -and $catalogOk -and $restore.exactRestored){'PASS'}else{'FAIL'});server=$server[0];fabricLoadedModIds=$mods;layer1TestmodLoaded=$loaded;layer1ClientProbeLoaded=$clientProbeLoaded;layer1ClientProbeModIds=$clientProbeMods;layer2RuntimePathHits=$classpathHits;layer2Argfiles=@($argFiles.Name);layer3ClassLoadHits=$classHits;testmodOnlyTypeCount=$testTypes.Count;clientProbeOnlyTypeCount=$clientProbeTypes.Count;staleDatapackWarnings=$stale;warningCount=$stale.Count;normalStop=$stopOk;worldSnapshots=$worldSnapshots;shutdownWorldKeys=$shutdownKeys;worldKeysExact=$worldOk;universeCatalogAbsentBeforeAfter=$catalogOk;catalogRecordsBefore=@();catalogRecordsAfter=@();catalogRecordsSha256='4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945';catalogRecordsEvidence='ABSENT catalog plus production bootstrap worlds=0; hash is canonical empty JSON array';exactRestore=$restore.exactRestored;classLogSha256=(Get-FileHash -LiteralPath $classFile -Algorithm SHA256).Hash}
 $report|ConvertTo-Json -Depth 15|Set-Content -LiteralPath (Join-Path $Gate 'main-only-oracle.json') -Encoding utf8
 $report|ConvertTo-Json -Depth 15
 if($report.status-ne 'PASS'){throw 'main-only 三層 oracle 未全部通過'}

@@ -177,6 +177,20 @@ Step 'summary' {
         $zip=[IO.Compression.ZipFile]::OpenRead($file.FullName)
         try {
             $entries=@($zip.Entries.FullName | Sort-Object); $hits=@(); $probeHits=@()
+            # clientProbe 的資源檔名同為 fabric.mod.json；只查 mod 身分與 entrypoint 欄位，不掃任意資源全文。
+            $manifestEntry=$zip.GetEntry('fabric.mod.json')
+            if($manifestEntry) {
+                $reader=[IO.StreamReader]::new($manifestEntry.Open())
+                try {$manifest=$reader.ReadToEnd() | ConvertFrom-Json} finally {$reader.Dispose()}
+                $entrypoints=@(foreach($property in @($manifest.entrypoints.PSObject.Properties)) {
+                    foreach($point in @($property.Value)) {
+                        if($point -is [string]){$point}
+                        elseif($null -ne $point -and 'value' -in $point.PSObject.Properties.Name){[string]$point.value}
+                    }
+                })
+                $clientProbeEntrypoints=@($entrypoints | Where-Object {$_ -match '(?i)client[-_.]?probe'})
+                if($manifest.id -match '(?i)client[-_.]?probe' -or $clientProbeEntrypoints.Count){throw "JAR clientProbe manifest 污染：$($file.Name) id=$($manifest.id) entrypoints=$($clientProbeEntrypoints -join ',')"}
+            }
             foreach($entry in $entries){
                 $entryClass=$entry -replace '\.(class|java)$',''
                 if($entry -match '(?i)testmod|gametest|quantumchamber-test\.mixins|m1_empty\.nbt' -or @($testPaths | Where-Object {$entryClass -eq $_ -or $entryClass.StartsWith($_+'$')}).Count){$hits+=$entry}
