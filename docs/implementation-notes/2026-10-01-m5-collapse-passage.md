@@ -9875,7 +9875,7 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
   | `M5UniversePassageGameTests` | 18 | 量子通道（F5-1 起，`passage_*`） |
 
   理由：(1) batchId 本來就以主題為前綴，切分可以機械判定、日後新增 test 也有明確的歸屬；(2) 四個 class 各約 840～1470 行，最大的比原本 4881 行小三倍以上；(3) 派工舉例的「recovery」不另成一類：會用到 recovery 的 test（`passage_recovery*`、`door_refusal` 的 `recoveryWritesSafe`）都是各自主題的一部分，拆出來反而要跨 class 共用更多 helper。
-- **純搬移的做法**（`bb0bb15`）：`f63c2/b1-split/split.py`（輸入是 `2b0bdd9` 的 `M5UniverseGameTests`，`input-M5UniverseGameTests.java`）把 class body 切成 161 個成員（Javadoc＋annotation＋宣告），逐字放進新的 class；每一個非空行恰屬於一個成員（腳本內斷言）。歸屬規則：test 依 batchId；hold 一族依明列的名稱進 `UHD`；其餘 helper 依使用者：只有一個 class 用到就放那個 class（`private` 不變），兩個以上、或被 support 用到就放 `USP`；同名的 overload 一起放。唯二的文字改動是：(a) 其他 class 用到的成員拿掉 `private`（32 個），(b) `{@link #x}` 指向新的 owner（例如 `{@link M5UniverseHold#begin}`）。`f63c2/b1-split/out/transform-diff.txt` 列出全部 37 行改動，另以腳本核對每一行都只差這兩種（`non-trivial 0`）。import 依各檔實際用到的簡單名稱（程式碼與 `{@link}`，不含 `{@code}`）挑選。新的 class Javadoc 是新寫的（`M5U` 的類別說明保留原文，前面多一段拆分的說明，`{@link}` 同 (b)）。
+- **純搬移的做法**（`bb0bb15`）：`f63c2/b1-split/split.py`（輸入是 `2b0bdd9` 的 `M5UniverseGameTests`，`input-M5UniverseGameTests.java`）把 class body 切成 161 個成員（Javadoc＋annotation＋宣告），逐字放進新的 class；每一個非空行恰屬於一個成員（腳本內斷言）。歸屬規則：test 依 batchId；hold 一族依明列的名稱進 `UHD`；其餘 helper 依使用者：只有一個 class 用到就放那個 class（`private` 不變），兩個以上、或被 support 用到就放 `USP`；同名的 overload 一起放。唯二的文字改動是：(a) 32 個需跨類別可見，其中 30 個移除 `private`，(b) `{@link #x}` 指向新的 owner（例如 `{@link M5UniverseHold#begin}`）。`f63c2/b1-split/out/transform-diff.txt` 列出全部 37 行改動，另以腳本核對每一行都只差這兩種（`non-trivial 0`）。import 依各檔實際用到的簡單名稱（程式碼與 `{@link}`，不含 `{@code}`）挑選。新的 class Javadoc 是新寫的（`M5U` 的類別說明保留原文，前面多一段拆分的說明，`{@link}` 同 (b)）。
 - **hold 的 owner `M5UniverseHold`**（public，因為 mixin 在另一個 package）：狀態 `ACTIVE`／`UNMET`／`BROKEN`／`SUITE_END_REGISTERED`、`HOLD_TICKS`、`lastBegun`、`afterPassFailure`、`afterPassStarted`；方法 `registerSuiteEnd`（SUITE_END 的 listener，`UHD:75`）、`begin`（`:96`）、`holdBeforeBegin`（`:139`）、`startHold`、`endHold`、`unconfirmedAuthorities`、`complete`、`awaitConvergedThenComplete`×2、`asTestFailure`、`logFailedDelta`、`failDefinitely`、`finish`、`convergeAll`、`converged`、`digest`、`unfinished`；record `Baseline`、`Begun`、`AfterPass`。test 用到的（`begin`、`complete`、`awaitConvergedThenComplete`、`asTestFailure`、`converged`、`failDefinitely`）改為 package-private，其餘仍 private。`M5ConvergenceHoldMixin` 改呼叫 `M5UniverseHold.holdBeforeBegin`，`M4GameTestBoundaryProbe:29` 改呼叫 `M5UniverseHold.registerSuiteEnd`。
 - **support `M5UniverseSupport`**（package-private）：`PREPARE_WAIT_TICKS`（UPJ 三處、UPS 一處）、`collapsedToUniverse`×2、`newCollapse`、`ResolvedUniverse`、`openOrigin`、`releaseThenComplete`、`local`、`outside`、log 計數（`membraneInfos`、`reapply*`、`ticks`、`entered`、`preloaded`、`prepared`、`passageOpened`、`sealWriteWarnings`）、`receiptStillSealed`、`sealedWith`、`allocationEntries`、`bytes`（C 之後另有 `extraPlayer`）。`CrossedEnd`、`endWithOneCrossed`、`sequence`、`controllerSignal`、`ARRIVED_*`、`CONTROLLER_PASSAGE_KEY` 等只有通道 test 用，跟著進 `UPS`；`resolvedUniverse`、`visible`、`projectionProtection` 等進 `UPJ`；`quarantinePauses`、`ownerless*` 等進 `UDR`；`nextOrdinal`、`worldKeys`、`scheduledCount`、`SEALED_KEY`、四個 UUID 常數留在 `M5U`。
 - **同步修改**：testmod `fabric.mod.json` 的 `fabric-gametest` 在 `M5UniverseGameTests` 之後加上另外三個 class（`bb0bb15`）；`gates.ps1:234-245`：script 層級的 `$M5RunClasses`（四個 class），`Assert-M5Run` 的檢查改為 `-cnotin $M5RunClasses`、訊息列出清單（`9b2ed8c`）；README「新增 M5 GameTest」第 1 點（:140）改為四個 class 與它們的主題，新增 class 時同步改 `$M5RunClasses` 與 entrypoint（`399335f`）。註解的指向：`DC:425`、`:532`（`door_reload` 的 test 改在 `UDR`）、`M5CollapseFixture:697`（`inertProjection` 改在 `UPJ`）、`SUP:80`（類別說明）。
@@ -10001,3 +10001,67 @@ adapter `fix1-red-after-pass`（`fix1/adapters_fix1.py`，不 commit）：`finis
 - 還原後在同一乾淨 HEAD 另跑正常 M5 gate 兩次：`gate-f63c2fix1-clean-20261021-a-1bd855413b264f36be6f10c145759239`、`gate-f63c2fix1-clean-20261021-b-60bb72fc5f874d52b79f4394c9de6b31`，均 exit=0、60/60、`M5_UNIVERSE_HOLD=0`。這些是完整正常 suite 回歸，與上面的受控 GREEN 分開。
 - 無 code commit，故先在乾淨的 `44f6cb9` 跑完整 `scripts/verification/run-all.ps1`：`run-all-2fa881c45802414fac0674ddfc37da6f`，`END ALL exit=0 HEAD=44f6cb9`。SUMMARY：default 179/179、windows 89、legacy 1/1、M5 60/60、perTest 56+1、JUnit 666（664 PASS、2 SKIPPED，failures/errors 0）、windowsCheckpoint 17、release 432 entries／385 classes、sources 226、testmodHits 0、mainOnly PASS、M3 4+5、recovery 24、M5 collapse 69、CI 規則 Windows／Ubuntu PASS。對前一次基準 `run-all-cbf51c5a8afc4506a4a162a46f876e1c`，上述數值、default／legacy／M5 testcase 與 JUnit 集合都相同；release SHA `c20bc00f...` 相同。sources SHA 不同，但 226 個項目的內容 `contentDiffers=0`、順序與 comment 相同，差異僅 zip `date_time`／`extra`。Full WARN／ERROR 55／31、legacy 0／0、M5 38／10；Full sorted diff 空，M5 原始 diff 是物件 hash、座標等動態欄位，限欄位正規化後無剩餘差異，不稱原始日誌逐字相同。pin 計數同為 4／9／4；worldgen 四類例外均 0；collapse probe `62953c067cdd4119928fa398d3dadf42` 對基準 `90498c8aabd44ed98a8b83ff481d968e` 的具名斷言與 step 比對 `RESULT=OK`。逐項輸出在 `fix1/runall1-*`。
 - 本節的文件 commit 之後另跑第二次完整 run-all；其 root、結果與比較保存在 `fix1/STATUS.md`。本節寫成時，證據仍待全新乾淨 context 的 spec／quality re-review；其後兩份獨立複審已通過、I-1 關閉，見本節開頭 Review 區塊，並非 implementer 自評。沒有 push、merge、tag 或刪除 worktree。
+## F6-3d-1：probe 資料封裝與有界等待
+
+- 狀態：本機實作與取證記錄；尚待 controller 派兩個全新 context 做 spec／quality review，不自評通過。GitHub CI、人工 smoke 與 milestone 整合狀態不由本段判定。
+- 範圍：原盤點 #26～#29 與 F6-3c-2 M-1 單句；沒有 production、build、workflow、正式 verification 腳本、正常測試集合或 phase 的變更。F6-3d-2／d-3、F6-3e 仍是後續。
+- Commit：`cd7ea88` 純 API 封裝；`82f1984` 保留鍵拒絕；`5777365` 等待上限；`5d1209a` Javadoc；`0d47a8b` README；`b003ea3` 僅補正 TICK_END 的 atWindow／atHalt 措辭。
+- 行號以 `b003ea3` 為準：`M5CollapseRun.java`:242,243,320,329,335,341,350,357,367；`M5CollapseTemplateRaceChain.java`:95；`M5CollapseUnloadChain.java`:88；`M5TestHooks.java`:1007,1013；`M5ChunkUnloadHooks.java`:133,137；`scripts/verification/README.md`:306,307。此條目之後保留供 controller 插入獨立 Review 區塊。
+
+### 取證 API 與保留鍵
+
+`proof`／`failures` 改為 private，18 類直接呼叫點等價遷移。`recordProof` 保留 put 的同鍵覆蓋／null；`recordFirstProof` 保留 putIfAbsent 的 null 語意；`proofText` 只回字串或 null，不交出 mutable map／list；`recordProofEntry` 累積 CLEARED_PROOF 的具名 entry，保留原來 put 的回傳值判定與重名診斷；`recordFailure` 只能追加。沒有新增 namespace、helper class 或通用框架。
+
+37 個 runner 頂層保留鍵的完整集合：
+
+| 組別 | 鍵 |
+| --- | --- |
+| 共用身分／設定 | producer、phase、phaseTable、nonce、startupNonce、pid、startTimeUtc、root、runtimeScope、loadedModIds、jvmProperties、failures、ending、steps |
+| STOP／共用執行事實 | stoppingSeen、stoppedSeen、witness、observed、ticks、status、stopRequested、crashWindow、haltTiming |
+| HALT | refused、window、hit、reached、crashPointFailure、detail、windowServerTick、haltServerTick、universeActiveAtHalt、stepAtHalt、atWindow、atHalt、disk、haltTimeUtc |
+
+三個寫入 API 都在修改前拒絕這些鍵：`reservedProofKey`、追加 failure、事件與 ERROR log，再丟 IllegalArgumentException；收下例外也不會消掉 failure，不能判 PASS／乾淨 HALT。正常 receipt 的 schema、鍵值語意與具名斷言不變。保留鍵清單與兩種 writer 的頂層 put 集合逐項相同。
+
+### 等待與註解
+
+`h6race` 的 idle、`unload` 的 loadedAgain 各直接由 2400 改為 1200 ticks（各只有一個用點，不另抽共用常數）。原生 20 TPS 約 60 秒；PHASE_TICK_LIMIT 3600、harness IdleSeconds 90／PhaseMinutes 8 仍分別計算，低 TPS 不保證先於 wall-clock timeout。
+
+受控未完成 fixture 的舊兩個上限都先走 90 秒 idle timeout，保留 timeout.json／jstack；新上限則各保留目標 stepBounded 與完整 chain 診斷，沒有 timeout：idle 的 phase tick 1201／59.912235 秒，loadedAgain 的 tick 1256／59.999924 秒。這是定向 oracle OK，phase 仍是預期 FAIL／非零，不能冒充正常 PASS。既有 events 先完成 materialize／readsReleased、目標沒有完成，與固定步序共同支持等待歸屬；精確行號／時間另存 step-entry-evidence.json。
+
+CrashPoint Javadoc 區分 WINDOW 的立即 halt，與 TICK_END 在 hook 收 atWindow／記 detail／回 production，再於同 tick end 收 atHalt 後 halt。ChunkReadHold Javadoc 寫出 running 的 volatile 退出路徑、stopped 非 volatile 的 best-effort 輪詢、sleep 不建立 happens-before／不保證可見期限，以及 daemon／外層 timeout 的限制；沒有更改 thread 行為。原版欄位來源與行號見 server-visibility-evidence.txt。
+
+### 定向、正常與完整回歸證據
+
+本節相對證據以 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63d1/` 為根；原始 phase receipt 另依各 JSON 的絕對 path 指向 SDD 的 `collapse-<runId>-<chain>/`。
+
+| 項目 | 採計證據／結果 |
+| --- | --- |
+| 純封裝正常 focused | e09058ed763f491c867fc856270ed288，7 phases，schema／具名名稱／真值／steps RESULT=OK；`refactor-precommit-compile.txt`、`refactor-precommit-state.json` |
+| 保留鍵 RED | cda7c4d4bac642f3a113fe170adc2f25，具名 `reservedProofKeysRejected`，111 case 未拒絕；`guard-red-2/oracle.json` |
+| 保留鍵兩次 GREEN | 5b7762b7153e4b14b0486957e584aa97、ee6d1c6886b8433fb1009b40739d6cb7，同乾淨82f1984，111項拒絕／保留／診斷與5個具名斷言全true；同RED fixture逐byte一致，各 `guard-final-*/oracle.json`／`restore.json` |
+| 等待定向 | 舊dc8fd5e5c35a4d9a96fa493e7cbe065d／af52cf79f0cf44cc8e27789326e64373，90秒idle timeout；新f793054e3b5b4f12bee2ab65c84e1d9f／55928ea6a72e4e7b9142060ceeff532a，目標stepBounded。`wait-*/oracle.json`、`restore.json`、`step-entry-evidence.json` |
+| 每個code commit前正常編譯 | `guard-compile/precommit.json`；`wait-compile/oracle.json`／`start.json`；`javadoc-compile/oracle.json`／`start.json`；`javadoc-timing-compile/oracle.json`／`start.json`。均只含當次commit內容，沒有adapter或mutation |
+| 最終乾淨focused兩次 | HEAD `b003ea3a8a01602a1322952573b9c0331f65be10`，runIds `669292788f574526a290a583520d8cd1`／`030937d94ae74dc9b144f35785c78c1c`，各7 phases（5 PASS＋2 HALT）、failures 0；具名／真值／steps／schema RESULT=OK，source／harness SHA pin前後一致，`final-clean-focused-two.json` |
+
+短期adapter只在既有testmod phase的允許檔暫時接線，guard fixture對真實runner的本地instance逐鍵呼叫API、以reflection只讀其private容器；沒有production seam、正式phase或新測試。`adapter.py` SHA-256 `14bd49568d7221bc0083855246d41345b989031db3a0fd19a92579abd8e75605`；`normal-probe.py` `d7ef975276099589a4eee01ee82810dbaafef4cb4824ec89f083c8f4c75396da`；`compare.py` `dd6c3d94f1d1aab04145401a10a51a5a601f93a06aa13ff65cda97fbcd802399`；`classify-warnings.py` `5a73d81960989be44ef14332e1a4309f6a11715ca1e4caa5942bfbe1ed073dfe`。短期證據是gitignored，不force-add；正式重跑仍經tracked `scripts/verification/`。
+
+
+第一輪完整回歸：`.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63d1/runall1/run-all-a734d37c40a64806a742bef2a5fbfe1b`，乾淨HEAD `b003ea3a8a01602a1322952573b9c0331f65be10`，`END ALL exit=0 HEAD=b003ea3a8a01602a1322952573b9c0331f65be10`。Full／legacy／M5成品一完成即已做唯讀比較，沒有等整輪END；各階段記錄在 `runall1/completion.json`。
+
+SUMMARY 同最新基準 `run-all-a8841a60e8b84bea8887c01992e4ca1f`（0ed3e62；與開工4527f26只有治理文件差異）：default179/179、windows89、legacy1/1、M560/60、perTest56+1、JUnit666（failures0/errors0/skipped2、windowsCheckpoint17）、release432entries/385classes、sources226、testmodHits0、mainOnlyPASS、M3 4+5、recovery24、collapse69/halts31、CI win／ubuntu兩PASS（本機規則，不是GitHub runner）。
+
+`runall1-compare/`：原始testcase／JUnit集合相同；release SHA `c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08` 相同；sources SHA 5a960b744c8ba550f0739ab3c3bef0f478eace01c264ae828effa3e0a3b534f9 與基準不同，但226項內容與順序全同，ZIP metadata對照保留。Full55/31、legacy0/0、M538/10的原始排序diff保留，限定UUID／tmp nonce／worker編號／絕對X/Z與tick／物件hash歸屬後remaining0；200/600、Y、velocity/yaw/pitch、錯誤類型與結果均保留（`warning-attribution-complete.json`）。pin4/9/4逐batch相同，worldgen四類0；69 phases的名稱／真值／steps／schema／phaseTable與ending皆同，`names.txt` RESULT=OK。
+
+observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後順序在 `collapse-phase-compare.json`，不是改名或真值差異。UUID衍生catalog digest變動另存 `m5-catalog-digest-attribution.json`，60筆非digest增量契約與suite56筆收斂相同，不宣稱raw receipt逐字相同。M5節流／HOLD／停服列在 `m5-tps-hold-stop.json`。
+
+
+本 note commit 後還要在乾淨 HEAD 跑第二次完整 run-all；結果由本輪 STATUS／completion.json 記錄，再由獨立 reviewer 與 controller 核對。這句不是預先宣稱第二輪通過。
+
+### 失敗與不採計紀錄
+
+- 初次 sandbox CIM 拒絕實際已建立 collapse-0865f84b81a4457dbe3f47abb88c11b3-w2，沒有 receipt，stdout／stderr 空；保留原 root，不以缺 JavaId 推論沒有啟動。以升權 CIM 確認 owner=0 才在新 nonce 重試。
+- guard-red 的 UTF8／cp950 diff 解碼失敗發生在 harness 之前，finally 還原一致，沒有 runtime；guard-red-2 才是採計 RED（cda7c4d4bac642f3a113fe170adc2f25）。
+- guard-green-pre 因錯誤只讀路徑未寫入 guard，實際 root 1cc193348ca14bb5ab159064cabd344f 的具名結果仍是 RED，保留且不採為 GREEN。錯誤只讀 path 位於本 worktree 的 .superpowers/sdd/，不是主 checkout；失敗發生在 source 寫入前。
+- 控制層改為固定 canonical worktree＋AGENTS.md／build.gradle markers、native 非零立即停止、try/finally bytes／blob 還原；真實 native exit37 的無 runtime 負向檢查證明 launch 分支不執行。guard-green-2 的 control hold 在建立 label／runtime 前停止；read-remaining 的 stdout cp950 列印失敗亦未啟 runtime。後續 Python 以 -X utf8／UTF8 subprocess 統一處理。
+- 補正文案前的兩次正常 focused（cf50221c0c67497aafd54cdb9d9d0f2d、f1d5a87e46254a3e961d9b02da09b28f）均有效且保留原 pin；最終兩次採用補正後 HEAD 的新 labels，不用舊 pin 冒充。
+- 所有原始失敗 root／receipt 保留；所有 adapter 有原 bytes、patch、HEAD／porcelain／blob 與 SHA-256 還原核對。沒有 push、merge、tag、PR、LICENSE 或刪除 worktree。
