@@ -97,8 +97,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：F6-3c-2 與 **F6-3d-1** 已完成（2026-10-21）。d-1 範圍為 #26～29 與 M-1；兩個全新獨立 reviewer context 完成兩階段唯讀審查，spec ✅／quality Approved，Critical／Important／Minor 都為 0。實作及 note range `4527f26..c526b295`；最終完整回歸釘選乾淨 `c526b295`：SDD `f6/f63d1/runall2/run-all-833243ca0c104b8fb6b887dd96445a7a`，`END ALL exit=0`。下一步 **F6-3d-2**（#15～21 的共用 owned-phase launcher／timeout／encoding／diagnostics），之後 d-3 才整理 gate／README。
-- Git 狀態（2026-10-21 19:09 唯讀核對）：origin feature 仍為 `30666c4`；本機 main 與 origin main 為 `a7e1be2`；本機與遠端沒有 `m5` tag。本輪只有本地提交，未 push／merge／tag／刪 worktree；每次仍需使用者新同意。
+- 目前：F6-3c-2、F6-3d-1 與 **F6-3d-2（含 fix round 1）已完成**（2026-10-22）。d-2範圍#15～21與X4，range `498d5e4..4e3fa6c`；首輪共同I-1的無效timeout RED已補證，兩個全新獨立context正式spec ✅／quality Approved，C/I/M皆0。最終完整回歸在乾淨 `4e3fa6c`：SDD `f6/f63d2/fix1/runall2/run-all-da52833326044b678588d05ac836a020`，`END ALL exit=0`。下一步 **F6-3d-3**（#13/#14/#22～24/#30/#31與既有裁示），之後F6-3e。詳交接檔§7與note該節。
+- Git 狀態（2026-10-22 00:41 唯讀核對）：origin feature 為 `30666c4`；本機 main 與遠端 main 為 `a7e1be2`；本機與遠端沒有 `m5` tag。本輪只有本地提交，未 push／merge／tag／刪 worktree；每次仍需使用者新同意。當時只有 Gradle daemon，沒有 owned Minecraft／probe JVM，未終止 daemon。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：

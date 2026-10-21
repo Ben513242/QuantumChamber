@@ -60,11 +60,11 @@
 - 先把 `f63c2/STATUS.md` 的 run-all-2 補進 note。controller 已在本檔的同一個 commit 補記，請核對。
 - review 通過之後，在 note 的 F6-3c-2 一節寫 review 區塊，並更新 plan、AGENTS、ledger。
 
-### 3.2 F6-3d：harness 腳本與 README（d-1 已完成；下一步 d-2）
+### 3.2 F6-3d：harness 腳本與 README（d-1／d-2 已完成；下一步 d-3）
 
 - 2026-10-21 controller 分三段，理由是隔離 Java runner 與程序／世界管理的變更並限制 context；原 scope 與裁示不變。
 - **d-1 已完成**：#26～29 與 M-1，`4527f26..c526b295`；兩份獨立 review C/I/M皆0，兩次完整回歸 exit0，詳 §7 最新紀錄與 note。
-- **下一步 d-2**：#15～21，共用 owned-phase launcher／timeout／encoding／diagnostics（X4缺log記launcher.json，不自動FAIL）。之後 **d-3** 才做 #13/#14/#22～24/#30/#31，以及既有 #25/X2(a)、X3、U3/H5 的安排。下列保留原完整範圍，已完成部分以本 routing 與 §7 區分。
+- **d-2 已完成**（2026-10-22）：#15～21，共用owned-phase launcher／timeout／encoding／diagnostics與X4；range `498d5e4..4e3fa6c`，首輪I-1由fix1補有效RED後經全新spec／quality複審關閉，C/I/M皆0。**下一步 d-3**：#13/#14/#22～24/#30/#31，以及既有#25/X2(a)、X3、U3/H5安排。下列保留原完整範圍，已完成部分以本routing與§7區分。
 
 - Step 0：F6-3c-2 spec Minor M-1 已由 d-1 處理：32 個跨類別可見成員中，30 個移除 private；161 個成員數保持。
 
@@ -237,7 +237,7 @@
 
 ### 2026-10-21：F6-3d-1 完成，下一步 F6-3d-2
 
-- **HEAD 與 porcelain**：實作、最終回歸與正式review固定 `c526b2956cd660c47aa0d41ae3654007e843c15f`，feature/m5-collapse；controller核對porcelain與diff --check皆空。這筆接手資訊由其後的docs-only同步commit加入；其精確HEAD以 `git log -1 --format=%H -- docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md` 解析，提交後的HEAD/porcelain另記SDD接手指引。相對c526b295只應有治理文件變更，不冒稱新docs HEAD跑過runtime。
+- **HEAD 與 porcelain**：實作、最終回歸與正式review固定 `c526b2956cd660c47aa0d41ae3654007e843c15f`，feature/m5-collapse；controller核對porcelain與diff --check皆空。此筆歷史治理文件同步commit為 `498d5e44476e4d2827dcf24d3d837c0a1c758a72`，提交後porcelain空；相對c526b295只有AGENTS/handoff/note/plan四檔。後續接手改讀本節最後一筆，不再以舊動態git log指引判斷最新HEAD。
 - **實際 Git 狀態**：2026-10-21 19:09唯讀核對，origin feature=`30666c42c35e82c8938f13902d06af97f050e753`；本機main/origin main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`；本機/遠端無m5 tag。本輪未push、merge、tag或刪worktree。
 - **完成 task/range**：F6-3d-1（#26～29與M-1），`4527f265..c526b295`，7 commits；code/README HEAD b003ea3。未改production/build/workflow/正式verification腳本；沒有處理d-2/d-3/F6-3e的實作。
 - **Review**：全新獨立context `/root/f63d1_spec` spec ✅、`/root/f63d1_quality` Approved，兩份C0/I0/M0；先唯讀預審固定版本，第二輪END後在各自原獨立reviewer context續核才出正式結論，沒有實作context自評。派工/預審/正式結果在SDD `f6/f63d1/*review*20261021.md`；沒有新增Minor，原M-1已關閉。
@@ -248,3 +248,17 @@
 - **未關閉 finding**：本task無C/I/M；其他既有事項仍按d-2/d-3/F6-3e/F7處理。AccessDenied維持M5現況、列已知限制的使用者裁示不變。
 - **等使用者裁示**：每一次push、main ff-only、tag、刪worktree；代操作manual smoke授權；M6範圍/優先序。現在沒有需要重新詢問AccessDenied的事項。
 - **下一步**：F6-3d-2 → d-3 → F6-3e → 單次push同意與雙平台CI驗收 → F7 → required manual smoke/whole-branch review/里程碑收尾 → m5合併/tag後才新M6 worktree。M5尚未收尾，M6尚未開始。
+
+### 2026-10-22：F6-3d-2（含 fix round 1）完成，下一步 F6-3d-3
+
+- **HEAD與porcelain**：實作／補證／最終回歸及正式複審固定 `4e3fa6cd3952e2a3e9dd0f4c5ca59708375d865a`、feature/m5-collapse，controller核porcelain與diff --check空。本筆由其後的四檔治理文件同步commit加入；該commit精確HEAD以 `git log -1 --format=%H -- docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md` 解析，提交後HEAD/porcelain另記ledger。相對4e3fa6c只應有AGENTS/handoff/note/plan，不冒稱治理docs新HEAD另跑過runtime。
+- **實際Git狀態**：2026-10-22 00:41唯讀核對，origin feature=`30666c42c35e82c8938f13902d06af97f050e753`，本機main及遠端main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`，本機／遠端無m5 tag。本輪未push、merge、tag、建PR/LICENSE或刪worktree。
+- **完成task/range**：F6-3d-2 #15～21/X4，`498d5e4..4e3fa6c`共6 commits；code/README=`6406208`，原note=`399f4b4`，fix1 note=`4e3fa6c`。僅兩個probe wrapper、新common、README與note；沒有production／Java／build／workflow變更。fix1只有note提交與ignored補證。
+- **Review**：首輪全新獨立spec `/root/f63d2_spec` ❌與quality `/root/f63d2_quality` Not approved，各C0/I1/M0；共同I-1為total/idle舊RED在PSScriptRoot空Path setup失敗卻被採計。fix1補有效目標RED、同乾淨HEAD各兩GREEN後，由另外兩個全新獨立context `/root/f63d2_fix1_spec` 正式spec ✅、`/root/f63d2_fix1_quality` 正式Approved，兩份C0/I0/M0，I-1 ADDRESSED。定向預審與回歸中續核均未提前通過；最後END/manifest齊備後，各自在原獨立context正式裁決。正式報告在SDD `f6/f63d2/fix1/*-review-final-20261022.md`。
+- **最終完整回歸**：SDD `f6/f63d2/fix1/runall1/run-all-274351d14b764d4ba9e6cf34b31216f2`（399f4b4）及 `f6/f63d2/fix1/runall2/run-all-da52833326044b678588d05ac836a020`（note後4e3fa6c，2026-10-22 00:34:09）均精確END ALL exit0。原d2兩輪a4b41a90…／2ab81a16…亦保留，沒有因比較控制層錯誤重跑成功runtime。
+- **SUMMARY**：default179/179 windows89 legacy1/1 M560/60 perTest56+1 JUnit666 failures0 errors0 skipped2 windowsCheckpoint17 release432entries/385classes sources226 testmodHits0 mainOnlyPASS M3 4+5 recovery24 collapse69/HALT31 本機CI規則win/ubuntu兩PASS；不等於GitHub CI或人工驗收。
+- **差異與保留**：案例集合／release SHA同，sources226內容／順序同、僅ZIP時間metadata。第一輪Full55/31；第二輪Full跨午夜，兩piece完整串接後56/31（原latest21/5），唯一WARN+1以batch／受控拒絕stack／source／XML PASS對上§6的m2_task4_disconnect_io；保留raw added1，未歸屬0。legacy0/0、M538/10、pin逐batch4/9/4、每輪107份log四類worldgen0。只調整本輪ignored比較輸入，未改原gate/END或正式harness。
+- **證據封存**：controller與兩個reviewer均直接重算9,852檔／2,027,023,673 bytes、202個phase索引與398 source/harness pins，全部符合。入口 `f6/f63d2/fix1/STATUS.md`；evidence manifest SHA=`4e9c05192cd30c5d2b95e8e4739ff6ad7b64bfe4ec3bc72b71e85187b3d2b30e`。原兩份無效timeout RED／全部舊root與manifest保留；控制層路徑、schema與分析假設失敗保留、不充作RED或runtime偶發。未重hash全部runtime世界，未宣稱備份完成。00:41只剩GradleDaemon，無owned game/probe JVM，未殺daemon。
+- **未關閉finding**：本task無C/I/M；剩餘d-3、F6-3e、F7及里程碑事項按既定順序。AccessDenied依使用者裁示維持M5現況、列已知限制。
+- **等使用者裁示**：每次push／main ff-only／tag／刪worktree；代操作manual smoke授權；M6範圍與優先序。當前沒有需重新詢問AccessDenied的事項。
+- **下一步**：F6-3d-3 → F6-3e → 單次push同意與雙平台CI驗收 → F7 → required manual smoke／whole-branch review／里程碑收尾 → m5合併並tag後才新M6 worktree。M5尚未整體收尾，M6未開始。

@@ -10081,6 +10081,17 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - Commits：`b72e740`（純共用抽取與接線）、`2a3fac3`（M4 採 handle／timeout）、`8d34cee`（獨立身分、編碼與診斷）、`6406208`（W7 註解與 README）。M4 行為改變沒有混稱純搬移。
 - 行號：`scripts/verification/probe-common.ps1`：Resolve-Evidence :3、New-OwnedRoot :17、Get-OwnedIdentity :65、Get-PhaseFailureNote :81、Copy-OwnedLogs :98、Stop-TimedOutPhase :112、Invoke-OwnedPhase :170；M4 wrapper :34／:53；M5 wrapper :114／:140／:162、W7 :53；README :195–200。
 
+### Review 與完成狀態（2026-10-22）
+
+- **F6-3d-2 完成**：實作與 note／fix1 range `498d5e4..4e3fa6c`（6 commits），code／README HEAD `6406208`。首輪 spec／quality 各 C0/I1/M0；共同 I-1 由 fix1 補足有效目標 RED／GREEN後關閉，原無效 RED root／fixture／manifest 保留且明列不採計。
+- 全新獨立 `/root/f63d2_fix1_spec` 正式 spec ✅、`/root/f63d2_fix1_quality` 正式 Approved，兩份 Critical／Important／Minor 都為 0。各 reviewer 未參與實作或首輪 review；先核定向證據、再核已完成的文件／回歸，最後在兩輪 END 與 manifest 齊備後於各自同一獨立 context 正式裁決。沒有以預審取代正式 review，無新增 Minor。
+- 正式報告：SDD `f6/f63d2/fix1/spec-review-final-20261022.md`、`quality-review-final-20261022.md`。I-1=ADDRESSED；此 task 沒有未關閉 finding。
+- 最終完整回歸釘選乾淨 `4e3fa6cd3952e2a3e9dd0f4c5ca59708375d865a`，SDD `f6/f63d2/fix1/runall2/run-all-da52833326044b678588d05ac836a020`，2026-10-22 00:34:09 `END ALL exit=0`。第一輪 `fix1/runall1/run-all-274351d14b764d4ba9e6cf34b31216f2` 亦 exit0（399f4b4）；完整 SUMMARY 見下方 fix1。後續治理文件同步 commit 不冒稱新 HEAD 另跑過 runtime。
+- 第二輪 Full 跨午夜，完整兩份原始 log 拼接後是 **WARN/ERROR 56/31**（原 latest 僅21/5），對 baseline55/31 的 raw added1 明確歸屬 `m2_task4_disconnect_io:0` 受控 journal 拒絕（交接§6既有項）；原始差異保留、未歸屬0。legacy0/0、M538/10；pin逐batch4/9/4、每輪107份log的四類worldgen0。
+- 案例集合相同；release SHA相同，sources226項內容／順序相同、差異僅ZIP時間metadata。兩輪398個source/harness pin與當前一致。Controller及兩個reviewer均各自核原始資料與manifest；9,852檔／2,027,023,673 bytes、202個phase索引與所有對應roots相符，未宣稱完整runtime世界備份。evidence manifest SHA=`4e9c05192cd30c5d2b95e8e4739ff6ad7b64bfe4ec3bc72b71e85187b3d2b30e`。
+- 下一步F6-3d-3；M5尚未整體收尾、M6未開始。尚未執行GitHub CI／required manual smoke，未push／merge／tag／刪worktree。
+
+
 ### 首輪獨立 review（本輪補證前）
 
 - 首輪 spec ❌／quality Not approved，兩份正式報告均 Critical 0／Important 1／Minor 0；共同 I-1 是 M4 total／idle 的舊 RED 取證無效，未發現已確認的正式程序管理 code 缺陷。
@@ -10133,6 +10144,14 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 
 ### F6-3d-2 fix round 1：M4 total／idle 目標 RED 補證
 
+- 行號：SDD `fix1/timeout-fixture.ps1:52–68`（來源／adapter）、`:77–89`（目標 oracle）；正式 source／harness 本輪未變。
+
+#### Fix round 1 review（2026-10-22）
+
+- 全新獨立 spec ✅／quality Approved，C0/I0/M0，I-1 ADDRESSED；詳細原始證據與 reviewer context 見本節上方「Review 與完成狀態」。無 Minor 留待下一輪。
+- 完成 range `399f4b4..4e3fa6c`，只有 note commit；最終 run-all 是乾淨4e3fa6c的 `run-all-da52833326044b678588d05ac836a020`，END ALL exit0。定向、focused及兩輪完整證據均已封存並獨立核對。
+
+
 - 基準與本輪 runtime HEAD：`399f4b415d286b56410574819f88e6fc310ffa8d`，分支 `feature/m5-collapse`，取證前與正常 runtime 期間 porcelain 空。沒有 production／testmod／正式 harness／README 變更，沒有 code commit；本輪只提交此 note。新證據入口為 SDD `f6/f63d2/fix1/STATUS.md`。
 - 方法：從 `b72e740` 抽取舊 `Invoke-M4Phase`，明確注入原 `scripts/verification` 路徑，修復 fixture 的空 `PSScriptRoot` 相依。total 的舊 8 分鐘與新 `PhaseMinutes` 同縮為 0.8 秒；idle 界線 0.2 秒、total 4 秒，兩版使用同一份情境與程序 mock。舊 total 分支只加觀察事件，沒有變更判斷；新 common 只將 `GetProcessById` 接到具名 mock。原文、adapter、逐行 diff、commit／blob／原始 SHA、當場 before／after blob／SHA 都保留，沒有暫改 tracked 檔案或需要檔案 restore。
 - `total-red-01`：launcher 被呼叫，進入等待迴圈並經 4 次 refresh；實測約 1.261 秒，跨過 0.8 秒後命中舊 total 分支，得到精確 `owned phase 逾時；禁止同 root 重跑`。沒有 timeout 診斷／owned 收尾；這項結論同時由分支事件、時間與精確例外證明，不是由缺檔單獨推定。
@@ -10143,4 +10162,4 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - 第一輪完整回歸：`C:\Users\Ben\Documents\minecraft QuantumChamber\.worktrees\m5-collapse\.superpowers\sdd\2026-10-01-m5-collapse-passage\f6\f63d2\fix1\runall1\run-all-274351d14b764d4ba9e6cf34b31216f2`；`END ALL exit=0 HEAD=399f4b415d286b56410574819f88e6fc310ffa8d`。SUMMARY：default179/179、windows89、legacy1/1、M5=60/60、perTest56+1、JUnit666（failures0/errors0/skipped2）、windowsCheckpoint17、release432 entries/385 classes、sources226、testmodHits0、mainOnly PASS、M3 4+5、recovery24、collapse69（HALT31）、本機 CI 規則 Windows／Ubuntu PASS；不是 GitHub CI。
 - 與原 d-2 乾淨 `399f4b4` 的 `run-all-2ab81a1610fc41fe9b30a9f1b1a45bcb` 比較：帶 class 的 testcase／JUnit 集合、M4 24／M5 69 phase schema／具名斷言／steps 均 RESULT=OK；release SHA `c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08` 相同。sources226 內容／順序相同，ZIP metadata 差異逐項解碼；Full WARN/ERROR=55/31、legacy=0/0、M5=38/10，原始含時間排序 diff 與限定欄位歸屬保留、剩餘差異0，pin逐batch4/9/4，worldgen四類0。完整 source／harness pins 取證期間不變；動態 UUID／nonce／PID／digest／entropy／journal 與 ZIP 時間各保留原值，不冒稱 raw 全同。
 - 純讀控制層曾因複製 focused 比較工具的相對 baseline 路徑及 entropy 檔名假設失敗，記於 `control-layer-errors.txt`；只修本輪副本／audit，未重跑成功 focused 或完整 runtime，亦未當成目標 RED。
-- 第二輪完整回歸在此 note commit 後以新的 root 執行，最終 END／比較、兩輪 source／harness pins、所有 roots 與 SHA manifest 由 fix1 STATUS／completion 記錄。I-1 的正式關閉留給全新獨立 spec／quality 複審，不提前宣稱通過。未執行 GitHub CI／人工 smoke，未 push／merge／tag／PR／LICENSE／刪 worktree，也未進入 d-3。
+- 以下為 `4e3fa6c` 提交時的待辦紀錄（其後實際結果見上方 Review）：第二輪完整回歸在該 note commit 後以新的 root 執行，最終 END／比較、兩輪 source／harness pins、所有 roots 與 SHA manifest 由 fix1 STATUS／completion 記錄。I-1 的正式關閉留給全新獨立 spec／quality 複審，不提前宣稱通過。未執行 GitHub CI／人工 smoke，未 push／merge／tag／PR／LICENSE／刪 worktree，也未進入 d-3。

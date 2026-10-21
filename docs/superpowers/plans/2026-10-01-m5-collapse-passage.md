@@ -841,8 +841,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - **F6-3c-2**：已完成（2026-10-21）。原實作 `48c5e4d..3e97dc9`；fix round 1 `44f6cb9..0ed3e62` 只補 pending after-pass 守門的定向 RED／GREEN，沒有正式 code／test 變更。兩個全新獨立 context 複審 spec ✅／quality Approved，Critical／Important 0；最終 `run-all-a8841a60e8b84bea8887c01992e4ca1f` 在乾淨 `0ed3e62` 為 `END ALL exit=0`。證據見 note 本節及交接檔 §7。
     - **F6-3d**：harness 腳本與 README。controller 2026-10-21 依 Java runner、程序管理與 gate 分成三段，隔離安全面的變更並限制 context；原 binding scope 不變，每段獨立 review 後才下一段。
       - **F6-3d-1**：#26～29 與 Step 0 M-1，已完成（2026-10-21，`4527f26..c526b295`）。proof/failures 封裝、37保留鍵、兩處1200tick等待、指定Javadoc/README；M-1更正32跨類別可見/30移除private，161不變。全新獨立spec ✅／quality Approved，C/I/M皆0；最終SDD `f6/f63d1/runall2/run-all-833243ca0c104b8fb6b887dd96445a7a` 在乾淨c526b295 END ALL exit0。
-      - **F6-3d-2（下一步）**：#15～21，共用 owned-phase launcher、timeout、encoding、diagnostics；X4 的缺 log 情況記 launcher.json，不自動判 FAIL。
-      - **F6-3d-3**：#13/#14/#22～24/#30/#31，boundary/clientProbe/phase-table/日誌輪替/逾時保留/README；#25依X2(a)只評估不進CI，X3不tracked歷史腳本，U3依既有H5裁示及recovery24證據處理。
+      - **F6-3d-2**：#15～21，已完成（2026-10-22，`498d5e4..4e3fa6c`，含fix1）。共用owned-phase launcher／timeout／encoding／diagnostics；X4缺log記launcher.json。首輪共同I-1已用有效total/idle RED與各兩GREEN補足；全新獨立spec ✅／quality Approved，C/I/M皆0。最終SDD `f6/f63d2/fix1/runall2/run-all-da52833326044b678588d05ac836a020` 在乾淨4e3fa6c END ALL exit0。
+      - **F6-3d-3（下一步）**：#13/#14/#22～24/#30/#31，boundary/clientProbe/phase-table/日誌輪替/逾時保留/README；#25依X2(a)只評估不進CI，X3不tracked歷史腳本，U3依既有H5裁示及recovery24證據處理。
     - **F6-3e**：`build.yml` 的明列清單與 `ci-rule-check.ps1`。
     - 最後 push 到 CI 驗收。push 前先問使用者。
   - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
