@@ -10,7 +10,7 @@
 #   -EvidenceRoot        彙整 recovery-run-<runId>.json 的位置；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle              gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 # phase receipt 位置由 testmod M4CandidateRecoveryProbe 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors/recovery-<nonce>/<phase>，不受 -EvidenceRoot 影響。
-param([switch]$ChainOnly, [switch]$NativeFailureOnly, [string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8)
+param([switch]$ChainOnly, [switch]$NativeFailureOnly, [string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8, [int]$GradleCodePage = [Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
 # whole-branch fix1：-Only 可只跑指定 chain／scenario（RED 用）；未指定時跑全部 24 phases。
 $ErrorActionPreference = 'Stop'
 $taskProject = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $Gradle -PathType Leaf)) { throw "找不到 Gra
 $taskGradle = $Gradle
 # evidence 目錄必須在 repo 內、路徑無 reparse，且被 gitignore（不得落在 tracked tree）。
 . (Join-Path $PSScriptRoot 'probe-common.ps1')
-$probeContext = [pscustomobject]@{Project=$taskProject; Gradle=$taskGradle; InitScript=(Join-Path $PSScriptRoot 'runtime.init.gradle'); RunId=''; RootPrefix='m4-recovery'; EvidencePrefix='recovery'; EvidenceOwner=''; Task='runM4Recovery'; PropertyPrefix='m4Recovery'; NonceProperty='quantumchamber.m4recovery.startupNonce'; IdleSeconds=$IdleSeconds; PhaseMinutes=$PhaseMinutes}
+$probeContext = [pscustomobject]@{Project=$taskProject; Gradle=$taskGradle; InitScript=(Join-Path $PSScriptRoot 'runtime.init.gradle'); RunId=''; RootPrefix='m4-recovery'; EvidencePrefix='recovery'; EvidenceOwner=''; Task='runM4Recovery'; PropertyPrefix='m4Recovery'; NonceProperty='quantumchamber.m4recovery.startupNonce'; IdleSeconds=$IdleSeconds; PhaseMinutes=$PhaseMinutes; GradleEncoding=[Text.Encoding]::GetEncoding($GradleCodePage); LogEncoding=[Text.Encoding]::UTF8}
 if (-not $EvidenceRoot) { $EvidenceRoot = Join-Path $taskProject '.superpowers/verification' }
 $EvidenceRoot = Resolve-Evidence -Context $probeContext -Path $EvidenceRoot
 $probeOwner = Resolve-Evidence -Context $probeContext -Path (Join-Path $taskProject '.superpowers/sdd/2026-09-21-m4-candidate-doors')
@@ -32,11 +32,12 @@ function Invoke-M4Phase([string]$Nonce, [string]$Phase, [string]$Root) {
     $state=Invoke-OwnedPhase -Context $probeContext -Nonce $Nonce -Phase $Phase -Root $Root
     $phaseEvidence=$state.PhaseEvidence; $startupNonce=$state.StartupNonce; $launcher=$state.Launcher
     $javaProcess=$state.JavaProcess; $javaId=$state.JavaId; $javaStart=$state.JavaStart
-    if ($launcher.ExitCode -ne 0) { throw "Gradle 非零退出：$($launcher.ExitCode)；保留 root：$Root" }
+    $note = Get-PhaseFailureNote -Context $probeContext -State $state
+    if ($launcher.ExitCode -ne 0) { throw "Gradle 非零退出：$($launcher.ExitCode)（$note）；保留 root：$Root" }
     $finalPath = Join-Path $phaseEvidence 'final.json'
     if (-not (Test-Path -LiteralPath $finalPath)) { throw "未產生正常 stop receipt：$phaseEvidence" }
     $receipt = Get-Content -LiteralPath $finalPath -Raw | ConvertFrom-Json -DateKind String
-    if ($receipt.status -ne 'PASS' -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested) { throw "probe 未通過：$phaseEvidence" }
+    if ($receipt.status -ne 'PASS' -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested) { throw "probe 未通過：$phaseEvidence（$note）" }
     if ($receipt.runtimeScope -ne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds) { throw 'recovery receipt 必須明確標示 testmod runtime，不能冒充 main-only' }
     if ($null -eq $javaId -or $javaId -ne $receipt.pid -or $receipt.startupNonce -ne $startupNonce) { throw 'JVM identity receipt 不符' }
     $recordedStart = [DateTimeOffset]::Parse($receipt.startTimeUtc)
@@ -46,10 +47,11 @@ function Invoke-M4Phase([string]$Nonce, [string]$Phase, [string]$Root) {
     $lockPath = Join-Path $Root 'world/session.lock'
     $lock = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $lock.Dispose()
-    Copy-Item -LiteralPath (Join-Path $Root "classload-$javaId.log") -Destination (Join-Path $phaseEvidence "classload-$javaId.log")
-    Copy-Item -LiteralPath (Join-Path $Root 'logs/latest.log') -Destination (Join-Path $phaseEvidence 'latest.log')
+    $auxiliaryLogs = Copy-OwnedLogs -State $state
     Get-ChildItem -LiteralPath (Join-Path $Root 'world/data') -File | ForEach-Object { [ordered]@{name=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $phaseEvidence 'data-hashes.json') -Encoding UTF8
     $identity = [ordered]@{ phase=$Phase; nonce=$Nonce; startupNonce=$startupNonce; javaPid=$javaId; javaStartTimeUtc=$javaStart.ToString('o'); gradleExitCode=$launcher.ExitCode; normalStop=$true; lockReleased=$true; root=$Root; receipt=$finalPath; receiptSha256=(Get-FileHash -LiteralPath $finalPath -Algorithm SHA256).Hash }
+    $identity.auxiliaryLogs = $auxiliaryLogs
+    $identity.logEncodings = [ordered]@{latestLog=$probeContext.LogEncoding.WebName; gradle=$probeContext.GradleEncoding.WebName; gradleCodePage=$probeContext.GradleEncoding.CodePage}
     $identity | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $phaseEvidence 'launcher.json') -Encoding UTF8
     $taskResults.Add([pscustomobject]$identity)
     Write-Output "PASS $Phase pid=$javaId root=$Root"

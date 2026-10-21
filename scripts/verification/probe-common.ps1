@@ -46,50 +46,125 @@ function Get-SharedLength([string]$Path) {
     try { return $stream.Length } finally { $stream.Dispose() }
 }
 
-function Get-SharedTail([string]$Path, [int]$Count) {
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+# 來源宣告分開：server latest.log 是 UTF-8；Gradle 是 launcher 明確選定的 console code page。
+function Get-SharedText([string]$Path, [Text.Encoding]$Encoding = [Text.Encoding]::UTF8) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
     try {
         $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-        try { $text = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8).ReadToEnd() } finally { $stream.Dispose() }
-        return @($text -split "`r?`n" | Where-Object { $_ -ne '' } | Select-Object -Last $Count)
-    } catch { return @("（讀不出來：$_）") }
+        try { $reader = [IO.StreamReader]::new($stream, $Encoding, $true); return $reader.ReadToEnd() } finally { $stream.Dispose() }
+    } catch { return "（讀不出來：$_）" }
+}
+
+function Get-SharedTail([string]$Path, [int]$Count, [Text.Encoding]$Encoding = [Text.Encoding]::UTF8) {
+    $text = Get-SharedText -Path $Path -Encoding $Encoding
+    return @($text -split "`r?`n" | Where-Object { $_ -ne '' } | Select-Object -Last $Count)
+}
+
+# 最新 CIM CreationDate 是獨立觀察；容許 Windows CIM 微秒精度造成的小於 1ms 差異。
+# 已持有的 handle 必須仍存活，命令 token 與 PID 亦必須相符。任何讀取失敗都拒絕終止。
+function Get-OwnedIdentity($Process, [DateTimeOffset]$Started, [string]$Name, [string]$CommandToken) {
+    $check = [ordered]@{matched=$false; pid=$Process.Id; observedStartTimeUtc=$null; nameMatched=$false; commandLineMatched=$false; startTimeMatched=$false; queryError=$null}
+    if ($Process.HasExited) { return $check }
+    try {
+        $live = Get-CimInstance Win32_Process -Filter "ProcessId=$($Process.Id)"
+        if ($null -eq $live) { return $check }
+        $freshStart = ([DateTimeOffset]$live.CreationDate).ToUniversalTime()
+        $check.observedStartTimeUtc = $freshStart.ToString('o')
+        $check.nameMatched = $live.Name -eq $Name
+        $check.commandLineMatched = $live.CommandLine -cmatch ([regex]::Escape($CommandToken) + '(?=\s|$|")')
+        $check.startTimeMatched = [Math]::Abs(($freshStart - $Started).TotalMilliseconds) -lt 1
+        $check.matched = $check.nameMatched -and $check.commandLineMatched -and $check.startTimeMatched -and -not $Process.HasExited
+    } catch { $check.queryError = $_.Exception.Message }
+    return $check
+}
+
+function Get-PhaseFailureNote($Context, $State) {
+    $note = Get-ReceiptNote $State.PhaseEvidence
+    $lines = @( (Get-SharedText -Path (Join-Path $State.Root 'logs/latest.log') -Encoding $Context.LogEncoding) -split "`r?`n" )
+    for ($i=0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notlike '*Could not execute entrypoint*') { continue }
+        $block = [Collections.Generic.List[string]]::new()
+        $block.Add($lines[$i])
+        for ($j=$i+1; $j -lt $lines.Count; $j++) {
+            if ($lines[$j] -match '^\[\d\d:\d\d:\d\d\]') { break }
+            if ($j - $i -lt 80 -or $lines[$j] -match 'Caused by:') { $block.Add($lines[$j]) }
+        }
+        $note += "；entrypoint latest.log：" + ($block -join "`n")
+        break
+    }
+    return $note
+}
+
+function Copy-OwnedLogs($State) {
+    $logs = [ordered]@{}
+    foreach ($item in @(@{key='classload';relative="classload-$($State.JavaId).log"}, @{key='latest';relative='logs/latest.log'})) {
+        $source = Join-Path $State.Root $item.relative
+        $present = Test-Path -LiteralPath $source -PathType Leaf
+        $logs[$item.key] = [ordered]@{source=$source; present=[bool]$present; copied=$false}
+        if ($present) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $State.PhaseEvidence (Split-Path -Leaf $source))
+            $logs[$item.key].copied = $true
+        }
+    }
+    return $logs
 }
 
 function Stop-TimedOutPhase($Context, $State, [string]$Reason) {
-    $Phase=$State.Phase; $PhaseEvidence=$State.PhaseEvidence; $Root=$State.Root; $StartupNonce=$State.StartupNonce
-    $JavaProcess=$State.JavaProcess; $JavaId=$State.JavaId; $JavaStart=$State.JavaStart; $Launcher=$State.Launcher
-    $Started=$State.Started; $LastActivity=$State.LastActivity; $IdleSeconds=$Context.IdleSeconds; $PhaseMinutes=$Context.PhaseMinutes
-
     $now = [DateTimeOffset]::UtcNow
-    $record = [ordered]@{ phase=$Phase; reason=$Reason; idleLimitSeconds=$IdleSeconds; phaseLimitMinutes=$PhaseMinutes; timeUtc=$now.ToString('o')
-        elapsedSeconds=[Math]::Round(($now - $Started).TotalSeconds, 1); idleSeconds=$(if ($null -ne $LastActivity) { [Math]::Round(($now - $LastActivity).TotalSeconds, 1) } else { $null })
-        root=$Root; startupNonce=$StartupNonce; pid=$JavaId; javaStartTimeUtc=$(if ($null -ne $JavaStart) { $JavaStart.ToString('o') } else { $null })
+    $record = [ordered]@{phase=$State.Phase; reason=$Reason; idleLimitSeconds=$Context.IdleSeconds; phaseLimitMinutes=$Context.PhaseMinutes; timeUtc=$now.ToString('o')
+        elapsedSeconds=[Math]::Round(($now - $State.Started).TotalSeconds, 1); idleSeconds=$(if ($null -ne $State.LastActivity) { [Math]::Round(($now - $State.LastActivity).TotalSeconds, 1) } else { $null })
+        root=$State.Root; startupNonce=$State.StartupNonce; pid=$State.JavaId; javaStartTimeUtc=$(if ($null -ne $State.JavaStart) { $State.JavaStart.ToString('o') } else { $null })
         commandLineMatched=$false; jstack=$null; jstackExitCode=$null; killed=$false; javaExited=$null; javaExitCode=$null; launcherExited=$null; launcherExitCode=$null
-        lastLogLines=@(); lastGradleLines=@() }
-    if ($null -ne $JavaId -and -not $JavaProcess.HasExited) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$JavaId"
-        $sameStart = ([DateTimeOffset]$JavaProcess.StartTime).ToUniversalTime() -eq $JavaStart
-        $matched = $null -ne $process -and $process.Name -eq 'java.exe' -and $process.CommandLine -like "*$($Context.NonceProperty)=$StartupNonce*" -and $sameStart
-        $record.commandLineMatched = [bool]$matched
-        if ($matched) {
-            $jstack = Join-Path (Split-Path -Parent $process.ExecutablePath) 'jstack.exe'
-            if (Test-Path -LiteralPath $jstack -PathType Leaf) {
-                $dump = Join-Path $PhaseEvidence "jstack-$JavaId.txt"
-                $dumper = Start-Process -FilePath $jstack -ArgumentList @('-l', "$JavaId") -RedirectStandardOutput $dump -RedirectStandardError "$dump.err" -WindowStyle Hidden -PassThru
-                if ($dumper.WaitForExit(60000)) { $record.jstack = Split-Path -Leaf $dump; $record.jstackExitCode = $dumper.ExitCode } else { $record.jstack = 'TIMEOUT（60 秒沒有結束）' }
-            } else { $record.jstack = "沒有 jstack：$jstack" }
-            Stop-Process -Id $JavaId -Force
-            $record.killed = $true
-            $record.javaExited = $JavaProcess.WaitForExit(30000)
-            if ($record.javaExited) { $record.javaExitCode = $JavaProcess.ExitCode }
+        identityCheck=$null; identityBeforeKill=$null; discoveryError=$null; launcherPid=$State.Launcher.Id; launcherIdentity=$null; launcherKilled=$false
+        encodings=@{latestLog=$Context.LogEncoding.WebName; gradle=$Context.GradleEncoding.WebName; gradleCodePage=$Context.GradleEncoding.CodePage}; lastLogLines=@(); lastGradleLines=@()}
+    $noJavaConfirmed = $false
+    # timeout 當下重新找一次 nonce；沒有舊 JavaId 不等於程序沒有啟動。
+    if ($null -eq $State.JavaId) {
+        try {
+            $candidates = @(Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -cmatch ([regex]::Escape("$($Context.NonceProperty)=$($State.StartupNonce)") + '(?=\s|$|")') })
+            if ($candidates.Count -eq 0) { $noJavaConfirmed = $true }
+            elseif ($candidates.Count -eq 1) {
+                $State.JavaId = [int]$candidates[0].ProcessId
+                $State.JavaProcess = [Diagnostics.Process]::GetProcessById($State.JavaId)
+                $null = $State.JavaProcess.Handle
+                $State.JavaStart = ([DateTimeOffset]$State.JavaProcess.StartTime).ToUniversalTime()
+                $record.pid=$State.JavaId; $record.javaStartTimeUtc=$State.JavaStart.ToString('o')
+            } else { $record.discoveryError='同一 nonce 出現多個 JVM，無法證實單一 owner' }
+        } catch { $record.discoveryError=$_.Exception.Message }
+    }
+    if ($null -ne $State.JavaProcess -and -not $State.JavaProcess.HasExited) {
+        $token = "$($Context.NonceProperty)=$($State.StartupNonce)"
+        $check = Get-OwnedIdentity -Process $State.JavaProcess -Started $State.JavaStart -Name 'java.exe' -CommandToken $token
+        $record.identityCheck=$check; $record.commandLineMatched=[bool]$check.matched
+        if ($check.matched) {
+            try {
+                $live = Get-CimInstance Win32_Process -Filter "ProcessId=$($State.JavaId)"
+                $jstack = Join-Path (Split-Path -Parent $live.ExecutablePath) 'jstack.exe'
+                if (Test-Path -LiteralPath $jstack -PathType Leaf) {
+                    $dump = Join-Path $State.PhaseEvidence "jstack-$($State.JavaId).txt"
+                    $dumper = Start-Process -FilePath $jstack -ArgumentList @('-l', "$($State.JavaId)") -RedirectStandardOutput $dump -RedirectStandardError "$dump.err" -WindowStyle Hidden -PassThru
+                    if ($dumper.WaitForExit(60000)) { $record.jstack=Split-Path -Leaf $dump; $record.jstackExitCode=$dumper.ExitCode } else { $record.jstack='TIMEOUT（60 秒沒有結束）' }
+                } else { $record.jstack="沒有 jstack：$jstack" }
+            } catch { $record.jstack="取證失敗：$($_.Exception.Message)" }
+            $record.identityBeforeKill = Get-OwnedIdentity -Process $State.JavaProcess -Started $State.JavaStart -Name 'java.exe' -CommandToken $token
+            if ($record.identityBeforeKill.matched) {
+                $State.JavaProcess.Kill()
+                $record.killed=$true; $record.javaExited=$State.JavaProcess.WaitForExit(30000)
+                if ($record.javaExited) { $record.javaExitCode=$State.JavaProcess.ExitCode }
+            }
         }
     }
-    $record.launcherExited = $Launcher.WaitForExit(60000)
-    if ($record.launcherExited) { $record.launcherExitCode = $Launcher.ExitCode }
-    $record.lastLogLines = Get-SharedTail (Join-Path $Root 'logs/latest.log') 20
-    $record.lastGradleLines = Get-SharedTail (Join-Path $PhaseEvidence 'stdout.log') 20
-    $record | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $PhaseEvidence 'timeout.json') -Encoding UTF8
-    throw "owned phase 逾時（$Reason）：pid=$JavaId commandLineMatched=$($record.commandLineMatched) jstack=$($record.jstack) killed=$($record.killed)；timeout.json 在 $PhaseEvidence；禁止同 root 重跑：$Root phase=$Phase"
+    # 只有當下沒有 nonce JVM、且新 CIM 身分仍吻合時，才結束本次 launcher handle；不掃殺子程序或 daemon。
+    if ($noJavaConfirmed -and -not $State.Launcher.HasExited) {
+        $record.launcherIdentity = Get-OwnedIdentity -Process $State.Launcher -Started $State.LauncherStart -Name 'powershell.exe' -CommandToken $State.LauncherCommandToken
+        if ($record.launcherIdentity.matched) { $State.Launcher.Kill(); $record.launcherKilled=$true }
+    }
+    $record.launcherExited=$State.Launcher.WaitForExit(60000)
+    if ($record.launcherExited) { $record.launcherExitCode=$State.Launcher.ExitCode }
+    $record.lastLogLines=Get-SharedTail -Path (Join-Path $State.Root 'logs/latest.log') -Count 20 -Encoding $Context.LogEncoding
+    $record.lastGradleLines=Get-SharedTail -Path (Join-Path $State.PhaseEvidence 'stdout.log') -Count 20 -Encoding $Context.GradleEncoding
+    $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $State.PhaseEvidence 'timeout.json') -Encoding UTF8
+    throw "owned phase 逾時（$Reason）：pid=$($State.JavaId) commandLineMatched=$($record.commandLineMatched) jstack=$($record.jstack) killed=$($record.killed) launcherKilled=$($record.launcherKilled)；timeout.json 在 $($State.PhaseEvidence)；禁止同 root 重跑：$($State.Root) phase=$($State.Phase)"
 }
 
 function Invoke-OwnedPhase($Context, [string]$Nonce, [string]$Phase, [string]$Root) {
@@ -99,10 +174,12 @@ function Invoke-OwnedPhase($Context, [string]$Nonce, [string]$Phase, [string]$Ro
     $startupNonce = [guid]::NewGuid().ToString('N')
     $arguments = @('-I', $Context.InitScript, $Context.Task, "-P$($Context.PropertyPrefix)Nonce=$Nonce", "-P$($Context.PropertyPrefix)Phase=$Phase", "-P$($Context.PropertyPrefix)StartupNonce=$startupNonce", "-P$($Context.PropertyPrefix)Root=$Root", '--console=plain')
     $quotedArguments = $arguments | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }
-    $command = "Set-Location -LiteralPath '" + $Context.Project.Replace("'", "''") + "'; & '" + $Context.Gradle.Replace("'", "''") + "' " + ($quotedArguments -join ' ') + '; exit $LASTEXITCODE'
+    $command = '$OutputEncoding=[Text.Encoding]::GetEncoding(' + $Context.GradleEncoding.CodePage + '); [Console]::OutputEncoding=$OutputEncoding; ' + "Set-Location -LiteralPath '" + $Context.Project.Replace("'", "''") + "'; & '" + $Context.Gradle.Replace("'", "''") + "' " + ($quotedArguments -join ' ') + '; exit $LASTEXITCODE'
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $stdout = Join-Path $phaseEvidence 'stdout.log'; $stderr = Join-Path $phaseEvidence 'stderr.log'
     $launcher = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-EncodedCommand', $encoded) -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $null = $launcher.Handle
+    $launcherStart = ([DateTimeOffset]$launcher.StartTime).ToUniversalTime()
     $started = [DateTimeOffset]::UtcNow
     $deadline = $started.AddMinutes($Context.PhaseMinutes)
     $lastActivity = $null
@@ -110,7 +187,7 @@ function Invoke-OwnedPhase($Context, [string]$Nonce, [string]$Phase, [string]$Ro
     $javaId = $null
     $javaStart = $null
     $javaProcess = $null
-    $state = [pscustomobject]@{Phase=$Phase; PhaseEvidence=$phaseEvidence; Root=$Root; StartupNonce=$startupNonce; Launcher=$launcher; Started=$started; LastActivity=$null; JavaProcess=$null; JavaId=$null; JavaStart=$null}
+    $state = [pscustomobject]@{Phase=$Phase; PhaseEvidence=$phaseEvidence; Root=$Root; StartupNonce=$startupNonce; Launcher=$launcher; LauncherStart=$launcherStart; LauncherCommandToken=$encoded; Started=$started; LastActivity=$null; JavaProcess=$null; JavaId=$null; JavaStart=$null}
     while (-not $launcher.HasExited) {
         if ($null -eq $javaId) {
             $candidate = Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like "*$($Context.NonceProperty)=$startupNonce*" }
@@ -140,7 +217,7 @@ function Invoke-OwnedPhase($Context, [string]$Nonce, [string]$Phase, [string]$Ro
         $launcher.Refresh()
     }
     $launcher.WaitForExit()
-    if ($null -eq $javaProcess) { throw "沒有找到 phase 的 JVM（startupNonce=$startupNonce）；保留 root：$Root" }
+    if ($null -eq $javaProcess) { throw "沒有找到 phase 的 JVM（startupNonce=$startupNonce；$(Get-PhaseFailureNote -Context $Context -State $state)）；保留 root：$Root" }
     if (-not $javaProcess.WaitForExit(60000)) { throw "Gradle 已結束但 JVM 仍在執行：pid=$javaId" }
     $javaExit = $javaProcess.ExitCode
     return $state

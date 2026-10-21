@@ -18,7 +18,7 @@
 # phase receipt 位置由 testmod M5CollapseRecoveryProbe 固定為 <repo>/.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/<phase>，不受 -EvidenceRoot 影響。
 # 新增 phase：testmod 的 M5CollapseRecoveryProbe.phases() 加 entry，這裡的 $chains 加同名的 phase 與預期的結束（README「M5 collapse probe」）。
 # 結構比照 m4-recovery-probe.ps1（owned root、phase evidence、launcher.json、彙整 JSON）。
-param([string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8)
+param([string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8, [int]$GradleCodePage = [Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
 $ErrorActionPreference = 'Stop'
 $taskProject = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 foreach ($marker in 'build.gradle', 'settings.gradle') { if (-not (Test-Path -LiteralPath (Join-Path $taskProject $marker) -PathType Leaf)) { throw "repo root 缺少 ${marker}：$taskProject" } }
@@ -100,7 +100,7 @@ foreach ($name in $Only) { if (-not $chains.Contains($name)) { throw "未知的 
 
 # evidence 目錄必須在 repo 內、路徑無 reparse，且被 gitignore（不得落在 tracked tree）。
 . (Join-Path $PSScriptRoot 'probe-common.ps1')
-$probeContext = [pscustomobject]@{Project=$taskProject; Gradle=$taskGradle; InitScript=(Join-Path $PSScriptRoot 'runtime.init.gradle'); RunId=''; RootPrefix='m5-collapse'; EvidencePrefix='collapse'; EvidenceOwner=''; Task='runM5Collapse'; PropertyPrefix='m5Collapse'; NonceProperty='quantumchamber.m5collapse.startupNonce'; IdleSeconds=$IdleSeconds; PhaseMinutes=$PhaseMinutes}
+$probeContext = [pscustomobject]@{Project=$taskProject; Gradle=$taskGradle; InitScript=(Join-Path $PSScriptRoot 'runtime.init.gradle'); RunId=''; RootPrefix='m5-collapse'; EvidencePrefix='collapse'; EvidenceOwner=''; Task='runM5Collapse'; PropertyPrefix='m5Collapse'; NonceProperty='quantumchamber.m5collapse.startupNonce'; IdleSeconds=$IdleSeconds; PhaseMinutes=$PhaseMinutes; GradleEncoding=[Text.Encoding]::GetEncoding($GradleCodePage); LogEncoding=[Text.Encoding]::UTF8}
 if (-not $EvidenceRoot) { $EvidenceRoot = Join-Path $taskProject '.superpowers/verification' }
 $EvidenceRoot = Resolve-Evidence -Context $probeContext -Path $EvidenceRoot
 $probeOwner = Resolve-Evidence -Context $probeContext -Path (Join-Path $taskProject '.superpowers/sdd/2026-10-01-m5-collapse-passage')
@@ -122,10 +122,10 @@ function Invoke-M5Phase([string]$Nonce, [string]$Phase, [string]$Root, [string]$
     $phaseEvidence=$state.PhaseEvidence; $startupNonce=$state.StartupNonce; $launcher=$state.Launcher
     $javaProcess=$state.JavaProcess; $javaId=$state.JavaId; $javaStart=$state.JavaStart; $javaExit=$javaProcess.ExitCode
     $stdout=Join-Path $phaseEvidence 'stdout.log'; $stderr=Join-Path $phaseEvidence 'stderr.log'
-    $gradleOutput = (Get-Content -LiteralPath $stdout -Raw) + (Get-Content -LiteralPath $stderr -Raw)
+    $gradleOutput = (Get-SharedText -Path $stdout -Encoding $probeContext.GradleEncoding) + (Get-SharedText -Path $stderr -Encoding $probeContext.GradleEncoding)
     $finalPath = Join-Path $phaseEvidence 'final.json'
     $haltPath = Join-Path $phaseEvidence 'halt.json'
-    $note = Get-ReceiptNote $phaseEvidence
+    $note = Get-PhaseFailureNote -Context $probeContext -State $state
     if ($Ending -eq 'stop') {
         if ($launcher.ExitCode -ne 0) { throw "Gradle 非零退出：$($launcher.ExitCode)（$note）；保留 root：$Root" }
         if ($javaExit -ne 0) { throw "JVM exit code $javaExit（預期正常停止的 0；$note）；保留 root：$Root" }
@@ -143,7 +143,7 @@ function Invoke-M5Phase([string]$Nonce, [string]$Phase, [string]$Root, [string]$
         if (-not (Test-Path -LiteralPath $haltPath)) { throw "未產生 halt receipt：$phaseEvidence" }
         $receiptPath = $haltPath
         $receipt = Get-Content -LiteralPath $haltPath -Raw | ConvertFrom-Json -DateKind String
-        if ($receipt.status -ne 'HALT' -or $receipt.window -ne $Window -or $receipt.phase -ne $Phase) { throw "halt receipt 不符：status=$($receipt.status) window=$($receipt.window)（預期 $Window）" }
+        if ($receipt.status -ne 'HALT' -or $receipt.window -cne $Window -or $receipt.phase -ne $Phase) { throw "halt receipt 不符：status=$($receipt.status) window=$($receipt.window)（預期 $Window；$note）" }
         # 乾淨的 halt（F6-2a）：crash 點的第一次 hit、crash 點沒有記下失敗、failures 是空的（probe 端也守門：不乾淨時不以 77 結束）。
         if ($receipt.hit -ne 1 -or @($receipt.failures).Count -ne 0 -or $receipt.crashPointFailure -ne 'none') { throw "halt 不乾淨：hit=$($receipt.hit) failures=$(@($receipt.failures) -join ' | ') crashPointFailure=$($receipt.crashPointFailure)：$phaseEvidence" }
     } else { throw "未知的結束方式：$Ending" }
@@ -165,12 +165,11 @@ function Invoke-M5Phase([string]$Nonce, [string]$Phase, [string]$Root, [string]$
     $lockPath = Join-Path $Root 'world/session.lock'
     $lock = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $lock.Dispose()
-    $classload = Join-Path $Root "classload-$javaId.log"
-    if (Test-Path -LiteralPath $classload) { Copy-Item -LiteralPath $classload -Destination (Join-Path $phaseEvidence "classload-$javaId.log") }
-    $latest = Join-Path $Root 'logs/latest.log'
-    if (Test-Path -LiteralPath $latest) { Copy-Item -LiteralPath $latest -Destination (Join-Path $phaseEvidence 'latest.log') }
+    $auxiliaryLogs = Copy-OwnedLogs -State $state
     Get-ChildItem -LiteralPath (Join-Path $Root 'world/data') -File | ForEach-Object { [ordered]@{name=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $phaseEvidence 'data-hashes.json') -Encoding UTF8
     $identity = [ordered]@{ phase=$Phase; ending=$Ending; window=$Window; nonce=$Nonce; startupNonce=$startupNonce; javaPid=$javaId; javaStartTimeUtc=$javaStart.ToString('o'); javaExitCode=$javaExit; gradleExitCode=$launcher.ExitCode; lockReleased=$true; root=$Root; receipt=$receiptPath; receiptSha256=(Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash }
+    $identity.auxiliaryLogs = $auxiliaryLogs
+    $identity.logEncodings = [ordered]@{latestLog=$probeContext.LogEncoding.WebName; gradle=$probeContext.GradleEncoding.WebName; gradleCodePage=$probeContext.GradleEncoding.CodePage}
     $identity | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $phaseEvidence 'launcher.json') -Encoding UTF8
     $taskResults.Add([pscustomobject]$identity)
     Write-Output "PASS $Phase ending=$Ending pid=$javaId javaExit=$javaExit root=$Root"
