@@ -258,7 +258,11 @@ Step 'summary' {
     if(@($collapsePhases | ForEach-Object startupNonce | Sort-Object -Unique).Count -ne $collapsePhases.Count){throw 'M5 collapse phases 必須各自使用不同 startupNonce'}
     foreach($phase in $collapsePhases) {
         $receipt=Read-Json $phase.receipt
-        if((@($receipt.phaseTable) -join ',') -cne ($expectedPhaseTable -join ',')){throw "M5 collapse phaseTable 不符：$($phase.phase)"}
+        $phaseTable=@($receipt.phaseTable)
+        if($phaseTable.Count -ne $expectedPhaseTable.Count){throw "M5 collapse phaseTable 不符：$($phase.phase)；Count=$($phaseTable.Count)，預期 $($expectedPhaseTable.Count)"}
+        for($index=0;$index -lt $expectedPhaseTable.Count;$index++){
+            if($phaseTable[$index] -isnot [string] -or -not [string]::Equals($phaseTable[$index],$expectedPhaseTable[$index],[StringComparison]::Ordinal)){throw "M5 collapse phaseTable 不符：$($phase.phase)；index=$index"}
+        }
         if((Hash $phase.receipt) -ne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -ne $phase.startupNonce -or $receipt.runtimeScope -ne 'testmod-present' -or $receipt.phase -cne $phase.phase){throw "M5 collapse receipt 不符：$($phase.receipt)"}
         $halted=$phase.ending -eq 'halt' -and $receipt.status -eq 'HALT' -and $receipt.window -ceq $phase.window -and $phase.javaExitCode -eq 77 -and $phase.gradleExitCode -ne 0 -and (Split-Path -Leaf $phase.receipt) -eq 'halt.json' -and $receipt.hit -eq 1 -and @($receipt.failures).Count -eq 0 -and $receipt.crashPointFailure -ceq 'none'
         $stopped=$phase.ending -eq 'stop' -and $receipt.status -eq 'PASS' -and $phase.javaExitCode -eq 0 -and $phase.gradleExitCode -eq 0 -and (Split-Path -Leaf $phase.receipt) -eq 'final.json'

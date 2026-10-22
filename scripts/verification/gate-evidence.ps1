@@ -64,13 +64,16 @@ function Save-GateRuntimeLog {
             if($selected){$bytes=Read-GateLogBytes (Join-Path $logRoot $file.name);$full.Write($bytes,0,$bytes.Length)}
         }
         $bytes=$full.ToArray();[IO.File]::WriteAllBytes((Join-Path $Evidence 'runtime-full.log'),$bytes)
-        $manifest=[ordered]@{schema=1;selectionBasis='pre-run snapshot content delta; filesystem UTC is diagnostic because file clock can precede precise wall-clock';identity=$Identity;before=$Before;pieces=$pieces;selectedCount=$order;encoding='UTF-8; original expanded bytes concatenated without line filtering';fullPath='runtime-full.log';fullLength=$bytes.Length;fullSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))}
+        $required=$Identity.runtimeLogMode -ceq 'minecraft' -and $Identity.status -ceq 'EXIT_ZERO'
+        $currentLogStatus=if($Identity.status -cne 'EXIT_ZERO'){'not-applicable-invocation-failed'}elseif($Identity.runtimeLogMode -cne 'minecraft'){'not-applicable-'+$Identity.runtimeLogMode}elseif($pieces.Count -eq 0){'missing-log-files'}elseif($order -eq 0){'no-current-pieces'}elseif($bytes.Length -eq 0){'empty-current-pieces'}else{'nonempty-current-pieces'}
+        $manifest=[ordered]@{schema=2;selectionBasis='pre-run snapshot content delta; filesystem UTC is diagnostic because file clock can precede precise wall-clock';identity=$Identity;before=$Before;pieces=$pieces;selectedCount=$order;currentLogRequired=$required;currentLogStatus=$currentLogStatus;encoding='UTF-8; original expanded bytes concatenated without line filtering';fullPath='runtime-full.log';fullLength=$bytes.Length;fullSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))}
         $manifest|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $Evidence 'runtime-log.json') -Encoding utf8
     } finally {$full.Dispose()}
 }
 function Read-GateRuntimeLog([string]$Evidence) {
     $manifest=Get-Content -LiteralPath (Join-Path $Evidence 'runtime-log.json') -Raw|ConvertFrom-Json -DateKind String
-    if($manifest.schema -ne 1 -or $manifest.fullPath -cne 'runtime-full.log'){throw '完整日誌 manifest schema/path 不符'}
+    # schema 1 只供已封存的歷史證據讀回；當次 caller 一律由 Save-GateRuntimeLog 寫 schema 2。
+    if($manifest.schema -notin @(1,2) -or $manifest.fullPath -cne 'runtime-full.log'){throw '完整日誌 manifest schema/path 不符'}
     $expected=[IO.MemoryStream]::new();$order=0
     try {
         foreach($piece in $manifest.pieces) {
@@ -84,6 +87,13 @@ function Read-GateRuntimeLog([string]$Evidence) {
         $bytes=[IO.File]::ReadAllBytes((Join-Path $Evidence $manifest.fullPath))
         $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
         if($order -ne $manifest.selectedCount -or $bytes.Length -ne $manifest.fullLength -or $hash -cne $manifest.fullSha256 -or $hash -cne [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expected.ToArray()))){throw '完整日誌輸出與原 pieces 不符'}
+        if($manifest.schema -eq 2){
+            if($manifest.identity.runtimeLogMode -cnotin @('minecraft','junit','compile-only')){throw '完整日誌 invocation 模式不符'}
+            $required=$manifest.identity.runtimeLogMode -ceq 'minecraft' -and $manifest.identity.status -ceq 'EXIT_ZERO'
+            $status=if($manifest.identity.status -cne 'EXIT_ZERO'){'not-applicable-invocation-failed'}elseif($manifest.identity.runtimeLogMode -cne 'minecraft'){'not-applicable-'+$manifest.identity.runtimeLogMode}elseif(@($manifest.pieces).Count -eq 0){'missing-log-files'}elseif($order -eq 0){'no-current-pieces'}elseif($bytes.Length -eq 0){'empty-current-pieces'}else{'nonempty-current-pieces'}
+            if($manifest.currentLogRequired -isnot [bool] -or $manifest.currentLogRequired -ne $required -or $manifest.currentLogStatus -cne $status){throw '完整日誌 applicability/status 不符'}
+            if($required -and ($order -eq 0 -or $bytes.Length -eq 0)){throw "成功 Minecraft invocation 缺少非空當次日誌：$status"}
+        }
         return [Text.Encoding]::UTF8.GetString($bytes)
     } finally {$expected.Dispose()}
 }

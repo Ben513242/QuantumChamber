@@ -112,7 +112,9 @@ function Copy-Build([string]$dest) {
         if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination $dest -Recurse}
     }
 }
-function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600) {
+function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600,[ValidateSet('minecraft','junit','compile-only')][string]$runtimeLogMode='minecraft') {
+    # 只有明確不啟動 Minecraft 的 JUnit／編譯 invocation 可以豁免當次日誌；不可拿它略過任何 run task。
+    if($runtimeLogMode -cne 'minecraft' -and @($tasks | Where-Object {$_ -cmatch '^run'}).Count){throw '日誌不適用模式不可包含 run task'}
     New-Item -ItemType Directory -Path $evidence -Force | Out-Null
     $taskArgs=@('--no-daemon','--console=plain','--max-workers=2','-I',(Join-Path $PSScriptRoot 'runtime.init.gradle'))+$tasks
     $quoted=@($taskArgs | ForEach-Object {if($_.Contains('"')){throw '拒絕未處理引號'};'"'+$_+'"'}) -join ' '
@@ -183,6 +185,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     finally {
         $outFile.Dispose();$errFile.Dispose()
         $identity=[ordered]@{exitCode=$exit;start=$start.ToUniversalTime().ToString('o');end=[DateTimeOffset]::UtcNow.ToString('o');command=$info.Arguments;launcherPid=$launcherPid;processes=@($known.Values);runtimeRoot=$runtimeRoot;doneSeen=($null-ne $done);stdinStop=$stopSent;nativeSaves=$debugCount;status=$(if($null -eq $failure -and $exit -eq 0){'EXIT_ZERO'}else{'FAIL'});error=$(if($failure){$failure.Exception.Message}else{$null})}
+        $identity.runtimeLogMode=$runtimeLogMode
         $captureErrors=@()
         foreach($capture in @(
             {Save-Json (Join-Path $evidence 'execution.json') $identity},
@@ -194,7 +197,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
         )){try{& $capture}catch{$captureErrors+=$_.Exception.Message}}
         if($captureErrors.Count){
             try{Save-Json (Join-Path $evidence 'capture-errors.json') ([ordered]@{originalError=$identity.error;errors=$captureErrors})}catch{Write-Warning "取證診斷寫入失敗：$($_.Exception.Message)"}
-            if(-not $failure){throw ("gate 取證失敗："+($captureErrors -join '; '))}
+            if(-not $failure -and $exit -eq 0){throw ("gate 取證失敗："+($captureErrors -join '; '))}
         }
     }
     # 只複製本次觀察到的 JVM（$known）產出的 classload／boundary；runDir 累積的舊檔不進 gate root（整合審查 R1）。
@@ -377,7 +380,7 @@ try {
         'M5GameTest' {Fresh-Game $false 'm5'}
         'Windows' {
             Copy-Build (Join-Path $gate 'prior-build')
-            $exit=@(Invoke-Gradle @('test','--tests','dev.quantumchamber.persistence.WindowsPlayerCheckpointVerifierTest','--tests','dev.quantumchamber.persistence.PlayerCheckpointStoreTest','--tests','dev.quantumchamber.persistence.PlayerRecoveryCheckpointTest','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds'))[-1]
+            $exit=@(Invoke-Gradle @('test','--tests','dev.quantumchamber.persistence.WindowsPlayerCheckpointVerifierTest','--tests','dev.quantumchamber.persistence.PlayerCheckpointStoreTest','--tests','dev.quantumchamber.persistence.PlayerRecoveryCheckpointTest','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -runtimeLogMode junit)[-1]
             Copy-Build (Join-Path $gate 'result-build');if($exit-ne 0){throw "Windows gate exit=$exit"}
         }
         'M3' {if($Only-ne 'transfer'){Probe-Chain 'universe' @('create-save','reload-read','unload-replace','final-verify')};if($Only-ne 'universe'){Probe-Chain 'transfer' @('setup-catalog','success-roundtrip','target-not-full','post-move-authority-loss','stale-service-receipt')}}
