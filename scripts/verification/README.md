@@ -12,6 +12,7 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 
 - Windows，repo 位於本機固定 NTFS 磁碟（Windows checkpoint 只接受本機固定 NTFS，`_windows` GameTest 與 checkpoint JUnit 都依賴它）。
 - PowerShell 7（`pwsh`）；`git` 在 PATH。`m4-recovery-probe.ps1` 與 `m5-collapse-probe.ps1` 另以 Windows PowerShell（`powershell.exe`）啟動 Gradle。
+- M2 cohort 故障驗證工具另外需要 PATH 上的 Python 3.8 以上版本，只使用標準函式庫；入口先執行 `python --version` 檢查，不安裝或下載套件。路徑可含空白，輸入／輸出以 UTF-8 處理。
 - Java 21。本機驗證使用 Eclipse Adoptium `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot`（`JAVA_HOME`）。
 - Gradle 8.8：預設 `C:/Users/Ben/.gradle/wrapper/dists/gradle-8.8-bin/dl7vupf4psengwqhwktix4v1/gradle-8.8/bin/gradle.bat`，不存在時改用 repo 的 `gradlew.bat`（這條 fallback 尚未實跑；第一次執行需要網路下載 Gradle）；也可用 `-Gradle` 指定絕對路徑。兩者都不存在時直接失敗。
 - 執行期間不得有 Minecraft client／server 或其他 Java 程序使用 `run/`。harness 會檢查 live owner 與 `session.lock`，有就拒絕。
@@ -31,6 +32,9 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 | `runtime.init.gradle` | 所有 gate 的 Gradle 呼叫都以 `-I` 載入：run* 接 stdin、寫 `classload-<pid>.log` |
 | `probe.init.gradle` | M3 gate 另外載入：把 `-Ptask9.*` 轉成 probe 的 system property |
 | `run-all.ps1` | 依序跑 Full、Legacy、M5 GameTest、Main＋oracle、M3、M4 recovery、M5 collapse probe、CI 綠燈規則（Windows／Ubuntu 兩個 step），最後以唯讀 summary 核對 |
+| `m2-cohort-failure-fixture.ps1` | CI-W1 的 M2 south cohort 故障驗證入口：暫時套用 testmod adapter，呼叫既有 `gates.ps1 -Mode GameTest`，在 `finally` 精確還原 Java source；另可只準備變體或只分析已保存的 gate root |
+| `m2-cohort-failure-adapter.ps1` | 產生七種互斥故障／等待情境的暫時 Java bytes；不自行修改 source 或執行 Gradle |
+| `m2-cohort-failure-oracle.py` | 讀原 XML、execution、manifest 選定的 log、world/source restore，分別記錄原 GameTest verdict 與具名等待／收尾的獨立判讀 |
 
 ## 執行
 
@@ -71,6 +75,31 @@ $v = 'scripts/verification'
 ```
 
 `ci-rule-check.ps1` 不因規則 FAIL 而 throw，判定看 `<root>/result.json` 的 `verdict`。要證明規則會擋下缺漏或宣告漂移，加 `-Mutation drop|skip|fail -MutationTarget <XML testcase name>`（`-MutationXml m5` 改對 M5 XML）或 `-SourceMutation interpose-annotation -SourceTarget <方法名稱>`，預期 `verdict=FAIL`。`-SourceMutation rename-windows` 把方法與它的 testcase 一起改名為 `<名稱>_windows`，用來驗證 `_windows` 規則的納入與排除（M5 的 `_windows` 案例：Windows step 要求出現在 M5 XML 並實際通過，Ubuntu step 不要求）。`-Mode GameTest`／`Windows`、`-Only` 與 mutation 模式在 2026-10-01 沒有單獨實跑；M5 F3c 實跑過的 mutation 記在 M5 implementation note 的 F3c 段。
+
+## M2 cohort 的 CI-W1 故障驗證
+
+在 repo 根目錄執行；`-Label` 只用英數與連字號。此入口固定使用既有的完整 default GameTest suite，不修改 `gates.ps1`；`-Only` 只屬於 M3，不能篩選 GameTest 案例。證據預設在被 gitignore 的 `.superpowers/verification/m2-cohort-failure/`；正式執行每次建立全新 fixture 與 gate root，原失敗 root 不重跑也不改寫。若另給 `-EvidenceRoot`，必須是本 worktree 內被忽略的路徑。
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenario partial-exception -Label ciw1-partial
+pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenario slow-new60 -Label ciw1-slow -PrepareOnly
+pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenario slow-old10 -OracleOnly `
+    -GateRoot '<先前的 gate root>' -FixtureRoot '<先前的 fixture root>' `
+    -OracleOutput '<同 worktree 忽略目錄內的新檔名>.json'
+```
+
+正式執行前確認沒有其他 runtime owner。入口核 Java source 與 HEAD 的 Git blob 一致，先備份原 bytes／SHA-256；adapter 只注入 testmod 的具名 south cohort，未命中的等待仍用原 predicate。正式 `gates.ps1 -Mode GameTest` 管理 fresh world 與逐檔 hash 還原；入口在 `finally` 寫回原 Java bytes，核 SHA、blob 與 source porcelain。fixture 的 `setup.json` 與 `verification-sources/` 保存本次三個腳本及本 README 的 bytes／SHA，後續文件更新不會使舊 root 的來源 pin 失效。含空白的路徑作為參數傳入即可；腳本以字面路徑操作，不用手動跳脫空白。
+
+| `-Scenario` | 預期獨立判讀 |
+| --- | --- |
+| `partial-exception` | 真 partial/chunk 未就緒時受控丟出原錯；原 GameTest FAIL 前正式返還、關閉 owned 連線，下一 batch 的舊 SID 仍乾淨 |
+| `timeout-false` | 測試 predicate 強制 false，證明具名等待有限失敗與收尾；不代表 production target 一直未就緒 |
+| `slow-old10`／`slow-new60` | 同一具名 stage3 真 pending 時讓 server callback 一次暫停約 25 秒，恢復時仍逐字跑原 predicate；舊 10 秒應有限 FAIL 並清理，新 60 秒應待真 ready 後 PASS。這是受控排程停頓，不是原 Windows CI 時序的精確重現 |
+| `request-fault` | 正式返還請求受控拋錯，獨立 witness 確認後仍安全關閉；原錯與 suppressed 請求錯保留 |
+| `witness-fault` | 純 witness 持續故障至單一絕對上限；保留原錯、suppressed 與尚未關閉的連線證據，獨立判讀只確認有界失敗，不冒稱清理完成 |
+| `late-crosswall` | 純查詢跨過原 wall deadline，後續不再請求或排程；正式返還 witness 成立後晚關閉，保留原 FAIL 與超時 suppressed，不誤記為期限內完成 |
+
+`partial-exception` 等故障案例的**原** GameTest 應是 FAIL：入口可因獨立 oracle `PASS` 正常結束，這只表示受控故障契約成立，不改原 `execution.json`、XML 或 gate verdict。以 `ORIGINAL_GATE_EXIT`、`ORACLE_VERDICT` 分開判讀；細節在 fixture `oracle.json`、`restore.json`、`gate-root.json`，gate 原件在其 `GATE_ROOT`。`-OracleOnly` 僅讀既有原 root 並寫新的報告，不啟動 Minecraft 或改 Java source。這份 fixture 驗證的是**已入場後七段 cohort 移動**的失敗收尾，不涵蓋最前段 `activeReady` 普通等待、其他 M2 caller 或正常 `trustedTeardown` 路徑。
 
 ## 新增 M5 GameTest
 
