@@ -1842,6 +1842,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
         final CorridorPageManager pages;
         final List<ConnectedGameTestPlayer> players=new java.util.ArrayList<>();
         final Map<UUID,net.minecraft.nbt.NbtElement> inventories=new java.util.HashMap<>();
+        private boolean cohortFailureOwned;
         final BlockPos lever;
         final ConnectedGameTestPlayer operator;
         NativeEntry(TestContext context,int count) {
@@ -1933,7 +1934,161 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 } finally { close(); }
             });
         }
+        /** 原等待失敗仍是本GameTest的結果；完成正式返還後才把同一原錯交給GameTest。 */
+        void failCohortAfterCleanup(int tick,RuntimeException original,CohortWaitTrace trace) {
+            if(cohortFailureOwned) {
+                original.addSuppressed(new IllegalStateException("具名cohort失敗收尾已由同一fixture持有"));
+                throw original;
+            }
+            cohortFailureOwned=true;
+            try { new CohortFailureCleanup(this,trace,original,tick).start(); }
+            catch(RuntimeException cleanupFailure) {
+                if(cleanupFailure!=original) original.addSuppressed(cleanupFailure);
+                throw original;
+            }
+        }
         @Override public void close() { players.forEach(ConnectedGameTestPlayer::close); operator.close(); }
+    }
+    /** 測試專用失敗收尾：只呼叫正式LOW與返還入口，不直接改journal、slot、lease或ticket。 */
+    private static final class CohortFailureCleanup {
+        private final NativeEntry fixture;
+        private final CohortWaitTrace trace;
+        private final RuntimeException original;
+        private final UUID sid;
+        private final UUID chamber;
+        private final int startTick;
+        private final int deadlineTick;
+        private final long startNanos=System.nanoTime();
+        private final long deadlineNanos=startNanos+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+        private RuntimeException firstCleanupFailure;
+        private String phase="START";
+        CohortFailureCleanup(NativeEntry fixture,CohortWaitTrace trace,RuntimeException original,int startTick) {
+            this.fixture=fixture; this.trace=trace; this.original=original; this.sid=trace.sid;
+            var record=fixture.record();
+            this.chamber=record==null ? null : record.chamberUuid();
+            this.startTick=startTick;
+            this.deadlineTick=Math.min(99000,startTick+20000);
+        }
+        void start() {
+            info("BEGIN",startTick);
+            if(chamber==null || !sid.equals(fixture.record().sessionUuid())) {
+                failNow("找不到本cohort的checked來源session",startTick);
+                return;
+            }
+            if(startTick>=deadlineTick) { failNow("GameTest剩餘tick不足以啟動收尾",startTick); return; }
+            try {
+                phase="LOW";
+                if(fixture.context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
+            } catch(RuntimeException cleanupFailure) { firstCleanupFailure=cleanupFailure; failNow("LOW失敗",startTick); return; }
+            schedule(startTick+1);
+        }
+        private void schedule(int tick) {
+            if(tick>deadlineTick || System.nanoTime()-deadlineNanos>=0) {
+                failNow("測試收尾觀測期限已到，不再排下一tick",tick-1); return;
+            }
+            try { fixture.context.runAtTick(tick,() -> poll(tick)); }
+            catch(RuntimeException schedulingFailure) { firstCleanupFailure=schedulingFailure; failNow("收尾排程失敗",tick); }
+        }
+        private void poll(int tick) {
+            boolean expired=tick>=deadlineTick || System.nanoTime()-deadlineNanos>=0;
+            phase=expired ? "EXPIRED_WITNESS" : "RETURNING";
+            boolean clean=false;
+            if(!expired) try {
+                // false 表示尚在返還或仍有操作，絕不能當完成；後續tick以正式witness為準。
+                dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(fixture.context.getWorld(),fixture.controller());
+            } catch(RuntimeException requestFailure) {
+                if(firstCleanupFailure==null) firstCleanupFailure=requestFailure;
+            }
+            // LOW可能已使production自行完成返還；請求失敗仍要獨立唯讀核正式完成狀態。
+            try { clean=cleanWitness(dev.quantumchamber.chamber.ChamberSessions.gateway()); }
+            catch(RuntimeException witnessFailure) { if(firstCleanupFailure==null) firstCleanupFailure=witnessFailure; }
+            boolean expiredAfterWitness=expired || tick>=deadlineTick || System.nanoTime()-deadlineNanos>=0;
+            if(clean) {
+                phase="CLOSE";
+                RuntimeException closeFailure=null;
+                for(var connection : fixture.players) {
+                    try { connection.close(); }
+                    catch(RuntimeException failure) { if(closeFailure==null) closeFailure=failure; else closeFailure.addSuppressed(failure); }
+                }
+                try { fixture.operator.close(); }
+                catch(RuntimeException failure) { if(closeFailure==null) closeFailure=failure; else closeFailure.addSuppressed(failure); }
+                for(var connection : fixture.players) if(fixture.server.getPlayerManager().getPlayer(connection.player().getUuid())!=null) {
+                    var remaining=new IllegalStateException("cohort玩家連線尚未關閉："+connection.player().getUuid());
+                    if(closeFailure==null) closeFailure=remaining; else closeFailure.addSuppressed(remaining);
+                }
+                if(fixture.server.getPlayerManager().getPlayer(fixture.operator.player().getUuid())!=null) {
+                    var remaining=new IllegalStateException("operator連線尚未關閉");
+                    if(closeFailure==null) closeFailure=remaining; else closeFailure.addSuppressed(remaining);
+                }
+                boolean expiredAfterClose=expiredAfterWitness || tick>=deadlineTick || System.nanoTime()-deadlineNanos>=0;
+                if(firstCleanupFailure!=null) original.addSuppressed(firstCleanupFailure);
+                if(closeFailure!=null) original.addSuppressed(closeFailure);
+                if(expiredAfterClose) original.addSuppressed(new IllegalStateException("測試收尾在期限後才確認正式返還："+witness(tick)));
+                phase=closeFailure!=null ? "CLOSE_FAILED" : expiredAfterClose ? "LATE_BACKEND_CLEAN"
+                        : firstCleanupFailure!=null ? "CLEAN_WITH_RETRY_ERROR" : "CLEAN";
+                info("FINAL",tick);
+                throw original;
+            }
+            if(expiredAfterWitness || tick>=deadlineTick || System.nanoTime()-deadlineNanos>=0) {
+                failNow("正式返還無法在測試收尾觀測期限內確認",tick); return;
+            }
+            schedule(tick+1);
+        }
+        private boolean cleanWitness(dev.quantumchamber.chamber.ChamberSessionGateway gateway) {
+            phase="WITNESS";
+            if(gateway.presence(fixture.server,chamber)!=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE) return false;
+            var journal=SessionRecoveryState.get(fixture.server);
+            if(journal.flushedRecords().containsKey(sid) || journal.records().containsKey(sid)) return false;
+            for(var connection : fixture.players) {
+                var player=connection.player();
+                if(player.getServerWorld()!=fixture.context.getWorld() || !dev.quantumchamber.chamber.ChamberOccupantService.contains(
+                        dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox())) return false;
+            }
+            if(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(fixture.context.getWorld(),fixture.frame.controllerPos())) return false;
+            try { fixture.pages.currentMappings(sid); return false; }
+            catch(IllegalArgumentException unknown) { if(!"未知 session".equals(unknown.getMessage())) throw unknown; }
+            return !fixture.pages.releaseComplete(sid);
+        }
+        private void failNow(String reason,int tick) {
+            if(firstCleanupFailure!=null) original.addSuppressed(firstCleanupFailure);
+            original.addSuppressed(new IllegalStateException("具名cohort收尾未完成："+reason+" "+witness(tick)));
+            phase="INCOMPLETE";
+            info("FINAL",tick);
+            throw original;
+        }
+        private String witness(int tick) {
+            var line=new StringBuilder("sid=").append(sid).append(" phase=").append(phase)
+                    .append(" startTick=").append(startTick).append(" tick=").append(tick)
+                    .append(" deadlineTick=").append(deadlineTick)
+                    .append(" elapsedMs=").append(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-startNanos))
+                    .append(" deadlineNanos=").append(deadlineNanos);
+            try {
+                var journal=SessionRecoveryState.get(fixture.server);
+                line.append(" presence=").append(chamber==null ? "UNKNOWN" : dev.quantumchamber.chamber.ChamberSessions.gateway().presence(fixture.server,chamber))
+                        .append(" flushed=").append(journal.flushedRecords().containsKey(sid))
+                        .append(" current=").append(journal.records().containsKey(sid));
+                boolean sourceBbox=true,playersClosed=true;
+                for(var connection : fixture.players) {
+                    var player=connection.player();
+                    sourceBbox &= player.getServerWorld()==fixture.context.getWorld() && dev.quantumchamber.chamber.ChamberOccupantService.contains(
+                            dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox());
+                    playersClosed &= fixture.server.getPlayerManager().getPlayer(player.getUuid())==null;
+                }
+                line.append(" sourceBbox=").append(sourceBbox).append(" playersClosed=").append(playersClosed)
+                        .append(" operatorClosed=").append(fixture.server.getPlayerManager().getPlayer(fixture.operator.player().getUuid())==null)
+                        .append(" mayMutate=").append(dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(fixture.context.getWorld(),fixture.frame.controllerPos()));
+                boolean spaceAbsent=false;
+                try { fixture.pages.currentMappings(sid); }
+                catch(IllegalArgumentException unknown) { if(!"未知 session".equals(unknown.getMessage())) throw unknown; spaceAbsent=true; }
+                line.append(" spaceAbsent=").append(spaceAbsent).append(" releaseReceiptOutstanding=").append(fixture.pages.releaseComplete(sid));
+            } catch(RuntimeException observed) { line.append(" witnessFailure=").append(observed.getClass().getSimpleName()).append(':').append(observed.getMessage()); }
+            return line.append(" waitStage=").append(trace.stage)
+                    .append(" waitExpectedEpoch=").append(trace.stage+2).toString();
+        }
+        private void info(String event,int tick) {
+            try { org.slf4j.LoggerFactory.getLogger("quantumchamber").info("CI_W1_COHORT_CLEANUP {} {}",event,witness(tick)); }
+            catch(RuntimeException diagnosticFailure) { original.addSuppressed(diagnosticFailure); }
+        }
     }
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_return_cohort", tickLimit = 100000)
     public void trusted_offline_cohort_cannot_be_dropped_before_release_windows(TestContext context) {
@@ -2459,7 +2614,11 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         context.assertTrue(false,"有限等待逾時："+trace.snapshot(tick));
                     cohortWhenUntil(context,tick+1,condition,ready,trace);
                 }
-            } catch(RuntimeException | Error failure) {
+            } catch(RuntimeException failure) {
+                try { trace.failed(tick,failure); }
+                catch(RuntimeException diagnosticFailure) { failure.addSuppressed(diagnosticFailure); }
+                trace.fixture.failCohortAfterCleanup(tick,failure,trace);
+            } catch(Error failure) {
                 trace.failed(tick,failure);
                 throw failure;
             }
