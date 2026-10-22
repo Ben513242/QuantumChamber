@@ -35,11 +35,13 @@ jobs:
           # 非 Windows 上 `_windows` 案例一律平台略過；以下跨平台案例是 Ubuntu 唯一的真實入場／傳送覆蓋，必須存在且實際通過（不可略過或缺席）。
           [xml]$gameTests = Get-Content -Raw 'build/gametest-results.xml'
           $requiredCrossPlatform = @(
-            'unsupported_checkpoint_platform_rejects_start_without_residue',
-            'unmanaged_entity_command_teleport_into_superposition_stays_at_source'
+            'quantumchamber:m1_empty|m2corridorgametests.unsupported_checkpoint_platform_rejects_start_without_residue',
+            'quantumchamber:m1_empty|m2corridorgametests.unmanaged_entity_command_teleport_into_superposition_stays_at_source'
           )
           foreach ($testName in $requiredCrossPlatform) {
-            $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")
+            $identity = $testName.Split('|')
+            $nodes = @($gameTests.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+            $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
               throw "必要跨平台 GameTest 未實際通過：$testName"
             }
@@ -49,6 +51,119 @@ jobs:
           # 不一致代表宣告格式漂移，嚴格掃描會漏要求，必須失敗。掃描前先去掉註解行（//、/*、* 開頭）。
           # 同一份判定另有兩處：Windows 檢查 step 與 scripts/verification/gates.ps1 的 Declared-GameTests，三處必須同步。
           [xml]$m5Tests = Get-Content -Raw 'build/gametest-m5-results.xml'
+          # XML classname 是結構；Java class 在完整 name 前綴。清單固定來自來源，不由當次 XML 反推。
+          $requiredM5Default = @(
+            'quantumchamber:m1_empty|m2corridorgametests.native_frozen_movement_gets_throttled_position_corrections_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.collapse_states_attach_without_returning_and_lookup_only_occupying_sessions',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.collapse_states_derive_presence_and_never_return_through_reconcile',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_collapsing_buff_lapse_returns_through_the_retained_path_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_measured_checkpoint_ignores_unrelated_chunk_failure_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_measured_release_waits_for_the_source_entity_storage_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_quarantined_selection_converges_to_checked_returning_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_double_fault_residue_converges_and_releases_chamber_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_readback_fault_overwrites_unacknowledged_arming_and_dedupes_warning_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.unchecked_residue_is_quarantined_and_removed_without_pausing_recovery',
+            'quantumchamber:m1_empty|m5collapsegametests.door_target_refuses_unloaded_chunks_without_forcing_them',
+            'quantumchamber:m1_empty|m5collapsegametests.door_target_rollback_failure_blocks_activation_until_the_next_success',
+            'quantumchamber:m1_empty|m5collapsegametests.dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit',
+            'quantumchamber:m1_empty|m5collapsegametests.dormant_source_receipt_resumes_only_on_a_powered_enabled_entry_edge',
+            'quantumchamber:m1_empty|m5collapsegametests.every_bulkhead_state_holds_back_fluids',
+            'quantumchamber:m1_empty|m5collapsegametests.harness_hook_slots_fail_fast_and_leave_no_residue',
+            'quantumchamber:m1_empty|m5collapsegametests.membrane_door_states_keep_the_detector_open_and_every_close_clears_them',
+            'quantumchamber:m1_empty|m5collapsegametests.native_commit_failure_falls_back_to_dormant_and_backs_off_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_offline_participant_rejoins_and_returns_while_the_collapse_holds_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_persistent_release_write_fault_waits_for_the_journal_backoff_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_return_write_fault_retries_only_the_same_write_then_settles_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_returned_participant_starts_elsewhere_and_only_the_active_session_returns_him_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_source_selection_collapses_returns_the_cohort_and_opens_the_door_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.nether_and_end_universe_receipts_are_cancelled_once_dormant',
+            'quantumchamber:m1_empty|m5collapsegametests.nether_live_new_selection_recovers_to_dormant_then_cancels_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.nether_side_doors_are_refused_and_an_m4_source_receipt_still_completes_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.permanently_sealed_sessions_at_startup_remind_the_admin_once',
+            'quantumchamber:m1_empty|m5collapsegametests.sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten',
+            'quantumchamber:m1_empty|m5collapsegametests.sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting',
+            'quantumchamber:m1_empty|m5collapsegametests.settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff',
+            'quantumchamber:m1_empty|m5collapsegametests.source_fast_path_terminal_write_fault_backs_off_and_keeps_the_door',
+            'quantumchamber:m1_empty|m5collapsegametests.startup_passage_ready_ends_and_normalizes_the_door_next_tick'
+          )
+          $requiredM5Run = @(
+            'quantumchamber:m1_empty|m5universedoorgametests.ownerless_membrane_is_normalized_on_the_next_tick_unless_a_collapse_session_owns_the_door',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_door_use_failures_refuse_and_warn_once_per_cause_until_recovery_writes_are_safe',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_participant_closing_by_the_controller_with_an_entity_in_the_doorway_leaves_it_open',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_rejected_seal_write_hands_the_door_back_open_until_the_retry_seals_it',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_seals_the_membrane_only_with_a_clear_doorway_and_no_non_participant_inside',
+            'quantumchamber:m1_empty|m5universedoorgametests.quarantined_prepare_hands_the_origin_door_back_open_and_reseals_it_after_converging',
+            'quantumchamber:m1_empty|m5universedoorgametests.rejected_seal_write_is_retried_on_the_per_session_backoff_without_rerunning_resolve',
+            'quantumchamber:m1_empty|m5universedoorgametests.sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it',
+            'quantumchamber:m1_empty|m5universedoorgametests.sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it',
+            'quantumchamber:m1_empty|m5universedoorgametests.startup_reapplies_a_stale_membrane_in_waiting_once_on_the_next_tick',
+            'quantumchamber:m1_empty|m5universegametests.allocation_write_fault_seals_then_retries_after_the_backoff_with_one_universe',
+            'quantumchamber:m1_empty|m5universegametests.disabled_record_of_the_session_is_reenabled_after_an_allocation_io_retry',
+            'quantumchamber:m1_empty|m5universegametests.discovery_read_fault_seals_unreadable_until_a_restart',
+            'quantumchamber:m1_empty|m5universegametests.dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge',
+            'quantumchamber:m1_empty|m5universegametests.existing_receipt_revalidates_the_same_universe_without_writing',
+            'quantumchamber:m1_empty|m5universegametests.existing_receipt_without_a_discovered_universe_seals_permanently',
+            'quantumchamber:m1_empty|m5universegametests.existing_resolve_waits_for_an_unconfirmed_discovery_without_sealing_and_warns_once',
+            'quantumchamber:m1_empty|m5universegametests.harness_await_converges_an_unflushed_catalog_change',
+            'quantumchamber:m1_empty|m5universegametests.harness_await_inside_a_scheduled_callback_keeps_other_scheduled_checks',
+            'quantumchamber:m1_empty|m5universegametests.harness_complete_retries_without_losing_the_baseline',
+            'quantumchamber:m1_empty|m5universegametests.materialize_failure_disables_the_record_and_seals_until_a_restart',
+            'quantumchamber:m1_empty|m5universegametests.sanity_allocates_one_disabled_record_without_materializing',
+            'quantumchamber:m1_empty|m5universegametests.sealed_entry_with_an_unconfirmed_write_still_closes_the_door_and_releases_the_ticket',
+            'quantumchamber:m1_empty|m5universepassagegametests.crossed_write_failure_pauses_the_passage_until_it_converges_then_expires',
+            'quantumchamber:m1_empty|m5universepassagegametests.crossed_write_rejected_still_shows_the_arrival_title_and_the_closed_message_at_the_expiry',
+            'quantumchamber:m1_empty|m5universepassagegametests.dormant_passage_reaches_comparator_fifteen_and_survives_refreshes_after_a_waiting_power_cut',
+            'quantumchamber:m1_empty|m5universepassagegametests.existing_passage_brings_a_second_chamber_to_the_same_universe',
+            'quantumchamber:m1_empty|m5universepassagegametests.existing_ready_revalidation_seals_when_the_universe_became_ineligible',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_crossing_needs_the_previous_tick_observation_after_skipped_ticks',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_crossings_arrive_in_stone_water_lava_and_mid_jump',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_ends_with_a_plain_open_door_when_the_source_loses_power',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_expires_after_one_of_two_crossed_and_the_chamber_opens_a_new_session_windows',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_participant_closing_the_door_ends_it_and_non_participants_are_refused',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_participant_crosses_to_the_same_pose_while_non_participants_and_riders_stay',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_power_loss_skips_the_one_who_crossed',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_recovery_seal_write_failure_closes_the_passage_until_another_flush',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_transfer_recovery_required_seals_and_keeps_the_crossed_receipt',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once',
+            'quantumchamber:m1_empty|m5universepassagegametests.ready_write_failure_keeps_the_door_plain_when_the_prepare_reenters_within_the_backoff',
+            'quantumchamber:m1_empty|m5universepassagegametests.ready_write_failure_restores_backs_off_and_opens_the_door_plainly',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.checkpoint_failure_seals_before_the_projection_is_complete',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.checkpoint_waits_for_a_clean_recheck_while_the_invariant_cells_keep_changing',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.deleting_the_projection_ledger_after_complete_degrades_and_seals_without_rewriting_the_interior',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.pending_write_failure_seals_without_writing_any_block',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_new_runs_the_destination_side_then_opens_the_passage',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_seals_a_conflict_when_the_destination_already_has_a_controller_without_a_ledger_entry',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_validates_the_site_of_an_existing_complete_entry_before_repairing',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_waits_while_another_projection_write_is_unconfirmed',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_controllers_are_recognized_by_the_index_on_load_sync_and_block_added',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_first_write_overwrites_the_volume_without_drops_or_neighbor_updates',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_write_failure_seals_then_retries_after_the_backoff_over_its_own_pending',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_writer_waits_for_players_and_repairs_only_the_invariant_cells'
+          )
+          if ($requiredM5Default.Count -ne 33 -or $requiredM5Run.Count -ne 60) { throw 'M5 明列清單數量必須為 default 新增 33 與 M5 run 60' }
+          foreach ($required in @(
+            @{ xml=$gameTests; identities=$requiredM5Default; run='default 新增' },
+            @{ xml=$m5Tests; identities=$requiredM5Run; run='M5' }
+          )) {
+            foreach ($testIdentity in $required.identities) {
+              $identity = $testIdentity.Split('|')
+              if ($identity[1].EndsWith('_windows', [StringComparison]::Ordinal)) { continue }
+              $nodes = @($required.xml.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+              $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
+              if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
+                throw "M5 明列 $($required.run) GameTest 未實際通過或身分不符：$testIdentity"
+              }
+            }
+          }
           $m5Declared = @()
           foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*.java') {
             $source = (@((Get-Content -Raw -LiteralPath $file.FullName) -split '\r?\n') | Where-Object { $_ -notmatch '^\s*(//|/\*|\*)' }) -join "`n"
@@ -124,53 +239,167 @@ jobs:
           [xml]$gameTests = Get-Content -Raw 'build/gametest-results.xml'
           # M5 run（runGameTestM5，M5 plan 決策 6）的 XML：batch 前綴 m5_universe 的案例只在這個 run 執行。
           [xml]$m5Tests = Get-Content -Raw 'build/gametest-m5-results.xml'
+          # XML classname 是結構；Java class 在完整 name 前綴。清單固定來自來源，不由當次 XML 反推。
+          $requiredM5Default = @(
+            'quantumchamber:m1_empty|m2corridorgametests.native_frozen_movement_gets_throttled_position_corrections_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.collapse_states_attach_without_returning_and_lookup_only_occupying_sessions',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.collapse_states_derive_presence_and_never_return_through_reconcile',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_collapsing_buff_lapse_returns_through_the_retained_path_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_measured_checkpoint_ignores_unrelated_chunk_failure_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_measured_release_waits_for_the_source_entity_storage_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_quarantined_selection_converges_to_checked_returning_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_cancel_fault_quarantines_unchecked_initial_at_once_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_double_fault_residue_converges_and_releases_chamber_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_readback_fault_overwrites_unacknowledged_arming_and_dedupes_warning_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.unchecked_residue_is_quarantined_and_removed_without_pausing_recovery',
+            'quantumchamber:m1_empty|m5collapsegametests.door_target_refuses_unloaded_chunks_without_forcing_them',
+            'quantumchamber:m1_empty|m5collapsegametests.door_target_rollback_failure_blocks_activation_until_the_next_success',
+            'quantumchamber:m1_empty|m5collapsegametests.dormant_entry_within_the_commit_backoff_is_consumed_without_a_commit',
+            'quantumchamber:m1_empty|m5collapsegametests.dormant_source_receipt_resumes_only_on_a_powered_enabled_entry_edge',
+            'quantumchamber:m1_empty|m5collapsegametests.every_bulkhead_state_holds_back_fluids',
+            'quantumchamber:m1_empty|m5collapsegametests.harness_hook_slots_fail_fast_and_leave_no_residue',
+            'quantumchamber:m1_empty|m5collapsegametests.membrane_door_states_keep_the_detector_open_and_every_close_clears_them',
+            'quantumchamber:m1_empty|m5collapsegametests.native_commit_failure_falls_back_to_dormant_and_backs_off_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_offline_participant_rejoins_and_returns_while_the_collapse_holds_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_persistent_release_write_fault_waits_for_the_journal_backoff_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_return_write_fault_retries_only_the_same_write_then_settles_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_returned_participant_starts_elsewhere_and_only_the_active_session_returns_him_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.native_source_selection_collapses_returns_the_cohort_and_opens_the_door_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.nether_and_end_universe_receipts_are_cancelled_once_dormant',
+            'quantumchamber:m1_empty|m5collapsegametests.nether_live_new_selection_recovers_to_dormant_then_cancels_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.nether_side_doors_are_refused_and_an_m4_source_receipt_still_completes_windows',
+            'quantumchamber:m1_empty|m5collapsegametests.permanently_sealed_sessions_at_startup_remind_the_admin_once',
+            'quantumchamber:m1_empty|m5collapsegametests.sealed_retry_at_startup_leaves_a_door_without_a_membrane_unwritten',
+            'quantumchamber:m1_empty|m5collapsegametests.sealed_retry_at_startup_opens_a_membrane_door_and_keeps_it_open_while_waiting',
+            'quantumchamber:m1_empty|m5collapsegametests.settled_collapse_roll_forward_into_sealed_is_retried_by_recovery_with_backoff',
+            'quantumchamber:m1_empty|m5collapsegametests.source_fast_path_terminal_write_fault_backs_off_and_keeps_the_door',
+            'quantumchamber:m1_empty|m5collapsegametests.startup_passage_ready_ends_and_normalizes_the_door_next_tick'
+          )
+          $requiredM5Run = @(
+            'quantumchamber:m1_empty|m5universedoorgametests.ownerless_membrane_is_normalized_on_the_next_tick_unless_a_collapse_session_owns_the_door',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_door_use_failures_refuse_and_warn_once_per_cause_until_recovery_writes_are_safe',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_participant_closing_by_the_controller_with_an_entity_in_the_doorway_leaves_it_open',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_participant_closing_the_door_ends_the_collapse_before_the_preload_with_the_universe_kept',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_rejected_seal_write_hands_the_door_back_open_until_the_retry_seals_it',
+            'quantumchamber:m1_empty|m5universedoorgametests.prepare_seals_the_membrane_only_with_a_clear_doorway_and_no_non_participant_inside',
+            'quantumchamber:m1_empty|m5universedoorgametests.quarantined_prepare_hands_the_origin_door_back_open_and_reseals_it_after_converging',
+            'quantumchamber:m1_empty|m5universedoorgametests.rejected_seal_write_is_retried_on_the_per_session_backoff_without_rerunning_resolve',
+            'quantumchamber:m1_empty|m5universedoorgametests.sealed_door_closes_once_after_its_chunk_reloads_and_stays_open_once_a_player_opens_it',
+            'quantumchamber:m1_empty|m5universedoorgametests.sealed_door_with_a_membrane_keeps_its_pending_close_when_a_player_uses_it',
+            'quantumchamber:m1_empty|m5universedoorgametests.startup_reapplies_a_stale_membrane_in_waiting_once_on_the_next_tick',
+            'quantumchamber:m1_empty|m5universegametests.allocation_write_fault_seals_then_retries_after_the_backoff_with_one_universe',
+            'quantumchamber:m1_empty|m5universegametests.disabled_record_of_the_session_is_reenabled_after_an_allocation_io_retry',
+            'quantumchamber:m1_empty|m5universegametests.discovery_read_fault_seals_unreadable_until_a_restart',
+            'quantumchamber:m1_empty|m5universegametests.dormant_new_receipt_resolves_without_power_then_waits_for_an_entry_edge',
+            'quantumchamber:m1_empty|m5universegametests.existing_receipt_revalidates_the_same_universe_without_writing',
+            'quantumchamber:m1_empty|m5universegametests.existing_receipt_without_a_discovered_universe_seals_permanently',
+            'quantumchamber:m1_empty|m5universegametests.existing_resolve_waits_for_an_unconfirmed_discovery_without_sealing_and_warns_once',
+            'quantumchamber:m1_empty|m5universegametests.harness_await_converges_an_unflushed_catalog_change',
+            'quantumchamber:m1_empty|m5universegametests.harness_await_inside_a_scheduled_callback_keeps_other_scheduled_checks',
+            'quantumchamber:m1_empty|m5universegametests.harness_complete_retries_without_losing_the_baseline',
+            'quantumchamber:m1_empty|m5universegametests.materialize_failure_disables_the_record_and_seals_until_a_restart',
+            'quantumchamber:m1_empty|m5universegametests.sanity_allocates_one_disabled_record_without_materializing',
+            'quantumchamber:m1_empty|m5universegametests.sealed_entry_with_an_unconfirmed_write_still_closes_the_door_and_releases_the_ticket',
+            'quantumchamber:m1_empty|m5universepassagegametests.crossed_write_failure_pauses_the_passage_until_it_converges_then_expires',
+            'quantumchamber:m1_empty|m5universepassagegametests.crossed_write_rejected_still_shows_the_arrival_title_and_the_closed_message_at_the_expiry',
+            'quantumchamber:m1_empty|m5universepassagegametests.dormant_passage_reaches_comparator_fifteen_and_survives_refreshes_after_a_waiting_power_cut',
+            'quantumchamber:m1_empty|m5universepassagegametests.existing_passage_brings_a_second_chamber_to_the_same_universe',
+            'quantumchamber:m1_empty|m5universepassagegametests.existing_ready_revalidation_seals_when_the_universe_became_ineligible',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_closed_by_the_one_who_stayed_skips_the_one_who_crossed',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_crossing_needs_the_previous_tick_observation_after_skipped_ticks',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_crossings_arrive_in_stone_water_lava_and_mid_jump',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_ends_with_a_plain_open_door_when_the_source_loses_power',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_expires_after_one_of_two_crossed_and_the_chamber_opens_a_new_session_windows',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_participant_closing_the_door_ends_it_and_non_participants_are_refused',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_participant_crosses_to_the_same_pose_while_non_participants_and_riders_stay',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_power_loss_skips_the_one_who_crossed',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_recovery_seal_write_failure_closes_the_passage_until_another_flush',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_transfer_recovery_required_seals_and_keeps_the_crossed_receipt',
+            'quantumchamber:m1_empty|m5universepassagegametests.passage_transfer_rolled_back_keeps_the_passage_open_and_warns_once',
+            'quantumchamber:m1_empty|m5universepassagegametests.ready_write_failure_keeps_the_door_plain_when_the_prepare_reenters_within_the_backoff',
+            'quantumchamber:m1_empty|m5universepassagegametests.ready_write_failure_restores_backs_off_and_opens_the_door_plainly',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.checkpoint_failure_seals_before_the_projection_is_complete',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.checkpoint_waits_for_a_clean_recheck_while_the_invariant_cells_keep_changing',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.deleting_the_projection_ledger_after_complete_degrades_and_seals_without_rewriting_the_interior',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.existing_revisit_checkpoints_a_repair_interrupted_before_its_checkpoint',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.existing_revisit_repairs_only_the_invariant_cells_and_keeps_the_interior',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.pending_write_failure_seals_without_writing_any_block',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_new_runs_the_destination_side_then_opens_the_passage',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_power_loss_releases_the_destination_ticket_and_an_entry_edge_resumes_it',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_seals_a_conflict_when_the_destination_already_has_a_controller_without_a_ledger_entry',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_validates_the_site_of_an_existing_complete_entry_before_repairing',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.prepare_waits_while_another_projection_write_is_unconfirmed',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_controllers_are_recognized_by_the_index_on_load_sync_and_block_added',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_first_write_overwrites_the_volume_without_drops_or_neighbor_updates',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_write_failure_seals_then_retries_after_the_backoff_over_its_own_pending',
+            'quantumchamber:m1_empty|m5universeprojectiongametests.projection_writer_waits_for_players_and_repairs_only_the_invariant_cells'
+          )
+          if ($requiredM5Default.Count -ne 33 -or $requiredM5Run.Count -ne 60) { throw 'M5 明列清單數量必須為 default 新增 33 與 M5 run 60' }
+          foreach ($required in @(
+            @{ xml=$gameTests; identities=$requiredM5Default; run='default 新增' },
+            @{ xml=$m5Tests; identities=$requiredM5Run; run='M5' }
+          )) {
+            foreach ($testIdentity in $required.identities) {
+              $identity = $testIdentity.Split('|')
+              $nodes = @($required.xml.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+              $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
+              if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
+                $problems.Add("M5 明列 $($required.run) GameTest 未實際通過或身分不符：$testIdentity")
+              }
+            }
+          }
           $requiredGameTests = @(
-            'trusted_offline_cohort_cannot_be_dropped_before_release_windows',
-            'trusted_return_source_snapshot_changes_are_rejected_windows',
-            'trusted_entrance_alias_edge_preserves_open_intent_windows',
-            'trusted_native_initial_and_whole_cohort_remap_windows',
-            'trusted_publish_checkpoint_failure_preserves_false_windows',
-            'trusted_incomplete_cohort_after_false_never_publishes_windows',
-            'trusted_retirement_preserves_live_valuable_item_windows',
-            'trusted_last_lease_requires_checked_remove_windows',
-            'trusted_pin_cap_includes_players_and_items_windows',
-            'trusted_far_components_retain_unaffected_instance_windows',
-            'trusted_geometry_requires_durable_reservation_and_stays_unpublished',
-            'trusted_returning_before_geometry_never_builds',
-            'trusted_retirement_retries_failed_cell_before_release',
-            'trusted_returning_before_prepare_retires_durable_reservation',
-            'native_lever_closed_buffed_cohort_enters_fixed_world_windows',
-            'native_missing_one_buff_rejects_whole_cohort',
-            'native_zero_people_never_starts_session',
-            'native_only_spectator_never_starts_or_consumes',
-            'native_twenty_six_people_rejected_before_reservation',
-            'native_second_move_failure_rolls_back_hidden_nbt_whole_cohort_windows',
-            'native_after_false_publish_failure_keeps_current_hidden_effect_windows',
-            'native_buff_expiry_during_geometry_keeps_precommit_returning_windows',
-            'native_shared_entry_preserves_frozen_relative_pose_north_windows',
-            'native_shared_entry_preserves_frozen_relative_pose_east_windows',
-            'native_shared_entry_preserves_frozen_relative_pose_south_windows',
-            'native_shared_entry_preserves_frozen_relative_pose_west_windows',
-            'native_staging_disconnect_keeps_frozen_offline_participant_windows',
-            'native_staging_extra_occupant_rejects_without_shortening_journal_windows',
-            'native_staging_low_keeps_current_effect_and_source_protection_windows',
-            'native_projection_identified_before_budget_split_publish_windows',
-            'native_projection_identified_before_budget_split_cancel_windows',
-            'native_replaced_source_controller_never_rolls_to_snapshot_windows',
-            'native_changed_source_uuid_never_rolls_to_snapshot_windows',
-            'native_partial_move_invalid_source_keeps_actual_world_pose_windows',
-            'native_returned_participant_moves_while_offline_member_pending_windows',
-            'unsupported_checkpoint_platform_rejects_start_without_residue',
-            'native_superposition_rejects_entity_placement_without_consuming_items_windows',
-            'native_experience_orb_crosses_seam_and_returns_before_cleanup_windows',
-            'native_return_move_exception_logs_cause_once_then_recovers_windows',
-            'native_buff_loss_return_logs_info_without_stack_windows',
-            'native_arming_abort_leaves_unentered_members_in_place_windows',
-            'native_moving_player_return_logs_no_pending_move_warning_windows',
-            'unmanaged_entity_command_teleport_into_superposition_stays_at_source'
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_offline_cohort_cannot_be_dropped_before_release_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_return_source_snapshot_changes_are_rejected_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_entrance_alias_edge_preserves_open_intent_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_native_initial_and_whole_cohort_remap_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_publish_checkpoint_failure_preserves_false_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_incomplete_cohort_after_false_never_publishes_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_retirement_preserves_live_valuable_item_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_last_lease_requires_checked_remove_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_pin_cap_includes_players_and_items_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_far_components_retain_unaffected_instance_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_geometry_requires_durable_reservation_and_stays_unpublished',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_returning_before_geometry_never_builds',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_retirement_retries_failed_cell_before_release',
+            'quantumchamber:m1_empty|m2corridorgametests.trusted_returning_before_prepare_retires_durable_reservation',
+            'quantumchamber:m1_empty|m2corridorgametests.native_lever_closed_buffed_cohort_enters_fixed_world_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_missing_one_buff_rejects_whole_cohort',
+            'quantumchamber:m1_empty|m2corridorgametests.native_zero_people_never_starts_session',
+            'quantumchamber:m1_empty|m2corridorgametests.native_only_spectator_never_starts_or_consumes',
+            'quantumchamber:m1_empty|m2corridorgametests.native_twenty_six_people_rejected_before_reservation',
+            'quantumchamber:m1_empty|m2corridorgametests.native_second_move_failure_rolls_back_hidden_nbt_whole_cohort_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_after_false_publish_failure_keeps_current_hidden_effect_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_buff_expiry_during_geometry_keeps_precommit_returning_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_shared_entry_preserves_frozen_relative_pose_north_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_shared_entry_preserves_frozen_relative_pose_east_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_shared_entry_preserves_frozen_relative_pose_south_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_shared_entry_preserves_frozen_relative_pose_west_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_staging_disconnect_keeps_frozen_offline_participant_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_staging_extra_occupant_rejects_without_shortening_journal_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_staging_low_keeps_current_effect_and_source_protection_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_projection_identified_before_budget_split_publish_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_projection_identified_before_budget_split_cancel_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_replaced_source_controller_never_rolls_to_snapshot_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_changed_source_uuid_never_rolls_to_snapshot_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_partial_move_invalid_source_keeps_actual_world_pose_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_returned_participant_moves_while_offline_member_pending_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.unsupported_checkpoint_platform_rejects_start_without_residue',
+            'quantumchamber:m1_empty|m2corridorgametests.native_superposition_rejects_entity_placement_without_consuming_items_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_experience_orb_crosses_seam_and_returns_before_cleanup_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_return_move_exception_logs_cause_once_then_recovers_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_buff_loss_return_logs_info_without_stack_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_arming_abort_leaves_unentered_members_in_place_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.native_moving_player_return_logs_no_pending_move_warning_windows',
+            'quantumchamber:m1_empty|m2corridorgametests.unmanaged_entity_command_teleport_into_superposition_stays_at_source'
           )
           foreach ($testName in $requiredGameTests) {
-            $node = $gameTests.SelectSingleNode("//testcase[@name='m2corridorgametests.$testName']")
+            $identity = $testName.Split('|')
+            $nodes = @($gameTests.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+            $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.skipped) {
               $problems.Add("必要 Windows 原生 GameTest 未實際通過：$testName")
             }
@@ -178,27 +407,29 @@ jobs:
           # M4 候選門真入場需要原生 checkpoint；非 Windows 以 `_windows` 平台略過，Windows 必須實際通過。
           # legacy 專用 batch 只在 runGameTestLegacy 執行，不在此清單。
           $requiredM4GameTests = @(
-            'native_selection_all_25_cells_first_wins_and_measured_freeze_windows',
-            'native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows',
-            'native_selection_flush_failure_never_sends_success_windows',
-            'native_selection_readback_failure_never_sends_success_windows',
-            'native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows',
-            'native_candidate_batch_fault_converges_to_checked_returning_windows',
-            'native_start_initial_flush_fault_rejects_without_residue_windows',
-            'dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows',
-            'busy_participant_start_rejected_before_any_reservation_windows',
-            'native_selection_cannot_use_candidate_before_checked_batch_readback_windows',
-            'native_selection_rejects_pending_batch_retired_and_unready_mapping_windows',
-            'north_complete_doors_recycle_split_merge_and_seam_windows',
-            'east_complete_doors_require_checked_ledger_windows',
-            'south_complete_doors_require_checked_ledger_windows',
-            'west_complete_doors_require_checked_ledger_windows',
-            'unhealthy_authorities_reject_before_reservation_windows',
-            'native_start_freezes_candidate_context_before_geometry_windows',
-            'native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows'
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_selection_all_25_cells_first_wins_and_measured_freeze_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_selection_flush_failure_never_sends_success_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_selection_readback_failure_never_sends_success_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_candidate_batch_fault_converges_to_checked_returning_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_initial_flush_fault_rejects_without_residue_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.dormant_receipt_blocks_only_its_chamber_and_participant_enters_other_chamber_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.busy_participant_start_rejected_before_any_reservation_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_selection_cannot_use_candidate_before_checked_batch_readback_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_selection_rejects_pending_batch_retired_and_unready_mapping_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.north_complete_doors_recycle_split_merge_and_seam_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.east_complete_doors_require_checked_ledger_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.south_complete_doors_require_checked_ledger_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.west_complete_doors_require_checked_ledger_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.unhealthy_authorities_reject_before_reservation_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_start_freezes_candidate_context_before_geometry_windows',
+            'quantumchamber:m1_empty|m4candidatedoorgametests.native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows'
           )
           foreach ($testName in $requiredM4GameTests) {
-            $node = $gameTests.SelectSingleNode("//testcase[@name='m4candidatedoorgametests.$testName']")
+            $identity = $testName.Split('|')
+            $nodes = @($gameTests.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+            $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.skipped) {
               $problems.Add("必要 Windows 原生 M4 GameTest 未實際通過：$testName")
             }
