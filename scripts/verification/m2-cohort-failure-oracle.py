@@ -24,7 +24,7 @@ def fields(line, marker):
     errors = []
     if marker == 'CI_W1_COHORT_WAIT FAIL':
         prefix = segment.partition(' failure=')[0].split(' mappingSlot=', 1)[0].split(' leaseSlot=', 1)[0]
-    elif marker == 'CI_W1_COHORT_WAIT READY':
+    elif marker in ('CI_W1_COHORT_WAIT BEGIN', 'CI_W1_COHORT_WAIT READY'):
         prefix = segment.split(' mappingSlot=', 1)[0].split(' leaseSlot=', 1)[0]
     elif marker in ('CI_W1_INJECT_PARTIAL', 'CI_W1_TIMEOUT_HOLD'):
         prefix = segment.partition(' own=')[0]
@@ -209,10 +209,20 @@ def main():
         scenario_conditions = {}
         if args.scenario in ('partial-exception', 'request-fault', 'witness-fault', 'late-crosswall'):
             metrics = lease_metrics(inject[0][1]) if len(inject) == 1 else []
+            begun = tagged('CI_W1_COHORT_WAIT BEGIN sid=' + str(sid) + ' stage=3 ') if sid else []
+            begun = [entry for entry in begun if len(inject) == 1 and entry[0] < inject[0][0]]
+            begin_values, begin_errors = fields(begun[0][1], 'CI_W1_COHORT_WAIT BEGIN') if len(begun) == 1 else ({}, [])
+            mapping_slots = re.findall(r'\bmappingSlot=(\d+)', begun[0][1]) if len(begun) == 1 else []
+            old_slots = set(mapping_slots)
+            new_metrics = [metric for metric in metrics if str(metric[0]) not in old_slots]
             scenario_conditions = {'stage3Partial': initial.get('stage') == '3' and initial.get('expected') == '5'
                 and initial.get('current') == '4' and initial.get('instances') == '1' and initial.get('leases') == '3',
-                'realNewLeaseNotReady': len(metrics) == 3 and any(full < total or loaded < total or ticking < total
-                    for _, total, full, loaded, ticking in metrics)}
+                'mappingBaseline': len(begun) == 1 and not begin_errors and begin_values.get('sid') == sid
+                    and begin_values.get('stage') == '3' and begin_values.get('instances') == '1'
+                    and len(mapping_slots) == len(old_slots) == 1,
+                'realNewLeaseNotReady': len(metrics) == 3 and len({metric[0] for metric in metrics}) == 3
+                    and len(new_metrics) == 2 and any(full < total or loaded < total or ticking < total
+                    for _, total, full, loaded, ticking in new_metrics)}
         if args.scenario in ('slow-old10', 'slow-new60'):
             pause_end = tagged('CI_W1_E1_PAUSE_END sid=')
             ended, ended_errors = fields(pause_end[0][1], 'CI_W1_E1_PAUSE_END') if len(pause_end) == 1 else ({}, [])
