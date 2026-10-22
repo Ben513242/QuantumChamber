@@ -77,6 +77,30 @@ def lease_metrics(line):
         r'slot=(\d+) chunks=(\d+) FULL=(\d+) loaded=(\d+) ticking=(\d+)', line)]
 
 
+def mapping_baseline(lines, sid, stage, before_line):
+    marker = 'CI_W1_COHORT_WAIT BEGIN sid={} stage={} '.format(sid, stage)
+    matches = [line for number, line in enumerate(lines, 1)
+               if number < before_line and marker in line]
+    if len(matches) != 1:
+        return set(), False
+    values, errors = fields(matches[0], 'CI_W1_COHORT_WAIT BEGIN')
+    slots = re.findall(r'\bmappingSlot=(\d+)', matches[0])
+    valid = (not errors and values.get('sid') == sid and values.get('stage') == str(stage)
+             and values.get('instances') == '1' and values.get('currentEpoch') == '4'
+             and values.get('expectedEpoch') == '5' and len(slots) == len(set(slots)) == 1)
+    return set(slots), valid
+
+
+def new_lease_state(metrics, old_slots):
+    slots = {slot for slot, _, _, _, _ in metrics}
+    new = [(total, full, loaded, ticking) for slot, total, full, loaded, ticking in metrics
+           if str(slot) not in old_slots]
+    valid = len(metrics) == len(slots) == 3 and len(old_slots) == 1 and len(new) == 2
+    unready = valid and any(full < total or loaded < total or ticking < total
+                            for total, full, loaded, ticking in new)
+    return slots, unready
+
+
 def expected_resource(values, sid, phase='CLEAN', first_suppressed=None):
     wanted = {'sid': sid, 'phase': phase, 'presence': 'NONE', 'flushed': 'false',
               'current': 'false', 'sourceBbox': 'true', 'playersClosed': 'true',
@@ -116,6 +140,7 @@ def main():
              'log': gate / 'execution/runtime-logs/latest.log',
              'manifest': gate / 'execution/runtime-log.json',
              'execution': gate / 'execution/execution.json',
+             'gateReceipt': gate / 'gate.json',
              'worldRestore': gate / 'world-restore.json',
              'sourceRestore': fixture / 'restore.json'}
     report = {'schema': 1, 'scenario': args.scenario, 'gateRoot': str(gate),
@@ -147,6 +172,7 @@ def main():
         post_values, post_errors = fields(post[0][1], 'CI_W1_ADAPTER_POSTFAIL') if len(post) == 1 else ({}, [])
         manifest = json.loads(paths['manifest'].read_text(encoding='utf-8-sig'))
         execution = json.loads(paths['execution'].read_text(encoding='utf-8-sig'))
+        gate_receipt = json.loads(paths['gateReceipt'].read_text(encoding='utf-8-sig'))
         world_restore = json.loads(paths['worldRestore'].read_text(encoding='utf-8-sig'))
         source_restore = json.loads(paths['sourceRestore'].read_text(encoding='utf-8-sig'))
         selected = [piece for piece in manifest.get('pieces', [])
@@ -173,7 +199,20 @@ def main():
                       str(source_restore.get('afterSha256', '')).lower() == str(before_sha).lower() and
                       world_restore.get('exactRestored') is True)
         expected_pass = args.scenario == 'slow-new60'
-        original_gate_ok = execution.get('exitCode') == (0 if expected_pass else 1)
+        original_gate_ok = (type(execution.get('exitCode')) is int and
+                            execution.get('exitCode') == (0 if expected_pass else 1))
+        expected_error = None if expected_pass else 'GameTest gate exit=1'
+        error_shape_ok = ('error' not in gate_receipt if expected_pass else
+                          'error' in gate_receipt and gate_receipt['error'] == expected_error)
+        formal_gate_ok = (all(key in gate_receipt for key in ('mode', 'status', 'evidence'))
+                          and error_shape_ok
+                          and 'gateError' in source_restore
+                          and isinstance(gate_receipt.get('evidence'), str)
+                          and gate_receipt.get('evidence') != ''
+                          and gate_receipt.get('mode') == 'GameTest'
+                          and gate_receipt.get('status') == ('PASS' if expected_pass else 'FAIL')
+                          and source_restore['gateError'] == expected_error
+                          and Path(gate_receipt.get('evidence', '')).resolve() == gate.resolve())
         xml_ok = (len(cases) == 179 and len(target) == len(sentinel) == 1 and
                   not any(child.tag == 'failure' for child in sentinel) and
                   (len(failures) == len(target_failure) == 0 if expected_pass else
@@ -209,33 +248,31 @@ def main():
         scenario_conditions = {}
         if args.scenario in ('partial-exception', 'request-fault', 'witness-fault', 'late-crosswall'):
             metrics = lease_metrics(inject[0][1]) if len(inject) == 1 else []
-            begun = tagged('CI_W1_COHORT_WAIT BEGIN sid=' + str(sid) + ' stage=3 ') if sid else []
-            begun = [entry for entry in begun if len(inject) == 1 and entry[0] < inject[0][0]]
-            begin_values, begin_errors = fields(begun[0][1], 'CI_W1_COHORT_WAIT BEGIN') if len(begun) == 1 else ({}, [])
-            mapping_slots = re.findall(r'\bmappingSlot=(\d+)', begun[0][1]) if len(begun) == 1 else []
-            old_slots = set(mapping_slots)
-            new_metrics = [metric for metric in metrics if str(metric[0]) not in old_slots]
+            old_slots, baseline_ok = mapping_baseline(lines, sid, 3, inject[0][0]) if len(inject) == 1 else (set(), False)
+            _, new_unready = new_lease_state(metrics, old_slots)
             scenario_conditions = {'stage3Partial': initial.get('stage') == '3' and initial.get('expected') == '5'
                 and initial.get('current') == '4' and initial.get('instances') == '1' and initial.get('leases') == '3',
-                'mappingBaseline': len(begun) == 1 and not begin_errors and begin_values.get('sid') == sid
-                    and begin_values.get('stage') == '3' and begin_values.get('instances') == '1'
-                    and len(mapping_slots) == len(old_slots) == 1,
-                'realNewLeaseNotReady': len(metrics) == 3 and len({metric[0] for metric in metrics}) == 3
-                    and len(new_metrics) == 2 and any(full < total or loaded < total or ticking < total
-                    for _, total, full, loaded, ticking in new_metrics)}
+                'mappingBaseline': baseline_ok,
+                'realNewLeaseNotReady': baseline_ok and new_unready}
         if args.scenario in ('slow-old10', 'slow-new60'):
             pause_end = tagged('CI_W1_E1_PAUSE_END sid=')
             ended, ended_errors = fields(pause_end[0][1], 'CI_W1_E1_PAUSE_END') if len(pause_end) == 1 else ({}, [])
             before, after = (lease_metrics(inject[0][1]) if len(inject) == 1 else [],
                              lease_metrics(pause_end[0][1]) if len(pause_end) == 1 else [])
+            old_slots, baseline_ok = mapping_baseline(lines, sid, 3, inject[0][0]) if len(inject) == 1 else (set(), False)
+            before_slots, before_new_unready = new_lease_state(before, old_slots)
+            after_slots, after_new_unready = new_lease_state(after, old_slots)
             scenario_conditions.update({'pauseOnce': len(inject) == len(pause_end) == 1,
                 'pauseParse': not initial_errors and not ended_errors,
+                'mappingBaseline': baseline_ok,
                 'truePending': initial.get('stage') == '3' and initial.get('expected') == '5'
                     and initial.get('current') == '4' and initial.get('instances') == '1'
                     and initial.get('leases') == '3' and initial.get('newUnderReady') == 'true'
-                    and initial.get('predicate') == 'false' and len(before) == len(after) == 3
-                    and any(full < total or loaded < total or ticking < total
-                            for _, total, full, loaded, ticking in before),
+                    and initial.get('predicate') == 'false' and ended.get('sid') == sid
+                    and ended.get('stage') == '3' and ended.get('expected') == '5'
+                    and ended.get('instances') == '1' and ended.get('leases') == '3'
+                    and ended.get('newUnderReady') == 'true' and baseline_ok
+                    and before_slots == after_slots and before_new_unready and after_new_unready,
                 'noEarlyPublish': ended.get('current') == '4' and ended.get('predicate') == 'false',
                 'pause25Seconds': int(ended.get('elapsedMs', '-1')) >= 25000
                     and int(ended.get('endNanos', '-1')) - int(ended.get('startNanos', '-1')) >= 25_000_000_000,
@@ -318,6 +355,7 @@ def main():
                     began[0][0] < ended[0][0] < late[0][0] < pre[0][0]})
         conditions = {'evidenceComplete': manifest_log_ok and restore_ok,
                       'originalGate': original_gate_ok,
+                      'formalGate': formal_gate_ok,
                       'originalXml': xml_ok and original_failure_ok,
                       'targetMarker': len(inject) == 1 and sid is not None and not initial_errors,
                       'sentinel': len(sentinel) == 1 and not any(child.tag == 'failure' for child in sentinel)}
@@ -331,6 +369,7 @@ def main():
                        'preMismatches': pre_mismatch, 'postMismatches': post_mismatch,
                        'scriptPinsFromSetup': pins, 'scriptPinChecks': pin_checks,
                        'sourceRestore': source_restore, 'worldRestore': world_restore,
+                       'gateReceipt': gate_receipt,
                        'markers': {'injection': inject, 'pre': pre, 'post': post}})
         report['oracleVerdict'] = status(conditions)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
