@@ -10206,3 +10206,68 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - source/harness pins 398→399：只新增gate-evidence，四個既有verification檔異動（gates/main-oracle/run-all/README），其餘全部src/build/workflow均同；兩focused的11份HARNESS SHA與runall1相同。新增診斷為execution的processes/runtimeRoot/error與UTC start/end、logs-before/xml-before、runtime-log/full、failure-artifacts/xml、capture-errors；原欄位保留。
 - 正式harness SHA-256（本輪bytes）：gate-evidence.ps1=1cfae9beeea56052dc1d256e0f47844816609765ce37ecb361e1a7b049e9c04f、gates.ps1=0bf4ea07943df5f73048b0b3511ac42a70b385428c878c729d15671085483b4d、main-oracle.ps1=65a2ea562ed1e93be9669a09c5363ab66c1662c8447a0cd97a105740dbf5c9a4、run-all.ps1=2816df270f95739804f03776c56368a0e2b2c3542763bbcae9a9be636108b520、README.md=b0be8f1408efc5eaafeaaee63f20fbcde209e88a610bec54cb413d15d88385b5。前段v2 manifest SHA=3f67f8ead5a3d946d04267461ec7669e860a68047297e1247b1aa8b281bc3f2f，4621檔640746312 bytes，controller已全讀回；前段快照不修改。
 - 以下為a829bed提交時的待辦紀錄；實際完成與正式review見上方Review區塊：本節docs commit後在新root執行第二輪完整回歸；提交時尚未完成，不預寫通過。最終END／全部差異／兩輪pins／原phase關聯／最終STATUS與逐檔SHA/大小readback在SDD f6/f63d3的completion、compare與manifest，由controller安排全新獨立spec／quality正式review。尚未review通過、不進F6-3e/M6；未GitHub CI／manual／push／merge／tag／PR／LICENSE／刪worktree。
+
+## F6-3e：CI 明列清單、完整日誌與 M5 停止守門
+
+- 起點 `4ba0496db990cece00087ff913a8fbd7e7c95b3f`，`feature/m5-collapse`、porcelain 空；所有工作在 `.worktrees/m5-collapse`。本節 code/README range 為 `4ba0496..81c8ee2`；本節由其後的獨立 docs commit 加入。
+- Code/README commits：`f0ccfb6`（Step 0）、`5829b42`（CI）、`16ea447`（M5 oracle 與已核定 testmod 診斷）、`81c8ee2`（README）。本機 task evidence 在 gitignored `.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/f63e/`，以下簡稱 `f63e/`；沒有 force-add。
+- 範圍只有 workflow、`gates.ps1`、`gate-evidence.ps1`、`run-all.ps1`、README 與 `M5UniverseHold.registerSuiteEnd` 的診斷／Javadoc。最後一項由 controller 在 `producer-diagnostic-ruling.md` 核定最小例外；production、build、closed wrappers、測試集合與名稱都沒改。`ci-rule-check.ps1` 原 CLI 已足夠，沒有無必要的 helper 修改。
+- 行號以 code/README `81c8ee2` 為準：`scripts/verification/gates.ps1:115/188/265/274/294`；`scripts/verification/gate-evidence.ps1:47/69/73/95`；`scripts/verification/run-all.ps1:261`；`.github/workflows/build.yml:37/55/90/243/278/354/409`；`src/testmod/java/dev/quantumchamber/gametest/M5UniverseHold.java:72/77/79/94`；`scripts/verification/README.md:7/9/348`。各宣告與證據行號另存 `source-line-references.json`。
+
+### 行為與真實來源
+
+1. **S-M1**：phaseTable 同時核 Count 與 `StringComparison.Ordinal` 的逐元素；真 69 項通過，將前兩項合成一個含逗號元素的 68 項表被拒絕，大小寫漂移也被拒絕。69 phases／31 HALT、phase 名稱／順序／窗口不變。
+2. **Q-M1**：當次日誌 manifest 升為 schema 2。成功 Minecraft invocation 至少一份非空當次 piece；缺檔／全舊／空內容明列 `missing-log-files`／`no-current-pieces`／`empty-current-pieces` 並拒絕。現有 Windows caller 是純 JUnit，明列不適用；compile-only 有正向 fixture。啟動失敗與非零 exit 不由取證診斷遮蓋：額外以原 `4ba0496` 的 gates/helper bytes 證明 exit23＋capture 拒絕原會 throw，新 caller 返回原 23，`execution.json` 仍 FAIL、`capture-errors.json` 仍保留拒絕。schema 1 只保留歷史 reader；未改 X4 wrapper「輔助 log 缺失只記 launcher」裁示。
+3. **CI**：以 `a7e1be2` 原來源 default146 與目前179的差集建立新增33，M5來源全部60，再逐項核成功 XML。新增 default 中 `_windows`16、M5中1；總數仍179／1／60，JUnit666。XML `classname` 真值是結構 `quantumchamber:m1_empty`，Java class 在完整 `name` 前綴；清單與三個既有陣列都精確核兩欄，不能只比方法名。`expected-tests.md` 與兩份 expected JSON 保存93項來源／class／method／XML對照，不以當次XML反推預期。既有動態宣告掃描、Windows必要執行與Ubuntu合法略過規則保留。
+4. **M5**：oracle 改讀已核 SHA／piece 順序的完整 UTF-8 當次 log。HOLD 必須0；節流結束恰一行、`waited>0`、`tps<=100.0`，不以 `waitedMs` 代替。SUITE_END 保留 records／digest／catalog converged／unfinished，再逐項核 `initialized=true` 與 allocation／projection／discovery／catalogUnconfirmed 全部 false。
+5. **四權威診斷**：依 note F6-3b fix1 review 的「最後一個 test 之後 catalog 以外未確認權威」缺口（原行9511–9512、9525／9532；ledger2566），使用既有 `CollapseAuthorities.Authority` 與 `unconfirmed`，沒有新增其他三權威的內容digest／筆數規格。production 在 STOPPED 移除 map instance，故只在 STOPPING 保留同 server 的既有 instance，STOPPED 當場讀值、finally 釋放，不能再 get、不 init／flush／converge。原 catalog 欄位語意不換成新的總合判斷；不改 HOLD、reset 或任何既有判定。
+
+### 定向 RED／GREEN 與編譯
+
+| 項目 | 有效原 caller RED | 新 GREEN |
+| --- | --- | --- |
+| phaseTable | `phase-table-old-491eecf88f3040668bd4242d8c3ca5d0` | `phase-table-new-d52d4a0ad91648b1a0bf057f51cc2249` |
+| 缺／舊／空 log | `log-required-old-fca44af10ff5406ebb5119f9fa2dfdcb` | `log-required-new-7b6c848419a246b38ba8c9496a52a908` |
+| exit23＋capture 拒絕 | `log-required-old-318e36a1df41418c9aa7509f72b36e2d` | `log-required-new-757e40312605413ab8be056243f5cb62` |
+| CI 兩 step／identity | `ci-fixture-old-f2350071beb7435daab90ea70407a81d` | `ci-fixture-new-5599adbcf8954c61a30fd43ae501489a` |
+| HOLD／TPS／四權威 | `m5-oracle-old-c1ae6f834bed45fb992cd0a2dcd42b55` | `m5-oracle-new-1f66cec6c6bc41399b262c70ceb24a34` |
+
+- CI各16情境含 default drop、`-MutationXml m5` drop、XML classname 漂移、方法名不變只換完整name的Java class前綴，以及 `-SourceMutation rename-windows`；後者維持 Windows FAIL／Ubuntu PASS。workflow working-byte 驗證與提交後 HEAD 原bytes兩 step PASS分開記在 `workflow-working-provenance.json`、`a-head-ci-proof.json`。
+- M5 17情境含新條件與原 catalog records／digest／converged／unfinished 的四項拒絕。fixture 的舊 stdout 與新 full 由同一受控內容產生；34組 stdout／full／latest 的 SHA 一致，pieces／manifest／順序都經正式 reader，拒絕精確命中目標，不以 setup 或 manifest 錯誤冒充 RED（`b-fixture-input-audit.json`）。mock 只替換程序／身分／世界邊界，沒有冒稱真 OS timeout 或真 producer 生命週期。
+- 每個 code commit 前只留該 commit 內容，以正常 tracked gate 編譯：`step0-compile/...de7f33919288441f85705d6ace8fd55c`（Windows，BUILD SUCCESSFUL 17s）、`a-compile/...528d6a4b8a7b486ea8e2a6a8c6138255`（Windows）、`b-compile/...23a0df187e9c4318b44e7ea22f29252f`（M5，2m36s）。各 precommit proof 保存 source SHA／blob／compile task 狀態；前兩輪四種 compile task 實跑，B 的 testmod 真實編譯與60／60、四旗標、HOLD0／tps85.7、exact restore都通過。README與本note是獨立docs commits。
+
+### 同乾淨 code/README HEAD 的兩輪 focused
+
+兩輪固定 `81c8ee2`，各跑四份正式 caller fixture（Step0、CI兩step／正反向與新M5 oracle），再跑正常 Main＋oracle、default與M5；來源／harness／README pins凍結，3個root都 exact restore。checkpoint／JUnit完整回歸由下方run-all提供。
+
+| 輪 | Main | default179 | M560 | M5 waited／tps |
+| --- | --- | --- | --- | --- |
+| 1 | `focused/round1/gate-f63e-r1-main-ec2851d6c4934bfba6faa36f9b3f42a4` | `focused/round1/gate-f63e-r1-default-a34ca2d1db974ba28558ae3525360c9e` | `focused/round1/gate-f63e-r1-m5-b35dbf6c89734ac68db9f81c0ad9402c` | 11288 / 85.2 |
+| 2 | `focused/round2/gate-f63e-r2-main-1c1a65da49bb4868b1e29cf77e64d6af` | `focused/round2/gate-f63e-r2-default-5a43c2631f6046b390ac75d907e3aa02` | `focused/round2/gate-f63e-r2-m5-880812a1a9dc4d3c8d124b31deec4a77` | 11295 / 85.3 |
+
+原 proof 是 `focused/round1/proof.json`、`focused/round2/proof.json`；沒有 failure／error／skip。controller 的獨立 raw readback 另存 controller-*，不冒稱為本 implementer 的 review 結論。
+
+### 第一輪完整回歸與逐項差異
+
+- 原 root：`runall1/run-all-44dcc6742a6a4e0c945b2c1d35e4515f`，乾淨 `81c8ee2`。原 console 在2026-10-22 10:40:40（台灣）結束，精確 `END ALL exit=0 HEAD=81c8ee241c4db386127ebea9781c3a8e81a39fb0`；`runall1-completion.json` 與 `runall1-comparison-completion.json` 已核。
+- 原 SUMMARY：`SUMMARY default=179/179 windows=89 legacy=1/1 m5=60/60 perTest=56+1 junit=666 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=432entries/385classes sources=226 testmodHits=0 mainOnly=PASS m3=4+5 recovery=24 m5collapse=69 ci=win:PASS,ubuntu:PASS`。collapse另核31 HALT；這是本機 CI rule fixture，尚非 GitHub runner 驗收。
+- Primary只讀採d-3 `run-all-ef317f60c17c4f478f5cc4071ad19d0f`（e8a3cf0、Full55／31）；secondary `af814a...`（a829bed、Full56／31、已歸屬raw added1）保留原STATUS／manifest，不改寫。工具先複製到本task，再改root／基準與五個新診斷欄位的明列差異；原SHA／最小adapter／執行SHA見 `comparison-adapter-provenance.json` 與 `comparison-tool-versions/`。
+- 帶 XML classname／完整name／狀態的 default179、legacy1、M560 與 JUnit666 集合相同；release SHA `c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08` 與primary完全相同（432 entries／385 classes）。sources226逐entry內容／順序相同；base SHA `249dbb9dceb36076e98c8d2109f0c36b4d24490ae8b60669fd1a6506ac3b4a88`、new SHA `1016c3302895c8a2e1034e6324533f7b42b6bacbfdf4a5fbb63976b315d6398c`，完整ZIP欄位檢查後226筆DOS date_time與226筆NTFS 0x000a／tag1時間差異，沒有剩餘未分類ZIP差異。
+- **literal WARN／ERROR**：Full55／31、移除86／新增86；M538／10、移除48／新增48；legacy0／0。具名動態欄位歸屬後 normalized removed／added／remaining都是0。原 `*-source-raw-sorted.diff` 與逐列 `*-literal-to-normalized.json` 保留；舊classifier的 `rawDifferenceCount` 名稱實為normalized層，不能讀成literal raw0。實際欄位清單：BlockPos absolute X/Z; Y retained; Minecraft object identity hash; absolute retry due tick; backoff duration retained; absolute waiting-start tick; 600-tick threshold retained; controlled failing chunk absolute X/Z; journal temporary-file nonce; path/failure cause retained; log timestamp; projection Controller absolute X/Z; Y retained; rollback absolute X/Z; 25 cells and Y retained; session/chamber/universe UUID; transfer Observation absolute X/Z; Y/velocity/yaw/pitch retained; transfer player absolute X/Z; Y and outcomes retained; worker scheduling id。
+- catalog60筆delta的非digest欄位相同；UUID導出的digest保留原值另列，suite舊4欄契約保留且新增5個診斷欄位逐項真值正確。當次M5 waited=11277、tps=86.0、HOLD0。observed鍵／真值／steps／schema／69項phaseTable不變；raw observed key order差異phase為 `無`，只列順序、不吞鍵或真值差異。
+- pin逐batch總4／9／4；raw audit直接重核 M4 24、M5 69（31 HALT）與M3 4＋5原receipt hash／身分／nonce／schema／結束。PID＋StartTime使用100ns ticks，差必須嚴格小於1ms，不放寬原精度。102個phase root列在 `runall1-v2-audit/phase-roots.json`；13份正常Minecraft當次log manifest均schema2／非空。106份完整／phase原log的4類worldgen例外皆0、沒有缺log。
+- 399 source／harness pins中只有授權6檔不同，其餘393完全相同，無新增／移除；production／build／closed wrappers不變。新schema／workflow／source欄位差異各自列在 `runall1-v2-audit/`、`runall1-compare/suite-end-field-diff.json`，不寫成「全部src無變」。
+
+### 保留的控制層錯誤與待辦
+
+- 普通CIM拒絕後走正式升權；一般git index.lock拒絕後升權提交，沒有把denied當無程序，也沒有重跑已成功正常gate。
+- inventory初版誤要求batchId，依正式scanner的defaultBatch修正task-only工具；CI setup root `ci-fixture-old-57921c343e314bc7a6b9ce3c805d34ab` 因Windows CreateProcess cwd過長不採計RED，新root減少巢狀後才採計；靜態parser初次把絕對path再Join成重複C:，真source四份本來都是parser0。原記錄／錯誤root保留，未動正式runtime。
+- 補充raw audit首版把launcher小寫ending直接和receipt大寫enum相等，在 w1-crash失敗；原失敗 `runall1-full-raw-audit.log`、`runall1-audit/`與source快照保留。核 `M5CollapseRun:139/398` 的enum.name()及wrapper chain表，兩側都是31 halt→HALT、38 stop→STOP；只修task-owned比較器成明列映射，新label `runall1-v2-audit` 通過。沒有修改receipt、放寬正式gate或重跑runtime。
+- Quality預審Minor M-1：`gates.ps1:117` 目前只以 `^run` 辨識不適用模式中的run task，未涵蓋 `:runGameTest`／`:sub:runServer`。現有豁免caller只有bare `test`，本輪正常caller不受影響；controller裁示交後續Step0／F7，本輪不開fix、不改凍結code。這是預審事項，不自行宣稱正式Approved或C／I0。
+- AccessDenied依使用者裁示維持M5現況；本輪沒有production重試、Defender／索引設定變更。任何比較控制錯誤都保留，不因此重跑成功runtime；沒有殺daemon。
+
+### 本節提交時點與第二輪
+
+本節提交時，兩focused與第一輪完整回歸及比較已完成。**第二輪完整run-all尚未執行**：必須在本note的獨立docs commit之後，以新HEAD／新root執行，source／harness／README仍固定81c8ee2的bytes。原END／SUMMARY、第二輪全部差異、最後STATUS／manifest與逐檔readback完成後才交controller正式雙review；當時結果由 `f63e/STATUS.md`、completion與最後controller Review區塊記錄，不提前寫PASS。最終manifest明列排除controller-*與可變派工／裁示控制檔；evidence manifest不是整個runtime世界備份。
+
+本輪未GitHub CI、人工smoke、push、main合併、tag、PR、LICENSE、刪worktree，也沒有開始F7／M6。M5仍待後續既定驗收與收尾。
