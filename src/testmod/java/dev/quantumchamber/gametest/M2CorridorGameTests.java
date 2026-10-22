@@ -563,13 +563,77 @@ public final class M2CorridorGameTests implements FabricGameTest {
         var stage=stages.get(index);
         walkNative(fixture,fixture.players.get(0).player(),stage.first());
         walkNative(fixture,fixture.players.get(1).player(),stage.second());
+        var trace=new CohortWaitTrace(fixture,sid,index,tick);
         when(fixture.context,tick,() -> fixture.pages.currentMappings(sid).epoch()==index+2
                 && fixture.record().spaceLeases().size()==fixture.pages.currentMappings(sid).instances().size(),readyTick -> {
             assertLogical(fixture.context,fixture,fixture.players.get(0).player(),stage.first());
             assertLogical(fixture.context,fixture,fixture.players.get(1).player(),stage.second());
             fixture.context.assertEquals(stage.instances(),fixture.pages.currentMappings(sid).instances().size(),"alias是否重疊決定近共享／遠分離");
             walkStages(fixture,sid,stages,index+1,readyTick+1);
-        });
+        },trace);
+    }
+    /** 只屬於具名cohort的等待快照；每個stage只記開始、ready、失敗各一次。 */
+    private static final class CohortWaitTrace {
+        final NativeEntry fixture;
+        final UUID sid;
+        final int stage;
+        final int startTick;
+        final long startNanos=System.nanoTime();
+        final long deadlineNanos=startNanos+java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        boolean readyLogged;
+        boolean failureLogged;
+        CohortWaitTrace(NativeEntry fixture,UUID sid,int stage,int startTick) {
+            this.fixture=fixture; this.sid=sid; this.stage=stage; this.startTick=startTick;
+        }
+        void begin() { log("BEGIN",startTick,null); }
+        void ready(int tick) { if(!readyLogged) { readyLogged=true; log("READY",tick,null); } }
+        void failed(int tick,Throwable failure) {
+            if(!failureLogged) { failureLogged=true; log("FAIL",tick,failure); }
+        }
+        String snapshot(int tick) {
+            long now=System.nanoTime();
+            var line=new StringBuilder("sid=").append(sid).append(" stage=").append(stage)
+                    .append(" expectedEpoch=").append(stage+2)
+                    .append(" elapsedMs=").append(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(now-startNanos))
+                    .append(" elapsedTicks=").append(tick-startTick)
+                    .append(" deadlineNanos=").append(deadlineNanos)
+                    .append(" remainingMs=").append(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadlineNanos-now));
+            try {
+                var journal=SessionRecoveryState.get(fixture.server);
+                var flushed=journal.flushedRecords().get(sid);
+                var staged=journal.records().get(sid);
+                var current=fixture.pages.currentMappings(sid);
+                line.append(" currentEpoch=").append(current.epoch())
+                        .append(" instances=").append(current.instances().size())
+                        .append(" leases=").append(flushed==null ? -1 : flushed.spaceLeases().size())
+                        .append(" flushed=").append(flushed==null ? "ABSENT" : flushed.state())
+                        .append(" current=").append(staged==null ? "ABSENT" : staged.state());
+                for(var view : current.instances()) line.append(" mappingSlot=").append(view.ref().slotId()).append(" bounds=").append(view.bounds());
+                if(flushed!=null) {
+                    var world=fixture.target;
+                    for(var lease : flushed.spaceLeases()) {
+                        var box=lease.bounds(); int total=0,full=0,loaded=0,ticking=0;
+                        for(int x=box.getMinX()>>4;x<=box.getMaxX()>>4;x++) for(int z=box.getMinZ()>>4;z<=box.getMaxZ()>>4;z++) {
+                            total++; var chunk=new net.minecraft.util.math.ChunkPos(x,z);
+                            if(world.getChunkManager().getWorldChunk(x,z)!=null) full++;
+                            if(world.isChunkLoaded(chunk.toLong())) loaded++;
+                            if(world.shouldTick(chunk)) ticking++;
+                        }
+                        line.append(" leaseSlot=").append(lease.slotId()).append(" leaseBounds=").append(box)
+                                .append(" chunks=").append(total).append(" FULL=").append(full)
+                                .append(" loaded=").append(loaded).append(" ticking=").append(ticking);
+                    }
+                }
+            } catch(RuntimeException diagnosticFailure) {
+                line.append(" snapshotFailure=").append(diagnosticFailure.getClass().getSimpleName())
+                        .append(':').append(diagnosticFailure.getMessage());
+            }
+            return line.toString();
+        }
+        private void log(String phase,int tick,Throwable failure) {
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").info("CI_W1_COHORT_WAIT {} {} failure={}",
+                    phase,snapshot(tick),failure==null ? "NONE" : failure.getClass().getName()+":"+failure.getMessage());
+        }
     }
     private static void walkNative(NativeEntry fixture,ServerPlayerEntity player,double z) {
         var owners=fixture.pages.currentEntityOwners(fixture.record().sessionUuid()).orElseThrow();
@@ -2380,6 +2444,26 @@ public final class M2CorridorGameTests implements FabricGameTest {
     private static net.minecraft.entity.ItemEntity itemAt(net.minecraft.server.world.ServerWorld world,Vec3d position,int count) {
         var item=new net.minecraft.entity.ItemEntity(world,position.x,position.y,position.z,new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND,count));
         item.setNoGravity(true); item.setVelocity(Vec3d.ZERO); item.setNeverDespawn(); item.setPickupDelayInfinite(); return item;
+    }
+    private static void when(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,CohortWaitTrace trace) {
+        trace.begin();
+        cohortWhenUntil(context,tick,condition,ready,trace);
+    }
+    private static void cohortWhenUntil(TestContext context,int tick,java.util.function.BooleanSupplier condition,
+            java.util.function.IntConsumer ready,CohortWaitTrace trace) {
+        context.runAtTick(tick,() -> {
+            try {
+                if(condition.getAsBoolean()) { trace.ready(tick); ready.accept(tick); }
+                else {
+                    if(tick>=90000 || System.nanoTime()>=trace.deadlineNanos)
+                        context.assertTrue(false,"有限等待逾時："+trace.snapshot(tick));
+                    cohortWhenUntil(context,tick+1,condition,ready,trace);
+                }
+            } catch(RuntimeException | Error failure) {
+                trace.failed(tick,failure);
+                throw failure;
+            }
+        });
     }
     private static void when(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready) {
         whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10));
