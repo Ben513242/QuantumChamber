@@ -60,11 +60,12 @@
 - 先把 `f63c2/STATUS.md` 的 run-all-2 補進 note。controller 已在本檔的同一個 commit 補記，請核對。
 - review 通過之後，在 note 的 F6-3c-2 一節寫 review 區塊，並更新 plan、AGENTS、ledger。
 
-### 3.2 F6-3d：harness 腳本與 README（d-1／d-2 已完成；下一步 d-3）
+### 3.2 F6-3d：harness 腳本與 README（三段已完成；下一步 F6-3e）
 
 - 2026-10-21 controller 分三段，理由是隔離 Java runner 與程序／世界管理的變更並限制 context；原 scope 與裁示不變。
 - **d-1 已完成**：#26～29 與 M-1，`4527f26..c526b295`；兩份獨立 review C/I/M皆0，兩次完整回歸 exit0，詳 §7 最新紀錄與 note。
-- **d-2 已完成**（2026-10-22）：#15～21，共用owned-phase launcher／timeout／encoding／diagnostics與X4；range `498d5e4..4e3fa6c`，首輪I-1由fix1補有效RED後經全新spec／quality複審關閉，C/I/M皆0。**下一步 d-3**：#13/#14/#22～24/#30/#31，以及既有#25/X2(a)、X3、U3/H5安排。下列保留原完整範圍，已完成部分以本routing與§7區分。
+- **d-2 已完成**（2026-10-22）：#15～21，共用owned-phase launcher／timeout／encoding／diagnostics與X4；range `498d5e4..4e3fa6c`，首輪I-1由fix1補有效RED後經全新spec／quality複審關閉，C/I/M皆0。
+- **d-3 已完成**（2026-10-22）：#13/#14/#22～24/#30/#31及既定#25/X2(a)/X3/U3；range `2243b07..a829bed`，兩份全新獨立review各C0/I0/M1，兩focused與兩完整run-all通過。下一步F6-3e，先處理下節兩項Minor。下列保留原完整範圍，實際完成以本routing與§7區分。
 
 - Step 0：F6-3c-2 spec Minor M-1 已由 d-1 處理：32 個跨類別可見成員中，30 個移除 private；161 個成員數保持。
 
@@ -76,6 +77,8 @@
 - 全部在本機驗收，不需要 CI。
 
 ### 3.3 F6-3e：`build.yml` 的明列清單與 gate 斷言
+
+- **Step 0（d-3 review Minor）**：S-M1補phaseTable Count及區分大小寫的逐項比較；Q-M1對預期Minecraft成功invocation要求非空當次log，缺失／全舊／空檔補正式caller負例並明列診斷，啟動前失敗與純JUnit可標不適用。兩者不改production，Q-M1不改X4 probe輔助log裁示；本輪不回頭開d-3 fix round。
 
 - `build.yml` 的明列清單（盤點 #01～#03）：
   - default run 在 M5 期間新增的 32 個 test，加上 F6-3c-2 新增的 1 個，共 33 個；
@@ -262,3 +265,16 @@
 - **未關閉finding**：本task無C/I/M；剩餘d-3、F6-3e、F7及里程碑事項按既定順序。AccessDenied依使用者裁示維持M5現況、列已知限制。
 - **等使用者裁示**：每次push／main ff-only／tag／刪worktree；代操作manual smoke授權；M6範圍與優先序。當前沒有需重新詢問AccessDenied的事項。
 - **下一步**：F6-3d-3 → F6-3e → 單次push同意與雙平台CI驗收 → F7 → required manual smoke／whole-branch review／里程碑收尾 → m5合併並tag後才新M6 worktree。M5尚未整體收尾，M6未開始。
+
+### 2026-10-22：F6-3d-3 完成，下一步 F6-3e（含兩項Minor Step 0）
+
+- **HEAD與porcelain**：實作、最終完整回歸及兩份正式review固定a829bed2f0e62c2093ac7790f62993b5f4488a97、feature/m5-collapse；controller直接核porcelain與diff --check空。本筆由其後四檔治理文件同步commit加入；該commit精確HEAD以git log -1 --format=%H -- docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md解析，提交後狀態另記ledger與controller postcommit。相對a829bed只應有AGENTS/handoff/note/plan，不冒稱治理docs HEAD另跑過runtime。
+- **push／remote／main／tag**：2026-10-22 08:09（台灣時間）git ls-remote核origin feature=30666c42c35e82c8938f13902d06af97f050e753；本機main與remote main=a7e1be2dab7424bf067bda378c6edd7518bbaf7f；本機與遠端無m5 tag。本輪無push/main合併/tag/刪worktree；當時無Java程序，未終止daemon。
+- **完成task/range**：F6-3d-3 #13/#14/#22～24/#30/#31與#25/X2(a)/X3/U3，2243b07..a829bed共7 commits。code/README=e8a3cf0；只有四支verification腳本（含新增helper）、README與note，沒有production/src/build/workflow/closed wrappers正式變更。
+- **獨立review**：/root/f63d3_spec正式spec ✅，C0/I0/M1；/root/f63d3_quality正式Approved，C0/I0/M1。兩個全新context均未參與實作、全程唯讀、不跑runtime；原報告f6/f63d3/spec-review-a829bed.md與quality-review-a829bed.md，hash及結論見note本節Review。
+- **最終完整回歸**：SDD f6/f63d3/runall2/run-all-af814a5573d443a0bd8faa00d259f76c，原console:140精確END ALL exit=0 HEAD=a829bed2f0e62c2093ac7790f62993b5f4488a97。前一輪ef317f60c17c4f478f5cc4071ad19d0f在e8a3cf0亦END0；兩focused同乾淨e8a3cf0。
+- **SUMMARY**：default179/179 windows89 legacy1/1 M560/60 perTest56+1 JUnit666 failures0 errors0 skipped2 windowsCheckpoint17 release432entries/385classes sources226 testmodHits0 mainOnlyPASS M3 4+5 recovery24 collapse69/HALT31 本機CI規則win/ubuntu兩PASS；不代表GitHub CI或人工驗收。
+- **差異與封存**：Full第一輪55/31、第二輪56/31；新增WARN由原batch/stack/source/XML對到既有m2_task4_disconnect_io受控拒絕，raw added1/rawDifferenceCount1/attributed1/remaining0，原比較失敗保留、未重跑runtime。release bytes同；sources226內容/順序同，僅ZIP時間；legacy0/0、M538/10、pin4/9/4、worldgen四類0。Controller與兩reviewer各自全量readback20,370檔/3,296,851,406bytes/204原phase roots，SHA/大小全符；399 source/harness pins固定。原STATUS/manifest不回寫，新review/controller報告另存。
+- **未關閉finding**：沒有Critical／Important。S-M1（spec）phaseTable串接碰撞、Q-M1（quality）當次log空選集缺失分類，均交F6-3e Step 0；本輪真69項receipt與8份非空當次log不受影響。其餘F6-3e/F7/里程碑事項照排程。
+- **使用者裁示**：每次push、main --ff-only合併、tag、刪worktree仍須新的明確同意；代操作manual smoke仍需使用者授權，未授權則由使用者執行；M6範圍與優先序待m5合併/tag後確認。AccessDenied已裁示M5維持現況並列已知限制，不再列為未決。
+- **下一步**：F6-3e Step 0兩Minor→default33/M5 run60帶class清單與HOLD/TPS/SUITE_END新斷言→取得單次push同意後雙平台CI（同SHA Ubuntu M5至少兩綠）→F7→required manual smoke/whole-branch review/里程碑收尾。M5尚未整體收尾，M6未開始。

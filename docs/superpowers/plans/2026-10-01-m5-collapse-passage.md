@@ -842,8 +842,10 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - **F6-3d**：harness 腳本與 README。controller 2026-10-21 依 Java runner、程序管理與 gate 分成三段，隔離安全面的變更並限制 context；原 binding scope 不變，每段獨立 review 後才下一段。
       - **F6-3d-1**：#26～29 與 Step 0 M-1，已完成（2026-10-21，`4527f26..c526b295`）。proof/failures 封裝、37保留鍵、兩處1200tick等待、指定Javadoc/README；M-1更正32跨類別可見/30移除private，161不變。全新獨立spec ✅／quality Approved，C/I/M皆0；最終SDD `f6/f63d1/runall2/run-all-833243ca0c104b8fb6b887dd96445a7a` 在乾淨c526b295 END ALL exit0。
       - **F6-3d-2**：#15～21，已完成（2026-10-22，`498d5e4..4e3fa6c`，含fix1）。共用owned-phase launcher／timeout／encoding／diagnostics；X4缺log記launcher.json。首輪共同I-1已用有效total/idle RED與各兩GREEN補足；全新獨立spec ✅／quality Approved，C/I/M皆0。最終SDD `f6/f63d2/fix1/runall2/run-all-da52833326044b678588d05ac836a020` 在乾淨4e3fa6c END ALL exit0。
-      - **F6-3d-3（下一步）**：#13/#14/#22～24/#30/#31，boundary/clientProbe/phase-table/日誌輪替/逾時保留/README；#25依X2(a)只評估不進CI，X3不tracked歷史腳本，U3依既有H5裁示及recovery24證據處理。
-    - **F6-3e**：`build.yml` 的明列清單與 `ci-rule-check.ps1`。
+      - **F6-3d-3**：已完成（2026-10-22，`2243b07..a829bed`，7 commits）。#13/#14/#22～24/#30/#31及既定#25/X2(a)/X3/U3；兩focused同乾淨e8a3cf0，note後最終SDD `f6/f63d3/runall2/run-all-af814a5573d443a0bd8faa00d259f76c` 在乾淨a829bed精確END ALL exit0。兩個全新獨立reviewer正式spec ✅／quality Approved，各C0/I0/M1；Minor排下一段Step 0，本輪實際證據有效。
+    - **F6-3e（下一步）**：先做Step 0兩項d-3 Minor，再做 `build.yml` 的明列清單與 `ci-rule-check.ps1`。
+      - S-M1：phaseTable補Count及區分大小寫逐項比較，拒絕合併元素造成的逗號串接碰撞。
+      - Q-M1：對預期Minecraft成功invocation核至少一份非空當次log，缺失／全舊／空檔有明確診斷與正式caller負例；啟動前失敗與純JUnit標明不適用，不改X4 probe輔助log裁示。
     - 最後 push 到 CI 驗收。push 前先問使用者。
   - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
   - boundary oracle 以 PID 挑 receipt 時的碰撞。

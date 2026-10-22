@@ -10165,9 +10165,28 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - 以下為 `4e3fa6c` 提交時的待辦紀錄（其後實際結果見上方 Review）：第二輪完整回歸在該 note commit 後以新的 root 執行，最終 END／比較、兩輪 source／harness pins、所有 roots 與 SHA manifest 由 fix1 STATUS／completion 記錄。I-1 的正式關閉留給全新獨立 spec／quality 複審，不提前宣稱通過。未執行 GitHub CI／人工 smoke，未 push／merge／tag／PR／LICENSE／刪 worktree，也未進入 d-3。
 
 
-## F6-3d-3：gate 身分、完整當次日誌與失敗取證（待獨立 review）
+## F6-3d-3：gate 身分、完整當次日誌與失敗取證（完成）
 
 - 整段起點 2243b0796f84926a848a527573353104fe181816；code/README HEAD e8a3cf03c85dea37b389ce3a5d06588763e857ef。前段 8e046de、d76ec25、1247f0c；續作 969c9b1、ff088de、e8a3cf0。只改 scripts/verification 的 gates、main-oracle、run-all、共用 gate-evidence 與 README，沒有 production／Java／build／workflow／closed probe wrapper 變更；本節另為 docs commit。
+
+- 行號（code HEAD）：gate-evidence.ps1:3、gate-evidence.ps1:47、gate-evidence.ps1:71、gate-evidence.ps1:98、gates.ps1:115、run-all.ps1:63、run-all.ps1:261。
+
+### Review（2026-10-22）
+
+- spec：✅，Critical 0／Important 0／Minor 1；reviewer為全新獨立context /root/f63d3_spec。quality：Approved，Critical 0／Important 0／Minor 1；reviewer為另一全新獨立context /root/f63d3_quality。兩者未參與本輪實作，皆唯讀且未跑runtime；正式裁決在兩輪完整回歸與封存完成後作成，沒有自評通過。
+- 原報告另存SDD f6/f63d3/spec-review-a829bed.md與quality-review-a829bed.md；SHA-256分別為 5e2c3630a443d66097e4dcdfebb47fe51de96ed3fe6bf680891592c359d5425f、90c7787bd40adaf33fd3a81cc4d7934da0627c22f09fc417b1fcb0b004928233。實際git diff為四支verification腳本（含新增helper）、README與本note，共六檔。
+- S-M1（spec原M-1，run-all.ps1:261）：phaseTable以逗號串接比較，69項合併前兩項成68項含逗號元素時字串仍相同；下一段F6-3e Step 0先補Count與區分大小寫的逐項比對及負例。
+- Q-M1（quality原M-1，gate-evidence.ps1:41、:66–86）：缺當次檔案時空manifest仍可通過；下一段F6-3e Step 0區分預期Minecraft成功invocation與啟動前失敗／純JUnit不適用，對缺失、全舊、空檔補正式caller負例及明確診斷。與X4 probe輔助log裁示分開處理。
+- 兩項均為Minor，本輪不開fix round。Controller另以真receipt作純記憶體69→68見證並核兩輪Full/legacy/M5/Main共8份manifest均有非空當次內容；本輪實際證據不受這兩個邊界影響，未關閉Critical／Important為0。
+- 完成range為2243b079..a829bed，共7 commits；code/README=e8a3cf0，最後runtime/review pin=a829bed。兩focused同乾淨e8a3cf0全部GREEN；第一輪ef317f60...與note後第二輪af814a5573d443a0bd8faa00d259f76c皆精確END ALL exit=0。最終root為SDD f6/f63d3/runall2/run-all-af814a5573d443a0bd8faa00d259f76c。
+- 最終SUMMARY：default179/179 windows89 legacy1/1 M560/60 perTest56+1 JUnit666 failures0 errors0 skipped2 windowsCheckpoint17 release432entries/385classes sources226 testmodHits0 mainOnlyPASS M3 4+5 recovery24 collapse69/HALT31 本機CI規則win/ubuntu兩PASS；不等於GitHub CI或人工驗收。
+- 原Full WARN/ERROR為第一輪55/31、第二輪56/31；legacy0/0、M538/10。第二輪完整log:9521的m2_task4_disconnect_io:0、:9627–9655受控journal flush拒絕stack、source與具名XML PASS相符。raw added1/rawDifferenceCount1/attributed1/remaining0，原比較exit1保留，未重跑成功runtime；不是raw差異0。
+- Controller獨立核原END、XML/含class集合、release bytes、sources226內容/順序與本次WARN原stack；兩reviewer另核ZIP時間欄位、pin4/9/4、worldgen四類0及M4/M5原receipt/身分/schema/steps。399 source/harness pins固定，沒有production/Java/build/workflow變更。
+- Controller與兩reviewer各自全量讀回20,370檔／3,296,851,406bytes／204原phase roots，SHA/大小全符。evidence manifest SHA=377a6fef00a187c13ac64adec5b10d7d99d50eac61239c19bcac88e554b3212a，root manifest SHA=6d3d83f025df13af20394bb48b33aa9fc13d1a6b80b420021d68ab84dd85b8b9。凍結STATUS與原manifest不回寫；新增controller/review報告另存，不是整個runtime世界備份。
+- 後續治理文件同步只更新實際完成與接手資訊；不把新的docs HEAD冒稱另跑過runtime。本輪未GitHub CI/manual/push/merge/tag/刪worktree。下一步F6-3e，先處理兩項Minor；M5尚未整體收尾，M6未開始。
+
+### 實作與取證（保留a829bed提交時紀錄）
+
 - #13：Get-GateBoundaryReceipt 由 copy／oracle 兩 caller 共用，核 PID、UTC start、filename/startupNonce；容差嚴格小於1ms。JSON DateKind String 保留時間字串。前段 DateKind bug 的原 FAIL root 187780a... 保留；新 root 3a5a9b... 才採 PASS（179/179、8 tasks executed、差0.1681ms）。所有前段原始 RED／GREEN、來源 bytes、SHA／blob、adapter exact restore 與 controller readback 見 SDD checkpoint-1247f0c/STATUS-frontpart.md，沒有重建或改判舊結果。
 - #14：main-only 的 mod list／classpath、argfiles、DLI、property／class-load 與 JAR fabric.mod.json 身分、entrypoint 納入 clientProbe；generic probe 原防線及合法 ModPresenceProbe 例外保留。真 runServer classpath RED 的原 oracle PASS／新副本 FAIL、PID26908 的 argfile、正常stop/world/exactRestore均保留；runtime.init.gradle 原 bytes/SHA/blob已還原。既有JAR拒絕不捏造新缺口。
 - #22：run-all 對每份原 receipt 的 phaseTable 再核名稱／順序；單份 drift 精確拒絕，69 phases／31 HALT、ending／window 不變。
@@ -10186,5 +10205,4 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - 完整當次WARN/ERROR：full 55/31（基準55/31）、legacy 0/0（基準0/0）、m5 38/10（基準38/10）；原始含時間排序diff與原序列皆保留。限定欄位（UUID、座標、worker/object identity、暫存nonce、絕對tick等）每行記歸屬，剩餘0，不稱raw全同；pin逐batch4/9/4、worldgen四類0，catalog原digest及靜態增量另留對照。secondary d2 fix1最終da528333...午夜原56/31及raw added1保留，不能以21/5殘缺latest取代。
 - source/harness pins 398→399：只新增gate-evidence，四個既有verification檔異動（gates/main-oracle/run-all/README），其餘全部src/build/workflow均同；兩focused的11份HARNESS SHA與runall1相同。新增診斷為execution的processes/runtimeRoot/error與UTC start/end、logs-before/xml-before、runtime-log/full、failure-artifacts/xml、capture-errors；原欄位保留。
 - 正式harness SHA-256（本輪bytes）：gate-evidence.ps1=1cfae9beeea56052dc1d256e0f47844816609765ce37ecb361e1a7b049e9c04f、gates.ps1=0bf4ea07943df5f73048b0b3511ac42a70b385428c878c729d15671085483b4d、main-oracle.ps1=65a2ea562ed1e93be9669a09c5363ab66c1662c8447a0cd97a105740dbf5c9a4、run-all.ps1=2816df270f95739804f03776c56368a0e2b2c3542763bbcae9a9be636108b520、README.md=b0be8f1408efc5eaafeaaee63f20fbcde209e88a610bec54cb413d15d88385b5。前段v2 manifest SHA=3f67f8ead5a3d946d04267461ec7669e860a68047297e1247b1aa8b281bc3f2f，4621檔640746312 bytes，controller已全讀回；前段快照不修改。
-- 行號（code HEAD）：gate-evidence.ps1:3、gate-evidence.ps1:47、gate-evidence.ps1:71、gate-evidence.ps1:98、gates.ps1:115、run-all.ps1:63、run-all.ps1:261。
-- 本節docs commit後在新root執行第二輪完整回歸；提交時尚未完成，不預寫通過。最終END／全部差異／兩輪pins／原phase關聯／最終STATUS與逐檔SHA/大小readback在SDD f6/f63d3的completion、compare與manifest，由controller安排全新獨立spec／quality正式review。尚未review通過、不進F6-3e/M6；未GitHub CI／manual／push／merge／tag／PR／LICENSE／刪worktree。
+- 以下為a829bed提交時的待辦紀錄；實際完成與正式review見上方Review區塊：本節docs commit後在新root執行第二輪完整回歸；提交時尚未完成，不預寫通過。最終END／全部差異／兩輪pins／原phase關聯／最終STATUS與逐檔SHA/大小readback在SDD f6/f63d3的completion、compare與manifest，由controller安排全新獨立spec／quality正式review。尚未review通過、不進F6-3e/M6；未GitHub CI／manual／push／merge／tag／PR／LICENSE／刪worktree。
