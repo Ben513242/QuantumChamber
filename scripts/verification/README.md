@@ -32,7 +32,7 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 | `runtime.init.gradle` | 所有 gate 的 Gradle 呼叫都以 `-I` 載入：run* 接 stdin、寫 `classload-<pid>.log` |
 | `probe.init.gradle` | M3 gate 另外載入：把 `-Ptask9.*` 轉成 probe 的 system property |
 | `run-all.ps1` | 依序跑 Full、Legacy、M5 GameTest、Main＋oracle、M3、M4 recovery、M5 collapse probe、CI 綠燈規則（Windows／Ubuntu 兩個 step），最後以唯讀 summary 核對 |
-| `m2-cohort-failure-fixture.ps1` | CI-W1 的 M2 south cohort 故障驗證入口：暫時套用 testmod adapter，呼叫既有 `gates.ps1 -Mode GameTest`，在 `finally` 精確還原 Java source；另可只準備變體或只分析已保存的 gate root |
+| `m2-cohort-failure-fixture.ps1` | CI-W1 的 M2 south cohort 故障驗證入口：暫時套用 testmod adapter，呼叫既有 `gates.ps1 -Mode GameTest`；只有 source 仍是本輪 mutation 時才在 `finally` 還原，外部編輯保留並判 FAIL。另可只準備變體、只分析已保存 gate root，或對 disposable 檔執行 source guard 自測 |
 | `m2-cohort-failure-adapter.ps1` | 產生七種互斥故障／等待情境的暫時 Java bytes；不自行修改 source 或執行 Gradle |
 | `m2-cohort-failure-oracle.py` | 讀原 XML、execution、manifest 選定的 log、world/source restore，分別記錄原 GameTest verdict 與具名等待／收尾的獨立判讀 |
 
@@ -83,12 +83,13 @@ $v = 'scripts/verification'
 ```powershell
 pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenario partial-exception -Label ciw1-partial
 pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenario slow-new60 -Label ciw1-slow -PrepareOnly
+pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenario partial-exception -SourceGuardSelfTest
 pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenario slow-old10 -OracleOnly `
     -GateRoot '<先前的 gate root>' -FixtureRoot '<先前的 fixture root>' `
     -OracleOutput '<同 worktree 忽略目錄內的新檔名>.json'
 ```
 
-正式執行前確認沒有其他 runtime owner。入口核 Java source 與 HEAD 的 Git blob 一致，先備份原 bytes／SHA-256；adapter 只注入 testmod 的具名 south cohort，未命中的等待仍用原 predicate。正式 `gates.ps1 -Mode GameTest` 管理 fresh world 與逐檔 hash 還原；入口在 `finally` 寫回原 Java bytes，核 SHA、blob 與 source porcelain。fixture 的 `setup.json` 與 `verification-sources/` 保存本次三個腳本及本 README 的 bytes／SHA，後續文件更新不會使舊 root 的來源 pin 失效。含空白的路徑作為參數傳入即可；腳本以字面路徑操作，不用手動跳脫空白。
+正式執行前確認沒有其他 runtime owner。入口核 Java source 與 HEAD 的 Git blob 一致，先備份原 bytes／SHA-256；adapter 只注入 testmod 的具名 south cohort，未命中的等待仍用原 predicate。正式 `gates.ps1 -Mode GameTest` 管理 fresh world 與逐檔 hash 還原；入口以同一個限制其他寫入的檔案 handle 比對與套用 source bytes，`finally` 僅在現值仍為本輪 mutation 時寫回原 bytes。若現值已是原 bytes，不再寫入；若檔案被外部改動、消失、成為 reparse path 或不可安全讀寫，保留現狀與見證，判 FAIL 並保留原 gate 錯。`-SourceGuardSelfTest` 僅用被忽略根的 disposable 檔案測試實際 guard 函式，不啟 Minecraft 或改正式 Java。fixture 的 `setup.json` 與 `verification-sources/` 保存本次三個腳本及本 README 的 bytes／SHA，後續文件更新不會使舊 root 的來源 pin 失效。含空白的路徑作為參數傳入即可；腳本以字面路徑操作，不用手動跳脫空白。
 
 | `-Scenario` | 預期獨立判讀 |
 | --- | --- |
@@ -99,7 +100,7 @@ pwsh -NoProfile -File scripts/verification/m2-cohort-failure-fixture.ps1 -Scenar
 | `witness-fault` | 純 witness 持續故障至單一絕對上限；保留原錯、suppressed 與尚未關閉的連線證據，獨立判讀只確認有界失敗，不冒稱清理完成 |
 | `late-crosswall` | 純查詢跨過原 wall deadline，後續不再請求或排程；正式返還 witness 成立後晚關閉，保留原 FAIL 與超時 suppressed，不誤記為期限內完成 |
 
-`partial-exception` 等故障案例的**原** GameTest 應是 FAIL：入口可因獨立 oracle `PASS` 正常結束，這只表示受控故障契約成立，不改原 `execution.json`、XML 或 gate verdict。以 `ORIGINAL_GATE_EXIT`、`ORACLE_VERDICT` 分開判讀；細節在 fixture `oracle.json`、`restore.json`、`gate-root.json`，gate 原件在其 `GATE_ROOT`。`-OracleOnly` 僅讀既有原 root 並寫新的報告，不啟動 Minecraft 或改 Java source。這份 fixture 驗證的是**已入場後七段 cohort 移動**的失敗收尾，不涵蓋最前段 `activeReady` 普通等待、其他 M2 caller 或正常 `trustedTeardown` 路徑。
+`partial-exception` 等故障案例的**原** GameTest 應是 FAIL：入口只有在原 `execution.json` exit 1、唯一受控案例失敗、`gate.json` 明確記 `GameTest gate exit=1`、捕捉的 gateError 同樣精確，且獨立 oracle `PASS` 時才正常結束。`slow-new60` 則要求原 exit 0、XML 全綠、`gate.json` PASS 且沒有 gateError；scope／boundary 等正式 gate 後段錯誤不能被 cohort oracle 掩蓋。`-OracleOnly` 的 oracle FAIL 會使入口以非零結束，但不修改原 `execution.json`、XML 或 gate verdict。以 `ORIGINAL_GATE_EXIT`、`ORACLE_VERDICT` 分開判讀；細節在 fixture `oracle.json`、`restore.json`、`gate-control.json`、`gate-root.json`，gate 原件在其 `GATE_ROOT`。`-OracleOnly` 僅讀既有原 root 並寫新的報告，不啟動 Minecraft 或改 Java source。這份 fixture 驗證的是**已入場後七段 cohort 移動**的失敗收尾，不涵蓋最前段 `activeReady` 普通等待、其他 M2 caller 或正常 `trustedTeardown` 路徑。
 
 ## 新增 M5 GameTest
 
