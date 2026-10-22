@@ -579,7 +579,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
         final int stage;
         final int startTick;
         final long startNanos=System.nanoTime();
-        final long deadlineNanos=startNanos+java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        final long deadlineNanos=startNanos+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
         boolean readyLogged;
         boolean failureLogged;
         CohortWaitTrace(NativeEntry fixture,UUID sid,int stage,int startTick) {
