@@ -70,19 +70,35 @@ public final class M5UniverseHold {
     /**
      * 由 {@code M4GameTestBoundaryProbe.register()} 在 M5 run 呼叫（取代 default run 的 boundary probe）：{@code SERVER_STOPPED} 時，
      * 也就是整個 suite 結束、原生存檔之後，寫一行 {@code M5_UNIVERSE_SUITE_END records=… digest=… converged=…}。gate 核對它等於最後
-     * 一個 test 的 after，最後一個 test 完成之後的任何 catalog 改動都會被抓到。
+     * 一個 test 的 after，最後一個 test 完成之後的任何 catalog 改動都會被抓到。四權威另輸出當時的 initialized 與各 unconfirmed 旗標。
+     * {@code SERVER_STOPPING} 只保留同 server 的既有 instance 參考；{@code SERVER_STOPPED} 的 production listener 會先從 map 移除 instance，
+     * 所以這裡不能再呼叫 get。停止完成之後才讀旗標（不是停止前的快照），finally 釋放診斷參考；不初始化、寫出或收斂權威。
      */
     static void registerSuiteEnd() {
         if (!SUITE_END_REGISTERED.compareAndSet(false, true)) return;
+        Map<MinecraftServer, CollapseAuthorities> suiteAuthorities = new IdentityHashMap<>();
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            try {
+                suiteAuthorities.put(server, CollapseAuthorities.get(server));
+            } catch (RuntimeException failure) {
+                LOGGER.error("M5_UNIVERSE_SUITE_END_FAILED 停止前無法保留四權威診斷參考", failure);
+            }
+        });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             try {
+                var authorities = suiteAuthorities.get(server);
+                if (authorities == null) throw new IllegalStateException("缺少同 server 的停止前四權威診斷參考");
                 var catalog = UniverseRegistryState.get(server);
                 var records = catalog.records();
                 boolean converged = !catalog.isDirty() && records.equals(catalog.flushedRecords());
-                LOGGER.info("M5_UNIVERSE_SUITE_END records={} digest={} converged={} unfinished={}",
-                        records.size(), digest(records), converged, unfinished());
+                LOGGER.info("M5_UNIVERSE_SUITE_END records={} digest={} converged={} unfinished={} initialized={} allocationUnconfirmed={} projectionUnconfirmed={} discoveryUnconfirmed={} catalogUnconfirmed={}",
+                        records.size(), digest(records), converged, unfinished(), authorities.initialized(),
+                        authorities.unconfirmed(CollapseAuthorities.Authority.ALLOCATION_LEDGER), authorities.unconfirmed(CollapseAuthorities.Authority.PROJECTION_LEDGER),
+                        authorities.unconfirmed(CollapseAuthorities.Authority.DISCOVERY), authorities.unconfirmed(CollapseAuthorities.Authority.CATALOG));
             } catch (RuntimeException failure) {
-                LOGGER.error("M5_UNIVERSE_SUITE_END_FAILED catalog 讀取失敗", failure);
+                LOGGER.error("M5_UNIVERSE_SUITE_END_FAILED 四權威或 catalog 讀取失敗", failure);
+            } finally {
+                suiteAuthorities.remove(server);
             }
         });
     }

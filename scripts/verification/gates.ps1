@@ -261,6 +261,7 @@ $M5RunClasses=@('M5UniverseGameTests','M5UniverseProjectionGameTests','M5Univers
 # 各自一個 batch；每個 test 都留下恰一行 PASS 的 M5_UNIVERSE_CATALOG_DELTA。依 log 順序串接：fresh 世界從 0 筆開始，前一個 test 的 after（筆數與
 # digest）等於下一個 test 的 before；suite 結束時（SERVER_STOPPED）恰一行 M5_UNIVERSE_SUITE_END，筆數與 digest 等於最後一個 test 的 after、
 # converged=true、沒有還沒通過的 test（catalog 只在各 test 自己斷言的範圍內改變，最後一個 test 之後也沒有改變）。結果寫入 <gate>/m5-oracle.json。
+# 正式完整當次日誌同時要求 HOLD=0、節流結束恰一行且 waited>0/tps<=100；SUITE_END 另逐項要求 initialized=true、四個 unconfirmed=false。
 function Assert-M5Run($server,$expected) {
     if(-not $server.commandLine.Contains('-Dquantumchamber.gametest.m5Only=true')){throw 'M5 run 的 server JVM 沒有 -Dquantumchamber.gametest.m5Only=true'}
     $boundary=@(Get-ChildItem -LiteralPath (Join-Path $gate 'execution') -Filter 'm4-boundary-*.json')
@@ -268,7 +269,14 @@ function Assert-M5Run($server,$expected) {
     $outside=@($expected | Where-Object {$_.class -cnotin $M5RunClasses})
     if($outside.Count){throw "m5_universe batch 只能宣告在 M5 run 的 GameTest class（$($M5RunClasses -join '、')）：$(@($outside | ForEach-Object case) -join ', ')"}
     if((Distinct-Count @($expected | ForEach-Object batch)) -ne $expected.Count){throw 'M5 test 必須各自一個 batch（逐 test 的 catalog 增量才只屬於該 test）'}
-    $stdout=Get-Content -LiteralPath (Join-Path $gate 'execution/stdout.log') -Raw
+    $stdout=Read-GateRuntimeLog -Evidence (Join-Path $gate 'execution')
+    if($stdout.Contains('M5_UNIVERSE_HOLD')){throw 'M5 全部 PASS 的 run 不得有 M5_UNIVERSE_HOLD'}
+    $paceLines=@($stdout -split '\r?\n' | Where-Object {$_.Contains('GameTest tick 節流 結束：')})
+    if($paceLines.Count -ne 1){throw "M5 節流結束列必須恰一行（$($paceLines.Count)）"}
+    $pace=[regex]::Match($paceLines[0],'GameTest tick 節流 結束：ticks=(?<ticks>\d+) waited=(?<waited>\d+) waitedMs=(?<waitedMs>\d+) elapsedMs=(?<elapsedMs>\d+) tps=(?<tps>\d+(?:\.\d+)?) minTickMs=(?<minTickMs>\d+)\s*$')
+    if(-not $pace.Success){throw 'M5 節流結束列格式不符'}
+    $pacing=[ordered]@{ticks=[long]$pace.Groups['ticks'].Value;waited=[long]$pace.Groups['waited'].Value;waitedMs=[long]$pace.Groups['waitedMs'].Value;elapsedMs=[long]$pace.Groups['elapsedMs'].Value;tps=[double]::Parse($pace.Groups['tps'].Value,[Globalization.CultureInfo]::InvariantCulture);minTickMs=[long]$pace.Groups['minTickMs'].Value}
+    if($pacing.waited -le 0 -or $pacing.tps -gt 100.0){throw "M5 節流必須 waited>0 且 tps<=100.0：waited=$($pacing.waited) tps=$($pacing.tps)"}
     $deltas=@([regex]::Matches($stdout,'M5_UNIVERSE_CATALOG_DELTA name=(?<name>\w+) before=(?<before>\d+) after=(?<after>\d+) expected=(?<expected>-?\d+) actual=(?<actual>-?\d+) converged=(?<converged>\w+) preserved=(?<preserved>\w+) beforeDigest=(?<beforeDigest>[0-9a-f]{64}) afterDigest=(?<afterDigest>[0-9a-f]{64}) status=(?<status>\w+)') | ForEach-Object {
         [pscustomobject]@{name=$_.Groups['name'].Value;before=[int]$_.Groups['before'].Value;after=[int]$_.Groups['after'].Value;expected=[int]$_.Groups['expected'].Value;converged=$_.Groups['converged'].Value;preserved=$_.Groups['preserved'].Value;beforeDigest=$_.Groups['beforeDigest'].Value;afterDigest=$_.Groups['afterDigest'].Value;status=$_.Groups['status'].Value}
     })
@@ -282,15 +290,17 @@ function Assert-M5Run($server,$expected) {
         if($delta.before -ne $previous -or ($null -ne $previousDigest -and $delta.beforeDigest -cne $previousDigest)){throw "catalog 在 test 自己斷言的範圍之外改變：$($delta.name) before=$($delta.before)，預期 $previous（digest 也必須接續）"}
         $previous=$delta.after; $previousDigest=$delta.afterDigest
     }
-    $ends=@([regex]::Matches($stdout,'M5_UNIVERSE_SUITE_END records=(?<records>\d+) digest=(?<digest>[0-9a-f]{64}) converged=(?<converged>\w+) unfinished=\[(?<unfinished>[^\]]*)\]') | ForEach-Object {
-        [pscustomobject]@{records=[int]$_.Groups['records'].Value;digest=$_.Groups['digest'].Value;converged=$_.Groups['converged'].Value;unfinished=$_.Groups['unfinished'].Value}
+    if([regex]::Matches($stdout,'M5_UNIVERSE_SUITE_END(?:\s|$)').Count -ne 1 -or $stdout.Contains('M5_UNIVERSE_SUITE_END_FAILED')){throw 'M5_UNIVERSE_SUITE_END 四權威結束列缺失、重複或讀取失敗'}
+    $ends=@([regex]::Matches($stdout,'(?m)M5_UNIVERSE_SUITE_END records=(?<records>\d+) digest=(?<digest>[0-9a-f]{64}) converged=(?<converged>\w+) unfinished=\[(?<unfinished>[^\]]*)\] initialized=(?<initialized>true|false) allocationUnconfirmed=(?<allocation>true|false) projectionUnconfirmed=(?<projection>true|false) discoveryUnconfirmed=(?<discovery>true|false) catalogUnconfirmed=(?<catalog>true|false)\s*$') | ForEach-Object {
+        [pscustomobject]@{records=[int]$_.Groups['records'].Value;digest=$_.Groups['digest'].Value;converged=$_.Groups['converged'].Value;unfinished=$_.Groups['unfinished'].Value;initialized=$_.Groups['initialized'].Value;allocationUnconfirmed=$_.Groups['allocation'].Value;projectionUnconfirmed=$_.Groups['projection'].Value;discoveryUnconfirmed=$_.Groups['discovery'].Value;catalogUnconfirmed=$_.Groups['catalog'].Value}
     })
-    if($ends.Count -ne 1){throw "M5_UNIVERSE_SUITE_END 必須恰一行（$($ends.Count)）"}
+    if($ends.Count -ne 1){throw 'M5_UNIVERSE_SUITE_END 四權威欄位缺失或格式不符'}
     $suiteEnd=$ends[0]
+    if($suiteEnd.initialized -cne 'true' -or $suiteEnd.allocationUnconfirmed -cne 'false' -or $suiteEnd.projectionUnconfirmed -cne 'false' -or $suiteEnd.discoveryUnconfirmed -cne 'false' -or $suiteEnd.catalogUnconfirmed -cne 'false'){throw 'M5_UNIVERSE_SUITE_END 四權威必須已初始化且全部確認'}
     if($suiteEnd.records -ne $previous -or $suiteEnd.digest -cne $previousDigest -or $suiteEnd.converged -cne 'true' -or $suiteEnd.unfinished.Length -ne 0){
         throw "suite 結束時的 catalog 與最後一個 test 的結果不符：records=$($suiteEnd.records)（最後一個 test 之後是 $previous）digest 相同=$($suiteEnd.digest -ceq $previousDigest) converged=$($suiteEnd.converged) 還沒通過=[$($suiteEnd.unfinished)]"
     }
-    Save-Json (Join-Path $gate 'm5-oracle.json') ([ordered]@{status='PASS';serverPid=$server.pid;boundaryReceipts=0;tests=$expected.Count;deltas=$deltas;finalRecordCount=$previous;suiteEnd=$suiteEnd})
+    Save-Json (Join-Path $gate 'm5-oracle.json') ([ordered]@{status='PASS';serverPid=$server.pid;boundaryReceipts=0;tests=$expected.Count;holds=0;pacing=$pacing;deltas=$deltas;finalRecordCount=$previous;suiteEnd=$suiteEnd})
 }
 function Fresh-Game([bool]$full,[string]$scope) {
     $run=Join-Path $repo $(if($scope -ceq 'legacy'){'run/gametest-legacy'}elseif($scope -ceq 'm5'){'run/gametest-m5'}else{'run/gametest'})
