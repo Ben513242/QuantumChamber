@@ -41,7 +41,9 @@ M5 起，每個 milestone 完成就合併 `main`，順序固定：
 
 milestone implementation → automated gates → required manual smoke → task＋whole-branch review → docs truth → push feature → `--ff-only` 合併 `main` → tag → 新 milestone worktree（短生命週期分支）。
 
-刪除任何 worktree（包括 `.worktrees/m1-chamber`）之前，必須先完成：
+**M5退役專屬裁示（2026-10-22）**：使用者 2026-10-22 明確裁示：M5 合併 main 後，刪除 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，包含其中 run/、.superpowers/ 與其他檔案；不做外部備份或另留副本。這是該次指定工作樹退役的授權，取代先前對此 M5 工作樹的搬出世界／備份前提；不授權現在合併 main、建立 tag，或刪除其他工作樹。退役仍依里程碑順序，先核對 main 包含最終 M5 commit、實際 tag 狀態、唯一 canonical absolute target、非 reparse、無 live Java owner 且 session.lock 已釋放。 這只適用本次指定M5工作樹；原始SDD／run資料退役後不另保留，tracked摘要留在Git。
+
+一般規則（上述M5專屬裁示取代其搬出世界與外部備份要求）：刪除其他 worktree（包括當時的 `.worktrees/m1-chamber`）之前，必須先完成：
 
 - 使用者世界與驗收世界移到 repo 外，例如使用者自有世界 `run/client-base/saves/新的世界test (1)`（2026-09-29 做過 B-5 預驗，已含 DORMANT receipt；處置見人工驗收清單 2.5 (a)）。
 - `run/` 與 `.superpowers/` 備份到 repo 外，建立 SHA-256 manifest，並驗證備份可讀。
@@ -97,8 +99,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：F6-3c-2與F6-3d三段皆已完成（2026-10-22）。最新d-3 range為 `2243b07..a829bed`，涵蓋#13/#14/#22～24/#30/#31及既定#25/X2(a)/X3/U3；兩個全新獨立context正式spec ✅／quality Approved，各Critical 0／Important 0／Minor 1。最終完整回歸在乾淨 `a829bed`：SDD `f6/f63d3/runall2/run-all-af814a5573d443a0bd8faa00d259f76c`，精確 `END ALL exit=0`。下一步 **F6-3e**，Step 0先補S-M1 phaseTable逐項比較與Q-M1當次log缺失檢查，再做CI明列清單與gate新斷言。詳交接檔§7與note該節Review。
-- Git 狀態（2026-10-22 08:09，台灣時間，唯讀核對）：origin feature 為 `30666c4`；本機 main 與遠端 main 為 `a7e1be2`；本機與遠端沒有 `m5` tag。本輪只有本地提交，未 push／merge／tag／刪 worktree；每次仍需使用者新同意。當時沒有Java程序，本輪未終止daemon。
+- 目前：F6-3c-2、F6-3d三段與F6-3e本機實作／驗證／獨立review皆完成（2026-10-22）。F6-3e range `4ba0496..04ac7f3`；全新獨立spec ✅ C0/I0/M0、quality Approved C0/I0/M1；原S-M1/Q-M1關閉，新Minor交F7前置Step0。兩focused與兩full皆通過，最終SDD `f6/f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361` 在乾淨04ac7f3精確END0。使用者已授權目前這批工作的單次push，治理文件同步後執行，再驗雙平台CI；目前尚未push。M5未整體結案，M6未開始。詳交接檔§7與note Review。
+- Git 狀態（2026-10-22 11:49，台灣時間，唯讀核對）：origin feature=`30666c4`，本機main與remote main=`a7e1be2`，本機／遠端無m5 tag；當時只有保留daemon23372、無非daemon Java。尚未push／merge／tag／刪worktree。這次feature push及M5合併main後不備份退役已各獲一次明確授權；後續push、main合併、tag及其他worktree刪除仍另取同意。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：
@@ -172,7 +174,7 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
     `src/main/` 沒有變更。完整回歸 `run-all-cbf51c5a8afc4506a4a162a46f876e1c` 為 `END ALL exit=0`（`3e97dc9`），`default=179`。
   - 最新 note commit 後完整回歸：`run-all-a8841a60e8b84bea8887c01992e4ca1f`（乾淨 `0ed3e62`），`END ALL exit=0`；default179、M5=60、JUnit666、collapse69。原有 `run-all-cbf51c5a…` 保留為原始實作基準。
   - 使用者 2026-10-21 裁示：M5 的 AccessDenied 維持現有 fail-closed／退避，列為已知限制；不加 production 短暫重試，不更動 Defender／索引設定。
-  - 之後依序是：F6-3d → F6-3e → push 到 CI 驗收（每次 push 前先問使用者）→ F7 → milestone 收尾 → M6。細節與目前 HEAD 的解析方式見上方的 Codex 交接檔 §7。
+  - F6-3c-2／d／e 的最新完成狀態以上方接手入口為準；後續依序是：本次已授權的單次push與CI驗收 → F7前置Step0／文件 → milestone收尾 → M6。其他push仍需新同意；目前HEAD的解析方式見交接檔§7。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 

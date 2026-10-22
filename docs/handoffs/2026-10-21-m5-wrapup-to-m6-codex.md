@@ -60,12 +60,12 @@
 - 先把 `f63c2/STATUS.md` 的 run-all-2 補進 note。controller 已在本檔的同一個 commit 補記，請核對。
 - review 通過之後，在 note 的 F6-3c-2 一節寫 review 區塊，並更新 plan、AGENTS、ledger。
 
-### 3.2 F6-3d：harness 腳本與 README（三段已完成；下一步 F6-3e）
+### 3.2 F6-3d：harness 腳本與 README（三段已完成）
 
 - 2026-10-21 controller 分三段，理由是隔離 Java runner 與程序／世界管理的變更並限制 context；原 scope 與裁示不變。
 - **d-1 已完成**：#26～29 與 M-1，`4527f26..c526b295`；兩份獨立 review C/I/M皆0，兩次完整回歸 exit0，詳 §7 最新紀錄與 note。
 - **d-2 已完成**（2026-10-22）：#15～21，共用owned-phase launcher／timeout／encoding／diagnostics與X4；range `498d5e4..4e3fa6c`，首輪I-1由fix1補有效RED後經全新spec／quality複審關閉，C/I/M皆0。
-- **d-3 已完成**（2026-10-22）：#13/#14/#22～24/#30/#31及既定#25/X2(a)/X3/U3；range `2243b07..a829bed`，兩份全新獨立review各C0/I0/M1，兩focused與兩完整run-all通過。下一步F6-3e，先處理下節兩項Minor。下列保留原完整範圍，實際完成以本routing與§7區分。
+- **d-3 已完成**（2026-10-22）：#13/#14/#22～24/#30/#31及既定#25/X2(a)/X3/U3；range `2243b07..a829bed`，兩份全新獨立review各C0/I0/M1，兩focused與兩完整run-all通過。當時移交的兩項Minor已由F6-3e Step0關閉。下列保留原完整範圍，實際完成以本routing與§7區分。
 
 - Step 0：F6-3c-2 spec Minor M-1 已由 d-1 處理：32 個跨類別可見成員中，30 個移除 private；161 個成員數保持。
 
@@ -76,7 +76,9 @@
   - U3：以 H5 為由關閉，note 要記下 H5 之後的 run-all 都是 recovery 24。
 - 全部在本機驗收，不需要 CI。
 
-### 3.3 F6-3e：`build.yml` 的明列清單與 gate 斷言
+### 3.3 F6-3e：`build.yml` 的明列清單與 gate 斷言（本機已完成）
+
+2026-10-22已完成 `4ba0496..04ac7f3`、兩focused、兩full END0與全新獨立spec C0/I0/M0／quality C0/I0/M1。原S-M1/Q-M1關閉；Quality M-1（gates.ps1:117 的限定 Gradle task 名稱辨識）排 F7 前置 Step 0，以獨立派工、行為 commit 與 review 承接，不混入 F7 文件 commit；現有正式豁免 caller 僅 bare test，本輪實際路徑不受影響。 下一步§3.4；下列保留原範圍，實際證據見§7與note Review。
 
 - **Step 0（d-3 review Minor）**：S-M1補phaseTable Count及區分大小寫的逐項比較；Q-M1對預期Minecraft成功invocation要求非空當次log，缺失／全舊／空檔補正式caller負例並明列診斷，啟動前失敗與純JUnit可標不適用。兩者不改production，Q-M1不改X4 probe輔助log裁示；本輪不回頭開d-3 fix round。
 
@@ -90,9 +92,11 @@
   - SUITE_END 核對四個權威，不只 catalog。
 - 驗收：`ci-rule-check.ps1` 的兩個 step 都 PASS；每一類都要有 mutation（`-Mutation drop`、`-MutationXml m5`、`-SourceMutation rename-windows`）；run-all 全綠。
 
-### 3.4 push 與 CI 驗收（**先問使用者**）
+### 3.4 push 與 CI 驗收（每次須授權；本次已授權待執行）
 
-- 建議 3.1～3.3 都完成之後，再問使用者要不要 push `feature/m5-collapse`，然後只 push 一次。
+使用者2026-10-22已明確同意「到目前為止commit都可以push了」。目前這批收尾工作先完成必要治理文件同步，再只push一次feature；截至本筆尚未執行。此同意不延用到後續push。
+
+- 原節點是在3.1～3.3完成後先取得單次push同意；本次已獲同意，治理文件同步後只執行一次，不重問或延用到後續push。
 - 驗收：
   - GitHub Actions 的 Ubuntu `build` 與 Windows `windows-native` 都通過；
   - **Ubuntu 的 M5 GameTest 在同一個 SHA 至少兩次 run 都綠**，這是 F6-3b 節流的驗收；
@@ -101,7 +105,7 @@
 
 ### 3.5 F7：文件
 
-- 照 plan 的 Task F7 進行。
+- 照plan Task F7進行；先承接F6-3e quality M-1的獨立harness Step0（限定Gradle task名稱辨識），不把行為修正混入文件commit。理由及範圍見note Review與ledger F7彙整。
 - 先盤點：ledger 的「F7 待辦彙整」，加上 `rg -n "F7" docs/implementation-notes/2026-10-01-m5-collapse-passage.md` 的所有命中，再對照之後各節是否已處理或改派。
 - controller 已知、但還沒寫進「F7 待辦彙整」的事項：
   - 原版 `StrongholdGenerator` 的 static 可變狀態：寫成已知問題，修正延到 M6（spec §20.14）。
@@ -122,15 +126,14 @@
 2. required manual smoke（spec §18）：
    - 清單寫成白話，項目、做法、預期寫在一起，見 F7 的 `docs/manual-acceptance/2026-10-01-m5-manual-smoke.md`。
    - 上一次（M1–M4）由 Claude 經使用者授權代操作遊戲：鍵盤滑鼠自動輸入、截圖、唯讀指令。驅動腳本在 repo 外的 `C:\Users\Ben\Documents\QC-acceptance-evidence\tools\mc-drive.ps1`，證據放在 `C:\Users\Ben\Documents\QC-acceptance-evidence\<日期>\`。
-   - 若不能代操作，就把白話清單交給使用者執行，並記錄結果。
+   - 代操作前須取得使用者明確授權；未授權或無法代操作時，把白話清單交給使用者執行並記錄結果。
 3. task 與 whole-branch review（範圍 `a7e1be2..HEAD`）：Critical／Important 為 0。
 4. docs truth：不提前寫「已合併 main」「已 push」「人工驗收已通過」。
 5. push `feature/m5-collapse`（**使用者明確指示**）。
 6. GitHub Actions 雙平台通過。
 7. `git merge --ff-only` 合併 `main`，並建立 annotated tag `m5`（**使用者明確指示**）。
-8. 依 worktree 退役流程做外部備份：建立 SHA-256 manifest、逐檔讀回驗證，之後才刪除 worktree（**使用者明確指示**）。
-   - 備份工具在 `C:\Users\Ben\Documents\QC-acceptance-evidence\tools\backup-worktree.ps1`。
-   - M1–M4 的前例在 `C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\`。
+8. M5退役依使用者2026-10-22最新裁示（**本次指定刪除已授權，條件尚未達成**）：使用者 2026-10-22 明確裁示：M5 合併 main 後，刪除 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，包含其中 run/、.superpowers/ 與其他檔案；不做外部備份或另留副本。這是該次指定工作樹退役的授權，取代先前對此 M5 工作樹的搬出世界／備份前提；不授權現在合併 main、建立 tag，或刪除其他工作樹。退役仍依里程碑順序，先核對 main 包含最終 M5 commit、實際 tag 狀態、唯一 canonical absolute target、非 reparse、無 live Java owner 且 session.lock 已釋放。
+   - 不使用會另存恢復快照的封存替代流程；只處理指定m5-collapse工作樹，不刪main checkout或其他路徑。原始SDD／run資料退役後不保留，tracked摘要／hash保留於Git。
 
 ### 3.7 M6
 
@@ -153,7 +156,8 @@
 
 ## 4. 等待使用者裁示的事項
 
-- 每一次 push、合併 `main`、打 tag、刪除 worktree。
+- 目前這批工作的單次feature push已獲2026-10-22授權，尚未執行；M5合併main後的指定工作樹退役亦已獲條件授權，且明確不備份／不留副本。
+- 後續每次push、合併main、打tag、其他worktree刪除，仍須新的明確同意；代操作manual smoke也須另獲授權。現在不能據退役條件授權自行合併main或打tag。
 - AccessDenied 的 B4 **已裁示（2026-10-21）**：M5 維持現有 fail-closed 與退避、列已知限制，不加短暫重試。B3 機器設定實驗未授權、未執行；若日後需要才另請使用者決定。
 - M6 的範圍與優先序。
 - 只問真正需要使用者決定的事。其餘依文件與合理預設處理，並在 ledger 與回報中說明。
@@ -278,3 +282,16 @@
 - **未關閉finding**：沒有Critical／Important。S-M1（spec）phaseTable串接碰撞、Q-M1（quality）當次log空選集缺失分類，均交F6-3e Step 0；本輪真69項receipt與8份非空當次log不受影響。其餘F6-3e/F7/里程碑事項照排程。
 - **使用者裁示**：每次push、main --ff-only合併、tag、刪worktree仍須新的明確同意；代操作manual smoke仍需使用者授權，未授權則由使用者執行；M6範圍與優先序待m5合併/tag後確認。AccessDenied已裁示M5維持現況並列已知限制，不再列為未決。
 - **下一步**：F6-3e Step 0兩Minor→default33/M5 run60帶class清單與HOLD/TPS/SUITE_END新斷言→取得單次push同意後雙平台CI（同SHA Ubuntu M5至少兩綠）→F7→required manual smoke/whole-branch review/里程碑收尾。M5尚未整體收尾，M6未開始。
+
+### 2026-10-22：F6-3e 本機驗證與獨立 review 完成，本次單次 push 已授權
+
+- **HEAD／porcelain**：實作、note、兩full與正式review固定 `04ac7f3a0e58a09ab0b88f8306d5b675f90b1198`、feature/m5-collapse；controller核porcelain空。完成range `4ba0496..04ac7f3`（5 commits），code/README81c8ee2。此筆由其後的四檔治理docs commit加入；最新治理HEAD以 `git log -1 --format=%H -- docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md` 解析，提交後實值另記ledger/controller postcommit；不冒稱治理HEAD另跑過runtime。
+- **實際refs（11:49台灣，唯讀）**：origin feature=`30666c42c35e82c8938f13902d06af97f050e753`；本機／遠端main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`；本機／遠端無m5 tag。當時僅daemon23372、無非daemon Java，未終止daemon。本輪截至此筆未push／merge／tag／刪worktree。
+- **完成內容**：Step0 S-M1/Q-M1；CI default新增33與M5全60的classname＋完整name；HOLD／TPS／四權威guard；唯一testmod診斷例外。production／build／closed wrappers未變。README與note獨立commit；CI正反向、每段compile、同乾淨HEAD兩focused皆成立。
+- **獨立review**：/root/f63e_spec正式✅ C0/I0/M0；/root/f63e_quality Approved C0/I0/M1。兩個全新context未參與實作、只讀、不跑runtime；預審與補核後，等兩END及manifest齊備才正式裁決。原文與SHA見note Review，皆在SDD f6/f63e/。
+- **最終run-all**：`f6/f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361`，11:44:59，原console:140精確END ALL exit0／HEAD04ac7f3；第一輪44dcc674...在81c8ee2於10:40:40亦END0。SUMMARY：default179/179 windows89 legacy1/1 M560/60 perTest56+1 JUnit666 failures0 errors0 skipped2 windowsCheckpoint17 release432entries/385classes sources226 testmodHits0 mainOnlyPASS M3 4+5 recovery24 collapse69/HALT31 本機CI win/ubuntu兩PASS；不是GitHub CI或manual結果。
+- **差異**：release原SHA相同；sources226內容／順序同，只差每項DOS／NTFS時間。兩輪Full55/31、legacy0/0、M538/10；literal Full86/86、M548/48、legacy0/0，限定動態欄位後normalized／remaining0。pin4/9/4、worldgen四類0；M5 tps86.0／85.4、HOLD0。2035個具名真值／steps／schema／phaseTable／鍵序同；新5個suite欄明列，未混入一般UUID歸屬。
+- **封存核對**：controller與兩reviewer各自全量讀回29,493檔／3,547,806,230bytes，file set／SHA／大小全符；205 roots＝task＋204原phase，3,807目錄／110空目錄；399pins固定。manifest SHA `537bbd47deed4ed3e56726df01ad08582ca73c435390ca98b5ea102a2f9fab5d`。原FAIL／空目錄／比較器與Git行尾控制錯誤全部保留，不曾重跑成功runtime；凍結STATUS/manifest不回寫，新增控制報告另存。這不是完整世界備份。
+- **未關閉finding**：無Critical／Important；Quality M-1（gates.ps1:117 的限定 Gradle task 名稱辨識）排 F7 前置 Step 0，以獨立派工、行為 commit 與 review 承接，不混入 F7 文件 commit；現有正式豁免 caller 僅 bare test，本輪實際路徑不受影響。 AccessDenied依既定裁示維持M5現況／已知限制，不加production短重試。
+- **使用者新裁示**：本次目前這批工作已獲單次push授權，治理docs同步後執行一次；不延用到後續push。使用者 2026-10-22 明確裁示：M5 合併 main 後，刪除 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，包含其中 run/、.superpowers/ 與其他檔案；不做外部備份或另留副本。這是該次指定工作樹退役的授權，取代先前對此 M5 工作樹的搬出世界／備份前提；不授權現在合併 main、建立 tag，或刪除其他工作樹。退役仍依里程碑順序，先核對 main 包含最終 M5 commit、實際 tag 狀態、唯一 canonical absolute target、非 reparse、無 live Java owner 且 session.lock 已釋放。 目前沒有合併main／tag或代操作manual smoke的授權。
+- **下一步**：本次單次push→雙平台CI（同SHA Ubuntu M5至少兩次綠，artifact核tps≤100與PREPARE最大tick）→F7前置Step0／文件→required manual smoke／whole-branch review／里程碑收尾。M5尚未整體結案，M6未開始；M6範圍／優先序仍待合併/tag後另確認。

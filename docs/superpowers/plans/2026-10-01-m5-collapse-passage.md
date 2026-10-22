@@ -843,10 +843,10 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - **F6-3d-1**：#26～29 與 Step 0 M-1，已完成（2026-10-21，`4527f26..c526b295`）。proof/failures 封裝、37保留鍵、兩處1200tick等待、指定Javadoc/README；M-1更正32跨類別可見/30移除private，161不變。全新獨立spec ✅／quality Approved，C/I/M皆0；最終SDD `f6/f63d1/runall2/run-all-833243ca0c104b8fb6b887dd96445a7a` 在乾淨c526b295 END ALL exit0。
       - **F6-3d-2**：#15～21，已完成（2026-10-22，`498d5e4..4e3fa6c`，含fix1）。共用owned-phase launcher／timeout／encoding／diagnostics；X4缺log記launcher.json。首輪共同I-1已用有效total/idle RED與各兩GREEN補足；全新獨立spec ✅／quality Approved，C/I/M皆0。最終SDD `f6/f63d2/fix1/runall2/run-all-da52833326044b678588d05ac836a020` 在乾淨4e3fa6c END ALL exit0。
       - **F6-3d-3**：已完成（2026-10-22，`2243b07..a829bed`，7 commits）。#13/#14/#22～24/#30/#31及既定#25/X2(a)/X3/U3；兩focused同乾淨e8a3cf0，note後最終SDD `f6/f63d3/runall2/run-all-af814a5573d443a0bd8faa00d259f76c` 在乾淨a829bed精確END ALL exit0。兩個全新獨立reviewer正式spec ✅／quality Approved，各C0/I0/M1；Minor排下一段Step 0，本輪實際證據有效。
-    - **F6-3e（下一步）**：先做Step 0兩項d-3 Minor，再做 `build.yml` 的明列清單與 `ci-rule-check.ps1`。
-      - S-M1：phaseTable補Count及區分大小寫逐項比較，拒絕合併元素造成的逗號串接碰撞。
-      - Q-M1：對預期Minecraft成功invocation核至少一份非空當次log，缺失／全舊／空檔有明確診斷與正式caller負例；啟動前失敗與純JUnit標明不適用，不改X4 probe輔助log裁示。
-    - 最後 push 到 CI 驗收。push 前先問使用者。
+    - **F6-3e（本機實作與review已完成）**：2026-10-22，`4ba0496..04ac7f3`；Step0兩Minor關閉、default新增33/M5全60精確清單、HOLD/TPS/四權威守門。唯一src變更是核定M5UniverseHold診斷，production不變。兩focused同乾淨81c8ee2、兩full END0；最終 `f6/f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361` 在note後04ac7f3。全新獨立spec ✅ C0/I0/M0、quality Approved C0/I0/M1；新增M-1交F7前置Step0。
+      - S-M1：已關閉；phaseTable核Count及Ordinal逐項，真69通過、合併68與case漂移精確拒絕。
+      - Q-M1：已關閉；schema2對成功Minecraft核非空當次log，缺失／全舊／空檔精確拒絕；JUnit/compile/原失敗明列不適用，exit23不被capture錯誤遮蓋，未改X4。
+    - 本次目前這批commit的單次push已獲使用者2026-10-22授權，治理文件同步後執行一次，再驗雙平台CI與同SHA兩次Ubuntu M5；截至本筆尚未push。後續每次push仍另問。
   - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
   - boundary oracle 以 PID 挑 receipt 時的碰撞。
   - Windows journal 原子移動的 `AccessDeniedException`：使用者 2026-10-21 裁示 M5 維持現況、列為已知限制；不加 production 短暫重試。F7 說明既有 fail-closed／退避與外部根因仍未證實的界線。
@@ -984,6 +984,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 
 ### Task F7: 文件
 
+**前置 Step 0（F6-3e review承接）**：Quality M-1（gates.ps1:117 的限定 Gradle task 名稱辨識）排 F7 前置 Step 0，以獨立派工、行為 commit 與 review 承接，不混入 F7 文件 commit；現有正式豁免 caller 僅 bare test，本輪實際路徑不受影響。 此前置harness修正須獨立派工、RED/GREEN與review，完成後再做下列文件範圍；目前只排入待辦，尚未實作。
+
 **Files:**
 - Modify: `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`（收尾）
 - Create: `docs/implementation-notes/compatibility.md`（設計 §32.3：F1b 實測的 render stack）
@@ -1001,13 +1003,13 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 ## Milestone 收尾（依 AGENTS.md）
 
 1. automated gates：`run-all.ps1` 全綠（含 M5 GameTest run 與 M5 probe）。
-2. required manual smoke（spec §18）：由 controller 代操作，回報使用者時用白話；結果寫入 F7 的清單（tracked）。
+2. required manual smoke（spec §18）：先取得使用者明確授權才由controller代操作，否則交使用者執行；清單與回報用白話，結果寫入F7的tracked清單。
 3. task＋whole-branch review：Critical／Important 為 0。
 4. docs truth。
 5. push `feature/m5-collapse`。
 6. GitHub Actions 雙平台通過。
 7. `git merge --ff-only` 合併 `main`，annotated tag `m5`（使用者 2026-10-01 開工指示指定的名稱）。
-8. 外部備份（依 worktree 退役 memory），再刪除 worktree。
+8. M5退役依使用者2026-10-22新裁示：合併main後，按本順序刪除指定m5-collapse工作樹及其run／.superpowers等檔案，不做外部備份、不留副本；這一次刪除已獲條件授權。仍須核main／tag實況、canonical target、非reparse、無live Java及lock釋放；不刪main checkout或其他worktree。
 
 ## Completion Evidence
 

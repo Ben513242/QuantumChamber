@@ -10214,6 +10214,21 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 - 範圍只有 workflow、`gates.ps1`、`gate-evidence.ps1`、`run-all.ps1`、README 與 `M5UniverseHold.registerSuiteEnd` 的診斷／Javadoc。最後一項由 controller 在 `producer-diagnostic-ruling.md` 核定最小例外；production、build、closed wrappers、測試集合與名稱都沒改。`ci-rule-check.ps1` 原 CLI 已足夠，沒有無必要的 helper 修改。
 - 行號以 code/README `81c8ee2` 為準：`scripts/verification/gates.ps1:115/188/265/274/294`；`scripts/verification/gate-evidence.ps1:47/69/73/95`；`scripts/verification/run-all.ps1:261`；`.github/workflows/build.yml:37/55/90/243/278/354/409`；`src/testmod/java/dev/quantumchamber/gametest/M5UniverseHold.java:72/77/79/94`；`scripts/verification/README.md:7/9/348`。各宣告與證據行號另存 `source-line-references.json`。
 
+### Review（2026-10-22；F6-3e 正式結案）
+
+- 獨立 spec reviewer `/root/f63e_spec`：✅，Critical 0／Important 0／Minor 0；獨立 quality reviewer `/root/f63e_quality`：Approved，Critical 0／Important 0／Minor 1。兩個全新 context 均未參與實作，全程唯讀；先預審，兩 full 與 manifest 齊備後才在各自原獨立 context 正式裁決，沒有實作 context 自評。
+- 原報告在 SDD `f6/f63e/spec-review-04ac7f3.md`（SHA256 `8dc721d195cd503d4b5ec492e240b4ea489318567ff30335b6450fc1cc6f894b`）及 `quality-review-04ac7f3.md`（SHA256 `30b32e85ccb9f2d001c9dde2fc8e1d6fcd7525673def9dfd4a03b2c17645b9df`）。Step 0 的 S-M1／Q-M1 皆關閉。Quality M-1（gates.ps1:117 的限定 Gradle task 名稱辨識）排 F7 前置 Step 0，以獨立派工、行為 commit 與 review 承接，不混入 F7 文件 commit；現有正式豁免 caller 僅 bare test，本輪實際路徑不受影響。
+- 完成 range `4ba0496..04ac7f3`（5 commits）；code/README pin `81c8ee2`，note/runtime/review pin `04ac7f3a0e58a09ab0b88f8306d5b675f90b1198`。其後本次治理文件同步只改 AGENTS、handoff、note、plan，不冒稱治理 docs 新 HEAD 另跑過 runtime。
+- 兩 focused 同乾淨81c8ee2；第一 full `f6/f63e/runall1/run-all-44dcc6742a6a4e0c945b2c1d35e4515f` 於10:40:40 END0。note 後最終 `f6/f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361` 於11:44:59（台灣），原 console:140 精確 `END ALL exit=0 HEAD=04ac7f3a0e58a09ab0b88f8306d5b675f90b1198`。
+- 最終 SUMMARY：default179/179 windows89 legacy1/1 M560/60 perTest56+1 JUnit666 failures0 errors0 skipped2 windowsCheckpoint17 release432entries/385classes sources226 testmodHits0 mainOnlyPASS M3 4+5 recovery24 collapse69/HALT31 本機CI win/ubuntu兩PASS。這是本機規則驗證，尚非 GitHub CI／人工 smoke。
+- 第二輪原 XML/JUnit 集合相同；release SHA 與 primary 相同；sources226內容／順序相同，僅每項 DOS date_time／NTFS timestamp metadata。第二輪 sources SHA=`0fd63efbd266be7c0a85631d92797a3dfc1d846a21bc597d7302227ff4c8b388`。
+- 兩輪 literal Full86移除／86新增、M548／48、legacy0／0；限定具名動態欄位歸屬後 normalized／remaining 才為0。Full55/31、legacy0/0、M538/10；pin逐batch4/9/4；每輪106份明列log四類worldgen0。69項phaseTable、2035個observed具名真值／steps／schema與鍵序皆相同；M4同名phase依24列順序及receipt/nonce核對。每輪13份schema2當次非空log manifest全部成立。
+- M5兩 full 的 waited/tps 為11277/86.0與11258/85.4，HOLD0；suite initialized=true、四個unconfirmed=false，catalog60筆delta及原4欄契約保留。
+- Controller與兩位reviewer各自全量讀回29,493檔／3,547,806,230bytes，SHA／大小與file set全部相符；205 roots＝task＋204原phase，3,807目錄含110空目錄。manifest SHA=`537bbd47deed4ed3e56726df01ad08582ca73c435390ca98b5ea102a2f9fab5d`；root manifest SHA=`dc83f2d051dbc1f0a14d55c4a7497515c6d5d6a20c3a3f325ffa5ca56c27b5e5`。399來源pin固定，對primary只有授權6檔變更、393相同。凍結STATUS/manifest不回寫，正式review/controller報告依明列排除規則另存；不是完整世界備份。
+- 原 CI 長cwd setup、parser路徑錯誤、auditor ending大小寫假設，以及Git LF blob／checkout CRLF前綴假設錯誤全部保留並歸屬。後兩項只修task-owned比較／自查工具，新label或v2採計；沒有改正式程式或重跑已成功runtime。沒有未關閉Critical／Important。
+- 使用者已授權目前這批工作的單次feature push；截至本治理docs提交尚未執行。使用者 2026-10-22 明確裁示：M5 合併 main 後，刪除 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，包含其中 run/、.superpowers/ 與其他檔案；不做外部備份或另留副本。這是該次指定工作樹退役的授權，取代先前對此 M5 工作樹的搬出世界／備份前提；不授權現在合併 main、建立 tag，或刪除其他工作樹。退役仍依里程碑順序，先核對 main 包含最終 M5 commit、實際 tag 狀態、唯一 canonical absolute target、非 reparse、無 live Java owner 且 session.lock 已釋放。 原始SDD/run資料在未來退役時一併刪除，tracked摘要與hash保留於Git；現在尚未刪除。
+- 下一步：完成本次已授權的單次push→雙平台CI（同SHA Ubuntu M5至少兩次綠、artifact tps≤100）→F7前置Step0與文件→required manual smoke／whole-branch review／里程碑收尾。M5尚未整體結案，M6未開始；main合併、tag、後續push與代操作manual smoke仍依各自授權門檻。
+
 ### 行為與真實來源
 
 1. **S-M1**：phaseTable 同時核 Count 與 `StringComparison.Ordinal` 的逐元素；真 69 項通過，將前兩項合成一個含逗號元素的 68 項表被拒絕，大小寫漂移也被拒絕。69 phases／31 HALT、phase 名稱／順序／窗口不變。
