@@ -114,7 +114,7 @@ function Copy-Build([string]$dest) {
 }
 function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600,[ValidateSet('minecraft','junit','compile-only')][string]$runtimeLogMode='minecraft') {
     # 只有明確不啟動 Minecraft 的 JUnit／編譯 invocation 可以豁免當次日誌；不可拿它略過任何 run task。
-    if($runtimeLogMode -cne 'minecraft' -and @($tasks | Where-Object {$_ -cmatch '^run'}).Count){throw '日誌不適用模式不可包含 run task'}
+    if($runtimeLogMode -cne 'minecraft' -and @($tasks | Where-Object {($_ -split ':')[-1] -cmatch '^run'}).Count){throw '日誌不適用模式不可包含 run task'}
     New-Item -ItemType Directory -Path $evidence -Force | Out-Null
     $taskArgs=@('--no-daemon','--console=plain','--max-workers=2','-I',(Join-Path $PSScriptRoot 'runtime.init.gradle'))+$tasks
     $quoted=@($taskArgs | ForEach-Object {if($_.Contains('"')){throw '拒絕未處理引號'};'"'+$_+'"'}) -join ' '
