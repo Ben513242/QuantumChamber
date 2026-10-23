@@ -14,7 +14,7 @@ import java.util.function.Supplier;
  * （{@code armedAtStartup}）把已在艙內的人當成觸發（「開服之後第一次觀察到原參與者在艙內」）；其他 session 只記下目前的狀態。
  * <p>H7 先由 {@link CollapseService} 的巢狀類別純搬移出來（{@code c2e01d6}，行為不變；交接 F6-2-19：讓 {@code CollapseService} 留在約 1600 行之內），再加上
  * {@link #forget}、{@link #trigger} 與 §7.3 閘門的第一次評估（H7 的 {@code level}）。F6-2d-2 Step 0（H7 quality Minor 1、spec Minor 1）：閘門「是否已評估過」由
- * {@code CollapseService.Track.gateEvaluated} 移進這裡，對外只有 {@link #gate}（行為不變），WAITING 的接線因此可以不經 server 測（{@code EntryWatchTest}）。
+ * {@code CollapseService.Track.gateEvaluated} 移進這裡，對外只有 {@link #gate}（行為不變），閘門判斷可由 {@code EntryWatchTest} 測；WAITING 的實際接線仍需 server 驗證。
  * <p><b>來源艙還沒載入時，這次觸發不消耗</b>（H7，spec v5.9 §7.1、§7.3、§11.2、§4 H7；{@link #trigger}、{@link #gate}）：觸發的人已符合其他參與者條件、但來源艙還沒載入
  * （{@link SourceSignal#NOT_LOADED}）時，不記為已觀察，之後每個 tick 再判斷，直到來源艙載入或他離開 interior。理由：重啟之後玩家在原艙內登入時，原艙不在 spawn chunks
  * 的話，chunk 要在 JOIN 之後幾個 tick 才由玩家（或 COLLAPSING 的來源）ticket 載入；在這時消耗觸發，開服之後的第一次觀察（或 JOIN 在艙內的邊緣）就會落空，玩家要離開再

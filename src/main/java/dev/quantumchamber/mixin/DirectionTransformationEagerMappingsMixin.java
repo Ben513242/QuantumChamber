@@ -16,8 +16,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * {@code NullPointerException}（{@code "facing" is null}），server crash 並卡在停服（與 H6 相同的原版行為）。M3 的 U 與來源世界共用 generator 與 seed，重啟之後兩邊同時生成
  * jigsaw 結構時會遇到；原版的 Overworld 與 Nether 同時生成 jigsaw 結構、或 server thread 的 {@code /place} 與 worker 同時第一次使用，也是同一種情況。這個修正適用於所有
  * 世界與所有呼叫端（common 的程式只經 {@code JigsawBlock}、{@code CrafterBlock} 的 rotate／mirror 呼叫 {@code map}）。
- * <p><b>為什麼在 {@code <clinit>} 的 TAIL。</b>依 JLS 12.4.2，class 的初始化在初始化鎖之下執行，完成之後其他執行緒要先經過同一個鎖（或 JVM 保證等價的 happens-before）
- * 才能使用這個 class，所以 {@code <clinit>} 裡的所有寫入（含每個 {@code EnumMap} 的內容）對之後使用這個 class 的任何執行緒都可見，不依賴特定 CPU 的記憶體模型。之後
+ * <p><b>為什麼在 {@code <clinit>} 的 TAIL。</b>依 JLS 12.4.2，執行 static initializer 時沒有持有初始化鎖；完成後 JVM 在鎖下標記 class 已初始化，其他執行緒經初始化程序
+ * （或等價的 happens-before）才能使用它。因此 {@code <clinit>} 裡的寫入（含 {@code EnumMap} 內容）對之後使用的執行緒可見，不依賴特定 CPU 的記憶體模型。之後
  * {@code mappings} 都不是 null，{@code map} 的 lazy 分支不再執行，欄位與 map 都不再被寫入，只剩讀取。TAIL 時常數、{@code COMBINATIONS} 與 {@code INVERSES} 都已建立；
  * 呼叫的就是原版的 {@code map}，結果與原版相同（只是提早算）。成本是 class 初始化時多建 48 個小的 {@code EnumMap}。
  * <p><b>class 初始化的循環。</b>{@code map} 只會初始化 {@code Direction}（與它自己的依賴）、{@code Direction.Axis}、{@code Direction.AxisDirection} 與
@@ -26,8 +26,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 兩條執行緒各自初始化其中一個 class 時不會互等（javap 與 class 初始化的實測見 note）。
  * <p><b>不記 log。</b>這裡沒有任何例外或分支。回歸測試是 JUnit 的 {@code DirectionTransformationMappingsTest}。
  * <p><b>相容性。</b>C2ME（{@code c2me-fixes-worldgen-threading-issues} 的 {@code MixinDirectionTransformation}）在每個常數的建構子 RETURN 呼叫 {@code map(Direction.UP)}；
- * 兩者並存時 {@code mappings} 在建構時就建好，這裡的呼叫只走非 null 的分支，結果相同、不論先後。{@code @Overwrite} 了 {@code map} 的 mod 會讓這裡呼叫它的版本，
- * 不影響正確性。{@code require=1}：目標的 {@code <clinit>} 不存在時開服即失敗（M5 的基線固定 1.21），不會靜默失效。
+ * 定點相容測試中，兩者並存時 {@code mappings} 在建構時就建好，這裡只走非 null 分支；這不是完整 C2ME 驗收。若別的 mod {@code @Overwrite map}，race 安全由該版本負責。
+ * {@code require=1} 只要求注入命中；enum 的 {@code <clinit>} 幾乎恆存在，語意漂移仍須由測試檢出，不能只靠這個設定。
  */
 @Mixin(DirectionTransformation.class)
 abstract class DirectionTransformationEagerMappingsMixin {

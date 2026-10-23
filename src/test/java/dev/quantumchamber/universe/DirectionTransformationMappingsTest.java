@@ -21,9 +21,9 @@ import org.junit.jupiter.api.Test;
  * {@code NativeSaveFailuresTest}），所以這裡驗的是 production 的類別。
  * <p>判準是不變量，不靠時序：class 初始化之後、這個 test 呼叫任何 {@code map} 之前，以反射讀每個常數的 {@code mappings}，必須都已建立、各有 6 個方向，內容與原版的
  * 計算相同（以原版的 {@code axisTransformation}、{@code AxisTransformation.map}、{@code shouldFlipDirection} 與 {@code Direction.from} 逐一重算）；之後 {@code map} 的
- * 回傳值也必須相同。原版沒有用過的常數是 null，所以修正前必定失敗：common 的程式只經 {@code JigsawBlock}、{@code CrafterBlock} 的 rotate／mirror 呼叫 {@code map}，
- * 最多用到 {@code BlockRotation} 與 {@code BlockMirror} 的 6 個常數，48 個之中至少 42 個是 null，與同一個 test JVM 裡先跑了哪些 test 無關。讀取之前就已建立的常數只是
- * 診斷，輸出到 stdout（{@code H8_DIRECTION_TRANSFORMATION}，test report 的 system-out）。
+ * 回傳值也必須相同。依目前的 test 順序，原版 common 程式只經 {@code JigsawBlock}、{@code CrafterBlock} 的 rotate／mirror 呼叫 {@code map}，最多用到
+ * {@code BlockRotation} 與 {@code BlockMirror} 的 6 個常數；因此修正前仍有未建立的常數。若日後同 JVM 的其他 test 先把 48 個常數都用過，這個回歸會被遮住，
+ * 須維持或重驗此前提。讀取之前已建立的常數是診斷，輸出到 stdout（{@code H8_DIRECTION_TRANSFORMATION}，test report 的 system-out）。
  */
 final class DirectionTransformationMappingsTest {
     @Test

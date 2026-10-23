@@ -42,7 +42,7 @@ import org.slf4j.LoggerFactory;
  * <li><b>PREPARE 期間的門</b>：{@link #prepareDoor}（每個 PREPARE 的 tick，由 {@code CollapseService.prepareUniverse} 呼叫）、{@link #releasePrepareDoor}（離開或暫停
  *     PREPARE）。</li>
  * <li><b>重新套用</b>：{@link #watchDoor}（每個 tick 對 COLLAPSING、SEALED 與執行期間的 PASSAGE_READY 觀察一次來源艙）。</li>
- * <li><b>待套用的門</b>：{@link #queueDoor}、{@link #openDoor}（排入），{@link #applyPending}（每個 tick 套用），目標見 {@link DoorGoal}。</li>
+ * <li><b>待套用的門</b>：{@link #queueDoor}、{@link #openDoor}（排入），{@link #applyPending}（每個 tick 套用）；SEALED 重試另由 {@link #normalizeAfterRetry} 取代待關的門。</li>
  * </ul>
  * <p><b>PASSAGE_READY 的門</b>（spec §10.2–§10.6，F5-1）：提交 PASSAGE_READY 之後 {@link #openPassage} 排入 passable 量子膜（{@link DoorGoal#PASSABLE}，立即嘗試一次）；
  * {@link #prepareDoor} 只在 PREPARE 擁有原艙門時執行，提交之後不會把它改回 sealed。通道期間的開關門（§10.5）由 {@link #doorAction} 的 PASSAGE_READY 分支決定：roll-forward
@@ -255,8 +255,8 @@ final class OriginDoors {
 
     /**
      * 排入下一個 tick 的重新套用（{@link #watchDoor}；{@code cause} 是 {@link #reapplyCause} 的字句，{@code passageClosedInMemory} 見 {@link #reapplyGoal(SessionState, boolean)}）；
-     * 已有待套用的門時只把它延到下一個 tick。排入（或延後）記 INFO：它記下的「下一個 tick（tick N）」是「不在 chunk 載入的當下寫方塊」的證據（GameTest 以它比對套用的 tick）；
-     * 完成時只有實際改了門（APPLIED）才記 INFO（{@link #applyDoor}）。這座艙待套用的門是找不到所屬 session 的正規化（{@link DoorGoal#NORMALIZE_OWNERLESS}，F5-2）時，以這個 session
+     * 已有待套用的門時只把它延到下一個 tick。排入（或延後）記 INFO：記下的是排入 tick；若套用前 SEALED 重試回 COLLAPSING，原關門會由 {@link #normalizeAfterRetry} 以 NORMALIZE 取代，
+     * 完成時只在實際改門（APPLIED）記 INFO（{@link #applyDoor}），所以排入的 CLOSE_ON_SEALED 與完成的 NORMALIZE 可不同。若原待套用目標是找不到所屬 session 的正規化（F5-2），以這個 session
      * 的目標取代它（session 的門優先；它在套用時也會因為這個 session 而被排除）。
      */
     private void reapplyDoor(SessionRecoveryRecord view, String cause, boolean passageClosedInMemory) {
@@ -876,7 +876,7 @@ final class OriginDoors {
         final CollapseBackoff backoff = new CollapseBackoff();
         String warned;
         boolean retried;
-        /** 由重新套用排入或延後（{@link #watchDoor}，F4b-3）：完成時另記一則 INFO。 */
+        /** 由 {@link #watchDoor} 排入或延後，或由 {@link #normalizeAfterRetry} 取代封存關門；實際改門時另記 INFO。 */
         boolean reapplied;
 
         /** 終局之後的一般開門。 */
