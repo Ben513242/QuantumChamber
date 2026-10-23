@@ -2,7 +2,7 @@
 
 > Status: Living design document  
 > Target: Minecraft Java Edition  
-> Document stage: 持續維護的玩法／架構規格；M0 已在 `main`，M1–M4 已在 `feature/m1-chamber` 實作並完成自動 gate、逐 task review 與 2026-09-29 的 M1–M4 整分支 final review（修正見 `docs/implementation-notes/2026-09-29-m1-m4-integration-review.md`，含 2026-09-30 的 integration fix round 4；人工驗收已於 2026-09-30 記錄，見 `docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md`；合併狀態以 `main`／tag 為準）；M5 待設計<br>
+> Document stage: 持續維護的玩法／架構規格；M1–M4 已完成驗收並合併 `main`（tag `m1-m4`）；M5 的塌縮與單向通道已在 `feature/m5-collapse` 實作，雙平台 CI 與 artifact 已驗收，F7 文件、required manual smoke、whole-branch review、main 整合與 tag `m5` 仍待。實況見 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。<br>
 > Revision: 0.11 — 核准單人先供電、後進艙啟動，以及斷電返還後解除原艙保護；使用者已核准技術規格並授權實作（實作狀態見上一行）
 >
 > **2026-09-17 玩法修訂：** 有效艙體外部供電即註冊並保護；供電期間可開門進入，關門且全員 QuantumState 後自動啟動，不要求第二個 rising edge。斷電先安全送回原始艙體、結束走廊，再解除原艙保護；其他宇宙的投影不可藉此拆除。另納入手持火把照明需求。
@@ -161,7 +161,7 @@ The closed bulkhead should visually reference the vanilla `minecraft:block/bedro
 
 For M1, manual/creative construction is acceptable. A survival-friendly construction ritual/recipe is **not a blocker for core implementation** and must not be invented silently by the code agent.
 
-2026-09-16 核准的 M1 操作修正：右鍵有效 Chamber 的 Controller，必須能在伺服器端將全部 25 格 Bulkhead 作為同一 logical door 開啟或關閉。開門後仍維持 empty outline／collision，玩家不必瞄準已成為空 outline 的艙門來關門；改以 Controller 為穩定入口。此入口沿用既有原子 door transaction、mutation authorization 與成功後的同步 Controller／comparator 刷新，不新增 renderer、packet、Session 或跨世界流程。原本右鍵處於關閉狀態的艙門來開門的入口仍保留。
+2026-09-16 核准的 M1 操作修正：右鍵有效 Chamber 的 Controller，能在伺服器端將 25 格 Bulkhead 作為同一 logical door 開關。當門是一般開門（`membrane=none`）時維持 empty outline／collision，以 Controller 為穩定關門入口；M5 的 sealed 門有完整碰撞，量子膜有可瞄準的 2px 外框，不能把 M1 的空外框規則套到它。此入口沿用既有原子 door transaction、mutation authorization 與 Controller／comparator 刷新；原本右鍵關閉艙門來開門的入口仍保留。
 
 同日另核准青紫辨識造型：量子艙門使用紫色科幻面板，腔室控制器使用青色框與清楚的正面核心，基岩保留為底層／外框。採一般 JSON 模型與 Minecraft 既有材質引用，讓物品圖示同步沿用新造型；不新增 renderer、動畫、bloom、實際光源或自訂 packet，不改碰撞、保護、幾何、方塊 ID 或狀態機。圖解配色是辨識語彙，不承諾概念圖中的 shader 效果；艙體仍只有原本三種建材。
 

@@ -994,7 +994,9 @@ code range `8ca77d9..27a5039`，兩個commit只改build、固定identity Tiny、
 
 ### Task F7: 文件
 
-**前置 Step 0（兩項review Minor）**：F6-3e Quality M-1（gates.ps1:117的限定Gradle task名稱辨識）及CI-S1 Quality M1（source-remap-check.ps1:16在fresh checkout尚無.superpowers時先Get-Item失敗）納入同一前置harness派工，分開行為commit、各保留RED/GREEN，再做獨立review；不混進F7文件commit。現有正式豁免caller僅bare test，本輪工作區已有.superpowers，兩項均未使本次實際證據失效。目前只排待辦，尚未實作；完成後再做下列文件範圍。
+**本輪 F7 精簡驗證（使用者 2026-10-24 新裁示）**：兩項 harness 前置各保留 RED／GREEN 與同一乾淨 HEAD 的 focused；五檔純 Java 註解另 commit，提交前做必要 compile 與 release 比對；harness 與註解集中跑一次最終完整 `run-all.ps1`，純文件更新不觸發重跑。之後仍由全新獨立 spec／quality reviewer 審查，Critical／Important 為 0 才關 task。這是本輪 F7 的驗證安排，不是未來 production 行為變更的通用豁免。`db029fa` 的既有 CI 原件不重算。
+
+**前置 Step 0（兩項review Minor）**：F6-3e Quality M-1（gates.ps1:117的限定Gradle task名稱辨識）及CI-S1 Quality M1（source-remap-check.ps1:16在fresh checkout尚無.superpowers時先Get-Item失敗）納入同一前置harness派工，分開行為commit、各保留RED/GREEN，再做獨立review；不混進F7文件commit。現有正式豁免caller僅bare test，本輪工作區已有.superpowers，兩項均未使本次實際證據失效。前置 Step 0 已由 `de7f373`、`fda0359` 分開實作；fresh spec／quality review 均 Approved C0/I0/M0。純註解 commit `71fb8e7` 已完成必要 compile／release 比對；文件、最終 full 與 F7 review 仍待。
 
 **Files:**
 - Modify: `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`（收尾）

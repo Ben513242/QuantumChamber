@@ -1,12 +1,14 @@
 # M5：塌縮與單向通道（實作紀錄）
 
-- Spec：[`docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`](../superpowers/specs/2026-10-01-m5-collapse-passage-design.md)（v5.3；最後一次修改 `8172104`）
-- Plan：[`docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`](../superpowers/plans/2026-10-01-m5-collapse-passage.md)（`ec7229d`、`9c315f8`；之後的修訂見 git log，最新為 `b712193`）
+- Spec：[`docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`](../superpowers/specs/2026-10-01-m5-collapse-passage-design.md)（binding v5.10；歷次裁示見 spec §20）
+- Plan：[`docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`](../superpowers/plans/2026-10-01-m5-collapse-passage.md)（目前 Task F7 與 Milestone 收尾為接續入口；歷史修訂見 git log）
 - Branch：`feature/m5-collapse`，由 `main`＝`a7e1be2` 開出。
 
 本文件逐 task 記錄 code-truth、RED／GREEN 的 gate root 與 commit range。gate root 在 gitignored 的 `.superpowers/verification/`，詳細過程在 gitignored 的 SDD ledger `.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`；這裡只留可核對的摘要。
 
-狀態：實作中。M5 尚未完成、尚未 push、尚未合併 `main`。
+目前狀態（2026-10-24）：M5 塌縮與單向通道功能已實作，CI-S1 關閉；`db029fa` 的 GitHub Actions Windows 一次、同 SHA Ubuntu 兩次真 job 與 artifact 已驗收。F7 前置 harness 已由 `de7f373`、`fda0359` 分開實作，fresh spec／quality review 均 Approved C0/I0/M0；純註解 commit `71fb8e7` 已完成必要 compile 與 release 比對；文件、集中一次最終完整 run-all、required manual smoke 與 whole-branch review 尚待；M5 未合併 `main`，未建立 tag `m5`。本段覆蓋下方各 task 當時的狀態句，不改寫歷史 root 的判定。
+
+文件入口：[M5 相容性與實測範圍](compatibility.md)、[M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)。已知窄限制：原版 playerdata 寫出若自行收下 IOException，只記不帶 `session=` 的 WARN；`saveCrossedPlayerData` 收不到該 IOException。若此時 crash，已跨越玩家可能回到最後一次成功存下的位置；checked `Crossed` 不能單獨證明 playerdata 已持久化（見本 note F6-2c 的 Crossed 後 playerdata 存檔與「交給後續」F7 觀察）。M5 的 Windows atomic move `AccessDeniedException` 維持現有 fail-closed／退避，外部持有者仍未確認；Stronghold 靜態競態修正依使用者裁示延到 M6。F7 的最終 commit／run-all／review 待實際完成後補在本 note 末節。
 
 ## T0：clean-clone 基線
 

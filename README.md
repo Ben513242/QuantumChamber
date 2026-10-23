@@ -1,5 +1,7 @@
 # QuantumChamber
 
+> **M5 功能分支狀態（2026-10-24）：** `feature/m5-collapse` 已實作塌縮與單向通道；`db029fa` 的 GitHub Actions Windows 一次、同 SHA Ubuntu 兩次真 job 及 artifact 已核。F7 文件、required manual smoke 與 whole-branch review 仍待；M5 尚未合併 `main`，也沒有 `m5` tag。M1–M4 的已完成紀錄如下。
+
 > **功能分支 `feature/m1-chamber`（M1–M4）狀態，驗收分層記錄：** 以下都已實作，並完成自動 gate 與逐 task review：
 >
 > - M2 左右走廊、入場保留 QuantumState Buff、任一凍結參與者 Buff 失效則整組返還。
@@ -14,19 +16,29 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。返還期間只凍結尚未返還的玩家：已返還者回到原艙就能正常移動與互動，但原艙保護與比較器 11 維持到全員收尾，收尾前也不能開新 session；離線者重新連線後的下一 tick 才返還。
 
-本機請從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 啟動 `start-client.bat`；選用照明為 `start-client.bat light`。M1–M4 已合併 `main`；實際合併狀態以 `main`／tag 為準。完整單人／多人流程、Buff 到期返還、選用外部計時斷電與八項人工驗收的結果，見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
+M1–M4 的已合併版本請從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 啟動 `start-client.bat`；要試 M5 功能分支，請在 `.worktrees/m5-collapse` 的根目錄啟動並使用其隔離的測試世界。完整 M2 流程與原人工驗收結果見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
-走廊是有限局部頁面與外觀延伸，並非無限配置世界。走廊本身是固定的 `quantumchamber:superposition` 世界，不是動態 Dimension；M3 已有動態 Universe backend 與 server-side transfer readiness，但尚未接成玩家可用的跨宇宙通道（屬 M5）。
+走廊是有限局部頁面與外觀延伸，本身仍是固定的 `quantumchamber:superposition` 世界。M5 已在 `feature/m5-collapse` 把 checked 候選收據接成塌縮與單向跨宇宙通道；玩法及尚待的人工驗收見下節。
 
 走廊世界只接受玩家、掉落物、投射物與經驗球。在走廊內使用船／箱船、礦車、盔甲架、物品展示框／螢光物品展示框、畫、生怪蛋、裝有生物的桶、終界水晶、拴繩或滯留型藥水會被拒絕，物品不扣，actionbar 顯示「量子走廊內不能放置船、盔甲架、展示框、生物等實體；物品未消耗。」。以生成方式（例如 `/summon`、蛋孵出的小雞）進入走廊的其他 entity 會被拒絕，不會出現在走廊；以跨維度傳送（傳送門、`/tp`、`/execute in … run tp`、`/spreadplayers`）送進來的會被拒絕並留在原處。這些指令被拒時，原版仍會顯示成功（已知限制）。經驗球比照掉落物跨頁面保留、返還時送到原艙中央；肩上的鸚鵡在走廊內不會被放下，返還後仍在肩上。入口艙的正面門位於走廊牆面，在走廊內保持關閉；入口 Controller 在正門正上方、兩側與內側是基岩，原版 client 瞄不到，修改版 client 送出的切換請求也一律拒絕。
 
-M4 起，完整側門可右鍵鎖定一次量子候選，但門保持關閉、玩家不移動，也不配置 Universe。鎖定後該 session 停止換頁。返還後，該座原艙在該存檔會被保留的選擇收據封鎖到 M5：期間無法再從它入場，也無法斷電拆除。參與者要等該 session 全員返還、清理完成（DORMANT）之後，才能使用其他 Chamber；返還與清理階段（`RETURN_PLAYERS`／`RELEASE_GEOMETRY`）仍會被拒絕開新 session。驗收 M2 時請勿點側門，詳見 [M4 候選門紀錄](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)。
+M4 當時，完整側門右鍵只會 checked 鎖定候選，門保持關閉、不配置 Universe；返還後的 DORMANT 收據把原艙封鎖，等待 M5 接手。M5 沿用該收據續行，不重抽候選；M4 的歷史行為與證據見 [M4 候選門紀錄](docs/implementation-notes/2026-09-21-m4-candidate-doors.md)。
 
-**不可降版**：用本 build 在某個存檔建立過任何走廊 session 之後，該存檔的 session journal 會寫成 schema3；M4 之前的 build 讀取會 fail closed。這類存檔之後只能用 M4 起的 build 開啟，也不要拿正式世界測試。
+**不可降版與存檔檔案**：M4 曾把 session journal 寫成 schema 3，M4 之前的 build 不能讀。M5 第一次完成 M5 authority 初始化後的 checked 寫入會把 journal 升為 schema 4；此後 M4 build 讀取會 fail closed。M5 的 `data/quantumchamber_universe_allocations.dat` 與 `data/quantumchamber_projections.dat` 不可刪除或用舊備份覆蓋。測試新版本請用世界複本。
 
 2026-09-30 已記錄人工驗收：單人玩法（清單 A、B-0、B-1、B-3、B-6）、近玩家 seam（C-4）、shader 與 GPU（B-2：Sodium 0.6.13、Iris 1.8.8、Complementary Reimagined r5.9.3，RTX 4090）都是 PASS；32 chunk 遠望與手持照明依使用者 2026-09-24 的回報採計（清單 D 段，沒有 build 紀錄）。合併 main 前的完整 gate 順序見 [AGENTS.md](AGENTS.md)「下一步」。
 
 逐項人工驗收步驟、預期結果與紀錄欄位見 [M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。
+
+## M5 塌縮與單向通道
+
+在 Overworld 側門選好候選之後，參與者先安全回到原艙；目的地準備期間門口是不可穿過的量子膜，準備完成才可穿過（比較器 15）。NEW／EXISTING 會在相同座標到達目的宇宙，畫面中央分別顯示「你已進入新的宇宙。」／「你已進入另一個宇宙。」；目的地是同 seed 的原始地形，**不是來源世界的複製**，身後的基岩投影艙不能啟動。SOURCE 候選只會塌縮並讓門一般開啟，不配置宇宙或傳送。真正的 M5 量子膜與光影畫面仍待 [人工 smoke](docs/manual-acceptance/2026-10-01-m5-manual-smoke.md) 驗收。
+
+通道在全員跨過、約 60 秒到期、參與者關門或斷電時結束；已跨過的人不再收到「量子通道已關閉。」。本切片沒有正規回程、目的地預覽、完整 Nether／End family 或在當前宇宙重生；非參與者與騎乘中的參與者不能藉膜傳送，物品與坐騎不跟隨。新的 Nether／End 側門選擇會被拒絕。重啟後在原艙內登入，來源艙載入完成時會照原收據續行；玩家不必為此再進出一次。`ALREADY_SELECTED` 的「候選已鎖定。」在真 client 不保證看得到，請以實際收據與後續塌縮判斷。
+
+永久原因的 SEALED 會讓原艙維持封鎖，管理員需看 ERROR；玩家仍可照一般方式開門離開。Windows 原子移動短暫 `AccessDeniedException` 依既有 fail-closed 與退避處理，外部持有者未查明。其他已知限制、存檔上限與模組接點見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md) 和 [相容性說明](docs/implementation-notes/compatibility.md)。
+
+已採計的本機完整 gate 基準為 default 179（其中 Windows 89）、legacy 1、M5 GameTest 60、JUnit 666（2 skip）、M5 跨 JVM collapse probe 69 phase（31 HALT）、release 432 entries／385 classes、sources 226；完整 root、其他項目與本輪最終結果以 [驗證 README](scripts/verification/README.md) 為準。已知偶發包括 Windows 原子移動拒絕、`m2_task4_disconnect_io` 多一則 WARN、走廊 test 未收尾引發 `m2_pin_capacity` 連坐，以及跨午夜的 log 輪替；失敗 root 必須保留，歸屬見 [M5 handoff §6](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。
 
 ## M1.2 基礎與歷史驗證
 
@@ -80,6 +92,11 @@ Windows PowerShell：
 `runGameTest` 使用 `run/gametest`，報告位於 `build/gametest-results.xml`；單獨 `clean build` 不包含此工作。M2 CI 與本機完整 gate 另明確執行 GameTests，不能把建置成功當成遊戲測試已跑。重現步驟與人工待驗見下方紀錄。
 
 ## 設計與執行紀錄
+
+- [M5 binding spec](docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md)
+- [M5 實作與驗證紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md)
+- [M5 相容性與實測範圍](docs/implementation-notes/compatibility.md)
+- [M5 人工 smoke 清單（待驗）](docs/manual-acceptance/2026-10-01-m5-manual-smoke.md)
 
 - [設計規格](docs/quantum_superposition_chamber_design.md)
 - [M0 Bootstrap 計畫](docs/plans/2026-09-15-m0-bootstrap.md)

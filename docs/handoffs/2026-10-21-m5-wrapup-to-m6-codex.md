@@ -106,8 +106,10 @@
 
 ### 3.5 F7：文件
 
-- 照plan Task F7進行；先承接兩項獨立harness Step0：F6-3e quality M-1（限定Gradle task名稱辨識）、CI-S1 quality M1（fresh checkout尚無.superpowers時source-remap-check先Get-Item失敗）。分開行為commit，不能混入文件commit；Minor不回頭開已完成task的fix round。
-- 先盤點：ledger 的「F7 待辦彙整」，加上 `rg -n "F7" docs/implementation-notes/2026-10-01-m5-collapse-passage.md` 的所有命中，再對照之後各節是否已處理或改派。
+2026-10-24 本輪 F7 精簡裁示：兩項 harness 各留 RED／GREEN 與同乾淨 HEAD 的 focused，純 Java 註解另 commit 並先做必要 compile／release 比對；之後集中一次最終完整 `run-all.ps1`，純 docs 不觸發 full。fresh spec／quality 雙 review 不省略。此安排只適用本輪已界定的 F7，不延用為後續 production 行為改變的豁免。正常 push 已持續授權（AGENTS.md「後續 push 持續授權」）；main 條件整合、tag、代操作 smoke 與指定退役仍各按原門檻。
+
+- 前置兩項 harness Minor 已由 `de7f373`、`fda0359` 分開實作；fresh spec／quality review 均 Approved C0/I0/M0。純註解 commit `71fb8e7` 已完成必要 compile／release 比對；依 plan Task F7 接續文件、最終 full 與 review，不把 Minor 回頭併入已完成 task 的 fix round。
+- F7 唯讀預備盤點已完成，ignored `f7/inventory.md` 只作本輪窄索引；tracked 長期結論寫入本 handoff、plan 與 M5 note，不依賴工作樹退役後的 ignored 檔。
 - controller 已知、但還沒寫進「F7 待辦彙整」的事項：
   - 原版 `StrongholdGenerator` 的 static 可變狀態：寫成已知問題，修正延到 M6（spec §20.14）。
   - Windows 原子移動的 `AccessDeniedException`：根因最可能是外部程序（Defender／索引器）。production 會 fail closed，並依退避重試。使用者已於 2026-10-21 裁示：M5 維持現況，列為已知限制，不加入 production 短暫重試；外部程序的實際持有者仍未確認。
@@ -170,7 +172,7 @@
 - **一個 implementer 做一個 task 或 fix round，之後一定有獨立的 spec review 與 code quality review。** Critical／Important 為 0 才往下。
   - Minor 不開 fix round，排進下一輪的 Step 0 或 A 段，不順手修。
   - 不能另開獨立 agent 時，review 要在**新的、乾淨的 context**（例如另一個 Codex session）裡，以 review 派工檔進行。不要在寫程式的同一個 context 自評通過。
-- **派工檔**明列以下內容，範本見 `handoff-codex/scratchpad/f63c2-prompt.md`：
+- **派工檔**至少明列以下內容；本 tracked 清單即為正式入口。`handoff-codex/scratchpad/f63c2-prompt.md` 只保留歷史範例，指定 M5 worktree 退役後不再可讀：
   - 開工時的 HEAD 與 porcelain 檢查；
   - 允許與不得修改的路徑；
   - 讀取範圍（限制 context）；

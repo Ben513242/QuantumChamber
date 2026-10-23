@@ -103,8 +103,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：CI-S1 已關閉。`db029fa` 已於2026-10-24單次推送；Build run39990661331 的 Windows 一次、同SHA Ubuntu兩次真job皆success，M5 TPS59.4／87.5／87.5，artifact差異全歸屬，sources本類CODEC已修正。主控直接核14原件SHA、三份JAR及原XML/log。新push持續授權見上方。F7盤點完成，下一步兩項harness Step0與文件；人工smoke及整分支review仍待，M5未結案、M6未開始。
-- Git快照：origin feature=`db029fa4db7e4e6dfa0201634f4988515fa27b1e`；main仍`a7e1be2`，無m5 tag。最新治理HEAD依handoff§7最後一筆解析；已跑完整runtime的code HEAD為27a5039，其後純docs不冒稱另跑full。main條件合併與指定M5不備份退役授權尚未使用。
+- 目前：CI-S1 已關閉，`db029fa` 的 Windows 一次與同 SHA Ubuntu 兩次真 job／artifact 已驗收。F7 兩項 harness Minor 已由 `de7f373`、`fda0359` 分開實作，fresh spec／quality review 均 Approved C0/I0/M0；純註解 commit `71fb8e7` 的 compile／release 比對已過，文件與人工 smoke 清單草稿已備。F7 集中一次最終完整 run-all、文件／註解 review、required manual smoke、whole-branch review 仍待；M5 未結案、M6 未開始。後續正常 push 持續授權見上方，main／tag／代操作／退役仍依各自條件。
+- Git快照：origin feature=`db029fa4db7e4e6dfa0201634f4988515fa27b1e`；main仍`a7e1be2`，無m5 tag。最新完整runtime的code HEAD仍為`27a5039`；其後的harness與純註解commit待F7整合full，不冒稱新HEAD已跑full。main條件合併與指定M5不備份退役授權尚未使用。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：

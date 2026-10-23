@@ -249,7 +249,7 @@ MEASURED＋SELECTED（M4；live 或 DORMANT）
 - 終局的流程：current 與 flushed 都要 exact 等於 expected → 移除 → flush → 讀回確認該 record 已不存在。
 - flush 或讀回失敗時，以 H3 的 CAS 規則放回 expected record，並依 §6 的收斂規則保持 dirty，然後記 WARN；不改門。
 - 讀回確認之後，才修剪該 session 在 `authorityHistory`／`checkedAuthority` 的內容（＝M4 quality M1），並留一個 process 內的 session UUID tombstone，防止同一個 UUID 被重新放回。
-- 同時移除該 session 在 `SuperpositionSessionManager` 的 runtime（`sessions`）與來源 ticket（`tickets`）。否則 `returnToOrigin` 會從殘留的 runtime 或 ticket 取得 authority（`main/superposition/SuperpositionSessionManager.java:317-321`），原艙會一直停在 RETURNING。attach 只為 COLLAPSING 建立來源 ticket（返還需要），不為 PASSAGE_READY 與 SEALED 建立。執行期間進入 SEALED 時也立即釋放來源 ticket，SEALED→COLLAPSING 重試時再取得，避免永久原因的 SEALED 讓來源 chunk 一直被載入。
+- 同時移除該 session 在 `SuperpositionSessionManager` 的 runtime（`sessions`）與來源 ticket（`tickets`）。否則 `returnToOrigin` 會從殘留的 runtime 或 ticket 取得 authority（`main/superposition/SuperpositionSessionManager.java:317-321`），原艙會一直停在 RETURNING。就 M5 狀態而言，attach 只為 COLLAPSING 建立來源 ticket（返還需要；M4 live MEASURED 仍沿既有路徑取得來源 ticket），不為 PASSAGE_READY 與 SEALED 建立。執行期間進入 SEALED 時也立即釋放來源 ticket，SEALED→COLLAPSING 重試時再取得，避免永久原因的 SEALED 讓來源 chunk 一直被載入。
 
 **版本與保護**：
 
@@ -348,7 +348,7 @@ MEASURED＋SELECTED（M4；live 或 DORMANT）
 - 呼叫 `allocateOverworld(uuid, ordinal)`，其中 `ordinal` 是 flushed catalog 的最大 ordinal 加 1（catalog 為空時為 0），availability 為 `EAGER_ENABLED`。
 - **只有在 catalog 的 current 恰等於 flushed（沒有 dirty）時才配置。** 不相等時等到下一個 tick 再試，不進 SEALED。M5 是唯一的 runtime catalog 寫入者，dirty 只在寫入失敗、等待收斂時持續；持續超過 600 ticks 時記一次 WARN。
 - 先 checked flush，才物化。flush 或讀回失敗時，依 §6 的 roll-forward：current 保留這筆配置並保持 dirty，下一次寫出（重試或原生 autosave）把它寫出；確認之前不物化。之後進 SEALED(`ALLOCATION_IO_FAILED`)，重試時先完成收斂。M3 的 `UniverseRegistryState.save` 失敗時本來就保留 current 與 dirty（`main/universe/UniverseRegistryState.java:217-224`），不需要新的還原 API。
-- catalog 已有該 UniverseId 時不重新配置，但要驗證：OVERWORLD descriptor、`VANILLA_OVERWORLD_SHARED_SEED_V1`、`SHARED_SAVE_SEED_V1`，availability 為 `EAGER_ENABLED`（§8.3 的重試路徑才可能是 `DISABLED`）。不符進 SEALED(`AUTHORITY_CORRUPT`)。
+- catalog 已有該 UniverseId 時不重新配置，但要驗證：OVERWORLD descriptor、`VANILLA_OVERWORLD_SHARED_SEED_V1`、`SHARED_SAVE_SEED_V1`，availability 為 `EAGER_ENABLED`，或為本 session 推導 id 的 `DISABLED`（視為 §8.3 已完成；由本 instance 剩餘的物化額度決定重試或 SEALED 等重啟）。不符進 SEALED(`AUTHORITY_CORRUPT`)。
 - 配置之前，先確認該 UUID 的 storage 目錄不存在。目錄已存在、catalog 卻沒有這筆紀錄，就是 orphan：進 SEALED(`AUTHORITY_CORRUPT`)，絕不採用或刪除那個目錄。
 
 ### 6.3 Runtime 物化與查詢由 lifecycle 擁有
@@ -393,7 +393,7 @@ M5 不另外 new `Minecraft121DynamicDimensionBackend`，也不繞過 lifecycle 
 
 - 它只讀 §6 的 collapse view（flushed record，加上 roll-forward 尚未確認的例外），所有 journal 變更都在既有的 session operation guard 之內。
 - 每次寫入前，都要求該 session 的 current 恰等於 flushed。
-- **尚未確認的 roll-forward 期間只做收斂**：某個 session 有尚未確認的 roll-forward journal 寫入（`Crossed`、SEALED、返還與清 lease 的進度）時，`CollapseService` 對它只重試同一份 current 的寫出（這是上一條的唯一例外），其他一律暫停：
+- **尚未確認的 roll-forward 期間只做收斂**：recovery tick 以 journal 為單位帶退避，重試同一份 current；塌縮流程與走廊清理暫停，不疊寫新的進度。某個 session 有尚未確認的 roll-forward journal 寫入（`Crossed`、SEALED、返還與清 lease 的進度）時，這是寫入守門的唯一例外：
   - 不嘗試任何傳送（跨越暫停），所以不會有無法記錄的傳送；
   - 結束條件與終局延後到確認之後才評估；確認時若已到期，照常依 (c) 結束；
   - 不疊寫新的進度。
@@ -405,7 +405,7 @@ M5 不另外 new `Minecraft121DynamicDimensionBackend`，也不繞過 lifecycle 
 
 起點必須是 flushed exact 的 `MEASURED + SELECTED`。M4 的 measured release 進行到一半時不提交（`space.finalizing` 不為空、或 `measuredReleasing` 為真），等它完成。
 
-- **live**（非 DORMANT）：選擇之後的下一個 tick，在 guard 閒置時提交。
+- **live**（非 DORMANT）：選擇之後、guard 閒置時的第一個 `END_SERVER_TICK` 提交；下一個 tick 起可觀察到 COLLAPSING。
   - 重啟後 attach 到非 DORMANT 的 MEASURED 時也一樣，這取代 M4「等待 M5 接管」的狀態。
   - 若 M4 的保留式 recovery 已經開始（例如同一個 tick Buff 失效，或有人斷線），照樣提交：record 允許部分參與者已返還、lease 已清空，COLLAPSING 直接接手後續的返還與清理。
   - 提交 COLLAPSING 不要求供電，§7.3 的 RESOLVE 也不要求。量測不可撤銷；斷電只影響 §7.3 的 PREPARE。
@@ -452,10 +452,10 @@ COLLAPSING record 在提交時寫入 `Destination`：
 - **套用量子膜的條件**：門的 25 格內沒有任何 entity 的 bbox，**而且**艙內沒有非參與者玩家（不含旁觀者）。不成立時，準備照常在背景進行，門維持一般開門，下一個 tick 再試。
 - **門口有人時的規則**（適用所有會讓門變成有碰撞的轉換）：
   - 改成 `sealed` 量子膜：依上一條。
-  - 改成關閉（SEALED、§10.6 (a)、PREPARE 期間關門）：門口有 entity 時，改為 `open=true`＋`membrane=none` 的一般開門，不關閉。
+  - 改成關閉（SEALED、§10.6 (a)、PREPARE 期間關門）：先等門口 entity storage 已載入再檢查；門口有 entity 時，改為 `open=true`＋`membrane=none` 的一般開門，不關閉。
   - 目的是不讓任何人卡在方塊裡。
 - 「有原參與者在艙內」只是進入 PREPARE 的條件，不是持續條件；PREPARE 開始之後參與者離開艙內（例如斷線），準備照常繼續。
-- **PREPARE 進行到一半時閘門不再成立**（斷電、Origin 被停用、結構失效、來源艙卸載）：
+- **PREPARE 進行到一半時閘門不再成立**（斷電、Origin 被停用、結構失效；COLLAPSING 持有來源 ticket，來源 chunk 卸載在這一階段只會因重啟發生）：
   1. 釋放目的世界的 ticket。
   2. 門改為 `open=true`＋`membrane=none` 的一般開門，所以不會有人被困住。
   3. 退回 WAITING。
@@ -524,7 +524,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 
 ### 9.1 預載
 
-- 在目的世界，對涵蓋「艙體 bbox 外擴 2 格」的每個 chunk 加上 M5 自己的 chunk ticket。外擴 2 格，是為了涵蓋傳送時「玩家 bbox 外擴 2 格」的 FULL 檢查（`main/universe/UniverseTransferService.java:279-288`）。
+- 在目的世界，對 `PassageTransferPolicy.preloadChunks(frame)` 推導的每個 chunk 加上 M5 ticket：先取艙體 bbox 水平外擴 1 格的 reach，再取其傳送 FULL 檢查涵蓋的 chunk；預載與傳送使用同一推導，不沿用舊的外擴 2 格字面。
 - 每個 tick 以非建立模式查詢，直到全部到達 FULL。不在 server thread 上做阻塞式的 `getChunk(..., create=true)`。
 - 沒有劇情上的逾時，也不重抽。超過 600 ticks 仍未完成時記一次 WARN，然後繼續等；期間參與者可以依 §7.3 關門結束。
 - ticket 在通道結束、PREPARE 期間結束，或進入 SEALED 時釋放。
@@ -544,7 +544,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
   - 寫完逐格驗證。
   - 對目的世界的相關 chunks 做原生存檔 checkpoint（H2 的通用元件）。
   - 以上都成功，才 checked 改為 COMPLETE。
-- **之後**（COMPLETE；EXISTING 再次造訪）：只修復不變量的 cell（shell、Controller、門），並把門設回開啟；不碰 interior，保留之前玩家在投影艙內的修改。
+- **之後**（COMPLETE；EXISTING 再次造訪）：只修復不變量 cell（shell、Controller、門），並把門設回開啟；不碰 interior。若本次寫了方塊，READY 之前要 checkpoint；同一 session 先前寫過而仍未 checkpoint，即使本次修復 0 格，也須先完成 checkpoint；否則 0 格不另存檔。
 
 **既有 entity**（兩種寫法都適用）：
 
@@ -559,11 +559,11 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 
 ### 9.3 投影的保護與載入辨識
 
-- **索引**：開服時，在任何動態世界載入 chunk 之前，從 projection ledger 與 catalog 建立記憶體內的索引：`worldKey → UniverseId → 不變量 cell`。
+- **索引**：開服時，在任何動態世界載入 chunk 之前，從 projection ledger 與 catalog 建立記憶體內的索引：`worldKey → UniverseId → 不變量 cell`。PENDING 確認時就登記 Controller 位置供載入辨識；COMPLETE 時才開始不變量保護。
   - 每次 COMPLETE 時更新這個索引。
   - `mayMutate` 是每次 `setBlockState` 都會經過的熱路徑，所以只查這個索引，不讀 PersistentState。
   - 註冊順序要讓索引早於 `UniverseLifecycleService` 的 bootstrap 物化（`main/QuantumSuperpositionMod.java:34-46`）。
-- **保護**：`ChamberProtectionService.mayMutate` 遇到非 vanilla 的 world key 時，查上述索引。
+- **保護**：COMPLETE entry 的不變量 cell 由 `ChamberProtectionService.mayMutate` 查上述索引；PENDING 只供 Controller 載入辨識，不提前當成已完成的保護。
   - 不變量 cell（shell、Controller、門）拒絕未授權的變更：玩家破壞與放置、活塞、爆炸、流體。
   - interior 不保護。
   - 投影艙的門可以照既有的門邏輯開關；下一次 PREPARE 會把它重新打開。
@@ -667,16 +667,16 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 - (c) game time 已到 `PassageExpiresAtGameTime`。
 - (d) 來源艙沒有供電（LOW）、Origin 被停用，或結構失效。依即時訊號判斷（Controller 的紅石輸入、registry 的 enabled、結構驗證），不經 `ChamberPowerCoordinator` 的 `returnToOrigin`（§10.7）。
 
-結束的順序：
+結束的順序（實際寫門由佇列在後續 tick 套用）：
 
 1. checked 終局（§5）。
-2. 門的狀態：(a) 改為關閉（門口有人時，依 §7.3 改為一般開門）；(b)(c)(d) 改為 `open=true`＋`membrane=none`，也就是一般的開門。
-3. 重新計算比較器，釋放目的世界的 ticket。
+2. 釋放目的世界的 ticket，然後排入門的目標：(a) 關閉（門口有人時依 §7.3 改為一般開門）；(b)(c)(d) 為 `open=true`＋`membrane=none` 的一般開門。
+3. 重新計算比較器。
 4. 原艙解除封鎖。若有尚未處理的 LOW，接著走一般的 OFF 流程。
 
 通道結束之後，若關了門、而且全員仍有 Buff，依 M2 規則會自動開始新的 session；塌縮不會動 Buff。
 
-找不到所屬 session、卻帶著 membrane 的 bulkhead（例如終局之後、改門之前 crash），在 `ChamberPowerCoordinator` 刷新該艙時，排入下一個 tick 正規化為 `membrane=none`。
+找不到所屬 session、卻帶著 membrane 的 bulkhead（例如終局之後、改門之前 crash），在 `ChamberPowerCoordinator` 刷新該艙時排入下一個 tick 正規化為 `membrane=none`；套用時若艙已被任何 M5 session（含 MEASURED／DORMANT）佔用就丟棄，與供電無關。
 
 ### 10.7 比較器
 
@@ -688,7 +688,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 因此：
 
 - `ChamberSessionGateway.Presence` 新增 `COLLAPSE` 與 `PASSAGE`。`SuperpositionSessionManager.presence()` 對三個 M5 狀態，在既有的 runtime 判斷之前，只依 §6 的 collapse view 推導：COLLAPSING、SEALED → `COLLAPSE`；PASSAGE_READY → `PASSAGE`。
-- `ChamberState` 新增 `PASSAGE`，`ChamberStatusSignal` 對應 15；`ChamberControllerBlock` 的開關門訊息 switch（`:87` 附近）補上 PASSAGE 的訊息。
+- `ChamberState` 新增 `PASSAGE`，`ChamberStatusSignal` 對應 15；`ChamberControllerBlock` 的 PASSAGE 訊息為「艙體的量子通道已開啟，原艙維持封鎖。」。
 - `reconcile` 遇到 `COLLAPSE` 或 `PASSAGE`：
   - 不走 pending／needsReturn 路徑，也不呼叫 `returnToOrigin`。
   - registry 的 power state：已供電且 enabled 時設為 POWERED；否則設為 RETURNING（不是 OFF），讓保護維持（`ChamberProtectionService` 只在 OFF 時放行變更）。
@@ -697,7 +697,7 @@ RESOLVE 排在 PREPARE 之前，不需要供電，也不看 PREPARE 的閘門（
 - record 終局之後 presence 回到 NONE，下一次 `reconcile` 依既有流程把 RETURNING 解除為 POWERED 或 OFF。
 - `CollapseService` 在 READY 提交、通道結束、進入 SEALED 之後，都要刷新該艙的 Controller（`ChamberPowerCoordinator.refresh`），讓比較器即時更新。
 - `ChamberControllerBlockEntity` 讀到不認得的 `ChamberState` 時沿用既有的 INVALID fallback，所以舊 build 讀到 `PASSAGE` 不會 crash（M5 本來就不可降版）。
-- `ChamberPowerCoordinator.reconcile` 在 `current==ARMED` 時短路的問題（R2 M5），在同一段程式一起修。
+- `ChamberPowerCoordinator.reconcile` 在 `current==ARMED` 時只為本 instance 由 start 留下的 ARMED 保持短路（R2 M5）；記號在 Controller block entity、不寫 NBT，重啟後重新評估，其他 stale ARMED 依 presence 正常刷新。
 
 ### 10.8 訊息
 
@@ -818,11 +818,11 @@ Cross-JVM 要覆蓋的 crash 窗口（每一個都要證明：同一個 Universe
 | `main/superposition/SuperpositionSessionManager.java` | `:59-64`、`:387-394`（attach） | 非 MEASURED 一律轉為 RETURNING | M5 狀態不轉 RETURNING：COLLAPSING 交給 `CollapseService`，PASSAGE_READY 依 §12 結束，SEALED 保留 |
 | 同上 | `:66-76`（`presence`）、`:81`（runtime） | 沒有 runtime 時回 UNKNOWN（`:73`）；只認 MEASURED | 三個 M5 狀態在 `:70-73` 之前只依 collapse view 推導：COLLAPSING、SEALED 回 `COLLAPSE`，PASSAGE_READY 回 `PASSAGE`（§10.7）；MEASURED 維持原樣 |
 | 同上 | `:178-186`（tick） | MEASURED 時請求 measured recovery | 只對 MEASURED 請求；M5 狀態由 `CollapseService` 負責，絕不呼叫 `requestMeasuredRecovery` |
-| 同上 | `:203`（measured 收尾的清理迴圈） | 只處理 MEASURED | COLLAPSING 的 release 收尾使用延伸後的同一路徑 |
+| 同上 | `:203`（measured 收尾的清理迴圈） | 只處理 MEASURED | 維持只處理 MEASURED；COLLAPSING 的 release 收尾改由 `CorridorPageManager` 的延伸路徑處理，SSM 不在清理完成時釋放 runtime／來源 ticket |
 | 同上 | `:315-345`（`returnToOrigin`，含 `:323` 的 MEASURED 分支） | MEASURED 時只請求 recovery，不寫 RETURNING | M5 狀態一律沒有副作用、回 false，不寫 RETURNING。斷電的後果全部由 `CollapseService` 依即時訊號處理：RESOLVE 不受斷電影響；PREPARE 依 §7.3 退回 WAITING；PASSAGE_READY 依 §10.6 (d) 結束；SEALED 保留 |
 | `main/persistence/SessionRecoveryManager.java` | `:52`（`blocks`） | RETURNING／MEASURED 未返還者凍結 | 加入 COLLAPSING 未返還者 |
 | 同上 | `:59`、`:81-84`、`:210-213`（`onJoin`、`onDisconnect`、`recordFor`） | `recordFor` 只排除 DORMANT，取 `flushedRecords()` 的 `findFirst()`，順序不固定 | 改用 §5 的 `occupies` 謂詞，只回傳仍佔用該玩家的 record。由於唯一性規則，這種 record 最多只有一筆 |
-| 同上 | `:94`、`:185`、`:216-222`、`:230`（`markReturning`、全員返還後的 release） | MEASURED 時請求 recovery、走 `releaseMeasured` | COLLAPSING 的返還與 release 改走 M5 的延伸路徑；PASSAGE_READY 與 SEALED 不寫入 |
+| 同上 | `:94`、`:185`、`:216-222`、`:230`（`markReturning`、全員返還後的 release） | MEASURED 時請求 recovery、走 `releaseMeasured` | COLLAPSING 的返還與 release 改走 M5 延伸路徑；PASSAGE_READY／SEALED 在 roll-forward 待確認時仍可重寫同一份 current（收斂，非新進度）；除此之外兩狀態不寫新進度 |
 | `main/persistence/SessionRecoveryState.java` | `:179`（`remove` 守門） | 拒絕 MEASURED | 改用 `receiptRetained`；只有 §5 的終局 API 可以移除 |
 | 同上 | `:146-151`、`:246-258`（`dormant`、`participantsAvailable`、`validateOwnership`） | 只豁免 MEASURED DORMANT | 依 §5 的唯一性規則 |
 | `main/corridor/CorridorPageManager.java` | `:89-92`（attach）、`:219-232`（`requestMeasuredRecovery`／`releaseMeasured`）、`:306`、`:321`、`:424`、`:837-842`（measured release） | 只認 MEASURED | COLLAPSING 的 RETURN／RELEASE 使用延伸後的同一路徑；其他 M5 狀態沒有 space |
@@ -869,7 +869,7 @@ M3 spec §8 把它列為正式 passage 的前置 blocker。F1 排在 T1、H1–H
 - 兩個旗標：讀到 schema 4、但本次初始化失敗時，`m5Evidence` 為真、`m5ReadyThisInstance` 為假，不提交新的 COLLAPSING。
 - 終局之後 `SuperpositionSessionManager` 沒有殘留的 runtime 與來源 ticket；重啟時 attach 不為 PASSAGE_READY、SEALED 建立來源 ticket。
 - `occupies` 謂詞與 `recordFor` 的查找。
-- projection ledger；discovery append 的 idempotency；catalog 配置失敗時的還原。
+- projection ledger；discovery append 的 idempotency；catalog 配置失敗時的 roll-forward（§6）。
 - `reconcile`：presence 為 `PASSAGE`＋供電＋enabled 時輸出 15；`COLLAPSE`／`PASSAGE` 不呼叫 `returnToOrigin`；registry 已是 RETURNING 時仍能到達 15；斷電時 power state 設為 RETURNING（保護不解除）、輸出 11；終局後解除。
 - 狀態邊：PASSAGE_READY→SEALED 只接受 `TRANSFER_RECOVERY_REQUIRED`，並保留 `Crossed` 與 opened／expires；它沒有 SEALED→COLLAPSING 的重試邊。
 - 推導階段與 PREPARE 閘門；四個朝向的跨越幾何；`PassageTransferPolicy` 的決策表（含跳躍、水、岩漿時的驗證與回滾資格）。

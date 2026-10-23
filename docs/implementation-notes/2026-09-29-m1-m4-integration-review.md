@@ -225,12 +225,16 @@ Round 3 full gate 的 stdout 有 47 則 WARN／ERROR，逐類比對 round 2（46
 
 ## Deferred triage 結論
 
+後續狀態：下列「31 項 runtime noise 延後分類」已由 M5 T0 的全新工作樹 gate 逐項分類，見 [M5 紀錄的 T0 段](2026-10-01-m5-collapse-passage.md)；原句保留為 2026-09-29 當時的結論。
+
 - **M2**（R2）：TransferService 診斷（＝R2 M1）與正常到期 WARN（＝R2 M2）本輪已修；6 個 mixin annotation warnings 來自 testmod `SessionTransferFaultMixin`（`require=0`），不進 release，關閉；31 項 runtime noise 延後到下一次 fresh gate 分類；rollback 預期 ERROR、編碼分類、fullgate stdout 亂碼、`m2-corridor.md:3`／plan:411、T7 旋轉敏感度，關閉；T10 restore 死碼（＝R2 M8）延後 M5 清理。
 - **M3-A／M3-B**（R3）：queue observer／registration-isolated close 的專屬 regression 接受風險，M5 動到 queue 時補；discardWorld、post-LOAD quarantine 措辭、過期 owner 路徑，關閉；Task 5 預期的 IOException ERROR stack，關閉。
 - **M4**（R3）：round 1 quality M1／M2／M4／M5／M6 延後 M5（其中 M4＝hardening (1) codec strictness，須在 M5 schema 變更前）；spec m-1 關閉；fix round 1 q1–q3 併入 M5 hardening (3)；q4、q5、q7 延後 M5；q6、s3 關閉（跨 JVM probe 已覆蓋）；Nits 延後或關閉；M5 handoff 第 9 點依 F-CHECKPOINT 上調並已隨本輪退避修正更新。
 - **R1**：harness tracked 化維持延後（擋刪除 worktree，不擋合併）；`task9-gates.ps1` 的 PID 過濾併入同一個 task（2026-10-01 已完成，含 PID 過濾）。
 
 ## 延後清單
+
+**M5 後續處置（2026-10-24）**：本表保留 M1–M4 整合審查時的風險與修法；已確認的後續變更為 H1 codec `8a68630`、H2 checkpoint `f362ebe`、H3 fail-closed `3957624`、H4 凍結修正 `a534184`。R2 M5 由 F5-2 `73d6d0b` 的 `ARMED_BY_START`／`reconcile` 修正；spec reviewer 判 B-1a、B-3c、C-1b、C-2a 均不經更動路徑（前三項從 IDLE／INVALID 起步，B-1a pending 使 current→INVALID），不列必要人工重驗，可選抽驗。R2 M6 的返還落點由 F3d `cc936d0` 修正；A-2、B-1b、C-3a 仍列 [M5 人工 smoke](../manual-acceptance/2026-10-01-m5-manual-smoke.md) 必要重驗。其他未列者仍依原表與 M5 note triage。
 
 逐項一句話與建議修法。M5 前置 hardening 的優先序由使用者 2026-09-29 指定，已同步寫入 [M4 紀錄](2026-09-21-m4-candidate-doors.md)「M5 handoff acceptance」。
 

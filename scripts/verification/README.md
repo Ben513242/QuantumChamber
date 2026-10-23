@@ -387,24 +387,23 @@ Invoke-Gradle 遇到 timeout／exception／非零 exit 時仍先 flush stdout／
 
 M5 collapse probe 維持本機 run-all，不加入 CI（既有 X2(a) 裁示）。它依賴 Windows `Win32_Process` 的 commandline／CreationDate 與 Java 21 `jstack`，69 個 phase 各啟一個 JVM，含 31 個預期 HALT；不能把單一測試的時間當成整條 chain 預算。`w12` 最後檢查到 tick620，在正常 20 TPS 約 31 秒，另加開服、worldgen、存檔與停服時間；每 phase 的 `PhaseMinutes=8`、`IdleSeconds=90` 分別限制總 wall-clock 與無進展時間，任一失敗就停止 chain。整輪正常實測時間以 note 的採計 run-all 為準；F7 再整理正式限制。歷史 `h5/sample-jstack.ps1`／`red.ps1` 保留為歷史取證，不追蹤化或修改。
 
-## 預期結果（M5 F3c）
+## 目前採計的預期結果（M5）
 
-M5 實作期間，程式與測試逐 task 增加，數字以最新一次 run 為準；每個 task 的數字變化記在 M5 implementation note（`docs/implementation-notes/2026-10-01-m5-collapse-passage.md`）。下表是 M5 F3c fix round 2 的 code commit 上以 `run-all.ps1` 實跑的結果，commit、run root 與耗時記在 note 的 F3c 段（Fix round 2）。M1–M4 收尾時（code `ba854e8`，2026-10-01 在 HEAD `e55b7f9` 實跑、以 C＝`c262b2a` 採計）的數字是：default 146/146（`_windows` 73）、per-test receipts 28＋1、JUnit 403、release 299 entries（256 classes）、sources 190，其餘各項與下表相同（當時沒有 M5 GameTest 與 batch 範圍兩項）。
+以下是 2026-10-24 前已採計的本機 `run-all.ps1` 基準：乾淨 code HEAD `27a5039` 的 `run-all-5435ef0d6da64f7486de613bb4b2bba0`，原 console 精確 `END ALL exit=0`；之後純文件治理 commit 不冒稱另跑過本機 runtime。F7 前置 harness 與註解完成後，以本輪唯一最終 run-all 的 root／HEAD 更新此處。M1–M4 當時的數字與每輪增量見 [M5 實作紀錄](../../docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。
 
-| 項目 | 預期 |
+| 項目 | 已採計基準 |
 | --- | --- |
-| default GameTest | 160/160，其中 `_windows` 80；0 failure／error／skipped |
-| per-test Universe probe receipts | default 38＋legacy 1，全部 exact PASS |
-| JUnit | 560，0 failure／error，2 skipped（只限 `NonWindowsPlayerCheckpointStoreTest`）；Windows checkpoint 三個 class 共 17 個實際執行 |
-| legacy GameTest | 1/1 |
-| M5 GameTest | 4/4（sanity 與三個 harness test）；沒有 M4 boundary receipt；每個 M5 test 的 catalog 增量都已核對並串接（各 ＋1，0 → 4 筆），suite 結束時 4 筆、digest 與最後一個 test 相同 |
-| batch 範圍 | default、legacy、M5 三個 run 的 XML 都恰好等於原始碼中屬於該 run 的宣告（160、1、4） |
-| main-only oracle | PASS（三層 testmod 命中 0、world keys exact、exact restore） |
-| M3 | lifecycle 4＋transfer 5 receipts PASS |
-| M4 recovery | 24/24 phases，各自獨立 JVM |
-| M5 collapse probe（M5 F6-1 起；SUMMARY 的 `m5collapse=`） | 9 條 chain、18 phases，各自獨立 JVM：8 個 halt（8 條 crash chain 的 crash phase；JVM exit 77、`halt.json` 的窗口與 chain 表相符）、10 個 stop（8 個 restart 與 `degraded` 的兩個 phase；exit 0、`final.json` PASS）；receipt 的 hash 對上 launcher |
-| CI 綠燈規則 | Windows、Ubuntu 兩個 step 都 PASS（讀 default 與 M5 兩份 XML） |
-| JAR | release 359 entries（312 classes）、sources 210；testmod／gametest／probe 命中 0（`dev/quantumchamber/compat/ModPresenceProbe` 是合法的 production class） |
+| default GameTest | 179/179，其中 `_windows` 89；0 failure／error／skipped |
+| legacy、M5 GameTest | legacy 1/1；M5 60/60 |
+| per-test Universe receipts | default 56＋legacy 1，全部 exact PASS |
+| JUnit | 666，0 failure／error，2 skipped；Windows checkpoint 17 實際執行 |
+| batch 範圍 | default、legacy、M5 的 XML 與屬於各 run 的宣告集合相符 |
+| main-only、M3、M4 | main-only PASS、testmod 命中 0；M3 lifecycle 4＋transfer 5；M4 recovery 24/24 |
+| M5 collapse probe（`m5collapse=`） | 69 phase、31 HALT，各 phase 獨立 JVM；halt／final receipt 與 launcher 對上。此 probe 只由本機 `run-all.ps1` 執行，不在 GitHub CI |
+| 本機 CI 規則 | Windows、Ubuntu 兩個 step 都 PASS；它不是 GitHub runner 的替代證據 |
+| JAR | release 432 entries（385 classes）、sources 226；testmod／gametest／probe 命中 0（production `ModPresenceProbe` 例外） |
+
+W12 已驗證第二次 SEALED 的退避加倍：`INITIAL_TICKS＋6 < d ≤ 2×INITIAL_TICKS＋6`。F1a 的短期 smoke driver／核對腳本未 tracked（U5），不能以本目錄的 tracked harness 重現其全部步驟。已知偶發與 root 保留規則見 [handoff §6](../../docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)；遇到跨午夜 log 輪替，比對須涵蓋同次啟動的兩段。
 
 ## 來源對照
 

@@ -569,6 +569,8 @@ GameTest 覆蓋範圍（逐名對照見 evidence owner 的 `m4-automated-gate-re
 
 ## 已知 deferred 項目與觀察
 
+**M5 後續狀態（2026-10-24）**：下表保留 M4 收尾時的原問題與建議，不代表全部仍未處理。codec strictness 已由 H1 `8a68630` 關閉；只看相關 region 的 checkpoint 由 H2 `f362ebe` 完成；未 checked authority 的 fail-closed 收斂由 H3 `3957624` 完成；凍結中的位置修正由 H4 `a534184` 完成。其餘項目逐項依 [M5 實作紀錄](2026-10-01-m5-collapse-passage.md) 與後續 review 判定，不能因為完成 H1–H4 一併宣稱關閉。
+
 **Whole-branch round 1**（延後或接受，依 ledger ruling）：
 
 | 項目 | 問題 | 建議修法 |
