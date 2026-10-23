@@ -17,6 +17,41 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+class DuplicateReceiptKey(ValueError):
+    def __init__(self, key):
+        super().__init__('同一JSON物件重複鍵：' + key)
+        self.key = key
+
+
+class ReceiptReadError(ValueError):
+    def __init__(self, path, error, key=None):
+        super().__init__('正式JSON憑證無效：{}：{}'.format(path, error))
+        self.path, self.key = path, key
+
+
+def read_receipt(path):
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise DuplicateReceiptKey(key)
+            value[key] = item
+        return value
+
+    def reject_constant(value):
+        raise ValueError('JSON非有限值：' + value)
+
+    try:
+        value = json.loads(path.read_text(encoding='utf-8-sig'),
+                           object_pairs_hook=unique_object, parse_constant=reject_constant)
+        if not isinstance(value, dict):
+            raise ValueError('頂層必須是JSON物件')
+        return value
+    except (ValueError, UnicodeError, OSError) as error:
+        key = error.key if isinstance(error, DuplicateReceiptKey) else None
+        raise ReceiptReadError(path, error, key) from error
+
+
 def fields(line, marker):
     """只解析固定欄位；suppressed 與 mapping/lease 尾段保持 opaque。"""
     segment = line.split(marker + ' ', 1)[1]
@@ -148,6 +183,19 @@ def main():
               'sourceFiles': {key: {'path': str(path), 'exists': path.is_file(),
                                     'sha256': sha(path) if path.is_file() else None}
                               for key, path in paths.items()}}
+    missing = [key for key, path in paths.items() if not path.is_file()]
+    if missing:
+        report['missingFiles'] = [{'key': key, 'path': str(paths[key])} for key in missing]
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        raise SystemExit('缺少正式憑證：' + ', '.join(str(paths[key]) for key in missing))
+    def checked_receipt(path):
+        try:
+            return read_receipt(path)
+        except ReceiptReadError as error:
+            report['invalidReceipt'] = {'path': str(error.path), 'key': error.key, 'error': str(error)}
+            output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            raise SystemExit(str(error))
+
     if all(path.is_file() for path in paths.values()):
         root = ET.parse(paths['xml']).getroot()
         cases = list(root.iter('testcase'))
@@ -170,11 +218,11 @@ def main():
         post = tagged('CI_W1_ADAPTER_POSTFAIL sid=')
         pre_values, pre_errors = fields(pre[0][1], 'CI_W1_ADAPTER_PREFAIL') if len(pre) == 1 else ({}, [])
         post_values, post_errors = fields(post[0][1], 'CI_W1_ADAPTER_POSTFAIL') if len(post) == 1 else ({}, [])
-        manifest = json.loads(paths['manifest'].read_text(encoding='utf-8-sig'))
-        execution = json.loads(paths['execution'].read_text(encoding='utf-8-sig'))
-        gate_receipt = json.loads(paths['gateReceipt'].read_text(encoding='utf-8-sig'))
-        world_restore = json.loads(paths['worldRestore'].read_text(encoding='utf-8-sig'))
-        source_restore = json.loads(paths['sourceRestore'].read_text(encoding='utf-8-sig'))
+        manifest = checked_receipt(paths['manifest'])
+        execution = checked_receipt(paths['execution'])
+        gate_receipt = checked_receipt(paths['gateReceipt'])
+        world_restore = checked_receipt(paths['worldRestore'])
+        source_restore = checked_receipt(paths['sourceRestore'])
         selected = [piece for piece in manifest.get('pieces', [])
                     if piece.get('path') == 'runtime-logs/latest.log' and piece.get('selected')]
         manifest_log_ok = len(selected) == 1 and selected[0].get('sha256', '').lower() == sha(paths['log']).lower()
@@ -182,7 +230,7 @@ def main():
         before_sha = source_restore.get('afterSha256')
         setup = {}
         if (fixture / 'setup.json').is_file():
-            setup = json.loads((fixture / 'setup.json').read_text(encoding='utf-8-sig'))
+            setup = checked_receipt(fixture / 'setup.json')
             before_blob = setup.get('sourceBlob', setup.get('beforeBlob', before_blob))
             before_sha = setup.get('sourceSha256', setup.get('beforeSha256', before_sha))
         script_files = {'fixture': 'm2-cohort-failure-fixture.ps1',
