@@ -104,13 +104,13 @@
 - 558這次push同意已使用，不重送、不延用後續commit。新feature push必須在修正具體可核後另獲明確同意；同SHA的必要Ubuntu第二次以job rerun，不額外push湊次數。
 - artifact/log只讀、不執行。CI-S1關閉及新版驗收完成後，才進F7前置Step0及文件。
 
-### 3.5 F7：文件
+### 3.5 F7：文件（已完成）
 
 2026-10-24 本輪 F7 精簡裁示：兩項 harness 各留 RED／GREEN 與同乾淨 HEAD 的 focused，純 Java 註解另 commit 並先做必要 compile／release 比對；之後集中一次最終完整 `run-all.ps1`，純 docs 不觸發 full。fresh spec／quality 雙 review 不省略。此安排只適用本輪已界定的 F7，不延用為後續 production 行為改變的豁免。正常 push 已持續授權（AGENTS.md「後續 push 持續授權」）；main 條件整合、tag、代操作 smoke 與指定退役仍各按原門檻。
 
-- 前置兩項 harness Minor 已由 `de7f373`、`fda0359` 分開實作；fresh spec／quality review 均 Approved C0/I0/M0。純註解 commit `71fb8e7` 已完成必要 compile／release 比對；依 plan Task F7 接續文件、最終 full 與 review，不把 Minor 回頭併入已完成 task 的 fix round。
+- 前置兩項 harness Minor 已由 `de7f373`、`fda0359` 分開實作；fresh spec／quality review 均 Approved C0/I0/M0。純註解71fb8e7、文件6b116e6與唯一full均完成，fresh F7 spec／quality最終Approved C0/I0/M0。詳§7最後一筆；人工smoke與whole-branch review仍待。
 - F7 唯讀預備盤點已完成，ignored `f7/inventory.md` 只作本輪窄索引；tracked 長期結論寫入本 handoff、plan 與 M5 note，不依賴工作樹退役後的 ignored 檔。
-- controller 已知、但還沒寫進「F7 待辦彙整」的事項：
+- 以下保留原F7盤點來源，現已寫入正式文件／註解，或明列M5之後deferred：
   - 原版 `StrongholdGenerator` 的 static 可變狀態：寫成已知問題，修正延到 M6（spec §20.14）。
   - Windows 原子移動的 `AccessDeniedException`：根因最可能是外部程序（Defender／索引器）。production 會 fail closed，並依退避重試。使用者已於 2026-10-21 裁示：M5 維持現況，列為已知限制，不加入 production 短暫重試；外部程序的實際持有者仍未確認。
   - collapse probe 不進 CI，只在本機 run-all 執行。
@@ -344,3 +344,14 @@
 - 未關 finding：兩項Minor F6-3e-M1／CI-S1-M1排F7 Step0；無Critical／Important。AccessDenied仍按既有裁示列限制。
 - 等使用者決定：代操作manual smoke、建立tag、M6範圍優先序；不再問正常push，同一次main條件合併／指定M5不備份退役授權保留。
 - 下一步：F7 Step0→文件與獨立review→manual smoke→whole-branch review→docs truth／push與CI→條件main整合→tag→指定worktree退役；M6未開始。
+
+### 2026-10-24：F7 完成，下一步人工 smoke／整分支 review
+
+- **HEAD／porcelain**：唯一full及F7 review固定乾淨 `6b116e60c0865000b5381740146aa4c54428297e`。本次純治理commit以 `git log -1 --format=%H --grep='^docs: record the M5 collapse and passage implementation$'` 解析；提交後由controller核porcelain。其後純docs不冒稱另跑runtime。
+- **Git快照（本次治理提交前git／ls-remote核對）**：origin feature=`db029fa4db7e4e6dfa0201634f4988515fa27b1e`；local/remote main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`；local/remote無m5 tag。F7 commits此時未push；後續正常push已有持續授權，依實際遠端ref／CI另記結果。
+- **完成range**：Step0 `183d484..fda0359`（de7f373／fda0359兩項harness各自commit）；純註解71fb8e7；文件初稿6b116e6；本commit同步正式結果，未改production行為。
+- **獨立review**：Step0 spec／quality及F7 spec／quality皆fresh獨立context，最終C0/I0/M0；F7各自在同一context補核唯一full，沒有實作context自評。Step0 quality額外跑ignored stub超出只讀派工，未改tracked／未跑真Gradle，正式四clean根維持採計；偏離與處置如實記note。F7 reviewer未重跑測試。
+- **最終run-all**：SDD `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，04:24:34 END ALL exit0、HEAD6b116e6。SUMMARY default179/179/windows89/legacy1/M560/60/perTest56+1/JUnit666/0fail/0error/2skip/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS；完整hash及原件見note末節。
+- **差異**：release整SHA同；sources只四個main註解entry內容改變；具名集合、phase、pin同、worldgen四類0、世界還原exact。Full56/31多1既有M2受控斷線WARN，原stack已核；未歸屬實質差異0。
+- **未關finding／待裁示**：本輪無C/I/M，歷史deferred依note/spec保留，AccessDenied仍列限制。manual smoke未執行，代操作仍待明確授權；tag建立與M6範圍優先序仍待。正常push不再問；同一次main條件整合及指定M5不備份退役授權保留未用。
+- **下一步**：依持續授權push已完成內容並驗新SHA CI；依正式白話清單做required manual smoke（代操作須授權）→whole-branch review→docs truth／最終CI／條件main整合／tag／指定worktree退役。M5未整體結案、M6未開始。

@@ -6,9 +6,9 @@
 
 本文件逐 task 記錄 code-truth、RED／GREEN 的 gate root 與 commit range。gate root 在 gitignored 的 `.superpowers/verification/`，詳細過程在 gitignored 的 SDD ledger `.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`；這裡只留可核對的摘要。
 
-目前狀態（2026-10-24）：M5 塌縮與單向通道功能已實作，CI-S1 關閉；`db029fa` 的 GitHub Actions Windows 一次、同 SHA Ubuntu 兩次真 job 與 artifact 已驗收。F7 前置 harness 已由 `de7f373`、`fda0359` 分開實作，fresh spec／quality review 均 Approved C0/I0/M0；純註解 commit `71fb8e7` 已完成必要 compile 與 release 比對；文件、集中一次最終完整 run-all、required manual smoke 與 whole-branch review 尚待；M5 未合併 `main`，未建立 tag `m5`。本段覆蓋下方各 task 當時的狀態句，不改寫歷史 root 的判定。
+目前狀態（2026-10-24）：M5 功能與 F7 文件／註解已完成；CI-S1 已關閉，`db029fa` 真雙平台 CI 及同 SHA 兩次 Ubuntu 已驗收。F7 Step0 `de7f373`／`fda0359`、純註解 `71fb8e7`、文件初稿 `6b116e6` 已驗證；唯一完整 run-all 在乾淨 `6b116e6` END ALL exit0，F7 fresh spec／quality 最終均 Approved C0/I0/M0。required manual smoke 與 whole-branch review 仍待；M5 未合併 main、未建立 tag m5。本段覆蓋下方歷史狀態句，原失敗 root 與當時判定保留。
 
-文件入口：[M5 相容性與實測範圍](compatibility.md)、[M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)。已知窄限制：原版 playerdata 寫出若自行收下 IOException，只記不帶 `session=` 的 WARN；`saveCrossedPlayerData` 收不到該 IOException。若此時 crash，已跨越玩家可能回到最後一次成功存下的位置；checked `Crossed` 不能單獨證明 playerdata 已持久化（見本 note F6-2c 的 Crossed 後 playerdata 存檔與「交給後續」F7 觀察）。M5 的 Windows atomic move `AccessDeniedException` 維持現有 fail-closed／退避，外部持有者仍未確認；Stronghold 靜態競態修正依使用者裁示延到 M6。F7 的最終 commit／run-all／review 待實際完成後補在本 note 末節。
+文件入口：[M5 相容性與實測範圍](compatibility.md)、[M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)。已知窄限制：原版 playerdata 寫出若自行收下 IOException，只記不帶 `session=` 的 WARN；`saveCrossedPlayerData` 收不到該 IOException。若此時 crash，已跨越玩家可能回到最後一次成功存下的位置；checked `Crossed` 不能單獨證明 playerdata 已持久化（見本 note F6-2c 的 Crossed 後 playerdata 存檔與「交給後續」F7 觀察）。M5 的 Windows atomic move `AccessDeniedException` 維持現有 fail-closed／退避，外部持有者仍未確認；Stronghold 靜態競態修正依使用者裁示延到 M6。F7 最終 commit／唯一 run-all／獨立 review 結果見本 note 末節。
 
 ## T0：clean-clone 基線
 
@@ -10505,3 +10505,20 @@ controller直接讀本輪與CI-W1 full2的原JAR：release整檔bytes完全相�
 - 最終本機run-all沿用前節乾淨27a的`run-all-5435ef0d6da64f7486de613bb4b2bba0`，END ALL exit0：default179、windows89、legacy1、M560、perTest56+1、JUnit666/0fail/0error/2skip、windowsCheckpoint17、release432/385、sources226、testmodHits0、MainOnlyPASS、M3 4+5、recovery24、collapse69/HALT31、ci win/ubuntu PASS。純文件依使用者精簡裁示不再重跑。
 - 使用者最新裁示：後續正常push持續授權，無需逐次詢問；不含force push／刪遠端ref，tag建立與manual代操作仍依各自授權。main仍a7e1be2，無m5 tag，指定worktree未退役。
 - 下一步：F7盤點已完成，先修兩項harness Minor，再做文件與人工smoke清單、獨立review。人工smoke、whole-branch review及milestone整合仍未完成；M6未開始。
+
+## F7：harness 前置、文件與純註解完成（2026-10-24）
+
+- 行號：`gates.ps1:117`、`source-remap-check.ps1:16`；Java 註解原行數不變，文件以章節標題定位。
+- **Review**：Step0 range `183d484..fda0359`，全新獨立 `/root/f7_step0_spec`、`/root/f7_step0_quality` 均 Approved C0/I0/M0。F7 range `fda0359..6b116e6`，全新獨立 `/root/f7_docs_spec`、`/root/f7_docs_quality` 先審 source/docs，再於各自同一獨立 context 唯讀補核唯一 full，最終均 Approved C0/I0/M0；沒有實作 context 自評，也沒有新增 Minor。
+  - F7 reports：SDD `f7/docs/spec-review.md`、`quality-review.md`；SHA 分別 `063a05a686ebbb96268c327d734b0e00a5b7f7789afae26bc7cc1cdea213ea4e`、`9f02e5f7a5641f822cbde7149fdba5e74a65a01b07217e24a92ccd69aedb47f1`。
+  - Step0 quality 額外跑了 ignored fixture（包括一次 sandbox junction 失敗與新 root 重跑），超出只讀派工；未改 tracked、未跑真 Gradle。原件保留於 `f7/step0/quality-review.md` 指定根，正式採計仍為原四個 clean 根。其獨立審查與原件核對有效，主控沒有把額外執行增列為門檻或重開第三份 review。F7 兩 reviewer 全程只讀、只寫報告。
+- **內容／commit**：`de7f373` 改以 Gradle task 最後一段辨識 run；`fda0359` 補 fresh `.superpowers` 初始化，原 reparse／EvidenceRoot 邊界保留；兩項分開行為 commit。`71fb8e7` 五個 Java 檔只有 13 行等量註解替換；`6b116e6` 十二份文件含 compatibility、manual smoke 兩新入口。沒有 production 行為改變；spec 勘誤只同步既有裁示，H9 可執行碼整理／Track holder 及 M6 項目仍延後。
+- **RED／GREEN**（以下均在 SDD `f7/step0/`）：task guard RED `task-guard-red-1-14fdc899a63e4d448f315e99cf56ffc9`；source init 真 RED `source-init-red-escalated-824d0391907246b399163fc9ef6be092`。同乾淨 `fda0359` 兩輪 GREEN：`task-guard-clean-1-3b06fc1867f34c0280e2225cd9648630`／`source-init-clean-1-632eafaf216f4fafab5d8bec7affb927`，及 `task-guard-clean-2-4843ebf0e0bf4cf78bb198afed489957`／`source-init-clean-2-5f7271d161e84defb5cebac0e76a55ee`；每輪 5/5、4/4。source init 是正式 wrapper 的隔離 stub 測試，不冒稱真 Gradle。
+- 第一項 commit 前以固定 Gradle 載入 tracked `runtime.init.gradle`，四組 compile 成功；一般 sandbox native DLL 失敗 log 保留。第二項依精簡安排以 PowerShell parser＋focused 驗證，未重編未變 Java。所有根與編譯紀錄見 `f7/step0/STATUS.md`。沒有 tracked 暫改，工具 blob 已核對 HEAD。
+- 註解 commit 前 `f7/docs/compile-java.log` 成功；source oracle 根 `.superpowers/source-remap/f7-comments-precommit-99f6116296f646e0a0daf9d4605ec446` 為 PASS。主控直接核 release 整 SHA 同基準、sources 226 項只四個 main 註解 entry 變更，見 `f7/docs/controller-comments-readback.json`。
+- **唯一最終 run-all**：SDD `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，2026-10-24 04:24:34 台灣時間，`END ALL exit=0 HEAD=6b116e60c0865000b5381740146aa4c54428297e`。summary SHA `29487ec7b6a9bb5f7621a162f351a0fe946263ef34c84f4e89430c8f1cd4aa16`。依使用者 F7 精簡要求只跑一次，純文件結果同步不重跑；不外推為 production 行為改變的豁免。
+- **SUMMARY**：default179/179、windows89、legacy1/1、M560/60、perTest56+1、JUnit666/0fail/0error/2skip、windowsCheckpoint17、release432entries/385classes、sources226、testmodHits0、MainOnlyPASS、M3 4+5、recovery24、M5collapse69/HALT31、本機ci win/ubuntu PASS。本機 ci 規則不代表新 SHA 的 GitHub runner 已驗收。
+- **基準／差異**：對照27a的 `f6/ci-sources-fix1/runall/run-all-5435ef0d6da64f7486de613bb4b2bba0`，15項摘要、具名 testcase／JUnit、phase names／truths／steps／schema、pin4/9/4皆同；107份log的四類worldgen例外均0。release整SHA仍 `c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08`；sources SHA `bd09fb7d47836fb266b26de89d35f1c551e6c20b480759530b4ff9233994febe`，四個main註解entry是已知內容變更，其餘內容同，ZIP時間等metadata差異保留於原件。
+- Full WARN/ERROR 56/31（基準55/31）：唯一新增WARN原 `gate-full-0a371ebc32e341b5885f013d0c32a10d/execution/runtime-full.log:9597-9599` 是 `M2CorridorGameTests.beforeDisconnectJournalFlush` 受控拒絕，屬 handoff §6 已知項，不是未查明的 AccessDenied 根因。legacy0/0、M538/10沒有新殘差。動態UUID／digest與逐項原文比對在 `f7/runall/f7-final-compare/`，FULL_RESULT為OK，未歸屬實質差異0。
+- M5唯一節流結束列／SUITE_END：TPS85.5、waited11256、HOLD0、四權威unconfirmed=false；四個world/server restore原件皆exactRestored=true、deleted=false。主控讀原END、summary、XML/JAR hash、還原紀錄及WARN堆疊，見 `f7/docs/controller-final-readback.json`。
+- **下一步／界線**：F7完成，人工smoke及whole-branch review尚待；正常push已持續授權，新commit的遠端／CI另核。main仍a7e1be2、無m5 tag，整合與指定工作樹退役條件未達。AccessDenied維持已知限制，M6未開始。
