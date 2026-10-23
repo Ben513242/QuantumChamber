@@ -6,7 +6,7 @@
 
 本文件逐 task 記錄 code-truth、RED／GREEN 的 gate root 與 commit range。gate root 在 gitignored 的 `.superpowers/verification/`，詳細過程在 gitignored 的 SDD ledger `.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`；這裡只留可核對的摘要。
 
-目前狀態（2026-10-24）：M5 功能與 F7 文件／註解已完成；CI-S1 已關閉，`db029fa` 真雙平台 CI 及同 SHA 兩次 Ubuntu 已驗收。F7 Step0 `de7f373`／`fda0359`、純註解 `71fb8e7`、文件初稿 `6b116e6` 已驗證；唯一完整 run-all 在乾淨 `6b116e6` END ALL exit0，F7 fresh spec／quality 最終均 Approved C0/I0/M0。required manual smoke 與 whole-branch review 仍待；M5 未合併 main、未建立 tag m5。本段覆蓋下方歷史狀態句，原失敗 root 與當時判定保留。
+目前狀態（2026-10-24）：M5 功能與 F7 文件／註解已完成；CI-S1 已關閉，`ec394ad` 已推送，run40023563006 的真雙平台 CI 及同 SHA 兩次 Ubuntu 原件已驗收。F7 Step0 `de7f373`／`fda0359`、純註解 `71fb8e7`、文件初稿 `6b116e6` 已驗證；唯一完整 run-all 在乾淨 `6b116e6` END ALL exit0，F7 fresh spec／quality 最終均 Approved C0/I0/M0。required manual smoke 與 whole-branch review 仍待；M5 未合併 main、未建立 tag m5。本段覆蓋下方歷史狀態句，原失敗 root 與當時判定保留。
 
 文件入口：[M5 相容性與實測範圍](compatibility.md)、[M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)。已知窄限制：原版 playerdata 寫出若自行收下 IOException，只記不帶 `session=` 的 WARN；`saveCrossedPlayerData` 收不到該 IOException。若此時 crash，已跨越玩家可能回到最後一次成功存下的位置；checked `Crossed` 不能單獨證明 playerdata 已持久化（見本 note F6-2c 的 Crossed 後 playerdata 存檔與「交給後續」F7 觀察）。M5 的 Windows atomic move `AccessDeniedException` 維持現有 fail-closed／退避，外部持有者仍未確認；Stronghold 靜態競態修正依使用者裁示延到 M6。F7 最終 commit／唯一 run-all／獨立 review 結果見本 note 末節。
 
@@ -10522,3 +10522,14 @@ controller直接讀本輪與CI-W1 full2的原JAR：release整檔bytes完全相�
 - Full WARN/ERROR 56/31（基準55/31）：唯一新增WARN原 `gate-full-0a371ebc32e341b5885f013d0c32a10d/execution/runtime-full.log:9597-9599` 是 `M2CorridorGameTests.beforeDisconnectJournalFlush` 受控拒絕，屬 handoff §6 已知項，不是未查明的 AccessDenied 根因。legacy0/0、M538/10沒有新殘差。動態UUID／digest與逐項原文比對在 `f7/runall/f7-final-compare/`，FULL_RESULT為OK，未歸屬實質差異0。
 - M5唯一節流結束列／SUITE_END：TPS85.5、waited11256、HOLD0、四權威unconfirmed=false；四個world/server restore原件皆exactRestored=true、deleted=false。主控讀原END、summary、XML/JAR hash、還原紀錄及WARN堆疊，見 `f7/docs/controller-final-readback.json`。
 - **下一步／界線**：F7完成，人工smoke及whole-branch review尚待；正常push已持續授權，新commit的遠端／CI另核。main仍a7e1be2、無m5 tag，整合與指定工作樹退役條件未達。AccessDenied維持已知限制，M6未開始。
+
+## F7 新版雙平台 CI／artifact 驗收（2026-10-24）
+
+- 行號：`ChamberControllerBlock.java:28`／`:40`（CI sources）；CI 原件用下列 run/job ID 與 freeze 定位。
+- **Review**：Step0 與 F7 的獨立 spec／quality 均 C0/I0/M0，範圍與原報告見前節；本次沒有程式變更，不再開相同 code review。主控獨立核對 collector 的原件；這不代替尚未完成的 whole-branch review。
+- **完成範圍與實際 push**：F7 `183d484..ec394ad` 已推送，2026-10-24 05:00 台灣時間 push exit0，遠端讀回 `ec394adff7e88203782bcda894cb6f20589efc09`。本輪 [Build run40023563006](https://github.com/Ben513242/QuantumChamber/actions/runs/40023563006) 固定該 SHA：Ubuntu `120653979972`、Windows `120653979755`、唯一 Ubuntu rerun `120662975743` 皆 success。第二輪 API 的 Windows 列沿用首輪時間，不算新執行。
+- 三輪 default179/179、M560/60、JUnit666，fail/error0；Ubuntu638PASS/28SKIP、Windows664PASS/2SKIP。具名 testcase／JUnit 集合同6b本機full，30項平台 outcome 差異逐項對四個 OS 註記；Windows cohort READY28/FAIL0。各唯一節流／SUITE_END、HOLD0、四權威 unconfirmed=false；TPS U1=87.5/W1=65.5/U2=85.4，waited10147/11291/10260。排除兩項具名長等待後 PREPARE 最大211/217/214 ticks；Ubuntu BEGIN59／records55與Windows60／56屬原生Windows案例的已知平台路徑差異。
+- 三份 release 各432entries/385classes，全部class bytes同F7本機基準；非class差異均換行。sources226逐entry對新的6b基準，非換行內容差異0；Controller宣告與return均為本類CODEC。兩次Ubuntu sources未壓縮內容及壓縮payload相同，整SHA差異歸timestamp/extra；其他順序／換行差異保留於比較報告，未歸屬內容差異0。不冒稱跨平台整JAR SHA相同。
+- 原件根 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f7/ci-ec394ad-20261024/`；freeze1 SHA `5faa8ab5b34c1e44d35f42459ce6cbb27fb512326a5f3069cb14e559a7f9a224`，freeze2 SHA `b2bfd74d29c803127742730b7aba2c19f8a889f1052fa8a35554b6e82db3d5d9`。主控直接核8+6原件SHA/size與三份nested JAR、原XML、M5 log，見兩份 `controller-attempt*-readback.json`；collector的逐項比較與短STATUS同根。下載內容只讀，未執行。
+- **最終本機 run-all** 沿用前節6b116e6的 `run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0、SUMMARY與原件hash見前節；本次純狀態同步不重跑。新治理commit只記已驗ec394ad，不冒稱其自身已完成CI。
+- **下一步**：人工smoke代操作問題已提出，尚未收到授權；不得以未答覆當同意。人工驗收、whole-branch review仍待，main仍a7e1be2、無m5 tag、worktree未退役，M6未開始。後續正常push持續授權，不再逐次詢問。

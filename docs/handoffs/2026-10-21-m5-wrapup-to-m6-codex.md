@@ -355,3 +355,14 @@
 - **差異**：release整SHA同；sources只四個main註解entry內容改變；具名集合、phase、pin同、worldgen四類0、世界還原exact。Full56/31多1既有M2受控斷線WARN，原stack已核；未歸屬實質差異0。
 - **未關finding／待裁示**：本輪無C/I/M，歷史deferred依note/spec保留，AccessDenied仍列限制。manual smoke未執行，代操作仍待明確授權；tag建立與M6範圍優先序仍待。正常push不再問；同一次main條件整合及指定M5不備份退役授權保留未用。
 - **下一步**：依持續授權push已完成內容並驗新SHA CI；依正式白話清單做required manual smoke（代操作須授權）→whole-branch review→docs truth／最終CI／條件main整合／tag／指定worktree退役。M5未整體結案、M6未開始。
+
+### 2026-10-24：F7 新版 CI 原件驗收完成，待人工 smoke
+
+- **HEAD／porcelain／range**：CI 固定 `ec394adff7e88203782bcda894cb6f20589efc09`，feature/m5-collapse、同步前 porcelain 空。F7 完成 range `183d484..ec394ad`；本筆只記錄 CI 結果，治理 HEAD 用 `git log -1 --format=%H --grep='^docs: record F7 CI acceptance and manual smoke handoff$'` 解析。不得把其後純文件 HEAD 當成已跑過本次 CI。
+- **push／遠端／main／tag**：ec394ad 已於 2026-10-24 05:00 台灣時間 push 成功；本筆提交前再次核 origin feature 同 SHA，local/remote main 仍 `a7e1be2dab7424bf067bda378c6edd7518bbaf7f`，local/remote 無 m5 tag。正常 push 持續授權；main 條件整合與指定 M5 不備份退役授權仍未用。
+- **CI**：[run40023563006](https://github.com/Ben513242/QuantumChamber/actions/runs/40023563006) 三個真 job 均 success：Ubuntu `120653979972`、Windows `120653979755`、第二次 Ubuntu `120662975743`，同 ec394ad；attempt2 的 Windows 沿用首輪，不多算一次。default179/M560 全 PASS，JUnit666 無 fail/error，Ubuntu28skip／Windows2skip 有 OS 註記歸屬。TPS 87.5／65.5／85.4，HOLD0、唯一 SUITE_END、四權威 unconfirmed=false。
+- **原件核對**：SDD `f7/ci-ec394ad-20261024/` 的兩 freeze 固定 8＋6 原件；主控直接重算全數 SHA/size 並讀原 XML/JAR/log，見 `controller-attempt1-readback.json`、`controller-attempt2-readback.json`。release385 class bytes 同 F7 本機基準；sources226 僅 LF/CRLF 與 ZIP metadata 差異，CODEC 宣告／回傳正確；未歸屬內容差異0。詳細 hash 與限制見 note 最新 CI 節。
+- **獨立 review**：沿用已完成的 Step0 與 F7 spec／quality，各 fresh 獨立 context，最終均 C0/I0/M0；本輪沒有程式變更，不重做同一實作 review。CI collector 與主控的原件複核不冒稱 whole-branch review。
+- **最終 run-all／SUMMARY**：沿用乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/179/windows89/legacy1/M560/60/perTest56+1/JUnit666/0fail/0error/2skip/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。依精簡裁示純文件不重跑。
+- **未關 finding／待決**：本輪無新 Critical／Important，歷史 deferred 及 AccessDenied 已知限制維持原處置。人工 smoke 未執行，代操作授權問題已提出但尚未答覆；建立 tag、M6 範圍／優先序仍待。正常 push 無需再問。
+- **下一步**：取得代操作授權或由使用者依正式清單執行 required manual smoke → whole-branch review → docs truth／最終 CI → 條件 main 整合／tag／指定工作樹退役。M5 未整體結案，M6 未開始。
