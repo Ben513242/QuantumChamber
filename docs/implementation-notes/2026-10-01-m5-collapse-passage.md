@@ -10450,3 +10450,44 @@ GitHub Actions [run39916471824](https://github.com/Ben513242/QuantumChamber/acti
 - 第一次gh log下載因CLI跳脫序列防護失敗，曾產生0-byte ubuntu-job-logs.zip；後續成功下載沿用該路徑而覆寫成1,153,815bytes，原空檔沒有保留。STATUS曾誤寫保留，已於封存前如實更正；失敗stderr只在當時工具輸出，沒有補造原件。成功原log另存.txt並納freeze，不能把覆寫記成失敗root完整保留。
 
 下一步先關CI-S1及驗證修正產物，再進F7前置Step0/文件、required manual smoke、整分支review、docs truth與里程碑整合。M5未整體收尾，M6未開始；沒有新增push/main/tag/退役授權。
+
+## F6 CI-S1：sources 欄位身分修正
+
+本節接續前節558 CI的來源包Important。正式code range為`8ca77d9..27a5039`（`bf3f04e`映射／oracle、`27a5039`取證入口修正），只改build、固定identity Tiny、verification oracle／入口與README五檔；production Java、公開API與workflow未改。證據根`$S`＝`.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/ci-sources-fix1/`；新的定向取證根在`.superpowers/source-remap/`。本機修正、review與run-all已完成執行，新SHA的遠端CI／artifact驗收仍待；不能把558原job成功當成修正後CI證據。
+
+### 行號（固定27a5039）
+
+- `build.gradle:227`：Yarn＋自有欄位identity layer；`:242`：只在mappingsConstants回接原Yarn constants；`:299`／`:307`：編譯與執行來源身分oracle，接入check/build。
+- `mappings/quantumchamber-codec-identity.tiny:1`：本類class／CODEC同名映射；`scripts/verification/SourceRemapOracle.java:1`：JDK AST＋ASM判準；`source-remap-check.ps1:1`：定向入口，`:16`的fresh checkout目錄問題列下一輪Minor。
+
+### Review 與本輪回歸裁示
+
+全新獨立context `/root/cis1_spec` Approved（C0/I0/M0）、`/root/cis1_quality` Approved（C0/I0/M1），均未參與實作、全程唯讀、不跑Gradle。兩者審查五檔與兩次focused原件；不冒稱它們另驗了其後的完整run-all、新CI或人工smoke。原文在`$S/spec-review.md`（SHA`62fdbf8f100500ff8f4532fec14969416196f46d897ffee24251ef153630f77a`）與`quality-review.md`（SHA`727389a9915c8ba5a21736b2178f99cb4ae26332efddbff39c551d7e18164386`）。Minor CI-S1-M1：fresh checkout尚無`.superpowers`時，定向wrapper先Get-Item會失敗；不影響check/build直接跑oracle或本輪已有目錄的證據，排下一輪Step0，不為Minor開本輪fix。它與既有F6-3e的gates task名稱辨識M-1是兩項。
+
+使用者指出主控過度細分派工、診斷與重複核對，要求簡化；主控已合併剩餘實作，沿用有效原件並取消非必要中間實驗。使用者進一步明確回答「同意，本輪採精簡回歸（建議）」：僅本次sources／build修正，在最終release整SHA同基準且fresh雙review C/I0的條件下，完整run-all由兩次減為一次，純文件更新不再觸發full。這兩個前提已以27a5039與原件成立；focused、新SHA雙平台CI／同SHA Ubuntu至少兩次、人工smoke及其他milestone關卡仍保留，不延用此例外到其他task。
+
+### 修正、RED／GREEN與界線
+
+固定Mercury／Lorenz的繼承補全會把父欄位改名帶入沒有自有identity entry的子類mapping。採用本類CODEC→CODEC明列映射；正式Tiny的原155,417行逐byte保留，只新增本類class／field兩行。Yarn layer保留unpick，並精確將Loom合成constants座標接回原Yarn constants；真解析證明定義bytes／constants SHA與原基準相同。沒有升固定版本，也沒有執行genSources；不把本機LF實驗當Ubuntu原生驗收，不宣稱已動態證明Ubuntu當次的訪問順序。
+
+原錯誤輸入在`$S/b2-baseline-red-f7b37a6284134d05b1927bbfa5fddb80`真remap後，Gradle本身exit0但獨立oracle為FAIL。正式oracle接入後，舊錯誤來源與缺entry均確實被拒；新wrapper的`wrapper-field-red-24115950c52e43ce923b04fa175cd571`要求明確的`SOURCE_REMAP_FIELD_REFERENCE_MISMATCH`，`wrapper-wrong-code-3dc8cf9df61d472ea63825db16b5c258`證明錯誤碼不符即使Gradle非零也不算有效RED。原Gradle exit與oracle判定分開保存。
+
+同一乾淨code HEAD `27a5039fa92d290f44e7acac9f9351615ab78d6b` 的兩次focused：`clean-green-1-b57e4452bbb04e4da1cdc3c3c4c7de69`、`clean-green-2-35e334b3e19247449d6f9465838ffe37`（均在`.superpowers/source-remap/`）。原命令`verifySourceRemap --rerun-tasks`，各Gradle exit0／oracle PASS、前後HEAD相同且porcelain空；這裡clean是Git乾淨，不是另執行gradle clean。工具pins及來源／release快照保存；controller直接讀log/result/JAR，收據`controller-final-focused-readback.json` SHA`c562ca0c515beeeed23b00e9fb42c6bbd028f7c6c10563a521ce18370b7990db`。兩份release整SHA同基準，sources226個entry內容同，整JAR SHA差異不代表內容差異。
+
+oracle只核本類欄位宣告／引用與release owner/name/descriptor，不是整份sources編譯認證；AST／ASM只讀artifact資料，不載入其中的class、initializer或processor。helper不進release／sources JAR。
+
+### 唯一完整回歸與產物
+
+`$S/runall/run-all-5435ef0d6da64f7486de613bb4b2bba0`的原`console.log:145`為`END ALL exit=0 HEAD=27a5039fa92d290f44e7acac9f9351615ab78d6b`。`summary.json` SHA`caf9c6efbd183229e9e13605ba1fe64f2f0983e91ba46d6fda0e6fbe82a5423a`。SUMMARY：default179/179、Windows89、legacy1/1、M560/60、perTest56+1、JUnit666（0 fail／0 error／2 skip）、WindowsCheckpoint17、release432entries/385classes、sources226/testmodHits0、main-only PASS、M3 4+5、M4 recovery24、M5 collapse69/HALT31、本機CI規則win/ubuntu PASS。這不是新GitHub CI或人工smoke結果。
+
+controller直接讀本輪與CI-W1 full2的原JAR：release整檔bytes完全相同，SHA`c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08`，因此全部385class與API不變。新sources整SHA`a1775f236e4ff060a57ed67b49243c5e226057040390590b8971f6cbe540ba86`；226 entries中只有`ChamberControllerBlock.java`內容改變，其餘225相同。目標entry由舊SHA`6d14817a97a161951abe6c8b5b4096bca0bae88cef9ce507182501f46bd10283`變為`2e530b1d6c63b3ca7c92d841755e6f11f1c3b1a631e0667978ed4e02dd6d202e`，唯一文字差是`return field_46280;`→`return CODEC;`。讀回收據`controller-full-readback.json` SHA`828ff63cc177da460e59a4ed434356c08d07fc3a25580cdd33d72468511244ad`。
+
+與CI-W1 full2比較：default179、legacy1、M560及JUnit666的完整帶class具名集合與outcome相同；M4 24／M5 69的schema、steps與具名真值相同。Full WARN/ERROR55/31、legacy0/0、M538/10；原文literal差異Full移86增86、M5移48增48、legacy0，既有分類器限定動態欄位後normalized removed/added/remaining均0，不把舊rawDifferenceCount欄當literal原文差異。pin逐batch及總數4/9/4相同，四類worldgen例外0；full/legacy/M5的exactRestored與main-only exactRestore皆true。M5 HOLD0，結束tps85.3。核心／逐行歸屬在`runall/cis1-27a-r2-compare/`；ZIP完整欄位對照在`runall/cis1-27a-r4-compare/`：226項DOS/NTFS時間差、目標CRC與原大小7744→7738／壓縮2343→2339，後續196項header_offset精確-4，無其他未歸屬差異。controller另核原log/summary、原JAR、差異收據與16個移置原件，沒有重新跑runtime或重算舊世界的整份manifest。
+
+### 原件保留、流程偏差與下一步
+
+早期B1的native啟動setup失敗不採計，明列owner的Java候選正式remap仍失敗而淘汰；暫改均還原，沒有提交production Java。B2的CRLF來源entry計數工具誤把226算成196；原FAIL保留，同一root後寫v2只是補充分析，違反新root規則且不採作該失敗分析轉GREEN，最終證據使用後續新root。詳細舊root索引見STATUS與stage-b1／stage-b2歷史報告，不重跑成功runtime改判。
+
+正式wrapper初版把證據放build、會遭Full的clean刪除，且Expected=FAIL只判任意非零；27a5039修正。五個舊root已核canonical／非reparse後原封移到`$S/formal-evidence/originals/`，16原檔以SHA讀回，保存來源→目的索引；新root在ignored `.superpowers/source-remap/`，保存工具pins與實際artifact快照。沒有補造舊root當時不存在的JAR快照，也沒有作repo外備份。此次full比較的setup變數遮蔽錯誤保留於cis1-27a-compare；初次ZIP metadata假設不符的cis1-27a-r3-compare也保留。核心採新label r2、ZIP歸屬採新label r4，沒有在失敗root改判，也沒有重跑run-all。
+
+本輪沒有新push。23:21（2026-10-23台灣時間）唯讀核origin feature仍5586384，local/remote main仍a7e1be2，local/remote無m5 tag。下一步取得新的單次feature push同意，再驗新SHA的雙平台CI／兩次Ubuntu／artifact；通過後才進F7前置兩項Minor、文件、required manual smoke、whole-branch review與里程碑收尾。M5未整體結案，M6未開始。
