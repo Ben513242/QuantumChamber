@@ -13,6 +13,7 @@ $ignored = [IO.Path]::GetFullPath((Join-Path $repo '.superpowers'))
 if ($Expected -eq 'FAIL' -and -not $ExpectedFailureCode) { throw '預期 FAIL 時必須指定 ExpectedFailureCode' }
 if ($Expected -eq 'PASS' -and $ExpectedFailureCode) { throw 'PASS 不接受 ExpectedFailureCode' }
 if ((Get-Item -LiteralPath $repo).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'repo 是 reparse point' }
+if (-not (Test-Path -LiteralPath $ignored)) { [IO.Directory]::CreateDirectory($ignored) | Out-Null }
 if ((Get-Item -LiteralPath $ignored).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw '.superpowers 是 reparse point' }
 $base = if ($EvidenceRoot) { [IO.Path]::GetFullPath((Join-Path $repo $EvidenceRoot)) } else { Join-Path $ignored 'source-remap' }
 if (-not $base.StartsWith($ignored + [IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'EvidenceRoot 必須在本工作樹的 .superpowers 下' }

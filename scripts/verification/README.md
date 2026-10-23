@@ -40,6 +40,8 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 
 CI-S1 的 sources remap 使用 Yarn `1.21+build.9:v2` 加上 `mappings/quantumchamber-codec-identity.tiny`；Yarn layer 保留原 unpick 定義，`mappingsConstants` 精確接回原 Yarn constants。定向檢查：`pwsh -NoProfile -File scripts/verification/source-remap-check.ps1 -Label <label>`。不加 override 時檢查本輪產生的 JAR；`-SourcesJar`／`-ReleaseJar` 僅供舊 artifact 負控，須搭配 `-Expected FAIL -ExpectedFailureCode SOURCE_REMAP_FIELD_REFERENCE_MISMATCH` 或 `SOURCE_REMAP_ENTRY_MISSING_OR_DUPLICATE`，且只有指定 oracle 錯誤才算有效負控。取證預設存於 ignored `.superpowers/source-remap/`，避開後續 `clean`。正式 `build` 經 `check` 執行此 oracle。
 
+F7 Step 0 的定向 harness 驗證入口：`pwsh -NoProfile -File scripts/verification/gradle-task-guard-check.ps1 -Label <label>` 直接載入 `gates.ps1` 的 `Invoke-Gradle`，在檔案操作前攔截，核對 bare／限定 `run` task 的拒絕與 `test` 放行；`pwsh -NoProfile -File scripts/verification/source-remap-init-check.ps1 -Label <label>` 在本工作樹的 ignored fixture 以 Gradle stub 執行來源 wrapper，核對缺目錄初始化、既有目錄、reparse 與 EvidenceRoot 邊界。每輪建立新 root；此入口不啟動 Minecraft。
+
 ## 執行
 
 全部 gates（M5 F3c 時約 15 分鐘；F6-1 加上 M5 collapse probe 之後的實測耗時記在 M5 implementation note 的 F6-1 段；以下指令在 repo 根目錄執行，腳本本身依檔案位置找 repo root）：
