@@ -10286,3 +10286,97 @@ observed JSON鍵列舉順序不同的phase：['w8late-restart']；完整前後�
 本節提交時，兩focused與第一輪完整回歸及比較已完成。**第二輪完整run-all尚未執行**：必須在本note的獨立docs commit之後，以新HEAD／新root執行，source／harness／README仍固定81c8ee2的bytes。原END／SUMMARY、第二輪全部差異、最後STATUS／manifest與逐檔readback完成後才交controller正式雙review；當時結果由 `f63e/STATUS.md`、completion與最後controller Review區塊記錄，不提前寫PASS。最終manifest明列排除controller-*與可變派工／裁示控制檔；evidence manifest不是整個runtime世界備份。
 
 本輪未GitHub CI、人工smoke、push、main合併、tag、PR、LICENSE、刪worktree，也沒有開始F7／M6。M5仍待後續既定驗收與收尾。
+
+## F6 CI 驗收（2026-10-22；固定 e6ac9f9，Windows 阻擋尚未關閉）
+
+- 本節只記錄已發生的 push／CI／唯讀取證；不冒稱後續修正或人工驗收已通過。
+- 行號以原 artifact 與 e6ac9f9 source 為準：Windows default log:4972/7535/7580/7651/7719/7946/9360；M2CorridorGameTests.java:549–572/1849–1872/2384–2419；CorridorPageManager.java:551–557/880–895/1035–1040。第二次Ubuntu M5節流原列為4701（controller以rg核對；取證者最終聊天4700為筆誤），SUITE_END為4699。
+
+### Review 與 controller 核對
+
+本次CI使用F6-3e正式雙review之後的治理HEAD e6ac9f900a0c7f6fe168720b222347ba145fac7c，來源／harness／README 399 pins與已驗證04ac7f3相同。F6-3e spec C0/I0/M0、quality C0/I0/M1的範圍與獨立context證據見前節；該結論不能代替Windows CI。CI取證 /root/ci_verify 及首敗分析 /root/ci_windows_triage 為不同的獨立context，全程未修改tracked或執行下載內容，這兩份調查不是新程式的spec／quality Approved。
+
+controller另直接讀兩輪原XML／M5 log、原Windows log、實際production/testmod來源，重算主封存673檔及追加7檔全部hash/大小，並直接比較原JAR每個entry。核對記錄為SDD `f6/ci-win-fix1/controller-ci-readback.json`。後續CI-W1程式變更必須另有兩份fresh review，不能沿用此調查context自評。
+
+### 實際 push 與兩輪 CI
+
+使用者授權的唯一一次feature push已執行成功：30666c4..e6ac9f9，原push exit0與ls-remote feature同SHA。該授權已用完，不延用到後續commit。沒有合併main、建立m5 tag或刪除worktree；人工smoke未執行，M6未開始。
+
+GitHub Actions run [39725384112](https://github.com/Ben513242/QuantumChamber/actions/runs/39725384112)，固定SHA e6ac9f900a0c7f6fe168720b222347ba145fac7c。
+
+- attempt1：Ubuntu build119647975265 success；Windows windows-native119647975026 failure。Windows「原生建置與GameTest」step失敗，default179中21fail；M5另行60pass，平台確認step因前一步失敗而skipped。JUnit666，failure/error0、skip2。
+- 為完成原任務同SHA兩次Ubuntu的明確要求，先凍結第一輪原件，再唯一rerun成功的Ubuntu job；不重跑Windows、不再次push。原INVOCATION/RESULT與前後metadata在 `f6/ci-20261022/rerun-control/`。
+- attempt2：Ubuntu新job119657600564 success；API另列Windows119657602315但起終仍是原04:58:49Z–05:20:12Z，證明不是第二次Windows執行。整輪結論仍failure。
+- Ubuntu原artifact為12402628961，新artifact為12404173597；未把同名舊artifact當第二次證據。兩輪default179/M560/JUnit666具名集合及結果相同，failure/error0。M5各真BEGIN59，另一項為Windows-only合法提早返回，不能說Ubuntu原生實跑60項。
+- Ubuntu TPS/waited：85.2/10264、86.4/10272，HOLD0；SUITE_END records55、converged=true、unfinished空、initialized=true，allocation/projection/discovery/catalog unconfirmed皆false。Windows M5為TPS55.9/waited11228、BEGIN60、records56，亦HOLD0及四權威健康。TPS是正式logger計算的整段平均，不冒稱中位數。
+- PREPARE全體最大616/616 ticks；依來源具名排除「阻擋玩家600tick／連續改動610tick」兩個刻意等待案例後最大218/216。Windows對應616與214；保留全體最大與各排除理由，不依數字直接剔除資料。
+
+### 產物與平台差異
+
+- 兩次Ubuntu release JAR逐byte相同，SHA-256 `eef4be5b935cc98dd272d33b3d60da194b2d95102e1a1b42d324bb515b81729c`，810270bytes／432entries。對本機原c20bc00的內容差異只有9個JSON CRLF→LF；Windows release `07763d47449a84fecde12b79bacafe9ec8043974182955e77f542d2739494a68`、810309bytes，對本機只另2個JSON LF→CRLF。全部class內容、entry名稱及順序同，ZIP date_time/extra/attrs/compression metadata無差；不由行尾差異推定Windows失敗原因。
+- 兩輪Ubuntu sources各226項內容／順序同，只差ZIP metadata。原SHA-256為b3438a597306cce52fb6ba6430c60f2210f7b3859e62fd0838335f217975dcf5、7978ab805682a6d33608f291deecccdc8647adc5bf2293175dce811aa71fb473。
+- JUnit三者同666具名集合：Ubuntu略過28個Windows-only（ClientLauncherTest13、PlayerCheckpointStoreTest3、WindowsPlayerCheckpointVerifierTest12），而實跑local/Windows略過的2個NonWindowsPlayerCheckpointStoreTest；淨差26。四個class的原annotation已直接核對，完整具名集合在追加JSON。
+- 原XML SHA不同，不能把具名結果集合相同寫成XML逐byte相同。原摘要SHA1/SHA2只是attempt1/attempt2的SHA-256簡寫，不是SHA-1演算法；追加報告已澄清。
+
+### 原證據、首敗與未完成項目
+
+SDD根 `f6/ci-20261022/`；CI-SUMMARY.md/json、ubuntu-attempt-comparison.json、CI-COMPARISON-ADDENDUM.md/json及STATUS.md為入口。attempt1保留213檔／20,214,712bytes，manifest SHA33ac7c121d419009ccbb62bf78d5b308bba4315b40693298f30f68c7dbea6b04；attempt2保留289檔／18,297,619bytes，SHAd391de1416b9f9ce4896b0937fb863b6d3c99e5042c03da278a768997c6369bc。主manifest673檔／42,505,465bytes、SHA796891fa3852e92b803b8f1b862b19d7441f089c9e8a0f35bebd3221bbd37446；追加7檔／141,290bytes、SHA4e964389c633097cee97dd5bfbc380632e66c5df2c132d2e69eef01051b58a40，controller獨立讀回全部相符。原ZIP/log/XML僅解析，未執行；網路／terminal escape拒絕與追加控制程式parse筆誤保留為控制層診斷，不當成runtime失敗或RED。
+
+Windows首敗native_cohort_walks_and_returns_south_windows，SID28d45847-1394-4667-b1f9-b173e5d26396。每stage10秒wall等待；自身slot2的266 chunks全FULL/loaded/ticking，slot3則338/91/91。另一組FULL=true只是固定chunk(62,125)診斷，不是整體ready。05:10:16Z已換batch，該SID幾何卻於05:10:28Z才完成elapsedMs21788；原cohort失敗路徑沒有正式返還／close。缺stage與完整predicate值，不能僅以21.788秒就選新timeout或宣稱已找出全部根因。
+
+歷史H9不適用：pin_capacity在05:06:17Z已先PASS，首敗後沒有同類pin溢出洪流。本次21fail按直接訊息為12件M2等待（含首敗）、6件allocator容量不足、3件M4等待；不能把後續20件全部歸因於首敗。production ready仍要求builds清空及所有target chunk FULL/loaded/ticking，目前未證明其契約有錯。
+
+整體CI尚未通過，F7／manual／whole-branch及里程碑收尾仍待。下一步為獨立CI-W1修正：先以具名partial-remap RED證明有限正式收尾，保留原FAIL、補診斷，再依量測評估有限等待budget；不得直接改production或以重跑掩蓋失敗。
+
+## F6 CI-W1：Windows 首敗的具名 cohort 等待與失敗收尾
+
+前節「F6 CI 驗收」保留固定 e6ac9f9 的原CI證據，本節接其後續本機修正。GitHub Actions run 39725384112 的 Windows default179中21fail仍是當時原 verdict，沒有因本機修正改判。Ubuntu同SHA兩次成功、Windows只跑一次的原件與hash見前節。本輪新commit尚未push，新Windows CI沒有執行，M5人工smoke／整分支正式review與main整合也都未完成。
+
+本節證據根`$E`＝`.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/ci-win-fix1/`（本worktree內，gitignored）；下文未冠前綴的root與報告路徑都相對`$E`。早期正式tracked入口的兩個**不同namespace**原root另為`$H`＝`.superpowers/verification/m2-cohort-failure/`下的`fixture-partial-exception-harness-partial-e2-dc6a9dbe5e72480fb5538e36c77d32fd`及`gate-m2cohort-harness-partial-e2-dc6a9dbe-2848bdec4eaf4ae6b4ac026c9c7d8582`：該次原GameTest exit1/XML179/唯一south原錯，獨立oracle PASS、source/world精確還原；兩root的完整path／原XML SHA`857a58daffd39b9a09551e12ca256db03b2cce680394c74d3181e7c4ea54d1ba`、log SHA`c771100ff407f5fed5816903bb99f94994631cb75d863cdca73ae073d9745361`也在`$E/STATUS.md`。不可只封存`$E`而漏掉`$H`。
+
+### 範圍與行號（以下皆為目前17eda6e source）
+
+- `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java:539–548` 是四個獨立GameTest：north方法名`native_cohort_walks_seam_splits_merges_and_returns_windows`，south/east/west方法名為`native_cohort_walks_and_returns_<direction>_windows`。各自共用`cohortWalk`的七段；原CI首敗與故障oracle.TEST均是south。舊派工中「單一XML testcase內四向」是錯誤表述，實際四個XML name已由本task `cohort-four-case-index.json`及四份原XML讀回更正，未回寫原XML。
+- Java :562–572只在已入場後的`walkStages`套用具名owner。`:576–633`的`CohortWaitTrace`每段各記一次BEGIN／READY／FAIL、epoch、mapping/lease bounds與target chunk FULL/loaded/ticking；wall上限由原10改成具名60秒。`:2603–2624`仍先判原predicate，未ready才受wall deadline／90000tick guard限制；`:2626`起的普通`when`仍10秒，案例`tickLimit=100000`未改。
+- Java :1938–1952於等待或ready callback的原RuntimeException進入`CohortFailureCleanup`，在GameTest原FAIL前收尾後重丟同一原錯。`:1953–2070`以正式LOW／`returnToOrigin`及獨立readonly witness確認presence、journal、來源完整bbox、保護可修改、space與release ack後才關owned連線；有限上限是wall60秒且tick不晚於`min(99000,startTick+20000)`。請求錯保留suppressed仍可依正式witness繼續；跨wall才安全關閉標`LATE_BACKEND_CLEAN`且保留原FAIL/timeout；無法確認則`INCOMPLETE`保留原錯及未關資源。此修正不涉及cohortWalk最初`activeReady`、其他M2 caller或正常`trustedTeardown`，也不修改production。
+- `scripts/verification/m2-cohort-failure-fixture.ps1:42–101/113–175/217–268`對原source bytes與本輪mutation在同一限制其他寫入的FileStream比對後才套用／還原，衝突不覆寫；原gateError、正式`gate.json`與execution結果另核。`m2-cohort-failure-oracle.py:20–54/115–139/191–265/299–327`只用Python3.8標準函式庫讀原XML/selected log及JSON憑證，拒同物件重複鍵與缺失／不合格式資料；同名鍵分屬不同巢狀物件則合法。south新lease是否真未ready，以同SID／stage唯一WAIT BEGIN的舊mappingSlot為基準，不採任一舊lease未ready的假證。`adapter.ps1`七種互斥testmod-only情境與README用法都在tracked `scripts/verification/`。
+
+### Review 與目前狀態
+
+固定Java commit range `e6ac9f9..4885bec`的獨立spec／quality前置預審C0/I0/M0，原報告`$E/spec-pre-review-4885bec.md`、`quality-pre-review-4885bec.md`。擴大harness預審由`/root/ciw1_spec_pre`／`/root/ciw1_quality_pre`固定eafa80d各判C0/I2/M0、C0/I3/M0，原報告`spec-expanded-pre-review-eafa80d.md`／`quality-expanded-pre-review-eafa80d.md`。fix1由全新`/root/ciw1_hfix1_spec`／`/root/ciw1_hfix1_quality`固定91b78ec各判C0/I1/M0（`hfix1-spec-review-91b78ec.md`／`hfix1-quality-review-91b78ec.md`），I-2的JSON同物件重複鍵尚未關。fix2由全新`/root/ciw1_hfix2_spec`／`/root/ciw1_hfix2_quality`固定17eda6e各判C0/I0/M0，I-2關閉（`hfix2-spec-review-17eda6e.md`／`hfix2-quality-review-17eda6e.md`）；同兩獨立context另對整輪code前置範圍`e6ac9f9..17eda6e`提出C0/I0/M0候選，原報告`ciw1-code-spec-pre-17eda6e.md`／`ciw1-code-quality-pre-17eda6e.md`。這些都不是CI-W1整輪正式Approved；此時兩次正常focused與第一次full1已通過，第二次full及最後整輪review仍待完成。
+
+### Commit、RED／GREEN與不採計界線
+
+本地range `e6ac9f9..17eda6e`九個commit：`8c78078`具名診斷、`40282d3`有限失敗收尾、`4885bec`只改CohortWaitTrace 10→60秒；`2554677`正式三檔harness、`60681b5`README；`eafa80d`新lease oracle基準、`6974e1c`source guard/正式gate/slow判讀、`91b78ec`README更新、`17eda6e`嚴格JSON receipt reader。`src/main`、build與CI未改。F6-3e的399份source/harness/README pin在本輪成402：原399中397項raw SHA同，變更僅M2 testmod Java與verification README，另加fixture／adapter／oracle三檔；逐檔raw SHA、Git blob與bytes見本task `runall1-source-pin-compare.json`。
+
+`eafa80d`的窄oracle fix時序須按原件讀：先在60681b5之上編輯未stage草稿，後補`harness-lease-oracle-fix-prompt.md`與固定舊blob`24b8229b...`的資料RED；在提交之前補齊同root舊PASS／新reader精確拒`realNewLeaseNotReady`、七原root回放與mapping負控，最後才獨立commit。不能倒寫成一開始已先完成細項派工和RED，也不能把修分析器說成新Minecraft runtime GREEN。
+
+下表的gate名均在`$E`內；「原exit」是正式GameTest原結果，故障情境的獨立oracle PASS只表示故障契約成立，不把原FAIL變成PASS。數值來自原XML／selected log與保存的source/world restore，詳細SHA與fixture root見`$E/STATUS.md`。
+
+| 情境／採計界線 | 正式gate root（相對`$E`） | 原exit／核心證據 |
+| --- | --- | --- |
+| partial RED（配對基準） | `gate-ciw1-red-third-db72e781f1f84f27bdce2d4fcf31f0b8` | 1；south stage3 expected5/current4、instances1/leases3、新slot真未ready，下一batch後舊SID仍完成幾何；原不安全收尾 |
+| 等待timeout RED | `gate-ciw1-timeout-first-0135feca70c64267aa64e19a8c6596d8` | 1；真正有限等待逾時，失敗後100 server ticks的下一batch仍見同SID ACTIVE／flushed SUPERPOSITION；只證測試waiter逾時 |
+| partial 修後安全FAIL | `gate-ciw1-red-green-witness1-44f12614faf343ce82d58b21d3fd6477` | 1；原south仍`CI_W1_PARTIAL_WAIT_FAIL`，原FAIL前及下一batch後owned資源與連線獨立全乾淨；oracle PASS |
+| return請求故障可恢復 | `gate-ciw1-red-request-retry-green1-29fdc856579b4c7b95e9ebe8c1928f59` | 1；`CLEAN_WITH_RETRY_ERROR`、原錯與`CI_W1_CLEANUP_FAULT` suppressed 1，正式witness安全後關線；oracle PASS |
+| witness持續故障負例 | `gate-ciw1-red-witness-deadline2-0f81e458a73c47e99be02a11713e5ed8` | 1；`INCOMPLETE`於tick=deadlineTick=26147、elapsed39133ms，原錯type/message/cause及suppressed保留，連線仍在；只採有界失敗 |
+| 跨wall晚安全收尾 | `gate-ciw1-red-late-crosswall1-61e91acbca7c433a82e716602a80764f` | 1；到期後純witness安全才關線，overdue約251ms、`LATE_BACKEND_CLEAN`、到期後request/schedule各0，原FAIL＋timeout suppressed保留 |
+| 真pending停頓、舊10秒 | `gate-ciw1-e1-old10-slow25-2e574827d3494171b2fee654749ec4b6` | 1；同tick停頓25003ms前後原predicate仍false、新lease未ready；elapsed25056ms／remaining−15056ms後有限FAIL並安全清理 |
+| 同選點、具名60秒 | `gate-ciw1-e1-new60-slow25-eb4f6a8a8c8a458d8bb0c2ca28eff147` | 0；停頓25001ms後仍false，直到elapsed29038ms才原predicate真READY；XML179/0、28段READY |
+| 永久false有限性負例 | `gate-ciw1-timeout-new60-false1-3bc2fff5d5b54a148eea5a78f6fc3675` | 1；測試predicate強制false，elapsed60001ms／remaining−1ms，當時production mapping與兩個182chunk lease已ready；530ms／21ticks後安全CLEAN，不能稱production仍未ready |
+
+原首敗的有效窄RED是stage3 south真partial／chunk未就緒時，舊錯在下一batch後舊SID仍繼續；另一個真正等待逾時RED也見跨batch殘留。修後partial-exception正式入口原GameTest仍179中唯一south FAIL，獨立資源oracle卻核原FAIL前及下一batch後owned SID/玩家/連線/lease均乾淨。舊10秒加一次25秒真pending停頓有限FAIL且安全清理；具名60秒在同選點需原predicate再真READY才原GameTest179/0，永久false於60秒仍有限FAIL（當次production mappings已ready，不能稱production持續未ready）。請求受控錯後正式witness完成的GREEN、witness持續故障的有界INCOMPLETE負例、跨wall晚安全close的GREEN，均保留原FAIL與suppressed的獨立判讀；實值與root索引見owner `STATUS.md`及`fix1/`、`fix2/`新報告。
+
+正式harness的七情境在保存原runtime上唯讀回放；fix1對外部source編輯、正式gate後段錯誤及slow舊slot假未ready各先有原bytes／真CLI資料RED，再有修後讀回；fix2同物件`gate.json`先FAIL後PASS的真CLI RED由舊reader錯PASS，修後direct及OracleOnly均非零且`invalidReceipt`列路徑／status鍵。八項重複鍵控制、四項缺檔／格式控制、25份原資料回放及17份fix1定向／控制補充回放彼此分開計數。合法JSON語意負控的Python退出約定仍可為0，但wrapper遇oracle FAIL必非零；原正式GameTest verdict從未被獨立oracle改寫。fix2提交前真語法file log為`fix2/precommit-syntax.log`，SHA256`a5b2ef7b39c7a75ccfddffa612b4998c2c7ffa5ff1f28fee3646ed95c1968b83`；fix1的語法檢查原輸出只在當時工具紀錄，事後補存不可冒稱提交前file log。
+
+不採計／控制層根皆保留：第一次partial一般CIM preflight拒絕未啟Minecraft；第二次partial adapter另有nullguard，只作窄觀察、不作配對基準；早期PowerShell XML自動展開與多次oracle巢狀欄位解析INVALID，修分析器沒有改原gate；最初FailWitness只採有界／殘留窄證據，後續才補原Throwable receipt；source guard首輪自測因SHA大小寫控制錯失敗，下一新root六項PASS；fix2第一控制driver因Windows路徑分隔符的分析斷言停止，controls-v2另根採計；17份補充回放第一次driver把I-2語意負控誤要求formalGate=true，原七份不採，v2新報告採計。所有原root不覆寫、不把控制層失敗稱Minecraft RED／GREEN。完整路徑、SHA與採計版本在本task `STATUS.md`。
+
+### F1／F2目前正式回歸（固定乾淨17eda6e）
+
+F1新兩次完整default `gates.ps1 -Mode GameTest`，root為`focused-postfix2-1/gate-ciw1-postfix2-1-c9d4cf7fa74646068a63398af627e5e6`與`focused-postfix2-2/gate-ciw1-postfix2-2-492c619f68f94212954bb7f77f49fa21`。各自原execution exit0、scope179/179、XML179/0、四個獨立cohort案例各PASS、四SID×stage0–6 READY28／WAIT FAIL0、world exactRestored=true與source blob`20cdab18`不變。兩輪完整`classname|name|outcome`集合與彼此及F6-3e最後Full相同；原XML/selected log SHA及readback在本task `focused-postfix2-*-readback.json`、`focused-postfix2-pair.json`、`cohort-four-case-*.json`。
+
+F2第一次完整`run-all.ps1`根`runall1/run-all-a05c7723437e472db4b575ae47a75f3d`，原`END ALL exit=0 HEAD=17eda6e`，SUMMARY：default179/179（Windows89）、legacy1/1、M560/60、perTest56+1、JUnit666/failure0/error0/skip2、WindowsCheckpoint17、release432entries/385classes、sources226/testmodHits0、Main-only PASS、M3 4+5、M4 recovery24、M5 collapse69（31 HALT）、CI規則Windows／Ubuntu PASS。`summary.json` SHA256`4a2cc34586188ad422b0b1d07681d4863cbbf3a4b2f4de472d3bc23c9f04de83`。
+
+對F6-3e最後`$E/../f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361`逐項比較：default／legacy／M5與JUnit完整帶class具名集合及outcome一致；release SHA仍`c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08`。sources新整檔SHA`3762c71ac660c0dc4f77fc3e777c34294e6e9b2425bf73fb4ce36ae6a96c8693`不同，但226個entry內容／順序與原壓縮payload相同，226份DOS/NTFS extra時間欄差異逐項解碼，沒有非時間差。Full WARN/ERROR55/31、legacy0/0、M538/10；完整原line multiset的literal差異Full移86增86、M5移48增48、legacy0，具名動態欄位歸屬後normalized removed/added/remaining皆0；不能把raw literal寫成0或把舊`rawDifferenceCount`當raw。pin逐batch同、總4/9/4；106份原log的四類worldgen例外0。M4 24/M5 69 receipt身分、schema/phaseTable/steps與基準同形，M5 2035個observed具名鍵與基準同集合且本輪真值全true；M3九階段正式收據與13份schema2非空當次log manifest全核。兩者的runtime-log manifest皆schema2、頂層與identity欄集合一致；`runall1-audit/runtime-log-schema2.json`舊`added`三欄其實沿用更早schema1→2歷史metadata，更正見`runall1-audit/runtime-log-schema2-v2.json`，不能算CI-W1新增。該稽核row.sha256指`manifest.fullPath`的`runtime-full.log`，不是manifest JSON本身；M5 crash receipt的合法status/ending為HALT/HALT、正常stop為PASS/STOP。比較原值／歸屬與工具快照見`runall1-compare/`、`runall1-audit/`、`runall1-source-pin-compare.json`；runall1根3813檔／507,956,730bytes的SHA256 manifest二次逐檔讀回全符，`runall1-manifest.json` SHA256`f203192e50ca88424bbe29c734e9d9ead1240b059e08fef23a9dbf242578a68c`。這些是本機回歸，不是新版GitHub Windows CI結果。
+
+此時第二次完整run-all與CI-W1整輪最後獨立review尚待完成；不能寫「CI-W1正式結案」「M5可整合main」。
