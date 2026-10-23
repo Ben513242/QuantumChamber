@@ -43,6 +43,8 @@ milestone implementation → automated gates → required manual smoke → task�
 
 **M5退役專屬裁示（2026-10-22）**：使用者 2026-10-22 明確裁示：M5 合併 main 後，刪除 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，包含其中 run/、.superpowers/ 與其他檔案；不做外部備份或另留副本。這是該次指定工作樹退役的授權，取代先前對此 M5 工作樹的搬出世界／備份前提；不授權現在合併 main、建立 tag，或刪除其他工作樹。退役仍依里程碑順序，先核對 main 包含最終 M5 commit、實際 tag 狀態、唯一 canonical absolute target、非 reparse、無 live Java owner 且 session.lock 已釋放。 這只適用本次指定M5工作樹；原始SDD／run資料退役後不另保留，tracked摘要留在Git。
 
+**M5整合專屬裁示（2026-10-22稍後）**：使用者明確指示「記得m5沒問題後合併main然後再push」。在M5 automated/雙平台CI、required manual smoke、task及whole-branch review與docs truth都完成後，已授權一次main `--ff-only`合併及其後一次push main；兩次操作各自的條件授權尚未使用。此授權不含下一次feature push、建立或推送tag；tag `m5`仍另取同意。派工MD由controller評估：必要長期內容整理到tracked文件/模板，一次性ignored派工不force-add、指定M5工作樹退役時一併刪除，不另留副本。
+
 一般規則（上述M5專屬裁示取代其搬出世界與外部備份要求）：刪除其他 worktree（包括當時的 `.worktrees/m1-chamber`）之前，必須先完成：
 
 - 使用者世界與驗收世界移到 repo 外，例如使用者自有世界 `run/client-base/saves/新的世界test (1)`（2026-09-29 做過 B-5 預驗，已含 DORMANT receipt；處置見人工驗收清單 2.5 (a)）。
@@ -99,8 +101,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：F6-3c-2、F6-3d三段與F6-3e本機實作／驗證／獨立review皆完成（2026-10-22）。F6-3e range `4ba0496..04ac7f3`；全新獨立spec ✅ C0/I0/M0、quality Approved C0/I0/M1；原S-M1/Q-M1關閉，新Minor交F7前置Step0。兩focused與兩full皆通過，最終SDD `f6/f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361` 在乾淨04ac7f3精確END0。使用者已授權目前這批工作的單次push，治理文件同步後執行，再驗雙平台CI；目前尚未push。M5未整體結案，M6未開始。詳交接檔§7與note Review。
-- Git 狀態（2026-10-22 11:49，台灣時間，唯讀核對）：origin feature=`30666c4`，本機main與remote main=`a7e1be2`，本機／遠端無m5 tag；當時只有保留daemon23372、無非daemon Java。尚未push／merge／tag／刪worktree。這次feature push及M5合併main後不備份退役已各獲一次明確授權；後續push、main合併、tag及其他worktree刪除仍另取同意。
+- 目前：F6-3c-2、F6-3d與F6-3e本機工作已完成；e6ac9f9推送後原Windows CI失敗，CI-W1已於2026-10-23完成本機修正與正式獨立spec/quality review（各C0/I0/M0，range e6ac9f9..027e5e8）。兩focused固定17eda6e，兩full END0；note後最後SDD `f6/ci-win-fix1/runall2/run-all-835e5a71ed2c48bab946d5c4e5776ef7`固定乾淨027e5e8。46,551唯一原檔與402pins經controller及兩reviewer讀回全符。下一步取得新單次feature push同意，再驗新版雙平台CI與同SHA至少兩次Ubuntu M5；F7前置M-1、文件、人工smoke及整分支review仍待。M5未整體結案，M6未開始。詳handoff§7及note Review。
+- Git 狀態（2026-10-23 13:14台灣時間唯讀核對）：origin feature=`e6ac9f900a0c7f6fe168720b222347ba145fac7c`，local/remote main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`，local/remote無m5 tag。本輪新commit未push，未main合併/tag/刪worktree；舊feature單次授權已於e6使用。main合併→push main及指定M5不備份退役的一次條件授權保留未用，tag/新feature push/代操作人工smoke仍須另同意。最新治理HEAD依handoff§7的唯一commit指引查核。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：
@@ -207,6 +209,6 @@ M5 第一切片的硬界線（使用者 2026-10-01 指示；細節以 M5 spec �
 2. 實作採 Subagent-Driven Development（見上方「開發與 review 流程」）。每次派工明列允許修改的路徑；不在別的 task 裡順手修已排入其他 task 或 milestone 的項目。
 3. 前置 hardening 已完成（plan 的 H1–H4）：codec strictness、只看相關 chunks 的存檔 checkpoint、未 checked authority 的 fail-closed 收斂、凍結時的位置修正。2026-09-30 留給 M5 的 4 項，處置見 M5 spec §4 與 §17 的延後清單 triage。
 4. Gate：以 `pwsh -NoProfile -File scripts/verification/run-all.ps1` 作為回歸基線。T0 已在 clean clone 實跑通過。M5 新增的 gate 擴充進 `scripts/verification/`，並經 review。以重導輸出的方式呼叫 `run-all.ps1` 時，外層要等 Gradle daemon 結束才會返回；判斷完成請看 `END ALL` 行。
-5. Milestone 收尾，順序固定：automated gates → required manual smoke（寫入 tracked note）→ task 與 whole-branch review → docs truth → push feature → 確認 GitHub Actions 雙平台通過 → `--ff-only` 合併 `main` → tag `m5` → 依 worktree 退役流程完成外部備份與驗證，之後才刪除 worktree。
+5. Milestone 收尾，順序固定：automated gates → required manual smoke（寫入tracked note）→ task及whole-branch review → docs truth → 新授權push feature → GitHub Actions雙平台通過 → 依上述條件授權 `--ff-only`合併main後push main → 另獲同意建立tag `m5`（tag推送亦須明確同意）→ 依M5退役專屬裁示刪指定工作樹、不備份/不留副本。其他worktree仍適用一般備份規則。
 
 `docs/handoffs/2026-09-24-m4-task9-resume*.md` 已完成，只保留為歷史紀錄，不再是接手入口。

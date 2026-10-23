@@ -846,7 +846,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
     - **F6-3e（本機實作與review已完成）**：2026-10-22，`4ba0496..04ac7f3`；Step0兩Minor關閉、default新增33/M5全60精確清單、HOLD/TPS/四權威守門。唯一src變更是核定M5UniverseHold診斷，production不變。兩focused同乾淨81c8ee2、兩full END0；最終 `f6/f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361` 在note後04ac7f3。全新獨立spec ✅ C0/I0/M0、quality Approved C0/I0/M1；新增M-1交F7前置Step0。
       - S-M1：已關閉；phaseTable核Count及Ordinal逐項，真69通過、合併68與case漂移精確拒絕。
       - Q-M1：已關閉；schema2對成功Minecraft核非空當次log，缺失／全舊／空檔精確拒絕；JUnit/compile/原失敗明列不適用，exit23不被capture錯誤遮蓋，未改X4。
-    - 本次目前這批commit的單次push已獲使用者2026-10-22授權，治理文件同步後執行一次，再驗雙平台CI與同SHA兩次Ubuntu M5；截至本筆尚未push。後續每次push仍另問。
+    - 原單次feature push已於e6ac9f9完成（2026-10-22）；原GitHub run39725384112 Ubuntu同SHA兩次成功、Windows default179中21fail。
+    - **CI-W1（2026-10-23本機完成）**：range e6ac9f9..027e5e8，僅M2 testmod/三個驗證工具/README/note；code17eda6e、note/runtime/review027e5e8。兩次正常focused、兩次完整run-all END0，最後 `f6/ci-win-fix1/runall2/run-all-835e5a71ed2c48bab946d5c4e5776ef7`。獨立spec/quality均Approved C0/I0/M0，全部原I關閉；46551唯一證據檔與402pins全量讀回相符，雙基準差異逐項歸屬。原Windows失敗未改判，新版本未push/CI未驗；下一步先取得新的單次feature push同意，再完成雙平台與同SHA兩次Ubuntu M5，之後才F7前置M-1及文件。原runtime/review pin不因後續治理docs改寫。
   - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
   - boundary oracle 以 PID 挑 receipt 時的碰撞。
   - Windows journal 原子移動的 `AccessDeniedException`：使用者 2026-10-21 裁示 M5 維持現況、列為已知限制；不加 production 短暫重試。F7 說明既有 fail-closed／退避與外部根因仍未證實的界線。
@@ -1008,7 +1009,7 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 4. docs truth。
 5. push `feature/m5-collapse`。
 6. GitHub Actions 雙平台通過。
-7. `git merge --ff-only` 合併 `main`，annotated tag `m5`（使用者 2026-10-01 開工指示指定的名稱）。
+7. 上述M5門檻全數成立後，依使用者2026-10-22稍後的一次條件授權，以 `git merge --ff-only` 合併main，再push main；授權尚未使用，不含新feature push。annotated tag `m5`名稱維持原指定，但建立tag與推送tag仍須另取明確同意。
 8. M5退役依使用者2026-10-22新裁示：合併main後，按本順序刪除指定m5-collapse工作樹及其run／.superpowers等檔案，不做外部備份、不留副本；這一次刪除已獲條件授權。仍須核main／tag實況、canonical target、非reparse、無live Java及lock釋放；不刪main checkout或其他worktree。
 
 ## Completion Evidence
