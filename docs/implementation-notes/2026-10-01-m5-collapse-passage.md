@@ -10491,3 +10491,15 @@ controller直接讀本輪與CI-W1 full2的原JAR：release整檔bytes完全相�
 正式wrapper初版把證據放build、會遭Full的clean刪除，且Expected=FAIL只判任意非零；27a5039修正。五個舊root已核canonical／非reparse後原封移到`$S/formal-evidence/originals/`，16原檔以SHA讀回，保存來源→目的索引；新root在ignored `.superpowers/source-remap/`，保存工具pins與實際artifact快照。沒有補造舊root當時不存在的JAR快照，也沒有作repo外備份。此次full比較的setup變數遮蔽錯誤保留於cis1-27a-compare；初次ZIP metadata假設不符的cis1-27a-r3-compare也保留。核心採新label r2、ZIP歸屬採新label r4，沒有在失敗root改判，也沒有重跑run-all。
 
 本輪沒有新push。23:21（2026-10-23台灣時間）唯讀核origin feature仍5586384，local/remote main仍a7e1be2，local/remote無m5 tag。下一步取得新的單次feature push同意，再驗新SHA的雙平台CI／兩次Ubuntu／artifact；通過後才進F7前置兩項Minor、文件、required manual smoke、whole-branch review與里程碑收尾。M5未整體結案，M6未開始。
+
+## CI-S1 新版 CI 驗收與持續 push 授權（2026-10-24）
+
+- 行號：以下以本節標題及原件相對路徑定位。
+- Review／關閉：CI-S1 code range `8ca77d9..27a5039` 已有全新獨立 spec C0/I0/M0、quality C0/I0/M1（見前節）；本輪只驗修正後真CI，沒有程式變更，不重做同一code的review。controller獨立讀原件後關閉原artifact Important；fresh-checkout Minor仍交F7 Step0。本輪沒有新Critical／Important。
+- `db029fa4db7e4e6dfa0201634f4988515fa27b1e`於2026-10-24 00:54台灣時間單次push，exit0，遠端同SHA。Build [run39990661331](https://github.com/Ben513242/QuantumChamber/actions/runs/39990661331)：Ubuntu `120541258937`、Windows `120541259085`、唯一Ubuntu rerun `120554503154`皆success。同SHA已滿兩次Ubuntu；attempt2沿用Windows結果，不算第二次Windows。
+- 三輪default179/179、M560/60、JUnit666且fail/error0；Ubuntu638PASS/28SKIP、Windows664PASS/2SKIP，30個OS outcome差異已對到四個tracked class註記。Windows cohort READY28／FAIL0。M5各唯一節流與SUITE_END、HOLD0、四權威unconfirmed=false；TPS U1=87.5、W1=59.4、U2=87.5，waited=10191／11202／10138。
+- 三份release432entries/385classes全部class bytes與本機27a相同，對558同平台release未壓縮內容0差異。sources226項對本機27a只差LF/CRLF；對558僅Controller來源一項實質修正，本類第28行CODEC宣告與第40行return CODEC，對應release Fieldref。兩Ubuntu source壓縮payload同，整SHA差異為timestamp/extra；未歸屬內容差異0。跨平台換行不冒稱整JAR SHA相同。
+- 原件根：`.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/ci-db029fa-20261024/`。freeze1 SHA `ec2c9fb343b6e1a4f4d12154b577d3f5dc2ba017a2be61254e26eae3b1e95217`、freeze2 SHA `908eeb4a9005cc3492f0449e93b7eda78c7cd41c634d0c4e23edc01774ffa649`；controller直接重算8+6原件全部吻合，見`controller-raw-readback.json`。原XML/log另見`controller-runtime-readback-v2.json`；v1檔名分類誤把兩個JUnit class算進GameTest，保留但不採計分類，v2直接重讀原XML更正，非runtime重跑。
+- 最終本機run-all沿用前節乾淨27a的`run-all-5435ef0d6da64f7486de613bb4b2bba0`，END ALL exit0：default179、windows89、legacy1、M560、perTest56+1、JUnit666/0fail/0error/2skip、windowsCheckpoint17、release432/385、sources226、testmodHits0、MainOnlyPASS、M3 4+5、recovery24、collapse69/HALT31、ci win/ubuntu PASS。純文件依使用者精簡裁示不再重跑。
+- 使用者最新裁示：後續正常push持續授權，無需逐次詢問；不含force push／刪遠端ref，tag建立與manual代操作仍依各自授權。main仍a7e1be2，無m5 tag，指定worktree未退役。
+- 下一步：F7盤點已完成，先修兩項harness Minor，再做文件與人工smoke清單、獨立review。人工smoke、whole-branch review及milestone整合仍未完成；M6未開始。

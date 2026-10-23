@@ -984,13 +984,13 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 
 ---
 
-### F6 CI-S1：來源包欄位身分修正（本機完成，待新SHA CI）
+### F6 CI-S1：來源包欄位身分修正（本機與新版CI完成）
 
 code range `8ca77d9..27a5039`，兩個commit只改build、固定identity Tiny、窄來源oracle／入口與README五檔；production Java／公開API不變。原錯誤來源真RED、修正後同clean27a兩focused GREEN；fresh spec C0/I0/M0、quality C0/I0/M1。Yarn unpick/constants保留，release整JAR SHA仍c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08。
 
 使用者明確同意本輪精簡例外：最終release同SHA且fresh雙review C/I0後，完整run-all兩次改一次、純文件更新不再觸發重跑；focused、新SHA雙平台CI／同SHA兩次Ubuntu、人工smoke仍保留。唯一 `f6/ci-sources-fix1/runall/run-all-5435ef0d6da64f7486de613bb4b2bba0` 在27a精確END ALL exit0，具名集合、pin、worldgen、WARN/ERROR與sources差異均已歸屬。此例外不延用其他task；初始過度細分的實驗／派工不再重做。
 
-下一步先取得新feature push明確同意，驗新SHA雙平台CI及artifact後才關CI-S1遠端驗收／進F7。原失敗root保留；CI-S1-M1（fresh checkout目錄初始化）按Minor規則交下一Step0，不回頭開本輪fix。詳note末節、handoff§7與SDD f6/ci-sources-fix1/STATUS.md。
+2026-10-24已將db029fa單次push，run39990661331的Windows一次及同SHA Ubuntu兩次成功，artifact差異全歸屬，CI-S1關閉，可進F7。後續正常push已持續授權，不再逐次詢問。原失敗root保留；CI-S1-M1（fresh checkout目錄初始化）按Minor規則交下一Step0，不回頭開本輪fix。詳note末節、handoff§7與SDD f6/ci-sources-fix1/STATUS.md。
 
 ### Task F7: 文件
 
@@ -1018,7 +1018,7 @@ code range `8ca77d9..27a5039`，兩個commit只改build、固定identity Tiny、
 4. docs truth。
 5. push `feature/m5-collapse`。
 6. GitHub Actions 雙平台通過。
-7. 上述M5門檻全數成立後，依使用者2026-10-22稍後的一次條件授權，以 `git merge --ff-only` 合併main，再push main；授權尚未使用，不含新feature push。annotated tag `m5`名稱維持原指定，但建立tag與推送tag仍須另取明確同意。
+7. 上述M5門檻全數成立後，依使用者2026-10-22稍後的一次條件授權，以 `git merge --ff-only` 合併main，再push main；合併授權尚未使用；正常push依2026-10-24持續授權。annotated tag `m5`名稱維持原指定，建立tag仍須另取明確同意。
 8. M5退役依使用者2026-10-22新裁示：合併main後，按本順序刪除指定m5-collapse工作樹及其run／.superpowers等檔案，不做外部備份、不留副本；這一次刪除已獲條件授權。仍須核main／tag實況、canonical target、非reparse、無live Java及lock釋放；不刪main checkout或其他worktree。
 
 ## Completion Evidence

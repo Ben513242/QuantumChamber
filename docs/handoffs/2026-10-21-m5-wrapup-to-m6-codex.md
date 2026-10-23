@@ -92,7 +92,9 @@
   - SUITE_END 核對四個權威，不只 catalog。
 - 驗收：`ci-rule-check.ps1` 的兩個 step 都 PASS；每一類都要有 mutation（`-Mutation drop`、`-MutationXml m5`、`-SourceMutation rename-windows`）；run-all 全綠。
 
-### 3.4 CI-S1本機修正完成，待新SHA CI
+### 3.4 CI-S1 已完成新版 CI／artifact 驗收
+
+2026-10-24：指定db029fa已單次push；run39990661331兩Ubuntu與一Windows真job成功，原件／sources修正通過，CI-S1關閉。詳§7最後一筆。下列558及本機待驗句保留為前階段紀錄，以此最新狀態為準。
 
 使用者指定的5586384已於2026-10-23單次push，origin feature即時核同SHA。新run39916471824：Windows job120291020173成功，Ubuntu job120291020358與一次必要rerun的新job120302805133均成功；兩Ubuntu M5 tps90.6/85.4、Windows58.9，default179/M560各全PASS。原e6 run39725384112的Windows21fail保留，不改判。
 
@@ -130,7 +132,7 @@
 4. docs truth：不提前寫「已合併 main」「已 push」「人工驗收已通過」。
 5. push `feature/m5-collapse`（**使用者明確指示**）。
 6. GitHub Actions 雙平台通過。
-7. 門檻全數完成後，依使用者「m5沒問題後合併main然後再push」的一次條件授權，`git merge --ff-only`合併main後push main；授權未用。annotated tag `m5`的建立與tag推送仍另取明確同意，不包含在main push授權中。
+7. 門檻全數完成後，依使用者「m5沒問題後合併main然後再push」的一次條件授權，`git merge --ff-only`合併main後push main；授權未用。annotated tag `m5`的建立仍另取明確同意；正常tag推送依2026-10-24持續push授權。
 8. M5退役依使用者2026-10-22最新裁示（**本次指定刪除已授權，條件尚未達成**）：使用者 2026-10-22 明確裁示：M5 合併 main 後，刪除 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，包含其中 run/、.superpowers/ 與其他檔案；不做外部備份或另留副本。這是該次指定工作樹退役的授權，取代先前對此 M5 工作樹的搬出世界／備份前提；不授權現在合併 main、建立 tag，或刪除其他工作樹。退役仍依里程碑順序，先核對 main 包含最終 M5 commit、實際 tag 狀態、唯一 canonical absolute target、非 reparse、無 live Java owner 且 session.lock 已釋放。
    - 不使用會另存恢復快照的封存替代流程；只處理指定m5-collapse工作樹，不刪main checkout或其他路徑。原始SDD／run資料退役後不保留，tracked摘要／hash保留於Git。
 
@@ -155,7 +157,7 @@
 
 ## 4. 等待使用者裁示的事項
 
-- 5586384的單次feature push授權已於2026-10-23實際使用；下一次feature push仍須新的明確同意。建立/推送tag、代操作manual smoke及其他worktree刪除仍依具體階段裁示。
+- 2026-10-24使用者已授權後續正常push，不再逐次詢問；db029fa指定單次push已使用。取代下方歷史單次push限制，不含force push／刪遠端ref；建立tag、代操作manual smoke及其他worktree刪除仍依具體階段裁示。
 - M5「沒問題後合併main然後再push」已獲一次條件授權：自動/雙平台CI、人工smoke、task/whole-branch review及docs truth完成後才用main ff-only→push main；目前條件未達、授權未用。指定M5工作樹合併後不備份/不留副本退役的授權也保留未用，不再為同一次已授權操作重問。
 - AccessDenied B4已裁示：M5維持現有fail-closed/退避、列已知限制，不加production重試。B3機器設定實驗未授權、未執行；有需要才另問。
 - M6範圍與優先序，等m5合併/tag後另確認。
@@ -329,3 +331,14 @@
 - **差異／保留**：release整SHA c20bc00...a5fc08與基準同；sources只有Controller的return field_46280→CODEC，其餘225entry同，ZIP時間／CRC／大小／offset已逐項歸屬。Full55/31、legacy0/0、M538/10；literal差異Full86移/86增、M548/48，限定動態欄位後remaining0；pin4/9/4、worldgen四類0、世界exact restore。原實驗／分析失敗roots保留；B2同root補分析的偏差不追認GREEN，最終採新roots。舊build內16原件已原封移ignored並由controller核SHA，沒有repo外備份。
 - **未關／下一步**：本機code的C/I已清，CI-S1遠端artifact仍待新SHA驗證；另有CI-S1-M1與既有F6-3e M-1待下一Step0。先取得新的單次feature push同意→雙平台及同SHA兩次Ubuntu/TPS/artifact→F7前置兩Minor與文件→required manual smoke／whole-branch review／docs truth→既定main/tag/退役順序。M5未整體結案、M6未開始。
 - **待使用者裁示**：新feature push、tag建立/推送、人工smoke代操作、M6範圍優先序。AccessDenied維持M5現況的既有裁示不變；本輪未改production行為，沒有新增production裁示需求。
+
+### 2026-10-24：db029fa 新版 CI 通過，後續正常 push 持續授權
+
+- HEAD／porcelain：本輪起始與CI固定`db029fa4db7e4e6dfa0201634f4988515fa27b1e`，工作樹乾淨；本次治理commit以 `git log -1 --format=%H --grep='^docs: record db029fa CI acceptance and ongoing push authorization$'` 解析。治理只改AGENTS／handoff／note／plan，ledger ignored；提交後由controller核porcelain。
+- 實際狀態：db029fa指定單次push exit0，origin feature同SHA；main仍a7e1be2，無m5 tag；未合併／未退役。使用者另授權「並且可以都push無需再問我了」，後續正常push不再問，替代前文歷史逐次限制。
+- 完成：run39990661331雙平台成功，Ubuntu真job120541258937與120554503154同SHA成功；Windows120541259085成功。default179、M560、JUnit666，兩Ubuntu TPS87.5；sources CODEC修正已核，未歸屬內容差異0，CI-S1關閉。F7盤點完成，前置實作未開始。
+- Review：既有CI-S1 spec／quality各fresh獨立context C/I0，quality M1留F7；本輪無code變更，不新增重複code review。主控獨立核freeze14原件、三份JAR及原XML/log；證據與限制詳note末節和SDD f6/ci-db029fa-20261024/STATUS.md。
+- 最終本機run-all：27a的run-all-5435ef0d6da64f7486de613bb4b2bba0，END ALL exit0，SUMMARY default179/windows89/legacy1/M560/JUnit666/recovery24/collapse69及全部其餘項見note；本輪純docs未重跑。
+- 未關 finding：兩項Minor F6-3e-M1／CI-S1-M1排F7 Step0；無Critical／Important。AccessDenied仍按既有裁示列限制。
+- 等使用者決定：代操作manual smoke、建立tag、M6範圍優先序；不再問正常push，同一次main條件合併／指定M5不備份退役授權保留。
+- 下一步：F7 Step0→文件與獨立review→manual smoke→whole-branch review→docs truth／push與CI→條件main整合→tag→指定worktree退役；M6未開始。

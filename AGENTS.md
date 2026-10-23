@@ -45,6 +45,8 @@ milestone implementation → automated gates → required manual smoke → task�
 
 **M5整合專屬裁示（2026-10-22稍後）**：使用者明確指示「記得m5沒問題後合併main然後再push」。在M5 automated/雙平台CI、required manual smoke、task及whole-branch review與docs truth都完成後，已授權一次main `--ff-only`合併及其後一次push main；兩次操作各自的條件授權尚未使用。此授權不含下一次feature push、建立或推送tag；tag `m5`仍另取同意。派工MD由controller評估：必要長期內容整理到tracked文件/模板，一次性ignored派工不force-add、指定M5工作樹退役時一併刪除，不另留副本。
 
+**後續 push 持續授權（2026-10-24）**：使用者明確指示「並且可以都push無需再問我了」。後續正常 push 不再逐次詢問，取代舊的單次 push／新 commit 另問規則；依任務需要合併推送，不為湊 CI 次數重送。這不授權 force push、刪除遠端 ref，或跳過 main 合併、tag 建立、人工 smoke 與 worktree 退役各自的門檻；tag 建立仍待明確同意。
+
 一般規則（上述M5專屬裁示取代其搬出世界與外部備份要求）：刪除其他 worktree（包括當時的 `.worktrees/m1-chamber`）之前，必須先完成：
 
 - 使用者世界與驗收世界移到 repo 外，例如使用者自有世界 `run/client-base/saves/新的世界test (1)`（2026-09-29 做過 B-5 預驗，已含 DORMANT receipt；處置見人工驗收清單 2.5 (a)）。
@@ -101,8 +103,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：CI-S1 sources修正已在bf3f04e／27a5039本機完成；production與release整JAR不變，同乾淨27a兩focused GREEN，fresh spec C0/I0/M0、quality C0/I0/M1。使用者已裁示本輪完整run-all只跑一次、純docs不重跑；唯一run-all-5435ef0d6da64f7486de613bb4b2bba0精確END ALL exit0、基準差異全歸屬。新SHA CI/artifact仍待新的單次push同意；558原CI成功但舊sources缺陷不改判。F7前置兩Minor（gates task辨識、source wrapper fresh checkout）、文件、人工smoke與整分支review仍待；M5未結案、M6未開始。詳handoff§7最後一筆及note末節。
-- Git狀態（2026-10-23 23:21台灣時間唯讀核對）：origin feature=558638474b57bf652577c2c291f82a45a68d436d；local/remote main=a7e1be2dab7424bf067bda378c6edd7518bbaf7f，local/remote無m5 tag。本輪新commits未push，558那次單次授權已用；main ff-only→push main及指定M5不備份退役的條件授權仍未用，tag/新feature push/代操作smoke依具體階段另取同意。最新治理HEAD依handoff§7唯一commit訊息解析；已跑runtime的code HEAD為27a5039，不把其後純docs HEAD冒稱另跑過full。
+- 目前：CI-S1 已關閉。`db029fa` 已於2026-10-24單次推送；Build run39990661331 的 Windows 一次、同SHA Ubuntu兩次真job皆success，M5 TPS59.4／87.5／87.5，artifact差異全歸屬，sources本類CODEC已修正。主控直接核14原件SHA、三份JAR及原XML/log。新push持續授權見上方。F7盤點完成，下一步兩項harness Step0與文件；人工smoke及整分支review仍待，M5未結案、M6未開始。
+- Git快照：origin feature=`db029fa4db7e4e6dfa0201634f4988515fa27b1e`；main仍`a7e1be2`，無m5 tag。最新治理HEAD依handoff§7最後一筆解析；已跑完整runtime的code HEAD為27a5039，其後純docs不冒稱另跑full。main條件合併與指定M5不備份退役授權尚未使用。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：
@@ -176,7 +178,7 @@ M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使
     `src/main/` 沒有變更。完整回歸 `run-all-cbf51c5a8afc4506a4a162a46f876e1c` 為 `END ALL exit=0`（`3e97dc9`），`default=179`。
   - 最新 note commit 後完整回歸：`run-all-a8841a60e8b84bea8887c01992e4ca1f`（乾淨 `0ed3e62`），`END ALL exit=0`；default179、M5=60、JUnit666、collapse69。原有 `run-all-cbf51c5a…` 保留為原始實作基準。
   - 使用者 2026-10-21 裁示：M5 的 AccessDenied 維持現有 fail-closed／退避，列為已知限制；不加 production 短暫重試，不更動 Defender／索引設定。
-  - F6-3c-2／d／e 的最新完成狀態以上方接手入口為準；後續依序是：本次已授權的單次push與CI驗收 → F7前置Step0／文件 → milestone收尾 → M6。其他push仍需新同意；目前HEAD的解析方式見交接檔§7。
+  - F6-3c-2／d／e 的最新完成狀態以上方接手入口為準；後續依序是：本次已授權的單次push與CI驗收 → F7前置Step0／文件 → milestone收尾 → M6。後續正常push依2026-10-24持續授權；目前HEAD的解析方式見交接檔§7。
 - 逐 task 的 code-truth、gate root、review 結果與交給後續 task 的事項，都在 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。
 - 使用者裁示、review 處置與 F7 待辦彙整，記在 SDD ledger：`.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`（gitignored）。
 
@@ -209,6 +211,6 @@ M5 第一切片的硬界線（使用者 2026-10-01 指示；細節以 M5 spec �
 2. 實作採 Subagent-Driven Development（見上方「開發與 review 流程」）。每次派工明列允許修改的路徑；不在別的 task 裡順手修已排入其他 task 或 milestone 的項目。
 3. 前置 hardening 已完成（plan 的 H1–H4）：codec strictness、只看相關 chunks 的存檔 checkpoint、未 checked authority 的 fail-closed 收斂、凍結時的位置修正。2026-09-30 留給 M5 的 4 項，處置見 M5 spec §4 與 §17 的延後清單 triage。
 4. Gate：以 `pwsh -NoProfile -File scripts/verification/run-all.ps1` 作為回歸基線。T0 已在 clean clone 實跑通過。M5 新增的 gate 擴充進 `scripts/verification/`，並經 review。以重導輸出的方式呼叫 `run-all.ps1` 時，外層要等 Gradle daemon 結束才會返回；判斷完成請看 `END ALL` 行。
-5. Milestone 收尾，順序固定：automated gates → required manual smoke（寫入tracked note）→ task及whole-branch review → docs truth → 新授權push feature → GitHub Actions雙平台通過 → 依上述條件授權 `--ff-only`合併main後push main → 另獲同意建立tag `m5`（tag推送亦須明確同意）→ 依M5退役專屬裁示刪指定工作樹、不備份/不留副本。其他worktree仍適用一般備份規則。
+5. Milestone 收尾，順序固定：automated gates → required manual smoke（寫入tracked note）→ task及whole-branch review → docs truth → 依持續授權push feature → GitHub Actions雙平台通過 → 依上述條件授權 `--ff-only`合併main後push main → 另獲同意建立tag `m5`（正常tag推送依持續push授權）→ 依M5退役專屬裁示刪指定工作樹、不備份/不留副本。其他worktree仍適用一般備份規則。
 
 `docs/handoffs/2026-09-24-m4-task9-resume*.md` 已完成，只保留為歷史紀錄，不再是接手入口。
