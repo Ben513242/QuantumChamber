@@ -35,6 +35,10 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 | `m2-cohort-failure-fixture.ps1` | CI-W1 的 M2 south cohort 故障驗證入口：暫時套用 testmod adapter，呼叫既有 `gates.ps1 -Mode GameTest`；只有 source 仍是本輪 mutation 時才在 `finally` 還原，外部編輯保留並判 FAIL。另可只準備變體、只分析已保存 gate root，或對 disposable 檔執行 source guard 自測 |
 | `m2-cohort-failure-adapter.ps1` | 產生七種互斥故障／等待情境的暫時 Java bytes；不自行修改 source 或執行 Gradle |
 | `m2-cohort-failure-oracle.py` | 讀原 XML、execution、manifest 選定的 log、world/source restore，分別記錄原 GameTest verdict 與具名等待／收尾的獨立判讀 |
+| `SourceRemapOracle.java` | `verifySourceRemap` 的靜態欄位身分檢查：讀 sources／release JAR，要求 `ChamberControllerBlock.CODEC` 的宣告、引用與發布 Fieldref 同屬本類；不載入 JAR 內 class |
+| `source-remap-check.ps1` | 本機定向執行 `verifySourceRemap`，每輪保留獨立 `build/verification/source-remap/` log；正式 `check`／`build` 也會自動執行此檢查 |
+
+CI-S1 的 sources remap 使用 Yarn `1.21+build.9:v2` 加上 `mappings/quantumchamber-codec-identity.tiny`；Yarn layer 保留原 unpick 定義，`mappingsConstants` 精確接回原 Yarn constants。定向檢查：`pwsh -NoProfile -File scripts/verification/source-remap-check.ps1 -Label <label>`。不加 override 時檢查本輪產生的 JAR；`-SourcesJar`／`-ReleaseJar` 僅供舊 artifact 負控。正式 `build` 經 `check` 執行此 oracle。
 
 ## 執行
 

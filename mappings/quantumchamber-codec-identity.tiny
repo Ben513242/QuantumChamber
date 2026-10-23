@@ -1,0 +1,3 @@
+tiny	2	0	intermediary	named
+c	dev/quantumchamber/chamber/ChamberControllerBlock	dev/quantumchamber/chamber/ChamberControllerBlock
+	f	Lcom/mojang/serialization/MapCodec;	CODEC	CODEC

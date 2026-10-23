@@ -224,7 +224,10 @@ tasks.named('check') {
 dependencies {
     lightingMods "maven.modrinth:lambdynamiclights:${project.lighting_mod_version}"
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    mappings loom.layered {
+        mappings("net.fabricmc:yarn:${project.yarn_mappings}:v2") { containsUnpick() }
+        mappings file('mappings/quantumchamber-codec-identity.tiny')
+    }
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
@@ -232,6 +235,15 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation "net.fabricmc:fabric-loader-junit:${project.loader_version}"
     testmodImplementation sourceSets.main.output
+}
+
+// Loom 1.7.4 會以 layered mappings 的合成座標尋找 :constants；精確接回原 Yarn 常數包。
+afterEvaluate {
+    def constants = configurations.getByName('mappingsConstants')
+    def synthetic = constants.dependencies.findAll { it.group == 'loom' && it.name == 'mappings' }
+    if (synthetic.size() != 1) throw new GradleException("預期一筆合成 mappingsConstants，實得 ${synthetic.size()}")
+    if (!constants.dependencies.remove(synthetic[0])) throw new GradleException('合成 mappingsConstants 移除失敗')
+    dependencies.add('mappingsConstants', "net.fabricmc:yarn:${project.yarn_mappings}:constants")
 }
 
 tasks.register('prepareClientLighting') {
@@ -281,6 +293,31 @@ java {
     withSourcesJar()
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
+}
+
+def sourceOracleClasses = layout.buildDirectory.dir('source-remap-oracle/classes')
+tasks.register('compileSourceRemapOracle', JavaCompile) {
+    source = files('scripts/verification/SourceRemapOracle.java')
+    classpath = configurations.compileClasspath
+    destinationDirectory = sourceOracleClasses
+    options.release = 21
+    options.compilerArgs.add('-proc:none')
+}
+
+tasks.register('verifySourceRemap', JavaExec) {
+    dependsOn tasks.named('compileSourceRemapOracle'), tasks.named('remapJar'), tasks.named('remapSourcesJar')
+    classpath = files(sourceOracleClasses) + configurations.compileClasspath
+    mainClass = 'SourceRemapOracle'
+    doFirst {
+        setArgs([
+            providers.gradleProperty('sourceOracleSources').getOrElse(tasks.named('remapSourcesJar').get().archiveFile.get().asFile.absolutePath),
+            providers.gradleProperty('sourceOracleRelease').getOrElse(tasks.named('remapJar').get().archiveFile.get().asFile.absolutePath)
+        ])
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifySourceRemap')
 }
 
 test {
