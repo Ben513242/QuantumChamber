@@ -38,7 +38,7 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 | `SourceRemapOracle.java` | `verifySourceRemap` 的靜態欄位身分檢查：讀 sources／release JAR，要求 `ChamberControllerBlock.CODEC` 的宣告、引用與發布 Fieldref 同屬本類；不載入 JAR 內 class |
 | `source-remap-check.ps1` | 本機定向執行 `verifySourceRemap`，每輪保留獨立 `build/verification/source-remap/` log；正式 `check`／`build` 也會自動執行此檢查 |
 
-CI-S1 的 sources remap 使用 Yarn `1.21+build.9:v2` 加上 `mappings/quantumchamber-codec-identity.tiny`；Yarn layer 保留原 unpick 定義，`mappingsConstants` 精確接回原 Yarn constants。定向檢查：`pwsh -NoProfile -File scripts/verification/source-remap-check.ps1 -Label <label>`。不加 override 時檢查本輪產生的 JAR；`-SourcesJar`／`-ReleaseJar` 僅供舊 artifact 負控。正式 `build` 經 `check` 執行此 oracle。
+CI-S1 的 sources remap 使用 Yarn `1.21+build.9:v2` 加上 `mappings/quantumchamber-codec-identity.tiny`；Yarn layer 保留原 unpick 定義，`mappingsConstants` 精確接回原 Yarn constants。定向檢查：`pwsh -NoProfile -File scripts/verification/source-remap-check.ps1 -Label <label>`。不加 override 時檢查本輪產生的 JAR；`-SourcesJar`／`-ReleaseJar` 僅供舊 artifact 負控，須搭配 `-Expected FAIL -ExpectedFailureCode SOURCE_REMAP_FIELD_REFERENCE_MISMATCH` 或 `SOURCE_REMAP_ENTRY_MISSING_OR_DUPLICATE`，且只有指定 oracle 錯誤才算有效負控。取證預設存於 ignored `.superpowers/source-remap/`，避開後續 `clean`。正式 `build` 經 `check` 執行此 oracle。
 
 ## 執行
 

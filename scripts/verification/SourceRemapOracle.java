@@ -43,7 +43,7 @@ public final class SourceRemapOracle {
     private static byte[] readUniqueEntry(Path jar, String name) throws IOException {
         try (ZipFile zip = new ZipFile(jar.toFile())) {
             var matches = zip.stream().filter(entry -> entry.getName().equals(name)).toList();
-            if (matches.size() != 1) throw new IOException(jar + " 的 " + name + " 數量為 " + matches.size());
+            if (matches.size() != 1) throw new IOException("SOURCE_REMAP_ENTRY_MISSING_OR_DUPLICATE: " + jar + " / " + name + " count=" + matches.size());
             try (var stream = zip.getInputStream(matches.getFirst())) { return stream.readAllBytes(); }
         }
     }
@@ -91,7 +91,7 @@ public final class SourceRemapOracle {
                 boolean qualifiedOwnName = ret.getExpression() instanceof MemberSelectTree select
                         && select.getExpression() instanceof IdentifierTree owner && owner.getName().contentEquals("ChamberControllerBlock")
                         && select.getIdentifier().contentEquals("CODEC");
-                if (!localName && !qualifiedOwnName) throw new IllegalStateException("getCodec 未引用本類 CODEC：" + ret.getExpression());
+                if (!localName && !qualifiedOwnName) throw new IllegalStateException("SOURCE_REMAP_FIELD_REFERENCE_MISMATCH: " + ret.getExpression());
             }
         }
         if (ownCodecFields != 1 || codecMethods != 1) {
