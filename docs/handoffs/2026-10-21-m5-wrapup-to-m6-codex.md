@@ -92,14 +92,15 @@
   - SUITE_END 核對四個權威，不只 catalog。
 - 驗收：`ci-rule-check.ps1` 的兩個 step 都 PASS；每一類都要有 mutation（`-Mutation drop`、`-MutationXml m5`、`-SourceMutation rename-windows`）；run-all 全綠。
 
-### 3.4 新版push與CI驗收（CI-W1本機完成，待新單次feature push同意）
+### 3.4 新版CI結果與CI-S1 sources阻擋（2026-10-23）
 
-使用者2026-10-22「到目前為止commit都可以push了」的單次授權已在e6ac9f9使用，遠端feature已核為該SHA。原run39725384112 Ubuntu同SHA兩次成功、Windows失敗（default179中21fail）；原結果保留。CI-W1本機修正/兩full/獨立雙review已完成，見§7；新commit尚未push，不能宣稱新版Windows CI已綠。
+使用者指定的5586384已於2026-10-23單次push，origin feature即時核同SHA。新run39916471824：Windows job120291020173成功，Ubuntu job120291020358與一次必要rerun的新job120302805133均成功；兩Ubuntu M5 tps90.6/85.4、Windows58.9，default179/M560各全PASS。原e6 run39725384112的Windows21fail保留，不改判。
 
-- 完成這次治理docs後，先取得下一次feature push的明確同意，只push一次；「可以續作」不當作新的push授權。
-- 驗收新SHA：Ubuntu `build`與Windows `windows-native`均通過；Ubuntu M5在同SHA至少兩次成功，從artifact核tps≤100及PREPARE最大tick。必要第二次用同SHA Ubuntu job rerun，不以額外push湊次數。
-- 下載CI artifact/log只讀、不執行。若失敗保留原root/原verdict，先調查；不能把原e6成功或本機GREEN當新版遠端CI結果。
-- 新版CI門檻完成後才進F7前置Step0及文件。F6-3e M-1保持獨立task，不混CI-W1。
+- 新CI原件已封存：51檔/13,289,790bytes、兩freeze14核心原件、402來源pins；controller直接讀回全部相符。入口SDD f6/ci-5586384-20261023/STATUS.md，詳細原件/差異/限制見note最新CI節。
+- **尚未通過完整artifact驗收**：獨立spec/quality最終均C0/I1/M0。CI-S1為ChamberControllerBlock sources的CODEC/field_46280宣告與引用不對應release class；Windows來源還有父欄位泛型不相容。release385個class bytes跨平台與本機同，原CI job成功仍成立，但不能因此豁免來源包缺陷。舊Ubuntu已有相同問題，只證明非本次新回歸。
+- 先完成獨立CI-S1 fix round（f6/ci-sources-fix1/；目前唯讀Stage A完成、未實作）：根因/真RED→GREEN、class/API不變證明、完整回歸與fresh雙review，再對修正SHA驗CI/artifact。若修法會改production行為，先回使用者；不把F7既有M-1混入。
+- 558這次push同意已使用，不重送、不延用後續commit。新feature push必須在修正具體可核後另獲明確同意；同SHA的必要Ubuntu第二次以job rerun，不額外push湊次數。
+- artifact/log只讀、不執行。CI-S1關閉及新版驗收完成後，才進F7前置Step0及文件。
 
 ### 3.5 F7：文件
 
@@ -154,7 +155,7 @@
 
 ## 4. 等待使用者裁示的事項
 
-- 下一次feature push須新同意；先前單次授權已於e6ac9f9使用。建立/推送tag、代操作manual smoke及其他worktree刪除均未獲本輪授權。
+- 5586384的單次feature push授權已於2026-10-23實際使用；下一次feature push仍須新的明確同意。建立/推送tag、代操作manual smoke及其他worktree刪除仍依具體階段裁示。
 - M5「沒問題後合併main然後再push」已獲一次條件授權：自動/雙平台CI、人工smoke、task/whole-branch review及docs truth完成後才用main ff-only→push main；目前條件未達、授權未用。指定M5工作樹合併後不備份/不留副本退役的授權也保留未用，不再為同一次已授權操作重問。
 - AccessDenied B4已裁示：M5維持現有fail-closed/退避、列已知限制，不加production重試。B3機器設定實驗未授權、未執行；有需要才另問。
 - M6範圍與優先序，等m5合併/tag後另確認。
@@ -305,3 +306,14 @@
 - **比較及封存**：兩focused同乾淨17eda6e；full2直接對full1及F6-3e兩基準的具名集合/phase斷言同，release c20bc00整檔同，sources226內容/順序/壓縮payload同、只ZIP時間；WARN/ERROR55/31、0/0、38/10的raw差異Full86/86及M548/48逐列歸屬後0殘差，pin4/9/4，106logs四類worldgen0。controller及兩reviewer各自全量讀回46,551唯一檔/6,509,798,201bytes與402pins全符，file set最後missing/extra0。統一manifest SHA `0aa90618e63980debfc7b0258e76ba1f8030356d527dd20eb2b45a056960ea96`；入口 `f6/ci-win-fix1/controller-completion-index.json`。四份manifest有交集不可加總；不是run/使用者世界備份。原控制層失敗及兩索引改名receipt保留，未重跑成功runtime；所有runner已END，沒有終止daemon。
 - **未關finding/待決**：CI-W1無C/I/M；F6-3e Quality M-1仍排F7前置獨立Step0。AccessDenied維持M5現況。下一次feature push、tag/其push、人工代操作仍須新同意；main ff-only→push main及指定M5不備份退役的已給條件授權未用。M6範圍/優先序未確認。
 - **下一步**：新的單次feature push同意→新版雙平台CI（Ubuntu同SHA至少兩綠、artifact TPS≤100）→F7前置Step0/文件→required manual smoke與whole-branch review→docs truth/CI→依條件授權main整合與push→另獲tag同意→指定M5工作樹不備份退役→確認M6範圍後新worktree/spec/plan/review。M5尚未整體收尾，M6未開始。
+
+### 2026-10-23：558新版CI三個job成功，CI-S1來源包Important未關閉
+
+- **HEAD/porcelain與range**：CI取證/兩份review固定558638474b57bf652577c2c291f82a45a68d436d、feature/m5-collapse、porcelain空；本次沒有code變更。本筆由其後唯一治理docs commit同步AGENTS/handoff/note/plan，ledger ignored；用 `git log -1 --format="%H %P %s" --grep="^docs: record 558 CI evidence and sources blocker$"` 精確解析最新治理HEAD，parent必為5586384。提交後讀回另存f6/ci-5586384-20261023/controller-governance-postcommit.json；不能把治理HEAD當已跑新版CI。
+- **push/remote/main/tag**：558於15:14:16–19台灣時間唯一一次push exit0；17:10再次核origin feature=558、local/remote main=a7e1be2、local/remote無m5tag。該次同意已用；沒有main合併/tag/退役/PR/LICENSE。既有main ff-only→push main與指定M5不備份退役條件授權未用。
+- **完成內容**：run39916471824 Windows job120291020173 success；Ubuntu job120291020358及唯一rerun job120302805133 success，完整SHA皆558。三者default179/M560全PASS、JUnit666；Windows664P/2S、Ubuntu638P/28S，30項平台差異逐案對四註記。Ubuntu tps90.6/85.4、Windows58.9；排兩具名長等待後PREPARE212/212/218；Windows cohort READY28/FAIL0。原job成功，不等同完整artifact驗收。
+- **獨立review**：/root/ci558_spec與/root/ci558_quality各全新context、未參與取證/實作、唯讀；最終皆C0/I1/M0、不予Approved。共同I-1列CI-S1，sources宣告/引用與release欄位身分不一致；不改原CI verdict。quality的manifest亂碼Minor由原bytes複核證明是顯示問題而撤回；spec的freeze先後筆誤經原JSON更正；原文與更正保留，詳note Review。沒有本輪殘留Minor，F6e M-1仍排F7前置Step0。
+- **原件與限制**：SDD f6/ci-5586384-20261023/，manifest51檔/13,289,790bytes，SHA09861319fa68957d05f060ad3b1d2e48f4e3daa6a1389339e56787f6f84eafbd；controller核全部SHA/size/集合與402pins全符。release385 class跨平台/本機同；sources另有CI-S1，不能說只有換行/ZIP差異。首輪下載0-byte暫存被後次覆寫、未保留，已如實記錄；純分析器欄位/skip假設修正不重跑CI、不改原件。不是run/世界備份。
+- **最終本機run-all**：沿用CI-W1在027e5e8的 f6/ci-win-fix1/runall2/run-all-835e5a71ed2c48bab946d5c4e5776ef7，原END ALL exit0，summary SHA58e24b9695e038a3c073a10e01bd2b2b42866375645bdb2a584cc7b9775e84e3。SUMMARY default179/legacy1/M560、JUnit666(0/0/2)、WindowsCheckpoint17、release432/385、sources226/testmodHits0、MainPASS、M3 4+5/M4 24/M5 69 HALT31、本機CI兩PASS。本輪未另跑本機runtime；不聲稱CI做了完整本機WARN/ERROR/worldgen逐列回歸。
+- **未關finding/下一步**：先CI-S1獨立fix round；/root/ci_sources_fix1僅完成唯讀Stage A，資料流/未知根因/實驗方案在該根diagnosis-report.md與STATUS，尚未實作。其後新SHA CI/artifact→F7前置M-1/文件→required manual smoke/整分支review/docs truth→依條件授權main整合/push→tag裁示→指定M5不備份退役。M5未收尾，M6未開始。
+- **待使用者裁示**：下一次feature push（到具體可核時才問）、tag與其push、代操作manual smoke、M6範圍/優先序。AccessDenied已決定M5維持現況，沒有新production行為裁示需求；若CI-S1修法必須改production行為，先提出具體方案。主控保持production/class API不變是合理預設，沒有偽稱使用者選了某技術修法。

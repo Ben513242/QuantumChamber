@@ -847,7 +847,8 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
       - S-M1：已關閉；phaseTable核Count及Ordinal逐項，真69通過、合併68與case漂移精確拒絕。
       - Q-M1：已關閉；schema2對成功Minecraft核非空當次log，缺失／全舊／空檔精確拒絕；JUnit/compile/原失敗明列不適用，exit23不被capture錯誤遮蓋，未改X4。
     - 原單次feature push已於e6ac9f9完成（2026-10-22）；原GitHub run39725384112 Ubuntu同SHA兩次成功、Windows default179中21fail。
-    - **CI-W1（2026-10-23本機完成）**：range e6ac9f9..027e5e8，僅M2 testmod/三個驗證工具/README/note；code17eda6e、note/runtime/review027e5e8。兩次正常focused、兩次完整run-all END0，最後 `f6/ci-win-fix1/runall2/run-all-835e5a71ed2c48bab946d5c4e5776ef7`。獨立spec/quality均Approved C0/I0/M0，全部原I關閉；46551唯一證據檔與402pins全量讀回相符，雙基準差異逐項歸屬。原Windows失敗未改判，新版本未push/CI未驗；下一步先取得新的單次feature push同意，再完成雙平台與同SHA兩次Ubuntu M5，之後才F7前置M-1及文件。原runtime/review pin不因後續治理docs改寫。
+    - **CI-W1（2026-10-23本機完成）**：range e6ac9f9..027e5e8，僅M2 testmod/三個驗證工具/README/note；code17eda6e、note/runtime/review027e5e8。兩次正常focused、兩次完整run-all END0，最後 `f6/ci-win-fix1/runall2/run-all-835e5a71ed2c48bab946d5c4e5776ef7`。獨立spec/quality均Approved C0/I0/M0，全部原I關閉；46551唯一證據檔與402pins全量讀回相符，雙基準差異逐項歸屬。原Windows失敗未改判；本機結案當時新版本尚未push，後續558的新CI結果見下一筆。原runtime/review pin不因後續治理docs改寫。
+    - **558新版CI（2026-10-23）**：指定單次push已完成；run39916471824 Windows一次、Ubuntu同SHA兩次真job均success，default179/M560全PASS、Ubuntu tps90.6/85.4。51檔原件及402pins讀回相符，但sources欄位不對應release class，獨立spec/quality皆C0/I1/M0，CI-S1阻擋完整artifact驗收。先獨立修正並重驗產物/CI，下一次feature push另需明確同意，之後才F7。原job成功保留，不能把Important轉成正常metadata差異。
   - `build.yml` 的明列清單：M5 期間新增的所有 test，清單在各節「交給後續」。
   - boundary oracle 以 PID 挑 receipt 時的碰撞。
   - Windows journal 原子移動的 `AccessDeniedException`：使用者 2026-10-21 裁示 M5 維持現況、列為已知限制；不加 production 短暫重試。F7 說明既有 fail-closed／退避與外部根因仍未證實的界線。
@@ -982,6 +983,12 @@ public ResolveResult resolve(MinecraftServer server, SessionRecoveryRecord recor
 **Commit：** 兩個 fix 分開 commit：`fix: open a membrane door when a sealed retry drops the pending close`、`fix: remind the admin of a permanently sealed session at startup`。
 
 ---
+
+### F6 CI-S1：來源包欄位身分修正（F7之前，獨立fix round）
+
+558新版CI的正式spec/quality共同Important：ChamberControllerBlock sources宣告/引用與release CODEC不一致，Windows父欄位泛型也不相容。發布class bytes相同，不把來源缺陷倒推成現有runtime回歸。Stage A唯讀診斷完成，尚未實作；派工與根因線索在SDD f6/ci-sources-fix1/prompt.md及diagnosis-report.md。
+
+範圍僅sources remap身分與對應oracle，保持production行為/公開API/385 class bytes不變是controller合理預設。先真實原輸入RED與binding/換行單變數診斷，再選最小修法，保留adapter/還原blob、兩次同clean code HEAD GREEN、commit前compile、兩次完整回歸及fresh spec/quality re-review。若修法會改production行為，先回報使用者；不得順手處理F7 M-1。新SHA的feature push另獲明確同意後再驗雙平台/同SHA兩次Ubuntu與artifact；CI-S1未關不進F7。純重構、harness行為與文件分commit，其他既有里程碑順序不變。
 
 ### Task F7: 文件
 

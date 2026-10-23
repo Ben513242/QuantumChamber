@@ -101,8 +101,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：F6-3c-2、F6-3d與F6-3e本機工作已完成；e6ac9f9推送後原Windows CI失敗，CI-W1已於2026-10-23完成本機修正與正式獨立spec/quality review（各C0/I0/M0，range e6ac9f9..027e5e8）。兩focused固定17eda6e，兩full END0；note後最後SDD `f6/ci-win-fix1/runall2/run-all-835e5a71ed2c48bab946d5c4e5776ef7`固定乾淨027e5e8。46,551唯一原檔與402pins經controller及兩reviewer讀回全符。下一步取得新單次feature push同意，再驗新版雙平台CI與同SHA至少兩次Ubuntu M5；F7前置M-1、文件、人工smoke及整分支review仍待。M5未整體結案，M6未開始。詳handoff§7及note Review。
-- Git 狀態（2026-10-23 13:14台灣時間唯讀核對）：origin feature=`e6ac9f900a0c7f6fe168720b222347ba145fac7c`，local/remote main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`，local/remote無m5 tag。本輪新commit未push，未main合併/tag/刪worktree；舊feature單次授權已於e6使用。main合併→push main及指定M5不備份退役的一次條件授權保留未用，tag/新feature push/代操作人工smoke仍須另同意。最新治理HEAD依handoff§7的唯一commit指引查核。
+- 目前：CI-W1本機修正已完成；5586384依使用者新授權於2026-10-23單次push，新run39916471824的Windows一次與Ubuntu同SHA兩次真實job均success，default179/M560各全PASS、Ubuntu M5 tps90.6/85.4。原artifact卻發現sources欄位與發布class不一致，獨立spec/quality皆C0/I1/M0、不予Approved；CI-S1仍open，須獨立修正與驗證後才進F7。新修正目前只完成唯讀Stage A，尚未實作。F7前置M-1、文件、人工smoke及整分支review仍待，M5未整體結案/M6未開始。詳handoff§7與note最新CI節。
+- Git狀態（2026-10-23 17:10台灣時間唯讀核對）：origin feature=558638474b57bf652577c2c291f82a45a68d436d；local/remote main=a7e1be2dab7424bf067bda378c6edd7518bbaf7f，local/remote無m5 tag。558這次單次push授權已用，不延用新commit；未main合併/tag/刪worktree。main ff-only→push main及指定M5不備份退役的一次條件授權保留未用；tag/新feature push/代操作人工smoke另依具體階段取得同意。最新治理HEAD依handoff§7的唯一commit指引核對。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：

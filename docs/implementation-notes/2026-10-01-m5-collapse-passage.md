@@ -10391,3 +10391,62 @@ F2第一次完整`run-all.ps1`根`runall1/run-all-a05c7723437e472db4b575ae47a75f
 對F6-3e最後`$E/../f63e/runall2/run-all-b17a4eab5cdd4d0dbde2a0dba1605361`逐項比較：default／legacy／M5與JUnit完整帶class具名集合及outcome一致；release SHA仍`c20bc00ff60a62fdbcee68ba6f93e7bdb9d5a40931339b0ce1a6e82fd1a5fc08`。sources新整檔SHA`3762c71ac660c0dc4f77fc3e777c34294e6e9b2425bf73fb4ce36ae6a96c8693`不同，但226個entry內容／順序與原壓縮payload相同，226份DOS/NTFS extra時間欄差異逐項解碼，沒有非時間差。Full WARN/ERROR55/31、legacy0/0、M538/10；完整原line multiset的literal差異Full移86增86、M5移48增48、legacy0，具名動態欄位歸屬後normalized removed/added/remaining皆0；不能把raw literal寫成0或把舊`rawDifferenceCount`當raw。pin逐batch同、總4/9/4；106份原log的四類worldgen例外0。M4 24/M5 69 receipt身分、schema/phaseTable/steps與基準同形，M5 2035個observed具名鍵與基準同集合且本輪真值全true；M3九階段正式收據與13份schema2非空當次log manifest全核。兩者的runtime-log manifest皆schema2、頂層與identity欄集合一致；`runall1-audit/runtime-log-schema2.json`舊`added`三欄其實沿用更早schema1→2歷史metadata，更正見`runall1-audit/runtime-log-schema2-v2.json`，不能算CI-W1新增。該稽核row.sha256指`manifest.fullPath`的`runtime-full.log`，不是manifest JSON本身；M5 crash receipt的合法status/ending為HALT/HALT、正常stop為PASS/STOP。比較原值／歸屬與工具快照見`runall1-compare/`、`runall1-audit/`、`runall1-source-pin-compare.json`；runall1根3813檔／507,956,730bytes的SHA256 manifest二次逐檔讀回全符，`runall1-manifest.json` SHA256`f203192e50ca88424bbe29c734e9d9ead1240b059e08fef23a9dbf242578a68c`。這些是本機回歸，不是新版GitHub Windows CI結果。
 
 以上是027e5e8初版提交時點的歷史：當時第二次完整run-all與整輪最後review尚待完成。最新CI-W1正式結果見本節Review區塊；M5整體驗收/整合仍未完成。
+
+## F6 新版 CI：5586384 的雙平台結果與 sources JAR 阻擋
+
+本節記錄使用者2026-10-23指定的一次feature push及其CI取證；前節CI-W1的「尚未push」均為本機結案當時的歷史。證據根`$T`＝`.superpowers/sdd/2026-10-01-m5-collapse-passage/f6/ci-5586384-20261023/`，下文路徑相對此根。原e6 run39725384112的Windows 21 fail仍保留原verdict。
+
+### 範圍與行號（固定5586384）
+
+- `src/main/java/dev/quantumchamber/chamber/ChamberControllerBlock.java:26/37–38`宣告與回傳本類CODEC，Git source在e6..558未變。
+- CI sources JAR的同名entry第28行是欄位宣告，第39–40行為remapped方法/回傳；不是Git source行號。其欄位問題見下方CI-S1。
+- JUnit平台條件：`ClientLauncherTest.java:15`（13案）、`PlayerCheckpointStoreTest.java:13`（3案）、`WindowsPlayerCheckpointVerifierTest.java:17`（12案）為EnabledOnOs(WINDOWS)；`NonWindowsPlayerCheckpointStoreTest.java:14`（2案）為DisabledOnOs(WINDOWS)。四檔皆在src/test/java/dev/quantumchamber/對應package。
+
+### Review 與目前狀態
+
+**2026-10-23正式獨立review：spec與quality最終皆C0/I1/M0，不予Approved。** Reviewer `/root/ci558_spec`與`/root/ci558_quality`各為未參與取證/實作的全新context，固定乾淨5586384、全程唯讀、不跑Gradle。共同I-1收斂為CI-S1（sources欄位身分），仍open，阻擋完整artifact驗收及進F7；原CI job success不改判。原報告`controller-spec-review-5586384.md` SHA`adc8bb2336f3a2833dfd8c7e4eb52c2021ea9f42e9158256d3e7df90b02b957b`、`controller-quality-review-5586384.md` SHA`0e2f7a78e6c3ec2239a01ff3b85739f6842c1d3d29811fe9ab63a6995fd64428`。沒有本輪殘留Minor；F6-3e既有M-1仍留F7前置Step0。
+
+- spec原訊息誤寫「兩freeze在rerun前」，同reviewer親核後更正：attempt1 freeze07:43:31、rerun07:46:30、attempt2 freeze08:38:47 UTC，只有首輪在rerun前。原文/更正都保存；spec未獨立重算402 pins，也未對CI與基準逐列比WARN/ERROR或worldgen，不擴稱其已驗範圍。402 pins由取證者、controller及quality reviewer各自核對。
+- quality初版M1認為manifest範圍亂碼；controller與同reviewer各自直接核raw UTF-8/ASCII codepoints/同SHA後，證明檔內字串正確、只是工具顯示轉碼，reviewer撤回M1。原文與撤回都保存，凍結manifest未改。
+- 已另派`/root/ci_sources_fix1`完成唯讀Stage A：證明dev sources輸入仍是本類CODEC，錯名出現在Loom/Mercury remap輸出；AST binding與平台/EOL因果尚待有界實驗。派工/診斷/STATUS在`f6/ci-sources-fix1/`。未實作修正，不能把調查當GREEN。
+
+CI原job成功不等同sources完整交付通過，CI-S1未關閉前不進F7。此輪只有取證與治理文件，沒有新code commit；本機最終run-all仍為前節CI-W1在乾淨027e5e8的 `f6/ci-win-fix1/runall2/run-all-835e5a71ed2c48bab946d5c4e5776ef7`，原`END ALL exit=0`，summary SHA `58e24b9695e038a3c073a10e01bd2b2b42866375645bdb2a584cc7b9775e84e3`。SUMMARY為default179/179、legacy1/1、M560/60、perTest56+1、JUnit666(0 fail/0 error/2 skip)、WindowsCheckpoint17、release432/385、sources226/testmodHits0、main-only PASS、M3 4+5、M4 24、M5 collapse69/HALT31、本機CI兩PASS。沒有宣稱在558或之後治理docs重新跑過本機runtime。
+
+### 單次push與三個真實job
+
+2026-10-23 15:14:16–19（台灣），唯一一次 `git push origin 558638474b57bf652577c2c291f82a45a68d436d:refs/heads/feature/m5-collapse` exit0，當時遠端ref即時讀回相同；見push-result.json。這次同意已使用，不延用新commit。17:10:53再次唯讀核對origin feature仍558，local/remote main仍a7e1be2、local/remote無m5tag；controller-git-before-docs.json保留原值。未合main/tag/退役。
+
+GitHub Actions [run39916471824](https://github.com/Ben513242/QuantumChamber/actions/runs/39916471824)，Build/push/feature分支，完整SHA皆為558638474b57bf652577c2c291f82a45a68d436d：
+
+|執行|job ID|UTC開始–結束|原結果|
+|---|---|---|---|
+|Ubuntu attempt1|120291020358|07:14:27–07:19:01|success|
+|Windows attempt1|120291020173|07:14:27–07:30:23|success|
+|Ubuntu attempt2|120302805133|07:46:38–07:52:11|success|
+
+首輪8核心原件於07:43:31 UTC凍結後，07:46:30只POST一次Ubuntu job rerun；intent/result及response SHA在rerun-*。attempt2中的Windows新API ID120302807723沿用首輪起訖時間，不是新跑，也沒有重算第二次Windows。
+
+### 原XML、log與artifact差異
+
+- 三個真實job的default XML各179 PASS、M5各60 PASS；完整帶class identity/outcome集合相同，兩Ubuntu的JUnit完整集合也相同。JUnit各666：Windows664 PASS/2 SKIP，Ubuntu各638 PASS/28 SKIP；30項雙向outcome差異逐案對上上述4處平台註記，見junit-platform-diff.json。不能把平台略過當真實原生執行。
+- Windows四個cohort XML各唯一PASS；原log四SID×stage0..6 READY28、FAIL0。
+- M5 Ubuntu BEGIN59、SUITE_END records55；Windows BEGIN60、records56。Ubuntu提前返回的是具名 `_windows` passage案例，XML PASS不能當作Ubuntu執行此原生案例。各HOLD0、唯一SUITE_END、converged=true/unfinished=[]/initialized=true，allocation/projection/discovery/catalogUnconfirmed皆false。
+- 節流原結束列：Ubuntu1 tps90.6/waited10141，Ubuntu2 tps85.4/waited10194，Windows tps58.9/waited11377，均≤100。PREPARE全部max616；排除具名`checkpoint_waits_for_a_clean_recheck_while_the_invariant_cells_keep_changing`（616）及`prepare_waits_for_a_player_in_the_destination_volume_and_warns_once_after_six_hundred_ticks`（607）後，Ubuntu各212、Windows218，均<600。
+- release各432entries/385classes，兩Ubuntu整SHA同`eef4be5b935cc98dd272d33b3d60da194b2d95102e1a1b42d324bb515b81729c`；Windows整SHA`07763d47449a84fecde12b79bacafe9ec8043974182955e77f542d2739494a68`。385 class bytes跨平台/本機全同；跨平台11個release文字entry差異都可歸LF/CRLF。sources各226entries；testmod/gametest/fault-mixin污染0。
+- 兩Ubuntu sources整SHA分別`6d18706487ff91bc6cbcf7f42435f97383ab6f79c4c5a9334cbb3b9fc3981d6d`、`81feedcfd00dc1c8b1ec0ad098015c127f977bb95b8cfe0dbe88e4fcaea4adbf`；226項未壓縮內容/壓縮payload相同，只ZIP時間/extra不同。但跨平台sources另有下述CI-S1，不能宣稱一律只有換行或時間。
+
+### CI-S1：來源包欄位身分與發布class不一致
+
+`ChamberControllerBlock.java`的sources第28行：Ubuntu宣告本類field_46280，Windows/本機宣告CODEC；三方第40行都return field_46280。Ubuntu新舊四份entry SHA均`4db7dd32adcda1fab9b9a213c763138536c04129926f1b81b09450f03c0cd688`，Windows/本機均`6d14817a97a161951abe6c8b5b4096bca0bae88cef9ce507182501f46bd10283`。去EOL後只第28行不同；舊e6存在同差異，只證明不是本次CI-W1新增，不證明輸出正確。
+
+六份新舊release class entry SHA同`e25018d90c3dd941040721efd3ee21d0c6a11380635318183defdc785c5453b4`。靜態javap核自有CODEC，method_53969於offset0 getstatic本類CODEC、clinit offset8 putstatic本類CODEC。Windows來源的field_46280卻解析父系Block的公開欄位，型別MapCodec<class_2248>與回傳MapCodec<? extends class_2237>不相容；未實跑重編artifact，不稱已觀察編譯失敗或重編後錯誤runtime。Ubuntu來源同名自有宣告雖遮蔽父欄位，但公開欄位名仍與release不一致。
+
+發布class本體未見此問題造成的行為回歸；來源包正確性/IDE導覽/可重建性則有實質缺陷。獨立調查與主控泛型補記在controller-sourcejar-investigation.md及controller-sourcejar-signature-followup.md。Loom/Mercury何一步與何種輸入條件造成映射選擇，尚待根因調查，不能逕稱OS根因。後續以獨立CI-S1 fix round處理，保持production行為/發布class API為controller依既有授權的合理預設；若必須改production行為先回報使用者。F7既有M-1不混入。
+
+### 證據封存與控制層更正
+
+- EVIDENCE-MANIFEST.json：51檔/13,289,790bytes，SHA`09861319fa68957d05f060ad3b1d2e48f4e3daa6a1389339e56787f6f84eafbd`；兩freeze共14核心原件。取證者與controller各自逐檔size/SHA讀回相符，檔案集合extra/missing0；402來源pin未變。controller-ci-manifest-readback.json SHA`4c148b59c7c8b52293a74b8ca11a5c696f30cd5e7ffb187a643128e7bdabb124`。範圍排除可變controller-*及manifest/readback自身，不是run/世界備份。
+- controller-ci-raw-readback.json SHA`1ddec13febcf60fea090b73ed60cdda29bc4fb23276f6812258fdb3f41d0d54b`直接讀三次原ZIP/XML/log/JAR；首版純分析器誤用waitedTicks欄位，在KeyError停止，原腳本保留；v2使用原log的waited，並在尚未執行到的JUnit比較處修正「skip包含關係/差26」假設為原XML雙向30項，未改CI原件或重跑runtime。更正見controller-analysis-correction.json。
+- 第一次gh log下載因CLI跳脫序列防護失敗，曾產生0-byte ubuntu-job-logs.zip；後續成功下載沿用該路徑而覆寫成1,153,815bytes，原空檔沒有保留。STATUS曾誤寫保留，已於封存前如實更正；失敗stderr只在當時工具輸出，沒有補造原件。成功原log另存.txt並納freeze，不能把覆寫記成失敗root完整保留。
+
+下一步先關CI-S1及驗證修正產物，再進F7前置Step0/文件、required manual smoke、整分支review、docs truth與里程碑整合。M5未整體收尾，M6未開始；沒有新增push/main/tag/退役授權。
