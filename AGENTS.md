@@ -101,12 +101,12 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-24：M6 已正式接手，完整範圍與順序已由使用者確認；spec 已通過獨立 review（C0/I0/M0），接續 plan，尚未實作。**
+**2026-10-24：M6 已正式接手，完整範圍與順序已由使用者確認；spec 與 plan 已通過獨立 review（各 C0/I0/M0），執行入口為 M6 plan Task 1。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
 - 使用者已確認完整 M6 的順序：測試腳本安全與生成競態 → random seed → same-seed fresh／profile → 完整 Nether／End family、portal／gateway 與 respawn；各段驗收，M7 不納入。先完成 binding spec 的獨立 review，再寫 plan 並獨立 review；Critical／Important 清零後直接實作，不另問是否開始。
-- 使用者要求子代理使用 SOL。本輪用 `gpt-6-sol`，短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
+- 使用者要求子代理使用 SOL。本輪僅用 SOL 系列（`gpt-6-sol`／`gpt-6.1-sol`），短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
 - 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
 - M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
 - M6 Step 0：兩項獨立 harness 修正（New-OwnedRoot 的 run 祖先守門；Move-Fresh 建立 fresh 失敗的復原與原例外保留），不可混入生成 production commit。scripts/verification/README.md 的舊基準現況句已於M6接手文件同步更正，採計handoff／note的M5最後基準，沒有重跑M5。

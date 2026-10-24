@@ -1,6 +1,6 @@
 # M6 宇宙生成多樣性與完整維度家族 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 每個 task 的 implementer 與獨立 spec／quality reviewers 使用不同 context。
+> **給執行 agent：** 必須使用 `superpowers:subagent-driven-development` 逐 task 執行，以 `- [ ]` 追蹤。每個 task 的 implementer 與獨立 spec／quality reviewers 使用不同 context。
 
 **Goal:** 在保留 M4／M5 既有收據與世界語意下，依序完成驗證腳本安全、三種原版結構生成競態防護、持久隨機與同種子生成、完整 Overworld／Nether／End 家族及其路由與重生。
 
@@ -9,6 +9,8 @@
 **Tech Stack:** Minecraft 1.21、Yarn `1.21+build.9`、Fabric Loader `0.17.2`、Fabric API `0.102.0+1.21`、Loom `1.7.4`、Java 21、Gradle 8.8、PowerShell 7；JUnit／Fabric GameTest／跨 JVM probe。
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（本計畫依已獨立審查的 v1.0 契約；目前文件 SHA256 `C776E2BA4A12F61A727D0C956B7522D7709C51975712C993E45CE498E3EF26BC`）。
+
+狀態（2026-10-25）：獨立 plan review 已完成，最終 C0/I0/M0，釘選 `38e80fa`／原 plan SHA256 `0F848A7153A4B9F93C1E191FCE3AE4469A1EFE10575078933F0DF43E9650D9D6`。主控 preflight 已核22個task與196個共享file/interface pair，路徑/前置缺口0；只同步本段與執行說明語言，task契約不變。以下checkbox尚未表示實作或runtime已完成。
 
 ## Global Constraints
 

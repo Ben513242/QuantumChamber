@@ -438,3 +438,9 @@
 - M6分支目前完成純文件range `0d05f88..d742355`；主checkout/main與m5 tag未變，尚未push M6。
 - 完整M6範圍/順序已由使用者確認；spec首輪C0/I3/M1，fix1後原四finding全關、新I1（遷移後實際設定）由fix2處理。另一個全新SOL複審釘選d742355／spec SHA256 CC37ACDB3E7F0A3A5585E94AFBF852FB16DA60906ECD7749309FD3A75A8B64DF，Approved C0/I0/M0。主控已讀回/核hash；報告hash與處置見M6 note。
 - 本次只同步spec採用狀態/標題與接手文件，沒有M6程式、harness或runtime變更；設計通過不等於實作或測試已過。下一步writing-plans→全新SOL plan review→C/I清零後SDD實作，不重問已確認的範圍。
+
+### 2026-10-25：M6 plan 獨立review／preflight完成，接續Task1
+
+- Spec已獨立C0/I0/M0；plan經兩輪修正，最後另一全新SOL複審C0/I0/M0（pin38e80fa，plan 0F848A，報告D53F46）。完整hash及finding處置見M6 note。主控preflight22task/196pair/94file IDs、路徑與前置缺口0，沒有把此檢查冒稱runtime。
+- 2026-10-25執行前再核主checkout乾淨、main仍0d05f88、m5 peeled仍a2d2b40；本輪未修改main/tag，M6工作樹仍獨立。接續M6 Task1 run祖先守門；當前code尚未改，以SDD STATUS/ledger接力，不重做M5。
+- Claude專案記憶已依使用者要求唯讀參考，可用流程已納入plan；舊10/21狀態不沿用為現況，未修改記憶。正常push仍持續授權；M6 main/tag/退役/人工代操作各依門檻。
