@@ -103,8 +103,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：F7 已完成，Step0 與 F7 的獨立 spec／quality 均 Approved C0/I0/M0；唯一完整回歸在乾淨6b116e6 END ALL exit0。ec394ad 已推送，run40023563006 的 Windows 與同 SHA 兩次 Ubuntu 均成功，原件驗收完成、未歸屬內容差異0。required manual smoke 與 whole-branch review仍待；代操作問題已提出、尚未收到授權。M5 未合併 main／建立m5 tag，M6未開始。
-- Git 快照（2026-10-24 本次CI結果同步前，已核git／ls-remote）：本機與origin feature=`ec394adff7e88203782bcda894cb6f20589efc09`、porcelain空；local/remote main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`，local/remote無m5 tag。最新治理HEAD依handoff§7最後一筆解析；本機runtime HEAD為6b116e6、已驗CI SHA為ec394ad，其後純紀錄commit不冒稱已跑CI。正常push持續授權，main條件整合及指定M5不備份退役授權未用。
+- 目前：F7 與 ec394ad 雙平台／同 SHA 兩次 Ubuntu CI 原件驗收已完成；2026-10-24 required manual smoke 的必測觀察也已完成，正式結果見 `docs/manual-acceptance/2026-10-01-m5-manual-smoke.md`。本輪獨立結果 review 與 whole-branch review 尚待，不能提前宣告 M5 可合併。代操作與既有鍵鼠驅動已獲明確授權；M5 未合併 main／建立 m5 tag，M6 未開始。
+- Git 快照（2026-10-24 人工結果同步前，已核 git／ls-remote）：local/origin feature=`734d72b67d47c09a4348a8667a9bf794b4e41b72`；開工 porcelain 空；本筆提交前只改本輪五份文件，獨立review之後另記結果。local/origin main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`，local/origin 無 m5 tag。治理 HEAD 依 handoff §7 最新紀錄解析；本機最後 full 為6b116e6、已驗 CI 為ec394ad，純文件 HEAD不冒稱另跑 runtime。正常push持續授權；main條件整合與指定M5不備份退役授權未用。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：

@@ -10533,3 +10533,15 @@ controller直接讀本輪與CI-W1 full2的原JAR：release整檔bytes完全相�
 - 原件根 `.superpowers/sdd/2026-10-01-m5-collapse-passage/f7/ci-ec394ad-20261024/`；freeze1 SHA `5faa8ab5b34c1e44d35f42459ce6cbb27fb512326a5f3069cb14e559a7f9a224`，freeze2 SHA `b2bfd74d29c803127742730b7aba2c19f8a889f1052fa8a35554b6e82db3d5d9`。主控直接核8+6原件SHA/size與三份nested JAR、原XML、M5 log，見兩份 `controller-attempt*-readback.json`；collector的逐項比較與短STATUS同根。下載內容只讀，未執行。
 - **最終本機 run-all** 沿用前節6b116e6的 `run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0、SUMMARY與原件hash見前節；本次純狀態同步不重跑。新治理commit只記已驗ec394ad，不冒稱其自身已完成CI。
 - **下一步**：人工smoke代操作問題已提出，尚未收到授權；不得以未答覆當同意。人工驗收、whole-branch review仍待，main仍a7e1be2、無m5 tag、worktree未退役，M6未開始。後續正常push持續授權，不再逐次詢問。
+
+## 人工 smoke：2026-10-24 實際操作與結果
+
+- 行號：正式清單 `docs/manual-acceptance/2026-10-01-m5-manual-smoke.md` 的各結果列與「本輪世界、操作界線與證據」；原件以本節相對檔名與時間定位。
+- **Review（尚待）**：將由未參與操作的兩個全新 context 分別做 spec compliance 與品質／證據 review；目前沒有本輪 Approved 結論，whole-branch review 亦尚待。完成 range 為基準734d72b後的純文件同步；runtime／最後完整回歸仍是下述既有乾淨 HEAD，不重做已通過 code review。
+- **結論與範圍**：controller已直接核 A1／A1b／A2／B符合前置的兩艙／C／D／E／F1–F3 的必測觀察，詳細時序與限制見正式清單；M5尚未整體結案。使用者已明確授權代操作、測試複本／遊戲指令／鍵鼠／截圖及實驗性提示，另允許改用既有mc-drive；正常push持續授權。
+- **基準／修改**：HEAD `734d72b67d47c09a4348a8667a9bf794b4e41b72`，開工porcelain空；本輪只更新文件、ignored一次性取證與測試世界，沒有production／testmod／build／workflow變更。單人普通世界seed20261024、WM4只讀備份複本；多人localhost世界QC-M5-MP，A/B/OBS三個main/client runtime，沒有另跑Gradle並行驗證。
+- **關鍵畫面**：NEW補拍session5d2a32d8…的frame08/09為sealed_x且持續前進仍z21.300，frame10轉passable_x才移動；原NEW-r3已驗同XYZ、原始地形／修改隔離、PROJECTION不能啟動與載入後title。EXISTING session4c4c2597…有「另一個宇宙」title；東向sessionf661bb6f…的sealed_z兩次W停x85.699999988，放行後真跨越，14:04:41留下者見關閉提示、14:04:43跨過者仍在U且無該句。兩軸向shader膜及閉門遠景均有實拍。
+- **其餘核對**：B三份原收據皆NEW，只有x23/x43已供電，兩筆沿原token續行並終局；x3未供電保留原exact收據，不冒稱SOURCE／EXISTING舊收據已驗。E為單人整合server重載＋整個Java正常退出／新Java登入，兩次同U同位置。F1原180秒藥水自然到期無退款；F2同UUID掉落物回中央／效果不重置；F3真喝奶全組回兩個避開石頭的位置，未清效果持續遞減。
+- **取證／偏差**：唯一入口SDD `manual-smoke-20261024/STATUS.md`；70原件／25,751,089bytes的 `controller-manual-evidence-index.json` SHA `afb40a6c907144a31667f1c30d8fd4940b88ca74862d33d0b6cf08f25783f3f6` 已逐檔重算。原生glfw崩潰、FOCUS_LOST、前置到期／頁面重新配置、ARMING佈置改變cohort，以及NBT摘要首敗都保留、不採計、不無據歸為偶發；細節見清單。長效custom藥水只延長C/D與NEW補拍前置，passage仍1200ticks，未freeze／改receipt。一次性派工與工具不force-add，依使用者M5退役裁示不另備份。
+- **最終 run-all／SUMMARY**：沿用乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/179/windows89/legacy1/M560/60/perTest56+1/JUnit666/0fail/0error/2skip/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。已驗遠端CI仍ec394ad/run40023563006，兩次Ubuntu與一次Windows；不冒稱734或本次文件HEAD另跑CI。依精簡安排純文件不重跑full。
+- **Git／下一步**：同步前local/origin feature皆734d72b，local/origin main皆a7e1be2，無m5 tag；本次先提交已核觀察，獨立review尚待；review結果之後另以純文件補記。接著獨立人工結果review、whole-branch review、docs truth／push及最終CI，再依既有條件整合main；建立tag仍須明確同意。M6未開始。server exec39709的stdin已關閉，正常stop未送達；server/client仍運行，未kill daemon，停服實況另記。

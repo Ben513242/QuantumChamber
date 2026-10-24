@@ -366,3 +366,13 @@
 - **最終 run-all／SUMMARY**：沿用乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/179/windows89/legacy1/M560/60/perTest56+1/JUnit666/0fail/0error/2skip/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。依精簡裁示純文件不重跑。
 - **未關 finding／待決**：本輪無新 Critical／Important，歷史 deferred 及 AccessDenied 已知限制維持原處置。人工 smoke 未執行，代操作授權問題已提出但尚未答覆；建立 tag、M6 範圍／優先序仍待。正常 push 無需再問。
 - **下一步**：取得代操作授權或由使用者依正式清單執行 required manual smoke → whole-branch review → docs truth／最終 CI → 條件 main 整合／tag／指定工作樹退役。M5 未整體結案，M6 未開始。
+
+### 2026-10-24：人工 smoke 必測觀察完成，結果與整分支 review 尚待
+
+- **HEAD／porcelain／range**：人工 runtime與開工固定 `734d72b67d47c09a4348a8667a9bf794b4e41b72`，當時porcelain空；目前只有本輪正式清單／AGENTS／note／plan／handoff文件草稿。沒有production變更或新code range。此筆先提交已核的人工觀察並明列review尚待，讓reviewer在乾淨固定HEAD審查；結論之後另以純文件補記。治理commit以 `git log -1 --format=%H --grep='^docs: record M5 manual smoke evidence$'` 解析，parent應734d72b，提交後由controller核porcelain。
+- **實際refs／授權**：同步前唯讀核local/origin feature皆734d72b，local/origin main皆a7e1be2，local/origin無m5 tag；本輪尚未merge/tag/退役。正常push持續授權，main條件整合與指定M5不備份退役授權未用，建立tag仍待同意。遊戲代操作、測試複本／提示與既有mc-drive切換均已獲明確同意，不再沿用前筆「尚待授權」。
+- **完成內容**：正式清單A1/A1b/A2/B符合前置的兩艙/C/D/E/F1–F3皆有實際觀察；最後NEW補拍frame08/09 sealed_x位置z21.300、frame10才passable_x移動，未用EXISTING替代。兩軸向shader、1/2分流與即時關閉訊息、帶裝飾三種返還均已核。B原件三筆全NEW，未供電C1不採計並保留；E是單人整合server／完整Java重啟。
+- **Review**：本輪獨立spec與品質／證據review尚待，沒有同context自評通過；既有F7兩角色C0/I0/M0仍只代表F7。whole-branch亦尚待，不提前宣布M5可合併。
+- **最終run-all／SUMMARY**：沿用乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/windows89/legacy1/M560/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。已驗CI仍ec394ad/run40023563006；純文件依精簡安排不重跑full，不冒稱新文件HEAD已驗CI。
+- **證據／未關事項**：SDD `manual-smoke-20261024/STATUS.md`為細節入口，70原件索引SHA `afb40a6c907144a31667f1c30d8fd4940b88ca74862d33d0b6cf08f25783f3f6`。早期glfw原生崩潰原因未證實，改用已授權driver的新label完成後續案例；失焦／前置到期／頁面配置與ARMING佈置偏差原件全部保留、不當偶發PASS。AccessDenied仍維持M5既有已知限制。server exec39709 stdin已關閉，stop未送達，server與三client仍運行、未kill daemon。
+- **待使用者裁示／下一步**：建立m5 tag與M6範圍／優先序仍待；正常push不用再問。先獨立結果review→whole-branch review→docs truth／push及最終CI→條件main整合→tag→指定worktree退役；正常停服與client關閉須實際完成並核無Java／lock，不能提前寫已停服。M6未開始。
