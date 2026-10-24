@@ -85,14 +85,25 @@ function Move-Fresh([string]$root,[string]$tag) {
     Save-Json (Join-Path $gate "$tag-original-files.json") $before
     $existed=Test-Path -LiteralPath $root
     if($existed) { Check-Path $backup | Out-Null; if(Test-Path -LiteralPath $backup){throw 'backup 碰撞'};Move-Item -LiteralPath $root -Destination $backup }
-    New-Item -ItemType Directory -Path $root | Out-Null
-    return [pscustomobject]@{root=$root;backup=$backup;existed=$existed;before=$before;tag=$tag}
+    $swap=[pscustomobject]@{root=$root;backup=$backup;existed=$existed;before=$before;tag=$tag}
+    try { New-Item -ItemType Directory -Path $root | Out-Null }
+    catch {
+        $createFailure=$_
+        try { Restore-Root $swap }
+        catch {
+            # 保留兩個原因與可恢復位置；復原失敗不可宣稱 exact restore。
+            $combined=[AggregateException]::new("fresh 建立與復原皆失敗；original=$root；backup=$backup；freshEvidence=$(Join-Path $gate ($tag+'-fresh'))", [Exception[]]@($createFailure.Exception,$_.Exception))
+            throw $combined
+        }
+        throw
+    }
+    return $swap
 }
 function Restore-Root($swap) {
     Assert-Idle $swap.root
     $fresh=Check-Path (Join-Path $gate ($swap.tag+'-fresh'))
     if(Test-Path -LiteralPath $fresh){throw 'fresh evidence 碰撞'}
-    Move-Item -LiteralPath $swap.root -Destination $fresh
+    if(Test-Path -LiteralPath $swap.root) { Move-Item -LiteralPath $swap.root -Destination $fresh }
     if($swap.existed) {
         Check-Path $swap.backup | Out-Null
         Move-Item -LiteralPath $swap.backup -Destination $swap.root

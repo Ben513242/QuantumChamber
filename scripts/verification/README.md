@@ -26,7 +26,7 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 | `gate-evidence.ps1` | 共用唯讀身分、當次完整日誌與失敗 XML 取證；載入只定義函式，不啟動程序或操作世界 |
 | `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod／clientProbe；另核對 world keys、正常停止與 exact restore |
 | `probe-common.ps1` | M4/M5 共用 owned-phase 程序生命週期、具名 Context/State 與診斷；`New-OwnedRoot` 建檔前以 `Assert-OwnedRunAncestor` 驗 canonical Project、run 與全部祖先非 reparse，root 必須直接位於 run 內；dot-source 本身沒有啟動或世界副作用 |
-| `m6-harness-safety-check.ps1` | `-Case owned-root -Label <唯一標籤>`：呼叫真實 `New-OwnedRoot`，驗既存／缺少實體 run 可用，junction、非 canonical／相對 Project 與越界 root 輸入以 `OWNED_ROOT_ANCESTOR_UNSAFE` 拒絕且不建設定檔。每次 fixture／receipt 留在 M6 SDD task-01 唯一 nonce 目錄，不碰使用者 run、不啟動 Gradle |
+| `m6-harness-safety-check.ps1` | `-Case owned-root -Label <唯一標籤>`：呼叫真實 `New-OwnedRoot`，驗既存／缺少實體 run 可用，junction、非 canonical／相對 Project 與越界 root 輸入以 `OWNED_ROOT_ANCESTOR_UNSAFE` 拒絕且不建設定檔。`-Case move-fresh` 以 AST 載入正式 `Move-Fresh`／`Restore-Root` 及相依函式，定向注入 fresh 建立與備份復原 I/O 故障；驗原世界逐檔 hash／lock、原例外、雙重失敗原因與部分 fresh 現場保存，並驗正常／原目錄不存在的語意。fixture／receipt 分別留在 M6 SDD task-01／task-02 唯一 nonce 目錄，不碰使用者 run、不啟動 Gradle |
 | `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，24 phases，每個 phase 一個 JVM |
 | `m5-collapse-probe.ps1` | M5 塌縮的跨 JVM crash／restart probe（spec §12 的 crash 窗口），每個 phase 一個 JVM；見「M5 collapse probe」 |
 | `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；fixture 同時放 default 與 M5 兩份 GameTest XML。可加 XML／原始碼 mutation 證明規則會失敗 |
