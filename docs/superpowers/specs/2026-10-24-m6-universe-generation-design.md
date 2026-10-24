@@ -1,12 +1,14 @@
-# M6 宇宙生成多樣性與完整維度家族：binding spec（待獨立審查）
+# M6 宇宙生成多樣性與完整維度家族：binding spec（v1.0）
 
 日期：2026-10-24。基準：`0d05f889da6f8b82b97af756aaa50066b3d42854`。本文定義 M6 的新行為；未明列變更的 M4／M5 checked 權威與遊戲行為維持原約定。本文尚非實作或驗收結果。
+
+狀態：獨立 spec review 已完成，最終 Critical 0／Important 0／Minor 0（釘選 `d742355`，原 spec SHA256 `CC37ACDB3E7F0A3A5585E94AFBF852FB16DA60906ECD7749309FD3A75A8B64DF`）。本版採用下列主控設計預設；審查後只同步採用狀態與標題，契約內容不變。M6 runtime／native gate 尚待 plan 與實作。
 
 ## 1. 目標、來源與交付順序
 
 **使用者已確認**完整 M6，依序為：①測試腳本安全與生成競態；②random seed；③same-seed fresh／generation profile；④完整 Nether／End family、portal／gateway、respawn。每段單獨驗收；spec 與 plan 經獨立 review、Critical／Important 歸零後直接實作。`StrongholdGenerator`、`NetherFortressGenerator`、`EndCityGenerator` 的共享可變狀態各自調查與修正。M7 literal branch／snapshot 不在範圍。
 
-**主控提案的具體預設**在 §4 標明；設計 §7.4 的 50／30／20 是示例，使用者尚未選定權重，也未指定 mutation 類型。M6 不改目前 `SOURCE`／`EXISTING`／`NEW` 的候選權重，不改選門後的候選身分；只讓新產生的 `NEW` 意圖可選 M6 profile。兩項獨立 harness Minor：`probe-common.ps1:17–24` 的 `run/` 祖先 canonical／reparse 守門，以及 `gates.ps1:80–102` 的 Move-Fresh「move 成功、建 fresh root 失敗」可復原且保留原錯誤；各自 RED／GREEN、獨立 commit，不能混進生成 production commit。
+**主控設計預設的具體預設**在 §4 標明；設計 §7.4 的 50／30／20 是示例，使用者尚未選定權重，也未指定 mutation 類型。M6 不改目前 `SOURCE`／`EXISTING`／`NEW` 的候選權重，不改選門後的候選身分；只讓新產生的 `NEW` 意圖可選 M6 profile。兩項獨立 harness Minor：`probe-common.ps1:17–24` 的 `run/` 祖先 canonical／reparse 守門，以及 `gates.ps1:80–102` 的 Move-Fresh「move 成功、建 fresh root 失敗」可復原且保留原錯誤；各自 RED／GREEN、獨立 commit，不能混進生成 production commit。
 
 | 切片 | 成功畫面／必要證據 | 必須先有 |
 | --- | --- | --- |
@@ -72,17 +74,17 @@ schema1 只有目前存檔 seed，沒有舊 seed 副本，因此**首次 M6 遷�
 
 切片②／③即使 schema2 catalog 已保留三個 role identity，也**禁止物化**新 U 的 Nether／End role，且只驗 seed／profile；玩家從新 U Overworld 使用原版 portal 或死亡時，仍可能照 M5 已知限制非正規回到 canonical。這個中間階段不宣稱家族 routing 或重生完成，也不為它提前改 portal／死亡玩法。切片④的 routing／respawn、role owner 與 no-leak 驗收全過後，才開 `FamilyCapabilityVersion=1` 的新候選與 Nether／End 物化；既有 capability 0 的 Overworld U 仍可依已驗 catalog family descriptor 開角色供原版 portal／respawn 使用，但不升級其舊量子艙收據權限。
 
-## 4. 生成策略與選擇（主控提案，待 review）
+## 4. 生成策略與選擇（主控設計預設）
 
 可行作法：A 從凍結的 `generationSeedMaterial` 決定 seed／profile，窄且可重現；B 另設 profile 抽選 ledger，較易動態調權但增加跨檔交易；C 配置時用 runtime RNG，重試會漂移。選 A。profile registry/API 最低契約是 `register(ProfileProvider{id, version, parameterSchema, resolveGenerationSettings, canonicalOutput})`、`freeze()`、`resolve(id,version,parameters)`：本 mod 與受信任 Java 擴充只能在**server 讀 M6 catalog／candidate 前**註冊；相同 id＋version 重複即拒絕啟動，freeze 後禁止更改。provider deterministic、無世界副作用，回傳可依 §3.1 canonical encoding 取 fingerprint 的完整三 role output；存檔所指 provider 缺失或 fingerprint 不符則 U fail closed。API 可查詢及嚴格解析已註冊 provider；M6 候選 policy **只選下表三種內建策略**，擴充 provider 不會被偷偷納入權重，需未來經 review 的新 policy 才能配置它的 U。此 API 能在啟動期實際註冊、驗參數與解析 snapshot，不是只包 enum；不建立通用腳本／插件執行器。
 
-| 新 `NEW` profile（提案） | root seed／差異 | 驗收 |
+| 新 `NEW` profile（本版採用） | root seed／差異 | 驗收 |
 | --- | --- | --- |
 | `RANDOM_VANILLA_V1` | 按下文固定雜湊取不同於來源的 root seed；三 role 使用已驗的 `quantumchamber:vanilla_normal_v1` 設定 | 同一意圖重啟完全相同；和來源 seed 不同，生成有可觀察差異 |
 | `SAME_SEED_FRESH_V1` | 精確複製 source root seed **及來源各 role 的已驗 generation settings snapshot**；新 UUID／空 storage，不複製方塊、實體或玩家歷史 | 同 seed 同設定的原始 terrain／biome／structure 相符，來源玩家建築不存在；日後修改互不影響 |
 | `SAME_SEED_TOGGLE_AMPLIFIED_V1` | 同 source root seed；來源 Overworld 為 normal 就改 amplified、為 amplified 就改 normal；Nether／End 設定照來源 snapshot | 相同 seed，Overworld 有可重現地形差異；三 role 重啟不變 |
 
-**分階段 policy snapshot（主控提案）**：切片②新 intent 固定 `PolicyVersion=1`，只選 random；切片③前半新 intent 用 `PolicyVersion=2`，從 random／same-seed 各一半選；切片③ mutation 驗收後的新 intent 才用 `PolicyVersion=3`，三類等量。切片②／③的 `FamilyCapabilityVersion=0`；僅切片④ family／routing／respawn 驗收後新產生的 intent 固定為 1，舊 intent 不升版。每一階段只凍結當時已驗的 profile；既有 intent 永不升 policy 或重抽。三類等量是為了讓玩家在少量新宇宙中能實際看見三種結果，並簡化第一輪驗證，不冒稱最終平衡。choice 取 `SHA-256(UTF8("quantumchamber:m6:profile-choice:v1") || int32BE(PolicyVersion) || GenerationSeedMaterial[32])` 第一個 unsigned 64-bit 大端整數，對當版 profile 數取餘數；固定排序是 random、same-seed、toggle-amplified。random seed 取 `SHA-256(UTF8("quantumchamber:m6:root-seed:v1") || GenerationSeedMaterial[32] || AllocationToken[32])` 第一個 signed 64-bit 大端整數；若恰等於 `SourceRootWorldSeed`，與 `0x9e3779b97f4a7c15` XOR 一次，必不同。same-seed／mutation 直接用 `SourceRootWorldSeed`。
+**分階段 policy snapshot（主控設計預設）**：切片②新 intent 固定 `PolicyVersion=1`，只選 random；切片③前半新 intent 用 `PolicyVersion=2`，從 random／same-seed 各一半選；切片③ mutation 驗收後的新 intent 才用 `PolicyVersion=3`，三類等量。切片②／③的 `FamilyCapabilityVersion=0`；僅切片④ family／routing／respawn 驗收後新產生的 intent 固定為 1，舊 intent 不升版。每一階段只凍結當時已驗的 profile；既有 intent 永不升 policy 或重抽。三類等量是為了讓玩家在少量新宇宙中能實際看見三種結果，並簡化第一輪驗證，不冒稱最終平衡。choice 取 `SHA-256(UTF8("quantumchamber:m6:profile-choice:v1") || int32BE(PolicyVersion) || GenerationSeedMaterial[32])` 第一個 unsigned 64-bit 大端整數，對當版 profile 數取餘數；固定排序是 random、same-seed、toggle-amplified。random seed 取 `SHA-256(UTF8("quantumchamber:m6:root-seed:v1") || GenerationSeedMaterial[32] || AllocationToken[32])` 第一個 signed 64-bit 大端整數；若恰等於 `SourceRootWorldSeed`，與 `0x9e3779b97f4a7c15` XOR 一次，必不同。same-seed／mutation 直接用 `SourceRootWorldSeed`。
 
 source seed 與**來源**各 role settings 在候選生成時按 exact source family 凍結為 `SourceSettingsSnapshot`；canonical source 取存檔 generator seed 與已驗原版設定，舊 U 取其 legacy seed/settings，schema2 U 取其 catalog `TargetSettingsSnapshot`。profile provider 再以 source snapshot／策略產生**目標** `TargetSettingsSnapshot`：random→normal；same-seed→來源原樣；toggle→只翻轉 normal/amplified Overworld。兩份各存 provider id/version、參數與 output fingerprint，下一次開服各自重算，不能只保存同名 id。M6 內建僅支援能精確重建的 vanilla normal／amplified 設定；來源有其他自訂／未知 preset 時不產生 M6 `NEW` intent，不能暗改 normal；`SOURCE`／`EXISTING` 仍按舊候選規則。固定 1.21 registry gate 要證明 amplified preset、biome／structure 與獨立 ServerWorld 可用；否則先修本文並獨立 review。terrain noise、biome、structures 都用持久 root seed，不只換 `BiomeAccess.hashSeed`。
 
@@ -118,8 +120,8 @@ M5 的 Nether／End 選門拒絕與 M4 舊 `MEASURED` 的 NEW／EXISTING 安全�
 
 既有 M5 本機基準是 code `6b116e6` 的 `run-all` `END ALL exit=0`，CI 是 `f99ce66` 雙平台成功，兩者不是 M6 證據。新的 full 依 `pwsh -NoProfile -File scripts/verification/run-all.ps1`，比對 SUMMARY、精確 testcase class/name、release／sources、WARN／ERROR、pin、worldgen 例外與 CI；純 docs 只查 diff／`git diff --check`，不重跑舊 code 基準。每段獨立 spec 與 quality review，Critical／Important 關閉才前進；最後 automated gates → required manual smoke（tracked note）→ whole-branch review → docs truth → feature push／雙平台 CI。正常 push 依既有持續授權；M6 合併 main、建立 tag、退役 worktree 另守各自門檻，不建立 PR／LICENSE，也不在 main 實作。
 
-## 9. 尚待設計審查核定的窄項
+## 9. 實作前驗證與支援界線
 
-1. 主控提案的三類等量預設與 `SAME_SEED_TOGGLE_AMPLIFIED_V1`，不是使用者指定的平衡規則；如原版 1.21 registry gate 不成立，須明列替代 mutation 再 review。
+1. 主控設計預設的三類等量預設與 `SAME_SEED_TOGGLE_AMPLIFIED_V1`，不是使用者指定的平衡規則；如原版 1.21 registry gate 不成立，須明列替代 mutation 再 review。
 2. schema1 舊世界首次升級前若存檔 seed 曾被外部變更，舊 catalog 沒有 seed 副本，無法純靠它證明歷史 seed；須在 native／fixture gate 確認可採的證據與 fail-closed 條件。
 3. Bed／anchor、dragon／gateway 的原版 owner 與資料格式、非玩家 portal 路徑先以固定版本 source／runtime 核實，不能由高層設計推稱已有 API。

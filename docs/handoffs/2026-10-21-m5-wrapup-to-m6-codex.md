@@ -432,3 +432,9 @@
 - 已從main開新工作樹`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`、分支`codex/m6-universe-generation`。原生工具遇dubious ownership後，以單次safe.directory的git worktree add建立，沒有更動全域設定。
 - 目前只有唯讀盤點與設計／治理文件，尚無M6實作、測試或通過的spec/plan review；下一步先完成spec獨立review，再plan獨立review，C/I清零後直接實作。
 - 後續主要接手入口改為AGENTS的M6入口、`docs/implementation-notes/2026-10-24-m6-universe-generation.md`及新SDD的STATUS。M5已驗full/CI仍固定6b116e6/f99ce66，不冒稱為M6證據。
+
+### 2026-10-24：M6 spec 獨立 review 完成，接續 plan
+
+- M6分支目前完成純文件range `0d05f88..d742355`；主checkout/main與m5 tag未變，尚未push M6。
+- 完整M6範圍/順序已由使用者確認；spec首輪C0/I3/M1，fix1後原四finding全關、新I1（遷移後實際設定）由fix2處理。另一個全新SOL複審釘選d742355／spec SHA256 CC37ACDB3E7F0A3A5585E94AFBF852FB16DA60906ECD7749309FD3A75A8B64DF，Approved C0/I0/M0。主控已讀回/核hash；報告hash與處置見M6 note。
+- 本次只同步spec採用狀態/標題與接手文件，沒有M6程式、harness或runtime變更；設計通過不等於實作或測試已過。下一步writing-plans→全新SOL plan review→C/I清零後SDD實作，不重問已確認的範圍。
