@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。目前為設計階段，尚未實作或執行 M6 runtime。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task 1 harness 安全修正完成並雙 review C0/I0/M0；接續 Task 2。M6 生成／維度家族程式尚未實作。
 
 ## 使用者確認的範圍與順序
 
@@ -69,3 +69,17 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - 主控preflight：22個task逐列、196個共享file/interface pair、94個展開檔案ID；路徑/既存/前置Create缺口0，沒有未裁示文字衝突。SDD preflight.md SHA256 `7116CA522D6EC8989F238B344556C5FD5B2DF7D1704C40EE45C9A852F3019111`，同表與rulings已入ledger。這是計畫自洽檢查，不是runtime證明。
 - 使用者要求的Claude專案記憶已唯讀參考；採用已有的人工驗收白話/焦點/當次log/15秒查看、STATUS小範圍接力與M6新run tick pacing檢查。舊進度/授權由最新AGENTS取代，未修改來源記憶；私人完整內容未複製進tracked文件。
 - 本次只同步plan通過狀態、執行說明繁體中文與接手入口；task文字未改，spec未改，所有M6來源檔/測試/harness仍無實作變更。接續Task1的受控RED→窄修→同clean code HEAD兩GREEN/full→獨立雙review，無需再問是否開始。
+
+## Task 1：owned run 祖先守門完成（2026-10-25）
+
+- range `0087b2f..b533367`，code `b53336717ecc0c54040fda6fa5b9b929e5644f2d`。只改probe-common.ps1、新m6-harness-safety-check.ps1與README；沒有Java/testmod/build/workflow變更。New-OwnedRoot建立前驗canonical Project、run與所有祖先非reparse/實體目錄，root direct parent必為run。
+- RED根 `task-01/h1-red-f0c519d004454e758785643026741ffc` 在BASE上，正常existing/fresh先PASS，真run-junction案例因未拒絕且受控外側被寫入FAIL，原現場保留。receipt SHA `6E2B94A71AE92AC18B5D577344415FDF978ACC66B4E9F5E6305B21D9EC7AFED1`。
+- 同clean b533367兩GREEN：`h1-green-a-627cf067877d478090b87cd37e01e59a`、`h1-green-b-0f2b78c3592745249a19cf2a8902e192`，各8/8；receipt SHA分別 `567D1F26E608E7D7F284717570E860E92F9E310F7E5446A7DC704D8D0065E673`、`6F40D75D7EAA769F7B852F2CCA266499FD82CACB359BD3465397119B845531A1`。PS parser兩檔0錯。
+- 完整run：`task-01/full/run-all-0790df31c2a943ceac91c2ca2eb01890`，2026-10-25 02:03:32精確`END ALL exit=0 HEAD=b53336717ecc0c54040fda6fa5b9b929e5644f2d`；summary SHA `2241279E97DBFD256EA86D1BCF2518F40EEC354D92E1E2A62C9836B9EE470C29`。
+- SUMMARY：default179/179/windows89/legacy1/M560/60/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/release432entries/385classes/sources226/testmod0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31。本機win/ubuntu CI rule PASS不是GitHub runner結果，沒有為此push。
+- 主控讀回RED/兩GREEN、三份具名XML、JUnit原XML、JAR ZIP/sha、main-only三層/normalStop/exactRestore/worldKeys與三world restore；scope missing/extra皆空。對M5 6b116e6的src/build/workflow無差異；未聲稱比過已退役的歷史raw XML。
+- 原97-log audit保留（SHA `667064F15D63454C83E70C252292AF10E957F438F93CC534462B1B39F5631081`）；M3 9phase/9log補充另存，主控與spec reviewer各重算255個原件hash零差異。M3 manifest SHA `CB6558B0D2800826456816A46D1D7944B8DD70760499A052E04B44D30367178C`，補充audit SHA `B914B4E503453047EF22F55DA45FCC32A4726BDB2B5CDBBE8590146B1B5618C1`。M3是fresh owned roots，無既有world可還原；均保留、owner/lock釋放。
+- 合計106當次log，2425 WARN/ERROR依具名fault/原版訊息歸屬，worldgen命中0。journal-corrupt的unexpected字樣為預期損壞GZIP拒絕：原receipt PASS/failures[]、拒啟動/保留bytes/正常停止及lock釋放皆證；不是未歸屬新例外。完整來源/stack與集合見task-1-report.md及原件。
+- 全新獨立spec `/root/m6_task1_spec_review` Approved C0/I0/M0，報告SHA `894FCB1DDE9C12700F3AF545C8E6F2BC103E271857C5B239F9EA7B5028A6C2AD`；另一全新quality `/root/m6_task1_quality_review` Approved C0/I0/M0，SHA `F75D4CB15CCFE06494E809B2D62F593F998D3FDB4C25D5CF9E8320373F79659B`。主控已讀完整兩報告/核hash；兩者僅唯讀，不重跑suite。
+- task-1-report.md SHA `063B359FD4810AC2BEF9224D0CF7AF2EE409D4A79E1CD25A84FEB653356AF4BC`；review diff SHA `FFA670EA39483B33450E63A3702C1461385B6D6B8861C8DBE39913C8D33AF43D`。本段相對上述code只有結果文件，不冒稱新docs SHA重跑runtime。
+- Task1完成、無未關finding。下一步Task2 Move-Fresh建目錄失敗復原，另派全新implementer；不做生成/renderer/M7。人工M6 smoke未執行、遠端CI未執行、尚未push/merge/tag/退役。

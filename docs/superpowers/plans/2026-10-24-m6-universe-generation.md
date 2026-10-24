@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（本計畫依已獨立審查的 v1.0 契約；目前文件 SHA256 `C776E2BA4A12F61A727D0C956B7522D7709C51975712C993E45CE498E3EF26BC`）。
 
-狀態（2026-10-25）：獨立 plan review 已完成，最終 C0/I0/M0，釘選 `38e80fa`／原 plan SHA256 `0F848A7153A4B9F93C1E191FCE3AE4469A1EFE10575078933F0DF43E9650D9D6`。主控 preflight 已核22個task與196個共享file/interface pair，路徑/前置缺口0；只同步本段與執行說明語言，task契約不變。以下checkbox尚未表示實作或runtime已完成。
+狀態（2026-10-25）：獨立 plan review 已完成，最終 C0/I0/M0，釘選 `38e80fa`／原 plan SHA256 `0F848A7153A4B9F93C1E191FCE3AE4469A1EFE10575078933F0DF43E9650D9D6`。主控 preflight 已核22個task與196個共享file/interface pair，路徑/前置缺口0；只同步本段與執行說明語言，task契約不變。各task完成狀態依checkbox及note中的實際證據；未勾選項目尚未完成。
 
 ## Global Constraints
 
@@ -82,9 +82,11 @@ Task 7 建立 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryPr
 
 **Files:** Modify `scripts/verification/probe-common.ps1:17-24`；Create `scripts/verification/m6-harness-safety-check.ps1`；Modify `scripts/verification/README.md`。
 **Interfaces:** consumes `Resolve-Evidence(Context,Path)`／`New-OwnedRoot(Context,Suffix)`；produces `Assert-OwnedRunAncestor(Context)`，建 root 前 canonical／non-reparse，拒絕不屬 repo 的 run ancestor。
-- [ ] 寫 `m6-harness-safety-check.ps1 -Case owned-root`：受控 reparse `run/`／非 canonical ancestor 的 RED 必以 `OWNED_ROOT_ANCESTOR_UNSAFE` 拒絕且不在外部建檔；正常實體 `run/` PASS。保留 fixture，不碰使用者 run。
-- [ ] 執行 `pwsh -NoProfile -File scripts/verification/m6-harness-safety-check.ps1 -Case owned-root -Label h1-red`，原版必在具名 unsafe 斷言 FAIL；修窄 guard、同檔 `h1-green-a/b` PASS。
-- [ ] 依全域 code 提交流程完成此 task 的必要 compile（PS parser／source guard）、乾淨 HEAD 兩 GREEN、full、fresh spec＋quality review；結果文件另 commit。
+- [x] 寫 `m6-harness-safety-check.ps1 -Case owned-root`：受控 reparse `run/`／非 canonical ancestor 的 RED 必以 `OWNED_ROOT_ANCESTOR_UNSAFE` 拒絕且不在外部建檔；正常實體 `run/` PASS。保留 fixture，不碰使用者 run。
+- [x] 執行 `pwsh -NoProfile -File scripts/verification/m6-harness-safety-check.ps1 -Case owned-root -Label h1-red`，原版必在具名 unsafe 斷言 FAIL；修窄 guard、同檔 `h1-green-a/b` PASS。
+- [x] 依全域 code 提交流程完成此 task 的必要 compile（PS parser／source guard）、乾淨 HEAD 兩 GREEN、full、fresh spec＋quality review；結果文件另 commit。
+
+完成證據：code "b533367"，兩次focused 8/8、run-all-0790df31c2a943ceac91c2ca2eb01890 END ALL exit0；全新spec/quality皆C0/I0/M0。詳M6 note Task1；本結果文件不另跑runtime。
 
 ### Task 2：`Move-Fresh` 建目錄失敗的 exact 復原
 

@@ -444,3 +444,9 @@
 - Spec已獨立C0/I0/M0；plan經兩輪修正，最後另一全新SOL複審C0/I0/M0（pin38e80fa，plan 0F848A，報告D53F46）。完整hash及finding處置見M6 note。主控preflight22task/196pair/94file IDs、路徑與前置缺口0，沒有把此檢查冒稱runtime。
 - 2026-10-25執行前再核主checkout乾淨、main仍0d05f88、m5 peeled仍a2d2b40；本輪未修改main/tag，M6工作樹仍獨立。接續M6 Task1 run祖先守門；當前code尚未改，以SDD STATUS/ledger接力，不重做M5。
 - Claude專案記憶已依使用者要求唯讀參考，可用流程已納入plan；舊10/21狀態不沿用為現況，未修改記憶。正常push仍持續授權；M6 main/tag/退役/人工代操作各依門檻。
+
+### 2026-10-25：M6 Task1 結案，接續 Task2
+
+- code b533367，range0087b2f..b533367，僅owned-root祖先守門/正式fixture runner/README。原RED保留、同clean HEAD兩次8/8、full run-all-0790df31c2a943ceac91c2ca2eb01890 END ALL exit0，全部基準數字符合；M3補9phase日誌與255原件，106logs worldgen0，WARN/ERROR具名歸屬。
+- 全新spec/quality均C0/I0/M0，主控已讀回原件及兩review；hash/range詳M6 note Task1。沒有把本機CI規則說成GitHub runner，也沒有人工smoke結果。
+- 本筆只更新結果/checkbox/入口，不重跑同code。Task1完成無未關finding；接續Task2（Move-Fresh建目錄失敗時復原並保留原錯誤），來源/測試範圍依短派工。main/m5不動，M6尚未push/merge/tag/退役。

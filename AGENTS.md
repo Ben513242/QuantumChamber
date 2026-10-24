@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-24：M6 已正式接手，完整範圍與順序已由使用者確認；spec 與 plan 已通過獨立 review（各 C0/I0/M0），執行入口為 M6 plan Task 1。**
+**2026-10-24：M6 已正式接手，完整範圍與順序已由使用者確認；spec 與 plan 已通過獨立 review（各 C0/I0/M0），Task 1 已完成（雙 review C0/I0/M0），執行入口為 M6 plan Task 2。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
