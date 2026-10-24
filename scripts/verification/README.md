@@ -11,7 +11,7 @@ pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClas
 pwsh -NoProfile -File scripts/verification/run-all.ps1
 ```
 
-`M6Compile` 只編譯 main/client/test/testmod，不代替 GREEN。M6Compile／M6JUnit／M6GameTest 每 phase 初始上限 180 秒、idle 90 秒；沿用 runner 的 stdin stop 與 finally 復原流程，沒有外層強停。新 M6 mode 保留首次 deadline 原因，即使 grace 內自然 exit0 仍 FAIL；`m6-deadline-check.ps1` 用真 Invoke-Gradle、受控短 deadline 與自然 exit0 假Gradle檢查 total／idle／正常與舊mode，不啟動 Minecraft。Windows SelfTest 序列執行，Ubuntu 明列此 process-harness 不支援，與 M6 native chains 分開。`M6JUnit` 選定 class 時核 exact suite、case 非空且不得 skipped；未指定 class 時執行全部 JUnit。`m6-focused` 每次先跑受控 scope／JAR／pace 反例，再跑 Move-Fresh 與 owned-root 回歸；受控空目錄殘留必被存在性斷言拒絕。正式 Move-Fresh 行為不變，所有 root 保留。`-Suite Probe -Chain <chain>` 在 Task 7 正式 runner 出現前以 `M6_PROBE_UNAVAILABLE` 拒絕。
+`M6Compile` 只編譯 main/client/test/testmod，不代替 GREEN。M6Compile／M6JUnit／M6GameTest 每 phase 初始上限 180 秒、idle 90 秒；沿用 runner 的 stdin stop 與 finally 復原流程，沒有外層強停。新 M6 mode 保留首次 deadline 原因，即使 grace 內自然 exit0 仍 FAIL；`m6-deadline-check.ps1` 用真 Invoke-Gradle、受控短 deadline 與自然 exit0 假Gradle檢查 total／idle／正常與舊mode，以及退出／仍存活時恢復輸出邊界和取證延遲控制，不啟動 Minecraft。Windows SelfTest 序列執行，Ubuntu 明列此 process-harness 不支援，與 M6 native chains 分開。`M6JUnit` 選定 class 時核 exact suite、case 非空且不得 skipped；未指定 class 時執行全部 JUnit。`m6-focused` 每次先跑受控 scope／JAR／pace 反例，再跑 Move-Fresh 與 owned-root 回歸；受控空目錄殘留必被存在性斷言拒絕。正式 Move-Fresh 行為不變，所有 root 保留。`-Suite Probe -Chain <chain>` 在 Task 7 正式 runner 出現前以 `M6_PROBE_UNAVAILABLE` 拒絕。
 
 新 M6 CI 可寫路徑會直接檢查目標與每層祖先的項目，拒絕 reparse（含斷鏈）與非目錄；世界只能不存在或為實體空目錄，其他 I/O 無法確認時拒絕。輸出 root 在首次建檔前必須被 gitignore，非 ignored 反例必須保持不存在。CI 的自測矩陣依實際平台使用 Junction／SymbolicLink。
 

@@ -151,11 +151,25 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     $xmlBefore=@(Get-GateXmlSnapshot (Join-Path $repo 'build'))
     Save-Json (Join-Path $evidence 'logs-before.json') $logBefore
     Save-Json (Join-Path $evidence 'xml-before.json') $xmlBefore
-    $start=[DateTimeOffset]::Now;$lastActivity=$start;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0;$failure=$null;$exit=$null;$launcherPid=$null;$deadline=$null;$deadlineAt=$null
+    $start=[DateTimeOffset]::Now;$lastActivity=$start;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0;$failure=$null;$exit=$null;$launcherPid=$null;$deadlineState=[pscustomobject]@{deadline=$null;observedAt=$null};$nativeExitTime=$null
+    # 先觀測再消耗新輸出；退出後用OS實際exit時間，不把取證延遲算進執行deadline。
+    function Observe-M6Deadline([string]$Point){
+        if(-not $m6Mode -or $null -ne $deadlineState.deadline){return}
+        $observed=[DateTimeOffset]::Now;$exited=$process.HasExited
+        $effective=if($exited){[DateTimeOffset]$process.ExitTime}else{$observed}
+        $totalDue=$start.AddSeconds($timeout);$idleDue=$lastActivity.AddSeconds($idleTimeout)
+        $totalExpired=$effective -gt $totalDue;$idleExpired=$idleTimeout -gt 0 -and $effective -gt $idleDue
+        if(-not $totalExpired -and -not $idleExpired){return}
+        $reason=if($totalExpired -and (-not $idleExpired -or $totalDue -le $idleDue)){'total'}else{'idle'}
+        $due=if($reason -eq 'total'){$totalDue}else{$idleDue}
+        $deadlineState.observedAt=$observed
+        $deadlineState.deadline=[ordered]@{reason=$reason;dueAt=$due.ToUniversalTime().ToString('o');observedAt=$observed.ToUniversalTime().ToString('o');evaluatedAt=$effective.ToUniversalTime().ToString('o');elapsedSeconds=($effective-$start).TotalSeconds;idleSeconds=($effective-$lastActivity).TotalSeconds;observedAfterExit=$exited;observationPoint=$Point}
+    }
     try {
         [void]$process.Start();$launcherPid=$process.Id
         $stdout=$process.StandardOutput.ReadLineAsync();$stderr=$process.StandardError.ReadLineAsync();$outEnd=$false;$errEnd=$false
         while(-not $process.HasExited -or -not $outEnd -or -not $errEnd) {
+            if($m6Mode){Observe-M6Deadline 'before-output'}
             while(-not $outEnd -and $stdout.IsCompleted) {
                 $line=$stdout.GetAwaiter().GetResult()
                 if($null -eq $line){$outEnd=$true;break}
@@ -185,6 +199,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
                 Save-Json (Join-Path $evidence 'locks-running.json') @(Lock-State $runtimeRoot)
                 $nextPoll=[DateTimeOffset]::Now.AddSeconds(1)
             }
+            if($m6Mode){Observe-M6Deadline 'after-process-poll'}
             if($done -and $stopMode -and -not $stopSent -and -not $process.HasExited) {
                 $elapsed=([DateTimeOffset]::Now-$done).TotalSeconds
                 if($stopMode -eq 'main') {
@@ -193,31 +208,27 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
                     if($debugCount -ge 2 -and $elapsed -ge 6){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
                 } elseif($elapsed -ge 3){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
             }
-            if(-not $process.HasExited -and (([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout -or ($idleTimeout -gt 0 -and ([DateTimeOffset]::Now-$lastActivity).TotalSeconds -gt $idleTimeout))) {
-                if($m6Mode -and $null -eq $deadline){
-                    $deadlineAt=[DateTimeOffset]::Now
-                    $deadline=[ordered]@{reason=$(if(($deadlineAt-$start).TotalSeconds -gt $timeout){'total'}else{'idle'});observedAt=$deadlineAt.ToUniversalTime().ToString('o');elapsedSeconds=($deadlineAt-$start).TotalSeconds;idleSeconds=($deadlineAt-$lastActivity).TotalSeconds;observedAfterExit=$false}
-                }
+            $expired=if($m6Mode){$null -ne $deadlineState.deadline}else{([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout}
+            if(-not $process.HasExited -and $expired){
                 if(-not $stopSent){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
-                if($m6Mode -and $deadlineAt -and ([DateTimeOffset]::Now-$deadlineAt).TotalSeconds -gt 60){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadline.reason)；grace後尚未退出：$evidence"}
-                if(-not $m6Mode -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt ($timeout+60)) {throw "逾時且 stdin stop 未完成：$evidence"}
+                if($m6Mode -and ([DateTimeOffset]::Now-$deadlineState.observedAt).TotalSeconds -gt 60){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadlineState.deadline.reason)；grace後尚未退出：$evidence"}
+                if(-not $m6Mode -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt ($timeout+60)){throw "逾時且 stdin stop 未完成：$evidence"}
             }
             Start-Sleep -Milliseconds 100
         }
         $process.WaitForExit()
         $exit=$process.ExitCode
-        # 即使輪詢剛好跨過程序退出，總deadline仍不可因exit0被抹掉。
-        if($m6Mode -and $null -eq $deadline -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout){
-            $deadlineAt=[DateTimeOffset]::Now
-            $deadline=[ordered]@{reason='total';observedAt=$deadlineAt.ToUniversalTime().ToString('o');elapsedSeconds=($deadlineAt-$start).TotalSeconds;idleSeconds=($deadlineAt-$lastActivity).TotalSeconds;observedAfterExit=$true}
+        if($m6Mode){
+            $nativeExitTime=([DateTimeOffset]$process.ExitTime).ToUniversalTime().ToString('o')
+            Observe-M6Deadline 'after-exit'
+            if($null -ne $deadlineState.deadline){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadlineState.deadline.reason)；已安全退出但逾時仍FAIL：$evidence"}
         }
-        if($m6Mode -and $null -ne $deadline){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadline.reason)；已安全退出但逾時仍FAIL：$evidence"}
     } catch {$failure=$_;throw}
     finally {
         $outFile.Dispose();$errFile.Dispose()
         $identity=[ordered]@{exitCode=$exit;start=$start.ToUniversalTime().ToString('o');end=[DateTimeOffset]::UtcNow.ToString('o');command=$info.Arguments;launcherPid=$launcherPid;processes=@($known.Values);runtimeRoot=$runtimeRoot;doneSeen=($null-ne $done);stdinStop=$stopSent;nativeSaves=$debugCount;status=$(if($null -eq $failure -and $exit -eq 0){'EXIT_ZERO'}else{'FAIL'});error=$(if($failure){$failure.Exception.Message}else{$null})}
         $identity.runtimeLogMode=$runtimeLogMode
-        if($m6Mode){$identity.configuredTimeoutSeconds=$timeout;$identity.configuredIdleSeconds=$idleTimeout;$identity.phaseDeadline=$deadline}
+        if($m6Mode){$identity.configuredTimeoutSeconds=$timeout;$identity.configuredIdleSeconds=$idleTimeout;$identity.phaseDeadline=$deadlineState.deadline;$identity.nativeExitTimeUtc=$nativeExitTime}
         $captureErrors=@()
         foreach($capture in @(
             {Save-Json (Join-Path $evidence 'execution.json') $identity},
