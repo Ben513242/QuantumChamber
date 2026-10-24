@@ -389,7 +389,7 @@ M5 collapse probe 維持本機 run-all，不加入 CI（既有 X2(a) 裁示）�
 
 ## 目前採計的預期結果（M5）
 
-以下是 2026-10-24 前已採計的本機 `run-all.ps1` 基準：乾淨 code HEAD `27a5039` 的 `run-all-5435ef0d6da64f7486de613bb4b2bba0`，原 console 精確 `END ALL exit=0`；之後純文件治理 commit 不冒稱另跑過本機 runtime。F7 前置 harness 與註解完成後，以本輪唯一最終 run-all 的 root／HEAD 更新此處。M1–M4 當時的數字與每輪增量見 [M5 實作紀錄](../../docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。
+M5 最後採計的本機 `run-all.ps1` 基準為乾淨 `6b116e60c0865000b5381740146aa4c54428297e` 的 `run-all-e32343e8bd034936aee50b9b3db48a1f`，原 console 精確 `END ALL exit=0`；已驗 CI 固定 `f99ce66132dbe4b7d4aff6719ef95bdf8486eac0`／run40079019075。M5 已整合並建立 tag；原 ignored runtime 資料依指定工作樹退役裁示不另備份，摘要與 hash 見 [M5 實作紀錄](../../docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。本段於 M6 接手時更正舊導覽；沒有重跑 M5，也不代表 M6 新行為已通過。
 
 | 項目 | 已採計基準 |
 | --- | --- |

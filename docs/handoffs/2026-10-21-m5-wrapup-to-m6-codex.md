@@ -423,3 +423,12 @@
 - **退役與交接**：唯一刪除目標C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，依使用者指定不備份、不archive、不另留run/.superpowers/派工原件；正式程式、可重跑harness及本文件摘要/hash留在Git。此筆為移除前紀錄，不預寫已刪：最終步驟再核canonical/nonreparse、Java、session.lock、main含最終M5與tag，再從目標外git worktree remove並核目錄不存在／registration消失／main乾淨。接手時若目錄已不存在即視為已退役，不重建M5取證空間；若仍存在先唯讀核對中斷點再續清理。
 - **下一步與待決事項**：M6尚未開始。先與使用者確認M6範圍／優先序，再從已合併main另開worktree與spec/plan/review；AccessDenied維持M5既有fail-closed／退避，Stronghold等static競態仍排M6。main/tag授權已在本輪使用；不重複建立或移動m5 tag。
 - **M6交付**：使用者另指定M6由新對話接續；完整可貼用提示詞已整理到 `docs/handoffs/2026-10-24-m6-new-chat-prompt.md`，包含M5基準、必讀範圍、M6候選scope／待決優先序、兩harness Minor與精簡驗證／授權邊界。本對話未開始M6實作。
+
+### 2026-10-24：M6 新對話接手與範圍確認
+
+- 新對話已核main/local/origin=`0d05f889da6f8b82b97af756aaa50066b3d42854`、主checkout乾淨；m5 object=`15c2943ce37950f468b030c5d194485a328c1705`／peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，本機與遠端一致，tag為main祖先；tag..main只有九份文件。
+- M5工作樹路徑不存在且Git registration消失，確認已依原裁示退役；不重建舊SDD、不重做M5驗收。
+- 使用者明確確認「完整M6，依上述順序分段實作」：測試腳本安全／生成競態→random seed→same-seed fresh／profile→完整Nether／End family、portal／gateway、respawn。M7不納入，子代理全部使用SOL。
+- 已從main開新工作樹`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`、分支`codex/m6-universe-generation`。原生工具遇dubious ownership後，以單次safe.directory的git worktree add建立，沒有更動全域設定。
+- 目前只有唯讀盤點與設計／治理文件，尚無M6實作、測試或通過的spec/plan review；下一步先完成spec獨立review，再plan獨立review，C/I清零後直接實作。
+- 後續主要接手入口改為AGENTS的M6入口、`docs/implementation-notes/2026-10-24-m6-universe-generation.md`及新SDD的STATUS。M5已驗full/CI仍固定6b116e6/f99ce66，不冒稱為M6證據。

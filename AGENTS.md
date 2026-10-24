@@ -101,13 +101,17 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
+**2026-10-24：M6 已正式接手，完整範圍與順序已由使用者確認；目前在 spec 設計，尚未實作。**
 
-- 目前：M5 功能、F7、人工smoke、整分支與最後文件review、雙平台CI皆完成；2026-10-24 18:13 main已ff到`a2d2b404329d2574469fca064a663e21fe89f333`，annotated tag `m5`指向同commit，main/tag/feature均已push並讀回確認。使用者已指示完成main/tag/指定worktree退役；本輪及其後純整合狀態文件採計已驗`f99ce66` CI，沒有程式/build/workflow差異。僅剩依此紀錄執行的工作樹移除核對，實際存在狀態以git與檔案系統為準。M6未開始，先確認範圍／優先序；兩個harness Minor交下一Step0。
-- Git 快照（2026-10-24 整合後、退役前）：local/origin main與feature皆`a2d2b404329d2574469fca064a663e21fe89f333`，兩工作樹porcelain空；annotated tag m5 object=`15c2943ce37950f468b030c5d194485a328c1705`、peeled target=a2d2b40，遠端相同。本筆後只有純狀態文件commit（以handoff§7最新紀錄解析）再ff同步main，tag固定a2d2b40不移動；最後full仍6b116e6，已驗CI仍f99ce66。指定M5退役不備份，正式程式/腳本與摘要留Git。
-- M6 新對話完整提示詞：[`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md)。使用者指定由新對話接續實作，本對話只完成M5；M6先確認範圍／優先序，再寫經review的spec/plan。
-- 每次停下或交回時，更新該檔的「交回紀錄」與本節。
-
+- 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
+- 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
+- 使用者已確認完整 M6 的順序：測試腳本安全與生成競態 → random seed → same-seed fresh／profile → 完整 Nether／End family、portal／gateway 與 respawn；各段驗收，M7 不納入。先完成 binding spec 的獨立 review，再寫 plan 並獨立 review；Critical／Important 清零後直接實作，不另問是否開始。
+- 使用者要求子代理使用 SOL。本輪用 `gpt-6-sol`，短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
+- 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
+- M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
+- M6 Step 0：兩項獨立 harness 修正（New-OwnedRoot 的 run 祖先守門；Move-Fresh 建立 fresh 失敗的復原與原例外保留），不可混入生成 production commit。scripts/verification/README.md 的舊基準現況句已於M6接手文件同步更正，採計handoff／note的M5最後基準，沒有重跑M5。
+- 正常 push 已持續授權；M6 main 合併、tag、工作樹退役、人工代操作各自依原門檻。M5 的一次授權與不備份退役例外不外推。
+- 每次交回同步 M6 note／plan、此節、ledger／STATUS 與舊 handoff §7 的新紀錄。以下 M5 進度只作歷史，不是M6待辦。
 M1–M4 已完成並合併（2026-10-01 核對）：
 
 - `main` 為 `a7e1be2`；annotated tag `m1-m4` 指向 `9bce72e`（記錄 M1–M4 人工驗收結果的 docs commit）。GitHub Actions run `36804549120`（`a7e1be2`）的 Ubuntu `build` 與 Windows `windows-native` 都是 success。實際狀態以 GitHub Actions、遠端 ref、`main` 與 tag 為準。
