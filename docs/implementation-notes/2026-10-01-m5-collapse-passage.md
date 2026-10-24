@@ -6,7 +6,7 @@
 
 本文件逐 task 記錄 code-truth、RED／GREEN 的 gate root 與 commit range。gate root 在 gitignored 的 `.superpowers/verification/`，詳細過程在 gitignored 的 SDD ledger `.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`；這裡只留可核對的摘要。
 
-目前狀態（2026-10-24）：M5 功能與 F7 文件／註解已完成；CI-S1 已關閉，`ec394ad` 已推送，run40023563006 的真雙平台 CI 及同 SHA 兩次 Ubuntu 原件已驗收。F7 Step0 `de7f373`／`fda0359`、純註解 `71fb8e7`、文件初稿 `6b116e6` 已驗證；唯一完整 run-all 在乾淨 `6b116e6` END ALL exit0，F7 fresh spec／quality 最終均 Approved C0/I0/M0。required manual smoke 與 whole-branch review 仍待；M5 未合併 main、未建立 tag m5。本段覆蓋下方歷史狀態句，原失敗 root 與當時判定保留。
+目前狀態（2026-10-24）：M5 功能與 F7 文件／註解已完成；CI-S1 已關閉，`ec394ad` 已推送，run40023563006 的真雙平台 CI 及同 SHA 兩次 Ubuntu 原件已驗收。F7 Step0 `de7f373`／`fda0359`、純註解 `71fb8e7`、文件初稿 `6b116e6` 已驗證；唯一完整 run-all 在乾淨 `6b116e6` END ALL exit0，F7 fresh spec／quality 最終均 Approved C0/I0/M0。required manual smoke 的必測操作與取證已完成；獨立結果 review 尚待通過，whole-branch review 仍待；M5 未合併 main、未建立 tag m5。本段覆蓋下方歷史狀態句，原失敗 root 與當時判定保留。
 
 文件入口：[M5 相容性與實測範圍](compatibility.md)、[M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)。已知窄限制：原版 playerdata 寫出若自行收下 IOException，只記不帶 `session=` 的 WARN；`saveCrossedPlayerData` 收不到該 IOException。若此時 crash，已跨越玩家可能回到最後一次成功存下的位置；checked `Crossed` 不能單獨證明 playerdata 已持久化（見本 note F6-2c 的 Crossed 後 playerdata 存檔與「交給後續」F7 觀察）。M5 的 Windows atomic move `AccessDeniedException` 維持現有 fail-closed／退避，外部持有者仍未確認；Stronghold 靜態競態修正依使用者裁示延到 M6。F7 最終 commit／唯一 run-all／獨立 review 結果見本 note 末節。
 
