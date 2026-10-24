@@ -1,4 +1,25 @@
-# M1–M4 驗證 harness
+# M1–M6 驗證 harness
+
+## M6 定向與 CI 入口
+
+M6 Task 3 提供四個互斥 scope：default（其餘）、legacy（`m4_legacy_runtime`）、M5（`m5_universe*`）、M6（`m6_universe*`）。XML 依完整 `classname|name` 集合比對，拒絕缺漏、重複、跨 scope、錯 template、failure／error／skipped。同一 batch 可以有多個 testcase；M6 canary 的 `m6_universe_gate` 目前有兩個。
+
+```powershell
+pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M6Compile -Label task-compile
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_gate -Label g0-green
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.persistence.PlayerCheckpointStoreTest -Label checkpoint-focused
+pwsh -NoProfile -File scripts/verification/run-all.ps1
+```
+
+`M6Compile` 只編譯 main/client/test/testmod，不代替 GREEN。`M6JUnit` 選定 class 時核 exact suite、case 非空且不得 skipped；未指定 class 時執行全部 JUnit。`m6-focused` 每次先跑受控 scope／JAR／pace 反例，再跑 Move-Fresh 與 owned-root 回歸；受控空目錄殘留必被存在性斷言拒絕。正式 Move-Fresh 行為不變，所有 root 保留。`-Suite Probe -Chain <chain>` 在 Task 7 正式 runner 出現前以 `M6_PROBE_UNAVAILABLE` 拒絕。
+
+M6 GameTest 用獨立 fresh `run/gametest-m6/world`，原世界可恢復 move／逐檔 hash exact restore。server 必帶唯一 `m6Only`、`minTickMillis=10`，不得註冊 M4 boundary 或 M5 suite-end observer；完整當次日誌的 pace 結束列恰一行，`waited>0`、`tps<=100.0`。full 同時核四 scope 與同 HEAD 的 M6 summary，並保留既有 release／sources、main-only 三層與 M3 固定 owner oracle。
+
+CI 使用該 checkout wrapper／Gradle 8.8／Java 21，經 `m6-ci-gametest.ps1 -Platform Windows|Ubuntu` 執行 JUnit、legacy、M6，再核對四 run 的 exact 集合、pace 與內外 JAR 隔離。兩平台 M6 step 初始 15 分鐘、oracle 5 分鐘，原 job 上限 90 分鐘。Windows 原生 checkpoint／owned-process native chains 在 Ubuntu 不支援，`-CheckUnsupportedNative` 只在實際 Ubuntu 保存 `UNSUPPORTED` receipt；Windows 誤用或平台偽裝會被拒絕。
+
+`ci-rule-check.ps1` 可加 `-M6GameTestXml`、`-M6RuntimeLog`、`-M6RuntimeRoot`、`-M6Artifacts`，複製到獨立 fixture 後執行 workflow 的 M6 oracle 原文。這是本機規則驗證，GitHub CI 成功另以遠端 run／exact SHA 證明。M6 native job／chains 的正式啟用屬 Task 12，此 task 未提前宣稱 native M6 通過。
+
+以下 M1–M5 數字是歷史基準；M6 以當次 scope／summary 原件為準。
 
 M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD workspace `.superpowers/sdd/2026-09-21-m4-candidate-doors/`，刪除 worktree 或 `.superpowers/` 後就無法重跑；這裡的腳本只改路徑、參數與名稱，安全行為（fresh world move／逐檔 hash exact restore、owned roots、拒絕覆寫、main-only 三層 oracle、JAR testmod 檢查）與原始檔相同；PID 過濾等少數邏輯差異與拿掉的核對，逐項列在「來源對照」。
 

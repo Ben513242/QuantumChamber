@@ -18,11 +18,15 @@ param(
     [Parameter(Mandatory)][string]$Step,
     [Parameter(Mandatory)][string]$GameTestXml,
     [Parameter(Mandatory)][string]$M5GameTestXml,
+    [string]$M6GameTestXml='',
+    [string]$M6RuntimeLog='',
+    [string]$M6RuntimeRoot='',
+    [string[]]$M6Artifacts=@(),
     [Parameter(Mandatory)][string]$JUnitDir,
     [Parameter(Mandatory)][string]$SourceRoot,
     [ValidateSet('none','drop','skip','fail')][string]$Mutation='none',
     [string]$MutationTarget='',
-    [ValidateSet('default','m5')][string]$MutationXml='default',
+    [ValidateSet('default','m5','m6')][string]$MutationXml='default',
     [ValidateSet('none','interpose-annotation','rename-windows')][string]$SourceMutation='none',
     [string]$SourceTarget='',
     [string]$EvidenceRoot=''
@@ -70,6 +74,20 @@ New-Item -ItemType Directory -Path (Join-Path $fixture 'src/testmod') -Force | O
 Copy-Item -LiteralPath $SourceRoot -Destination (Join-Path $fixture 'src/testmod/java') -Recurse
 [xml]$xml=Get-Content -LiteralPath $GameTestXml -Raw
 [xml]$m5Xml=Get-Content -LiteralPath $M5GameTestXml -Raw
+$m6Xml=$null
+if($M6GameTestXml){
+    [xml]$m6Xml=Get-Content -LiteralPath $M6GameTestXml -Raw
+    New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification'),(Join-Path $fixture 'run/gametest-m6/logs'),(Join-Path $fixture 'build/libs') -Force | Out-Null
+    foreach($scriptName in @('gates.ps1','m6-ci-gametest.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination (Join-Path $fixture 'scripts/verification')}
+    Copy-Item -LiteralPath $M6RuntimeLog -Destination (Join-Path $fixture 'run/gametest-m6/logs/latest.log')
+    foreach($artifact in $M6Artifacts){Copy-Item -LiteralPath $artifact -Destination (Join-Path $fixture 'build/libs')}
+    if($Step -ceq '確認 Ubuntu M6 精確集合與隔離'){
+        # 僅本機workflow規則fixture：literal合法排除；不是實際Ubuntu執行證據。
+        New-Item -ItemType Directory -Path (Join-Path $fixture 'build/m6-verification') -Force | Out-Null
+        [ordered]@{head=(git -C $repo rev-parse HEAD).Trim();platform='Ubuntu';actualPlatform='Ubuntu';status='UNSUPPORTED';reason='M6_NATIVE_WINDOWS_REQUIRED';supported=$false;nativeExecuted=$false} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fixture 'build/m6-verification/unsupported-native.json') -Encoding utf8
+    }
+    foreach($boundary in @(Get-ChildItem -LiteralPath $M6RuntimeRoot -Filter 'm4-boundary-*.json' -File)){Copy-Item -LiteralPath $boundary.FullName -Destination (Join-Path $fixture 'run/gametest-m6')}
+}
 $sourceMutated=$null
 if($SourceMutation -ne 'none'){
     if($SourceTarget -notmatch '^\w+$'){throw "SourceTarget 必須是方法名稱：$SourceTarget"}
@@ -86,7 +104,7 @@ if($SourceMutation -ne 'none'){
         if($SourceTarget -like '*_windows'){throw "rename-windows 的目標不可已是 _windows：$SourceTarget"}
         $text=$text.Replace($needle,"public void ${SourceTarget}_windows(TestContext")
         $caseName=$hits[0].BaseName.ToLowerInvariant()+'.'+$SourceTarget
-        $cases=@(@($xml,$m5Xml) | ForEach-Object {$_.SelectNodes("//testcase[@name='$caseName']")} | Where-Object {$null -ne $_})
+        $cases=@(@($xml,$m5Xml,$m6Xml) | Where-Object {$null -ne $_} | ForEach-Object {$_.SelectNodes("//testcase[@name='$caseName']")} | Where-Object {$null -ne $_})
         if($cases.Count -ne 1){throw "rename-windows 的 testcase 必須恰出現一次：$caseName（$($cases.Count)）"}
         $cases[0].SetAttribute('name',$caseName+'_windows')
     }
@@ -94,7 +112,7 @@ if($SourceMutation -ne 'none'){
     $sourceMutated=[IO.Path]::GetRelativePath($fixture,$hits[0].FullName)
 }
 if($Mutation -ne 'none'){
-    $target=if($MutationXml -eq 'm5'){$m5Xml}else{$xml}
+    $target=if($MutationXml -eq 'm6'){$m6Xml}elseif($MutationXml -eq 'm5'){$m5Xml}else{$xml}
     $node=$target.SelectSingleNode("//testcase[@name='$MutationTarget']")
     if($null -eq $node){throw "mutation 目標不在 $MutationXml XML：$MutationTarget"}
     switch($Mutation){
@@ -105,6 +123,7 @@ if($Mutation -ne 'none'){
 }
 $xml.Save((Join-Path $fixture 'build/gametest-results.xml'))
 $m5Xml.Save((Join-Path $fixture 'build/gametest-m5-results.xml'))
+if($m6Xml){$m6Xml.Save((Join-Path $fixture 'build/gametest-m6-results.xml'))}
 $stepFile=Join-Path $root 'step.ps1'
 Set-Content -LiteralPath $stepFile -Value ("`$ErrorActionPreference = 'stop'`n"+$script) -Encoding utf8
 $info=[Diagnostics.ProcessStartInfo]::new('pwsh')
@@ -119,6 +138,7 @@ $m5WindowsCases=@($m5Xml.SelectNodes('//testcase') | Where-Object {$_.name -like
 $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).Path;workflowSha256=(Get-FileHash -LiteralPath $Workflow -Algorithm SHA256).Hash;step=$Step
     gameTestXml=(Resolve-Path -LiteralPath $GameTestXml).Path;gameTestXmlSha256=(Get-FileHash -LiteralPath $GameTestXml -Algorithm SHA256).Hash
     m5GameTestXml=(Resolve-Path -LiteralPath $M5GameTestXml).Path;m5GameTestXmlSha256=(Get-FileHash -LiteralPath $M5GameTestXml -Algorithm SHA256).Hash
+    head=(git -C $repo rev-parse HEAD).Trim();m6GameTestXmlSha256=$(if($M6GameTestXml){(Get-FileHash -LiteralPath $M6GameTestXml).Hash}else{''});m6RuntimeLogSha256=$(if($M6RuntimeLog){(Get-FileHash -LiteralPath $M6RuntimeLog).Hash}else{''})
     junitDir=$JUnitDir;sourceRoot=$SourceRoot;mutation=$Mutation;mutationTarget=$MutationTarget;mutationXml=$MutationXml;sourceMutation=$SourceMutation;sourceTarget=$SourceTarget;sourceMutatedFile=$sourceMutated
     fixtureWindowsCases=$windowsCases;fixtureM5WindowsCases=$m5WindowsCases;exitCode=$process.ExitCode;verdict=$(if($process.ExitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
 $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8

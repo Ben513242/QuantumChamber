@@ -1,6 +1,6 @@
 # M6 harness 安全檢查：只操作本次唯一 fixture，所有成功與失敗現場都保留。
 param([Parameter(Mandatory)][ValidateSet('owned-root','move-fresh')][string]$Case,
-      [Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9-]+$')][string]$Label)
+      [Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9-]+$')][string]$Label, [switch]$InjectResidualEmptyDirectory)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'probe-common.ps1')
@@ -109,6 +109,8 @@ function Invoke-MoveFreshChecks {
             '成功 fresh 現場' | Set-Content -LiteralPath (Join-Path $target 'fresh.txt')
             Restore-Root $swap
         } catch { $caught = $_ }
+        if ($InjectResidualEmptyDirectory -and $scenario -eq 'normal-absent') { Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $target | Out-Null }
+        $observedExists = Test-Path -LiteralPath $target
         $after = @(Files-Hash $target) | ConvertTo-Json -Depth 4 -Compress
         $backups = @(Get-ChildItem -LiteralPath $gate -Directory | Where-Object Name -like '*.task9-backup-*')
         $locksAvailable = @(Lock-State $target | Where-Object { -not $_.exclusiveAvailable }).Count -eq 0
@@ -126,8 +128,9 @@ function Invoke-MoveFreshChecks {
                 $backups.Count -eq 0 -and $locksAvailable -and $exactRestored
             if ($scenario -eq 'partial-create-fails') { $ok = $ok -and (Test-Path -LiteralPath (Join-Path $gate 'fixture-fresh/partial.txt')) }
         }
-        $results.Add([ordered]@{name=$scenario;passed=[bool]$ok;originalExisted=$originalExisted;exactRestored=[bool]$exactRestored;hashUnchanged=($before -ceq $after);locksAvailable=$locksAvailable;backupPaths=@($backups | ForEach-Object FullName);error=$(if($caught){$caught.Exception.ToString()}else{$null});fixture=$gate})
-        if (-not $ok) { throw "MOVE_FRESH_RESTORE_MISSING case=$scenario originalError=$caught backupCount=$($backups.Count)" }
+        if ($scenario -ne 'restore-fails') { $ok = $ok -and ($observedExists -eq $originalExisted) }
+        $results.Add([ordered]@{name=$scenario;observedExists=[bool]$observedExists;passed=[bool]$ok;originalExisted=$originalExisted;exactRestored=[bool]$exactRestored;hashUnchanged=($before -ceq $after);locksAvailable=$locksAvailable;backupPaths=@($backups | ForEach-Object FullName);error=$(if($caught){$caught.Exception.ToString()}else{$null});fixture=$gate})
+        if (-not $ok) { throw "MOVE_FRESH_RESTORE_MISSING case=$scenario observedExists=$observedExists expectedExists=$originalExisted originalError=$caught backupCount=$($backups.Count)" }
     }
 }
 

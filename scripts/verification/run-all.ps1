@@ -83,6 +83,11 @@ $gates=Join-Path $PSScriptRoot 'gates.ps1'
 Step 'full' { & $gates -Mode Full -Label full -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'legacy' { & $gates -Mode Legacy -Label legacy -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm5-gametest' { & $gates -Mode M5GameTest -Label m5-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
+Step 'm6-oracle-and-safety' {
+    & (Join-Path $PSScriptRoot 'm6-ci-gametest.ps1') -Platform Windows -SelfTest -OutputRoot (Join-Path $runRoot 'm6-oracle-selftest')
+    foreach($case in @('move-fresh','owned-root')){& (Join-Path $PSScriptRoot 'm6-harness-safety-check.ps1') -Case $case -Label "full-$case"}
+}
+Step 'm6-gametest' { & $gates -Mode M6GameTest -Label m6-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'main' { & $gates -Mode Main -Label main-only -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'main-oracle' {
     $main=One 'gate-main-only-'
@@ -101,6 +106,13 @@ Step 'ci-rule' {
     $check=Join-Path $PSScriptRoot 'ci-rule-check.ps1'
     & $check -Label win-green -Workflow $workflow -Step '確認 Windows 原生案例確實執行' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot
     & $check -Label ubuntu-green -Workflow $workflow -Step '確認非 Windows 跨平台案例確實執行' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot
+    $m6=One 'gate-m6-gametest-'
+    $m6Arguments=@{M6GameTestXml=(Join-Path $m6 'result-build/gametest-m6-results.xml');M6RuntimeLog=(Join-Path $m6 'execution/runtime-logs/latest.log');M6RuntimeRoot=(Join-Path $m6 'world-fresh/..');M6Artifacts=@(Get-ChildItem -LiteralPath (Join-Path $full 'result-build/libs') -File -Filter '*.jar' | ForEach-Object FullName)}
+    foreach($platform in @('Windows','Ubuntu')){
+        & $check -Label "$($platform.ToLowerInvariant())-m6-green" -Workflow $workflow -Step "確認 $platform M6 精確集合與隔離" -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot @m6Arguments
+        $r=Read-Json (Join-Path (One "ci-$($platform.ToLowerInvariant())-m6-green-") 'result.json')
+        if($r.verdict -ne 'PASS' -or $r.head -cne $startHead){throw "M6 CI 規則 fixture 失敗：$platform"}
+    }
     # ci-rule-check.ps1 不因 FAIL 而 throw；綠燈核對在此判定。
     foreach($label in 'win-green','ubuntu-green'){ $r=Read-Json (Join-Path (One "ci-$label-") 'result.json'); if($r.verdict -ne 'PASS' -or $r.mutation -ne 'none' -or $r.sourceMutation -ne 'none'){throw "CI 規則 $label 未通過或不是原樣執行：exit=$($r.exitCode) mutation=$($r.mutation) sourceMutation=$($r.sourceMutation)"} }
 }
@@ -108,31 +120,39 @@ Step 'summary' {
     # 唯讀：只讀本次 run root 的原始 XML／receipt／JAR／oracle／CI 結果，任何不符直接 throw；不改寫任何 gate root。
     $head=(git -C $repo rev-parse HEAD).Trim()
     if($head -cne $startHead){throw "HEAD 在執行期間改變：$startHead -> $head"}
-    $full=One 'gate-full-'; $legacy=One 'gate-legacy-'; $m5=One 'gate-m5-gametest-'; $main=One 'gate-main-only-'; $m3=One 'gate-m3-'; $recoveryFile=One 'recovery-run-' '.json'; $collapseFile=One 'collapse-run-' '.json'
-    foreach($gate in @([pscustomobject]@{root=$full;mode='Full'},[pscustomobject]@{root=$legacy;mode='Legacy'},[pscustomobject]@{root=$m5;mode='M5GameTest'},[pscustomobject]@{root=$main;mode='Main'},[pscustomobject]@{root=$m3;mode='M3'})) {
+    $full=One 'gate-full-'; $legacy=One 'gate-legacy-'; $m5=One 'gate-m5-gametest-'; $m6=One 'gate-m6-gametest-'; $main=One 'gate-main-only-'; $m3=One 'gate-m3-'; $recoveryFile=One 'recovery-run-' '.json'; $collapseFile=One 'collapse-run-' '.json'
+    foreach($gate in @([pscustomobject]@{root=$full;mode='Full'},[pscustomobject]@{root=$legacy;mode='Legacy'},[pscustomobject]@{root=$m5;mode='M5GameTest'},[pscustomobject]@{root=$m6;mode='M6GameTest'},[pscustomobject]@{root=$main;mode='Main'},[pscustomobject]@{root=$m3;mode='M3'})) {
         $g=Read-Json (Join-Path $gate.root 'gate.json'); if($g.status -ne 'PASS' -or $g.mode -ne $gate.mode){throw "gate 狀態不符：$($gate.root)"}
     }
-    foreach($swap in @([pscustomobject]@{root=$full;tag='world'},[pscustomobject]@{root=$legacy;tag='world'},[pscustomobject]@{root=$m5;tag='world'},[pscustomobject]@{root=$main;tag='server'})) {
+    foreach($swap in @([pscustomobject]@{root=$full;tag='world'},[pscustomobject]@{root=$legacy;tag='world'},[pscustomobject]@{root=$m5;tag='world'},[pscustomobject]@{root=$m6;tag='world'},[pscustomobject]@{root=$main;tag='server'})) {
         $r=Read-Json (Join-Path $swap.root "$($swap.tag)-restore.json"); if(-not $r.exactRestored -or $r.deleted){throw "restore 不符：$($swap.root)"}
     }
-    foreach($runtimeGate in @($full,$legacy,$m5,$main)){Read-GateRuntimeLog -Evidence (Join-Path $runtimeGate 'execution') | Out-Null}
+    foreach($runtimeGate in @($full,$legacy,$m5,$m6,$main)){Read-GateRuntimeLog -Evidence (Join-Path $runtimeGate 'execution') | Out-Null}
     $fullExec=Read-Json (Join-Path $full 'execution/execution.json'); $legacyExec=Read-Json (Join-Path $legacy 'execution/execution.json'); $m5Exec=Read-Json (Join-Path $m5 'execution/execution.json')
     if($fullExec.exitCode -ne 0 -or $legacyExec.exitCode -ne 0 -or $m5Exec.exitCode -ne 0){throw 'gate exit 非0'}
     if($fullExec.command -notmatch '"clean" "test" "runGameTest" "build" "--rerun-tasks"' -or $legacyExec.command -notmatch '"runGameTestLegacy" "--rerun-tasks"' -or $m5Exec.command -notmatch '"runGameTestM5" "--rerun-tasks"'){throw 'gate 指令不符'}
     # 1. GameTest XML：全部 case 無 failure／error／skipped，名稱唯一。
     $defaultXml=Join-Path $full 'result-build/gametest-results.xml'; $legacyXml=Join-Path $legacy 'result-build/gametest-legacy-results.xml'; $m5Xml=Join-Path $m5 'result-build/gametest-m5-results.xml'
     $defaultCases=@(Xml-Cases $defaultXml); $legacyCases=@(Xml-Cases $legacyXml); $m5Cases=@(Xml-Cases $m5Xml)
-    $bad=@($defaultCases+$legacyCases+$m5Cases | Where-Object {$_.SelectSingleNode('failure') -or $_.SelectSingleNode('error') -or $_.SelectSingleNode('skipped')})
-    if($defaultCases.Count -eq 0 -or $legacyCases.Count -eq 0 -or $m5Cases.Count -eq 0 -or $bad.Count -ne 0){throw "GameTest XML 不符：default=$($defaultCases.Count) legacy=$($legacyCases.Count) m5=$($m5Cases.Count) bad=$($bad.Count)"}
+    $m6Xml=Join-Path $m6 'result-build/gametest-m6-results.xml';$m6Cases=@(Xml-Cases $m6Xml)
+    $m6Exec=Read-Json (Join-Path $m6 'execution/execution.json')
+    if($m6Exec.exitCode -ne 0 -or $m6Exec.command -notmatch '"runGameTestM6" "--rerun-tasks"'){throw 'M6 gate 指令或 exit 不符'}
+    $bad=@($defaultCases+$legacyCases+$m5Cases+$m6Cases | Where-Object {$_.SelectSingleNode('failure') -or $_.SelectSingleNode('error') -or $_.SelectSingleNode('skipped')})
+    if($defaultCases.Count -eq 0 -or $legacyCases.Count -eq 0 -or $m5Cases.Count -eq 0 -or $m6Cases.Count -eq 0 -or $bad.Count -ne 0){throw "GameTest XML 不符：default=$($defaultCases.Count) legacy=$($legacyCases.Count) m5=$($m5Cases.Count) bad=$($bad.Count)"}
     if(@($defaultCases | ForEach-Object name | Sort-Object -Unique).Count -ne $defaultCases.Count -or @($m5Cases | ForEach-Object name | Sort-Object -Unique).Count -ne $m5Cases.Count){throw 'default／M5 XML case 名稱不唯一'}
     $windowsCases=@($defaultCases | Where-Object {$_.name -like '*_windows'}).Count
     # 1b. batch 前綴矩陣（plan 決策 6）：三個 GameTest gate 各自核對過 XML 等於原始碼中屬於該 run 的宣告；這裡確認完整 suite（沒有 onlyBatches）與數量。
     $scopes=[ordered]@{}
-    foreach($s in @([pscustomobject]@{root=$full;scope='default';count=$defaultCases.Count},[pscustomobject]@{root=$legacy;scope='legacy';count=$legacyCases.Count},[pscustomobject]@{root=$m5;scope='m5';count=$m5Cases.Count})) {
+    foreach($s in @([pscustomobject]@{root=$full;scope='default';count=$defaultCases.Count},[pscustomobject]@{root=$legacy;scope='legacy';count=$legacyCases.Count},[pscustomobject]@{root=$m5;scope='m5';count=$m5Cases.Count},[pscustomobject]@{root=$m6;scope='m6';count=$m6Cases.Count})) {
         $r=Read-Json (Join-Path $s.root 'scope.json')
         if($r.status -ne 'PASS' -or $r.scope -cne $s.scope -or @($r.onlyBatches).Count -ne 0 -or $r.actual -ne $s.count -or $r.expected -ne $s.count){throw "batch 範圍不符：$($s.scope)"}
         $scopes[$s.scope]=$r.expected
     }
+    $m6Oracle=Read-Json (Join-Path $m6 'm6-summary.json')
+    if($m6Oracle.status -ne 'PASS' -or $m6Oracle.head -cne $head -or $m6Oracle.runtimeScope -ne 'testmod-present' -or $m6Oracle.boundaryReceipts -ne 0 -or $m6Oracle.m5SuiteEnds -ne 0 -or $m6Oracle.pacing.waited -le 0 -or $m6Oracle.pacing.tps -gt 100.0 -or $m6Oracle.xmlSha256.ToLowerInvariant() -cne (Hash $m6Xml)){throw 'M6 oracle 不是同 HEAD 完整 PASS'}
+    $m6Scope=Read-Json (Join-Path $m6 'scope.json')
+    $identities=@($m6Cases | ForEach-Object {$_.classname+'|'+$_.name} | Sort-Object)
+    if(($identities -join ',') -cne ((@($m6Scope.expectedCases)|Sort-Object) -join ',') -or $m6Scope.head -cne $head){throw 'M6_SCOPE_MISMATCH：summary exact 集合／HEAD 不符'}
     # 1c. M5 run 的 oracle：沒有 M4 boundary receipt，每個 M5 test 的 catalog 增量與 suite 結束時的 catalog 都已核對。
     $m5Oracle=Read-Json (Join-Path $m5 'm5-oracle.json')
     if($m5Oracle.status -ne 'PASS' -or $m5Oracle.boundaryReceipts -ne 0 -or $m5Oracle.tests -ne $m5Cases.Count -or @($m5Oracle.deltas).Count -ne $m5Cases.Count -or $null -eq $m5Oracle.suiteEnd -or $m5Oracle.suiteEnd.records -ne $m5Oracle.finalRecordCount){throw 'M5 oracle 不是完整 PASS'}
@@ -276,14 +296,19 @@ Step 'summary' {
         if($r.verdict -ne 'PASS' -or $r.mutation -ne 'none' -or $r.sourceMutation -ne 'none' -or $r.workflowSha256 -ne $workflowHash -or $r.gameTestXmlSha256.ToLowerInvariant() -ne (Hash $defaultXml) -or $r.m5GameTestXmlSha256.ToLowerInvariant() -ne (Hash $m5Xml)){throw "CI 規則結果不符：$label verdict=$($r.verdict) mutation=$($r.mutation) sourceMutation=$($r.sourceMutation)"}
         $ci[$label]=$r.verdict
     }
+    foreach($platform in @('windows','ubuntu')){
+        $r=Read-Json (Join-Path (One "ci-$platform-m6-green-") 'result.json')
+        if($r.verdict -ne 'PASS' -or $r.head -cne $head -or $r.workflowSha256 -ne $workflowHash -or $r.m6GameTestXmlSha256.ToLowerInvariant() -cne (Hash $m6Xml) -or $r.m6RuntimeLogSha256.ToLowerInvariant() -cne (Hash (Join-Path $m6 'execution/runtime-logs/latest.log'))){throw "M6 CI fixture SHA／原件不符：$platform"}
+        $ci["$platform-m6"]=$r.verdict
+    }
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
-        gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
+        gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;m6=$m6Cases.Count;m6XmlSha256=Hash $m6Xml;m6Pacing=$m6Oracle.pacing;m6Cases=$identities;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
         jars=$jars;mainOnly=[ordered]@{status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
-        roots=[ordered]@{full=$full;legacy=$legacy;m5=$m5;main=$main;m3=$m3}}
+        roots=[ordered]@{full=$full;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
-    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
+    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
 }
 Say "END ALL exit=0 HEAD=$((git -C $repo rev-parse HEAD).Trim())"

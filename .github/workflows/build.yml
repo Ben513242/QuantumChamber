@@ -20,16 +20,29 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6
       - name: Build
+        timeout-minutes: 25
         run: ./gradlew clean build
       - name: 非 Windows GameTest 平台契約
-        timeout-minutes: 20
+        timeout-minutes: 15
         run: ./gradlew runGameTest --no-daemon
       # default GameTest 失敗時仍跑 M5 GameTest，兩邊的失敗都看得到；前一步失敗時 job 已是紅燈，下方檢查 step 維持預設（略過）。
       - name: 非 Windows M5 GameTest
         if: ${{ !cancelled() }}
-        timeout-minutes: 20
+        timeout-minutes: 15
         run: ./gradlew runGameTestM5 --no-daemon
+      - name: Ubuntu M6 JUnit 與獨立 GameTest
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu
+          & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu -CheckUnsupportedNative
+      - name: 確認 Ubuntu M6 精確集合與隔離
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu -VerifyOnly -UnsupportedNativeReceipt build/m6-verification/unsupported-native.json -GameTestXml build/gametest-m6-results.xml -RuntimeLog run/gametest-m6/logs/latest.log -RuntimeRoot run/gametest-m6 -OutputRoot build/m6-verified -Artifacts @(Get-ChildItem build/libs -Filter '*.jar' | ForEach-Object FullName)
       - name: 確認非 Windows 跨平台案例確實執行
+        timeout-minutes: 5
         shell: pwsh
         run: |
           # 非 Windows 上 `_windows` 案例一律平台略過；以下跨平台案例是 Ubuntu 唯一的真實入場／傳送覆蓋，必須存在且實際通過（不可略過或缺席）。
@@ -191,6 +204,7 @@ jobs:
           path: build/libs/*.jar
           if-no-files-found: error
       - name: 上傳 Ubuntu 測試證據
+        timeout-minutes: 5
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -199,6 +213,12 @@ jobs:
             build/test-results/test/*.xml
             build/gametest-results.xml
             build/gametest-m5-results.xml
+            build/gametest-legacy-results.xml
+            build/gametest-m6-results.xml
+            build/m6-verification/**
+            build/m6-verified/**
+            run/gametest-legacy/logs/latest.log
+            run/gametest-m6/logs/latest.log
             run/gametest/logs/latest.log
             run/gametest-m5/logs/latest.log
           if-no-files-found: error
@@ -222,7 +242,18 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 20
         run: ./gradlew.bat runGameTestM5 --no-daemon
+      - name: Windows M6 JUnit 與獨立 GameTest
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows
+      - name: 確認 Windows M6 精確集合與隔離
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows -VerifyOnly -GameTestXml build/gametest-m6-results.xml -RuntimeLog run/gametest-m6/logs/latest.log -RuntimeRoot run/gametest-m6 -OutputRoot build/m6-verified -Artifacts @(Get-ChildItem build/libs -Filter '*.jar' | ForEach-Object FullName)
       - name: 確認 Windows 原生案例確實執行
+        timeout-minutes: 5
         shell: pwsh
         run: |
           # 各項檢查先彙整，最後一次列出全部缺席／失敗名稱；任一項不符即 throw（維持失敗即紅）。
@@ -467,7 +498,7 @@ jobs:
               $caseName = $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
               if ($annotation -match 'batchId\s*=\s*"m5_universe') {
                 $declaredM5 += $caseName
-              } elseif ($annotation -notmatch 'batchId\s*=\s*"m4_legacy_runtime"') {
+              } elseif ($annotation -notmatch 'batchId\s*=\s*"(?:m4_legacy_runtime"|m6_universe)') {
                 $declared += $caseName
               }
             }
@@ -504,6 +535,7 @@ jobs:
           Write-Output "Windows 原生 _windows GameTest：default 宣告 $($declared.Count) 個、M5 宣告 $($declaredM5.Count) 個（嚴格與寬鬆掃描一致），都出現在所屬 XML；default XML $($windowsCases.Count) 個、M5 XML $($m5WindowsCases.Count) 個 _windows 案例，都沒有 failure／error／skipped"
           Write-Output "M5 GameTest：宣告 $($m5Declared.Count) 個（嚴格與寬鬆掃描一致），都出現在 M5 XML 且沒有 failure／error／skipped（M5 XML 共 $($m5Tests.SelectNodes('//testcase').Count) 個）"
       - name: 上傳 Windows 原生測試證據
+        timeout-minutes: 5
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -513,6 +545,12 @@ jobs:
             build/test-results/test/*.xml
             build/gametest-results.xml
             build/gametest-m5-results.xml
+            build/gametest-legacy-results.xml
+            build/gametest-m6-results.xml
+            build/m6-verification/**
+            build/m6-verified/**
+            run/gametest-legacy/logs/latest.log
+            run/gametest-m6/logs/latest.log
             run/gametest/logs/latest.log
             run/gametest-m5/logs/latest.log
           if-no-files-found: error

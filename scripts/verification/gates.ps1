@@ -14,10 +14,12 @@
 #   -Gradle        gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 # M3 probe 的 evidence owner 由 testmod ProbeEvidenceOwner 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors，不受 -EvidenceRoot 影響。
 param(
-    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M5GameTest','Windows','M3')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M5GameTest','Windows','M3','M6Compile','M6JUnit','M6GameTest')][string]$Mode,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string]$Label='run',
     [ValidateSet('','universe','transfer')][string]$Only='',
     [string]$EvidenceRoot='',
+    [string]$TestClass='',
+    [string]$Batch='',
     [string]$Gradle=''
 )
 $ErrorActionPreference='Stop'
@@ -31,6 +33,11 @@ if(-not(Test-Path -LiteralPath $Gradle -PathType Leaf)){throw "找不到 Gradle�
 $probeOwner=[IO.Path]::GetFullPath((Join-Path $repo '.superpowers/sdd/2026-09-21-m4-candidate-doors'))
 $id=[Guid]::NewGuid().ToString('N')
 Set-Location -LiteralPath $repo
+$priorJavaOptions=$env:JAVA_TOOL_OPTIONS
+if($Batch){
+    if($Mode -ne 'M6GameTest' -or $Batch -notmatch '^m6_universe[\w-]*(,m6_universe[\w-]*)*$'){throw 'M6_SCOPE_MISMATCH：Batch 僅供 M6GameTest 的 M6 batch'}
+    # 環境變更在最外層 try/finally 內才套用。
+}
 function Save-Json($path,$value) { $value | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path -Encoding utf8 }
 function Check-Path([string]$path) {
     $full=[IO.Path]::GetFullPath($path)
@@ -118,7 +125,7 @@ function Server-Files([string]$root) {
 }
 function Copy-Build([string]$dest) {
     New-Item -ItemType Directory -Path $dest | Out-Null
-    foreach($name in @('test-results','reports','gametest-results.xml','gametest-legacy-results.xml','gametest-m5-results.xml','libs')) {
+    foreach($name in @('test-results','reports','gametest-results.xml','gametest-legacy-results.xml','gametest-m5-results.xml','gametest-m6-results.xml','libs')) {
         $source=Join-Path $repo "build/$name"
         if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination $dest -Recurse}
     }
@@ -142,7 +149,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     $xmlBefore=@(Get-GateXmlSnapshot (Join-Path $repo 'build'))
     Save-Json (Join-Path $evidence 'logs-before.json') $logBefore
     Save-Json (Join-Path $evidence 'xml-before.json') $xmlBefore
-    $start=[DateTimeOffset]::Now;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0;$failure=$null;$exit=$null;$launcherPid=$null
+    $start=[DateTimeOffset]::Now;$lastActivity=$start;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0;$failure=$null;$exit=$null;$launcherPid=$null
     try {
         [void]$process.Start();$launcherPid=$process.Id
         $stdout=$process.StandardOutput.ReadLineAsync();$stderr=$process.StandardError.ReadLineAsync();$outEnd=$false;$errEnd=$false
@@ -150,7 +157,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
             while(-not $outEnd -and $stdout.IsCompleted) {
                 $line=$stdout.GetAwaiter().GetResult()
                 if($null -eq $line){$outEnd=$true;break}
-                $outFile.WriteLine($line);$outFile.Flush()
+                $outFile.WriteLine($line);$outFile.Flush();$lastActivity=[DateTimeOffset]::Now
                 if($line -match 'Done \([0-9.,]+s\)!') {$done=[DateTimeOffset]::Now;Write-Output "Done：$evidence"}
                 if($line -match 'Saved the game') {$debugCount++}
                 $stdout=$process.StandardOutput.ReadLineAsync()
@@ -158,7 +165,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
             while(-not $errEnd -and $stderr.IsCompleted) {
                 $line=$stderr.GetAwaiter().GetResult()
                 if($null -eq $line){$errEnd=$true;break}
-                $errFile.WriteLine($line);$errFile.Flush();$stderr=$process.StandardError.ReadLineAsync()
+                $errFile.WriteLine($line);$errFile.Flush();$lastActivity=[DateTimeOffset]::Now;$stderr=$process.StandardError.ReadLineAsync()
             }
             if(-not $process.HasExited -and [DateTimeOffset]::Now -ge $nextPoll) {
                 foreach($java in (Java-Processes | Where-Object {$_.ProcessId -notin $baselineIds})) {
@@ -184,7 +191,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
                     if($debugCount -ge 2 -and $elapsed -ge 6){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
                 } elseif($elapsed -ge 3){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
             }
-            if(-not $process.HasExited -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout) {
+            if(-not $process.HasExited -and (([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout -or ($Mode -eq 'M6GameTest' -and ([DateTimeOffset]::Now-$lastActivity).TotalSeconds -gt 90))) {
                 if(-not $stopSent){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
                 if(([DateTimeOffset]::Now-$start).TotalSeconds -gt ($timeout+60)) {throw "逾時且 stdin stop 未完成：$evidence"}
             }
@@ -226,14 +233,14 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
 }
 function Distinct-Count($items) { $set=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); foreach($item in $items){[void]$set.Add($item)}; return $set.Count }
 # plan 決策 6 的 batch 前綴矩陣（與 testmod M4LegacyGameTestFilterMixin 相同）：m4_legacy_runtime 屬 legacy run，前綴 m5_universe 屬 M5 run，其餘屬 default run。
-function Batch-Scope([string]$batch) { if($batch -ceq 'm4_legacy_runtime'){return 'legacy'}; if($batch.StartsWith('m5_universe',[StringComparison]::Ordinal)){return 'm5'}; return 'default' }
+function Batch-Scope([string]$batch) { if($batch -ceq 'm4_legacy_runtime'){return 'legacy'}; if($batch.StartsWith('m5_universe',[StringComparison]::Ordinal)){return 'm5'}; if($batch.StartsWith('m6_universe',[StringComparison]::Ordinal)){return 'm6'}; return 'default' }
 # testmod 原始碼宣告的全部 GameTest：XML testcase 名稱（class 小寫＋'.'＋方法名稱）、batchId（沒寫時是原版預設 defaultBatch）與所屬 run。
 # 先去掉註解行（去掉前導空白後以 //、/*、* 開頭的行，含 Javadoc 內的 {@code @GameTest}），再掃描；每個檔的 @GameTest 數必須等於可解析的
 # 宣告數，不一致代表宣告格式漂移（例如 @GameTest 與方法之間多了 annotation），直接失敗。
 # 「哪些 test 屬於哪個 run」另有兩份實作在 .github/workflows/build.yml 的兩個檢查 step；三處的註解排除、嚴格／寬鬆掃描與前綴規則必須同步（README）。
-function Declared-GameTests {
+function Declared-GameTests([string]$SourceRoot=(Join-Path $repo 'src/testmod/java')) {
     $cases=@()
-    foreach($file in Get-ChildItem -LiteralPath (Join-Path $repo 'src/testmod/java') -Recurse -File -Filter '*.java' | Sort-Object FullName) {
+    foreach($file in Get-ChildItem -LiteralPath $SourceRoot -Recurse -File -Filter '*.java' | Sort-Object FullName) {
         $text=(@((Get-Content -LiteralPath $file.FullName -Raw) -split '\r?\n') | Where-Object {$_ -notmatch '^\s*(//|/\*|\*)'}) -join "`n"
         $strict=@([regex]::Matches($text,'(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+)\(TestContext'))
         $loose=([regex]::Matches($text,'@GameTest\b')).Count
@@ -241,7 +248,9 @@ function Declared-GameTests {
         foreach($match in $strict) {
             $batchMatch=[regex]::Match($match.Groups['annotation'].Value,'batchId\s*=\s*"(?<batch>[^"]*)"')
             $batch=if($batchMatch.Success){$batchMatch.Groups['batch'].Value}else{'defaultBatch'}
-            $cases+=[pscustomobject]@{case=$file.BaseName.ToLowerInvariant()+'.'+$match.Groups['name'].Value;name=$match.Groups['name'].Value;class=$file.BaseName;batch=$batch;scope=(Batch-Scope $batch)}
+            $templateMatch=[regex]::Match($match.Groups['annotation'].Value,'templateName\s*=\s*"(?<template>[^"]+)"')
+            if(-not $templateMatch.Success){throw "M6_SCOPE_MISMATCH：GameTest 缺少可解析 templateName：$($file.Name)"}
+            $cases+=[pscustomobject]@{identity=$templateMatch.Groups['template'].Value+'|'+$file.BaseName.ToLowerInvariant()+'.'+$match.Groups['name'].Value;case=$file.BaseName.ToLowerInvariant()+'.'+$match.Groups['name'].Value;name=$match.Groups['name'].Value;class=$file.BaseName;batch=$batch;scope=(Batch-Scope $batch)}
         }
     }
     if((Distinct-Count @($cases | ForEach-Object case)) -ne $cases.Count){throw 'GameTest testcase 名稱不唯一'}
@@ -249,21 +258,22 @@ function Declared-GameTests {
 }
 # 本 run 的 XML testcase 集合必須恰好等於原始碼中屬於本 run 的宣告（以 JAVA_TOOL_OPTIONS 的 onlyBatches 取證時，再與那些 batch 取交集）。
 # 結果寫入 <gate>/scope.json；回傳本 run 應執行的宣告。
-function Assert-Scope([string]$xmlPath,[string]$scope) {
-    $declared=@(Declared-GameTests)
+function Assert-Scope([string]$xmlPath,[string]$scope,[string]$SourceRoot=(Join-Path $repo 'src/testmod/java'),[string[]]$OnlyBatches=@()) {
+    $declared=@(Declared-GameTests $SourceRoot)
     $expected=@($declared | Where-Object {$_.scope -ceq $scope})
-    $only=@()
-    if($env:JAVA_TOOL_OPTIONS -match '-Dquantumchamber\.gametest\.onlyBatches=(?<batches>\S+)'){$only=@($Matches['batches'].Split(','));$expected=@($expected | Where-Object {$_.batch -cin $only})}
+    $only=@($OnlyBatches | Where-Object {-not [string]::IsNullOrWhiteSpace($_)})
+    if(-not $only.Count -and $env:JAVA_TOOL_OPTIONS -match '-Dquantumchamber\.gametest\.onlyBatches=(?<batches>\S+)'){$only=@($Matches['batches'].Split(','))}
+    if($only.Count){$expected=@($expected | Where-Object {$_.batch -cin $only})}
     [xml]$report=Get-Content -LiteralPath $xmlPath -Raw
-    $actual=@($report.SelectNodes('//testcase') | ForEach-Object {$_.name})
-    $expectedNames=@($expected | ForEach-Object case)
+    $actual=@($report.SelectNodes('//testcase') | ForEach-Object {$_.classname+'|'+$_.name})
+    $expectedNames=@($expected | ForEach-Object identity)
     $missing=@($expectedNames | Where-Object {$_ -cnotin $actual})
     $extra=@($actual | Where-Object {$_ -cnotin $expectedNames})
-    $status=if($expected.Count -gt 0 -and $missing.Count -eq 0 -and $extra.Count -eq 0 -and $actual.Count -eq $expected.Count){'PASS'}else{'FAIL'}
+    $status=if($expected.Count -gt 0 -and $missing.Count -eq 0 -and $extra.Count -eq 0 -and $actual.Count -eq $expected.Count -and (Distinct-Count $actual) -eq $actual.Count -and @($report.SelectNodes('//testcase/failure|//testcase/error|//testcase/skipped')).Count -eq 0){'PASS'}else{'FAIL'}
     Save-Json (Join-Path $gate 'scope.json') ([ordered]@{scope=$scope;status=$status;onlyBatches=$only;xml=$xmlPath
-        declared=[ordered]@{default=@($declared | Where-Object {$_.scope -ceq 'default'}).Count;legacy=@($declared | Where-Object {$_.scope -ceq 'legacy'}).Count;m5=@($declared | Where-Object {$_.scope -ceq 'm5'}).Count}
-        expected=$expected.Count;actual=$actual.Count;missing=$missing;extra=$extra})
-    if($status -ne 'PASS'){throw "GameTest run 範圍不符（$scope）：expected=$($expected.Count) actual=$($actual.Count) 缺 [$($missing -join ', ')] 多 [$($extra -join ', ')]"}
+        declared=[ordered]@{default=@($declared | Where-Object {$_.scope -ceq 'default'}).Count;legacy=@($declared | Where-Object {$_.scope -ceq 'legacy'}).Count;m5=@($declared | Where-Object {$_.scope -ceq 'm5'}).Count;m6=@($declared | Where-Object {$_.scope -ceq 'm6'}).Count}
+        head=(git -C $repo rev-parse HEAD).Trim();expected=$expected.Count;actual=$actual.Count;expectedCases=$expectedNames;actualCases=$actual;missing=$missing;extra=$extra})
+    if($status -ne 'PASS'){throw "M6_SCOPE_MISMATCH：GameTest run 範圍不符（$scope）：expected=$($expected.Count) actual=$($actual.Count) 缺 [$($missing -join ', ')] 多 [$($extra -join ', ')]"}
     return $expected
 }
 # M5 run 的 GameTest class（F6-3c-2 由 M5UniverseGameTests 依主題拆成四個；testmod fabric.mod.json 的 fabric-gametest entrypoint 同步列出，README「新增 M5 GameTest」）。
@@ -314,15 +324,15 @@ function Assert-M5Run($server,$expected) {
     Save-Json (Join-Path $gate 'm5-oracle.json') ([ordered]@{status='PASS';serverPid=$server.pid;boundaryReceipts=0;tests=$expected.Count;holds=0;pacing=$pacing;deltas=$deltas;finalRecordCount=$previous;suiteEnd=$suiteEnd})
 }
 function Fresh-Game([bool]$full,[string]$scope) {
-    $run=Join-Path $repo $(if($scope -ceq 'legacy'){'run/gametest-legacy'}elseif($scope -ceq 'm5'){'run/gametest-m5'}else{'run/gametest'})
-    $task=if($scope -ceq 'legacy'){'runGameTestLegacy'}elseif($scope -ceq 'm5'){'runGameTestM5'}else{'runGameTest'}
-    $report=if($scope -ceq 'legacy'){'gametest-legacy-results.xml'}elseif($scope -ceq 'm5'){'gametest-m5-results.xml'}else{'gametest-results.xml'}
+    $run=Join-Path $repo $(if($scope -ceq 'legacy'){'run/gametest-legacy'}elseif($scope -ceq 'm5'){'run/gametest-m5'}elseif($scope -ceq 'm6'){'run/gametest-m6'}else{'run/gametest'})
+    $task=if($scope -ceq 'legacy'){'runGameTestLegacy'}elseif($scope -ceq 'm5'){'runGameTestM5'}elseif($scope -ceq 'm6'){'runGameTestM6'}else{'runGameTest'}
+    $report=if($scope -ceq 'legacy'){'gametest-legacy-results.xml'}elseif($scope -ceq 'm5'){'gametest-m5-results.xml'}elseif($scope -ceq 'm6'){'gametest-m6-results.xml'}else{'gametest-results.xml'}
     $swap=Move-Fresh (Join-Path $run 'world') 'world'
     try {
         Copy-Build (Join-Path $gate 'prior-build')
         $tasks=if($full){@('clean','test',$task,'build','--rerun-tasks')}else{@($task,'--rerun-tasks')}
         $runStart=[DateTime]::UtcNow
-        $result=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $run '' 1200)[-1]
+        $result=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $run '' $(if($scope -ceq 'm6'){180}else{1200}))[-1]
         Copy-Build (Join-Path $gate 'result-build')
         if($result -ne 0){throw "GameTest gate exit=$result"}
         # 只認本次 run 寫出的 XML，不讀上一次留下的舊檔。
@@ -333,6 +343,12 @@ function Fresh-Game([bool]$full,[string]$scope) {
             if($server.Count -ne 1){throw "M5 run 必須恰有一個 server JVM（$($server.Count)）"}
             $expected=@(Assert-Scope (Join-Path $gate "result-build/$report") 'm5')
             Assert-M5Run $server[0] $expected
+        } elseif($scope -ceq 'm6') {
+            if($server.Count -ne 1){throw 'M6 run 必須恰有一個 server JVM'}
+            if(-not $server[0].commandLine.Contains('-Dquantumchamber.gametest.m6Only=true') -or $server[0].commandLine -match '-Dquantumchamber[.]gametest[.](m5Only|legacyOnly)=true'){throw 'M6_SCOPE_MISMATCH：server JVM scope flags 不符'}
+            & (Join-Path $PSScriptRoot 'm6-ci-gametest.ps1') -Platform Windows -VerifyOnly -GameTestXml (Join-Path $gate "result-build/$report") -RuntimeLog (Join-Path $gate 'execution/runtime-logs/latest.log') -RuntimeRoot $run -OutputRoot $gate -Batch $Batch
+            $m6Scope=Get-Content -LiteralPath (Join-Path $gate 'scope.json') -Raw | ConvertFrom-Json
+            if($m6Scope.status -ne 'PASS'){throw 'M6_SCOPE_MISMATCH：M6 scope 非 PASS'}
         } else {
             if($server.Count -ne 1){throw "GameTest run 必須恰有一個 server JVM（$($server.Count)）"}
             $boundary=@(Get-GateBoundaryReceipt -Root (Join-Path $gate 'execution') -Processes $server | Where-Object matched | ForEach-Object receipt)
@@ -378,6 +394,7 @@ if(-not(Test-Path -LiteralPath $EvidenceRoot)){New-Item -ItemType Directory -Pat
 $gate=Join-Path $EvidenceRoot "gate-$Label-$id"
 New-Item -ItemType Directory -Path $gate | Out-Null
 try {
+    if($Batch){$env:JAVA_TOOL_OPTIONS=("$priorJavaOptions -Dquantumchamber.gametest.onlyBatches=$Batch").Trim()}
     switch($Mode) {
         'Inventory' {
             $cases=@()
@@ -399,6 +416,25 @@ try {
         'Full' {Fresh-Game $true 'default'}
         'Legacy' {Fresh-Game $false 'legacy'}
         'M5GameTest' {Fresh-Game $false 'm5'}
+        'M6GameTest' {Fresh-Game $false 'm6'}
+        'M6Compile' {
+            $exit=@(Invoke-Gradle @('classes','clientClasses','testClasses','testmodClasses','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -runtimeLogMode compile-only)[-1]
+            if($exit -ne 0){throw "M6_COMPILE_FAILED exit=$exit"}
+        }
+        'M6JUnit' {
+            if($TestClass -and $TestClass -notmatch '^dev\.quantumchamber\.[A-Za-z0-9_.$]+$'){throw 'M6_JUNIT_SCOPE_MISMATCH：TestClass 必須為完整 class 名稱'}
+            $tasks=@('test');if($TestClass){$tasks+=@('--tests',$TestClass)};$tasks+='--rerun-tasks'
+            $exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -runtimeLogMode junit)[-1]
+            Copy-Build (Join-Path $gate 'result-build')
+            if($exit -ne 0){throw "M6_JUNIT_FAILED exit=$exit"}
+            $cases=@();$suites=@()
+            foreach($file in Get-ChildItem -LiteralPath (Join-Path $gate 'result-build/test-results/test') -Filter 'TEST-*.xml') {
+                [xml]$xml=Get-Content -LiteralPath $file.FullName -Raw
+                $suites+=([string]$xml.testsuite.name);$cases+=@($xml.SelectNodes('//testcase'))
+            }
+            if(-not $cases.Count -or @($cases | Where-Object {$_.SelectSingleNode('failure|error')}).Count -or ($TestClass -and ($suites.Count -ne 1 -or $suites[0] -cne $TestClass -or @($cases | Where-Object {$_.SelectSingleNode('skipped')}).Count))){throw 'M6_JUNIT_SCOPE_MISMATCH：JUnit 集合缺失／失敗／非指定 class'}
+            Save-Json (Join-Path $gate 'junit-scope.json') ([ordered]@{status='PASS';head=(git -C $repo rev-parse HEAD).Trim();testClass=$TestClass;classes=$suites;cases=@($cases | ForEach-Object {$_.classname+'|'+$_.name})})
+        }
         'Windows' {
             Copy-Build (Join-Path $gate 'prior-build')
             $exit=@(Invoke-Gradle @('test','--tests','dev.quantumchamber.persistence.WindowsPlayerCheckpointVerifierTest','--tests','dev.quantumchamber.persistence.PlayerCheckpointStoreTest','--tests','dev.quantumchamber.persistence.PlayerRecoveryCheckpointTest','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -runtimeLogMode junit)[-1]
@@ -410,4 +446,4 @@ try {
 } catch {
     Save-Json (Join-Path $gate 'gate.json') ([ordered]@{mode=$Mode;label=$Label;status='FAIL';error=$_.ToString();evidence=$gate})
     throw
-} finally {Write-Output "GATE_ROOT=$gate"}
+} finally {$env:JAVA_TOOL_OPTIONS=$priorJavaOptions;Write-Output "GATE_ROOT=$gate"}
