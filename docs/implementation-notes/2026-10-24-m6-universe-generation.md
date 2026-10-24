@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task 1、2 harness 安全修正完成，雙 review 的 C/I 均為 0；Task 2 quality Minor M-1 交 Task 3 Step 0。接續 M6 專用測試／CI 入口；生成／維度家族程式尚未實作。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1、2完成；Task3本機實作／雙review完成（C/I=0，一項Minor交Task4 Step0），遠端同CI commit的Windows／Ubuntu尚待推送後驗證。CI gate未完成前不進Task4；生成／維度家族程式尚未實作。
 
 ## 使用者確認的範圍與順序
 
@@ -99,3 +99,19 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 
 - 已核四scope矩陣漏列M4GameTestBoundaryProbe owner：它原本對非M5 GameTest註冊catalog/world不變快照，不適用後續M6 Universe配置。補入Task3 Files，exact M6略過M4/M5 observer，混合scope拒絕；fresh M6無M4 artifact/M5 suite-end，既有三scope由full守住。不改production/spec。
 - 另一全新SOL `/root/m6_task3_plan_check` 狹義review Approved C0/I0/M0，報告SHA `22AE0B840CD1E9BF2A696BEB03B353C0A69757AC59EADAEB25B32FBF0125393D`。主控已讀回；這是必要owner補足，未宣稱Task3 code或runtime通過。另將Task2 Minor列Task3 Step0。
+
+## Task 3：本機實作與雙 review 完成，CI gate 待驗（2026-10-25）
+
+- range `f4b5ab1..ac085c8`，最終 code `ac085c8c2fdaaf9d3fbddcb7cc1affd305eb4602`；五commit含初稿355648a、path/ignored修正64b9e8d、初deadline b773f12、idle邊界5df251d、Main CI接線ac085c8。16檔限testmod／harness／build／workflow與核准plan owner，src/main/client及版本未變。
+- 新M6Compile／M6JUnit／M6GameTest與m6-focused入口、四scope exact classname|name、多case同batch、專用fresh M6 run、tick10ms及37項oracle。M4/M5 observer不混入M6；testmod仍不進release/sources。Task2 M-1已補observedExists與真正存在性斷言，原Move-Fresh行為不變。
+- 真bootstrap與scope／JAR／mixedflags／nullBatch反例保留。第一修正的world junction、首次ignored寫入、deadline自然exit0誤PASS均有原guard RED；兩fresh修正review仍找到idle退出／輸出恢復邊界（各C0/I1/M0）。第二修正以真Invoke-Gradle重現quiet-exit、late-output-live及慢取證誤FAIL，改在drain前／poll後／退出後觀測，OS ExitTime封頂；7個process-only案例不冒稱Minecraft。
+- 路徑守門允許實體empty/absent，拒完整target/祖先reparse、非目錄、非空world與未證I/O，輸出先驗ignored。原非ignored副作用9檔經hash保全搬存；Windows symbolic-link EPERM與原本可拒的dangling Junction不冒稱RED。所有原失敗／舊full根保留，詳終局report。
+- Windows CI Main-only補充經另一fresh plan review C0/I0/M0，報告SHA `459C320F892C5581BB53161BEE10FD61FEFA4C9C237CAB85C545D579CFD16313`。薄wrapper沿用既有Main／三層oracle，relative bundle、同SHA與17原件hash；Windows獨立7分鐘、reserve8，job90/M6step15不變，always-upload；Ubuntu不加Main，Task12 native job未提前。這是已核初值，非最壞IO時間保證。
+- compile在各code commit前對同內容工作樹完成；同clean ac085的g2兩bundle：M6各2/2，waited26/25、TPS49.4/49.8；各37項oracle＋deadline7、Main-Ci真Run/Verify與1正7負Main receipt規則。兩Main runtime25.067/24.008秒，三層0、normalStop/exactRestore、同SHA/hash皆符；額外JUnit入口exact3。
+- 正式full：`.superpowers/verification/run-all-77dcbab203604ecfbff7d94e79f009c6`，07:43:39精確 `END ALL exit=0 HEAD=ac085c8c2fdaaf9d3fbddcb7cc1affd305eb4602`；summary SHA `702FEEB64347E9AB517B245AE3383282236063D66799A8B769789528C0D325FC`。default179/windows89/legacy1/M560/M62（TPS48.5）/perTest56+1/JUnit666(0/0/2)/checkpoint17/M3 4+5/recovery24/collapse69/HALT31/MainOnlyPASS。
+- full Main只跑一次，整wrapper/oracle約40.629秒；main-ci-receipt SHA `FE304FB91E83CDF211BBE354DD621BF52168B6BAEDD4DB9F9CF2425B0052D7F3`，17個原件主控及reviewers重hash相符。缺收據／錯head／GameTest冒充／testmod／stop／restore／缺原件皆由正式CI rule fixture具名拒絕，仍非遠端CI證據。
+- audit-ac085c8：107 Minecraft logs與7 process-only分開；2418 WARN/ERROR逐筆歸屬、unattributed0、worldgen/pin-HOLD0。M3固定owner255原件hash、停止/lock/restore皆核。既有三GameTest scope/JUnit集合同Task2，新增M6兩case另列；release432entries/385classes與sources226逐entry bytes同Task2、testmod0。14核心hash主控重算無差。
+- 首次整Task3 fresh spec Approved with minor C0/I0/M1，報告SHA `8B13968806BC981D4C5E83C4ACC876B9999AC64AD2D62A318A30DC55418B6FD4`；另一fresh quality Approved C0/I0/M0，SHA `39BACC339A238F87D47A153D9E9DCA8169D8D2B1394EC8B7B757EAE329633C76`。兩者皆獨立確認R2 I-1 ADDRESSED，主控已全文讀回。
+- Minor M-1：m6-ci-gametest的單值scope名稱被PowerShell解包，`$names+'m6_first'`形成串接名稱，三個反例未真的加入獨立M6 case。正式filter與四run XML互斥已成立；依handoff規則交Task4 Step0補精準fixture，非阻擋、此輪不為Minor重跑相同full。
+- 終局task-3-report.md SHA `C06A50AA623DCB8C64E0F4EE94ED69785DD43FDA45543B2DEE2392AEAFD123DB`；完整diff SHA `172DE25DC28F75ACC2705917945F7436AE3E12A4921DAD764CFC868190AA8C07`。本筆為純結果／接續文件，採計ac085，不冒稱docs SHA自己跑過runtime。
+- **目前未push M6、未取得遠端同CI commit的Windows／Ubuntu結果，Task3尚未全部結案。** 下一步正常push feature並讀回實際兩平台XML／pace／JAR／排除及Windows Main原件；C/I及此外部gate清零後才Task4。人工、milestone整分支、main/tag/退役均未執行。

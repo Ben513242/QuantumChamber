@@ -1,6 +1,6 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
-> 最新接續（2026-10-25）：以下保留原始開工提示。使用者已確認完整M6及順序，spec／plan已獨立review通過，Task1與Task2已完成、C/I=0；目前接續Task3，並處理Task2一項測試Minor。請依AGENTS目前入口、M6 note與SDD STATUS接續，不重問已裁定範圍、不重做已完成task。
+> 最新接續（2026-10-25）：以下保留原始開工提示。完整M6與順序已確認，spec／plan已review；Task1、2完成，Task3本機實作與雙review C/I=0，正在準備push與實際雙平台CI。Task3一項scalar fixture Minor交Task4 Step0；遠端CI gate未驗前不開始Task4。依AGENTS、M6 note與SDD STATUS接續，不重問範圍、不重做已完task。
 
 你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。請先核對 M5 收尾事實，再確認 M6 範圍與優先序，完成經獨立 review 的 spec／plan，接著依核准範圍實作。不要只回答能不能做，也不要重做已完成的 M5。
 

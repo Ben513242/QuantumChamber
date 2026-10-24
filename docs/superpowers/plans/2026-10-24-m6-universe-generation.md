@@ -101,16 +101,18 @@ Task 7 建立 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryPr
 
 ### Task 3：M6 定向 gate 與結果 oracle
 
+本機實作／review完成（code ac085c8；spec C0/I0/M1、quality C0/I0/M0）。實際同CI commit雙平台仍待push後驗證，故本task未全部結案。M-1交Task4 Step0，不拿本機fixture當遠端CI。
+
 補充（2026-10-25）：M4 boundary observer 的必要 owner 隔離已經全新 SOL 獨立 review，C0/I0/M0；原四 scope 契約不變。Task 2 quality Minor M-1 依交接規則併入本 task Step 0。
 
 **Files:** Create `scripts/verification/m6-focused.ps1`、`m6-ci-gametest.ps1`、`scripts/verification/m6-deadline-check.ps1`、`scripts/verification/m6-ci-main-only.ps1`、`src/testmod/java/dev/quantumchamber/gametest/M6GateCanaryGameTests.java`；Modify `scripts/verification/gates.ps1`、`m6-harness-safety-check.ps1`、`run-all.ps1`、`ci-rule-check.ps1`、`README.md`、`build.gradle`、`.github/workflows/build.yml`、`src/testmod/resources/fabric.mod.json`、`src/testmod/java/dev/quantumchamber/gametest/mixin/M4LegacyGameTestFilterMixin.java`、`src/testmod/java/dev/quantumchamber/gametest/M4GameTestBoundaryProbe.java`、`src/testmod/resources/quantumchamber-test.mixins.json`（僅新 testmod mixin 確有加入時）。
 **Interfaces:** `gates.ps1` 新增 `-Mode M6Compile|M6JUnit|M6GameTest`、`-TestClass <fqcn>`（JUnit）、`-Batch <batch>`（GameTest），由 `m6-focused.ps1 -Suite JUnit|GameTest|Probe` 封裝；`runGameTestM6` 是獨立 fresh runtime。filter 四種 scope 互斥：legacy=`m4_legacy_runtime`、M5=`m5_universe*`、M6=`m6_universe*`、default=其餘。focused `-Batch` 可含多個 testcase：比較所選 batch 的**完整 `classname+name` 集合**，不能用 testcase 數等於 batch 數。full/CI 同樣比 exact 集合及 JAR/main-only 隔離。
-- [ ] Step 0：承接 Task 2 quality M-1，非 restore-fails 案例直接斷言目錄存在性等於 originalExisted，receipt 保存 observedExists；以受控殘留空目錄反例證明可拒絕，再跑 move-fresh 與 owned-root focused。只補測試，不改已驗 Move-Fresh 行為；完整回歸併本 task 最終候選。
-- [ ] 精確 M6 run 略過 M4 boundary observer 與 M5 suite-end 註冊；mixed scope flags 必拒絕。fresh M6 canary root 不得產生 m4-boundary artifact 或 M5_UNIVERSE_SUITE_END；default／legacy／M5 原 oracle 由 full 保持。
-- [ ] 先建可啟動的最小 `runGameTestM6`／`m6-focused.ps1`／四 scope filter，於 `fabric.mod.json` 註冊 canary `fabric-gametest` 並加入可觀察且為真的 `m6_universe_gate` 斷言；跑 `pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_gate -Label g0-canary`，確認 XML 有該 exact case 且 PASS；這是 harness bootstrap，不當行為 RED。
-- [ ] 在可執行 canary 基礎上，用錯誤 XML／testmod 泄漏 fixture 使 oracle 具名 `M6_SCOPE_MISMATCH`／`M6_TESTMOD_LEAK` RED；證 default/legacy/M5 均排除 M6、M6 不含它們，不能拿缺 entrypoint 或空測試當 RED。
+- [x] Step 0：承接 Task 2 quality M-1，非 restore-fails 案例直接斷言目錄存在性等於 originalExisted，receipt 保存 observedExists；以受控殘留空目錄反例證明可拒絕，再跑 move-fresh 與 owned-root focused。只補測試，不改已驗 Move-Fresh 行為；完整回歸併本 task 最終候選。
+- [x] 精確 M6 run 略過 M4 boundary observer 與 M5 suite-end 註冊；mixed scope flags 必拒絕。fresh M6 canary root 不得產生 m4-boundary artifact 或 M5_UNIVERSE_SUITE_END；default／legacy／M5 原 oracle 由 full 保持。
+- [x] 先建可啟動的最小 `runGameTestM6`／`m6-focused.ps1`／四 scope filter，於 `fabric.mod.json` 註冊 canary `fabric-gametest` 並加入可觀察且為真的 `m6_universe_gate` 斷言；跑 `pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_gate -Label g0-canary`，確認 XML 有該 exact case 且 PASS；這是 harness bootstrap，不當行為 RED。
+- [x] 在可執行 canary 基礎上，用錯誤 XML／testmod 泄漏 fixture 使 oracle 具名 `M6_SCOPE_MISMATCH`／`M6_TESTMOD_LEAK` RED；證 default/legacy/M5 均排除 M6、M6 不含它們，不能拿缺 entrypoint 或空測試當 RED。
 - [ ] 加 fresh `run/gametest-m6`、`gameTestM6` 專用 `minTickMillis=10`、`m6-ci-gametest.ps1` 的 Windows／Ubuntu 正常 run 與合法平台拒絕路徑；`g0-green-a/b` 的 canary PASS，negative fixture 仍 FAIL，M6 pace `waited>0/tps<=100.0`、`run-all`/`ci-rule-check` 新 summary 與兩平台同 SHA 比對，release/sources/main-only oracle 照舊。CI 新 step 的 budget/artifact 依上方矩陣。
-- [ ] 完成 compile、code commit、兩次 clean HEAD focused、full、fresh spec＋quality review；之後所有 task 只能經此 tracked runner 跑 focused。
+- [x] 完成 compile、code commit、兩次 clean HEAD focused、full、fresh spec＋quality review；之後所有 task 只能經此 tracked runner 跑 focused。
 
 ## 切片①：三類原版結構生成競態
 
@@ -118,8 +120,9 @@ Task 7 建立 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryPr
 
 ### Task 4：Stronghold invocation state
 
-**Files:** Create `src/main/java/dev/quantumchamber/mixin/StrongholdGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/StrongholdGenerationConcurrencyTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/resources/fabric.mod.json`（註冊 `fabric-gametest`）、`scripts/verification/README.md`。
+**Files:** Create `src/main/java/dev/quantumchamber/mixin/StrongholdGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/StrongholdGenerationConcurrencyTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/resources/fabric.mod.json`（註冊 `fabric-gametest`）、`scripts/verification/README.md`、`scripts/verification/m6-ci-gametest.ps1`（僅Step0）。
 **Interfaces:** exact 原版 `StrongholdStructure.addPieces` invocation 內隔離 `possiblePieces`、`activePieceType`、`totalWeight`、`ALL_PIECES.generatedCount`；新 mixin 不改其他 structures。
+- [ ] Step0承接Task3 spec M-1：強制把單一scope名稱包成陣列後再加入獨立m6_first，核原合法case仍在、actual=2、extra恰為m6_first；修正三個跨scope fixture的精準性。以受控反例／focused驗證，完整回歸併本task；不改正式filter語意。
 - [ ] 讀 native `init/pickPiece/addPieces` 實際讀寫、`/place` caller，記可注入方法 descriptor 與再入性；JUnit `twoWorldStrongholdsDoNotSharePieceCounts` 的 barrier RED 要見 count/state 交叉，`singleWorldStrongholdLayoutUnchanged` 對照固定 seed。
 - [ ] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.StrongholdGenerationConcurrencyTest -Label r1-red` 具名 RED；最小 mixin 後 `r1-green-a/b` PASS。另 `-Suite GameTest -Batch m6_universe_race_stronghold` 驗 `/place`／worker 無卡住。
 - [ ] compile→code commit→兩個 clean HEAD JUnit GREEN＋GameTest→full→fresh spec／quality；若鎖／ThreadLocal 不能證安全，停在此 task 不進 Task 5。

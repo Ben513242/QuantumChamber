@@ -456,3 +456,9 @@
 - code98ea115，range0c20c59..98ea115；Move-Fresh建立失敗自動復原／原錯誤保留。真RED、同pin雙6/6及owned-root8/8、full run-all-700c8a5654fa445283b6885f02810ba0 END ALL exit0；106logs/255個M3原件與artifact/main-only/restore均核。
 - fresh spec C0/I0/M0、quality C0/I0/M1；Minor為不存在目錄的直接斷言，交Task3 Step0。本次實際路徑均不存在，沒有待關C/I。詳細hash／原失敗launcher與8空目錄保全見M6 note。
 - Task3 M4 boundary observer的必要owner補充已另獨立review C0/I0/M0，plan同步；下一步全新implementer建M6 focused/full/CI。這次只有結果文件與已審計畫補充，不重跑Task2；main/m5未動，M6尚未push/遠端CI/人工/合併/tag/退役。
+
+### 2026-10-25：M6 Task3 本機review完成，CI待驗
+
+- code ac085c8，range f4b5ab1..ac085c8，完成M6測試框架、路徑／deadline與Windows獨立Main CI接線；最後full run-all-77dcbab203604ecfbff7d94e79f009c6 END ALL exit0。
+- 整Task3 fresh spec C0/I0/M1、quality C0/I0/M0，R2 idle Important已閉；Minor為三個scalar scope fixture，交Task4 Step0。完整hash/原件/修正歷程見M6 note，不拿本機CI規則冒稱遠端。
+- 本筆採計code ac085，是純文件；準備正常push並核實際同CI SHA雙平台。遠端gate尚未完成，不進Task4；main/m5未動，無人工/合併/tag/退役。
