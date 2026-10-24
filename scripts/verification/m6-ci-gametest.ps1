@@ -209,7 +209,14 @@ function Invoke-M6OracleSelfTest {
     $checks.Add([ordered]@{name='nonignored-output-remains-absent';passed=$true;path=$nonignored;observedExists=$false})
     if((git -C $repo rev-parse HEAD).Trim() -cne $head){throw 'M6_HEAD_CHANGED：SelfTest期間HEAD改變'}
     # 最後一個負例不可污染正式 scope receipt。
-    Save-Json (Join-Path $OutputRoot 'selftest.json') ([ordered]@{status='PASS';head=$head;checks=@($checks.ToArray());multiCaseBatch=2})
+    $processHarness=if($IsWindows){
+        $deadlineRoot=Join-Path $OutputRoot 'deadline-harness'
+        & (Join-Path $PSScriptRoot 'm6-deadline-check.ps1') -OutputRoot $deadlineRoot | Out-Null
+        $receipt=Get-Content -LiteralPath (Join-Path $deadlineRoot 'summary.json') -Raw | ConvertFrom-Json
+        if($receipt.status -cne 'PASS' -or $receipt.head -cne $head -or $receipt.minecraftLaunched -ne $false){throw 'M6_DEADLINE_CONTRACT_MISMATCH：正式helper不是同HEAD純process檢查'}
+        [ordered]@{status='PASS';executed=$true;receipt=(Join-Path $deadlineRoot 'summary.json');receiptSha256=(Get-FileHash -LiteralPath (Join-Path $deadlineRoot 'summary.json')).Hash}
+    }else{[ordered]@{status='UNSUPPORTED';executed=$false;reason='WINDOWS_PROCESS_HARNESS_ONLY';minecraftLaunched=$false}}
+    Save-Json (Join-Path $OutputRoot 'selftest.json') ([ordered]@{status='PASS';head=$head;checks=@($checks.ToArray());multiCaseBatch=2;windowsProcessHarness=$processHarness})
     Write-Output "M6_ORACLE_SELFTEST_PASS checks=$($checks.Count) HEAD=$head"
 }
 if($SelfTest){Invoke-M6OracleSelfTest;return}

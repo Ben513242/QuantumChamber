@@ -130,11 +130,11 @@ function Copy-Build([string]$dest) {
         if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination $dest -Recurse}
     }
 }
-function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600,[ValidateSet('minecraft','junit','compile-only')][string]$runtimeLogMode='minecraft') {
+function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600,[ValidateSet('minecraft','junit','compile-only')][string]$runtimeLogMode='minecraft',[ValidateRange(1,3600)][int]$idleSeconds=90) {
     # 只有明確不啟動 Minecraft 的 JUnit／編譯 invocation 可以豁免當次日誌；不可拿它略過任何 run task。
     if($runtimeLogMode -cne 'minecraft' -and @($tasks | Where-Object {($_ -split ':')[-1] -cmatch '^run'}).Count){throw '日誌不適用模式不可包含 run task'}
     $m6Mode=$Mode -in @('M6Compile','M6JUnit','M6GameTest')
-    $idleTimeout=if($m6Mode){90}else{0}
+    $idleTimeout=if($m6Mode){$idleSeconds}else{0}
     New-Item -ItemType Directory -Path $evidence -Force | Out-Null
     $taskArgs=@('--no-daemon','--console=plain','--max-workers=2','-I',(Join-Path $PSScriptRoot 'runtime.init.gradle'))+$tasks
     $quoted=@($taskArgs | ForEach-Object {if($_.Contains('"')){throw '拒絕未處理引號'};'"'+$_+'"'}) -join ' '
@@ -151,7 +151,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     $xmlBefore=@(Get-GateXmlSnapshot (Join-Path $repo 'build'))
     Save-Json (Join-Path $evidence 'logs-before.json') $logBefore
     Save-Json (Join-Path $evidence 'xml-before.json') $xmlBefore
-    $start=[DateTimeOffset]::Now;$lastActivity=$start;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0;$failure=$null;$exit=$null;$launcherPid=$null
+    $start=[DateTimeOffset]::Now;$lastActivity=$start;$nextPoll=$start;$done=$null;$stopAt=$null;$stopSent=$false;$debugCount=0;$failure=$null;$exit=$null;$launcherPid=$null;$deadline=$null;$deadlineAt=$null
     try {
         [void]$process.Start();$launcherPid=$process.Id
         $stdout=$process.StandardOutput.ReadLineAsync();$stderr=$process.StandardError.ReadLineAsync();$outEnd=$false;$errEnd=$false
@@ -194,19 +194,30 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
                 } elseif($elapsed -ge 3){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
             }
             if(-not $process.HasExited -and (([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout -or ($idleTimeout -gt 0 -and ([DateTimeOffset]::Now-$lastActivity).TotalSeconds -gt $idleTimeout))) {
+                if($m6Mode -and $null -eq $deadline){
+                    $deadlineAt=[DateTimeOffset]::Now
+                    $deadline=[ordered]@{reason=$(if(($deadlineAt-$start).TotalSeconds -gt $timeout){'total'}else{'idle'});observedAt=$deadlineAt.ToUniversalTime().ToString('o');elapsedSeconds=($deadlineAt-$start).TotalSeconds;idleSeconds=($deadlineAt-$lastActivity).TotalSeconds;observedAfterExit=$false}
+                }
                 if(-not $stopSent){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
-                if(([DateTimeOffset]::Now-$start).TotalSeconds -gt ($timeout+60)) {throw "逾時且 stdin stop 未完成：$evidence"}
+                if($m6Mode -and $deadlineAt -and ([DateTimeOffset]::Now-$deadlineAt).TotalSeconds -gt 60){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadline.reason)；grace後尚未退出：$evidence"}
+                if(-not $m6Mode -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt ($timeout+60)) {throw "逾時且 stdin stop 未完成：$evidence"}
             }
             Start-Sleep -Milliseconds 100
         }
         $process.WaitForExit()
         $exit=$process.ExitCode
+        # 即使輪詢剛好跨過程序退出，總deadline仍不可因exit0被抹掉。
+        if($m6Mode -and $null -eq $deadline -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout){
+            $deadlineAt=[DateTimeOffset]::Now
+            $deadline=[ordered]@{reason='total';observedAt=$deadlineAt.ToUniversalTime().ToString('o');elapsedSeconds=($deadlineAt-$start).TotalSeconds;idleSeconds=($deadlineAt-$lastActivity).TotalSeconds;observedAfterExit=$true}
+        }
+        if($m6Mode -and $null -ne $deadline){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadline.reason)；已安全退出但逾時仍FAIL：$evidence"}
     } catch {$failure=$_;throw}
     finally {
         $outFile.Dispose();$errFile.Dispose()
         $identity=[ordered]@{exitCode=$exit;start=$start.ToUniversalTime().ToString('o');end=[DateTimeOffset]::UtcNow.ToString('o');command=$info.Arguments;launcherPid=$launcherPid;processes=@($known.Values);runtimeRoot=$runtimeRoot;doneSeen=($null-ne $done);stdinStop=$stopSent;nativeSaves=$debugCount;status=$(if($null -eq $failure -and $exit -eq 0){'EXIT_ZERO'}else{'FAIL'});error=$(if($failure){$failure.Exception.Message}else{$null})}
         $identity.runtimeLogMode=$runtimeLogMode
-        if($m6Mode){$identity.configuredTimeoutSeconds=$timeout;$identity.configuredIdleSeconds=$idleTimeout}
+        if($m6Mode){$identity.configuredTimeoutSeconds=$timeout;$identity.configuredIdleSeconds=$idleTimeout;$identity.phaseDeadline=$deadline}
         $captureErrors=@()
         foreach($capture in @(
             {Save-Json (Join-Path $evidence 'execution.json') $identity},
