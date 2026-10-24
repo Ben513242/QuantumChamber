@@ -1,6 +1,6 @@
 # QuantumChamber
 
-> **M5 功能分支狀態（2026-10-24）：** `feature/m5-collapse` 已實作塌縮與單向通道；`db029fa` 的 GitHub Actions Windows 一次、同 SHA Ubuntu 兩次真 job 及 artifact 已核。F7 文件、required manual smoke 與 whole-branch review 仍待；M5 尚未合併 `main`，也沒有 `m5` tag。M1–M4 的已完成紀錄如下。
+> **M5 收尾狀態（2026-10-24）：** 塌縮與單向通道、F7 文件、required manual smoke 與整分支獨立 review 均已完成（Critical／Important 0）。`f99ce66` 的 GitHub Actions Windows 一次、同 SHA Ubuntu 兩次真 job 與 artifact 已核；最後只同步文件狀態。M5 尚未合併 `main`，也未建立 `m5` tag；完整證據與實況見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。M1–M4 的已完成紀錄如下。
 
 > **功能分支 `feature/m1-chamber`（M1–M4）狀態，驗收分層記錄：** 以下都已實作，並完成自動 gate 與逐 task review：
 >
@@ -18,7 +18,7 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 M1–M4 的已合併版本請從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 啟動 `start-client.bat`；要試 M5 功能分支，請在 `.worktrees/m5-collapse` 的根目錄啟動並使用其隔離的測試世界。完整 M2 流程與原人工驗收結果見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
-走廊是有限局部頁面與外觀延伸，本身仍是固定的 `quantumchamber:superposition` 世界。M5 已在 `feature/m5-collapse` 把 checked 候選收據接成塌縮與單向跨宇宙通道；玩法及尚待的人工驗收見下節。
+走廊是有限局部頁面與外觀延伸，本身仍是固定的 `quantumchamber:superposition` 世界。M5 已在 `feature/m5-collapse` 把 checked 候選收據接成塌縮與單向跨宇宙通道；玩法及已完成的人工驗收見下節。
 
 走廊世界只接受玩家、掉落物、投射物與經驗球。在走廊內使用船／箱船、礦車、盔甲架、物品展示框／螢光物品展示框、畫、生怪蛋、裝有生物的桶、終界水晶、拴繩或滯留型藥水會被拒絕，物品不扣，actionbar 顯示「量子走廊內不能放置船、盔甲架、展示框、生物等實體；物品未消耗。」。以生成方式（例如 `/summon`、蛋孵出的小雞）進入走廊的其他 entity 會被拒絕，不會出現在走廊；以跨維度傳送（傳送門、`/tp`、`/execute in … run tp`、`/spreadplayers`）送進來的會被拒絕並留在原處。這些指令被拒時，原版仍會顯示成功（已知限制）。經驗球比照掉落物跨頁面保留、返還時送到原艙中央；肩上的鸚鵡在走廊內不會被放下，返還後仍在肩上。入口艙的正面門位於走廊牆面，在走廊內保持關閉；入口 Controller 在正門正上方、兩側與內側是基岩，原版 client 瞄不到，修改版 client 送出的切換請求也一律拒絕。
 
@@ -32,7 +32,7 @@ M4 當時，完整側門右鍵只會 checked 鎖定候選，門保持關閉、�
 
 ## M5 塌縮與單向通道
 
-在 Overworld 側門選好候選之後，參與者先安全回到原艙；目的地準備期間門口是不可穿過的量子膜，準備完成才可穿過（比較器 15）。NEW／EXISTING 會在相同座標到達目的宇宙，畫面中央分別顯示「你已進入新的宇宙。」／「你已進入另一個宇宙。」；目的地是同 seed 的原始地形，**不是來源世界的複製**，身後的基岩投影艙不能啟動。SOURCE 候選只會塌縮並讓門一般開啟，不配置宇宙或傳送。真正的 M5 量子膜與光影畫面仍待 [人工 smoke](docs/manual-acceptance/2026-10-01-m5-manual-smoke.md) 驗收。
+在 Overworld 側門選好候選之後，參與者先安全回到原艙；目的地準備期間門口是不可穿過的量子膜，準備完成才可穿過（比較器 15）。NEW／EXISTING 會在相同座標到達目的宇宙，畫面中央分別顯示「你已進入新的宇宙。」／「你已進入另一個宇宙。」；目的地是同 seed 的原始地形，**不是來源世界的複製**，身後的基岩投影艙不能啟動。SOURCE 候選只會塌縮並讓門一般開啟，不配置宇宙或傳送。M5 量子膜、兩軸向光影與跨越畫面已由 [人工 smoke](docs/manual-acceptance/2026-10-01-m5-manual-smoke.md) 實際驗收並經獨立 review。
 
 通道在全員跨過、約 60 秒到期、參與者關門或斷電時結束；已跨過的人不再收到「量子通道已關閉。」。本切片沒有正規回程、目的地預覽、完整 Nether／End family 或在當前宇宙重生；非參與者與騎乘中的參與者不能藉膜傳送，物品與坐騎不跟隨。新的 Nether／End 側門選擇會被拒絕。重啟後在原艙內登入，來源艙載入完成時會照原收據續行；玩家不必為此再進出一次。`ALREADY_SELECTED` 的「候選已鎖定。」在真 client 不保證看得到，請以實際收據與後續塌縮判斷。
 
