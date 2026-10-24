@@ -1,5 +1,7 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
+> 最新接續（2026-10-25）：以下保留原始開工提示。使用者已確認完整M6及順序，spec／plan已獨立review通過，Task1與Task2已完成、C/I=0；目前接續Task3，並處理Task2一項測試Minor。請依AGENTS目前入口、M6 note與SDD STATUS接續，不重問已裁定範圍、不重做已完成task。
+
 你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。請先核對 M5 收尾事實，再確認 M6 範圍與優先序，完成經獨立 review 的 spec／plan，接著依核准範圍實作。不要只回答能不能做，也不要重做已完成的 M5。
 
 一律用繁體中文（台灣）回報；程式識別字、指令、檔名維持原文。先講結論與可驗證證據，再談推論。對使用者用白話。可以派工給 gpt-6-sol；總協調者負責分工、驗證與文件真實性。

@@ -1,10 +1,10 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task 1 harness 安全修正完成並雙 review C0/I0/M0；接續 Task 2。M6 生成／維度家族程式尚未實作。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task 1、2 harness 安全修正完成，雙 review 的 C/I 均為 0；Task 2 quality Minor M-1 交 Task 3 Step 0。接續 M6 專用測試／CI 入口；生成／維度家族程式尚未實作。
 
 ## 使用者確認的範圍與順序
 
-完整 M6，依序分段驗收：測試腳本安全與生成競態 → random seed → same-seed fresh／generation profile 與 registry/API → 完整 Nether／End family、portal／gateway、respawn 與同 DimensionRole 投影／跨越。M7 literal branch／snapshot 不納入。子代理使用 SOL；本輪採 `gpt-6-sol`。
+完整 M6，依序分段驗收：測試腳本安全與生成競態 → random seed → same-seed fresh／generation profile 與 registry/API → 完整 Nether／End family、portal／gateway、respawn 與同 DimensionRole 投影／跨越。M7 literal branch／snapshot 不納入。子代理使用 SOL；本輪採 `gpt-6-sol`／`gpt-6.1-sol`。
 
 先寫 binding spec，獨立 spec review 清除 Critical／Important；再寫 plan 並獨立 review，通過後直接實作。具體 profile 類型、權重與技術選擇若由協調者決定，會在 spec 標明為設計預設，不冒稱使用者逐項選定。
 
@@ -26,15 +26,15 @@
 
 ## Step 0 與驗證邊界
 
-- `probe-common.ps1:17–24`：New-OwnedRoot 尚未在建立前守住 run 祖先的 canonical／reparse 邊界。
-- `gates.ps1:80–102`：Move-Fresh 搬移後 New-Item 失敗，caller 尚未取得 swap；需確保復原仍執行，且保留原例外。現況不是原世界已毀損。
+- 開工盤點 `probe-common.ps1:17–24`：當時New-OwnedRoot尚未守住run祖先的canonical／reparse邊界；後續修正與證據見Task1。
+- 開工盤點 `gates.ps1:80–102`：當時Move-Fresh搬移後New-Item失敗會使caller尚未取得swap；後續復原與原例外修正見Task2。當時原世界仍在backup，並非已毀損。
 - 開工發現 `scripts/verification/README.md:392` 仍有F7前的27a5039現況句，本輪已同步更正為最新已驗M5本機full：6b116e6／run-all-e32343e8bd034936aee50b9b3db48a1f；CI：f99ce66／run40079019075。這是文件修正，未重跑已完成M5。
-- 本輪尚無M6測試、runtime root、review通過或code commit。兩個SOL唯讀盤點不是獨立spec/plan review。
+- 開工盤點當時尚無M6測試、runtime root、review通過或code commit；下方逐輪紀錄覆蓋該歷史狀態。兩個SOL唯讀盤點本身不是獨立spec/plan review。
 - 後續每task／fix round保持RED、同乾淨code HEAD的兩次focused GREEN與必要完整回歸；具體矩陣由plan定義。純文件只驗diff與格式，不冒稱新SHA已跑runtime。
 
 ## 接續
 
-SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。目前正撰寫 `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`；完成後交全新SOL reviewer。
+SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。目前依已核 spec／plan 接續 Task 3；Task 1、2 不重做，最新原件與派工狀態看 STATUS。
 
 ## Spec 第一輪獨立 review（2026-10-24）
 
@@ -83,3 +83,19 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - 全新獨立spec `/root/m6_task1_spec_review` Approved C0/I0/M0，報告SHA `894FCB1DDE9C12700F3AF545C8E6F2BC103E271857C5B239F9EA7B5028A6C2AD`；另一全新quality `/root/m6_task1_quality_review` Approved C0/I0/M0，SHA `F75D4CB15CCFE06494E809B2D62F593F998D3FDB4C25D5CF9E8320373F79659B`。主控已讀完整兩報告/核hash；兩者僅唯讀，不重跑suite。
 - task-1-report.md SHA `063B359FD4810AC2BEF9224D0CF7AF2EE409D4A79E1CD25A84FEB653356AF4BC`；review diff SHA `FFA670EA39483B33450E63A3702C1461385B6D6B8861C8DBE39913C8D33AF43D`。本段相對上述code只有結果文件，不冒稱新docs SHA重跑runtime。
 - Task1完成、無未關finding。下一步Task2 Move-Fresh建目錄失敗復原，另派全新implementer；不做生成/renderer/M7。人工M6 smoke未執行、遠端CI未執行、尚未push/merge/tag/退役。
+
+## Task 2：fresh 建立失敗的原世界復原完成（2026-10-25）
+
+- range `0c20c59..98ea115`，code `98ea1151c6ddefb2ece82a3f71cc6b1715818348`，只改 gates.ps1、m6-harness-safety-check.ps1、README。建立 fresh 前保存 swap；建立失敗自動復原並保留原例外，雙重失敗保留兩原因與可恢復位置。無／部分 fresh 與正常路徑均涵蓋。
+- BASE 具名 RED `task-02/h2-red-real-e21690134914410ab33990ac4f10cc2b` 保留 backup；receipt SHA `48725ABB6DD5AF1BB00DAB0085F3271600A3A490037973BD9A961788D5293B3B`。兩次同 clean code GREEN 各6/6：`h2-green-a-469229a36a7c41748f3863cb535cc609`、`h2-green-b-236ae49654a544cfa099d580f219ae16`；SHA `4B8C40AF4F45311EDF568753BC3642BD4CBE5AB646ED89236CC9383CE8465296`／`A4702DE3ADE05514A3005B2BC01442ACD0F5C75C9DB078D4F3A179C3C3CAB563`。owned-root回歸8/8，PS parser/diff check通過。
+- full `task-02/full/run-all-700c8a5654fa445283b6885f02810ba0`，03:34:36精確 `END ALL exit=0 HEAD=98ea1151c6ddefb2ece82a3f71cc6b1715818348`；summary SHA `07949818454F0F994BF582299B8D443B3F439C5AE44946B5D2DFD14B31F1F63B`。default179/windows89/legacy1/M560/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/JAR432entries/385classes/sources226/testmod0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31。本機兩平台CI規則PASS不是GitHub runner。
+- 主控核原XML/JUnit集合、JAR、main-only三層與exact restore；implementer逐entry名稱/bytes比Task1完全相同。M3固定owner的255原件由主控及reviewers重算無差；manifest SHA `020F1F2F2C0D58971FE5D4612EE1A4BAFD429B8F60AE0350D2F1EC52C718C3D8`，補充audit SHA `0E733BC1EEEFA690EA74E998D37971E12B18AE7BC2B31F3903490C3D186CF4BC`。
+- 106當次logs、2420 WARN/ERROR皆具名分類，worldgen例外0；新增Bat UUID重複一次與2059ms/41tick延遲一次，相關phase均PASS，保留為觀察，不宣稱受控或已修復。完整原行／原因在SDD report及audit。
+- 首次full `run-all-9333c7196eaa4631ac99182b5343f025` 在JVM啟動前失敗，原root/日誌與exact restore保留，不採GREEN。必要子環境差異未單變量證因果；未改hook/全域或殺daemon。首啟動誤建的8空目錄經canonical/非reparse/empty/time/owner核對後，可恢復move至 `task-02/first-launch-artifacts-4f3146759827477b8596d498214ec07e`，preservation為8 moved、deleted=false。
+- 獨立spec `/root/m6_task2_spec_review` Approved C0/I0/M0，SHA `998EE4E6A73DA838A40BD55F798B5666BACC7A9C2800F1BC745CBEC04C1FD23C`；獨立quality `/root/m6_task2_quality_review` Approved C0/I0/M1，SHA `297A9762A5A833ED2BEF7E7A3558409563C3E9541ECEAB59D22A9D73EBDE13BF`。主控已完整讀回。Minor M-1：absent案例補直接Test-Path存在性斷言及observedExists；本次實際四個路徑皆不存在，依規則交Task3 Step0，不另重跑Task2。
+- 終局 report SHA `D8CE35B30021EDFA178CBEC50C8ACA4F6E3793E2A20AA980F84337DE3FA8E5EA`；diff SHA `B78BE2549D3FE7BD7002FB77C4655749CE48B1F1452DDE60C72793A2286E25A3`。結果文件採計98ea115，不冒稱docs SHA重跑runtime。Task2完成；未push、遠端CI／人工smoke／main／tag／退役未執行。
+
+## Task 3 前置計畫補充（2026-10-25）
+
+- 已核四scope矩陣漏列M4GameTestBoundaryProbe owner：它原本對非M5 GameTest註冊catalog/world不變快照，不適用後續M6 Universe配置。補入Task3 Files，exact M6略過M4/M5 observer，混合scope拒絕；fresh M6無M4 artifact/M5 suite-end，既有三scope由full守住。不改production/spec。
+- 另一全新SOL `/root/m6_task3_plan_check` 狹義review Approved C0/I0/M0，報告SHA `22AE0B840CD1E9BF2A696BEB03B353C0A69757AC59EADAEB25B32FBF0125393D`。主控已讀回；這是必要owner補足，未宣稱Task3 code或runtime通過。另將Task2 Minor列Task3 Step0。

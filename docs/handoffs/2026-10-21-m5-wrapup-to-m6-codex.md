@@ -450,3 +450,9 @@
 - code b533367，range0087b2f..b533367，僅owned-root祖先守門/正式fixture runner/README。原RED保留、同clean HEAD兩次8/8、full run-all-0790df31c2a943ceac91c2ca2eb01890 END ALL exit0，全部基準數字符合；M3補9phase日誌與255原件，106logs worldgen0，WARN/ERROR具名歸屬。
 - 全新spec/quality均C0/I0/M0，主控已讀回原件及兩review；hash/range詳M6 note Task1。沒有把本機CI規則說成GitHub runner，也沒有人工smoke結果。
 - 本筆只更新結果/checkbox/入口，不重跑同code。Task1完成無未關finding；接續Task2（Move-Fresh建目錄失敗時復原並保留原錯誤），來源/測試範圍依短派工。main/m5不動，M6尚未push/merge/tag/退役。
+
+### 2026-10-25：M6 Task2 結案，接續 Task3
+
+- code98ea115，range0c20c59..98ea115；Move-Fresh建立失敗自動復原／原錯誤保留。真RED、同pin雙6/6及owned-root8/8、full run-all-700c8a5654fa445283b6885f02810ba0 END ALL exit0；106logs/255個M3原件與artifact/main-only/restore均核。
+- fresh spec C0/I0/M0、quality C0/I0/M1；Minor為不存在目錄的直接斷言，交Task3 Step0。本次實際路徑均不存在，沒有待關C/I。詳細hash／原失敗launcher與8空目錄保全見M6 note。
+- Task3 M4 boundary observer的必要owner補充已另獨立review C0/I0/M0，plan同步；下一步全新implementer建M6 focused/full/CI。這次只有結果文件與已審計畫補充，不重跑Task2；main/m5未動，M6尚未push/遠端CI/人工/合併/tag/退役。
