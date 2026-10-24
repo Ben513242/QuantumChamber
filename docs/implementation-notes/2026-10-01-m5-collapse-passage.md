@@ -1,12 +1,12 @@
 # M5：塌縮與單向通道（實作紀錄）
 
 - Spec：[`docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`](../superpowers/specs/2026-10-01-m5-collapse-passage-design.md)（binding v5.10；歷次裁示見 spec §20）
-- Plan：[`docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`](../superpowers/plans/2026-10-01-m5-collapse-passage.md)（目前 Task F7 與 Milestone 收尾為接續入口；歷史修訂見 git log）
+- Plan：[`docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`](../superpowers/plans/2026-10-01-m5-collapse-passage.md)（Milestone 收尾為接續入口；歷史修訂見 git log）
 - Branch：`feature/m5-collapse`，由 `main`＝`a7e1be2` 開出。
 
 本文件逐 task 記錄 code-truth、RED／GREEN 的 gate root 與 commit range。gate root 在 gitignored 的 `.superpowers/verification/`，詳細過程在 gitignored 的 SDD ledger `.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`；這裡只留可核對的摘要。
 
-目前狀態（2026-10-24）：M5 功能、F7、required manual smoke 與整分支獨立 review 已完成（spec C0/I0/M0、quality C0/I0/M2，兩Minor交下一Step0）。最後程式相同的 `f99ce66132dbe4b7d4aff6719ef95bdf8486eac0` 已push，run40079019075一個Windows與同SHA兩次真Ubuntu、14原件及artifact／log差異均已核，未歸屬差異0。唯一完整本機run-all仍在乾淨6b116e6 END ALL exit0；此後只有文件。最後同步README／總設計入口等舊狀態句，新文件HEAD未另跑CI，獨立docs review與CI採計／tag裁示尚待；main／tag／退役尚未執行，M6未開始。本段覆蓋下方歷史現況句，原失敗root與當時判定保留。
+目前狀態（2026-10-24）：M5 功能、F7、required manual smoke 與整分支獨立 review 已完成（spec C0/I0/M0、quality C0/I0/M2，兩Minor交下一Step0）。最後程式相同的 `f99ce66132dbe4b7d4aff6719ef95bdf8486eac0` 已push，run40079019075一個Windows與同SHA兩次真Ubuntu、14原件及artifact／log差異均已核，未歸屬差異0。唯一完整本機run-all仍在乾淨6b116e6 END ALL exit0；此後只有文件。最後同步README／總設計入口等舊狀態句，正式CI證據仍釘選f99；最後獨立docs雙review已通過（均C0/I0/M1，同一導覽Minor在本次結果同步更正），純狀態文件CI採計與tag裁示尚待；main／tag／退役尚未執行，M6未開始。本段覆蓋下方歷史現況句，原失敗root與當時判定保留。
 
 文件入口：[M5 相容性與實測範圍](compatibility.md)、[M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)。已知窄限制：原版 playerdata 寫出若自行收下 IOException，只記不帶 `session=` 的 WARN；`saveCrossedPlayerData` 收不到該 IOException。若此時 crash，已跨越玩家可能回到最後一次成功存下的位置；checked `Crossed` 不能單獨證明 playerdata 已持久化（見本 note F6-2c 的 Crossed 後 playerdata 存檔與「交給後續」F7 觀察）。M5 的 Windows atomic move `AccessDeniedException` 維持現有 fail-closed／退避，外部持有者仍未確認；Stronghold 靜態競態修正依使用者裁示延到 M6。F7 最終 commit／唯一 run-all／獨立 review 結果見本 note 末節。
 
@@ -10558,9 +10558,9 @@ controller直接讀本輪與CI-W1 full2的原JAR：release整檔bytes完全相�
 ## M5 最後 CI 與文件入口同步（2026-10-24）
 
 - 行號：本節以實際run/job與SDD manifest定位；README與總設計只改現況句，不改binding行為。
-- **文件入口與review**：controller合併前末檢補到README:3/21/35與總設計Document stage的舊F7/manual/whole-branch待做句，現與已完成證據對齊。原整分支review仍釘選a7e1be2..0f59f73，spec C0/I0/M0、quality C0/I0/M2且context獨立；這次文件同步另交兩個全新context做spec／quality review，結果尚待，不自評Approved。沒有src/test/build/workflow變更。
+- **文件入口與review**：controller末檢補齊README:3/21/35與總設計Document stage的舊F7/manual/whole-branch待做句。`f99ce66..5a4fa3a` 已由兩個全新context獨立審查，spec Approved、quality Approved，皆C0/I0/M1；兩者唯一且相同Minor為note:4的舊Plan導覽，已於接續結果同步Step0改為「Milestone 收尾為接續入口」，不改玩法或另開程式fix round。報告SDD `whole-branch-20261024/final-docs-spec-review.md` SHA `9ce6ac31dbc07ad62a6b470e6c60943f743e932d925941a4d858d9b4d1e80bf9`、`final-docs-quality-review.md` SHA `5c92f66f73f8ec27563d84bb8186a4acbd62e671a73263bda15a2c6619f02c3a`，controller已讀回並核差異。原整分支review仍釘選a7e1be2..0f59f73，spec C0/I0/M0、quality C0/I0/M2，兩harness Minor交下一Step0。沒有src/test/build/workflow變更。
 - **CI與原件**：Build [run40079019075](https://github.com/Ben513242/QuantumChamber/actions/runs/40079019075)，固定 `f99ce66132dbe4b7d4aff6719ef95bdf8486eac0`。Ubuntu真job `120828478682`（08:41:28–08:46:50 UTC）及唯一rerun `120834288496`（09:11:34–09:17:04 UTC）、Windows真job `120828478496`（08:41:28–09:01:35 UTC）皆success；第二輪Windows列沿用原時間，不算新執行。TPS依序86.3／86.4／65.9，waited>0、HOLD0、各唯一SUITE_END且四權威皆已確認。
 - **固定原件與主控複核**：SDD `f7/ci-final-20261024` 首輪8件freeze SHA `daff481a0faac9a7148b8c59b3454de6cba74fff2fa1078fe5c97a8555c54c42`，第二輪6件freeze SHA `b976c535526d9dea35f1c82334bc2f94b1a550a74a1bceab259a2a4379e2bdae`。controller分別逐檔核大小/hash、原API的SHA與真job時間，第二輪另直接讀ZIP/XML/JAR，沒有執行下載內容。
 - **比較結論**：三輪default179/M560完整class+test集合相同，JUnit identity666相同（Windows664PASS/2SKIP、Ubuntu638PASS/28SKIP；30項outcome差異逐項對到四個tracked OS條件）。release432entries/385classes全部class bytes相同；sources226，對本機差異均LF/CRLF與ZIP時間/extra，兩Ubuntu sources未壓縮內容與壓縮payload差異0，CODEC來源與release身分吻合。未歸屬內容差異0。CI raw WARN/ERROR與前次成功CI總數一致，訊息正規化後六組排序差異0；殘差只為故障注入診斷座標、物件位址與暫存nonce，未出現新原因類別。
 - **最後本機full／SUMMARY**：仍採乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/windows89/legacy1/M560/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。本次只改狀態文件，不重跑full；新文件HEAD沒有冒稱重新執行CI。
-- **下一步**：最後文件review完成後，提出純狀態文件沿用f99 CI與建立annotated tag m5的具體裁示；main條件整合與正常push已有授權，tag尚未建立，指定worktree尚未刪除。server/client已正常關閉、Java空及server lock已釋放的原件見上一節。
+- **下一步**：最後文件review已完成，提出純狀態文件沿用f99 CI與建立annotated tag m5的具體裁示；main條件整合與正常push已有授權，tag尚未建立，指定worktree尚未刪除。server/client已正常關閉、Java空及server lock已釋放的原件見上一節。
