@@ -4,7 +4,7 @@
 
 ## 已實測的 client 畫面
 
-2026-10-01 的 F1b 真 client 驗證使用單人世界，在 Minecraft 1.21 載入 Sodium 0.6.13、Iris 1.8.8（兩者為 `+mc1.21.1` 版）與 Complementary Reimagined r5.9.3。光影關閉與開啟時，驗證用的 `enter`／`return` 均完成；開啟光影時，Iris 為動態宇宙與原世界建立 pipeline，畫面有光影效果。這證明當時的渲染組合能執行 F1b 的進出操作；**尚未證明 M5 可穿越量子膜時的畫面與跨越行為**。後者列在 [M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)，結果待記錄。
+2026-10-01 的 F1b 真 client 驗證使用單人世界，在 Minecraft 1.21 載入 Sodium 0.6.13、Iris 1.8.8（兩者為 `+mc1.21.1` 版）與 Complementary Reimagined r5.9.3。光影關閉與開啟時，驗證用的 `enter`／`return` 均完成；開啟光影時，Iris 為動態宇宙與原世界建立 pipeline，畫面有光影效果。這證明當時的渲染組合能執行 F1b 的進出操作；F1b 本身不等同 M5 可穿越量子膜驗收。後續於2026-10-24完成 [M5 人工 smoke](../manual-acceptance/2026-10-01-m5-manual-smoke.md) 的兩軸量子膜、光影畫面與真實跨越，並經獨立結果review；範圍與原件以該清單為準。
 
 單人世界從世界清單重新進入時，曾看到原版「使用實驗性設定的世界不受支援」警告；以 quick play 進入時沒有顯示。當時的唯讀檢查只看到 M1 起的 `quantumchamber:superposition` 在世界生成設定中；「警告來自 datapack 維度」是推論，沒有另做根因驗證。F1b 的原始觀察見 [M5 implementation note 的 F1b 段](2026-10-01-m5-collapse-passage.md)。
 

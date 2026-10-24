@@ -1014,7 +1014,7 @@ code range `8ca77d9..27a5039`，兩個commit只改build、固定identity Tiny、
 
 ## Milestone 收尾（依 AGENTS.md）
 
-**2026-10-24 人工更新**：A1／A1b／A2／B符合前置的兩艙／C／D／E／F1–F3必測觀察已完成，結果及偏差已寫入正式清單；B未供電C1仍依規則未驗、不冒稱舊SOURCE／EXISTING已測。未改production，沿用F7唯一full，純文件不重跑。本輪獨立結果 review 已完成：原兩份 C0/I1/M0 的同一文件 I-1 由 e8ed90e 兩行修正，兩個全新 context 複審均 C0/I0/M0。整分支 review `a7e1be2..0f59f73` 已通過（全新 spec C0/I0/M0、quality C0/I0/M2）；`f99ce66` 的雙平台／同SHA兩次Ubuntu及原件已驗收；後續只同步狀態文件，正式CI證據仍釘選f99。最後docs雙review均C0/I0/M1，同一note導覽Minor已在結果同步更正；純狀態文件CI採計／tag裁示及main／tag／退役尚待。品質 Minor 1（owned probe run root 的 canonical／reparse 守門）與 Minor 2（Move-Fresh 搬移後建立失敗時自動還原）排入下一輪 Step 0；本輪不改 production／harness。
+**2026-10-24 人工更新**：A1／A1b／A2／B符合前置的兩艙／C／D／E／F1–F3必測觀察已完成，結果及偏差已寫入正式清單；B未供電C1仍依規則未驗、不冒稱舊SOURCE／EXISTING已測。未改production，沿用F7唯一full，純文件不重跑。本輪獨立結果 review 已完成：原兩份 C0/I1/M0 的同一文件 I-1 由 e8ed90e 兩行修正，兩個全新 context 複審均 C0/I0/M0。整分支 review `a7e1be2..0f59f73` 已通過（全新 spec C0/I0/M0、quality C0/I0/M2）；`f99ce66` 的雙平台／同SHA兩次Ubuntu及原件已驗收；後續只同步狀態文件，正式CI證據仍釘選f99。最後docs雙review均C0/I0/M1，同一note導覽Minor已在結果同步更正；本輪使用者已指示繼續main/tag/退役，純狀態文件採計f99 CI；main已ff到a2d2b40、annotated tag m5指向同commit並已push，指定worktree按裁示進行不備份退役，移除實況以git/path核對。品質 Minor 1（owned probe run root 的 canonical／reparse 守門）與 Minor 2（Move-Fresh 搬移後建立失敗時自動還原）排入下一輪 Step 0；本輪不改 production／harness。
 
 1. automated gates：`run-all.ps1` 全綠（含 M5 GameTest run 與 M5 probe）。
 2. required manual smoke（spec §18）：先取得使用者明確授權才由controller代操作，否則交使用者執行；清單與回報用白話，結果寫入F7的tracked清單。
@@ -1022,7 +1022,7 @@ code range `8ca77d9..27a5039`，兩個commit只改build、固定identity Tiny、
 4. docs truth。
 5. push `feature/m5-collapse`。
 6. GitHub Actions 雙平台通過。
-7. 上述M5門檻全數成立後，依使用者2026-10-22稍後的一次條件授權，以 `git merge --ff-only` 合併main，再push main；合併授權尚未使用；正常push依2026-10-24持續授權。annotated tag `m5`名稱維持原指定，建立tag仍須另取明確同意。
+7. 上述M5門檻全數成立後，依使用者2026-10-22稍後的一次條件授權，以 `git merge --ff-only` 合併main，再push main；此合併與push已於2026-10-24完成；annotated tag `m5`亦經同日最新收尾指示建立於a2d2b40並push。正常push依持續授權；後續純整合狀態紀錄依本輪裁示再ff-only同步main。
 8. M5退役依使用者2026-10-22新裁示：合併main後，按本順序刪除指定m5-collapse工作樹及其run／.superpowers等檔案，不做外部備份、不留副本；這一次刪除已獲條件授權。仍須核main／tag實況、canonical target、非reparse、無live Java及lock釋放；不刪main checkout或其他worktree。
 
 ## Completion Evidence

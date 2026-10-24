@@ -1,6 +1,6 @@
 # QuantumChamber
 
-> **M5 收尾狀態（2026-10-24）：** 塌縮與單向通道、F7 文件、required manual smoke 與整分支獨立 review 均已完成（Critical／Important 0）。`f99ce66` 的 GitHub Actions Windows 一次、同 SHA Ubuntu 兩次真 job 與 artifact 已核；最後只同步文件狀態。M5 尚未合併 `main`，也未建立 `m5` tag；完整證據與實況見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。M1–M4 的已完成紀錄如下。
+> **M5 已整合（2026-10-24）：** main 已包含 `a2d2b40`，annotated tag `m5` 指向該版本，兩者已推送。塌縮與單向通道、F7、人工 smoke 與獨立 review 均已完成（Critical／Important 0）；純整合狀態文件依本輪裁示採計程式相同的 `f99ce66` 雙平台／同 SHA 兩次 Ubuntu CI。完整證據、已知限制與實際 refs 見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。M6 尚未開始。
 
 > **功能分支 `feature/m1-chamber`（M1–M4）狀態，驗收分層記錄：** 以下都已實作，並完成自動 gate 與逐 task review：
 >
@@ -16,9 +16,9 @@ QuantumChamber 是一個以伺服器權威為核心的 Minecraft Fabric 模組�
 
 功能分支 `feature/m1-chamber` 已接上左右走廊、群體換頁與安全返還：外部先供電，玩家完整入艙、關門且全員具 QuantumState 後，進入固定的 `quantumchamber:superposition` 世界，保留當前效果與自然倒數。喝藥的瓶子消耗遵循原生規則；入場不另消耗 Buff。任一凍結參與者的效果自然到期或被牛奶解除，全組返回同一原艙且不退款藥效。仍 HIGH 時原艙保持保護；全員補喝、關門並滿足資格可建立新 SID。LOW 時先完成玩家與有價物品返還、租約清理，再解除保護；離線或來源身分不符持續 pending。返還期間只凍結尚未返還的玩家：已返還者回到原艙就能正常移動與互動，但原艙保護與比較器 11 維持到全員收尾，收尾前也不能開新 session；離線者重新連線後的下一 tick 才返還。
 
-M1–M4 的已合併版本請從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 啟動 `start-client.bat`；要試 M5 功能分支，請在 `.worktrees/m5-collapse` 的根目錄啟動並使用其隔離的測試世界。完整 M2 流程與原人工驗收結果見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
+M1–M5 的已合併版本請從主 checkout `C:\Users\Ben\Documents\minecraft QuantumChamber` 啟動 `start-client.bat`，測試新版本仍使用世界複本。M5 開發工作樹是指定退役目標，不作為日後啟動入口。完整 M2 流程與原人工驗收結果見 [M2 操作與驗證紀錄](docs/implementation-notes/m2-corridor.md)。
 
-走廊是有限局部頁面與外觀延伸，本身仍是固定的 `quantumchamber:superposition` 世界。M5 已在 `feature/m5-collapse` 把 checked 候選收據接成塌縮與單向跨宇宙通道；玩法及已完成的人工驗收見下節。
+走廊是有限局部頁面與外觀延伸，本身仍是固定的 `quantumchamber:superposition` 世界。main 的 M5 已把 checked 候選收據接成塌縮與單向跨宇宙通道；玩法及已完成的人工驗收見下節。
 
 走廊世界只接受玩家、掉落物、投射物與經驗球。在走廊內使用船／箱船、礦車、盔甲架、物品展示框／螢光物品展示框、畫、生怪蛋、裝有生物的桶、終界水晶、拴繩或滯留型藥水會被拒絕，物品不扣，actionbar 顯示「量子走廊內不能放置船、盔甲架、展示框、生物等實體；物品未消耗。」。以生成方式（例如 `/summon`、蛋孵出的小雞）進入走廊的其他 entity 會被拒絕，不會出現在走廊；以跨維度傳送（傳送門、`/tp`、`/execute in … run tp`、`/spreadplayers`）送進來的會被拒絕並留在原處。這些指令被拒時，原版仍會顯示成功（已知限制）。經驗球比照掉落物跨頁面保留、返還時送到原艙中央；肩上的鸚鵡在走廊內不會被放下，返還後仍在肩上。入口艙的正面門位於走廊牆面，在走廊內保持關閉；入口 Controller 在正門正上方、兩側與內側是基岩，原版 client 瞄不到，修改版 client 送出的切換請求也一律拒絕。
 

@@ -11,7 +11,7 @@
 ## 正確工作區
 
 - Repository（主 checkout，停在 `main`）：`C:/Users/Ben/Documents/minecraft QuantumChamber`。不要在主 checkout 或 `main` 上實作。
-- M5 worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse`，分支 `feature/m5-collapse`，2026-10-01 從 `main`（`a7e1be2`）開出。M5 的所有工作都在這個 worktree 做；push 狀態以遠端 ref 為準。
+- M5 歷史開發 worktree／本次退役目標：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse`，分支 `feature/m5-collapse`。M5 已合併 main 並建立 tag m5；此目錄依使用者指定不備份退役，不再作為新任務工作區。目錄是否已移除以 `git worktree list` 與實際路徑為準；後續以主 checkout 的已合併 M5 為基準，先確認 M6 範圍，再建立新 worktree，不直接在 main 實作。
 - M1–M4 的 worktree `.worktrees/m1-chamber` 已於 2026-10-01 完成外部備份與驗證後刪除；分支 `feature/m1-chamber` 仍在本機與 `origin`。它的 `run/`、`.superpowers/`（含 M1–M4 SDD ledger 與 evidence owner）與 `.tools/` 只存在於 repo 外的備份 `C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\`（資料夾名稱去掉開頭的點：`run`、`superpowers`、`tools`；`MANIFEST-sha256.txt`、`BACKUP-LOG.txt`）。這份備份只讀參考，不得修改。
 - 主 checkout 的 git 會報 dubious ownership：對主 checkout 下指令時，每次單獨加 `git -c safe.directory="C:/Users/Ben/Documents/minecraft QuantumChamber" -C <path> ...`，不要改全域設定。
 - 每個 milestone 要等前一個 milestone ff 進 `main` 並打 tag 之後，才另開新的 worktree 與 branch。
@@ -43,9 +43,9 @@ milestone implementation → automated gates → required manual smoke → task�
 
 **M5退役專屬裁示（2026-10-22）**：使用者 2026-10-22 明確裁示：M5 合併 main 後，刪除 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，包含其中 run/、.superpowers/ 與其他檔案；不做外部備份或另留副本。這是該次指定工作樹退役的授權，取代先前對此 M5 工作樹的搬出世界／備份前提；不授權現在合併 main、建立 tag，或刪除其他工作樹。退役仍依里程碑順序，先核對 main 包含最終 M5 commit、實際 tag 狀態、唯一 canonical absolute target、非 reparse、無 live Java owner 且 session.lock 已釋放。 這只適用本次指定M5工作樹；原始SDD／run資料退役後不另保留，tracked摘要留在Git。
 
-**M5整合專屬裁示（2026-10-22稍後）**：使用者明確指示「記得m5沒問題後合併main然後再push」。在M5 automated/雙平台CI、required manual smoke、task及whole-branch review與docs truth都完成後，已授權一次main `--ff-only`合併及其後一次push main；兩次操作各自的條件授權尚未使用。此授權不含下一次feature push、建立或推送tag；tag `m5`仍另取同意。派工MD由controller評估：必要長期內容整理到tracked文件/模板，一次性ignored派工不force-add、指定M5工作樹退役時一併刪除，不另留副本。
+**M5整合專屬裁示（2026-10-22稍後）**：使用者明確指示「記得m5沒問題後合併main然後再push」。在M5 automated/雙平台CI、required manual smoke、task及whole-branch review與docs truth都完成後，已授權一次main `--ff-only`合併及其後一次push main；該次條件授權已於2026-10-24使用，main fast-forward到a2d2b40並push。使用者同日承接具體候選／CI採計問句指示「繼續收尾main、tag、工作樹退役」，本輪因此建立annotated tag `m5`並push；使用者另明確回覆「同意沿用 CI，完成 M5 收尾（建議）」，後續純整合狀態文件採計f99 CI並再ff-only同步main；不外推為其他tag授權。派工MD由controller評估：必要長期內容整理到tracked文件/模板，一次性ignored派工不force-add、指定M5工作樹退役時一併刪除，不另留副本。
 
-**後續 push 持續授權（2026-10-24）**：使用者明確指示「並且可以都push無需再問我了」。後續正常 push 不再逐次詢問，取代舊的單次 push／新 commit 另問規則；依任務需要合併推送，不為湊 CI 次數重送。這不授權 force push、刪除遠端 ref，或跳過 main 合併、tag 建立、人工 smoke 與 worktree 退役各自的門檻；tag 建立仍待明確同意。
+**後續 push 持續授權（2026-10-24）**：使用者明確指示「並且可以都push無需再問我了」。後續正常 push 不再逐次詢問，取代舊的單次 push／新 commit 另問規則；依任務需要合併推送，不為湊 CI 次數重送。這不授權 force push、刪除遠端 ref，或跳過 main 合併、tag 建立、人工 smoke 與 worktree 退役各自的門檻；本輪m5 tag已另獲同意並建立，其他tag仍須明確同意。
 
 一般規則（上述M5專屬裁示取代其搬出世界與外部備份要求）：刪除其他 worktree（包括當時的 `.worktrees/m1-chamber`）之前，必須先完成：
 
@@ -103,8 +103,9 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 **2026-10-21 起，M5 收尾到 M6 交接給 Codex。** 接手入口是 [`docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md`](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。該檔寫明：目前狀態、剩下的工作（依序）、等待使用者裁示的事項、工作方式與已知偶發。請先讀它，再讀本節其餘部分。
 
-- 目前：M5 功能、F7、required manual smoke 與整分支獨立 review 均完成；spec C0/I0/M0、quality C0/I0/M2，兩Minor交下一Step0。`f99ce66132dbe4b7d4aff6719ef95bdf8486eac0` 的 run40079019075 已驗 Windows一次／同SHA Ubuntu兩次真job與原件，未歸屬差異0。最後只更正README／總設計入口等文件現況，正式CI證據仍釘選f99；最後獨立docs雙review均C0/I0/M1，同一導覽Minor已在結果同步更正。純狀態文件CI採計與tag裁示尚待。main／tag／退役未執行，M6未開始。
-- Git 快照（2026-10-24 最後文件同步前）：HEAD/origin feature=`f99ce66132dbe4b7d4aff6719ef95bdf8486eac0`、開工porcelain空；local/origin main=`a7e1be2dab7424bf067bda378c6edd7518bbaf7f`、main乾淨且可ff、無m5 tag（實際refs仍以即時git為準）。治理HEAD依handoff§7最新commit訊息解析。本機最後full是6b116e6，最新已驗CI是f99ce66；本次只有文件，不重跑本機full。正常push持續授權；main條件整合與指定M5不備份退役授權未用，tag建立仍待同意。
+- 目前：M5 功能、F7、人工smoke、整分支與最後文件review、雙平台CI皆完成；2026-10-24 18:13 main已ff到`a2d2b404329d2574469fca064a663e21fe89f333`，annotated tag `m5`指向同commit，main/tag/feature均已push並讀回確認。使用者已指示完成main/tag/指定worktree退役；本輪及其後純整合狀態文件採計已驗`f99ce66` CI，沒有程式/build/workflow差異。僅剩依此紀錄執行的工作樹移除核對，實際存在狀態以git與檔案系統為準。M6未開始，先確認範圍／優先序；兩個harness Minor交下一Step0。
+- Git 快照（2026-10-24 整合後、退役前）：local/origin main與feature皆`a2d2b404329d2574469fca064a663e21fe89f333`，兩工作樹porcelain空；annotated tag m5 object=`15c2943ce37950f468b030c5d194485a328c1705`、peeled target=a2d2b40，遠端相同。本筆後只有純狀態文件commit（以handoff§7最新紀錄解析）再ff同步main，tag固定a2d2b40不移動；最後full仍6b116e6，已驗CI仍f99ce66。指定M5退役不備份，正式程式/腳本與摘要留Git。
+- M6 新對話完整提示詞：[`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md)。使用者指定由新對話接續實作，本對話只完成M5；M6先確認範圍／優先序，再寫經review的spec/plan。
 - 每次停下或交回時，更新該檔的「交回紀錄」與本節。
 
 M1–M4 已完成並合併（2026-10-01 核對）：
@@ -114,7 +115,7 @@ M1–M4 已完成並合併（2026-10-01 核對）：
 - M1–M4 的歷程（逐 task 與整分支 review、integration fix rounds 1–4、人工驗收、合併、harness tracked 化與 worktree 退役）記在 `docs/implementation-notes/2026-09-21-m4-candidate-doors.md`、`docs/implementation-notes/2026-09-29-m1-m4-integration-review.md` 與 `scripts/verification/README.md`。M1–M4 的 SDD ledger 只在外部備份：`C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\superpowers\sdd\2026-09-21-m4-candidate-doors\progress.md`（只讀）。
 - `scripts/verification/` 的 harness 原始檔（`task9-gates.ps1` 等）與 M1–M4 evidence，也都在同一份外部備份的 `superpowers\sdd\2026-09-21-m4-candidate-doors\`。M3 probe 與 M4 recovery 的 receipt 位置由 testmod 固定在 repo 內的 `.superpowers/sdd/2026-09-21-m4-candidate-doors/`；依程式，tracked harness 在該目錄不存在時會自行建立；M5 T0（2026-10-01，HEAD `2c24d51`）已在 clean clone 實跑確認，見 M5 note 的「T0」。
 
-M5（`feature/m5-collapse`）實作中，尚未合併 `main`。2026-10-09 依使用者指示，把 feature 分支 push 到 `origin`，讓使用者在另一台電腦 pull 下來試玩：第一次是 `5ba8b47`，停在 F6-2c fix round 1 的中途；fix round 1 的實作完成之後再 push 一次。實際狀態以遠端 ref 為準。
+以下保留 M5（`feature/m5-collapse`）當時的實作進度；最新已合併／tag 狀態以上方接手入口為準。2026-10-09 依使用者指示，把 feature 分支 push 到 `origin`，讓使用者在另一台電腦 pull 下來試玩：第一次是 `5ba8b47`，停在 F6-2c fix round 1 的中途；fix round 1 的實作完成之後再 push 一次。實際狀態以遠端 ref 為準。
 
 - spec 與 plan：spec 為 `docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`（v5.10；v5.10 是使用者 2026-10-14 對 H8、H9 的裁示；v5.4、v5.5 是使用者 2026-10-08 對到達提示的裁示，v5.6、v5.7 是 2026-10-09 對 chunk 卸載 livelock 與跨越後存 playerdata 的裁示，v5.8 是 2026-10-13 對 worldgen CME 的裁示，v5.9 是 2026-10-14 對重啟之後觸發的裁示），plan 為 `docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`。兩者都依使用者 2026-10-01 指示，處理完 review 後直接進入實作，不另等核可。
 - 進度（2026-10-13）：

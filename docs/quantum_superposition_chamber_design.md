@@ -2,7 +2,7 @@
 
 > Status: Living design document  
 > Target: Minecraft Java Edition  
-> Document stage: 持續維護的玩法／架構規格；M1–M4 已完成驗收並合併 `main`（tag `m1-m4`）；M5 塌縮與單向通道、F7、required manual smoke 與整分支獨立 review 已完成，`f99ce66` 的雙平台／同 SHA 兩次 Ubuntu CI 與 artifact 已驗收。最後只同步文件狀態；main 整合與 tag `m5` 尚未執行，M6 未開始。實況見 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。<br>
+> Document stage: 持續維護的玩法／架構規格；M1–M4 已完成驗收並合併 `main`（tag `m1-m4`）；M5 的塌縮與單向通道、F7、人工 smoke、獨立 review 與雙平台 CI 已完成，2026-10-24 以 `--ff-only` 合併 main 並建立／推送 annotated tag `m5`（指向 `a2d2b40`）。純整合狀態文件採計程式相同的 `f99ce66` CI；M6 未開始，範圍／優先序尚待確認。實況見 `docs/implementation-notes/2026-10-01-m5-collapse-passage.md`。<br>
 > Revision: 0.11 — 核准單人先供電、後進艙啟動，以及斷電返還後解除原艙保護；使用者已核准技術規格並授權實作（實作狀態見上一行）
 >
 > **2026-09-17 玩法修訂：** 有效艙體外部供電即註冊並保護；供電期間可開門進入，關門且全員 QuantumState 後自動啟動，不要求第二個 rising edge。斷電先安全送回原始艙體、結束走廊，再解除原艙保護；其他宇宙的投影不可藉此拆除。另納入手持火把照明需求。

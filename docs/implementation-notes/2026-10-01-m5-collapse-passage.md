@@ -1,12 +1,12 @@
 # M5：塌縮與單向通道（實作紀錄）
 
 - Spec：[`docs/superpowers/specs/2026-10-01-m5-collapse-passage-design.md`](../superpowers/specs/2026-10-01-m5-collapse-passage-design.md)（binding v5.10；歷次裁示見 spec §20）
-- Plan：[`docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`](../superpowers/plans/2026-10-01-m5-collapse-passage.md)（Milestone 收尾為接續入口；歷史修訂見 git log）
+- Plan：[`docs/superpowers/plans/2026-10-01-m5-collapse-passage.md`](../superpowers/plans/2026-10-01-m5-collapse-passage.md)（M5已整合；下一步為指定worktree退役核對及M6範圍確認，歷史修訂見git log）
 - Branch：`feature/m5-collapse`，由 `main`＝`a7e1be2` 開出。
 
 本文件逐 task 記錄 code-truth、RED／GREEN 的 gate root 與 commit range。gate root 在 gitignored 的 `.superpowers/verification/`，詳細過程在 gitignored 的 SDD ledger `.superpowers/sdd/2026-10-01-m5-collapse-passage/progress.md`；這裡只留可核對的摘要。
 
-目前狀態（2026-10-24）：M5 功能、F7、required manual smoke 與整分支獨立 review 已完成（spec C0/I0/M0、quality C0/I0/M2，兩Minor交下一Step0）。最後程式相同的 `f99ce66132dbe4b7d4aff6719ef95bdf8486eac0` 已push，run40079019075一個Windows與同SHA兩次真Ubuntu、14原件及artifact／log差異均已核，未歸屬差異0。唯一完整本機run-all仍在乾淨6b116e6 END ALL exit0；此後只有文件。最後同步README／總設計入口等舊狀態句，正式CI證據仍釘選f99；最後獨立docs雙review已通過（均C0/I0/M1，同一導覽Minor在本次結果同步更正），純狀態文件CI採計與tag裁示尚待；main／tag／退役尚未執行，M6未開始。本段覆蓋下方歷史現況句，原失敗root與當時判定保留。
+目前狀態（2026-10-24）：M5功能、F7、required manual smoke、整分支及最後文件review皆完成，沒有未關Critical／Important；兩個harness Minor交下一Step0，最後文件導覽Minor已更正。18:13已將main由a7e1be2 fast-forward到a2d2b404329d2574469fca064a663e21fe89f333，annotated tag m5指向a2d2b40，main/tag/feature已push並讀回相同refs。純狀態文件依本輪裁示採計f99ce66的run40079019075（一Windows、同SHA兩真Ubuntu與14原件）；最後本機full仍乾淨6b116e6 END ALL exit0，沒有重跑或冒稱新文件SHA另驗CI。指定M5 worktree按使用者指示不備份退役，最後移除結果以git worktree list／實際路徑核對；M6未開始。本段覆蓋下方歷史現況句。
 
 文件入口：[M5 相容性與實測範圍](compatibility.md)、[M5 人工 smoke 清單](../manual-acceptance/2026-10-01-m5-manual-smoke.md)。已知窄限制：原版 playerdata 寫出若自行收下 IOException，只記不帶 `session=` 的 WARN；`saveCrossedPlayerData` 收不到該 IOException。若此時 crash，已跨越玩家可能回到最後一次成功存下的位置；checked `Crossed` 不能單獨證明 playerdata 已持久化（見本 note F6-2c 的 Crossed 後 playerdata 存檔與「交給後續」F7 觀察）。M5 的 Windows atomic move `AccessDeniedException` 維持現有 fail-closed／退避，外部持有者仍未確認；Stronghold 靜態競態修正依使用者裁示延到 M6。F7 最終 commit／唯一 run-all／獨立 review 結果見本 note 末節。
 
@@ -10564,3 +10564,15 @@ controller直接讀本輪與CI-W1 full2的原JAR：release整檔bytes完全相�
 - **比較結論**：三輪default179/M560完整class+test集合相同，JUnit identity666相同（Windows664PASS/2SKIP、Ubuntu638PASS/28SKIP；30項outcome差異逐項對到四個tracked OS條件）。release432entries/385classes全部class bytes相同；sources226，對本機差異均LF/CRLF與ZIP時間/extra，兩Ubuntu sources未壓縮內容與壓縮payload差異0，CODEC來源與release身分吻合。未歸屬內容差異0。CI raw WARN/ERROR與前次成功CI總數一致，訊息正規化後六組排序差異0；殘差只為故障注入診斷座標、物件位址與暫存nonce，未出現新原因類別。
 - **最後本機full／SUMMARY**：仍採乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/windows89/legacy1/M560/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。本次只改狀態文件，不重跑full；新文件HEAD沒有冒稱重新執行CI。
 - **下一步**：最後文件review已完成，提出純狀態文件沿用f99 CI與建立annotated tag m5的具體裁示；main條件整合與正常push已有授權，tag尚未建立，指定worktree尚未刪除。server/client已正常關閉、Java空及server lock已釋放的原件見上一節。
+
+## M5 整合與指定工作樹退役（2026-10-24）
+
+- 行號：實際refs與授權以handoff §7最後一筆、整合原件與Git為準。
+- **授權與CI採計**：使用者承接a2d2b40／純狀態文件CI採計／tag的具體問句，指示「繼續收尾main、tag、工作樹退役」，並明確回覆「同意沿用 CI，完成 M5 收尾（建議）」。本輪據此採計f99ce66已驗CI，僅限a2d2b40相對f99的七份純狀態文件，以及之後合併/tag的純狀態紀錄；沒有程式、測試、build或workflow豁免，也不延用到M6。
+- **實際整合與refs**：18:13:25台灣時間讀回：main由a7e1be2以--ff-only前進a2d2b404329d2574469fca064a663e21fe89f333；feature/main正常push成功。annotated tag m5 object為15c2943ce37950f468b030c5d194485a328c1705，peeled target=a2d2b40；remote feature/main與m5 peeled皆同SHA。main與feature的porcelain皆空。原件SDD whole-branch-20261024/integration-intent.json／integration-result.json；本段只在實際成功後寫入。
+- **本筆文件commit**：只更新整合現況、啟動入口與compatibility的舊人工待驗句；先在feature commit再--ff-only同步main，不直接在main commit。治理commit以 `git log -1 --format=%H --grep='^docs: record M5 integration and retirement handoff$'` 解析，parent應a2d2b40；最終HEAD與push以實際refs為準，tag固定a2d2b40、不移動。
+- **Review與完成range**：整分支a7e1be2..0f59f73由獨立全新spec/quality審查，C0/I0/M0與C0/I0/M2；最後七份文件f99..5a4fa3a由另外兩個全新context審查，均C0/I0/M1，同一導覽Minor已於a2d2b40更正。人工原審文件I-1由e8ed90e及兩個全新複審C0/I0/M0關閉。兩個whole-branch harness Minor（owned root reparse守門／Move-Fresh建立失敗復原）交下一Step0。沒有未關Critical／Important；本筆只紀錄實際Git結果，不另宣稱新程式review。
+- **最終CI與run-all**：CI固定f99ce66／run40079019075：Windows120828478496與Ubuntu120828478682/120834288496全success，TPS65.9/86.3/86.4，14原件核對／集合／JAR／log未歸屬差異0。最後本機full固定6b116e6、f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f、END ALL exit0；SUMMARY default179/windows89/legacy1/M560/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。新純文件push可能自動觸發CI，但不冒稱那些run已驗收，不為相同程式重跑本機full或另發Ubuntu rerun。
+- **退役與交接**：唯一刪除目標C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse，依使用者指定不備份、不archive、不另留run/.superpowers/派工原件；正式程式、可重跑harness及本文件摘要/hash留在Git。此筆為移除前紀錄，不預寫已刪：最終步驟再核canonical/nonreparse、Java、session.lock、main含最終M5與tag，再從目標外git worktree remove並核目錄不存在／registration消失／main乾淨。接手時若目錄已不存在即視為已退役，不重建M5取證空間；若仍存在先唯讀核對中斷點再續清理。
+- **下一步與待決事項**：M6尚未開始。先與使用者確認M6範圍／優先序，再從已合併main另開worktree與spec/plan/review；AccessDenied維持M5既有fail-closed／退避，Stronghold等static競態仍排M6。main/tag授權已在本輪使用；不重複建立或移動m5 tag。
+- **M6交付**：使用者另指定M6由新對話接續；完整可貼用提示詞已整理到 `docs/handoffs/2026-10-24-m6-new-chat-prompt.md`，包含M5基準、必讀範圍、M6候選scope／待決優先序、兩harness Minor與精簡驗證／授權邊界。本對話未開始M6實作。
