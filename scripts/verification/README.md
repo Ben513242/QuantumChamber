@@ -25,7 +25,8 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 | `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`M5GameTest`（`runGameTestM5`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`）。三個 GameTest run（default、legacy、M5）都核對 XML 是本次 run 寫出的，而且 testcase 集合恰好等於原始碼依 batch 前綴矩陣屬於該 run 的宣告（`scope.json`）：`m4_legacy_runtime` 屬 legacy run，前綴 `m5_universe` 屬 M5 run，其餘屬 default run。default 與 legacy 另核對 M4 boundary oracle；M5 run 不註冊 boundary probe，改核對每個 M5 test 自己斷言的 catalog 增量、增量之間的串接（筆數與 digest），以及 suite 結束時（`SERVER_STOPPED`）的 catalog 等於最後一個 test 的結果（`m5-oracle.json`） |
 | `gate-evidence.ps1` | 共用唯讀身分、當次完整日誌與失敗 XML 取證；載入只定義函式，不啟動程序或操作世界 |
 | `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod／clientProbe；另核對 world keys、正常停止與 exact restore |
-| `probe-common.ps1` | M4/M5 共用 owned-phase 程序生命週期、具名 Context/State 與診斷；dot-source 本身沒有啟動或世界副作用 |
+| `probe-common.ps1` | M4/M5 共用 owned-phase 程序生命週期、具名 Context/State 與診斷；`New-OwnedRoot` 建檔前以 `Assert-OwnedRunAncestor` 驗 canonical Project、run 與全部祖先非 reparse，root 必須直接位於 run 內；dot-source 本身沒有啟動或世界副作用 |
+| `m6-harness-safety-check.ps1` | `-Case owned-root -Label <唯一標籤>`：呼叫真實 `New-OwnedRoot`，驗既存／缺少實體 run 可用，junction、非 canonical／相對 Project 與越界 root 輸入以 `OWNED_ROOT_ANCESTOR_UNSAFE` 拒絕且不建設定檔。每次 fixture／receipt 留在 M6 SDD task-01 唯一 nonce 目錄，不碰使用者 run、不啟動 Gradle |
 | `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，24 phases，每個 phase 一個 JVM |
 | `m5-collapse-probe.ps1` | M5 塌縮的跨 JVM crash／restart probe（spec §12 的 crash 窗口），每個 phase 一個 JVM；見「M5 collapse probe」 |
 | `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；fixture 同時放 default 與 M5 兩份 GameTest XML。可加 XML／原始碼 mutation 證明規則會失敗 |

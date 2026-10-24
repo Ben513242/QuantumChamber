@@ -14,9 +14,38 @@ function Resolve-Evidence($Context, [string]$Path) {
     return $full
 }
 
+function Assert-OwnedRunAncestor($Context) {
+    try {
+        $project = [string]$Context.Project
+        if (-not [IO.Path]::IsPathFullyQualified($project)) { throw 'Project 必須是絕對路徑' }
+        $full = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($project))
+        $supplied = [IO.Path]::TrimEndingDirectorySeparator($project.Replace([IO.Path]::AltDirectorySeparatorChar, [IO.Path]::DirectorySeparatorChar))
+        if (-not $full.Equals($supplied, [StringComparison]::OrdinalIgnoreCase)) { throw "Project 不是 canonical 路徑：$project" }
+        if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw "Project 目錄不存在：$full" }
+        $run = Join-Path $full 'run'
+        $cursor = $run
+        while ($cursor) {
+            # Get-Item 亦可辨認目標已遺失的 junction；不能只依 Test-Path 略過它。
+            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue -ErrorVariable itemError
+            if ($item) {
+                if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "拒絕 reparse：$cursor" }
+                if (-not $item.PSIsContainer) { throw "祖先不是目錄：$cursor" }
+            } elseif ($itemError -and $itemError[0].CategoryInfo.Category -ne 'ObjectNotFound') {
+                throw $itemError[0]
+            }
+            $parent = [IO.Path]::GetDirectoryName($cursor)
+            if ($parent -eq $cursor) { break }
+            $cursor = $parent
+        }
+        return $run
+    } catch { throw "OWNED_ROOT_ANCESTOR_UNSAFE：$($_.Exception.Message)" }
+}
+
 function New-OwnedRoot($Context, [string]$Suffix) {
+    $run = Assert-OwnedRunAncestor -Context $Context
     $nonce = "$($Context.RunId)-$Suffix"
-    $root = Join-Path $Context.Project "run/$($Context.RootPrefix)-$nonce"
+    $root = [IO.Path]::GetFullPath((Join-Path $run "$($Context.RootPrefix)-$nonce"))
+    if (-not [IO.Path]::GetDirectoryName($root).Equals($run, [StringComparison]::OrdinalIgnoreCase)) { throw "OWNED_ROOT_ANCESTOR_UNSAFE：root 必須直接位於 run 內：$root" }
     if (Test-Path -LiteralPath $root) { throw "root 已存在：$root" }
     New-Item -ItemType Directory -Path $root | Out-Null
     'eula=true' | Set-Content -LiteralPath (Join-Path $root 'eula.txt') -Encoding ASCII
