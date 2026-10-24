@@ -1,6 +1,6 @@
 # M5 塌縮與單向通道人工 smoke 清單
 
-狀態：**必測操作與取證已完成，獨立 review 尚待**。2026-10-24 由 Codex 經 Ben 明確授權代操作；以下 PASS 是實際觀察結果，不代表 M5 已合併或整體結案。依 [M5 binding spec §18](../superpowers/specs/2026-10-01-m5-collapse-passage-design.md) 與 F3d／F5-3 裁示核對；M1–M4 歷史結果保留於 [原清單](2026-09-24-m1-m4-manual-acceptance.md)。
+狀態：**必測操作、取證及獨立結果 review 已完成**。2026-10-24 由 Codex 經 Ben 明確授權代操作；以下 PASS 是實際觀察結果，不代表 M5 已合併或整體結案。依 [M5 binding spec §18](../superpowers/specs/2026-10-01-m5-collapse-passage-design.md) 與 F3d／F5-3 裁示核對；M1–M4 歷史結果保留於 [原清單](2026-09-24-m1-m4-manual-acceptance.md)。
 
 ## 執行基準與記錄方式
 
@@ -76,5 +76,5 @@ D的北／東向閉門遠景與斜角圖各自保存為 `d-north-far-closed`／a
 - A1前置r1艙外平台未建成（後讀該格為air）造成落下，並非證明QuantumState穿地板；r2未選門就自然到期，均保留原件。投影controller起初誤查是否bedrock，後依spec／ProjectionWriter更正為PROJECTION controller，再實測不可啟動；未修改production。
 - 多人client初次使用Sky切窗時，QC_B／QC_OBS原生崩潰於同一 `glfw.dll+0x101ab`，原因未證實，不歸為已知偶發。兩份hs_err與啟動log保留；新label重啟後改用使用者明確授權的既有mc-drive，後續採計輪次完成。FOCUS_LOST均停止輸入，未把被遮住的Codex畫面當遊戲證據。
 - C首輪／D早期輪次因藥效到期、失焦、移到另一邏輯頁後重新配置而未完成選門；原收據與log保留。一次在ARMING期間佈置定位使cohort改變，觸發保護性RETURNING；不是無根據歸類的偶發。唯讀NBT摘要的bytes序列化首敗另保留partial JSON與原bytes，改新label輸出hex，未改世界收據。細節及全部root入口見同根 `STATUS.md`。
-- 獨立人工結果review與整分支review尚待；本清單不提前宣布M5可合併。最終本機full仍為F7的 `run-all-e32343e8bd034936aee50b9b3db48a1f`（乾淨6b116e6，END ALL exit0），已驗雙平台CI仍固定ec394ad／run40023563006；本輪純文件不重跑full，不冒稱734d72b或後續文件HEAD已另跑CI。
+- 獨立人工結果 review 已完成：原 spec／quality 均 C0/I1/M0，唯一 I-1 是 note／plan 的兩個舊現況句；e8ed90e 修正後，另外兩個全新 context 複審均 C0/I0/M0、I-1 關閉、Minor 0。四份原報告、hash 與 range 見 implementation note 的「人工 smoke：2026-10-24 實際操作與結果」。整分支 review 尚待；本清單不提前宣布 M5 可合併。最終本機full仍為F7的 `run-all-e32343e8bd034936aee50b9b3db48a1f`（乾淨6b116e6，END ALL exit0），已驗雙平台CI仍固定ec394ad／run40023563006；本輪純文件不重跑full，不冒稱734d72b或後續文件HEAD已另跑CI。
 - 本輪dedicated server的exec stdin已關閉，無法透過該管道送stop；截至本次紀錄仍在運行，未kill daemon。正常停服／關閉測試client與其實際結果另記，不能提前寫已停服。

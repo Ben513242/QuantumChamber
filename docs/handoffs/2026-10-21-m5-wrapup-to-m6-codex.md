@@ -376,3 +376,11 @@
 - **最終run-all／SUMMARY**：沿用乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/windows89/legacy1/M560/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。已驗CI仍ec394ad/run40023563006；純文件依精簡安排不重跑full，不冒稱新文件HEAD已驗CI。
 - **證據／未關事項**：SDD `manual-smoke-20261024/STATUS.md`為細節入口，70原件索引SHA `afb40a6c907144a31667f1c30d8fd4940b88ca74862d33d0b6cf08f25783f3f6`。早期glfw原生崩潰原因未證實，改用已授權driver的新label完成後續案例；失焦／前置到期／頁面配置與ARMING佈置偏差原件全部保留、不當偶發PASS。AccessDenied仍維持M5既有已知限制。server exec39709 stdin已關閉，stop未送達，server與三client仍運行、未kill daemon。
 - **待使用者裁示／下一步**：建立m5 tag與M6範圍／優先序仍待；正常push不用再問。先獨立結果review→whole-branch review→docs truth／push及最終CI→條件main整合→tag→指定worktree退役；正常停服與client關閉須實際完成並核無Java／lock，不能提前寫已停服。M6未開始。
+
+### 2026-10-24：人工結果 review 結案，下一步整分支 review
+
+- **HEAD／porcelain／range**：開工 local feature=`e8ed90e92ba358e93ed123bb6fc3600ebbcc083d`、porcelain 空。人工結果文件786bd67與兩行fix e8ed90e完成 range `734d72b..e8ed90e`；本筆只做五份文件的 review 結論同步，治理 commit 以 `git log -1 --format=%H --grep='^docs: close M5 manual smoke review$'` 解析，parent 應 e8ed90e。提交後另核 porcelain。
+- **實際refs／授權**：最近已核 origin feature=734d72b、local/origin main=a7e1be2、local/origin 無m5 tag；本筆之前的786bd67/e8ed90e尚未push。正常push持續授權；main條件整合與指定M5不備份退役授權未用，tag建立仍待同意。
+- **完成與review**：必測人工觀察已完成。原spec與quality各C0/I1/M0，唯一I-1是note/plan兩個舊現況句；e8ed90e修正，另兩個全新context複審均C0/I0/M0，I-1關閉、Minor0。四個reviewer都獨立於被審內容的操作／撰寫；報告與完整hash見note人工節。這些只涵蓋人工結果與文件，whole-branch仍待。
+- **最後run-all／SUMMARY**：沿用乾淨6b116e6的 `f7/runall/run-all-e32343e8bd034936aee50b9b3db48a1f`，END ALL exit0；default179/windows89/legacy1/M560/perTest56+1/JUnit666(0fail/0error/2skip)/checkpoint17/release432/385/sources226/testmodHits0/MainOnlyPASS/M3 4+5/recovery24/collapse69/HALT31/ci win與ubuntu PASS。已驗CI仍ec394ad/run40023563006；純文件不重跑full，後續文件HEAD未冒稱已驗CI。
+- **未關事項／裁示／下一步**：本輪review無未關finding；AccessDenied已知限制與早期glfw原生崩潰未證實根因保持原紀錄。server/client未執行正常關閉，不能寫已停服。下一步全新spec/quality整分支review→docs truth／push及最終CI→條件main整合→詢問tag→指定worktree退役。M6未開始，範圍／優先序留M5合併tag後再確認。
