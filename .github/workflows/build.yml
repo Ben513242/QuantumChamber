@@ -34,15 +34,16 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
+          & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu -SelfTest -OutputRoot build/m6-oracle-selftest
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu -CheckUnsupportedNative
       - name: 確認 Ubuntu M6 精確集合與隔離
-        timeout-minutes: 5
+        timeout-minutes: 2
         shell: pwsh
         run: |
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu -VerifyOnly -UnsupportedNativeReceipt build/m6-verification/unsupported-native.json -GameTestXml build/gametest-m6-results.xml -RuntimeLog run/gametest-m6/logs/latest.log -RuntimeRoot run/gametest-m6 -OutputRoot build/m6-verified -Artifacts @(Get-ChildItem build/libs -Filter '*.jar' | ForEach-Object FullName)
       - name: 確認非 Windows 跨平台案例確實執行
-        timeout-minutes: 5
+        timeout-minutes: 3
         shell: pwsh
         run: |
           # 非 Windows 上 `_windows` 案例一律平台略過；以下跨平台案例是 Ubuntu 唯一的真實入場／傳送覆蓋，必須存在且實際通過（不可略過或缺席）。
@@ -197,6 +198,7 @@ jobs:
             }
           }
       - name: Upload mod JAR
+        timeout-minutes: 2
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -204,7 +206,7 @@ jobs:
           path: build/libs/*.jar
           if-no-files-found: error
       - name: 上傳 Ubuntu 測試證據
-        timeout-minutes: 5
+        timeout-minutes: 3
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -216,6 +218,7 @@ jobs:
             build/gametest-legacy-results.xml
             build/gametest-m6-results.xml
             build/m6-verification/**
+            build/m6-oracle-selftest/**
             build/m6-verified/**
             run/gametest-legacy/logs/latest.log
             run/gametest-m6/logs/latest.log
@@ -246,14 +249,15 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
+          & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows -SelfTest -OutputRoot build/m6-oracle-selftest
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows
       - name: 確認 Windows M6 精確集合與隔離
-        timeout-minutes: 5
+        timeout-minutes: 2
         shell: pwsh
         run: |
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows -VerifyOnly -GameTestXml build/gametest-m6-results.xml -RuntimeLog run/gametest-m6/logs/latest.log -RuntimeRoot run/gametest-m6 -OutputRoot build/m6-verified -Artifacts @(Get-ChildItem build/libs -Filter '*.jar' | ForEach-Object FullName)
       - name: 確認 Windows 原生案例確實執行
-        timeout-minutes: 5
+        timeout-minutes: 3
         shell: pwsh
         run: |
           # 各項檢查先彙整，最後一次列出全部缺席／失敗名稱；任一項不符即 throw（維持失敗即紅）。
@@ -548,6 +552,7 @@ jobs:
             build/gametest-legacy-results.xml
             build/gametest-m6-results.xml
             build/m6-verification/**
+            build/m6-oracle-selftest/**
             build/m6-verified/**
             run/gametest-legacy/logs/latest.log
             run/gametest-m6/logs/latest.log

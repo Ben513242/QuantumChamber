@@ -11,7 +11,7 @@ if($Chain -or ($Suite -eq 'JUnit' -and $Batch) -or ($Suite -eq 'GameTest' -and $
 if($Batch -and $Batch -notmatch '^m6_universe[\w-]*(,m6_universe[\w-]*)*$'){throw 'M6_SCOPE_MISMATCH：僅接受 M6 batch'}
 if(-not $EvidenceRoot){$EvidenceRoot=Join-Path $repo '.superpowers/verification'}
 $root=Join-Path $EvidenceRoot ("focused-$Label-"+[guid]::NewGuid().ToString('N'))
-# CI oracle 的 canonical／reparse 守門先驗 root，後續 gate 自己再驗 gitignored。
+# CI oracle 在首次建檔前先驗 canonical／reparse／gitignored；gate 再核對自身證據前提。
 & (Join-Path $PSScriptRoot 'm6-ci-gametest.ps1') -Platform Windows -SelfTest -OutputRoot (Join-Path $root 'oracle')
 foreach($case in @('move-fresh','owned-root')){
     & (Join-Path $PSScriptRoot 'm6-harness-safety-check.ps1') -Case $case -Label "$Label-$case" | Tee-Object -FilePath (Join-Path $root "$case.log")

@@ -136,6 +136,7 @@ Step 'summary' {
     $defaultCases=@(Xml-Cases $defaultXml); $legacyCases=@(Xml-Cases $legacyXml); $m5Cases=@(Xml-Cases $m5Xml)
     $m6Xml=Join-Path $m6 'result-build/gametest-m6-results.xml';$m6Cases=@(Xml-Cases $m6Xml)
     $m6Exec=Read-Json (Join-Path $m6 'execution/execution.json')
+    if($m6Exec.configuredTimeoutSeconds -ne 180 -or $m6Exec.configuredIdleSeconds -ne 90){throw 'M6_PHASE_BUDGET_MISMATCH：必須180秒／idle90秒'}
     if($m6Exec.exitCode -ne 0 -or $m6Exec.command -notmatch '"runGameTestM6" "--rerun-tasks"'){throw 'M6 gate 指令或 exit 不符'}
     $bad=@($defaultCases+$legacyCases+$m5Cases+$m6Cases | Where-Object {$_.SelectSingleNode('failure') -or $_.SelectSingleNode('error') -or $_.SelectSingleNode('skipped')})
     if($defaultCases.Count -eq 0 -or $legacyCases.Count -eq 0 -or $m5Cases.Count -eq 0 -or $m6Cases.Count -eq 0 -or $bad.Count -ne 0){throw "GameTest XML 不符：default=$($defaultCases.Count) legacy=$($legacyCases.Count) m5=$($m5Cases.Count) bad=$($bad.Count)"}
