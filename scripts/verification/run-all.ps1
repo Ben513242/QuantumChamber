@@ -88,11 +88,11 @@ Step 'm6-oracle-and-safety' {
     foreach($case in @('move-fresh','owned-root')){& (Join-Path $PSScriptRoot 'm6-harness-safety-check.ps1') -Case $case -Label "full-$case"}
 }
 Step 'm6-gametest' { & $gates -Mode M6GameTest -Label m6-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
-Step 'main' { & $gates -Mode Main -Label main-only -EvidenceRoot $runRoot -Gradle $Gradle }
+Step 'main' { & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -EvidenceRoot $runRoot -Gradle $Gradle -ExpectedHead $startHead }
 Step 'main-oracle' {
     $main=One 'gate-main-only-'
     Write-Output "MAIN_GATE=$main"
-    & (Join-Path $PSScriptRoot 'main-oracle.ps1') -Gate $main | Out-Null
+    & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -VerifyOnly -Receipt (Join-Path $runRoot 'main-ci-receipt.json') -ExpectedHead $startHead | Out-Null
     Write-Output "MAIN_ORACLE=$(Join-Path $main 'main-only-oracle.json')"
 }
 Step 'm3' { & $gates -Mode M3 -Label m3 -EvidenceRoot $runRoot -Gradle $Gradle }
@@ -109,9 +109,17 @@ Step 'ci-rule' {
     $m6=One 'gate-m6-gametest-'
     $m6Arguments=@{M6GameTestXml=(Join-Path $m6 'result-build/gametest-m6-results.xml');M6RuntimeLog=(Join-Path $m6 'execution/runtime-logs/latest.log');M6RuntimeRoot=(Join-Path $m6 'world-fresh/..');M6Artifacts=@(Get-ChildItem -LiteralPath (Join-Path $full 'result-build/libs') -File -Filter '*.jar' | ForEach-Object FullName)}
     foreach($platform in @('Windows','Ubuntu')){
-        & $check -Label "$($platform.ToLowerInvariant())-m6-green" -Workflow $workflow -Step "確認 $platform M6 精確集合與隔離" -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot @m6Arguments
+        $mainArguments=if($platform -ceq 'Windows'){@{MainReceipt=(Join-Path $runRoot 'main-ci-receipt.json')}}else{@{}}
+        & $check @mainArguments -Label "$($platform.ToLowerInvariant())-m6-green" -Workflow $workflow -Step "確認 $platform M6 精確集合與隔離" -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot @m6Arguments
         $r=Read-Json (Join-Path (One "ci-$($platform.ToLowerInvariant())-m6-green-") 'result.json')
-        if($r.verdict -ne 'PASS' -or $r.head -cne $startHead){throw "M6 CI 規則 fixture 失敗：$platform"}
+        if($r.verdict -ne 'PASS' -or $r.head -cne $startHead -or ($platform -ceq 'Windows' -and ($r.mainMutation -cne 'none' -or -not $r.mainReceiptSha256))){throw "M6 CI 規則 fixture 失敗：$platform"}
+    }
+    $mainNegative=[ordered]@{'missing-receipt'='M6_MAIN_RECEIPT_MISSING';'wrong-head'='M6_MAIN_HEAD_MISMATCH';gametest='M6_MAIN_SCOPE_MISMATCH';testmod='M6_MAIN_TESTMOD_LEAK';stop='M6_MAIN_STOP_MISMATCH';restore='M6_MAIN_RESTORE_MISMATCH';'missing-evidence'='M6_MAIN_EVIDENCE_MISSING'}
+    foreach($pair in $mainNegative.GetEnumerator()){
+        $label="main-$($pair.Key)-red"
+        & $check -Label $label -Workflow $workflow -Step '確認 Windows M6 精確集合與隔離' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot -MainReceipt (Join-Path $runRoot 'main-ci-receipt.json') -MainMutation $pair.Key @m6Arguments
+        $r=Read-Json (Join-Path (One "ci-$label-") 'result.json')
+        if($r.verdict -cne 'FAIL' -or $r.mainMutation -cne $pair.Key -or -not $r.output.Contains($pair.Value)){throw "Main CI反例未具名拒絕：$($pair.Key)"}
     }
     # ci-rule-check.ps1 不因 FAIL 而 throw；綠燈核對在此判定。
     foreach($label in 'win-green','ubuntu-green'){ $r=Read-Json (Join-Path (One "ci-$label-") 'result.json'); if($r.verdict -ne 'PASS' -or $r.mutation -ne 'none' -or $r.sourceMutation -ne 'none'){throw "CI 規則 $label 未通過或不是原樣執行：exit=$($r.exitCode) mutation=$($r.mutation) sourceMutation=$($r.sourceMutation)"} }
@@ -228,6 +236,7 @@ Step 'summary' {
     # 5. main-only 三層 oracle＋world key oracle。
     $oracle=Read-Json (Join-Path $main 'main-only-oracle.json')
     if($oracle.status -ne 'PASS' -or $oracle.layer1TestmodLoaded -or @($oracle.layer2RuntimePathHits).Count -ne 0 -or @($oracle.layer3ClassLoadHits).Count -ne 0 -or -not $oracle.worldKeysExact -or -not $oracle.exactRestore){throw 'main-only oracle 不是完整 PASS'}
+    & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -VerifyOnly -Receipt (Join-Path $runRoot 'main-ci-receipt.json') -ExpectedHead $head | Out-Null
     # 6. M3 lifecycle 與 transfer receipts（evidenceOwner＝testmod 固定的 M4 plan 目錄）。
     $probeOwner=[IO.Path]::GetFullPath((Join-Path $repo '.superpowers/sdd/2026-09-21-m4-candidate-doors'))
     $m3Names=@('universe-create-save','universe-reload-read','universe-unload-replace','universe-final-verify','transfer-setup-catalog','transfer-success-roundtrip','transfer-target-not-full','transfer-post-move-authority-loss','transfer-stale-service-receipt')
@@ -305,7 +314,7 @@ Step 'summary' {
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
         gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;m6=$m6Cases.Count;m6XmlSha256=Hash $m6Xml;m6Pacing=$m6Oracle.pacing;m6Cases=$identities;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
-        jars=$jars;mainOnly=[ordered]@{status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
+        jars=$jars;mainOnly=[ordered]@{ciReceipt=(Join-Path $runRoot 'main-ci-receipt.json');ciReceiptSha256=Hash (Join-Path $runRoot 'main-ci-receipt.json');status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}

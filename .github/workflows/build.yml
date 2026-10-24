@@ -251,11 +251,17 @@ jobs:
         run: |
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows -SelfTest -OutputRoot build/m6-oracle-selftest
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows
+      - name: Windows Main-only runtime 與三層 oracle
+        timeout-minutes: 7
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m6-ci-main-only.ps1 -Ci -Gradle (Join-Path $PWD 'gradlew.bat') -EvidenceRoot build/m6-main-only -ExpectedHead $env:GITHUB_SHA
       - name: 確認 Windows M6 精確集合與隔離
         timeout-minutes: 2
         shell: pwsh
         run: |
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows -VerifyOnly -GameTestXml build/gametest-m6-results.xml -RuntimeLog run/gametest-m6/logs/latest.log -RuntimeRoot run/gametest-m6 -OutputRoot build/m6-verified -Artifacts @(Get-ChildItem build/libs -Filter '*.jar' | ForEach-Object FullName)
+          & ./scripts/verification/m6-ci-main-only.ps1 -VerifyOnly -Receipt build/m6-main-only/main-ci-receipt.json -ExpectedHead $env:GITHUB_SHA
       - name: 確認 Windows 原生案例確實執行
         timeout-minutes: 3
         shell: pwsh
@@ -552,6 +558,7 @@ jobs:
             build/gametest-legacy-results.xml
             build/gametest-m6-results.xml
             build/m6-verification/**
+            build/m6-main-only/**
             build/m6-oracle-selftest/**
             build/m6-verified/**
             run/gametest-legacy/logs/latest.log

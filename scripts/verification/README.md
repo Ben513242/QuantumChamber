@@ -19,7 +19,9 @@ M6 GameTest 用獨立 fresh `run/gametest-m6/world`，原世界可恢復 move／
 
 CI 使用該 checkout wrapper／Gradle 8.8／Java 21，經 `m6-ci-gametest.ps1 -Platform Windows|Ubuntu` 執行 JUnit、legacy、M6，再核對四 run 的 exact 集合、pace 與內外 JAR 隔離。兩平台 M6 step 初始 15 分鐘、oracle 5 分鐘，原 job 上限 90 分鐘。Windows 原生 checkpoint／owned-process native chains 在 Ubuntu 不支援，`-CheckUnsupportedNative` 只在實際 Ubuntu 保存 `UNSUPPORTED` receipt；Windows 誤用或平台偽裝會被拒絕。
 
-`ci-rule-check.ps1` 可加 `-M6GameTestXml`、`-M6RuntimeLog`、`-M6RuntimeRoot`、`-M6Artifacts`，複製到獨立 fixture 後執行 workflow 的 M6 oracle 原文。這是本機規則驗證，GitHub CI 成功另以遠端 run／exact SHA 證明。M6 native job／chains 的正式啟用屬 Task 12，此 task 未提前宣稱 native M6 通過。
+Windows CI 另以 `m6-ci-main-only.ps1 -Ci` 在獨立7分鐘step執行既有Main runner／三層oracle，保存同SHA的main-ci-receipt與原件hash並always-upload；既有oracle step必需驗此receipt。local run-all經同wrapper仍只跑一次Main並保留原world可恢復move／restore，Ubuntu不加Main-only。Windows預留改8分鐘，job90與M6step15不變。
+
+`ci-rule-check.ps1` 可加 `-M6GameTestXml`、`-M6RuntimeLog`、`-M6RuntimeRoot`、`-M6Artifacts`，複製到獨立 fixture 後執行 workflow 的 M6 oracle 原文。Windows另需 `-MainReceipt`，可用 `-MainMutation missing-receipt|wrong-head|gametest|testmod|stop|restore|missing-evidence`；每個新fixture改語意後重算外hash，必須以具名原因拒絕，不啟Minecraft。這是本機規則驗證，GitHub CI 成功另以遠端 run／exact SHA 證明。M6 native job／chains 的正式啟用屬 Task 12，此 task 未提前宣稱 native M6 通過。
 
 以下 M1–M5 數字是歷史基準；M6 以當次 scope／summary 原件為準。
 

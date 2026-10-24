@@ -22,6 +22,8 @@ param(
     [string]$M6RuntimeLog='',
     [string]$M6RuntimeRoot='',
     [string[]]$M6Artifacts=@(),
+    [string]$MainReceipt='',
+    [ValidateSet('none','missing-receipt','wrong-head','gametest','testmod','stop','restore','missing-evidence')][string]$MainMutation='none',
     [Parameter(Mandatory)][string]$JUnitDir,
     [Parameter(Mandatory)][string]$SourceRoot,
     [ValidateSet('none','drop','skip','fail')][string]$Mutation='none',
@@ -78,7 +80,7 @@ $m6Xml=$null
 if($M6GameTestXml){
     [xml]$m6Xml=Get-Content -LiteralPath $M6GameTestXml -Raw
     New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification'),(Join-Path $fixture 'run/gametest-m6/logs'),(Join-Path $fixture 'build/libs') -Force | Out-Null
-    foreach($scriptName in @('gates.ps1','m6-ci-gametest.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination (Join-Path $fixture 'scripts/verification')}
+    foreach($scriptName in @('gates.ps1','m6-ci-gametest.ps1','m6-ci-main-only.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination (Join-Path $fixture 'scripts/verification')}
     Copy-Item -LiteralPath $M6RuntimeLog -Destination (Join-Path $fixture 'run/gametest-m6/logs/latest.log')
     foreach($artifact in $M6Artifacts){Copy-Item -LiteralPath $artifact -Destination (Join-Path $fixture 'build/libs')}
     if($Step -ceq '確認 Ubuntu M6 精確集合與隔離'){
@@ -88,6 +90,32 @@ if($M6GameTestXml){
     }
     foreach($boundary in @(Get-ChildItem -LiteralPath $M6RuntimeRoot -Filter 'm4-boundary-*.json' -File)){Copy-Item -LiteralPath $boundary.FullName -Destination (Join-Path $fixture 'run/gametest-m6')}
 }
+$mainOriginalHash=''
+if($MainReceipt){
+    & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -VerifyOnly -Receipt $MainReceipt -ExpectedHead (git -C $repo rev-parse HEAD).Trim() | Out-Null
+    $mainOriginalHash=(Get-FileHash -LiteralPath $MainReceipt).Hash
+    $main=Get-Content -LiteralPath $MainReceipt -Raw | ConvertFrom-Json -DateKind String
+    $originalBundle=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($MainReceipt))
+    $mainBundle=Join-Path $fixture 'build/m6-main-only';New-Item -ItemType Directory -Path $mainBundle | Out-Null
+    foreach($file in $main.files){
+        $destination=Join-Path $mainBundle $file.path
+        New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $originalBundle $file.path) -Destination $destination
+    }
+    function Main-Path([string]$Kind){$f=@($main.files | Where-Object kind -ceq $Kind);if($f.Count -ne 1){throw 'Main fixture引用不唯一'};return Join-Path $mainBundle $f[0].path}
+    switch($MainMutation){
+        'wrong-head' {$main.headBefore='0000000000000000000000000000000000000000';$main.headAfter=$main.headBefore}
+        'gametest' {$p=Main-Path 'gate';$v=Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -DateKind String;$v.mode='M6GameTest';$v | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $p -Encoding utf8}
+        'testmod' {$p=Main-Path 'oracle';$v=Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -DateKind String;$v.layer2RuntimePathHits=@('build/classes/java/testmod');$v | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $p -Encoding utf8}
+        'stop' {$p=Main-Path 'execution';$v=Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -DateKind String;$v.stdinStop=$false;$v | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $p -Encoding utf8}
+        'restore' {$p=Main-Path 'restore';$v=Get-Content -LiteralPath $p -Raw | ConvertFrom-Json -DateKind String;$v.exactRestored=$false;$v | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $p -Encoding utf8}
+        'missing-evidence' {Move-Item -LiteralPath (Main-Path 'classload') -Destination (Join-Path $mainBundle 'preserved-classload.log')}
+    }
+    # 突變後重算外層hash，確認語意守門確實拒絕，不能只靠舊hash碰巧失敗。
+    foreach($f in $main.files){$p=Join-Path $mainBundle $f.path;if(Test-Path -LiteralPath $p -PathType Leaf){$f.sha256=(Get-FileHash -LiteralPath $p).Hash}}
+    $main | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $mainBundle 'main-ci-receipt.json') -Encoding utf8
+    if($MainMutation -eq 'missing-receipt'){Move-Item -LiteralPath (Join-Path $mainBundle 'main-ci-receipt.json') -Destination (Join-Path $mainBundle 'preserved-receipt.json')}
+}elseif($MainMutation -ne 'none'){throw 'MainMutation須有有效MainReceipt作為原件'}
 $sourceMutated=$null
 if($SourceMutation -ne 'none'){
     if($SourceTarget -notmatch '^\w+$'){throw "SourceTarget 必須是方法名稱：$SourceTarget"}
@@ -128,6 +156,7 @@ $stepFile=Join-Path $root 'step.ps1'
 Set-Content -LiteralPath $stepFile -Value ("`$ErrorActionPreference = 'stop'`n"+$script) -Encoding utf8
 $info=[Diagnostics.ProcessStartInfo]::new('pwsh')
 foreach($argument in @('-NoProfile','-NonInteractive','-Command',". '$($stepFile.Replace("'","''"))'")){$info.ArgumentList.Add($argument)}
+$info.Environment['GITHUB_SHA']=(git -C $repo rev-parse HEAD).Trim()
 $info.WorkingDirectory=$fixture;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
 $process=[Diagnostics.Process]::Start($info)
 $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEnd();$process.WaitForExit()
@@ -139,6 +168,7 @@ $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).P
     gameTestXml=(Resolve-Path -LiteralPath $GameTestXml).Path;gameTestXmlSha256=(Get-FileHash -LiteralPath $GameTestXml -Algorithm SHA256).Hash
     m5GameTestXml=(Resolve-Path -LiteralPath $M5GameTestXml).Path;m5GameTestXmlSha256=(Get-FileHash -LiteralPath $M5GameTestXml -Algorithm SHA256).Hash
     head=(git -C $repo rev-parse HEAD).Trim();m6GameTestXmlSha256=$(if($M6GameTestXml){(Get-FileHash -LiteralPath $M6GameTestXml).Hash}else{''});m6RuntimeLogSha256=$(if($M6RuntimeLog){(Get-FileHash -LiteralPath $M6RuntimeLog).Hash}else{''})
+    mainReceipt=$MainReceipt;mainReceiptSha256=$mainOriginalHash;mainMutation=$MainMutation;mainFixtureRuntimeLaunched=$false
     junitDir=$JUnitDir;sourceRoot=$SourceRoot;mutation=$Mutation;mutationTarget=$MutationTarget;mutationXml=$MutationXml;sourceMutation=$SourceMutation;sourceTarget=$SourceTarget;sourceMutatedFile=$sourceMutated
     fixtureWindowsCases=$windowsCases;fixtureM5WindowsCases=$m5WindowsCases;exitCode=$process.ExitCode;verdict=$(if($process.ExitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
 $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
