@@ -30,7 +30,7 @@ pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClas
 pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_race_stronghold -Label stronghold-worlds
 ```
 
-JUnit 使用兩個原生生成 context，透過 collector 屏障檢查真實 count／list／weight 與完整 piece NBT；固定 seed 8128、chunk 32,32 的原版基準為 98 pieces、SHA256 `a80452213409b05c039da03127cc9864ae6f779722541e1256336131bb9bd21a`。另驗例外釋放、同 worker 重用與另一 worker 可繼續。GameTest 使用實際 Overworld／Nether 的 context，以受控測試執行緒呼叫原版整輪入口；這些執行緒不是 Minecraft worldgen executor。真正 worldgen 的 caller 與 `/place` 共用相同原生入口；另一案例在真 server thread 經 dispatcher 執行 `/place structure minecraft:stronghold`，先按原版 StructureStart 擴張後的 box 預載 chunks，再與受控 worker 交錯。
+JUnit 刻意共用 testmod 的 classes，BeforeAll 核 class 的實際來源、全部 fabric.mod.json、testmod mixin resources 與 Fabric mod list；testmod resources／entrypoint 不得帶入。這是有測試 classes 的 JUnit runtime，不是 main-only。JUnit 使用兩個原生生成 context，透過 collector 屏障檢查真實 count／list／weight 與完整 piece NBT；固定 seed 8128、chunk 32,32 的原版基準為 98 pieces、SHA256 `a80452213409b05c039da03127cc9864ae6f779722541e1256336131bb9bd21a`。另驗例外釋放、同 worker 重用與另一 worker 可繼續。GameTest 使用實際 Overworld／Nether 的 context，以受控測試執行緒呼叫原版整輪入口；這些執行緒不是 Minecraft worldgen executor。真正 worldgen 的 caller 與 `/place` 共用相同原生入口；另一案例在真 server thread 經 dispatcher 執行 `/place structure minecraft:stronghold`，先按原版 StructureStart 擴張後的 box 預載 chunks，再與受控 worker 交錯。
 
 `M6_STRONGHOLD_THREAD` 必證等待的是正式 monitor，且 owner 為第一輪 worker；屏障在第二輪完成或確認此等待後即放行，不要求兩輪同時進入鎖內。正式修補只包 StrongholdStructure.addPieces 整輪，保留原版 piece 遞迴、重試與 RNG。monitor 可重入且例外自動釋放；原版沒有整輪再入 caller，不宣稱第三方 hook／collector 的巢狀整輪安全。原版完整 `/place` 對 WorldChunk 的 PostProcessing 警告以當次原件逐筆歸屬，不壓掉日誌，也不當作 worldgen race。
 

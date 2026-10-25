@@ -120,7 +120,7 @@ Task3完成（code ac085c8；spec C0/I0/M1、quality C0/I0/M0；CI commit4d8fc66
 
 ### Task 4：Stronghold invocation state
 
-**Files:** Create `src/main/java/dev/quantumchamber/mixin/StrongholdGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/StrongholdGenerationConcurrencyTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/resources/fabric.mod.json`（註冊 `fabric-gametest`）、`scripts/verification/README.md`、`scripts/verification/m6-ci-gametest.ps1`（僅Step0）。
+**Files:** Create `src/main/java/dev/quantumchamber/mixin/StrongholdGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/StrongholdGenerationConcurrencyTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/resources/fabric.mod.json`（註冊 `fabric-gametest`）、`scripts/verification/README.md`、`scripts/verification/m6-ci-gametest.ps1`（僅Step0）、`build.gradle`（僅JUnit共用testmod classes；不帶resources）。
 **Interfaces:** exact 原版 `StrongholdStructure.addPieces` invocation 內隔離 `possiblePieces`、`activePieceType`、`totalWeight`、`ALL_PIECES.generatedCount`；新 mixin 不改其他 structures。
 - [ ] Step0承接Task3 spec M-1：強制把單一scope名稱包成陣列後再加入獨立m6_first，核原合法case仍在、actual=2、extra恰為m6_first；修正三個跨scope fixture的精準性。以受控反例／focused驗證，完整回歸併本task；不改正式filter語意。
 - [ ] 讀 native `init/pickPiece/addPieces` 實際讀寫、`/place` caller，記可注入方法 descriptor 與再入性；JUnit `twoWorldStrongholdsDoNotSharePieceCounts` 的 barrier RED 要見 count/state 交叉，`singleWorldStrongholdLayoutUnchanged` 對照固定 seed。

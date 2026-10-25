@@ -186,6 +186,9 @@ sourceSets {
     test {
         compileClasspath += clientProbe.output.classesDirs
         runtimeClasspath += clientProbe.output.classesDirs
+        // Stronghold JUnit共用testmod的原生fixture；只加入classes，不加入manifest/mixin/template resources。
+        compileClasspath += testmod.output.classesDirs
+        runtimeClasspath += testmod.output.classesDirs
     }
 }
 

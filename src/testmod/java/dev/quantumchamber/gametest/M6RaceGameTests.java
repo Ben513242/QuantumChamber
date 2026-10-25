@@ -112,7 +112,7 @@ public final class M6RaceGameTests implements FabricGameTest {
                 new ChunkRandom(new CheckedRandom(0)), seed, pos, world, biome -> true);
     }
 
-    /** 真 GameTest 的原版呼叫/屏障；不含 generator 的複製實作或 JUnit 依賴。 */
+    /** JUnit 與真 GameTest 共用原版呼叫/屏障；不含 generator 的複製實作或 JUnit 依賴。 */
     public static final class NativeHarness {
         private static final long WAIT_SECONDS = 10;
         private static final Method ADD_PIECES = method();

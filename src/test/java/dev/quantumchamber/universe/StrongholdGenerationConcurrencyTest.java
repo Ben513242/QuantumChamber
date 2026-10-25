@@ -1,33 +1,23 @@
 package dev.quantumchamber.universe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.lang.management.ManagementFactory;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import com.google.gson.JsonParser;
+import dev.quantumchamber.gametest.M6RaceGameTests.NativeHarness;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.Arrays;
-import java.util.HexFormat;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
 import net.minecraft.registry.BuiltinRegistries;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.RegistryKeys;
-import net.minecraft.structure.StrongholdGenerator;
-import net.minecraft.structure.StructureContext;
-import net.minecraft.resource.ResourceManager;
 import net.minecraft.structure.StructurePiece;
 import net.minecraft.structure.StructurePiecesCollector;
 import net.minecraft.util.math.ChunkPos;
@@ -37,7 +27,6 @@ import net.minecraft.world.HeightLimitView;
 import net.minecraft.world.biome.BiomeKeys;
 import net.minecraft.world.gen.chunk.FlatChunkGenerator;
 import net.minecraft.world.gen.chunk.FlatChunkGeneratorConfig;
-import net.minecraft.world.gen.structure.StrongholdStructure;
 import net.minecraft.world.gen.structure.Structure;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -46,7 +35,23 @@ import org.junit.jupiter.api.Test;
 final class StrongholdGenerationConcurrencyTest {
     private static FlatChunkGenerator generator;
 
-    @BeforeAll static void bootstrap() {
+    @BeforeAll static void bootstrap() throws Exception {
+        var loader = StrongholdGenerationConcurrencyTest.class.getClassLoader();
+        var sharedClassSource = NativeHarness.class.getProtectionDomain().getCodeSource().getLocation().toExternalForm();
+        assertTrue(sharedClassSource.endsWith("/build/classes/java/testmod/"), "共享fixture必須來自本checkout的testmod classes");
+        var manifests = Collections.list(loader.getResources("fabric.mod.json"));
+        for (var resource : manifests) {
+            try (var stream = resource.openStream()) {
+                var id = JsonParser.parseString(new String(stream.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject().get("id").getAsString();
+                assertFalse(id.equals("quantumchamber-testmod"), "JUnit不得帶入testmod manifest：" + resource);
+            }
+        }
+        assertFalse(loader.getResources("quantumchamber-test.mixins.json").hasMoreElements(), "JUnit不得帶入testmod mixin resources");
+        assertFalse(FabricLoader.getInstance().isModLoaded("quantumchamber-testmod"), "JUnit不得註冊testmod entrypoint");
+        assertTrue(FabricLoader.getInstance().isModLoaded("quantumchamber"), "此JUnit必須由Fabric載入正式mod與mixin");
+        System.out.println("M6_STRONGHOLD_JUNIT_CP classes=" + sharedClassSource + " manifests=" + manifests
+                + " mods=" + FabricLoader.getInstance().getAllMods().stream().map(mod -> mod.getMetadata().getId()).sorted().toList()
+                + " testmodResources=false testmodMod=false");
         SharedConstants.createGameVersion(); Bootstrap.initialize();
         var lookup = BuiltinRegistries.createWrapperLookup();
         var biome = lookup.getWrapperOrThrow(RegistryKeys.BIOME).getOrThrow(BiomeKeys.PLAINS);
@@ -94,161 +99,4 @@ final class StrongholdGenerationConcurrencyTest {
         assertEquals(expected, actual.get(), "例外後worker重用或另一worker產生布局漂移");
     }
 
-    /** 僅JUnit的原版呼叫/有界collector屏障；不改正式classpath或測試mod載入。 */
-    public static final class NativeHarness {
-        private static final long WAIT_SECONDS = 10;
-        private static final Method ADD_PIECES = method();
-        private static final Field ALL = field(StrongholdGenerator.class, "ALL_PIECES");
-        private static final Field POSSIBLE = field(StrongholdGenerator.class, "possiblePieces");
-        private static final Field ACTIVE = field(StrongholdGenerator.class, "activePieceType");
-        private static final Field WEIGHT = field(StrongholdGenerator.class, "totalWeight");
-        private static final Field COUNT = field(ALL.getType().getComponentType(), "generatedCount");
-        private static final StructureContext NBT_CONTEXT = new StructureContext(ResourceManager.Empty.INSTANCE, DynamicRegistryManager.EMPTY, null);
-
-        private NativeHarness() { }
-
-        private static Method method() {
-            try {
-                var method = StrongholdStructure.class.getDeclaredMethod("addPieces", StructurePiecesCollector.class, Structure.Context.class);
-                method.setAccessible(true); return method;
-            } catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
-        }
-
-        private static Field field(Class<?> owner, String name) {
-            try { var field = owner.getDeclaredField(name); field.setAccessible(true); return field; }
-            catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
-        }
-
-        public static StructurePiecesCollector generate(Structure.Context context) {
-            return generate(context, new StructurePiecesCollector());
-        }
-
-        public static <T extends StructurePiecesCollector> T generate(Structure.Context context, T collector) {
-            try { ADD_PIECES.invoke(null, collector, context); return collector; }
-            catch (InvocationTargetException failure) { rethrow(failure.getCause()); throw new AssertionError("unreachable"); }
-            catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
-        }
-
-        public static String state() {
-            try {
-                var all = (Object[]) ALL.get(null);
-                var counts = new int[all.length];
-                for (int i = 0; i < all.length; i++) counts[i] = COUNT.getInt(all[i]);
-                var possible = (List<?>) POSSIBLE.get(null);
-                var active = (Class<?>) ACTIVE.get(null);
-                return "counts=" + Arrays.toString(counts) + ";possible=" + possible.size()
-                        + ";listIdentity=" + System.identityHashCode(possible) + ";active=" + (active == null ? "null" : active.getSimpleName())
-                        + ";weight=" + WEIGHT.getInt(null);
-            } catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
-        }
-
-        public static String layout(StructurePiecesCollector collector) {
-            try {
-                var digest = MessageDigest.getInstance("SHA-256");
-                for (var piece : collector.toList().pieces()) {
-                    digest.update(piece.toNbt(NBT_CONTEXT).toString().getBytes(StandardCharsets.UTF_8));
-                    digest.update((byte) '\n');
-                }
-                return HexFormat.of().formatHex(digest.digest());
-            } catch (java.security.NoSuchAlgorithmException failure) { throw new AssertionError(failure); }
-        }
-
-        public static Map<String, Integer> pieceCounts(StructurePiecesCollector collector) {
-            var counts = new TreeMap<String, Integer>();
-            for (var piece : collector.toList().pieces()) counts.merge(piece.getClass().getSimpleName(), 1, Integer::sum);
-            return Map.copyOf(counts);
-        }
-
-        public static RaceResult race(Structure.Context first, Structure.Context second) throws InterruptedException {
-            var expectedA = layout(generate(first)); var expectedB = layout(generate(second));
-            var paused = new PausedCollector();
-            var actualB = new AtomicReference<String>(); var failure = new AtomicReference<Throwable>();
-            var bDone = new AtomicBoolean();
-            var a = worker("M6Stronghold-world-A", () -> generate(first, paused), failure);
-            Thread b = null;
-            String observed;
-            try {
-                await(paused.paused, "A 尚未到原生 count 屏障");
-                b = worker("M6Stronghold-world-B", () -> {
-                    try { actualB.set(layout(generate(second))); } finally { bDone.set(true); }
-                }, failure);
-                observed = awaitBlockedOrFinished(b, bDone, a, "two-contexts");
-            } finally {
-                paused.release.countDown();
-                join(a); if (b != null) join(b);
-            }
-            rethrow(failure.get());
-            var result = new RaceResult(paused.before, paused.after, expectedA, layout(paused), expectedB, actualB.get(), observed);
-            System.out.println("M6_STRONGHOLD_NATIVE " + result + " countsA=" + pieceCounts(paused));
-            return result;
-        }
-
-        public record RaceResult(String before, String after, String expectedA, String actualA,
-                                 String expectedB, String actualB, String observation) {
-            public void requireSafe() {
-                if (!before.equals(after)) throw new AssertionError("STRONGHOLD_SHARED_STATE_CROSSED：" + this);
-                if (!expectedA.equals(actualA) || !expectedB.equals(actualB)) throw new AssertionError("STRONGHOLD_LAYOUT_CHANGED：" + this);
-            }
-        }
-
-        public static final class PausedCollector extends StructurePiecesCollector {
-            public final CountDownLatch paused = new CountDownLatch(1), release = new CountDownLatch(1);
-            public volatile String before, after;
-            private int added;
-            private boolean held;
-            @Override public void addPiece(StructurePiece piece) {
-                super.addPiece(piece);
-                if (!held && ++added == 12) {
-                    held = true; before = state(); paused.countDown();
-                    try { await(release, "A count 屏障未被釋放"); }
-                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
-                    after = state();
-                }
-            }
-        }
-
-        @FunctionalInterface public interface ThrowingRunnable { void run() throws Exception; }
-
-        public static Thread worker(String name, ThrowingRunnable action, AtomicReference<Throwable> failure) {
-            var thread = new Thread(() -> { try { action.run(); } catch (Throwable problem) { failure.compareAndSet(null, problem); } }, name);
-            thread.setDaemon(true); thread.start(); return thread;
-        }
-
-        public static void await(CountDownLatch latch, String message) throws InterruptedException {
-            if (!latch.await(WAIT_SECONDS, TimeUnit.SECONDS)) throw new AssertionError("STRONGHOLD_TIMEOUT：" + message);
-        }
-
-        public static String awaitBlockedOrFinished(Thread thread, AtomicBoolean done, Thread owner, String label) {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
-            while (!done.get()) {
-                if (thread.getState() == Thread.State.BLOCKED && Arrays.stream(thread.getStackTrace())
-                        .anyMatch(frame -> frame.getClassName().equals(StrongholdStructure.class.getName()) && frame.getMethodName().contains("addPieces"))) {
-                    var info = ManagementFactory.getThreadMXBean().getThreadInfo(thread.threadId(), Integer.MAX_VALUE);
-                    try {
-                        var monitor = field(StrongholdStructure.class, "quantumchamber$invocationLock").get(null);
-                        if (info == null || info.getLockInfo() == null || info.getLockOwnerId() != owner.threadId()
-                                || info.getLockInfo().getIdentityHashCode() != System.identityHashCode(monitor)) {
-                            throw new AssertionError("STRONGHOLD_WRONG_MONITOR_OWNER：" + info);
-                        }
-                    } catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
-                    System.out.println("M6_STRONGHOLD_THREAD label=" + label + " thread=" + thread.getName() + " owner=" + owner.getName() + " monitor=" + info.getLockInfo() + " info=" + info);
-                    return "BLOCKED_PRODUCTION_MONITOR_OWNER_A";
-                }
-                if (System.nanoTime() > deadline) throw new AssertionError("STRONGHOLD_TIMEOUT：等待 invocation 阻擋或完成 " + label);
-                Thread.onSpinWait();
-            }
-            return "FINISHED_WHILE_A_PAUSED";
-        }
-
-        public static void join(Thread thread) throws InterruptedException {
-            thread.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
-            if (thread.isAlive()) throw new AssertionError("STRONGHOLD_WORKER_LEAK：" + thread.getName());
-        }
-
-        public static void rethrow(Throwable failure) {
-            if (failure instanceof Error error) throw error;
-            if (failure instanceof RuntimeException runtime) throw runtime;
-            if (failure != null) throw new IllegalStateException(failure);
-        }
-    }
 }
