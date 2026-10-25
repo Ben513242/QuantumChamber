@@ -497,3 +497,10 @@
 - Task7最終code245051e，新增原生DIAGNOSTIC鏈與CI cwd前置檢查；schema1沒有seed參數，未宣稱獨立seed完成。原0f pin錯標／缺guard限制保留，舊原件不回補。
 - quality I-1（deep自測若可啟動會進Full/遞迴）已修：所有child PreflightOnly、受控正反例真Start、正常None真布局。安全RED、同clean雙focused、新full efbd於18:04:45 ENDALL0；fresh scoped雙review皆ADDRESSED且無新增C/I。完整hash/原件/原歷史full見M6 note。
 - Task7完成，Task10/11 run-all owner與oracle責任已按review補plan；接續Task8設定快照/provider API。主checkout/main仍0d05f88、m5 peeled仍a2d2b40，兩checkout當次porcelain空；本筆只更新結果文件，採計code245/Task6 CI71f，不稱新docs SHA有runtime、Task7遠端CI或人工已通過。main/tag/退役未動。
+
+### 2026-10-25：Task7 CI結案；Task8 v1.1契約／plan採用，native gate繼續
+
+- Task7 CI40184992145/attempt1/head64d雙平台success，687原件由fresh SOL audit PASS；report B6ADA59D…／result12D57322…，root已全文讀回，完整hash/覆蓋/lag與lock限制見M6 note。
+- Task8目前只有ignored native探索，沒有production；原strict證明static Java定義非native codec可完整表達，且template/Identifier/alias/tag/context仍有未證。v1.1明列完整設定資料graph與runtime條件、ordered tags、frozen GenerateStructures byte與lease，沒有宣稱任意Java語意可hash。
+- spec兩輪獨立review6FAA19EE…/3921419E…與plan05FC7673…均C0/I0/M0；本次只同步採用狀態。按已審8A→8B1→8B2→8B3流程，每正式風險批次維持原gates，8A未過不進production。Root未把一般技術明確化冒稱使用者新裁示。
+- 有效v4原型已有tag原生順序/alias actualdefinition證據；錯v3 launch、setup與保全限制原樣留存。下一步是受控native resource Session fixture及完整typed graph/ctx可行性，非重跑舊full。main/m5/tag/人工/退役未動。

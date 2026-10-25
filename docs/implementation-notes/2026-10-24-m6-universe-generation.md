@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1–7完成；Task6 CI 71f51f7／run40169884283雙平台原件audit PASS；Task7最終code245051e、新full efbd與fresh雙複審C/I=0。接續Task8設定快照/provider API。獨立seed、profile與完整family玩法尚未啟用。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1–7與Task7 CI64d／run40184992145已核PASS。Task8仍在8A原生資料gate；spec v1.1與精確plan修訂已獨立C/I=0並採用，但未開始production。下一步補完整template/resource authority、引用與context證據，再依8B1–8B3門檻實作。
 
 ## 使用者確認的範圍與順序
 
@@ -239,3 +239,30 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - native交接：getSeed()J持續讀全域；SCML constructor先凍結noise/placement，ServerWorld constructor另直接讀全域建StructureLocator；BiomeAccess需hashSeed，schema1 properties wrapper委派canonical、randomSequences實際共用。Task11須按exact server/key/catalog descriptor建立長期owner與設定，不替換全域SaveProperties，不只依暫時context。End dragon尚有canonical key+type創建條件及全域讀寫，交Task16。named merged/runtime common整JAR分開；9/10 class原bytes一致，ServerWorld只對相關方法normalized指令比對相符，不能稱整class或mixin後記憶體相同。
 - 最新report SHA FDADAE2C3D69CF9A12F011845EFD8BFD10D9FD289E6DD754ED2B5066D4EBC21D；audit2F5D92DB6B09B1338185148656E35599AB05C8000DC37953259D468EEF40F9EB；manifestA4ECD3B94302FF47A40473AEEE04334B241958FA4B6ADD167E61DB7ABBB7D33B（9source+118evidence）。fix diff08682C2FB62D075974B197D49A7FC1E5C84B304D42B5797BC5372271A9F53CE9。舊report/delivery/manifest原bytes保留review-round0；目前report追加fix不冒稱舊hash。
 - 本筆結果文件採計code245及Task6實際CI71f，不冒稱docs SHA跑過runtime或Task7遠端CI已過。Task7完成，接續Task8設定快照/provider API；獨立seed/profile/family、人工smoke、整分支review、main/tag/退役仍有各自門檻。
+
+## Task7：實際雙平台 CI 結案（2026-10-25）
+
+- 功能分支已正常push並讀回64d6317671b5e9152bfd9e088356d16175088b3c；對已驗code245只有五份結果Markdown。[run40184992145](https://github.com/Ben513242/QuantumChamber/actions/runs/40184992145) attempt1，同head的Ubuntu121143800814與Windows121143800620均completed/success，無rerun。
+- 官方三ZIP digest/length核符：Ubuntu266193bytes／7BD1BE012B8F1818A21C7F73904D9F08051FDCA9CD12DD9A04FC586BDB47DC33；Windows4031616／37338C344C7052F8542429762B511B0DA143EA8F7195045D8DC1847303CBF51C；JAR1142601／020B2969E64FE608BADA49FB080A332F2BF5775DB916E5CD7C693F162EC13214。安全解壓687原檔逐hash/length，無symlink，未執行artifact。
+- 四scope179/1/60/8與完整JUnit681集合exact本機efbd；Win679pass+2合法skip／Ubuntu653pass+28合法skip，Ubuntu_windows early-complete不冒稱Windows原生正向。三race基準、EndCity20模板/NBT/船數/RNG與合法place第7點均原件核符。
+- release438entries/391classes、sources231，兩平台所有class bytes exact本機；Windows release全payload同、sources6文字僅CRLF，Ubuntu release11resources/sources193文字僅CRLF；未有testmod/gametest/fault洩漏，合法ModPresenceProbe保留。major65與EndCity匿名欄位/remap/refmap相符。
+- Windows Main PID8232/parent7852，17原件hash/samehead；43mods、runtime CP/兩argfiles/DLI/exact PID classload三層無leak；兩save/normal stop/exit0/四worldkey/catalog一致。原server不存在、fresh保留、restore exact/deletedfalse、after-lock可exclusive。running-lock缺PID/時間且availabletrue，不當live server持鎖證明。
+- 九份canonical logs2679 WARNERROR逐來源/phase/batch/cause歸屬；Fortress各791、Stronghold Win438/Ubuntu441、End0。Win lag6506ms/130ticks、Ubuntu2877/57均在Fortress後/Stronghold前，未有分段/單變量因果，不稱吞吐/效能通過。原六種compiler warnings重複於兩次compile，不當新增十二種。歷史Bat/recovery未覆蓋不關。
+- 本CI未跑M3跨JVM、recovery24、collapse69、native DIAGNOSTIC2或本機新safety6；Task12遠端native job尚未新增。M6 pace Win109ticks/61waited/8.3TPS、Ubuntu101/80/15.2、minTick10，只證節流契約。
+- fresh SOL獨立auditor PASS C0/I0/M0，12原件checks true/pending空，root全文讀回/hash核。task-07/ci-40184992145/ci-audit-report.md SHA B6ADA59DC981AC3F7EF0ABC3E0DC0CC298CDC10B87818907C4DDC88BD239E4B1；result SHA12D5732240E666468C30F1E039D9D6194E9537B43CFB4B6C2BE1105730ADB10C。初XML屬性讀取器誤取name的比較檔保留不採；final精確解析才採。
+- 結論僅Task7 code245/CI64d，不代Task8 native gate/production、人工/整M6/main/tag；結果於本次契約/計畫更新納入tracked，不為CI次數另行重跑相同程式。
+
+## Task8A：原生調查與 v1.1 契約採用（尚未實作完成）
+
+- Task8 BASE64d，僅ignored原生調查／方案，沒有production/JUnit/testmod/source變更或正式snapshot寫出。最初native DimensionOptions.CODEC只輸出refs；Builtin lookup未綁tags會失敗。改以真vanilla datapack RegistryLoader與tags後得到部分typed graph，不能把key數當完整性。
+- 獨立native review SHA546D733B65744A79778394A5DA258802F88DB9DA585CB99EE4AAE7E4D9215094確認production gate仍FAIL：I1 template/Identifier/resource未閉合；I2全role alias symbols會吞真target；I3缺tag靜默ifPresent；I4 static/runtime條件；I5 context接線/時序。原strict只檢最後ampEnd，accepted gate還須逐role。Implementer沒有自批完整。
+- 原生AbstractBlock.Settings.CODEC為Codec.unit；strength1/99均輸出{}，只證codec非單射，不當已證terrain漂移。v1.1因此明確完整生成**資料**graph（dynamic/reloadable、typed references、tag有效次序、template資源/NBT等）與受支援static/dispatch runtime前提；不是忽略已知依賴，也不承諾偵測任意Java/mixin語意。未涵蓋/required缺失/不支持/不可重建仍拒，不以namespace/JAR當actual值未改證據，M7玩家chunk/entity歷史仍排除。
+- root原生短讀另核ChunkGenerating.generateStructures直接讀global GeneratorOptions.shouldGenerateStructures；ServerWorld ctor交GeneratorOptions給StructureAccessor。r2將內建Parameters明列OverworldPreset string＋GenerateStructures嚴格NBT byte0/1，三策略保留source值；NEW_M6及新family role須由Task11 exact owner供constructor/worker frozen值，未遷移legacy不變、migrated OW額外比實際bool。外層snapshot五欄/512bytes/32byteFP不變，尚無正式M6snapshot需遷移。
+- v1.1首草案EA51CDD1B16135D10B999E3EE12A4F54122DFABE1BCFB5E176BAC8AE6E9C18FE，fresh spec report6FAA19EEA2609B66373B55A4CABE4B2500A54A26A726BCAE86BAE0326DB7C00D；r2 CA21AF117A6C7D47F7DE9E6A2ECD9A994A40BFC88F3EEA48F58EF8FD2C36D8A1，fresh delta report3921419E7879ADAB3D03A3778E1E84DA5D50AF416447499217B7E717FDA8256F，均C0/I0/M0。主控全文讀回；兩席判屬維持既有M6承諾的技術明確化，不需另作產品範圍裁示，不冒稱使用者逐項批准細節。
+- 精確plan草案CF851C38AF64FC1D891E5D4F7F1A62F9E64A0AD6A93FD62143D89009193319F9，fresh review05FC7673941BE8B0D5B927C86D1585E166194752E0BC4507FCE001C0193AC41C Approved C0/I0/M0。採12core、2template adapter、7testmod、5PS與build.gradle窄轉發owner；8A完整資料/方法gate→8B1 DTO/metadata→8B2canonicalizer/context→8B3真lifecycle與stop後oracle。各正式風險批次仍雙focused/full/fresh reviews，B3 final code full即Task8終局，不為docs再跑。
+- 8A原型已有biome/structure/tag/loot真overlay、Nether-only不污染OW、typedcycle與unknown generator拒絕，但皆diagnostic。舊source/class只在batch後凍結、repo cwd.fabric/logs缺before不存在證據的限制原樣保留，內容完整move到ignored evidence，不補造歷史。Prototype agent只作原生觀察，不是release注入方案。
+- 8a2第一批6輪已保存80項artifact pre/post；GenerateStructures敏感、required tag拒與六role各自REJECT_OPAQUE_STATIC成立。tag overlay未replace沒改有效次序、alias manual namespace錯誤是setup，未當成功。後三輪REPL舊閉包實跑v3而非預期v4，同樣保留且不採v4結果。
+- 有效批次改固定launcher-v2 D1B87239C8689FE6425BDBCDC194DD7FE7C7D468B3B2EBBBBC3C1E44C903ABD8與literal spec SHA988DB27D2BFEC331FEB4BBB73671AAB4E322BCA8DFB8A9071DD655153F69EE38；七個無Java正反例後，3新root各81項pre/post、actual class-source realpath exact=v4、自然exit0。baseline2d983d0381b341a1b68cd8f5daf30322、tag38afc4173f6448a2ae8c006c608fbd6b、alias e553ccd3424b4e7eadcf8e3bc418ebd0均在短verification。
+- 原生tag同members反序使同RNG seed0–4選值由magma變netherrack、FP變；RegistryEntryList的get/index/getRandom有順序語意，不全排序。真Jigsaw alias==target==start_pool town_centers仍有actual definition type10/equalsNative兩preset真。root已讀原stdout/comparison；target definition mutation與非alias同欄仍未覆蓋，不將I2全關。batch3 findings2135F73CEE83D14D5CA21A1B1E6CA319321383AC6AD0A72BE773E4DEF9FF23AA、comparison50EF470DC84FD54CFE45B8177443B1DEB60FA2B509D92C132E6646476DD03833、manifestB8FBCB6692A4FD8F23D7C32CEDC1006A973CCB2F767ADC64E66AF57DF62F3958。
+- Context/data authority方案依native SaveLoading refresh→factory及SERVER_STARTING→setup、reload holder/refresh/template clear/END時序；實際接線仍留8B。Template manager cache→saved→devSNBT→ResourceManager；有效writeNbt不單獨證可重建，須持久來源以同manager.createTemplate重建exact比；錯誤不沿native fallback冒充完整。合法temporary Session方法fixture僅提案，尚未執行；完整resource graph、alias-context、預算與其他native缺口仍未關。
+- 本次只有已審契約/plan與CI結果文件採用，不聲稱Native/Task8/新code gates或人工已完成；main/tag/退役未動。正式SourceSnapshot/API/registry/data graph/context/runtime程式，必等8A accepted native review與主控8B放行。
