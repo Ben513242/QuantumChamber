@@ -490,3 +490,10 @@
 - Task6 code e077be6a0918d7c2e56056e23363b0e2cde1a2cd，EndCity invocation-private ThreadLocal stack＋三字段點；原版真template RED、同pin五focused、新短full44da END ALL exit0與fresh雙review皆C/I0。原深root9280在CI Process.Start失敗，保持FAIL無ENDALL，不拼接；控制與新完整success分開採計。
 - spec/quality均M2：lag未歸因與深cwd支援缺口；前者保留觀察、後者交Task7 Step0 triage。三類race切片完成本機驗證，接續Task7原生seed/settings診斷，DIAGNOSTIC綠不當功能seed已通過。
 - 本筆純結果/接續文件採計e077與Task5 CI d9，不宣稱Task6遠端CI已過；main/m5、人工／milestone整分支／tag／退役未動。
+
+### 2026-10-25：M6 Task6 CI／Task7結案，接續Task8
+
+- Task6 CI run40169884283／attempt1／head71f雙平台success，687檔與Main17由fresh SOL audit PASS；running-lock快照的時間/PID限制及lag/Bat觀察詳M6 note，不外推性能或Task12 native鏈。
+- Task7最終code245051e，新增原生DIAGNOSTIC鏈與CI cwd前置檢查；schema1沒有seed參數，未宣稱獨立seed完成。原0f pin錯標／缺guard限制保留，舊原件不回補。
+- quality I-1（deep自測若可啟動會進Full/遞迴）已修：所有child PreflightOnly、受控正反例真Start、正常None真布局。安全RED、同clean雙focused、新full efbd於18:04:45 ENDALL0；fresh scoped雙review皆ADDRESSED且無新增C/I。完整hash/原件/原歷史full見M6 note。
+- Task7完成，Task10/11 run-all owner與oracle責任已按review補plan；接續Task8設定快照/provider API。主checkout/main仍0d05f88、m5 peeled仍a2d2b40，兩checkout當次porcelain空；本筆只更新結果文件，採計code245/Task6 CI71f，不稱新docs SHA有runtime、Task7遠端CI或人工已通過。main/tag/退役未動。

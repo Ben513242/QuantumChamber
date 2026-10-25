@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1–3完成；Task3 code ac085c8、本機雙review C/I=0，CI commit4d8fc66雙平台原件已核PASS。接續Task4 Stronghold競態，先補scalar fixture Minor；生成／維度家族程式尚未實作。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1–7完成；Task6 CI 71f51f7／run40169884283雙平台原件audit PASS；Task7最終code245051e、新full efbd與fresh雙複審C/I=0。接續Task8設定快照/provider API。獨立seed、profile與完整family玩法尚未啟用。
 
 ## 使用者確認的範圍與順序
 
@@ -16,12 +16,12 @@
 - 宿主 create_worktree 因主 checkout 已知 dubious ownership 失敗，未建立可用工作樹；遵守不改全域 safe.directory，以每次命令限定的設定建立 `C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation` 與 `codex/m6-universe-generation`。
 - 新工作樹從上述 main SHA 開出，初始 porcelain 空；`.superpowers/sdd/2026-10-24-m6-universe-generation/` 已由 `git check-ignore` 確認 ignored。
 
-## 已核現行契約
+## 開工時核對的契約（後續結果見各 task）
 
 - NEW candidate 已凍結 token、profile、generationSeedMaterial，並寫入 receipt；目前僅允許 legacy shared-seed profile。
 - catalog schema1 未保存實際 seed；factory 共用 canonical Overworld generator／save seed／random sequences。random seed 不能只改 factory 的單一 seed 引數，必須先定義新版本持久化與legacy相容性。
 - 三個 DimensionRole 是預留型別；keys、definition、backend、lifecycle、transfer 仍有 Overworld 限制。完整 family 需要實作，不把 enum 視為已完成。
-- Stronghold／Nether fortress／End city static 競態仍需各自根因與定向 runtime 證據；H5/H6/H8 未覆蓋它們。
+- 開工時 Stronghold／Nether fortress／End city static 競態尚未由 H5/H6/H8 覆蓋；後續已在 Task4–6 分別完成根因、修正、定向 runtime 與獨立 review。
 - 舊 Universe 身分／seed／destination、M4 receipt、M5 schema4 authority、同XYZ passage、inert投影與既有失敗語意保持，除非新binding spec明列已授權的M6變更。
 
 ## Step 0 與驗證邊界
@@ -208,3 +208,34 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - fresh spec Approved C0/I0/M2，SHA5614D5425B1F0F500ACEE45EFB6D36F7C3DC1827CF4C624CFF5078E4E8784DEE；fresh quality Approved C0/I0/M2，SHAB0EAD6A3F59589873A40E55A17B177B8958505E3C7E676C0587376D217BEF167，主控全文讀/hash核。兩席同兩Minor去重：M1三lag未歸因，M2深EvidenceRoot的CI cwd支援缺口；不因全綠關性能/Bat觀察，M2交Task7 Step0先triage最小正式入口前置診斷/支援範圍。沒有未關C/I，Task6結案；Task7僅診斷，不先宣稱獨立seed功能。
 - 唯一終局report SHA0F0ED58B604555DF6B2C33B28D601B24FBB90CF43EBBFB1A562B9F99EED8AE1F；新短full audit SHA3496C5E3E695A69B9B5F646A49E10FAA82DA5B1F249B125DA33CEA020006AB00；manifest（44evidence+8source）D3CEA1D6EFF3C8477514BFC37EF334BE021AC9CD18351B35124C47DD45746B3F。
 - 完整review diff SHA A6677A3783782FB93C68FF94D23F5843DA3C9B1C61EAD89782A82F65A6B13CEF。結果文件採最終code e077，不冒稱docs SHA或Task5 CI d9背書此候選；main/tag/人工/退役未動。
+
+## Task6：實際雙平台 CI 結案（2026-10-25）
+
+- 功能分支已正常 push 並讀回 71f51f741d75e566281a64ac111aa7719170e883；相對 code e077 只有五份 Markdown。[run40169884283](https://github.com/Ben513242/QuantumChamber/actions/runs/40169884283)／attempt1，同 head 的 Ubuntu job121098398199、Windows job121098398061 均 success，沒有重跑。
+- 三 ZIP digest 與官方 API 核符：Ubuntu629BF00916BEEF6D024107015803E9A26B1972173FFDE48D33516ED828A30D0D、JAR ADB4C674AEBBC4FD4142AC15DB24DF38AB341842118AAA5F79FBC32E1712C084、Windows035FBAFD1C83827528F87F2317670FE3314C1E6C14AEE50E4DC8AD164FDAFF81。687 檔逐 hash/length 核符，無 symlink 或 artifact 執行。
+- 四 scope179/1/60/8 exact；JUnit681：Ubuntu653pass+28合法skip、Windows679pass+2skip。三種race基準、EndCity6JUnit/20原版模板、完整NBT/船數/RNG與合法place第7點均有原件。
+- release438entries/391classes、sources231，無testmod；兩平台class bytes同本機，只記錄CRLF文字差異。正式remap class/refmap與匿名field14394/root14679/init14688/create14687相符。
+- Windows main-only17原件hash與same-head/PID2716/parent8060核符；43mod list、runtime CP/argfiles/DLI、exact PID class-load三層隔離、兩次save與normalStop/after-lock/restore成立。locks-running快照沒有server PID/時間，且由Gradle launcher存活時覆寫，該輪exclusiveAvailable=true，不能宣稱它證明server執行期間持鎖；after快照僅證明釋放。
+- 九份canonical runtime log共2686 WARN/ERROR逐行歸屬；lag於Ubuntu3529ms/70ticks、Windows5218ms/104ticks再現，均在Fortress/place後、two-context/EndCity前。根因/吞吐仍未證明，歷史Bat/recovery未覆蓋，不因此關閉。Task12 native chains未執行。
+- 全新SOL CI auditor PASS，11原件核對全true，主控已全文讀回。task-06/ci-40169884283/ci-audit-report.md SHA037BAE124D6AE828B640236C09935AAA89B29170D6491F6D2D7FD41824F75BB9；result SHA E1C23525E632943366776DF6DF1ED2478AFAF037D4B57CA021BF6F6CD894D646。
+- 此結果只對Task6 codee077/CI71f，不代Task7。結果取得時Task7 full凍結，先留ignored原件，本段在其fix完整回歸與複審完成後納入tracked；main/tag/人工/退役未動。
+
+## Task7：原生 seed/settings 診斷與安全自測完成（2026-10-25）
+
+- range71f51f7..245051e，最終code245051e87af563b778b79bca27e6706be30848f2。5fd9142新增probe/CI cwd前置守門；0f3574e修正診斷metadata語意；245051e關閉quality I-1。共九個允許路徑，沒有production/client差異；發布payload維持Task6。
+- 正式tracked入口為testmod M6UniverseRecoveryProbe／Loom m6UniverseProbe、m6-universe-probe.ps1、focused Probe與run-all AllEnabled。首版只有native-seed-diagnostic，兩個新JVM的baseline/save-reopen，m6ProbeSchema=1、expectedMode=DIAGNOSTIC。無M6參數安靜停用，partial/unknown/mixed拒絕；M4/M5未傳extra時UTF8/NUL邊界arguments byte exact。
+- 兩個schema1 U由正式catalog checked提交/讀回與backend物化，重開由正式lifecycle恢復；另有canonical O/N/E控制。量測getSeed、StructureLocator/placement seeds、BiomeAccess hash、NoiseConfig/biome樣本、properties delegates，以及用真正object ==分組的nonce專用randomSequences連續值。有界worker僅唯讀採樣，不稱自然worldgen壓測。新native root永留、沒有移動既有world；完整回歸的五組fresh/restore另驗。
+- **語意界線**：schema1的allocateOverworld第二參數是ordinal，沒有seed權威。原synthetic seedHints未傳catalog/factory，已移除；主控更正先前要求hint互異的假設。功能RED只觀察schema1沒有獨立seed/sequence能力，不是factory忽略seed入參。Task11另用真正schema2 root與FUNCTIONAL鏈；診斷綠不代表隨機種子功能完成。
+- 原0f具名功能RED與雙DIAGNOSTIC GREEN完整原件見task-07/fix1-focused-full-readiness.json。RED/A的expectedHead標籤錯留5fd，但raw前後HEAD/summary皆0f、status0byte/git0；三輪原launcher缺pre-spawn guard。主控及兩席原review依實際原件採計，保留限制、不回補歷史。後來immutable pin/Node+PS guard的process-only反例只證新launcher；新GT8及ca76/full有自己的真guard。
+- Task6深root9280保持FAIL。正常run-all在任何昂貴runtime/world前，依同一11-case table對等長cwd-map兄弟布局真Process.Start；不猜通用260上限、不改global設定。當前正常mode=None/REAL_PROJECTED_CWD；PreflightOnly只證布局啟動，不能代full。
+- 原0f full ca76為ENDALL0；fresh spec C0/I0/M2（SHA B1BF9E3E96786E711483B80F166B0ABBD48F47E20AFFE05479FBF2EAC80921D3），quality C0/I1/M0（SHA C84C173772308E56CC0F51ECE76F01ADE265A7AABAAC231288DF6BFE7FA332ED）。I-1是deep自測若能啟動便進真Full/世界操作及遞迴；當次本機深cwd拒絕不能證跨環境安全，故當時Task7未結案。
+- **I-1 fix round1（0f..245）**：所有自測child無條件PreflightOnly；非None受控模式只准與停止旗標配對。RootSuccess用既存磁碟根、StartFailure用owned evidence內未建立唯一cwd，仍真Process.Start，requested/effective與CONTROLLED_TRANSPORT_ONLY分列。None保留真布局檢查。150秒只是等待界線，逾時留PID/start/root且不kill/不續下一runtime；安全本體是停止契約。
+- 安全RED在原0f真函式AST僅替唯一Start呼叫，檢實際argv缺停止旗標，fork前具名M6_CI_SELFTEST_RUNTIME_NOT_BOUNDED；child0/ownedJava0/run不變。原source SHA4BC710F6426D52A5B054372499B5BCEA80EE1897790FE851239009414B4AF5E1，函式C91DF72700E4571F3306149F5F8191A25FA0F3DD01D7C654D6DB000ED0721BE3。不是unknown參數/編譯錯或真進unsafe full冒充RED。
+- compile gate-qfix1-compile-637e90481d2542a98c20441c97950124/parser PASS。245同clean雙focused：quality-fix1/green-a-pin-eefef957ad544a8d99c14850fdbb1fd7與green-b-pin-b5f4bd113af1472ab1ea9096f60d1630；兩輪AST adapter各真委派3次且全bounded，正式六case PASS，兩缺配對由正式純guard安全驗證。B另move6/owned8/optional9 PASS。原prestart/prepost/exit均245/clean/git0；完整索引quality-fix1/focused-full-readiness.json。
+- **最終新full**：.superpowers/verification/run-all-efbd4990e8824a63bc93b458643877b0，18:04:45+08 END ALL exit0/245，outer42724自然exit0。summary SHA E69A1055D2691645B9FDFD5B54FF5AB7B2EFFABA7B0F3553A303760C91A4DFE1；新guard/prepost同pin/clean。四XML179/1/60/8、JUnit681=679pass+2合法skip；release438entries/391classes/sources231/testmod0；Main17原件/PID32016/43mods/三層/兩save/stop/restore；M3九/255原件、recovery24、collapse69/HALT31、11本機CI規則，全部本輪原件核對。沒有把本機規則稱為遠端CI。
+- 新full的正式safety6與父None/真11布局都核實；native兩JVM23884/40936、不同startupNonce、catalog與reopen一致、控制組/序列連續/正常stop/鎖皆符，功能仍false。五restore實體逐檔hash/存在性一致（legacy60檔、M6原world23檔）；8鎖釋放，liveMinecraft0，保留idle29168。沒有拼用ca76作245的full。
+- 本輪109logs/3659 WARNERROR全歸屬：fault/policy157、region1845、piston1、PostProcessing1232、lag1、offline412、journal-corrupt3、native-offline8；worldgen/pin-HOLD/未歸屬0。六compiler warnings與ca76逐字同。Fortress791多重集合exact；Stronghold447→441的20差異座標兩輪Anvil僅wall_torch/air，EndCity0。M6 log894的2773ms/55ticks lag未歸因，歷史Bat未關；不稱pristine或效能通過，不為清空警告重跑。
+- fresh scoped spec I-1 ADDRESSED／新增C0/I0/M0，SHA96E35BBB0D69BAEF9DA5BF4A653C55837D5ECB48C22F472209C89D11E7AAFFF3；fresh scoped quality Approved／I-1 ADDRESSED／新增C0/I0/M0，SHA3FF2D7062D20F004AC7A763164CD89DC9D55E6F4F343447E4E67C456E5EE059F。主控全文讀回，並直接核127檔hash、原pin/XML/JUnit/Main17/native與safety原件；沒有未關C/I。原Minor保留lag/Bat追蹤；Task10/11的run-all owner/oracle責任已依兩席同意補入plan，不提前擴future鏈。
+- native交接：getSeed()J持續讀全域；SCML constructor先凍結noise/placement，ServerWorld constructor另直接讀全域建StructureLocator；BiomeAccess需hashSeed，schema1 properties wrapper委派canonical、randomSequences實際共用。Task11須按exact server/key/catalog descriptor建立長期owner與設定，不替換全域SaveProperties，不只依暫時context。End dragon尚有canonical key+type創建條件及全域讀寫，交Task16。named merged/runtime common整JAR分開；9/10 class原bytes一致，ServerWorld只對相關方法normalized指令比對相符，不能稱整class或mixin後記憶體相同。
+- 最新report SHA FDADAE2C3D69CF9A12F011845EFD8BFD10D9FD289E6DD754ED2B5066D4EBC21D；audit2F5D92DB6B09B1338185148656E35599AB05C8000DC37953259D468EEF40F9EB；manifestA4ECD3B94302FF47A40473AEEE04334B241958FA4B6ADD167E61DB7ABBB7D33B（9source+118evidence）。fix diff08682C2FB62D075974B197D49A7FC1E5C84B304D42B5797BC5372271A9F53CE9。舊report/delivery/manifest原bytes保留review-round0；目前report追加fix不冒稱舊hash。
+- 本筆結果文件採計code245及Task6實際CI71f，不冒稱docs SHA跑過runtime或Task7遠端CI已過。Task7完成，接續Task8設定快照/provider API；獨立seed/profile/family、人工smoke、整分支review、main/tag/退役仍有各自門檻。

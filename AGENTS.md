@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-25：Task 1–6 已完成。三種原版生成競態皆已完成本機 gates 與 fresh 雙review（C/I=0）；接續Task7原生seed/settings診斷probe，先triage深EvidenceRoot的CI cwd前置檢查。隨機種子、profile、完整family尚未實作完成。**
+**2026-10-25：Task 1–7 已完成。Task7最終code245051e、新full efbd及fresh雙複審C/I=0，深cwd自測的I-1已關閉。接續Task8可持久化設定快照/provider API；獨立seed、profile與完整family玩法尚未啟用。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
@@ -109,7 +109,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - 使用者要求子代理使用 SOL。本輪僅用 SOL 系列（`gpt-6-sol`／`gpt-6.1-sol`），短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
 - 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
 - M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
-- Task1–5及Task5 CI d9／run40158887195已結案；兩平台原件獨立audit PASS，lag於兩平台再現，未作吞吐保證。Task6 code e077、原版RED／五focused及新短full run-all-44da51f56266477882047b03b7fcfc60通過，fresh spec/quality皆C0/I0/M2。原深root9280在CI cwd280/Win32267失敗，沒有ENDALL，完整保留不改判；同程序短路徑控制後新完整full才採計。三lag觀察及歷史Bat未關，深cwd支援缺口交Task7 Step0 triage，詳M6 note。Task6尚未有自己的遠端CI結果，不借Task5 CI背書。
+- Task1–6與其CI已結案；Task6實際CI 71f51f7／run40169884283雙平台原件audit PASS。Task7 range71f..245只動test/harness/build，無production/client；最終full run-all-efbd4990e8824a63bc93b458643877b0通過，I-1經全新spec/quality複審ADDRESSED且無新增C/I。DIAGNOSTIC只證schema1現況，不能稱獨立seed功能已完成。lag/Bat觀察仍未歸因，Task10/11的run-all owner補正已入plan；詳細原件/hash與原0f pin限制見M6 note。Task7自身遠端CI待後續實際結果，不借Task6 CI背書。
 - 正常 push 已持續授權；M6 main 合併、tag、工作樹退役、人工代操作各自依原門檻。M5 的一次授權與不備份退役例外不外推。
 - 每次交回同步 M6 note／plan、此節、ledger／STATUS 與舊 handoff §7 的新紀錄。以下 M5 進度只作歷史，不是M6待辦。
 M1–M4 已完成並合併（2026-10-01 核對）：
