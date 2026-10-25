@@ -111,8 +111,14 @@ function Invoke-M6OracleSelfTest {
         if($selected.Count -ne @($names).Count){throw 'M6_ORACLE_SELFTEST_FAILED：正例集合不符'}
         $checks.Add([ordered]@{name="positive-$scope";passed=$true;cases=$names})
         if($scope -ne 'm6'){
-            Xml-Fixture @($names+'m6_first') $xml
+            Xml-Fixture (@($names)+@('m6_first')) $xml
+            [xml]$crossScope=Get-Content -LiteralPath $xml -Raw
+            $crossNames=@($crossScope.SelectNodes('//testcase') | ForEach-Object name)
+            if($crossNames.Count -ne 2 -or ('fixture.'+@($names)[0]) -cnotin $crossNames -or 'fixture.m6_first' -cnotin $crossNames){throw "M6_ORACLE_SELFTEST_FAILED：reject-m6-in-$scope 沒有保留合法case與獨立M6case：[$($crossNames -join ',')]"}
             Reject "reject-m6-in-$scope" 'M6_SCOPE_MISMATCH' {Assert-Scope $xml $scope $source}
+            $crossReceipt=Get-Content -LiteralPath (Join-Path $gate 'scope.json') -Raw | ConvertFrom-Json
+            if($crossReceipt.actual -ne 2 -or @($crossReceipt.missing).Count -ne 0 -or @($crossReceipt.extra).Count -ne 1 -or $crossReceipt.extra[0] -cne 'quantumchamber:m1_empty|fixture.m6_first'){throw 'M6_ORACLE_SELFTEST_FAILED：跨scope負例不精準'}
+            $checks.Add([ordered]@{name="cross-scope-fixture-$scope";passed=$true;actual=$crossReceipt.actual;actualCases=$crossReceipt.actualCases;missing=$crossReceipt.missing;extra=$crossReceipt.extra})
         }
     }
     Xml-Fixture @('m6_first','m6_second') $xml
