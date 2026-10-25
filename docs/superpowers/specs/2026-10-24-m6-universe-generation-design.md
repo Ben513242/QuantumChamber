@@ -1,8 +1,8 @@
-# M6 宇宙生成多樣性與完整維度家族：binding spec（v1.1）
+# M6 宇宙生成多樣性與完整維度家族：binding spec（v1.2）
 
 日期：2026-10-24。基準：`0d05f889da6f8b82b97af756aaa50066b3d42854`。本文定義 M6 的新行為；未明列變更的 M4／M5 checked 權威與遊戲行為維持原約定。本文尚非實作或驗收結果。
 
-狀態：v1.1已依獨立spec與plan review採用。資料closure/context草案EA51CDD…由6FAA19EE…判C0/I0/M0；GenerateStructures差異CA21AF1…由3921419E…判C0/I0/M0；精確plan草案CF851C3…由05FC7673…判C0/I0/M0。審查後只同步標題/採用狀態與交叉引用，契約本文不變。這不表示native gate、Task8或production已通過。M4/M5格式與既有權威不變；尚無正式M6snapshot，內建Parameters依本版兩欄。實作進度以plan/note為準。
+狀態：v1.2已依獨立原生advisory D9927B1B…與fresh spec/plan review E9FCC770…（C0/I0/M0）採用；只澄清原生furnace RecipesUsed歷史資料與後續配方模擬邊界，其餘v1.1契約不變。平台驗證排程另依plan r3/r4（review 4F03E40E…／E9FCC770…）執行。審後只同步標題/採用狀態/交叉引用；這不表示native gate、Task8或production已通過。M4/M5權威與內建兩欄Parameters不變；實作進度以plan/note為準。
 
 ## 1. 目標、來源與交付順序
 
@@ -63,6 +63,10 @@ schema1 factory 用 canonical `DimensionOptions.OVERWORLD`、存檔的 generator
 保留原設定與 alias mapping 本文；symbolic alias source 只能按來源物件型別、欄位角色及該次 edge occurrence 判定，不得把某 id 加進整 role 的全域豁免集合。所有可能 target 必入圖，不以單次 seed 選中的分支代替。相同 id 若也是 target 或普通引用，仍須解析。Required reference 缺失必 fail closed；只有原版／受審 adapter 明確允許的 optional 空值可成立，且要記錄 typed presence／empty／resolution 狀態，不能靜默略過。
 
 資源解析必與受支援原生生成路徑的實際來源／優先序相符，不能拿不同來源的同名 vanilla 檔替代目前有效內容。若涉及 saved／cached template 覆寫，須證明能取得有效、可重建的設定資料，或將該情境具名判為不支援；不得默默只讀datapack便稱 actual closure。Pre-authored generation template 及其 jigsaw pool／loot／component 設定是生成輸入，不等於複製玩家既有 chunk/entity 的 M7 literal snapshot。
+
+**原生furnace歷史欄位的精確邊界**：對固定1.21原生furnace／blast_furnace／smoker owner的template block-entity根欄位RecipesUsed，依AbstractFurnaceBlockEntity的契約視為「recipe id→已完成燒製次數」literal history。完整有效template NBT仍納入canonical payload，該compound的存在／空值、每個原始key及型別／int值都保留；不得刪除、只留key、改成零或用重解碼預設值代替。本版支援RecipesUsed為NbtCompound、key可由原生Identifier.of解析、值為NbtInt；其他形狀具名unsupported，不借原生getInt容錯默默改型別。合法但目前不存在的recipe id可以保留，因原生讀入不查RecipeManager，後續領XP時的get(id)為Optional；不得因此欄位建立required recipe-definition edge或加入整份recipe registry。未知owner／其他occurrence的同名欄位不能獲全域豁免，仍依其真正consumer契約接納或拒絕。
+
+本條只界定歷史欄位，不排除真正生成配置：Items的item／component依賴、BurnTime／CookTime／CookTimeTotal及其他raw NBT完整保留，原有jigsaw／loot／component required edges照舊。此generation settings snapshot凍結生成設定與模板初始資料，**不凍結生成後的持續燒製、XP、配方解鎖或後續遊玩recipe selection**；有料／燃燒中的furnace後續行為仍依當時遊戲環境。不能把這項界線說成任何世界變動／生成相關caller都不讀recipes（例如替換既有furnace可發XP）。若另有真正生成設定或受支援adapter把recipe definition作生成輸入，必驗actual effective RecipeManager／lookup的同epoch來源與可重建typed edges，或具名拒絕；不能只讀同名vanilla JSON或泛略所有recipes。這不新增M7玩家世界複製或完整後續遊戲模擬保證。
 
 Canonical map key、節點索引以明列的穩定規則排序；列表及可能影響原生隨機選取／迭代的次序必保留。Tag 不能一概視為無序集合：對 RegistryEntryList 等原生以 list/index/getRandom 消費的資料，保留實際有效成員次序；僅在已證明無次序語意時才能排序。Visited 依節點種類、registry/resource 類型與 canonical id 分派，同 id 不同類型不能合併；共享／cycle 每節點編碼一次並保留引用，不截斷未展開邊。所有有限的節點／edge／resource解碼／總canonical bytes預算必在實作前由 native gate 量測、明列並經 review；超限、缺 required target、解碼失敗、未知 codec/type/reference 語意都拒建立／解析snapshot，不用預設值替代。每 role component與全family輸出使用同一資料契約，不因全registry/resource dump把無關Nether/End資料塞入Overworld。
 

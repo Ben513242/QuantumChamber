@@ -504,3 +504,11 @@
 - Task8目前只有ignored native探索，沒有production；原strict證明static Java定義非native codec可完整表達，且template/Identifier/alias/tag/context仍有未證。v1.1明列完整設定資料graph與runtime條件、ordered tags、frozen GenerateStructures byte與lease，沒有宣稱任意Java語意可hash。
 - spec兩輪獨立review6FAA19EE…/3921419E…與plan05FC7673…均C0/I0/M0；本次只同步採用狀態。按已審8A→8B1→8B2→8B3流程，每正式風險批次維持原gates，8A未過不進production。Root未把一般技術明確化冒稱使用者新裁示。
 - 有效v4原型已有tag原生順序/alias actualdefinition證據；錯v3 launch、setup與保全限制原樣留存。下一步是受控native resource Session fixture及完整typed graph/ctx可行性，非重跑舊full。main/m5/tag/人工/退役未動。
+
+
+### 2026-10-26：M6 Task8A 原生診斷與 v1.2／r3-r4 採用
+
+- Task1–7及CI64d既有結案不變；Task8仍8A，只有ignored prototype，沒有production或random seed玩法。resource v2兩phase僅authority/cache/可重建方法PASS；graph v2–v5皆具名FAIL，D1/D2只No-FP診斷且正常Session/鎖收斂，完整結果與hash見M6 note。
+- D2僅normal/overworld partial，停RecipesUsed/deepslate；七配置欄有11個original witness，role未結束未驗總配對。未flush停止template id，不能補造歸屬或據partial174resources定正式budget。已見Pool/temple/noise/FluidState/receiver family僅原生補件，待合併實作與controls。
+- 採用已審spec v1.2與plan r3/r4：Recipe advisory D9927B1B…／窄review E9FCC770…、平台review4F03E40E…均root讀回，C/I/M=0。Exact furnace RecipesUsed保留完整raw歷史、原生Optional missing語意；真正配置依賴不省略。8A native gate仍先於8B，Windows named／Ubuntu named／Windows intermediary三bundle實跑比較及raw audit仍先於Task8完成/Task9，不當waiver。
+- 本輪只MD，source/test/build/workflow與code245／CI64d不變；實驗舊HEAD67e不可供新launcher沿用，下一步先讀實際採用commit與STATUS。未宣稱新docs SHA有runtime/CI/人工；main/m5/tag/退役未動。正常push依既有持續授權，實際狀態另以Git核。

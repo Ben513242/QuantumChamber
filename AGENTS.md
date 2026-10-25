@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-25：Task1–7與Task7 CI64d已完成。Task8仍在8A原生資料gate；spec v1.1與精確plan修訂已獨立C/I=0並採用，但完整resource/context證據未齊，production/8B尚未放行。依新plan完成8A，再分8B1–8B3實作；random seed玩法尚未啟用。**
+**2026-10-26：Task1–7與Task7 CI64d已完成。Task8仍在8A；resource方法fixture已通過，但完整graph與D1/D2診斷均未過完整gate，沒有production/8B。spec v1.2與plan r3/r4已獨立C/I/M=0並採用：原生RecipesUsed保留完整raw歷史資料，跨mapping/平台真實比較仍是Task8完成前硬gate。接續合併已見family修正與必要controls；random seed玩法尚未啟用。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
@@ -109,7 +109,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - 使用者要求子代理使用 SOL。本輪僅用 SOL 系列（`gpt-6-sol`／`gpt-6.1-sol`），短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
 - 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
 - M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
-- Task7 code245051e的full efbd與fresh雙複審C/I=0；CI64d／run40184992145雙平台及687原件獨立audit PASS。Task8原生strict曾遇static codec無法表達全部Java語意，已據實修訂完整data graph與runtime前提，沒有省略template/tag/Identifier依賴；GenerateStructures改為snapshot參數凍結。Native I1–I5及resource/budget/context實證仍待8A，不把spec/plan通過當production。lag/Bat與running-lock取證限制保留，詳M6 note及SDD STATUS。
+- Task7 code245/full efbd與CI64d/run40184992145既有證據保留。Task8實驗HEAD為67e，resource v2兩phase僅方法PASS；graph v2–v5皆具名FAIL，D1/D2只No-FP診斷且正常關閉Session/鎖，不當完整closure/budget/restart。D2只到normal/overworld與RecipesUsed，原件未記停止template id，不補造。下一批module/spec必用本次文件採用後的實際新HEAD，不沿用硬pin67e。完整來源/引用/unknown拒絕與native review仍先於8B；平台/production mapping三bundle實跑在8B3且Task9前必過。詳M6 note與STATUS。
 - 正常 push 已持續授權；M6 main 合併、tag、工作樹退役、人工代操作各自依原門檻。M5 的一次授權與不備份退役例外不外推。
 - 每次交回同步 M6 note／plan、此節、ledger／STATUS 與舊 handoff §7 的新紀錄。以下 M5 進度只作歷史，不是M6待辦。
 M1–M4 已完成並合併（2026-10-01 核對）：

@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1–7與Task7 CI64d／run40184992145已核PASS。Task8仍在8A原生資料gate；spec v1.1與精確plan修訂已獨立C/I=0並採用，但未開始production。下一步補完整template/resource authority、引用與context證據，再依8B1–8B3門檻實作。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-26）：Task1–7與Task7 CI64d完成；Task8仍8A。spec v1.2及plan r3/r4獨立審查採用，原生graph仍未通過、沒有production/8B或random seed玩法。以下新紀錄區分方法PASS、原FAIL與有界No-FP診斷。
 
 ## 使用者確認的範圍與順序
 
@@ -266,3 +266,37 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - 原生tag同members反序使同RNG seed0–4選值由magma變netherrack、FP變；RegistryEntryList的get/index/getRandom有順序語意，不全排序。真Jigsaw alias==target==start_pool town_centers仍有actual definition type10/equalsNative兩preset真。root已讀原stdout/comparison；target definition mutation與非alias同欄仍未覆蓋，不將I2全關。batch3 findings2135F73CEE83D14D5CA21A1B1E6CA319321383AC6AD0A72BE773E4DEF9FF23AA、comparison50EF470DC84FD54CFE45B8177443B1DEB60FA2B509D92C132E6646476DD03833、manifestB8FBCB6692A4FD8F23D7C32CEDC1006A973CCB2F767ADC64E66AF57DF62F3958。
 - Context/data authority方案依native SaveLoading refresh→factory及SERVER_STARTING→setup、reload holder/refresh/template clear/END時序；實際接線仍留8B。Template manager cache→saved→devSNBT→ResourceManager；有效writeNbt不單獨證可重建，須持久來源以同manager.createTemplate重建exact比；錯誤不沿native fallback冒充完整。合法temporary Session方法fixture僅提案，尚未執行；完整resource graph、alias-context、預算與其他native缺口仍未關。
 - 本次只有已審契約/plan與CI結果文件採用，不聲稱Native/Task8/新code gates或人工已完成；main/tag/退役未動。正式SourceSnapshot/API/registry/data graph/context/runtime程式，必等8A accepted native review與主控8B放行。
+
+
+## Task8A：方法fixture、型別診斷與 v1.2／r3-r4 採用（2026-10-26）
+
+本段採用前Git實核為67e63df04b0061f493f048fa5c043a1e5832d7aa／clean，實驗均以該HEAD及逐檔凍結artifact釘選。只有ignored prototype／合法temporary LevelStorage.Session；沒有MinecraftServer/ServerWorld、既有世界搬移或production/testmod/build/workflow實作變更。固定constructor後工作、正常與例外路徑共用Session.close＋獨立FileChannel鎖；timeout只合作取消。失敗root與所有原件保留，不在原root改判重跑。
+
+- resource v1原root727551…因fixture誤用NbtIo.read讀disk named-root，得到空compound；保留FAIL，不當native cache故障。v2改readCompound＋EOF及分開witness，在m6-settings-resource-8ffde62a548748b88bdb438fd217e432以PID38016/30500兩phase自然exit0，cache3/unload2/reopen3全true、68項pre/post/classsource與Session/鎖成立。只證有效來源／可持久重建方法；TWO-PHASE-RESULT SHA520557EACAC829E842A512A9202655B016EE6913AA5830506765431E1F2E2C37。root另重算72個原件索引項相符。
+- graph v1準備未runtime；prelaunch修正constructor owner寫入漏close窗口與G2只比FP的缺口，v2增受控acquire後故障與外部canonical逐byte/node manifest比較。固定34 top-level（含9budget pairs／18evaluation），但下面各輪皆未跑完整表；準備／純編譯與guard不當runtime GREEN。
+
+| 實驗（短verification root） | 實際結果 | 清理／範圍 |
+| --- | --- | --- |
+| graph v2 g-e632c7cf188f4691，PID6396 | 7054ms自然exit1；ParameterList.Preset$2未接納 | constructor cleanup控制PASS；2 Session正常close/獨立鎖、105pre/post/classsource exact；無G2 |
+| graph v3 g-855b08c99e567a0b，PID18776 | 10579ms自然exit1；BiomeMaterialCondition CodecHolder未接納 | 同上；原始actual getEntries與重建比較已入prototype，但未認整體通過 |
+| graph v4 g-397fc76c237be2b0，PID11552 | 10384ms自然exit1；TemperatureModifier enum常數子類未辨識 | 同上；15 exact MaterialRules CodecHolder及唯一derived欄有native證據，非泛略callback |
+| graph v5 g-984933d432388149，PID38792 | 10547ms自然exit1；direct Pool未接納 | 同上；enum NONE witness已到達，不能外推全圖 |
+| D1 g-2d01d2c3f0eeafe6，PID27780 | DIAGNOSTIC_STOPPED／自然exit1；hardcoded field.get(null) NPE | 只normal/overworld；1 Session/鎖、100hash/classsource、No-FP真拒。4 raw型別/8 lineage樣本；非gate PASS |
+| D2 g-c4d472e040a02306，PID31540 | DIAGNOSTIC_STOPPED／自然exit1，22.945s；Recipe deepslate unsupported | 只normal/overworld；1 Session/鎖、105hash/classsource、No-FP真拒。8 raw型別/20 lineage樣本，其他5role未到 |
+
+各輪無timeout/kill，事後owner消失、lock獨佔開啟且hash不變；root原件及外部audit無level.dat/region/entities/poi。Graph各FAIL沒有accepted/G2；D1/D2設計上禁止settings FP/canonical.bin/accepted，即使未知0亦非PASS。D2 metrics 174 resources／7,149,297 raw bytes、nodes1435/edges44727/states2044/depth62皆為partial，不據此釘正式budget。
+
+D2 receiver audit在固定JAR8241class/73043method的真GETSTATIC/GETFIELD對照1496列（1486static＋10instance），exact declaring owner/descriptor/flags/read全部閉合；七instance配置欄留typed邊與original Codec input witness。已見11個樣本、9requests/13receiver tokens，但role未完成，不能代role-end完整配對。106個class-group列無同class直接read的保守邊仍保留；receiver audit不等於完整consumer callgraph。NPE的唯一觸發row未有原件，不補造。
+
+原報告SHA：graph v2 B6E00EA49A16C6127590FD1C83D2777A3562982B8EFE9790FFA1B2301800B313；v3 EFBE3B74D63CEEF5DCA9FDE7100A1BD996CE1CE69E927C2E6AD3CF5A00CCC770；v4 74D9174A6FC8F79542AA5A357F12C27FBDBE63F7C80E56CECE78A81DEABCE918；v5 3D50C9269FFC3785750A8143D3B003A7C0DD31B268EEC8FA700F782D95DB4261；D1 3A8D6243D361B26D358D7A91EA79A034522A234EB75D2C99DE547189178A554E；D2 9F940E86F8A76FBFF90DF77F8A4C800B55439B5654149C2DA2A41AA1F43031DD。原始索引在本工作樹SDD task-08各owner；不force-add。
+
+已見family合併草案D025B8AA5FBD326BDF9F3946BECDBF18707FE720DE8E5FB5DCE3E7012AA60743：Pool ordered資料、temple精確factory、sampler original/rebuild（state-provider seed非root必留）、FluidState資料與receiver分流。只有原生證據與待測方案，尚未編譯或實跑這份合併修補。D2 failure前未flush context.evidence/readerSamples，無停止template id／NBT path原件；不把靜態候選當runtime歸屬。
+
+### 已審文件採用與後續硬門檻
+
+- 平台advisory52CB31BF…及owner0845AD41…指出原兩named JVM不證mapping/platform。r3草案8C86461384A6512C9AFB750E4FDFD2CB499F329BB6D0540F534FC0840B05FCDA由fresh SOL review4F03E40EDA33158CA8FF5343BAB72B3B9FAAE485081CBB7F986C30AE903AFD41判C/I/M=0；root全文核。
+- Recipe原生advisory D9927B1B3BBBAEB5C57E7934C3E9B718D21F19CC48EC89BB104AF72D68C4533C釘AbstractFurnaceBlockEntity read/setLastRecipe/領XP Optional語意；不把vanilla deepslate JSON當actual RecipeManager。spec草案49D8D54DA55BA0A958AC2B28702C468DE6CCC215769A647F3C8BC63BF289651C、r4 C2E3926949B62883DE0D7A93706EB76DB9EC06F897A9E925755A7A4623A8E1B8由fresh SOL E9FCC770E6417014F1BE4E8A2F85ADD04E79AFF88B8CA43F4C64158C450522ED判C/I/M=0，root全文核。屬現有生成設定契約的原生語意澄清，不冒稱新增使用者裁示。
+- v1.2只在exact原生furnace/blast_furnace/smoker的RecipesUsed保留完整typed raw history；合法missing id不作required recipe edge，wrong shape/unknown owner不默放。Items/Burn/Cook與真正jigsaw/loot/component依賴仍保留；後續smelting/XP/unlock不在生成設定凍結保證。新controls與正式TemplateAdapterTest仍必做，這次採用不是它們已過。
+- 採用spec SHA 0E0E3E5500241756077BB0860A55D00F8EE80C7508DEF11AD0093AD768D1C305；plan SHA 795FABA837C2D73B08055F305CD8E12A6EAE8D115BC49EC2AB27C969FEDCA71E。相對審過的草案只改標題／狀態／spec引用（spec行1/5、plan行1/11/13/15），契約正文逐行相同。Recipe邊界沒有擴成任意recipe豁免。
+- 8A先完成native資料／有限budget／restart與fresh native review，才可明確放8B；跨runtime比較仍待8B3，Windows named／Ubuntu named／Windows release/intermediary三bundle六role及兩family原始bytes exact、實際classsource／namespace／stop／鎖、CI raw audit未全過不得結Task8或進Task9。新scripts/workflow/build owner見plan，release/sources隔離不變；不是將未驗項目waive。
+- 本次只MD採用／結果記錄，正式code/test/build/workflow與已驗code245／CI64d相同；不重跑同code full、不冒稱採用docs SHA有runtime或新CI audit。後續launcher/spec須改釘採用commit的實際HEAD，不能重用硬67e。尚無8B、random seed玩法、人工／整M6 review或main/tag／退役完成。
