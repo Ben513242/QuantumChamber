@@ -139,29 +139,53 @@ function Invoke-CiCwdPreflightChecks {
     $runPath=Join-Path $project 'run';$beforeExists=Test-Path -LiteralPath $runPath
     $beforeRun=@(if($beforeExists){Get-ChildItem -LiteralPath $runPath -Force | ForEach-Object Name | Sort-Object})
     $entryPids=[Collections.Generic.List[int]]::new();$entryTargets=[Collections.Generic.List[string]]::new()
-    foreach($kind in @('deep-normal-entry','short-preflight-only')){
-        $short=$kind -ceq 'short-preflight-only'
-        $target=if($short){Join-Path $project '.superpowers/verification'}else{Join-Path $evidence ('deep-layout-'+[guid]::NewGuid().ToString('N'))}
+    # 純guard驗參數配對；不直接啟動缺停止旗標的run-all。
+    $tokens=$null;$parseErrors=$null;$runner=Join-Path $PSScriptRoot 'run-all.ps1'
+    $runnerAst=[Management.Automation.Language.Parser]::ParseFile($runner,[ref]$tokens,[ref]$parseErrors)
+    if($parseErrors.Count){throw 'M6_CI_PREFLIGHT_RUNNER_PARSE_FAILED'}
+    $guards=@($runnerAst.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-CiCwdProbeTestMode'},$false))
+    if($guards.Count -ne 1){throw 'M6_CI_PREFLIGHT_GUARD_COUNT'}
+    Invoke-Expression $guards[0].Extent.Text
+    Assert-CiCwdProbeTestMode -Mode None -StopAfterPreflight $false
+    foreach($mode in @('RootSuccess','StartFailure')){
+        $caught=$null
+        try {Assert-CiCwdProbeTestMode -Mode $mode -StopAfterPreflight $false}catch{$caught=$_.Exception.Message}
+        $ok=$caught -like 'M6_CI_CWD_TEST_REQUIRES_PREFLIGHT_ONLY*'
+        $results.Add([ordered]@{name="reject-unbounded-adapter-$mode";passed=$ok;message=$caught;childStarted=$false;guardSource=$runner;guardSourceSha256=(Get-FileHash -LiteralPath $runner).Hash})
+        if(-not $ok){throw 'M6_CI_PREFLIGHT_UNBOUNDED_ADAPTER_ACCEPTED'}
+    }
+    foreach($scenario in @([pscustomobject]@{name='forced-success-bounded';mode='RootSuccess';success=$true},[pscustomobject]@{name='controlled-start-failure-bounded';mode='StartFailure';success=$false},[pscustomobject]@{name='real-short-preflight-only';mode='None';success=$true})){
+        $kind=$scenario.name
+        $target=Join-Path $project '.superpowers/verification'
         $info=[Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh.exe'))
-        foreach($argument in @('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'run-all.ps1'),'-EvidenceRoot',$target)){$info.ArgumentList.Add($argument)}
-        if($short){$info.ArgumentList.Add('-PreflightOnly')}
+        foreach($argument in @('-NoProfile','-NonInteractive','-File',$runner,'-EvidenceRoot',$target,'-PreflightOnly','-CiCwdProbeTestMode',$scenario.mode)){$info.ArgumentList.Add($argument)}
         $info.WorkingDirectory=$project;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+        $rootsBefore=@(if(Test-Path -LiteralPath $target){Get-ChildItem -LiteralPath $target -Directory -Filter 'run-all-*' | ForEach-Object FullName})
+        # 所有child在guard後停止；不再以某種路徑必定拒絕作安全前提。
         $process=[Diagnostics.Process]::Start($info)
         $entryPids.Add($process.Id);$entryTargets.Add($target)
         $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
-        # 子程序只經正式入口的 process-only guard，不設會截斷世界復原的外層timeout。
-        $process.WaitForExit();$stdout=$out.GetAwaiter().GetResult();$stderr=$err.GetAwaiter().GetResult();$exit=$process.ExitCode
+        # 150秒僅為process-only收斂界線（11×10秒＋40秒bootstrap），安全本體是PreflightOnly。
+        if(-not $process.WaitForExit(150000)){
+            $observedRoots=@(if(Test-Path -LiteralPath $target){Get-ChildItem -LiteralPath $target -Directory -Filter 'run-all-*' | Where-Object {$_.FullName -notin $rootsBefore} | ForEach-Object FullName})
+            [ordered]@{kind=$kind;pid=$process.Id;startTimeUtc=([DateTimeOffset]$process.StartTime).ToUniversalTime().ToString('o');evidenceRoot=$target;observedRunRoots=$observedRoots;arguments=@($info.ArgumentList);waitLimitSeconds=150;killed=$false;nextRuntimeAllowed=$false} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence "$kind-timeout.json") -Encoding utf8
+            throw "M6_CI_PREFLIGHT_SELFTEST_TIMEOUT：pid=$($process.Id)；保留現場，確認owned helper收斂前禁止下一runtime"
+        }
+        $stdout=$out.GetAwaiter().GetResult();$stderr=$err.GetAwaiter().GetResult();$exit=$process.ExitCode
         [IO.File]::WriteAllText((Join-Path $evidence "$kind.stdout.log"),$stdout)
         [IO.File]::WriteAllText((Join-Path $evidence "$kind.stderr.log"),$stderr)
         $roots=@([regex]::Matches($stdout,'(?m)^RUN_ROOT=(.+)\r?$') | ForEach-Object {$_.Groups[1].Value.Trim()})
         if($roots.Count -ne 1){throw "M6_CI_PREFLIGHT_TEST_FAILED：root不唯一 kind=$kind"}
         $receipt=Get-Content -LiteralPath (Join-Path $roots[0] 'ci-cwd-preflight.json') -Raw | ConvertFrom-Json
         $noRuntime=$stdout -notmatch '(?m)^BEGIN ' -and @($receipt.worldOperations).Count -eq 0 -and -not $receipt.gradleStarted
-        $ok=if($short){$exit -eq 0 -and $receipt.status -ceq 'PASS' -and @($receipt.rows).Count -eq 11 -and $stdout.Contains('END PREFLIGHT exit=0')}
-            else{$exit -ne 0 -and $receipt.status -ceq 'FAIL' -and ($stdout+$stderr).Contains('M6_CI_CWD_UNSUPPORTED') -and -not $stdout.Contains('END ALL')}
-        $results.Add([ordered]@{name=$kind;passed=[bool]($ok -and $noRuntime);exitCode=$exit;runRoot=$roots[0];preflightOnly=$short;noRuntime=$noRuntime;receiptSha256=(Get-FileHash -LiteralPath (Join-Path $roots[0] 'ci-cwd-preflight.json')).Hash})
+        $modeExact=$receipt.testMode -ceq $scenario.mode
+        $ok=if($scenario.success){$exit -eq 0 -and $receipt.status -ceq 'PASS' -and @($receipt.rows).Count -eq 11 -and $stdout.Contains('END PREFLIGHT exit=0')}
+            else{$exit -ne 0 -and $receipt.status -ceq 'FAIL' -and ($stdout+$stderr).Contains('M6_CI_CWD_UNSUPPORTED') -and @($receipt.rows).Count -eq 1 -and -not $receipt.rows[0].started -and $null -ne $receipt.rows[0].nativeErrorCode -and -not $receipt.rows[0].effectiveCwdExisted -and -not $stdout.Contains('END ALL')}
+        if($scenario.mode -ceq 'RootSuccess'){$ok=$ok -and @($receipt.rows | Where-Object {-not $_.effectiveCwdExisted -or $_.effectiveWorkingDirectory -cne [IO.Path]::GetPathRoot($project) -or -not $_.started -or $_.exitCode -ne 0}).Count -eq 0 -and $receipt.layoutEvidence -ceq 'CONTROLLED_TRANSPORT_ONLY'}
+        if($scenario.mode -ceq 'None'){$ok=$ok -and @($receipt.rows | Where-Object {$_.requestedWorkingDirectory -cne $_.effectiveWorkingDirectory}).Count -eq 0 -and $receipt.layoutEvidence -ceq 'REAL_PROJECTED_CWD'}
+        $results.Add([ordered]@{name=$kind;passed=[bool]($ok -and $noRuntime -and $modeExact);exitCode=$exit;pid=$process.Id;runRoot=$roots[0];preflightOnly=$true;testMode=$scenario.mode;noRuntime=$noRuntime;receiptSha256=(Get-FileHash -LiteralPath (Join-Path $roots[0] 'ci-cwd-preflight.json')).Hash})
         $process.Dispose()
-        if(-not $ok -or -not $noRuntime){throw "M6_CI_PREFLIGHT_TEST_FAILED：kind=$kind exit=$exit"}
+        if(-not $ok -or -not $noRuntime -or -not $modeExact){throw "M6_CI_PREFLIGHT_TEST_FAILED：kind=$kind exit=$exit"}
     }
     $afterJava=@(Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine)
     $afterExists=Test-Path -LiteralPath $runPath

@@ -10,8 +10,14 @@
 # 參數：
 #   -EvidenceRoot  run root 的上層；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle        傳給 gates.ps1／m4-recovery-probe.ps1／m5-collapse-probe.ps1（空字串＝各自預設）
-param([string]$EvidenceRoot='',[string]$Gradle='',[switch]$PreflightOnly)
+param([string]$EvidenceRoot='',[string]$Gradle='',[switch]$PreflightOnly,
+      [ValidateSet('None','RootSuccess','StartFailure')][string]$CiCwdProbeTestMode='None')
 $ErrorActionPreference='Stop'
+function Assert-CiCwdProbeTestMode([string]$Mode,[bool]$StopAfterPreflight){
+    if($Mode -ne 'None' -and -not $StopAfterPreflight){throw 'M6_CI_CWD_TEST_REQUIRES_PREFLIGHT_ONLY：受控adapter只准在明確停止模式使用'}
+}
+Assert-CiCwdProbeTestMode -Mode $CiCwdProbeTestMode -StopAfterPreflight ([bool]$PreflightOnly)
+
 . (Join-Path $PSScriptRoot 'gate-evidence.ps1')
 # 不設定 onlyBatches（先移除 JAVA_TOOL_OPTIONS），default／legacy 皆為完整 suite。
 Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
@@ -103,7 +109,7 @@ function Assert-CiCwdStartable {
         foreach($case in $ciCases){
             $cwd=Join-Path $layout ("ci-$($case.label)-$([guid]::NewGuid().ToString('N'))/fixture")
             New-Item -ItemType Directory -Path $cwd | Out-Null
-            $row=[ordered]@{label=$case.label;cwd=$cwd;characters=$cwd.Length;fileName='pwsh';arguments=@('-NoProfile','-NonInteractive','-Command','exit 0');started=$false;pid=$null;exitCode=$null;nativeErrorCode=$null;timedOut=$false;stdout='';stderr='';error=$null}
+            $row=[ordered]@{label=$case.label;cwd=$cwd;requestedWorkingDirectory=$cwd;effectiveWorkingDirectory=$cwd;testMode=$CiCwdProbeTestMode;effectiveCwdExisted=$null;characters=$cwd.Length;fileName='pwsh';arguments=@('-NoProfile','-NonInteractive','-Command','exit 0');started=$false;pid=$null;exitCode=$null;nativeErrorCode=$null;timedOut=$false;stdout='';stderr='';error=$null}
             $rows.Add($row)
             $process=$null
             try {
@@ -111,6 +117,16 @@ function Assert-CiCwdStartable {
                 foreach($argument in $row.arguments){$info.ArgumentList.Add($argument)}
                 $info.Environment['GITHUB_SHA']=$startHead
                 $info.WorkingDirectory=$cwd;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+                # 受控transport仍是真Process.Start；只有PreflightOnly允許改effective cwd。
+                if($CiCwdProbeTestMode -eq 'RootSuccess'){
+                    $info.WorkingDirectory=[IO.Path]::GetPathRoot($repo)
+                    if(-not(Test-Path -LiteralPath $info.WorkingDirectory -PathType Container)){throw 'M6_CI_CWD_TEST_ROOT_UNAVAILABLE'}
+                } elseif($CiCwdProbeTestMode -eq 'StartFailure'){
+                    $info.WorkingDirectory=Join-Path $runRoot ('intentionally-absent-'+[guid]::NewGuid().ToString('N'))
+                    if(Test-Path -LiteralPath $info.WorkingDirectory){throw 'M6_CI_CWD_TEST_TARGET_EXISTS'}
+                }
+                $row.effectiveWorkingDirectory=$info.WorkingDirectory
+                $row.effectiveCwdExisted=Test-Path -LiteralPath $info.WorkingDirectory -PathType Container
                 $process=[Diagnostics.Process]::Start($info)
                 $row.started=$true;$row.pid=$process.Id
                 $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
@@ -127,11 +143,11 @@ function Assert-CiCwdStartable {
                 while($exception.InnerException){$exception=$exception.InnerException}
                 if($exception -is [ComponentModel.Win32Exception]){$row.nativeErrorCode=$exception.NativeErrorCode}
                 $row.error=$_.Exception.Message
-                throw "M6_CI_CWD_UNSUPPORTED：label=$($case.label) cwd=$cwd native=$($row.nativeErrorCode) error=$($row.error)"
+                throw "M6_CI_CWD_UNSUPPORTED：label=$($case.label) requestedCwd=$cwd effectiveCwd=$($row.effectiveWorkingDirectory) native=$($row.nativeErrorCode) error=$($row.error)"
             } finally {if($process){$process.Dispose()}}
         }
     } catch {$failure=$_.Exception.Message}
-    [ordered]@{status=$(if($failure){'FAIL'}else{'PASS'});head=$startHead;layoutRoot=$layout;expectedLabels=@($ciCases.label);worldOperations=@();gradleStarted=$false;rows=@($rows.ToArray());failure=$failure} |
+    [ordered]@{status=$(if($failure){'FAIL'}else{'PASS'});head=$startHead;testMode=$CiCwdProbeTestMode;layoutEvidence=$(if($CiCwdProbeTestMode -eq 'None'){'REAL_PROJECTED_CWD'}else{'CONTROLLED_TRANSPORT_ONLY'});layoutRoot=$layout;expectedLabels=@($ciCases.label);worldOperations=@();gradleStarted=$false;rows=@($rows.ToArray());failure=$failure} |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runRoot 'ci-cwd-preflight.json') -Encoding utf8
     if($failure){throw $failure}
     Say "CI_CWD_PREFLIGHT PASS cases=$($rows.Count) LAYOUT=$layout"
