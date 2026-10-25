@@ -133,10 +133,12 @@ Task4完成（code4485a92；spec C0/I0/M0、quality C0/I0/M1；同pin雙GREEN與
 
 **Files:** Create `src/main/java/dev/quantumchamber/mixin/NetherFortressGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/NetherFortressGenerationConcurrencyTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`、`scripts/verification/README.md`、`src/test/java/dev/quantumchamber/universe/StrongholdGenerationConcurrencyTest.java`（僅Step0測試cleanup回歸）。
 **Interfaces:** 兩組 static pieces 的 `generatedCount` 只在一個 fortress invocation 內共享；不變更 Stronghold 或 canonical 單世界輸出。
-- [ ] Step0承接Task4 quality M-1：worker啟動後await也納入finally；先release，再逐一嘗試有界join，保留主要例外、cleanup以suppressed附加。只改測試cleanup並加具名失敗路徑回歸，不強停thread、不改Stronghold production；必要共用helper新增前向主控補exact owner。完整回歸併本task。
-- [ ] 先盤點 `ALL_BRIDGE_PIECES`／`ALL_CORRIDOR_PIECES` 的全部讀寫、遞迴與 `/place` 路徑；RED `twoWorldFortressesKeepIndependentCounts` 的兩世界 barrier 應顯示交叉，`singleWorldFortressLayoutUnchanged` 固定 seed。
-- [ ] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.NetherFortressGenerationConcurrencyTest -Label r2-red` 具名 FAIL；窄修後 `r2-green-a/b`、`-Suite GameTest -Batch m6_universe_race_fortress` PASS。
-- [ ] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality；保留原 RED root。
+- [x] Step0承接Task4 quality M-1：worker啟動後await也納入finally；先release，再逐一嘗試有界join，保留主要例外、cleanup以suppressed附加。只改測試cleanup並加具名失敗路徑回歸，不強停thread、不改Stronghold production；必要共用helper新增前向主控補exact owner。完整回歸併本task。
+- [x] 先盤點 `ALL_BRIDGE_PIECES`／`ALL_CORRIDOR_PIECES` 的全部讀寫、遞迴與 `/place` 路徑；RED `twoWorldFortressesKeepIndependentCounts` 的兩世界 barrier 應顯示交叉，`singleWorldFortressLayoutUnchanged` 固定 seed。
+- [x] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.NetherFortressGenerationConcurrencyTest -Label r2-red` 具名 FAIL；窄修後 `r2-green-a/b`、`-Suite GameTest -Batch m6_universe_race_fortress` PASS。
+- [x] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality；保留原 RED root。
+
+Task5完成（code43edeb1；fresh spec/quality均C0/I0/M2；同pin五focused與full通過）。Task4 cleanup M-1關閉；兩個Task5 Minor是lag/Bat原件觀察，記M6 note並由後續相關驗證追蹤，無要求現在新增production修正或為清空警告重跑。
 
 ### Task 6：End city invocation state
 

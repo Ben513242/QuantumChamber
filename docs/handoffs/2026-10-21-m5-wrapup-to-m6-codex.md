@@ -474,3 +474,11 @@
 - Stronghold整輪state隔離code4485a92544df83d1d2337b4d8358451c0c040013；有效原版RED、同clean pin雙JUnit與真世界/place GREEN、full run-all-5c211bff7c78488b8e22ddc4575258f4 END ALL exit0皆完成。四scope179/1/60/4、JUnit667pass+2合法skip、recovery24/collapse69；原件/警告/限制見M6 note。
 - 全新spec C0/I0/M0、quality C0/I0/M1；測試cleanup Minor交Task5 Step0。Task3 scalar fixture Minor已關。正式wrapper只對已核vanilla caller保證，不外推第三方巢狀生成；不冒稱自然worldgen executor或重現CME。
 - 本筆為結果與必要Step0 owner文件，採計4485，不重跑runtime；接續全新Fortress implementer。Task4尚未新增遠端CI結果，main/m5、人工/里程碑整分支/tag/退役未動。
+
+
+### 2026-10-25：M6 Task4 CI／Task5 結案，接續Task6
+
+- Task4正常push165b011，run40153911285 attempt1的Ubuntu／Windows皆success；675原artifact與Main17證據由fresh SOL獨立audit PASS，完整hash/平台排除/1108當次警告歸屬見M6 note。此CI僅背書Task4 code4485。
+- Task5最終code43edeb12bddacc0014e8af85df74c2e49e9000b7，Step0 cleanup＋Fortress獨立整輪guard；原版RED、五輪同clean pin focused、full run-all-01d6cb27560441ba9b12bd95b40be49b END ALL exit0，fresh spec/quality皆C0/I0/M2。
+- 去重後兩個Minor是單次2760ms/55ticks lag與native-save復原Bat UUID重複；保留exact原件/未知根因及影響，不稱受控或已修、不重跑清空輸出。Task4 cleanup Minor已關，無未關C/I；接續Task6 EndCity。
+- 目前Task5尚無自身遠端CI結果，本筆純文件採計43edeb；main/m5、人工／里程碑整分支／tag／退役未動。

@@ -144,3 +144,34 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - 全新獨立spec Approved C0/I0/M0，報告SHA `3D6806A9F3C3B8B01469005382FB727FD195969F15E116011B79E1B60BCCAB00`；quality Approved C0/I0/M1，SHA `EEF08095042EB2914AED0D2F5814B56A6855745D28702ABFA2DF0B398F4F288D`，主控已全文讀回。Minor：測試worker啟動後的await應納finally，多worker逐一嘗試join並保留主要例外；交Task5 Step0，不改production鎖，無待關C/I。
 - clean-pin的當時證據包括session工具讀回；runner有HEAD但沒有各次porcelain檔案，B沒有獨立clean receipt。主控09:15原工具輸出逐bytes摘錄已保存，spec reviewer直接比原session三行一致；不拿現在clean補歷史。後續新launcher保存當時前後HEAD/status，不重跑舊gate。
 - 實作者終局report SHA `926FF0F39D04AFD491E151A535884F654EF3465479E5F4BEB499051392ACDF67`，完整diff SHA `E1AFD05DE95DAF8A6CE8FF9DBAA2CFB5766D80EFEE7A05E00FEA238A967E11DE`。主控另核39核心/source hash、4XML、Main17原件。本段結果文件採計4485，非新docs SHA runtime證據；未新增遠端CI/main/tag/人工/退役結論。
+
+
+## Task4：實際雙平台 CI 結案（2026-10-25）
+
+- 功能分支已正常push並讀回165b0111a4ff00fa5c68ed44a56b92c84bcfd039；相對已驗code4485只有五份結果/接續Markdown。實際[run40153911285](https://github.com/Ben513242/QuantumChamber/actions/runs/40153911285) attempt1，同head的Ubuntu job121051034307與Windows121051034451均success；未重跑。
+- 三ZIP digest與GitHub API/joblog符：Ubuntu F59B71DBF5D2718AE79BE2A085A97B9D6920CA3AF1FC67B6FDF5708AB572533D、JAR E73B8CB86728DF72B5BE3A6011304FB18D7D31A245C5E68D61E38AA49A9FE6AA、Windows21186484503DBAAD6F1A6F4F6D59853EF952CDE9E0A32ECDC7B573B1CE5CBAE5。安全解壓675檔逐hash核符，沒有執行artifact內容。
+- 兩平台四scope原XML179/1/60/4 exact；JUnit669，Ubuntu641pass+28合法Windows-only skip、Windows667pass+2NonWindows skip。Ubuntu原GameTest平台略過與M5唯一_windows的early complete已核，不當原生正向覆蓋；M5 delta Ubuntu59/terminal55、Win60/terminal56，皆連續/confirmed。
+- Stronghold兩平台固定98pieces/a804完整NBT、正式monitor owner、真world/place result1/state與NBT不變皆有原件。M6 pace Ubuntu waited50/TPS27.3、Win38/19.5，minTick10；selftest40，Windows process-only7，Ubuntu UNSUPPORTED/nativeExecuted=false。Task12 native chains NOT_REQUESTED，不冒稱已涵蓋。
+- Windows真Main-only PID4604，17原件hash/samehead、43mod list/實際DLI與argfiles/classload三層均符；221個自家class/lambda均可對release owner。兩次save-all、normalStop、worldkeys/catalog、exclusive lock與exactRestore成立。
+- release433entries/386classes、sources227，無testmod。Ubuntu相對本機class bytes全同，11release resources與193sources文字只CRLF/LF；Windows release完整payload/整JAR同本機，sources僅新增Stronghold mixin28行的CRLF差異。行尾正規化後無其他漂移。
+- 九份實際runtime logs共1108 WARN/ERROR全部逐path/line/block/batch歸屬，M6原版place Ubuntu448/Win444；Windows Main實際4筆offline警告（oracle排除後warningCount0，不等於零原始警告）。受控M5 H2 IO、policy/piston等依當次來源核；沒有新worldgen/CME/NPE或pin/HOLD異常。既有compiler/Actions棄用提示保留，未擴修版本。
+- 全新SOL CI auditor PASS C0/I0/M0，主控已全文讀回。task-04/ci-40153911285/ci-audit-report.md SHA93C1E269CB1B504F6B058727B2D6FA56D4E694B2F9564495C5DE4C1B8C9DC818；result SHA26BAFFD99F676790B45FC6CF76639BE6349420EA710D6412F0F2723E0FDDBB73，independentChecks全true/pending空。
+- 此CI結論僅Task4 code4485/CI165；不代Task5 code43edeb。取得結果時Task5 full在codefreeze，先存ignored原件，本段待其full/review後才併結果文件commit；不為文件重跑runtime或填充CI次數。main/m5、人工、里程碑整分支、tag/退役未動。
+
+
+## Task5：Nether Fortress invocation state完成（2026-10-25）
+
+- range165b011..43edeb1，最終code43edeb12bddacc0014e8af85df74c2e49e9000b7；05f2bda為Task4 M-1 cleanup獨立測試修正、43edeb1為Fortress窄修。只六個允許路徑，production僅Fortress整輪monitor與註冊，不改Stronghold production/算法/RNG/build/EndCity/seed/family。
+- Step0把worker啟動後await納清理範圍，先release、逐一有界join、保留primary/suppressed。原helper RED為5tests/2具名失敗PRIMARY_LOST/JOIN_SKIPPED；另補真worker前屏障失敗回歸。dirty開發GREEN不當clean證據；最終Stronghold A/B各6及full涵蓋三個新增cleanup case。
+- 原版JAR仍C3D5432D0538D7750B985E42788484BEE4C63BBFACD7CADD496E940C83DFCEC4。Start兩list引用同static PieceData；完整addPieces涵蓋重設、所有擴張與shift，獨立monitor保護兩組count。已核vanilla沒有整輪再入/持鎖chunk-server-future等待；限制不外推第三方hook，不宣稱自然worldgen executor壓測或CME已重現。
+- Fortress fixture每invocation用原版9參數Context的createChunkRandom/setCarverSeed，不沿用Stronghold的顯式random0或重用耗過的random。原版seed8128/chunk32,32=155pieces，完整NBT0c60781b533c2b0d82e2f36835d9174a58cc1b72a82cf5035d1cf97150b0149b；Stronghold98/a804原基準保留。
+- 有效RED：focused-r2-red-native-f02801d037484bcdbbbd347f88983b5d為3/1具名FORTRESS_SHARED_STATE_CROSSED/0error，bridge/corridor污染、A NBT0c6078→f76ca1；focused-r2-place-red-native-249ac7287fae436d9c5b016403d5b070兩真world/place案例皆具名污染、原世界exact restore。未把靜態lookup錯誤當runtime RED。
+- compile gate-r2-compile-registered-7df5279cd5764e868ab7f0e5d616b376 PASS。五輪同clean43edeb：Fortress A/B各3、真GT2、Stronghold A/B各6，bad0；每輪原始pre/post HEAD/porcelain現場保存，不補歷史。完整root/XML hash見task-05/focused-full-readiness.json，主控直接重算五XML並讀pin原文。
+- 唯一full .superpowers/verification/run-all-01d6cb27560441ba9b12bd95b40be49b，11:19:59 END ALL exit0/43edeb；summary SHAD631F2965728E8FCC5E9BEBE78672DEA588D537FA25350224BF3733BFE7A6D28。四scope179/1/60/6，JUnit673pass+2合法skip、舊669全保留只增6；M3 4+5/recovery24/collapse69/HALT31/MainPASS。五swap/原M6world23檔pathset/hash/長度/lock/stop均符。
+- release434entries/387classes、sources228，只增Fortressclass/java與註冊/refmap，其餘payload同Task4；testmod0。M6兩個正式monitor物件不同，各有真place與雙world witness；full節流waited63/TPS14.2。
+- 107原logs共3660 WARNERROR：3658已分類（含原版/place1240=Fortress791＋Stronghold449），另兩筆觀察如下。Fortress791與原版RED/focused多重集合exact；Stronghold比Task4 full445的28差異座標Anvil全wall_torch/air，四regionhash保留。沒有新增worldgen/pinHOLD異常；六compiler warnings與Task4逐字同。
+- 新觀察保留：M6 raw:894單次2760ms/55ticks延遲，Fortress PASS後/Stronghold前，M6 6/6/pace/stop仍符；native-save/recover-after-write-fail log:76 Bat UUID重複，原receipt/stop/lock符。source與上下文已留，但根因、實際重複來源/影響未單變量證實；非受控注入、未宣稱已修、不為洗掉warning重跑。兩席獨立review均判非阻擋Minor，保留後續觀察；不是根因已關閉。
+- 最終liveMinecraft0，保留idle daemon25796。初始34120查無、退出原因未知，未kill或重啟補造。full當時前後原文與最後Git同43edeb/空porcelain。主控核四XML與Main17，完整192原件hash由實作者核且供fresh review。
+- 全新spec Approved C0/I0/M2，報告SHA586C3B1B1E7E73F9AC9D2322067B4B43BBDC29F7EC5806BABC790EC34EF12E3A；全新quality Approved C0/I0/M2，SHA021EDE3C40530CFFFD82C9C1EECFA7DF3FB37BC094EF22E09478C77BDF914E63。主控已全文讀回，Task4 cleanup M-1關閉，無未關C/I；兩席M1/M2是同兩筆lag/Bat觀察，去重後共兩項，非四項。
+- 觀察保留於tracked note與後續native／自然多世界驗證；若再現或有entity遺失症狀再依原nonce/世界證據作有界調查，不直接擴張Task6 production，也不為清空警告重跑。Task5結案，接續Task6。
+- 終局report SHA809AEE8181174144084CFCE1F554D5F7AC72A1B153B2293C8F358B08CDC5D6EB；manifest SHACC6DB49928DC8D0BFE0432C4952D74B81FB597D3E9B833AA08F940E147C60D18；完整diff SHA4B5DCE5A352EAB56A111CA257B08D1FB3CDA5F9B731A86DB977256CA8AFCBB6D。結果文件採code43edeb，不冒稱新docs SHA有runtime或借Task4 CI165替本task背書。未新增main/tag/人工/退役結論。
