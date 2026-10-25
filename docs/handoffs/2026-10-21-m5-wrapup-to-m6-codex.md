@@ -462,3 +462,8 @@
 - code ac085c8，range f4b5ab1..ac085c8，完成M6測試框架、路徑／deadline與Windows獨立Main CI接線；最後full run-all-77dcbab203604ecfbff7d94e79f009c6 END ALL exit0。
 - 整Task3 fresh spec C0/I0/M1、quality C0/I0/M0，R2 idle Important已閉；Minor為三個scalar scope fixture，交Task4 Step0。完整hash/原件/修正歷程見M6 note，不拿本機CI規則冒稱遠端。
 - 本筆採計code ac085，是純文件；準備正常push並核實際同CI SHA雙平台。遠端gate尚未完成，不進Task4；main/m5未動，無人工/合併/tag/退役。
+
+### 2026-10-25：M6 Task3 遠端CI結案，接續Task4
+
+- feature已正常push4d8fc66，遠端ref讀回；CI run40144948603兩job同4d8fc66 success。新SOL唯讀artifact audit核669檔／三ZIP、四scope XML、JUnit平台skip、JAR換行／timestamp差異、Windows Main三層/stop/restore與65秒量測，PASS；完整hash見M6 note。
+- Task3已完成，Minor交Task4 Step0；接續Stronghold invocation state，不重做Task1–3或M5。source實測pin仍ac085、本次CI4d8；本筆純文件不重跑runtime，也不為CI次數單獨重推。main/tag/人工/退役未執行。

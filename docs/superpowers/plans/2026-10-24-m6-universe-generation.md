@@ -101,7 +101,7 @@ Task 7 建立 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryPr
 
 ### Task 3：M6 定向 gate 與結果 oracle
 
-本機實作／review完成（code ac085c8；spec C0/I0/M1、quality C0/I0/M0）。實際同CI commit雙平台仍待push後驗證，故本task未全部結案。M-1交Task4 Step0，不拿本機fixture當遠端CI。
+Task3完成（code ac085c8；spec C0/I0/M1、quality C0/I0/M0；CI commit4d8fc66／run40144948603雙平台原件PASS）。M-1交Task4 Step0；本機、CI與後續純文件SHA分別採計，不冒稱新docs SHA重跑runtime。
 
 補充（2026-10-25）：M4 boundary observer 的必要 owner 隔離已經全新 SOL 獨立 review，C0/I0/M0；原四 scope 契約不變。Task 2 quality Minor M-1 依交接規則併入本 task Step 0。
 
@@ -111,7 +111,7 @@ Task 7 建立 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryPr
 - [x] 精確 M6 run 略過 M4 boundary observer 與 M5 suite-end 註冊；mixed scope flags 必拒絕。fresh M6 canary root 不得產生 m4-boundary artifact 或 M5_UNIVERSE_SUITE_END；default／legacy／M5 原 oracle 由 full 保持。
 - [x] 先建可啟動的最小 `runGameTestM6`／`m6-focused.ps1`／四 scope filter，於 `fabric.mod.json` 註冊 canary `fabric-gametest` 並加入可觀察且為真的 `m6_universe_gate` 斷言；跑 `pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_gate -Label g0-canary`，確認 XML 有該 exact case 且 PASS；這是 harness bootstrap，不當行為 RED。
 - [x] 在可執行 canary 基礎上，用錯誤 XML／testmod 泄漏 fixture 使 oracle 具名 `M6_SCOPE_MISMATCH`／`M6_TESTMOD_LEAK` RED；證 default/legacy/M5 均排除 M6、M6 不含它們，不能拿缺 entrypoint 或空測試當 RED。
-- [ ] 加 fresh `run/gametest-m6`、`gameTestM6` 專用 `minTickMillis=10`、`m6-ci-gametest.ps1` 的 Windows／Ubuntu 正常 run 與合法平台拒絕路徑；`g0-green-a/b` 的 canary PASS，negative fixture 仍 FAIL，M6 pace `waited>0/tps<=100.0`、`run-all`/`ci-rule-check` 新 summary 與兩平台同 SHA 比對，release/sources/main-only oracle 照舊。CI 新 step 的 budget/artifact 依上方矩陣。
+- [x] 加 fresh `run/gametest-m6`、`gameTestM6` 專用 `minTickMillis=10`、`m6-ci-gametest.ps1` 的 Windows／Ubuntu 正常 run 與合法平台拒絕路徑；`g0-green-a/b` 的 canary PASS，negative fixture 仍 FAIL，M6 pace `waited>0/tps<=100.0`、`run-all`/`ci-rule-check` 新 summary 與兩平台同 SHA 比對，release/sources/main-only oracle 照舊。CI 新 step 的 budget/artifact 依上方矩陣。
 - [x] 完成 compile、code commit、兩次 clean HEAD focused、full、fresh spec＋quality review；之後所有 task 只能經此 tracked runner 跑 focused。
 
 ## 切片①：三類原版結構生成競態

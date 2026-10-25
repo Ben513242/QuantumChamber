@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1、2完成；Task3本機實作／雙review完成（C/I=0，一項Minor交Task4 Step0），遠端同CI commit的Windows／Ubuntu尚待推送後驗證。CI gate未完成前不進Task4；生成／維度家族程式尚未實作。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-25）：Task1–3完成；Task3 code ac085c8、本機雙review C/I=0，CI commit4d8fc66雙平台原件已核PASS。接續Task4 Stronghold競態，先補scalar fixture Minor；生成／維度家族程式尚未實作。
 
 ## 使用者確認的範圍與順序
 
@@ -115,3 +115,16 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - Minor M-1：m6-ci-gametest的單值scope名稱被PowerShell解包，`$names+'m6_first'`形成串接名稱，三個反例未真的加入獨立M6 case。正式filter與四run XML互斥已成立；依handoff規則交Task4 Step0補精準fixture，非阻擋、此輪不為Minor重跑相同full。
 - 終局task-3-report.md SHA `C06A50AA623DCB8C64E0F4EE94ED69785DD43FDA45543B2DEE2392AEAFD123DB`；完整diff SHA `172DE25DC28F75ACC2705917945F7436AE3E12A4921DAD764CFC868190AA8C07`。本筆為純結果／接續文件，採計ac085，不冒稱docs SHA自己跑過runtime。
 - **目前未push M6、未取得遠端同CI commit的Windows／Ubuntu結果，Task3尚未全部結案。** 下一步正常push feature並讀回實際兩平台XML／pace／JAR／排除及Windows Main原件；C/I及此外部gate清零後才Task4。人工、milestone整分支、main/tag/退役均未執行。
+
+## Task 3：實際雙平台 CI 完成，接續 Task 4（2026-10-25）
+
+- 正常push `codex/m6-universe-generation` 已成功，遠端ref讀回 `4d8fc66b1dfe6f1ac573c9b078766793982c6e3e`；相對本機已驗code ac085c8只有5份Markdown文件，沒有source/test/build/workflow差異。主checkout當時clean/main0d05f88，m5仍a2d2b40；未合main/tag。
+- 實際 [GitHub Actions run40144948603](https://github.com/Ben513242/QuantumChamber/actions/runs/40144948603)：Ubuntu build job121024188392、Windows windows-native job121024188613，同CI SHA4d8fc66、皆success。已經GitHub app讀全文job logs與原artifact，不以本機fixture代替；未重跑此CI。
+- 三ZIP比GitHub digest及upload log相符：Ubuntu `DBF46CC2C7F8C3A59B93D518F3153A5AEE0E7070D5FB8FCA7AD2A2EBB123CBBC`；Windows `147815827481F927ACC29047330A82BA567C7931D253D90CBF7EC23F7E4CE08B`；JAR `FA427C26197B18FB67BB886B134686ABDD37166F2EFC9D95DAB56134020C681C`。安全解壓669檔逐一hash/size核符，mandatory missing0，未執行artifact內程式。
+- 各平台四scope XML為179/1/60/2，exact identities對scope與local ac085；bad/duplicates0。JUnit均666：Ubuntu638 pass＋28 Windows-only skip，Windows664 pass＋2 NonWindows skip。Ubuntu default89個與M5一個_windows案例為平台guard complete，不計原生正向覆蓋。
+- 真wrapper8.8/Temurin21.0.12.1；M6 pace Ubuntu waited29/TPS36.3、Windows waited16/TPS24.0，minTick10且結束行各恰一。Ubuntu真SymbolicLink/selftest37與native UNSUPPORTED、nativeExecuted=false；Windows真Junction/selftest37＋process helper7。Task12 chains未提前採計。
+- Windows Main17原件hash/sameSHA/Main mode/PID2780核符；Fabric mod list43、runtime argfiles/DLI、exact classload皆無testmod/clientProbe；save/normalStop/lock/exactRestore/worldkeys/catalog成立。API Main step65秒（execution51.466秒），低於已核7分鐘初值，只是當次量測。
+- release432entries/385classes、sources226，entry集合同；Windows release與local整JAR SHA相同，Windows sources payload相同但226timestamps不同。Ubuntu release11個JSON、sources193個文字entry僅CRLF/LF；class bytes全exact，換行正規化後無其他payload差異。
+- 9份實際server log共212 WARN/ERROR均歸屬；Windows pin256來自受控第257pin案例，不宣稱零pin warning。另Ubuntu12筆既有SessionTransferFaultMixin annotation warning、兩平台Node20 deprecation與Gradle8.8 notice已記錄；無未歸屬runtime例外、worldgen/CME/NPE/OOM/hold。沒有順手升級版本。
+- 全新SOL唯讀CI auditor `/root/m6_task3_ci_audit` PASS，主控已全文讀回；報告 `task-03/ci-40144948603/ci-audit-report.md` SHA `A2A6094B83322D2CFAF75E98903FE6D0E5276AA9F8EDB23A3807FA56D65D700D`，結果JSON SHA `3BC674AA612465AC64AA6E8E39F9567963185F55C34ACCE76791D8FA7414A2D9`。原ZIP/manifests/原API時間/selected摘錄及完整joblog讀取歸屬均在該root；空jobs-timing.json未採計。
+- Task3所有必要本機／code-review／遠端CI gates已完成；spec M-1已明列交Task4 Step0，沒有未關C/I。此後純狀態文件採計code ac085／CI4d8，不為湊CI次數另推；待下一次正常功能推送合併文件。Task4尚未實作；人工gameplay、milestone整分支、main/tag/退役仍未執行。
