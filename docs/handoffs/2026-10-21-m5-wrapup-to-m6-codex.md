@@ -482,3 +482,11 @@
 - Task5最終code43edeb12bddacc0014e8af85df74c2e49e9000b7，Step0 cleanup＋Fortress獨立整輪guard；原版RED、五輪同clean pin focused、full run-all-01d6cb27560441ba9b12bd95b40be49b END ALL exit0，fresh spec/quality皆C0/I0/M2。
 - 去重後兩個Minor是單次2760ms/55ticks lag與native-save復原Bat UUID重複；保留exact原件/未知根因及影響，不稱受控或已修、不重跑清空輸出。Task4 cleanup Minor已關，無未關C/I；接續Task6 EndCity。
 - 目前Task5尚無自身遠端CI結果，本筆純文件採計43edeb；main/m5、人工／里程碑整分支／tag／退役未動。
+
+
+### 2026-10-25：M6 Task5 CI／Task6 結案，接續Task7
+
+- Task5 CI run40158887195 attempt1/head d9雙平台success，681原檔與Main17由fresh SOL audit PASS；兩平台lag O1再現，性能未驗，並不排除未跑的本機Bat/recovery觀察。完整hash/範圍見M6 note。
+- Task6 code e077be6a0918d7c2e56056e23363b0e2cde1a2cd，EndCity invocation-private ThreadLocal stack＋三字段點；原版真template RED、同pin五focused、新短full44da END ALL exit0與fresh雙review皆C/I0。原深root9280在CI Process.Start失敗，保持FAIL無ENDALL，不拼接；控制與新完整success分開採計。
+- spec/quality均M2：lag未歸因與深cwd支援缺口；前者保留觀察、後者交Task7 Step0 triage。三類race切片完成本機驗證，接續Task7原生seed/settings診斷，DIAGNOSTIC綠不當功能seed已通過。
+- 本筆純結果/接續文件採計e077與Task5 CI d9，不宣稱Task6遠端CI已過；main/m5、人工／milestone整分支／tag／退役未動。

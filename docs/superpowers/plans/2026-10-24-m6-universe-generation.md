@@ -146,9 +146,11 @@ Task5完成（code43edeb1；fresh spec/quality均C0/I0/M2；同pin五focused與f
 **Interfaces:** `Part.shipGenerated` 每次 city invocation 獨立，不洩漏下一任務或另一世界。
 
 Task6原生方案owner補充（2026-10-25）：模板載入有同步resource/disk/DataFix鏈，採五參數root的invocation-private ThreadLocal stack與匿名bridge三個exact字段點，不新增全輪跨thread鎖。已由fresh SOL方案review C0/I0/M1；新增上述bridge mixin/state helper，後續仍須有效RED/compile/remap/同pinGREEN/full/fresh雙review。無frame只沿原字段，不承諾第三方root/Part混用相容；無withInitial，無frame查詢get()==null立即remove，允許JDK瞬時null而不留entry/空stack，root finally恢復父frame或remove。
-- [ ] 盤點 `Part.shipGenerated` 寫入／重設、遞迴及 `/place`；RED `twoWorldEndCitiesKeepShipChoiceIndependent` 與 `singleWorldEndCityLayoutUnchanged` 分別證共享污染及原版輸出。
-- [ ] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.EndCityGenerationConcurrencyTest -Label r3-red` 具名 FAIL；窄修後 `r3-green-a/b`、`-Suite GameTest -Batch m6_universe_race_endcity` PASS。
-- [ ] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality，完成切片①的三類獨立驗收，不用 race 修補取代後續 family 測試。
+- [x] 盤點 `Part.shipGenerated` 寫入／重設、遞迴及 `/place`；RED `twoWorldEndCitiesKeepShipChoiceIndependent` 與 `singleWorldEndCityLayoutUnchanged` 分別證共享污染及原版輸出。
+- [x] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.EndCityGenerationConcurrencyTest -Label r3-red` 具名 FAIL；窄修後 `r3-green-a/b`、`-Suite GameTest -Batch m6_universe_race_endcity` PASS。
+- [x] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality，完成切片①的三類獨立驗收，不用 race 修補取代後續 family 測試。
+
+Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新短full44da通過）。原深root9280保持FAIL，未拼接；兩Minor為lag觀察與深cwd前置支援缺口，後者交Task7 Step0 triage，無未關C/I。
 
 ## 切片②：持久 random seed
 
@@ -156,6 +158,7 @@ Task6原生方案owner補充（2026-10-25）：模板載入有同步resource/dis
 
 **Files:** Create `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryProbe.java`、`scripts/verification/m6-universe-probe.ps1`；Modify `scripts/verification/m6-focused.ps1`、`m6-harness-safety-check.ps1`、`probe-common.ps1`、`run-all.ps1`、`README.md`、`build.gradle`、`src/testmod/resources/fabric.mod.json`。此 task 不改 production。
 **Interfaces:** `M6UniverseRecoveryProbe` 是 testmod `main` entrypoint，`build.gradle` 的 Loom `m6UniverseProbe` run 綁 `run/m6-universe-<nonce>`；`m6-universe-probe.ps1` 使用 `probe-common.ps1` owned process 與 `m6UniverseNonce/Phase/StartupNonce/Root/Chain/ExpectedMode` properties；`-AllEnabled` manifest 首版只有 diagnostic，`run-all.ps1` 從此 task 起真跑。produces `-Chain native-seed-diagnostic` 的 per-world `getSeed/noise/structure/biome/randomSequences` receipt `m6ProbeSchema=1,expectedMode=DIAGNOSTIC`，以及固定 1.21 exact mixin descriptor／constructor thread map，供 Task 11。`probe-common.ps1` 新 extra properties 在 M4/M5 caller 未指定時無行為差異。
+- [ ] Step0承接Task6 M-2：先依280字cwd Win32267／147與218字成功的當次原件，triage正式run-all入口的最小前置診斷或明確支援範圍；在任何昂貴runtime/world操作前拒絕無法啟動的CI布局。用process-only受控反例與短root正例，不臆測通用路徑上限、不改global設定、不搬失敗root。只先用既有run-all／harness owner；若需改ci-rule-check等新path先向主控補owner/方案，獨立review與本task最終gates仍必要。
 - [ ] 以 native-inventory JAR hash 為起點，補 `ServerWorld.getSeed()` 持續全域讀、constructor `StructureLocator`、`ServerChunkLoadingManager` noise/structure、biome source、`RandomSequences` 非 null 共用、End dragon 讀寫、`/place` worker；測試 `newWorldStillReadsSaveSeed`、`newWorldSharesCanonicalRandomSequences` 在 M5 code 上取得**預期現況 RED**，不是測試框架失敗。
 - [ ] `m6-focused.ps1 -Suite Probe -Chain native-seed-diagnostic -Label g1-red` 保留原 root；probe 用新 owned world，startup/shutdown 與 restore 留 receipt；另以 `m6-harness-safety-check.ps1 -Case optional-probe-properties -Label g1-extra` 驗 `probe-common.ps1` 的新 Chain/ExpectedMode properties 僅 M6 傳入、M4/M5 原 arguments 完全不變。此 task 的兩次 GREEN 只表示 `DIAGNOSTIC` oracle 可靠辨識舊行為、單世界控制組通過，另保留 `newWorldHasIndependentSeed` 功能斷言 RED，不能把預期舊缺陷當功能 PASS。
 - [ ] compile→test/probe commit→兩次同 HEAD 探針驗證與 full→fresh spec／quality；將注入點、context owner、不得改全域 SaveProperties 的可執行決定寫入 tracked note 的結果 docs commit。

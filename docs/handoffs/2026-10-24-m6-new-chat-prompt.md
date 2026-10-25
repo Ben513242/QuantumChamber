@@ -1,6 +1,6 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
-> 最新接續（2026-10-25）：以下保留原始開工提示。完整M6／順序與spec／plan已確認，Task1–5完成。Task5 code43edeb的五focused/full與fresh雙review C/I=0；兩筆lag/Bat UUID Minor保留觀察，接續Task6 EndCity。Task4 CI165／run40153911285雙平台原件PASS，不代後續code。依AGENTS、M6 note與SDD STATUS接續，不重問範圍、不重做已完task。
+> 最新接續（2026-10-25）：以下保留原始開工提示。完整M6／順序與spec／plan已確認，Task1–6完成；Task6 code e077、原版RED／同pin focused／新短full與fresh雙review C/I=0。接續Task7 seed/settings原生診斷與probe，先triage深EvidenceRoot的CI cwd支援；lag及歷史Bat觀察未關。Task5 CI d9／run40158887195雙平台原件PASS，不代後續code。依AGENTS、M6 note與SDD STATUS接續，不重問範圍、不重做已完task。
 
 你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。請先核對 M5 收尾事實，再確認 M6 範圍與優先序，完成經獨立 review 的 spec／plan，接著依核准範圍實作。不要只回答能不能做，也不要重做已完成的 M5。
 

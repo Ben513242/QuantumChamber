@@ -175,3 +175,36 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - 全新spec Approved C0/I0/M2，報告SHA586C3B1B1E7E73F9AC9D2322067B4B43BBDC29F7EC5806BABC790EC34EF12E3A；全新quality Approved C0/I0/M2，SHA021EDE3C40530CFFFD82C9C1EECFA7DF3FB37BC094EF22E09478C77BDF914E63。主控已全文讀回，Task4 cleanup M-1關閉，無未關C/I；兩席M1/M2是同兩筆lag/Bat觀察，去重後共兩項，非四項。
 - 觀察保留於tracked note與後續native／自然多世界驗證；若再現或有entity遺失症狀再依原nonce/世界證據作有界調查，不直接擴張Task6 production，也不為清空警告重跑。Task5結案，接續Task6。
 - 終局report SHA809AEE8181174144084CFCE1F554D5F7AC72A1B153B2293C8F358B08CDC5D6EB；manifest SHACC6DB49928DC8D0BFE0432C4952D74B81FB597D3E9B833AA08F940E147C60D18；完整diff SHA4B5DCE5A352EAB56A111CA257B08D1FB3CDA5F9B731A86DB977256CA8AFCBB6D。結果文件採code43edeb，不冒稱新docs SHA有runtime或借Task4 CI165替本task背書。未新增main/tag/人工/退役結論。
+
+
+## Task5：實際雙平台 CI 結案（2026-10-25）
+
+- 功能分支正常push並讀回d9e570545a6c9bf5186bb4fc154b9f848d196281；對已驗code43edeb只五份純結果Markdown。[run40158887195](https://github.com/Ben513242/QuantumChamber/actions/runs/40158887195) attempt1，同head的Ubuntu job121066035452與Windows121066035350皆success，沒有重跑。
+- 官方三ZIP SHA：Ubuntu5EEF559B0F1976769DD5B7F68ACEE071E50BC8AC38976D8B2EF783D882BDC6B4、JAR3DEC5EF1CA3E45BBE17FF4B44B6593EEAF427C5B674924889DD3CCEAB7E11B9E、Win18274B9E93A6B11B4D1191D34C51D8660421C320D74E78FB40F2917B0521E9D1；681原檔逐hash/length/ZIPpayload皆符。
+- 兩平台四scope179/1/60/6 exact；JUnit675，Ubuntu647pass+28合法skip、Windows673pass+2skip。Stronghold6/98/a804、Fortress3/155/0c6078與四真world/place案例皆有原NBT/monitor/owner/stop正向原件；原版算法/RNG基準無漂移。
+- M6 pace Ubuntu waited58/TPS12.4、Windows49/7.0、minTick10，selftest40與Windows process-only7符。Ubuntu平台略過及M5唯一_windows early complete已核，不算Windows原生正向；Task12 native chains NOT_REQUESTED，本CI亦未跑本機M3/recovery24/collapse69。
+- Windows真Main-only PID6008，17原件hash/samehead、43mod list、DLI/argfiles/classload三層、兩次save-all/normalStop/exclusive lock/exactRestore/worldkeys/catalog成立。release434/387classes、sources228無testmod；兩平台class bytes同本機，Ubuntu11resources/193sources與Windows兩mixin.java僅CRLF差異。
+- 當次九份runtime原log共2694 WARNERROR逐來源歸屬，M6 PostProcessing Ubuntu1237/Win1239，另properties/eula及lag；Main四筆offline不等於實際零warning。既有受控IO/policy/rollback等按當次batch/stack核，不以舊full數字代入。
+- CI O-1延續Task5 M-1觀察：Ubuntu原latest:913 lag3444ms/68ticks，在Fortress REAL_WORLDS/canary後、Stronghold前；Windows:897 lag7209ms/144ticks，在Fortress placePASS後、two-context前。秒級preflight→place粗窗口不是分段/單變量量測，不能歸因鎖或預載，也不宣稱性能/吞吐已驗或警告已修。本機Bat/recovery未歸因觀察不因本CI未跑相關chain而排除。
+- 全新SOL CI auditor PASS C0/I0/M0＋非阻斷O-1，主控已全文讀回。task-05/ci-40158887195/ci-audit-report.md SHA087821AAE3BDB99475F0792457EC548C09A1F7C3B1400F1C6206A9A9531EC504；result SHA898F2A368671D632592D6732CD991E95654E8ECF9E87A8301043126BAE3C2411，independentChecks全true/pending空。
+- 結論只對Task5 code43edeb/CI d9，不代Task6 e077。結果取得時Task6 full已凍結，先留ignored原件，本段待其full/review後才併結果docs；不為文件重跑runtime或填CI次數。main/m5、人工、里程碑整分支、tag/退役未動。
+
+
+## Task6：End city invocation state完成（2026-10-25）
+
+- range d9e5705..e077be6，production候選74943e83601c3a514a9148a7b791b5611943a9db、fixture修正e077be6a0918d7c2e56056e23363b0e2cde1a2cd。八tracked檔含主控核准plan owner單段；不改Stronghold/Fortress production、seed/profile/family/renderer。
+- 原版EndCity五參數generator整輪包四個Part.init與全部遞迴；模板有同步resource/disk/DataFix鏈，採invocation-private ThreadLocal stack，不新增整輪全域鎖。新增EndCityBridgeStateMixin／EndCityInvocationState兩owner經fresh方案review C0/I0/M1，SHA CDD62677A952B7AF4F32661BDA0DAD696B96C92DAEFF39E53C5472B27C7C929E。
+- root push false、finally回父/空時remove；無withInitial，無frame查詢getnull即remove，不留空stack/entry（允許JDK瞬時null）。三字段init PUT/create GET+PUT各require1/allow1/Coerce/Shadow/remap；保持選船但collision拒絕的原語意。無frame只沿原field，不承諾第三方root/Part混用final共享flag相容，方案M1已限縮Javadoc/README。
+- 真20模板byte/hash/尺寸/DataVersion3953，以Schemas.getFixer+manager.createTemplate原版loader。Context/carverseed/rotation/offset+7按原版，JUnit固定y80不冒稱terrain eligibility；session唯一nonce/finally close，失敗保留不刪。
+- 原版完整loader RED：focused-r3-red-template-loader-e9dd1a9bf1cb4877965d0fe6752dcb62/gate-r3-red-template-loader-10e85cf7edd64b719e12b737732a2b2c，XML SHA B44A7CC4B3D3E091A0E99C675CE7DAD8EFA52EF0316830B279B83374C1DE0116；4/2具名FAIL，並行flag true→false使A94pieces/1ship變108/2，nested父flag亦被污染，非setup。初A無船timeout原root另留不當RED。
+- A seed481516/chunk-32,-32/pos-505,80,-505 原NBT d06329e10c9031569b17660abba5d85069ee705fc05145321b5b99daa543925a、94/1、rng-1076416987575963468、rot90；B8128/chunk32,32原NBT33a33d1ffe909140fd5cc5f6bed8a2d06e130b3ffbe924a45f0064a349fb2c13、8/0、rng-8328947346988894843、rot180。未為通過改基準；RNG wrapper只委派不加抽樣。
+- 74943初GT5/6為EndCity固定位置高度<60/無pieces，在worker前bbox失敗，原root/restore保留。e077純fixture修正用81點有界外島grid問原版hasChildren；第7點1024,80,1792合法，exactbox預載、同座標真place1且A仍暫停時command完成；A完整NBT/船/RNG保持。production diff空，非繞過eligibility/skip。
+- 最終e077五focused：EndCity雙6、三raceGT6、Stronghold6、Fortress3，全bad0；每輪現場pre/post git exit0/expectedHEAD/0byte status。原74943GREEN（含A缺status鏡像的真pre-JUnit/post時序）只作歷史，不背書最終。既有NativeHarness本文不變、bbox抽函式正規化exact；舊兩JUnit各一回歸，完整full再驗。
+- 發布remap靜態核major65、匿名class_3342$3/field_14394、root14679/init14688/create14687及兩註冊；後續以最終full發布原件核內容。主控已讀三production、fixturefix與五原XML/pin/GT原log/restore。
+- 首輪full深SDD/pin/run-all-92807788b5214113ac1ff5c99fb276b1：runtime全過但13:14:58 CI-rule Process.Start失敗，outer14684 exit1，無summary/ENDALL；不拼接改判、原世界5swap/locks皆恢復且root保留。原cwd280字實體存在；同pwsh/args/環境process-only v2/v3兩次Win32267，147與最長CIlabel投影218均exit0；正式CI-only短cwd178 smoke通過。此控制不代full。
+- 未改source/global設定/registry/PATH或搬動失敗root。主控另放行預設短.superpowers/verification的新full run-all-44da51f56266477882047b03b7fcfc60，metadata pin89f91另存SDD，不作EvidenceRoot；同clean e077五focused沿用。14:10:16新輪END ALL exit0/e077，summary SHA D885B7EDFB574D094C76FB7E7DFE39BF45BFAA46E4B3092AB74315AE01186988；四scope179/1/60/8、JUnit679pass+2合法skip、M3九/recovery24/collapse69/HALT31、11CI規則全完成。release438/391classes/sources231/testmod0；新Main PID16228三層/17原件/stop/restore符。主控已核新原summary/四XML/prepost同pin；完整warnings/owner以終局audit再核，不借原失敗輪。
+- 新短full107原logs3652 WARNERROR全逐來源核對，包含place1231（Fortress791、Stronghold440）及三lag：M6:893 2819ms/56ticks、w4-restart:101 2726/54、w10-crash:97 2001/40，分別綁當次receipt/stop或HALT77/lock；不把M6時序套其餘phase。controlled IO可識別、worldgen/pinHOLD0，原M6world23檔與5swap/7locks均符。
+- Task5 lag M1在本task focused再現2577ms/51ticks，Fortress place後/EndCity前；原深full亦2763/55。唯讀lag-triage比較原行/舊preload與NativeHarness原文一致，沒有分段/單變量因果或吞吐保證；不稱已修、不改logger/timeout/production或為pristine重跑。新的短full依當次原件另報，不借舊數字。Task5 Bat M2未因本task某輪未見而關閉。
+- fresh spec Approved C0/I0/M2，SHA5614D5425B1F0F500ACEE45EFB6D36F7C3DC1827CF4C624CFF5078E4E8784DEE；fresh quality Approved C0/I0/M2，SHAB0EAD6A3F59589873A40E55A17B177B8958505E3C7E676C0587376D217BEF167，主控全文讀/hash核。兩席同兩Minor去重：M1三lag未歸因，M2深EvidenceRoot的CI cwd支援缺口；不因全綠關性能/Bat觀察，M2交Task7 Step0先triage最小正式入口前置診斷/支援範圍。沒有未關C/I，Task6結案；Task7僅診斷，不先宣稱獨立seed功能。
+- 唯一終局report SHA0F0ED58B604555DF6B2C33B28D601B24FBB90CF43EBBFB1A562B9F99EED8AE1F；新短full audit SHA3496C5E3E695A69B9B5F646A49E10FAA82DA5B1F249B125DA33CEA020006AB00；manifest（44evidence+8source）D3CEA1D6EFF3C8477514BFC37EF334BE021AC9CD18351B35124C47DD45746B3F。
+- 完整review diff SHA A6677A3783782FB93C68FF94D23F5843DA3C9B1C61EAD89782A82F65A6B13CEF。結果文件採最終code e077，不冒稱docs SHA或Task5 CI d9背書此候選；main/tag/人工/退役未動。
