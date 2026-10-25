@@ -81,26 +81,25 @@ public final class M6RaceGameTests implements FabricGameTest {
             var paused = new NativeHarness.PausedCollector();
             var failure = new AtomicReference<Throwable>();
             var worker = NativeHarness.worker("M6Stronghold-place-worker", () -> NativeHarness.generate(workerContext, paused), failure);
-            NativeHarness.await(paused.paused, "worker 尚未到原生 count 屏障");
             var commandDone = new AtomicBoolean();
             var serverThread = Thread.currentThread();
-            var monitor = NativeHarness.worker("M6Stronghold-place-observer", () -> {
-                try { NativeHarness.awaitBlockedOrFinished(serverThread, commandDone, worker, "place"); }
-                finally { paused.release.countDown(); }
-            }, failure);
-            int value;
-            try {
-                value = server.getCommandManager().getDispatcher().execute(
+            var monitor = new AtomicReference<Thread>();
+            var value = new int[1];
+            NativeHarness.withCleanup(() -> {
+                NativeHarness.await(paused.paused, "worker 尚未到原生 count 屏障");
+                monitor.set(NativeHarness.worker("M6Stronghold-place-observer", () -> {
+                    try { NativeHarness.awaitBlockedOrFinished(serverThread, commandDone, worker, "place"); }
+                    finally { paused.release.countDown(); }
+                }, failure));
+                value[0] = server.getCommandManager().getDispatcher().execute(
                         "place structure minecraft:stronghold 1024 64 1024", server.getCommandSource().withWorld(world).withLevel(4));
-            } finally {
-                commandDone.set(true); paused.release.countDown();
-                NativeHarness.join(worker); NativeHarness.join(monitor);
-            }
+            }, () -> { commandDone.set(true); paused.release.countDown(); },
+                    () -> NativeHarness.join(worker), () -> { if (monitor.get() != null) NativeHarness.join(monitor.get()); });
             NativeHarness.rethrow(failure.get());
-            System.out.println("M6_STRONGHOLD_PLACE_RESULT serverThread=" + serverThread.getName() + " result=" + value + " expected=" + expected + " actual=" + NativeHarness.layout(paused) + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
-            context.assertTrue(value == 1 && paused.before.equals(paused.after) && expected.equals(NativeHarness.layout(paused)),
+            System.out.println("M6_STRONGHOLD_PLACE_RESULT serverThread=" + serverThread.getName() + " result=" + value[0] + " expected=" + expected + " actual=" + NativeHarness.layout(paused) + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
+            context.assertTrue(value[0] == 1 && paused.before.equals(paused.after) && expected.equals(NativeHarness.layout(paused)),
                     "M6 Stronghold /place 汙染 worker state/layout");
-            System.out.println("M6_STRONGHOLD_PLACE PASS serverThread=" + serverThread.getName() + " worker=" + worker.getName() + " result=" + value + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
+            System.out.println("M6_STRONGHOLD_PLACE PASS serverThread=" + serverThread.getName() + " worker=" + worker.getName() + " result=" + value[0] + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
             context.complete();
         } catch (Exception failure) { throw new IllegalStateException("M6 Stronghold /place 交錯驗證失敗", failure); }
     }
@@ -183,20 +182,17 @@ public final class M6RaceGameTests implements FabricGameTest {
             var actualB = new AtomicReference<String>(); var failure = new AtomicReference<Throwable>();
             var bDone = new AtomicBoolean();
             var a = worker("M6Stronghold-world-A", () -> generate(first, paused), failure);
-            Thread b = null;
-            String observed;
-            try {
+            var b = new AtomicReference<Thread>();
+            var observed = new AtomicReference<String>();
+            withCleanup(() -> {
                 await(paused.paused, "A 尚未到原生 count 屏障");
-                b = worker("M6Stronghold-world-B", () -> {
+                b.set(worker("M6Stronghold-world-B", () -> {
                     try { actualB.set(layout(generate(second))); } finally { bDone.set(true); }
-                }, failure);
-                observed = awaitBlockedOrFinished(b, bDone, a, "two-contexts");
-            } finally {
-                paused.release.countDown();
-                join(a); if (b != null) join(b);
-            }
+                }, failure));
+                observed.set(awaitBlockedOrFinished(b.get(), bDone, a, "two-contexts"));
+            }, paused.release::countDown, () -> join(a), () -> { if (b.get() != null) join(b.get()); });
             rethrow(failure.get());
-            var result = new RaceResult(paused.before, paused.after, expectedA, layout(paused), expectedB, actualB.get(), observed);
+            var result = new RaceResult(paused.before, paused.after, expectedA, layout(paused), expectedB, actualB.get(), observed.get());
             System.out.println("M6_STRONGHOLD_NATIVE " + result + " countsA=" + pieceCounts(paused));
             return result;
         }
@@ -226,6 +222,24 @@ public final class M6RaceGameTests implements FabricGameTest {
         }
 
         @FunctionalInterface public interface ThrowingRunnable { void run() throws Exception; }
+
+        /** 統一測試屏障的失敗清理；每個 join 仍有原本的有界等待。 */
+        public static void withCleanup(ThrowingRunnable action, Runnable release, ThrowingRunnable... joins) throws InterruptedException {
+            Throwable problem = null;
+            try { action.run(); } catch (Throwable failure) { problem = failure; }
+            try { release.run(); } catch (Throwable failure) { problem = appendFailure(problem, failure); }
+            for (var join : joins) {
+                try { join.run(); } catch (Throwable failure) { problem = appendFailure(problem, failure); }
+            }
+            if (problem instanceof InterruptedException interrupted) throw interrupted;
+            rethrow(problem);
+        }
+
+        private static Throwable appendFailure(Throwable primary, Throwable cleanup) {
+            if (primary == null) return cleanup;
+            if (primary != cleanup) primary.addSuppressed(cleanup);
+            return primary;
+        }
 
         public static Thread worker(String name, ThrowingRunnable action, AtomicReference<Throwable> failure) {
             var thread = new Thread(() -> { try { action.run(); } catch (Throwable problem) { failure.compareAndSet(null, problem); } }, name);

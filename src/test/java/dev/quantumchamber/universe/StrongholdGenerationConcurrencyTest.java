@@ -80,6 +80,47 @@ final class StrongholdGenerationConcurrencyTest {
         assertTrue(baseline.toList().pieces().stream().anyMatch(piece -> piece.getClass().getSimpleName().equals("PortalRoom")), "原版重試必須產生PortalRoom");
     }
 
+    @Test void cleanupKeepsPrimaryFailureAndAttemptsEveryJoin() {
+        var primary = new InterruptedException("M6_CONTROLLED_PRE_BARRIER_INTERRUPT");
+        var firstJoin = new IllegalStateException("M6_CONTROLLED_FIRST_JOIN_FAILURE");
+        var secondJoin = new IllegalArgumentException("M6_CONTROLLED_SECOND_JOIN_FAILURE");
+        var order = new java.util.ArrayList<String>();
+        var actual = assertThrows(Throwable.class, () -> NativeHarness.withCleanup(
+                () -> { order.add("await"); throw primary; },
+                () -> order.add("release"),
+                () -> { order.add("join-A"); throw firstJoin; },
+                () -> { order.add("join-B"); throw secondJoin; }));
+        assertTrue(actual == primary, "M6_CLEANUP_PRIMARY_LOST：清理不得遮蔽原始屏障失敗");
+        assertEquals(List.of("await", "release", "join-A", "join-B"), order, "M6_CLEANUP_JOIN_SKIPPED");
+        assertEquals(List.of(firstJoin, secondJoin), List.of(actual.getSuppressed()), "M6_CLEANUP_SUPPRESSED_MISSING");
+    }
+
+    @Test void preBarrierFailureReleasesAndJoinsStartedWorker() throws InterruptedException {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var waiting = new java.util.concurrent.CountDownLatch(1);
+        var failure = new AtomicReference<Throwable>();
+        var worker = NativeHarness.worker("M6Stronghold-cleanup-pre-barrier", () -> {
+            waiting.countDown(); NativeHarness.await(release, "cleanup release 遺失");
+        }, failure);
+        var primary = new InterruptedException("M6_CONTROLLED_PRE_BARRIER_INTERRUPT");
+        var actual = assertThrows(InterruptedException.class, () -> NativeHarness.withCleanup(
+                () -> { NativeHarness.await(waiting, "worker未啟動"); throw primary; },
+                release::countDown, () -> NativeHarness.join(worker)));
+        assertTrue(actual == primary, "原始中斷必須保留");
+        assertFalse(worker.isAlive(), "M6_CLEANUP_WORKER_LEAK");
+        NativeHarness.rethrow(failure.get());
+    }
+
+    @Test void cleanupWithoutPrimaryStillAttemptsLaterJoin() {
+        var firstJoin = new IllegalStateException("M6_CONTROLLED_FIRST_JOIN_FAILURE");
+        var order = new java.util.ArrayList<String>();
+        var actual = assertThrows(Throwable.class, () -> NativeHarness.withCleanup(
+                () -> order.add("action"), () -> order.add("release"),
+                () -> { order.add("join-A"); throw firstJoin; }, () -> order.add("join-B")));
+        assertTrue(actual == firstJoin, "首個清理失敗必須保留");
+        assertEquals(List.of("action", "release", "join-A", "join-B"), order, "M6_CLEANUP_JOIN_SKIPPED");
+    }
+
     @Test void exceptionReleasesInvocationAndWorkerCanBeReused() throws InterruptedException {
         var expected = NativeHarness.layout(NativeHarness.generate(context(8128, 32, 32)));
         var failure = new AtomicReference<Throwable>();
