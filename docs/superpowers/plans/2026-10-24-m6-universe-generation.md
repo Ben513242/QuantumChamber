@@ -142,8 +142,10 @@ Task5完成（code43edeb1；fresh spec/quality均C0/I0/M2；同pin五focused與f
 
 ### Task 6：End city invocation state
 
-**Files:** Create `src/main/java/dev/quantumchamber/mixin/EndCityGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/EndCityGenerationConcurrencyTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`、`scripts/verification/README.md`。
+**Files:** Create `src/main/java/dev/quantumchamber/mixin/EndCityGeneratorStateMixin.java`、`src/main/java/dev/quantumchamber/mixin/EndCityBridgeStateMixin.java`、`src/main/java/dev/quantumchamber/universe/EndCityInvocationState.java`、`src/test/java/dev/quantumchamber/universe/EndCityGenerationConcurrencyTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`、`scripts/verification/README.md`。
 **Interfaces:** `Part.shipGenerated` 每次 city invocation 獨立，不洩漏下一任務或另一世界。
+
+Task6原生方案owner補充（2026-10-25）：模板載入有同步resource/disk/DataFix鏈，採五參數root的invocation-private ThreadLocal stack與匿名bridge三個exact字段點，不新增全輪跨thread鎖。已由fresh SOL方案review C0/I0/M1；新增上述bridge mixin/state helper，後續仍須有效RED/compile/remap/同pinGREEN/full/fresh雙review。無frame只沿原字段，不承諾第三方root/Part混用相容；無withInitial，無frame查詢get()==null立即remove，允許JDK瞬時null而不留entry/空stack，root finally恢復父frame或remove。
 - [ ] 盤點 `Part.shipGenerated` 寫入／重設、遞迴及 `/place`；RED `twoWorldEndCitiesKeepShipChoiceIndependent` 與 `singleWorldEndCityLayoutUnchanged` 分別證共享污染及原版輸出。
 - [ ] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.EndCityGenerationConcurrencyTest -Label r3-red` 具名 FAIL；窄修後 `r3-green-a/b`、`-Suite GameTest -Batch m6_universe_race_endcity` PASS。
 - [ ] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality，完成切片①的三類獨立驗收，不用 race 修補取代後續 family 測試。

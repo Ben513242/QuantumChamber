@@ -79,24 +79,8 @@ public final class M6RaceGameTests implements FabricGameTest {
         var workerWorld = kind == Kind.FORTRESS ? server.getOverworld() : server.getWorld(World.NETHER);
         context.assertTrue(server.isOnThread() && world != null && workerWorld != null && world != workerWorld, "真 /place 必須在 server thread，worker 使用另一實際世界");
         try {
-            // 先在持鎖前完成原版 /place 所需 chunks 的載入，鎖內不可等待 server/chunk 工作。
             var pos = new BlockPos(1024, 64, 1024);
-            var generator = world.getChunkManager().getChunkGenerator();
-            var structure = world.getRegistryManager().get(RegistryKeys.STRUCTURE).getEntry(kind == Kind.STRONGHOLD ? StructureKeys.STRONGHOLD : StructureKeys.FORTRESS).orElseThrow().value();
-            var prepared = structure.createStructureStart(world.getRegistryManager(), generator, generator.getBiomeSource(),
-                    world.getChunkManager().getNoiseConfig(), world.getStructureTemplateManager(), world.getSeed(), new ChunkPos(pos), 0, world, biome -> true);
-            // StructureStart還會依terrain adaptation擴張box；不可只載入collector的piece box。
-            var box = prepared.getBoundingBox();
-            world.getChunk(pos);
-            System.out.println("M6_" + kind + "_PLACE_PREFLIGHT targetLoaded=" + world.isChunkLoaded(pos) + " box=" + box);
-            for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) {
-                for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) world.getChunk(x, z);
-            }
-            for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) {
-                for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) {
-                    context.assertTrue(world.isChunkLoaded(new BlockPos(x << 4, 64, z << 4)), "原版/place需要的bbox chunk未載入");
-                }
-            }
+            preparePlaceChunks(context, world, kind == Kind.STRONGHOLD ? StructureKeys.STRONGHOLD : StructureKeys.FORTRESS, pos, kind.toString());
             var workerContext = worldContext(workerWorld, 481516, new ChunkPos(-32, -32));
             var expected = NativeHarness.layout(NativeHarness.generate(workerContext, kind));
             var paused = new NativeHarness.PausedCollector(kind);
@@ -123,6 +107,68 @@ public final class M6RaceGameTests implements FabricGameTest {
             System.out.println("M6_" + kind + "_PLACE PASS serverThread=" + serverThread.getName() + " worker=" + worker.getName() + " result=" + value[0] + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
             context.complete();
         } catch (Exception failure) { throw new IllegalStateException("M6 " + kind + " /place 交錯驗證失敗", failure); }
+    }
+
+
+    private static void preparePlaceChunks(TestContext context, ServerWorld world,
+            net.minecraft.registry.RegistryKey<Structure> structureKey, BlockPos pos, String kind) {
+        // 在 worker 屏障之前預載原版 StructureStart 的 exact bbox；place內不補等 chunk。
+        var generator = world.getChunkManager().getChunkGenerator();
+        var structure = world.getRegistryManager().get(RegistryKeys.STRUCTURE).getEntry(structureKey).orElseThrow().value();
+        var prepared = structure.createStructureStart(world.getRegistryManager(), generator, generator.getBiomeSource(),
+                world.getChunkManager().getNoiseConfig(), world.getStructureTemplateManager(), world.getSeed(), new ChunkPos(pos), 0, world, biome -> true);
+        // StructureStart還會依terrain adaptation擴張box；不可只載入collector的piece box。
+        var box = prepared.getBoundingBox();
+        world.getChunk(pos);
+        System.out.println("M6_" + kind + "_PLACE_PREFLIGHT targetLoaded=" + world.isChunkLoaded(pos) + " box=" + box);
+        for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) {
+            for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) world.getChunk(x, z);
+        }
+        for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) {
+            for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) {
+                context.assertTrue(world.isChunkLoaded(new BlockPos(x << 4, 64, z << 4)), "原版/place需要的bbox chunk未載入");
+            }
+        }
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_endcity", tickLimit=1200)
+    public void end_cities_in_two_real_worlds_keep_ship_choice(TestContext context) {
+        var server = context.getWorld().getServer();
+        var first = server.getWorld(World.END); var second = server.getOverworld();
+        context.assertTrue(first != null && first != second, "End city 必須使用兩個實際 ServerWorld");
+        try {
+            var result = EndCityHarness.race(worldContext(first, 481516, new ChunkPos(-32, -32)),
+                    worldContext(second, 8128, new ChunkPos(32, 32)));
+            System.out.println("M6_END_CITY_REAL_WORLDS worlds=" + first.getRegistryKey().getValue() + "," + second.getRegistryKey().getValue() + " " + result);
+            result.requireSafe(); context.complete();
+        } catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_endcity", tickLimit=1200)
+    public void end_city_place_on_server_thread_and_worker_finish_without_deadlock(TestContext context) {
+        var server = context.getWorld().getServer(); var world = server.getWorld(World.END); var workerWorld = server.getOverworld();
+        context.assertTrue(server.isOnThread() && world != null && world != workerWorld, "真End city/place必須在server thread");
+        try {
+            var pos = new BlockPos(1024, 80, 1024);
+            preparePlaceChunks(context, world, StructureKeys.END_CITY, pos, "END_CITY");
+            var workerContext = worldContext(workerWorld, 481516, new ChunkPos(-32, -32));
+            var expected = EndCityHarness.generate(workerContext).signature();
+            var paused = new EndCityHarness.PausedRandom(); var actual = new AtomicReference<String>();
+            var failure = new AtomicReference<Throwable>();
+            var worker = NativeHarness.worker("M6EndCity-place-worker", () -> actual.set(EndCityHarness.generate(workerContext, paused).signature()), failure);
+            var value = new int[1];
+            NativeHarness.withCleanup(() -> {
+                NativeHarness.await(paused.paused, "End city worker未到船隻RNG屏障");
+                value[0] = server.getCommandManager().getDispatcher().execute("place structure minecraft:end_city 1024 80 1024",
+                        server.getCommandSource().withWorld(world).withLevel(4));
+                context.assertTrue(paused.release.getCount() == 1, "server /place 必須在worker仍暫停時完成");
+            }, paused.release::countDown, () -> NativeHarness.join(worker));
+            NativeHarness.rethrow(failure.get());
+            context.assertTrue(value[0] == 1 && paused.before == paused.after && expected.equals(actual.get()), "End city/place 污染worker船隻/NBT/RNG或未完成");
+            System.out.println("M6_END_CITY_PLACE PASS serverThread=" + Thread.currentThread().getName() + " worker=" + worker.getName()
+                    + " result=" + value[0] + " stateBefore=" + paused.before + " stateAfter=" + paused.after + " expected=" + expected + " actual=" + actual.get());
+            context.complete();
+        } catch (Exception failure) { throw new IllegalStateException("M6 End city /place 驗證失敗", failure); }
     }
 
     private static Structure.Context worldContext(ServerWorld world, long seed, ChunkPos pos) {
@@ -346,6 +392,106 @@ public final class M6RaceGameTests implements FabricGameTest {
             if (failure instanceof Error error) throw error;
             if (failure instanceof RuntimeException runtime) throw runtime;
             if (failure != null) throw new IllegalStateException(failure);
+        }
+    }
+
+    /** End city 保留五參數原版入口；共用既有 worker/cleanup，屏障只在委派 RNG。 */
+    public static final class EndCityHarness {
+        private static final Field BRIDGE = NativeHarness.field(net.minecraft.structure.EndCityGenerator.class, "BRIDGE_PIECE");
+        private static final Field SHIP = NativeHarness.field(bridge().getClass(), "shipGenerated");
+        private EndCityHarness() { }
+
+        private static Object bridge() {
+            try { return BRIDGE.get(null); } catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
+        }
+
+        public static boolean shipState() {
+            try {
+                boolean nativeValue = SHIP.getBoolean(bridge());
+                try {
+                    var state = Class.forName("dev.quantumchamber.universe.EndCityInvocationState");
+                    return (boolean) state.getMethod("read", boolean.class).invoke(null, nativeValue);
+                } catch (ClassNotFoundException originalRuntime) { return nativeValue; }
+            } catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+        }
+
+        public record City(StructurePiecesCollector collector, long rngTail, net.minecraft.util.BlockRotation rotation) {
+            public String signature() {
+                return NativeHarness.layout(collector) + ";count=" + collector.toList().pieces().size()
+                        + ";ships=" + ships() + ";rng=" + rngTail + ";rotation=" + rotation;
+            }
+            public long ships() {
+                return collector.toList().pieces().stream().filter(piece -> piece.toNbt(NativeHarness.NBT_CONTEXT).getString("Template").equals("ship")).count();
+            }
+        }
+
+        public static City generate(Structure.Context context) { return generate(context, null); }
+
+        public static City generate(Structure.Context context, PausedRandom observer) {
+            // 與原版 EndCityStructure 同樣先用 fresh carver random 選 rotation；位置固定測試 y80。
+            var invocation = new Structure.Context(context.dynamicRegistryManager(), context.chunkGenerator(), context.biomeSource(),
+                    context.noiseConfig(), context.structureTemplateManager(), context.seed(), context.chunkPos(), context.world(), context.biomePredicate());
+            var random = invocation.random();
+            var rotation = net.minecraft.util.BlockRotation.random(random);
+            var pos = new BlockPos(context.chunkPos().getOffsetX(7), 80, context.chunkPos().getOffsetZ(7));
+            var pieces = new java.util.ArrayList<StructurePiece>();
+            if (observer != null) observer.delegate = random;
+            net.minecraft.structure.EndCityGenerator.addPieces(context.structureTemplateManager(), pos, rotation, pieces,
+                    observer == null ? random : observer);
+            var collector = new StructurePiecesCollector(); pieces.forEach(collector::addPiece);
+            return new City(collector, random.nextLong(), rotation);
+        }
+
+        public record CityRace(boolean before, boolean after, String expectedA, String actualA, String expectedB, String actualB) {
+            public void requireSafe() {
+                if (before != after) throw new AssertionError("END_CITY_SHARED_SHIP_STATE_CROSSED：" + this);
+                if (!expectedA.equals(actualA) || !expectedB.equals(actualB)) throw new AssertionError("END_CITY_SHIP_LAYOUT_OR_RNG_CHANGED：" + this);
+            }
+        }
+
+        public static CityRace race(Structure.Context first, Structure.Context second) throws InterruptedException {
+            var expectedA = generate(first).signature(); var expectedB = generate(second).signature();
+            var paused = new PausedRandom();
+            var actualA = new AtomicReference<String>(); var actualB = new AtomicReference<String>();
+            var failure = new AtomicReference<Throwable>(); var b = new AtomicReference<Thread>();
+            var a = NativeHarness.worker("M6EndCity-world-A", () -> actualA.set(generate(first, paused).signature()), failure);
+            NativeHarness.withCleanup(() -> {
+                NativeHarness.await(paused.paused, "End city A 尚未產船並到下一個 RNG 呼叫");
+                b.set(NativeHarness.worker("M6EndCity-world-B", () -> actualB.set(generate(second).signature()), failure));
+                NativeHarness.join(b.get());
+            }, paused.release::countDown, () -> NativeHarness.join(a), () -> { if (b.get() != null) NativeHarness.join(b.get()); });
+            NativeHarness.rethrow(failure.get());
+            var result = new CityRace(paused.before, paused.after, expectedA, actualA.get(), expectedB, actualB.get());
+            System.out.println("M6_END_CITY_NATIVE " + result); return result;
+        }
+
+        /** 不改值、不多消耗 RNG；ship=true 後下一個原版 RNG 呼叫才暫停。 */
+        public static final class PausedRandom implements net.minecraft.util.math.random.Random {
+            public final CountDownLatch paused = new CountDownLatch(1), release = new CountDownLatch(1);
+            public volatile boolean before, after;
+            private net.minecraft.util.math.random.Random delegate;
+            private boolean held;
+            private final Runnable onShip;
+            public PausedRandom() { this(null); }
+            public PausedRandom(Runnable onShip) { this.onShip = onShip; }
+            private void beforeNext() {
+                if (!held && shipState()) {
+                    held = true; before = shipState(); paused.countDown();
+                    try { if (onShip == null) NativeHarness.await(release, "End city RNG 屏障未被釋放"); else onShip.run(); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                    after = shipState();
+                }
+            }
+            public net.minecraft.util.math.random.Random split() { beforeNext(); return delegate.split(); }
+            public net.minecraft.util.math.random.RandomSplitter nextSplitter() { beforeNext(); return delegate.nextSplitter(); }
+            public void setSeed(long seed) { delegate.setSeed(seed); }
+            public int nextInt() { beforeNext(); return delegate.nextInt(); }
+            public int nextInt(int bound) { beforeNext(); return delegate.nextInt(bound); }
+            public long nextLong() { beforeNext(); return delegate.nextLong(); }
+            public boolean nextBoolean() { beforeNext(); return delegate.nextBoolean(); }
+            public float nextFloat() { beforeNext(); return delegate.nextFloat(); }
+            public double nextDouble() { beforeNext(); return delegate.nextDouble(); }
+            public double nextGaussian() { beforeNext(); return delegate.nextGaussian(); }
         }
     }
 }

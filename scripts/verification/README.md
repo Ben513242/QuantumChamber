@@ -47,6 +47,21 @@ Fortress與Stronghold共用同一NativeHarness的原生呼叫、collector屏障�
 
 兩種類別的worker啟動後await均在共用清理範圍內；失敗先release，再逐一嘗試有界join，保留主要Throwable，清理失敗附加suppressed。JUnit具名回歸涵蓋屏障前失敗的release／join、第一個join失敗後仍嘗試後續join與原始例外保全；不強停thread。原版/place產生的PostProcessing警告由當次日誌逐筆歸屬，不關閉logger，也不冒稱自然worldgen競態或crash重現。
 
+### M6 End city 競態（Task 6）
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.EndCityGenerationConcurrencyTest -Label endcity-junit
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_race_endcity -Label endcity-worlds
+```
+
+End city 的正式整輪是 EndCityGenerator.addPieces(StructureTemplateManager,BlockPos,BlockRotation,List,Random) 五參數入口；Structure 私有入口完成內部清單後才送 collector，因此改在只委派的 RNG wrapper 內，於船隻旗標已 true 之後的下一個原版 RNG 呼叫暫停。共用既有 worker／release／有界 join／例外保全，保留完整 piece NBT、船數與 RNG 尾值 oracle；不複製 generator。
+
+JUnit 從 runtime classpath 讀20個真原版 compressed NBT，核 hash／非零尺寸，經原版 Schemas.getFixer及manager.createTemplate，再放入真template cache；每輪建立唯一 nonce LevelStorage session並close，失敗root不刪。fresh九參數Context初始化carver random，先按原版消耗rotation，再傳同一random；固定y80只測layout，不宣稱terrain／biome eligibility。原版有船基準 seed481516、chunk-32,-32、pos-505,80,-505：94pieces、1船，完整NBT SHA256 `d06329e10c9031569b17660abba5d85069ee705fc05145321b5b99daa543925a`，RNG尾值-1076416987575963468、CLOCKWISE_90。無船控制seed8128、chunk32,32為8pieces／0船。另驗正常／例外巢狀恢復父frame、最外層例外清理、同／另一worker重用及無frame直接Part的原字段讀寫。
+
+正式修補以ThreadLocal stack讓每個整輪擁有私有ship flag，涵蓋四Part.init與全部遞迴；三字段存取維持原位置，不回滾collision拒絕前的選船與RNG。finally pop，最後一層remove；無withInitial，無frame查詢立即remove可能的null entry。模板載入仍可能同步讀磁碟／resource／datafix，不新增包整輪的全域monitor或跨worker等待。無frame只沿原字段，不承諾第三方混用root／Part仍能觀察到原版final共享flag；active frame內的直接Part會共用該frame。
+
+GameTest使用End／Overworld兩個真ServerWorld與受控worker，另在真server thread經dispatcher執行 `/place structure minecraft:end_city`，先按registered StructureStart exact bbox預載chunks，驗command result1、worker仍暫停時place完成，以及worker船隻／NBT／RNG不變並正常停服。這不是自然worldgen executor壓測、crash重現、吞吐或任意mod相容性證明。
+
 以下 M1–M5 數字是歷史基準；M6 以當次 scope／summary 原件為準。
 
 M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD workspace `.superpowers/sdd/2026-09-21-m4-candidate-doors/`，刪除 worktree 或 `.superpowers/` 後就無法重跑；這裡的腳本只改路徑、參數與名稱，安全行為（fresh world move／逐檔 hash exact restore、owned roots、拒絕覆寫、main-only 三層 oracle、JAR testmod 檢查）與原始檔相同；PID 過濾等少數邏輯差異與拿掉的核對，逐項列在「來源對照」。

@@ -28,6 +28,8 @@
     "PalettedBlockInfoListConcurrentCacheMixin",
     "DirectionTransformationEagerMappingsMixin",
     "StrongholdGeneratorStateMixin",
-    "NetherFortressGeneratorStateMixin"
+    "NetherFortressGeneratorStateMixin",
+    "EndCityGeneratorStateMixin",
+    "EndCityBridgeStateMixin"
   ]
 }
