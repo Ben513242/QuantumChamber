@@ -34,6 +34,19 @@ JUnit 刻意共用 testmod 的 classes，BeforeAll 核 class 的實際來源、�
 
 `M6_STRONGHOLD_THREAD` 必證等待的是正式 monitor，且 owner 為第一輪 worker；屏障在第二輪完成或確認此等待後即放行，不要求兩輪同時進入鎖內。正式修補只包 StrongholdStructure.addPieces 整輪，保留原版 piece 遞迴、重試與 RNG。monitor 可重入且例外自動釋放；原版沒有整輪再入 caller，不宣稱第三方 hook／collector 的巢狀整輪安全。原版完整 `/place` 對 WorldChunk 的 PostProcessing 警告以當次原件逐筆歸屬，不壓掉日誌，也不當作 worldgen race。
 
+### M6 Nether Fortress 競態（Task 5）
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.NetherFortressGenerationConcurrencyTest -Label fortress-junit
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_race_fortress -Label fortress-worlds
+```
+
+Fortress與Stronghold共用同一NativeHarness的原生呼叫、collector屏障、完整piece NBT、worker與清理邏輯；每種類別分別核exact原生method、fields及正式monitor class／identity／owner。Fortress的兩個per-Start清單仍引用static PieceData，屏障讀取兩組generatedCount；單序列固定seed8128、chunk32,32的原版基準為155 pieces、SHA256 `0c60781b533c2b0d82e2f36835d9174a58cc1b72a82cf5035d1cf97150b0149b`。Fortress每輪以原版9參數Structure.Context建構子初始化seed/chunkPos的ChunkRandom，不重用耗過的random。另驗受控collector例外後同／另一worker正常生成。
+
+正式Fortress鎖獨立於Stronghold，只包NetherFortressStructure.addPieces整輪，不更改演算法與RNG。原版此區間不等chunk／server／future，沒有整輪再入caller；第三方collector／hook巢狀整輪不在保證範圍。GameTest以Overworld／Nether兩個真實世界context呼原生入口，受控worker不是Minecraft worldgen executor；另一案例在真server thread經dispatcher執行Nether的/place structure minecraft:fortress，先按registered StructureStart exact box預載chunks，再驗阻擋在Fortress正式monitor、owner是worker，以及command result1、worker state／完整NBT不變、正常停服。
+
+兩種類別的worker啟動後await均在共用清理範圍內；失敗先release，再逐一嘗試有界join，保留主要Throwable，清理失敗附加suppressed。JUnit具名回歸涵蓋屏障前失敗的release／join、第一個join失敗後仍嘗試後續join與原始例外保全；不強停thread。原版/place產生的PostProcessing警告由當次日誌逐筆歸屬，不關閉logger，也不冒稱自然worldgen競態或crash重現。
+
 以下 M1–M5 數字是歷史基準；M6 以當次 scope／summary 原件為準。
 
 M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD workspace `.superpowers/sdd/2026-09-21-m4-candidate-doors/`，刪除 worktree 或 `.superpowers/` 後就無法重跑；這裡的腳本只改路徑、參數與名稱，安全行為（fresh world move／逐檔 hash exact restore、owned roots、拒絕覆寫、main-only 三層 oracle、JAR testmod 檢查）與原始檔相同；PID 過濾等少數邏輯差異與拿掉的核對，逐項列在「來源對照」。

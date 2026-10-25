@@ -27,6 +27,7 @@
     "ServerChunkLoadingManagerStaleUnloadMixin",
     "PalettedBlockInfoListConcurrentCacheMixin",
     "DirectionTransformationEagerMappingsMixin",
-    "StrongholdGeneratorStateMixin"
+    "StrongholdGeneratorStateMixin",
+    "NetherFortressGeneratorStateMixin"
   ]
 }

@@ -1,5 +1,6 @@
 package dev.quantumchamber.gametest;
 
+import dev.quantumchamber.gametest.M6RaceGameTests.NativeHarness.Kind;
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -21,6 +22,7 @@ import net.minecraft.registry.RegistryKeys;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.structure.StrongholdGenerator;
+import net.minecraft.structure.NetherFortressGenerator;
 import net.minecraft.structure.StructureContext;
 import net.minecraft.structure.StructurePiece;
 import net.minecraft.structure.StructurePiecesCollector;
@@ -32,42 +34,61 @@ import net.minecraft.util.math.random.ChunkRandom;
 import net.minecraft.util.math.random.CheckedRandom;
 import net.minecraft.world.World;
 import net.minecraft.world.gen.structure.StrongholdStructure;
+import net.minecraft.world.gen.structure.NetherFortressStructure;
 import net.minecraft.world.gen.structure.Structure;
 import net.minecraft.world.gen.structure.StructureKeys;
 
-/** M6 Stronghold 的原生整輪競態；所有屏障只在測試的 collector，沒有 production 故障 hook。 */
+/** M6 結構的原生整輪競態；所有屏障只在測試 collector，沒有 production 故障 hook。 */
 public final class M6RaceGameTests implements FabricGameTest {
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_stronghold", tickLimit=1200)
     public void strongholds_in_two_real_worlds_keep_native_state(TestContext context) {
+        realWorldRace(context, Kind.STRONGHOLD);
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_fortress", tickLimit=1200)
+    public void fortresses_in_two_real_worlds_keep_native_state(TestContext context) {
+        realWorldRace(context, Kind.FORTRESS);
+    }
+
+    private void realWorldRace(TestContext context, Kind kind) {
         try {
             var overworld = context.getWorld().getServer().getOverworld();
             var nether = context.getWorld().getServer().getWorld(World.NETHER);
             context.assertTrue(nether != null && overworld != nether, "Stronghold 必須使用兩個實際 ServerWorld");
             var result = NativeHarness.race(worldContext(overworld, 8128, new ChunkPos(32, 32)),
-                    worldContext(nether, 481516, new ChunkPos(-32, -32)));
-            System.out.println("M6_STRONGHOLD_REAL_WORLDS worlds=" + overworld.getRegistryKey().getValue() + "," + nether.getRegistryKey().getValue() + " " + result);
+                    worldContext(nether, 481516, new ChunkPos(-32, -32)), kind);
+            System.out.println("M6_" + kind + "_REAL_WORLDS worlds=" + overworld.getRegistryKey().getValue() + "," + nether.getRegistryKey().getValue() + " " + result);
             result.requireSafe();
             context.complete();
-        } catch (Exception failure) { throw new IllegalStateException("M6 Stronghold 雙真世界驗證失敗", failure); }
+        } catch (Exception failure) { throw new IllegalStateException("M6 " + kind + " 雙真世界驗證失敗", failure); }
     }
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_stronghold", tickLimit=1200)
     public void place_on_server_thread_and_worker_finish_without_deadlock(TestContext context) {
+        placeWithWorker(context, Kind.STRONGHOLD);
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_fortress", tickLimit=1200)
+    public void fortress_place_on_server_thread_and_worker_finish_without_deadlock(TestContext context) {
+        placeWithWorker(context, Kind.FORTRESS);
+    }
+
+    private void placeWithWorker(TestContext context, Kind kind) {
         var server = context.getWorld().getServer();
-        var world = server.getOverworld();
-        var nether = server.getWorld(World.NETHER);
-        context.assertTrue(server.isOnThread() && nether != null, "真 /place 必須在 server thread，worker 使用另一實際世界");
+        var world = kind == Kind.FORTRESS ? server.getWorld(World.NETHER) : server.getOverworld();
+        var workerWorld = kind == Kind.FORTRESS ? server.getOverworld() : server.getWorld(World.NETHER);
+        context.assertTrue(server.isOnThread() && world != null && workerWorld != null && world != workerWorld, "真 /place 必須在 server thread，worker 使用另一實際世界");
         try {
             // 先在持鎖前完成原版 /place 所需 chunks 的載入，鎖內不可等待 server/chunk 工作。
             var pos = new BlockPos(1024, 64, 1024);
             var generator = world.getChunkManager().getChunkGenerator();
-            var structure = world.getRegistryManager().get(RegistryKeys.STRUCTURE).getEntry(StructureKeys.STRONGHOLD).orElseThrow().value();
+            var structure = world.getRegistryManager().get(RegistryKeys.STRUCTURE).getEntry(kind == Kind.STRONGHOLD ? StructureKeys.STRONGHOLD : StructureKeys.FORTRESS).orElseThrow().value();
             var prepared = structure.createStructureStart(world.getRegistryManager(), generator, generator.getBiomeSource(),
                     world.getChunkManager().getNoiseConfig(), world.getStructureTemplateManager(), world.getSeed(), new ChunkPos(pos), 0, world, biome -> true);
             // StructureStart還會依terrain adaptation擴張box；不可只載入collector的piece box。
             var box = prepared.getBoundingBox();
             world.getChunk(pos);
-            System.out.println("M6_STRONGHOLD_PLACE_PREFLIGHT targetLoaded=" + world.isChunkLoaded(pos) + " box=" + box);
+            System.out.println("M6_" + kind + "_PLACE_PREFLIGHT targetLoaded=" + world.isChunkLoaded(pos) + " box=" + box);
             for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) {
                 for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) world.getChunk(x, z);
             }
@@ -76,32 +97,32 @@ public final class M6RaceGameTests implements FabricGameTest {
                     context.assertTrue(world.isChunkLoaded(new BlockPos(x << 4, 64, z << 4)), "原版/place需要的bbox chunk未載入");
                 }
             }
-            var workerContext = worldContext(nether, 481516, new ChunkPos(-32, -32));
-            var expected = NativeHarness.layout(NativeHarness.generate(workerContext));
-            var paused = new NativeHarness.PausedCollector();
+            var workerContext = worldContext(workerWorld, 481516, new ChunkPos(-32, -32));
+            var expected = NativeHarness.layout(NativeHarness.generate(workerContext, kind));
+            var paused = new NativeHarness.PausedCollector(kind);
             var failure = new AtomicReference<Throwable>();
-            var worker = NativeHarness.worker("M6Stronghold-place-worker", () -> NativeHarness.generate(workerContext, paused), failure);
+            var worker = NativeHarness.worker("M6" + kind + "-place-worker", () -> NativeHarness.generate(workerContext, paused, kind), failure);
             var commandDone = new AtomicBoolean();
             var serverThread = Thread.currentThread();
             var monitor = new AtomicReference<Thread>();
             var value = new int[1];
             NativeHarness.withCleanup(() -> {
                 NativeHarness.await(paused.paused, "worker 尚未到原生 count 屏障");
-                monitor.set(NativeHarness.worker("M6Stronghold-place-observer", () -> {
-                    try { NativeHarness.awaitBlockedOrFinished(serverThread, commandDone, worker, "place"); }
+                monitor.set(NativeHarness.worker("M6" + kind + "-place-observer", () -> {
+                    try { NativeHarness.awaitBlockedOrFinished(serverThread, commandDone, worker, "place", kind); }
                     finally { paused.release.countDown(); }
                 }, failure));
                 value[0] = server.getCommandManager().getDispatcher().execute(
-                        "place structure minecraft:stronghold 1024 64 1024", server.getCommandSource().withWorld(world).withLevel(4));
+                        "place structure minecraft:" + (kind == Kind.STRONGHOLD ? "stronghold" : "fortress") + " 1024 64 1024", server.getCommandSource().withWorld(world).withLevel(4));
             }, () -> { commandDone.set(true); paused.release.countDown(); },
                     () -> NativeHarness.join(worker), () -> { if (monitor.get() != null) NativeHarness.join(monitor.get()); });
             NativeHarness.rethrow(failure.get());
-            System.out.println("M6_STRONGHOLD_PLACE_RESULT serverThread=" + serverThread.getName() + " result=" + value[0] + " expected=" + expected + " actual=" + NativeHarness.layout(paused) + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
+            System.out.println("M6_" + kind + "_PLACE_RESULT serverThread=" + serverThread.getName() + " result=" + value[0] + " expected=" + expected + " actual=" + NativeHarness.layout(paused) + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
             context.assertTrue(value[0] == 1 && paused.before.equals(paused.after) && expected.equals(NativeHarness.layout(paused)),
-                    "M6 Stronghold /place 汙染 worker state/layout");
-            System.out.println("M6_STRONGHOLD_PLACE PASS serverThread=" + serverThread.getName() + " worker=" + worker.getName() + " result=" + value[0] + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
+                    "M6 " + kind + " /place 汙染 worker state/layout");
+            System.out.println("M6_" + kind + "_PLACE PASS serverThread=" + serverThread.getName() + " worker=" + worker.getName() + " result=" + value[0] + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
             context.complete();
-        } catch (Exception failure) { throw new IllegalStateException("M6 Stronghold /place 交錯驗證失敗", failure); }
+        } catch (Exception failure) { throw new IllegalStateException("M6 " + kind + " /place 交錯驗證失敗", failure); }
     }
 
     private static Structure.Context worldContext(ServerWorld world, long seed, ChunkPos pos) {
@@ -114,19 +135,27 @@ public final class M6RaceGameTests implements FabricGameTest {
     /** JUnit 與真 GameTest 共用原版呼叫/屏障；不含 generator 的複製實作或 JUnit 依賴。 */
     public static final class NativeHarness {
         private static final long WAIT_SECONDS = 10;
-        private static final Method ADD_PIECES = method();
+        public enum Kind {
+            STRONGHOLD(StrongholdStructure.class), FORTRESS(NetherFortressStructure.class);
+            private final Class<?> structureClass;
+            private final Method addPieces;
+            Kind(Class<?> structureClass) { this.structureClass = structureClass; this.addPieces = method(structureClass); }
+        }
         private static final Field ALL = field(StrongholdGenerator.class, "ALL_PIECES");
         private static final Field POSSIBLE = field(StrongholdGenerator.class, "possiblePieces");
         private static final Field ACTIVE = field(StrongholdGenerator.class, "activePieceType");
         private static final Field WEIGHT = field(StrongholdGenerator.class, "totalWeight");
         private static final Field COUNT = field(ALL.getType().getComponentType(), "generatedCount");
+        private static final Field BRIDGE = field(NetherFortressGenerator.class, "ALL_BRIDGE_PIECES");
+        private static final Field CORRIDOR = field(NetherFortressGenerator.class, "ALL_CORRIDOR_PIECES");
+        private static final Field FORTRESS_COUNT = field(BRIDGE.getType().getComponentType(), "generatedCount");
         private static final StructureContext NBT_CONTEXT = new StructureContext(ResourceManager.Empty.INSTANCE, DynamicRegistryManager.EMPTY, null);
 
         private NativeHarness() { }
 
-        private static Method method() {
+        private static Method method(Class<?> owner) {
             try {
-                var method = StrongholdStructure.class.getDeclaredMethod("addPieces", StructurePiecesCollector.class, Structure.Context.class);
+                var method = owner.getDeclaredMethod("addPieces", StructurePiecesCollector.class, Structure.Context.class);
                 method.setAccessible(true); return method;
             } catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
         }
@@ -140,10 +169,35 @@ public final class M6RaceGameTests implements FabricGameTest {
             return generate(context, new StructurePiecesCollector());
         }
 
+        public static StructurePiecesCollector generate(Structure.Context context, Kind kind) {
+            return generate(context, new StructurePiecesCollector(), kind);
+        }
+
         public static <T extends StructurePiecesCollector> T generate(Structure.Context context, T collector) {
-            try { ADD_PIECES.invoke(null, collector, context); return collector; }
+            return generate(context, collector, Kind.STRONGHOLD);
+        }
+
+        public static <T extends StructurePiecesCollector> T generate(Structure.Context context, T collector, Kind kind) {
+            // Fortress不重設傳入random；每輪使用原版9參數constructor的setCarverSeed契約。
+            var invocation = kind == Kind.FORTRESS ? new Structure.Context(context.dynamicRegistryManager(),
+                    context.chunkGenerator(), context.biomeSource(), context.noiseConfig(), context.structureTemplateManager(),
+                    context.seed(), context.chunkPos(), context.world(), context.biomePredicate()) : context;
+            try { kind.addPieces.invoke(null, collector, invocation); return collector; }
             catch (InvocationTargetException failure) { rethrow(failure.getCause()); throw new AssertionError("unreachable"); }
             catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+        }
+
+        private static String counts(Field array, Field count) throws IllegalAccessException {
+            var all = (Object[]) array.get(null);
+            var counts = new int[all.length];
+            for (int i = 0; i < all.length; i++) counts[i] = count.getInt(all[i]);
+            return Arrays.toString(counts);
+        }
+
+        public static String state(Kind kind) {
+            if (kind == Kind.STRONGHOLD) return state();
+            try { return "bridge=" + counts(BRIDGE, FORTRESS_COUNT) + ";corridor=" + counts(CORRIDOR, FORTRESS_COUNT); }
+            catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
         }
 
         public static String state() {
@@ -177,46 +231,53 @@ public final class M6RaceGameTests implements FabricGameTest {
         }
 
         public static RaceResult race(Structure.Context first, Structure.Context second) throws InterruptedException {
-            var expectedA = layout(generate(first)); var expectedB = layout(generate(second));
-            var paused = new PausedCollector();
+            return race(first, second, Kind.STRONGHOLD);
+        }
+
+        public static RaceResult race(Structure.Context first, Structure.Context second, Kind kind) throws InterruptedException {
+            var expectedA = layout(generate(first, kind)); var expectedB = layout(generate(second, kind));
+            var paused = new PausedCollector(kind);
             var actualB = new AtomicReference<String>(); var failure = new AtomicReference<Throwable>();
             var bDone = new AtomicBoolean();
-            var a = worker("M6Stronghold-world-A", () -> generate(first, paused), failure);
+            var a = worker("M6" + kind + "-world-A", () -> generate(first, paused, kind), failure);
             var b = new AtomicReference<Thread>();
             var observed = new AtomicReference<String>();
             withCleanup(() -> {
                 await(paused.paused, "A 尚未到原生 count 屏障");
-                b.set(worker("M6Stronghold-world-B", () -> {
-                    try { actualB.set(layout(generate(second))); } finally { bDone.set(true); }
+                b.set(worker("M6" + kind + "-world-B", () -> {
+                    try { actualB.set(layout(generate(second, kind))); } finally { bDone.set(true); }
                 }, failure));
-                observed.set(awaitBlockedOrFinished(b.get(), bDone, a, "two-contexts"));
+                observed.set(awaitBlockedOrFinished(b.get(), bDone, a, "two-contexts", kind));
             }, paused.release::countDown, () -> join(a), () -> { if (b.get() != null) join(b.get()); });
             rethrow(failure.get());
-            var result = new RaceResult(paused.before, paused.after, expectedA, layout(paused), expectedB, actualB.get(), observed.get());
-            System.out.println("M6_STRONGHOLD_NATIVE " + result + " countsA=" + pieceCounts(paused));
+            var result = new RaceResult(kind, paused.before, paused.after, expectedA, layout(paused), expectedB, actualB.get(), observed.get());
+            System.out.println("M6_" + kind + "_NATIVE " + result + " countsA=" + pieceCounts(paused));
             return result;
         }
 
-        public record RaceResult(String before, String after, String expectedA, String actualA,
+        public record RaceResult(Kind kind, String before, String after, String expectedA, String actualA,
                                  String expectedB, String actualB, String observation) {
             public void requireSafe() {
-                if (!before.equals(after)) throw new AssertionError("STRONGHOLD_SHARED_STATE_CROSSED：" + this);
-                if (!expectedA.equals(actualA) || !expectedB.equals(actualB)) throw new AssertionError("STRONGHOLD_LAYOUT_CHANGED：" + this);
+                if (!before.equals(after)) throw new AssertionError(kind + "_SHARED_STATE_CROSSED：" + this);
+                if (!expectedA.equals(actualA) || !expectedB.equals(actualB)) throw new AssertionError(kind + "_LAYOUT_CHANGED：" + this);
             }
         }
 
         public static final class PausedCollector extends StructurePiecesCollector {
             public final CountDownLatch paused = new CountDownLatch(1), release = new CountDownLatch(1);
             public volatile String before, after;
+            private final Kind kind;
             private int added;
             private boolean held;
+            public PausedCollector() { this(Kind.STRONGHOLD); }
+            public PausedCollector(Kind kind) { this.kind = kind; }
             @Override public void addPiece(StructurePiece piece) {
                 super.addPiece(piece);
                 if (!held && ++added == 12) {
-                    held = true; before = state(); paused.countDown();
+                    held = true; before = state(kind); paused.countDown();
                     try { await(release, "A count 屏障未被釋放"); }
                     catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
-                    after = state();
+                    after = state(kind);
                 }
             }
         }
@@ -251,19 +312,23 @@ public final class M6RaceGameTests implements FabricGameTest {
         }
 
         public static String awaitBlockedOrFinished(Thread thread, AtomicBoolean done, Thread owner, String label) {
+            return awaitBlockedOrFinished(thread, done, owner, label, Kind.STRONGHOLD);
+        }
+
+        public static String awaitBlockedOrFinished(Thread thread, AtomicBoolean done, Thread owner, String label, Kind kind) {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
             while (!done.get()) {
                 if (thread.getState() == Thread.State.BLOCKED && Arrays.stream(thread.getStackTrace())
-                        .anyMatch(frame -> frame.getClassName().equals(StrongholdStructure.class.getName()) && frame.getMethodName().contains("addPieces"))) {
+                        .anyMatch(frame -> frame.getClassName().equals(kind.structureClass.getName()) && frame.getMethodName().contains("addPieces"))) {
                     var info = ManagementFactory.getThreadMXBean().getThreadInfo(thread.threadId(), Integer.MAX_VALUE);
                     try {
-                        var monitor = field(StrongholdStructure.class, "quantumchamber$invocationLock").get(null);
+                        var monitor = field(kind.structureClass, "quantumchamber$invocationLock").get(null);
                         if (info == null || info.getLockInfo() == null || info.getLockOwnerId() != owner.threadId()
                                 || info.getLockInfo().getIdentityHashCode() != System.identityHashCode(monitor)) {
-                            throw new AssertionError("STRONGHOLD_WRONG_MONITOR_OWNER：" + info);
+                            throw new AssertionError(kind + "_WRONG_MONITOR_OWNER：" + info);
                         }
                     } catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
-                    System.out.println("M6_STRONGHOLD_THREAD label=" + label + " thread=" + thread.getName() + " owner=" + owner.getName() + " monitor=" + info.getLockInfo() + " info=" + info);
+                    System.out.println("M6_" + kind + "_THREAD label=" + label + " thread=" + thread.getName() + " owner=" + owner.getName() + " monitor=" + info.getLockInfo() + " info=" + info);
                     return "BLOCKED_PRODUCTION_MONITOR_OWNER_A";
                 }
                 if (System.nanoTime() > deadline) throw new AssertionError("STRONGHOLD_TIMEOUT：等待 invocation 阻擋或完成 " + label);
