@@ -144,12 +144,32 @@ public final class M6RaceGameTests implements FabricGameTest {
         } catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
     }
 
+    private static BlockPos endCityPlacePosition(ServerWorld world) {
+        var generator = world.getChunkManager().getChunkGenerator();
+        var structure = world.getRegistryManager().get(RegistryKeys.STRUCTURE).getEntry(StructureKeys.END_CITY).orElseThrow().value();
+        int attempts = 0;
+        // 固定有界外島grid只讀取原版位置/高度判定，不複製演算法或先載入chunks。
+        for (int x = 1024; x <= 2048; x += 128) {
+            for (int z = 1024; z <= 2048; z += 128) {
+                attempts++;
+                var pos = new BlockPos(x, 80, z);
+                var start = structure.createStructureStart(world.getRegistryManager(), generator, generator.getBiomeSource(),
+                        world.getChunkManager().getNoiseConfig(), world.getStructureTemplateManager(), world.getSeed(), new ChunkPos(pos), 0, world, biome -> true);
+                if (start.hasChildren()) {
+                    System.out.println("M6_END_CITY_PLACE_TARGET attempts=" + attempts + " pos=" + pos + " nativeBox=" + start.getBoundingBox());
+                    return pos;
+                }
+            }
+        }
+        throw new IllegalStateException("M6_END_CITY_NO_ELIGIBLE_PLACE_TARGET attempts=" + attempts);
+    }
+
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_endcity", tickLimit=1200)
     public void end_city_place_on_server_thread_and_worker_finish_without_deadlock(TestContext context) {
         var server = context.getWorld().getServer(); var world = server.getWorld(World.END); var workerWorld = server.getOverworld();
         context.assertTrue(server.isOnThread() && world != null && world != workerWorld, "真End city/place必須在server thread");
         try {
-            var pos = new BlockPos(1024, 80, 1024);
+            var pos = endCityPlacePosition(world);
             preparePlaceChunks(context, world, StructureKeys.END_CITY, pos, "END_CITY");
             var workerContext = worldContext(workerWorld, 481516, new ChunkPos(-32, -32));
             var expected = EndCityHarness.generate(workerContext).signature();
@@ -159,7 +179,7 @@ public final class M6RaceGameTests implements FabricGameTest {
             var value = new int[1];
             NativeHarness.withCleanup(() -> {
                 NativeHarness.await(paused.paused, "End city worker未到船隻RNG屏障");
-                value[0] = server.getCommandManager().getDispatcher().execute("place structure minecraft:end_city 1024 80 1024",
+                value[0] = server.getCommandManager().getDispatcher().execute("place structure minecraft:end_city " + pos.getX() + " " + pos.getY() + " " + pos.getZ(),
                         server.getCommandSource().withWorld(world).withLevel(4));
                 context.assertTrue(paused.release.getCount() == 1, "server /place 必須在worker仍暫停時完成");
             }, paused.release::countDown, () -> NativeHarness.join(worker));

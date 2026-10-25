@@ -60,7 +60,7 @@ JUnit 從 runtime classpath 讀20個真原版 compressed NBT，核 hash／非零
 
 正式修補以ThreadLocal stack讓每個整輪擁有私有ship flag，涵蓋四Part.init與全部遞迴；三字段存取維持原位置，不回滾collision拒絕前的選船與RNG。finally pop，最後一層remove；無withInitial，無frame查詢立即remove可能的null entry。模板載入仍可能同步讀磁碟／resource／datafix，不新增包整輪的全域monitor或跨worker等待。無frame只沿原字段，不承諾第三方混用root／Part仍能觀察到原版final共享flag；active frame內的直接Part會共用該frame。
 
-GameTest使用End／Overworld兩個真ServerWorld與受控worker，另在真server thread經dispatcher執行 `/place structure minecraft:end_city`，先按registered StructureStart exact bbox預載chunks，驗command result1、worker仍暫停時place完成，以及worker船隻／NBT／RNG不變並正常停服。這不是自然worldgen executor壓測、crash重現、吞吐或任意mod相容性證明。
+GameTest使用End／Overworld兩個真ServerWorld與受控worker，另在真server thread以固定有界外島grid先呼原版createStructureStart／hasChildren挑選合法位置，再經dispatcher執行 `/place structure minecraft:end_city`；按同一registered StructureStart exact bbox預載chunks，驗command result1、worker仍暫停時place完成，以及worker船隻／NBT／RNG不變並正常停服。這不是自然worldgen executor壓測、crash重現、吞吐或任意mod相容性證明。
 
 以下 M1–M5 數字是歷史基準；M6 以當次 scope／summary 原件為準。
 
