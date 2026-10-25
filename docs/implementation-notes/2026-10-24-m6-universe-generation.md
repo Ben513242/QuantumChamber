@@ -128,3 +128,19 @@ SDD／短派工入口：`.superpowers/sdd/2026-10-24-m6-universe-generation/STAT
 - 9份實際server log共212 WARN/ERROR均歸屬；Windows pin256來自受控第257pin案例，不宣稱零pin warning。另Ubuntu12筆既有SessionTransferFaultMixin annotation warning、兩平台Node20 deprecation與Gradle8.8 notice已記錄；無未歸屬runtime例外、worldgen/CME/NPE/OOM/hold。沒有順手升級版本。
 - 全新SOL唯讀CI auditor `/root/m6_task3_ci_audit` PASS，主控已全文讀回；報告 `task-03/ci-40144948603/ci-audit-report.md` SHA `A2A6094B83322D2CFAF75E98903FE6D0E5276AA9F8EDB23A3807FA56D65D700D`，結果JSON SHA `3BC674AA612465AC64AA6E8E39F9567963185F55C34ACCE76791D8FA7414A2D9`。原ZIP/manifests/原API時間/selected摘錄及完整joblog讀取歸屬均在該root；空jobs-timing.json未採計。
 - Task3所有必要本機／code-review／遠端CI gates已完成；spec M-1已明列交Task4 Step0，沒有未關C/I。此後純狀態文件採計code ac085／CI4d8，不為湊CI次數另推；待下一次正常功能推送合併文件。Task4尚未實作；人工gameplay、milestone整分支、main/tag/退役仍未執行。
+
+
+## Task 4：Stronghold invocation state完成（2026-10-25）
+
+- range `170d2fa..4485a92`，最終 code `4485a92544df83d1d2337b4d8358451c0c040013`；Step0 `bf84d26`、窄修 `70ec295`、共用fixture `4485a92`。production僅Stronghold整輪monitor與註冊；不改RNG/原版算法，未碰Fortress/EndCity/seed/family。
+- Task3 M-1：三個跨scope反例改為實際兩case，合法case保留、missing空、唯一extra=m6_first；受控原guard RED成立，selftest37→40。此改進不改正式filter。
+- 固定1.21 native JAR仍C3D5432D0538D7750B985E42788484BEE4C63BBFACD7CADD496E940C83DFCEC4；完整StrongholdStructure.addPieces含init、piece遞迴與PortalRoom重試。已核vanilla高度getter無chunk/future/server等待，沒有整輪再入；JVM monitor可重入且例外釋放。此結論限已核vanilla caller，不承諾任意第三方hook巢狀整輪。
+- 有效原版RED：`focused-r1-red-native-108d56fd056c45809940f36c6299536e`為3/1failure/0error，具名STRONGHOLD_SHARED_STATE_CROSSED；count/list/weight及NBT有交叉。`focused-r1-place-red-exact-box-9d57524d4f2a4c0081bb582c63b2d1ce`兩真世界/真正server-thread dispatcher的兩case均具名失敗。原setup API/box失敗保留、非RED。70ec移除mixin註冊mutation重現具名失敗並finally exact restore。
+- 固定seed8128/chunk32,32原版98pieces，完整NBT SHA `a80452213409b05c039da03127cc9864ae6f779722541e1256336131bb9bd21a`。並行測試使用真原版入口/兩個實際ServerWorld與受控worker；不冒稱自然worldgen executor或重現CME。BLOCKED核production monitor identity/owner=A，另驗例外後同worker與不同worker。
+- 主控發現兩份158行helper逐字重複後，核准classes-only fixture共用與plan owner追加；build僅test compile/runtime加testmod.output.classesDirs、不帶resources。JUnit枚舉40manifest/testmixins/modlist確認邊界；不是main-only。4485相對70ec production diff空。
+- 新4485 compile `gate-task4-shared-fixture-compile-2a3b92970c8443ec971da00438763544` PASS；同clean pin兩focused `focused-shared-green-a-22d7808cbec84984a36753c7b968b74d`、`focused-shared-green-b-fe2907cbd2844440b1d8e116ae341d62` 各3/0/0/0；`focused-shared-world-green-6c980c1fca9249a8a183fd7d189947bf` 2/2、真place result1/正常停止/原世界還原。
+- 完整full `.superpowers/verification/run-all-5c211bff7c78488b8e22ddc4575258f4`，09:55:19 END ALL exit0/HEAD4485；summary SHA `7AE0EA0B8C864245101757F743E59E8A5742E5DF5ACBCC67D93619E7FAD3DB27`。四scope179/1/60/4；JUnit667pass+2合法skip，舊666集合不減；M3 4+5/recovery24/collapse69/HALT31。Main17原件三層/stop/exactRestore、五world swaps、owner0/locks均符。
+- release433entries/386classes、sources227，testmod0，新增僅mixin與註冊/refmap；107logs2863 WARNERROR全歸屬（原有2418+place445），worldgen/pin-HOLD/未歸屬0。place RED444/focused443/full445差異座標皆從保留Anvil讀回為wall_torch/air，符合原版place的world RNG；沒有抑制訊息。既有compiler warnings未擴修。
+- 全新獨立spec Approved C0/I0/M0，報告SHA `3D6806A9F3C3B8B01469005382FB727FD195969F15E116011B79E1B60BCCAB00`；quality Approved C0/I0/M1，SHA `EEF08095042EB2914AED0D2F5814B56A6855745D28702ABFA2DF0B398F4F288D`，主控已全文讀回。Minor：測試worker啟動後的await應納finally，多worker逐一嘗試join並保留主要例外；交Task5 Step0，不改production鎖，無待關C/I。
+- clean-pin的當時證據包括session工具讀回；runner有HEAD但沒有各次porcelain檔案，B沒有獨立clean receipt。主控09:15原工具輸出逐bytes摘錄已保存，spec reviewer直接比原session三行一致；不拿現在clean補歷史。後續新launcher保存當時前後HEAD/status，不重跑舊gate。
+- 實作者終局report SHA `926FF0F39D04AFD491E151A535884F654EF3465479E5F4BEB499051392ACDF67`，完整diff SHA `E1AFD05DE95DAF8A6CE8FF9DBAA2CFB5766D80EFEE7A05E00FEA238A967E11DE`。主控另核39核心/source hash、4XML、Main17原件。本段結果文件採計4485，非新docs SHA runtime證據；未新增遠端CI/main/tag/人工/退役結論。

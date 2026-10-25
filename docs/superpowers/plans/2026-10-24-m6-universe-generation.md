@@ -122,15 +122,18 @@ Task3完成（code ac085c8；spec C0/I0/M1、quality C0/I0/M0；CI commit4d8fc66
 
 **Files:** Create `src/main/java/dev/quantumchamber/mixin/StrongholdGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/StrongholdGenerationConcurrencyTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/resources/fabric.mod.json`（註冊 `fabric-gametest`）、`scripts/verification/README.md`、`scripts/verification/m6-ci-gametest.ps1`（僅Step0）、`build.gradle`（僅JUnit共用testmod classes；不帶resources）。
 **Interfaces:** exact 原版 `StrongholdStructure.addPieces` invocation 內隔離 `possiblePieces`、`activePieceType`、`totalWeight`、`ALL_PIECES.generatedCount`；新 mixin 不改其他 structures。
-- [ ] Step0承接Task3 spec M-1：強制把單一scope名稱包成陣列後再加入獨立m6_first，核原合法case仍在、actual=2、extra恰為m6_first；修正三個跨scope fixture的精準性。以受控反例／focused驗證，完整回歸併本task；不改正式filter語意。
-- [ ] 讀 native `init/pickPiece/addPieces` 實際讀寫、`/place` caller，記可注入方法 descriptor 與再入性；JUnit `twoWorldStrongholdsDoNotSharePieceCounts` 的 barrier RED 要見 count/state 交叉，`singleWorldStrongholdLayoutUnchanged` 對照固定 seed。
-- [ ] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.StrongholdGenerationConcurrencyTest -Label r1-red` 具名 RED；最小 mixin 後 `r1-green-a/b` PASS。另 `-Suite GameTest -Batch m6_universe_race_stronghold` 驗 `/place`／worker 無卡住。
-- [ ] compile→code commit→兩個 clean HEAD JUnit GREEN＋GameTest→full→fresh spec／quality；若鎖／ThreadLocal 不能證安全，停在此 task 不進 Task 5。
+- [x] Step0承接Task3 spec M-1：強制把單一scope名稱包成陣列後再加入獨立m6_first，核原合法case仍在、actual=2、extra恰為m6_first；修正三個跨scope fixture的精準性。以受控反例／focused驗證，完整回歸併本task；不改正式filter語意。
+- [x] 讀 native `init/pickPiece/addPieces` 實際讀寫、`/place` caller，記可注入方法 descriptor 與再入性；JUnit `twoWorldStrongholdsDoNotSharePieceCounts` 的 barrier RED 要見 count/state 交叉，`singleWorldStrongholdLayoutUnchanged` 對照固定 seed。
+- [x] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.StrongholdGenerationConcurrencyTest -Label r1-red` 具名 RED；最小 mixin 後 `r1-green-a/b` PASS。另 `-Suite GameTest -Batch m6_universe_race_stronghold` 驗 `/place`／worker 無卡住。
+- [x] compile→code commit→兩個 clean HEAD JUnit GREEN＋GameTest→full→fresh spec／quality；若鎖／ThreadLocal 不能證安全，停在此 task 不進 Task 5。
+
+Task4完成（code4485a92；spec C0/I0/M0、quality C0/I0/M1；同pin雙GREEN與full通過）。測試cleanup Minor明列於下方Task5 Step0，無未關C/I；詳細root/hash及支援限制見M6 note。
 
 ### Task 5：Nether fortress invocation state
 
-**Files:** Create `src/main/java/dev/quantumchamber/mixin/NetherFortressGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/NetherFortressGenerationConcurrencyTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`、`scripts/verification/README.md`。
+**Files:** Create `src/main/java/dev/quantumchamber/mixin/NetherFortressGeneratorStateMixin.java`、`src/test/java/dev/quantumchamber/universe/NetherFortressGenerationConcurrencyTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`、`scripts/verification/README.md`、`src/test/java/dev/quantumchamber/universe/StrongholdGenerationConcurrencyTest.java`（僅Step0測試cleanup回歸）。
 **Interfaces:** 兩組 static pieces 的 `generatedCount` 只在一個 fortress invocation 內共享；不變更 Stronghold 或 canonical 單世界輸出。
+- [ ] Step0承接Task4 quality M-1：worker啟動後await也納入finally；先release，再逐一嘗試有界join，保留主要例外、cleanup以suppressed附加。只改測試cleanup並加具名失敗路徑回歸，不強停thread、不改Stronghold production；必要共用helper新增前向主控補exact owner。完整回歸併本task。
 - [ ] 先盤點 `ALL_BRIDGE_PIECES`／`ALL_CORRIDOR_PIECES` 的全部讀寫、遞迴與 `/place` 路徑；RED `twoWorldFortressesKeepIndependentCounts` 的兩世界 barrier 應顯示交叉，`singleWorldFortressLayoutUnchanged` 固定 seed。
 - [ ] `m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.NetherFortressGenerationConcurrencyTest -Label r2-red` 具名 FAIL；窄修後 `r2-green-a/b`、`-Suite GameTest -Batch m6_universe_race_fortress` PASS。
 - [ ] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality；保留原 RED root。

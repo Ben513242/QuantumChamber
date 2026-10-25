@@ -1,6 +1,6 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
-> 最新接續（2026-10-25）：以下保留原始開工提示。完整M6／順序已確認，spec／plan已review，Task1–3完成。Task3 code ac085、本機雙review C/I=0、CI4d8／run40144948603雙平台原件PASS；接續Task4 Stronghold與scalar fixture Step0。依AGENTS、M6 note與SDD STATUS接續，不重問範圍、不重做已完task。
+> 最新接續（2026-10-25）：以下保留原始開工提示。完整M6／順序與spec／plan已確認，Task1–4完成。Task4 code4485的雙focused/full與fresh雙review C/I=0；接續Task5 Fortress，先處理測試cleanup Minor。Task3 CI4d8雙平台已驗，不代表後續code已跑遠端CI。依AGENTS、M6 note與SDD STATUS接續，不重問範圍、不重做已完task。
 
 你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。請先核對 M5 收尾事實，再確認 M6 範圍與優先序，完成經獨立 review 的 spec／plan，接著依核准範圍實作。不要只回答能不能做，也不要重做已完成的 M5。
 
