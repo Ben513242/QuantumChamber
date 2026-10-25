@@ -1,0 +1,272 @@
+package dev.quantumchamber.gametest;
+
+import java.lang.management.ManagementFactory;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
+import net.minecraft.registry.DynamicRegistryManager;
+import net.minecraft.registry.RegistryKeys;
+import net.minecraft.resource.ResourceManager;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.structure.StrongholdGenerator;
+import net.minecraft.structure.StructureContext;
+import net.minecraft.structure.StructurePiece;
+import net.minecraft.structure.StructurePiecesCollector;
+import net.minecraft.test.GameTest;
+import net.minecraft.test.TestContext;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.random.ChunkRandom;
+import net.minecraft.util.math.random.CheckedRandom;
+import net.minecraft.world.World;
+import net.minecraft.world.gen.structure.StrongholdStructure;
+import net.minecraft.world.gen.structure.Structure;
+import net.minecraft.world.gen.structure.StructureKeys;
+
+/** M6 Stronghold 的原生整輪競態；所有屏障只在測試的 collector，沒有 production 故障 hook。 */
+public final class M6RaceGameTests implements FabricGameTest {
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_stronghold", tickLimit=1200)
+    public void strongholds_in_two_real_worlds_keep_native_state(TestContext context) {
+        try {
+            var overworld = context.getWorld().getServer().getOverworld();
+            var nether = context.getWorld().getServer().getWorld(World.NETHER);
+            context.assertTrue(nether != null && overworld != nether, "Stronghold 必須使用兩個實際 ServerWorld");
+            var result = NativeHarness.race(worldContext(overworld, 8128, new ChunkPos(32, 32)),
+                    worldContext(nether, 481516, new ChunkPos(-32, -32)));
+            System.out.println("M6_STRONGHOLD_REAL_WORLDS worlds=" + overworld.getRegistryKey().getValue() + "," + nether.getRegistryKey().getValue() + " " + result);
+            result.requireSafe();
+            context.complete();
+        } catch (Exception failure) { throw new IllegalStateException("M6 Stronghold 雙真世界驗證失敗", failure); }
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_race_stronghold", tickLimit=1200)
+    public void place_on_server_thread_and_worker_finish_without_deadlock(TestContext context) {
+        var server = context.getWorld().getServer();
+        var world = server.getOverworld();
+        var nether = server.getWorld(World.NETHER);
+        context.assertTrue(server.isOnThread() && nether != null, "真 /place 必須在 server thread，worker 使用另一實際世界");
+        try {
+            // 先在持鎖前完成原版 /place 所需 chunks 的載入，鎖內不可等待 server/chunk 工作。
+            var pos = new BlockPos(1024, 64, 1024);
+            var generator = world.getChunkManager().getChunkGenerator();
+            var structure = world.getRegistryManager().get(RegistryKeys.STRUCTURE).getEntry(StructureKeys.STRONGHOLD).orElseThrow().value();
+            var prepared = structure.createStructureStart(world.getRegistryManager(), generator, generator.getBiomeSource(),
+                    world.getChunkManager().getNoiseConfig(), world.getStructureTemplateManager(), world.getSeed(), new ChunkPos(pos), 0, world, biome -> true);
+            // StructureStart還會依terrain adaptation擴張box；不可只載入collector的piece box。
+            var box = prepared.getBoundingBox();
+            world.getChunk(pos);
+            System.out.println("M6_STRONGHOLD_PLACE_PREFLIGHT targetLoaded=" + world.isChunkLoaded(pos) + " box=" + box);
+            for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) {
+                for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) world.getChunk(x, z);
+            }
+            for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) {
+                for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) {
+                    context.assertTrue(world.isChunkLoaded(new BlockPos(x << 4, 64, z << 4)), "原版/place需要的bbox chunk未載入");
+                }
+            }
+            var workerContext = worldContext(nether, 481516, new ChunkPos(-32, -32));
+            var expected = NativeHarness.layout(NativeHarness.generate(workerContext));
+            var paused = new NativeHarness.PausedCollector();
+            var failure = new AtomicReference<Throwable>();
+            var worker = NativeHarness.worker("M6Stronghold-place-worker", () -> NativeHarness.generate(workerContext, paused), failure);
+            NativeHarness.await(paused.paused, "worker 尚未到原生 count 屏障");
+            var commandDone = new AtomicBoolean();
+            var serverThread = Thread.currentThread();
+            var monitor = NativeHarness.worker("M6Stronghold-place-observer", () -> {
+                try { NativeHarness.awaitBlockedOrFinished(serverThread, commandDone, worker, "place"); }
+                finally { paused.release.countDown(); }
+            }, failure);
+            int value;
+            try {
+                value = server.getCommandManager().getDispatcher().execute(
+                        "place structure minecraft:stronghold 1024 64 1024", server.getCommandSource().withWorld(world).withLevel(4));
+            } finally {
+                commandDone.set(true); paused.release.countDown();
+                NativeHarness.join(worker); NativeHarness.join(monitor);
+            }
+            NativeHarness.rethrow(failure.get());
+            System.out.println("M6_STRONGHOLD_PLACE_RESULT serverThread=" + serverThread.getName() + " result=" + value + " expected=" + expected + " actual=" + NativeHarness.layout(paused) + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
+            context.assertTrue(value == 1 && paused.before.equals(paused.after) && expected.equals(NativeHarness.layout(paused)),
+                    "M6 Stronghold /place 汙染 worker state/layout");
+            System.out.println("M6_STRONGHOLD_PLACE PASS serverThread=" + serverThread.getName() + " worker=" + worker.getName() + " result=" + value + " stateBefore=" + paused.before + " stateAfter=" + paused.after);
+            context.complete();
+        } catch (Exception failure) { throw new IllegalStateException("M6 Stronghold /place 交錯驗證失敗", failure); }
+    }
+
+    private static Structure.Context worldContext(ServerWorld world, long seed, ChunkPos pos) {
+        var generator = world.getChunkManager().getChunkGenerator();
+        return new Structure.Context(world.getRegistryManager(), generator, generator.getBiomeSource(),
+                world.getChunkManager().getNoiseConfig(), world.getStructureTemplateManager(),
+                new ChunkRandom(new CheckedRandom(0)), seed, pos, world, biome -> true);
+    }
+
+    /** 真 GameTest 的原版呼叫/屏障；不含 generator 的複製實作或 JUnit 依賴。 */
+    public static final class NativeHarness {
+        private static final long WAIT_SECONDS = 10;
+        private static final Method ADD_PIECES = method();
+        private static final Field ALL = field(StrongholdGenerator.class, "ALL_PIECES");
+        private static final Field POSSIBLE = field(StrongholdGenerator.class, "possiblePieces");
+        private static final Field ACTIVE = field(StrongholdGenerator.class, "activePieceType");
+        private static final Field WEIGHT = field(StrongholdGenerator.class, "totalWeight");
+        private static final Field COUNT = field(ALL.getType().getComponentType(), "generatedCount");
+        private static final StructureContext NBT_CONTEXT = new StructureContext(ResourceManager.Empty.INSTANCE, DynamicRegistryManager.EMPTY, null);
+
+        private NativeHarness() { }
+
+        private static Method method() {
+            try {
+                var method = StrongholdStructure.class.getDeclaredMethod("addPieces", StructurePiecesCollector.class, Structure.Context.class);
+                method.setAccessible(true); return method;
+            } catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
+        }
+
+        private static Field field(Class<?> owner, String name) {
+            try { var field = owner.getDeclaredField(name); field.setAccessible(true); return field; }
+            catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
+        }
+
+        public static StructurePiecesCollector generate(Structure.Context context) {
+            return generate(context, new StructurePiecesCollector());
+        }
+
+        public static <T extends StructurePiecesCollector> T generate(Structure.Context context, T collector) {
+            try { ADD_PIECES.invoke(null, collector, context); return collector; }
+            catch (InvocationTargetException failure) { rethrow(failure.getCause()); throw new AssertionError("unreachable"); }
+            catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+        }
+
+        public static String state() {
+            try {
+                var all = (Object[]) ALL.get(null);
+                var counts = new int[all.length];
+                for (int i = 0; i < all.length; i++) counts[i] = COUNT.getInt(all[i]);
+                var possible = (List<?>) POSSIBLE.get(null);
+                var active = (Class<?>) ACTIVE.get(null);
+                return "counts=" + Arrays.toString(counts) + ";possible=" + possible.size()
+                        + ";listIdentity=" + System.identityHashCode(possible) + ";active=" + (active == null ? "null" : active.getSimpleName())
+                        + ";weight=" + WEIGHT.getInt(null);
+            } catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
+        }
+
+        public static String layout(StructurePiecesCollector collector) {
+            try {
+                var digest = MessageDigest.getInstance("SHA-256");
+                for (var piece : collector.toList().pieces()) {
+                    digest.update(piece.toNbt(NBT_CONTEXT).toString().getBytes(StandardCharsets.UTF_8));
+                    digest.update((byte) '\n');
+                }
+                return HexFormat.of().formatHex(digest.digest());
+            } catch (java.security.NoSuchAlgorithmException failure) { throw new AssertionError(failure); }
+        }
+
+        public static Map<String, Integer> pieceCounts(StructurePiecesCollector collector) {
+            var counts = new TreeMap<String, Integer>();
+            for (var piece : collector.toList().pieces()) counts.merge(piece.getClass().getSimpleName(), 1, Integer::sum);
+            return Map.copyOf(counts);
+        }
+
+        public static RaceResult race(Structure.Context first, Structure.Context second) throws InterruptedException {
+            var expectedA = layout(generate(first)); var expectedB = layout(generate(second));
+            var paused = new PausedCollector();
+            var actualB = new AtomicReference<String>(); var failure = new AtomicReference<Throwable>();
+            var bDone = new AtomicBoolean();
+            var a = worker("M6Stronghold-world-A", () -> generate(first, paused), failure);
+            Thread b = null;
+            String observed;
+            try {
+                await(paused.paused, "A 尚未到原生 count 屏障");
+                b = worker("M6Stronghold-world-B", () -> {
+                    try { actualB.set(layout(generate(second))); } finally { bDone.set(true); }
+                }, failure);
+                observed = awaitBlockedOrFinished(b, bDone, a, "two-contexts");
+            } finally {
+                paused.release.countDown();
+                join(a); if (b != null) join(b);
+            }
+            rethrow(failure.get());
+            var result = new RaceResult(paused.before, paused.after, expectedA, layout(paused), expectedB, actualB.get(), observed);
+            System.out.println("M6_STRONGHOLD_NATIVE " + result + " countsA=" + pieceCounts(paused));
+            return result;
+        }
+
+        public record RaceResult(String before, String after, String expectedA, String actualA,
+                                 String expectedB, String actualB, String observation) {
+            public void requireSafe() {
+                if (!before.equals(after)) throw new AssertionError("STRONGHOLD_SHARED_STATE_CROSSED：" + this);
+                if (!expectedA.equals(actualA) || !expectedB.equals(actualB)) throw new AssertionError("STRONGHOLD_LAYOUT_CHANGED：" + this);
+            }
+        }
+
+        public static final class PausedCollector extends StructurePiecesCollector {
+            public final CountDownLatch paused = new CountDownLatch(1), release = new CountDownLatch(1);
+            public volatile String before, after;
+            private int added;
+            private boolean held;
+            @Override public void addPiece(StructurePiece piece) {
+                super.addPiece(piece);
+                if (!held && ++added == 12) {
+                    held = true; before = state(); paused.countDown();
+                    try { await(release, "A count 屏障未被釋放"); }
+                    catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException(failure); }
+                    after = state();
+                }
+            }
+        }
+
+        @FunctionalInterface public interface ThrowingRunnable { void run() throws Exception; }
+
+        public static Thread worker(String name, ThrowingRunnable action, AtomicReference<Throwable> failure) {
+            var thread = new Thread(() -> { try { action.run(); } catch (Throwable problem) { failure.compareAndSet(null, problem); } }, name);
+            thread.setDaemon(true); thread.start(); return thread;
+        }
+
+        public static void await(CountDownLatch latch, String message) throws InterruptedException {
+            if (!latch.await(WAIT_SECONDS, TimeUnit.SECONDS)) throw new AssertionError("STRONGHOLD_TIMEOUT：" + message);
+        }
+
+        public static String awaitBlockedOrFinished(Thread thread, AtomicBoolean done, Thread owner, String label) {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(WAIT_SECONDS);
+            while (!done.get()) {
+                if (thread.getState() == Thread.State.BLOCKED && Arrays.stream(thread.getStackTrace())
+                        .anyMatch(frame -> frame.getClassName().equals(StrongholdStructure.class.getName()) && frame.getMethodName().contains("addPieces"))) {
+                    var info = ManagementFactory.getThreadMXBean().getThreadInfo(thread.threadId(), Integer.MAX_VALUE);
+                    try {
+                        var monitor = field(StrongholdStructure.class, "quantumchamber$invocationLock").get(null);
+                        if (info == null || info.getLockInfo() == null || info.getLockOwnerId() != owner.threadId()
+                                || info.getLockInfo().getIdentityHashCode() != System.identityHashCode(monitor)) {
+                            throw new AssertionError("STRONGHOLD_WRONG_MONITOR_OWNER：" + info);
+                        }
+                    } catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
+                    System.out.println("M6_STRONGHOLD_THREAD label=" + label + " thread=" + thread.getName() + " owner=" + owner.getName() + " monitor=" + info.getLockInfo() + " info=" + info);
+                    return "BLOCKED_PRODUCTION_MONITOR_OWNER_A";
+                }
+                if (System.nanoTime() > deadline) throw new AssertionError("STRONGHOLD_TIMEOUT：等待 invocation 阻擋或完成 " + label);
+                Thread.onSpinWait();
+            }
+            return "FINISHED_WHILE_A_PAUSED";
+        }
+
+        public static void join(Thread thread) throws InterruptedException {
+            thread.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+            if (thread.isAlive()) throw new AssertionError("STRONGHOLD_WORKER_LEAK：" + thread.getName());
+        }
+
+        public static void rethrow(Throwable failure) {
+            if (failure instanceof Error error) throw error;
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            if (failure != null) throw new IllegalStateException(failure);
+        }
+    }
+}

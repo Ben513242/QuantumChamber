@@ -23,6 +23,17 @@ Windows CI 另以 `m6-ci-main-only.ps1 -Ci` 在獨立7分鐘step執行既有Main
 
 `ci-rule-check.ps1` 可加 `-M6GameTestXml`、`-M6RuntimeLog`、`-M6RuntimeRoot`、`-M6Artifacts`，複製到獨立 fixture 後執行 workflow 的 M6 oracle 原文。Windows另需 `-MainReceipt`，可用 `-MainMutation missing-receipt|wrong-head|gametest|testmod|stop|restore|missing-evidence`；每個新fixture改語意後重算外hash，必須以具名原因拒絕，不啟Minecraft。這是本機規則驗證，GitHub CI 成功另以遠端 run／exact SHA 證明。M6 native job／chains 的正式啟用屬 Task 12，此 task 未提前宣稱 native M6 通過。
 
+### M6 Stronghold 競態（Task 4）
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.StrongholdGenerationConcurrencyTest -Label stronghold-junit
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_race_stronghold -Label stronghold-worlds
+```
+
+JUnit 使用兩個原生生成 context，透過 collector 屏障檢查真實 count／list／weight 與完整 piece NBT；固定 seed 8128、chunk 32,32 的原版基準為 98 pieces、SHA256 `a80452213409b05c039da03127cc9864ae6f779722541e1256336131bb9bd21a`。另驗例外釋放、同 worker 重用與另一 worker 可繼續。GameTest 使用實際 Overworld／Nether 的 context，以受控測試執行緒呼叫原版整輪入口；這些執行緒不是 Minecraft worldgen executor。真正 worldgen 的 caller 與 `/place` 共用相同原生入口；另一案例在真 server thread 經 dispatcher 執行 `/place structure minecraft:stronghold`，先按原版 StructureStart 擴張後的 box 預載 chunks，再與受控 worker 交錯。
+
+`M6_STRONGHOLD_THREAD` 必證等待的是正式 monitor，且 owner 為第一輪 worker；屏障在第二輪完成或確認此等待後即放行，不要求兩輪同時進入鎖內。正式修補只包 StrongholdStructure.addPieces 整輪，保留原版 piece 遞迴、重試與 RNG。monitor 可重入且例外自動釋放；原版沒有整輪再入 caller，不宣稱第三方 hook／collector 的巢狀整輪安全。原版完整 `/place` 對 WorldChunk 的 PostProcessing 警告以當次原件逐筆歸屬，不壓掉日誌，也不當作 worldgen race。
+
 以下 M1–M5 數字是歷史基準；M6 以當次 scope／summary 原件為準。
 
 M1–M4 automated gates 的 tracked 版本。原本只放在 gitignored 的 SDD workspace `.superpowers/sdd/2026-09-21-m4-candidate-doors/`，刪除 worktree 或 `.superpowers/` 後就無法重跑；這裡的腳本只改路徑、參數與名稱，安全行為（fresh world move／逐檔 hash exact restore、owned roots、拒絕覆寫、main-only 三層 oracle、JAR testmod 檢查）與原始檔相同；PID 過濾等少數邏輯差異與拿掉的核對，逐項列在「來源對照」。

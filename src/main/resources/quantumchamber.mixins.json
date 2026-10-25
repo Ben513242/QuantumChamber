@@ -26,6 +26,7 @@
     "PlayerEntityShoulderSuperpositionMixin",
     "ServerChunkLoadingManagerStaleUnloadMixin",
     "PalettedBlockInfoListConcurrentCacheMixin",
-    "DirectionTransformationEagerMappingsMixin"
+    "DirectionTransformationEagerMappingsMixin",
+    "StrongholdGeneratorStateMixin"
   ]
 }
