@@ -35,10 +35,9 @@ function Assert-DiagnosticReceipt($receipt,[string]$Phase,[string]$Nonce,[string
     if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or -not $receipt.diagnosticPassed -or -not $receipt.catalogChecked){throw 'M6_DIAGNOSTIC_ORACLE_FAILED：Java斷言未通過'}
     if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds){throw 'M6_RUNTIME_SCOPE_MISMATCH'}
     if(-not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen){throw 'M6_NORMAL_STOP_MISSING'}
-    if(@($receipt.worlds).Count -ne 5 -or @($receipt.descriptors).Count -ne 2 -or @($receipt.seedHints).Count -ne 2){throw 'M6_WORLD_SET_MISMATCH'}
+    if(@($receipt.worlds).Count -ne 5 -or @($receipt.descriptors).Count -ne 2){throw 'M6_WORLD_SET_MISMATCH'}
     $expected=@('minecraft:overworld','minecraft:the_nether','minecraft:the_end','quantumchamber:universe/67000000-0000-4000-8000-000000000001/overworld','quantumchamber:universe/67000000-0000-4000-8000-000000000002/overworld')
     if((@($receipt.worlds.worldKey) -join '|') -cne ($expected -join '|') -or @($receipt.worlds.worldKey | Sort-Object -Unique).Count -ne 5){throw 'M6_WORLD_SET_MISMATCH：exact keys'}
-    if($receipt.seedHints[0] -ceq $receipt.seedHints[1] -or $receipt.saveSeed -cin $receipt.seedHints){throw 'M6_SEED_HINTS_NOT_DISTINCT'}
     foreach($world in $receipt.worlds){
         if($world.getSeed -cne $receipt.saveSeed -or $world.locatorSeed -cne $receipt.saveSeed -or $world.structureSeed -cne $world.expectedStructureSeed -or $world.concentricRingSeed -cne $world.expectedConcentricRingSeed -or -not $world.noiseControlExact -or -not $world.biomeControlExact -or -not $world.structureControlExact){throw "M6_WORLD_ORACLE_FAILED：$($world.worldKey)"}
         if($world.worker.serverThread -or $world.worker.getSeed -cne $world.getSeed -or (@($world.worker.noiseSamples) -join '|') -cne (@($world.noiseSamples) -join '|') -or (@($world.worker.biomeSamples) -join '|') -cne (@($world.biomeSamples) -join '|')){throw 'M6_WORKER_ORACLE_FAILED'}

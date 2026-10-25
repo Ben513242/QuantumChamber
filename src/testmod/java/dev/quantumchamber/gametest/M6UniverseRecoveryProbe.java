@@ -110,7 +110,7 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             worlds.add(world);
         }
         long seed=server.getSaveProperties().getGeneratorOptions().getSeed();
-        proof.put("saveSeed",Long.toString(seed));proof.put("seedHints",List.of(Long.toString(seed^0x9e3779b97f4a7c15L),Long.toString(seed^0x6a09e667f3bcc909L)));
+        proof.put("saveSeed",Long.toString(seed));
         proof.put("serverThread",Thread.currentThread().getName());proof.put("descriptors",descriptors);
         proof.put("catalogSha256",hash(catalogPath));proof.put("catalogChecked",true);
         JsonObject previous=baseline?null:JsonParser.parseString(Files.readString(config.root().resolve("native-baseline.json"))).getAsJsonObject();
@@ -120,7 +120,7 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             require(previous.get("saveSeed").getAsString().equals(Long.toString(seed)),"M6_REOPEN_SEED_CHANGED");
         }
         var rows=new ArrayList<Map<String,Object>>();
-        for(int i=0;i<worlds.size();i++){var row=observeWorld(worlds.get(i),i,seed);if(i>=3)row.put("diagnosticSeedHint",Long.toString(seed^(i==3?0x9e3779b97f4a7c15L:0x6a09e667f3bcc909L)));rows.add(row);}
+        for(int i=0;i<worlds.size();i++)rows.add(observeWorld(worlds.get(i),i,seed));
         proof.put("worlds",rows);
         var sequenceRows=sampleSequences(worlds,seed,baseline?0:1);proof.put("randomSequences",sequenceRows);
         for(int i=3;i<worlds.size();i++){
