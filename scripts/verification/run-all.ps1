@@ -10,7 +10,7 @@
 # 參數：
 #   -EvidenceRoot  run root 的上層；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
 #   -Gradle        傳給 gates.ps1／m4-recovery-probe.ps1／m5-collapse-probe.ps1（空字串＝各自預設）
-param([string]$EvidenceRoot='',[string]$Gradle='')
+param([string]$EvidenceRoot='',[string]$Gradle='',[switch]$PreflightOnly)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'gate-evidence.ps1')
 # 不設定 onlyBatches（先移除 JAVA_TOOL_OPTIONS），default／legacy 皆為完整 suite。
@@ -79,13 +79,73 @@ function Receipts([string]$gate,$server,[string[]]$expected) {
     }
     return $finals.Count
 }
+
+# 同一張表同時決定啟動前的真實 cwd 布局與最後的 CI 規則案例。
+$ciCases=@(
+    [pscustomobject]@{label='win-green';kind='legacy';step='確認 Windows 原生案例確實執行';platform='Windows';mutation='none';expected=''},
+    [pscustomobject]@{label='ubuntu-green';kind='legacy';step='確認非 Windows 跨平台案例確實執行';platform='Ubuntu';mutation='none';expected=''},
+    [pscustomobject]@{label='windows-m6-green';kind='m6';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='none';expected=''},
+    [pscustomobject]@{label='ubuntu-m6-green';kind='m6';step='確認 Ubuntu M6 精確集合與隔離';platform='Ubuntu';mutation='none';expected=''},
+    [pscustomobject]@{label='main-missing-receipt-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='missing-receipt';expected='M6_MAIN_RECEIPT_MISSING'},
+    [pscustomobject]@{label='main-wrong-head-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='wrong-head';expected='M6_MAIN_HEAD_MISMATCH'},
+    [pscustomobject]@{label='main-gametest-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='gametest';expected='M6_MAIN_SCOPE_MISMATCH'},
+    [pscustomobject]@{label='main-testmod-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='testmod';expected='M6_MAIN_TESTMOD_LEAK'},
+    [pscustomobject]@{label='main-stop-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='stop';expected='M6_MAIN_STOP_MISMATCH'},
+    [pscustomobject]@{label='main-restore-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='restore';expected='M6_MAIN_RESTORE_MISMATCH'},
+    [pscustomobject]@{label='main-missing-evidence-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='missing-evidence';expected='M6_MAIN_EVIDENCE_MISSING'}
+)
+function Assert-CiCwdStartable {
+    # cwd-map- 與 run-all- 等長；兄弟 root 的真實字元／layout 完全相同，不混入 One() 的結果。
+    $layout=Join-Path $EvidenceRoot ('cwd-map-'+[guid]::NewGuid().ToString('N'))
+    $rows=[Collections.Generic.List[object]]::new()
+    $failure=$null
+    try {
+        foreach($case in $ciCases){
+            $cwd=Join-Path $layout ("ci-$($case.label)-$([guid]::NewGuid().ToString('N'))/fixture")
+            New-Item -ItemType Directory -Path $cwd | Out-Null
+            $row=[ordered]@{label=$case.label;cwd=$cwd;characters=$cwd.Length;fileName='pwsh';arguments=@('-NoProfile','-NonInteractive','-Command','exit 0');started=$false;pid=$null;exitCode=$null;nativeErrorCode=$null;timedOut=$false;stdout='';stderr='';error=$null}
+            $rows.Add($row)
+            $process=$null
+            try {
+                $info=[Diagnostics.ProcessStartInfo]::new('pwsh')
+                foreach($argument in $row.arguments){$info.ArgumentList.Add($argument)}
+                $info.Environment['GITHUB_SHA']=$startHead
+                $info.WorkingDirectory=$cwd;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+                $process=[Diagnostics.Process]::Start($info)
+                $row.started=$true;$row.pid=$process.Id
+                $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
+                if(-not $process.WaitForExit(10000)){
+                    $row.timedOut=$true
+                    # 此 handle 只屬於本次 exit 0 的 process-only 子程序，沒有 Java／世界操作。
+                    $process.Kill();$process.WaitForExit()
+                    throw 'M6_CI_CWD_UNSUPPORTED：process-only 子程序超過10秒'
+                }
+                $row.exitCode=$process.ExitCode;$row.stdout=$stdout.GetAwaiter().GetResult();$row.stderr=$stderr.GetAwaiter().GetResult()
+                if($row.exitCode -ne 0){throw "M6_CI_CWD_UNSUPPORTED：process-only exit=$($row.exitCode)"}
+            } catch {
+                $exception=$_.Exception
+                while($exception.InnerException){$exception=$exception.InnerException}
+                if($exception -is [ComponentModel.Win32Exception]){$row.nativeErrorCode=$exception.NativeErrorCode}
+                $row.error=$_.Exception.Message
+                throw "M6_CI_CWD_UNSUPPORTED：label=$($case.label) cwd=$cwd native=$($row.nativeErrorCode) error=$($row.error)"
+            } finally {if($process){$process.Dispose()}}
+        }
+    } catch {$failure=$_.Exception.Message}
+    [ordered]@{status=$(if($failure){'FAIL'}else{'PASS'});head=$startHead;layoutRoot=$layout;expectedLabels=@($ciCases.label);worldOperations=@();gradleStarted=$false;rows=@($rows.ToArray());failure=$failure} |
+        ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runRoot 'ci-cwd-preflight.json') -Encoding utf8
+    if($failure){throw $failure}
+    Say "CI_CWD_PREFLIGHT PASS cases=$($rows.Count) LAYOUT=$layout"
+}
+Assert-CiCwdStartable
+if($PreflightOnly){Say "END PREFLIGHT exit=0 HEAD=$startHead";return}
+
 $gates=Join-Path $PSScriptRoot 'gates.ps1'
 Step 'full' { & $gates -Mode Full -Label full -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'legacy' { & $gates -Mode Legacy -Label legacy -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm5-gametest' { & $gates -Mode M5GameTest -Label m5-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm6-oracle-and-safety' {
     & (Join-Path $PSScriptRoot 'm6-ci-gametest.ps1') -Platform Windows -SelfTest -OutputRoot (Join-Path $runRoot 'm6-oracle-selftest')
-    foreach($case in @('move-fresh','owned-root')){& (Join-Path $PSScriptRoot 'm6-harness-safety-check.ps1') -Case $case -Label "full-$case"}
+    foreach($case in @('move-fresh','owned-root','optional-probe-properties','ci-cwd-preflight')){& (Join-Path $PSScriptRoot 'm6-harness-safety-check.ps1') -Case $case -Label "full-$case"}
 }
 Step 'm6-gametest' { & $gates -Mode M6GameTest -Label m6-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'main' { & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -EvidenceRoot $runRoot -Gradle $Gradle -ExpectedHead $startHead }
@@ -98,31 +158,31 @@ Step 'main-oracle' {
 Step 'm3' { & $gates -Mode M3 -Label m3 -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'recovery' { & (Join-Path $PSScriptRoot 'm4-recovery-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm5-collapse' { & (Join-Path $PSScriptRoot 'm5-collapse-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
+Step 'm6-native' { & (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') -AllEnabled -ExpectedMode DIAGNOSTIC -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'ci-rule' {
     $full=One 'gate-full-'; $m5=One 'gate-m5-gametest-'
     $xml=Join-Path $full 'result-build/gametest-results.xml'; $junit=Join-Path $full 'result-build/test-results/test'
     $m5Xml=Join-Path $m5 'result-build/gametest-m5-results.xml'
     $workflow=Join-Path $repo '.github/workflows/build.yml'; $src=Join-Path $repo 'src/testmod/java'
     $check=Join-Path $PSScriptRoot 'ci-rule-check.ps1'
-    & $check -Label win-green -Workflow $workflow -Step '確認 Windows 原生案例確實執行' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot
-    & $check -Label ubuntu-green -Workflow $workflow -Step '確認非 Windows 跨平台案例確實執行' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot
     $m6=One 'gate-m6-gametest-'
     $m6Arguments=@{M6GameTestXml=(Join-Path $m6 'result-build/gametest-m6-results.xml');M6RuntimeLog=(Join-Path $m6 'execution/runtime-logs/latest.log');M6RuntimeRoot=(Join-Path $m6 'world-fresh/..');M6Artifacts=@(Get-ChildItem -LiteralPath (Join-Path $full 'result-build/libs') -File -Filter '*.jar' | ForEach-Object FullName)}
-    foreach($platform in @('Windows','Ubuntu')){
-        $mainArguments=if($platform -ceq 'Windows'){@{MainReceipt=(Join-Path $runRoot 'main-ci-receipt.json')}}else{@{}}
-        & $check @mainArguments -Label "$($platform.ToLowerInvariant())-m6-green" -Workflow $workflow -Step "確認 $platform M6 精確集合與隔離" -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot @m6Arguments
-        $r=Read-Json (Join-Path (One "ci-$($platform.ToLowerInvariant())-m6-green-") 'result.json')
-        if($r.verdict -ne 'PASS' -or $r.head -cne $startHead -or ($platform -ceq 'Windows' -and ($r.mainMutation -cne 'none' -or -not $r.mainReceiptSha256))){throw "M6 CI 規則 fixture 失敗：$platform"}
+    foreach($case in $ciCases){
+        $arguments=@{Label=$case.label;Workflow=$workflow;Step=$case.step;GameTestXml=$xml;M5GameTestXml=$m5Xml;JUnitDir=$junit;SourceRoot=$src;EvidenceRoot=$runRoot}
+        if($case.kind -ne 'legacy'){
+            foreach($key in $m6Arguments.Keys){$arguments[$key]=$m6Arguments[$key]}
+            if($case.platform -ceq 'Windows'){$arguments.MainReceipt=Join-Path $runRoot 'main-ci-receipt.json'}
+        }
+        if($case.kind -ceq 'main-negative'){$arguments.MainMutation=$case.mutation}
+        & $check @arguments
+        $r=Read-Json (Join-Path (One "ci-$($case.label)-") 'result.json')
+        if($case.kind -ceq 'main-negative'){
+            if($r.verdict -cne 'FAIL' -or $r.mainMutation -cne $case.mutation -or -not $r.output.Contains($case.expected)){throw "Main CI反例未具名拒絕：$($case.mutation)"}
+        } else {
+            if($r.verdict -cne 'PASS' -or $r.head -cne $startHead -or $r.mutation -cne 'none' -or $r.sourceMutation -cne 'none'){throw "CI規則未原樣通過：$($case.label)"}
+            if($case.kind -ceq 'm6' -and $case.platform -ceq 'Windows' -and ($r.mainMutation -cne 'none' -or -not $r.mainReceiptSha256)){throw 'M6 CI規則缺少正式Main receipt'}
+        }
     }
-    $mainNegative=[ordered]@{'missing-receipt'='M6_MAIN_RECEIPT_MISSING';'wrong-head'='M6_MAIN_HEAD_MISMATCH';gametest='M6_MAIN_SCOPE_MISMATCH';testmod='M6_MAIN_TESTMOD_LEAK';stop='M6_MAIN_STOP_MISMATCH';restore='M6_MAIN_RESTORE_MISMATCH';'missing-evidence'='M6_MAIN_EVIDENCE_MISSING'}
-    foreach($pair in $mainNegative.GetEnumerator()){
-        $label="main-$($pair.Key)-red"
-        & $check -Label $label -Workflow $workflow -Step '確認 Windows M6 精確集合與隔離' -GameTestXml $xml -M5GameTestXml $m5Xml -JUnitDir $junit -SourceRoot $src -EvidenceRoot $runRoot -MainReceipt (Join-Path $runRoot 'main-ci-receipt.json') -MainMutation $pair.Key @m6Arguments
-        $r=Read-Json (Join-Path (One "ci-$label-") 'result.json')
-        if($r.verdict -cne 'FAIL' -or $r.mainMutation -cne $pair.Key -or -not $r.output.Contains($pair.Value)){throw "Main CI反例未具名拒絕：$($pair.Key)"}
-    }
-    # ci-rule-check.ps1 不因 FAIL 而 throw；綠燈核對在此判定。
-    foreach($label in 'win-green','ubuntu-green'){ $r=Read-Json (Join-Path (One "ci-$label-") 'result.json'); if($r.verdict -ne 'PASS' -or $r.mutation -ne 'none' -or $r.sourceMutation -ne 'none'){throw "CI 規則 $label 未通過或不是原樣執行：exit=$($r.exitCode) mutation=$($r.mutation) sourceMutation=$($r.sourceMutation)"} }
 }
 Step 'summary' {
     # 唯讀：只讀本次 run root 的原始 XML／receipt／JAR／oracle／CI 結果，任何不符直接 throw；不改寫任何 gate root。
@@ -311,14 +371,30 @@ Step 'summary' {
         if($r.verdict -ne 'PASS' -or $r.head -cne $head -or $r.workflowSha256 -ne $workflowHash -or $r.m6GameTestXmlSha256.ToLowerInvariant() -cne (Hash $m6Xml) -or $r.m6RuntimeLogSha256.ToLowerInvariant() -cne (Hash (Join-Path $m6 'execution/runtime-logs/latest.log'))){throw "M6 CI fixture SHA／原件不符：$platform"}
         $ci["$platform-m6"]=$r.verdict
     }
+    # 原生鏈不是GameTest或Task11功能通過；逐receipt另核schema/mode/身分與舊功能RED。
+    $nativeFile=One 'm6-native-run-' '.json';$native=Read-Json $nativeFile
+    if($native.status -cne 'PASS' -or $native.head -cne $head -or -not $native.allEnabled -or $native.requireIndependentSeed -or $native.expectedMode -cne 'DIAGNOSTIC' -or $native.phaseCount -ne 2 -or (@($native.selectedChains) -join ',') -cne 'native-seed-diagnostic' -or $native.phaseMinutes -ne 3 -or $native.idleSeconds -ne 90 -or $native.blockMinutes -ne 60){throw 'M6_NATIVE_SUMMARY_MISMATCH'}
+    if(@($native.enabledManifest).Count -ne 1 -or $native.enabledManifest[0].chain -cne 'native-seed-diagnostic' -or $native.enabledManifest[0].expectedMode -cne 'DIAGNOSTIC' -or (@($native.enabledManifest[0].phases) -join ',') -cne 'baseline,save-reopen'){throw 'M6_NATIVE_MANIFEST_MISMATCH'}
+    if((@($native.phases.phase) -join ',') -cne 'baseline,save-reopen' -or @($native.phases.javaPid | Sort-Object -Unique).Count -ne 2 -or @($native.phases.startupNonce | Sort-Object -Unique).Count -ne 2){throw 'M6_NATIVE_PHASE_SET_MISMATCH'}
+    foreach($phase in $native.phases){
+        $receipt=Read-Json $phase.receipt
+        if((Hash $phase.receipt) -cne $phase.receiptSha256.ToLowerInvariant() -or $receipt.status -cne 'PASS' -or $receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'DIAGNOSTIC' -or $receipt.chain -cne 'native-seed-diagnostic' -or $receipt.phase -cne $phase.phase -or $receipt.nonce -cne $phase.nonce -or $receipt.startupNonce -cne $phase.startupNonce -or $receipt.pid -ne $phase.javaPid -or $receipt.root -cne $phase.root){throw 'M6_NATIVE_RECEIPT_MISMATCH'}
+        if(-not $phase.normalStop -or -not $phase.lockReleased -or $phase.javaExitCode -ne 0 -or $phase.gradleExitCode -ne 0 -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested){throw 'M6_NATIVE_STOP_MISMATCH'}
+        if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds -or @($receipt.worlds).Count -ne 5 -or @($receipt.randomSequences).Count -ne 5 -or -not $receipt.catalogChecked -or -not $receipt.diagnosticPassed -or @($receipt.failures).Count -or -not $receipt.diagnosticAssertions.newWorldStillReadsSaveSeed -or -not $receipt.diagnosticAssertions.newWorldSharesCanonicalRandomSequences -or $receipt.functionalAssertions.newWorldHasIndependentSeed -ne $false -or $receipt.functionalAssertions.newWorldHasIndependentRandomSequences -ne $false){throw 'M6_NATIVE_DIAGNOSTIC_SEMANTICS_MISMATCH'}
+    }
+    $first=Read-Json $native.phases[0].receipt;$second=Read-Json $native.phases[1].receipt
+    if($first.catalogSha256 -cne $second.catalogSha256 -or -not $second.diagnosticAssertions.reopenExact){throw 'M6_NATIVE_REOPEN_MISMATCH'}
+    $preservation=Read-Json $native.chains[0].preservation
+    if($preservation.strategy -cne 'NEW_OWNED_ROOT' -or $preservation.existingWorldsMoved -ne 0 -or $preservation.existingWorldsChanged -or -not $preservation.retainedRoot -or -not $preservation.normalStop -or -not $preservation.lockReleased){throw 'M6_NATIVE_PRESERVATION_MISMATCH'}
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
         gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;m6=$m6Cases.Count;m6XmlSha256=Hash $m6Xml;m6Pacing=$m6Oracle.pacing;m6Cases=$identities;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
         jars=$jars;mainOnly=[ordered]@{ciReceipt=(Join-Path $runRoot 'main-ci-receipt.json');ciReceiptSha256=Hash (Join-Path $runRoot 'main-ci-receipt.json');status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
+        m6Native=[ordered]@{summary=$nativeFile;sha256=Hash $nativeFile;mode='DIAGNOSTIC';phaseCount=$native.phaseCount;chains=$native.chains;functionalAssertionsRemainRed=$true}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
-    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
+    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$($native.phaseCount) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
 }
 Say "END ALL exit=0 HEAD=$((git -C $repo rev-parse HEAD).Trim())"

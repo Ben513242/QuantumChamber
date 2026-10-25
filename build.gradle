@@ -121,6 +121,18 @@ loom {
                 if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m5collapse.${key}=${providers.gradleProperty(property).get()}"
             }
         }
+        m6UniverseProbe {
+            server()
+            name 'M6 Universe Native Diagnostic Probe'
+            source sourceSets.testmod
+            def nonce = providers.gradleProperty('m6UniverseNonce').getOrElse('disabled')
+            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M6 nonce 只能包含小寫英數與連字號')
+            runDir "run/m6-universe-${nonce}"
+            ['phase', 'nonce', 'startupNonce', 'root', 'chain', 'expectedMode'].each { key ->
+                def property = 'm6Universe' + key.capitalize()
+                if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m6universe.${key}=${providers.gradleProperty(property).get()}"
+            }
+        }
         gameTest {
             server()
             name 'M1 Game Test'

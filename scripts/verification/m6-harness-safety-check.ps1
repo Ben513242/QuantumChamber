@@ -1,12 +1,12 @@
 # M6 harness 安全檢查：只操作本次唯一 fixture，所有成功與失敗現場都保留。
-param([Parameter(Mandatory)][ValidateSet('owned-root','move-fresh')][string]$Case,
+param([Parameter(Mandatory)][ValidateSet('owned-root','move-fresh','ci-cwd-preflight','optional-probe-properties')][string]$Case,
       [Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9-]+$')][string]$Label, [switch]$InjectResidualEmptyDirectory)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'probe-common.ps1')
 $project = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 $owner = [pscustomobject]@{Project=$project}
-$taskDirectory = if ($Case -eq 'owned-root') { 'task-01' } else { 'task-02' }
+$taskDirectory = switch ($Case) { 'owned-root' {'task-01'} 'move-fresh' {'task-02'} default {'task-07'} }
 $evidence = Resolve-Evidence -Context $owner -Path (Join-Path $project ".superpowers/sdd/2026-10-24-m6-universe-generation/$taskDirectory/$Label-$([guid]::NewGuid().ToString('N'))")
 $results = [Collections.Generic.List[object]]::new()
 $head = (git -C $project rev-parse HEAD).Trim()
@@ -134,8 +134,80 @@ function Invoke-MoveFreshChecks {
     }
 }
 
+function Invoke-CiCwdPreflightChecks {
+    $beforeJava=@(Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine)
+    $runPath=Join-Path $project 'run';$beforeExists=Test-Path -LiteralPath $runPath
+    $beforeRun=@(if($beforeExists){Get-ChildItem -LiteralPath $runPath -Force | ForEach-Object Name | Sort-Object})
+    $entryPids=[Collections.Generic.List[int]]::new();$entryTargets=[Collections.Generic.List[string]]::new()
+    foreach($kind in @('deep-normal-entry','short-preflight-only')){
+        $short=$kind -ceq 'short-preflight-only'
+        $target=if($short){Join-Path $project '.superpowers/verification'}else{Join-Path $evidence ('deep-layout-'+[guid]::NewGuid().ToString('N'))}
+        $info=[Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh.exe'))
+        foreach($argument in @('-NoProfile','-NonInteractive','-File',(Join-Path $PSScriptRoot 'run-all.ps1'),'-EvidenceRoot',$target)){$info.ArgumentList.Add($argument)}
+        if($short){$info.ArgumentList.Add('-PreflightOnly')}
+        $info.WorkingDirectory=$project;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+        $process=[Diagnostics.Process]::Start($info)
+        $entryPids.Add($process.Id);$entryTargets.Add($target)
+        $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
+        # 子程序只經正式入口的 process-only guard，不設會截斷世界復原的外層timeout。
+        $process.WaitForExit();$stdout=$out.GetAwaiter().GetResult();$stderr=$err.GetAwaiter().GetResult();$exit=$process.ExitCode
+        [IO.File]::WriteAllText((Join-Path $evidence "$kind.stdout.log"),$stdout)
+        [IO.File]::WriteAllText((Join-Path $evidence "$kind.stderr.log"),$stderr)
+        $roots=@([regex]::Matches($stdout,'(?m)^RUN_ROOT=(.+)\r?$') | ForEach-Object {$_.Groups[1].Value.Trim()})
+        if($roots.Count -ne 1){throw "M6_CI_PREFLIGHT_TEST_FAILED：root不唯一 kind=$kind"}
+        $receipt=Get-Content -LiteralPath (Join-Path $roots[0] 'ci-cwd-preflight.json') -Raw | ConvertFrom-Json
+        $noRuntime=$stdout -notmatch '(?m)^BEGIN ' -and @($receipt.worldOperations).Count -eq 0 -and -not $receipt.gradleStarted
+        $ok=if($short){$exit -eq 0 -and $receipt.status -ceq 'PASS' -and @($receipt.rows).Count -eq 11 -and $stdout.Contains('END PREFLIGHT exit=0')}
+            else{$exit -ne 0 -and $receipt.status -ceq 'FAIL' -and ($stdout+$stderr).Contains('M6_CI_CWD_UNSUPPORTED') -and -not $stdout.Contains('END ALL')}
+        $results.Add([ordered]@{name=$kind;passed=[bool]($ok -and $noRuntime);exitCode=$exit;runRoot=$roots[0];preflightOnly=$short;noRuntime=$noRuntime;receiptSha256=(Get-FileHash -LiteralPath (Join-Path $roots[0] 'ci-cwd-preflight.json')).Hash})
+        $process.Dispose()
+        if(-not $ok -or -not $noRuntime){throw "M6_CI_PREFLIGHT_TEST_FAILED：kind=$kind exit=$exit"}
+    }
+    $afterJava=@(Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine)
+    $afterExists=Test-Path -LiteralPath $runPath
+    $afterRun=@(if($afterExists){Get-ChildItem -LiteralPath $runPath -Force | ForEach-Object Name | Sort-Object})
+    # 舊daemon可以退出；無關Java變動只記錄，不能冒稱是本case副作用。
+    $ownedJava=@($afterJava | Where-Object {
+        $candidate=$_
+        $candidate.ParentProcessId -in $entryPids -or @($entryTargets | Where-Object {$candidate.CommandLine -and $candidate.CommandLine.Contains($_)}).Count -gt 0
+    })
+    $sameRun=$beforeExists -eq $afterExists -and ($beforeRun -join '|') -ceq ($afterRun -join '|')
+    $results.Add([ordered]@{name='process-only-no-world-operations';passed=($ownedJava.Count -eq 0 -and $sameRun);javaBefore=$beforeJava;javaAfter=$afterJava;ownedJava=$ownedJava;entryPids=@($entryPids.ToArray());runExistedBefore=$beforeExists;runExistsAfter=$afterExists;runNamesUnchanged=$sameRun})
+    if($ownedJava.Count -or -not $sameRun){throw 'M6_CI_PREFLIGHT_TEST_FAILED：本case有Java owner或run目錄改變'}
+}
+
+function Invoke-OptionalProbePropertyChecks {
+    foreach($prefix in @('m4Recovery','m5Collapse')){
+        $context=[pscustomobject]@{InitScript='C:/fixture with spaces/runtime.init.gradle';Task=$(if($prefix -ceq 'm4Recovery'){'runM4Recovery'}else{'runM5Collapse'});PropertyPrefix=$prefix}
+        $expected=@('-I','C:/fixture with spaces/runtime.init.gradle',$context.Task,"-P${prefix}Nonce=nonce-fixed","-P${prefix}Phase=baseline","-P${prefix}StartupNonce=0123456789abcdef0123456789abcdef","-P${prefix}Root=C:/fixture with spaces/root",'--console=plain')
+        $actual=@(Get-OwnedPhaseArguments -Context $context -Nonce nonce-fixed -Phase baseline -Root 'C:/fixture with spaces/root' -StartupNonce 0123456789abcdef0123456789abcdef)
+        $expectedBytes=[Text.Encoding]::UTF8.GetBytes([string]::Join([char]0,$expected));$actualBytes=[Text.Encoding]::UTF8.GetBytes([string]::Join([char]0,$actual))
+        $exact=[Convert]::ToHexString($expectedBytes) -ceq [Convert]::ToHexString($actualBytes)
+        $results.Add([ordered]@{name="$prefix-byte-exact";passed=$exact;arguments=$actual;utf8Hex=[Convert]::ToHexString($actualBytes)})
+        if(-not $exact){throw "M6_OPTIONAL_PROPERTIES_REGRESSION：$prefix"}
+    }
+    $context=[pscustomobject]@{InitScript='init';Task='runM6UniverseProbe';PropertyPrefix='m6Universe'}
+    $actual=@(Get-OwnedPhaseArguments -Context $context -Nonce n -Phase baseline -Root root -StartupNonce startup -ExtraProperties ([ordered]@{Chain='native-seed-diagnostic';ExpectedMode='DIAGNOSTIC'}))
+    $exact=($actual[-3..-1] -join '|') -ceq '-Pm6UniverseChain=native-seed-diagnostic|-Pm6UniverseExpectedMode=DIAGNOSTIC|--console=plain'
+    $results.Add([ordered]@{name='m6-optional-pair';passed=$exact;arguments=$actual})
+    if(-not $exact){throw 'M6_OPTIONAL_PROPERTIES_REGRESSION：M6配對'}
+    foreach($extras in @([ordered]@{Chain='x'},[ordered]@{Chain='x';Unknown='y'},[ordered]@{Chain='';ExpectedMode='DIAGNOSTIC'})){
+        $caught=$null
+        try {Get-OwnedPhaseArguments -Context $context -Nonce n -Phase baseline -Root root -StartupNonce startup -ExtraProperties $extras | Out-Null}catch{$caught=$_.Exception.Message}
+        $ok=$caught -like 'M6_EXTRA_PROPERTIES_*';$results.Add([ordered]@{name='reject-malformed-extra';passed=$ok;message=$caught})
+        if(-not $ok){throw 'M6_OPTIONAL_PROPERTIES_REJECTION_MISSING'}
+    }
+    foreach($arguments in @(@{Chain='unknown'},@{ExpectedMode='FUNCTIONAL'},@{AllEnabled=$true;Chain='native-seed-diagnostic'})){
+        $caught=$null
+        try {& (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') @arguments | Out-Null}catch{$caught=$_.Exception.Message}
+        $ok=$caught -match '^M6_(CHAIN_UNKNOWN|EXPECTED_MODE_MIXED|CHAIN_SELECTION_MIXED)'
+        $results.Add([ordered]@{name='reject-chain-mode-before-runtime';passed=$ok;message=$caught})
+        if(-not $ok){throw 'M6_CHAIN_MODE_REJECTION_MISSING'}
+    }
+}
+
 try {
-    if ($Case -eq 'move-fresh') { Invoke-MoveFreshChecks } else {
+    if ($Case -eq 'optional-probe-properties') { Invoke-OptionalProbePropertyChecks } elseif ($Case -eq 'ci-cwd-preflight') { Invoke-CiCwdPreflightChecks } elseif ($Case -eq 'move-fresh') { Invoke-MoveFreshChecks } else {
     Invoke-Fixture 'normal-existing-run' 'existing' $false
     Invoke-Fixture 'normal-fresh-run' 'fresh' $false
     Invoke-Fixture 'reject-run-junction' 'run-junction' $true

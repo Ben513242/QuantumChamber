@@ -513,3 +513,26 @@ W12 已驗證第二次 SEALED 的退避加倍：`INITIAL_TICKS＋6 < d ≤ 2×IN
 | `.tools/m1-server-smoke.ps1` | `5cf237004616bf1622299d03e1776d456fbf9a1f9fc35005b5f5894460ba9438` | M1 時期 smoke：直接在現有 `run/server` 世界放方塊、沒有 fresh move／restore，且讀固定的 `m1-smoke` 存檔；由 `gates.ps1 -Mode Main` 與 GameTest 取代 |
 | `.tools/read-m1-registry.py` | `ce3407f0f76cd76a4ff7dd48c413ed0940d9ea9b74cc14b5354dbfaf1527789f` | 斷言 registry `SchemaVersion == 1`，目前 `ChamberRegistryState` 是 schema 2；沒有 tracked 文件引用 |
 | `.tools/m12-lighting-audit/lambdynamiclights-3.1.4+1.21.1.jar` | `c91de6935c866c85a68f96ac051dabae6a23b402e345b7141b6fb3c39998612b` | 第三方 JAR 的唯讀 audit 副本，不是腳本；建置以 `gradle.properties` 的 SHA-512 從 Maven 解析 |
+
+
+### M6 Task7：原生seed/settings診斷（DIAGNOSTIC）
+
+正式入口為m6-focused.ps1 -Suite Probe -Chain native-seed-diagnostic -Label <label>；底層m6-universe-probe.ps1 -AllEnabled的tracked manifest目前只有此chain。每次新建run/m6-universe-<nonce>，baseline與save-reopen各一個新JVM/startupNonce；phase3分鐘、idle90秒、M6區塊60分鐘。失敗root保留，不重跑同nonce。Task7起本機run-all真跑全部已啟用鏈；Task12才新增遠端Windows native job，現有雙平台GameTest CI不代表此鏈已遠端驗證。
+
+receipt固定m6ProbeSchema=1、expectedMode=DIAGNOSTIC、chain/phase/nonce/startupNonce與exact PID/start time。兩個schema1 U以正式catalog checked提交、讀回及backend物化；重開由正式lifecycle恢復。canonical Overworld/Nether/End為控制組。每world分開保存重複getSeed、StructureLocator.seed、structureSeed/concentricRingSeed、BiomeAccess的hash seed、實際NoiseConfig固定四點finalDensity/temperature/vegetation raw double bits，以及相同設定/save seed重建控制與biome樣本。另以有界唯讀worker核相同seed/noise/biome，不把它冒稱自然chunk生成壓測。兩U各有互異且異於saveSeed的診斷hint；hint不是catalog seed，也不影響production factory。
+
+randomSequences用object ==確認canonical共用owner、記實際seed與group；只消耗nonce專用quantumchamber:m6_native_diagnostic/<nonce>序列，以獨立控制序列核baseline與重啟後連續值，不碰一般loot stream。newWorldStillReadsSaveSeed/newWorldSharesCanonicalRandomSequences是舊行為觀察；newWorldHasIndependentSeed/newWorldHasIndependentRandomSequences持續為具名功能RED。-RequireIndependentSeed明示要求獨立seed，會在兩phase正常stop、JVM退出及session.lock釋放核對後回M6_FUNCTIONAL_RED；原DIAGNOSTIC receipt保留，沒有把診斷鏈改成FUNCTIONAL。Task11用另一條native-seed-functional鏈才驗新功能。
+
+所有M6 property完全缺席時testmod入口安靜關閉；部分缺失、未知chain/phase、混用mode或M4/M5/GameTest flags具名拒絕。probe-common可選ExtraProperties只接受M6的Chain/ExpectedMode完整配對；未指定時M4/M5原參數向量byte exact，m6-harness-safety-check.ps1 -Case optional-probe-properties驗證。native root完全全新，不移動既有world；preservation.json明列existingWorldsMoved=0、existingWorldsChanged=false、retainedRoot=true，不冒稱已刪除還原原本不存在的root。
+
+固定1.21注入交接：ServerWorld.getSeed()J每次讀global SaveProperties；ServerWorld constructor的275–331已同步建chunk manager，418–430又直接讀GeneratorOptions.getSeed()J，432–476建StructureLocator。ServerChunkLoadingManager constructor的193–293先由world.getSeed建立NoiseConfig與placement calculator，302之後才建worldgen executor；此時world instance尚未正式註冊，不能只在world map登記後修seed。factory傳入的BiomeAccess seed另經hashSeed；NoiseConfig與實際BiomeSource消費鏈分開。RegistryWrapper版StructurePlacementCalculator.create使用同入參保存structure/ring seed，Stream版ringSeed為0，probe逐world核實際值，不將所有seed層混稱相等。
+
+Task11須處理exact server＋world key＋catalog descriptor的持續owner，以及constructor直接global讀取；不得替換全域SaveProperties、registry或canonical DimensionOptions，不得只用短暫constructor context。schema1 properties各是新UnmodifiableLevelProperties wrapper，但其SaveProperties/main properties delegate仍canonical；schema1 randomSequences亦原樣共用，本task未改production。ServerWorld constructor完整descriptor為(Lnet/minecraft/server/MinecraftServer;Ljava/util/concurrent/Executor;Lnet/minecraft/world/level/storage/LevelStorage$Session;Lnet/minecraft/world/level/ServerWorldProperties;Lnet/minecraft/registry/RegistryKey;Lnet/minecraft/world/dimension/DimensionOptions;Lnet/minecraft/server/WorldGenerationProgressListener;ZJLjava/util/List;ZLnet/minecraft/util/math/random/RandomSequencesState;)V。
+
+End family留Task16：ServerWorld constructor504–526同時要求key==World.END與dimensionType THE_END才建dragon fight，529–549讀global getDragonFight，saveLevel()V再寫global setDragonFight；custom End需同時處理建立條件與雙端持久owner。本task只記原版owner與canonical控制，不宣稱family隔離。worker ChunkGenerating使用own context world的noise/calculator，carve另讀world.getSeed；server-thread /place的PlaceCommand.executePlaceStructure亦同步讀getSeed/noise再createStructureStart。固定named merged 1.21 JAR SHA256=C3D5432D0538D7750B985E42788484BEE4C63BBFACD7CADD496E940C83DFCEC4；它與runtime common artifact的整JARhash不同。
+
+### run-all的CI工作目錄前置守門
+
+正常run-all與-PreflightOnly都在任何Gradle/gate/world操作前共用同一guard。11個CI label從同一case table供前置檢查與正式consumer；同EvidenceRoot下cwd-map-<GUID>與run-all-<GUID>等長的兄弟目錄，真實建立每個ci-<label>-<GUID>/fixture後以原CI的ProcessStartInfo('pwsh')/GITHUB_SHA啟動exit0。所有projection與ci-cwd-preflight.json永久保留，summary不把它當CI結果。
+
+不猜通用260上限或改registry/global longpaths；Start失敗、非0或process-only子程序超過10秒都以M6_CI_CWD_UNSUPPORTED拒絕，昂貴runtime尚未開始。-PreflightOnly成功只證明當次布局可啟動，不代full。預設EvidenceRoot仍是短.superpowers/verification，SDD僅存pin metadata。m6-harness-safety-check.ps1 -Case ci-cwd-preflight以正常入口的深root具名拒絕及短root的PreflightOnly正例驗控制流，保留Java前後觀察且不要求既有daemon永遠存活，也支援fresh checkout沒有run/。Task6原深9280失敗保留FAIL，不能用新guard或process-only控制改判。

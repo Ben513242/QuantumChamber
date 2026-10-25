@@ -196,12 +196,27 @@ function Stop-TimedOutPhase($Context, $State, [string]$Reason) {
     throw "owned phase 逾時（$Reason）：pid=$($State.JavaId) commandLineMatched=$($record.commandLineMatched) jstack=$($record.jstack) killed=$($record.killed) launcherKilled=$($record.launcherKilled)；timeout.json 在 $($State.PhaseEvidence)；禁止同 root 重跑：$($State.Root) phase=$($State.Phase)"
 }
 
-function Invoke-OwnedPhase($Context, [string]$Nonce, [string]$Phase, [string]$Root) {
+# 可選extra只由M6傳入；未指定時保留M4/M5逐byte相同的原參數向量。
+function Get-OwnedPhaseArguments($Context,[string]$Nonce,[string]$Phase,[string]$Root,[string]$StartupNonce,[Collections.IDictionary]$ExtraProperties=@{}) {
+    $arguments = @('-I', $Context.InitScript, $Context.Task, "-P$($Context.PropertyPrefix)Nonce=$Nonce", "-P$($Context.PropertyPrefix)Phase=$Phase", "-P$($Context.PropertyPrefix)StartupNonce=$StartupNonce", "-P$($Context.PropertyPrefix)Root=$Root")
+    if($ExtraProperties.Count){
+        if($Context.PropertyPrefix -cne 'm6Universe' -or $ExtraProperties.Count -ne 2 -or -not $ExtraProperties.Contains('Chain') -or -not $ExtraProperties.Contains('ExpectedMode')){throw 'M6_EXTRA_PROPERTIES_INVALID：只接受M6的Chain/ExpectedMode完整配對'}
+        foreach($key in @('Chain','ExpectedMode')){
+            $value=[string]$ExtraProperties[$key]
+            if([string]::IsNullOrWhiteSpace($value)){throw "M6_EXTRA_PROPERTIES_MISSING：$key"}
+            $arguments+="-P$($Context.PropertyPrefix)$key=$value"
+        }
+    }
+    $arguments+='--console=plain'
+    return $arguments
+}
+
+function Invoke-OwnedPhase($Context, [string]$Nonce, [string]$Phase, [string]$Root, [Collections.IDictionary]$ExtraProperties=@{}) {
     $phaseEvidence = Join-Path $Context.EvidenceOwner "$($Context.EvidencePrefix)-$Nonce/$Phase"
     if (Test-Path -LiteralPath $phaseEvidence) { throw "phase evidence 已存在，禁止重跑：$phaseEvidence" }
     New-Item -ItemType Directory -Path $phaseEvidence | Out-Null
     $startupNonce = [guid]::NewGuid().ToString('N')
-    $arguments = @('-I', $Context.InitScript, $Context.Task, "-P$($Context.PropertyPrefix)Nonce=$Nonce", "-P$($Context.PropertyPrefix)Phase=$Phase", "-P$($Context.PropertyPrefix)StartupNonce=$startupNonce", "-P$($Context.PropertyPrefix)Root=$Root", '--console=plain')
+    $arguments = @(Get-OwnedPhaseArguments -Context $Context -Nonce $Nonce -Phase $Phase -Root $Root -StartupNonce $startupNonce -ExtraProperties $ExtraProperties)
     $quotedArguments = $arguments | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }
     $command = '$OutputEncoding=[Text.Encoding]::GetEncoding(' + $Context.GradleEncoding.CodePage + '); [Console]::OutputEncoding=$OutputEncoding; ' + "Set-Location -LiteralPath '" + $Context.Project.Replace("'", "''") + "'; & '" + $Context.Gradle.Replace("'", "''") + "' " + ($quotedArguments -join ' ') + '; exit $LASTEXITCODE'
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
