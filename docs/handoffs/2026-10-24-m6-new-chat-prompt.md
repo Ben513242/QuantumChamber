@@ -1,8 +1,8 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
-> 最新（2026-10-26）：使用者已明確恢復工作並要求遠端回合失敗後繼續、子代理卡住就換新的SOL。§9是已失效的歷史停工點；接續看§10及本工作樹STATUS。範圍／順序已批准、spec／plan已review，不重問、不重做M5、不重建工作樹。
+> 最新（2026-10-27）：Task8仍8A，A7與End等限定focused已通過；完整B27 G1停在End相依owner，G2未啟。接續看§11與STATUS最前current block；§9停工點已失效、§10是較早歷史。遇遠端回合失敗先核既有程序／產物，再接續或換fresh SOL。範圍／順序已批准，不重問、不重做M5、不重建工作樹。
 
-你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。現在已有M6工作樹與經review的spec／plan，按§10與最新STATUS接續；§1–8保留最初開工背景及長期限制。
+你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。現在已有M6工作樹與經review的spec／plan，按§11與最新STATUS接續；§1–8保留最初開工背景及長期限制。
 
 一律用繁體中文（台灣）回報；程式識別字、指令、檔名維持原文。先講結論與可驗證證據，再談推論。對使用者用白話。可以派工給 gpt-6-sol；總協調者負責分工、驗證與文件真實性。
 
@@ -105,7 +105,7 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 
 ## 8. 最初開工流程（已完成，不重跑）
 
-以下是最初開工流程；目前已完成，後續直接按§10接續：
+以下是最初開工流程；目前已完成，後續直接按§11接續：
 
 1. 實際main／origin／m5 tag／工作區狀態與證據。
 2. M6哪些範圍是已知要求，哪些只是建議或待決；建議第一個可驗收切片與順序。
@@ -139,3 +139,14 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 - 最新調查：semaphore為歷史OR latch、pop不清，inactive仍由depth0等條件證；另固定AccessWidener.classes為LinkedHashSet。兩token窄修已編譯並經獨立review8992DAFD…通過，plan已採用；下一步新pin/freeze後由root啟下一次唯一A7，禁止清flag、放寬任意值或略過incoming exact。
 - 本輪正式src/build/scripts/workflow對245051e無差異；既有full efbd／CI64d只採原pin，不稱新文件HEAD已跑full。三次原始binding文件已保存task-08/binding-inputs-a6b7fcc；歷史FAIL不改判。
 - A7通過才完整B34/G2/native review；完整8A資料gate後才8B。Task8及三bundle跨平台gate未完成前不進Task9，M6人工／整分支／main／tag／退役門檻不變。
+
+
+## 11. 2026-10-27 接續點：End focused完成，完整B相依owner仍待修
+
+- 所有本節原生證據的Git pin為1ec44f10e878ecc86ae773de1fbf658ab6a3f2d3。本次只更新接續文件；後續HEAD／push以Git讀回，不把新docs SHA當已跑full或native。spec v1.3不變；原spec/plan/note/AGENTS/兩handoff原bytes已保存task-08/binding-inputs-1ec44f10-20261027/mapping-index.json。
+- A7已38/38，獨立結果review bd7c0150… C0/I0/M0，只結owned Model A/component。Magma、Axis、generic RED/GREEN與End各focused的範圍、root及review hash見M6 note最後一節，不重跑已完成的setup。
+- 最新End v6 focused：g-73006d864209429f/p1-be5dce71，PID14088／4610ms自然exit0；11案=1 typed-only＋10具名拒、11graph、2Context／Session／lock關閉、0 component／FP、source14、charged41520。父oracle與fresh native結果review 5281ed89… C0/I0/M0；僅限End settings契約，不是完整圖。
+- 最新完整B27 G1：g-7d3a70ec3b9f4f67/p1-d4526a5e，PID38124／10131ms自然exit1；constructor control PASS，base-normal的overworld/the_nether COMPLETE、the_end FAIL於UNSUPPORTED_END_OWNER registry|minecraft:worldgen/density_function|minecraft:end/sloped_cheese。193postpins exact、雙Session／lock關閉，G2未啟。舊root保留，不改判或重送。
+- 下一個限定方案：task-08/end-dependency-owner-audit-v1/CONTRACT-PROPOSAL.md（SHA69bc0509ddd953b45a5d74acc60d8717109ff3fba5f3fbe62470ff19370a4131）。固定JAR896份worldgen JSON只有3處end_islands，新增owner僅sloped_cheese的argument1；失敗raw沒記該物件identity，不能把unit-codec推論當實測。先關契約review，明列新正反案例與預算，再實作新immutable候選；不泛放寬Simplex、不保持activeEnd覆蓋整個drain。
+- 順序不變：限定修正／fresh review／focused → 完整B G1 → 同batch剩餘至少210秒才G2 → fresh native及quality review → root明確8B放行。8B、跨mapping／OS三bundle、Task9起與人工尚未完成。正常push持續授權；main／tag／退役各自門檻不變。
+- 唯一工作樹與SOL要求沿用AGENTS。目前沒有待存取的live JVM；若接手時實況不同先核owner/lock，不依文字盲啟。STATUS第一個current block優先於下方含「最新」字樣的歷史段落。

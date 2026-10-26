@@ -526,3 +526,10 @@
 使用者已明確恢復開工，舊用量停工點失效；範圍／順序與spec／plan不重做。Task1–7維持既有結案，Task8仍8A。A7核心finding已關；三次新root均自然exit1，依序停於漏列SYSTEMDRIVE、helper raw路由前提、Mixin歷史semaphore假設。第三次已證helper一次正常define且loader/source/bytes exact，但38案例及五個native targets仍未到。原始FAIL與pre/post證據全保留；剩餘Loader前提已一次靜態核對，兩token窄修已編譯／獨立review；待新pin/freeze後重跑，不略過guard。
 
 最新入口為M6提示詞§10、M6 note最後一節與本工作樹STATUS。正式src/build/scripts/workflow對245051e無差異，full efbd／CI64d僅採既有pin，不稱新文件HEAD已驗。M5／main／tag／工作樹退役均未動；M6正常push持續授權，其他門檻不變。
+
+
+### 2026-10-27：M6限定focused完成，B27相依owner接續
+
+目前入口改為M6提示詞§11、M6 note「2026-10-27接續點」與STATUS最前current block。A7 38案及Magma／Axis／generic／End各限定focused已有獨立結果review；End v6 11案自然PASS，但完整B27 G1仍自然FAIL於end/sloped_cheese相依owner，G2未啟，沒有8A／8B放行。固定原版896份worldgen JSON盤點已定位最小新owner，接著審契約與正反矩陣；不重做M5，不泛放寬未知sampler。
+
+本次仍只更新文件，正式code245051e／full efbd／CI64d沿用各自原pin；native原證據pin1ec44f10與binding原bytes已封存，不能說新docs HEAD已跑測試。main仍0d05f889、m5 peeled仍a2d2b404；M6未合併／tag／退役，正常push依持續授權。新候選改綁文件commit後的實際HEAD，所有失敗root原樣保留。

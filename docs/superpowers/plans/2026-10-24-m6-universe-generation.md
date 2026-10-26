@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-26）：Task1–7及Task7 CI已完成；Task8仍8A。已採用v1.3 exact Single真absence／readonly五態／Model B正常遊戲來源與gate設計，review3E61305D…為C0/I0/M1（文字已修）。A7（38eval）及完整B/G2未過，沒有8B或production放行；平台r3/r4硬gate保留。
+狀態（2026-10-27）：Task1–7及Task7 CI已完成；Task8仍8A。v1.3產品設計不改。A7 38案與Magma／Axis／generic／End各限定focused已通過並獨立review；End focused 11案不等完整End graph。最新完整B27 G1在base-normal的end/sloped_cheese相依owner FAIL，G2未啟；先審該最小契約擴充，再以新HEAD候選繼續。完整B34/G2與fresh native/quality未過，沒有8B或production放行；平台r3/r4硬gate保留。證據與下一步見M6 note「2026-10-27接續點」。
 
 採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當前native資料gate仍未通過，沒有8B放行。
 

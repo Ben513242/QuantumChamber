@@ -381,3 +381,50 @@ Task7既有full為code245的run-all-efbd4990e8824a63bc93b458643877b0，CI為64d6
 - root完整讀獨立分析4897422C…、addendum9A281576D34A308108229EBBFBA064A772D9A2C5267679A302DA39F5039C9512與修正review8992DAFDD47391515C930407C196100EC8D4600DA20A97BB0F96DAEE0C8752FA（C0/I0/M0），重算STATE-FIX-REVIEW-MANIFEST-v1的九原件均符。Helper source SHA0CC4A46BFAADEDD67FFB7AE29181B6EA8D44FDA1BDB5F9B070D150D47B805AC4；純javac24648自然exit0、stdout/stderr空。
 - 恰兩token：固定semaphore=false→true並維持所有Watch；AW.classes以既有kind3 exact LinkedHashSet取代錯誤kind2 HashSet，仍必空。不得clear/set、任意boolean或降低owner/incoming守門。其餘prepare normal constructor／setter／queue／config／coprocessor已一次靜態核對，未到runtime的值不稱已過。
 - plan已明確採用此窄技術更新；產品spec不改。三次FAIL原判保留，下一次以本輪docs commit新pin重建literal與完整freeze後再由root啟動A7；尚無第四次runtime或38eval結果。
+
+
+### 2026-10-27接續點：A7與限定focused完成，完整B27仍停End相依owner
+
+本節取代前節「A7三次setup、尚未執行案例」作為目前狀態。Task1–7不重做；Task8仍8A，8B未放行。以下native原件均釘1ec44f10e878ecc86ae773de1fbf658ab6a3f2d3；本次是純接續文件更新，正式src/build/scripts/.github對Task7 code245051e87af563b778b79bca27e6706be30848f2無差異。既有full run-all-efbd4990e8824a63bc93b458643877b0及CI40184992145/head64d6317671b5e9152bfd9e088356d16175088b3c仍只代表原pin，不稱新docs HEAD自己跑過full或CI。
+
+#### 已採計的限定結果
+
+下列root均在本工作樹的.superpowers/verification/；review均在.superpowers/sdd/2026-10-24-m6-universe-generation/task-08/。它們是ignored prototype的有限證據，不是正式release／完整B或8A完成。
+
+|範圍|唯一採計root與結果|獨立結果review（SHA-256）|
+|---|---|---|
+|A7 owned Model A/component|g-398b36a7c5f4e794/p1-c4d90214；PID41900／5560ms／exit0，38/38，G40/O14/D2/A42/M68；1 Context/Session/lock|a7-result-review-v1.md：bd7c0150f2084199898f50a5fc84cc2d46a0807421e285f2e045d7f7a9455cfb，C0/I0/M0|
+|取消輪詢／primitive helper|g-815b2a49157c0a62；PID15752／415.218ms／exit0，13控制、0 Context，4組raw逐byte同|B18-focused-result-review-v1.md：9f46f445ebae1494337b09b813bfdbc63aabf32688df9b29f423fd89c54dda63，C0/I0；不代表完整B效能|
+|Magma受限NBT profile|g-47048bdb93f40710/p1-7ff3456c；PID36104／4510ms／exit0，54輸入／52控制，24 publication＋30拒，1 Context|magma-focused-result-review-v1.md：25d61b749377bdc41385b6a5b345ac4d4769262a8b14c03761b8b81189b545b5，C0/I0/M0|
+|Axis declaring admission|g-b1ea237c4d4281ae/p1-57d12428；PID13592／4646ms／exit0，15案=8 component、6預期拒、1 typed-only|axis-focused-result-review-v1.md：f0a894a6eadd3e64e7c2022d7429909cb067f541d6bcbeab8ff8b4e35335a0ec，C0/I0/M0|
+|generic三鍵guard|RED g-c9817fe6e686cf0a/p1-270471bd，PID12344／4442ms；GREEN g-59cd65b580dc8241/p1-b0525e54，PID42676／4462ms；GREEN 37案=8 publication＋29拒|generic-rg-result-review-v1.md：d0f1056b21b74d99948ec7d88587be41230a7f131f11db2d44e14a1483fe3606，限定C0/I0/M0|
+|End兩路只讀path|g-714529baf4880917/p1-3f85c9e5；PID27552／4269ms／exit0，13 logical rows／37物件觀測，1 Context、0 graph／publication／FP|end-holder-path-native-result-review.md：d20a2bc5639013732eeaeaca5539540a0b7c740d06ec0a7b6d863ee827a636a3，C0/I0|
+|End settings完整state focused|g-73006d864209429f/p1-be5dce71；PID14088／4610ms／exit0，11案=1 typed-only＋10具名拒、11graph、2 Context/Session/lock、0 publication／FP|end-simplex-focused-native-result-review.md：5281ed89dbf31af860c596d491c97acbfc786f3107f9e39220340505fc07a219，C0/I0/M0|
+
+A7第五跑才達38案；第四跑g-5e850f7b8deaa86e/p1-e024dab7（PID588／5502ms）在case5因inventory接錯而FAIL。修正只接回固定inventory及實際class source路徑，未放寬Loader守門。A7 actual IO170/native142僅屬預定觀測窗口，不是整個JVM全部I/O；once-dev=false→true只在A7 Main明示一次設定，不外推B／8B3。五個targets、16 hooks與fatal空均由當次原件核；原四次FAIL、ModRemap/CDS警告與兩個故意壞GZIP的ERROR保留。A7結果入口為graph-absence-contract-v1/reference-inventory-fix-v1/A7-result-v1/A7-RESULT-v2.md，SHA e40b0eb74e52aeb317872a3b6c9fa6a548e4070ab1b71420a9a72fd0e9f646b0。
+
+generic有效RED是舊adapter三項缺陷被受控重現（其餘六baseline保留），自然exit0／execution accepted不表示舊版修好；GREEN限制generic根及巢狀entity的DeathLootTable、active_effects、CustomName三鍵，Magma走獨立受限profile。六baseline逐byte相同。早先g-d90131fa6016d5cf/p1-590f3e82只是driver owner/scope收尾錯誤，仍是HARNESS FAIL，不採作缺陷RED。這些focused不關閉完整B與fresh native完整性門檻。
+
+#### End從靜態推導到實測接線
+
+固定End JSON 3923 bytes，SHA 8f779257fd0a4237e38cf09c7e8057152b73d1ae0c392cefbd21b1b10763daaf。只讀probe證兩路的11個density child均是Holder→exact Direct（key空）→value；initial-density七個Binary依序ADD/MUL/ADD/ADD/MUL/ADD/ADD、走argument2，cache的mapped欄位CACHE2D、raw enum name Cache2D與asString cache_2d分清。兩個終點在該run同identity8；程式不硬編8。曾有的LinearOperation推導及直接Wrapping假設已被真trace取代。
+
+End v6完整focused保留原物件、獨立new EndIslands(0)及codec後／終局四份各2076-byte狀態（全512個permutation與3個raw double bits），四份相同SHA 2c5b0805b26a64d392e0653a22864f1908e310587230f4a939e0df3a6df08557；owner／sampler／array均與重建reference分離。N1–4逐案只翻一bit並由同正式comparator拒，registry前後不變；owner、node、非零seed、裸Simplex／Octave與overlay source負例具名拒。14次source attest、charged canonical41520、小於32MiB；forced/file/checkpoint計數11/15/21421；dev false前後相同、fatal空。198 pre/post pins exact、PIDgone、兩個session.lock可獨占且bytes不變。final SHA eb53dbaeb1aa9112204ab8ec7291f1e99d30fb54fb3d69f4aab12dac7926b105；有限RESULT SHA cd6e9c07810ebcdf10f9cc47a3fea164099342f7fa83cd308655d9af3c3969ee，88檔keymanifest SHA f2b4797f12deb4606da5e4c0ae8627cfff9cff4ecd0d40faa903452b1031d85d。
+
+中間失敗均保原root：End v3 PID6256的class hash literal只有56碼；End v4 PID7952漏Holder；path probe v2 PID29372把mapped欄位當Enum.name；End v5 PID6796已完成7列，N8正確拒絕後因測試漏sampler identity而NPE。v6只補test Main的sampler／array欄位與父端必填／原owner鏈，production End契約未因此改；原117 artifact byte exact。36項純Node controls包含原有反例與缺／錯N8身分、cache asString／constant及extra Holder，v5的parser覆蓋Minor由v6 review關閉。純Node controls本身不稱native GREEN。
+
+#### 完整B27仍FAIL：唯一新增dependency owner
+
+B26組合首次review C0/I1：classSource函式用未定義s.minecraftJar，未啟runtime；B27以顯式nativeJar參數及callsite修正。114 Java artifacts、End helper、child/cold與B26 byte exact，沒有重編Java；雙phase同函式class-source控制6/6、nativeClaim控制4/4。B27獨立複審C0/I0/M0由reviewer訊息交root忠實落檔B27-class-source-rereview.md（SHA 5e909b2c9d88c382a209741deac17fb3f7eae86b75af1fc0ae9a92512953988a）；manifest/pins由root另行實核，沒有假稱reviewer重新跑。
+
+B27唯一G1 root g-7d3a70ec3b9f4f67/p1-d4526a5e，PID38124／10131ms／自然exit1。constructor control PASS；base-normal的overworld/the_nether COMPLETE，the_end在registry|minecraft:worldgen/density_function|minecraft:end/sloped_cheese被UNSUPPORTED_END_OWNER拒絕，34案尚未完成。當次End noise_settings proof已完成，後續drain才遇到新owner。context/session/close/lock各2；role attempts3；decoded39669941、chargedCanonical74814321、filePoll399/forced20/checkpoints26453863、fatal空、dev false不變。193 postpins exact、PIDgone／rootJava0、兩鎖獨占且hash不變；G2未啟，不能重用該batch/root或改判。
+
+FAIL-RESULT為task-08/B27-G1-END-DEPENDENCY-FAIL/FAIL-RESULT.json，SHA 01f725a53983bab2edc2f4f569aa544c5f62df520fa47b09763e023bd11dadd4；42檔keymanifest SHA 342f74a832bb5fc70ab9593b79b38bb59cffc26b4277d109449de2a756a419ec。B17逾時、B18 Magma、B23 Axis與B25 Simplex原FAIL，以及其他未啟動候選都保留；不得以後來focused通過回改舊結果。
+
+下一個限定方案為task-08/end-dependency-owner-audit-v1/CONTRACT-PROPOSAL.md，SHA 69bc0509ddd953b45a5d74acc60d8717109ff3fba5f3fbe62470ff19370a4131，仍是待審方案。固定JAR896份worldgen JSON精掃僅3處end_islands：已驗noise_settings/end兩路，加上density_function/end/sloped_cheese的argument1。後者133 bytes、SHA 175954c7e03469b790e047f16358e0c0a6a7804030c34cf160a9361219d67c25；固定JAR中只有end.json的final_density引用它。OWNER-CENSUS SHA 0419a6a8b008b107f441dce1da8f451f56040f11b9ca858e4c2fe31595bfff9f。lastEnd在noise owner完成後留存，activeEnd在encode終局清空；後續NVC只看activeEnd，所以拒絕。失敗收據未記dependency物件identity／winner／decoded root，unit codec的same-object只能稱靜態推論。新候選須runtime exact source、同已驗allowlist物件／sampler／array／state／codec後才接受；未知node、clone、非零seed、overlay仍拒，不能把activeEnd延伸到整個drain。
+
+#### 後續與文件真實性
+
+先關dependency契約review並釘新增正反案例／Context／source-read／charge上限，再新immutable實作、fresh review、focused；其後完整B G1，G1 accepted且同600秒batch剩至少210秒才另放G2。B原34case／24Context／28role與9對18 budget controls、G2兩BASE／2Context／6role、2G／180+30／600及原graph/output caps保持。完整B／fresh native與quality未通過，不進8B；三bundle跨mapping／OS仍是Task8完成及Task9前硬門。既有B18 focused helper的第二file open失敗可能留第一handle、Magma缺id診斷訊息等Minor維持後續Step0；static canonical未charge／H-H1 replay與full resolve成本界線仍留給完整native review，不默稱已關。
+
+本次改檔前已把1ec44f10的spec/plan/note/AGENTS/兩handoff原bytes保存task-08/binding-inputs-1ec44f10-20261027/mapping-index.json並逐byte讀回。spec v1.3仍SHA5ca4c3058c2e0564a7ef8979427c4c5a6dd3fe5b9ed8fbff999bccc0e53bc4a9；產品範圍不改。下一候選需以本次文件commit後實際HEAD與新plan/note pins重新freeze；舊run只採原1ec44f10，不能拿變動後live文件冒原件。本次不重跑未變的正式full，不建立PR／LICENSE，不合main／移tag／刪工作樹。push依持續授權；實際commit／遠端狀態以Git讀回為準。

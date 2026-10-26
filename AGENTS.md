@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-26 已恢復開工：使用者後續明確要求繼續，舊11%用量停工點已失效。Task1–7完成，Task8仍8A；A7核心finding已關，38項Main及Loader候選已完成準備，三次啟動均在setup階段自然FAIL，尚未執行案例。最新一次已證helper正常載入；Mixin歷史semaphore與集合型別的兩token窄修已編譯並經獨立review，待新pin/freeze後重跑。先讀M6接手提示詞§10、M6 note最新節及STATUS；遠端回合失敗先核原程序/產物後續接，子代理卡住則換新的SOL，不重做M5。**
+**2026-10-27：Task1–7完成；Task8仍8A。A7 38案、Magma／Axis／generic與End 11案focused均已在各自範圍通過並獨立review。最新完整B27 G1自然FAIL：base-normal的Overworld／Nether COMPLETE，End在density_function/end/sloped_cheese相依owner被拒；G2未啟。先讀M6提示詞§11、M6 note最後一節與STATUS最前current block。繼續處理這個已定位的相依契約，不重做M5／A7，不把局部focused當完整8A通過。遠端回合失敗先核原程序／產物，失效代理換fresh SOL後接續。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
@@ -109,7 +109,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - 使用者要求子代理使用 SOL。本輪僅用 SOL 系列（`gpt-6-sol`／`gpt-6.1-sol`），短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
 - 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
 - M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
-- Task7的code245/full efbd與CI64d/run40184992145仍為既有正式基準；本輪僅ignored A7 prototype及文件，沒有新的production驗收。A7三次FAIL各保留root/receipt，第三次helper的loader/source/bytes已exact；38eval、完整B34/G2、8B及跨平台/人工仍未過。正常遊戲與外部修改reload／重啟裁示不變；下一個launcher必綁更新文件後的實際HEAD。
+- 正式src/build/scripts/workflow仍與Task7 code245051e相同；full efbd與CI64d/run40184992145只採原pin。Task8目前只有ignored prototype，原FAIL與原件全保留。最新已驗End focused root為g-73006d864209429f/p1-be5dce71；完整B27 root為g-7d3a70ec3b9f4f67/p1-d4526a5e且仍FAIL。8B、三bundle跨平台、人工與整分支門檻未過。新候選必綁文件更新後的實際HEAD；1ec44f10原binding已封存。
 - 正常 push 已持續授權；M6 main 合併、tag、工作樹退役、人工代操作各自依原門檻。M5 的一次授權與不備份退役例外不外推。
 - 每次交回同步 M6 note／plan、此節、ledger／STATUS 與舊 handoff §7 的新紀錄。以下 M5 進度只作歷史，不是M6待辦。
 M1–M4 已完成並合併（2026-10-01 核對）：
