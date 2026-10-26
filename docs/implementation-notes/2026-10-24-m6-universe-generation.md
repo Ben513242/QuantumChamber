@@ -347,3 +347,8 @@ Task7既有full為code245的run-all-efbd4990e8824a63bc93b458643877b0，CI為64d6
 - 16 exact method hooks／bootstrap單counter identity／transform與callback latched fatal／expected拒絕前fatal空／readonly禁用入口均須實作核；ctor pre-init attempt不傳this、成功return才記receiver，attempt與完成分列且不double charge。#10/#24與三個isolated native winner承擔正向witness，bootstrap未量成本不混N/IO。
 - #26 setup N2→1（owned author反射）、#29 N2→3（獨立corrupt→OrBlank歷史保留壞檔）；總setup94/native766及IO768、38eval/G40/O14/D2/A42/M68不變。A7仍準備、無runtime，完整B/G2／8B／平台／人工未過。
 - 修改前614eda458561697bbeb6383ae04c5142f49e34ad的plan原bytes/SHA024D0903AE7586A6AEE706D549B2AEB964B102C760686F3948D04A06CA5CB573已存task-08/binding-inputs-614eda4/mapping-index.json；原dce archive與所有舊runtime原件不改。本次只plan/note兩MD；新plan SHA C8DA5985FD6984B3B074EBE697955182389D311D2D46468FF2FA6F5478225453，spec v1.3仍5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9。root另做窄docs-truth後建立新pin，final launcher/spec/freeze不沿614硬pin；不宣稱新docs SHA已有full/CI。
+
+### A7 Loader admission v4 設計採用（2026-10-26；未 runtime）
+
+- plan採用 v4 `BDD8BFD4D82A401EE26AC83CB7A572B9420802352F703CE21C883766775A239A`，獨立設計 review `33D8D22229D6D304C435C6CEC1DC643A1656602B6319EC7497A689FA6C7823BA` C0/I0/M0。正常 helper producer／owner初始化、一次expected與每define只讀閉包／唯一bridge fatal latch，實作與literal manifest仍須核；設計通過不等於native parser或A7通過。
+- 修改前4976847的plan bytes已保存 `task-08/binding-inputs-4976847/plan.md` 與mapping-index.json；spec不改。僅本plan與note兩MD採用，不改production/build/scripts，不commit/push；root窄docs-truth後給新pin，final literal/freeze再綁實際新pin。所有舊immutable包及FAIL root保持，1JVM/38case與成本上限不改，B/G2／8B／平台runtime仍未過。
