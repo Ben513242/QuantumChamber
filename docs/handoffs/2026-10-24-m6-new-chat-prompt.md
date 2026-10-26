@@ -1,6 +1,6 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
-> 最新接續（2026-10-26）：Task1–7及Task7 CI64d完成，Task8仍8A。spec v1.3／Model B設計已獨立Approved採用；A40/A2–A6僅限定component，v12 B工具中斷是INCOMPLETE，v13 B缺vanilla target真FAIL且G2未啟。下一步只準備已釘A7（38eval/G40/O14/D2/A42/M68），先root短讀固定artifact/module/spec後另放runtime，再完整B/G2與native review；8B／跨mapping-OS／人工未過。正常遊戲操作期間無外部改模板/datapack，外部修改走reload／重啟。正式code仍245，舊full/CI不代表新docs HEAD已測；新實驗釘後續實際採用commit，不重用dce/67e launcher。不重問範圍、不重做M5、M7不納入；以下開工提示保留歷史。
+> 最新收尾（2026-10-26）：使用者要求依本週剩11%用量自行找收尾點；本輪停止於文件已push、A7準備與未解finding保全。Task8仍8A，A7未啟動；先讀本檔§9，待下次指示再續做，不按舊開工提示重問範圍或重做M5。
 
 你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。請先核對 M5 收尾事實，再確認 M6 範圍與優先序，完成經獨立 review 的 spec／plan，接著依核准範圍實作。不要只回答能不能做，也不要重做已完成的 M5。
 
@@ -111,3 +111,20 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 2. M6哪些範圍是已知要求，哪些只是建議或待決；建議第一個可驗收切片與順序。
 3. 僅詢問尚待使用者裁示的範圍／優先序（若有規則衝突，一併列出一次），同時繼續不依賴答案的盤點。
 4. 範圍確認後建立M6 spec／plan、安排獨立review並接續實作；不把準備完成誤報為M6已實作。
+
+
+## 9. 收尾交回（2026-10-26；用量限制）
+
+使用者明確指示「本週20x方案使用量剩11%,自己找收尾點」。本輪不再新編譯、測試、修正或擴大review；所有代理已交回／停止，沒有A7 fixture、pending工具或live compiler。這是可接續的停工點，不是Task8完成或gate waiver。
+
+- 交回前已驗local/origin feature為612a5e78abb099e3604176691fedd2e20637a614（已push）；其後只允本次交回文件commit，實際HEAD以Git為準。正式code仍245051e，main仍0d05f889、m5 peeled仍a2d2b404，未合併／移動tag。既有full/CI只採原pin，不代表後續docs HEAD已跑。
+- spec v1.3 SHA5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9；plan C8DA5985FD6984B3B074EBE697955182389D311D2D46468FF2FA6F5478225453。正常遊戲、snapshot期間無外部改檔、外部修改reload／重啟的使用者裁示保持。
+- 唯一A7準備owner在本工作樹的.superpowers/sdd/2026-10-24-m6-universe-generation/task-08/graph-absence-contract-v1/；sources、observer/agent、純編譯紀錄及immutable package保留，沒有force-add。這些準備與原始證據只在本機ignored空間，不等同已推送的正式程式。
+- 實作者交回：task-08/A7-closeout-2026-10-26.md，SHA EF98C94685BD620676C849A2B5CB01919E8B3D9247A87AB107408802BE67106C。最近pure javac 2740／19312／9244均自然closed0；core最後finally小delta尚未重編。集中Main38尚未寫成、尚無final candidate/freeze/guards，不能啟動A7。
+- 核心先行review：task-08/a7-core-preflight-review-v1.md，SHA B3F390BD691C73E168D4F361B499251326567BD5AEB1B4C9A4C7CF9A5280B15A，C0/I2。I-1：extract finally末尾endAttempt/checkFatal仍可能覆蓋primary；須單一例外仲裁並保suppressed與fatal latch。I-2：depth replay仍沿去重readerSamples且把SNBT當binary；須依完整ReaderOccurrence及kind重播。此輪未修，不可升格final freeze。
+- immutable core-review-package-v1為14Java，manifest SHA200CF6A383E28DA3BF90948CC2DF3D0F12DA5D4BBC7ECAFD1A7E0E8F665D77C4，不改該包。後續修正另釘新包並獨立複審。
+- Loader前提候選：同owner/A7-native-transform-preflight-v2.md，SHA6D724C129CA6477F1C65CBAB0919A9306F4ED12E56E2A497E488EDBA44D35413；primary索引C172D5DE846BF2CD1471895A32BACF22FC41D55FA42DC7204311FBB5F946CC6D。尚未fresh review／採用／實作；現agent raw hash硬拒，不能假定Knot define bytes就是raw JAR。候選須在target定義前獨立釘fixed Loader expected，再證Mixin identity與incoming exact；不反射重入或略hash。
+
+下一次按此順序：核實際Git／程序狀態→讀closeout與兩項finding→有限修正及複審／Loader前提review→完成Main38、once-dev、16hook觀測與包裝→按當時新pin做純編譯/freeze/guards→root短讀後才另授權唯一A7 JVM。A7通過後才完整B34/G2/native review；Task8未完成前不進Task9。新實驗不沿用dce／614／612舊硬pin。
+
+所有舊FAIL／INCOMPLETE／root／binding archives保留，不改判、不刪世界或工作樹。無自動排程或背景續跑；待使用者下次指示。
