@@ -519,3 +519,10 @@
 - 本次只六份MD，spec v1.3／Task8 absence與Model B設計依fresh review3E61305D…（C0/I0/M1，M1鍵數已修）採用；使用者限定正常遊戲操作，外部模板/datapack修改走reload／重啟，snapshot期間無外部同時改檔。詳細規則、owner與38項A7矩陣在M6 spec/plan，不把設計Approved當runtime通過。
 - A40/A2/A3/A4/A5/A6只各自component範圍；A6 v11 fixture輸出owner錯配真FAIL保留，v12修後21PASS；v12 B工具中斷僅INCOMPLETE，v13 B正常closed1但缺vanilla template真FAIL，G2未啟。完整原件/hash與限制見M6 note，不改判歷史。
 - 唯一下一步是待本次docs-truth／root自行commit後，以新實際pin準備A7（38eval/G40/O14/D2/A42/M68、1Context/Session/1JVM），root短讀後才另放runtime，再完整B/G2/native review。A7、完整B與8B、跨mapping/OS、人工仍未過；正式code245／full efbd／CI64d保持原pin，不稱新docs HEAD已有runtime或新CI。M6後續Task9起順序不變，main/tag/merge/退役未動。
+
+
+### 2026-10-26：M6恢復與A7三次setup結果
+
+使用者已明確恢復開工，舊用量停工點失效；範圍／順序與spec／plan不重做。Task1–7維持既有結案，Task8仍8A。A7核心finding已關；三次新root均自然exit1，依序停於漏列SYSTEMDRIVE、helper raw路由前提、Mixin歷史semaphore假設。第三次已證helper一次正常define且loader/source/bytes exact，但38案例及五個native targets仍未到。原始FAIL與pre/post證據全保留；剩餘Loader前提已一次靜態核對，兩token窄修已編譯／獨立review；待新pin/freeze後重跑，不略過guard。
+
+最新入口為M6提示詞§10、M6 note最後一節與本工作樹STATUS。正式src/build/scripts/workflow對245051e無差異，full efbd／CI64d僅採既有pin，不稱新文件HEAD已驗。M5／main／tag／工作樹退役均未動；M6正常push持續授權，其他門檻不變。

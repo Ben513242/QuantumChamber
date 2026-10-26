@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-26收尾：依使用者本週用量剩11%的指示，停在已推送spec v1.3／A7準備保全點。Task1–7完成，Task8仍8A；A7核心先行review C0/I2未解，Main／Loader observer admission／final freeze尚未完成，沒有A7 fixture授權。下一次先讀M6接手提示詞§9與A7-closeout，再決定兩項修正及Loader前提review；不自動背景續跑、不重做M5。**
+**2026-10-26 已恢復開工：使用者後續明確要求繼續，舊11%用量停工點已失效。Task1–7完成，Task8仍8A；A7核心finding已關，38項Main及Loader候選已完成準備，三次啟動均在setup階段自然FAIL，尚未執行案例。最新一次已證helper正常載入；Mixin歷史semaphore與集合型別的兩token窄修已編譯並經獨立review，待新pin/freeze後重跑。先讀M6接手提示詞§10、M6 note最新節及STATUS；遠端回合失敗先核原程序/產物後續接，子代理卡住則換新的SOL，不重做M5。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
@@ -109,7 +109,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - 使用者要求子代理使用 SOL。本輪僅用 SOL 系列（`gpt-6-sol`／`gpt-6.1-sol`），短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
 - 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
 - M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
-- Task7 code `245051e87af563b778b79bca27e6706be30848f2`／full efbd與CI `64d6317671b5e9152bfd9e088356d16175088b3c`／run40184992145既有證據保留，不升格為新docs HEAD已測。Task8 v12工具中斷僅INCOMPLETE，v13 B正常收斂但缺vanilla template真FAIL，G2未啟；舊原件不改判。使用者限定正常遊戲操作，外部模板/datapack變更走reload／重啟；snapshot期間不支援外部同時改檔。新spec/plan採用只是設計，A7未跑；完整closure/budget/restart/native review仍先於8B，三bundle仍先於Task8完成/Task9。新launcher須釘後續實際commit，不沿用dce/67e舊pin。詳M6 note與STATUS。
+- Task7的code245/full efbd與CI64d/run40184992145仍為既有正式基準；本輪僅ignored A7 prototype及文件，沒有新的production驗收。A7三次FAIL各保留root/receipt，第三次helper的loader/source/bytes已exact；38eval、完整B34/G2、8B及跨平台/人工仍未過。正常遊戲與外部修改reload／重啟裁示不變；下一個launcher必綁更新文件後的實際HEAD。
 - 正常 push 已持續授權；M6 main 合併、tag、工作樹退役、人工代操作各自依原門檻。M5 的一次授權與不備份退役例外不外推。
 - 每次交回同步 M6 note／plan、此節、ledger／STATUS 與舊 handoff §7 的新紀錄。以下 M5 進度只作歷史，不是M6待辦。
 M1–M4 已完成並合併（2026-10-01 核對）：

@@ -306,11 +306,20 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 - #35–37在各原RESOLVE attempt對isolated manager另作一次native getTemplate/writeNbt counterpart，對strict選中NativeTemplate exact；actual provider順序分別Saved、Saved→dev、Saved→dev→RM。native counterpart與strict rebuild共N9<=16，provider最多3＋strict stat/open最多4，IO<=7/12；仍各1A/1G/1O、M2，無live getter。必要return前驗證不為守7而刪，實際仍受IO12。
 - #26 setup N2→1：只owned native blank constructor一次，author由fixture固定field反射改值，不呼setAuthor、不改shared static；保author guard。#29 N2→3：獨立manager用固定4byte非GZIP saved壞檔產blank（getBlank＋nested get＋blank ctor），壞檔保持存在、不與#28共manager。兩格相抵setup總94，672＋94仍766；IO768、G/O/D/A/M與時間/JVM/bytes cap不變。實際entry比預期多或shape不符就FAIL/SETUP_FAIL，回root修表，不偷延長。
 
-##### A7 Loader admission v4 採用（只準備，未執行）
+##### A7 Loader admission v4 採用（原始設計；最新執行狀態見下節）
 
 採用 ignored owner `task-08/graph-absence-contract-v1/A7-native-transform-preflight-v4.md`，SHA `BDD8BFD4D82A401EE26AC83CB7A572B9420802352F703CE21C883766775A239A`；獨立設計 review `task-08/a7-loader-admission-v4-review.md`，SHA `33D8D22229D6D304C435C6CEC1DC643A1656602B6319EC7497A689FA6C7823BA`，C0/I0/M0。此為 A7 專用有限 Loader admission：必要 JDK-only helper 必經正常 Knot loadClass 定義與選擇返回，先證 owner 初始化；固定 raw 與各一次 pre-mixin expected 分離，expected 表只發布一次，每 target define 再核只讀狀態閉包／路由／incoming exact expected，通過才注入原16 hooks。唯一 bootstrap bridge 與永不清除首錯 fatal latch 必貫穿 launcher／attempt／Main／finally。
 
 固定 producer、manifest、JVM/env/mod/config/plugin/AW 原件封閉與 callback 預備閉包，依 v4 全文；未知／null／來源／狀態／hash／coverage 不符即 SETUP_FAIL，不以 raw 相同、dummy probe 或未知當零替代。runtime 仍未授權；helper正常路由、集合實際型別、pending空、五target的raw/expected/incoming/output與16hook需當次receipt證明。此採用不代表目前候選實作已通過review或A7／B／8A完成，B／8B3不沿用A7特例；38eval、G40/O14/D2/A42/M68、IO768/native766、時間與容量上限均不變。
+
+##### A7 Loader狀態窄修（2026-10-26採用；下一次runtime待驗）
+
+已實跑三次setup，最新PID34220已證正常helper define，停semaphore=false要求；38eval未開始。採用ignored owner prepare-assumption-audit-v1/A7-LOADER-STATE-ADDENDUM-v1.md（SHA9A281576D34A308108229EBBFBA064A772D9A2C5267679A302DA39F5039C9512），獨立review8992DAFDD47391515C930407C196100EC8D4600DA20A97BB0F96DAEE0C8752FA為C0/I0/M0。此節僅取代v4的兩個錯誤技術前提：
+
+- 本固定A7 profile要求semaphore=true且原Watch持續核對不漂移。它是歷史OR latch，pop不清；inactive仍要求depth=0、maxDepth=1、errorState=false、同owner／thread及所有原狀態閉包。不呼set/clear，不允任意boolean；公開getter的mutable escape仍受固定manifest與逐次watch限制，首次置true的stack未知，不補造。
+- 固定shaded AccessWidener.classes實為LinkedHashSet，使用既有exact kind3並仍要求空／identity／member穩定；三rules map維持exact HashMap且空，不擴容器白名單。config仍逐一要求visited=true；addendum的visited0記號不代表把此布林值改false。
+
+Helper固定package及literal Minecraft JAR接線已經C3BE0742…獨立review；三source窄修在第三次setup只證helper正常返回，不冒稱其餘guard通過。此次helper恰兩token修正，compiler24648自然exit0；其餘prepare constructor／normal setter已靜態盤點，runtime未到的條件仍必實驗拒絕或通過。spec v1.3產品契約、38eval／16hooks、fixed expected／incoming exact、quota／deadline不變；新文件pin與全部artifact preflight後才另啟唯一A7。完整B34/G2及8B門檻不變。
 
 ##### B34責任與策略review先後
 

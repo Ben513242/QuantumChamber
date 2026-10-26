@@ -1,8 +1,8 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
-> 最新收尾（2026-10-26）：使用者要求依本週剩11%用量自行找收尾點；本輪停止於文件已push、A7準備與未解finding保全。Task8仍8A，A7未啟動；先讀本檔§9，待下次指示再續做，不按舊開工提示重問範圍或重做M5。
+> 最新（2026-10-26）：使用者已明確恢復工作並要求遠端回合失敗後繼續、子代理卡住就換新的SOL。§9是已失效的歷史停工點；接續看§10及本工作樹STATUS。範圍／順序已批准、spec／plan已review，不重問、不重做M5、不重建工作樹。
 
-你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。請先核對 M5 收尾事實，再確認 M6 範圍與優先序，完成經獨立 review 的 spec／plan，接著依核准範圍實作。不要只回答能不能做，也不要重做已完成的 M5。
+你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。現在已有M6工作樹與經review的spec／plan，按§10與最新STATUS接續；§1–8保留最初開工背景及長期限制。
 
 一律用繁體中文（台灣）回報；程式識別字、指令、檔名維持原文。先講結論與可驗證證據，再談推論。對使用者用白話。可以派工給 gpt-6-sol；總協調者負責分工、驗證與文件真實性。
 
@@ -14,7 +14,7 @@
 - 先核 main、origin/main、tag、工作樹列表與 porcelain。預期主 checkout 乾淨、main 包含 m5。若 dirty、tag 不符，或出現交接未記錄的程式變更，停下回報，不 reset／clean／自行合併。
 - 舊 M5 工作樹 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse 是已指定的不備份退役目標。先確認路徑與 git registration 是否都已移除；若仍存在，先讀最後交回紀錄核對中斷點，不自行重建、清空或接著實作 M6。
 - M5 的 run/、.superpowers/、一次性派工與原始驗收資料依使用者裁示不另留備份。長期摘要與 hash 在 tracked note／handoff，正式可重跑 harness 在 scripts/verification/。缺少舊 ignored 原件不是要求重新驗收 M5 的理由。
-- 不在主 checkout 或 main 上實作。核對完成後，從最新已合併 main 建立新的 M6 worktree／branch（建議 codex/m6-universe-generation）；優先使用宿主的 worktree 工具，回報實際路徑。之後所有指令指定該 workdir 或 git -C。
+- 不在主 checkout 或 main 上實作。重用已存在的 .worktrees/m6-universe-generation／codex/m6-universe-generation；所有指令明確指定此workdir，不另建同一milestone工作樹。
 
 可用的唯讀開工指令（PowerShell；safe.directory 只對該次命令生效，不改全域設定）：
 
@@ -55,7 +55,7 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 
 使用者已指定併入 M6：調查並修正 StrongholdGenerator、Nether fortress、End city 在多世界同時生成時的 static 可變狀態競態。既有 H5／H6／H8 修補不能冒充這些新 race 已修。
 
-使用者希望看見不同宇宙生成，先做 random seed 是既有建議，**完整範圍與優先序尚未由使用者最後裁定**。第一次回報應在讀完必要資料後提出具體切片建議，集中問一次真正需要決定的範圍／順序；不要反問空泛的「M6 要做什麼」。建議把必要的 worldgen race 根因／防護與最小 random-seed 切片排前面，再逐步處理 profile 與完整 families，但不能把這個建議當成已核准的 plan。
+使用者已裁定完整M6分段實作：測試腳本與生成競態 → random seed → same-seed fresh／profile → 完整Nether／End family、portal／gateway與respawn；各段驗收，M7不納入。這個範圍與順序不再待問。
 
 不要納入 M7 的 literal branch／snapshot；它有獨立設計 gate。也不要為「完整」順手新增與所選切片無關的 renderer、UI 或架構重寫。
 
@@ -103,9 +103,9 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 - M5 required manual smoke 已完成並獨立review。整分支spec C0/I0/M0、quality C0/I0/M2；最後文件spec/quality各C0/I0/M1，同一導覽Minor已更正。只保留前述兩個harness Minor待Step0。
 - 這些是已完成 M5 的基準，不是 M6 新行為的測試證據。新的程式行為要有自己的 RED／GREEN、review與必要回歸。
 
-## 8. 你在新對話的第一輪交付
+## 8. 最初開工流程（已完成，不重跑）
 
-先執行唯讀核對與必要檢索，再簡短回報：
+以下是最初開工流程；目前已完成，後續直接按§10接續：
 
 1. 實際main／origin／m5 tag／工作區狀態與證據。
 2. M6哪些範圍是已知要求，哪些只是建議或待決；建議第一個可驗收切片與順序。
@@ -113,7 +113,7 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 4. 範圍確認後建立M6 spec／plan、安排獨立review並接續實作；不把準備完成誤報為M6已實作。
 
 
-## 9. 收尾交回（2026-10-26；用量限制）
+## 9. 歷史停工點（2026-10-26；已被恢復指示取代）
 
 使用者明確指示「本週20x方案使用量剩11%,自己找收尾點」。本輪不再新編譯、測試、修正或擴大review；所有代理已交回／停止，沒有A7 fixture、pending工具或live compiler。這是可接續的停工點，不是Task8完成或gate waiver。
 
@@ -128,3 +128,14 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 下一次按此順序：核實際Git／程序狀態→讀closeout與兩項finding→有限修正及複審／Loader前提review→完成Main38、once-dev、16hook觀測與包裝→按當時新pin做純編譯/freeze/guards→root短讀後才另授權唯一A7 JVM。A7通過後才完整B34/G2/native review；Task8未完成前不進Task9。新實驗不沿用dce／614／612舊硬pin。
 
 所有舊FAIL／INCOMPLETE／root／binding archives保留，不改判、不刪世界或工作樹。無自動排程或背景續跑；待使用者下次指示。
+
+
+## 10. 恢復開工與A7實跑（2026-10-26）
+
+- 使用者已撤銷停工點並要求持續工作；若代理遠端回合失敗，先核程序與產物再續接／換新SOL，不能因工具回覆失敗重送已啟動的JVM。
+- 唯一工作樹為 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation；本節更新前HEAD a6b7fcc39fe52945176bef036759df8d98204c75。後續文件commit以Git核實，main仍0d05f889、m5仍a2d2b404，未合M6／移動tag。
+- 原core I1/I2已由獨立複審3B7D7ACB…關閉，Main38已寫成；Loader v4設計、錯誤仲裁與System argv候選已有獨立review。這些限定證據不等於38案例通過。
+- 三次A7自然exit1：PID25756/631ms為ENV_UNLISTED:SYSTEMDRIVE；PID40768/1063ms為HELPER_ROUTE／HELPER_NORMAL_DEFINE_BYTES；PID34220/1166ms已證helper正常define，停STATE_VALUE:semaphore。三輪各自pre/post輸入一致，沒有載入五個原生target或執行38案例。完整root與hash見M6 note及ignored原件。
+- 最新調查：semaphore為歷史OR latch、pop不清，inactive仍由depth0等條件證；另固定AccessWidener.classes為LinkedHashSet。兩token窄修已編譯並經獨立review8992DAFD…通過，plan已採用；下一步新pin/freeze後由root啟下一次唯一A7，禁止清flag、放寬任意值或略過incoming exact。
+- 本輪正式src/build/scripts/workflow對245051e無差異；既有full efbd／CI64d只採原pin，不稱新文件HEAD已跑full。三次原始binding文件已保存task-08/binding-inputs-a6b7fcc；歷史FAIL不改判。
+- A7通過才完整B34/G2/native review；完整8A資料gate後才8B。Task8及三bundle跨平台gate未完成前不進Task9，M6人工／整分支／main／tag／退役門檻不變。

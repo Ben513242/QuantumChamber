@@ -352,3 +352,32 @@ Task7既有full為code245的run-all-efbd4990e8824a63bc93b458643877b0，CI為64d6
 
 - plan採用 v4 `BDD8BFD4D82A401EE26AC83CB7A572B9420802352F703CE21C883766775A239A`，獨立設計 review `33D8D22229D6D304C435C6CEC1DC643A1656602B6319EC7497A689FA6C7823BA` C0/I0/M0。正常 helper producer／owner初始化、一次expected與每define只讀閉包／唯一bridge fatal latch，實作與literal manifest仍須核；設計通過不等於native parser或A7通過。
 - 修改前4976847的plan bytes已保存 `task-08/binding-inputs-4976847/plan.md` 與mapping-index.json；spec不改。僅本plan與note兩MD採用，不改production/build/scripts，不commit/push；root窄docs-truth後給新pin，final literal/freeze再綁實際新pin。所有舊immutable包及FAIL root保持，1JVM/38case與成本上限不改，B/G2／8B／平台runtime仍未過。
+
+
+### A7恢復開工、核心複審與三次setup實跑（2026-10-26）
+
+使用者已明確恢復工作，舊11%用量停工限制失效；要求遠端回合失敗後續接，子代理卡住就換新的SOL。Task8仍8A，正式程式對245051e無差異；三輪都沒有執行38案例，不稱A7或8A通過。
+
+- core I1/I2已關：獨立複審3B7D7ACBB055545335DDD82714AFCAB753A0FD54F6C01263AF04DD07EC2537C0，限定JDK helper RED/GREEN及實際接線；native parser仍須A7。Launcher primary仲裁複審96EDFBF6DCCFF07E89D9F83233C220B82E3734A887697C56E37B761C5FACDCE8，System argv複審18DC95AC826D60B0DDCED9610E491AE629B5DDDF26537B143F84085439CFC019；均不外推完整runtime。
+- root使用非阻塞controller v5（SHA368D42D1623BE8D84540AD7234821C352ED8F221A668466DD01CA66A013751D6），保180秒成功期限／30秒合作收斂／600秒共同期限，無強殺、無重用root。
+
+|候選／root（均在.superpowers/verification）|實際結果|限定證據|
+|---|---|---|
+|controller-v5；g-db27835c4a1a4f59/p1-d8b9919c|PID25756，631ms，自然exit1；ENV_UNLISTED:SYSTEMDRIVE|272 pre/post相同，Knot及Minecraft未載入|
+|env-systemdrive-v1；g-8f2144b9edf20c0a/p1-8dcc36fc|PID40768，1063ms，自然exit1；HELPER_ROUTE，首錯latch HELPER_NORMAL_DEFINE_BYTES|269 pre/post相同；實際Windows argv exact、LocalFree一次成功；Knot返回|
+|helper-route-fix-v1；g-05aaff1453002de0/p1-76102627|PID34220，1166ms，自然exit1；STATE_VALUE:semaphore|270 pre/post相同；helper一次callback、loader/source/bytes exact並正常返回；五個native target未載入|
+
+原始stderr/setup與exit均保留；exit的contract-final.json缺失是setup停止後的次要audit結果，不能蓋掉Java首錯。root逐輪八原件hash及有限判讀存各owner的ROOT-FIRST／SECOND／THIRD-A7-FAILURE-AUDIT.json。沒有Context／Session／38eval的成功證據。
+
+- 環境修正只固定SYSTEMDRIVE=C:，其餘未知env仍拒；獨立review0AF5BFBD42AED72B435C6F8978B1DF9770667032F1CC48E2B6795FFC132348FD，八pure Node controls只證資料語意。272→269為三個重複realpath改新位置單列，unique同為268，非少驗三個來源。
+- helper原default package被固定Loader列為Minecraft並做access transform，raw相等前提錯；改qc.m6.a7.admission，維持所有精確guard與首次有界分項receipt。同輪修正fixture JSON誤傳為mcJar，改取literal已pin Minecraft JAR；三source窄修獨立reviewC3BE0742ACF7745B5BAF93756780E65B4A400C8B5745ECB779CDE75A7EB88F90、compiler21752自然exit0。第三跑只關閉helper路由缺口，不冒稱整A7 GREEN。
+- semaphore獨立分析4897422CB344328D62F892CBC060F5002DE1C531B5B8EB0FC5FF9E9731529D3F：旗標是歷史OR latch，Knot流程不以isSet判目前active；仍需depth0/max1/errorfalse、固定owner/同thread與所有snapshot不漂移。首次置true的精確stack未觀測，不補造。剩餘prepare集合型別一次核對，未到達的guard不當已驗。
+
+修改前a6b7fcc的spec/plan/note原bytes已保存task-08/binding-inputs-a6b7fcc/mapping-index.json；三次實驗仍對原pin，不能以更新後live文件冒原件。此處僅同步狀態，不更改產品spec／38eval、G40/O14/D2/A42/M68、IO768/native766或容量／期限。下一輪技術前提採用與實作review後再綁新HEAD。既有Task7 full efbd與CI64d維持原pin；完整B34/G2、8B、三bundle與人工仍待。
+
+
+#### A7 Loader狀態窄修已採用（尚未重跑）
+
+- root完整讀獨立分析4897422C…、addendum9A281576D34A308108229EBBFBA064A772D9A2C5267679A302DA39F5039C9512與修正review8992DAFDD47391515C930407C196100EC8D4600DA20A97BB0F96DAEE0C8752FA（C0/I0/M0），重算STATE-FIX-REVIEW-MANIFEST-v1的九原件均符。Helper source SHA0CC4A46BFAADEDD67FFB7AE29181B6EA8D44FDA1BDB5F9B070D150D47B805AC4；純javac24648自然exit0、stdout/stderr空。
+- 恰兩token：固定semaphore=false→true並維持所有Watch；AW.classes以既有kind3 exact LinkedHashSet取代錯誤kind2 HashSet，仍必空。不得clear/set、任意boolean或降低owner/incoming守門。其餘prepare normal constructor／setter／queue／config／coprocessor已一次靜態核對，未到runtime的值不稱已過。
+- plan已明確採用此窄技術更新；產品spec不改。三次FAIL原判保留，下一次以本輪docs commit新pin重建literal與完整freeze後再由root啟動A7；尚無第四次runtime或38eval結果。
