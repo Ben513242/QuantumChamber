@@ -265,10 +265,10 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 |23|已知async writer繞過gate且無受審source adapter|TEMPLATE_COHERENCE_UNAVAILABLE|1|0|0|1|2|8|2|
 |24|一個空palette不當constructor blank（另記0/1 shape與NBT）|TEMPLATE_NATIVE_BLANK_SHAPE|1|0|0|1|2|0|6|
 |25|非exact native template class假空|TEMPLATE_NATIVE_IMPLEMENTATION|1|0|0|1|2|8|2|
-|26|blank但author非constructor值|TEMPLATE_NATIVE_BLANK_SHAPE|1|0|0|1|2|8|2|
+|26|blank但author非constructor值|TEMPLATE_NATIVE_BLANK_SHAPE|1|0|0|1|2|8|1|
 |27|固定isolated重建回傳同一live template instance（manager為不同owner）|TEMPLATE_REBUILD_ISOLATION|1|0|0|1|2|8|2|
 |28|正常absence歷史 vs error產blank後錯檔已移出：當次全absent|SAME_ABSENT_BYTES|2|2|0|2|4|16|12|
-|29|error產blank但當次壞檔仍存在|TEMPLATE_SOURCE_DECODE_FAILED|1|0|0|1|2|8|2|
+|29|error產blank但當次壞檔仍存在|TEMPLATE_SOURCE_DECODE_FAILED|1|0|0|1|2|8|3|
 |30|PRESENT空模板 vs ABSENT constructor blank|DIFFERENT_PRESENCE_BYTES|2|2|0|2|2|8|2|
 |31|固定TemplateId="minecraft:bad id"（空白非法）|TEMPLATE_ID_INVALID|1|0|0|1|0|0|2|
 |32|固定Resolution為NbtInt(1)，其餘三鍵合法|TEMPLATE_ENVELOPE_INVALID|1|0|0|1|0|0|2|
@@ -281,7 +281,7 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 
 **固定input／coverage補正：** #17只在第一次saved父目錄readAttributes probe注入AccessDeniedException，預期UNOBSERVABLE；不是其他父節點或OS ACL全測。#27只測隔離manager不同但回傳同一live template instance，預期ISOLATION拒；shared manager路線本套未另測，必由8B2 gate/owner單元測試補，不能聲稱兩者皆runtime覆蓋。#31只用空白非法id，不聲稱合法但非canonical spelling全覆蓋；#32固定Resolution=NbtInt(1)；#33四鍵合法baseline另加Unexpected:NbtInt(1)；#34 Resolution="OTHER"。其他欄位錯型如Contract/TemplateId/NativeTemplate、missing key等由8B2 strict encoder/decoder單元測試另列，不冒A7全測。每個baseline NativeTemplate由owned native constructor/writeNbt取得，不手填假payload。
 
-#35–37各一次真正resolution：S=chest＋原生simple_dungeon loot引用、D=jigsaw＋minecraft:empty pool、R=stone palette三份不同且合法native NBT。#35 saved S/dev D/RM R，assert S及loot edge；#36 saved absent/dev D/RM R，assert D及pool edge；#37 saved/dev absent/RM R，assert R及block edge；development=true、dev路徑取原生相對目錄不修改shared static欄。每列另M=2，3次不是一次name比較；完整payload與其他已知refs沿原adapter保留。production development=false的NA分支是靜態與後續8B3責任，不冒稱A7三次已測。
+#35–37各一次真正resolution：S=chest＋原生simple_dungeon loot引用、D=jigsaw＋minecraft:empty pool、R=stone palette三份不同且合法native NBT。#35 saved S/dev D/RM R，assert S及loot edge；#36 saved absent/dev D/RM R，assert D及pool edge；#37 saved/dev absent/RM R，assert R及block edge；development=true；dev路徑取原生相對目錄。依下列已審A7 startup前提，fresh專屬A7 JVM只在任何Context/Manager/Session/server/world建構前，由Main顯式一次設定SharedConstants.isDevelopment=true並保持到退出；不是自然Fabric設定、不是途中切換／還原，不進observer或B/8B3。每列另M=2，3次不是一次name比較；完整payload與其他已知refs沿原adapter保留。production development=false的NA分支是靜態與後續8B3責任，不冒稱A7三次已測。
 
 #24固定順序：①new StructureTemplate（ctor blank 0palette）；②writeNbt A；③隔離manager.createTemplate(A)，其內另一次ctor及readNbt；④writeNbt B。共2ctor+2write+1create+1read=6個新增native觀測操作，全由N=6承擔，IO=0（memory）。assert實際重建形狀是否1空palette；fixture形狀不符則SETUP_SHAPE_MISMATCH，不能當RED/GREEN。記A/B bytes是否同及native分支，不預造RNG差異；absent guard仍只收constructor 0palette。#10只owned getTemplate empty、OrBlank及其nested getter/blank ctor，另一次writeNbt記完整native結果（5個已列native entry操作，quota8）；不偷偷另unload或解碼。#28保兩條歷史，每次rawerror/搬出保全記錄，當次全absence兩輸出同；#29錯檔仍在必拒。
 
@@ -292,6 +292,19 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 每graph原isolated CaseMeter重置，case IO/N quota列內reset，JVM batch總計不重設；D亦用bounded encoder並獨立輸出bytes上限，不發布FP。原raw8MiB/tracker64MiB/total128MiB/depth128與node/edge/state/canonical限額保留；A7 owned input總16MiB、O+D bytes總16MiB/evidence8MiB。只一JVM、2G、180秒＋合作30／600秒，沿v13非阻塞start/status。未有38case成本證據，超時保留/停止不加時、不kill Session owner、不追加JVM。
 
 #18/22是同owned model A的受控token/race fault；不是外部違約FS ABA偵測承諾。#13/14是實際Resource supplier FNF/IO；#16/17為同source IO/authority邊界故障，不稱Windows ACL驗證。genuine native資源/Session與只讀cache狀態before/after保留，finally resource views/streams close，最後Session.close＋獨立鎖。
+
+##### A7 startup／observer窄修訂（已採用；未實作驗收）
+
+採用A7-setup-amendment草案 SHA FB36DCC097FFD90D51E25E4DBA26B213385F7E341D28B899FDF76C7EC5E3D37E；獨立review FC7AD02FDCD59D854C2F3D19E3FB33C7B33D26A072D5061239D3E1C456291847為C0/I0/M0。這只核准測試前提／觀測／兩格quota修訂，不代表agent或A7 runtime通過；spec v1.3五態、encoding與正式正常遊戲支援域不改。
+
+- 已核自然前提缺口：固定MC沒有isDevelopment的PUTSTATIC；固定Loader與builtin ASM patch／Hooks未找到自然設定，fabric.development不等於MC native flag。舊resource方法fixture曾暫設flag，不能拿它證此次自然配置。因此只允fresh專屬A7 JVM由集中Main在任何Context/Manager/Session/server/world建立前，明確參數A7_NATIVE_DEV_BOOTSTRAP_ONCE下單次設true，保持至退出；B及8B3不帶override。observer不設定flag，不注入假provider list。
+- bootstrap順序：Knot unit-test init但不launch MC main→安裝／核16 exact hooks及單一bootstrap bridge identity/fatal空→讀flag before=false與Context attempts=0、manager/Session/server/world ctor attempts/returns全0→Main一次assignment→after=true、assignmentCount/BootstrapEnvironmentWrites皆1→才Bootstrap/Context與唯一Session。前提或coverage不符即SETUP_FAIL；class load不是instance建構證據。單次環境寫獨立列，不混N/IO或38eval。
+- constructor hook必分pre-init attempt與成功post-init return：pre event只有tag／stage，不傳uninitialized-this；N或M在attempt計一次，正常return後才帶receiver身份記完成，不重複charge。非ctor在method entry計。receipt分列attempt/return／entry，#24六個charged operations不是把ctor的兩種event算兩次；失敗ctor不得冒稱完成。
+- 原10 exact hook：Template ctor/writeNbt/readNbt，Manager ctor/createTemplate/getTemplate/getTemplateOrBlank/unloadTemplate/setResourceManager/saveTemplate；另三provider loadTemplateFromFile/loadTemplateFromGameTestFile/loadTemplateFromResource（同Identifier→Optional descriptor）只計logical IO；再加MinecraftServer／ServerWorld／LevelStorage.Session各自固定ctor作前置／禁止觀測。合計16 method targets，descriptor/class hash與既有靜態原件逐一核，缺／未知hook拒。server/world全程attempt=0；Session前0後最多1，仍finally close／獨立鎖。
+- agent/helper僅ignored test runtime：helper JDK-only，append bootstrap search，由null loader取；Main／MC進同bridge identity，不把helper複製進main artifacts或release。transform失敗即使返回原class也先latch fatal；callback自身throw亦先latch；每次expected rejection檢fatal仍空才可PASS，native Throwable fallback不能洗掉觀測／budget錯。entry只記SETUP/RESOLVE/NATIVE_CONTROL，bootstrap另列，不改MC資料／codec結果。
+- RESOLVE標exact live/isolated receiver；live get/getBlank/unload/setRM/save/create及live readNbt入口0。#10/#24提供getter/ctor/write/create/read正向witness；save/unload/setRM僅確切安裝＋零入口，不假稱正向調用。#10的N5（其中ctor attempt/return分列、只charge一次）在quota8；#24須native實證2ctor/2write/create/read共N6及原shape，不用估值代PASS。
+- #35–37在各原RESOLVE attempt對isolated manager另作一次native getTemplate/writeNbt counterpart，對strict選中NativeTemplate exact；actual provider順序分別Saved、Saved→dev、Saved→dev→RM。native counterpart與strict rebuild共N9<=16，provider最多3＋strict stat/open最多4，IO<=7/12；仍各1A/1G/1O、M2，無live getter。必要return前驗證不為守7而刪，實際仍受IO12。
+- #26 setup N2→1：只owned native blank constructor一次，author由fixture固定field反射改值，不呼setAuthor、不改shared static；保author guard。#29 N2→3：獨立manager用固定4byte非GZIP saved壞檔產blank（getBlank＋nested get＋blank ctor），壞檔保持存在、不與#28共manager。兩格相抵setup總94，672＋94仍766；IO768、G/O/D/A/M與時間/JVM/bytes cap不變。實際entry比預期多或shape不符就FAIL/SETUP_FAIL，回root修表，不偷延長。
 
 ##### B34責任與策略review先後
 

@@ -339,3 +339,11 @@ Task8仍8A，正式code為245051e87af563b778b79bca27e6706be30848f2；沒有produ
 A7後才另放完整B34/G2：#19保原exact Single missing fixture改完整OW absence正向，34case/24ctx/28role attempt不增，但須新增該role完整bytes/FP/metrics/node manifest；pool/loot真正required負向不變。全部新圖mutation、H/H-1、冷JVM/native review未過前不進8B；8B正式TDD/雙focused/full/freshreviews及8B3 Windows named／Ubuntu named／Windows intermediary三bundle仍硬gate。Task9起後續順序、M6人工/whole-branch/main/tag/退役門檻均不變。
 
 Task7既有full為code245的run-all-efbd4990e8824a63bc93b458643877b0，CI為64d6317671b5e9152bfd9e088356d16175088b3c/run40184992145；不把本輪六MD或之後新docs HEAD稱為已跑新runtime/CI。此次只diff／git diff --check，不為未變code重跑full；尚未commit/push，由root先做獨立docs-truth。
+
+
+### A7 startup／observer前提修訂採用（2026-10-26；仍只準備）
+
+- 固定MC與Loader/ASM patch／Hooks唯讀證據未證自然SharedConstants.isDevelopment=true；fabric.development不是該native flag。既有resource方法fixture用過暫設flag，不可冒充自然環境。A7-setup-amendment FB36DCC097FFD90D51E25E4DBA26B213385F7E341D28B899FDF76C7EC5E3D37E經fresh SOL FC7AD02FDCD59D854C2F3D19E3FB33C7B33D26A072D5061239D3E1C456291847 Approved C0/I0/M0；設計允fresh A7 Main在零Context/manager/Session/server/world前顯式一次dev=true，保持退出，記before/after與唯一參數，不在observer暗改，B/8B3無override。尚未fixture執行，不把設計採用當runtime。
+- 16 exact method hooks／bootstrap單counter identity／transform與callback latched fatal／expected拒絕前fatal空／readonly禁用入口均須實作核；ctor pre-init attempt不傳this、成功return才記receiver，attempt與完成分列且不double charge。#10/#24與三個isolated native winner承擔正向witness，bootstrap未量成本不混N/IO。
+- #26 setup N2→1（owned author反射）、#29 N2→3（獨立corrupt→OrBlank歷史保留壞檔）；總setup94/native766及IO768、38eval/G40/O14/D2/A42/M68不變。A7仍準備、無runtime，完整B/G2／8B／平台／人工未過。
+- 修改前614eda458561697bbeb6383ae04c5142f49e34ad的plan原bytes/SHA024D0903AE7586A6AEE706D549B2AEB964B102C760686F3948D04A06CA5CB573已存task-08/binding-inputs-614eda4/mapping-index.json；原dce archive與所有舊runtime原件不改。本次只plan/note兩MD；新plan SHA C8DA5985FD6984B3B074EBE697955182389D311D2D46468FF2FA6F5478225453，spec v1.3仍5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9。root另做窄docs-truth後建立新pin，final launcher/spec/freeze不沿614硬pin；不宣稱新docs SHA已有full/CI。
