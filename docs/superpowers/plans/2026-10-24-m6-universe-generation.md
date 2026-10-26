@@ -8,11 +8,13 @@
 
 **Tech Stack:** Minecraft 1.21、Yarn `1.21+build.9`、Fabric Loader `0.17.2`、Fabric API `0.102.0+1.21`、Loom `1.7.4`、Java 21、Gradle 8.8、PowerShell 7；JUnit／Fabric GameTest／跨 JVM probe。
 
-**Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.2，SHA256 `0E0E3E5500241756077BB0860A55D00F8EE80C7508DEF11AD0093AD768D1C305`）。
+**Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-26）：Task1–7及Task7 CI已完成；Task8仍在8A原生資料gate。v1.1原審查歷史保留於note；本次採用平台驗證排程r3與RecipesUsed澄清r4，fresh reviews均C0/I0/M0。Native完整資料圖、有限budget與獨立native review仍未通過，8B尚未放行；依下方實際checkbox與note接續，不把文件審查當功能完成。
+狀態（2026-10-26）：Task1–7及Task7 CI已完成；Task8仍8A。已採用v1.3 exact Single真absence／readonly五態／Model B正常遊戲來源與gate設計，review3E61305D…為C0/I0/M1（文字已修）。A7（38eval）及完整B/G2未過，沒有8B或production放行；平台r3/r4硬gate保留。
 
-採用紀錄（2026-10-26）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當前native資料gate仍未通過，沒有8B放行。
+採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當前native資料gate仍未通過，沒有8B放行。
+
+本次v1.3採用紀錄：草案SHA `0E14C72680E4F9728694A4BDD927E13E7F833351872CD00128D552EB67DF4E20`、fresh review SHA `3E61305D9BE716F29C4249F8EB59D366AB468298FA6574F983BA14C5033987D5`。只修M1「其餘四鍵」為「其餘三鍵」，其餘已審語意保留，分置spec與本Task8節；所有unchecked gate仍未通過。
 
 ## Global Constraints
 
@@ -193,6 +195,109 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 - [ ] Context可行性先釘實際SaveLoading.refresh→factory/create、Fabric SERVER_STARTING→setup/首次journal、reload holder→tags refresh→template clear→END的時序。多個inflight不能先publish；失敗/stop失效與borrowed resource ownership明列。尚未接線不當runtime已證。
 - [ ] 完整vanilla reachable圖量測後給有限node/edge/resource decode/total canonical bytes/depth表與邊界/超限反例，由主控及獨立native review釘選後才8B；目前1180個全pack templates與40,024,933解壓bytes只是upperbound，不等於reachable/budget驗收。不得以unlimited tracker、只有壓縮長度或未定budget啟用可持久化provider。
 - [ ] 全新SOL native re-review關閉8A的資料完整性/方法finding及有限預算；spec/plan獨立review與主控明確8B放行都必要。放行必列「資料gate已驗，跨mapping/platform runtime待8B3」，不稱已驗所有執行環境。此階段不拿repo未變的run-all冒充prototype coverage。
+
+#### 8A7與8B2前策略：template absence／live admission（設計已採用，未實作）
+
+使用者限定正常遊戲操作，snapshot期間無外部改模板/datapack；外部修改走reload／重啟。以下完整承接已審v2設計，schema仍snapshot五鍵／512bytes／32byte FP；`quantumchamber:m6-template-resolution-v1`是未發布首版resolved契約，不升未發布ProviderVersion。當次error拒、五態只讀與完整constructor blank定義見spec §3.1.1。舊required-template FAIL不改判。
+
+##### 已選Model B：具體owner／writer／consumer inventory與gate
+
+固定JAR token篩選83class再解析actual opcode/indy，28個相關callsite列missing-template-live-admission-inventory-v2.json；不是只計constant-pool引用，更不把此數量稱所有mod完整性。owner／network/dev證據見missing-template-live-owner-evidence-v2.json；process NBT copy見missing-template-process-copy-evidence-v2.json。
+
+|來源/狀態|exact owner/API/field|normal writer與consumer同源|選定協定|
+|---|---|---|---|
+|server/Session|MinecraftServer.structureTemplateManager；getStructureTemplateManager；session由既有MinecraftServerDynamicWorldAccess.quantumchamber$getSession|ServerWorld.getStructureTemplateManager轉同server manager；不是自行造另一manager冒live|lease綁同server/Session/manager，server.isOnThread，epoch及inflight/stop先後核|
+|ResourceManager|MinecraftServer.getResourceManager→resourceManagerHolder.resourceManager；Manager.resourceManager|MinecraftServer.method_29440 offset107 setResourceManager；Single Manager loader實際open同resourceManager|reload從開始先標inflight；apply shared gate換RM/clearcache並更epoch，END後可新lease；old RM不可偷換為另一image|
+|saved|Session GENERATED normalize→Manager.generatedPath；getTemplatePath為generated/<ns>/structures/<path>.nbt|StructureBlockBlockEntity.saveStructure offset41 getter、79 saveFromWorld、88 setAuthor、101 manager.saveTemplate；packet handler forceMainThread offset9，save offset203|saved native寫由server-thread command或manager.saveTemplate shared側；snapshot server-thread不交錯。可寫目錄不因此拒|
+|dev SNBT|SharedConstants.isDevelopment時StructureTestUtil.testStructuresDirectoryName/<id.path>.snbt|TestCommand.executeExport→NbtProvider.convertNbtToSnbt；executeImport reader42/output75/write87、unload138；正常command同步server-thread|server-thread窗口不交錯；release後操作，下次新capture；若同API被foreign async呼叫不在此admission內|
+|cache|Manager.templates:Map<Identifier,Optional<StructureTemplate>>|getTemplate computeIfAbsent；OrBlank put；unload remove；setRM clear；FossilFeature/SimpleStructurePiece/Single/ruined portal在生成路徑可從worker取同manager|相關manager methods共同shared gate，snapshot只try排他|
+|cached template內容|StructureTemplate四instance欄；normal mutator saveFromWorld/readNbt/setAuthor|saveStructure在getter返回後才改template，故只包manager方法不足；Manager.createTemplate呼readNbt；datagen validator亦readNbt但不屬live server owner|已發佈template identity綁current manager gate；三個mutator也shared，無owner association的live cache entry拒coverage|
+
+現有H6只把PalettedBlockInfoList.blockToInfos換ConcurrentHashMap，是derived lookup cache安全，不當本次writer exclusion。Template.process offset88把NBT copy到current BlockInfo後才processor.process；place的LootTableSeed put作用在處理後資料。此為固定native已讀路徑；未知processor/writer不可因namespace而admit，若會修改原template必有adapter/gate或拒。
+
+**已選gate設計（設計層Approved；尚未實作，8B2成功路徑前仍守策略/owner/hold budget審查）：**
+
+1. 每exact native manager建立ReentrantReadWriteLock＋current identity binding。普通getTemplate、getTemplateOrBlank、saveTemplate、unloadTemplate、setResourceManager、createTemplate的完整body取shared/read側，nested reentrant；用具備exception-finally的wrap，而非只有HEAD/RETURN漏例外。正常getter仍可原語意填cache，snapshot不呼它們。
+2. createTemplate返回及兩getter返回前，在仍持shared時登記template identity→同manager gate；OrBlank新blank亦先關聯再離開wrapper。所有live cache entry必可核此association。StructureTemplate.saveFromWorld/readNbt/setAuthor若對associated template則取其gate shared。未關聯新constructor/isolated instance可在自身owned owner建立，但不能混入live cache冒coverage。固定原生正常不共用一mutable template給不同manager；若發現多owner則TEMPLATE_OWNER_AMBIGUOUS拒，不猜一個。這是當次同步ownership，不是歷史provenance。
+3. association map短monitor：template mutator只查owner後立即釋monitor，然後取shared並重驗；manager取shared後可短暫登記。snapshot不可持association monitor去取gate。鎖階序gate→短association monitor；不存在monitor→等待gate。弱identity/lifecycle紀錄於manager退休後不提前拆掉仍在worker使用的舊template gate；正式owner清理／GC策略須review。
+4. snapshot先檢server-thread/epoch/inflight/stop/身份，**只writeLock.tryLock()，不排隊等待**。忙即TEMPLATE_SNAPSHOT_NOT_READY，無副作用回既有unavailable/重試路徑，不把短暫busy當永久corrupt。取得後只讀cache field/完整template資料、bounded來源reader與隔離native重建；不呼live五個禁用method、不等worker、無world副作用。finally必釋放，任error也釋放。return前核同身份/epoch/stop並完整cache/source相符。
+5. 已持shared的thread再要求snapshot，不做read→write upgrade，立即NOT_READY。shared/isolated重建同thread嵌套可重入；write-owner合法巢狀只讀／lease需配對depth，每層finally釋一層，禁止未結束lease外漏。一次snapshot只碰一live manager；不得持A再取B。worker可能等server時snapshot try排他直接失敗，所以沒有server等worker閉路；exclusive期間禁止future.join/get、事件迴圈pump或調worker。
+6. snapshot exclusive會短時阻擋後來的普通shared getter；snapshot成本/hold時間須量測，不能拿59秒partial prototype當遊戲server可接受延遲。策略正確性與可接受hold budget在8B2成功路徑前review釘選，未滿足便不發布；8B3再跑真worker busy、巢狀/exception、save、reload/stop接線與deadlock反例，不到8B3才發明策略。
+
+**可通與必拒配置：**固定1.21 native manager、標準Session/generated、普通Fabric遊戲server、既有受審mixin＋本gate/accessors全命中、來源使用目前RM、正常結構方塊/command/reload的server-thread模型，無外部同時改檔及未知async writer：策略上可try-acquire成功，8B2實作/8B3 runtime仍待證。標準可寫saved/dev不必OS鎖。已知async模組直接Files寫saved/dev或直接改cached NBT且未走gate/source adapter，或者替換manager／resource讀取語意而沒有受審能力：拒，不以檔案當次不存在接納。未知任意Java行為不在本版支援承諾，不能只憑相同namespace／descriptor宣稱已admit。
+
+**新增production/test owner計畫（本版文件採用；尚未派工實作）：**
+
+- 新main universe/Minecraft121TemplateAccessGate.java，test universe/Minecraft121TemplateAccessGateTest.java。
+- 新main mixin/StructureTemplateManagerSettingsGateMixin.java、StructureTemplateSettingsGateMixin.java、StructureTemplateManagerSettingsAccessor.java、StructureTemplateSettingsAccessor.java；更新src/main/resources/quantumchamber.mixins.json。全部前綴src/main/java/dev/quantumchamber或src/test/java/dev/quantumchamber。
+- 既有Minecraft121SettingsContexts／TemplateSettingsAdapter／Canonicalizer owners接lease與readonly DTO；既有MinecraftServerDynamicWorldAccess已供Session，不新增provenance store。gate wrap若用MixinExtras完整method wrapper，其固定依賴/descriptor/exception-finally及release無testmod污染須在策略review核。必要testmod observer/fault仍依8B3原owner另派，不藉此新增production test開關。
+
+##### A7：已採用固定操作／計數（未執行）
+
+38個top-level，G40／有效component輸出O14／單node diagnostic D2／adapter attempts A42／owned native manager上限M68。1Context/1Session/1JVM；不是68個Context。#11/12整圖一旦unknown use失敗，一律O=0；各只許D=1保存成功Single node的診斷bytes，檔名diagnostic-node，無FP/完整component/accepted，不得拿D當合法圖。無論先後，unknown拒與原圖不可發布都必斷言。
+
+表內I為額外fixture/template IO quota（不含該列12*A的解析IO quota）；N為額外native template setup/observation操作quota（不含16*A解析操作quota）。這些是精確分配的hard ceiling，不是未跑先報實際呼叫數。每列失敗／setup也計，不另加隱藏evaluation。
+
+|#|固定fixture／assertion|預期結果／碼|G|O|D|A|M|I|N|
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+|1|不可觀測cache|TEMPLATE_CACHE_UNOBSERVABLE|1|0|0|1|0|0|0|
+|2|無entry＋真absence|ABSENT|1|1|0|1|2|8|2|
+|3|negative＋真absence|ABSENT|1|1|0|1|2|8|2|
+|4|genuine constructor blank＋真absence|ABSENT|1|1|0|1|2|8|2|
+|5|其他present＋來源present exact|PRESENT|1|1|0|1|2|8|2|
+|6|其他present＋來源absent|TEMPLATE_CACHE_SOURCE_MISMATCH|1|0|0|1|2|8|2|
+|7|negative＋來源present且恰空|TEMPLATE_CACHE_SOURCE_MISMATCH|1|0|0|1|2|8|2|
+|8|無entry＋來源present恰空|PRESENT|1|1|0|1|2|8|2|
+|9|constructor blank＋來源present|TEMPLATE_CACHE_SOURCE_MISMATCH|1|0|0|1|2|8|2|
+|10|孤立native absence→getTemplate→OrBlank cache變化|NATIVE_CONTROL|0|0|0|0|2|8|8|
+|11|unknown先、Single後：同id|UNKNOWN_TEMPLATE_USE|1|0|1|2|2|8|2|
+|12|Single先、unknown後：同id|UNKNOWN_TEMPLATE_USE|1|0|1|2|2|8|2|
+|13|RM present，open丟FNF|TEMPLATE_SOURCE_READ_FAILED|1|0|0|1|2|8|2|
+|14|RM present，open丟IOException|TEMPLATE_SOURCE_READ_FAILED|1|0|0|1|2|8|2|
+|15|高優先saved corrupt＋低優先合法RM|TEMPLATE_SOURCE_DECODE_FAILED|1|0|0|1|2|8|2|
+|16|saved存在但不可讀|TEMPLATE_SOURCE_READ_FAILED|1|0|0|1|2|8|2|
+|17|固定saved父目錄readAttributes在第一次probe拋AccessDeniedException|TEMPLATE_SOURCE_UNOBSERVABLE|1|0|0|1|2|8|2|
+|18|讀取中source generation變更|TEMPLATE_SOURCE_UNSTABLE|1|0|0|1|2|8|2|
+|19|cache entry instance替換|TEMPLATE_CACHE_UNSTABLE|1|0|0|1|2|8|2|
+|20|同instance cache內容改變|TEMPLATE_CACHE_UNSTABLE|1|0|0|1|2|8|2|
+|21|lease epoch失效|TEMPLATE_LEASE_STALE|1|0|0|1|2|8|2|
+|22|受支持writer-token故障變更：前後bytes/stat相同|TEMPLATE_SOURCE_UNSTABLE|1|0|0|1|2|8|2|
+|23|已知async writer繞過gate且無受審source adapter|TEMPLATE_COHERENCE_UNAVAILABLE|1|0|0|1|2|8|2|
+|24|一個空palette不當constructor blank（另記0/1 shape與NBT）|TEMPLATE_NATIVE_BLANK_SHAPE|1|0|0|1|2|0|6|
+|25|非exact native template class假空|TEMPLATE_NATIVE_IMPLEMENTATION|1|0|0|1|2|8|2|
+|26|blank但author非constructor值|TEMPLATE_NATIVE_BLANK_SHAPE|1|0|0|1|2|8|2|
+|27|固定isolated重建回傳同一live template instance（manager為不同owner）|TEMPLATE_REBUILD_ISOLATION|1|0|0|1|2|8|2|
+|28|正常absence歷史 vs error產blank後錯檔已移出：當次全absent|SAME_ABSENT_BYTES|2|2|0|2|4|16|12|
+|29|error產blank但當次壞檔仍存在|TEMPLATE_SOURCE_DECODE_FAILED|1|0|0|1|2|8|2|
+|30|PRESENT空模板 vs ABSENT constructor blank|DIFFERENT_PRESENCE_BYTES|2|2|0|2|2|8|2|
+|31|固定TemplateId="minecraft:bad id"（空白非法）|TEMPLATE_ID_INVALID|1|0|0|1|0|0|2|
+|32|固定Resolution為NbtInt(1)，其餘三鍵合法|TEMPLATE_ENVELOPE_INVALID|1|0|0|1|0|0|2|
+|33|固定四鍵合法envelope另加Unexpected:NbtInt(1)|TEMPLATE_ENVELOPE_INVALID|1|0|0|1|0|0|2|
+|34|固定Resolution="OTHER"，其他欄位合法|TEMPLATE_ENVELOPE_INVALID|1|0|0|1|0|0|2|
+|35|固定saved=S、dev=D、RM=R，winner=S；保完整真refs|PRESENT_WITH_EDGES|1|1|0|1|2|8|2|
+|36|固定saved absent、dev=D、RM=R，development=true，winner=D|PRESENT_WITH_EDGES|1|1|0|1|2|8|2|
+|37|固定saved/dev absent、RM=R，winner=R|PRESENT_WITH_EDGES|1|1|0|1|2|8|2|
+|38|ABSENT envelope按tag孤立constructor重建exact|SAME_ABSENT_BYTES|2|2|0|2|2|8|2|
+
+**固定input／coverage補正：** #17只在第一次saved父目錄readAttributes probe注入AccessDeniedException，預期UNOBSERVABLE；不是其他父節點或OS ACL全測。#27只測隔離manager不同但回傳同一live template instance，預期ISOLATION拒；shared manager路線本套未另測，必由8B2 gate/owner單元測試補，不能聲稱兩者皆runtime覆蓋。#31只用空白非法id，不聲稱合法但非canonical spelling全覆蓋；#32固定Resolution=NbtInt(1)；#33四鍵合法baseline另加Unexpected:NbtInt(1)；#34 Resolution="OTHER"。其他欄位錯型如Contract/TemplateId/NativeTemplate、missing key等由8B2 strict encoder/decoder單元測試另列，不冒A7全測。每個baseline NativeTemplate由owned native constructor/writeNbt取得，不手填假payload。
+
+#35–37各一次真正resolution：S=chest＋原生simple_dungeon loot引用、D=jigsaw＋minecraft:empty pool、R=stone palette三份不同且合法native NBT。#35 saved S/dev D/RM R，assert S及loot edge；#36 saved absent/dev D/RM R，assert D及pool edge；#37 saved/dev absent/RM R，assert R及block edge；development=true、dev路徑取原生相對目錄不修改shared static欄。每列另M=2，3次不是一次name比較；完整payload與其他已知refs沿原adapter保留。production development=false的NA分支是靜態與後續8B3責任，不冒稱A7三次已測。
+
+#24固定順序：①new StructureTemplate（ctor blank 0palette）；②writeNbt A；③隔離manager.createTemplate(A)，其內另一次ctor及readNbt；④writeNbt B。共2ctor+2write+1create+1read=6個新增native觀測操作，全由N=6承擔，IO=0（memory）。assert實際重建形狀是否1空palette；fixture形狀不符則SETUP_SHAPE_MISMATCH，不能當RED/GREEN。記A/B bytes是否同及native分支，不預造RNG差異；absent guard仍只收constructor 0palette。#10只owned getTemplate empty、OrBlank及其nested getter/blank ctor，另一次writeNbt記完整native結果（5個已列native entry操作，quota8）；不偷偷另unload或解碼。#28保兩條歷史，每次rawerror/搬出保全記錄，當次全absence兩輸出同；#29錯檔仍在必拒。
+
+**IO與native operation歸屬：**解析IO定義為TemplateSourceObservation對source stat/查RM/open的logical attempt（native loader控制以每provider的一次probe/open計），每adapter attempt<=12，A42最多504。額外fixture建立/原生getter查源/寫壞檔/保全move按表I總和264；合計新增template logical IO<=768。這不是OS syscall總數，**未量MC bootstrap的IO不包括在768且不宣稱已量**；bootstrap仍受同JVM時間/heap與新owned root約束。每次stream bytes另走原bounded reader，不能以一次open繞decode上限。
+
+解析native template observation/constructor/write/read/decode等每attempt<=16，最多672；表N setup總和94（#24六步、#10五步有預留、#28歷史建構含失敗均在各列quota），合計<=766。M68是manager constructor個數上限，與Template constructor操作分開；codec/MC bootstrap內未量全域constructor不冒稱包含。counter在各wrapper操作前檢；nested createTemplate的ctor/read明列計帳，不以一個外層呼叫抹掉。實作準備若無法在此counter model核nested實際次數，須回root修表，不用估算值冒receipt。
+
+每graph原isolated CaseMeter重置，case IO/N quota列內reset，JVM batch總計不重設；D亦用bounded encoder並獨立輸出bytes上限，不發布FP。原raw8MiB/tracker64MiB/total128MiB/depth128與node/edge/state/canonical限額保留；A7 owned input總16MiB、O+D bytes總16MiB/evidence8MiB。只一JVM、2G、180秒＋合作30／600秒，沿v13非阻塞start/status。未有38case成本證據，超時保留/停止不加時、不kill Session owner、不追加JVM。
+
+#18/22是同owned model A的受控token/race fault；不是外部違約FS ABA偵測承諾。#13/14是實際Resource supplier FNF/IO；#16/17為同source IO/authority邊界故障，不稱Windows ACL驗證。genuine native資源/Session與只讀cache狀態before/after保留，finally resource views/streams close，最後Session.close＋獨立鎖。
+
+##### B34責任與策略review先後
+
+B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/TemplateId/ABSENT_NATIVE_BLANK/完整native blank與role COMPLETE，新增該role完整canonical/FP/metrics/node manifest一組。B仍34case/24ctx/28role attempt，因原#19本來同一Context及OW attempt；required pool#18/loot#20負向不變。原9對18 H/H-1全依新圖測；不得拿舊partial或diagnostic D補。G2原2BASE/2Context/6role，同deadline remaining>=210與六canonical逐byte/node exact證cold absence穩定；未過不稱8A gate。
+
+先獨立review本次live admission/gate策略與必要owner，通過前8B2不能建立正式snapshot成功路徑。8A A7只owned模型A/契約資料；8B2須具名RED→同clean雙focused/full/reviews（含tryLock忙、finally/exception、nested、no upgrade、owner錯配、writer拒）。8B3再真normal server worker/cache fill、正常saved/dev操作、reload多inflight/失敗、stop與snapshot同源lease runtime，並守三bundle跨mapping/OS。此處尚未實作/compile，沒有把候選稱已證無死鎖或live GREEN。
 
 #### 8B1：snapshot與metadata API
 

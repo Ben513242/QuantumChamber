@@ -512,3 +512,10 @@
 - D2僅normal/overworld partial，停RecipesUsed/deepslate；七配置欄有11個original witness，role未結束未驗總配對。未flush停止template id，不能補造歸屬或據partial174resources定正式budget。已見Pool/temple/noise/FluidState/receiver family僅原生補件，待合併實作與controls。
 - 採用已審spec v1.2與plan r3/r4：Recipe advisory D9927B1B…／窄review E9FCC770…、平台review4F03E40E…均root讀回，C/I/M=0。Exact furnace RecipesUsed保留完整raw歷史、原生Optional missing語意；真正配置依賴不省略。8A native gate仍先於8B，Windows named／Ubuntu named／Windows intermediary三bundle實跑比較及raw audit仍先於Task8完成/Task9，不當waiver。
 - 本輪只MD，source/test/build/workflow與code245／CI64d不變；實驗舊HEAD67e不可供新launcher沿用，下一步先讀實際採用commit與STATUS。未宣稱新docs SHA有runtime/CI/人工；main/m5/tag/退役未動。正常push依既有持續授權，實際狀態另以Git核。
+
+
+### 2026-10-26：M6 Task8A局部證據與v1.3設計採用（尚未實作）
+
+- 本次只六份MD，spec v1.3／Task8 absence與Model B設計依fresh review3E61305D…（C0/I0/M1，M1鍵數已修）採用；使用者限定正常遊戲操作，外部模板/datapack修改走reload／重啟，snapshot期間無外部同時改檔。詳細規則、owner與38項A7矩陣在M6 spec/plan，不把設計Approved當runtime通過。
+- A40/A2/A3/A4/A5/A6只各自component範圍；A6 v11 fixture輸出owner錯配真FAIL保留，v12修後21PASS；v12 B工具中斷僅INCOMPLETE，v13 B正常closed1但缺vanilla template真FAIL，G2未啟。完整原件/hash與限制見M6 note，不改判歷史。
+- 唯一下一步是待本次docs-truth／root自行commit後，以新實際pin準備A7（38eval/G40/O14/D2/A42/M68、1Context/Session/1JVM），root短讀後才另放runtime，再完整B/G2/native review。A7、完整B與8B、跨mapping/OS、人工仍未過；正式code245／full efbd／CI64d保持原pin，不稱新docs HEAD已有runtime或新CI。M6後續Task9起順序不變，main/tag/merge/退役未動。

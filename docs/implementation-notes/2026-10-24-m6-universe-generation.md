@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-26）：Task1–7與Task7 CI64d完成；Task8仍8A。spec v1.2及plan r3/r4獨立審查採用，原生graph仍未通過、沒有production/8B或random seed玩法。以下新紀錄區分方法PASS、原FAIL與有界No-FP診斷。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-26）：Task1–7及Task7 CI64d完成；Task8仍8A。spec v1.3／正常遊戲Model B與absence設計已獨立Approved採用，A7未跑，完整B/G2/native gate未過、無production/8B。最新v6–v13限定結果與下一步見文末；不把文件採用當實作結果。
 
 ## 使用者確認的範圍與順序
 
@@ -300,3 +300,42 @@ D2 receiver audit在固定JAR8241class/73043method的真GETSTATIC/GETFIELD對照
 - 採用spec SHA 0E0E3E5500241756077BB0860A55D00F8EE80C7508DEF11AD0093AD768D1C305；plan SHA 795FABA837C2D73B08055F305CD8E12A6EAE8D115BC49EC2AB27C969FEDCA71E。相對審過的草案只改標題／狀態／spec引用（spec行1/5、plan行1/11/13/15），契約正文逐行相同。Recipe邊界沒有擴成任意recipe豁免。
 - 8A先完成native資料／有限budget／restart與fresh native review，才可明確放8B；跨runtime比較仍待8B3，Windows named／Ubuntu named／Windows release/intermediary三bundle六role及兩family原始bytes exact、實際classsource／namespace／stop／鎖、CI raw audit未全過不得結Task8或進Task9。新scripts/workflow/build owner見plan，release/sources隔離不變；不是將未驗項目waive。
 - 本次只MD採用／結果記錄，正式code/test/build/workflow與已驗code245／CI64d相同；不重跑同code full、不冒稱採用docs SHA有runtime或新CI audit。後續launcher/spec須改釘採用commit的實際HEAD，不能重用硬67e。尚無8B、random seed玩法、人工／整M6 review或main/tag／退役完成。
+
+
+## Task8：v6–v13局部證據與v1.3設計採用（2026-10-26）
+
+### 本輪仍未完成的範圍
+
+Task8仍8A，正式code為245051e87af563b778b79bca27e6706be30848f2；沒有production／8B或random seed玩法。以下均ignored standalone方法／component prototype，不是main-only／正式server或完整family FP。各自有自然exit、source/prepost與Session/鎖證據者只按各自範圍採計；不把其中一個PASS抵完整B失敗。A40/A2/A3早期named rejection部分僅frozen predicate/source證據，不能升格為後來expectedCode/actualCode raw控制；A4起raw碼依各報告採計。
+
+|批次|實際範圍／結果|ignored報告與SHA256|
+|---|---|---|
+|v6 A40|40eval／56graph／39component；Pool/temple/noise/Fluid/history/receiver限定contract|task-08/graph-strict-v6/A-RESULT.md；`B9883DA463E4273942C21B193714A4A57457E1CC5299D7B1786CDEF80494608F`|
+|v7 A2|6eval／7graph／3component；exact SimpleParticleType；參數化粒子仍unsupported|task-08/graph-strict-v7/A2-RESULT.md；`494693BB5896F567A3685F713767557B02193FB4AB8EEF15A7AC7E80B4C33B80`|
+|v8 A3|4eval／5graph／4component；GameEvent native id/radius；非same-id radius-only mutation|task-08/graph-strict-v8/A3-RESULT.md；`6C835C7CCCD940F03247C6EF914C009A244F434CB0613A20FED7EC335D7AEF44`|
+|v9 A4|13eval／18graph／11component；Changes present/removed、trim refs、DATA三入口與七raw拒碼|task-08/graph-strict-v9/A4-RESULT.md；`0C094DC5F8A065A5F5AEB17DC08A50659D6C23BD13F3930D1640B37A66A43DAD`|
+|v10 A5|22eval／31graph／18component；A4十三項回歸＋exact Enchantment.effects owner／13raw拒碼|task-08/graph-strict-v10/A5-RESULT.md；`45BB8E4ECCEC0D50B9DF95968B3C8163669309020BA18B4B231A614193B03CE1`|
+|v11 A6|真FAIL：case18 finish把template payload送到pool node；19–21未到|task-08/graph-strict-v11/A6-FAIL-RESULT.md；`85C2FE787CB7E9AEA7F4AB178BF01297276B3BF9D18C420B848023CC59E03FC5`|
+|v12 A6|21eval PASS／24graph／15component／10raw碼；Single use、cycle、state、雙palette；仍component|task-08/graph-strict-v12/A6-RESULT.md；`A127E3F43B53B838F68AC13154CB52A423697508D998DE68D53D25962239A153`|
+|v12 B|TOOL_INTERRUPTED/INCOMPLETE；缺exit/final/base cleanup，不能當native FAIL/PASS|task-08/graph-strict-v12/B-TOOL-INTERRUPTED-RESULT.md；`D9514D53E5ED0677834DCF91DD1E584AD362191266B21353393D18F527479BBE`|
+|v13 B|正常closed1／59.098s；base-normal OW缺vanilla template，其他32case未到，G2未啟|task-08/graph-strict-v13/B-G1-FAIL-RESULT.md；`C86EF968B3F986E303F5A7AC9AD4ADD9C0E7BBAAAA9C276760111105AB829C0B`|
+
+- v11 A6原FAIL的guard正確：fixture finish owner錯配；v12只改最後用已存current pool payload，保template/pool兩nodes、回邊/state與immutable guard。原FAIL及原root不改判。v12 A6的15bytes、四pair、十raw碼、234prepost/source及事後鎖均root核過；25native element只為driver顯式建立預定數，不是bootstrap constructor實測總量。
+- v12 B的node_repl預設30秒await逾時/kernel reset後PID不存在，原件缺exit/final/base cleanup；兩鎖事後可獨占只證當時鎖釋放，不證正常finally。該輪只INCOMPLETE，未重送run或kill。v13改非阻塞start/status，35秒純Node測試跨呼叫完成（非Minecraft證據），B取得正常exit/final且真FAIL，不混兩輪原因。
+- v13 B原件25檔、236pre/post/source、兩正常close/鎖與事後owner核對。runtime incoming確為ancient_city/walls/no_corners pool→pool-location→intact_horizontal_wall_stairs_5；固定JAR pool確含該Single location而NBT缺失。成功reader/authority885、resource attempts886；nodes3420/edges79851/states4241/depth62、decoded26032598，published canonical0、case/batch charged32619。只是partial，未證完整矩陣時間或H/H-1／full resolve總成本。完整watch鏈只按原件，不概稱所有Nether資料皆與OW相關或ISO已過。
+
+### 已採用的窄設計與使用者裁示
+
+使用者明確裁示「限定正常遊戲操作（外部修改走reload／重啟）」：snapshot窗口內無外部改模板/datapack，不要求OS隔離或任意外部FS ABA保證。fresh設計review3E61305D9BE716F29C4249F8EB59D366AB468298FA6574F983BA14C5033987D5為C0/I0/M1，root全文讀回；草案0E14C72680E4F9728694A4BDD927E13E7F833351872CD00128D552EB67DF4E20採用，M1「其餘四鍵」已改「其餘三鍵」。這是設計層Approved，不是A7/8A/native/lifecycle/死鎖／8B GREEN。
+
+- spec v1.3釘exact Single真absence、五態只讀cache與完整constructor blank／當次error拒；不查歷史provenance、不讓已清除error永久污染。unknown/required用途逐use與scope驗，不因一次Single而全域豁免。完整NativeTemplate保留真refs；PRESENT與ABSENT_NATIVE_BLANK用quantumchamber:m6-template-resolution-v1 exact四鍵envelope區分，不加snapshot鍵/Parameters、不升尚未發布ProviderVersion。
+- Model B已選per-manager普通方法shared側／snapshot server-thread只try-exclusive，取不到NOT_READY不等worker；getter返回後的template三mutator須當次owner association，完整finally／nested與鎖序列入plan。新增gate/mixin/accessor/test owners只為計畫，未實作。8B2成功路徑前仍有strategy/owner/hold budget review，8B3再真server worker、saved/dev、reload/stop與三bundle跨runtime驗證；不把候選無閉路論證當實測。
+- 新採用spec SHA 5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9；plan SHA 024D0903AE7586A6AEE706D549B2AEB964B102C760686F3948D04A06CA5CB573。採用前dce5963的spec v1.2原SHA0E0E3E55…、plan795FABA8…原bytes已存task-08/binding-inputs-dce5963/，mapping-index.json列原path／preserved path／bytes／SHA。舊prototype/報告/prepost原件不改；它們指向當時binding bytes，不能把現已更新的檔案假當原bytes。後續新launcher釘root完成docs-truth後的實際commit，不重用dce/67e硬pin。
+
+### 唯一下一步與保留門檻
+
+下一步只按plan準備A7：38evaluation／40G／14有效O／2diagnostic D／42A／M68上限，1Context/Session/1JVM，尚未執行。#11/12 unknown圖O0、D單node無FP；三source winner各一次；固定type/id/extra／palette操作與新增logical template IO768、native操作766上限已明列，未量MC bootstrap不混稱總系統IO。先root短讀固定source/artifact/module/spec與guards，再另授權runtime。
+
+A7後才另放完整B34/G2：#19保原exact Single missing fixture改完整OW absence正向，34case/24ctx/28role attempt不增，但須新增該role完整bytes/FP/metrics/node manifest；pool/loot真正required負向不變。全部新圖mutation、H/H-1、冷JVM/native review未過前不進8B；8B正式TDD/雙focused/full/freshreviews及8B3 Windows named／Ubuntu named／Windows intermediary三bundle仍硬gate。Task9起後續順序、M6人工/whole-branch/main/tag/退役門檻均不變。
+
+Task7既有full為code245的run-all-efbd4990e8824a63bc93b458643877b0，CI為64d6317671b5e9152bfd9e088356d16175088b3c/run40184992145；不把本輪六MD或之後新docs HEAD稱為已跑新runtime/CI。此次只diff／git diff --check，不為未變code重跑full；尚未commit/push，由root先做獨立docs-truth。

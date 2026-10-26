@@ -1,8 +1,8 @@
-# M6 宇宙生成多樣性與完整維度家族：binding spec（v1.2）
+# M6 宇宙生成多樣性與完整維度家族：binding spec（v1.3）
 
 日期：2026-10-24。基準：`0d05f889da6f8b82b97af756aaa50066b3d42854`。本文定義 M6 的新行為；未明列變更的 M4／M5 checked 權威與遊戲行為維持原約定。本文尚非實作或驗收結果。
 
-狀態：v1.2已依獨立原生advisory D9927B1B…與fresh spec/plan review E9FCC770…（C0/I0/M0）採用；只澄清原生furnace RecipesUsed歷史資料與後續配方模擬邊界，其餘v1.1契約不變。平台驗證排程另依plan r3/r4（review 4F03E40E…／E9FCC770…）執行。審後只同步標題/採用狀態/交叉引用；這不表示native gate、Task8或production已通過。M4/M5權威與內建兩欄Parameters不變；實作進度以plan/note為準。
+狀態：v1.3已依設計層獨立review `3E61305D9BE716F29C4249F8EB59D366AB468298FA6574F983BA14C5033987D5`（C0/I0/M1，鍵數文字已修正）採用exact Single真absence／只讀cache與resolved template契約；使用者裁示snapshot期間限正常遊戲操作，外部改檔走reload／重啟。v1.2 RecipesUsed及plan r3/r4平台硬gate保留。本次是設計採用，不是A7、8A native gate或8B實作通過；正式進度以plan/note為準。
 
 ## 1. 目標、來源與交付順序
 
@@ -73,6 +73,46 @@ Canonical map key、節點索引以明列的穩定規則排序；列表及可能
 Static registry的原生可編碼值與block state properties按實際值納入。不能由codec表示的Java implementation、static mutable值、opaque callback行為不是fingerprint的可偵測保證。可持久化provider限受審adapter與明列的runtime相容性前提：生成相關static/dispatch行為須符合受支援1.21語意；已知／宣告的改寫若無受審adapter、相容性版本與必要資料則拒絕。未知或檢查無法確認的相容性狀態不得冒充已支援；固定版本、namespace、JAR/extension身分與啟動檢查只是相容性證據，不證明任意Java值或語意從未改變。受信任Java擴充也不能自行提供fingerprint來免除此門檻。
 
 Fingerprint exact相同只保證本節完整設定資料圖相同；生成重現另以相同root seed、受支援執行環境及相同生成前提為條件。它不保證偵測任意同id/version的Java/mixin/startup改寫，不包含玩家編輯、既有chunk/entity歷史或M7 literal snapshot。以實際資料內容／canonical id及adapter版本形成穩定表示；server identity、epoch、物件身分、PID、nonce、實體檔案位置與runtime mapping名稱只作驗證證據，不進fingerprint。資料無法跨同版本重啟精確重建者不得持久化。
+
+#### 原生template真absence與只讀解析（v1.3）
+
+固定1.21 exact SinglePoolElement的Identifier location經原生getStructure→StructureTemplateManager.getTemplateOrBlank時，僅「當次所有適用來源可權威證明真不存在」可用quantumchamber:m6-template-resolution-v1表示ABSENT_NATIVE_BLANK。這不是全域template optional；未知consumer／implementation、required用途及任何當次source error／unknown／不一致仍fail closed。ignore-first與absence是兩個獨立能力，不互相推導。共享data node不能省略每use＋既有alias scope的能力／結果驗證；Single與unknown兩種先後順序皆不得污染。
+
+**live cache觀測只有五態**：UNOBSERVABLE、NO_ENTRY、NEGATIVE（entry存在且Optional.empty）、PRESENT_CONSTRUCTOR_BLANK、OTHER_PRESENT。借用manager禁止getTemplate/getTemplateOrBlank/unloadTemplate/setResourceManager及任何填入／清除cache行為；不得用會產negative cache的getter當只讀觀測。觀測器只讀exact native cache的key存在、entry／template identity及受支援資料；不可觀測拒。原生建構／重建只能在隔離owner，不共用live manager/cache/可變template instance；不能把隔離OrBlank的副作用施到live。
+
+PRESENT_CONSTRUCTOR_BLANK必須exact固定原生StructureTemplate class／已核class身分，blockInfoLists為0項、entities為0項、size三int皆0、author為原生constructor的"?"；本固定class的四個instance欄位均已核。另完整native writeNbt與隔離新constructor的NBT exact；不能只比writeNbt。0個palette與1個空palette不得視為同一internal shape，即使writeNbt恰相等；未知subclass/新增設定欄位拒。author是本版保守constructor admission條件，不宣稱Single原生會讀author，也不另把class/path字串塞FP。
+
+當次source先按原優先序Saved generated→development SNBT（適用時）→實際ResourceManager，區分PRESENT／PROVEN_ABSENT／ERROR／UNKNOWN。只探測到高優先present且成功時採該完整值；高優先error不能以較低來源或cache遮掩；未知來源、不可讀、FNF來源原因不明、stat父路徑不可判、decode錯、epoch/source不穩定皆拒。ResourceManager.getResource present但open FNF／IO必為error，不是真absence。不可把native吞錯fallback當來源權威。
+
+|cache態|當次來源|可接受結果|
+|---|---|---|
+|UNOBSERVABLE|任何|拒|
+|NO_ENTRY|真absence／present可重建|分別ABSENT_NATIVE_BLANK／PRESENT|
+|NEGATIVE|真absence|ABSENT_NATIVE_BLANK；當次present（即使空）拒不一致|
+|PRESENT_CONSTRUCTOR_BLANK|所有來源當次真absence，完整native等價且coherent|ABSENT_NATIVE_BLANK；當次present拒|
+|OTHER_PRESENT|當次present且native完整重建exact|PRESENT；當次absence或不一致拒|
+
+當次ERROR／UNKNOWN／不穩定優先於以上所有可接受列。cached genuine constructor blank＋當次全absence可接納，**不追查歷史建立原因**；過去error來源已移出且當次已真absence，不永久污染snapshot。當次error仍存在必拒。保留歷史error receipt是證據保全，非新的provenance owner或FP欄位。
+
+
+**Model B正常遊戲操作的可執行候選**：依plan Task8已選per-manager gate，現有server/context lease持有exact server、server-thread、manager、Session與ResourceManager identity及同reload epoch；同步解析窗口不yield/pump server tasks、不等worker/future。正常server-thread結構方塊保存、dev import/export與reload apply不會與同server-thread snapshot交錯。外部檔案變更須先退出snapshot窗口，再經reload／重啟建立新epoch；stat/hash僅附加違約偵測，不宣稱抓到任意外部ABA。
+
+正常worldgen worker的getTemplate/OrBlank會填cache，仍須協調；不能因外部ABA排除就省cache gate。foreign/未知source/writer不自動admit。支援條件不是目錄唯讀：正常可寫saved/dev目錄可通；但有已知繞gate async writer／改cache或template的模組、未知manager/source implementation且無受審adapter時，該context拒TEMPLATE_WRITER_UNSUPPORTED或TEMPLATE_SOURCE_ADAPTER_UNSUPPORTED。無epoch/owner/gate能力則TEMPLATE_CONTEXT_UNBOUND，不默用vanilla或固定pack替代。
+
+來源變更以正常操作/同owner gate與epoch協調，不另建歷史provenance。窗口前後仍核identity/content/epoch；native受控writer-token若變便拒SOURCE_UNSTABLE／CACHE_UNSTABLE／LEASE_STALE。外部不合作ABA不是支援保證，不能把前後hash等於證明其不存在。
+
+**exact resolved encoding**：每個template data node以同一envelope存一次，exact四鍵，禁止額外鍵：
+
+|鍵|NBT型別／值|
+|---|---|
+|Contract|NBT string，恰quantumchamber:m6-template-resolution-v1|
+|TemplateId|NBT string，Identifier.of(x).toString()==x的canonical id|
+|Resolution|NBT string，恰PRESENT或ABSENT_NATIVE_BLANK|
+|NativeTemplate|NBT compound，完整實際native writeNbt資料；不刪任何tag/type/order語意|
+
+沿既有canonical NBT規則編碼（compound鍵canonical順序、保NBT型別與list順序及固定byte order）。Contract承擔既有resolved adapter版本角色，不加snapshot第五鍵以外欄位／Parameters，不升尚未發布的ProviderVersion。發布後不能同contract靜默改encoding。PRESENT恰空與ABSENT_NATIVE_BLANK必因Resolution不同bytes。完整NativeTemplate仍交原有typed NBT adapter保全部pool/loot/component等真refs；不能只保envelope或丟掉原payload。OS/path/mapping、source proof/stat/error文字與cache identity只入證據，不入FP。
+
+ABSENT重建依Resolution建立新的exact native constructor blank，再驗完整四欄／NBT；不能把NBT反解的一個空palette當constructor blank。PRESENT重建走原生createTemplate且保既有actual/rebuild完整比對。source/absence改變即resolved bytes與FP可辨；外層snapshot仍exact五鍵、512bytes、32byteFP，沒有歷史error欄。
 
 ### 3.1.2 Server-bound context 與完整 gate
 
