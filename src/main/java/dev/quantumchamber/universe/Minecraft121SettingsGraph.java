@@ -7,6 +7,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import net.minecraft.nbt.*;
+import net.minecraft.util.Identifier;
 
 /** C1a 的 owned typed 資料圖；不取得 live source、不產生或發布快照。 */
 final class Minecraft121SettingsGraph {
@@ -17,7 +18,7 @@ final class Minecraft121SettingsGraph {
             identifier(registry); identifier(id);
         }
     }
-    record Occurrence(Key target, String aliasScope, String use) {
+    record Occurrence(long ordinal, Key target, String aliasScope, String use) {
         Occurrence {
             Objects.requireNonNull(target, "target");
             label(aliasScope); label(use);
@@ -75,9 +76,9 @@ final class Minecraft121SettingsGraph {
     /** 每條邊保留；資料節點共用，但 alias/use 的完成狀態獨立。 */
     Occurrence reference(Key from, String path, Key target, String aliasScope, String use) {
         mutable(); label(path);
-        var occurrence = new Occurrence(target, aliasScope, use);
+        var occurrence = new Occurrence(edges.size(), target, aliasScope, use);
         require(edges.size() < limits.edges(), "BUDGET_EDGES");
-        require(states.contains(occurrence) || states.size() < limits.states(), "BUDGET_STATES");
+        require(states.size() < limits.states(), "BUDGET_STATES");
         reserve(from); reserve(target);
         edges.add(new Edge(from, path, occurrence));
         states.add(occurrence);
@@ -143,7 +144,8 @@ final class Minecraft121SettingsGraph {
         if (!condition) { failed = true; throw new Failure(code); }
     }
     private static void identifier(String value) {
-        if (value == null || !value.matches("[a-z0-9_.-]+:[a-z0-9/._-]+"))
+        Identifier parsed = value == null ? null : Identifier.tryParse(value);
+        if (parsed == null || !value.contains(":") || !parsed.toString().equals(value))
             throw new IllegalArgumentException("GRAPH_IDENTIFIER_INVALID");
     }
     private static void label(String value) {

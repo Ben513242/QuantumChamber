@@ -99,6 +99,26 @@ class Minecraft121SettingsCanonicalizerTest {
         assertThrows(IllegalArgumentException.class,()->new Minecraft121SettingsGraph.Key(
                 Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:settings","implicit"));
     }
+    @Test void everyEdgeOccurrenceMustCompleteEvenForSameTargetScopeAndUse() {
+        for (String secondPath : new String[]{"first", "second"}) {
+            var g=graph(); var target=key(Minecraft121SettingsGraph.Kind.REGISTRY,"shared");
+            var first=g.reference(ROOT,"first",target,"root","required");
+            g.reference(ROOT,secondPath,target,"root","required");
+            g.payload(target,NbtInt.of(2));g.expanded(first);
+            rejects("GRAPH_UNCLOSED",g::finish);
+        }
+    }
+    @Test void nativeIdentifierMustBeCanonicalAndExplicit() {
+        for (String id : new String[]{"stone", ":stone", "Minecraft:stone", "minecraft:a b"}) {
+            assertThrows(IllegalArgumentException.class,()->new Minecraft121SettingsGraph.Key(
+                    Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:settings",id), id);
+        }
+        for (String id : new String[]{"minecraft:plains", "minecraft:"}) {
+            var accepted = new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,
+                    "minecraft:worldgen/biome", id);
+            assertEquals(net.minecraft.util.Identifier.of(id).toString(),accepted.id());
+        }
+    }
     private static byte[] bytes(NbtElement value) {
         var g=new Minecraft121SettingsGraph();g.payload(ROOT,value);return g.finish();
     }
