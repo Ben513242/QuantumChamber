@@ -53,6 +53,7 @@ final class Minecraft121SettingsGraph {
     private final Set<Occurrence> completed = new HashSet<>();
     private long totalRaw;
     private long retainedBytes;
+    private long nativeStateCharge;
     private long canonicalBytes = 4 + DOMAIN.length() + 8;
     private boolean failed;
     private byte[] finished;
@@ -67,6 +68,14 @@ final class Minecraft121SettingsGraph {
     void expanded(Occurrence occurrence) { checked(() -> { expandedUnchecked(occurrence); return null; }); }
     void resource(Key key) { checked(() -> { resourceUnchecked(key); return null; }); }
     void decoded(long bytes) { checked(() -> { decodedUnchecked(bytes); return null; }); }
+    /** 原生狀態每次使用收費；與輸出共用上限，但不改canonical輸出長度／格式。 */
+    void nativeState(long bytes) {
+        checked(() -> {
+            mutable();require(bytes >= 0,"BUDGET_NATIVE_STATE");
+            require(bytes <= limits.canonical() - nativeStateCharge - canonicalBytes,"BUDGET_CANONICAL");
+            decodedUnchecked(bytes);nativeStateCharge += bytes;return null;
+        });
+    }
     byte[] finish() { return checked(this::finishUnchecked); }
     void requireOpen() { checked(() -> { mutable(); return null; }); }
     void invalidate() { failed = true; }
@@ -79,7 +88,7 @@ final class Minecraft121SettingsGraph {
 
     private void payloadUnchecked(Key key, NbtElement value) {
         mutable(); reserve(key);
-        long available = nodes.containsKey(key) ? limits.canonical() : limits.canonical() - canonicalBytes;
+        long available = nodes.containsKey(key) ? limits.canonical() - nativeStateCharge : limits.canonical() - nativeStateCharge - canonicalBytes;
         var output = new Encoder(Math.min(available, limits.totalRaw()));
         output.nbt(Objects.requireNonNull(value), 0);
         byte[] encoded = output.bytes();
@@ -98,13 +107,13 @@ final class Minecraft121SettingsGraph {
         mutable();
         long edgeBytes = keyBytes(from) + textBytes(path) + keyBytes(target)
                 + textBytes(aliasScope) + textBytes(use);
-        require(edgeBytes <= limits.canonical() - canonicalBytes, "BUDGET_CANONICAL");
+        require(edgeBytes <= limits.canonical() - nativeStateCharge - canonicalBytes, "BUDGET_CANONICAL");
         label(path);
         var occurrence = new Occurrence(edges.size(), target, aliasScope, use);
         require(edges.size() < limits.edges(), "BUDGET_EDGES");
         require(states.size() < limits.states(), "BUDGET_STATES");
         reserve(from); reserve(target);
-        require(edgeBytes <= limits.canonical() - canonicalBytes, "BUDGET_CANONICAL");
+        require(edgeBytes <= limits.canonical() - nativeStateCharge - canonicalBytes, "BUDGET_CANONICAL");
         canonicalBytes += edgeBytes;
         edges.add(new Edge(from, path, occurrence));
         states.add(occurrence);
@@ -137,7 +146,7 @@ final class Minecraft121SettingsGraph {
         if (finished != null) return finished.clone();
         require(!nodes.isEmpty() && nodes.keySet().containsAll(requested)
                 && completed.containsAll(states), "GRAPH_UNCLOSED");
-        var output = new Encoder(limits.canonical());
+        var output = new Encoder(limits.canonical() - nativeStateCharge);
         output.text(DOMAIN);
         output.integer(nodes.size());
         for (var entry : nodes.entrySet()) {
@@ -162,7 +171,7 @@ final class Minecraft121SettingsGraph {
         require(requested.contains(key) || requested.size() < limits.nodes(), "BUDGET_NODES");
         if (requested.add(key)) {
             long bytes = keyBytes(key);
-            require(bytes <= limits.canonical() - canonicalBytes, "BUDGET_CANONICAL");
+            require(bytes <= limits.canonical() - nativeStateCharge - canonicalBytes, "BUDGET_CANONICAL");
             canonicalBytes += bytes;
         }
     }

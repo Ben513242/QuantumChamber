@@ -15,8 +15,8 @@ import net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters;
 import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 
 /**
- * C1b-B1 的 typed registry 傳遞層。只接納原生 noise parameters 與空 pool；
- * 其他定義、inline entry 與非 direct alias 仍具名拒絕，不能作完整設定快照。
+ * C1b 的 typed registry 傳遞層。接納原生 noise parameters、空 pool 與 End 局部值；
+ * End 的 base_3d_noise 仍未支援；其他定義、inline entry 與非 direct alias 具名拒絕，不能作完整設定快照。
  * registries/resources 必須由呼叫端的同一次有效來源 lease 提供；本類不取得 live source。
  */
 final class Minecraft121RegistryClosure {
@@ -26,12 +26,15 @@ final class Minecraft121RegistryClosure {
     private final ResourceManager resources;
     private final ArrayDeque<Work> pending = new ArrayDeque<>();
     private final Set<Key> definitions = new HashSet<>();
+    private final Minecraft121NativeValueContracts nativeValues;
 
     Minecraft121RegistryClosure(Minecraft121SettingsGraph graph, DynamicRegistryManager registries,
             ResourceManager resources) {
         this.graph=Objects.requireNonNull(graph);
         this.registries=Objects.requireNonNull(registries);
         this.resources=Objects.requireNonNull(resources);
+        this.nativeValues=new Minecraft121NativeValueContracts(graph,registries,resources,
+                (occurrence,key)->pending.addLast(new Work(occurrence,key,null,true)));
     }
 
     void reference(Key from, String path, RegistryKey<?> key) {
@@ -87,7 +90,9 @@ final class Minecraft121RegistryClosure {
                 else {
                     var entry=actual(work.registryKey());
                     var target=work.occurrence().target();
-                    if(definitions.add(target)) expandDefinition(target,work.registryKey(),entry.value());
+                    if(Minecraft121NativeValueContracts.supported(work.registryKey()))
+                        graph.payload(target,nativeValues.capture(work.registryKey(),entry.value()));
+                    else if(definitions.add(target)) expandDefinition(target,work.registryKey(),entry.value());
                 }
                 graph.expanded(work.occurrence());
             }

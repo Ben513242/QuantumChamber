@@ -294,4 +294,266 @@ class Minecraft121SettingsCanonicalizerTest {
         var h=graph();var d=closure(h,r);d.reference(ROOT,"value",noiseKey("a"));d.drain();
         assertFalse(Arrays.equals(before,h.finish()),"同id的新原生內容不得沿用舊payload");
     }
+
+    @Test void endNativeBridgesHitRealOwnersAndOwnSealBytes() throws Exception {
+        var end=net.minecraft.world.gen.densityfunction.DensityFunctionTypes.endIslands(0L);
+        var access=assertInstanceOf(Minecraft121NativeValueContracts.EndStateAccess.class,end);
+        var state=access.quantumchamber$captureEndState();assertEquals(2076,state.bytes().length);
+        var sampler=nativeField(end,"sampler").get(end);var expected=java.nio.ByteBuffer.allocate(2076);
+        for(String name:java.util.List.of("originX","originY","originZ"))expected.putLong(Double.doubleToRawLongBits(nativeField(sampler,name).getDouble(sampler)));
+        var permutation=(int[])nativeField(sampler,"permutation").get(sampler);expected.putInt(512);for(int element:permutation)expected.putInt(element);
+        assertArrayEquals(expected.array(),state.bytes(),"三origin與全部512個int須逐byte一致");
+        assertTrue(state.sameIdentity(access.quantumchamber$captureEndState()));
+        var copy=state.bytes();copy[0]^=1;assertArrayEquals(access.quantumchamber$captureEndState().bytes(),state.bytes());
+        var rebuilt=(Minecraft121NativeValueContracts.EndStateAccess)net.minecraft.world.gen.densityfunction.DensityFunctionTypes.endIslands(0L);
+        var other=rebuilt.quantumchamber$captureEndState();assertTrue(state.independentIdentity(other));assertArrayEquals(state.bytes(),other.bytes());
+        var binary=net.minecraft.world.gen.densityfunction.DensityFunctionTypes.add(end,net.minecraft.world.gen.densityfunction.DensityFunctionTypes.cache2d(end));
+        var binaryAccess=assertInstanceOf(dev.quantumchamber.mixin.DensityBinarySettingsAccess.class,binary);
+        assertSame(end,binaryAccess.quantumchamber$argument1());
+    }
+    @Test void nativeSealCopiesBothDirectionsAndUsesIdentityNotEquals() {
+        var first=new String("same");var equal=new String("same");byte[] input={1,2,3};
+        var seal=Minecraft121NativeValueContracts.SimplexStateSeal.capture(first,input);input[0]=99;
+        var output=seal.bytes();output[1]=99;assertArrayEquals(new byte[]{1,2,3},seal.bytes());
+        assertTrue(seal.sameIdentity(Minecraft121NativeValueContracts.SimplexStateSeal.capture(first,input)));
+        assertTrue(seal.independentIdentity(Minecraft121NativeValueContracts.SimplexStateSeal.capture(equal,input)));
+    }
+
+    private static final net.minecraft.registry.RegistryKey<net.minecraft.world.gen.chunk.ChunkGeneratorSettings> END_SETTINGS=
+            net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.CHUNK_GENERATOR_SETTINGS,net.minecraft.util.Identifier.ofVanilla("end"));
+    private static final net.minecraft.registry.RegistryKey<net.minecraft.world.gen.densityfunction.DensityFunction> END_SLOPED=
+            net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION,net.minecraft.util.Identifier.ofVanilla("end/sloped_cheese"));
+    private record EndFixture(net.minecraft.resource.LifecycledResourceManagerImpl resources,net.minecraft.registry.DynamicRegistryManager.Immutable registries) implements AutoCloseable {
+        static EndFixture load() {
+            var rm=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,
+                    java.util.List.of(net.minecraft.resource.VanillaDataPackProvider.createDefaultPack()));
+            try {
+                var combined=net.minecraft.registry.ServerDynamicRegistryType.createCombinedDynamicRegistries();
+                var worldgen=net.minecraft.registry.RegistryLoader.loadFromResource(rm,
+                        combined.getPrecedingRegistryManagers(net.minecraft.registry.ServerDynamicRegistryType.WORLDGEN),
+                        net.minecraft.registry.RegistryLoader.DYNAMIC_REGISTRIES);
+                return new EndFixture(rm,worldgen);
+            } catch(RuntimeException|Error failure) { rm.close();throw failure; }
+        }
+        Object settings() { return registries.get(net.minecraft.registry.RegistryKeys.CHUNK_GENERATOR_SETTINGS).get(END_SETTINGS); }
+        Object sloped() { return registries.get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION).get(END_SLOPED); }
+        public void close() { resources.close(); }
+    }
+    @Test void fixedNativeEndTwoRoutesCaptureOwnedSimplexState() {
+        try(var f=EndFixture.load()) {
+            var g=graph();var nativeValues=new Minecraft121NativeValueContracts(g,f.registries(),f.resources());
+            var captured=(NbtCompound)nativeValues.capture(END_SETTINGS,f.settings());
+            var states=captured.getList("EndStates",NbtElement.BYTE_ARRAY_TYPE);assertEquals(2,states.size());
+            for(var state:states)assertEquals(2076,((NbtByteArray)state).getByteArray().length);
+            assertArrayEquals(((NbtByteArray)states.get(0)).getByteArray(),((NbtByteArray)states.get(1)).getByteArray());
+            var dependent=(NbtCompound)nativeValues.capture(END_SLOPED,f.sloped());
+            assertEquals(2076,dependent.getByteArray("EndState").length);
+        }
+    }
+
+    private static net.minecraft.world.gen.densityfunction.DensityFunction endEndpoint(EndFixture f) {
+        var settings=(net.minecraft.world.gen.chunk.ChunkGeneratorSettings)f.settings();
+        var wrapping=(net.minecraft.world.gen.densityfunction.DensityFunctionTypes.Wrapper)
+                ((net.minecraft.world.gen.densityfunction.DensityFunctionTypes.RegistryEntryHolder)settings.noiseRouter().erosion()).function().value();
+        return ((net.minecraft.world.gen.densityfunction.DensityFunctionTypes.RegistryEntryHolder)wrapping.wrapped()).function().value();
+    }
+    private static java.lang.reflect.Field nativeField(Object owner,String name) throws Exception {
+        var field=owner.getClass().getDeclaredField(name);field.setAccessible(true);return field;
+    }
+    private static Minecraft121SettingsGraph.Key nativeNode(net.minecraft.registry.RegistryKey<?> key) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,key.getRegistry().toString(),key.getValue().toString());
+    }
+    @Test void endLocalCaptureRetainsFourTypedRequiredEdgesButCannotFinishWholeGraph() {
+        try(var f=EndFixture.load()) {
+            var g=graph();var edges=new java.util.ArrayList<String>();
+            var values=new Minecraft121NativeValueContracts(g,f.registries(),f.resources(),(occurrence,key)->edges.add(key.getValue().toString()));
+            g.payload(nativeNode(END_SETTINGS),values.capture(END_SETTINGS,f.settings()));
+            g.payload(nativeNode(END_SLOPED),values.capture(END_SLOPED,f.sloped()));
+            assertEquals(java.util.List.of("minecraft:end/sloped_cheese","minecraft:end/sloped_cheese","minecraft:end/base_3d_noise","minecraft:end/base_3d_noise"),edges);
+            rejects("GRAPH_UNCLOSED",g::finish);
+            var h=graph();var closure=new Minecraft121RegistryClosure(h,f.registries(),f.resources());
+            closure.reference(ROOT,"end",END_SETTINGS);rejects("UNSUPPORTED_REGISTRY_DEFINITION",closure::drain);
+            rejects("GRAPH_FAILED",h::finish);
+        }
+    }
+    @Test void endRejectsForeignOwnerAndUnscopedNativeValues() {
+        try(var f=EndFixture.load();var foreign=EndFixture.load()) {
+            var g=graph();var values=new Minecraft121NativeValueContracts(g,f.registries(),f.resources());
+            rejects("NATIVE_DEFINITION_OWNER",()->values.capture(END_SETTINGS,foreign.settings()));rejects("GRAPH_FAILED",g::finish);
+            for(Object value:java.util.List.of(net.minecraft.world.gen.densityfunction.DensityFunctionTypes.endIslands(0L),
+                    new net.minecraft.util.math.noise.SimplexNoiseSampler(new net.minecraft.util.math.random.CheckedRandom(0L)),new Object())) {
+                var h=graph();var isolated=new Minecraft121NativeValueContracts(h,f.registries(),f.resources());
+                rejects("NATIVE_DEFINITION_OWNER",()->isolated.capture(END_SETTINGS,value));rejects("GRAPH_FAILED",h::finish);
+            }
+            var unknown=net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION,net.minecraft.util.Identifier.ofVanilla("end/base_3d_noise"));
+            rejects("UNSUPPORTED_NATIVE_VALUE",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(unknown,f.sloped()));
+        }
+    }
+    @Test void endStateDriftAtLastPermutationIndexIsRejectedAndOriginalArrayIsNotPublished() throws Exception {
+        try(var f=EndFixture.load()) {
+            var endpoint=endEndpoint(f);var sampler=nativeField(endpoint,"sampler").get(endpoint);
+            var array=(int[])nativeField(sampler,"permutation").get(sampler);int old=array[511];
+            try {
+                array[511]^=1;var g=graph();var values=new Minecraft121NativeValueContracts(g,f.registries(),f.resources());
+                rejects("NATIVE_END_SIMPLEX_STATE_MISMATCH",()->values.capture(END_SETTINGS,f.settings()));rejects("GRAPH_FAILED",g::finish);
+            } finally { array[511]=old; }
+        }
+    }
+    @Test void endOriginRawBitsAndPermutationShapeAreValidated() throws Exception {
+        try(var f=EndFixture.load()) {
+            var endpoint=endEndpoint(f);var sampler=nativeField(endpoint,"sampler").get(endpoint);var origin=nativeField(sampler,"originX");double old=origin.getDouble(sampler);
+            try {
+                origin.setDouble(sampler,Double.longBitsToDouble(Double.doubleToRawLongBits(old)^1));
+                rejects("NATIVE_END_SIMPLEX_STATE_MISMATCH",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_SETTINGS,f.settings()));
+            } finally { origin.setDouble(sampler,old); }
+            var permutation=nativeField(sampler,"permutation");Object original=permutation.get(sampler);
+            try { permutation.set(sampler,new int[511]);rejects("NATIVE_END_SIMPLEX_SHAPE",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_SETTINGS,f.settings())); }
+            finally { permutation.set(sampler,original); }
+        }
+    }
+    @Test void slopedCaptureRechecksOriginalSamplerAndArrayIdentity() throws Exception {
+        try(var f=EndFixture.load()) {
+            var endpoint=endEndpoint(f);var samplerField=nativeField(endpoint,"sampler");var sampler=samplerField.get(endpoint);
+            var arrayField=nativeField(sampler,"permutation");int[] original=(int[])arrayField.get(sampler);
+            var values=new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources());values.capture(END_SETTINGS,f.settings());
+            try { arrayField.set(sampler,original.clone());rejects("NATIVE_END_ORIGINAL_IDENTITY_CHANGED",()->values.capture(END_SLOPED,f.sloped())); }
+            finally { arrayField.set(sampler,original); }
+            var second=new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources());second.capture(END_SETTINGS,f.settings());
+            var rebuilt=net.minecraft.world.gen.densityfunction.DensityFunctionTypes.endIslands(0L);
+            try { samplerField.set(endpoint,nativeField(rebuilt,"sampler").get(rebuilt));rejects("NATIVE_END_ORIGINAL_IDENTITY_CHANGED",()->second.capture(END_SLOPED,f.sloped())); }
+            finally { samplerField.set(endpoint,sampler); }
+        }
+    }
+    @Test void fixedEndCodecIdentityDriftIsRejected() throws Exception {
+        try(var f=EndFixture.load()) {
+            var entry=net.minecraft.registry.Registries.DENSITY_FUNCTION_TYPE.getEntry(net.minecraft.util.Identifier.ofVanilla("end_islands")).orElseThrow();
+            var value=nativeField(entry,"value");Object before=value.get(entry);
+            try {
+                value.set(entry,net.minecraft.registry.Registries.DENSITY_FUNCTION_TYPE.get(net.minecraft.util.Identifier.ofVanilla("add")));
+                rejects("NATIVE_END_CODEC_OWNER",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_SETTINGS,f.settings()));
+            } finally { value.set(entry,before); }
+        }
+    }
+    @Test void repeatedEndCaptureChargesStateAndSourceForEveryOccurrence() {
+        try(var f=EndFixture.load()) {
+            var g=limited(100,100,100,100,8388608,20000,268435456,128);g.payload(ROOT,NbtInt.of(1));
+            var values=new Minecraft121NativeValueContracts(g,f.registries(),f.resources());values.capture(END_SETTINGS,f.settings());
+            rejects("BUDGET_TOTAL_RAW",()->values.capture(END_SETTINGS,f.settings()));rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+    @Test void endSourceWinnerCannotBeReplacedByAnIdenticalNamedOverlay(@org.junit.jupiter.api.io.TempDir java.nio.file.Path temp) throws Exception {
+        try(var f=EndFixture.load()) {
+            var id=net.minecraft.util.Identifier.ofVanilla("worldgen/noise_settings/end.json");byte[] raw;
+            try(var in=f.resources().getResource(id).orElseThrow().getInputStream()) { raw=in.readAllBytes(); }
+            var path=temp.resolve("data/minecraft/worldgen/noise_settings/end.json");java.nio.file.Files.createDirectories(path.getParent());java.nio.file.Files.write(path,raw);
+            var info=new net.minecraft.resource.ResourcePackInfo("vanilla",net.minecraft.text.Text.literal("vanilla"),net.minecraft.resource.ResourcePackSource.NONE,java.util.Optional.empty());
+            try(var overlay=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of(new net.minecraft.resource.DirectoryResourcePack(info,temp)))) {
+                rejects("UNSUPPORTED_END_SOURCE_WINNER",()->new Minecraft121NativeValueContracts(graph(),f.registries(),overlay).capture(END_SETTINGS,f.settings()));
+            }
+        }
+    }
+
+    @Test void slopedDirectAndReferenceShapesCannotBeSwapped() throws Exception {
+        try(var f=EndFixture.load()) {
+            var registry=f.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION);
+            var entry=registry.getEntry(END_SLOPED).orElseThrow();Object original=entry.value();var field=nativeField(entry,"value");
+            var binary=(dev.quantumchamber.mixin.DensityBinarySettingsAccess)original;
+            for(int mode=0;mode<2;mode++) {
+                var values=new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources());values.capture(END_SETTINGS,f.settings());
+                var bad=mode==0?net.minecraft.world.gen.densityfunction.DensityFunctionTypes.add(binary.quantumchamber$argument2(),binary.quantumchamber$argument2()):
+                        net.minecraft.world.gen.densityfunction.DensityFunctionTypes.add(binary.quantumchamber$argument1(),binary.quantumchamber$argument1());
+                try { field.set(entry,bad);String expected=mode==0?"END_OWNER_PATH_UNRESOLVED":"END_DEPENDENCY_ARGUMENT2_SHAPE";
+                    rejects(expected,()->values.capture(END_SLOPED,bad)); }
+                finally { field.set(entry,original); }
+            }
+        }
+    }
+    @Test @SuppressWarnings("unchecked") void slopedOrdinaryBaseReferenceRemainsRequired() throws Exception {
+        try(var f=EndFixture.load()) {
+            var registry=f.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION);
+            var base=net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION,net.minecraft.util.Identifier.ofVanilla("end/base_3d_noise"));
+            var entries=(java.util.Map<Object,Object>)nativeField(registry,"keyToEntry").get(registry);
+            var g=graph();var values=new Minecraft121NativeValueContracts(g,f.registries(),f.resources());values.capture(END_SETTINGS,f.settings());
+            Object removed=entries.remove(base);assertNotNull(removed);
+            try { rejects("REQUIRED_REGISTRY_TARGET_MISSING",()->values.capture(END_SLOPED,f.sloped()));rejects("GRAPH_FAILED",g::finish); }
+            finally { entries.put(base,removed); }
+        }
+    }
+    @Test void terminalSourceReadCannotHideAnArrayIdentityChange() throws Exception {
+        try(var f=EndFixture.load()) {
+            var endpoint=endEndpoint(f);var sampler=nativeField(endpoint,"sampler").get(endpoint);
+            var field=nativeField(sampler,"permutation");int[] original=(int[])field.get(sampler);
+            var calls=new java.util.concurrent.atomic.AtomicInteger();
+            var resources=(net.minecraft.resource.ResourceManager)java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),new Class<?>[]{net.minecraft.resource.ResourceManager.class},(proxy,method,args)->{
+                        if(method.getName().equals("getResource") && calls.incrementAndGet()==2)field.set(sampler,original.clone());
+                        return method.invoke(f.resources(),args);
+                    });
+            var g=graph();var values=new Minecraft121NativeValueContracts(g,f.registries(),resources);
+            try { rejects("NATIVE_END_ORIGINAL_IDENTITY_CHANGED",()->values.capture(END_SETTINGS,f.settings()));rejects("GRAPH_FAILED",g::finish); }
+            finally { field.set(sampler,original); }
+        }
+    }
+
+    @Test void exactEndSourceBytesAreCheckedEvenWithNativePackIdentity() throws Exception {
+        try(var f=EndFixture.load()) {
+            var resources=(net.minecraft.resource.ResourceManager)java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),new Class<?>[]{net.minecraft.resource.ResourceManager.class},(proxy,method,args)->{
+                        if(method.getName().equals("getResource")) {
+                            var actual=f.resources().getResource((net.minecraft.util.Identifier)args[0]).orElseThrow();
+                            byte[] bytes;try(var in=actual.getInputStream()) { bytes=in.readAllBytes(); }bytes[0]^=1;
+                            return java.util.Optional.of(new net.minecraft.resource.Resource(actual.getPack(),()->new java.io.ByteArrayInputStream(bytes)));
+                        }
+                        return method.invoke(f.resources(),args);
+                    });
+            rejects("UNSUPPORTED_END_SOURCE",()->new Minecraft121NativeValueContracts(graph(),f.registries(),resources).capture(END_SETTINGS,f.settings()));
+        }
+    }
+
+    @Test void slopedTerminalReadMustRecheckTheRegistryRootIdentity() throws Exception {
+        try(var f=EndFixture.load()) {
+            var entry=f.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION).getEntry(END_SLOPED).orElseThrow();
+            Object original=entry.value();var field=nativeField(entry,"value");var args=(dev.quantumchamber.mixin.DensityBinarySettingsAccess)original;
+            var replacement=net.minecraft.world.gen.densityfunction.DensityFunctionTypes.add(args.quantumchamber$argument1(),args.quantumchamber$argument2());
+            assertNotSame(original,replacement);var calls=new java.util.concurrent.atomic.AtomicInteger();
+            var resources=(net.minecraft.resource.ResourceManager)java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                    new Class<?>[]{net.minecraft.resource.ResourceManager.class},(proxy,method,arguments)->{
+                        if(method.getName().equals("getResource") && calls.incrementAndGet()==4)field.set(entry,replacement);
+                        return method.invoke(f.resources(),arguments);
+                    });
+            var g=graph();var values=new Minecraft121NativeValueContracts(g,f.registries(),resources);values.capture(END_SETTINGS,f.settings());
+            try { rejects("NATIVE_END_ORIGINAL_IDENTITY_CHANGED",()->values.capture(END_SLOPED,original));rejects("GRAPH_FAILED",g::finish); }
+            finally { field.set(entry,original); }
+        }
+    }
+
+    @Test void repeatedEndNativeStateAlsoConsumesCanonicalBudget() {
+        try(var f=EndFixture.load()) {
+            var g=limited(100,100,100,100,8388608,134217728,8000,128);g.payload(ROOT,NbtInt.of(1));
+            var values=new Minecraft121NativeValueContracts(g,f.registries(),f.resources());
+            values.capture(END_SETTINGS,f.settings());
+            rejects("BUDGET_CANONICAL",()->values.capture(END_SETTINGS,f.settings()));rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+
+    @Test void nativeStateBudgetIsSeparateAndLeavesCanonicalOutputUnchanged() {
+        byte[] original=graph().finish();long cap=original.length+2076L;
+        var g=limited(10,10,10,10,8388608,134217728,cap,128);g.payload(ROOT,NbtInt.of(1));g.nativeState(2076);
+        assertArrayEquals(original,g.finish());
+        var h=limited(10,10,10,10,8388608,134217728,cap,128);h.payload(ROOT,NbtInt.of(1));h.nativeState(2076);
+        rejects("BUDGET_CANONICAL",()->h.nativeState(1));rejects("GRAPH_FAILED",h::finish);
+    }
+    @Test void laterPayloadAndEdgesRespectAlreadyChargedNativeState() {
+        long cap=graph().finish().length+2076L;
+        for(boolean payload:java.util.List.of(true,false)) {
+            var g=limited(10,10,10,10,8388608,134217728,cap,128);g.payload(ROOT,NbtInt.of(1));g.nativeState(2076);
+            rejects("BUDGET_CANONICAL",()->{if(payload)g.payload(key(Minecraft121SettingsGraph.Kind.REGISTRY,"later"),NbtInt.of(2));
+                else g.reference(ROOT,"later",ROOT,"ordinary","required");});rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+    @Test void nativeStateRejectsNegativeAndOverflowBeforeReuse() {
+        for(long bytes:new long[]{-1,Long.MAX_VALUE}) {
+            var g=graph();rejects(bytes<0?"BUDGET_NATIVE_STATE":"BUDGET_CANONICAL",()->g.nativeState(bytes));rejects("GRAPH_FAILED",g::finish);
+        }
+    }
 }
