@@ -573,3 +573,8 @@
 
 - B3本機code530491b六檔補固定End base Interpolated/Octave/Perlin raw state，具名RED57/7與terminal70/1、雙乾淨focused70/70×2、M6Compile/完整run-all-4fdb961002a3414e808c1cb12f488ba8 END ALL0/JUnit778 f0e0；獨立spec/quality均C/I/M0，release/sources無testmod，詳M6 note末節。僅固定End base局部，非完整三role/FP/snapshot。
 - C1c template v1設計C0/I2/M1，v2安全DTO/RecipesUsed原key/五態與Single location方案獨立C0/I0/M0，正式八owner/RED/GREEN未啟；100ms live hold I-1、C1d/8B3三bundle、Task9–20/人工/整分支/main/tag/退役均待。B3 code與此結果文件docs truth前不push。
+
+### 2026-10-29：M6 Task8B2-C1c-T/A局部閉包結案，C1d接手
+
+- T code `d0bf69b`：typed NBT局部契約，乾淨M6Compile及雙focused20/20，獨立spec/quality各C0/I0/M1。A code `bf46e97`（binding設計docs `29a5988`）接通來源優先序、同live lease隔離native rebuild與exact Single非空pool局部閉包；乾淨M6Compile、Adapter54/54×2、Canonicalizer76/76×2，完整`run-all-55870333f3bb422b9f53535574e302ec`自然END ALL0／JUnit838 f0e0 skip2；獨立spec C0/I0/M0、quality C0/I0/M1。A結果與hash索引見ignored `task-08/8b2-c1c-a-evidence/FINAL-RESULT.md`、`FINAL-RESULT-HASHES.json`，T見`8b2-c1c-t-evidence/T-IMPLEMENTER-RESULT.md`。首次full長cwd前置FAIL、RED與中途FAIL均保原件，不改判。
+- C1c只接納局部template source/cache/Single與窄typed NBT；BLOCK/ITEM/PROCESSOR_LIST/LOOT_TABLE等leaf、Vault/TrialSpawner/entity及完整OW973/N210/E20均未接納。C1d先完整owner census與typed leaf/consumer白名單，再處理三role FP/provider/snapshot；`createSnapshot/resolve`維持fail closed。100ms live hold I-1及8B3真server／三bundle仍未關，Task9–20、人工與整分支門檻仍待。本機CI oracle不等於遠端CI；本筆docs commit無新full，也未據此宣稱push/main/tag。

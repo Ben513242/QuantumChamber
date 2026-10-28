@@ -1,6 +1,8 @@
 # QuantumChamber M6：新對話完整接續提示詞（2026-10-28）
 
-## 0. 接續後更新（2026-10-28）
+## 0. 接續後更新（2026-10-29）
+
+**目前接手點：** C1c-T `d0bf69b` 已建立typed NBT局部契約，C1c-A `bf46e97` 已接通來源／同live lease隔離native rebuild／exact Single局部閉包。T乾淨雙focused20/20、獨立spec/quality各C0/I0/M1；A乾淨雙focused Adapter54/54、Canonicalizer76/76，完整`run-all-55870333f3bb422b9f53535574e302ec`自然`END ALL exit=0`、JUnit838（0 fail／0 error／2既有skip），獨立spec C0/I0/M0、quality C0/I0/M1。首次full長cwd前置FAIL與所有RED/中途FAIL保留。這是本機CI oracle，非遠端CI；`createSnapshot/resolve`仍fail closed。C1d先做完整owner census、typed leaf/consumer白名單，100ms live hold I-1與8B3三bundle仍須過門才能進Task9；完整三role／OW973/N210/E20／FP與人工未完成。詳M6 note末節、plan Task8與STATUS current；以下舊段保留當時快照，v4父FAIL/B27 FAIL不改判。
 
 本檔第1–7節保留交接當時狀態；本段為後續更新。8A完整B28在8d65769 pin通過且v4父FAIL/B27 G1 FAIL不改判。8B1候選code3ec19675經具名RED、乾淨雙focused、完整run-all與獨立spec/quality審查C/I0，已結案；正式createSnapshot/resolve仍fail closed。8B2內部G已在fix code0666cfd完成gate/mixin/context的乾淨雙focused/full與獨立C/I0，但8B2整體未完成；C1a純owned SettingsGraph已在fix code71e85ae完成具名RED、乾淨雙focused/full及獨立C/I/M0；C1b-B1白名單局部typed registry已在本機code a5db2c7完成具名RED、乾淨雙focused/full及獨立C/I/M0；B2局部End code acaf81b已乾淨雙focused49/49/獨立C/I/M0但base_3d_noise仍拒閉合；B3 code530491b已三samplerRED/乾淨雙focused70/70/完整full/獨立C/I/M0，但仍非三role/FP；C1c template安全DTO/來源/typed NBT v2設計C0/I0/M0待code，後續C1d仍須three-role/custom provider schema/resolve及100ms單次live hold量測，8B3的lifecycle/三bundle跨mapping／OS、Task8終局與M6人工/整分支門檻仍待。最新原件/限制看M6 note末節與STATUS最前current；新候選綁實際新HEAD，不沿舊8d/3ec驗證pin。
 
