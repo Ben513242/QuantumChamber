@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-28 B28 結果）：Task1–7完成；Task8A 的完整B28 G1/G2在8d657694 pin原生PASS，獨立native／quality review C0/I0/M0，8A資料gate可接受並放行8B。v4 child23/23 PASS但父FAIL原判保留；v5離線複核不當新native。8B正式設定snapshot/API/context/lifecycle未開始，三bundle跨mapping／OS、Task8終局、人工與M6整體門檻仍待；原件/限制見M6 note末節。
+狀態（2026-10-28 Task8B1）：Task1–7與8A完成；8B1候選code `3ec19675` 的具名RED、乾淨HEAD雙focused、完整run-all與獨立spec/quality審查均通過，C/I0，可進8B2。8B1只建立正式snapshot DTO及provider metadata/API，createSnapshot/resolve仍fail closed；8B2 canonicalizer/context與8B3 lifecycle/三bundle跨mapping／OS、Task8終局、Task9–20及人工/整分支門檻仍待。v4父FAIL及B27 FAIL原判保留；實際pin/原件見M6 note末節。
 
 採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當時native資料gate仍未通過，沒有8B放行；現況以上方2026-10-28 B28結果為準。
 
@@ -331,10 +331,12 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 **本批owner子集：** Snapshot/Provider/Registry及其兩JUnit、ServerSettingsContext的窄API宣告、README。若需要尚未完成的canonicalizer/context implementation，只能最小可編譯且fail-closed的介面/骨架，不作假成功，不接journal/candidate/世界物化。
 
-- [ ] 先具名RED：snapshotRejectsUnknownParameter、snapshotRejectsOversize512、registryRejectsLateOrDuplicateRegistration、strict GenerateStructures缺失/錯type/非0或1、roundtrip/defensive copies。新API骨架需可編譯；不存在class、NPE/setup/compile錯不當RED。
-- [ ] 註冊metadata/query/freeze與來源/目標immutable DTO完成；native changed-provider與完整resolve仍屬8B2，不把8B1稱Task8完成。compile→逐檔candidate→SnapshotTest/RegistryTest各兩focused→full→fresh兩review。
+- [x] 先具名RED：snapshotRejectsUnknownParameter、snapshotRejectsOversize512、registryRejectsLateOrDuplicateRegistration、strict GenerateStructures缺失/錯type/非0或1、roundtrip/defensive copies。新API骨架需可編譯；不存在class、NPE/setup/compile錯不當RED。
+- [x] 註冊metadata/query/freeze與來源/目標immutable DTO完成；native changed-provider與完整resolve仍屬8B2，不把8B1稱Task8完成。compile→逐檔candidate→SnapshotTest/RegistryTest各兩focused→full→fresh兩review。
 
 #### 8B2：canonicalizer、template adapter與context owner
+
+8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；mod初始化與testmod/PS屬8B3。
 

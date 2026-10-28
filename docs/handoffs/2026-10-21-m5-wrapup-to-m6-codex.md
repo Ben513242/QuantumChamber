@@ -543,3 +543,8 @@
 
 - 在M6工作樹8d657694 pin完成B28 200pins pureprepare與合併窄審C0/I0/M1；G1 PID38140 34case/24Context/28role自然PASS，G2 PID39276 2BASE/2Context/6role自然PASS，六份canonical逐byte/node manifest相同。獨立native/quality結果審查C0/I0/M0，Task8A資料gate可接受並放行8B1；詳細root/SHA/限制見M6 note末節。
 - v4 child23PASS但父END_DEP_EDGE_COPY FAIL、B27 G1 FAIL原判保留；v5只離線複核，未重跑相同focused。B28為Windows named vanilla fixture prototype，不是正式source/API或跨mapping／OS。Task8/Task9、人工/整分支/main/tag/退役門檻仍待；本筆與後續純文件commit不冒稱B28在新HEAD重跑。
+
+### 2026-10-28：M6 Task8B1結案，接8B2
+
+- 候選code `3ec19675`（七檔）完成正式具名RED、乾淨HEAD雙focused及本機完整run-all `run-all-0845a02d8c3b47bd98d239ca7bb61bb3` END ALL exit0；獨立spec/quality皆C/I0。初次dirty-pin focused的I-1已由四份乾淨3ec focused補證關閉，舊root仍保留。詳細XML/hash與限制見M6 note末節。
+- 8B1只提供snapshot DTO、provider metadata/registry；createSnapshot/resolve仍fail closed。8B2必做custom provider frozen schema驗證、正式canonicalizer/context及resolve正反測試；8B3三bundle跨mapping／OS與Task8終局、Task9–20、人工/整分支/main/tag/退役仍待。此處不把本機run-all規則檢查冒稱真跨平台三bundle。

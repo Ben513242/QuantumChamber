@@ -2,7 +2,7 @@
 
 ## 0. 接續後更新（2026-10-28）
 
-本檔第1–7節保留交接當時狀態。後續已在8d65769483703589a10d37820c139441b2524baa pin完成B28準備與一次合併窄審（C0/I0/M1），完整G1/G2自然exit0且父端accepted，獨立native/quality review C0/I0/M0。Task8A資料gate可接受，明確放行8B1；原v4父FAIL與B27 G1 FAIL不改判。最新原件/限制見M6 implementation note末節與本工作樹STATUS最前current。8B正式snapshot/API/context/lifecycle、三bundle跨mapping／OS與M6人工/整分支門檻仍待；新候選須綁實際新HEAD，不沿用8d原驗證pin。
+本檔第1–7節保留交接當時狀態；本段為後續更新。8A完整B28在8d65769 pin通過且v4父FAIL/B27 G1 FAIL不改判。8B1候選code3ec19675經具名RED、乾淨雙focused、完整run-all與獨立spec/quality審查C/I0，已結案；正式createSnapshot/resolve仍fail closed。下一批8B2須完成canonicalizer/template/context及custom provider schema驗證，8B3的lifecycle/三bundle跨mapping／OS、Task8終局與M6人工/整分支門檻仍待。最新原件/限制看M6 note末節與STATUS最前current；新候選綁實際新HEAD，不沿舊8d/3ec驗證pin。
 
 
 請接續 QuantumChamber M6。本檔是目前最新接續入口；先讀工作樹 AGENTS.md，再完整讀本檔。不要從歷史 M5／A7 setup 重來，也不要重新詢問已裁定的 M6 範圍。
