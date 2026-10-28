@@ -1,8 +1,8 @@
 # QuantumChamber M6：新對話完整接手提示詞
 
-> 最新（2026-10-27）：Task8仍8A，A7與End等限定focused已通過；完整B27 G1停在End相依owner，G2未啟。接續看§11與STATUS最前current block；§9停工點已失效、§10是較早歷史。遇遠端回合失敗先核既有程序／產物，再接續或換fresh SOL。範圍／順序已批准，不重問、不重做M5、不重建工作樹。
+> 最新（2026-10-28）：完整接續入口改為 [2026-10-28-m6-task8a-resume-prompt.md](2026-10-28-m6-task8a-resume-prompt.md)。依使用者要求暫停新增工作交新對話；23案child PASS／v4父FAIL／v5離線複核通過要分開陳述。B28只部分草稿，未啟G1/G2。§9已失效的舊用量停工點不適用，§10–11只留歷史。
 
-你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。現在已有M6工作樹與經review的spec／plan，按§11與最新STATUS接續；§1–8保留最初開工背景及長期限制。
+你是 QuantumChamber（Minecraft 1.21 Fabric mod）的 M6 接手者。現在已有M6工作樹與經review的spec／plan，按上方最新入口與STATUS最前current block接續；§1–8保留最初開工背景及長期限制。
 
 一律用繁體中文（台灣）回報；程式識別字、指令、檔名維持原文。先講結論與可驗證證據，再談推論。對使用者用白話。可以派工給 gpt-6-sol；總協調者負責分工、驗證與文件真實性。
 
@@ -105,7 +105,7 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 
 ## 8. 最初開工流程（已完成，不重跑）
 
-以下是最初開工流程；目前已完成，後續直接按§11接續：
+以下是最初開工流程；目前已完成，後續直接按上方最新入口接續：
 
 1. 實際main／origin／m5 tag／工作區狀態與證據。
 2. M6哪些範圍是已知要求，哪些只是建議或待決；建議第一個可驗收切片與順序。
@@ -150,3 +150,10 @@ git -c "safe.directory=$qcRepo" -C "$qcRepo" worktree list --porcelain
 - 下一個限定方案：task-08/end-dependency-owner-audit-v1/CONTRACT-PROPOSAL.md（SHA69bc0509ddd953b45a5d74acc60d8717109ff3fba5f3fbe62470ff19370a4131）。固定JAR896份worldgen JSON只有3處end_islands，新增owner僅sloped_cheese的argument1；失敗raw沒記該物件identity，不能把unit-codec推論當實測。先關契約review，明列新正反案例與預算，再實作新immutable候選；不泛放寬Simplex、不保持activeEnd覆蓋整個drain。
 - 順序不變：限定修正／fresh review／focused → 完整B G1 → 同batch剩餘至少210秒才G2 → fresh native及quality review → root明確8B放行。8B、跨mapping／OS三bundle、Task9起與人工尚未完成。正常push持續授權；main／tag／退役各自門檻不變。
 - 唯一工作樹與SOL要求沿用AGENTS。目前沒有待存取的live JVM；若接手時實況不同先核owner/lock，不依文字盲啟。STATUS第一個current block優先於下方含「最新」字樣的歷史段落。
+
+
+## 12. 2026-10-28 完整交接
+
+請依同目錄2026-10-28-m6-task8a-resume-prompt.md接續。使用者要求加速、不要反覆驗證未變程式，並指定子代理5.6 SOL／6 SOL。v4 Java 23案已全PASS，父predicate錯誤導致整run仍FAIL；v5以唯讀真原件確認修正，不追認舊root。下一步完成B28部分草稿、重綁交接docs新HEAD/pins、一次合併窄審後直接G1/G2；不要再啟相同23案focused。B28尚無有效prepare或review，其copied v27紀錄與claim不得誤採。詳細證據、hash、未完成項、可玩狀態與工具方式都在新提示詞。
+
+本節更新前local/origin feature為f6065fde7f0dffe7b2a29c894f69a257978b4e64，交接文件再有純docs commit，接手核實際Git。原6份binding raw已封存task-08/binding-inputs-f6065fde-20261028；新文件SHA不代表重跑native/full/CI。main/tag/正式程式未動。

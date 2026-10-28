@@ -101,12 +101,12 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-27：Task1–7完成；Task8仍8A。A7 38案、Magma／Axis／generic與End 11案focused均已在各自範圍通過並獨立review。最新完整B27 G1自然FAIL：base-normal的Overworld／Nether COMPLETE，End在density_function/end/sloped_cheese相依owner被拒；G2未啟。先讀M6提示詞§11、M6 note最後一節與STATUS最前current block。繼續處理這個已定位的相依契約，不重做M5／A7，不把局部focused當完整8A通過。遠端回合失敗先核原程序／產物，失效代理換fresh SOL後接續。**
+**2026-10-28：依使用者要求收在交新對話的檢查點。Task1–7完成，Task8仍8A。最新23案Java child全PASS，但v4父oracle FAIL；v5只修父端predicate，唯讀複核真原件通過，舊FAIL不改判。B28只有部分草稿，未freeze/prepare/review/G1/G2。先完整讀 docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md，再讀STATUS最前current與owner handoff。沿已驗原件直接準備完整B，不重跑未變的23案、不重做M5/A7。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
-- 先讀 [`docs/handoffs/2026-10-24-m6-new-chat-prompt.md`](docs/handoffs/2026-10-24-m6-new-chat-prompt.md) 的硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
+- 先讀 [`docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md`](docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md) 的完整接續指示；2026-10-24提示詞保留長期硬規則，再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md`。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
 - 使用者已確認完整 M6 的順序：測試腳本安全與生成競態 → random seed → same-seed fresh／profile → 完整 Nether／End family、portal／gateway 與 respawn；各段驗收，M7 不納入。先完成 binding spec 的獨立 review，再寫 plan 並獨立 review；Critical／Important 清零後直接實作，不另問是否開始。
-- 使用者要求子代理使用 SOL。本輪僅用 SOL 系列（`gpt-6-sol`／`gpt-6.1-sol`），短派工、全新 context 的獨立 reviewer；保留既有 SDD／RED-GREEN／回歸門檻。
+- 使用者2026-10-28指定子代理只用 gpt-5.6-sol 或 gpt-6-sol；較早6.1 SOL紀錄只屬歷史。短派工、一個writer配有界獨立review，沿用未變已審部分。使用者要求加速、不鬼打牆：v4 child23真PASS＋v5離線父修證據可銜接完整B，必要的合併窄審一次完成，不另重跑相同focused；保留重要安全與完整B/平台/人工門檻。
 - 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
 - M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
 - 正式src/build/scripts/workflow仍與Task7 code245051e相同；full efbd與CI64d/run40184992145只採原pin。Task8目前只有ignored prototype，原FAIL與原件全保留。最新已驗End focused root為g-73006d864209429f/p1-be5dce71；完整B27 root為g-7d3a70ec3b9f4f67/p1-d4526a5e且仍FAIL。8B、三bundle跨平台、人工與整分支門檻未過。新候選必綁文件更新後的實際HEAD；1ec44f10原binding已封存。

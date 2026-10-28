@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-27）：Task1–7及Task7 CI已完成；Task8仍8A。v1.3產品設計不改。A7 38案與Magma／Axis／generic／End各限定focused已通過並獨立review；End focused 11案不等完整End graph。最新完整B27 G1在base-normal的end/sloped_cheese相依owner FAIL，G2未啟；先審該最小契約擴充，再以新HEAD候選繼續。完整B34/G2與fresh native/quality未過，沒有8B或production放行；平台r3/r4硬gate保留。證據與下一步見M6 note「2026-10-27接續點」。
+狀態（2026-10-28交接）：Task1–7完成，Task8仍8A。End dependency v4 child真23/23 PASS，但父oracle錯刪同名edge而FAIL；v5精確predicate＋唯讀真原件複核通過，不改判原run。使用者裁示加速：沿用未變Java證據，不重跑相同23案，完成B28部分草稿並一次合併窄審後直接完整G1/G2。B28未freeze/prepare/review/runtime；交接新docs HEAD後必重綁。8B、平台三bundle與人工門檻不變；最新入口docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md。
 
 採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當前native資料gate仍未通過，沒有8B放行。
 

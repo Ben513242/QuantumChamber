@@ -533,3 +533,8 @@
 目前入口改為M6提示詞§11、M6 note「2026-10-27接續點」與STATUS最前current block。A7 38案及Magma／Axis／generic／End各限定focused已有獨立結果review；End v6 11案自然PASS，但完整B27 G1仍自然FAIL於end/sloped_cheese相依owner，G2未啟，沒有8A／8B放行。固定原版896份worldgen JSON盤點已定位最小新owner，接著審契約與正反矩陣；不重做M5，不泛放寬未知sampler。
 
 本次仍只更新文件，正式code245051e／full efbd／CI64d沿用各自原pin；native原證據pin1ec44f10與binding原bytes已封存，不能說新docs HEAD已跑測試。main仍0d05f889、m5 peeled仍a2d2b404；M6未合併／tag／退役，正常push依持續授權。新候選改綁文件commit後的實際HEAD，所有失敗root原樣保留。
+
+
+### 2026-10-28：M6交新對話，避免重做驗證
+
+最新完整提示詞為docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md。Task8A仍未關；23案Java child PASS／v4父FAIL／v5唯讀複核通過分開保留，B28只部分草稿，未freeze/prepare/review/G1/G2。使用者要求加速、不重跑未變23案，並指定子代理5.6 SOL／6 SOL；依新提示詞完成必要組合審查後直接完整B。此次收尾只同步文件，沒有新遊戲功能、main/tag/退役或人工驗收。原f606 binding已封存，接手以新docs實際HEAD重綁未啟候選。
