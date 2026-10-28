@@ -231,6 +231,8 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 - 新main universe/Minecraft121TemplateAccessGate.java，test universe/Minecraft121TemplateAccessGateTest.java。
 - 新main mixin/StructureTemplateManagerSettingsGateMixin.java、StructureTemplateSettingsGateMixin.java、StructureTemplateManagerSettingsAccessor.java、StructureTemplateSettingsAccessor.java；更新src/main/resources/quantumchamber.mixins.json。全部前綴src/main/java/dev/quantumchamber或src/test/java/dev/quantumchamber。
 - 既有Minecraft121SettingsContexts／TemplateSettingsAdapter／Canonicalizer owners接lease與readonly DTO；既有MinecraftServerDynamicWorldAccess已供Session，不新增provenance store。gate wrap若用MixinExtras完整method wrapper，其固定依賴/descriptor/exception-finally及release無testmod污染須在策略review核。必要testmod observer/fault仍依8B3原owner另派，不藉此新增production test開關。
+- 8B2正式資料閉包另增四個最小support main owner：`universe/Minecraft121SettingsGraph.java`（graph/預算/編碼）、`Minecraft121RegistryClosure.java`（typed registry/tag/ref可達性）、`Minecraft121NativeValueContracts.java`（受審原生值與End契約）、`Minecraft121TemplateValueContracts.java`（template NBT pool/loot/component/RecipesUsed）；精確責任/原8A證據與JUnit映射見ignored `task-08/8b2-gate-design/SUPPORT-OWNERS.md`。B28 test-only launcher/fixture/observer/receipt不得搬入release。
+- 8B2 gate設計獨立review C0/I1/M1：固定JAR九method descriptors與MixinExtras快取類別靜態核實；I-1為單次live exclusive hold尚無量測，候選100ms只作fail-closed硬上限。可先實作gate/RED/計時與超限拒，normal/amplified三role、present/absent、saved/dev/resource與worker busy的單次hold原件及獨立複審通過前不得發布成功snapshot；超限須縮短持鎖工作並重審，不調高上限湊PASS。弱identity/retired gate與鎖順序列實作review。設計review摘要 SHA `b48713c05b1bf4a3a76e310a7cd71764e8e7fbe2f24f86d586c66e7d65882013`。
 
 ##### A7：已採用固定操作／計數（未執行）
 
@@ -338,7 +340,7 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
-**本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；mod初始化與testmod/PS屬8B3。
+**本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。
 
 - [ ] 先具名RED snapshotRejectsChangedProvider（同id/version改實際biome/structure/tag/loot/template，不以fake FP字串）、missingProvider/unknownVersion、required/unknown/resource budget、alias/symbol、tag順序及source資料controls。normal/amplified三rolenative輸出，N/E component相同；不同rootseed不進FP，其他salt等不刪。GenerateStructures false可精確重建，不受只改canonical global覆蓋。
 - [ ] 實作full data encoding/strict reconstruction、exact ctx/epoch/owner/readonly API，不跨解析呼叫cache FP。純unit測contextEpochRejectsReloadAndStop、contextDoesNotCrossServer及inflight/失敗；不把unit當native事件接線。Source/Target snapshot格式與資料owner按spec，任一role未閉合不可建立snapshot。
