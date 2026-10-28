@@ -170,4 +170,128 @@ class Minecraft121SettingsCanonicalizerTest {
     private static byte[] bytes(NbtElement value) {
         var g=new Minecraft121SettingsGraph();g.payload(ROOT,value);return g.finish();
     }
+
+    @org.junit.jupiter.api.BeforeAll static void bootstrapRegistryFixture() {
+        net.minecraft.SharedConstants.createGameVersion(); net.minecraft.Bootstrap.initialize();
+    }
+    private static net.minecraft.registry.RegistryKey<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters> noiseKey(String id) {
+        return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS, net.minecraft.util.Identifier.of("minecraft",id));
+    }
+    private static net.minecraft.registry.SimpleRegistry<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters> noiseRegistry() {
+        var r=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS,com.mojang.serialization.Lifecycle.stable());
+        r.add(noiseKey("a"),new net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters(-3,1.0),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
+        r.add(noiseKey("b"),new net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters(-2,0.5),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
+        r.freeze(); return r;
+    }
+    private static Minecraft121RegistryClosure closure(Minecraft121SettingsGraph g, net.minecraft.registry.Registry<?> r) {
+        return new Minecraft121RegistryClosure(g,new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(r)),new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of()));
+    }
+    @Test void typedRegistryEntryCapturesNativeValueAndEveryOccurrence() {
+        var r=noiseRegistry(); var g=graph();var c=closure(g,r);
+        c.entry(ROOT,"entry",r.getEntry(noiseKey("a")).orElseThrow());c.reference(ROOT,"ordinary",noiseKey("a"));c.drain();
+        var actual=g.finish();
+        var one=graph();var d=closure(one,r);d.reference(ROOT,"ordinary",noiseKey("a"));d.drain();
+        assertFalse(Arrays.equals(actual,one.finish()),"兩個真引用不可被去重");
+        var changed=graph();var e=closure(changed,r);e.reference(ROOT,"ordinary",noiseKey("b"));e.drain();
+        assertFalse(Arrays.equals(one.finish(),changed.finish()),"原生定義值必須進圖");
+    }
+    @Test void missingRegistryTargetAndForeignEntryPoisonGraph() {
+        var r=noiseRegistry();var g=graph();var c=closure(g,r);c.reference(ROOT,"missing",noiseKey("missing"));
+        rejects("REQUIRED_REGISTRY_TARGET_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);
+        var h=graph();var d=closure(h,r);var foreign=noiseRegistry().getEntry(noiseKey("a")).orElseThrow();
+        rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->d.entry(ROOT,"foreign",foreign));rejects("GRAPH_FAILED",h::finish);
+    }
+    @Test void requiredAbsentTagRejectsWhileOptionalAbsenceIsExplicit() {
+        var r=noiseRegistry();var key=net.minecraft.registry.tag.TagKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS,net.minecraft.util.Identifier.of("minecraft","none"));
+        var g=graph();var c=closure(g,r);c.tag(ROOT,"required",key,true);
+        rejects("REQUIRED_TAG_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);
+        var h=graph();var d=closure(h,r);d.tag(ROOT,"optional",key,false);d.drain();assertFalse(Arrays.equals(graph().finish(),h.finish()));
+    }
+    @Test void unknownNativeRegistryDefinitionFailsClosed() {
+        var r=new net.minecraft.registry.SimpleRegistry<net.minecraft.nbt.NbtCompound>(net.minecraft.registry.RegistryKey.ofRegistry(net.minecraft.util.Identifier.of("test","opaque")),com.mojang.serialization.Lifecycle.stable());
+        var k=net.minecraft.registry.RegistryKey.of(r.getKey(),net.minecraft.util.Identifier.of("minecraft","a"));r.add(k,new NbtCompound(),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);r.freeze();
+        var g=graph();var c=closure(g,r);c.reference(ROOT,"unknown",k);rejects("UNSUPPORTED_REGISTRY_DEFINITION",c::drain);rejects("GRAPH_FAILED",g::finish);
+    }
+
+    private static net.minecraft.registry.SimpleRegistry<net.minecraft.structure.pool.StructurePool> poolRegistry() {
+        var r=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL,com.mojang.serialization.Lifecycle.stable());
+        var a=net.minecraft.registry.RegistryKey.of(r.getKey(),net.minecraft.util.Identifier.of("minecraft","a"));
+        var b=net.minecraft.registry.RegistryKey.of(r.getKey(),net.minecraft.util.Identifier.of("minecraft","b"));
+        var lookup=r.createMutableEntryLookup();var ar=lookup.getOrThrow(a);var br=lookup.getOrThrow(b);
+        r.add(a,new net.minecraft.structure.pool.StructurePool(br,java.util.List.of()),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
+        r.add(b,new net.minecraft.structure.pool.StructurePool(ar,java.util.List.of()),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);r.freeze();return r;
+    }
+    @Test void nativeEmptyPoolFallbackCycleIsClosedAndTypedIdsStayDistinct() {
+        var r=poolRegistry();var n=noiseRegistry();var g=graph();
+        var c=new Minecraft121RegistryClosure(g,new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(r,n)),new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of()));
+        c.reference(ROOT,"pool",net.minecraft.registry.RegistryKey.of(r.getKey(),net.minecraft.util.Identifier.of("minecraft","a")));
+        c.reference(ROOT,"noise",noiseKey("a"));c.drain();
+        var expected=graph();
+        var pa=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:worldgen/template_pool","minecraft:a");
+        var pb=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:worldgen/template_pool","minecraft:b");
+        var na=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:worldgen/noise","minecraft:a");
+        var manager=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(r,n));
+        var ops=manager.getOps(NbtOps.INSTANCE);
+        expected.payload(pa,net.minecraft.structure.pool.StructurePool.CODEC.encodeStart(ops,r.get(net.minecraft.util.Identifier.ofVanilla("a"))).getOrThrow());
+        expected.payload(pb,net.minecraft.structure.pool.StructurePool.CODEC.encodeStart(ops,r.get(net.minecraft.util.Identifier.ofVanilla("b"))).getOrThrow());
+        expected.payload(na,net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters.CODEC.encodeStart(ops,n.get(noiseKey("a"))).getOrThrow());
+        expected.expanded(expected.reference(ROOT,"pool",pa,"ordinary","required"));
+        expected.expanded(expected.reference(ROOT,"noise",na,"ordinary","required"));
+        expected.expanded(expected.reference(pa,"fallback",pb,"ordinary","pool-fallback"));
+        expected.expanded(expected.reference(pb,"fallback",pa,"ordinary","pool-fallback"));
+        assertArrayEquals(expected.finish(),g.finish(),"兩個typed registry與兩條循環邊皆須完整");
+    }
+    private static net.minecraft.structure.pool.alias.StructurePoolAliasBinding directAlias(String source,String target) {
+        return net.minecraft.structure.pool.alias.StructurePoolAliasBinding.direct(
+                net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL,net.minecraft.util.Identifier.of("minecraft",source)),
+                net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL,net.minecraft.util.Identifier.of("minecraft",target)));
+    }
+    @Test void aliasSourceIsSymbolicOnlyForItsOwnOccurrence() {
+        var r=poolRegistry();var g=graph();var c=closure(g,r);
+        net.minecraft.structure.pool.alias.StructurePoolAliasBinding binding=directAlias("missing","a");
+        c.alias(ROOT,"mapping",binding);c.drain();assertTrue(g.finish().length>graph().finish().length);
+        var h=graph();var d=closure(h,r);d.alias(ROOT,"mapping",binding);
+        d.reference(ROOT,"ordinary",net.minecraft.registry.RegistryKey.of(r.getKey(),net.minecraft.util.Identifier.of("minecraft","missing")));
+        rejects("REQUIRED_REGISTRY_TARGET_MISSING",d::drain);rejects("GRAPH_FAILED",h::finish);
+    }
+    @Test void aliasTargetsRemainRequiredIncludingSourceIdUsedAsTarget() {
+        var g=graph();var c=closure(g,poolRegistry());
+        c.alias(ROOT,"mapping",directAlias("missing","missing"));
+        rejects("REQUIRED_REGISTRY_TARGET_MISSING",c::drain);
+    }
+    @Test void tagOrderAndPresentEmptyDifferFromAbsent(@org.junit.jupiter.api.io.TempDir java.nio.file.Path temp) throws Exception {
+        var key=net.minecraft.registry.tag.TagKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS,net.minecraft.util.Identifier.of("minecraft","a"));
+        var tagFile=temp.resolve("data/minecraft/"+net.minecraft.registry.RegistryKeys.getTagPath(key.registry())+"/a.json");
+        java.nio.file.Files.createDirectories(tagFile.getParent());java.nio.file.Files.writeString(tagFile,"{\"values\":[]}");
+        var info=new net.minecraft.resource.ResourcePackInfo("fixture",net.minecraft.text.Text.literal("fixture"),net.minecraft.resource.ResourcePackSource.NONE,java.util.Optional.empty());
+        try(var rm=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of(new net.minecraft.resource.DirectoryResourcePack(info,temp)))) {
+            byte[][] values=new byte[3][];
+            for(int mode=0;mode<3;mode++) {
+                var r=noiseRegistry();var a=r.getEntry(noiseKey("a")).orElseThrow();var b=r.getEntry(noiseKey("b")).orElseThrow();
+                java.util.List<net.minecraft.registry.entry.RegistryEntry<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters>> members=mode==0?java.util.List.of(a,b):mode==1?java.util.List.of(b,a):java.util.List.of();
+                java.nio.file.Files.writeString(tagFile,mode==0?"{\"values\":[\"minecraft:a\",\"minecraft:b\"]}":mode==1?"{\"values\":[\"minecraft:b\",\"minecraft:a\"]}":"{\"values\":[]}");
+                var loader=new net.minecraft.registry.tag.TagGroupLoader<net.minecraft.registry.entry.RegistryEntry<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters>>(
+                        id->r.getEntry(net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS,id)).map(x->x),net.minecraft.registry.RegistryKeys.getTagPath(key.registry()));
+                var loaded=loader.load(rm);assertEquals(members,loaded.get(key.id()));
+                r.populateTags(java.util.Map.of(key,loaded.get(key.id())));var g=graph();var c=new Minecraft121RegistryClosure(g,new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(r)),rm);
+                c.tag(ROOT,"tag",key,false);c.reference(ROOT,"ordinary",noiseKey("a"));c.drain();values[mode]=g.finish();
+            }
+            assertFalse(Arrays.equals(values[0],values[1]),"原生成員次序不得排序");
+            var h=graph();var d=closure(h,noiseRegistry());d.tag(ROOT,"tag",key,false);d.reference(ROOT,"ordinary",noiseKey("a"));d.drain();
+            assertFalse(Arrays.equals(values[2],h.finish()),"存在空tag與來源缺失必須可區分");
+        }
+    }
+    @Test void closureQueueUsesGraphBudgetAndCannotRecoverAfterFailure() {
+        var g=limited(10,1,10,10,100,1000,2000,10);g.payload(ROOT,NbtInt.of(1));var c=closure(g,noiseRegistry());
+        c.reference(ROOT,"one",noiseKey("a"));rejects("BUDGET_EDGES",()->c.reference(ROOT,"two",noiseKey("a")));
+        rejects("GRAPH_FAILED",c::drain);rejects("GRAPH_FAILED",g::finish);
+    }
+
+    @Test void sameTypedIdChangedNativeValueChangesOwnedBytes() {
+        var r=noiseRegistry();var g=graph();var c=closure(g,r);c.reference(ROOT,"value",noiseKey("a"));c.drain();var before=g.finish();
+        r.get(noiseKey("a")).amplitudes().set(0,0.25);
+        assertArrayEquals(before,g.finish(),"完成圖不得持有可變原生值");
+        var h=graph();var d=closure(h,r);d.reference(ROOT,"value",noiseKey("a"));d.drain();
+        assertFalse(Arrays.equals(before,h.finish()),"同id的新原生內容不得沿用舊payload");
+    }
 }

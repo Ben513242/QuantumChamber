@@ -68,6 +68,8 @@ final class Minecraft121SettingsGraph {
     void resource(Key key) { checked(() -> { resourceUnchecked(key); return null; }); }
     void decoded(long bytes) { checked(() -> { decodedUnchecked(bytes); return null; }); }
     byte[] finish() { return checked(this::finishUnchecked); }
+    void requireOpen() { checked(() -> { mutable(); return null; }); }
+    void invalidate() { failed = true; }
 
     /** 任一驗證／編碼失敗均使本次圖失效，原例外照原樣交回。 */
     private <T> T checked(java.util.function.Supplier<T> action) {
