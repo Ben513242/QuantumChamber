@@ -272,8 +272,8 @@ class Minecraft121SettingsCanonicalizerTest {
                 java.nio.file.Files.writeString(tagFile,mode==0?"{\"values\":[\"minecraft:a\",\"minecraft:b\"]}":mode==1?"{\"values\":[\"minecraft:b\",\"minecraft:a\"]}":"{\"values\":[]}");
                 var loader=new net.minecraft.registry.tag.TagGroupLoader<net.minecraft.registry.entry.RegistryEntry<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters>>(
                         id->r.getEntry(net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS,id)).map(x->x),net.minecraft.registry.RegistryKeys.getTagPath(key.registry()));
-                var loaded=loader.load(rm);assertEquals(members,loaded.get(key.id()));
-                r.populateTags(java.util.Map.of(key,loaded.get(key.id())));var g=graph();var c=new Minecraft121RegistryClosure(g,new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(r)),rm);
+                var loaded=java.util.List.copyOf(loader.load(rm).get(key.id()));assertEquals(members,loaded);
+                r.populateTags(java.util.Map.of(key,loaded));var g=graph();var c=new Minecraft121RegistryClosure(g,new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(r)),rm);
                 c.tag(ROOT,"tag",key,false);c.reference(ROOT,"ordinary",noiseKey("a"));c.drain();values[mode]=g.finish();
             }
             assertFalse(Arrays.equals(values[0],values[1]),"原生成員次序不得排序");
