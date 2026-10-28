@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-10-29：8B2-C1b-B1局部typed registry已在本機code `a5db2c7` 完成具名RED、乾淨雙focused、完整run-all及獨立spec/quality C/I/M0；B2 End橋接設計C0/I0/M1，待三窄Mixin+config及正式code。B1不含完整End/三role/live/FP，C1c/d、100ms live hold I-1、8B3三bundle、Task8/Task9–20與人工仍待。先讀M6 note末節與本工作樹STATUS最前current；v4父FAIL/B27 FAIL不改判。**
+**2026-10-29：8B2-C1b-B2局部End捕獲在本機code `acaf81b` 完成乾淨雙focused49/49與獨立spec/quality C/I/M0，base_3d_noise仍GRAPH_UNCLOSED；B3 Interpolated/Octave/Perlin三窄Mixin設計C0/I0/M1待正式code。C1c/d、100ms live hold I-1、8B3三bundle、Task8/Task9–20與人工仍待。先讀M6 note末節與本工作樹STATUS最前current；v4父FAIL/B27 FAIL不改判。**
 
 - 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - 先讀 [`docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md`](docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md) §0現況；§1–7保留交接時的歷史狀態與長期約束。再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 末節與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md` 最前current。M5 舊 handoff 的 §7 最後紀錄保留歷史與開工核對。
@@ -109,7 +109,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - 使用者2026-10-28指定子代理只用 gpt-5.6-sol、gpt-6-sol 或 gpt-6-astra；較早6.1 SOL紀錄只屬歷史。短派工、一個writer配有界獨立review，沿用未變已審部分。使用者要求加速、不鬼打牆：v4 child23真PASS＋v5離線父修證據可銜接完整B，必要的合併窄審一次完成，不另重跑相同focused；保留重要安全與完整B/平台/人工門檻。
 - 開工實核：local/origin main=`0d05f889da6f8b82b97af756aaa50066b3d42854`，主工作區乾淨；m5 annotated object=`15c2943ce37950f468b030c5d194485a328c1705`，peeled=`a2d2b404329d2574469fca064a663e21fe89f333`，遠端一致且是 main 祖先；tag..main 只有文件。
 - M5 工作樹已確認路徑不存在、Git registration 消失。原 run／SDD 已依專屬裁示不備份退役，不重建或重做 M5 驗收。M5 最後本機 full 仍是6b116e6、已驗CI仍f99ce66；它們不代表M6新行為通過。
-- build/scripts/workflow仍沿Task7既有基線；src/main/test已另有8B1、8B2-G、C1a及本機B1切片，不能稱仍是Task7 code。Task7 full efbd與CI64d/run40184992145只採原pin。Task8A B28仍為ignored prototype，G1/G2在原8d65769 pin accepted；8B1 code3ec19675只提供DTO/registry，8B2-G code0666cfd只提供gate/context，C1a code71e85ae只提供owned圖，B1 code a5db2c7只提供白名單局部typed registry；正式完整解析仍fail closed。完整B27原FAIL與v4父FAIL不改判。8B2-C/8B3、三bundle跨平台、人工與整分支門檻未過；新docs HEAD不冒充舊驗證pin。8B2-C1b-B2候選必綁文件更新後實際HEAD；1ec44f10原binding已封存。
+- build/scripts/workflow仍沿Task7既有基線；src/main/test已另有8B1、8B2-G、C1a及本機B1切片，不能稱仍是Task7 code。Task7 full efbd與CI64d/run40184992145只採原pin。Task8A B28仍為ignored prototype，G1/G2在原8d65769 pin accepted；8B1 code3ec19675只提供DTO/registry，8B2-G code0666cfd只提供gate/context，C1a code71e85ae只提供owned圖，B1 code a5db2c7只提供白名單局部typed registry，B2 code acaf81b只提供End局部捕獲且base仍不閉合；正式完整解析仍fail closed。完整B27原FAIL與v4父FAIL不改判。8B2-C/8B3、三bundle跨平台、人工與整分支門檻未過；新docs HEAD不冒充舊驗證pin。8B2-C1b-B3候選必綁文件更新後實際HEAD；1ec44f10原binding已封存。
 - 正常 push 已持續授權；M6 main 合併、tag、工作樹退役、人工代操作各自依原門檻。M5 的一次授權與不備份退役例外不外推。
 - 每次交回同步 M6 note／plan、此節、ledger／STATUS 與舊 handoff §7 的新紀錄。以下 M5 進度只作歷史，不是M6待辦。
 M1–M4 已完成並合併（2026-10-01 核對）：

@@ -2,7 +2,7 @@
 
 ## 0. 接續後更新（2026-10-28）
 
-本檔第1–7節保留交接當時狀態；本段為後續更新。8A完整B28在8d65769 pin通過且v4父FAIL/B27 G1 FAIL不改判。8B1候選code3ec19675經具名RED、乾淨雙focused、完整run-all與獨立spec/quality審查C/I0，已結案；正式createSnapshot/resolve仍fail closed。8B2內部G已在fix code0666cfd完成gate/mixin/context的乾淨雙focused/full與獨立C/I0，但8B2整體未完成；C1a純owned SettingsGraph已在fix code71e85ae完成具名RED、乾淨雙focused/full及獨立C/I/M0；C1b-B1白名單局部typed registry已在本機code a5db2c7完成具名RED、乾淨雙focused/full及獨立C/I/M0；B2 End橋接設計C0/I0/M1待正式三Mixin/行為驗證，後續C1c/d仍須完成template/安全只讀DTO、three-role/custom provider schema/resolve及100ms單次live hold量測，8B3的lifecycle/三bundle跨mapping／OS、Task8終局與M6人工/整分支門檻仍待。最新原件/限制看M6 note末節與STATUS最前current；新候選綁實際新HEAD，不沿舊8d/3ec驗證pin。
+本檔第1–7節保留交接當時狀態；本段為後續更新。8A完整B28在8d65769 pin通過且v4父FAIL/B27 G1 FAIL不改判。8B1候選code3ec19675經具名RED、乾淨雙focused、完整run-all與獨立spec/quality審查C/I0，已結案；正式createSnapshot/resolve仍fail closed。8B2內部G已在fix code0666cfd完成gate/mixin/context的乾淨雙focused/full與獨立C/I0，但8B2整體未完成；C1a純owned SettingsGraph已在fix code71e85ae完成具名RED、乾淨雙focused/full及獨立C/I/M0；C1b-B1白名單局部typed registry已在本機code a5db2c7完成具名RED、乾淨雙focused/full及獨立C/I/M0；B2局部End code acaf81b已乾淨雙focused49/49/獨立C/I/M0但base_3d_noise仍拒閉合；B3三sampler橋接設計C0/I0/M1待正式三Mixin/RED/GREEN/full，後續C1c/d仍須完成template/安全只讀DTO、three-role/custom provider schema/resolve及100ms單次live hold量測，8B3的lifecycle/三bundle跨mapping／OS、Task8終局與M6人工/整分支門檻仍待。最新原件/限制看M6 note末節與STATUS最前current；新候選綁實際新HEAD，不沿舊8d/3ec驗證pin。
 
 
 請接續 QuantumChamber M6。本檔是目前最新接續入口；先讀工作樹 AGENTS.md，再完整讀本檔。不要從歷史 M5／A7 setup 重來，也不要重新詢問已裁定的 M6 範圍。

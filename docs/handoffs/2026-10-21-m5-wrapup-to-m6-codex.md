@@ -563,3 +563,8 @@
 
 - B1本機code464946b＋test fixture fixa5db2c7，修正後RED29案4具名fail、乾淨雙focused29/29×2、M6CompilePASS、run-all-53c1566db6194a27bdbe494e8c1deb32 END ALL0/JUnit737 f0e0；獨立spec/quality皆C/I/M0。原ResourceManager.EMPTY與alias fixture及TagGroupLoader Collection/List失敗root保留、不改判。B1只白名單NoiseParameters/空pool/direct alias/ordered tag，完整End/三role/FP仍待；詳M6 note末節。
 - B2固定JAR私有End讀取最小三Mixin＋config設計獨立C0/I0/M1，M1 seal入/出byte[]防禦複製及unit CODEC singleton邊界已釘；尚未compile/runtime/mixin命中/行為RED。B1與本筆設計docs真相先於正常push，B2從新HEAD開始。100ms live hold I1、8B3三bundle、Task9–20/人工/整分支/main/tag/退役均待。
+
+### 2026-10-29：M6 Task8B2-C1b-B2局部End結案，B3 sampler橋接設計
+
+- B2本機codeacaf81b八檔：固定End兩路/2076byte state、sloped_cheese Direct/Reference/必要邊，RED32/1及terminal/計費定向RED後，乾淨雙focused49/49×2、M6Compile PASS，獨立spec/quality皆C/I/M0。原Node→pwsh setup與RED root保留；首輪無已提交fix，full留C1整合。end/base_3d_noise InterpolatedSampler仍未支援，graph.finish拒，未有完整End FP；詳M6 note末節。
+- B3最小三sampler Mixin＋config設計獨立C0/I0/M1，M1為nested逐槽identity/封存陣列clone及非首槽同raw不同identity控制；正式code/compile/runtime/full待。B2與本次owner docs truth先於正常push；C1c/d、100ms live hold I-1、8B3三bundle、Task9–20/人工/整分支/main/tag/退役均待。
