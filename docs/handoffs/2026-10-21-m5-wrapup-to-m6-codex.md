@@ -568,3 +568,8 @@
 
 - B2本機codeacaf81b八檔：固定End兩路/2076byte state、sloped_cheese Direct/Reference/必要邊，RED32/1及terminal/計費定向RED後，乾淨雙focused49/49×2、M6Compile PASS，獨立spec/quality皆C/I/M0。原Node→pwsh setup與RED root保留；首輪無已提交fix，full留C1整合。end/base_3d_noise InterpolatedSampler仍未支援，graph.finish拒，未有完整End FP；詳M6 note末節。
 - B3最小三sampler Mixin＋config設計獨立C0/I0/M1，M1為nested逐槽identity/封存陣列clone及非首槽同raw不同identity控制；正式code/compile/runtime/full待。B2與本次owner docs truth先於正常push；C1c/d、100ms live hold I-1、8B3三bundle、Task9–20/人工/整分支/main/tag/退役均待。
+
+### 2026-10-29：M6 Task8B2-C1b-B3結案，C1c template v2設計放行
+
+- B3本機code530491b六檔補固定End base Interpolated/Octave/Perlin raw state，具名RED57/7與terminal70/1、雙乾淨focused70/70×2、M6Compile/完整run-all-4fdb961002a3414e808c1cb12f488ba8 END ALL0/JUnit778 f0e0；獨立spec/quality均C/I/M0，release/sources無testmod，詳M6 note末節。僅固定End base局部，非完整三role/FP/snapshot。
+- C1c template v1設計C0/I2/M1，v2安全DTO/RecipesUsed原key/五態與Single location方案獨立C0/I0/M0，正式八owner/RED/GREEN未啟；100ms live hold I-1、C1d/8B3三bundle、Task9–20/人工/整分支/main/tag/退役均待。B3 code與此結果文件docs truth前不push。
