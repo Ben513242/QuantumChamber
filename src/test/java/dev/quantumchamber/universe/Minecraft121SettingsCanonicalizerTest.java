@@ -119,6 +119,54 @@ class Minecraft121SettingsCanonicalizerTest {
             assertEquals(net.minecraft.util.Identifier.of(id).toString(),accepted.id());
         }
     }
+    @Test void oversizedEdgeLabelsAreRejectedBeforeRetentionOrSorting() {
+        String huge="x".repeat(4096);
+        for (int field=0;field<3;field++) {
+            var g=limited(10,10,10,10,100,1000,128,10);g.payload(ROOT,NbtInt.of(1));
+            String path=field==0?huge:"path", scope=field==1?huge:"scope", use=field==2?huge:"use";
+            rejects("BUDGET_CANONICAL",()->g.reference(ROOT,path,ROOT,scope,use));
+            rejects("GRAPH_FAILED",g::finish);
+        }
+        var nbt=new NbtCompound();nbt.putInt(huge,1);nbt.putInt("a",2);
+        rejects("BUDGET_CANONICAL",()->limited(10,10,10,10,100,1000,128,10).payload(ROOT,nbt));
+    }
+    @Test void rejectedInputCannotLeaveAnOlderGraphPublishable() {
+        String invalid=String.valueOf((char)0xd800);
+        var payloadGraph=graph();
+        assertThrows(IllegalArgumentException.class,()->payloadGraph.payload(ROOT,NbtString.of(invalid)));
+        rejects("GRAPH_FAILED",payloadGraph::finish);
+        for (int field=0;field<3;field++) {
+            var g=graph();String path=field==0?invalid:"path",scope=field==1?invalid:"scope",use=field==2?invalid:"use";
+            assertThrows(IllegalArgumentException.class,()->g.reference(ROOT,path,ROOT,scope,use));
+            rejects("GRAPH_FAILED",g::finish);
+        }
+        var g=graph();assertThrows(NullPointerException.class,()->g.payload(ROOT,null));
+        rejects("GRAPH_FAILED",g::finish);
+    }
+    @Test void numericAndArrayEncodingHasFixedBigEndianBytes() {
+        var hex=java.util.HexFormat.of();
+        assertTrue(hex.formatHex(bytes(NbtInt.of(0x01020304))).endsWith("030102030400000000"));
+        assertTrue(hex.formatHex(bytes(new NbtIntArray(new int[]{0x01020304,-1})))
+                .endsWith("0b0000000201020304ffffffff00000000"));
+        assertTrue(hex.formatHex(bytes(new NbtLongArray(new long[]{0x0102030405060708L})))
+                .endsWith("0c00000001010203040506070800000000"));
+        assertTrue(hex.formatHex(bytes(new NbtByteArray(new byte[]{1,-1})))
+                .endsWith("070000000201ff00000000"));
+        assertTrue(hex.formatHex(bytes(NbtFloat.of(Float.intBitsToFloat(0x7fc00001))))
+                .endsWith("057fc0000100000000"));
+        assertTrue(hex.formatHex(bytes(NbtDouble.of(Double.longBitsToDouble(0x7ff8000000000001L))))
+                .endsWith("067ff800000000000100000000"));
+    }
+    @Test void nonAsciiCompoundKeysUseUtf8OrderAndEdgeInsertionOrderIsIrrelevant() {
+        var nbt=new NbtCompound();nbt.putInt("😀",2);nbt.putInt("\ue000",1);
+        assertTrue(java.util.HexFormat.of().formatHex(bytes(nbt)).endsWith(
+                "0a0000000200000003ee8080030000000100000004f09f9880030000000200000000"));
+        var first=graph();var a=first.reference(ROOT,"a",ROOT,"root","required");
+        var b=first.reference(ROOT,"b",ROOT,"root","required");first.expanded(a);first.expanded(b);
+        var second=graph();var d=second.reference(ROOT,"b",ROOT,"root","required");
+        var c=second.reference(ROOT,"a",ROOT,"root","required");second.expanded(c);second.expanded(d);
+        assertArrayEquals(first.finish(),second.finish());
+    }
     private static byte[] bytes(NbtElement value) {
         var g=new Minecraft121SettingsGraph();g.payload(ROOT,value);return g.finish();
     }
