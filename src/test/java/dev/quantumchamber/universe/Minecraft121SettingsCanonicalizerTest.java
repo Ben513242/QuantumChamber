@@ -372,8 +372,8 @@ class Minecraft121SettingsCanonicalizerTest {
             assertEquals(java.util.List.of("minecraft:end/sloped_cheese","minecraft:end/sloped_cheese","minecraft:end/base_3d_noise","minecraft:end/base_3d_noise"),edges);
             rejects("GRAPH_UNCLOSED",g::finish);
             var h=graph();var closure=new Minecraft121RegistryClosure(h,f.registries(),f.resources());
-            closure.reference(ROOT,"end",END_SETTINGS);rejects("UNSUPPORTED_REGISTRY_DEFINITION",closure::drain);
-            rejects("GRAPH_FAILED",h::finish);
+            closure.reference(ROOT,"end",END_SETTINGS);closure.drain();
+            assertTrue(h.finish().length>1000,"只閉合此局部End子圖，不代表三role或snapshot");
         }
     }
     @Test void endRejectsForeignOwnerAndUnscopedNativeValues() {
@@ -386,7 +386,9 @@ class Minecraft121SettingsCanonicalizerTest {
                 rejects("NATIVE_DEFINITION_OWNER",()->isolated.capture(END_SETTINGS,value));rejects("GRAPH_FAILED",h::finish);
             }
             var unknown=net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION,net.minecraft.util.Identifier.ofVanilla("end/base_3d_noise"));
-            rejects("UNSUPPORTED_NATIVE_VALUE",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(unknown,f.sloped()));
+            rejects("NATIVE_DEFINITION_OWNER",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(unknown,f.sloped()));
+            var unsupported=net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION,net.minecraft.util.Identifier.ofVanilla("end/unknown"));
+            rejects("UNSUPPORTED_NATIVE_VALUE",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(unsupported,f.sloped()));
         }
     }
     @Test void endStateDriftAtLastPermutationIndexIsRejectedAndOriginalArrayIsNotPublished() throws Exception {
@@ -556,4 +558,223 @@ class Minecraft121SettingsCanonicalizerTest {
             var g=graph();rejects(bytes<0?"BUDGET_NATIVE_STATE":"BUDGET_CANONICAL",()->g.nativeState(bytes));rejects("GRAPH_FAILED",g::finish);
         }
     }
+    private static final net.minecraft.registry.RegistryKey<net.minecraft.world.gen.densityfunction.DensityFunction> END_BASE=
+            net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION,net.minecraft.util.Identifier.ofVanilla("end/base_3d_noise"));
+    private static net.minecraft.util.math.noise.InterpolatedNoiseSampler baseSampler(EndFixture f) {
+        return (net.minecraft.util.math.noise.InterpolatedNoiseSampler)f.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION).get(END_BASE);
+    }
+    private static Minecraft121NativeValueContracts.SamplerStateSeal samplerSeal(Object sampler) {
+        return ((Minecraft121NativeValueContracts.InterpolatedStateAccess)sampler).quantumchamber$captureInterpolatedState();
+    }
+    private static net.minecraft.util.math.noise.PerlinNoiseSampler[] lowerSlots(Object sampler) throws Exception {
+        return (net.minecraft.util.math.noise.PerlinNoiseSampler[])nativeField(nativeField(sampler,"lowerInterpolatedNoise").get(sampler),"octaveSamplers")
+                .get(nativeField(sampler,"lowerInterpolatedNoise").get(sampler));
+    }
+    @Test void samplerBridgesHitAllThreeNativeClassesBeforeBehaviorTests() throws Exception {
+        try(var f=EndFixture.load()) {
+            var sampler=baseSampler(f);assertInstanceOf(Minecraft121NativeValueContracts.InterpolatedStateAccess.class,sampler);
+            for(String name:java.util.List.of("lowerInterpolatedNoise","upperInterpolatedNoise","interpolationNoise")) {
+                var octave=nativeField(sampler,name).get(sampler);assertInstanceOf(Minecraft121NativeValueContracts.OctaveStateAccess.class,octave);
+                for(var perlin:(Object[])nativeField(octave,"octaveSamplers").get(octave))
+                    if(perlin!=null)assertInstanceOf(Minecraft121NativeValueContracts.PerlinStateAccess.class,perlin);
+            }
+            var state=samplerSeal(sampler);assertTrue(state.bytes().length>1000);
+            assertTrue(state.sameIdentity(samplerSeal(sampler)));
+            var codec=net.minecraft.util.math.noise.InterpolatedNoiseSampler.CODEC.codec().codec();
+            var encoded=codec.encodeStart(NbtOps.INSTANCE,sampler).getOrThrow();
+            var rebuilt=codec.parse(NbtOps.INSTANCE,encoded).getOrThrow();
+            assertTrue(state.independentIdentity(samplerSeal(rebuilt)));
+            assertArrayEquals(state.bytes(),samplerSeal(rebuilt).bytes());
+        }
+    }
+    @Test void baseSamplerCapturesRawStateAndOnlyClosesItsRequiredNode() {
+        try(var f=EndFixture.load()) {
+            var g=graph();var values=new Minecraft121NativeValueContracts(g,f.registries(),f.resources());
+            var captured=(NbtCompound)values.capture(END_BASE,baseSampler(f));
+            assertArrayEquals(samplerSeal(baseSampler(f)).bytes(),captured.getByteArray("SamplerState"));
+            assertTrue(captured.contains("NativeCodec"));
+            var occurrence=g.reference(ROOT,"base",nativeNode(END_BASE),"ordinary","required");
+            g.payload(nativeNode(END_BASE),captured);g.expanded(occurrence);assertTrue(g.finish().length>1000);
+        }
+    }
+    @FunctionalInterface private interface SamplerMutation { void run(Object sampler) throws Exception; }
+    private void samplerRejects(SamplerMutation mutation,String expected) throws Exception {
+        try(var f=EndFixture.load()) {
+            var sampler=baseSampler(f);mutation.run(sampler);var g=graph();
+            rejects(expected,()->new Minecraft121NativeValueContracts(g,f.registries(),f.resources()).capture(END_BASE,sampler));
+            rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+    @Test void samplerCase10RandomizedTreeRejectsDespiteSameCodec() throws Exception {
+        try(var f=EndFixture.load()) {
+            var sampler=baseSampler(f);var random=sampler.copyWithRandom(new net.minecraft.util.math.random.CheckedRandom(7));
+            var entry=f.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION).getEntry(END_BASE).orElseThrow();
+            var field=nativeField(entry,"value");field.set(entry,random);
+            try { rejects("NATIVE_SAMPLER_REBUILD_MISMATCH",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_BASE,random)); }
+            finally { field.set(entry,sampler); }
+        }
+    }
+    @Test void samplerCase11PermutationMutationRejects() throws Exception {
+        samplerRejects(s->{var p=lowerSlots(s)[0];((byte[])nativeField(p,"permutation").get(p))[0]^=1;},"NATIVE_SAMPLER_REBUILD_MISMATCH");
+    }
+    @Test void samplerCase12OriginMutationRejects() throws Exception {
+        samplerRejects(s->{var p=lowerSlots(s)[0];var field=nativeField(p,"originX");field.setDouble(p,field.getDouble(p)+1);},"NATIVE_SAMPLER_REBUILD_MISMATCH");
+    }
+    @Test void samplerCase13NullSlotMutationRejects() throws Exception {
+        samplerRejects(s->lowerSlots(s)[0]=null,"NATIVE_SAMPLER_REBUILD_MISMATCH");
+    }
+    @Test void samplerCase39SixtyFiveSlotsRejectBeforeCapture() throws Exception {
+        samplerRejects(s->{var o=nativeField(s,"lowerInterpolatedNoise").get(s);nativeField(o,"octaveSamplers").set(o,java.util.Arrays.copyOf(lowerSlots(s),65));},"BUDGET_NATIVE_OCTAVES");
+    }
+    @Test void samplerCase40Permutation257RejectBeforeCapture() throws Exception {
+        samplerRejects(s->{var p=lowerSlots(s)[0];nativeField(p,"permutation").set(p,new byte[257]);},"NATIVE_PERMUTATION_SHAPE");
+    }
+
+    @Test void samplerSealClonesNestedIdentityVectorsAndBytesBothDirections() {
+        Object owner=new Object(), array=new Object(), childOwner=new Object(), childArray=new Object();
+        byte[] childBytes={1,2}, bytes={3,4};
+        var child=Minecraft121NativeValueContracts.SamplerStateSeal.capture(childOwner,childArray,new Object[0],new Minecraft121NativeValueContracts.SamplerStateSeal[0],childBytes);
+        Object[] identities={childOwner,null};var children=new Minecraft121NativeValueContracts.SamplerStateSeal[]{child,null};
+        var seal=Minecraft121NativeValueContracts.SamplerStateSeal.capture(owner,array,identities,children,bytes);
+        identities[0]=new Object();children[0]=null;childBytes[0]=9;bytes[0]=9;
+        var original=Minecraft121NativeValueContracts.SamplerStateSeal.capture(owner,array,new Object[]{childOwner,null},
+                new Minecraft121NativeValueContracts.SamplerStateSeal[]{child,null},new byte[]{3,4});
+        assertTrue(seal.sameIdentity(original));assertArrayEquals(new byte[]{1,2},child.bytes());
+        byte[] out=seal.bytes();out[0]=8;assertArrayEquals(new byte[]{3,4},seal.bytes());
+    }
+    private static byte[] rawSamplerOracle(Object sampler,int level) throws Exception {
+        var buffer=new java.io.ByteArrayOutputStream();var out=new java.io.DataOutputStream(buffer);
+        if(level==0) {
+            for(String field:java.util.List.of("xzScale","yScale","xzFactor","yFactor","smearScaleMultiplier","scaledXzScale","scaledYScale","maxValue"))
+                out.writeLong(Double.doubleToRawLongBits(nativeField(sampler,field).getDouble(sampler)));
+            for(String field:java.util.List.of("lowerInterpolatedNoise","upperInterpolatedNoise","interpolationNoise")) {
+                byte[] child=rawSamplerOracle(nativeField(sampler,field).get(sampler),1);out.writeInt(child.length);out.write(child);
+            }
+        } else if(level==1) {
+            out.writeInt(nativeField(sampler,"firstOctave").getInt(sampler));
+            var amplitudes=(it.unimi.dsi.fastutil.doubles.DoubleList)nativeField(sampler,"amplitudes").get(sampler);
+            out.writeInt(amplitudes.size());for(double value:amplitudes)out.writeLong(Double.doubleToRawLongBits(value));
+            for(String field:java.util.List.of("persistence","lacunarity","maxValue"))out.writeLong(Double.doubleToRawLongBits(nativeField(sampler,field).getDouble(sampler)));
+            var slots=(Object[])nativeField(sampler,"octaveSamplers").get(sampler);out.writeInt(slots.length);
+            for(Object slot:slots){out.writeByte(slot==null?0:1);if(slot!=null)out.write(rawSamplerOracle(slot,2));}
+        } else {
+            for(String field:java.util.List.of("originX","originY","originZ"))out.writeLong(Double.doubleToRawLongBits(nativeField(sampler,field).getDouble(sampler)));
+            byte[] permutation=(byte[])nativeField(sampler,"permutation").get(sampler);out.writeInt(permutation.length);out.write(permutation);
+        }
+        return buffer.toByteArray();
+    }
+    @Test void samplerSealMatchesAllRawFieldsAndPreservesNullSlotOrder() throws Exception {
+        try(var f=EndFixture.load()) {
+            var sampler=baseSampler(f);assertArrayEquals(rawSamplerOracle(sampler,0),samplerSeal(sampler).bytes());
+            var slots=lowerSlots(sampler);slots[1]=null;
+            assertArrayEquals(rawSamplerOracle(sampler,0),samplerSeal(sampler).bytes());
+            slots[2]=null;assertArrayEquals(rawSamplerOracle(sampler,0),samplerSeal(sampler).bytes());
+        }
+    }
+    @Test void samplerAllEightScalarsAndDerivedOctaveValuesRetainRawBits() throws Exception {
+        try(var f=EndFixture.load()) {
+            var sampler=baseSampler(f);
+            for(String name:java.util.List.of("xzScale","yScale","xzFactor","yFactor","smearScaleMultiplier","scaledXzScale","scaledYScale","maxValue")) {
+                var field=nativeField(sampler,name);double original=field.getDouble(sampler);byte[] before=samplerSeal(sampler).bytes();
+                try { field.setDouble(sampler,-0.0d);assertFalse(java.util.Arrays.equals(before,samplerSeal(sampler).bytes()));
+                    assertArrayEquals(rawSamplerOracle(sampler,0),samplerSeal(sampler).bytes()); }
+                finally { field.setDouble(sampler,original); }
+            }
+            var octave=nativeField(sampler,"upperInterpolatedNoise").get(sampler);
+            for(String name:java.util.List.of("persistence","lacunarity","maxValue")) {
+                var field=nativeField(octave,name);double original=field.getDouble(octave);
+                try { field.setDouble(octave,-0.0d);assertArrayEquals(rawSamplerOracle(sampler,0),samplerSeal(sampler).bytes()); }
+                finally { field.setDouble(octave,original); }
+            }
+        }
+    }
+    @Test void samplerRejectsNonfiniteDerivedScalarAndOctaveAmplitudeCap() throws Exception {
+        samplerRejects(s->nativeField(s,"scaledXzScale").setDouble(s,Double.NaN),"NATIVE_SAMPLER_NONFINITE");
+        samplerRejects(s->{var o=nativeField(s,"lowerInterpolatedNoise").get(s);nativeField(o,"amplitudes").set(o,new it.unimi.dsi.fastutil.doubles.DoubleArrayList(new double[65]));},"BUDGET_NATIVE_OCTAVES");
+    }
+    @Test void sampler64SlotsAreCapturedButDifferingShapeCannotReplay() throws Exception {
+        try(var f=EndFixture.load()) {
+            var s=baseSampler(f);var o=nativeField(s,"lowerInterpolatedNoise").get(s);
+            nativeField(o,"octaveSamplers").set(o,java.util.Arrays.copyOf(lowerSlots(s),64));
+            assertArrayEquals(rawSamplerOracle(s,0),samplerSeal(s).bytes());
+            rejects("NATIVE_SAMPLER_REBUILD_MISMATCH",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_BASE,s));
+        }
+    }
+    @Test void samplerRejectsThreeChildAliasAndOrderSwap() throws Exception {
+        samplerRejects(s->nativeField(s,"upperInterpolatedNoise").set(s,nativeField(s,"lowerInterpolatedNoise").get(s)),"NATIVE_SAMPLER_ALIASED");
+        samplerRejects(s->{var lower=nativeField(s,"lowerInterpolatedNoise");var upper=nativeField(s,"upperInterpolatedNoise");Object old=lower.get(s);lower.set(s,upper.get(s));upper.set(s,old);},"NATIVE_SAMPLER_REBUILD_MISMATCH");
+    }
+    private static net.minecraft.resource.ResourceManager onSecondBaseRead(EndFixture f,org.junit.jupiter.api.function.Executable mutation) {
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        return (net.minecraft.resource.ResourceManager)java.lang.reflect.Proxy.newProxyInstance(Minecraft121SettingsCanonicalizerTest.class.getClassLoader(),
+                new Class<?>[]{net.minecraft.resource.ResourceManager.class},(proxy,method,args)->{
+                    if(method.getName().equals("getResource") && calls.incrementAndGet()==2)mutation.execute();
+                    return method.invoke(f.resources(),args);
+                });
+    }
+    @Test void samplerNonFirstSlotSameRawNewIdentityIsRejectedAtTerminalRead() throws Exception {
+        try(var f=EndFixture.load()) {
+            var sampler=baseSampler(f);var slots=lowerSlots(sampler);var codec=net.minecraft.util.math.noise.InterpolatedNoiseSampler.CODEC.codec().codec();
+            var rebuilt=codec.parse(NbtOps.INSTANCE,codec.encodeStart(NbtOps.INSTANCE,sampler).getOrThrow()).getOrThrow();
+            Object original=slots[1];var replacement=lowerSlots(rebuilt)[1];assertNotSame(original,replacement);
+            var before=samplerSeal(sampler);
+            var resources=onSecondBaseRead(f,()->{slots[1]=replacement;assertArrayEquals(before.bytes(),samplerSeal(sampler).bytes());assertFalse(before.sameIdentity(samplerSeal(sampler)));});
+            var g=graph();rejects("NATIVE_SAMPLER_ORIGINAL_IDENTITY_CHANGED",()->new Minecraft121NativeValueContracts(g,f.registries(),resources).capture(END_BASE,sampler));rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+    @Test void samplerPermutationArraySameBytesIdentityDriftIsRejected() throws Exception {
+        try(var f=EndFixture.load()) {
+            var s=baseSampler(f);var p=lowerSlots(s)[2];var field=nativeField(p,"permutation");byte[] original=(byte[])field.get(p);
+            var resources=onSecondBaseRead(f,()->field.set(p,original.clone()));
+            rejects("NATIVE_SAMPLER_ORIGINAL_IDENTITY_CHANGED",()->new Minecraft121NativeValueContracts(graph(),f.registries(),resources).capture(END_BASE,s));
+        }
+    }
+    @Test void samplerTerminalStateMutationCannotHideBehindMatchingCodec() throws Exception {
+        try(var f=EndFixture.load()) {
+            var s=baseSampler(f);var p=lowerSlots(s)[2];byte[] permutation=(byte[])nativeField(p,"permutation").get(p);
+            var resources=onSecondBaseRead(f,()->permutation[255]^=1);
+            rejects("NATIVE_SAMPLER_ORIGINAL_STATE_CHANGED",()->new Minecraft121NativeValueContracts(graph(),f.registries(),resources).capture(END_BASE,s));
+        }
+    }
+    @Test @SuppressWarnings("unchecked") void samplerTerminalRegistryEntryIdentityMustRemainExact() throws Exception {
+        try(var f=EndFixture.load();var foreign=EndFixture.load()) {
+            var registry=f.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION);var sampler=baseSampler(f);
+            var original=registry.getEntry(END_BASE).orElseThrow();
+            var replacement=foreign.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION).getEntry(END_BASE).orElseThrow();
+            nativeField(replacement,"value").set(replacement,sampler);
+            var entries=(java.util.Map<Object,Object>)nativeField(registry,"keyToEntry").get(registry);
+            var resources=onSecondBaseRead(f,()->entries.put(END_BASE,replacement));
+            try { rejects("NATIVE_SAMPLER_ORIGINAL_IDENTITY_CHANGED",()->new Minecraft121NativeValueContracts(graph(),f.registries(),resources).capture(END_BASE,sampler)); }
+            finally { entries.put(END_BASE,original); }
+        }
+    }
+    @Test void samplerForeignSubclassAndNonBaseOwnerReject() throws Exception {
+        try(var f=EndFixture.load();var foreign=EndFixture.load()) {
+            rejects("NATIVE_DEFINITION_OWNER",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_BASE,baseSampler(foreign)));
+            var subclass=new net.minecraft.util.math.noise.InterpolatedNoiseSampler(new net.minecraft.util.math.random.CheckedRandom(0),0.25,0.25,80,160,4){};
+            var entry=f.registries().get(net.minecraft.registry.RegistryKeys.DENSITY_FUNCTION).getEntry(END_BASE).orElseThrow();var field=nativeField(entry,"value");var original=entry.value();
+            try { field.set(entry,subclass);rejects("NATIVE_DEFINITION_OWNER",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_BASE,subclass)); }
+            finally { field.set(entry,original); }
+            rejects("NATIVE_DEFINITION_OWNER",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_SETTINGS,original));
+        }
+    }
+    @Test void samplerRepeatedCaptureChargesRawAndCanonicalBudget() {
+        try(var f=EndFixture.load()) {
+            var s=baseSampler(f);int stateSize=samplerSeal(s).bytes().length;
+            var raw=limited(100,100,100,100,8388608,4L*stateSize+314,268435456,128);
+            var values=new Minecraft121NativeValueContracts(raw,f.registries(),f.resources());values.capture(END_BASE,s);
+            rejects("BUDGET_TOTAL_RAW",()->values.capture(END_BASE,s));rejects("GRAPH_FAILED",raw::finish);
+            var canonical=limited(100,100,100,100,8388608,134217728,4L*stateSize+1000,128);
+            var second=new Minecraft121NativeValueContracts(canonical,f.registries(),f.resources());second.capture(END_BASE,s);
+            rejects("BUDGET_CANONICAL",()->second.capture(END_BASE,s));rejects("GRAPH_FAILED",canonical::finish);
+        }
+    }
+    @Test void samplerCancellationRejectsWithoutClearingInterrupt() {
+        try(var f=EndFixture.load()) {
+            Thread.currentThread().interrupt();
+            try { rejects("NATIVE_SAMPLER_CANCELLED",()->new Minecraft121NativeValueContracts(graph(),f.registries(),f.resources()).capture(END_BASE,baseSampler(f)));assertTrue(Thread.currentThread().isInterrupted()); }
+            finally { Thread.interrupted(); }
+        }
+    }
+
 }

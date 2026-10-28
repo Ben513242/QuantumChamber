@@ -24,6 +24,50 @@ import net.minecraft.resource.ResourceManager;
 
 /** 固定1.21 End局部值契約；不宣稱完整End資料閉包或snapshot。 */
 public final class Minecraft121NativeValueContracts {
+
+    public interface InterpolatedStateAccess { SamplerStateSeal quantumchamber$captureInterpolatedState(); }
+    public interface OctaveStateAccess { SamplerStateSeal quantumchamber$captureOctaveState(); }
+    public interface PerlinStateAccess { SamplerStateSeal quantumchamber$capturePerlinState(); }
+    /** 每層封存逐槽身分快照與owned bytes；原陣列只作身分token。 */
+    public static final class SamplerStateSeal {
+        private final Object owner, array;
+        private final Object[] identities;
+        private final SamplerStateSeal[] children;
+        private final byte[] bytes;
+        private SamplerStateSeal(Object owner,Object array,Object[] identities,SamplerStateSeal[] children,byte[] bytes) {
+            this.owner=Objects.requireNonNull(owner);this.array=array;
+            this.identities=identities.clone();this.children=children.clone();this.bytes=bytes.clone();
+            require(this.identities.length==this.children.length,"NATIVE_SAMPLER_SEAL_SHAPE");
+            for(int i=0;i<this.children.length;i++) require(this.children[i]==null?this.identities[i]==null:
+                    this.children[i].owner==this.identities[i],"NATIVE_SAMPLER_SEAL_SHAPE");
+        }
+        public static SamplerStateSeal capture(Object owner,Object array,Object[] identities,SamplerStateSeal[] children,byte[] bytes) {
+            return new SamplerStateSeal(owner,array,identities,children,bytes);
+        }
+        public byte[] bytes() { return bytes.clone(); }
+        public boolean sameIdentity(SamplerStateSeal other) {
+            if(owner!=other.owner || array!=other.array || children.length!=other.children.length)return false;
+            for(int i=0;i<children.length;i++) {
+                if(identities[i]!=other.identities[i])return false;
+                if(children[i]!=null && !children[i].sameIdentity(other.children[i]))return false;
+            }
+            return true;
+        }
+        public boolean independentIdentity(SamplerStateSeal other) {
+            Set<Object> originals=Collections.newSetFromMap(new IdentityHashMap<>());collect(originals);
+            Set<Object> rebuilt=Collections.newSetFromMap(new IdentityHashMap<>());other.collect(rebuilt);
+            return Collections.disjoint(originals,rebuilt);
+        }
+        private void collect(Set<Object> into) {
+            into.add(owner);if(array!=null)into.add(array);
+            for(var child:children)if(child!=null)child.collect(into);
+        }
+    }
+    /** 固定native class/source與取消點；供三個窄Mixin共同使用，不公開底層值。 */
+    public static void samplerType(Object value,Class<?> expected) { samplerCheckpoint();nativeType(value,expected); }
+    public static void samplerCheckpoint() { require(!Thread.currentThread().isInterrupted(),"NATIVE_SAMPLER_CANCELLED"); }
+    public static long samplerBits(double value) { require(Double.isFinite(value),"NATIVE_SAMPLER_NONFINITE");return Double.doubleToRawLongBits(value); }
+
     public interface SimplexStateAccess { SimplexStateSeal quantumchamber$captureSimplexState(); }
     public interface EndStateAccess { EndStateSeal quantumchamber$captureEndState(); }
     /** 身分只可比較；原陣列不提供getter，bytes入出皆複製。 */
@@ -75,15 +119,54 @@ public final class Minecraft121NativeValueContracts {
         this.graph=Objects.requireNonNull(graph);this.registries=Objects.requireNonNull(registries);
         this.resources=Objects.requireNonNull(resources);this.references=Objects.requireNonNull(references);
     }
-    static boolean supported(RegistryKey<?> key) { return key.equals(END_SETTINGS)||key.equals(SLOPED); }
+    static boolean supported(RegistryKey<?> key) { return key.equals(END_SETTINGS)||key.equals(SLOPED)||key.equals(BASE); }
     NbtElement capture(RegistryKey<?> key,Object value) {
         try {
             graph.requireOpen();require(supported(key),"UNSUPPORTED_NATIVE_VALUE");
-            require(actual(key).value()==value,"NATIVE_DEFINITION_OWNER");
-            var captured=key.equals(END_SETTINGS)?settings(value):sloped(value);
-            require(actual(key).value()==value,"NATIVE_END_ORIGINAL_IDENTITY_CHANGED");return captured;
+            var entry=actual(key);require(entry.value()==value,"NATIVE_DEFINITION_OWNER");
+            var captured=key.equals(END_SETTINGS)?settings(value):key.equals(SLOPED)?sloped(value):base(value);
+            require(!key.equals(BASE) || actual(key)==entry,"NATIVE_SAMPLER_ORIGINAL_IDENTITY_CHANGED");
+            require(actual(key).value()==value,key.equals(BASE)?"NATIVE_SAMPLER_ORIGINAL_IDENTITY_CHANGED":"NATIVE_END_ORIGINAL_IDENTITY_CHANGED");return captured;
         } catch(RuntimeException|Error error) { graph.invalidate();throw error; }
     }
+
+    private NbtElement base(Object value) {
+        nativeType(value,net.minecraft.util.math.noise.InterpolatedNoiseSampler.class);
+        var sampler=(net.minecraft.util.math.noise.InterpolatedNoiseSampler)value;codecIdentity(sampler,"old_blended_noise");
+        var before=samplerState(sampler);
+        byte[] resource=source(BASE,157,"38db7d590abc3144e3357a79562d649d9880bc2c62ddc99480d93f4b6401c9a6");
+        var codec=net.minecraft.util.math.noise.InterpolatedNoiseSampler.CODEC.codec().codec();
+        var encoded=codec.encodeStart(NbtOps.INSTANCE,sampler).getOrThrow();
+        var rebuilt=codec.parse(NbtOps.INSTANCE,encoded).getOrThrow();
+        require(encoded.equals(codec.encodeStart(NbtOps.INSTANCE,rebuilt).getOrThrow()),"NATIVE_SAMPLER_CODEC_REPLAY_MISMATCH");
+        var reconstructed=samplerState(rebuilt);
+        require(before.independentIdentity(reconstructed),"NATIVE_SAMPLER_REFERENCE_NOT_INDEPENDENT");
+        require(Arrays.equals(before.bytes(),reconstructed.bytes()),"NATIVE_SAMPLER_REBUILD_MISMATCH");
+        var densityEncoded=DensityFunctionTypes.CODEC.encodeStart(NbtOps.INSTANCE,sampler).getOrThrow();
+        sourceMatches(DensityFunctionTypes.CODEC,densityEncoded,resource);
+        samplerStable(sampler,before);
+        require(Arrays.equals(resource,source(BASE,157,"38db7d590abc3144e3357a79562d649d9880bc2c62ddc99480d93f4b6401c9a6")),"UNSUPPORTED_END_SOURCE");
+        samplerStable(sampler,before);
+        if(originalSettings!=null)verifyStable(originalSettings,endpoints,states);
+        var result=new NbtCompound();result.put("NativeCodec",encoded);result.putByteArray("SamplerState",before.bytes());return result;
+    }
+    private SamplerStateSeal samplerState(net.minecraft.util.math.noise.InterpolatedNoiseSampler sampler) {
+        nativeType(sampler,net.minecraft.util.math.noise.InterpolatedNoiseSampler.class);
+        require(sampler instanceof InterpolatedStateAccess,"NATIVE_SAMPLER_BRIDGE_MISSING");
+        try {
+            var state=((InterpolatedStateAccess)sampler).quantumchamber$captureInterpolatedState();
+            byte[] bytes=state.bytes();graph.nativeState(bytes.length);
+            require(java.nio.ByteBuffer.wrap(bytes).getLong(56)==Double.doubleToRawLongBits(sampler.maxValue()),"NATIVE_SAMPLER_MAX_VALUE_MISMATCH");
+            return state;
+        } catch(IllegalStateException error) { throw new Failure(error.getMessage()); }
+    }
+    private void samplerStable(net.minecraft.util.math.noise.InterpolatedNoiseSampler sampler,SamplerStateSeal before) {
+        require(actual(BASE).value()==sampler,"NATIVE_SAMPLER_ORIGINAL_IDENTITY_CHANGED");
+        var after=samplerState(sampler);
+        require(before.sameIdentity(after),"NATIVE_SAMPLER_ORIGINAL_IDENTITY_CHANGED");
+        require(Arrays.equals(before.bytes(),after.bytes()),"NATIVE_SAMPLER_ORIGINAL_STATE_CHANGED");
+    }
+
     private NbtElement settings(Object value) {
         nativeType(value,ChunkGeneratorSettings.class);var settings=(ChunkGeneratorSettings)value;
         byte[] before=source(END_SETTINGS,3923,"8f779257fd0a4237e38cf09c7e8057152b73d1ae0c392cefbd21b1b10763daaf");
