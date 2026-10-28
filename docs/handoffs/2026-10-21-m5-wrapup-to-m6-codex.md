@@ -558,3 +558,8 @@
 
 - C1a僅兩檔正式owned bounded SettingsGraph/JUnit；原88b0db5漏重複真edge occurrence，fix101bcbae雖雙focused綠但spec/quality各I2，未跑full。fix2 code71e85ae以具名RED/綠修排序前無界UTF8配置及失敗圖未poison，乾淨雙focused各19/19、M6Compile PASS、新full run-all-e64b6c86c16c4f78ba7fff476ea1a6ce END ALL0/JUnit727 f0e0；獨立spec/quality皆C/I/M0，詳M6 note末節。
 - 只結純圖，C1b registry/native、C1c template、C1d three-role/安全DTO/provider/resolve與100ms單次live hold I1仍待；8B3真server/三bundle及Task9–20/人工/整分支/main/tag/退役均未到。新的純docs HEAD不得冒71e原驗證pin已有full/遠端CI。
+
+### 2026-10-29：M6 Task8B2-C1b-B1結案，B2 End橋接前置設計
+
+- B1本機code464946b＋test fixture fixa5db2c7，修正後RED29案4具名fail、乾淨雙focused29/29×2、M6CompilePASS、run-all-53c1566db6194a27bdbe494e8c1deb32 END ALL0/JUnit737 f0e0；獨立spec/quality皆C/I/M0。原ResourceManager.EMPTY與alias fixture及TagGroupLoader Collection/List失敗root保留、不改判。B1只白名單NoiseParameters/空pool/direct alias/ordered tag，完整End/三role/FP仍待；詳M6 note末節。
+- B2固定JAR私有End讀取最小三Mixin＋config設計獨立C0/I0/M1，M1 seal入/出byte[]防禦複製及unit CODEC singleton邊界已釘；尚未compile/runtime/mixin命中/行為RED。B1與本筆設計docs真相先於正常push，B2從新HEAD開始。100ms live hold I1、8B3三bundle、Task9–20/人工/整分支/main/tag/退役均待。
