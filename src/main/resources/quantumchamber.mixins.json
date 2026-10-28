@@ -30,6 +30,10 @@
     "StrongholdGeneratorStateMixin",
     "NetherFortressGeneratorStateMixin",
     "EndCityGeneratorStateMixin",
-    "EndCityBridgeStateMixin"
+    "EndCityBridgeStateMixin",
+    "StructureTemplateManagerSettingsGateMixin",
+    "StructureTemplateSettingsGateMixin",
+    "StructureTemplateManagerSettingsAccessor",
+    "StructureTemplateSettingsAccessor"
   ]
 }

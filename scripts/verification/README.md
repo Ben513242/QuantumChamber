@@ -1,5 +1,14 @@
 # M1–M6 驗證 harness
 
+## M6 Task8B2-G 定向
+
+`Minecraft121TemplateAccessGateTest` 驗固定 1.21 manager/template 的 shared wrap、identity 關聯、retire/no-upgrade/nested 與 100ms lease 拒絕；`Minecraft121SettingsContextsTest` 驗同server、epoch、inflight/失敗與 stop 的 lease 失效。這些是 JUnit 單元及離線原生方法證據，正式 server reload/worker 與設定快照成功路徑仍依後續 gate。
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.Minecraft121TemplateAccessGateTest -Label m6-settings-gate
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.Minecraft121SettingsContextsTest -Label m6-settings-contexts
+```
+
 ## M6 定向與 CI 入口
 
 M6 Task 3 提供四個互斥 scope：default（其餘）、legacy（`m4_legacy_runtime`）、M5（`m5_universe*`）、M6（`m6_universe*`）。XML 依完整 `classname|name` 集合比對，拒絕缺漏、重複、跨 scope、錯 template、failure／error／skipped。同一 batch 可以有多個 testcase；M6 canary 的 `m6_universe_gate` 目前有兩個。
