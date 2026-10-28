@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-28 Task8B1）：Task1–7與8A完成；8B1候選code `3ec19675` 的具名RED、乾淨HEAD雙focused、完整run-all與獨立spec/quality審查均通過，C/I0，可進8B2。8B1只建立正式snapshot DTO及provider metadata/API，createSnapshot/resolve仍fail closed；8B2 canonicalizer/context與8B3 lifecycle/三bundle跨mapping／OS、Task8終局、Task9–20及人工/整分支門檻仍待。v4父FAIL及B27 FAIL原判保留；實際pin/原件見M6 note末節。
+狀態（2026-10-28 Task8B2-G）：Task1–7、8A、8B1完成；8B2內部G（template gate/mixin/context）原候選548四I經fix0666關閉，乾淨0666雙focused與完整run-all通過，獨立spec C0/I0/M0、quality C0/I0/M1，可接8B2-C。G不發布snapshot；C須正式安全只讀DTO/完整closure/provider/resolve並實測單次live 100ms hold關設計I-1，8B3 lifecycle/三bundle、Task8終局、Task9–20與人工/整分支仍待。原v4父FAIL/B27 FAIL不改判；原件見M6 note末節。
 
 採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當時native資料gate仍未通過，沒有8B放行；現況以上方2026-10-28 B28結果為準。
 
@@ -337,6 +337,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 - [x] 註冊metadata/query/freeze與來源/目標immutable DTO完成；native changed-provider與完整resolve仍屬8B2，不把8B1稱Task8完成。compile→逐檔candidate→SnapshotTest/RegistryTest各兩focused→full→fresh兩review。
 
 #### 8B2：canonicalizer、template adapter與context owner
+
+內部分round G已完成（code54822048..0666cfd，原四I關閉；Gate/Contexts乾淨雙focused與新完整full通過，獨立spec C0/I0/M0、quality C0/I0/M1）。G保留fail-closed，不開正式snapshot；刪除未使用且會外洩live Map/List的raw accessor。C才在真TemplateAdapter消費點建立exclusive lease內安全只讀DTO並驗解鎖後無live可變引用，實作完整資料閉包/provider/resolve；100ms單次live hold I-1須以代表配置量測及獨立review關閉，超限縮短鎖內工作而非提高cap。quality Minor公平鎖無參數tryLock可插隊，C依非阻塞契約與實測評估。G結果摘要 `task-08/8b2-g-result-review.md` SHA `35485325987576a6ca4ef8a0339a293351b0c99205deb01067ee376c95e5dacc`。
 
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 

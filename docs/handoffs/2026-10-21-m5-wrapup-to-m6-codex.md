@@ -548,3 +548,8 @@
 
 - 候選code `3ec19675`（七檔）完成正式具名RED、乾淨HEAD雙focused及本機完整run-all `run-all-0845a02d8c3b47bd98d239ca7bb61bb3` END ALL exit0；獨立spec/quality皆C/I0。初次dirty-pin focused的I-1已由四份乾淨3ec focused補證關閉，舊root仍保留。詳細XML/hash與限制見M6 note末節。
 - 8B1只提供snapshot DTO、provider metadata/registry；createSnapshot/resolve仍fail closed。8B2必做custom provider frozen schema驗證、正式canonicalizer/context及resolve正反測試；8B3三bundle跨mapping／OS與Task8終局、Task9–20、人工/整分支/main/tag/退役仍待。此處不把本機run-all規則檢查冒稱真跨平台三bundle。
+
+### 2026-10-28：M6 Task8B2-G 結案，接8B2-C
+
+- G原候選54822048九方法mixin/gate/context雙focused/full綠，但獨立spec/quality各C0/I4；原full與所有failed roots保留。fix code0666cfd刪raw accessor、修持鎖計時與retired終判、初始發布一次性及canonical gate；四份乾淨focused Gate11/11×2/Contexts6/6×2，新full run-all-484f111755db4714b2666db4ab02ffa6 END ALL0、JUnit708 f0/e0。獨立spec C0/I0/M0、quality C0/I0/M1，詳M6 note末節。
+- 只結G，正式snapshot/三role資料閉包與100ms單次live hold I-1仍屬C；安全DTO不得回live mutable Map/List/Template，C先量真manager持鎖資料，超限不提高cap而窄修設計。8B3三bundle及Task8/Task9/人工/整分支/main/tag/退役都待；本筆docs不冒0666原pin已有新full/CI。
