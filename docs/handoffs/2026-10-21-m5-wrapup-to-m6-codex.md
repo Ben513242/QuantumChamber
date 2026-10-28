@@ -553,3 +553,8 @@
 
 - G原候選54822048九方法mixin/gate/context雙focused/full綠，但獨立spec/quality各C0/I4；原full與所有failed roots保留。fix code0666cfd刪raw accessor、修持鎖計時與retired終判、初始發布一次性及canonical gate；四份乾淨focused Gate11/11×2/Contexts6/6×2，新full run-all-484f111755db4714b2666db4ab02ffa6 END ALL0、JUnit708 f0/e0。獨立spec C0/I0/M0、quality C0/I0/M1，詳M6 note末節。
 - 只結G，正式snapshot/三role資料閉包與100ms單次live hold I-1仍屬C；安全DTO不得回live mutable Map/List/Template，C先量真manager持鎖資料，超限不提高cap而窄修設計。8B3三bundle及Task8/Task9/人工/整分支/main/tag/退役都待；本筆docs不冒0666原pin已有新full/CI。
+
+### 2026-10-28：M6 Task8B2-C1a圖核心結案，接C1b
+
+- C1a僅兩檔正式owned bounded SettingsGraph/JUnit；原88b0db5漏重複真edge occurrence，fix101bcbae雖雙focused綠但spec/quality各I2，未跑full。fix2 code71e85ae以具名RED/綠修排序前無界UTF8配置及失敗圖未poison，乾淨雙focused各19/19、M6Compile PASS、新full run-all-e64b6c86c16c4f78ba7fff476ea1a6ce END ALL0/JUnit727 f0e0；獨立spec/quality皆C/I/M0，詳M6 note末節。
+- 只結純圖，C1b registry/native、C1c template、C1d three-role/安全DTO/provider/resolve與100ms單次live hold I1仍待；8B3真server/三bundle及Task9–20/人工/整分支/main/tag/退役均未到。新的純docs HEAD不得冒71e原驗證pin已有full/遠端CI。
