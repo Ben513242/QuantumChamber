@@ -777,4 +777,102 @@ class Minecraft121SettingsCanonicalizerTest {
         }
     }
 
+    private static net.minecraft.registry.RegistryKey<net.minecraft.structure.pool.StructurePool> poolKey(String id) {
+        return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL,net.minecraft.util.Identifier.of(id));
+    }
+    private static net.minecraft.structure.pool.SinglePoolElement single(String id) {
+        return net.minecraft.structure.pool.StructurePoolElement.ofSingle(id).apply(net.minecraft.structure.pool.StructurePool.Projection.RIGID);
+    }
+    private static final class PoolFixture implements AutoCloseable {
+        final net.minecraft.resource.LifecycledResourceManagerImpl rm=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        final net.minecraft.world.level.storage.LevelStorage.Session session;
+        final net.minecraft.registry.DynamicRegistryManager registries;
+        final ServerSettingsContext context;
+        PoolFixture(java.nio.file.Path root,net.minecraft.structure.pool.StructurePoolElement... elements) throws Exception {
+            java.nio.file.Files.createDirectories(root);session=net.minecraft.world.level.storage.LevelStorage.create(root).createSession("pool");
+            var pools=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL,com.mojang.serialization.Lifecycle.stable());
+            var fallback=pools.createMutableEntryLookup().getOrThrow(poolKey("test:pool"));
+            var weighted=new java.util.ArrayList<com.mojang.datafixers.util.Pair<net.minecraft.structure.pool.StructurePoolElement,Integer>>();
+            for(var e:elements)weighted.add(com.mojang.datafixers.util.Pair.of(e,1));
+            pools.add(poolKey("test:pool"),new net.minecraft.structure.pool.StructurePool(fallback,weighted),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);pools.freeze();
+            var processors=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.PROCESSOR_LIST,com.mojang.serialization.Lifecycle.stable());processors.freeze();
+            registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(pools,processors,net.minecraft.registry.Registries.BLOCK));
+            var lookup=net.minecraft.registry.Registries.BLOCK.getReadOnlyWrapper().withFeatureFilter(net.minecraft.resource.featuretoggle.FeatureFlags.DEFAULT_ENABLED_FEATURES);
+            var manager=new net.minecraft.structure.StructureTemplateManager(rm,session,net.minecraft.datafixer.Schemas.getFixer(),lookup);
+            var contexts=new Minecraft121SettingsContexts(this);contexts.publishInitial(new Minecraft121SettingsContexts.Sources(registries,rm,manager,session,true));context=contexts.acquire(this);
+        }
+        void present(String id) throws Exception {
+            var key=net.minecraft.util.Identifier.of(id);var path=session.getDirectory(net.minecraft.util.WorldSavePath.GENERATED)
+                .resolve(key.getNamespace()+"/structures/"+key.getPath()+".nbt");java.nio.file.Files.createDirectories(path.getParent());
+            NbtIo.writeCompressed(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),path);
+        }
+        @Override public void close() throws Exception {try{session.close();}finally{rm.close();}}
+    }
+    @Test void nonEmptyPoolSingleCodecLocationCreatesTemplateEdge(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        try(var f=new PoolFixture(root,single("test:shared"))) {
+            var codec=net.minecraft.structure.pool.SinglePoolElement.CODEC.codec();var ops=f.registries.getOps(NbtOps.INSTANCE);
+            var encoded=codec.encodeStart(ops,single("test:shared")).getOrThrow();
+            assertEquals(encoded,codec.encodeStart(ops,codec.parse(ops,encoded).getOrThrow()).getOrThrow(),"fixture原生Single left必能roundtrip");
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();
+            String absent=new String(g.finish(),java.nio.charset.StandardCharsets.ISO_8859_1);
+            assertTrue(absent.contains("ABSENT_NATIVE_BLANK"));assertTrue(absent.contains("test:shared"));assertTrue(absent.contains("fallback"));
+            f.present("test:shared");var h=graph();var d=new Minecraft121RegistryClosure(h,f.context);d.reference(ROOT,"pool",poolKey("test:pool"));d.drain();
+            assertTrue(new String(h.finish(),java.nio.charset.StandardCharsets.ISO_8859_1).contains("PRESENT"));assertFalse(Arrays.equals(g.finish(),h.finish()));
+        }
+    }
+    @Test void singleCodecRejectsLegacySubclassAndInlineRight(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        var ctor=net.minecraft.structure.pool.SinglePoolElement.class.getDeclaredConstructors()[0];ctor.setAccessible(true);
+        var inline=(net.minecraft.structure.pool.SinglePoolElement)ctor.newInstance(com.mojang.datafixers.util.Either.right(new net.minecraft.structure.StructureTemplate()),
+            net.minecraft.registry.entry.RegistryEntry.of(new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of())),
+            net.minecraft.structure.pool.StructurePool.Projection.RIGID,java.util.Optional.empty());
+        var legacy=net.minecraft.structure.pool.StructurePoolElement.ofLegacySingle("test:shared").apply(net.minecraft.structure.pool.StructurePool.Projection.RIGID);
+        var subclass=new net.minecraft.structure.pool.SinglePoolElement(com.mojang.datafixers.util.Either.left(net.minecraft.util.Identifier.of("test:shared")),
+            net.minecraft.registry.entry.RegistryEntry.of(new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of())),
+            net.minecraft.structure.pool.StructurePool.Projection.RIGID,java.util.Optional.empty()) {};
+        var cases=java.util.List.of(legacy,subclass,inline);
+        for(int i=0;i<cases.size();i++)try(var f=new PoolFixture(root.resolve("case-"+i),cases.get(i))) {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));
+            rejects(i==2?"UNSUPPORTED_SINGLE_LOCATION":"UNSUPPORTED_POOL_ELEMENT",c::drain);rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+    @Test void sameTemplateDifferentUsesAndAliasOccurrenceExpand(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        try(var f=new PoolFixture(root,single("test:shared"))) {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);
+            c.template(ROOT,"one",net.minecraft.util.Identifier.of("test:shared"),Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"scope-a");
+            c.template(ROOT,"two",net.minecraft.util.Identifier.of("test:shared"),Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"scope-b");c.drain();
+            String bytes=new String(g.finish(),java.nio.charset.StandardCharsets.ISO_8859_1);assertTrue(bytes.contains("scope-a"));assertTrue(bytes.contains("scope-b"));
+            var h=graph();var d=new Minecraft121RegistryClosure(h,f.context);d.reference(ROOT,"pool",poolKey("test:pool"));
+            d.alias(ROOT,"alias",net.minecraft.structure.pool.alias.StructurePoolAliasBinding.direct(poolKey("test:symbol"),poolKey("test:pool")));d.drain();
+            assertTrue(new String(h.finish(),java.nio.charset.StandardCharsets.ISO_8859_1).contains("alias-target"));
+        }
+    }
+    @Test void singleThenUnknownAndUnknownThenSingleBothReject(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        for(boolean reverse:java.util.List.of(false,true))try(var f=new PoolFixture(root.resolve("order-"+reverse))) {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);var id=net.minecraft.util.Identifier.of("test:shared");
+            rejects("TEMPLATE_ABSENCE_UNSUPPORTED_USE",()->{
+                c.template(ROOT,"one",id,reverse?Minecraft121TemplateSettingsAdapter.Use.UNKNOWN:Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"scope");
+                c.template(ROOT,"two",id,reverse?Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE:Minecraft121TemplateSettingsAdapter.Use.UNKNOWN,"scope");c.drain();
+            });rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+    @Test void templateStateEdgeResourceRawCanonicalBudgetOverflowRejected(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        String[] codes={"BUDGET_EDGES","BUDGET_STATES","BUDGET_RESOURCES","BUDGET_RAW","BUDGET_TOTAL_RAW","BUDGET_CANONICAL"};
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for(int index=0;index<codes.length;index++){final int i=index;checks.add(()->{try(var f=new PoolFixture(root.resolve("budget-"+i),single("test:a"),single("test:b"))) {
+            var g=limited(100,i==0?1:100,i==1?1:100,i==2?1:10,i==3?1:10000,i==4?512:100000,i==5?128:100000,128);
+            var c=new Minecraft121RegistryClosure(g,f.context);final String code=codes[i];
+            rejects(code,()->{g.payload(ROOT,NbtInt.of(1));if(code.equals("BUDGET_TOTAL_RAW")){for(int j=0;j<10;j++)c.template(ROOT,"repeat-"+j,net.minecraft.util.Identifier.of("test:repeat"),Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"budget");}else c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();});rejects("GRAPH_FAILED",g::finish);
+        }});}
+        assertAll(checks);
+    }
+
+    @Test void nativeSingleCodecMissingProcessorRegistryDiagnostic() {
+        var ops=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(poolRegistry(),net.minecraft.registry.Registries.BLOCK)).getOps(NbtOps.INSTANCE);
+        var codec=net.minecraft.structure.pool.SinglePoolElement.CODEC.codec();var encoded=codec.encodeStart(ops,single("test:shared"));
+        String message=encoded.error().map(com.mojang.serialization.DataResult.Error::message).orElseGet(()->
+            codec.parse(ops,encoded.getOrThrow()).error().orElseThrow().message());
+        System.out.println("MISSING_PROCESSOR_REGISTRY_NATIVE_CAUSE="+message);
+        assertTrue(message.contains("processor_list"),message);
+    }
+
 }

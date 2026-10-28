@@ -29,6 +29,7 @@ final class Minecraft121TemplateValueContracts {
     private final Minecraft121SettingsGraph graph;
     private final DynamicRegistryManager registries;
     private final BiConsumer<Occurrence,RegistryKey<?>> references;
+    private String aliasScope="template";
 
     Minecraft121TemplateValueContracts(Minecraft121SettingsGraph graph,DynamicRegistryManager registries,
             BiConsumer<Occurrence,RegistryKey<?>> references) {
@@ -37,12 +38,17 @@ final class Minecraft121TemplateValueContracts {
     }
 
     /** 所有失敗使圖失效；資料節點可共用，每次呼叫仍完整驗consumer並保留全部occurrence。 */
-    NbtCompound capture(Key node,NbtCompound template) {
+    NbtCompound capture(Key node,NbtCompound template) {return capture(node,template,template);}
+    NbtCompound captureEnvelope(Key node,NbtCompound envelope,String scope) {
+        aliasScope=Objects.requireNonNull(scope);
+        return capture(node,envelope.getCompound("NativeTemplate"),envelope);
+    }
+    private NbtCompound capture(Key node,NbtCompound template,NbtCompound payload) {
         try {
             graph.requireOpen();require(node.kind()==Kind.TEMPLATE,"TEMPLATE_NODE_KIND");
             graph.resource(node);graph.decoded(measure(template,0));
             // bounded encoder先驗完整raw資料，才deep copy或進native codec；後續失敗不可finish。
-            graph.payload(node,template);
+            graph.payload(node,payload);
             var owned=template.copy();
             require(owned.getKeys().stream().allMatch(Set.of("size","palette","palettes","blocks","entities","DataVersion","author")::contains),
                     "UNSUPPORTED_TEMPLATE_FIELD");
@@ -199,7 +205,7 @@ final class Minecraft121TemplateValueContracts {
 
     private void reference(Key node,String path,RegistryKey<?> target) {
         var key=new Key(Kind.REGISTRY,target.getRegistry().toString(),target.getValue().toString());
-        var occurrence=graph.reference(node,path,key,"template","required");
+        var occurrence=graph.reference(node,path,key,aliasScope,"required");
         references.accept(occurrence,target);
     }
     private static String string(NbtCompound value,String key) {
@@ -216,7 +222,7 @@ final class Minecraft121TemplateValueContracts {
         require(list(value,NbtElement.INT_TYPE).size()==3,"TEMPLATE_SHAPE_INVALID");
     }
     /** 保守記憶體計量，逐節點檢查，禁止先無界序列化或deep copy。 */
-    private static long measure(NbtElement value,int depth) {
+    static long measure(NbtElement value,int depth) {
         require(depth<=128,"BUDGET_DEPTH");long total=16;
         if(value instanceof NbtCompound c)for(String key:c.getKeys()) {
             total+=8L+4L*key.length()+measure(c.get(key),depth+1);require(total<=8388608,"BUDGET_RAW");

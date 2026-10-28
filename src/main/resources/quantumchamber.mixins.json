@@ -33,6 +33,8 @@
     "EndCityBridgeStateMixin",
     "StructureTemplateManagerSettingsGateMixin",
     "StructureTemplateSettingsGateMixin",
+    "StructureTemplateManagerSettingsAccessor",
+    "StructureTemplateSettingsAccessor",
     "EndIslandsSettingsStateMixin",
     "SimplexSettingsStateMixin",
     "DensityBinarySettingsAccess",
