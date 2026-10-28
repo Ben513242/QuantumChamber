@@ -1,10 +1,10 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-26）：Task1–7及Task7 CI64d完成；Task8仍8A。spec v1.3／正常遊戲Model B與absence設計已獨立Approved採用，A7未跑，完整B/G2/native gate未過、無production/8B。最新v6–v13限定結果與下一步見文末；不把文件採用當實作結果。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-28）：Task1–7完成；Task8A完整B28 G1/G2在8d65769 pin通過並經獨立結果審查 C0/I0/M0，資料 gate 可接受、8B可開工。正式snapshot/API/context/lifecycle、三bundle跨mapping／OS、Task8終局與M6人工驗收仍待；原件與限制見文末。
 
 ## 使用者確認的範圍與順序
 
-完整 M6，依序分段驗收：測試腳本安全與生成競態 → random seed → same-seed fresh／generation profile 與 registry/API → 完整 Nether／End family、portal／gateway、respawn 與同 DimensionRole 投影／跨越。M7 literal branch／snapshot 不納入。子代理使用 SOL；本輪採 `gpt-6-sol`／`gpt-6.1-sol`。
+完整 M6，依序分段驗收：測試腳本安全與生成競態 → random seed → same-seed fresh／generation profile 與 registry/API → 完整 Nether／End family、portal／gateway、respawn 與同 DimensionRole 投影／跨越。M7 literal branch／snapshot 不納入。子代理依2026-10-28最新使用者指示，只採 `gpt-5.6-sol`、`gpt-6-sol` 或 `gpt-6-astra`，按任務選用。
 
 先寫 binding spec，獨立 spec review 清除 Critical／Important；再寫 plan 並獨立 review，通過後直接實作。具體 profile 類型、權重與技術選擇若由協調者決定，會在 spec 標明為設計預設，不冒稱使用者逐項選定。
 
@@ -442,3 +442,11 @@ FAIL-RESULT為task-08/B27-G1-END-DEPENDENCY-FAIL/FAIL-RESULT.json，SHA 01f725a5
 - owner handoff task-08/2026-10-28-owner-handoff.md SHA e1b89fab81a6a26d441e019b4b30fedb53664831564dde7a40788485bfb32b07。新對話先核現況、完成B28草稿／新HEAD與文件pins／root nonce owner，再一次合併review；C/I0後唯一G1，accepted且同600秒batch剩至少210秒才G2。原34/24/28、9對18、G2兩BASE/6role與180+合作30等門檻保持；8B、三bundle平台與完整M6人工收尾仍未到。
 
 交接前已確認無M6 Java/javac程序，所有run已收斂，未強制終止Session。交接docs前HEAD f6065fde7f0dffe7b2a29c894f69a257978b4e64／tracked clean；原spec/plan/note/AGENTS/兩handoff六份raw已逐byte保存task-08/binding-inputs-f6065fde-20261028/mapping-index.json。本次只MD，正式source/build/scripts/workflow仍Task7，不為文件重跑full；新commit/push以Git讀回，不能把新docs pin冒原native輸入。可玩基準仍是已完成M5，完整M6未交付。
+
+### 2026-10-28：B28 完整 G1/G2 接受，Task8A 資料 gate 結案
+
+在工作樹 `codex/m6-universe-generation` 的 8d65769483703589a10d37820c139441b2524baa（local/origin同、tracked clean）重綁B28。spec SHA `09612c111cf09c371cd3c820b29f5123fb9739f95c611b717a2a208936ed6159`、200 pins純prepare exact、116 Java artifacts（B27 110件＋已驗v5六件逐byte exact）；新root/owner在啟動前空。合併窄審 C0/I0/M1（Minor只在 `PRESERVATION-v28.json` 來源標籤誤寫112/4，實際110/6，原包不改）；reviewer訊息由controller忠實保存於 `task-08/B28-COMBINED-REVIEW.md` SHA `30dba7567c33ff0bbddd66641c18a79eaa288f178fe6f8b89d207c7c1d1e8808`。v4舊root `g-e660823a8ed3b887/p1-fd1eacb0` 的23案Java child真PASS、父 `END_DEP_EDGE_COPY` FAIL/acceptanceForbidden仍原判；v5只離線重核真raw，不把它追認成新native。
+
+controller唯一啟B28 root `g-95266857184fe3fd`：G1 `p1-9db25adc` PID38140自然exit0/66,770ms，34case、24 Context/Session/lock、28 role attempts，九對18次boundary/overflow evaluation；graph-final SHA `9d350ca4119d7bcda56b7de1e25e54aef3082accec0f085340b9f230c983d6d8`。G1父端accepted後、同batch餘約513秒才啟G2 `p2-18238982`，PID39276自然exit0/15,708ms，兩BASE、2 Context/Session/lock、6 role；graph-final SHA `cc66ea37121069f3d388665599eef3074e328fa3ac72e2c673ae89dc18cc6c64`。G2六份canonical逐byte與node manifest比較SHA `37d16bd88e60b1208ddf24ee44b0e63be7afcd5fa66c355711872ada6524aeee`，六組直接bytes相同。兩phase END proof audit為 `f4af2c4e81e232eb5ce6d2162e46d08f51c6d85ef8daad3f3bf353b8c175459d`／`63c7b9185e96620cc144c27a55c9f4f07c15bfdb050931b176b137e7410769eb`。
+
+獨立native/quality review C0/I0/M0：200 pins與四份pre/post exact、outputs-manifest 431/81檔逐SHA、七End Context及多role charge、23條phase class-source、六份冷比較、PID消失與26把lock獨佔、無原世界資料皆核。結果訊息保存 `task-08/B28-NATIVE-RESULT-REVIEW.md` SHA `e638b5c485f10e73ff1f8af06aa6c59dbeea3d173ee253339d1831192135aa20`。`exit.json` 的accepted:false是marker前snapshot，不改寫；最終以`phase-accepted.json`與controller final state判定。18次預算是邊界評估，不是18次完整native resolve；本8A證據限Windows named vanilla fixture。Task8A資料gate結案、明確放行8B1；正式production、三bundle跨mapping／OS及Task8/Task9之門檻仍待，既有Task7 full/CI僅採原pin。

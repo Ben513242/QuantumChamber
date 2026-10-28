@@ -10,11 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-28交接）：Task1–7完成，Task8仍8A。End dependency v4 child真23/23 PASS，但父oracle錯刪同名edge而FAIL；v5精確predicate＋唯讀真原件複核通過，不改判原run。使用者裁示加速：沿用未變Java證據，不重跑相同23案，完成B28部分草稿並一次合併窄審後直接完整G1/G2。B28未freeze/prepare/review/runtime；交接新docs HEAD後必重綁。8B、平台三bundle與人工門檻不變；最新入口docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md。
+狀態（2026-10-28 B28 結果）：Task1–7完成；Task8A 的完整B28 G1/G2在8d657694 pin原生PASS，獨立native／quality review C0/I0/M0，8A資料gate可接受並放行8B。v4 child23/23 PASS但父FAIL原判保留；v5離線複核不當新native。8B正式設定snapshot/API/context/lifecycle未開始，三bundle跨mapping／OS、Task8終局、人工與M6整體門檻仍待；原件/限制見M6 note末節。
 
-採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當前native資料gate仍未通過，沒有8B放行。
+採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當時native資料gate仍未通過，沒有8B放行；現況以上方2026-10-28 B28結果為準。
 
-本次v1.3採用紀錄：草案SHA `0E14C72680E4F9728694A4BDD927E13E7F833351872CD00128D552EB67DF4E20`、fresh review SHA `3E61305D9BE716F29C4249F8EB59D366AB468298FA6574F983BA14C5033987D5`。只修M1「其餘四鍵」為「其餘三鍵」，其餘已審語意保留，分置spec與本Task8節；所有unchecked gate仍未通過。
+本次v1.3採用紀錄：草案SHA `0E14C72680E4F9728694A4BDD927E13E7F833351872CD00128D552EB67DF4E20`、fresh review SHA `3E61305D9BE716F29C4249F8EB59D366AB468298FA6574F983BA14C5033987D5`。只修M1「其餘四鍵」為「其餘三鍵」，其餘已審語意保留，分置spec與本Task8節；當時所有unchecked gate仍未通過；現況以上方2026-10-28 B28結果為準。
 
 ## Global Constraints
 
@@ -186,15 +186,15 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 
 #### 8A：完整native資料 gate（不得先進production）
 
-- [ ] 依已審spec完整走實際options、相關sets/placements、dynamic/reloadable definitions、required/optional tags、Identifier-only/hardcoded resources、template NBT pool/loot/component等；明列支援adapter與static/runtime條件，unknown/opaque/缺required/不可重建fail closed。不得全registry/resource dump；tag保留native有效順序，僅證無序才排序。
-- [ ] Alias按typed來源/欄位/edge occurrence；同id同時source/target/ordinary仍展開所有真target，非alias恰有type/alias不可誤免。Template data node可encode一次，但引用遍歷按alias-context occurrence；所有可能target納入，resource→pool→template cycle/shared依typed node/ctx去重，不截邊。
-- [ ] 先freeze executable artifact與spec SHA，launch前後source/class/agent/dependency hash、實際class-load source exact；每次新短owned cwd。一個probe，不以REPL閉包舊artifact/label或batch後snapshot補造pin；原失敗root永留。normal/amplified六個preset/role各在clear前strict判，任何失敗不得全familyFP。
-- [ ] Native template有效來源須按cache→saved generated→development SNBT（適用時）→ResourceManager的真優先序核；effective getTemplate/writeNbt與可持久來源同manager.createTemplate重建後exact比。cached-only／來源壞／未知priority不拿同名vanilla fallback替代。合法temporary LevelStorage.Session fixture可於新owned storage root內調查，不建MinecraftServer/ServerWorld、不觸既有世界；需before canonical/非reparse/absent、finally Session.close、另channel lock釋放、重開新JVM可重建證據。每一批仍先向主控送有界方法/預算再放行。
-- [ ] 精確原生furnace／blast_furnace／smoker的RecipesUsed按spec v1.2 literal history規則，保留完整raw NBT，不建立required recipe edge；其他owner/occurrence不全域豁免。新增有界controls：同template只改history id或int值，canonical payload與FP必變；empty compound／存在性與型別保留；合法missing recipe id可原生讀入／保存，無required-missing；wrong container/value type具名拒；未知owner同名不放寬。只改無關recipe資源不得污染此history圖，必明標未驗actual RecipeManager；不得用vanilla recipe JSON冒充它。Items／BurnTime等改變同樣保留並可辨，loot/component真正target變更與required-missing原gate照跑。可擴既有MINI/成對assertions，短派工明列actual case/evaluation計數與上限，不用改名隱藏新增工作量。
-- [ ] 必要native控制：template payload/target定義mutation、unrelated resource不污染OW、NBT pool/loot/component target、alias交集/非alias同欄、required tag/unknown feature/processor/resource種別、tag同members不同order與native取樣、GenerateStructures true/false、static消費端有限盤點/known unsupported拒絕、逐role strict與冷JVM restart穩定性。8A同時審核canonical格式不依runtime mapping／path及consumer邊界，誠實保留跨mapping／平台未實跑狀態；實跑exact比較移至下方8B3具名gate，未完成不得結Task8／進Task9。Prototype只作資料/可行性證據，正式FP不可用DIAGNOSTIC_UNPROVEN狀態。
-- [ ] Context可行性先釘實際SaveLoading.refresh→factory/create、Fabric SERVER_STARTING→setup/首次journal、reload holder→tags refresh→template clear→END的時序。多個inflight不能先publish；失敗/stop失效與borrowed resource ownership明列。尚未接線不當runtime已證。
-- [ ] 完整vanilla reachable圖量測後給有限node/edge/resource decode/total canonical bytes/depth表與邊界/超限反例，由主控及獨立native review釘選後才8B；目前1180個全pack templates與40,024,933解壓bytes只是upperbound，不等於reachable/budget驗收。不得以unlimited tracker、只有壓縮長度或未定budget啟用可持久化provider。
-- [ ] 全新SOL native re-review關閉8A的資料完整性/方法finding及有限預算；spec/plan獨立review與主控明確8B放行都必要。放行必列「資料gate已驗，跨mapping/platform runtime待8B3」，不稱已驗所有執行環境。此階段不拿repo未變的run-all冒充prototype coverage。
+- [x] 依已審spec完整走實際options、相關sets/placements、dynamic/reloadable definitions、required/optional tags、Identifier-only/hardcoded resources、template NBT pool/loot/component等；明列支援adapter與static/runtime條件，unknown/opaque/缺required/不可重建fail closed。不得全registry/resource dump；tag保留native有效順序，僅證無序才排序。
+- [x] Alias按typed來源/欄位/edge occurrence；同id同時source/target/ordinary仍展開所有真target，非alias恰有type/alias不可誤免。Template data node可encode一次，但引用遍歷按alias-context occurrence；所有可能target納入，resource→pool→template cycle/shared依typed node/ctx去重，不截邊。
+- [x] 先freeze executable artifact與spec SHA，launch前後source/class/agent/dependency hash、實際class-load source exact；每次新短owned cwd。一個probe，不以REPL閉包舊artifact/label或batch後snapshot補造pin；原失敗root永留。normal/amplified六個preset/role各在clear前strict判，任何失敗不得全familyFP。
+- [x] Native template有效來源須按cache→saved generated→development SNBT（適用時）→ResourceManager的真優先序核；effective getTemplate/writeNbt與可持久來源同manager.createTemplate重建後exact比。cached-only／來源壞／未知priority不拿同名vanilla fallback替代。合法temporary LevelStorage.Session fixture可於新owned storage root內調查，不建MinecraftServer/ServerWorld、不觸既有世界；需before canonical/非reparse/absent、finally Session.close、另channel lock釋放、重開新JVM可重建證據。每一批仍先向主控送有界方法/預算再放行。
+- [x] 精確原生furnace／blast_furnace／smoker的RecipesUsed按spec v1.2 literal history規則，保留完整raw NBT，不建立required recipe edge；其他owner/occurrence不全域豁免。新增有界controls：同template只改history id或int值，canonical payload與FP必變；empty compound／存在性與型別保留；合法missing recipe id可原生讀入／保存，無required-missing；wrong container/value type具名拒；未知owner同名不放寬。只改無關recipe資源不得污染此history圖，必明標未驗actual RecipeManager；不得用vanilla recipe JSON冒充它。Items／BurnTime等改變同樣保留並可辨，loot/component真正target變更與required-missing原gate照跑。可擴既有MINI/成對assertions，短派工明列actual case/evaluation計數與上限，不用改名隱藏新增工作量。
+- [x] 必要native控制：template payload/target定義mutation、unrelated resource不污染OW、NBT pool/loot/component target、alias交集/非alias同欄、required tag/unknown feature/processor/resource種別、tag同members不同order與native取樣、GenerateStructures true/false、static消費端有限盤點/known unsupported拒絕、逐role strict與冷JVM restart穩定性。8A同時審核canonical格式不依runtime mapping／path及consumer邊界，誠實保留跨mapping／平台未實跑狀態；實跑exact比較移至下方8B3具名gate，未完成不得結Task8／進Task9。Prototype只作資料/可行性證據，正式FP不可用DIAGNOSTIC_UNPROVEN狀態。
+- [x] Context可行性先釘實際SaveLoading.refresh→factory/create、Fabric SERVER_STARTING→setup/首次journal、reload holder→tags refresh→template clear→END的時序。多個inflight不能先publish；失敗/stop失效與borrowed resource ownership明列。尚未接線不當runtime已證。
+- [x] 完整vanilla reachable圖量測後給有限node/edge/resource decode/total canonical bytes/depth表與邊界/超限反例，由主控及獨立native review釘選後才8B；目前1180個全pack templates與40,024,933解壓bytes只是upperbound，不等於reachable/budget驗收。不得以unlimited tracker、只有壓縮長度或未定budget啟用可持久化provider。
+- [x] 全新獨立 native re-review關閉8A的資料完整性/方法finding及有限預算；spec/plan獨立review與主控明確8B放行都必要。放行必列「資料gate已驗，跨mapping/platform runtime待8B3」，不稱已驗所有執行環境。此階段不拿repo未變的run-all冒充prototype coverage。
 
 #### 8A7與8B2前策略：template absence／live admission（設計已採用，未實作）
 

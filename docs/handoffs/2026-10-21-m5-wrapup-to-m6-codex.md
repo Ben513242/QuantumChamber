@@ -538,3 +538,8 @@
 ### 2026-10-28：M6交新對話，避免重做驗證
 
 最新完整提示詞為docs/handoffs/2026-10-28-m6-task8a-resume-prompt.md。Task8A仍未關；23案Java child PASS／v4父FAIL／v5唯讀複核通過分開保留，B28只部分草稿，未freeze/prepare/review/G1/G2。使用者要求加速、不重跑未變23案，並指定子代理5.6 SOL／6 SOL；依新提示詞完成必要組合審查後直接完整B。此次收尾只同步文件，沒有新遊戲功能、main/tag/退役或人工驗收。原f606 binding已封存，接手以新docs實際HEAD重綁未啟候選。
+
+### 2026-10-28：M6 Task8A B28 G1/G2 結案，轉8B1
+
+- 在M6工作樹8d657694 pin完成B28 200pins pureprepare與合併窄審C0/I0/M1；G1 PID38140 34case/24Context/28role自然PASS，G2 PID39276 2BASE/2Context/6role自然PASS，六份canonical逐byte/node manifest相同。獨立native/quality結果審查C0/I0/M0，Task8A資料gate可接受並放行8B1；詳細root/SHA/限制見M6 note末節。
+- v4 child23PASS但父END_DEP_EDGE_COPY FAIL、B27 G1 FAIL原判保留；v5只離線複核，未重跑相同focused。B28為Windows named vanilla fixture prototype，不是正式source/API或跨mapping／OS。Task8/Task9、人工/整分支/main/tag/退役門檻仍待；本筆與後續純文件commit不冒稱B28在新HEAD重跑。
