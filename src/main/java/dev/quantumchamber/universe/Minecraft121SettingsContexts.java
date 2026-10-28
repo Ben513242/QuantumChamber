@@ -26,6 +26,7 @@ public final class Minecraft121SettingsContexts {
     private long epoch;
     private int inflight;
     private boolean failed;
+    private boolean initialPublished;
     private boolean stopped;
 
     public Minecraft121SettingsContexts(Object server) {
@@ -35,8 +36,9 @@ public final class Minecraft121SettingsContexts {
 
     public synchronized void publishInitial(Sources sources) {
         requireOwnerThread();
-        if (stopped || current != null || inflight != 0) throw unavailable();
+        if (stopped || initialPublished || current != null || inflight != 0) throw unavailable();
         current = Objects.requireNonNull(sources, "sources");
+        initialPublished = true;
         epoch++;
     }
 
@@ -44,6 +46,7 @@ public final class Minecraft121SettingsContexts {
         requireOwnerThread();
         if (stopped) throw unavailable();
         if (inflight == 0) { pending = null; failed = false; }
+        initialPublished = true;
         inflight++;
         current = null;
         epoch++;

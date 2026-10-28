@@ -7,8 +7,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
-import dev.quantumchamber.mixin.StructureTemplateManagerSettingsAccessor;
-import dev.quantumchamber.mixin.StructureTemplateSettingsAccessor;
 import net.minecraft.datafixer.Schemas;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.Registries;
@@ -22,7 +20,8 @@ import org.junit.jupiter.api.Test;
 
 class Minecraft121TemplateAccessGateTest {
     @Test void snapshotRejectsBusyManagerWithoutWaiting() throws Exception {
-        var gate = new Minecraft121TemplateAccessGate(new Object());
+        var managerIdentity = new Object();
+        var gate = Minecraft121TemplateAccessGate.forManager(managerIdentity);
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var reader = new Thread(() -> gate.withManagerRead(() -> {
@@ -46,7 +45,8 @@ class Minecraft121TemplateAccessGateTest {
     }
 
     @Test void sharedReaderCannotUpgradeToSnapshot() {
-        var gate = new Minecraft121TemplateAccessGate(new Object());
+        var managerIdentity = new Object();
+        var gate = Minecraft121TemplateAccessGate.forManager(managerIdentity);
         gate.withManagerRead(() -> {
             var failure = assertThrows(IllegalStateException.class, gate::trySnapshot);
             assertEquals("TEMPLATE_SNAPSHOT_NOT_READY", failure.getMessage());
@@ -55,7 +55,8 @@ class Minecraft121TemplateAccessGateTest {
     }
 
     @Test void exceptionReleasesManagerReadLock() {
-        var gate = new Minecraft121TemplateAccessGate(new Object());
+        var managerIdentity = new Object();
+        var gate = Minecraft121TemplateAccessGate.forManager(managerIdentity);
         assertThrows(IllegalArgumentException.class, () -> gate.withManagerRead(() -> {
             throw new IllegalArgumentException("controlled");
         }));
@@ -65,8 +66,10 @@ class Minecraft121TemplateAccessGateTest {
     }
 
     @Test void associatedTemplateCannotMoveToSecondManager() {
-        var first = new Minecraft121TemplateAccessGate(new Object());
-        var second = new Minecraft121TemplateAccessGate(new Object());
+        var firstManager = new Object();
+        var secondManager = new Object();
+        var first = Minecraft121TemplateAccessGate.forManager(firstManager);
+        var second = Minecraft121TemplateAccessGate.forManager(secondManager);
         var template = new StructureTemplate();
         first.associate(template);
         var failure = assertThrows(IllegalStateException.class, () -> second.associate(template));
@@ -74,7 +77,8 @@ class Minecraft121TemplateAccessGateTest {
     }
 
     @Test void retiredGateKeepsOldTemplateMutatorWhileRejectingNewSnapshot() {
-        var gate = new Minecraft121TemplateAccessGate(new Object());
+        var managerIdentity = new Object();
+        var gate = Minecraft121TemplateAccessGate.forManager(managerIdentity);
         var template = new StructureTemplate();
         gate.associate(template);
         gate.retire();
@@ -149,33 +153,9 @@ class Minecraft121TemplateAccessGateTest {
         else assertNull(failure.get(), "native method failed after shared gate released");
     }
 
-    @Test void nativeAccessorsExposeExactOwnedCacheAndBlankShape() throws Exception {
-        SharedConstants.createGameVersion(); Bootstrap.initialize();
-        var root = Files.createTempDirectory("qc-8b2-accessor-");
-        System.out.println("M6_8B2_GATE_FIXTURE_ROOT=" + root);
-        try (var session = LevelStorage.create(root).createSession("fixture")) {
-            var manager = new StructureTemplateManager(ResourceManager.Empty.INSTANCE, session,
-                    Schemas.getFixer(), Registries.BLOCK.getReadOnlyWrapper());
-            var gate = Minecraft121TemplateAccessGate.forManager(manager);
-            var id = Identifier.of("quantumchamber:accessor_probe");
-            var template = manager.getTemplateOrBlank(id);
-            try (var lease = gate.trySnapshot()) {
-                var owner = (StructureTemplateManagerSettingsAccessor) manager;
-                assertSame(ResourceManager.Empty.INSTANCE, owner.quantumchamber$getSettingsResourceManager());
-                assertTrue(owner.quantumchamber$getSettingsTemplates().get(id).isPresent());
-                assertSame(template, owner.quantumchamber$getSettingsTemplates().get(id).orElseThrow());
-                var shape = (StructureTemplateSettingsAccessor) template;
-                assertTrue(shape.quantumchamber$getSettingsBlockInfoLists().isEmpty());
-                assertTrue(shape.quantumchamber$getSettingsEntities().isEmpty());
-                assertEquals(0, shape.quantumchamber$getSettingsSize().getX());
-                assertEquals("?", shape.quantumchamber$getSettingsAuthor());
-                lease.requireWithinBudget();
-            }
-        }
-    }
-
     @Test void snapshotRejectsHoldLongerThanHundredMillis() throws Exception {
-        var gate = new Minecraft121TemplateAccessGate(new Object());
+        var managerIdentity = new Object();
+        var gate = Minecraft121TemplateAccessGate.forManager(managerIdentity);
         var lease = gate.trySnapshot();
         Thread.sleep(150);
         var failure = assertThrows(IllegalStateException.class, lease::close);
@@ -184,7 +164,8 @@ class Minecraft121TemplateAccessGateTest {
     }
 
     @Test void nestedWriteLeaseKeepsExclusiveUntilOuterClose() throws Exception {
-        var gate = new Minecraft121TemplateAccessGate(new Object());
+        var managerIdentity = new Object();
+        var gate = Minecraft121TemplateAccessGate.forManager(managerIdentity);
         var outer = gate.trySnapshot();
         var inner = gate.trySnapshot();
         inner.close();
@@ -206,5 +187,23 @@ class Minecraft121TemplateAccessGateTest {
         assertTrue(completed.await(5, TimeUnit.SECONDS));
         worker.join(5_000);
         assertFalse(worker.isAlive());
+    }
+
+    @Test void gateConstructorIsNotPublicAlternativeLock() {
+        assertThrows(NoSuchMethodException.class,
+                () -> Minecraft121TemplateAccessGate.class.getConstructor(Object.class));
+    }
+
+    @Test void retiringAnOpenLeaseRejectsCloseAndReleasesLock() {
+        var managerIdentity = new Object();
+        var gate = Minecraft121TemplateAccessGate.forManager(managerIdentity);
+        var template = new StructureTemplate();
+        gate.associate(template);
+        var lease = gate.trySnapshot();
+        gate.retire();
+        var failure = assertThrows(IllegalStateException.class, lease::close);
+        assertEquals("TEMPLATE_SNAPSHOT_NOT_READY", failure.getMessage());
+        assertEquals(7, Minecraft121TemplateAccessGate.withTemplateRead(template, () -> 7));
+        assertThrows(IllegalStateException.class, gate::trySnapshot);
     }
 }

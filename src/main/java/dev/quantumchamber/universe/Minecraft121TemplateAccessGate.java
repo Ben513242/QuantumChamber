@@ -24,7 +24,7 @@ public final class Minecraft121TemplateAccessGate {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
     private volatile boolean retired;
 
-    public Minecraft121TemplateAccessGate(Object managerIdentity) {
+    private Minecraft121TemplateAccessGate(Object managerIdentity) {
         this.managerIdentity = new WeakReference<>(Objects.requireNonNull(managerIdentity, "manager identity 缺失"));
     }
 
@@ -92,9 +92,10 @@ public final class Minecraft121TemplateAccessGate {
         }
         var active = ACTIVE_SNAPSHOT.get();
         if (active != null && active != this) throw new IllegalStateException("TEMPLATE_SNAPSHOT_NOT_READY");
+        long attemptStart = System.nanoTime();
         if (!lock.writeLock().tryLock()) throw new IllegalStateException("TEMPLATE_SNAPSHOT_NOT_READY");
         ACTIVE_SNAPSHOT.set(this);
-        return new HeldSnapshot(this, System.nanoTime(), Thread.currentThread());
+        return new HeldSnapshot(this, attemptStart, Thread.currentThread());
     }
 
     public void retire() { retired = true; }
@@ -165,13 +166,14 @@ public final class Minecraft121TemplateAccessGate {
         @Override public void close() {
             if (closed) return;
             if (Thread.currentThread() != owner) throw new IllegalStateException("TEMPLATE_LEASE_WRONG_THREAD");
-            boolean overBudget = gate.retired || System.nanoTime() - start > MAX_HOLD_NANOS;
             closed = true;
             try { gate.lock.writeLock().unlock(); }
             finally {
                 if (!gate.lock.isWriteLockedByCurrentThread()) ACTIVE_SNAPSHOT.remove();
             }
-            if (overBudget) throw new IllegalStateException("TEMPLATE_SNAPSHOT_NOT_READY");
+            if (gate.retired || System.nanoTime() - start > MAX_HOLD_NANOS) {
+                throw new IllegalStateException("TEMPLATE_SNAPSHOT_NOT_READY");
+            }
         }
     }
 }

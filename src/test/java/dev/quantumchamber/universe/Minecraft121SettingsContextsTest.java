@@ -83,4 +83,15 @@ class Minecraft121SettingsContextsTest {
             assertNull(field.get(contexts), "stop retained borrowed source: " + field.getName());
         }
     }
+
+    @Test void failedReloadCannotRepublishInitial() {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        contexts.publishInitial(sources());
+        contexts.reloadStarted();
+        contexts.reloadFinished(false, null);
+        var failure = assertThrows(IllegalStateException.class, () -> contexts.publishInitial(sources()));
+        assertEquals("CONTEXT_UNAVAILABLE", failure.getMessage());
+        assertThrows(IllegalStateException.class, () -> contexts.acquire(server));
+    }
 }

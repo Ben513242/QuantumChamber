@@ -32,8 +32,6 @@
     "EndCityGeneratorStateMixin",
     "EndCityBridgeStateMixin",
     "StructureTemplateManagerSettingsGateMixin",
-    "StructureTemplateSettingsGateMixin",
-    "StructureTemplateManagerSettingsAccessor",
-    "StructureTemplateSettingsAccessor"
+    "StructureTemplateSettingsGateMixin"
   ]
 }
