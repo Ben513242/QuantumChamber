@@ -23,7 +23,8 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * 以及named PROCESSOR_LIST局部閉包（exact StructureProcessorList，元素只admit exact原生Nop／LavaSubmerged）。
  * BLOCK、ITEM、ATTRIBUTE與STATUS_EFFECT static registry leaf經definitions去重後交Minecraft121RegistryLeafContracts擷取（只admit
  * 全域static registry與原生source；ITEM另要求component codec的固定static registry聯集都是本closure的lease registries持有的全域
- * 物件，只收已審型別表Minecraft121ItemComponentContracts內的default component，codec用同一份lease registries的ops）。BLOCK、
+ * 物件，只收已審型別表Minecraft121ItemComponentContracts內的default component，codec用由同一份lease registries建立、identity私有、
+ * 不與遊戲或其他encode共用CodecCache key的ops，D1b-3c-0b）。BLOCK、
  * ATTRIBUTE與STATUS_EFFECT leaf沒有子邊；ITEM leaf從D1b-3b起，把default component中的static引用（attribute、status effect、
  * using_converts_to的item、direct tool rule的block）經itemReference sink接回本closure，成為ITEM node的出邊（每個ITEM node只擷取
  * 一次，出邊也只產生一次）。原生source判斷也委派該類，那是Closure、LeafContracts與ItemComponentContracts共用的唯一實作

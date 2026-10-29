@@ -39,7 +39,8 @@ import org.junit.jupiter.api.Test;
 /**
  * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷（含D1b-3-0 Step0的殘餘風險收斂、D1b-3a的lease
  * registries identity與8型literal／空DEFAULT component，D1b-3b的單一分派型別契約、ITEM leaf出邊與ATTRIBUTE／STATUS_EFFECT leaf，
- * 以及D1b-3c-0的codec前copy重建、ref的key比對、M9的NBT交叉檢查與ITEM seam source自驗的行為見證）。
+ * D1b-3c-0的codec前copy重建、ref的key比對、M9的NBT交叉檢查與ITEM seam source自驗的行為見證，以及D1b-3c-0b的CodecCache快取端
+ * 隔離、tool rule Optional literal、只收空值三型的正規化、copy保真度的全族群gating與M9逐件雙向檢查）。
  * 只讀全域static registry：不註冊Block／Item，不populate tag；不引用ModBlocks／ModItems。局部物件只有新建的局部registry（不登記到
  * Registries.REGISTRIES）、foreign的EntityAttribute／StatusEffect子類（建構子不碰registry），以及以Unsafe配置、不跑建構子的foreign
  * Item（不呼叫Registries.ITEM.createEntry）。唯一的instance欄位變更是itemLeafDefaultComponentMutationIsCapturedAndRestored（設計§5.5
@@ -459,10 +460,11 @@ class Minecraft121RegistryLeafContractsTest {
         @Override public java.util.Set<net.minecraft.component.ComponentType<?>> getTypes(){return later.getTypes();}
         @Override public java.util.Iterator<net.minecraft.component.Component<?>> iterator(){return (iterations++==0?first:later).iterator();}
     }
-    @Test void itemLeafRejectsLyingNestedListAfterRoundtrip() {
+    @Test void itemLeafRejectsLyingNestedListBeforeCodec() {
         // S0-1 RED①：原生LoreComponent放在原生SimpleComponentMap裡；巢狀List自稱為空，codec的迭代卻吐出一行。
         // LoreComponent(List)以Lists.transform建立styledLines view，所以lines()與styledLines()的isEmpty都會被騙。
         // D1b-3c-0起LORE在codec之前正規化為DEFAULT，roundtrip再也看不到這行；改由LORE值條件的iterator檢查在codec之前拒（同一個碼）。
+        // D1b-3c-0b（quality Q-M4(b)）改名：原名itemLeafRejectsLyingNestedListAfterRoundtrip沿用S0-1的時點，舊證據以原名記錄。
         var lore=new LoreComponent(new LyingLines());
         var components=single(new net.minecraft.component.Component<>(DataComponentTypes.LORE,lore));
         assertAll("fixture前提",
@@ -1056,8 +1058,8 @@ class Minecraft121RegistryLeafContractsTest {
         // 不到：帶hidden_effect的effect被接受，payload等於不帶它的同值；子類的effect也被接受，payload等於原生同值，而且擷取全程不呼叫
         // 子類的getter。D1b-3c-0（spec M1＋quality Q-M1）：codec之前以effect()的copy重建StatusEffectEntry，FOOD codec外層的CodecCache
         // （以value為key）不再經record的ObjectMethods呼叫到原物件的hashCode／equals，所以子類的Object method也必須是0次。
-        // 前提（quality Q-M1的測試附帶問題）：每次seam都經itemRegistries()新建lease manager（RegistryOps以identity比對），hidden與
-        // counting子案的payload不會被CodecCache跨seam短路；fixture前提斷言這一點。
+        // 前提（quality Q-M1的測試附帶問題）：每次seam都經itemRegistries()新建lease manager，而且D1b-3c-0b起每個LeafContracts的ops
+        // identity私有（不與其他ops相等），hidden與counting子案的payload不會被CodecCache跨seam短路；fixture前提斷言前一點。
         // 值都是局部新物件（ItemStack.set只改該stack自己的ComponentMapImpl），不改動全域狀態。
         var patched=new ItemStack(Items.BOWL);patched.set(DataComponentTypes.MAX_STACK_SIZE,1);
         var plain=new StatusEffectInstance(StatusEffects.SPEED,100,0,false,true,true);
@@ -1111,11 +1113,12 @@ class Minecraft121RegistryLeafContractsTest {
     }
     @Test void itemLeafCodecEncodesRebuiltNativeCopiesNotForeignLists() {
         // D1b-3c-0（spec M1＋quality Q-M1）：attribute_modifiers、tool、food的codec由DataComponentTypes.CACHE（CodecCache，以
-        // (codec, value, ops)為key的全域cache）包裝。三型的record不複製List，所以呼叫端可以放進foreign List：它的hashCode／equals會在
-        // cache內、白名單再驗之前執行；若它宣稱等於另一個已快取的同型值，encode就會命中那個值的編碼（等值替換），而ref相同時再驗與
+        // (codec identity, value, ops)為key的全域cache）包裝。三型的record不複製List，所以呼叫端可以放進foreign List：它的hashCode／equals
+        // 會在cache內、白名單再驗之前執行；若它宣稱等於另一個已快取的同型值，encode就會命中那個值的編碼（等值替換），而ref相同時再驗與
         // ref比對都抓不到。每個子案以同一份LeafContracts（同一份lease ops，production中同一closure的各ITEM leaf也共用）先擷取誠實值，
         // 再擷取「內容不同、但以ClaimingList宣稱等於誠實值」的本值。修正後codec只編碼以List.copyOf與已驗元素重建的原生copy：payload
-        // 等於本值的獨立編碼（另一份lease manager），而且ClaimingList的equals／hashCode一次都不被呼叫。
+        // 等於本值的獨立編碼（另一份lease manager），而且本值的ClaimingList的equals／hashCode一次都不被呼叫。本測試只涵蓋「本值是
+        // foreign」（探測端）；「已存的值是foreign」（快取端）見itemLeafCodecCacheIgnoresEntriesStoredByOtherEncodesOfSameManager。
         var id=Identifier.ofVanilla("base_attack_damage");
         java.util.function.Function<Double,List<AttributeModifiersComponent.Entry>> modifiers=amount->List.of(new AttributeModifiersComponent.Entry(
                 EntityAttributes.GENERIC_ATTACK_DAMAGE,new EntityAttributeModifier(id,amount,EntityAttributeModifier.Operation.ADD_VALUE),
@@ -1153,7 +1156,7 @@ class Minecraft121RegistryLeafContractsTest {
             var payload=leaves.itemCapture(Items.DIAMOND,c.lying()).payload();
             int calls=c.list().calls.get();
             assertAll(()->assertEquals(expected,payload,"payload是本值的編碼，不是另一個值的快取編碼"),
-                    ()->assertEquals(0,calls,"foreign List的equals／hashCode不得被呼叫"));
+                    ()->assertEquals(0,calls,"本值的foreign List的equals／hashCode不得被呼叫"));
         }));
         assertAll(checks);
     }
@@ -1274,7 +1277,8 @@ class Minecraft121RegistryLeafContractsTest {
         // roundtrip再驗：CodecCache以value.equals比對（同一份ops已存DEFAULT的編碼時命中），以及DFU optionalFieldOf編碼時的
         // Objects.equals(value, default)（potion_contents的custom_effects；沒有快取也會省略這個欄位）。兩條都讓payload成為空值的編碼，
         // 遊戲使用的原物件卻不是空的。修正後比照LORE：值條件以iterator確認真的沒有元素，copy正規化為各自的DEFAULT，codec與cache
-        // 不再呼叫foreign List的equals／hashCode。
+        // 不再呼叫foreign List的equals／hashCode。potion_contents的customEffects()是Lists.transform的view（迭代走原List的listIterator，
+        // javap），本List只覆寫iterator()，所以這一案也鑑別值條件另以getEffects()迭代原List的那一步。
         var speed=new StatusEffectInstance(StatusEffects.SPEED);
         var pattern=RegistryEntry.of(new net.minecraft.block.entity.BannerPattern(Identifier.ofVanilla("base"),"block.minecraft.banner.base"));
         record Case(String name,ComponentMap honest,EmptyClaimingList<?> list,ComponentMap lying) {}
@@ -1474,15 +1478,30 @@ class Minecraft121RegistryLeafContractsTest {
     private static final java.util.regex.Pattern LITERAL_IDENTIFIER_PATHS=java.util.regex.Pattern.compile(
             "minecraft:attribute_modifiers/modifiers/\\d+/id");
     /**
-     * quality Q-M3的交叉檢查（與型別模型無關）：遞迴走訪DefaultComponents NBT，收集每個NbtString值（compound的鍵是component型別id，
-     * 不收），回傳其中能parse成Identifier、且存在於固定聯集某個registry的值（path→id）；LITERAL_IDENTIFIER_PATHS的位置排除。
+     * quality Q-M3的交叉檢查（與型別模型無關）：遞迴走訪DefaultComponents NBT，收集每個NbtString值，以及巢狀compound中帶namespace的鍵
+     * （D1b-3c-0b；頂層的鍵是component型別id，不收），回傳其中的引用候選（path→字串）。LITERAL_IDENTIFIER_PATHS的位置排除。
+     * <ul>
+     * <li>「#」開頭、其餘能parse成Identifier的字串是tag引用的候選，記成「#」加tag id（D1b-3c-0b）。1.21分不出tag「未populate」與
+     * 「真的空」（D1b-3設計§4.2 H-TAG），所以不查tag是否存在：ACCEPTED item的payload帶任何這種字串而沒有對應的tag ref，都是失敗
+     * （fail safe）。</li>
+     * <li>其他字串與鍵：能parse成Identifier、且存在於固定聯集某個registry的才算。鍵只收含「:」的（registry-keyed map以
+     * Identifier.toString寫出，必帶namespace）；codec的欄位名沒有namespace，不收，否則像tool rule的speed會被當成STATUS_EFFECT的
+     * minecraft:speed。鍵的path以「@key」結尾。</li>
+     * </ul>
      */
     private static java.util.Map<String,String> payloadRegistryIdStrings(NbtCompound defaults) {
         var strings=new java.util.TreeMap<String,String>();collectStrings("",defaults,strings);
         var ids=new java.util.TreeMap<String,String>();
         for(var entry:strings.entrySet()) {
             if(LITERAL_IDENTIFIER_PATHS.matcher(entry.getKey()).matches())continue;
-            var id=Identifier.tryParse(entry.getValue());
+            String value=entry.getValue();
+            if(value.startsWith("#")) {
+                var tag=Identifier.tryParse(value.substring(1));
+                if(tag!=null)ids.put(entry.getKey(),"#"+tag);
+                continue;
+            }
+            if(entry.getKey().endsWith("@key")&&value.indexOf(':')<0)continue;
+            var id=Identifier.tryParse(value);
             if(id!=null&&itemLeafStaticRegistries().stream().anyMatch(registry->registry.containsId(id)))ids.put(entry.getKey(),id.toString());
         }
         return ids;
@@ -1490,7 +1509,13 @@ class Minecraft121RegistryLeafContractsTest {
     private static void collectStrings(String path,NbtElement element,java.util.Map<String,String> out) {
         switch(element) {
             case NbtString string -> out.put(path,string.asString());
-            case NbtCompound compound -> {for(String key:compound.getKeys())collectStrings(path.isEmpty()?key:path+"/"+key,compound.get(key),out);}
+            case NbtCompound compound -> {
+                for(String key:compound.getKeys()) {
+                    String child=path.isEmpty()?key:path+"/"+key;
+                    if(!path.isEmpty())out.put(child+"@key",key);
+                    collectStrings(child,compound.get(key),out);
+                }
+            }
             case NbtList list -> {for(int i=0;i<list.size();i++)collectStrings(path+"/"+i,list.get(i),out);}
             default -> {}
         }

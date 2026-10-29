@@ -28,7 +28,8 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * <li>BLOCK payload（Contract=quantumchamber:m6-static-block-leaf-v1）是生成consumer實際解碼用到的state definition與
  * default state，加上RequiredFeatures。</li>
  * <li>ITEM payload（Contract=quantumchamber:m6-static-item-leaf-v1）是已審型別表（Minecraft121ItemComponentContracts）內的
- * default ComponentMap，以同一張表在codec之前重建的copy（D1b-3c-0；原生ComponentMap.CODEC以lease registries的ops編碼），加上
+ * default ComponentMap，以同一張表在codec之前重建的copy（D1b-3c-0；原生ComponentMap.CODEC以lease registries建立、identity私有的ops
+ * 編碼，D1b-3c-0b），加上
  * RequiredFeatures。vanilla item的copy與原值編碼相同（D1b-3c-0以ITEM成本診斷的逐件leafCanonicalSha256核對；診斷不gating）。
  * RequiredFeatures有兩種原生委派：BlockItem委派getBlock().getRequiredFeatures()，SpawnEggItem委派建構時EntityType的
  * getRequiredFeatures()，所以這個值由Block或EntityType推導；生成consumer不讀BlockItem.getBlock，leaf也不建Item→Block或
@@ -63,9 +64,19 @@ final class Minecraft121RegistryLeafContracts {
     private final Minecraft121SettingsGraph graph;
     private final DynamicRegistryManager registries;
     /**
-     * ITEM component codec的ops：建構時（closure建構時，lease之外）由lease registries建一次，跨leaf共用。RegistryOps對各registry的
-     * 解析是lazy的：第一次查詢某registry時才取wrapper並快取，所以實際解析發生在lease內、itemCapture步驟7的try內（D1b-3a quality
-     * M1(b)）。
+     * ITEM component codec的ops：建構時（closure建構時，lease之外）由lease registries建一次，跨本物件的各ITEM leaf共用。RegistryOps對
+     * 各registry的解析是lazy的：第一次查詢某registry時才取wrapper並快取，所以實際解析發生在lease內、itemCapture步驟7的try內（D1b-3a
+     * quality M1(b)）。
+     *
+     * <p>identity私有（D1b-3c-0b，quality Q-M1(B)；javap，D1B3C0B-JAVAP-FACTS）：DataComponentTypes.CACHE的key是(codec identity, value,
+     * ops)；RegistryOps.equals比delegate與registryInfoGetter，WrapperLookup.getOps建出的CachedRegistryInfoGetter的equals再委派
+     * registriesLookup.equals，所以凡以同一個manager getOps建出的ops都共用同一組key，遊戲或其他encode存入的foreign值會被本leaf命中。
+     * 本欄因此以RegistryOps.of(NbtOps, PrivateLookup)建立：同一條CachedRegistryInfoGetter路徑（compute＝
+     * getOptionalWrapper(key).map(RegistryInfo::fromWrapper)），PrivateLookup只把getOptionalWrapper委派給lease registries，所以registry
+     * 解析、owner（ownerEquals只經getOwner）與lazy的時點都不變；只有ops的identity不同，不與任何其他ops相等。能命中的只剩本物件自己
+     * 存入的entry（值的範圍見Minecraft121ItemComponentContracts.Copy）。CodecCache$Key.equals先比value再比ops，所以只有完整hash相同時
+     * 才會對他人存入的值呼叫equals（之後ops不相等，仍不命中）；本ops的hash含PrivateLookup的identity hash，要刻意湊出同一個hash，得先
+     * 以反射讀出本物件的private欄位。
      */
     private final RegistryOps<NbtElement> ops;
     /** ITEM leaf出邊的sink：item(...)寫入payload之後，對itemCapture抽出的每個ref依序呼叫一次（from是該ITEM node）。 */
@@ -84,7 +95,21 @@ final class Minecraft121RegistryLeafContracts {
         this.graph=Objects.requireNonNull(graph);
         this.registries=Objects.requireNonNull(registries);
         this.references=Objects.requireNonNull(references);
-        this.ops=registries.getOps(NbtOps.INSTANCE);
+        this.ops=RegistryOps.of(NbtOps.INSTANCE,new PrivateLookup(registries));
+    }
+    /**
+     * 只供ops使用的WrapperLookup（D1b-3c-0b）：兩個抽象方法原樣委派lease registries；不覆寫equals／hashCode，所以以它建出的
+     * CachedRegistryInfoGetter與RegistryOps只等於自己（identity）。
+     */
+    private static final class PrivateLookup implements RegistryWrapper.WrapperLookup {
+        private final DynamicRegistryManager registries;
+        PrivateLookup(DynamicRegistryManager registries) {this.registries=registries;}
+        @Override public java.util.stream.Stream<RegistryKey<? extends Registry<?>>> streamAllRegistryKeys() {
+            return registries.streamAllRegistryKeys();
+        }
+        @Override public <T> Optional<RegistryWrapper.Impl<T>> getOptionalWrapper(RegistryKey<? extends Registry<? extends T>> registryRef) {
+            return registries.getOptionalWrapper(registryRef);
+        }
     }
 
     /**
@@ -339,9 +364,10 @@ final class Minecraft121RegistryLeafContracts {
         // 6. default component白名單（第一次迭代）：容器class先驗source（只擋直接foreign的容器），再逐項依單一分派表判斷值條件、
         // 重建copy並對copy再驗，從copy抽出原值的ref；排在codec之前。food的using_converts_to目標item在這裡驗source（M5）。
         var originalRefs=requireReviewedDefaults(components).references();
-        // 6b. codec前的copy重建（第二次迭代，D1b-3b spec M1＋quality Q-M1）：codec只編碼這份以已驗元素與List.copyOf重建的原生map，
-        // 所以CodecCache內執行的equals／hashCode全部來自固定JAR與JDK，foreign List也無法讓encode命中另一個值的快取編碼。這次迭代取代
-        // 原本codec自己對容器的迭代：吐出未審型別或不符值條件的值時在這裡就拒；帶ref的內容與第一次不同時由7c的ref比對擋下。
+        // 6b. codec前的copy重建（第二次迭代，D1b-3b spec M1＋quality Q-M1）：codec只編碼這份以已驗元素重建、或正規化為DEFAULT的原生map，
+        // 所以foreign的本值無法讓encode命中另一個值的快取編碼（探測端）；已存的值是foreign的方向由ops的私有identity隔離（D1b-3c-0b，
+        // 見ops欄位）。這次迭代取代原本codec自己對容器的迭代：吐出未審型別或不符值條件的值時在這裡就拒；帶ref的內容與第一次不同時由
+        // 7c的ref比對擋下。
         var copy=requireReviewedDefaults(components).copy();
         // 7. 原生ComponentMap.CODEC以lease ops對copy做encode→parse→encode；保留parse重建的原生map。
         NbtElement encoded,again;ComponentMap rebuilt;
