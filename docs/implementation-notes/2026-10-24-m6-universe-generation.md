@@ -860,9 +860,9 @@ C1～C15 全部由 controller 依審查定案，不需要使用者裁示。
   - 先驗容器本身的 source；
   - 迭代時，`Failure` 原樣透傳，其他 RuntimeException 改碼為 `UNSUPPORTED_ITEM_DEFAULT_COMPONENT` 並 `initCause`；
   - roundtrip 之後保留 `parse` 重建的原生 map，再驗一次白名單。
-  
+
   這樣同時關閉兩種繞過：巢狀 List 自稱為空、迭代卻吐出元素；容器兩次迭代的內容不一致。
-  
+
   容器的 source 檢查只擋直接 foreign 的容器。原生包裝（例如 `ComponentMapImpl`、`ComponentMap.of`／`filtered`）會委派到外部 map，它們的內容一致性由「重建後再驗」保證，所以仍然 fail closed。
 - S0-2：`executedOwnerClasses` 加入 SpawnEggItem 分支。以 `getEntityType(ItemStack.EMPTY)` 取得 EntityType，並驗它的 source。
 - S0-3：新增 `everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes`。測試端獨立列出已審的 8 型與值條件，斷言每個 vanilla item 只能 ACCEPTED，或因白名單外型別被拒；不斷言數量。
