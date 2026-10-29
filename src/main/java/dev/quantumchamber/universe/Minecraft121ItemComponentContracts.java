@@ -13,14 +13,20 @@ import net.minecraft.component.type.AttributeModifiersComponent;
 import net.minecraft.component.type.BannerPatternsComponent;
 import net.minecraft.component.type.ChargedProjectilesComponent;
 import net.minecraft.component.type.ContainerComponent;
+import net.minecraft.component.type.FoodComponent;
 import net.minecraft.component.type.ItemEnchantmentsComponent;
 import net.minecraft.component.type.LoreComponent;
 import net.minecraft.component.type.PotionContentsComponent;
 import net.minecraft.component.type.SuspiciousStewEffectsComponent;
+import net.minecraft.component.type.ToolComponent;
+import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.entry.RegistryEntryList;
 import net.minecraft.util.Rarity;
 import net.minecraft.util.Unit;
 
@@ -32,8 +38,9 @@ import net.minecraft.util.Unit;
  * D2b的模板effective component應重用本表，不另立第三份白名單；TemplateValueContracts.components()目前另有自己的表，交D2b收斂。
  *
  * <p>值條件只呼叫固定JAR內exact class的record欄位或原生accessor，而且只在exact原生class成立之後才呼叫；ref抽取只在同一個值的
- * 值條件成立之後呼叫。容器或巢狀List自稱的內容可以與codec實際迭代的內容不同，所以呼叫端必須對roundtrip重建的原生map再套一次
- * 本表（值條件與ref抽取都是）。
+ * 值條件成立之後呼叫，而且自己再對巢狀元素驗一次exact原生class（巢狀List可以在值條件與抽取兩次迭代間吐出不同元素），不呼叫未驗
+ * 物件的任何方法。容器或巢狀List自稱的內容可以與codec實際迭代的內容不同，所以呼叫端必須對roundtrip重建的原生map再套一次本表
+ * （值條件與ref抽取），並逐一比對原值與重建值抽出的ref是同一物件（D1b-3設計審查M2）。
  */
 final class Minecraft121ItemComponentContracts {
     private Minecraft121ItemComponentContracts() {}
@@ -101,8 +108,8 @@ final class Minecraft121ItemComponentContracts {
         static final Map<ComponentType<?>,Contract> CONTRACTS=build();
         private static Map<ComponentType<?>,Contract> build() {
             var table=new IdentityHashMap<ComponentType<?>,Contract>();
-            // D1b-2：MAX_STACK_SIZE／MAX_DAMAGE／DAMAGE／REPAIR_COST（Integer）、RARITY（exact Rarity）；ENCHANTMENTS、LORE、
-            // ATTRIBUTE_MODIFIERS只收exact原生class且為空。
+            // D1b-2：MAX_STACK_SIZE／MAX_DAMAGE／DAMAGE／REPAIR_COST（Integer）、RARITY（exact Rarity）；ENCHANTMENTS、LORE只收
+            // exact原生class且為空。D1b-2的ATTRIBUTE_MODIFIERS（只收空值）由下方D1b-3b的契約放寬取代。
             put(table,DataComponentTypes.MAX_STACK_SIZE,noRefs(value->value instanceof Integer));
             put(table,DataComponentTypes.MAX_DAMAGE,noRefs(value->value instanceof Integer));
             put(table,DataComponentTypes.DAMAGE,noRefs(value->value instanceof Integer));
@@ -112,8 +119,6 @@ final class Minecraft121ItemComponentContracts {
                     &&((ItemEnchantmentsComponent)value).isEmpty()));
             put(table,DataComponentTypes.LORE,noRefs(value->nativeExact(value,LoreComponent.class)
                     &&((LoreComponent)value).lines().isEmpty()&&((LoreComponent)value).styledLines().isEmpty()));
-            put(table,DataComponentTypes.ATTRIBUTE_MODIFIERS,noRefs(value->nativeExact(value,AttributeModifiersComponent.class)
-                    &&((AttributeModifiersComponent)value).modifiers().isEmpty()));
             // D1b-3a的literal（D1b-3設計§2.2）：FIRE_RESISTANT的值須是固定JAR內單例enum net.minecraft.util.Unit.INSTANCE；
             // ENCHANTMENT_GLINT_OVERRIDE（Boolean）、OMINOUS_BOTTLE_AMPLIFIER（Integer；原生範圍0..4由codec強制）。Boolean與Integer
             // 是JDK的final類別（CodeSource為null），不能套exact原生source，只驗型別。
@@ -134,7 +139,15 @@ final class Minecraft121ItemComponentContracts {
                     &&((BannerPatternsComponent)value).layers().isEmpty()));
             put(table,DataComponentTypes.CHARGED_PROJECTILES,noRefs(value->nativeExact(value,ChargedProjectilesComponent.class)
                     &&((ChargedProjectilesComponent)value).isEmpty()));
-            // 會引用其他registry或tag的型別（tool、非空attribute_modifiers、food、jukebox_playable等）屬D1b-3b～3d，不在本表。
+            // D1b-3b的static引用（D1b-3設計§2.2）：非空ATTRIBUTE_MODIFIERS（→ATTRIBUTE）、FOOD（→STATUS_EFFECT、ITEM）、只有direct
+            // rule的TOOL（→BLOCK）。引用一律須是exact原生RegistryEntry.Reference（inline的Direct entry在codec之前就拒）。tool的tag
+            // rule屬D1b-3c、jukebox_playable屬D1b-3d，仍不在本表。
+            put(table,DataComponentTypes.ATTRIBUTE_MODIFIERS,new Contract(Minecraft121ItemComponentContracts::attributeModifiers,
+                    Minecraft121ItemComponentContracts::attributeModifierRefs,List.of(RegistryKeys.ATTRIBUTE)));
+            put(table,DataComponentTypes.FOOD,new Contract(Minecraft121ItemComponentContracts::food,
+                    Minecraft121ItemComponentContracts::foodRefs,List.of(RegistryKeys.STATUS_EFFECT,RegistryKeys.ITEM)));
+            put(table,DataComponentTypes.TOOL,new Contract(Minecraft121ItemComponentContracts::directTool,
+                    Minecraft121ItemComponentContracts::directToolRefs,List.of(RegistryKeys.BLOCK)));
             return Collections.unmodifiableMap(table);
         }
         private static void put(Map<ComponentType<?>,Contract> table,ComponentType<?> type,Contract contract) {
@@ -145,8 +158,119 @@ final class Minecraft121ItemComponentContracts {
             return new Contract(value,NO_REFS,List.of());
         }
     }
+
+    /**
+     * 非空ATTRIBUTE_MODIFIERS（放寬D1b-2的「必須為空」）：exact原生AttributeModifiersComponent，每個entry是exact原生Entry，其attribute
+     * 是exact原生Reference。modifier（id、amount、operation）與slot、show_in_tooltip是literal（Identifier.CODEC不綁registry）。
+     */
+    private static boolean attributeModifiers(Object value) {
+        if(!nativeExact(value,AttributeModifiersComponent.class))return false;
+        var modifiers=((AttributeModifiersComponent)value).modifiers();
+        if(modifiers==null)return false;
+        for(var entry:modifiers)
+            if(!nativeExact(entry,AttributeModifiersComponent.Entry.class)||!nativeExact(entry.attribute(),RegistryEntry.Reference.class))return false;
+        return true;
+    }
+    /** modifiers/i/type → ATTRIBUTE（codec欄位名type）。 */
+    private static void attributeModifierRefs(Object value,BiConsumer<String,RegistryEntry.Reference<?>> sink) {
+        int i=0;
+        for(var element:((AttributeModifiersComponent)value).modifiers()) {
+            var entry=exact(element,AttributeModifiersComponent.Entry.class);
+            sink.accept("modifiers/"+i+"/type",reference(entry.attribute()));
+            i++;
+        }
+    }
+    /**
+     * FOOD：exact原生FoodComponent；nutrition、saturation、can_always_eat、eat_seconds是literal。using_converts_to若存在，見
+     * convertsToStack；每個effect是exact原生StatusEffectEntry，effect type是exact原生Reference。
+     *
+     * <p>固定1.21 JAR的事實（javap）：StatusEffectEntry.effect()不是單純accessor，而是回傳new StatusEffectInstance(this.effect)；copy
+     * 建構子與copyFrom只以getfield讀type、duration、amplifier、ambient、show_particles、show_icon，不複製hiddenEffect，也不呼叫原物件的
+     * 任何method。CODEC與PACKET_CODEC的getter、食用時套用effect都經這個copy，所以原物件的class與hidden_effect在公開API下都觀察不到，
+     * 也不會被編碼或使用：payload恰等於實際被使用的copy。D1b-3設計§2.2「hidden_effect必須缺席」因此在本JAR恆成立，不另設檢查；
+     * 這裡對copy驗exact class，是「呼叫方法之前先驗exact」的通則，在本JAR恆真。
+     *
+     * <p>殘餘風險：FOOD的codec由DataComponentTypes.CACHE（CodecCache，以(codec, value, ops)為key的Guava cache）包裝，encode時會呼叫
+     * FoodComponent的hashCode／equals，經record的ObjectMethods一路呼叫到StatusEffectEntry私有欄位裡的原物件。原物件的class在公開API
+     * 下無法驗證，所以若它是foreign子類，它的hashCode／equals會在codec內、未經source檢查就執行（payload仍只來自copy，不受影響）。
+     * vanilla的food effect都是原生StatusEffectInstance。
+     */
+    private static boolean food(Object value) {
+        if(!nativeExact(value,FoodComponent.class))return false;
+        var food=(FoodComponent)value;
+        var convertsTo=food.usingConvertsTo();var effects=food.effects();
+        if(convertsTo==null||effects==null||convertsTo.isPresent()&&!convertsToStack(convertsTo.get()))return false;
+        for(var entry:effects) {
+            if(!nativeExact(entry,FoodComponent.StatusEffectEntry.class))return false;
+            var effect=((FoodComponent.StatusEffectEntry)entry).effect();
+            if(!nativeExact(effect,StatusEffectInstance.class)||!nativeExact(effect.getEffectType(),RegistryEntry.Reference.class))return false;
+        }
+        return true;
+    }
+    /**
+     * using_converts_to的ItemStack：exact原生（ItemStack是final），count為1（UNCOUNTED_CODEC不編count，非1的count不會進payload，所以拒），
+     * 沒有patch。D1b-3設計審查M5：解碼時ItemStack建構子會先呼叫目標item的postProcessComponents（virtual），encode也會呼叫它的
+     * getRegistryEntry，所以在codec之前、在呼叫目標item的任何virtual method之前，先對executedOwnerClasses(目標item)逐項驗原生source
+     * （不符為NATIVE_DEFINITION_SOURCE，與item leaf步驟2的碼相同）。
+     */
+    private static boolean convertsToStack(Object value) {
+        if(!nativeExact(value,ItemStack.class))return false;
+        var stack=(ItemStack)value;
+        if(stack.getCount()!=1)return false;
+        for(var type:Minecraft121RegistryLeafContracts.executedOwnerClasses(stack.getItem()))Minecraft121RegistryLeafContracts.requireNativeSource(type);
+        return stack.getComponentChanges().isEmpty();
+    }
+    /** using_converts_to/id → ITEM；effects/i/effect/id → STATUS_EFFECT（codec欄位次序：using_converts_to在effects之前）。 */
+    private static void foodRefs(Object value,BiConsumer<String,RegistryEntry.Reference<?>> sink) {
+        var food=(FoodComponent)value;
+        var convertsTo=food.usingConvertsTo();
+        if(convertsTo.isPresent())sink.accept("using_converts_to/id",reference(exact(convertsTo.get(),ItemStack.class).getRegistryEntry()));
+        int i=0;
+        for(var element:food.effects()) {
+            var effect=exact(exact(element,FoodComponent.StatusEffectEntry.class).effect(),StatusEffectInstance.class);
+            sink.accept("effects/"+i+"/effect/id",reference(effect.getEffectType()));
+            i++;
+        }
+    }
+    /**
+     * 只有direct rule的TOOL：exact原生ToolComponent，每個rule是exact原生Rule，blocks是exact原生RegistryEntryList.Direct（tag rule的
+     * Named屬D1b-3c，拒），每個block是exact原生Reference。speed、correct_for_drops、default_mining_speed、damage_per_block是literal。
+     * direct list經ops相關的RegistryFixedCodec解析（owner須是lease的BLOCK，固定聯集已證明它就是全域物件）。
+     */
+    private static boolean directTool(Object value) {
+        if(!nativeExact(value,ToolComponent.class))return false;
+        var rules=((ToolComponent)value).rules();
+        if(rules==null)return false;
+        for(var rule:rules) {
+            if(!nativeExact(rule,ToolComponent.Rule.class)||!nativeExact(rule.blocks(),RegistryEntryList.Direct.class))return false;
+            var blocks=(RegistryEntryList.Direct<?>)rule.blocks();
+            for(int j=0;j<blocks.size();j++)if(!nativeExact(blocks.get(j),RegistryEntry.Reference.class))return false;
+        }
+        return true;
+    }
+    /** rules/i/blocks/j → BLOCK（j是direct list內的次序，與單一元素時encode成字串無關）。 */
+    private static void directToolRefs(Object value,BiConsumer<String,RegistryEntry.Reference<?>> sink) {
+        int i=0;
+        for(var element:((ToolComponent)value).rules()) {
+            var blocks=exact(exact(element,ToolComponent.Rule.class).blocks(),RegistryEntryList.Direct.class);
+            for(int j=0;j<blocks.size();j++)sink.accept("rules/"+i+"/blocks/"+j,reference(blocks.get(j)));
+            i++;
+        }
+    }
+
     /** exact class且source為原生，之後才可呼叫該值的方法。 */
     private static boolean nativeExact(Object value,Class<?> type) {
         return value!=null&&value.getClass()==type&&Minecraft121RegistryLeafContracts.nativeSource(type);
+    }
+    /**
+     * ref抽取端的防線：巢狀List可以在值條件與抽取兩次迭代間吐出不同元素，所以抽取端對每個要呼叫方法的物件再驗exact原生class，
+     * 不符為UNSUPPORTED_ITEM_DEFAULT_COMPONENT。
+     */
+    private static <T> T exact(Object value,Class<T> type) {
+        if(!nativeExact(value,type))throw new Minecraft121SettingsGraph.Failure("UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
+        return type.cast(value);
+    }
+    private static RegistryEntry.Reference<?> reference(Object entry) {
+        return exact(entry,RegistryEntry.Reference.class);
     }
 }

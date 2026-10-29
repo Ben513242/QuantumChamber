@@ -6,6 +6,8 @@ import net.minecraft.SharedConstants;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.component.ComponentMap;
+import net.minecraft.entity.attribute.EntityAttribute;
+import net.minecraft.entity.effect.StatusEffect;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -19,7 +21,7 @@ import net.minecraft.state.property.*;
 import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 
 /**
- * C1d-D1b static registry leaf的owner；admit BLOCK與ITEM兩種，leaf都沒有出發邊。
+ * C1d-D1b static registry leaf的owner；admit BLOCK、ITEM、ATTRIBUTE與STATUS_EFFECT四種。只有ITEM leaf有出發邊（D1b-3b起）。
  * <ul>
  * <li>BLOCK payload（Contract=quantumchamber:m6-static-block-leaf-v1）是生成consumer實際解碼用到的state definition與
  * default state，加上RequiredFeatures。</li>
@@ -28,8 +30,11 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * 委派：BlockItem委派getBlock().getRequiredFeatures()，SpawnEggItem委派建構時EntityType的getRequiredFeatures()，所以這個值由
  * Block或EntityType推導；生成consumer不讀BlockItem.getBlock，leaf也不建Item→Block或Item→EntityType邊。D1b-3a起，literal與
  * 空DEFAULT的8型也已審（fire_resistant、enchantment_glint_override、ominous_bottle_amplifier；potion_contents、
- * suspicious_stew_effects、container、banner_patterns、charged_projectiles只收空值）；會引用其他registry或tag的型別（tool、
- * 非空attribute_modifiers、food、jukebox_playable等）仍fail closed，屬D1b-3b～3d。</li>
+ * suspicious_stew_effects、container、banner_patterns、charged_projectiles只收空值）。D1b-3b起，非空attribute_modifiers、food與
+ * 只有direct rule的tool也已審，它們的static引用（ATTRIBUTE、STATUS_EFFECT、ITEM、BLOCK）以同一筆型別契約從default component
+ * 抽出，經建構時傳入的sink成為該ITEM node的出邊。tool的tag rule（D1b-3c）與jukebox_playable（D1b-3d）等仍fail closed。</li>
+ * <li>ATTRIBUTE payload（Contract=quantumchamber:m6-static-attribute-leaf-v1）與STATUS_EFFECT payload
+ * （Contract=quantumchamber:m6-static-status-effect-leaf-v1，加上RequiredFeatures）：兩者沒有value codec，Java值不入FP。</li>
  * </ul>
  *
  * <p>exact原生class加上CodeSource相同，只證明這個value執行的程式碼來自固定1.21 JAR，不證明instance的Settings
@@ -48,6 +53,8 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 final class Minecraft121RegistryLeafContracts {
     private static final String BLOCK_CONTRACT="quantumchamber:m6-static-block-leaf-v1";
     private static final String ITEM_CONTRACT="quantumchamber:m6-static-item-leaf-v1";
+    private static final String ATTRIBUTE_CONTRACT="quantumchamber:m6-static-attribute-leaf-v1";
+    private static final String STATUS_EFFECT_CONTRACT="quantumchamber:m6-static-status-effect-leaf-v1";
     private final Minecraft121SettingsGraph graph;
     private final DynamicRegistryManager registries;
     /**
@@ -191,8 +198,13 @@ final class Minecraft121RegistryLeafContracts {
      *
      * <p>步驟2～3寫死成單一迴圈：對executedOwnerClasses(item)的每一項呼叫requireNativeSource（item class，以及BlockItem的
      * block class、SpawnEggItem的EntityType class）；itemCapture開頭另有同樣的seam自驗。殘餘風險：「這兩處檢查同時被刪除」
-     * （連同item class的檢查）沒有任何測試能抓到，因為測試不能建立或註冊foreign Item／BlockItem（{@code Item.<init>}會寫入
-     * 全域registry）；這一點靠spec review逐行確認。
+     * （連同item class的檢查）沒有任何測試能抓到，因為測試不能註冊foreign Item／BlockItem（{@code Item.<init>}會寫入全域registry，
+     * 而closure只解析registry裡的entry）；這一點靠spec review逐行確認。
+     *
+     * <p>殘餘風險（D1b-3a quality M2）：步驟1與itemCapture的seam自驗丟出同一個碼，所以單獨刪除本method的步驟1時，DATA_COMPONENT_TYPE、
+     * BLOCK、ATTRIBUTE、STATUS_EFFECT四個key是等價突變；只有ITEM key抓得到（lease的局部ITEM解析出的entry會先在步驟4得到
+     * STATIC_LEAF_IDENTITY_MISMATCH，Canon的itemLeafRejectsForeignRegistryInstance預期STATIC_REGISTRY_OWNER_MISMATCH）。步驟1排在
+     * entry.value()之前這件事在行為上無法觀察，靠逐行審查確認。
      */
     NbtCompound item(Key node,RegistryKey<?> key,RegistryEntry.Reference<?> entry) {
         // 1. registry identity：component codec可能查詢的static registry固定聯集（ITEM排第一）都須是lease持有的全域物件本身。
@@ -212,6 +224,58 @@ final class Minecraft121RegistryLeafContracts {
         graph.payload(node,capture.payload());
         for(var ref:capture.references())references.accept(node,ref);
         return capture.payload();
+    }
+
+    /**
+     * ATTRIBUTE leaf（D1b-3b；payload只有Contract=quantumchamber:m6-static-attribute-leaf-v1）：EntityAttribute沒有value codec，
+     * Java值（fallback、clamp範圍、tracked、category）不入FP（spec §3.1.1）。由closure經definitions去重後呼叫，回傳寫入圖的payload。
+     * 步驟（D1b-3設計審查M3）：1. registry identity（lease的ATTRIBUTE須是全域物件本身）→ 2. class／source（instanceof EntityAttribute
+     * 加上value class的原生source；vanilla有ClampedEntityAttribute等子類，所以不要求exact class）→ 3. node與key對應，且全域registry
+     * 中這個value的entry就是closure解析出的entry、key相同 → 4. payload。EntityAttribute沒有feature。
+     */
+    NbtCompound attribute(Key node,RegistryKey<?> key,RegistryEntry.Reference<?> entry) {
+        // 1.
+        requireStaticRegistry(Registries.ATTRIBUTE);
+        // 2. 通過之前不呼叫value的任何virtual method。
+        Object value=entry.value();
+        require(value instanceof EntityAttribute,"NATIVE_DEFINITION_OWNER");
+        requireNativeSource(value.getClass());
+        // 3.
+        requireLeafNode(node,key);
+        require(Registries.ATTRIBUTE.getEntry((EntityAttribute)value)==entry&&entry.registryKey().equals(key),"STATIC_LEAF_IDENTITY_MISMATCH");
+        // 4.
+        var payload=new NbtCompound();
+        payload.putString("Contract",ATTRIBUTE_CONTRACT);
+        graph.payload(node,payload);
+        return payload;
+    }
+    /**
+     * STATUS_EFFECT leaf（D1b-3b；payload是Contract=quantumchamber:m6-static-status-effect-leaf-v1加上RequiredFeatures）：StatusEffect
+     * 沒有value codec，Java值（category、color、attribute modifier、粒子）不入FP（spec §3.1.1）。步驟（D1b-3設計審查M3）：
+     * 1. registry identity（全域STATUS_EFFECT）→ 2. class／source（instanceof StatusEffect加上value class的原生source；vanilla有
+     * RegenerationStatusEffect等十餘個子類）→ 3. node與key對應，且全域registry中這個value的entry就是closure解析出的entry → 4. feature
+     * （getRequiredFeatures不是final，所以在source之後才呼叫；只admit vanilla子集）→ 5. payload。
+     */
+    NbtCompound statusEffect(Key node,RegistryKey<?> key,RegistryEntry.Reference<?> entry) {
+        // 1.
+        requireStaticRegistry(Registries.STATUS_EFFECT);
+        // 2. 通過之前不呼叫value的任何virtual method。
+        Object value=entry.value();
+        require(value instanceof StatusEffect,"NATIVE_DEFINITION_OWNER");
+        requireNativeSource(value.getClass());
+        var effect=(StatusEffect)value;
+        // 3.
+        requireLeafNode(node,key);
+        require(Registries.STATUS_EFFECT.getEntry(effect)==entry&&entry.registryKey().equals(key),"STATIC_LEAF_IDENTITY_MISMATCH");
+        // 4.
+        var features=effect.getRequiredFeatures();
+        requireVanillaFeatures(features);
+        // 5.
+        var payload=new NbtCompound();
+        payload.putString("Contract",STATUS_EFFECT_CONTRACT);
+        payload.put("RequiredFeatures",featureIds(features));
+        graph.payload(node,payload);
+        return payload;
     }
 
     /**
@@ -243,9 +307,9 @@ final class Minecraft121RegistryLeafContracts {
      * 證明payload隨值改變而不必改動全域狀態。是instance method：codec用本物件的lease registries與建構時建好的ops。
      *
      * <p>開頭自行驗步驟1的registry identity聯集，以及對executedOwnerClasses(item)逐項驗source（冪等；item(...)原有的檢查保留，
-     * 維持設計次序），因為codec與RequiredFeatures會執行它們；seam不依賴呼叫端。殘餘風險：source自驗沒有行為層級的測試（測試
-     * 不能建立foreign Item），「item(...)與本seam兩處source檢查同時被刪除」靠spec review逐行確認；BLOCK seam的自驗則有Canon的
-     * 具名測試。
+     * 維持設計次序），因為codec與RequiredFeatures會執行它們；seam不依賴呼叫端。殘餘風險：source自驗沒有行為層級的測試（測試不能
+     * 註冊foreign Item；LeafTest只以Unsafe配置一個未註冊的foreign Item，見證food using_converts_to的事前source檢查），「item(...)
+     * 與本seam兩處source檢查同時被刪除」靠spec review逐行確認；BLOCK seam的自驗則有Canon的具名測試。
      *
      * <p>default component白名單（已審型別表Minecraft121ItemComponentContracts）跑兩次：步驟6在codec之前先驗容器class的source、
      * 再逐項判斷輸入的map；步驟7的roundtrip之後，對parse重建的原生map再跑一次。容器或巢狀List自稱的內容可以與codec實際迭代的
@@ -264,8 +328,9 @@ final class Minecraft121RegistryLeafContracts {
         // 5. feature：只admit vanilla子集；同一個值寫入RequiredFeatures。
         var features=item.getRequiredFeatures();
         requireVanillaFeatures(features);
-        // 6. default component白名單：容器class先驗source（只擋直接foreign的容器），再逐項依單一分派表判斷，排在codec之前。
-        requireReviewedDefaults(components);
+        // 6. default component白名單：容器class先驗source（只擋直接foreign的容器），再逐項依單一分派表判斷，排在codec之前；
+        // 同一次迭代以同一筆契約抽出原值的ref（只對值條件已成立的值抽取）。food的using_converts_to目標item在這裡驗source（M5）。
+        var originalRefs=requireReviewedDefaults(components);
         // 7. 原生ComponentMap.CODEC以lease ops做encode→parse→encode；保留parse重建的原生map。
         NbtElement encoded,again;ComponentMap rebuilt;
         try {
@@ -282,8 +347,11 @@ final class Minecraft121RegistryLeafContracts {
         }
         require(encoded instanceof NbtCompound,"UNSUPPORTED_ITEM_COMPONENT_CODEC");
         require(encoded.equals(again),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
-        // 白名單（值條件與ref抽取，同一筆契約）對重建的原生map再驗一次：已知encoded等於again，所以驗到的就是payload實際寫入的內容。
+        // 7b. 白名單（值條件與ref抽取，同一筆契約）對重建的原生map再驗一次：已知encoded等於again，所以驗到的就是payload實際寫入的內容。
         var references=requireReviewedDefaults(rebuilt);
+        // 7c. 原值與重建值的ref逐一比對（D1b-3設計審查M2）：只從重建的map抽ref，會把foreign的Reference（同key、不同物件）靜默換成
+        // registry的物件；所以要求兩邊的path逐一相同、entry是同一物件。
+        requireSameReferences(originalRefs,references);
         // 8.
         var payload=new NbtCompound();
         payload.putString("Contract",ITEM_CONTRACT);
@@ -294,11 +362,13 @@ final class Minecraft121RegistryLeafContracts {
 
     /**
      * 步驟6的白名單（codec前的輸入map與roundtrip重建的map共用）：容器class須為原生source，之後才呼叫它的iterator；再逐項以
-     * Minecraft121ItemComponentContracts的單一分派表取該型的契約：不屬已審型別或值條件不符一律UNSUPPORTED_ITEM_DEFAULT_COMPONENT；
-     * 值條件成立之後，才以同一筆契約的ref抽取取出該值的ref（path加上components/&lt;型別id&gt;/前綴）。回傳的ref依型別id排序、同型內
-     * 依抽取次序，與容器的迭代次序無關。容器的source檢查只擋直接foreign的容器class；原生包裝（ComponentMapImpl、
-     * ComponentMap.of／filtered）仍可能委派foreign的map或predicate，它們的內容一致性由roundtrip後對重建map的再驗保證。迭代、
-     * 判斷與抽取包在try內：Failure原樣交回，其他RuntimeException改成UNSUPPORTED_ITEM_DEFAULT_COMPONENT並以initCause保留原因。
+     * Minecraft121ItemComponentContracts的單一分派表取該型的契約：不屬已審型別或值條件不符，一律UNSUPPORTED_ITEM_DEFAULT_COMPONENT；
+     * 值條件成立之後，才以同一筆契約的ref抽取取出該值的ref（path加上components/&lt;型別id&gt;/前綴）。值條件可丟出具名Failure（food的
+     * using_converts_to目標item不是原生source時為NATIVE_DEFINITION_SOURCE）。回傳的ref依型別id排序、同型內依抽取次序，與容器的
+     * 迭代次序無關。容器的source檢查只擋直接foreign
+     * 的容器class；原生包裝（ComponentMapImpl、ComponentMap.of／filtered）仍可能委派foreign的map或predicate，它們的內容一致性由
+     * roundtrip後對重建map的再驗與ref比對保證。迭代、判斷與抽取包在try內：Failure原樣交回，其他RuntimeException改成
+     * UNSUPPORTED_ITEM_DEFAULT_COMPONENT並以initCause保留原因。
      */
     private static List<Minecraft121ItemComponentContracts.Ref> requireReviewedDefaults(ComponentMap components) {
         require(components!=null,"UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
@@ -326,6 +396,23 @@ final class Minecraft121RegistryLeafContracts {
         var references=new ArrayList<Minecraft121ItemComponentContracts.Ref>();
         for(var refs:byType.values())references.addAll(refs);
         return references;
+    }
+    /**
+     * 步驟7c：原值與重建值抽出的ref逐一比對。件數或path不同（容器或巢狀List在兩次迭代間改變了帶ref的內容）為
+     * NATIVE_CODEC_ROUNDTRIP_CHANGED；同一path的entry不是同一物件（foreign的同key Reference被codec換成registry的物件）為
+     * REGISTRY_ENTRY_OWNER_MISMATCH。switch對sealed Ref窮舉，D1b-3c加Tag時沒有比對規則就無法編譯。
+     */
+    private static void requireSameReferences(List<Minecraft121ItemComponentContracts.Ref> original,
+            List<Minecraft121ItemComponentContracts.Ref> rebuilt) {
+        require(original.size()==rebuilt.size(),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+        for(int i=0;i<original.size();i++) {
+            var before=original.get(i);var after=rebuilt.get(i);
+            require(before.path().equals(after.path()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+            switch(before) {
+                case Minecraft121ItemComponentContracts.Ref.Entry entry -> require(after instanceof Minecraft121ItemComponentContracts.Ref.Entry other
+                        &&entry.entry()==other.entry(),"REGISTRY_ENTRY_OWNER_MISMATCH");
+            }
+        }
     }
 
     /** 只admit vanilla feature子集（含空集合）。world enabled features屬D3／D4的必要輸入；在那之前這是暫時的fail closed。 */

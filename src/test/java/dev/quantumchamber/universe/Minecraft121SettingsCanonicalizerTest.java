@@ -1,13 +1,18 @@
 package dev.quantumchamber.universe;
 
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.ROOT;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.attributeNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.blockNode;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.canonicalNodes;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.effectNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.singleItemTemplate;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.withItemLeafRegistries;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemLeafRegistriesWithout;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemLeafRegistriesWithForeign;
 import static org.junit.jupiter.api.Assertions.*;
+import dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.CanonicalEdge;
+import dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.CanonicalGraph;
 import java.util.Arrays;
 import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
@@ -1396,49 +1401,7 @@ class Minecraft121SettingsCanonicalizerTest {
         var features=new NbtList();features.add(NbtString.of("minecraft:vanilla"));leaf.put("RequiredFeatures",features);
         return leaf;
     }
-    private record CanonicalEdge(Minecraft121SettingsGraph.Key from,String path,Minecraft121SettingsGraph.Key target,String aliasScope,String use) {}
-    private record CanonicalGraph(java.util.Map<Minecraft121SettingsGraph.Key,byte[]> nodes,java.util.List<CanonicalEdge> edges) {}
-    /**
-     * 測試用的canonical讀取：依Graph.finish的格式（DOMAIN、node數、每個node的key與payload、edge數、每條edge）
-     * 與Encoder.nbt的編碼，解出node key、payload bytes與edges；必須恰好讀完全部bytes。
-     */
-    private static CanonicalGraph canonicalNodes(byte[] bytes) {
-        var in=java.nio.ByteBuffer.wrap(bytes);
-        assertEquals("quantumchamber:m6:settings-graph:v1",canonicalText(in));
-        var nodes=new java.util.LinkedHashMap<Minecraft121SettingsGraph.Key,byte[]>();
-        for(int i=0,count=in.getInt();i<count;i++) {
-            var key=canonicalKey(in);int start=in.position();skipCanonicalNbt(in);
-            assertNull(nodes.put(key,Arrays.copyOfRange(bytes,start,in.position())),"node key不得重複");
-        }
-        var edges=new java.util.ArrayList<CanonicalEdge>();
-        for(int i=0,count=in.getInt();i<count;i++)
-            edges.add(new CanonicalEdge(canonicalKey(in),canonicalText(in),canonicalKey(in),canonicalText(in),canonicalText(in)));
-        assertFalse(in.hasRemaining(),"canonical bytes須恰好讀完");
-        return new CanonicalGraph(nodes,edges);
-    }
-    private static String canonicalText(java.nio.ByteBuffer in) {
-        byte[] value=new byte[in.getInt()];in.get(value);return new String(value,java.nio.charset.StandardCharsets.UTF_8);
-    }
-    private static Minecraft121SettingsGraph.Key canonicalKey(java.nio.ByteBuffer in) {
-        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.valueOf(canonicalText(in)),canonicalText(in),canonicalText(in));
-    }
-    private static void skipCanonicalNbt(java.nio.ByteBuffer in) {
-        byte type=in.get();
-        switch(type) {
-            case NbtElement.BYTE_TYPE -> in.get();
-            case NbtElement.SHORT_TYPE -> in.getShort();
-            case NbtElement.INT_TYPE,NbtElement.FLOAT_TYPE -> in.getInt();
-            case NbtElement.LONG_TYPE,NbtElement.DOUBLE_TYPE -> in.getLong();
-            case NbtElement.STRING_TYPE -> canonicalText(in);
-            case NbtElement.BYTE_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+count);}
-            case NbtElement.INT_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+4*count);}
-            case NbtElement.LONG_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+8*count);}
-            case NbtElement.LIST_TYPE -> {for(int i=0,count=in.getInt();i<count;i++)skipCanonicalNbt(in);}
-            case NbtElement.COMPOUND_TYPE -> {for(int i=0,count=in.getInt();i<count;i++){canonicalText(in);skipCanonicalNbt(in);}}
-            default -> fail("未知的canonical NBT type "+type);
-        }
-    }
-    /** 單一NBT值在canonical中的payload bytes（以只含ROOT的圖編碼後取出）。 */
+    /** 單一NBT值在canonical中的payload bytes（以只含ROOT的圖編碼後取出；canonicalNodes在Minecraft121RegistryLeafTestFixtures）。 */
     private static byte[] payloadBytes(NbtElement value) {
         return canonicalNodes(bytes(value)).nodes().get(ROOT);
     }
@@ -1729,7 +1692,7 @@ class Minecraft121SettingsCanonicalizerTest {
                     ()->assertEquals(3,effective.size(),"RESOLVED effective components有3個"),
                     ()->assertTrue(canonical.edges().stream().noneMatch(e->e.from().kind()==Minecraft121SettingsGraph.Kind.REGISTRY
                             &&(e.from().registry().equals("minecraft:block")||e.from().registry().equals("minecraft:item"))),
-                            "BLOCK／ITEM leaf沒有出發邊，所以沒有Block↔Item邊"));
+                            "這個模板的BLOCK leaf與ITEM leaf（sapling的default只有不帶ref的已審型別）沒有出發邊，所以沒有Block↔Item邊"));
             // raw count 9→8：覆寫同一個saved來源；只改模板內容，canonical須改變，ITEM leaf的payload不受count影響。
             var changed=raw.copy();var firstStack=templateItemStacks(changed).get(0);
             assertEquals(9,firstStack.getInt("count"),"fixture前提：第一疊count為9");firstStack.putInt("count",8);
@@ -1805,12 +1768,6 @@ class Minecraft121SettingsCanonicalizerTest {
     }
     private static net.minecraft.registry.RegistryKey<net.minecraft.entity.effect.StatusEffect> effectKey(String id) {
         return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.STATUS_EFFECT,net.minecraft.util.Identifier.of(id));
-    }
-    private static Minecraft121SettingsGraph.Key attributeNode(String id) {
-        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:attribute",id);
-    }
-    private static Minecraft121SettingsGraph.Key effectNode(String id) {
-        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:mob_effect",id);
     }
     /** ATTRIBUTE leaf的字面值：只有Contract（EntityAttribute沒有value codec，Java值不入FP）。 */
     private static NbtCompound expectedAttributeLeaf() {

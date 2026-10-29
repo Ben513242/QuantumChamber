@@ -37,11 +37,13 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷（含D1b-3-0 Step0的殘餘風險收斂，以及D1b-3a的lease
- * registries identity與8型literal／空DEFAULT component）。
- * 只讀全域static registry：不建立或註冊Block／Item，不populate tag；不引用ModBlocks／ModItems。唯一的instance欄位變更是
- * itemLeafDefaultComponentMutationIsCapturedAndRestored（設計§5.5選配，條件寫在該測試），finally以identity還原並assertSame。
- * 共用的fixture組裝（ROOT、blockNode、itemNode、ITEM leaf的lease registries、singleItemTemplate）在Minecraft121RegistryLeafTestFixtures。
+ * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷（含D1b-3-0 Step0的殘餘風險收斂、D1b-3a的lease
+ * registries identity與8型literal／空DEFAULT component，以及D1b-3b的單一分派型別契約、ITEM leaf出邊與ATTRIBUTE／STATUS_EFFECT leaf）。
+ * 只讀全域static registry：不註冊Block／Item，不populate tag；不引用ModBlocks／ModItems。局部物件只有新建的局部registry（不登記到
+ * Registries.REGISTRIES）、foreign的EntityAttribute／StatusEffect子類（建構子不碰registry），以及以Unsafe配置、不跑建構子的foreign
+ * Item（不呼叫Registries.ITEM.createEntry）。唯一的instance欄位變更是itemLeafDefaultComponentMutationIsCapturedAndRestored（設計§5.5
+ * 選配，條件寫在該測試），finally以identity還原並assertSame。共用的fixture組裝（ROOT、各REGISTRY node、ITEM leaf的lease registries、
+ * singleItemTemplate、canonicalNodes）在Minecraft121RegistryLeafTestFixtures。
  */
 class Minecraft121RegistryLeafContractsTest {
     @BeforeAll static void bootstrap() {
@@ -559,9 +561,9 @@ class Minecraft121RegistryLeafContractsTest {
     }
     /**
      * D1b-3b新增與放寬的3型（設計§2.2）：非空ATTRIBUTE_MODIFIERS（放寬D1b-2的「必須為空」；每個attribute都是named Reference）、
-     * FOOD（using_converts_to的ItemStack沒有patch且count為1；每個effect的type是named Reference，且不帶hidden_effect）、TOOL（每個
-     * rule都是direct list，沒有tag rule）。以typed record與instanceof判定（與production的exact class判定是不同的表示法）；hidden_effect
-     * 沒有公開accessor，測試端以plain NbtOps編碼該effect後檢查鍵。
+     * FOOD（using_converts_to的ItemStack沒有patch且count為1；每個effect的type是named Reference）、TOOL（每個rule都是direct list，沒有
+     * tag rule）。以typed record與instanceof判定（與production的exact class判定是不同的表示法）。hidden_effect不列條件：
+     * StatusEffectEntry.effect()回傳不含hidden_effect的copy（javap），公開API下觀察不到，也不會被編碼或使用。
      */
     private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> d1b3bReviewedItemDefaults() {
         return java.util.Map.of(
@@ -569,8 +571,7 @@ class Minecraft121RegistryLeafContractsTest {
                         &&modifiers.modifiers().stream().allMatch(entry->entry.attribute() instanceof net.minecraft.registry.entry.RegistryEntry.Reference<?>),
                 DataComponentTypes.FOOD,value->value instanceof net.minecraft.component.type.FoodComponent food
                         &&food.usingConvertsTo().map(stack->stack.getCount()==1&&stack.getComponentChanges().isEmpty()).orElse(true)
-                        &&food.effects().stream().allMatch(entry->entry.effect().getEffectType() instanceof net.minecraft.registry.entry.RegistryEntry.Reference<?>
-                                &&!hasHiddenEffect(entry.effect())),
+                        &&food.effects().stream().allMatch(entry->entry.effect().getEffectType() instanceof net.minecraft.registry.entry.RegistryEntry.Reference<?>),
                 DataComponentTypes.TOOL,value->value instanceof net.minecraft.component.type.ToolComponent tool
                         &&tool.rules().stream().allMatch(rule->rule.blocks().getTagKey().isEmpty()));
     }
@@ -922,22 +923,46 @@ class Minecraft121RegistryLeafContractsTest {
                 ()->assertAll("subcase=inline BLOCK",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
                         ()->seam(Items.DIAMOND,block.apply(RegistryEntry.of(Blocks.COBWEB))))));
     }
-    @Test void itemLeafFoodValueConditionsRejectPatchCountHiddenEffectAndForeignInstance() {
+    /**
+     * 計數的StatusEffectInstance子類：getter與Object method分開計數。getter是codec的asParameters與食用時會呼叫的method；hashCode／
+     * equals則由FOOD codec外層的CodecCache（以value為key）經record的ObjectMethods呼叫到。
+     */
+    static final class CountingEffectInstance extends StatusEffectInstance {
+        static final java.util.concurrent.atomic.AtomicInteger GETTERS=new java.util.concurrent.atomic.AtomicInteger();
+        static final java.util.concurrent.atomic.AtomicInteger OBJECT_METHODS=new java.util.concurrent.atomic.AtomicInteger();
+        CountingEffectInstance(RegistryEntry<net.minecraft.entity.effect.StatusEffect> type,int duration) {super(type,duration);}
+        @Override public RegistryEntry<net.minecraft.entity.effect.StatusEffect> getEffectType() {GETTERS.incrementAndGet();return super.getEffectType();}
+        @Override public int getDuration() {GETTERS.incrementAndGet();return super.getDuration();}
+        @Override public int getAmplifier() {GETTERS.incrementAndGet();return super.getAmplifier();}
+        @Override public boolean isAmbient() {GETTERS.incrementAndGet();return super.isAmbient();}
+        @Override public boolean shouldShowParticles() {GETTERS.incrementAndGet();return super.shouldShowParticles();}
+        @Override public boolean shouldShowIcon() {GETTERS.incrementAndGet();return super.shouldShowIcon();}
+        @Override public boolean equals(Object other) {OBJECT_METHODS.incrementAndGet();return super.equals(other);}
+        @Override public int hashCode() {OBJECT_METHODS.incrementAndGet();return super.hashCode();}
+    }
+    @Test void itemLeafFoodRejectsPatchedOrCountedConvertsToAndReadsEffectsThroughNativeCopy() {
         // food的值條件（設計§2.2、設計審查M5）：using_converts_to的ItemStack必須沒有patch，且count為1（UNCOUNTED_CODEC不編count，
-        // 非1的count不會進payload，所以拒）；effect必須是exact原生StatusEffectInstance（codec的asParameters會呼叫可覆寫的getter），
-        // 且不帶hidden_effect（沒有公開accessor，以encoded形狀判定；encoded須等於重建值的encode，所以兩邊都驗到）。
+        // 非1的count不會進payload，所以拒）。effect：固定JAR的StatusEffectEntry.effect()回傳new StatusEffectInstance(this.effect)，copy
+        // 只以getfield讀欄位、不複製hiddenEffect（javap）；codec與食用都經這個copy。所以hidden_effect與原物件的class在公開API下都觀察
+        // 不到：帶hidden_effect的effect被接受，payload等於不帶它的同值；子類的effect也被接受，payload等於原生同值，而且擷取全程不呼叫
+        // 子類的getter。殘餘風險（ItemComponentContracts的FOOD契約Javadoc）：FOOD codec外層的CodecCache以value為key，會經record的
+        // ObjectMethods呼叫到原物件的hashCode／equals；次數取決於cache狀態，只輸出D1B3B_FOOD_EFFECT_OBJECT_METHOD_CALLS，不斷言。
         // 值都是局部新物件（ItemStack.set只改該stack自己的ComponentMapImpl），不改動全域狀態。
         var patched=new ItemStack(Items.BOWL);patched.set(DataComponentTypes.MAX_STACK_SIZE,1);
+        var plain=new StatusEffectInstance(StatusEffects.SPEED,100,0,false,true,true);
         var hidden=new StatusEffectInstance(StatusEffects.SPEED,100,0,false,true,true,new StatusEffectInstance(StatusEffects.SPEED,200));
-        var subclass=new StatusEffectInstance(StatusEffects.SPEED,100){};
+        var counting=new CountingEffectInstance(StatusEffects.SPEED,100);
         java.util.function.BiFunction<Optional<ItemStack>,List<FoodComponent.StatusEffectEntry>,ComponentMap> food=(convertsTo,effects)->
                 only(DataComponentTypes.FOOD,new FoodComponent(6,7.2f,false,1.6f,convertsTo,effects));
+        java.util.function.Function<StatusEffectInstance,ComponentMap> withEffect=effect->food.apply(Optional.empty(),
+                List.of(new FoodComponent.StatusEffectEntry(effect,1f)));
         var bowl=Optional.of(new ItemStack(Items.BOWL));
         assertAll(
                 ()->assertAll("fixture前提",
                         ()->assertFalse(patched.getComponentChanges().isEmpty(),"patched有patch"),
-                        ()->assertTrue(hasHiddenEffect(hidden),"hidden帶hidden_effect"),
-                        ()->assertNotSame(StatusEffectInstance.class,subclass.getClass(),"subclass不是exact class")),
+                        ()->assertTrue(hasHiddenEffect(hidden),"hidden本身帶hidden_effect"),
+                        ()->assertFalse(hasHiddenEffect(new FoodComponent.StatusEffectEntry(hidden,1f).effect()),"effect()的copy不含hidden_effect"),
+                        ()->assertNotSame(StatusEffectInstance.class,counting.getClass(),"counting不是exact class")),
                 ()->assertAll("subcase=正向對照",()->assertRefs(List.of(
                         new ExpectedRef("components/minecraft:food/using_converts_to/id",Items.BOWL.getRegistryEntry()),
                         new ExpectedRef("components/minecraft:food/effects/0/effect/id",StatusEffects.SPEED)),
@@ -947,10 +972,17 @@ class Minecraft121RegistryLeafContractsTest {
                         ()->seam(Items.DIAMOND,food.apply(Optional.of(patched),List.of())))),
                 ()->assertAll("subcase=using_converts_to的count為2",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
                         ()->seam(Items.DIAMOND,food.apply(Optional.of(new ItemStack(Items.BOWL,2)),List.of())))),
-                ()->assertAll("subcase=effect帶hidden_effect",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
-                        ()->seam(Items.DIAMOND,food.apply(Optional.empty(),List.of(new FoodComponent.StatusEffectEntry(hidden,1f)))))),
-                ()->assertAll("subcase=StatusEffectInstance的匿名子類",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
-                        ()->seam(Items.DIAMOND,food.apply(Optional.empty(),List.of(new FoodComponent.StatusEffectEntry(subclass,1f)))))));
+                ()->assertAll("subcase=effect帶hidden_effect（effect()的copy不含它）",()->assertEquals(seam(Items.DIAMOND,withEffect.apply(plain)),
+                        seam(Items.DIAMOND,withEffect.apply(hidden)),"payload等於不帶hidden_effect的同值")),
+                ()->assertAll("subcase=StatusEffectInstance的子類（effect()的copy是exact原生）",()->{
+                    var expected=seam(Items.DIAMOND,withEffect.apply(plain));
+                    var map=withEffect.apply(counting);
+                    CountingEffectInstance.GETTERS.set(0);CountingEffectInstance.OBJECT_METHODS.set(0);
+                    var payload=seam(Items.DIAMOND,map);
+                    System.out.println("D1B3B_FOOD_EFFECT_OBJECT_METHOD_CALLS calls="+CountingEffectInstance.OBJECT_METHODS.get()
+                            +" note=CodecCache-hashCode-equals-on-unverifiable-stored-effect");
+                    assertAll(()->assertEquals(expected,payload,"payload等於原生同值"),
+                            ()->assertEquals(0,CountingEffectInstance.GETTERS.get(),"擷取全程不呼叫子類的getter"));}));
     }
 
     /**
@@ -989,6 +1021,66 @@ class Minecraft121RegistryLeafContractsTest {
         assertAll(
                 ()->assertEquals("NATIVE_DEFINITION_SOURCE",failure.getMessage()),
                 ()->assertEquals(0,ForeignConvertsToItem.CALLS.get(),"source檢查之前不得呼叫foreign item的任何virtual method"));
+    }
+
+    /** foreign的EntityAttribute子類：行為正常，只有source不是固定JAR；建構子只寫欄位，不碰任何registry（javap）。 */
+    static final class ForeignAttribute extends net.minecraft.entity.attribute.EntityAttribute {
+        ForeignAttribute() {super("attribute.test.foreign",1.0);}
+    }
+    /** foreign的StatusEffect子類：同上；建構子只建本物件自己的map與欄位，不碰任何registry（javap）。 */
+    static final class ForeignEffect extends net.minecraft.entity.effect.StatusEffect {
+        ForeignEffect() {super(net.minecraft.entity.effect.StatusEffectCategory.NEUTRAL,0);}
+    }
+    /** 局部registry（新物件，已freeze，不登記到Registries.REGISTRIES）中key對應value的entry。 */
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private static RegistryEntry.Reference<?> localEntry(net.minecraft.registry.RegistryKey<? extends net.minecraft.registry.Registry<?>> registry,
+            RegistryKey<?> key,Object value) {
+        var local=new net.minecraft.registry.SimpleRegistry((RegistryKey)registry,com.mojang.serialization.Lifecycle.stable());
+        local.add((RegistryKey)key,value,net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);local.freeze();
+        return (RegistryEntry.Reference<?>)local.getEntry((RegistryKey)key).orElseThrow();
+    }
+    @Test void attributeAndStatusEffectLeavesCheckSourceBeforeIdentity() {
+        // D1b-3設計審查M3：兩個leaf的步驟是registry identity → class／source（instanceof基底類別加上value class的原生source）→ node與
+        // entry identity →（STATUS_EFFECT）feature → payload。vanilla使用子類（generic.armor是ClampedEntityAttribute、regeneration是
+        // RegenerationStatusEffect），所以正向對照用子類。foreign子類放在局部registry，lease仍是全域registry，所以步驟1通過、停在步驟2的
+        // NATIVE_DEFINITION_SOURCE；拿掉source檢查時會落到步驟3的STATIC_LEAF_IDENTITY_MISMATCH（全域registry裡沒有這個value）。
+        var registries=withItemLeafRegistries();
+        var armorKey=EntityAttributes.GENERIC_ARMOR.getKey().orElseThrow();var armor=Registries.ATTRIBUTE.getEntry(armorKey).orElseThrow();
+        var regenerationKey=StatusEffects.REGENERATION.getKey().orElseThrow();
+        var regeneration=Registries.STATUS_EFFECT.getEntry(regenerationKey).orElseThrow();
+        var armorNode=attributeNode("minecraft:generic.armor");var regenerationNode=effectNode("minecraft:regeneration");
+        var attributeLeaf=new NbtCompound();attributeLeaf.putString("Contract","quantumchamber:m6-static-attribute-leaf-v1");
+        var effectLeaf=new NbtCompound();effectLeaf.putString("Contract","quantumchamber:m6-static-status-effect-leaf-v1");
+        effectLeaf.put("RequiredFeatures",strings("minecraft:vanilla"));
+        java.util.function.Function<DynamicRegistryManager,Minecraft121RegistryLeafContracts> leavesWith=r->leaves(new Minecraft121SettingsGraph(),r);
+        assertAll(
+                ()->assertAll("fixture前提：vanilla值是子類",
+                        ()->assertInstanceOf(net.minecraft.entity.attribute.ClampedEntityAttribute.class,armor.value()),
+                        ()->assertNotSame(net.minecraft.entity.effect.StatusEffect.class,regeneration.value().getClass())),
+                ()->assertAll("subcase=正向對照",
+                        ()->assertEquals(attributeLeaf,leavesWith.apply(registries).attribute(armorNode,armorKey,armor)),
+                        ()->assertEquals(effectLeaf,leavesWith.apply(registries).statusEffect(regenerationNode,regenerationKey,regeneration))),
+                ()->assertAll("subcase=foreign子類（局部registry的entry）",
+                        ()->rejects("NATIVE_DEFINITION_SOURCE",()->leavesWith.apply(registries).attribute(armorNode,armorKey,
+                                localEntry(RegistryKeys.ATTRIBUTE,armorKey,new ForeignAttribute()))),
+                        ()->rejects("NATIVE_DEFINITION_SOURCE",()->leavesWith.apply(registries).statusEffect(regenerationNode,regenerationKey,
+                                localEntry(RegistryKeys.STATUS_EFFECT,regenerationKey,new ForeignEffect())))),
+                ()->assertAll("subcase=vanilla值放在局部registry的entry（不是全域registry的entry）",
+                        ()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",()->leavesWith.apply(registries).attribute(armorNode,armorKey,
+                                localEntry(RegistryKeys.ATTRIBUTE,armorKey,armor.value()))),
+                        ()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",()->leavesWith.apply(registries).statusEffect(regenerationNode,regenerationKey,
+                                localEntry(RegistryKeys.STATUS_EFFECT,regenerationKey,regeneration.value())))),
+                ()->assertAll("subcase=node與key不符",
+                        ()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",()->leavesWith.apply(registries).attribute(attributeNode("minecraft:generic.luck"),armorKey,armor)),
+                        ()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",()->leavesWith.apply(registries).statusEffect(itemNode("minecraft:regeneration"),
+                                regenerationKey,regeneration))),
+                ()->assertAll("subcase=lease的registry缺席或是另一個物件",
+                        ()->rejects("REQUIRED_REGISTRY_MISSING",()->leavesWith.apply(itemLeafRegistriesWithout(RegistryKeys.ATTRIBUTE)).attribute(armorNode,armorKey,armor)),
+                        ()->rejects("STATIC_REGISTRY_OWNER_MISMATCH",()->leavesWith.apply(itemLeafRegistriesWithForeign(RegistryKeys.ATTRIBUTE)).attribute(armorNode,armorKey,armor)),
+                        ()->rejects("REQUIRED_REGISTRY_MISSING",()->leavesWith.apply(itemLeafRegistriesWithout(RegistryKeys.STATUS_EFFECT))
+                                .statusEffect(regenerationNode,regenerationKey,regeneration)),
+                        ()->rejects("STATIC_REGISTRY_OWNER_MISMATCH",()->leavesWith.apply(itemLeafRegistriesWithForeign(RegistryKeys.STATUS_EFFECT))
+                                .statusEffect(regenerationNode,regenerationKey,regeneration))));
     }
 
     /** 測試端獨立走訪（typed record accessor，不呼叫production的契約或抽取器）：一條ref寫成「path | registry | id」。 */
@@ -1187,33 +1279,48 @@ class Minecraft121RegistryLeafContractsTest {
     /**
      * C1d-D1b-3 closure層級的ITEM成本診斷（設計§6.3），不gating：不開lease、不斷言數量或時間，也不用Assumptions跳過；drain的Failure
      * 只記碼。一個graph、一個closure（production形狀：LeafContracts在closure建構時建立，跨leaf共用），對選定的minecraft ITEM各
-     * reference一次後drain並finish；計時涵蓋closure建構、reference、drain與finish。兩組item由測試端oracle選出（不呼叫production，
-     * 所以選取本身不暖機codec）：d1b2-reviewed只含D1b-2已審型別（換源前後可比的同一組），reviewed含目前全部已審型別。pass0是本測試
-     * 第一次closure（同JVM其他測試可能已暖機部分codec，所以只是本測試的冷值），pass1是暖值。另量ops建立成本：換源前每個leaf都建一次
-     * 只含全域static registries的ops，換源後每個closure只建一次lease ops。目前的ITEM leaf沒有出邊也沒有tag，不涉及H-TAG的下界。
+     * reference一次後drain並finish；計時涵蓋closure建構、reference、drain與finish，不含之後的canonical解碼。
+     *
+     * <p>取樣的調整（D1b-3a spec M2）：設計§6.3寫「對全部minecraft ITEM執行reference」，但只要有一個被拒item，drain就會fail closed、
+     * 整輪量不到東西，所以三組item都由測試端oracle選出（不呼叫production，選取本身不暖機codec）：d1b2-reviewed只含D1b-2已審型別
+     * （換源前後可比的同一組），d1b3a-reviewed是D1b-3a為止的已審型別（3b之前的那一組），reviewed是目前全部已審型別。node與edge數
+     * 從finish後的canonical解出（量測值，不是由item數推算）；失敗時印NA。另印reviewed組中ITEM node出邊依target registry的條數。
+     * pass0是本測試第一次closure（同JVM其他測試可能已暖機部分codec，所以只是本測試的冷值），pass1是暖值。另量ops建立成本：換源前
+     * 每個leaf都建一次只含全域static registries的ops，換源後每個closure只建一次lease ops（兩者都是lazy，只量到物件配置）。D1b-3b
+     * 起ITEM leaf有出邊（ATTRIBUTE、STATUS_EFFECT、ITEM、BLOCK），但仍沒有tag，不涉及H-TAG的下界。
      */
     @Test void staticItemClosureCostDiagnostic() throws Exception {
         var groups=new java.util.LinkedHashMap<String,java.util.List<net.minecraft.registry.RegistryKey<Item>>>();
-        groups.put("d1b2-reviewed",new java.util.ArrayList<>());groups.put("reviewed",new java.util.ArrayList<>());
-        var d1b2=d1b2ReviewedItemDefaults();var reviewed=reviewedItemDefaults();
+        var tables=new java.util.LinkedHashMap<String,java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>>>();
+        tables.put("d1b2-reviewed",d1b2ReviewedItemDefaults());tables.put("d1b3a-reviewed",d1b3aCumulativeItemDefaults());
+        tables.put("reviewed",reviewedItemDefaults());
+        for(var name:tables.keySet())groups.put(name,new java.util.ArrayList<>());
         for(var entry:(Iterable<net.minecraft.registry.entry.RegistryEntry.Reference<Item>>)Registries.ITEM.streamEntries()::iterator) {
             if(!entry.registryKey().getValue().getNamespace().equals("minecraft"))continue;
-            if(allReviewed(entry.value(),d1b2,null))groups.get("d1b2-reviewed").add(entry.registryKey());
-            if(allReviewed(entry.value(),reviewed,null))groups.get("reviewed").add(entry.registryKey());
+            for(var table:tables.entrySet())if(allReviewed(entry.value(),table.getValue(),null))groups.get(table.getKey()).add(entry.registryKey());
         }
         try(var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of())) {
             for(var group:groups.entrySet())for(int pass=0;pass<2;pass++) {
-                var keys=group.getValue();String code="ACCEPTED";long bytes=0;
+                var keys=group.getValue();String code="ACCEPTED";byte[] finished=null;
                 long start=System.nanoTime();
                 try {
                     var graph=new Minecraft121SettingsGraph();graph.payload(ROOT,NbtInt.of(1));
                     var closure=new Minecraft121RegistryClosure(graph,itemRegistries(),resources);
                     for(int i=0;i<keys.size();i++)closure.reference(ROOT,"items/"+i,keys.get(i));
-                    closure.drain();bytes=graph.finish().length;
+                    closure.drain();finished=graph.finish();
                 } catch(Minecraft121SettingsGraph.Failure failure){code=failure.getMessage();}
                 long elapsed=System.nanoTime()-start;
+                String nodes="NA",edges="NA",itemOutEdges="NA";
+                if(finished!=null) {
+                    var canonical=canonicalNodes(finished);nodes=String.valueOf(canonical.nodes().size());edges=String.valueOf(canonical.edges().size());
+                    var byTarget=new java.util.TreeMap<String,Integer>();
+                    for(var edge:canonical.edges())if(edge.from().kind()==Minecraft121SettingsGraph.Kind.REGISTRY
+                            &&edge.from().registry().equals("minecraft:item"))byTarget.merge(edge.target().registry(),1,Integer::sum);
+                    itemOutEdges=byTarget.toString();
+                }
                 System.out.println("D1B3_ITEM_CLOSURE_COST group="+group.getKey()+" pass="+(pass==0?"cold":"warm")+" items="+keys.size()
-                        +" nodes="+(keys.size()+1)+" edges="+keys.size()+" result="+code+" ns="+elapsed+" canonicalBytes="+bytes);
+                        +" nodes="+nodes+" edges="+edges+" itemOutEdgesByTarget="+itemOutEdges+" result="+code+" ns="+elapsed
+                        +" canonicalBytes="+(finished==null?0:finished.length)+" countSource=measured-from-canonical");
             }
         }
         int rounds=10000;long sink=0;var lease=itemRegistries();

@@ -1,8 +1,11 @@
 package dev.quantumchamber.universe;
 
+import static org.junit.jupiter.api.Assertions.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtInt;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.registry.DynamicRegistryManager;
@@ -13,11 +16,11 @@ import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.SimpleRegistry;
 
 /**
- * C1d-D1b static registry leaf測試共用的fixture組裝（LeafTest與Canon共用）：ROOT、BLOCK／ITEM的REGISTRY node key、ITEM leaf
- * 需要的lease registries，以及合成的單一item模板。這裡只放fixture的組裝；預期值的helper（expectedBlockLeaf、expectedItemLeaf、
- * literal）維持在各測試類別內各自獨立，才能保留oracle的獨立性。不引用ModBlocks／ModItems，也不寫入全域狀態（只讀全域static
- * registry；局部registry都是新物件，不登記到Registries.REGISTRIES）。singleItemTemplate讀SharedConstants.getGameVersion()，
- * 呼叫前須先SharedConstants.createGameVersion()（兩個測試類別都在@BeforeAll完成）。
+ * C1d-D1b static registry leaf測試共用的fixture組裝（LeafTest與Canon共用）：ROOT、BLOCK／ITEM／ATTRIBUTE／STATUS_EFFECT的REGISTRY
+ * node key、ITEM leaf需要的lease registries、合成的單一item模板，以及canonical bytes的測試端讀取（canonicalNodes）。這裡只放fixture
+ * 的組裝與讀取；預期值的helper（expectedBlockLeaf、expectedItemLeaf、literal）維持在各測試類別內各自獨立，才能保留oracle的獨立性。
+ * 不引用ModBlocks／ModItems，也不寫入全域狀態（只讀全域static registry；局部registry都是新物件，不登記到Registries.REGISTRIES）。
+ * singleItemTemplate讀SharedConstants.getGameVersion()，呼叫前須先SharedConstants.createGameVersion()（兩個測試類別都在@BeforeAll完成）。
  */
 final class Minecraft121RegistryLeafTestFixtures {
     private Minecraft121RegistryLeafTestFixtures() {}
@@ -31,6 +34,55 @@ final class Minecraft121RegistryLeafTestFixtures {
     }
     static Minecraft121SettingsGraph.Key itemNode(String id) {
         return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,RegistryKeys.ITEM.getValue().toString(),id);
+    }
+    static Minecraft121SettingsGraph.Key attributeNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,RegistryKeys.ATTRIBUTE.getValue().toString(),id);
+    }
+    static Minecraft121SettingsGraph.Key effectNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,RegistryKeys.STATUS_EFFECT.getValue().toString(),id);
+    }
+
+    record CanonicalEdge(Minecraft121SettingsGraph.Key from,String path,Minecraft121SettingsGraph.Key target,String aliasScope,String use) {}
+    record CanonicalGraph(java.util.Map<Minecraft121SettingsGraph.Key,byte[]> nodes,List<CanonicalEdge> edges) {}
+    /**
+     * 測試用的canonical讀取：依Graph.finish的格式（DOMAIN、node數、每個node的key與payload、edge數、每條edge）
+     * 與Encoder.nbt的編碼，解出node key、payload bytes與edges；必須恰好讀完全部bytes。
+     */
+    static CanonicalGraph canonicalNodes(byte[] bytes) {
+        var in=java.nio.ByteBuffer.wrap(bytes);
+        assertEquals("quantumchamber:m6:settings-graph:v1",canonicalText(in));
+        var nodes=new java.util.LinkedHashMap<Minecraft121SettingsGraph.Key,byte[]>();
+        for(int i=0,count=in.getInt();i<count;i++) {
+            var key=canonicalKey(in);int start=in.position();skipCanonicalNbt(in);
+            assertNull(nodes.put(key,Arrays.copyOfRange(bytes,start,in.position())),"node key不得重複");
+        }
+        var edges=new ArrayList<CanonicalEdge>();
+        for(int i=0,count=in.getInt();i<count;i++)
+            edges.add(new CanonicalEdge(canonicalKey(in),canonicalText(in),canonicalKey(in),canonicalText(in),canonicalText(in)));
+        assertFalse(in.hasRemaining(),"canonical bytes須恰好讀完");
+        return new CanonicalGraph(nodes,edges);
+    }
+    private static String canonicalText(java.nio.ByteBuffer in) {
+        byte[] value=new byte[in.getInt()];in.get(value);return new String(value,java.nio.charset.StandardCharsets.UTF_8);
+    }
+    private static Minecraft121SettingsGraph.Key canonicalKey(java.nio.ByteBuffer in) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.valueOf(canonicalText(in)),canonicalText(in),canonicalText(in));
+    }
+    private static void skipCanonicalNbt(java.nio.ByteBuffer in) {
+        byte type=in.get();
+        switch(type) {
+            case NbtElement.BYTE_TYPE -> in.get();
+            case NbtElement.SHORT_TYPE -> in.getShort();
+            case NbtElement.INT_TYPE,NbtElement.FLOAT_TYPE -> in.getInt();
+            case NbtElement.LONG_TYPE,NbtElement.DOUBLE_TYPE -> in.getLong();
+            case NbtElement.STRING_TYPE -> canonicalText(in);
+            case NbtElement.BYTE_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+count);}
+            case NbtElement.INT_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+4*count);}
+            case NbtElement.LONG_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+8*count);}
+            case NbtElement.LIST_TYPE -> {for(int i=0,count=in.getInt();i<count;i++)skipCanonicalNbt(in);}
+            case NbtElement.COMPOUND_TYPE -> {for(int i=0,count=in.getInt();i<count;i++){canonicalText(in);skipCanonicalNbt(in);}}
+            default -> fail("未知的canonical NBT type "+type);
+        }
     }
 
     /**
