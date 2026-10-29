@@ -850,3 +850,50 @@ C1～C15 全部由 controller 依審查定案，不需要使用者裁示。
 - 3c：M2 的 Named 部分、M6、M7；
 - 3d：M3、M8；
 - M10：在結案 docs 中修正。
+
+### 2026-10-30：D1b-3-0（Step0）結案
+
+**commit**：`73acdaf`（RED 測試）、`2823985a30be5dc0571139ff0913ee4a32127b77`（fix）。改動五個檔：LeafContracts、Closure（只改 Javadoc）、CanonicalizerTest、LeafContractsTest，以及新增的 `Minecraft121RegistryLeafTestFixtures`。這一輪不新增 component 型別，也不更換 codec ops。
+
+**行為**，對應設計 §5 的 S0-1～S0-9：
+- S0-1：新增 `requireReviewedDefaults`，處理順序如下：
+  - 先驗容器本身的 source；
+  - 迭代時，`Failure` 原樣透傳，其他 RuntimeException 改碼為 `UNSUPPORTED_ITEM_DEFAULT_COMPONENT` 並 `initCause`；
+  - roundtrip 之後保留 `parse` 重建的原生 map，再驗一次白名單。
+  
+  這樣同時關閉兩種繞過：巢狀 List 自稱為空、迭代卻吐出元素；容器兩次迭代的內容不一致。
+  
+  容器的 source 檢查只擋直接 foreign 的容器。原生包裝（例如 `ComponentMapImpl`、`ComponentMap.of`／`filtered`）會委派到外部 map，它們的內容一致性由「重建後再驗」保證，所以仍然 fail closed。
+- S0-2：`executedOwnerClasses` 加入 SpawnEggItem 分支。以 `getEntityType(ItemStack.EMPTY)` 取得 EntityType，並驗它的 source。
+- S0-3：新增 `everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes`。測試端獨立列出已審的 8 型與值條件，斷言每個 vanilla item 只能 ACCEPTED，或因白名單外型別被拒；不斷言數量。
+- S0-4：成本診斷拆成 BLOCK、ITEM 兩個 `@Test`，共用 `measureLeafCosts`。**退場條件**：D1b-3 結案或 I-1 定案，以先到者為準。屆時刪除逐行的 `*_COST_ENTRY` 輸出，只留 SUMMARY、CODES、REJECTED_TYPES、COLD／WARM。不改用 system property 開關，因為 test JVM 拿不到 Gradle 的 `-D`。
+- S0-5：抽出 `requireStaticRegistry`；`blockPayload` 與 `itemPayload` 兩個 seam 開頭都自驗 source。ITEM seam 的自驗沒有行為層級的 RED，因為測試無法建立 foreign Item；這是殘餘風險，靠 spec review 逐行確認。
+- S0-6：變更測試在 try 之前先 `assertInstanceOf(ItemAccessor.class,…)`。
+- S0-7：fixture 去重，並把測試改名。
+- S0-8、S0-9：只改 Javadoc。
+
+**測試數**：LeafTest 從 15 增為 21，Canon 從 109 增為 110。
+
+**證據**（ignored，`task-08/8b2-c1d-d1b30-evidence/`）：
+- 具名 RED：RED2-LEAF `focused-c1d-d1b30-red2-leaf-3d41ffbe…` 19/4，RED-CANON `focused-c1d-d1b30-red-canon-c2ce82ff…` 110/1。
+- GREEN：leaf 21/0，canon 110/0。
+- 5 個突變見證（W-S0-1A／1B／1C／2／3）都能鑑別，只改 LeafContracts，跑完已還原。
+- 行為不變：ITEM 仍是 1158 件 ACCEPTED、175 件被拒，BLOCK 仍是 1060 件全部 ACCEPTED。
+
+**乾淨 `2823985` 驗證**：
+- M6Compile PASS。
+- Canon focused `focused-c1d-d1b30-clean-canon-1-725f946130a94cf89cecce3a40c6d8e9`、`focused-c1d-d1b30-clean-canon-2-bbb494b08469411bb911ca62c438438f` 皆 110/110。
+- LeafTest focused `focused-c1d-d1b30-clean-leaf-1-95dd6351fb1a47efbd6447f2df286bf3`、`focused-c1d-d1b30-clean-leaf-2-2b4e8776997d4aba9eaedf950d7bfc6d` 皆 21/21。
+- 完整 `run-all-42034bb2a7144d8bb4841f9a10b242c4` 自然 END ALL exit0：JUnit893（0 fail／0 error／2 既有 skip）、default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2、mainOnly PASS、testmodHits0。console.log SHA256 `0615f4db0450f7f7f2268ad78896ae838c596c156e5ed349d820cbd1b767b352`，summary.json SHA256 `87d6faae33b2d58976599cbdcf96fbd7b17ad9a50003429e192b1c7e18c0ea44`。
+- 本機 CI oracle 不等於遠端 CI；`2823985` 的遠端 CI 要等本筆 push 之後才讀回。
+
+**全新審查**：
+- spec C0/I0/M2 ✅（`D1B30-SPEC-REVIEW.md`，SHA256 `67e96b84f69ab4f49b66cb60596fce17dc12029d755fd19710f82f19b299631e`）。
+- quality C0/I0/M3 Approved（`D1B30-QUALITY-REVIEW.md`，SHA256 `5ad4746699fc28b0c64612f3347cad35884d2f8b8b3464990e7328a710edcee9`）。fail-closed 完整：payload 一律是 `encoded`，且必須等於重建 map 的 encode 結果，而重建 map 已經再驗過白名單。
+
+五項 Minor 併入 3a：
+- `stats()` 遇到空陣列會丟 AIOOBE（既有行為）；
+- 類別 Javadoc 補上 SpawnEggItem 的委派；
+- 容器 source 檢查的 Javadoc 改寫為實際擋下的範圍；
+- SpawnEgg 前提 `assertSame` 恆真（requiredFeatures 是同一個 VANILLA 實例），改寫訊息並引用 javap；ISE 斷言改成檢查訊息；
+- Javadoc 改以 spec 章節引用、不用行號；Fixtures 註明需要先 `createGameVersion`。

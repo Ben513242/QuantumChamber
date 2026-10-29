@@ -603,3 +603,8 @@
 
 - D1b-1 遠端 CI run `40875796265`（`4b16cb0`）兩 job success。
 - D1b-2 code `3fbe626`：ItemAccessor setup probe 成立，具名 RED→GREEN，乾淨 Canon focused 109/109×2、LeafTest 15/15×2，完整 `run-all-cb0f99493892472ab1f63860f3ed3ad4` 自然 END ALL0／JUnit886；spec C0/I0/M3、quality C0/I0/M5。`3fbe626` 的遠端 CI 待本筆 push 後讀回。下一步 D1b-3（引用其他 registry 的 default component），須先設計並審查。細節見 M6 note 末節。
+
+### 2026-10-30：M6 D1b-3 設計放行、D1b-3-0（Step0）結案，接 3a
+
+- D1b-2 遠端 CI run `40888610474`（`b6004de`）兩 job success。D1b-3 設計經全新設計審查 C0/I0/M10 放行。
+- D1b-3-0 code `2823985`：具名 RED→GREEN，乾淨 Canon focused 110/110×2、LeafTest 21/21×2，完整 `run-all-42034bb2a7144d8bb4841f9a10b242c4` 自然 END ALL0／JUnit893；spec C0/I0/M2、quality C0/I0/M3。`2823985` 的遠端 CI 待本筆 push 後讀回。下一步 3a。細節見 M6 note 末節。

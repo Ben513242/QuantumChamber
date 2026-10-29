@@ -75,3 +75,13 @@
   - component codec 改用 lease registries，並固定證明 static registry 的 identity。
   - 切分：3-0（Step0，9 項）→ 3a（8 型 literal）→ 3b（attribute／food／直接 tool）→ 3c（tool tag，TAG 只展開一次，tag 測試技法）→ 3d（jukebox）。
 - 下一步：D1b-3-0。各子片要帶的審查 Minor 見 M6 note 末節。
+
+### 2026-10-30：D1b-3-0（Step0）結案
+
+- D1b-3-0 code `2823985` 已收斂 D1b-2 的殘餘風險：
+  - roundtrip 之後，對重建的原生 map 再驗一次白名單，關閉「容器說謊」與「巢狀 List 說謊」兩種繞過；
+  - SpawnEggItem 委派的 EntityType 也納入 source 檢查；
+  - 新增 ITEM 拒絕原因的 gating；
+  - 兩個 seam 都自驗 source。
+- 驗證與審查：具名 RED→GREEN，5 個突變見證；乾淨 Canon focused 110/110×2、LeafTest 21/21×2；完整 `run-all-42034bb2a7144d8bb4841f9a10b242c4` 自然 END ALL0／JUnit893；spec C0/I0/M2、quality C0/I0/M3。
+- 下一步：3a。component codec 改用 lease registries，並固定證明 identity（ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、STATUS_EFFECT）；接受 8 型 literal。派工要帶設計審查的 M1、M4，以及 D1b-3-0 兩席審查的 5 項 Minor（見 M6 note）。`2823985` 的遠端 CI 要等本筆 push 後讀回。

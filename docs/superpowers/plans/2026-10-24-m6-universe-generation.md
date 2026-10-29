@@ -358,6 +358,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 2026-10-29 D1b-2快照：D1b-1遠端CI run40875796265（4b16cb0）兩job success。D1b-2 ITEM static leaf code `3fbe626`（138ca88 RED＋3fbe626 feat）：ItemAccessor setup probe成立、具名RED→GREEN、見證3/4/7；乾淨Canon focused109/109×2、LeafTest15/15×2、完整`run-all-cb0f99493892472ab1f63860f3ed3ad4` END ALL0／JUnit886，spec C0/I0/M3、quality C0/I0/M5。1333 vanilla ITEM中1158 ACCEPTED、175因白名單外default component fail closed留D1b-3。BLOCK／ITEM static leaf局部閉合；兩席Minor與殘餘風險（ComponentMap容器與巢狀List、SpawnEggItem委派）併入D1b-3 Step0；D1b-3前置決策為component codec改用lease registries（spec第123行）。
 
+2026-10-30 D1b-3快照：D1b-2遠端CI run40888610474（b6004de）兩job success。D1b-3設計（ignored `task-08/8b2-c1d-design/D1B3-PROPOSAL.md`）經全新設計審查C0/I0/M10放行，切分3-0→3a→3b→3c→3d。D1b-3-0 Step0 code `2823985`（73acdaf RED＋2823985 fix，含新增test fixture檔）：具名RED→GREEN、見證5個；乾淨Canon focused110/110×2、LeafTest21/21×2、完整`run-all-42034bb2a7144d8bb4841f9a10b242c4` END ALL0／JUnit893，spec C0/I0/M2、quality C0/I0/M3。下一步3a。
+
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。
