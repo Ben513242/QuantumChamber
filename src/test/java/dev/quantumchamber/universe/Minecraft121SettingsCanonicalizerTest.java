@@ -1191,7 +1191,9 @@ class Minecraft121SettingsCanonicalizerTest {
                     template,processors.getEntry(processorKey(processorId)).orElseThrow()).apply(
                     net.minecraft.structure.pool.StructurePool.Projection.RIGID),1));
             pools.add(poolKey("test:pool"),new net.minecraft.structure.pool.StructurePool(fallback,weighted),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);pools.freeze();
-            registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(pools,processors,net.minecraft.registry.Registries.BLOCK));
+            // 全域static BLOCK／ITEM只讀放入；模板BE內的item引用由ITEM leaf擷取（缺ITEM時closure會在REQUIRED_REGISTRY_MISSING就停下）。
+            registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(pools,processors,
+                    net.minecraft.registry.Registries.BLOCK,net.minecraft.registry.Registries.ITEM));
             var lookup=net.minecraft.registry.Registries.BLOCK.getReadOnlyWrapper().withFeatureFilter(net.minecraft.resource.featuretoggle.FeatureFlags.DEFAULT_ENABLED_FEATURES);
             var manager=new net.minecraft.structure.StructureTemplateManager(rm,session,net.minecraft.datafixer.Schemas.getFixer(),lookup);
             var contexts=new Minecraft121SettingsContexts(this);contexts.publishInitial(new Minecraft121SettingsContexts.Sources(registries,rm,manager,session,true));context=contexts.acquire(this);
@@ -1207,6 +1209,10 @@ class Minecraft121SettingsCanonicalizerTest {
             }
             java.nio.file.Files.write(savedTemplate(id),bytes);
             return NbtIo.readCompressed(new java.io.ByteArrayInputStream(bytes),NbtSizeTracker.ofUnlimitedBytes());
+        }
+        /** 把合成或改過的模板NBT寫到saved路徑（覆寫）；capture每次都重讀來源並隔離重建，不經manager快取。 */
+        void presentNbt(String id,NbtCompound template) throws Exception {
+            NbtIo.writeCompressed(template,savedTemplate(id));
         }
         private java.nio.file.Path savedTemplate(String id) throws Exception {
             var key=net.minecraft.util.Identifier.of(id);var path=session.getDirectory(net.minecraft.util.WorldSavePath.GENERATED)
@@ -1500,8 +1506,20 @@ class Minecraft121SettingsCanonicalizerTest {
     }
     @Test void blockLeafRejectsForeignSourceBlock() {
         // ModBlocks的既有class init已在bootstrapRegistryFixture觸發（static registry freeze之前）；本測試只讀，不新增任何註冊。
-        var bulkhead=dev.quantumchamber.registry.ModBlocks.QUANTUM_BULKHEAD;var key=blockKey("quantumchamber:quantum_bulkhead");
-        assertSame(bulkhead,net.minecraft.registry.Registries.BLOCK.get(key),"fixture前提：bulkhead已在全域BLOCK registry");
+        // bulkhead帶mod enum MEMBRANE，拿掉source check時仍會在property步驟被拒；chamber_controller只有原生HORIZONTAL_FACING、
+        // Settings複製自bedrock，拿掉source check就會被ACCEPTED，證明source check是只用原生property的mod Block子類的唯一防線。
+        assertAll(
+                ()->assertAll("subcase=quantum_bulkhead",()->foreignSourceBlockRejected(
+                        dev.quantumchamber.registry.ModBlocks.QUANTUM_BULKHEAD,"quantumchamber:quantum_bulkhead")),
+                ()->assertAll("subcase=chamber_controller",()->{
+                    var controller=dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER;
+                    assertEquals(java.util.List.of(net.minecraft.state.property.Properties.HORIZONTAL_FACING),
+                            java.util.List.copyOf(controller.getStateManager().getProperties()),"fixture前提：只有原生HORIZONTAL_FACING");
+                    foreignSourceBlockRejected(controller,"quantumchamber:chamber_controller");}));
+    }
+    private static void foreignSourceBlockRejected(net.minecraft.block.Block block,String id) {
+        var key=blockKey(id);
+        assertSame(block,net.minecraft.registry.Registries.BLOCK.get(key),"fixture前提：已在全域BLOCK registry");
         var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);c.reference(ROOT,"foreign",key);
         rejects("NATIVE_DEFINITION_SOURCE",c::drain);rejects("GRAPH_FAILED",g::finish);
     }
@@ -1565,6 +1583,196 @@ class Minecraft121SettingsCanonicalizerTest {
                         var g=graphWithEdges.apply(needed-1);var c=templateClosure.apply(g);
                         rejects("BUDGET_EDGES",c::drain);rejects("GRAPH_FAILED",g::finish);}));
         }
+    }
+
+    // ===== C1d-D1b-2：ITEM static registry leaf（只經closure的既有API；預期payload由測試端獨立算出，不經production leaf） =====
+    // 不引用ModItems（引用會觸發全域Item註冊；Canon的EndFixture會freeze static registry），也不註冊任何Item或Block。
+    private static final String ITEM_LEAF_CONTRACT="quantumchamber:m6-static-item-leaf-v1";
+    private static net.minecraft.registry.RegistryKey<net.minecraft.item.Item> itemKey(String id) {
+        return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.ITEM,net.minecraft.util.Identifier.of(id));
+    }
+    private static Minecraft121SettingsGraph.Key itemNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,net.minecraft.registry.RegistryKeys.ITEM.getValue().toString(),id);
+    }
+    /**
+     * 測試端獨立算出的ITEM leaf：DefaultComponents以plain NbtOps對item.getComponents()做原生ComponentMap.CODEC編碼
+     * （不經production的RegistryOps、白名單與roundtrip）；vanilla item的RequiredFeatures直接寫成["minecraft:vanilla"]。
+     */
+    private static NbtCompound expectedItemLeaf(net.minecraft.item.Item item) {
+        var leaf=new NbtCompound();leaf.putString("Contract",ITEM_LEAF_CONTRACT);
+        leaf.put("DefaultComponents",net.minecraft.component.ComponentMap.CODEC.encodeStart(NbtOps.INSTANCE,item.getComponents()).getOrThrow());
+        var features=new NbtList();features.add(NbtString.of("minecraft:vanilla"));leaf.put("RequiredFeatures",features);
+        return leaf;
+    }
+    private static java.util.Set<String> itemNodeIds(CanonicalGraph graph) {
+        var ids=new java.util.TreeSet<String>();
+        for(var key:graph.nodes().keySet())
+            if(key.kind()==Minecraft121SettingsGraph.Kind.REGISTRY&&key.registry().equals(net.minecraft.registry.RegistryKeys.ITEM.getValue().toString()))ids.add(key.id());
+        return ids;
+    }
+    /** 模板blocks中每個BE的Items項（回傳的是raw內的活參照；要改值請先copy整份模板）。 */
+    private static java.util.List<NbtCompound> templateItemStacks(NbtCompound raw) {
+        var stacks=new java.util.ArrayList<NbtCompound>();
+        for(var entry:raw.getList("blocks",NbtElement.COMPOUND_TYPE)) {
+            var block=(NbtCompound)entry;
+            if(block.contains("nbt"))for(var item:block.getCompound("nbt").getList("Items",NbtElement.COMPOUND_TYPE))stacks.add((NbtCompound)item);
+        }
+        return stacks;
+    }
+    /**
+     * 在任何lease之外先走一次模板BE item與palette leaf會用到的路徑：ItemStack codec、ComponentMap codec（closure的RegistryOps與
+     * 只含全域static registries的RegistryOps），以及palette block的BLOCK leaf seam；只降低冷成本落在lease內的風險。
+     */
+    private static void warmTemplateItems(PoolFixture f,NbtCompound raw) {
+        var ops=f.registries.getOps(NbtOps.INSTANCE);
+        var staticOps=net.minecraft.registry.DynamicRegistryManager.of(net.minecraft.registry.Registries.REGISTRIES).getOps(NbtOps.INSTANCE);
+        var codec=net.minecraft.component.ComponentMap.CODEC;
+        for(var stack:templateItemStacks(raw)) {
+            var components=net.minecraft.item.ItemStack.CODEC.parse(ops,stack).getOrThrow().getItem().getComponents();
+            codec.parse(ops,codec.encodeStart(ops,components).getOrThrow()).getOrThrow();
+            codec.parse(staticOps,codec.encodeStart(staticOps,components).getOrThrow()).getOrThrow();
+        }
+        for(String name:new java.util.TreeSet<>(paletteNames(raw))) {
+            var block=net.minecraft.registry.Registries.BLOCK.get(net.minecraft.util.Identifier.of(name));
+            Minecraft121RegistryLeafContracts.blockPayload(block,block.getDefaultState());
+        }
+    }
+    /** 經pool引用模板、drain並finish；同一個fixture可重複呼叫（capture每次重讀saved來源）。 */
+    private static byte[] closePoolTemplate(PoolFixture f) {
+        var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();
+        return g.finish();
+    }
+    /**
+     * 合成模板：1×1×1、只有一個container block entity，內含一個不帶raw components的item（Slot 0、count 1）。
+     * DataVersion取目前版本，不觸發datafix；palette只寫Name，由原生toBlockState取default state。
+     */
+    private static NbtCompound singleItemTemplate(String block,String item) {
+        var template=new NbtCompound();
+        template.putInt("DataVersion",net.minecraft.SharedConstants.getGameVersion().getSaveVersion().getId());
+        var size=new NbtList();var pos=new NbtList();
+        for(int i=0;i<3;i++){size.add(NbtInt.of(1));pos.add(NbtInt.of(0));}
+        template.put("size",size);
+        var state=new NbtCompound();state.putString("Name",block);var palette=new NbtList();palette.add(state);template.put("palette",palette);
+        var stack=new NbtCompound();stack.putByte("Slot",(byte)0);stack.putString("id",item);stack.putInt("count",1);
+        var items=new NbtList();items.add(stack);
+        var blockEntity=new NbtCompound();blockEntity.putString("id",block);blockEntity.put("Items",items);
+        var info=new NbtCompound();info.putInt("state",0);info.put("pos",pos);info.put("nbt",blockEntity);
+        var blocks=new NbtList();blocks.add(info);template.put("blocks",blocks);template.put("entities",new NbtList());
+        return template;
+    }
+
+    @Test void itemRegistryLeafClosesNamedReference() {
+        var diamond=net.minecraft.item.Items.DIAMOND;
+        var g=graph();var c=closure(g,net.minecraft.registry.Registries.ITEM);
+        c.reference(ROOT,"diamond",itemKey("minecraft:diamond"));c.drain();
+        var expected=graph();
+        expected.payload(itemNode("minecraft:diamond"),expectedItemLeaf(diamond));
+        expected.expanded(expected.reference(ROOT,"diamond",itemNode("minecraft:diamond"),"ordinary","required"));
+        assertArrayEquals(expected.finish(),g.finish(),"named reference的邊保留，payload等於另一張圖獨立算出的ITEM leaf");
+    }
+    @Test void templateChestBlockAndItemLeavesCloseWithoutDummyPayload(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        String id="minecraft:woodland_mansion/1x2_a4";String sapling="minecraft:dark_oak_sapling";
+        try(var f=new PoolFixture(root,single(id))) {
+            var raw=f.presentVanilla(id);var palette=paletteNames(raw);var stacks=templateItemStacks(raw);
+            var blockIds=new java.util.TreeSet<>(java.util.List.of("minecraft:air","minecraft:birch_planks","minecraft:chest",sapling,
+                    "minecraft:dirt","minecraft:green_carpet","minecraft:ladder","minecraft:oak_planks"));
+            assertAll("fixture前提",
+                    ()->assertEquals(10,palette.size(),"palette有10項"),
+                    // 複審Minor #1：ladder佔3個state（facing east／west／south），10項只對應8個block id。
+                    ()->assertEquals(blockIds,new java.util.TreeSet<>(palette),"10項palette對應8個block id"),
+                    ()->assertEquals(java.util.List.of(sapling+"*9",sapling+"*10",sapling+"*9"),
+                            stacks.stream().map(s->s.getString("id")+"*"+s.getInt("count")).toList(),"chest內3疊dark_oak_sapling"),
+                    ()->assertTrue(stacks.stream().noneMatch(s->s.contains("components")),"item沒有raw components"));
+            // 任何lease之前先暖機，只降低風險：pool codec的encode、模板隔離重建與palette原生state路徑、BE item的codec與BLOCK leaf seam。
+            warmPoolCodec(f);warmVanillaTemplate(f,raw);warmTemplateItems(f,raw);
+            var first=closePoolTemplate(f);var canonical=canonicalNodes(first);
+            var template=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.TEMPLATE,"minecraft:structure",id);
+            var itemEdges=canonical.edges().stream().filter(e->e.target().equals(itemNode(sapling))).toList();
+            var effective=canonical.nodes().keySet().stream().filter(k->k.kind()==Minecraft121SettingsGraph.Kind.RESOLVED
+                    &&k.registry().equals("quantumchamber:template_components")).toList();
+            assertAll(
+                    ()->assertEquals(blockIds,blockNodeIds(canonical),"BLOCK node集合恰為palette的8個block id"),
+                    ()->{for(String block:blockIds)assertArrayEquals(payloadBytes(expectedBlockLeaf(
+                            net.minecraft.registry.Registries.BLOCK.get(net.minecraft.util.Identifier.of(block)))),
+                            canonical.nodes().get(blockNode(block)),block+"的payload bytes須等於獨立算出的BLOCK leaf");},
+                    ()->assertEquals(java.util.Set.of(sapling),itemNodeIds(canonical),"ITEM node恰為dark_oak_sapling"),
+                    ()->assertArrayEquals(payloadBytes(expectedItemLeaf(net.minecraft.item.Items.DARK_OAK_SAPLING)),
+                            canonical.nodes().get(itemNode(sapling)),"ITEM payload等於獨立算出的leaf，不是假payload"),
+                    ()->assertEquals(3,itemEdges.size(),"3疊item各自一條ITEM邊"),
+                    ()->assertTrue(itemEdges.stream().allMatch(e->e.from().equals(template)&&e.path().matches("palettes/0/blocks/\\d+/Items/\\d+/id")),
+                            "ITEM邊都來自模板的BE Items"),
+                    ()->assertEquals(3,effective.size(),"RESOLVED effective components有3個"),
+                    ()->assertTrue(canonical.edges().stream().noneMatch(e->e.from().kind()==Minecraft121SettingsGraph.Kind.REGISTRY
+                            &&(e.from().registry().equals("minecraft:block")||e.from().registry().equals("minecraft:item"))),
+                            "BLOCK／ITEM leaf沒有出發邊，所以沒有Block↔Item邊"));
+            // raw count 9→8：覆寫同一個saved來源；只改模板內容，canonical須改變，ITEM leaf的payload不受count影響。
+            var changed=raw.copy();var firstStack=templateItemStacks(changed).get(0);
+            assertEquals(9,firstStack.getInt("count"),"fixture前提：第一疊count為9");firstStack.putInt("count",8);
+            f.presentNbt(id,changed);
+            var second=closePoolTemplate(f);
+            assertFalse(Arrays.equals(first,second),"raw count 9→8時canonical須改變");
+            assertArrayEquals(canonical.nodes().get(itemNode(sapling)),canonicalNodes(second).nodes().get(itemNode(sapling)),
+                    "count只在模板payload，ITEM leaf不變");
+            assertFalse(Arrays.equals(canonical.nodes().get(template),canonicalNodes(second).nodes().get(template)),"模板payload隨count改變");
+        }
+    }
+    @Test void templateItemDefaultsRejectedWithoutRawComponents(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        // 複審Minor #3：food與tool兩條default路徑各用一個合成模板、各自一個子案；同一模板內第一個被拒後capture就中止，另一條會測不到。
+        // 兩個item都不帶raw components，所以擋下的是default路徑（TemplateValueContracts.components對有效component的白名單）。
+        assertAll(
+                ()->assertAll("subcase=chest內golden_apple（default帶food）",()->templateDefaultRejected(root.resolve("chest"),
+                        "minecraft:chest","minecraft:golden_apple",net.minecraft.component.DataComponentTypes.FOOD)),
+                ()->assertAll("subcase=furnace內wooden_shovel（default帶tool）",()->templateDefaultRejected(root.resolve("furnace"),
+                        "minecraft:furnace","minecraft:wooden_shovel",net.minecraft.component.DataComponentTypes.TOOL)));
+    }
+    private static void templateDefaultRejected(java.nio.file.Path root,String container,String item,
+            net.minecraft.component.ComponentType<?> unreviewed) throws Exception {
+        var template=singleItemTemplate(container,item);
+        assertFalse(templateItemStacks(template).get(0).contains("components"),"fixture前提：item沒有raw components");
+        assertTrue(net.minecraft.registry.Registries.ITEM.get(net.minecraft.util.Identifier.of(item)).getComponents().contains(unreviewed),
+                "fixture前提：default帶未審component");
+        String id="test:defaults";
+        try(var f=new PoolFixture(root,single(id))) {
+            f.presentNbt(id,template);
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));
+            rejects("UNSUPPORTED_TEMPLATE_COMPONENT",c::drain);rejects("GRAPH_FAILED",g::finish);
+        }
+    }
+    @Test void sameIdBlockAndItemRemainDistinctNodes() {
+        // 設計原列stone與chest；chest的ITEM default帶minecraft:container（不在D1b白名單，屬D1b-3），所以第二個同id改用
+        // dark_oak_sapling（BlockItem＋SaplingBlock，default只有baseline）。stone的ITEM也是BlockItem。
+        var registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(
+                net.minecraft.registry.Registries.BLOCK,net.minecraft.registry.Registries.ITEM));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var ids=java.util.List.of("minecraft:stone","minecraft:dark_oak_sapling");
+            var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+            for(int i=0;i<ids.size();i++){c.reference(ROOT,"block/"+i,blockKey(ids.get(i)));c.reference(ROOT,"item/"+i,itemKey(ids.get(i)));}
+            c.drain();var canonical=canonicalNodes(g.finish());
+            var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+            checks.add(()->assertEquals(new java.util.TreeSet<>(ids),blockNodeIds(canonical),"BLOCK node"));
+            checks.add(()->assertEquals(new java.util.TreeSet<>(ids),itemNodeIds(canonical),"ITEM node"));
+            checks.add(()->assertEquals(1+2*ids.size(),canonical.nodes().size(),"同id的BLOCK與ITEM是不同的typed node"));
+            for(String id:ids)checks.add(()->assertAll(id,
+                    ()->assertArrayEquals(payloadBytes(expectedBlockLeaf(net.minecraft.registry.Registries.BLOCK.get(net.minecraft.util.Identifier.of(id)))),
+                            canonical.nodes().get(blockNode(id))),
+                    ()->assertArrayEquals(payloadBytes(expectedItemLeaf(net.minecraft.registry.Registries.ITEM.get(net.minecraft.util.Identifier.of(id)))),
+                            canonical.nodes().get(itemNode(id))),
+                    ()->assertFalse(Arrays.equals(canonical.nodes().get(blockNode(id)),canonical.nodes().get(itemNode(id))),"payload不同")));
+            assertAll(checks);
+        } finally {resources.close();}
+    }
+    @Test void itemLeafRequiredRegistryMissingRejects() {
+        var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);c.reference(ROOT,"diamond",itemKey("minecraft:diamond"));
+        rejects("REQUIRED_REGISTRY_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);
+    }
+    @Test void itemLeafRejectsForeignRegistryInstance() {
+        // 局部registry是新物件，不登記到Registries.REGISTRIES；DIAMOND以standalone entry加入，不改動全域registry或DIAMOND本身。
+        var local=new net.minecraft.registry.SimpleRegistry<net.minecraft.item.Item>(net.minecraft.registry.RegistryKeys.ITEM,
+                com.mojang.serialization.Lifecycle.stable());
+        local.add(itemKey("minecraft:diamond"),net.minecraft.item.Items.DIAMOND,net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);local.freeze();
+        var g=graph();var c=closure(g,local);c.reference(ROOT,"diamond",itemKey("minecraft:diamond"));
+        rejects("STATIC_REGISTRY_OWNER_MISMATCH",c::drain);rejects("GRAPH_FAILED",g::finish);
     }
 
 }
