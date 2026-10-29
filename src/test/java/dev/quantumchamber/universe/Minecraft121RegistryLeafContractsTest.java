@@ -490,6 +490,18 @@ class Minecraft121RegistryLeafContractsTest {
         // D1b-3b（設計審查M2）：第二次迭代多出的是已審的food，重建map的再驗會通過；但步驟6自原值抽出的ref（沒有food）與重建值的ref
         // （golden_apple的兩個effect）不同，以NATIVE_CODEC_ROUNDTRIP_CHANGED拒絕，不會讓「原值迭代看不到的ref」靜默進圖。
         var wrappedFood=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(base,withFood));
+        // D1b-3c-0（quality Q-M2）：兩次迭代的food各帶不同的effect type（件數與path相同、key不同）是內容改變，不是owner不符，所以是
+        // NATIVE_CODEC_ROUNDTRIP_CHANGED；只有同key、不同物件才是REGISTRY_ENTRY_OWNER_MISMATCH（itemLeafRejectsForeignReferenceWithSameId）。
+        // 原值的effect type是未綁定key的intrusive Reference時（registryKey()丟ISE），同樣是key不同；intrusive(...)只建新物件，不寫入registry。
+        java.util.function.Function<RegistryEntry<net.minecraft.entity.effect.StatusEffect>,ComponentMap> foodWith=effect->ComponentMap.builder()
+                .addAll(base).add(DataComponentTypes.FOOD,new FoodComponent(1,0.1f,false,1.6f,Optional.empty(),
+                        List.of(new FoodComponent.StatusEffectEntry(new StatusEffectInstance(effect,100),1f)))).build();
+        var shiftedEffect=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(foodWith.apply(StatusEffects.SPEED),
+                foodWith.apply(StatusEffects.REGENERATION)));
+        var unbound=RegistryEntry.Reference.intrusive(Registries.STATUS_EFFECT.getEntryOwner(),StatusEffects.SPEED.value());
+        var unboundFirst=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(foodWith.apply(unbound),
+                foodWith.apply(StatusEffects.SPEED)));
+        assertThrows(IllegalStateException.class,unbound::registryKey,"fixture前提：intrusive Reference沒有綁定key");
         assertAll(
                 ()->assertAll("subcase=直接foreign容器",()->rejects("NATIVE_DEFINITION_SOURCE",
                         ()->seam(Items.DIAMOND,new ShiftingComponentMap(base,withStored)))),
@@ -497,7 +509,15 @@ class Minecraft121RegistryLeafContractsTest {
                         ()->assertDoesNotThrow(()->requireNativeSource(wrapped.getClass()),"fixture前提：外層是原生容器"),
                         ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,wrapped))),
                 ()->assertAll("subcase=原生ComponentMapImpl包裝foreign容器（第二次多出帶ref的已審food）",
-                        ()->rejects("NATIVE_CODEC_ROUNDTRIP_CHANGED",()->seam(Items.DIAMOND,wrappedFood))));
+                        ()->rejects("NATIVE_CODEC_ROUNDTRIP_CHANGED",()->seam(Items.DIAMOND,wrappedFood))),
+                ()->assertAll("subcase=原生ComponentMapImpl包裝foreign容器（兩次迭代的food effect type不同：speed→regeneration）",
+                        ()->rejects("NATIVE_CODEC_ROUNDTRIP_CHANGED",()->seam(Items.DIAMOND,shiftedEffect))),
+                ()->assertAll("subcase=原生ComponentMapImpl包裝foreign容器（原值的effect type是未綁定key的intrusive Reference）",()->{
+                    var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,()->seam(Items.DIAMOND,unboundFirst));
+                    assertEquals("NATIVE_CODEC_ROUNDTRIP_CHANGED",failure.getMessage());
+                    assertInstanceOf(IllegalStateException.class,failure.getCause(),"原因是未綁定key的registryKey()，以initCause保留");
+                    assertFalse(failure.getCause() instanceof Minecraft121SettingsGraph.Failure,"cause不是另一個Failure");
+                }));
     }
     @Test void itemLeafNestedListExceptionBecomesNamedCode() {
         // S0-1 RED③：foreign容器會先在容器source檢查被擋，所以丟例外的是原生LoreComponent內的巢狀List，外層是原生SimpleComponentMap。
@@ -756,6 +776,8 @@ class Minecraft121RegistryLeafContractsTest {
     /**
      * 測試端獨立列出「已接受的值會產生ref」的已審型別；其餘已審型別都必須明確宣告NO_REFS。D1b-3各子片增減型別時同步更新。
      * D1b-3a為止沒有；D1b-3b為非空attribute_modifiers（ATTRIBUTE）、food（STATUS_EFFECT、ITEM）與只有direct rule的tool（BLOCK）。
+     * 新增帶引用的型別時，production契約的refs與registries、本清單與independentRefs三處要同步（quality Q-M3）；三處同時漏列時，
+     * 由M9的NBT交叉檢查（payloadRegistryIdStrings）抓到。
      */
     private static java.util.Set<net.minecraft.component.ComponentType<?>> refBearingItemDefaultTypes() {
         return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL);
@@ -787,9 +809,22 @@ class Minecraft121RegistryLeafContractsTest {
     }
 
     // ===== C1d-D1b-3b：非空attribute_modifiers、food與只有direct rule的tool；ITEM leaf開始產生出邊 =====
+    /**
+     * ref的描述與指向的named entry：對sealed Ref窮舉（quality Q-M4(c)），D1b-3c加Tag時這裡沒有對應分支就無法編譯，不會在runtime才丟
+     * ClassCastException。describeRef、assertRefs與M9 oracle都經這兩個helper取用ref。
+     */
     private static String describeRef(Minecraft121ItemComponentContracts.Ref ref) {
-        var key=((Minecraft121ItemComponentContracts.Ref.Entry)ref).entry().registryKey();
-        return ref.path()+" -> "+key.getRegistry()+"|"+key.getValue();
+        return switch(ref) {
+            case Minecraft121ItemComponentContracts.Ref.Entry entry -> {
+                var key=entry.entry().registryKey();
+                yield ref.path()+" -> "+key.getRegistry()+"|"+key.getValue();
+            }
+        };
+    }
+    private static RegistryEntry.Reference<?> refEntry(Minecraft121ItemComponentContracts.Ref ref) {
+        return switch(ref) {
+            case Minecraft121ItemComponentContracts.Ref.Entry entry -> entry.entry();
+        };
     }
     private static List<String> describeRefs(List<Minecraft121ItemComponentContracts.Ref> refs) {
         return refs.stream().map(Minecraft121RegistryLeafContractsTest::describeRef).toList();
@@ -803,8 +838,7 @@ class Minecraft121RegistryLeafContractsTest {
     }
     private static void assertRefs(List<ExpectedRef> expected,List<Minecraft121ItemComponentContracts.Ref> actual,String message) {
         assertEquals(expected.stream().map(ExpectedRef::describe).toList(),describeRefs(actual),message+"：path、registry、id與次序");
-        for(int i=0;i<expected.size();i++)assertSame(expected.get(i).entry(),((Minecraft121ItemComponentContracts.Ref.Entry)actual.get(i)).entry(),
-                message+"：第"+i+"條ref是同一個named entry物件");
+        for(int i=0;i<expected.size();i++)assertSame(expected.get(i).entry(),refEntry(actual.get(i)),message+"：第"+i+"條ref是同一個named entry物件");
     }
     /** plain NbtOps獨立編碼的default ComponentMap（不經production的RegistryOps、白名單與roundtrip）。 */
     private static NbtElement plainDefaults(Item item) {
@@ -925,7 +959,7 @@ class Minecraft121RegistryLeafContractsTest {
     }
     /**
      * 計數的StatusEffectInstance子類：getter與Object method分開計數。getter是codec的asParameters與食用時會呼叫的method；hashCode／
-     * equals則由FOOD codec外層的CodecCache（以value為key）經record的ObjectMethods呼叫到。
+     * equals是FOOD codec外層的CodecCache（以value為key）經record的ObjectMethods可能呼叫到的method（D1b-3c-0起必須是0次）。
      */
     static final class CountingEffectInstance extends StatusEffectInstance {
         static final java.util.concurrent.atomic.AtomicInteger GETTERS=new java.util.concurrent.atomic.AtomicInteger();
@@ -945,8 +979,10 @@ class Minecraft121RegistryLeafContractsTest {
         // 非1的count不會進payload，所以拒）。effect：固定JAR的StatusEffectEntry.effect()回傳new StatusEffectInstance(this.effect)，copy
         // 只以getfield讀欄位、不複製hiddenEffect（javap）；codec與食用都經這個copy。所以hidden_effect與原物件的class在公開API下都觀察
         // 不到：帶hidden_effect的effect被接受，payload等於不帶它的同值；子類的effect也被接受，payload等於原生同值，而且擷取全程不呼叫
-        // 子類的getter。殘餘風險（ItemComponentContracts的FOOD契約Javadoc）：FOOD codec外層的CodecCache以value為key，會經record的
-        // ObjectMethods呼叫到原物件的hashCode／equals；次數取決於cache狀態，只輸出D1B3B_FOOD_EFFECT_OBJECT_METHOD_CALLS，不斷言。
+        // 子類的getter。D1b-3c-0（spec M1＋quality Q-M1）：codec之前以effect()的copy重建StatusEffectEntry，FOOD codec外層的CodecCache
+        // （以value為key）不再經record的ObjectMethods呼叫到原物件的hashCode／equals，所以子類的Object method也必須是0次。
+        // 前提（quality Q-M1的測試附帶問題）：每次seam都經itemRegistries()新建lease manager（RegistryOps以identity比對），hidden與
+        // counting子案的payload不會被CodecCache跨seam短路；fixture前提斷言這一點。
         // 值都是局部新物件（ItemStack.set只改該stack自己的ComponentMapImpl），不改動全域狀態。
         var patched=new ItemStack(Items.BOWL);patched.set(DataComponentTypes.MAX_STACK_SIZE,1);
         var plain=new StatusEffectInstance(StatusEffects.SPEED,100,0,false,true,true);
@@ -962,7 +998,8 @@ class Minecraft121RegistryLeafContractsTest {
                         ()->assertFalse(patched.getComponentChanges().isEmpty(),"patched有patch"),
                         ()->assertTrue(hasHiddenEffect(hidden),"hidden本身帶hidden_effect"),
                         ()->assertFalse(hasHiddenEffect(new FoodComponent.StatusEffectEntry(hidden,1f).effect()),"effect()的copy不含hidden_effect"),
-                        ()->assertNotSame(StatusEffectInstance.class,counting.getClass(),"counting不是exact class")),
+                        ()->assertNotSame(StatusEffectInstance.class,counting.getClass(),"counting不是exact class"),
+                        ()->assertNotSame(itemRegistries(),itemRegistries(),"每次seam都新建lease manager，CodecCache不跨seam共用")),
                 ()->assertAll("subcase=正向對照",()->assertRefs(List.of(
                         new ExpectedRef("components/minecraft:food/using_converts_to/id",Items.BOWL.getRegistryEntry()),
                         new ExpectedRef("components/minecraft:food/effects/0/effect/id",StatusEffects.SPEED)),
@@ -979,10 +1016,71 @@ class Minecraft121RegistryLeafContractsTest {
                     var map=withEffect.apply(counting);
                     CountingEffectInstance.GETTERS.set(0);CountingEffectInstance.OBJECT_METHODS.set(0);
                     var payload=seam(Items.DIAMOND,map);
-                    System.out.println("D1B3B_FOOD_EFFECT_OBJECT_METHOD_CALLS calls="+CountingEffectInstance.OBJECT_METHODS.get()
-                            +" note=CodecCache-hashCode-equals-on-unverifiable-stored-effect");
                     assertAll(()->assertEquals(expected,payload,"payload等於原生同值"),
-                            ()->assertEquals(0,CountingEffectInstance.GETTERS.get(),"擷取全程不呼叫子類的getter"));}));
+                            ()->assertEquals(0,CountingEffectInstance.GETTERS.get(),"擷取全程不呼叫子類的getter"),
+                            ()->assertEquals(0,CountingEffectInstance.OBJECT_METHODS.get(),
+                                    "CodecCache不得呼叫子類的hashCode／equals（codec只看重建的原生copy）"));}));
+    }
+    /**
+     * 會說謊的foreign List（quality Q-M1）：內容是real，equals／hashCode卻宣稱等於claimed；兩者的呼叫次數記在calls。CodecCache的
+     * key以value的equals／hashCode比對，所以把它放進已審record，可以讓encode命中claimed那個值已快取的編碼。
+     */
+    private static final class ClaimingList<E> extends java.util.AbstractList<E> {
+        final java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+        private final List<E> real;private final List<?> claimed;
+        ClaimingList(List<E> real,List<?> claimed){this.real=real;this.claimed=claimed;}
+        @Override public E get(int index){return real.get(index);}
+        @Override public int size(){return real.size();}
+        @Override public boolean equals(Object other){calls.incrementAndGet();return claimed.equals(other);}
+        @Override public int hashCode(){calls.incrementAndGet();return claimed.hashCode();}
+    }
+    @Test void itemLeafCodecEncodesRebuiltNativeCopiesNotForeignLists() {
+        // D1b-3c-0（spec M1＋quality Q-M1）：attribute_modifiers、tool、food的codec由DataComponentTypes.CACHE（CodecCache，以
+        // (codec, value, ops)為key的全域cache）包裝。三型的record不複製List，所以呼叫端可以放進foreign List：它的hashCode／equals會在
+        // cache內、白名單再驗之前執行；若它宣稱等於另一個已快取的同型值，encode就會命中那個值的編碼（等值替換），而ref相同時再驗與
+        // ref比對都抓不到。每個子案以同一份LeafContracts（同一份lease ops，production中同一closure的各ITEM leaf也共用）先擷取誠實值，
+        // 再擷取「內容不同、但以ClaimingList宣稱等於誠實值」的本值。修正後codec只編碼以List.copyOf與已驗元素重建的原生copy：payload
+        // 等於本值的獨立編碼（另一份lease manager），而且ClaimingList的equals／hashCode一次都不被呼叫。
+        var id=Identifier.ofVanilla("base_attack_damage");
+        java.util.function.Function<Double,List<AttributeModifiersComponent.Entry>> modifiers=amount->List.of(new AttributeModifiersComponent.Entry(
+                EntityAttributes.GENERIC_ATTACK_DAMAGE,new EntityAttributeModifier(id,amount,EntityAttributeModifier.Operation.ADD_VALUE),
+                AttributeModifierSlot.MAINHAND));
+        java.util.function.Function<Float,List<ToolComponent.Rule>> rules=speed->List.of(new ToolComponent.Rule(
+                RegistryEntryList.of(List.of(Blocks.COBWEB.getRegistryEntry())),Optional.of(speed),Optional.of(true)));
+        java.util.function.Function<Integer,List<FoodComponent.StatusEffectEntry>> effects=duration->List.of(
+                new FoodComponent.StatusEffectEntry(new StatusEffectInstance(StatusEffects.SPEED,duration),1f));
+        java.util.function.Function<List<AttributeModifiersComponent.Entry>,ComponentMap> attribute=list->only(DataComponentTypes.ATTRIBUTE_MODIFIERS,
+                new AttributeModifiersComponent(list,true));
+        java.util.function.Function<List<ToolComponent.Rule>,ComponentMap> tool=list->only(DataComponentTypes.TOOL,new ToolComponent(list,1f,1));
+        java.util.function.Function<List<FoodComponent.StatusEffectEntry>,ComponentMap> food=list->only(DataComponentTypes.FOOD,
+                new FoodComponent(6,7.2f,false,1.6f,Optional.empty(),list));
+        record Case(String name,ComponentMap honest,ComponentMap own,ComponentMap lying,ClaimingList<?> list,Object lyingValue,Object honestValue) {}
+        var cases=new java.util.ArrayList<Case>();
+        {var lie=new ClaimingList<>(modifiers.apply(9.0),modifiers.apply(3.0));var honest=attribute.apply(modifiers.apply(3.0));var lying=attribute.apply(lie);
+            cases.add(new Case("attribute_modifiers（amount 9.0宣稱等於3.0）",honest,attribute.apply(modifiers.apply(9.0)),lying,lie,
+                    lying.get(DataComponentTypes.ATTRIBUTE_MODIFIERS),honest.get(DataComponentTypes.ATTRIBUTE_MODIFIERS)));}
+        {var lie=new ClaimingList<>(rules.apply(4f),rules.apply(15f));var honest=tool.apply(rules.apply(15f));var lying=tool.apply(lie);
+            cases.add(new Case("tool（rule speed 4宣稱等於15）",honest,tool.apply(rules.apply(4f)),lying,lie,
+                    lying.get(DataComponentTypes.TOOL),honest.get(DataComponentTypes.TOOL)));}
+        {var lie=new ClaimingList<>(effects.apply(999),effects.apply(100));var honest=food.apply(effects.apply(100));var lying=food.apply(lie);
+            cases.add(new Case("food（effect duration 999宣稱等於100）",honest,food.apply(effects.apply(999)),lying,lie,
+                    lying.get(DataComponentTypes.FOOD),honest.get(DataComponentTypes.FOOD)));}
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for(var c:cases)checks.add(()->assertAll("subcase="+c.name(),()->{
+            // fixture前提：本值與誠實值的獨立編碼不同；CodecCache的key比對（probe.equals(stored)、hashCode）會把本值當成誠實值。
+            var expected=seam(Items.DIAMOND,c.own());
+            assertNotEquals(seam(Items.DIAMOND,c.honest()),expected,"fixture前提：本值與誠實值的編碼不同");
+            assertTrue(c.lyingValue().equals(c.honestValue())&&c.lyingValue().hashCode()==c.honestValue().hashCode(),
+                    "fixture前提：本值以ClaimingList宣稱等於誠實值");
+            var leaves=leaves(new Minecraft121SettingsGraph(),itemRegistries());
+            leaves.itemCapture(Items.DIAMOND,c.honest());
+            c.list().calls.set(0);
+            var payload=leaves.itemCapture(Items.DIAMOND,c.lying()).payload();
+            int calls=c.list().calls.get();
+            assertAll(()->assertEquals(expected,payload,"payload是本值的編碼，不是另一個值的快取編碼"),
+                    ()->assertEquals(0,calls,"foreign List的equals／hashCode不得被呼叫"));
+        }));
+        assertAll(checks);
     }
 
     /**
@@ -991,23 +1089,25 @@ class Minecraft121RegistryLeafContractsTest {
      */
     static final class ForeignConvertsToItem extends Item {
         static final java.util.concurrent.atomic.AtomicInteger CALLS=new java.util.concurrent.atomic.AtomicInteger();
+        /** 只為通過編譯，永不呼叫：實例一律以allocateForeign建立（呼叫它會經Item.&lt;init&gt;寫入全域registry）。 */
         private ForeignConvertsToItem() {super(new Item.Settings());}
         @Override public ComponentMap getComponents() {CALLS.incrementAndGet();return ComponentMap.EMPTY;}
         @Override public RegistryEntry.Reference<Item> getRegistryEntry() {CALLS.incrementAndGet();return Items.BOWL.getRegistryEntry();}
         @Override public void postProcessComponents(ItemStack stack) {CALLS.incrementAndGet();}
     }
-    private static ForeignConvertsToItem allocateForeignItem() throws Exception {
+    /** 以Unsafe.allocateInstance建立type的實例：不跑建構子與欄位初始化（D1b-3b D11），所以foreign Item不碰任何registry。 */
+    private static <T> T allocateForeign(Class<T> type) throws Exception {
         // 反射取得sun.misc.Unsafe（jdk.unsupported模組open了sun.misc），不在編譯期引用內部API。
         var unsafeClass=Class.forName("sun.misc.Unsafe");
         var field=unsafeClass.getDeclaredField("theUnsafe");field.setAccessible(true);
-        return (ForeignConvertsToItem)unsafeClass.getMethod("allocateInstance",Class.class).invoke(field.get(null),ForeignConvertsToItem.class);
+        return type.cast(unsafeClass.getMethod("allocateInstance",Class.class).invoke(field.get(null),type));
     }
     @Test void itemLeafFoodConvertsToItemSourceIsCheckedBeforeCodec() throws Exception {
         // 設計審查M5：解碼using_converts_to時，ItemStack建構子會先執行目標item的postProcessComponents（virtual），所以codec之前要先對
         // 目標item跑executedOwnerClasses的source檢查。foreign item冒充bowl的registry entry：沒有事前檢查時，encode寫出minecraft:bowl、
         // parse得到真bowl，原值與重建值的ref也是同一個bowl entry，會被靜默接受；有事前檢查時在codec之前以NATIVE_DEFINITION_SOURCE拒，
         // 且全程不呼叫foreign item的任何virtual method。
-        var foreign=allocateForeignItem();
+        var foreign=allocateForeign(ForeignConvertsToItem.class);
         var stack=new ItemStack(foreign);
         assertAll("fixture前提",
                 ()->assertFalse(nativeSource(ForeignConvertsToItem.class),"foreign item class不是原生source"),
@@ -1021,6 +1121,34 @@ class Minecraft121RegistryLeafContractsTest {
         assertAll(
                 ()->assertEquals("NATIVE_DEFINITION_SOURCE",failure.getMessage()),
                 ()->assertEquals(0,ForeignConvertsToItem.CALLS.get(),"source檢查之前不得呼叫foreign item的任何virtual method"));
+    }
+    /**
+     * 測試自訂的foreign Item子類（S0-5 ITEM seam自驗的行為見證用）：同樣只以allocateForeign建立，不註冊、不碰任何registry。
+     * getRequiredFeatures回傳vanilla子集：拿掉seam的source自驗時，seam會一路接受，而不是在feature檢查改碼。每個被覆寫的virtual
+     * method都計數。
+     */
+    static final class ForeignSeamItem extends Item {
+        static final java.util.concurrent.atomic.AtomicInteger CALLS=new java.util.concurrent.atomic.AtomicInteger();
+        /** 只為通過編譯，永不呼叫：實例一律以allocateForeign建立（呼叫它會經Item.&lt;init&gt;寫入全域registry）。 */
+        private ForeignSeamItem() {super(new Item.Settings());}
+        @Override public FeatureSet getRequiredFeatures() {CALLS.incrementAndGet();return FeatureFlags.VANILLA_FEATURES;}
+        @Override public ComponentMap getComponents() {CALLS.incrementAndGet();return Items.DIAMOND.getComponents();}
+        @Override public RegistryEntry.Reference<Item> getRegistryEntry() {CALLS.incrementAndGet();return Items.DIAMOND.getRegistryEntry();}
+    }
+    @Test void itemCaptureSeamChecksItemSourceItself() throws Exception {
+        // S0-5（D1b-3設計§5；D1b-3b spec review的「交給後續」）：ITEM seam開頭自行對executedOwnerClasses(item)逐項驗原生source，
+        // 不依賴item(...)的步驟2。以Unsafe配置的foreign Item不在任何registry，closure到不了它，所以直接呼叫seam，傳入diamond的
+        // default component。seam自驗在時：NATIVE_DEFINITION_SOURCE，且全程不呼叫foreign item的任何virtual method。拿掉seam自驗時
+        // （見證W-ITEM-SEAM），seam會呼叫getRequiredFeatures，並以diamond的default component接受這個foreign item。
+        var foreign=allocateForeign(ForeignSeamItem.class);
+        assertAll("fixture前提",
+                ()->assertFalse(nativeSource(ForeignSeamItem.class),"foreign item class不是原生source"),
+                ()->assertEquals(List.of(ForeignSeamItem.class),executedOwnerClasses(foreign),"非原生item只回傳item class本身"));
+        ForeignSeamItem.CALLS.set(0);
+        var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,()->capture(foreign,Items.DIAMOND.getComponents()));
+        assertAll(
+                ()->assertEquals("NATIVE_DEFINITION_SOURCE",failure.getMessage()),
+                ()->assertEquals(0,ForeignSeamItem.CALLS.get(),"source自驗之前不得呼叫foreign item的任何virtual method"));
     }
 
     /** foreign的EntityAttribute子類：行為正常，只有source不是固定JAR；建構子只寫欄位，不碰任何registry（javap）。 */
@@ -1088,6 +1216,11 @@ class Minecraft121RegistryLeafContractsTest {
         var key=entry.getKey().orElseThrow();
         return path+" | "+key.getRegistry()+" | "+key.getValue();
     }
+    /**
+     * M9的ref獨立走訪：只走帶引用的三型（與refBearingItemDefaultTypes()、production的型別契約是同一份設計分析）。新增帶引用的型別時，
+     * production契約的refs與registries、refBearingItemDefaultTypes()與本method三處要同步；漏了三處時的最後一道防線是M9的NBT交叉檢查
+     * （payloadRegistryIdStrings，與型別模型無關）。
+     */
     private static java.util.Map<String,RegistryEntry<?>> independentRefs(Item item) {
         var refs=new java.util.TreeMap<String,RegistryEntry<?>>();var components=item.getComponents();
         var modifiers=components.get(DataComponentTypes.ATTRIBUTE_MODIFIERS);
@@ -1106,34 +1239,73 @@ class Minecraft121RegistryLeafContractsTest {
         }
         return refs;
     }
+    /**
+     * 已知的literal Identifier位置（相對DefaultComponents的NBT path）：attribute modifier的id以Identifier.CODEC編碼、不綁registry
+     * （設計§2.2）。交叉檢查只排除這些位置。
+     */
+    private static final java.util.regex.Pattern LITERAL_IDENTIFIER_PATHS=java.util.regex.Pattern.compile(
+            "minecraft:attribute_modifiers/modifiers/\\d+/id");
+    /**
+     * quality Q-M3的交叉檢查（與型別模型無關）：遞迴走訪DefaultComponents NBT，收集每個NbtString值（compound的鍵是component型別id，
+     * 不收），回傳其中能parse成Identifier、且存在於固定聯集某個registry的值（path→id）；LITERAL_IDENTIFIER_PATHS的位置排除。
+     */
+    private static java.util.Map<String,String> payloadRegistryIdStrings(NbtCompound defaults) {
+        var strings=new java.util.TreeMap<String,String>();collectStrings("",defaults,strings);
+        var ids=new java.util.TreeMap<String,String>();
+        for(var entry:strings.entrySet()) {
+            if(LITERAL_IDENTIFIER_PATHS.matcher(entry.getKey()).matches())continue;
+            var id=Identifier.tryParse(entry.getValue());
+            if(id!=null&&itemLeafStaticRegistries().stream().anyMatch(registry->registry.containsId(id)))ids.put(entry.getKey(),id.toString());
+        }
+        return ids;
+    }
+    private static void collectStrings(String path,NbtElement element,java.util.Map<String,String> out) {
+        switch(element) {
+            case NbtString string -> out.put(path,string.asString());
+            case NbtCompound compound -> {for(String key:compound.getKeys())collectStrings(path.isEmpty()?key:path+"/"+key,compound.get(key),out);}
+            case NbtList list -> {for(int i=0;i<list.size();i++)collectStrings(path+"/"+i,list.get(i),out);}
+            default -> {}
+        }
+    }
     @Test void everyAcceptedVanillaItemLeafRefsMatchIndependentWalk() {
         // 設計審查M9：ref抽取的全族群獨立oracle。對每個測試端判定為已審的minecraft item，以typed record獨立走訪default component，
         // 算出(path, registry, id)集合，逐項比對itemCapture的輸出與item(...)經sink送出的ref；entry另以identity比對。漏抽一條ref不會
         // fail closed，只會讓閉包不完整，所以要靠這個oracle守。不斷言數量，只要求至少有一件帶ref。
-        var reviewed=reviewedItemDefaults();var mismatched=new java.util.TreeMap<String,String>();int[] counts=new int[2];
+        // D1b-3c-0（quality Q-M3）：上面的走訪與結構測試用的是同一份人工型別模型；另加與模型無關的交叉檢查：payload的DefaultComponents
+        // 中，凡是能parse成Identifier、且存在於固定聯集某個registry的字串值（已知literal位置除外），都必須是該item某條ref的id。新型別
+        // 被宣告成NO_REFS、又同時漏列在refBearingItemDefaultTypes()與independentRefs時，只有這道檢查會失敗（見證W-M9-CROSS）。
+        var reviewed=reviewedItemDefaults();var mismatched=new java.util.TreeMap<String,String>();int[] counts=new int[3];
         for(var entry:(Iterable<RegistryEntry.Reference<Item>>)Registries.ITEM.streamEntries()::iterator) {
             var id=entry.registryKey().getValue();var item=entry.value();
             if(!id.getNamespace().equals("minecraft")||!allReviewed(item,reviewed,null))continue;
             counts[0]++;
             var expected=independentRefs(item);if(!expected.isEmpty())counts[1]++;
             var expectedTriples=expected.entrySet().stream().map(e->refTriple(e.getKey(),e.getValue())).sorted().toList();
-            List<Minecraft121ItemComponentContracts.Ref> captured;
+            Minecraft121RegistryLeafContracts.ItemCapture capture;
             var emitted=new java.util.ArrayList<java.util.Map.Entry<Minecraft121SettingsGraph.Key,Minecraft121ItemComponentContracts.Ref>>();
-            try {captured=capture(item,item.getComponents()).references();itemLeaf(item,emitted);}
+            try {capture=capture(item,item.getComponents());itemLeaf(item,emitted);}
             catch(Minecraft121SettingsGraph.Failure failure){mismatched.put(id.toString(),"failure="+failure.getMessage());continue;}
-            var capturedTriples=captured.stream().map(ref->refTriple(ref.path(),((Minecraft121ItemComponentContracts.Ref.Entry)ref).entry())).sorted().toList();
-            var emittedTriples=emitted.stream().map(e->refTriple(e.getValue().path(),((Minecraft121ItemComponentContracts.Ref.Entry)e.getValue()).entry())).sorted().toList();
+            var captured=capture.references();
+            var capturedTriples=captured.stream().map(ref->refTriple(ref.path(),refEntry(ref))).sorted().toList();
+            var emittedTriples=emitted.stream().map(e->refTriple(e.getValue().path(),refEntry(e.getValue()))).sorted().toList();
             var problems=new java.util.ArrayList<String>();
             if(!expectedTriples.equals(capturedTriples))problems.add("capture="+capturedTriples+" expected="+expectedTriples);
             if(!capturedTriples.equals(emittedTriples))problems.add("sink="+emittedTriples);
             if(!emitted.stream().allMatch(e->e.getKey().equals(itemNode(id.toString()))))problems.add("sink的from不是該ITEM node");
-            for(var ref:captured)if(expected.get(ref.path())!=((Minecraft121ItemComponentContracts.Ref.Entry)ref).entry())problems.add("identity:"+ref.path());
+            for(var ref:captured)if(expected.get(ref.path())!=refEntry(ref))problems.add("identity:"+ref.path());
+            // 與型別模型無關的交叉檢查（quality Q-M3）：payload中的registry id字串都必須是某條ref的id。
+            var refIds=new java.util.TreeSet<String>();for(var ref:captured)refIds.add(refEntry(ref).registryKey().getValue().toString());
+            var registryIds=payloadRegistryIdStrings(capture.payload().getCompound("DefaultComponents"));
+            if(!registryIds.isEmpty())counts[2]++;
+            for(var string:registryIds.entrySet())if(!refIds.contains(string.getValue()))
+                problems.add("crossCheck:payload的"+string.getKey()+"="+string.getValue()+"不是任何ref的id");
             if(!problems.isEmpty())mismatched.put(id.toString(),String.join("; ",problems));
         }
         assertAll(
                 ()->assertTrue(counts[0]>0,"fixture前提：有已審的minecraft item"),
                 ()->assertTrue(counts[1]>0,"fixture前提：至少一件已審item帶ref"),
-                ()->assertEquals(java.util.Map.of(),mismatched,"每個已審vanilla item抽出的ref恰等於測試端獨立走訪的結果"));
+                ()->assertTrue(counts[2]>0,"fixture前提：交叉檢查至少在一件item的payload找到registry id字串（不是空轉）"),
+                ()->assertEquals(java.util.Map.of(),mismatched,"每個已審vanilla item抽出的ref恰等於測試端獨立走訪的結果，且涵蓋payload中的registry id"));
     }
 
     /**
@@ -1159,9 +1331,15 @@ class Minecraft121RegistryLeafContractsTest {
         NbtCompound capture(Minecraft121RegistryLeafContracts leaves,Minecraft121SettingsGraph.Key node,
                 net.minecraft.registry.RegistryKey<T> key,net.minecraft.registry.entry.RegistryEntry.Reference<T> entry);
     }
-    /** pass0的結果碼、冷耗時、payload bytes與payload（被拒為null），以及pass1的暖耗時；陣列與entries同序。 */
+    /**
+     * pass0的結果碼、冷耗時、payload bytes、payload與單節點canonical的SHA-256（被拒為null），以及pass1的暖耗時；陣列與entries同序。
+     */
     private record LeafCosts<T>(java.util.List<net.minecraft.registry.entry.RegistryEntry.Reference<T>> entries,String[] result,
-            long[] cold,long[] warm,long[] bytes,NbtCompound[] payloads) {}
+            long[] cold,long[] warm,long[] bytes,NbtCompound[] payloads,String[] digests) {}
+    private static String sha256(byte[] bytes) {
+        try {return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}
+        catch(java.security.NoSuchAlgorithmException missing) {throw new IllegalStateException(missing);}
+    }
     /**
      * BLOCK與ITEM診斷共用的冷暖量測：registry的每個entry各自建graph與leaves（不開lease、不跨leaf共用），逐一擷取兩輪。
      * 非Failure的RuntimeException只記class名（診斷不gating）。
@@ -1171,7 +1349,7 @@ class Minecraft121RegistryLeafContractsTest {
         var entries=new java.util.ArrayList<net.minecraft.registry.entry.RegistryEntry.Reference<T>>();
         registry.streamEntries().forEach(entries::add);
         int count=entries.size();long[] cold=new long[count],warm=new long[count],bytes=new long[count];
-        String[] result=new String[count];var payloads=new NbtCompound[count];
+        String[] result=new String[count],digests=new String[count];var payloads=new NbtCompound[count];
         for(int pass=0;pass<2;pass++) {
             for(int i=0;i<count;i++) {
                 var entry=entries.get(i);var key=entry.registryKey();var node=nodeOf.apply(key.getValue().toString());
@@ -1182,11 +1360,14 @@ class Minecraft121RegistryLeafContractsTest {
                 catch(Minecraft121SettingsGraph.Failure failure){code=failure.getMessage();}
                 catch(RuntimeException other){code=other.getClass().getName();}
                 long elapsed=System.nanoTime()-start;
-                if(pass==0){cold[i]=elapsed;result[i]=code;payloads[i]=payload;if(payload!=null)bytes[i]=payloadBytes(graph.finish(),node);}
+                if(pass==0) {
+                    cold[i]=elapsed;result[i]=code;payloads[i]=payload;
+                    if(payload!=null){var finished=graph.finish();bytes[i]=payloadBytes(finished,node);digests[i]=sha256(finished);}
+                }
                 else warm[i]=elapsed;
             }
         }
-        return new LeafCosts<>(entries,result,cold,warm,bytes,payloads);
+        return new LeafCosts<>(entries,result,cold,warm,bytes,payloads,digests);
     }
     /**
      * C1d-D1b-1 BLOCK leaf成本診斷，不gating：不開lease、不斷言數量或時間，也不用Assumptions跳過；輸出寫進system-out，供I-1評估
@@ -1231,14 +1412,18 @@ class Minecraft121RegistryLeafContractsTest {
      * component，以只含該component的map走seam（itemCapture，DIAMOND當feature載體），得到逐型別判定。REJECTED_TYPES是「含該型別被拒的
      * item數」，ACCEPTED_TYPES是「該型別被接受的component數」。拒絕原因的gating由everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes負責。
      *
+     * <p>D1b-3c-0起ENTRY行另帶leafCanonicalSha256（該item單節點圖canonical bytes的SHA-256；被拒為NA），ACCEPTED_DIGEST是依id排序的
+     * 「id=hash」逐行串接後的SHA-256：只比payload長度不夠（D1b-3a spec M4），各子片以這兩者逐件比對既有ACCEPTED件的payload不退化。
+     *
      * <p>退場條件同BLOCK：D1b-3結案或I-1定案（以先到者為準）時，刪除逐行的D1B2_ITEM_LEAF_COST_ENTRY，只保留摘要行
-     * （SUMMARY、CODES、REJECTED_TYPES、COLD／WARM等）。
+     * （SUMMARY、ACCEPTED_DIGEST、CODES、REJECTED_TYPES、COLD／WARM等）。
      */
     @Test void staticItemLeafCostDiagnostic() {
         var costs=measureLeafCosts(Registries.ITEM,itemRegistries(),Minecraft121RegistryLeafTestFixtures::itemNode,
                 (leaves,node,key,entry)->leaves.item(node,key,entry));
         var entries=costs.entries();int count=entries.size();
-        String[] result=costs.result();long[] cold=costs.cold(),warm=costs.warm(),bytes=costs.bytes();
+        String[] result=costs.result(),digests=costs.digests();long[] cold=costs.cold(),warm=costs.warm(),bytes=costs.bytes();
+        var acceptedDigests=new java.util.TreeMap<String,String>();
         var codes=new java.util.TreeMap<String,Integer>();var namespaces=new java.util.TreeMap<String,Integer>();
         var rejectedTypes=new java.util.TreeMap<String,Integer>();var acceptedTypes=new java.util.TreeMap<String,Integer>();
         var rejectedTypesByCode=new java.util.TreeMap<String,java.util.TreeMap<String,Integer>>();
@@ -1259,10 +1444,15 @@ class Minecraft121RegistryLeafContractsTest {
             for(String type:rejected)rejectedTypes.merge(type,1,Integer::sum);
             if(!result[i].equals("ACCEPTED"))for(String type:rejected)
                 rejectedTypesByCode.computeIfAbsent(result[i],k->new java.util.TreeMap<>()).merge(type,1,Integer::sum);
+            if(digests[i]!=null)acceptedDigests.put(id.toString(),digests[i]);
             System.out.println("D1B2_ITEM_LEAF_COST_ENTRY id="+id+" result="+result[i]+" coldNs="+cold[i]+" warmNs="+warm[i]
-                    +" payloadBytes="+bytes[i]+" rejectedTypes="+rejected);
+                    +" payloadBytes="+bytes[i]+" leafCanonicalSha256="+(digests[i]==null?"NA":digests[i])+" rejectedTypes="+rejected);
         }
+        var digestLines=new StringBuilder();
+        for(var digest:acceptedDigests.entrySet())digestLines.append(digest.getKey()).append('=').append(digest.getValue()).append('\n');
         System.out.println("D1B2_ITEM_LEAF_COST_SUMMARY leaves="+count+" accepted="+accepted+" rejected="+(count-accepted)+" totalPayloadBytes="+totalBytes);
+        System.out.println("D1B2_ITEM_LEAF_COST_ACCEPTED_DIGEST accepted="+acceptedDigests.size()+" sha256="
+                +sha256(digestLines.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))+" note=sha256-of-sorted-id=leafCanonicalSha256-lines");
         System.out.println("D1B2_ITEM_LEAF_COST_CODES "+codes);
         System.out.println("D1B2_ITEM_LEAF_COST_NAMESPACES "+namespaces);
         System.out.println("D1B2_ITEM_LEAF_COST_REJECTED_TYPES itemsContainingRejectedType="+rejectedTypes);

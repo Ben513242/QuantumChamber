@@ -1811,6 +1811,28 @@ class Minecraft121SettingsCanonicalizerTest {
         }
         assertArrayEquals(expected.finish(),g.finish(),"4個item都閉合；出邊、target leaf與payload等於獨立組出的圖");
     }
+    @Test void itemLeafSharedNodeEmitsOutEdgesOnce() {
+        // D1b-3b spec M2（設計§1.5第7點）：ITEM node只經definitions去重展開一次，它的出邊是node定義的一部分，也只產生一次；指向同一個
+        // ITEM的每條occurrence邊都保留。ROOT以兩條path引用golden_apple：預期2條ROOT邊、1個ITEM payload、2條出邊（regeneration、
+        // absorption）。在occurrence層級呼叫leaf的突變（見證W-CANON-ONCE）會讓出邊倍增。
+        var g=graph();var c=itemClosure(g,withItemLeafRegistries());
+        c.reference(ROOT,"first",itemKey("minecraft:golden_apple"));c.reference(ROOT,"second",itemKey("minecraft:golden_apple"));
+        c.drain();
+        var expected=graph();
+        expected.payload(itemNode("minecraft:golden_apple"),expectedItemLeaf(net.minecraft.item.Items.GOLDEN_APPLE));
+        expected.expanded(expected.reference(ROOT,"first",itemNode("minecraft:golden_apple"),"ordinary","required"));
+        expected.expanded(expected.reference(ROOT,"second",itemNode("minecraft:golden_apple"),"ordinary","required"));
+        for(String effect:java.util.List.of("minecraft:regeneration","minecraft:absorption"))expected.payload(effectNode(effect),expectedStatusEffectLeaf());
+        String food="components/minecraft:food/";
+        itemEdge(expected,"minecraft:golden_apple",food+"effects/0/effect/id",effectNode("minecraft:regeneration"));
+        itemEdge(expected,"minecraft:golden_apple",food+"effects/1/effect/id",effectNode("minecraft:absorption"));
+        var actual=g.finish();
+        var edges=canonicalNodes(actual).edges();
+        assertAll(
+                ()->assertEquals(2,edges.stream().filter(e->e.from().equals(ROOT)).count(),"ROOT的兩條occurrence邊都保留"),
+                ()->assertEquals(2,edges.stream().filter(e->e.from().equals(itemNode("minecraft:golden_apple"))).count(),"出邊只產生一次"),
+                ()->assertArrayEquals(expected.finish(),actual,"2條ROOT邊、1個ITEM payload、2條出邊，等於獨立組出的圖"));
+    }
     @Test void attributeAndStatusEffectRegistryLeavesClose() {
         // D1b-3b：ATTRIBUTE與STATUS_EFFECT的registry定義從UNSUPPORTED_REGISTRY_DEFINITION變成可閉合的static leaf。同一個node被named
         // reference與entry兩條引用時只擷取一次，兩條邊都保留。
