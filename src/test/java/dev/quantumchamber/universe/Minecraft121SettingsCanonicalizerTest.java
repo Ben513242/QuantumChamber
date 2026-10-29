@@ -1025,13 +1025,32 @@ class Minecraft121SettingsCanonicalizerTest {
         verifyLonger.add(nop);verifyLonger.add(nop);
         assertAll(
                 ()->processorListChanged("getList()==null",null),
-                ()->processorListChanged("size()丟例外",sizeFails),
+                ()->assertInstanceOf(UnsupportedOperationException.class,
+                        processorListChanged("size()丟例外",sizeFails).getCause(),"size()丟例外：須保留原因例外"),
                 ()->processorListChanged("清單比size短",shorter),
-                ()->processorListChanged("迭代中結構性add（CME）",structural),
+                ()->assertInstanceOf(java.util.ConcurrentModificationException.class,
+                        processorListChanged("迭代中結構性add（CME）",structural).getCause(),"CME：須保留原因例外"),
                 ()->processorListChanged("第一遍後size改變",grownAfterCopy),
                 ()->processorListChanged("第二遍較短",verifyShorter),
                 ()->processorListChanged("第二遍較長",verifyLonger),
                 ()->processorListChanged("第二遍後size改變",grownAfterVerify));
+    }
+    @Test void namedProcessorListNegativeSizeAndExhaustedIteratorFailAsChanged() {
+        var nop=(net.minecraft.structure.processor.StructureProcessor)net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
+        var negative=new java.util.AbstractList<net.minecraft.structure.processor.StructureProcessor>() {
+            @Override public int size(){return -1;}
+            @Override public net.minecraft.structure.processor.StructureProcessor get(int index){return nop;}
+        };
+        // AbstractList的iterator在get丟IndexOutOfBounds且modCount未變時改丟NoSuchElementException（清單在hasNext後縮短）。
+        var exhausted=new java.util.AbstractList<net.minecraft.structure.processor.StructureProcessor>() {
+            @Override public int size(){return 1;}
+            @Override public net.minecraft.structure.processor.StructureProcessor get(int index){throw new IndexOutOfBoundsException(index);}
+        };
+        assertAll(
+                ()->processorListChanged("size()為負",negative),
+                ()->assertInstanceOf(java.util.NoSuchElementException.class,
+                        processorListChanged("iterator提早耗盡（NoSuchElementException）",exhausted).getCause(),
+                        "NoSuchElementException：須保留原因例外"));
     }
     @Test void namedProcessorSameSizeReplacementDuringCopyFailsClosed() {
         var changing=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {

@@ -20,11 +20,14 @@ import net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters;
 import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 
 /**
- * typed registry 傳遞層：noise parameters、受審End值與exact Single pool局部閉包。
+ * typed registry 傳遞層：noise parameters、受審End值、exact Single pool局部閉包，
+ * 以及named PROCESSOR_LIST局部閉包（exact StructureProcessorList，元素只admit exact原生Nop／LavaSubmerged）。
  * 未admit的定義／consumer、inline entry與非direct alias仍拒絕，不是完整三role快照。
  * registries/resources 必須由呼叫端的同一次有效來源 lease 提供；本類不取得 live source。
  */
 final class Minecraft121RegistryClosure {
+    /** D1a admission設計定的保守pre-encode工作量上限（恰4096接受、4097拒）；沒有原生上限依據，不取代Graph的edge/state/raw/canonical/depth預算。 */
+    private static final int MAX_NAMED_PROCESSORS=4096;
     private record Work(Occurrence occurrence, RegistryKey<?> registryKey, TagKey<?> tag, boolean required,
             Identifier template,Minecraft121TemplateSettingsAdapter.Use use) {
         Work(Occurrence occurrence,RegistryKey<?> key,TagKey<?> tag,boolean required){this(occurrence,key,tag,required,null,null);}
@@ -189,53 +192,7 @@ final class Minecraft121RegistryClosure {
 
     private void expandDefinition(Key node, RegistryKey<?> key, Object value) {
         if(key.getRegistry().equals(RegistryKeys.PROCESSOR_LIST.getValue())) {
-            require(value!=null && value.getClass()==StructureProcessorList.class,"NATIVE_DEFINITION_OWNER");
-            nativeSource(value.getClass());
-            var original=((StructureProcessorList)value).getList();
-            require(original!=null,"PROCESSOR_LIST_CHANGED");
-            int size;
-            try {size=original.size();} catch(RuntimeException bad) {throw failure("PROCESSOR_LIST_CHANGED");}
-            require(size<=4096,"BUDGET_PROCESSORS");
-            var copy=new ArrayList<StructureProcessor>(size);
-            try {
-                for(var processor:original) {
-                    require(copy.size()<size,"PROCESSOR_LIST_CHANGED");
-                    copy.add(processor);
-                }
-                require(copy.size()==size,"PROCESSOR_LIST_CHANGED");
-                require(original.size()==size,"PROCESSOR_LIST_CHANGED");
-                // 固定原生路徑無發布後writer；第二遍只拒可見變動，不宣稱防任意ABA。
-                var verify=original.iterator();
-                for(int i=0;i<size;i++) {
-                    require(verify.hasNext(),"PROCESSOR_LIST_CHANGED");
-                    require(verify.next()==copy.get(i),"PROCESSOR_LIST_CHANGED");
-                }
-                require(!verify.hasNext() && original.size()==size,"PROCESSOR_LIST_CHANGED");
-            } catch(ConcurrentModificationException bad) {throw failure("PROCESSOR_LIST_CHANGED");}
-            for(var processor:copy) {
-                require(processor!=null,"PROCESSOR_LIST_CHANGED");
-                Class<?> type=processor.getClass();nativeSource(type);
-                require(type==NopStructureProcessor.class || type==LavaSubmergedBlockStructureProcessor.class,
-                        "UNSUPPORTED_PROCESSOR_TYPE");
-            }
-            NbtElement encoded;
-            try {encoded=roundtrip(StructureProcessorType.PROCESSORS_CODEC,new StructureProcessorList(List.copyOf(copy)));}
-            catch(RuntimeException bad) {var failure=failure("UNSUPPORTED_PROCESSOR_CODEC");failure.initCause(bad);throw failure;}
-            require(encoded instanceof NbtCompound,"UNSUPPORTED_PROCESSOR_CODEC");
-            var fields=(NbtCompound)encoded;
-            require(fields.getKeys().equals(Set.of("processors")) && fields.get("processors") instanceof NbtList,
-                    "UNSUPPORTED_PROCESSOR_CODEC");
-            var items=fields.getList("processors",NbtElement.COMPOUND_TYPE);
-            require(items.size()==size,"UNSUPPORTED_PROCESSOR_CODEC");
-            for(int i=0;i<size;i++) {
-                var item=items.getCompound(i);
-                String expected=copy.get(i).getClass()==NopStructureProcessor.class?
-                        "minecraft:nop":"minecraft:lava_submerged_block";
-                require(item.getKeys().equals(Set.of("processor_type"))
-                        && item.get("processor_type") instanceof NbtString
-                        && expected.equals(item.getString("processor_type")),"UNSUPPORTED_PROCESSOR_CODEC");
-            }
-            graph.payload(node,fields);
+            expandProcessorList(node,value);
             return;
         }
         if(key.getRegistry().equals(RegistryKeys.NOISE_PARAMETERS.getValue())) {
@@ -247,6 +204,62 @@ final class Minecraft121RegistryClosure {
             return;
         }
         throw failure("UNSUPPORTED_REGISTRY_DEFINITION");
+    }
+
+    private void expandProcessorList(Key node,Object value) {
+        require(value!=null && value.getClass()==StructureProcessorList.class,"NATIVE_DEFINITION_OWNER");
+        nativeSource(value.getClass());
+        var original=((StructureProcessorList)value).getList();
+        require(original!=null,"PROCESSOR_LIST_CHANGED");
+        int size;
+        try {size=original.size();}
+        catch(RuntimeException bad) {var failure=failure("PROCESSOR_LIST_CHANGED");failure.initCause(bad);throw failure;}
+        require(size>=0,"PROCESSOR_LIST_CHANGED");
+        require(size<=MAX_NAMED_PROCESSORS,"BUDGET_PROCESSORS");
+        var copy=new ArrayList<StructureProcessor>(size);
+        try {
+            for(var processor:original) {
+                require(copy.size()<size,"PROCESSOR_LIST_CHANGED");
+                copy.add(processor);
+            }
+            require(copy.size()==size,"PROCESSOR_LIST_CHANGED");
+            require(original.size()==size,"PROCESSOR_LIST_CHANGED");
+            // 固定原生路徑無發布後writer；第二遍只拒可見變動，不宣稱防任意ABA。
+            var verify=original.iterator();
+            for(int i=0;i<size;i++) {
+                require(verify.hasNext(),"PROCESSOR_LIST_CHANGED");
+                require(verify.next()==copy.get(i),"PROCESSOR_LIST_CHANGED");
+            }
+            require(!verify.hasNext() && original.size()==size,"PROCESSOR_LIST_CHANGED");
+        } catch(ConcurrentModificationException|NoSuchElementException bad) {
+            // 只正規化iterator的變動訊號；Failure等其他例外原樣交回checked()。
+            var failure=failure("PROCESSOR_LIST_CHANGED");failure.initCause(bad);throw failure;
+        }
+        for(var processor:copy) {
+            if(captureScope!=null)captureScope.checkpoint();
+            require(processor!=null,"PROCESSOR_LIST_CHANGED");
+            Class<?> type=processor.getClass();nativeSource(type);
+            require(type==NopStructureProcessor.class || type==LavaSubmergedBlockStructureProcessor.class,
+                    "UNSUPPORTED_PROCESSOR_TYPE");
+        }
+        NbtElement encoded;
+        try {encoded=roundtrip(StructureProcessorType.PROCESSORS_CODEC,new StructureProcessorList(List.copyOf(copy)));}
+        catch(RuntimeException bad) {var failure=failure("UNSUPPORTED_PROCESSOR_CODEC");failure.initCause(bad);throw failure;}
+        require(encoded instanceof NbtCompound,"UNSUPPORTED_PROCESSOR_CODEC");
+        var fields=(NbtCompound)encoded;
+        require(fields.getKeys().equals(Set.of("processors")) && fields.get("processors") instanceof NbtList,
+                "UNSUPPORTED_PROCESSOR_CODEC");
+        var items=fields.getList("processors",NbtElement.COMPOUND_TYPE);
+        require(items.size()==size,"UNSUPPORTED_PROCESSOR_CODEC");
+        for(int i=0;i<size;i++) {
+            var item=items.getCompound(i);
+            String expected=copy.get(i).getClass()==NopStructureProcessor.class?
+                    "minecraft:nop":"minecraft:lava_submerged_block";
+            require(item.getKeys().equals(Set.of("processor_type"))
+                    && item.get("processor_type") instanceof NbtString
+                    && expected.equals(item.getString("processor_type")),"UNSUPPORTED_PROCESSOR_CODEC");
+        }
+        graph.payload(node,fields);
     }
 
     private void expandPool(Key node,Object value,String aliasScope) {
