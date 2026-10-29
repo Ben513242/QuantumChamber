@@ -831,13 +831,16 @@ class Minecraft121SettingsCanonicalizerTest {
         var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
                 net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
         try {
+            // finish結果會快取：先drain、再改來源，最後才第一次finish，舊圖若仍讀可變來源才會被抓到。
             var old=graph();var a=new Minecraft121RegistryClosure(old,registries,resources);
-            a.reference(ROOT,"processor",processorKey("test:mutable"));a.drain();byte[] original=old.finish();
+            a.reference(ROOT,"processor",processorKey("test:mutable"));a.drain();
             mutable.set(0,net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE);
-            assertArrayEquals(original,old.finish());
+            assertArrayEquals(namedProcessorBytes("test:mutable",new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(
+                    net.minecraft.structure.processor.NopStructureProcessor.INSTANCE))),old.finish(),"drain時的[NOP]須已由舊圖擁有");
             var fresh=graph();var b=new Minecraft121RegistryClosure(fresh,registries,resources);
             b.reference(ROOT,"processor",processorKey("test:mutable"));b.drain();
-            assertFalse(Arrays.equals(original,fresh.finish()));
+            assertArrayEquals(namedProcessorBytes("test:mutable",new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(
+                    net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE))),fresh.finish(),"新capture須反映新值");
         } finally {resources.close();}
     }
     @Test void namedProcessorRejectsUnsupportedNativeAndForeignTypes() {
@@ -858,6 +861,45 @@ class Minecraft121SettingsCanonicalizerTest {
                 rejects(codes.get(i),c::drain);rejects("GRAPH_FAILED",g::finish);
             } finally {resources.close();}
         }
+    }
+    @Test void namedProcessorChecksEveryElementNotOnlyTheFirst() {
+        var trailingNull=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>();
+        trailingNull.add(net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE);trailingNull.add(null);
+        var cases=java.util.List.<java.util.List<net.minecraft.structure.processor.StructureProcessor>>of(
+                java.util.List.of(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE,
+                        new net.minecraft.structure.processor.BlockIgnoreStructureProcessor(java.util.List.of())),trailingNull);
+        var codes=java.util.List.of("UNSUPPORTED_PROCESSOR_TYPE","PROCESSOR_LIST_CHANGED");
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for(int index=0;index<cases.size();index++) {
+            final int i=index;
+            checks.add(()->assertAll("subcase="+codes.get(i),()->{
+                var registries=processorRegistries("test:bad",new net.minecraft.structure.processor.StructureProcessorList(cases.get(i)));
+                var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                        net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+                try {
+                    var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+                    c.reference(ROOT,"processor",processorKey("test:bad"));
+                    rejects(codes.get(i),c::drain);rejects("GRAPH_FAILED",g::finish);
+                } finally {resources.close();}
+            }));
+        }
+        assertAll(checks);
+    }
+    @Test void namedProcessorPayloadIsBoundedByGraphCanonicalBudgetDuringDrain() {
+        var nop=(net.minecraft.structure.processor.StructureProcessor)net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            // 同一組limits：ROOT、reference與1項payload都放得下，4096項payload放不下；reference須成功，拒絕只能發生在drain內的processor payload。
+            for(int count:new int[]{1,4096}) {
+                var g=limited(10,10,10,10,100,134217728,2048,128);g.payload(ROOT,NbtInt.of(1));
+                var c=new Minecraft121RegistryClosure(g,processorRegistries("test:payload",
+                        new net.minecraft.structure.processor.StructureProcessorList(java.util.Collections.nCopies(count,nop))),resources);
+                c.reference(ROOT,"processor",processorKey("test:payload"));
+                if(count==1) {c.drain();assertTrue(g.finish().length>0,"小payload在同一組limits下須可完成");}
+                else {rejects("BUDGET_CANONICAL",c::drain);rejects("GRAPH_FAILED",g::finish);}
+            }
+        } finally {resources.close();}
     }
     @Test void namedProcessorCountCapIsIndependentOfGraphBudget() {
         var nop=net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
@@ -916,6 +958,80 @@ class Minecraft121SettingsCanonicalizerTest {
                 rejects("PROCESSOR_LIST_CHANGED",c::drain);rejects("GRAPH_FAILED",g::finish);
             } finally {resources.close();}
         }
+    }
+    /** 期望drain以PROCESSOR_LIST_CHANGED拒絕並毒化Graph；回傳Failure供呼叫端再驗原因例外。 */
+    private static Minecraft121SettingsGraph.Failure processorListChanged(String label,
+            java.util.List<net.minecraft.structure.processor.StructureProcessor> list) {
+        var registries=processorRegistries("test:bad",new net.minecraft.structure.processor.StructureProcessorList(list));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+            c.reference(ROOT,"processor",processorKey("test:bad"));
+            var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,c::drain,label);
+            assertEquals("PROCESSOR_LIST_CHANGED",failure.getMessage(),label);
+            assertEquals("GRAPH_FAILED",assertThrows(Minecraft121SettingsGraph.Failure.class,g::finish,label).getMessage(),label);
+            return failure;
+        } finally {resources.close();}
+    }
+    @Test void namedProcessorListUnreadableOrDriftingSourceFailsAsChanged() {
+        var nop=(net.minecraft.structure.processor.StructureProcessor)net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
+        var sizeFails=new java.util.AbstractList<net.minecraft.structure.processor.StructureProcessor>() {
+            @Override public int size(){throw new UnsupportedOperationException("fixture size");}
+            @Override public net.minecraft.structure.processor.StructureProcessor get(int index){return nop;}
+        };
+        var shorter=new java.util.AbstractList<net.minecraft.structure.processor.StructureProcessor>() {
+            int reads;
+            @Override public int size(){return ++reads==1?2:1;}
+            @Override public net.minecraft.structure.processor.StructureProcessor get(int index){return nop;}
+        };
+        var structural=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            boolean added;
+            @Override public java.util.Iterator<net.minecraft.structure.processor.StructureProcessor> iterator() {
+                var delegate=super.iterator();
+                return new java.util.Iterator<>() {
+                    @Override public boolean hasNext(){return delegate.hasNext();}
+                    @Override public net.minecraft.structure.processor.StructureProcessor next(){
+                        var item=delegate.next();if(!added){added=true;add(nop);}return item;
+                    }
+                };
+            }
+        };
+        structural.add(nop);structural.add(nop);
+        // production依序讀size：配置前、第一遍後、第二遍後；ArrayList自身iterator不呼叫size()。
+        var grownAfterCopy=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            int reads;
+            @Override public int size(){return ++reads==2?3:super.size();}
+        };
+        grownAfterCopy.add(nop);grownAfterCopy.add(nop);
+        var grownAfterVerify=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            int reads;
+            @Override public int size(){return ++reads==3?3:super.size();}
+        };
+        grownAfterVerify.add(nop);grownAfterVerify.add(nop);
+        var verifyShorter=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            int iterators;
+            @Override public java.util.Iterator<net.minecraft.structure.processor.StructureProcessor> iterator() {
+                return ++iterators==1?super.iterator():java.util.List.of(nop).iterator();
+            }
+        };
+        verifyShorter.add(nop);verifyShorter.add(nop);
+        var verifyLonger=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            int iterators;
+            @Override public java.util.Iterator<net.minecraft.structure.processor.StructureProcessor> iterator() {
+                return ++iterators==1?super.iterator():java.util.List.of(nop,nop,nop).iterator();
+            }
+        };
+        verifyLonger.add(nop);verifyLonger.add(nop);
+        assertAll(
+                ()->processorListChanged("getList()==null",null),
+                ()->processorListChanged("size()丟例外",sizeFails),
+                ()->processorListChanged("清單比size短",shorter),
+                ()->processorListChanged("迭代中結構性add（CME）",structural),
+                ()->processorListChanged("第一遍後size改變",grownAfterCopy),
+                ()->processorListChanged("第二遍較短",verifyShorter),
+                ()->processorListChanged("第二遍較長",verifyLonger),
+                ()->processorListChanged("第二遍後size改變",grownAfterVerify));
     }
     @Test void namedProcessorSameSizeReplacementDuringCopyFailsClosed() {
         var changing=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
@@ -1093,20 +1209,39 @@ class Minecraft121SettingsCanonicalizerTest {
         }
     }
     @Test void templateStateEdgeResourceRawCanonicalBudgetOverflowRejected(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
-        String[] codes={"BUDGET_EDGES","BUDGET_STATES","BUDGET_RESOURCES","BUDGET_RAW","BUDGET_TOTAL_RAW","BUDGET_CANONICAL"};
-        // charge兼兩用：BUDGET_TOTAL_RAW的精確邊界；並在lease外完成JVM首次原生blank template載入（100ms量hold，不量冷類別載入；production冷啟動仍屬live hold I-1）。
-        long charge=Minecraft121TemplateValueContracts.measure(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),0);
+        String[] codes={"BUDGET_EDGES","BUDGET_STATES","BUDGET_RESOURCES","BUDGET_RAW","BUDGET_CANONICAL"};
+        // 任何lease之前先算blank charge，本方法只拿它暖機：BUDGET_RESOURCES是本方法第一個在lease內capture的子案，先讓JVM首次的原生blank template載入落在lease外。
+        // 100ms量的是hold，不排除冷類別載入；這只降低風險，lease內仍有其他冷成本（例如BUDGET_EDGES的pool codec），production冷啟動仍屬live hold I-1。
+        Minecraft121TemplateValueContracts.measure(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),0);
         var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
         for(int index=0;index<codes.length;index++){final int i=index;checks.add(()->assertAll("subcase="+codes[i],()->{try(var f=new PoolFixture(root.resolve("budget-"+i),single("test:a"),single("test:b"))) {
-            var g=limited(100,i==0?1:100,i==1?1:100,i==2?1:10,i==3?1:10000,i==4?charge:100000,i==5?128:100000,128);
-            var c=new Minecraft121RegistryClosure(g,f.context);final String code=codes[i];var repeat=net.minecraft.util.Identifier.of("test:repeat");
-            if(code.equals("BUDGET_TOTAL_RAW")) {
-                var once=limited(100,100,100,10,10000,charge,100000,128);var d=new Minecraft121RegistryClosure(once,f.context);once.payload(ROOT,NbtInt.of(1));
-                d.template(ROOT,"repeat-0",repeat,Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"budget");d.drain();once.finish();
-            }
-            rejects(code,()->{g.payload(ROOT,NbtInt.of(1));if(code.equals("BUDGET_TOTAL_RAW")){for(int j=0;j<2;j++)c.template(ROOT,"repeat-"+j,repeat,Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"budget");}else c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();});rejects("GRAPH_FAILED",g::finish);
+            var g=limited(100,i==0?1:100,i==1?1:100,i==2?1:10,i==3?1:10000,100000,i==4?128:100000,128);
+            var c=new Minecraft121RegistryClosure(g,f.context);final String code=codes[i];
+            rejects(code,()->{g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();});rejects("GRAPH_FAILED",g::finish);
         }}));}
         assertAll(checks);
+    }
+    private static Minecraft121RegistryClosure repeatedTemplate(Minecraft121SettingsGraph g,PoolFixture f,int occurrences) {
+        g.payload(ROOT,NbtInt.of(1));var c=new Minecraft121RegistryClosure(g,f.context);
+        for(int j=0;j<occurrences;j++)c.template(ROOT,"repeat-"+j,net.minecraft.util.Identifier.of("test:repeat"),
+                Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"budget");
+        return c;
+    }
+    @Test void templateTotalRawAllowsOneChargeAndRejectsAccumulation(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        // 任何lease之前先算blank charge：它是本測試的BUDGET_TOTAL_RAW邊界，也讓JVM首次的原生blank template載入落在lease外（暖機）。
+        long charge=Minecraft121TemplateValueContracts.measure(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),0);
+        try(var f=new PoolFixture(root,single("test:a"),single("test:b"))) {
+            var below=limited(100,100,100,10,10000,charge-1,100000,128);
+            var once=limited(100,100,100,10,10000,charge,100000,128);
+            var twice=limited(100,100,100,10,10000,charge,100000,128);
+            assertAll(
+                    ()->assertAll("subcase=totalRaw=charge-1,occurrences=1",()->{
+                        var c=repeatedTemplate(below,f,1);rejects("BUDGET_TOTAL_RAW",c::drain);rejects("GRAPH_FAILED",below::finish);}),
+                    ()->assertAll("subcase=totalRaw=charge,occurrences=1",()->{
+                        repeatedTemplate(once,f,1).drain();assertTrue(once.finish().length>0,"一份charge足夠一次occurrence");}),
+                    ()->assertAll("subcase=totalRaw=charge,occurrences=2",()->{
+                        var c=repeatedTemplate(twice,f,2);rejects("BUDGET_TOTAL_RAW",c::drain);rejects("GRAPH_FAILED",twice::finish);}));
+        }
     }
 
     @Test void nativeSingleCodecMissingProcessorRegistryDiagnostic() {
