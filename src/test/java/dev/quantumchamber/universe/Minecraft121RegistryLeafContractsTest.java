@@ -209,10 +209,11 @@ class Minecraft121RegistryLeafContractsTest {
         System.out.println("D1B1_LEAF_COST_SUMMARY leaves="+count+" totalPayloadBytes="+totalBytes+" properties="+totalProperties+" values="+totalValues);
         System.out.println("D1B1_LEAF_COST_CODES "+codes);
         System.out.println("D1B1_LEAF_COST_NAMESPACES "+namespaces);
-        System.out.println("D1B1_LEAF_COST_FIRST_LEAF_NS id="+entries.get(0).registryKey().getValue()+" coldNs="+cold[0]+"（本JVM中本測試的第一個leaf，最冷）");
+        // system-out走測試JVM的平台編碼，標記一律用ASCII（與既有TEMPLATE_CANONICAL_L等相同）。
+        System.out.println("D1B1_LEAF_COST_FIRST_LEAF_NS id="+entries.get(0).registryKey().getValue()+" coldNs="+cold[0]+" note=first-leaf-of-this-test");
         System.out.println("D1B1_LEAF_COST_COLD_NS "+stats(cold));
         System.out.println("D1B1_LEAF_COST_WARM_NS "+stats(warm));
         System.out.println("D1B1_LEAF_COST_REFERENCE owPaletteOccurrences=17262 owPaletteUniqueBlocks=375 owAllConsumerBlocks=924 unionPaletteUniqueBlocks=401"
-                +" source=B28 census（D1B-PROPOSAL-v2 §2、§6 的常數，不是本測試量的）");
+                +" source=B28-census-constants-not-measured-here");
     }
 }
