@@ -349,6 +349,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 2026-10-29 D1a結案快照：test-only fix2 `9d97cd0`在任何lease前算blank charge兼暖機，BUDGET_TOTAL_RAW改為正例1次occurrence＋負例2次occurrence（原fixture實際也只到第2次）；乾淨M6Compile、雙focused88/88、完整`run-all-3990c81a33b84ee9961ae54b63f4b752` END ALL0／JUnit850 f0e0 skip2，fresh spec C0/I0/M5、quality C0/I0/M6。D1a只限named PROCESSOR_LIST empty／NOP／LAVA局部閉包；fix2降低100ms偶發風險、不宣稱根治。11項Minor交下一C1d切片Step0，清單見M6 note末節。C1d其餘、100ms live hold I-1、8B3、Task8終局仍待。
 
+2026-10-29 C1d Step0快照：D1a遠端CI run40836148542（307565f）兩job success。D1a Minor收斂code `242c20b`（d561520 test＋242c fix，只RegistryClosure與CanonicalizerTest）：具名RED→GREEN93/93、乾淨雙focused93/93、完整`run-all-41d76dffa3104602a75c8836ff2184ae` END ALL0／JUnit855，fresh spec C0/I0/M0、quality C0/I0/M4。4096＝D1a保守pre-encode工作量cap、無原生上限依據、不保證完整vanilla配置可用；多個大清單同lease可能逼近100ms，列為I-1輸入。242c遠端CI待本筆push後讀回。新Minor S1～S4併入下一切片D1b（BLOCK/ITEM有效值與component）Step0；D1b依ignored SEQUENCE-PROPOSAL（未審順序提案）先寫設計並獨立審查才實作。
+
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。

@@ -40,3 +40,9 @@
 - D1a 結案只限 named PROCESSOR_LIST empty／NOP／LAVA 的局部閉包；這段 closure 尚無 production caller，`createSnapshot/resolve` 仍 fail closed。fix1 兩次原 FAIL、v4 父 FAIL 與 B27 FAIL 原判保留。
 - 驗證與審查：乾淨 `9d97cd0` M6Compile、CanonicalizerTest 雙 focused 88/88、完整 `run-all-3990c81a33b84ee9961ae54b63f4b752` 自然 END ALL0（JUnit850 f0e0 skip2）；整段 `f1e0bef..9d97cd0` fresh spec C0/I0/M5、quality C0/I0/M6。原件與 root 見 M6 note 末節及 ignored `task-08/8b2-c1d-d1a-evidence/FIX2-*`。
 - 下一步：下一個 C1d 切片先做 Step0，處理 11 項 Minor（清單見 M6 note 末節）。之後依已審的 D0-O 原始分母（ignored `task-08/8b2-c1d-census-offline/run-89ca6200-a1fb-4856-bc0c-b24a8ea76b6a`，方法繼承到 `task-08/8b2-c1d-design/D0-METHOD-v4.md`）、`D0-N-METHOD-v2.md`（N 門靜態方法）及 `N-GAPS.json` 的 source／consumer／admission 缺口擴充 leaf／consumer；N-R 來源 JVM 仍要另包審查，需要新設計時先寫設計並獨立審查。仍待的門檻：C1d 其餘 leaf 與三 role FP／provider／snapshot／resolve、100ms live hold I-1、8B3 三 bundle、Task8 終局、Task9–20、人工與整分支。若同一個 budget 測試再出現 NOT_READY，視為新的 FAIL、保留 root，不重送改判。
+
+### 2026-10-29：C1d Step0（D1a Minor 收斂）結案
+
+- D1a 遠端 CI：run `40836148542`（`307565f`）兩 job success。
+- Step0 code `242c20b`：處理 D1a 審查的 spec M1～M4 與 quality Q1～Q6，只改 RegistryClosure 與 CanonicalizerTest，不擴充 leaf／consumer。spec M5 屬 docs truth，D1a 文件已寫成降低風險；BUDGET_EDGES 第一個 lease 的冷成本是殘餘風險，歸 live hold I-1。驗證與審查：具名 RED→GREEN 93/93，乾淨雙 focused 93/93，完整 `run-all-41d76dffa3104602a75c8836ff2184ae` 自然 END ALL0／JUnit855；fresh spec C0/I0/M0、quality C0/I0/M4。Q1 的突變證明曾暫改範圍外的 Graph 檔，已還原、核對 hash，未進 commit。
+- 下一步：D1b（BLOCK／ITEM 有效值與 default／effective component）。先依 ignored `task-08/8b2-c1d-design/SEQUENCE-PROPOSAL.md`（未審順序提案）、固定 1.21 JAR 的 consumer 與 D0-O 原始分母寫設計提案，經獨立審查後才實作；Step0 新增的 4 項 Minor（S1～S4）與兩項既有測試問題併入 D1b 的 Step0。清單見 M6 note 末節。`242c20b` 的遠端 CI 要等本筆 docs push 後讀回；本機 CI oracle 不等於遠端 CI。

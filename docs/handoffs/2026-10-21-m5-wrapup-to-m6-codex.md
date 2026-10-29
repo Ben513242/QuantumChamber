@@ -583,3 +583,8 @@
 
 - Codex 交接 docs `62a2f72`（入口 `docs/handoffs/2026-10-29-m6-claude-resume-prompt.md`）。Claude 實核 Git 與原件一致後接手；fix1 兩次原 FAIL 保留，不改判。
 - test-only fix2 code `9d97cd0`：具名診斷證明交接的「10 次重建」假設不成立，改在任何 lease 前算 blank charge 兼暖機，BUDGET_TOTAL_RAW 改為正例 1 次 occurrence＋負例 2 次 occurrence。乾淨 M6Compile、雙 focused 88/88、完整 `run-all-3990c81a33b84ee9961ae54b63f4b752` 自然 END ALL0／JUnit850 f0e0 skip2；整段 `f1e0bef..9d97cd0` fresh spec C0/I0/M5、quality C0/I0/M6。D1a 只限 named PROCESSOR_LIST empty／NOP／LAVA 局部閉包；fix2 降低 100ms 偶發風險，不宣稱根治。11 項 Minor 交下一個 C1d 切片 Step0（清單見 M6 note 末節）。C1d 其餘、100ms live hold I-1、8B3、Task8 終局與 Task9–20 仍待；本機 CI oracle 不等於遠端 CI。
+
+### 2026-10-29：M6 C1d Step0（D1a Minor 收斂）結案，接 D1b 設計
+
+- D1a 遠端 CI：run `40836148542`（`307565f`）的 Ubuntu build 與 Windows windows-native 皆 success。
+- Step0 code `242c20b`（只限 RegistryClosure 與 CanonicalizerTest）：具名 RED→GREEN 93/93，乾淨雙 focused 93/93，完整 `run-all-41d76dffa3104602a75c8836ff2184ae` 自然 END ALL0／JUnit855；fresh spec C0/I0/M0、quality C0/I0/M4。新 Minor S1～S4 併入下一個實質切片 D1b（BLOCK／ITEM 有效值與 component）的 Step0；D1b 須先寫設計並獨立審查。`242c20b` 的遠端 CI 待本筆 push 後讀回。細節見 M6 note 末節。

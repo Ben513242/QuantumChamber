@@ -556,3 +556,52 @@ GREEN root `focused-c1d-d1a-fix2-green-67d2ef88317b4130af43b41b24c8e4cd` 88/88�
 - quality Q6：BUDGET_TOTAL_RAW 子案改拆成 @Test，或斷言 finish 的回傳。
 
 若同一測試日後再出現 NOT_READY，視為新的 FAIL，保留原 root，不重送改判。C1d 其餘部分（BLOCK／ITEM／LOOT_TABLE、Vault／TrialSpawner／entity／component、非模板閉包、三 role FP／provider／snapshot／resolve、100ms live hold I-1）、8B3 三 bundle、Task8 終局與 Task9–20 仍待。
+
+D1a 遠端 CI：docs commit `307565fc6c22b2066f7b1359c13f7d97ad8603ce`（含 code `9d97cd0`）的 GitHub Actions Build run `40836148542` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩 job 皆 success。只讀回 job 結論，沒有 audit artifact 內容，也不是 8B3 三 bundle。
+
+### 2026-10-29：C1d Step0（D1a Minor 收斂）
+
+範圍只限 D1a 兩個 owner，不擴充任何 leaf 或 consumer：commit `d561520`（只改測試）與 `242c20b3715ccdc64f68f3923809bdbdd542ef5a`（`Minecraft121RegistryClosure` 加對應測試）。
+- production：
+  - PROCESSOR_LIST 分支抽成 `expandProcessorList`，除下列修改外與舊碼等價；
+  - 負 size 在配置之前拒絕；
+  - iterator 的 CME／NoSuchElementException 歸類為 PROCESSOR_LIST_CHANGED；
+  - 兩個 catch（`size()` 例外，以及 CME／NSEE）一律 `initCause`；
+  - owned copy 的逐項迴圈比照 `expandPool` 加 checkpoint；
+  - 類別 Javadoc 補上 named PROCESSOR_LIST 的局部範圍。
+- 4096 抽成 `MAX_NAMED_PROCESSORS`。出處是 D1a 設計（ignored `task-08/8b2-c1d-design/D1A-PROPOSAL-v2.md` 第 28 行）：這是 D1a 新增的保守 pre-encode 工作量上限，恰 4096 接受、4097 拒；沒有原生上限依據，不取代 Graph 的 edge／state／raw／canonical／depth 預算，也不保證完整 vanilla 配置可用。quality 審查另指出：同一次 drain 若有多個接近 4096 項的清單，lease 內的 codec 工作可能逼近 100ms，結果是 fail closed（NOT_READY）。這是 live hold I-1 與這個上限之間的取捨，列為 I-1 的輸入。新加的逐項 checkpoint 沒有專屬的鑑別測試，因為不准用 clock override；依等價論證，拿掉它不改變 fail-closed 結果。
+- 測試從 88 變 93：
+  - 來源漂移與不可讀的直接負例：null list、size 例外、清單縮短、CME、第一遍後 size 改變、第二遍較短／較長、第二遍後 size 改變、負 size、NSEE；
+  - `namedProcessorCaptureOwnsEarlierGraphAfterSourceMutation` 改為 drain→mutate→first finish，與獨立擷取的 bytes 比對；
+  - processor payload 在 drain 階段受 canonical 預算約束；
+  - 多元素清單的型別負例；
+  - BUDGET_TOTAL_RAW 拆成獨立的 `templateTotalRawAllowsOneChargeAndRejectsAccumulation`，含 charge-1／charge 單次／charge 兩次三例。
+
+  兩個 template budget 測試都在任何 lease 之前先算 charge 暖機；註解只寫降低風險，不寫根治或成因。
+
+證據放在 ignored `task-08/8b2-c1d-step0-evidence/`：
+- 具名 RED `focused-c1d-step0-red-914093591eb54318be69c4d6b9f6c6db`：93 案 2 fail，原因是負 size 拋 IAE、NSEE 未正規化、size()／CME 沒有 cause。
+- GREEN `focused-c1d-step0-green-40fa111be00e425f8557aaed9f7ae0ad`：93/93。
+- Q1 的突變證明 `focused-c1d-step0-q1-mutation-df4c0f3851ec4d1b8c053c38e1b95375`：新寫法 FAIL、舊寫法 PASS。為了讓舊圖在 finish 時讀到改過的來源，這次突變暫時改了範圍外的 `Minecraft121SettingsGraph.java`，以及 closure 與測試檔。三檔都已還原並逐檔核對 hash，沒有進 commit；Graph 檔在 HEAD 與 `9d97cd0` 是同一個 blob。
+
+乾淨 `242c20b` 的驗證結果：
+- M6Compile PASS。
+- focused `focused-c1d-step0-clean-1-38bbbccf7d8742a29d83008a077231e3`、`focused-c1d-step0-clean-2-813f16645c8b4c1692826ee171695453` 皆 93/93。
+- 完整 `run-all-41d76dffa3104602a75c8836ff2184ae` 自然 END ALL exit0：JUnit855（0 fail／0 error／2 既有 skip）、default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2、mainOnly PASS、testmodHits0。console.log SHA256 `0ce56107cf330a6c564121dba1bc42e44189c275b263fedab1a745f107bd3950`，summary.json SHA256 `961d9b8c4b57f068e9adaffe3394038b8876fe4244951812aff9d3b235b28e77`。
+- 驗證腳本的 `Assert-Pin` 全部通過。本機 CI oracle（`ci=win:PASS,ubuntu:PASS`）不等於遠端 CI；`242c20b` 的遠端 CI 要等本筆 docs push 之後才讀回。
+
+D1a 那 11 項 Minor 的處置：spec M1～M4 與 quality Q1～Q6 都在本輪完成。spec M5 屬 docs truth，D1a 結案文件已寫成「降低風險、不認定成因」；BUDGET_EDGES 第一個 lease 的 30～45ms 冷成本是殘餘風險，歸 live hold I-1。
+
+全新獨立審查：spec C0/I0/M0；quality C0/I0/M4，Approved。報告是 ignored 的 `STEP0-SPEC-REVIEW.md`（SHA256 `3706958c1a4ba539a5eafd832915e1e846e8867d0d5e2468652ac5c0ef864888`）與 `STEP0-QUALITY-REVIEW.md`（SHA256 `dda9c4b1e8b187d540dd91d51f3d82a4a6946faf25a8193e838cf98c3cb56c54`）。
+
+新的 Minor 編為 S1～S4（與 D1a 的 spec M1～M4 區分），併入下一個實質 C1d 切片（D1b）的 Step0，不另開清理輪：
+- S1：第一次 `size()` 以外的讀取點（包括第二、三次 `size()` 與 iterator），CME／NSEE 以外的 RuntimeException 沒有正規化，且 catch 旁的註解不精確。
+- S2：`processorListChanged` 沒有斷言 require 路徑必須沒有 cause。
+- S3：`namedProcessorCountCapIsIndependentOfGraphBudget` 殘留 reference 階段的空轉負例。
+- S4：processor 負例 helper 要一般化，Q2 測試改用 assertAll。
+
+另有兩項既有問題，本輪不改，同樣由 D1b Step0 處理（兩者都在 CanonicalizerTest，屬 D1b 的 owner 檔）：
+- template budget 測試的 BUDGET_CANONICAL 子案，也在 reference 階段就失敗（出處：Step0 quality 報告的觀察 1）；
+- noise 測試 `sameTypedIdChangedNativeValueChangesOwnedBytes` 先 finish、改值、再 finish，因 finish 有快取，舊圖斷言恆成立（出處：D1a `FIX2-QUALITY-REVIEW.md` 的 Q1）。
+
+下一個實質切片依 ignored `task-08/8b2-c1d-design/SEQUENCE-PROPOSAL.md` 的 D1b（BLOCK／ITEM 有效值與 default／effective component）。這份順序提案是 Codex 寫的，本身標示「未審」；D1b 要先寫設計提案並經獨立審查，才能實作。
