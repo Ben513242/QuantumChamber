@@ -1799,4 +1799,111 @@ class Minecraft121SettingsCanonicalizerTest {
         rejects("STATIC_REGISTRY_OWNER_MISMATCH",c::drain);rejects("GRAPH_FAILED",g::finish);
     }
 
+    // ===== C1d-D1b-3b：ITEM leaf的出邊與ATTRIBUTE／STATUS_EFFECT static leaf（預期圖由測試端獨立組出，不經production leaf） =====
+    private static net.minecraft.registry.RegistryKey<net.minecraft.entity.attribute.EntityAttribute> attributeKey(String id) {
+        return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.ATTRIBUTE,net.minecraft.util.Identifier.of(id));
+    }
+    private static net.minecraft.registry.RegistryKey<net.minecraft.entity.effect.StatusEffect> effectKey(String id) {
+        return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.STATUS_EFFECT,net.minecraft.util.Identifier.of(id));
+    }
+    private static Minecraft121SettingsGraph.Key attributeNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:attribute",id);
+    }
+    private static Minecraft121SettingsGraph.Key effectNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:mob_effect",id);
+    }
+    /** ATTRIBUTE leaf的字面值：只有Contract（EntityAttribute沒有value codec，Java值不入FP）。 */
+    private static NbtCompound expectedAttributeLeaf() {
+        var leaf=new NbtCompound();leaf.putString("Contract","quantumchamber:m6-static-attribute-leaf-v1");return leaf;
+    }
+    /** STATUS_EFFECT leaf的字面值：Contract加上RequiredFeatures（vanilla effect直接寫成["minecraft:vanilla"]）。 */
+    private static NbtCompound expectedStatusEffectLeaf() {
+        var leaf=new NbtCompound();leaf.putString("Contract","quantumchamber:m6-static-status-effect-leaf-v1");
+        var features=new NbtList();features.add(NbtString.of("minecraft:vanilla"));leaf.put("RequiredFeatures",features);
+        return leaf;
+    }
+    /** 預期圖上一條ITEM leaf出邊：from為該ITEM node，scope ordinary，use item-default-component。 */
+    private static void itemEdge(Minecraft121SettingsGraph graph,String from,String path,Minecraft121SettingsGraph.Key target) {
+        graph.expanded(graph.reference(itemNode(from),path,target,"ordinary","item-default-component"));
+    }
+    @Test void itemLeafClosureEmitsStaticReferenceEdges() {
+        // D1b-3b（設計§1.5第6、7點）：ITEM leaf寫入payload之後，default component的每個ref各成一條出邊（scope ordinary、use
+        // item-default-component），target依registry成為ITEM／ATTRIBUTE／STATUS_EFFECT leaf；同一個target node只擷取一次（mace與trident
+        // 共用兩個attribute），每條出邊都保留。golden_apple→regeneration／absorption、beetroot_soup→bowl、mace／trident→attack_damage／
+        // attack_speed。預期圖由測試端獨立組出：ITEM payload以plain NbtOps編碼，ATTRIBUTE與STATUS_EFFECT payload寫成字面值。
+        var ids=java.util.List.of("minecraft:golden_apple","minecraft:beetroot_soup","minecraft:mace","minecraft:trident");
+        var g=graph();var c=itemClosure(g,withItemLeafRegistries());
+        for(String id:ids)c.reference(ROOT,id,itemKey(id));
+        c.drain();
+        var expected=graph();
+        for(String id:ids) {
+            expected.payload(itemNode(id),expectedItemLeaf(net.minecraft.registry.Registries.ITEM.get(net.minecraft.util.Identifier.of(id))));
+            expected.expanded(expected.reference(ROOT,id,itemNode(id),"ordinary","required"));
+        }
+        expected.payload(itemNode("minecraft:bowl"),expectedItemLeaf(net.minecraft.item.Items.BOWL));
+        for(String effect:java.util.List.of("minecraft:regeneration","minecraft:absorption"))expected.payload(effectNode(effect),expectedStatusEffectLeaf());
+        for(String attribute:java.util.List.of("minecraft:generic.attack_damage","minecraft:generic.attack_speed"))
+            expected.payload(attributeNode(attribute),expectedAttributeLeaf());
+        String food="components/minecraft:food/",modifiers="components/minecraft:attribute_modifiers/modifiers/";
+        itemEdge(expected,"minecraft:golden_apple",food+"effects/0/effect/id",effectNode("minecraft:regeneration"));
+        itemEdge(expected,"minecraft:golden_apple",food+"effects/1/effect/id",effectNode("minecraft:absorption"));
+        itemEdge(expected,"minecraft:beetroot_soup",food+"using_converts_to/id",itemNode("minecraft:bowl"));
+        for(String weapon:java.util.List.of("minecraft:mace","minecraft:trident")) {
+            itemEdge(expected,weapon,modifiers+"0/type",attributeNode("minecraft:generic.attack_damage"));
+            itemEdge(expected,weapon,modifiers+"1/type",attributeNode("minecraft:generic.attack_speed"));
+        }
+        assertArrayEquals(expected.finish(),g.finish(),"4個item都閉合；出邊、target leaf與payload等於獨立組出的圖");
+    }
+    @Test void attributeAndStatusEffectRegistryLeavesClose() {
+        // D1b-3b：ATTRIBUTE與STATUS_EFFECT的registry定義從UNSUPPORTED_REGISTRY_DEFINITION變成可閉合的static leaf。同一個node被named
+        // reference與entry兩條引用時只擷取一次，兩條邊都保留。
+        var g=graph();var c=itemClosure(g,withItemLeafRegistries());
+        c.reference(ROOT,"armor",attributeKey("minecraft:generic.armor"));
+        c.entry(ROOT,"armor-entry",net.minecraft.entity.attribute.EntityAttributes.GENERIC_ARMOR);
+        c.reference(ROOT,"speed",effectKey("minecraft:speed"));
+        c.drain();
+        var expected=graph();
+        expected.payload(attributeNode("minecraft:generic.armor"),expectedAttributeLeaf());
+        expected.payload(effectNode("minecraft:speed"),expectedStatusEffectLeaf());
+        expected.expanded(expected.reference(ROOT,"armor",attributeNode("minecraft:generic.armor"),"ordinary","required"));
+        expected.expanded(expected.reference(ROOT,"armor-entry",attributeNode("minecraft:generic.armor"),"ordinary","entry"));
+        expected.expanded(expected.reference(ROOT,"speed",effectNode("minecraft:speed"),"ordinary","required"));
+        assertArrayEquals(expected.finish(),g.finish(),"兩種leaf的payload與三條邊等於獨立組出的圖");
+    }
+    @Test void attributeAndStatusEffectLeavesRejectForeignRegistryMissingTargetAndInline() {
+        // 局部registry是新物件，不登記到Registries.REGISTRIES；vanilla的值以standalone entry加入，不改動全域registry或值本身。
+        // lease的registry不是全域物件→STATIC_REGISTRY_OWNER_MISMATCH；缺target→REQUIRED_REGISTRY_TARGET_MISSING；inline→
+        // UNSUPPORTED_INLINE_ENTRY；同key的standAlone Reference→REGISTRY_ENTRY_OWNER_MISMATCH。
+        var localAttributes=new net.minecraft.registry.SimpleRegistry<net.minecraft.entity.attribute.EntityAttribute>(
+                net.minecraft.registry.RegistryKeys.ATTRIBUTE,com.mojang.serialization.Lifecycle.stable());
+        localAttributes.add(attributeKey("minecraft:generic.armor"),net.minecraft.entity.attribute.EntityAttributes.GENERIC_ARMOR.value(),
+                net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);localAttributes.freeze();
+        var localEffects=new net.minecraft.registry.SimpleRegistry<net.minecraft.entity.effect.StatusEffect>(
+                net.minecraft.registry.RegistryKeys.STATUS_EFFECT,com.mojang.serialization.Lifecycle.stable());
+        localEffects.add(effectKey("minecraft:speed"),net.minecraft.entity.effect.StatusEffects.SPEED.value(),
+                net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);localEffects.freeze();
+        var armorKey=attributeKey("minecraft:generic.armor");
+        assertAll(
+                ()->assertAll("subcase=局部ATTRIBUTE registry",()->{
+                    var g=graph();var c=closure(g,localAttributes);c.reference(ROOT,"armor",armorKey);
+                    rejects("STATIC_REGISTRY_OWNER_MISMATCH",c::drain);rejects("GRAPH_FAILED",g::finish);}),
+                ()->assertAll("subcase=局部STATUS_EFFECT registry",()->{
+                    var g=graph();var c=closure(g,localEffects);c.reference(ROOT,"speed",effectKey("minecraft:speed"));
+                    rejects("STATIC_REGISTRY_OWNER_MISMATCH",c::drain);rejects("GRAPH_FAILED",g::finish);}),
+                ()->assertAll("subcase=缺target",()->{
+                    var g=graph();var c=itemClosure(g,withItemLeafRegistries());c.reference(ROOT,"missing",attributeKey("test:missing"));
+                    rejects("REQUIRED_REGISTRY_TARGET_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);}),
+                ()->assertAll("subcase=inline",()->{
+                    var g=graph();var c=itemClosure(g,withItemLeafRegistries());
+                    rejects("UNSUPPORTED_INLINE_ENTRY",()->c.entry(ROOT,"inline",net.minecraft.registry.entry.RegistryEntry.of(
+                            net.minecraft.entity.effect.StatusEffects.SPEED.value())));
+                    rejects("GRAPH_FAILED",g::finish);}),
+                ()->assertAll("subcase=同key的standAlone Reference",()->{
+                    var g=graph();var c=itemClosure(g,withItemLeafRegistries());
+                    var foreign=net.minecraft.registry.entry.RegistryEntry.Reference.standAlone(
+                            net.minecraft.registry.Registries.ATTRIBUTE.getEntryOwner(),armorKey);
+                    rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->c.entry(ROOT,"foreign",foreign));
+                    rejects("GRAPH_FAILED",g::finish);}));
+    }
+
 }

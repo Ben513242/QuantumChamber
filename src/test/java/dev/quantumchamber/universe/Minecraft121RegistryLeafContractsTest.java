@@ -3,18 +3,33 @@ package dev.quantumchamber.universe;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafContracts.*;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.*;
 import static org.junit.jupiter.api.Assertions.*;
+import java.util.List;
+import java.util.Optional;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.component.ComponentMap;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.AttributeModifierSlot;
+import net.minecraft.component.type.AttributeModifiersComponent;
+import net.minecraft.component.type.FoodComponent;
 import net.minecraft.component.type.LoreComponent;
+import net.minecraft.component.type.ToolComponent;
+import net.minecraft.entity.attribute.EntityAttributeModifier;
+import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.nbt.*;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.entry.RegistryEntryList;
+import net.minecraft.util.Identifier;
 import net.minecraft.resource.featuretoggle.FeatureFlags;
 import net.minecraft.resource.featuretoggle.FeatureSet;
 import net.minecraft.state.property.*;
@@ -271,18 +286,23 @@ class Minecraft121RegistryLeafContractsTest {
     @Test void itemLeafRejectsUnreviewedDefaultComponents() {
         // D1b-3a起potion（potion_contents）與chest（container）的空DEFAULT已審，移到itemLeafAcceptsLiteralAndEmptyDefaultComponents；
         // 拒絕面改用仍未支援的型別：stored_enchantments（ENCHANTMENT是dynamic）與bees（非空值帶entity NBT，屬D2）。
-        // golden_apple（food）與iron_axe（tool、非空attribute_modifiers）屬D1b-3b，在那之前仍拒。
+        // D1b-3b起golden_apple（food）與非空attribute_modifiers已審，移到itemLeafCapturesStaticEntryRefsFromReviewedDefaults；
+        // 帶tool tag rule的item（iron_axe、iron_sword、shears）屬D1b-3c，在那之前仍拒（D1b-3設計§3.1的3b列「iron_sword仍拒」）。
         String code="UNSUPPORTED_ITEM_DEFAULT_COMPONENT";
+        java.util.function.Predicate<Item> tagRule=item->item.getComponents().get(DataComponentTypes.TOOL).rules().stream()
+                .anyMatch(rule->rule.blocks().getTagKey().isPresent());
         assertAll(
-                ()->assertAll("subcase=golden_apple（food）",
-                        ()->assertTrue(Items.GOLDEN_APPLE.getComponents().contains(DataComponentTypes.FOOD),"fixture前提"),
-                        ()->rejects(code,()->itemLeaf(Items.GOLDEN_APPLE))),
-                ()->assertAll("subcase=iron_axe（tool與非空attribute_modifiers）",
+                ()->assertAll("subcase=iron_axe（tool tag rule；另帶非空attribute_modifiers）",
+                        ()->assertTrue(tagRule.test(Items.IRON_AXE),"fixture前提：有tag rule"),
                         ()->rejects(code,()->itemLeaf(Items.IRON_AXE)),
-                        ()->rejects(code,()->seam(Items.IRON_AXE,single(component(Items.IRON_AXE,DataComponentTypes.TOOL)))),
-                        ()->{var modifiers=component(Items.IRON_AXE,DataComponentTypes.ATTRIBUTE_MODIFIERS);
-                            assertFalse(modifiers.value().modifiers().isEmpty(),"fixture前提：attribute_modifiers非空");
-                            rejects(code,()->seam(Items.IRON_AXE,single(modifiers)));}),
+                        ()->rejects(code,()->seam(Items.IRON_AXE,single(component(Items.IRON_AXE,DataComponentTypes.TOOL))))),
+                ()->assertAll("subcase=iron_sword（direct cobweb加上#sword_efficient）",
+                        ()->assertTrue(tagRule.test(Items.IRON_SWORD),"fixture前提：有tag rule"),
+                        ()->rejects(code,()->itemLeaf(Items.IRON_SWORD)),
+                        ()->rejects(code,()->seam(Items.IRON_SWORD,single(component(Items.IRON_SWORD,DataComponentTypes.TOOL))))),
+                ()->assertAll("subcase=shears（direct、#leaves、#wool）",
+                        ()->assertTrue(tagRule.test(Items.SHEARS),"fixture前提：有tag rule"),
+                        ()->rejects(code,()->itemLeaf(Items.SHEARS))),
                 ()->assertAll("subcase=enchanted_book（stored_enchantments；另帶已審的enchantment_glint_override）",
                         ()->assertTrue(Items.ENCHANTED_BOOK.getComponents().contains(DataComponentTypes.STORED_ENCHANTMENTS),"fixture前提"),
                         ()->rejects(code,()->itemLeaf(Items.ENCHANTED_BOOK)),
@@ -315,8 +335,10 @@ class Minecraft121RegistryLeafContractsTest {
         var expectedTemplate=new java.util.LinkedHashMap<String,String>();
         for(var item:items)expectedTemplate.put(Registries.ITEM.getId(item).toString(),"REJECTED");
         for(String id:java.util.List.of("minecraft:diamond","minecraft:ender_pearl","minecraft:water_bucket"))expectedTemplate.put(id,"ACCEPTED");
-        // 預期分歧表（leaf ACCEPTED、模板REJECTED）：D1b-3a＝potion（potion_contents空DEFAULT）、chest（container空DEFAULT）。
-        var expectedDivergence=java.util.List.of("minecraft:potion","minecraft:chest");
+        // 預期分歧表（leaf ACCEPTED、模板REJECTED）：D1b-3a＝potion（potion_contents空DEFAULT）、chest（container空DEFAULT）；
+        // D1b-3b＝golden_apple（food）。wooden_shovel與iron_axe的tool帶tag rule，屬D1b-3c，leaf仍拒（設計§3.3把它們列在3b是
+        // 漏看了tag rule）。
+        var expectedDivergence=java.util.List.of("minecraft:golden_apple","minecraft:potion","minecraft:chest");
         var uncovered=new java.util.ArrayList<String>();var divergence=new java.util.ArrayList<String>();
         for(var id:leaf.keySet()) {
             if(template.get(id).equals("ACCEPTED")&&!leaf.get(id).equals("ACCEPTED"))uncovered.add(id);
@@ -333,13 +355,15 @@ class Minecraft121RegistryLeafContractsTest {
         var diamond=Items.DIAMOND;var original=diamond.getComponents();
         var changed=ComponentMap.builder().addAll(original).add(DataComponentTypes.MAX_STACK_SIZE,16).build();
         var base=seam(diamond,original);var other=seam(diamond,changed);
-        var withFood=ComponentMap.builder().addAll(original).add(DataComponentTypes.FOOD,component(Items.GOLDEN_APPLE,DataComponentTypes.FOOD).value()).build();
+        // D1b-3b起food已審，未審面改用stored_enchantments（空DEFAULT也不在已審表；ENCHANTMENT是dynamic）。
+        var withStored=ComponentMap.builder().addAll(original).add(DataComponentTypes.STORED_ENCHANTMENTS,
+                net.minecraft.component.type.ItemEnchantmentsComponent.DEFAULT).build();
         assertAll(
                 ()->assertNotEquals(base,other,"同一id改了default component值，payload須跟著改變"),
                 ()->assertEquals(16,other.getCompound("DefaultComponents").getInt("minecraft:max_stack_size")),
                 ()->assertEquals(base.get("RequiredFeatures"),other.get("RequiredFeatures")),
                 ()->assertEquals(itemLeaf(diamond),base,"production接線傳入getComponents()，結果須與seam相同"),
-                ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(diamond,withFood)));
+                ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(diamond,withStored)));
         assertSame(original,diamond.getComponents(),"seam測試不得改動全域狀態");
     }
     @Test void blockItemLeafExecutedOwnersIncludeBlockAndHasNoBlockEdge() {
@@ -445,24 +469,33 @@ class Minecraft121RegistryLeafContractsTest {
         rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,components));
     }
     @Test void itemLeafRejectsForeignComponentMapContainer() {
-        // S0-1 RED②：步驟6的白名單與codec各迭代容器一次；foreign容器可以讓兩次內容不同（第二次多出food）。
+        // S0-1 RED②：步驟6的白名單與codec各迭代容器一次；foreign容器可以讓兩次內容不同（第二次多出一個component）。
+        // D1b-3b起food已審（原本第二次多出的是food），所以「重建map的再驗」子案改用仍未審的stored_enchantments；多出已審food的情況
+        // 另列一個子案，由原值與重建值的ref比對擋下。
         var base=Items.DIAMOND.getComponents();
+        var withStored=ComponentMap.builder().addAll(base).add(DataComponentTypes.STORED_ENCHANTMENTS,
+                net.minecraft.component.type.ItemEnchantmentsComponent.DEFAULT).build();
         var withFood=ComponentMap.builder().addAll(base).add(DataComponentTypes.FOOD,component(Items.GOLDEN_APPLE,DataComponentTypes.FOOD).value()).build();
-        var probe=new ShiftingComponentMap(base,withFood);
+        var probe=new ShiftingComponentMap(base,withStored);
         var firstTypes=new java.util.HashSet<net.minecraft.component.ComponentType<?>>();for(var c:probe)firstTypes.add(c.type());
         var laterTypes=new java.util.HashSet<net.minecraft.component.ComponentType<?>>();for(var c:probe)laterTypes.add(c.type());
         assertAll("fixture前提",
-                ()->assertFalse(firstTypes.contains(DataComponentTypes.FOOD),"第一次迭代不含food"),
-                ()->assertTrue(laterTypes.contains(DataComponentTypes.FOOD),"第二次迭代含food"));
+                ()->assertFalse(firstTypes.contains(DataComponentTypes.STORED_ENCHANTMENTS),"第一次迭代不含stored_enchantments"),
+                ()->assertTrue(laterTypes.contains(DataComponentTypes.STORED_ENCHANTMENTS),"第二次迭代含stored_enchantments"));
         // D1b-3-0 quality M1：容器source檢查只擋直接foreign的容器；原生包裝ComponentMapImpl（changedComponents為空時iterator直接
-        // 委派base）能通過，它的內容一致性由roundtrip後重建map的再驗保證。codec那次迭代吐出food，重建map含food，再驗時拒絕。
-        var wrapped=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(base,withFood));
+        // 委派base）能通過，它的內容一致性由roundtrip後重建map的再驗保證。codec那次迭代吐出stored_enchantments，重建map含它，再驗時拒絕。
+        var wrapped=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(base,withStored));
+        // D1b-3b（設計審查M2）：第二次迭代多出的是已審的food，重建map的再驗會通過；但步驟6自原值抽出的ref（沒有food）與重建值的ref
+        // （golden_apple的兩個effect）不同，以NATIVE_CODEC_ROUNDTRIP_CHANGED拒絕，不會讓「原值迭代看不到的ref」靜默進圖。
+        var wrappedFood=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(base,withFood));
         assertAll(
                 ()->assertAll("subcase=直接foreign容器",()->rejects("NATIVE_DEFINITION_SOURCE",
-                        ()->seam(Items.DIAMOND,new ShiftingComponentMap(base,withFood)))),
-                ()->assertAll("subcase=原生ComponentMapImpl包裝foreign容器",
+                        ()->seam(Items.DIAMOND,new ShiftingComponentMap(base,withStored)))),
+                ()->assertAll("subcase=原生ComponentMapImpl包裝foreign容器（第二次多出未審型別）",
                         ()->assertDoesNotThrow(()->requireNativeSource(wrapped.getClass()),"fixture前提：外層是原生容器"),
-                        ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,wrapped))));
+                        ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,wrapped))),
+                ()->assertAll("subcase=原生ComponentMapImpl包裝foreign容器（第二次多出帶ref的已審food）",
+                        ()->rejects("NATIVE_CODEC_ROUNDTRIP_CHANGED",()->seam(Items.DIAMOND,wrappedFood))));
     }
     @Test void itemLeafNestedListExceptionBecomesNamedCode() {
         // S0-1 RED③：foreign容器會先在容器source檢查被擋，所以丟例外的是原生LoreComponent內的巢狀List，外層是原生SimpleComponentMap。
@@ -524,10 +557,50 @@ class Minecraft121RegistryLeafContractsTest {
                 DataComponentTypes.BANNER_PATTERNS,net.minecraft.component.type.BannerPatternsComponent.DEFAULT::equals,
                 DataComponentTypes.CHARGED_PROJECTILES,net.minecraft.component.type.ChargedProjectilesComponent.DEFAULT::equals);
     }
-    /** 目前已審的全部型別：D1b-2加上D1b-3a。 */
+    /**
+     * D1b-3b新增與放寬的3型（設計§2.2）：非空ATTRIBUTE_MODIFIERS（放寬D1b-2的「必須為空」；每個attribute都是named Reference）、
+     * FOOD（using_converts_to的ItemStack沒有patch且count為1；每個effect的type是named Reference，且不帶hidden_effect）、TOOL（每個
+     * rule都是direct list，沒有tag rule）。以typed record與instanceof判定（與production的exact class判定是不同的表示法）；hidden_effect
+     * 沒有公開accessor，測試端以plain NbtOps編碼該effect後檢查鍵。
+     */
+    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> d1b3bReviewedItemDefaults() {
+        return java.util.Map.of(
+                DataComponentTypes.ATTRIBUTE_MODIFIERS,value->value instanceof net.minecraft.component.type.AttributeModifiersComponent modifiers
+                        &&modifiers.modifiers().stream().allMatch(entry->entry.attribute() instanceof net.minecraft.registry.entry.RegistryEntry.Reference<?>),
+                DataComponentTypes.FOOD,value->value instanceof net.minecraft.component.type.FoodComponent food
+                        &&food.usingConvertsTo().map(stack->stack.getCount()==1&&stack.getComponentChanges().isEmpty()).orElse(true)
+                        &&food.effects().stream().allMatch(entry->entry.effect().getEffectType() instanceof net.minecraft.registry.entry.RegistryEntry.Reference<?>
+                                &&!hasHiddenEffect(entry.effect())),
+                DataComponentTypes.TOOL,value->value instanceof net.minecraft.component.type.ToolComponent tool
+                        &&tool.rules().stream().allMatch(rule->rule.blocks().getTagKey().isEmpty()));
+    }
+    private static boolean hasHiddenEffect(net.minecraft.entity.effect.StatusEffectInstance effect) {
+        return ((NbtCompound)net.minecraft.entity.effect.StatusEffectInstance.CODEC.encodeStart(NbtOps.INSTANCE,effect).getOrThrow()).contains("hidden_effect");
+    }
+    /**
+     * 依子片合併已審型別表（D1b-3a quality F1）：後片與前片同鍵時，該鍵必須列在relaxed（明確宣告「後片放寬前片的條件」），否則丟例外；
+     * relaxed裡的鍵也必須真的與前片同鍵。不用putAll靜默覆蓋。
+     */
+    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> merge(
+            java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> base,
+            java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> later,
+            java.util.Set<net.minecraft.component.ComponentType<?>> relaxed) {
+        var merged=new java.util.HashMap<>(base);
+        for(var entry:later.entrySet()) {
+            if(base.containsKey(entry.getKey())!=relaxed.contains(entry.getKey()))
+                throw new IllegalStateException("子片表重疊未宣告或宣告不實："+typeName(entry.getKey()));
+            merged.put(entry.getKey(),entry.getValue());
+        }
+        for(var key:relaxed)if(!later.containsKey(key))throw new IllegalStateException("relaxed不在後片表："+typeName(key));
+        return merged;
+    }
+    /** D1b-3a為止已審的型別：D1b-2加上D1b-3a（兩表不重疊）。 */
+    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> d1b3aCumulativeItemDefaults() {
+        return merge(d1b2ReviewedItemDefaults(),d1b3aReviewedItemDefaults(),java.util.Set.of());
+    }
+    /** 目前已審的全部型別：D1b-3a為止的表，加上D1b-3b（ATTRIBUTE_MODIFIERS明確放寬D1b-2的「必須為空」）。 */
     private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewedItemDefaults() {
-        var reviewed=new java.util.HashMap<>(d1b2ReviewedItemDefaults());reviewed.putAll(d1b3aReviewedItemDefaults());
-        return reviewed;
+        return merge(d1b3aCumulativeItemDefaults(),d1b3bReviewedItemDefaults(),java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS));
     }
     /** default的每個component都符合reviewed的值條件；不符的型別id加入unreviewed（可為null）。 */
     private static boolean allReviewed(Item item,java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewed,
@@ -607,15 +680,15 @@ class Minecraft121RegistryLeafContractsTest {
     }
     @Test void itemLeafAcceptsLiteralAndEmptyDefaultComponents() {
         // 設計§2.2與§3.1的3a：8型的vanilla default是literal或空DEFAULT，不引用任何registry。encoded值逐型寫成字面值（不經ComponentMap.CODEC）。
-        // 真vanilla item從REJECTED變ACCEPTED：每型一個只帶該型（其餘都是D1b-2已審型別）的item。ominous_bottle與suspicious_stew另帶food
-        // （D1b-3b），所以這兩型只以seam的單一component驗。
+        // 真vanilla item從REJECTED變ACCEPTED：每型一個只帶該型（其餘都是D1b-2已審型別）的item。ominous_bottle與suspicious_stew另帶food，
+        // D1b-3a時只能以seam的單一component驗；D1b-3b起food已審，這兩件也以整個item驗。
         record Case(Item carrier,net.minecraft.component.ComponentType<?> type,NbtElement literal,boolean wholeItem) {}
         var cases=java.util.List.of(
                 new Case(Items.NETHERITE_INGOT,DataComponentTypes.FIRE_RESISTANT,new NbtCompound(),true),
                 new Case(Items.EXPERIENCE_BOTTLE,DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE,NbtByte.ONE,true),
-                new Case(Items.OMINOUS_BOTTLE,DataComponentTypes.OMINOUS_BOTTLE_AMPLIFIER,NbtInt.of(0),false),
+                new Case(Items.OMINOUS_BOTTLE,DataComponentTypes.OMINOUS_BOTTLE_AMPLIFIER,NbtInt.of(0),true),
                 new Case(Items.POTION,DataComponentTypes.POTION_CONTENTS,new NbtCompound(),true),
-                new Case(Items.SUSPICIOUS_STEW,DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,new NbtList(),false),
+                new Case(Items.SUSPICIOUS_STEW,DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,new NbtList(),true),
                 new Case(Items.BARREL,DataComponentTypes.CONTAINER,new NbtList(),true),
                 new Case(Items.SHIELD,DataComponentTypes.BANNER_PATTERNS,new NbtList(),true),
                 new Case(Items.CROSSBOW,DataComponentTypes.CHARGED_PROJECTILES,new NbtList(),true));
@@ -681,10 +754,10 @@ class Minecraft121RegistryLeafContractsTest {
     }
     /**
      * 測試端獨立列出「已接受的值會產生ref」的已審型別；其餘已審型別都必須明確宣告NO_REFS。D1b-3各子片增減型別時同步更新。
-     * D1b-3a為止沒有任何已審型別產生ref。
+     * D1b-3a為止沒有；D1b-3b為非空attribute_modifiers（ATTRIBUTE）、food（STATUS_EFFECT、ITEM）與只有direct rule的tool（BLOCK）。
      */
     private static java.util.Set<net.minecraft.component.ComponentType<?>> refBearingItemDefaultTypes() {
-        return java.util.Set.of();
+        return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL);
     }
     @Test void itemComponentContractTableIsSingleDispatchWithExplicitRefs() {
         // 每個已審型別在同一筆契約宣告值條件、ref抽取與codec會查詢的static registry（ItemComponentContracts的單一分派表）。結構斷言：
@@ -710,6 +783,265 @@ class Minecraft121RegistryLeafContractsTest {
                     ()->assertTrue(union.containsAll(contract.registries()),"宣告的registry都屬於固定聯集："+contract.registries())));
         }
         assertAll(checks);
+    }
+
+    // ===== C1d-D1b-3b：非空attribute_modifiers、food與只有direct rule的tool；ITEM leaf開始產生出邊 =====
+    private static String describeRef(Minecraft121ItemComponentContracts.Ref ref) {
+        var key=((Minecraft121ItemComponentContracts.Ref.Entry)ref).entry().registryKey();
+        return ref.path()+" -> "+key.getRegistry()+"|"+key.getValue();
+    }
+    private static List<String> describeRefs(List<Minecraft121ItemComponentContracts.Ref> refs) {
+        return refs.stream().map(Minecraft121RegistryLeafContractsTest::describeRef).toList();
+    }
+    /** 預期的一條ref：path與指向的named entry（entry以identity比對）。 */
+    private record ExpectedRef(String path,RegistryEntry<?> entry) {
+        String describe() {
+            var key=entry.getKey().orElseThrow();
+            return path+" -> "+key.getRegistry()+"|"+key.getValue();
+        }
+    }
+    private static void assertRefs(List<ExpectedRef> expected,List<Minecraft121ItemComponentContracts.Ref> actual,String message) {
+        assertEquals(expected.stream().map(ExpectedRef::describe).toList(),describeRefs(actual),message+"：path、registry、id與次序");
+        for(int i=0;i<expected.size();i++)assertSame(expected.get(i).entry(),((Minecraft121ItemComponentContracts.Ref.Entry)actual.get(i)).entry(),
+                message+"：第"+i+"條ref是同一個named entry物件");
+    }
+    /** plain NbtOps獨立編碼的default ComponentMap（不經production的RegistryOps、白名單與roundtrip）。 */
+    private static NbtElement plainDefaults(Item item) {
+        return ComponentMap.CODEC.encodeStart(NbtOps.INSTANCE,item.getComponents()).getOrThrow();
+    }
+    @Test void itemLeafCapturesStaticEntryRefsFromReviewedDefaults() {
+        // D1b-3設計§3.1的3b列：golden_apple（food的effect→STATUS_EFFECT）、beetroot_soup（food的using_converts_to→ITEM bowl）、
+        // mace（非空attribute_modifiers→ATTRIBUTE；tool的rules為空，不產生ref）從REJECTED變ACCEPTED並帶出ref。ref的path對應原生codec的
+        // 欄位，依component型別id排序、同型內依list次序；entry以identity比對vanilla常數。item(...)經sink送出的ref與seam相同，from是
+        // 該ITEM node。
+        var food="components/minecraft:food/";var modifiers="components/minecraft:attribute_modifiers/modifiers/";
+        var cases=new java.util.LinkedHashMap<Item,List<ExpectedRef>>();
+        cases.put(Items.GOLDEN_APPLE,List.of(new ExpectedRef(food+"effects/0/effect/id",StatusEffects.REGENERATION),
+                new ExpectedRef(food+"effects/1/effect/id",StatusEffects.ABSORPTION)));
+        cases.put(Items.BEETROOT_SOUP,List.of(new ExpectedRef(food+"using_converts_to/id",Items.BOWL.getRegistryEntry())));
+        cases.put(Items.MACE,List.of(new ExpectedRef(modifiers+"0/type",EntityAttributes.GENERIC_ATTACK_DAMAGE),
+                new ExpectedRef(modifiers+"1/type",EntityAttributes.GENERIC_ATTACK_SPEED)));
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        checks.add(()->assertTrue(Items.MACE.getComponents().get(DataComponentTypes.TOOL).rules().isEmpty(),"fixture前提：mace的tool rules為空"));
+        for(var c:cases.entrySet()) {
+            var item=c.getKey();String id=Registries.ITEM.getId(item).toString();
+            checks.add(()->assertAll("subcase="+id,()->{
+                var capture=capture(item,item.getComponents());
+                assertRefs(c.getValue(),capture.references(),"seam");
+                assertEquals(plainDefaults(item),capture.payload().getCompound("DefaultComponents"),"DefaultComponents等於plain NbtOps獨立編碼的default");
+                var emitted=new java.util.ArrayList<java.util.Map.Entry<Minecraft121SettingsGraph.Key,Minecraft121ItemComponentContracts.Ref>>();
+                assertEquals(capture.payload(),itemLeaf(item,emitted),"production接線的payload與seam相同");
+                assertEquals(describeRefs(capture.references()),emitted.stream().map(e->describeRef(e.getValue())).toList(),"item(...)經sink送出同一組ref");
+                assertTrue(emitted.stream().allMatch(e->e.getKey().equals(itemNode(id))),"from是該ITEM node");
+            }));
+        }
+        assertAll(checks);
+    }
+    @Test void itemLeafToolDirectRulesCaptureBlockRefsAndSameIdStaysTyped() {
+        // 只有direct rule的tool（D1b-3b）：每個rule的每個block各一條ref，path為rules/i/blocks/j。vanilla沒有這種default（mace與trident的
+        // rules為空，其他工具都帶tag rule），所以以seam的局部值驗；RegistryEntryList.of只複製block的intrusive entry，不改動全域狀態。
+        // 同id不同registry不混：direct block的stone與food using_converts_to的item stone是兩條registry不同的ref。
+        // direct加上tag rule（iron_sword的default tool）仍拒，tag rule屬D1b-3c。
+        var rules="components/minecraft:tool/rules/";
+        var tool=new ToolComponent(List.of(ToolComponent.Rule.ofAlwaysDropping(List.of(Blocks.COBWEB),15f),
+                ToolComponent.Rule.of(List.of(Blocks.VINE,Blocks.GLOW_LICHEN),2f)),1f,1);
+        var stoneFood=new FoodComponent(1,0.1f,false,1.6f,Optional.of(new ItemStack(Items.STONE)),List.of());
+        var stoneTool=new ToolComponent(List.of(ToolComponent.Rule.of(List.of(Blocks.STONE),1f)),1f,1);
+        var mixed=ComponentMap.builder().add(DataComponentTypes.TOOL,stoneTool).add(DataComponentTypes.FOOD,stoneFood).build();
+        var swordTool=component(Items.IRON_SWORD,DataComponentTypes.TOOL);
+        assertAll(
+                ()->assertAll("subcase=direct rules",()->assertRefs(List.of(new ExpectedRef(rules+"0/blocks/0",Blocks.COBWEB.getRegistryEntry()),
+                        new ExpectedRef(rules+"1/blocks/0",Blocks.VINE.getRegistryEntry()),new ExpectedRef(rules+"1/blocks/1",Blocks.GLOW_LICHEN.getRegistryEntry())),
+                        capture(Items.DIAMOND,only(DataComponentTypes.TOOL,tool)).references(),"seam")),
+                ()->assertAll("subcase=空rules",()->assertEquals(List.of(),
+                        capture(Items.DIAMOND,only(DataComponentTypes.TOOL,new ToolComponent(List.of(),1f,2))).references())),
+                ()->assertAll("subcase=同id的BLOCK與ITEM",()->assertRefs(List.of(
+                        new ExpectedRef("components/minecraft:food/using_converts_to/id",Items.STONE.getRegistryEntry()),
+                        new ExpectedRef(rules+"0/blocks/0",Blocks.STONE.getRegistryEntry())),capture(Items.DIAMOND,mixed).references(),"seam")),
+                ()->assertAll("subcase=direct加上tag rule（iron_sword）",
+                        ()->assertTrue(swordTool.value().rules().stream().anyMatch(rule->rule.blocks().getTagKey().isEmpty())
+                                &&swordTool.value().rules().stream().anyMatch(rule->rule.blocks().getTagKey().isPresent()),"fixture前提：direct與tag rule並存"),
+                        ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,single(swordTool)))));
+    }
+    @Test void itemLeafRejectsForeignReferenceWithSameId() {
+        // 設計審查M2（Entry部分）：只從重建的map抽ref，會把foreign的Reference靜默換成registry的物件。原值與重建值要逐一比對、要求每個ref
+        // 是同一物件，不同時為REGISTRY_ENTRY_OWNER_MISMATCH。foreign Reference以Reference.standAlone(全域owner, 同一個key)建立：encode只
+        // 寫key（ATTRIBUTE與STATUS_EFFECT的entry codec不比owner；BLOCK的RegistryFixedCodec比owner，但這裡用的就是全域owner），parse後換成
+        // registry的物件，所以只有identity比對擋得住。standAlone不寫入任何registry。正向對照：同一個值改用全域entry時ACCEPTED。
+        var foreignAttribute=RegistryEntry.Reference.standAlone(Registries.ATTRIBUTE.getEntryOwner(),
+                EntityAttributes.GENERIC_ATTACK_DAMAGE.getKey().orElseThrow());
+        var foreignEffect=RegistryEntry.Reference.standAlone(Registries.STATUS_EFFECT.getEntryOwner(),StatusEffects.SPEED.getKey().orElseThrow());
+        var foreignBlock=RegistryEntry.Reference.standAlone(Registries.BLOCK.getEntryOwner(),Blocks.COBWEB.getRegistryEntry().registryKey());
+        var modifier=new EntityAttributeModifier(Identifier.ofVanilla("base_attack_damage"),3.0,EntityAttributeModifier.Operation.ADD_VALUE);
+        java.util.function.Function<RegistryEntry<net.minecraft.entity.attribute.EntityAttribute>,ComponentMap> attribute=entry->only(
+                DataComponentTypes.ATTRIBUTE_MODIFIERS,new AttributeModifiersComponent(List.of(new AttributeModifiersComponent.Entry(entry,modifier,
+                        AttributeModifierSlot.MAINHAND)),true));
+        java.util.function.Function<RegistryEntry<net.minecraft.entity.effect.StatusEffect>,ComponentMap> effect=entry->only(DataComponentTypes.FOOD,
+                new FoodComponent(1,0.1f,false,1.6f,Optional.empty(),List.of(new FoodComponent.StatusEffectEntry(new StatusEffectInstance(entry,100),1f))));
+        java.util.function.Function<RegistryEntry<Block>,ComponentMap> block=entry->only(DataComponentTypes.TOOL,new ToolComponent(List.of(
+                new ToolComponent.Rule(RegistryEntryList.of(List.of(entry)),Optional.of(15f),Optional.of(true))),1f,1));
+        assertAll(
+                ()->assertAll("fixture前提：同key、不同物件",
+                        ()->assertNotSame(EntityAttributes.GENERIC_ATTACK_DAMAGE,foreignAttribute),
+                        ()->assertNotSame(StatusEffects.SPEED,foreignEffect),
+                        ()->assertNotSame(Blocks.COBWEB.getRegistryEntry(),foreignBlock),
+                        ()->assertEquals(Blocks.COBWEB.getRegistryEntry().registryKey(),foreignBlock.registryKey())),
+                ()->assertAll("subcase=attribute_modifiers的ATTRIBUTE",
+                        ()->rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->seam(Items.DIAMOND,attribute.apply(foreignAttribute))),
+                        ()->assertDoesNotThrow(()->seam(Items.DIAMOND,attribute.apply(EntityAttributes.GENERIC_ATTACK_DAMAGE)),"正向對照")),
+                ()->assertAll("subcase=food effect的STATUS_EFFECT",
+                        ()->rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->seam(Items.DIAMOND,effect.apply(foreignEffect))),
+                        ()->assertDoesNotThrow(()->seam(Items.DIAMOND,effect.apply(StatusEffects.SPEED)),"正向對照")),
+                ()->assertAll("subcase=tool direct rule的BLOCK",
+                        ()->rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->seam(Items.DIAMOND,block.apply(foreignBlock))),
+                        ()->assertDoesNotThrow(()->seam(Items.DIAMOND,block.apply(Blocks.COBWEB.getRegistryEntry())),"正向對照")));
+    }
+    @Test void itemLeafRejectsMissingTargetAndInlineReferences() {
+        // 缺target：standAlone的key不在registry；encode只寫id，parse找不到，在codec拒（UNSUPPORTED_ITEM_COMPONENT_CODEC），不進payload。
+        // inline：RegistryEntry.of建立的Direct entry不是exact原生Reference，值條件在codec之前就拒（UNSUPPORTED_ITEM_DEFAULT_COMPONENT）。
+        var modifier=new EntityAttributeModifier(Identifier.ofVanilla("base_attack_damage"),3.0,EntityAttributeModifier.Operation.ADD_VALUE);
+        java.util.function.Function<RegistryEntry<net.minecraft.entity.attribute.EntityAttribute>,ComponentMap> attribute=entry->only(
+                DataComponentTypes.ATTRIBUTE_MODIFIERS,new AttributeModifiersComponent(List.of(new AttributeModifiersComponent.Entry(entry,modifier,
+                        AttributeModifierSlot.MAINHAND)),true));
+        java.util.function.Function<RegistryEntry<net.minecraft.entity.effect.StatusEffect>,ComponentMap> effect=entry->only(DataComponentTypes.FOOD,
+                new FoodComponent(1,0.1f,false,1.6f,Optional.empty(),List.of(new FoodComponent.StatusEffectEntry(new StatusEffectInstance(entry,100),1f))));
+        java.util.function.Function<RegistryEntry<Block>,ComponentMap> block=entry->only(DataComponentTypes.TOOL,new ToolComponent(List.of(
+                new ToolComponent.Rule(RegistryEntryList.of(List.of(entry)),Optional.of(15f),Optional.of(true))),1f,1));
+        var missing=Identifier.of("test","missing");
+        assertAll(
+                ()->assertAll("subcase=缺ATTRIBUTE target",()->rejects("UNSUPPORTED_ITEM_COMPONENT_CODEC",()->seam(Items.DIAMOND,attribute.apply(
+                        RegistryEntry.Reference.standAlone(Registries.ATTRIBUTE.getEntryOwner(),RegistryKey.of(RegistryKeys.ATTRIBUTE,missing)))))),
+                ()->assertAll("subcase=缺STATUS_EFFECT target",()->rejects("UNSUPPORTED_ITEM_COMPONENT_CODEC",()->seam(Items.DIAMOND,effect.apply(
+                        RegistryEntry.Reference.standAlone(Registries.STATUS_EFFECT.getEntryOwner(),RegistryKey.of(RegistryKeys.STATUS_EFFECT,missing)))))),
+                ()->assertAll("subcase=缺BLOCK target",()->rejects("UNSUPPORTED_ITEM_COMPONENT_CODEC",()->seam(Items.DIAMOND,block.apply(
+                        RegistryEntry.Reference.standAlone(Registries.BLOCK.getEntryOwner(),RegistryKey.of(RegistryKeys.BLOCK,missing)))))),
+                ()->assertAll("subcase=inline ATTRIBUTE",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
+                        ()->seam(Items.DIAMOND,attribute.apply(RegistryEntry.of(EntityAttributes.GENERIC_ARMOR.value()))))),
+                ()->assertAll("subcase=inline STATUS_EFFECT",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
+                        ()->seam(Items.DIAMOND,effect.apply(RegistryEntry.of(StatusEffects.SPEED.value()))))),
+                ()->assertAll("subcase=inline BLOCK",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
+                        ()->seam(Items.DIAMOND,block.apply(RegistryEntry.of(Blocks.COBWEB))))));
+    }
+    @Test void itemLeafFoodValueConditionsRejectPatchCountHiddenEffectAndForeignInstance() {
+        // food的值條件（設計§2.2、設計審查M5）：using_converts_to的ItemStack必須沒有patch，且count為1（UNCOUNTED_CODEC不編count，
+        // 非1的count不會進payload，所以拒）；effect必須是exact原生StatusEffectInstance（codec的asParameters會呼叫可覆寫的getter），
+        // 且不帶hidden_effect（沒有公開accessor，以encoded形狀判定；encoded須等於重建值的encode，所以兩邊都驗到）。
+        // 值都是局部新物件（ItemStack.set只改該stack自己的ComponentMapImpl），不改動全域狀態。
+        var patched=new ItemStack(Items.BOWL);patched.set(DataComponentTypes.MAX_STACK_SIZE,1);
+        var hidden=new StatusEffectInstance(StatusEffects.SPEED,100,0,false,true,true,new StatusEffectInstance(StatusEffects.SPEED,200));
+        var subclass=new StatusEffectInstance(StatusEffects.SPEED,100){};
+        java.util.function.BiFunction<Optional<ItemStack>,List<FoodComponent.StatusEffectEntry>,ComponentMap> food=(convertsTo,effects)->
+                only(DataComponentTypes.FOOD,new FoodComponent(6,7.2f,false,1.6f,convertsTo,effects));
+        var bowl=Optional.of(new ItemStack(Items.BOWL));
+        assertAll(
+                ()->assertAll("fixture前提",
+                        ()->assertFalse(patched.getComponentChanges().isEmpty(),"patched有patch"),
+                        ()->assertTrue(hasHiddenEffect(hidden),"hidden帶hidden_effect"),
+                        ()->assertNotSame(StatusEffectInstance.class,subclass.getClass(),"subclass不是exact class")),
+                ()->assertAll("subcase=正向對照",()->assertRefs(List.of(
+                        new ExpectedRef("components/minecraft:food/using_converts_to/id",Items.BOWL.getRegistryEntry()),
+                        new ExpectedRef("components/minecraft:food/effects/0/effect/id",StatusEffects.SPEED)),
+                        capture(Items.DIAMOND,food.apply(bowl,List.of(new FoodComponent.StatusEffectEntry(new StatusEffectInstance(StatusEffects.SPEED,100),1f))))
+                                .references(),"seam")),
+                ()->assertAll("subcase=using_converts_to有patch",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
+                        ()->seam(Items.DIAMOND,food.apply(Optional.of(patched),List.of())))),
+                ()->assertAll("subcase=using_converts_to的count為2",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
+                        ()->seam(Items.DIAMOND,food.apply(Optional.of(new ItemStack(Items.BOWL,2)),List.of())))),
+                ()->assertAll("subcase=effect帶hidden_effect",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
+                        ()->seam(Items.DIAMOND,food.apply(Optional.empty(),List.of(new FoodComponent.StatusEffectEntry(hidden,1f)))))),
+                ()->assertAll("subcase=StatusEffectInstance的匿名子類",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",
+                        ()->seam(Items.DIAMOND,food.apply(Optional.empty(),List.of(new FoodComponent.StatusEffectEntry(subclass,1f)))))));
+    }
+
+    /**
+     * 測試自訂的foreign Item子類（M5見證用）：只以Unsafe.allocateInstance建立，不跑建構子與欄位初始化，所以不會呼叫
+     * Registries.ITEM.createEntry，也不註冊、不碰任何registry。它冒充bowl的registry entry；每個被覆寫的virtual method都計數。
+     */
+    static final class ForeignConvertsToItem extends Item {
+        static final java.util.concurrent.atomic.AtomicInteger CALLS=new java.util.concurrent.atomic.AtomicInteger();
+        private ForeignConvertsToItem() {super(new Item.Settings());}
+        @Override public ComponentMap getComponents() {CALLS.incrementAndGet();return ComponentMap.EMPTY;}
+        @Override public RegistryEntry.Reference<Item> getRegistryEntry() {CALLS.incrementAndGet();return Items.BOWL.getRegistryEntry();}
+        @Override public void postProcessComponents(ItemStack stack) {CALLS.incrementAndGet();}
+    }
+    private static ForeignConvertsToItem allocateForeignItem() throws Exception {
+        // 反射取得sun.misc.Unsafe（jdk.unsupported模組open了sun.misc），不在編譯期引用內部API。
+        var unsafeClass=Class.forName("sun.misc.Unsafe");
+        var field=unsafeClass.getDeclaredField("theUnsafe");field.setAccessible(true);
+        return (ForeignConvertsToItem)unsafeClass.getMethod("allocateInstance",Class.class).invoke(field.get(null),ForeignConvertsToItem.class);
+    }
+    @Test void itemLeafFoodConvertsToItemSourceIsCheckedBeforeCodec() throws Exception {
+        // 設計審查M5：解碼using_converts_to時，ItemStack建構子會先執行目標item的postProcessComponents（virtual），所以codec之前要先對
+        // 目標item跑executedOwnerClasses的source檢查。foreign item冒充bowl的registry entry：沒有事前檢查時，encode寫出minecraft:bowl、
+        // parse得到真bowl，原值與重建值的ref也是同一個bowl entry，會被靜默接受；有事前檢查時在codec之前以NATIVE_DEFINITION_SOURCE拒，
+        // 且全程不呼叫foreign item的任何virtual method。
+        var foreign=allocateForeignItem();
+        var stack=new ItemStack(foreign);
+        assertAll("fixture前提",
+                ()->assertFalse(nativeSource(ForeignConvertsToItem.class),"foreign item class不是原生source"),
+                ()->assertSame(foreign,stack.getItem()),
+                ()->assertEquals(1,stack.getCount()),
+                ()->assertTrue(stack.getComponentChanges().isEmpty(),"沒有patch"),
+                ()->assertSame(Items.BOWL.getRegistryEntry(),stack.getRegistryEntry(),"冒充bowl的registry entry"));
+        var food=only(DataComponentTypes.FOOD,new FoodComponent(6,7.2f,false,1.6f,Optional.of(stack),List.of()));
+        ForeignConvertsToItem.CALLS.set(0);
+        var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,()->seam(Items.DIAMOND,food));
+        assertAll(
+                ()->assertEquals("NATIVE_DEFINITION_SOURCE",failure.getMessage()),
+                ()->assertEquals(0,ForeignConvertsToItem.CALLS.get(),"source檢查之前不得呼叫foreign item的任何virtual method"));
+    }
+
+    /** 測試端獨立走訪（typed record accessor，不呼叫production的契約或抽取器）：一條ref寫成「path | registry | id」。 */
+    private static String refTriple(String path,RegistryEntry<?> entry) {
+        var key=entry.getKey().orElseThrow();
+        return path+" | "+key.getRegistry()+" | "+key.getValue();
+    }
+    private static java.util.Map<String,RegistryEntry<?>> independentRefs(Item item) {
+        var refs=new java.util.TreeMap<String,RegistryEntry<?>>();var components=item.getComponents();
+        var modifiers=components.get(DataComponentTypes.ATTRIBUTE_MODIFIERS);
+        if(modifiers!=null)for(int i=0;i<modifiers.modifiers().size();i++)
+            refs.put("components/minecraft:attribute_modifiers/modifiers/"+i+"/type",modifiers.modifiers().get(i).attribute());
+        var food=components.get(DataComponentTypes.FOOD);
+        if(food!=null) {
+            food.usingConvertsTo().ifPresent(stack->refs.put("components/minecraft:food/using_converts_to/id",stack.getRegistryEntry()));
+            for(int i=0;i<food.effects().size();i++)
+                refs.put("components/minecraft:food/effects/"+i+"/effect/id",food.effects().get(i).effect().getEffectType());
+        }
+        var tool=components.get(DataComponentTypes.TOOL);
+        if(tool!=null)for(int i=0;i<tool.rules().size();i++) {
+            var blocks=tool.rules().get(i).blocks();
+            for(int j=0;j<blocks.size();j++)refs.put("components/minecraft:tool/rules/"+i+"/blocks/"+j,blocks.get(j));
+        }
+        return refs;
+    }
+    @Test void everyAcceptedVanillaItemLeafRefsMatchIndependentWalk() {
+        // 設計審查M9：ref抽取的全族群獨立oracle。對每個測試端判定為已審的minecraft item，以typed record獨立走訪default component，
+        // 算出(path, registry, id)集合，逐項比對itemCapture的輸出與item(...)經sink送出的ref；entry另以identity比對。漏抽一條ref不會
+        // fail closed，只會讓閉包不完整，所以要靠這個oracle守。不斷言數量，只要求至少有一件帶ref。
+        var reviewed=reviewedItemDefaults();var mismatched=new java.util.TreeMap<String,String>();int[] counts=new int[2];
+        for(var entry:(Iterable<RegistryEntry.Reference<Item>>)Registries.ITEM.streamEntries()::iterator) {
+            var id=entry.registryKey().getValue();var item=entry.value();
+            if(!id.getNamespace().equals("minecraft")||!allReviewed(item,reviewed,null))continue;
+            counts[0]++;
+            var expected=independentRefs(item);if(!expected.isEmpty())counts[1]++;
+            var expectedTriples=expected.entrySet().stream().map(e->refTriple(e.getKey(),e.getValue())).sorted().toList();
+            List<Minecraft121ItemComponentContracts.Ref> captured;
+            var emitted=new java.util.ArrayList<java.util.Map.Entry<Minecraft121SettingsGraph.Key,Minecraft121ItemComponentContracts.Ref>>();
+            try {captured=capture(item,item.getComponents()).references();itemLeaf(item,emitted);}
+            catch(Minecraft121SettingsGraph.Failure failure){mismatched.put(id.toString(),"failure="+failure.getMessage());continue;}
+            var capturedTriples=captured.stream().map(ref->refTriple(ref.path(),((Minecraft121ItemComponentContracts.Ref.Entry)ref).entry())).sorted().toList();
+            var emittedTriples=emitted.stream().map(e->refTriple(e.getValue().path(),((Minecraft121ItemComponentContracts.Ref.Entry)e.getValue()).entry())).sorted().toList();
+            var problems=new java.util.ArrayList<String>();
+            if(!expectedTriples.equals(capturedTriples))problems.add("capture="+capturedTriples+" expected="+expectedTriples);
+            if(!capturedTriples.equals(emittedTriples))problems.add("sink="+emittedTriples);
+            if(!emitted.stream().allMatch(e->e.getKey().equals(itemNode(id.toString()))))problems.add("sink的from不是該ITEM node");
+            for(var ref:captured)if(expected.get(ref.path())!=((Minecraft121ItemComponentContracts.Ref.Entry)ref).entry())problems.add("identity:"+ref.path());
+            if(!problems.isEmpty())mismatched.put(id.toString(),String.join("; ",problems));
+        }
+        assertAll(
+                ()->assertTrue(counts[0]>0,"fixture前提：有已審的minecraft item"),
+                ()->assertTrue(counts[1]>0,"fixture前提：至少一件已審item帶ref"),
+                ()->assertEquals(java.util.Map.of(),mismatched,"每個已審vanilla item抽出的ref恰等於測試端獨立走訪的結果"));
     }
 
     /**
