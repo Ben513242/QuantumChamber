@@ -85,3 +85,19 @@
   - 兩個 seam 都自驗 source。
 - 驗證與審查：具名 RED→GREEN，5 個突變見證；乾淨 Canon focused 110/110×2、LeafTest 21/21×2；完整 `run-all-42034bb2a7144d8bb4841f9a10b242c4` 自然 END ALL0／JUnit893；spec C0/I0/M2、quality C0/I0/M3。
 - 下一步：3a。component codec 改用 lease registries，並固定證明 identity（ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、STATUS_EFFECT）；接受 8 型 literal。派工要帶設計審查的 M1、M4，以及 D1b-3-0 兩席審查的 5 項 Minor（見 M6 note）。`2823985` 的遠端 CI 要等本筆 push 後讀回。
+
+### 2026-10-30：D1b-3a 結案
+
+- D1b-3-0 遠端 CI run `40911589298`／`40911636980` success。
+- D1b-3a code `36fdd36` 的內容：
+  - component codec 改用 lease registries；
+  - 固定證明 ITEM／DATA_COMPONENT_TYPE／BLOCK／ATTRIBUTE／STATUS_EFFECT 的 identity；
+  - 新增 owner `Minecraft121ItemComponentContracts`；
+  - 接受 8 型 literal／空 DEFAULT，ITEM 被拒數從 175 降為 109。
+
+  驗證與審查：具名 RED→GREEN、6 個見證；乾淨 Canon focused 112/112×2、LeafTest 25/25×2；完整 `run-all-8aba2dc201f94d959e0e886b6be6ea4f` 自然 END ALL0／JUnit899；spec C0/I0/M4、quality C0/I0/M3。
+- 殘餘：W-OPS 是等價突變，只有 3d 的 dynamic JUKEBOX_SONG 能殺掉，已列為 3d 的結案條件。
+- 下一步：3b，處理 attribute_modifiers、food，以及只有直接引用的 tool；新增 ATTRIBUTE 與 STATUS_EFFECT leaf；ITEM leaf 開始產生出邊。
+  - **硬性前置**：已審型別表要先改成單一分派的 per-type contract，值條件與 refs 寫在同一處，以免 ref 抽取漂移而造成 fail-open。
+  - 要帶入的 Minor 見 M6 note「D1b-3a 結案」一節。
+  - `36fdd36` 的遠端 CI 要等本筆 push 之後讀回。

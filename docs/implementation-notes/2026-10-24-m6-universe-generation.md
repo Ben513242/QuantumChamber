@@ -897,3 +897,85 @@ C1～C15 全部由 controller 依審查定案，不需要使用者裁示。
 - 容器 source 檢查的 Javadoc 改寫為實際擋下的範圍；
 - SpawnEgg 前提 `assertSame` 恆真（requiredFeatures 是同一個 VANILLA 實例），改寫訊息並引用 javap；ISE 斷言改成檢查訊息；
 - Javadoc 改以 spec 章節引用、不用行號；Fixtures 註明需要先 `createGameVersion`。
+
+D1b-3-0 遠端 CI：docs commit `5a789fa77eeed05e63dd1b3744bed802a2d7bc63` 對應 run `40911589298`，修正行尾空白的 `0f1e4e055a95a06311a37772a35596b5eaeccef4` 對應 run `40911636980`，兩者都是 completed／success，Ubuntu `build` 與 Windows `windows-native` 兩個 job 也都 success。兩個 SHA 都包含 code `2823985`。這裡只讀回 job 的結論。
+
+### 2026-10-30：D1b-3a（lease registries 加 identity，8 型 literal／空 DEFAULT）結案
+
+**commit**：`c8c1e7e`（RED 測試）與 `36fdd36941c8ec36281cc53183c86d53248a68e9`（feat），共改六個檔：
+- 新增 main owner `Minecraft121ItemComponentContracts`；
+- LeafContracts；
+- Closure（只改 Javadoc）；
+- CanonicalizerTest、LeafContractsTest；
+- test fixture。
+
+**行為**：
+- **換源**：ITEM component codec 的 ops 改為 `registries.getOps(NbtOps.INSTANCE)`。closure 建構時建立一次；RegistryOps 對 registry 的解析是 lazy 的，實際發生在 lease 內。
+- **identity 證明**：`requireItemComponentRegistries()` 固定證明 ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、STATUS_EFFECT 這組聯集，lease 的 registry 必須與全域 static registry 是同一物件。證明在 `item()` 與 `itemCapture()` 都會執行，而且都早於 codec。
+  - registry 缺席時的錯誤碼改為 `REQUIRED_REGISTRY_MISSING`；
+  - 同 key 但不是同一物件，仍為 `STATIC_REGISTRY_OWNER_MISMATCH`。
+- **seam**：static `itemPayload` 改為 instance `itemCapture`；ITEM leaf 的 Contract 維持 v1。
+- **8 型值條件**，寫在新 owner：
+
+  | 型別 | 值條件 |
+  |---|---|
+  | fire_resistant | `==net.minecraft.util.Unit.INSTANCE` |
+  | enchantment_glint_override | Boolean |
+  | ominous_bottle_amplifier | Integer |
+  | potion_contents | exact class，且三欄皆空 |
+  | suspicious_stew_effects | exact class，且為空 |
+  | banner_patterns | exact class，且為空 |
+  | charged_projectiles | exact class，且為空 |
+  | container | `==ContainerComponent.DEFAULT` |
+
+  - 經 `ComponentMap.CODEC` 或 `fromStacks` 產生的空 container 都是 DEFAULT。其他原生路徑可能產生非 DEFAULT 的空 container，這種情況只會被誤拒，仍是 fail closed。
+  - roundtrip 之後，在重建的 map 上再驗一次值條件。
+- **白名單一致性測試**改為「涵蓋」關係，並附上預期的分歧表 `[potion, chest]`。
+- D1b-3-0 兩席審查提出的 5 項 Minor 已一併處理。
+
+**覆蓋**：
+- 1333 個 ITEM 中，ACCEPTED 從 1158 增為 1224，被拒從 175 降為 109。
+- B28 可達的 85 個原被拒 item 中，新接受 16 個；剩下 69 個分別屬於 attribute_modifiers 32、tool 33、food 28、jukebox 8，交給 3b～3d。
+- 既有 1158 件沒有退化。payload 只比較了**長度**相同，內容等值依據 Contract 維持 v1 的推理與具名 oracle 抽樣，沒有逐件比對內容 hash。
+- 成本：closure 層級在換源前後量不到差異。`D1B3_ITEM_OPS_COST` 量到的只是兩種 lazy ops 的物件配置成本，不包括 wrapper 解析。
+
+**測試數**：LeafTest 21→25，Canon 110→112。
+
+**證據**（ignored，`task-08/8b2-c1d-d1b3a-evidence/`）：
+- 具名 RED：RED-LEAF 25/4，RED-CANON 112/2。
+- GREEN：25/0，112/0。
+- 見證 W-ID-ALL、W-ID-SEAM、W-ID-K、W-VAL-POTION、W-VAL-CONTAINER、W-VAL-UNIT 都能鑑別。
+
+**殘餘風險**：
+- W-OPS（把 codec 改回 static ops）存活，這是預期中的等價突變：5 個 static registry 的 identity 都已證明，3a 收的型別也不經 ops 查 registry。3a～3c 都沒有行為層級的見證，靠逐行審查確認。**只有 3d 的 dynamic JUKEBOX_SONG 能殺掉它，所以「3d 重跑 W-OPS 並殺掉」列為 3d 的結案條件。**
+- 只刪 `item()` 的步驟 1 時，DCT、BLOCK、ATTRIBUTE、STATUS_EFFECT 四個 key 是等價突變，因為 seam 會丟出同一個碼；只有 ITEM key 抓得到。
+
+**乾淨 `36fdd36` 驗證**：
+- M6Compile PASS。
+- Canon focused `focused-c1d-d1b3a-clean-canon-1-b0661554f5764eaa93623e1fc7a2e363`、`focused-c1d-d1b3a-clean-canon-2-7c048c84662b4181afac05e5b90c5307` 皆 112/112。
+- LeafTest focused `focused-c1d-d1b3a-clean-leaf-1-13ce2aa833854998afc07268a058a2a0`、`focused-c1d-d1b3a-clean-leaf-2-eee388c303e04ec5867f76573236166a` 皆 25/25。
+- 完整 `run-all-8aba2dc201f94d959e0e886b6be6ea4f` 自然 END ALL exit0：
+  - JUnit899（0 fail／0 error／2 既有 skip）；
+  - default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2；
+  - release 505 entries／458 classes，mainOnly PASS，testmodHits0；
+  - console.log SHA256 `4e3bb95e47989f8ef4974ec8c61843d6378d5db99f89d7244ccc9cb26825f934`，summary.json SHA256 `8cef36eb7fcb62385fdda3819e44b85e6fc4479a6e422350aeecd27397cb09d1`。
+- 本機 CI oracle 不等於遠端 CI，`36fdd36` 的遠端 CI 要等本筆 push 之後才讀回。
+
+**全新審查**：
+- spec C0/I0/M4 ✅（`D1B3A-SPEC-REVIEW.md`，SHA256 `2190319a61c747deef9cc3c48efc0452a711b14402599428f5decda8599e76c3`），五項偏離都合規。
+- quality C0/I0/M3 Approved（`D1B3A-QUALITY-REVIEW.md`，SHA256 `df2f54ac03030ddab4ae81b46a75cd350a441d6ce3d1e18e7cfeb184d0802a7c`）。
+
+**交 3b 的事項**（3b 的硬性前置在最前面）：
+- **硬性前置**：已審型別表要改成**單一分派的 per-type contract**，每型在同一處宣告值條件與 refs，literal 型別明確宣告 `NO_REFS`，並加上結構測試。這樣才能避免 ref 抽取另寫一條分派、與值條件表漂移，造成「型別被接受卻沒抽出 ref」的靜默少邊（fail-open）。
+- 設計 §1.5 第 2、5～7 點。
+- 設計審查 M2（Entry）、M3、M5、M9。
+- 診斷的 node／edge 改為實際量測值。
+- 改寫 ItemComponentContracts 的 Javadoc：tool 的 BLOCK 歸類，以及「固定聯集」的說法；同時寫明 ops 是 lazy 解析。
+- `item()` 步驟 1 的殘餘風險要註記，或補 W-ID-ITEM 見證。
+- `reviewedItemDefaults()` 的 putAll 在型別重疊時要明確處理。
+- `StaticRegistry` 改用 `List<Registry<?>>`。
+- withFood 子案翻轉的清單。
+
+另有兩項交給其他切片：
+- 3d：對齊 JUKEBOX_SONG 缺席時的定碼。
+- D2：收斂 `nativeSource` 的互相依賴，並處理 container oracle 用 equals、production 用 identity 的差異。
