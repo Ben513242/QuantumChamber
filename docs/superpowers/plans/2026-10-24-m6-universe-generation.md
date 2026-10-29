@@ -365,6 +365,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 2026-10-30 D1b-3b快照：3a遠端CI run40926054933（bb52b47）success。3b code `ff3aecc`（8e6b9a5 refactor＋c4d8549 RED＋ff3aecc feat）：單一分派per-type contract與結構測試、attribute/food/直接tool、ATTRIBUTE與STATUS_EFFECT leaf、ITEM出邊；ITEM被拒175→66（B28 85→39）；乾淨Canon focused115/115×2、LeafTest34/34×2；首輪full因AccessDenied外部鎖檔（M5已知限制）FAIL保留原root，新nonce`run-all-090bcb63a6e04cff9650b9aaba5281bd` END ALL0／JUnit911；spec C0/I0/M4、quality C0/I0/M4。設計§3.3稱wooden_shovel／iron_axe於3b翻轉有誤，兩者屬3c。下一步3c（Step0：codec前重建三型record等）。
 
+2026-10-30 D1b-3c-0快照：3b遠端CI run40948195881（6b5e495）success。3c-0 Step0 code `be9d408`（d904df2 RED＋be9d408 fix）：codec前以已驗元素重建attribute_modifiers/food/tool record、LORE正規化、ref key比對、M9交叉檢查、RefSink介面、Unsafe補ITEM seam見證；1267件ACCEPTED逐件內容hash不變；乾淨Canon focused116/116×2、LeafTest36/36×2、完整`run-all-a465f127b08a431db4f24eeda83ebf8c` END ALL0／JUnit914，spec C0/I0/M3、quality C0/I0/M4。設計勘誤（§3.3 wooden_shovel／iron_axe屬3c、fire_resistant為net.minecraft.util.Unit）記於M6 note。下一步D1b-3c-0b硬化（CodecCache快取端等，只有mod觸發），再3c本體。
+
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。

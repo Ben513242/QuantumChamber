@@ -1060,3 +1060,51 @@ D1b-3a 遠端 CI：docs commit `bb52b471e21f23323b8cc1b9afb84c6a650f62f7`（含 
 - 補上同一個 ITEM 被兩條 occurrence 引用、只產生一次出邊的 Canon 測試。
 - 用 Unsafe 技法為 S0-5 的 ITEM seam 補上行為見證。
 - 更正設計文件中 wooden_shovel 與 iron_axe 的翻轉時點（屬 3c），並在 plan 第 241 行補上 ATTRIBUTE／STATUS_EFFECT 分支與 ref sink。
+
+D1b-3b 遠端 CI：docs commit `6b5e495c9db241231f155b3b41eae313ac9d3122`（含 code `ff3aecc`）的 run `40948195881` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩 job 皆 success。只讀回 job 結論。
+
+**設計勘誤**（ignored 的 `task-08/8b2-c1d-design/D1B3-PROPOSAL.md` 被 plan 以 SHA256 釘住，所以原檔不改，勘誤記在這裡）：
+- §3.3 說 wooden_shovel 與 iron_axe 會在 3b 翻轉，這是錯的。兩者都帶 tool 的 tag rule，翻轉要等 3c。
+- 設計審查 M4 說 fire_resistant 的值是「DFU Unit」，實際上是固定 JAR 內的 `net.minecraft.util.Unit`。
+
+### 2026-10-30：D1b-3c-0（Step0：D1b-3b 殘餘收斂）結案
+
+**commit**：`d904df2`（RED 測試）與 `be9d408986bb7a6e7acd17c5c74d6548dd6af660`（fix），只改 ItemComponentContracts、LeafContracts、LeafContractsTest、CanonicalizerTest 四個檔。本片不接受新型別，也不改 `expandTag`。
+
+**行為**：
+- **codec 前的 copy 重建**：Contract 新增 `copy` 欄位。attribute_modifiers、food、tool 三型以已驗元素加 `List.copyOf` 重建：tool 的 Direct 用 `RegistryEntryList.of`，food 的 effects 用 `effect()` 的 copy。LORE 正規化為 DEFAULT，並加 iterator 檢查。流程是：原值的值條件 → 第二次迭代建立 copy → 檢查 copy 的值條件 → 從 copy 抽 ref。
+  - **具名 RED 證實了等值替換的風險**：修正前，foreign List 的 equals 說謊時，payload 會變成另一個已快取值的編碼。實測 attribute 預期 9.0 得到 3.0、tool 預期 4.0 得到 15.0、food 預期 999 得到 100。修正後不再發生。
+- `requireSameReferences` 改為先比 `registryKey()`：key 不同為 `NATIVE_CODEC_ROUNDTRIP_CHANGED`，同 key 但不是同一物件才是 `REGISTRY_ENTRY_OWNER_MISMATCH`。未綁定 key 的 Reference 丟出的 ISE 也改碼，並以 initCause 保留原因。
+- M9 新增與模型無關的交叉檢查：payload 中凡是可解析、且屬於固定聯集 registry 的 id，都必須出現在 ref id 中。Javadoc 也寫明：新增帶引用的型別時，三處清單要同步更新。
+- ref sink 改成 `RefSink` 小介面，有 entry 與 tag 兩個方法。tag 目前一律拋 Failure，所以整件 item 會被明確拒絕，不會靜默遺漏。測試端的 cast 改為 sealed switch。
+- 新增 Canon 測試：同一個 ITEM 被兩條 occurrence 引用時，出邊只產生一次。
+- 以 `Unsafe.allocateInstance` 補上 ITEM seam 自驗的行為見證，關閉 D1b-3-0 S0-5 的殘餘風險。
+
+**payload 不變**：1267 件 ACCEPTED 逐件比較內容 hash，重建前後 0 件改變，digest 為 `8bdc6c43e1280e98e2a335efb4a01cb1703cc9086a26edda442a12f643c9e396`。spec 審查以自寫 parser 獨立重算；另以 D1b-3b 的 XML 為基準比對，1333 件全部相同。
+
+**測試數**：LeafTest 34→36，Canon 115→116。
+
+**證據**（ignored，位於 `task-08/8b2-c1d-d1b3c0-evidence/`）：
+- 具名 RED：leaf 36/3。
+- GREEN：GREEN2 的內容與 commit 相同，leaf 36/0、canon 116/0。
+- 5 個見證全部被殺：W-M9-CROSS、W-ITEM-SEAM、W-CANON-ONCE、W-LORE-ITER、W-COPY-FOOD。
+
+**乾淨 `be9d408` 驗證**：
+- M6Compile PASS。
+- Canon focused `focused-c1d-d1b3c0-clean-canon-1-3e1c55b83e7348c3826529cf1a0c1e04`、`focused-c1d-d1b3c0-clean-canon-2-15a4656db38849e9aebb6483409ea628` 皆 116/116。
+- LeafTest focused `focused-c1d-d1b3c0-clean-leaf-1-c2c39a8d86be412297c56f07b8cd1303`、`focused-c1d-d1b3c0-clean-leaf-2-dbb934b3e3d84f34a54926481b5a0d5c` 皆 36/36。
+- 完整 `run-all-a465f127b08a431db4f24eeda83ebf8c` 自然 END ALL exit0：JUnit914（0 fail／0 error／2 既有 skip）、default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2，release 514 entries／467 classes，mainOnly PASS，testmodHits0。console.log SHA256 `d975e5b3be1481b1b40ba2442f7271d1595cf578902aa9792f45c55624d53c91`，summary.json SHA256 `9897259f97ab159cc6be713e685102b965cfab64ccbfe4f50568a674ff5906de`。
+- 本機 CI oracle 不等於遠端 CI，`be9d408` 的遠端 CI 要等本筆 push 後才讀回。
+
+**全新審查**：
+- spec C0/I0/M3 ✅（`D1B3C0-SPEC-REVIEW.md`，SHA256 `98f2d3c9e5e22bb9948402d07b2220b844513bea431a5b6bd0bdb7959402a1b3`）。
+- quality C0/I0/M4 Approved（`D1B3C0-QUALITY-REVIEW.md`，SHA256 `cfaeb7caeda5bdec7dba69429a1abf2a62fb759b6082d0dbcbe13822a96921fb`）。
+
+**殘餘與下一片 D1b-3c-0b**：以下各項只有第三方 mod 刻意構造時才會觸發，vanilla 不受影響。controller 把兩席的 Minor 合併成獨立切片 D1b-3c-0b，排在 3c 本體之前：
+- **CodecCache 的快取端**（quality Q-M1）：copy 只擋住「本值是 foreign」這個方向。JDK 的 `List.equals` 會呼叫**對方**的 iterator，而 ops 等值只看 manager 是否為同一物件。所以只要先前有人用同一個 manager encode 過帶說謊 List 的 record，誠實的 copy 也會命中快取，vanilla item 的 literal 欄位（例如 golden_apple 的 food duration）就可能被替換；邊不受影響。修法有兩種，擇一：讓 ops 的 identity 獨立，不與遊戲共用快取；或做一個與快取無關的事後比對。另外要補「快取端說謊」的 RED。
+- tool rule 的 `speed`／`correct_for_drops` 是 Optional，內容沒有驗證 class（spec M1）。
+- potion_contents、suspicious_stew_effects、banner_patterns 三型也走 CodecCache；DFU 的 `optionalFieldOf` 預設值比對同樣會呼叫 equals。三型要比照 LORE，正規化為 DEFAULT 並加 iterator 檢查（spec M2）。
+- copy 的保真度要有全族群的 gating 測試：每件 ACCEPTED item 的 payload，都要等於用另一個新建 manager 的 static ops 對原值獨立編碼的結果；並為各重建型別加上帶非預設 literal 的 seam 子案（quality Q-M2）。
+- M9 的「不空轉」前提改成逐件雙向集合相等，並補上 `#` tag 與 compound 鍵兩個盲點（quality Q-M3）。
+- 結構測試補上 `refBearing ⊆ rebuilt`；`itemLeafRejectsLyingNestedListAfterRoundtrip` 改名；`foodCopy` 的 Javadoc 補充說明（quality Q-M4）。
+- 交 3d 的待辦：`Contract.registries` 只列 static registry，3d 引入 dynamic 的 JUKEBOX_SONG 時要重新定義。M9 交叉檢查的 registry 集合也要隨 dynamic registry 擴充，否則 3d 漏抽 ref 時抓不到。

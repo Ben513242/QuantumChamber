@@ -618,3 +618,8 @@
 
 - 3a 遠端 CI run `40926054933`（`bb52b47`）success。
 - D1b-3b code `ff3aecc`：單一分派 per-type contract、attribute／food／直接 tool、ATTRIBUTE 與 STATUS_EFFECT leaf、ITEM 出邊；乾淨 Canon focused 115/115×2、LeafTest 34/34×2。首輪 full 因 AccessDenied 外部鎖檔（M5 已知限制）FAIL，原 root 保留；新 nonce `run-all-090bcb63a6e04cff9650b9aaba5281bd` 自然 END ALL0／JUnit911。spec C0/I0/M4、quality C0/I0/M4。`ff3aecc` 的遠端 CI 待本筆 push 後讀回。下一步 3c。細節見 M6 note 末節。
+
+### 2026-10-30：M6 D1b-3c-0（Step0）結案，接 3c-0b
+
+- 3b 遠端 CI run `40948195881`（`6b5e495`）success。
+- D1b-3c-0 code `be9d408`：codec 前以已驗元素重建三型 record，具名 RED 證實了等值替換的風險，已修正；1267 件 ACCEPTED 的逐件內容 hash 不變。乾淨 Canon focused 116/116×2、LeafTest 36/36×2，完整 `run-all-a465f127b08a431db4f24eeda83ebf8c` 自然 END ALL0／JUnit914；spec C0/I0/M3、quality C0/I0/M4。`be9d408` 的遠端 CI 待本筆 push 後讀回。下一步 D1b-3c-0b（硬化），之後才是 3c 本體。細節見 M6 note 末節。

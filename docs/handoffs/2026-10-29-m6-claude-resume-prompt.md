@@ -117,3 +117,16 @@
   - hidden_effect 不可能被觀察，改為斷言它被丟棄；
   - CodecCache 是全域的，存在等值替換的殘餘風險，修正排到 3c Step0：codec 前用已驗元素重建 attribute／tool／food 三型 record。
 - 下一步：3c。先做 Step0，清單見 M6 note「D1b-3b 結案」的「交 3c Step0 的事項」；之後做 tool 的 tag rule、TAG 節點只展開一次、tag 測試技法。wooden_shovel 與 iron_axe 會在 3c 翻轉。`ff3aecc` 的遠端 CI 要等本筆 push 之後讀回。
+
+### 2026-10-30：D1b-3c-0（Step0）結案
+
+- 3b 遠端 CI run `40948195881` success。
+- D1b-3c-0 code `be9d408` 的內容：
+  - codec 之前，以已驗元素重建 attribute_modifiers／food／tool 三型 record，LORE 正規化。具名 RED 實測證實了修正前的等值替換，例如 food 預期 999 卻得到 100。
+  - ref 先比 key。
+  - M9 加上與型別模型無關的交叉檢查。
+  - 新增 `RefSink` 介面。
+  - 用 Unsafe 補上 ITEM seam 自驗的見證。
+
+  1267 件 ACCEPTED 的逐件內容 hash 不變。乾淨 Canon focused 116/116×2、LeafTest 36/36×2，完整 `run-all-a465f127b08a431db4f24eeda83ebf8c` 自然 END ALL0／JUnit914；spec C0/I0/M3、quality C0/I0/M4。
+- 下一步是 D1b-3c-0b（硬化），清單見 M6 note「D1b-3c-0 結案」的「殘餘與下一片」，其中最重要的是 CodecCache 的快取端缺口。這些路徑只有第三方 mod 刻意構造時才會觸發，vanilla 不受影響。3c-0b 之後才進 3c 本體：tool tag rule、TAG 節點只展開一次、tag 測試技法。`be9d408` 的遠端 CI 要等本筆 push 之後讀回。
