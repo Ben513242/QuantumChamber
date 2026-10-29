@@ -6,6 +6,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.component.ComponentMap;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.LoreComponent;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
@@ -377,6 +378,76 @@ class Minecraft121RegistryLeafContractsTest {
                     ()->assertArrayEquals(expectedOriginal,oldBytes,"舊圖在變更前已擷取，第一次finish不受變更影響"),
                     ()->assertArrayEquals(expectedChanged,newBytes,"新圖擷取到變更後的default component"));
         }
+    }
+
+    // ===== C1d-D1b-3-0（Step0）：D1b-2殘餘風險的具名RED；只用seam與測試類別，不改動全域狀態 =====
+    /** 會說謊的巢狀List：size()==0、isEmpty()==true（AbstractList預設看size），iterator()卻吐出一行Text。 */
+    private static final class LyingLines extends java.util.AbstractList<net.minecraft.text.Text> {
+        @Override public net.minecraft.text.Text get(int index){throw new IndexOutOfBoundsException(index);}
+        @Override public int size(){return 0;}
+        @Override public java.util.Iterator<net.minecraft.text.Text> iterator(){
+            return java.util.List.<net.minecraft.text.Text>of(net.minecraft.text.Text.literal("hidden")).iterator();
+        }
+    }
+    /** 自稱size()==0（通過LoreComponent建構子的256上限檢查），但isEmpty()／iterator()／get()一律丟ISE。 */
+    private static final class ThrowingLines extends java.util.AbstractList<net.minecraft.text.Text> {
+        @Override public net.minecraft.text.Text get(int index){throw new IllegalStateException("throwing lore get");}
+        @Override public int size(){return 0;}
+        @Override public boolean isEmpty(){throw new IllegalStateException("throwing lore isEmpty");}
+        @Override public java.util.Iterator<net.minecraft.text.Text> iterator(){throw new IllegalStateException("throwing lore iterator");}
+    }
+    /** 測試自訂的foreign ComponentMap：第一次iterator()只吐first的component，之後的iterator()改吐later（兩次迭代內容不同）。 */
+    private static final class ShiftingComponentMap implements ComponentMap {
+        private final ComponentMap first,later;private int iterations;
+        ShiftingComponentMap(ComponentMap first,ComponentMap later){this.first=first;this.later=later;}
+        @Override public <T> T get(net.minecraft.component.ComponentType<? extends T> type){return later.get(type);}
+        @Override public java.util.Set<net.minecraft.component.ComponentType<?>> getTypes(){return later.getTypes();}
+        @Override public java.util.Iterator<net.minecraft.component.Component<?>> iterator(){return (iterations++==0?first:later).iterator();}
+    }
+    @Test void itemLeafRejectsLyingNestedListAfterRoundtrip() {
+        // S0-1 RED①：原生LoreComponent放在原生SimpleComponentMap裡；巢狀List自稱為空，codec的迭代卻吐出一行。
+        // LoreComponent(List)以Lists.transform建立styledLines view，所以lines()與styledLines()的isEmpty都會被騙。
+        var lore=new LoreComponent(new LyingLines());
+        var components=single(new net.minecraft.component.Component<>(DataComponentTypes.LORE,lore));
+        assertAll("fixture前提",
+                ()->assertTrue(lore.lines().isEmpty()&&lore.styledLines().isEmpty(),"兩個isEmpty都回報為空"),
+                ()->assertTrue(lore.lines().iterator().hasNext(),"iterator卻吐出元素"),
+                ()->assertEquals(1,((NbtCompound)ComponentMap.CODEC.encodeStart(NbtOps.INSTANCE,components).getOrThrow())
+                        .getList("minecraft:lore",NbtElement.STRING_TYPE).size(),"原生codec（plain NbtOps）實際編出一行lore"),
+                ()->assertDoesNotThrow(()->requireNativeSource(components.getClass()),"外層是原生容器"));
+        rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->itemPayload(Items.DIAMOND,components));
+    }
+    @Test void itemLeafRejectsForeignComponentMapContainer() {
+        // S0-1 RED②：步驟6的白名單與codec各迭代容器一次；foreign容器可以讓兩次內容不同（第二次多出food）。
+        var base=Items.DIAMOND.getComponents();
+        var withFood=ComponentMap.builder().addAll(base).add(DataComponentTypes.FOOD,component(Items.GOLDEN_APPLE,DataComponentTypes.FOOD).value()).build();
+        var probe=new ShiftingComponentMap(base,withFood);
+        var firstTypes=new java.util.HashSet<net.minecraft.component.ComponentType<?>>();for(var c:probe)firstTypes.add(c.type());
+        var laterTypes=new java.util.HashSet<net.minecraft.component.ComponentType<?>>();for(var c:probe)laterTypes.add(c.type());
+        assertAll("fixture前提",
+                ()->assertFalse(firstTypes.contains(DataComponentTypes.FOOD),"第一次迭代不含food"),
+                ()->assertTrue(laterTypes.contains(DataComponentTypes.FOOD),"第二次迭代含food"));
+        rejects("NATIVE_DEFINITION_SOURCE",()->itemPayload(Items.DIAMOND,new ShiftingComponentMap(base,withFood)));
+    }
+    @Test void itemLeafNestedListExceptionBecomesNamedCode() {
+        // S0-1 RED③：foreign容器會先在容器source檢查被擋，所以丟例外的是原生LoreComponent內的巢狀List，外層是原生SimpleComponentMap。
+        var components=single(new net.minecraft.component.Component<>(DataComponentTypes.LORE,new LoreComponent(new ThrowingLines())));
+        assertDoesNotThrow(()->requireNativeSource(components.getClass()),"fixture前提：外層是原生容器");
+        var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,()->itemPayload(Items.DIAMOND,components));
+        assertAll(
+                ()->assertEquals("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",failure.getMessage()),
+                ()->assertInstanceOf(IllegalStateException.class,failure.getCause(),"原因以initCause保留"));
+    }
+    @Test void spawnEggItemExecutedOwnersIncludeEntityTypeClass() {
+        // S0-2 RED：原生SpawnEggItem的getRequiredFeatures委派type.getRequiredFeatures()（EntityType的method可被覆寫），
+        // 所以leaf擷取時也會執行該EntityType的class。
+        var egg=(net.minecraft.item.SpawnEggItem)Items.PIG_SPAWN_EGG;
+        var type=egg.getEntityType(net.minecraft.item.ItemStack.EMPTY);
+        assertAll("fixture前提",
+                ()->assertSame(net.minecraft.entity.EntityType.PIG,type,"ENTITY_DATA為空時回傳建構時的type"),
+                ()->assertSame(type.getRequiredFeatures(),egg.getRequiredFeatures(),"spawn egg的RequiredFeatures委派EntityType"));
+        assertEquals(java.util.List.of(net.minecraft.item.SpawnEggItem.class,net.minecraft.entity.EntityType.class),
+                executedOwnerClasses(Items.PIG_SPAWN_EGG),"SpawnEggItem的EntityType class也會被執行");
     }
 
     /**

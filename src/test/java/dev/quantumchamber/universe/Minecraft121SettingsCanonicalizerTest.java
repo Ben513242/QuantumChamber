@@ -1523,6 +1523,18 @@ class Minecraft121SettingsCanonicalizerTest {
         var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);c.reference(ROOT,"foreign",key);
         rejects("NATIVE_DEFINITION_SOURCE",c::drain);rejects("GRAPH_FAILED",g::finish);
     }
+    @Test void blockPayloadSeamRejectsForeignSourceBlock() {
+        // D1b-3-0 S0-5 RED：seam自行驗block class的source，不依賴呼叫端block(...)已驗。放在Canon是因為ModBlocks只在本類的
+        // bootstrapRegistryFixture初始化（LeafTest不引用ModBlocks）；本測試只讀。bulkhead帶mod enum MEMBRANE，seam不驗source時
+        // 停在property步驟；chamber_controller只有原生HORIZONTAL_FACING，seam不驗source時會回傳payload。
+        java.util.function.Function<net.minecraft.block.Block,org.junit.jupiter.api.function.Executable> seam=
+                block->()->Minecraft121RegistryLeafContracts.blockPayload(block,block.getDefaultState());
+        assertAll(
+                ()->assertAll("subcase=quantum_bulkhead",()->rejects("NATIVE_DEFINITION_SOURCE",
+                        seam.apply(dev.quantumchamber.registry.ModBlocks.QUANTUM_BULKHEAD))),
+                ()->assertAll("subcase=chamber_controller",()->rejects("NATIVE_DEFINITION_SOURCE",
+                        seam.apply(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER))));
+    }
     @Test void blockLeafMissingTargetAndBlockOnlyIdInItemRegistry() {
         var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);c.reference(ROOT,"missing",blockKey("minecraft:not_a_block"));
         rejects("REQUIRED_REGISTRY_TARGET_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);
