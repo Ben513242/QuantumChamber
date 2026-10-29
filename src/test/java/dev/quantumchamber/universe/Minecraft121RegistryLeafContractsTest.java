@@ -1,6 +1,7 @@
 package dev.quantumchamber.universe;
 
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafContracts.*;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.*;
 import static org.junit.jupiter.api.Assertions.*;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
@@ -13,7 +14,6 @@ import net.minecraft.item.Items;
 import net.minecraft.nbt.*;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryKeys;
 import net.minecraft.resource.featuretoggle.FeatureFlags;
 import net.minecraft.resource.featuretoggle.FeatureSet;
 import net.minecraft.state.property.*;
@@ -21,9 +21,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷。
+ * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷（含D1b-3-0 Step0的殘餘風險收斂）。
  * 只讀全域static registry：不建立或註冊Block／Item，不populate tag；不引用ModBlocks／ModItems。唯一的instance欄位變更是
  * itemLeafDefaultComponentMutationIsCapturedAndRestored（設計§5.5選配，條件寫在該測試），finally以identity還原並assertSame。
+ * 共用的fixture組裝（ROOT、blockNode、itemNode、singleItemTemplate）在Minecraft121RegistryLeafTestFixtures。
  */
 class Minecraft121RegistryLeafContractsTest {
     @BeforeAll static void bootstrap() {
@@ -31,9 +32,6 @@ class Minecraft121RegistryLeafContractsTest {
     }
     private static void rejects(String code,org.junit.jupiter.api.function.Executable action) {
         assertEquals(code,assertThrows(Minecraft121SettingsGraph.Failure.class,action).getMessage());
-    }
-    private static Minecraft121SettingsGraph.Key node(String id) {
-        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,RegistryKeys.BLOCK.getValue().toString(),id);
     }
     private static NbtList strings(String... values) {
         var list=new NbtList();for(String value:values)list.add(NbtString.of(value));return list;
@@ -43,7 +41,7 @@ class Minecraft121RegistryLeafContractsTest {
         var key=block.getRegistryEntry().registryKey();var entry=Registries.BLOCK.getEntry(key).orElseThrow();
         var graph=new Minecraft121SettingsGraph();
         var leaves=new Minecraft121RegistryLeafContracts(graph,new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.BLOCK)));
-        var payload=leaves.block(node(key.getValue().toString()),key,entry);
+        var payload=leaves.block(blockNode(key.getValue().toString()),key,entry);
         assertTrue(graph.finish().length>0,"payload須已寫入圖");
         return payload;
     }
@@ -188,23 +186,20 @@ class Minecraft121RegistryLeafContractsTest {
                 n->()->new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),registries).item(n,diamondKey,diamond);
         var kind=Minecraft121SettingsGraph.Kind.REGISTRY;
         assertAll(
-                ()->assertDoesNotThrow(block.apply(node("minecraft:stone")),"正向對照：BLOCK"),
+                ()->assertDoesNotThrow(block.apply(blockNode("minecraft:stone")),"正向對照：BLOCK"),
                 ()->assertDoesNotThrow(item.apply(itemNode("minecraft:diamond")),"正向對照：ITEM"),
-                ()->assertAll("subcase=BLOCK id不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",block.apply(node("minecraft:granite")))),
+                ()->assertAll("subcase=BLOCK id不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",block.apply(blockNode("minecraft:granite")))),
                 ()->assertAll("subcase=BLOCK registry不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",
                         block.apply(new Minecraft121SettingsGraph.Key(kind,"minecraft:item","minecraft:stone")))),
                 ()->assertAll("subcase=BLOCK kind不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",
                         block.apply(new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.TAG,"minecraft:block","minecraft:stone")))),
                 ()->assertAll("subcase=ITEM id不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",item.apply(itemNode("minecraft:emerald")))),
-                ()->assertAll("subcase=ITEM registry不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",item.apply(node("minecraft:diamond")))),
+                ()->assertAll("subcase=ITEM registry不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",item.apply(blockNode("minecraft:diamond")))),
                 ()->assertAll("subcase=ITEM kind不符",()->rejects("STATIC_LEAF_IDENTITY_MISMATCH",
                         item.apply(new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.RESOLVED,"minecraft:item","minecraft:diamond")))));
     }
 
     // ===== C1d-D1b-2：ITEM static registry leaf =====
-    private static Minecraft121SettingsGraph.Key itemNode(String id) {
-        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,RegistryKeys.ITEM.getValue().toString(),id);
-    }
     private static DynamicRegistryManager itemRegistries() {
         return new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.ITEM));
     }
@@ -261,21 +256,6 @@ class Minecraft121RegistryLeafContractsTest {
                         ()->assertTrue(Items.CHEST.getComponents().contains(DataComponentTypes.CONTAINER),"fixture前提"),
                         ()->rejects(code,()->itemLeaf(Items.CHEST))));
     }
-    /** 合成chest模板（與Canon的singleItemTemplate同形，各自獨立）：一個不帶raw components的item。 */
-    private static NbtCompound chestTemplate(String item) {
-        var template=new NbtCompound();
-        template.putInt("DataVersion",net.minecraft.SharedConstants.getGameVersion().getSaveVersion().getId());
-        var size=new NbtList();var pos=new NbtList();
-        for(int i=0;i<3;i++){size.add(NbtInt.of(1));pos.add(NbtInt.of(0));}
-        template.put("size",size);
-        var state=new NbtCompound();state.putString("Name","minecraft:chest");var palette=new NbtList();palette.add(state);template.put("palette",palette);
-        var stack=new NbtCompound();stack.putByte("Slot",(byte)0);stack.putString("id",item);stack.putInt("count",1);
-        var items=new NbtList();items.add(stack);
-        var blockEntity=new NbtCompound();blockEntity.putString("id","minecraft:chest");blockEntity.put("Items",items);
-        var info=new NbtCompound();info.putInt("state",0);info.put("pos",pos);info.put("nbt",blockEntity);
-        var blocks=new NbtList();blocks.add(info);template.put("blocks",blocks);template.put("entities",new NbtList());
-        return template;
-    }
     private static String verdict(org.junit.jupiter.api.function.Executable action,String rejectedCode) {
         try {action.execute();return "ACCEPTED";}
         catch(Minecraft121SettingsGraph.Failure failure) {return failure.getMessage().equals(rejectedCode)?"REJECTED":failure.getMessage();}
@@ -293,7 +273,7 @@ class Minecraft121RegistryLeafContractsTest {
             leaf.put(id.toString(),verdict(()->itemLeaf(item),"UNSUPPORTED_ITEM_DEFAULT_COMPONENT"));
             var node=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.TEMPLATE,"minecraft:structure","test:whitelist/"+id.getPath());
             template.put(id.toString(),verdict(()->new Minecraft121TemplateValueContracts(new Minecraft121SettingsGraph(),registries,(occurrence,key)->{})
-                    .capture(node,chestTemplate(id.toString())),"UNSUPPORTED_TEMPLATE_COMPONENT"));
+                    .capture(node,singleItemTemplate("minecraft:chest",id.toString())),"UNSUPPORTED_TEMPLATE_COMPONENT"));
         }
         var expected=new java.util.LinkedHashMap<String,String>();
         for(String id:java.util.List.of("minecraft:diamond","minecraft:ender_pearl","minecraft:water_bucket"))expected.put(id,"ACCEPTED");
@@ -316,10 +296,10 @@ class Minecraft121RegistryLeafContractsTest {
                 ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->itemPayload(diamond,withFood)));
         assertSame(original,diamond.getComponents(),"seam測試不得改動全域狀態");
     }
-    @Test void blockItemLeafChecksBlockSourceAndHasNoBlockEdge() {
-        // item(...)寫死成對executedOwnerClasses(item)逐項requireNativeSource；見證3把「不回傳block class」當突變，由下方等值斷言抓到。
-        // 殘餘風險：「刪除整個迴圈」（連同item class檢查）沒有任何測試能抓到：測試不能建立或註冊foreign Item／BlockItem
-        // （Item.<init>會寫入全域registry），靠spec review逐行確認。
+    @Test void blockItemLeafExecutedOwnersIncludeBlockAndHasNoBlockEdge() {
+        // 斷言的是executedOwnerClasses的輸出；item(...)與itemPayload開頭都對它逐項requireNativeSource。見證3把「不回傳block class」
+        // 當突變，由下方等值斷言抓到。殘餘風險：「兩處檢查同時被刪除」（連同item class檢查）沒有任何測試能抓到：測試不能建立或註冊
+        // foreign Item／BlockItem（Item.<init>會寫入全域registry），靠spec review逐行確認。
         var sapling=Items.DARK_OAK_SAPLING;
         assertAll(
                 ()->assertEquals(java.util.List.of(BlockItem.class,net.minecraft.block.ChestBlock.class),executedOwnerClasses(Items.CHEST),
@@ -338,8 +318,6 @@ class Minecraft121RegistryLeafContractsTest {
                     assertArrayEquals(expected.finish(),graph.finish(),"只有ITEM node本身，沒有指向BLOCK的edge");
                 });
     }
-    private static final Minecraft121SettingsGraph.Key ROOT=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.OPTIONS,
-            "minecraft:settings","minecraft:root");
     /** 獨立組出「ROOT一條named reference指向該ITEM node、payload為給定值」的完整圖bytes。 */
     private static byte[] expectedItemGraph(String id,NbtCompound payload) {
         var graph=new Minecraft121SettingsGraph();graph.payload(ROOT,NbtInt.of(1));graph.payload(itemNode(id),payload);
@@ -350,10 +328,13 @@ class Minecraft121RegistryLeafContractsTest {
         // 設計§5.5選配，只限分支A：setup probe成立（證據D1B2-PROBE：Items.DIAMOND instanceof ItemAccessor，寫回同一物件後assertSame）。
         // 依賴Fabric的內部mixin net.fabricmc.fabric.mixin.item.ItemAccessor（不是API；fabric-item-api-v1 11.0.0+afdfc921d1，
         // class SHA256 b56a5426cf8a9510d49caa08f00a0acb78d1ff3395ff0c844f69d2769b3fb099）；版本固定，升級Fabric時要重驗。
+        // 這是編譯期的直接引用：Fabric API若搬移或改名ItemAccessor，壞掉的是整個test source set的編譯（所有JUnit都跑不起來），不只本測試。
         // 條件：單一method、單執行緒；變更前暖機；時序固定為「舊closure在變更前drain → 變更 → 舊圖第一次finish → 新closure（不開lease）
         // drain後finish → finally以identity還原」，最後assertSame。變更期間不建立ItemStack，也不呼叫其他API。
         var item=Items.DIAMOND;var id="minecraft:diamond";var key=item.getRegistryEntry().registryKey();var original=item.getComponents();
         var changed=ComponentMap.builder().addAll(original).add(DataComponentTypes.MAX_STACK_SIZE,16).build();
+        // setup：mixin沒有套用時在這裡以setup失敗結束，不會在try／finally的cast丟CCE而蓋掉原因。
+        var accessor=assertInstanceOf(net.fabricmc.fabric.mixin.item.ItemAccessor.class,item,"setup：ItemAccessor mixin");
         // 暖機：變更前對同一item完整走一次seam（原值與變更值）、leaf capture與closure drain／finish。
         var expectedOriginal=expectedItemGraph(id,itemPayload(item,original));
         var expectedChanged=expectedItemGraph(id,itemPayload(item,changed));
@@ -367,11 +348,11 @@ class Minecraft121RegistryLeafContractsTest {
             var newClosure=new Minecraft121RegistryClosure(newGraph,itemRegistries(),resources);newClosure.reference(ROOT,"item",key);
             byte[] oldBytes,newBytes;
             try {
-                ((net.fabricmc.fabric.mixin.item.ItemAccessor)item).setComponents(changed);
+                accessor.setComponents(changed);
                 oldBytes=oldGraph.finish();
                 newClosure.drain();newBytes=newGraph.finish();
             } finally {
-                ((net.fabricmc.fabric.mixin.item.ItemAccessor)item).setComponents(original);
+                accessor.setComponents(original);
             }
             assertSame(original,item.getComponents(),"finally已以identity還原原物件");
             assertAll(
@@ -380,7 +361,7 @@ class Minecraft121RegistryLeafContractsTest {
         }
     }
 
-    // ===== C1d-D1b-3-0（Step0）：D1b-2殘餘風險的具名RED；只用seam與測試類別，不改動全域狀態 =====
+    // ===== C1d-D1b-3-0（Step0）：D1b-2殘餘風險的具名RED與拒絕原因gating；只用seam與測試類別，不改動全域狀態 =====
     /** 會說謊的巢狀List：size()==0、isEmpty()==true（AbstractList預設看size），iterator()卻吐出一行Text。 */
     private static final class LyingLines extends java.util.AbstractList<net.minecraft.text.Text> {
         @Override public net.minecraft.text.Text get(int index){throw new IndexOutOfBoundsException(index);}
@@ -449,6 +430,54 @@ class Minecraft121RegistryLeafContractsTest {
         assertEquals(java.util.List.of(net.minecraft.item.SpawnEggItem.class,net.minecraft.entity.EntityType.class),
                 executedOwnerClasses(Items.PIG_SPAWN_EGG),"SpawnEggItem的EntityType class也會被執行");
     }
+    /**
+     * 測試端獨立列出的已審ITEM default型別與值條件（D1b-2白名單；不呼叫production的判斷）。共8型：MAX_STACK_SIZE／MAX_DAMAGE／
+     * DAMAGE／REPAIR_COST（值為Integer）、RARITY（值為Rarity），其中ENCHANTMENTS、LORE、ATTRIBUTE_MODIFIERS這3型另帶「必須為空」
+     * 條件。D1b-3各子片擴充leaf白名單時，同步擴充本表。以method建立，避免在@BeforeAll的Bootstrap之前觸發DataComponentTypes的class init。
+     */
+    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewedItemDefaults() {
+        return java.util.Map.of(
+                DataComponentTypes.MAX_STACK_SIZE,value->value instanceof Integer,
+                DataComponentTypes.MAX_DAMAGE,value->value instanceof Integer,
+                DataComponentTypes.DAMAGE,value->value instanceof Integer,
+                DataComponentTypes.REPAIR_COST,value->value instanceof Integer,
+                DataComponentTypes.RARITY,value->value instanceof net.minecraft.util.Rarity,
+                DataComponentTypes.ENCHANTMENTS,value->value instanceof net.minecraft.component.type.ItemEnchantmentsComponent enchantments
+                        &&enchantments.getSize()==0,
+                DataComponentTypes.LORE,value->value instanceof LoreComponent lore&&lore.lines().isEmpty(),
+                DataComponentTypes.ATTRIBUTE_MODIFIERS,value->value instanceof net.minecraft.component.type.AttributeModifiersComponent modifiers
+                        &&modifiers.modifiers().isEmpty());
+    }
+    @Test void everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes() {
+        // S0-3（D1b-2 quality M2(b)）：拒絕原因層級的gating，不斷言數量。只篩minecraft namespace（full中先init的mod item會被篩掉）。
+        // 每個item的leaf結果只能是ACCEPTED或UNSUPPORTED_ITEM_DEFAULT_COMPONENT，而且「被拒」⇔「default含上表以外的型別或值」。
+        // 非Failure的例外不攔，直接讓本測試失敗。
+        var reviewed=reviewedItemDefaults();
+        var mismatched=new java.util.TreeMap<String,String>();int checked=0;
+        for(var entry:(Iterable<net.minecraft.registry.entry.RegistryEntry.Reference<Item>>)Registries.ITEM.streamEntries()::iterator) {
+            var id=entry.registryKey().getValue();
+            if(!id.getNamespace().equals("minecraft"))continue;
+            checked++;
+            var unreviewed=new java.util.TreeSet<String>();
+            for(var component:entry.value().getComponents()) {
+                var condition=reviewed.get(component.type());
+                if(condition==null||!condition.test(component.value()))unreviewed.add(String.valueOf(Registries.DATA_COMPONENT_TYPE.getId(component.type())));
+            }
+            String actual;
+            try {itemLeaf(entry.value());actual="ACCEPTED";}
+            catch(Minecraft121SettingsGraph.Failure failure){actual=failure.getMessage();}
+            String expected=unreviewed.isEmpty()?"ACCEPTED":"UNSUPPORTED_ITEM_DEFAULT_COMPONENT";
+            if(!expected.equals(actual))mismatched.put(id.toString(),"expected="+expected+" actual="+actual+" unreviewed="+unreviewed);
+        }
+        int total=checked;
+        var nonEmptyLore=single(new net.minecraft.component.Component<>(DataComponentTypes.LORE,
+                new LoreComponent(java.util.List.of(net.minecraft.text.Text.literal("line")))));
+        assertAll(
+                ()->assertTrue(total>0,"fixture前提：有minecraft item"),
+                ()->assertEquals(java.util.Map.of(),mismatched,"每個vanilla ITEM只能ACCEPTED，或因白名單外的型別或值被拒"),
+                // vanilla的lore全為空，所以「LORE不再檢查是否為空」這類突變不會改變上面任何item的結果；以seam子案補上。
+                ()->assertAll("subcase=seam非空lore",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->itemPayload(Items.DIAMOND,nonEmptyLore))));
+    }
 
     /**
      * 單節點圖的finish長度扣掉固定開銷（DOMAIN、node數、key、edge數），即該node的payload bytes。這依賴Graph.finish的版面：
@@ -466,32 +495,58 @@ class Minecraft121RegistryLeafContractsTest {
         return "count="+sorted.length+" min="+sorted[0]+" p50="+at.apply(50)+" p90="+at.apply(90)+" p99="+at.apply(99)
                 +" max="+sorted[sorted.length-1]+" mean="+(total/sorted.length)+" total="+total;
     }
-    @Test void staticLeafCostDiagnostic() {
-        // 不gating：不開lease、不斷言數量或時間，也不用Assumptions跳過；輸出寫進system-out，供I-1評估static leaf是否移出lease。
-        // pass0是本測試第一次擷取每個block（同class其他測試可能已先擷取stone、chest、oak_stairs、obsidian）；pass1是同一JVM的暖值。
-        var registries=new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.BLOCK));
-        var entries=new java.util.ArrayList<net.minecraft.registry.entry.RegistryEntry.Reference<Block>>();
-        Registries.BLOCK.streamEntries().forEach(entries::add);
-        int count=entries.size();long[] cold=new long[count],warm=new long[count];long[] bytes=new long[count];
-        String[] result=new String[count];int[] properties=new int[count],values=new int[count];
+    /** 一次leaf擷取；measureLeafCosts只計時這個呼叫（graph與leaves在計時之外建立）。 */
+    @FunctionalInterface private interface LeafCapture<T> {
+        NbtCompound capture(Minecraft121RegistryLeafContracts leaves,Minecraft121SettingsGraph.Key node,
+                net.minecraft.registry.RegistryKey<T> key,net.minecraft.registry.entry.RegistryEntry.Reference<T> entry);
+    }
+    /** pass0的結果碼、冷耗時、payload bytes與payload（被拒為null），以及pass1的暖耗時；陣列與entries同序。 */
+    private record LeafCosts<T>(java.util.List<net.minecraft.registry.entry.RegistryEntry.Reference<T>> entries,String[] result,
+            long[] cold,long[] warm,long[] bytes,NbtCompound[] payloads) {}
+    /**
+     * BLOCK與ITEM診斷共用的冷暖量測：registry的每個entry各自建graph與leaves（不開lease、不跨leaf共用），逐一擷取兩輪。
+     * 非Failure的RuntimeException只記class名（診斷不gating）。
+     */
+    private static <T> LeafCosts<T> measureLeafCosts(net.minecraft.registry.Registry<T> registry,DynamicRegistryManager registries,
+            java.util.function.Function<String,Minecraft121SettingsGraph.Key> nodeOf,LeafCapture<T> capture) {
+        var entries=new java.util.ArrayList<net.minecraft.registry.entry.RegistryEntry.Reference<T>>();
+        registry.streamEntries().forEach(entries::add);
+        int count=entries.size();long[] cold=new long[count],warm=new long[count],bytes=new long[count];
+        String[] result=new String[count];var payloads=new NbtCompound[count];
         for(int pass=0;pass<2;pass++) {
             for(int i=0;i<count;i++) {
-                var entry=entries.get(i);var key=entry.registryKey();var node=node(key.getValue().toString());
+                var entry=entries.get(i);var key=entry.registryKey();var node=nodeOf.apply(key.getValue().toString());
                 var graph=new Minecraft121SettingsGraph();var leaves=new Minecraft121RegistryLeafContracts(graph,registries);
                 String code="ACCEPTED";NbtCompound payload=null;
                 long start=System.nanoTime();
-                try {payload=leaves.block(node,key,entry);}
+                try {payload=capture.capture(leaves,node,key,entry);}
                 catch(Minecraft121SettingsGraph.Failure failure){code=failure.getMessage();}
                 catch(RuntimeException other){code=other.getClass().getName();}
                 long elapsed=System.nanoTime()-start;
-                if(pass==0) {
-                    cold[i]=elapsed;result[i]=code;
-                    if(payload!=null) {
-                        bytes[i]=payloadBytes(graph.finish(),node);var domains=payload.getCompound("PropertyDomains");properties[i]=domains.getSize();
-                        for(String name:domains.getKeys())values[i]+=domains.getList(name,NbtElement.STRING_TYPE).size();
-                    }
-                } else warm[i]=elapsed;
+                if(pass==0){cold[i]=elapsed;result[i]=code;payloads[i]=payload;if(payload!=null)bytes[i]=payloadBytes(graph.finish(),node);}
+                else warm[i]=elapsed;
             }
+        }
+        return new LeafCosts<>(entries,result,cold,warm,bytes,payloads);
+    }
+    /**
+     * C1d-D1b-1 BLOCK leaf成本診斷，不gating：不開lease、不斷言數量或時間，也不用Assumptions跳過；輸出寫進system-out，供I-1評估
+     * static leaf是否移出lease。pass0是本測試第一次擷取每個block，但同JVM的其他測試（JUnit預設method次序不保證）可能已先擷取
+     * 部分block，所以只是本測試的冷值；pass1是同一JVM再擷取一次的暖值。BLOCK的可用性gating由everyVanillaBlockLeafIsAccepted負責。
+     *
+     * <p>退場條件（D1b-2 quality M2(a)）：D1b-3結案或I-1定案（以先到者為準）時，刪除逐行的D1B1_LEAF_COST_ENTRY，只保留摘要行
+     * （SUMMARY、CODES、COLD／WARM等）；evidence CSV改由當輪focused XML擷取。不用system property開關：test JVM拿不到Gradle的-D，
+     * 要改build.gradle，超出owner。
+     */
+    @Test void staticBlockLeafCostDiagnostic() {
+        var costs=measureLeafCosts(Registries.BLOCK,new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.BLOCK)),
+                Minecraft121RegistryLeafTestFixtures::blockNode,(leaves,node,key,entry)->leaves.block(node,key,entry));
+        var entries=costs.entries();int count=entries.size();
+        String[] result=costs.result();long[] cold=costs.cold(),warm=costs.warm(),bytes=costs.bytes();
+        int[] properties=new int[count],values=new int[count];
+        for(int i=0;i<count;i++)if(costs.payloads()[i]!=null) {
+            var domains=costs.payloads()[i].getCompound("PropertyDomains");properties[i]=domains.getSize();
+            for(String name:domains.getKeys())values[i]+=domains.getList(name,NbtElement.STRING_TYPE).size();
         }
         var codes=new java.util.TreeMap<String,Integer>();var namespaces=new java.util.TreeMap<String,Integer>();
         long totalBytes=0;int totalProperties=0,totalValues=0;
@@ -511,32 +566,20 @@ class Minecraft121RegistryLeafContractsTest {
         System.out.println("D1B1_LEAF_COST_WARM_NS "+stats(warm));
         System.out.println("D1B1_LEAF_COST_REFERENCE owPaletteOccurrences=17262 owPaletteUniqueBlocks=375 owAllConsumerBlocks=924 unionPaletteUniqueBlocks=401"
                 +" source=B28-census-constants-not-measured-here");
-        itemLeafCostDiagnostic();
     }
     /**
-     * D1b-2 ITEM段，同樣不gating。每個item的leaf結果碼與冷暖耗時；另對minecraft namespace每個item的每個default component，
-     * 以只含該component的map走itemPayload（DIAMOND當feature載體），得到逐型別判定。REJECTED_TYPES是「含該型別被拒的item數」，
-     * ACCEPTED_TYPES是「該型別被接受的component數」。
+     * C1d-D1b-2 ITEM leaf成本診斷，同樣不gating；pass0／pass1的意義與BLOCK相同。另對minecraft namespace每個item的每個default
+     * component，以只含該component的map走itemPayload（DIAMOND當feature載體），得到逐型別判定。REJECTED_TYPES是「含該型別被拒的
+     * item數」，ACCEPTED_TYPES是「該型別被接受的component數」。拒絕原因的gating由everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes負責。
+     *
+     * <p>退場條件同BLOCK：D1b-3結案或I-1定案（以先到者為準）時，刪除逐行的D1B2_ITEM_LEAF_COST_ENTRY，只保留摘要行
+     * （SUMMARY、CODES、REJECTED_TYPES、COLD／WARM等）。
      */
-    private static void itemLeafCostDiagnostic() {
-        var registries=itemRegistries();
-        var entries=new java.util.ArrayList<net.minecraft.registry.entry.RegistryEntry.Reference<Item>>();
-        Registries.ITEM.streamEntries().forEach(entries::add);
-        int count=entries.size();long[] cold=new long[count],warm=new long[count],bytes=new long[count];String[] result=new String[count];
-        for(int pass=0;pass<2;pass++) {
-            for(int i=0;i<count;i++) {
-                var entry=entries.get(i);var key=entry.registryKey();var node=itemNode(key.getValue().toString());
-                var graph=new Minecraft121SettingsGraph();var leaves=new Minecraft121RegistryLeafContracts(graph,registries);
-                String code="ACCEPTED";NbtCompound payload=null;
-                long start=System.nanoTime();
-                try {payload=leaves.item(node,key,entry);}
-                catch(Minecraft121SettingsGraph.Failure failure){code=failure.getMessage();}
-                catch(RuntimeException other){code=other.getClass().getName();}
-                long elapsed=System.nanoTime()-start;
-                if(pass==0){cold[i]=elapsed;result[i]=code;if(payload!=null)bytes[i]=payloadBytes(graph.finish(),node);}
-                else warm[i]=elapsed;
-            }
-        }
+    @Test void staticItemLeafCostDiagnostic() {
+        var costs=measureLeafCosts(Registries.ITEM,itemRegistries(),Minecraft121RegistryLeafTestFixtures::itemNode,
+                (leaves,node,key,entry)->leaves.item(node,key,entry));
+        var entries=costs.entries();int count=entries.size();
+        String[] result=costs.result();long[] cold=costs.cold(),warm=costs.warm(),bytes=costs.bytes();
         var codes=new java.util.TreeMap<String,Integer>();var namespaces=new java.util.TreeMap<String,Integer>();
         var rejectedTypes=new java.util.TreeMap<String,Integer>();var acceptedTypes=new java.util.TreeMap<String,Integer>();
         var rejectedTypesByCode=new java.util.TreeMap<String,java.util.TreeMap<String,Integer>>();

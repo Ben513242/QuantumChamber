@@ -1,12 +1,15 @@
 package dev.quantumchamber.universe;
 
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.ROOT;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.blockNode;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemNode;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.singleItemTemplate;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.Arrays;
 import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
 
 class Minecraft121SettingsCanonicalizerTest {
-    private static final Minecraft121SettingsGraph.Key ROOT = key(Minecraft121SettingsGraph.Kind.OPTIONS, "root");
     private static Minecraft121SettingsGraph.Key key(Minecraft121SettingsGraph.Kind kind, String id) {
         return new Minecraft121SettingsGraph.Key(kind, "minecraft:settings", "minecraft:" + id);
     }
@@ -1372,9 +1375,6 @@ class Minecraft121SettingsCanonicalizerTest {
     private static net.minecraft.registry.RegistryKey<net.minecraft.block.Block> blockKey(String id) {
         return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.BLOCK,net.minecraft.util.Identifier.of(id));
     }
-    private static Minecraft121SettingsGraph.Key blockNode(String id) {
-        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,net.minecraft.registry.RegistryKeys.BLOCK.getValue().toString(),id);
-    }
     /**
      * 測試端獨立算出的BLOCK leaf：沿用B28的DefaultState（NbtHelper.fromBlockState）與PropertyDomains（getValues的原生次序）形狀；
      * vanilla block的RequiredFeatures直接寫成["minecraft:vanilla"]，不經FEATURE_MANAGER。
@@ -1603,9 +1603,6 @@ class Minecraft121SettingsCanonicalizerTest {
     private static net.minecraft.registry.RegistryKey<net.minecraft.item.Item> itemKey(String id) {
         return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.ITEM,net.minecraft.util.Identifier.of(id));
     }
-    private static Minecraft121SettingsGraph.Key itemNode(String id) {
-        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,net.minecraft.registry.RegistryKeys.ITEM.getValue().toString(),id);
-    }
     /**
      * 測試端獨立算出的ITEM leaf：DefaultComponents以plain NbtOps對item.getComponents()做原生ComponentMap.CODEC編碼
      * （不經production的RegistryOps、白名單與roundtrip）；vanilla item的RequiredFeatures直接寫成["minecraft:vanilla"]。
@@ -1653,24 +1650,6 @@ class Minecraft121SettingsCanonicalizerTest {
     private static byte[] closePoolTemplate(PoolFixture f) {
         var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();
         return g.finish();
-    }
-    /**
-     * 合成模板：1×1×1、只有一個container block entity，內含一個不帶raw components的item（Slot 0、count 1）。
-     * DataVersion取目前版本，不觸發datafix；palette只寫Name，由原生toBlockState取default state。
-     */
-    private static NbtCompound singleItemTemplate(String block,String item) {
-        var template=new NbtCompound();
-        template.putInt("DataVersion",net.minecraft.SharedConstants.getGameVersion().getSaveVersion().getId());
-        var size=new NbtList();var pos=new NbtList();
-        for(int i=0;i<3;i++){size.add(NbtInt.of(1));pos.add(NbtInt.of(0));}
-        template.put("size",size);
-        var state=new NbtCompound();state.putString("Name",block);var palette=new NbtList();palette.add(state);template.put("palette",palette);
-        var stack=new NbtCompound();stack.putByte("Slot",(byte)0);stack.putString("id",item);stack.putInt("count",1);
-        var items=new NbtList();items.add(stack);
-        var blockEntity=new NbtCompound();blockEntity.putString("id",block);blockEntity.put("Items",items);
-        var info=new NbtCompound();info.putInt("state",0);info.put("pos",pos);info.put("nbt",blockEntity);
-        var blocks=new NbtList();blocks.add(info);template.put("blocks",blocks);template.put("entities",new NbtList());
-        return template;
     }
 
     @Test void itemRegistryLeafClosesNamedReference() {
