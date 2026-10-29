@@ -787,25 +787,61 @@ class Minecraft121RegistryLeafContractsTest {
         return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL);
     }
     /**
-     * 測試端獨立列出codec之前要重建copy的已審型別（D1b-3c-0；spec M1＋quality Q-M1）：帶List的三型record，加上正規化為DEFAULT的LORE。
-     * 其餘已審型別都必須明確宣告AS_IS。
+     * 測試端獨立列出codec之前要重建copy的已審型別（D1b-3c-0；spec M1＋quality Q-M1）：帶List的三型record，加上正規化為DEFAULT的LORE；
+     * D1b-3c-0b（spec M2）起，同樣只收空值、record以public建構子原樣收List的potion_contents、suspicious_stew_effects、banner_patterns
+     * 也正規化為各自的DEFAULT。其餘已審型別都必須明確宣告AS_IS。
      */
     private static java.util.Set<net.minecraft.component.ComponentType<?>> rebuiltItemDefaultTypes() {
-        return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL,DataComponentTypes.LORE);
+        return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL,DataComponentTypes.LORE,
+                DataComponentTypes.POTION_CONTENTS,DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,DataComponentTypes.BANNER_PATTERNS);
+    }
+    /**
+     * 測試端依javap獨立列出codec由DataComponentTypes.CACHE（CodecCache）包裝的已審型別（DataComponentTypes各型builder lambda是否呼叫
+     * ComponentType$Builder.cache()；證據D1B3C0-JAVAP-FACTS）。其餘已審型別（Integer、Boolean、Rarity、Unit的literal）沒有快取。
+     */
+    private static java.util.Set<net.minecraft.component.ComponentType<?>> cachedItemDefaultTypes() {
+        return java.util.Set.of(DataComponentTypes.LORE,DataComponentTypes.ENCHANTMENTS,DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,
+                DataComponentTypes.TOOL,DataComponentTypes.CHARGED_PROJECTILES,DataComponentTypes.POTION_CONTENTS,DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,
+                DataComponentTypes.BANNER_PATTERNS,DataComponentTypes.CONTAINER);
+    }
+    /**
+     * 帶CodecCache、卻明確宣告AS_IS的已審型別（D1b-3c-0b；quality Q-M1的(B)前提「帶CACHE的型別都不是AS_IS，或已另外處理」）。
+     * CONTAINER的值條件只收DEFAULT單例本身；enchantments與charged_projectiles只收空值，理由寫在production AS_IS的Javadoc。新增帶快取的
+     * 型別時，要嘛在codec之前重建copy，要嘛在這裡列出並在AS_IS寫明理由；結構測試要求cachedItemDefaultTypes()恰分成這兩組。
+     */
+    private static java.util.Set<net.minecraft.component.ComponentType<?>> cachedAsIsItemDefaultTypes() {
+        return java.util.Set.of(DataComponentTypes.ENCHANTMENTS,DataComponentTypes.CHARGED_PROJECTILES,DataComponentTypes.CONTAINER);
+    }
+    /** type的codec是否由CodecCache包裝：CodecCache.wrap回傳的是CodecCache內的匿名類別（javap：wrap＝new CodecCache$2(this, codec)）。 */
+    private static boolean codecCached(net.minecraft.component.ComponentType<?> type) {
+        var codec=type.getCodec();
+        return codec!=null&&codec.getClass().getEnclosingClass()==net.minecraft.util.dynamic.CodecCache.class;
     }
     @Test void itemComponentContractTableIsSingleDispatchWithExplicitRefs() {
         // 每個已審型別在同一筆契約宣告值條件、copy重建、ref抽取與codec會查詢的static registry（ItemComponentContracts的單一分派表）。
         // 結構斷言：表的型別集合等於測試端獨立列出的已審型別；會產生ref的型別恰為refBearingItemDefaultTypes()（有抽取器且宣告查詢的
         // registry），其餘都明確宣告NO_REFS且不查registry；codec前重建copy的型別恰為rebuiltItemDefaultTypes()，其餘都明確宣告AS_IS；
         // 各型宣告的registry都屬於固定static registry聯集；固定聯集等於fixture獨立列出的那組。
+        // D1b-3c-0b：會產生ref的型別都必須重建copy（ref從copy抽，quality Q-M4(a)）；帶CodecCache的已審型別恰分成「重建copy」與
+        // cachedAsIsItemDefaultTypes()兩組（LeafContracts私有ops的前提，quality Q-M1(B)）。
         var contracts=Minecraft121ItemComponentContracts.contracts();
-        var refBearing=refBearingItemDefaultTypes();var rebuilt=rebuiltItemDefaultTypes();
+        var refBearing=refBearingItemDefaultTypes();var rebuilt=rebuiltItemDefaultTypes();var cachedAsIs=cachedAsIsItemDefaultTypes();
         var union=itemLeafStaticRegistries().stream().map(r->(Object)r.getKey()).toList();
         var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
         checks.add(()->assertEquals(typeNames(reviewedItemDefaults().keySet()),typeNames(contracts.keySet()),
                 "表的型別集合等於測試端獨立列出的已審型別"));
         checks.add(()->assertTrue(contracts.keySet().containsAll(refBearing),"會產生ref的型別都在表內："+typeNames(refBearing)));
         checks.add(()->assertTrue(contracts.keySet().containsAll(rebuilt),"重建copy的型別都在表內："+typeNames(rebuilt)));
+        checks.add(()->assertTrue(rebuilt.containsAll(refBearing),"會產生ref的型別都在codec之前重建copy（ref從copy抽，不得從可能是foreign的原值抽）："
+                +typeNames(refBearing)+" ⊄ "+typeNames(rebuilt)));
+        checks.add(()->assertEquals(typeNames(cachedItemDefaultTypes()),typeNames(contracts.keySet().stream()
+                .filter(Minecraft121RegistryLeafContractsTest::codecCached).toList()),"codec帶CodecCache的已審型別等於測試端依javap獨立列出的那組"));
+        checks.add(()->{
+            var partition=new java.util.HashSet<net.minecraft.component.ComponentType<?>>(rebuilt);partition.addAll(cachedAsIs);
+            assertAll("帶CodecCache的已審型別恰分成「重建copy」與「明確列出的AS_IS」兩組",
+                    ()->assertEquals(typeNames(cachedItemDefaultTypes()),typeNames(partition),"兩組的聯集等於帶快取的型別"),
+                    ()->assertTrue(java.util.Collections.disjoint(rebuilt,cachedAsIs),"兩組不重疊"));
+        });
         checks.add(()->assertEquals(itemLeafStaticRegistries(),Minecraft121ItemComponentContracts.staticRegistries(),
                 "production的固定聯集等於fixture獨立列出的聯集（含次序，ITEM第一）"));
         for(var entry:contracts.entrySet()) {
@@ -842,6 +878,15 @@ class Minecraft121RegistryLeafContractsTest {
             case Minecraft121ItemComponentContracts.Ref.Entry entry -> entry.entry();
         };
     }
+    /**
+     * M9交叉檢查的ref目標字串（D1b-3c-0b，quality Q-M3）：Entry是指向的registry id；D1b-3c的Tag應為「#」加tag id（與
+     * payloadRegistryIdStrings收集tag字串的寫法相同）。對sealed Ref窮舉，加Tag時沒有對應分支就無法編譯。
+     */
+    private static String refTargetId(Minecraft121ItemComponentContracts.Ref ref) {
+        return switch(ref) {
+            case Minecraft121ItemComponentContracts.Ref.Entry entry -> entry.entry().registryKey().getValue().toString();
+        };
+    }
     private static List<String> describeRefs(List<Minecraft121ItemComponentContracts.Ref> refs) {
         return refs.stream().map(Minecraft121RegistryLeafContractsTest::describeRef).toList();
     }
@@ -859,6 +904,20 @@ class Minecraft121RegistryLeafContractsTest {
     /** plain NbtOps獨立編碼的default ComponentMap（不經production的RegistryOps、白名單與roundtrip）。 */
     private static NbtElement plainDefaults(Item item) {
         return ComponentMap.CODEC.encodeStart(NbtOps.INSTANCE,item.getComponents()).getOrThrow();
+    }
+    /**
+     * 另一個新建manager（全域static registries）的static ops（D1b-3c-0b，quality Q-M2）：不用plain NbtOps，因為tool的direct／tag rule經
+     * RegistryFixedCodec與RegistryEntryListCodec，需要RegistryOps；manager每次新建，所以CodecCache的key與production、其他測試都不同。
+     */
+    private static net.minecraft.registry.RegistryOps<NbtElement> independentOps() {
+        return DynamicRegistryManager.of(Registries.REGISTRIES).getOps(NbtOps.INSTANCE);
+    }
+    /** 以independentOps()對原值的獨立編碼（不經production的白名單、copy與ops）。 */
+    private static NbtElement independentDefaults(ComponentMap components) {
+        return independentDefaults(independentOps(),components);
+    }
+    private static NbtElement independentDefaults(net.minecraft.registry.RegistryOps<NbtElement> ops,ComponentMap components) {
+        return ComponentMap.CODEC.encodeStart(ops,components).getOrThrow();
     }
     @Test void itemLeafCapturesStaticEntryRefsFromReviewedDefaults() {
         // D1b-3設計§3.1的3b列：golden_apple（food的effect→STATUS_EFFECT）、beetroot_soup（food的using_converts_to→ITEM bowl）、
@@ -1098,6 +1157,159 @@ class Minecraft121RegistryLeafContractsTest {
         }));
         assertAll(checks);
     }
+    /**
+     * quality Q-M1的「快取端說謊」（D1b-3c-0b）：第一次iterator()吐first的元素，之後吐later；hashCode等於later的（不經iterator），
+     * iterator()的呼叫次數記在iterations。放進已審record後，以共用manager的ops先encode：CodecCache存下first的編碼，key的hash卻等於later
+     * （誠實值）的hash。之後誠實值的encode以「查詢key.equals(已存key)」比對（Guava LocalCache；CodecCache$Key.equals依序比codec
+     * identity、value.equals、ops.equals），JDK List.equals迭代的是對方（本List）的iterator、吐出later，所以命中（javap，D1B3C0B-JAVAP-FACTS）。
+     */
+    private static final class ShiftingList<E> extends java.util.AbstractList<E> {
+        final java.util.concurrent.atomic.AtomicInteger iterations=new java.util.concurrent.atomic.AtomicInteger();
+        private final List<E> first,later;
+        ShiftingList(List<E> first,List<E> later){this.first=first;this.later=later;}
+        @Override public E get(int index){return later.get(index);}
+        @Override public int size(){return later.size();}
+        @Override public java.util.Iterator<E> iterator(){return (iterations.getAndIncrement()==0?first:later).iterator();}
+        @Override public int hashCode(){return later.hashCode();}
+    }
+    @Test void itemLeafCodecCacheIgnoresEntriesStoredByOtherEncodesOfSameManager() {
+        // D1b-3c-0b（quality Q-M1）：codec前的copy只關掉「本值是foreign」（探測端）的方向。RegistryOps.equals比delegate與
+        // registryInfoGetter，WrapperLookup.getOps建的CachedRegistryInfoGetter再委派manager的equals（javap），所以凡以同一個manager
+        // getOps建出的ops都共用同一組CodecCache key。遊戲或其他encode若先以這樣的ops encode過帶ShiftingList的已審record，誠實的copy
+        // 也會命中那個foreign值在插入時的編碼；受害的是vanilla item本身（這裡是golden_apple的food duration），而且ref相同，7b與7c都抓
+        // 不到。修正後LeafContracts的ops identity私有，不與任何其他ops相等：payload等於另一個新建manager的獨立編碼，本encode也不再迭代
+        // 那個foreign List。
+        var regs=itemRegistries();var item=Items.GOLDEN_APPLE;var components=item.getComponents();
+        var honest=components.get(DataComponentTypes.FOOD);
+        var first=new java.util.ArrayList<FoodComponent.StatusEffectEntry>();
+        for(var entry:honest.effects()) {
+            var effect=entry.effect();
+            first.add(first.isEmpty()?new FoodComponent.StatusEffectEntry(new StatusEffectInstance(effect.getEffectType(),999,effect.getAmplifier(),
+                    effect.isAmbient(),effect.shouldShowParticles(),effect.shouldShowIcon()),entry.probability()):entry);
+        }
+        var lie=new ShiftingList<>(List.copyOf(first),honest.effects());
+        var lying=new FoodComponent(honest.nutrition(),honest.saturation(),honest.canAlwaysEat(),honest.eatSeconds(),honest.usingConvertsTo(),lie);
+        // 預期值：另一個新建manager（不共用任何ops）的seam。
+        var expected=seam(item,components);
+        var leaves=leaves(new Minecraft121SettingsGraph(),regs);
+        // 遊戲或其他encode的形狀：同一個manager的另一個ops，經FOOD的CodecCache包裝codec先encode說謊值（first：duration 999）。
+        var poisoned=DataComponentTypes.FOOD.getCodec().encodeStart(regs.getOps(NbtOps.INSTANCE),lying).getOrThrow();
+        var viaSharedManager=DataComponentTypes.FOOD.getCodec().encodeStart(regs.getOps(NbtOps.INSTANCE),honest).getOrThrow();
+        var independent=FoodComponent.CODEC.encodeStart(NbtOps.INSTANCE,honest).getOrThrow();
+        assertAll("fixture前提",
+                ()->assertTrue(honest.effects().size()>1,"golden_apple的food帶多個effect"),
+                ()->assertNotEquals(independent,poisoned,"說謊值插入時的編碼（first）不是誠實值的編碼"),
+                ()->assertEquals(poisoned,viaSharedManager,"同一個manager的另一個ops對誠實值encode，命中說謊值的快取編碼"),
+                ()->assertEquals(independent,expected.getCompound("DefaultComponents").get("minecraft:food"),"另一個新建manager的seam是誠實值的編碼"));
+        int before=lie.iterations.get();
+        var payload=leaves.itemCapture(item,components).payload();
+        int iterated=lie.iterations.get()-before;
+        assertAll(()->assertEquals(expected,payload,"payload等於另一個新建manager的獨立編碼，不是共用manager快取中foreign值的編碼"),
+                ()->assertEquals(0,iterated,"本encode不得迭代其他encode存入快取的foreign List"));
+    }
+    /** spec M1的heap pollution：放進Optional&lt;Float&gt;／Optional&lt;Boolean&gt;的foreign物件；equals／hashCode宣稱等於claimed，Object method的呼叫次數記在calls。 */
+    private static final class ClaimingLiteral {
+        final java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();
+        private final Object claimed;
+        ClaimingLiteral(Object claimed){this.claimed=claimed;}
+        @Override public boolean equals(Object other){calls.incrementAndGet();return claimed.equals(other);}
+        @Override public int hashCode(){calls.incrementAndGet();return claimed.hashCode();}
+        @Override public String toString(){calls.incrementAndGet();return String.valueOf(claimed);}
+    }
+    /** raw cast製造的heap pollution：Optional的型別參數與內容不符（測試只送進seam）。 */
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private static <T> Optional<T> polluted(Object content) {
+        return (Optional)Optional.of(content);
+    }
+    @Test void itemLeafToolRuleOptionalLiteralsMustBeExactJdkClasses() {
+        // D1b-3c-0b（spec M1）：tool rule的speed／correct_for_drops是Optional<Float>／Optional<Boolean>，erasure之後只剩Optional，呼叫端可以用
+        // unchecked cast放進任意物件。copy原樣保留Optional時，CodecCache經Rule的ObjectMethods呼叫內容的hashCode／equals：沒有命中時FLOAT／
+        // BOOL encode失敗（UNSUPPORTED_ITEM_COMPONENT_CODEC）；同一份ops已存誠實值時命中，以誠實值的編碼被接受，遊戲使用的卻是foreign物件。
+        // 修正後值條件要求Optional非null、內容的class恰為Float／Boolean（只呼叫JDK final的Optional方法與final的getClass()），copy也重建
+        // Optional：一律在codec之前以UNSUPPORTED_ITEM_DEFAULT_COMPONENT拒，foreign物件的方法一次都不被呼叫。
+        var cobweb=RegistryEntryList.of(List.of(Blocks.COBWEB.getRegistryEntry()));
+        java.util.function.BiFunction<Optional<Float>,Optional<Boolean>,ComponentMap> tool=(speed,drops)->only(DataComponentTypes.TOOL,
+                new ToolComponent(List.of(new ToolComponent.Rule(cobweb,speed,drops)),1f,1));
+        var honest=tool.apply(Optional.of(15f),Optional.of(true));
+        record Case(String name,ClaimingLiteral foreign,ComponentMap map,boolean honestCachedFirst) {}
+        var cases=new java.util.ArrayList<Case>();
+        {var foreign=new ClaimingLiteral(15f);cases.add(new Case("speed的內容是foreign物件（沒有快取）",foreign,tool.apply(polluted(foreign),Optional.of(true)),false));}
+        {var foreign=new ClaimingLiteral(15f);cases.add(new Case("speed的內容是宣稱等於15f的foreign物件（同一份ops已存誠實值）",foreign,
+                tool.apply(polluted(foreign),Optional.of(true)),true));}
+        {var foreign=new ClaimingLiteral(true);cases.add(new Case("correct_for_drops的內容是foreign物件（沒有快取）",foreign,tool.apply(Optional.of(15f),polluted(foreign)),false));}
+        {var foreign=new ClaimingLiteral(true);cases.add(new Case("correct_for_drops的內容是宣稱等於true的foreign物件（同一份ops已存誠實值）",foreign,
+                tool.apply(Optional.of(15f),polluted(foreign)),true));}
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        checks.add(()->assertAll("正向對照",
+                ()->assertEquals(independentDefaults(honest),seam(Items.DIAMOND,honest).getCompound("DefaultComponents"),"Float／Boolean的內容照常接受"),
+                ()->assertDoesNotThrow(()->seam(Items.DIAMOND,tool.apply(Optional.empty(),Optional.empty())),"空Optional照常接受")));
+        checks.add(()->assertAll("subcase=speed是null",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,tool.apply(null,Optional.of(true))))));
+        checks.add(()->assertAll("subcase=correct_for_drops是null",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,tool.apply(Optional.of(15f),null)))));
+        for(var c:cases)checks.add(()->assertAll("subcase="+c.name(),()->{
+            var leaves=leaves(new Minecraft121SettingsGraph(),itemRegistries());
+            if(c.honestCachedFirst())leaves.itemCapture(Items.DIAMOND,honest);
+            c.foreign().calls.set(0);
+            assertAll(()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->leaves.itemCapture(Items.DIAMOND,c.map())),
+                    ()->assertEquals(0,c.foreign().calls.get(),"foreign物件的equals／hashCode／toString不得被呼叫"));
+        }));
+        assertAll(checks);
+    }
+    /**
+     * spec M2的等值捷徑（D1b-3c-0b）：自稱為空的foreign List，size()==0（所以isEmpty為true）、equals只對空List回true、hashCode與空List相同，
+     * iterator()卻吐出hidden。equals／hashCode的呼叫次數記在equalityCalls（iterator不計：值條件本來就要迭代它）。
+     */
+    private static final class EmptyClaimingList<E> extends java.util.AbstractList<E> {
+        final java.util.concurrent.atomic.AtomicInteger equalityCalls=new java.util.concurrent.atomic.AtomicInteger();
+        private final E hidden;
+        EmptyClaimingList(E hidden){this.hidden=hidden;}
+        @Override public E get(int index){throw new IndexOutOfBoundsException(index);}
+        @Override public int size(){return 0;}
+        @Override public java.util.Iterator<E> iterator(){return List.of(hidden).iterator();}
+        @Override public boolean equals(Object other){equalityCalls.incrementAndGet();return List.of().equals(other);}
+        @Override public int hashCode(){equalityCalls.incrementAndGet();return List.of().hashCode();}
+    }
+    @Test void itemLeafEmptyOnlyListComponentsAreNormalizedBeforeCodec() {
+        // D1b-3c-0b（spec M2）：potion_contents、suspicious_stew_effects、banner_patterns只收空值，record以public建構子原樣收List（javap）。
+        // AS_IS時有兩條等值捷徑，讓「自稱為空、迭代卻吐出元素」的List（D1b-3-0 S0-1 RED①的形狀，再加上說謊的equals／hashCode）跳過
+        // roundtrip再驗：CodecCache以value.equals比對（同一份ops已存DEFAULT的編碼時命中），以及DFU optionalFieldOf編碼時的
+        // Objects.equals(value, default)（potion_contents的custom_effects；沒有快取也會省略這個欄位）。兩條都讓payload成為空值的編碼，
+        // 遊戲使用的原物件卻不是空的。修正後比照LORE：值條件以iterator確認真的沒有元素，copy正規化為各自的DEFAULT，codec與cache
+        // 不再呼叫foreign List的equals／hashCode。
+        var speed=new StatusEffectInstance(StatusEffects.SPEED);
+        var pattern=RegistryEntry.of(new net.minecraft.block.entity.BannerPattern(Identifier.ofVanilla("base"),"block.minecraft.banner.base"));
+        record Case(String name,ComponentMap honest,EmptyClaimingList<?> list,ComponentMap lying) {}
+        var cases=new java.util.ArrayList<Case>();
+        {var list=new EmptyClaimingList<>(speed);cases.add(new Case("potion_contents的custom_effects",
+                only(DataComponentTypes.POTION_CONTENTS,net.minecraft.component.type.PotionContentsComponent.DEFAULT),list,
+                only(DataComponentTypes.POTION_CONTENTS,new net.minecraft.component.type.PotionContentsComponent(Optional.empty(),Optional.empty(),list))));}
+        {var list=new EmptyClaimingList<>(new net.minecraft.component.type.SuspiciousStewEffectsComponent.StewEffect(StatusEffects.SPEED,160));
+            cases.add(new Case("suspicious_stew_effects",only(DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,
+                    net.minecraft.component.type.SuspiciousStewEffectsComponent.DEFAULT),list,
+                    only(DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,new net.minecraft.component.type.SuspiciousStewEffectsComponent(list))));}
+        {var list=new EmptyClaimingList<>(new net.minecraft.component.type.BannerPatternsComponent.Layer(pattern,net.minecraft.util.DyeColor.RED));
+            cases.add(new Case("banner_patterns",only(DataComponentTypes.BANNER_PATTERNS,net.minecraft.component.type.BannerPatternsComponent.DEFAULT),list,
+                    only(DataComponentTypes.BANNER_PATTERNS,new net.minecraft.component.type.BannerPatternsComponent(list))));}
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for(var c:cases) {
+            checks.add(()->assertAll("fixture前提："+c.name(),
+                    ()->assertTrue(c.list().isEmpty(),"isEmpty回報為空"),
+                    ()->assertTrue(c.list().iterator().hasNext(),"iterator卻吐出元素")));
+            checks.add(()->assertAll("subcase="+c.name()+"（沒有快取：optionalFieldOf的Objects.equals，或codec自己迭代）",()->{
+                var leaves=leaves(new Minecraft121SettingsGraph(),itemRegistries());
+                c.list().equalityCalls.set(0);
+                assertAll(()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->leaves.itemCapture(Items.DIAMOND,c.lying())),
+                        ()->assertEquals(0,c.list().equalityCalls.get(),"codec與cache不得呼叫foreign List的equals／hashCode"));
+            }));
+            checks.add(()->assertAll("subcase="+c.name()+"（同一份ops已存DEFAULT的編碼：CodecCache的value.equals）",()->{
+                var leaves=leaves(new Minecraft121SettingsGraph(),itemRegistries());
+                assertDoesNotThrow(()->leaves.itemCapture(Items.DIAMOND,c.honest()),"誠實的DEFAULT照常接受");
+                c.list().equalityCalls.set(0);
+                assertAll(()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->leaves.itemCapture(Items.DIAMOND,c.lying())),
+                        ()->assertEquals(0,c.list().equalityCalls.get(),"codec與cache不得呼叫foreign List的equals／hashCode"));
+            }));
+        }
+        assertAll(checks);
+    }
 
     /**
      * 測試自訂的foreign Item子類（M5見證用）：只以Unsafe.allocateInstance建立，不跑建構子與欄位初始化，所以不會呼叫
@@ -1290,7 +1502,10 @@ class Minecraft121RegistryLeafContractsTest {
         // D1b-3c-0（quality Q-M3）：上面的走訪與結構測試用的是同一份人工型別模型；另加與模型無關的交叉檢查：payload的DefaultComponents
         // 中，凡是能parse成Identifier、且存在於固定聯集某個registry的字串值（已知literal位置除外），都必須是該item某條ref的id。新型別
         // 被宣告成NO_REFS、又同時漏列在refBearingItemDefaultTypes()與independentRefs時，只有這道檢查會失敗（見證W-M9-CROSS）。
-        var reviewed=reviewedItemDefaults();var mismatched=new java.util.TreeMap<String,String>();int[] counts=new int[3];
+        // D1b-3c-0b（quality Q-M3）：「不空轉」不再只要求全族群一件，改成逐件雙向：payload的registry id與tag字串集合須恰等於ref的目標集合，
+        // 所以collector漏走某種結構時，帶ref的item都會失敗。另以兩個子案證明collector收「#」開頭的tag字串（目前沒有ACCEPTED item帶tag
+        // ref）與巢狀compound中的鍵。
+        var reviewed=reviewedItemDefaults();var mismatched=new java.util.TreeMap<String,String>();int[] counts=new int[2];
         for(var entry:(Iterable<RegistryEntry.Reference<Item>>)Registries.ITEM.streamEntries()::iterator) {
             var id=entry.registryKey().getValue();var item=entry.value();
             if(!id.getNamespace().equals("minecraft")||!allReviewed(item,reviewed,null))continue;
@@ -1309,19 +1524,94 @@ class Minecraft121RegistryLeafContractsTest {
             if(!capturedTriples.equals(emittedTriples))problems.add("sink="+emittedTriples);
             if(!emitted.stream().allMatch(e->e.getKey().equals(itemNode(id.toString()))))problems.add("sink的from不是該ITEM node");
             for(var ref:captured)if(expected.get(ref.path())!=refEntry(ref))problems.add("identity:"+ref.path());
-            // 與型別模型無關的交叉檢查（quality Q-M3）：payload中的registry id字串都必須是某條ref的id。
-            var refIds=new java.util.TreeSet<String>();for(var ref:captured)refIds.add(refEntry(ref).registryKey().getValue().toString());
+            // 與型別模型無關的交叉檢查（quality Q-M3；D1b-3c-0b改為逐件雙向）：payload中的registry id與tag字串集合恰等於ref的目標集合。
+            var refIds=new java.util.TreeSet<String>();for(var ref:captured)refIds.add(refTargetId(ref));
             var registryIds=payloadRegistryIdStrings(capture.payload().getCompound("DefaultComponents"));
-            if(!registryIds.isEmpty())counts[2]++;
-            for(var string:registryIds.entrySet())if(!refIds.contains(string.getValue()))
-                problems.add("crossCheck:payload的"+string.getKey()+"="+string.getValue()+"不是任何ref的id");
+            if(!new java.util.TreeSet<>(registryIds.values()).equals(refIds))
+                problems.add("crossCheck:payload的registry id／tag字串"+registryIds+"不等於ref的目標"+refIds);
             if(!problems.isEmpty())mismatched.put(id.toString(),String.join("; ",problems));
         }
+        var pickaxeTool=Items.IRON_PICKAXE.getComponents().get(DataComponentTypes.TOOL);
         assertAll(
                 ()->assertTrue(counts[0]>0,"fixture前提：有已審的minecraft item"),
                 ()->assertTrue(counts[1]>0,"fixture前提：至少一件已審item帶ref"),
-                ()->assertTrue(counts[2]>0,"fixture前提：交叉檢查至少在一件item的payload找到registry id字串（不是空轉）"),
-                ()->assertEquals(java.util.Map.of(),mismatched,"每個已審vanilla item抽出的ref恰等於測試端獨立走訪的結果，且涵蓋payload中的registry id"));
+                ()->assertEquals(java.util.Map.of(),mismatched,"每個已審vanilla item抽出的ref恰等於測試端獨立走訪的結果，且payload的registry id集合恰等於ref的目標"),
+                ()->assertAll("subcase=collector收「#」開頭的tag字串（iron_pickaxe tool的獨立編碼；D1b-3c的tag ref以此比對）",
+                        ()->assertTrue(pickaxeTool.rules().stream().allMatch(rule->rule.blocks().getTagKey().isPresent()),"fixture前提：iron_pickaxe只有tag rule"),
+                        ()->assertEquals(new java.util.TreeSet<>(java.util.Set.of("#minecraft:incorrect_for_iron_tool","#minecraft:mineable/pickaxe")),
+                                new java.util.TreeSet<>(payloadRegistryIdStrings((NbtCompound)independentDefaults(only(DataComponentTypes.TOOL,pickaxeTool))).values()),
+                                "兩個tag字串都被收集；codec的欄位名（例如speed，與STATUS_EFFECT的minecraft:speed同名）不是引用")),
+                ()->assertAll("subcase=collector收巢狀compound中帶namespace的鍵（registry-keyed map），不收頂層的component型別鍵",()->{
+                    var levels=new NbtCompound();levels.putInt("minecraft:stone",1);levels.putInt("test:absent",2);
+                    var component=new NbtCompound();component.put("levels",levels);component.putString("plain","minecraft:bowl");
+                    var defaults=new NbtCompound();defaults.put("minecraft:enchantments",component);defaults.putByte("minecraft:dirt",(byte)1);
+                    assertEquals(java.util.Map.of("minecraft:enchantments/levels/minecraft:stone@key","minecraft:stone","minecraft:enchantments/plain","minecraft:bowl"),
+                            payloadRegistryIdStrings(defaults),"巢狀的minecraft:stone鍵與plain值都被收集；頂層鍵、沒有namespace的欄位名與聯集外的id不收");
+                }));
+    }
+
+    @Test void everyAcceptedVanillaItemLeafPayloadEqualsIndependentEncodingOfOriginal() {
+        // D1b-3c-0b（quality Q-M2）：copy保真度的全族群gating。每個測試端判定為已審的minecraft item，item(...)的DefaultComponents都必須等於
+        // 另一個新建manager的static ops對原值item.getComponents()的獨立編碼（不經production的白名單、copy與ops）。只比9件時，copy若寫死或
+        // 漏抄常數literal欄位（show_in_tooltip、eat_seconds、probability、default_mining_speed…）沒有任何gating測試會失敗；vanilla有非常數值
+        // （dried_kelp的eat_seconds 0.8、chicken的hunger probability 0.3，fixture前提斷言）。ACCEPTED_DIGEST仍只是診斷。
+        var ops=independentOps();var reviewed=reviewedItemDefaults();var mismatched=new java.util.TreeMap<String,String>();int[] checked=new int[1];
+        for(var entry:(Iterable<RegistryEntry.Reference<Item>>)Registries.ITEM.streamEntries()::iterator) {
+            var id=entry.registryKey().getValue();var item=entry.value();
+            if(!id.getNamespace().equals("minecraft")||!allReviewed(item,reviewed,null))continue;
+            checked[0]++;
+            NbtCompound payload;
+            try {payload=itemLeaf(item);}
+            catch(Minecraft121SettingsGraph.Failure failure){mismatched.put(id.toString(),"failure="+failure.getMessage());continue;}
+            var independent=independentDefaults(ops,item.getComponents());
+            if(!independent.equals(payload.getCompound("DefaultComponents")))
+                mismatched.put(id.toString(),"payload="+payload.getCompound("DefaultComponents")+" independent="+independent);
+        }
+        var kelp=Items.DRIED_KELP.getComponents().get(DataComponentTypes.FOOD);var chicken=Items.CHICKEN.getComponents().get(DataComponentTypes.FOOD);
+        assertAll(
+                ()->assertTrue(checked[0]>0,"fixture前提：有已審的minecraft item"),
+                ()->assertAll("fixture前提：已審的vanilla item帶非預設literal",
+                        ()->assertTrue(allReviewed(Items.DRIED_KELP,reviewed,null)&&kelp.eatSeconds()!=1.6f,"dried_kelp的eat_seconds不是預設的1.6"),
+                        ()->assertTrue(allReviewed(Items.CHICKEN,reviewed,null)&&chicken.effects().stream().anyMatch(effect->effect.probability()<1f),
+                                "chicken的effect probability小於1")),
+                ()->assertEquals(java.util.Map.of(),mismatched,"每個已審vanilla item的payload等於另一個新建manager對原值的獨立編碼"));
+    }
+    @Test void itemLeafRebuiltCopiesKeepNonDefaultLiterals() {
+        // D1b-3c-0b（quality Q-M2）：每個重建copy的record型別各一個帶非預設literal的seam子案（全族群gating只涵蓋vanilla出現過的值），預期值是
+        // 另一個新建manager的static ops對原值的獨立編碼，不經copy。fixture前提確認獨立編碼真的寫出了這些非預設欄位（optionalFieldOf的
+        // 預設值不寫出）。值都是局部新物件，不改動全域狀態。
+        var attribute=new AttributeModifiersComponent(List.of(
+                new AttributeModifiersComponent.Entry(EntityAttributes.GENERIC_ARMOR,new EntityAttributeModifier(Identifier.ofVanilla("test_armor"),2.5,
+                        EntityAttributeModifier.Operation.ADD_MULTIPLIED_BASE),AttributeModifierSlot.HEAD),
+                new AttributeModifiersComponent.Entry(EntityAttributes.GENERIC_LUCK,new EntityAttributeModifier(Identifier.ofVanilla("test_luck"),-1.0,
+                        EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL),AttributeModifierSlot.ARMOR)),false);
+        var food=new FoodComponent(3,0.25f,true,0.8f,Optional.of(new ItemStack(Items.BOWL)),List.of(
+                new FoodComponent.StatusEffectEntry(new StatusEffectInstance(StatusEffects.HUNGER,600,2,true,false,false),0.3f),
+                new FoodComponent.StatusEffectEntry(new StatusEffectInstance(StatusEffects.SPEED,100),1f)));
+        var tool=new ToolComponent(List.of(
+                new ToolComponent.Rule(RegistryEntryList.of(List.of(Blocks.COBWEB.getRegistryEntry())),Optional.of(15f),Optional.of(true)),
+                new ToolComponent.Rule(RegistryEntryList.of(List.of(Blocks.VINE.getRegistryEntry(),Blocks.GLOW_LICHEN.getRegistryEntry())),Optional.empty(),Optional.of(false)),
+                new ToolComponent.Rule(RegistryEntryList.of(List.of(Blocks.STONE.getRegistryEntry())),Optional.of(2f),Optional.empty())),2.5f,3);
+        var cases=new java.util.LinkedHashMap<String,ComponentMap>();
+        cases.put("attribute_modifiers（show_in_tooltip=false、非預設slot與operation）",only(DataComponentTypes.ATTRIBUTE_MODIFIERS,attribute));
+        cases.put("food（can_always_eat=true、eat_seconds=0.8、probability=0.3、using_converts_to存在、effect的ambient／particles／icon非預設）",
+                only(DataComponentTypes.FOOD,food));
+        cases.put("tool（default_mining_speed=2.5、damage_per_block=3、speed與correct_for_drops各有present與empty）",only(DataComponentTypes.TOOL,tool));
+        cases.put("三型放在同一個map",ComponentMap.builder().add(DataComponentTypes.ATTRIBUTE_MODIFIERS,attribute).add(DataComponentTypes.FOOD,food)
+                .add(DataComponentTypes.TOOL,tool).build());
+        var all=(NbtCompound)independentDefaults(cases.get("三型放在同一個map"));
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        checks.add(()->assertAll("fixture前提：獨立編碼寫出了非預設欄位",
+                ()->assertTrue(all.getCompound("minecraft:attribute_modifiers").contains("show_in_tooltip"),"show_in_tooltip"),
+                ()->assertTrue(all.getCompound("minecraft:food").contains("can_always_eat")&&all.getCompound("minecraft:food").contains("eat_seconds"),
+                        "can_always_eat與eat_seconds"),
+                ()->assertTrue(all.getCompound("minecraft:food").getList("effects",NbtElement.COMPOUND_TYPE).getCompound(0).contains("probability"),"probability"),
+                ()->assertTrue(all.getCompound("minecraft:tool").contains("default_mining_speed")&&all.getCompound("minecraft:tool").contains("damage_per_block"),
+                        "default_mining_speed與damage_per_block")));
+        for(var c:cases.entrySet())checks.add(()->assertAll("subcase="+c.getKey(),
+                ()->assertEquals(independentDefaults(c.getValue()),seam(Items.DIAMOND,c.getValue()).getCompound("DefaultComponents"),
+                        "payload等於另一個新建manager對原值的獨立編碼")));
+        assertAll(checks);
     }
 
     /**
