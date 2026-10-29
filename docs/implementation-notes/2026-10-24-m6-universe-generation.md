@@ -637,7 +637,7 @@ Step0 遠端 CI：docs commit `0998f677d3dacce9041507dfcb3ec53c4cdc66cd`（含 c
    - trapped_chest 的 BE owner 被誤拒（`Minecraft121TemplateValueContracts.java:98`，fail closed）；
    - palette 使用寬鬆 codec；
    - `containsId` 沒有依 feature 過濾；
-   - TemplateValueContracts 中的 `nativeSource` 複本。
+   - `nativeSource` 的另外三份複本：TemplateValueContracts、TemplateSettingsAdapter、NativeValueContracts（D1b-1 spec 審查補充）。
 6. D1c 的真資料 GREEN 依賴 D1b-3。
 7. BLOCK tag 次序的 closure 測試延到產生 BLOCK tag edge 的切片（預計 D1b-3 的 tool）。那個切片要先設計可還原、或不碰全域 registry 的 tag 測試技法。
 
@@ -665,3 +665,65 @@ Step0 遠端 CI：docs commit `0998f677d3dacce9041507dfcb3ec53c4cdc66cd`（含 c
   - `warmPoolCodec` 的 Javadoc 說得比實際暖機的範圍寬；
   - 寬 catch 依賴一個未寫明的前提。要寫成註解規則：try 內只放來源讀取，以及前置 require 已保證不會丟例外的本地操作；checkpoint、graph、codec 必須放在 try 外。D1b-1 會在 LeafContracts 重用這個模式；
   - E1 的三張圖要抽成共用工廠。
+
+D1b-0 遠端 CI：docs commit `b7d539aa067049a423ef437abada88716fcc649a`（含 code `0efb058`）的 GitHub Actions Build run `40863093293` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩個 job 都是 success。這裡只讀回 job 結論，沒有 audit artifact 內容。
+
+### 2026-10-29：D1b-1（BLOCK static registry leaf）結案
+
+**commit**：`9cfab02`（RED 測試）、`df3e66b`（feat）、`58a2ff9eae62c759778e6c6eb158a53d82bf0e7c`（診斷輸出改 ASCII）。只動四個 owner：
+- 新增 `Minecraft121RegistryLeafContracts`；
+- 新增 `Minecraft121RegistryLeafContractsTest`；
+- 窄改 `Minecraft121RegistryClosure`：加 BLOCK 分支，並把 `nativeSource` 改為委派；
+- 窄改 `Minecraft121SettingsCanonicalizerTest`。
+
+ITEM 屬於 D1b-2，本輪沒有做，也沒有留空殼。
+
+**行為**：
+- BLOCK leaf 的 payload 只有四個鍵：`Contract=quantumchamber:m6-static-block-leaf-v1`、`DefaultState`（`NbtHelper.fromBlockState`）、`PropertyDomains`（依原生次序）、`RequiredFeatures`（只 admit vanilla 子集）。Settings、Java 行為、`BlockTypes.CODEC`、`asItem` 與 state id 都不入值。
+- 檢查依序是 registry identity → class 與 source → intrusive identity → features → 原生 property 與值型別 → default state roundtrip；每一步都有具名錯誤碼，`Failure` 原樣透傳。
+- BLOCK 經 `definitions` 去重，leaf 沒有子邊。
+- payload 範例：stone 180 bytes、oak_stairs 503 bytes。
+- 成本診斷（不 gating）：1060 個 BLOCK leaf 冷啟動合計 30ms、暖啟動 11.5ms，p99 137µs。這些數字是 I-1 的輸入。
+- D1b-0 審查的三項 Minor 也已處理：`warmPoolCodec` 的 Javadoc、把寬 catch 的前提寫成註解規則、E1 三張圖改用共用工廠。
+
+**測試數**：Canon 從 95 增為 103，LeafTest 新增 7 個。
+
+**證據**（ignored，`task-08/8b2-c1d-d1b1-evidence/`）：
+- RED1 `focused-c1d-d1b1-red-d52da108…` 保留為原件，見下方「與設計前提的衝突」。
+- 具名 RED2 `focused-c1d-d1b1-red2-069b3c36…`：103 案中 6 個停在 `UNSUPPORTED_REGISTRY_DEFINITION`。
+- GREEN：canon 103/0、leaf 7/0。
+- 突變見證 1、2、5a、5b、6、8 都能鑑別，而且只改 LeafContracts，跑完已還原。
+
+**與設計前提的衝突（更正 v2 §5.6／§12）**：
+- Canon 的 `EndFixture` 經 `CombinedDynamicRegistries` → `ImmutableImpl.toImmutable()` → `freeze`，會凍結全域 static registry。freeze 之後無法註冊。
+- 所以 JVM 裡第一次觸發 `ModBlocks.<clinit>` 若晚於 freeze，就會丟 "This registry can't create intrusive holders"，而且這個 class 在該 JVM 會永久不可用。RED1 就是這個情況；javap 證據見 `D1B1-MODBLOCKS-FREEZE-JAVAP.txt`。
+- 設計原本假設「`MembraneStateTest` 等測試已在同一個 JVM 先觸發」，這個前提不成立；fabric-loader-junit 在測試前也不會執行 mod 的 `onInitialize`。
+- 修正方式：在 Canon 的 `@BeforeAll` 呼叫 `ModBlocks.register()`。這只會觸發既有的 class init，可以重複呼叫，沒有新增註冊。
+- 殘餘風險：
+  - Canon 的 freeze 是 JVM 全域的，D1b-1 只處理了 ModBlocks。`ChamberControllerBlockEntityNbtTest` 經 `ModBlockEntities` 寫入 `BLOCK_ENTITY_TYPE`，所以它若排在 Canon 之後，仍會失敗。這是既有依賴，本輪不改。
+  - 日後新增的測試，若經 CombinedDynamicRegistries／toImmutable 碰到 static registry，必須先完成 ModBlocks 的初始化。
+  - `ModItems` 受同一機制影響，D1b-2 維持完全不引用。
+- 這次完整 JUnit 的 class 順序是 `chamber.*` 先於 `universe.*`。
+
+**乾淨 `58a2ff9` 的驗證**：
+- M6Compile PASS。
+- Canon focused `focused-c1d-d1b1-clean-canon-1-7c220cc5128d40beaf2f80e0f05547e5`、`focused-c1d-d1b1-clean-canon-2-ffdbb0c9167140f49d7b50228ad8bf1f` 都是 103/103。
+- LeafTest focused `focused-c1d-d1b1-clean-leaf-1-390308d56b28406ea4bb0427b0bf3711`、`focused-c1d-d1b1-clean-leaf-2-9d6d2858a358483a90e6b6c8797540a5` 都是 7/7。
+- 完整 `run-all-9b4906c116d14c6ab5b42da9723209f3` 自然結束，END ALL exit0：
+  - JUnit 872（0 fail／0 error／2 個既有 skip）；
+  - default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2；
+  - release 503 entries／456 classes，mainOnly PASS，testmodHits0；
+  - console.log SHA256 `954bdf143a76e752ab1c41412509468bd1e18874a0b39fdb21ee8204d37b2759`，summary.json SHA256 `e69653af61f158a9cc32474b5cd329f3e8fa63c651f741b9f860e527593a13da`。
+- 本機 CI oracle 不等於遠端 CI；`58a2ff9` 的遠端 CI 要等本筆 push 之後才讀回。
+
+**全新審查**：
+- spec C0/I0/M2（`D1B1-SPEC-REVIEW.md`，SHA256 `9b98354a9c398aaae0727f82d402ad1767fa7a234f80671cb7d89470732ce573`）。
+  - M1：「唯一的原生 source 判斷」只在 Closure 與 LeafContracts 兩者之間成立。src/main 另有 TemplateValueContracts、TemplateSettingsAdapter、NativeValueContracts 三份，交 D2 收斂；C1d 待辦第 5 項也一併補上 Adapter 與 NativeValueContracts。
+  - M2：即上方的設計前提更正。
+- quality C0/I0/M5 Approved（`D1B1-QUALITY-REVIEW.md`，SHA256 `0266f660b5890eb6057f0b440f88cc81df808825ffa2c8ab03a3457de9320e02`）。M1～M4 併入 D1b-2 派工：
+  - M1：`block()` 補上 node 與 key 對應的檢查，並修正註解；
+  - M2：foreign source 測試加一個只帶原生 property 的 `chamber_controller` 子案；
+  - M3：新增 gating 測試，斷言所有 minecraft namespace 的 BLOCK 都 ACCEPTED；controller 採用，用來防止可用性回歸；
+  - M4：`BLOCK_CONTRACT` 改為 private，並調整 `value` 的取值位置。
+
+  M5 即上方的殘餘風險說明。

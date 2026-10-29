@@ -53,3 +53,10 @@
 - D1b 設計：v1 經全新設計審查 C0/I1/M7。I-1 是測試計畫中有兩項全域 registry 變更無法在 finally 還原，完整 JUnit 共用同一個 JVM，會汙染其他測試。v2 修訂後，經窄複審 C0/I0/M5 放行。Q1～Q10 由 controller 定案，無需使用者裁示；N1 採嚴格 fail closed。設計文件與 SHA 見 M6 note 末節；設計審查要求的 7 項 C1d 待辦已寫入 note。
 - D1b-0 code `0efb058`：具名 RED→GREEN 95/95，乾淨雙 focused 95/95，完整 `run-all-359153a6930a42c7a8b9a05df4901f9e` 自然 END ALL0／JUnit857；spec C0/I0/M1、quality C0/I0/M2。
 - 下一步：D1b-1（BLOCK leaf），依 v2 §3.2、§3.6、§5.1、§5.2、§5.4、§5.5 實作。複審的 5 項 Minor 與 D1b-0 審查的 3 項 Minor 隨派工修正。`0efb058` 的遠端 CI 要等本筆 push 後讀回。
+
+### 2026-10-29：D1b-1（BLOCK static leaf）結案
+
+- D1b-0 遠端 CI run `40863093293`（`b7d539a`）兩 job success。
+- D1b-1 code `58a2ff9`：新增 `Minecraft121RegistryLeafContracts` 與其測試，BLOCK leaf payload 為 Contract／DefaultState／PropertyDomains／RequiredFeatures。驗證與審查：具名 RED→GREEN，6 個突變見證；乾淨 Canon focused 103/103×2、LeafTest 7/7×2，完整 `run-all-9b4906c116d14c6ab5b42da9723209f3` 自然 END ALL0／JUnit872；spec C0/I0/M2、quality C0/I0/M5。
+- 設計前提更正：Canon 的 EndFixture 會 freeze 全域 static registry，freeze 後無法註冊；ModBlocks 改在 Canon `@BeforeAll` 初始化。`ModItems` 受同一機制影響，D1b-2 不引用。
+- 下一步：D1b-2（ITEM leaf，含真 chest 模板；第一步是 `ItemAccessor` 的 setup probe）。複審 Minor #1、#3、#4、#5 的 ITEM 部分，與 D1b-1 quality 審查的 M1～M4 併入派工。`58a2ff9` 的遠端 CI 要等本筆 push 後讀回。

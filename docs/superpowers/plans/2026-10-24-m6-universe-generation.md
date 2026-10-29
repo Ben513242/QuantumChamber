@@ -354,6 +354,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 2026-10-29 D1b設計與D1b-0快照：Step0遠端CI run40845641782（0998f67）兩job success。D1b設計v2（ignored `task-08/8b2-c1d-design/D1B-PROPOSAL-v2.md`）經全新設計審查C0/I1/M7→窄複審C0/I0/M5放行，切分D1b-0 Step0→D1b-1 BLOCK leaf→D1b-2 ITEM leaf→D1b-3引用其他registry的component→D1c真資料。D1b-1／D1b-2的新增owner見上方Files段的C1d-D1b bullet。D1b-0 code `0efb058`：乾淨雙focused95/95、完整`run-all-359153a6930a42c7a8b9a05df4901f9e` END ALL0／JUnit857，spec C0/I0/M1、quality C0/I0/M2。設計審查要求的7項C1d待辦已寫入M6 note。
 
+2026-10-29 D1b-1快照：D1b-0遠端CI run40863093293（b7d539a）兩job success。D1b-1 BLOCK static leaf code `58a2ff9`（9cfab02 RED＋df3e66b feat＋58a2ff9），具名RED2→GREEN、見證1/2/5a/5b/6/8；乾淨Canon focused103/103×2、LeafTest7/7×2、完整`run-all-9b4906c116d14c6ab5b42da9723209f3` END ALL0／JUnit872，spec C0/I0/M2、quality C0/I0/M5。更正設計前提：Canon EndFixture會freeze全域static registry，freeze後無法註冊，ModBlocks改於Canon @BeforeAll初始化。quality M1～M4併入D1b-2；下一步D1b-2 ITEM leaf。
+
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。
