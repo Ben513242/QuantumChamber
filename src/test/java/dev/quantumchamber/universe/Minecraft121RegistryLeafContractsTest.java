@@ -38,7 +38,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷（含D1b-3-0 Step0的殘餘風險收斂、D1b-3a的lease
- * registries identity與8型literal／空DEFAULT component，以及D1b-3b的單一分派型別契約、ITEM leaf出邊與ATTRIBUTE／STATUS_EFFECT leaf）。
+ * registries identity與8型literal／空DEFAULT component，D1b-3b的單一分派型別契約、ITEM leaf出邊與ATTRIBUTE／STATUS_EFFECT leaf，
+ * 以及D1b-3c-0的codec前copy重建、ref的key比對、M9的NBT交叉檢查與ITEM seam source自驗的行為見證）。
  * 只讀全域static registry：不註冊Block／Item，不populate tag；不引用ModBlocks／ModItems。局部物件只有新建的局部registry（不登記到
  * Registries.REGISTRIES）、foreign的EntityAttribute／StatusEffect子類（建構子不碰registry），以及以Unsafe配置、不跑建構子的foreign
  * Item（不呼叫Registries.ITEM.createEntry）。唯一的instance欄位變更是itemLeafDefaultComponentMutationIsCapturedAndRestored（設計§5.5
@@ -370,8 +371,9 @@ class Minecraft121RegistryLeafContractsTest {
     }
     @Test void blockItemLeafExecutedOwnersIncludeBlockAndHasNoBlockEdge() {
         // 斷言的是executedOwnerClasses的輸出；item(...)與itemCapture開頭都對它逐項requireNativeSource。見證3把「不回傳block class」
-        // 當突變，由下方等值斷言抓到。殘餘風險：「兩處檢查同時被刪除」（連同item class檢查）沒有任何測試能抓到：測試不能建立或註冊
-        // foreign Item／BlockItem（Item.<init>會寫入全域registry），靠spec review逐行確認。
+        // 當突變，由下方等值斷言抓到。D1b-3c-0起seam的逐項檢查本身有行為見證（itemCaptureSeamChecksItemSourceItself，以Unsafe配置的
+        // foreign Item），刪除seam檢查（不論是否連同item(...)的檢查）都會被抓到；只刪item(...)的檢查是等價突變，靠spec review逐行確認
+        // （測試不能註冊foreign Item／BlockItem，Item.<init>會寫入全域registry）。
         var sapling=Items.DARK_OAK_SAPLING;
         assertAll(
                 ()->assertEquals(java.util.List.of(BlockItem.class,net.minecraft.block.ChestBlock.class),executedOwnerClasses(Items.CHEST),
@@ -460,6 +462,7 @@ class Minecraft121RegistryLeafContractsTest {
     @Test void itemLeafRejectsLyingNestedListAfterRoundtrip() {
         // S0-1 RED①：原生LoreComponent放在原生SimpleComponentMap裡；巢狀List自稱為空，codec的迭代卻吐出一行。
         // LoreComponent(List)以Lists.transform建立styledLines view，所以lines()與styledLines()的isEmpty都會被騙。
+        // D1b-3c-0起LORE在codec之前正規化為DEFAULT，roundtrip再也看不到這行；改由LORE值條件的iterator檢查在codec之前拒（同一個碼）。
         var lore=new LoreComponent(new LyingLines());
         var components=single(new net.minecraft.component.Component<>(DataComponentTypes.LORE,lore));
         assertAll("fixture前提",
@@ -485,10 +488,11 @@ class Minecraft121RegistryLeafContractsTest {
                 ()->assertFalse(firstTypes.contains(DataComponentTypes.STORED_ENCHANTMENTS),"第一次迭代不含stored_enchantments"),
                 ()->assertTrue(laterTypes.contains(DataComponentTypes.STORED_ENCHANTMENTS),"第二次迭代含stored_enchantments"));
         // D1b-3-0 quality M1：容器source檢查只擋直接foreign的容器；原生包裝ComponentMapImpl（changedComponents為空時iterator直接
-        // 委派base）能通過，它的內容一致性由roundtrip後重建map的再驗保證。codec那次迭代吐出stored_enchantments，重建map含它，再驗時拒絕。
+        // 委派base）能通過，它的內容一致性由第二次迭代的白名單保證。D1b-3c-0起第二次迭代是codec之前的copy重建（步驟6b，取代原本codec
+        // 自己的迭代）：它吐出stored_enchantments，在6b的白名單就拒絕。
         var wrapped=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(base,withStored));
-        // D1b-3b（設計審查M2）：第二次迭代多出的是已審的food，重建map的再驗會通過；但步驟6自原值抽出的ref（沒有food）與重建值的ref
-        // （golden_apple的兩個effect）不同，以NATIVE_CODEC_ROUNDTRIP_CHANGED拒絕，不會讓「原值迭代看不到的ref」靜默進圖。
+        // D1b-3b（設計審查M2）：第二次迭代多出的是已審的food，6b與重建map的再驗都會通過；但步驟6自原值抽出的ref（沒有food）與重建值
+        // 的ref（golden_apple的兩個effect）不同，以NATIVE_CODEC_ROUNDTRIP_CHANGED拒絕，不會讓「原值迭代看不到的ref」靜默進圖。
         var wrappedFood=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(base,withFood));
         // D1b-3c-0（quality Q-M2）：兩次迭代的food各帶不同的effect type（件數與path相同、key不同）是內容改變，不是owner不符，所以是
         // NATIVE_CODEC_ROUNDTRIP_CHANGED；只有同key、不同物件才是REGISTRY_ENTRY_OWNER_MISMATCH（itemLeafRejectsForeignReferenceWithSameId）。
@@ -782,23 +786,35 @@ class Minecraft121RegistryLeafContractsTest {
     private static java.util.Set<net.minecraft.component.ComponentType<?>> refBearingItemDefaultTypes() {
         return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL);
     }
+    /**
+     * 測試端獨立列出codec之前要重建copy的已審型別（D1b-3c-0；spec M1＋quality Q-M1）：帶List的三型record，加上正規化為DEFAULT的LORE。
+     * 其餘已審型別都必須明確宣告AS_IS。
+     */
+    private static java.util.Set<net.minecraft.component.ComponentType<?>> rebuiltItemDefaultTypes() {
+        return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL,DataComponentTypes.LORE);
+    }
     @Test void itemComponentContractTableIsSingleDispatchWithExplicitRefs() {
-        // 每個已審型別在同一筆契約宣告值條件、ref抽取與codec會查詢的static registry（ItemComponentContracts的單一分派表）。結構斷言：
-        // 表的型別集合等於測試端獨立列出的已審型別；會產生ref的型別恰為refBearingItemDefaultTypes()（有抽取器且宣告查詢的registry），
-        // 其餘都明確宣告NO_REFS且不查registry；各型宣告的registry都屬於固定static registry聯集；固定聯集等於fixture獨立列出的那組。
+        // 每個已審型別在同一筆契約宣告值條件、copy重建、ref抽取與codec會查詢的static registry（ItemComponentContracts的單一分派表）。
+        // 結構斷言：表的型別集合等於測試端獨立列出的已審型別；會產生ref的型別恰為refBearingItemDefaultTypes()（有抽取器且宣告查詢的
+        // registry），其餘都明確宣告NO_REFS且不查registry；codec前重建copy的型別恰為rebuiltItemDefaultTypes()，其餘都明確宣告AS_IS；
+        // 各型宣告的registry都屬於固定static registry聯集；固定聯集等於fixture獨立列出的那組。
         var contracts=Minecraft121ItemComponentContracts.contracts();
-        var refBearing=refBearingItemDefaultTypes();
+        var refBearing=refBearingItemDefaultTypes();var rebuilt=rebuiltItemDefaultTypes();
         var union=itemLeafStaticRegistries().stream().map(r->(Object)r.getKey()).toList();
         var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
         checks.add(()->assertEquals(typeNames(reviewedItemDefaults().keySet()),typeNames(contracts.keySet()),
                 "表的型別集合等於測試端獨立列出的已審型別"));
         checks.add(()->assertTrue(contracts.keySet().containsAll(refBearing),"會產生ref的型別都在表內："+typeNames(refBearing)));
+        checks.add(()->assertTrue(contracts.keySet().containsAll(rebuilt),"重建copy的型別都在表內："+typeNames(rebuilt)));
         checks.add(()->assertEquals(itemLeafStaticRegistries(),Minecraft121ItemComponentContracts.staticRegistries(),
                 "production的固定聯集等於fixture獨立列出的聯集（含次序，ITEM第一）"));
         for(var entry:contracts.entrySet()) {
-            var contract=entry.getValue();boolean bearing=refBearing.contains(entry.getKey());
+            var contract=entry.getValue();boolean bearing=refBearing.contains(entry.getKey());boolean copied=rebuilt.contains(entry.getKey());
             checks.add(()->assertAll("type="+typeName(entry.getKey()),
                     ()->assertNotNull(contract.value(),"值條件須宣告"),
+                    ()->assertNotNull(contract.copy(),"copy須明確宣告"),
+                    ()->assertEquals(copied,contract.copy()!=Minecraft121ItemComponentContracts.AS_IS,
+                            copied?"帶List的record與LORE須在codec之前重建copy，不得是AS_IS":"literal與其餘只收空值的型別須明確宣告AS_IS"),
                     ()->assertNotNull(contract.refs(),"refs須明確宣告"),
                     ()->assertEquals(bearing,contract.refs()!=Minecraft121ItemComponentContracts.NO_REFS,
                             bearing?"會產生ref的型別須有抽取器，不得是NO_REFS":"literal／只收空值的型別須明確宣告NO_REFS"),
