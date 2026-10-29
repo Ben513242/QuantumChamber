@@ -2,7 +2,6 @@ package dev.quantumchamber.universe;
 
 import com.mojang.serialization.Codec;
 import java.util.*;
-import net.minecraft.SharedConstants;
 import net.minecraft.nbt.*;
 import net.minecraft.registry.*;
 import net.minecraft.registry.entry.*;
@@ -22,7 +21,9 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 /**
  * typed registry 傳遞層：noise parameters、受審End值、exact Single pool局部閉包，
  * 以及named PROCESSOR_LIST局部閉包（exact StructureProcessorList，元素只admit exact原生Nop／LavaSubmerged）。
- * 未admit的定義／consumer、inline entry與非direct alias仍拒絕，不是完整三role快照。
+ * BLOCK static registry leaf經definitions去重後交Minecraft121RegistryLeafContracts擷取（只admit全域static BLOCK registry
+ * 與exact原生source，leaf沒有子邊）；原生source判斷也委派該類的唯一實作。
+ * 未admit的定義／consumer（含ITEM等其他static registry）、inline entry與非direct alias仍拒絕，不是完整三role快照。
  * registries/resources 必須由呼叫端的同一次有效來源 lease 提供；本類不取得 live source。
  */
 final class Minecraft121RegistryClosure {
@@ -39,6 +40,7 @@ final class Minecraft121RegistryClosure {
     private final ArrayDeque<Work> pending = new ArrayDeque<>();
     private final Set<Key> definitions = new HashSet<>();
     private final Minecraft121NativeValueContracts nativeValues;
+    private final Minecraft121RegistryLeafContracts leaves;
     private ServerSettingsContext context;
     private Minecraft121TemplateSettingsAdapter.Scope captureScope;
     private final Set<ScopedDefinition> poolExpanded=new HashSet<>(),templateExpanded=new HashSet<>();
@@ -50,6 +52,7 @@ final class Minecraft121RegistryClosure {
         this.resources=Objects.requireNonNull(resources);
         this.nativeValues=new Minecraft121NativeValueContracts(graph,registries,resources,
                 (occurrence,key)->pending.addLast(new Work(occurrence,key,null,true)));
+        this.leaves=new Minecraft121RegistryLeafContracts(graph,registries);
     }
 
     Minecraft121RegistryClosure(Minecraft121SettingsGraph graph,ServerSettingsContext context) {
@@ -125,7 +128,7 @@ final class Minecraft121RegistryClosure {
                             graph.payload(target,nativeValues.capture(work.registryKey(),entry.value()));
                         else if(work.registryKey().getRegistry().equals(RegistryKeys.TEMPLATE_POOL.getValue()))
                             expandPool(target,entry.value(),work.occurrence().aliasScope());
-                        else if(definitions.add(target))expandDefinition(target,work.registryKey(),entry.value());
+                        else if(definitions.add(target))expandDefinition(target,work.registryKey(),entry);
                     }
                     graph.expanded(work.occurrence());
                 }
@@ -190,7 +193,12 @@ final class Minecraft121RegistryClosure {
         graph.payload(work.occurrence().target(),payload);
     }
 
-    private void expandDefinition(Key node, RegistryKey<?> key, Object value) {
+    private void expandDefinition(Key node, RegistryKey<?> key, RegistryEntry.Reference<?> entry) {
+        Object value=entry.value();
+        if(key.getRegistry().equals(RegistryKeys.BLOCK.getValue())) {
+            leaves.block(node,key,entry);
+            return;
+        }
         if(key.getRegistry().equals(RegistryKeys.PROCESSOR_LIST.getValue())) {
             expandProcessorList(node,value);
             return;
@@ -214,6 +222,8 @@ final class Minecraft121RegistryClosure {
         int size;
         ArrayList<StructureProcessor> copy;
         // 第一次size()、兩個require、配置與兩遍迭代同在一個try；逐項checkpoint留在try之外，NOT_READY不會被改碼。
+        // 寬catch前提：try內只放來源清單的讀取（size／iterator／hasNext／next），以及前置require已保證不丟例外的本地操作
+        // （配置、copy.add、copy.get）；checkpoint、graph、codec等可能丟非Failure例外的呼叫必須放在try外，否則會被改碼為PROCESSOR_LIST_CHANGED。
         try {
             size=original.size();
             require(size>=0,"PROCESSOR_LIST_CHANGED");
@@ -320,10 +330,9 @@ final class Minecraft121RegistryClosure {
         require(encoded.equals(codec.encodeStart(ops,rebuilt).getOrThrow()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
         return encoded;
     }
+    /** 委派LeafContracts的唯一原生source判斷；錯誤碼仍是NATIVE_DEFINITION_SOURCE。 */
     private void nativeSource(Class<?> type) {
-        require(type.getProtectionDomain().getCodeSource()!=null && SharedConstants.class.getProtectionDomain().getCodeSource()!=null
-                && type.getProtectionDomain().getCodeSource().getLocation().equals(
-                SharedConstants.class.getProtectionDomain().getCodeSource().getLocation()),"NATIVE_DEFINITION_SOURCE");
+        Minecraft121RegistryLeafContracts.requireNativeSource(type);
     }
     private void checked(Runnable action) {
         try { graph.requireOpen();action.run(); }
