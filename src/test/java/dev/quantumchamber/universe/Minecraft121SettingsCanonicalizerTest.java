@@ -178,8 +178,12 @@ class Minecraft121SettingsCanonicalizerTest {
         return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS, net.minecraft.util.Identifier.of("minecraft",id));
     }
     private static net.minecraft.registry.SimpleRegistry<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters> noiseRegistry() {
+        return noiseRegistry(1.0);
+    }
+    /** a的唯一amplitude可指定；其餘與noiseRegistry()相同，供獨立registry算出預期bytes。 */
+    private static net.minecraft.registry.SimpleRegistry<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters> noiseRegistry(double amplitudeA) {
         var r=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS,com.mojang.serialization.Lifecycle.stable());
-        r.add(noiseKey("a"),new net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters(-3,1.0),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
+        r.add(noiseKey("a"),new net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters(-3,amplitudeA),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
         r.add(noiseKey("b"),new net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters(-2,0.5),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
         r.freeze(); return r;
     }
@@ -287,12 +291,19 @@ class Minecraft121SettingsCanonicalizerTest {
         rejects("GRAPH_FAILED",c::drain);rejects("GRAPH_FAILED",g::finish);
     }
 
+    /** 以獨立registry擷取a（amplitude指定）的完整圖bytes，作為比對基準。 */
+    private static byte[] independentNoiseBytes(double amplitudeA) {
+        var g=graph();var c=closure(g,noiseRegistry(amplitudeA));c.reference(ROOT,"value",noiseKey("a"));c.drain();return g.finish();
+    }
     @Test void sameTypedIdChangedNativeValueChangesOwnedBytes() {
-        var r=noiseRegistry();var g=graph();var c=closure(g,r);c.reference(ROOT,"value",noiseKey("a"));c.drain();var before=g.finish();
+        var r=noiseRegistry();var g=graph();var c=closure(g,r);c.reference(ROOT,"value",noiseKey("a"));c.drain();
+        // finish結果會快取：先drain、再改原生值，最後才第一次finish；舊圖若仍讀可變來源才會被抓到。
         r.get(noiseKey("a")).amplitudes().set(0,0.25);
-        assertArrayEquals(before,g.finish(),"完成圖不得持有可變原生值");
+        var original=independentNoiseBytes(1.0);var changed=independentNoiseBytes(0.25);
+        assertFalse(Arrays.equals(original,changed),"fixture的兩個amplitude須產生不同bytes");
+        assertArrayEquals(original,g.finish(),"drain時的原生值須已由舊圖擁有");
         var h=graph();var d=closure(h,r);d.reference(ROOT,"value",noiseKey("a"));d.drain();
-        assertFalse(Arrays.equals(before,h.finish()),"同id的新原生內容不得沿用舊payload");
+        assertArrayEquals(changed,h.finish(),"同id的新原生內容不得沿用舊payload，新closure須反映新值");
     }
 
     @Test void endNativeBridgesHitRealOwnersAndOwnSealBytes() throws Exception {
@@ -865,40 +876,35 @@ class Minecraft121SettingsCanonicalizerTest {
     @Test void namedProcessorChecksEveryElementNotOnlyTheFirst() {
         var trailingNull=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>();
         trailingNull.add(net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE);trailingNull.add(null);
-        var cases=java.util.List.<java.util.List<net.minecraft.structure.processor.StructureProcessor>>of(
-                java.util.List.of(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE,
-                        new net.minecraft.structure.processor.BlockIgnoreStructureProcessor(java.util.List.of())),trailingNull);
-        var codes=java.util.List.of("UNSUPPORTED_PROCESSOR_TYPE","PROCESSOR_LIST_CHANGED");
-        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
-        for(int index=0;index<cases.size();index++) {
-            final int i=index;
-            checks.add(()->assertAll("subcase="+codes.get(i),()->{
-                var registries=processorRegistries("test:bad",new net.minecraft.structure.processor.StructureProcessorList(cases.get(i)));
-                var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
-                        net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
-                try {
-                    var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
-                    c.reference(ROOT,"processor",processorKey("test:bad"));
-                    rejects(codes.get(i),c::drain);rejects("GRAPH_FAILED",g::finish);
-                } finally {resources.close();}
-            }));
-        }
-        assertAll(checks);
+        // 兩案都由require拒絕，不帶cause。
+        assertAll(
+                ()->processorRejects("UNSUPPORTED_PROCESSOR_TYPE","subcase=UNSUPPORTED_PROCESSOR_TYPE（第二項為BlockIgnore）",
+                        java.util.List.of(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE,
+                                new net.minecraft.structure.processor.BlockIgnoreStructureProcessor(java.util.List.of())),null),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","subcase=PROCESSOR_LIST_CHANGED（尾端null）",trailingNull,null));
+    }
+    /** Q2用：ROOT payload與reference都在呼叫端的rejects之外完成，回傳尚未drain的closure。 */
+    private static Minecraft121RegistryClosure processorPayloadClosure(Minecraft121SettingsGraph g,int count,
+            net.minecraft.resource.ResourceManager resources) {
+        var nop=(net.minecraft.structure.processor.StructureProcessor)net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
+        g.payload(ROOT,NbtInt.of(1));
+        var c=new Minecraft121RegistryClosure(g,processorRegistries("test:payload",
+                new net.minecraft.structure.processor.StructureProcessorList(java.util.Collections.nCopies(count,nop))),resources);
+        c.reference(ROOT,"processor",processorKey("test:payload"));
+        return c;
     }
     @Test void namedProcessorPayloadIsBoundedByGraphCanonicalBudgetDuringDrain() {
-        var nop=(net.minecraft.structure.processor.StructureProcessor)net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
         var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
                 net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
         try {
-            // 同一組limits：ROOT、reference與1項payload都放得下，4096項payload放不下；reference須成功，拒絕只能發生在drain內的processor payload。
-            for(int count:new int[]{1,4096}) {
-                var g=limited(10,10,10,10,100,134217728,2048,128);g.payload(ROOT,NbtInt.of(1));
-                var c=new Minecraft121RegistryClosure(g,processorRegistries("test:payload",
-                        new net.minecraft.structure.processor.StructureProcessorList(java.util.Collections.nCopies(count,nop))),resources);
-                c.reference(ROOT,"processor",processorKey("test:payload"));
-                if(count==1) {c.drain();assertTrue(g.finish().length>0,"小payload在同一組limits下須可完成");}
-                else {rejects("BUDGET_CANONICAL",c::drain);rejects("GRAPH_FAILED",g::finish);}
-            }
+            // 同一組limits：ROOT、reference與1項payload都放得下，4096項payload放不下；拒絕只能發生在drain內的processor payload。
+            assertAll(
+                    ()->assertAll("subcase=count=1",()->{
+                        var g=limited(10,10,10,10,100,134217728,2048,128);var c=processorPayloadClosure(g,1,resources);
+                        c.drain();assertTrue(g.finish().length>0,"小payload在同一組limits下須可完成");}),
+                    ()->assertAll("subcase=count=4096",()->{
+                        var g=limited(10,10,10,10,100,134217728,2048,128);var c=processorPayloadClosure(g,4096,resources);
+                        rejects("BUDGET_CANONICAL",c::drain);rejects("GRAPH_FAILED",g::finish);}));
         } finally {resources.close();}
     }
     @Test void namedProcessorCountCapIsIndependentOfGraphBudget() {
@@ -913,11 +919,6 @@ class Minecraft121SettingsCanonicalizerTest {
             var g=graph();var c=new Minecraft121RegistryClosure(g,tooLarge,resources);
             c.reference(ROOT,"processor",processorKey("test:large"));
             rejects("BUDGET_PROCESSORS",c::drain);rejects("GRAPH_FAILED",g::finish);
-            var small=limited(10,10,10,10,100,1000,8,10);
-            var d=new Minecraft121RegistryClosure(small,processorRegistries("test:small",
-                    new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(nop))),resources);
-            rejects("BUDGET_CANONICAL",()->{d.reference(ROOT,"processor",processorKey("test:small"));d.drain();});
-            rejects("GRAPH_FAILED",small::finish);
         } finally {resources.close();}
     }
     @Test void namedProcessorMissingTargetWrongRegistryAndInlineFailClosed() {
@@ -959,9 +960,12 @@ class Minecraft121SettingsCanonicalizerTest {
             } finally {resources.close();}
         }
     }
-    /** 期望drain以PROCESSOR_LIST_CHANGED拒絕並毒化Graph；回傳Failure供呼叫端再驗原因例外。 */
-    private static Minecraft121SettingsGraph.Failure processorListChanged(String label,
-            java.util.List<net.minecraft.structure.processor.StructureProcessor> list) {
+    /**
+     * 期望drain以code拒絕並毒化Graph。expectedCause為null時斷言沒有cause（require路徑），
+     * 否則斷言cause為該型別；回傳Failure供呼叫端再驗。reference在assertThrows之外，失敗即為ERROR。
+     */
+    private static Minecraft121SettingsGraph.Failure processorRejects(String code,String label,
+            java.util.List<net.minecraft.structure.processor.StructureProcessor> list,Class<? extends Throwable> expectedCause) {
         var registries=processorRegistries("test:bad",new net.minecraft.structure.processor.StructureProcessorList(list));
         var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
                 net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
@@ -969,7 +973,9 @@ class Minecraft121SettingsCanonicalizerTest {
             var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
             c.reference(ROOT,"processor",processorKey("test:bad"));
             var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,c::drain,label);
-            assertEquals("PROCESSOR_LIST_CHANGED",failure.getMessage(),label);
+            assertEquals(code,failure.getMessage(),label);
+            if(expectedCause==null)assertNull(failure.getCause(),label+"：require路徑不得帶cause");
+            else assertInstanceOf(expectedCause,failure.getCause(),label+"：須保留原因例外");
             assertEquals("GRAPH_FAILED",assertThrows(Minecraft121SettingsGraph.Failure.class,g::finish,label).getMessage(),label);
             return failure;
         } finally {resources.close();}
@@ -1024,16 +1030,14 @@ class Minecraft121SettingsCanonicalizerTest {
         };
         verifyLonger.add(nop);verifyLonger.add(nop);
         assertAll(
-                ()->processorListChanged("getList()==null",null),
-                ()->assertInstanceOf(UnsupportedOperationException.class,
-                        processorListChanged("size()丟例外",sizeFails).getCause(),"size()丟例外：須保留原因例外"),
-                ()->processorListChanged("清單比size短",shorter),
-                ()->assertInstanceOf(java.util.ConcurrentModificationException.class,
-                        processorListChanged("迭代中結構性add（CME）",structural).getCause(),"CME：須保留原因例外"),
-                ()->processorListChanged("第一遍後size改變",grownAfterCopy),
-                ()->processorListChanged("第二遍較短",verifyShorter),
-                ()->processorListChanged("第二遍較長",verifyLonger),
-                ()->processorListChanged("第二遍後size改變",grownAfterVerify));
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","getList()==null",null,null),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","size()丟例外",sizeFails,UnsupportedOperationException.class),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","清單比size短",shorter,null),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","迭代中結構性add（CME）",structural,java.util.ConcurrentModificationException.class),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","第一遍後size改變",grownAfterCopy,null),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","第二遍較短",verifyShorter,null),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","第二遍較長",verifyLonger,null),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","第二遍後size改變",grownAfterVerify,null));
     }
     @Test void namedProcessorListNegativeSizeAndExhaustedIteratorFailAsChanged() {
         var nop=(net.minecraft.structure.processor.StructureProcessor)net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
@@ -1047,10 +1051,43 @@ class Minecraft121SettingsCanonicalizerTest {
             @Override public net.minecraft.structure.processor.StructureProcessor get(int index){throw new IndexOutOfBoundsException(index);}
         };
         assertAll(
-                ()->processorListChanged("size()為負",negative),
-                ()->assertInstanceOf(java.util.NoSuchElementException.class,
-                        processorListChanged("iterator提早耗盡（NoSuchElementException）",exhausted).getCause(),
-                        "NoSuchElementException：須保留原因例外"));
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","size()為負",negative,null),
+                ()->processorRejects("PROCESSOR_LIST_CHANGED","iterator提早耗盡（NoSuchElementException）",exhausted,
+                        java.util.NoSuchElementException.class));
+    }
+    @Test void namedProcessorListLaterReadFailuresNormalizeWithCause() {
+        var nop=(net.minecraft.structure.processor.StructureProcessor)net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
+        // production依序讀size：配置前、第一遍後、第二遍後；iterator()：第一遍、第二遍。以下三點都在第一次size()之後。
+        var secondSizeFails=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            int reads;
+            @Override public int size(){if(++reads==2)throw new UnsupportedOperationException("fixture second size");return super.size();}
+        };
+        secondSizeFails.add(nop);secondSizeFails.add(nop);
+        // IllegalStateException是Failure的父類：須被正規化，不可被當成已編碼的Failure原樣交回。
+        var secondIteratorFails=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            int iterators;
+            @Override public java.util.Iterator<net.minecraft.structure.processor.StructureProcessor> iterator() {
+                if(++iterators==2)throw new IllegalStateException("fixture second iterator");
+                return super.iterator();
+            }
+        };
+        secondIteratorFails.add(nop);secondIteratorFails.add(nop);
+        var hasNextFails=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            @Override public java.util.Iterator<net.minecraft.structure.processor.StructureProcessor> iterator() {
+                return new java.util.Iterator<>() {
+                    @Override public boolean hasNext(){throw new UnsupportedOperationException("fixture hasNext");}
+                    @Override public net.minecraft.structure.processor.StructureProcessor next(){throw new AssertionError("hasNext已丟例外，不應呼叫next");}
+                };
+            }
+        };
+        hasNextFails.add(nop);
+        assertAll(
+                ()->assertEquals("fixture second size",processorRejects("PROCESSOR_LIST_CHANGED","第二次size()丟UOE",
+                        secondSizeFails,UnsupportedOperationException.class).getCause().getMessage(),"第二次size()：cause須為fixture例外"),
+                ()->assertEquals("fixture second iterator",processorRejects("PROCESSOR_LIST_CHANGED","第二次iterator()丟ISE",
+                        secondIteratorFails,IllegalStateException.class).getCause().getMessage(),"第二次iterator()：cause須為fixture例外"),
+                ()->assertEquals("fixture hasNext",processorRejects("PROCESSOR_LIST_CHANGED","第一遍hasNext()丟UOE",
+                        hasNextFails,UnsupportedOperationException.class).getCause().getMessage(),"hasNext()：cause須為fixture例外"));
     }
     @Test void namedProcessorSameSizeReplacementDuringCopyFailsClosed() {
         var changing=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
@@ -1227,18 +1264,50 @@ class Minecraft121SettingsCanonicalizerTest {
             });rejects("GRAPH_FAILED",g::finish);
         }
     }
+    /** 在任何lease之外先對fixture的同一個pool encode一次，讓pool codec的冷成本不落在drain的lease內；只降低風險。 */
+    private static void warmPoolCodec(PoolFixture f) {
+        net.minecraft.structure.pool.StructurePool.CODEC.encodeStart(f.registries.getOps(NbtOps.INSTANCE),
+                f.registries.get(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL).get(poolKey("test:pool"))).getOrThrow();
+    }
     @Test void templateStateEdgeResourceRawCanonicalBudgetOverflowRejected(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
-        String[] codes={"BUDGET_EDGES","BUDGET_STATES","BUDGET_RESOURCES","BUDGET_RAW","BUDGET_CANONICAL"};
+        // BUDGET_CANONICAL子案已拆到templateCanonicalBudgetRejectsInsideDrainAtExactBoundary：舊的canonical=128在reference就被拒，從未進drain。
+        String[] codes={"BUDGET_EDGES","BUDGET_STATES","BUDGET_RESOURCES","BUDGET_RAW"};
         // 任何lease之前先算blank charge，本方法只拿它暖機：BUDGET_RESOURCES是本方法第一個在lease內capture的子案，先讓JVM首次的原生blank template載入落在lease外。
-        // 100ms量的是hold，不排除冷類別載入；這只降低風險，lease內仍有其他冷成本（例如BUDGET_EDGES的pool codec），production冷啟動仍屬live hold I-1。
+        // 每個子案也先在lease外對同一個pool encode一次（BUDGET_EDGES是第一個drain的子案），讓pool codec的encode冷成本不落在lease內。
+        // 100ms量的是hold，不排除冷類別載入；這些暖機只降低風險，不代表lease內已沒有冷成本，production冷啟動仍屬live hold I-1。
         Minecraft121TemplateValueContracts.measure(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),0);
         var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
         for(int index=0;index<codes.length;index++){final int i=index;checks.add(()->assertAll("subcase="+codes[i],()->{try(var f=new PoolFixture(root.resolve("budget-"+i),single("test:a"),single("test:b"))) {
-            var g=limited(100,i==0?1:100,i==1?1:100,i==2?1:10,i==3?1:10000,100000,i==4?128:100000,128);
+            warmPoolCodec(f);
+            var g=limited(100,i==0?1:100,i==1?1:100,i==2?1:10,i==3?1:10000,100000,100000,128);
             var c=new Minecraft121RegistryClosure(g,f.context);final String code=codes[i];
-            rejects(code,()->{g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();});rejects("GRAPH_FAILED",g::finish);
+            // ROOT payload與reference放在rejects之外：它們若在drain之前就失敗，會成為ERROR，不會被當成預期的拒絕。
+            g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));
+            rejects(code,c::drain);rejects("GRAPH_FAILED",g::finish);
         }}));}
         assertAll(checks);
+    }
+    @Test void templateCanonicalBudgetRejectsInsideDrainAtExactBoundary(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        // 暖機同上，只降低風險：任何lease之前先算blank charge，並對同一個pool encode一次。
+        Minecraft121TemplateValueContracts.measure(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),0);
+        try(var f=new PoolFixture(root,single("test:a"),single("test:b"))) {
+            warmPoolCodec(f);
+            // Graph的canonicalBytes（初值加上每次reserve、payload與reference的累加）恰等於finish輸出長度；此路徑不收nativeState費。
+            // 先以標準limits完整drain＋finish量出L；canonical=L須完成且bytes相同，canonical=L-1須在drain內被拒。
+            var standard=new Minecraft121SettingsGraph();var s=new Minecraft121RegistryClosure(standard,f.context);
+            standard.payload(ROOT,NbtInt.of(1));s.reference(ROOT,"pool",poolKey("test:pool"));s.drain();
+            byte[] expected=standard.finish();long boundary=expected.length;
+            System.out.println("TEMPLATE_CANONICAL_L="+boundary);
+            assertAll(
+                    ()->assertAll("subcase=canonical=L",()->{
+                        var g=limited(100,100,100,10,10000,100000,boundary,128);var c=new Minecraft121RegistryClosure(g,f.context);
+                        g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));
+                        c.drain();assertArrayEquals(expected,g.finish(),"canonical恰為L時須完成且bytes與標準limits相同");}),
+                    ()->assertAll("subcase=canonical=L-1",()->{
+                        var g=limited(100,100,100,10,10000,100000,boundary-1,128);var c=new Minecraft121RegistryClosure(g,f.context);
+                        g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));
+                        rejects("BUDGET_CANONICAL",c::drain);rejects("GRAPH_FAILED",g::finish);}));
+        }
     }
     private static Minecraft121RegistryClosure repeatedTemplate(Minecraft121SettingsGraph g,PoolFixture f,int occurrences) {
         g.payload(ROOT,NbtInt.of(1));var c=new Minecraft121RegistryClosure(g,f.context);
