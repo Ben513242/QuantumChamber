@@ -173,6 +173,9 @@ class Minecraft121SettingsCanonicalizerTest {
 
     @org.junit.jupiter.api.BeforeAll static void bootstrapRegistryFixture() {
         net.minecraft.SharedConstants.createGameVersion(); net.minecraft.Bootstrap.initialize();
+        // ModBlocks的既有class init（註冊2個mod block）必須在任何test之前觸發，與MembraneStateTest相同：Fabric下Bootstrap不freeze，
+        // 但EndFixture等經CombinedDynamicRegistries的toImmutable()會把static registry freeze；之後才init會失敗，並使ModBlocks在此JVM永久不可用。
+        dev.quantumchamber.registry.ModBlocks.register();
     }
     private static net.minecraft.registry.RegistryKey<net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters> noiseKey(String id) {
         return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS, net.minecraft.util.Identifier.of("minecraft",id));
@@ -1194,9 +1197,21 @@ class Minecraft121SettingsCanonicalizerTest {
             var contexts=new Minecraft121SettingsContexts(this);contexts.publishInitial(new Minecraft121SettingsContexts.Sources(registries,rm,manager,session,true));context=contexts.acquire(this);
         }
         void present(String id) throws Exception {
+            NbtIo.writeCompressed(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),savedTemplate(id));
+        }
+        /** 從classpath的固定1.21 JAR複製vanilla模板原始bytes到saved路徑（不改寫內容）；回傳解出的原始NBT供fixture前提與暖機使用。 */
+        NbtCompound presentVanilla(String id) throws Exception {
+            var key=net.minecraft.util.Identifier.of(id);byte[] bytes;
+            try(var in=Minecraft121SettingsCanonicalizerTest.class.getResourceAsStream("/data/"+key.getNamespace()+"/structure/"+key.getPath()+".nbt")) {
+                assertNotNull(in,"fixture前提：classpath須有vanilla模板 "+id);bytes=in.readAllBytes();
+            }
+            java.nio.file.Files.write(savedTemplate(id),bytes);
+            return NbtIo.readCompressed(new java.io.ByteArrayInputStream(bytes),NbtSizeTracker.ofUnlimitedBytes());
+        }
+        private java.nio.file.Path savedTemplate(String id) throws Exception {
             var key=net.minecraft.util.Identifier.of(id);var path=session.getDirectory(net.minecraft.util.WorldSavePath.GENERATED)
                 .resolve(key.getNamespace()+"/structures/"+key.getPath()+".nbt");java.nio.file.Files.createDirectories(path.getParent());
-            NbtIo.writeCompressed(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),path);
+            return path;
         }
         @Override public void close() throws Exception {try{session.close();}finally{rm.close();}}
     }
@@ -1264,7 +1279,7 @@ class Minecraft121SettingsCanonicalizerTest {
             });rejects("GRAPH_FAILED",g::finish);
         }
     }
-    /** 在任何lease之外先對fixture的同一個pool encode一次，讓pool codec的冷成本不落在drain的lease內；只降低風險。 */
+    /** 在任何lease之外先對fixture的同一個pool encode一次，降低pool codec encode路徑的冷成本落在drain lease內的風險（parse等路徑未暖機）。 */
     private static void warmPoolCodec(PoolFixture f) {
         net.minecraft.structure.pool.StructurePool.CODEC.encodeStart(f.registries.getOps(NbtOps.INSTANCE),
                 f.registries.get(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL).get(poolKey("test:pool"))).getOrThrow();
@@ -1294,18 +1309,23 @@ class Minecraft121SettingsCanonicalizerTest {
             warmPoolCodec(f);
             // Graph的canonicalBytes（初值加上每次reserve、payload與reference的累加）恰等於finish輸出長度；此路徑不收nativeState費。
             // 先以標準limits完整drain＋finish量出L；canonical=L須完成且bytes相同，canonical=L-1須在drain內被拒。
-            var standard=new Minecraft121SettingsGraph();var s=new Minecraft121RegistryClosure(standard,f.context);
-            standard.payload(ROOT,NbtInt.of(1));s.reference(ROOT,"pool",poolKey("test:pool"));s.drain();
+            // 三張圖由同一個工廠建出，只差canonical一維：以Limits.standard()為底，量測用的就是Limits.standard()本身。
+            var standardLimits=Minecraft121SettingsGraph.Limits.standard();
+            java.util.function.LongFunction<Minecraft121SettingsGraph> graphWithCanonical=canonical->new Minecraft121SettingsGraph(
+                    new Minecraft121SettingsGraph.Limits(standardLimits.nodes(),standardLimits.edges(),standardLimits.states(),
+                            standardLimits.resources(),standardLimits.raw(),standardLimits.totalRaw(),canonical,standardLimits.depth()));
+            // ROOT payload與reference都在呼叫端的rejects之外完成，回傳尚未drain的closure。
+            java.util.function.Function<Minecraft121SettingsGraph,Minecraft121RegistryClosure> poolClosure=g->{
+                var c=new Minecraft121RegistryClosure(g,f.context);g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));return c;};
+            var standard=graphWithCanonical.apply(standardLimits.canonical());poolClosure.apply(standard).drain();
             byte[] expected=standard.finish();long boundary=expected.length;
             System.out.println("TEMPLATE_CANONICAL_L="+boundary);
             assertAll(
                     ()->assertAll("subcase=canonical=L",()->{
-                        var g=limited(100,100,100,10,10000,100000,boundary,128);var c=new Minecraft121RegistryClosure(g,f.context);
-                        g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));
-                        c.drain();assertArrayEquals(expected,g.finish(),"canonical恰為L時須完成且bytes與標準limits相同");}),
+                        var g=graphWithCanonical.apply(boundary);poolClosure.apply(g).drain();
+                        assertArrayEquals(expected,g.finish(),"canonical恰為L時須完成且bytes與標準limits相同");}),
                     ()->assertAll("subcase=canonical=L-1",()->{
-                        var g=limited(100,100,100,10,10000,100000,boundary-1,128);var c=new Minecraft121RegistryClosure(g,f.context);
-                        g.payload(ROOT,NbtInt.of(1));c.reference(ROOT,"pool",poolKey("test:pool"));
+                        var g=graphWithCanonical.apply(boundary-1);var c=poolClosure.apply(g);
                         rejects("BUDGET_CANONICAL",c::drain);rejects("GRAPH_FAILED",g::finish);}));
         }
     }
@@ -1339,6 +1359,212 @@ class Minecraft121SettingsCanonicalizerTest {
             codec.parse(ops,encoded.getOrThrow()).error().orElseThrow().message());
         System.out.println("MISSING_PROCESSOR_REGISTRY_NATIVE_CAUSE="+message);
         assertTrue(message.contains("processor_list"),message);
+    }
+
+    // ===== C1d-D1b-1：BLOCK static registry leaf（只經closure的既有API；預期payload由測試端獨立算出，不經production leaf） =====
+    private static final String BLOCK_LEAF_CONTRACT="quantumchamber:m6-static-block-leaf-v1";
+    private static net.minecraft.registry.RegistryKey<net.minecraft.block.Block> blockKey(String id) {
+        return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.BLOCK,net.minecraft.util.Identifier.of(id));
+    }
+    private static Minecraft121SettingsGraph.Key blockNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,net.minecraft.registry.RegistryKeys.BLOCK.getValue().toString(),id);
+    }
+    /**
+     * 測試端獨立算出的BLOCK leaf：沿用B28的DefaultState（NbtHelper.fromBlockState）與PropertyDomains（getValues的原生次序）形狀；
+     * vanilla block的RequiredFeatures直接寫成["minecraft:vanilla"]，不經FEATURE_MANAGER。
+     */
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private static NbtCompound expectedBlockLeaf(net.minecraft.block.Block block) {
+        var leaf=new NbtCompound();leaf.putString("Contract",BLOCK_LEAF_CONTRACT);
+        leaf.put("DefaultState",NbtHelper.fromBlockState(block.getDefaultState()));
+        var domains=new NbtCompound();
+        for(var property:block.getStateManager().getProperties()) {
+            var values=new NbtList();
+            for(var value:property.getValues())values.add(NbtString.of(((net.minecraft.state.property.Property)property).name((Comparable)value)));
+            domains.put(property.getName(),values);
+        }
+        leaf.put("PropertyDomains",domains);
+        var features=new NbtList();features.add(NbtString.of("minecraft:vanilla"));leaf.put("RequiredFeatures",features);
+        return leaf;
+    }
+    private record CanonicalEdge(Minecraft121SettingsGraph.Key from,String path,Minecraft121SettingsGraph.Key target,String aliasScope,String use) {}
+    private record CanonicalGraph(java.util.Map<Minecraft121SettingsGraph.Key,byte[]> nodes,java.util.List<CanonicalEdge> edges) {}
+    /**
+     * 測試用的canonical讀取：依Graph.finish的格式（DOMAIN、node數、每個node的key與payload、edge數、每條edge）
+     * 與Encoder.nbt的編碼，解出node key、payload bytes與edges；必須恰好讀完全部bytes。
+     */
+    private static CanonicalGraph canonicalNodes(byte[] bytes) {
+        var in=java.nio.ByteBuffer.wrap(bytes);
+        assertEquals("quantumchamber:m6:settings-graph:v1",canonicalText(in));
+        var nodes=new java.util.LinkedHashMap<Minecraft121SettingsGraph.Key,byte[]>();
+        for(int i=0,count=in.getInt();i<count;i++) {
+            var key=canonicalKey(in);int start=in.position();skipCanonicalNbt(in);
+            assertNull(nodes.put(key,Arrays.copyOfRange(bytes,start,in.position())),"node key不得重複");
+        }
+        var edges=new java.util.ArrayList<CanonicalEdge>();
+        for(int i=0,count=in.getInt();i<count;i++)
+            edges.add(new CanonicalEdge(canonicalKey(in),canonicalText(in),canonicalKey(in),canonicalText(in),canonicalText(in)));
+        assertFalse(in.hasRemaining(),"canonical bytes須恰好讀完");
+        return new CanonicalGraph(nodes,edges);
+    }
+    private static String canonicalText(java.nio.ByteBuffer in) {
+        byte[] value=new byte[in.getInt()];in.get(value);return new String(value,java.nio.charset.StandardCharsets.UTF_8);
+    }
+    private static Minecraft121SettingsGraph.Key canonicalKey(java.nio.ByteBuffer in) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.valueOf(canonicalText(in)),canonicalText(in),canonicalText(in));
+    }
+    private static void skipCanonicalNbt(java.nio.ByteBuffer in) {
+        byte type=in.get();
+        switch(type) {
+            case NbtElement.BYTE_TYPE -> in.get();
+            case NbtElement.SHORT_TYPE -> in.getShort();
+            case NbtElement.INT_TYPE,NbtElement.FLOAT_TYPE -> in.getInt();
+            case NbtElement.LONG_TYPE,NbtElement.DOUBLE_TYPE -> in.getLong();
+            case NbtElement.STRING_TYPE -> canonicalText(in);
+            case NbtElement.BYTE_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+count);}
+            case NbtElement.INT_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+4*count);}
+            case NbtElement.LONG_ARRAY_TYPE -> {int count=in.getInt();in.position(in.position()+8*count);}
+            case NbtElement.LIST_TYPE -> {for(int i=0,count=in.getInt();i<count;i++)skipCanonicalNbt(in);}
+            case NbtElement.COMPOUND_TYPE -> {for(int i=0,count=in.getInt();i<count;i++){canonicalText(in);skipCanonicalNbt(in);}}
+            default -> fail("未知的canonical NBT type "+type);
+        }
+    }
+    /** 單一NBT值在canonical中的payload bytes（以只含ROOT的圖編碼後取出）。 */
+    private static byte[] payloadBytes(NbtElement value) {
+        return canonicalNodes(bytes(value)).nodes().get(ROOT);
+    }
+    private static java.util.Set<String> blockNodeIds(CanonicalGraph graph) {
+        var ids=new java.util.TreeSet<String>();
+        for(var key:graph.nodes().keySet())
+            if(key.kind()==Minecraft121SettingsGraph.Kind.REGISTRY&&key.registry().equals(net.minecraft.registry.RegistryKeys.BLOCK.getValue().toString()))ids.add(key.id());
+        return ids;
+    }
+    private static java.util.List<String> paletteNames(NbtCompound raw) {
+        var names=new java.util.ArrayList<String>();
+        for(var entry:raw.getList("palette",NbtElement.COMPOUND_TYPE))names.add(((NbtCompound)entry).getString("Name"));
+        return names;
+    }
+    /** 在任何lease之外先走一次vanilla模板會用到的原生路徑（blank charge、隔離重建、palette的BlockState codec與NbtHelper），只降低冷成本落在lease內的風險。 */
+    private static void warmVanillaTemplate(PoolFixture f,NbtCompound raw) {
+        Minecraft121TemplateValueContracts.measure(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),0);
+        var lookup=net.minecraft.registry.Registries.BLOCK.getReadOnlyWrapper();
+        var rebuilt=new net.minecraft.structure.StructureTemplate();rebuilt.readNbt(lookup,raw.copy());
+        Minecraft121TemplateValueContracts.measure(rebuilt.writeNbt(new NbtCompound()),0);
+        var ops=f.registries.getOps(NbtOps.INSTANCE);
+        for(var entry:raw.getList("palette",NbtElement.COMPOUND_TYPE)) {
+            var state=net.minecraft.block.BlockState.CODEC.parse(ops,entry).getOrThrow();
+            NbtHelper.toBlockState(lookup,NbtHelper.fromBlockState(state));
+        }
+    }
+
+    @Test void blockRegistryLeafClosesNamedReferenceAndEntry() {
+        var chest=net.minecraft.block.Blocks.CHEST;
+        var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);
+        c.reference(ROOT,"stone",blockKey("minecraft:stone"));c.entry(ROOT,"chest",chest.getRegistryEntry());c.drain();
+        var expected=graph();
+        expected.payload(blockNode("minecraft:stone"),expectedBlockLeaf(net.minecraft.block.Blocks.STONE));
+        expected.payload(blockNode("minecraft:chest"),expectedBlockLeaf(chest));
+        expected.expanded(expected.reference(ROOT,"stone",blockNode("minecraft:stone"),"ordinary","required"));
+        expected.expanded(expected.reference(ROOT,"chest",blockNode("minecraft:chest"),"ordinary","entry"));
+        assertArrayEquals(expected.finish(),g.finish(),"named reference與entry兩條邊都保留，payload等於另一張圖獨立算出的BLOCK leaf");
+    }
+    @Test void templatePaletteBlocksCloseThroughStaticLeaf(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        String id="minecraft:fossil/skull_1";
+        try(var f=new PoolFixture(root,single(id))) {
+            var raw=f.presentVanilla(id);var palette=paletteNames(raw);
+            assertEquals(java.util.List.of("minecraft:bone_block","minecraft:bone_block","minecraft:bone_block"),palette,
+                    "fixture前提：skull_1的palette是bone_block的三個axis");
+            // 任何lease之前先暖機，只降低風險：pool codec的encode、vanilla模板的隔離重建與palette的原生state路徑。
+            warmPoolCodec(f);warmVanillaTemplate(f,raw);
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();
+            var canonical=canonicalNodes(g.finish());
+            var template=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.TEMPLATE,"minecraft:structure",id);
+            var paletteTargets=canonical.edges().stream().filter(e->e.from().equals(template)&&e.path().startsWith("palettes/0/"))
+                    .map(e->e.target().toString()).sorted().toList();
+            var expectedTargets=palette.stream().map(name->blockNode(name).toString()).sorted().toList();
+            assertAll(
+                    ()->assertEquals(expectedTargets,paletteTargets,"(i) palette的每一項都有一條指向REGISTRY BLOCK node的邊"),
+                    ()->assertEquals(new java.util.TreeSet<>(palette),blockNodeIds(canonical),"(iii) BLOCK node集合恰好等於palette的block集合"),
+                    ()->{for(String block:blockNodeIds(canonical))assertArrayEquals(payloadBytes(expectedBlockLeaf(
+                            net.minecraft.registry.Registries.BLOCK.get(net.minecraft.util.Identifier.of(block)))),
+                            canonical.nodes().get(blockNode(block)),"(ii) "+block+"的payload bytes須等於獨立算出的BLOCK leaf");});
+        }
+    }
+    @Test void blockLeafRejectsForeignRegistryInstance() {
+        // 局部registry是新物件，不登記到Registries.REGISTRIES；STONE以standalone entry加入，不改動全域registry或STONE本身。
+        var local=new net.minecraft.registry.SimpleRegistry<net.minecraft.block.Block>(net.minecraft.registry.RegistryKeys.BLOCK,
+                com.mojang.serialization.Lifecycle.stable());
+        local.add(blockKey("minecraft:stone"),net.minecraft.block.Blocks.STONE,net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);local.freeze();
+        var g=graph();var c=closure(g,local);c.reference(ROOT,"stone",blockKey("minecraft:stone"));
+        rejects("STATIC_REGISTRY_OWNER_MISMATCH",c::drain);rejects("GRAPH_FAILED",g::finish);
+    }
+    @Test void blockLeafRejectsForeignSourceBlock() {
+        // ModBlocks的既有class init已在bootstrapRegistryFixture觸發（static registry freeze之前）；本測試只讀，不新增任何註冊。
+        var bulkhead=dev.quantumchamber.registry.ModBlocks.QUANTUM_BULKHEAD;var key=blockKey("quantumchamber:quantum_bulkhead");
+        assertSame(bulkhead,net.minecraft.registry.Registries.BLOCK.get(key),"fixture前提：bulkhead已在全域BLOCK registry");
+        var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);c.reference(ROOT,"foreign",key);
+        rejects("NATIVE_DEFINITION_SOURCE",c::drain);rejects("GRAPH_FAILED",g::finish);
+    }
+    @Test void blockLeafMissingTargetAndBlockOnlyIdInItemRegistry() {
+        var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);c.reference(ROOT,"missing",blockKey("minecraft:not_a_block"));
+        rejects("REQUIRED_REGISTRY_TARGET_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);
+        var fire=net.minecraft.util.Identifier.ofVanilla("fire");var items=net.minecraft.registry.Registries.ITEM;
+        assertTrue(net.minecraft.registry.Registries.BLOCK.containsId(fire),"fixture前提：fire是block");
+        assertFalse(items.containsId(fire),"fixture前提：fire沒有item");
+        assertSame(items.get(items.getDefaultId()),items.get(fire),"fixture前提：DefaultedRegistry的get(Identifier)會回落到air");
+        var registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(net.minecraft.registry.Registries.BLOCK,items));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var h=graph();var d=new Minecraft121RegistryClosure(h,registries,resources);
+            d.reference(ROOT,"block-only",net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.ITEM,fire));
+            rejects("REQUIRED_REGISTRY_TARGET_MISSING",d::drain);rejects("GRAPH_FAILED",h::finish);
+        } finally {resources.close();}
+    }
+    @Test void blockLeafInlineDirectEntryRejected() {
+        var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);
+        rejects("UNSUPPORTED_INLINE_ENTRY",()->c.entry(ROOT,"inline",net.minecraft.registry.entry.RegistryEntry.of(net.minecraft.block.Blocks.STONE)));
+        rejects("GRAPH_FAILED",g::finish);
+    }
+    @Test void blockLeafSharedNodeKeepsEveryOccurrenceEdge() {
+        var g=graph();var c=closure(g,net.minecraft.registry.Registries.BLOCK);
+        c.reference(ROOT,"first",blockKey("minecraft:stone"));c.reference(ROOT,"second",blockKey("minecraft:stone"));c.drain();
+        // 只守occurrence的保留：一個BLOCK node，兩條edge都完成（finish要求每個occurrence都已完成）；不涉及leaf的子邊。
+        var canonical=canonicalNodes(g.finish());var stone=blockNode("minecraft:stone");
+        assertEquals(java.util.Set.of(ROOT,stone),canonical.nodes().keySet());
+        assertEquals(java.util.List.of(new CanonicalEdge(ROOT,"first",stone,"ordinary","required"),
+                new CanonicalEdge(ROOT,"second",stone,"ordinary","required")),canonical.edges());
+    }
+    @Test void templatePaletteReferencesChargeEdgeBudgetPerUse(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        String id="minecraft:fossil/skull_1";
+        try(var f=new PoolFixture(root)) {
+            var raw=f.presentVanilla(id);int palette=paletteNames(raw).size();
+            assertEquals(3,palette,"fixture前提：skull_1的palette有三項，全是bone_block");
+            // 任何lease之前先暖機，只降低風險。
+            warmVanillaTemplate(f,raw);
+            // 直接引用模板（不經pool）：ROOT→template一條，palette每一項各一條；BLOCK leaf沒有子邊。
+            // 這守的是TemplateValueContracts的palette reference逐次計費：同一個BLOCK node被引用三次，每次各收一條edge預算。
+            // 恰好足夠時drain與finish都完成；少一條時，第三次palette引用在drain內被拒（早於任何BLOCK leaf）。
+            long needed=1+palette;var standardLimits=Minecraft121SettingsGraph.Limits.standard();
+            java.util.function.LongFunction<Minecraft121SettingsGraph> graphWithEdges=edges->new Minecraft121SettingsGraph(
+                    new Minecraft121SettingsGraph.Limits(standardLimits.nodes(),edges,standardLimits.states(),standardLimits.resources(),
+                            standardLimits.raw(),standardLimits.totalRaw(),standardLimits.canonical(),standardLimits.depth()));
+            // ROOT payload與template reference都在呼叫端的rejects之外完成，回傳尚未drain的closure。
+            java.util.function.Function<Minecraft121SettingsGraph,Minecraft121RegistryClosure> templateClosure=g->{
+                var c=new Minecraft121RegistryClosure(g,f.context);g.payload(ROOT,NbtInt.of(1));
+                c.template(ROOT,"template",net.minecraft.util.Identifier.of(id),Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"palette-budget");
+                return c;};
+            assertAll(
+                    ()->assertAll("subcase=edges=1+palette（恰好足夠）",()->{
+                        var g=graphWithEdges.apply(needed);templateClosure.apply(g).drain();var canonical=canonicalNodes(g.finish());
+                        var paletteEdges=canonical.edges().stream().filter(e->e.path().startsWith("palettes/0/")).toList();
+                        assertEquals(needed,canonical.edges().size(),"每條edge都保留");
+                        assertEquals(palette,paletteEdges.size(),"palette每次引用都有自己的edge");
+                        assertTrue(paletteEdges.stream().allMatch(e->e.target().equals(blockNode("minecraft:bone_block"))),"三次引用指向同一個BLOCK node");
+                        assertEquals(java.util.Set.of("minecraft:bone_block"),blockNodeIds(canonical),"共用一個BLOCK node");}),
+                    ()->assertAll("subcase=edges=palette（恰好不足）",()->{
+                        var g=graphWithEdges.apply(needed-1);var c=templateClosure.apply(g);
+                        rejects("BUDGET_EDGES",c::drain);rejects("GRAPH_FAILED",g::finish);}));
+        }
     }
 
 }
