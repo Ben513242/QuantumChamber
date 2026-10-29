@@ -613,3 +613,8 @@
 
 - D1b-3-0 遠端 CI run `40911589298`／`40911636980` success。
 - D1b-3a code `36fdd36`：component codec 改用 lease registries 加固定 identity 證明，接受 8 型 literal／空 DEFAULT（新接受 66 件）；乾淨 Canon focused 112/112×2、LeafTest 25/25×2，完整 `run-all-8aba2dc201f94d959e0e886b6be6ea4f` 自然 END ALL0／JUnit899；spec C0/I0/M4、quality C0/I0/M3。`36fdd36` 的遠端 CI 待本筆 push 後讀回。下一步 3b。細節見 M6 note 末節。
+
+### 2026-10-30：M6 D1b-3b 結案，接 3c
+
+- 3a 遠端 CI run `40926054933`（`bb52b47`）success。
+- D1b-3b code `ff3aecc`：單一分派 per-type contract、attribute／food／直接 tool、ATTRIBUTE 與 STATUS_EFFECT leaf、ITEM 出邊；乾淨 Canon focused 115/115×2、LeafTest 34/34×2。首輪 full 因 AccessDenied 外部鎖檔（M5 已知限制）FAIL，原 root 保留；新 nonce `run-all-090bcb63a6e04cff9650b9aaba5281bd` 自然 END ALL0／JUnit911。spec C0/I0/M4、quality C0/I0/M4。`ff3aecc` 的遠端 CI 待本筆 push 後讀回。下一步 3c。細節見 M6 note 末節。

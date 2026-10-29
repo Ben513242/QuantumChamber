@@ -101,3 +101,19 @@
   - **硬性前置**：已審型別表要先改成單一分派的 per-type contract，值條件與 refs 寫在同一處，以免 ref 抽取漂移而造成 fail-open。
   - 要帶入的 Minor 見 M6 note「D1b-3a 結案」一節。
   - `36fdd36` 的遠端 CI 要等本筆 push 之後讀回。
+
+### 2026-10-30：D1b-3b 結案
+
+- 3a 遠端 CI run `40926054933` success。
+- D1b-3b code `ff3aecc` 的內容：
+  - 已審型別表改成單一分派 per-type contract，加結構測試；
+  - 接受非空 attribute_modifiers、food、只有直接引用的 tool；
+  - 新增 ATTRIBUTE 與 STATUS_EFFECT leaf；
+  - ITEM leaf 開始產生出邊，原值與重建值兩邊的 ref 逐一比對。
+
+  ITEM 被拒數從 109 降為 66。
+- 驗證與審查：具名 RED→GREEN，8 個見證；乾淨 Canon focused 115/115×2、LeafTest 34/34×2。首輪 full 因 `quantumchamber_sessions.dat` 原子移動遇到 AccessDenied 而 FAIL，屬 M5 已知的外部鎖檔限制，與 3b 無關；原 root 保留，改用新 nonce 的 `run-all-090bcb63a6e04cff9650b9aaba5281bd` 自然 END ALL0／JUnit911。spec C0/I0/M4、quality C0/I0/M4。
+- controller 裁示：
+  - hidden_effect 不可能被觀察，改為斷言它被丟棄；
+  - CodecCache 是全域的，存在等值替換的殘餘風險，修正排到 3c Step0：codec 前用已驗元素重建 attribute／tool／food 三型 record。
+- 下一步：3c。先做 Step0，清單見 M6 note「D1b-3b 結案」的「交 3c Step0 的事項」；之後做 tool 的 tag rule、TAG 節點只展開一次、tag 測試技法。wooden_shovel 與 iron_axe 會在 3c 翻轉。`ff3aecc` 的遠端 CI 要等本筆 push 之後讀回。

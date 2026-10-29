@@ -979,3 +979,84 @@ D1b-3-0 遠端 CI：docs commit `5a789fa77eeed05e63dd1b3744bed802a2d7bc63` 對�
 另有兩項交給其他切片：
 - 3d：對齊 JUKEBOX_SONG 缺席時的定碼。
 - D2：收斂 `nativeSource` 的互相依賴，並處理 container oracle 用 equals、production 用 identity 的差異。
+
+D1b-3a 遠端 CI：docs commit `bb52b471e21f23323b8cc1b9afb84c6a650f62f7`（含 code `36fdd36`）的 run `40926054933` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩個 job 都是 success。這裡只讀回 job 結論。
+
+### 2026-10-30：D1b-3b（attribute／food／直接 tool，ATTRIBUTE 與 STATUS_EFFECT leaf，ITEM 出邊）結案
+
+**commit**：`8e6b9a5`（refactor：單一分派 contract）、`c4d8549`（RED 測試）、`ff3aecc21651145de1df3c410dc9ccdc1a34c83a`（feat）。共改六個檔：ItemComponentContracts、LeafContracts、Closure、CanonicalizerTest、LeafContractsTest、Fixtures。
+
+**硬性前置（3a quality M3(a)）已完成**：
+- 已審型別表改為單一分派 `IdentityHashMap<ComponentType,Contract>`，Contract 包含值條件、refs 與 registries；literal 與空值型別明確宣告 `NO_REFS`。
+- 結構測試 `itemComponentContractTableIsSingleDispatchWithExplicitRefs` 守住這張表。
+- 子片表改用 `merge()` 合併，重疊必須明確宣告。
+
+**行為**：
+- **接受的型別**：
+  - 非空 attribute_modifiers：attribute 必須是 exact Reference；
+  - food：`using_converts_to` 必須沒有 patch、count 為 1，並在 codec 之前先驗目標 item 的 source；
+  - 只有 direct BLOCK rule 的 tool：tag rule 仍拒，屬 3c。
+- **新 leaf**：ATTRIBUTE、STATUS_EFFECT。
+  - 檢查順序：registry identity → instanceof 基底類別＋source → node 與 entry identity →（只有 STATUS_EFFECT）features → payload。
+  - payload 只有 Contract；STATUS_EFFECT 另帶 RequiredFeatures。
+- **ITEM leaf 開始產生出邊**：
+  - 步驟 6 從原值抽 ref，步驟 7b 從重建值抽 ref，兩邊逐一比對：path 不同為 `NATIVE_CODEC_ROUNDTRIP_CHANGED`，entry 不是同一物件為 `REGISTRY_ENTRY_OWNER_MISMATCH`。
+  - payload 寫入之後，才交給 ref sink；sink 沿用 `entry()` 的檢查，use 為 `item-default-component`。
+  - 出邊範例：golden_apple→regeneration／absorption、beetroot_soup→bowl、mace／trident→attack_damage／attack_speed。
+- **獨立 oracle**：`everyAcceptedVanillaItemLeafRefsMatchIndependentWalk`（設計審查 M9）。
+- **一併處理**：設計審查的 M2（Entry）、M3、M5、M9，以及 3a 兩席審查列給 3b 的事項（Javadoc 更正、診斷改為實際量測、W-ID-ITEM 見證、`StaticRegistry` 改成 `List<Registry<?>>`、putAll 改為 merge、withFood 翻轉清單）。
+- **與設計不同、經審查判定合規的地方**：
+  - 新增 count==1 這個收緊；
+  - inline 引用在值條件階段就被拒；
+  - 設計 §3.3 說 wooden_shovel 與 iron_axe 會在 3b 翻轉，這是錯的：兩者都帶 tag rule，屬 3c；
+  - M5 見證用 `Unsafe.allocateInstance` 配置未註冊的 foreign Item，不碰 registry，在完整 JUnit 中安全。
+
+**controller 裁示**：
+- **D1 hidden_effect**：javap 證實 `StatusEffectEntry.effect()` 回傳不帶 hiddenEffect 的新 instance，所以 hidden_effect 不可能被觀察、編碼或使用；設計的「否則拒」是恆真條件。改為斷言 hidden 被丟棄，不以反射讀原物件。spec review 已獨立核實這個前提。
+- **D2 CodecCache**：FOOD、attribute_modifiers、tool 與 lore 的型別都帶 `.cache()`，而這個 cache 是**全域**的，以 value 的 equals／hashCode 比對。foreign 的子類或 List 實作若 equals 說謊，可能命中另一個值的快取編碼，使 payload 的 literal 與實際使用的值不同；重建再驗與 ref 比對都抓不到。這只有 mod 刻意構造才會發生，vanilla 不受影響。**修正排在 3c Step0**：在 codec 之前，用已驗過的元素重建三型 record，包括 food 的 effects 改用 `effect()` 的 copy、tool 的 Direct 用 `RegistryEntryList.of` 重建，LORE 也一併正規化。
+
+**覆蓋**：
+- 1333 個 ITEM 中，ACCEPTED 為 1267，被拒為 66。D1b-2 被拒的 175 件中累計接受 109 件；B28 的 85 件中累計接受 46 件，與設計預估相同。
+- 沒有任何件退化；既有已接受件的 payload 長度不變。
+- 剩下被拒的：tool 的 tag rule 31 件（屬 3c）、jukebox 19 件（屬 3d），其餘是設計列為不納入的型別。
+- closure 量測：1267 件，nodes 1277，edges 1288，canonical 720,515 bytes。
+- 冷尖峰在本輪量不到，因為同一個 JVM 中先跑的測試已經暖化了 codec。I-1 若要可靠的冷啟動數字，需要在全新 JVM 中專門量測。
+
+**測試數**：LeafTest 從 25 增為 34，Canon 從 112 增為 115。
+
+**證據**（ignored，`task-08/8b2-c1d-d1b3b-evidence/`）：
+- 具名 RED：leaf 33/12，canon 115/3。
+- GREEN：GREEN 前兩次 FAIL 的 root 都保留；最終 leaf 34/0、canon 115/0。
+- 8 個見證全部被殺：W-REF-ID、W-SRC-ATTR、W-SRC-EFFECT、W-M5、W-STRUCT、W-M9-DROP、W-ID-ITEM、W-COUNT。
+
+**乾淨 `ff3aecc` 驗證**：
+- M6Compile PASS。
+- Canon focused `focused-c1d-d1b3b-clean-canon-1-e5a88c0e53b34519b577e523b7354940`、`focused-c1d-d1b3b-clean-canon-2-bf5e0b1edc124e3e9512973fb712edde` 皆 115/115。
+- LeafTest focused `focused-c1d-d1b3b-clean-leaf-1-16eb450bc9524ba9b855a6dbe94866e6`、`focused-c1d-d1b3b-clean-leaf-2-7d5a8d3d62a64e509b87f0ed5c5556c3` 皆 34/34。
+- **第一次完整回歸 FAIL，原 root 保留**：`run-all-afa9356c32f2436d8b78bf58e8fcb2c2`。
+  - 現象：default GameTest 55 個 required test 失敗。
+  - 根因：03:17:45，`run/gametest/world/data/quantumchamber_sessions.dat` 的原子移動發生 `AccessDeniedException`，是外部程序鎖住了檔案。之後 session 一直留在保留租約、佔住走廊容量，連帶造成後續的「AABB 容量不足」。
+  - 這屬於使用者 2026-10-21 裁示的 M5 已知限制：維持 fail-closed 與退避，不加 production 重試。3b 改的只有 universe closure，沒有任何 GameTest 或 production 呼叫端，與這次失敗無關。
+- **新 nonce 重跑**：`run-all-090bcb63a6e04cff9650b9aaba5281bd` 在同一個 HEAD 自然 END ALL exit0，前後的 Assert-Pin 都通過。
+  - JUnit911（0 fail／0 error／2 個既有 skip）；
+  - default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2；
+  - release 510 entries／463 classes，mainOnly PASS，testmodHits0；
+  - console.log SHA256 `129dca3579a0efa5cca7227d3d9122434211c725844869414ac18c9e3a8aacbb`，summary.json SHA256 `a2e0babd880865f3439ad67d57cc73bcfc3ee4519b4011f947bec3a393a8fe71`。
+- 本機 CI oracle 不等於遠端 CI；`ff3aecc` 的遠端 CI 要等本筆 push 之後才讀回。
+
+**全新審查**：
+- spec C0/I0/M4 ✅（`D1B3B-SPEC-REVIEW.md`，SHA256 `29ae4676bafa85213e26c256378fa9c159b9ce2c8e4e563ec3bc4689c5ad4735`）。
+- quality C0/I0/M4 Approved（`D1B3B-QUALITY-REVIEW.md`，SHA256 `4dd729cdce3db04109c85195d6e2037e38dac9a1be772f5fd318966f5b475736`）。新 leaf 的 payload 不含 attribute 預設值或 effect 顏色，這些只影響遊戲行為與 client 呈現，不影響生成或 loot，所以不是生成層級的缺口。
+
+**交 3c Step0 的事項**：
+- D2 的 copy 重建，涵蓋三型 List 容器，並補上「manager 不共用」的前提斷言。
+- `requireSameReferences` 先比 `registryKey()`：key 不同為 ROUNDTRIP_CHANGED，同 key 但物件不同才是 OWNER_MISMATCH。
+- M9 加一道與型別模型無關的交叉檢查：payload 中可以解析、且屬於固定聯集的 registry id，都必須出現在 ref id 裡。另外寫明新增帶引用的型別時，三處清單要同步。
+- 降低擴充摩擦：
+  - ref sink 改成 entry／tag 兩個方法的小介面；
+  - 測試中的 cast 改成 sealed switch；
+  - `Contract.registries` 只列 static，列入 3d 待辦；
+  - 寫明 `contracts()` 的迭代次序不得用於 canonical。
+- 補上同一個 ITEM 被兩條 occurrence 引用、只產生一次出邊的 Canon 測試。
+- 用 Unsafe 技法為 S0-5 的 ITEM seam 補上行為見證。
+- 更正設計文件中 wooden_shovel 與 iron_axe 的翻轉時點（屬 3c），並在 plan 第 241 行補上 ATTRIBUTE／STATUS_EFFECT 分支與 ref sink。
