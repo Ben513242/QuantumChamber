@@ -598,3 +598,8 @@
 
 - D1b-0 遠端 CI run `40863093293`（`b7d539a`）兩 job success。
 - D1b-1 code `58a2ff9`：具名 RED→GREEN，乾淨 Canon focused 103/103×2、LeafTest 7/7×2，完整 `run-all-9b4906c116d14c6ab5b42da9723209f3` 自然 END ALL0／JUnit872；spec C0/I0/M2、quality C0/I0/M5。更正設計前提：Canon EndFixture 會 freeze 全域 static registry，ModBlocks 改於 Canon `@BeforeAll` 初始化。`58a2ff9` 的遠端 CI 待本筆 push 後讀回。下一步 D1b-2（ITEM leaf）。細節見 M6 note 末節。
+
+### 2026-10-29：M6 D1b-2（ITEM static leaf）結案，BLOCK／ITEM leaf 局部閉合
+
+- D1b-1 遠端 CI run `40875796265`（`4b16cb0`）兩 job success。
+- D1b-2 code `3fbe626`：ItemAccessor setup probe 成立，具名 RED→GREEN，乾淨 Canon focused 109/109×2、LeafTest 15/15×2，完整 `run-all-cb0f99493892472ab1f63860f3ed3ad4` 自然 END ALL0／JUnit886；spec C0/I0/M3、quality C0/I0/M5。`3fbe626` 的遠端 CI 待本筆 push 後讀回。下一步 D1b-3（引用其他 registry 的 default component），須先設計並審查。細節見 M6 note 末節。

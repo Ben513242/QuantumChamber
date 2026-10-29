@@ -727,3 +727,79 @@ ITEM 屬於 D1b-2，本輪沒有做，也沒有留空殼。
   - M4：`BLOCK_CONTRACT` 改為 private，並調整 `value` 的取值位置。
 
   M5 即上方的殘餘風險說明。
+
+D1b-1 遠端 CI：docs commit `4b16cb0d0cbd9a0f98c7a937b3265a59a03aa69a`（含 code `58a2ff9`）的 GitHub Actions Build run `40875796265` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩個 job 都是 success。這裡只讀回 job 的結論。
+
+### 2026-10-29：D1b-2（ITEM static registry leaf）結案
+
+**commit**：`138ca88`（RED 測試）、`3fbe626f0428d98b175107103c4b173daf36168b`（feat），同樣只動那四個 owner 檔。
+
+**行為**：
+- ITEM leaf 的 payload 只有三個鍵：`Contract=quantumchamber:m6-static-item-leaf-v1`、`DefaultComponents`、`RequiredFeatures`。
+- `DefaultComponents` 的白名單與 TemplateValueContracts 相同，但扣掉 `container_loot`，本輪沒有擴充。
+- 檢查依序是：registry identity → 對 `executedOwnerClasses(item)` 逐項做 source 檢查（BlockItem 包含 block class）→ node 與 key 的對應及 entry identity → features → 白名單 → codec roundtrip。
+- leaf 沒有出邊；Item→Block 只經由 default component 出現，D1b 對這類 fail closed。
+- component codec 用的是只含全域 static registry 的 RegistryOps。白名單內的型別都不查 registry，所以在 D1b-2 成立。
+- 一併處理了 D1b-1 quality 的 M1～M4：
+  - BLOCK 與 ITEM 都補上 node 與 key 的對應檢查；
+  - 新增 `chamber_controller` 這個 foreign source 子案；
+  - 新增 gating 測試 `everyVanillaBlockLeafIsAccepted`；
+  - contract 常數改為 private，並調整取值位置。
+
+**ITEM 的成本與覆蓋（診斷，不 gating）**：1333 個 vanilla ITEM 中，1158 個 ACCEPTED，175 個因 default 帶有白名單外的型別而 fail closed，留給 D1b-3。以含該型別的 item 數計：
+
+| 型別 | item 數 |
+|---|---|
+| food | 41 |
+| tool | 33 |
+| 非空 attribute_modifiers | 32 |
+| container | 32 |
+| jukebox_playable | 19 |
+| banner_patterns | 17 |
+| fire_resistant | 13 |
+
+ITEM 冷啟動合計約 98ms，這是 I-1 的輸入。BLOCK 維持 1060 個全數 ACCEPTED。
+
+**測試數**：Canon 從 103 增為 109，LeafTest 從 7 增為 15。
+
+**證據**（ignored，`task-08/8b2-c1d-d1b2-evidence/`）：
+- `ItemAccessor` 的 setup probe `focused-c1d-d1b2-probe-9bc46ea7…`：9/0，成立，所以採分支 A，保留 `Item.components` 變更測試。測試依賴 Fabric 內部的 mixin，升級 Fabric 時要重驗。
+- 具名 RED `focused-c1d-d1b2-red-a69bf53a…`：109 案中 4 個停在 `UNSUPPORTED_REGISTRY_DEFINITION`。
+- GREEN：Canon 109/0，LeafTest 15/0。
+- 突變見證 3、4、7 都能鑑別，另有 M2 的補證。
+
+**與設計的差異（審查判定合規）**：
+- chest、furnace、barrel 的 ITEM default 帶 `minecraft:container`，不在 binding 白名單內，所以 chest 的 ITEM leaf 依規則會被拒。這是設計表本身的矛盾。
+- 因此測試改用 dark_oak_sapling 驗證「同 id 的 BLOCK 與 ITEM 是不同 node」與「leaf 不產生邊」，並另外加上 chest 的拒絕子案。
+- 真 vanilla 模板的 GREEN 有實證：`woodland_mansion/1x2_a4` 的 chest 只出現在 palette（由 BLOCK leaf 處理），chest 內的物品是 sapling。
+- 設計 §3.4 說 transient component 會在 codec 失敗，實際上是被直接略過，所以白名單是唯一的防線。
+
+**殘餘風險（併入 D1b-3 Step0）**：以下只有第三方 mod 放入 foreign 實作時才會觸發，vanilla 與 Fabric 不受影響。
+- `ComponentMap` 容器本身的 class 沒有驗 source，巢狀 List 也可能自稱為空、在 codec 迭代時卻吐出元素。修法是 roundtrip 之後，對原生重建出的 map 再跑一次白名單檢查。
+- 原生 `SpawnEggItem` 會委派到可覆寫的 `EntityType.getRequiredFeatures`，但 `executedOwnerClasses` 只列了 BlockItem 的委派。
+- 「整個 source 迴圈被刪除」沒有測試能抓到，要靠 spec review 逐行確認。
+
+**D1b-3 的設計前置決策**：在 static RegistryOps 下，引用 static registry 或 tag 的型別（例如 potion、tool）會用全域 static registry 解析，而不是 lease 的 registries。依 spec 第 123 行，不能拿全域 fallback 冒充實際的 context，所以必須改用 lease 的 registries（seam 要多帶 registries），或證明兩者等價。
+
+**乾淨 `3fbe626` 驗證**：
+- M6Compile PASS。
+- Canon focused `focused-c1d-d1b2-clean-canon-1-aaa3823af73843a08e4a98b6b4e29cbb`、`focused-c1d-d1b2-clean-canon-2-1519eb9588ae4eaa8e5f63dab151e6db` 皆 109/109。
+- LeafTest focused `focused-c1d-d1b2-clean-leaf-1-f32ee566c2d64ce699b92a7e4e6a3408`、`focused-c1d-d1b2-clean-leaf-2-d0093ae5911e4795ab68fb416ce6b176` 皆 15/15。
+- 完整 `run-all-cb0f99493892472ab1f63860f3ed3ad4` 自然 END ALL exit0：JUnit886（0 fail／0 error／2 既有 skip）、default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2、mainOnly PASS、testmodHits0。console.log SHA256 `504a3e0eb25e21aaa0bfb37025fe0f2cbe5bee60b78a0937341b2bf34481e505`，summary.json SHA256 `bef10370d940af3664a1a7a4b1994861a5fa3f318df3cae63fce03be2a839139`。
+- 本機 CI oracle 不等於遠端 CI，`3fbe626` 的遠端 CI 要等本筆 push 之後才讀回。
+
+**全新審查**：
+- spec：C0/I0/M3（`D1B2-SPEC-REVIEW.md`，SHA256 `36e46901408b0435f6eec6cd46742c4d67509e39ff7b9b26f9a0314c969a6a43`），四項偏離全部合規。
+- quality：C0/I0/M5，Approved（`D1B2-QUALITY-REVIEW.md`，SHA256 `ad50e4846f1648ea2ba14d03de087c928b26bb8b65ef00135281f1020c715bd8`）。確定性成立：Encoder 依 UTF-8 排序 compound key，所以 component 的迭代次序不影響 bytes。
+
+兩份審查的 Minor 全部併入 D1b-3 Step0：
+- 前述殘餘風險；
+- 成本診斷的退場條件；
+- ITEM 拒絕原因層級的 gating 測試（controller 已採用：結果只允許 ACCEPTED 或白名單外拒絕，不斷言數量）；
+- 抽出 `requireStaticRegistry`，並讓 seam 自行驗 source；
+- 變更測試先斷言 `ItemAccessor`，並補上影響範圍的註解；
+- 整理測試 fixture 的重複。
+
+TemplateValueContracts `:171-193` 也有同樣的模式，記給 D2。
+
+**D1b 的 BLOCK 與 ITEM static leaf 至此都已閉合**（局部閉包；`createSnapshot/resolve` 仍 fail closed）。下一個是 D1b-3：會引用其他 registry 的 default component，例如 tool→block tag、attribute、food 與 potion→status_effect。它要另行設計並審查；D1c 的真資料 GREEN 依賴 D1b-3。

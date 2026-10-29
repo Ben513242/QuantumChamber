@@ -60,3 +60,10 @@
 - D1b-1 code `58a2ff9`：新增 `Minecraft121RegistryLeafContracts` 與其測試，BLOCK leaf payload 為 Contract／DefaultState／PropertyDomains／RequiredFeatures。驗證與審查：具名 RED→GREEN，6 個突變見證；乾淨 Canon focused 103/103×2、LeafTest 7/7×2，完整 `run-all-9b4906c116d14c6ab5b42da9723209f3` 自然 END ALL0／JUnit872；spec C0/I0/M2、quality C0/I0/M5。
 - 設計前提更正：Canon 的 EndFixture 會 freeze 全域 static registry，freeze 後無法註冊；ModBlocks 改在 Canon `@BeforeAll` 初始化。`ModItems` 受同一機制影響，D1b-2 不引用。
 - 下一步：D1b-2（ITEM leaf，含真 chest 模板；第一步是 `ItemAccessor` 的 setup probe）。複審 Minor #1、#3、#4、#5 的 ITEM 部分，與 D1b-1 quality 審查的 M1～M4 併入派工。`58a2ff9` 的遠端 CI 要等本筆 push 後讀回。
+
+### 2026-10-29：D1b-2（ITEM static leaf）結案
+
+- D1b-1 遠端 CI run `40875796265`（`4b16cb0`）兩 job success。
+- D1b-2 code `3fbe626`：ITEM leaf payload 為 Contract／DefaultComponents／RequiredFeatures。驗證與審查：`ItemAccessor` setup probe 成立；具名 RED→GREEN；見證 3／4／7；乾淨 Canon focused 109/109×2、LeafTest 15/15×2；完整 `run-all-cb0f99493892472ab1f63860f3ed3ad4` 自然 END ALL0／JUnit886；spec C0/I0/M3、quality C0/I0/M5。1333 個 vanilla ITEM 中 1158 個 ACCEPTED，175 個因白名單外的 default component 依設計 fail closed。
+- 設計表矛盾：chest 的 ITEM 帶 `container`，依白名單會被拒，所以測試改用 dark_oak_sapling；真 vanilla 模板的 GREEN 仍有實證。
+- 下一步：D1b-3，處理會引用其他 registry 的 default component（tool、attribute、food、potion 等）。須先寫設計並獨立審查。前置決策是 component codec 改用 lease 的 registries，或證明與全域 static registry 等價（spec 第 123 行）。D1b-3 的 Step0 要併入 D1b-2 兩席審查的 Minor 與殘餘風險：ComponentMap 容器與巢狀 List、SpawnEggItem 委派、ITEM 拒絕原因 gating、診斷退場條件等。清單見 M6 note 末節。`3fbe626` 的遠端 CI 要等本筆 push 後讀回。
