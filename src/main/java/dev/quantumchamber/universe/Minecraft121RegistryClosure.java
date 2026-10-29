@@ -21,9 +21,9 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 /**
  * typed registry 傳遞層：noise parameters、受審End值、exact Single pool局部閉包，
  * 以及named PROCESSOR_LIST局部閉包（exact StructureProcessorList，元素只admit exact原生Nop／LavaSubmerged）。
- * BLOCK static registry leaf經definitions去重後交Minecraft121RegistryLeafContracts擷取（只admit全域static BLOCK registry
- * 與exact原生source，leaf沒有子邊）；原生source判斷也委派該類的唯一實作。
- * 未admit的定義／consumer（含ITEM等其他static registry）、inline entry與非direct alias仍拒絕，不是完整三role快照。
+ * BLOCK與ITEM static registry leaf經definitions去重後交Minecraft121RegistryLeafContracts擷取（只admit全域static BLOCK／ITEM
+ * registry與exact原生source，ITEM另只收白名單內的default component；leaf沒有子邊）；原生source判斷也委派該類的唯一實作。
+ * 未admit的定義／consumer（含其他static registry）、inline entry與非direct alias仍拒絕，不是完整三role快照。
  * registries/resources 必須由呼叫端的同一次有效來源 lease 提供；本類不取得 live source。
  */
 final class Minecraft121RegistryClosure {
@@ -194,11 +194,16 @@ final class Minecraft121RegistryClosure {
     }
 
     private void expandDefinition(Key node, RegistryKey<?> key, RegistryEntry.Reference<?> entry) {
-        Object value=entry.value();
+        // static leaf自己在registry identity之後才取value；其他分支才在這裡取。
         if(key.getRegistry().equals(RegistryKeys.BLOCK.getValue())) {
             leaves.block(node,key,entry);
             return;
         }
+        if(key.getRegistry().equals(RegistryKeys.ITEM.getValue())) {
+            leaves.item(node,key,entry);
+            return;
+        }
+        Object value=entry.value();
         if(key.getRegistry().equals(RegistryKeys.PROCESSOR_LIST.getValue())) {
             expandProcessorList(node,value);
             return;
