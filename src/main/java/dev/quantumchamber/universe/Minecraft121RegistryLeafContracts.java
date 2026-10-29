@@ -4,12 +4,7 @@ import java.util.*;
 import net.minecraft.SharedConstants;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
-import net.minecraft.component.Component;
 import net.minecraft.component.ComponentMap;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.AttributeModifiersComponent;
-import net.minecraft.component.type.ItemEnchantmentsComponent;
-import net.minecraft.component.type.LoreComponent;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -20,7 +15,6 @@ import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.resource.featuretoggle.FeatureFlags;
 import net.minecraft.resource.featuretoggle.FeatureSet;
 import net.minecraft.state.property.*;
-import net.minecraft.util.Rarity;
 import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 
 /**
@@ -28,10 +22,13 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * <ul>
  * <li>BLOCK payload（Contract=quantumchamber:m6-static-block-leaf-v1）是生成consumer實際解碼用到的state definition與
  * default state，加上RequiredFeatures。</li>
- * <li>ITEM payload（Contract=quantumchamber:m6-static-item-leaf-v1）是白名單內的default ComponentMap（原生ComponentMap.CODEC
- * 編碼），加上RequiredFeatures。BlockItem的RequiredFeatures委派getBlock().getRequiredFeatures()，所以這個值由Block推導；
- * 生成consumer不讀BlockItem.getBlock，leaf也不建Item→Block邊。default component會引用其他registry的型別（tool、非空
- * attribute_modifiers、food、potion_contents、container等）一律fail closed，屬D1b-3。</li>
+ * <li>ITEM payload（Contract=quantumchamber:m6-static-item-leaf-v1）是已審型別表（Minecraft121ItemComponentContracts）內的
+ * default ComponentMap（原生ComponentMap.CODEC以lease registries的ops編碼），加上RequiredFeatures。RequiredFeatures有兩種原生
+ * 委派：BlockItem委派getBlock().getRequiredFeatures()，SpawnEggItem委派建構時EntityType的getRequiredFeatures()，所以這個值由
+ * Block或EntityType推導；生成consumer不讀BlockItem.getBlock，leaf也不建Item→Block或Item→EntityType邊。D1b-3a起，literal與
+ * 空DEFAULT的8型也已審（fire_resistant、enchantment_glint_override、ominous_bottle_amplifier；potion_contents、
+ * suspicious_stew_effects、container、banner_patterns、charged_projectiles只收空值）；會引用其他registry或tag的型別（tool、
+ * 非空attribute_modifiers、food、jukebox_playable等）仍fail closed，屬D1b-3b～3d。</li>
  * </ul>
  *
  * <p>exact原生class加上CodeSource相同，只證明這個value執行的程式碼來自固定1.21 JAR，不證明instance的Settings
@@ -39,21 +36,26 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * 它的Settings與constructor參數不在FP可偵測的保證內。Block／Item的Java行為、BlockTypes.CODEC、Block方法中hardcoded的tag讀取、
  * asItem、recipeRemainder、翻譯鍵與state id都不入值。
  *
- * <p>檢查順序固定：先registry identity，再class／source（步驟2），步驟2通過之後才呼叫value的virtual method；ITEM的步驟3
- * （BlockItem的block class、SpawnEggItem的EntityType class）本身就要呼叫getBlock()／getEntityType()，所以只在item class
- * 已驗為原生之後才呼叫。兩個seam（blockPayload／itemPayload）開頭另自行驗同一組source，不依賴呼叫端。內部require丟出的Failure
- * 原樣交回；其他RuntimeException才改成該步驟的具名碼並以initCause保留原因。寬catch的try內只放該碼所指的來源讀取，以及
- * 前置require已保證不丟例外的本地操作；checkpoint、graph與其他codec等可能丟非Failure例外的呼叫一律放在try外，否則會被改碼。
+ * <p>檢查順序固定：先registry identity（BLOCK leaf只驗BLOCK；ITEM leaf驗Minecraft121ItemComponentContracts的固定static registry
+ * 聯集；lease缺席為REQUIRED_REGISTRY_MISSING，同key另一個物件為STATIC_REGISTRY_OWNER_MISMATCH），再class／source（步驟2），
+ * 步驟2通過之後才呼叫value的virtual method；ITEM的步驟3（BlockItem的block class、SpawnEggItem的EntityType class）本身就要呼叫
+ * getBlock()／getEntityType()，所以只在item class已驗為原生之後才呼叫。兩個seam（blockPayload／itemCapture）開頭另自行驗同一組
+ * source（itemCapture也自驗registry identity聯集），不依賴呼叫端。內部require丟出的Failure原樣交回；其他RuntimeException才改成
+ * 該步驟的具名碼並以initCause保留原因。寬catch的try內只放該碼所指的來源讀取，以及前置require已保證不丟例外的本地操作；
+ * checkpoint、graph與其他codec等可能丟非Failure例外的呼叫一律放在try外，否則會被改碼。
  */
 final class Minecraft121RegistryLeafContracts {
     private static final String BLOCK_CONTRACT="quantumchamber:m6-static-block-leaf-v1";
     private static final String ITEM_CONTRACT="quantumchamber:m6-static-item-leaf-v1";
     private final Minecraft121SettingsGraph graph;
     private final DynamicRegistryManager registries;
+    /** ITEM component codec的ops：建構時（closure建構時，lease之外）由lease registries建一次，跨leaf共用。 */
+    private final RegistryOps<NbtElement> ops;
 
     Minecraft121RegistryLeafContracts(Minecraft121SettingsGraph graph,DynamicRegistryManager registries) {
         this.graph=Objects.requireNonNull(graph);
         this.registries=Objects.requireNonNull(registries);
+        this.ops=registries.getOps(NbtOps.INSTANCE);
     }
 
     /**
@@ -171,13 +173,13 @@ final class Minecraft121RegistryLeafContracts {
      * ITEM leaf；與block(...)相同，由closure經definitions去重後呼叫，回傳寫入圖的payload。
      *
      * <p>步驟2～3寫死成單一迴圈：對executedOwnerClasses(item)的每一項呼叫requireNativeSource（item class，以及BlockItem的
-     * block class、SpawnEggItem的EntityType class）；itemPayload開頭另有同樣的seam自驗。殘餘風險：「這兩處檢查同時被刪除」
+     * block class、SpawnEggItem的EntityType class）；itemCapture開頭另有同樣的seam自驗。殘餘風險：「這兩處檢查同時被刪除」
      * （連同item class的檢查）沒有任何測試能抓到，因為測試不能建立或註冊foreign Item／BlockItem（{@code Item.<init>}會寫入
      * 全域registry）；這一點靠spec review逐行確認。
      */
     NbtCompound item(Key node,RegistryKey<?> key,RegistryEntry.Reference<?> entry) {
-        // 1. registry identity：只接受全域static ITEM registry本身。
-        requireStaticRegistry(RegistryKeys.ITEM,Registries.ITEM);
+        // 1. registry identity：component codec可能查詢的static registry固定聯集（ITEM排第一）都須是lease持有的全域物件本身。
+        requireItemComponentRegistries();
         // 2. class／source：通過之前不呼叫value的任何virtual method。3. BlockItem另驗block class、SpawnEggItem另驗EntityType class
         // （executedOwnerClasses只在item class已是原生時才呼叫getBlock()／getEntityType()）。兩步同一個迴圈。
         Object value=entry.value();
@@ -188,7 +190,7 @@ final class Minecraft121RegistryLeafContracts {
         requireLeafNode(node,key);
         require(item.getRegistryEntry()==entry&&entry.registryKey().equals(key),"STATIC_LEAF_IDENTITY_MISMATCH");
         // 5～7由seam完成；production一律傳入getComponents()。
-        var payload=itemPayload(item,item.getComponents());
+        var payload=itemCapture(item,item.getComponents());
         // 8.
         graph.payload(node,payload);
         return payload;
@@ -219,36 +221,39 @@ final class Minecraft121RegistryLeafContracts {
     }
 
     /**
-     * ITEM leaf的純函式seam：production一律傳入item.getComponents()；測試可傳同一個item的其他ComponentMap（builder複本），
-     * 證明payload隨值改變而不必改動全域狀態。
+     * ITEM leaf的seam：production一律傳入item.getComponents()；測試可傳同一個item的其他ComponentMap（builder複本），
+     * 證明payload隨值改變而不必改動全域狀態。是instance method：codec用本物件的lease registries與建構時建好的ops。
      *
-     * <p>開頭自行對executedOwnerClasses(item)逐項驗source（冪等；item(...)原有的迴圈保留，維持設計次序），因為RequiredFeatures
-     * 會執行它們；seam不依賴呼叫端已驗source。殘餘風險：本seam的自驗沒有行為層級的測試（測試不能建立foreign Item），
-     * 「item(...)與本seam兩處檢查同時被刪除」靠spec review逐行確認；BLOCK seam的自驗則有Canon的具名測試。
+     * <p>開頭自行驗步驟1的registry identity聯集，以及對executedOwnerClasses(item)逐項驗source（冪等；item(...)原有的檢查保留，
+     * 維持設計次序），因為codec與RequiredFeatures會執行它們；seam不依賴呼叫端。殘餘風險：source自驗沒有行為層級的測試（測試
+     * 不能建立foreign Item），「item(...)與本seam兩處source檢查同時被刪除」靠spec review逐行確認；BLOCK seam的自驗則有Canon的
+     * 具名測試。
      *
-     * <p>default component白名單跑兩次：步驟6在codec之前先驗容器class的source、再逐項判斷輸入的map；步驟7的roundtrip之後，
-     * 對parse重建的原生map再跑一次。容器或巢狀List自稱的內容可以與codec實際迭代的內容不同，重建的map才是payload實際寫入的內容。
+     * <p>default component白名單（已審型別表Minecraft121ItemComponentContracts）跑兩次：步驟6在codec之前先驗容器class的source、
+     * 再逐項判斷輸入的map；步驟7的roundtrip之後，對parse重建的原生map再跑一次。容器或巢狀List自稱的內容可以與codec實際迭代的
+     * 內容不同，重建的map才是payload實際寫入的內容。
      *
-     * <p>codec用只含全域static registries的RegistryOps（{@code DynamicRegistryManager.of(Registries.REGISTRIES)}），不是lease的
-     * registries。白名單內的型別都不需要registry lookup；需要dynamic registry的型別會在codec失敗而fail closed；但引用static
-     * registry的型別（例如tool的BLOCK、非空attribute_modifiers的ATTRIBUTE）會經全域static registry成功解析，不會失敗。依spec
-     * 第123行，全域registry不得冒充實際context，所以這類型別在D1b-3a換源（lease ops加static registry identity）之前不得放入白名單；
-     * 換源後依該設計改寫本段。
+     * <p>codec用lease registries的ops（D1b-3設計§1.5；M6 spec §3.1.2：不得以全域fallback冒充實際context）。component型別鍵、
+     * ItemStack、attribute與status effect等codec綁定全域registry物件、不看ops，所以步驟1先證明lease持有的就是那些全域物件，
+     * 全域解析才等於lease解析，證明不成立就在codec之前fail closed；經ops查詢的引用（tool的block tag與direct list、dynamic的
+     * jukebox song）直接由lease解析。D1b-3a只admit不查registry的literal與空DEFAULT，leaf仍沒有出邊；從D1b-3b起，會產生引用的
+     * 型別要從重建的map抽出ref，本seam的回傳值依設計§1.5第2、5點擴充。
      */
-    static NbtCompound itemPayload(Item item,ComponentMap components) {
+    NbtCompound itemCapture(Item item,ComponentMap components) {
+        // 步驟1的seam自驗：codec之前證明固定static registry聯集。
+        requireItemComponentRegistries();
         // 步驟2～3的seam自驗：通過之前不呼叫item（及其block或EntityType）的任何virtual method。
         for(var type:executedOwnerClasses(item))requireNativeSource(type);
         // 5. feature：只admit vanilla子集；同一個值寫入RequiredFeatures。
         var features=item.getRequiredFeatures();
         requireVanillaFeatures(features);
-        // 6. default component白名單：容器class先驗source，再逐項依(type,value)判斷，排在codec之前。
+        // 6. default component白名單：容器class先驗source（只擋直接foreign的容器），再逐項依(type,value)判斷，排在codec之前。
         requireReviewedDefaults(components);
-        // 7. 原生ComponentMap.CODEC的encode→parse→encode；保留parse重建的原生map。
-        var ops=DynamicRegistryManager.of(Registries.REGISTRIES).getOps(NbtOps.INSTANCE);
+        // 7. 原生ComponentMap.CODEC以lease ops做encode→parse→encode；保留parse重建的原生map。
         NbtElement encoded,again;ComponentMap rebuilt;
         try {
             // 寬catch前提：try內只放本碼所指的原生ComponentMap.CODEC encode／parse／encode（getOrThrow把DataResult的錯誤轉成例外）；
-            // ops的建立、比較、白名單與graph都在try外。
+            // ops在建構時建立，比較、白名單與graph都在try外。
             encoded=ComponentMap.CODEC.encodeStart(ops,components).getOrThrow();
             rebuilt=ComponentMap.CODEC.parse(ops,encoded).getOrThrow();
             again=ComponentMap.CODEC.encodeStart(ops,rebuilt).getOrThrow();
@@ -270,8 +275,11 @@ final class Minecraft121RegistryLeafContracts {
     }
 
     /**
-     * 步驟6的白名單（codec前的輸入map與roundtrip重建的map共用）：容器class須為原生source，之後才呼叫它的iterator；再逐項判斷。
-     * 迭代與判斷包在try內：Failure原樣交回，其他RuntimeException改成UNSUPPORTED_ITEM_DEFAULT_COMPONENT並以initCause保留原因。
+     * 步驟6的白名單（codec前的輸入map與roundtrip重建的map共用）：容器class須為原生source，之後才呼叫它的iterator；再逐項以
+     * Minecraft121ItemComponentContracts.reviewedDefault判斷，不屬已審型別或值不符一律UNSUPPORTED_ITEM_DEFAULT_COMPONENT。
+     * 容器的source檢查只擋直接foreign的容器class；原生包裝（ComponentMapImpl、ComponentMap.of／filtered）仍可能委派foreign的
+     * map或predicate，它們的內容一致性由roundtrip後對重建map的再驗保證。迭代與判斷包在try內：Failure原樣交回，其他
+     * RuntimeException改成UNSUPPORTED_ITEM_DEFAULT_COMPONENT並以initCause保留原因。
      */
     private static void requireReviewedDefaults(ComponentMap components) {
         require(components!=null,"UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
@@ -279,36 +287,13 @@ final class Minecraft121RegistryLeafContracts {
         try {
             // 寬catch前提：try內只放本碼所指的來源讀取（容器的iterator，以及component的type／value與巢狀值的isEmpty等讀取），
             // 以及前置require已保證不丟例外的本地操作（class比較、source判斷）。
-            for(var component:components)requireReviewedDefault(component);
+            for(var component:components)
+                require(Minecraft121ItemComponentContracts.reviewedDefault(component),"UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
         } catch(Failure rejected) {
             throw rejected;
         } catch(RuntimeException bad) {
             throw failure("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",bad);
         }
-    }
-    /**
-     * 單一component的判斷，與TemplateValueContracts.components對有效component的白名單相同，但扣掉container_loot（那是模板BE的
-     * consumer，不是item default）：MAX_STACK_SIZE／MAX_DAMAGE／DAMAGE／REPAIR_COST（Integer）、RARITY（exact Rarity），以及
-     * ENCHANTMENTS／LORE／ATTRIBUTE_MODIFIERS（exact原生class且為空）。其餘型別或非空值一律UNSUPPORTED_ITEM_DEFAULT_COMPONENT；
-     * 會引用其他registry的型別屬D1b-3，不在本白名單擴充。巢狀List的isEmpty由該List自己回報，所以重建的map要再驗一次。
-     */
-    private static void requireReviewedDefault(Component<?> component) {
-        var type=component.type();Object value=component.value();boolean reviewed;
-        if(type==DataComponentTypes.MAX_STACK_SIZE||type==DataComponentTypes.MAX_DAMAGE
-                ||type==DataComponentTypes.DAMAGE||type==DataComponentTypes.REPAIR_COST)reviewed=value instanceof Integer;
-        else if(type==DataComponentTypes.RARITY)reviewed=nativeExact(value,Rarity.class);
-        else if(type==DataComponentTypes.ENCHANTMENTS)reviewed=nativeExact(value,ItemEnchantmentsComponent.class)
-                &&((ItemEnchantmentsComponent)value).isEmpty();
-        else if(type==DataComponentTypes.LORE)reviewed=nativeExact(value,LoreComponent.class)
-                &&((LoreComponent)value).lines().isEmpty()&&((LoreComponent)value).styledLines().isEmpty();
-        else if(type==DataComponentTypes.ATTRIBUTE_MODIFIERS)reviewed=nativeExact(value,AttributeModifiersComponent.class)
-                &&((AttributeModifiersComponent)value).modifiers().isEmpty();
-        else reviewed=false;
-        require(reviewed,"UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
-    }
-    /** exact class且source為原生，之後才可呼叫該值的方法。 */
-    private static boolean nativeExact(Object value,Class<?> type) {
-        return value!=null&&value.getClass()==type&&nativeSource(type);
     }
 
     /** 只admit vanilla feature子集（含空集合）。world enabled features屬D3／D4的必要輸入；在那之前這是暫時的fail closed。 */
@@ -325,18 +310,32 @@ final class Minecraft121RegistryLeafContracts {
     }
 
     /**
-     * 原生source判斷，是Closure與LeafContracts共用的唯一實作：class的CodeSource位置須與固定1.21 JAR（SharedConstants所在）相同。
+     * 原生source判斷，是Closure、LeafContracts與ItemComponentContracts共用的唯一實作：class的CodeSource位置須與固定1.21 JAR
+     * （SharedConstants所在）相同。
      * 只看class，不看namespace或id，也不證明instance的值；JDK類別的CodeSource為null，一律拒絕。TemplateValueContracts、
      * TemplateSettingsAdapter與NativeValueContracts另有既有複本，交D2收斂。
      */
     static void requireNativeSource(Class<?> type) {
         require(nativeSource(type),"NATIVE_DEFINITION_SOURCE");
     }
-    /** 步驟1的registry identity：lease中該key的registry須就是全域static registry本身；缺席或另一個物件都是STATIC_REGISTRY_OWNER_MISMATCH。 */
-    private void requireStaticRegistry(RegistryKey<? extends Registry<?>> key,Registry<?> global) {
-        require(registries.getOptional(key).orElse(null)==global,"STATIC_REGISTRY_OWNER_MISMATCH");
+    /**
+     * ITEM leaf的步驟1：Minecraft121ItemComponentContracts.staticRegistries()的每一個（依表的次序，ITEM第一）都須是lease持有的
+     * 全域物件本身。聯集固定，不依admit的型別增減。
+     */
+    private void requireItemComponentRegistries() {
+        for(var registry:Minecraft121ItemComponentContracts.staticRegistries())requireStaticRegistry(registry.key(),registry.global());
     }
-    private static boolean nativeSource(Class<?> type) {
+    /**
+     * 步驟1的registry identity：lease中該key的registry須就是全域static registry本身；缺席為REQUIRED_REGISTRY_MISSING（與closure
+     * 解析registry時的碼相同），同key的另一個物件為STATIC_REGISTRY_OWNER_MISMATCH。
+     */
+    private void requireStaticRegistry(RegistryKey<? extends Registry<?>> key,Registry<?> global) {
+        var actual=registries.getOptional(key).orElse(null);
+        require(actual!=null,"REQUIRED_REGISTRY_MISSING");
+        require(actual==global,"STATIC_REGISTRY_OWNER_MISMATCH");
+    }
+    /** 原生source的布林判斷（requireNativeSource與Minecraft121ItemComponentContracts的exact原生判斷共用）。 */
+    static boolean nativeSource(Class<?> type) {
         var source=type.getProtectionDomain().getCodeSource();
         var game=SharedConstants.class.getProtectionDomain().getCodeSource();
         return source!=null&&game!=null&&source.getLocation().equals(game.getLocation());

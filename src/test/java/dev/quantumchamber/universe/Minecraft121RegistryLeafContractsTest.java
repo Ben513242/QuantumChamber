@@ -208,11 +208,11 @@ class Minecraft121RegistryLeafContractsTest {
         return withItemLeafRegistries();
     }
     /**
-     * ITEM seam的單一入口，測試只經這裡呼叫seam。D1b-3-0的seam是static itemPayload，codec用只含全域static registries的ops、
-     * 不看lease，所以registries在換源之前沒有作用。
+     * ITEM seam的單一入口，測試只經這裡呼叫seam。D1b-3a起seam是instance itemCapture：以registries建LeafContracts（建構時建好
+     * lease ops），codec之前先證明固定static registry identity。graph只是建構參數，seam不寫入它。
      */
     private static NbtCompound seam(DynamicRegistryManager registries,Item item,ComponentMap components) {
-        return itemPayload(item,components);
+        return new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),registries).itemCapture(item,components);
     }
     private static NbtCompound seam(Item item,ComponentMap components) {
         return seam(itemRegistries(),item,components);
@@ -325,7 +325,7 @@ class Minecraft121RegistryLeafContractsTest {
         assertSame(original,diamond.getComponents(),"seam測試不得改動全域狀態");
     }
     @Test void blockItemLeafExecutedOwnersIncludeBlockAndHasNoBlockEdge() {
-        // 斷言的是executedOwnerClasses的輸出；item(...)與itemPayload開頭都對它逐項requireNativeSource。見證3把「不回傳block class」
+        // 斷言的是executedOwnerClasses的輸出；item(...)與itemCapture開頭都對它逐項requireNativeSource。見證3把「不回傳block class」
         // 當突變，由下方等值斷言抓到。殘餘風險：「兩處檢查同時被刪除」（連同item class檢查）沒有任何測試能抓到：測試不能建立或註冊
         // foreign Item／BlockItem（Item.<init>會寫入全域registry），靠spec review逐行確認。
         var sapling=Items.DARK_OAK_SAPLING;
@@ -746,7 +746,7 @@ class Minecraft121RegistryLeafContractsTest {
     }
     /**
      * C1d-D1b-2 ITEM leaf成本診斷，同樣不gating；pass0／pass1的意義與BLOCK相同。另對minecraft namespace每個item的每個default
-     * component，以只含該component的map走itemPayload（DIAMOND當feature載體），得到逐型別判定。REJECTED_TYPES是「含該型別被拒的
+     * component，以只含該component的map走seam（itemCapture，DIAMOND當feature載體），得到逐型別判定。REJECTED_TYPES是「含該型別被拒的
      * item數」，ACCEPTED_TYPES是「該型別被接受的component數」。拒絕原因的gating由everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes負責。
      *
      * <p>退場條件同BLOCK：D1b-3結案或I-1定案（以先到者為準）時，刪除逐行的D1B2_ITEM_LEAF_COST_ENTRY，只保留摘要行

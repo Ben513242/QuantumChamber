@@ -22,8 +22,10 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * typed registry 傳遞層：noise parameters、受審End值、exact Single pool局部閉包，
  * 以及named PROCESSOR_LIST局部閉包（exact StructureProcessorList，元素只admit exact原生Nop／LavaSubmerged）。
  * BLOCK與ITEM static registry leaf經definitions去重後交Minecraft121RegistryLeafContracts擷取（只admit全域static BLOCK／ITEM
- * registry與exact原生source，ITEM另只收白名單內的default component；leaf沒有子邊）；原生source判斷也委派該類，那是Closure與
- * LeafContracts共用的唯一實作（TemplateValueContracts／TemplateSettingsAdapter／NativeValueContracts另有既有複本，交D2收斂）。
+ * registry與exact原生source；ITEM另要求component codec的固定static registry聯集都是本closure的lease registries持有的全域物件，
+ * 只收已審型別表Minecraft121ItemComponentContracts內的default component，codec用同一份lease registries的ops；leaf沒有子邊）；
+ * 原生source判斷也委派該類，那是Closure、LeafContracts與ItemComponentContracts共用的唯一實作（TemplateValueContracts／
+ * TemplateSettingsAdapter／NativeValueContracts另有既有複本，交D2收斂）。
  * 未admit的定義／consumer（含其他static registry）、inline entry與非direct alias仍拒絕，不是完整三role快照。
  * registries/resources 必須由呼叫端的同一次有效來源 lease 提供；本類不取得 live source。
  */
@@ -337,8 +339,8 @@ final class Minecraft121RegistryClosure {
         return encoded;
     }
     /**
-     * 委派LeafContracts.requireNativeSource（Closure與LeafContracts共用的唯一實作；TemplateValueContracts／TemplateSettingsAdapter／
-     * NativeValueContracts另有既有複本，交D2收斂）；錯誤碼仍是NATIVE_DEFINITION_SOURCE。
+     * 委派LeafContracts.requireNativeSource（Closure、LeafContracts與ItemComponentContracts共用的唯一實作；TemplateValueContracts／
+     * TemplateSettingsAdapter／NativeValueContracts另有既有複本，交D2收斂）；錯誤碼仍是NATIVE_DEFINITION_SOURCE。
      */
     private void nativeSource(Class<?> type) {
         Minecraft121RegistryLeafContracts.requireNativeSource(type);

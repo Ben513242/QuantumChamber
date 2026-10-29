@@ -1632,17 +1632,15 @@ class Minecraft121SettingsCanonicalizerTest {
         return stacks;
     }
     /**
-     * 在任何lease之外先走一次模板BE item與palette leaf會用到的路徑：ItemStack codec、ComponentMap codec（closure的RegistryOps與
-     * 只含全域static registries的RegistryOps），以及palette block的BLOCK leaf seam；只降低冷成本落在lease內的風險。
+     * 在任何lease之外先走一次模板BE item與palette leaf會用到的路徑：ItemStack codec、ComponentMap codec（D1b-3a起ITEM leaf與
+     * closure用同一份lease registries的RegistryOps），以及palette block的BLOCK leaf seam；只降低冷成本落在lease內的風險。
      */
     private static void warmTemplateItems(PoolFixture f,NbtCompound raw) {
         var ops=f.registries.getOps(NbtOps.INSTANCE);
-        var staticOps=net.minecraft.registry.DynamicRegistryManager.of(net.minecraft.registry.Registries.REGISTRIES).getOps(NbtOps.INSTANCE);
         var codec=net.minecraft.component.ComponentMap.CODEC;
         for(var stack:templateItemStacks(raw)) {
             var components=net.minecraft.item.ItemStack.CODEC.parse(ops,stack).getOrThrow().getItem().getComponents();
             codec.parse(ops,codec.encodeStart(ops,components).getOrThrow()).getOrThrow();
-            codec.parse(staticOps,codec.encodeStart(staticOps,components).getOrThrow()).getOrThrow();
         }
         for(String name:new java.util.TreeSet<>(paletteNames(raw))) {
             var block=net.minecraft.registry.Registries.BLOCK.get(net.minecraft.util.Identifier.of(name));
