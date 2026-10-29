@@ -345,6 +345,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 內部分round G、C1a與C1b-B1/B2/B3已按各自code pin通過既定focused/review；C1c-T/A亦已完成上列局部範圍，8B2整體仍未完成。C1d須先做完整owner census與typed leaf/consumer白名單，再完成三role閉包、provider/FP、snapshot/resolve；`createSnapshot/resolve`目前fail closed。100ms單次live hold I-1須以代表配置量測及獨立review關閉，超限縮短鎖內工作而非提高cap；8B3三bundle與真server lifecycle仍待。原G quality Minor公平鎖無參數tryLock可插隊仍須評估，C1c-A quality Minor manager來源raw/total-raw計費與depth亦交C1d。G結果摘要 `task-08/8b2-g-result-review.md` SHA `35485325987576a6ca4ef8a0339a293351b0c99205deb01067ee376c95e5dacc`；B3、B1、C1a各自原件與SHA見前筆note，舊驗證pin不轉成新docs HEAD驗證。
 
+2026-10-29 Claude 接手快照：D0-O六組raw分母已獨立C0/I0/M0，但consumer/source/admission仍未證。D1a原候選`877d20f`完整full通過，獨立spec/quality各C0/I1/M1；fix1`165b8b9`的same-size RED→GREEN已通，乾淨第二focused及新nonce補驗各因既有template測試先碰100ms而FAIL，fix1 full未啟且無最終review。下一步先限CanonicalizerTest窄修BUDGET_TOTAL_RAW fixture，再新HEAD雙focused/full與獨立review；詳[`Claude續作提示詞`](../../handoffs/2026-10-29-m6-claude-resume-prompt.md)。此狀態不代表D1a／8B2／Task8完成。
+
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。
