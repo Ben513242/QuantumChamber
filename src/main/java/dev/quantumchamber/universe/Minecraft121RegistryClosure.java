@@ -10,6 +10,11 @@ import net.minecraft.registry.tag.TagKey;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.structure.pool.StructurePool;
 import net.minecraft.structure.pool.alias.StructurePoolAliasBinding;
+import net.minecraft.structure.processor.StructureProcessorList;
+import net.minecraft.structure.processor.StructureProcessor;
+import net.minecraft.structure.processor.StructureProcessorType;
+import net.minecraft.structure.processor.NopStructureProcessor;
+import net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters;
 import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
@@ -183,6 +188,49 @@ final class Minecraft121RegistryClosure {
     }
 
     private void expandDefinition(Key node, RegistryKey<?> key, Object value) {
+        if(key.getRegistry().equals(RegistryKeys.PROCESSOR_LIST.getValue())) {
+            require(value!=null && value.getClass()==StructureProcessorList.class,"NATIVE_DEFINITION_OWNER");
+            nativeSource(value.getClass());
+            var original=((StructureProcessorList)value).getList();
+            require(original!=null,"PROCESSOR_LIST_CHANGED");
+            int size;
+            try {size=original.size();} catch(RuntimeException bad) {throw failure("PROCESSOR_LIST_CHANGED");}
+            require(size<=4096,"BUDGET_PROCESSORS");
+            var copy=new ArrayList<StructureProcessor>(size);
+            try {
+                for(var processor:original) {
+                    require(copy.size()<size,"PROCESSOR_LIST_CHANGED");
+                    copy.add(processor);
+                }
+                require(copy.size()==size,"PROCESSOR_LIST_CHANGED");
+                require(original.size()==size,"PROCESSOR_LIST_CHANGED");
+            } catch(ConcurrentModificationException bad) {throw failure("PROCESSOR_LIST_CHANGED");}
+            for(var processor:copy) {
+                require(processor!=null,"PROCESSOR_LIST_CHANGED");
+                Class<?> type=processor.getClass();nativeSource(type);
+                require(type==NopStructureProcessor.class || type==LavaSubmergedBlockStructureProcessor.class,
+                        "UNSUPPORTED_PROCESSOR_TYPE");
+            }
+            NbtElement encoded;
+            try {encoded=roundtrip(StructureProcessorType.PROCESSORS_CODEC,new StructureProcessorList(List.copyOf(copy)));}
+            catch(RuntimeException bad) {var failure=failure("UNSUPPORTED_PROCESSOR_CODEC");failure.initCause(bad);throw failure;}
+            require(encoded instanceof NbtCompound,"UNSUPPORTED_PROCESSOR_CODEC");
+            var fields=(NbtCompound)encoded;
+            require(fields.getKeys().equals(Set.of("processors")) && fields.get("processors") instanceof NbtList,
+                    "UNSUPPORTED_PROCESSOR_CODEC");
+            var items=fields.getList("processors",NbtElement.COMPOUND_TYPE);
+            require(items.size()==size,"UNSUPPORTED_PROCESSOR_CODEC");
+            for(int i=0;i<size;i++) {
+                var item=items.getCompound(i);
+                String expected=copy.get(i).getClass()==NopStructureProcessor.class?
+                        "minecraft:nop":"minecraft:lava_submerged_block";
+                require(item.getKeys().equals(Set.of("processor_type"))
+                        && item.get("processor_type") instanceof NbtString
+                        && expected.equals(item.getString("processor_type")),"UNSUPPORTED_PROCESSOR_CODEC");
+            }
+            graph.payload(node,fields);
+            return;
+        }
         if(key.getRegistry().equals(RegistryKeys.NOISE_PARAMETERS.getValue())) {
             require(value!=null && value.getClass()==NoiseParameters.class,"NATIVE_DEFINITION_OWNER");
             nativeSource(value.getClass());var parameters=(NoiseParameters)value;

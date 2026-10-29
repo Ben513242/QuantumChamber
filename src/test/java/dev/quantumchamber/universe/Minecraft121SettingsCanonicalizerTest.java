@@ -780,6 +780,160 @@ class Minecraft121SettingsCanonicalizerTest {
     private static net.minecraft.registry.RegistryKey<net.minecraft.structure.pool.StructurePool> poolKey(String id) {
         return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL,net.minecraft.util.Identifier.of(id));
     }
+    private static net.minecraft.registry.RegistryKey<net.minecraft.structure.processor.StructureProcessorList> processorKey(String id) {
+        return net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.PROCESSOR_LIST,net.minecraft.util.Identifier.of(id));
+    }
+    private static net.minecraft.registry.DynamicRegistryManager processorRegistries(String id,
+            net.minecraft.structure.processor.StructureProcessorList value) {
+        var processors=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.PROCESSOR_LIST,
+                com.mojang.serialization.Lifecycle.stable());
+        processors.add(processorKey(id),value,net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
+        processors.freeze();
+        return new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(processors));
+    }
+    @Test void namedProcessorListRequiresAdmittedNativeDefinition() {
+        var value=new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(
+                net.minecraft.structure.processor.NopStructureProcessor.INSTANCE));
+        var registries=processorRegistries("test:nop",value);
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var g=graph();var closure=new Minecraft121RegistryClosure(g,registries,resources);
+            closure.reference(ROOT,"processor",processorKey("test:nop"));closure.drain();
+            assertTrue(g.finish().length>0);
+        } finally {resources.close();}
+    }
+    private static byte[] namedProcessorBytes(String id,net.minecraft.structure.processor.StructureProcessorList value) {
+        var registries=processorRegistries(id,value);
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var g=graph();var closure=new Minecraft121RegistryClosure(g,registries,resources);
+            closure.reference(ROOT,"processor",processorKey(id));closure.drain();return g.finish();
+        } finally {resources.close();}
+    }
+    @Test void namedProcessorCanonicalBytesPreserveEmptyTypeAndOrder() {
+        var nop=net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
+        var lava=net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE;
+        var empty=namedProcessorBytes("test:list",new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of()));
+        var one=namedProcessorBytes("test:list",new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(nop)));
+        var other=namedProcessorBytes("test:list",new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(lava)));
+        var forward=namedProcessorBytes("test:list",new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(nop,lava)));
+        var reverse=namedProcessorBytes("test:list",new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(lava,nop)));
+        assertFalse(Arrays.equals(empty,one));assertFalse(Arrays.equals(one,other));assertFalse(Arrays.equals(forward,reverse));
+        String text=new String(forward,java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertTrue(text.contains("minecraft:nop"));assertTrue(text.contains("minecraft:lava_submerged_block"));
+    }
+    @Test void namedProcessorCaptureOwnsEarlierGraphAfterSourceMutation() {
+        var mutable=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>();
+        mutable.add(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE);
+        var registries=processorRegistries("test:mutable",new net.minecraft.structure.processor.StructureProcessorList(mutable));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var old=graph();var a=new Minecraft121RegistryClosure(old,registries,resources);
+            a.reference(ROOT,"processor",processorKey("test:mutable"));a.drain();byte[] original=old.finish();
+            mutable.set(0,net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE);
+            assertArrayEquals(original,old.finish());
+            var fresh=graph();var b=new Minecraft121RegistryClosure(fresh,registries,resources);
+            b.reference(ROOT,"processor",processorKey("test:mutable"));b.drain();
+            assertFalse(Arrays.equals(original,fresh.finish()));
+        } finally {resources.close();}
+    }
+    @Test void namedProcessorRejectsUnsupportedNativeAndForeignTypes() {
+        var unsupported=new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(
+                new net.minecraft.structure.processor.BlockIgnoreStructureProcessor(java.util.List.of())));
+        var subclass=new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of()) {};
+        var lavaSubclass=new net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor() {};
+        var cases=java.util.List.of(unsupported,subclass,
+                new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(lavaSubclass)));
+        var codes=java.util.List.of("UNSUPPORTED_PROCESSOR_TYPE","NATIVE_DEFINITION_OWNER","NATIVE_DEFINITION_SOURCE");
+        for(int i=0;i<cases.size();i++) {
+            var registries=processorRegistries("test:bad",cases.get(i));
+            var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                    net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+            try {
+                var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+                c.reference(ROOT,"processor",processorKey("test:bad"));
+                rejects(codes.get(i),c::drain);rejects("GRAPH_FAILED",g::finish);
+            } finally {resources.close();}
+        }
+    }
+    @Test void namedProcessorCountCapIsIndependentOfGraphBudget() {
+        var nop=net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;
+        var atCap=java.util.Collections.nCopies(4096,(net.minecraft.structure.processor.StructureProcessor)nop);
+        assertTrue(namedProcessorBytes("test:large",new net.minecraft.structure.processor.StructureProcessorList(atCap)).length>0);
+        var tooLarge=processorRegistries("test:large",new net.minecraft.structure.processor.StructureProcessorList(
+                java.util.Collections.nCopies(4097,(net.minecraft.structure.processor.StructureProcessor)nop)));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,tooLarge,resources);
+            c.reference(ROOT,"processor",processorKey("test:large"));
+            rejects("BUDGET_PROCESSORS",c::drain);rejects("GRAPH_FAILED",g::finish);
+            var small=limited(10,10,10,10,100,1000,8,10);
+            var d=new Minecraft121RegistryClosure(small,processorRegistries("test:small",
+                    new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of(nop))),resources);
+            rejects("BUDGET_CANONICAL",()->{d.reference(ROOT,"processor",processorKey("test:small"));d.drain();});
+            rejects("GRAPH_FAILED",small::finish);
+        } finally {resources.close();}
+    }
+    @Test void namedProcessorMissingTargetWrongRegistryAndInlineFailClosed() {
+        var processors=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.PROCESSOR_LIST,
+                com.mojang.serialization.Lifecycle.stable());processors.freeze();
+        var noise=noiseRegistry();
+        var registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(processors,noise));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            for(int i=0;i<3;i++) {
+                var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);final int variant=i;
+                rejects(i==0?"REQUIRED_REGISTRY_TARGET_MISSING":i==1?"REQUIRED_REGISTRY_MISSING":"UNSUPPORTED_INLINE_ENTRY",()->{
+                    if(variant==0)c.reference(ROOT,"missing",processorKey("test:missing"));
+                    else if(variant==1)c.reference(ROOT,"wrong",poolKey("test:missing"));
+                    else c.entry(ROOT,"inline",net.minecraft.registry.entry.RegistryEntry.of(
+                            new net.minecraft.structure.processor.StructureProcessorList(java.util.List.of())));
+                    c.drain();
+                });rejects("GRAPH_FAILED",g::finish);
+            }
+        } finally {resources.close();}
+    }
+    @Test void namedProcessorNullAndChangingListFailClosed() {
+        var nullItem=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>();nullItem.add(null);
+        var drifting=new java.util.AbstractList<net.minecraft.structure.processor.StructureProcessor>() {
+            int reads;
+            @Override public int size(){return ++reads==1?1:2;}
+            @Override public net.minecraft.structure.processor.StructureProcessor get(int index){return net.minecraft.structure.processor.NopStructureProcessor.INSTANCE;}
+        };
+        var cases=java.util.List.of(nullItem,drifting);
+        for(int i=0;i<cases.size();i++) {
+            var registries=processorRegistries("test:bad",new net.minecraft.structure.processor.StructureProcessorList(cases.get(i)));
+            var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                    net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+            try {
+                var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+                c.reference(ROOT,"processor",processorKey("test:bad"));
+                rejects("PROCESSOR_LIST_CHANGED",c::drain);rejects("GRAPH_FAILED",g::finish);
+            } finally {resources.close();}
+        }
+    }
+    @Test void namedProcessorRepeatedUsesKeepBothEdgesAndBudget() {
+        var registries=processorRegistries("test:same",new net.minecraft.structure.processor.StructureProcessorList(
+                java.util.List.of(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE)));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(
+                net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+            c.reference(ROOT,"first",processorKey("test:same"));c.reference(ROOT,"second",processorKey("test:same"));c.drain();
+            String text=new String(g.finish(),java.nio.charset.StandardCharsets.ISO_8859_1);
+            assertTrue(text.contains("first"));assertTrue(text.contains("second"));
+            var limited=limited(10,1,10,10,8388608,134217728,268435456,128);
+            limited.payload(ROOT,NbtInt.of(1));var d=new Minecraft121RegistryClosure(limited,registries,resources);
+            d.reference(ROOT,"first",processorKey("test:same"));
+            rejects("BUDGET_EDGES",()->d.reference(ROOT,"second",processorKey("test:same")));
+            rejects("GRAPH_FAILED",limited::finish);
+        } finally {resources.close();}
+    }
     private static net.minecraft.structure.pool.SinglePoolElement single(String id) {
         return net.minecraft.structure.pool.StructurePoolElement.ofSingle(id).apply(net.minecraft.structure.pool.StructurePool.Projection.RIGID);
     }
@@ -789,13 +943,23 @@ class Minecraft121SettingsCanonicalizerTest {
         final net.minecraft.registry.DynamicRegistryManager registries;
         final ServerSettingsContext context;
         PoolFixture(java.nio.file.Path root,net.minecraft.structure.pool.StructurePoolElement... elements) throws Exception {
+            this(root,null,null,null,elements);
+        }
+        PoolFixture(java.nio.file.Path root,String processorId,java.util.List<net.minecraft.structure.processor.StructureProcessor> values,
+                String template,net.minecraft.structure.pool.StructurePoolElement... elements) throws Exception {
             java.nio.file.Files.createDirectories(root);session=net.minecraft.world.level.storage.LevelStorage.create(root).createSession("pool");
+            var processors=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.PROCESSOR_LIST,com.mojang.serialization.Lifecycle.stable());
+            if(processorId!=null)processors.add(processorKey(processorId),new net.minecraft.structure.processor.StructureProcessorList(values),
+                    net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);
+            processors.freeze();
             var pools=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.TEMPLATE_POOL,com.mojang.serialization.Lifecycle.stable());
             var fallback=pools.createMutableEntryLookup().getOrThrow(poolKey("test:pool"));
             var weighted=new java.util.ArrayList<com.mojang.datafixers.util.Pair<net.minecraft.structure.pool.StructurePoolElement,Integer>>();
             for(var e:elements)weighted.add(com.mojang.datafixers.util.Pair.of(e,1));
+            if(template!=null)weighted.add(com.mojang.datafixers.util.Pair.of(net.minecraft.structure.pool.StructurePoolElement.ofProcessedSingle(
+                    template,processors.getEntry(processorKey(processorId)).orElseThrow()).apply(
+                    net.minecraft.structure.pool.StructurePool.Projection.RIGID),1));
             pools.add(poolKey("test:pool"),new net.minecraft.structure.pool.StructurePool(fallback,weighted),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);pools.freeze();
-            var processors=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.PROCESSOR_LIST,com.mojang.serialization.Lifecycle.stable());processors.freeze();
             registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(pools,processors,net.minecraft.registry.Registries.BLOCK));
             var lookup=net.minecraft.registry.Registries.BLOCK.getReadOnlyWrapper().withFeatureFilter(net.minecraft.resource.featuretoggle.FeatureFlags.DEFAULT_ENABLED_FEATURES);
             var manager=new net.minecraft.structure.StructureTemplateManager(rm,session,net.minecraft.datafixer.Schemas.getFixer(),lookup);
@@ -807,6 +971,23 @@ class Minecraft121SettingsCanonicalizerTest {
             NbtIo.writeCompressed(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),path);
         }
         @Override public void close() throws Exception {try{session.close();}finally{rm.close();}}
+    }
+    @Test void processedSingleKeepsNamedProcessorEdgeDistinctFromInlineEmpty(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        for(var values:java.util.List.of(java.util.List.<net.minecraft.structure.processor.StructureProcessor>of(),
+                java.util.List.<net.minecraft.structure.processor.StructureProcessor>of(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE),
+                java.util.List.<net.minecraft.structure.processor.StructureProcessor>of(net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE))) {
+            try(var f=new PoolFixture(root.resolve("case-"+values.size()+"-"+(values.isEmpty()?"empty":values.get(0).getClass().getSimpleName())),
+                    "test:processors",values,"test:shared")) {
+                var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();
+                String text=new String(g.finish(),java.nio.charset.StandardCharsets.ISO_8859_1);
+                assertTrue(text.contains("test:processors"));assertTrue(text.contains("required-processors"));
+                assertTrue(text.contains("test:shared"));
+            }
+        }
+        try(var f=new PoolFixture(root.resolve("inline"),single("test:shared"))) {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();
+            assertFalse(new String(g.finish(),java.nio.charset.StandardCharsets.ISO_8859_1).contains("test:processors"));
+        }
     }
     @Test void nonEmptyPoolSingleCodecLocationCreatesTemplateEdge(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
         try(var f=new PoolFixture(root,single("test:shared"))) {
