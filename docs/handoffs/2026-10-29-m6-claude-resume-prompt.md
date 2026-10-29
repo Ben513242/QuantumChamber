@@ -30,3 +30,13 @@
 - Task9 的唯讀 NBT streaming 版本探測準備在 ignored task-09/version-probe-readonly.md。不可提前實作 Task9 以繞過 Task8 gate。
 
 正常 feature push 已持續授權；force push、PR、main 合併、tag、人工代驗或 worktree 退役沒有因此獲得新授權。每次停下更新本接手入口、M6 note 與 ignored STATUS，保留原始 FAIL 與精確 code／CI pin。
+
+## 交回紀錄
+
+### 2026-10-29：Claude 完成 D1a fix2，D1a 結案
+
+- 接手實核：local／origin feature 同 `62a2f72`、tracked clean，只有閒置 Gradle daemon；fix1 兩次原 FAIL 原件保留，不改判。
+- 本檔「Claude 第一件實作工作」一節建議的窄修，其前提經具名診斷證明不成立：原 BUDGET_TOTAL_RAW fixture 只做 2 次 capture，不是 10 次。不暖機的 DIAG2 量到第一個 capture 子案的 lease 內約有 23.6ms 冷成本，可以移出 lease；但原失敗子案未能定位，以測試耗時比例粗估的失敗時 lease 也只約 62～71ms，仍低於 100ms，不足以認定是原 FAIL 的成因。DIAG2 的預設判讀規則未成立（STOP_NO_FIX），fix2 是 controller 之後以降低風險為由裁示續作。fix2 code `9d97cd0` 改在任何 lease 前算 blank charge 兼暖機，BUDGET_TOTAL_RAW 改為正例 1 次 occurrence＋負例 2 次 occurrence；只降低 100ms 偶發風險，不宣稱根治。
+- D1a 結案只限 named PROCESSOR_LIST empty／NOP／LAVA 的局部閉包；這段 closure 尚無 production caller，`createSnapshot/resolve` 仍 fail closed。fix1 兩次原 FAIL、v4 父 FAIL 與 B27 FAIL 原判保留。
+- 驗證與審查：乾淨 `9d97cd0` M6Compile、CanonicalizerTest 雙 focused 88/88、完整 `run-all-3990c81a33b84ee9961ae54b63f4b752` 自然 END ALL0（JUnit850 f0e0 skip2）；整段 `f1e0bef..9d97cd0` fresh spec C0/I0/M5、quality C0/I0/M6。原件與 root 見 M6 note 末節及 ignored `task-08/8b2-c1d-d1a-evidence/FIX2-*`。
+- 下一步：下一個 C1d 切片先做 Step0，處理 11 項 Minor（清單見 M6 note 末節）。之後依已審的 D0-O 原始分母（ignored `task-08/8b2-c1d-census-offline/run-89ca6200-a1fb-4856-bc0c-b24a8ea76b6a`，方法繼承到 `task-08/8b2-c1d-design/D0-METHOD-v4.md`）、`D0-N-METHOD-v2.md`（N 門靜態方法）及 `N-GAPS.json` 的 source／consumer／admission 缺口擴充 leaf／consumer；N-R 來源 JVM 仍要另包審查，需要新設計時先寫設計並獨立審查。仍待的門檻：C1d 其餘 leaf 與三 role FP／provider／snapshot／resolve、100ms live hold I-1、8B3 三 bundle、Task8 終局、Task9–20、人工與整分支。若同一個 budget 測試再出現 NOT_READY，視為新的 FAIL、保留 root，不重送改判。

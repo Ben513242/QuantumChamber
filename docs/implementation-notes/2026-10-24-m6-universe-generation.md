@@ -522,3 +522,37 @@ D0-O純離線六組在前兩個新root依序觸每role 16MiB與total treeNodes 8
 D1a原程式候選 `877d20f041b5d853ab227fc444ea9c6413924fbb` 限RegistryClosure與CanonicalizerTest兩owner，乾淨M6Compile與focused85/85×2、完整 `run-all-d4822a217c9d48f2894cfc83bf2a1bc0` 自然END ALL exit0／JUnit847 f0e0 skip2；但獨立spec/quality各C0/I1/M1，I1為同大小List.set期間可能發布混合processor清單。固定原生DFU List.copyOf／RegistryLoader證據的I1設計補件v2已獨立C0/I0/M0，僅限正常原生解碼、非任意第三方writer/ABA。
 
 fix1 code `165b8b9c9d1db6999b65b39a201f35bc9397bdd8`（range 877d20f..165b8b9）只在原兩owner加bounded第二iterator identity重核及三個精確測試；same-size具名RED88案1fail→GREEN88/88。乾淨M6Compile與第一次focused88/88通過；第二focused及新nonce補驗皆88案1fail，既有templateStateEdgeResourceRawCanonicalBudgetOverflowRejected先在native重建碰100ms `TEMPLATE_SNAPSHOT_NOT_READY`，未達預期BUDGET_TOTAL_RAW；原兩FAIL完整保留，fix1 full尚未啟，沒有fix1最終code review。接手先核ignored `task-08/8b2-c1d-d1a-evidence/IMPLEMENTER-HANDOFF.md`（SHA256 457d9f7b01aed648b4fc6ef376e710d5d5833380784af23fea39175ef0d4d44a）及Git，不提高100ms或production cap；下一步是原測試owner的窄fixture fix2、clean雙focused/full及獨立review。詳新 [`Claude續作提示詞`](../handoffs/2026-10-29-m6-claude-resume-prompt.md)。本段只記部分實作與交接，D1a／C1d／Task8及Task9–20皆未完成。
+
+### 2026-10-29：D1a fix2 與結案（Claude 接手）
+
+Claude 開工實核：local／origin feature 同 `62a2f72`、tracked clean；main `0d05f88`、tag m5 一致；只有閒置 Gradle daemon；fix1 兩次原 FAIL 原件完整保留，不改判。
+
+fix2 先做具名診斷，推翻交接中「BUDGET_TOTAL_RAW 在同一 lease 重建 10 次」的假設（證據在 ignored `task-08/8b2-c1d-d1a-evidence/FIX2-*`）：
+- 具名 RED root `focused-c1d-d1a-fix2-red-3bd6e097d5164d9c88df8c383c3d5144`（88 案 1 fail，只含兩個刻意的邊界 RED）：一份原生 blank template 的 charge 為 328；原 fixture（totalRaw=512）在第 2 次 occurrence 就超過剩餘 184，第 3～10 次從未執行；totalRaw=charge-1 時單次就被拒，2×charge 時兩次都不拒。
+- 不暖機的 DIAG2 root `focused-c1d-d1a-fix2-diag2-464d2cac0c5f43c9b06b1eb960d771a8`（88/88）：第一個會 capture 的子案 BUDGET_RESOURCES，lease 內 drain 33.1ms；RED run 在方法開頭先算 charge，等於已暖機，該子案只要 9.5ms。兩者相差約 23.6ms，是落在 lease 內的冷成本。
+- 兩次原 FAIL 都停在 `privateRebuild` 新建 template instance 之後的 checkpoint（`requireManager`／`chargeOwned`），但這並未證明是 JVM 第一次載入；舊 XML 沒有子案名，原失敗子案未能定位。以本測試耗時比例粗估（0.269s 或 0.234s 對 0.125s，乘上 33.1ms），失敗時這個 lease 約 71ms／62ms，仍低於 100ms；而且 fix1 GREEN 的耗時是 0.287s 卻通過，測試耗時只是很粗的代理指標。
+- DIAG2 依派工的預設判讀規則判定為未成立（STOP_NO_FIX）。fix2 是 controller 之後以「冷成本確實在 lease 內、可以移除」為由裁示續作，只算降低風險，不宣稱根治，也不認定為原 FAIL 的成因。
+
+fix2 code `9d97cd0854b1139d040063ac3d58424a3b76462c`（range `62a2f72..9d97cd0`）只改 `Minecraft121SettingsCanonicalizerTest` 的 `templateStateEdgeResourceRawCanonicalBudgetOverflowRejected` 一個方法：
+- 方法開頭、任何 lease 之前算 charge，兼作 JVM 首次載入的暖機；
+- BUDGET_TOTAL_RAW 改為 totalRaw=charge，1 次 occurrence 的正例 drain／finish 成功，2 次相同 occurrence 的負例為 BUDGET_TOTAL_RAW、finish 為 GRAPH_FAILED；
+- 每個子案的失敗訊息常駐子案名；其他 5 子案、100ms、raw cap 與 production 都不變。
+
+GREEN root `focused-c1d-d1a-fix2-green-67d2ef88317b4130af43b41b24c8e4cd` 88/88。乾淨 `9d97cd0`：M6Compile PASS；focused `focused-c1d-d1a-fix2-clean-1-a9bd437970404d1caf4f6464257cb44b`、`focused-c1d-d1a-fix2-clean-2-c5dc4938d7674e75bcf0aa41a5fa1acd` 皆 PASS；完整 `run-all-3990c81a33b84ee9961ae54b63f4b752` 自然 END ALL exit0：JUnit850（0 fail／0 error／2 既有 skip）、default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2、mainOnly PASS、testmodHits0、release 502 entries／455 classes；console.log SHA256 `83bf09c346df6b5c3c1f91796e5cd796af2d7b8d7ddae17210854d4144a2b187`、summary.json SHA256 `2c72c9bcd5e0b9c29835761e38b67120f7e20ea3cf0a7fca9406ef94fdde98cd`。驗證腳本前後 `Assert-Pin` 皆通過。本機 CI oracle 不等於遠端 CI。
+
+全新獨立審查（整段 `f1e0bef..9d97cd0`，含原候選與 fix1）：spec C0/I0/M5、quality C0/I0/M6 Approved。877d20f 的 I1 已由 fix1 依 addendum v2 的限定前提（固定原生 codec、正常遊戲無 writer）關閉；原候選審查的 M1 原文不在磁碟上，改由本次 fresh review 從頭審。報告為 ignored `FIX2-SPEC-REVIEW.md`（SHA256 `fcc22aa22f7bbf6a8cf33e8388985c74721a6693782316abebdd891ca51e722b`）與 `FIX2-QUALITY-REVIEW.md`（SHA256 `4f8a408570f21679681f9d9a53fb2595f8339e492593b8468e9ff3743bf65884`）。
+
+**D1a 結案**，但只限 named PROCESSOR_LIST empty／NOP／LAVA 的局部閉包；這段 closure 目前沒有 production caller，`createSnapshot/resolve` 仍 fail closed。11 項 Minor 交下一個 C1d 切片的 Step0：
+- spec M1：負的 size，以及 CME 以外的 iterator 例外，未歸類為 PROCESSOR_LIST_CHANGED。
+- spec M2：null list、size 例外、清單縮短、CME、第二遍件數不符，缺直接負例。
+- spec M3：RegistryClosure 類別 Javadoc 未更新。
+- spec M4：charge「精確邊界」的措辭，或補 charge-1 負例。
+- spec M5：fix2 的根因證據不足，不可宣稱根因（DIAG2 判定 STOP_NO_FIX，原失敗子案未定位，粗估仍低於 100ms），docs 只能寫成降低風險；BUDGET_EDGES 的第一個 lease 仍有 30～45ms 的 pool codec 冷成本。
+- quality Q1：`namedProcessorCaptureOwnsEarlierGraphAfterSourceMutation` 的舊圖斷言，因 finish 有快取而恆成立。
+- quality Q2：沒有測試證明 processor payload 受 Graph canonical／owned-bytes 預算約束；`namedProcessorCountCapIsIndependentOfGraphBudget` 的 BUDGET_CANONICAL 負例與 `namedProcessorRepeatedUsesKeepBothEdgesAndBudget` 的 BUDGET_EDGES 負例，都在 reference 階段就失敗，根本沒走到 processor 分支（與上述 budget 測試的同名子案無關）。
+- quality Q3：缺多元素清單的型別負例。
+- quality Q4：改錯誤碼時 initCause 不一致。
+- quality Q5：4096 缺命名常數與出處、邏輯未抽成方法、沒有逐項 checkpoint。
+- quality Q6：BUDGET_TOTAL_RAW 子案改拆成 @Test，或斷言 finish 的回傳。
+
+若同一測試日後再出現 NOT_READY，視為新的 FAIL，保留原 root，不重送改判。C1d 其餘部分（BLOCK／ITEM／LOOT_TABLE、Vault／TrialSpawner／entity／component、非模板閉包、三 role FP／provider／snapshot／resolve、100ms live hold I-1）、8B3 三 bundle、Task8 終局與 Task9–20 仍待。

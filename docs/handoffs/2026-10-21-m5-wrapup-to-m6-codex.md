@@ -578,3 +578,8 @@
 
 - T code `d0bf69b`：typed NBT局部契約，乾淨M6Compile及雙focused20/20，獨立spec/quality各C0/I0/M1。A code `bf46e97`（binding設計docs `29a5988`）接通來源優先序、同live lease隔離native rebuild與exact Single非空pool局部閉包；乾淨M6Compile、Adapter54/54×2、Canonicalizer76/76×2，完整`run-all-55870333f3bb422b9f53535574e302ec`自然END ALL0／JUnit838 f0e0 skip2；獨立spec C0/I0/M0、quality C0/I0/M1。A結果與hash索引見ignored `task-08/8b2-c1c-a-evidence/FINAL-RESULT.md`、`FINAL-RESULT-HASHES.json`，T見`8b2-c1c-t-evidence/T-IMPLEMENTER-RESULT.md`。首次full長cwd前置FAIL、RED與中途FAIL均保原件，不改判。
 - C1c只接納局部template source/cache/Single與窄typed NBT；BLOCK/ITEM/PROCESSOR_LIST/LOOT_TABLE等leaf、Vault/TrialSpawner/entity及完整OW973/N210/E20均未接納。C1d先完整owner census與typed leaf/consumer白名單，再處理三role FP/provider/snapshot；`createSnapshot/resolve`維持fail closed。100ms live hold I-1及8B3真server／三bundle仍未關，Task9–20、人工與整分支門檻仍待。本機CI oracle不等於遠端CI；本筆docs commit無新full，也未據此宣稱push/main/tag。
+
+### 2026-10-29：M6 Codex 交回 Claude，C1d-D1a 結案
+
+- Codex 交接 docs `62a2f72`（入口 `docs/handoffs/2026-10-29-m6-claude-resume-prompt.md`）。Claude 實核 Git 與原件一致後接手；fix1 兩次原 FAIL 保留，不改判。
+- test-only fix2 code `9d97cd0`：具名診斷證明交接的「10 次重建」假設不成立，改在任何 lease 前算 blank charge 兼暖機，BUDGET_TOTAL_RAW 改為正例 1 次 occurrence＋負例 2 次 occurrence。乾淨 M6Compile、雙 focused 88/88、完整 `run-all-3990c81a33b84ee9961ae54b63f4b752` 自然 END ALL0／JUnit850 f0e0 skip2；整段 `f1e0bef..9d97cd0` fresh spec C0/I0/M5、quality C0/I0/M6。D1a 只限 named PROCESSOR_LIST empty／NOP／LAVA 局部閉包；fix2 降低 100ms 偶發風險，不宣稱根治。11 項 Minor 交下一個 C1d 切片 Step0（清單見 M6 note 末節）。C1d 其餘、100ms live hold I-1、8B3、Task8 終局與 Task9–20 仍待；本機 CI oracle 不等於遠端 CI。
