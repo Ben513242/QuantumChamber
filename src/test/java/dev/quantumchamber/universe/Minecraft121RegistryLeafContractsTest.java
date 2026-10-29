@@ -38,11 +38,19 @@ class Minecraft121RegistryLeafContractsTest {
     private static NbtList strings(String... values) {
         var list=new NbtList();for(String value:values)list.add(NbtString.of(value));return list;
     }
+    /** 以registries建LeafContracts；ITEM leaf的出邊依序收進emitted（from與ref成對），其他leaf不呼叫sink。 */
+    private static Minecraft121RegistryLeafContracts leaves(Minecraft121SettingsGraph graph,DynamicRegistryManager registries,
+            java.util.List<java.util.Map.Entry<Minecraft121SettingsGraph.Key,Minecraft121ItemComponentContracts.Ref>> emitted) {
+        return new Minecraft121RegistryLeafContracts(graph,registries,(from,ref)->emitted.add(java.util.Map.entry(from,ref)));
+    }
+    private static Minecraft121RegistryLeafContracts leaves(Minecraft121SettingsGraph graph,DynamicRegistryManager registries) {
+        return leaves(graph,registries,new java.util.ArrayList<>());
+    }
     /** 走production的block(...)接線：registries只放全域static BLOCK registry，entry以key自registry解析（同closure）。 */
     private static NbtCompound leaf(Block block) {
         var key=block.getRegistryEntry().registryKey();var entry=Registries.BLOCK.getEntry(key).orElseThrow();
         var graph=new Minecraft121SettingsGraph();
-        var leaves=new Minecraft121RegistryLeafContracts(graph,new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.BLOCK)));
+        var leaves=leaves(graph,new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.BLOCK)));
         var payload=leaves.block(blockNode(key.getValue().toString()),key,entry);
         assertTrue(graph.finish().length>0,"payload須已寫入圖");
         return payload;
@@ -184,9 +192,9 @@ class Minecraft121RegistryLeafContractsTest {
         var stoneKey=Blocks.STONE.getRegistryEntry().registryKey();var stone=Registries.BLOCK.getEntry(stoneKey).orElseThrow();
         var diamondKey=Items.DIAMOND.getRegistryEntry().registryKey();var diamond=Registries.ITEM.getEntry(diamondKey).orElseThrow();
         java.util.function.Function<Minecraft121SettingsGraph.Key,org.junit.jupiter.api.function.Executable> block=
-                n->()->new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),registries).block(n,stoneKey,stone);
+                n->()->leaves(new Minecraft121SettingsGraph(),registries).block(n,stoneKey,stone);
         java.util.function.Function<Minecraft121SettingsGraph.Key,org.junit.jupiter.api.function.Executable> item=
-                n->()->new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),registries).item(n,diamondKey,diamond);
+                n->()->leaves(new Minecraft121SettingsGraph(),registries).item(n,diamondKey,diamond);
         var kind=Minecraft121SettingsGraph.Kind.REGISTRY;
         assertAll(
                 ()->assertDoesNotThrow(block.apply(blockNode("minecraft:stone")),"正向對照：BLOCK"),
@@ -209,21 +217,31 @@ class Minecraft121RegistryLeafContractsTest {
     }
     /**
      * ITEM seam的單一入口，測試只經這裡呼叫seam。D1b-3a起seam是instance itemCapture：以registries建LeafContracts（建構時建好
-     * lease ops），codec之前先證明固定static registry identity。graph只是建構參數，seam不寫入它。
+     * lease ops），codec之前先證明固定static registry identity。graph只是建構參數，seam不寫入它，也不呼叫sink。
      */
+    private static Minecraft121RegistryLeafContracts.ItemCapture capture(DynamicRegistryManager registries,Item item,ComponentMap components) {
+        return leaves(new Minecraft121SettingsGraph(),registries).itemCapture(item,components);
+    }
+    private static Minecraft121RegistryLeafContracts.ItemCapture capture(Item item,ComponentMap components) {
+        return capture(itemRegistries(),item,components);
+    }
     private static NbtCompound seam(DynamicRegistryManager registries,Item item,ComponentMap components) {
-        return new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),registries).itemCapture(item,components);
+        return capture(registries,item,components).payload();
     }
     private static NbtCompound seam(Item item,ComponentMap components) {
         return seam(itemRegistries(),item,components);
     }
-    /** 走production的item(...)接線：registries為itemRegistries()，entry以key自全域ITEM registry解析（同closure）。 */
-    private static NbtCompound itemLeaf(Item item) {
+    /** 走production的item(...)接線：registries為itemRegistries()，entry以key自全域ITEM registry解析（同closure）；出邊收進emitted。 */
+    private static NbtCompound itemLeaf(Item item,
+            java.util.List<java.util.Map.Entry<Minecraft121SettingsGraph.Key,Minecraft121ItemComponentContracts.Ref>> emitted) {
         var key=item.getRegistryEntry().registryKey();var entry=Registries.ITEM.getEntry(key).orElseThrow();
         var graph=new Minecraft121SettingsGraph();
-        var payload=new Minecraft121RegistryLeafContracts(graph,itemRegistries()).item(itemNode(key.getValue().toString()),key,entry);
+        var payload=leaves(graph,itemRegistries(),emitted).item(itemNode(key.getValue().toString()),key,entry);
         assertTrue(graph.finish().length>0,"payload須已寫入圖");
         return payload;
+    }
+    private static NbtCompound itemLeaf(Item item) {
+        return itemLeaf(item,new java.util.ArrayList<>());
     }
     /** 只含單一component的map：診斷與測試用來逐型別判定白名單（以feature為vanilla的item當載體）。 */
     private static <T> ComponentMap single(net.minecraft.component.Component<T> component) {
@@ -341,7 +359,7 @@ class Minecraft121RegistryLeafContractsTest {
                     // leaf不產生occurrence：dark_oak_sapling（BlockItem＋SaplingBlock，default只有baseline）只寫入自己的ITEM node。
                     var key=sapling.getRegistryEntry().registryKey();var entry=Registries.ITEM.getEntry(key).orElseThrow();
                     var node=itemNode(key.getValue().toString());var graph=new Minecraft121SettingsGraph();
-                    var payload=new Minecraft121RegistryLeafContracts(graph,itemRegistries()).item(node,key,entry);
+                    var payload=leaves(graph,itemRegistries()).item(node,key,entry);
                     var expected=new Minecraft121SettingsGraph();expected.payload(node,payload);
                     assertArrayEquals(expected.finish(),graph.finish(),"只有ITEM node本身，沒有指向BLOCK的edge");
                 });
@@ -562,7 +580,7 @@ class Minecraft121RegistryLeafContractsTest {
         var node=itemNode(key.getValue().toString());
         var codecFails=ComponentMap.builder().addAll(diamond.getComponents()).add(DataComponentTypes.MAX_STACK_SIZE,0).build();
         java.util.function.Function<DynamicRegistryManager,org.junit.jupiter.api.function.Executable> leafWith=
-                registries->()->new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),registries).item(node,key,entry);
+                registries->()->leaves(new Minecraft121SettingsGraph(),registries).item(node,key,entry);
         var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
         checks.add(()->assertAll("正向對照與fixture前提",
                 ()->assertDoesNotThrow(leafWith.apply(itemRegistries())),
@@ -583,7 +601,7 @@ class Minecraft121RegistryLeafContractsTest {
         // BLOCK leaf共用同一個registry identity helper：lease缺BLOCK時同樣是REQUIRED_REGISTRY_MISSING（換源之前是STATIC_REGISTRY_OWNER_MISMATCH）。
         var stoneKey=Blocks.STONE.getRegistryEntry().registryKey();var stone=Registries.BLOCK.getEntry(stoneKey).orElseThrow();
         checks.add(()->assertAll("subcase=BLOCK leaf的lease缺BLOCK",()->rejects("REQUIRED_REGISTRY_MISSING",
-                ()->new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),itemLeafRegistriesWithout(RegistryKeys.BLOCK))
+                ()->leaves(new Minecraft121SettingsGraph(),itemLeafRegistriesWithout(RegistryKeys.BLOCK))
                         .block(blockNode("minecraft:stone"),stoneKey,stone))));
         assertAll(checks);
     }
@@ -654,6 +672,46 @@ class Minecraft121RegistryLeafContractsTest {
         assertAll(checks);
     }
 
+    // ===== C1d-D1b-3b：單一分派的ITEM default component型別契約（D1b-3a quality M3(a)的硬性前置） =====
+    private static String typeName(net.minecraft.component.ComponentType<?> type) {
+        return String.valueOf(Registries.DATA_COMPONENT_TYPE.getId(type));
+    }
+    private static java.util.TreeSet<String> typeNames(java.util.Collection<? extends net.minecraft.component.ComponentType<?>> types) {
+        var names=new java.util.TreeSet<String>();for(var type:types)names.add(typeName(type));return names;
+    }
+    /**
+     * 測試端獨立列出「已接受的值會產生ref」的已審型別；其餘已審型別都必須明確宣告NO_REFS。D1b-3各子片增減型別時同步更新。
+     * D1b-3a為止沒有任何已審型別產生ref。
+     */
+    private static java.util.Set<net.minecraft.component.ComponentType<?>> refBearingItemDefaultTypes() {
+        return java.util.Set.of();
+    }
+    @Test void itemComponentContractTableIsSingleDispatchWithExplicitRefs() {
+        // 每個已審型別在同一筆契約宣告值條件、ref抽取與codec會查詢的static registry（ItemComponentContracts的單一分派表）。結構斷言：
+        // 表的型別集合等於測試端獨立列出的已審型別；會產生ref的型別恰為refBearingItemDefaultTypes()（有抽取器且宣告查詢的registry），
+        // 其餘都明確宣告NO_REFS且不查registry；各型宣告的registry都屬於固定static registry聯集；固定聯集等於fixture獨立列出的那組。
+        var contracts=Minecraft121ItemComponentContracts.contracts();
+        var refBearing=refBearingItemDefaultTypes();
+        var union=itemLeafStaticRegistries().stream().map(r->(Object)r.getKey()).toList();
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        checks.add(()->assertEquals(typeNames(reviewedItemDefaults().keySet()),typeNames(contracts.keySet()),
+                "表的型別集合等於測試端獨立列出的已審型別"));
+        checks.add(()->assertTrue(contracts.keySet().containsAll(refBearing),"會產生ref的型別都在表內："+typeNames(refBearing)));
+        checks.add(()->assertEquals(itemLeafStaticRegistries(),Minecraft121ItemComponentContracts.staticRegistries(),
+                "production的固定聯集等於fixture獨立列出的聯集（含次序，ITEM第一）"));
+        for(var entry:contracts.entrySet()) {
+            var contract=entry.getValue();boolean bearing=refBearing.contains(entry.getKey());
+            checks.add(()->assertAll("type="+typeName(entry.getKey()),
+                    ()->assertNotNull(contract.value(),"值條件須宣告"),
+                    ()->assertNotNull(contract.refs(),"refs須明確宣告"),
+                    ()->assertEquals(bearing,contract.refs()!=Minecraft121ItemComponentContracts.NO_REFS,
+                            bearing?"會產生ref的型別須有抽取器，不得是NO_REFS":"literal／只收空值的型別須明確宣告NO_REFS"),
+                    ()->assertEquals(bearing,!contract.registries().isEmpty(),"有ref ⇔ 宣告codec會查詢的static registry"),
+                    ()->assertTrue(union.containsAll(contract.registries()),"宣告的registry都屬於固定聯集："+contract.registries())));
+        }
+        assertAll(checks);
+    }
+
     /**
      * 單節點圖的finish長度扣掉固定開銷（DOMAIN、node數、key、edge數），即該node的payload bytes。這依賴Graph.finish的版面：
      * 格式改變時此欄會失真而不會報錯，所以只用在不gating的診斷。
@@ -693,7 +751,7 @@ class Minecraft121RegistryLeafContractsTest {
         for(int pass=0;pass<2;pass++) {
             for(int i=0;i<count;i++) {
                 var entry=entries.get(i);var key=entry.registryKey();var node=nodeOf.apply(key.getValue().toString());
-                var graph=new Minecraft121SettingsGraph();var leaves=new Minecraft121RegistryLeafContracts(graph,registries);
+                var graph=new Minecraft121SettingsGraph();var leaves=leaves(graph,registries);
                 String code="ACCEPTED";NbtCompound payload=null;
                 long start=System.nanoTime();
                 try {payload=capture.capture(leaves,node,key,entry);}

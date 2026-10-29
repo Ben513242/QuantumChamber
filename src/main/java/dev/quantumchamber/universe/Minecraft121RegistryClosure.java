@@ -55,7 +55,7 @@ final class Minecraft121RegistryClosure {
         this.resources=Objects.requireNonNull(resources);
         this.nativeValues=new Minecraft121NativeValueContracts(graph,registries,resources,
                 (occurrence,key)->pending.addLast(new Work(occurrence,key,null,true)));
-        this.leaves=new Minecraft121RegistryLeafContracts(graph,registries);
+        this.leaves=new Minecraft121RegistryLeafContracts(graph,registries,this::itemReference);
     }
 
     Minecraft121RegistryClosure(Minecraft121SettingsGraph graph,ServerSettingsContext context) {
@@ -75,11 +75,25 @@ final class Minecraft121RegistryClosure {
         checked(() -> enqueue(from,path,key,"ordinary","required"));
     }
     void entry(Key from, String path, RegistryEntry<?> entry) {
+        checked(() -> enqueueEntry(from,path,entry,"entry"));
+    }
+    /**
+     * ITEM leaf出邊的sink（D1b-3設計§1.5第6點）：item(...)寫入payload之後，對每個ref呼叫一次；from是該ITEM node，scope是ordinary，
+     * use是item-default-component。Entry走與entry(...)相同的inline拒絕與actual(key)==entry檢查。只在drain內被呼叫，只是把Work
+     * 加進同一個FIFO。switch對sealed Ref窮舉，D1b-3c加Tag時沒有接線就無法編譯。
+     */
+    private void itemReference(Key from,Minecraft121ItemComponentContracts.Ref ref) {
         checked(() -> {
-            var key=entry.getKey().orElseThrow(() -> failure("UNSUPPORTED_INLINE_ENTRY"));
-            require(actual(key)==entry,"REGISTRY_ENTRY_OWNER_MISMATCH");
-            enqueue(from,path,key,"ordinary","entry");
+            switch(ref) {
+                case Minecraft121ItemComponentContracts.Ref.Entry reference ->
+                        enqueueEntry(from,reference.path(),reference.entry(),"item-default-component");
+            }
         });
+    }
+    private void enqueueEntry(Key from,String path,RegistryEntry<?> entry,String use) {
+        var key=entry.getKey().orElseThrow(() -> failure("UNSUPPORTED_INLINE_ENTRY"));
+        require(actual(key)==entry,"REGISTRY_ENTRY_OWNER_MISMATCH");
+        enqueue(from,path,key,"ordinary",use);
     }
     void tag(Key from, String path, TagKey<?> tag, boolean required) {
         checked(() -> {
