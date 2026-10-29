@@ -67,3 +67,11 @@
 - D1b-2 code `3fbe626`：ITEM leaf payload 為 Contract／DefaultComponents／RequiredFeatures。驗證與審查：`ItemAccessor` setup probe 成立；具名 RED→GREEN；見證 3／4／7；乾淨 Canon focused 109/109×2、LeafTest 15/15×2；完整 `run-all-cb0f99493892472ab1f63860f3ed3ad4` 自然 END ALL0／JUnit886；spec C0/I0/M3、quality C0/I0/M5。1333 個 vanilla ITEM 中 1158 個 ACCEPTED，175 個因白名單外的 default component 依設計 fail closed。
 - 設計表矛盾：chest 的 ITEM 帶 `container`，依白名單會被拒，所以測試改用 dark_oak_sapling；真 vanilla 模板的 GREEN 仍有實證。
 - 下一步：D1b-3，處理會引用其他 registry 的 default component（tool、attribute、food、potion 等）。須先寫設計並獨立審查。前置決策是 component codec 改用 lease 的 registries，或證明與全域 static registry 等價（spec 第 123 行）。D1b-3 的 Step0 要併入 D1b-2 兩席審查的 Minor 與殘餘風險：ComponentMap 容器與巢狀 List、SpawnEggItem 委派、ITEM 拒絕原因 gating、診斷退場條件等。清單見 M6 note 末節。`3fbe626` 的遠端 CI 要等本筆 push 後讀回。
+
+### 2026-10-29：D1b-3 設計放行
+
+- D1b-2 遠端 CI run `40888610474`（`b6004de`）兩 job success。
+- D1b-3 設計（ignored `task-08/8b2-c1d-design/D1B3-PROPOSAL.md`）經全新設計審查 C0/I0/M10 放行，C1～C15 由 controller 定案，無需使用者裁示。
+  - component codec 改用 lease registries，並固定證明 static registry 的 identity。
+  - 切分：3-0（Step0，9 項）→ 3a（8 型 literal）→ 3b（attribute／food／直接 tool）→ 3c（tool tag，TAG 只展開一次，tag 測試技法）→ 3d（jukebox）。
+- 下一步：D1b-3-0。各子片要帶的審查 Minor 見 M6 note 末節。

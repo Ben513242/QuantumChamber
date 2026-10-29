@@ -803,3 +803,50 @@ ITEM 冷啟動合計約 98ms，這是 I-1 的輸入。BLOCK 維持 1060 個全�
 TemplateValueContracts `:171-193` 也有同樣的模式，記給 D2。
 
 **D1b 的 BLOCK 與 ITEM static leaf 至此都已閉合**（局部閉包；`createSnapshot/resolve` 仍 fail closed）。下一個是 D1b-3：會引用其他 registry 的 default component，例如 tool→block tag、attribute、food 與 potion→status_effect。它要另行設計並審查；D1c 的真資料 GREEN 依賴 D1b-3。
+
+D1b-2 遠端 CI：docs commit `b6004de5205984a983bdc0cba1efd8206cfc26a7`（含 code `3fbe626`）的 GitHub Actions Build run `40888610474` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩個 job 都是 success。這裡只讀回 job 的結論。
+
+### 2026-10-29：D1b-3 設計放行
+
+D1b-3 處理會引用其他 registry 或 tag 的 ITEM default component。設計提案是 ignored 的 `task-08/8b2-c1d-design/D1B3-PROPOSAL.md`（SHA256 `9f6ba930ff55ea2abc1e488aa6ea65871fbf2fceaaade07d10405bd2d399d58d`），經全新設計審查（`D1B3-DESIGN-REVIEW.md`，SHA256 `3518edb0a95df15b92f5ed3973e55887cf1782574aedeb511b2728eff03c7de2`）為 C0/I0/M10，**可進實作**。審查者以自己的 javap 與 census 腳本重算，事實全部成立。
+
+**前置決策（C1）**：component codec 改用 lease registries，並固定證明一組 static registry 的 identity：lease 的 `registries.get(K)` 必須與全域 `Registries.K` 是同一個物件。這組固定為 ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、STATUS_EFFECT，3d 起再加 SOUND_EVENT。
+- 理由：ATTRIBUTE、STATUS_EFFECT、POTION、ITEM、DATA_COMPONENT_TYPE 的 codec 都直接綁定全域 registry，不看 ops。只換 ops 改不了解析來源，必須靠 identity 證明，全域解析才等於 lease 解析，這樣才符合 spec 第 123 行。
+- dynamic 的 JUKEBOX_SONG 只能經 lease 解析；在 static ops 下必定失敗。
+- identity 不成立時，在 codec 之前就 fail closed。
+
+**範圍**：D1b-2 被拒的 175 個 ITEM 共 23 型；其中 B28 實際可達的只有 85 個、12 型。真正會產生 registry 或 tag 邊的只有四型：
+- tool：BLOCK 直接引用與 BLOCK tag；
+- 非空 attribute_modifiers：ATTRIBUTE；
+- food：STATUS_EFFECT，以及 using_converts_to 引用的 ITEM；
+- jukebox_playable：JUKEBOX_SONG，再引用 SOUND_EVENT。
+
+另有 8 型在 vanilla default 中是 literal 或空的 DEFAULT 常數。其餘 11 型只出現在 B28 不可達的 16 個 ITEM，維持 fail closed，列為具名未支援。
+
+**切分**：每片累計可接受的數量以「175 個中／B28 85 個中」表示。
+- D1b-3-0（Step0）：處理 D1b-2 兩席審查列出的殘餘風險與 Minor，共 9 項。
+- 3a：改用 lease ops 並證明 identity，接受 8 型 literal（66／16）。
+- 3b：attribute、food，以及只有直接引用的 tool；新增 ATTRIBUTE 與 STATUS_EFFECT leaf，ITEM leaf 開始產生出邊（109／46）。
+- 3c：tool 的 tag 規則；每個 TAG 節點只展開一次（OW 的成員邊會從 1,127 條避免膨脹到約 6,184 條；不改變任何既有 bytes）；tag 測試技法（140／77）。
+- 3d：jukebox_playable，新增 JUKEBOX_SONG 定義與 SOUND_EVENT leaf（159／85）。D1c 的真資料 GREEN 要等 3d。
+
+**tag 測試技法（C6）**：
+- 採用 T1：seam 加 local registry，不碰全域 registry。
+- 採用 T2：可還原的全域 populate 視窗。前提是所有 BLOCK tag 都為空、只使用既有的 tag key；finally 呼叫 `clearTags()`，再以後置斷言確認。審查以 javap 確認可以精確還原到原本的 JDK 空集合單例。
+- T3（真 server 上已載入的 tag）交給 8B3。
+
+**新增 owner（C4）**：`Minecraft121ItemComponentContracts`，在 3a 引入，並在 plan 新增 bullet。
+
+C1～C15 全部由 controller 依審查定案，不需要使用者裁示。
+
+**新增的 C1d 待辦**：
+- Named tag list 沒有「已載入」旗標，「tag 尚未 populate」與「真的空 tag」分不出來，要由 8B3 保證 context 在 tag 載入之後才發布。
+- JUnit 中帶 tag 的真資料閉包（例如 D1c），成員只能當作空集合下界，不能拿來證明成員已閉合。
+- 冷啟動時，tool、food、effect 三種 codec 的第一次使用分別約 17.5／16.9／11.8ms（單輪值，兩輪之間差約 11%），是 I-1 的輸入。I-1 的候選方向是把不連到 TEMPLATE 的 static leaf 子圖延後到 template gate 之外處理，這屬於 D4，需要四項證明。
+
+10 項 Minor 依審查的放行條件，分別帶入對應子片的派工：
+- 3a：M1、M4；
+- 3b：M2 的 Entry 部分、M3、M5、M9；
+- 3c：M2 的 Named 部分、M6、M7；
+- 3d：M3、M8；
+- M10：在結案 docs 中修正。
