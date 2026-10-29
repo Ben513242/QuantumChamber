@@ -14,6 +14,7 @@ import net.minecraft.item.Items;
 import net.minecraft.nbt.*;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.RegistryKeys;
 import net.minecraft.resource.featuretoggle.FeatureFlags;
 import net.minecraft.resource.featuretoggle.FeatureSet;
 import net.minecraft.state.property.*;
@@ -21,10 +22,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷（含D1b-3-0 Step0的殘餘風險收斂）。
+ * C1d-D1b-1 BLOCK與D1b-2 ITEM static registry leaf的單元測試與成本診斷（含D1b-3-0 Step0的殘餘風險收斂，以及D1b-3a的lease
+ * registries identity與8型literal／空DEFAULT component）。
  * 只讀全域static registry：不建立或註冊Block／Item，不populate tag；不引用ModBlocks／ModItems。唯一的instance欄位變更是
  * itemLeafDefaultComponentMutationIsCapturedAndRestored（設計§5.5選配，條件寫在該測試），finally以identity還原並assertSame。
- * 共用的fixture組裝（ROOT、blockNode、itemNode、singleItemTemplate）在Minecraft121RegistryLeafTestFixtures。
+ * 共用的fixture組裝（ROOT、blockNode、itemNode、ITEM leaf的lease registries、singleItemTemplate）在Minecraft121RegistryLeafTestFixtures。
  */
 class Minecraft121RegistryLeafContractsTest {
     @BeforeAll static void bootstrap() {
@@ -177,7 +179,8 @@ class Minecraft121RegistryLeafContractsTest {
     }
     @Test void staticLeafRejectsNodeNotMatchingKey() {
         // D1b-1 quality M1：payload要寫入的node須是這個key的REGISTRY node；這是caller不變式之外的防線。
-        var registries=new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.BLOCK,Registries.ITEM));
+        // registries用ITEM leaf的lease聯集（含BLOCK）：ITEM leaf的registry identity排在node檢查之前。
+        var registries=withItemLeafRegistries();
         var stoneKey=Blocks.STONE.getRegistryEntry().registryKey();var stone=Registries.BLOCK.getEntry(stoneKey).orElseThrow();
         var diamondKey=Items.DIAMOND.getRegistryEntry().registryKey();var diamond=Registries.ITEM.getEntry(diamondKey).orElseThrow();
         java.util.function.Function<Minecraft121SettingsGraph.Key,org.junit.jupiter.api.function.Executable> block=
@@ -200,10 +203,21 @@ class Minecraft121RegistryLeafContractsTest {
     }
 
     // ===== C1d-D1b-2：ITEM static registry leaf =====
+    /** ITEM leaf的lease形狀registries：fixture獨立列出的全域static registry聯集（ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、STATUS_EFFECT）。 */
     private static DynamicRegistryManager itemRegistries() {
-        return new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.ITEM));
+        return withItemLeafRegistries();
     }
-    /** 走production的item(...)接線：registries只放全域static ITEM registry，entry以key自registry解析（同closure）。 */
+    /**
+     * ITEM seam的單一入口，測試只經這裡呼叫seam。D1b-3-0的seam是static itemPayload，codec用只含全域static registries的ops、
+     * 不看lease，所以registries在換源之前沒有作用。
+     */
+    private static NbtCompound seam(DynamicRegistryManager registries,Item item,ComponentMap components) {
+        return itemPayload(item,components);
+    }
+    private static NbtCompound seam(Item item,ComponentMap components) {
+        return seam(itemRegistries(),item,components);
+    }
+    /** 走production的item(...)接線：registries為itemRegistries()，entry以key自全域ITEM registry解析（同closure）。 */
     private static NbtCompound itemLeaf(Item item) {
         var key=item.getRegistryEntry().registryKey();var entry=Registries.ITEM.getEntry(key).orElseThrow();
         var graph=new Minecraft121SettingsGraph();
@@ -237,6 +251,9 @@ class Minecraft121RegistryLeafContractsTest {
                 ()->assertNotEquals(diamond,pearl,"不同item的payload須不同：抓「沒有讀實際item」的接線突變"));
     }
     @Test void itemLeafRejectsUnreviewedDefaultComponents() {
+        // D1b-3a起potion（potion_contents）與chest（container）的空DEFAULT已審，移到itemLeafAcceptsLiteralAndEmptyDefaultComponents；
+        // 拒絕面改用仍未支援的型別：stored_enchantments（ENCHANTMENT是dynamic）與bees（非空值帶entity NBT，屬D2）。
+        // golden_apple（food）與iron_axe（tool、非空attribute_modifiers）屬D1b-3b，在那之前仍拒。
         String code="UNSUPPORTED_ITEM_DEFAULT_COMPONENT";
         assertAll(
                 ()->assertAll("subcase=golden_apple（food）",
@@ -244,27 +261,29 @@ class Minecraft121RegistryLeafContractsTest {
                         ()->rejects(code,()->itemLeaf(Items.GOLDEN_APPLE))),
                 ()->assertAll("subcase=iron_axe（tool與非空attribute_modifiers）",
                         ()->rejects(code,()->itemLeaf(Items.IRON_AXE)),
-                        ()->rejects(code,()->itemPayload(Items.IRON_AXE,single(component(Items.IRON_AXE,DataComponentTypes.TOOL)))),
+                        ()->rejects(code,()->seam(Items.IRON_AXE,single(component(Items.IRON_AXE,DataComponentTypes.TOOL)))),
                         ()->{var modifiers=component(Items.IRON_AXE,DataComponentTypes.ATTRIBUTE_MODIFIERS);
                             assertFalse(modifiers.value().modifiers().isEmpty(),"fixture前提：attribute_modifiers非空");
-                            rejects(code,()->itemPayload(Items.IRON_AXE,single(modifiers)));}),
-                ()->assertAll("subcase=potion（potion_contents）",
-                        ()->assertTrue(Items.POTION.getComponents().contains(DataComponentTypes.POTION_CONTENTS),"fixture前提"),
-                        ()->rejects(code,()->itemLeaf(Items.POTION))),
-                // 設計外補充：chest的ITEM default帶container（probe證據D1B2-PROBE），同樣不在D1b白名單。
-                ()->assertAll("subcase=chest（container）",
-                        ()->assertTrue(Items.CHEST.getComponents().contains(DataComponentTypes.CONTAINER),"fixture前提"),
-                        ()->rejects(code,()->itemLeaf(Items.CHEST))));
+                            rejects(code,()->seam(Items.IRON_AXE,single(modifiers)));}),
+                ()->assertAll("subcase=enchanted_book（stored_enchantments；另帶已審的enchantment_glint_override）",
+                        ()->assertTrue(Items.ENCHANTED_BOOK.getComponents().contains(DataComponentTypes.STORED_ENCHANTMENTS),"fixture前提"),
+                        ()->rejects(code,()->itemLeaf(Items.ENCHANTED_BOOK)),
+                        ()->rejects(code,()->seam(Items.ENCHANTED_BOOK,single(component(Items.ENCHANTED_BOOK,DataComponentTypes.STORED_ENCHANTMENTS))))),
+                ()->assertAll("subcase=bee_nest（bees）",
+                        ()->assertTrue(Items.BEE_NEST.getComponents().contains(DataComponentTypes.BEES),"fixture前提"),
+                        ()->rejects(code,()->itemLeaf(Items.BEE_NEST))));
     }
     private static String verdict(org.junit.jupiter.api.function.Executable action,String rejectedCode) {
         try {action.execute();return "ACCEPTED";}
         catch(Minecraft121SettingsGraph.Failure failure) {return failure.getMessage().equals(rejectedCode)?"REJECTED":failure.getMessage();}
         catch(Throwable other) {return other.getClass().getName();}
     }
-    @Test void itemDefaultWhitelistMatchesTemplateEffectiveWhitelist() {
+    @Test void itemDefaultWhitelistCoversTemplateEffectiveWhitelist() {
         // 一邊是leaf的default白名單，一邊是TemplateValueContracts.capture對「只含該item的合成chest模板」的有效component白名單；
         // reference consumer是stub，只比accept／reject，不finish，也不填假payload。chest（container）是設計外補充。
-        var registries=new DynamicRegistryManager.ImmutableImpl(java.util.List.of(Registries.BLOCK,Registries.ITEM));
+        // D1b-3設計§3.3（controller C13）：模板端白名單在D2b之前不擴充，所以只斷言「模板ACCEPTED ⇒ leaf ACCEPTED」，另以預期分歧表
+        // 列出leaf接受、模板仍拒的item。每個D1b-3子片同步更新分歧表；D2b須把TemplateValueContracts.components()收斂到同一套已審型別契約。
+        var registries=withItemLeafRegistries();
         var items=java.util.List.of(Items.DIAMOND,Items.ENDER_PEARL,Items.WATER_BUCKET,Items.GOLDEN_APPLE,Items.WOODEN_SHOVEL,
                 Items.IRON_AXE,Items.POTION,Items.CHEST);
         var leaf=new java.util.LinkedHashMap<String,String>();var template=new java.util.LinkedHashMap<String,String>();
@@ -275,25 +294,34 @@ class Minecraft121RegistryLeafContractsTest {
             template.put(id.toString(),verdict(()->new Minecraft121TemplateValueContracts(new Minecraft121SettingsGraph(),registries,(occurrence,key)->{})
                     .capture(node,singleItemTemplate("minecraft:chest",id.toString())),"UNSUPPORTED_TEMPLATE_COMPONENT"));
         }
-        var expected=new java.util.LinkedHashMap<String,String>();
-        for(String id:java.util.List.of("minecraft:diamond","minecraft:ender_pearl","minecraft:water_bucket"))expected.put(id,"ACCEPTED");
-        for(String id:java.util.List.of("minecraft:golden_apple","minecraft:wooden_shovel","minecraft:iron_axe","minecraft:potion","minecraft:chest"))
-            expected.put(id,"REJECTED");
+        var expectedTemplate=new java.util.LinkedHashMap<String,String>();
+        for(var item:items)expectedTemplate.put(Registries.ITEM.getId(item).toString(),"REJECTED");
+        for(String id:java.util.List.of("minecraft:diamond","minecraft:ender_pearl","minecraft:water_bucket"))expectedTemplate.put(id,"ACCEPTED");
+        // 預期分歧表（leaf ACCEPTED、模板REJECTED）：D1b-3a＝potion（potion_contents空DEFAULT）、chest（container空DEFAULT）。
+        var expectedDivergence=java.util.List.of("minecraft:potion","minecraft:chest");
+        var uncovered=new java.util.ArrayList<String>();var divergence=new java.util.ArrayList<String>();
+        for(var id:leaf.keySet()) {
+            if(template.get(id).equals("ACCEPTED")&&!leaf.get(id).equals("ACCEPTED"))uncovered.add(id);
+            if(leaf.get(id).equals("ACCEPTED")&&template.get(id).equals("REJECTED"))divergence.add(id);
+        }
         assertAll(
-                ()->assertEquals(template,leaf,"兩份白名單逐項同判"),
-                ()->assertEquals(expected,leaf,"fixture前提：接受與拒絕兩邊都有"));
+                ()->assertEquals(expectedTemplate,template,"模板端判定（D2b之前不變）：接受與拒絕兩邊都有"),
+                ()->assertEquals(java.util.List.of(),uncovered,"模板ACCEPTED ⇒ leaf ACCEPTED"),
+                ()->assertEquals(expectedDivergence,divergence,"預期分歧表"),
+                ()->assertTrue(leaf.values().stream().allMatch(v->v.equals("ACCEPTED")||v.equals("REJECTED")),
+                        "leaf結果只有ACCEPTED或白名單拒絕："+leaf));
     }
     @Test void itemLeafDefaultComponentsChangePayloadWithoutGlobalMutation() {
         var diamond=Items.DIAMOND;var original=diamond.getComponents();
         var changed=ComponentMap.builder().addAll(original).add(DataComponentTypes.MAX_STACK_SIZE,16).build();
-        var base=itemPayload(diamond,original);var other=itemPayload(diamond,changed);
+        var base=seam(diamond,original);var other=seam(diamond,changed);
         var withFood=ComponentMap.builder().addAll(original).add(DataComponentTypes.FOOD,component(Items.GOLDEN_APPLE,DataComponentTypes.FOOD).value()).build();
         assertAll(
                 ()->assertNotEquals(base,other,"同一id改了default component值，payload須跟著改變"),
                 ()->assertEquals(16,other.getCompound("DefaultComponents").getInt("minecraft:max_stack_size")),
                 ()->assertEquals(base.get("RequiredFeatures"),other.get("RequiredFeatures")),
                 ()->assertEquals(itemLeaf(diamond),base,"production接線傳入getComponents()，結果須與seam相同"),
-                ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->itemPayload(diamond,withFood)));
+                ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(diamond,withFood)));
         assertSame(original,diamond.getComponents(),"seam測試不得改動全域狀態");
     }
     @Test void blockItemLeafExecutedOwnersIncludeBlockAndHasNoBlockEdge() {
@@ -336,8 +364,8 @@ class Minecraft121RegistryLeafContractsTest {
         // setup：mixin沒有套用時在這裡以setup失敗結束，不會在try／finally的cast丟CCE而蓋掉原因。
         var accessor=assertInstanceOf(net.fabricmc.fabric.mixin.item.ItemAccessor.class,item,"setup：ItemAccessor mixin");
         // 暖機：變更前對同一item完整走一次seam（原值與變更值）、leaf capture與closure drain／finish。
-        var expectedOriginal=expectedItemGraph(id,itemPayload(item,original));
-        var expectedChanged=expectedItemGraph(id,itemPayload(item,changed));
+        var expectedOriginal=expectedItemGraph(id,seam(item,original));
+        var expectedChanged=expectedItemGraph(id,seam(item,changed));
         try(var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of())) {
             var warm=new Minecraft121SettingsGraph();warm.payload(ROOT,NbtInt.of(1));
             var warmClosure=new Minecraft121RegistryClosure(warm,itemRegistries(),resources);warmClosure.reference(ROOT,"item",key);warmClosure.drain();
@@ -396,7 +424,7 @@ class Minecraft121RegistryLeafContractsTest {
                 ()->assertEquals(1,((NbtCompound)ComponentMap.CODEC.encodeStart(NbtOps.INSTANCE,components).getOrThrow())
                         .getList("minecraft:lore",NbtElement.STRING_TYPE).size(),"原生codec（plain NbtOps）實際編出一行lore"),
                 ()->assertDoesNotThrow(()->requireNativeSource(components.getClass()),"外層是原生容器"));
-        rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->itemPayload(Items.DIAMOND,components));
+        rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,components));
     }
     @Test void itemLeafRejectsForeignComponentMapContainer() {
         // S0-1 RED②：步驟6的白名單與codec各迭代容器一次；foreign容器可以讓兩次內容不同（第二次多出food）。
@@ -408,34 +436,48 @@ class Minecraft121RegistryLeafContractsTest {
         assertAll("fixture前提",
                 ()->assertFalse(firstTypes.contains(DataComponentTypes.FOOD),"第一次迭代不含food"),
                 ()->assertTrue(laterTypes.contains(DataComponentTypes.FOOD),"第二次迭代含food"));
-        rejects("NATIVE_DEFINITION_SOURCE",()->itemPayload(Items.DIAMOND,new ShiftingComponentMap(base,withFood)));
+        // D1b-3-0 quality M1：容器source檢查只擋直接foreign的容器；原生包裝ComponentMapImpl（changedComponents為空時iterator直接
+        // 委派base）能通過，它的內容一致性由roundtrip後重建map的再驗保證。codec那次迭代吐出food，重建map含food，再驗時拒絕。
+        var wrapped=new net.minecraft.component.ComponentMapImpl(new ShiftingComponentMap(base,withFood));
+        assertAll(
+                ()->assertAll("subcase=直接foreign容器",()->rejects("NATIVE_DEFINITION_SOURCE",
+                        ()->seam(Items.DIAMOND,new ShiftingComponentMap(base,withFood)))),
+                ()->assertAll("subcase=原生ComponentMapImpl包裝foreign容器",
+                        ()->assertDoesNotThrow(()->requireNativeSource(wrapped.getClass()),"fixture前提：外層是原生容器"),
+                        ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,wrapped))));
     }
     @Test void itemLeafNestedListExceptionBecomesNamedCode() {
         // S0-1 RED③：foreign容器會先在容器source檢查被擋，所以丟例外的是原生LoreComponent內的巢狀List，外層是原生SimpleComponentMap。
         var components=single(new net.minecraft.component.Component<>(DataComponentTypes.LORE,new LoreComponent(new ThrowingLines())));
         assertDoesNotThrow(()->requireNativeSource(components.getClass()),"fixture前提：外層是原生容器");
-        var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,()->itemPayload(Items.DIAMOND,components));
+        var failure=assertThrows(Minecraft121SettingsGraph.Failure.class,()->seam(Items.DIAMOND,components));
+        // Failure本身也是IllegalStateException的子類，所以以訊息把cause釘在巢狀List的isEmpty，並排除Failure包Failure。
         assertAll(
                 ()->assertEquals("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",failure.getMessage()),
-                ()->assertInstanceOf(IllegalStateException.class,failure.getCause(),"原因以initCause保留"));
+                ()->assertEquals("throwing lore isEmpty",failure.getCause().getMessage(),"原因以initCause保留"),
+                ()->assertFalse(failure.getCause() instanceof Minecraft121SettingsGraph.Failure,"cause不是另一個Failure"));
     }
     @Test void spawnEggItemExecutedOwnersIncludeEntityTypeClass() {
         // S0-2 RED：原生SpawnEggItem的getRequiredFeatures委派type.getRequiredFeatures()（EntityType的method可被覆寫），
-        // 所以leaf擷取時也會執行該EntityType的class。
+        // 所以leaf擷取時也會執行該EntityType的class。委派本身的證據是javap：SpawnEggItem.getRequiredFeatures offset 0-7為
+        // getfield type → invokevirtual EntityType.getRequiredFeatures（D1b-3設計§5 S0-2，class SHA256 ff9846974b03…）。
         var egg=(net.minecraft.item.SpawnEggItem)Items.PIG_SPAWN_EGG;
         var type=egg.getEntityType(net.minecraft.item.ItemStack.EMPTY);
         assertAll("fixture前提",
                 ()->assertSame(net.minecraft.entity.EntityType.PIG,type,"ENTITY_DATA為空時回傳建構時的type"),
-                ()->assertSame(type.getRequiredFeatures(),egg.getRequiredFeatures(),"spawn egg的RequiredFeatures委派EntityType"));
+                ()->assertSame(type.getRequiredFeatures(),egg.getRequiredFeatures(),
+                        "一致性檢查（vanilla的EntityType與Item共用同一個VANILLA_FEATURES實例，不鑑別委派；委派由javap證明）"));
         assertEquals(java.util.List.of(net.minecraft.item.SpawnEggItem.class,net.minecraft.entity.EntityType.class),
                 executedOwnerClasses(Items.PIG_SPAWN_EGG),"SpawnEggItem的EntityType class也會被執行");
     }
     /**
-     * 測試端獨立列出的已審ITEM default型別與值條件（D1b-2白名單；不呼叫production的判斷）。共8型：MAX_STACK_SIZE／MAX_DAMAGE／
-     * DAMAGE／REPAIR_COST（值為Integer）、RARITY（值為Rarity），其中ENCHANTMENTS、LORE、ATTRIBUTE_MODIFIERS這3型另帶「必須為空」
-     * 條件。D1b-3各子片擴充leaf白名單時，同步擴充本表。以method建立，避免在@BeforeAll的Bootstrap之前觸發DataComponentTypes的class init。
+     * 測試端獨立列出的已審ITEM default型別與值條件（不呼叫production的判斷），依子片分表。以method建立，避免在@BeforeAll的
+     * Bootstrap之前觸發DataComponentTypes的class init。D1b-3各子片擴充leaf白名單時，同步新增該子片的表。
+     *
+     * <p>D1b-2共8型：MAX_STACK_SIZE／MAX_DAMAGE／DAMAGE／REPAIR_COST（值為Integer）、RARITY（值為Rarity），其中ENCHANTMENTS、LORE、
+     * ATTRIBUTE_MODIFIERS這3型另帶「必須為空」條件。
      */
-    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewedItemDefaults() {
+    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> d1b2ReviewedItemDefaults() {
         return java.util.Map.of(
                 DataComponentTypes.MAX_STACK_SIZE,value->value instanceof Integer,
                 DataComponentTypes.MAX_DAMAGE,value->value instanceof Integer,
@@ -448,6 +490,40 @@ class Minecraft121RegistryLeafContractsTest {
                 DataComponentTypes.ATTRIBUTE_MODIFIERS,value->value instanceof net.minecraft.component.type.AttributeModifiersComponent modifiers
                         &&modifiers.modifiers().isEmpty());
     }
+    /**
+     * D1b-3a新增8型（設計§2.2）：fire_resistant（MC的net.minecraft.util.Unit）、enchantment_glint_override（Boolean）、
+     * ominous_bottle_amplifier（Integer）是literal；potion_contents、suspicious_stew_effects、container、banner_patterns、
+     * charged_projectiles只收空DEFAULT。空值以各型DEFAULT.equals判定（與production逐欄位isEmpty是不同的表示法）。
+     */
+    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> d1b3aReviewedItemDefaults() {
+        return java.util.Map.of(
+                DataComponentTypes.FIRE_RESISTANT,value->value instanceof net.minecraft.util.Unit,
+                DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE,value->value instanceof Boolean,
+                DataComponentTypes.OMINOUS_BOTTLE_AMPLIFIER,value->value instanceof Integer,
+                DataComponentTypes.POTION_CONTENTS,net.minecraft.component.type.PotionContentsComponent.DEFAULT::equals,
+                DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,net.minecraft.component.type.SuspiciousStewEffectsComponent.DEFAULT::equals,
+                DataComponentTypes.CONTAINER,net.minecraft.component.type.ContainerComponent.DEFAULT::equals,
+                DataComponentTypes.BANNER_PATTERNS,net.minecraft.component.type.BannerPatternsComponent.DEFAULT::equals,
+                DataComponentTypes.CHARGED_PROJECTILES,net.minecraft.component.type.ChargedProjectilesComponent.DEFAULT::equals);
+    }
+    /** 目前已審的全部型別：D1b-2加上D1b-3a。 */
+    private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewedItemDefaults() {
+        var reviewed=new java.util.HashMap<>(d1b2ReviewedItemDefaults());reviewed.putAll(d1b3aReviewedItemDefaults());
+        return reviewed;
+    }
+    /** default的每個component都符合reviewed的值條件；不符的型別id加入unreviewed（可為null）。 */
+    private static boolean allReviewed(Item item,java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewed,
+            java.util.Set<String> unreviewed) {
+        boolean all=true;
+        for(var component:item.getComponents()) {
+            var condition=reviewed.get(component.type());
+            if(condition==null||!condition.test(component.value())) {
+                all=false;
+                if(unreviewed!=null)unreviewed.add(String.valueOf(Registries.DATA_COMPONENT_TYPE.getId(component.type())));
+            }
+        }
+        return all;
+    }
     @Test void everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes() {
         // S0-3（D1b-2 quality M2(b)）：拒絕原因層級的gating，不斷言數量。只篩minecraft namespace（full中先init的mod item會被篩掉）。
         // 每個item的leaf結果只能是ACCEPTED或UNSUPPORTED_ITEM_DEFAULT_COMPONENT，而且「被拒」⇔「default含上表以外的型別或值」。
@@ -459,10 +535,7 @@ class Minecraft121RegistryLeafContractsTest {
             if(!id.getNamespace().equals("minecraft"))continue;
             checked++;
             var unreviewed=new java.util.TreeSet<String>();
-            for(var component:entry.value().getComponents()) {
-                var condition=reviewed.get(component.type());
-                if(condition==null||!condition.test(component.value()))unreviewed.add(String.valueOf(Registries.DATA_COMPONENT_TYPE.getId(component.type())));
-            }
+            allReviewed(entry.value(),reviewed,unreviewed);
             String actual;
             try {itemLeaf(entry.value());actual="ACCEPTED";}
             catch(Minecraft121SettingsGraph.Failure failure){actual=failure.getMessage();}
@@ -476,7 +549,109 @@ class Minecraft121RegistryLeafContractsTest {
                 ()->assertTrue(total>0,"fixture前提：有minecraft item"),
                 ()->assertEquals(java.util.Map.of(),mismatched,"每個vanilla ITEM只能ACCEPTED，或因白名單外的型別或值被拒"),
                 // vanilla的lore全為空，所以「LORE不再檢查是否為空」這類突變不會改變上面任何item的結果；以seam子案補上。
-                ()->assertAll("subcase=seam非空lore",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->itemPayload(Items.DIAMOND,nonEmptyLore))));
+                ()->assertAll("subcase=seam非空lore",()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,nonEmptyLore))));
+    }
+
+    // ===== C1d-D1b-3a：component codec改用lease registries（codec之前固定證明static registry identity），以及8型literal／空DEFAULT =====
+    @Test void itemLeafCodecUsesLeaseRegistriesWithIdentity() {
+        // 設計§1.5第4點與設計審查M1（controller C1）：ITEM leaf在codec之前固定證明ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、
+        // STATUS_EFFECT都是lease持有的全域registry本身；缺席→REQUIRED_REGISTRY_MISSING，同key另一個物件→STATIC_REGISTRY_OWNER_MISMATCH。
+        // item(...)與seam各自都要擋。codecFails能過白名單、但會在codec失敗（MAX_STACK_SIZE的原生範圍是1..99）：identity若排在codec
+        // 之後，這個子案會得到UNSUPPORTED_ITEM_COMPONENT_CODEC。
+        var diamond=Items.DIAMOND;var key=diamond.getRegistryEntry().registryKey();var entry=Registries.ITEM.getEntry(key).orElseThrow();
+        var node=itemNode(key.getValue().toString());
+        var codecFails=ComponentMap.builder().addAll(diamond.getComponents()).add(DataComponentTypes.MAX_STACK_SIZE,0).build();
+        java.util.function.Function<DynamicRegistryManager,org.junit.jupiter.api.function.Executable> leafWith=
+                registries->()->new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),registries).item(node,key,entry);
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        checks.add(()->assertAll("正向對照與fixture前提",
+                ()->assertDoesNotThrow(leafWith.apply(itemRegistries())),
+                ()->assertDoesNotThrow(()->seam(diamond,diamond.getComponents())),
+                ()->rejects("UNSUPPORTED_ITEM_COMPONENT_CODEC",()->seam(diamond,codecFails))));
+        for(var registry:itemLeafStaticRegistries()) {
+            var registryKey=registry.getKey();String name=registryKey.getValue().toString();
+            var missing=itemLeafRegistriesWithout(registryKey);var foreign=itemLeafRegistriesWithForeign(registryKey);
+            checks.add(()->assertAll("subcase=lease缺"+name,
+                    ()->rejects("REQUIRED_REGISTRY_MISSING",leafWith.apply(missing)),
+                    ()->rejects("REQUIRED_REGISTRY_MISSING",()->seam(missing,diamond,diamond.getComponents())),
+                    ()->rejects("REQUIRED_REGISTRY_MISSING",()->seam(missing,diamond,codecFails))));
+            checks.add(()->assertAll("subcase=lease的"+name+"是同key的另一個物件",
+                    ()->rejects("STATIC_REGISTRY_OWNER_MISMATCH",leafWith.apply(foreign)),
+                    ()->rejects("STATIC_REGISTRY_OWNER_MISMATCH",()->seam(foreign,diamond,diamond.getComponents())),
+                    ()->rejects("STATIC_REGISTRY_OWNER_MISMATCH",()->seam(foreign,diamond,codecFails))));
+        }
+        // BLOCK leaf共用同一個registry identity helper：lease缺BLOCK時同樣是REQUIRED_REGISTRY_MISSING（換源之前是STATIC_REGISTRY_OWNER_MISMATCH）。
+        var stoneKey=Blocks.STONE.getRegistryEntry().registryKey();var stone=Registries.BLOCK.getEntry(stoneKey).orElseThrow();
+        checks.add(()->assertAll("subcase=BLOCK leaf的lease缺BLOCK",()->rejects("REQUIRED_REGISTRY_MISSING",
+                ()->new Minecraft121RegistryLeafContracts(new Minecraft121SettingsGraph(),itemLeafRegistriesWithout(RegistryKeys.BLOCK))
+                        .block(blockNode("minecraft:stone"),stoneKey,stone))));
+        assertAll(checks);
+    }
+    @Test void itemLeafAcceptsLiteralAndEmptyDefaultComponents() {
+        // 設計§2.2與§3.1的3a：8型的vanilla default是literal或空DEFAULT，不引用任何registry。encoded值逐型寫成字面值（不經ComponentMap.CODEC）。
+        // 真vanilla item從REJECTED變ACCEPTED：每型一個只帶該型（其餘都是D1b-2已審型別）的item。ominous_bottle與suspicious_stew另帶food
+        // （D1b-3b），所以這兩型只以seam的單一component驗。
+        record Case(Item carrier,net.minecraft.component.ComponentType<?> type,NbtElement literal,boolean wholeItem) {}
+        var cases=java.util.List.of(
+                new Case(Items.NETHERITE_INGOT,DataComponentTypes.FIRE_RESISTANT,new NbtCompound(),true),
+                new Case(Items.EXPERIENCE_BOTTLE,DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE,NbtByte.ONE,true),
+                new Case(Items.OMINOUS_BOTTLE,DataComponentTypes.OMINOUS_BOTTLE_AMPLIFIER,NbtInt.of(0),false),
+                new Case(Items.POTION,DataComponentTypes.POTION_CONTENTS,new NbtCompound(),true),
+                new Case(Items.SUSPICIOUS_STEW,DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,new NbtList(),false),
+                new Case(Items.BARREL,DataComponentTypes.CONTAINER,new NbtList(),true),
+                new Case(Items.SHIELD,DataComponentTypes.BANNER_PATTERNS,new NbtList(),true),
+                new Case(Items.CROSSBOW,DataComponentTypes.CHARGED_PROJECTILES,new NbtList(),true));
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for(var c:cases) {
+            String type=String.valueOf(Registries.DATA_COMPONENT_TYPE.getId(c.type()));String carrier=Registries.ITEM.getId(c.carrier()).toString();
+            checks.add(()->assertAll("subcase="+type+"（"+carrier+"）",
+                    ()->{var defaults=seam(Items.DIAMOND,single(component(c.carrier(),c.type()))).getCompound("DefaultComponents");
+                        assertEquals(java.util.Set.of(type),defaults.getKeys(),"seam單一component");
+                        assertEquals(c.literal(),defaults.get(type),"encoded值");},
+                    ()->{if(c.wholeItem())assertEquals(c.literal(),itemLeaf(c.carrier()).getCompound("DefaultComponents").get(type),
+                            "整個item的leaf ACCEPTED，含該型的encoded值");}));
+        }
+        // 值條件只認型別；ominous_bottle_amplifier的原生範圍0..4由codec強制，超出時在codec拒，不寫入payload。
+        checks.add(()->assertAll("subcase=ominous_bottle_amplifier=5（超出原生範圍）",()->rejects("UNSUPPORTED_ITEM_COMPONENT_CODEC",
+                ()->seam(Items.DIAMOND,ComponentMap.builder().add(DataComponentTypes.OMINOUS_BOTTLE_AMPLIFIER,5).build()))));
+        assertAll(checks);
+    }
+    /** raw cast製造的heap pollution：值的型別與ComponentType的型別參數不符（測試只送進seam）。 */
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private static ComponentMap mistyped(net.minecraft.component.ComponentType<?> type,Object value) {
+        return ComponentMap.builder().add((net.minecraft.component.ComponentType)type,value).build();
+    }
+    private static <T> ComponentMap only(net.minecraft.component.ComponentType<T> type,T value) {
+        return ComponentMap.builder().add(type,value).build();
+    }
+    @Test void itemLeafRejectsNonEmptyOrMistypedReviewedComponents() {
+        // 設計審查M4：8型的值條件逐型鑑別。5型只收空值：每個非空值仍拒（potion_contents的三個欄位各一案）；3型literal：型別不符的值
+        // 仍拒。全部只經seam，值都是新建的局部物件（direct banner pattern entry、新ItemStack），不改動全域狀態。
+        var speed=net.minecraft.entity.effect.StatusEffects.SPEED;
+        var pattern=net.minecraft.registry.entry.RegistryEntry.of(new net.minecraft.block.entity.BannerPattern(
+                net.minecraft.util.Identifier.ofVanilla("base"),"block.minecraft.banner.base"));
+        var cases=new java.util.LinkedHashMap<String,ComponentMap>();
+        cases.put("potion_contents的potion非空",only(DataComponentTypes.POTION_CONTENTS,
+                new net.minecraft.component.type.PotionContentsComponent(net.minecraft.potion.Potions.WATER)));
+        cases.put("potion_contents的customColor非空",only(DataComponentTypes.POTION_CONTENTS,new net.minecraft.component.type.PotionContentsComponent(
+                java.util.Optional.empty(),java.util.Optional.of(0x385DC6),java.util.List.of())));
+        cases.put("potion_contents的customEffects非空",only(DataComponentTypes.POTION_CONTENTS,new net.minecraft.component.type.PotionContentsComponent(
+                java.util.Optional.empty(),java.util.Optional.empty(),java.util.List.of(new net.minecraft.entity.effect.StatusEffectInstance(speed)))));
+        cases.put("suspicious_stew_effects非空",only(DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,new net.minecraft.component.type.SuspiciousStewEffectsComponent(
+                java.util.List.of(new net.minecraft.component.type.SuspiciousStewEffectsComponent.StewEffect(speed,160)))));
+        cases.put("container非空",only(DataComponentTypes.CONTAINER,
+                net.minecraft.component.type.ContainerComponent.fromStacks(java.util.List.of(new net.minecraft.item.ItemStack(Items.STONE)))));
+        cases.put("banner_patterns非空",only(DataComponentTypes.BANNER_PATTERNS,new net.minecraft.component.type.BannerPatternsComponent(
+                java.util.List.of(new net.minecraft.component.type.BannerPatternsComponent.Layer(pattern,net.minecraft.util.DyeColor.RED)))));
+        cases.put("charged_projectiles非空",only(DataComponentTypes.CHARGED_PROJECTILES,
+                net.minecraft.component.type.ChargedProjectilesComponent.of(new net.minecraft.item.ItemStack(Items.ARROW))));
+        cases.put("fire_resistant的值不是Unit.INSTANCE",mistyped(DataComponentTypes.FIRE_RESISTANT,Boolean.TRUE));
+        cases.put("enchantment_glint_override的值不是Boolean",mistyped(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE,"true"));
+        cases.put("ominous_bottle_amplifier的值不是Integer",mistyped(DataComponentTypes.OMINOUS_BOTTLE_AMPLIFIER,0L));
+        var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
+        for(var c:cases.entrySet())checks.add(()->assertAll("subcase="+c.getKey(),
+                ()->rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->seam(Items.DIAMOND,c.getValue()))));
+        assertAll(checks);
     }
 
     /**
@@ -490,6 +665,8 @@ class Minecraft121RegistryLeafContractsTest {
         return finished.length-text-4-keyBytes-4;
     }
     private static String stats(long[] values) {
+        // 不gating：空陣列（例如突變下沒有任何ACCEPTED）只回報count=0，不丟例外（D1b-3-0 spec M1）。
+        if(values.length==0)return "count=0";
         var sorted=values.clone();java.util.Arrays.sort(sorted);long total=0;for(long value:sorted)total+=value;
         java.util.function.IntFunction<Long> at=p->sorted[Math.min(sorted.length-1,(int)Math.ceil(p/100.0*sorted.length)-1)];
         return "count="+sorted.length+" min="+sorted[0]+" p50="+at.apply(50)+" p90="+at.apply(90)+" p99="+at.apply(99)
@@ -592,7 +769,7 @@ class Minecraft121RegistryLeafContractsTest {
             if(id.getNamespace().equals("minecraft"))for(var component:entries.get(i).value().getComponents()) {
                 String type=String.valueOf(Registries.DATA_COMPONENT_TYPE.getId(component.type()));
                 String verdict;
-                try {itemPayload(Items.DIAMOND,single(component));verdict="ACCEPTED";}
+                try {seam(Items.DIAMOND,single(component));verdict="ACCEPTED";}
                 catch(Minecraft121SettingsGraph.Failure failure){verdict=failure.getMessage();}
                 catch(RuntimeException other){verdict=other.getClass().getName();}
                 if(verdict.equals("ACCEPTED"))acceptedTypes.merge(type,1,Integer::sum);else rejected.add(type);
@@ -616,5 +793,47 @@ class Minecraft121RegistryLeafContractsTest {
         System.out.println("D1B2_ITEM_LEAF_COST_ACCEPTED_WARM_NS "+stats(acceptedWarm.stream().mapToLong(Long::longValue).toArray()));
         System.out.println("D1B2_ITEM_LEAF_COST_REFERENCE templateItemUnion=10 templateItemBaselineOnly=7 owAllConsumerItems=290 unionAllConsumerItems=314"
                 +" source=B28-census-constants-not-measured-here");
+    }
+    /**
+     * C1d-D1b-3 closure層級的ITEM成本診斷（設計§6.3），不gating：不開lease、不斷言數量或時間，也不用Assumptions跳過；drain的Failure
+     * 只記碼。一個graph、一個closure（production形狀：LeafContracts在closure建構時建立，跨leaf共用），對選定的minecraft ITEM各
+     * reference一次後drain並finish；計時涵蓋closure建構、reference、drain與finish。兩組item由測試端oracle選出（不呼叫production，
+     * 所以選取本身不暖機codec）：d1b2-reviewed只含D1b-2已審型別（換源前後可比的同一組），reviewed含目前全部已審型別。pass0是本測試
+     * 第一次closure（同JVM其他測試可能已暖機部分codec，所以只是本測試的冷值），pass1是暖值。另量ops建立成本：換源前每個leaf都建一次
+     * 只含全域static registries的ops，換源後每個closure只建一次lease ops。目前的ITEM leaf沒有出邊也沒有tag，不涉及H-TAG的下界。
+     */
+    @Test void staticItemClosureCostDiagnostic() throws Exception {
+        var groups=new java.util.LinkedHashMap<String,java.util.List<net.minecraft.registry.RegistryKey<Item>>>();
+        groups.put("d1b2-reviewed",new java.util.ArrayList<>());groups.put("reviewed",new java.util.ArrayList<>());
+        var d1b2=d1b2ReviewedItemDefaults();var reviewed=reviewedItemDefaults();
+        for(var entry:(Iterable<net.minecraft.registry.entry.RegistryEntry.Reference<Item>>)Registries.ITEM.streamEntries()::iterator) {
+            if(!entry.registryKey().getValue().getNamespace().equals("minecraft"))continue;
+            if(allReviewed(entry.value(),d1b2,null))groups.get("d1b2-reviewed").add(entry.registryKey());
+            if(allReviewed(entry.value(),reviewed,null))groups.get("reviewed").add(entry.registryKey());
+        }
+        try(var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of())) {
+            for(var group:groups.entrySet())for(int pass=0;pass<2;pass++) {
+                var keys=group.getValue();String code="ACCEPTED";long bytes=0;
+                long start=System.nanoTime();
+                try {
+                    var graph=new Minecraft121SettingsGraph();graph.payload(ROOT,NbtInt.of(1));
+                    var closure=new Minecraft121RegistryClosure(graph,itemRegistries(),resources);
+                    for(int i=0;i<keys.size();i++)closure.reference(ROOT,"items/"+i,keys.get(i));
+                    closure.drain();bytes=graph.finish().length;
+                } catch(Minecraft121SettingsGraph.Failure failure){code=failure.getMessage();}
+                long elapsed=System.nanoTime()-start;
+                System.out.println("D1B3_ITEM_CLOSURE_COST group="+group.getKey()+" pass="+(pass==0?"cold":"warm")+" items="+keys.size()
+                        +" nodes="+(keys.size()+1)+" edges="+keys.size()+" result="+code+" ns="+elapsed+" canonicalBytes="+bytes);
+            }
+        }
+        int rounds=10000;long sink=0;var lease=itemRegistries();
+        long start=System.nanoTime();
+        for(int i=0;i<rounds;i++)sink+=System.identityHashCode(DynamicRegistryManager.of(Registries.REGISTRIES).getOps(NbtOps.INSTANCE));
+        long staticOps=System.nanoTime()-start;
+        start=System.nanoTime();
+        for(int i=0;i<rounds;i++)sink+=System.identityHashCode(lease.getOps(NbtOps.INSTANCE));
+        long leaseOps=System.nanoTime()-start;
+        System.out.println("D1B3_ITEM_OPS_COST rounds="+rounds+" staticOpsTotalNs="+staticOps+" leaseOpsTotalNs="+leaseOps
+                +" sink="+(sink&1)+" note=before-D1b-3a-static-ops-built-per-leaf;after-one-lease-ops-per-closure");
     }
 }

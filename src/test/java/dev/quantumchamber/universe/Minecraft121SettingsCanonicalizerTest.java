@@ -4,6 +4,9 @@ import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.R
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.blockNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.singleItemTemplate;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.withItemLeafRegistries;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemLeafRegistriesWithout;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemLeafRegistriesWithForeign;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.Arrays;
 import net.minecraft.nbt.*;
@@ -1194,9 +1197,9 @@ class Minecraft121SettingsCanonicalizerTest {
                     template,processors.getEntry(processorKey(processorId)).orElseThrow()).apply(
                     net.minecraft.structure.pool.StructurePool.Projection.RIGID),1));
             pools.add(poolKey("test:pool"),new net.minecraft.structure.pool.StructurePool(fallback,weighted),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);pools.freeze();
-            // 全域static BLOCK／ITEM只讀放入；模板BE內的item引用由ITEM leaf擷取（缺ITEM時closure會在REQUIRED_REGISTRY_MISSING就停下）。
-            registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(pools,processors,
-                    net.minecraft.registry.Registries.BLOCK,net.minecraft.registry.Registries.ITEM));
+            // 全域static registry只讀放入：BLOCK、ITEM，以及ITEM leaf的component codec要求的DATA_COMPONENT_TYPE、ATTRIBUTE、STATUS_EFFECT
+            // （D1b-3a的固定identity聯集）。模板BE內的item引用由ITEM leaf擷取（缺ITEM時closure會在REQUIRED_REGISTRY_MISSING就停下）。
+            registries=withItemLeafRegistries(pools,processors);
             var lookup=net.minecraft.registry.Registries.BLOCK.getReadOnlyWrapper().withFeatureFilter(net.minecraft.resource.featuretoggle.FeatureFlags.DEFAULT_ENABLED_FEATURES);
             var manager=new net.minecraft.structure.StructureTemplateManager(rm,session,net.minecraft.datafixer.Schemas.getFixer(),lookup);
             var contexts=new Minecraft121SettingsContexts(this);contexts.publishInitial(new Minecraft121SettingsContexts.Sources(registries,rm,manager,session,true));context=contexts.acquire(this);
@@ -1652,14 +1655,47 @@ class Minecraft121SettingsCanonicalizerTest {
         return g.finish();
     }
 
+    /** ITEM leaf的closure：registries是fixture的lease聯集（全域ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、STATUS_EFFECT）。 */
+    private static Minecraft121RegistryClosure itemClosure(Minecraft121SettingsGraph g,net.minecraft.registry.DynamicRegistryManager registries) {
+        return new Minecraft121RegistryClosure(g,registries,new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of()));
+    }
     @Test void itemRegistryLeafClosesNamedReference() {
         var diamond=net.minecraft.item.Items.DIAMOND;
-        var g=graph();var c=closure(g,net.minecraft.registry.Registries.ITEM);
+        var g=graph();var c=itemClosure(g,withItemLeafRegistries());
         c.reference(ROOT,"diamond",itemKey("minecraft:diamond"));c.drain();
         var expected=graph();
         expected.payload(itemNode("minecraft:diamond"),expectedItemLeaf(diamond));
         expected.expanded(expected.reference(ROOT,"diamond",itemNode("minecraft:diamond"),"ordinary","required"));
         assertArrayEquals(expected.finish(),g.finish(),"named reference的邊保留，payload等於另一張圖獨立算出的ITEM leaf");
+    }
+    @Test void itemLeafClosureAcceptsLiteralAndEmptyDefaults() {
+        // D1b-3a：只帶literal或空DEFAULT（加上D1b-2已審型別）的vanilla item經closure閉合；payload等於另一張圖獨立算出的leaf
+        // （plain NbtOps編碼），每條named reference的邊都保留。
+        var ids=java.util.List.of("minecraft:netherite_ingot","minecraft:experience_bottle","minecraft:potion","minecraft:barrel",
+                "minecraft:shield","minecraft:crossbow");
+        var g=graph();var c=itemClosure(g,withItemLeafRegistries());
+        for(String id:ids)c.reference(ROOT,id,itemKey(id));
+        c.drain();
+        var expected=graph();
+        for(String id:ids) {
+            expected.payload(itemNode(id),expectedItemLeaf(net.minecraft.registry.Registries.ITEM.get(net.minecraft.util.Identifier.of(id))));
+            expected.expanded(expected.reference(ROOT,id,itemNode(id),"ordinary","required"));
+        }
+        assertArrayEquals(expected.finish(),g.finish(),"6個item都閉合，payload等於獨立算出的ITEM leaf");
+    }
+    @Test void itemLeafClosureRejectsLeaseWithoutComponentRegistryIdentity() {
+        // D1b-3a：closure把自己的lease registries交給ITEM leaf；component codec要求的static registry缺席或不是全域物件時，在codec之前
+        // fail closed，graph失效。以DATA_COMPONENT_TYPE為例（每個registry的子案在LeafTest）。
+        var dataComponentType=net.minecraft.registry.RegistryKeys.DATA_COMPONENT_TYPE;
+        assertAll(
+                ()->assertAll("subcase=lease缺DATA_COMPONENT_TYPE",()->{
+                    var g=graph();var c=itemClosure(g,itemLeafRegistriesWithout(dataComponentType));
+                    c.reference(ROOT,"diamond",itemKey("minecraft:diamond"));
+                    rejects("REQUIRED_REGISTRY_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);}),
+                ()->assertAll("subcase=lease的DATA_COMPONENT_TYPE是另一個物件",()->{
+                    var g=graph();var c=itemClosure(g,itemLeafRegistriesWithForeign(dataComponentType));
+                    c.reference(ROOT,"diamond",itemKey("minecraft:diamond"));
+                    rejects("STATIC_REGISTRY_OWNER_MISMATCH",c::drain);rejects("GRAPH_FAILED",g::finish);}));
     }
     @Test void templateChestBlockAndItemLeavesCloseWithoutDummyPayload(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
         String id="minecraft:woodland_mansion/1x2_a4";String sapling="minecraft:dark_oak_sapling";
@@ -1730,10 +1766,9 @@ class Minecraft121SettingsCanonicalizerTest {
         }
     }
     @Test void sameIdBlockAndItemRemainDistinctNodes() {
-        // 設計原列stone與chest；chest的ITEM default帶minecraft:container（不在D1b白名單，屬D1b-3），所以第二個同id改用
-        // dark_oak_sapling（BlockItem＋SaplingBlock，default只有baseline）。stone的ITEM也是BlockItem。
-        var registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(
-                net.minecraft.registry.Registries.BLOCK,net.minecraft.registry.Registries.ITEM));
+        // 設計原列stone與chest；D1b-2時chest的ITEM default帶minecraft:container（當時不在白名單；D1b-3a起空DEFAULT已審），
+        // 所以第二個同id用dark_oak_sapling（BlockItem＋SaplingBlock，default只有baseline）。stone的ITEM也是BlockItem。
+        var registries=withItemLeafRegistries();
         var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
         try {
             var ids=java.util.List.of("minecraft:stone","minecraft:dark_oak_sapling");
