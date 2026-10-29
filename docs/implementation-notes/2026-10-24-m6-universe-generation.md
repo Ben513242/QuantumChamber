@@ -605,3 +605,63 @@ D1a 那 11 項 Minor 的處置：spec M1～M4 與 quality Q1～Q6 都在本輪�
 - noise 測試 `sameTypedIdChangedNativeValueChangesOwnedBytes` 先 finish、改值、再 finish，因 finish 有快取，舊圖斷言恆成立（出處：D1a `FIX2-QUALITY-REVIEW.md` 的 Q1）。
 
 下一個實質切片依 ignored `task-08/8b2-c1d-design/SEQUENCE-PROPOSAL.md` 的 D1b（BLOCK／ITEM 有效值與 default／effective component）。這份順序提案是 Codex 寫的，本身標示「未審」；D1b 要先寫設計提案並經獨立審查，才能實作。
+
+Step0 遠端 CI：docs commit `0998f677d3dacce9041507dfcb3ec53c4cdc66cd`（含 code `242c20b`）的 GitHub Actions Build run `40845641782` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩個 job 都是 success。只讀回 job 結論，沒有審查 artifact 內容，也不是 8B3 三 bundle。
+
+### 2026-10-29：D1b 設計放行與 D1b-0（Step0）結案
+
+**D1b 設計**（全部是 ignored 文件，位於 `task-08/8b2-c1d-design/`）：
+- `D1B-PROPOSAL.md` v1（SHA256 `c685d0da36d102c03c0b77b30d03b115e112067fae88f75641e9e007bb306d0a`）經全新設計審查，結果 C0/I1/M7（`D1B-DESIGN-REVIEW.md`，SHA256 `d9671dbde86b99b125c2f56521f7f2a4e83251654893ef8be1d7a5e2dd1a3278`）。事實核對全部成立，包括：
+  - RED 位置；
+  - census：每個 role 的 BLOCK 數為 924／857／853、ITEM 數為 290／147／106，聯集為 928／314；D1b 實際入口為 BLOCK 401、ITEM 10；
+  - javap 的 consumer 證據；
+  - Fabric 在 runtime 改寫 `Item.components`；
+  - Block 與 Item 之間沒有互相引用的邊；
+  - trapped_chest 被誤拒。
+- I-1：測試計畫中有兩項無法在 finally 還原，因為完整 JUnit 共用同一個 JVM，會汙染其他測試：
+  - BLOCK tag populate；
+  - 註冊 foreign Item。
+- `D1B-PROPOSAL-v2.md`（SHA256 `4efd44fc691c51d5badb28f00744e3b8be1eb5f05e1db54ef225a38f423defa7`）改寫測試計畫，並逐項修正 M1～M7。原審查者窄範圍複審（`D1B-DESIGN-REREVIEW.md`，SHA256 `adf099ca5b99d968d273f2ccf4e53c8a8c66988642d02f13d44334bc9b290766`）結果 C0/I0/M5：I-1、M1～M7 全部 CLOSED，**放行 D1b-1 實作**；5 項 Minor 隨 D1b-1／D1b-2 派工修正。
+- Q1～Q10 都由 controller 定案，沒有需要使用者裁示的項目。v2 新增三項行為，處置如下：
+  - N1 採嚴格做法：ITEM leaf 拒絕 block 為 foreign class 的 BlockItem，因此 mod 的 BlockItem 會 fail closed。這與 spec 第 73、104 行不衝突，玩家也看不到差異。
+  - N2：ignored `SUPPORT-OWNERS.md` 第 9 列在實作時同步加註。
+  - N3：採用。
+- 切分：D1b-0（Step0）→ D1b-1（BLOCK leaf，新增 `Minecraft121RegistryLeafContracts` 及其測試）→ D1b-2（ITEM leaf，含真 chest 模板）→ D1b-3（會引用其他 registry 的 default component，需另行設計）→ D1c 的真資料整合。D1c 的真資料 GREEN 依賴 D1b-3。
+
+**C1d 待辦**（D1b 設計審查要求寫入 tracked note）：
+1. world enabled feature set 屬於 spec 第 59 行要求的資料控制值。`MinecraftServer.<init>` 以 `saveProperties.getEnabledFeatures()` 過濾 template 的 block lookup，D3／D4 必須納入；D1b 只 admit vanilla 子集，作為暫時的 fail closed。
+2. End 的 `default_block`／`default_fluid` 缺 BLOCK 邊，是 C1b-B2 的既有缺口（`Minecraft121NativeValueContracts.java:175`），由 D3 補。
+3. Block Java 方法中 hardcoded 的 tag 讀取（B28 有 87 個 block-placement 群組）另開切片，排在 D2 之後、D4 之前。在那之前，不宣稱 palette 的語意已閉包。
+4. 對 spec 第 73 行「原生可編碼值」的解讀：取生成 consumer 實際解碼的 state definition 與 default state。`BlockTypes.CODEC` 不納入，因為在固定 JAR 中引用它的只有 `data/report/BlockListProvider` 與 `Registries`，沒有生成 consumer。
+5. 交 D2 的 Step0：
+   - trapped_chest 的 BE owner 被誤拒（`Minecraft121TemplateValueContracts.java:98`，fail closed）；
+   - palette 使用寬鬆 codec；
+   - `containsId` 沒有依 feature 過濾；
+   - TemplateValueContracts 中的 `nativeSource` 複本。
+6. D1c 的真資料 GREEN 依賴 D1b-3。
+7. BLOCK tag 次序的 closure 測試延到產生 BLOCK tag edge 的切片（預計 D1b-3 的 tool）。那個切片要先設計可還原、或不碰全域 registry 的 tag 測試技法。
+
+**D1b-0（Step0）**：
+- commit `cd4ec85`（test）＋`0efb058a79a2387096045922c972e3515bda021a`（fix）。只改 RegistryClosure 與 CanonicalizerTest；測試數從 93 變 95。
+- production 只有 S1：`expandProcessorList` 的第一次 `size()`、require、配置與兩遍迭代改放進同一個 try；catch 先把 `Failure` 原樣 throw，其餘 `RuntimeException` 改碼為 PROCESSOR_LIST_CHANGED 並 `initCause`。逐項 checkpoint 留在 try 之外。
+- 測試：
+  - processor 負例 helper 一般化，並斷言 cause；
+  - 刪除在 reference 階段就失敗的空轉負例；
+  - Q2 改用 assertAll；
+  - template budget 測試把 payload 與 reference 移出 `rejects`，並在 lease 外暖機 pool codec 的 encode 路徑；
+  - 新增 `templateCanonicalBudgetRejectsInsideDrainAtExactBoundary`：自行量出 L=2067，canonical=L 時通過，L-1 時在 drain 內拒絕；
+  - noise 測試改為 drain → 改值 → 第一次 finish。
+- 證據（ignored，`task-08/8b2-c1d-d1b0-evidence/`）：
+  - E1 RED `focused-c1d-d1b0-e1-red-7b7acb057e6640a0a15de9db7c3a68df`：93 案 1 fail，原 CANONICAL 子案在 reference 階段就失敗，從沒進入 drain；
+  - S1 具名 RED `focused-c1d-d1b0-red-731c77e552684a2592b8eaf7c61d9da8`：95 案 1 fail，三種裸例外直接逸出；
+  - GREEN `focused-c1d-d1b0-green-ff716c9d83e44ca0b554b3f6fbd5ace2`：95/95；
+  - S2、E2 的突變見證。E2 曾暫時修改範圍外的 Graph 檔，已還原並核對 hash；Graph 的 blob 在 HEAD 與 `9d97cd0` 相同。
+- 乾淨 `0efb058` 的驗證：
+  - M6Compile PASS；
+  - focused `focused-c1d-d1b0-clean-1-2936b55c3e664208beeacd0750ae80fe`、`focused-c1d-d1b0-clean-2-67b48f3b0adb42b3942efaafa2287e3c` 都是 95/95；
+  - 完整 `run-all-359153a6930a42c7a8b9a05df4901f9e` 自然結束，END ALL exit0。JUnit857（0 fail／0 error／2 個既有 skip）、default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2、mainOnly PASS、testmodHits0。console.log SHA256 `4097282377245295d82f85815860df00ab5fc8c04b9cd168a190ef8889a90a2b`，summary.json SHA256 `107ea3262984cc0113213614ca1a08f928e2a0dac658cca003e1e2c18382b721`；
+  - 本機 CI oracle 不等於遠端 CI，`0efb058` 的遠端 CI 要等本筆 push 之後才讀回。
+- 全新審查：spec C0/I0/M1（`D1B0-SPEC-REVIEW.md`，SHA256 `7f10dce91438ce0296577ba1edbd656120c47af022bbe9dfce91af9d029bac65`），quality C0/I0/M2，Approved（`D1B0-QUALITY-REVIEW.md`，SHA256 `0816b34d73ddaee51904454765864130d5b89c741df9da7d8d456af7c67281bd`）。三項 Minor 併入 D1b-1 派工：
+  - `warmPoolCodec` 的 Javadoc 說得比實際暖機的範圍寬；
+  - 寬 catch 依賴一個未寫明的前提。要寫成註解規則：try 內只放來源讀取，以及前置 require 已保證不會丟例外的本地操作；checkpoint、graph、codec 必須放在 try 外。D1b-1 會在 LeafContracts 重用這個模式；
+  - E1 的三張圖要抽成共用工廠。

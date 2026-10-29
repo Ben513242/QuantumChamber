@@ -588,3 +588,8 @@
 
 - D1a 遠端 CI：run `40836148542`（`307565f`）的 Ubuntu build 與 Windows windows-native 皆 success。
 - Step0 code `242c20b`（只限 RegistryClosure 與 CanonicalizerTest）：具名 RED→GREEN 93/93，乾淨雙 focused 93/93，完整 `run-all-41d76dffa3104602a75c8836ff2184ae` 自然 END ALL0／JUnit855；fresh spec C0/I0/M0、quality C0/I0/M4。新 Minor S1～S4 併入下一個實質切片 D1b（BLOCK／ITEM 有效值與 component）的 Step0；D1b 須先寫設計並獨立審查。`242c20b` 的遠端 CI 待本筆 push 後讀回。細節見 M6 note 末節。
+
+### 2026-10-29：M6 D1b 設計放行、D1b-0 結案，接 D1b-1
+
+- Step0 遠端 CI run `40845641782`（`0998f67`）兩 job success。D1b 設計 v2 經設計審查 C0/I1/M7、窄複審 C0/I0/M5 放行。
+- D1b-0 code `0efb058`：乾淨雙 focused 95/95，完整 `run-all-359153a6930a42c7a8b9a05df4901f9e` 自然 END ALL0／JUnit857；spec C0/I0/M1、quality C0/I0/M2，Minor 併入 D1b-1 派工。`0efb058` 的遠端 CI 待本筆 push 後讀回。下一步 D1b-1（BLOCK leaf）。細節見 M6 note 末節。

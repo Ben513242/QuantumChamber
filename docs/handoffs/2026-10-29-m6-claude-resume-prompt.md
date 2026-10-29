@@ -46,3 +46,10 @@
 - D1a 遠端 CI：run `40836148542`（`307565f`）兩 job success。
 - Step0 code `242c20b`：處理 D1a 審查的 spec M1～M4 與 quality Q1～Q6，只改 RegistryClosure 與 CanonicalizerTest，不擴充 leaf／consumer。spec M5 屬 docs truth，D1a 文件已寫成降低風險；BUDGET_EDGES 第一個 lease 的冷成本是殘餘風險，歸 live hold I-1。驗證與審查：具名 RED→GREEN 93/93，乾淨雙 focused 93/93，完整 `run-all-41d76dffa3104602a75c8836ff2184ae` 自然 END ALL0／JUnit855；fresh spec C0/I0/M0、quality C0/I0/M4。Q1 的突變證明曾暫改範圍外的 Graph 檔，已還原、核對 hash，未進 commit。
 - 下一步：D1b（BLOCK／ITEM 有效值與 default／effective component）。先依 ignored `task-08/8b2-c1d-design/SEQUENCE-PROPOSAL.md`（未審順序提案）、固定 1.21 JAR 的 consumer 與 D0-O 原始分母寫設計提案，經獨立審查後才實作；Step0 新增的 4 項 Minor（S1～S4）與兩項既有測試問題併入 D1b 的 Step0。清單見 M6 note 末節。`242c20b` 的遠端 CI 要等本筆 docs push 後讀回；本機 CI oracle 不等於遠端 CI。
+
+### 2026-10-29：D1b 設計放行、D1b-0（Step0）結案
+
+- Step0 遠端 CI run `40845641782`（`0998f67`）兩 job success。
+- D1b 設計：v1 經全新設計審查 C0/I1/M7。I-1 是測試計畫中有兩項全域 registry 變更無法在 finally 還原，完整 JUnit 共用同一個 JVM，會汙染其他測試。v2 修訂後，經窄複審 C0/I0/M5 放行。Q1～Q10 由 controller 定案，無需使用者裁示；N1 採嚴格 fail closed。設計文件與 SHA 見 M6 note 末節；設計審查要求的 7 項 C1d 待辦已寫入 note。
+- D1b-0 code `0efb058`：具名 RED→GREEN 95/95，乾淨雙 focused 95/95，完整 `run-all-359153a6930a42c7a8b9a05df4901f9e` 自然 END ALL0／JUnit857；spec C0/I0/M1、quality C0/I0/M2。
+- 下一步：D1b-1（BLOCK leaf），依 v2 §3.2、§3.6、§5.1、§5.2、§5.4、§5.5 實作。複審的 5 項 Minor 與 D1b-0 審查的 3 項 Minor 隨派工修正。`0efb058` 的遠端 CI 要等本筆 push 後讀回。
