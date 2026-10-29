@@ -212,27 +212,33 @@ final class Minecraft121RegistryClosure {
         var original=((StructureProcessorList)value).getList();
         require(original!=null,"PROCESSOR_LIST_CHANGED");
         int size;
-        try {size=original.size();}
-        catch(RuntimeException bad) {var failure=failure("PROCESSOR_LIST_CHANGED");failure.initCause(bad);throw failure;}
-        require(size>=0,"PROCESSOR_LIST_CHANGED");
-        require(size<=MAX_NAMED_PROCESSORS,"BUDGET_PROCESSORS");
-        var copy=new ArrayList<StructureProcessor>(size);
+        ArrayList<StructureProcessor> copy;
+        // 第一次size()、兩個require、配置與兩遍迭代同在一個try；逐項checkpoint留在try之外，NOT_READY不會被改碼。
         try {
+            size=original.size();
+            require(size>=0,"PROCESSOR_LIST_CHANGED");
+            require(size<=MAX_NAMED_PROCESSORS,"BUDGET_PROCESSORS");
+            copy=new ArrayList<>(size);
             for(var processor:original) {
                 require(copy.size()<size,"PROCESSOR_LIST_CHANGED");
                 copy.add(processor);
             }
             require(copy.size()==size,"PROCESSOR_LIST_CHANGED");
             require(original.size()==size,"PROCESSOR_LIST_CHANGED");
-            // 固定原生路徑無發布後writer；第二遍只拒可見變動，不宣稱防任意ABA。
+            // 第二遍以新iterator核對件數與逐項identity（==），連同前後兩次size()，只抓得到讀取當下仍可見的增減或替換；
+            // 讀取之間已改回的ABA與最後一次size()之後的寫入都抓不到，依據是固定原生解碼路徑在發布後沒有writer。
             var verify=original.iterator();
             for(int i=0;i<size;i++) {
                 require(verify.hasNext(),"PROCESSOR_LIST_CHANGED");
                 require(verify.next()==copy.get(i),"PROCESSOR_LIST_CHANGED");
             }
             require(!verify.hasNext() && original.size()==size,"PROCESSOR_LIST_CHANGED");
-        } catch(ConcurrentModificationException|NoSuchElementException bad) {
-            // 只正規化iterator的變動訊號；Failure等其他例外原樣交回checked()。
+        } catch(Failure rejected) {
+            // 已編碼的拒絕（含BUDGET_PROCESSORS）原樣交回checked()；Failure是RuntimeException子類，須先catch。
+            throw rejected;
+        } catch(RuntimeException bad) {
+            // 讀來源清單（size／iterator／hasNext／next）丟出的其他RuntimeException，含CME、NoSuchElementException
+            // 與heap pollution造成的ClassCastException，一律視為來源變動，改碼PROCESSOR_LIST_CHANGED並保留cause。
             var failure=failure("PROCESSOR_LIST_CHANGED");failure.initCause(bad);throw failure;
         }
         for(var processor:copy) {
