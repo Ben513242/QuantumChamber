@@ -1094,12 +1094,18 @@ class Minecraft121SettingsCanonicalizerTest {
     }
     @Test void templateStateEdgeResourceRawCanonicalBudgetOverflowRejected(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
         String[] codes={"BUDGET_EDGES","BUDGET_STATES","BUDGET_RESOURCES","BUDGET_RAW","BUDGET_TOTAL_RAW","BUDGET_CANONICAL"};
+        // charge兼兩用：BUDGET_TOTAL_RAW的精確邊界；並在lease外完成JVM首次原生blank template載入（100ms量hold，不量冷類別載入；production冷啟動仍屬live hold I-1）。
+        long charge=Minecraft121TemplateValueContracts.measure(new net.minecraft.structure.StructureTemplate().writeNbt(new NbtCompound()),0);
         var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
-        for(int index=0;index<codes.length;index++){final int i=index;checks.add(()->{try(var f=new PoolFixture(root.resolve("budget-"+i),single("test:a"),single("test:b"))) {
-            var g=limited(100,i==0?1:100,i==1?1:100,i==2?1:10,i==3?1:10000,i==4?512:100000,i==5?128:100000,128);
-            var c=new Minecraft121RegistryClosure(g,f.context);final String code=codes[i];
-            rejects(code,()->{g.payload(ROOT,NbtInt.of(1));if(code.equals("BUDGET_TOTAL_RAW")){for(int j=0;j<10;j++)c.template(ROOT,"repeat-"+j,net.minecraft.util.Identifier.of("test:repeat"),Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"budget");}else c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();});rejects("GRAPH_FAILED",g::finish);
-        }});}
+        for(int index=0;index<codes.length;index++){final int i=index;checks.add(()->assertAll("subcase="+codes[i],()->{try(var f=new PoolFixture(root.resolve("budget-"+i),single("test:a"),single("test:b"))) {
+            var g=limited(100,i==0?1:100,i==1?1:100,i==2?1:10,i==3?1:10000,i==4?charge:100000,i==5?128:100000,128);
+            var c=new Minecraft121RegistryClosure(g,f.context);final String code=codes[i];var repeat=net.minecraft.util.Identifier.of("test:repeat");
+            if(code.equals("BUDGET_TOTAL_RAW")) {
+                var once=limited(100,100,100,10,10000,charge,100000,128);var d=new Minecraft121RegistryClosure(once,f.context);once.payload(ROOT,NbtInt.of(1));
+                d.template(ROOT,"repeat-0",repeat,Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"budget");d.drain();once.finish();
+            }
+            rejects(code,()->{g.payload(ROOT,NbtInt.of(1));if(code.equals("BUDGET_TOTAL_RAW")){for(int j=0;j<2;j++)c.template(ROOT,"repeat-"+j,repeat,Minecraft121TemplateSettingsAdapter.Use.EXACT_SINGLE,"budget");}else c.reference(ROOT,"pool",poolKey("test:pool"));c.drain();});rejects("GRAPH_FAILED",g::finish);
+        }}));}
         assertAll(checks);
     }
 
