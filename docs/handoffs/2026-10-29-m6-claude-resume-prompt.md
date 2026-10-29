@@ -130,3 +130,17 @@
 
   1267 件 ACCEPTED 的逐件內容 hash 不變。乾淨 Canon focused 116/116×2、LeafTest 36/36×2，完整 `run-all-a465f127b08a431db4f24eeda83ebf8c` 自然 END ALL0／JUnit914；spec C0/I0/M3、quality C0/I0/M4。
 - 下一步是 D1b-3c-0b（硬化），清單見 M6 note「D1b-3c-0 結案」的「殘餘與下一片」，其中最重要的是 CodecCache 的快取端缺口。這些路徑只有第三方 mod 刻意構造時才會觸發，vanilla 不受影響。3c-0b 之後才進 3c 本體：tool tag rule、TAG 節點只展開一次、tag 測試技法。`be9d408` 的遠端 CI 要等本筆 push 之後讀回。
+
+### 2026-10-30：D1b-3c-0b（硬化）結案
+
+- 3c-0 遠端 CI run `40962495545` success。
+- D1b-3c-0b code `ae25614`：
+  - 以私有 `PrivateLookup` 建立 ops，讓 identity 獨立，隔離 CodecCache 的快取端；具名 RED 證實修正前 payload 會被替換。
+  - tool Optional 的內容 class 驗證。
+  - potion／stew／banner 正規化為 DEFAULT，並加 iterator 檢查。
+  - copy 保真度的全族群 gating。
+  - M9 改為逐件雙向比對。
+
+  1267 件 ACCEPTED 的逐件 hash 不變。驗證與審查：乾淨 Canon focused 116/116×2、LeafTest 41/41×2，完整 `run-all-89f998ff5a984fe4ac109f88431f6da9` 自然 END ALL0／JUnit919；spec C0/I0/M2、quality C0/I0/M4。
+- **controller 範圍裁示**：必須以反射、access widener 或 mixin 繞過存取限制才能觸發的殘餘，只寫進文件與待辦，不再另開硬化切片。
+- 下一步：3c 本體，包括 tool tag rule、TAG 節點只展開一次、tag 測試技法 T1＋T2；wooden_shovel 與 iron_axe 屆時會翻轉。另外要一併處理 3c-0b quality 的 M1～M4（測試與文件），清單見 M6 note。`ae25614` 的遠端 CI 要等本筆 push 之後讀回。

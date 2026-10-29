@@ -1108,3 +1108,55 @@ D1b-3b 遠端 CI：docs commit `6b5e495c9db241231f155b3b41eae313ac9d3122`（含 
 - M9 的「不空轉」前提改成逐件雙向集合相等，並補上 `#` tag 與 compound 鍵兩個盲點（quality Q-M3）。
 - 結構測試補上 `refBearing ⊆ rebuilt`；`itemLeafRejectsLyingNestedListAfterRoundtrip` 改名；`foodCopy` 的 Javadoc 補充說明（quality Q-M4）。
 - 交 3d 的待辦：`Contract.registries` 只列 static registry，3d 引入 dynamic 的 JUKEBOX_SONG 時要重新定義。M9 交叉檢查的 registry 集合也要隨 dynamic registry 擴充，否則 3d 漏抽 ref 時抓不到。
+
+D1b-3c-0 遠端 CI：docs commit `1b7dbe5f6a63b0ef490d270943a2c3eea2bf230b`（含 code `be9d408`）的 run `40962495545` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩 job 都是 success。這裡只讀回 job 結論。
+
+### 2026-10-30：D1b-3c-0b（硬化）結案
+
+**commit**：`a5e4f97`（RED 測試）、`ae256143485479134d9a7192506f174c3e9f808b`（fix），共改四個檔：ItemComponentContracts、LeafContracts、Closure（只改 Javadoc）、LeafContractsTest。這一片不接受新型別，也不改 `expandTag`。
+
+**行為**：
+- **CodecCache 快取端（採 (B)）**：LeafContracts 改用 `RegistryOps.of(NbtOps.INSTANCE, new PrivateLookup(registries))`。`PrivateLookup` 委派了兩個抽象方法，三個預設方法都只走 `getOptionalWrapper`。它不覆寫 equals／hashCode，所以 ops 的 identity 是私有的，不會和遊戲或其他 closure 共用快取 key。registry 解析、owner 與 lazy 的時點都不變，spec 審查已用 javap 獨立核實。
+  - 具名 RED 證實了修正前的問題：別人先存入說謊的值後，誠實 vanilla 值的 payload 會被替換成那個值，實測 duration 該是 100，得到 999。修正後，foreign 值不會被命中，也不會被迭代。
+  - 帶快取的型別分成「重建」與「明確列為 AS_IS」兩組，由結構測試守住。enchantments、charged_projectiles、container 維持 AS_IS：前兩者的建構子不是 public，只收空值；container 只收 DEFAULT 單例。
+- **tool rule 的 Optional**：`jdkLiteral`／`jdkLiteralCopy` 要求內容的 class 恰為 Float／Boolean，copy 時重建 Optional。
+- **potion_contents、suspicious_stew_effects、banner_patterns**：比照 LORE，正規化為各自的 DEFAULT，並加 iterator 檢查。potion 另外檢查 `getEffects()`，因為 `customEffects()` 是 `Lists.transform` 的 view，走的迭代路徑不同。
+- **copy 保真度的全族群 gating**：`everyAcceptedVanillaItemLeafPayloadEqualsIndependentEncodingOfOriginal`，以另一個新建 manager 的 static ops 對原值獨立編碼來比對；並加上非預設 literal 的 seam 子案。
+- **M9**：改為逐件雙向集合相等，收集器補上 `#` tag，以及巢狀 compound 中含「:」的鍵。
+- **結構測試**：補 `rebuilt ⊇ refBearing`；測試改名為 `itemLeafRejectsLyingNestedListBeforeCodec`。
+
+**payload 不變**：1267 件 ACCEPTED 的逐件內容 hash 0 件改變，digest 仍為 `8bdc6c43e1280e98e2a335efb4a01cb1703cc9086a26edda442a12f643c9e396`。spec 審查以自寫 parser 獨立重算。
+
+**測試數**：LeafTest 36→41，Canon 維持 116。
+
+**證據**（ignored，`task-08/8b2-c1d-d1b3c0b-evidence/`）：
+- 具名 RED：41/5。
+- GREEN1：41/1，原 root 保留。這次失敗是 potion view 的自然見證。
+- GREEN2、GREEN3（等於 commit）：41/0、116/0。
+- 8 個見證全部被殺：W-CACHE-OPS、W-TOOL-OPT、W-EMPTY-ITER、W-COPY-EAT、W-COPY-TOOLTIP、W-COPY-MINING、W-M9-BIDIR、W-STRUCT-REF。
+
+**乾淨 `ae25614` 驗證**：
+- M6Compile PASS。
+- Canon focused `focused-c1d-d1b3c0b-clean-canon-1-9fa3b179dc224b4bb25cddee35a6c65e`、`focused-c1d-d1b3c0b-clean-canon-2-d457770a4dc14a15a4171124157a4870` 皆 116/116。
+- LeafTest focused `focused-c1d-d1b3c0b-clean-leaf-1-0caba695007e42f18e6e30dbca34b92d`、`focused-c1d-d1b3c0b-clean-leaf-2-5d960e568ad7413381c9c04de4c84a3b` 皆 41/41。
+- 完整 `run-all-89f998ff5a984fe4ac109f88431f6da9` 自然 END ALL exit0：JUnit919（0 fail／0 error／2 既有 skip）、default179、M5 60、M6 8、recovery24、M5 collapse69、M6 native DIAGNOSTIC2、release 515 entries／468 classes、mainOnly PASS、testmodHits0。console.log SHA256 `bb89802c11d7bec524c5a00dec587de3475bc4dbe0e08ea31ee95bfec5818bfb`，summary.json SHA256 `7e3de3272711998fad19c6f5e85c9eea64f8a2364ab88c3cdc04db94720eb9e6`。
+- 本機 CI oracle 不等於遠端 CI；`ae25614` 的遠端 CI 要等本筆 push 後才讀回。
+
+**全新審查**：
+- spec C0/I0/M2 ✅（`D1B3C0B-SPEC-REVIEW.md`，SHA256 `49a69fd49d83b67e3f0df2ecc4c429fb98eb6b214518292c587620b1c389c185`）。
+- quality C0/I0/M4 Approved（`D1B3C0B-QUALITY-REVIEW.md`，SHA256 `e4a7a0e18e211c67a47212fcebd2b7291848dbe9c4ce4777c8261137c6b7d050`）。
+
+**controller 範圍裁示**：凡是必須以反射、access widener、mixin 等**繞過存取限制**才能觸發的殘餘，只寫進 Javadoc 與 tracked 待辦，不再另開硬化切片。只有一般 mod 用 public API 就能觸發，或 vanilla 會受影響的問題，才當場修正。理由是前者已超出「正常遊戲加一般 mod」的威脅模型，繼續追會讓 C1d 的硬化沒有盡頭。依此裁示，以下只登記、不修：
+- 繞過存取限制、放進 `ItemEnchantmentsComponent` map 子類時，可以等值命中空的 DEFAULT（spec M1）。
+- 讀得到全域 CACHE 的程式碼，可以經由 `Key.ops()` 取得私有 ops（spec M2）。
+- 第三方 mod 若以 mixin 改寫 `CodecCache$Key`、`RegistryOps`、`CachedRegistryInfoGetter` 的 equals，(B) 就會失效（quality R1）。
+
+**交 D2b 的待辦**：TemplateValueContracts（`:123`、`:195-198`）仍用共用 manager 的 ops，對帶快取的型別做 encode，而且重建後沒有再套值條件，所以存在同類的快取端風險（spec O1）。
+
+**I-1 輸入的註記**：改用私有 ops 後，逐件成本診斷的暖值不再包含 CodecCache 命中，3c-0b 前後的數字不能直接比較；closure 層級的診斷不受影響。另外，私有 ops 會在全域 512 筆的 CACHE 中多占數十到一兩百筆。被驅逐的一方只是重新 encode，沒有正確性風險。
+
+**交 3c 本體的事項**（3c-0b quality 的 M1～M4）：
+- potion 補一個「只有 `listIterator` 說謊」的子案；三型各加一個「正規化成 DEFAULT」的正向見證，要求 equals／hashCode 被呼叫 0 次。
+- 更正類別 Javadoc、結構測試失敗訊息、`foodCopy` Javadoc 三處措辭。
+- 結構測試加上「已審型別恰等於 rebuilt、literal、cachedAsIs 三組不相交的聯集」，並在 ops Javadoc 寫明「私有 ops 不得交給固定 JAR 以外的 codec」這個前提。
+- 成本診斷的 Javadoc 註明冷暖語意已改變。

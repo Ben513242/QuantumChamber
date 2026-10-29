@@ -367,6 +367,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 2026-10-30 D1b-3c-0快照：3b遠端CI run40948195881（6b5e495）success。3c-0 Step0 code `be9d408`（d904df2 RED＋be9d408 fix）：codec前以已驗元素重建attribute_modifiers/food/tool record、LORE正規化、ref key比對、M9交叉檢查、RefSink介面、Unsafe補ITEM seam見證；1267件ACCEPTED逐件內容hash不變；乾淨Canon focused116/116×2、LeafTest36/36×2、完整`run-all-a465f127b08a431db4f24eeda83ebf8c` END ALL0／JUnit914，spec C0/I0/M3、quality C0/I0/M4。設計勘誤（§3.3 wooden_shovel／iron_axe屬3c、fire_resistant為net.minecraft.util.Unit）記於M6 note。下一步D1b-3c-0b硬化（CodecCache快取端等，只有mod觸發），再3c本體。
 
+2026-10-30 D1b-3c-0b快照：3c-0遠端CI run40962495545（1b7dbe5）success。3c-0b code `ae25614`（a5e4f97 RED＋ae25614 fix）：私有PrivateLookup使ops identity隔離CodecCache快取端、tool Optional、potion/stew/banner正規化、copy保真度全族群gating、M9逐件雙向；1267件逐件hash不變；乾淨Canon focused116/116×2、LeafTest41/41×2、完整`run-all-89f998ff5a984fe4ac109f88431f6da9` END ALL0／JUnit919，spec C0/I0/M2、quality C0/I0/M4。controller範圍裁示：須繞過存取限制才能觸發的殘餘只文件化。下一步3c本體。
+
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。
