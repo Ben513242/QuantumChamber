@@ -204,6 +204,13 @@ final class Minecraft121RegistryClosure {
                 }
                 require(copy.size()==size,"PROCESSOR_LIST_CHANGED");
                 require(original.size()==size,"PROCESSOR_LIST_CHANGED");
+                // 固定原生路徑無發布後writer；第二遍只拒可見變動，不宣稱防任意ABA。
+                var verify=original.iterator();
+                for(int i=0;i<size;i++) {
+                    require(verify.hasNext(),"PROCESSOR_LIST_CHANGED");
+                    require(verify.next()==copy.get(i),"PROCESSOR_LIST_CHANGED");
+                }
+                require(!verify.hasNext() && original.size()==size,"PROCESSOR_LIST_CHANGED");
             } catch(ConcurrentModificationException bad) {throw failure("PROCESSOR_LIST_CHANGED");}
             for(var processor:copy) {
                 require(processor!=null,"PROCESSOR_LIST_CHANGED");

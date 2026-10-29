@@ -917,6 +917,62 @@ class Minecraft121SettingsCanonicalizerTest {
             } finally {resources.close();}
         }
     }
+    @Test void namedProcessorSameSizeReplacementDuringCopyFailsClosed() {
+        var changing=new java.util.ArrayList<net.minecraft.structure.processor.StructureProcessor>() {
+            boolean changed;
+            @Override public java.util.Iterator<net.minecraft.structure.processor.StructureProcessor> iterator() {
+                var delegate=super.iterator();
+                return new java.util.Iterator<>() {
+                    @Override public boolean hasNext(){return delegate.hasNext();}
+                    @Override public net.minecraft.structure.processor.StructureProcessor next(){
+                        var item=delegate.next();
+                        if(!changed){changed=true;set(0,net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE);
+                            set(1,net.minecraft.structure.processor.LavaSubmergedBlockStructureProcessor.INSTANCE);}
+                        return item;
+                    }
+                };
+            }
+        };
+        changing.add(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE);
+        changing.add(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE);
+        var registries=processorRegistries("test:changing",new net.minecraft.structure.processor.StructureProcessorList(changing));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+            c.reference(ROOT,"processor",processorKey("test:changing"));
+            rejects("PROCESSOR_LIST_CHANGED",c::drain);rejects("GRAPH_FAILED",g::finish);
+        } finally {resources.close();}
+    }
+    @Test void namedProcessorDoesNotUseSameIdFromWrongRegistry() {
+        var processors=new net.minecraft.registry.SimpleRegistry<>(net.minecraft.registry.RegistryKeys.PROCESSOR_LIST,
+                com.mojang.serialization.Lifecycle.stable());processors.freeze();
+        var noise=noiseRegistry();assertTrue(noise.getEntry(noiseKey("a")).isPresent());
+        var registries=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(processors,noise));
+        var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of());
+        try {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,registries,resources);
+            rejects("REQUIRED_REGISTRY_TARGET_MISSING",()->{c.reference(ROOT,"wrong",processorKey("minecraft:a"));c.drain();});
+            rejects("GRAPH_FAILED",g::finish);
+        } finally {resources.close();}
+    }
+    private static String encodedGraphFields(String... fields) throws java.io.IOException {
+        var bytes=new java.io.ByteArrayOutputStream();var output=new java.io.DataOutputStream(bytes);
+        for(var field:fields){byte[] value=field.getBytes(java.nio.charset.StandardCharsets.UTF_8);output.writeInt(value.length);output.write(value);}
+        return bytes.toString(java.nio.charset.StandardCharsets.ISO_8859_1);
+    }
+    @Test void namedProcessorKeepsBothAliasScopedUses(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        try(var f=new PoolFixture(root,"test:processors",java.util.List.of(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE),"test:shared")) {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,f.context);
+            var binding=net.minecraft.structure.pool.alias.StructurePoolAliasBinding.direct(poolKey("test:symbol"),poolKey("test:pool"));
+            c.alias(ROOT,"alias-one",binding);c.alias(ROOT,"alias-two",binding);c.drain();
+            String encoded=new String(g.finish(),java.nio.charset.StandardCharsets.ISO_8859_1);
+            for(var path:java.util.List.of("alias-one","alias-two")) {
+                String scope=ROOT.kind()+"/"+ROOT.registry()+"/"+ROOT.id()+"/"+path;
+                assertTrue(encoded.contains(encodedGraphFields("REGISTRY",net.minecraft.registry.RegistryKeys.PROCESSOR_LIST.getValue().toString(),
+                        "test:processors",scope,"required-processors")),path);
+            }
+        }
+    }
     @Test void namedProcessorRepeatedUsesKeepBothEdgesAndBudget() {
         var registries=processorRegistries("test:same",new net.minecraft.structure.processor.StructureProcessorList(
                 java.util.List.of(net.minecraft.structure.processor.NopStructureProcessor.INSTANCE)));
