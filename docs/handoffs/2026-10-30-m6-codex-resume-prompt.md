@@ -2,6 +2,8 @@
 
 請接續 QuantumChamber M6，全程使用繁體中文（台灣）精簡回報；先核對原件，再推論。工作區是 `C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`。不要在主 checkout 或 main 上實作，不要重做已結案的切片，也不要把任何保留下來的 FAIL 追認為 PASS。
 
+**最新狀態請先讀檔尾「交回紀錄」的 D1b-3d 本機結案。下方 §2–5 是 2026-10-30 Claude→Codex 交接當時的歷史快照，不代表 D1b-3d 最新狀態。**
+
 ## 1. 接手時先讀、先核
 
 1. 依序讀：本工作區 `AGENTS.md`；本檔全文；`docs/implementation-notes/2026-10-24-m6-universe-generation.md` 從「2026-10-29：D1a fix2 與結案」到檔尾（C1d 的逐片紀錄、裁示、殘餘與待辦都在這裡）；`docs/superpowers/plans/2026-10-24-m6-universe-generation.md` 的 Task 8 與 Task 9–22。
@@ -87,3 +89,9 @@ AGENTS 的「目前接手入口」、M6 note 末節、plan 快照、ignored 的 
 - code pin `fe76d49` 在純 docs HEAD `a635b3a` 上完成乾淨本機驗證及獨立 spec／quality C/I0；本片可結案。四項偏離獲兩席接受；T2 還原斷言 Minor 交 3d Step0。
 - 使用者已同意「只有 mod 須繞過存取限制的殘餘記錄、先推主線」；public API 可觸發或 vanilla 受影響者仍須當場修。此裁示不等於跳過 3d 設計／審查、W-OPS、8B3、Task8 或 M6 門檻。
 - 下一片 D1b-3d 先設計／獨立審查；W-OPS 須被殺。3b AccessDenied 原 FAIL、v4 父 FAIL、B27 FAIL 不改判。此時僅有本機 full 證據，遠端 CI 尚未在本 docs HEAD 上跑。
+
+### 2026-10-30：D1b-3d 本機結案，交 D1c-0 取證
+
+- 3c docs HEAD `857cd4882da50e370a1550647ae38486f3572818` 的 GitHub run `40996306990` 雙 job success；僅讀回 job／steps，不當成 8B3 三 bundle。3d code pin `ccccb9697e005ad9eece0f88545df949c5ca3c45`，range `857cd488..ccccb969`，六 owner；乾淨 M6Compile、Canon123×2、Leaf51×2、完整 `run-all-d9c930ca1b374edda994caf753abe746` 自然 END ALL exit0／JUnit936（fail0／error0／既有 skip2）。summary SHA256 `615111b53c765cb5e5ee3ae55fc1443978ee2f0e624b02972077522efeae887f`；console SHA256 `e6203e0f4db52b6b79ecb72f3f0490fa1777b2e9f64646fd6b7764c78d2a6c59`。
+- 本片接上 JUKEBOX_SONG dynamic registry 與 SOUND_EVENT leaf；W-OPS 以真 vanilla `music_disc_13` key-only default 被殺。舊 1298 件 ACCEPTED 逐件 payload hash 不變，新 ACCEPTED 1317，COST_ENTRY 兩種前綴皆 0。七個突變乾淨被殺；T2 兩具名目標亦被殺，但同輪另有模板 100ms `TEMPLATE_SNAPSHOT_NOT_READY` FAIL，不算乾淨第八個見證，原 root 保留。ignored `FINAL-RESULT.json` SHA256 `14f26d63a424061c96c66ceb7275efb759c8550148dc26211eed120b3d0eecf0`；`ERRATUM.md` SHA256 `764b1c378274d990f16bd60c93ef5997723d01689d25bcdea9e7b29ed7026d37`。
+- 獨立 spec／quality 各 C0/I0/M1；spec `D1B3D-SPEC-REVIEW.md` SHA256 `8b666f2e26b304d7da8b9ac2932e46e3df169b531208662fbfb889f30506a47e`，quality `D1B3D-QUALITY-REVIEW.md` SHA256 `73bdc8902bea3c316e5f66e5f12354c785df530c74cb8ab6ff645aeea65da7b3`。3d 僅本機結案，遠端 CI 尚未在此 code／docs HEAD 跑。D1c-0 僅完成只讀取證設計獨立審查 C0/I0/M2；D1c-1 未放行。Task8、C1d、100ms live hold I-1、8B3 三 bundle、Task9–22／M6 仍待；v4 父、B27、3b AccessDenied 與 T2 額外 100ms 的 FAIL 原判保留。僅須繞過存取限制的 mod 殘餘可文件化先推主線；public API 或 vanilla 受影響者仍須修。

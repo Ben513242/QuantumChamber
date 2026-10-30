@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-30 Task8B2-C1d D1b-3c）：Task1–7、8A、8B1、8B2-G、C1a、C1b-B1/B2/B3 及 C1c 局部切片已依各自 code pin 結案；C1d 的 D1a、Step0、D1b-0／1／2／3-0／3a／3b／3c-0／3c-0b／3c 也僅限各自範圍本機結案。D1b-3c code pin `fe76d49` 在純 docs HEAD `a635b3a` 乾淨 M6Compile、CanonicalizerTest 121×2、LeafContractsTest 43×2、完整 `run-all-976de0f417a84aa3b5e1074fe4b99dca` END ALL exit0（JUnit926），獨立 spec／quality 均 C0/I0/M1；遠端 CI 尚未在本 docs HEAD 上採計。D1b-3d 尚需設計／審查並殺 W-OPS；C1d 其餘切片、100ms live hold I-1、8B3 三 bundle、Task8 終局、Task9–20／人工仍待。舊 v4 父 FAIL／B27 FAIL 不改判。
+狀態（2026-10-30 Task8B2-C1d D1b-3d）：Task1–7、8A、8B1、8B2-G、C1a、C1b-B1/B2/B3 及 C1c 局部切片已依各自 code pin 結案；C1d 的 D1a、Step0、D1b-0／1／2／3-0／3a／3b／3c-0／3c-0b／3c／3d 也僅限各自範圍本機結案。D1b-3d code pin `ccccb9697e005ad9eece0f88545df949c5ca3c45`，range `857cd488..ccccb969`，六 owner；乾淨 M6Compile、CanonicalizerTest 123×2、LeafContractsTest 51×2、完整 `run-all-d9c930ca1b374edda994caf753abe746` END ALL exit0（JUnit936，fail0／error0／skip2），獨立 spec／quality 各 C0/I0/M1。W-OPS 真 vanilla key-only 見證已殺；T2 兩目標被殺但同輪另有 100ms `TEMPLATE_SNAPSHOT_NOT_READY` FAIL，原 root 保留。D1b-3c docs HEAD `857cd488` 的 CI run `40996306990` 雙 job success；新 code／docs HEAD 遠端 CI 尚未採計，且此 run 不是 8B3 三 bundle。D1c-0 只讀取證設計審 C0/I0/M2；D1c-1 未放行。C1d 其餘切片、100ms live hold I-1、8B3 三 bundle、Task8 終局、Task9–22／人工仍待。舊 v4 父 FAIL／B27 FAIL、3b AccessDenied 與 T2 額外 100ms FAIL 均不改判。
 
 採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當時native資料gate仍未通過，沒有8B放行；現況以上方2026-10-28 B28結果為準。
 
