@@ -1,5 +1,6 @@
 package dev.quantumchamber.gametest.mixin;
 import dev.quantumchamber.gametest.M6SettingsTraceObserver;
+import dev.quantumchamber.gametest.M6RefreshSealStartupObserver;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import net.minecraft.registry.CombinedDynamicRegistries;
@@ -24,7 +25,9 @@ public abstract class M6SettingsTraceContentsMixin {
         M6SettingsTraceObserver.contentsFuture(rm,ci.getReturnValue());
     }
     @Inject(method="refresh()V",at=@At("HEAD"),require=1,expect=1,allow=1)
-    private void traceRefreshHead(CallbackInfo ci) { M6SettingsTraceObserver.refresh((DataPackContents)(Object)this,false); }
+    private void traceRefreshHead(CallbackInfo ci) { M6SettingsTraceObserver.refresh((DataPackContents)(Object)this,false); M6RefreshSealStartupObserver.refresh((DataPackContents)(Object)this,"REFRESH_HEAD"); }
     @Inject(method="refresh()V",at=@At("RETURN"),require=1,expect=1,allow=1)
-    private void traceRefreshReturn(CallbackInfo ci) { M6SettingsTraceObserver.refresh((DataPackContents)(Object)this,true); }
+    private void traceRefreshReturn(CallbackInfo ci) { M6SettingsTraceObserver.refresh((DataPackContents)(Object)this,true); M6RefreshSealStartupObserver.refresh((DataPackContents)(Object)this,"REFRESH_RETURN"); }
+    @Inject(method="refresh()V",at=@At(value="INVOKE",target="Lnet/minecraft/registry/tag/TagManagerLoader;getRegistryTags()Ljava/util/List;",ordinal=0),require=1,expect=1,allow=1)
+    private void sealBeforeWork(CallbackInfo ci) { M6RefreshSealStartupObserver.beforeWork((DataPackContents)(Object)this); }
 }

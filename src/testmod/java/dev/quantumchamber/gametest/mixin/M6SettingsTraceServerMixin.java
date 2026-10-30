@@ -6,6 +6,7 @@ import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import java.util.function.BooleanSupplier;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.quantumchamber.gametest.M6SettingsTraceObserver;
+import dev.quantumchamber.gametest.M6RefreshSealStartupObserver;
 import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -98,9 +99,9 @@ public abstract class M6SettingsTraceServerMixin {
     private void traceComposeReturn(ImmutableList<?> packs, CallbackInfoReturnable<CompletionStage<?>> ci) {M6SettingsTraceObserver.nativeStage(packs,ci.getReturnValue());}
 
     @WrapOperation(method="<init>(Ljava/lang/Thread;Lnet/minecraft/world/level/storage/LevelStorage$Session;Lnet/minecraft/resource/ResourcePackManager;Lnet/minecraft/server/SaveLoader;Ljava/net/Proxy;Lcom/mojang/datafixers/DataFixer;Lnet/minecraft/util/ApiServices;Lnet/minecraft/server/WorldGenerationProgressListenerFactory;)V",at=@At(value="FIELD",target="Lnet/minecraft/server/MinecraftServer;resourceManagerHolder:Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;",opcode=181,ordinal=0),require=1,expect=1,allow=1)
-    private void traceInitialStore(MinecraftServer receiver, @Coerce Object holder, Operation<Void> original) {original.call(receiver,holder);M6SettingsTraceObserver.store(receiver,holder,true);}
+    private void traceInitialStore(MinecraftServer receiver, @Coerce Object holder, Operation<Void> original) {original.call(receiver,holder);M6SettingsTraceObserver.store(receiver,holder,true);M6RefreshSealStartupObserver.store(receiver,holder,true);}
     @WrapOperation(method="method_29440(Ljava/util/Collection;Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;)V",at=@At(value="FIELD",target="Lnet/minecraft/server/MinecraftServer;resourceManagerHolder:Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;",opcode=181,ordinal=0),require=1,expect=1,allow=1)
-    private void traceReloadStore(MinecraftServer receiver, @Coerce Object holder, Operation<Void> original) {original.call(receiver,holder);M6SettingsTraceObserver.store(receiver,holder,false);}
+    private void traceReloadStore(MinecraftServer receiver, @Coerce Object holder, Operation<Void> original) {original.call(receiver,holder);M6SettingsTraceObserver.store(receiver,holder,false);M6RefreshSealStartupObserver.store(receiver,holder,false);}
     @Inject(method="method_29440(Ljava/util/Collection;Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;)V",at=@At("HEAD"),require=1,expect=1,allow=1)
     private void traceApplyHead(Collection<?> packs, @Coerce Object holder, CallbackInfo ci) {M6SettingsTraceObserver.applyHead(holder);}
     @Inject(method="method_29440(Ljava/util/Collection;Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;)V",at=@At(value="INVOKE",target="Lnet/minecraft/server/DataPackContents;refresh()V",shift=At.Shift.AFTER,ordinal=0),require=1,expect=1,allow=1)
@@ -114,7 +115,7 @@ public abstract class M6SettingsTraceServerMixin {
     @Inject(method="runServer()V",at=@At(value="INVOKE",target="Lnet/minecraft/server/MinecraftServer;setupServer()Z",ordinal=0),require=1,expect=1,allow=1)
     private void traceStarting(CallbackInfo ci) {M6SettingsTraceObserver.starting((MinecraftServer)(Object)this);}
     @Inject(method="shutdown()V",at=@At("HEAD"),require=1,expect=1,allow=1)
-    private void traceStopping(CallbackInfo ci) {M6SettingsTraceObserver.stopping();}
+    private void traceStopping(CallbackInfo ci) {M6SettingsTraceObserver.stopping();M6RefreshSealStartupObserver.stopping((MinecraftServer)(Object)this);}
     @Inject(method="shutdown()V",at=@At("RETURN"),require=1,expect=1,allow=1)
-    private void traceStopped(CallbackInfo ci) {M6SettingsTraceObserver.stopped();}
+    private void traceStopped(CallbackInfo ci) {M6SettingsTraceObserver.stopped();M6RefreshSealStartupObserver.stopped((MinecraftServer)(Object)this);}
 }
