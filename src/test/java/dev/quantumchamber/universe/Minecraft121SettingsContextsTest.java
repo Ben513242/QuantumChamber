@@ -27,6 +27,189 @@ class Minecraft121SettingsContextsTest {
         return new Minecraft121SettingsContexts.Sources(new Object(), new Object(), new Object(), new Object(), true);
     }
 
+    private static void unavailable(Runnable action) {
+        assertEquals("CONTEXT_UNAVAILABLE", assertThrows(IllegalStateException.class, action::run).getMessage());
+    }
+    private static void initialState(Minecraft121SettingsContexts contexts, String expected) throws Exception {
+        var fence = field(cell(contexts), "fence");
+        synchronized (fence) { assertEquals(expected, field(fence, "initialState").toString()); }
+    }
+    @Test void initialMetadataPermitCanCommitFixtureOnOwner() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var ticket = contexts.captureInitial();
+        unavailable(() -> contexts.publishInitial(ticket, sources()));
+        initialState(contexts, "ISSUED");
+        var fixture = sources(); // METADATA_ONLY；不證明原生來源已 ready。
+        try (var capture = contexts.beginInitialCapture(ticket)) {
+            capture.checkpoint();
+            contexts.publishInitial(ticket, fixture);
+        }
+        initialState(contexts, "COMMITTED");
+        assertSame(fixture, Minecraft121SettingsContexts.sources(contexts.acquire(server)));
+        contexts.acquire(server).requireValid();
+    }
+    @Test void abortThenDirectPublishRejects() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        capture.abort();
+        initialState(contexts, "ABORTED");
+        unavailable(() -> contexts.publishInitial(ticket, sources()));
+        unavailable(() -> contexts.beginInitialCapture(ticket));
+        unavailable(() -> contexts.acquire(server));
+        capture.close();
+    }
+    @Test void closeBeforeCommitAborts() throws Exception {
+        var contexts = new Minecraft121SettingsContexts(new Object());
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        capture.close(); capture.close();
+        initialState(contexts, "ABORTED");
+        unavailable(capture::checkpoint);
+        unavailable(capture::abort);
+        unavailable(() -> contexts.publishInitial(ticket, sources()));
+    }
+    @Test void closeAfterCommitKeepsCommitted() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        contexts.publishInitial(ticket, sources());
+        capture.close(); capture.close();
+        contexts.acquire(server).requireValid();
+        initialState(contexts, "COMMITTED");
+        unavailable(capture::checkpoint);
+        unavailable(capture::abort);
+    }
+    @Test void abortAfterCommitRejectsAndLeaseRemainsValid() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        contexts.publishInitial(ticket, sources());
+        unavailable(capture::abort);
+        contexts.acquire(server).requireValid();
+        initialState(contexts, "COMMITTED");
+        capture.close();
+    }
+    @Test void explicitTicketBlocksLegacyPublish() {
+        var contexts = new Minecraft121SettingsContexts(new Object());
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        capture.abort();
+        unavailable(() -> contexts.publishInitial(sources()));
+        capture.close();
+        unavailable(() -> contexts.publishInitial(sources()));
+    }
+    @Test void legacyPublishBlocksTicket() {
+        var contexts = new Minecraft121SettingsContexts(new Object());
+        contexts.publishInitial(sources());
+        unavailable(contexts::captureInitial);
+    }
+    @Test void wrongTicketOrThreadRejects() throws Exception {
+        var contexts = new Minecraft121SettingsContexts(new Object());
+        var ticket = contexts.captureInitial();
+        var constructor = Minecraft121SettingsContexts.InitialTicket.class.getDeclaredConstructor(Object.class, long.class);
+        constructor.setAccessible(true);
+        var generation = Minecraft121SettingsContexts.InitialTicket.class.getDeclaredField("generation");
+        generation.setAccessible(true);
+        var fake = constructor.newInstance(field(ticket, "incarnation"), generation.getLong(ticket));
+        unavailable(() -> contexts.beginInitialCapture(fake));
+        var capture = contexts.beginInitialCapture(ticket);
+        foreign(() -> {
+            unavailable(capture::checkpoint);
+            unavailable(() -> contexts.publishInitial(ticket, sources()));
+        });
+        capture.checkpoint();
+        unavailable(() -> contexts.publishInitial(fake, sources()));
+        capture.close();
+    }
+    @Test void invalidCheckpointCannotResetTicket() throws Exception {
+        var contexts = new Minecraft121SettingsContexts(new Object());
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        foreign(() -> unavailable(capture::checkpoint));
+        capture.checkpoint();
+        contexts.publishInitial(ticket, sources());
+        capture.close();
+        initialState(contexts, "COMMITTED");
+    }
+    @Test void stoppedOrForeignCannotBeginOrClose() throws Exception {
+        var contexts = new Minecraft121SettingsContexts(new Object());
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        foreign(() -> unavailable(capture::close));
+        capture.checkpoint();
+        capture.close();
+        var stopped = new Minecraft121SettingsContexts(new Object());
+        var stoppedTicket = stopped.captureInitial();
+        foreign(stopped::revokeStop);
+        unavailable(() -> stopped.beginInitialCapture(stoppedTicket));
+    }
+
+    @Test void initialStopBeforeCommitRejects() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        foreign(contexts::revokeStop);
+        unavailable(capture::checkpoint);
+        unavailable(() -> contexts.publishInitial(ticket, sources()));
+        unavailable(() -> contexts.acquire(server));
+        assertNull(field(cell(contexts), "payload"));
+        capture.close();
+    }
+    @Test void initialStopAfterMetadataCommitRevokesLease() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        contexts.publishInitial(ticket, sources());
+        var lease = contexts.acquire(server);
+        foreign(contexts::revokeStop);
+        unavailable(lease::requireValid);
+        assertNull(field(cell(contexts), "payload"));
+        capture.close();
+    }
+    @Test void retainedPermitAfterForeignStopHasNoOwnerPath() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        foreign(contexts::revokeStop);
+        assertNull(field(cell(contexts), "payload"));
+        for (var member : capture.getClass().getDeclaredFields()) {
+            member.setAccessible(true);
+            var value = member.get(capture);
+            assertNotSame(server, value);
+            assertFalse(value instanceof Thread);
+            assertFalse(value instanceof Minecraft121SettingsContexts.Sources);
+            assertFalse(member.getName().equals("this$0"));
+        }
+        capture.close();
+    }
+    @Test void reloadOverlapAndOverflowCannotResurrectInitial() throws Exception {
+        var contexts = new Minecraft121SettingsContexts(new Object());
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        contexts.revokeReloadStart();
+        unavailable(capture::checkpoint);
+        unavailable(() -> contexts.publishInitial(ticket, sources()));
+        unavailable(() -> contexts.publishInitial(sources()));
+        capture.close();
+        var overflow = new Minecraft121SettingsContexts(new Object());
+        var fence = field(cell(overflow), "fence");
+        var generation = fence.getClass().getDeclaredField("generation");
+        generation.setAccessible(true);
+        synchronized (fence) { generation.setLong(fence, Long.MAX_VALUE); }
+        var last = overflow.captureInitial();
+        unavailable(overflow::revokeReloadStart);
+        unavailable(() -> overflow.beginInitialCapture(last));
+        unavailable(() -> overflow.publishInitial(last, sources()));
+    }
+
     @Test void contextEpochRejectsReloadAndStop() {
         var server = new Object();
         var contexts = new Minecraft121SettingsContexts(server);
@@ -52,6 +235,8 @@ class Minecraft121SettingsContextsTest {
         var lease = contexts.acquire(server);
         var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
         var thread = new Thread(() -> { try { lease.requireValid(); } catch (Throwable error) { failure.set(error); } });
+        thread.setDaemon(true);
+        assertTrue(thread.isDaemon(), "跨執行緒測試 worker 必須為 daemon");
         thread.start(); thread.join(5_000);
         assertFalse(thread.isAlive());
         assertInstanceOf(IllegalStateException.class, failure.get());
@@ -208,7 +393,10 @@ class Minecraft121SettingsContextsTest {
         var contexts = new Minecraft121SettingsContexts(server);
         var ticket = contexts.captureInitial();
         var initial = sources();
-        contexts.publishInitial(ticket, initial);
+        try (var capture = contexts.beginInitialCapture(ticket)) {
+            capture.checkpoint();
+            contexts.publishInitial(ticket, initial);
+        }
         assertSame(initial, Minecraft121SettingsContexts.sources(contexts.acquire(server)));
         assertThrows(IllegalStateException.class, () -> contexts.publishInitial(ticket, sources()));
         assertThrows(IllegalStateException.class, contexts::captureInitial);
@@ -340,7 +528,10 @@ class Minecraft121SettingsContextsTest {
         var ia = a.captureInitial();
         var ib = b.captureInitial();
         assertThrows(IllegalStateException.class, () -> b.publishInitial(ia, sources()));
-        b.publishInitial(ib, sources());
+        try (var capture = b.beginInitialCapture(ib)) {
+            capture.checkpoint();
+            b.publishInitial(ib, sources());
+        }
         var ta = a.revokeReloadStart();
         var tb = b.revokeReloadStart();
         assertThrows(IllegalStateException.class, () -> b.adoptReload(ta));
@@ -365,7 +556,10 @@ class Minecraft121SettingsContextsTest {
             assertThrows(IllegalStateException.class, () -> contexts.reloadFinished(true, sources()));
             assertThrows(IllegalStateException.class, contexts::stop);
         });
-        contexts.publishInitial(initial, sources());
+        try (var capture = contexts.beginInitialCapture(initial)) {
+            capture.checkpoint();
+            contexts.publishInitial(initial, sources());
+        }
         var lease = contexts.acquire(server);
         foreign(() -> {
             assertThrows(IllegalStateException.class, lease::requireValid);

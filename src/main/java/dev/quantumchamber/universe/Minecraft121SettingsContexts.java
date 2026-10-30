@@ -41,6 +41,8 @@ public final class Minecraft121SettingsContexts {
     }
 
     /** 唯一 monitor；臨界區只做身分、metadata 比對與引用賦值。 */
+    private enum InitialState { ISSUED, CAPTURING, COMMITTED, ABORTED }
+
     static final class Fence {
         private final Object incarnation = new Object();
         private long generation;
@@ -50,6 +52,8 @@ public final class Minecraft121SettingsContexts {
         private boolean admissionClosed = true;
         private int legacyPending;
         private InitialTicket initialTicket;
+        private InitialState initialState;
+        private InitialCapture initialCapture;
         private ReloadTicket activeTicket;
         private boolean adopted;
         private boolean settled;
@@ -140,6 +144,71 @@ public final class Minecraft121SettingsContexts {
     }
     RevocationHandle revocationHandle() { return new RevocationHandle(cell); }
 
+    /** metadata-only 借用；不得承載原生 source 或 owner 引用。 */
+    static final class InitialCapture implements AutoCloseable {
+        private final Cell cell;
+        private final InitialTicket ticket;
+        private boolean closed;
+        private InitialCapture(Cell cell, InitialTicket ticket) {
+            this.cell = cell;
+            this.ticket = ticket;
+        }
+        void checkpoint() {
+            synchronized (cell.fence) {
+                if (closed) throw unavailable();
+                requireCapturing(cell, ticket, this);
+            }
+        }
+        void abort() {
+            synchronized (cell.fence) {
+                if (closed) throw unavailable();
+                requireCapturing(cell, ticket, this);
+                cell.fence.initialState = InitialState.ABORTED;
+            }
+        }
+        @Override public void close() {
+            synchronized (cell.fence) {
+                if (closed) return;
+                OwnerState state = cell.payload;
+                if (state != null && Thread.currentThread() != state.ownerThread) throw unavailable();
+                if (cell.fence.initialCapture == this
+                        && cell.fence.initialState == InitialState.CAPTURING)
+                    cell.fence.initialState = InitialState.ABORTED;
+                closed = true;
+            }
+        }
+    }
+    InitialCapture beginInitialCapture(InitialTicket exact) {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
+            fence.requireLive();
+            requireInitial(state, fence);
+            requireExactInitial(fence, exact);
+            if (fence.initialState != InitialState.ISSUED || fence.activeTicket != null)
+                throw unavailable();
+            var capture = new InitialCapture(cell, exact);
+            fence.initialCapture = capture;
+            fence.initialState = InitialState.CAPTURING;
+            return capture;
+        }
+    }
+    private static void requireExactInitial(Fence fence, InitialTicket exact) {
+        if (!fence.explicit || exact == null || exact != fence.initialTicket
+                || exact.incarnation != fence.incarnation || exact.generation != fence.generation)
+            throw unavailable();
+    }
+    private static void requireCapturing(Cell cell, InitialTicket exact, InitialCapture capture) {
+        Fence fence = cell.fence;
+        OwnerState state = cell.payload;
+        if (state == null || Thread.currentThread() != state.ownerThread) throw unavailable();
+        fence.requireLive();
+        requireInitial(state, fence);
+        requireExactInitial(fence, exact);
+        if (fence.activeTicket != null || fence.initialState != InitialState.CAPTURING
+                || fence.initialCapture != capture || capture.closed) throw unavailable();
+    }
+
     InitialTicket captureInitial() {
         synchronized (cell.fence) {
             OwnerState state = requireOwnerState();
@@ -149,6 +218,7 @@ public final class Minecraft121SettingsContexts {
             if (fence.initialTicket != null || fence.activeTicket != null) throw unavailable();
             fence.explicit = true;
             fence.initialTicket = new InitialTicket(fence.incarnation, fence.generation);
+            fence.initialState = InitialState.ISSUED;
             return fence.initialTicket;
         }
     }
@@ -158,10 +228,11 @@ public final class Minecraft121SettingsContexts {
             Fence fence = cell.fence;
             fence.requireLive();
             requireInitial(state, fence);
-            if (!fence.explicit || expected == null || expected != fence.initialTicket
-                    || expected.incarnation != fence.incarnation || expected.generation != fence.generation
-                    || fence.activeTicket != null) throw unavailable();
+            requireExactInitial(fence, expected);
+            if (fence.activeTicket != null || fence.initialState != InitialState.CAPTURING
+                    || fence.initialCapture == null || fence.initialCapture.closed) throw unavailable();
             publish(state, fence, Objects.requireNonNull(sources, "sources"));
+            fence.initialState = InitialState.COMMITTED;
             state.initialPublished = true;
             state.epoch++;
         }
