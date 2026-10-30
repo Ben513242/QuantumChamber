@@ -1,6 +1,7 @@
 package dev.quantumchamber.gametest;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.mojang.serialization.JsonOps;
 import dev.quantumchamber.gametest.mixin.M6SettingsTraceHolderAccessor;
@@ -385,7 +386,7 @@ public final class M6SettingsTraceObserver {
             summary.put("publisher","NOT_RUN");summary.put("leaseInvalidation","NOT_RUN");summary.put("task8Eligible",false);
             target=evidence;events=List.copyOf(EVENTS);finalized=true;
         }
-        try{StringBuilder lines=new StringBuilder();for(var row:events){String line=JSON.toJson(row);check(line.getBytes(StandardCharsets.UTF_8).length<=1024,"LINE_BYTE_CAP");lines.append(line).append('\n');}
+        try{final Gson eventJson = new GsonBuilder().serializeNulls().create();StringBuilder lines=new StringBuilder();for(var row:events){String line=eventJson.toJson(row);check(line.getBytes(StandardCharsets.UTF_8).length<=1024,"LINE_BYTE_CAP");lines.append(line).append('\n');}
             check(lines.toString().getBytes(StandardCharsets.UTF_8).length<=131072,"TOTAL_BYTE_CAP");
             Files.writeString(target.resolve("events.jsonl"),lines,StandardOpenOption.CREATE_NEW);Files.writeString(target.resolve("final-candidate.json"),JSON.toJson(summary),StandardOpenOption.CREATE_NEW);
         }catch(Throwable e){fail("WRITER_FAILURE");System.err.println("LT_LATE_AFTER_FINAL_FAIL");}
