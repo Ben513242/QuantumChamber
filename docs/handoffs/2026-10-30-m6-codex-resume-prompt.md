@@ -2,7 +2,7 @@
 
 請接續 QuantumChamber M6，全程使用繁體中文（台灣）精簡回報；先核對原件，再推論。工作區是 `C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`。不要在主 checkout 或 main 上實作，不要重做已結案的切片，也不要把任何保留下來的 FAIL 追認為 PASS。
 
-**最新狀態請先讀檔尾「交回紀錄」的 D1b-3d 本機結案。下方 §2–5 是 2026-10-30 Claude→Codex 交接當時的歷史快照，不代表 D1b-3d 最新狀態。**
+**最新狀態請先讀檔尾「交回紀錄」的 8B3-LT 本機觀測片結案。下方 §2–5 是 2026-10-30 Claude→Codex 交接時的歷史快照，D1b-3d 結案亦屬先前紀錄。**
 
 ## 1. 接手時先讀、先核
 
@@ -95,3 +95,12 @@ AGENTS 的「目前接手入口」、M6 note 末節、plan 快照、ignored 的 
 - 3c docs HEAD `857cd4882da50e370a1550647ae38486f3572818` 的 GitHub run `40996306990` 雙 job success；僅讀回 job／steps，不當成 8B3 三 bundle。3d code pin `ccccb9697e005ad9eece0f88545df949c5ca3c45`，range `857cd488..ccccb969`，六 owner；乾淨 M6Compile、Canon123×2、Leaf51×2、完整 `run-all-d9c930ca1b374edda994caf753abe746` 自然 END ALL exit0／JUnit936（fail0／error0／既有 skip2）。summary SHA256 `615111b53c765cb5e5ee3ae55fc1443978ee2f0e624b02972077522efeae887f`；console SHA256 `e6203e0f4db52b6b79ecb72f3f0490fa1777b2e9f64646fd6b7764c78d2a6c59`。
 - 本片接上 JUKEBOX_SONG dynamic registry 與 SOUND_EVENT leaf；W-OPS 以真 vanilla `music_disc_13` key-only default 被殺。舊 1298 件 ACCEPTED 逐件 payload hash 不變，新 ACCEPTED 1317，COST_ENTRY 兩種前綴皆 0。七個突變乾淨被殺；T2 兩具名目標亦被殺，但同輪另有模板 100ms `TEMPLATE_SNAPSHOT_NOT_READY` FAIL，不算乾淨第八個見證，原 root 保留。ignored `FINAL-RESULT.json` SHA256 `14f26d63a424061c96c66ceb7275efb759c8550148dc26211eed120b3d0eecf0`；`ERRATUM.md` SHA256 `764b1c378274d990f16bd60c93ef5997723d01689d25bcdea9e7b29ed7026d37`。
 - 獨立 spec／quality 各 C0/I0/M1；spec `D1B3D-SPEC-REVIEW.md` SHA256 `8b666f2e26b304d7da8b9ac2932e46e3df169b531208662fbfb889f30506a47e`，quality `D1B3D-QUALITY-REVIEW.md` SHA256 `73bdc8902bea3c316e5f66e5f12354c785df530c74cb8ab6ff645aeea65da7b3`。3d 僅本機結案，遠端 CI 尚未在此 code／docs HEAD 跑。D1c-0 僅完成只讀取證設計獨立審查 C0/I0/M2；D1c-1 未放行。Task8、C1d、100ms live hold I-1、8B3 三 bundle、Task9–22／M6 仍待；v4 父、B27、3b AccessDenied 與 T2 額外 100ms 的 FAIL 原判保留。僅須繞過存取限制的 mod 殘餘可文件化先推主線；public API 或 vanilla 受影響者仍須修。
+
+### 2026-10-30：8B3-LT 本機觀測片結案（僅 testmod）
+
+- Code range 3d9248a28fc52694ef43bd11d7f739fec46ea11d..0b8f86b90e932810b7b0a4a79a9a82cfdc6bd8f0：候選 fe1e3c3 加 fix1 0b8f86b，恰 11 個 testmod 檔；ignored launcher／preflight／oracle 不在 Git。3d docs HEAD 3d9248a28fc52694ef43bd11d7f739fec46ea11d 的 GitHub run 41011354606 雙 job success，非本片或 8B3 三 bundle 的 CI。
+- 同一乾淨 code pin 兩次新 nonce focused GREEN：4d1a132a9f31af3f4b65cc30f5f0758b、5e2c9cbccee5876bd6fc0e00836566b8。postflight SHA256 9315559061e1ee3d17254fd506c8b29ac859df8dfa972465cbf51143528fcca5／6725ffdc8a6d4c15962a0007d3dc305c3bc8d323150b3108c1175f25cbfecbd0；strict oracle stdout SHA256 均為 32d5aca3896d148f694a8820da39db6fc3dd7db65525db0f1577e9e31645834f；外部 owner／lock 收據 SHA256 feeeea6be829e8d189338cb7e50d4cb031f6d2c9343586a8064e26f05413a130／df4b2d01818a2d0f505a26dafc1fbafb5ca74ea041441748cfef8f55e9e204fd。各 71 事件、29 identity；受控失敗觀測為 RETAINED，不外推所有 failure。postflight 原件的 cleanupConfirmed=false／newLaunchAllowed=false 未改寫；獨立外部收據才證 owner／lock 收斂。
+- 完整 run-all-ecd3be3ca6ca4bd191a98ccb1f4506ce 自然 END ALL exit=0，HEAD=0b8f86b90e932810b7b0a4a79a9a82cfdc6bd8f0；summary SHA256 a26b4bef04489c9abc6309cf716e5e21340a1db18f0d73b306fd6c5d83dc8a2c、console SHA256 e7495589a1d3a2a963d30800b5c971dc60af5815dc4167ec8388aed26e26a5ef。JUnit936（fail0／error0／既有 skip2）、default179、M5 60、M6 8、recovery24、collapse69、M6 native DIAGNOSTIC2、mainOnly PASS；release／sources testmodHits0，實際 JAR hash 與 summary 相符。full 後無 live Java，gametest session.lock 不存在。
+- 獨立 task spec C0/I0/M1（報告 SHA256 29d8058a3865edd5ab71887ec19863a2533c441f5ffd385647206af6c9ca3d00）、quality C0/I0/M1（報告 SHA256 a3d11dc322712190a9e262e61f082a66150deafd920b75aab5d973f1cc0110a8），僅允本機觀測片結案。共同 Minor：Fabric START／END 診斷事件未記當刻 active RM；下一個 8B3 lifecycle 設計 Step0 須裁定刪除冗餘診斷欄，或補 exact active RM。不能從 Fabric callback RM 推定 active RM，更不能推 token／發布權威。
+- prepare 6f3c2cb55001eb32807f2b36b1e898e1 FAIL，native faebfc97c1fe62f4da2d467bd36f4ee2、7537ecf0b6caefd00c00705712c4b859、18660a8c33433a7486cf85e4ee4b1bcd FAIL 均保留原 root／原判；v4 父、B27、3b AccessDenied、T2 額外 100ms FAIL 亦不改判。killCalls0 僅指外層 launcher；preflight Python spawnSync timeout30s 可能終止 Python。
+- D1c-0a–0d raw 證據與 8B3-L 順序設計仍 STOP。D1c-1、production publisher／lease／source GREEN、100ms live hold I-1、off-thread／重疊 reload／stop交錯、8B3-F 三 bundle、Task8 終局、Task9–22、人工 smoke 與 M6 均未放行。createSnapshot/resolve 仍 fail closed。
