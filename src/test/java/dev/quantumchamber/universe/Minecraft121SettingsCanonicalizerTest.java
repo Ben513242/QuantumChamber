@@ -2068,7 +2068,7 @@ class Minecraft121SettingsCanonicalizerTest {
      * <li>P2：開始前全部BLOCK tag為空：每個Named.entries是JDK的List.of()單例、每個Reference.tags是Set.of()單例（反射唯讀）。</li>
      * <li>P3：單執行緒，且沒有仍在執行的worldgen worker（requireNoConcurrentWorldgen）。</li>
      * <li>body只做closure的drain／finish：不建立ItemStack、不呼叫isIn（tool item沒有food，不會解碼using_converts_to的ItemStack）。</li>
-     * <li>finally一律呼叫clearTags()；finally之後的後置斷言：key集合與每個key的Named都與快照相同（assertSame），每個Named.entries與
+     * <li>finally一律呼叫clearTags()及後置斷言，body失敗也執行；保留primary並附加suppressed錯誤。斷言：key集合與每個key的Named都與快照相同（assertSame），每個Named.entries與
      * Reference.tags都回到快照中的同一個JDK空集合單例（javap：clearTags以copyOf(List.of())與setTags(Set.of())寫回，JDK的List.copyOf／
      * Set.copyOf對空的不可變集合回傳單例本身）。</li>
      * </ul>
@@ -2089,7 +2089,7 @@ class Minecraft121SettingsCanonicalizerTest {
             return body.run();
         }, () -> {net.minecraft.registry.Registries.BLOCK.clearTags(); return null;}, () -> {
         var after=blockTagState();
-        assertAll("T2後置斷言（finally之後）",
+        assertAll("T2後置斷言（finally內）",
                 ()->assertEquals(before.named().keySet(),after.named().keySet(),"key集合與快照相同"),
                 ()->{for(var e:before.named().entrySet())assertSame(e.getValue(),after.named().get(e.getKey()),"#"+e.getKey().id()+"的Named與快照是同一物件");},
                 ()->assertEquals(before.fields().size(),after.fields().size(),"Named與Reference的數量不變"),
@@ -2101,10 +2101,22 @@ class Minecraft121SettingsCanonicalizerTest {
     }
     /** 共用還原控制流；局部 callback 可驗失敗路徑，不修改全域 registry。 */
     private static <T> T withTagRestoration(WindowBody<T> body, WindowBody<?> cleanup, WindowBody<?> restoration) throws Exception {
-        T result;
-        try { result=body.run(); } finally { cleanup.run(); }
-        restoration.run();
-        return result;
+        Throwable primary=null;
+        try { return body.run(); }
+        catch(Exception | Error failure) {primary=failure; throw failure;}
+        finally {
+            Throwable failure=primary;
+            try {cleanup.run();} catch(Exception | Error secondary) {
+                if(failure==null)failure=secondary; else if(failure!=secondary)failure.addSuppressed(secondary);
+            }
+            try {restoration.run();} catch(Exception | Error secondary) {
+                if(failure==null)failure=secondary; else if(failure!=secondary)failure.addSuppressed(secondary);
+            }
+            if(primary==null&&failure!=null) {
+                if(failure instanceof Exception exception)throw exception;
+                throw (Error)failure;
+            }
+        }
     }
     @Test void tagWindowBodyFailureStillChecksRestoration() throws Exception {
         var primary=new IllegalStateException("body");
