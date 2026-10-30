@@ -101,6 +101,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**最新 2026-10-31：8B3-L STOP fence 第一片 code pin `402850b` 僅就 Contexts 本地演算法結案：乾淨 M6Compile、雙 focused 各精確21項及完整 `run-all-03daf56742b14a0fa7acad45e5ec8ba1` 自然 END ALL exit0／JUnit951；獨立 spec C0/I0/M0、quality C0/I0/M1。LT2 STOP-PENDING `6bc60fc91584008b983aa668ebad1f00` 原 root 仍 FAIL，真 late 已觀測，不能稱 STOP_UNPROVEN 或安全完成。正式 lifecycle／publisher／source GREEN、100ms、8B3-F 三 bundle、Task8／Task9–22 仍待。8B3-LT docs `3d4a792` 的 CI run `41053474913` 雙 job success；新 code 尚未 push／無其遠端 CI。細節見新入口檔尾與 M6 note 末節；下方舊快照保留為歷史。**
+
 **最新 2026-10-30：8B3-LT code 0b8f86b（3d9248a..0b8f86b，恰 11 個 testmod 檔）僅就本機觀測片結案：雙新 nonce focused GREEN、完整 run-all-ecd3be3ca6ca4bd191a98ccb1f4506ce END ALL exit0／JUnit936，獨立 spec／quality 各 C0/I0/M1。3d docs 3d9248a 的 CI run 41011354606 雙 job success，非 8B3 三 bundle。production publisher／lease／source GREEN、100ms／8B3-F 三 bundle／Task8／Task9–22仍待；原FAIL保留。Fabric 診斷事件 active RM Minor 交下一 8B3 lifecycle 設計 Step0。 細節見新入口檔尾「交回紀錄」與 M6 note 末節；下方 D1b-3d 敘述是歷史快照。**
 
 **2026-10-30 Codex 接續：新入口是 [`docs/handoffs/2026-10-30-m6-codex-resume-prompt.md`](docs/handoffs/2026-10-30-m6-codex-resume-prompt.md)，請先讀它。D1b-3d code pin `ccccb9697e005ad9eece0f88545df949c5ca3c45`（range `857cd488..ccccb969`）已完成乾淨本機 M6Compile、Canon123×2、Leaf51×2、完整 `run-all-d9c930ca1b374edda994caf753abe746` END ALL exit0／JUnit936，兩席審查 C0/I0/M1；W-OPS 真 vanilla key-only 唱片見證已殺。T2 突變的兩個具名目標被殺，但同輪另有 100ms `TEMPLATE_SNAPSHOT_NOT_READY` FAIL，原 root 保留，不能稱八個乾淨見證。D1b-3c 的 docs HEAD `857cd488` 遠端 CI run `40996306990` 雙 job success，只讀 job／steps，不是 8B3 三 bundle；新 code／docs HEAD 的遠端 CI 尚未採計。後續 D1c-0 僅完成只讀取證設計審查，D1c-1 未放行；C1d、100ms live hold I-1、8B3、Task 8 與 Task 9–22／M6 仍待。以下是歷程。**

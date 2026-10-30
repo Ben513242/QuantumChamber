@@ -2,7 +2,7 @@
 
 請接續 QuantumChamber M6，全程使用繁體中文（台灣）精簡回報；先核對原件，再推論。工作區是 `C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`。不要在主 checkout 或 main 上實作，不要重做已結案的切片，也不要把任何保留下來的 FAIL 追認為 PASS。
 
-**最新狀態請先讀檔尾「交回紀錄」的 8B3-LT 本機觀測片結案。下方 §2–5 是 2026-10-30 Claude→Codex 交接時的歷史快照，D1b-3d 結案亦屬先前紀錄。**
+**最新狀態請先讀檔尾「交回紀錄」的 2026-10-31 8B3-L STOP fence 第一片本機結案。下方 §2–5 是 2026-10-30 Claude→Codex 交接時的歷史快照，D1b-3d 結案亦屬先前紀錄。**
 
 ## 1. 接手時先讀、先核
 
@@ -104,3 +104,10 @@ AGENTS 的「目前接手入口」、M6 note 末節、plan 快照、ignored 的 
 - 獨立 task spec C0/I0/M1（報告 SHA256 29d8058a3865edd5ab71887ec19863a2533c441f5ffd385647206af6c9ca3d00）、quality C0/I0/M1（報告 SHA256 a3d11dc322712190a9e262e61f082a66150deafd920b75aab5d973f1cc0110a8），僅允本機觀測片結案。共同 Minor：Fabric START／END 診斷事件未記當刻 active RM；下一個 8B3 lifecycle 設計 Step0 須裁定刪除冗餘診斷欄，或補 exact active RM。不能從 Fabric callback RM 推定 active RM，更不能推 token／發布權威。
 - prepare 6f3c2cb55001eb32807f2b36b1e898e1 FAIL，native faebfc97c1fe62f4da2d467bd36f4ee2、7537ecf0b6caefd00c00705712c4b859、18660a8c33433a7486cf85e4ee4b1bcd FAIL 均保留原 root／原判；v4 父、B27、3b AccessDenied、T2 額外 100ms FAIL 亦不改判。killCalls0 僅指外層 launcher；preflight Python spawnSync timeout30s 可能終止 Python。
 - D1c-0a–0d raw 證據與 8B3-L 順序設計仍 STOP。D1c-1、production publisher／lease／source GREEN、100ms live hold I-1、off-thread／重疊 reload／stop交錯、8B3-F 三 bundle、Task8 終局、Task9–22、人工 smoke 與 M6 均未放行。createSnapshot/resolve 仍 fail closed。
+
+### 2026-10-31：8B3-L STOP fence 第一片本機結案，交下一 Step0
+
+- 8B3-LT docs HEAD `3d4a792ee4d22d56a5266a940d3644e2264eace1` 已 push／ls-remote 讀回；GitHub Build run `41053474913` 同 SHA completed/success attempt1，Ubuntu `build`／Windows `windows-native` 兩 job success，三份 artifact 清單已讀未解壓。這不是 8B3 三 bundle。LT2 四情境 OFFTHREAD／AB／BA／PARTIAL 各單輪不同 nonce 的 native postflight／oracle／外部清理 PASS；LT2 整片未結。
+- STOP-PENDING `6bc60fc91584008b983aa668ebad1f00` 原 root FAIL：STOPPING 後 worker off-thread holder／refresh／templates／F success，oracle RUN_FAIL；外部 owner0／lock 已釋放。真 late 已觀測，不能稱 `STOP_UNPROVEN`，也不能稱安全。原 FAIL 保留、不重跑改判。
+- Stop fence 設計 proposal、addendum v1、獨立 review 後，code range `cd691f5a8d81920e22bbcf89fffc05944a909ec4..402850b93f6b9c0dfd81b7620e65e3c44383720f` 恰兩檔 `Contexts.java`／`ContextsTest.java`；RED 8/2 foreign START／STOP 舊 lease，final GREEN 21/0、七 production mutation 被殺（首次 tombstone 提早還原不採）。乾淨 M6Compile、雙獨立 focused 各21項 PASS、完整 `run-all-03daf56742b14a0fa7acad45e5ec8ba1` 自然 END ALL exit0／JUnit951（f0/e0/既有 skip2），mainOnly PASS、release/sources testmodHits0。final spec C0/I0/M0、quality C0/I0/M1，僅允 Contexts 本地演算法結案；quality Minor 測試 worker 非 daemon 交下一 Step0。原件與 SHA 見 M6 note 末節。
+- 正式 lifecycle／publisher／source GREEN、consumer raw refs/census、foreign shutdown cleanup、100ms、8B3-F 三 bundle、Task8／Task9–22仍 STOP；`createSnapshot`／`resolve` fail closed。v4 父、B27、3b AccessDenied、T2 額外100ms、LT2 STOP-PENDING 原 FAIL 不改判。新 code HEAD `402850b` 尚未 push／無其遠端 CI。本筆 docs 變更待提交；新 code 遠端 CI 待實際 push 後讀回。

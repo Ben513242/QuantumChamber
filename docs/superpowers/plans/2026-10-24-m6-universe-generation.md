@@ -10,7 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-30 8B3-LT 本機觀測片）：8B3-LT code 0b8f86b（3d9248a..0b8f86b，恰 11 個 testmod 檔）僅就本機觀測片結案：雙新 nonce focused GREEN、完整 run-all-ecd3be3ca6ca4bd191a98ccb1f4506ce END ALL exit0／JUnit936，獨立 spec／quality 各 C0/I0/M1。3d docs 3d9248a 的 CI run 41011354606 雙 job success，非 8B3 三 bundle。production publisher／lease／source GREEN、100ms／8B3-F 三 bundle／Task8／Task9–22仍待；原FAIL保留。Fabric 診斷事件 active RM Minor 交下一 8B3 lifecycle 設計 Step0。 詳細 evidence、SHA 與原 FAIL 見 M6 note 末節；本計畫的 8B3 三 bundle 與 Task8→Task9 門檻不變。
+狀態（2026-10-31 8B3-L STOP fence 第一片）：code pin `402850b` 的 Contexts 本地演算法，乾淨 M6Compile、雙 focused 各21項、完整 `run-all-03daf56742b14a0fa7acad45e5ec8ba1` 自然 END ALL exit0／JUnit951；獨立 spec C0/I0/M0、quality C0/I0/M1，僅此片本機結案。LT2 STOP-PENDING 原 root FAIL，真 late 已觀測但安全未證；LT2 整片未結。8B3-LT docs `3d4a792` 遠端 run `41053474913` 雙 job success，非新 code CI／8B3 三 bundle。正式 lifecycle／publisher／source、consumer census、foreign shutdown cleanup、100ms、8B3-F、Task8→Task9門檻不變；詳細原件見 M6 note 末節。
+
+歷史狀態（2026-10-30 8B3-LT 本機觀測片）：8B3-LT code 0b8f86b（3d9248a..0b8f86b，恰 11 個 testmod 檔）僅就本機觀測片結案：雙新 nonce focused GREEN、完整 run-all-ecd3be3ca6ca4bd191a98ccb1f4506ce END ALL exit0／JUnit936，獨立 spec／quality 各 C0/I0/M1。3d docs 3d9248a 的 CI run 41011354606 雙 job success，非 8B3 三 bundle。production publisher／lease／source GREEN、100ms／8B3-F 三 bundle／Task8／Task9–22仍待；原FAIL保留。Fabric 診斷事件 active RM Minor 交下一 8B3 lifecycle 設計 Step0。 詳細 evidence、SHA 與原 FAIL 見 M6 note 末節；本計畫的 8B3 三 bundle 與 Task8→Task9 門檻不變。
 
 採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當時native資料gate仍未通過，沒有8B放行；現況以上方2026-10-28 B28結果為準。
 
