@@ -34,6 +34,61 @@ class Minecraft121SettingsContextsTest {
         var fence = field(cell(contexts), "fence");
         synchronized (fence) { assertEquals(expected, field(fence, "initialState").toString()); }
     }
+
+    private static void callbackHasOnlyStrongMetadata(Object callback, Object server) throws Exception {
+        var seen = new java.util.IdentityHashMap<Object, Boolean>();
+        var pending = new java.util.ArrayDeque<Object>();
+        pending.add(callback);
+        while (!pending.isEmpty()) {
+            var current = pending.removeFirst();
+            if (seen.put(current, Boolean.TRUE) != null) continue;
+            assertNotSame(server, current, "callback 強達 server");
+            assertFalse(current instanceof Thread, "callback 強達 owner Thread");
+            assertFalse(current instanceof Minecraft121SettingsContexts.Sources, "callback 強達 Sources");
+            var kind = current.getClass().getSimpleName();
+            assertFalse(kind.equals("Cell") || kind.equals("OwnerState") || kind.equals("InitialCapture"),
+                    "callback 強達 " + kind);
+            if (!current.getClass().getName().startsWith("dev.quantumchamber.universe.Minecraft121SettingsContexts$"))
+                continue;
+            for (var member : current.getClass().getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(member.getModifiers())) continue;
+                member.setAccessible(true);
+                var next = member.get(current);
+                if (next == null || next instanceof java.lang.ref.WeakReference<?>) continue;
+                pending.add(next);
+            }
+        }
+    }
+    @Test void callbackCannotReachActiveInitialCaptureOwner() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var callback = contexts.revocationHandle();
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        callbackHasOnlyStrongMetadata(callback, server);
+        capture.close();
+    }
+    @Test void callbackCannotReachCommittedClosedInitialCaptureOwner() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var callback = contexts.revocationHandle();
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        contexts.publishInitial(ticket, sources());
+        capture.close();
+        callbackHasOnlyStrongMetadata(callback, server);
+    }
+    @Test void callbackCannotReachAbortedClosedInitialCaptureOwner() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var callback = contexts.revocationHandle();
+        var ticket = contexts.captureInitial();
+        var capture = contexts.beginInitialCapture(ticket);
+        capture.abort();
+        capture.close();
+        callbackHasOnlyStrongMetadata(callback, server);
+    }
+
     @Test void initialMetadataPermitCanCommitFixtureOnOwner() throws Exception {
         var server = new Object();
         var contexts = new Minecraft121SettingsContexts(server);

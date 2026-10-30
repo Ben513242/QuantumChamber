@@ -53,7 +53,7 @@ public final class Minecraft121SettingsContexts {
         private int legacyPending;
         private InitialTicket initialTicket;
         private InitialState initialState;
-        private InitialCapture initialCapture;
+        private Object initialCaptureToken;
         private ReloadTicket activeTicket;
         private boolean adopted;
         private boolean settled;
@@ -148,10 +148,12 @@ public final class Minecraft121SettingsContexts {
     static final class InitialCapture implements AutoCloseable {
         private final Cell cell;
         private final InitialTicket ticket;
+        private final Object token;
         private boolean closed;
-        private InitialCapture(Cell cell, InitialTicket ticket) {
+        private InitialCapture(Cell cell, InitialTicket ticket, Object token) {
             this.cell = cell;
             this.ticket = ticket;
+            this.token = token;
         }
         void checkpoint() {
             synchronized (cell.fence) {
@@ -171,7 +173,7 @@ public final class Minecraft121SettingsContexts {
                 if (closed) return;
                 OwnerState state = cell.payload;
                 if (state != null && Thread.currentThread() != state.ownerThread) throw unavailable();
-                if (cell.fence.initialCapture == this
+                if (cell.fence.initialCaptureToken == token
                         && cell.fence.initialState == InitialState.CAPTURING)
                     cell.fence.initialState = InitialState.ABORTED;
                 closed = true;
@@ -187,8 +189,9 @@ public final class Minecraft121SettingsContexts {
             requireExactInitial(fence, exact);
             if (fence.initialState != InitialState.ISSUED || fence.activeTicket != null)
                 throw unavailable();
-            var capture = new InitialCapture(cell, exact);
-            fence.initialCapture = capture;
+            var token = new Object();
+            var capture = new InitialCapture(cell, exact, token);
+            fence.initialCaptureToken = token;
             fence.initialState = InitialState.CAPTURING;
             return capture;
         }
@@ -206,7 +209,7 @@ public final class Minecraft121SettingsContexts {
         requireInitial(state, fence);
         requireExactInitial(fence, exact);
         if (fence.activeTicket != null || fence.initialState != InitialState.CAPTURING
-                || fence.initialCapture != capture || capture.closed) throw unavailable();
+                || fence.initialCaptureToken != capture.token || capture.closed) throw unavailable();
     }
 
     InitialTicket captureInitial() {
@@ -230,7 +233,7 @@ public final class Minecraft121SettingsContexts {
             requireInitial(state, fence);
             requireExactInitial(fence, expected);
             if (fence.activeTicket != null || fence.initialState != InitialState.CAPTURING
-                    || fence.initialCapture == null || fence.initialCapture.closed) throw unavailable();
+                    || fence.initialCaptureToken == null) throw unavailable();
             publish(state, fence, Objects.requireNonNull(sources, "sources"));
             fence.initialState = InitialState.COMMITTED;
             state.initialPublished = true;
