@@ -21,6 +21,8 @@ import net.minecraft.component.type.LoreComponent;
 import net.minecraft.component.type.PotionContentsComponent;
 import net.minecraft.component.type.SuspiciousStewEffectsComponent;
 import net.minecraft.component.type.ToolComponent;
+import net.minecraft.component.type.JukeboxPlayableComponent;
+import net.minecraft.registry.RegistryPair;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
@@ -38,7 +40,7 @@ import net.minecraft.util.Unit;
  * 證明lease identity的static registry固定聯集（{@link #staticRegistries}）。每個已審型別在表內同一處宣告四件事：值條件、codec前的
  * copy重建（帶List的record重建、LORE與三個只收空值型別正規化為DEFAULT，見{@link Copy}；literal與帶CodecCache卻只收空值或單例的
  * enchantments、charged_projectiles、container明確宣告{@link #AS_IS}，理由見AS_IS）、ref抽取（literal與只收空值的型別明確宣告
- * {@link #NO_REFS}），以及已接受的值經codec會查詢的static registry。呼叫端只經同一筆契約取用這些，所以不會另有一張ref或copy分派表與值條件表漂移，
+ * {@link #NO_REFS}），以及已接受的值經codec會查詢的registry。呼叫端只經同一筆契約取用這些，所以不會另有一張ref或copy分派表與值條件表漂移，
  * 造成「型別被接受、卻沒抽出ref」的靜默少邊。D1c的loot function與D2b的模板effective component應重用本表，不另立第三份白名單；
  * TemplateValueContracts.components()目前另有自己的表，交D2b收斂。
  *
@@ -55,10 +57,14 @@ final class Minecraft121ItemComponentContracts {
 
     /**
      * ITEM leaf從default component抽出的引用（D1b-3設計§1.5第2點）。path是相對ITEM node的完整路徑
-     * （components/&lt;component型別id&gt;/…）。指向named registry entry的Entry，以及D1b-3c起tool tag rule的Tag。
+     * （components/&lt;component型別id&gt;/…）。指向named registry entry的Entry、tool tag rule的Tag，以及dynamic JUKEBOX_SONG的Key。
      */
-    sealed interface Ref permits Ref.Entry,Ref.Tag {
+    sealed interface Ref permits Ref.Entry,Ref.Tag,Ref.Key {
         String path();
+        /** dynamic key引用；boundEntry若存在，須由leaf證明為同lease的actual(key)。 */
+        record Key(String path,RegistryKey<?> key,Optional<RegistryEntry.Reference<?>> boundEntry) implements Ref {
+            public Key {Objects.requireNonNull(path);Objects.requireNonNull(key);Objects.requireNonNull(boundEntry);}
+        }
         /** 指向named registry entry的引用；entry是exact原生RegistryEntry.Reference（值條件已驗）。 */
         record Entry(String path,RegistryEntry.Reference<?> entry) implements Ref {
             public Entry {
@@ -86,6 +92,7 @@ final class Minecraft121ItemComponentContracts {
     interface RefSink {
         void entry(String path,RegistryEntry.Reference<?> entry);
         void tag(String path,RegistryEntryList.Named<?> tag);
+        void key(String path,RegistryKey<?> key,Optional<RegistryEntry.Reference<?>> boundEntry);
     }
     /**
      * 一型的ref抽取：只對值條件已成立的copy呼叫；sink收到相對於該component的path（例如effects/0/effect/id）。新增帶引用的型別時，
@@ -145,10 +152,8 @@ final class Minecraft121ItemComponentContracts {
      * NATIVE_DEFINITION_SOURCE（D1b-3b quality Q-M4(e)；呼叫端原樣交回）。</li>
      * <li>copy：codec前的copy重建（AS_IS或重建器，不得為null）。</li>
      * <li>refs：ref抽取（NO_REFS或抽取器，不得為null）。</li>
-     * <li>registries：已接受的值經codec會查詢的static registry，只作宣告，由結構測試核對它屬於staticRegistries()；production的identity
-     * 證明一律用固定聯集，不依本欄增減。本欄只列static registry（D1b-3b quality Q-M4(b)）：D1b-3d的jukebox_playable引用dynamic的
-     * JUKEBOX_SONG（只要求存在，不在固定聯集），屆時結構測試的「有ref ⇔ registries非空」與「registries屬於固定聯集」要重新定義
-     * （3d待辦）。</li>
+     * <li>registries：已接受的值經codec會查詢的全部registry。結構測試獨立核對static聯集與受審dynamic JUKEBOX_SONG；
+     * static identity證明仍用固定聯集，dynamic只在實際ref出現時要求同lease target。</li>
      * </ul>
      */
     record Contract(Predicate<Object> value,Copy copy,Refs refs,List<RegistryKey<? extends Registry<?>>> registries) {
@@ -171,7 +176,7 @@ final class Minecraft121ItemComponentContracts {
      * 只能經lease解析，不在本表。每次回傳新的List，元素是static final的全域物件；key一律由getKey()取得。
      */
     static List<Registry<?>> staticRegistries() {
-        return List.of(Registries.ITEM,Registries.DATA_COMPONENT_TYPE,Registries.BLOCK,Registries.ATTRIBUTE,Registries.STATUS_EFFECT);
+        return List.of(Registries.ITEM,Registries.DATA_COMPONENT_TYPE,Registries.BLOCK,Registries.ATTRIBUTE,Registries.STATUS_EFFECT,Registries.SOUND_EVENT);
     }
 
     /** type的已審契約；不是已審型別時回傳null。 */
@@ -227,7 +232,7 @@ final class Minecraft121ItemComponentContracts {
                     &&((ChargedProjectilesComponent)value).isEmpty()));
             // D1b-3b的static引用（D1b-3設計§2.2）：非空ATTRIBUTE_MODIFIERS（→ATTRIBUTE）、FOOD（→STATUS_EFFECT、ITEM）、TOOL（→BLOCK）。
             // 引用一律須是exact原生RegistryEntry.Reference（inline的Direct entry在codec之前就拒）。D1b-3c起TOOL也收tag rule（→BLOCK tag，
-            // 原生Named，須是lease registry的那一個，見LeafContracts的7c）；jukebox_playable屬D1b-3d，仍不在本表。三型的record都不複製List，codec之前以已驗元素重建（D1b-3c-0）。
+            // 原生Named，須是lease registry的那一個，見LeafContracts的7c）；jukebox_playable的dynamic契約另列於下方。三型的record都不複製List，codec之前以已驗元素重建（D1b-3c-0）。
             put(table,DataComponentTypes.ATTRIBUTE_MODIFIERS,new Contract(Minecraft121ItemComponentContracts::attributeModifiers,
                     Minecraft121ItemComponentContracts::attributeModifiersCopy,Minecraft121ItemComponentContracts::attributeModifierRefs,
                     List.of(RegistryKeys.ATTRIBUTE)));
@@ -237,6 +242,8 @@ final class Minecraft121ItemComponentContracts {
             put(table,DataComponentTypes.TOOL,new Contract(Minecraft121ItemComponentContracts::tool,
                     Minecraft121ItemComponentContracts::toolCopy,Minecraft121ItemComponentContracts::toolRefs,
                     List.of(RegistryKeys.BLOCK)));
+            put(table,DataComponentTypes.JUKEBOX_PLAYABLE,new Contract(Minecraft121ItemComponentContracts::jukebox,
+                    Minecraft121ItemComponentContracts::jukeboxCopy,Minecraft121ItemComponentContracts::jukeboxRefs,List.of(RegistryKeys.JUKEBOX_SONG)));
             return Collections.unmodifiableMap(table);
         }
         private static void put(Map<ComponentType<?>,Contract> table,ComponentType<?> type,Contract contract) {
@@ -504,6 +511,28 @@ final class Minecraft121ItemComponentContracts {
      */
     private static boolean emptyList(List<?> list) {
         return list!=null&&list.isEmpty()&&!list.iterator().hasNext();
+    }
+
+    /** 公開RegistryPair可以帶矛盾entry/key；先驗形狀，lease identity另由LeafContracts守住。 */
+    private static boolean jukebox(Object value) {
+        if(!nativeExact(value,JukeboxPlayableComponent.class))return false;
+        var pair=((JukeboxPlayableComponent)value).song();
+        if(!nativeExact(pair,RegistryPair.class)||!nativeExact(pair.key(),RegistryKey.class)
+                ||!pair.key().getRegistry().equals(RegistryKeys.JUKEBOX_SONG.getValue())||pair.entry()==null)return false;
+        if(pair.entry().isEmpty())return true;
+        Object bound=pair.entry().get();
+        if(!nativeExact(bound,RegistryEntry.Reference.class))return false;
+        return ((RegistryEntry.Reference<?>)bound).getKey().filter(pair.key()::equals).isPresent();
+    }
+    private static Object jukeboxCopy(Object value) {
+        if(!jukebox(value))throw new Minecraft121SettingsGraph.Failure("UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
+        var component=(JukeboxPlayableComponent)value;var pair=component.song();
+        return new JukeboxPlayableComponent(new RegistryPair<>(pair.entry(),pair.key()),component.showInTooltip());
+    }
+    private static void jukeboxRefs(Object value,RefSink sink) {
+        if(!jukebox(value))throw new Minecraft121SettingsGraph.Failure("UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
+        var pair=((JukeboxPlayableComponent)value).song();
+        sink.key("song",pair.key(),pair.entry().map(entry->(RegistryEntry.Reference<?>)entry));
     }
 
     /** exact class且source為原生，之後才可呼叫該值的方法。 */

@@ -99,6 +99,8 @@ final class Minecraft121RegistryClosure {
             switch(ref) {
                 case Minecraft121ItemComponentContracts.Ref.Entry reference ->
                         enqueueEntry(from,reference.path(),reference.entry(),"item-default-component");
+                case Minecraft121ItemComponentContracts.Ref.Key reference ->
+                        enqueue(from,reference.path(),reference.key(),"ordinary","required-item-component-key");
                 case Minecraft121ItemComponentContracts.Ref.Tag reference ->
                         enqueueTag(from,reference.path(),reference.tag().getTag(),true);
             }
@@ -256,7 +258,9 @@ final class Minecraft121RegistryClosure {
             leaves.statusEffect(node,key,entry);
             return;
         }
+        if(key.getRegistry().equals(RegistryKeys.SOUND_EVENT.getValue())) {leaves.sound(node,key,entry);return;}
         Object value=entry.value();
+        if(key.getRegistry().equals(RegistryKeys.JUKEBOX_SONG.getValue())) {expandJukeboxSong(node,value);return;}
         if(key.getRegistry().equals(RegistryKeys.PROCESSOR_LIST.getValue())) {
             expandProcessorList(node,value);
             return;
@@ -270,6 +274,55 @@ final class Minecraft121RegistryClosure {
             return;
         }
         throw failure("UNSUPPORTED_REGISTRY_DEFINITION");
+    }
+
+    /** dynamic定義只接納固定1.21的四欄song；原值Text先admit再建owned copy，未驗物件不進codec。 */
+    private void expandJukeboxSong(Key node,Object value) {
+        var copy=ownedSong(value);
+        var ops=registries.getOps(NbtOps.INSTANCE);
+        var encoded=net.minecraft.block.jukebox.JukeboxSong.CODEC.encodeStart(ops,copy).getOrThrow();
+        var rebuilt=net.minecraft.block.jukebox.JukeboxSong.CODEC.parse(ops,encoded).getOrThrow();
+        var rebuiltCopy=ownedSong(rebuilt);
+        require(encoded.equals(net.minecraft.block.jukebox.JukeboxSong.CODEC.encodeStart(ops,rebuiltCopy).getOrThrow()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+        require(encoded instanceof NbtCompound,"UNSUPPORTED_JUKEBOX_SONG");
+        var payload=(NbtCompound)encoded;
+        require(payload.getKeys().equals(Set.of("sound_event","description","length_in_seconds","comparator_output")),"UNSUPPORTED_JUKEBOX_SONG");
+        var description=payload.get("description");
+        require(description instanceof NbtCompound text&&text.getKeys().equals(Set.of("translate"))&&text.get("translate") instanceof net.minecraft.nbt.NbtString,
+                "UNSUPPORTED_JUKEBOX_DESCRIPTION");
+        if(copy.soundEvent() instanceof RegistryEntry.Reference<?> reference) {
+            require(rebuiltCopy.soundEvent()==reference,"REGISTRY_ENTRY_OWNER_MISMATCH");
+            enqueueEntry(node,"sound_event",reference,"jukebox-sound");
+        } else {
+            require(rebuiltCopy.soundEvent() instanceof RegistryEntry.Direct<?>,"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+            require(Minecraft121RegistryLeafContracts.soundValue(copy.soundEvent().value()).equals(
+                    Minecraft121RegistryLeafContracts.soundValue(rebuiltCopy.soundEvent().value())),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+        }
+        graph.payload(node,payload);
+    }
+    private net.minecraft.block.jukebox.JukeboxSong ownedSong(Object value) {
+        require(value!=null&&value.getClass()==net.minecraft.block.jukebox.JukeboxSong.class,"NATIVE_DEFINITION_OWNER");nativeSource(value.getClass());
+        var song=(net.minecraft.block.jukebox.JukeboxSong)value;
+        require(Float.isFinite(song.lengthInSeconds())&&song.lengthInSeconds()>0&&song.comparatorOutput()>=0&&song.comparatorOutput()<=15,"UNSUPPORTED_JUKEBOX_SONG");
+        var sound=song.soundEvent();
+        require(sound!=null&&(sound.getClass()==RegistryEntry.Reference.class||sound.getClass()==RegistryEntry.Direct.class),"NATIVE_DEFINITION_OWNER");
+        nativeSource(sound.getClass());
+        if(sound instanceof RegistryEntry.Reference<?> reference)leaves.requireSoundReference(reference);
+        else Minecraft121RegistryLeafContracts.soundValue(sound.value());
+        return new net.minecraft.block.jukebox.JukeboxSong(sound,ownedDescription(song.description()),song.lengthInSeconds(),song.comparatorOutput());
+    }
+    /** exact原生的public直接getter；不render，不走原siblings/hover/content codec。 */
+    private net.minecraft.text.Text ownedDescription(Object value) {
+        require(value!=null&&value.getClass()==net.minecraft.text.MutableText.class,"UNSUPPORTED_JUKEBOX_DESCRIPTION");
+        require(Minecraft121RegistryLeafContracts.nativeSource(value.getClass()),"UNSUPPORTED_JUKEBOX_DESCRIPTION");
+        var text=(net.minecraft.text.MutableText)value;var content=text.getContent();
+        require(content!=null&&content.getClass()==net.minecraft.text.TranslatableTextContent.class
+                &&Minecraft121RegistryLeafContracts.nativeSource(content.getClass()),"UNSUPPORTED_JUKEBOX_DESCRIPTION");
+        var translated=(net.minecraft.text.TranslatableTextContent)content;
+        require(text.getSiblings()!=null&&text.getSiblings().isEmpty(),"UNSUPPORTED_JUKEBOX_DESCRIPTION");
+        require(text.getStyle()==net.minecraft.text.Style.EMPTY&&translated.getKey()!=null&&translated.getFallback()==null
+                &&translated.getArgs()!=null&&translated.getArgs().length==0,"UNSUPPORTED_JUKEBOX_DESCRIPTION");
+        return net.minecraft.text.Text.translatable(translated.getKey());
     }
 
     private void expandProcessorList(Key node,Object value) {

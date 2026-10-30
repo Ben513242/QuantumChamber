@@ -240,7 +240,7 @@ class Minecraft121RegistryLeafContractsTest {
     // ===== C1d-D1b-2：ITEM static registry leaf =====
     /** ITEM leaf的lease形狀registries：fixture獨立列出的全域static registry聯集（ITEM、DATA_COMPONENT_TYPE、BLOCK、ATTRIBUTE、STATUS_EFFECT）。 */
     private static DynamicRegistryManager itemRegistries() {
-        return withItemLeafRegistries();
+        return withItemLeafRegistries(vanillaSongs());
     }
     /**
      * ITEM seam的單一入口，測試只經這裡呼叫seam。D1b-3a起seam是instance itemCapture：以registries建LeafContracts（建構時建好
@@ -300,13 +300,9 @@ class Minecraft121RegistryLeafContractsTest {
         // 拒絕面改用仍未支援的型別：stored_enchantments（ENCHANTMENT是dynamic）與bees（非空值帶entity NBT，屬D2）。
         // D1b-3b起golden_apple（food）與非空attribute_modifiers已審，移到itemLeafCapturesStaticEntryRefsFromReviewedDefaults；
         // D1b-3c起帶tool tag rule的item（iron_axe、iron_sword、shears）也已審，移到itemLeafToolTagRulesCaptureNamedTagRefs。拒絕面另加
-        // jukebox_playable（dynamic的JUKEBOX_SONG，屬D1b-3d）。
+        // D1b-3d起jukebox_playable也已審，拒絕面維持stored_enchantments與bees。
         String code="UNSUPPORTED_ITEM_DEFAULT_COMPONENT";
         assertAll(
-                ()->assertAll("subcase=music_disc_13（jukebox_playable，屬D1b-3d）",
-                        ()->assertTrue(Items.MUSIC_DISC_13.getComponents().contains(DataComponentTypes.JUKEBOX_PLAYABLE),"fixture前提"),
-                        ()->rejects(code,()->itemLeaf(Items.MUSIC_DISC_13)),
-                        ()->rejects(code,()->seam(Items.MUSIC_DISC_13,single(component(Items.MUSIC_DISC_13,DataComponentTypes.JUKEBOX_PLAYABLE))))),
                 ()->assertAll("subcase=enchanted_book（stored_enchantments；另帶已審的enchantment_glint_override）",
                         ()->assertTrue(Items.ENCHANTED_BOOK.getComponents().contains(DataComponentTypes.STORED_ENCHANTMENTS),"fixture前提"),
                         ()->rejects(code,()->itemLeaf(Items.ENCHANTED_BOOK)),
@@ -641,7 +637,10 @@ class Minecraft121RegistryLeafContractsTest {
     }
     /** 目前已審的全部型別：D1b-3b為止的表，加上D1b-3c（TOOL明確放寬D1b-3b的「只有direct rule」）。 */
     private static java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewedItemDefaults() {
-        return merge(d1b3bCumulativeItemDefaults(),d1b3cReviewedItemDefaults(),java.util.Set.of(DataComponentTypes.TOOL));
+        var reviewed=new java.util.HashMap<>(merge(d1b3bCumulativeItemDefaults(),d1b3cReviewedItemDefaults(),java.util.Set.of(DataComponentTypes.TOOL)));
+        reviewed.put(DataComponentTypes.JUKEBOX_PLAYABLE,value->value instanceof JukeboxPlayableComponent component
+                &&component.song().key()!=null&&component.song().key().getRegistry().equals(RegistryKeys.JUKEBOX_SONG.getValue()));
+        return reviewed;
     }
     /** default的每個component都符合reviewed的值條件；不符的型別id加入unreviewed（可為null）。 */
     private static boolean allReviewed(Item item,java.util.Map<net.minecraft.component.ComponentType<?>,java.util.function.Predicate<Object>> reviewed,
@@ -800,7 +799,7 @@ class Minecraft121RegistryLeafContractsTest {
      * 由M9的NBT交叉檢查（payloadRegistryIdStrings）抓到。
      */
     private static java.util.Set<net.minecraft.component.ComponentType<?>> refBearingItemDefaultTypes() {
-        return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL);
+        return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL,DataComponentTypes.JUKEBOX_PLAYABLE);
     }
     /**
      * 測試端獨立列出codec之前要重建copy的已審型別（D1b-3c-0；spec M1＋quality Q-M1）：帶List的三型record，加上正規化為DEFAULT的LORE；
@@ -809,7 +808,7 @@ class Minecraft121RegistryLeafContractsTest {
      */
     private static java.util.Set<net.minecraft.component.ComponentType<?>> rebuiltItemDefaultTypes() {
         return java.util.Set.of(DataComponentTypes.ATTRIBUTE_MODIFIERS,DataComponentTypes.FOOD,DataComponentTypes.TOOL,DataComponentTypes.LORE,
-                DataComponentTypes.POTION_CONTENTS,DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,DataComponentTypes.BANNER_PATTERNS);
+                DataComponentTypes.POTION_CONTENTS,DataComponentTypes.SUSPICIOUS_STEW_EFFECTS,DataComponentTypes.BANNER_PATTERNS,DataComponentTypes.JUKEBOX_PLAYABLE);
     }
     /**
      * 測試端依javap獨立列出codec由DataComponentTypes.CACHE（CodecCache）包裝的已審型別（DataComponentTypes各型builder lambda是否呼叫
@@ -848,14 +847,15 @@ class Minecraft121RegistryLeafContractsTest {
         // 每個已審型別在同一筆契約宣告值條件、copy重建、ref抽取與codec會查詢的static registry（ItemComponentContracts的單一分派表）。
         // 結構斷言：表的型別集合等於測試端獨立列出的已審型別；會產生ref的型別恰為refBearingItemDefaultTypes()（有抽取器且宣告查詢的
         // registry），其餘都明確宣告NO_REFS且不查registry；codec前重建copy的型別恰為rebuiltItemDefaultTypes()，其餘都明確宣告AS_IS；
-        // 各型宣告的registry都屬於固定static registry聯集；固定聯集等於fixture獨立列出的那組。
-        // D1b-3c-0b：會產生ref的型別都必須重建copy（ref從copy抽，quality Q-M4(a)）；帶CodecCache的已審型別恰分成「重建copy」與
+        // 各型宣告的registry都屬於固定static聯集或已審dynamic JUKEBOX_SONG；固定聯集等於fixture獨立列出的那組。
+        // D1b-3c-0b：會產生ref的型別都必須重建copy（ref從copy抽，quality Q-M4(a)）；帶CodecCache的已審型別恰分成「重建copy中的cached型別」與
         // cachedAsIsItemDefaultTypes()兩組（LeafContracts私有ops的前提，quality Q-M1(B)）。D1b-3c（3c-0b quality M3(a)）：已審型別恰等於
         // rebuilt、literal、cachedAsIs三組不相交的聯集，literal型別都不帶CodecCache。
         var contracts=Minecraft121ItemComponentContracts.contracts();
         var refBearing=refBearingItemDefaultTypes();var rebuilt=rebuiltItemDefaultTypes();var cachedAsIs=cachedAsIsItemDefaultTypes();
         var literal=literalItemDefaultTypes();
-        var union=itemLeafStaticRegistries().stream().map(r->(Object)r.getKey()).toList();
+        var union=new java.util.ArrayList<Object>(itemLeafStaticRegistries().stream().map(r->(Object)r.getKey()).toList());
+        union.add(RegistryKeys.JUKEBOX_SONG);
         var checks=new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
         checks.add(()->assertEquals(typeNames(reviewedItemDefaults().keySet()),typeNames(contracts.keySet()),
                 "表的型別集合等於測試端獨立列出的已審型別"));
@@ -866,7 +866,7 @@ class Minecraft121RegistryLeafContractsTest {
         checks.add(()->assertEquals(typeNames(cachedItemDefaultTypes()),typeNames(contracts.keySet().stream()
                 .filter(Minecraft121RegistryLeafContractsTest::codecCached).toList()),"codec帶CodecCache的已審型別等於測試端依javap獨立列出的那組"));
         checks.add(()->{
-            var partition=new java.util.HashSet<net.minecraft.component.ComponentType<?>>(rebuilt);partition.addAll(cachedAsIs);
+            var partition=new java.util.HashSet<net.minecraft.component.ComponentType<?>>(rebuilt.stream().filter(Minecraft121RegistryLeafContractsTest::codecCached).toList());partition.addAll(cachedAsIs);
             assertAll("帶CodecCache的已審型別恰分成「重建copy」與「明確列出的AS_IS」兩組",
                     ()->assertEquals(typeNames(cachedItemDefaultTypes()),typeNames(partition),"兩組的聯集等於帶快取的型別"),
                     ()->assertTrue(java.util.Collections.disjoint(rebuilt,cachedAsIs),"兩組不重疊"));
@@ -894,8 +894,8 @@ class Minecraft121RegistryLeafContractsTest {
                     ()->assertNotNull(contract.refs(),"refs須明確宣告"),
                     ()->assertEquals(bearing,contract.refs()!=Minecraft121ItemComponentContracts.NO_REFS,
                             bearing?"會產生ref的型別須有抽取器，不得是NO_REFS":"literal／只收空值的型別須明確宣告NO_REFS"),
-                    ()->assertEquals(bearing,!contract.registries().isEmpty(),"有ref ⇔ 宣告codec會查詢的static registry"),
-                    ()->assertTrue(union.containsAll(contract.registries()),"宣告的registry都屬於固定聯集："+contract.registries())));
+                    ()->assertEquals(bearing,!contract.registries().isEmpty(),"有ref ⇔ 宣告codec會查詢的registry"),
+                    ()->assertTrue(union.containsAll(contract.registries()),"宣告的registry都屬於static聯集或受審dynamic集合："+contract.registries())));
         }
         assertAll(checks);
     }
@@ -912,6 +912,7 @@ class Minecraft121RegistryLeafContractsTest {
                 var key=entry.entry().registryKey();
                 yield ref.path()+" -> "+key.getRegistry()+"|"+key.getValue();
             }
+            case Minecraft121ItemComponentContracts.Ref.Key key -> ref.path()+" -> "+key.key().getRegistry()+"|"+key.key().getValue();
             case Minecraft121ItemComponentContracts.Ref.Tag tag -> {
                 var key=tag.tag().getTag();
                 yield ref.path()+" -> #"+key.registry().getValue()+"|"+key.id();
@@ -922,6 +923,7 @@ class Minecraft121RegistryLeafContractsTest {
     private static Object refObject(Minecraft121ItemComponentContracts.Ref ref) {
         return switch(ref) {
             case Minecraft121ItemComponentContracts.Ref.Entry entry -> entry.entry();
+            case Minecraft121ItemComponentContracts.Ref.Key key -> key.key();
             case Minecraft121ItemComponentContracts.Ref.Tag tag -> tag.tag();
         };
     }
@@ -932,6 +934,7 @@ class Minecraft121RegistryLeafContractsTest {
     private static String refTargetId(Minecraft121ItemComponentContracts.Ref ref) {
         return switch(ref) {
             case Minecraft121ItemComponentContracts.Ref.Entry entry -> entry.entry().registryKey().getValue().toString();
+            case Minecraft121ItemComponentContracts.Ref.Key key -> key.key().getValue().toString();
             case Minecraft121ItemComponentContracts.Ref.Tag tag -> "#"+tag.tag().getTag().id();
         };
     }
@@ -945,7 +948,7 @@ class Minecraft121RegistryLeafContractsTest {
                 var tag=named.getTag();
                 return path+" -> #"+tag.registry().getValue()+"|"+tag.id();
             }
-            var key=((RegistryEntry<?>)target).getKey().orElseThrow();
+            var key=target instanceof RegistryKey<?> k?k:((RegistryEntry<?>)target).getKey().orElseThrow();
             return path+" -> "+key.getRegistry()+"|"+key.getValue();
         }
     }
@@ -958,11 +961,12 @@ class Minecraft121RegistryLeafContractsTest {
         return ComponentMap.CODEC.encodeStart(NbtOps.INSTANCE,item.getComponents()).getOrThrow();
     }
     /**
-     * 另一個新建manager（全域static registries）的static ops（D1b-3c-0b，quality Q-M2）：不用plain NbtOps，因為tool的direct／tag rule經
+     * 另一個新建manager（六個全域static與同一組局部JUKEBOX_SONG）的獨立ops（D1b-3c-0b，quality Q-M2）：不用plain NbtOps，因為tool的direct／tag rule經
      * RegistryFixedCodec與RegistryEntryListCodec，需要RegistryOps；manager每次新建，所以CodecCache的key與production、其他測試都不同。
      */
     private static net.minecraft.registry.RegistryOps<NbtElement> independentOps() {
-        return DynamicRegistryManager.of(Registries.REGISTRIES).getOps(NbtOps.INSTANCE);
+        return new DynamicRegistryManager.ImmutableImpl(java.util.stream.Stream.concat(itemLeafStaticRegistries().stream(),
+                java.util.stream.Stream.of(vanillaSongs())).toList()).getOps(NbtOps.INSTANCE);
     }
     /** 以independentOps()對原值的獨立編碼（不經production的白名單、copy與ops）。 */
     private static NbtElement independentDefaults(ComponentMap components) {
@@ -1690,7 +1694,7 @@ class Minecraft121RegistryLeafContractsTest {
             var tag=named.getTag();
             return path+" | #"+tag.registry().getValue()+" | "+tag.id();
         }
-        var key=((RegistryEntry<?>)target).getKey().orElseThrow();
+        var key=target instanceof RegistryKey<?> k?k:((RegistryEntry<?>)target).getKey().orElseThrow();
         return path+" | "+key.getRegistry()+" | "+key.getValue();
     }
     /**
@@ -1716,6 +1720,8 @@ class Minecraft121RegistryLeafContractsTest {
             if(blocks.getTagKey().isPresent())refs.put("components/minecraft:tool/rules/"+i+"/blocks",blocks);
             else for(int j=0;j<blocks.size();j++)refs.put("components/minecraft:tool/rules/"+i+"/blocks/"+j,blocks.get(j));
         }
+        var jukebox=components.get(DataComponentTypes.JUKEBOX_PLAYABLE);
+        if(jukebox!=null)refs.put("components/minecraft:jukebox_playable/song",jukebox.song().key());
         return refs;
     }
     /**
@@ -1749,7 +1755,7 @@ class Minecraft121RegistryLeafContractsTest {
             }
             if(entry.getKey().endsWith("@key")&&value.indexOf(':')<0)continue;
             var id=Identifier.tryParse(value);
-            if(id!=null&&itemLeafStaticRegistries().stream().anyMatch(registry->registry.containsId(id)))ids.put(entry.getKey(),id.toString());
+            if(id!=null&&java.util.stream.Stream.concat(itemLeafStaticRegistries().stream(),java.util.stream.Stream.of(vanillaSongs())).anyMatch(registry->registry.containsId(id)))ids.put(entry.getKey(),id.toString());
         }
         return ids;
     }
@@ -1801,6 +1807,14 @@ class Minecraft121RegistryLeafContractsTest {
             // 與型別模型無關的交叉檢查（quality Q-M3；D1b-3c-0b改為逐件雙向）：payload中的registry id與tag字串集合恰等於ref的目標集合。
             var refIds=new java.util.TreeSet<String>();for(var ref:captured)refIds.add(refTargetId(ref));
             var registryIds=payloadRegistryIdStrings(capture.payload().getCompound("DefaultComponents"));
+            var refPaths=new java.util.TreeMap<String,String>();
+            for(var ref:captured) {
+                String path=ref.path().substring("components/".length());
+                if(!registryIds.containsKey(path)&&path.endsWith("/0")&&registryIds.containsKey(path.substring(0,path.length()-2)))
+                    path=path.substring(0,path.length()-2); // 原生codec可把單元素list編成scalar。
+                refPaths.put(path,refTargetId(ref));
+            }
+            if(!registryIds.equals(refPaths))problems.add("pathCrossCheck:"+registryIds+" != "+refPaths);
             if(!new java.util.TreeSet<>(registryIds.values()).equals(refIds))
                 problems.add("crossCheck:payload的registry id／tag字串"+registryIds+"不等於ref的目標"+refIds);
             if(!problems.isEmpty())mismatched.put(id.toString(),String.join("; ",problems));
@@ -1825,6 +1839,10 @@ class Minecraft121RegistryLeafContractsTest {
                 }));
     }
 
+    /** 與3c成本證據同格式：僅該ITEM node，不含ROOT或出邊。 */
+    private static String singleLeafHash(String id,NbtCompound payload) {
+        var graph=new Minecraft121SettingsGraph();graph.payload(itemNode(id),payload);return sha256(graph.finish());
+    }
     @Test void everyAcceptedVanillaItemLeafPayloadEqualsIndependentEncodingOfOriginal() {
         // D1b-3c-0b（quality Q-M2）：copy保真度的全族群gating。每個測試端判定為已審的minecraft item，item(...)的DefaultComponents都必須等於
         // 另一個新建manager的static ops對原值item.getComponents()的獨立編碼（不經production的白名單、copy與ops）。只比9件時，copy若寫死或
@@ -1839,6 +1857,10 @@ class Minecraft121RegistryLeafContractsTest {
             try {payload=itemLeaf(item);}
             catch(Minecraft121SettingsGraph.Failure failure){mismatched.put(id.toString(),"failure="+failure.getMessage());continue;}
             var independent=independentDefaults(ops,item.getComponents());
+            var expected=payload.copy();expected.put("DefaultComponents",independent);
+            String actualHash=singleLeafHash(id.toString(),payload);
+            assertEquals(singleLeafHash(id.toString(),expected),actualHash,"逐件payload hash："+id);
+            System.out.println("D1B3D_PAYLOAD_HASH id="+id+" sha256="+actualHash);
             if(!independent.equals(payload.getCompound("DefaultComponents")))
                 mismatched.put(id.toString(),"payload="+payload.getCompound("DefaultComponents")+" independent="+independent);
         }
@@ -1961,8 +1983,8 @@ class Minecraft121RegistryLeafContractsTest {
      * 部分block，所以只是本測試的冷值；pass1是同一JVM再擷取一次的暖值（BLOCK leaf不經CodecCache；ITEM的pass1自D1b-3c-0b起不含
      * CodecCache命中，見measureLeafCosts）。BLOCK的可用性gating由everyVanillaBlockLeafIsAccepted負責。
      *
-     * <p>退場條件（D1b-2 quality M2(a)）：D1b-3結案或I-1定案（以先到者為準）時，刪除逐行的D1B1_LEAF_COST_ENTRY，只保留摘要行
-     * （SUMMARY、CODES、COLD／WARM等）；evidence CSV改由當輪focused XML擷取。不用system property開關：test JVM拿不到Gradle的-D，
+     * <p>退場條件（D1b-2 quality M2(a)）：D1b-3d已移除逐件timing，只保留聚合摘要行
+     * （SUMMARY、CODES、COLD／WARM等）；focused XML只承載聚合診斷，沒有逐件timing可供擷取。不用system property開關：test JVM拿不到Gradle的-D，
      * 要改build.gradle，超出owner。
      */
     @Test void staticBlockLeafCostDiagnostic() {
@@ -1981,8 +2003,6 @@ class Minecraft121RegistryLeafContractsTest {
             var id=entries.get(i).registryKey().getValue();
             codes.merge(result[i],1,Integer::sum);namespaces.merge(id.getNamespace(),1,Integer::sum);
             totalBytes+=bytes[i];totalProperties+=properties[i];totalValues+=values[i];
-            System.out.println("D1B1_LEAF_COST_ENTRY id="+id+" result="+result[i]+" coldNs="+cold[i]+" warmNs="+warm[i]
-                    +" payloadBytes="+bytes[i]+" properties="+properties[i]+" values="+values[i]);
         }
         System.out.println("D1B1_LEAF_COST_SUMMARY leaves="+count+" totalPayloadBytes="+totalBytes+" properties="+totalProperties+" values="+totalValues);
         System.out.println("D1B1_LEAF_COST_CODES "+codes);
@@ -2000,10 +2020,10 @@ class Minecraft121RegistryLeafContractsTest {
      * component，以只含該component的map走seam（itemCapture，DIAMOND當feature載體），得到逐型別判定。REJECTED_TYPES是「含該型別被拒的
      * item數」，ACCEPTED_TYPES是「該型別被接受的component數」。拒絕原因的gating由everyVanillaItemLeafIsAcceptedOrRejectedOnlyForUnreviewedTypes負責。
      *
-     * <p>D1b-3c-0起ENTRY行另帶leafCanonicalSha256（該item單節點圖canonical bytes的SHA-256；被拒為NA），ACCEPTED_DIGEST是依id排序的
-     * 「id=hash」逐行串接後的SHA-256：只比payload長度不夠（D1b-3a spec M4），各子片以這兩者逐件比對既有ACCEPTED件的payload不退化。
+     * <p>D1b-3d逐件正確性測試輸出D1B3D_PAYLOAD_HASH（該item單節點圖canonical bytes的SHA-256；被拒為NA），ACCEPTED_DIGEST是依id排序的
+     * 「id=hash」逐行串接後的SHA-256：只比payload長度不夠（D1b-3a spec M4），各子片以獨立逐件gating與證據檔比對既有ACCEPTED件的payload不退化。
      *
-     * <p>退場條件同BLOCK：D1b-3結案或I-1定案（以先到者為準）時，刪除逐行的D1B2_ITEM_LEAF_COST_ENTRY，只保留摘要行
+     * <p>退場條件同BLOCK：D1b-3d已移除逐件timing，只保留聚合摘要行
      * （SUMMARY、ACCEPTED_DIGEST、CODES、REJECTED_TYPES、COLD／WARM等）。
      */
     @Test void staticItemLeafCostDiagnostic() {
@@ -2033,8 +2053,6 @@ class Minecraft121RegistryLeafContractsTest {
             if(!result[i].equals("ACCEPTED"))for(String type:rejected)
                 rejectedTypesByCode.computeIfAbsent(result[i],k->new java.util.TreeMap<>()).merge(type,1,Integer::sum);
             if(digests[i]!=null)acceptedDigests.put(id.toString(),digests[i]);
-            System.out.println("D1B2_ITEM_LEAF_COST_ENTRY id="+id+" result="+result[i]+" coldNs="+cold[i]+" warmNs="+warm[i]
-                    +" payloadBytes="+bytes[i]+" leafCanonicalSha256="+(digests[i]==null?"NA":digests[i])+" rejectedTypes="+rejected);
         }
         var digestLines=new StringBuilder();
         for(var digest:acceptedDigests.entrySet())digestLines.append(digest.getKey()).append('=').append(digest.getValue()).append('\n');
@@ -2157,7 +2175,8 @@ class Minecraft121RegistryLeafContractsTest {
     @Test @SuppressWarnings({"rawtypes","unchecked"}) void jukeboxRejectsForeignAndContradictoryPair() {
         var regs=withItemLeafRegistries(vanillaSongs());var key=songKey("minecraft:13");
         var actual=vanillaSongs().getEntry(key).orElseThrow();
-        var foreign=(RegistryEntry<JukeboxSong>)localEntry(RegistryKeys.JUKEBOX_SONG,key,actual.value());
+        var foreign=RegistryEntry.Reference.standAlone(vanillaSongs().getEntryOwner(),key);
+        assertNotSame(actual,foreign);assertEquals(actual.registryKey(),foreign.registryKey());
         rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->capture(regs,Items.DIAMOND,jukebox(new RegistryPair<>(Optional.of(foreign),key))));
         rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->capture(regs,Items.DIAMOND,jukebox(new RegistryPair<>(Optional.of(actual),songKey("minecraft:cat")))));
         rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->capture(regs,Items.DIAMOND,jukebox(new RegistryPair<>(Optional.of(RegistryEntry.of(actual.value())),key))));
@@ -2194,6 +2213,12 @@ class Minecraft121RegistryLeafContractsTest {
     }
     @Test void jukeboxDescriptionRejectsNonMinimalEncodedText() {
         var sound=vanillaSongs().getEntry(songKey("minecraft:13")).orElseThrow().value().soundEvent();
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        var foreign=(Text)java.lang.reflect.Proxy.newProxyInstance(Text.class.getClassLoader(),new Class<?>[]{Text.class},
+                (proxy,method,args)->{calls.incrementAndGet();throw new AssertionError("不得呼foreign Text");});
+        rejects("UNSUPPORTED_JUKEBOX_DESCRIPTION",()->songGraph(withItemLeafRegistries(songs(java.util.Map.of("qctest:foreign",
+                new JukeboxSong(sound,foreign,100,1)))),songKey("qctest:foreign")));
+        assertEquals(0,calls.get());
         var siblings=Text.translatable("song").append(Text.literal("tail"));
         assertFalse(siblings.getSiblings().isEmpty());assertEquals(net.minecraft.text.MutableText.class,siblings.getClass());
         for(var text:List.of(siblings,Text.literal("song"),Text.translatableWithFallback("song","fallback"),
@@ -2213,8 +2238,18 @@ class Minecraft121RegistryLeafContractsTest {
         var all=new java.util.ArrayList<>(itemLeafStaticRegistries());all.remove(Registries.SOUND_EVENT);all.add(foreign);
         rejects("STATIC_REGISTRY_OWNER_MISMATCH",()->songGraph(new DynamicRegistryManager.ImmutableImpl(all),soundKey));
         var bound=Registries.SOUND_EVENT.getEntry(soundKey).orElseThrow();
+        rejects("STATIC_REGISTRY_OWNER_MISMATCH",()->leaves(new Minecraft121SettingsGraph(),new DynamicRegistryManager.ImmutableImpl(all))
+                .sound(soundNode(soundKey.getValue().toString()),soundKey,bound));
         var wrong=(RegistryEntry<SoundEvent>)localEntry(RegistryKeys.SOUND_EVENT,soundKey,bound.value());
         rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->songGraph(withItemLeafRegistries(songs(java.util.Map.of("qctest:sound",
                 new JukeboxSong(wrong,Text.translatable("song"),100,1)))),songKey("qctest:sound")));
+    }
+    @Test void soundLiteralPayloadIsExactFiniteAndNative() {
+        var literal=SoundEvent.of(Identifier.of("qctest:literal"),12f);
+        var expected=new NbtCompound();expected.putString("sound_id","qctest:literal");expected.putFloat("range",12f);
+        assertEquals(expected,soundValue(literal));
+        assertNotEquals(soundValue(literal),soundValue(SoundEvent.of(Identifier.of("qctest:literal"),13f)));
+        rejects("NATIVE_DEFINITION_OWNER",()->soundValue(new Object()));
+        rejects("UNSUPPORTED_NONFINITE_NATIVE_VALUE",()->soundValue(SoundEvent.of(Identifier.of("qctest:literal"),Float.NaN)));
     }
 }

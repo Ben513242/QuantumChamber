@@ -23,7 +23,7 @@ import net.minecraft.state.property.*;
 import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
 
 /**
- * C1d-D1b static registry leaf的owner；admit BLOCK、ITEM、ATTRIBUTE與STATUS_EFFECT四種。只有ITEM leaf有出發邊（D1b-3b起）。
+ * C1d-D1b static registry leaf的owner；admit BLOCK、ITEM、ATTRIBUTE、STATUS_EFFECT與SOUND_EVENT五種。只有ITEM leaf有出發邊（D1b-3b起）。
  * <ul>
  * <li>BLOCK payload（Contract=quantumchamber:m6-static-block-leaf-v1）是生成consumer實際解碼用到的state definition與
  * default state，加上RequiredFeatures。</li>
@@ -38,7 +38,7 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * D1b-3b起，非空attribute_modifiers、food與只有direct rule的tool也已審，它們的static引用（ATTRIBUTE、STATUS_EFFECT、ITEM、BLOCK）
  * 以同一筆型別契約從default component抽出，經建構時傳入的sink成為該ITEM node的出邊。D1b-3c起tool的tag rule也已審：它的Named
  * 抽成Tag ref，經同一個sink成為指向BLOCK TAG node的required出邊（原值與重建值的Named須是同一物件，見requireSameReferences）。
- * jukebox_playable（D1b-3d）等仍fail closed。</li>
+ * D1b-3d的jukebox_playable以Key ref連到同lease的JUKEBOX_SONG。未審型別仍fail closed。</li>
  * <li>ATTRIBUTE payload（Contract=quantumchamber:m6-static-attribute-leaf-v1）與STATUS_EFFECT payload
  * （Contract=quantumchamber:m6-static-status-effect-leaf-v1，加上RequiredFeatures）：兩者沒有value codec，Java值不入FP。</li>
  * </ul>
@@ -378,7 +378,10 @@ final class Minecraft121RegistryLeafContracts {
         // 所以foreign的本值無法讓encode命中另一個值的快取編碼（探測端）；已存的值是foreign的方向由ops的私有identity隔離（D1b-3c-0b，
         // 見ops欄位）。這次迭代取代原本codec自己對容器的迭代：吐出未審型別或不符值條件的值時在這裡就拒；帶ref的內容與第一次不同時由
         // 7c的ref比對擋下。
-        var copy=requireReviewedDefaults(components).copy();
+        var reviewedCopy=requireReviewedDefaults(components);
+        var copy=reviewedCopy.copy();
+        requireKeyReferences(originalRefs);
+        requireKeyReferences(reviewedCopy.references());
         // 7. 原生ComponentMap.CODEC以lease ops對copy做encode→parse→encode；保留parse重建的原生map。
         NbtElement encoded,again;ComponentMap rebuilt;
         try {
@@ -400,6 +403,7 @@ final class Minecraft121RegistryLeafContracts {
         var references=requireReviewedDefaults(rebuilt).references();
         // 7c. 原值與重建值的ref逐一比對（D1b-3設計審查M2）：只從重建的map抽ref，會把foreign的Reference或Named（同key、不同物件）靜默
         // 換成registry的物件；所以要求兩邊的path與key逐一相同、entry或Named是同一物件。
+        requireKeyReferences(references);
         requireSameReferences(originalRefs,references);
         // 8.
         var payload=new NbtCompound();
@@ -441,6 +445,9 @@ final class Minecraft121RegistryLeafContracts {
                 contract.refs().extract(copy,new Minecraft121ItemComponentContracts.RefSink() {
                     @Override public void entry(String path,RegistryEntry.Reference<?> entry) {
                         refs().add(new Minecraft121ItemComponentContracts.Ref.Entry("components/"+id()+"/"+path,entry));
+                    }
+                    @Override public void key(String path,RegistryKey<?> key,Optional<RegistryEntry.Reference<?>> boundEntry) {
+                        refs().add(new Minecraft121ItemComponentContracts.Ref.Key("components/"+id()+"/"+path,key,boundEntry));
                     }
                     @Override public void tag(String path,RegistryEntryList.Named<?> tag) {
                         // D1b-3c：tool tag rule的Named（抽取器已驗原生Named與BLOCK的TagKey；是否為registry的Named由7c比對）。
@@ -496,6 +503,10 @@ final class Minecraft121RegistryLeafContracts {
                         require(entry.entry().registryKey().equals(other.entry().registryKey()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
                         require(entry.entry()==other.entry(),"REGISTRY_ENTRY_OWNER_MISMATCH");
                     }
+                    case Minecraft121ItemComponentContracts.Ref.Key key -> {
+                        if(!(after instanceof Minecraft121ItemComponentContracts.Ref.Key other))throw new Failure("NATIVE_CODEC_ROUNDTRIP_CHANGED");
+                        require(key.key().equals(other.key()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+                    }
                     case Minecraft121ItemComponentContracts.Ref.Tag tag -> {
                         if(!(after instanceof Minecraft121ItemComponentContracts.Ref.Tag other))throw new Failure("NATIVE_CODEC_ROUNDTRIP_CHANGED");
                         require(tag.tag().getTag().equals(other.tag().getTag()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
@@ -508,6 +519,50 @@ final class Minecraft121RegistryLeafContracts {
         } catch(RuntimeException bad) {
             throw failure("NATIVE_CODEC_ROUNDTRIP_CHANGED",bad);
         }
+    }
+
+    /** Key-only可在roundtrip成為bound Reference，但原值/copy/重建值的任何bound都必須是actual(key)。 */
+    @SuppressWarnings({"rawtypes","unchecked"})
+    private void requireKeyReferences(List<Minecraft121ItemComponentContracts.Ref> refs) {
+        for(var ref:refs)if(ref instanceof Minecraft121ItemComponentContracts.Ref.Key key) {
+            Registry registry=(Registry)registries.getOptional((RegistryKey)RegistryKey.ofRegistry(key.key().getRegistry())).orElse(null);
+            require(registry!=null,"REQUIRED_REGISTRY_MISSING");
+            var actual=registry.getEntry((RegistryKey)key.key()).orElse(null);
+            require(actual!=null,"REQUIRED_REGISTRY_TARGET_MISSING");
+            require(key.boundEntry().isEmpty()||key.boundEntry().get()==actual,"REGISTRY_ENTRY_OWNER_MISMATCH");
+        }
+    }
+    /** SOUND_EVENT只允許同lease的全域static owner；inline literal不經本方法。 */
+    void requireSoundReference(RegistryEntry.Reference<?> reference) {
+        requireStaticRegistry(Registries.SOUND_EVENT);
+        require(reference.getClass()==RegistryEntry.Reference.class,"NATIVE_DEFINITION_OWNER");
+        requireNativeSource(reference.getClass());
+        var key=reference.getKey().orElseThrow(()->new Failure("REGISTRY_ENTRY_OWNER_MISMATCH"));
+        require(key.getRegistry().equals(RegistryKeys.SOUND_EVENT.getValue()),"REGISTRY_ENTRY_OWNER_MISMATCH");
+        require(Registries.SOUND_EVENT.getEntry(key.getValue()).orElse(null)==reference,"REGISTRY_ENTRY_OWNER_MISMATCH");
+    }
+    NbtCompound sound(Key node,RegistryKey<?> key,RegistryEntry.Reference<?> entry) {
+        requireStaticRegistry(Registries.SOUND_EVENT);
+        Object value=entry.value();requireSoundValue(value);
+        requireLeafNode(node,key);
+        require(entry.registryKey().equals(key)&&Registries.SOUND_EVENT.getEntry((net.minecraft.sound.SoundEvent)value)==entry,
+                "STATIC_LEAF_IDENTITY_MISMATCH");
+        var payload=new NbtCompound();payload.putString("Contract","quantumchamber:m6-static-sound-event-leaf-v1");
+        payload.put("Value",soundValue(value));graph.payload(node,payload);return payload;
+    }
+    private static void requireSoundValue(Object value) {
+        require(value!=null&&value.getClass()==net.minecraft.sound.SoundEvent.class,"NATIVE_DEFINITION_OWNER");
+        requireNativeSource(value.getClass());
+        require(Float.isFinite(((net.minecraft.sound.SoundEvent)value).getDistanceToTravel(1f)),"UNSUPPORTED_NONFINITE_NATIVE_VALUE");
+    }
+    /** 自驗的literal seam；完整保留sound_id及optional range，先驗finite避免lenient optional解碼掉值。 */
+    static NbtElement soundValue(Object value) {
+        requireSoundValue(value);var sound=(net.minecraft.sound.SoundEvent)value;
+        var encoded=net.minecraft.sound.SoundEvent.CODEC.encodeStart(NbtOps.INSTANCE,sound).getOrThrow();
+        var rebuilt=net.minecraft.sound.SoundEvent.CODEC.parse(NbtOps.INSTANCE,encoded).getOrThrow();
+        requireSoundValue(rebuilt);
+        require(encoded.equals(net.minecraft.sound.SoundEvent.CODEC.encodeStart(NbtOps.INSTANCE,rebuilt).getOrThrow()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+        return encoded;
     }
 
     /** 只admit vanilla feature子集（含空集合）。world enabled features屬D3／D4的必要輸入；在那之前這是暫時的fail closed。 */
