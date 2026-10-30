@@ -46,7 +46,9 @@ public final class M6SettingsTraceObserver {
     private static long lastEndSeq;
 
     private static final class Op {
-        Object list,rm,content,lookup,manager,holder,c,f;
+        Object list,rm,content,lookup,manager,holder,c,f,cResult;
+        String candidateMarker;
+        boolean failureSnapshot;
         boolean returned,contentDone,cDone,fDone,candidate,drained,retired,controlled;
         int callbacks;
     }
@@ -88,7 +90,7 @@ public final class M6SettingsTraceObserver {
     public static void composeInput(int t,Object list){observe(()->{Boolean on=owner();synchronized(MONITOR){check(t>=1&&t<4&&!OPS[t].retired,"COMPOSE_TOKEN");check(OPS[t].list==null,"DUPLICATE_COMPOSE");OPS[t].list=list;emit(t,"COMPOSE_INPUT",Map.of("list",id(list)),Map.of(),on);}});}
     public static void composeHead(Object list){observe(()->{Boolean on=owner();synchronized(MONITOR){int t=find(list,"list");emit(t,"COMPOSE_HEAD",Map.of("list",id(list)),Map.of(),on);}});}
     public static void bindResource(Object list,ResourceManager rm){observe(()->{synchronized(MONITOR){int t=find(list,"list");check(OPS[t].rm==null,"DUPLICATE_RM");OPS[t].rm=rm;id(rm);}});}
-    public static void reloadInput(ResourceManager rm){observe(()->{Boolean on=owner();synchronized(MONITOR){int t;if(OPS[0].rm==null&&server==null){t=0;OPS[0].rm=rm;}else t=find(rm,"rm");emit(t,"RELOAD_INPUT",Map.of("rm",id(rm)),Map.of(),on);}});}
+    public static void reloadInput(ResourceManager rm){observe(()->{Boolean on=owner();synchronized(MONITOR){int t;if(OPS[0].rm==null&&server==null){t=0;OPS[0].rm=rm;}else t=find(rm,"rm");Map<String,String> ids=new LinkedHashMap<>();ids.put("rm",id(rm));if(t>0)ids.put("list",id(OPS[t].list));emit(t,"RELOAD_INPUT",ids,Map.of(),on);}});}
     public static int resourceToken(ResourceManager rm){synchronized(MONITOR){return find(rm,"rm");}}
     public static void applied(Object manager){observe(()->{Boolean on=owner();synchronized(MONITOR){emit(-1,"APPLY_RETURN",Map.of("manager",id(manager)),Map.of(),on);}});}
     private static void registerCallback(int t){synchronized(MONITOR){check(t>=0&&t<4&&!OPS[t].retired&&!finalized,"CALLBACK_REGISTRATION");pending++;OPS[t].callbacks++;}}
@@ -97,11 +99,11 @@ public final class M6SettingsTraceObserver {
         Object l=c==null?null:c.getReloadableRegistries();Object m=c==null?null:c.getReloadableRegistries().getRegistryManager();Boolean on=owner();
         synchronized(MONITOR){Op o=OPS[t];check(!o.retired&&!o.contentDone,"CONTENT_CALLBACK_DUPLICATE");o.contentDone=true;Map<String,String> ids=new LinkedHashMap<>();ids.put("rm",id(rm));if(c!=null){check(o.content==null||o.content==c,"LATE_CONTENT_MISMATCH");check(o.lookup==null||o.lookup==l,"LATE_LOOKUP_MISMATCH");check(o.manager==null||o.manager==m,"LATE_MANAGER_MISMATCH");o.content=c;o.lookup=l;o.manager=m;ids.putAll(contentIds(c,l,m));}emit(t,"CONTENT_COMPLETE",ids,Map.of("success",error==null),on);}
     }));});}
-    public static void nativeStage(Object list,CompletionStage<?> c){observe(()->{Boolean on=owner();synchronized(MONITOR){int t=find(list,"list");check(OPS[t].c==null,"DUPLICATE_STAGE");OPS[t].c=c;emit(t,"C_RETURN",Map.of("c",id(c)),Map.of(),on);}});}
-    public static void stage(int t,CompletionStage<?> c){observe(()->{synchronized(MONITOR){check(OPS[t].c==c,"ORIGINAL_STAGE_CHANGED");}registerCallback(t);c.whenComplete((h,error)->callback(t,()->{Boolean on=owner();synchronized(MONITOR){check(!OPS[t].cDone&&!OPS[t].retired,"C_CALLBACK_DUPLICATE");OPS[t].cDone=true;emit(t,"C_COMPLETE",Map.of("c",id(c)),Map.of("success",error==null),on);}}));});}
+    public static void nativeStage(Object list,CompletionStage<?> c){observe(()->{Boolean on=owner();synchronized(MONITOR){int t=find(list,"list");check(OPS[t].c==null,"DUPLICATE_STAGE");OPS[t].c=c;emit(t,"C_RETURN",Map.of("c",id(c),"list",id(list)),Map.of(),on);}});}
+    public static void stage(int t,CompletionStage<?> c){observe(()->{synchronized(MONITOR){check(OPS[t].c==c,"ORIGINAL_STAGE_CHANGED");}registerCallback(t);c.whenComplete((h,error)->callback(t,()->{Boolean on=owner();synchronized(MONITOR){check(!OPS[t].cDone&&!OPS[t].retired,"C_CALLBACK_DUPLICATE");OPS[t].cDone=true;Map<String,String> ids=new LinkedHashMap<>();ids.put("c",id(c));if(error==null){check(h!=null,"C_RESULT_NULL");check(OPS[t].holder==null||OPS[t].holder==h,"C_RESULT_HOLDER_MISMATCH");OPS[t].cResult=h;ids.put("holder",id(h));}emit(t,"C_COMPLETE",ids,Map.of("success",error==null),on);}}));});}
     public static void future(int t,CompletableFuture<?> f){observe(()->{Boolean on=owner();synchronized(MONITOR){check(OPS[t].f==null,"DUPLICATE_FUTURE");OPS[t].f=f;emit(t,"F_RETURN",Map.of("f",id(f)),Map.of(),on);}registerCallback(t);f.whenComplete((unused,error)->callback(t,()->{Boolean callbackOwner=owner();synchronized(MONITOR){check(!OPS[t].fDone&&!OPS[t].retired,"F_CALLBACK_DUPLICATE");OPS[t].fDone=true;emit(t,"F_COMPLETE",Map.of("f",id(f)),Map.of("success",error==null),callbackOwner);}}));});}
     public static void returned(CompletableFuture<?> f){observe(()->{Boolean on=owner();synchronized(MONITOR){check(call>=1&&OPS[call].f==f,"RETURN_F_CHANGED");OPS[call].returned=true;emit(call,"RELOAD_RETURN",Map.of("f",id(f)),Map.of(),on);call=-1;}});}
-    public static void holderInput(int t,Object h){observe(()->{View v=view(h);synchronized(MONITOR){check(!OPS[t].retired,"RETIRED_HOLDER");bindView(OPS[t],v);}});}
+    public static void holderInput(int t,Object h){observe(()->{View v=view(h);synchronized(MONITOR){check(!OPS[t].retired,"RETIRED_HOLDER");check(OPS[t].cResult==null||OPS[t].cResult==h,"CONSUMER_C_RESULT_MISMATCH");bindView(OPS[t],v);}});}
     public static void applyHead(Object h){observe(()->{View v=view(h);Boolean on=owner();synchronized(MONITOR){int t=find(h,"holder");check(Boolean.TRUE.equals(on),"APPLY_OFF_THREAD");bindView(OPS[t],v);emit(t,"APPLY_HEAD",viewIds(v),Map.of(),on);}});}
     public static void store(MinecraftServer s,Object h,boolean initial){observe(()->{View v=view(h);Boolean on=initial?null:s.isOnThread();synchronized(MONITOR){int t=initial?0:find(h,"holder");bindView(OPS[t],v);activeHolder=h;emit(t,"HOLDER_INSTALL",viewIds(v),Map.of(),on);}});}
     public static void constructed(MinecraftServer s,LevelStorage.Session storage,StructureTemplateManager tm){observe(()->{Object h;synchronized(MONITOR){check(server==null,"SECOND_SERVER");server=s;session=storage;templates=tm;id(s);id(storage);id(tm);h=activeHolder;}active(s,h,tm,"CONSTRUCTOR_RETURN");});}
@@ -120,22 +122,58 @@ public final class M6SettingsTraceObserver {
         String digest;try{digest=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));}catch(Exception e){throw new IllegalStateException(e);}
         String expected=t==1?"B":"A";String type=t==1?"minecraft:chest":"minecraft:empty";check(json.isJsonObject()&&json.getAsJsonObject().size()==1&&json.getAsJsonObject().has("type")&&json.getAsJsonObject().get("type").getAsString().equals(type),"WINNER_SEMANTICS");
         boolean coherent=s.getResourceManager()==v.rm&&s.getReloadableRegistries()==v.lookup&&((M6SettingsTraceTemplateAccessor)tm).quantumchamber$traceResourceManager()==v.rm;boolean on=s.isOnThread();
-        synchronized(MONITOR){check(t!=2&&!OPS[t].candidate&&coherent,"CANDIDATE_INVALID");OPS[t].candidate=true;emit(t,"PUBLICATION_CANDIDATE",viewIds(v),Map.of("marker",tag,"winner",expected,"winnerSha256",digest,"empty",true,"missing",true,"coherent",coherent),on);}
+        synchronized(MONITOR){check(t!=2&&!OPS[t].candidate&&coherent,"CANDIDATE_INVALID");OPS[t].candidate=true;OPS[t].candidateMarker=tag;emit(t,"PUBLICATION_CANDIDATE",viewIds(v),Map.of("marker",tag,"winner",expected,"winnerSha256",digest,"empty",true,"missing",true,"coherent",coherent),on);}
     }
     public static void journal(MinecraftServer s){observe(()->{Object h;synchronized(MONITOR){if(journalSeen)return;journalSeen=true;h=activeHolder;}View v=view(h);boolean on=s.isOnThread();synchronized(MONITOR){check(s==server&&OPS[0].candidate&&on,"JOURNAL_BEFORE_CANDIDATE");emit(0,"JOURNAL_FIRST_GET",viewIds(v),Map.of("candidate",true),on);}});}
     public static void fabricStart(){observe(()->{Boolean on=owner();synchronized(MONITOR){emit(-1,"FABRIC_START",Map.of(),Map.of(),on);}});}
     public static void fabricEnd(boolean success){observe(()->{Boolean on=owner();synchronized(MONITOR){endCount++;endSuccess=success;emit(-1,"FABRIC_END",Map.of(),Map.of("success",success),on);lastEndSeq=EVENTS.size();}});}
     public static void controlled(ResourceManager rm){observe(()->{int t=resourceToken(rm);Boolean on=owner();synchronized(MONITOR){check(t==2&&!OPS[t].controlled,"FAULT_TOKEN");OPS[t].controlled=true;emit(t,"FAILURE_OBSERVED",Map.of("rm",id(rm)),Map.of("controlled",true),on);}});}
+    /** 原 F 已完成後在 owner thread 讀實際來源，不假設失敗沒有部分套用。 */
+    public static void failureSnapshot(MinecraftServer s,CompletableFuture<?> f){observe(()->{
+        Object holder;
+        synchronized(MONITOR){if(OPS[2].failureSnapshot)return;check(OPS[2].f==f&&!OPS[2].retired,"FAILURE_F_MISMATCH");holder=activeHolder;}
+        boolean on=s.isOnThread();check(on,"FAILURE_SNAPSHOT_OFF_THREAD");
+        boolean done=f.isDone(),exceptional=f.isCompletedExceptionally();
+        check(done&&exceptional,"FAILURE_F_NOT_COMPLETE");
+        View v=view(holder);Object rm=s.getResourceManager();var lookup=s.getReloadableRegistries();
+        Object actualManager=lookup.getRegistryManager();
+        Object templateRm=((M6SettingsTraceTemplateAccessor)s.getStructureTemplateManager()).quantumchamber$traceResourceManager();
+        String tag=observedMarker(lookup.getRegistryManager());
+        boolean coherent=rm==v.rm&&lookup==v.lookup&&actualManager==v.manager&&templateRm==v.rm;
+        synchronized(MONITOR){
+            check(s==server&&OPS[2].returned&&!stopping,"FAILURE_SNAPSHOT_PHASE");
+            Op prior=OPS[1];boolean retained=coherent&&holder==prior.holder&&v.rm==prior.rm&&v.content==prior.content
+                    &&v.lookup==prior.lookup&&v.manager==prior.manager&&Objects.equals(tag,prior.candidateMarker);
+            Map<String,String> ids=new LinkedHashMap<>(viewIds(v));ids.put("f",id(f));ids.put("templateRm",id(templateRm));
+            ids.put("activeRm",id(rm));ids.put("activeLookup",id(lookup));ids.put("activeManager",id(actualManager));
+            emit(2,"FAILURE_ACTIVE_VIEW",ids,Map.of("futureDone",done,"futureFailed",exceptional,"marker",tag,
+                    "coherent",coherent,"classification",retained?"RETAINED":"PARTIAL"),on);
+            OPS[2].failureSnapshot=true;
+        }
+    });}
+    private static String observedMarker(DynamicRegistryManager.Immutable m){
+        var optional=m.get(RegistryKeys.BLOCK).getEntryList(TagKey.of(RegistryKeys.BLOCK,Identifier.of("quantumchamber:lt_marker")));
+        if(optional.isEmpty())return "ABSENT";
+        var entries=optional.orElseThrow();if(entries.size()==0)return "EMPTY";if(entries.size()>2)return "UNSUPPORTED";
+        List<String> values=new ArrayList<>();
+        for(int i=0;i<entries.size();i++){
+            var key=entries.get(i).getKey();if(key.isEmpty())return "UNSUPPORTED";
+            String value=key.orElseThrow().getValue().toString();
+            if(!value.equals("minecraft:stone")&&!value.equals("minecraft:dirt"))return "UNSUPPORTED";
+            values.add(value.substring(10));
+        }
+        Collections.sort(values);return String.join(",",values);
+    }
     public static boolean drain(int t){if(!ENABLED)return false;Boolean on=owner();synchronized(MONITOR){Op o=OPS[t];if(failed||o.retired)return o.drained;
-        if(!o.contentDone||o.callbacks!=0||(t==0?(!o.candidate||!journalSeen):(!o.returned||!o.cDone||!o.fDone||endCount!=t||(t==2?!o.controlled:!o.candidate))))return false;
+        if(!o.contentDone||o.callbacks!=0||(t==0?(!o.candidate||!journalSeen):(!o.returned||!o.cDone||!o.fDone||endCount!=t||(t==2?(!o.controlled||!o.failureSnapshot):!o.candidate))))return false;
         if(t>0&&endSuccess!=(t!=2)){failed=true;firstFailure="END_RESULT";return false;}
         o.drained=true;emit(t,"DRAINED",Map.of(),t==0?Map.of():Map.of("endSeq",lastEndSeq),on);o.retired=true;purge();return true;
     }}
     /** 退役只移除引用，累積 identity counter 不減、不重用。 */
     private static void purge(){Set<Object> keep=Collections.newSetFromMap(new IdentityHashMap<>());Collections.addAll(keep,server,session,templates,activeHolder);
         if(activeHolder!=null){for(Op o:OPS)if(o.holder==activeHolder)Collections.addAll(keep,o.rm,o.content,o.lookup,o.manager);}
-        for(Op o:OPS)if(!o.retired)Collections.addAll(keep,o.list,o.rm,o.content,o.lookup,o.manager,o.holder,o.c,o.f);
-        IDS.keySet().removeIf(key->!keep.contains(key));for(Op o:OPS)if(o.retired&&o.holder!=activeHolder){o.list=null;o.rm=null;o.content=null;o.lookup=null;o.manager=null;o.holder=null;o.c=null;o.f=null;}else if(o.retired){o.list=null;o.c=null;o.f=null;}
+        for(Op o:OPS)if(!o.retired)Collections.addAll(keep,o.list,o.rm,o.content,o.lookup,o.manager,o.holder,o.c,o.f,o.cResult);
+        IDS.keySet().removeIf(key->!keep.contains(key));for(Op o:OPS)if(o.retired&&o.holder!=activeHolder){o.list=null;o.rm=null;o.content=null;o.lookup=null;o.manager=null;o.holder=null;o.c=null;o.f=null;o.cResult=null;}else if(o.retired){o.list=null;o.c=null;o.f=null;o.cResult=null;}
     }
     public static MinecraftServer serverForStop(){synchronized(MONITOR){return server;}}
     public static boolean finalized(){synchronized(MONITOR){return finalized;}}

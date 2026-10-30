@@ -28,9 +28,11 @@ public final class M6SettingsTraceProbe implements ModInitializer {
     private volatile boolean terminal;
     private String nonce;
     private Path evidence;
-    private final long processStart=ProcessHandle.current().info().startInstant().orElseThrow().toEpochMilli();
+    private long processStart;
     @Override public void onInitialize(){
         if(!M6SettingsTraceObserver.enabled())return;
+        processStart=ProcessHandle.current().info().startInstant()
+                .orElseThrow(()->new IllegalStateException("LT_PROCESS_START_UNAVAILABLE")).toEpochMilli();
         nonce=System.getProperty("quantumchamber.lt.nonce","");
         if(!nonce.matches("[a-f0-9]{32}"))throw new IllegalStateException("LT_INVALID_NONCE");
         evidence=Path.of(System.getProperty("quantumchamber.lt.evidence","")).toAbsolutePath().normalize();
@@ -66,6 +68,7 @@ public final class M6SettingsTraceProbe implements ModInitializer {
             try{future.getNow(null);}catch(CompletionException e){success=false;failure=e;}
             if(success!=(phase!=2)){M6SettingsTraceObserver.fail("DRIVER_RESULT");stop(s);return;}
             if(phase==2){boolean controlled=false;for(Throwable c=failure;c!=null;c=c.getCause())if("LT_CONTROLLED_FAILURE".equals(c.getMessage()))controlled=true;if(!controlled){M6SettingsTraceObserver.fail("WRONG_FAILURE");stop(s);return;}}
+            if(phase==2)M6SettingsTraceObserver.failureSnapshot(s,future);
             if(!M6SettingsTraceObserver.drain(phase))return;
             if(phase==3){stop(s);return;}launch(s,phase+1);
         }catch(RuntimeException error){M6SettingsTraceObserver.fail("DRIVER_EXCEPTION");stop(s);}
