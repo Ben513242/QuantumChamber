@@ -4,6 +4,25 @@ import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
 
 class Minecraft121SettingsContextsTest {
+    private static Object field(Object target, String name) throws Exception {
+        var field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
+    }
+
+    private static Object cell(Minecraft121SettingsContexts contexts) throws Exception {
+        return field(contexts, "cell");
+    }
+
+    private static void detached(Minecraft121SettingsContexts contexts) throws Exception {
+        assertNull(field(cell(contexts), "payload"), "Cell 仍持有 owner payload");
+        for (var ownerField : Minecraft121SettingsContexts.class.getDeclaredFields()) {
+            ownerField.setAccessible(true);
+            assertFalse(ownerField.get(contexts) instanceof Thread, "facade 仍持有 Thread");
+            assertFalse(ownerField.get(contexts) instanceof Minecraft121SettingsContexts.Sources,
+                    "facade 仍持有 Sources");
+        }
+    }
     private static Minecraft121SettingsContexts.Sources sources() {
         return new Minecraft121SettingsContexts.Sources(new Object(), new Object(), new Object(), new Object(), true);
     }
@@ -84,6 +103,29 @@ class Minecraft121SettingsContextsTest {
         }
     }
 
+    @Test void retainedLeaseAndFacadeDetachAfterForeignStop() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        contexts.publishInitial(sources());
+        var lease = contexts.acquire(server);
+        foreign(contexts::revokeStop);
+        assertThrows(IllegalStateException.class, lease::requireValid);
+        detached(contexts);
+        // 從兩個保留的 root 檢查實際強邊，不以 GC 或失效例外代替斷邊證據。
+        for (var field : lease.getClass().getDeclaredFields()) {
+            field.setAccessible(true);
+            assertNotSame(contexts, field.get(lease), "lease 仍直接保留 facade");
+            assertFalse(field.get(lease) instanceof Thread, "lease 仍保留 owner thread");
+        }
+        for (var field : Minecraft121SettingsContexts.class.getDeclaredFields()) {
+            field.setAccessible(true);
+            var value = field.get(contexts);
+            assertNotSame(server, value, "facade 仍保留 server");
+            assertFalse(value instanceof Thread, "facade 仍保留 owner thread");
+            assertFalse(value instanceof Minecraft121SettingsContexts.Sources, "facade 仍保留 Sources");
+        }
+    }
+
     @Test void failedReloadCannotRepublishInitial() {
         var server = new Object();
         var contexts = new Minecraft121SettingsContexts(server);
@@ -98,6 +140,7 @@ class Minecraft121SettingsContextsTest {
     private static void foreign(Runnable action) throws Exception {
         var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
         var worker = new Thread(() -> { try { action.run(); } catch (Throwable e) { failure.set(e); } });
+        worker.setDaemon(true);
         worker.start();
         worker.join(5_000);
         assertFalse(worker.isAlive(), "foreign 操作未在期限內完成");
@@ -136,6 +179,7 @@ class Minecraft121SettingsContextsTest {
             catch (Throwable e) { failure.set(e); }
             finally { revoked.countDown(); }
         });
+        worker.setDaemon(true);
         worker.start();
         try {
             assertThrows(IllegalStateException.class, () -> {
@@ -276,7 +320,7 @@ class Minecraft121SettingsContextsTest {
         assertThrows(IllegalStateException.class, () -> contexts.acquire(server));
         assertThrows(IllegalStateException.class, contexts::revokeReloadStart);
         contexts.revokeStop();
-        contexts.stop();
+        assertThrows(IllegalStateException.class, contexts::stop);
         contexts.revokeStop();
         assertThrows(IllegalStateException.class, contexts::stop);
         var pending = new Minecraft121SettingsContexts(new Object());
@@ -285,7 +329,8 @@ class Minecraft121SettingsContextsTest {
         foreign(pending::revokeStop);
         assertThrows(IllegalStateException.class, () -> pending.finishReload(ticket, true, sources()));
         assertThrows(IllegalStateException.class, () -> pending.finishReload(ticket, false, null));
-        pending.stop();
+        assertThrows(IllegalStateException.class, pending::stop);
+        detached(pending);
     }
 
     @Test void serverIncarnationsDoNotAlias() {
@@ -342,11 +387,7 @@ class Minecraft121SettingsContextsTest {
         var ticket = contexts.revokeReloadStart();
         contexts.adoptReload(ticket);
         contexts.stop();
-        for (String name : new String[] {"current", "pending", "server", "ownerThread"}) {
-            var field = Minecraft121SettingsContexts.class.getDeclaredField(name);
-            field.setAccessible(true);
-            assertNull(field.get(contexts), "stop 留下 owner 引用：" + name);
-        }
+        detached(contexts);
         contexts.revokeStop();
         assertThrows(IllegalStateException.class, () -> contexts.finishReload(ticket, true, sources()));
     }
@@ -354,9 +395,7 @@ class Minecraft121SettingsContextsTest {
     @Test void generationExhaustionPermanentlyClosesWithoutWrapping() throws Exception {
         var server = new Object();
         var contexts = new Minecraft121SettingsContexts(server);
-        var fenceField = Minecraft121SettingsContexts.class.getDeclaredField("fence");
-        fenceField.setAccessible(true);
-        var fence = fenceField.get(contexts);
+        var fence = field(cell(contexts), "fence");
         var generation = fence.getClass().getDeclaredField("generation");
         generation.setAccessible(true);
         // 僅測不可實際迭代至的數值邊界；正式路徑仍呼真 START／adopt／finish。
@@ -372,7 +411,65 @@ class Minecraft121SettingsContextsTest {
         assertThrows(IllegalStateException.class, contexts::revokeReloadStart);
         synchronized (fence) { assertEquals(Long.MAX_VALUE, generation.getLong(fence)); }
         contexts.revokeStop();
-        contexts.stop();
+        detached(contexts);
+        assertThrows(IllegalStateException.class, contexts::stop);
         contexts.revokeStop();
+    }
+
+    @Test void callbackGraphIsMetadataOnlyAndStopDetachesRetainedRoots() throws Exception {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        contexts.publishInitial(sources());
+        var lease = contexts.acquire(server);
+        var callback = contexts.revocationHandle();
+        assertFalse(callback.isStopped());
+        assertSame(cell(contexts), field(lease, "cell"));
+        assertSame(field(cell(contexts), "fence"), field(callback, "fence"));
+        for (var member : callback.getClass().getDeclaredFields()) {
+            member.setAccessible(true);
+            var value = member.get(callback);
+            assertNotSame(contexts, value);
+            assertNotSame(cell(contexts), value);
+            assertFalse(value instanceof Thread);
+            assertFalse(value instanceof Minecraft121SettingsContexts.Sources);
+            assertFalse(member.getName().equals("this$0"), "callback 不得捕捉 facade");
+        }
+        assertInstanceOf(java.lang.ref.WeakReference.class, field(callback, "cell"));
+        foreign(callback::revokeStopAndDetach);
+        assertTrue(callback.isStopped());
+        detached(contexts);
+        assertThrows(IllegalStateException.class, lease::requireValid);
+        assertThrows(IllegalStateException.class, contexts::stop);
+        assertThrows(IllegalStateException.class, contexts::captureInitial);
+        assertThrows(IllegalStateException.class, callback::revokeReloadStart);
+        callback.revokeStopAndDetach();
+        detached(contexts);
+    }
+
+    @Test void foreignStopCompletesWhileOwnerIsParkedOutsideFence() throws Exception {
+        var reached = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server, () -> {
+            reached.countDown();
+            await(release);
+        });
+        contexts.publishInitial(sources());
+        var lease = contexts.acquire(server);
+        var stopper = new Thread(() -> {
+            await(reached);
+            contexts.revocationHandle().revokeStopAndDetach();
+            release.countDown();
+        });
+        stopper.setDaemon(true);
+        stopper.start();
+        try {
+            assertThrows(IllegalStateException.class, () -> Minecraft121SettingsContexts.sources(lease));
+        } finally {
+            release.countDown();
+            stopper.join(5_000);
+            assertFalse(stopper.isAlive());
+        }
+        detached(contexts);
     }
 }

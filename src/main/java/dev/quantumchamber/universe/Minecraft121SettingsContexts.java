@@ -1,5 +1,6 @@
 package dev.quantumchamber.universe;
 
+import java.lang.ref.WeakReference;
 import java.util.Objects;
 
 /** 單一 server 的設定來源 owner；正式生命週期接線仍由後續切片負責。 */
@@ -30,7 +31,6 @@ public final class Minecraft121SettingsContexts {
             this.generation = generation;
         }
     }
-
     static final class ReloadTicket {
         private final Object incarnation;
         private final long generation;
@@ -40,7 +40,7 @@ public final class Minecraft121SettingsContexts {
         }
     }
 
-    /** 所有欄位僅由本 monitor 保護；不得保存 native 來源或反向取得 owner 鎖。 */
+    /** 唯一 monitor；臨界區只做身分、metadata 比對與引用賦值。 */
     static final class Fence {
         private final Object incarnation = new Object();
         private long generation;
@@ -53,7 +53,6 @@ public final class Minecraft121SettingsContexts {
         private ReloadTicket activeTicket;
         private boolean adopted;
         private boolean settled;
-
         private void advance() {
             admissionClosed = true;
             if (generation == Long.MAX_VALUE) {
@@ -62,7 +61,6 @@ public final class Minecraft121SettingsContexts {
             }
             generation++;
         }
-
         private void stop() {
             if (stopped) return;
             stopped = true;
@@ -70,260 +68,270 @@ public final class Minecraft121SettingsContexts {
             if (generation == Long.MAX_VALUE) poisoned = true;
             else generation++;
         }
-
         private void requireLive() {
             if (stopped || poisoned) throw unavailable();
         }
     }
 
-    private final Fence fence = new Fence();
-    private final SourcesReadBarrier sourcesReadBarrier;
-    private Object server;
-    private Thread ownerThread;
-    private Sources current;
-    private Sources pending;
-    private long epoch;
-    private long publishedGeneration;
-    private int inflight;
-    private boolean failed;
-    private boolean initialPublished;
-    private boolean stopped;
-
-    public Minecraft121SettingsContexts(Object server) {
-        this(server, () -> { });
+    /** facade 與 lease 的共同引用槽；一個 incarnation 絕不替換 Cell。 */
+    private static final class Cell {
+        private final Fence fence = new Fence();
+        private OwnerState payload;
+        private Cell(OwnerState payload) { this.payload = payload; }
+    }
+    /** 原生來源與 Thread 只能由可撤銷 payload 強持。 */
+    private static final class OwnerState {
+        private Object server;
+        private Thread ownerThread;
+        private final SourcesReadBarrier sourcesReadBarrier;
+        private Sources current;
+        private Sources pending;
+        private long epoch;
+        private long publishedGeneration;
+        private int inflight;
+        private boolean failed;
+        private boolean initialPublished;
+        private OwnerState(Object server, SourcesReadBarrier barrier) {
+            this.server = server;
+            this.ownerThread = Thread.currentThread();
+            this.sourcesReadBarrier = barrier;
+        }
     }
 
+    /** callback 僅強持 metadata；Cell 為弱邊，不保活 owner/native。 */
+    static final class RevocationHandle {
+        private final Fence fence;
+        private final WeakReference<Cell> cell;
+        private RevocationHandle(Cell cell) {
+            this.fence = cell.fence;
+            this.cell = new WeakReference<>(cell);
+        }
+        ReloadTicket revokeReloadStart() {
+            synchronized (fence) {
+                if (fence.stopped) throw unavailable();
+                fence.explicit = true;
+                fence.advance();
+                if (fence.legacyPending != 0 || (fence.activeTicket != null && !fence.settled))
+                    fence.poisoned = true;
+                fence.activeTicket = new ReloadTicket(fence.incarnation, fence.generation);
+                fence.adopted = false;
+                fence.settled = false;
+                return fence.activeTicket;
+            }
+        }
+        /** 不等待 owner 事件迴圈或 native 借用；取得短 monitor 後同步撤銷與斷邊。 */
+        void revokeStopAndDetach() {
+            synchronized (fence) {
+                fence.stop();
+                Cell found = cell.get();
+                if (found != null) found.payload = null;
+            }
+        }
+        boolean isStopped() {
+            synchronized (fence) { return fence.stopped; }
+        }
+    }
+
+    private final Cell cell;
+    public Minecraft121SettingsContexts(Object server) { this(server, () -> { }); }
     Minecraft121SettingsContexts(Object server, SourcesReadBarrier barrier) {
-        this.server = Objects.requireNonNull(server, "server");
-        sourcesReadBarrier = Objects.requireNonNull(barrier, "barrier");
-        ownerThread = Thread.currentThread();
+        cell = new Cell(new OwnerState(Objects.requireNonNull(server, "server"),
+                Objects.requireNonNull(barrier, "barrier")));
     }
+    RevocationHandle revocationHandle() { return new RevocationHandle(cell); }
 
-    synchronized InitialTicket captureInitial() {
-        requireOwnerThread();
-        synchronized (fence) {
+    InitialTicket captureInitial() {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
             fence.requireLive();
-            requireInitial();
+            requireInitial(state, fence);
             if (fence.initialTicket != null || fence.activeTicket != null) throw unavailable();
             fence.explicit = true;
             fence.initialTicket = new InitialTicket(fence.incarnation, fence.generation);
             return fence.initialTicket;
         }
     }
-
-    synchronized void publishInitial(InitialTicket expected, Sources sources) {
-        requireOwnerThread();
-        synchronized (fence) {
+    void publishInitial(InitialTicket expected, Sources sources) {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
             fence.requireLive();
-            requireInitial();
+            requireInitial(state, fence);
             if (!fence.explicit || expected == null || expected != fence.initialTicket
                     || expected.incarnation != fence.incarnation || expected.generation != fence.generation
                     || fence.activeTicket != null) throw unavailable();
-            publish(Objects.requireNonNull(sources, "sources"));
-            initialPublished = true;
-            epoch++;
+            publish(state, fence, Objects.requireNonNull(sources, "sources"));
+            state.initialPublished = true;
+            state.epoch++;
         }
     }
-
-    /** 可由 foreign 呼叫；只撤銷 metadata，絕不觸碰 owner／native 狀態。 */
-    ReloadTicket revokeReloadStart() {
-        synchronized (fence) {
-            if (fence.stopped) throw unavailable();
-            fence.explicit = true;
-            fence.advance();
-            if (fence.legacyPending != 0 || (fence.activeTicket != null && !fence.settled)) {
-                fence.poisoned = true;
-            }
-            fence.activeTicket = new ReloadTicket(fence.incarnation, fence.generation);
-            fence.adopted = false;
-            fence.settled = false;
-            return fence.activeTicket;
-        }
-    }
-
-    synchronized void adoptReload(ReloadTicket expected) {
-        requireOwnerThread();
-        synchronized (fence) {
-            requireTicket(expected);
-            if (fence.adopted || fence.settled || inflight != 0) throw unavailable();
-            current = null;
-            pending = null;
-            failed = false;
-            initialPublished = true;
-            epoch++;
-            inflight = 1;
+    /** foreign START 僅撤銷 metadata，不讀 payload。 */
+    ReloadTicket revokeReloadStart() { return revocationHandle().revokeReloadStart(); }
+    void adoptReload(ReloadTicket expected) {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
+            requireTicket(fence, expected);
+            if (fence.adopted || fence.settled || state.inflight != 0) throw unavailable();
+            state.current = null;
+            state.pending = null;
+            state.failed = false;
+            state.initialPublished = true;
+            state.epoch++;
+            state.inflight = 1;
             fence.adopted = true;
         }
     }
-
-    synchronized void finishReload(ReloadTicket expected, boolean success, Sources sources) {
-        requireOwnerThread();
-        synchronized (fence) {
-            requireTicket(expected);
-            if (!fence.adopted || fence.settled || inflight != 1) throw unavailable();
+    void finishReload(ReloadTicket expected, boolean success, Sources sources) {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
+            requireTicket(fence, expected);
+            if (!fence.adopted || fence.settled || state.inflight != 1) throw unavailable();
             fence.settled = true;
-            inflight = 0;
-            current = null;
-            pending = null;
-            if (success && sources != null) publish(sources);
+            state.inflight = 0;
+            state.current = null;
+            state.pending = null;
+            if (success && sources != null) publish(state, fence, sources);
         }
     }
+    void revokeStop() { revocationHandle().revokeStopAndDetach(); }
 
-    void revokeStop() {
-        synchronized (fence) { fence.stop(); }
-    }
-
-    public synchronized void publishInitial(Sources sources) {
-        requireOwnerThread();
-        synchronized (fence) {
-            requireLegacy();
-            requireInitial();
-            publish(Objects.requireNonNull(sources, "sources"));
-            initialPublished = true;
-            epoch++;
+    public void publishInitial(Sources sources) {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
+            requireLegacy(state, fence);
+            requireInitial(state, fence);
+            publish(state, fence, Objects.requireNonNull(sources, "sources"));
+            state.initialPublished = true;
+            state.epoch++;
         }
     }
-
-    public synchronized void reloadStarted() {
-        requireOwnerThread();
-        synchronized (fence) {
-            requireLegacy();
-            if (inflight == Integer.MAX_VALUE) {
+    public void reloadStarted() {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
+            requireLegacy(state, fence);
+            if (state.inflight == Integer.MAX_VALUE) {
                 fence.poisoned = true;
                 fence.admissionClosed = true;
                 throw unavailable();
             }
             fence.advance();
-            if (inflight == 0) { pending = null; failed = false; }
-            initialPublished = true;
-            inflight++;
+            if (state.inflight == 0) { state.pending = null; state.failed = false; }
+            state.initialPublished = true;
+            state.inflight++;
             fence.legacyPending++;
-            current = null;
-            epoch++;
+            state.current = null;
+            state.epoch++;
         }
     }
-
-    public synchronized void reloadFinished(boolean success, Sources sources) {
-        requireOwnerThread();
-        synchronized (fence) {
-            requireLegacy();
-            if (inflight <= 0) throw unavailable();
-            if (!success || sources == null) failed = true;
-            else if (pending == null) pending = sources;
-            else if (!pending.sameIdentities(sources)) failed = true;
-            inflight--;
+    public void reloadFinished(boolean success, Sources sources) {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
+            requireLegacy(state, fence);
+            if (state.inflight <= 0) throw unavailable();
+            if (!success || sources == null) state.failed = true;
+            else if (state.pending == null) state.pending = sources;
+            else if (!state.pending.sameIdentities(sources)) state.failed = true;
+            state.inflight--;
             fence.legacyPending--;
-            if (inflight == 0) {
-                if (!failed && pending != null) publish(pending);
-                pending = null;
+            if (state.inflight == 0) {
+                if (!state.failed && state.pending != null) publish(state, fence, state.pending);
+                state.pending = null;
             }
         }
     }
-
-    public synchronized ServerSettingsContext acquire(Object requestedServer) {
-        requireOwnerThread();
-        synchronized (fence) {
-            requireAvailable();
-            if (server != requestedServer) throw unavailable();
-            return new Lease(this, epoch, ownerThread, fence.incarnation, publishedGeneration);
+    public ServerSettingsContext acquire(Object requestedServer) {
+        synchronized (cell.fence) {
+            OwnerState state = requireOwnerState();
+            Fence fence = cell.fence;
+            requireAvailable(state, fence);
+            if (state.server != requestedServer) throw unavailable();
+            return new Lease(cell, state.epoch, fence.incarnation, state.publishedGeneration);
+        }
+    }
+    public void stop() {
+        synchronized (cell.fence) {
+            requireOwnerState();
+            cell.fence.stop();
+            cell.payload = null;
         }
     }
 
-    public synchronized void stop() {
-        requireOwnerThread();
-        synchronized (fence) {
-            fence.stop();
-            stopped = true;
-            current = null;
-            pending = null;
-            inflight = 0;
-            fence.legacyPending = 0;
-            epoch++;
-            server = null;
-            ownerThread = null;
-        }
-    }
-
-    /** 最後的同鎖驗證與擷取才是權威；已逸出的 raw Sources 不具撤回能力。 */
+    /** 最後同鎖驗證與擷取才是權威；已逸出的 raw Sources 無撤回能力。 */
     static Sources sources(ServerSettingsContext context) {
         if (!(context instanceof Lease lease)) throw unavailable();
-        lease.requireValid();
-        // 測試障礙固定在所有鎖外，公開建構子只使用 no-op。
-        lease.owner.sourcesReadBarrier.afterPrecheck();
-        synchronized (lease.owner) {
-            synchronized (lease.owner.fence) {
-                lease.validateLocked();
-                return lease.owner.current;
-            }
+        SourcesReadBarrier barrier;
+        synchronized (lease.cell.fence) {
+            OwnerState state = lease.validateLocked();
+            barrier = state.sourcesReadBarrier;
         }
+        // 障礙只供測試，固定在所有鎖外。
+        barrier.afterPrecheck();
+        synchronized (lease.cell.fence) { return lease.validateLocked().current; }
     }
-
-    /** 初次發布狀態檢查須已持有 owner → Fence 兩把鎖。 */
-    private void requireInitial() {
-        if (stopped || initialPublished || current != null || inflight != 0
+    private OwnerState requireOwnerState() {
+        OwnerState state = cell.payload;
+        if (state == null || Thread.currentThread() != state.ownerThread) throw unavailable();
+        return state;
+    }
+    private static void requireInitial(OwnerState state, Fence fence) {
+        if (state.initialPublished || state.current != null || state.inflight != 0
                 || fence.legacyPending != 0) throw unavailable();
     }
-
-    private void requireLegacy() {
+    private static void requireLegacy(OwnerState state, Fence fence) {
         fence.requireLive();
         if (fence.explicit) throw unavailable();
-        if (fence.legacyPending != inflight) {
+        if (fence.legacyPending != state.inflight) {
             fence.poisoned = true;
             fence.admissionClosed = true;
             throw unavailable();
         }
     }
-
-    private void requireTicket(ReloadTicket expected) {
+    private static void requireTicket(Fence fence, ReloadTicket expected) {
         fence.requireLive();
         if (!fence.explicit || expected == null || expected != fence.activeTicket
-                || expected.incarnation != fence.incarnation || expected.generation != fence.generation) {
+                || expected.incarnation != fence.incarnation || expected.generation != fence.generation)
             throw unavailable();
-        }
     }
-
-    private void publish(Sources sources) {
-        current = sources;
-        publishedGeneration = fence.generation;
+    private static void publish(OwnerState state, Fence fence, Sources sources) {
+        state.current = sources;
+        state.publishedGeneration = fence.generation;
         fence.admissionClosed = false;
     }
-
-    private void requireAvailable() {
+    private static void requireAvailable(OwnerState state, Fence fence) {
         fence.requireLive();
-        if (stopped || fence.admissionClosed || inflight != 0 || current == null
-                || publishedGeneration != fence.generation) throw unavailable();
+        if (fence.admissionClosed || state.inflight != 0 || state.current == null
+                || state.publishedGeneration != fence.generation) throw unavailable();
     }
-
-    private void requireOwnerThread() {
-        if (Thread.currentThread() != ownerThread) throw unavailable();
-    }
-
     private static IllegalStateException unavailable() { return new IllegalStateException("CONTEXT_UNAVAILABLE"); }
 
     private static final class Lease implements ServerSettingsContext {
-        private final Minecraft121SettingsContexts owner;
+        private final Cell cell;
         private final long epoch;
-        private final Thread thread;
         private final Object incarnation;
         private final long generation;
-        private Lease(Minecraft121SettingsContexts owner, long epoch, Thread thread,
-                Object incarnation, long generation) {
-            this.owner = owner;
+        private Lease(Cell cell, long epoch, Object incarnation, long generation) {
+            this.cell = cell;
             this.epoch = epoch;
-            this.thread = thread;
             this.incarnation = incarnation;
             this.generation = generation;
         }
-        private void validateLocked() {
-            owner.requireAvailable();
-            if (Thread.currentThread() != thread || owner.ownerThread != thread
-                    || owner.epoch != epoch || owner.fence.incarnation != incarnation
-                    || owner.fence.generation != generation) throw unavailable();
+        private OwnerState validateLocked() {
+            Fence fence = cell.fence;
+            OwnerState state = cell.payload;
+            if (state == null || Thread.currentThread() != state.ownerThread) throw unavailable();
+            requireAvailable(state, fence);
+            if (state.epoch != epoch || fence.incarnation != incarnation
+                    || fence.generation != generation) throw unavailable();
+            return state;
         }
         @Override public void requireValid() {
-            synchronized (owner) {
-                synchronized (owner.fence) { validateLocked(); }
-            }
+            synchronized (cell.fence) { validateLocked(); }
         }
     }
 }
