@@ -5,6 +5,11 @@ import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.*
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.List;
 import java.util.Optional;
+import net.minecraft.block.jukebox.JukeboxSong;
+import net.minecraft.component.type.JukeboxPlayableComponent;
+import net.minecraft.registry.RegistryPair;
+import net.minecraft.sound.SoundEvent;
+import net.minecraft.text.Text;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.component.ComponentMap;
@@ -2114,5 +2119,102 @@ class Minecraft121RegistryLeafContractsTest {
         long leaseOps=System.nanoTime()-start;
         System.out.println("D1B3_ITEM_OPS_COST rounds="+rounds+" staticOpsTotalNs="+staticOps+" leaseOpsTotalNs="+leaseOps
                 +" sink="+(sink&1)+" note=before-D1b-3a-static-ops-built-per-leaf;after-one-lease-ops-per-closure");
+    }
+
+    /** 直接走正式 closure，fixture 不建立 live lease 或碰世界。 */
+    private static byte[] songGraph(DynamicRegistryManager registries,RegistryKey<?> key) {
+        try(var resources=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,List.of())) {
+            var graph=new Minecraft121SettingsGraph();graph.payload(ROOT,new NbtCompound());
+            var closure=new Minecraft121RegistryClosure(graph,registries,resources);
+            closure.reference(ROOT,"first",key);closure.reference(ROOT,"second",key);closure.drain();return graph.finish();
+        }
+    }
+    private static RegistryKey<JukeboxSong> songKey(String id) {return RegistryKey.of(RegistryKeys.JUKEBOX_SONG,Identifier.of(id));}
+    private static ComponentMap jukebox(RegistryPair<JukeboxSong> pair) {
+        return only(DataComponentTypes.JUKEBOX_PLAYABLE,new JukeboxPlayableComponent(pair,false));
+    }
+    @Test void jukeboxDefaultResolvesOnlyFromLeaseDynamicRegistry() {
+        var item=Items.MUSIC_DISC_13;var pair=item.getComponents().get(DataComponentTypes.JUKEBOX_PLAYABLE).song();
+        assertTrue(pair.entry().isEmpty(),"真 vanilla default 是 key-only");
+        assertTrue(withItemLeafRegistries().getOptional(RegistryKeys.JUKEBOX_SONG).isEmpty());
+        var regs=withItemLeafRegistries(vanillaSongs());
+        var capture=capture(regs,item,item.getComponents());
+        assertEquals(1,capture.references().size());
+        assertEquals("components/minecraft:jukebox_playable/song",capture.references().getFirst().path());
+        var graph=canonicalNodes(songGraph(regs,item.getRegistryEntry().registryKey()));
+        assertTrue(graph.nodes().containsKey(songNode("minecraft:13")));
+        assertTrue(graph.nodes().containsKey(soundNode("minecraft:music_disc.13")));
+        assertEquals(2,graph.edges().stream().filter(e->e.from().equals(ROOT)).count());
+        assertEquals(1,graph.edges().stream().filter(e->e.from().equals(itemNode("minecraft:music_disc_13"))).count());
+        assertEquals(1,graph.edges().stream().filter(e->e.from().equals(songNode("minecraft:13"))&&e.path().equals("sound_event")).count());
+    }
+    @Test void jukeboxRejectsMissingRegistryAndMissingSongBeforeCodec() {
+        var item=Items.MUSIC_DISC_13;
+        rejects("REQUIRED_REGISTRY_MISSING",()->capture(withItemLeafRegistries(),item,item.getComponents()));
+        rejects("REQUIRED_REGISTRY_TARGET_MISSING",()->capture(withItemLeafRegistries(songs(java.util.Map.of())),item,item.getComponents()));
+        assertDoesNotThrow(()->capture(withItemLeafRegistries(),Items.DIAMOND,Items.DIAMOND.getComponents()));
+    }
+    @Test @SuppressWarnings({"rawtypes","unchecked"}) void jukeboxRejectsForeignAndContradictoryPair() {
+        var regs=withItemLeafRegistries(vanillaSongs());var key=songKey("minecraft:13");
+        var actual=vanillaSongs().getEntry(key).orElseThrow();
+        var foreign=(RegistryEntry<JukeboxSong>)localEntry(RegistryKeys.JUKEBOX_SONG,key,actual.value());
+        rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->capture(regs,Items.DIAMOND,jukebox(new RegistryPair<>(Optional.of(foreign),key))));
+        rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->capture(regs,Items.DIAMOND,jukebox(new RegistryPair<>(Optional.of(actual),songKey("minecraft:cat")))));
+        rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->capture(regs,Items.DIAMOND,jukebox(new RegistryPair<>(Optional.of(RegistryEntry.of(actual.value())),key))));
+        RegistryPair<JukeboxSong> wrong=new RegistryPair((RegistryKey)RegistryKey.of(RegistryKeys.ITEM,Identifier.ofVanilla("13")));
+        rejects("UNSUPPORTED_ITEM_DEFAULT_COMPONENT",()->capture(regs,Items.DIAMOND,jukebox(wrong)));
+        assertDoesNotThrow(()->capture(regs,Items.DIAMOND,jukebox(new RegistryPair<>(actual))));
+    }
+    @Test void jukeboxSongDefinitionChangesCanonicalBytes() {
+        var original=song("minecraft:music_disc.13","jukebox_song.minecraft.13",100,1);var key=songKey("qctest:target");
+        java.util.function.Function<JukeboxSong,byte[]> encode=s->songGraph(withItemLeafRegistries(songs(java.util.Map.of("qctest:target",s))),key);
+        var baseline=encode.apply(original);
+        for(var changed:List.of(song("minecraft:music_disc.cat","jukebox_song.minecraft.13",100,1),
+                song("minecraft:music_disc.13","jukebox_song.minecraft.cat",100,1),song("minecraft:music_disc.13","jukebox_song.minecraft.13",101,1),
+                song("minecraft:music_disc.13","jukebox_song.minecraft.13",100,2)))assertFalse(java.util.Arrays.equals(baseline,encode.apply(changed)));
+        assertArrayEquals(baseline,songGraph(withItemLeafRegistries(songs(java.util.Map.of("qctest:target",original,"qctest:unrelated",
+                song("minecraft:music_disc.cat","other",12,2)))),key));
+        for(float bad:new float[]{Float.NaN,Float.POSITIVE_INFINITY,0,-1})
+            rejects("UNSUPPORTED_JUKEBOX_SONG",()->encode.apply(new JukeboxSong(original.soundEvent(),original.description(),bad,1)));
+        rejects("UNSUPPORTED_JUKEBOX_SONG",()->encode.apply(new JukeboxSong(original.soundEvent(),original.description(),100,16)));
+    }
+    @Test void jukeboxInlineSoundIsLiteralButInlineSongRejected() {
+        var key=songKey("qctest:inline");
+        java.util.function.Function<Float,byte[]> encode=range->songGraph(withItemLeafRegistries(songs(java.util.Map.of("qctest:inline",
+                new JukeboxSong(RegistryEntry.of(SoundEvent.of(Identifier.ofVanilla("music_disc.13"),range)),Text.translatable("song"),100,1)))),key);
+        var bytes=encode.apply(12f);assertFalse(java.util.Arrays.equals(bytes,encode.apply(13f)));
+        assertFalse(canonicalNodes(bytes).nodes().keySet().stream().anyMatch(k->k.registry().equals("minecraft:sound_event")));
+        rejects("UNSUPPORTED_NONFINITE_NATIVE_VALUE",()->encode.apply(Float.NaN));
+        rejects("UNSUPPORTED_NONFINITE_NATIVE_VALUE",()->encode.apply(Float.POSITIVE_INFINITY));
+        var value=vanillaSongs().getEntry(songKey("minecraft:13")).orElseThrow().value();
+        try(var rm=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,List.of())) {
+            var g=new Minecraft121SettingsGraph();g.payload(ROOT,new NbtCompound());var c=new Minecraft121RegistryClosure(g,withItemLeafRegistries(),rm);
+            rejects("UNSUPPORTED_INLINE_ENTRY",()->c.entry(ROOT,"inline-song",RegistryEntry.of(value)));
+        }
+    }
+    @Test void jukeboxDescriptionRejectsNonMinimalEncodedText() {
+        var sound=vanillaSongs().getEntry(songKey("minecraft:13")).orElseThrow().value().soundEvent();
+        var siblings=Text.translatable("song").append(Text.literal("tail"));
+        assertFalse(siblings.getSiblings().isEmpty());assertEquals(net.minecraft.text.MutableText.class,siblings.getClass());
+        for(var text:List.of(siblings,Text.literal("song"),Text.translatableWithFallback("song","fallback"),
+                Text.translatable("song","arg"),Text.translatable("song").formatted(net.minecraft.util.Formatting.BOLD),
+                Text.translatable("song").styled(s->s.withHoverEvent(new net.minecraft.text.HoverEvent(net.minecraft.text.HoverEvent.Action.SHOW_ITEM,
+                        new net.minecraft.text.HoverEvent.ItemStackContent(new ItemStack(Items.DIAMOND))))))) {
+            rejects("UNSUPPORTED_JUKEBOX_DESCRIPTION",()->songGraph(withItemLeafRegistries(songs(java.util.Map.of("qctest:desc",
+                    new JukeboxSong(sound,text,100,1)))),songKey("qctest:desc")));
+        }
+    }
+    @Test void soundLeafRequiresStaticOwnerAndNamedSoundIdentity() {
+        var soundKey=RegistryKey.of(RegistryKeys.SOUND_EVENT,Identifier.ofVanilla("music_disc.13"));
+        assertDoesNotThrow(()->songGraph(withItemLeafRegistries(),soundKey));
+        rejects("REQUIRED_REGISTRY_MISSING",()->songGraph(itemLeafRegistriesWithout(RegistryKeys.SOUND_EVENT),soundKey));
+        var foreign=new net.minecraft.registry.SimpleRegistry<SoundEvent>(RegistryKeys.SOUND_EVENT,com.mojang.serialization.Lifecycle.stable());
+        foreign.add(soundKey,SoundEvent.of(soundKey.getValue()),net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT);foreign.freeze();
+        var all=new java.util.ArrayList<>(itemLeafStaticRegistries());all.remove(Registries.SOUND_EVENT);all.add(foreign);
+        rejects("STATIC_REGISTRY_OWNER_MISMATCH",()->songGraph(new DynamicRegistryManager.ImmutableImpl(all),soundKey));
+        var bound=Registries.SOUND_EVENT.getEntry(soundKey).orElseThrow();
+        var wrong=(RegistryEntry<SoundEvent>)localEntry(RegistryKeys.SOUND_EVENT,soundKey,bound.value());
+        rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->songGraph(withItemLeafRegistries(songs(java.util.Map.of("qctest:sound",
+                new JukeboxSong(wrong,Text.translatable("song"),100,1)))),songKey("qctest:sound")));
     }
 }

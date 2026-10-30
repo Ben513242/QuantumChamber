@@ -94,7 +94,7 @@ final class Minecraft121RegistryLeafTestFixtures {
      * ATTRIBUTE、STATUS_EFFECT本身。測試端獨立列出，不讀production的清單：production若多要求一個registry，用這組fixture的測試會失敗。
      */
     static List<Registry<?>> itemLeafStaticRegistries() {
-        return List.<Registry<?>>of(Registries.ITEM,Registries.DATA_COMPONENT_TYPE,Registries.BLOCK,Registries.ATTRIBUTE,Registries.STATUS_EFFECT);
+        return List.<Registry<?>>of(Registries.ITEM,Registries.DATA_COMPONENT_TYPE,Registries.BLOCK,Registries.ATTRIBUTE,Registries.STATUS_EFFECT,Registries.SOUND_EVENT);
     }
     /** others加上itemLeafStaticRegistries()組成的lease形狀registries；others不得含聯集內的key（ImmutableImpl遇重複key會丟例外）。 */
     static DynamicRegistryManager withItemLeafRegistries(Registry<?>... others) {
@@ -116,6 +116,40 @@ final class Minecraft121RegistryLeafTestFixtures {
         var local=new SimpleRegistry((RegistryKey)key,com.mojang.serialization.Lifecycle.stable());
         local.freeze();
         return local;
+    }
+
+    /** 每次只建局部 dynamic registry；vanilla item 的 key-only pair 保持原物件。 */
+    static SimpleRegistry<net.minecraft.block.jukebox.JukeboxSong> songs(java.util.Map<String,net.minecraft.block.jukebox.JukeboxSong> values) {
+        var registry=new SimpleRegistry<net.minecraft.block.jukebox.JukeboxSong>(RegistryKeys.JUKEBOX_SONG,com.mojang.serialization.Lifecycle.stable());
+        values.forEach((id,value)->registry.add(RegistryKey.of(RegistryKeys.JUKEBOX_SONG,net.minecraft.util.Identifier.of(id)),value,
+                net.minecraft.registry.entry.RegistryEntryInfo.DEFAULT));
+        registry.freeze();return registry;
+    }
+    static net.minecraft.block.jukebox.JukeboxSong song(String sound,String description,float seconds,int comparator) {
+        return new net.minecraft.block.jukebox.JukeboxSong(Registries.SOUND_EVENT.getEntry(net.minecraft.util.Identifier.of(sound)).orElseThrow(),
+                net.minecraft.text.Text.translatable(description),seconds,comparator);
+    }
+    /** 同一組局部 songs 供 production fixture 與獨立編碼 manager 共用；不寫全域 registry。 */
+    static Registry<net.minecraft.block.jukebox.JukeboxSong> vanillaSongs() {return SongFixture.SONGS;}
+    private static final class SongFixture {
+        static final Registry<net.minecraft.block.jukebox.JukeboxSong> SONGS=create();
+        private static Registry<net.minecraft.block.jukebox.JukeboxSong> create() {
+            var values=new java.util.LinkedHashMap<String,net.minecraft.block.jukebox.JukeboxSong>();
+            for(var item:Registries.ITEM) {
+                var component=item.getComponents().get(net.minecraft.component.DataComponentTypes.JUKEBOX_PLAYABLE);
+                if(component!=null) {
+                    var id=component.song().key().getValue();
+                    values.put(id.toString(),song("minecraft:music_disc."+id.getPath(),"jukebox_song.minecraft."+id.getPath(),100f,1));
+                }
+            }
+            return songs(values);
+        }
+    }
+    static Minecraft121SettingsGraph.Key songNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:jukebox_song",id);
+    }
+    static Minecraft121SettingsGraph.Key soundNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,"minecraft:sound_event",id);
     }
 
     /**
