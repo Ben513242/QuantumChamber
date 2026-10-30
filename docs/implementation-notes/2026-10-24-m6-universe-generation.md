@@ -1160,3 +1160,31 @@ D1b-3c-0 遠端 CI：docs commit `1b7dbe5f6a63b0ef490d270943a2c3eea2bf230b`（�
 - 更正類別 Javadoc、結構測試失敗訊息、`foodCopy` Javadoc 三處措辭。
 - 結構測試加上「已審型別恰等於 rebuilt、literal、cachedAsIs 三組不相交的聯集」，並在 ops Javadoc 寫明「私有 ops 不得交給固定 JAR 以外的 codec」這個前提。
 - 成本診斷的 Javadoc 註明冷暖語意已改變。
+
+D1b-3c-0b 遠端 CI：docs commit `463a984b6f714da911466d039dff99defac97cb8`（含 code `ae25614`）的 run `40975183995` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩 job 都是 success。只讀回 job 結論。
+
+### 2026-10-30：D1b-3c 本體已實作（未驗證、未審查），Claude 交回 Codex
+
+**commit**：`7749108`（RED 測試）、`fe76d49e3e4cd08e97e51f5e9e16d092177a2104`（feat），改動六個檔：ItemComponentContracts、LeafContracts、Closure、CanonicalizerTest、LeafContractsTest、Fixtures。**本片只完成 implementer 階段：乾淨雙 focused、完整 run-all，以及獨立 spec／quality 審查都還沒做，不可稱結案。**
+
+implementer 的回報（尚未經審查核實）：
+- **tool 的 tag rule**：rule 可以是 Direct，也可以是原生 Named。Named 的 TagKey 必須是 exact TagKey，registry 必須是 BLOCK。ref 為 `Tag(...)`，Closure 以 required（`required-tag`）入列。
+- **foreign Named**：平行比對原值與重建值。key 不同為 `NATIVE_CODEC_ROUNDTRIP_CHANGED`，同 key 但不是同一物件為 `STATIC_TAG_OWNER_MISMATCH`。
+  - Named 的值條件改用 `instanceof Named` 加原生 source 檢查，不用 exact class。原因：`RegistryEntryList.of(owner, tag)` 回傳的是固定 JAR 內的匿名子類 `RegistryEntryList$1`；若用 exact class，負例會在值條件就被擋下，identity 比對也會變成等價突變。**這項偏離需要審查判定。**
+- **TAG 節點只展開一次**：以 `tagPresence` 記錄，第一條 occurrence 才展開成員邊。T2 視窗內的真 vanilla 成員實測：單次展開時成員邊 1,127、canonical 593,818 bytes；每條 occurrence 都展開時是 6,184 條、1,428,896 bytes。ITEM→TAG 邊 56 條，與 B28 census 一致。
+- **tag 測試技法**：T1 用 seam 加 local registry；T2 是可還原的全域 populate 視窗，放在 Canon。T2 會檢查前提 P1～P3，並以反射唯讀 `Named.entries` 與 `Reference.tags`，確認狀態精確還原。T3 交給 8B3。
+  - P3 用 thread 名稱判斷 worldgen worker，屬啟發式，在完整 run-all 中是否會誤判，**尚未驗證**。
+- **3c-0b quality 的 M1～M4**：已處理。
+- **ITEM 覆蓋**（實測）：1333 件中 1298 件 ACCEPTED，35 件被拒。B28 可達件中，仍被拒的只剩 8 張唱片（屬 3d）。原本已接受的 1267 件，逐件 hash 0 件改變，digest 仍為 `8bdc6c43e1280e98e2a335efb4a01cb1703cc9086a26edda442a12f643c9e396`。
+- **測試數**：LeafTest 41→43，Canon 116→121。
+- **證據**（ignored，`task-08/8b2-c1d-d1b3c-evidence/`，總索引 `D1B3C-INDEX.json`）：
+  - 具名 RED：leaf 43/7、canon 121/4。
+  - GREEN1：leaf 43/1，原 root 保留。
+  - GREEN2：leaf 43/0、canon 121/0。
+  - 9 個見證全部被殺：W-NAMED-ID、W-TOOL-REG、W-M9-TAG、W-TAG-EACH、W-PRESENCE-EACH、W-T2-NOCLEAR、W-POTION-VIEW、W-EMPTY-DEFAULT、W-STRUCT-LITERAL。
+
+**新增的 C1d 待辦**：
+- 8B3 必須證明 context 是在 tag binding 之後才發布（設計 §4.2 H-TAG）。
+- JUnit 中帶 tag 的真資料閉包，其成員只能當作空集合的下界，不能拿來證明成員閉合（設計審查 M7）。
+
+**交接**：使用者 2026-10-30 指示，等這個子代理完成就收尾並交回 Codex。新入口是 [`docs/handoffs/2026-10-30-m6-codex-resume-prompt.md`](../handoffs/2026-10-30-m6-codex-resume-prompt.md)。Claude 這段工作的 scratchpad 已複製到 ignored 的 `handoff-claude-20261030/scratchpad/`，附 `SCRATCHPAD-MANIFEST-sha256.txt`。

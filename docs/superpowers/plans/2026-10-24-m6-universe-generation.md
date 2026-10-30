@@ -369,6 +369,8 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 2026-10-30 D1b-3c-0b快照：3c-0遠端CI run40962495545（1b7dbe5）success。3c-0b code `ae25614`（a5e4f97 RED＋ae25614 fix）：私有PrivateLookup使ops identity隔離CodecCache快取端、tool Optional、potion/stew/banner正規化、copy保真度全族群gating、M9逐件雙向；1267件逐件hash不變；乾淨Canon focused116/116×2、LeafTest41/41×2、完整`run-all-89f998ff5a984fe4ac109f88431f6da9` END ALL0／JUnit919，spec C0/I0/M2、quality C0/I0/M4。controller範圍裁示：須繞過存取限制才能觸發的殘餘只文件化。下一步3c本體。
 
+2026-10-30 交回Codex快照：3c-0b遠端CI run40975183995（463a984）success。3c本體code `fe76d49`（7749108 RED＋fe76d49 feat：tool tag rule、TAG單次展開、T1＋T2 tag測試技法）已commit，但未乾淨驗證、未審查，不可稱結案。接手入口`docs/handoffs/2026-10-30-m6-codex-resume-prompt.md`；第一件工作是3c的乾淨驗證與兩席審查，之後3d（jukebox，結案條件W-OPS須被殺）。
+
 8B1 quality Minor交此批：正式create／resolve接線時凍結provider/schema/adapter能力並驗custom參數；補resolve直接正反測試。8B1的`fromNbt`只證結構有效，不能冒稱custom設定已驗。
 
 **本批owner子集：** Canonicalizer/TemplateAdapter/Contexts main及其三JUnit、ServerSettingsContext實作、Registry/Snapshot及既有兩JUnit所需整合、README；同時包含上方 gate 七個 owner 與四個資料 support owner。mod初始化與testmod/PS屬8B3。

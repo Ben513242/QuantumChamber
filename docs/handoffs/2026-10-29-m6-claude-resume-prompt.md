@@ -144,3 +144,9 @@
   1267 件 ACCEPTED 的逐件 hash 不變。驗證與審查：乾淨 Canon focused 116/116×2、LeafTest 41/41×2，完整 `run-all-89f998ff5a984fe4ac109f88431f6da9` 自然 END ALL0／JUnit919；spec C0/I0/M2、quality C0/I0/M4。
 - **controller 範圍裁示**：必須以反射、access widener 或 mixin 繞過存取限制才能觸發的殘餘，只寫進文件與待辦，不再另開硬化切片。
 - 下一步：3c 本體，包括 tool tag rule、TAG 節點只展開一次、tag 測試技法 T1＋T2；wooden_shovel 與 iron_axe 屆時會翻轉。另外要一併處理 3c-0b quality 的 M1～M4（測試與文件），清單見 M6 note。`ae25614` 的遠端 CI 要等本筆 push 之後讀回。
+
+### 2026-10-30：Claude 交回 Codex（本檔到此為止）
+
+- 3c-0b 遠端 CI run `40975183995` success。
+- D1b-3c 本體 code `fe76d49` 已 commit，但未驗證、未審查。
+- 使用者指示收尾並交回 Codex。後續入口改為 [`2026-10-30-m6-codex-resume-prompt.md`](2026-10-30-m6-codex-resume-prompt.md)；本檔只保留為 Claude 期間的歷史紀錄。

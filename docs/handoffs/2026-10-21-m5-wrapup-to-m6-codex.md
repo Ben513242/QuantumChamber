@@ -629,3 +629,8 @@
 - 3c-0 遠端 CI run `40962495545`（`1b7dbe5`）success。
 - D1b-3c-0b code `ae25614`：用私有 ops identity 隔離 CodecCache 快取端，具名 RED 證實此風險；1267 件逐件 hash 不變。乾淨 Canon focused 116/116×2、LeafTest 41/41×2，完整 `run-all-89f998ff5a984fe4ac109f88431f6da9` 自然 END ALL0／JUnit919；spec C0/I0/M2、quality C0/I0/M4。
 - controller 範圍裁示：須繞過存取限制才能觸發的殘餘只做文件化。`ae25614` 的遠端 CI 待本筆 push 後讀回。下一步 3c 本體。細節見 M6 note 末節。
+
+### 2026-10-30：M6 Claude 交回 Codex
+
+- 3c-0b 遠端 CI run `40975183995`（`463a984`）success。
+- D1b-3c 本體 code `fe76d49` 已 commit，但未驗證、未審查。新接手入口是 `docs/handoffs/2026-10-30-m6-codex-resume-prompt.md`。
