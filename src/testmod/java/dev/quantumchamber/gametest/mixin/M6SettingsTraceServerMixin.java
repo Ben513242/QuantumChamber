@@ -2,6 +2,8 @@ package dev.quantumchamber.gametest.mixin;
 
 import com.google.common.collect.ImmutableList;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import java.util.function.BooleanSupplier;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.quantumchamber.gametest.M6SettingsTraceObserver;
 import java.util.Collection;
@@ -32,19 +34,42 @@ public abstract class M6SettingsTraceServerMixin {
     @Shadow @Final protected LevelStorage.Session session;
     @Shadow @Final private StructureTemplateManager structureTemplateManager;
 
-    @Inject(method="reloadResources(Ljava/util/Collection;)Ljava/util/concurrent/CompletableFuture;",at=@At("HEAD"),require=1,expect=1,allow=1)
-    private void traceBegin(Collection<?> packs, CallbackInfoReturnable<CompletableFuture<Void>> ci) {
-        M6SettingsTraceObserver.begin((MinecraftServer)(Object)this);
+    @WrapMethod(method="reloadResources(Ljava/util/Collection;)Ljava/util/concurrent/CompletableFuture;",require=1,expect=1,allow=1)
+    private CompletableFuture<Void> traceInvocation(Collection<String> packs, Operation<CompletableFuture<Void>> original) {
+        if(!M6SettingsTraceObserver.enabled())return original.call(packs);
+        var frame=M6SettingsTraceObserver.enterInvocation((MinecraftServer)(Object)this);
+        boolean normal=false;
+        try {
+            M6SettingsTraceObserver.beforeOriginal(frame);
+            CompletableFuture<Void> result=original.call(packs);
+            M6SettingsTraceObserver.returned(result);
+            normal=true;
+            return result;
+        } catch(Throwable error) {
+            M6SettingsTraceObserver.invocationThrown(frame,error);
+            throw error;
+        } finally { M6SettingsTraceObserver.exitInvocation(frame,normal); }
+    }
+    @WrapOperation(method="reloadResources(Ljava/util/Collection;)Ljava/util/concurrent/CompletableFuture;",at=@At(value="INVOKE",target="Lnet/minecraft/server/MinecraftServer;runTasks(Ljava/util/function/BooleanSupplier;)V",ordinal=0),require=1,expect=1,allow=1)
+    private void tracePump(MinecraftServer receiver, BooleanSupplier predicate, Operation<Void> original) {
+        if(!M6SettingsTraceObserver.lt2()){original.call(receiver,predicate);return;}
+        var frame=M6SettingsTraceObserver.enterPump(receiver);
+        boolean normal=false;
+        try { original.call(receiver,predicate);normal=true; }
+        finally { M6SettingsTraceObserver.exitPump(frame,normal); }
     }
     @WrapOperation(method="reloadResources(Ljava/util/Collection;)Ljava/util/concurrent/CompletableFuture;",at=@At(value="INVOKE",target="Ljava/util/concurrent/CompletableFuture;thenCompose(Ljava/util/function/Function;)Ljava/util/concurrent/CompletableFuture;",ordinal=0),require=1,expect=1,allow=1)
     private CompletableFuture<?> traceCompose(CompletableFuture<?> receiver, Function<Object,CompletionStage<?>> function, Operation<CompletableFuture<?>> original) {
         if(!M6SettingsTraceObserver.enabled()) return original.call(receiver,function);
         int token=M6SettingsTraceObserver.callToken();
         Function<Object,CompletionStage<?>> wrapped=input->{
-            M6SettingsTraceObserver.composeInput(token,input);
-            CompletionStage<?> result=function.apply(input);
-            M6SettingsTraceObserver.stage(token,result);
-            return result;
+            var frame=M6SettingsTraceObserver.enterCompose(token);
+            try {
+                M6SettingsTraceObserver.composeInput(token,input);
+                CompletionStage<?> result=function.apply(input);
+                M6SettingsTraceObserver.stage(token,result);
+                return result;
+            } finally { M6SettingsTraceObserver.exitCompose(frame); }
         };
         return original.call(receiver,wrapped);
     }
@@ -52,7 +77,12 @@ public abstract class M6SettingsTraceServerMixin {
     private CompletableFuture<?> traceAccept(CompletableFuture<?> receiver, Consumer<Object> consumer, Executor executor, Operation<CompletableFuture<?>> original) {
         if(!M6SettingsTraceObserver.enabled()) return original.call(receiver,consumer,executor);
         int token=M6SettingsTraceObserver.callToken();
-        Consumer<Object> wrapped=holder->{M6SettingsTraceObserver.holderInput(token,holder);consumer.accept(holder);};
+        M6SettingsTraceObserver.applyExecutor(token,executor,(MinecraftServer)(Object)this);
+        Consumer<Object> wrapped=holder->{
+            var frame=M6SettingsTraceObserver.enterApply(token);
+            try {M6SettingsTraceObserver.holderInput(token,holder);consumer.accept(holder);}
+            finally {M6SettingsTraceObserver.exitApply(frame);}
+        };
         CompletableFuture<?> result=original.call(receiver,wrapped,executor);
         M6SettingsTraceObserver.future(token,result);
         return result;
@@ -66,8 +96,6 @@ public abstract class M6SettingsTraceServerMixin {
     private void traceComposeHead(ImmutableList<?> packs, CallbackInfoReturnable<CompletionStage<?>> ci) {M6SettingsTraceObserver.composeHead(packs);}
     @Inject(method="method_29437(Lcom/google/common/collect/ImmutableList;)Ljava/util/concurrent/CompletionStage;",at=@At("RETURN"),require=1,expect=1,allow=1)
     private void traceComposeReturn(ImmutableList<?> packs, CallbackInfoReturnable<CompletionStage<?>> ci) {M6SettingsTraceObserver.nativeStage(packs,ci.getReturnValue());}
-    @Inject(method="reloadResources(Ljava/util/Collection;)Ljava/util/concurrent/CompletableFuture;",at=@At("RETURN"),require=1,expect=1,allow=1)
-    private void traceReturn(Collection<?> packs, CallbackInfoReturnable<CompletableFuture<Void>> ci) {M6SettingsTraceObserver.returned(ci.getReturnValue());}
 
     @WrapOperation(method="<init>(Ljava/lang/Thread;Lnet/minecraft/world/level/storage/LevelStorage$Session;Lnet/minecraft/resource/ResourcePackManager;Lnet/minecraft/server/SaveLoader;Ljava/net/Proxy;Lcom/mojang/datafixers/DataFixer;Lnet/minecraft/util/ApiServices;Lnet/minecraft/server/WorldGenerationProgressListenerFactory;)V",at=@At(value="FIELD",target="Lnet/minecraft/server/MinecraftServer;resourceManagerHolder:Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;",opcode=181,ordinal=0),require=1,expect=1,allow=1)
     private void traceInitialStore(MinecraftServer receiver, @Coerce Object holder, Operation<Void> original) {original.call(receiver,holder);M6SettingsTraceObserver.store(receiver,holder,true);}
@@ -75,6 +103,8 @@ public abstract class M6SettingsTraceServerMixin {
     private void traceReloadStore(MinecraftServer receiver, @Coerce Object holder, Operation<Void> original) {original.call(receiver,holder);M6SettingsTraceObserver.store(receiver,holder,false);}
     @Inject(method="method_29440(Ljava/util/Collection;Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;)V",at=@At("HEAD"),require=1,expect=1,allow=1)
     private void traceApplyHead(Collection<?> packs, @Coerce Object holder, CallbackInfo ci) {M6SettingsTraceObserver.applyHead(holder);}
+    @Inject(method="method_29440(Ljava/util/Collection;Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;)V",at=@At(value="INVOKE",target="Lnet/minecraft/server/DataPackContents;refresh()V",shift=At.Shift.AFTER,ordinal=0),require=1,expect=1,allow=1)
+    private void tracePartial(Collection<?> packs, @Coerce Object holder, CallbackInfo ci) {M6SettingsTraceObserver.partialAfterRefresh(holder);}
     @Inject(method="method_29440(Ljava/util/Collection;Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;)V",at=@At(value="INVOKE",target="Lnet/minecraft/structure/StructureTemplateManager;setResourceManager(Lnet/minecraft/resource/ResourceManager;)V",shift=At.Shift.AFTER,ordinal=0),require=1,expect=1,allow=1)
     private void traceTemplates(Collection<?> packs, @Coerce Object holder, CallbackInfo ci) {M6SettingsTraceObserver.active((MinecraftServer)(Object)this,holder,structureTemplateManager,"TEMPLATES_UPDATED");}
     @Inject(method="method_29440(Ljava/util/Collection;Lnet/minecraft/server/MinecraftServer$ResourceManagerHolder;)V",at=@At("RETURN"),require=1,expect=1,allow=1)
