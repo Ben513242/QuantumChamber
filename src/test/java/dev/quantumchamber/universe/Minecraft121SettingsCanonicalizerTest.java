@@ -2084,13 +2084,10 @@ class Minecraft121SettingsCanonicalizerTest {
         for(var key:tags.keySet())assertTrue(before.named().containsKey(key),"T2前提P1：TagKey "+key.id()+"不在全域BLOCK registry；只能populate既有key"
                 +"（populateTags以computeIfAbsent建立不存在的key，會留下新的Named；setup失敗，不是RED）");
         requireEmptyGlobalBlockTags(before,"T2前提P2");
-        T result;
-        try {
+        return withTagRestoration(() -> {
             net.minecraft.registry.Registries.BLOCK.populateTags(tags);
-            result=body.run();
-        } finally {
-            net.minecraft.registry.Registries.BLOCK.clearTags();
-        }
+            return body.run();
+        }, () -> {net.minecraft.registry.Registries.BLOCK.clearTags(); return null;}, () -> {
         var after=blockTagState();
         assertAll("T2後置斷言（finally之後）",
                 ()->assertEquals(before.named().keySet(),after.named().keySet(),"key集合與快照相同"),
@@ -2099,7 +2096,34 @@ class Minecraft121SettingsCanonicalizerTest {
                 ()->{long changed=before.fields().entrySet().stream().filter(e->after.fields().get(e.getKey())!=e.getValue()).count();
                     assertEquals(0,changed,"每個Named.entries與Reference.tags都回到快照中的同一物件");},
                 ()->requireEmptyGlobalBlockTags(after,"T2後置斷言"));
+            return null;
+        });
+    }
+    /** 共用還原控制流；局部 callback 可驗失敗路徑，不修改全域 registry。 */
+    private static <T> T withTagRestoration(WindowBody<T> body, WindowBody<?> cleanup, WindowBody<?> restoration) throws Exception {
+        T result;
+        try { result=body.run(); } finally { cleanup.run(); }
+        restoration.run();
         return result;
+    }
+    @Test void tagWindowBodyFailureStillChecksRestoration() throws Exception {
+        var primary=new IllegalStateException("body");
+        var calls=new java.util.ArrayList<String>();
+        assertSame(primary,assertThrows(IllegalStateException.class,()->withTagRestoration(()->{throw primary;},
+                ()->{calls.add("cleanup");return null;},()->{calls.add("assertion");return null;})));
+        assertEquals(java.util.List.of("cleanup","assertion"),calls);
+        var before=blockTagState();
+        assertSame(primary,assertThrows(IllegalStateException.class,()->inPopulatedBlockTagWindow(
+                blockTagMembers(java.util.Map.of("minecraft:mineable/pickaxe",java.util.List.of("minecraft:stone"))),()->{throw primary;})));
+        requireEmptyGlobalBlockTags(blockTagState(),"body失敗後仍還原");
+        assertEquals(before.named().keySet(),blockTagState().named().keySet());
+    }
+    @Test void tagWindowRetainsPrimaryAndSuppressesCleanupAndAssertionFailures() {
+        var primary=new IllegalStateException("body"); var cleanup=new IllegalArgumentException("cleanup"); var restoration=new AssertionError("restoration");
+        var actual=assertThrows(IllegalStateException.class,()->withTagRestoration(()->{throw primary;},
+                ()->{throw cleanup;},()->{throw restoration;}));
+        assertSame(primary,actual); assertArrayEquals(new Throwable[]{cleanup,restoration},actual.getSuppressed());
+        assertSame(restoration,assertThrows(AssertionError.class,()->withTagRestoration(()->null,()->null,()->{throw restoration;})));
     }
     /** 依id組出populate的成員（全域BLOCK的Reference，依給定次序）。 */
     private static java.util.Map<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
