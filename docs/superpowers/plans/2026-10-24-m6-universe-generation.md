@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
 
-狀態（2026-10-29 Task8B2-C1b B3）：Task1–7、8A、8B1、8B2-G、C1a、C1b-B1/B2/B3局部資料切片完成；B3 code530491b三sampler橋接具名RED、同乾淨雙focused70/70、完整run-all與獨立spec/quality C/I/M0通過。C1c template安全DTO/來源/typed NBT的v2設計獨立C0/I0/M0，可接正式實作；C1d三role/provider/resolve、100ms live hold I-1、8B3三bundle、Task8終局、Task9–20/人工仍待。B3不冒完整三role/FP/snapshot；舊v4父FAIL/B27FAIL不改判。
+狀態（2026-10-30 Task8B2-C1d D1b-3c）：Task1–7、8A、8B1、8B2-G、C1a、C1b-B1/B2/B3 及 C1c 局部切片已依各自 code pin 結案；C1d 的 D1a、Step0、D1b-0／1／2／3-0／3a／3b／3c-0／3c-0b／3c 也僅限各自範圍本機結案。D1b-3c code pin `fe76d49` 在純 docs HEAD `a635b3a` 乾淨 M6Compile、CanonicalizerTest 121×2、LeafContractsTest 43×2、完整 `run-all-976de0f417a84aa3b5e1074fe4b99dca` END ALL exit0（JUnit926），獨立 spec／quality 均 C0/I0/M1；遠端 CI 尚未在本 docs HEAD 上採計。D1b-3d 尚需設計／審查並殺 W-OPS；C1d 其餘切片、100ms live hold I-1、8B3 三 bundle、Task8 終局、Task9–20／人工仍待。舊 v4 父 FAIL／B27 FAIL 不改判。
 
 採用紀錄（2026-10-26；歷史r3/r4）：r3平台排程由fresh reviewer 4F03E40E…判C0/I0/M0；v1.2／r4窄差異由E9FCC770…判C0/I0/M0。r3 runtime硬gate完整保留，RecipesUsed新增完整raw/typed-history與必要controls；正文依已審草案採用，只有標題、採用狀態及spec引用更新。當時native資料gate仍未通過，沒有8B放行；現況以上方2026-10-28 B28結果為準。
 

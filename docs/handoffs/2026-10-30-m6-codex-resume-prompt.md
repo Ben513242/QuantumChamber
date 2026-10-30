@@ -11,7 +11,7 @@
 ## 2. 交接時的 Git 與證據
 
 - 最後一筆程式 commit 是 `fe76d49e3e4cd08e97e51f5e9e16d092177a2104`（D1b-3c 本體 feat），前一筆是 `77491088f579a2d6d598af19b563ecb7ccb61b85`（RED）。兩筆都**已在本機 commit**；本交接的 docs commit 會一起 push，實際狀態以 ls-remote 為準。
-- **D1b-3c 本體只完成 implementer 階段**：還沒有乾淨雙 focused、沒有完整 run-all，也沒有獨立 spec／quality 審查，**不可稱為已結案**。implementer 的回報與全部證據在 ignored 的 `task-08/8b2-c1d-d1b3c-evidence/`，總索引是 `D1B3C-INDEX.json`。
+- **D1b-3c 本體已就本片本機結案**：code pin `fe76d49e3e4cd08e97e51f5e9e16d092177a2104`，純 docs HEAD `a635b3abeb4879c0b1fcb5df08c1eadb5ae21b2d` 上 M6Compile、雙 focused、完整 run-all 通過，獨立 spec／quality 均 C0/I0/M1。遠端 CI 尚未在本 docs HEAD 上採計。證據在 ignored 的 `task-08/8b2-c1d-d1b3c-evidence/`；總索引 `D1B3C-INDEX.json` SHA256 `f3a8c48bac83de125820a44959543d92b18a0ec823e8b10a105c75cc4ac0d843`，乾淨結果 `D1B3C-CLEAN-RESULT.json` SHA256 `12c3dd702f90e398df6c0958ae3a091dd12c51931420fea5f12356c143fb72f9`。
 - 已結案的 code pin（每片都有本機 full、兩席審查 C/I0 與遠端雙平台 CI），詳見 M6 note：
 
   | 切片 | code pin |
@@ -27,22 +27,19 @@
   | D1b-3c-0 | `be9d408` |
   | D1b-3c-0b | `ae25614` |
 
-  最新一次完整回歸是 `run-all-89f998ff5a984fe4ac109f88431f6da9`（`ae25614`，JUnit919）。
+  D1b-3c 前的完整回歸是 `run-all-89f998ff5a984fe4ac109f88431f6da9`（`ae25614`，JUnit919）；目前最新本機完整回歸是 `run-all-976de0f417a84aa3b5e1074fe4b99dca`（同 code 的純 docs HEAD `a635b3a`，JUnit926，END ALL exit0）。
 - 3b 首輪 full 的 FAIL 原 root 保留：`run-all-afa9356c32f2436d8b78bf58e8fcb2c2`，根因是 AccessDenied 外部鎖檔，屬 M5 的已知限制。
 - Claude 這段工作的 scratchpad 已複製到 ignored 的 `handoff-claude-20261030/scratchpad/`，附有 `SCRATCHPAD-MANIFEST-sha256.txt`。內容是各片的 javap 輸出與抽取腳本，只作為參考。
 
-## 3. 第一件工作：完成 D1b-3c 本體的結案
+## 3. D1b-3c 結案紀錄（已執行）
 
-1. 核對 HEAD 與 porcelain，確認 `git diff 463a984..fe76d49 --stat` 只動到六個允許的檔：ItemComponentContracts、LeafContracts、Closure、CanonicalizerTest、LeafContractsTest、Fixtures。
-2. 在乾淨的 `fe76d49`（或之後的 docs HEAD，只要 code 相同）上跑：M6Compile；`dev.quantumchamber.universe.Minecraft121SettingsCanonicalizerTest` 與 `dev.quantumchamber.universe.Minecraft121RegistryLeafContractsTest` 各兩次 focused；完整 `scripts/verification/run-all.ps1`。前後都要做 Assert-Pin（HEAD 不變且 porcelain 為空），範本見 `task-08/8b2-c1d-d1b3c0b-evidence/D1B3C0B-CLEAN-VALIDATION.ps1`。run-all 約需 45 分鐘，判斷是否完成看 `END ALL` 那一行。
-   - 預期：LeafTest 43、Canon 121。
-   - 特別看 T2（全域 tag populate 視窗）在完整 JUnit 中的 P3 啟發式（以 thread 名稱判斷 worldgen worker）是否誤判。
-3. 派獨立 spec review，再派獨立 quality review（唯讀、不跑 Gradle），審查對象是 `463a984..fe76d49`。implementer 自報的偏離要請審查判定：
+1. `463a984..fe76d49` 六檔範圍已核對；本機在乾淨 `a635b3a`（與 `fe76d49` code 相同）完成 M6Compile、Canon 121/121×2、LeafTest 43/43×2。完整 `run-all-976de0f417a84aa3b5e1074fe4b99dca` 自然 END ALL exit0：JUnit926（fail0／error0／skip2）、default179、M5 60、M6 8、recovery24、collapse69、M6 native DIAGNOSTIC2、mainOnly PASS、release516 entries／469 classes、sources254 entries、兩 JAR testmodHits0。summary SHA256 `81935c0c8d4ffcb3a1c650bcf932e2e411d2c29bac7d8a3c1a6816695807792d`；console SHA256 `762a3f4baf9f081d6d8739690061bdb6750692b933d30d31495566120215286a`。P3 在此 full 沒造成失敗，仍只是啟發式。
+2. 獨立 spec 與 quality 審查對象均為 `463a984..fe76d49`，各 C0/I0/M1；報告 SHA256 分別為 `279325d7f6466112123aa1785e008cbf8b28f7ecd00079329a9c89e39dca7b47`、`14923d16fd37732fa830b4ee031adf98b4cfdb99953b3f8213396b7d91713b19`。四項偏離均審准：
    - Named 改用 `instanceof Named` 加原生 source 檢查（不用 exact class）。原因是 `RegistryEntryList$1` 是固定 JAR 內的匿名子類。
    - closure 層不另加 Named identity 檢查，因為那裡是恆真式。
    - T2 以反射唯讀 `Named.entries`／`Reference.tags`。
    - 成本診斷的 RM 改用 vanilla 預設 pack。
-4. C／I 清零之後，更新 tracked docs truth（AGENTS 入口、M6 note、plan 快照），然後 push 並讀回遠端 CI。另外要把兩項待辦寫入 tracked note：「8B3 須證明 context 在 tag binding 之後才發布」，以及「JUnit 中帶 tag 的真資料閉包，成員只能當空下界」。
+3. 兩席共同 Minor：T2 的 `clearTags()` 在 `finally`，但還原後斷言在外層；body 拋錯時會跳過斷言。交 D1b-3d Step0，保持 primary／suppressed 例外。8B3 必須證明 context 在 tag binding 後發布；JUnit 帶 tag 真資料的成員只能當空集合下界。遠端 CI 留待 docs commit push 後讀回。
 
 ## 4. 之後的順序與已定規則
 
@@ -82,5 +79,11 @@ AGENTS 的「目前接手入口」、M6 note 末節、plan 快照、ignored 的 
 ### 2026-10-30：Claude 交回 Codex
 
 - 這段由 Claude 接手後，D1a 以及 C1d 的 Step0、D1b-0／1／2、D1b-3-0／3a／3b／3c-0／3c-0b 都已結案；完整 JUnit 從 847 增為 919。D1b-3 的設計 v1 經審查、修訂後放行。BLOCK／ITEM static leaf 已局部閉合；ITEM 被拒數從 175 降為 35（以 3c 實作後的實測為準）。
-- 停點是 D1b-3c 本體：已 commit（`fe76d49`），還沒有驗證，也還沒有審查。
-- 使用者沒有新的範圍裁示。Claude 在 2026-10-30 曾向使用者提出：「只有 mod 會觸發的硬化，可以改為記成殘餘、先推主線」，使用者尚未回覆；目前依上方 controller 範圍裁示處理。
+- 當時停點是 D1b-3c 本體：已 commit（`fe76d49`），當時尚未驗證及審查；其後結案見下筆紀錄。
+- 當時使用者尚未回覆範圍提問；其後已明確同意，見下筆紀錄。
+
+### 2026-10-30：Codex 完成 D1b-3c 本機結案文件
+
+- code pin `fe76d49` 在純 docs HEAD `a635b3a` 上完成乾淨本機驗證及獨立 spec／quality C/I0；本片可結案。四項偏離獲兩席接受；T2 還原斷言 Minor 交 3d Step0。
+- 使用者已同意「只有 mod 須繞過存取限制的殘餘記錄、先推主線」；public API 可觸發或 vanilla 受影響者仍須當場修。此裁示不等於跳過 3d 設計／審查、W-OPS、8B3、Task8 或 M6 門檻。
+- 下一片 D1b-3d 先設計／獨立審查；W-OPS 須被殺。3b AccessDenied 原 FAIL、v4 父 FAIL、B27 FAIL 不改判。此時僅有本機 full 證據，遠端 CI 尚未在本 docs HEAD 上跑。

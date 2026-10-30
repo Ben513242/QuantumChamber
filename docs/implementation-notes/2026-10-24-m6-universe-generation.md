@@ -1163,17 +1163,17 @@ D1b-3c-0 遠端 CI：docs commit `1b7dbe5f6a63b0ef490d270943a2c3eea2bf230b`（�
 
 D1b-3c-0b 遠端 CI：docs commit `463a984b6f714da911466d039dff99defac97cb8`（含 code `ae25614`）的 run `40975183995` completed／success，Ubuntu `build` 與 Windows `windows-native` 兩 job 都是 success。只讀回 job 結論。
 
-### 2026-10-30：D1b-3c 本體已實作（未驗證、未審查），Claude 交回 Codex
+### 2026-10-30：D1b-3c 本體實作與本機結案
 
-**commit**：`7749108`（RED 測試）、`fe76d49e3e4cd08e97e51f5e9e16d092177a2104`（feat），改動六個檔：ItemComponentContracts、LeafContracts、Closure、CanonicalizerTest、LeafContractsTest、Fixtures。**本片只完成 implementer 階段：乾淨雙 focused、完整 run-all，以及獨立 spec／quality 審查都還沒做，不可稱結案。**
+**commit**：`7749108`（RED 測試）、`fe76d49e3e4cd08e97e51f5e9e16d092177a2104`（feat），改動六個檔：ItemComponentContracts、LeafContracts、Closure、CanonicalizerTest、LeafContractsTest、Fixtures。本片的乾淨本機驗證及獨立雙席審查已完成；下列 implementer 原始紀錄仍保留作歷程。
 
-implementer 的回報（尚未經審查核實）：
+implementer 的回報（後經下方雙席審查核對）：
 - **tool 的 tag rule**：rule 可以是 Direct，也可以是原生 Named。Named 的 TagKey 必須是 exact TagKey，registry 必須是 BLOCK。ref 為 `Tag(...)`，Closure 以 required（`required-tag`）入列。
 - **foreign Named**：平行比對原值與重建值。key 不同為 `NATIVE_CODEC_ROUNDTRIP_CHANGED`，同 key 但不是同一物件為 `STATIC_TAG_OWNER_MISMATCH`。
-  - Named 的值條件改用 `instanceof Named` 加原生 source 檢查，不用 exact class。原因：`RegistryEntryList.of(owner, tag)` 回傳的是固定 JAR 內的匿名子類 `RegistryEntryList$1`；若用 exact class，負例會在值條件就被擋下，identity 比對也會變成等價突變。**這項偏離需要審查判定。**
+  - Named 的值條件改用 `instanceof Named` 加原生 source 檢查，不用 exact class。原因：`RegistryEntryList.of(owner, tag)` 回傳的是固定 JAR 內的匿名子類 `RegistryEntryList$1`；若用 exact class，負例會在值條件就被擋下，identity 比對也會變成等價突變。**這項偏離後經雙席審查接受。**
 - **TAG 節點只展開一次**：以 `tagPresence` 記錄，第一條 occurrence 才展開成員邊。T2 視窗內的真 vanilla 成員實測：單次展開時成員邊 1,127、canonical 593,818 bytes；每條 occurrence 都展開時是 6,184 條、1,428,896 bytes。ITEM→TAG 邊 56 條，與 B28 census 一致。
 - **tag 測試技法**：T1 用 seam 加 local registry；T2 是可還原的全域 populate 視窗，放在 Canon。T2 會檢查前提 P1～P3，並以反射唯讀 `Named.entries` 與 `Reference.tags`，確認狀態精確還原。T3 交給 8B3。
-  - P3 用 thread 名稱判斷 worldgen worker，屬啟發式，在完整 run-all 中是否會誤判，**尚未驗證**。
+  - P3 用 thread 名稱判斷 worldgen worker，屬測試啟發式；本次完整 run-all 通過，但不能外推為真 server 隔離保證。
 - **3c-0b quality 的 M1～M4**：已處理。
 - **ITEM 覆蓋**（實測）：1333 件中 1298 件 ACCEPTED，35 件被拒。B28 可達件中，仍被拒的只剩 8 張唱片（屬 3d）。原本已接受的 1267 件，逐件 hash 0 件改變，digest 仍為 `8bdc6c43e1280e98e2a335efb4a01cb1703cc9086a26edda442a12f643c9e396`。
 - **測試數**：LeafTest 41→43，Canon 116→121。
@@ -1188,3 +1188,9 @@ implementer 的回報（尚未經審查核實）：
 - JUnit 中帶 tag 的真資料閉包，其成員只能當作空集合的下界，不能拿來證明成員閉合（設計審查 M7）。
 
 **交接**：使用者 2026-10-30 指示，等這個子代理完成就收尾並交回 Codex。新入口是 [`docs/handoffs/2026-10-30-m6-codex-resume-prompt.md`](../handoffs/2026-10-30-m6-codex-resume-prompt.md)。Claude 這段工作的 scratchpad 已複製到 ignored 的 `handoff-claude-20261030/scratchpad/`，附 `SCRATCHPAD-MANIFEST-sha256.txt`。
+
+**乾淨本機驗證與原件**：code pin `fe76d49e3e4cd08e97e51f5e9e16d092177a2104`；純 docs HEAD `a635b3abeb4879c0b1fcb5df08c1eadb5ae21b2d`，驗證前 tracked clean，code 無差異。M6Compile PASS；Canon focused 121/121×2、LeafTest 43/43×2。完整 `run-all-976de0f417a84aa3b5e1074fe4b99dca` 自然 `END ALL exit=0`：JUnit926（fail0／error0／既有 skip2）、default179、M5 60、M6 8、recovery24、collapse69、M6 native DIAGNOSTIC2、mainOnly PASS、release 516 entries／469 classes、sources 254 entries、兩 JAR testmodHits0。本機 CI oracle 不能替代遠端 CI；本 docs HEAD 的遠端 CI 尚未採計。完整 summary SHA256 `81935c0c8d4ffcb3a1c650bcf932e2e411d2c29bac7d8a3c1a6816695807792d`、console SHA256 `762a3f4baf9f081d6d8739690061bdb6750692b933d30d31495566120215286a`；ignored `D1B3C-CLEAN-RESULT.json` SHA256 `12c3dd702f90e398df6c0958ae3a091dd12c51931420fea5f12356c143fb72f9`、`D1B3C-INDEX.json` SHA256 `f3a8c48bac83de125820a44959543d92b18a0ec823e8b10a105c75cc4ac0d843`。
+
+**獨立審查與處置**：spec C0/I0/M1（`D1B3C-SPEC-REVIEW.md`，SHA256 `279325d7f6466112123aa1785e008cbf8b28f7ecd00079329a9c89e39dca7b47`），quality C0/I0/M1（`D1B3C-QUALITY-REVIEW.md`，SHA256 `14923d16fd37732fa830b4ee031adf98b4cfdb99953b3f8213396b7d91713b19`）；兩席接受四項實作偏離：Named 用 `instanceof` 加原生 source、closure 不重做恆真 identity 比對、T2 唯讀反射、成本診斷 RM 用 vanilla 預設 pack。同一 Minor 是 T2 的 `clearTags()` 雖在 `finally`，後置還原斷言在外層，body 拋錯時會跳過；交 D1b-3d Step0，修正時須保留 primary／suppressed 例外。3c 只就本片本機與雙席 C/I0 結案；D1b-3d 先設計／審查，且必須殺 W-OPS。8B3 仍須證明 context 在 tag binding 後發布；JUnit tag 真資料的成員只是空集合下界。Task8、C1d、M6 均未完成；3b AccessDenied 原 FAIL、v4 父 FAIL、B27 FAIL 均不改判。
+
+**使用者範圍裁示更新**：使用者本輪同意「只有 mod 須繞過存取限制的殘餘記錄、先推主線」。此裁示只及於須以反射、access widener、mixin 等繞過存取限制才能觸發的殘餘；一般 mod 透過 public API 可觸發或 vanilla 會受影響者仍當場修正。
