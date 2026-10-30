@@ -27,7 +27,9 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * 不與遊戲或其他encode共用CodecCache key的ops，D1b-3c-0b）。BLOCK、
  * ATTRIBUTE與STATUS_EFFECT leaf沒有子邊；ITEM leaf從D1b-3b起，把default component中的static引用（attribute、status effect、
  * using_converts_to的item、direct tool rule的block）經itemReference sink接回本closure，成為ITEM node的出邊（每個ITEM node只擷取
- * 一次，出邊也只產生一次）。原生source判斷也委派該類，那是Closure、LeafContracts與ItemComponentContracts共用的唯一實作
+ * 一次，出邊也只產生一次）；D1b-3c起tool tag rule的BLOCK tag也經同一個sink成為required的TAG出邊（controller C8）。TAG node只展開
+ * 一次（D1b-3設計§4.4、設計審查M6）：presence讀一次RM，payload與依原生次序的成員邊只產生一次，每條occurrence的邊照常保留、各自檢查
+ * required。原生source判斷也委派該類，那是Closure、LeafContracts與ItemComponentContracts共用的唯一實作
  * （TemplateValueContracts／TemplateSettingsAdapter／NativeValueContracts另有既有複本，交D2收斂）。
  * 未admit的定義／consumer（含其他static registry）、inline entry與非direct alias仍拒絕，不是完整三role快照。
  * registries/resources 必須由呼叫端的同一次有效來源 lease 提供；本類不取得 live source。
@@ -50,6 +52,11 @@ final class Minecraft121RegistryClosure {
     private ServerSettingsContext context;
     private Minecraft121TemplateSettingsAdapter.Scope captureScope;
     private final Set<ScopedDefinition> poolExpanded=new HashSet<>(),templateExpanded=new HashSet<>();
+    /**
+     * 已展開的TAG node與它第一次展開時的presence（D1b-3設計§4.4、設計審查M6）。tag的Key不含scope，沒有pool那種alias scope語意，
+     * 所以以node為單位只展開一次；同一個epoch內presence不會變，之後的occurrence只檢查!required||present。
+     */
+    private final Map<Key,Boolean> tagPresence=new HashMap<>();
 
     Minecraft121RegistryClosure(Minecraft121SettingsGraph graph, DynamicRegistryManager registries,
             ResourceManager resources) {
@@ -81,15 +88,19 @@ final class Minecraft121RegistryClosure {
         checked(() -> enqueueEntry(from,path,entry,"entry"));
     }
     /**
-     * ITEM leaf出邊的sink（D1b-3設計§1.5第6點）：item(...)寫入payload之後，對每個ref呼叫一次；from是該ITEM node，scope是ordinary，
-     * use是item-default-component。Entry走與entry(...)相同的inline拒絕與actual(key)==entry檢查。只在drain內被呼叫，只是把Work
-     * 加進同一個FIFO。switch對sealed Ref窮舉，D1b-3c加Tag時沒有接線就無法編譯。
+     * ITEM leaf出邊的sink（D1b-3設計§1.5第6點）：item(...)寫入payload之後，對每個ref呼叫一次；from是該ITEM node，scope是ordinary。
+     * Entry的use是item-default-component，走與entry(...)相同的inline拒絕與actual(key)==entry檢查。Tag（D1b-3c，tool的tag rule）走與
+     * tag(...)相同的路徑，required為true（controller C8：原生parse時tag必須已在registry；vanilla的tag檔一定存在），use是required-tag；
+     * leaf已要求原值與重建值的Named是同一物件，而重建值的Named就是lease BLOCK registry的getEntryList(tag)。只在drain內被呼叫，只是把Work
+     * 加進同一個FIFO。switch對sealed Ref窮舉，新增Ref種類時沒有接線就無法編譯。
      */
     private void itemReference(Key from,Minecraft121ItemComponentContracts.Ref ref) {
         checked(() -> {
             switch(ref) {
                 case Minecraft121ItemComponentContracts.Ref.Entry reference ->
                         enqueueEntry(from,reference.path(),reference.entry(),"item-default-component");
+                case Minecraft121ItemComponentContracts.Ref.Tag reference ->
+                        enqueueTag(from,reference.path(),reference.tag().getTag(),true);
             }
         });
     }
@@ -99,11 +110,12 @@ final class Minecraft121RegistryClosure {
         enqueue(from,path,key,"ordinary",use);
     }
     void tag(Key from, String path, TagKey<?> tag, boolean required) {
-        checked(() -> {
-            var target=new Key(Kind.TAG,tag.registry().getValue().toString(),tag.id().toString());
-            var occurrence=graph.reference(from,path,target,"ordinary",required?"required-tag":"optional-tag");
-            pending.addLast(new Work(occurrence,null,tag,required));
-        });
+        checked(() -> enqueueTag(from,path,tag,required));
+    }
+    private void enqueueTag(Key from,String path,TagKey<?> tag,boolean required) {
+        var target=new Key(Kind.TAG,tag.registry().getValue().toString(),tag.id().toString());
+        var occurrence=graph.reference(from,path,target,"ordinary",required?"required-tag":"optional-tag");
+        pending.addLast(new Work(occurrence,null,tag,required));
     }
 
     /** source 只在固定 direct binding 的這個欄位當 symbolic；普通引用照常解析。 */
@@ -188,8 +200,20 @@ final class Minecraft121RegistryClosure {
         Optional<?> result=registry.getEntry((RegistryKey)key);
         return (RegistryEntry.Reference<?>)result.orElseThrow(() -> failure("REQUIRED_REGISTRY_TARGET_MISSING"));
     }
+    /**
+     * TAG node的展開，每個node只做一次（D1b-3設計§4.4、設計審查M6）：第一條occurrence讀RM的presence、檢查required、解析Named並依原生
+     * 次序把成員入列，再寫payload並記下presence；之後指向同一node的occurrence只檢查!required||present（presence沿用第一次的結果，不再
+     * 讀RM），payload與成員邊不重做，occurrence的邊由graph保留。第一條occurrence的檢查次序與修正前相同，所以每個tag只有一條occurrence時
+     * bytes不變（production在D1b-3c之前沒有tag caller，既有測試的tag也都只有一條occurrence）。
+     */
     @SuppressWarnings({"rawtypes","unchecked"})
     private void expandTag(Work work) {
+        var node=work.occurrence().target();
+        var expanded=tagPresence.get(node);
+        if(expanded!=null) {
+            require(!work.required()||expanded,"REQUIRED_TAG_MISSING");
+            return;
+        }
         var tag=work.tag();var registry=(Registry)registry(tag.registry());
         var source=Identifier.of(tag.id().getNamespace(),RegistryKeys.getTagPath(tag.registry())+"/"+tag.id().getPath()+".json");
         boolean present=!resources.getAllResources(source).isEmpty();
@@ -205,12 +229,13 @@ final class Minecraft121RegistryClosure {
             for(int i=0;i<list.size();i++) {
                 var entry=list.get(i);var key=entry.getKey().orElseThrow(() -> failure("TAG_INLINE_MEMBER"));
                 require(key.getRegistry().equals(tag.registry().getValue()) && actual(key)==entry,"TAG_MEMBER_OWNER_MISMATCH");
-                enqueue(work.occurrence().target(),"members/"+i,key,"ordinary","ordered-tag-member");
+                enqueue(node,"members/"+i,key,"ordinary","ordered-tag-member");
                 members.add(NbtString.of(key.getValue().toString()));
             }
         }
         payload.put("Members",members);
-        graph.payload(work.occurrence().target(),payload);
+        graph.payload(node,payload);
+        tagPresence.put(node,present);
     }
 
     private void expandDefinition(Key node, RegistryKey<?> key, RegistryEntry.Reference<?> entry) {

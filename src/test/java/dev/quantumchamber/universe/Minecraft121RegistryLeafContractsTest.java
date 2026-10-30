@@ -907,12 +907,17 @@ class Minecraft121RegistryLeafContractsTest {
                 var key=entry.entry().registryKey();
                 yield ref.path()+" -> "+key.getRegistry()+"|"+key.getValue();
             }
+            case Minecraft121ItemComponentContracts.Ref.Tag tag -> {
+                var key=tag.tag().getTag();
+                yield ref.path()+" -> #"+key.registry().getValue()+"|"+key.id();
+            }
         };
     }
     /** ref指向的物件：Entry是named entry，Tag是Named list；一律以identity比對。 */
     private static Object refObject(Minecraft121ItemComponentContracts.Ref ref) {
         return switch(ref) {
             case Minecraft121ItemComponentContracts.Ref.Entry entry -> entry.entry();
+            case Minecraft121ItemComponentContracts.Ref.Tag tag -> tag.tag();
         };
     }
     /**
@@ -922,6 +927,7 @@ class Minecraft121RegistryLeafContractsTest {
     private static String refTargetId(Minecraft121ItemComponentContracts.Ref ref) {
         return switch(ref) {
             case Minecraft121ItemComponentContracts.Ref.Entry entry -> entry.entry().registryKey().getValue().toString();
+            case Minecraft121ItemComponentContracts.Ref.Tag tag -> "#"+tag.tag().getTag().id();
         };
     }
     private static List<String> describeRefs(List<Minecraft121ItemComponentContracts.Ref> refs) {
@@ -1154,6 +1160,8 @@ class Minecraft121RegistryLeafContractsTest {
         assertAll(
                 ()->assertAll("fixture前提",
                         ()->assertNotSame(registryNamed,selfBuilt,"A是另一個物件"),
+                        ()->assertTrue(selfBuilt.getClass()!=RegistryEntryList.Named.class&&nativeSource(selfBuilt.getClass()),
+                                "A是固定JAR內Named的匿名子類（javap：RegistryEntryList.of(owner, tag)回傳RegistryEntryList$1），值條件收原生Named，擋它的是identity比對"),
                         ()->assertEquals(pickaxe,selfBuilt.getTag(),"A的tag key相同"),
                         ()->assertTrue(selfBuilt.ownerEquals(Registries.BLOCK.getEntryOwner()),"A的owner是全域BLOCK"),
                         ()->assertFalse(localNamed.ownerEquals(Registries.BLOCK.getEntryOwner()),"B的owner是局部registry"),

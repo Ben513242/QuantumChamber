@@ -36,7 +36,8 @@ import static dev.quantumchamber.universe.Minecraft121SettingsGraph.*;
  * Item→EntityType邊。D1b-3a起，literal與空DEFAULT的8型也已審（fire_resistant、enchantment_glint_override、
  * ominous_bottle_amplifier；potion_contents、suspicious_stew_effects、container、banner_patterns、charged_projectiles只收空值）。
  * D1b-3b起，非空attribute_modifiers、food與只有direct rule的tool也已審，它們的static引用（ATTRIBUTE、STATUS_EFFECT、ITEM、BLOCK）
- * 以同一筆型別契約從default component抽出，經建構時傳入的sink成為該ITEM node的出邊。tool的tag rule（D1b-3c）與
+ * 以同一筆型別契約從default component抽出，經建構時傳入的sink成為該ITEM node的出邊。D1b-3c起tool的tag rule也已審：它的Named
+ * 抽成Tag ref，經同一個sink成為指向BLOCK TAG node的required出邊（原值與重建值的Named須是同一物件，見requireSameReferences）。
  * jukebox_playable（D1b-3d）等仍fail closed。</li>
  * <li>ATTRIBUTE payload（Contract=quantumchamber:m6-static-attribute-leaf-v1）與STATUS_EFFECT payload
  * （Contract=quantumchamber:m6-static-status-effect-leaf-v1，加上RequiredFeatures）：兩者沒有value codec，Java值不入FP。</li>
@@ -77,6 +78,15 @@ final class Minecraft121RegistryLeafContracts {
      * 存入的entry（值的範圍見Minecraft121ItemComponentContracts.Copy）。CodecCache$Key.equals先比value再比ops，所以只有完整hash相同時
      * 才會對他人存入的值呼叫equals（之後ops不相等，仍不命中）；本ops的hash含PrivateLookup的identity hash，要刻意湊出同一個hash，得先
      * 以反射讀出本物件的private欄位。
+     *
+     * <p>前提（D1b-3c-0b quality M3(b)）：本ops只交給固定JAR內的原生codec，也就是ComponentMap.CODEC與已審型別經它dispatch到的codec。encode時
+     * ops沿著codec樹往下傳；若某個已審型別的codec會dispatch到mod提供的codec，那個codec就拿得到本ops，可以只用public API（例如
+     * DataComponentTypes.FOOD.getCodec().encodeStart(ops, 說謊的值)）在本ops下存入說謊的entry，讓同一個LeafContracts後面的vanilla item
+     * 命中（快取端的形狀）。目前的已審型別都不會走到mod的codec：attribute與status effect走registry entry codec，using_converts_to的
+     * ItemStack必須沒有patch，tool走RegistryEntryList（D1b-3c的tag rule只寫「#」加tag id）。新增會dispatch到registry codec、或帶非空
+     * ItemStack patch（patch的component型別可以是mod註冊的）的型別時，要重新論證這個前提。另一個前提是固定JAR中CodecCache$Key、
+     * RegistryOps與CachedRegistryInfoGetter的equals語意；其他mod若以mixin改寫它們，私有identity就失效（只能以繞過存取限制的方式觸發，
+     * 依controller裁示只文件化）。
      */
     private final RegistryOps<NbtElement> ops;
     /** ITEM leaf出邊的sink：item(...)寫入payload之後，對itemCapture抽出的每個ref依序呼叫一次（from是該ITEM node）。 */
@@ -388,8 +398,8 @@ final class Minecraft121RegistryLeafContracts {
         // 7b. 白名單（值條件、copy與ref抽取，同一筆契約）對重建的原生map再驗一次：已知encoded等於again，所以驗到的就是payload實際
         // 寫入的內容。
         var references=requireReviewedDefaults(rebuilt).references();
-        // 7c. 原值與重建值的ref逐一比對（D1b-3設計審查M2）：只從重建的map抽ref，會把foreign的Reference（同key、不同物件）靜默換成
-        // registry的物件；所以要求兩邊的path與key逐一相同、entry是同一物件。
+        // 7c. 原值與重建值的ref逐一比對（D1b-3設計審查M2）：只從重建的map抽ref，會把foreign的Reference或Named（同key、不同物件）靜默
+        // 換成registry的物件；所以要求兩邊的path與key逐一相同、entry或Named是同一物件。
         requireSameReferences(originalRefs,references);
         // 8.
         var payload=new NbtCompound();
@@ -406,7 +416,7 @@ final class Minecraft121RegistryLeafContracts {
      * 步驟6、6b與7b共用的白名單（codec前對輸入map的兩次迭代，以及roundtrip重建的map）：容器class須為原生source，之後才呼叫它的
      * iterator；再逐項以Minecraft121ItemComponentContracts的單一分派表取該型的契約：不屬已審型別、原值或copy不符值條件，一律
      * UNSUPPORTED_ITEM_DEFAULT_COMPONENT。值條件對原值成立之後，才以同一筆契約重建copy（D1b-3c-0）並對copy再套一次值條件，再從copy
-     * 抽出ref（path加上components/&lt;型別id&gt;/前綴；ref sink的tag在D1b-3c之前一律fail closed）。值條件可丟出具名Failure（food的
+     * 抽出ref（path加上components/&lt;型別id&gt;/前綴；entry包成Ref.Entry，D1b-3c起tool tag rule的Named包成Ref.Tag）。值條件可丟出具名Failure（food的
      * using_converts_to目標item不是原生source時為NATIVE_DEFINITION_SOURCE）。回傳的ref依型別id排序、同型內依抽取次序，與容器的
      * 迭代次序無關。容器的source檢查只擋直接foreign的容器class；原生包裝（ComponentMapImpl、ComponentMap.of／filtered）仍可能委派
      * foreign的map或predicate，它們的內容一致性由步驟6b的第二次迭代、roundtrip後對重建map的再驗與ref比對保證。迭代、判斷、重建與
@@ -430,14 +440,20 @@ final class Minecraft121RegistryLeafContracts {
                 require(contract.value().test(copy),"UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
                 contract.refs().extract(copy,new Minecraft121ItemComponentContracts.RefSink() {
                     @Override public void entry(String path,RegistryEntry.Reference<?> entry) {
-                        var id=Registries.DATA_COMPONENT_TYPE.getId(type);
-                        require(id!=null,"UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
-                        byType.computeIfAbsent(id.toString(),k->new ArrayList<>())
-                                .add(new Minecraft121ItemComponentContracts.Ref.Entry("components/"+id+"/"+path,entry));
+                        refs().add(new Minecraft121ItemComponentContracts.Ref.Entry("components/"+id()+"/"+path,entry));
                     }
                     @Override public void tag(String path,RegistryEntryList.Named<?> tag) {
-                        // D1b-3c之前沒有抽取器呼叫tag，Ref也還沒有Tag：一律fail closed，不留可被誤用的空殼路徑。
-                        throw new Failure("UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
+                        // D1b-3c：tool tag rule的Named（抽取器已驗原生Named與BLOCK的TagKey；是否為registry的Named由7c比對）。
+                        refs().add(new Minecraft121ItemComponentContracts.Ref.Tag("components/"+id()+"/"+path,tag));
+                    }
+                    /** 型別id只在有ref時才查（與D1b-3b相同）；查不到為UNSUPPORTED_ITEM_DEFAULT_COMPONENT。 */
+                    private String id() {
+                        var id=Registries.DATA_COMPONENT_TYPE.getId(type);
+                        require(id!=null,"UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
+                        return id.toString();
+                    }
+                    private List<Minecraft121ItemComponentContracts.Ref> refs() {
+                        return byType.computeIfAbsent(id(),k->new ArrayList<>());
                     }
                 });
                 copies.add((ComponentType)type,copy);
@@ -452,17 +468,24 @@ final class Minecraft121RegistryLeafContracts {
         return new Reviewed(copies.build(),references);
     }
     /**
-     * 步驟7c：原值與重建值抽出的ref逐一比對（D1b-3b quality Q-M2）。件數、path或指向的key不同（容器或巢狀List在兩次迭代間改變了
-     * 帶ref的內容）為NATIVE_CODEC_ROUNDTRIP_CHANGED；path與key都相同、entry卻不是同一物件（foreign的同key Reference被codec換成
-     * registry的物件）才是REGISTRY_ENTRY_OWNER_MISMATCH。switch對sealed Ref窮舉，D1b-3c加Tag時沒有比對規則就無法編譯。key的讀取包在
-     * try內：原值的Reference可能沒有綁定key（registryKey()丟ISE），那也是key不同，改成NATIVE_CODEC_ROUNDTRIP_CHANGED並以initCause
-     * 保留原因。
+     * 步驟7c：原值與重建值抽出的ref逐一比對（D1b-3b quality Q-M2）。件數、path、ref種類或指向的key不同（容器或巢狀List在兩次迭代間改變了
+     * 帶ref的內容）為NATIVE_CODEC_ROUNDTRIP_CHANGED；path與key都相同、物件卻不同時才是owner不符：
+     * <ul>
+     * <li>Entry：foreign的同key Reference被codec換成registry的物件→REGISTRY_ENTRY_OWNER_MISMATCH。</li>
+     * <li>Tag（D1b-3c，設計審查M2 Named）：以RegistryEntryList.of(全域owner, tag)另建的同tag Named，encode的ownerEquals會通過、parse換成
+     * registry的Named→STATIC_TAG_OWNER_MISMATCH。重建值的Named由lease lookup的getOptional(tag)解析（javap：RegistryEntryListCodec.decode
+     * →SimpleRegistry$1.getOptional→getEntryList），所以只檢查重建值是恆真式；兩邊是同一物件時，原值就是lease BLOCK registry的
+     * getEntryList(tag)（設計§3.1的3c列）。owner不同的Named（例如局部registry的）在encode的ownerEquals就失敗，是codec錯誤。</li>
+     * </ul>
+     * switch對sealed Ref窮舉，新增Ref種類時沒有比對規則就無法編譯。key的讀取包在try內：原值的Reference可能沒有綁定key（registryKey()
+     * 丟ISE），那也是key不同，改成NATIVE_CODEC_ROUNDTRIP_CHANGED並以initCause保留原因。Named的getTag只讀欄位，TagKey是final record，
+     * 比對只執行固定JAR與JDK的程式碼。
      */
     private static void requireSameReferences(List<Minecraft121ItemComponentContracts.Ref> original,
             List<Minecraft121ItemComponentContracts.Ref> rebuilt) {
         try {
-            // 寬catch前提：try內只放本碼所指的ref讀取（path，以及exact原生Reference的registryKey()），以及前置require已保證不丟例外的
-            // 本地操作（本地List的size／get、String與RegistryKey的equals、identity比較）。
+            // 寬catch前提：try內只放本碼所指的ref讀取（path，exact原生Reference的registryKey()，以及原生Named的getTag()），以及前置
+            // require已保證不丟例外的本地操作（本地List的size／get、String、RegistryKey與TagKey的equals、identity比較）。
             require(original.size()==rebuilt.size(),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
             for(int i=0;i<original.size();i++) {
                 var before=original.get(i);var after=rebuilt.get(i);
@@ -472,6 +495,11 @@ final class Minecraft121RegistryLeafContracts {
                         if(!(after instanceof Minecraft121ItemComponentContracts.Ref.Entry other))throw new Failure("NATIVE_CODEC_ROUNDTRIP_CHANGED");
                         require(entry.entry().registryKey().equals(other.entry().registryKey()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
                         require(entry.entry()==other.entry(),"REGISTRY_ENTRY_OWNER_MISMATCH");
+                    }
+                    case Minecraft121ItemComponentContracts.Ref.Tag tag -> {
+                        if(!(after instanceof Minecraft121ItemComponentContracts.Ref.Tag other))throw new Failure("NATIVE_CODEC_ROUNDTRIP_CHANGED");
+                        require(tag.tag().getTag().equals(other.tag().getTag()),"NATIVE_CODEC_ROUNDTRIP_CHANGED");
+                        require(tag.tag()==other.tag(),"STATIC_TAG_OWNER_MISMATCH");
                     }
                 }
             }

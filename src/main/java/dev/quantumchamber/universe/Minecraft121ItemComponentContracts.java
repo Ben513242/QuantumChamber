@@ -29,14 +29,16 @@ import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.entry.RegistryEntryList;
+import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Rarity;
 import net.minecraft.util.Unit;
 
 /**
  * C1d-D1b-3 ITEM default component型別契約的唯一owner：已審型別的單一分派表（{@link #contract}），以及ITEM leaf在codec之前逐一
  * 證明lease identity的static registry固定聯集（{@link #staticRegistries}）。每個已審型別在表內同一處宣告四件事：值條件、codec前的
- * copy重建（LORE以外的literal與只收空值型別明確宣告{@link #AS_IS}）、ref抽取（literal與只收空值的型別明確宣告{@link #NO_REFS}），
- * 以及已接受的值經codec會查詢的static registry。呼叫端只經同一筆契約取用這些，所以不會另有一張ref或copy分派表與值條件表漂移，
+ * copy重建（帶List的record重建、LORE與三個只收空值型別正規化為DEFAULT，見{@link Copy}；literal與帶CodecCache卻只收空值或單例的
+ * enchantments、charged_projectiles、container明確宣告{@link #AS_IS}，理由見AS_IS）、ref抽取（literal與只收空值的型別明確宣告
+ * {@link #NO_REFS}），以及已接受的值經codec會查詢的static registry。呼叫端只經同一筆契約取用這些，所以不會另有一張ref或copy分派表與值條件表漂移，
  * 造成「型別被接受、卻沒抽出ref」的靜默少邊。D1c的loot function與D2b的模板effective component應重用本表，不另立第三份白名單；
  * TemplateValueContracts.components()目前另有自己的表，交D2b收斂。
  *
@@ -53,9 +55,9 @@ final class Minecraft121ItemComponentContracts {
 
     /**
      * ITEM leaf從default component抽出的引用（D1b-3設計§1.5第2點）。path是相對ITEM node的完整路徑
-     * （components/&lt;component型別id&gt;/…）。目前只有指向named registry entry的Entry；tool的tag rule（Tag）屬D1b-3c。
+     * （components/&lt;component型別id&gt;/…）。指向named registry entry的Entry，以及D1b-3c起tool tag rule的Tag。
      */
-    sealed interface Ref permits Ref.Entry {
+    sealed interface Ref permits Ref.Entry,Ref.Tag {
         String path();
         /** 指向named registry entry的引用；entry是exact原生RegistryEntry.Reference（值條件已驗）。 */
         record Entry(String path,RegistryEntry.Reference<?> entry) implements Ref {
@@ -64,10 +66,22 @@ final class Minecraft121ItemComponentContracts {
                 Objects.requireNonNull(entry);
             }
         }
+        /**
+         * 指向named tag的引用（D1b-3c，tool的tag rule）：tag是原生的RegistryEntryList.Named（class的source是固定JAR，見nativeNamed），
+         * 它的TagKey是exact原生TagKey、registry為BLOCK（值條件已驗）。path是tag字串在codec中的位置（rules/i/blocks），不是成員。LeafContracts以原值與重建值的Named逐一比對identity
+         * （設計審查M2 Named）；重建值的Named由lease lookup的getOptional(tag)解析，所以兩者同一時，它就是lease BLOCK registry的
+         * getEntryList(tag)（設計§3.1的3c列）。
+         */
+        record Tag(String path,RegistryEntryList.Named<?> tag) implements Ref {
+            public Tag {
+                Objects.requireNonNull(path);
+                Objects.requireNonNull(tag);
+            }
+        }
     }
     /**
-     * ref抽取的接收端（D1b-3b quality Q-M4(a)）：entry收named registry entry的引用；tag收tool tag rule的Named list，預留給D1b-3c。
-     * D1b-3c之前沒有抽取器呼叫tag，唯一的實作（LeafContracts.requireReviewedDefaults）對tag一律fail closed，不會靜默丟掉tag引用。
+     * ref抽取的接收端（D1b-3b quality Q-M4(a)）：entry收named registry entry的引用；tag收tool tag rule的Named list（D1b-3c）。唯一的
+     * 實作（LeafContracts.requireReviewedDefaults）把兩者分別包成Ref.Entry與Ref.Tag。
      */
     interface RefSink {
         void entry(String path,RegistryEntry.Reference<?> entry);
@@ -86,8 +100,9 @@ final class Minecraft121ItemComponentContracts {
     /**
      * 一型的codec前copy重建（D1b-3b spec M1＋quality Q-M1，D1b-3c-0）：只在該型值條件對同一個值成立之後呼叫，回傳codec實際要編碼的值；
      * 呼叫端對回傳值再套一次值條件。「重建」的意思是：巢狀容器換成以已驗元素建立的JDK不可變List（List.copyOf），只收空值的型別正規化
-     * 為原生DEFAULT，Optional literal先驗內容是exact Float／Boolean再重建Optional；named的Reference（與D1b-3c的Named list）保持identity，
-     * 兩者都沒有覆寫equals／hashCode。帶List的已審record（attribute_modifiers、tool、food）以此重建；LORE，以及D1b-3c-0b（spec M2）起的
+     * 為原生DEFAULT，Optional literal先驗內容是exact Float／Boolean再重建Optional；named的Reference與tool tag rule的Named list（D1b-3c）
+     * 保持identity，兩者都沒有覆寫equals／hashCode（javap：RegistryEntryList$Named與$ListBacked都沒有宣告equals／hashCode），所以CodecCache
+     * 對它們只比identity，不會執行foreign程式碼。帶List的已審record（attribute_modifiers、tool、food）以此重建；LORE，以及D1b-3c-0b（spec M2）起的
      * potion_contents、suspicious_stew_effects、banner_patterns正規化為各自的DEFAULT。
      *
      * <p>DataComponentTypes.CACHE（CodecCache，以(codec identity, value, ops)為key的全域Guava cache；Key.equals依序比codec identity、
@@ -146,7 +161,7 @@ final class Minecraft121ItemComponentContracts {
     }
 
     /**
-     * 已審型別（含D1b-3c規劃的tool tag rule）的codec會查詢的static registry固定聯集（D1b-3設計審查M1，controller C1），ITEM排第一。
+     * 已審型別（含D1b-3c的tool tag rule）的codec會查詢的static registry固定聯集（D1b-3設計審查M1，controller C1），ITEM排第一。
      * ITEM（ItemStack與item引用）、DATA_COMPONENT_TYPE（component型別鍵）、ATTRIBUTE與STATUS_EFFECT經ops無關的codec解析
      * （Registry.getEntryCodec／getCodec綁定全域registry物件，不看ops），所以只能以「lease持有的就是全域物件」證明全域解析等於lease
      * 解析。BLOCK（tool rule的direct list與tag）經ops解析，但tool default持有的是全域BLOCK的Reference／Named，encode時以lease的
@@ -210,17 +225,17 @@ final class Minecraft121ItemComponentContracts {
                     &&emptyList(((BannerPatternsComponent)value).layers()),BannerPatternsComponent.DEFAULT));
             put(table,DataComponentTypes.CHARGED_PROJECTILES,noRefs(value->nativeExact(value,ChargedProjectilesComponent.class)
                     &&((ChargedProjectilesComponent)value).isEmpty()));
-            // D1b-3b的static引用（D1b-3設計§2.2）：非空ATTRIBUTE_MODIFIERS（→ATTRIBUTE）、FOOD（→STATUS_EFFECT、ITEM）、只有direct
-            // rule的TOOL（→BLOCK）。引用一律須是exact原生RegistryEntry.Reference（inline的Direct entry在codec之前就拒）。tool的tag
-            // rule屬D1b-3c、jukebox_playable屬D1b-3d，仍不在本表。三型的record都不複製List，codec之前以已驗元素重建（D1b-3c-0）。
+            // D1b-3b的static引用（D1b-3設計§2.2）：非空ATTRIBUTE_MODIFIERS（→ATTRIBUTE）、FOOD（→STATUS_EFFECT、ITEM）、TOOL（→BLOCK）。
+            // 引用一律須是exact原生RegistryEntry.Reference（inline的Direct entry在codec之前就拒）。D1b-3c起TOOL也收tag rule（→BLOCK tag，
+            // 原生Named，須是lease registry的那一個，見LeafContracts的7c）；jukebox_playable屬D1b-3d，仍不在本表。三型的record都不複製List，codec之前以已驗元素重建（D1b-3c-0）。
             put(table,DataComponentTypes.ATTRIBUTE_MODIFIERS,new Contract(Minecraft121ItemComponentContracts::attributeModifiers,
                     Minecraft121ItemComponentContracts::attributeModifiersCopy,Minecraft121ItemComponentContracts::attributeModifierRefs,
                     List.of(RegistryKeys.ATTRIBUTE)));
             put(table,DataComponentTypes.FOOD,new Contract(Minecraft121ItemComponentContracts::food,
                     Minecraft121ItemComponentContracts::foodCopy,Minecraft121ItemComponentContracts::foodRefs,
                     List.of(RegistryKeys.STATUS_EFFECT,RegistryKeys.ITEM)));
-            put(table,DataComponentTypes.TOOL,new Contract(Minecraft121ItemComponentContracts::directTool,
-                    Minecraft121ItemComponentContracts::directToolCopy,Minecraft121ItemComponentContracts::directToolRefs,
+            put(table,DataComponentTypes.TOOL,new Contract(Minecraft121ItemComponentContracts::tool,
+                    Minecraft121ItemComponentContracts::toolCopy,Minecraft121ItemComponentContracts::toolRefs,
                     List.of(RegistryKeys.BLOCK)));
             return Collections.unmodifiableMap(table);
         }
@@ -316,8 +331,14 @@ final class Minecraft121ItemComponentContracts {
      * copy：每個effect以effect()的copy（固定JAR回傳不帶hiddenEffect的新原生StatusEffectInstance）與probability重建
      * StatusEffectEntry，再List.copyOf。using_converts_to保留原Optional與原ItemStack：Optional與ItemStack都是final，ItemStack沒有覆寫
      * equals／hashCode（javap，CodecCache只比identity），目標item的source已由值條件在codec之前驗過。但ItemStack是可變物件，copy與原值
-     * 共用同一個stack（D1b-3c-0b quality Q-M4(c)）：6b之後若有foreign程式碼改了它的patch，payload的安全靠7b對重建map再驗
-     * getComponentChanges().isEmpty()；count不編碼（UNCOUNTED_CODEC），所以count的改變不影響payload。literal欄位照抄。
+     * 共用同一個stack（D1b-3c-0b quality Q-M4(c)）。6b之後若有foreign程式碼改了它的patch，實際的保證如下（D1b-3c-0b quality M2(c)）：
+     * <ul>
+     * <li>重新編碼時（沒有命中快取），patch會寫進encoded，由7b對重建map再驗getComponentChanges().isEmpty()擋下；</li>
+     * <li>命中同一個LeafContracts先前以同一個stack物件存入的entry時（ItemStack以identity比對），encode回傳的是較早、已驗過值條件的
+     * 無patch編碼，payload仍不含patch，但這不是靠7b；</li>
+     * <li>兩種情況下，遊戲之後使用的stack都已帶patch，效果與「capture之後才改」相同，屬spec §3.1.1的Java implementation殘餘。</li>
+     * </ul>
+     * count不編碼（UNCOUNTED_CODEC），所以count的改變不影響payload。literal欄位照抄。
      */
     private static Object foodCopy(Object value) {
         var food=(FoodComponent)value;
@@ -342,23 +363,55 @@ final class Minecraft121ItemComponentContracts {
         }
     }
     /**
-     * 只有direct rule的TOOL：exact原生ToolComponent，每個rule是exact原生Rule，blocks是exact原生RegistryEntryList.Direct（tag rule的
-     * Named屬D1b-3c，拒），每個block是exact原生Reference。speed、correct_for_drops、default_mining_speed、damage_per_block是literal：
-     * speed與correct_for_drops是Optional&lt;Float&gt;／Optional&lt;Boolean&gt;，泛型經erasure，內容可以被unchecked cast換成任意物件（heap
-     * pollution），所以要求Optional非null、內容存在時class恰為Float／Boolean（jdkLiteral；D1b-3c-0b spec M1）。direct list經ops相關的
-     * RegistryFixedCodec解析（owner須是lease的BLOCK，固定聯集已證明它就是全域物件）。
+     * TOOL：exact原生ToolComponent，每個rule是exact原生Rule，blocks是下列兩者之一：
+     * <ul>
+     * <li>exact原生RegistryEntryList.Direct，每個block是exact原生Reference（D1b-3b）；經ops相關的RegistryFixedCodec解析。</li>
+     * <li>原生的RegistryEntryList.Named（tag rule，D1b-3c；見nativeNamed與blockTag）。encode只呼叫ownerEquals與getStorage（兩者都只讀
+     * 欄位），不讀成員；parse以lookup的getOptional(tag)解析（javap：RegistryEntryListCodec），查不到時是codec錯誤。這裡不要求它就是
+     * registry的那個Named：那由LeafContracts在roundtrip之後以原值與重建值的identity比對（設計審查M2 Named）。</li>
+     * </ul>
+     * speed、correct_for_drops、default_mining_speed、damage_per_block是literal：speed與correct_for_drops是
+     * Optional&lt;Float&gt;／Optional&lt;Boolean&gt;，泛型經erasure，內容可以被unchecked cast換成任意物件（heap pollution），所以要求
+     * Optional非null、內容存在時class恰為Float／Boolean（jdkLiteral；D1b-3c-0b spec M1）。兩種list的owner都須是lease的BLOCK（encode
+     * 的ownerEquals；固定聯集已證明它就是全域物件）。
      */
-    private static boolean directTool(Object value) {
+    private static boolean tool(Object value) {
         if(!nativeExact(value,ToolComponent.class))return false;
         var rules=((ToolComponent)value).rules();
         if(rules==null)return false;
         for(var rule:rules) {
-            if(!nativeExact(rule,ToolComponent.Rule.class)||!nativeExact(rule.blocks(),RegistryEntryList.Direct.class))return false;
+            if(!nativeExact(rule,ToolComponent.Rule.class))return false;
             if(!jdkLiteral(rule.speed(),Float.class)||!jdkLiteral(rule.correctForDrops(),Boolean.class))return false;
-            var blocks=(RegistryEntryList.Direct<?>)rule.blocks();
-            for(int j=0;j<blocks.size();j++)if(!nativeExact(blocks.get(j),RegistryEntry.Reference.class))return false;
+            var blocks=rule.blocks();
+            if(nativeNamed(blocks)) {
+                if(!blockTag((RegistryEntryList.Named<?>)blocks))return false;
+                continue;
+            }
+            if(!nativeExact(blocks,RegistryEntryList.Direct.class))return false;
+            var direct=(RegistryEntryList.Direct<?>)blocks;
+            for(int j=0;j<direct.size();j++)if(!nativeExact(direct.get(j),RegistryEntry.Reference.class))return false;
         }
         return true;
+    }
+    /**
+     * tool tag rule的list是否為原生Named（D1b-3c）：RegistryEntryList.Named的實例，且class的source是固定JAR（比照EntityAttribute與
+     * StatusEffect leaf的「instanceof基底類別＋原生source」，設計審查M3）。固定JAR內有兩種：registry建立的Named本身，以及
+     * RegistryEntryList.of(owner, tag)回傳的匿名子類RegistryEntryList$1（javap：只覆寫getEntries並丟UnsupportedOperationException，
+     * 是不綁registry的Named）。後者不是registry的Named，會在roundtrip之後的identity比對以STATIC_TAG_OWNER_MISMATCH拒（設計審查M2的
+     * 負例A）。只用instanceof與final的getClass()判定，不呼叫值的方法；Named的建構子是package-private，固定JAR以外的子類由source擋下。
+     */
+    private static boolean nativeNamed(Object blocks) {
+        return blocks instanceof RegistryEntryList.Named<?>&&Minecraft121RegistryLeafContracts.nativeSource(blocks.getClass());
+    }
+    /**
+     * tool tag rule的Named（D1b-3c）：它的TagKey須是exact原生TagKey（final record），registry為BLOCK。Named&lt;Block&gt;的泛型經erasure，
+     * raw cast可以放進另一個registry的TagKey（heap pollution）；codec只寫「#」加id、parse會換成BLOCK的同名tag，所以在值條件就拒，不留到
+     * 7c的key比對。getTag只讀tag欄位（getfield；原生的兩種Named都沒有覆寫它），不讀成員，所以未populate時也成立；registry的比對以
+     * RegistryKeys.BLOCK為receiver（RegistryKey沒有覆寫equals，建構子是private）。
+     */
+    private static boolean blockTag(RegistryEntryList.Named<?> named) {
+        var tag=named.getTag();
+        return nativeExact(tag,TagKey.class)&&RegistryKeys.BLOCK.equals(tag.registry());
     }
     /**
      * Optional literal（D1b-3c-0b，spec M1）：Optional非null，內容存在時class恰為type。Optional是JDK final，isEmpty／get與getClass()都是
@@ -374,29 +427,50 @@ final class Minecraft121ItemComponentContracts {
         return value.isEmpty()?Optional.empty():Optional.of(type.cast(value.get()));
     }
     /**
-     * copy：每個rule的direct list以RegistryEntryList.of(List.copyOf(已驗的blocks))重建（Direct的equals／hashCode委派它持有的List），
-     * speed與correct_for_drops以jdkLiteralCopy重建Optional，再List.copyOf rules。
+     * copy：每個rule的direct list以RegistryEntryList.of(List.copyOf(已驗的blocks))重建（Direct的equals／hashCode委派它持有的List）；
+     * tag rule的Named保持identity（再驗exact原生與blockTag；Named沒有覆寫equals／hashCode，CodecCache只比identity）。speed與
+     * correct_for_drops以jdkLiteralCopy重建Optional，再List.copyOf rules。
      */
-    @SuppressWarnings("unchecked")
-    private static Object directToolCopy(Object value) {
+    private static Object toolCopy(Object value) {
         var tool=(ToolComponent)value;
         var rules=new ArrayList<ToolComponent.Rule>();
         for(var element:tool.rules()) {
             var rule=exact(element,ToolComponent.Rule.class);
-            var direct=exact(rule.blocks(),RegistryEntryList.Direct.class);
-            var blocks=new ArrayList<RegistryEntry<Block>>();
-            for(int j=0;j<direct.size();j++)blocks.add((RegistryEntry<Block>)reference(direct.get(j)));
-            rules.add(new ToolComponent.Rule(RegistryEntryList.of(List.copyOf(blocks)),jdkLiteralCopy(rule.speed(),Float.class),
+            rules.add(new ToolComponent.Rule(blocksCopy(rule.blocks()),jdkLiteralCopy(rule.speed(),Float.class),
                     jdkLiteralCopy(rule.correctForDrops(),Boolean.class)));
         }
         return new ToolComponent(List.copyOf(rules),tool.defaultMiningSpeed(),tool.damagePerBlock());
     }
-    /** rules/i/blocks/j → BLOCK（j是direct list內的次序，與單一元素時encode成字串無關）。 */
-    private static void directToolRefs(Object value,RefSink sink) {
+    @SuppressWarnings("unchecked")
+    private static RegistryEntryList<Block> blocksCopy(RegistryEntryList<Block> blocks) {
+        if(nativeNamed(blocks)) {
+            blockTagRule(blocks);
+            return blocks;
+        }
+        var direct=exact(blocks,RegistryEntryList.Direct.class);
+        var copy=new ArrayList<RegistryEntry<Block>>();
+        for(int j=0;j<direct.size();j++)copy.add((RegistryEntry<Block>)reference(direct.get(j)));
+        return RegistryEntryList.of(List.copyOf(copy));
+    }
+    /** tag rule的Named：再驗nativeNamed與blockTag，不符為UNSUPPORTED_ITEM_DEFAULT_COMPONENT；回傳同一個物件。 */
+    private static RegistryEntryList.Named<?> blockTagRule(Object blocks) {
+        if(!nativeNamed(blocks)||!blockTag((RegistryEntryList.Named<?>)blocks))
+            throw new Minecraft121SettingsGraph.Failure("UNSUPPORTED_ITEM_DEFAULT_COMPONENT");
+        return (RegistryEntryList.Named<?>)blocks;
+    }
+    /**
+     * direct rule：rules/i/blocks/j → BLOCK（j是direct list內的次序，與單一元素時encode成字串無關）；tag rule：rules/i/blocks → BLOCK tag
+     * （D1b-3c；Named本身，即tag字串在codec中的位置）。
+     */
+    private static void toolRefs(Object value,RefSink sink) {
         int i=0;
         for(var element:((ToolComponent)value).rules()) {
-            var blocks=exact(exact(element,ToolComponent.Rule.class).blocks(),RegistryEntryList.Direct.class);
-            for(int j=0;j<blocks.size();j++)sink.entry("rules/"+i+"/blocks/"+j,reference(blocks.get(j)));
+            var blocks=exact(element,ToolComponent.Rule.class).blocks();
+            if(nativeNamed(blocks))sink.tag("rules/"+i+"/blocks",blockTagRule(blocks));
+            else {
+                var direct=exact(blocks,RegistryEntryList.Direct.class);
+                for(int j=0;j<direct.size();j++)sink.entry("rules/"+i+"/blocks/"+j,reference(direct.get(j)));
+            }
             i++;
         }
     }
