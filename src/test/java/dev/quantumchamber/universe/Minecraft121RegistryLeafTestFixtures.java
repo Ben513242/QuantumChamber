@@ -17,7 +17,7 @@ import net.minecraft.registry.SimpleRegistry;
 
 /**
  * C1d-D1b static registry leaf測試共用的fixture組裝（LeafTest與Canon共用）：ROOT、BLOCK／ITEM／ATTRIBUTE／STATUS_EFFECT的REGISTRY
- * node key、ITEM leaf需要的lease registries、合成的單一item模板，以及canonical bytes的測試端讀取（canonicalNodes）。這裡只放fixture
+ * node key與BLOCK tag的TAG node key（D1b-3c）、ITEM leaf需要的lease registries、合成的單一item模板，以及canonical bytes的測試端讀取（canonicalNodes）。這裡只放fixture
  * 的組裝與讀取；預期值的helper（expectedBlockLeaf、expectedItemLeaf、literal）維持在各測試類別內各自獨立，才能保留oracle的獨立性。
  * 不引用ModBlocks／ModItems，也不寫入全域狀態（只讀全域static registry；局部registry都是新物件，不登記到Registries.REGISTRIES）。
  * singleItemTemplate讀SharedConstants.getGameVersion()，呼叫前須先SharedConstants.createGameVersion()（兩個測試類別都在@BeforeAll完成）。
@@ -40,6 +40,10 @@ final class Minecraft121RegistryLeafTestFixtures {
     }
     static Minecraft121SettingsGraph.Key effectNode(String id) {
         return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.REGISTRY,RegistryKeys.STATUS_EFFECT.getValue().toString(),id);
+    }
+    /** BLOCK tag的TAG node key（D1b-3c：tool tag rule的出邊目標）；id不含「#」。 */
+    static Minecraft121SettingsGraph.Key blockTagNode(String id) {
+        return new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.TAG,RegistryKeys.BLOCK.getValue().toString(),id);
     }
 
     record CanonicalEdge(Minecraft121SettingsGraph.Key from,String path,Minecraft121SettingsGraph.Key target,String aliasScope,String use) {}

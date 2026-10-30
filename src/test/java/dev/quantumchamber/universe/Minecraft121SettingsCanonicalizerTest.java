@@ -3,6 +3,7 @@ package dev.quantumchamber.universe;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.ROOT;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.attributeNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.blockNode;
+import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.blockTagNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.canonicalNodes;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.effectNode;
 import static dev.quantumchamber.universe.Minecraft121RegistryLeafTestFixtures.itemNode;
@@ -1883,6 +1884,349 @@ class Minecraft121SettingsCanonicalizerTest {
                             net.minecraft.registry.Registries.ATTRIBUTE.getEntryOwner(),armorKey);
                     rejects("REGISTRY_ENTRY_OWNER_MISMATCH",()->c.entry(ROOT,"foreign",foreign));
                     rejects("GRAPH_FAILED",g::finish);}));
+    }
+
+    // ===== C1d-D1b-3c：TAG node單次展開（設計§4.4、設計審查M6）與tool tag rule的closure閉合（T1、T2；設計§4.3） =====
+    /** 計數getAllResources的ResourceManager（每個TAG node的presence只讀一次RM，設計審查M6）；其他方法原樣委派。 */
+    private static final class CountingResources implements net.minecraft.resource.ResourceManager {
+        final java.util.Map<net.minecraft.util.Identifier,Integer> reads=new java.util.HashMap<>();
+        private final net.minecraft.resource.ResourceManager delegate;
+        CountingResources(net.minecraft.resource.ResourceManager delegate){this.delegate=delegate;}
+        @Override public java.util.Set<String> getAllNamespaces(){return delegate.getAllNamespaces();}
+        @Override public java.util.List<net.minecraft.resource.Resource> getAllResources(net.minecraft.util.Identifier id){
+            reads.merge(id,1,Integer::sum);return delegate.getAllResources(id);
+        }
+        @Override public java.util.Map<net.minecraft.util.Identifier,net.minecraft.resource.Resource> findResources(String startingPath,
+                java.util.function.Predicate<net.minecraft.util.Identifier> allowedPathPredicate){return delegate.findResources(startingPath,allowedPathPredicate);}
+        @Override public java.util.Map<net.minecraft.util.Identifier,java.util.List<net.minecraft.resource.Resource>> findAllResources(String startingPath,
+                java.util.function.Predicate<net.minecraft.util.Identifier> allowedPathPredicate){return delegate.findAllResources(startingPath,allowedPathPredicate);}
+        @Override public java.util.stream.Stream<net.minecraft.resource.ResourcePack> streamResourcePacks(){return delegate.streamResourcePacks();}
+        @Override public java.util.Optional<net.minecraft.resource.Resource> getResource(net.minecraft.util.Identifier id){return delegate.getResource(id);}
+    }
+    /** 只含root資料夾pack的RM。 */
+    private static net.minecraft.resource.LifecycledResourceManagerImpl directoryResources(java.nio.file.Path root) {
+        var info=new net.minecraft.resource.ResourcePackInfo("fixture",net.minecraft.text.Text.literal("fixture"),net.minecraft.resource.ResourcePackSource.NONE,
+                java.util.Optional.empty());
+        return new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,
+                java.util.List.of(new net.minecraft.resource.DirectoryResourcePack(info,root)));
+    }
+    /** tag檔在RM中的id（&lt;namespace&gt;:tags/&lt;registry&gt;/&lt;path&gt;.json，與closure的presence檢查相同的寫法）。 */
+    private static net.minecraft.util.Identifier tagSource(net.minecraft.registry.tag.TagKey<?> tag) {
+        return net.minecraft.util.Identifier.of(tag.id().getNamespace(),
+                net.minecraft.registry.RegistryKeys.getTagPath(tag.registry())+"/"+tag.id().getPath()+".json");
+    }
+    /** 在root下寫出tag檔；內容一律是空的values，只為通過presence檢查：成員由registry決定（closure信任registry，不讀JSON；設計§4.2 H-TAG）。 */
+    private static void writeTagFiles(java.nio.file.Path root,java.util.List<? extends net.minecraft.registry.tag.TagKey<?>> tags) throws java.io.IOException {
+        java.nio.file.Files.createDirectories(root);
+        for(var tag:tags) {
+            var source=tagSource(tag);var file=root.resolve("data/"+source.getNamespace()+"/"+source.getPath());
+            java.nio.file.Files.createDirectories(file.getParent());java.nio.file.Files.writeString(file,"{\"values\":[]}");
+        }
+    }
+    /** TAG node的payload字面值：Presence=PRESENT與依原生次序的成員id。 */
+    private static NbtCompound presentTagPayload(java.util.List<String> members) {
+        var payload=new NbtCompound();payload.putString("Presence","PRESENT");
+        var list=new NbtList();for(String member:members)list.add(NbtString.of(member));payload.put("Members",list);
+        return payload;
+    }
+    @Test void tagNodeExpandsMembersOnceAcrossOccurrences(@org.junit.jupiter.api.io.TempDir java.nio.file.Path temp) throws Exception {
+        // 設計§4.4與設計審查M6（controller C7）：同一個TAG node被多條occurrence引用時，presence只讀一次RM，payload與成員邊只產生一次；
+        // 每條occurrence的邊都保留，之後的occurrence只檢查!required||present。局部noise registry（populateTags只改該局部物件），不碰全域。
+        // 預期圖由測試端獨立組出：ROOT兩條（optional與required各一）、TAG payload一次、成員邊各一條。修正前每條occurrence都重新展開：
+        // 成員邊倍增、RM讀兩次（RED）。production目前沒有其他tag caller，既有測試每個tag都只有一條occurrence，所以既有bytes不變。
+        var key=net.minecraft.registry.tag.TagKey.of(net.minecraft.registry.RegistryKeys.NOISE_PARAMETERS,net.minecraft.util.Identifier.of("minecraft","a"));
+        var present=temp.resolve("present");writeTagFiles(present,java.util.List.of(key));
+        try(var rm=directoryResources(present);
+                var empty=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,java.util.List.of())) {
+            var r=noiseRegistry();var a=r.getEntry(noiseKey("a")).orElseThrow();var b=r.getEntry(noiseKey("b")).orElseThrow();
+            r.populateTags(java.util.Map.of(key,java.util.List.of(a,b)));
+            var counting=new CountingResources(rm);var manager=new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(r));
+            var g=graph();var c=new Minecraft121RegistryClosure(g,manager,counting);
+            c.tag(ROOT,"first",key,false);c.tag(ROOT,"second",key,true);c.drain();
+            var actual=g.finish();
+            var tag=new Minecraft121SettingsGraph.Key(Minecraft121SettingsGraph.Kind.TAG,"minecraft:worldgen/noise","minecraft:a");
+            var na=nativeNode(noiseKey("a"));var nb=nativeNode(noiseKey("b"));var ops=manager.getOps(NbtOps.INSTANCE);
+            var expected=graph();
+            expected.payload(tag,presentTagPayload(java.util.List.of("minecraft:a","minecraft:b")));
+            expected.payload(na,net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters.CODEC.encodeStart(ops,a.value()).getOrThrow());
+            expected.payload(nb,net.minecraft.util.math.noise.DoublePerlinNoiseSampler.NoiseParameters.CODEC.encodeStart(ops,b.value()).getOrThrow());
+            expected.expanded(expected.reference(ROOT,"first",tag,"ordinary","optional-tag"));
+            expected.expanded(expected.reference(ROOT,"second",tag,"ordinary","required-tag"));
+            expected.expanded(expected.reference(tag,"members/0",na,"ordinary","ordered-tag-member"));
+            expected.expanded(expected.reference(tag,"members/1",nb,"ordinary","ordered-tag-member"));
+            var edges=canonicalNodes(actual).edges();
+            // 缺檔：optional在前、required在後。presence只讀一次；required的occurrence照樣以REQUIRED_TAG_MISSING拒（行為不變）。
+            var absentReads=new CountingResources(empty);var h=graph();
+            var d=new Minecraft121RegistryClosure(h,new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of(noiseRegistry())),absentReads);
+            d.tag(ROOT,"optional",key,false);d.tag(ROOT,"required",key,true);
+            var absentFailure=assertThrows(Minecraft121SettingsGraph.Failure.class,d::drain);
+            assertAll(
+                    ()->assertEquals(2,edges.stream().filter(e->e.from().equals(ROOT)).count(),"ROOT的兩條occurrence邊都保留"),
+                    ()->assertEquals(2,edges.stream().filter(e->e.from().equals(tag)).count(),"成員邊只產生一次（不隨occurrence倍增）"),
+                    ()->assertEquals(java.util.Map.of(tagSource(key),1),counting.reads,"presence每個TAG node只讀一次RM"),
+                    ()->assertArrayEquals(expected.finish(),actual,"等於獨立組出的圖"),
+                    ()->assertAll("subcase=缺檔（optional在前、required在後）",
+                            ()->assertEquals("REQUIRED_TAG_MISSING",absentFailure.getMessage()),
+                            ()->assertEquals(java.util.Map.of(tagSource(key),1),absentReads.reads,"缺檔時presence也只讀一次"),
+                            ()->rejects("GRAPH_FAILED",h::finish)));
+        }
+    }
+
+    private static net.minecraft.registry.tag.TagKey<net.minecraft.block.Block> blockTagKey(String id) {
+        return net.minecraft.registry.tag.TagKey.of(net.minecraft.registry.RegistryKeys.BLOCK,net.minecraft.util.Identifier.of(id));
+    }
+    /**
+     * 測試端獨立算出、帶tool tag rule的ITEM leaf：DefaultComponents以另一個新建manager的static ops編碼（tag rule要RegistryOps才寫成
+     * 「#」tag字串；plain NbtOps會改寫成Named當下的成員清單），vanilla item的RequiredFeatures直接寫成["minecraft:vanilla"]。
+     */
+    private static NbtCompound expectedToolItemLeaf(net.minecraft.item.Item item) {
+        var leaf=new NbtCompound();leaf.putString("Contract",ITEM_LEAF_CONTRACT);
+        var ops=net.minecraft.registry.DynamicRegistryManager.of(net.minecraft.registry.Registries.REGISTRIES).getOps(NbtOps.INSTANCE);
+        leaf.put("DefaultComponents",net.minecraft.component.ComponentMap.CODEC.encodeStart(ops,item.getComponents()).getOrThrow());
+        var features=new NbtList();features.add(NbtString.of("minecraft:vanilla"));leaf.put("RequiredFeatures",features);
+        return leaf;
+    }
+    /** 預期圖上一條ITEM leaf的tag出邊：from為該ITEM node，scope ordinary，use required-tag（tool的tag是required，controller C8）。 */
+    private static void itemTagEdge(Minecraft121SettingsGraph graph,String from,String path,String tag) {
+        graph.expanded(graph.reference(itemNode(from),path,blockTagNode(tag),"ordinary","required-tag"));
+    }
+    @Test void itemLeafToolTagRuleRequiresTagSource() {
+        // controller C8：tool的tag是required（原生parse時tag必須已在registry；vanilla的tag檔一定存在，fail closed的方向安全）。RM沒有tag檔時
+        // 以REQUIRED_TAG_MISSING拒，graph失效。
+        var g=graph();var c=itemClosure(g,withItemLeafRegistries());c.reference(ROOT,"pickaxe",itemKey("minecraft:iron_pickaxe"));
+        rejects("REQUIRED_TAG_MISSING",c::drain);rejects("GRAPH_FAILED",g::finish);
+    }
+    @Test void itemLeafToolTagClosureWithoutPopulateIsVacuousLowerBound(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        // 設計§4.2 H-TAG與§4.3 T1-4：文件化的危險見證，不是正例。RM有tag檔、全域BLOCK tag未populate（JUnit）時，closure照樣閉合：TAG node
+        // 是Presence=PRESENT、Members=[]，與「真的空tag」分不出來（1.21的Named沒有已載入旗標）。所以JUnit中任何帶tag的真資料閉包都只能當
+        // 成員的空集合下界，不能當成員閉合的證明；production的正確性靠8B3證明context在tag binding之後才發布。成員閉合的正例見T2視窗。
+        var incorrect=blockTagKey("minecraft:incorrect_for_iron_tool");var pickaxe=blockTagKey("minecraft:mineable/pickaxe");
+        writeTagFiles(root,java.util.List.of(incorrect,pickaxe));
+        for(var tag:java.util.List.of(incorrect,pickaxe))
+            assertEquals(0,net.minecraft.registry.Registries.BLOCK.getEntryList(tag).orElseThrow().size(),"fixture前提：全域tag未populate");
+        try(var rm=directoryResources(root)) {
+            var g=graph();var c=new Minecraft121RegistryClosure(g,withItemLeafRegistries(),rm);
+            c.reference(ROOT,"pickaxe",itemKey("minecraft:iron_pickaxe"));c.drain();
+            var expected=graph();String id="minecraft:iron_pickaxe";
+            expected.payload(itemNode(id),expectedToolItemLeaf(net.minecraft.item.Items.IRON_PICKAXE));
+            for(String attribute:java.util.List.of("minecraft:generic.attack_damage","minecraft:generic.attack_speed"))
+                expected.payload(attributeNode(attribute),expectedAttributeLeaf());
+            for(var tag:java.util.List.of(incorrect,pickaxe))expected.payload(blockTagNode(tag.id().toString()),presentTagPayload(java.util.List.of()));
+            expected.expanded(expected.reference(ROOT,"pickaxe",itemNode(id),"ordinary","required"));
+            itemEdge(expected,id,"components/minecraft:attribute_modifiers/modifiers/0/type",attributeNode("minecraft:generic.attack_damage"));
+            itemEdge(expected,id,"components/minecraft:attribute_modifiers/modifiers/1/type",attributeNode("minecraft:generic.attack_speed"));
+            itemTagEdge(expected,id,"components/minecraft:tool/rules/0/blocks","minecraft:incorrect_for_iron_tool");
+            itemTagEdge(expected,id,"components/minecraft:tool/rules/1/blocks","minecraft:mineable/pickaxe");
+            assertArrayEquals(expected.finish(),g.finish(),"H-TAG：PRESENT且Members=[]（空集合下界，不是成員閉合的證明）");
+        }
+    }
+
+    /** T2視窗前後比對的全域BLOCK tag狀態：每個既有TagKey的Named，以及每個Named.entries與每個Reference.tags欄位的物件（反射唯讀）。 */
+    private record BlockTagState(java.util.Map<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
+            net.minecraft.registry.entry.RegistryEntryList.Named<net.minecraft.block.Block>> named,java.util.IdentityHashMap<Object,Object> fields) {}
+    private static BlockTagState blockTagState() throws Exception {
+        var named=new java.util.LinkedHashMap<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
+                net.minecraft.registry.entry.RegistryEntryList.Named<net.minecraft.block.Block>>();
+        var fields=new java.util.IdentityHashMap<Object,Object>();
+        for(var pair:(Iterable<com.mojang.datafixers.util.Pair<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
+                net.minecraft.registry.entry.RegistryEntryList.Named<net.minecraft.block.Block>>>)net.minecraft.registry.Registries.BLOCK.streamTagsAndEntries()::iterator) {
+            assertNull(named.put(pair.getFirst(),pair.getSecond()),"tag key重複："+pair.getFirst());
+            fields.put(pair.getSecond(),nativeField(pair.getSecond(),"entries").get(pair.getSecond()));
+        }
+        for(var entry:(Iterable<net.minecraft.registry.entry.RegistryEntry.Reference<net.minecraft.block.Block>>)
+                net.minecraft.registry.Registries.BLOCK.streamEntries()::iterator)fields.put(entry,nativeField(entry,"tags").get(entry));
+        return new BlockTagState(named,fields);
+    }
+    /** P2：每個Named都沒有成員且entries是JDK的List.of()單例，每個Reference.tags是Set.of()單例。 */
+    private static void requireEmptyGlobalBlockTags(BlockTagState state,String when) {
+        var nonEmpty=new java.util.ArrayList<String>();
+        for(var entry:state.named().entrySet())
+            if(state.fields().get(entry.getValue())!=java.util.List.of()||entry.getValue().size()!=0)nonEmpty.add("#"+entry.getKey().id());
+        long tagged=state.fields().entrySet().stream().filter(e->e.getKey() instanceof net.minecraft.registry.entry.RegistryEntry.Reference<?>
+                &&e.getValue()!=java.util.Set.of()).count();
+        assertTrue(nonEmpty.isEmpty()&&tagged==0,when+"：全域BLOCK tag須全部為空（每個Named.entries與每個Reference.tags都是JDK的空集合單例）；"
+                +"nonEmptyTags="+nonEmpty+" taggedReferences="+tagged+"。這表示前序測試留下了全域tag狀態，T2不得在此狀態下populate"
+                +"（設計§4.3 T2前提P2；setup失敗，不是RED，改用T3）");
+    }
+    /** P3：單執行緒（build.gradle的test沒有平行設定、repo沒有junit-platform.properties），且沒有仍在執行的worldgen worker（設計審查M7）。 */
+    private static void requireNoConcurrentWorldgen() {
+        var busy=new java.util.ArrayList<String>();
+        for(var thread:Thread.getAllStackTraces().keySet()) {
+            if(thread==Thread.currentThread()||!thread.isAlive())continue;
+            String name=thread.getName();
+            if(name.startsWith("H6TemplateCache-")||name.startsWith("Worker-Main-")&&thread.getState()==Thread.State.RUNNABLE)
+                busy.add(name+"("+thread.getState()+")");
+        }
+        assertEquals(java.util.List.of(),busy,"T2前提P3：先前測試不得留下仍在執行的worldgen worker（設計審查M7；setup失敗，不是RED）");
+    }
+    @FunctionalInterface private interface WindowBody<T> {T run() throws Exception;}
+    /**
+     * D1b-3設計§4.3 T2（controller C6，設計審查M7）：可證明還原的全域BLOCK tag populate視窗。宿主是本類（Canon）：LeafTest的類別契約是
+     * 「不populate tag」，維持不變。條件：
+     * <ul>
+     * <li>P1：要populate的TagKey都已在全域BLOCK registry（只用既有key：populateTags對不存在的key會以computeIfAbsent新增Named）。</li>
+     * <li>P2：開始前全部BLOCK tag為空：每個Named.entries是JDK的List.of()單例、每個Reference.tags是Set.of()單例（反射唯讀）。</li>
+     * <li>P3：單執行緒，且沒有仍在執行的worldgen worker（requireNoConcurrentWorldgen）。</li>
+     * <li>body只做closure的drain／finish：不建立ItemStack、不呼叫isIn（tool item沒有food，不會解碼using_converts_to的ItemStack）。</li>
+     * <li>finally一律呼叫clearTags()；finally之後的後置斷言：key集合與每個key的Named都與快照相同（assertSame），每個Named.entries與
+     * Reference.tags都回到快照中的同一個JDK空集合單例（javap：clearTags以copyOf(List.of())與setTags(Set.of())寫回，JDK的List.copyOf／
+     * Set.copyOf對空的不可變集合回傳單例本身）。</li>
+     * </ul>
+     * P1、P2、P3任一不成立都是setup失敗（不是RED，也不跳過）。唯一殘留：populateTags把tagToEntryList換成內容相同的新IdentityHashMap
+     * （clearTags不換回）。只有依賴它的迭代次序（streamTags／streamTagsAndEntries）或以反射讀map物件才觀察得到；src/main、src/test、
+     * src/testmod都沒有這種使用者（populateTags／clearTags／streamTags只出現在本類，且其他呼叫都是對局部registry），Fabric 0.102.0的
+     * mixin也不以populateTags／clearTags為目標（設計§4.1）。
+     */
+    private static <T> T inPopulatedBlockTagWindow(java.util.Map<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
+            java.util.List<net.minecraft.registry.entry.RegistryEntry<net.minecraft.block.Block>>> tags,WindowBody<T> body) throws Exception {
+        requireNoConcurrentWorldgen();
+        var before=blockTagState();
+        for(var key:tags.keySet())assertTrue(before.named().containsKey(key),"T2前提P1：TagKey "+key.id()+"不在全域BLOCK registry；只能populate既有key"
+                +"（populateTags以computeIfAbsent建立不存在的key，會留下新的Named；setup失敗，不是RED）");
+        requireEmptyGlobalBlockTags(before,"T2前提P2");
+        T result;
+        try {
+            net.minecraft.registry.Registries.BLOCK.populateTags(tags);
+            result=body.run();
+        } finally {
+            net.minecraft.registry.Registries.BLOCK.clearTags();
+        }
+        var after=blockTagState();
+        assertAll("T2後置斷言（finally之後）",
+                ()->assertEquals(before.named().keySet(),after.named().keySet(),"key集合與快照相同"),
+                ()->{for(var e:before.named().entrySet())assertSame(e.getValue(),after.named().get(e.getKey()),"#"+e.getKey().id()+"的Named與快照是同一物件");},
+                ()->assertEquals(before.fields().size(),after.fields().size(),"Named與Reference的數量不變"),
+                ()->{long changed=before.fields().entrySet().stream().filter(e->after.fields().get(e.getKey())!=e.getValue()).count();
+                    assertEquals(0,changed,"每個Named.entries與Reference.tags都回到快照中的同一物件");},
+                ()->requireEmptyGlobalBlockTags(after,"T2後置斷言"));
+        return result;
+    }
+    /** 依id組出populate的成員（全域BLOCK的Reference，依給定次序）。 */
+    private static java.util.Map<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
+            java.util.List<net.minecraft.registry.entry.RegistryEntry<net.minecraft.block.Block>>> blockTagMembers(java.util.Map<String,java.util.List<String>> members) {
+        var tags=new java.util.LinkedHashMap<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
+                java.util.List<net.minecraft.registry.entry.RegistryEntry<net.minecraft.block.Block>>>();
+        for(var e:members.entrySet()) {
+            var entries=new java.util.ArrayList<net.minecraft.registry.entry.RegistryEntry<net.minecraft.block.Block>>();
+            for(String id:e.getValue())entries.add(net.minecraft.registry.Registries.BLOCK.getEntry(blockKey(id)).orElseThrow());
+            tags.put(blockTagKey(e.getKey()),java.util.List.copyOf(entries));
+        }
+        return tags;
+    }
+    private static final java.util.List<String> IRON_TOOLS=java.util.List.of("minecraft:iron_pickaxe","minecraft:iron_axe");
+    /** iron_pickaxe與iron_axe各一條ROOT引用的closure（RM只提供presence）。 */
+    private static byte[] closeIronTools(net.minecraft.resource.ResourceManager resources) {
+        var g=graph();var c=new Minecraft121RegistryClosure(g,withItemLeafRegistries(),resources);
+        for(String id:IRON_TOOLS)c.reference(ROOT,id,itemKey(id));
+        c.drain();return g.finish();
+    }
+    /** closeIronTools的預期圖（測試端獨立組出）：members是三個tag依原生次序的成員id。 */
+    private static byte[] expectedIronToolsGraph(java.util.Map<String,java.util.List<String>> members) {
+        var tags=java.util.Map.of("minecraft:iron_pickaxe",java.util.List.of("minecraft:incorrect_for_iron_tool","minecraft:mineable/pickaxe"),
+                "minecraft:iron_axe",java.util.List.of("minecraft:incorrect_for_iron_tool","minecraft:mineable/axe"));
+        var expected=graph();
+        for(String id:IRON_TOOLS)expected.payload(itemNode(id),expectedToolItemLeaf(net.minecraft.registry.Registries.ITEM.get(net.minecraft.util.Identifier.of(id))));
+        for(String attribute:java.util.List.of("minecraft:generic.attack_damage","minecraft:generic.attack_speed"))expected.payload(attributeNode(attribute),expectedAttributeLeaf());
+        for(var e:members.entrySet()) {
+            expected.payload(blockTagNode(e.getKey()),presentTagPayload(e.getValue()));
+            for(String block:e.getValue())expected.payload(blockNode(block),expectedBlockLeaf(net.minecraft.registry.Registries.BLOCK.get(net.minecraft.util.Identifier.of(block))));
+        }
+        String modifiers="components/minecraft:attribute_modifiers/modifiers/",rules="components/minecraft:tool/rules/";
+        for(String id:IRON_TOOLS) {
+            expected.expanded(expected.reference(ROOT,id,itemNode(id),"ordinary","required"));
+            itemEdge(expected,id,modifiers+"0/type",attributeNode("minecraft:generic.attack_damage"));
+            itemEdge(expected,id,modifiers+"1/type",attributeNode("minecraft:generic.attack_speed"));
+            for(int i=0;i<2;i++)itemTagEdge(expected,id,rules+i+"/blocks",tags.get(id).get(i));
+        }
+        for(var e:members.entrySet())for(int i=0;i<e.getValue().size();i++)
+            expected.expanded(expected.reference(blockTagNode(e.getKey()),"members/"+i,blockNode(e.getValue().get(i)),"ordinary","ordered-tag-member"));
+        return expected.finish();
+    }
+    @Test void toolTagMembersCloseInNativeOrderInsidePopulateWindow(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        // 設計§3.1的3c列與§4.3 T2（controller C6）：可還原的全域populate視窗內的端到端正例。iron_pickaxe與iron_axe共用
+        // #incorrect_for_iron_tool：TAG node單次展開時，它的成員邊只有一份（不隨兩條occurrence倍增）。BLOCK tag的成員依populate的原生次序
+        // 成為TAG payload的Members與members/i邊，指向各自的BLOCK leaf；換次序則bytes改變。預期圖由測試端獨立組出（ITEM payload以另一個
+        // 新建manager的static ops編碼，BLOCK與ATTRIBUTE leaf寫成字面值），在視窗外先算好。視窗外先以同一條closure路徑暖機一次（不populate，
+        // 結果不斷言；設計§4.3 T2時序1）。RM的tag檔內容是空的values，成員只由populate決定（H-TAG：closure信任registry，不讀JSON）。
+        String incorrect="minecraft:incorrect_for_iron_tool",pickaxe="minecraft:mineable/pickaxe",axe="minecraft:mineable/axe";
+        writeTagFiles(root,java.util.List.of(blockTagKey(incorrect),blockTagKey(pickaxe),blockTagKey(axe)));
+        var orderA=new java.util.LinkedHashMap<String,java.util.List<String>>();
+        orderA.put(incorrect,java.util.List.of("minecraft:obsidian","minecraft:diamond_ore"));
+        orderA.put(pickaxe,java.util.List.of("minecraft:stone","minecraft:granite"));orderA.put(axe,java.util.List.of("minecraft:oak_log"));
+        var orderB=new java.util.LinkedHashMap<String,java.util.List<String>>();
+        for(var e:orderA.entrySet())orderB.put(e.getKey(),e.getValue().reversed());
+        try(var rm=directoryResources(root)) {
+            closeIronTools(rm);
+            var expectedA=expectedIronToolsGraph(orderA);var expectedB=expectedIronToolsGraph(orderB);
+            assertFalse(Arrays.equals(expectedA,expectedB),"fixture前提：兩種次序的預期bytes不同");
+            byte[] a=inPopulatedBlockTagWindow(blockTagMembers(orderA),()->closeIronTools(rm));
+            byte[] b=inPopulatedBlockTagWindow(blockTagMembers(orderB),()->closeIronTools(rm));
+            var edges=canonicalNodes(a).edges();
+            assertAll(
+                    ()->assertArrayEquals(expectedA,a,"次序A：成員依populate次序成為BLOCK leaf，等於獨立組出的圖"),
+                    ()->assertArrayEquals(expectedB,b,"次序B（逆序）：等於獨立組出的圖"),
+                    ()->assertFalse(Arrays.equals(a,b),"換次序則bytes改變"),
+                    ()->assertEquals(2,edges.stream().filter(e->e.target().equals(blockTagNode(incorrect))).count(),"兩把工具各一條指向共用tag的邊"),
+                    ()->assertEquals(2,edges.stream().filter(e->e.from().equals(blockTagNode(incorrect))).count(),"共用tag的成員邊只有一份"));
+        }
+    }
+    @Test void toolTagClosureWithVanillaMembersCostDiagnostic() throws Exception {
+        // 設計§6.3：「3c的T2視窗內可以另量一次含tag成員的值。只作診斷，不斷言。」不gating：closure的Failure只記碼，不斷言數量或時間，
+        // 也不用Assumptions跳過；只有T2視窗本身的前置與還原斷言會失敗。對全部帶tool tag rule的minecraft item（測試端以getTagKey選出），
+        // 先在視窗外量一次未populate的下界（H-TAG：Members=[]），再在視窗內populate這些item用到的既有tag key（成員以TagGroupLoader從vanilla
+        // 預設資料包解出，原生次序），量冷暖兩輪。occurrenceWeightedMemberEdges是「每條ITEM→TAG occurrence都展開一次」時的成員邊數
+        // （Σ該occurrence指向的tag的成員數），對照實際的tagMemberEdges（每個TAG node只展開一次）。
+        var items=new java.util.ArrayList<net.minecraft.registry.RegistryKey<net.minecraft.item.Item>>();
+        var used=new java.util.TreeMap<String,net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>>();
+        for(var entry:(Iterable<net.minecraft.registry.entry.RegistryEntry.Reference<net.minecraft.item.Item>>)net.minecraft.registry.Registries.ITEM.streamEntries()::iterator) {
+            if(!entry.registryKey().getValue().getNamespace().equals("minecraft"))continue;
+            var tool=entry.value().getComponents().get(net.minecraft.component.DataComponentTypes.TOOL);
+            if(tool==null)continue;boolean tagged=false;
+            for(var rule:tool.rules())if(rule.blocks().getTagKey().isPresent()){tagged=true;var tag=rule.blocks().getTagKey().get();used.put(tag.id().toString(),tag);}
+            if(tagged)items.add(entry.registryKey());
+        }
+        try(var rm=new net.minecraft.resource.LifecycledResourceManagerImpl(net.minecraft.resource.ResourceType.SERVER_DATA,
+                java.util.List.of(net.minecraft.resource.VanillaDataPackProvider.createDefaultPack()))) {
+            var loader=new net.minecraft.registry.tag.TagGroupLoader<net.minecraft.registry.entry.RegistryEntry<net.minecraft.block.Block>>(
+                    id->net.minecraft.registry.Registries.BLOCK.getEntry(net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.BLOCK,id)).map(x->x),
+                    net.minecraft.registry.RegistryKeys.getTagPath(net.minecraft.registry.RegistryKeys.BLOCK));
+            var loaded=loader.load(rm);
+            var populate=new java.util.LinkedHashMap<net.minecraft.registry.tag.TagKey<net.minecraft.block.Block>,
+                    java.util.List<net.minecraft.registry.entry.RegistryEntry<net.minecraft.block.Block>>>();
+            var memberCounts=new java.util.TreeMap<String,Integer>();
+            for(var tag:used.values()) {
+                var members=java.util.Objects.requireNonNull(loaded.get(tag.id()),"vanilla資料包沒有tag "+tag.id());
+                populate.put(tag,java.util.List.copyOf(members));memberCounts.put("#"+tag.id(),members.size());
+            }
+            java.util.function.Function<String,String> measure=pass->{
+                String code="ACCEPTED";byte[] finished=null;long start=System.nanoTime();
+                try {
+                    var g=graph();var c=new Minecraft121RegistryClosure(g,withItemLeafRegistries(),rm);
+                    for(int i=0;i<items.size();i++)c.reference(ROOT,"items/"+i,items.get(i));
+                    c.drain();finished=g.finish();
+                } catch(Minecraft121SettingsGraph.Failure failure){code=failure.getMessage();}
+                long elapsed=System.nanoTime()-start;
+                String stats="nodes=NA edges=NA";
+                if(finished!=null) {
+                    var canonical=canonicalNodes(finished);var outFromTag=new java.util.HashMap<Minecraft121SettingsGraph.Key,Integer>();
+                    for(var e:canonical.edges())if(e.from().kind()==Minecraft121SettingsGraph.Kind.TAG)outFromTag.merge(e.from(),1,Integer::sum);
+                    long itemToTag=0,weighted=0;
+                    for(var e:canonical.edges())if(e.from().kind()==Minecraft121SettingsGraph.Kind.REGISTRY&&e.target().kind()==Minecraft121SettingsGraph.Kind.TAG){
+                        itemToTag++;weighted+=outFromTag.getOrDefault(e.target(),0);}
+                    long blocks=canonical.nodes().keySet().stream().filter(k->k.kind()==Minecraft121SettingsGraph.Kind.REGISTRY&&k.registry().equals("minecraft:block")).count();
+                    long tagNodes=canonical.nodes().keySet().stream().filter(k->k.kind()==Minecraft121SettingsGraph.Kind.TAG).count();
+                    stats="nodes="+canonical.nodes().size()+" edges="+canonical.edges().size()+" tagNodes="+tagNodes+" itemToTagEdges="+itemToTag
+                            +" tagMemberEdges="+outFromTag.values().stream().mapToInt(Integer::intValue).sum()+" occurrenceWeightedMemberEdges="+weighted
+                            +" blockNodes="+blocks+" canonicalBytes="+finished.length;
+                }
+                return "D1B3C_TOOL_TAG_CLOSURE_COST pass="+pass+" items="+items.size()+" usedTags="+used.size()+" "+stats+" result="+code+" ns="+elapsed;
+            };
+            System.out.println(measure.apply("unpopulated-lower-bound"));
+            var lines=inPopulatedBlockTagWindow(populate,()->java.util.List.of(measure.apply("populated-cold"),measure.apply("populated-warm")));
+            lines.forEach(System.out::println);
+            System.out.println("D1B3C_TOOL_TAG_MEMBERS "+memberCounts+" total="+memberCounts.values().stream().mapToInt(Integer::intValue).sum()
+                    +" source=vanilla-default-pack-TagGroupLoader");
+        }
     }
 
 }
