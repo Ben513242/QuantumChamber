@@ -49,7 +49,7 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 **最小 lifecycle**：
 
 - mod init：註冊內建 provider → freeze metadata → 以固定 Fabric lifecycle 事件接 `Minecraft121SettingsContexts` 的 `publishInitial`／`reloadStarted`／`reloadFinished`／`stop`，早於 journal／M5 authority 第一次需要 resolve。發布時點仍須以實際生命週期證據釘選，不靠 listener 註冊順序猜。
-- 一個 M6 GameTest scenario：自然 startup 後 `acquire` 成功、registries identity、`createSnapshot`／`resolve`；**不做真 reload**，因為 retained 的 S1a observer 會把同 server 任何 reload 記為 `UNEXPECTED_RELOAD`。reload／STOPPING 接線由 lifecycle JUnit（可注入 registrar seam 核四個 Fabric 事件的註冊與委派）加 mutation 守；真 server reload、多 inflight、controlled future 失敗、off-thread 交錯、refresh seal、source bridge 都歸 8-H。
+- 一個 M6 GameTest scenario：自然 startup 後 `acquire` 成功、registries identity、`createSnapshot`／`resolve`；**不做真 reload**，因為 retained 的 S1a observer 會把同 server 任何 reload 記為 `UNEXPECTED_RELOAD`。reload／STOPPING 接線由 lifecycle JUnit（可注入 registrar seam 核四個 Fabric 事件的註冊、假 Sources factory 核委派）加 mutation 守；真 server reload、多 inflight、controlled future 失敗、off-thread 交錯、refresh seal、source bridge 都歸 8-H。
 - 不新增三 bundle oracle；CI 仍是現有 Ubuntu `build`／Windows `windows-native` 雙 job。
 
 **8-core 完成門檻**：同 plan 每批協定：候選 compile → 具名 RED → GREEN → mutation-only＋REVERT → 乾淨同 pin 雙 focused → 完整 run-all 自然 `END ALL exit=0` → fresh spec／quality 各 C0/I0 → docs truth → 正常 push → 雙平台 CI success。全部通過才進 Task 9。
