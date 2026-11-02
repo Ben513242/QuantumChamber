@@ -8,7 +8,9 @@
 
 **Tech Stack:** Minecraft 1.21、Yarn `1.21+build.9`、Fabric Loader `0.17.2`、Fabric API `0.102.0+1.21`、Loom `1.7.4`、Java 21、Gradle 8.8、PowerShell 7；JUnit／Fabric GameTest／跨 JVM probe。
 
-**Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`）。
+**Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`；v1.4 依使用者 2026-11-02 裁示縮 Task 8 範圍，草案待獨立 review，採用後在此補 SHA）。
+
+狀態（2026-11-02 使用者裁示縮 Task 8 範圍）：使用者原話「我想先裁示縮 Task 8 範圍，至少本模組功能都完成後才修必須的任務切片」。Task 8 自本版拆為 8C（Task 8-core，見 Task 8 第一個小節）與 8-H（原 8A／8B1／8B2／8B3 未完成部分，歷史原文保留）；8C 通過即可進 Task 9，8-H 在 Task 21 之後 triage，只做裁示為必須者，其餘明確 waiver。接手入口 `docs/handoffs/2026-11-02-m6-codex-resume-prompt.md`。撰寫時 feature local／origin `d8c5897309fa21cf99598e1bb2f1cd05e8ace803`（純 docs）。所有 retained FAIL 原判不變；下方 2026-10-31 以後各筆為歷史。
 
 狀態（2026-10-31 Codex 收尾交接）：feature local／origin `d5004398c1bb9e502c75650f3d5095c3e329c443`，S1a code pin `96cc6c3ba2cac4d8806684e1443de0e9335d9590` 僅一次自然成功 TestServer startup seal；GitHub Build run `41145800231` 同 SHA Ubuntu／Windows雙job success，但遠端未執行 S1A_ORACLE、非8B3-F三bundle。S1b-0 v2、integrated新RM兩份唯讀提案尚未獨審，實作／fault native仍STOP；正式source/consumer、D1c LOOT_TABLE、100ms live hold、Task8→Task9及後續未放行。新接手入口 `docs/handoffs/2026-10-31-m6-codex-resume-prompt.md`；LT2 STOP-PENDING及舊FAIL原判不變。
 
@@ -43,7 +45,7 @@
 | --- | --- |
 | 同一 `AllocationToken` 的 catalog atomic move 已落地但讀回失敗 | Task 10 `m6CatalogReadbackAfterMoveKeepsSameSeedAndUuid`，cross-JVM `catalog-readback` |
 | frozen seed 不變但 migrated legacy Overworld 的 normal／amplified 設定被外改 | Task 15 `migratedLegacyRejectsChangedLiveGenerator`，雙向 cross-JVM `legacy-preset-change` |
-| provider 同 id/version 輸出變更或已卸載 | Task 8 `snapshotRejectsChangedProvider`、Task 9 `journalRejectsMissingProvider` |
+| provider 同 id/version 輸出變更或已卸載 | Task 8C `resolveRejectsFingerprintMismatch`、`resolveRejectsUnknownProviderOrVersion`（`SHALLOW_V1` 深度，見 spec §3.1.3 已知限制）、Task 9 `journalRejectsMissingProvider`；完整閉包深度的 `snapshotRejectsChangedProvider` 屬 Task 8-H |
 | 多世界 End dragon/gateway state 共用或覆寫 canonical | Task 16 `endStateIsPerUniverse`、Task 19 `gatewayKeepsOwnEnd` |
 | custom Nether／End 玩家重啟登入或死亡退回 canonical | Task 17 `loginMaterializesExactRoleBeforeLookup`、Task 20 `invalidAnchorFallsBackWithinUniverse` |
 
@@ -180,7 +182,9 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 
 **結果（2026-10-25）：** range71f51f7..245051e；原0f診斷RED/雙GREEN及ca76完整回歸保留歷史。quality I-1由245051e修正，安全RED/同clean雙focused/新full efbd通過；fresh scoped spec與quality均I-1 ADDRESSED、無新增C/I。Task7完成，詳M6 note；獨立seed尚待Task11/12。
 
-### Task 8：完整設定資料 snapshot、provider 與 context
+### Task 8：設定資料 snapshot、provider 與 context（v1.4 拆為 8C 與 8-H）
+
+**v1.4（2026-11-02）**：依使用者裁示，Task 8 拆為 **8C（Task 8-core）** 與 **8-H（延後）**。8C 見下方第一個小節；8A／8B1／8B2／8B3 原文自此歸 8-H，保留為歷史與未完成清單，不刪改。下一段原「Task8整體完成前不進Task9」「三bundle任一缺失／不符不得結Task8或進Task9」自 v1.4 起只約束 8-H，改為「8C 完成門檻通過即進 Task 9」。
 
 本task分為8A與8B1–8B3有依賴的風險批次；不是用改名省略門檻。8A為原生探索／方案 gate，沒有production。8B1–8B3各有candidate compile、真RED、同clean雙focused、完整run-all與全新spec/quality；C/I未關不進下一批。8B3 final code的完整full同時作Task8終局，沒有程式差異時不另為結果文件重跑同一full。Task8整體完成前不進Task9。8A的資料closure／budget／cold-restart與native review通過，只允許進入8B正式實作；放行紀錄須明列跨mapping／平台runtime尚未驗。該runtime比較在8B3用正式canonicalizer、共用testmod fixture與exact artifact oracle完成；三bundle任一缺失／不符不得結Task8或進Task9，不以靜態格式審核冒稱跨runtime實跑。
 
@@ -193,6 +197,36 @@ Task6完成（code e077；fresh spec/quality均C0/I0/M2；同pin五focused與新
 **外部oracle owner（7檔＋workflow）：** Create scripts/verification/m6-settings-receipt-check.ps1、m6-settings-mapping-probe.ps1、m6-settings-compare.ps1；Modify scripts/verification/gates.ps1、m6-ci-gametest.ps1、run-all.ps1、ci-rule-check.ps1、.github/workflows/build.yml。Receipt/local/CI/full用同一strict validator；mapping wrapper只管production runtime／artifact／owned root；compare只讀三bundle逐byte核對。既有scope動態掃m6_universe，不新增固定class清單。另Modify build.gradle：gameTestM6的receipt root／startup nonce／expected head／expected coverage mode完整properties配對轉發；新增m6SettingsTestmodJar、remapM6SettingsTestmodJar及準備production runtime/依賴/namespace manifest所需的限定task。testmod JAR只包含sourceSets.testmod.output，remap named→intermediary，不nested main或依賴；放build/m6-settings-artifacts，不入build/libs。release／sources JAR與build/libs恰兩JAR的既有隔離oracle不變。只借用固定版本已核的官方server／Loader／production Fabric API、完整mapping及相依性；所有實際載入JAR（含預先產生的intermediary game cache）必在launch前存在並hash，不能用launch後生成檔倒補pre-pin。不得用未還原的JAVA_TOOL_OPTIONS、daemon舊環境或Loom named remapped_mods充當production runtime。
 
 **介面與owner：** Provider只回immutable ResolvedSettings（三role DimensionOptions＋frozen generateStructures），不供FP bytes。Registry register拒id+version重複，freeze凍metadata/schema/adapter能力，createSnapshot/resolve需有效ServerSettingsContext lease並由canonicalizer重算。內建Parameters恰OverworldPreset string normal/amplified與GenerateStructures NBT byte0/1；缺失/錯type/其他值拒絕。三策略保留source bool；resolve已存snapshot不用live canonical bool覆蓋。Snapshot外層exact五欄、canonical NBT含欄名/值<=512、FP32byte與defensive copy。ServerSettingsContext是窄只讀lease/view；Minecraft121SettingsContexts是唯一server/epoch/inflight owner，acquire(server)或unavailable，所有consumer以exact owner驗使用，不暴露mutable server/lookup/template，不帶rootseed。Native generation controls及source採集另守r2；不能只將flag放FP而Task11仍讀global。
+
+#### 8C：Task 8-core（v1.4；spec §3.1.3 `SHALLOW_V1` 與 §3.1.2 8-core 最小 lifecycle）
+
+v1.4 門檻改寫：**8C 全部通過即可進 Task 9**；下方 8A／8B 段落中「三 bundle 任一缺失不得結 Task 8 或進 Task 9」「8B3 final full 作 Task 8 終局」等條款自 v1.4 起只約束 Task 8-H。8C 不刪、不改名、不放寬任何已結案 Task 8 owner 與測試；它們續留 run-all 基線（10-31：JUnit 971、M6 GameTest 9/9）。8C 不取得 template gate exclusive、不走 Adapter／Closure live 路徑、不新增三 bundle oracle、不改 workflow job 結構。每片沿 Global Constraints 協定：候選 compile（`gates.ps1 -Mode M6Compile`）→具名 RED→GREEN→mutation-only＋REVERT→同乾淨 HEAD 雙 focused→完整 `run-all.ps1`→fresh spec／quality C0/I0→docs truth→正常 push→雙平台 CI。
+
+**8C owner 總表**：Create `src/main/java/dev/quantumchamber/universe/Minecraft121ShallowSettingsCanonicalizer.java`、`Minecraft121VanillaPresetProfileProvider.java`、`Minecraft121SettingsLifecycle.java`；Modify `UniverseProfileRegistry.java`、`ServerSettingsContext.java`、`Minecraft121SettingsContexts.java`、`src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java`；Create test `src/test/java/dev/quantumchamber/universe/Minecraft121ShallowSettingsCanonicalizerTest.java`、`Minecraft121VanillaPresetProfileProviderTest.java`、`Minecraft121SettingsLifecycleTest.java`；Modify test `UniverseProfileRegistryTest.java`、`Minecraft121SettingsContextsTest.java`、`GenerationSettingsSnapshotTest.java`；Create testmod `src/testmod/java/dev/quantumchamber/gametest/M6SettingsGameTests.java`；Modify `scripts/verification/README.md`。既有 `Minecraft121SettingsCanonicalizerTest.java` 測的是 Graph／Closure／Leaf 等 8B2 support owner，8C 不改它，也不借其名稱。每片短派工仍須展開 exact 允許檔案。
+
+##### 8C-0：`SHALLOW_V1` canonicalizer 與內建 provider（純 JUnit，不接 server）
+- [ ] 先釘 lease 介面：`ServerSettingsContext` 新增只讀 `registries()`（immutable `DynamicRegistryManager.Immutable` 或等價 `RegistryWrapper.WrapperLookup` view）與 `sourceGenerateStructures()`，兩者先 `requireValid()`；不暴露 server、ResourceManager、template manager、Session 或任何 mutable lookup。`Minecraft121SettingsContexts` 的 lease 實作由既有 `Sources.registries`／`generateStructures` 提供，不改 stop fence／owner Cell／initial ticket 語意。JUnit `leaseRegistriesRequireValid`、`leaseDoesNotExposeServerOrResources`（以反射核 `ServerSettingsContext` 公開方法集合恰為三個）。
+- [ ] `Minecraft121VanillaPresetProfileProvider`：id `quantumchamber:m6_profiles_v1`、version 1、`ParameterSchema` 沿 `GenerationSettingsSnapshot.validateBuiltinParameters`、`adapterCapabilities` 恰 `quantumchamber:m6-settings-shallow-v1`。`resolveGenerationSettings` 由 lease registries 取 `DIMENSION_TYPE`／`CHUNK_GENERATOR_SETTINGS`／`MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST`／`BIOME` 建三 role `DimensionOptions`：Overworld 依 preset 取 `minecraft:overworld`／`minecraft:amplified` settings 與 overworld multi-noise preset；Nether／End 取原版固定設定（`minecraft:nether`／`minecraft:end` settings、對應 biome source 與 dimension type）；缺任一 registry entry 拒。回 immutable `ResolvedSettings(roles, generateStructures)`，`generateStructures` 取 Parameters 值，不取 lease live 值。
+- [ ] `Minecraft121ShallowSettingsCanonicalizer`：輸入 `ResolvedSettings`＋Parameters＋lease registries，依 spec §3.1.3 以 `DimensionOptions.CODEC` 經 `RegistryOps.of(NbtOps.INSTANCE, registries)` encode 三 role，沿既有 canonical NBT 規則（重用 `Minecraft121SettingsGraph` 的 canonical 編碼器或抽出共用純函式，不改其既有行為）產出四鍵 envelope 與 canonical bytes；FP＝`SHA-256(UTF8("quantumchamber:m6:settings:v1") || canonical)`；canonical 上限 8192 bytes。
+- [ ] 具名 RED（在無實作或 fail-closed stub 下具名斷言失敗，不以 compile error 當 RED）：`shallowCanonicalIsDeterministicAcrossTwoRegistryLoads`、`shallowFingerprintDiffersBetweenNormalAndAmplified`、`shallowFingerprintDiffersWhenGenerateStructuresFlips`、`shallowRejectsUnknownOverworldPreset`、`shallowRejectsMissingOrDuplicateRole`、`shallowRequiresValidLeaseBeforeAndAfterEncode`、`shallowEncodesRegistryReferencesAsIdsOnly`（canonical 不含 `noise_router`、`sea_level`、`spawn_target` 等 noise settings 內容鍵）、`shallowRejectsCanonicalOverLimit`、`shallowEnvelopeHasExactFourKeys`，與限制見證 `shallowFingerprintUnchangedWhenNoiseSettingsContentChanges`（以第二份修改 `minecraft:amplified` 內容的資源 fixture 載入 registries，FP 相同；fixture 技法由 implementer 選，須真走 codec 路徑，不得改 NBT 後重算冒充）。registries fixture 沿 `Minecraft121SettingsCanonicalizerTest.EndFixture` 的 `RegistryLoader.loadFromResource` 技法（注意其 static registry freeze 限制與 `ModBlocks` 初始化順序，見 M6 note D1b-1）。
+- [ ] mutation-only＋REVERT 至少：固定 Contract 字串改一字元、Roles 鍵排序改為 role 宣告序、GenerateStructures 改讀 lease live 值、Overworld preset 映射 normal↔amplified 對調；各由具名測試殺。乾淨同 HEAD 雙 focused（兩個新 test class 各兩次）＋完整 run-all；fresh spec／quality C0/I0。
+
+##### 8C-1：`UniverseProfileRegistry.createSnapshot`／`resolve` 真路徑
+- [ ] `createSnapshot(id, version, parameters, lease)`：registry 須已 freeze；provider 缺→拒；`parameterSchema.validate`；lease `requireValid`；provider resolve→canonicalizer FP→組 5 鍵 snapshot（沿既有 512 bytes、defensive copy）；回傳前再 `requireValid`。`resolve(snapshot, lease)`：provider 依 id／version 查，缺→拒；validate Parameters；resolve；重算 FP 與 snapshot `OutputFingerprint` 逐 byte 比，不等→拒；回 immutable `ResolvedSettings`。拒絕一律 fail closed 例外，不回 Optional 預設。
+- [ ] 具名 RED：`createSnapshotRequiresFrozenRegistry`、`createSnapshotRejectsUnknownProviderOrVersion`、`createSnapshotRequiresValidLeaseBeforeAndAfterResolve`、`createSnapshotRejectsInvalidParameters`、`resolveRejectsFingerprintMismatch`（同 id／version、改任一 Parameters 或翻一 FP byte）、`resolveRejectsUnknownProviderOrVersion`、`resolveReturnsThreeRolesAndFrozenGenerateStructures`、`snapshotNbtRoundTripKeepsFingerprintAndResolves`。既有 8B1 測試不得刪改語意；`fromNbt` 仍只證結構有效。
+- [ ] 8B1 quality Minor 於此關閉：create／resolve 接線時凍結 provider／schema／adapter 能力並驗 custom 參數；補 resolve 直接正反測試。mutation-only＋REVERT、雙 focused（Registry／Snapshot／Contexts 三 test class 各兩次）、完整 run-all、fresh 兩席 review。
+
+##### 8C-2：mod init、Fabric lifecycle 接線與一個 GameTest scenario
+- [ ] `Minecraft121SettingsLifecycle`（唯一 owner）：每 exact server 一個 `Minecraft121SettingsContexts`；`SERVER_STARTING` 以 `Sources(server.getRegistryManager(), server.getResourceManager(), server.getStructureTemplateManager(), 既有 MinecraftServerDynamicWorldAccess 的 Session, saveProperties.getGeneratorOptions().shouldGenerateStructures())` `publishInitial`；`START_DATA_PACK_RELOAD`→`reloadStarted`；`END_DATA_PACK_RELOAD(server, rm, success)`→`reloadFinished(success, 新 Sources)`；`SERVER_STOPPING`→`stop` 並移除該 server 項。`QuantumSuperpositionMod.onInitialize` 註冊內建 provider、`freeze()`、呼叫 lifecycle 註冊，置於既有 `SERVER_STARTED` 之前的程式位置；不在 mod init 解析任何 native 資料。public 查詢入口 `acquire(server)` 供 Task 9 起使用，M4／M5 路徑不呼叫。
+- [ ] testmod `M6SettingsGameTests`，batch `m6_universe_settings_context`，一個 test：`acquire(server)` 成功且 lease `registries()` 與 `server.getRegistryManager()` `==`；`createSnapshot` normal／amplified 各一並 `resolve` 回三 role；呼叫真 `server.reloadResources(現有 pack 清單)`，server thread 只 tick-poll 不 join；完成後舊 lease `requireValid` 拒、新 `acquire` 成功並再次 resolve 得相同 FP。既有 `M4LegacyGameTestFilterMixin` 的 `m6_universe` 前綴與 `gates.ps1` 動態 scope 自動納入；README 記 M6 GameTest 集合由 9 增為 10（以當次 scope 原件為準）。STOPPING／foreign 失效由既有 ContextsTest 守住，不在 GameTest 停服。
+- [ ] 具名 RED：接線前 GameTest `acquire` 得 unavailable 具名失敗；接線後 GREEN。JUnit `lifecyclePublishesOnceAndStopsPerServer`（以 fake server／Sources 物件驗 publish／reload／stop 呼叫序與 per-server 隔離，不啟 Minecraft）。mutation-only＋REVERT 至少：漏接 `START_DATA_PACK_RELOAD`、STOPPING 不 `stop`、Sources 取全域 builtin registry 而非 `server.getRegistryManager()`。雙 focused（GameTest batch 兩次＋ContextsTest／LifecycleTest）、完整 run-all、fresh 兩席 review。
+- [ ] 不新增 production test 開關、不加 receipt oracle 腳本；S1a／Trace testmod 與 `m6-refresh-seal-check.ps1` 原樣保留。
+
+##### 8C-3：Task 8-core 終局
+- [ ] 最終乾淨 code HEAD 的完整 `run-all.ps1` 自然 `END ALL exit=0`（含既有 M6 native DIAGNOSTIC2、main-only、release／sources 隔離）；docs truth（M6 note、plan 此節、README、AGENTS 接手入口）→正常 push→Ubuntu `build`／Windows `windows-native` 雙 job success 讀回。通過後進 Task 9；本機 full 不代跨平台 CI，遠端 CI 不代 Windows run-all。
+- [ ] 8-H 交接：在 M6 note 列 8C 結案時 8-H 四項（H1–H4）的狀態與原件 SHA，供 Task 21 後 triage。
+
+#### 以下 8A／8B1／8B2／8B3 自 v1.4 起歸 Task 8-H（歷史原文保留，未完成項見「Task 8-H triage」節）
 
 #### 8A：完整native資料 gate（不得先進production）
 
@@ -520,6 +554,14 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 - [ ] `m6-focused.ps1 -Suite GameTest -Batch m6_universe_family_chamber -Label f7-red` 具名 FAIL；修後 `f7-green-a/b`、`-Suite Probe -Chain legacy-new-role` PASS，WorldKey/role/projection ledger/live instance exact 比對。
 - [ ] Task 16–20 的 role owner、portal 與 respawn no-leak gate 已各自通過後，才在本 task 的 code commit 讓**新建** Context 凍結 capability 1；本 task 的兩次 clean HEAD focused＋full 驗此值與同 role 通道。既有 0 不升版；再交 fresh spec／quality review。
 
+### Task 8-H triage 與必須切片（v1.4；排在 Task 21 之後、Task 22 之前）
+
+**Files:** Modify `docs/implementation-notes/2026-10-24-m6-universe-generation.md`、本 plan 此節、`AGENTS.md` 接手入口；實作檔依裁示為必須的切片各自列出。
+**Interfaces:** triage 只產文件與裁示，不改程式；每個必須切片再按 Global Constraints 協定獨立派工。
+- [ ] 列出 H1 完整閉包 ProviderVersion≥2（C1d 其餘含 D1c LOOT_TABLE、三 role 完整 canonical／FP、100ms live hold I-1、T2 額外 100ms FAIL）、H2 正式 lifecycle 證明（S1b、S2 integrated RM、source bridge／同票同 seal／consumer、LT2 STOP-PENDING 安全性）、H3 8B3-F 三 bundle（三腳本、ci-rule 負例、workflow、production runtime 準備核）、H4 完整 reload GameTests 的當時狀態、原件 SHA 與 retained FAIL。
+- [ ] 獨立 review 對每項提案「M6 合併 `main` 前必須」或「明確 gate waiver 移 M7」，附理由；預設建議（非裁示）：若 M6 正式只出 `SHALLOW_V1`，H1、H4 可 waiver；H3 至少須證 Windows intermediary main-only 與 named 的 `SHALLOW_V1` FP 相同；H2 只在 refresh seal 進入正式路徑時必須。交使用者裁示，裁示原話記入 AGENTS。
+- [ ] 只實作裁示為必須者，每片具名 RED→GREEN→雙 focused→full→兩席 review；waiver 項寫入 Task 22 人工清單與接手入口，標示 `main` 為開發快照時的限制。所有 retained FAIL 不因 waiver 改判。
+
 ## Milestone 收尾（與 code task 分離）
 
 ### Task 22：整合驗證、人工清單與文件真實性
@@ -532,4 +574,4 @@ B#19保原exact Single MISS_TEMPLATE fixture，改完整OW正向；檢Contract/T
 
 ## 五項自查索引
 
-Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14，§5→Tasks 15–20，§6→Task 21，§8→每 task protocol＋22。所有 Review Focus 各有具名斷言。跨 task 介面由 file map 固定；原版 native 注入點保留 Task 7/16/18/19/20 的先驗 gate，未當成已驗 API。計畫不含本輪授權外玩法；若 native gate 證固定 1.21 無法實現某個 binding 契約，停止該 task、具名回報 spec 修訂與獨立 review，不能用不受控 fallback 替代。
+Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14（§3.1.3／§3.1.2 8-core→Task 8C；§3.1.1 完整閉包→Task 8-H），§5→Tasks 15–20，§6→Task 21，§8→每 task protocol＋22。所有 Review Focus 各有具名斷言。跨 task 介面由 file map 固定；原版 native 注入點保留 Task 7/16/18/19/20 的先驗 gate，未當成已驗 API。計畫不含本輪授權外玩法；若 native gate 證固定 1.21 無法實現某個 binding 契約，停止該 task、具名回報 spec 修訂與獨立 review，不能用不受控 fallback 替代。
