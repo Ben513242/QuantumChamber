@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-02 唯一接手入口：[`docs/handoffs/2026-11-02-m6-codex-resume-prompt.md`](docs/handoffs/2026-11-02-m6-codex-resume-prompt.md)。使用者 2026-11-02 裁示縮 Task 8 範圍：先完成 Task 8-core 與 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片；第一件工作是只改 spec／plan 並送獨立 review，不動程式。local／origin feature `5b2bafa67790916e6d9dfac9a71c1d3e60a47442`，GitHub run `41149366263` 雙 job success。所有 retained FAIL 原判不變。下方各筆均為歷史快照。**
+**2026-11-02 唯一接手入口：[`docs/handoffs/2026-11-02-m6-codex-resume-prompt.md`](docs/handoffs/2026-11-02-m6-codex-resume-prompt.md)。使用者 2026-11-02 裁示縮 Task 8 範圍：先完成 Task 8-core 與 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片；同日 spec v1.4 與 plan 8C／8-H 已經兩席獨審加三輪窄複審採用（最終 C0/I0/M0），第一件工作改為 plan 8C-0 實作，在 Windows 工作樹依接手檔第 9 節派工簡報執行。採用前最後一筆已讀 CI 是 `4ca1303` 的 run `41432221278` 雙 job success；其後 docs commit 的 run 於撰寫時 in_progress。本輪 Claude 雲端 session 無法 build，8C 程式未開始，未跑任何 focused／run-all。所有 retained FAIL 原判不變。下方各筆均為歷史快照。**
 
 **歷史 2026-10-31 收尾接手入口（已被 2026-11-02 取代）：[`docs/handoffs/2026-10-31-m6-codex-resume-prompt.md`](docs/handoffs/2026-10-31-m6-codex-resume-prompt.md)。local／origin feature `d5004398c1bb9e502c75650f3d5095c3e329c443`；S1a code pin `96cc6c3ba2cac4d8806684e1443de0e9335d9590` 僅一次自然成功 startup 診斷，遠端 run `41145800231` 同 SHA Ubuntu／Windows 雙 job success，但 CI 沒執行 S1A_ORACLE。S1b-0 v2 與 integrated RM 兩份最新唯讀草案尚未獨審，實作／native 都 STOP；Task8、Task9–22 與 M6 整體未完成。LT2 STOP-PENDING 原 FAIL 及 v4 父等舊 FAIL 原判不變。下方各筆均為歷史快照。**
 

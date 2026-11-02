@@ -2,7 +2,7 @@
 
 日期：2026-10-24。基準：`0d05f889da6f8b82b97af756aaa50066b3d42854`。本文定義 M6 的新行為；未明列變更的 M4／M5 checked 權威與遊戲行為維持原約定。本文尚非實作或驗收結果。
 
-狀態（v1.4，2026-11-02）：依使用者 2026-11-02 裁示「我想先裁示縮 Task 8 範圍，至少本模組功能都完成後才修必須的任務切片」。為落實裁示，**controller 設計預設（非使用者原話）**：新增 §3.1.3 `SHALLOW_V1` 最小閉包並把 §3.1.1 完整閉包綁定到 ProviderVersion≥2（Task 8-H），§3.1.2 增 8-core 最小 lifecycle，§3.1／§3.2／§4／§8／§9 相應調整；M6 正式版是否只出 `SHALLOW_V1`，在 §8 的 8-H triage 交使用者裁示。首輪獨立 spec review C0/I4/M11（報告 SHA256 見 M6 note 2026-11-02 條目），本修訂稿已逐項處理，待窄複審確認後在此補採用 SHA。v1.3 以下內容、既有 8A／8B 局部結案證據與所有 retained FAIL 原判不變。
+狀態（v1.4，2026-11-02）：依使用者 2026-11-02 裁示「我想先裁示縮 Task 8 範圍，至少本模組功能都完成後才修必須的任務切片」。為落實裁示，**controller 設計預設（非使用者原話）**：新增 §3.1.3 `SHALLOW_V1` 最小閉包並把 §3.1.1 完整閉包綁定到 ProviderVersion≥2（Task 8-H），§3.1.2 增 8-core 最小 lifecycle，§3.1／§3.2／§4／§8／§9 相應調整；M6 正式版是否只出 `SHALLOW_V1`，在 §8 的 8-H triage 交使用者裁示。**v1.4 已採用**：首輪獨立 spec review C0/I4/M11（SHA256 `c1ab9ec35a6e6c9dfba14f7f9532a2dfcca655019c974446c4ecf41df0963be8`）、plan review C0/I5/M11（SHA256 `5aa3302026c10312b9d1c415b471d44db7bd18b5a5789e2d823f1ba719120e12`）、窄複審一 C0/I1/M3（`ff9ae0b788bc9ba4b2704c25166db6ba87f24e93149c815eac0a1007388868f1`）、窄複審二 C0/I1/M2（`e52e6a80755a7faceb6d193242010f951be0d0d792f02194702376e2f2a0c920`）、窄複審三 C0/I0/M0（`943626daecfb517da91a74828d02412c4866c2c81e2f702e8d75c30ccb04ebb2`）；全部 Important 關閉後採用，本檔採用版 SHA256 記於 plan 第 11 行與 M6 note 2026-11-02 條目。v1.3 以下內容、既有 8A／8B 局部結案證據與所有 retained FAIL 原判不變。
 
 狀態：v1.3已依設計層獨立review `3E61305D9BE716F29C4249F8EB59D366AB468298FA6574F983BA14C5033987D5`（C0/I0/M1，鍵數文字已修正）採用exact Single真absence／只讀cache與resolved template契約；使用者裁示snapshot期間限正常遊戲操作，外部改檔走reload／重啟。v1.2 RecipesUsed及plan r3/r4平台硬gate保留。本次是設計採用，不是A7、8A native gate或8B實作通過；正式進度以plan/note為準。
 

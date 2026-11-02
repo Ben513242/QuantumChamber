@@ -8,9 +8,9 @@
 
 **Tech Stack:** Minecraft 1.21、Yarn `1.21+build.9`、Fabric Loader `0.17.2`、Fabric API `0.102.0+1.21`、Loom `1.7.4`、Java 21、Gradle 8.8、PowerShell 7；JUnit／Fabric GameTest／跨 JVM probe。
 
-**Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`；v1.4 依使用者 2026-11-02 裁示縮 Task 8 範圍，草案待獨立 review，採用後在此補 SHA）。
+**Spec:** `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md`（已獨立審查採用v1.3，SHA256 `5CA4C3058C2E0564A7EF8979427C4C5A6DD3FE5B9ED8FBFF999BCCC0E53BC4A9`；v1.4 依使用者 2026-11-02 裁示縮 Task 8 範圍，經兩席獨審加三輪窄複審採用，採用版 SHA256 `e9dbaac9736a83a38dde96605c2ffd411a7b716b35e241eaa209d4943748dad2`）。
 
-狀態（2026-11-02 使用者裁示縮 Task 8 範圍）：使用者原話「我想先裁示縮 Task 8 範圍，至少本模組功能都完成後才修必須的任務切片」。Task 8 自本版拆為 8C（Task 8-core，見 Task 8 第一個小節）與 8-H（原 8A／8B1／8B2／8B3 未完成部分，歷史原文保留）；8C 通過即可進 Task 9，8-H 在 Task 21 之後 triage，只做裁示為必須者，其餘明確 waiver。接手入口 `docs/handoffs/2026-11-02-m6-codex-resume-prompt.md`。草案 commit `20338be`（待獨審）之前的 feature HEAD 為 `d8c5897`；首輪獨立 plan review C0/I5/M11 與 spec review C0/I4/M11 已逐項處理（見 M6 note 2026-11-02 條目），待窄複審後補採用 SHA。所有 retained FAIL 原判不變；下方 2026-10-31 及更早各筆為歷史。
+狀態（2026-11-02 使用者裁示縮 Task 8 範圍）：使用者原話「我想先裁示縮 Task 8 範圍，至少本模組功能都完成後才修必須的任務切片」。Task 8 自本版拆為 8C（Task 8-core，見 Task 8 第一個小節）與 8-H（原 8A／8B1／8B2／8B3 未完成部分，歷史原文保留）；8C 通過即可進 Task 9，8-H 在 Task 21 之後 triage，只做裁示為必須者，其餘明確 waiver。接手入口 `docs/handoffs/2026-11-02-m6-codex-resume-prompt.md`。草案 commit `20338be`（待獨審）之前的 feature HEAD 為 `d8c5897`；首輪獨立 plan review C0/I5/M11 與 spec review C0/I4/M11 全部處理，窄複審三輪（C0/I1/M3→C0/I1/M2→C0/I0/M0）後採用；review 報告 SHA256 見 M6 note 2026-11-02 條目。**8C 可派實作**；本雲端 session 無法 build，8C 程式尚未開始。所有 retained FAIL 原判不變；下方 2026-10-31 及更早各筆為歷史。
 
 狀態（2026-10-31 Codex 收尾交接）：feature local／origin `d5004398c1bb9e502c75650f3d5095c3e329c443`，S1a code pin `96cc6c3ba2cac4d8806684e1443de0e9335d9590` 僅一次自然成功 TestServer startup seal；GitHub Build run `41145800231` 同 SHA Ubuntu／Windows雙job success，但遠端未執行 S1A_ORACLE、非8B3-F三bundle。S1b-0 v2、integrated新RM兩份唯讀提案尚未獨審，實作／fault native仍STOP；正式source/consumer、D1c LOOT_TABLE、100ms live hold、Task8→Task9及後續未放行。新接手入口 `docs/handoffs/2026-10-31-m6-codex-resume-prompt.md`；LT2 STOP-PENDING及舊FAIL原判不變。
 

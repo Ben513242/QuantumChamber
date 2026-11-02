@@ -5,7 +5,7 @@
 ## 0. 貼給 Codex 的起手句
 
 ```
-請以 Codex 身分接手 QuantumChamber M6。先讀 AGENTS.md，再讀 docs/handoffs/2026-11-02-m6-codex-resume-prompt.md 全文並依其第 1 節順序讀完其餘文件。使用者 2026-11-02 已裁示縮 Task 8 範圍（見該檔第 2 節原話）：先完成 Task 8-core 與 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片。第一件工作是第 3 節第 2 步：只改 spec／plan 文件並送獨立 review，不動程式。全程繁體中文（台灣），先報結論與證據。
+請以 Codex 身分接手 QuantumChamber M6。先讀 AGENTS.md，再讀 docs/handoffs/2026-11-02-m6-codex-resume-prompt.md 全文並依其第 1 節順序讀完其餘文件。使用者 2026-11-02 已裁示縮 Task 8 範圍（見該檔第 2 節原話）：先完成 Task 8-core 與 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片。spec v1.4 與 plan 8C／8-H 已獨審採用；第一件工作是第 3 節第 3 步、依第 9 節派工簡報實作 plan 8C-0，在 Windows 工作樹以 Subagent-Driven Development 執行（具名 RED→GREEN→mutation→雙 focused→full→兩席 review）。全程繁體中文（台灣），先報結論與證據。
 ```
 
 ## 1. 工作區與先讀
@@ -27,18 +27,18 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 
 ## 3. 新工作順序（取代 10-31 檔「下次工作順序」）
 
-1. 核 Git／CI／ignored 原件（第 1 節）。
-2. **只改文件，不動程式**：spec 升 v1.4（§3.1.1 增「SHALLOW_V1 最小 closure 與已知限制」小節、§3.1.2 標明 8-core 的最小 lifecycle、§8 門檻對應調整）；plan Task 8 重構為 8-core 與 8-H 兩段，8B2／8B3 既有已結案切片紀錄原文保留為歷史、不刪。送獨立 spec review 與獨立 plan review；Critical／Important 清零才進第 3 步。第 4 節是 controller 建議的界線，不是已審設計。
-3. 實作 Task 8-core，依 plan 每批協定切片（第 4 節末）。
+1. 核 Git／CI／ignored 原件（第 1 節）。【已完成，見第 6 節 2026-11-02 稍後事實】
+2. 【已完成：spec v1.4 與 plan 8C／8-H 經兩席獨審加三輪窄複審採用，最終 C0/I0/M0；commit 鏈見第 6 節】**只改文件，不動程式**：spec 升 v1.4（§3.1.1 增「SHALLOW_V1 最小 closure 與已知限制」小節、§3.1.2 標明 8-core 的最小 lifecycle、§8 門檻對應調整）；plan Task 8 重構為 8-core 與 8-H 兩段，8B2／8B3 既有已結案切片紀錄原文保留為歷史、不刪。送獨立 spec review 與獨立 plan review；Critical／Important 清零才進第 3 步。第 4 節是 controller 建議的界線，不是已審設計。
+3. **下一步**：實作 Task 8-core，依 plan 8C-0→8C-1→8C-2→8C-3 每批協定切片；8C-0 派工簡報見第 9 節。
 4. Task 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21，依 plan 原文與各自門檻；不因 Task 8 縮範圍而放寬任何 Task 9–21 的 RED／雙 focused／full／兩席 review／CI。
 5. Task 8-H triage：列出第 5 節全部項目的當時狀態，提案哪些為「必須」、哪些 waiver，送獨立 review 後交使用者裁示；只實作裁示為必須者。
 6. Task 22 收尾（含人工 smoke、whole-branch review、docs truth、CI），之後 `main` 合併、tag、退役仍另守門檻。
 
-## 4. Task 8-core 範圍界線（spec／plan 修訂須落實；具體設計仍須獨審）
+## 4. Task 8-core 範圍界線（已由 spec v1.4 §3.1.2／§3.1.3 與 plan 8C 定案；本節是摘要，細節以 spec／plan 為準）
 
 **保留不動**：所有已 commit 的 Task 8 owner 與測試繼續編譯並在 run-all 內通過（10-31 基線 JUnit 971、M6 GameTest 9/9）。不刪、不改名、不為縮範圍而放寬任何既有 fail-closed 斷言。Template access gate 的 mixin、Contexts 的 stop fence／owner Cell／initial ticket、S1a 的 `DataPackContentsRefreshSealMixin` 診斷都保留；它們不進 8-core 的成功路徑。
 
-**最小 closure（controller 建議預設，待 spec 修訂與獨審定案）**：
+**最小 closure（spec §3.1.3 `SHALLOW_V1`，已採用）**：
 
 - 內建 provider（`quantumchamber:vanilla_normal_v1`／`vanilla_amplified_v1`，ProviderVersion 1；`m6_profiles_v1` 是 PolicyId，不是 ProviderId）的 closure 定義為 `SHALLOW_V1`：三 role 的 `DimensionOptions` 以 lease 的 registry ops 做原生 codec encode，registry 引用保留為 id、不做 transitive 展開、不讀 template／tag／loot／component；加上 Parameters 的 `OverworldPreset` 與 `GenerateStructures`。canonical 編碼為固定 key 排序的 NBT，沿用既有 512 byte 與 32 byte FP 契約。
 - 完整資料閉包是未來另一個 ProviderVersion（例如 version 2），不是改 version 1 的語意；snapshot 外層五欄 schema 不變。
@@ -71,6 +71,14 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 - 此盤點在沒有 ignored 原件的 clone 上完成，未核任何 SHA256 原件，未跑 Gradle／run-all。10-31 檔的本機 full／oracle 數字沿用原紀錄，沒有新驗證。
 - 進度判讀：Task 1–7 於 10-25 兩天完成；Task 8 自 10-26 到 10-31 六天，依 owner 檔數估 8B2 約六成、8B3 不到兩成；每片結案都新增 UNKNOWN 或 STOP，整合端未動。這是本裁示的背景，不是新的門檻。
 
+### 6b. 2026-11-02 稍後事實（spec／plan 採用輪）
+
+- commit 鏈：`d8c5897` 裁示與接手檔 → `20338be` v1.4 草案（待獨審）→ `4ca1303` 首輪 fix（spec C0/I4/M11、plan C0/I5/M11 全處理）→ `4a50629` 第二輪 fix（窄複審一 C0/I1/M3，I-N1 registrar seam）→ `2b1764e` 第三輪 fix（窄複審二 C0/I1/M2，I-N2 Sources factory）→ 本檔所在的採用 commit（窄複審三 C0/I0/M0）。review 報告 SHA256：spec `c1ab9ec35a6e6c9dfba14f7f9532a2dfcca655019c974446c4ecf41df0963be8`、plan `5aa3302026c10312b9d1c415b471d44db7bd18b5a5789e2d823f1ba719120e12`、窄複審一 `ff9ae0b788bc9ba4b2704c25166db6ba87f24e93149c815eac0a1007388868f1`、二 `e52e6a80755a7faceb6d193242010f951be0d0d792f02194702376e2f2a0c920`、三 `943626daecfb517da91a74828d02412c4866c2c81e2f702e8d75c30ccb04ebb2`；原件只在雲端 session scratchpad，要旨記於 M6 note。
+- 採用版 spec SHA256 `e9dbaac9736a83a38dde96605c2ffd411a7b716b35e241eaa209d4943748dad2`、plan SHA256 `e087f43c1717fa63ea6857220544443ca8d528930d71cf107acb5424001646a5`。
+- 遠端 CI：`d8c5897` run 41409147739、`20338be` run 41429481418、`4ca1303` run 41432221278 皆 Ubuntu `build`／Windows `windows-native` 雙 job success；`4a50629` run 41433659755、`2b1764e` run 41434595336 於撰寫時 in_progress；採用 commit 的 run 待讀回。全部純 docs，CI 只證既有 gate 未壞。
+- 本輪 controller 是 Claude Code 雲端 session，子代理為 Claude（只讀 reviewer）。雲端容器網路政策擋 `maven.fabricmc.net`、`libraries.minecraft.net`、`piston-meta.mojang.com`，且無 pwsh，故**未寫任何 8C 程式、未跑任何 Gradle／focused／run-all**；8C 實作必須在 Windows 工作樹（或同等可 build、可跑 PowerShell gate 的環境）進行。
+- 使用者 2026-11-02 另問是否提供 ignored 的 SDD ledger／STATUS；controller 回覆只需 `progress.md` Rulings 段與 `STATUS.md` 首段作唯讀參考，本輪未取得，因此 v1.4 未與 ignored ledger 交叉核對；Codex 到場第一步須補核此點，若 ledger 有與 v1.4 衝突的舊裁示，先向使用者確認再動。
+
 ## 7. 授權與邊界（沿用）
 
 - 子代理只用 `gpt-5.6-sol`、`gpt-6-sol` 或 `gpt-6-astra`。一個 implementer 對應一片，之後獨立 spec／quality；C/I 清零才往下一片。
@@ -81,3 +89,23 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 ## 8. 交回紀錄
 
 Codex 每次交回在此追加：日期、code pin、range、RED／GREEN、雙 focused、full nonce、兩席 review、CI run、下一步。
+
+- 2026-11-02（Claude 雲端 controller）：只有文件變更。spec v1.4／plan 8C 與 8-H／接手檔／AGENTS／M6 note；review 鏈與 CI 見第 6b 節。8C-0 未開工。下一步：Codex 依第 9 節派工 8C-0。
+
+## 9. 8C-0 派工簡報（給 Codex implementer；binding 以 plan 8C-0 與 spec §3.1.3 原文為準）
+
+**前置**：Windows 工作樹、porcelain 空、HEAD 為本檔所在 commit 或其後 docs commit；先 `gates.ps1 -Mode M6Compile -Label 8c0-baseline` 確認基線可編譯。先讀 plan 8C 總說與 8C-0、spec §3.1.2 (d)／§3.1.3、M6 note D1b-1（`ModBlocks` 須在 registries fixture freeze 前初始化）。
+
+**允許檔案**：main `ServerSettingsContext.java`、`Minecraft121SettingsContexts.java`（只加 lease 兩個讀面）、`Minecraft121SettingsGraph.java`（只抽出 NBT canonical 純函式，行為不變）、新 `Minecraft121ShallowSettingsCanonicalizer.java`、新 `Minecraft121VanillaPresetProfileProvider.java`；test 新 `Minecraft121WorldgenRegistryFixture.java`、新 `Minecraft121ShallowSettingsCanonicalizerTest.java`、新 `Minecraft121VanillaPresetProfileProviderTest.java`、既有 `Minecraft121SettingsContextsTest.java`。不碰 `GenerationSettingsSnapshot.java`、`UniverseProfileRegistry.java`（8C-1）、任何 testmod／scripts／build。
+
+**介面要點**：
+- `ServerSettingsContext` 公開方法恰三個：既有 `requireValid()`，新 `DynamicRegistryManager.Immutable registries()`、`boolean sourceGenerateStructures()`。Lease 實作在既有 `synchronized(cell.fence){ validateLocked() }` 之後讀 `Sources.registries`，非 `DynamicRegistryManager.Immutable` 即拋既有 `unavailable()`（`CONTEXT_UNAVAILABLE`）；`Sources` record 型別不變。
+- provider 同一類別以兩個 id 註冊：`quantumchamber:vanilla_normal_v1`（preset 必 normal）、`quantumchamber:vanilla_amplified_v1`（必 amplified），version 1，`adapterCapabilities` 恰 `quantumchamber:m6-settings-shallow-v1`；`ParameterSchema` 先 `GenerationSettingsSnapshot.validateBuiltinParameters` 再核 id↔preset。三 role 以 lease registries 的 Reference entry 建構（spec §3.1.3 精確 id）；`generateStructures` 取 Parameters。另 `Optional<String> detectOverworldPreset(lease)`。
+- canonicalizer 輸入 `ResolvedSettings`＋Parameters＋lease；`RegistryOps.of(NbtOps.INSTANCE, lease.registries())`，encode 前後各 `requireValid()`；encode 後逐 role 結構檢查 id 字串（`SHALLOW_INLINE_ELEMENT`）；四鍵 envelope；canonical 由 Graph 抽出的純函式編碼（鍵序＝Unicode scalar 次序、list 保序、big-endian）；FP＝SHA-256(`quantumchamber:m6:settings:v1` UTF-8 ‖ canonical)；上限 8192 bytes。
+- 固定 1.21 API 落點（實作時以 Yarn `1.21+build.9` 實查，不以此處為已驗）：`DimensionOptions(RegistryEntry<DimensionType>, ChunkGenerator)`、`NoiseChunkGenerator(BiomeSource, RegistryEntry<ChunkGeneratorSettings>)`、`MultiNoiseBiomeSource.create(RegistryEntry<MultiNoiseBiomeSourceParameterList>)`、`TheEndBiomeSource.createVanilla(RegistryEntryLookup<Biome>)`、keys `ChunkGeneratorSettings.OVERWORLD／AMPLIFIED／NETHER／END`、`MultiNoiseBiomeSourceParameterLists.OVERWORLD／NETHER`、`DimensionTypes.OVERWORLD／THE_NETHER／THE_END`、`DimensionOptions.CODEC`、`RegistryOps.of`。
+
+**fixture**：`Minecraft121WorldgenRegistryFixture` 以 `ServerDynamicRegistryType.createCombinedDynamicRegistries()` 與 `RegistryLoader.loadFromResource(rm, preceding(WORLDGEN), RegistryLoader.DYNAMIC_REGISTRIES)` 真載入原版 worldgen registries（技法同 `Minecraft121SettingsCanonicalizerTest.EndFixture`，但不得 import 該 private record）；提供第二個入口以額外測試 pack 覆寫 `minecraft:amplified` noise settings（改 `sea_level`），供限制見證。每次載入都是獨立 registries；provider 與 canonicalizer 必用同一 lease 的 registries。
+
+**具名 RED 清單**：依 plan 8C-0 第 4 點十七個名稱逐字使用；RED 須是具名斷言失敗，不是 compile error。mutation 四個與 killer 對應見 plan 8C-0 第 5 點；每輪 mutation-only diff、REVERT 後 `git hash-object` 比對原 blob。
+
+**驗證命令**：`gates.ps1 -Mode M6Compile -Label 8c0-compile`；`m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.Minecraft121ShallowSettingsCanonicalizerTest -Label 8c0-canon-{{1,2}}`、同法 `…Minecraft121VanillaPresetProfileProviderTest`、`…Minecraft121SettingsContextsTest`；完整 `run-all.ps1` 看 `END ALL exit=0`。結案 note 記實測三 role canonical 長度、JUnit 數、M6 GameTest 仍 9/9。之後 fresh spec／quality 各一席，C/I 清零才進 8C-1。
