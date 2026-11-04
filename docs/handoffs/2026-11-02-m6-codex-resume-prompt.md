@@ -2,10 +2,12 @@
 
 全程使用繁體中文（台灣）、精簡回報。先核原件，再推論。本檔取代 [`2026-10-31-m6-codex-resume-prompt.md`](2026-10-31-m6-codex-resume-prompt.md) 成為唯一接手入口；10-31 檔保留為歷史，其「下次工作順序」一節已被本檔第 3 節取代，其餘停點事實與原 FAIL 原判仍有效。
 
+**2026-11-04 目前接續點**：8C-0 本機 code pin `d39fef1530bcf30102731e15aca1478657429c30`，三個 code commit、九檔；具名 RED／GREEN、四個原計畫 mutation 加 depth／detect-shape 兩個修正 mutation、乾淨雙 focused 與完整 `run-all-3e4a5c71830d4a5ea0e642176c7576b2` 自然 `END ALL exit=0`（JUnit993、M6 9/9）。spec I-1 修後 C0/I0/M0；quality Approved C0/I0/M1，Minor 為測試 fixture 清理雙重失敗可能遮蔽原錯誤。此筆撰寫時 docs truth／feature push／本 code 的遠端 CI 尚待；確認雙平台成功後接 8C-1。原 `run-all-8b67…` FAIL 與所有既有 FAIL 不改判。以下原 2026-11-02 停點與 §9 派工簡報保留為歷史，不再當未開工指示。
+
 ## 0. 貼給 Codex 的起手句
 
 ```
-請以 Codex 身分接手 QuantumChamber M6。先讀 AGENTS.md，再讀 docs/handoffs/2026-11-02-m6-codex-resume-prompt.md 全文並依其第 1 節順序讀完其餘文件。使用者 2026-11-02 已裁示縮 Task 8 範圍（見該檔第 2 節原話）：先完成 Task 8-core 與 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片。spec v1.4 與 plan 8C／8-H 已獨審採用；第一件工作是第 3 節第 3 步、依第 9 節派工簡報實作 plan 8C-0，在 Windows 工作樹以 Subagent-Driven Development 執行（具名 RED→GREEN→mutation→雙 focused→full→兩席 review）。全程繁體中文（台灣），先報結論與證據。
+請以 Codex 身分接手 QuantumChamber M6。先讀 AGENTS.md，再讀 docs/handoffs/2026-11-02-m6-codex-resume-prompt.md 全文並依其第 1 節順序讀完其餘文件。使用者 2026-11-02 已裁示縮 Task 8 範圍：先完成 Task 8-core 與 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片。8C-0 本機 code pin d39fef1530bcf30102731e15aca1478657429c30 已通過兩席 review；到場先核 Git、ignored 原件、四份 docs truth 是否已提交推送，以及本 code 的 Ubuntu／Windows 雙平台 CI。未完成者依序完成，雙平台成功後依 plan 派 8C-1；不重做 8C-0。全程在 Windows M6 工作樹使用 Subagent-Driven Development，繁體中文（台灣）精簡回報，先證據後結論。
 ```
 
 ## 1. 工作區與先讀
@@ -29,7 +31,7 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 
 1. 核 Git／CI／ignored 原件（第 1 節）。【已完成，見第 6 節 2026-11-02 稍後事實】
 2. 【已完成：spec v1.4 與 plan 8C／8-H 經兩席獨審加三輪窄複審採用，最終 C0/I0/M0；commit 鏈見第 6 節】**只改文件，不動程式**：spec 升 v1.4（§3.1.1 增「SHALLOW_V1 最小 closure 與已知限制」小節、§3.1.2 標明 8-core 的最小 lifecycle、§8 門檻對應調整）；plan Task 8 重構為 8-core 與 8-H 兩段，8B2／8B3 既有已結案切片紀錄原文保留為歷史、不刪。送獨立 spec review 與獨立 plan review；Critical／Important 清零才進第 3 步。第 4 節是 controller 建議的界線，不是已審設計。
-3. **下一步**：實作 Task 8-core，依 plan 8C-0→8C-1→8C-2→8C-3 每批協定切片；8C-0 派工簡報見第 9 節。
+3. **目前下一步**：8C-0 本機已驗且兩席 C/I0；完成 docs truth／正常 push／本 code 雙平台 CI 後，依 plan 實作 8C-1→8C-2→8C-3。8C-0 派工簡報留第 9 節供原件核對。
 4. Task 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21，依 plan 原文與各自門檻；不因 Task 8 縮範圍而放寬任何 Task 9–21 的 RED／雙 focused／full／兩席 review／CI。
 5. Task 8-H triage：列出第 5 節全部項目的當時狀態，提案哪些為「必須」、哪些 waiver，送獨立 review 後交使用者裁示；只實作裁示為必須者。
 6. Task 22 收尾（含人工 smoke、whole-branch review、docs truth、CI），之後 `main` 合併、tag、退役仍另守門檻。
@@ -40,7 +42,7 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 
 **最小 closure（spec §3.1.3 `SHALLOW_V1`，已採用）**：
 
-- 內建 provider（`quantumchamber:vanilla_normal_v1`／`vanilla_amplified_v1`，ProviderVersion 1；`m6_profiles_v1` 是 PolicyId，不是 ProviderId）的 closure 定義為 `SHALLOW_V1`：三 role 的 `DimensionOptions` 以 lease 的 registry ops 做原生 codec encode，registry 引用保留為 id、不做 transitive 展開、不讀 template／tag／loot／component；加上 Parameters 的 `OverworldPreset` 與 `GenerateStructures`。canonical 編碼為固定 key 排序的 NBT，沿用既有 512 byte 與 32 byte FP 契約。
+- 內建 provider（`quantumchamber:vanilla_normal_v1`／`vanilla_amplified_v1`，ProviderVersion 1；`m6_profiles_v1` 是 PolicyId，不是 ProviderId）的 closure 定義為 `SHALLOW_V1`：三 role 的 `DimensionOptions` 以 lease 的 registry ops 做原生 codec encode，registry 引用保留為 id、不做 transitive 展開、不讀 template／tag／loot／component；加上 Parameters 的 `OverworldPreset` 與 `GenerateStructures`。canonical 編碼為固定 key 排序的 NBT；SHALLOW_V1 envelope 上限 8192 bytes，snapshot 外層五鍵上限 512 bytes，FP 為 32 bytes。
 - 完整資料閉包是未來另一個 ProviderVersion（例如 version 2），不是改 version 1 的語意；snapshot 外層五欄 schema 不變。
 - 明列已知限制：`SHALLOW_V1` 的 FP 偵測不到 datapack 改寫 `minecraft:amplified` 等 noise_settings 內容、tag 內容或 template 內容。這是本裁示接受的風險，寫進 spec 已知限制與 Task 22 人工清單，不隱藏。
 - `createSnapshot`／`resolve` 對 version 1 走真路徑；對未知 provider、version 或 closure 仍 fail closed。
@@ -91,6 +93,7 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 Codex 每次交回在此追加：日期、code pin、range、RED／GREEN、雙 focused、full nonce、兩席 review、CI run、下一步。
 
 - 2026-11-02（Claude 雲端 controller）：只有文件變更。spec v1.4／plan 8C 與 8-H／接手檔／AGENTS／M6 note；review 鏈與 CI 見第 6b 節。8C-0 未開工。下一步：Codex 依第 9 節派工 8C-0。
+- 2026-11-04（Codex，8C-0）：code range `071bdf0..d39fef1`（`1c10b6a` 本體、`a8b8d20` Graph depth fix、`d39fef1` preset detect I-1 fix），九檔。具名 RED／GREEN、六個 mutation-only＋REVERT；最終乾淨 pin 三 class 各兩次 focused：Provider 5、Shallow 14、Contexts 44；depth fix pin 另有舊 CanonicalizerTest 123×2。新 full `run-all-3e4a5c71830d4a5ea0e642176c7576b2` 自然 `END ALL exit=0`／JUnit993／M6 9/9／mainOnly PASS；先前 `run-all-8b67…` JUnit 1 FAIL 原判保留。spec I-1 修後 C0/I0/M0、quality Approved C0/I0/M1；Minor 為測試 fixture 清理失敗的原錯誤保留，記於後續 fixture 整理。此筆尚未 push、無本 code 遠端 CI；下一步先 docs truth／push／CI，再 8C-1。
 
 ## 9. 8C-0 派工簡報（給 Codex implementer；binding 以 plan 8C-0 與 spec §3.1.3 原文為準）
 
