@@ -2,6 +2,8 @@
 
 全程使用繁體中文（台灣）、精簡回報。先核原件，再推論。本檔取代 [`2026-10-31-m6-codex-resume-prompt.md`](2026-10-31-m6-codex-resume-prompt.md) 成為唯一接手入口；10-31 檔保留為歷史，其「下次工作順序」一節已被本檔第 3 節取代，其餘停點事實與原 FAIL 原判仍有效。
 
+**2026-11-05 最新接續點：Task 8-core 已結案。** 末code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 的 `run-all-f9344a453d914fc2b22bae056c0fed1e` 自然END ALL0／JUnit1014／M6 10/10／mainOnlyPASS，S1a Full strict10案十事件PASS；最終docs HEAD `0f02011b97e9b03b043afbfe33d14aa203d88708` 已push，GitHub run `41918108739` 同SHA Ubuntu／Windows雙job success，三artifact清單已讀未解壓。8C-3 handoff§4摘要I-1已修、窄複審 ADDRESSED C0/I0/M1；M1為8C-2已揭露異常foreign END／dispatch未永久poison。下一步Task9 v2設計已複審C0/I0/M0，tracked plan窄補已獨審C0/I0/M0（報告SHA256 832EB19BF104F7C2A31804A407654680F551F5487640341D78CAA191F09BEF50），隨本docs commit採用後派schema5／policy1；8-H H1–H4待Task21後triage，無waiver、原FAIL不改判。這筆是純狀態文件更新，後續舊接續點皆為歷史。
+
 **2026-11-05 最新接續點**：8C-2 docs HEAD `e1eb9fcdda9c38496db803c0797a7477a7b363c1` 的 GitHub run `41911139872` Ubuntu／Windows雙job success；最終code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 的完整 `run-all-f9344a453d914fc2b22bae056c0fed1e` 自然END ALL0／JUnit1014／M6 10/10，S1a Full strict另PASS；其後只有四份docs。8C-3唯讀本機審核C0/I1/M1：handoff§4過時legacy摘要已修待複審，M1是8C-2已揭露foreign END／dispatch未永久poison。8C-3最終docs truth／commit／遠端CI尚待；通過才進Task9。H1–H4仍排Task21後triage，原FAIL不改判。以下8C-2接續點與§9派工文為歷史。
 
 **2026-11-05 最新接續點**：8C-1 docs HEAD `443221e634142e9ee39bc1cb5b0123c6c08cf059` 的遠端 run `41863993829` Ubuntu／Windows雙job success；8C-2 thread／ticket與GameTest entrypoint兩次窄設計已審，docs base `f8f8d847b5509e02a84cde2c1685986d687c5780`。8C-2 code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 本機七檔、Lifecycle12×2／自然settings GameTest1×2 focused PASS、完整 `run-all-f9344a453d914fc2b22bae056c0fed1e` END ALL0／JUnit1014／M6 10/10，S1a Full strict10案十事件 PASS；spec C0/I0/M1、quality Approved C0/I0/M1。Minor為異常 foreign END／dispatch 未永久poison，符合tracked最小短路契約但弱於ignored addendum，須記受限偏離。此筆 8C-2 docs truth／push／遠端CI與8C-3終局尚待；Task9未開始。原8C-1接續點與§9舊派工文為歷史。
@@ -13,7 +15,7 @@
 ## 0. 貼給 Codex 的起手句
 
 ```
-請以 Codex 身分接手 QuantumChamber M6。先讀 AGENTS.md，再讀 docs/handoffs/2026-11-02-m6-codex-resume-prompt.md 全文並依其第 1 節順序讀完其餘文件。使用者 2026-11-02 已裁示縮 Task 8 範圍：先完成 Task 8-core 與 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片。8C-0～8C-2 已結案；最終 code pin 16b833cc43278fe8fb56e8e75f2aed4beee49667 本機 full 與雙平台 CI 已過。到場先核 Git、ignored 原件、8C-3 handoff §4 的窄修複審、最終 docs truth／push／同 code 雙平台 CI；完成後依 plan 進 Task 9，不重做 8C-0～8C-2。全程在 Windows M6 工作樹使用 Subagent-Driven Development，繁體中文（台灣）精簡回報，先證據後結論。
+請以 Codex 身分接手 QuantumChamber M6。先讀 AGENTS.md，再讀 docs/handoffs/2026-11-02-m6-codex-resume-prompt.md 全文並依其第 1 節順序讀完其餘文件。使用者 2026-11-02 已裁示縮 Task 8 範圍：Task 8-core 已完成，接續 Task 9–21 全部功能，之後才做 Task 8-H 中經 triage 判為必須的切片。最終 8C code pin 16b833cc43278fe8fb56e8e75f2aed4beee49667、本機full與最終docs HEAD0f02011b97e9b03b043afbfe33d14aa203d88708 的 GitHub run41918108739 Ubuntu／Windows雙job success 均已有原件。到場核 Git、ignored STATUS/progress、原FAIL與Task9前置設計後，Task9 v2設計已複審C0/I0/M0，先核本docs commit已採獨審C0/I0/M0的Task9 plan窄補，再依plan派Task9 schema5／policy1；不重做8C-0～8C-3，不在main實作。全程繁體中文（台灣）精簡回報，先證據後結論，使用Subagent-Driven Development。
 ```
 
 ## 1. 工作區與先讀
@@ -37,7 +39,7 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 
 1. 核 Git／CI／ignored 原件（第 1 節）。【已完成，見第 6 節 2026-11-02 稍後事實】
 2. 【已完成：spec v1.4 與 plan 8C／8-H 經兩席獨審加三輪窄複審採用，最終 C0/I0/M0；commit 鏈見第 6 節】**只改文件，不動程式**：spec 升 v1.4（§3.1.1 增「SHALLOW_V1 最小 closure 與已知限制」小節、§3.1.2 標明 8-core 的最小 lifecycle、§8 門檻對應調整）；plan Task 8 重構為 8-core 與 8-H 兩段，8B2／8B3 既有已結案切片紀錄原文保留為歷史、不刪。送獨立 spec review 與獨立 plan review；Critical／Important 清零才進第 3 步。第 4 節是 controller 建議的界線，不是已審設計。
-3. **目前下一步**：8C-0～8C-2 各片 code／review／docs／雙平台 CI 已完成；8C-3 最終 code pin 的 full 已自然 END ALL0。修 handoff §4 的 I-1 並複審，完成最終 docs truth／正常 push／雙平台 CI 後才進 Task 9。第 9 節 8C-0 派工簡報只供歷史核對。
+3. **目前下一步**：Task 8-core 的8C-0～8C-3已通過本機full、獨立審查、docs truth、正常push及最終雙平台CI；先核現場Git/ignored原件，再核本docs commit已採Task9 v2設計C0/I0/M0的tracked plan窄補，才依plan實作schema5／policy1。第9節8C-0派工簡報僅供歷史核對；8-H待Task21後triage，不能提前waiver。
 4. Task 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21，依 plan 原文與各自門檻；不因 Task 8 縮範圍而放寬任何 Task 9–21 的 RED／雙 focused／full／兩席 review／CI。
 5. Task 8-H triage：列出第 5 節全部項目的當時狀態，提案哪些為「必須」、哪些 waiver，送獨立 review 後交使用者裁示；只實作裁示為必須者。
 6. Task 22 收尾（含人工 smoke、whole-branch review、docs truth、CI），之後 `main` 合併、tag、退役仍另守門檻。
@@ -105,6 +107,8 @@ Codex 每次交回在此追加：日期、code pin、range、RED／GREEN、雙 f
 - 2026-11-05（Codex，8C-2）：8C-1 docs HEAD `443221e` 的 GitHub run `41863993829` Ubuntu／Windows雙job success。兩次thread／ticket及GameTest entrypoint設計窄修後，base `f8f8d847b5509e02a84cde2c1685986d687c5780`，8C-2 code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 恰七檔；自然 startup acquire 具名 RED、Lifecycle具名RED、初次 factory失敗新RED→GREEN，最終Lifecycle12×2、settings GameTest1×2乾淨focused PASS。完整 `run-all-f9344a453d914fc2b22bae056c0fed1e` 自然END ALL0／JUnit1014／M6 10/10／mainOnlyPASS，另S1a Full strict10案固定十事件PASS；少案checker負例精確 `S1A_ORACLE_SCOPE`。spec C0/I0/M1、quality Approved C0/I0/M1；同一Minor為異常foreign END／dispatch未永久poison，符合tracked最小契約但弱於ignored addendum。早期FQCN／batch空／單參數編譯setup FAIL、stop mutation首輪存活、wrong-registry整root附S1a EVENT_ORDER FAIL、舊round2逐輪REVERT JSON缺口各保原判／限制，不補造。此筆docs truth／push／本code遠端CI尚待；通過後8C-3，Task9仍未開始。
 
 - 2026-11-05（Codex，8C-3 終局準備）：8C-2 docs HEAD `e1eb9fcdda9c38496db803c0797a7477a7b363c1` 的 GitHub run `41911139872` Ubuntu／Windows雙job success，三artifact清單讀回、未解壓raw audit；採code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667`。同code本機 full `run-all-f9344a453d914fc2b22bae056c0fed1e` END ALL0／JUnit1014／M6 10/10／mainOnlyPASS、S1a strict Full 10案十事件PASS；code後只有四份docs，未重跑相同focused。本機8C-3獨立唯讀審核 C0/I1/M1（SHA256 `14E7689190DEFD7071F55A2B0852C5004677388DFF0825797785532FA1F92A48`），I1 為本檔 §4 過時直呼 legacy 摘要，已窄修待複審；M1 foreign END／dispatch 未永久poison 的受限偏離已在8C-2 note。H1完整閉包／100ms、H2正式source/refresh/consumer與LT2、H3三bundle、H4真reload仍待Task21後triage，沒有提前waiver或改判原FAIL。8C-3最終 docs commit／CI尚待，Task9未開始。
+
+- 2026-11-05（Codex，8C-core終局）：末code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 的本機 `run-all-f9344a453d914fc2b22bae056c0fed1e` 自然 END ALL0／JUnit1014／M6 10/10、S1a Full strict10案十事件PASS；code後只有四份docs。最終docs HEAD `0f02011b97e9b03b043afbfe33d14aa203d88708` 已正常push／ls-remote同SHA，GitHub run `41918108739` 同SHA completed/success，Ubuntu build／Windows windows-native雙job與M6／main-only／隔離／上傳步驟success，三artifact清單已讀未解壓。8C-3本機審核原I1為§4 legacy直呼摘要，已修且窄複審 ADDRESSED C0/I0/M1（SHA256 `E74D0653CD254E4BAB135E851924F219DD8D58EB14317BB6378A614AE1151140`）。此筆純狀態文件無code/build/workflow差異，正常push後Task9為下一片；其v2設計及本plan窄補均已獨審C0/I0/M0，隨本docs commit採用；Task9–21、8-H與M6整體均未完成，所有原FAIL保原判。
 
 ## 9. 8C-0 派工簡報（給 Codex implementer；binding 以 plan 8C-0 與 spec §3.1.3 原文為準）
 
