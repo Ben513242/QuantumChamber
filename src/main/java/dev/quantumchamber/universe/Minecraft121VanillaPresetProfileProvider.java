@@ -74,10 +74,18 @@ public final class Minecraft121VanillaPresetProfileProvider implements UniverseP
 
     /** 只在來源 Overworld 與兩個原版 shallow 設定逐 byte 相同時辨認。 */
     public static Optional<String> detectOverworldPreset(ServerSettingsContext lease) {
+        lease.requireValid();
         var registries = lease.registries();
         var actual = registries.get(RegistryKeys.DIMENSION).get(DimensionOptions.OVERWORLD);
         if (actual == null) return Optional.empty();
-        byte[] encoded = Minecraft121ShallowSettingsCanonicalizer.encodeRole(actual, lease);
+        byte[] encoded;
+        try {
+            encoded = Minecraft121ShallowSettingsCanonicalizer.encodeRole(actual, lease);
+        } catch (IllegalArgumentException error) {
+            if (!"SHALLOW_INLINE_ELEMENT".equals(error.getMessage())) throw error;
+            lease.requireValid();
+            return Optional.empty();
+        }
         for (String id : new String[] {NORMAL_ID, AMPLIFIED_ID}) {
             var parameters = new NbtCompound();
             parameters.putString("OverworldPreset", NORMAL_ID.equals(id) ? "normal" : "amplified");
