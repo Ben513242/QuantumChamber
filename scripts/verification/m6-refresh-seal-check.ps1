@@ -15,7 +15,7 @@ Require ($processes.Count -eq 1 -and $processes[0].commandLine.Contains('-Dquant
 $locks=@(Read-Json 'execution/locks-after.json');Require (@($locks | Where-Object {-not $_.exclusiveAvailable}).Count -eq 0) 'LOCK'
 $restore=Read-Json 'world-restore.json';Require ($restore.exactRestored -eq $true -and $restore.deleted -eq $false -and $restore.freshEvidence) 'RESTORE'
 $summary=Read-Json 'm6-summary.json';Require ($summary.status -ceq 'PASS' -and $summary.runtimeScope -ceq 'testmod-present') 'SUMMARY'
-$selection=Read-Json 'scope.json';$expectedCount=if($Scope -ceq 'Focused'){1}else{9}
+$selection=Read-Json 'scope.json';$expectedCount=if($Scope -ceq 'Focused'){1}else{10}
 $target='quantumchamber:m1_empty|m6refreshsealgametests.naturalstartuprefreshsealsexactboundsources'
 Require ($selection.scope -ceq 'm6' -and $selection.status -ceq 'PASS' -and $selection.expected -eq $expectedCount -and $selection.actual -eq $expectedCount) 'SCOPE'
 Require (@($selection.missing).Count -eq 0 -and @($selection.extra).Count -eq 0 -and @($selection.expectedCases | Where-Object {$_ -ceq $target}).Count -eq 1 -and @($selection.actualCases | Where-Object {$_ -ceq $target}).Count -eq 1) 'CASES'

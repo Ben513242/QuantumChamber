@@ -13,6 +13,8 @@ pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClas
 
 M6 Task 3 提供四個互斥 scope：default（其餘）、legacy（`m4_legacy_runtime`）、M5（`m5_universe*`）、M6（`m6_universe*`）。XML 依完整 `classname|name` 集合比對，拒絕缺漏、重複、跨 scope、錯 template、failure／error／skipped。同一 batch 可以有多個 testcase；M6 canary 的 `m6_universe_gate` 目前有兩個。
 
+Task 8C-2 加入 `m6_universe_settings_context` 的單一自然開服案例後，M6 Full 精確集合由 9 案增為 10 案；實際清單仍以當次 `scope.json` 的 `expectedCases` 與 XML 逐案核對。`m6-refresh-seal-check.ps1 -Scope Full` 要求 10 案及固定十個 S1a 事件，少一案或任何 failure／error／skipped 均拒絕。
+
 ```powershell
 pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M6Compile -Label task-compile
 pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_gate -Label g0-green

@@ -15,6 +15,7 @@ import dev.quantumchamber.registry.ModEffects;
 import dev.quantumchamber.registry.ModItems;
 import dev.quantumchamber.registry.ModPotions;
 import dev.quantumchamber.universe.UniverseLifecycleService;
+import dev.quantumchamber.universe.Minecraft121SettingsLifecycle;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerBlockEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -34,6 +35,7 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         ModEffects.register();
         ModPotions.register();
         ModPotions.registerBrewingRecipe();
+        Minecraft121SettingsLifecycle.initialize();
         ChamberProtectionService.initialize();
         ChamberMaintenanceInteraction.initialize();
         ChamberControllerLoadSyncQueue.initialize();
