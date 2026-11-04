@@ -89,9 +89,7 @@ final class Minecraft121SettingsGraph {
     private void payloadUnchecked(Key key, NbtElement value) {
         mutable(); reserve(key);
         long available = nodes.containsKey(key) ? limits.canonical() - nativeStateCharge : limits.canonical() - nativeStateCharge - canonicalBytes;
-        var output = new Encoder(Math.min(available, limits.totalRaw()));
-        output.nbt(Objects.requireNonNull(value), 0);
-        byte[] encoded = output.bytes();
+        byte[] encoded = canonicalNbt(Objects.requireNonNull(value), Math.min(available, limits.totalRaw()));
         byte[] previous = nodes.get(key);
         require(previous == null || Arrays.equals(previous, encoded), "DATA_NODE_CHANGED");
         if (previous == null) {
@@ -174,6 +172,13 @@ final class Minecraft121SettingsGraph {
             require(bytes <= limits.canonical() - nativeStateCharge - canonicalBytes, "BUDGET_CANONICAL");
             canonicalBytes += bytes;
         }
+    }
+    /** 與圖節點共用同一個型別保真、排序及 big-endian 編碼器。 */
+    static byte[] canonicalNbt(NbtElement value, long cap) {
+        var graph = new Minecraft121SettingsGraph();
+        var output = graph.new Encoder(cap);
+        output.nbt(Objects.requireNonNull(value), 0);
+        return output.bytes();
     }
     private long keyBytes(Key key) {
         Objects.requireNonNull(key);

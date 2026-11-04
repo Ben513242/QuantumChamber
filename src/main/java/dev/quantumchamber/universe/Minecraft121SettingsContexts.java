@@ -2,6 +2,7 @@ package dev.quantumchamber.universe;
 
 import java.lang.ref.WeakReference;
 import java.util.Objects;
+import net.minecraft.registry.DynamicRegistryManager;
 
 /** 單一 server 的設定來源 owner；正式生命週期接線仍由後續切片負責。 */
 public final class Minecraft121SettingsContexts {
@@ -406,6 +407,16 @@ public final class Minecraft121SettingsContexts {
         }
         @Override public void requireValid() {
             synchronized (cell.fence) { validateLocked(); }
+        }
+        @Override public DynamicRegistryManager.Immutable registries() {
+            synchronized (cell.fence) {
+                var source = validateLocked().current.registries();
+                if (!(source instanceof DynamicRegistryManager.Immutable immutable)) throw unavailable();
+                return immutable;
+            }
+        }
+        @Override public boolean sourceGenerateStructures() {
+            synchronized (cell.fence) { return validateLocked().current.generateStructures(); }
         }
     }
 }

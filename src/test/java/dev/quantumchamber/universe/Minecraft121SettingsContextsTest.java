@@ -4,6 +4,34 @@ import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
 
 class Minecraft121SettingsContextsTest {
+    @Test void leaseRegistriesRequireValid() {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        var registries = new net.minecraft.registry.DynamicRegistryManager.ImmutableImpl(java.util.List.of()).toImmutable();
+        contexts.publishInitial(new Minecraft121SettingsContexts.Sources(registries, new Object(), new Object(), new Object(), false));
+        var lease = contexts.acquire(server);
+        assertSame(registries, lease.registries());
+        assertFalse(lease.sourceGenerateStructures());
+        contexts.stop();
+        unavailable(lease::registries);
+        unavailable(lease::sourceGenerateStructures);
+    }
+
+    @Test void leaseRegistriesRejectNonRegistryManagerSources() {
+        var server = new Object();
+        var contexts = new Minecraft121SettingsContexts(server);
+        contexts.publishInitial(sources());
+        var lease = contexts.acquire(server);
+        unavailable(lease::registries);
+        assertTrue(lease.sourceGenerateStructures());
+    }
+
+    @Test void leaseDoesNotExposeServerOrResources() {
+        var methods = java.util.Arrays.stream(ServerSettingsContext.class.getMethods())
+                .filter(method -> method.getDeclaringClass() == ServerSettingsContext.class)
+                .map(java.lang.reflect.Method::getName).collect(java.util.stream.Collectors.toSet());
+        assertEquals(java.util.Set.of("requireValid", "registries", "sourceGenerateStructures"), methods);
+    }
     private static Object field(Object target, String name) throws Exception {
         var field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
