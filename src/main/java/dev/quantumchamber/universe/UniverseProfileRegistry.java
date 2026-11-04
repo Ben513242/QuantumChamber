@@ -1,6 +1,7 @@
 package dev.quantumchamber.universe;
 
 import java.util.HashMap;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -46,10 +47,55 @@ public final class UniverseProfileRegistry {
 
     public GenerationSettingsSnapshot createSnapshot(String id, int version, NbtCompound parameters,
             ServerSettingsContext context) {
-        throw new IllegalStateException("M6 context/canonicalizer 尚未就緒");
+        var registration = requireBound(id, version);
+        if (context == null) throw new IllegalStateException("CONTEXT_UNAVAILABLE");
+        var input = validateParameters(registration, parameters);
+        context.requireValid();
+        var resolved = registration.provider().resolveGenerationSettings(input.copy(), context);
+        var fingerprint = new Minecraft121ShallowSettingsCanonicalizer()
+                .canonicalize(resolved, input, context).fingerprint();
+        var nbt = new NbtCompound();
+        nbt.putInt("SnapshotVersion", 1);
+        nbt.putString("ProviderId", id);
+        nbt.putInt("ProviderVersion", version);
+        nbt.put("Parameters", input.copy());
+        nbt.putByteArray("OutputFingerprint", fingerprint);
+        var snapshot = GenerationSettingsSnapshot.fromNbt(nbt);
+        context.requireValid();
+        return snapshot;
     }
     public UniverseProfileProvider.ResolvedSettings resolve(GenerationSettingsSnapshot snapshot,
             ServerSettingsContext context) {
-        throw new IllegalStateException("M6 context/canonicalizer 尚未就緒");
+        Objects.requireNonNull(snapshot, "snapshot");
+        var registration = requireBound(snapshot.providerId(), snapshot.providerVersion());
+        if (context == null) throw new IllegalStateException("CONTEXT_UNAVAILABLE");
+        var input = validateParameters(registration, snapshot.parameters());
+        context.requireValid();
+        var resolved = registration.provider().resolveGenerationSettings(input.copy(), context);
+        var fingerprint = new Minecraft121ShallowSettingsCanonicalizer()
+                .canonicalize(resolved, input, context).fingerprint();
+        if (!Arrays.equals(fingerprint, snapshot.outputFingerprint()))
+            throw new IllegalStateException("SETTINGS_FINGERPRINT_MISMATCH");
+        context.requireValid();
+        return resolved;
+    }
+
+    private synchronized Registration requireBound(String id, int version) {
+        if (!frozen) throw new IllegalStateException("Profile registry 尚未凍結");
+        var registration = registrations.get(new Key(id, version));
+        if (registration == null || version != 1 || !GenerationSettingsSnapshot.isBuiltin(id)
+                || registration.provider().getClass() != Minecraft121VanillaPresetProfileProvider.class
+                || !Minecraft121VanillaPresetProfileProvider.CAPABILITY.equals(registration.metadata().adapterCapabilities())
+                || !id.equals(registration.provider().id()) || version != registration.provider().version()
+                || !registration.metadata().adapterCapabilities().equals(registration.provider().adapterCapabilities()))
+            throw new IllegalStateException("PROFILE_CLOSURE_UNBOUND");
+        return registration;
+    }
+
+    private static NbtCompound validateParameters(Registration registration, NbtCompound parameters) {
+        if (parameters == null) throw new IllegalArgumentException("Parameters 缺失");
+        var copy = parameters.copy();
+        registration.metadata().parameterSchema().validate(copy);
+        return copy;
     }
 }
