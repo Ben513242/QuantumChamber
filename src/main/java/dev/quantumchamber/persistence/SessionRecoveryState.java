@@ -86,7 +86,10 @@ public final class SessionRecoveryState extends PersistentState {
         INSTALLATIONS.removeIf(entry -> entry.server.get() == null);
         for (var entry : INSTALLATIONS) {
             if (entry.server.get() == server) {
-                if (entry.manager.get() != manager) throw new IllegalStateException("JOURNAL_WRONG_MANAGER");
+                if (entry.manager.get() != manager) {
+                    entry.phase = InstallationPhase.FAILED;
+                    throw new IllegalStateException("JOURNAL_WRONG_MANAGER");
+                }
                 return entry;
             }
             if (entry.manager.get() == manager) throw new IllegalStateException("JOURNAL_SHARED_MANAGER");
@@ -176,6 +179,7 @@ public final class SessionRecoveryState extends PersistentState {
     private Path checkedPath;
     private boolean checkedAbsent;
     private PendingAttempt pending;
+    private boolean pendingRestartRequired;
     private record PendingAttempt(Path target, SessionJournalStore.PreparedWrite prepared,
             Map<UUID, SessionRecoveryRecord> expectedRecords, NbtCompound oldWrapped,
             Map<UUID, SessionRecoveryRecord> oldRecords, boolean oldAbsent) {
@@ -873,12 +877,21 @@ public final class SessionRecoveryState extends PersistentState {
 
     /** 只讀收斂：原 checked exact 才解除；原 attempt exact 也不得在本 instance 復活已 abort 的 current。 */
     private void reconcilePending(Path target) throws IOException {
+        if (pendingRestartRequired) throw new IOException("JOURNAL_PENDING_RESTART_REQUIRED");
         var attempt = pending;
         if (!attempt.target().equals(target)) throw new IOException("JOURNAL_PENDING_TARGET_MISMATCH");
+        // 第一次核對若無法證實舊權威，此 instance 之後不再重讀或寫入。
+        pendingRestartRequired = true;
+        requireExactOldAuthority(target, attempt);
+        pendingRestartRequired = false;
+        pending = null;
+    }
+
+    private void requireExactOldAuthority(Path target, PendingAttempt attempt) throws IOException {
         NbtCompound actual;
         try { actual = readback.read(target); }
         catch (NoSuchFileException missing) {
-            if (attempt.oldAbsent()) { pending = null; return; }
+            if (attempt.oldAbsent()) return;
             throw new IOException("JOURNAL_PENDING_MISSING_OLD", missing);
         } catch (IOException | RuntimeException unreadable) {
             throw new IOException("JOURNAL_PENDING_UNREADABLE", unreadable);
@@ -888,10 +901,7 @@ public final class SessionRecoveryState extends PersistentState {
             decoded = fromNbt(actual.getCompound("data"), intentValidator); decoded.requireHealthy();
         } catch (RuntimeException unreadable) { throw new IOException("JOURNAL_PENDING_UNREADABLE", unreadable); }
         if (attempt.oldWrapped() != null && attempt.oldWrapped().equals(actual)
-                && attempt.oldRecords().equals(decoded.records())) {
-            pending = null;
-            return;
-        }
+                && attempt.oldRecords().equals(decoded.records())) return;
         if (actual.getCompound("data").getInt("SchemaVersion") == attempt.prepared().schema()
                 && attempt.prepared().wrapped().equals(actual) && attempt.expectedRecords().equals(decoded.records()))
             throw new IOException("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED");

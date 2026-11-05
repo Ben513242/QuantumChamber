@@ -394,26 +394,67 @@ class SessionJournalSchemaFiveTest {
             assertTrue(restarted.flushedRecords().containsKey(fresh.sessionUuid()));
         }
     }
-    @Test void pendingExactOldCanReleaseButUnknownOrMissingCannot() throws Exception {
+    @Test void firstPendingReadOfExactOldReleasesForCurrentChanges() throws Exception {
         try (var fixture = settings()) {
             var registry = builtin(); var lease = new TestLease(fixture.registries());
             var validator = SessionRecoveryState.m6Validator(() -> registry, () -> lease);
-            var old = fixtureRecord(1, false, registry, lease); var fresh = fixtureRecord(2, true, registry, lease);
-            var disk = new Disk("pending-old", validator, old); byte[] oldBytes = Files.readAllBytes(disk.file);
+            var old = fixtureRecord(1, false, registry, lease);
+            var fresh = fixtureRecord(2, true, registry, lease);
+            var later = fixtureRecord(3, false, registry, lease);
+            var disk = new Disk("pending-old-first", validator, old);
+            byte[] oldBytes = Files.readAllBytes(disk.file);
             disk.state.put(fresh); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::save);
-            assertTrue(disk.state.abortUnchecked(fresh));
-            var later = fixtureRecord(3, false, registry, lease); disk.state.put(later);
-            var different = SessionJournalStore.read(disk.file);
-            different.getCompound("data").getList("Records", 10).getCompound(1).getList("CandidateLedger", 10)
-                    .getCompound(0).getCompound("Candidate").getCompound("Intent").putLong("SourceRootWorldSeed", 43);
-            NbtIo.writeCompressed(different, disk.file); assertThrows(UncheckedIOException.class, disk::save);
-            assertEquals(different, SessionJournalStore.read(disk.file));
-            Files.write(disk.file, new byte[] {0, 1, 2}); assertThrows(UncheckedIOException.class, disk::save);
-            assertArrayEquals(new byte[] {0, 1, 2}, Files.readAllBytes(disk.file));
-            Files.delete(disk.file); assertThrows(UncheckedIOException.class, disk::save); assertFalse(Files.exists(disk.file));
-            Files.write(disk.file, oldBytes); assertDoesNotThrow(disk::save);
+            assertTrue(disk.state.abortUnchecked(fresh)); disk.state.put(later);
+            Files.write(disk.file, oldBytes);
+            assertDoesNotThrow(disk::save);
             assertEquals(4, SessionJournalStore.read(disk.file).getCompound("data").getInt("SchemaVersion"));
             assertEquals(java.util.Map.of(old.sessionUuid(), old, later.sessionUuid(), later), disk.state.flushedRecords());
+        }
+    }
+    @Test void pendingExactAttemptRequiresRestartEvenAfterOldBytesReturn() throws Exception {
+        checkTerminalPending("attempt", "JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED");
+    }
+    @Test void pendingOtherAuthorityRequiresRestartEvenAfterOldBytesReturn() throws Exception {
+        checkTerminalPending("other", "JOURNAL_PENDING_AUTHORITY_UNKNOWN");
+    }
+    @Test void pendingUnreadableRequiresRestartEvenAfterOldBytesReturn() throws Exception {
+        checkTerminalPending("corrupt", "JOURNAL_PENDING_UNREADABLE");
+    }
+    @Test void pendingMissingRequiresRestartEvenAfterOldBytesReturn() throws Exception {
+        checkTerminalPending("missing", "JOURNAL_PENDING_MISSING_OLD");
+    }
+    private void checkTerminalPending(String observation, String expectedReason) throws Exception {
+        try (var fixture = settings()) {
+            var registry = builtin(); var lease = new TestLease(fixture.registries());
+            var validator = SessionRecoveryState.m6Validator(() -> registry, () -> lease);
+            var old = fixtureRecord(1, false, registry, lease);
+            var fresh = fixtureRecord(2, true, registry, lease);
+            var later = fixtureRecord(3, false, registry, lease);
+            var disk = new Disk("pending-terminal-" + observation, validator, old);
+            var checked = disk.state.flushedRecords(); byte[] oldBytes = Files.readAllBytes(disk.file);
+            disk.state.put(fresh); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::save);
+            assertTrue(disk.state.abortUnchecked(fresh)); disk.state.put(later);
+            switch (observation) {
+                case "attempt" -> { /* 保留實際 move 的檔案。 */ }
+                case "other" -> {
+                    var different = SessionJournalStore.read(disk.file);
+                    different.putInt("DataVersion", different.getInt("DataVersion") + 1);
+                    NbtIo.writeCompressed(different, disk.file);
+                }
+                case "corrupt" -> Files.write(disk.file, new byte[] {0, 1, 2});
+                case "missing" -> Files.delete(disk.file);
+                default -> throw new AssertionError(observation);
+            }
+            byte[] observed = Files.exists(disk.file) ? Files.readAllBytes(disk.file) : null;
+            assertEquals(expectedReason, assertThrows(UncheckedIOException.class, disk::save).getCause().getMessage());
+            if (observed == null) assertFalse(Files.exists(disk.file));
+            else assertArrayEquals(observed, Files.readAllBytes(disk.file));
+            Files.write(disk.file, oldBytes);
+            assertThrows(UncheckedIOException.class, disk::save, "已判定重啟，還原舊檔後仍須停寫");
+            assertArrayEquals(oldBytes, Files.readAllBytes(disk.file)); assertEquals(checked, disk.state.flushedRecords());
+            assertTrue(disk.state.isDirty()); assertEquals(later, disk.state.records().get(later.sessionUuid()));
+            var restarted = SessionRecoveryState.load(disk.file, validator); restarted.requireHealthy();
+            assertEquals(checked, restarted.flushedRecords());
         }
     }
     @Test void preMoveFailureDoesNotPoisonNextSave() throws Exception {
@@ -455,7 +496,7 @@ class SessionJournalSchemaFiveTest {
             port.set(state, (SessionRecoveryState.JournalReadback) path -> { throw new IOException("move 後故障"); });
             assertThrows(UncheckedIOException.class, () -> state.save(file.toFile(), null));
             port.set(state, (SessionRecoveryState.JournalReadback) SessionJournalStore::read);
-            assertTrue(state.abortUnchecked(fresh)); assertThrows(UncheckedIOException.class, () -> state.save(file.toFile(), null));
+            assertTrue(state.abortUnchecked(fresh));
             Files.delete(file); assertDoesNotThrow(() -> state.save(file.toFile(), null));
             assertTrue(state.flushedRecords().isEmpty());
             assertEquals(4, SessionJournalStore.read(file).getCompound("data").getInt("SchemaVersion"));
@@ -588,6 +629,27 @@ class SessionJournalSchemaFiveTest {
                 SessionRecoveryState::new, state -> {}));
         var otherManager = new NoReadManager(directory); var separate = SessionRecoveryState.getOrInstall(new Object(), otherManager, SessionRecoveryState::new, state -> otherManager.set(SessionRecoveryState.STATE_ID, state));
         assertNotSame(first, separate);
+    }
+    @Test void wrongManagerPermanentlyStopsOriginalGetAndOwnedSave() throws Exception {
+        net.minecraft.SharedConstants.createGameVersion();
+        var server = new Object(); var a = new NoReadManager(directory); var b = new NoReadManager(directory);
+        var file = directory.resolve("wrong-manager.dat");
+        var state = SessionRecoveryState.getOrInstall(server, a, () -> SessionRecoveryState.load(file),
+                value -> a.set(SessionRecoveryState.STATE_ID, value));
+        state.markDirty(); state.save(file.toFile(), null);
+        byte[] checkedBytes = Files.readAllBytes(file); var checked = state.flushedRecords(); state.markDirty();
+        assertThrows(IllegalStateException.class, () -> SessionRecoveryState.getOrInstall(server, b,
+                () -> { throw new AssertionError("B 不得載入"); }, value -> fail("B 不得安裝")));
+        assertAll(
+                () -> assertThrows(IllegalStateException.class, () -> SessionRecoveryState.getOrInstall(server, a,
+                        SessionRecoveryState::new, value -> fail("A 不得重新安裝"))),
+                () -> assertThrows(IllegalStateException.class, () -> state.save(file.toFile(), null)),
+                () -> assertArrayEquals(checkedBytes, Files.readAllBytes(file)),
+                () -> assertEquals(checked, state.flushedRecords()), () -> assertTrue(state.isDirty()));
+        assertEquals(0, b.installs); assertEquals(1, a.installs);
+        var separate = SessionRecoveryState.getOrInstall(new Object(), b, SessionRecoveryState::new,
+                value -> b.set(SessionRecoveryState.STATE_ID, value));
+        assertNotSame(state, separate); assertEquals(0, a.reads + b.reads);
     }
     @Test void failedLoaderAndReentryCannotRetryOrInstall() {
         var server = new Object(); var manager = new NoReadManager(directory); var calls = new AtomicInteger();
