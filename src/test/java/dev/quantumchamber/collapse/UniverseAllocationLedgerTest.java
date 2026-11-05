@@ -76,6 +76,47 @@ class UniverseAllocationLedgerTest {
             () -> assertEquals(List.of(first, second), two.entries(), "被拒的追加不改變 ledger"));
     }
 
+    @Test void allocationTwoKeepsLegacyRowsExact() {
+        var original = UniverseAllocationLedger.empty().append(entry(9)).append(entry(1)).toNbt();
+        var upgraded = original.copy();
+        upgraded.putInt("SchemaVersion", 2);
+        var decoded = UniverseAllocationLedger.fromNbt(upgraded);
+        assertEquals(upgraded, decoded.toNbt());
+        assertEquals(List.of(entry(9), entry(1)), decoded.entries());
+        assertEquals(original.get("Entries"), decoded.toNbt().get("Entries"));
+    }
+
+    @Test void mixedAllocationRowsPreserveFrozenSeedAndRejectMalformedFields() {
+        var legacy = UniverseAllocationLedger.empty().append(entry(9)).toNbt();
+        var mixed = legacy.copy();
+        mixed.putInt("SchemaVersion", 2);
+        var row = new NbtCompound();
+        row.putInt("EntryVersion", 2);
+        row.putByteArray("AllocationToken", token(2).bytes());
+        row.putUuid("UniverseId", entry(2).universeId().value());
+        row.putInt("PolicyVersion", 1);
+        row.putString("ProfileId", NewUniverseIntent.RANDOM_PROFILE_ID);
+        row.putInt("ProfileVersion", 1);
+        row.putLong("RootWorldSeed", Long.MIN_VALUE);
+        row.putByteArray("TargetSettingsFingerprint", token(3).bytes());
+        mixed.getList("Entries", NbtElement.COMPOUND_TYPE).add(row);
+
+        var decoded = UniverseAllocationLedger.fromNbt(mixed);
+        assertEquals(mixed, decoded.toNbt());
+        var cases = new ArrayList<Executable>();
+        for (String key : row.getKeys()) {
+            rejects(cases, "缺 " + key, mixed, nbt -> row(nbt, 1).remove(key));
+        }
+        rejects(cases, "schema1 混入新列", mixed, nbt -> nbt.putInt("SchemaVersion", 1));
+        rejects(cases, "多欄", mixed, nbt -> row(nbt, 1).putInt("Extra", 1));
+        rejects(cases, "種子型別錯誤", mixed, nbt -> row(nbt, 1).putInt("RootWorldSeed", 0));
+        rejects(cases, "指紋長度錯誤", mixed, nbt -> row(nbt, 1).putByteArray("TargetSettingsFingerprint", new byte[31]));
+        rejects(cases, "未知 policy", mixed, nbt -> row(nbt, 1).putInt("PolicyVersion", 2));
+        rejects(cases, "未知 profile", mixed, nbt -> row(nbt, 1).putString("ProfileId", "quantumchamber:other"));
+        rejects(cases, "未知列版本", mixed, nbt -> row(nbt, 1).putInt("EntryVersion", 3));
+        assertAll(cases);
+    }
+
     @Test void codecRoundtripsExactlyInAppendOrderWithExactKeys() {
         var ledger = UniverseAllocationLedger.empty().append(entry(9)).append(entry(1)).append(entry(5));
         var nbt = ledger.toNbt();
@@ -97,7 +138,7 @@ class UniverseAllocationLedgerTest {
     @Test void strictDecodeRejectsMalformedLedgers() throws Exception {
         var valid = UniverseAllocationLedger.empty().append(entry(1)).append(entry(2)).toNbt();
         var cases = new ArrayList<Executable>();
-        rejects(cases, "schema 2", valid, nbt -> nbt.putInt("SchemaVersion", 2));
+        rejects(cases, "schema 3", valid, nbt -> nbt.putInt("SchemaVersion", 3));
         rejects(cases, "schema 型別", valid, nbt -> nbt.putLong("SchemaVersion", 1));
         rejects(cases, "缺 Entries", valid, nbt -> nbt.remove("Entries"));
         rejects(cases, "缺 SchemaVersion", valid, nbt -> nbt.remove("SchemaVersion"));

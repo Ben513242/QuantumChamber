@@ -21,46 +21,74 @@ import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 
 /**
- * spec §6.1 的 allocation ledger：{@code <save>/data/quantumchamber_universe_allocations.dat}，schema 1，只能追加；
+ * spec §6.1 的 allocation ledger：{@code <save>/data/quantumchamber_universe_allocations.dat}，schema 1/2，只能追加；
  * AllocationToken 唯一、UniverseId 唯一、exact keys。
  * <p>本類別是不可變的內容（推導、strict codec、追加與唯一性）；檔案的 checked 寫入、讀回、初始化與收斂由 {@link CollapseAuthorities} 負責。
  * 它不是 PersistentState（spec §6 收斂共通第 1 點）。
  * <p>strict decode 只驗結構（exact keys、型別、長度、唯一性、筆數上限）；entry 是否「正是本 session 會寫出的內容」（UniverseId 等於推導值、
- * OVERWORLD profile v1）在 lookup 時以 {@link Entry#of} exact 比對（spec §6「既有紀錄的驗證」）。
+ * 預期 profile、種子與指紋）在 lookup 時以 {@link Entry#of} exact 比對（spec §6「既有紀錄的驗證」）。
  */
 public final class UniverseAllocationLedger {
     public static final String FILE_NAME = "quantumchamber_universe_allocations.dat";
-    static final int SCHEMA_VERSION = 1;
+    private static final int LEGACY_SCHEMA = 1;
+    private static final int M6_SCHEMA = 2;
     /**
      * 逐筆解碼前檢查的筆數上限（沿用 H1 為 M4 candidate ledger 加的做法：先比對 list 長度，再逐筆解碼）。數值沿用 M4 的
      * {@code MaxCandidateEntries}（16384）：每筆對應一個 EAGER_ENABLED 的宇宙，每次開服都會全部物化，實際上遠低於此值。
-     * 寫滿時以 {@code NbtSizeTracker} 實測的解碼計量：allocation 約 10.0 MB、projection 約 13.4 MB，都在讀檔的 16 MiB 預算之內，
-     * 寫滿仍讀得回來。追加時也先檢查，不寫出讀不回來的檔案。
+     * 舊 schema 寫滿時以 {@code NbtSizeTracker} 實測的解碼計量：allocation 約 10.0 MB、projection 約 13.4 MB，都在讀檔的 16 MiB 預算之內，
+     * schema 2 的欄位較多；筆數與解碼容量為分開判定的條件。
      */
     public static final int MAX_ENTRIES = 16384;
     private static final Set<String> ROOT_KEYS = Set.of("SchemaVersion", "Entries");
     private static final Set<String> ENTRY_KEYS = Set.of("AllocationToken", "UniverseId", "Profile", "ProfileVersion");
+    private static final Set<String> M6_ENTRY_KEYS = Set.of("EntryVersion", "AllocationToken", "UniverseId",
+            "PolicyVersion", "ProfileId", "ProfileVersion", "RootWorldSeed", "TargetSettingsFingerprint");
     private static final byte[] DOMAIN = "quantumchamber:universe-id:v1".getBytes(StandardCharsets.UTF_8);
-    private static final UniverseAllocationLedger EMPTY = new UniverseAllocationLedger(List.of());
+    private static final UniverseAllocationLedger EMPTY = new UniverseAllocationLedger(LEGACY_SCHEMA, List.of());
 
-    /** ledger 的一筆配置。只驗非 null；與推導值、profile 的一致性由 lookup 以 {@link #of} exact 比對。 */
-    public record Entry(CandidateBytes allocationToken, UniverseId universeId, GeneratorProfile profile, int profileVersion) {
+    public record M6Fields(int policyVersion, String profileId, long rootWorldSeed, CandidateBytes targetSettingsFingerprint) {
+        public M6Fields {
+            if (policyVersion != 1 || !NewUniverseIntent.RANDOM_PROFILE_ID.equals(profileId)) {
+                throw new IllegalArgumentException("未知的 M6 allocation policy 或 profile");
+            }
+            Objects.requireNonNull(targetSettingsFingerprint, "targetSettingsFingerprint");
+        }
+    }
+
+    /** 舊列保留原四欄。新列使用凍結的 M6 欄位組；lookup 透過 {@link #of} 比對完整列。 */
+    public record Entry(CandidateBytes allocationToken, UniverseId universeId, GeneratorProfile profile, int profileVersion, M6Fields m6) {
+        public Entry(CandidateBytes allocationToken, UniverseId universeId, GeneratorProfile profile, int profileVersion) {
+            this(allocationToken, universeId, profile, profileVersion, null);
+        }
+
         public Entry {
             Objects.requireNonNull(allocationToken, "allocationToken");
             Objects.requireNonNull(universeId, "universeId");
-            Objects.requireNonNull(profile, "profile");
+            if (m6 == null) {
+                Objects.requireNonNull(profile, "profile");
+            } else if (profile != null || profileVersion != 1) {
+                throw new IllegalArgumentException("M6 allocation 不可含舊 profile，且只支援 profile version 1");
+            }
         }
 
-        /** 本 session 依 NEW 候選會寫出的 exact entry：UniverseId 為 token 的推導值，profile 與版本取自 intent（M4 已限定 OVERWORLD v1）。 */
+        /** 兩種 NEW 都從凍結的 intent 取得完整列，UUID 皆依 allocation token 推導。 */
         public static Entry of(NewUniverseIntent intent) {
             Objects.requireNonNull(intent, "intent");
-            return new Entry(intent.allocationToken(), deriveUniverseId(intent.allocationToken()), intent.profile(), intent.profileVersion());
+            var id = deriveUniverseId(intent.allocationToken());
+            if (intent.isM6()) {
+                var fields = new M6Fields(intent.policyVersion(), intent.profileId(), intent.rootWorldSeed(),
+                        new CandidateBytes(intent.targetSettingsSnapshot().outputFingerprint()));
+                return new Entry(intent.allocationToken(), id, null, intent.profileVersion(), fields);
+            }
+            return new Entry(intent.allocationToken(), id, intent.profile(), intent.profileVersion());
         }
     }
 
     private final List<Entry> entries;
+    private final int schemaVersion;
 
-    private UniverseAllocationLedger(List<Entry> entries) {
+    private UniverseAllocationLedger(int schemaVersion, List<Entry> entries) {
+        this.schemaVersion = schemaVersion;
         this.entries = List.copyOf(entries);
         var tokens = new HashSet<CandidateBytes>();
         var ids = new HashSet<UniverseId>();
@@ -106,13 +134,32 @@ public final class UniverseAllocationLedger {
         return entries.stream().filter(entry -> entry.universeId().equals(universeId)).findFirst();
     }
 
+    boolean isSchemaTwo() { return schemaVersion == M6_SCHEMA; }
+
+    void requireReadable() throws java.io.IOException {
+        var expected = toNbt();
+        var bytes = new java.io.ByteArrayOutputStream();
+        net.minecraft.nbt.NbtIo.writeCompressed(expected, bytes);
+        var decoded = dev.quantumchamber.persistence.CheckedNbtFile.parse(bytes.toByteArray());
+        if (!expected.equals(decoded) || !equals(fromNbt(decoded))) {
+            throw new IllegalArgumentException("allocation 候選於 strict 讀回後不相符");
+        }
+    }
+
+    UniverseAllocationLedger upgradeEnvelope() {
+        return schemaVersion == M6_SCHEMA ? this : new UniverseAllocationLedger(M6_SCHEMA, entries);
+    }
+
     /** 只能追加：回傳多了一筆的新 ledger；token 或 UniverseId 重複、或已達上限時丟 {@link IllegalArgumentException}，本 ledger 不變。 */
     UniverseAllocationLedger append(Entry entry) {
         Objects.requireNonNull(entry, "entry");
         if (entries.size() >= MAX_ENTRIES) throw new IllegalArgumentException("allocation ledger 已達 " + MAX_ENTRIES + " 筆上限");
+        if (entry.m6() != null && schemaVersion != M6_SCHEMA) {
+            throw new IllegalStateException("追加 M6 row 前須先 checked 升級 envelope");
+        }
         var next = new ArrayList<>(entries);
         next.add(entry);
-        return new UniverseAllocationLedger(next);
+        return new UniverseAllocationLedger(schemaVersion, next);
     }
 
     NbtCompound toNbt() {
@@ -121,12 +168,21 @@ public final class UniverseAllocationLedger {
             var row = new NbtCompound();
             row.putByteArray("AllocationToken", entry.allocationToken().bytes());
             row.putUuid("UniverseId", entry.universeId().value());
-            row.putString("Profile", entry.profile().name());
+            if (entry.m6() == null) {
+                row.putString("Profile", entry.profile().name());
+            } else {
+                var fields = entry.m6();
+                row.putInt("EntryVersion", 2);
+                row.putInt("PolicyVersion", fields.policyVersion());
+                row.putString("ProfileId", fields.profileId());
+                row.putLong("RootWorldSeed", fields.rootWorldSeed());
+                row.putByteArray("TargetSettingsFingerprint", fields.targetSettingsFingerprint().bytes());
+            }
             row.putInt("ProfileVersion", entry.profileVersion());
             list.add(row);
         }
         var root = new NbtCompound();
-        root.putInt("SchemaVersion", SCHEMA_VERSION);
+        root.putInt("SchemaVersion", schemaVersion);
         root.put("Entries", list);
         return root;
     }
@@ -136,28 +192,43 @@ public final class UniverseAllocationLedger {
         Objects.requireNonNull(nbt, "nbt");
         if (!nbt.getKeys().equals(ROOT_KEYS)) throw new IllegalArgumentException("allocation ledger root 欄位缺失或含未知欄位");
         LedgerNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
-        if (nbt.getInt("SchemaVersion") != SCHEMA_VERSION) throw new IllegalArgumentException("不支援的 allocation ledger schema");
+        int schema = nbt.getInt("SchemaVersion");
+        if (schema != LEGACY_SCHEMA && schema != M6_SCHEMA) throw new IllegalArgumentException("不支援的 allocation ledger schema");
         var list = LedgerNbt.compounds(nbt, "Entries", MAX_ENTRIES);
         var decoded = new ArrayList<Entry>(list.size());
         for (int index = 0; index < list.size(); index++) {
             var row = list.getCompound(index);
-            if (!row.getKeys().equals(ENTRY_KEYS)) throw new IllegalArgumentException("allocation ledger Entries[" + index + "] 欄位缺失或含未知欄位");
+            boolean m6 = schema == M6_SCHEMA && row.contains("EntryVersion");
+            if (!row.getKeys().equals(m6 ? M6_ENTRY_KEYS : ENTRY_KEYS)) throw new IllegalArgumentException("allocation ledger Entries[" + index + "] 欄位缺失或含未知欄位");
             LedgerNbt.requireType(row, "AllocationToken", NbtElement.BYTE_ARRAY_TYPE);
             byte[] token = row.getByteArray("AllocationToken");
             if (token.length != 32) throw new IllegalArgumentException("allocation ledger Entries[" + index + "].AllocationToken 必須恰為 32 bytes");
             var universeId = UniverseId.of(LedgerNbt.uuid(row, "UniverseId"));
-            var profile = LedgerNbt.enumValue(GeneratorProfile.class, row, "Profile");
             LedgerNbt.requireType(row, "ProfileVersion", NbtElement.INT_TYPE);
-            decoded.add(new Entry(new CandidateBytes(token), universeId, profile, row.getInt("ProfileVersion")));
+            int profileVersion = row.getInt("ProfileVersion");
+            if (m6) {
+                LedgerNbt.requireType(row, "EntryVersion", NbtElement.INT_TYPE);
+                LedgerNbt.requireType(row, "PolicyVersion", NbtElement.INT_TYPE);
+                LedgerNbt.requireType(row, "ProfileId", NbtElement.STRING_TYPE);
+                LedgerNbt.requireType(row, "RootWorldSeed", NbtElement.LONG_TYPE);
+                LedgerNbt.requireType(row, "TargetSettingsFingerprint", NbtElement.BYTE_ARRAY_TYPE);
+                if (row.getInt("EntryVersion") != 2) throw new IllegalArgumentException("未知的 allocation row 版本");
+                var fields = new M6Fields(row.getInt("PolicyVersion"), row.getString("ProfileId"),
+                        row.getLong("RootWorldSeed"), new CandidateBytes(row.getByteArray("TargetSettingsFingerprint")));
+                decoded.add(new Entry(new CandidateBytes(token), universeId, null, profileVersion, fields));
+            } else {
+                var profile = LedgerNbt.enumValue(GeneratorProfile.class, row, "Profile");
+                decoded.add(new Entry(new CandidateBytes(token), universeId, profile, profileVersion));
+            }
         }
-        return new UniverseAllocationLedger(decoded);
+        return new UniverseAllocationLedger(schema, decoded);
     }
 
     @Override public boolean equals(Object other) {
-        return other instanceof UniverseAllocationLedger ledger && entries.equals(ledger.entries);
+        return other instanceof UniverseAllocationLedger ledger && schemaVersion == ledger.schemaVersion && entries.equals(ledger.entries);
     }
 
-    @Override public int hashCode() { return entries.hashCode(); }
+    @Override public int hashCode() { return Objects.hash(schemaVersion, entries); }
 
     @Override public String toString() { return "UniverseAllocationLedger[" + entries.size() + " entries]"; }
 }

@@ -1,7 +1,6 @@
 package dev.quantumchamber.universe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -17,10 +16,11 @@ class UniverseKeysTest {
     }
 
     @Test
-    void rejectsRolesOutsideTheSchemaOneOverworldContract() {
+    void universeKeysDeriveAllThreeWithoutLoadingWorld() {
         var id = UniverseId.of(UUID.fromString("00000000-0000-0000-0000-000000000123"));
-
-        assertThrows(IllegalArgumentException.class, () -> UniverseKeys.world(id, DimensionRole.NETHER));
-        assertThrows(IllegalArgumentException.class, () -> UniverseKeys.world(id, DimensionRole.END));
+        String prefix = "quantumchamber:universe/00000000-0000-0000-0000-000000000123/";
+        assertEquals(prefix + "overworld", UniverseKeys.world(id, DimensionRole.OVERWORLD).getValue().toString());
+        assertEquals(prefix + "nether", UniverseKeys.world(id, DimensionRole.NETHER).getValue().toString());
+        assertEquals(prefix + "end", UniverseKeys.world(id, DimensionRole.END).getValue().toString());
     }
 }

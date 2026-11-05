@@ -479,6 +479,10 @@ public final class CollapseAuthorities {
         if (gate != null) return gate;
         var expected = UniverseAllocationLedger.Entry.of(intent);
         var ledger = allocation.current;
+        if (intent.isM6() || ledger.isSchemaTwo()) {
+            Lookup<UniverseAllocationLedger.Entry> baseline = allocationBaseline();
+            if (baseline != null) return baseline;
+        }
         var existing = ledger.byToken(expected.allocationToken());
         if (existing.isPresent()) {
             if (existing.get().equals(expected)) return Lookup.found(existing.get());
@@ -490,7 +494,20 @@ public final class CollapseAuthorities {
         if (ledger.entries().size() >= UniverseAllocationLedger.MAX_ENTRIES) {
             return corrupt(new IllegalStateException("allocation ledger 已達 " + UniverseAllocationLedger.MAX_ENTRIES + " 筆上限"));
         }
-        Lookup<UniverseAllocationLedger.Entry> written = checkedWrite(allocation, ledger.append(expected));
+        var writable = intent.isM6() ? ledger.upgradeEnvelope() : ledger;
+        var next = writable.append(expected);
+        if (next.isSchemaTwo()) {
+            try {
+                next.requireReadable();
+            } catch (IOException | RuntimeException failure) {
+                return corrupt(new IllegalStateException("allocation 候選內容無法通過有界讀回", failure));
+            }
+        }
+        if (writable != ledger) {
+            Lookup<UniverseAllocationLedger.Entry> upgrade = checkedWrite(allocation, writable);
+            if (upgrade != null) return upgrade;
+        }
+        Lookup<UniverseAllocationLedger.Entry> written = checkedWrite(allocation, next);
         return written == null ? Lookup.appended(expected) : written;
     }
 
@@ -662,15 +679,62 @@ public final class CollapseAuthorities {
      *     {@link AvailabilityPolicy#EAGER_ONLY}
      */
     public Lookup<UniverseRecord> allocateOrVerifyCatalog(UniverseId universeId, AvailabilityPolicy availability) {
+        return allocateCatalog(universeId, availability, null);
+    }
+
+    private <T> Lookup<T> allocationBaseline() {
+        try {
+            var disk = UniverseAllocationLedger.fromNbt(CheckedNbtFile.parse(io.read(allocation.path)));
+            if (!disk.equals(allocation.confirmed) && !(allocation.unconfirmed && disk.equals(allocation.current))) {
+                return corrupt(new IllegalStateException("allocation 檔案已遭外部替換"));
+            }
+            return null;
+        } catch (NoSuchFileException missing) {
+            return corrupt(markLost(allocation, missing));
+        } catch (IOException failure) {
+            return Lookup.failed(Lookup.Status.UNREADABLE, SealedReason.AUTHORITY_UNREADABLE,
+                    new UncheckedIOException("allocation 讀回失敗", failure));
+        } catch (RuntimeException malformed) {
+            return corrupt(malformed);
+        }
+    }
+
+    public Lookup<UniverseRecord> allocateOrVerifyCatalog(NewUniverseIntent intent, AvailabilityPolicy availability) {
+        requireThread();
+        var expected = UniverseAllocationLedger.Entry.of(intent);
+        Lookup<UniverseRecord> gate = gate(allocation);
+        if (gate != null) return gate;
+        if (intent.isM6()) {
+            Lookup<UniverseRecord> baseline = allocationBaseline();
+            if (baseline != null) return baseline;
+            try {
+                catalog.catalog().verifyM6Baseline();
+            } catch (RuntimeException foreign) {
+                return corrupt(foreign);
+            }
+        }
+        if (allocation.confirmed.byToken(intent.allocationToken()).filter(expected::equals).isEmpty()) {
+            return corrupt(new IllegalStateException("NEW 缺少完全相符的 checked allocation row"));
+        }
+        return allocateCatalog(expected.universeId(), availability, intent.isM6() ? intent : null);
+    }
+
+    private Lookup<UniverseRecord> allocateCatalog(UniverseId universeId, AvailabilityPolicy availability, NewUniverseIntent intent) {
         requireThread();
         Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");
         Lookup<UniverseRecord> gate = catalogGate("不配置");
         if (gate != null) return gate;
         var state = catalog.catalog();
+        if (intent == null && allocation.current.isSchemaTwo()
+                && allocation.current.byUniverseId(universeId).map(row -> row.m6() != null).orElse(false)) {
+            return corrupt(new IllegalStateException("已配置的 M6 NEW 需要原 checked frozen intent 才能配置 catalog"));
+        }
         Map<UniverseId, UniverseRecord> flushed = state.flushedRecords();
         var existing = flushed.get(universeId);
         if (existing != null) {
-            if (catalogRecordMatches(existing, universeId, availability)) return Lookup.found(existing);
+            boolean matches = intent == null ? existing.definition().schemaVersion() == 1 && catalogRecordMatches(existing, universeId, availability)
+                    : catalogRecordMatches(intent, existing, availability);
+            if (matches) return Lookup.found(existing);
             return corrupt(new IllegalStateException("既有 catalog record 不是 M5 會配置的內容（descriptor、profile、seed policy 或 availability 不符）"));
         }
         var storage = universeStorage(universeId);
@@ -686,7 +750,15 @@ public final class CollapseAuthorities {
         UniverseRecord allocated;
         try {
             long ordinal = Math.addExact(flushed.values().stream().mapToLong(record -> record.definition().allocationOrdinal()).max().orElse(-1), 1);
-            allocated = state.allocateOverworld(universeId.value(), ordinal);
+            if (intent == null) {
+                allocated = state.allocateOverworld(universeId.value(), ordinal);
+            } else {
+                if (state.upgradeEnvelope()) {
+                    Lookup<UniverseRecord> upgrade = flushCatalog(state);
+                    if (upgrade != null) return upgrade;
+                }
+                allocated = state.allocateM6(UniverseRegistry.newM6(universeId, ordinal, intent));
+            }
         } catch (RuntimeException failure) {
             return corrupt(new IllegalStateException("catalog 配置失敗", failure));
         }
@@ -746,6 +818,7 @@ public final class CollapseAuthorities {
         UniverseRecord previous;
         try {
             state.requireHealthy();
+            state.verifyIfSchemaTwo();
             previous = state.records().get(universeId);
         } catch (IllegalStateException unhealthy) {
             return corrupt(new IllegalStateException("catalog 不健康，不變更 availability", unhealthy));
@@ -787,9 +860,22 @@ public final class CollapseAuthorities {
      * @param availability 只有 NEW 的 RESOLVE（本 session 推導的 UniverseId）可以傳 {@link AvailabilityPolicy#MATERIALIZE_RETRY}（也接受
      *     {@code DISABLED}，F4a fix round 1）；其餘一律 {@link AvailabilityPolicy#EAGER_ONLY}
      */
+    public static boolean catalogRecordMatches(NewUniverseIntent intent, UniverseRecord record, AvailabilityPolicy availability) {
+        var id = UniverseAllocationLedger.deriveUniverseId(intent.allocationToken());
+        if (!intent.isM6()) return record.definition().schemaVersion() == 1 && catalogRecordMatches(record, id, availability);
+        var expected = UniverseRegistry.newM6(id, record.definition().allocationOrdinal(), intent);
+        return expected.definition().equals(record.definition()) && expected.generation().equals(record.generation())
+                && availability.accepts(record.desiredAvailability());
+    }
+
     public static boolean catalogRecordMatches(UniverseRecord record, UniverseId universeId, AvailabilityPolicy availability) {
         Objects.requireNonNull(record, "record"); Objects.requireNonNull(universeId, "universeId"); Objects.requireNonNull(availability, "availability");
         var definition = record.definition();
+        // EXISTING 沒有 NEW intent；strict catalog 已驗定義，這裡只比對目的地身分與可用性。
+        if (definition.schemaVersion() == 2) {
+            return availability == AvailabilityPolicy.EAGER_ONLY && definition.universeId().equals(universeId)
+                    && availability.accepts(record.desiredAvailability());
+        }
         var expected = new UniverseRegistry().allocateOverworld(universeId.value(), definition.allocationOrdinal()).definition();
         return definition.equals(expected) && availability.accepts(record.desiredAvailability());
     }
@@ -820,6 +906,7 @@ public final class CollapseAuthorities {
         var slot = slot(authority);
         if (slot.lost != null || !slot.unconfirmed) return;
         if (!slot.backoff.ready(ticks.getAsInt())) return;
+        if (slot == allocation && allocation.current.isSchemaTwo() && allocationBaseline() != null) return;
         rewrite(slot);
     }
 
@@ -919,10 +1006,12 @@ public final class CollapseAuthorities {
     private <T> Lookup<T> catalogGate(String refusal) {
         Lookup<T> initialization = initializationGate();
         if (initialization != null) return initialization;
-        var state = catalog.catalog();
+        UniverseRegistryState state;
         try {
+            state = catalog.catalog();
             state.requireHealthy();
-        } catch (IllegalStateException unhealthy) {
+            state.verifyIfSchemaTwo();
+        } catch (RuntimeException unhealthy) {
             return corrupt(new IllegalStateException("catalog 不健康，" + refusal, unhealthy));
         }
         if (catalogUnconfirmed(state)) return Lookup.waiting();

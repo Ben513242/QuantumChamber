@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Set;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -38,8 +40,14 @@ public final class UniverseRegistryState extends PersistentState {
 
     private UniverseRegistry current = new UniverseRegistry();
     private Map<UniverseId, UniverseRecord> flushed = Map.of();
+    private int envelopeVersion = 1;
+    private final Map<UniverseId, NbtCompound> legacyRows = new LinkedHashMap<>();
     private String loadError;
+    private static final Map<MinecraftServer, java.lang.ref.WeakReference<UniverseRegistryState>> INSTALLATIONS =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
     private MinecraftServer owner;
+    private NbtCompound checkedWrapper;
+    private NbtCompound attemptedWrapper;
     private final UniverseCatalogStore.Readback readback;
 
     public UniverseRegistryState() {
@@ -55,16 +63,26 @@ public final class UniverseRegistryState extends PersistentState {
         requireServerThread(server);
         var path = path(server);
         var manager = server.getOverworld().getPersistentStateManager();
+        var knownRef = INSTALLATIONS.get(server);
+        var known = knownRef == null ? null : knownRef.get();
+        var loaded = new UniverseRegistryState[1];
         var type = new PersistentState.Type<>(
                 UniverseRegistryState::new,
-                (NbtCompound ignored, RegistryWrapper.WrapperLookup lookup) -> load(path),
+                (NbtCompound ignored, RegistryWrapper.WrapperLookup lookup) -> loaded[0] = load(path),
                 DataFixTypes.LEVEL);
         var state = manager.get(type, STATE_ID);
+        if (knownRef != null && (known == null || state != known)) {
+            throw new IllegalStateException("catalog 原生 state 已被替換");
+        }
+        if (known == null && state != null && state != loaded[0]) {
+            throw new IllegalStateException("catalog key 已有外部提供的 state");
+        }
         if (state == null) {
             state = load(path);
             manager.set(STATE_ID, state);
         }
         state.owner = server;
+        if (known == null) INSTALLATIONS.put(server, new java.lang.ref.WeakReference<>(state));
         return state;
     }
 
@@ -78,7 +96,10 @@ public final class UniverseRegistryState extends PersistentState {
         }
 
         try {
-            return fromNbt(UniverseCatalogStore.read(path).getCompound("data"));
+            var wrapped = UniverseCatalogStore.read(path);
+            var state = fromNbt(wrapped.getCompound("data"));
+            state.checkedWrapper = wrapped;
+            return state;
         } catch (IOException | RuntimeException exception) {
             return failed("catalog 無法讀取: " + exception);
         }
@@ -87,7 +108,8 @@ public final class UniverseRegistryState extends PersistentState {
     public static UniverseRegistryState fromNbt(NbtCompound nbt) {
         try {
             requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
-            if (nbt.getInt("SchemaVersion") != 1) {
+            int schema = nbt.getInt("SchemaVersion");
+            if ((schema != 1 && schema != 2) || (schema == 2 && !nbt.getKeys().equals(Set.of("SchemaVersion", "Records")))) {
                 throw new IllegalArgumentException("不支援 Universe catalog schema");
             }
             requireType(nbt, "Records", NbtElement.LIST_TYPE);
@@ -99,10 +121,24 @@ public final class UniverseRegistryState extends PersistentState {
                 throw new IllegalArgumentException("Records 必須包含 compound");
             }
             var decoded = new ArrayList<UniverseRecord>(rawRecords.size());
-            for (int index = 0; index < rawRecords.size(); index++) {
-                decoded.add(UniverseRecord.fromNbt(rawRecords.getCompound(index)));
-            }
             var state = new UniverseRegistryState();
+            state.envelopeVersion = schema;
+            for (int index = 0; index < rawRecords.size(); index++) {
+                var raw = rawRecords.getCompound(index);
+                if (schema == 2 && raw.getInt("SchemaVersion") == 1) {
+                    if (!raw.getKeys().equals(Set.of("SchemaVersion", "UniverseUuid", "AllocationOrdinal", "DesiredAvailability", "Worlds"))) {
+                        throw new IllegalArgumentException("schema2 內的舊 record 必須維持舊形狀");
+                    }
+                    var roles = raw.getList("Worlds", NbtElement.COMPOUND_TYPE);
+                    if (roles.size() != 1 || !roles.getCompound(0).getKeys().equals(Set.of("WorldKey", "Role", "GeneratorProfile", "SeedPolicy", "StoragePolicyVersion"))) {
+                        throw new IllegalArgumentException("schema2 內的舊 role 必須維持五欄");
+                    }
+                }
+                var record = UniverseRecord.fromNbt(raw);
+                if (record.definition().schemaVersion() > schema) throw new IllegalArgumentException("catalog envelope 版本低於 record");
+                if (record.definition().schemaVersion() == 1) state.legacyRows.put(record.definition().universeId(), raw.copy());
+                decoded.add(record);
+            }
             state.current = new UniverseRegistry(decoded);
             state.flushed = state.current.records();
             return state;
@@ -199,6 +235,31 @@ public final class UniverseRegistryState extends PersistentState {
         return commitCandidate(candidate, result);
     }
 
+    public boolean upgradeEnvelope() {
+        requireMutationThread();
+        requireHealthy();
+        if (envelopeVersion == 2) return false;
+        // 升級前先依新 envelope 的規則驗原列，避免寫出下一次載入會拒絕的 catalog。
+        var upgraded = writeNbt(new NbtCompound());
+        upgraded.putInt("SchemaVersion", 2);
+        fromNbt(upgraded).requireHealthy();
+        envelopeVersion = 2;
+        markDirty();
+        return true;
+    }
+
+    public UniverseRecord allocateM6(UniverseRecord record) {
+        requireMutationThread();
+        requireHealthy();
+        if (envelopeVersion != 2 || isDirty() || record.generation() == null
+                || record.generation().provenance() != UniverseRecord.Provenance.NEW_M6
+                || record.desiredAvailability() != DesiredAvailability.DISABLED) {
+            throw new IllegalStateException("配置 NEW_M6 前須有 checked schema2 envelope");
+        }
+        var candidate = current.copy();
+        return commitCandidate(candidate, candidate.register(record));
+    }
+
     public UniverseRecord changeAvailability(UniverseId id, DesiredAvailability availability) {
         requireMutationThread();
         requireHealthy();
@@ -218,31 +279,82 @@ public final class UniverseRegistryState extends PersistentState {
     public void save(Path target) {
         requireMutationThread();
         requireHealthy();
-        if (!isDirty()) {
-            return;
-        }
+        if (owner != null && get(owner) != this) throw new IllegalStateException("catalog 寫入 owner 不符");
+        if (envelopeVersion == 2 && owner != null) requireDiskBaseline(target);
+        if (!isDirty()) return;
         var wrapped = new NbtCompound();
         wrapped.put("data", writeNbt(new NbtCompound()));
         NbtHelper.putDataVersion(wrapped);
         try {
-            UniverseCatalogStore.write(target, wrapped, readback);
+            if (envelopeVersion == 2) verifyEncodedState(wrapped);
+            attemptedWrapper = wrapped;
+            UniverseCatalogStore.write(target, wrapped, candidate -> {
+                var observed = readback.read(candidate);
+                if (envelopeVersion == 2) verifyEncodedState(observed);
+                return observed;
+            });
         } catch (IOException exception) {
             throw new UncheckedIOException(
                     "Universe catalog 落盤失敗，保留 dirty 與上一個 durable snapshot", exception);
         }
+        checkedWrapper = wrapped;
+        attemptedWrapper = null;
         flushed = current.records();
         setDirty(false);
     }
 
+    private void verifyEncodedState(NbtCompound wrapped) {
+        var decoded = fromNbt(wrapped.getCompound("data"));
+        decoded.requireHealthy();
+        if (decoded.envelopeVersion != envelopeVersion || !decoded.records().equals(current.records())) {
+            throw new IllegalStateException("catalog strict 讀回的版本或 records 不符");
+        }
+    }
+
+    public void verifyIfSchemaTwo() {
+        if (envelopeVersion == 2) verifyM6Baseline();
+    }
+
+    public void verifyM6Baseline() {
+        requireHealthy();
+        if (owner != null) {
+            if (get(owner) != this) throw new IllegalStateException("catalog 使用的 owner 不符");
+            requireDiskBaseline(path(owner));
+        }
+    }
+
+    private void requireDiskBaseline(Path target) {
+        try {
+            var actual = UniverseCatalogStore.read(target);
+            if (!actual.equals(checkedWrapper) && !actual.equals(attemptedWrapper)) {
+                throw new IllegalStateException("catalog 檔案與已確認／等待讀回的內容不符");
+            }
+        } catch (NoSuchFileException absent) {
+            if (checkedWrapper != null) throw new IllegalStateException("已確認的 catalog 檔案消失", absent);
+        } catch (IOException failure) {
+            throw new UncheckedIOException("無法驗證 catalog 檔案", failure);
+        }
+    }
+
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
-        nbt.putInt("SchemaVersion", 1);
+        nbt.putInt("SchemaVersion", envelopeVersion);
         var entries = new NbtList();
-        current.records().values().stream()
-                .sorted(Comparator
-                        .comparingLong((UniverseRecord record) -> record.definition().allocationOrdinal())
-                        .thenComparing(record -> record.definition().universeId().value().toString()))
-                .forEach(record -> entries.add(record.toNbt()));
+        var records = current.records().values().stream();
+        if (envelopeVersion == 1) {
+            records = records.sorted(Comparator.comparingLong((UniverseRecord record) -> record.definition().allocationOrdinal())
+                    .thenComparing(record -> record.definition().universeId().value().toString()));
+        }
+        records.forEach(record -> {
+            var original = legacyRows.get(record.definition().universeId());
+            if (original == null) {
+                entries.add(record.toNbt());
+            } else {
+                var row = original.copy();
+                row.putString("DesiredAvailability", record.desiredAvailability().name());
+                entries.add(row);
+            }
+        });
         nbt.put("Records", entries);
         return nbt;
     }

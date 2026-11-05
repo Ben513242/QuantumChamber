@@ -1,5 +1,6 @@
 package dev.quantumchamber.universe;
 
+import dev.quantumchamber.candidate.NewUniverseIntent;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -45,10 +46,25 @@ public final class UniverseRegistry {
                 new UniverseDefinition(1, id, allocationOrdinal, worlds),
                 DesiredAvailability.EAGER_ENABLED);
 
+        return register(candidate);
+    }
+
+    public static UniverseRecord newM6(UniverseId id, long ordinal, NewUniverseIntent intent) {
+        var worlds = new EnumMap<DimensionRole, UniverseWorldDescriptor>(DimensionRole.class);
+        for (var role : DimensionRole.values()) {
+            worlds.put(role, new UniverseWorldDescriptor(UniverseKeys.world(id, role), role, null, SeedPolicy.EXPLICIT_ROOT_SEED_V1, 1));
+        }
+        var generation = new UniverseRecord.Generation(intent.rootWorldSeed(), intent.profileId(), intent.profileVersion(),
+                intent.targetSettingsSnapshot().toNbt(), UniverseRecord.Provenance.NEW_M6, null);
+        return new UniverseRecord(new UniverseDefinition(2, id, ordinal, worlds), DesiredAvailability.DISABLED, generation);
+    }
+
+    UniverseRecord register(UniverseRecord candidate) {
+        var id = candidate.definition().universeId();
         var existing = records.get(id);
         if (existing != null) {
-            if (!existing.definition().equals(candidate.definition())) {
-                throw new IllegalArgumentException("既有 Universe definition 不可改寫: " + uuid);
+            if (!existing.definition().equals(candidate.definition()) || !Objects.equals(existing.generation(), candidate.generation())) {
+                throw new IllegalArgumentException("既有 Universe definition 不可改寫: " + id);
             }
             return existing;
         }
@@ -85,7 +101,7 @@ public final class UniverseRegistry {
         if (existing.desiredAvailability() == availability) {
             return existing;
         }
-        var changed = new UniverseRecord(existing.definition(), availability);
+        var changed = new UniverseRecord(existing.definition(), availability, existing.generation());
         records.put(id, changed);
         return changed;
     }

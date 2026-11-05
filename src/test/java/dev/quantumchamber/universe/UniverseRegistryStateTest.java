@@ -36,6 +36,29 @@ class UniverseRegistryStateTest {
     }
 
     @Test
+    void checkedSchemaTwoEnvelopePreservesExistingRecordOrderAndContents() throws Exception {
+        var original = new UniverseRegistryState();
+        original.allocateOverworld(ID, 17);
+        original.allocateOverworld(new UUID(0, 2), 4);
+        var encoded = original.writeNbt(new NbtCompound());
+        var old = encoded.copy();
+        var records = old.getList("Records", net.minecraft.nbt.NbtElement.COMPOUND_TYPE);
+        var first = records.remove(0);
+        records.add(first);
+        var state = UniverseRegistryState.fromNbt(old);
+        assertTrue(state.upgradeEnvelope());
+        var file = root.resolve("mixed.dat");
+        state.save(file);
+        var disk = UniverseCatalogStore.read(file).getCompound("data");
+        assertEquals(2, disk.getInt("SchemaVersion"));
+        assertEquals(old.get("Records"), disk.get("Records"));
+        var reloaded = UniverseRegistryState.load(file);
+        assertFalse(reloaded.upgradeEnvelope());
+        assertEquals(disk, reloaded.writeNbt(new NbtCompound()));
+        assertFalse(reloaded.isDirty());
+    }
+
+    @Test
     void corruptExistingCatalogNeverFallsBackToEmpty() throws Exception {
         var target = root.resolve("quantumchamber_universes.dat");
         Files.writeString(target, "not nbt");

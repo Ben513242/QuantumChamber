@@ -56,6 +56,14 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
         proof.put("loadedModIds", FabricLoader.getInstance().getAllMods().stream().map(m -> m.getMetadata().getId()).sorted().toList());
         proof.put("failures", failures);
         ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
+        if (config.chain().equals("catalog-readback")) {
+            var catalog = new M6CatalogProbePhases(config.phase(), config.root(), config.evidence(), proof);
+            ServerTickEvents.END_SERVER_TICK.register(owner -> catalog.endTick());
+            ServerLifecycleEvents.SERVER_STOPPING.register(owner -> catalog.stopping());
+            ServerLifecycleEvents.SERVER_STARTED.register(AFTER, catalog::started);
+            LOGGER.info("M6_NATIVE_BEGIN chain={} phase={} mode=FUNCTIONAL startupNonce={}", config.chain(), config.phase(), config.startupNonce());
+            return;
+        }
         ServerLifecycleEvents.SERVER_STARTED.register(AFTER, owner -> {server=owner;});
         ServerTickEvents.END_SERVER_TICK.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
         ServerTickEvents.END_SERVER_TICK.register(AFTER, owner -> {
@@ -274,9 +282,14 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             if(values.stream().allMatch(Objects::isNull))return null;
             require(values.stream().allMatch(value->value!=null && !value.isBlank()),"M6_CONFIG_MISSING_PROPERTY");
             require(values.get(0).matches("[a-z0-9]+(?:-[a-z0-9]+)*") && values.get(2).matches("[0-9a-f]{32}"),"M6_CONFIG_NONCE_INVALID");
-            require(Set.of("baseline","save-reopen").contains(values.get(1)),"M6_CONFIG_PHASE_UNKNOWN");
-            require(values.get(4).equals("native-seed-diagnostic"),"M6_CONFIG_CHAIN_UNKNOWN");
-            require(values.get(5).equals("DIAGNOSTIC"),"M6_CONFIG_MODE_MIXED");
+            if (values.get(4).equals("catalog-readback")) {
+                require(Set.of("intent", "allocation", "atomic-move-readback", "restart").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
+                require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
+            } else {
+                require(values.get(4).equals("native-seed-diagnostic"), "M6_CONFIG_CHAIN_UNKNOWN");
+                require(Set.of("baseline", "save-reopen").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
+                require(values.get(5).equals("DIAGNOSTIC"), "M6_CONFIG_MODE_MIXED");
+            }
             for(var property:System.getProperties().stringPropertyNames()){
                 require(!property.startsWith("quantumchamber.m4recovery.") && !property.startsWith("quantumchamber.m5collapse.")
                         && !property.startsWith("fabric-api.gametest") && !property.startsWith("quantumchamber.gametest.")
@@ -288,7 +301,7 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
                 Path project=root.getParent().getParent();require(Files.isRegularFile(project.resolve("build.gradle")),"M6_CONFIG_PROJECT_MISSING");
                 require(!Files.isSymbolicLink(root) && root.toRealPath().equals(root),"M6_CONFIG_ROOT_REPARSE");
                 Path evidence=project.resolve(".superpowers/verification/m6-native-"+values.get(0)).resolve(values.get(1));
-                require(!Files.exists(evidence.resolve("final.json")),"M6_CONFIG_PHASE_ALREADY_USED");
+                require(!Files.exists(evidence.resolve("final.json")) && !Files.exists(evidence.resolve("halt.json")),"M6_CONFIG_PHASE_ALREADY_USED");
                 return new Configuration(values.get(0),values.get(1),values.get(2),root,values.get(4),values.get(5),evidence);
             }catch(java.io.IOException failure){throw new IllegalStateException("M6_CONFIG_ROOT_UNREADABLE",failure);}
         }

@@ -13,7 +13,9 @@ public record UniverseWorldDescriptor(
     public UniverseWorldDescriptor {
         Objects.requireNonNull(worldKey, "worldKey");
         Objects.requireNonNull(role, "role");
-        Objects.requireNonNull(generatorProfile, "generatorProfile");
+        if ((seedPolicy == SeedPolicy.SHARED_SAVE_SEED_V1) != (generatorProfile != null)) {
+            throw new IllegalArgumentException("只有舊的 shared-seed descriptor 可帶 GeneratorProfile");
+        }
         Objects.requireNonNull(seedPolicy, "seedPolicy");
         if (storagePolicyVersion < 1) {
             throw new IllegalArgumentException("storagePolicyVersion 必須為正數");

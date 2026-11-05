@@ -27,6 +27,16 @@ class UniverseDefinitionTest {
     }
 
     @Test
+    void seedPolicyRejectsUnknownValue() {
+        assertEquals("EXPLICIT_ROOT_SEED_V1", SeedPolicy.valueOf("EXPLICIT_ROOT_SEED_V1").name());
+        assertThrows(IllegalArgumentException.class, () -> SeedPolicy.valueOf("EXPLICIT_ROOT_SEED_V2"));
+        var legacy = record().toNbt();
+        assertRejectedForEachWorldMutation(legacy,
+                world -> world.putString("SeedPolicy", "EXPLICIT_ROOT_SEED_V1"),
+                world -> world.putString("SeedPolicy", "EXPLICIT_ROOT_SEED_V2"));
+    }
+
+    @Test
     void schemaOneRequiresItsExactRoleProfilePolicyAndStorageVersion() {
         assertThrows(IllegalArgumentException.class, () -> definition(
                 descriptor(DimensionRole.OVERWORLD, GeneratorProfile.VANILLA_OVERWORLD_SHARED_SEED_V1,
@@ -119,6 +129,46 @@ class UniverseDefinitionTest {
         var worlds = duplicate.getList("Worlds", NbtElement.COMPOUND_TYPE);
         worlds.add(worlds.getCompound(0).copy());
         assertThrows(IllegalArgumentException.class, () -> UniverseRecord.fromNbt(duplicate));
+    }
+
+    @Test void catalogRejectsWrongProvenanceRoleShape() {
+        var encoded = record().toNbt();
+        encoded.putInt("SchemaVersion", 2);
+        encoded.putString("Provenance", "NEW_M6");
+        encoded.putLong("RootWorldSeed", -735L);
+        encoded.putString("ProfileId", "quantumchamber:random_vanilla_v1");
+        encoded.putInt("ProfileVersion", 1);
+        var snapshot = new NbtCompound();
+        snapshot.putInt("SnapshotVersion", 1);
+        snapshot.putString("ProviderId", "quantumchamber:vanilla_normal_v1");
+        snapshot.putInt("ProviderVersion", 1);
+        var parameters = new NbtCompound();
+        parameters.putString("OverworldPreset", "normal");
+        parameters.putBoolean("GenerateStructures", true);
+        snapshot.put("Parameters", parameters);
+        snapshot.putByteArray("OutputFingerprint", new byte[32]);
+        encoded.put("TargetSettingsSnapshot", snapshot);
+        var roles = new NbtList();
+        for (var role : DimensionRole.values()) {
+            var world = new NbtCompound();
+            world.putString("WorldKey", UniverseKeys.world(ID, role).getValue().toString());
+            world.putString("Role", role.name());
+            world.putString("SeedPolicy", "EXPLICIT_ROOT_SEED_V1");
+            world.putInt("StoragePolicyVersion", 1);
+            roles.add(world);
+        }
+        encoded.put("Worlds", roles);
+        assertEquals(encoded, UniverseRecord.fromNbt(encoded).toNbt());
+        assertRejectedForEachMutation(encoded,
+                nbt -> nbt.putString("Provenance", "UNKNOWN"),
+                nbt -> nbt.putByteArray("LegacySchemaOneDigest", new byte[32]),
+                nbt -> nbt.putString("Provenance", "MIGRATED_SCHEMA1"),
+                nbt -> nbt.remove("RootWorldSeed"),
+                nbt -> nbt.getList("Worlds", NbtElement.COMPOUND_TYPE).remove(2));
+        assertRejectedForEachWorldMutation(encoded,
+                world -> world.putString("SeedPolicy", "SHARED_SAVE_SEED_V1"),
+                world -> world.putString("GeneratorProfile", "VANILLA_OVERWORLD_SHARED_SEED_V1"),
+                world -> world.putString("WorldKey", "quantumchamber:other"));
     }
 
     private static UniverseRecord record() {

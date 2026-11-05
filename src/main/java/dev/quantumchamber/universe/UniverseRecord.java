@@ -1,6 +1,9 @@
 package dev.quantumchamber.universe;
 
+import dev.quantumchamber.candidate.CandidateBytes;
+import dev.quantumchamber.candidate.NewUniverseIntent;
 import java.util.EnumMap;
+import java.util.Set;
 import java.util.Objects;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -9,10 +12,47 @@ import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.util.Identifier;
 
-public record UniverseRecord(UniverseDefinition definition, DesiredAvailability desiredAvailability) {
+public record UniverseRecord(UniverseDefinition definition, DesiredAvailability desiredAvailability, Generation generation) {
+    public enum Provenance { NEW_M6, MIGRATED_SCHEMA1 }
+
+    public record Generation(long rootWorldSeed, String profileId, int profileVersion, NbtCompound targetSettingsSnapshot,
+            Provenance provenance, CandidateBytes legacySchemaOneDigest) {
+        public Generation {
+            Objects.requireNonNull(provenance, "provenance");
+            if (profileVersion != 1 || Identifier.tryParse(profileId) == null || !profileId.contains(":")
+                    || (provenance == Provenance.MIGRATED_SCHEMA1) != (legacySchemaOneDigest != null)) {
+                throw new IllegalArgumentException("schema2 profile 或 provenance 不符");
+            }
+            var snapshot = GenerationSettingsSnapshot.fromNbt(targetSettingsSnapshot);
+            if (provenance == Provenance.NEW_M6 && (!NewUniverseIntent.RANDOM_PROFILE_ID.equals(profileId)
+                    || !snapshot.providerId().equals("quantumchamber:vanilla_normal_v1") || snapshot.providerVersion() != 1
+                    || !snapshot.parameters().getString("OverworldPreset").equals("normal"))) {
+                throw new IllegalArgumentException("NEW_M6 只接受已支援的 random vanilla profile 與 normal 目標");
+            }
+            targetSettingsSnapshot = snapshot.toNbt();
+        }
+
+        @Override public NbtCompound targetSettingsSnapshot() { return targetSettingsSnapshot.copy(); }
+    }
+
+    public UniverseRecord(UniverseDefinition definition, DesiredAvailability availability) {
+        this(definition, availability, null);
+    }
+
     public UniverseRecord {
         Objects.requireNonNull(definition, "definition");
         Objects.requireNonNull(desiredAvailability, "desiredAvailability");
+        if ((definition.schemaVersion() == 2) != (generation != null)) {
+            throw new IllegalArgumentException("schema 與 generation 欄位不符");
+        }
+        if (generation != null) {
+            for (var descriptor : definition.worlds().values()) {
+                boolean shared = generation.provenance() == Provenance.MIGRATED_SCHEMA1 && descriptor.role() == DimensionRole.OVERWORLD;
+                if (shared != (descriptor.seedPolicy() == SeedPolicy.SHARED_SAVE_SEED_V1)) {
+                    throw new IllegalArgumentException("provenance 與 role seed policy 不符");
+                }
+            }
+        }
     }
 
     public NbtCompound toNbt() {
@@ -22,12 +62,21 @@ public record UniverseRecord(UniverseDefinition definition, DesiredAvailability 
         nbt.putLong("AllocationOrdinal", definition.allocationOrdinal());
         nbt.putString("DesiredAvailability", desiredAvailability.name());
 
+        if (generation != null) {
+            nbt.putLong("RootWorldSeed", generation.rootWorldSeed());
+            nbt.putString("ProfileId", generation.profileId());
+            nbt.putInt("ProfileVersion", generation.profileVersion());
+            nbt.put("TargetSettingsSnapshot", generation.targetSettingsSnapshot());
+            nbt.putString("Provenance", generation.provenance().name());
+            if (generation.legacySchemaOneDigest() != null) nbt.putByteArray("LegacySchemaOneDigest", generation.legacySchemaOneDigest().bytes());
+        }
+
         var worlds = new NbtList();
         for (var descriptor : definition.worlds().values()) {
             var world = new NbtCompound();
             world.putString("WorldKey", descriptor.worldKey().getValue().toString());
             world.putString("Role", descriptor.role().name());
-            world.putString("GeneratorProfile", descriptor.generatorProfile().name());
+            if (descriptor.generatorProfile() != null) world.putString("GeneratorProfile", descriptor.generatorProfile().name());
             world.putString("SeedPolicy", descriptor.seedPolicy().name());
             world.putInt("StoragePolicyVersion", descriptor.storagePolicyVersion());
             worlds.add(world);
@@ -40,10 +89,28 @@ public record UniverseRecord(UniverseDefinition definition, DesiredAvailability 
         Objects.requireNonNull(nbt, "nbt");
         requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
         int schemaVersion = nbt.getInt("SchemaVersion");
-        if (schemaVersion != 1) {
+        if (schemaVersion != 1 && schemaVersion != 2) {
             throw new IllegalArgumentException("不支援 Universe schema: " + schemaVersion);
         }
 
+        Generation generation = null;
+        if (schemaVersion == 2) {
+            var provenance = parseEnum(Provenance.class, string(nbt, "Provenance"), "Provenance");
+            var keys = new java.util.HashSet<>(Set.of("SchemaVersion", "UniverseUuid", "AllocationOrdinal", "DesiredAvailability",
+                    "RootWorldSeed", "ProfileId", "ProfileVersion", "TargetSettingsSnapshot", "Provenance", "Worlds"));
+            CandidateBytes digest = null;
+            if (provenance == Provenance.MIGRATED_SCHEMA1) {
+                keys.add("LegacySchemaOneDigest");
+                requireType(nbt, "LegacySchemaOneDigest", NbtElement.BYTE_ARRAY_TYPE);
+                digest = new CandidateBytes(nbt.getByteArray("LegacySchemaOneDigest"));
+            }
+            if (!nbt.getKeys().equals(keys)) throw new IllegalArgumentException("schema2 catalog record 欄位不符");
+            requireType(nbt, "RootWorldSeed", NbtElement.LONG_TYPE);
+            requireType(nbt, "ProfileVersion", NbtElement.INT_TYPE);
+            requireType(nbt, "TargetSettingsSnapshot", NbtElement.COMPOUND_TYPE);
+            generation = new Generation(nbt.getLong("RootWorldSeed"), string(nbt, "ProfileId"), nbt.getInt("ProfileVersion"),
+                    nbt.getCompound("TargetSettingsSnapshot"), provenance, digest);
+        }
         requireType(nbt, "UniverseUuid", NbtElement.INT_ARRAY_TYPE);
         if (!nbt.containsUuid("UniverseUuid")) {
             throw new IllegalArgumentException("UniverseUuid 必須是有效 UUID");
@@ -69,8 +136,13 @@ public record UniverseRecord(UniverseDefinition definition, DesiredAvailability 
                 throw new IllegalArgumentException("WorldKey 不是合法 identifier");
             }
             var role = parseEnum(DimensionRole.class, string(world, "Role"), "Role");
-            var profile = parseEnum(
-                    GeneratorProfile.class, string(world, "GeneratorProfile"), "GeneratorProfile");
+            boolean shared = generation == null || (generation.provenance() == Provenance.MIGRATED_SCHEMA1 && role == DimensionRole.OVERWORLD);
+            if (generation != null && !world.getKeys().equals(shared
+                    ? Set.of("WorldKey", "Role", "SeedPolicy", "StoragePolicyVersion", "GeneratorProfile")
+                    : Set.of("WorldKey", "Role", "SeedPolicy", "StoragePolicyVersion"))) {
+                throw new IllegalArgumentException("schema2 role 欄位不符");
+            }
+            var profile = shared ? parseEnum(GeneratorProfile.class, string(world, "GeneratorProfile"), "GeneratorProfile") : null;
             var seedPolicy = parseEnum(SeedPolicy.class, string(world, "SeedPolicy"), "SeedPolicy");
             requireType(world, "StoragePolicyVersion", NbtElement.INT_TYPE);
             var descriptor = new UniverseWorldDescriptor(
@@ -82,7 +154,7 @@ public record UniverseRecord(UniverseDefinition definition, DesiredAvailability 
         }
 
         var definition = new UniverseDefinition(schemaVersion, universeId, allocationOrdinal, worlds);
-        return new UniverseRecord(definition, availability);
+        return new UniverseRecord(definition, availability, generation);
     }
 
     private static String string(NbtCompound nbt, String key) {

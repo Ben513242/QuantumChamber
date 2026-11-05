@@ -9,13 +9,18 @@ Set-StrictMode -Version Latest
 $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 . (Join-Path $PSScriptRoot 'probe-common.ps1')
 # 已啟用集合是正式來源；Task11須新增另一條FUNCTIONAL chain，不能改判舊diagnostic。
-$manifest=@([pscustomobject]@{chain='native-seed-diagnostic';expectedMode='DIAGNOSTIC';phases=@('baseline','save-reopen')})
+$manifest=@(
+    [pscustomobject]@{chain='native-seed-diagnostic';m6ProbeSchema=1;expectedMode='DIAGNOSTIC';phases=@('baseline','save-reopen')}
+    [pscustomobject]@{chain='catalog-readback';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('intent','allocation','atomic-move-readback','restart')}
+)
 if(-not $IsWindows){throw 'M6_NATIVE_PLATFORM_UNSUPPORTED：owned Win32_Process原生鏈僅支援Windows'}
 if($IdleSeconds -ne 90 -or $PhaseMinutes -ne 3 -or $BlockMinutes -ne 60){throw 'M6_NATIVE_BUDGET_MISMATCH：phase3分/idle90秒/block60分'}
 if($AllEnabled -and $PSBoundParameters.ContainsKey('Chain')){throw 'M6_CHAIN_SELECTION_MIXED：AllEnabled不能同時指定Chain'}
 $selected=@(if($AllEnabled){$manifest}else{$manifest | Where-Object chain -CEQ $Chain})
 if($selected.Count -eq 0){throw "M6_CHAIN_UNKNOWN：$Chain"}
-if(@($selected | Where-Object expectedMode -CNE $ExpectedMode).Count){throw "M6_EXPECTED_MODE_MIXED：$ExpectedMode"}
+if($AllEnabled -and $PSBoundParameters.ContainsKey('ExpectedMode')){throw 'M6_EXPECTED_MODE_MIXED：全鏈逐一採用各自模式'}
+if($RequireIndependentSeed -and ($AllEnabled -or $Chain -cne 'native-seed-diagnostic')){throw 'M6_FUNCTIONAL_NEGATIVE_SCOPE'}
+if(-not $AllEnabled -and @($selected | Where-Object expectedMode -CNE $ExpectedMode).Count){throw "M6_EXPECTED_MODE_MIXED：$ExpectedMode"}
 if(-not $Gradle){$fixed='C:/Users/Ben/.gradle/wrapper/dists/gradle-8.8-bin/dl7vupf4psengwqhwktix4v1/gradle-8.8/bin/gradle.bat';$Gradle=if(Test-Path -LiteralPath $fixed){$fixed}else{Join-Path $project 'gradlew.bat'}}
 if(-not(Test-Path -LiteralPath $Gradle -PathType Leaf)){throw "M6_GRADLE_MISSING：$Gradle"}
 $head=(git -C $project rev-parse HEAD).Trim()
@@ -49,6 +54,24 @@ function Assert-DiagnosticReceipt($receipt,[string]$Phase,[string]$Nonce,[string
     if($receipt.functionalAssertions.newWorldHasIndependentSeed -ne $false -or $receipt.functionalAssertions.newWorldHasIndependentRandomSequences -ne $false){throw 'M6_DIAGNOSTIC_FUNCTIONAL_RED_CHANGED'}
     if($Phase -ceq 'save-reopen' -and -not $receipt.diagnosticAssertions.reopenExact){throw 'M6_REOPEN_ORACLE_MISSING'}
 }
+function Assert-CatalogReceipt($receipt,$phase,$owned,$state) {
+    if($receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cne 'catalog-readback' -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_CATALOG_RECEIPT_IDENTITY'}
+    if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or $receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds -or $receipt.startedCallbacks -ne 1 -or $receipt.endTicks -ne 0 -or $receipt.stoppingEvents -ne 0 -or $receipt.movesAfterFault -ne 0 -or $receipt.worldAndStorageAbsent -ne $true){throw 'M6_CATALOG_PHASE_BOUNDARY'}
+    $afterMove=$phase -ceq 'atomic-move-readback'
+    $hasCatalog=$afterMove -or $phase -ceq 'restart'
+    if($receipt.faultCount -ne [int]$afterMove -or $receipt.envelopeMoves -ne [int]$afterMove -or $receipt.catalogDirty -ne $afterMove -or $receipt.allocationCount -ne [int]($phase -cne 'intent') -or $receipt.catalogCurrentCount -ne [int]$hasCatalog -or $receipt.catalogFlushedCount -ne [int]($phase -ceq 'restart')){throw 'M6_CATALOG_PHASE_STATE'}
+    if($receipt.uuid -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' -or $receipt.targetFingerprint -cnotmatch '^[0-9a-f]{64}$' -or $receipt.allocationToken -cnotmatch '^[0-9a-f]{64}$' -or $receipt.profileId -cne 'quantumchamber:random_vanilla_v1' -or $receipt.profileVersion -ne 1){throw 'M6_CATALOG_FROZEN_IDENTITY'}
+    $keys=@('overworld','nether','end') | ForEach-Object {"quantumchamber:universe/$($receipt.uuid)/$_"}
+    if((@($receipt.roleKeys) -join '|') -cne ($keys -join '|')){throw 'M6_CATALOG_ROLE_KEYS'}
+    foreach($key in $keys){if(Test-Path -LiteralPath (Join-Path "$($owned.root)/world/dimensions" $key.Replace(':','/'))){throw 'M6_CATALOG_STORAGE_PRESENT'}}
+    $files=@{journalHash='quantumchamber_sessions.dat';allocationHash='quantumchamber_universe_allocations.dat';catalogHash='quantumchamber_universes.dat'}
+    foreach($name in $files.Keys){
+        $path=Join-Path "$($owned.root)/world/data" $files[$name]
+        if($name -ceq 'catalogHash' -and -not $hasCatalog){
+            if($receipt.$name -cne 'ABSENT' -or (Test-Path -LiteralPath $path)){throw 'M6_CATALOG_EARLY_FILE'}
+        } elseif((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $receipt.$name){throw 'M6_CATALOG_AUTHORITY_HASH'}
+    }
+}
 try {
     foreach($chainSpec in $selected){
         if([DateTimeOffset]::UtcNow -ge $deadline){throw 'M6_NATIVE_BLOCK_BUDGET_EXCEEDED'}
@@ -57,11 +80,20 @@ try {
         foreach($phase in $chainSpec.phases){
             if([DateTimeOffset]::UtcNow -ge $deadline){throw 'M6_NATIVE_BLOCK_BUDGET_EXCEEDED'}
             $state=Invoke-OwnedPhase -Context $context -Nonce $owned.nonce -Phase $phase -Root $owned.root -ExtraProperties ([ordered]@{Chain=$chainSpec.chain;ExpectedMode=$chainSpec.expectedMode})
-            $receiptPath=Join-Path $state.PhaseEvidence 'final.json'
+            $functional=$chainSpec.expectedMode -ceq 'FUNCTIONAL'
+            $receiptName=if($functional){'halt.json'}else{'final.json'}
+            $receiptPath=Join-Path $state.PhaseEvidence $receiptName
             if(-not(Test-Path -LiteralPath $receiptPath)){throw "M6_RECEIPT_MISSING：$(Get-PhaseFailureNote -Context $context -State $state)"}
             $receipt=Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -DateKind String
-            if($state.Launcher.ExitCode -ne 0 -or $state.JavaProcess.ExitCode -ne 0){throw 'M6_PHASE_EXIT_NONZERO'}
-            Assert-DiagnosticReceipt -Receipt $receipt -Phase $phase -Nonce $owned.nonce -StartupNonce $state.StartupNonce
+            if($functional){
+                if($state.Launcher.ExitCode -eq 0 -or $state.JavaProcess.ExitCode -ne 77 -or (Test-Path -LiteralPath (Join-Path $state.PhaseEvidence 'final.json'))){throw 'M6_CATALOG_HALT_MISMATCH'}
+                $gradleOutput=(Get-SharedText -Path (Join-Path $state.PhaseEvidence 'stdout.log') -Encoding $context.GradleEncoding)+(Get-SharedText -Path (Join-Path $state.PhaseEvidence 'stderr.log') -Encoding $context.GradleEncoding)
+                if($gradleOutput -notmatch 'finished with non-zero exit value 77'){throw 'M6_CATALOG_GRADLE_EXIT_MISMATCH'}
+                Assert-CatalogReceipt $receipt $phase $owned $state
+            } else {
+                if($state.Launcher.ExitCode -ne 0 -or $state.JavaProcess.ExitCode -ne 0){throw 'M6_PHASE_EXIT_NONZERO'}
+                Assert-DiagnosticReceipt -Receipt $receipt -Phase $phase -Nonce $owned.nonce -StartupNonce $state.StartupNonce
+            }
             if($receipt.pid -ne $state.JavaId -or $receipt.root -cne $owned.root){throw 'M6_JVM_IDENTITY_MISMATCH'}
             if([Math]::Abs(([DateTimeOffset]::Parse($receipt.startTimeUtc)-$state.JavaStart).TotalSeconds) -gt 1){throw 'M6_JVM_STARTTIME_MISMATCH'}
             if(-not $state.JavaProcess.HasExited){throw 'M6_JVM_STILL_LIVE'}
@@ -70,7 +102,7 @@ try {
             foreach($key in @('classload','latest')){if(-not $logs[$key].copied){throw "M6_RUNTIME_LOG_MISSING：$key"}}
             $runtime=Get-SharedText -Path (Join-Path $state.PhaseEvidence 'latest.log') -Encoding ([Text.Encoding]::UTF8)
             if([regex]::Matches($runtime,'M6_NATIVE_BEGIN chain=').Count -ne 1 -or [regex]::Matches($runtime,'M6_NATIVE_END chain=').Count -ne 1){throw 'M6_RUNTIME_LOG_IDENTITY_MISMATCH'}
-            $row=[ordered]@{m6ProbeSchema=1;status='PASS';chain=$chainSpec.chain;phase=$phase;expectedMode=$chainSpec.expectedMode;nonce=$owned.nonce;startupNonce=$state.StartupNonce;root=$owned.root;javaPid=$state.JavaId;javaStartTimeUtc=$state.JavaStart.ToString('o');gradleExitCode=$state.Launcher.ExitCode;javaExitCode=$state.JavaProcess.ExitCode;normalStop=$true;lockReleased=$true;receipt=$receiptPath;receiptSha256=(Get-FileHash -LiteralPath $receiptPath).Hash;auxiliaryLogs=$logs}
+            $row=[ordered]@{m6ProbeSchema=1;status='PASS';chain=$chainSpec.chain;phase=$phase;expectedMode=$chainSpec.expectedMode;nonce=$owned.nonce;startupNonce=$state.StartupNonce;root=$owned.root;javaPid=$state.JavaId;javaStartTimeUtc=$state.JavaStart.ToString('o');gradleExitCode=$state.Launcher.ExitCode;javaExitCode=$state.JavaProcess.ExitCode;normalStop=(-not $functional);lockReleased=$true;receipt=$receiptPath;receiptSha256=(Get-FileHash -LiteralPath $receiptPath).Hash;auxiliaryLogs=$logs}
             $row | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $state.PhaseEvidence 'launcher.json') -Encoding utf8
             $row | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $state.PhaseEvidence 'phase.json') -Encoding utf8
             $results.Add($row);$state.JavaProcess.Dispose();$state.Launcher.Dispose()
@@ -78,15 +110,22 @@ try {
         }
         $current=@($results.ToArray() | Select-Object -Skip $chainStart)
         if(@($current.javaPid | Select-Object -Unique).Count -ne $chainSpec.phases.Count -or @($current.startupNonce | Select-Object -Unique).Count -ne $chainSpec.phases.Count){throw 'M6_PHASE_JVM_REUSED'}
-        [ordered]@{strategy='NEW_OWNED_ROOT';existingWorldsMoved=0;existingWorldsChanged=$false;retainedRoot=$true;root=$owned.root;normalStop=$true;lockReleased=$true} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $owned.root 'preservation.json') -Encoding utf8
+        [ordered]@{strategy='NEW_OWNED_ROOT';existingWorldsMoved=0;existingWorldsChanged=$false;retainedRoot=$true;root=$owned.root;normalStop=(-not $functional);lockReleased=$true} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $owned.root 'preservation.json') -Encoding utf8
+        if($functional){
+            $proofs=@($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String})
+            foreach($field in @('uuid','session','allocationToken','rootWorldSeed','targetFingerprint','profileId','profileVersion','journalHash')){
+                if(@($proofs | ForEach-Object {$_.$field} | Sort-Object -Unique).Count -ne 1){throw "M6_CATALOG_RESTART_IDENTITY：$field"}
+            }
+            if($proofs[1].allocationHash -cne $proofs[2].allocationHash -or $proofs[2].allocationHash -cne $proofs[3].allocationHash -or $proofs[2].catalogHash -cne $proofs[3].catalogHash){throw 'M6_CATALOG_RESTART_HASH'}
+        }
         $chains.Add([ordered]@{chain=$chainSpec.chain;expectedMode=$chainSpec.expectedMode;phases=@($chainSpec.phases);root=$owned.root;preservation=(Join-Path $owned.root 'preservation.json')})
     }
     if((git -C $project rev-parse HEAD).Trim() -cne $head){throw 'M6_HEAD_CHANGED_DURING_PROBE'}
 } catch {$failure=$_.Exception.Message}
-[ordered]@{status=$(if($failure){'FAIL'}else{'PASS'});head=$head;runId=$context.RunId;allEnabled=[bool]$AllEnabled;enabledManifest=$manifest;selectedChains=@($selected.chain);expectedMode=$ExpectedMode;phaseMinutes=$PhaseMinutes;idleSeconds=$IdleSeconds;blockMinutes=$BlockMinutes;phaseCount=$results.Count;phases=@($results.ToArray());chains=@($chains.ToArray());failure=$failure;functionalAssertionsRemainRed=($null -eq $failure -and $results.Count -gt 0);requireIndependentSeed=[bool]$RequireIndependentSeed} |
+[ordered]@{status=$(if($failure){'FAIL'}else{'PASS'});head=$head;runId=$context.RunId;allEnabled=[bool]$AllEnabled;enabledManifest=$manifest;selectedChains=@($selected.chain);expectedMode=$(if($AllEnabled){'PER_CHAIN'}else{$ExpectedMode});phaseMinutes=$PhaseMinutes;idleSeconds=$IdleSeconds;blockMinutes=$BlockMinutes;phaseCount=$results.Count;phases=@($results.ToArray());chains=@($chains.ToArray());failure=$failure;functionalAssertionsRemainRed=($null -eq $failure -and 'native-seed-diagnostic' -in $selected.chain);requireIndependentSeed=[bool]$RequireIndependentSeed} |
     ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $summaryPath -Encoding utf8
 Write-Output "M6_NATIVE_SUMMARY=$summaryPath"
 if($failure){throw $failure}
 # 明示功能負向要求在正常stop/lock核對後才拒絕；receipt/chain仍始終是DIAGNOSTIC。
 if($RequireIndependentSeed){throw "M6_FUNCTIONAL_RED：newWorldHasIndependentSeed=false；DIAGNOSTIC receipt保留於$summaryPath"}
-Write-Output "M6_NATIVE PASS diagnostic-only HEAD=$head phases=$($results.Count)"
+Write-Output "M6_NATIVE PASS chains=$($selected.chain -join ',') HEAD=$head phases=$($results.Count)"

@@ -13,10 +13,7 @@ public final class UniverseKeys {
     public static RegistryKey<World> world(UniverseId universeId, DimensionRole role) {
         Objects.requireNonNull(universeId, "universeId");
         Objects.requireNonNull(role, "role");
-        if (role != DimensionRole.OVERWORLD) {
-            throw new IllegalArgumentException("schema 1 只支援 OVERWORLD world key");
-        }
-        String path = "universe/" + universeId.value() + "/overworld";
+        String path = "universe/" + universeId.value() + "/" + role.name().toLowerCase(java.util.Locale.ROOT);
         return RegistryKey.of(RegistryKeys.WORLD, Identifier.of("quantumchamber", path));
     }
 }

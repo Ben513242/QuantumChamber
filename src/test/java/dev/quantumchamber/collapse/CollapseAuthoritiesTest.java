@@ -6,6 +6,7 @@ import static dev.quantumchamber.collapse.UniverseAllocationLedgerTest.intent;
 import static dev.quantumchamber.collapse.UniverseAllocationLedgerTest.token;
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.quantumchamber.candidate.NewUniverseIntent;
 import dev.quantumchamber.candidate.SourceFamilyRef;
 import dev.quantumchamber.candidate.UniverseDiscoveryRecord;
 import dev.quantumchamber.candidate.UniverseDiscoveryState;
@@ -19,6 +20,8 @@ import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.universe.DesiredAvailability;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
+import dev.quantumchamber.universe.GenerationSettingsSnapshot;
+import dev.quantumchamber.universe.UniverseRecord;
 import dev.quantumchamber.universe.UniverseCatalogStore;
 import dev.quantumchamber.universe.UniverseId;
 import dev.quantumchamber.universe.UniverseRegistryState;
@@ -216,7 +219,7 @@ class CollapseAuthoritiesTest {
         cases.add(() -> failedInitialization("garbage", save -> write(allocationFile(save), new byte[] {31, -117, 8, 0, 1, 2}),
                 Outcome.CORRUPT, Outcome.NOT_CREATED, SealedReason.AUTHORITY_CORRUPT));
         cases.add(() -> failedInitialization("wrong-schema", save -> {
-            var nbt = UniverseAllocationLedger.empty().toNbt(); nbt.putInt("SchemaVersion", 2);
+            var nbt = UniverseAllocationLedger.empty().toNbt(); nbt.putInt("SchemaVersion", 3);
             Files.createDirectories(allocationFile(save).getParent()); NbtIo.writeCompressed(nbt, allocationFile(save));
         }, Outcome.CORRUPT, Outcome.NOT_CREATED, SealedReason.AUTHORITY_CORRUPT));
         cases.add(() -> failedInitialization("read-io", save -> io.failReadback(ProjectionLedger.FILE_NAME),
@@ -862,6 +865,133 @@ class CollapseAuthoritiesTest {
 
     // ---- catalog（spec §6.2、§6 收斂；F2c） ----
 
+    private static NewUniverseIntent m6Intent() {
+        var snapshot = new NbtCompound();
+        snapshot.putInt("SnapshotVersion", 1);
+        snapshot.putString("ProviderId", "quantumchamber:vanilla_normal_v1");
+        snapshot.putInt("ProviderVersion", 1);
+        var parameters = new NbtCompound();
+        parameters.putString("OverworldPreset", "normal");
+        parameters.putBoolean("GenerateStructures", true);
+        snapshot.put("Parameters", parameters);
+        snapshot.putByteArray("OutputFingerprint", token(15).bytes());
+        var settings = GenerationSettingsSnapshot.fromNbt(snapshot);
+        return new NewUniverseIntent(token(12), token(11), 1, NewUniverseIntent.RANDOM_PROFILE_ID,
+                1, 52L, settings, settings, 0);
+    }
+
+    @Test void allocationTwoRejectsCandidateOverReadBudgetWithoutChangingAuthority() throws Exception {
+        var intent = m6Intent();
+        var expected = UniverseAllocationLedger.Entry.of(intent);
+        var ledger = UniverseAllocationLedger.empty().upgradeEnvelope().append(expected).toNbt();
+        var rows = ledger.getList("Entries", net.minecraft.nbt.NbtElement.COMPOUND_TYPE);
+        var template = rows.getCompound(0).copy();
+        long one = nbtCost(ledger);
+        rows.add(template.copy());
+        long perRow = nbtCost(ledger) - one;
+        long limit = 16L * 1024 * 1024;
+        int count = Math.toIntExact(1 + (limit - one) / perRow);
+        assertTrue(count < UniverseAllocationLedger.MAX_ENTRIES, "容量先達界線");
+        rows.clear();
+        for (int index = 0; index < count; index++) {
+            var token = token(100 + index);
+            var row = template.copy();
+            row.putByteArray("AllocationToken", token.bytes());
+            row.putUuid("UniverseId", UniverseAllocationLedger.deriveUniverseId(token).value());
+            rows.add(row);
+        }
+        assertTrue(nbtCost(ledger) <= limit);
+        var save = save("allocation-read-budget");
+        var file = allocationFile(save);
+        Files.createDirectories(file.getParent());
+        NbtIo.writeCompressed(ledger, file);
+        NbtIo.writeCompressed(ProjectionLedger.empty().toNbt(), projectionFile(save));
+        var authority = authorities(save);
+        assertTrue(authority.initialize(() -> journal(4)).succeeded());
+        var original = Files.readAllBytes(file);
+        rows.add(template);
+        assertTrue(nbtCost(ledger) > limit);
+        int reads = io.reads.size();
+        assertCorrupt(authority.lookupOrAppendAllocation(intent));
+        assertEquals(List.of(file), io.reads.subList(reads, io.reads.size()), "只查磁碟基準，拒絕寫入");
+        assertArrayEquals(original, Files.readAllBytes(file));
+        assertFalse(authority.unconfirmed(Authority.ALLOCATION_LEDGER));
+    }
+
+    private static long nbtCost(NbtCompound value) throws IOException {
+        var bytes = new ByteArrayOutputStream();
+        NbtIo.writeCompressed(value, bytes);
+        var tracker = NbtSizeTracker.ofUnlimitedBytes();
+        NbtIo.readCompressed(new java.io.ByteArrayInputStream(bytes.toByteArray()), tracker);
+        return tracker.getAllocatedBytes();
+    }
+
+    @Test void m6CatalogReadbackAfterMoveKeepsSameSeedAndUuid() throws Exception {
+        var save = save("catalog-m6-readback");
+        var authority = initialized(save);
+        var intent = m6Intent();
+        var id = UniverseAllocationLedger.deriveUniverseId(intent.allocationToken());
+        assertEquals(Lookup.Status.APPENDED, authority.lookupOrAppendAllocation(intent).status());
+        var catalog = catalog(save);
+        catalog.failAfterMovedRecord = true;
+        catalog.failAfterMove(1);
+        assertEquals(Lookup.Status.WRITE_FAILED, authority.allocateOrVerifyCatalog(intent, MATERIALIZE_RETRY).status());
+        assertEquals(2, catalog.flushes, "先 checked envelope，再獨立寫出新 row");
+        assertTrue(catalog.state.flushedRecords().isEmpty());
+        assertTrue(authority.unconfirmed(Authority.CATALOG));
+        var landed = catalog.disk().records().get(id);
+        assertNotNull(landed);
+        assertEquals(intent.rootWorldSeed(), landed.toNbt().getLong("RootWorldSeed"));
+        assertEquals(intent.targetSettingsSnapshot().toNbt(), landed.toNbt().getCompound("TargetSettingsSnapshot"));
+        assertEquals(DesiredAvailability.DISABLED, landed.desiredAvailability());
+        catalog.state = catalog.disk();
+        assertEquals(Lookup.Status.FOUND, authority.allocateOrVerifyCatalog(intent, MATERIALIZE_RETRY).status());
+        assertEquals(1, catalog.state.flushedRecords().size());
+    }
+
+    @Test void idOnlyNewCannotCreateLegacyCatalogForCheckedM6Allocation() throws Exception {
+        var save = save("m6-id-only");
+        var authority = initialized(save);
+        var port = catalog(save);
+        var legacyId = UniverseAllocationLedger.deriveUniverseId(token(17));
+        assertEquals(Lookup.Status.APPENDED, authority.allocateOrVerifyCatalog(legacyId, EAGER_ONLY).status());
+        var bytes = Files.readAllBytes(port.path);
+        var checked = port.state.flushedRecords();
+        var intent = m6Intent();
+        var id = UniverseAllocationLedger.deriveUniverseId(intent.allocationToken());
+        assertEquals(Lookup.Status.APPENDED, authority.lookupOrAppendAllocation(intent).status());
+        assertCorrupt(authority.allocateOrVerifyCatalog(id, MATERIALIZE_RETRY));
+        assertArrayEquals(bytes, Files.readAllBytes(port.path));
+        assertEquals(checked, port.state.records());
+        assertEquals(checked, port.state.flushedRecords());
+        assertFalse(port.state.isDirty());
+        assertFalse(Files.exists(save.resolve("dimensions")));
+    }
+
+    @Test void existingM6UsesCheckedDefinitionAndAvailabilityWithoutAllocationToken() {
+        var intent = m6Intent();
+        var id = UniverseAllocationLedger.deriveUniverseId(intent.allocationToken());
+        var record = dev.quantumchamber.universe.UniverseRegistry.newM6(id, 7, intent);
+        assertFalse(CollapseAuthorities.catalogRecordMatches(record, id, EAGER_ONLY));
+        var enabled = new UniverseRecord(record.definition(), DesiredAvailability.EAGER_ENABLED, record.generation());
+        assertTrue(CollapseAuthorities.catalogRecordMatches(enabled, id, EAGER_ONLY));
+        assertFalse(CollapseAuthorities.catalogRecordMatches(enabled, UniverseId.of(UUID.randomUUID()), EAGER_ONLY));
+    }
+
+    @Test void orphanStorageNeverAdopted() throws Exception {
+        var save = save("m6-orphan");
+        var authority = initialized(save);
+        var intent = m6Intent();
+        var id = UniverseAllocationLedger.deriveUniverseId(intent.allocationToken());
+        assertEquals(Lookup.Status.APPENDED, authority.lookupOrAppendAllocation(intent).status());
+        Path role = save.resolve("dimensions/quantumchamber/universe").resolve(id.value().toString()).resolve("end");
+        Files.createDirectories(role);
+        var sentinel = Files.writeString(role.resolve("sentinel"), "owner");
+        assertCorrupt(authority.allocateOrVerifyCatalog(intent, MATERIALIZE_RETRY));
+        assertEquals("owner", Files.readString(sentinel));
+        assertTrue(catalog(save).state.flushedRecords().isEmpty());
+    }
+
     @Test void catalogAllocationUsesTheNextFlushedOrdinalAndVerifiesExistingRecords() throws Exception {
         var save = save("catalog-allocate");
         var authorities = initialized(save);
@@ -1397,6 +1527,7 @@ class CollapseAuthoritiesTest {
         int flushes;
         private int failures;
         private boolean landBeforeFailure;
+        private boolean failAfterMovedRecord;
 
         TestCatalog(Path save) { path = save.resolve("data").resolve(UniverseRegistryState.STATE_ID + ".dat"); }
 
@@ -1405,7 +1536,7 @@ class CollapseAuthoritiesTest {
         @Override public void flush(UniverseRegistryState catalog) {
             assertSame(state, catalog, "寫出的是同一個 PersistentState");
             flushes++;
-            if (failures > 0) {
+            if (failures > 0 && (!failAfterMovedRecord || !catalog.records().isEmpty())) {
                 failures--;
                 if (landBeforeFailure) {
                     try { UniverseCatalogStore.write(path, wrapped(catalog)); } catch (IOException failure) { throw new UncheckedIOException(failure); }
