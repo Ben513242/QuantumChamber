@@ -92,6 +92,9 @@ public final class SessionRecoveryState extends PersistentState {
                 }
                 return entry;
             }
+        }
+        // 先處理該 server 的既有 binding，只有新 server 才檢查 manager 是否被占用。
+        for (var entry : INSTALLATIONS) {
             if (entry.manager.get() == manager) throw new IllegalStateException("JOURNAL_SHARED_MANAGER");
         }
         return null;

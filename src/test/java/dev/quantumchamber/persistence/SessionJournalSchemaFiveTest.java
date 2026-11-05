@@ -651,6 +651,28 @@ class SessionJournalSchemaFiveTest {
                 value -> b.set(SessionRecoveryState.STATE_ID, value));
         assertNotSame(state, separate); assertEquals(0, a.reads + b.reads);
     }
+    @Test void managerOwnedByEarlierServerStillInvalidatesOnlyVisitingServer() throws Exception {
+        net.minecraft.SharedConstants.createGameVersion();
+        var s2 = new Object(); var b = new NoReadManager(directory); var bFile = directory.resolve("earlier-b.dat");
+        var bState = SessionRecoveryState.getOrInstall(s2, b, () -> SessionRecoveryState.load(bFile),
+                value -> b.set(SessionRecoveryState.STATE_ID, value));
+        var s1 = new Object(); var a = new NoReadManager(directory); var aFile = directory.resolve("later-a.dat");
+        var aState = SessionRecoveryState.getOrInstall(s1, a, () -> SessionRecoveryState.load(aFile),
+                value -> a.set(SessionRecoveryState.STATE_ID, value));
+        aState.markDirty(); aState.save(aFile.toFile(), null);
+        byte[] checkedBytes = Files.readAllBytes(aFile); var checked = aState.flushedRecords(); aState.markDirty();
+        assertThrows(IllegalStateException.class, () -> SessionRecoveryState.getOrInstall(s1, b,
+                () -> { throw new AssertionError("失配不能重載"); }, value -> fail("失配不能重新安裝")));
+        assertSame(bState, SessionRecoveryState.getOrInstall(s2, b, SessionRecoveryState::new, value -> fail("B 不得重裝")));
+        bState.markDirty(); bState.save(bFile.toFile(), null); assertFalse(bState.isDirty()); assertTrue(Files.isRegularFile(bFile));
+        assertAll(
+                () -> assertThrows(IllegalStateException.class, () -> SessionRecoveryState.getOrInstall(s1, a,
+                        SessionRecoveryState::new, value -> fail("A 不得重新安裝"))),
+                () -> assertThrows(IllegalStateException.class, () -> aState.save(aFile.toFile(), null)),
+                () -> assertArrayEquals(checkedBytes, Files.readAllBytes(aFile)),
+                () -> assertEquals(checked, aState.flushedRecords()), () -> assertTrue(aState.isDirty()));
+        assertEquals(1, a.installs); assertEquals(1, b.installs); assertEquals(0, a.reads + b.reads);
+    }
     @Test void failedLoaderAndReentryCannotRetryOrInstall() {
         var server = new Object(); var manager = new NoReadManager(directory); var calls = new AtomicInteger();
         assertThrows(IllegalStateException.class, () -> SessionRecoveryState.getOrInstall(server, manager,
