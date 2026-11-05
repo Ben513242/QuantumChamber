@@ -688,6 +688,10 @@ class SessionJournalSchemaFiveTest {
     }
     private static Settings settings() {
         net.minecraft.SharedConstants.createGameVersion(); net.minecraft.Bootstrap.initialize(); dev.quantumchamber.registry.ModBlocks.register();
+        // 建立唯讀 registry view 後不能補註冊；先備妥同一測試 JVM 會使用的模組型別。
+        dev.quantumchamber.registry.ModBlockEntities.register();
+        dev.quantumchamber.registry.ModEffects.register();
+        dev.quantumchamber.registry.ModPotions.register();
         var resources = new LifecycledResourceManagerImpl(ResourceType.SERVER_DATA, List.of(VanillaDataPackProvider.createDefaultPack()));
         try {
             var combined = ServerDynamicRegistryType.createCombinedDynamicRegistries();

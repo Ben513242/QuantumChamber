@@ -913,7 +913,7 @@ class SessionRecoverySchema4Test {
                 n -> row(n).putString("State", "MEASURED"),
                 n -> row(n).put("Collapse", new NbtCompound()),
                 n -> n.putString("Unknown", "x"),
-                n -> n.putInt("SchemaVersion", 5),
+                n -> n.putInt("SchemaVersion", 6),
                 n -> n.putInt("SchemaVersion", 3));
         var cases = new ArrayList<Executable>();
         for (var mutate : mutations) cases.add(() -> { var input = envelope(transfer); mutate.accept(input); SessionRecoverySchema3Test.unhealthy(input); });
