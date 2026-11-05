@@ -2,6 +2,8 @@
 
 全程使用繁體中文（台灣）、精簡回報。先核原件，再推論。本檔取代 [`2026-10-31-m6-codex-resume-prompt.md`](2026-10-31-m6-codex-resume-prompt.md) 成為唯一接手入口；10-31 檔保留為歷史，其「下次工作順序」一節已被本檔第 3 節取代，其餘停點事實與原 FAIL 原判仍有效。
 
+**2026-11-05 最新停點（以下舊接續點、§0 舊起手句、§9 舊派工文均為歷史）：** Task8-core 已結；裁示前 feature HEAD `743ffbf891b81b585e12dbbd3fc25d09656b089b` 是舊 Task9 slot 即時攔截設計 docs commit，Task9 程式仍 WIP，未提交 code、未達乾淨雙 focused／full／兩席／CI。使用者原話「我同意先推主線」指功能優先；最新裁示把三個原生 hook、相關 permit／負控／mutation 與 JDI intermediary gate 移到 Task8-H H5，Task21 後 triage。Task9 只保留唯讀 slot 四態與本模組下次 get/save 偵測停寫；承認其間 vanilla autosave 可能寫 foreign state 的已知風險。縮範圍五份文件獨立窄審初 C0/I1/M0，plan 通則措辭修正後同席重核 C0/I0/M0；純 docs commit/push 之後依新 HEAD 接續 Task9 WIP。舊 slot RED／GREEN root 原判保留，不能冒充新版證據。正常 push 已授權，main 合併／tag／PR／工作樹退役另守門檻。Task10–21 的其他 mod 專屬碰撞只作事後 fail closed；plan 外新增 production 注入點／驗證腳本／外部 JVM observer 先回報裁示。
+
 **2026-11-05 最新接續點：Task 8-core 已結案。** 末code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 的 `run-all-f9344a453d914fc2b22bae056c0fed1e` 自然END ALL0／JUnit1014／M6 10/10／mainOnlyPASS，S1a Full strict10案十事件PASS；最終docs HEAD `0f02011b97e9b03b043afbfe33d14aa203d88708` 已push，GitHub run `41918108739` 同SHA Ubuntu／Windows雙job success，三artifact清單已讀未解壓。8C-3 handoff§4摘要I-1已修、窄複審 ADDRESSED C0/I0/M1；M1為8C-2已揭露異常foreign END／dispatch未永久poison。下一步Task9 v2設計已複審C0/I0/M0，tracked plan窄補已獨審C0/I0/M0（報告SHA256 832EB19BF104F7C2A31804A407654680F551F5487640341D78CAA191F09BEF50），隨本docs commit採用後派schema5／policy1；8-H H1–H4待Task21後triage，無waiver、原FAIL不改判。這筆是純狀態文件更新，後續舊接續點皆為歷史。
 
 **2026-11-05 最新接續點**：8C-2 docs HEAD `e1eb9fcdda9c38496db803c0797a7477a7b363c1` 的 GitHub run `41911139872` Ubuntu／Windows雙job success；最終code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 的完整 `run-all-f9344a453d914fc2b22bae056c0fed1e` 自然END ALL0／JUnit1014／M6 10/10，S1a Full strict另PASS；其後只有四份docs。8C-3唯讀本機審核C0/I1/M1：handoff§4過時legacy摘要已修待複審，M1是8C-2已揭露foreign END／dispatch未永久poison。8C-3最終docs truth／commit／遠端CI尚待；通過才進Task9。H1–H4仍排Task21後triage，原FAIL不改判。以下8C-2接續點與§9派工文為歷史。
@@ -99,6 +101,8 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 ## 8. 交回紀錄
 
 Codex 每次交回在此追加：日期、code pin、range、RED／GREEN、雙 focused、full nonce、兩席 review、CI run、下一步。
+
+- 2026-11-05（Codex，Task9 縮範圍裁示採用中）：使用者原話「我同意先推主線」，並裁示三個 reserved slot 原生 hook、相關 permit／負控／mutation 與專用 intermediary/JDI gate 移 Task8-H H5，Task21 後 triage；接受其他 mod 碰同 id 後至下次本模組 get/save 前可能被 vanilla autosave 寫入 foreign state。開始時 local/origin HEAD `743ffbf891b81b585e12dbbd3fc25d09656b089b` 為被取代的舊設計 docs commit；Task9 code 仍未提交 WIP。A/B/C 局部 RED／GREEN 與舊 slot root 均保原件原判，不作新版雙 focused/full／兩席／CI 採計。此筆修 spec／plan／M6 note／AGENTS／接手入口；獨立窄審初 C0/I1/M0（Task10–21「不寫壞」措辭過強），plan 改為偵測後本模組停寫、明示偵測前 vanilla autosave 風險，同席重核 C0/I0/M0。純 docs commit/push 後恢復縮後 Task9；main 合併、tag、PR、工作樹退役尚未授權。
 
 - 2026-11-02（Claude 雲端 controller）：只有文件變更。spec v1.4／plan 8C 與 8-H／接手檔／AGENTS／M6 note；review 鏈與 CI 見第 6b 節。8C-0 未開工。下一步：Codex 依第 9 節派工 8C-0。
 - 2026-11-04（Codex，8C-0）：code range `071bdf0..d39fef1`（`1c10b6a` 本體、`a8b8d20` Graph depth fix、`d39fef1` preset detect I-1 fix），九檔。具名 RED／GREEN、六個 mutation-only＋REVERT；最終乾淨 pin 三 class 各兩次 focused：Provider 5、Shallow 14、Contexts 44；depth fix pin 另有舊 CanonicalizerTest 123×2。新 full `run-all-3e4a5c71830d4a5ea0e642176c7576b2` 自然 `END ALL exit=0`／JUnit993／M6 9/9／mainOnly PASS；先前 `run-all-8b67…` JUnit 1 FAIL 原判保留。spec I-1 修後 C0/I0/M0、quality Approved C0/I0/M1；Minor 為測試 fixture 清理失敗的原錯誤保留，記於後續 fixture 整理。此筆尚未 push、無本 code 遠端 CI；下一步先 docs truth／push／CI，再 8C-1。
