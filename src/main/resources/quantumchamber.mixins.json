@@ -41,6 +41,7 @@
     "DensityBinarySettingsAccess",
     "InterpolatedSettingsStateMixin",
     "OctavePerlinSettingsStateMixin",
-    "PerlinSettingsStateMixin"
+    "PerlinSettingsStateMixin",
+    "PersistentStateManagerJournalCacheMixin"
   ]
 }

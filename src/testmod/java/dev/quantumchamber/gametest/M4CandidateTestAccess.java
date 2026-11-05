@@ -105,24 +105,86 @@ final class M4CandidateTestAccess {
         var runtime=((Map<?,?>)get(dev.quantumchamber.chamber.ChamberSessions.gateway(),"sessions")).get(record.chamberUuid());
         set(runtime,"state",dev.quantumchamber.superposition.SessionState.SUPERPOSITION);
     }
-    /** 僅獨立 fresh-save runner，在全部 authority 都空的邊界模擬空 schema3 冷載入。 */
+    private static java.lang.reflect.Field managerField(Class<?> type, String name) throws ReflectiveOperationException {
+        var fields=java.util.Arrays.stream(net.minecraft.world.PersistentStateManager.class.getDeclaredFields()).filter(field ->
+                field.getType()==type && java.lang.reflect.Modifier.isPrivate(field.getModifiers()) && java.lang.reflect.Modifier.isFinal(field.getModifiers())
+                && !java.lang.reflect.Modifier.isStatic(field.getModifiers()) && (name==null || field.getName().equals(name))).toList();
+        if(fields.size()!=1) throw new IllegalStateException("LEGACY_NATIVE_FIELD_SHAPE");
+        var field=fields.get(0);field.setAccessible(true);return field;
+    }
+    private static void coldBoundary(MinecraftServer server,CorridorPageManager pages,Object sessions,
+            dev.quantumchamber.persistence.SessionRecoveryState before,java.nio.file.Path path) {
+        before.requireHealthy();
+        if(!Boolean.getBoolean("quantumchamber.gametest.legacyOnly") || !server.isOnThread() || before.isDirty()
+                || !before.records().isEmpty() || !before.flushedRecords().isEmpty() || !before.uncheckedSessions().isEmpty()
+                || !((Map<?,?>)get(pages,"spaces")).isEmpty() || !((Map<?,?>)get(sessions,"sessions")).isEmpty()
+                || !((java.util.Set<?>)get(before,"quarantined")).isEmpty() || !((java.util.Set<?>)get(before,"rollForwardPending")).isEmpty()
+                || get(before,"pending")!=null || Boolean.TRUE.equals(get(before,"legacyWriteUnconfirmed")) || Boolean.TRUE.equals(get(before,"schemaFiveEvidence"))
+                || get(before,"owner")!=server || !path.equals(get(before,"checkedPath")) || get(pages,"journal")!=before
+                || get(sessions,"journal")!=before || get(get(sessions,"recovery"),"journal")!=before)
+            throw new IllegalStateException("LEGACY_COLD_BOUNDARY_UNPROVEN");
+    }
+    private static Object matchingBinding(java.util.List<?> entries,MinecraftServer server,net.minecraft.world.PersistentStateManager manager,
+            dev.quantumchamber.persistence.SessionRecoveryState before) {
+        Object found=null;
+        for(Object entry:entries) {
+            var s=((java.lang.ref.WeakReference<?>)get(entry,"server")).get(); var m=((java.lang.ref.WeakReference<?>)get(entry,"manager")).get();
+            if(s!=server && m!=manager)continue;
+            if(found!=null || s!=server || m!=manager || ((java.lang.ref.WeakReference<?>)get(entry,"state")).get()!=before
+                    || !"INSTALLED".equals(get(entry,"phase").toString())) throw new IllegalStateException("LEGACY_BINDING_NOT_EXACT");
+            found=entry;
+        }
+        if(found==null || get(before,"installation")!=found)throw new IllegalStateException("LEGACY_BINDING_MISSING");
+        return found;
+    }
+    /** 只有 legacyOnly fresh、完整已確認的空權威才能模擬冷載；不採外部替換物件作正式權威。 */
     static dev.quantumchamber.persistence.SessionRecoveryState reloadEmptySchemaThree(MinecraftServer server,CorridorPageManager pages)
             throws java.io.IOException {
-        var before=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
-        var sessions=dev.quantumchamber.chamber.ChamberSessions.gateway();
-        if(!Boolean.getBoolean("quantumchamber.gametest.legacyOnly") || !before.records().isEmpty() || !before.flushedRecords().isEmpty()
-                || !((Map<?,?>)get(pages,"spaces")).isEmpty() || !((Map<?,?>)get(sessions,"sessions")).isEmpty())
-            throw new IllegalStateException("空schema3冷載入只允許獨立runner的全空authority邊界");
-        var data=new net.minecraft.nbt.NbtCompound(); data.putInt("SchemaVersion",3); data.put("Records",new net.minecraft.nbt.NbtList());
-        var wrapped=new net.minecraft.nbt.NbtCompound(); wrapped.put("data",data); net.minecraft.nbt.NbtHelper.putDataVersion(wrapped);
-        var path=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data/quantumchamber_sessions.dat");
+        var before=dev.quantumchamber.persistence.SessionRecoveryState.get(server); var sessions=dev.quantumchamber.chamber.ChamberSessions.gateway();
+        var manager=server.getOverworld().getPersistentStateManager(); String id=dev.quantumchamber.persistence.SessionRecoveryState.STATE_ID;
+        var path=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data").resolve(id+".dat").toAbsolutePath().normalize();
+        coldBoundary(server,pages,sessions,before,path);
+        var view=(dev.quantumchamber.persistence.SessionRecoveryState.JournalSlotView)(Object)manager;
+        if(view.quantumchamber$inspectJournalSlot(before)!=dev.quantumchamber.persistence.SessionRecoveryState.JournalSlot.SAME)
+            throw new IllegalStateException("LEGACY_SLOT_NOT_SAME");
+        boolean absent=Boolean.TRUE.equals(get(before,"checkedAbsent")); var checked=(net.minecraft.nbt.NbtCompound)get(before,"checkedWrapped");
+        if(absent) {
+            if(checked!=null)throw new IllegalStateException("LEGACY_ABSENT_PROVENANCE");
+            try {java.nio.file.Files.readAttributes(path,java.nio.file.attribute.BasicFileAttributes.class,java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                throw new IllegalStateException("LEGACY_EXPECTED_ABSENT");} catch(java.nio.file.NoSuchFileException expected) { /* 已證不存在。 */ }
+        } else if(checked==null || !checked.equals(dev.quantumchamber.persistence.SessionJournalStore.read(path))) throw new IllegalStateException("LEGACY_CHECKED_WRAPPER_MISMATCH");
+        Object fence; Map<?,?> nativeStates;
+        try {
+            var fenceField=managerField(Object.class,"quantumchamber$journalSlotFence"); fence=fenceField.get(manager);
+            var second=new net.minecraft.world.PersistentStateManager(path.getParent().toFile(),net.minecraft.datafixer.Schemas.getFixer(),server.getRegistryManager());
+            if(fence==manager || fence==fenceField.get(second))throw new IllegalStateException("LEGACY_FENCE_NOT_PRIVATE_PER_MANAGER");
+            nativeStates=(Map<?,?>)managerField(Map.class,null).get(manager);
+        } catch(ReflectiveOperationException badShape){throw new IllegalStateException("LEGACY_NATIVE_FIELD_UNAVAILABLE",badShape);}
+        var entries=(java.util.List<?>)get(dev.quantumchamber.persistence.SessionRecoveryState.class,"INSTALLATIONS");
+        Object binding;
+        synchronized(fence){synchronized(entries){binding=matchingBinding(entries,server,manager,before);
+            if(nativeStates.get(id)!=before)throw new IllegalStateException("LEGACY_NATIVE_SLOT_MISMATCH");}}
+        var data=new net.minecraft.nbt.NbtCompound();data.putInt("SchemaVersion",3);data.put("Records",new net.minecraft.nbt.NbtList());
+        var wrapped=new net.minecraft.nbt.NbtCompound();wrapped.put("data",data);net.minecraft.nbt.NbtHelper.putDataVersion(wrapped);
         net.minecraft.nbt.NbtIo.writeCompressed(wrapped,path);
         var actual=net.minecraft.nbt.NbtIo.readCompressed(path,net.minecraft.nbt.NbtSizeTracker.of(4096));
-        if(!actual.equals(wrapped)) throw new IllegalStateException("空schema3 fixture讀回不符");
-        var loaded=dev.quantumchamber.persistence.SessionRecoveryState.fromNbt(actual.getCompound("data")); loaded.requireHealthy();
-        server.getOverworld().getPersistentStateManager().set(dev.quantumchamber.persistence.SessionRecoveryState.STATE_ID,loaded);
-        if(dev.quantumchamber.persistence.SessionRecoveryState.get(server)!=loaded) throw new IllegalStateException("native journal cache不符");
-        set(pages,"journal",loaded); set(sessions,"journal",loaded); set(get(sessions,"recovery"),"journal",loaded);
+        if(!actual.equals(wrapped))throw new IllegalStateException("空schema3 fixture讀回不符");
+        coldBoundary(server,pages,sessions,before,path);
+        synchronized(fence){synchronized(entries){
+            if(matchingBinding(entries,server,manager,before)!=binding || nativeStates.get(id)!=before)throw new IllegalStateException("LEGACY_COLD_RECHECK");
+            if(!nativeStates.remove(id,before) || !entries.remove(binding))throw new IllegalStateException("LEGACY_COLD_REMOVE");
+        }}
+        var loaded=dev.quantumchamber.persistence.SessionRecoveryState.get(server); loaded.requireHealthy();
+        if(loaded==before || !loaded.candidateInitialized() || loaded.m5Evidence()
+                || !loaded.records().isEmpty() || !loaded.flushedRecords().isEmpty() || get(loaded,"owner")!=server
+                || !path.equals(get(loaded,"checkedPath")) || !wrapped.equals(get(loaded,"checkedWrapped"))
+                || !wrapped.equals(dev.quantumchamber.persistence.SessionJournalStore.read(path))
+                || view.quantumchamber$inspectJournalSlot(loaded)!=dev.quantumchamber.persistence.SessionRecoveryState.JournalSlot.SAME
+                || dev.quantumchamber.persistence.SessionRecoveryState.get(server)!=loaded)throw new IllegalStateException("LEGACY_COLD_REAL_GET_FAILED");
+        set(pages,"journal",loaded);set(sessions,"journal",loaded);set(get(sessions,"recovery"),"journal",loaded);
+        if(get(pages,"journal")!=loaded || get(sessions,"journal")!=loaded || get(get(sessions,"recovery"),"journal")!=loaded)
+            throw new IllegalStateException("LEGACY_CONSUMER_REBIND");
+        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M4_JOURNAL_SLOT_COLD mode=peek-only slot=SAME consumers=3 distinctFence=true");
         return loaded;
     }
     static void tickets(CorridorPageManager pages, UUID session, boolean acquire) {

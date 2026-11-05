@@ -6,6 +6,17 @@ import dev.quantumchamber.corridor.DoorKey.DoorWallSide;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
 import dev.quantumchamber.universe.UniverseId;
+import dev.quantumchamber.universe.GenerationSettingsSnapshot;
+import dev.quantumchamber.universe.UniverseProfileRegistry;
+import dev.quantumchamber.universe.Minecraft121VanillaPresetProfileProvider;
+import dev.quantumchamber.universe.ServerSettingsContext;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.registry.DynamicRegistryManager;
+import net.minecraft.registry.RegistryLoader;
+import net.minecraft.registry.ServerDynamicRegistryType;
+import net.minecraft.resource.LifecycledResourceManagerImpl;
+import net.minecraft.resource.ResourceType;
+import net.minecraft.resource.VanillaDataPackProvider;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +34,166 @@ import org.junit.jupiter.api.io.TempDir;
 class CandidateResolverTest {
     @TempDir Path root;
     private static final SourceFamilyRef SOURCE = new SourceFamilyRef.Vanilla(World.OVERWORLD, DimensionRole.OVERWORLD);
+
+    @Test void policyOneOnlyFreezesRandom() throws Exception {
+        var entropy = entropy();
+        var policy = assertDoesNotThrow(() -> m6Policy(entropy.entropyFingerprint(), -1));
+        try (var fixture = settingsFixture()) {
+            var registry = builtinRegistry();
+            var lease = new Lease(fixture.registries());
+            var calls = new int[2];
+            var resolver = new CandidateResolver(entropy, registry, () -> { calls[0]++; return lease; });
+            for (boolean structures : new boolean[] {false, true}) {
+                var source = registry.createSnapshot("quantumchamber:vanilla_amplified_v1", 1,
+                        parameters("amplified", structures), lease);
+                var candidate = assertInstanceOf(QuantumCandidate.New.class,
+                        resolver.resolve(newKey(entropy), policy, List.of(), () -> {
+                            calls[1]++; return new SourceGenerationSnapshot(42L, source);
+                        }));
+                var intent = candidate.intent();
+                assertEquals("quantumchamber:random_vanilla_v1", intent.profileId());
+                assertEquals(1, intent.policyVersion());
+                assertEquals(0, intent.familyCapabilityVersion());
+                assertEquals(42L, intent.sourceRootWorldSeed());
+                assertNotEquals(42L, intent.rootWorldSeed());
+                assertEquals(source.toNbt(), intent.sourceSettingsSnapshot().toNbt());
+                var target = intent.targetSettingsSnapshot();
+                assertEquals("quantumchamber:vanilla_normal_v1", target.providerId());
+                assertEquals(parameters("normal", structures), target.parameters());
+                assertDoesNotThrow(() -> registry.resolve(target, lease));
+                for (var measured : List.of(source, target)) {
+                    var encoded = new java.io.ByteArrayOutputStream();
+                    net.minecraft.nbt.NbtIo.write(measured.toNbt(), new java.io.DataOutputStream(encoded));
+                    System.out.println("T9_BUILTIN_SNAPSHOT_BYTES provider=" + measured.providerId()
+                            + " structures=" + structures + " bytes=" + encoded.size());
+                }
+                var digest = java.security.MessageDigest.getInstance("SHA-256");
+                digest.update("quantumchamber:m6:root-seed:v1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                digest.update(intent.generationSeedMaterial().bytes());
+                digest.update(intent.allocationToken().bytes());
+                assertEquals(java.nio.ByteBuffer.wrap(digest.digest()).getLong(), intent.rootWorldSeed());
+            }
+            assertArrayEquals(new int[] {2, 2}, calls);
+        }
+    }
+
+    @Test void m6NonNewAndLegacyNeverAcquireOrCapture() throws Exception {
+        var entropy = entropy();
+        var resolver = new CandidateResolver(entropy, builtinRegistry(), () -> { throw new AssertionError("提早 acquire"); });
+        var pool = List.of(record(universe(1, 9), 0, true));
+        var policy = assertDoesNotThrow(() -> m6Policy(entropy.entropyFingerprint(), 0));
+        var derivation = new CandidateDerivation(entropy);
+        boolean sourceSeen = false, existingSeen = false;
+        for (int station = 0; station < 1000 && !(sourceSeen && existingSeen); station++) {
+            var door = key(station); int bucket = derivation.bucket(door, 2);
+            if (bucket >= 25) continue;
+            var candidate = resolver.resolve(door, policy, pool, () -> { throw new AssertionError("提早 capture"); });
+            if (bucket < 5) { assertInstanceOf(QuantumCandidate.Source.class, candidate); sourceSeen = true; }
+            else { assertInstanceOf(QuantumCandidate.Existing.class, candidate); existingSeen = true; }
+        }
+        assertTrue(sourceSeen && existingSeen);
+        assertInstanceOf(QuantumCandidate.New.class, resolver.resolve(key(37),
+                policy(entropy.entropyFingerprint(), -1, SOURCE), List.of(), () -> { throw new AssertionError("legacy capture"); }));
+    }
+
+    @Test void m6NewRejectsStaleLeaseAndChangedSourceFingerprint() throws Exception {
+        var entropy = entropy(); var policy = assertDoesNotThrow(() -> m6Policy(entropy.entropyFingerprint(), -1));
+        try (var fixture = settingsFixture()) {
+            var registry = builtinRegistry(); var lease = new Lease(fixture.registries());
+            var source = registry.createSnapshot("quantumchamber:vanilla_normal_v1", 1, parameters("normal", false), lease);
+            var resolver = new CandidateResolver(entropy, registry, () -> lease);
+            var raw = source.toNbt(); var bad = raw.getByteArray("OutputFingerprint"); bad[0] ^= 1;
+            raw.putByteArray("OutputFingerprint", bad);
+            assertThrows(IllegalStateException.class, () -> resolver.resolve(newKey(entropy), policy, List.of(),
+                    () -> new SourceGenerationSnapshot(42, GenerationSettingsSnapshot.fromNbt(raw))));
+            lease.valid = false;
+            assertThrows(IllegalStateException.class, () -> resolver.resolve(newKey(entropy), policy, List.of(),
+                    () -> new SourceGenerationSnapshot(42, source)));
+        }
+    }
+
+    @Test void m6PolicyRejectsFutureVersionsAndWrongCapability() {
+        for (int version : new int[] {0, 2, 3, 4}) assertThrows(IllegalArgumentException.class,
+                () -> new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"), version, 2,
+                        5, 20, 75, -1, 4096, bytes(), SOURCE, 0));
+        for (int capability : new int[] {-1, 1, 2}) assertThrows(IllegalArgumentException.class,
+                () -> new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"), 1, 2,
+                        5, 20, 75, -1, 4096, bytes(), SOURCE, capability));
+    }
+
+    @Test void randomRootSeedMatchesIndependentVectorAndCollisionCorrection() {
+        var snapshot = structuralSnapshot("normal", false);
+        // Python hashlib/struct 獨立預算，material 與 token 皆為 32 個零。
+        var normal = assertDoesNotThrow(() -> new NewUniverseIntent(bytes(), bytes(), 1,
+                "quantumchamber:random_vanilla_v1", 1, 42L, snapshot, snapshot, 0));
+        assertEquals(2399119142747761084L, normal.rootWorldSeed());
+        var collision = new NewUniverseIntent(bytes(), bytes(), 1, "quantumchamber:random_vanilla_v1", 1,
+                2399119142747761084L, snapshot, snapshot, 0);
+        assertEquals(-4648810344396122711L, collision.rootWorldSeed());
+        assertEquals(normal, new NewUniverseIntent(bytes(), bytes(), 1, "quantumchamber:random_vanilla_v1", 1,
+                42L, GenerationSettingsSnapshot.fromNbt(snapshot.toNbt()), GenerationSettingsSnapshot.fromNbt(snapshot.toNbt()), 0));
+    }
+
+    @Test void m6IntentRejectsWrongTargetAndUnsupportedPolicy() {
+        var normal = structuralSnapshot("normal", false); var amplified = structuralSnapshot("amplified", false);
+        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 1,
+                "quantumchamber:random_vanilla_v1", 1, 42L, normal, amplified, 0));
+        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 1,
+                "quantumchamber:random_vanilla_v1", 1, 42L, normal, structuralSnapshot("normal", true), 0));
+        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 2,
+                "quantumchamber:random_vanilla_v1", 1, 42L, normal, normal, 0));
+        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 1,
+                "quantumchamber:random_vanilla_v1", 1, 42L, normal, normal, 1));
+    }
+    private static GenerationSettingsSnapshot structuralSnapshot(String preset, boolean structures) {
+        var nbt = new NbtCompound(); nbt.putInt("SnapshotVersion", 1);
+        nbt.putString("ProviderId", "quantumchamber:vanilla_" + preset + "_v1");
+        nbt.putInt("ProviderVersion", 1); nbt.put("Parameters", parameters(preset, structures));
+        nbt.putByteArray("OutputFingerprint", new byte[32]); return GenerationSettingsSnapshot.fromNbt(nbt);
+    }
+
+    private static CandidatePolicySnapshot m6Policy(CandidateBytes fingerprint, long watermark) {
+        return new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"),
+                1, 2, 5, 20, 75, watermark, 4096, fingerprint, SOURCE, 0);
+    }
+    private static DoorKey newKey(CandidateEntropyState entropy) {
+        var derivation = new CandidateDerivation(entropy);
+        for (int i = 0; i < 1000; i++) if (derivation.bucket(key(i), 2) >= 25) return key(i);
+        throw new AssertionError("fixture 找不到 NEW bucket");
+    }
+    private static NbtCompound parameters(String preset, boolean structures) {
+        var nbt = new NbtCompound(); nbt.putString("OverworldPreset", preset);
+        nbt.putByte("GenerateStructures", (byte) (structures ? 1 : 0)); return nbt;
+    }
+    private static UniverseProfileRegistry builtinRegistry() {
+        var registry = new UniverseProfileRegistry();
+        registry.register(new Minecraft121VanillaPresetProfileProvider("quantumchamber:vanilla_normal_v1"));
+        registry.register(new Minecraft121VanillaPresetProfileProvider("quantumchamber:vanilla_amplified_v1"));
+        registry.freeze(); return registry;
+    }
+    private record SettingsFixture(LifecycledResourceManagerImpl resources,
+            DynamicRegistryManager.Immutable registries) implements AutoCloseable {
+        @Override public void close() { resources.close(); }
+    }
+    private static SettingsFixture settingsFixture() {
+        net.minecraft.SharedConstants.createGameVersion(); net.minecraft.Bootstrap.initialize();
+        dev.quantumchamber.registry.ModBlocks.register();
+        var resources = new LifecycledResourceManagerImpl(ResourceType.SERVER_DATA,
+                List.of(VanillaDataPackProvider.createDefaultPack()));
+        try {
+            var combined = ServerDynamicRegistryType.createCombinedDynamicRegistries();
+            return new SettingsFixture(resources, RegistryLoader.loadFromResource(resources,
+                    combined.getPrecedingRegistryManagers(ServerDynamicRegistryType.WORLDGEN), RegistryLoader.DYNAMIC_REGISTRIES));
+        } catch (RuntimeException | Error e) { resources.close(); throw e; }
+    }
+    private static final class Lease implements ServerSettingsContext {
+        private final DynamicRegistryManager.Immutable registries;
+        boolean valid = true;
+        Lease(DynamicRegistryManager.Immutable registries) { this.registries = registries; }
+        public void requireValid() { if (!valid) throw new IllegalStateException("CONTEXT_UNAVAILABLE"); }
+        public DynamicRegistryManager.Immutable registries() { requireValid(); return registries; }
+        public boolean sourceGenerateStructures() { throw new AssertionError("不得以 live bool 覆蓋 frozen Parameters"); }
+    }
 
     @Test void candidateAndIntentKeepExactImmutableBytes() {
         byte[] input = CandidateDerivationTest.SECRET.clone();

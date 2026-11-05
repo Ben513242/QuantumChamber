@@ -558,3 +558,30 @@ pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClas
 pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass dev.quantumchamber.universe.UniverseProfileRegistryTest -Label 8b1-registry
 pwsh -NoProfile -File scripts/verification/run-all.ps1
 ```
+
+### M6 Task 9：schema5 候選格式與 checked journal
+
+此片只驗格式、權威與手工凍結的 policy1；正式新 session 的 `SuperpositionSession.freezeCandidateContext` 仍使用 M4。M6 NEW 以 8-core 的 server-bound lease 驗來源與目標 `SHALLOW_V1` snapshot，random 目標使用 normal preset 並保留來源 `GenerateStructures`；不把此片當作已啟用獨立 seed 的世界生成。
+
+定向入口是 `m6-focused.ps1` 的完整 JUnit 類別：`CandidateResolverTest` 驗 seed 向量、碰撞修正與 lazy 路徑；`CandidateJournalCodecTest` 驗新舊形狀與版本配對；`SessionJournalSchemaFiveTest` 驗 raw NBT、首次安裝、容量、checked preflight／readback、故障後的不可變 attempt 與重新載入。乾淨候選 HEAD 各跑兩次，完畢再執行完整回歸：
+
+```powershell
+$qcSuites = [ordered]@{
+    resolver = 'dev.quantumchamber.candidate.CandidateResolverTest'
+    codec    = 'dev.quantumchamber.persistence.CandidateJournalCodecTest'
+    journal  = 'dev.quantumchamber.persistence.SessionJournalSchemaFiveTest'
+}
+foreach ($qcRound in 1, 2) {
+    foreach ($qcSuite in $qcSuites.GetEnumerator()) {
+        pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClass $qcSuite.Value -Label "t9-$($qcSuite.Key)-$qcRound"
+        if ($LASTEXITCODE -ne 0) { throw '保留失敗 root，查明原因後使用新 nonce。' }
+    }
+}
+pwsh -NoProfile -File scripts/verification/run-all.ps1
+```
+
+容量看 XML 的 `T9_*` 計量。4096 是每 session 的候選數量上限；16 MiB 是整份 schema5 envelope 的 `NbtSizeTracker` 解碼預算。全 NEW 測試保留 4096 筆、來源 amplified 219 bytes／目標 normal 213 bytes；此形狀實測 17,258,862，必須在寫前拒絕並維持舊權威。另以相鄰筆數驗預算內的 checked 成功與下一筆拒絕，以較小的 SOURCE／EXISTING 驗 4096／4097 計數界線。這些計量不是壓縮檔大小或 JVM 實佔記憶體；單一 fixture 的鄰近筆數也不是全服固定容量。512／513 bytes 只驗 snapshot 結構邊界，不能把未綁定 provider 當成正式可解析。合法 schema3／4 仍以兩個各含 16384 筆的 session 驗超過 16 MiB 的正式載入與 checked 讀回。
+
+schema5 一旦可能已 atomic move、同次 readback 卻未確認，該 instance 的後續 save 先只讀；只有 exact 舊 checked 權威（含原本已證實的不存在）才能解除。即使讀回 exact 原 attempt，也維持原 `flushedRecords` 並停寫至重啟，不會復活已 abort 的 current。交接時將測試根與 SHA 記入 [M6 實作紀錄](../../docs/implementation-notes/2026-10-24-m6-universe-generation.md)；人工 smoke 與 Task 12 的正式遊戲入口另有門檻。
+
+日誌快取只在 QuantumChamber 取得或儲存自己的狀態時核對物件身分。其他模組若以相同保留鍵呼叫原生 set 或由 get 回填，原生自動存檔可能在下次核對前已覆寫日誌。發現不符就停止本模組寫入；外部即時攔截留待 H5 評估，本輪未驗。

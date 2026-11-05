@@ -112,6 +112,13 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
             }
             var doors = new HashSet<DoorKey>(); var ids = new HashSet<CandidateId>();
             for (var entry : candidateLedger) {
+                if (entry.candidate() instanceof QuantumCandidate.New fresh) {
+                    var context = candidateContext.orElseThrow(); var intent = fresh.intent();
+                    if (context.isM6() != intent.isM6() || intent.isM6()
+                            && (context.policyVersion() != intent.policyVersion()
+                            || context.familyCapabilityVersion() != intent.familyCapabilityVersion()))
+                        throw new IllegalArgumentException("NEW intent 與同 session 的凍結 Context 不符");
+                }
                 if (!sessionUuid.equals(entry.doorKey().sessionUuid()) || !doors.add(entry.doorKey())
                         || !ids.add(entry.candidate().candidateId())) {
                     throw new IllegalArgumentException("ledger 的 session、DoorKey 或 CandidateId 不合法");
@@ -314,6 +321,11 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
 
     /** 依 envelope schema 編碼：schema 4 多一個 {@code Collapse}（M4 狀態為空 compound）；schema 3 以下不得帶塌縮欄位。 */
     NbtCompound toNbt(int envelopeSchema) {
+        if (envelopeSchema < 1 || envelopeSchema > 5) throw new IllegalArgumentException("不支援 journal schema");
+        if (envelopeSchema < 5 && candidateContext.filter(CandidatePolicySnapshot::isM6).isPresent())
+            throw new IllegalStateException("M6 Context／intent 只能寫入 schema5");
+        if (envelopeSchema == 5 && candidateContext.isEmpty())
+            throw new IllegalStateException("schema5 不接受無 Context 的 legacy session");
         if (envelopeSchema < 4 && !collapse.isEmpty()) throw new IllegalStateException("schema 4 之前的 envelope 不得寫出塌縮欄位");
         var nbt = new NbtCompound();
         nbt.putUuid("SessionUuid", sessionUuid); nbt.putUuid("ChamberUuid", chamberUuid);
@@ -357,7 +369,7 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
     }
 
     static SessionRecoveryRecord fromNbt(NbtCompound nbt,int envelopeSchema) {
-        if (envelopeSchema < 1 || envelopeSchema > 4) throw new IllegalArgumentException("不支援 journal schema");
+        if (envelopeSchema < 1 || envelopeSchema > 5) throw new IllegalArgumentException("不支援 journal schema");
         // schema 3 起預設嚴格（之後的版本沿用）：record 與內層 compound 為 exact key（並必須帶 candidate payload）、
         // Origin 的 WorldKey 必須 canonical；schema 1／2 保留原本的寬鬆解析。schema 4 的 record 是 schema 3 的 11 個 key 再加 Collapse。
         boolean strict = envelopeSchema >= 3;
@@ -411,6 +423,8 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         var selection = Optional.<CandidateSelection>empty();
         if (strict) {
             var decodedContext = CandidateJournalCodec.context(compound(nbt, "CandidateContext"));
+            if (envelopeSchema < 5 && decodedContext.isM6())
+                throw new IllegalArgumentException("schema5 之前不可攜帶 M6 Context");
             context = Optional.of(decodedContext);
             var rawLedger = compounds(nbt, "CandidateLedger", envelopeSchema);
             // 先比對上限再逐筆解碼；超過凍結 policy 的 MaxCandidateEntries 一律 fail closed。

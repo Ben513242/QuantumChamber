@@ -7,6 +7,7 @@ import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.universe.DimensionRole;
 import dev.quantumchamber.universe.GeneratorProfile;
+import dev.quantumchamber.universe.GenerationSettingsSnapshot;
 import dev.quantumchamber.universe.UniverseId;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,7 +23,7 @@ import net.minecraft.registry.RegistryKeys;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Uuids;
 
-/** schema 3／4 journal payload（候選 context、ledger、selection 與 schema 4 的 Collapse）的局部 strict codec；不執行 ledger service 或狀態遷移。 */
+/** schema 3–5 的局部 strict codec；M6 新形狀不回退 legacy，不執行 ledger service 或狀態遷移。 */
 final class CandidateJournalCodec {
     private CandidateJournalCodec() {}
 
@@ -92,6 +93,7 @@ final class CandidateJournalCodec {
         nbt.putInt("SourceWeight", context.sourceWeight()); nbt.putInt("DiscoveredWeight", context.discoveredWeight());
         nbt.putInt("NewWeight", context.newWeight()); nbt.putLong("DiscoveryWatermark", context.discoveryWatermark());
         nbt.putInt("MaxCandidateEntries", context.maxCandidateEntries()); nbt.putByteArray("EntropyFingerprint", context.entropyFingerprint().bytes());
+        if (context.isM6()) nbt.putInt("FamilyCapabilityVersion", context.familyCapabilityVersion());
         var source = new NbtCompound(); source.putString("Role", context.sourceFamilyRef().role().name());
         switch (context.sourceFamilyRef()) {
             case SourceFamilyRef.Vanilla vanilla -> {
@@ -105,8 +107,14 @@ final class CandidateJournalCodec {
     }
 
     static CandidatePolicySnapshot context(NbtCompound nbt) {
-        keys(nbt, "PolicyId", "PolicyVersion", "CandidateSchemaVersion", "SourceWeight", "DiscoveredWeight", "NewWeight",
+        boolean m6 = nbt.contains("FamilyCapabilityVersion") || nbt.getInt("CandidateSchemaVersion") == 2
+                || nbt.getString("PolicyId").equals("quantumchamber:m6_profiles_v1");
+        if (m6) keys(nbt, "PolicyId", "PolicyVersion", "CandidateSchemaVersion", "SourceWeight", "DiscoveredWeight", "NewWeight",
+                "DiscoveryWatermark", "MaxCandidateEntries", "EntropyFingerprint", "SourceFamilyRef", "FamilyCapabilityVersion");
+        else keys(nbt, "PolicyId", "PolicyVersion", "CandidateSchemaVersion", "SourceWeight", "DiscoveredWeight", "NewWeight",
                 "DiscoveryWatermark", "MaxCandidateEntries", "EntropyFingerprint", "SourceFamilyRef");
+        if (m6 && !string(nbt, "PolicyId").equals("quantumchamber:m6_profiles_v1"))
+            throw new IllegalArgumentException("新 Context 不可回退 M4 形狀");
         var source = compound(nbt, "SourceFamilyRef");
         var role = DimensionRole.valueOf(string(source, "Role"));
         SourceFamilyRef ref = switch (string(source, "Kind")) {
@@ -123,7 +131,7 @@ final class CandidateJournalCodec {
         return new CandidatePolicySnapshot(Identifier.of(string(nbt, "PolicyId")), integer(nbt, "PolicyVersion"),
                 integer(nbt, "CandidateSchemaVersion"), integer(nbt, "SourceWeight"), integer(nbt, "DiscoveredWeight"),
                 integer(nbt, "NewWeight"), longValue(nbt, "DiscoveryWatermark"), integer(nbt, "MaxCandidateEntries"),
-                bytes(nbt, "EntropyFingerprint"), ref);
+                bytes(nbt, "EntropyFingerprint"), ref, m6 ? integer(nbt, "FamilyCapabilityVersion") : 0);
     }
 
     static NbtCompound entry(CandidateLedgerEntry entry) {
@@ -137,7 +145,15 @@ final class CandidateJournalCodec {
             case QuantumCandidate.New fresh -> {
                 candidate.putString("Kind", "NEW"); var intent = new NbtCompound();
                 intent.putByteArray("AllocationToken", fresh.intent().allocationToken().bytes());
-                intent.putString("Profile", fresh.intent().profile().name()); intent.putInt("ProfileVersion", fresh.intent().profileVersion());
+                intent.putInt("ProfileVersion", fresh.intent().profileVersion());
+                if (fresh.intent().isM6()) {
+                    intent.putInt("PolicyVersion", fresh.intent().policyVersion());
+                    intent.putString("ProfileId", fresh.intent().profileId());
+                    intent.putLong("SourceRootWorldSeed", fresh.intent().sourceRootWorldSeed());
+                    intent.put("SourceSettingsSnapshot", fresh.intent().sourceSettingsSnapshot().toNbt());
+                    intent.put("TargetSettingsSnapshot", fresh.intent().targetSettingsSnapshot().toNbt());
+                    intent.putInt("FamilyCapabilityVersion", fresh.intent().familyCapabilityVersion());
+                } else intent.putString("Profile", fresh.intent().profile().name());
                 intent.putByteArray("GenerationSeedMaterial", fresh.intent().generationSeedMaterial().bytes()); candidate.put("Intent", intent);
             }
         }
@@ -157,6 +173,15 @@ final class CandidateJournalCodec {
             }
             case "NEW" -> {
                 keys(candidate, "Kind", "CandidateId", "Intent"); var intent = compound(candidate, "Intent");
+                if (intent.contains("PolicyVersion")) {
+                    keys(intent, "AllocationToken", "GenerationSeedMaterial", "PolicyVersion", "ProfileId", "ProfileVersion",
+                            "SourceRootWorldSeed", "SourceSettingsSnapshot", "TargetSettingsSnapshot", "FamilyCapabilityVersion");
+                    yield new QuantumCandidate.New(id, new NewUniverseIntent(bytes(intent, "AllocationToken"),
+                            bytes(intent, "GenerationSeedMaterial"), integer(intent, "PolicyVersion"), string(intent, "ProfileId"),
+                            integer(intent, "ProfileVersion"), longValue(intent, "SourceRootWorldSeed"),
+                            GenerationSettingsSnapshot.fromNbt(compound(intent, "SourceSettingsSnapshot")),
+                            GenerationSettingsSnapshot.fromNbt(compound(intent, "TargetSettingsSnapshot")), integer(intent, "FamilyCapabilityVersion")));
+                }
                 keys(intent, "AllocationToken", "Profile", "ProfileVersion", "GenerationSeedMaterial");
                 yield new QuantumCandidate.New(id, new NewUniverseIntent(bytes(intent, "AllocationToken"),
                         GeneratorProfile.valueOf(string(intent, "Profile")), integer(intent, "ProfileVersion"), bytes(intent, "GenerationSeedMaterial")));

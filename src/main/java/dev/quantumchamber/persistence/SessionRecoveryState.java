@@ -1,5 +1,9 @@
 package dev.quantumchamber.persistence;
 import dev.quantumchamber.candidate.QuantumCandidate;
+import dev.quantumchamber.candidate.NewUniverseIntent;
+import dev.quantumchamber.universe.Minecraft121SettingsLifecycle;
+import dev.quantumchamber.universe.UniverseProfileRegistry;
+import dev.quantumchamber.universe.ServerSettingsContext;
 import dev.quantumchamber.collapse.CollapseDestination;
 import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.DimensionRole;
@@ -10,6 +14,11 @@ import java.util.UUID;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.ArrayList;
+import java.lang.ref.WeakReference;
+import java.util.function.Supplier;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 import java.io.File;
 import java.io.IOException;
@@ -19,7 +28,6 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import net.minecraft.datafixer.DataFixTypes;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
@@ -32,10 +40,120 @@ import net.minecraft.world.PersistentState;
 /** 使用原生 manager 的生命週期，但讀寫均經過可觀測的 journal 健康閘門。 */
 public final class SessionRecoveryState extends PersistentState {
     public static final String STATE_ID = "quantumchamber_sessions";
+    public enum JournalSlot { ABSENT, PRESENT_NULL, SAME, OTHER }
+    /** 固定 journal key，只回傳關係；不交出原生 map、foreign state 或鎖。 */
+    public interface JournalSlotView { JournalSlot quantumchamber$inspectJournalSlot(SessionRecoveryState expected); }
     @FunctionalInterface interface JournalReadback { NbtCompound read(Path path) throws IOException; }
     private final JournalReadback readback;
+    @FunctionalInterface interface M6IntentValidator { void validate(List<NewUniverseIntent> intents); }
+    private static final M6IntentValidator REJECT_M6 = intents -> { throw new IllegalStateException("M6 snapshot 缺少 server-bound validator"); };
+    private final M6IntentValidator intentValidator;
     public SessionRecoveryState() { this(SessionJournalStore::read); }
-    SessionRecoveryState(JournalReadback readback) { this.readback = java.util.Objects.requireNonNull(readback); }
+    SessionRecoveryState(JournalReadback readback) { this(readback, REJECT_M6); }
+    SessionRecoveryState(JournalReadback readback, M6IntentValidator validator) {
+        this.readback = Objects.requireNonNull(readback); this.intentValidator = Objects.requireNonNull(validator);
+    }
+    static M6IntentValidator m6Validator(Supplier<UniverseProfileRegistry> registry, Supplier<ServerSettingsContext> acquire) {
+        Objects.requireNonNull(registry); Objects.requireNonNull(acquire);
+        return intents -> {
+            if (intents.isEmpty()) return;
+            var profiles = registry.get(); var lease = acquire.get(); lease.requireValid();
+            for (var intent : intents) {
+                profiles.resolve(intent.sourceSettingsSnapshot(), lease);
+                profiles.resolve(intent.targetSettingsSnapshot(), lease);
+            }
+            lease.requireValid();
+        };
+    }
+    private enum InstallationPhase { LOADING, INSTALLED, FAILED }
+    private static final class InstalledState {
+        private final WeakReference<Object> server;
+        private final WeakReference<Object> manager;
+        private final WeakReference<Thread> ownerThread = new WeakReference<>(Thread.currentThread());
+        private WeakReference<SessionRecoveryState> state = new WeakReference<>(null);
+        private InstallationPhase phase = InstallationPhase.LOADING;
+        InstalledState(Object server, Object manager) {
+            this.server = new WeakReference<>(server); this.manager = new WeakReference<>(manager);
+        }
+    }
+    private static final List<InstalledState> INSTALLATIONS = new ArrayList<>();
+    private static JournalSlot peek(Object manager, SessionRecoveryState expected) {
+        if (!(manager instanceof JournalSlotView view)) throw new IllegalStateException("JOURNAL_SLOT_VIEW_UNAVAILABLE");
+        return Objects.requireNonNull(view.quantumchamber$inspectJournalSlot(expected));
+    }
+    /** 呼叫端持有 INSTALLATIONS；不呼 native API、外部 callback 或 IO。 */
+    private static InstalledState findBinding(Object server, Object manager) {
+        INSTALLATIONS.removeIf(entry -> entry.server.get() == null);
+        for (var entry : INSTALLATIONS) {
+            if (entry.server.get() == server) {
+                if (entry.manager.get() != manager) throw new IllegalStateException("JOURNAL_WRONG_MANAGER");
+                return entry;
+            }
+            if (entry.manager.get() == manager) throw new IllegalStateException("JOURNAL_SHARED_MANAGER");
+        }
+        return null;
+    }
+    private static void requirePhase(InstalledState entry, Object server, Object manager, InstallationPhase phase) {
+        if (entry == null || findBinding(server, manager) != entry || entry.phase != phase
+                || entry.ownerThread.get() != Thread.currentThread()) throw new IllegalStateException("JOURNAL_BINDING_CONFLICT");
+    }
+    /** 不初始化、不重新讀檔；只核既有 owner。peek 自己的短 fence 不與 INSTALLATIONS 巢狀。 */
+    private static void requireOwned(Object server, Object manager, InstalledState slot, SessionRecoveryState state) {
+        synchronized (INSTALLATIONS) {
+            requirePhase(slot, server, manager, InstallationPhase.INSTALLED);
+            if (slot.state.get() != state || state.installation != slot || state.installationServer != server)
+                throw new IllegalStateException("JOURNAL_OWNER_IDENTITY");
+        }
+        var observed = peek(manager, state);
+        synchronized (INSTALLATIONS) {
+            requirePhase(slot, server, manager, InstallationPhase.INSTALLED);
+            if (observed != JournalSlot.SAME || slot.state.get() != state || server instanceof MinecraftServer && state.owner != server) {
+                slot.phase = InstallationPhase.FAILED;
+                throw new IllegalStateException("JOURNAL_OWNER_SLOT_MISMATCH");
+            }
+        }
+    }
+    static SessionRecoveryState getOrInstall(Object server, Object manager,
+            Supplier<SessionRecoveryState> loader, Consumer<SessionRecoveryState> installer) {
+        Objects.requireNonNull(server); Objects.requireNonNull(manager); Objects.requireNonNull(loader); Objects.requireNonNull(installer);
+        InstalledState known; SessionRecoveryState cached = null;
+        synchronized (INSTALLATIONS) {
+            known = findBinding(server, manager);
+            if (known != null) {
+                if (known.ownerThread.get() != Thread.currentThread()) throw new IllegalStateException("JOURNAL_WRONG_THREAD");
+                cached = known.state.get();
+                if (known.phase != InstallationPhase.INSTALLED || cached == null) {
+                    known.phase = InstallationPhase.FAILED; throw new IllegalStateException("JOURNAL_BINDING_CONFLICT");
+                }
+            }
+        }
+        if (cached != null) { requireOwned(server, manager, known, cached); return cached; }
+        if (peek(manager, null) != JournalSlot.ABSENT) throw new IllegalStateException("JOURNAL_INITIAL_SLOT_OCCUPIED");
+        InstalledState slot;
+        synchronized (INSTALLATIONS) {
+            if (findBinding(server, manager) != null) throw new IllegalStateException("JOURNAL_RESERVATION_DRIFT");
+            slot = new InstalledState(server, manager); INSTALLATIONS.add(slot);
+        }
+        try {
+            var state = Objects.requireNonNull(loader.get(), "loaded state");
+            if (peek(manager, null) != JournalSlot.ABSENT) throw new IllegalStateException("JOURNAL_INSTALL_PRECHECK");
+            synchronized (INSTALLATIONS) {
+                requirePhase(slot, server, manager, InstallationPhase.LOADING);
+                if (state.installation != null || server instanceof MinecraftServer && state.owner != server)
+                    throw new IllegalStateException("JOURNAL_INSTALL_OWNER");
+                state.installation = slot; state.installationServer = server; slot.state = new WeakReference<>(state);
+            }
+            installer.accept(state);
+            if (peek(manager, state) != JournalSlot.SAME) throw new IllegalStateException("JOURNAL_INSTALL_POSTCHECK");
+            synchronized (INSTALLATIONS) {
+                requirePhase(slot, server, manager, InstallationPhase.LOADING); slot.phase = InstallationPhase.INSTALLED;
+            }
+            return state;
+        } catch (RuntimeException | Error failure) {
+            synchronized (INSTALLATIONS) { slot.phase = InstallationPhase.FAILED; }
+            throw failure;
+        }
+    }
     private final Map<UUID, SessionRecoveryRecord> records = new LinkedHashMap<>();
     // 僅存活於本 process；remove 與空 journal flush 都不能抹去同 UUID 的最後 authority。
     private final Map<UUID, SessionRecoveryRecord> authorityHistory = new LinkedHashMap<>();
@@ -47,9 +165,25 @@ public final class SessionRecoveryState extends PersistentState {
     private Map<UUID, SessionRecoveryRecord> flushed = Map.of();
     // Schema 3 envelope 本身是不可撤銷的初始化證據；不新增 NBT 欄位。
     private boolean candidateInitialized;
-    // spec §5 的兩個旗標，不可混用。m5Evidence 只決定寫出的 schema：讀到 schema 4 或本 instance 初始化成功時為真，之後不變回假。
+    // m5Evidence：讀到 schema 4／5 或本 instance 初始化成功時為真；schemaFiveEvidence 另守單向升級，不混用。
     // m5ReadyThisInstance 只決定能不能提交新的 COLLAPSING：只有本 instance 的 M5 authority 初始化成功才為真，讀到 schema 4 不算。
     private boolean m5Evidence;
+    private boolean schemaFiveEvidence;
+    // 不改 schema1–4 的既有重試流程；但讀回未確認時，不能直接跨進首次 schema5 提交。
+    private boolean legacyWriteUnconfirmed;
+    // 只有正式 load／正常 exact readback 才能建立 wrapped provenance；純 fromNbt 不猜 DataVersion 或磁碟不存在。
+    private NbtCompound checkedWrapped;
+    private Path checkedPath;
+    private boolean checkedAbsent;
+    private PendingAttempt pending;
+    private record PendingAttempt(Path target, SessionJournalStore.PreparedWrite prepared,
+            Map<UUID, SessionRecoveryRecord> expectedRecords, NbtCompound oldWrapped,
+            Map<UUID, SessionRecoveryRecord> oldRecords, boolean oldAbsent) {
+        private PendingAttempt {
+            expectedRecords = Map.copyOf(expectedRecords); oldRecords = Map.copyOf(oldRecords);
+            oldWrapped = oldWrapped == null ? null : oldWrapped.copy();
+        }
+    }
     private boolean m5ReadyThisInstance;
     // 已 checked 終局（讀回確認不存在）的 session：本 process 內 put 一律拒絕同一個 UUID。
     private final java.util.Set<UUID> terminated = new HashSet<>();
@@ -60,34 +194,41 @@ public final class SessionRecoveryState extends PersistentState {
     private final Map<UUID, String> confirmedFailureWarnings = new HashMap<>();
     private String loadError;
     private MinecraftServer owner;
+    private InstalledState installation;
+    private Object installationServer;
 
     public static SessionRecoveryState get(MinecraftServer server) {
         requireServerThread(server);
         Path path = path(server);
         var manager = server.getOverworld().getPersistentStateManager();
-        // 原生 manager 只負責快取；首次 callback 仍從正式檔案 strict read，避免遷移或預設 compound 掩蓋損壞。
-        var type = new PersistentState.Type<>(SessionRecoveryState::new,
-                (NbtCompound ignored, RegistryWrapper.WrapperLookup lookup) -> load(path), DataFixTypes.LEVEL);
-        SessionRecoveryState state = manager.get(type, STATE_ID);
-        if (state == null) {
-            // 原生讀檔失敗可能回 null；只有 checked read 證明檔案不存在才允許初建。
-            state = load(path);
-            manager.set(STATE_ID, state);
-        }
-        state.owner = server;
-        return state;
+        return getOrInstall(server, manager, () -> {
+            var state = load(path, m6Validator(Minecraft121SettingsLifecycle::registry,
+                    () -> Minecraft121SettingsLifecycle.acquire(server)));
+            state.owner = server;
+            return state;
+        }, state -> manager.set(STATE_ID, state));
     }
 
     static SessionRecoveryState load(Path path) {
+        return load(path, REJECT_M6);
+    }
+    static SessionRecoveryState load(Path path, M6IntentValidator validator) {
         try {
             Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         } catch (NoSuchFileException absent) {
-            return new SessionRecoveryState();
+            var state = new SessionRecoveryState(SessionJournalStore::read, validator);
+            state.checkedPath = path.toAbsolutePath().normalize(); state.checkedAbsent = true;
+            return state;
         } catch (IOException | RuntimeException exception) {
             return failed("無法確認 journal 路徑：" + exception);
         }
         try {
-            return fromNbt(SessionJournalStore.read(path).getCompound("data"));
+            var wrapped = SessionJournalStore.read(path);
+            var state = fromNbt(wrapped.getCompound("data"), validator);
+            if (state.loadError == null) {
+                state.checkedWrapped = wrapped.copy(); state.checkedPath = path.toAbsolutePath().normalize();
+            }
+            return state;
         } catch (IOException | RuntimeException exception) {
             // 已見到檔案後消失也屬讀取失敗，不退回空 journal。
             return failed("journal 無法讀取：" + exception);
@@ -95,20 +236,28 @@ public final class SessionRecoveryState extends PersistentState {
     }
 
     public static SessionRecoveryState fromNbt(NbtCompound nbt) {
+        return fromNbt(nbt, REJECT_M6);
+    }
+    static SessionRecoveryState fromNbt(NbtCompound nbt, M6IntentValidator validator) {
         try {
             JournalNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
             int schema=nbt.getInt("SchemaVersion");
-            if (schema < 1 || schema > 4) throw new IllegalArgumentException("不支援 journal schema");
+            if (schema < 1 || schema > 5) throw new IllegalArgumentException("不支援 journal schema");
             if (schema >= 3) JournalNbt.keys(nbt, "SchemaVersion", "Records");
-            var state = new SessionRecoveryState();
-            // schema 4 只會出現在 candidate 已初始化的 journal；它同時是 M5 authority 已初始化的證據，但不代表本 instance 已就緒。
+            var state = new SessionRecoveryState(SessionJournalStore::read, validator);
+            // schema 4／5 都是 candidate 與 M5 authority 已初始化的證據，但不代表本 instance 已就緒。
             state.candidateInitialized = schema >= 3;
-            state.m5Evidence = schema == 4;
+            state.m5Evidence = schema >= 4;
+            state.schemaFiveEvidence = schema == 5;
             for (var raw : JournalNbt.compounds(nbt, "Records", schema)) {
                 var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw,schema);
                 if (state.records.putIfAbsent(record.sessionUuid(), record) != null) throw new IllegalArgumentException("session UUID 重複");
             }
             validateOwnership(state.records);
+            var newIntents = state.records.values().stream().flatMap(record -> record.candidateLedger().stream())
+                    .map(entry -> entry.candidate()).filter(candidate -> candidate instanceof QuantumCandidate.New fresh && fresh.intent().isM6())
+                    .map(candidate -> ((QuantumCandidate.New) candidate).intent()).toList();
+            if (!newIntents.isEmpty()) state.intentValidator.validate(newIntents);
             state.flushed = Map.copyOf(state.records);
             state.authorityHistory.putAll(state.flushed);
             state.checkedAuthority.putAll(state.flushed);
@@ -616,13 +765,32 @@ public final class SessionRecoveryState extends PersistentState {
         nbt.put("Records", entries); return nbt;
     }
     /**
-     * spec §5 的寫出式子：有 legacy record → 2；否則 candidateInitialized → (m5Evidence ? 4 : 3)；否則 → 2（空 journal）。
-     * 兩個旗標都不會變回假，所以一旦寫成 schema 4 就不再降回。
+     * 已確認 schema5 永不降版；首次 M6 Context 寫出另守初始化與未知寫入。
+     * 其餘維持舊式子：legacy → 2；candidateInitialized → (m5Evidence ? 4 : 3)；空且未初始化 → 2。
      */
     private int writtenSchema(Map<UUID, SessionRecoveryRecord> writable) {
         // envelopeSchema 先驗證不混裝 legacy 與 candidate（混裝時丟例外，寫出因此失敗）；它的回傳值（有 candidate → 3，否則 2）
         // 只在最後一行使用。
         int envelope = envelopeSchema(writable);
+        if (schemaFiveEvidence) {
+            if (writable.values().stream().anyMatch(record -> record.candidateContext().isEmpty()))
+                throw new IllegalStateException("schema5 不可降回無 Context 的 legacy session");
+            return 5;
+        }
+        if (writable.values().stream().anyMatch(record -> record.candidateContext().map(context -> context.isM6()).orElse(false))) {
+            if (!m5ReadyThisInstance || legacyWriteUnconfirmed || !rollForwardPending.isEmpty())
+                throw new IllegalStateException("首次 schema5 必須完成 M5 初始化且沒有其他未確認寫入");
+            // 先從 durable 集合確認每筆舊 authority 仍原樣存在；只巡 writable 會漏掉未 flush 的 remove。
+            for (var confirmed : flushed.entrySet()) {
+                if (!Objects.equals(confirmed.getValue(), writable.get(confirmed.getKey())))
+                    throw new IllegalStateException("首次 schema5 不可併入尚未 checked 的舊 session 移除或變更");
+            }
+            for (var record : writable.values()) {
+                if (!record.candidateContext().orElseThrow().isM6() && !flushed.containsKey(record.sessionUuid()))
+                    throw new IllegalStateException("首次 schema5 不可夾帶其他未確認 candidate authority");
+            }
+            return 5;
+        }
         if (writable.values().stream().anyMatch(record -> record.candidateContext().isEmpty())) return 2;
         if (candidateInitialized) return m5Evidence ? 4 : 3;
         // 空 journal → 2。有 candidate record 時 candidateInitialized 必為真，走不到這裡；仍沿用 envelope 判斷，不寫出錯誤的 2。
@@ -642,22 +810,58 @@ public final class SessionRecoveryState extends PersistentState {
 
     @Override public void save(File file, RegistryWrapper.WrapperLookup lookup) {
         requireMutationThread();
+        if (installation != null) {
+            Object manager = owner == null ? installation.manager.get() : owner.getOverworld().getPersistentStateManager();
+            requireOwned(installationServer, manager, installation, this);
+        } else if (owner != null) throw new IllegalStateException("JOURNAL_UNINSTALLED_OWNER");
         requireHealthy();
+        // 即使 caller 已清 dirty，也不能藉 autosave／stop 或 cache hit 丟棄未確認的 attempt。
+        if (pending != null) {
+            try { reconcilePending(file.toPath().toAbsolutePath().normalize()); }
+            catch (IOException | RuntimeException failure) {
+                throw new UncheckedIOException("journal pending 未確認，拒絕覆寫", failure instanceof IOException io
+                        ? io : new IOException("journal pending 解析失敗", failure));
+            }
+        }
         if (!isDirty()) return;
         var wrapped = new NbtCompound(); wrapped.put("data", writeNbt(new NbtCompound()));
         NbtHelper.putDataVersion(wrapped);
         var expected = Map.copyOf(writable());
         try {
-            SessionJournalStore.write(file.toPath(), wrapped);
+            if (wrapped.getCompound("data").getInt("SchemaVersion") == 5) {
+                var candidate = new SessionRecoveryState[1];
+                var prepared = SessionJournalStore.prepareSchemaFive(wrapped, data -> {
+                    var decoded = fromNbt(data, intentValidator); decoded.requireHealthy();
+                    if (!expected.equals(decoded.records())) throw new IllegalStateException("schema5 preflight records 不符");
+                    candidate[0] = decoded;
+                });
+                var target = file.toPath().toAbsolutePath().normalize();
+                boolean sameCheckedPath = target.equals(checkedPath);
+                pending = new PendingAttempt(target, prepared, candidate[0].flushedRecords(),
+                        sameCheckedPath ? checkedWrapped : null, flushed, sameCheckedPath && checkedAbsent);
+                try { SessionJournalStore.writePrepared(file.toPath(), prepared); }
+                catch (SessionJournalStore.WriteFailure failure) {
+                    if (!failure.possiblyMoved()) pending = null;
+                    throw failure;
+                }
+            } else {
+                legacyWriteUnconfirmed = true;
+                SessionJournalStore.write(file.toPath(), wrapped);
+            }
             var actual = readback.read(file.toPath());
-            var decoded = fromNbt(actual.getCompound("data"));
+            var decoded = fromNbt(actual.getCompound("data"), intentValidator);
             decoded.requireHealthy();
             if (!wrapped.equals(actual) || !expected.equals(decoded.records())) {
                 throw new IOException("journal 正式檔 exact readback 不符");
             }
+            var checkedCopy = actual.copy();
             flushed = decoded.flushedRecords();
             authorityHistory.putAll(flushed);
             checkedAuthority.putAll(flushed);
+            schemaFiveEvidence |= actual.getCompound("data").getInt("SchemaVersion") == 5;
+            legacyWriteUnconfirmed = false;
+            checkedWrapped = checkedCopy; checkedPath = file.toPath().toAbsolutePath().normalize(); checkedAbsent = false;
+            pending = null;
             // roll-forward 尚未確認的 session：讀回確認 flushed 已等於 current 時清除。
             rollForwardPending.removeIf(sid -> Objects.equals(flushed.get(sid), records.get(sid)));
         } catch (IOException | RuntimeException exception) {
@@ -665,6 +869,33 @@ public final class SessionRecoveryState extends PersistentState {
                     exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
         }
         setDirty(false);
+    }
+
+    /** 只讀收斂：原 checked exact 才解除；原 attempt exact 也不得在本 instance 復活已 abort 的 current。 */
+    private void reconcilePending(Path target) throws IOException {
+        var attempt = pending;
+        if (!attempt.target().equals(target)) throw new IOException("JOURNAL_PENDING_TARGET_MISMATCH");
+        NbtCompound actual;
+        try { actual = readback.read(target); }
+        catch (NoSuchFileException missing) {
+            if (attempt.oldAbsent()) { pending = null; return; }
+            throw new IOException("JOURNAL_PENDING_MISSING_OLD", missing);
+        } catch (IOException | RuntimeException unreadable) {
+            throw new IOException("JOURNAL_PENDING_UNREADABLE", unreadable);
+        }
+        SessionRecoveryState decoded;
+        try {
+            decoded = fromNbt(actual.getCompound("data"), intentValidator); decoded.requireHealthy();
+        } catch (RuntimeException unreadable) { throw new IOException("JOURNAL_PENDING_UNREADABLE", unreadable); }
+        if (attempt.oldWrapped() != null && attempt.oldWrapped().equals(actual)
+                && attempt.oldRecords().equals(decoded.records())) {
+            pending = null;
+            return;
+        }
+        if (actual.getCompound("data").getInt("SchemaVersion") == attempt.prepared().schema()
+                && attempt.prepared().wrapped().equals(actual) && attempt.expectedRecords().equals(decoded.records()))
+            throw new IOException("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED");
+        throw new IOException("JOURNAL_PENDING_AUTHORITY_UNKNOWN");
     }
 
     private static SessionRecoveryState failed(String error) {
