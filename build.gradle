@@ -141,6 +141,15 @@ loom {
             vmArg '-Dfabric-api.gametest'
             vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.file('gametest-results.xml').get().asFile}"
         }
+        gameTestM4Normal {
+            server()
+            name 'M6 Policy 1 Candidate Regression Game Test'
+            source sourceSets.testmod
+            runDir 'run/gametest-m4-normal'
+            vmArg '-Dfabric-api.gametest'
+            vmArg '-Dquantumchamber.gametest.m4NormalOnly=true'
+            vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.file('gametest-m4-normal-results.xml').get().asFile}"
+        }
         gameTestLegacy {
             server()
             name 'Isolated Legacy Schema 2 Game Test'

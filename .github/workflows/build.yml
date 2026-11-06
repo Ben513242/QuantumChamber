@@ -90,6 +90,17 @@ jobs:
         timeout-minutes: 3
         shell: pwsh
         run: |
+          # normal scope 僅 Windows 真執行；兩平台都嚴格核來源宣告。
+          $normalDeclared = @()
+          foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*.java') {
+            $source = (@((Get-Content -Raw -LiteralPath $file.FullName) -split '\r?\n') | Where-Object { $_ -notmatch '^\s*(//|/\*|\*)' }) -join "`n"
+            $strictNormal = @([regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+)\(TestContext') | Where-Object { $_.Groups['annotation'].Value -match 'batchId\s*=\s*"m4_normal_' })
+            $looseNormal = [regex]::Matches($source, 'batchId\s*=\s*"m4_normal_').Count
+            if ($strictNormal.Count -ne $looseNormal) { throw 'M4_NORMAL_SOURCE_MISMATCH：normal 宣告格式漂移' }
+            foreach ($match in $strictNormal) { $normalDeclared += $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value }
+          }
+          if ($normalDeclared.Count -ne 13 -or @($normalDeclared | Sort-Object -Unique).Count -ne 13) { throw 'M4_NORMAL_SOURCE_MISMATCH：必須恰為13案' }
+
           # 非 Windows 上 `_windows` 案例一律平台略過；以下跨平台案例是 Ubuntu 唯一的真實入場／傳送覆蓋，必須存在且實際通過（不可略過或缺席）。
           [xml]$gameTests = Get-Content -Raw 'build/gametest-results.xml'
           $requiredCrossPlatform = @(
@@ -260,11 +271,13 @@ jobs:
             build/gametest-results.xml
             build/gametest-m5-results.xml
             build/gametest-legacy-results.xml
+            build/gametest-m4-normal-results.xml
             build/gametest-m6-results.xml
             build/m6-verification/**
             build/m6-oracle-selftest/**
             build/m6-verified/**
             run/gametest-legacy/logs/latest.log
+            run/gametest-m4-normal/logs/latest.log
             run/gametest-m6/logs/latest.log
             run/gametest/logs/latest.log
             run/gametest-m5/logs/latest.log
@@ -285,6 +298,10 @@ jobs:
         timeout-minutes: 30
         run: ./gradlew.bat clean build runGameTest --rerun-tasks --no-daemon
       # default GameTest 失敗時仍跑 M5 GameTest，兩邊的失敗都看得到；前一步失敗時 job 已是紅燈，下方檢查 step 維持預設（略過）。
+      - name: Windows normal 選門回歸 GameTest
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: ./gradlew.bat runGameTestM4Normal --no-daemon
       - name: Windows 原生 M5 GameTest
         if: ${{ !cancelled() }}
         timeout-minutes: 20
@@ -312,6 +329,17 @@ jobs:
         run: |
           # 各項檢查先彙整，最後一次列出全部缺席／失敗名稱；任一項不符即 throw（維持失敗即紅）。
           $problems = [System.Collections.Generic.List[string]]::new()
+          # normal scope 僅 Windows 真執行；兩平台都嚴格核來源宣告。
+          $normalDeclared = @()
+          foreach ($file in Get-ChildItem -Path 'src/testmod/java' -Recurse -Filter '*.java') {
+            $source = (@((Get-Content -Raw -LiteralPath $file.FullName) -split '\r?\n') | Where-Object { $_ -notmatch '^\s*(//|/\*|\*)' }) -join "`n"
+            $strictNormal = @([regex]::Matches($source, '(?s)@GameTest\((?<annotation>[^)]*)\)\s*public void (?<name>\w+)\(TestContext') | Where-Object { $_.Groups['annotation'].Value -match 'batchId\s*=\s*"m4_normal_' })
+            $looseNormal = [regex]::Matches($source, 'batchId\s*=\s*"m4_normal_').Count
+            if ($strictNormal.Count -ne $looseNormal) { throw 'M4_NORMAL_SOURCE_MISMATCH：normal 宣告格式漂移' }
+            foreach ($match in $strictNormal) { $normalDeclared += $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value }
+          }
+          if ($normalDeclared.Count -ne 13 -or @($normalDeclared | Sort-Object -Unique).Count -ne 13) { throw 'M4_NORMAL_SOURCE_MISMATCH：必須恰為13案' }
+
           $suites = @('PlayerCheckpointStoreTest', 'WindowsPlayerCheckpointVerifierTest')
           foreach ($suite in $suites) {
             [xml]$result = Get-Content -Raw "build/test-results/test/TEST-dev.quantumchamber.persistence.$suite.xml"
@@ -324,6 +352,12 @@ jobs:
           [xml]$gameTests = Get-Content -Raw 'build/gametest-results.xml'
           # M5 run（runGameTestM5，M5 plan 決策 6）的 XML：batch 前綴 m5_universe 的案例只在這個 run 執行。
           [xml]$m5Tests = Get-Content -Raw 'build/gametest-m5-results.xml'
+          [xml]$normalTests = Get-Content -Raw 'build/gametest-m4-normal-results.xml'
+          $normalCases = @($normalTests.SelectNodes('//testcase'))
+          $normalNames = @($normalCases | ForEach-Object name)
+          if ($normalNames.Count -ne $normalDeclared.Count -or @($normalNames | Sort-Object -Unique).Count -ne $normalNames.Count -or @($normalNames | Where-Object { $_ -cnotin $normalDeclared }).Count -gt 0 -or @($normalDeclared | Where-Object { $_ -cnotin $normalNames }).Count -gt 0 -or @($normalTests.SelectNodes('//failure|//error|//skipped')).Count -gt 0) { throw 'M4_NORMAL_XML_MISMATCH：normal XML 必須 exact 全數通過' }
+          if (@($gameTests.SelectNodes('//testcase') | Where-Object { $_.name -cin $normalDeclared }).Count -gt 0 -or @($m5Tests.SelectNodes('//testcase') | Where-Object { $_.name -cin $normalDeclared }).Count -gt 0) { throw 'M4_NORMAL_XML_MISMATCH：normal 案例出現在錯誤 XML' }
+
           # XML classname 是結構；Java class 在完整 name 前綴。清單固定來自來源，不由當次 XML 反推。
           $requiredM5Default = @(
             'quantumchamber:m1_empty|m2corridorgametests.native_frozen_movement_gets_throttled_position_corrections_windows',
@@ -429,7 +463,8 @@ jobs:
           )) {
             foreach ($testIdentity in $required.identities) {
               $identity = $testIdentity.Split('|')
-              $nodes = @($required.xml.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+              $requiredXml = if ($identity[1] -cin $normalDeclared) { $normalTests } else { $required.xml }
+              $nodes = @($requiredXml.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
               $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
               if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.error -or $null -ne $node.skipped) {
                 $problems.Add("M5 明列 $($required.run) GameTest 未實際通過或身分不符：$testIdentity")
@@ -483,7 +518,8 @@ jobs:
           )
           foreach ($testName in $requiredGameTests) {
             $identity = $testName.Split('|')
-            $nodes = @($gameTests.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+            $requiredXml = if ($identity[1] -cin $normalDeclared) { $normalTests } else { $gameTests }
+            $nodes = @($requiredXml.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
             $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.skipped) {
               $problems.Add("必要 Windows 原生 GameTest 未實際通過：$testName")
@@ -513,7 +549,8 @@ jobs:
           )
           foreach ($testName in $requiredM4GameTests) {
             $identity = $testName.Split('|')
-            $nodes = @($gameTests.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
+            $requiredXml = if ($identity[1] -cin $normalDeclared) { $normalTests } else { $gameTests }
+            $nodes = @($requiredXml.SelectNodes("//testcase[@classname='$($identity[0])' and @name='$($identity[1])']"))
             $node = if ($nodes.Count -eq 1) { $nodes[0] } else { $null }
             if ($null -eq $node -or $null -ne $node.failure -or $null -ne $node.skipped) {
               $problems.Add("必要 Windows 原生 M4 GameTest 未實際通過：$testName")
@@ -552,7 +589,7 @@ jobs:
               $caseName = $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
               if ($annotation -match 'batchId\s*=\s*"m5_universe') {
                 $declaredM5 += $caseName
-              } elseif ($annotation -notmatch 'batchId\s*=\s*"(?:m4_legacy_runtime"|m6_universe)') {
+              } elseif ($annotation -notmatch 'batchId\s*=\s*"(?:m4_legacy_runtime"|m4_normal_|m6_universe)') {
                 $declared += $caseName
               }
             }
@@ -600,12 +637,14 @@ jobs:
             build/gametest-results.xml
             build/gametest-m5-results.xml
             build/gametest-legacy-results.xml
+            build/gametest-m4-normal-results.xml
             build/gametest-m6-results.xml
             build/m6-verification/**
             build/m6-main-only/**
             build/m6-oracle-selftest/**
             build/m6-verified/**
             run/gametest-legacy/logs/latest.log
+            run/gametest-m4-normal/logs/latest.log
             run/gametest-m6/logs/latest.log
             run/gametest/logs/latest.log
             run/gametest-m5/logs/latest.log

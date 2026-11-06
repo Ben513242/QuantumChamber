@@ -18,6 +18,7 @@ param(
     [Parameter(Mandatory)][string]$Step,
     [Parameter(Mandatory)][string]$GameTestXml,
     [Parameter(Mandatory)][string]$M5GameTestXml,
+    [string]$M4NormalGameTestXml='',
     [string]$M6GameTestXml='',
     [string]$M6RuntimeLog='',
     [string]$M6RuntimeRoot='',
@@ -28,9 +29,9 @@ param(
     [ValidateSet('none','missing-receipt','wrong-head','gametest','testmod','stop','restore','missing-evidence')][string]$MainMutation='none',
     [Parameter(Mandatory)][string]$JUnitDir,
     [Parameter(Mandatory)][string]$SourceRoot,
-    [ValidateSet('none','drop','skip','fail')][string]$Mutation='none',
+    [ValidateSet('none','drop','skip','fail','wrong-scope')][string]$Mutation='none',
     [string]$MutationTarget='',
-    [ValidateSet('default','m5','m6')][string]$MutationXml='default',
+    [ValidateSet('default','normal','m5','m6')][string]$MutationXml='default',
     [ValidateSet('none','interpose-annotation','rename-windows')][string]$SourceMutation='none',
     [string]$SourceTarget='',
     [string]$EvidenceRoot=''
@@ -78,6 +79,8 @@ New-Item -ItemType Directory -Path (Join-Path $fixture 'src/testmod') -Force | O
 Copy-Item -LiteralPath $SourceRoot -Destination (Join-Path $fixture 'src/testmod/java') -Recurse
 [xml]$xml=Get-Content -LiteralPath $GameTestXml -Raw
 [xml]$m5Xml=Get-Content -LiteralPath $M5GameTestXml -Raw
+$normalXml=$null
+if($M4NormalGameTestXml){[xml]$normalXml=Get-Content -LiteralPath $M4NormalGameTestXml -Raw}
 $m6Xml=$null
 if($M6GameTestXml){
     [xml]$m6Xml=Get-Content -LiteralPath $M6GameTestXml -Raw
@@ -157,7 +160,7 @@ if($SourceMutation -ne 'none'){
         if($SourceTarget -like '*_windows'){throw "rename-windows 的目標不可已是 _windows：$SourceTarget"}
         $text=$text.Replace($needle,"public void ${SourceTarget}_windows(TestContext")
         $caseName=$hits[0].BaseName.ToLowerInvariant()+'.'+$SourceTarget
-        $cases=@(@($xml,$m5Xml,$m6Xml) | Where-Object {$null -ne $_} | ForEach-Object {$_.SelectNodes("//testcase[@name='$caseName']")} | Where-Object {$null -ne $_})
+        $cases=@(@($xml,$normalXml,$m5Xml,$m6Xml) | Where-Object {$null -ne $_} | ForEach-Object {$_.SelectNodes("//testcase[@name='$caseName']")} | Where-Object {$null -ne $_})
         if($cases.Count -ne 1){throw "rename-windows 的 testcase 必須恰出現一次：$caseName（$($cases.Count)）"}
         $cases[0].SetAttribute('name',$caseName+'_windows')
     }
@@ -165,10 +168,11 @@ if($SourceMutation -ne 'none'){
     $sourceMutated=[IO.Path]::GetRelativePath($fixture,$hits[0].FullName)
 }
 if($Mutation -ne 'none'){
-    $target=if($MutationXml -eq 'm6'){$m6Xml}elseif($MutationXml -eq 'm5'){$m5Xml}else{$xml}
+    $target=if($MutationXml -eq 'normal'){$normalXml}elseif($MutationXml -eq 'm6'){$m6Xml}elseif($MutationXml -eq 'm5'){$m5Xml}else{$xml}
     $node=$target.SelectSingleNode("//testcase[@name='$MutationTarget']")
     if($null -eq $node){throw "mutation 目標不在 $MutationXml XML：$MutationTarget"}
     switch($Mutation){
+        'wrong-scope' { if($MutationXml -ne 'normal'){throw 'wrong-scope 僅供 normal'}; [void]$xml.DocumentElement.AppendChild($xml.ImportNode($node,$true)); [void]$node.ParentNode.RemoveChild($node) }
         'drop' {[void]$node.ParentNode.RemoveChild($node)}
         'skip' {[void]$node.AppendChild($target.CreateElement('skipped'))}
         'fail' {$failure=$target.CreateElement('failure');$failure.SetAttribute('message','CI 規則檢查刻意注入的失敗');[void]$node.AppendChild($failure)}
@@ -176,6 +180,7 @@ if($Mutation -ne 'none'){
 }
 $xml.Save((Join-Path $fixture 'build/gametest-results.xml'))
 $m5Xml.Save((Join-Path $fixture 'build/gametest-m5-results.xml'))
+if($normalXml){$normalXml.Save((Join-Path $fixture 'build/gametest-m4-normal-results.xml'))}
 if($m6Xml){$m6Xml.Save((Join-Path $fixture 'build/gametest-m6-results.xml'))}
 $stepFile=Join-Path $root 'step.ps1'
 Set-Content -LiteralPath $stepFile -Value ("`$ErrorActionPreference = 'stop'`n"+$script) -Encoding utf8
@@ -192,6 +197,7 @@ $m5WindowsCases=@($m5Xml.SelectNodes('//testcase') | Where-Object {$_.name -like
 $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).Path;workflowSha256=(Get-FileHash -LiteralPath $Workflow -Algorithm SHA256).Hash;step=$Step
     gameTestXml=(Resolve-Path -LiteralPath $GameTestXml).Path;gameTestXmlSha256=(Get-FileHash -LiteralPath $GameTestXml -Algorithm SHA256).Hash
     m5GameTestXml=(Resolve-Path -LiteralPath $M5GameTestXml).Path;m5GameTestXmlSha256=(Get-FileHash -LiteralPath $M5GameTestXml -Algorithm SHA256).Hash
+    m4NormalGameTestXmlSha256=$(if($M4NormalGameTestXml){(Get-FileHash -LiteralPath $M4NormalGameTestXml).Hash}else{''})
     head=(git -C $repo rev-parse HEAD).Trim();m6GameTestXmlSha256=$(if($M6GameTestXml){(Get-FileHash -LiteralPath $M6GameTestXml).Hash}else{''});m6RuntimeLogSha256=$(if($M6RuntimeLog){(Get-FileHash -LiteralPath $M6RuntimeLog).Hash}else{''})
     mainReceipt=$MainReceipt;mainReceiptSha256=$mainOriginalHash;mainMutation=$MainMutation;mainFixtureRuntimeLaunched=$false
     nativeSummary=$M6NativeSummary;nativeSummarySha256=$(if($M6NativeSummary){(Get-FileHash -LiteralPath $M6NativeSummary).Hash}else{''});nativeMutation=$NativeMutation;nativeFixtureRuntimeLaunched=$false

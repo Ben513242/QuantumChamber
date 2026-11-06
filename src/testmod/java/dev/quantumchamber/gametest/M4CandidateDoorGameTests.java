@@ -45,7 +45,7 @@ public final class M4CandidateDoorGameTests {
         context.complete();
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_first_wins",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_select_first_wins",tickLimit=100000)
     public void native_selection_all_25_cells_first_wins_and_measured_freeze_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_selection_all_25_cells_first_wins_and_measured_freeze_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_selection_all_25_cells_first_wins_and_measured_freeze_windows");
@@ -95,7 +95,7 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_rejections",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_select_rejections",tickLimit=100000)
     public void native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_selection_rejects_identity_bbox_cohort_source_and_incomplete_windows");
@@ -156,20 +156,20 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_flush_before",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_select_flush_before",tickLimit=100000)
     public void native_selection_flush_failure_never_sends_success_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_selection_flush_failure_never_sends_success_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_selection_flush_failure_never_sends_success_windows");
         selectionFailure(context,"before");
     }
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_flush_after",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_select_flush_after",tickLimit=100000)
     public void native_selection_readback_failure_never_sends_success_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_selection_readback_failure_never_sends_success_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_selection_readback_failure_never_sends_success_windows");
         selectionFailure(context,"after");
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_fault_other_flush",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_select_fault_other_flush",tickLimit=100000)
     public void native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_selection_fault_never_admitted_by_other_session_flush_or_native_save_windows");
@@ -206,10 +206,11 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_batch_fault_returning",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_batch_fault_returning",tickLimit=100000)
     public void native_candidate_batch_fault_converges_to_checked_returning_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_candidate_batch_fault_converges_to_checked_returning_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_candidate_batch_fault_converges_to_checked_returning_windows");
+        assertNormalSource(context);
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         var probe=new BatchFaultProbe(fixture); batchFaultProbe=probe;
         // 延後清單「M4 test 收尾」：等待逾時或斷言失敗時也解除 probe 並關閉 fixture，不讓它攔截後續 batch 的 journal flush。
@@ -219,6 +220,7 @@ public final class M4CandidateDoorGameTests {
         context.waitAndRun(2,fixture::power);
         whenWithin(context,3,60,() -> probe.fired,fired -> context.runAtTick(fired+1,() -> {
             batchFaultProbe=null;
+            assertPolicyOne(context,probe.faulted);
             var sid=probe.faulted.sessionUuid(); var journal=SessionRecoveryState.get(fixture.server);
             var current=journal.records().get(sid); var flushed=journal.flushedRecords().get(sid);
             context.assertTrue(flushed!=null && current!=null,"batch fault 後 session record 不得消失");
@@ -494,7 +496,7 @@ public final class M4CandidateDoorGameTests {
      * H3 q3：隔離中的 session 要能收斂。以 CAS 不符建立隔離（production 中 CAS 必定成立，這是防禦路徑）：未 checked 的 SELECTED
      * 之上再疊返還進度，再以原本的 next 呼叫 abort。recovery 必須以上一份 flushed authority 寫出 checked RETURNING，玩家照常返還。
      */
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h3_quarantine_converges",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m5_h3_quarantine_converges",tickLimit=100000)
     public void native_quarantined_selection_converges_to_checked_returning_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_quarantined_selection_converges_to_checked_returning_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_quarantined_selection_converges_to_checked_returning_windows");
@@ -611,7 +613,7 @@ public final class M4CandidateDoorGameTests {
      * MEASURED 清理遇持續原生存檔失敗：checkpoint 依 per-space 20→40→… tick 指數退避、同一原因的 WARN 只附一次 stack；
      * 故障解除後完成 DORMANT，selection receipt 與 fail-closed 契約不變。GameTest server 不以 20 TPS 節流，故以 server tick 計數。
      */
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_ifix1_checkpoint_backoff",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_ifix1_checkpoint_backoff",tickLimit=100000)
     public void native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_measured_checkpoint_failure_backs_off_then_reaches_dormant_windows");
@@ -668,7 +670,7 @@ public final class M4CandidateDoorGameTests {
      * 保留 lease（玩家已返還）；解除之後完成 DORMANT，checkpoint 恰一次而且被承認，沒有「checkpoint 已恢復」的 INFO（沒有失敗過）。修改前：checkpoint 照樣呼叫、丟
      * 「相關 chunk／entity storage 尚未完整載入」、記「MEASURED 保留 receipt 等待安全返還」WARN 並進入 checkpoint 的退避。GameTest server 不以 20 TPS 節流，故以 server tick 計數。
      */
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_f60_source_entity_storage",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m5_f60_source_entity_storage",tickLimit=100000)
     public void native_measured_release_waits_for_the_source_entity_storage_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_measured_release_waits_for_the_source_entity_storage_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_measured_release_waits_for_the_source_entity_storage_windows");
@@ -772,7 +774,7 @@ public final class M4CandidateDoorGameTests {
      * 被承認後 MEASURED 清理即結束，所以會擋下的情形排在前面。故障在原生 IO worker 內發生，並只對故障目標等真 IO 完成，
      * 外層 server.save 照常回 true（見 ChunkCheckpointScopeFaultMixin）。
      */
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_h2_checkpoint_scope",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m5_h2_checkpoint_scope",tickLimit=100000)
     public void native_measured_checkpoint_ignores_unrelated_chunk_failure_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_measured_checkpoint_ignores_unrelated_chunk_failure_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_measured_checkpoint_ignores_unrelated_chunk_failure_windows");
@@ -1044,10 +1046,11 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_unflushed",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_select_unflushed",tickLimit=100000)
     public void native_selection_cannot_use_candidate_before_checked_batch_readback_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_selection_cannot_use_candidate_before_checked_batch_readback_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_selection_cannot_use_candidate_before_checked_batch_readback_windows");
+        assertNormalSource(context);
         var fixture=new M2CorridorGameTests.NativeEntry(context,1,Direction.NORTH);
         var probe=new CandidatePublishProbe(fixture); publishProbe=probe;
         // 延後清單「M4 test 收尾」：等待逾時時也解除 probe 並關閉 fixture，不讓它在後續 batch 的 journal flush 裡操作本 test 的玩家。
@@ -1057,6 +1060,7 @@ public final class M4CandidateDoorGameTests {
         context.waitAndRun(2,fixture::power);
         whenWithin(context,3,60,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,tick -> {
             publishProbe=null;
+            assertPolicyOne(context,fixture.record());
             fixture.trustedTeardown(tick+1,() -> {
                 context.assertTrue(probe.observed && probe.rejected,"真候選batch未flush窗口：側門互動拒絕且current/durable零額外mutation"); M4PerTestUniverseProbe.complete(context);
             });
@@ -1083,7 +1087,7 @@ public final class M4CandidateDoorGameTests {
         fixture.trustedTeardown(tick,() -> M4PerTestUniverseProbe.complete(fixture.context));
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_select_mapping_windows",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m4_select_mapping_windows",tickLimit=100000)
     public void native_selection_rejects_pending_batch_retired_and_unready_mapping_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_selection_rejects_pending_batch_retired_and_unready_mapping_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_selection_rejects_pending_batch_retired_and_unready_mapping_windows");
@@ -1121,14 +1125,26 @@ public final class M4CandidateDoorGameTests {
         });
     }
 
+    private static void assertNormalSource(TestContext context) {
+        context.assertTrue(Boolean.getBoolean("quantumchamber.gametest.m4NormalOnly"), "M4_NORMAL_SCOPE：必須使用 normal 專用 run");
+        var lease=dev.quantumchamber.universe.Minecraft121SettingsLifecycle.acquire(context.getWorld().getServer());
+        context.assertEquals("normal",dev.quantumchamber.universe.Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(lease).orElse("unknown"),
+                "M4_NORMAL_PRESET：必須辨識真 normal 來源");
+    }
+    private static void assertPolicyOne(TestContext context,SessionRecoveryRecord record) {
+        var policy=record.candidateContext().orElseThrow();
+        context.assertEquals(1,policy.policyVersion(),"M4_NORMAL_POLICY：新 session 固定 policy1");
+        context.assertEquals(0,policy.familyCapabilityVersion(),"M4_NORMAL_POLICY：新 session 固定 family0");
+    }
     /**
      * 真入場、等 358 扇側門發布之後交給 {@code ready}。M5 plan 決策 7：在交出之前就暫停這個 session 的塌縮流程，之後的選門（MEASURED）照 M4 一直等待。
      */
     private static void nativeCandidates(TestContext context,int people,java.util.function.BiConsumer<M2CorridorGameTests.NativeEntry,Integer> ready) {
+        assertNormalSource(context);
         var fixture=new M2CorridorGameTests.NativeEntry(context,people,Direction.NORTH);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,
-                tick -> { M5TestHooks.suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
+                tick -> { assertPolicyOne(context,fixture.record()); M5TestHooks.suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
     }
     private static net.minecraft.util.ActionResult use(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player) {
         return M5GameTestSupport.interact(fixture.target,pos,player);
@@ -1733,6 +1749,8 @@ public final class M4CandidateDoorGameTests {
     public void native_start_freezes_candidate_context_before_geometry_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_start_freezes_candidate_context_before_geometry_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_start_freezes_candidate_context_before_geometry_windows");
+        context.assertTrue(context.getWorld().getServer().getOverworld().getChunkManager().getChunkGenerator()
+                instanceof net.minecraft.world.gen.chunk.FlatChunkGenerator,"M4_DEFAULT_FLAT：default 來源維持 flat");
         var fixture = new M2CorridorGameTests.NativeEntry(context, 1, Direction.NORTH);
         context.waitAndRun(2, fixture::power);
         when(context, 3, () -> fixture.record() != null, tick -> {
@@ -1740,6 +1758,7 @@ public final class M4CandidateDoorGameTests {
             context.assertEquals(SessionState.ARMING, initial.state(), "入場先承認 ARMING");
             fixture.trustedTeardown(tick + 1, () -> {
                 context.assertTrue(initial.candidateContext().isPresent(), "原生新 session 必須在 ARMING 凍結 candidate context");
+                assertPolicyOne(context,initial);
                 var policy = initial.candidateContext().orElseThrow();
                 context.assertEquals(new SourceFamilyRef.Vanilla(World.OVERWORLD, DimensionRole.OVERWORLD), policy.sourceFamilyRef(), "凍結真來源 family");
                 context.assertTrue(initial.candidateLedger().isEmpty(), "ARMING 不能提早生成候選");
@@ -1912,7 +1931,7 @@ public final class M4CandidateDoorGameTests {
      * recovery 的 RETRY_FLUSH 確認 SETTLED，但走廊 space 下一個 tick 才釋放，這段期間 measuredRecoveryComplete 必須為假（fix round 1 的 I-1）。
      * 收尾以終局 API 移除 record，runtime 與來源 ticket 以正式 API（{@code releaseAfterTerminal}）釋放；失敗路徑由 hook 在清理真的完成時代為收尾。
      */
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m5_f3a_native_collapsing_return",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m4_normal_m5_f3a_native_collapsing_return",tickLimit=100000)
     public void native_collapsing_buff_lapse_returns_through_the_retained_path_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_collapsing_buff_lapse_returns_through_the_retained_path_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_collapsing_buff_lapse_returns_through_the_retained_path_windows");

@@ -97,7 +97,7 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 
 | 檔案 | 用途 |
 | --- | --- |
-| `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`M5GameTest`（`runGameTestM5`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`）。三個 GameTest run（default、legacy、M5）都核對 XML 是本次 run 寫出的，而且 testcase 集合恰好等於原始碼依 batch 前綴矩陣屬於該 run 的宣告（`scope.json`）：`m4_legacy_runtime` 屬 legacy run，前綴 `m5_universe` 屬 M5 run，其餘屬 default run。default 與 legacy 另核對 M4 boundary oracle；M5 run 不註冊 boundary probe，改核對每個 M5 test 自己斷言的 catalog 增量、增量之間的串接（筆數與 digest），以及 suite 結束時（`SERVER_STOPPED`）的 catalog 等於最後一個 test 的結果（`m5-oracle.json`） |
+| `gates.ps1` | gate 主體。`-Mode Full`（`clean test runGameTest build --rerun-tasks`）、`Legacy`（`runGameTestLegacy`）、`M4NormalGameTest`（`runGameTestM4Normal`）、`M5GameTest`（`runGameTestM5`）、`Main`（main-only `runServer`）、`M3`（lifecycle 4 phases＋transfer 5 phases）、`GameTest`（只跑 `runGameTest`）、`Windows`（3 個 Windows checkpoint JUnit class）、`Inventory`（靜態列出 `@GameTest`）。五個 GameTest run（default、legacy、normal、M5、M6）都核對 XML 是本次 run 寫出的，而且 testcase 集合恰好等於原始碼依 batch 前綴矩陣屬於該 run 的宣告（`scope.json`）：`m4_legacy_runtime` 屬 legacy run，前綴 `m4_normal_` 屬 normal run、`m5_universe` 屬 M5 run、`m6_universe` 屬 M6 run，其餘屬 default run。default、legacy 與 normal 另核對 M4 boundary oracle；M5 run 不註冊 boundary probe，改核對每個 M5 test 自己斷言的 catalog 增量、增量之間的串接（筆數與 digest），以及 suite 結束時（`SERVER_STOPPED`）的 catalog 等於最後一個 test 的結果（`m5-oracle.json`） |
 | `gate-evidence.ps1` | 共用唯讀身分、當次完整日誌與失敗 XML 取證；載入只定義函式，不啟動程序或操作世界 |
 | `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod／clientProbe；另核對 world keys、正常停止與 exact restore |
 | `probe-common.ps1` | M4/M5 共用 owned-phase 程序生命週期、具名 Context/State 與診斷；`New-OwnedRoot` 建檔前以 `Assert-OwnedRunAncestor` 驗 canonical Project、run 與全部祖先非 reparse，root 必須直接位於 run 內；dot-source 本身沒有啟動或世界副作用 |
@@ -603,3 +603,12 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 schema5 一旦可能已 atomic move、同次 readback 卻未確認，該 instance 的後續 save 先只讀；只有 exact 舊 checked 權威（含原本已證實的不存在）才能解除。即使讀回 exact 原 attempt，也維持原 `flushedRecords` 並停寫至重啟，不會復活已 abort 的 current。交接時將測試根與 SHA 記入 [M6 實作紀錄](../../docs/implementation-notes/2026-10-24-m6-universe-generation.md)；人工 smoke 與 Task 12 的正式遊戲入口另有門檻。
 
 日誌快取只在 QuantumChamber 取得或儲存自己的狀態時核對物件身分。其他模組若以相同保留鍵呼叫原生 set 或由 get 回填，原生自動存檔可能在下次核對前已覆寫日誌。發現不符就停止本模組寫入；外部即時攔截留待 H5 評估，本輪未驗。
+
+
+## Task12 normal 選門／故障回歸 scope
+
+`pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M4NormalGameTest -Label normal` 執行13個 `m4_normal_*` batch；`-Batch m4_normal_m4_select_first_wins` 可保留單案focused證據。它們使用原測試方法與真玩家／故障路徑，只驗新 M6 policy1/family0 的回歸，不宣稱歷史 M4 schema1 活選門。
+
+`gameTestM4Normal` 以 exact `quantumchamber.gametest.m4NormalOnly=true` 在既有 testmod Redirect 選 vanilla normal holder，獨立 `run/gametest-m4-normal`／`build/gametest-m4-normal-results.xml`；default、legacy、M5、M6仍flat，scope flags互斥。新run沿用 Move-Fresh／Restore-Root、當次XML exact集合、M4 boundary及逐案收據；`run-all.ps1` 的default／legacy／normal收據分流核對。新session與來源preset須通過runtime斷言，不能以flag或名稱冒稱normal。
+
+Windows CI 的「Windows normal 選門回歸 GameTest」真跑新scope，「確認 Windows 原生案例確實執行」以新XML核13案exact集合，移動的requiredM4／M5-default案例按來源歸屬讀normal XML。normal XML與runtime log上傳到既有artifact。Ubuntu只驗嚴格來源宣告，不宣稱執行Windows案例。`ci-rule-check.ps1 -M4NormalGameTestXml <path>` 支援 `-MutationXml normal -Mutation drop|wrong-scope`；後者把測試搬到錯誤default XML，兩者都必須由 `M4_NORMAL_XML_MISMATCH` 拒絕。完整run-all採同表執行這兩個反例與正控制。

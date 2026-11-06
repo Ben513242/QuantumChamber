@@ -59,10 +59,53 @@ final class M4CandidateTestAccess {
     static Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord> diskRecords(MinecraftServer server) {
         try {
             var path=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data/quantumchamber_sessions.dat");
-            var decoded=dev.quantumchamber.persistence.SessionRecoveryState.fromNbt(
-                    dev.quantumchamber.persistence.SessionJournalStore.read(path).getCompound("data"));
-            decoded.requireHealthy(); return decoded.flushedRecords();
-        } catch(java.io.IOException failure) { throw new IllegalStateException(failure); }
+            var digest=java.security.MessageDigest.getInstance("SHA-256");
+            try (var input=new java.security.DigestInputStream(java.nio.file.Files.newInputStream(path),digest)) {
+                input.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            var before=java.util.HexFormat.of().formatHex(digest.digest());
+            var nbt=dev.quantumchamber.persistence.SessionJournalStore.read(path).getCompound("data");
+            if (!nbt.contains("SchemaVersion",net.minecraft.nbt.NbtElement.INT_TYPE))
+                throw new IllegalStateException("M4_DISK_SCHEMA：缺少 int SchemaVersion");
+            int schema=nbt.getInt("SchemaVersion");
+            if (schema<1 || schema>5) throw new IllegalStateException("M4_DISK_SCHEMA：不支援 schema="+schema);
+            dev.quantumchamber.persistence.SessionRecoveryState decoded;
+            boolean exactOwner=false,exactValidator=false;
+            if (schema<5) {
+                // 歷史 fault 案例可在 current unhealthy 時讀舊磁碟；不得要求安裝 state 健康。
+                decoded=dev.quantumchamber.persistence.SessionRecoveryState.fromNbt(nbt);
+            } else {
+                if (!server.isOnThread()) throw new IllegalStateException("M4_DISK_OWNER：必須在 server thread");
+                var installed=dev.quantumchamber.persistence.SessionRecoveryState.get(server);
+                installed.requireHealthy();
+                exactOwner=get(installed,"owner")==server;
+                if (!exactOwner) throw new IllegalStateException("M4_DISK_OWNER：安裝 state 不屬於此 server");
+                var type=dev.quantumchamber.persistence.SessionRecoveryState.class;
+                var field=type.getDeclaredField("intentValidator");field.setAccessible(true);
+                var validator=field.get(installed);
+                exactValidator=validator!=null && field.getType().isInstance(validator)
+                        && field.getType().getName().equals(type.getName()+"$M6IntentValidator");
+                if (!exactValidator) throw new IllegalStateException("M4_DISK_VALIDATOR：缺少 exact 正式 validator");
+                var reader=type.getDeclaredMethod("fromNbt",net.minecraft.nbt.NbtCompound.class,field.getType());
+                reader.setAccessible(true);
+                decoded=(dev.quantumchamber.persistence.SessionRecoveryState)reader.invoke(null,nbt,validator);
+                if (decoded==installed) throw new IllegalStateException("M4_DISK_DECODE：不可回記憶體 state");
+            }
+            decoded.requireHealthy();
+            try (var input=new java.security.DigestInputStream(java.nio.file.Files.newInputStream(path),digest)) {
+                input.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            var after=java.util.HexFormat.of().formatHex(digest.digest());
+            if (!before.equals(after)) throw new IllegalStateException("M4_DISK_CHANGED：strict read 改動原檔");
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
+                    "M4_DISK_READ schema={} exactOwner={} exactValidator={} before={} after={} path={}",
+                    schema,exactOwner,exactValidator,before,after,path.toAbsolutePath().normalize());
+            return decoded.flushedRecords();
+        } catch (InvocationTargetException failure) {
+            throw new IllegalStateException("M4_DISK_DECODE：正式 reader 呼叫失敗",failure.getCause());
+        } catch (ReflectiveOperationException | java.io.IOException | java.security.NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("M4_DISK_DECODE：strict 磁碟讀回失敗",failure);
+        }
     }
     /** 僅在保存 DORMANT 測試證據後移除 testmod 自建 receipt；production 仍禁止一般 remove 消耗 MEASURED。 */
     @SuppressWarnings("unchecked")
