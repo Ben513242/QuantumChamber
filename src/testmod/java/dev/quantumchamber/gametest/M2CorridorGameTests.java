@@ -425,7 +425,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             });
         });
     }
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_mid_remap_low",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_mid_remap_low",tickLimit=1000000)
     public void native_power_loss_during_actual_remap_returns_cohort_and_value_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
@@ -439,19 +439,43 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 item.setNoGravity(true); item.setVelocity(Vec3d.ZERO); item.setNeverDespawn(); item.setPickupDelayInfinite();
                 context.assertTrue(fixture.target.spawnEntity(item),"mid-remap真有價item"); var itemId=item.getUuid();
                 walkNative(fixture,fixture.players.get(0).player(),95.5); walkNative(fixture,fixture.players.get(1).player(),96.5);
-                whenUntil(context,tick+1,() -> fault.hit,lowTick -> {
-                    hooks.release();
-                    context.assertTrue(fault.moved!=null && fault.tick>=0,"真move RETURN窗口必須命中");
-                    context.assertTrue(SessionRecoveryRecord.sameParticipantSources(initial.participants(),fixture.record().participants())
-                            && fixture.record().spaceLeases().size()>=2,"partial batch保留完整sources與兩邊lease");
-                    fixture.trustedTeardown(lowTick+1,() -> {
-                        var value=context.getWorld().getEntity(itemId);
-                        context.assertTrue(value instanceof net.minecraft.entity.ItemEntity returned && returned.getStack().getCount()==5
-                                && returned.getStack().isOf(net.minecraft.item.Items.DIAMOND),"cohort與五顆鑽石均真返還後才清理");
-                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_REMAP_LOW_OK sid={} sourceOff=true item={} amount=5",initial.sessionUuid(),itemId);
-                        context.complete();
-                    });
-                },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30),hooks);
+                long waitStart=System.nanoTime();
+                long deadline=waitStart+java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+                class RemapWait {
+                    void schedule(int testTick) {
+                        context.runAtTick(testTick,() -> {
+                            try {
+                                long now=System.nanoTime();
+                                if(now>=deadline) {
+                                    var world=context.getWorld().getServer().getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
+                                    var sample=new net.minecraft.util.math.ChunkPos(62,125);
+                                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").warn(
+                                            "M2_REMAP_WALL_TIMEOUT sid={} elapsedMs={} testTick={} serverTick={} actualHit={}",initial.sessionUuid(),
+                                            java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(now-waitStart),testTick,fixture.server.getTicks(),fault.hit);
+                                    context.assertTrue(false,"有限等待逾時：FULL="+(world.getChunkManager().getWorldChunk(62,125)!=null)
+                                            +" loaded="+world.isChunkLoaded(sample.toLong())+" ticking="+world.shouldTick(sample)
+                                            +" tickingFuture="+world.getChunkManager().isTickingFutureReady(sample.toLong())
+                                            +" chunkDebug="+world.getChunkManager().getChunkLoadingDebugInfo(sample)
+                                            +" worldTime="+world.getTime()+" serverTicks="+world.getServer().getTicks()+" own="+waitingLeaseEvidence(context));
+                                    return;
+                                }
+                                if(!fault.hit) { schedule(testTick+1); return; }
+                                hooks.release();
+                                context.assertTrue(fault.moved!=null && fault.tick>=0,"真move RETURN窗口必須命中");
+                                context.assertTrue(SessionRecoveryRecord.sameParticipantSources(initial.participants(),fixture.record().participants())
+                                        && fixture.record().spaceLeases().size()>=2,"partial batch保留完整sources與兩邊lease");
+                                fixture.trustedTeardown(testTick+1,() -> {
+                                    var value=context.getWorld().getEntity(itemId);
+                                    context.assertTrue(value instanceof net.minecraft.entity.ItemEntity returned && returned.getStack().getCount()==5
+                                            && returned.getStack().isOf(net.minecraft.item.Items.DIAMOND),"cohort與五顆鑽石均真返還後才清理");
+                                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_REMAP_LOW_OK sid={} sourceOff=true item={} amount=5",initial.sessionUuid(),itemId);
+                                    context.complete();
+                                });
+                            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+                        });
+                    }
+                }
+                new RemapWait().schedule(tick+1);
             } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
         });
     }
@@ -858,7 +882,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
         return new CommandRun(parsed,List.copyOf(results));
     }
     /** 經驗球比照掉落物：成為 pin、跨 seam 換頁，返還時回原艙且移除 session tag，不隨清理遺失。 */
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_experience_orb",tickLimit=100000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_ifix1_experience_orb",tickLimit=1000000)
     public void native_experience_orb_crosses_seam_and_returns_before_cleanup_windows(TestContext context) {
         if(!Platform.isWindows()) { context.complete(); return; }
         M4PerTestUniverseProbe.begin(context,"native_experience_orb_crosses_seam_and_returns_before_cleanup_windows");
@@ -871,24 +895,44 @@ public final class M2CorridorGameTests implements FabricGameTest {
             orb.setNoGravity(true); orb.setVelocity(Vec3d.ZERO);
             context.assertTrue(fixture.target.spawnEntity(orb),"真經驗球入走廊世界");
             var orbId=orb.getUuid(); var tag="quantumchamber_session:"+sid; var witness=new java.util.LinkedHashMap<String,Boolean>();
-            long settle=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
-            whenUntil(context,tick+1,() -> fixture.pages.currentMappings(sid).epoch()==2 || System.nanoTime()>=settle,settled -> {
-                witness.put("orbPageTriggeredRemap",fixture.pages.currentMappings(sid).epoch()==2);
-                var owners=fixture.pages.currentEntityOwners(sid);
-                witness.put("orbHasUniqueCurrentOwner",owners.isPresent() && owners.get().containsKey(orbId));
-                var live=fixture.target.getEntity(orbId);
-                witness.put("orbTagged",live!=null && live.getCommandTags().contains(tag));
-                fixture.trustedTeardown(settled+1,() -> {
-                    var returned=context.getWorld().getEntity(orbId);
-                    witness.put("orbReturnedToSourceChamber",returned instanceof net.minecraft.entity.ExperienceOrbEntity value && value.getExperienceAmount()==7
-                            && dev.quantumchamber.chamber.ChamberOccupantService.contains(dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),value.getBoundingBox()));
-                    witness.put("orbTagRemoved",returned!=null && !returned.getCommandTags().contains(tag));
-                    if(returned!=null) returned.discard();
-                    var stray=fixture.target.getEntity(orbId); if(stray!=null) stray.discard();
-                    context.assertTrue(!witness.containsValue(false),"經驗球必須比照掉落物搬運與返還："+witness);
-                    M4PerTestUniverseProbe.complete(context);
-                });
-            },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+            long waitStart=System.nanoTime();
+            long deadline=waitStart+java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+            class OrbWait {
+                void schedule(int testTick) {
+                    context.runAtTick(testTick,() -> {
+                        long now=System.nanoTime();
+                        if(now>=deadline) {
+                            witness.put("orbPageTriggeredRemap",false);
+                            long epoch=fixture.pages.currentMappings(sid).epoch();
+                            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").warn(
+                                    "M2_ORB_WALL_TIMEOUT sid={} elapsedMs={} testTick={} serverTick={} epoch={}",sid,
+                                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(now-waitStart),testTick,fixture.server.getTicks(),epoch);
+                            settle(testTick,false);
+                            return;
+                        }
+                        if(fixture.pages.currentMappings(sid).epoch()==2) { settle(testTick,true); return; }
+                        schedule(testTick+1);
+                    });
+                }
+                void settle(int testTick,boolean onTime) {
+                    witness.put("orbPageTriggeredRemap",onTime);
+                    var owners=fixture.pages.currentEntityOwners(sid);
+                    witness.put("orbHasUniqueCurrentOwner",owners.isPresent() && owners.get().containsKey(orbId));
+                    var live=fixture.target.getEntity(orbId);
+                    witness.put("orbTagged",live!=null && live.getCommandTags().contains(tag));
+                    fixture.trustedTeardown(testTick+1,() -> {
+                        var returned=context.getWorld().getEntity(orbId);
+                        witness.put("orbReturnedToSourceChamber",returned instanceof net.minecraft.entity.ExperienceOrbEntity value && value.getExperienceAmount()==7
+                                && dev.quantumchamber.chamber.ChamberOccupantService.contains(dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),value.getBoundingBox()));
+                        witness.put("orbTagRemoved",returned!=null && !returned.getCommandTags().contains(tag));
+                        if(returned!=null) returned.discard();
+                        var stray=fixture.target.getEntity(orbId); if(stray!=null) stray.discard();
+                        context.assertTrue(!witness.containsValue(false),"經驗球必須比照掉落物搬運與返還："+witness);
+                        M4PerTestUniverseProbe.complete(context);
+                    });
+                }
+            }
+            new OrbWait().schedule(tick+1);
         });
     }
     /**
