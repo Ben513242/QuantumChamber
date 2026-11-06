@@ -365,14 +365,16 @@ function Fresh-Game([bool]$full,[string]$scope) {
         if(-not(Test-Path -LiteralPath $written -PathType Leaf) -or (Get-Item -LiteralPath $written).LastWriteTimeUtc -lt $runStart){throw "GameTest XML 不是本次 run 寫出的：$report"}
         $server=@(Get-Content -LiteralPath (Join-Path $gate 'execution/processes.json') -Raw | ConvertFrom-Json -DateKind String | Where-Object {$_.commandLine -match 'net.fabricmc.devlaunchinjector.Main'})
         if($server.Count -ne 1){throw 'GameTest run 必須恰有一個 server JVM'}
-        $scopeFlags=[ordered]@{legacy='legacyOnly';normal='m4NormalOnly';m5='m5Only';m6='m6Only'}
+        $scopeFlags=[ordered]@{default='defaultNormal';legacy='legacyOnly';normal='m4NormalOnly';m5='m5Only';m6='m6Only'}
         foreach($key in $scopeFlags.Keys){
             $enabled=$server[0].commandLine.Contains("-Dquantumchamber.gametest.$($scopeFlags[$key])=true")
             if($enabled -ne ($scope -ceq $key)){throw "M6_SCOPE_MISMATCH：exact JVM scope flags 不符：$scope/$key"}
         }
         $presetLog=Read-GateRuntimeLog -Evidence (Join-Path $gate 'execution')
-        $presetRows=@([regex]::Matches($presetLog,'M4_TEST_PRESET normalScope=(true|false) flatConfig=(true|false)'))
-        if($presetRows.Count -ne 1 -or $presetRows[0].Groups[1].Value -cne $(if($scope -ceq 'normal'){'true'}else{'false'}) -or $presetRows[0].Groups[2].Value -cne $(if($scope -ceq 'normal'){'false'}else{'true'})){throw 'M4_TEST_PRESET_MISMATCH：實際啟動 config 與 scope 不符'}
+        $presetRows=@([regex]::Matches($presetLog,'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+        $expectedPreset=if($scope -ceq 'default'){@('true','false','false','true')}elseif($scope -ceq 'normal'){@('false','true','false','true')}else{@('false','false','true','false')}
+        if($presetRows.Count -ne 1 -or [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count -ne 1){throw 'M4_TEST_PRESET_MISMATCH：啟動 marker 必須恰一'}
+        for($field=0;$field -lt 4;$field++){if($presetRows[0].Groups[$field+1].Value -cne $expectedPreset[$field]){throw 'M4_TEST_PRESET_MISMATCH：實際啟動 config 與 scope 不符'}}
         if($scope -ceq 'm5') {
             if($server.Count -ne 1){throw "M5 run 必須恰有一個 server JVM（$($server.Count)）"}
             $expected=@(Assert-Scope (Join-Path $gate "result-build/$report") 'm5')

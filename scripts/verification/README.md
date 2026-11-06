@@ -11,7 +11,7 @@ pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite JUnit -TestClas
 
 ## M6 定向與 CI 入口
 
-M6 Task 3 提供四個互斥 scope：default（其餘）、legacy（`m4_legacy_runtime`）、M5（`m5_universe*`）、M6（`m6_universe*`）。XML 依完整 `classname|name` 集合比對，拒絕缺漏、重複、跨 scope、錯 template、failure／error／skipped。同一 batch 可以有多個 testcase；M6 canary 的 `m6_universe_gate` 目前有兩個。
+目前提供五個互斥 scope：default（其餘）、normal（`m4_normal_*`）、legacy（`m4_legacy_runtime`）、M5（`m5_universe*`）、M6（`m6_universe*`）。XML 依完整 `classname|name` 集合比對，拒絕缺漏、重複、跨 scope、錯 template、failure／error／skipped。同一 batch 可以有多個 testcase；M6 canary 的 `m6_universe_gate` 目前有兩個。
 
 Task 8C-2 加入 `m6_universe_settings_context` 的單一自然開服案例後，M6 Full 精確集合由 9 案增為 10 案；實際清單仍以當次 `scope.json` 的 `expectedCases` 與 XML 逐案核對。`m6-refresh-seal-check.ps1 -Scope Full` 要求 10 案及固定十個 S1a 事件，少一案或任何 failure／error／skipped 均拒絕。
 
@@ -26,9 +26,9 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 
 新 M6 CI 可寫路徑會直接檢查目標與每層祖先的項目，拒絕 reparse（含斷鏈）與非目錄；世界只能不存在或為實體空目錄，其他 I/O 無法確認時拒絕。輸出 root 在首次建檔前必須被 gitignore，非 ignored 反例必須保持不存在。CI 的自測矩陣依實際平台使用 Junction／SymbolicLink。
 
-M6 GameTest 用獨立 fresh `run/gametest-m6/world`，原世界可恢復 move／逐檔 hash exact restore。server 必帶唯一 `m6Only`、`minTickMillis=10`，不得註冊 M4 boundary 或 M5 suite-end observer；完整當次日誌的 pace 結束列恰一行，`waited>0`、`tps<=100.0`。full 同時核四 scope 與同 HEAD 的 M6 summary，並保留既有 release／sources、main-only 三層與 M3 固定 owner oracle。
+M6 GameTest 用獨立 fresh `run/gametest-m6/world`，原世界可恢復 move／逐檔 hash exact restore。server 必帶唯一 `m6Only`、`minTickMillis=10`，不得註冊 M4 boundary 或 M5 suite-end observer；完整當次日誌的 pace 結束列恰一行，`waited>0`、`tps<=100.0`。full 同時核五 scope 與同 HEAD 的 M6 summary，並保留既有 release／sources、main-only 三層與 M3 固定 owner oracle。
 
-CI 使用該 checkout wrapper／Gradle 8.8／Java 21，經 `m6-ci-gametest.ps1 -Platform Windows|Ubuntu` 執行 JUnit、legacy、M6，再核對四 run 的 exact 集合、pace 與內外 JAR 隔離。兩平台 M6 step 初始 15 分鐘、oracle 5 分鐘，原 job 上限 90 分鐘。Windows 原生 checkpoint／owned-process native chains 在 Ubuntu 不支援，`-CheckUnsupportedNative` 只在實際 Ubuntu 保存 `UNSUPPORTED` receipt；Windows 誤用或平台偽裝會被拒絕。
+CI 使用該 checkout wrapper／Gradle 8.8／Java 21，經 `m6-ci-gametest.ps1 -Platform Windows|Ubuntu` 執行 JUnit、legacy、M6，再核對其實跑 run 的 exact 集合、pace 與內外 JAR 隔離。兩平台 M6 step 初始 15 分鐘、oracle 5 分鐘，原 job 上限 90 分鐘。Windows 原生 checkpoint／owned-process native chains 在 Ubuntu 不支援，`-CheckUnsupportedNative` 只在實際 Ubuntu 保存 `UNSUPPORTED` receipt；Windows 誤用或平台偽裝會被拒絕。
 
 Windows CI 另以 `m6-ci-main-only.ps1 -Ci` 在獨立7分鐘step執行既有Main runner／三層oracle，保存同SHA的main-ci-receipt與原件hash並always-upload；既有oracle step必需驗此receipt。local run-all經同wrapper仍只跑一次Main並保留原world可恢復move／restore，Ubuntu不加Main-only。Windows預留改8分鐘，job90與M6step15不變。
 
@@ -609,6 +609,11 @@ schema5 一旦可能已 atomic move、同次 readback 卻未確認，該 instanc
 
 `pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M4NormalGameTest -Label normal` 執行13個 `m4_normal_*` batch；`-Batch m4_normal_m4_select_first_wins` 可保留單案focused證據。它們使用原測試方法與真玩家／故障路徑，只驗新 M6 policy1/family0 的回歸，不宣稱歷史 M4 schema1 活選門。
 
-`gameTestM4Normal` 以 exact `quantumchamber.gametest.m4NormalOnly=true` 在既有 testmod Redirect 選 vanilla normal holder，獨立 `run/gametest-m4-normal`／`build/gametest-m4-normal-results.xml`；default、legacy、M5、M6仍flat，scope flags互斥。新run沿用 Move-Fresh／Restore-Root、當次XML exact集合、M4 boundary及逐案收據；`run-all.ps1` 的default／legacy／normal收據分流核對。新session與來源preset須通過runtime斷言，不能以flag或名稱冒稱normal。
+`gameTestM4Normal` 以 exact `quantumchamber.gametest.m4NormalOnly=true` 在既有 testmod Redirect 選 vanilla normal holder，獨立 `run/gametest-m4-normal`／`build/gametest-m4-normal-results.xml`；default以exact `defaultNormal=true`亦使用normal，legacy、M5、M6仍flat，scope flags互斥。新run沿用 Move-Fresh／Restore-Root、當次XML exact集合、M4 boundary及逐案收據；`run-all.ps1` 的default／legacy／normal收據分流核對。新session與來源preset須通過runtime斷言，不能以flag或名稱冒稱normal。
 
 Windows CI 的「Windows normal 選門回歸 GameTest」真跑新scope，「確認 Windows 原生案例確實執行」以新XML核13案exact集合，移動的requiredM4／M5-default案例按來源歸屬讀normal XML。normal XML與runtime log上傳到既有artifact。Ubuntu只驗嚴格來源宣告，不宣稱執行Windows案例。`ci-rule-check.ps1 -M4NormalGameTestXml <path>` 支援 `-MutationXml normal -Mutation drop|wrong-scope`；後者把測試搬到錯誤default XML，兩者都必須由 `M4_NORMAL_XML_MISMATCH` 拒絕。完整run-all採同表執行這兩個反例與正控制。
+
+
+Task12 default-normal 窄補：default 與 normal 專用 scope 使用 vanilla normal；legacy／M5／M6 保持 flat。既有 TestServer Redirect 明確 `require=1`，啟動一次 `M4_TEST_PRESET` 記錄 defaultNormal／normalScope、實際 flatConfig 與 DEFAULT holder generator 身分相符的 normalConfig；gate同時核JVM flags與實際config。default context另以正式provider辨識真normal、policy1/family0。M6 flat unknown NEW拒絕案例不改。
+
+兩平台CI都依本次runtime log驗default／legacy／M5／M6 marker，Windows另核normal專用scope；Ubuntu不冒執行normal13。`ci-rule-check.ps1` 對完整run依XML位置推回同runRoot唯一gate與原件，明列log SHA；受控跨root輸入須明示 `-PresetFixture`，僅驗規則。`-PresetMutation missing-marker|wrong-flag|wrong-config` 只改fixture log，必由 `M4_TEST_PRESET_MISMATCH` 拒絕。先前full的36FAIL不改判；是否全數通過以新root `END ALL` 為準。

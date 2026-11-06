@@ -1749,8 +1749,9 @@ public final class M4CandidateDoorGameTests {
     public void native_start_freezes_candidate_context_before_geometry_windows(TestContext context) {
         if(!Platform.isWindows()) { platformSkip(context,"native_start_freezes_candidate_context_before_geometry_windows"); return; }
         M4PerTestUniverseProbe.begin(context,"native_start_freezes_candidate_context_before_geometry_windows");
-        context.assertTrue(context.getWorld().getServer().getOverworld().getChunkManager().getChunkGenerator()
-                instanceof net.minecraft.world.gen.chunk.FlatChunkGenerator,"M4_DEFAULT_FLAT：default 來源維持 flat");
+        context.assertEquals("normal",dev.quantumchamber.universe.Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(
+                dev.quantumchamber.universe.Minecraft121SettingsLifecycle.acquire(context.getWorld().getServer())).orElse("unknown"),
+                "M4_DEFAULT_NORMAL：default 必須辨識真 normal 來源");
         var fixture = new M2CorridorGameTests.NativeEntry(context, 1, Direction.NORTH);
         context.waitAndRun(2, fixture::power);
         when(context, 3, () -> fixture.record() != null, tick -> {

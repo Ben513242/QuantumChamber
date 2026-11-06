@@ -19,6 +19,13 @@ param(
     [Parameter(Mandatory)][string]$GameTestXml,
     [Parameter(Mandatory)][string]$M5GameTestXml,
     [string]$M4NormalGameTestXml='',
+    [string]$DefaultRuntimeLog='',
+    [string]$LegacyRuntimeLog='',
+    [string]$M4NormalRuntimeLog='',
+    [string]$M5RuntimeLog='',
+    [switch]$PresetFixture,
+    [ValidateSet('none','missing-marker','wrong-flag','wrong-config')][string]$PresetMutation='none',
+    [ValidateSet('default','legacy','normal','m5','m6')][string]$PresetMutationScope='default',
     [string]$M6GameTestXml='',
     [string]$M6RuntimeLog='',
     [string]$M6RuntimeRoot='',
@@ -94,6 +101,65 @@ if($M6GameTestXml){
         [ordered]@{head=(git -C $repo rev-parse HEAD).Trim();platform='Ubuntu';actualPlatform='Ubuntu';status='UNSUPPORTED';reason='M6_NATIVE_WINDOWS_REQUIRED';supported=$false;nativeExecuted=$false} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fixture 'build/m6-verification/unsupported-native.json') -Encoding utf8
     }
     foreach($boundary in @(Get-ChildItem -LiteralPath $M6RuntimeRoot -Filter 'm4-boundary-*.json' -File)){Copy-Item -LiteralPath $boundary.FullName -Destination (Join-Path $fixture 'run/gametest-m6')}
+}
+# 正式full輸入必須由同runRoot的唯一gate/本次XML推回log；離線跨root原件須明示fixture。
+. (Join-Path $PSScriptRoot 'gate-evidence.ps1')
+$presetSources=@()
+if($Step -cin @('確認 Windows 原生案例確實執行','確認非 Windows 跨平台案例確實執行')) {
+    $presetScopes=if($Step -ceq '確認 Windows 原生案例確實執行'){@('default','legacy','normal','m5','m6')}else{@('default','legacy','m5','m6')}
+    if($PresetMutation -ne 'none' -and $PresetMutationScope -cnotin $presetScopes){throw 'M4_PRESET_INPUT：mutation scope未在此平台執行'}
+    $defaultGate=Split-Path (Split-Path (Resolve-Path -LiteralPath $GameTestXml).Path)
+    $sameRun=Split-Path $defaultGate
+    foreach($presetScope in $presetScopes) {
+        $runtimeLog=switch($presetScope){'default'{$DefaultRuntimeLog};'legacy'{$LegacyRuntimeLog};'normal'{$M4NormalRuntimeLog};'m5'{$M5RuntimeLog};'m6'{$M6RuntimeLog}}
+        $xmlInput=switch($presetScope){'default'{$GameTestXml};'normal'{$M4NormalGameTestXml};'m5'{$M5GameTestXml};default{''}}
+        $gateRoot='';$xmlHash='';$sourceHead=''
+        if(-not $PresetFixture) {
+            if($runtimeLog){throw 'M4_PRESET_INPUT：跨root顯式log必須標示PresetFixture'}
+            if($xmlInput){$xmlInput=(Resolve-Path -LiteralPath $xmlInput).Path;$gateRoot=Split-Path (Split-Path $xmlInput)}
+            else {
+                $prefix=if($presetScope -ceq 'legacy'){'gate-legacy-'}else{'gate-m6-gametest-'}
+                $matches=@(Get-ChildItem -LiteralPath $sameRun -Directory | Where-Object {$_.Name -cmatch ('^'+$prefix+'[0-9a-f]{32}$')})
+                if($matches.Count -ne 1){throw "M4_PRESET_INPUT：$presetScope 必須同runRoot唯一gate"}
+                $gateRoot=$matches[0].FullName
+                $xmlInput=Join-Path $gateRoot $(if($presetScope -ceq 'legacy'){'result-build/gametest-legacy-results.xml'}else{'result-build/gametest-m6-results.xml'})
+            }
+            if((Split-Path $gateRoot) -cne $sameRun){throw 'M4_PRESET_INPUT：gate不屬於同runRoot'}
+            $gateReceipt=Get-Content -LiteralPath (Join-Path $gateRoot 'gate.json') -Raw|ConvertFrom-Json
+            $scopeReceipt=Get-Content -LiteralPath (Join-Path $gateRoot 'scope.json') -Raw|ConvertFrom-Json
+            $execution=Get-Content -LiteralPath (Join-Path $gateRoot 'execution/execution.json') -Raw|ConvertFrom-Json -DateKind String
+            if($gateReceipt.evidence -cne $gateRoot -or $scopeReceipt.xml -cne $xmlInput){throw 'M4_PRESET_INPUT：receipt不是exact gate/XML路徑'}
+            $sourceHead=$scopeReceipt.head
+            if($gateReceipt.status -cne 'PASS' -or $scopeReceipt.status -cne 'PASS' -or $scopeReceipt.scope -cne $presetScope -or $sourceHead -cne (git -C $repo rev-parse HEAD).Trim() -or $execution.exitCode -ne 0){throw 'M4_PRESET_INPUT：gate/scope/HEAD/exit不符'}
+            $xmlTime=(Get-Item -LiteralPath $xmlInput).LastWriteTimeUtc
+            if($xmlTime -lt ([DateTimeOffset]$execution.start).UtcDateTime -or $xmlTime -gt ([DateTimeOffset]$execution.end).UtcDateTime){throw 'M4_PRESET_INPUT：XML不是當次execution原件'}
+            $xmlHash=(Get-FileHash -LiteralPath $xmlInput).Hash
+            $runtimeLog=Join-Path $gateRoot 'execution/runtime-logs/latest.log'
+            $null=Read-GateRuntimeLog -Evidence (Join-Path $gateRoot 'execution')
+            $logManifest=Get-Content -LiteralPath (Join-Path $gateRoot 'execution/runtime-log.json') -Raw|ConvertFrom-Json -DateKind String
+            $latest=@($logManifest.pieces | Where-Object {$_.name -ceq 'latest.log' -and $_.selected})
+            if($latest.Count -ne 1 -or $logManifest.identity.start -cne $execution.start -or $logManifest.identity.end -cne $execution.end -or $logManifest.identity.launcherPid -ne $execution.launcherPid -or $latest[0].sha256 -cne (Get-FileHash -LiteralPath $runtimeLog).Hash){throw 'M4_PRESET_INPUT：log不是同execution的已核原件'}
+
+        } elseif(-not $runtimeLog){throw "M4_PRESET_INPUT：fixture缺少 $presetScope log原件"}
+        $runtimeLog=(Resolve-Path -LiteralPath $runtimeLog).Path
+        $sourceHash=(Get-FileHash -LiteralPath $runtimeLog).Hash
+        $runName=switch($presetScope){'default'{'gametest'};'normal'{'gametest-m4-normal'};'legacy'{'gametest-legacy'};'m5'{'gametest-m5'};'m6'{'gametest-m6'}}
+        $dest=Join-Path $fixture "run/$runName/logs/latest.log"
+        New-Item -ItemType Directory -Path (Split-Path $dest) -Force|Out-Null
+        Copy-Item -LiteralPath $runtimeLog -Destination $dest
+        if($PresetMutation -ne 'none' -and $PresetMutationScope -ceq $presetScope){
+            $text=Get-Content -LiteralPath $dest -Raw
+            $pattern='M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) flatConfig=(true|false) normalConfig=(true|false)'
+            if([regex]::Matches($text,$pattern).Count -ne 1){throw 'M4_PRESET_INPUT：mutation前marker必須恰一'}
+            switch($PresetMutation){
+                'missing-marker' {$text=[regex]::Replace($text,$pattern,'REMOVED_PRESET_MARKER')}
+                'wrong-flag' {$oldFlag=[regex]::Match($text,'M4_TEST_PRESET defaultNormal=(true|false)').Groups[1].Value;$newFlag=if($oldFlag -ceq 'true'){'false'}else{'true'};$text=$text.Replace("M4_TEST_PRESET defaultNormal=$oldFlag","M4_TEST_PRESET defaultNormal=$newFlag")}
+                'wrong-config' {$oldConfig=[regex]::Match($text,'flatConfig=(true|false) normalConfig=(true|false)').Value;$newConfig=if($oldConfig -ceq 'flatConfig=false normalConfig=true'){'flatConfig=true normalConfig=false'}else{'flatConfig=false normalConfig=true'};$text=$text.Replace($oldConfig,$newConfig)}
+            }
+            Set-Content -LiteralPath $dest -Value $text -Encoding utf8
+        }
+        $presetSources+=[pscustomobject]@{scope=$presetScope;source=$runtimeLog;sha256=$sourceHash;gate=$gateRoot;xml=$xmlInput;xmlSha256=$xmlHash;head=$sourceHead;fixture=[bool]$PresetFixture}
+    }
 }
 $mainOriginalHash=''
 if($M6NativeSummary) {
@@ -201,6 +267,7 @@ $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).P
     head=(git -C $repo rev-parse HEAD).Trim();m6GameTestXmlSha256=$(if($M6GameTestXml){(Get-FileHash -LiteralPath $M6GameTestXml).Hash}else{''});m6RuntimeLogSha256=$(if($M6RuntimeLog){(Get-FileHash -LiteralPath $M6RuntimeLog).Hash}else{''})
     mainReceipt=$MainReceipt;mainReceiptSha256=$mainOriginalHash;mainMutation=$MainMutation;mainFixtureRuntimeLaunched=$false
     nativeSummary=$M6NativeSummary;nativeSummarySha256=$(if($M6NativeSummary){(Get-FileHash -LiteralPath $M6NativeSummary).Hash}else{''});nativeMutation=$NativeMutation;nativeFixtureRuntimeLaunched=$false
+    presetFixture=[bool]$PresetFixture;presetMutation=$PresetMutation;presetMutationScope=$PresetMutationScope;presetSources=$presetSources
     junitDir=$JUnitDir;sourceRoot=$SourceRoot;mutation=$Mutation;mutationTarget=$MutationTarget;mutationXml=$MutationXml;sourceMutation=$SourceMutation;sourceTarget=$SourceTarget;sourceMutatedFile=$sourceMutated
     fixtureWindowsCases=$windowsCases;fixtureM5WindowsCases=$m5WindowsCases;exitCode=$process.ExitCode;verdict=$(if($process.ExitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
 $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
