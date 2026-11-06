@@ -25,8 +25,17 @@ public final class CandidateLedgerService {
     private static final int MAX_NEW_ENTRIES = 256;
     private static final Comparator<DoorKey> KEY_ORDER = Comparator.comparingLong(DoorKey::logicalStationIndex)
             .thenComparing(DoorKey::wallSide);
-    public record CandidateBatchResult(List<DoorKey> committedKeys, boolean sessionFailed) {
-        public CandidateBatchResult { committedKeys = List.copyOf(committedKeys); }
+    public enum BatchFailure { NONE, OTHER, UNKNOWN_SOURCE_PRESET }
+    /** 只有來源preset辨識的精確空值使用此型別；不涵蓋provider或IO失敗。 */
+    public static final class UnknownSourcePresetException extends IllegalStateException {
+        public UnknownSourcePresetException() { super("不支援來源 preset，禁止 NEW"); }
+    }
+    public record CandidateBatchResult(List<DoorKey> committedKeys, boolean sessionFailed, BatchFailure failure) {
+        public CandidateBatchResult(List<DoorKey> keys, boolean failed) { this(keys,failed,failed?BatchFailure.OTHER:BatchFailure.NONE); }
+        public CandidateBatchResult {
+            committedKeys = List.copyOf(committedKeys);Objects.requireNonNull(failure);
+            if(sessionFailed==(failure==BatchFailure.NONE))throw new IllegalArgumentException("batch失敗型別不一致");
+        }
     }
     /**
      * COMMIT_FAILED：checked 提交已嘗試但失敗；未 checked authority 已由本 owner 還原或隔離（兩者都失敗時記 ERROR，由 recovery tick 隔離），
@@ -56,8 +65,9 @@ public final class CandidateLedgerService {
     @FunctionalInterface interface InputsLoader { CandidateInputs load() throws IOException; }
 
     public CandidateBatchResult commitCandidates(MinecraftServer server, UUID sessionUuid, List<DoorKey> completeKeys) {
+        CandidateBatchResult result;
         try {
-            return commitCandidates(journal(server), () -> requireServerThread(server), () -> {
+            result = commitCandidates(journal(server), () -> requireServerThread(server), () -> {
                 var root = server.getSavePath(WorldSavePath.ROOT);
                 // 已存在 candidate session 就是 M4 evidence；缺失的 entropy 不得重新產生。
                 return new CandidateInputs(new CandidateResolver(CandidateEntropyState.loadOrCreate(root, true),
@@ -69,6 +79,14 @@ public final class CandidateLedgerService {
             LOGGER.warn("候選 batch 無法進入 checked 提交，session={} 將安全返還：{}", sessionUuid, FailureText.describe(exception));
             return failedBatch();
         }
+        // 通知必須在上方catch之外；正常返回才表示exact owner已實際設旗標。
+        if(result.failure()==BatchFailure.UNKNOWN_SOURCE_PRESET) {
+            var state=SessionRecoveryState.get(server);
+            var record=state.flushedRecords().get(sessionUuid);
+            if(record==null || !record.equals(state.records().get(sessionUuid)))throw new IllegalStateException("未知preset通知缺少exact checked record");
+            dev.quantumchamber.chamber.ChamberSessions.gateway().onUnknownSourcePreset(server,record);
+        }
+        return result;
     }
     public SelectionOutcome trySelect(MinecraftServer server, UUID sessionUuid, DoorKey doorKey, UUID playerUuid, long gameTime) {
         try {
@@ -107,6 +125,10 @@ public final class CandidateLedgerService {
             return failedBatch();
         } catch (IOException | RuntimeException exception) {
             LOGGER.warn("候選 batch 無法 checked 提交，session={} 將安全返還：{}", sessionUuid, FailureText.describe(exception));
+            var seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable,Boolean>());
+            for(Throwable cause=exception;cause!=null && seen.add(cause);cause=cause.getCause()) {
+                if(cause instanceof UnknownSourcePresetException)return new CandidateBatchResult(List.of(),true,BatchFailure.UNKNOWN_SOURCE_PRESET);
+            }
             return failedBatch();
         }
     }
@@ -128,7 +150,7 @@ public final class CandidateLedgerService {
             }
         }
         var preset = dev.quantumchamber.universe.Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(lease)
-                .orElseThrow(() -> new IllegalStateException("不支援來源 preset，禁止 NEW"));
+                .orElseThrow(UnknownSourcePresetException::new);
         var parameters = new net.minecraft.nbt.NbtCompound();
         parameters.putString("OverworldPreset", preset);
         parameters.putByte("GenerateStructures", (byte)(lease.sourceGenerateStructures() ? 1 : 0));

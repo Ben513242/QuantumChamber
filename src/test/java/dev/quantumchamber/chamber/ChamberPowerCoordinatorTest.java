@@ -11,6 +11,27 @@ import net.minecraft.world.World;
 import org.junit.jupiter.api.Test;
 
 class ChamberPowerCoordinatorTest {
+    @Test void unknownPresetLatchBlocksHighButDoesNotBlockReturn() {
+        backend.retryRequiresLow=true;
+        backend.presence=ChamberSessionGateway.Presence.RETURNING;
+        backend.returned=false;
+        assertEquals(ChamberState.ARMED,refresh(true,ChamberState.ARMED,true));
+        backend.returned=true;
+        assertEquals(ChamberState.IDLE,refresh(true,ChamberState.ARMED,true));
+        assertEquals(0,backend.starts,"HIGH返還完成也不得再次start");
+        assertTrue(backend.retryRequiresLow);
+    }
+    @Test void onlyActualLowClearsUnknownPresetLatch() {
+        backend.retryRequiresLow=true;
+        registry.setEnabled(uuid,false);
+        refresh(true,ChamberState.ARMED,true);
+        assertTrue(backend.retryRequiresLow,"停用不是LOW");
+        registry.setEnabled(uuid,true);
+        refresh(false,ChamberState.IDLE,true);
+        assertFalse(backend.retryRequiresLow,"實際LOW才清除");
+        refresh(true,ChamberState.INVALID,true);
+        assertEquals(1,backend.starts);
+    }
     @Test void stagingRemainsReadyAndStartsOnlyOnceAcrossIneligibleRefresh() {
         backend.startResult = ChamberSessionGateway.StartResult.STAGING;
         assertEquals(ChamberState.READY,refresh(true,ChamberState.IDLE,true));
@@ -337,6 +358,9 @@ class ChamberPowerCoordinatorTest {
         int starts;
         int returns;
         boolean blocked;
+        boolean retryRequiresLow;
+        @Override public boolean candidateRetryRequiresLow() { return retryRequiresLow; }
+        @Override public void clearCandidateRetryRequiresLow() { retryRequiresLow=false; }
         List<UUID> startedParticipants;
         ChamberSessionGateway.StartResult startResult = ChamberSessionGateway.StartResult.ARMED_ONLY;
         @Override public ChamberSessionGateway.Presence presence() {

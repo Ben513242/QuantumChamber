@@ -105,6 +105,8 @@ public final class ChamberPowerCoordinator {
                     @Override public boolean activationBlocked() { return controller.activationBlocked(); }
                     @Override public boolean heldByStart() { return controller.heldByStart(); }
                     @Override public void setHeldByStart(boolean held) { controller.setHeldByStart(held); }
+                    @Override public boolean candidateRetryRequiresLow() { return controller.candidateRetryRequiresLow(); }
+                    @Override public void clearCandidateRetryRequiresLow() { controller.clearCandidateRetryRequiresLow(); }
                     @Override public ChamberSessionGateway.Presence presence() {
                         observed[0] = null;
                         return observed[0] = gateway.presence(world.getServer(), controller.chamberUuid());
@@ -199,6 +201,8 @@ public final class ChamberPowerCoordinator {
         var record = registry.records().get(uuid);
         if (record == null || record.destroyed() || record.instanceKind() != ChamberInstanceKind.ORIGIN) return ChamberState.INVALID;
         try {
+            // production僅在exact原艙及完整供電鄰域已核實後進入此方法。
+            if(!powered)sessions.clearCandidateRetryRequiresLow();
             var presence = Objects.requireNonNull(sessions.presence(), "presence");
             if (presence == ChamberSessionGateway.Presence.COLLAPSE || presence == ChamberSessionGateway.Presence.PASSAGE) {
                 // M5 塌縮狀態（spec §10.7）：不走 pending／needsReturn、不呼叫 returnToOrigin（斷電等即時訊號由塌縮流程處理）。
@@ -231,6 +235,7 @@ public final class ChamberPowerCoordinator {
             if (!record.enabled()) return ChamberState.INVALID;
             if (presence == ChamberSessionGateway.Presence.ACTIVE) return ChamberState.ARMED;
             if (presence == ChamberSessionGateway.Presence.ARMING) return ChamberState.READY;
+            if(sessions.candidateRetryRequiresLow())return ChamberState.IDLE;
             var preview = readiness.get();
             if (!preview.accepted()) return preview.readiness();
             if (sessions.activationBlocked()) return ChamberState.IDLE;
@@ -301,6 +306,8 @@ public final class ChamberPowerCoordinator {
         boolean heldByStart();
         /** 寫回 {@link #heldByStart}（每次協調先寫 false，只有 start 留下或依記號保持 ARMED 時寫 true）。 */
         void setHeldByStart(boolean held);
+        boolean candidateRetryRequiresLow();
+        void clearCandidateRetryRequiresLow();
         ChamberSessionGateway.Presence presence();
         ChamberSessionGateway.StartResult start(List<UUID> participants);
         boolean returnToOrigin();

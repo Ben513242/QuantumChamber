@@ -16,6 +16,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class ChamberControllerBlockEntityNbtTest {
+    @Test void candidateRetryLatchSurvivesNormalReloadAndOldNbtDefaultsFalse() {
+        var encoded=controller().createNbt(DynamicRegistryManager.EMPTY);
+        encoded.putBoolean("CandidateRetryRequiresLow",true);
+        var restored=controller();restored.read(encoded,DynamicRegistryManager.EMPTY);
+        assertTrue(restored.createNbt(DynamicRegistryManager.EMPTY).getBoolean("CandidateRetryRequiresLow"),"專用旗標必正常持久化");
+        encoded.remove("CandidateRetryRequiresLow");restored.read(encoded,DynamicRegistryManager.EMPTY);
+        assertFalse(restored.createNbt(DynamicRegistryManager.EMPTY).getBoolean("CandidateRetryRequiresLow"));
+    }
     @Test
     void activationFaultSurvivesReloadAndOldNbtDefaultsToUnblocked() {
         var original = controller();

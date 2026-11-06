@@ -30,6 +30,30 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CandidateLedgerServiceTest {
+    @Test void onlyTypedUnknownPresetIsMarkedForLowRetry() {
+        var port=port(List.of());var before=port.state.flushedRecords();
+        var result=service.commitCandidates(port,OWNER,()->{throw new IllegalStateException("包裝",new CandidateLedgerService.UnknownSourcePresetException());},SESSION,List.of(key(1)));
+        assertEquals(CandidateLedgerService.BatchFailure.UNKNOWN_SOURCE_PRESET,result.failure());
+        assertEquals(before,port.state.flushedRecords());assertEquals(0,port.puts);assertEquals(0,port.flushes);
+    }
+    @Test void ioProviderAndMatchingTextDoNotRequestLowRetry() {
+        for(var error:List.of(new IllegalStateException("PROFILE_CLOSURE_UNBOUND"),new IllegalStateException("不支援來源 preset，禁止 NEW"),new java.io.UncheckedIOException(new java.io.IOException("IO")))) {
+            var port=port(List.of());
+            var result=service.commitCandidates(port,OWNER,()->{throw error;},SESSION,List.of(key(1)));
+            assertEquals(CandidateLedgerService.BatchFailure.OTHER,result.failure());
+            assertEquals(0,port.puts);assertEquals(0,port.flushes);
+        }
+    }
+    @Test void missingGatewayCallbackAndUnattachedOwnerCannotAcknowledge() {
+        var gateway=new dev.quantumchamber.chamber.ChamberSessionGateway() {
+            public Presence presence(net.minecraft.server.MinecraftServer server,UUID chamber){return Presence.NONE;}
+            public StartResult start(net.minecraft.server.world.ServerWorld world,dev.quantumchamber.chamber.ChamberControllerBlockEntity controller,List<UUID> people){return StartResult.REJECTED;}
+            public boolean returnToOrigin(net.minecraft.server.world.ServerWorld world,dev.quantumchamber.chamber.ChamberControllerBlockEntity controller){return true;}
+        };
+        assertThrows(UnsupportedOperationException.class,()->gateway.onUnknownSourcePreset(null,fresh()));
+        var manager=new dev.quantumchamber.superposition.SuperpositionSessionManager();
+        assertThrows(IllegalStateException.class,()->manager.onUnknownSourcePreset(null,fresh()));
+    }
     private static final UUID SESSION = CandidateDerivationTest.SESSION;
     private static final UUID PLAYER = new UUID(0, 20);
     private static final UUID SECOND_PLAYER = new UUID(0, 21);

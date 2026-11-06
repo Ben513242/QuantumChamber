@@ -17,4 +17,9 @@ public interface ChamberSessionGateway {
     Presence presence(MinecraftServer server, UUID chamberUuid);
     StartResult start(ServerWorld originWorld, ChamberControllerBlockEntity controller, List<UUID> participantUuids);
     boolean returnToOrigin(ServerWorld originWorld, ChamberControllerBlockEntity controller);
+
+    /** 正常返回代表exact原艙已設未知preset專用旗標；非正式adapter不得假ack。 */
+    default void onUnknownSourcePreset(MinecraftServer server, dev.quantumchamber.persistence.SessionRecoveryRecord checked) {
+        throw new UnsupportedOperationException("session gateway 未接未知來源preset拒絕通知");
+    }
 }

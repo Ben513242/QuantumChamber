@@ -112,11 +112,21 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             throw new IllegalStateException("測量尚未完成exact readback");
         sessions.get(record.chamberUuid()).state=SessionState.MEASURED;
     }
+    @Override public void onUnknownSourcePreset(MinecraftServer owner,SessionRecoveryRecord checked) {
+        requireServer(owner);
+        java.util.Objects.requireNonNull(checked,"checked");
+        var runtime=sessions.get(checked.chamberUuid());
+        if(checked.state()!=SessionState.SUPERPOSITION || !checked.candidateContext().map(dev.quantumchamber.candidate.CandidatePolicySnapshot::isM6).orElse(false)
+                || !checked.equals(journal.flushedRecords().get(checked.sessionUuid())) || !checked.equals(journal.records().get(checked.sessionUuid()))
+                || runtime==null || !runtime.initial.sessionUuid().equals(checked.sessionUuid()) || !sourceAuthority(runtime))
+            throw new IllegalStateException("未知preset通知的exact session/controller owner不符");
+        runtime.controller.requireCandidateRetryLow();
+    }
     @Override public StartResult start(ServerWorld source,ChamberControllerBlockEntity controller,List<UUID> requested) {
         requireServer(source.getServer());
         var chamber=controller.chamberUuid();
         if(chamber==null || presence(server,chamber)!=Presence.NONE || requested.isEmpty() || requested.size()>25
-                || new HashSet<>(requested).size()!=requested.size() || controller.activationBlocked()) return StartResult.REJECTED;
+                || new HashSet<>(requested).size()!=requested.size() || controller.activationBlocked() || controller.candidateRetryRequiresLow()) return StartResult.REJECTED;
         var preview=new ChamberActivationService().evaluateReadiness(source,controller);
         if(!preview.accepted() || !new HashSet<>(preview.participantUuids()).equals(new HashSet<>(requested))
                 || !source.isReceivingRedstonePower(controller.getPos())) return StartResult.REJECTED;

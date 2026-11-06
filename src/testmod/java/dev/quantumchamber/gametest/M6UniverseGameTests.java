@@ -6,6 +6,133 @@ import net.minecraft.test.TestContext;
 
 /** 同 server 的真 schema2 backend 與 canonical／legacy 控制組。 */
 public final class M6UniverseGameTests implements FabricGameTest {
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_retry_high", tickLimit=100000)
+    public void unknown_preset_high_requires_real_low_before_one_retry(TestContext context) {
+        if (!com.sun.jna.Platform.isWindows()) { context.complete(); return; }
+        new RetryHighProbe(context,false).start();
+    }
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_retry_callback", tickLimit=100000)
+    public void unknown_preset_callback_failure_still_returns_safely(TestContext context) {
+        if (!com.sun.jna.Platform.isWindows()) { context.complete(); return; }
+        new RetryHighProbe(context,true).start();
+    }
+
+    /** 原失敗仍先經LOW與正式返還清理，避免RED自身變成反覆入場風暴。 */
+    private static final class RetryHighProbe {
+        private final TestContext context;
+        private final M2CorridorGameTests.NativeEntry fixture;
+        private final LogCapture logs = new LogCapture("quantumchamber");
+        private final java.util.Set<java.util.UUID> ids = new java.util.HashSet<>();
+        private final long deadline = System.nanoTime() + 60_000_000_000L;
+        private dev.quantumchamber.persistence.SessionRecoveryRecord attempt;
+        private boolean returning;
+        private int stage, stableAt = -1;
+        private byte[] stableJournal;
+        private net.minecraft.nbt.NbtCompound stableController;
+        private final boolean callbackFault;
+        private final dev.quantumchamber.chamber.ChamberSessionGateway originalGateway;
+        private dev.quantumchamber.chamber.ChamberSessionGateway decorator;
+        private int callbacks,retryStartedAt;
+        private dev.quantumchamber.chamber.ChamberControllerBlockEntity controllerIdentity;
+        RetryHighProbe(TestContext context,boolean callbackFault) {
+            this.context=context;this.callbackFault=callbackFault;fixture=new M2CorridorGameTests.NativeEntry(context,1);
+            originalGateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+        }
+        void start() {
+            context.runAtTick(2, () -> {
+                if(callbackFault) {
+                    decorator=new dev.quantumchamber.chamber.ChamberSessionGateway() {
+                        public Presence presence(net.minecraft.server.MinecraftServer server,java.util.UUID chamber){return originalGateway.presence(server,chamber);}
+                        public StartResult start(net.minecraft.server.world.ServerWorld world,dev.quantumchamber.chamber.ChamberControllerBlockEntity controller,java.util.List<java.util.UUID> people){return originalGateway.start(world,controller,people);}
+                        public boolean returnToOrigin(net.minecraft.server.world.ServerWorld world,dev.quantumchamber.chamber.ChamberControllerBlockEntity controller){return originalGateway.returnToOrigin(world,controller);}
+                        public void onUnknownSourcePreset(net.minecraft.server.MinecraftServer server,dev.quantumchamber.persistence.SessionRecoveryRecord checked) {
+                            callbacks++;
+                            boolean wrongServer=false,staleRecord=false;
+                            try {originalGateway.onUnknownSourcePreset(null,checked);}catch(IllegalStateException expected){wrongServer=true;}
+                            try {originalGateway.onUnknownSourcePreset(server,attempt);}catch(IllegalStateException expected){staleRecord=true;}
+                            context.assertTrue(wrongServer && staleRecord && !fixture.controller().candidateRetryRequiresLow(),"錯owner／舊record不能設旗標");
+                            throw new IllegalStateException("TEST_UNKNOWN_PRESET_CALLBACK_FAILURE");
+                        }
+                    };
+                    dev.quantumchamber.chamber.ChamberSessions.install(decorator);
+                }
+                controllerIdentity=fixture.controller();fixture.power();attempt=fixture.record();
+                if(attempt==null){finish("RETRY_INITIAL_ARMING_MISSING",3);return;}
+                ids.add(attempt.sessionUuid());poll(3);
+            });
+        }
+        private void poll(int tick) {
+            context.runAtTick(tick, () -> {
+                try {
+                    if(System.nanoTime()>=deadline){finish("RETRY_WALL_DEADLINE stage="+stage,tick+1);return;}
+                    context.assertTrue(fixture.controller()==controllerIdentity,"必須同一exact controller instance");
+                    if(stage>=2 && tick-retryStartedAt>400){finish("RETRY_TICK_DEADLINE",tick+1);return;}
+                    var current=fixture.record();
+                    if(current!=null) {
+                        ids.add(current.sessionUuid());
+                        if(ids.size()>(stage<2?1:2)){finish("UNKNOWN_PRESET_HIGH_RESTARTED ids="+ids.size(),tick+1);return;}
+                        context.assertTrue(current.state()!=dev.quantumchamber.superposition.SessionState.MEASURED
+                                && !(current.candidateSelection().orElseThrow() instanceof dev.quantumchamber.candidate.CandidateSelection.Selected),"拒絕不可checked SELECTED");
+                        if(stage==2 && !current.sessionUuid().equals(attempt.sessionUuid())) {attempt=current;returning=false;stableAt=-1;stage=3;}
+                        if(current.sessionUuid().equals(attempt.sessionUuid()) && current.state()==dev.quantumchamber.superposition.SessionState.RETURNING) {
+                            context.assertEquals(current,dev.quantumchamber.persistence.SessionRecoveryState.get(fixture.server).records().get(current.sessionUuid()),"RETURNING current=flushed");
+                            context.assertTrue(logs.entries().stream().anyMatch(entry -> exactNewWitness(fixture.server,attempt,entry.message())),"當次NEW/key/fingerprint與RETURNING同sid");
+                            returning=true;
+                            if(callbackFault) {
+                                context.assertEquals(1,callbacks,"callback恰一次，沒有假ack");
+                                context.assertTrue(!fixture.controller().candidateRetryRequiresLow(),"throw前不冒稱已設旗標");
+                                context.assertTrue(logs.entries().stream().anyMatch(entry -> entry.thrown()!=null && String.valueOf(entry.thrown().getMessage()).contains("TEST_UNKNOWN_PRESET_CALLBACK_FAILURE")),"callback原錯進正式返還路徑");
+                                finish(null,tick+1);return;
+                            }
+                        }
+                    }
+                    var presence=dev.quantumchamber.chamber.ChamberSessions.gateway().presence(fixture.server,fixture.controller().chamberUuid());
+                    if(stage==1) {
+                        context.assertTrue(!fixture.controller().createNbt(fixture.server.getRegistryManager()).getBoolean("CandidateRetryRequiresLow"),"實際LOW解除旗標");
+                        fixture.power();stage=2;retryStartedAt=tick;stableAt=-1;poll(tick+1);return;
+                    }
+                    if((stage==0 || stage==3) && returning && current==null && presence==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE) {
+                        if(stableAt<0){stableAt=tick;poll(tick+1);return;}
+                        if(tick==stableAt+1) {stableJournal=journalBytes();stableController=fixture.controller().createNbt(fixture.server.getRegistryManager());}
+                        context.assertTrue(java.util.Arrays.equals(stableJournal,journalBytes()),"HIGH安定期不得新checked寫入");
+                        context.assertEquals(stableController,fixture.controller().createNbt(fixture.server.getRegistryManager()),"HIGH同controller保持");
+                        if(tick-stableAt>=201) {
+                            context.assertTrue(stableController.getBoolean("CandidateRetryRequiresLow"),"未知preset旗標保持至LOW");
+                            fixture.assertInventory();
+                            if(stage==0){fixture.power();stage=1;poll(tick+1);return;}
+                            context.assertEquals(2,ids.size(),"LOW→HIGH只有一次新session且無第三次");finish(null,tick+1);return;
+                        }
+                    }
+                    poll(tick+1);
+                } catch(Exception failure) {finish(failure.toString(),tick+1);}
+            });
+        }
+        private byte[] journalBytes() throws java.io.IOException {
+            return java.nio.file.Files.readAllBytes(fixture.server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)
+                    .resolve("data/quantumchamber_sessions.dat"));
+        }
+        private void finish(String failure,int tick) {
+            Runnable done=() -> {
+                try {context.assertTrue(failure==null,failure==null?"完成":failure);}
+                finally {
+                    try {logs.close();} finally {
+                        if(callbackFault) {
+                            boolean ours=dev.quantumchamber.chamber.ChamberSessions.gateway()==decorator;
+                            dev.quantumchamber.chamber.ChamberSessions.install(originalGateway);
+                            context.assertTrue(ours && dev.quantumchamber.chamber.ChamberSessions.gateway()==originalGateway,"finally還原exact gateway");
+                        }
+                    }
+                }
+                context.complete();
+            };
+            if(fixture.record()!=null)fixture.trustedTeardown(tick,done);
+            else {
+                if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()))fixture.power();
+                try {done.run();}finally{fixture.close();}
+            }
+        }
+    }
+
     /** 獨立 resolver owner 控制組，不冒充正式玩家跨 JVM 功能鏈。 */
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_random", tickLimit=100000)
     public void source_and_existing_do_not_resolve_unknown_preset(TestContext context) throws Exception {
@@ -153,7 +280,7 @@ public final class M6UniverseGameTests implements FabricGameTest {
             dev.quantumchamber.persistence.SessionRecoveryRecord initial, String message) {
         var pattern = java.util.regex.Pattern.compile("NEW_BUCKET bucket=([0-9]+) door=DoorKey\\[sessionUuid=([0-9a-f-]{36}), logicalStationIndex=(-?[0-9]+), wallSide=(NEGATIVE_LATERAL|POSITIVE_LATERAL)\\] candidateIdSha256=([0-9a-f]{64})");
         var match = pattern.matcher(message);
-        if (!match.find() || !message.contains(" <- java.lang.IllegalStateException: 不支援來源 preset，禁止 NEW")
+        if (!match.find() || !message.contains(" <- " + dev.quantumchamber.candidate.CandidateLedgerService.UnknownSourcePresetException.class.getName() + ": 不支援來源 preset，禁止 NEW")
                 || !initial.sessionUuid().toString().equals(match.group(2))) return false;
         try {
             var policy = initial.candidateContext().orElseThrow();

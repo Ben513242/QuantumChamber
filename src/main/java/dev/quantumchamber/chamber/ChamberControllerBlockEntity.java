@@ -19,6 +19,17 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
     private boolean powerInitialized;
     // 門交易無法完整復原時，持久化禁止新啟動；僅成功整面門交易解除。
     private boolean activationBlocked;
+    private boolean candidateRetryRequiresLow;
+
+    public boolean candidateRetryRequiresLow() { return candidateRetryRequiresLow; }
+    /** 只供已核exact session owner的未知preset拒絕；不替代一般故障旗標。 */
+    public void requireCandidateRetryLow() {
+        if(!candidateRetryRequiresLow){candidateRetryRequiresLow=true;markDirty();}
+    }
+    /** 僅供供電協調在核實實際LOW後清除。 */
+    void clearCandidateRetryRequiresLow() {
+        if(candidateRetryRequiresLow){candidateRetryRequiresLow=false;markDirty();}
+    }
     // 每次 runtime load 都重新標記；不能隨 NBT 跨載入保存。
     private boolean loadSyncPending;
     /**
@@ -119,6 +130,7 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         wasPowered = nbt.getBoolean("WasPowered");
         powerInitialized = nbt.getBoolean("PowerInitialized");
         activationBlocked = nbt.getBoolean("ActivationBlocked");
+        candidateRetryRequiresLow = nbt.getBoolean("CandidateRetryRequiresLow");
     }
 
     @Override
@@ -130,6 +142,7 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         nbt.putBoolean("WasPowered", wasPowered);
         nbt.putBoolean("PowerInitialized", powerInitialized);
         nbt.putBoolean("ActivationBlocked", activationBlocked);
+        nbt.putBoolean("CandidateRetryRequiresLow",candidateRetryRequiresLow);
     }
 
     private static <E extends Enum<E>> E enumValue(String value, E fallback, String key) {
