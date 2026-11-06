@@ -562,9 +562,9 @@ End family留Task16：ServerWorld constructor504–526同時要求key==World.END
 
 ### run-all的CI工作目錄前置守門
 
-正常run-all與-PreflightOnly都在任何Gradle/gate/world操作前共用同一guard。11個CI label從同一case table供前置檢查與正式consumer；同EvidenceRoot下cwd-map-<GUID>與run-all-<GUID>等長的兄弟目錄，真實建立每個ci-<label>-<GUID>/fixture後以原CI的ProcessStartInfo('pwsh')/GITHUB_SHA啟動exit0。所有projection與ci-cwd-preflight.json永久保留，summary不把它當CI結果。
+正常run-all與-PreflightOnly都在任何Gradle/gate/world操作前共用同一guard。21個CI label與run-all的`$ciCases`同步，從同一case table供前置檢查與正式consumer；同EvidenceRoot下cwd-map-<GUID>與run-all-<GUID>等長的兄弟目錄，真實建立每個ci-<label>-<GUID>/fixture後以原CI的ProcessStartInfo('pwsh')/GITHUB_SHA啟動exit0。所有projection與ci-cwd-preflight.json永久保留，summary不把它當CI結果。
 
-不猜通用260上限或改registry/global longpaths；Start失敗、非0或process-only子程序超過10秒都以M6_CI_CWD_UNSUPPORTED拒絕，昂貴runtime尚未開始。-PreflightOnly成功只證明當次布局可啟動，不代full。預設EvidenceRoot仍是短.superpowers/verification，SDD僅存pin metadata。m6-harness-safety-check.ps1 -Case ci-cwd-preflight的所有child一律PreflightOnly，保證guard成功或失敗都不進gates/world/遞迴。受限CiCwdProbeTestMode只准與PreflightOnly配對：RootSuccess用已驗既存的磁碟根目錄作effective cwd、StartFailure用明確未建立的唯一cwd，兩者仍是真Process.Start；receipt分列requested/effective/testMode，受控成功不當作原布局可用證明。另以None模式檢查真short layout的11labels。缺配對只由正式純guard安全核對，不啟無停止邊界的child；150秒只作process-only等待界線，不靠timeout/kill保護world。保留Java前後觀察且不要求既有daemon永遠存活，也支援fresh checkout沒有run/。Task6原深9280失敗保留FAIL，不能用新guard或process-only控制改判。
+不猜通用260上限或改registry/global longpaths；Start失敗、非0或process-only子程序超過10秒都以M6_CI_CWD_UNSUPPORTED拒絕，昂貴runtime尚未開始。-PreflightOnly成功只證明當次布局可啟動，不代full。預設EvidenceRoot仍是短.superpowers/verification，SDD僅存pin metadata。m6-harness-safety-check.ps1 -Case ci-cwd-preflight的所有child一律PreflightOnly，保證guard成功或失敗都不進gates/world/遞迴。受限CiCwdProbeTestMode只准與PreflightOnly配對：RootSuccess用已驗既存的磁碟根目錄作effective cwd、StartFailure用明確未建立的唯一cwd，兩者仍是真Process.Start；receipt分列requested/effective/testMode，受控成功不當作原布局可用證明。另以None模式檢查真short layout的21 labels；若run-all的`$ciCases`再變，這兩處計數與safety oracle須同步review。缺配對只由正式純guard安全核對，不啟無停止邊界的child；150秒只是保守的process-only總等待界線，21個各至多10秒的child總和可能超過界線而FAIL，不靠timeout/kill保護world。保留Java前後觀察且不要求既有daemon永遠存活，也支援fresh checkout沒有run/。Task6原深9280失敗保留FAIL，不能用新guard或process-only控制改判。
 
 ### M6 Task8B1：設定快照與 profile metadata
 

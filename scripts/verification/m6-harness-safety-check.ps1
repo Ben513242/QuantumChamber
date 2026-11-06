@@ -165,7 +165,7 @@ function Invoke-CiCwdPreflightChecks {
         $process=[Diagnostics.Process]::Start($info)
         $entryPids.Add($process.Id);$entryTargets.Add($target)
         $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
-        # 150秒僅為process-only收斂界線（11×10秒＋40秒bootstrap），安全本體是PreflightOnly。
+        # 150秒是21 case的保守process-only總界線；各case最多10秒，總和可能超過界線而FAIL，安全本體是PreflightOnly。
         if(-not $process.WaitForExit(150000)){
             $observedRoots=@(if(Test-Path -LiteralPath $target){Get-ChildItem -LiteralPath $target -Directory -Filter 'run-all-*' | Where-Object {$_.FullName -notin $rootsBefore} | ForEach-Object FullName})
             [ordered]@{kind=$kind;pid=$process.Id;startTimeUtc=([DateTimeOffset]$process.StartTime).ToUniversalTime().ToString('o');evidenceRoot=$target;observedRunRoots=$observedRoots;arguments=@($info.ArgumentList);waitLimitSeconds=150;killed=$false;nextRuntimeAllowed=$false} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence "$kind-timeout.json") -Encoding utf8
@@ -179,7 +179,7 @@ function Invoke-CiCwdPreflightChecks {
         $receipt=Get-Content -LiteralPath (Join-Path $roots[0] 'ci-cwd-preflight.json') -Raw | ConvertFrom-Json
         $noRuntime=$stdout -notmatch '(?m)^BEGIN ' -and @($receipt.worldOperations).Count -eq 0 -and -not $receipt.gradleStarted
         $modeExact=$receipt.testMode -ceq $scenario.mode
-        $ok=if($scenario.success){$exit -eq 0 -and $receipt.status -ceq 'PASS' -and @($receipt.rows).Count -eq 11 -and $stdout.Contains('END PREFLIGHT exit=0')}
+        $ok=if($scenario.success){$exit -eq 0 -and $receipt.status -ceq 'PASS' -and @($receipt.rows).Count -eq 21 -and $stdout.Contains('END PREFLIGHT exit=0')}
             else{$exit -ne 0 -and $receipt.status -ceq 'FAIL' -and ($stdout+$stderr).Contains('M6_CI_CWD_UNSUPPORTED') -and @($receipt.rows).Count -eq 1 -and -not $receipt.rows[0].started -and $null -ne $receipt.rows[0].nativeErrorCode -and -not $receipt.rows[0].effectiveCwdExisted -and -not $stdout.Contains('END ALL')}
         if($scenario.mode -ceq 'RootSuccess'){$ok=$ok -and @($receipt.rows | Where-Object {-not $_.effectiveCwdExisted -or $_.effectiveWorkingDirectory -cne [IO.Path]::GetPathRoot($project) -or -not $_.started -or $_.exitCode -ne 0}).Count -eq 0 -and $receipt.layoutEvidence -ceq 'CONTROLLED_TRANSPORT_ONLY'}
         if($scenario.mode -ceq 'None'){$ok=$ok -and @($receipt.rows | Where-Object {$_.requestedWorkingDirectory -cne $_.effectiveWorkingDirectory}).Count -eq 0 -and $receipt.layoutEvidence -ceq 'REAL_PROJECTED_CWD'}
