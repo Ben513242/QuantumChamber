@@ -532,7 +532,7 @@ schema5在空journal／只剩M4 rows後仍單向保持5；同一schema5 envelope
 - [x] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality；任何原生 seed 消費者仍讀全域時切片②不得結案。
 
 **Task11 world-map 並行 I-1 修正（2026-11-06）**：原生 `MinecraftServer.worlds` 是未同步 `LinkedHashMap`，worker 在 `Minecraft121ServerWorldFactory.exactOwner` 讀 `server.getWorld` 時，本模組 backend 可能在 server thread 發布或卸載第三個 U；兩已發布U只讀的並行見證不足。fix `232359a9eccf93b7d939c0f05ebe0f400d66146e` 在原Task11白名單內使已發布 live map 身分讀與 backend publish／rollback／unload／failure-retain 四寫共用該原生 map 的短 monitor，鎖內只有map操作，不持鎖跨I/O、callback或close；未發布建構world仍只允 owning ThreadLocal。確定性 native monitor/latch 具名RED→GREEN、publish/remove JUnit 具名RED→GREEN、三mutation-only killer/逐位元REVERT及真第三U物化卸載＋兩舊U背景worker見證已由新pin雙focused/full驗；獨立I-1窄複審ADDRESSED C0/I0，不將其它mod未同步寫入原生map當成本修正保證。
-- [ ] Task11 最終 code pin 正常push，遠端同SHA Ubuntu／Windows雙平台CI success並讀回原件；此前只結本機與兩席審查，不啟Task12正式玩家入口。
+- [x] Task11 最終 code pin 正常push，遠端同SHA Ubuntu／Windows雙平台CI success並讀回原件；code pin `232359a9eccf93b7d939c0f05ebe0f400d66146e` 由docs HEAD `3452e311058647aa8998436d72cac26612156a2c` 的GitHub run `42195022397` 雙job success採計，三artifact清單已讀未解壓；Task12正式玩家入口仍獨立待驗。
 
 ### Task 12：random NEW 的 collapse／restart 端到端
 
