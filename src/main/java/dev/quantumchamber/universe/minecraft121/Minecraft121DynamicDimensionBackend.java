@@ -58,6 +58,18 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
             requireVersion(FabricLoader.getInstance().getModContainer("minecraft").orElseThrow()
                     .getMetadata().getVersion().getFriendlyString());
             requireDescriptor(descriptor);
+            if (descriptor.seedPolicy() == SeedPolicy.EXPLICIT_ROOT_SEED_V1) {
+                var catalog = dev.quantumchamber.universe.UniverseRegistryState.get(server);
+                catalog.requireHealthy();
+                var record = catalog.flushedRecords().values().stream()
+                        .filter(row -> descriptor.equals(row.definition().worlds().get(descriptor.role())))
+                        .findFirst().orElseThrow(() -> new IllegalStateException("schema2 descriptor 缺 checked catalog owner"));
+                if (record.definition().schemaVersion() != 2 || record.generation() == null
+                        || !record.equals(catalog.records().get(record.definition().universeId()))
+                        || record.desiredAvailability() != dev.quantumchamber.universe.DesiredAvailability.EAGER_ENABLED) {
+                    throw new IllegalStateException("schema2 descriptor 的 checked owner 不可物化");
+                }
+            }
             var active = resolveActive(server, descriptor);
             if (active.isPresent()) {
                 return new MaterializeResult(MaterializeResult.Status.ALREADY_ACTIVE, active.get());
@@ -490,14 +502,16 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
     static void requireDescriptor(UniverseWorldDescriptor descriptor) {
         var id = descriptor.worldKey().getValue();
         String[] parts = id.getPath().split("/", -1);
+        boolean supportedSeed = descriptor.seedPolicy() == SeedPolicy.SHARED_SAVE_SEED_V1
+                ? descriptor.generatorProfile() == GeneratorProfile.VANILLA_OVERWORLD_SHARED_SEED_V1
+                : descriptor.seedPolicy() == SeedPolicy.EXPLICIT_ROOT_SEED_V1 && descriptor.generatorProfile() == null;
         if (!id.getNamespace().equals("quantumchamber") || parts.length != 3
                 || !parts[0].equals("universe") || !parts[2].equals("overworld")
                 || !UUID.fromString(parts[1]).toString().equals(parts[1])
                 || descriptor.role() != DimensionRole.OVERWORLD
-                || descriptor.generatorProfile() != GeneratorProfile.VANILLA_OVERWORLD_SHARED_SEED_V1
-                || descriptor.seedPolicy() != SeedPolicy.SHARED_SAVE_SEED_V1
+                || !supportedSeed
                 || descriptor.storagePolicyVersion() != 1) {
-            throw new IllegalArgumentException("descriptor 不符合 schema 1 的 owned Overworld profile");
+            throw new IllegalArgumentException("descriptor 不符合 owned Overworld profile");
         }
     }
 

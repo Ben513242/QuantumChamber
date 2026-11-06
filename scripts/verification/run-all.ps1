@@ -392,11 +392,12 @@ Step 'summary' {
     $expectedNative=@(
         [pscustomobject]@{chain='native-seed-diagnostic';expectedMode='DIAGNOSTIC';m6ProbeSchema=1;phases=@('baseline','save-reopen')}
         [pscustomobject]@{chain='catalog-readback';expectedMode='FUNCTIONAL';m6ProbeSchema=1;phases=@('intent','allocation','atomic-move-readback','restart')}
+        [pscustomobject]@{chain='native-seed-functional';expectedMode='FUNCTIONAL';m6ProbeSchema=1;phases=@('construct','reopen')}
     )
     function Assert-NativeManifest($candidate) {
-        if($candidate.status -cne 'PASS' -or $candidate.head -cne $head -or -not $candidate.allEnabled -or $candidate.requireIndependentSeed -or $candidate.expectedMode -cne 'PER_CHAIN' -or $candidate.phaseCount -ne 6 -or (@($candidate.selectedChains) -join ',') -cne 'native-seed-diagnostic,catalog-readback' -or $candidate.phaseMinutes -ne 3 -or $candidate.idleSeconds -ne 90 -or $candidate.blockMinutes -ne 60 -or $candidate.functionalAssertionsRemainRed -ne $true){throw 'M6_NATIVE_SUMMARY_MISMATCH'}
-        if(@($candidate.enabledManifest).Count -ne 2 -or @($candidate.chains).Count -ne 2 -or @($candidate.phases).Count -ne 6){throw 'M6_NATIVE_MANIFEST_MISMATCH'}
-        for($index=0;$index -lt 2;$index++){
+        if($candidate.status -cne 'PASS' -or $candidate.head -cne $head -or -not $candidate.allEnabled -or $candidate.requireIndependentSeed -or $candidate.expectedMode -cne 'PER_CHAIN' -or $candidate.phaseCount -ne 8 -or (@($candidate.selectedChains) -join ',') -cne 'native-seed-diagnostic,catalog-readback,native-seed-functional' -or $candidate.phaseMinutes -ne 3 -or $candidate.idleSeconds -ne 90 -or $candidate.blockMinutes -ne 60 -or $candidate.functionalAssertionsRemainRed -ne $true){throw 'M6_NATIVE_SUMMARY_MISMATCH'}
+        if(@($candidate.enabledManifest).Count -ne 3 -or @($candidate.chains).Count -ne 3 -or @($candidate.phases).Count -ne 8){throw 'M6_NATIVE_MANIFEST_MISMATCH'}
+        for($index=0;$index -lt $expectedNative.Count;$index++){
             $spec=$expectedNative[$index];$entry=$candidate.enabledManifest[$index];$chain=$candidate.chains[$index]
             if($entry.chain -cne $spec.chain -or $chain.chain -cne $spec.chain -or $entry.expectedMode -cne $spec.expectedMode -or $chain.expectedMode -cne $spec.expectedMode -or $entry.m6ProbeSchema -ne 1 -or ($entry.phases -join ',') -cne ($spec.phases -join ',') -or ($chain.phases -join ',') -cne ($spec.phases -join ',')){throw 'M6_NATIVE_MANIFEST_MISMATCH'}
         }
@@ -404,7 +405,7 @@ Step 'summary' {
             $rows=@($candidate.phases | Where-Object chain -CEQ $chain.chain)
             if(@($rows.javaPid | Sort-Object -Unique).Count -ne $chain.phases.Count){throw 'M6_NATIVE_PHASE_JVM_REUSED'}
         }
-        if((@($candidate.phases.phase) -join ',') -cne 'baseline,save-reopen,intent,allocation,atomic-move-readback,restart' -or @($candidate.phases.startupNonce | Sort-Object -Unique).Count -ne 6){throw 'M6_NATIVE_PHASE_SET_MISMATCH'}
+        if((@($candidate.phases.phase) -join ',') -cne 'baseline,save-reopen,intent,allocation,atomic-move-readback,restart,construct,reopen' -or @($candidate.phases.startupNonce | Sort-Object -Unique).Count -ne 8){throw 'M6_NATIVE_PHASE_SET_MISMATCH'}
     }
     function Assert-NativeReceipt($row,$receipt,$spec,$expectedPhase,$expectedRoot) {
         if($row.status -cne 'PASS' -or $row.m6ProbeSchema -ne 1 -or $row.chain -cne $spec.chain -or $row.phase -cne $expectedPhase -or $row.expectedMode -cne $spec.expectedMode -or $row.root -cne $expectedRoot -or $receipt.status -cne 'PASS' -or $receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne $spec.expectedMode -or $receipt.chain -cne $spec.chain -or $receipt.phase -cne $expectedPhase -or $receipt.nonce -cne $row.nonce -or $receipt.startupNonce -cne $row.startupNonce -or $receipt.pid -ne $row.javaPid -or $receipt.root -cne $expectedRoot -or $row.lockReleased -ne $true){throw 'M6_NATIVE_RECEIPT_MISMATCH'}
@@ -412,6 +413,13 @@ Step 'summary' {
         if($spec.expectedMode -ceq 'DIAGNOSTIC'){
             if(-not $row.normalStop -or $row.javaExitCode -ne 0 -or $row.gradleExitCode -ne 0 -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested){throw 'M6_NATIVE_STOP_MISMATCH'}
             if(@($receipt.worlds).Count -ne 5 -or @($receipt.randomSequences).Count -ne 5 -or -not $receipt.catalogChecked -or -not $receipt.diagnosticPassed -or -not $receipt.diagnosticAssertions.newWorldStillReadsSaveSeed -or -not $receipt.diagnosticAssertions.newWorldSharesCanonicalRandomSequences -or $receipt.functionalAssertions.newWorldHasIndependentSeed -ne $false -or $receipt.functionalAssertions.newWorldHasIndependentRandomSequences -ne $false){throw 'M6_NATIVE_DIAGNOSTIC_SEMANTICS_MISMATCH'}
+        } elseif($spec.chain -ceq 'native-seed-functional') {
+            if(-not $row.normalStop -or $row.javaExitCode -ne 0 -or $row.gradleExitCode -ne 0 -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested){throw 'M6_NATIVE_STOP_MISMATCH'}
+            if($receipt.canonicalSettingsKey -cne 'minecraft:amplified' -or -not $receipt.staleInstanceControls -or @($receipt.parallelWorkers).Count -ne 4 -or @($receipt.parallelWorkers | Where-Object {-not $_.exact}).Count -or $receipt.globalAtStart -ne ($expectedPhase -ceq 'construct') -or $receipt.globalForNextStart -ne $false -or -not $receipt.nativeConstructorFailed -or -not $receipt.constructionCleared -or -not $receipt.functionalPassed -or -not $receipt.catalogChecked -or -not $receipt.legacyControl -or -not $receipt.independentSequences -or @($receipt.worlds).Count -ne 2 -or @($receipt.vanillaControls).Count -ne 4 -or @($receipt.vanillaControls | Where-Object {-not $_.workerExact -or -not $_.locatorExact -or -not $_.mapExact}).Count){throw 'M6_NATIVE_SEED_MISMATCH'}
+            for($i=0;$i -lt 2;$i++) {
+                $w=$receipt.worlds[$i];$seed=@('712345678901','-99123456789')[$i]
+                if($w.worldKey -cne @('quantumchamber:universe/00000000-0000-0000-0000-0000000105b9/overworld','quantumchamber:universe/00000000-0000-0000-0000-0000000105ba/overworld')[$i] -or $w.settingsKey -cne 'minecraft:overworld' -or $w.seed -cne $seed -or $w.frozenStructures -ne ($i -eq 0) -or $w.accessorStructures -ne ($i -eq 0) -or -not $w.nativeConsumersExact -or $w.sequenceValue -cne $w.sequenceExpected -or @($w.samples).Count -ne 4 -or -not $w.workerExact -or $w.workerGenerated -ne ($i -eq 0) -or -not $w.locatorExact -or -not $w.mapExact -or $w.mapFilled -ne ($i -eq 0)){throw 'M6_NATIVE_SEED_MISMATCH'}
+            }
         } else {
             $fault=$expectedPhase -ceq 'atomic-move-readback'
             if($row.normalStop -ne $false -or $row.javaExitCode -ne 77 -or $row.gradleExitCode -eq 0 -or $receipt.startedCallbacks -ne 1 -or $receipt.endTicks -ne 0 -or $receipt.stoppingEvents -ne 0 -or $receipt.movesAfterFault -ne 0 -or $receipt.faultCount -ne [int]$fault -or $receipt.envelopeMoves -ne [int]$fault -or $receipt.worldAndStorageAbsent -ne $true){throw 'M6_NATIVE_FUNCTIONAL_HALT_MISMATCH'}
@@ -420,17 +428,21 @@ Step 'summary' {
     }
     Assert-NativeManifest $native
     # 用本輪真實正例的副本逐一破壞 manifest/receipt，必須讓同一份正式 oracle 拒絕。
-    $badManifest=$native | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
-    $badManifest.enabledManifest[1].expectedMode='DIAGNOSTIC'
-    $rejected=$false
-    try { Assert-NativeManifest $badManifest } catch { if($_.Exception.Message -ceq 'M6_NATIVE_MANIFEST_MISMATCH'){$rejected=$true}else{throw} }
-    if(-not $rejected){throw 'M6_NATIVE_MANIFEST_NEGATIVE_MISSED'}
+    for($index=0;$index -lt $expectedNative.Count;$index++) {
+        foreach($field in @('expectedMode','m6ProbeSchema','chain','phases')) {
+            $badManifest=$native | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
+            $badManifest.enabledManifest[$index].$field=if($field -ceq 'm6ProbeSchema'){2}elseif($field -ceq 'phases'){@('WRONG')}else{'WRONG'}
+            $rejected=$false
+            try {Assert-NativeManifest $badManifest} catch {if($_.Exception.Message -ceq 'M6_NATIVE_MANIFEST_MISMATCH'){$rejected=$true}else{throw}}
+            if(-not $rejected){throw "M6_NATIVE_MANIFEST_NEGATIVE_MISSED：$index/$field"}
+        }
+    }
     $offset=0
     $catalogReceipts=@()
     for($index=0;$index -lt $expectedNative.Count;$index++){
         $spec=$expectedNative[$index];$chain=$native.chains[$index]
         $preservation=Read-Json $chain.preservation
-        if($preservation.root -cne $chain.root -or $preservation.strategy -cne 'NEW_OWNED_ROOT' -or $preservation.existingWorldsMoved -ne 0 -or $preservation.existingWorldsChanged -or -not $preservation.retainedRoot -or $preservation.normalStop -ne ($index -eq 0) -or -not $preservation.lockReleased){throw 'M6_NATIVE_PRESERVATION_MISMATCH'}
+        if($preservation.root -cne $chain.root -or $preservation.strategy -cne 'NEW_OWNED_ROOT' -or $preservation.existingWorldsMoved -ne 0 -or $preservation.existingWorldsChanged -or -not $preservation.retainedRoot -or $preservation.normalStop -ne ($spec.chain -cne 'catalog-readback') -or -not $preservation.lockReleased){throw 'M6_NATIVE_PRESERVATION_MISMATCH'}
         foreach($phaseName in $spec.phases){
             $row=$native.phases[$offset];$offset++
             $receipt=Read-Json $row.receipt
@@ -442,6 +454,14 @@ Step 'summary' {
                 $rejected=$false
                 try { Assert-NativeReceipt $row $badReceipt $spec $phaseName $chain.root } catch { if($_.Exception.Message -ceq 'M6_NATIVE_RECEIPT_MISMATCH'){$rejected=$true}else{throw} }
                 if(-not $rejected){throw "M6_NATIVE_RECEIPT_NEGATIVE_MISSED：$field"}
+            }
+            if($spec.chain -ceq 'native-seed-functional') {
+                foreach($field in @('workerExact','locatorExact','mapExact','nativeConsumersExact')) {
+                    $badReceipt=$receipt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
+                    $badReceipt.worlds[0].$field=$false;$rejected=$false
+                    try {Assert-NativeReceipt $row $badReceipt $spec $phaseName $chain.root} catch {if($_.Exception.Message -ceq 'M6_NATIVE_SEED_MISMATCH'){$rejected=$true}else{throw}}
+                    if(-not $rejected){throw "M6_NATIVE_SEED_NEGATIVE_MISSED：$field"}
+                }
             }
             if($index -eq 1){$catalogReceipts+=$receipt}
         }

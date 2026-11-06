@@ -105,6 +105,26 @@ public final class UniverseLifecycleService {
         }
     }
 
+    /** 僅對 checked schema2 descriptor 的 exact ACTIVE native instance 提供長期 seed。 */
+    public static java.util.OptionalLong rootSeed(MinecraftServer server,
+            net.minecraft.registry.RegistryKey<net.minecraft.world.World> worldKey, UniverseWorldDescriptor descriptor) {
+        requireServerThread(server);
+        if (descriptor == null || !descriptor.worldKey().equals(worldKey)
+                || descriptor.seedPolicy() != SeedPolicy.EXPLICIT_ROOT_SEED_V1) return java.util.OptionalLong.empty();
+        var context = CONTEXTS.get(server);
+        if (context == null || !context.ready) return java.util.OptionalLong.empty();
+        var catalog = UniverseRegistryState.get(server);
+        catalog.requireHealthy();
+        var row = catalog.flushedRecords().values().stream()
+                .filter(record -> descriptor.equals(record.definition().worlds().get(descriptor.role())))
+                .findFirst().orElse(null);
+        if (row == null || row.definition().schemaVersion() != 2 || row.generation() == null
+                || !row.equals(catalog.records().get(row.definition().universeId()))) return java.util.OptionalLong.empty();
+        var world = context.backend.resolveActive(server, descriptor);
+        if (world.isEmpty()) return java.util.OptionalLong.empty();
+        return dev.quantumchamber.universe.minecraft121.Minecraft121ServerWorldFactory.rootSeed(world.get());
+    }
+
     /**
      * spec §6.3（M5 F4a）：執行期間物化一筆已配置的 Universe（NEW 的 RESOLVE）。使用 lifecycle Context 內既有的 backend 與 runtime registry，
      * 不另外建立 backend；只能在 server thread 呼叫。只回傳結果，不記塌縮流程的 log（塌縮流程的 log 由 collapse package 帶 marker 記錄）；

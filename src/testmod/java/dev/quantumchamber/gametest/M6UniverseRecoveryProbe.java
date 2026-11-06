@@ -56,6 +56,15 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
         proof.put("loadedModIds", FabricLoader.getInstance().getAllMods().stream().map(m -> m.getMetadata().getId()).sorted().toList());
         proof.put("failures", failures);
         ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
+        if (config.chain().equals("native-seed-functional")) {
+            var random = new M6RandomProbePhases(config.phase(), config.root(), config.evidence(), proof);
+            ServerLifecycleEvents.SERVER_STARTED.register(AFTER, random::started);
+            ServerTickEvents.END_SERVER_TICK.register(random::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(random::stopping);
+            ServerLifecycleEvents.SERVER_STOPPED.register(random::stopped);
+            LOGGER.info("M6_NATIVE_BEGIN chain={} phase={} mode=FUNCTIONAL startupNonce={}", config.chain(), config.phase(), config.startupNonce());
+            return;
+        }
         if (config.chain().equals("catalog-readback")) {
             var catalog = new M6CatalogProbePhases(config.phase(), config.root(), config.evidence(), proof);
             ServerTickEvents.END_SERVER_TICK.register(owner -> catalog.endTick());
@@ -282,7 +291,10 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             if(values.stream().allMatch(Objects::isNull))return null;
             require(values.stream().allMatch(value->value!=null && !value.isBlank()),"M6_CONFIG_MISSING_PROPERTY");
             require(values.get(0).matches("[a-z0-9]+(?:-[a-z0-9]+)*") && values.get(2).matches("[0-9a-f]{32}"),"M6_CONFIG_NONCE_INVALID");
-            if (values.get(4).equals("catalog-readback")) {
+            if (values.get(4).equals("native-seed-functional")) {
+                require(Set.of("construct", "reopen").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
+                require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
+            } else if (values.get(4).equals("catalog-readback")) {
                 require(Set.of("intent", "allocation", "atomic-move-readback", "restart").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
                 require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
             } else {

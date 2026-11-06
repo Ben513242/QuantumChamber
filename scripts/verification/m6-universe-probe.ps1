@@ -12,6 +12,7 @@ $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $manifest=@(
     [pscustomobject]@{chain='native-seed-diagnostic';m6ProbeSchema=1;expectedMode='DIAGNOSTIC';phases=@('baseline','save-reopen')}
     [pscustomobject]@{chain='catalog-readback';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('intent','allocation','atomic-move-readback','restart')}
+    [pscustomobject]@{chain='native-seed-functional';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('construct','reopen')}
 )
 if(-not $IsWindows){throw 'M6_NATIVE_PLATFORM_UNSUPPORTED：owned Win32_Process原生鏈僅支援Windows'}
 if($IdleSeconds -ne 90 -or $PhaseMinutes -ne 3 -or $BlockMinutes -ne 60){throw 'M6_NATIVE_BUDGET_MISMATCH：phase3分/idle90秒/block60分'}
@@ -54,6 +55,21 @@ function Assert-DiagnosticReceipt($receipt,[string]$Phase,[string]$Nonce,[string
     if($receipt.functionalAssertions.newWorldHasIndependentSeed -ne $false -or $receipt.functionalAssertions.newWorldHasIndependentRandomSequences -ne $false){throw 'M6_DIAGNOSTIC_FUNCTIONAL_RED_CHANGED'}
     if($Phase -ceq 'save-reopen' -and -not $receipt.diagnosticAssertions.reopenExact){throw 'M6_REOPEN_ORACLE_MISSING'}
 }
+function Assert-SeedReceipt($receipt,$phase,$owned,$state) {
+    if($receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cne 'native-seed-functional' -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_SEED_RECEIPT_IDENTITY'}
+    if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or -not $receipt.nativeConstructorFailed -or -not $receipt.constructionCleared -or -not $receipt.functionalPassed){throw 'M6_SEED_FUNCTIONAL_ASSERTION_FAILED'}
+    if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds){throw 'M6_SEED_RUNTIME_SCOPE'}
+    if($receipt.globalAtStart -ne ($phase -ceq 'construct') -or $receipt.globalForNextStart -ne $false){throw 'M6_SEED_REOPEN_GLOBAL'}
+    if(-not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.catalogChecked -or -not $receipt.legacyControl -or -not $receipt.independentSequences){throw 'M6_SEED_OWNER_CONTROL'}
+    if(@($receipt.vanillaControls).Count -ne 4 -or @($receipt.vanillaControls | Where-Object {-not $_.workerExact -or -not $_.locatorExact -or -not $_.mapExact}).Count){throw 'M6_SEED_VANILLA_CONTROL'}
+    if($receipt.canonicalSettingsKey -cne 'minecraft:amplified' -or -not $receipt.staleInstanceControls -or @($receipt.parallelWorkers).Count -ne 4 -or @($receipt.parallelWorkers | Where-Object {-not $_.exact}).Count){throw 'M6_SEED_PARALLEL_OWNER'}
+    if(@($receipt.worlds).Count -ne 2){throw 'M6_SEED_WORLD_SET'}
+    $seeds=@('712345678901','-99123456789')
+    for($i=0;$i -lt 2;$i++) {
+        $w=$receipt.worlds[$i]
+        if($w.worldKey -cne @('quantumchamber:universe/00000000-0000-0000-0000-0000000105b9/overworld','quantumchamber:universe/00000000-0000-0000-0000-0000000105ba/overworld')[$i] -or $w.settingsKey -cne 'minecraft:overworld' -or $w.seed -cne $seeds[$i] -or $w.frozenStructures -ne ($i -eq 0) -or $w.accessorStructures -ne ($i -eq 0) -or -not $w.nativeConsumersExact -or $w.sequenceValue -cne $w.sequenceExpected -or @($w.samples).Count -ne 4 -or -not $w.workerExact -or $w.workerGenerated -ne ($i -eq 0) -or -not $w.locatorExact -or -not $w.mapExact -or $w.mapFilled -ne ($i -eq 0)){throw 'M6_SEED_NATIVE_CONSUMER_MISMATCH'}
+    }
+}
 function Assert-CatalogReceipt($receipt,$phase,$owned,$state) {
     if($receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cne 'catalog-readback' -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_CATALOG_RECEIPT_IDENTITY'}
     if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or $receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds -or $receipt.startedCallbacks -ne 1 -or $receipt.endTicks -ne 0 -or $receipt.stoppingEvents -ne 0 -or $receipt.movesAfterFault -ne 0 -or $receipt.worldAndStorageAbsent -ne $true){throw 'M6_CATALOG_PHASE_BOUNDARY'}
@@ -76,11 +92,12 @@ try {
     foreach($chainSpec in $selected){
         if([DateTimeOffset]::UtcNow -ge $deadline){throw 'M6_NATIVE_BLOCK_BUDGET_EXCEEDED'}
         $owned=New-OwnedRoot -Context $context -Suffix $chainSpec.chain
+        if($chainSpec.chain -ceq 'native-seed-functional'){'level-type=minecraft:amplified' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
         $chainStart=$results.Count
         foreach($phase in $chainSpec.phases){
             if([DateTimeOffset]::UtcNow -ge $deadline){throw 'M6_NATIVE_BLOCK_BUDGET_EXCEEDED'}
             $state=Invoke-OwnedPhase -Context $context -Nonce $owned.nonce -Phase $phase -Root $owned.root -ExtraProperties ([ordered]@{Chain=$chainSpec.chain;ExpectedMode=$chainSpec.expectedMode})
-            $functional=$chainSpec.expectedMode -ceq 'FUNCTIONAL'
+            $functional=$chainSpec.chain -ceq 'catalog-readback'
             $receiptName=if($functional){'halt.json'}else{'final.json'}
             $receiptPath=Join-Path $state.PhaseEvidence $receiptName
             if(-not(Test-Path -LiteralPath $receiptPath)){throw "M6_RECEIPT_MISSING：$(Get-PhaseFailureNote -Context $context -State $state)"}
@@ -92,7 +109,16 @@ try {
                 Assert-CatalogReceipt $receipt $phase $owned $state
             } else {
                 if($state.Launcher.ExitCode -ne 0 -or $state.JavaProcess.ExitCode -ne 0){throw 'M6_PHASE_EXIT_NONZERO'}
-                Assert-DiagnosticReceipt -Receipt $receipt -Phase $phase -Nonce $owned.nonce -StartupNonce $state.StartupNonce
+                if($chainSpec.chain -ceq 'native-seed-functional'){
+                    Assert-SeedReceipt $receipt $phase $owned $state
+                    foreach($field in @('workerExact','locatorExact','mapExact','nativeConsumersExact')) {
+                        $bad=$receipt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
+                        $bad.worlds[0].$field=$false;$rejected=$false
+                        try {Assert-SeedReceipt $bad $phase $owned $state} catch {if($_.Exception.Message -ceq 'M6_SEED_NATIVE_CONSUMER_MISMATCH'){$rejected=$true}else{throw}}
+                        if(-not $rejected){throw "M6_SEED_NEGATIVE_MISSED：$field"}
+                    }
+                }
+                else {Assert-DiagnosticReceipt -Receipt $receipt -Phase $phase -Nonce $owned.nonce -StartupNonce $state.StartupNonce}
             }
             if($receipt.pid -ne $state.JavaId -or $receipt.root -cne $owned.root){throw 'M6_JVM_IDENTITY_MISMATCH'}
             if([Math]::Abs(([DateTimeOffset]::Parse($receipt.startTimeUtc)-$state.JavaStart).TotalSeconds) -gt 1){throw 'M6_JVM_STARTTIME_MISMATCH'}
@@ -117,6 +143,15 @@ try {
                 if(@($proofs | ForEach-Object {$_.$field} | Sort-Object -Unique).Count -ne 1){throw "M6_CATALOG_RESTART_IDENTITY：$field"}
             }
             if($proofs[1].allocationHash -cne $proofs[2].allocationHash -or $proofs[2].allocationHash -cne $proofs[3].allocationHash -or $proofs[2].catalogHash -cne $proofs[3].catalogHash){throw 'M6_CATALOG_RESTART_HASH'}
+        }
+        if($chainSpec.chain -ceq 'native-seed-functional') {
+            $a=Get-Content -Raw -LiteralPath $current[0].receipt | ConvertFrom-Json -DateKind String
+            $b=Get-Content -Raw -LiteralPath $current[1].receipt | ConvertFrom-Json -DateKind String
+            for($i=0;$i -lt 2;$i++) {
+                foreach($field in @('worldKey','seed','frozenStructures','accessorStructures','settingsKey','samples','positivePosition')) {
+                    if(($a.worlds[$i].$field | ConvertTo-Json -Compress) -cne ($b.worlds[$i].$field | ConvertTo-Json -Compress)){throw "M6_SEED_REOPEN_MISMATCH：$field"}
+                }
+            }
         }
         $chains.Add([ordered]@{chain=$chainSpec.chain;expectedMode=$chainSpec.expectedMode;phases=@($chainSpec.phases);root=$owned.root;preservation=(Join-Path $owned.root 'preservation.json')})
     }
