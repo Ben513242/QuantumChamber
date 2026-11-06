@@ -47,7 +47,12 @@ public final class CandidateLedgerService {
     private static final class CommitFailure extends RuntimeException {
         CommitFailure(Throwable cause) { super(cause.getMessage(), cause, false, false); }
     }
-    record CandidateInputs(CandidateResolver resolver, UniverseDiscoveryState discovery) {}
+    record CandidateInputs(CandidateResolver resolver, UniverseDiscoveryState discovery,
+            java.util.function.Function<SourceFamilyRef, SourceGenerationSnapshot> source) {
+        CandidateInputs(CandidateResolver resolver, UniverseDiscoveryState discovery) {
+            this(resolver, discovery, ignored -> { throw new IllegalStateException("M6 source 未接線"); });
+        }
+    }
     @FunctionalInterface interface InputsLoader { CandidateInputs load() throws IOException; }
 
     public CandidateBatchResult commitCandidates(MinecraftServer server, UUID sessionUuid, List<DoorKey> completeKeys) {
@@ -55,8 +60,10 @@ public final class CandidateLedgerService {
             return commitCandidates(journal(server), () -> requireServerThread(server), () -> {
                 var root = server.getSavePath(WorldSavePath.ROOT);
                 // 已存在 candidate session 就是 M4 evidence；缺失的 entropy 不得重新產生。
-                return new CandidateInputs(new CandidateResolver(CandidateEntropyState.loadOrCreate(root, true)),
-                        UniverseDiscoveryState.load(root));
+                return new CandidateInputs(new CandidateResolver(CandidateEntropyState.loadOrCreate(root, true),
+                        dev.quantumchamber.universe.Minecraft121SettingsLifecycle.registry(),
+                        () -> dev.quantumchamber.universe.Minecraft121SettingsLifecycle.acquire(server)),
+                        UniverseDiscoveryState.load(root), source -> sourceSnapshot(server, source));
             }, sessionUuid, completeKeys);
         } catch (RuntimeException exception) {
             LOGGER.warn("候選 batch 無法進入 checked 提交，session={} 將安全返還：{}", sessionUuid, FailureText.describe(exception));
@@ -92,7 +99,8 @@ public final class CandidateLedgerService {
             var loaded = inputs.load();
             var pool = loaded.discovery().eligibleSnapshot(context.discoveryWatermark(), context.sourceFamilyRef());
             var ledger = new ArrayList<>(previous.candidateLedger());
-            for (var key : missing) ledger.add(new CandidateLedgerEntry(key, loaded.resolver().resolve(key, context, pool)));
+            for (var key : missing) ledger.add(new CandidateLedgerEntry(key, loaded.resolver().resolve(key, context, pool,
+                    () -> loaded.source().apply(context.sourceFamilyRef()))));
             var next = copy(previous, ledger, previous.candidateSelection().orElseThrow(), previous.state());
             return committedKeys(commitChecked(journal, previous, next), requested);
         } catch (CommitFailure alreadyLogged) {
@@ -101,6 +109,32 @@ public final class CandidateLedgerService {
             LOGGER.warn("候選 batch 無法 checked 提交，session={} 將安全返還：{}", sessionUuid, FailureText.describe(exception));
             return failedBatch();
         }
+    }
+
+    /** 只由 NEW lazy 分支呼叫；以凍結來源取得當次 exact server 的設定 lease。 */
+    private static SourceGenerationSnapshot sourceSnapshot(MinecraftServer server, SourceFamilyRef source) {
+        var lease = dev.quantumchamber.universe.Minecraft121SettingsLifecycle.acquire(server);
+        var registry = dev.quantumchamber.universe.Minecraft121SettingsLifecycle.registry();
+        if (source instanceof SourceFamilyRef.Catalog catalogSource) {
+            var catalog = dev.quantumchamber.universe.UniverseRegistryState.get(server);
+            catalog.requireHealthy();
+            var record = java.util.Objects.requireNonNull(catalog.flushedRecords().get(catalogSource.universeId()), "來源 catalog");
+            if (!record.equals(catalog.records().get(catalogSource.universeId())))
+                throw new IllegalStateException("來源 catalog 尚未 checked");
+            if (record.generation() != null) {
+                var snapshot = dev.quantumchamber.universe.GenerationSettingsSnapshot.fromNbt(record.generation().targetSettingsSnapshot());
+                registry.resolve(snapshot, lease);
+                return new SourceGenerationSnapshot(record.generation().rootWorldSeed(), snapshot);
+            }
+        }
+        var preset = dev.quantumchamber.universe.Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(lease)
+                .orElseThrow(() -> new IllegalStateException("不支援來源 preset，禁止 NEW"));
+        var parameters = new net.minecraft.nbt.NbtCompound();
+        parameters.putString("OverworldPreset", preset);
+        parameters.putByte("GenerateStructures", (byte)(lease.sourceGenerateStructures() ? 1 : 0));
+        var snapshot = registry.createSnapshot("quantumchamber:vanilla_" + preset + "_v1", 1, parameters, lease);
+        lease.requireValid();
+        return new SourceGenerationSnapshot(server.getSaveProperties().getGeneratorOptions().getSeed(), snapshot);
     }
     SelectionOutcome trySelect(JournalPort journal, Runnable threadGuard,
             UUID sessionUuid, DoorKey doorKey, UUID playerUuid, long gameTime) {

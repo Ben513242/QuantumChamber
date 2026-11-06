@@ -35,7 +35,7 @@ import net.minecraft.world.border.WorldBorderListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** 由 lifecycle owner 在 server thread 的安全邊界呼叫；不讀取 catalog。 */
+/** 由 lifecycle owner 在 server thread 的安全邊界呼叫；schema2 物化前重核 checked catalog，schema1 沿既有路徑。 */
 public final class Minecraft121DynamicDimensionBackend implements DynamicDimensionBackend {
     private static final Logger LOGGER = LoggerFactory.getLogger(Minecraft121DynamicDimensionBackend.class);
     private final UniverseRuntimeRegistry<MinecraftServer, ServerWorld> runtime = new UniverseRuntimeRegistry<>();

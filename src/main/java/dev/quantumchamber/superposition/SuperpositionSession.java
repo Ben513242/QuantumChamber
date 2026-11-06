@@ -8,7 +8,6 @@ import dev.quantumchamber.candidate.*;
 import dev.quantumchamber.universe.DimensionRole;
 import java.io.IOException;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.WorldSavePath;
 import dev.quantumchamber.transfer.QuantumEffectTransaction;
 import net.minecraft.server.world.ServerWorld;
@@ -26,6 +25,10 @@ public final class SuperpositionSession {
     final java.util.Set<java.util.UUID> moveAttempted=new java.util.HashSet<>();
     /** 先驗 discovery 與 entropy，再允許任何 session／space reservation。 */
     static CandidatePolicySnapshot freezeCandidateContext(MinecraftServer server, ServerWorld source) throws IOException {
+        return freezeCandidateContext(server, source, M6CandidatePolicySelector.forNewSession(server));
+    }
+    static CandidatePolicySnapshot freezeCandidateContext(MinecraftServer server, ServerWorld source,
+            M6CandidatePolicySelector selector) throws IOException {
         var journal=SessionRecoveryState.get(server);
         var records=java.util.stream.Stream.concat(journal.records().values().stream(),journal.flushedRecords().values().stream()).toList();
         if(records.stream().anyMatch(record -> record.candidateContext().isEmpty()))
@@ -35,8 +38,8 @@ public final class SuperpositionSession {
         var discovery=candidateEvidence ? UniverseDiscoveryState.load(root) : UniverseDiscoveryState.loadOrCreate(root);
         var entropy=CandidateEntropyState.loadOrCreate(root,candidateEvidence || !discovery.records().isEmpty());
         var role=DimensionRole.fromVanillaKey(source.getRegistryKey()).orElseThrow();
-        return new CandidatePolicySnapshot(Identifier.of("quantumchamber:m4_v1"),1,1,5,20,75,discovery.watermark(),16384,
-                entropy.entropyFingerprint(),new SourceFamilyRef.Vanilla(source.getRegistryKey(),role));
+        return selector.freeze(discovery.watermark(), entropy.entropyFingerprint(),
+                new SourceFamilyRef.Vanilla(source.getRegistryKey(),role));
     }
     SuperpositionSession(ServerWorld source,ChamberControllerBlockEntity controller,ChamberFrame frame,
             QuantumEffectTransaction effects,CorridorPageManager.PreparedMappings prepared,SessionRecoveryRecord initial) {

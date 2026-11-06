@@ -23,6 +23,8 @@ param(
     [string]$M6RuntimeRoot='',
     [string[]]$M6Artifacts=@(),
     [string]$MainReceipt='',
+    [string]$M6NativeSummary='',
+    [ValidateSet('none','mode','schema','chain','phase','receipt','restore','hash')][string]$NativeMutation='none',
     [ValidateSet('none','missing-receipt','wrong-head','gametest','testmod','stop','restore','missing-evidence')][string]$MainMutation='none',
     [Parameter(Mandatory)][string]$JUnitDir,
     [Parameter(Mandatory)][string]$SourceRoot,
@@ -91,6 +93,29 @@ if($M6GameTestXml){
     foreach($boundary in @(Get-ChildItem -LiteralPath $M6RuntimeRoot -Filter 'm4-boundary-*.json' -File)){Copy-Item -LiteralPath $boundary.FullName -Destination (Join-Path $fixture 'run/gametest-m6')}
 }
 $mainOriginalHash=''
+if($M6NativeSummary) {
+    New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification') -Force | Out-Null
+    foreach($name in @('m6-universe-probe.ps1','probe-common.ps1')) {Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture "scripts/verification/$name")}
+    $native=Get-Content -LiteralPath $M6NativeSummary -Raw | ConvertFrom-Json -DateKind String
+    switch($NativeMutation) {
+        'mode' {$native.enabledManifest[0].expectedMode='FUNCTIONAL'}
+        'schema' {$native.enabledManifest[0].m6ProbeSchema=2}
+        'chain' {$native.enabledManifest[0].chain='WRONG'}
+        'phase' {$native.phases[0].phase='WRONG'}
+        'hash' {$native.phases[0].receiptSha256='0'*64}
+        'receipt' {
+            $changed=Get-Content -LiteralPath $native.phases[0].receipt -Raw | ConvertFrom-Json -DateKind String;$changed.status='FAIL'
+            $path=Join-Path $fixture 'build/native-mutated-receipt.json';$changed | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+            $native.phases[0].receipt=$path;$native.phases[0].receiptSha256=(Get-FileHash -LiteralPath $path).Hash
+        }
+        'restore' {
+            $changed=Get-Content -LiteralPath $native.chains[0].preservation -Raw | ConvertFrom-Json -DateKind String;$changed.retainedRoot=$false
+            $path=Join-Path $fixture 'build/native-mutated-preservation.json';$changed | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+            $native.chains[0].preservation=$path;$native.chains[0].preservationSha256=(Get-FileHash -LiteralPath $path).Hash
+        }
+    }
+    $native | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $fixture 'build/m6-native-summary.json') -Encoding utf8
+}
 if($MainReceipt){
     & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -VerifyOnly -Receipt $MainReceipt -ExpectedHead (git -C $repo rev-parse HEAD).Trim() | Out-Null
     $mainOriginalHash=(Get-FileHash -LiteralPath $MainReceipt).Hash
@@ -169,6 +194,7 @@ $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).P
     m5GameTestXml=(Resolve-Path -LiteralPath $M5GameTestXml).Path;m5GameTestXmlSha256=(Get-FileHash -LiteralPath $M5GameTestXml -Algorithm SHA256).Hash
     head=(git -C $repo rev-parse HEAD).Trim();m6GameTestXmlSha256=$(if($M6GameTestXml){(Get-FileHash -LiteralPath $M6GameTestXml).Hash}else{''});m6RuntimeLogSha256=$(if($M6RuntimeLog){(Get-FileHash -LiteralPath $M6RuntimeLog).Hash}else{''})
     mainReceipt=$MainReceipt;mainReceiptSha256=$mainOriginalHash;mainMutation=$MainMutation;mainFixtureRuntimeLaunched=$false
+    nativeSummary=$M6NativeSummary;nativeSummarySha256=$(if($M6NativeSummary){(Get-FileHash -LiteralPath $M6NativeSummary).Hash}else{''});nativeMutation=$NativeMutation;nativeFixtureRuntimeLaunched=$false
     junitDir=$JUnitDir;sourceRoot=$SourceRoot;mutation=$Mutation;mutationTarget=$MutationTarget;mutationXml=$MutationXml;sourceMutation=$SourceMutation;sourceTarget=$SourceTarget;sourceMutatedFile=$sourceMutated
     fixtureWindowsCases=$windowsCases;fixtureM5WindowsCases=$m5WindowsCases;exitCode=$process.ExitCode;verdict=$(if($process.ExitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
 $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8

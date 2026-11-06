@@ -8,6 +8,50 @@ permissions:
   contents: read
 
 jobs:
+  m6-native:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: 執行 Windows M6 全部原生跨 JVM 鏈
+        timeout-minutes: 70
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m6-universe-probe.ps1 -AllEnabled -Gradle (Join-Path $PWD 'gradlew.bat')
+          $summaries = @(Get-ChildItem .superpowers/verification -File -Filter 'm6-native-run-*.json')
+          if ($summaries.Count -ne 1) { throw 'M6_NATIVE_CI_SUMMARY_NOT_UNIQUE' }
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          Copy-Item -LiteralPath $summaries[0].FullName -Destination build/m6-native-summary.json
+      - name: 確認 Windows M6 原生鏈精確收據
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m6-universe-probe.ps1 -VerifySummary build/m6-native-summary.json -ExpectedHead $env:GITHUB_SHA -SelfTest
+      - name: 上傳 Windows M6 原生跨 JVM 證據
+        if: always()
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: quantumchamber-m6-native-windows
+          compression-level: 1
+          include-hidden-files: true
+          path: |
+            build/m6-native-summary.json
+            .superpowers/verification/m6-native-*/**
+            .superpowers/verification/m6-native-run-*.json
+            run/m6-universe-*/formal-intent.json
+            run/m6-universe-*/partial-storage.json
+            run/m6-universe-*/partial-before-restart.json
+            run/m6-universe-*/preservation.json
+            run/m6-universe-*/server.properties
+            run/m6-universe-*/world/data/**
+            run/m6-universe-*/world/dimensions/quantumchamber/universe/**
+          if-no-files-found: error
   build:
     runs-on: ubuntu-latest
     # job 層級的上限也涵蓋沒有個別 timeout 的 Build step。

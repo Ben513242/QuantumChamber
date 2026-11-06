@@ -65,7 +65,14 @@ public final class CandidateResolver {
         if (!policy.isM6()) return new QuantumCandidate.New(id, new NewUniverseIntent(token,
                 GeneratorProfile.VANILLA_OVERWORLD_SHARED_SEED_V1, 1, material));
         if (registry == null || acquire == null) throw new IllegalStateException("M6 context 尚未接線");
-        var source = Objects.requireNonNull(sourceSupplier.get(), "source");
+        SourceGenerationSnapshot source;
+        try {
+            source = Objects.requireNonNull(sourceSupplier.get(), "source");
+        } catch (RuntimeException failure) {
+            // 保留拒絕原因與候選識別，供營運定位；不輸出 entropy、seed 或衍生 material。
+            throw new IllegalStateException("NEW_BUCKET bucket=" + bucket + " door=" + doorKey + " candidateIdSha256=" + candidateFingerprint(id)
+                    + "：" + failure.getMessage(), failure);
+        }
         var lease = Objects.requireNonNull(acquire.get(), "lease");
         lease.requireValid();
         registry.resolve(source.settings(), lease);
@@ -77,5 +84,13 @@ public final class CandidateResolver {
                 source.rootSeed(), source.settings(), target, policy.familyCapabilityVersion());
         lease.requireValid();
         return new QuantumCandidate.New(id, intent);
+    }
+
+    private static String candidateFingerprint(CandidateId id) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(id.value().bytes()));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new AssertionError(impossible);
+        }
     }
 }

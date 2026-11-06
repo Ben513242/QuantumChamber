@@ -156,7 +156,9 @@ public final class DestinationResolver {
         }
         // 2. catalog（§6.2）：未確認時等待，不 SEALED。這個 UniverseId 是本 session 的推導值（第 1 步已比對），DISABLED 也接受（§8.3 已完成）。
         authorities.convergeIfNeeded(Authority.CATALOG);
-        var verified = authorities.allocateOrVerifyCatalog(id, AvailabilityPolicy.MATERIALIZE_RETRY);
+        var verified = intent.isM6()
+                ? authorities.allocateOrVerifyCatalog(intent, AvailabilityPolicy.MATERIALIZE_RETRY)
+                : authorities.allocateOrVerifyCatalog(id, AvailabilityPolicy.MATERIALIZE_RETRY);
         if (verified.status() == Lookup.Status.WAIT) return ResolveResult.waiting("catalog 有未確認的寫入（§6.2）");
         if (!verified.succeeded()) return failed(verified);
         if (verified.value().orElseThrow().desiredAvailability() == DesiredAvailability.DISABLED) {

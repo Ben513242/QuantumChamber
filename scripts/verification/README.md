@@ -526,9 +526,27 @@ W12 已驗證第二次 SEALED 的退避加倍：`INITIAL_TICKS＋6 < d ≤ 2×IN
 | `.tools/m12-lighting-audit/lambdynamiclights-3.1.4+1.21.1.jar` | `c91de6935c866c85a68f96ac051dabae6a23b402e345b7141b6fb3c39998612b` | 第三方 JAR 的唯讀 audit 副本，不是腳本；建置以 `gradle.properties` 的 SHA-512 從 Maven 解析 |
 
 
-### M6 Task7：原生seed/settings診斷（DIAGNOSTIC）
+### M6 Task12：正式玩家 random NEW 與原生鏈驗證入口
 
-正式入口為m6-focused.ps1 -Suite Probe -Chain native-seed-diagnostic -Label <label>；底層m6-universe-probe.ps1 -AllEnabled的tracked manifest目前只有此chain。每次新建run/m6-universe-<nonce>，baseline與save-reopen各一個新JVM/startupNonce；phase3分鐘、idle90秒、M6區塊60分鐘。失敗root保留，不重跑同nonce。Task7起本機run-all真跑全部已啟用鏈；Task12才新增遠端Windows native job，現有雙平台GameTest CI不代表此鏈已遠端驗證。
+`m6-universe-probe.ps1 -AllEnabled` 目前宣告五條鏈、十五個 phase：`native-seed-diagnostic`（2，仍為 DIAGNOSTIC）、`catalog-readback`（4）、`native-seed-functional`（2）、`intent-allocation`（3）、`partial-overworld`（4）。後四條為 FUNCTIONAL，各鏈使用自己的全新 owned root，不跨 root 拼接同一個 intent。這是要求集合，不代表任何尚未跑完的工作已驗收。
+
+正式玩家鏈請直接執行：
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -Chain intent-allocation -ExpectedMode FUNCTIONAL
+pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -Chain partial-overworld -ExpectedMode FUNCTIONAL
+pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -VerifySummary <AllEnabled-summary.json> -ExpectedHead <sha> -SelfTest
+```
+
+IA 為 `intent,allocation,restart`；PO 為 `intent,catalog,partial,restart`。兩者都由真玩家、實體艙與拉桿進入正式 session／candidate batch，從該 batch 的 NEW 走正式側門選擇，沒有手工 session receipt。PO 的 `partial` 僅在正式 `ServerWorldEvents.LOAD` 同步窗口：checked EAGER、runtime MATERIALIZING、ACTIVE 空且 discovery 尚無該 U；固定一個 chunk 正式存檔、raw MCA 地形對讀與 SHA-256 manifest 完成後 halt77。超過 60 秒、窗口返回或沒有可驗的 partial storage 都是 FAIL，不能改下一 tick 重判。外層還在重啟前核原檔 hash，重啟後才驗 ACTIVE、原地形與唯一 discovery。
+
+`-VerifySummary` 只讀已保存收據，不啟動 JVM；核 exact chain／phase／mode／schema、PID/startupNonce、exit、receipt/preservation hash、跨 phase frozen identity 與 partial 重啟證據。`-SelfTest` 使用記憶體副本破壞 manifest、receipt、restore 和 hash，確認同一份 oracle 拒絕。`run-all.ps1` 與獨立 Windows `m6-native` CI job 都呼此入口；`ci-rule-check.ps1 -M6NativeSummary ... -NativeMutation mode|schema|chain|phase|receipt|restore|hash` 在 fixture 複本執行 workflow 原文，不能把本機 fixture 當遠端 CI 結果。
+
+flat GameTest 的 `m6_universe_random` 分別驗正式 ARMING policy1／family0、未知來源 NEW 的確切拒因與安全返還，以及 resolver 的 SOURCE／EXISTING／legacy 控制組；不冒 normal source snapshot 或玩家跨 JVM 功能證據。NEW 診斷只輸出 DoorKey、bucket 與 CandidateId 再 SHA-256 fingerprint，不輸出 raw CandidateId、entropy、material 或 seed。
+
+### M6 Task7：原生seed/settings診斷（DIAGNOSTIC，歷史範圍）
+
+正式入口為m6-focused.ps1 -Suite Probe -Chain native-seed-diagnostic -Label <label>；底層m6-universe-probe.ps1 -AllEnabled的tracked manifest在Task7當時只有此chain。每次新建run/m6-universe-<nonce>，baseline與save-reopen各一個新JVM/startupNonce；phase3分鐘、idle90秒、M6區塊60分鐘。失敗root保留，不重跑同nonce。Task7起本機run-all真跑全部已啟用鏈；Task12才新增遠端Windows native job，現有雙平台GameTest CI不代表此鏈已遠端驗證。
 
 receipt固定m6ProbeSchema=1、expectedMode=DIAGNOSTIC、chain/phase/nonce/startupNonce與exact PID/start time。兩個schema1 U以正式catalog checked提交、讀回及backend物化；重開由正式lifecycle恢復。canonical Overworld/Nether/End為控制組。每world分開保存重複getSeed、StructureLocator.seed、structureSeed/concentricRingSeed、BiomeAccess的hash seed、實際NoiseConfig固定四點finalDensity/temperature/vegetation raw double bits，以及相同設定/save seed重建控制與biome樣本。另以有界唯讀worker核相同seed/noise/biome，不把它冒稱自然chunk生成壓測。兩U只有不同UUID/allocationOrdinal；allocateOverworld的第二參數是配置序號，schema1沒有seed欄位。本task未請求或保存獨立seed，功能RED是目前不具獨立seed能力的觀察，不能證明factory忽略seed入參；Task11才以真schema2 catalog seed驗證獨立功能。
 

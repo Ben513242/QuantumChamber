@@ -100,6 +100,11 @@ $ciCases=@(
     [pscustomobject]@{label='main-restore-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='restore';expected='M6_MAIN_RESTORE_MISMATCH'},
     [pscustomobject]@{label='main-missing-evidence-red';kind='main-negative';step='確認 Windows M6 精確集合與隔離';platform='Windows';mutation='missing-evidence';expected='M6_MAIN_EVIDENCE_MISSING'}
 )
+$ciCases += [pscustomobject]@{label='native-green';kind='native';step='確認 Windows M6 原生鏈精確收據';platform='Windows';mutation='none';expected=''}
+foreach($mutation in @('mode','schema','chain','phase','receipt','restore','hash')) {
+    $expected=switch($mutation){ 'phase' {'M6_SAVED_RECEIPT_IDENTITY'} 'receipt' {'M6_SAVED_RECEIPT_IDENTITY'} 'restore' {'M6_SAVED_PRESERVATION'} 'hash' {'M6_SAVED_RECEIPT_HASH'} default {'M6_SAVED_MANIFEST'} }
+    $ciCases += [pscustomobject]@{label="native-$mutation-red";kind='native-negative';step='確認 Windows M6 原生鏈精確收據';platform='Windows';mutation=$mutation;expected=$expected}
+}
 function Assert-CiCwdStartable {
     # cwd-map- 與 run-all- 等長；兄弟 root 的真實字元／layout 完全相同，不混入 One() 的結果。
     $layout=Join-Path $EvidenceRoot ('cwd-map-'+[guid]::NewGuid().ToString('N'))
@@ -185,14 +190,17 @@ Step 'ci-rule' {
     $m6Arguments=@{M6GameTestXml=(Join-Path $m6 'result-build/gametest-m6-results.xml');M6RuntimeLog=(Join-Path $m6 'execution/runtime-logs/latest.log');M6RuntimeRoot=(Join-Path $m6 'world-fresh/..');M6Artifacts=@(Get-ChildItem -LiteralPath (Join-Path $full 'result-build/libs') -File -Filter '*.jar' | ForEach-Object FullName)}
     foreach($case in $ciCases){
         $arguments=@{Label=$case.label;Workflow=$workflow;Step=$case.step;GameTestXml=$xml;M5GameTestXml=$m5Xml;JUnitDir=$junit;SourceRoot=$src;EvidenceRoot=$runRoot}
-        if($case.kind -ne 'legacy'){
+        if($case.kind -cin @('m6','main-negative')){
             foreach($key in $m6Arguments.Keys){$arguments[$key]=$m6Arguments[$key]}
             if($case.platform -ceq 'Windows'){$arguments.MainReceipt=Join-Path $runRoot 'main-ci-receipt.json'}
         }
         if($case.kind -ceq 'main-negative'){$arguments.MainMutation=$case.mutation}
+        if($case.kind -cin @('native','native-negative')){$arguments.M6NativeSummary=One 'm6-native-run-' '.json';$arguments.NativeMutation=$case.mutation}
         & $check @arguments
         $r=Read-Json (Join-Path (One "ci-$($case.label)-") 'result.json')
-        if($case.kind -ceq 'main-negative'){
+        if($case.kind -ceq 'native-negative'){
+            if($r.verdict -cne 'FAIL' -or $r.nativeMutation -cne $case.mutation -or -not $r.output.Contains($case.expected)){throw 'Native CI反例未具名拒絕'}
+        } elseif($case.kind -ceq 'main-negative'){
             if($r.verdict -cne 'FAIL' -or $r.mainMutation -cne $case.mutation -or -not $r.output.Contains($case.expected)){throw "Main CI反例未具名拒絕：$($case.mutation)"}
         } else {
             if($r.verdict -cne 'PASS' -or $r.head -cne $startHead -or $r.mutation -cne 'none' -or $r.sourceMutation -cne 'none'){throw "CI規則未原樣通過：$($case.label)"}
@@ -387,97 +395,17 @@ Step 'summary' {
         if($r.verdict -ne 'PASS' -or $r.head -cne $head -or $r.workflowSha256 -ne $workflowHash -or $r.m6GameTestXmlSha256.ToLowerInvariant() -cne (Hash $m6Xml) -or $r.m6RuntimeLogSha256.ToLowerInvariant() -cne (Hash (Join-Path $m6 'execution/runtime-logs/latest.log'))){throw "M6 CI fixture SHA／原件不符：$platform"}
         $ci["$platform-m6"]=$r.verdict
     }
-    # 原生鏈不是GameTest或Task11功能通過；逐receipt另核schema/mode/身分與舊功能RED。
+    # 逐鏈分開DIAGNOSTIC與FUNCTIONAL；同一oracle保留歷史收據與最終原檔的不同時間語意。
     $nativeFile=One 'm6-native-run-' '.json';$native=Read-Json $nativeFile
-    $expectedNative=@(
-        [pscustomobject]@{chain='native-seed-diagnostic';expectedMode='DIAGNOSTIC';m6ProbeSchema=1;phases=@('baseline','save-reopen')}
-        [pscustomobject]@{chain='catalog-readback';expectedMode='FUNCTIONAL';m6ProbeSchema=1;phases=@('intent','allocation','atomic-move-readback','restart')}
-        [pscustomobject]@{chain='native-seed-functional';expectedMode='FUNCTIONAL';m6ProbeSchema=1;phases=@('construct','reopen')}
-    )
-    function Assert-NativeManifest($candidate) {
-        if($candidate.status -cne 'PASS' -or $candidate.head -cne $head -or -not $candidate.allEnabled -or $candidate.requireIndependentSeed -or $candidate.expectedMode -cne 'PER_CHAIN' -or $candidate.phaseCount -ne 8 -or (@($candidate.selectedChains) -join ',') -cne 'native-seed-diagnostic,catalog-readback,native-seed-functional' -or $candidate.phaseMinutes -ne 3 -or $candidate.idleSeconds -ne 90 -or $candidate.blockMinutes -ne 60 -or $candidate.functionalAssertionsRemainRed -ne $true){throw 'M6_NATIVE_SUMMARY_MISMATCH'}
-        if(@($candidate.enabledManifest).Count -ne 3 -or @($candidate.chains).Count -ne 3 -or @($candidate.phases).Count -ne 8){throw 'M6_NATIVE_MANIFEST_MISMATCH'}
-        for($index=0;$index -lt $expectedNative.Count;$index++){
-            $spec=$expectedNative[$index];$entry=$candidate.enabledManifest[$index];$chain=$candidate.chains[$index]
-            if($entry.chain -cne $spec.chain -or $chain.chain -cne $spec.chain -or $entry.expectedMode -cne $spec.expectedMode -or $chain.expectedMode -cne $spec.expectedMode -or $entry.m6ProbeSchema -ne 1 -or ($entry.phases -join ',') -cne ($spec.phases -join ',') -or ($chain.phases -join ',') -cne ($spec.phases -join ',')){throw 'M6_NATIVE_MANIFEST_MISMATCH'}
-        }
-        foreach($chain in $candidate.chains){
-            $rows=@($candidate.phases | Where-Object chain -CEQ $chain.chain)
-            if(@($rows.javaPid | Sort-Object -Unique).Count -ne $chain.phases.Count){throw 'M6_NATIVE_PHASE_JVM_REUSED'}
-        }
-        if((@($candidate.phases.phase) -join ',') -cne 'baseline,save-reopen,intent,allocation,atomic-move-readback,restart,construct,reopen' -or @($candidate.phases.startupNonce | Sort-Object -Unique).Count -ne 8){throw 'M6_NATIVE_PHASE_SET_MISMATCH'}
+    foreach($case in @($ciCases | Where-Object {$_.kind -cin @('native','native-negative')})) {
+        $r=Read-Json (Join-Path (One "ci-$($case.label)-") 'result.json')
+        if($r.head -cne $head -or $r.workflowSha256 -cne $workflowHash -or $r.nativeSummarySha256.ToLowerInvariant() -cne (Hash $nativeFile) -or $r.nativeMutation -cne $case.mutation -or $r.nativeFixtureRuntimeLaunched){throw 'M6_NATIVE_CI_FIXTURE_IDENTITY'}
+        $expectedVerdict=if($case.kind -ceq 'native'){'PASS'}else{'FAIL'}
+        if($r.verdict -cne $expectedVerdict){throw 'M6_NATIVE_CI_FIXTURE_VERDICT'}
+        $ci[$case.label]=$r.verdict
     }
-    function Assert-NativeReceipt($row,$receipt,$spec,$expectedPhase,$expectedRoot) {
-        if($row.status -cne 'PASS' -or $row.m6ProbeSchema -ne 1 -or $row.chain -cne $spec.chain -or $row.phase -cne $expectedPhase -or $row.expectedMode -cne $spec.expectedMode -or $row.root -cne $expectedRoot -or $receipt.status -cne 'PASS' -or $receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne $spec.expectedMode -or $receipt.chain -cne $spec.chain -or $receipt.phase -cne $expectedPhase -or $receipt.nonce -cne $row.nonce -or $receipt.startupNonce -cne $row.startupNonce -or $receipt.pid -ne $row.javaPid -or $receipt.root -cne $expectedRoot -or $row.lockReleased -ne $true){throw 'M6_NATIVE_RECEIPT_MISMATCH'}
-        if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds -or @($receipt.failures).Count){throw 'M6_NATIVE_RUNTIME_SCOPE'}
-        if($spec.expectedMode -ceq 'DIAGNOSTIC'){
-            if(-not $row.normalStop -or $row.javaExitCode -ne 0 -or $row.gradleExitCode -ne 0 -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested){throw 'M6_NATIVE_STOP_MISMATCH'}
-            if(@($receipt.worlds).Count -ne 5 -or @($receipt.randomSequences).Count -ne 5 -or -not $receipt.catalogChecked -or -not $receipt.diagnosticPassed -or -not $receipt.diagnosticAssertions.newWorldStillReadsSaveSeed -or -not $receipt.diagnosticAssertions.newWorldSharesCanonicalRandomSequences -or $receipt.functionalAssertions.newWorldHasIndependentSeed -ne $false -or $receipt.functionalAssertions.newWorldHasIndependentRandomSequences -ne $false){throw 'M6_NATIVE_DIAGNOSTIC_SEMANTICS_MISMATCH'}
-        } elseif($spec.chain -ceq 'native-seed-functional') {
-            if(-not $row.normalStop -or $row.javaExitCode -ne 0 -or $row.gradleExitCode -ne 0 -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.stopRequested){throw 'M6_NATIVE_STOP_MISMATCH'}
-            if($receipt.canonicalSettingsKey -cne 'minecraft:amplified' -or -not $receipt.worldMonitorReadBlocked -or $receipt.worldMonitorReadAttempts -ne 2 -or -not $receipt.thirdUniversePublishedAndUnloaded -or @($receipt.thirdUniverseWorkerSamples).Count -ne 2 -or @($receipt.thirdUniverseWorkerSamples | Where-Object {$_ -le 0}).Count -or -not $receipt.staleInstanceControls -or @($receipt.parallelWorkers).Count -ne 4 -or @($receipt.parallelWorkers | Where-Object {-not $_.exact}).Count -or $receipt.globalAtStart -ne ($expectedPhase -ceq 'construct') -or $receipt.globalForNextStart -ne $false -or -not $receipt.nativeConstructorFailed -or -not $receipt.constructionCleared -or -not $receipt.functionalPassed -or -not $receipt.catalogChecked -or -not $receipt.legacyControl -or -not $receipt.independentSequences -or @($receipt.worlds).Count -ne 2 -or @($receipt.vanillaControls).Count -ne 4 -or @($receipt.vanillaControls | Where-Object {-not $_.workerExact -or -not $_.locatorExact -or -not $_.mapExact}).Count){throw 'M6_NATIVE_SEED_MISMATCH'}
-            for($i=0;$i -lt 2;$i++) {
-                $w=$receipt.worlds[$i];$seed=@('712345678901','-99123456789')[$i]
-                if($w.worldKey -cne @('quantumchamber:universe/00000000-0000-0000-0000-0000000105b9/overworld','quantumchamber:universe/00000000-0000-0000-0000-0000000105ba/overworld')[$i] -or $w.settingsKey -cne 'minecraft:overworld' -or $w.seed -cne $seed -or $w.frozenStructures -ne ($i -eq 0) -or $w.accessorStructures -ne ($i -eq 0) -or -not $w.nativeConsumersExact -or $w.sequenceValue -cne $w.sequenceExpected -or @($w.samples).Count -ne 4 -or -not $w.workerExact -or $w.workerGenerated -ne ($i -eq 0) -or -not $w.locatorExact -or -not $w.mapExact -or $w.mapFilled -ne ($i -eq 0)){throw 'M6_NATIVE_SEED_MISMATCH'}
-            }
-        } else {
-            $fault=$expectedPhase -ceq 'atomic-move-readback'
-            if($row.normalStop -ne $false -or $row.javaExitCode -ne 77 -or $row.gradleExitCode -eq 0 -or $receipt.startedCallbacks -ne 1 -or $receipt.endTicks -ne 0 -or $receipt.stoppingEvents -ne 0 -or $receipt.movesAfterFault -ne 0 -or $receipt.faultCount -ne [int]$fault -or $receipt.envelopeMoves -ne [int]$fault -or $receipt.worldAndStorageAbsent -ne $true){throw 'M6_NATIVE_FUNCTIONAL_HALT_MISMATCH'}
-            if($receipt.allocationCount -ne [int]($expectedPhase -cne 'intent') -or $receipt.catalogCurrentCount -ne [int]($fault -or $expectedPhase -ceq 'restart') -or $receipt.catalogFlushedCount -ne [int]($expectedPhase -ceq 'restart') -or $receipt.catalogDirty -ne $fault){throw 'M6_NATIVE_FUNCTIONAL_AUTHORITY_MISMATCH'}
-        }
-    }
-    Assert-NativeManifest $native
-    # 用本輪真實正例的副本逐一破壞 manifest/receipt，必須讓同一份正式 oracle 拒絕。
-    for($index=0;$index -lt $expectedNative.Count;$index++) {
-        foreach($field in @('expectedMode','m6ProbeSchema','chain','phases')) {
-            $badManifest=$native | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
-            $badManifest.enabledManifest[$index].$field=if($field -ceq 'm6ProbeSchema'){2}elseif($field -ceq 'phases'){@('WRONG')}else{'WRONG'}
-            $rejected=$false
-            try {Assert-NativeManifest $badManifest} catch {if($_.Exception.Message -ceq 'M6_NATIVE_MANIFEST_MISMATCH'){$rejected=$true}else{throw}}
-            if(-not $rejected){throw "M6_NATIVE_MANIFEST_NEGATIVE_MISSED：$index/$field"}
-        }
-    }
-    $offset=0
-    $catalogReceipts=@()
-    for($index=0;$index -lt $expectedNative.Count;$index++){
-        $spec=$expectedNative[$index];$chain=$native.chains[$index]
-        $preservation=Read-Json $chain.preservation
-        if($preservation.root -cne $chain.root -or $preservation.strategy -cne 'NEW_OWNED_ROOT' -or $preservation.existingWorldsMoved -ne 0 -or $preservation.existingWorldsChanged -or -not $preservation.retainedRoot -or $preservation.normalStop -ne ($spec.chain -cne 'catalog-readback') -or -not $preservation.lockReleased){throw 'M6_NATIVE_PRESERVATION_MISMATCH'}
-        foreach($phaseName in $spec.phases){
-            $row=$native.phases[$offset];$offset++
-            $receipt=Read-Json $row.receipt
-            if((Hash $row.receipt) -cne $row.receiptSha256.ToLowerInvariant()){throw 'M6_NATIVE_RECEIPT_HASH'}
-            Assert-NativeReceipt $row $receipt $spec $phaseName $chain.root
-            foreach($field in @('m6ProbeSchema','expectedMode','chain','phase')){
-                $badReceipt=$receipt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
-                $badReceipt.$field=if($field -ceq 'm6ProbeSchema'){2}else{'WRONG'}
-                $rejected=$false
-                try { Assert-NativeReceipt $row $badReceipt $spec $phaseName $chain.root } catch { if($_.Exception.Message -ceq 'M6_NATIVE_RECEIPT_MISMATCH'){$rejected=$true}else{throw} }
-                if(-not $rejected){throw "M6_NATIVE_RECEIPT_NEGATIVE_MISSED：$field"}
-            }
-            if($spec.chain -ceq 'native-seed-functional') {
-                foreach($field in @('worldMonitorReadBlocked','thirdUniversePublishedAndUnloaded')) {
-                    $badReceipt=$receipt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
-                    $badReceipt.$field=$false;$rejected=$false
-                    try {Assert-NativeReceipt $row $badReceipt $spec $phaseName $chain.root} catch {if($_.Exception.Message -ceq 'M6_NATIVE_SEED_MISMATCH'){$rejected=$true}else{throw}}
-                    if(-not $rejected){throw "M6_NATIVE_MONITOR_NEGATIVE_MISSED：$field"}
-                }
-                foreach($field in @('workerExact','locatorExact','mapExact','nativeConsumersExact')) {
-                    $badReceipt=$receipt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
-                    $badReceipt.worlds[0].$field=$false;$rejected=$false
-                    try {Assert-NativeReceipt $row $badReceipt $spec $phaseName $chain.root} catch {if($_.Exception.Message -ceq 'M6_NATIVE_SEED_MISMATCH'){$rejected=$true}else{throw}}
-                    if(-not $rejected){throw "M6_NATIVE_SEED_NEGATIVE_MISSED：$field"}
-                }
-            }
-            if($index -eq 1){$catalogReceipts+=$receipt}
-        }
-    }
-    $first=Read-Json $native.phases[0].receipt;$second=Read-Json $native.phases[1].receipt
-    if($first.catalogSha256 -cne $second.catalogSha256 -or -not $second.diagnosticAssertions.reopenExact){throw 'M6_NATIVE_REOPEN_MISMATCH'}
-    foreach($field in @('uuid','session','allocationToken','rootWorldSeed','profileId','profileVersion','targetFingerprint','journalHash')){
-        if(@($catalogReceipts | ForEach-Object {$_.$field} | Sort-Object -Unique).Count -ne 1){throw "M6_NATIVE_FUNCTIONAL_RESTART_MISMATCH：$field"}
-    }
-    if($catalogReceipts[2].catalogHash -cne $catalogReceipts[3].catalogHash -or $catalogReceipts[1].allocationHash -cne $catalogReceipts[2].allocationHash -or $catalogReceipts[2].allocationHash -cne $catalogReceipts[3].allocationHash){throw 'M6_NATIVE_FUNCTIONAL_RESTART_HASH'}
+    & (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') -VerifySummary $nativeFile -ExpectedHead $head -SelfTest |
+        Tee-Object -FilePath (Join-Path $runRoot 'm6-native-verify.log')
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
         gameTest=[ordered]@{default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;m6=$m6Cases.Count;m6XmlSha256=Hash $m6Xml;m6Pacing=$m6Oracle.pacing;m6Cases=$identities;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
@@ -487,6 +415,6 @@ Step 'summary' {
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
-    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:2,FUNCTIONAL:6 ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
+    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) perTest=$fullReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:2,FUNCTIONAL:13 ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
 }
 Say "END ALL exit=0 HEAD=$((git -C $repo rev-parse HEAD).Trim())"

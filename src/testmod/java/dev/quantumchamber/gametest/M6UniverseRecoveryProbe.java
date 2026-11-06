@@ -29,7 +29,7 @@ import net.minecraft.world.gen.noise.NoiseConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Schema1現況診斷；PASS只表示舊行為被可靠辨識，獨立seed功能仍是RED。 */
+/** 原生鏈的嚴格 dispatch；schema1 DIAGNOSTIC 與 seed／正式玩家 FUNCTIONAL 分開採計。 */
 public final class M6UniverseRecoveryProbe implements ModInitializer {
     private static final Gson JSON = new Gson();
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber-m6-native");
@@ -56,6 +56,16 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
         proof.put("loadedModIds", FabricLoader.getInstance().getAllMods().stream().map(m -> m.getMetadata().getId()).sorted().toList());
         proof.put("failures", failures);
         ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
+        if (Set.of("intent-allocation","partial-overworld").contains(config.chain())) {
+            var gameplay = new M6RandomProbePhases.GameplayPhases(config.chain(), config.phase(), config.root(), config.evidence(), proof);
+            ServerLifecycleEvents.SERVER_STARTED.register(AFTER, gameplay::started);
+            ServerTickEvents.END_SERVER_TICK.register(gameplay::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(gameplay::stopping);
+            ServerLifecycleEvents.SERVER_STOPPED.register(gameplay::stopped);
+            net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents.LOAD.register(gameplay::loaded);
+            LOGGER.info("M6_NATIVE_BEGIN chain={} phase={} mode=FUNCTIONAL startupNonce={}", config.chain(), config.phase(), config.startupNonce());
+            return;
+        }
         if (config.chain().equals("native-seed-functional")) {
             var random = new M6RandomProbePhases(config.phase(), config.root(), config.evidence(), proof);
             ServerLifecycleEvents.SERVER_STARTED.register(AFTER, random::started);
@@ -291,7 +301,13 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             if(values.stream().allMatch(Objects::isNull))return null;
             require(values.stream().allMatch(value->value!=null && !value.isBlank()),"M6_CONFIG_MISSING_PROPERTY");
             require(values.get(0).matches("[a-z0-9]+(?:-[a-z0-9]+)*") && values.get(2).matches("[0-9a-f]{32}"),"M6_CONFIG_NONCE_INVALID");
-            if (values.get(4).equals("native-seed-functional")) {
+            if (values.get(4).equals("partial-overworld")) {
+                require(Set.of("intent", "catalog", "partial", "restart").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
+                require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
+            } else if (values.get(4).equals("intent-allocation")) {
+                require(Set.of("intent", "allocation", "restart").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
+                require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
+            } else if (values.get(4).equals("native-seed-functional")) {
                 require(Set.of("construct", "reopen").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
                 require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
             } else if (values.get(4).equals("catalog-readback")) {

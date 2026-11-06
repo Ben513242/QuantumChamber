@@ -2,6 +2,13 @@ package dev.quantumchamber.gametest;
 
 import com.google.gson.Gson;
 import dev.quantumchamber.candidate.NewUniverseIntent;
+import dev.quantumchamber.candidate.*;
+import dev.quantumchamber.chamber.*;
+import dev.quantumchamber.collapse.*;
+import dev.quantumchamber.corridor.*;
+import dev.quantumchamber.persistence.*;
+import dev.quantumchamber.superposition.*;
+import dev.quantumchamber.registry.*;
 import dev.quantumchamber.universe.*;
 import java.nio.file.*;
 import java.util.*;
@@ -28,7 +35,7 @@ import net.minecraft.world.gen.noise.NoiseConfig;
 import net.minecraft.world.gen.densityfunction.DensityFunction;
 import org.slf4j.LoggerFactory;
 
-/** 真 checked fixture 的兩個 JVM；不接正式 candidate／玩家入口。 */
+/** Task11 的 seed owner fixture；Task12 GameplayPhases 另走真正式玩家 candidate／collapse 路徑。 */
 public final class M6RandomProbePhases {
     private static final long[] SEEDS = {712345678901L, -99123456789L};
     private static final int[][] POINTS = {{0,64,0},{1032,80,-2056},{-9012,24,7196},{32768,112,16384}};
@@ -426,6 +433,429 @@ public final class M6RandomProbePhases {
         }
         return result;
     }
+    /** Task12：正式玩家入場取得的 frozen intent；不製造或覆寫 session receipt。 */
+    static final class GameplayPhases {
+        private final String chain, phase;
+        private final Path root, evidence;
+        private final Map<String,Object> proof;
+        private final ChamberFrame frame = new ChamberFrame(new BlockPos(8,70,8), Direction.NORTH);
+        private final BlockPos lever = frame.controllerPos().north();
+        private MinecraftServer server;
+        private ServerWorld source;
+        private ConnectedGameTestPlayer participant, operator;
+        private UUID sid;
+        private UniverseId id;
+        private NewUniverseIntent intent;
+        private com.google.gson.JsonObject manifest;
+        private M5TestHooks.CrashPoint crash;
+        private int stage, ticks;
+        private boolean finished;
+
+        GameplayPhases(String chain, String phase, Path root, Path evidence, Map<String,Object> proof) {
+            this.chain=chain; this.phase=phase; this.root=root; this.evidence=evidence; this.proof=proof;
+        }
+
+        void started(MinecraftServer owner) {
+            server=owner; source=owner.getOverworld();
+            guarded(() -> {
+                require(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).toRealPath().equals(root.resolve("world").toRealPath()), "FORMAL_ROOT_IDENTITY");
+                var preset=Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(Minecraft121SettingsLifecycle.acquire(server));
+                require(preset.orElse("").equals("normal"), "FORMAL_SOURCE_NOT_NORMAL");
+                proof.put("sourcePreset","normal");
+                if(phase.equals("intent")) unknownProviderBeforeIntent();
+                if (!phase.equals("intent")) {
+                    manifest=com.google.gson.JsonParser.parseString(Files.readString(root.resolve("formal-intent.json"))).getAsJsonObject();
+                    sid=UUID.fromString(manifest.get("session").getAsString());
+                    var record=record();
+                    require(record!=null, "FORMAL_RESTART_RECEIPT_MISSING");
+                    takeIntent(record);
+                    requireStableManifest();
+                    participant=new ConnectedGameTestPlayer(source,new com.mojang.authlib.GameProfile(
+                            UUID.fromString(manifest.get("player").getAsString()),"m6-formal"));
+                    participant.confirmTeleport();
+                    participant.player().setNoGravity(true);
+                }
+                if (phase.equals("intent") || phase.equals("allocation")) {
+                    var window=phase.equals("intent") ? M5TestHooks.CrashWindow.COLLAPSING_COMMITTED : M5TestHooks.CrashWindow.ALLOCATION_APPENDED;
+                    crash=new M5TestHooks.CrashPoint(window, ignored -> sid!=null, (detail,hits) -> guarded(() -> {
+                        require(hits==1,"FORMAL_CRASH_DUPLICATED");
+                        if(detail instanceof M5TestHooks.CollapsingCommit commit) require(commit.next().sessionUuid().equals(sid) && commit.result().committed(),"FORMAL_INTENT_COMMIT");
+                        snapshot(false);
+                        require(UniverseRegistryState.get(server).flushedRecords().get(id)==null && !Files.exists(storage()),"catalogBeforeWorldStorage");
+                        proof.put("worldAndStorageAbsent",true);
+                        finishHalt(true);
+                    }));
+                    M5TestHooks.CRASH_POINT.install(crash,null);
+                }
+                if (phase.equals("catalog")) installCatalogCut();
+            });
+        }
+
+        void tick(MinecraftServer owner) {
+            if(owner!=server || finished)return;
+            guarded(() -> {
+                require(++ticks<1800,"FORMAL_BOUNDED_WAIT stage="+stage);
+                if(phase.equals("intent")) {
+                    if(stage==0) { build(); stage=1; return; }
+                    if(stage==1) { arm(); return; }
+                    if(stage==2) { select(); return; }
+                    return;
+                }
+                var current=record();
+                require(current!=null,"FORMAL_SESSION_LOST");
+                require(current.state()!=SessionState.SEALED,"randomNewUsesFrozenSeedAcrossRestart: SEALED="+current.collapse());
+                if(!phase.equals("restart"))return;
+                var active=UniverseLifecycleService.resolveActive(server,id);
+                var discovered=UniverseDiscoveryState.load(root.resolve("world")).records().stream().filter(row -> row.universeId().equals(id)).toList();
+                if(active.isEmpty() || discovered.isEmpty())return;
+                require(discovered.size()==1 && discovered.getFirst().gameplayEligible(),"FORMAL_DISCOVERY_NOT_UNIQUE");
+                snapshot(true);
+                require(active.get().getSeed()==intent.rootWorldSeed(),"randomNewUsesFrozenSeedAcrossRestart");
+                if(chain.equals("partial-overworld")) {
+                    var partial=com.google.gson.JsonParser.parseString(Files.readString(root.resolve("partial-storage.json"))).getAsJsonObject();
+                    require(partial.get("uuid").getAsString().equals(id.value().toString()) && partial.get("rootWorldSeed").getAsString().equals(Long.toString(intent.rootWorldSeed())),"PARTIAL_RESTART_IDENTITY");
+                    var actual=terrainSamples(active.get(),true);
+                    require(new Gson().toJsonTree(actual).equals(partial.get("terrainSamples")),"PARTIAL_RESTART_TERRAIN");
+                    proof.put("partialTerrainExact",true);proof.put("terrainSamples",actual);
+                }
+                proof.put("active",true);proof.put("discoveryCount",discovered.size());proof.put("nativeSeed",Long.toString(active.get().getSeed()));
+                proof.put("functionalPassed",true);proof.put("stopRequested",true);finished=true;
+                server.stop(false);
+            });
+        }
+
+        private void build() {
+            source.getChunk(0,0);
+            M1FoundationSessionFixture.set(source,frame.controllerPos(),false);
+            ChamberProtectionService.get().authorizedMutation(() -> {
+                for(int x=0;x<7;x++)for(int y=0;y<7;y++)for(int z=0;z<7;z++) {
+                    boolean shell=x==0||x==6||y==0||y==6||z==0||z==6;
+                    var state=(shell?net.minecraft.block.Blocks.BEDROCK:net.minecraft.block.Blocks.AIR).getDefaultState();
+                    if(z==0&&x>0&&x<6&&y>0&&y<6)state=ModBlocks.QUANTUM_BULKHEAD.getDefaultState();
+                    source.setBlockState(ChamberGeometry.localToWorld(frame,x,y,z),state,3);
+                }
+                source.setBlockState(frame.controllerPos(),ModBlocks.CHAMBER_CONTROLLER.getDefaultState().with(ChamberControllerBlock.FACING,Direction.NORTH),3);
+            });
+            source.setBlockState(lever,net.minecraft.block.Blocks.LEVER.getDefaultState()
+                    .with(net.minecraft.block.LeverBlock.FACE,net.minecraft.block.enums.BlockFace.WALL)
+                    .with(net.minecraft.block.LeverBlock.FACING,Direction.NORTH),3);
+            participant=new ConnectedGameTestPlayer(source);participant.confirmTeleport();participant.player().setNoGravity(true);
+            participant.player().refreshPositionAndAngles(CorridorGeometry.position(frame,2.5,1,2.5),0,0);
+            participant.player().addStatusEffect(new net.minecraft.entity.effect.StatusEffectInstance(ModEffects.QUANTUM_STATE,1000000));
+            operator=new ConnectedGameTestPlayer(source);operator.confirmTeleport();operator.player().setNoGravity(true);
+            operator.player().refreshPositionAndAngles(CorridorGeometry.position(frame,3.5,6,-1.5),0,0);
+        }
+
+        private void arm() throws Exception {
+            var controller=(ChamberControllerBlockEntity)source.getBlockEntity(frame.controllerPos());
+            if(controller==null)return;
+            boolean pending=(boolean)field(controller,"loadSyncPending");
+            proof.put("controllerLoadSyncPending",pending);proof.put("controllerPowerInitialized",controller.powerInitialized());
+            if(pending || !controller.powerInitialized())return;
+            var readiness=new ChamberActivationService().evaluateReadiness(source,controller);
+            proof.put("armReadiness",readiness.toString());
+            if(!readiness.accepted())return;
+            PlayerCheckpointStore.saveAndVerify(server,participant.player(),Optional.empty());
+            require(server.save(false,true,true),"FORMAL_SOURCE_SAVE");
+            var action=source.getBlockState(lever).onUse(source,operator.player(),new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(lever),Direction.NORTH,lever,false));
+            require(action.isAccepted(),"FORMAL_LEVER_USE");
+            var initial=SessionRecoveryState.get(server).flushedRecords().values().stream().filter(row -> row.chamberUuid().equals(controller.chamberUuid())).findFirst()
+                    .orElseThrow(() -> new IllegalStateException("FORMAL_ARMING_MISSING powered="+source.isReceivingRedstonePower(frame.controllerPos())
+                            +" uuid="+controller.chamberUuid()+" state="+controller.chamberState()+" readiness="+readiness));
+            sid=initial.sessionUuid();
+            require(initial.state()==SessionState.ARMING && initial.candidateContext().orElseThrow().isM6(),"FORMAL_ARMING_POLICY_ONE");
+            proof.put("formalLeverEntry",true);proof.put("armingPolicy",1);proof.put("familyCapability",0);stage=2;
+        }
+
+        private void select() throws Exception {
+            var current=record();
+            if(current==null || current.state()!=SessionState.SUPERPOSITION)return;
+            var pages=CorridorPageManager.forServer(server);
+            var entry=current.candidateLedger().stream().filter(row -> row.candidate() instanceof QuantumCandidate.New && pages.selectableDoors(sid).contains(row.doorKey())).findFirst();
+            if(entry.isEmpty())return;
+            var key=entry.get().doorKey();
+            BlockPos cell=null;
+            for(var view:pages.currentMappings(sid).instances()) {
+                var mapped=new ChamberFrame(view.localBlockOrigin().offset(view.outwardFacing().rotateYCounterclockwise(),3).up(6),view.outwardFacing());
+                var possible=CorridorGeometry.block(mapped,key.wallSide()==DoorKey.DoorWallSide.NEGATIVE_LATERAL?0:6,1,
+                        Math.toIntExact(key.logicalStationIndex()*8+1-view.logicalAnchorBlock()));
+                if(view.bounds().contains(possible)) {cell=possible;break;}
+            }
+            require(cell!=null,"FORMAL_NEW_DOOR_UNMAPPED");
+            var corridor=server.getWorld(SuperpositionWorld.KEY);
+            require(corridor.getBlockState(cell).onUse(corridor,participant.player(),new net.minecraft.util.hit.BlockHitResult(Vec3d.ofCenter(cell),Direction.UP,cell,false)).isAccepted(),"FORMAL_NEW_DOOR_USE");
+            var selected=record();
+            require(selected.state()==SessionState.MEASURED && selected.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected,"FORMAL_CHECKED_SELECTED");
+            takeIntent(selected);
+            proof.put("formalBatch",true);proof.put("formalSelected",true);proof.put("candidateCount",selected.candidateLedger().size());
+            proof.put("door",key.toString());proof.put("player",participant.player().getUuid().toString());
+            require(server.save(false,true,true),"FORMAL_SELECTED_SAVE");
+            unknownProviderAfterIntent(selected);
+            stableFields();
+            durable(root.resolve("formal-intent.json"),proof);
+            stage=3;
+        }
+
+        private SessionRecoveryRecord record() { return sid==null?null:SessionRecoveryState.get(server).flushedRecords().get(sid); }
+        private void takeIntent(SessionRecoveryRecord row) {
+            require(row.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New,"FORMAL_NOT_NEW");
+            intent=((QuantumCandidate.New)row.selectedCandidate().orElseThrow()).intent();
+            require(intent.isM6() && intent.policyVersion()==1 && intent.familyCapabilityVersion()==0,"FORMAL_FROZEN_POLICY");
+            require(intent.sourceRootWorldSeed()==server.getSaveProperties().getGeneratorOptions().getSeed()
+                    && intent.sourceSettingsSnapshot().parameters().getString("OverworldPreset").equals("normal")
+                    && intent.targetSettingsSnapshot().parameters().getString("OverworldPreset").equals("normal"),"FORMAL_SOURCE_SNAPSHOT");
+            id=UniverseAllocationLedger.deriveUniverseId(intent.allocationToken());
+        }
+        private Path storage() {return root.resolve("world/dimensions/quantumchamber/universe/"+id.value()+"/overworld");}
+
+        /** 只包裝既有 typed catalog port；delegate完成正式checked flush後同步核原件，不改內容。 */
+        private void installCatalogCut() throws Exception {
+            var authorities=CollapseAuthorities.get(server);
+            var slot=CollapseAuthorities.class.getDeclaredField("catalog");slot.setAccessible(true);
+            var delegate=slot.get(authorities);
+            var wrapper=java.lang.reflect.Proxy.newProxyInstance(slot.getType().getClassLoader(),new Class<?>[]{slot.getType()},(proxy,method,args)->{
+                method.setAccessible(true);
+                Object result;
+                try {result=method.invoke(delegate,args);} catch(java.lang.reflect.InvocationTargetException failure){throw failure.getCause();}
+                if(method.getName().equals("flush") && UniverseRegistryState.get(server).flushedRecords().containsKey(id)) {
+                    guarded(() -> {
+                        snapshot(false);checkedCatalog(DesiredAvailability.DISABLED);
+                        require(!Files.exists(storage()) && server.getWorld(UniverseKeys.world(id,DimensionRole.OVERWORLD))==null,"catalogBeforeWorldStorage");
+                        require(noDiscovery(),"CATALOG_EARLY_DISCOVERY");
+                        proof.put("worldAndStorageAbsent",true);proof.put("discoveryCount",0);
+                        finishHalt(true);
+                    });
+                }
+                return result;
+            });
+            slot.set(authorities,wrapper);
+        }
+
+        /** 只能在正式LOAD、map已發布但runtime.activate尚未執行的同步窗口停下。 */
+        void loaded(MinecraftServer owner,ServerWorld world) {
+            if(!phase.equals("partial") || owner!=server || id==null || !world.getRegistryKey().equals(UniverseKeys.world(id,DimensionRole.OVERWORLD)))return;
+            guarded(() -> {
+                long started=System.nanoTime();
+                require(server.getWorld(world.getRegistryKey())==world,"PARTIAL_EXACT_LIVE_WORLD");
+                snapshot(false);var row=checkedCatalog(DesiredAvailability.EAGER_ENABLED);
+                require(UniverseLifecycleService.resolveActive(server,id).isEmpty() && noDiscovery(),"PARTIAL_ALREADY_ACTIVE_OR_DISCOVERED");
+                var contexts=UniverseLifecycleService.class.getDeclaredField("CONTEXTS");contexts.setAccessible(true);
+                var context=((Map<?,?>)contexts.get(null)).get(server);
+                var backend=field(context,"backend");
+                @SuppressWarnings("unchecked") var runtime=(UniverseRuntimeRegistry<MinecraftServer,ServerWorld>)field(backend,"runtime");
+                require(runtime.state(server,row.definition().worlds().get(DimensionRole.OVERWORLD))==DynamicWorldRuntimeState.MATERIALIZING,"PARTIAL_NOT_MATERIALIZING");
+                require(world.getSeed()==intent.rootWorldSeed(),"PARTIAL_OWNER_SEED");
+                proof.put("loadWindow",true);proof.put("runtimeState","MATERIALIZING");proof.put("active",false);proof.put("discoveryCount",0);
+                LoggerFactory.getLogger("quantumchamber-m6-native").info("M6_PARTIAL_SINGLE_CHUNK_BEGIN");
+                world.getChunk(0,0);
+                require(System.nanoTime()-started<60_000_000_000L,"PARTIAL_CHUNK_DEADLINE");
+                world.save(null,true,false);
+                require(System.nanoTime()-started<60_000_000_000L,"PARTIAL_SAVE_DEADLINE");
+                var terrain=terrainSamples(world,true);
+                require(terrain.stream().anyMatch(sample -> !sample.endsWith("minecraft:air")),"PARTIAL_TERRAIN_EMPTY");
+                var hashes=new TreeMap<String,String>();
+                try(var files=Files.walk(storage())) {
+                    for(var path:files.filter(Files::isRegularFile).toList()) {
+                        require(!Files.isSymbolicLink(path),"PARTIAL_STORAGE_REPARSE");
+                        hashes.put(storage().relativize(path).toString().replace('\\','/'),digest(path));
+                    }
+                }
+                require(hashes.containsKey("region/r.0.0.mca"),"PARTIAL_STORAGE_MISSING");
+                require(runtime.state(server,row.definition().worlds().get(DimensionRole.OVERWORLD))==DynamicWorldRuntimeState.MATERIALIZING
+                        && UniverseLifecycleService.resolveActive(server,id).isEmpty() && noDiscovery(),"PARTIAL_WINDOW_CHANGED");
+                proof.put("partialStorageVerified",true);proof.put("chunkRequests",1);proof.put("terrainSamples",terrain);
+                proof.put("partialHashes",hashes);proof.put("partialElapsedMs",(System.nanoTime()-started)/1_000_000L);
+                durable(root.resolve("partial-storage.json"),proof);
+                finishHalt(true);
+            });
+            throw new IllegalStateException("PARTIAL_LOAD_RETURNED");
+        }
+
+        private List<String> terrainSamples(ServerWorld world,boolean compareDisk) throws Exception {
+            var samples=new ArrayList<String>();
+            for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
+                var pos=new BlockPos(x,y,z);
+                var nativeName=net.minecraft.registry.Registries.BLOCK.getId(world.getBlockState(pos).getBlock()).toString();
+                var disk=M5CollapseDiskEvidence.block(storage(),pos);
+                require(!disk.name().equals(M5CollapseDiskEvidence.ABSENT) && (!compareDisk || disk.name().equals(nativeName)),"PARTIAL_RAW_MCA_TERRAIN");
+                samples.add(x+","+y+","+z+"="+disk.name());
+            }
+            return List.copyOf(samples);
+        }
+        private boolean noDiscovery() throws Exception {return UniverseDiscoveryState.load(root.resolve("world")).records().stream().noneMatch(row->row.universeId().equals(id));}
+        private UniverseRecord checkedCatalog(DesiredAvailability availability) throws Exception {
+            var catalog=UniverseRegistryState.get(server);var row=catalog.flushedRecords().get(id);
+            require(row!=null && row.equals(catalog.records().get(id)) && row.desiredAvailability()==availability
+                    && CollapseAuthorities.catalogRecordMatches(intent,row,CollapseAuthorities.AvailabilityPolicy.MATERIALIZE_RETRY),"catalogBeforeWorldStorage");
+            var disk=UniverseRegistryState.fromNbt(UniverseCatalogStore.read(root.resolve("world/data/"+UniverseRegistryState.STATE_ID+".dat")).getCompound("data"));
+            disk.requireHealthy();require(row.equals(disk.flushedRecords().get(id)),"FORMAL_CATALOG_STRICT");
+            proof.put("catalogChecked",true);proof.put("catalogAvailability",availability.name());return row;
+        }
+        private static String digest(Path path) throws Exception {return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));}
+        private void stableFields() {
+            proof.put("session",sid.toString());proof.put("uuid",id.value().toString());proof.put("worldKey",UniverseKeys.world(id,DimensionRole.OVERWORLD).getValue().toString());
+            proof.put("rootWorldSeed",Long.toString(intent.rootWorldSeed()));proof.put("sourceRootWorldSeed",Long.toString(intent.sourceRootWorldSeed()));
+            proof.put("allocationToken",HexFormat.of().formatHex(intent.allocationToken().bytes()));
+            proof.put("targetFingerprint",HexFormat.of().formatHex(intent.targetSettingsSnapshot().outputFingerprint()));
+            proof.put("sourceFingerprint",HexFormat.of().formatHex(intent.sourceSettingsSnapshot().outputFingerprint()));
+            proof.put("profileId",intent.profileId());proof.put("storage",storage().toString());
+        }
+        private void requireStableManifest() {
+            stableFields();
+            for(var key:List.of("session","uuid","worldKey","rootWorldSeed","sourceRootWorldSeed","allocationToken","targetFingerprint","sourceFingerprint","profileId","storage"))
+                require(proof.get(key).toString().equals(manifest.get(key).getAsString()),"FORMAL_RESTART_IDENTITY:"+key);
+            require(manifest.get("formalLeverEntry").getAsBoolean() && manifest.get("formalBatch").getAsBoolean() && manifest.get("formalSelected").getAsBoolean(),"FORMAL_ENTRY_MANIFEST");
+            proof.put("formalLeverEntry",true);proof.put("formalBatch",true);proof.put("formalSelected",true);
+            for(var key:List.of("providerACreateRejected","providerAResolveRejected","providerBLoadRejected","providerBPreflightRejected","providerAuthorityUnchanged","providerRegistrationRestored")) {
+                require(manifest.get(key).getAsBoolean(),"PROVIDER_BASELINE_MANIFEST:"+key);proof.put(key,true);
+            }
+        }
+
+        /** Task9原本正確的拒絕是baseline正控制；不假稱新production修復。 */
+        private void unknownProviderBeforeIntent() throws Exception {
+            var before=authorityHashes();var journal=SessionRecoveryState.get(server);
+            require(journal.flushedRecords().isEmpty(),"PROVIDER_A_NOT_FIRST_INTENT");
+            var lease=Minecraft121SettingsLifecycle.acquire(server);var registry=Minecraft121SettingsLifecycle.registry();
+            var parameters=new NbtCompound();parameters.putString("OverworldPreset","normal");parameters.putBoolean("GenerateStructures",lease.sourceGenerateStructures());
+            withMissingProvider(() -> {
+                boolean rejected=false;
+                try {registry.createSnapshot("quantumchamber:vanilla_normal_v1",1,parameters,lease);}
+                catch(IllegalStateException failure){rejected=failure.getMessage().contains("PROFILE_CLOSURE_UNBOUND");}
+                require(rejected,"unknownProviderFailsClosedWithoutReplacement:A_CREATE");proof.put("providerACreateRejected",true);
+            });
+            var snapshot=registry.createSnapshot("quantumchamber:vanilla_normal_v1",1,parameters,lease);
+            withMissingProvider(() -> {
+                boolean rejected=false;
+                try {registry.resolve(snapshot,lease);}catch(IllegalStateException failure){rejected=failure.getMessage().contains("PROFILE_CLOSURE_UNBOUND");}
+                require(rejected,"unknownProviderFailsClosedWithoutReplacement:A_RESOLVE");proof.put("providerAResolveRejected",true);
+            });
+            registry.resolve(snapshot,lease);
+            require(before.equals(authorityHashes()) && journal.flushedRecords().isEmpty(),"PROVIDER_A_CHANGED_AUTHORITY");
+            proof.put("providerABefore",before);proof.put("providerAAfter",authorityHashes());
+        }
+
+        private void unknownProviderAfterIntent(SessionRecoveryRecord selected) throws Exception {
+            var journal=SessionRecoveryState.get(server);journal.requireHealthy();
+            var path=root.resolve("world/data/"+SessionRecoveryState.STATE_ID+".dat");
+            var before=authorityHashes();var beforeBytes=Files.readAllBytes(path);
+            Files.createDirectories(evidence);
+            Files.write(evidence.resolve("provider-before-journal.dat"),beforeBytes,StandardOpenOption.CREATE_NEW);
+            proof.put("providerBeforeHashes",before);
+            var validatorField=SessionRecoveryState.class.getDeclaredField("intentValidator");validatorField.setAccessible(true);
+            var validator=validatorField.get(journal);
+            var load=SessionRecoveryState.class.getDeclaredMethod("load",Path.class,validatorField.getType());load.setAccessible(true);
+            withMissingProvider(() -> {
+                var newlyLoaded=(SessionRecoveryState)load.invoke(null,path,validator);
+                boolean loadRejected=false;
+                try {newlyLoaded.requireHealthy();}catch(IllegalStateException failure){loadRejected=failure.getMessage().contains("PROFILE_CLOSURE_UNBOUND");}
+                require(newlyLoaded!=journal && loadRejected,"unknownProviderFailsClosedWithoutReplacement:B_LOAD");
+                require(Arrays.equals(beforeBytes,Files.readAllBytes(path)) && before.equals(authorityHashes()),"PROVIDER_B1_CHANGED_AUTHORITY");
+                proof.put("providerB1AfterHashes",authorityHashes());
+                proof.put("providerBLoadRejected",true);
+                journal.requireHealthy();
+                // 只要求正式state保存既有原件；不put、變更或製造record，不替換validator。
+                journal.markDirty();boolean preflightRejected=false;
+                try {journal.flush(server);}catch(RuntimeException failure){preflightRejected=FailureText.describe(failure).contains("PROFILE_CLOSURE_UNBOUND");}
+                require(preflightRejected,"unknownProviderFailsClosedWithoutReplacement:B_PREFLIGHT");proof.put("providerBPreflightRejected",true);
+                require(Arrays.equals(beforeBytes,Files.readAllBytes(path)) && before.equals(authorityHashes())
+                        && selected.equals(journal.flushedRecords().get(sid)) && selected.equals(journal.records().get(sid)),"PROVIDER_B_CHANGED_AUTHORITY");
+                proof.put("providerB2AfterHashes",authorityHashes());
+            });
+            require(journal==SessionRecoveryState.get(server),"PROVIDER_REPLACED_INSTALLED_STATE");
+            journal.flush(server);
+            var restored=(SessionRecoveryState)load.invoke(null,path,validator);restored.requireHealthy();
+            require(Arrays.equals(beforeBytes,Files.readAllBytes(path)) && before.equals(authorityHashes())
+                    && selected.equals(restored.flushedRecords().get(sid)),"PROVIDER_RESTORE_NOT_EXACT");
+            proof.put("providerAuthorityUnchanged",true);proof.put("providerJournalSha256",digest(path));
+        }
+
+        /** 隔離且同thread持registry monitor；finally恢復同一映射與exact registration身分。 */
+        private void withMissingProvider(CheckedAction action) throws Exception {
+            var registry=Minecraft121SettingsLifecycle.registry();
+            synchronized(registry) {
+                var provider=registry.find("quantumchamber:vanilla_normal_v1",1).orElseThrow();
+                @SuppressWarnings("unchecked") var registrations=(Map<Object,Object>)field(registry,"registrations");
+                Object key=null;
+                for(var entry:registrations.entrySet())if(field(entry.getValue(),"provider")==provider) {require(key==null,"PROVIDER_KEY_NOT_UNIQUE");key=entry.getKey();}
+                require(key!=null,"PROVIDER_KEY_MISSING");
+                var registration=registrations.remove(key);
+                try {action.run();} finally {
+                    require(field(registry,"registrations")==registrations,"PROVIDER_MAP_REPLACED");
+                    registrations.put(key,registration);
+                    require(registrations.get(key)==registration && registry.find("quantumchamber:vanilla_normal_v1",1).orElseThrow()==provider,"PROVIDER_REGISTRATION_NOT_RESTORED");
+                    proof.put("providerRegistrationRestored",true);
+                }
+            }
+        }
+
+        private Map<String,String> authorityHashes() throws Exception {
+            var result=new TreeMap<String,String>();
+            for(var name:List.of(SessionRecoveryState.STATE_ID+".dat",UniverseAllocationLedger.FILE_NAME,UniverseRegistryState.STATE_ID+".dat",UniverseDiscoveryState.FILE_NAME)) {
+                var path=root.resolve("world/data/"+name);result.put(name,Files.exists(path)?digest(path):"ABSENT");
+            }
+            var universeRoot=root.resolve("world/dimensions/quantumchamber/universe");
+            if(Files.exists(universeRoot)) {
+                try(var paths=Files.walk(universeRoot)){for(var path:paths.toList())result.put("storage/"+universeRoot.relativize(path),Files.isRegularFile(path)?digest(path):"DIRECTORY");}
+            }
+            return result;
+        }
+        private void snapshot(boolean active) throws Exception {
+            var current=record();takeIntent(current);stableFields();
+            var journal=SessionRecoveryState.get(server);
+            var validatorField=SessionRecoveryState.class.getDeclaredField("intentValidator");validatorField.setAccessible(true);
+            var decode=SessionRecoveryState.class.getDeclaredMethod("fromNbt",NbtCompound.class,validatorField.getType());decode.setAccessible(true);
+            var wrapped=SessionJournalStore.read(root.resolve("world/data/"+SessionRecoveryState.STATE_ID+".dat"));
+            var diskState=(SessionRecoveryState)decode.invoke(null,wrapped.getCompound("data"),validatorField.get(journal));
+            diskState.requireHealthy();
+            var disk=diskState.flushedRecords().get(sid);
+            require(current.equals(disk) && current.equals(journal.records().get(sid)),"FORMAL_JOURNAL_CHECKED_READBACK");proof.put("journalChecked",true);
+            var allocationPath=root.resolve("world/data/"+UniverseAllocationLedger.FILE_NAME);
+            var allocation=dev.quantumchamber.persistence.CheckedNbtFile.parse(dev.quantumchamber.persistence.CheckedNbtFile.readFile(allocationPath));
+            var rows=allocation.getList("Entries",net.minecraft.nbt.NbtElement.COMPOUND_TYPE);
+            proof.put("allocationCount",rows.size());proof.put("allocationChecked",!phase.equals("intent"));
+            if(!phase.equals("intent")) {
+                require(rows.size()==1,"FORMAL_ALLOCATION_UNIQUE");
+                var row=rows.getCompound(0);
+                require(row.getUuid("UniverseId").equals(id.value()) && row.getLong("RootWorldSeed")==intent.rootWorldSeed(),"FORMAL_ALLOCATION_IDENTITY");
+            } else require(rows.isEmpty(),"FORMAL_ALLOCATION_BEFORE_INTENT");
+            if(active) {
+                var catalog=UniverseRegistryState.get(server);var row=catalog.flushedRecords().get(id);
+                require(row!=null && row.equals(catalog.records().get(id)) && row.desiredAvailability()==DesiredAvailability.EAGER_ENABLED
+                        && CollapseAuthorities.catalogRecordMatches(intent,row,CollapseAuthorities.AvailabilityPolicy.EAGER_ONLY),"catalogBeforeWorldStorage");
+                var diskCatalog=UniverseCatalogStore.read(root.resolve("world/data/"+UniverseRegistryState.STATE_ID+".dat")).getCompound("data").getList("Records",net.minecraft.nbt.NbtElement.COMPOUND_TYPE);
+                require(diskCatalog.size()==1 && UniverseRecord.fromNbt(diskCatalog.getCompound(0)).equals(row),"FORMAL_CATALOG_STRICT");
+                require(Files.isDirectory(storage()),"FORMAL_STORAGE_MISSING");proof.put("catalogChecked",true);proof.put("catalogAvailability","EAGER_ENABLED");
+            }
+        }
+        void stopping(MinecraftServer owner) {if(owner==server)proof.put("stoppingSeen",true);}
+        void stopped(MinecraftServer owner) {
+            if(owner!=server)return;
+            proof.put("stoppedSeen",true);proof.put("status",Boolean.TRUE.equals(proof.get("functionalPassed"))?"PASS":"FAIL");
+            try {durable(evidence.resolve("final.json"),proof);} catch(Exception failure){throw new IllegalStateException(failure);}
+            logEnd();
+        }
+        private void finishHalt(boolean passed) throws Exception {
+            finished=true;proof.put("status",passed?"PASS":"FAIL");proof.put("functionalPassed",passed);proof.put("ending","HALT");
+            durable(evidence.resolve("halt.json"),proof);logEnd();Runtime.getRuntime().halt(passed?77:78);
+        }
+        @SuppressWarnings("unchecked") private void guarded(CheckedAction action) {
+            try {action.run();} catch(Throwable failure) {
+                ((List<String>)proof.get("failures")).add(failure.toString());
+                LoggerFactory.getLogger("quantumchamber-m6-native").error("M6_FORMAL_GAMEPLAY_FAILED",failure);
+                try {finishHalt(false);}catch(Exception receiptFailure){throw new IllegalStateException(receiptFailure);}
+            }
+        }
+        private void logEnd() {LoggerFactory.getLogger("quantumchamber-m6-native").info("M6_NATIVE_END chain={} phase={} mode=FUNCTIONAL status={}",chain,phase,proof.get("status"));}
+        private static void durable(Path path,Object value) throws Exception {
+            Files.createDirectories(path.getParent());
+            var bytes=new Gson().toJson(value).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            try(var channel=java.nio.channels.FileChannel.open(path,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)) {
+                var buffer=java.nio.ByteBuffer.wrap(bytes);while(buffer.hasRemaining())channel.write(buffer);channel.force(true);
+            }
+        }
+        @FunctionalInterface private interface CheckedAction {void run() throws Exception;}
+    }
+
     private static Object field(Object owner,String name) throws ReflectiveOperationException {
         for(Class<?> type=owner.getClass();type!=null;type=type.getSuperclass()) {
             try {var field=type.getDeclaredField(name);field.setAccessible(true);return field.get(owner);}
