@@ -515,7 +515,7 @@ schema5在空journal／只剩M4 rows後仍單向保持5；同一schema5 envelope
 
 **Task10 functional probe 入口窄補（2026-11-05）**：既有 `m6-focused.ps1` 的 Probe 分支雖轉傳 `-ExpectedMode`，預設卻為 `DIAGNOSTIC`，且成功訊息固定寫 `diagnostic-only`；不能用未指定mode的 `-Suite Probe -Chain catalog-readback` 當功能PASS。Task10 的正式定向功能鏈直接呼叫本Task Files已列的 `m6-universe-probe.ps1`，明傳 `-ExpectedMode FUNCTIONAL`，依其 `m6-native-run-<runId>.json` 摘要、逐phase receipt與負控判定；`m6-focused.ps1` 只用於本Task JUnit，不修改此白名單外腳本。正式 `run-all.ps1` 的 `-AllEnabled` 必逐chain使用manifest各自的 `expectedMode` 並比較 mode／schema／chain／phase/receipt，不把舊 `native-seed-diagnostic` 的兩phase或負向功能斷言改判。這是既有兩支白名單腳本內的接線，不新增驗證檔或外部JVM observer。
 - [x] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality；未經 catalog checked，不可呼叫物化。
-- [ ] Task10 最終 code pin 正常 push，遠端同SHA Ubuntu／Windows 雙平台 CI success 並讀回原件；此前只結本機及兩席審查，不啟 Task11 程式。
+- [x] Task10 最終 code pin 正常 push，遠端同SHA Ubuntu／Windows 雙平台 CI success 並讀回原件；code pin `309f0d224ea53dd8bf73f4ccfff3c3e45e27c62c` 由docs HEAD `cceacd5140f1e1a6e8fedab2430cd67d772ad0f9` 的GitHub run `42163888020` 雙jobsuccess採計，三artifact清單已讀未解壓。
 
 ### Task 11：new U 的長期 root seed 與原版生成設定 owner
 
@@ -524,7 +524,9 @@ schema5在空journal／只剩M4 rows後仍單向保持5；同一schema5 envelope
 - [ ] 承接Task7 review M-2：首次新增enabled chain時，同步擴充正式run-all的manifest/summary/receipt oracle與正反例，逐mode/schema/chain/phase核對；保留既有DIAGNOSTIC歷史語意，不延到Task12才補。此owner補正已經Task7兩席獨立review確認，隨本task雙GREEN/full及fresh review驗收。
 - [ ] GenerateStructures由checked target snapshot重建，exact schema2 owner供StructureAccessor及ChunkGenerating.generateStructures持續worker，不改全域GeneratorOptions。具名true/false、NEW_M6重啟切canonical global仍frozen、legacy原路、constructor/worker/source capture一致；native descriptor/consumer漏一處不得結案。新mixin只對exact owner生效，unknown/canonical沿原版，不將ProviderContext晚到當fallback。
 - [ ] RED `newUniverseGetSeedChangesAfterConstruction`（現行全域 seed）、`noiseStructureBiomeUseFrozenRoot`、`twoUniversesDoNotShareRandomSequences`、`legacySchemaOneStillUsesSaveSeed`；以 Task 7 native descriptor 實證構造器直接讀與 worker 建 noise 的窗口。
-- [ ] `m6-focused.ps1 -Suite Probe -Chain native-seed-functional -Label g5-red` 在 `expectedMode=FUNCTIONAL` 下具名 FAIL；窄 owner/mixin 後 `g5-green-a/b`、GameTest `m6_universe_seed_owner` PASS。Task 11 修改 Java dispatch 與 PS oracle，不重判 Task 7 的 `DIAGNOSTIC` root；另 probe 同 server 兩 schema2 U 並行、schema1/canonical 控制組無 context、constructor 失敗 `finally` 清理及重啟後 seed 相同。
+- [ ] 直接執行 `m6-universe-probe.ps1 -Chain native-seed-functional -ExpectedMode FUNCTIONAL`，在完整 chain／phase manifest 與測試 Java dispatch 已接妥後取得真正 seed owner 行為具名 RED；窄 owner/mixin 後 `g5-green-a/b`、GameTest `m6_universe_seed_owner` PASS。Task 11 修改 Java dispatch 與 PS oracle，不重判 Task 7 的 `DIAGNOSTIC` root；另 probe 同 server 兩 schema2 U 並行、schema1/canonical 控制組無 context、constructor 失敗 `finally` 清理及重啟後 seed 相同。
+
+**Task11 functional probe 入口窄補（2026-11-06）**：沿Task10已採用的入口界線，`m6-focused.ps1` 的 Probe 預設 `DIAGNOSTIC` 且成功文字固定 `diagnostic-only`，不作本片功能鏈的正式判決。Task11 Files已列的 `m6-universe-probe.ps1` 明傳 `FUNCTIONAL`，以其 `m6-native-run-<runId>.json` 與逐phase receipt／負控判定；`m6-focused.ps1` 僅用於本片JUnit／GameTest，不修改這支白名單外腳本。正式 `run-all.ps1` 與probe須逐chain區分舊 `native-seed-diagnostic`、Task10 `catalog-readback` 及新增 `native-seed-functional` 的mode/schema/phase集合；Task7舊診斷功能負向結果與Task10首tick前halt77收據均保原判。本段不新增驗證檔、production注入點或外部JVM observer。
 - [ ] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality；任何原生 seed 消費者仍讀全域時切片②不得結案。
 
 ### Task 12：random NEW 的 collapse／restart 端到端
