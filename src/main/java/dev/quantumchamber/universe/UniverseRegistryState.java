@@ -125,15 +125,6 @@ public final class UniverseRegistryState extends PersistentState {
             state.envelopeVersion = schema;
             for (int index = 0; index < rawRecords.size(); index++) {
                 var raw = rawRecords.getCompound(index);
-                if (schema == 2 && raw.getInt("SchemaVersion") == 1) {
-                    if (!raw.getKeys().equals(Set.of("SchemaVersion", "UniverseUuid", "AllocationOrdinal", "DesiredAvailability", "Worlds"))) {
-                        throw new IllegalArgumentException("schema2 內的舊 record 必須維持舊形狀");
-                    }
-                    var roles = raw.getList("Worlds", NbtElement.COMPOUND_TYPE);
-                    if (roles.size() != 1 || !roles.getCompound(0).getKeys().equals(Set.of("WorldKey", "Role", "GeneratorProfile", "SeedPolicy", "StoragePolicyVersion"))) {
-                        throw new IllegalArgumentException("schema2 內的舊 role 必須維持五欄");
-                    }
-                }
                 var record = UniverseRecord.fromNbt(raw);
                 if (record.definition().schemaVersion() > schema) throw new IllegalArgumentException("catalog envelope 版本低於 record");
                 if (record.definition().schemaVersion() == 1) state.legacyRows.put(record.definition().universeId(), raw.copy());

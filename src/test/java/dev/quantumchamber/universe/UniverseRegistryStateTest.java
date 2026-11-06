@@ -1,6 +1,7 @@
 package dev.quantumchamber.universe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -56,6 +57,89 @@ class UniverseRegistryStateTest {
         assertFalse(reloaded.upgradeEnvelope());
         assertEquals(disk, reloaded.writeNbt(new NbtCompound()));
         assertFalse(reloaded.isDirty());
+    }
+
+    @Test
+    void schemaTwoUpgradePreservesLegalLegacyRecordAndRoleExtras() throws Exception {
+        org.junit.jupiter.api.Assertions.assertAll(
+                () -> preservesLegalLegacyExtra(false),
+                () -> preservesLegalLegacyExtra(true));
+    }
+
+    private void preservesLegalLegacyExtra(boolean onRole) throws Exception {
+        var original = new UniverseRegistryState();
+        original.allocateOverworld(ID, 17);
+        original.allocateOverworld(new UUID(0, 2), 4);
+        var legacy = original.writeNbt(new NbtCompound());
+        var rows = legacy.getList("Records", NbtElement.COMPOUND_TYPE);
+        var first = rows.remove(0);
+        rows.add(first);
+        var extension = rows.getCompound(0);
+        if (onRole) extension = extension.getList("Worlds", NbtElement.COMPOUND_TYPE).getCompound(0);
+        extension.putString("Extra", "既有有效擴充");
+        var before0 = rowBytes(rows.getCompound(0));
+        var before1 = rowBytes(rows.getCompound(1));
+        var state = UniverseRegistryState.fromNbt(legacy);
+        state.requireHealthy();
+        assertTrue(state.upgradeEnvelope());
+        var file = root.resolve(onRole ? "role-extra.dat" : "record-extra.dat");
+        state.save(file);
+        var envelope = UniverseCatalogStore.read(file).getCompound("data");
+        assertEquals(2, envelope.getInt("SchemaVersion"));
+        assertArrayEquals(before0, rowBytes(envelope.getList("Records", NbtElement.COMPOUND_TYPE).getCompound(0)));
+        assertArrayEquals(before1, rowBytes(envelope.getList("Records", NbtElement.COMPOUND_TYPE).getCompound(1)));
+
+        var reloaded = UniverseRegistryState.load(file);
+        reloaded.requireHealthy();
+        var candidate = m6CatalogFixture();
+        reloaded.allocateM6(candidate);
+        reloaded.save(file);
+        var finalState = UniverseRegistryState.load(file);
+        finalState.requireHealthy();
+        var mixed = finalState.writeNbt(new NbtCompound());
+        var finalRows = mixed.getList("Records", NbtElement.COMPOUND_TYPE);
+        assertEquals(3, finalRows.size());
+        assertEquals(rows.getCompound(0), finalRows.getCompound(0));
+        assertEquals(rows.getCompound(1), finalRows.getCompound(1));
+        assertArrayEquals(before0, rowBytes(finalRows.getCompound(0)));
+        assertArrayEquals(before1, rowBytes(finalRows.getCompound(1)));
+        var retained = finalRows.getCompound(0);
+        if (onRole) retained = retained.getList("Worlds", NbtElement.COMPOUND_TYPE).getCompound(0);
+        assertEquals(NbtElement.STRING_TYPE, retained.get("Extra").getType());
+        assertEquals("既有有效擴充", retained.getString("Extra"));
+        assertEquals(candidate.toNbt(), finalRows.getCompound(2));
+        assertEquals(candidate, finalState.flushedRecords().get(candidate.definition().universeId()));
+
+        var extraRecord = mixed.copy();
+        extraRecord.getList("Records", NbtElement.COMPOUND_TYPE).getCompound(2).putString("Extra", "拒絕");
+        assertThrows(IllegalStateException.class, () -> UniverseRegistryState.fromNbt(extraRecord).requireHealthy());
+        var extraRole = mixed.copy();
+        extraRole.getList("Records", NbtElement.COMPOUND_TYPE).getCompound(2)
+                .getList("Worlds", NbtElement.COMPOUND_TYPE).getCompound(0).putString("Extra", "拒絕");
+        assertThrows(IllegalStateException.class, () -> UniverseRegistryState.fromNbt(extraRole).requireHealthy());
+    }
+
+    private static byte[] rowBytes(NbtCompound row) throws Exception {
+        // compound key 的物理迭代順序不屬於 NBT 語意；canonical bytes 保留型別、全部欄位與 list 次序。
+        return Minecraft121SettingsGraph.canonicalNbt(row, 1024 * 1024);
+    }
+
+    private static UniverseRecord m6CatalogFixture() {
+        var snapshot = new NbtCompound();
+        snapshot.putInt("SnapshotVersion", 1);
+        snapshot.putString("ProviderId", "quantumchamber:vanilla_normal_v1");
+        snapshot.putInt("ProviderVersion", 1);
+        var parameters = new NbtCompound();
+        parameters.putString("OverworldPreset", "normal");
+        parameters.putBoolean("GenerateStructures", true);
+        snapshot.put("Parameters", parameters);
+        snapshot.putByteArray("OutputFingerprint", new byte[32]);
+        var settings = GenerationSettingsSnapshot.fromNbt(snapshot);
+        var token = new dev.quantumchamber.candidate.CandidateBytes(new byte[32]);
+        var intent = new dev.quantumchamber.candidate.NewUniverseIntent(token, token, 1,
+                dev.quantumchamber.candidate.NewUniverseIntent.RANDOM_PROFILE_ID, 1, 42L, settings, settings, 0);
+        var id = dev.quantumchamber.collapse.UniverseAllocationLedger.deriveUniverseId(token);
+        return UniverseRegistry.newM6(id, 18, intent);
     }
 
     @Test
