@@ -36,12 +36,15 @@ public final class M6UniverseGameTests implements FabricGameTest {
         private dev.quantumchamber.chamber.ChamberSessionGateway decorator;
         private int callbacks,retryStartedAt;
         private boolean terminal;
+        private boolean manualCloseDone;
+        private Throwable originalFailure;
         private dev.quantumchamber.chamber.ChamberControllerBlockEntity controllerIdentity;
         RetryHighProbe(TestContext context,boolean callbackFault) {
             this.context=context;this.callbackFault=callbackFault;
             cleanupFault=callbackFault?M2CorridorGameTests.NativeEntry.TeardownFault.valueOf(System.getProperty("quantumchamber.test.m6RetryCleanupFault","NONE")):M2CorridorGameTests.NativeEntry.TeardownFault.NONE;
             originalGateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
             fixture=new M2CorridorGameTests.NativeEntry(context,1);
+            controllerIdentity=fixture.controller();
             logs=new LogCapture("quantumchamber");
             try {
                 hooks.add(this::verifyDetached);
@@ -120,7 +123,7 @@ public final class M6UniverseGameTests implements FabricGameTest {
                     }
                     poll(tick+1);
                 } catch(RuntimeException | Error failure) {
-                    hooks.releaseAfter(failure);throw failure;
+                    actionFailed(failure,tick);
                 }
             });
         }
@@ -132,33 +135,87 @@ public final class M6UniverseGameTests implements FabricGameTest {
         }
         private void finish(String message,int tick) {finishOnce(message==null?null:new IllegalStateException(message),tick);}
         private void finishOnce(Throwable failure,int tick) {
-            if(terminal){if(failure!=null){hooks.releaseAfter(failure);throwOriginal(failure);}return;}
+            if(terminal){if(failure!=null)releaseAndThrow(failure);return;}
             terminal=true;
+            if(failure!=null){originalFailure=failure;hooks.prefer(failure);}
             Runnable done=() -> {
-                if(failure!=null){hooks.releaseAfter(failure);throwOriginal(failure);return;}
+                var primary=hooks.preferred();
+                if(primary!=null){releaseAndThrow(primary);return;}
                 hooks.release();context.complete();
             };
             try {
-                if(fixture.record()!=null)fixture.trustedTeardown(tick,done,hooks,cleanupFault);
-                else {
-                    if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()))fixture.power();
-                    try {done.run();}catch(RuntimeException | Error original) {
-                        try {fixture.close();}catch(RuntimeException | Error cleanup){if(cleanup!=original)original.addSuppressed(cleanup);}
-                        throw original;
+                SessionView view;
+                try {view=sessionView();}catch(RuntimeException | Error uncertain) {
+                    if(hooks.preferred()==null){originalFailure=uncertain;hooks.prefer(uncertain);}
+                    else hooks.primary(uncertain);
+                    view=SessionView.PENDING;
+                }
+                if(view==SessionView.NONE) {
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_NO_SESSION_VERIFIED pid={} session={} presence=NONE currentEmpty=true flushedEmpty=true",ProcessHandle.current().pid(),attempt==null?"UNASSIGNED":attempt.sessionUuid());
+                    closeNoSessionOnce();done.run();
+                } else {
+                    if(view==SessionView.PENDING) {
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").warn("M6_RETRY_PENDING_RETURN pid={} session={}",ProcessHandle.current().pid(),attempt==null?"UNASSIGNED":attempt.sessionUuid());
+                        requestReturn();
                     }
-                    fixture.close();
+                    fixture.trustedTeardown(tick,done,hooks,cleanupFault);
                 }
             } catch(RuntimeException | Error original) {
-                if(failure!=null && original!=failure){failure.addSuppressed(original);hooks.releaseAfter(failure);throwOriginal(failure);return;}
-                hooks.releaseAfter(original);throw original;
+                releaseAndThrow(original);
             }
+        }
+        private enum SessionView { CHECKED, NONE, PENDING }
+        private void requireFixtureOwner() {
+            var world=context.getWorld();
+            if(!fixture.server.isOnThread() || fixture.server.getWorld(world.getRegistryKey())!=world
+                    || controllerIdentity==null || fixture.controller()!=controllerIdentity || controllerIdentity.isRemoved()
+                    || controllerIdentity.getWorld()!=world)throw new IllegalStateException("M6_RETRY_FIXTURE_OWNER_UNCERTAIN");
+            if(attempt!=null && !attempt.chamberUuid().equals(controllerIdentity.chamberUuid()))throw new IllegalStateException("M6_RETRY_CHAMBER_IDENTITY_CHANGED");
+            var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+            if(gateway!=originalGateway && gateway!=decorator)throw new IllegalStateException("M6_RETRY_GATEWAY_OWNER_UNCERTAIN");
+        }
+        private SessionView sessionView() {
+            requireFixtureOwner();
+            var chamber=controllerIdentity.chamberUuid();
+            if(chamber==null)return SessionView.PENDING;
+            var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(fixture.server);
+            java.util.function.Predicate<dev.quantumchamber.persistence.SessionRecoveryRecord> belongs=row->row.chamberUuid().equals(chamber)
+                    || row.origin().worldKey().equals(context.getWorld().getRegistryKey().getValue()) && row.origin().controllerPos().equals(fixture.frame.controllerPos());
+            var checked=journal.flushedRecords().values().stream().filter(belongs).toList();
+            if(checked.size()>1)throw new IllegalStateException("M6_RETRY_AMBIGUOUS_CHECKED_SESSION");
+            if(!checked.isEmpty()) {
+                var row=checked.getFirst();
+                if(!row.chamberUuid().equals(chamber) || !row.origin().worldKey().equals(context.getWorld().getRegistryKey().getValue())
+                        || !row.origin().controllerPos().equals(fixture.frame.controllerPos()))throw new IllegalStateException("M6_RETRY_CHECKED_ORIGIN_MISMATCH");
+                // START故障可能早於attempt賦值；從exact checked原件綁回同一SID。
+                attempt=row;return SessionView.CHECKED;
+            }
+            boolean currentEmpty=journal.records().values().stream().noneMatch(belongs);
+            var presence=dev.quantumchamber.chamber.ChamberSessions.gateway().presence(fixture.server,chamber);
+            return currentEmpty && presence==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE?SessionView.NONE:SessionView.PENDING;
+        }
+        private void requestReturn() {
+            requireFixtureOwner();
+            if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()))fixture.power();
+            dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),controllerIdentity);
+        }
+        private void closeNoSessionOnce() {
+            // 僅由同一同步交易中已驗證NONE的唯一呼叫點進入；不再查核後另走跳過返還的例外路徑。
+            if(!manualCloseDone){manualCloseDone=true;fixture.close();}
+        }
+        private void actionFailed(Throwable failure,int tick) {
+            if(terminal){releaseAndThrow(failure);return;}
+            finishOnce(failure,tick+1);
+        }
+        private void releaseAndThrow(Throwable failure) {
+            var primary=hooks.primary(failure);hooks.releaseAfter(primary);throwOriginal(primary);
         }
         private void schedule(int tick,Runnable action) {
             try {
                 context.runAtTick(tick,() -> {
-                    try {action.run();}catch(RuntimeException | Error failure){hooks.releaseAfter(failure);throw failure;}
+                    try {action.run();}catch(RuntimeException | Error failure){actionFailed(failure,Math.toIntExact(context.getTick()));}
                 });
-            } catch(RuntimeException | Error failure){hooks.releaseAfter(failure);throw failure;}
+            } catch(RuntimeException | Error failure){actionFailed(failure,Math.toIntExact(context.getTick()));}
         }
         private static void throwOriginal(Throwable failure) {
             if(failure instanceof RuntimeException runtime)throw runtime;
@@ -176,9 +233,29 @@ public final class M6UniverseGameTests implements FabricGameTest {
             var logger=(org.apache.logging.log4j.core.Logger)org.apache.logging.log4j.LogManager.getLogger("quantumchamber");
             boolean absent=!logger.getContext().getConfiguration().getRootLogger().getAppenders().containsKey(logs.getName());
             boolean stopped=!logs.isStarted();
-            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_CLEANUP_DETACHED status={} pid={} session={} fault={} gateway={} appenderRemoved={} captureStopped={}",
-                    gateway&&absent&&stopped?"PASS":"FAIL",ProcessHandle.current().pid(),attempt==null?"UNASSIGNED":attempt.sessionUuid(),cleanupFault,gateway,absent,stopped);
-            context.assertTrue(gateway&&absent&&stopped,"M6_RETRY_CLEANUP_DETACH_FAILED");
+            var observed=(java.util.Map<?,?>)M4CandidateTestAccess.get(ConnectedGameTestPlayer.class,"OBSERVED");
+            boolean removed=true,unobserved=true,queuesEmpty=true;
+            var connections=new java.util.ArrayList<>(fixture.players);connections.add(fixture.operator);
+            for(var connection:connections) {
+                var id=connection.player().getUuid();
+                removed &= fixture.server.getPlayerManager().getPlayer(id)==null;
+                unobserved &= !observed.containsKey(id);
+                var channel=(io.netty.channel.embedded.EmbeddedChannel)M4CandidateTestAccess.get(connection,"channel");
+                var inbound=(java.util.Queue<?>)M4CandidateTestAccess.get(channel,"inboundMessages");
+                var outbound=(java.util.Queue<?>)M4CandidateTestAccess.get(channel,"outboundMessages");
+                queuesEmpty &= (inbound==null || inbound.isEmpty()) && (outbound==null || outbound.isEmpty());
+            }
+            boolean detached=gateway&&absent&&stopped&&removed&&unobserved&&queuesEmpty;
+            if(originalFailure!=null) {
+                boolean same=hooks.preferred()==originalFailure;
+                boolean timeout=java.util.Arrays.stream(originalFailure.getSuppressed()).anyMatch(error->String.valueOf(error.getMessage()).contains("有限等待逾時"));
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_PRIMARY_RETAINED pid={} session={} sameObject={} message={} timeoutSuppressed={}",
+                        ProcessHandle.current().pid(),attempt==null?"UNASSIGNED":attempt.sessionUuid(),same,originalFailure.getMessage(),timeout);
+                detached &= same;
+            }
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_CLEANUP_DETACHED status={} pid={} session={} fault={} gateway={} appenderRemoved={} captureStopped={} playersRemoved={} observedRemoved={} queuesEmpty={}",
+                    detached?"PASS":"FAIL",ProcessHandle.current().pid(),attempt==null?"UNASSIGNED":attempt.sessionUuid(),cleanupFault,gateway,absent,stopped,removed,unobserved,queuesEmpty);
+            context.assertTrue(detached,"M6_RETRY_CLEANUP_DETACH_FAILED");
         }
     }
 

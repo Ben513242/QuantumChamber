@@ -1920,12 +1920,27 @@ public final class M2CorridorGameTests implements FabricGameTest {
         }
         void trustedTeardown(int tick,Runnable complete,TestHooks hooks,TeardownFault fault) {
             var initial=record();
-            context.assertTrue(initial!=null,"必須是已知 source session 才能要求收尾");
+            if(hooks==null)context.assertTrue(initial!=null,"必須是已知 source session 才能要求收尾");
+            var chamber=initial==null?controller().chamberUuid():initial.chamberUuid();
+            context.assertTrue(chamber!=null,"收尾必須有exact chamber身分");
             if(context.getWorld().isReceivingRedstonePower(frame.controllerPos())) power();
             else dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),controller());
             var journal=SessionRecoveryState.get(server);
+            if(hooks!=null && initial!=null) {
+                var afterLow=journal.flushedRecords().get(initial.sessionUuid());
+                if(afterLow!=null && afterLow.state()==SessionState.RETURNING && afterLow.equals(journal.records().get(initial.sessionUuid())))
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_RETURNING_CHECKED pid={} session={} state=RETURNING currentExact=true",ProcessHandle.current().pid(),initial.sessionUuid());
+            }
+            boolean[] returnVerified={false},closed={false},returnLogged={false};
             Runnable returned=() -> {
-                    context.assertTrue(!journal.flushedRecords().containsKey(initial.sessionUuid()),"真release收據消費前已durable移除");
+                    returnVerified[0]=false;
+                    if(hooks==null)context.assertTrue(!journal.flushedRecords().containsKey(initial.sessionUuid()),"真release收據消費前已durable移除");
+                    else {
+                        java.util.function.Predicate<SessionRecoveryRecord> belongs=row->row.chamberUuid().equals(chamber)
+                                || row.origin().worldKey().equals(context.getWorld().getRegistryKey().getValue()) && row.origin().controllerPos().equals(frame.controllerPos());
+                        context.assertTrue(journal.flushedRecords().values().stream().noneMatch(belongs)
+                                && journal.records().values().stream().noneMatch(belongs),"真release必須current/flushed都無此艙或此origin的session");
+                    }
                     for(var connection : players) {
                         var player=connection.player();
                         context.assertTrue(player.getServerWorld()==context.getWorld()
@@ -1935,17 +1950,26 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     }
                     context.assertTrue(dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),frame.controllerPos()),
                             "LOW真返還收尾後解除來源保護");
+                    returnVerified[0]=true;
+                    if(hooks!=null && !returnLogged[0]) {
+                        returnLogged[0]=true;
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_RETURN_VERIFIED pid={} session={} chamber={} returned=true",ProcessHandle.current().pid(),initial==null?"NO_CHECKED":initial.sessionUuid(),chamber);
+                    }
             };
+            if(hooks!=null)hooks.add(() -> {
+                if(!returnVerified[0])throw new IllegalStateException("M6_RETRY_CLOSE_PENDING_RETURN_NOT_VERIFIED");
+                if(!closed[0]) {closed[0]=true;close();}
+            });
             boolean[] injected={false};
             Runnable mark=() -> {
                 if(!injected[0]) {
                     injected[0]=true;
-                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_TEARDOWN_FAULT kind={} pid={} session={} returned=true",fault,ProcessHandle.current().pid(),initial.sessionUuid());
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_TEARDOWN_FAULT kind={} pid={} session={} returned=true",fault,ProcessHandle.current().pid(),initial==null?"NO_CHECKED":initial.sessionUuid());
                 }
             };
             java.util.function.BooleanSupplier condition=() -> {
-                if(dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,initial.chamberUuid())
-                        !=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE)return false;
+                if(dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,chamber)
+                        !=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE){returnVerified[0]=false;return false;}
                 if(fault==TeardownFault.CONDITION || fault==TeardownFault.TIMEOUT) {
                     returned.run();mark.run();
                     if(fault==TeardownFault.CONDITION)throw new IllegalStateException("M6_RETRY_TEARDOWN_CONDITION");
@@ -1959,11 +1983,14 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     returned.run();
                     if(fault==TeardownFault.READY){mark.run();throw new IllegalStateException("M6_RETRY_TEARDOWN_READY");}
                     complete.run();
-                } catch(RuntimeException | Error failure) {original=failure;throw failure;}
+                } catch(RuntimeException | Error failure) {
+                    original=hooks==null?failure:hooks.primary(failure);
+                    if(original instanceof RuntimeException runtime)throw runtime;throw (Error)original;
+                }
                 finally {
-                    try {close();} catch(RuntimeException | Error cleanup) {
-                        if(hooks!=null && original!=null)original.addSuppressed(cleanup);else throw cleanup;
-                    }
+                    if(hooks==null)close();
+                    else if(original!=null)hooks.releaseAfter(original);
+                    else hooks.release();
                 }
             };
             if(fault==TeardownFault.TIMEOUT)whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(2),hooks);
@@ -2691,8 +2718,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     whenUntil(context,tick+1,condition,ready,deadline,hooks);
                 }
             } catch (RuntimeException | Error failure) {
-                if (hooks!=null) hooks.releaseAfter(failure);
-                throw failure;
+                if(hooks==null)throw failure;
+                var primary=hooks.primary(failure);hooks.releaseAfter(primary);
+                if(primary instanceof RuntimeException runtime)throw runtime;throw (Error)primary;
             }
         });
     }
@@ -2704,6 +2732,19 @@ public final class M2CorridorGameTests implements FabricGameTest {
     static final class TestHooks {
         private final java.util.ArrayDeque<Runnable> releases=new java.util.ArrayDeque<>();
         private boolean released;
+        private Throwable preferred;
+        void prefer(Throwable original) {
+            if(!(original instanceof RuntimeException) && !(original instanceof Error))throw new IllegalArgumentException("preferred必須是RuntimeException或Error");
+            if(released || preferred!=null && preferred!=original)throw new IllegalStateException("preferred只允許同一原錯");
+            preferred=original;
+        }
+        Throwable preferred() {return preferred;}
+        Throwable primary(Throwable failure) {
+            java.util.Objects.requireNonNull(failure);
+            if(preferred==null || preferred==failure)return failure;
+            for(var prior:preferred.getSuppressed())if(prior==failure)return preferred;
+            preferred.addSuppressed(failure);return preferred;
+        }
         void add(Runnable release) {
             if(released) throw new IllegalStateException("測試 hook 已釋放，不可再登記");
             releases.push(release);
@@ -2714,14 +2755,14 @@ public final class M2CorridorGameTests implements FabricGameTest {
             Throwable failure=null;
             while(!releases.isEmpty()) {
                 try { releases.pop().run(); }
-                catch(RuntimeException | Error exception) { if(failure==null) failure=exception; else failure.addSuppressed(exception); }
+                catch(RuntimeException | Error exception) { if(failure==null) failure=exception; else if(failure!=exception)failure.addSuppressed(exception); }
             }
             if(failure instanceof RuntimeException exception) throw exception;
             if(failure instanceof Error error) throw error;
         }
         /** 失敗路徑：先釋放 hook；釋放本身的例外或 Error 附在原失敗上，不遮蔽原因。 */
         void releaseAfter(Throwable failure) {
-            try { release(); } catch(RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            try { release(); } catch(RuntimeException | Error cleanup) { if(failure!=cleanup)failure.addSuppressed(cleanup); }
         }
     }
     private static String waitingLeaseEvidence(TestContext context) {
