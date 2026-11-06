@@ -923,7 +923,7 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
     /**
      * F4b-2（spec §6.5 的實體交叉檢查；plan Step 1 第 3 組）：RESOLVE 之後、PREPARE 之前，宇宙 U 的投影 Controller 位置已經有一座 Controller（例如 ledger 遺失，
      * 或玩家在動態宇宙自行搭建），interior 另有一塊石頭；projection ledger 沒有這座艙在 U 的 entry。PREPARE 預載完成之後：PROJECTION_CONFLICT（永久，ERROR
-     * 「需要管理員處理」一則），不寫 PENDING（ledger 的檔案 bytes 不變），不清 interior（石頭還在），不寫任何投影方塊（shell 仍是 AIR），既有的 Controller 不被覆寫；
+     * 「需要管理員處理」一則），不寫 PENDING（ledger 的檔案 bytes 不變），不清 interior（石頭還在），不進 ProjectionWriter；測試核 343 格前後無淨變更，既有 Controller 的同一 BE、身分與 NBT 不被覆寫；
      * 目的世界與來源的 ticket 都已釋放。永久原因：P 再次由艙外進入也不重試。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_cross_check", tickLimit = 900)
@@ -1126,7 +1126,7 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
     /**
      * F4b-2（spec §6 收斂規則第 2 點、§6.5；plan Step 1 第 9 組「投影方塊只在 PENDING 確認之後寫」）：PENDING 的 checked 寫入在 atomic move 之後讀回失敗（testmod 的
      * {@code CheckedNbtFileReadFaultMixin}，對 {@code quantumchamber_projections.dat} 注入一次）。roll-forward：current 保留 PENDING、權威未確認；PREPARE 進
-     * SEALED(PROJECTION_FAILED)（可重試的 WARN 一則），沒有寫任何方塊（volume 的 343 格都是 AIR）、沒有登記到投影保護索引；目的世界的 ticket 已釋放。完成之前等
+     * SEALED(PROJECTION_FAILED)（可重試的 WARN 一則），在 writer 前返回；測試核目的 343 格前後無淨變更（normal 地形不要求全 AIR）、沒有登記到投影保護索引；目的世界的 ticket 已釋放。完成之前等
      * projection ledger 收斂（權威的退避 200 tick 之後由 helper 重寫）。catalog 增量 1。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m5_universe_prepare_pending_fault", tickLimit = 900)
