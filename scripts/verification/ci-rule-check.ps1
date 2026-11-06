@@ -24,7 +24,7 @@ param(
     [string]$M4NormalRuntimeLog='',
     [string]$M5RuntimeLog='',
     [switch]$PresetFixture,
-    [ValidateSet('none','missing-marker','wrong-flag','wrong-config')][string]$PresetMutation='none',
+    [ValidateSet('none','missing-marker','wrong-flag','wrong-m5-only','wrong-m5-normal','wrong-config')][string]$PresetMutation='none',
     [ValidateSet('default','legacy','normal','m5','m6')][string]$PresetMutationScope='default',
     [string]$M6GameTestXml='',
     [string]$M6RuntimeLog='',
@@ -149,11 +149,13 @@ if($Step -cin @('確認 Windows 原生案例確實執行','確認非 Windows 跨
         Copy-Item -LiteralPath $runtimeLog -Destination $dest
         if($PresetMutation -ne 'none' -and $PresetMutationScope -ceq $presetScope){
             $text=Get-Content -LiteralPath $dest -Raw
-            $pattern='M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) flatConfig=(true|false) normalConfig=(true|false)'
+            $pattern='M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'
             if([regex]::Matches($text,$pattern).Count -ne 1){throw 'M4_PRESET_INPUT：mutation前marker必須恰一'}
             switch($PresetMutation){
                 'missing-marker' {$text=[regex]::Replace($text,$pattern,'REMOVED_PRESET_MARKER')}
                 'wrong-flag' {$oldFlag=[regex]::Match($text,'M4_TEST_PRESET defaultNormal=(true|false)').Groups[1].Value;$newFlag=if($oldFlag -ceq 'true'){'false'}else{'true'};$text=$text.Replace("M4_TEST_PRESET defaultNormal=$oldFlag","M4_TEST_PRESET defaultNormal=$newFlag")}
+                'wrong-m5-only' {$oldFlag=[regex]::Match($text,'m5Only=(true|false)').Groups[1].Value;$newFlag=if($oldFlag -ceq 'true'){'false'}else{'true'};$text=$text.Replace("m5Only=$oldFlag","m5Only=$newFlag")}
+                'wrong-m5-normal' {$oldFlag=[regex]::Match($text,'m5Normal=(true|false)').Groups[1].Value;$newFlag=if($oldFlag -ceq 'true'){'false'}else{'true'};$text=$text.Replace("m5Normal=$oldFlag","m5Normal=$newFlag")}
                 'wrong-config' {$oldConfig=[regex]::Match($text,'flatConfig=(true|false) normalConfig=(true|false)').Value;$newConfig=if($oldConfig -ceq 'flatConfig=false normalConfig=true'){'flatConfig=true normalConfig=false'}else{'flatConfig=false normalConfig=true'};$text=$text.Replace($oldConfig,$newConfig)}
             }
             Set-Content -LiteralPath $dest -Value $text -Encoding utf8

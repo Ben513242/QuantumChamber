@@ -370,11 +370,12 @@ function Fresh-Game([bool]$full,[string]$scope) {
             $enabled=$server[0].commandLine.Contains("-Dquantumchamber.gametest.$($scopeFlags[$key])=true")
             if($enabled -ne ($scope -ceq $key)){throw "M6_SCOPE_MISMATCH：exact JVM scope flags 不符：$scope/$key"}
         }
+        if($server[0].commandLine.Contains('-Dquantumchamber.gametest.m5Normal=true') -ne ($scope -ceq 'm5')){throw 'M4_TEST_PRESET_MISMATCH：exact m5Normal flag不符'}
         $presetLog=Read-GateRuntimeLog -Evidence (Join-Path $gate 'execution')
-        $presetRows=@([regex]::Matches($presetLog,'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
-        $expectedPreset=if($scope -ceq 'default'){@('true','false','false','true')}elseif($scope -ceq 'normal'){@('false','true','false','true')}else{@('false','false','true','false')}
+        $presetRows=@([regex]::Matches($presetLog,'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+        $expectedPreset=if($scope -ceq 'default'){@('true','false','false','false','false','true')}elseif($scope -ceq 'normal'){@('false','true','false','false','false','true')}elseif($scope -ceq 'm5'){@('false','false','true','true','false','true')}else{@('false','false','false','false','true','false')}
         if($presetRows.Count -ne 1 -or [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count -ne 1){throw 'M4_TEST_PRESET_MISMATCH：啟動 marker 必須恰一'}
-        for($field=0;$field -lt 4;$field++){if($presetRows[0].Groups[$field+1].Value -cne $expectedPreset[$field]){throw 'M4_TEST_PRESET_MISMATCH：實際啟動 config 與 scope 不符'}}
+        for($field=0;$field -lt 6;$field++){if($presetRows[0].Groups[$field+1].Value -cne $expectedPreset[$field]){throw 'M4_TEST_PRESET_MISMATCH：實際啟動 config 與 scope 不符'}}
         if($scope -ceq 'm5') {
             if($server.Count -ne 1){throw "M5 run 必須恰有一個 server JVM（$($server.Count)）"}
             $expected=@(Assert-Scope (Join-Path $gate "result-build/$report") 'm5')

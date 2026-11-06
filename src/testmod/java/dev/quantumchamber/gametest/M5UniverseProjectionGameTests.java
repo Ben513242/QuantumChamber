@@ -329,14 +329,14 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
         resolvedUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var chunks = M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
             whenTicks(context, resolved, 200, () -> M5GameTestSupport.blockTicking(universe, chunks),
-                    ticking -> projectionProtection(context, hooks, universe, frame, chamber, id, ticking),
+                    ticking -> projectionProtection(context, hooks, universe, frame, sid, chamber, id, ticking),
                     () -> "投影周圍強制載入的 chunk 沒有開始 block ticking：" + chunks, hooks);
         });
     }
 
     /** {@link #projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids} 在投影周圍的 chunk 開始 block ticking（{@code ticking}）之後的本體。 */
     private static void projectionProtection(TestContext context, M2CorridorGameTests.TestHooks hooks, ServerWorld universe,
-            ChamberFrame frame, UUID chamber, UniverseId id, int ticking) {
+            ChamberFrame frame, UUID sid, UUID chamber, UniverseId id, int ticking) {
         var server = context.getWorld().getServer();
         var witness = new LinkedHashMap<String, Boolean>();
         var protection = ChamberProtectionService.get();
@@ -420,7 +420,21 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             universe.setBlockState(solid, Blocks.STONE.getDefaultState());
         }
         universe.setBlockState(wet, Blocks.AIR.getDefaultState());
+        universe.setBlockState(outside(frame,9,4,3),Blocks.AIR.getDefaultState());
+        universe.setBlockState(outside(frame,9,3,3),Blocks.AIR.getDefaultState());
+        java.util.function.Supplier<String> waterGeometry=() -> {
+            var samples=new ArrayList<String>();
+            for(int x=5;x<=9;x++) for(int y=3;y<=4;y++) {
+                var pos=x<=6?local(frame,x,y,3):outside(frame,x,y,3);
+                samples.add("local="+x+","+y+",3 pos="+pos.toShortString()+" block="+universe.getBlockState(pos)
+                        +" fluid="+universe.getFluidState(pos)+" mayMutate="+protection.mayMutate(universe,pos)+" blockTicking="+universe.shouldTickBlockPos(pos)
+                        +" tickingFuture="+universe.getChunkManager().isTickingFutureReady(ChunkPos.toLong(pos)));
+            }
+            return samples.toString();
+        };
         universe.setBlockState(source, Blocks.WATER.getDefaultState());
+        LOGGER.info("M5_WATER_GEOMETRY stage=before-flow sid={} universe={} frame={} facing={} source={} wet={} dry={} samples={}",
+                sid,id,frame.controllerPos().toShortString(),frame.outwardFacing(),source.toShortString(),wet.toShortString(),dry.toShortString(),waterGeometry.get());
         // 等對照組的活塞真的推動（方塊事件與 block entity 都跑過）、水源也流動過（排程刻跑過；同一次流動同時往 dry 與 wet）再判定。
         BooleanSupplier controlPistonPushed = () -> universe.getBlockState(controlPiston).get(PistonBlock.EXTENDED)
                 && universe.getBlockState(controlTarget).isOf(Blocks.STONE);
@@ -430,6 +444,8 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
         BooleanSupplier pushSettled = () -> universe.getBlockState(intoDamaged).get(PistonBlock.EXTENDED)
                 && !universe.getBlockState(pushedInto).isOf(Blocks.MOVING_PISTON)
                 && !universe.getBlockState(pushedStone).isOf(Blocks.MOVING_PISTON);
+        long waterDeadlineTick=ticking+1L+200;
+        int[] waterDiagnosticTick={ticking};
         whenTicks(context, ticking + 1, 200, () -> controlPistonPushed.getAsBoolean() && waterMoved.getAsBoolean() && pushSettled.getAsBoolean(), settled -> {
             witness.put("pistonsCannotMoveInvariantCells", universe.getBlockState(local(frame, 6, 2, 4)).isOf(Blocks.BEDROCK)
                     && M5GameTestSupport.doorIs(universe, local(frame, 3, 2, 0), true, MembraneState.NONE)
@@ -453,12 +469,16 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             hooks.release();
             context.assertTrue(!witness.containsValue(false), "投影的保護：" + witness + " denied=" + deniedCells + " allowed=" + allowedCells);
             awaitConvergedThenComplete(context, 1, 20);
-        }, () -> "對照組沒有發生：controlPistonPushed=" + controlPistonPushed.getAsBoolean() + " waterMoved=" + waterMoved.getAsBoolean()
+        }, () -> {
+            if(++waterDiagnosticTick[0]>=waterDeadlineTick) LOGGER.info("M5_WATER_GEOMETRY stage=timeout sid={} universe={} frame={} facing={} source={} wet={} dry={} samples={}",
+                    sid,id,frame.controllerPos().toShortString(),frame.outwardFacing(),source.toShortString(),wet.toShortString(),dry.toShortString(),waterGeometry.get());
+            return "對照組沒有發生：controlPistonPushed=" + controlPistonPushed.getAsBoolean() + " waterMoved=" + waterMoved.getAsBoolean()
                 + " piston=" + universe.getBlockState(controlPiston) + " target=" + universe.getBlockState(controlTarget) + " source=" + universe.getFluidState(source)
                 + " wet=" + universe.getBlockState(wet) + " blockTicking=" + universe.shouldTickBlockPos(controlPiston) + "/" + universe.shouldTickBlockPos(wet)
                 + " tickingFuture=" + universe.getChunkManager().isTickingFutureReady(ChunkPos.toLong(controlPiston))
                 + "/" + universe.getChunkManager().isTickingFutureReady(ChunkPos.toLong(wet)) + " time=" + universe.getTime()
-                + " witness=" + witness, hooks);
+                + " witness=" + witness;
+        }, hooks);
     }
 
     /**
@@ -918,15 +938,32 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             M5GameTestSupport.forceProjectionChunks(universe, frame, hooks);
-            var stone = local(frame, 2, 1, 2); var shell = local(frame, 0, 3, 3);
+            var stone = local(frame, 2, 1, 2);
             universe.setBlockState(frame.controllerPos(), ModBlocks.CHAMBER_CONTROLLER.getDefaultState().with(ChamberControllerBlock.FACING, frame.outwardFacing()));
             universe.setBlockState(stone, Blocks.STONE.getDefaultState());
+            var volumeBefore=cells(universe,frame);
+            var controllerBefore=Objects.requireNonNull(M5GameTestSupport.controller(universe,frame),"fixture Controller block entity");
+            var chamberBefore=controllerBefore.chamberUuid();
+            var nbtBefore=controllerBefore.createNbtWithIdentifyingData(server.getRegistryManager());
             var ledgerBefore = bytes(data, ProjectionLedger.FILE_NAME);
+            LOGGER.info("M5_PROJECTION_PREIMAGE kind=controller stage=before sid={} universe={} frame={} facing={} count={} chamber={} nbt={} ledgerSha256={} cells={}",
+                    sid,id,frame.controllerPos().toShortString(),frame.outwardFacing(),volumeBefore.size(),chamberBefore,nbtBefore,
+                    com.google.common.hash.Hashing.sha256().hashBytes(ledgerBefore),volumeBefore);
             whenTicks(context, resolved + 1, 400, () -> sealedWith(journal, sid, SealedReason.PROJECTION_CONFLICT), sealed -> {
                 witness.put("noPendingWritten", CollapseAuthorities.get(server).projection(chamber, id).status() == CollapseAuthorities.Lookup.Status.ABSENT
                         && Arrays.equals(ledgerBefore, bytes(data, ProjectionLedger.FILE_NAME)));
                 witness.put("interiorNotCleared", universe.getBlockState(stone).isOf(Blocks.STONE));
-                witness.put("noProjectionBlocks", universe.getBlockState(shell).isAir());
+                var volumeAfter=cells(universe,frame);
+                var controllerAfter=M5GameTestSupport.controller(universe,frame);
+                // 只證無淨方塊變更；Controller衝突在writer前早退的code-truth另列。
+                witness.put("noProjectionBlocks",volumeBefore.size()==343 && volumeBefore.equals(volumeAfter));
+                witness.put("sameControllerBlockEntity",controllerAfter==controllerBefore && !controllerBefore.isRemoved());
+                witness.put("controllerIdentityUnchanged",controllerAfter!=null && Objects.equals(chamberBefore,controllerAfter.chamberUuid()));
+                witness.put("controllerNbtUnchanged",controllerAfter!=null && nbtBefore.equals(controllerAfter.createNbtWithIdentifyingData(server.getRegistryManager())));
+                LOGGER.info("M5_PROJECTION_PREIMAGE kind=controller stage=after sid={} universe={} frame={} facing={} count={} sameInstance={} removed={} chamber={} nbt={} netUnchanged={} cells={}",
+                        sid,id,frame.controllerPos().toShortString(),frame.outwardFacing(),volumeAfter.size(),controllerAfter==controllerBefore,
+                        controllerBefore.isRemoved(),controllerAfter==null?null:controllerAfter.chamberUuid(),
+                        controllerAfter==null?null:controllerAfter.createNbtWithIdentifyingData(server.getRegistryManager()),volumeBefore.equals(volumeAfter),volumeAfter);
                 witness.put("existingControllerKept", universe.getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER));
                 var errors = capture.matching(Level.ERROR, sid.toString());
                 witness.put("onePermanentAdminError", errors.size() == 1 && errors.getFirst().message().contains("SEALED(PROJECTION_CONFLICT)")
@@ -1102,11 +1139,26 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
         collapsedToUniverse(context, origin, hooks, (resolved, universe, sid, chamber, id) -> {
             var witness = new LinkedHashMap<String, Boolean>();
             var authorities = CollapseAuthorities.get(server);
+            var data=server.getSavePath(WorldSavePath.ROOT).resolve("data");
+            M5GameTestSupport.forceProjectionChunks(universe,frame,hooks);
+            var ledgerBeforeCapture=bytes(data,ProjectionLedger.FILE_NAME);
+            var volumeBefore=cells(universe,frame);
+            witness.put("preimageReadKeptLedgerBytes",Arrays.equals(ledgerBeforeCapture,bytes(data,ProjectionLedger.FILE_NAME)));
+            LOGGER.info("M5_PROJECTION_PREIMAGE kind=pending stage=before sid={} universe={} frame={} facing={} count={} ledgerSha256={} cells={}",
+                    sid,id,frame.controllerPos().toShortString(),frame.outwardFacing(),volumeBefore.size(),
+                    com.google.common.hash.Hashing.sha256().hashBytes(ledgerBeforeCapture),volumeBefore);
             var fault = M5GameTestSupport.installCheckedReadFault(context, ProjectionLedger.FILE_NAME, 0, 1, hooks);
             whenTicks(context, resolved + 1, 400, () -> sealedWith(journal, sid, SealedReason.PROJECTION_FAILED), sealed -> {
                 witness.put("pendingReadbackFaultedOnce", fault.hits() == 1);
                 witness.put("ledgerUnconfirmed", authorities.unconfirmed(CollapseAuthorities.Authority.PROJECTION_LEDGER));
-                witness.put("noBlockWritten", cells(universe, frame).stream().allMatch(BlockState::isAir));
+                var ledgerAfterFault=bytes(data,ProjectionLedger.FILE_NAME);
+                var volumeAfter=cells(universe,frame);
+                // 只證無淨方塊變更；writer未達由正式PENDING失敗早退另證。
+                witness.put("noBlockWritten",volumeBefore.size()==343 && volumeBefore.equals(volumeAfter));
+                witness.put("postimageReadKeptLedgerBytes",Arrays.equals(ledgerAfterFault,bytes(data,ProjectionLedger.FILE_NAME)));
+                LOGGER.info("M5_PROJECTION_PREIMAGE kind=pending stage=after sid={} universe={} frame={} facing={} count={} ledgerSha256={} faultHits={} netUnchanged={} cells={}",
+                        sid,id,frame.controllerPos().toShortString(),frame.outwardFacing(),volumeAfter.size(),
+                        com.google.common.hash.Hashing.sha256().hashBytes(ledgerAfterFault),fault.hits(),volumeBefore.equals(volumeAfter),volumeAfter);
                 witness.put("notRegistered", !ProjectionProtectionIndex.projectionControllerAt(server, universe.getRegistryKey(), frame.controllerPos()));
                 witness.put("oneRetryableWarn", capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "SEALED(PROJECTION_FAILED)", "退避期之外",
                         sid.toString()).size() == 1 && capture.matching(Level.ERROR, sid.toString()).isEmpty());

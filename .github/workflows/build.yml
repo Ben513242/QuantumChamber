@@ -95,10 +95,10 @@ jobs:
           foreach ($presetScope in $presetScopes) {
             $runName = switch ($presetScope) { 'default' {'gametest'} 'normal' {'gametest-m4-normal'} 'legacy' {'gametest-legacy'} 'm5' {'gametest-m5'} 'm6' {'gametest-m6'} }
             $presetLog = Get-Content -LiteralPath "run/$runName/logs/latest.log" -Raw
-            $markers = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
-            $expectedPreset = if ($presetScope -ceq 'default') { @('true','false','false','true') } elseif ($presetScope -ceq 'normal') { @('false','true','false','true') } else { @('false','false','true','false') }
+            $markers = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+            $expectedPreset = if ($presetScope -ceq 'default') { @('true','false','false','false','false','true') } elseif ($presetScope -ceq 'normal') { @('false','true','false','false','false','true') } elseif ($presetScope -ceq 'm5') { @('false','false','true','true','false','true') } else { @('false','false','false','false','true','false') }
             if ($markers.Count -ne 1 -or [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count -ne 1) { throw "M4_TEST_PRESET_MISMATCH：$presetScope marker 必須恰一" }
-            for ($field=0; $field -lt 4; $field++) { if ($markers[0].Groups[$field+1].Value -cne $expectedPreset[$field]) { throw "M4_TEST_PRESET_MISMATCH：$presetScope flag/config 錯配" } }
+            for ($field=0; $field -lt 6; $field++) { if ($markers[0].Groups[$field+1].Value -cne $expectedPreset[$field]) { throw "M4_TEST_PRESET_MISMATCH：$presetScope flag/config 錯配" } }
           }
           # normal scope 僅 Windows 真執行；兩平台都嚴格核來源宣告。
           $normalDeclared = @()
@@ -342,10 +342,10 @@ jobs:
           foreach ($presetScope in $presetScopes) {
             $runName = switch ($presetScope) { 'default' {'gametest'} 'normal' {'gametest-m4-normal'} 'legacy' {'gametest-legacy'} 'm5' {'gametest-m5'} 'm6' {'gametest-m6'} }
             $presetLog = Get-Content -LiteralPath "run/$runName/logs/latest.log" -Raw
-            $markers = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
-            $expectedPreset = if ($presetScope -ceq 'default') { @('true','false','false','true') } elseif ($presetScope -ceq 'normal') { @('false','true','false','true') } else { @('false','false','true','false') }
+            $markers = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+            $expectedPreset = if ($presetScope -ceq 'default') { @('true','false','false','false','false','true') } elseif ($presetScope -ceq 'normal') { @('false','true','false','false','false','true') } elseif ($presetScope -ceq 'm5') { @('false','false','true','true','false','true') } else { @('false','false','false','false','true','false') }
             if ($markers.Count -ne 1 -or [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count -ne 1) { throw "M4_TEST_PRESET_MISMATCH：$presetScope marker 必須恰一" }
-            for ($field=0; $field -lt 4; $field++) { if ($markers[0].Groups[$field+1].Value -cne $expectedPreset[$field]) { throw "M4_TEST_PRESET_MISMATCH：$presetScope flag/config 錯配" } }
+            for ($field=0; $field -lt 6; $field++) { if ($markers[0].Groups[$field+1].Value -cne $expectedPreset[$field]) { throw "M4_TEST_PRESET_MISMATCH：$presetScope flag/config 錯配" } }
           }
           # 各項檢查先彙整，最後一次列出全部缺席／失敗名稱；任一項不符即 throw（維持失敗即紅）。
           $problems = [System.Collections.Generic.List[string]]::new()
