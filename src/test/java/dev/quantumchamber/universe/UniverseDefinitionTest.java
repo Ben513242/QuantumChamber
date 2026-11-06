@@ -132,6 +132,57 @@ class UniverseDefinitionTest {
     }
 
     @Test void catalogRejectsWrongProvenanceRoleShape() {
+        var encoded = newM6RecordNbt();
+        assertEquals(encoded, UniverseRecord.fromNbt(encoded).toNbt());
+        assertRejectedForEachMutation(encoded,
+                nbt -> nbt.putString("Provenance", "UNKNOWN"),
+                nbt -> nbt.putByteArray("LegacySchemaOneDigest", new byte[32]),
+                nbt -> nbt.putString("Provenance", "MIGRATED_SCHEMA1"),
+                nbt -> nbt.remove("RootWorldSeed"),
+                nbt -> nbt.getList("Worlds", NbtElement.COMPOUND_TYPE).remove(2));
+        assertRejectedForEachWorldMutation(encoded,
+                world -> world.putString("SeedPolicy", "SHARED_SAVE_SEED_V1"),
+                world -> world.putString("GeneratorProfile", "VANILLA_OVERWORLD_SHARED_SEED_V1"),
+                world -> world.putString("WorldKey", "quantumchamber:other"));
+    }
+
+    @Test
+    void migratedSchemaOneRejectsUnknownProfileUntilTask15() throws Exception {
+        var legacy = record().toNbt();
+        assertEquals(legacy, UniverseRecord.fromNbt(legacy).toNbt());
+        var fresh = newM6RecordNbt();
+        assertEquals(fresh, UniverseRecord.fromNbt(fresh).toNbt());
+
+        var migrated = migratedSchemaOneNbt();
+        migrated.putString("ProfileId", "quantumchamber:unknown");
+        assertThrows(IllegalArgumentException.class, () -> UniverseRecord.fromNbt(migrated));
+    }
+
+    @Test
+    void migratedSchemaOneRejectsEvenCurrentNewProfileUntilTask15() throws Exception {
+        var migrated = migratedSchemaOneNbt();
+        assertEquals("quantumchamber:random_vanilla_v1", migrated.getString("ProfileId"));
+        assertThrows(IllegalArgumentException.class, () -> UniverseRecord.fromNbt(migrated));
+    }
+
+    private static NbtCompound migratedSchemaOneNbt() throws Exception {
+        var legacy = record().toNbt();
+        var definition = legacy.copy();
+        definition.remove("DesiredAvailability");
+        byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(Minecraft121SettingsGraph.canonicalNbt(definition, 1024 * 1024));
+        var migrated = newM6RecordNbt();
+        migrated.putString("Provenance", "MIGRATED_SCHEMA1");
+        migrated.putByteArray("LegacySchemaOneDigest", digest);
+        var worlds = migrated.getList("Worlds", NbtElement.COMPOUND_TYPE);
+        worlds.set(0, legacy.getList("Worlds", NbtElement.COMPOUND_TYPE).getCompound(0).copy());
+        assertEquals(32, digest.length);
+        assertEquals(3, worlds.size());
+        assertEquals(legacy.getList("Worlds", NbtElement.COMPOUND_TYPE).getCompound(0), worlds.getCompound(0));
+        return migrated;
+    }
+
+    private static NbtCompound newM6RecordNbt() {
         var encoded = record().toNbt();
         encoded.putInt("SchemaVersion", 2);
         encoded.putString("Provenance", "NEW_M6");
@@ -158,17 +209,7 @@ class UniverseDefinitionTest {
             roles.add(world);
         }
         encoded.put("Worlds", roles);
-        assertEquals(encoded, UniverseRecord.fromNbt(encoded).toNbt());
-        assertRejectedForEachMutation(encoded,
-                nbt -> nbt.putString("Provenance", "UNKNOWN"),
-                nbt -> nbt.putByteArray("LegacySchemaOneDigest", new byte[32]),
-                nbt -> nbt.putString("Provenance", "MIGRATED_SCHEMA1"),
-                nbt -> nbt.remove("RootWorldSeed"),
-                nbt -> nbt.getList("Worlds", NbtElement.COMPOUND_TYPE).remove(2));
-        assertRejectedForEachWorldMutation(encoded,
-                world -> world.putString("SeedPolicy", "SHARED_SAVE_SEED_V1"),
-                world -> world.putString("GeneratorProfile", "VANILLA_OVERWORLD_SHARED_SEED_V1"),
-                world -> world.putString("WorldKey", "quantumchamber:other"));
+        return encoded;
     }
 
     private static UniverseRecord record() {

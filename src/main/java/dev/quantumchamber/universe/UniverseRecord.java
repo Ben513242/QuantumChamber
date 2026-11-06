@@ -15,10 +15,14 @@ import net.minecraft.util.Identifier;
 public record UniverseRecord(UniverseDefinition definition, DesiredAvailability desiredAvailability, Generation generation) {
     public enum Provenance { NEW_M6, MIGRATED_SCHEMA1 }
 
+    /** Task15 尚未定義遷移 profile 契約；目前只接受 NEW_M6 的生成權威。 */
     public record Generation(long rootWorldSeed, String profileId, int profileVersion, NbtCompound targetSettingsSnapshot,
             Provenance provenance, CandidateBytes legacySchemaOneDigest) {
         public Generation {
             Objects.requireNonNull(provenance, "provenance");
+            if (provenance == Provenance.MIGRATED_SCHEMA1) {
+                throw new IllegalArgumentException("MIGRATED_SCHEMA1 的 profile 契約待 Task15 定義，目前拒絕載入");
+            }
             if (profileVersion != 1 || Identifier.tryParse(profileId) == null || !profileId.contains(":")
                     || (provenance == Provenance.MIGRATED_SCHEMA1) != (legacySchemaOneDigest != null)) {
                 throw new IllegalArgumentException("schema2 profile 或 provenance 不符");
