@@ -54,6 +54,42 @@ class UniverseRootSeedOwnerTest {
         assertThrows(IllegalStateException.class, () -> owner.bind(server, descriptor, new Object()));
     }
 
+    @Test void worldPublishWaitsForWorldsMonitor() throws Exception { verifyWorldMapWrite(false); }
+
+    @Test void worldRemovalWaitsForWorldsMonitor() throws Exception { verifyWorldMapWrite(true); }
+
+    private static void verifyWorldMapWrite(boolean remove) throws Exception {
+        var map = new java.util.LinkedHashMap<String, Object>();
+        var value = new Object();
+        if (remove) map.put("owned", value);
+        var method = dev.quantumchamber.universe.minecraft121.Minecraft121DynamicDimensionBackend.class.getDeclaredMethod(
+                remove ? "removeWorld" : "putWorldIfAbsent", java.util.Map.class, Object.class, Object.class);
+        method.setAccessible(true);
+        var attempted = new java.util.concurrent.CountDownLatch(1);
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<Object> future;
+            synchronized (map) {
+                future = executor.submit(() -> { attempted.countDown(); return method.invoke(null, map, "owned", value); });
+                assertTrue(attempted.await(10, java.util.concurrent.TimeUnit.SECONDS));
+                assertThrows(java.util.concurrent.TimeoutException.class,
+                        () -> future.get(500, java.util.concurrent.TimeUnit.MILLISECONDS),
+                        "worlds monitor 釋放前不得發布或移除世界");
+            }
+            var result = future.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            if (remove) {
+                assertEquals(Boolean.TRUE, result);
+                assertFalse(map.containsKey("owned"));
+            } else {
+                assertNull(result);
+                assertSame(value, map.get("owned"));
+            }
+        } finally {
+            executor.shutdown();
+            assertTrue(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS));
+        }
+    }
+
     private static UniverseWorldDescriptor descriptor(long id, SeedPolicy policy) {
         return new UniverseWorldDescriptor(UniverseKeys.world(UniverseId.of(new UUID(0, id)), DimensionRole.OVERWORLD),
                 DimensionRole.OVERWORLD, policy == SeedPolicy.SHARED_SAVE_SEED_V1

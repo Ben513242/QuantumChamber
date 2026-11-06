@@ -52,7 +52,12 @@ public final class Minecraft121ServerWorldFactory {
         if (owner == null || !owner.matches(world.getServer(), owner.descriptor, world)
                 || !owner.descriptor.worldKey().equals(world.getRegistryKey())) return null;
         // 建構窗口只屬原 owning thread；其餘必須已發布成 exact native live instance。
-        return constructing == owner || world.getServer().getWorld(world.getRegistryKey()) == world ? owner : null;
+        if (constructing == owner) return owner;
+        var worlds = ((MinecraftServerDynamicWorldAccess) world.getServer()).quantumchamber$getWorlds();
+        // 只鎖 native map 的短身份讀；與 backend 所有本模組 publish/remove 共用 monitor。
+        synchronized (worlds) {
+            return worlds.get(world.getRegistryKey()) == world ? owner : null;
+        }
     }
 
     public static boolean constructionPending() { return CONSTRUCTION.get() != null; }

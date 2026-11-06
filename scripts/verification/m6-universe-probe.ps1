@@ -62,7 +62,7 @@ function Assert-SeedReceipt($receipt,$phase,$owned,$state) {
     if($receipt.globalAtStart -ne ($phase -ceq 'construct') -or $receipt.globalForNextStart -ne $false){throw 'M6_SEED_REOPEN_GLOBAL'}
     if(-not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen -or -not $receipt.catalogChecked -or -not $receipt.legacyControl -or -not $receipt.independentSequences){throw 'M6_SEED_OWNER_CONTROL'}
     if(@($receipt.vanillaControls).Count -ne 4 -or @($receipt.vanillaControls | Where-Object {-not $_.workerExact -or -not $_.locatorExact -or -not $_.mapExact}).Count){throw 'M6_SEED_VANILLA_CONTROL'}
-    if($receipt.canonicalSettingsKey -cne 'minecraft:amplified' -or -not $receipt.staleInstanceControls -or @($receipt.parallelWorkers).Count -ne 4 -or @($receipt.parallelWorkers | Where-Object {-not $_.exact}).Count){throw 'M6_SEED_PARALLEL_OWNER'}
+    if($receipt.canonicalSettingsKey -cne 'minecraft:amplified' -or -not $receipt.worldMonitorReadBlocked -or $receipt.worldMonitorReadAttempts -ne 2 -or -not $receipt.thirdUniversePublishedAndUnloaded -or @($receipt.thirdUniverseWorkerSamples).Count -ne 2 -or @($receipt.thirdUniverseWorkerSamples | Where-Object {$_ -le 0}).Count -or -not $receipt.staleInstanceControls -or @($receipt.parallelWorkers).Count -ne 4 -or @($receipt.parallelWorkers | Where-Object {-not $_.exact}).Count){throw 'M6_SEED_PARALLEL_OWNER'}
     if(@($receipt.worlds).Count -ne 2){throw 'M6_SEED_WORLD_SET'}
     $seeds=@('712345678901','-99123456789')
     for($i=0;$i -lt 2;$i++) {
@@ -111,6 +111,12 @@ try {
                 if($state.Launcher.ExitCode -ne 0 -or $state.JavaProcess.ExitCode -ne 0){throw 'M6_PHASE_EXIT_NONZERO'}
                 if($chainSpec.chain -ceq 'native-seed-functional'){
                     Assert-SeedReceipt $receipt $phase $owned $state
+                    foreach($field in @('worldMonitorReadBlocked','thirdUniversePublishedAndUnloaded')) {
+                        $bad=$receipt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
+                        $bad.$field=$false;$rejected=$false
+                        try {Assert-SeedReceipt $bad $phase $owned $state} catch {if($_.Exception.Message -ceq 'M6_SEED_PARALLEL_OWNER'){$rejected=$true}else{throw}}
+                        if(-not $rejected){throw "M6_SEED_MONITOR_NEGATIVE_MISSED：$field"}
+                    }
                     foreach($field in @('workerExact','locatorExact','mapExact','nativeConsumersExact')) {
                         $bad=$receipt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
                         $bad.worlds[0].$field=$false;$rejected=$false

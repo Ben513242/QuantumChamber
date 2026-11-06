@@ -130,6 +130,8 @@ public final class M6RandomProbePhases {
             rows.get(i).put("sequenceValue",Long.toString(actual));
             rows.get(i).put("sequenceExpected",Long.toString(expected));
         }
+        verifyWorldMonitorRead(worlds);
+        verifyThirdUniversePublication(worlds,catalog);
         proof.put("parallelWorkers",parallelWorkers(worlds,rows));
         proof.put("worlds",rows);proof.put("legacySeed",Long.toString(saveSeed));
         proof.put("legacyControl",true);proof.put("independentSequences",true);
@@ -202,6 +204,100 @@ public final class M6RandomProbePhases {
         row.put("samples",actualSamples);row.put("nativeConsumersExact",true);
         return row;
     }
+    /** 真第三 U 的 checked 配置、發布與完整卸載，與兩個已發布 U 的 worker 查詢重疊。 */
+    private void verifyThirdUniversePublication(List<ServerWorld> worlds,UniverseRegistryState catalog) throws Exception {
+        var id=UniverseId.of(new UUID(0,67004));
+        var running=new java.util.concurrent.atomic.AtomicBoolean(true);
+        var ready=new CountDownLatch(2);
+        var counts=new java.util.concurrent.atomic.AtomicLongArray(2);
+        var executor=Executors.newFixedThreadPool(2);
+        var tasks=new ArrayList<Future<Long>>();
+        try {
+            for(int i=0;i<2;i++) {
+                final int index=i;var world=worlds.get(i);
+                tasks.add(executor.submit(()->{
+                    while(running.get()) {
+                        var seed=dev.quantumchamber.universe.minecraft121.Minecraft121ServerWorldFactory.rootSeed(world);
+                        boolean flag=dev.quantumchamber.universe.minecraft121.Minecraft121ServerWorldFactory.generateStructures(world,index!=0);
+                        require(seed.orElse(Long.MIN_VALUE)==SEEDS[index] && flag==(index==0),"M6_BACKGROUND_OWNER_CHANGED_DURING_THIRD_U");
+                        if(counts.incrementAndGet(index)==1)ready.countDown();
+                        java.util.concurrent.locks.LockSupport.parkNanos(100_000);
+                    }
+                    return counts.get(index);
+                }));
+            }
+            require(ready.await(10,TimeUnit.SECONDS),"M6_THIRD_U_WORKERS_NOT_READY");
+            long before0=counts.get(0),before1=counts.get(1);
+            if(!catalog.flushedRecords().containsKey(id)) {
+                var parameters=new NbtCompound();parameters.putString("OverworldPreset","normal");parameters.putBoolean("GenerateStructures",true);
+                var snapshot=Minecraft121SettingsLifecycle.registry().createSnapshot("quantumchamber:vanilla_normal_v1",1,
+                        parameters,Minecraft121SettingsLifecycle.acquire(server));
+                var roles=new EnumMap<DimensionRole,UniverseWorldDescriptor>(DimensionRole.class);
+                for(var role:DimensionRole.values())roles.put(role,new UniverseWorldDescriptor(UniverseKeys.world(id,role),role,null,SeedPolicy.EXPLICIT_ROOT_SEED_V1,1));
+                var generation=new UniverseRecord.Generation(314159265358L,NewUniverseIntent.RANDOM_PROFILE_ID,1,
+                        snapshot.toNbt(),UniverseRecord.Provenance.NEW_M6,null);
+                catalog.allocateM6(new UniverseRecord(new UniverseDefinition(2,id,3,roles),DesiredAvailability.DISABLED,generation));catalog.flush(server);
+            }
+            require(catalog.flushedRecords().get(id).desiredAvailability()==DesiredAvailability.DISABLED,"M6_THIRD_U_NOT_DISABLED");
+            catalog.changeAvailability(id,DesiredAvailability.EAGER_ENABLED);catalog.flush(server);
+            var result=UniverseLifecycleService.materializeAllocated(server,id);
+            require(result.active(),"M6_THIRD_U_MATERIALIZE_FAILED");
+            var world=result.world().orElseThrow();
+            require(world.getSeed()==314159265358L,"M6_THIRD_U_SEED_CHANGED");
+            var contexts=UniverseLifecycleService.class.getDeclaredField("CONTEXTS");contexts.setAccessible(true);
+            var context=((Map<?,?>)contexts.get(null)).get(server);
+            var backend=(dev.quantumchamber.universe.minecraft121.Minecraft121DynamicDimensionBackend)field(context,"backend");
+            var descriptor=catalog.flushedRecords().get(id).definition().worlds().get(DimensionRole.OVERWORLD);
+            require(backend.unload(server,descriptor,world)==UnloadResult.UNLOADED,"M6_THIRD_U_UNLOAD_FAILED");
+            require(server.getWorld(descriptor.worldKey())==null,"M6_THIRD_U_STILL_PUBLISHED");
+            catalog.changeAvailability(id,DesiredAvailability.DISABLED);catalog.flush(server);
+            require(counts.get(0)>before0 && counts.get(1)>before1,"M6_THIRD_U_WORKERS_DID_NOT_OVERLAP");
+            proof.put("thirdUniversePublishedAndUnloaded",true);
+            proof.put("thirdUniverseWorkerSamples",List.of(counts.get(0)-before0,counts.get(1)-before1));
+        } finally {
+            running.set(false);executor.shutdown();
+            require(executor.awaitTermination(40,TimeUnit.SECONDS),"M6_THIRD_U_WORKERS_NOT_STOPPED");
+            for(var task:tasks)task.get(10,TimeUnit.SECONDS);
+        }
+    }
+
+    /** server 持有同一 worlds monitor 時，worker 的 live-owner 讀必須等待，不能讀正在重排的 map。 */
+    private void verifyWorldMonitorRead(List<ServerWorld> worlds) throws Exception {
+        var map=((dev.quantumchamber.mixin.MinecraftServerDynamicWorldAccess)server).quantumchamber$getWorlds();
+        var ready=new CountDownLatch(2);var start=new CountDownLatch(1);var attempting=new CountDownLatch(2);
+        var executor=Executors.newFixedThreadPool(2);
+        var tasks=new ArrayList<Future<Map<String,Object>>>();
+        try {
+            synchronized(map) {
+                for(int i=0;i<2;i++) {
+                    final int index=i;var world=worlds.get(i);
+                    tasks.add(executor.submit(()->{
+                        ready.countDown();require(start.await(10,TimeUnit.SECONDS),"M6_MONITOR_START_TIMEOUT");
+                        attempting.countDown();
+                        var seed=dev.quantumchamber.universe.minecraft121.Minecraft121ServerWorldFactory.rootSeed(world);
+                        boolean flag=dev.quantumchamber.universe.minecraft121.Minecraft121ServerWorldFactory.generateStructures(world,index!=0);
+                        return Map.<String,Object>of("seed",seed.orElse(Long.MIN_VALUE),"structures",flag,"index",index);
+                    }));
+                }
+                require(ready.await(10,TimeUnit.SECONDS),"M6_MONITOR_WORKERS_NOT_READY");start.countDown();
+                require(attempting.await(10,TimeUnit.SECONDS),"M6_MONITOR_WORKERS_NOT_ATTEMPTING");
+                proof.put("worldMonitorReadAttempts",2);
+                for(var task:tasks) {
+                    try {
+                        var escaped=task.get(500,TimeUnit.MILLISECONDS);
+                        proof.put("worldMonitorEscaped",escaped);
+                        throw new IllegalStateException("M6_WORLD_OWNER_READ_ESCAPED_MONITOR");
+                    } catch(TimeoutException expectedBlocked) { }
+                }
+            }
+            for(int i=0;i<tasks.size();i++) {
+                var result=tasks.get(i).get(10,TimeUnit.SECONDS);
+                require(result.get("seed").equals(SEEDS[i]) && result.get("structures").equals(i==0),"M6_MONITOR_RELEASE_OWNER_CHANGED");
+            }
+            proof.put("worldMonitorReadBlocked",true);
+        } finally {start.countDown();executor.shutdown();require(executor.awaitTermination(40,TimeUnit.SECONDS),"M6_MONITOR_WORKERS_NOT_STOPPED");}
+    }
+
     private List<Map<String,Object>> parallelWorkers(List<ServerWorld> worlds,List<Map<String,Object>> rows) throws Exception {
         var results=new ArrayList<Map<String,Object>>();
         boolean original=server.getSaveProperties().getGeneratorOptions().shouldGenerateStructures();

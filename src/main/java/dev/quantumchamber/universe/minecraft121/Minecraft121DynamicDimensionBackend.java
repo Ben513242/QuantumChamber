@@ -102,7 +102,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
             borders.put(created, new BorderBinding(sourceBorder, listener));
             created.getWorldBorder().load(sourceBorder.write());
             sourceBorder.addListener(listener);
-            requireMapIdentity(worlds.putIfAbsent(descriptor.worldKey(), created), null);
+            requireMapIdentity(putWorldIfAbsent(worlds, descriptor.worldKey(), created), null);
             published = true;
             requireWorldIdentity(server, descriptor, created);
             Path actualStorage = requireStorage(
@@ -263,7 +263,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
             UniverseWorldDescriptor descriptor, ServerWorld created, boolean published) throws IOException {
         if (published) {
             requireMapIdentity(worlds.get(descriptor.worldKey()), created);
-            if (!worlds.remove(descriptor.worldKey(), created)) {
+            if (!removeWorld(worlds, descriptor.worldKey(), created)) {
                 throw new IllegalStateException("無法 expected-remove 未公開的 world");
             }
         }
@@ -390,7 +390,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
                 try {
                     access.discardWorld(expected);
                     requireMapIdentity(worlds.get(descriptor.worldKey()), quarantine ? null : expected);
-                    if (!quarantine && !worlds.remove(descriptor.worldKey(), expected)) {
+                    if (!quarantine && !removeWorld(worlds, descriptor.worldKey(), expected)) {
                         throw new IllegalStateException("exact world remove 未成功");
                     }
                     access.close(expected);
@@ -462,7 +462,7 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
 
         void retainAfterLoadFailure(S server, K key, W created, Map<K, W> worlds) {
             markUnhealthy(server);
-            W current = worlds.putIfAbsent(key, created);
+            W current = putWorldIfAbsent(worlds, key, created);
             if (current != null && current != created) {
                 // R6：不取代陌生 owner；只保留強參照，Task 7 quiesce 前不宣稱已 save/close。
                 quarantine.computeIfAbsent(server, ignored -> Collections.newSetFromMap(new IdentityHashMap<>()))
@@ -513,6 +513,15 @@ public final class Minecraft121DynamicDimensionBackend implements DynamicDimensi
                 || descriptor.storagePolicyVersion() != 1) {
             throw new IllegalArgumentException("descriptor 不符合 owned Overworld profile");
         }
+    }
+
+    /** native worlds map 的短操作接縫；不在此範圍呼叫外部事件或 I/O。 */
+    static <K, W> W putWorldIfAbsent(Map<K, W> worlds, K key, W world) {
+        synchronized (worlds) { return worlds.putIfAbsent(key, world); }
+    }
+
+    static <K, W> boolean removeWorld(Map<K, W> worlds, K key, W expected) {
+        synchronized (worlds) { return worlds.remove(key, expected); }
     }
 
     static void requireMapIdentity(Object current, Object expected) {
