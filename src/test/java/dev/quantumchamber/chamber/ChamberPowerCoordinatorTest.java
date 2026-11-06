@@ -11,6 +11,25 @@ import net.minecraft.world.World;
 import org.junit.jupiter.api.Test;
 
 class ChamberPowerCoordinatorTest {
+    @Test void normalSuccessfulReturnKeepsRetryLatchFalseAndMayRestartAtHeldHigh() {
+        registry.setPowerState(uuid,ChamberPowerState.POWERED);
+        backend.startResult=ChamberSessionGateway.StartResult.STAGING;
+        assertEquals(ChamberState.READY,refresh(true,ChamberState.IDLE,true));
+        assertEquals(1,backend.starts);
+        assertFalse(backend.retryRequiresLow,"正常start不設未知preset旗標");
+        backend.presence=ChamberSessionGateway.Presence.ACTIVE;
+        assertEquals(ChamberState.ARMED,refresh(true,ChamberState.READY,true));
+        assertFalse(backend.retryRequiresLow,"正常活動session不設旗標");
+        backend.presence=ChamberSessionGateway.Presence.RETURNING;
+        backend.returned=false;
+        assertEquals(ChamberState.ARMED,refresh(true,ChamberState.ARMED,true));
+        assertEquals(1,backend.starts,"返還未完成不能搶先重啟");
+        assertFalse(backend.retryRequiresLow);
+        backend.returned=true;
+        assertEquals(ChamberState.READY,refresh(true,ChamberState.ARMED,true));
+        assertEquals(2,backend.starts,"正常返還完成且資格成立，持續HIGH可再start");
+        assertFalse(backend.retryRequiresLow,"整條正常路徑沒有LOW，也不需清旗標");
+    }
     @Test void unknownPresetLatchBlocksHighButDoesNotBlockReturn() {
         backend.retryRequiresLow=true;
         backend.presence=ChamberSessionGateway.Presence.RETURNING;
