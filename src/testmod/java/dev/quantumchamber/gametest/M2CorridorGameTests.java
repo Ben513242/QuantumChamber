@@ -430,26 +430,29 @@ public final class M2CorridorGameTests implements FabricGameTest {
         if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2); context.waitAndRun(2,fixture::power);
         when(context,3,fixture::activeReady,tick -> {
-            var initial=fixture.record(); var fault=new RemapPowerLoss(fixture);
-            var view=fixture.pages.currentMappings(initial.sessionUuid()).instances().getFirst();
-            var position=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(1.5,1,95.5,Vec3d.ZERO,0,0)).position();
-            var item=new net.minecraft.entity.ItemEntity(fixture.target,position.x,position.y,position.z,new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND,5));
-            item.setNoGravity(true); item.setVelocity(Vec3d.ZERO); item.setNeverDespawn(); item.setPickupDelayInfinite();
-            context.assertTrue(fixture.target.spawnEntity(item),"mid-remap真有價item"); var itemId=item.getUuid();
-            walkNative(fixture,fixture.players.get(0).player(),95.5); walkNative(fixture,fixture.players.get(1).player(),96.5);
-            when(context,tick+1,() -> fault.hit,lowTick -> {
-                fault.close();
-                context.assertTrue(fault.moved!=null && fault.tick>=0,"真move RETURN窗口必須命中");
-                context.assertTrue(SessionRecoveryRecord.sameParticipantSources(initial.participants(),fixture.record().participants())
-                        && fixture.record().spaceLeases().size()>=2,"partial batch保留完整sources與兩邊lease");
-                fixture.trustedTeardown(lowTick+1,() -> {
-                    var value=context.getWorld().getEntity(itemId);
-                    context.assertTrue(value instanceof net.minecraft.entity.ItemEntity returned && returned.getStack().getCount()==5
-                            && returned.getStack().isOf(net.minecraft.item.Items.DIAMOND),"cohort與五顆鑽石均真返還後才清理");
-                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_REMAP_LOW_OK sid={} sourceOff=true item={} amount=5",initial.sessionUuid(),itemId);
-                    context.complete();
-                });
-            });
+            var initial=fixture.record(); var hooks=new TestHooks(); var fault=new RemapPowerLoss(fixture);
+            hooks.add(fault::close);
+            try {
+                var view=fixture.pages.currentMappings(initial.sessionUuid()).instances().getFirst();
+                var position=fixture.pages.toPhysical(view.ref(),new CorridorPageManager.LogicalPose(1.5,1,95.5,Vec3d.ZERO,0,0)).position();
+                var item=new net.minecraft.entity.ItemEntity(fixture.target,position.x,position.y,position.z,new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND,5));
+                item.setNoGravity(true); item.setVelocity(Vec3d.ZERO); item.setNeverDespawn(); item.setPickupDelayInfinite();
+                context.assertTrue(fixture.target.spawnEntity(item),"mid-remap真有價item"); var itemId=item.getUuid();
+                walkNative(fixture,fixture.players.get(0).player(),95.5); walkNative(fixture,fixture.players.get(1).player(),96.5);
+                whenUntil(context,tick+1,() -> fault.hit,lowTick -> {
+                    hooks.release();
+                    context.assertTrue(fault.moved!=null && fault.tick>=0,"真move RETURN窗口必須命中");
+                    context.assertTrue(SessionRecoveryRecord.sameParticipantSources(initial.participants(),fixture.record().participants())
+                            && fixture.record().spaceLeases().size()>=2,"partial batch保留完整sources與兩邊lease");
+                    fixture.trustedTeardown(lowTick+1,() -> {
+                        var value=context.getWorld().getEntity(itemId);
+                        context.assertTrue(value instanceof net.minecraft.entity.ItemEntity returned && returned.getStack().getCount()==5
+                                && returned.getStack().isOf(net.minecraft.item.Items.DIAMOND),"cohort與五顆鑽石均真返還後才清理");
+                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK4_REMAP_LOW_OK sid={} sourceOff=true item={} amount=5",initial.sessionUuid(),itemId);
+                        context.complete();
+                    });
+                },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30),hooks);
+            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
         });
     }
 
