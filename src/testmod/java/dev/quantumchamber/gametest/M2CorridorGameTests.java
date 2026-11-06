@@ -1912,14 +1912,19 @@ public final class M2CorridorGameTests implements FabricGameTest {
         }
         /** Task4 之後交由真 backend 收尾；保留既有呼叫名稱以便對照 Task3 入場案例。 */
         void trustedTeardown(int tick,Runnable complete) {
+            trustedTeardown(tick,complete,null,TeardownFault.NONE);
+        }
+        enum TeardownFault { NONE, CONDITION, READY, TIMEOUT }
+        void trustedTeardown(int tick,Runnable complete,TestHooks hooks) {
+            trustedTeardown(tick,complete,hooks,TeardownFault.NONE);
+        }
+        void trustedTeardown(int tick,Runnable complete,TestHooks hooks,TeardownFault fault) {
             var initial=record();
             context.assertTrue(initial!=null,"必須是已知 source session 才能要求收尾");
             if(context.getWorld().isReceivingRedstonePower(frame.controllerPos())) power();
             else dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(context.getWorld(),controller());
             var journal=SessionRecoveryState.get(server);
-            when(context,tick,() -> dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,initial.chamberUuid())
-                    ==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE,ignored -> {
-                try {
+            Runnable returned=() -> {
                     context.assertTrue(!journal.flushedRecords().containsKey(initial.sessionUuid()),"真release收據消費前已durable移除");
                     for(var connection : players) {
                         var player=connection.player();
@@ -1930,9 +1935,39 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     }
                     context.assertTrue(dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(context.getWorld(),frame.controllerPos()),
                             "LOW真返還收尾後解除來源保護");
+            };
+            boolean[] injected={false};
+            Runnable mark=() -> {
+                if(!injected[0]) {
+                    injected[0]=true;
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_TEARDOWN_FAULT kind={} pid={} session={} returned=true",fault,ProcessHandle.current().pid(),initial.sessionUuid());
+                }
+            };
+            java.util.function.BooleanSupplier condition=() -> {
+                if(dev.quantumchamber.chamber.ChamberSessions.gateway().presence(server,initial.chamberUuid())
+                        !=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE)return false;
+                if(fault==TeardownFault.CONDITION || fault==TeardownFault.TIMEOUT) {
+                    returned.run();mark.run();
+                    if(fault==TeardownFault.CONDITION)throw new IllegalStateException("M6_RETRY_TEARDOWN_CONDITION");
+                    return false;
+                }
+                return true;
+            };
+            java.util.function.IntConsumer ready=ignored -> {
+                Throwable original=null;
+                try {
+                    returned.run();
+                    if(fault==TeardownFault.READY){mark.run();throw new IllegalStateException("M6_RETRY_TEARDOWN_READY");}
                     complete.run();
-                } finally { close(); }
-            });
+                } catch(RuntimeException | Error failure) {original=failure;throw failure;}
+                finally {
+                    try {close();} catch(RuntimeException | Error cleanup) {
+                        if(hooks!=null && original!=null)original.addSuppressed(cleanup);else throw cleanup;
+                    }
+                }
+            };
+            if(fault==TeardownFault.TIMEOUT)whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(2),hooks);
+            else when(context,tick,condition,ready,hooks);
         }
         /** 原等待失敗仍是本GameTest的結果；完成正式返還後才把同一原錯交給GameTest。 */
         void failCohortAfterCleanup(int tick,RuntimeException original,CohortWaitTrace trace) {

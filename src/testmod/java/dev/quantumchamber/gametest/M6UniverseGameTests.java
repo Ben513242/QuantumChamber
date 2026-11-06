@@ -21,7 +21,8 @@ public final class M6UniverseGameTests implements FabricGameTest {
     private static final class RetryHighProbe {
         private final TestContext context;
         private final M2CorridorGameTests.NativeEntry fixture;
-        private final LogCapture logs = new LogCapture("quantumchamber");
+        private final LogCapture logs;
+        private final M2CorridorGameTests.TestHooks hooks = new M2CorridorGameTests.TestHooks();
         private final java.util.Set<java.util.UUID> ids = new java.util.HashSet<>();
         private final long deadline = System.nanoTime() + 60_000_000_000L;
         private dev.quantumchamber.persistence.SessionRecoveryRecord attempt;
@@ -30,16 +31,29 @@ public final class M6UniverseGameTests implements FabricGameTest {
         private byte[] stableJournal;
         private net.minecraft.nbt.NbtCompound stableController;
         private final boolean callbackFault;
+        private final M2CorridorGameTests.NativeEntry.TeardownFault cleanupFault;
         private final dev.quantumchamber.chamber.ChamberSessionGateway originalGateway;
         private dev.quantumchamber.chamber.ChamberSessionGateway decorator;
         private int callbacks,retryStartedAt;
+        private boolean terminal;
         private dev.quantumchamber.chamber.ChamberControllerBlockEntity controllerIdentity;
         RetryHighProbe(TestContext context,boolean callbackFault) {
-            this.context=context;this.callbackFault=callbackFault;fixture=new M2CorridorGameTests.NativeEntry(context,1);
+            this.context=context;this.callbackFault=callbackFault;
+            cleanupFault=callbackFault?M2CorridorGameTests.NativeEntry.TeardownFault.valueOf(System.getProperty("quantumchamber.test.m6RetryCleanupFault","NONE")):M2CorridorGameTests.NativeEntry.TeardownFault.NONE;
             originalGateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+            fixture=new M2CorridorGameTests.NativeEntry(context,1);
+            logs=new LogCapture("quantumchamber");
+            try {
+                hooks.add(this::verifyDetached);
+                hooks.add(logs::close);
+                hooks.add(this::restoreGateway);
+            } catch(RuntimeException | Error failure) {
+                try {logs.close();}catch(RuntimeException | Error cleanup){if(cleanup!=failure)failure.addSuppressed(cleanup);}
+                hooks.releaseAfter(failure);throw failure;
+            }
         }
         void start() {
-            context.runAtTick(2, () -> {
+            schedule(2, () -> {
                 if(callbackFault) {
                     decorator=new dev.quantumchamber.chamber.ChamberSessionGateway() {
                         public Presence presence(net.minecraft.server.MinecraftServer server,java.util.UUID chamber){return originalGateway.presence(server,chamber);}
@@ -62,7 +76,8 @@ public final class M6UniverseGameTests implements FabricGameTest {
             });
         }
         private void poll(int tick) {
-            context.runAtTick(tick, () -> {
+            schedule(tick, () -> {
+                if(terminal)return;
                 try {
                     if(System.nanoTime()>=deadline){finish("RETRY_WALL_DEADLINE stage="+stage,tick+1);return;}
                     context.assertTrue(fixture.controller()==controllerIdentity,"必須同一exact controller instance");
@@ -104,32 +119,66 @@ public final class M6UniverseGameTests implements FabricGameTest {
                         }
                     }
                     poll(tick+1);
-                } catch(Exception failure) {finish(failure.toString(),tick+1);}
+                } catch(RuntimeException | Error failure) {
+                    hooks.releaseAfter(failure);throw failure;
+                }
             });
         }
-        private byte[] journalBytes() throws java.io.IOException {
-            return java.nio.file.Files.readAllBytes(fixture.server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)
-                    .resolve("data/quantumchamber_sessions.dat"));
+        private byte[] journalBytes() {
+            try {
+                return java.nio.file.Files.readAllBytes(fixture.server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)
+                        .resolve("data/quantumchamber_sessions.dat"));
+            } catch(java.io.IOException failure){throw new java.io.UncheckedIOException(failure);}
         }
-        private void finish(String failure,int tick) {
+        private void finish(String message,int tick) {finishOnce(message==null?null:new IllegalStateException(message),tick);}
+        private void finishOnce(Throwable failure,int tick) {
+            if(terminal){if(failure!=null){hooks.releaseAfter(failure);throwOriginal(failure);}return;}
+            terminal=true;
             Runnable done=() -> {
-                try {context.assertTrue(failure==null,failure==null?"完成":failure);}
-                finally {
-                    try {logs.close();} finally {
-                        if(callbackFault) {
-                            boolean ours=dev.quantumchamber.chamber.ChamberSessions.gateway()==decorator;
-                            dev.quantumchamber.chamber.ChamberSessions.install(originalGateway);
-                            context.assertTrue(ours && dev.quantumchamber.chamber.ChamberSessions.gateway()==originalGateway,"finally還原exact gateway");
-                        }
-                    }
-                }
-                context.complete();
+                if(failure!=null){hooks.releaseAfter(failure);throwOriginal(failure);return;}
+                hooks.release();context.complete();
             };
-            if(fixture.record()!=null)fixture.trustedTeardown(tick,done);
-            else {
-                if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()))fixture.power();
-                try {done.run();}finally{fixture.close();}
+            try {
+                if(fixture.record()!=null)fixture.trustedTeardown(tick,done,hooks,cleanupFault);
+                else {
+                    if(context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos()))fixture.power();
+                    try {done.run();}catch(RuntimeException | Error original) {
+                        try {fixture.close();}catch(RuntimeException | Error cleanup){if(cleanup!=original)original.addSuppressed(cleanup);}
+                        throw original;
+                    }
+                    fixture.close();
+                }
+            } catch(RuntimeException | Error original) {
+                if(failure!=null && original!=failure){failure.addSuppressed(original);hooks.releaseAfter(failure);throwOriginal(failure);return;}
+                hooks.releaseAfter(original);throw original;
             }
+        }
+        private void schedule(int tick,Runnable action) {
+            try {
+                context.runAtTick(tick,() -> {
+                    try {action.run();}catch(RuntimeException | Error failure){hooks.releaseAfter(failure);throw failure;}
+                });
+            } catch(RuntimeException | Error failure){hooks.releaseAfter(failure);throw failure;}
+        }
+        private static void throwOriginal(Throwable failure) {
+            if(failure instanceof RuntimeException runtime)throw runtime;
+            if(failure instanceof Error error)throw error;
+            throw new AssertionError(failure);
+        }
+        private void restoreGateway() {
+            var current=dev.quantumchamber.chamber.ChamberSessions.gateway();
+            if(current==originalGateway)return;
+            if(decorator==null || current!=decorator)throw new IllegalStateException("M6_RETRY_FOREIGN_GATEWAY_NOT_OVERWRITTEN");
+            dev.quantumchamber.chamber.ChamberSessions.install(originalGateway);
+        }
+        private void verifyDetached() {
+            boolean gateway=dev.quantumchamber.chamber.ChamberSessions.gateway()==originalGateway;
+            var logger=(org.apache.logging.log4j.core.Logger)org.apache.logging.log4j.LogManager.getLogger("quantumchamber");
+            boolean absent=!logger.getContext().getConfiguration().getRootLogger().getAppenders().containsKey(logs.getName());
+            boolean stopped=!logs.isStarted();
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M6_RETRY_CLEANUP_DETACHED status={} pid={} session={} fault={} gateway={} appenderRemoved={} captureStopped={}",
+                    gateway&&absent&&stopped?"PASS":"FAIL",ProcessHandle.current().pid(),attempt==null?"UNASSIGNED":attempt.sessionUuid(),cleanupFault,gateway,absent,stopped);
+            context.assertTrue(gateway&&absent&&stopped,"M6_RETRY_CLEANUP_DETACH_FAILED");
         }
     }
 
