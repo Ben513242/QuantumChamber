@@ -363,7 +363,7 @@ final class M5CollapseInitChain {
         run.expect("nothingAllocatedAtStart", () -> M5CollapseDiskEvidence.allocations(run.data()).isEmpty()
                         && !UniverseRegistryState.get(run.server()).flushedRecords().containsKey(fixture.universe()) && fixture.universeWorld().isEmpty(),
                 () -> "allocation=" + fixture.allocationsOrError() + " catalog=" + UniverseRegistryState.get(run.server()).flushedRecords().keySet());
-        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
+        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.server(), run.saveRoot(), fixture.sid()));
     }
 
     /** 每個 tick：journal 正式檔與開服時不同（寫過）時，SchemaVersion 必須是 4（spec §12：初始化成功之後的第一次 checked 寫入升為 schema 4）。 */

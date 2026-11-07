@@ -490,7 +490,34 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         catalogBefore = UniverseRegistryState.get(run.server()).flushedRecords().size();
         var file = run.config.evidence().resolve(M5CollapseRun.RECEIPT_NBT);
         M5CollapseRun.require(!Files.exists(file), "receipt NBT 已存在：" + file);
-        var wrapped = M5CollapseDiskEvidence.writeJournal(file, List.of(measured));
+        run.journal().flush(run.server());
+        var source = run.data().resolve(M5CollapseDiskEvidence.JOURNAL);
+        run.expect("receiptExactSaveRoot", run.data().toAbsolutePath().normalize().equals(run.server().getSavePath(net.minecraft.util.WorldSavePath.ROOT).toAbsolutePath().normalize().resolve("data")), () -> "非 exact server save root");
+        var snapshot = M5CollapseDiskEvidence.snapshot(run.server(), source, false);
+        var records = snapshot.decoded().flushedRecords();
+        var sourceSha = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(snapshot.bytes()));
+        run.recordProof("receiptSource", Map.of("path", source.toAbsolutePath().normalize().toString(), "schema", snapshot.wrapped().getCompound("data").getInt("SchemaVersion"),
+                "dataVersion", snapshot.wrapped().getInt("DataVersion"), "rowCount", records.size(), "sids", records.keySet().stream().map(UUID::toString).toList(), "sha256", sourceSha));
+        run.expect("receiptSourceExactCheckedSet", records.equals(run.journal().flushedRecords()), () -> "磁碟全集合與 checked flushed 不同");
+        run.expect("receiptExactCheckedRecord", measured.state() == SessionState.MEASURED && measured.selectedCandidate().isPresent()
+                && measured.equals(records.get(sid)) && measured.equals(run.journal().flushedRecords().get(sid)), () -> "磁碟整筆與 checked receipt 不同");
+        run.expect("receiptSourceUnchanged", sourceSha.equals(M5CollapseDiskEvidence.sha256(source)), () -> "正式檔讀前後 SHA 不同");
+        var wrapped = M5CollapseDiskEvidence.singleReceipt(run, snapshot, sid, measured);
+        byte[] receiptBytes;
+        if (records.size() == 1) receiptBytes = snapshot.bytes();
+        else {
+            var compressed = new java.io.ByteArrayOutputStream();
+            NbtIo.writeCompressed(wrapped, compressed);
+            receiptBytes = compressed.toByteArray();
+        }
+        Files.write(file, receiptBytes, java.nio.file.StandardOpenOption.CREATE_NEW);
+        var copied = M5CollapseDiskEvidence.snapshot(run.server(), file, true);
+        run.expect("receiptCopyExact", java.util.Arrays.equals(receiptBytes, copied.bytes()) && wrapped.equals(copied.wrapped())
+                && copied.decoded().flushedRecords().equals(Map.of(sid, measured)), () -> "旁證寫後 bytes、NBT 或 record 不同");
+        run.expect("receiptSourceStillUnchanged", sourceSha.equals(M5CollapseDiskEvidence.sha256(source)), () -> "寫旁證改動正式檔");
+        run.recordProof("receiptExtraction", Map.of("sourceSha256", sourceSha, "receiptSha256", M5CollapseDiskEvidence.sha256(file),
+                "sourceRows", records.size(), "receiptRows", copied.decoded().flushedRecords().size(), "targetNbtSha256", M5CollapseDiskEvidence.sha256(wrapped.getCompound("data").getList("Records", net.minecraft.nbt.NbtElement.COMPOUND_TYPE).getCompound(0)),
+                "sourceBytesExact", java.util.Arrays.equals(snapshot.bytes(), copied.bytes())));
         var evidence = new LinkedHashMap<String, Object>();
         evidence.put("sessionUuid", sid.toString());
         evidence.put("chamberUuid", chamber.toString());
@@ -545,9 +572,12 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
         var halt = window == null ? run.readStoppedReceipt(crashPhase, "setup") : readHaltReceipt(crashPhase, window);
         var noted = halt.getAsJsonObject("receipt");
         var receiptFile = crashEvidence.resolve(M5CollapseRun.RECEIPT_NBT);
-        run.expect("receiptNbtIntact", M5CollapseDiskEvidence.sha256(receiptFile).equals(M5CollapseRun.text(noted, "receiptNbtSha256")),
+        var snapshot = M5CollapseDiskEvidence.snapshot(run.server(), receiptFile, true);
+        run.expect("receiptNbtIntact", HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(snapshot.bytes())).equals(M5CollapseRun.text(noted, "receiptNbtSha256")),
                 () -> "receipt NBT 的 SHA-256 與 halt receipt 不同");
-        var decoded = SessionRecoveryState.fromNbt(NbtIo.readCompressed(receiptFile, NbtSizeTracker.ofUnlimitedBytes()).getCompound("data"));
+        var decoded = snapshot.decoded();
+        run.expect("receiptCandidateDigest", M5CollapseDiskEvidence.sha256(snapshot.wrapped()).equals(M5CollapseRun.text(noted, "candidateSha256")), () -> "候選摘要不同");
+        run.expect("receiptSingleRowAtRestart", decoded.flushedRecords().size() == 1, () -> "旁證不只一筆");
         decoded.requireHealthy();
         var measured = decoded.flushedRecords().get(UUID.fromString(M5CollapseRun.text(noted, "sessionUuid")));
         run.expect("receiptDecoded", measured != null && measured.state() == SessionState.MEASURED, () -> "receipt NBT 裡沒有這個 session 的 MEASURED 收據");
@@ -856,6 +886,6 @@ final class M5CollapseFixture implements M5CollapseRun.Context {
     }
 
     @Override public Map<String, Object> diskSummary() {
-        return M5CollapseDiskEvidence.summary(run.server() == null ? run.worldData().getParent() : run.saveRoot(), sid);
+        return M5CollapseDiskEvidence.summary(run.server(), run.server() == null ? run.worldData().getParent() : run.saveRoot(), sid);
     }
 }

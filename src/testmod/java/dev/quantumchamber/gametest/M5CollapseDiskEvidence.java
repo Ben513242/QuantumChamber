@@ -98,22 +98,102 @@ final class M5CollapseDiskEvidence {
      */
     record JournalOnDisk(int schema, int dataVersion, Map<UUID, SessionRecoveryRecord> records) {}
 
-    /**
-     * F6-2e-2（F6-2e-1 quality Minor 2）：磁碟上的 journal（{@code data} 的 {@link #JOURNAL}），production 的 {@link SessionJournalStore#read} 讀回、{@link SessionRecoveryState#fromNbt}
-     * strict 解碼、{@code requireHealthy}；檔案不存在時是空的。原本 {@link #journalRecord} 與 {@code M5CollapseUnsupportedChain} 各自推導路徑、各寫一份 read＋decode。
-     */
-    static Optional<JournalOnDisk> journal(Path data) throws IOException {
-        var file = data.resolve(JOURNAL);
-        if (!Files.exists(file)) return Optional.empty();
-        var root = SessionJournalStore.read(file);
-        var envelope = root.getCompound("data");
-        var decoded = SessionRecoveryState.fromNbt(envelope);
-        decoded.requireHealthy();
-        return Optional.of(new JournalOnDisk(envelope.getInt("SchemaVersion"), NbtHelper.getDataVersion(root, -1), decoded.flushedRecords()));
+    /** 同一份 compressed bytes；正式 raw walker 與 schema5 16 MiB reader。 */
+    record JournalSnapshot(byte[] bytes, NbtCompound wrapped, SessionRecoveryState decoded) {}
+
+    static JournalSnapshot snapshot(net.minecraft.server.MinecraftServer server, Path file, boolean receipt) throws IOException {
+        for (var cursor = file.toAbsolutePath().normalize(); cursor != null; cursor = cursor.getParent()) {
+            if (Files.isSymbolicLink(cursor) || Files.readAttributes(cursor, java.nio.file.attribute.BasicFileAttributes.class,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS).isOther()) throw new IOException("M5_DISK_PATH：不可經過 reparse：" + cursor);
+        }
+        if (!Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) throw new IOException("M5_DISK_FILE：必須一般檔案");
+        byte[] bytes;
+        try (var input = Files.newInputStream(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) { bytes = input.readAllBytes(); }
+        try {
+            var walkerType = Class.forName(SessionJournalStore.class.getName() + "$RawWalker");
+            var constructor = walkerType.getDeclaredConstructor(byte[].class, boolean.class); constructor.setAccessible(true);
+            var scan = walkerType.getDeclaredMethod("scan"); scan.setAccessible(true);
+            int schema = (int) scan.invoke(constructor.newInstance(bytes, false));
+            NbtCompound wrapped;
+            if (receipt && schema < 5) {
+                // 舊旁證不含 DataVersion；正式 schema5 絕不走此相容路徑。
+                wrapped = NbtIo.readCompressed(new ByteArrayInputStream(bytes), NbtSizeTracker.of(16L * 1024 * 1024));
+            } else {
+                var type = Class.forName(SessionJournalStore.class.getName() + "$Snapshot");
+                var create = type.getDeclaredConstructor(byte[].class); create.setAccessible(true);
+                var decode = type.getDeclaredMethod("decode"); decode.setAccessible(true);
+                wrapped = (NbtCompound) decode.invoke(create.newInstance((Object) bytes));
+            }
+            return new JournalSnapshot(bytes, wrapped, decode(server, wrapped.getCompound("data")));
+        } catch (ReflectiveOperationException failure) {
+            throw new IOException("M5_DISK_RAW：正式 snapshot 讀取失敗", failure instanceof java.lang.reflect.InvocationTargetException invoked ? invoked.getCause() : failure);
+        }
     }
 
-    static Optional<SessionRecoveryRecord> journalRecord(Path data, UUID session) throws IOException {
-        return journal(data).map(journal -> journal.records().get(session));
+    static SessionRecoveryState decode(net.minecraft.server.MinecraftServer server, NbtCompound nbt) throws IOException {
+        if (!nbt.contains("SchemaVersion", NbtElement.INT_TYPE)) throw new IOException("M5_DISK_SCHEMA：缺版本");
+        int schema = nbt.getInt("SchemaVersion");
+        if (schema < 1 || schema > 5) throw new IOException("M5_DISK_SCHEMA：未知版本");
+        SessionRecoveryState decoded;
+        if (schema < 5) decoded = SessionRecoveryState.fromNbt(nbt);
+        else {
+            if (server == null) throw new IOException("M5_DISK_SERVER_REQUIRED：schema5 必須明確 server");
+            if (!server.isOnThread()) throw new IOException("M5_DISK_OWNER：必須 server thread");
+            var installed = SessionRecoveryState.get(server); installed.requireHealthy();
+            try {
+                var owner = SessionRecoveryState.class.getDeclaredField("owner"); owner.setAccessible(true);
+                if (owner.get(installed) != server) throw new IOException("M5_DISK_OWNER：非 exact owner");
+                var field = SessionRecoveryState.class.getDeclaredField("intentValidator"); field.setAccessible(true);
+                var validator = field.get(installed);
+                if (validator == null || !field.getType().isInstance(validator)
+                        || !field.getType().getName().equals(SessionRecoveryState.class.getName() + "$M6IntentValidator"))
+                    throw new IOException("M5_DISK_VALIDATOR：缺正式 validator");
+                var reader = SessionRecoveryState.class.getDeclaredMethod("fromNbt", NbtCompound.class, field.getType()); reader.setAccessible(true);
+                decoded = (SessionRecoveryState) reader.invoke(null, nbt, validator);
+                if (decoded == installed) throw new IOException("M5_DISK_DECODE：不可回 installed state");
+            } catch (ReflectiveOperationException failure) { throw new IOException("M5_DISK_DECODE：bound decode 失敗", failure); }
+        }
+        try { decoded.requireHealthy(); }
+        catch (IllegalStateException failure) { throw new IOException("M5_DISK_HEALTHY：strict 解碼拒絕", failure); }
+        return decoded;
+    }
+
+    /** 只從已解碼正式 snapshot 的原 NBT 取 exact sid；不重序列化 record。 */
+    static NbtCompound singleReceipt(M5CollapseRun run, JournalSnapshot source, UUID sid, SessionRecoveryRecord measured) throws IOException {
+        var original = source.wrapped();
+        var rows = original.getCompound("data").getList("Records", NbtElement.COMPOUND_TYPE);
+        var matches = new java.util.ArrayList<NbtCompound>();
+        for (var row : rows) {
+            var compound = (NbtCompound) row;
+            if (compound.containsUuid("SessionUuid") && sid.equals(compound.getUuid("SessionUuid"))) matches.add(compound);
+        }
+        run.expect("receiptSourceTargetUnique", matches.size() == 1, () -> "正式 NBT 目標 sid 不是恰一次：" + sid);
+        var target = matches.getFirst();
+        var wrapped = original.copy();
+        var single = new net.minecraft.nbt.NbtList(); single.add(target.copy());
+        wrapped.getCompound("data").put("Records", single);
+        var restored = wrapped.copy(); restored.getCompound("data").put("Records", rows.copy());
+        run.expect("receiptEnvelopeExact", original.equals(restored) && target.equals(single.getCompound(0)), () -> "旁證變更了 Records 以外內容或目標 NBT");
+        var decoded = decode(run.server(), wrapped.getCompound("data")).flushedRecords();
+        run.expect("receiptSingleTargetExact", decoded.size() == 1 && measured.equals(decoded.get(sid))
+                && source.decoded().flushedRecords().get(sid).equals(decoded.get(sid)), () -> "旁證不是唯一 exact target");
+        return wrapped;
+    }
+
+    static Optional<JournalOnDisk> journal(Path data) throws IOException { return journal(null, data); }
+
+    static Optional<JournalOnDisk> journal(net.minecraft.server.MinecraftServer server, Path data) throws IOException {
+        var file = data.resolve(JOURNAL);
+        if (!Files.exists(file)) return Optional.empty();
+        if (server != null && !data.toAbsolutePath().normalize().equals(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).toAbsolutePath().normalize().resolve("data")))
+            throw new IOException("M5_DISK_SAVE_ROOT：非 exact server save root");
+        var snapshot = snapshot(server, file, false);
+        var root = snapshot.wrapped();
+        return Optional.of(new JournalOnDisk(root.getCompound("data").getInt("SchemaVersion"), NbtHelper.getDataVersion(root, -1), snapshot.decoded().flushedRecords()));
+    }
+
+    static Optional<SessionRecoveryRecord> journalRecord(net.minecraft.server.MinecraftServer server, Path data, UUID session) throws IOException {
+        return journal(server, data).map(journal -> journal.records().get(session));
     }
 
     /**
@@ -128,7 +208,7 @@ final class M5CollapseDiskEvidence {
      * 推導只會讓規則不一致；斷言的名稱跨 run 比對，不為鍵改名；沒有程式讀這些鍵。
      */
     static Optional<JournalOnDisk> expectJournalOnDisk(M5CollapseRun run, Path data, String name, int schema, Map<UUID, SessionRecoveryRecord> expected) throws Exception {
-        var journal = journal(data);
+        var journal = journal(run.server(), data);
         int actual = journal.map(JournalOnDisk::schema).orElse(-1);
         var records = journal.map(JournalOnDisk::records).orElse(Map.of());
         run.expect(name, actual == schema && records.equals(expected),
@@ -307,17 +387,32 @@ final class M5CollapseDiskEvidence {
 
     /**
      * halt receipt 的磁碟權威摘要：五個檔各自的 SHA-256 與內容摘要（journal 的 schema 與這個 session 的狀態、allocation、catalog、discovery、projection 的每一筆）。
-     * 讀取失敗的項目記成 {@code UNREADABLE: <原因>}，不丟出（halt 之前一定要寫得出 receipt）。
+     * journal 的 schema／狀態／SHA 來自同一 snapshot，讀取失敗必拒；其他權威保留 {@code UNREADABLE: <原因>} 診斷。
      */
-    static Map<String, Object> summary(Path saveRoot, UUID session) {
+    static Map<String, Object> summary(Path saveRoot, UUID session) { return summary(null, saveRoot, session); }
+
+    static Map<String, Object> summary(net.minecraft.server.MinecraftServer server, Path saveRoot, UUID session) {
         var data = saveRoot.resolve("data");
         var result = new LinkedHashMap<String, Object>();
         var hashes = new LinkedHashMap<String, String>();
         for (var name : FILES) hashes.put(name, attempt(() -> sha256(data.resolve(name))).toString());
         result.put("sha256", hashes);
-        result.put("journalSchema", attempt(() -> journalSchema(data)));
-        result.put("journalState", attempt(() -> session == null ? "NO_SESSION"
-                : journalRecord(data, session).map(record -> record.state().name()).orElse("ABSENT")));
+        try {
+            var file = data.resolve(JOURNAL);
+            if (!Files.exists(file)) {
+                result.put("journalSchema", -1); result.put("journalState", "ABSENT");
+            } else {
+                if (server != null && !saveRoot.toAbsolutePath().normalize().equals(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).toAbsolutePath().normalize()))
+                    throw new IOException("M5_DISK_SAVE_ROOT：摘要非 exact server save root");
+                var snapshot = snapshot(server, file, false);
+                hashes.put(JOURNAL, HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(snapshot.bytes())));
+                result.put("journalSchema", snapshot.wrapped().getCompound("data").getInt("SchemaVersion"));
+                var record = session == null ? null : snapshot.decoded().flushedRecords().get(session);
+                result.put("journalState", session == null ? "NO_SESSION" : record == null ? "ABSENT" : record.state().name());
+            }
+        } catch (IOException | NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("M5_SUMMARY_JOURNAL：不可把讀取失敗當有效摘要", failure);
+        }
         result.put("allocations", attempt(() -> allocations(data).stream().map(Allocation::toString).toList()));
         result.put("catalog", attempt(() -> catalog(data).values().stream()
                 .map(record -> record.definition().universeId().value() + " " + record.desiredAvailability()).toList()));

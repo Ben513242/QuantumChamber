@@ -776,7 +776,7 @@ final class M5CollapseWindows {
      * 原生存檔）；allocation ledger 還是空的（RESOLVE 還沒有開始）。
      */
     private static void committedBeforeTheReturn(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
+        var onDisk = M5CollapseDiskEvidence.journalRecord(run.server(), run.data(), fixture.sid()).orElse(null);
         evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
         run.expect("journalCollapsingAtHalt", onDisk != null && onDisk.state() == SessionState.COLLAPSING
                         && M5CollapseFixture.destination(onDisk).equals(Optional.of(fixture.universe())),
@@ -835,7 +835,7 @@ final class M5CollapseWindows {
         run.expect("controllerOnDiskBeforeHalt", controllerBlock(disk), () -> "checkpoint 之後磁碟上的 Controller 位置是 " + disk);
         run.expect("projectionCompleteAtHalt", () -> M5CollapseDiskEvidence.projections(run.data()).equals(List.of(fixture.projection())),
                 () -> "projection ledger=" + fixture.projectionsOrError());
-        var state = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).map(record -> record.state().name()).orElse("ABSENT");
+        var state = M5CollapseDiskEvidence.journalRecord(run.server(), run.data(), fixture.sid()).map(record -> record.state().name()).orElse("ABSENT");
         run.expect("journalCollapsingAtHalt", SessionState.COLLAPSING.name().equals(state), () -> "磁碟上的 journal 是 " + state);
     }
 
@@ -856,7 +856,7 @@ final class M5CollapseWindows {
      * {@code atHalt} 的 {@code recordAtHalt}（restart 開服時比對相同：opened／expires、Crossed、RecoveryRequired 都沒有變）。
      */
     private static void recordOnDisk(M5CollapseRun run, M5CollapseFixture fixture, Map<String, Object> evidence, SessionRecoveryRecord expected, String name) throws Exception {
-        var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
+        var onDisk = M5CollapseDiskEvidence.journalRecord(run.server(), run.data(), fixture.sid()).orElse(null);
         putRecordAtHalt(evidence, expected);
         evidence.put("doorCenterOnDisk", doorCenterOnDisk(run, fixture));
         run.expect(name, expected.equals(onDisk), () -> "磁碟上的 record=" + (onDisk == null ? "ABSENT" : onDisk.state() + " crossed=" + onDisk.collapse().crossed()));
@@ -976,7 +976,7 @@ final class M5CollapseWindows {
      * Controller 是 PASSAGE（重啟之後找不到所屬 session 的量子膜）。
      */
     private static void terminatedBeforeTheDoor(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid());
+        var onDisk = M5CollapseDiskEvidence.journalRecord(run.server(), run.data(), fixture.sid());
         evidence.put("journalStateOnDisk", onDisk.map(record -> record.state().name()).orElse("ABSENT"));
         run.expect("terminatedOnDiskAtHalt", onDisk.isEmpty(), () -> "磁碟上仍有這個 session：" + evidence.get("journalStateOnDisk"));
         // F6-3 Step 0（F6-2e-3 quality nit）：經 M5CollapseDoors.is（原本 M5GameTestSupport.doorPassable(run.source(), FRAME)，同一個 doorAll(…, true, passable)，判斷相同）。
@@ -1040,7 +1040,7 @@ final class M5CollapseWindows {
      * catalog 都還沒有 U。F6-2d-2 Step 0（F6-2d-1 quality Minor 4）：另記下收據的摘要（{@code recordAtHalt}，restart 的 {@code recordKeptAcrossTheRestart}）。
      */
     private static void dormantAtHalt(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
+        var onDisk = M5CollapseDiskEvidence.journalRecord(run.server(), run.data(), fixture.sid()).orElse(null);
         evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
         putRecordAtHalt(evidence, fixture.receipt());
         run.expect("dormantOnDiskAtHalt", fixture.receipt().equals(onDisk), () -> "磁碟上的 journal 是 " + (onDisk == null ? "ABSENT" : onDisk.state()) + "，不是收據");
@@ -1080,7 +1080,7 @@ final class M5CollapseWindows {
      * Minor 4）：另記下磁碟上這筆 COLLAPSING 的摘要（{@code recordAtHalt}），restart 逐欄位比對（{@code recordKeptAcrossTheRestart}）。
      */
     private static void disabledBeforeTheSeal(M5CollapseRun run, M5CollapseFixture fixture, Object detail, Map<String, Object> evidence) throws Exception {
-        var onDisk = M5CollapseDiskEvidence.journalRecord(run.data(), fixture.sid()).orElse(null);
+        var onDisk = M5CollapseDiskEvidence.journalRecord(run.server(), run.data(), fixture.sid()).orElse(null);
         evidence.put("journalStateOnDisk", onDisk == null ? "ABSENT" : onDisk.state().name());
         putRecordAtHalt(evidence, onDisk);
         run.expect("collapsingOnDiskAtHalt", onDisk != null && onDisk.state() == SessionState.COLLAPSING
@@ -1246,7 +1246,7 @@ final class M5CollapseWindows {
             run.expect("unrecognizedWhenLoaded", atLoad.instanceKind() == ChamberInstanceKind.ORIGIN && !atLoad.powerInitialized() && atLoad.loadSyncPending(),
                     () -> "載入時的 Controller：" + atLoad);
         }
-        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
+        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.server(), run.saveRoot(), sid));
         return load;
     }
 

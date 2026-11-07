@@ -139,7 +139,7 @@ final class M5CollapseRevisitChains {
                 new Step("committed", 40, () -> {
                     if (!fixture.committed()) return false;
                     placeRefreshWitness();
-                    run.recordProof("diskAtStop", M5CollapseDiskEvidence.summary(run.saveRoot(), fixture.sid()));
+                    run.recordProof("diskAtStop", M5CollapseDiskEvidence.summary(run.server(), run.saveRoot(), fixture.sid()));
                     return true;
                 })));
         return Phase.stop(steps).started(fixture::requireFreshWorld);
@@ -228,7 +228,7 @@ final class M5CollapseRevisitChains {
         run.expect("refreshWitnessOnDisk", REDSTONE_BLOCK.equals(witness.name()), () -> "磁碟上 Controller 正上方是 " + witness);
         diskInstanceKind = M5CollapseDiskEvidence.blockEntityString(fixture.dimensionDirectory(world), FRAME.controllerPos(), "InstanceKind");
         run.recordProof("projectionControllerKindOnDisk", diskInstanceKind);
-        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.saveRoot(), sid));
+        run.recordProof("startedDisk", M5CollapseDiskEvidence.summary(run.server(), run.saveRoot(), sid));
         load = M5CollapseProjectionLoad.start(run, fixture);
         // 剛由磁碟載入時是磁碟上的值：InstanceKind 是 setup 時寫回的 PROJECTION、WasPowered 仍是 false（refresh witness 放上時沒有 refresh）、load-sync 還在佇列。
         var atLoad = load.atLoad();
