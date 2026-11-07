@@ -427,7 +427,10 @@ function Invoke-W10Fresh {
     $psi=[Diagnostics.ProcessStartInfo]::new((Resolve-W10Pwsh))
     $psi.WorkingDirectory=$w10OldProject; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
     $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
-    foreach ($arg in @('-NoProfile','-File',(Join-Path $w10OldProject 'scripts/verification/m5-collapse-probe.ps1'),'-Only','w10','-StopAfterPhase','w10-crash','-PhaseMinutes','8','-IdleSeconds','90')) { $psi.ArgumentList.Add($arg) }
+    $producerRunner=Assert-W10Path (Join-Path $w10OldProject 'scripts/verification/m5-collapse-probe.ps1')
+    $producerCommand='[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference=''Stop''; try { & ''' + $producerRunner.Replace("'","''") + ''' -Only w10 -StopAfterPhase w10-crash -PhaseMinutes 8 -IdleSeconds 90; exit 0 } catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }'
+    $producerEncoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($producerCommand))
+    foreach ($arg in @('-NoProfile','-EncodedCommand',$producerEncoded)) { $psi.ArgumentList.Add($arg) }
     $watch=[Diagnostics.Stopwatch]::StartNew()
     $child=[Diagnostics.Process]::Start($psi); $started=$child.StartTime.ToUniversalTime().ToString('o')
     $outFile=[IO.File]::Open((Join-Path $diagnostic 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
