@@ -1398,7 +1398,7 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             var pendingReady = new boolean[1];
             context.runAtTick(resolved + 400, () -> M5GameTestSupport.prepare400Snapshot(
                     "prepare_unconfirmed_first", resolved, sid, frame, universe, journal, "PENDING", pendingReady[0],
-                    () -> authorities.projection(chamber, id).value().map(entry -> entry.status().name()).orElse("ABSENT")));
+                    () -> authorities.projection(chamber, id)));
             whenTicks(context, resolved + 1, 400, () -> authorities.projection(chamber, id).value()
                     .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent(), pendingAt -> {
                 pendingReady[0] = true;

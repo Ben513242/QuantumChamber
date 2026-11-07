@@ -394,7 +394,7 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
             var firstReady = new boolean[1];
             context.runAtTick(resolved + 400, () -> M5GameTestSupport.prepare400Snapshot(
                     "existing_passage_first", resolved, sid1, frame, universe, journal, "PASSAGE_READY", firstReady[0],
-                    () -> CollapseAuthorities.get(server).projection(chamber, id).status().name()));
+                    () -> CollapseAuthorities.get(server).projection(chamber, id)));
             whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid1).equals("PASSAGE_READY"), readyAt -> {
                 firstReady[0] = true;
                 crossMidline(context, readyAt + 1, hooks, p, frame, 3.5);

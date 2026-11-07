@@ -14,6 +14,8 @@ import dev.quantumchamber.chamber.ChamberState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.chamber.QuantumBulkheadBlock;
 import dev.quantumchamber.collapse.CollapseService;
+import dev.quantumchamber.collapse.CollapseAuthorities;
+import dev.quantumchamber.collapse.ProjectionLedger;
 import dev.quantumchamber.collapse.ProjectionWriter;
 import dev.quantumchamber.collapse.SealedReason;
 import dev.quantumchamber.corridor.CorridorGeometry;
@@ -1056,22 +1058,28 @@ final class M5GameTestSupport {
 
     /** 首個 PREPARE 等待的單次唯讀觀測；診斷失敗不得改寫 GameTest 的原判決。 */
     static void prepare400Snapshot(String test, int resolved, UUID sid, ChamberFrame frame, ServerWorld universe,
-            SessionRecoveryState journal, String target, boolean alreadyReady, Supplier<String> projectionStatus) {
+            SessionRecoveryState journal, String target, boolean alreadyReady,
+            Supplier<CollapseAuthorities.Lookup<ProjectionLedger.Entry>> projectionLookup) {
         try {
             var server = universe.getServer();
             var current = journal.records().get(sid);
             var flushed = journal.flushedRecords().get(sid);
             var currentState = current == null ? "ABSENT" : current.state().name();
             var flushedState = flushed == null ? "ABSENT" : flushed.state().name();
+            var lookup = projectionLookup.get();
+            var lookupStatus = lookup.status();
+            var entryStatus = lookup.value().map(entry -> entry.status().name()).orElse("ABSENT");
+            var targetNow = prepare400TargetNow(target, flushed == null ? null : flushed.state(), lookup);
+            var targetReached = alreadyReady || targetNow;
             var worldKey = universe.getRegistryKey();
             var liveOwner = server.getWorld(worldKey) == universe;
             var owner = liveOwner ? "MATCH" : "WRONG_WORLD";
-            if (alreadyReady || !liveOwner || current == null || flushed == null
+            if (targetReached || !liveOwner || current == null || flushed == null
                     || current.state() != SessionState.COLLAPSING || flushed.state() != SessionState.COLLAPSING) {
-                var classification = alreadyReady ? "TARGET_REACHED" : !liveOwner ? "UNKNOWN" : "SESSION_TERMINATED_OR_ABSENT";
-                LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} serverTick={} target={} current={} flushed={} phase=UNKNOWN worldKey={} worldIdentity={} owner={} classification={}",
+                var classification = targetReached ? "TARGET_REACHED" : !liveOwner ? "UNKNOWN" : "SESSION_TERMINATED_OR_ABSENT";
+                LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} serverTick={} target={} current={} flushed={} phase=UNKNOWN worldKey={} worldIdentity={} owner={} projectionLookupStatus={} projectionEntryStatus={} targetNow={} alreadyReady={} classification={}",
                         test, sid, resolved, resolved + 400, server.getTicks(), target, currentState, flushedState,
-                        worldKey.getValue(), System.identityHashCode(universe), owner, classification);
+                        worldKey.getValue(), System.identityHashCode(universe), owner, lookupStatus, entryStatus, targetNow, alreadyReady, classification);
                 return;
             }
             @SuppressWarnings("unchecked")
@@ -1091,16 +1099,28 @@ final class M5GameTestSupport {
                 if (level == null) missing.add(coordinate);
                 if (!full) notFull.add(coordinate);
             }
-            var projection = projectionStatus.get();
-            var classification = prepare400Classification(false, true, preparing, missing.size(), notFull.size());
-            LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} serverTick={} target={} current={} flushed={} phase={} worldKey={} worldIdentity={} owner={} expectedChunks={} ticketMap={} eachChunk={} missingTickets={} notFull={} allFull={} projectionStatus={} classification={}",
+            var lookupHealthy = lookupStatus == CollapseAuthorities.Lookup.Status.FOUND || lookupStatus == CollapseAuthorities.Lookup.Status.ABSENT;
+            var classification = lookupHealthy
+                    ? prepare400Classification(false, true, preparing, missing.size(), notFull.size()) : "UNKNOWN";
+            LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} serverTick={} target={} current={} flushed={} phase={} worldKey={} worldIdentity={} owner={} expectedChunks={} ticketMap={} eachChunk={} missingTickets={} notFull={} allFull={} projectionLookupStatus={} projectionEntryStatus={} targetNow={} alreadyReady={} classification={}",
                     test, sid, resolved, resolved + 400, server.getTicks(), target, currentState, flushedState,
                     preparing ? "PREPARE" : "NOT_PREPARE", worldKey.getValue(), System.identityHashCode(universe), owner, area.size(), tickets, chunks, missing,
-                    notFull, notFull.isEmpty(), projection, classification);
+                    notFull, notFull.isEmpty(), lookupStatus, entryStatus, targetNow, alreadyReady, classification);
         } catch (RuntimeException failure) {
             LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} classification=DIAGNOSTIC_ERROR error={}",
                     test, sid, resolved, resolved + 400, failure.getClass().getSimpleName());
         }
+    }
+
+    /** 只用同一次 projection lookup 與已讀的 flushed state 判斷當刻目標。 */
+    static boolean prepare400TargetNow(String target, SessionState flushedState,
+            CollapseAuthorities.Lookup<ProjectionLedger.Entry> lookup) {
+        return switch (target) {
+            case "PASSAGE_READY" -> flushedState == SessionState.PASSAGE_READY;
+            case "PENDING" -> lookup.status() == CollapseAuthorities.Lookup.Status.FOUND
+                    && lookup.value().filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent();
+            default -> throw new IllegalArgumentException("未知的 PREPARE 快照目標：" + target);
+        };
     }
 
     /** 固定資料負控亦使用此純分類器；單次快照只證當刻。 */
