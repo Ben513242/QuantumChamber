@@ -129,7 +129,22 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             var watched = local(frame, 0, 3, 3); var observer = outside(frame, -1, 3, 3);
             var wired = local(frame, 6, 2, 3); var wire = outside(frame, 7, 2, 3); var support = outside(frame, 7, 1, 3);
             wireSnapshot(universe, sid, id, frame, "beforeSetup", wire, support, wired);
+            int fixtureDeadline = resolved + 4 + 200;
+            var pocket = List.of(wire.up(), wire.north(), wire.south(), wire.west());
+            var required = new ArrayList<BlockPos>(pocket);
+            required.add(wire); required.add(support); required.add(wired);
+            whenTicks(context, resolved + 4, 200, () -> required.stream().allMatch(pos -> {
+                var chunk = new ChunkPos(pos);
+                return universe.isChunkLoaded(chunk.toLong())
+                        && universe.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null;
+            }) && universe.shouldTickBlocksInChunk(ChunkPos.toLong(wire))
+                    && universe.getChunkManager().isTickingFutureReady(ChunkPos.toLong(wire)), full -> {
+            wireSnapshot(universe, sid, id, frame, "beforeFixtureFull", wire, support, wired);
+            context.assertTrue(full < fixtureDeadline, "投影的第一次寫入 fixture FULL/ticking 太晚：deadline=" + fixtureDeadline);
+            context.assertTrue(wired.equals(wire.east()), "投影線路 fixture：EAST 必須是投影 shell");
             ChamberProtectionService.get().authorizedMutation(() -> {
+                // 只在投影外封住流體入口；EAST 的 shell 仍交由 writer 寫入。
+                for (var side : pocket) universe.setBlockState(side, Blocks.STONE.getDefaultState(), Block.NOTIFY_ALL);
                 for (var chest : List.of(interiorChest, shellChest)) {
                     universe.setBlockState(chest, Blocks.CHEST.getDefaultState(), Block.NOTIFY_ALL);
                     ((ChestBlockEntity) universe.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 5));
@@ -158,12 +173,19 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             spectator.player().teleport(universe, spectatorAt.x, spectatorAt.y, spectatorAt.z, Set.of(), 0, 0);
             var area = box(frame).expand(3);
             // 新產生的 chunk 的 entity storage 是非同步載入的：等到豬看得見（entity 的區段已在追蹤中），之後的掉落物檢查才有意義；同時等偵測器靜止。
-            whenTicks(context, resolved + 4, 200, () -> visible(universe, pig, area)
+            whenTicks(context, full + 1, Math.max(0, fixtureDeadline - full - 1), () -> visible(universe, pig, area)
                     && !universe.getBlockState(observer).get(ObserverBlock.POWERED)
                     && !universe.getBlockTickScheduler().isQueued(observer, Blocks.OBSERVER), settled -> {
                 wireSnapshot(universe, sid, id, frame, "fixtureSettled", wire, support, wired);
                 witness.put("fixtureSettled", universe.getBlockState(wire).isOf(Blocks.REDSTONE_WIRE) && universe.getBlockState(support).isAir()
-                        && items(universe, area) == 0 && spectator.player().getServerWorld() == universe);
+                        && items(universe, area) == 0 && spectator.player().getServerWorld() == universe
+                        && wired.equals(wire.east())
+                        && pocket.stream().allMatch(side -> universe.getFluidState(side).isEmpty()));
+                if (witness.get("fixtureSettled") == false) {
+                    hooks.release();
+                    context.assertTrue(false, "投影的第一次寫入 fixtureSettled=false：" + witness);
+                    return;
+                }
                 var pigBefore = pig.getPos();
                 var spectatorBefore = spectator.player().getPos();
                 wireSnapshot(universe, sid, id, frame, "beforeWriter", wire, support, wired);
@@ -196,7 +218,10 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
                     context.assertTrue(!witness.containsValue(false), "投影的第一次寫入：" + witness);
                     awaitConvergedThenComplete(context, 1, 20);
                 });
-            }, () -> "entity storage 沒有載入或偵測器沒有靜止：pigVisible=" + visible(universe, pig, area), hooks);
+            }, () -> "投影的第一次寫入 fixture 逾時：entity storage 沒有載入或偵測器沒有靜止；pigVisible="
+                    + visible(universe, pig, area) + " deadline=" + fixtureDeadline, hooks);
+            }, () -> "投影的第一次寫入 fixture FULL/ticking 逾時：wire=" + wire + " deadline=" + fixtureDeadline,
+                    hooks);
         });
     }
 
