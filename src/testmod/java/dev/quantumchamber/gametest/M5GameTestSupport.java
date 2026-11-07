@@ -1054,6 +1054,65 @@ final class M5GameTestSupport {
         return tickets(world, DESTINATION_TICKET, sid);
     }
 
+    /** 首個 PREPARE 等待的單次唯讀觀測；診斷失敗不得改寫 GameTest 的原判決。 */
+    static void prepare400Snapshot(String test, int resolved, UUID sid, ChamberFrame frame, ServerWorld universe,
+            SessionRecoveryState journal, String target, boolean alreadyReady, Supplier<String> projectionStatus) {
+        try {
+            var server = universe.getServer();
+            var current = journal.records().get(sid);
+            var flushed = journal.flushedRecords().get(sid);
+            var currentState = current == null ? "ABSENT" : current.state().name();
+            var flushedState = flushed == null ? "ABSENT" : flushed.state().name();
+            var worldKey = universe.getRegistryKey();
+            var liveOwner = server.getWorld(worldKey) == universe;
+            var owner = liveOwner ? "MATCH" : "WRONG_WORLD";
+            if (alreadyReady || !liveOwner || current == null || flushed == null
+                    || current.state() != SessionState.COLLAPSING || flushed.state() != SessionState.COLLAPSING) {
+                var classification = alreadyReady ? "TARGET_REACHED" : !liveOwner ? "UNKNOWN" : "SESSION_TERMINATED_OR_ABSENT";
+                LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} serverTick={} target={} current={} flushed={} phase=UNKNOWN worldKey={} worldIdentity={} owner={} classification={}",
+                        test, sid, resolved, resolved + 400, server.getTicks(), target, currentState, flushedState,
+                        worldKey.getValue(), System.identityHashCode(universe), owner, classification);
+                return;
+            }
+            @SuppressWarnings("unchecked")
+            var tracks = (Map<UUID, ?>) M4CandidateTestAccess.get(collapseService(server), "tracks");
+            var track = tracks.get(sid);
+            var preparing = track != null && Boolean.TRUE.equals(M4CandidateTestAccess.get(track, "preparing"));
+            var area = preloadArea(frame).stream().sorted(Comparator.comparingInt((ChunkPos pos) -> pos.x).thenComparingInt(pos -> pos.z)).toList();
+            var tickets = destinationTickets(universe, sid);
+            var chunks = new ArrayList<String>(area.size());
+            var missing = new ArrayList<String>();
+            var notFull = new ArrayList<String>();
+            for (var pos : area) {
+                var level = tickets.get(pos);
+                var coordinate = pos.x + "," + pos.z;
+                var full = universe.getChunkManager().getWorldChunk(pos.x, pos.z) != null;
+                chunks.add(coordinate + ":" + (level == null ? "ABSENT" : level) + ":" + full);
+                if (level == null) missing.add(coordinate);
+                if (!full) notFull.add(coordinate);
+            }
+            var projection = projectionStatus.get();
+            var classification = prepare400Classification(false, true, preparing, missing.size(), notFull.size());
+            LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} serverTick={} target={} current={} flushed={} phase={} worldKey={} worldIdentity={} owner={} expectedChunks={} ticketMap={} eachChunk={} missingTickets={} notFull={} allFull={} projectionStatus={} classification={}",
+                    test, sid, resolved, resolved + 400, server.getTicks(), target, currentState, flushedState,
+                    preparing ? "PREPARE" : "NOT_PREPARE", worldKey.getValue(), System.identityHashCode(universe), owner, area.size(), tickets, chunks, missing,
+                    notFull, notFull.isEmpty(), projection, classification);
+        } catch (RuntimeException failure) {
+            LOGGER.info("M5_PREPARE_400_SNAPSHOT test={} sid={} resolved={} sampleTick={} classification=DIAGNOSTIC_ERROR error={}",
+                    test, sid, resolved, resolved + 400, failure.getClass().getSimpleName());
+        }
+    }
+
+    /** 固定資料負控亦使用此純分類器；單次快照只證當刻。 */
+    static String prepare400Classification(boolean alreadyReady, boolean liveOwner, boolean active,
+            int missingTickets, int notFull) {
+        if (alreadyReady) return "TARGET_REACHED";
+        if (!liveOwner || !active) return "UNKNOWN";
+        if (missingTickets > 0) return "TICKET_MISSING";
+        if (notFull > 0) return "CHUNK_NOT_FULL";
+        return "PHASE_STALLED_AFTER_FULL";
+    }
+
     /**
      * {@code world} 的原生 ticket 表中，類型名稱是 {@code type}、argument 是 {@code argument} 的 ticket 所在的 chunk 與 level（依 x、z 排序；同一個 chunk 有幾張時記最後
      * 讀到的那張），從原生 ticket 表唯讀取得（{@code ChunkTicketManagerTestAccessor}；不修改原生集合）。沒有時為空。F6-2d Step 0（F6-2c quality Minor 8）：由

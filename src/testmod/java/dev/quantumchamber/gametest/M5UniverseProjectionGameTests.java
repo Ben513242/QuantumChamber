@@ -1395,8 +1395,13 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             BooleanSupplier noSeal = () -> !M5GameTestSupport.state(journal, sid).equals("SEALED")
                     && capture.marked(Level.WARN, CollapseService.LOG_MARKER.getName(), "塌縮進入 SEALED", sid.toString()).isEmpty()
                     && capture.matching(Level.ERROR, sid.toString()).isEmpty();
+            var pendingReady = new boolean[1];
+            context.runAtTick(resolved + 400, () -> M5GameTestSupport.prepare400Snapshot(
+                    "prepare_unconfirmed_first", resolved, sid, frame, universe, journal, "PENDING", pendingReady[0],
+                    () -> authorities.projection(chamber, id).value().map(entry -> entry.status().name()).orElse("ABSENT")));
             whenTicks(context, resolved + 1, 400, () -> authorities.projection(chamber, id).value()
                     .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent(), pendingAt -> {
+                pendingReady[0] = true;
                 var fault = M5GameTestSupport.installCheckedReadFault(context, ProjectionLedger.FILE_NAME, 0, 1, hooks);
                 var other = new ProjectionLedger.Entry(UUID.randomUUID(), id, DimensionRole.OVERWORLD, frame.controllerPos().add(64, 0, 0), frame.outwardFacing(),
                         ProjectionLedger.Entry.Status.PENDING);
