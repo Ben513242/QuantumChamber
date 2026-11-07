@@ -208,6 +208,134 @@ public final class M6RandomProbePhases {
                         "error",failure.getClass().getName()+":"+String.valueOf(failure.getMessage()).substring(0,Math.min(160,String.valueOf(failure.getMessage()).length())),"elapsedNanos",System.nanoTime()-start));}catch(Throwable ignored) {}return false;
             }finally {active=previous;if(prior==null)FRAME.remove();else FRAME.set(prior);}
         }
+        private static final String CONCURRENCY_PROPERTY="quantumchamber.test.m6OreWriterConcurrency";
+        private static final java.util.concurrent.atomic.AtomicBoolean CONCURRENCY_RAN=new java.util.concurrent.atomic.AtomicBoolean();
+        /** 顯式 opt-in；正常路徑不建 thread/latch，也不等待。 */
+        private static boolean concurrentSynthetic(Map<String,Object> proof,boolean serverThread) {
+            String mode=System.getProperty(CONCURRENCY_PROPERTY,"");
+            if(!"once-v1".equals(mode)) {
+                proof.put("partialOreWriterConcurrencySynthetic",Map.of("synthetic",true,"status","DISABLED","propertyObserved",mode.length()>32?"INVALID":mode));
+                return true;
+            }
+            long start=System.nanoTime(),deadline=start+TimeUnit.SECONDS.toNanos(4);
+            Window previous=active;Frame prior=FRAME.get();
+            var row=new LinkedHashMap<String,Object>();
+            row.put("synthetic",true);row.put("propertyObserved",mode);row.put("status","DIAGNOSTIC_INVALID");
+            row.put("root",proof.get("root"));row.put("nonce",proof.get("nonce"));row.put("startupNonce",proof.get("startupNonce"));
+            row.put("timingPerturbation",true);row.put("functionalAcceptance",false);
+            var checks=new ArrayList<String>();
+            var first=new java.util.concurrent.atomic.AtomicReference<Throwable>();
+            Thread[] workers=new Thread[2];
+            var cleared=new java.util.concurrent.atomic.AtomicIntegerArray(2);
+            var returns=new java.util.concurrent.atomic.AtomicIntegerArray(2);
+            var throwsCount=new java.util.concurrent.atomic.AtomicIntegerArray(2);
+            var enteredA=new CountDownLatch(1);var publishedB=new CountDownLatch(1);var releaseA=new CountDownLatch(1);
+            boolean passed=false;
+            try {
+                check(serverThread && previous==null && prior==null && "partial-overworld".equals(proof.get("chain"))
+                        && "restart".equals(proof.get("phase")) && proof.get("root") instanceof String
+                        && proof.get("nonce") instanceof String && proof.get("startupNonce") instanceof String,
+                        "CONCURRENCY_OWNER",checks);
+                check(CONCURRENCY_RAN.compareAndSet(false,true),"CONCURRENCY_ONCE",checks);row.put("invocations",1);
+                var stone=net.minecraft.block.Blocks.STONE.getDefaultState();var ore=net.minecraft.block.Blocks.DIORITE.getDefaultState();
+                Window w=new Window(null,"synthetic-concurrent","synthetic-concurrent","synthetic","synthetic","synthetic");
+                ChunkSection[] sections={new ChunkSection(new PalettedContainer<>(net.minecraft.block.Block.STATE_IDS,stone,PalettedContainer.PaletteProvider.BLOCK_STATE),null),
+                        new ChunkSection(new PalettedContainer<>(net.minecraft.block.Block.STATE_IDS,stone,PalettedContainer.PaletteProvider.BLOCK_STATE),null)};
+                Frame[] frames={new Frame(w,10,-1,0),new Frame(w,20,1,0)};active=w;
+                for(int index=0;index<2;index++) {
+                    final int worker=index;
+                    workers[index]=new Thread(() -> {
+                        try {
+                            if(worker==1)awaitSynthetic(enteredA,deadline);
+                            demand(FRAME.get()==null,"THREAD_LOCAL_ISOLATION");FRAME.set(frames[worker]);
+                            int x=worker*5;section(new BlockPos(x,0,0),() -> sections[worker]);
+                            var returned=write(sections[worker],x,0,0,ore,() -> {
+                                returns.incrementAndGet(worker);
+                                if(worker==0) {enteredA.countDown();awaitSynthetic(releaseA,deadline);}
+                                demand(FRAME.get()==frames[worker],"THREAD_LOCAL_ISOLATION");return stone;
+                            });
+                            demand(returned==stone && returns.get(worker)==1,"ORIGINAL_RETURN_ONCE");
+                            if(worker==1) {publishedB.countDown();awaitSynthetic(releaseA,deadline);}
+                            demand(FRAME.get()==frames[worker],"THREAD_LOCAL_ISOLATION");
+                            var sentinel=new IllegalStateException("synthetic-original-"+worker);
+                            try {write(sections[worker],x,0,0,ore,() -> {throwsCount.incrementAndGet(worker);throw sentinel;});
+                                throw new IllegalStateException("ORIGINAL_THROW_MISSING");}
+                            catch(IllegalStateException failure) {demand(failure==sentinel && throwsCount.get(worker)==1,"ORIGINAL_THROW_IDENTITY_ONCE");}
+                            demand(vein(null,() -> {demand(FRAME.get()==null,"THREAD_LOCAL_ISOLATION");return true;})
+                                    && FRAME.get()==frames[worker],"THREAD_LOCAL_ISOLATION");
+                            try {vein(null,() -> {throw sentinel;});throw new IllegalStateException("NESTED_THROW_MISSING");}
+                            catch(IllegalStateException failure) {demand(failure==sentinel && FRAME.get()==frames[worker],"THREAD_LOCAL_ISOLATION");}
+                        }catch(Throwable failure) {first.compareAndSet(null,failure);}
+                        finally {
+                            FRAME.remove();if(FRAME.get()==null)cleared.set(worker,1);
+                            // 失敗喚醒不是發布成功；server先採計firstFailure，再核slots。
+                            if(worker==0)enteredA.countDown();else publishedB.countDown();
+                        }
+                    },"m6-ore-synthetic-"+index);
+                    workers[index].setDaemon(true);workers[index].start();
+                }
+                awaitSynthetic(publishedB,deadline);rethrowSynthetic(first);
+                check(workers[0].threadId()!=workers[1].threadId(),"DISTINCT_WORKERS",checks);
+                check(w.reserved.get()==2 && w.events.get(0)==null && w.events.get(1)!=null,"CONTROLLED_PUBLICATION",checks);
+                var sink=new LinkedHashMap<String,Object>();freeze(w,sink);
+                var frozen=w.frozen;String frozenBytes=new Gson().toJson(frozen);
+                check(((Number)frozen.get("cutoff")).intValue()==2 && ((Number)frozen.get("inFlight")).intValue()==1
+                        && ((List<?>)frozen.get("events")).size()==1,"CUTOFF_INFLIGHT",checks);
+                row.put("cutoffBeforeRelease",2);row.put("inFlightBeforeRelease",1);row.put("publishedSlotsBeforeRelease",List.of(1));
+                releaseA.countDown();
+                for(Thread worker:workers)joinSynthetic(worker,deadline);
+                rethrowSynthetic(first);
+                check(cleared.get(0)==1 && cleared.get(1)==1,"WORKER_FINALLY_CLEARED",checks);
+                Event a=w.events.get(0),b=w.events.get(1);
+                check(a!=null && b!=null && a.frame==10 && b.frame==20 && a.x==0 && b.x==5
+                        && a.thread==workers[0].threadId() && b.thread==workers[1].threadId()
+                        && sections[0]!=sections[1],"THREAD_LOCAL_ISOLATION",checks);
+                check(returns.get(0)==1 && returns.get(1)==1 && throwsCount.get(0)==1 && throwsCount.get(1)==1,"ORIGINAL_OPERATIONS_ONCE",checks);
+                freeze(w,sink);
+                check(w.frozen==frozen && sink.get("partialOreWriter")==frozen && new Gson().toJson(w.frozen).equals(frozenBytes),"CUT_OFF_NO_BACKFILL",checks);
+                row.put("threadIds",List.of(workers[0].threadId(),workers[1].threadId()));
+                row.put("frames",List.of(a.frame,b.frame));row.put("absolutePositions",List.of(List.of(a.x,a.y,a.z),List.of(b.x,b.y,b.z)));
+                row.put("publishedSlotsAfterJoin",List.of(0,1));row.put("frozenSlotsAfterJoin",List.of(1));
+                row.put("originalReturnCalls",List.of(returns.get(0),returns.get(1)));row.put("originalThrowCalls",List.of(throwsCount.get(0),throwsCount.get(1)));
+                // capacity及錯root直接沿用既有純helper控制，仍與真writer分欄。
+                FRAME.remove();active=null;
+                var controls=new LinkedHashMap<String,Object>();
+                check(synthetic(controls),"CAPACITY_AND_STALE_CONTEXT",checks);
+                row.put("capacityAndStaleContextControls",controls.get("partialOreWriterSynthetic"));passed=true;
+            }catch(Throwable failure) {
+                Throwable cause=first.get()==null?failure:first.get();row.put("failure",String.valueOf(cause.getMessage()));
+            }finally {
+                releaseA.countDown();enteredA.countDown();publishedB.countDown();
+                long cleanupDeadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                for(Thread worker:workers)if(worker!=null && worker.isAlive())worker.interrupt();
+                boolean clean=true;
+                for(Thread worker:workers)if(worker!=null) {
+                    try {joinSynthetic(worker,cleanupDeadline);}catch(Throwable failure) {clean=false;}
+                    if(worker.isAlive())clean=false;
+                }
+                active=previous;if(prior==null)FRAME.remove();else FRAME.set(prior);
+                row.put("workersTerminated",clean && workers[0]!=null && workers[1]!=null);
+                row.put("workerFramesCleared",List.of(cleared.get(0)==1,cleared.get(1)==1));
+                passed=passed && clean && cleared.get(0)==1 && cleared.get(1)==1;
+                row.put("status",passed?"PASS":"DIAGNOSTIC_INVALID");row.put("checks",List.copyOf(checks));
+                row.put("elapsedNanos",System.nanoTime()-start);proof.put("partialOreWriterConcurrencySynthetic",row);
+            }
+            return passed;
+        }
+        private static void demand(boolean condition,String name) {if(!condition)throw new IllegalStateException(name);}
+        private static void awaitSynthetic(CountDownLatch latch,long deadline) {
+            try {long remaining=deadline-System.nanoTime();demand(remaining>0 && latch.await(remaining,TimeUnit.NANOSECONDS),"SYNTHETIC_DEADLINE");}
+            catch(InterruptedException failure) {Thread.currentThread().interrupt();throw new IllegalStateException("SYNTHETIC_INTERRUPTED",failure);}
+        }
+        private static void joinSynthetic(Thread worker,long deadline) {
+            try {long remaining=deadline-System.nanoTime();
+                if(worker.isAlive()) {demand(remaining>0,"SYNTHETIC_JOIN_DEADLINE");TimeUnit.NANOSECONDS.timedJoin(worker,remaining);}
+                demand(!worker.isAlive(),"SYNTHETIC_WORKER_STILL_ALIVE");
+            }catch(InterruptedException failure) {Thread.currentThread().interrupt();throw new IllegalStateException("SYNTHETIC_JOIN_INTERRUPTED",failure);}
+        }
+        private static void rethrowSynthetic(java.util.concurrent.atomic.AtomicReference<Throwable> failure) {
+            if(failure.get()!=null)throw new IllegalStateException(failure.get().getMessage(),failure.get());
+        }
         private static void check(boolean condition,String name,List<String> checks) {
             if(!condition)throw new IllegalStateException(name);if(!name.isEmpty())checks.add(name);
         }
@@ -906,7 +1034,7 @@ public final class M6RandomProbePhases {
             var details=new ArrayList<Map<String,Object>>();
             boolean timing=chain.equals("partial-overworld") && phase.equals("restart") && compareDisk;
             int sampleIndex=0;
-            OreWitness.Window writer=timing && OreWitness.synthetic(proof)?OreWitness.arm(world,callerResolvedActiveWorld,proof,sid.toString(),id.value().toString()):null;
+            OreWitness.Window writer=timing && OreWitness.concurrentSynthetic(proof,server.isOnThread()) && OreWitness.synthetic(proof)?OreWitness.arm(world,callerResolvedActiveWorld,proof,sid.toString(),id.value().toString()):null;
             try {
             if(phase.equals("partial")) {
                 var region=storage().resolve("region/r.0.0.mca");
