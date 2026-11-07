@@ -412,11 +412,19 @@ function Wait-W10Producer($Child,$OutputTask,$ErrorTask,$Watch) {
     }
     return ($Watch.Elapsed.TotalMinutes -ge 10)
 }
+function Resolve-W10Pwsh([string]$PwshHome = $PSHOME) {
+    try {
+        $candidate=[IO.Path]::GetFullPath((Join-Path $PwshHome 'pwsh.exe'))
+        $null=Assert-W10Path $candidate
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "執行檔不存在：$candidate" }
+        return $candidate
+    } catch { throw "W10_PWSH_UNAVAILABLE：$($_.Exception.Message)" }
+}
 function Invoke-W10Fresh {
     $pre=Assert-W10Preflight
     $beforeRoots=@(Get-W10RootSet $w10OldProject $false); $beforeEvidence=@(Get-W10RootSet $w10OldProject $true)
     $diagnostic=Join-Path $EvidenceRoot "w10-producer-$taskRunId"; $null=Assert-W10Path $diagnostic -Absent; $null=New-Item -ItemType Directory -Path $diagnostic
-    $psi=[Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application).Source)
+    $psi=[Diagnostics.ProcessStartInfo]::new((Resolve-W10Pwsh))
     $psi.WorkingDirectory=$w10OldProject; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
     $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
     foreach ($arg in @('-NoProfile','-File',(Join-Path $w10OldProject 'scripts/verification/m5-collapse-probe.ps1'),'-Only','w10','-StopAfterPhase','w10-crash','-PhaseMinutes','8','-IdleSeconds','90')) { $psi.ArgumentList.Add($arg) }
