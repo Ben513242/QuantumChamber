@@ -1,1 +1,2 @@
 /start-client.bat text eol=crlf
+/scripts/verification/m5-w10-producer-v2.patch text eol=lf whitespace=-blank-at-eol

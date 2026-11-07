@@ -624,3 +624,53 @@ Task12 M5 normal 來源窄補：同一 `gameTestM5`／fresh `run/gametest-m5` �
 Task12 CI preset marker 跨午夜核對：兩平台每個實際執行的 scope，第一個 GameTest 前確認各自 log 目錄為空；事後依當次 `latest.log` 加合法日期 gzip 逐 piece 驗嚴格／寬鬆 marker 總數恰一、六欄 exact，保留壓縮原件與 SHA。Log4j gzip 採固定單 member 解碼，壓縮輸入最多 **16 MiB**、展開輸出最多 **64 MiB**；超限、壞 header／trailer、第二 member、額外尾端、錯名或重複 marker 均具名拒絕。這是 CI 證據讀取上限，不是正式 journal 容量。原 CI run `42313448722` 及截斷 gzip 意外 PASS root 保留原判，新 pin 的兩平台 CI 與 artifact 尚待驗證。
 
 Task12 M4 recovery 現行腳本為25 phase；上表 M5 已採計24/24保留歷史原判。`readback-fault` 唯一用 `EXPECTED_PENDING_RESTART_REQUIRED` 專用 oracle 核未確認寫入後停寫與原檔不變，接續新 JVM `recover→verify`；其餘24 phase仍要求正常 `final.json PASS`。這是現行用法，不代表新 code pin 的乾淨雙focused／完整run-all或遠端CI已通過。
+
+### W10 每輪固定 m5 producer → 現版 consumer
+
+預設 M5 full69 與 `-Only w10` 每輪使用新 nonce：舊 v2 `HALT_ONLY` → `ImportOnly` → 獨立磁碟驗證 `AUTOMATED_PRESTART` → 現版單次 restart。原 67 phase 不變；W10 的舊 HALT row 與新 STOP row 保持各自 root/code/runner pin。自動驗證收據是受審程式的驗證結果，不表示每輪有人審查。`run-all.ps1` 在第一個 Gradle/world gate 前執行 W10 `-PreflightOnly`，最後另讀原件、完整 source 與 copied crash hashes；缺準備即早期 FAIL。
+
+這版固定 Windows 舊 checkout 路徑：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-w10-m5-producer`。現版 checkout 由腳本位置推導。新機須先經 controller 核准建立該路徑的 **fresh detached checkout**；日常 gate 不自動 fetch、建 worktree 或套 patch。已有世界/evidence/v2 runner 的 checkout 禁止重套或覆寫。
+
+固定身分（四種 bytes 身分不可混用）：
+
+| 項目 | 精確值 |
+| --- | --- |
+| annotated `m5` object | `15c2943ce37950f468b030c5d194485a328c1705` |
+| peeled commit | `a2d2b404329d2574469fca064a663e21fe89f333` |
+| tag 原 runner Git blob | `9b2624fcc1dfa77fa756c06505c4332ffc072ee0` |
+| tracked `m5-w10-producer-v2.patch` SHA256（LF、含末 LF） | `87019F483ED40F95256300CA4F9318E64873F52414AAC775930D077C66A0CE3C` |
+| 套後 runner bytes SHA256 | `6036C012B890080DFD15168B6E90D42856698B062BAA2405BBB44B38F3E7FE7E` |
+| runner 內部 diff SHA256（各行 LF 串接、無末 LF） | `54993C33BE32E74FEF571804C91E527C912C721440F8E7B17FEDD3115EA01670` |
+
+唯一載體為旁邊的可讀 `.patch`；`.gitattributes` 精確單路徑 `text eol=lf` 保住 Windows checkout bytes。先核當前 clone 的 tag object/peeled 與 patch SHA，再在已核准且目標不存在時建立 fresh checkout。例如（變數以實際現版 checkout 填入）：
+
+```powershell
+$consumer = (Get-Location).Path
+$producer = 'C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-w10-m5-producer'
+$patch = Join-Path $consumer 'scripts/verification/m5-w10-producer-v2.patch'
+# 先核 tag、patch SHA、目標 canonical/非 reparse、owner 0；目標已存在就停，不清除。
+if (Test-Path -LiteralPath $producer) { throw 'producer 已存在，禁止重建或重套' }
+git -C $consumer worktree add --detach $producer a2d2b404329d2574469fca064a663e21fe89f333
+# 以下每條皆須 exit 0；先核 detached HEAD、porcelain 空、原 runner blob。
+git -C $producer rev-parse HEAD
+git -C $producer status --porcelain --untracked-files=all
+git -C $producer hash-object --path=scripts/verification/m5-collapse-probe.ps1 scripts/verification/m5-collapse-probe.ps1
+git -C $producer apply --check $patch
+git -C $producer apply $patch
+Get-FileHash -LiteralPath (Join-Path $producer 'scripts/verification/m5-collapse-probe.ps1')
+$diff = @(& git -C $producer diff --no-ext-diff --binary HEAD -- scripts/verification/m5-collapse-probe.ps1) -join "`n"
+[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($diff)))
+git -C $producer status --porcelain --untracked-files=all
+```
+
+最後 porcelain 必須恰為 ` M scripts/verification/m5-collapse-probe.ps1`，所有身份逐字符合上表；不可調預期 SHA 讓文字相同但 bytes 不同的 runner 過關。patch 缺失、CRLF 或末 LF 變動、錯 tag、原 runner 非 tag blob、其他 dirty、重套均拒絕。fresh 重建 proof 與實跑證據分列，當前舊 checkout 能跑不等於新機重建已驗。
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m5-collapse-probe.ps1 -Only w10 -PreflightOnly
+pwsh -NoProfile -File scripts/verification/m5-collapse-probe.ps1 -Only w10
+pwsh -NoProfile -File scripts/verification/run-all.ps1
+```
+
+producer 子 shell 固定總上限 10 分鐘，內層 PhaseMinutes=8、IdleSeconds=90。timeout 保存 process/stdout/stderr 與新 root，停止整鏈；無法精確歸屬的程序不殺、不接續 import。每輪以啟動前後 root/evidence 集合辨認唯一新增 nonce，不看 mtime。import 部分失敗或已存在 attempt/result/FAIL 時不得補拷或重送；下一輪重新產新 nonce。已消費 `625a9f816af14087bc50e66896bd137b-w10` 封存原件不可重用。
+
+舊 checkout 與所有新舊 root 保留至 controller 明確處置。它不適用已退役 `.worktrees/m5-collapse` 的免備份例外；退役前須依 AGENTS 一般規則搬出世界、外部備份 run/證據、SHA256 manifest、可讀性與 lock/owner/reparse 核對。CI 目前未執行 M5 跨 JVM W10；遠端 job success 只證實其實跑 scope，不能稱 CI W10 PASS。

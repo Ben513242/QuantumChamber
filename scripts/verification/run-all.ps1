@@ -51,6 +51,91 @@ function Step([string]$name,[scriptblock]$body) {
 function One([string]$prefix,[string]$suffix=''){ $d=@(Get-ChildItem -LiteralPath $runRoot | Where-Object {$_.Name -match ('^'+[regex]::Escape($prefix)+'[0-9a-f]{32}'+[regex]::Escape($suffix)+'$')}); if($d.Count -ne 1){throw "root 必須恰一個：$prefix（$($d.Count)）"}; return $d[0].FullName }
 function Read-Json([string]$path){return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String}
 function Hash([string]$path){return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+function Assert-W10FullEvidence($Collapse,[string]$ExpectedHead) {
+    # 獨立終局oracle：不呼producer/import helper，不以summary或validation的PASS代替原件。
+    $w=$Collapse.w10
+    if ($w.contract -cne 'w10-fixed-m5-full-v1' -or $w.parentRunId -cne $Collapse.runId -or $w.nonce -cnotmatch '^[0-9a-f]{32}-w10$' -or $w.nonce -ceq '625a9f816af14087bc50e66896bd137b-w10') { throw 'W10_FULL_CONTRACT' }
+    $old=[IO.Path]::GetFullPath('C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-w10-m5-producer')
+    $source=Join-Path $old "run/m5-collapse-$($w.nonce)"; $dest=Join-Path $repo "run/m5-collapse-$($w.nonce)"
+    $sep=Join-Path $old ".superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-$($w.nonce)"
+    $dep=Join-Path $repo ".superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-$($w.nonce)"
+    if ($w.sourceRoot -cne $source -or $w.destRoot -cne $dest -or $w.sourceEvidence -cne $sep -or $w.destEvidence -cne $dep) { throw 'W10_FULL_ROOT' }
+    foreach ($pair in @(@('bridge','bridge-import.json'),@('validation','automated-prestart.json'),@('result','bridge-result.json'))) {
+        if ($w.($pair[0]) -cne (Join-Path $dep $pair[1])) { throw 'W10_FULL_PATH' }
+    }
+    foreach ($name in @('bridge','validation','result','provenance')) { if ((Hash $w.$name) -cne $w.($name+'Sha256').ToLowerInvariant()) { throw "W10_FULL_HASH：$name" } }
+    $b=Read-Json $w.bridge; $v=Read-Json $w.validation; $r=Read-Json $w.result; $p=Read-Json $w.provenance
+    $m=Read-Json (Join-Path $sep 'producer.json'); $a=Read-Json (Join-Path $dep 'resume-attempt.json')
+    if ($m.status -cne 'HALT_ONLY' -or $m.completeChain -ne $false -or $m.nonce -cne $w.nonce -or $m.sourceRoot -cne $source -or $m.sourceEvidence -cne $sep -or $m.ownerCount -ne 0 -or $m.locksReleased -ne $true) { throw 'W10_FULL_PRODUCER' }
+    if ($b.bridgeContract -cne $w.contract -or $b.status -cne 'IMPORTED_ONLY' -or $b.completeChain -ne $false -or $b.restartStarted -ne $false -or $b.nonce -cne $w.nonce -or $b.sourceRoot -cne $source -or $b.destRoot -cne $dest -or $b.sourceEvidence -cne $sep -or $b.destEvidence -cne $dep) { throw 'W10_FULL_BRIDGE' }
+    if ($v.verificationKind -cne 'AUTOMATED_PRESTART' -or $v.status -cne 'PASS' -or $v.contract -cne $w.contract -or $v.parentRunId -cne $Collapse.runId -or $v.nonce -cne $w.nonce -or $v.sourceRoot -cne $source -or $v.destRoot -cne $dest -or $v.bridgeSha256 -cne $w.bridgeSha256 -or $v.provenancePath -cne $w.provenance -or $v.provenanceSha256 -cne $w.provenanceSha256) { throw 'W10_FULL_VALIDATION' }
+    if ($a.status -cne 'ATTEMPT_RESERVED' -or $a.nonce -cne $w.nonce -or $a.bridgeSha256 -cne $w.bridgeSha256 -or $r.status -cne 'RESTART_ONLY_IMPORT' -or $r.bridgeContract -cne $w.contract -or $r.nonce -cne $w.nonce -or $r.sourceRoot -cne $source -or $r.destRoot -cne $dest -or $r.bridgeSha256 -cne $w.bridgeSha256 -or -not $r.sourceUnchanged -or $r.ownerCount -ne 0 -or -not $r.locksReleased) { throw 'W10_FULL_RESULT' }
+    if ($p.contract -cne $w.contract -or $p.parentRunId -cne $Collapse.runId -or $p.nonce -cne $w.nonce -or $p.outerExit -ne 0 -or $p.timedOut -ne $false -or (Hash $p.processPath) -cne $p.processSha256.ToLowerInvariant()) { throw 'W10_FULL_PROVENANCE' }
+    foreach ($kind in @('Roots','Evidence')) {
+        $before=@($p.('before'+$kind)); $after=@($p.('after'+$kind)); $new=@($after | Where-Object { $_ -cnotin $before })
+        if (@($before | Where-Object { $_ -cnotin $after }).Count -or $new.Count -ne 1 -or $new[0] -cne $w.nonce) { throw 'W10_FULL_FRESH_SET' }
+    }
+    $process=Read-Json $p.processPath
+    if ($process.pid -le 0 -or $process.cwd -cne $old -or $process.outerExit -ne 0 -or $process.timedOut -ne $false -or $process.elapsedSeconds -gt 600 -or (Canon $process.beforeRoots) -cne (Canon $p.beforeRoots) -or (Canon $process.afterRoots) -cne (Canon $p.afterRoots) -or (Canon $process.beforeEvidence) -cne (Canon $p.beforeEvidence) -or (Canon $process.afterEvidence) -cne (Canon $p.afterEvidence)) { throw 'W10_FULL_PROCESS' }
+    $manifestSha=Hash (Join-Path $sep 'producer.json')
+    foreach ($obj in @($b,$v,$p)) { if ($obj.producerManifestSha256.ToLowerInvariant() -cne $manifestSha) { throw 'W10_FULL_MANIFEST_SHA' } }
+    $fixed='a2d2b404329d2574469fca064a663e21fe89f333'
+    $pin=$w.producerPin
+    if ($pin.codeSha -cne $fixed -or $pin.tagTarget -cne $fixed -or $pin.tagObject -cne '15c2943ce37950f468b030c5d194485a328c1705' -or $pin.runnerSha256 -cne '6036C012B890080DFD15168B6E90D42856698B062BAA2405BBB44B38F3E7FE7E' -or $pin.runnerPatchSha256 -cne '54993C33BE32E74FEF571804C91E527C912C721440F8E7B17FEDD3115EA01670') { throw 'W10_FULL_PRODUCER_PIN' }
+    foreach ($obj in @($b,$v,$r,$a,$p)) { if ((Canon $obj.producerPin) -cne (Canon $pin) -or (Canon $obj.consumerPin) -cne (Canon $w.consumerPin)) { throw 'W10_FULL_DUAL_PIN' } }
+    if ((Canon $m.pin) -cne (Canon $pin) -or $w.consumerPin.codeSha -cne $ExpectedHead -or (Hash (Join-Path $PSScriptRoot 'm5-collapse-probe.ps1')) -cne $w.consumerPin.runnerSha256.ToLowerInvariant()) { throw 'W10_FULL_CONSUMER_PIN' }
+    foreach ($project in @($old,$repo)) {
+        $observedHead=(& git -C $project rev-parse HEAD).Trim(); if ($LASTEXITCODE) { throw 'W10_FULL_GIT' }
+        $wanted=if ($project -ceq $old) { $fixed } else { $ExpectedHead }
+        $wantedStatus=if ($project -ceq $old) { ' M scripts/verification/m5-collapse-probe.ps1' } else { '' }
+        $status=@(& git -C $project status --porcelain --untracked-files=all)
+        if ($LASTEXITCODE -or $observedHead -cne $wanted -or ($status -join "`n") -cne $wantedStatus) { throw 'W10_FULL_GIT' }
+        $tag=(& git -C $project rev-parse m5).Trim(); if ($LASTEXITCODE -or $tag -cne $pin.tagObject) { throw 'W10_FULL_TAG' }
+    }
+    if ((Hash (Join-Path $old 'scripts/verification/m5-collapse-probe.ps1')) -cne $pin.runnerSha256.ToLowerInvariant()) { throw 'W10_FULL_RUNNER' }
+    $oldDiff=@(& git -C $old diff --no-ext-diff --binary HEAD -- scripts/verification/m5-collapse-probe.ps1) -join "`n"
+    if ($LASTEXITCODE -or [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($oldDiff))) -cne $pin.runnerPatchSha256) { throw 'W10_FULL_PATCH' }
+    # 逐層唯讀枚舉source全集合，以及dest copied crash；consumer world在restart後可合法改變。
+    $inventory=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($area in @(@('root',$source,@('world','eula.txt','server.properties')),@('crash',(Join-Path $sep 'w10-crash'),@('')))) {
+        foreach ($relative in $area[2]) {
+            $pending=[Collections.Generic.Queue[string]]::new(); $pending.Enqueue((Join-Path $area[1] $relative))
+            while ($pending.Count) {
+                $path=$pending.Dequeue(); $cursor=$path
+                while ($cursor) { $i=Get-Item -LiteralPath $cursor -Force; if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'W10_FULL_REPARSE' }; $cursor=[IO.Path]::GetDirectoryName($cursor) }
+                $item=Get-Item -LiteralPath $path -Force
+                if ($item.PSIsContainer) { foreach ($child in Get-ChildItem -LiteralPath $path -Force) { $pending.Enqueue($child.FullName) }; continue }
+                $key=$area[0]+'/'+[IO.Path]::GetRelativePath($area[1],$path); $inventory.Add($key,@{length=$item.Length;sha256=Hash $path})
+            }
+        }
+    }
+    foreach ($required in @('root/world\level.dat','root/world\session.lock','root/world\data\quantumchamber_sessions.dat','root/eula.txt','root/server.properties','crash/halt.json','crash/launcher.json','crash/receipt.nbt','crash/w10-batch.nbt')) { if (-not $inventory.ContainsKey($required)) { throw 'W10_FULL_MANDATORY' } }
+    if (-not @($inventory.Keys | Where-Object { $_ -cmatch '^root/world\\playerdata\\.+\.dat$' }).Count) { throw 'W10_FULL_PLAYERDATA' }
+    foreach ($files in @(@{rows=@($m.files)},@{rows=@($b.files)})) {
+        $keys=@($files.rows | ForEach-Object { $_.area+'/'+$_.relative }); if ((($keys | Sort-Object) -join '|') -cne (($inventory.Keys | Sort-Object) -join '|')) { throw 'W10_FULL_FILE_SET' }
+        foreach ($f in $files.rows) { $actual=$inventory[$f.area+'/'+$f.relative]; if ($actual.length -ne $f.length -or $actual.sha256 -cne $f.sha256.ToLowerInvariant()) { throw 'W10_FULL_SOURCE_SHA' } }
+    }
+    $crash=Join-Path $dep 'w10-crash'
+    $copyQueue=[Collections.Generic.Queue[string]]::new();$copyQueue.Enqueue($crash);$copied=[Collections.Generic.List[object]]::new()
+    while($copyQueue.Count){$path=$copyQueue.Dequeue();$cursor=$path;while($cursor){$i=Get-Item -LiteralPath $cursor -Force;if($i.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'W10_FULL_REPARSE'};$cursor=[IO.Path]::GetDirectoryName($cursor)};$item=Get-Item -LiteralPath $path -Force;if($item.PSIsContainer){foreach($child in Get-ChildItem -LiteralPath $path -Force){$copyQueue.Enqueue($child.FullName)}}else{$copied.Add($item)}}
+    $wanted=@($m.files | Where-Object area -ceq 'crash')
+    if ((@($copied | ForEach-Object { [IO.Path]::GetRelativePath($crash,$_.FullName) } | Sort-Object) -join '|') -cne (@($wanted.relative | Sort-Object) -join '|')) { throw 'W10_FULL_COPIED_SET' }
+    foreach ($f in $wanted) { $path=Join-Path $crash $f.relative; if ((Get-Item -LiteralPath $path).Length -ne $f.length -or (Hash $path) -cne $f.sha256.ToLowerInvariant()) { throw 'W10_FULL_COPIED_SHA' } }
+    $rows=@($Collapse.phases | Where-Object { $_.phase -cin @('w10-crash','w10-restart') })
+    if ($rows.Count -ne 2 -or $rows[0].phase -cne 'w10-crash' -or $rows[1].phase -cne 'w10-restart' -or $rows[0].root -cne $source -or $rows[1].root -cne $dest -or $rows[0].codeSha -cne $fixed -or $rows[1].codeSha -cne $ExpectedHead -or $rows[0].javaPid -eq $rows[1].javaPid -or $rows[0].startupNonce -ceq $rows[1].startupNonce) { throw 'W10_FULL_PHASE_PAIR' }
+    for ($ix=0;$ix -lt 2;$ix++) {
+        $row=$rows[$ix]; $phase=if ($ix -eq 0) { $r.producerPhase } else { $r.consumerPhase }; $evidence=if ($ix -eq 0) { Join-Path $sep 'w10-crash' } else { Join-Path $dep 'w10-restart' }
+        $receipt=Join-Path $evidence $(if ($ix -eq 0) { 'halt.json' } else { 'final.json' }); $raw=Read-Json $receipt; $launcher=Read-Json (Join-Path $evidence 'launcher.json')
+        if ($row.receipt -cne $receipt -or $row.nonce -cne $w.nonce -or $row.parentRunId -cne $Collapse.runId -or $row.runnerSha256 -cne $(if ($ix -eq 0) { $pin.runnerSha256 } else { $w.consumerPin.runnerSha256 }) -or (Canon $launcher) -cne (Canon $phase)) { throw 'W10_FULL_PHASE_ORIGINAL' }
+        foreach ($field in $launcher.PSObject.Properties.Name) { if ((Canon $row.$field) -cne (Canon $launcher.$field)) { throw 'W10_FULL_ROW' } }
+        if ($raw.root -cne $row.root -or $raw.nonce -cne $w.nonce -or $raw.pid -ne $row.javaPid -or $raw.startupNonce -cne $row.startupNonce -or (Hash $receipt) -cne $row.receiptSha256.ToLowerInvariant() -or (Canon $raw.phaseTable) -cne (Canon @($Collapse.phases.phase))) { throw 'W10_FULL_RECEIPT' }
+        if ($ix -eq 0) { if ($raw.status -cne 'HALT' -or $raw.window -cne 'M4_RECEIPT_STEP' -or $row.javaExitCode -ne 77 -or $row.gradleExitCode -eq 0 -or $raw.hit -ne 1 -or @($raw.failures).Count -or $raw.crashPointFailure -cne 'none') { throw 'W10_FULL_HALT' } }
+        elseif ($raw.status -cne 'PASS' -or $row.javaExitCode -ne 0 -or $row.gradleExitCode -ne 0 -or -not $raw.stopRequested -or -not $raw.stoppingSeen -or -not $raw.stoppedSeen) { throw 'W10_FULL_STOP' }
+    }
+    foreach ($projectRoot in @($source,$dest)) { foreach ($lockPath in Get-ChildItem -LiteralPath (Join-Path $projectRoot 'world') -Filter session.lock -Recurse -Force -File) { $handle=[IO.File]::Open($lockPath.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None); $handle.Dispose() } }
+    $owners=@(Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe'" | Where-Object { -not $_.CommandLine -or $_.CommandLine -notmatch 'org\.gradle\.launcher\.daemon\.bootstrap\.GradleDaemon' -or $_.CommandLine.Contains($old) -or $_.CommandLine.Contains($repo) })
+    if ($owners.Count) { throw 'W10_FULL_OWNER' }
+}
 function Canon($value) {
     if($null -eq $value){return 'null'}
     if($value -is [System.Management.Automation.PSCustomObject]) {
@@ -160,6 +245,7 @@ function Assert-CiCwdStartable {
     Say "CI_CWD_PREFLIGHT PASS cases=$($rows.Count) LAYOUT=$layout"
 }
 Assert-CiCwdStartable
+Step 'w10-preflight' { & (Join-Path $PSScriptRoot 'm5-collapse-probe.ps1') -Only w10 -PreflightOnly -Gradle $Gradle }
 if($PreflightOnly){Say "END PREFLIGHT exit=0 HEAD=$startHead";return}
 
 $gates=Join-Path $PSScriptRoot 'gates.ps1'
@@ -414,6 +500,7 @@ Step 'summary' {
         $stopped=$phase.ending -eq 'stop' -and $receipt.status -eq 'PASS' -and $phase.javaExitCode -eq 0 -and $phase.gradleExitCode -eq 0 -and (Split-Path -Leaf $phase.receipt) -eq 'final.json'
         if(-not ($halted -or $stopped)){throw "M5 collapse phase 沒有依預期結束：$($phase.phase) ending=$($phase.ending) status=$($receipt.status) javaExit=$($phase.javaExitCode)"}
     }
+    Assert-W10FullEvidence $collapse $head
     # 8. CI 綠燈規則：以 HEAD workflow 原文逐字執行，對本次 full gate XML。
     $workflowHash=(Get-FileHash -LiteralPath (Join-Path $repo '.github/workflows/build.yml') -Algorithm SHA256).Hash
     $ci=[ordered]@{}

@@ -20,7 +20,7 @@
 # phase receipt 位置由 testmod M5CollapseRecoveryProbe 固定為 <repo>/.superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-<nonce>/<phase>，不受 -EvidenceRoot 影響。
 # 新增 phase：testmod 的 M5CollapseRecoveryProbe.phases() 加 entry，這裡的 $chains 加同名的 phase 與預期的結束（README「M5 collapse probe」）。
 # 結構比照 m4-recovery-probe.ps1（owned root、phase evidence、launcher.json、彙整 JSON）。
-param([string]$StopAfterPhase = '', [string]$ImportW10Crash = '', [switch]$ImportOnly, [string]$ResumeImportedW10 = '', [string]$ImportedBridgeSha256 = '', [string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8, [int]$GradleCodePage = [Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+param([switch]$PreflightOnly, [string]$StopAfterPhase = '', [string]$ImportW10Crash = '', [switch]$ImportOnly, [string]$ResumeImportedW10 = '', [string]$ImportedBridgeSha256 = '', [string[]]$Only = @(), [string]$EvidenceRoot = '', [string]$Gradle = '', [int]$IdleSeconds = 90, [int]$PhaseMinutes = 8, [int]$GradleCodePage = [Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
 $ErrorActionPreference = 'Stop'
 $taskProject = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 foreach ($marker in 'build.gradle', 'settings.gradle') { if (-not (Test-Path -LiteralPath (Join-Path $taskProject $marker) -PathType Leaf)) { throw "repo root 缺少 ${marker}：$taskProject" } }
@@ -101,8 +101,8 @@ $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() 
 foreach ($name in $Only) { if (-not $chains.Contains($name)) { throw "未知的 chain：$name（可用：$($chains.Keys -join ', ')）" } }
 
 
-# W10 可達性 spike：只在固定舊 checkout 產生 partial，現版明示匯入。
-# 不替代 full69；原 halt bytes 與舊 root 欄位完整保留。
+# W10 跨版整合：固定舊v2每輪產生partial，現版以受審自動驗證接單次restart。
+# 原 halt bytes 與舊 root 欄位完整保留；只有父summary將真兩phase納入full69。
 function Assert-W10Path([string]$Path, [switch]$Absent) {
     if (-not [IO.Path]::IsPathFullyQualified($Path)) { throw "W10_PATH：必須絕對路徑 $Path" }
     $full=[IO.Path]::GetFullPath($Path)
@@ -137,7 +137,8 @@ function Assert-W10Idle([string]$Project, [string]$Nonce, [string]$Root) {
 function Get-W10Pin([string]$Project, [switch]$Producer) {
     $head=(& git -C $Project rev-parse HEAD).Trim(); if ($LASTEXITCODE) { throw 'W10_GIT：HEAD' }
     $status=@(& git -C $Project status --porcelain --untracked-files=all)
-    if ($LASTEXITCODE -or @($status | Where-Object { $_ -cne ' M scripts/verification/m5-collapse-probe.ps1' }).Count) { throw 'W10_GIT：僅允 runner 未stage窄patch' }
+    if ($LASTEXITCODE -or ($Producer -and (($status -join "`n") -cne ' M scripts/verification/m5-collapse-probe.ps1')) -or (-not $Producer -and $status.Count)) { throw 'W10_GIT：consumer須乾淨；producer僅允runner未stage窄patch' }
+    if ($Producer) { $branch=@(& git -C $Project symbolic-ref -q HEAD); if ($LASTEXITCODE -ne 1 -or $branch.Count) { throw 'W10_GIT：producer須detached' } }
     $tag=(& git -C $Project rev-parse 'm5^{commit}').Trim()
     if ($LASTEXITCODE -or $tag -cne 'a2d2b404329d2574469fca064a663e21fe89f333' -or ($Producer -and $head -cne $tag)) { throw 'W10_GIT：m5 pin 不符' }
     $tagObject=(& git -C $Project rev-parse m5).Trim()
@@ -198,7 +199,15 @@ function Assert-W10Halt([string]$Root,[string]$Crash,[string]$Nonce) {
     return $l
 }
 $w10OldProject=[IO.Path]::GetFullPath('C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-w10-m5-producer')
-$w10NewProject=[IO.Path]::GetFullPath('C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation')
+$w10NewProject=$taskProject
+
+function Get-W10Nonce([string]$Root) {
+    $leaf=Split-Path -Leaf $Root
+    if ($leaf -cnotmatch '^m5-collapse-([0-9a-f]{32}-w10)$') { throw 'W10_NONCE：root格式錯誤' }
+    $nonce=$Matches[1]
+    if ($nonce -ceq '625a9f816af14087bc50e66896bd137b-w10') { throw 'W10_CONSUMED：封存spike禁止重用' }
+    return $nonce
+}
 
 function Assert-W10Mode([string[]]$Selected, [string]$Stop, [string]$Import, [bool]$OnlyImport, [string]$Resume, [string]$BridgeSha) {
     if (-not ($Stop -or $Import -or $OnlyImport -or $Resume -or $BridgeSha)) { return }
@@ -218,43 +227,40 @@ function Assert-W10SourcePin($Pin) {
         $Pin.runnerPatchSha256 -cne '54993C33BE32E74FEF571804C91E527C912C721440F8E7B17FEDD3115EA01670') { throw 'W10_SOURCE_PIN：只允已審v2 producer' }
 }
 function Get-W10Source([string]$Root) {
-    $nonce='625a9f816af14087bc50e66896bd137b-w10'
+    $nonce=Get-W10Nonce $Root
     $rootPath=Assert-W10Path $Root
-    if ($rootPath -cne (Join-Path $w10OldProject "run/m5-collapse-$nonce")) { throw 'W10_SOURCE：只允已審exact nonce/root' }
+    if ($rootPath -cne (Join-Path $w10OldProject "run/m5-collapse-$nonce")) { throw 'W10_SOURCE：固定舊checkout的nonce/root不符' }
     $ep=Join-Path $w10OldProject ".superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-$nonce"
     $crash=Join-Path $ep 'w10-crash'
     $manifestPath=Assert-W10Path (Join-Path $ep 'producer.json')
     $null=Assert-W10Path (Join-Path $ep 'w10-restart') -Absent
-    $manifestHash='CE944EC478FFD3F1D83C495963CEFFA4FF89940D2E8D6974382121217B049EDB'
-    if ((Get-FileHash -LiteralPath $manifestPath).Hash -cne $manifestHash) { throw 'W10_PRODUCER：原manifest SHA不符' }
+    $manifestHash=(Get-FileHash -LiteralPath $manifestPath).Hash
     $producer=Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -DateKind String
     $pin=Get-W10Pin $w10OldProject -Producer
     Assert-W10SourcePin $pin
     Assert-W10SourcePin $producer.pin
     Assert-W10Same $producer.pin $pin 'source pin三方核對'
     if ($producer.status -cne 'HALT_ONLY' -or $producer.completeChain -ne $false -or $producer.nonce -cne $nonce -or
-        $producer.sourceRoot -cne $rootPath -or $producer.sourceEvidence -cne $ep -or @($producer.files).Count -ne 63) { throw 'W10_PRODUCER：provenance 不符' }
+        $producer.sourceRoot -cne $rootPath -or $producer.sourceEvidence -cne $ep -or $producer.ownerCount -ne 0 -or $producer.locksReleased -ne $true) { throw 'W10_PRODUCER：provenance 不符' }
     $files=Get-W10Files $rootPath $crash
     Assert-W10Files $producer.files $files
     $old=Assert-W10Halt $rootPath $crash $nonce
     Assert-W10Same $producer.phase $old '舊phase'
-    if ($old.receiptSha256 -cne 'BE60910D55F3875CBA94B65EF79EF2E3BCA3868194031A87D6C31E1F2D8BAFEB' -or
-        $old.javaPid -ne 5208 -or $old.startupNonce -cne 'b4ec87ba3d434cc6b51e6906f2fa2f78') { throw 'W10_PRODUCER：已審halt身分不符' }
     Assert-W10Idle $w10OldProject $nonce $rootPath
     if ((Get-FileHash -LiteralPath $manifestPath).Hash -cne $manifestHash) { throw 'W10_PRODUCER：讀取中manifest改變' }
     return [pscustomobject]@{nonce=$nonce;root=$rootPath;evidence=$ep;crash=$crash;pin=$pin;files=$files;phase=$old;manifestSha=$manifestHash}
 }
 function Get-W10ResumeState([string]$Root, [string]$ReviewedSha, [string]$AttemptSha = '') {
     if ($ReviewedSha -cnotmatch '^[0-9A-Fa-f]{64}$') { throw 'W10_BRIDGE_SHA：缺外部釘選SHA' }
-    $nonce='625a9f816af14087bc50e66896bd137b-w10'
+    $nonce=Get-W10Nonce $Root
     $dest=Assert-W10Path $Root
     if ($dest -cne (Join-Path $taskProject "run/m5-collapse-$nonce")) { throw 'W10_DEST：exact root/nonce不符' }
     $ep=Assert-W10Path (Join-Path $probeOwner "collapse-$nonce")
     $bridgePath=Assert-W10Path (Join-Path $ep 'bridge-import.json')
     if ((Get-FileHash -LiteralPath $bridgePath).Hash -cne $ReviewedSha.ToUpperInvariant()) { throw 'W10_BRIDGE_SHA：不符審查釘選' }
     $bridge=Get-Content -LiteralPath $bridgePath -Raw | ConvertFrom-Json -DateKind String
-    if ($bridge.bridgeContract -cne 'w10-v2-to-v3-two-stage-1' -or $bridge.status -cne 'IMPORTED_ONLY' -or
-        $bridge.completeChain -ne $false -or $bridge.spikeOnly -ne $true -or $bridge.restartStarted -ne $false -or
+    if ($bridge.bridgeContract -cne 'w10-fixed-m5-full-v1' -or $bridge.status -cne 'IMPORTED_ONLY' -or
+        $bridge.completeChain -ne $false -or $bridge.restartStarted -ne $false -or
         $bridge.nonce -cne $nonce -or $bridge.destRoot -cne $dest -or $bridge.destEvidence -cne $ep) { throw 'W10_BRIDGE：contract不符' }
     $source=Get-W10Source (Join-Path $w10OldProject "run/m5-collapse-$nonce")
     if ($bridge.sourceRoot -cne $source.root -or $bridge.sourceEvidence -cne $source.evidence -or
@@ -279,7 +285,185 @@ function Get-W10ResumeState([string]$Root, [string]$ReviewedSha, [string]$Attemp
     Assert-W10Same $pin (Get-W10Pin $taskProject) '重核後consumer pin'
     return [pscustomobject]@{nonce=$nonce;root=$dest;evidence=$ep;crash=$crash;bridgePath=$bridgePath;bridge=$bridge;source=$source;pin=$pin}
 }
+function Get-W10RootSet([string]$Project, [bool]$Evidence) {
+    $parent=if ($Evidence) { Join-Path $Project '.superpowers/sdd/2026-10-01-m5-collapse-passage' } else { Join-Path $Project 'run' }
+    $pattern=if ($Evidence) { '^collapse-([0-9a-f]{32}-w10)$' } else { '^m5-collapse-([0-9a-f]{32}-w10)$' }
+    $null=Assert-W10Path $parent
+    if (-not (Test-Path -LiteralPath $parent)) { return @() }
+    return @(Get-ChildItem -LiteralPath $parent -Force | Where-Object Name -cmatch $pattern | ForEach-Object {
+        $null=Assert-W10Path $_.FullName
+        if (-not $_.PSIsContainer) { throw 'W10_ROOT_SET：不是目錄' }
+        if ($_.Name -cmatch $pattern) { $Matches[1] }
+    } | Sort-Object)
+}
+function Assert-W10FreshSet($BeforeRoots,$AfterRoots,$BeforeEvidence,$AfterEvidence) {
+    if (@($BeforeRoots | Where-Object { $_ -cnotin $AfterRoots }).Count -or @($BeforeEvidence | Where-Object { $_ -cnotin $AfterEvidence }).Count) { throw 'W10_ROOT_SET：舊集合遺失' }
+    $addedRoots=@($AfterRoots | Where-Object { $_ -cnotin $BeforeRoots })
+    $addedEvidence=@($AfterEvidence | Where-Object { $_ -cnotin $BeforeEvidence })
+    if ($addedRoots.Count -ne 1 -or $addedEvidence.Count -ne 1 -or $addedRoots[0] -cne $addedEvidence[0]) { throw 'W10_ROOT_SET：本輪須唯一新增相同nonce' }
+    return $addedRoots[0]
+}
+function Assert-W10Preflight {
+    if (-not $IsWindows) { throw 'W10_PLATFORM：固定v2需Windows' }
+    foreach ($project in @($taskProject,$w10OldProject)) {
+        $null=Assert-W10Path $project
+        foreach ($relative in @('.git','scripts/verification/m5-collapse-probe.ps1','scripts/verification/probe-common.ps1','scripts/verification/runtime.init.gradle')) {
+            $path=Assert-W10Path (Join-Path $project $relative)
+            if (-not (Test-Path -LiteralPath $path)) { throw "W10_DEPENDENCY：$path" }
+        }
+        Assert-W10Idle $project 'preflight-no-nonce' ''
+        foreach ($nonce in @(Get-W10RootSet $project $false)) { Assert-W10Idle $project $nonce (Join-Path $project "run/m5-collapse-$nonce") }
+    }
+    $pin=Get-W10Pin $w10OldProject -Producer; Assert-W10SourcePin $pin
+    $consumer=Get-W10Pin $taskProject
+    $patch=Assert-W10Path (Join-Path $PSScriptRoot 'm5-w10-producer-v2.patch')
+    if ((Get-FileHash -LiteralPath $patch).Hash -cne '87019F483ED40F95256300CA4F9318E64873F52414AAC775930D077C66A0CE3C') { throw 'W10_PATCH：tracked載體bytes不符' }
+    $blob=(& git -C $taskProject rev-parse 'HEAD:scripts/verification/m5-w10-producer-v2.patch').Trim()
+    if ($LASTEXITCODE) { throw 'W10_PATCH：HEAD未包含載體' }
+    $workBlob=(& git -C $taskProject hash-object --no-filters -- $patch).Trim()
+    if ($LASTEXITCODE -or $blob -cne $workBlob) { throw 'W10_PATCH：HEAD blob與工作bytes不同' }
+    return [pscustomobject]@{producerPin=$pin;consumerPin=$consumer;patchSha256=(Get-FileHash -LiteralPath $patch).Hash;worldDispatch=0}
+}
+# 與import writer不同的枚舉：從磁碟逐層列實際檔案，使用stream SHA；不使用Get-W10Files或bridge.files作起點。
+function Get-W10AuditInventory([string]$Root,[string]$Crash) {
+    $map=[Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($entry in @(@('root',$Root,'world'),@('root',$Root,'eula.txt'),@('root',$Root,'server.properties'),@('crash',$Crash,''))) {
+        $stack=[Collections.Generic.Stack[string]]::new(); $stack.Push((Join-Path $entry[1] $entry[2]))
+        while ($stack.Count) {
+            $path=$stack.Pop(); $null=Assert-W10Path $path; $item=Get-Item -LiteralPath $path -Force
+            if ($item.PSIsContainer) { foreach ($child in $item.EnumerateFileSystemInfos()) { $stack.Push($child.FullName) }; continue }
+            if ($item.Attributes -band [IO.FileAttributes]::Device) { throw 'W10_AUDIT_FILE：非一般檔' }
+            $relative=[IO.Path]::GetRelativePath($entry[1],$path); $key=$entry[0]+'/'+$relative
+            $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+            try { $size=$stream.Length; $sha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)) } finally { $stream.Dispose() }
+            $map.Add($key,[pscustomobject]@{length=$size;sha256=$sha})
+        }
+    }
+    foreach ($key in @('root/world\level.dat','root/world\session.lock','root/world\data\quantumchamber_sessions.dat','root/eula.txt','root/server.properties','crash/halt.json','crash/launcher.json','crash/receipt.nbt','crash/w10-batch.nbt')) {
+        if (-not $map.ContainsKey($key)) { throw "W10_AUDIT_MISSING：$key" }
+    }
+    if (-not @($map.Keys | Where-Object { $_ -cmatch '^root/world\\playerdata\\.+\.dat$' }).Count) { throw 'W10_AUDIT_MISSING：playerdata' }
+    return ,$map
+}
+function Assert-W10AuditManifest($Inventory,$Files) {
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($f in $Files) {
+        $key=$f.area+'/'+$f.relative
+        if (-not $seen.Add($key) -or -not $Inventory.ContainsKey($key) -or $Inventory[$key].length -ne $f.length -or $Inventory[$key].sha256 -cne $f.sha256) { throw "W10_AUDIT_MANIFEST：$key" }
+    }
+    if ($seen.Count -ne $Inventory.Count) { throw 'W10_AUDIT_MANIFEST：完整集合不符' }
+}
+function Test-W10Imported([string]$Root,[string]$ProvenancePath) {
+    $dest=Assert-W10Path $Root; $nonce=Get-W10Nonce $dest
+    if ($dest -cne (Join-Path $taskProject "run/m5-collapse-$nonce")) { throw 'W10_AUDIT_ROOT：dest不符' }
+    $ep=Join-Path $probeOwner "collapse-$nonce"; $source=Join-Path $w10OldProject "run/m5-collapse-$nonce"
+    $sep=Join-Path $w10OldProject ".superpowers/sdd/2026-10-01-m5-collapse-passage/collapse-$nonce"
+    foreach ($leaf in @('w10-restart','resume-attempt.json','bridge-result.json','resume-fail.json','import-fail.json','automated-prestart.json')) { $null=Assert-W10Path (Join-Path $ep $leaf) -Absent }
+    $null=Assert-W10Path (Join-Path $sep 'w10-restart') -Absent
+    $bp=Assert-W10Path (Join-Path $ep 'bridge-import.json'); $mp=Assert-W10Path (Join-Path $sep 'producer.json')
+    $null=Assert-W10Path $ProvenancePath
+    $hashes=@{}; foreach ($path in @($bp,$mp,$ProvenancePath)) { $hashes[$path]=(Get-FileHash -LiteralPath $path).Hash }
+    $p=Get-Content -LiteralPath $ProvenancePath -Raw | ConvertFrom-Json -DateKind String
+    $m=Get-Content -LiteralPath $mp -Raw | ConvertFrom-Json -DateKind String
+    $b=Get-Content -LiteralPath $bp -Raw | ConvertFrom-Json -DateKind String
+    $fresh=Assert-W10FreshSet @($p.beforeRoots) @($p.afterRoots) @($p.beforeEvidence) @($p.afterEvidence)
+    if ($p.contract -cne 'w10-fixed-m5-full-v1' -or $p.parentRunId -cne $taskRunId -or $p.nonce -cne $nonce -or $fresh -cne $nonce -or $p.outerExit -ne 0 -or $p.timedOut -ne $false -or $p.producerManifestSha256 -cne $hashes[$mp]) { throw 'W10_AUDIT_PROVENANCE：本輪來源不符' }
+    $null=Assert-W10Path $p.processPath
+    if ((Get-FileHash -LiteralPath $p.processPath).Hash -cne $p.processSha256) { throw 'W10_AUDIT_PROCESS：程序原件SHA不符' }
+    $process=Get-Content -LiteralPath $p.processPath -Raw | ConvertFrom-Json -DateKind String
+    if ($process.pid -le 0 -or $process.cwd -cne $w10OldProject -or $process.outerExit -ne 0 -or $process.timedOut -ne $false -or $process.elapsedSeconds -gt 600) { throw 'W10_AUDIT_PROCESS：未證自然成功/期限' }
+    foreach ($name in @('beforeRoots','afterRoots','beforeEvidence','afterEvidence')) { Assert-W10Same $p.$name $process.$name "audit process $name" }
+    $pin=Get-W10Pin $w10OldProject -Producer; Assert-W10SourcePin $pin
+    Assert-W10Same $pin $m.pin 'audit producer'; Assert-W10Same $pin $b.producerPin 'audit bridge producer'; Assert-W10Same $pin $p.producerPin 'audit launch producer'
+    $newPin=Get-W10Pin $taskProject; Assert-W10Same $newPin $b.consumerPin 'audit consumer'; Assert-W10Same $newPin $p.consumerPin 'audit launch consumer'
+    if ($m.status -cne 'HALT_ONLY' -or $m.completeChain -ne $false -or $m.sourceRoot -cne $source -or $m.sourceEvidence -cne $sep -or $m.nonce -cne $nonce -or $m.ownerCount -ne 0 -or $m.locksReleased -ne $true) { throw 'W10_AUDIT_PRODUCER：來源契約不符' }
+    if ($b.bridgeContract -cne 'w10-fixed-m5-full-v1' -or $b.status -cne 'IMPORTED_ONLY' -or $b.completeChain -ne $false -or $b.restartStarted -ne $false -or $b.nonce -cne $nonce -or $b.sourceRoot -cne $source -or $b.destRoot -cne $dest -or $b.sourceEvidence -cne $sep -or $b.destEvidence -cne $ep -or $b.producerManifestSha256 -cne $hashes[$mp]) { throw 'W10_AUDIT_BRIDGE：映射不符' }
+    $sourceInventory=Get-W10AuditInventory $source (Join-Path $sep 'w10-crash')
+    $destInventory=Get-W10AuditInventory $dest (Join-Path $ep 'w10-crash')
+    Assert-W10AuditManifest $sourceInventory $m.files; Assert-W10AuditManifest $sourceInventory $b.files
+    if (($sourceInventory.Keys -join '|') -cne ($destInventory.Keys -join '|')) { throw 'W10_AUDIT_COPY：完整集合不同' }
+    foreach ($key in $sourceInventory.Keys) { if ($sourceInventory[$key].length -ne $destInventory[$key].length -or $sourceInventory[$key].sha256 -cne $destInventory[$key].sha256) { throw "W10_AUDIT_COPY：$key" } }
+    $phase=Assert-W10Halt $source (Join-Path $sep 'w10-crash') $nonce
+    $copyPhase=Assert-W10Halt $source (Join-Path $ep 'w10-crash') $nonce
+    Assert-W10Same $phase $copyPhase 'audit copied halt'; Assert-W10Same $phase $m.phase 'audit phase'; Assert-W10Same $phase $b.oldPhase 'audit bridge phase'
+    if ($b.oldHaltSha256 -cne $phase.receiptSha256 -or $p.oldHaltSha256 -cne $phase.receiptSha256) { throw 'W10_AUDIT_HALT：SHA不符' }
+    Assert-W10Idle $w10OldProject $nonce $source; Assert-W10Idle $taskProject $nonce $dest
+    foreach ($path in $hashes.Keys) { if ((Get-FileHash -LiteralPath $path).Hash -cne $hashes[$path]) { throw 'W10_AUDIT_CHANGED：核對期間原件改變' } }
+    $receipt=Join-Path $ep 'automated-prestart.json'
+    Write-W10NewJson $receipt ([ordered]@{verificationKind='AUTOMATED_PRESTART';status='PASS';contract='w10-fixed-m5-full-v1';nonce=$nonce;parentRunId=$taskRunId;
+        sourceRoot=$source;destRoot=$dest;producerPin=$pin;consumerPin=$newPin;producerManifestSha256=$hashes[$mp];bridgeSha256=$hashes[$bp];provenancePath=$ProvenancePath;provenanceSha256=$hashes[$ProvenancePath];
+        checks=@('fresh-set','full-disk-inventory','mandatory','length-sha','halt-phaseTable-identity','dual-pin','owner-zero','locks-released');fileCount=$sourceInventory.Count;restartDispatch=0;additionalCopies=0})
+    return $receipt
+}
+function Get-W10ValidatedSha([string]$Receipt,[string]$ParentRunId,[string]$Root) {
+    $null=Assert-W10Path $Receipt
+    $v=Get-Content -LiteralPath $Receipt -Raw | ConvertFrom-Json -DateKind String
+    if ($v.verificationKind -cne 'AUTOMATED_PRESTART' -or $v.status -cne 'PASS' -or $v.contract -cne 'w10-fixed-m5-full-v1' -or $v.parentRunId -cne $ParentRunId -or $v.destRoot -cne $Root -or $v.nonce -cne (Get-W10Nonce $Root)) { throw 'W10_VALIDATION：非本輪受審自動驗證' }
+    Assert-W10Same $v.consumerPin (Get-W10Pin $taskProject) 'validation consumer'
+    $ep=Join-Path $probeOwner "collapse-$($v.nonce)"
+    if ($Receipt -cne (Join-Path $ep 'automated-prestart.json') -or (Get-FileHash -LiteralPath (Join-Path $ep 'bridge-import.json')).Hash -cne $v.bridgeSha256 -or (Get-FileHash -LiteralPath $v.provenancePath).Hash -cne $v.provenanceSha256) { throw 'W10_VALIDATION：bridge/provenance換包' }
+    return $v.bridgeSha256
+}
+function Wait-W10Producer($Child,$OutputTask,$ErrorTask,$Watch) {
+    # 同一期限包含shell與pipe排空；只回報timeout，絕不猜owner或殺程序。
+    while (-not $Child.HasExited -or -not $OutputTask.IsCompleted -or -not $ErrorTask.IsCompleted) {
+        if ($Watch.Elapsed.TotalMinutes -ge 10) { return $true }
+        Start-Sleep -Milliseconds 250
+    }
+    return ($Watch.Elapsed.TotalMinutes -ge 10)
+}
+function Invoke-W10Fresh {
+    $pre=Assert-W10Preflight
+    $beforeRoots=@(Get-W10RootSet $w10OldProject $false); $beforeEvidence=@(Get-W10RootSet $w10OldProject $true)
+    $diagnostic=Join-Path $EvidenceRoot "w10-producer-$taskRunId"; $null=Assert-W10Path $diagnostic -Absent; $null=New-Item -ItemType Directory -Path $diagnostic
+    $psi=[Diagnostics.ProcessStartInfo]::new((Get-Command pwsh -CommandType Application).Source)
+    $psi.WorkingDirectory=$w10OldProject; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
+    $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
+    foreach ($arg in @('-NoProfile','-File',(Join-Path $w10OldProject 'scripts/verification/m5-collapse-probe.ps1'),'-Only','w10','-StopAfterPhase','w10-crash','-PhaseMinutes','8','-IdleSeconds','90')) { $psi.ArgumentList.Add($arg) }
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $child=[Diagnostics.Process]::Start($psi); $started=$child.StartTime.ToUniversalTime().ToString('o')
+    $outFile=[IO.File]::Open((Join-Path $diagnostic 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    $errFile=[IO.File]::Open((Join-Path $diagnostic 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    $outTask=$child.StandardOutput.BaseStream.CopyToAsync($outFile); $errTask=$child.StandardError.BaseStream.CopyToAsync($errFile)
+    $timedOut=Wait-W10Producer $child $outTask $errTask $watch
+    if (-not $timedOut) { $outTask.GetAwaiter().GetResult(); $errTask.GetAwaiter().GetResult() }
+    $outFile.Dispose(); $errFile.Dispose()
+    $afterRoots=@(Get-W10RootSet $w10OldProject $false); $afterEvidence=@(Get-W10RootSet $w10OldProject $true)
+    $processRecord=[ordered]@{pid=$child.Id;startTimeUtc=$started;cwd=$psi.WorkingDirectory;arguments=@($psi.ArgumentList);timedOut=$timedOut;outerExit=$(if ($child.HasExited) {$child.ExitCode}else{$null});elapsedSeconds=$watch.Elapsed.TotalSeconds;beforeRoots=$beforeRoots;afterRoots=$afterRoots;beforeEvidence=$beforeEvidence;afterEvidence=$afterEvidence;
+        ownerDiagnostic=@(Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe' OR Name='pwsh.exe'" | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine)}
+    Write-W10NewJson (Join-Path $diagnostic 'process.json') $processRecord
+    # 不以shell退出推定Java退出；timeout不殺未知owner，也不進import。
+    if ($timedOut -or $child.ExitCode -ne 0) { throw "W10_PRODUCER_EXIT：期限/outer失敗，保留 $diagnostic" }
+    $nonce=Assert-W10FreshSet $beforeRoots $afterRoots $beforeEvidence $afterEvidence
+    $source=Get-W10Source (Join-Path $w10OldProject "run/m5-collapse-$nonce")
+    $dest=Assert-W10Path (Join-Path $taskProject "run/m5-collapse-$nonce") -Absent
+    $ep=Assert-W10Path (Join-Path $probeOwner "collapse-$nonce") -Absent
+    Assert-W10Same $pre.producerPin $source.pin 'launch後producer'; Assert-W10Same $pre.consumerPin (Get-W10Pin $taskProject) 'launch後consumer'
+    $provenance=Join-Path $diagnostic 'provenance.json'
+    Write-W10NewJson $provenance ([ordered]@{contract='w10-fixed-m5-full-v1';parentRunId=$taskRunId;nonce=$nonce;beforeRoots=$beforeRoots;afterRoots=$afterRoots;beforeEvidence=$beforeEvidence;afterEvidence=$afterEvidence;outerExit=0;timedOut=$false;
+        producerPin=$source.pin;consumerPin=$pre.consumerPin;producerManifestSha256=$source.manifestSha;oldHaltSha256=$source.phase.receiptSha256;processPath=(Join-Path $diagnostic 'process.json');processSha256=(Get-FileHash -LiteralPath (Join-Path $diagnostic 'process.json')).Hash})
+    & $PSCommandPath -Only w10 -ImportW10Crash $source.root -ImportOnly -EvidenceRoot $EvidenceRoot | Out-Host
+    $validation=Test-W10Imported $dest $provenance
+    $reviewedSha=Get-W10ValidatedSha $validation $taskRunId $dest
+    & $PSCommandPath -Only w10 -ResumeImportedW10 $dest -ImportedBridgeSha256 $reviewedSha -EvidenceRoot $EvidenceRoot -Gradle $taskGradle | Out-Host
+    $resultPath=Join-Path $ep 'bridge-result.json'; $result=Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json -DateKind String
+    if ($result.status -cne 'RESTART_ONLY_IMPORT' -or $result.bridgeContract -cne 'w10-fixed-m5-full-v1' -or $result.nonce -cne $nonce -or $result.bridgeSha256 -cne $reviewedSha -or -not $result.sourceUnchanged -or $result.ownerCount -ne 0 -or -not $result.locksReleased) { throw 'W10_RESULT：終局契約不符' }
+    Assert-W10Same $source (Get-W10Source $source.root) 'aggregate前source'; Assert-W10Same $pre.consumerPin (Get-W10Pin $taskProject) 'aggregate前consumer'
+    foreach ($pair in @(@{phase=$result.producerPhase;pin=$source.pin},@{phase=$result.consumerPhase;pin=$pre.consumerPin})) {
+        $row=$pair.phase; $row | Add-Member -NotePropertyName codeSha -NotePropertyValue $pair.pin.codeSha
+        $row | Add-Member -NotePropertyName runnerSha256 -NotePropertyValue $pair.pin.runnerSha256
+        $row | Add-Member -NotePropertyName parentRunId -NotePropertyValue $taskRunId
+        $taskResults.Add($row)
+    }
+    return [pscustomobject]@{contract='w10-fixed-m5-full-v1';parentRunId=$taskRunId;nonce=$nonce;sourceRoot=$source.root;destRoot=$dest;sourceEvidence=$source.evidence;destEvidence=$ep;producerPin=$source.pin;consumerPin=$pre.consumerPin;
+        provenance=$provenance;provenanceSha256=(Get-FileHash -LiteralPath $provenance).Hash;validation=$validation;validationSha256=(Get-FileHash -LiteralPath $validation).Hash;bridge=(Join-Path $ep 'bridge-import.json');bridgeSha256=$reviewedSha;result=$resultPath;resultSha256=(Get-FileHash -LiteralPath $resultPath).Hash}
+}
 Assert-W10Mode $Only $StopAfterPhase $ImportW10Crash ([bool]$ImportOnly) $ResumeImportedW10 $ImportedBridgeSha256
+if ($PreflightOnly -and ($StopAfterPhase -or $ImportW10Crash -or $ResumeImportedW10 -or $ImportOnly -or $ImportedBridgeSha256)) { throw 'W10_MODE：PreflightOnly不可混合' }
+if ($PreflightOnly -or (-not ($StopAfterPhase -or $ImportW10Crash -or $ResumeImportedW10) -and ($Only.Count -eq 0 -or 'w10' -cin $Only))) {
+    $null=Assert-W10Preflight
+    if ($PreflightOnly) { Write-Output 'W10 PREFLIGHT PASS worldDispatch=0'; return }
+}
 if ($StopAfterPhase -or $ImportW10Crash -or $ResumeImportedW10) {
     if ($StopAfterPhase -and ($StopAfterPhase -cne 'w10-crash' -or $taskProject -cne $w10OldProject)) { throw 'W10_MODE：HALT_ONLY只允固定舊checkout' }
     if (($ImportW10Crash -or $ResumeImportedW10) -and $taskProject -cne $w10NewProject) { throw 'W10_MODE：import/resume只允現版checkout' }
@@ -404,7 +588,7 @@ if ($ImportW10Crash) {
         }
         # 映射記在新檔；copy 的 halt.root 仍為 sourceRoot，不做 JSON round-trip。
         Write-W10NewJson (Join-Path $destEvidence 'bridge-import.json') ([ordered]@{
-            status='IMPORTED_ONLY';completeChain=$false;spikeOnly=$true;restartStarted=$false;bridgeContract='w10-v2-to-v3-two-stage-1';
+            status='IMPORTED_ONLY';completeChain=$false;restartStarted=$false;bridgeContract='w10-fixed-m5-full-v1';
             nonce=$nonce;sourceRoot=$sourceRoot;destRoot=$destRoot;
             sourceEvidence=$sourceEvidence;destEvidence=$destEvidence;producerPin=$sourcePin;consumerPin=$w10Pin;
             producerManifestSha256=$producerManifestHash;oldHaltSha256=$oldIdentity.receiptSha256;
@@ -438,7 +622,7 @@ if ($ResumeImportedW10) {
         Invoke-M5Phase $checked.nonce 'w10-restart' $checked.root 'stop' ''
         $newIdentity=$taskResults[0]
         if ($newIdentity.startupNonce -ceq $checked.source.phase.startupNonce -or $newIdentity.javaPid -eq $checked.source.phase.javaPid) { throw 'W10_BRIDGE：必須全新PID/startupNonce' }
-        # 成功marker必須最後寫；source讀回涵蓋63檔、manifest、halt、pin與owner/lock。
+        # 成功marker必須最後寫；source讀回涵蓋完整集合、manifest、halt、pin與owner/lock。
         $finalSource=Get-W10Source $checked.source.root
         Assert-W10Same $checked.source $finalSource 'restart後source'
         Assert-W10Same $checked.pin (Get-W10Pin $taskProject) 'restart後consumer pin'
@@ -449,7 +633,7 @@ if ($ResumeImportedW10) {
         $null=Assert-W10Halt $checked.source.root $checked.crash $checked.nonce
         Assert-W10Idle $taskProject $checked.nonce $checked.root
         Write-W10NewJson (Join-Path $checked.evidence 'bridge-result.json') ([ordered]@{
-            status='RESTART_ONLY_IMPORT';completeChain=$false;spikeOnly=$true;nonce=$checked.nonce;
+            status='RESTART_ONLY_IMPORT';completeChain=$false;bridgeContract='w10-fixed-m5-full-v1';nonce=$checked.nonce;
             sourceRoot=$checked.source.root;destRoot=$checked.root;bridgeSha256=$ImportedBridgeSha256.ToUpperInvariant();
             producerPin=$checked.source.pin;consumerPin=$checked.pin;producerPhase=$checked.source.phase;consumerPhase=$newIdentity;
             sourceUnchanged=$true;ownerCount=0;locksReleased=$true
@@ -461,12 +645,13 @@ if ($ResumeImportedW10) {
         if ($attemptWritten) { Write-W10NewJson (Join-Path $resume.evidence 'resume-fail.json') $failure }
         throw
     }
-    Write-Output "W10 RESTART_ONLY_IMPORT spike：$($checked.evidence)（非full69／Task12結案）"
+    Write-Output "W10 RESTART_ONLY_IMPORT：$($checked.evidence)（此分段本身非full69／Task12結案）"
     return
 }
 
 foreach ($chain in $chains.Keys) {
     if ($Only.Count -gt 0 -and $chain -notin $Only) { continue }
+    if ($chain -ceq 'w10' -and -not $StopAfterPhase) { $w10Integration=Invoke-W10Fresh; continue }
     if ($StopAfterPhase) {
         $freshNonce="$taskRunId-w10"
         $null=Assert-W10Path (Join-Path $taskProject "run/m5-collapse-$freshNonce") -Absent
@@ -498,7 +683,11 @@ foreach ($chain in $chains.Keys) {
     $nonces = @($chainResults | Select-Object -ExpandProperty startupNonce -Unique)
     if ($identities.Count -ne $chainResults.Count -or $nonces.Count -ne $chainResults.Count) { throw "chain $chain 的每個 phase 必須是不同的 JVM（PID@StartTime 與 startupNonce）" }
 }
+$expectedRunPhases=@($chains.Keys | Where-Object { $Only.Count -eq 0 -or $_ -cin $Only } | ForEach-Object { $chains[$_] } | ForEach-Object phase)
+if ((@($taskResults | ForEach-Object phase) -join ',') -cne ($expectedRunPhases -join ',') -or
+    @($taskResults | ForEach-Object { "$($_.javaPid)@$($_.javaStartTimeUtc)" } | Sort-Object -Unique).Count -ne $taskResults.Count -or
+    @($taskResults | ForEach-Object startupNonce | Sort-Object -Unique).Count -ne $taskResults.Count) { throw 'W10_AGGREGATE：phase順序／全輪JVM唯一性不符' }
 $summaryPath = Join-Path $EvidenceRoot "collapse-run-$taskRunId.json"
 if (Test-Path -LiteralPath $summaryPath) { throw "collapse 彙整已存在，禁止覆寫：$summaryPath" }
-[ordered]@{status='PASS'; runId=$taskRunId; only=@($Only); phaseCount=$taskResults.Count; phases=@($taskResults)} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+[ordered]@{status='PASS'; runId=$taskRunId; only=@($Only); phaseCount=$taskResults.Count; phases=@($taskResults); w10=$w10Integration} | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
 Write-Output "M5 collapse evidence: $summaryPath"
