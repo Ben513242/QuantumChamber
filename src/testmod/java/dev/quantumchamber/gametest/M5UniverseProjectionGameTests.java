@@ -128,6 +128,7 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             var interiorChest = local(frame, 3, 1, 3); var shellChest = local(frame, 0, 4, 3); var interiorStone = local(frame, 2, 2, 2);
             var watched = local(frame, 0, 3, 3); var observer = outside(frame, -1, 3, 3);
             var wired = local(frame, 6, 2, 3); var wire = outside(frame, 7, 2, 3); var support = outside(frame, 7, 1, 3);
+            wireSnapshot(universe, sid, id, frame, "beforeSetup", wire, support, wired);
             ChamberProtectionService.get().authorizedMutation(() -> {
                 for (var chest : List.of(interiorChest, shellChest)) {
                     universe.setBlockState(chest, Blocks.CHEST.getDefaultState(), Block.NOTIFY_ALL);
@@ -143,6 +144,7 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
                 universe.setBlockState(support, Blocks.AIR.getDefaultState(),
                         Block.NOTIFY_LISTENERS | Block.FORCE_STATE);
             });
+            wireSnapshot(universe, sid, id, frame, "afterSupportRemoval", wire, support, wired);
             var pig = EntityType.PIG.create(universe);
             var pigAt = ChamberSpaceCoordinates.position(frame, 2.5, 3, 4.5);
             pig.refreshPositionAndAngles(pigAt.x, pigAt.y, pigAt.z, 0, 0);
@@ -159,10 +161,12 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             whenTicks(context, resolved + 4, 200, () -> visible(universe, pig, area)
                     && !universe.getBlockState(observer).get(ObserverBlock.POWERED)
                     && !universe.getBlockTickScheduler().isQueued(observer, Blocks.OBSERVER), settled -> {
+                wireSnapshot(universe, sid, id, frame, "fixtureSettled", wire, support, wired);
                 witness.put("fixtureSettled", universe.getBlockState(wire).isOf(Blocks.REDSTONE_WIRE) && universe.getBlockState(support).isAir()
                         && items(universe, area) == 0 && spectator.player().getServerWorld() == universe);
                 var pigBefore = pig.getPos();
                 var spectatorBefore = spectator.player().getPos();
+                wireSnapshot(universe, sid, id, frame, "beforeWriter", wire, support, wired);
                 var result = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE);
                 witness.put("written", result.status() == ProjectionWriter.Status.WRITTEN && result.written() > 0 && result.blockingPlayers().isEmpty());
                 witness.put("everyCellIsTheSpecTarget", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
@@ -171,10 +175,17 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
                 witness.put("chestsDroppedNothing", items(universe, area) == 0);
                 witness.put("observerNotScheduled", !universe.getBlockTickScheduler().isQueued(observer, Blocks.OBSERVER));
                 witness.put("floatingWireStays", universe.getBlockState(wire).isOf(Blocks.REDSTONE_WIRE));
+                wireSnapshot(universe, sid, id, frame, "writerReturn-" + result.status() + "-" + result.written()
+                        + "-floating=" + witness.get("floatingWireStays"), wire, support, wired);
                 witness.put("pigNotMovedOrRemoved", !pig.isRemoved() && pig.getPos().equals(pigBefore) && visible(universe, pig, area));
                 witness.put("spectatorNotMoved", spectator.player().getPos().equals(spectatorBefore));
                 LOGGER.info("M5_PROJECTION_FIRST_WRITE settled={} status={} written={} mismatched={}", settled - resolved, result.status(), result.written(),
                         result.mismatched().size());
+                for (int delay = 1; delay <= 4; delay++) {
+                    int sampledDelay = delay;
+                    at(context, settled + delay, hooks, () -> wireSnapshot(universe, sid, id, frame,
+                            "writerPlus" + sampledDelay, wire, support, wired));
+                }
                 at(context, settled + 4, hooks, () -> {
                     witness.put("observerNeverPulsed", !universe.getBlockState(observer).get(ObserverBlock.POWERED)
                             && !universe.getBlockTickScheduler().isQueued(observer, Blocks.OBSERVER));
@@ -187,6 +198,30 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
                 });
             }, () -> "entity storage 沒有載入或偵測器沒有靜止：pigVisible=" + visible(universe, pig, area), hooks);
         });
+    }
+
+    /** 只讀已載入的八格；排程與 ticking 僅是快照，不能據此推斷更新呼叫者。 */
+    private static void wireSnapshot(ServerWorld world, UUID session, UniverseId id, ChamberFrame frame,
+            String stage, BlockPos wire, BlockPos support, BlockPos wired) {
+        var cells = new LinkedHashMap<String, BlockPos>();
+        cells.put("wire", wire);
+        for (var direction : Direction.values()) cells.put(direction.name(), wire.offset(direction));
+        var states = new LinkedHashMap<String, String>();
+        for (var cell : cells.entrySet()) {
+            var pos = cell.getValue();
+            var chunk = new ChunkPos(pos);
+            if (!world.isChunkLoaded(chunk.toLong()) || world.getChunkManager().getWorldChunk(chunk.x, chunk.z) == null) {
+                states.put(cell.getKey(), pos.toShortString() + "=NOT_LOADED");
+            } else {
+                states.put(cell.getKey(), pos.toShortString() + "=" + world.getBlockState(pos)
+                        + "/fluid=" + world.getFluidState(pos));
+            }
+        }
+        LOGGER.info("M5_WIRE_DIAG stage={} session={} universe={} frame={} world={} tick={} wire={} support={} wired={} cells={} "
+                        + "wireQueued={} ticking={} futureReady={} writerFlags=NOTIFY_LISTENERS|FORCE_STATE|SKIP_DROPS",
+                stage, session, id, frame, world.getRegistryKey().getValue(), world.getServer().getTicks(), wire, support, wired, states,
+                world.getBlockTickScheduler().isQueued(wire, Blocks.REDSTONE_WIRE),
+                world.shouldTick(new ChunkPos(wire)), world.getChunkManager().isTickingFutureReady(ChunkPos.toLong(wire)));
     }
 
     /** {@code entity} 在 {@code area} 內、而且以原版的 entity 查詢看得到（它所在的區段已在追蹤中）。 */

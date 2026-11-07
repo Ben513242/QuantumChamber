@@ -673,14 +673,130 @@ public final class M6RandomProbePhases {
 
         private List<String> terrainSamples(ServerWorld world,boolean compareDisk) throws Exception {
             var samples=new ArrayList<String>();
+            var details=new ArrayList<Map<String,Object>>();
+            if(phase.equals("partial")) {
+                var region=storage().resolve("region/r.0.0.mca");
+                try {proof.put("terrainSampleRegionSha256Before",M5CollapseDiskEvidence.sha256(region));
+                    proof.put("terrainSampleRegionLength",Files.size(region));}
+                catch(Exception failure) {proof.put("terrainSampleDiagnosticError",diagnosticError("partialRegionBefore",failure));}
+            }
             for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
                 var pos=new BlockPos(x,y,z);
-                var nativeName=net.minecraft.registry.Registries.BLOCK.getId(world.getBlockState(pos).getBlock()).toString();
+                var live=world.getBlockState(pos);
+                var nativeName=net.minecraft.registry.Registries.BLOCK.getId(live.getBlock()).toString();
                 var disk=M5CollapseDiskEvidence.block(storage(),pos);
-                require(!disk.name().equals(M5CollapseDiskEvidence.ABSENT) && (!compareDisk || disk.name().equals(nativeName)),"PARTIAL_RAW_MCA_TERRAIN");
+                boolean terrainMatches=!disk.name().equals(M5CollapseDiskEvidence.ABSENT)
+                        && (!compareDisk || disk.name().equals(nativeName));
+                if (phase.equals("partial")) {
+                    var detail=new LinkedHashMap<String,Object>();
+                    detail.put("pos",pos.toShortString());detail.put("liveState",live.toString());
+                    detail.put("rawState",disk.name());detail.put("rawProperties",disk.properties());
+                    try {detail.put("liveBiome",world.getBiome(pos).getKey().map(key->key.getValue().toString()).orElse("UNKEYED"));
+                        detail.put("rawBiome",rawBiome(pos));}
+                    catch(Exception failure) {detail.put("diagnosticError",diagnosticError("partialBiome",failure));}
+                    details.add(detail);
+                }
+                if (!terrainMatches && !proof.containsKey("firstTerrainDifference")) {
+                    try {firstTerrainDifference(world,pos,live,disk,nativeName,disk.name());}
+                    catch(Exception failure) {proof.put("diagnosticError",diagnosticError("firstTerrainDifference",failure));}
+                }
+                require(terrainMatches,"PARTIAL_RAW_MCA_TERRAIN");
                 samples.add(x+","+y+","+z+"="+disk.name());
             }
+            if (phase.equals("partial")) {
+                proof.put("partialTerrainDiagnostics",details);
+                try {proof.put("terrainSampleRegionSha256After",M5CollapseDiskEvidence.sha256(storage().resolve("region/r.0.0.mca")));}
+                catch(Exception failure) {proof.put("terrainSampleDiagnosticError",diagnosticError("partialRegionAfter",failure));}
+            }
             return List.copyOf(samples);
+        }
+
+        private void firstTerrainDifference(ServerWorld world,BlockPos pos,net.minecraft.block.BlockState live,
+                M5CollapseDiskEvidence.DiskBlock disk,String liveName,String comparedRaw) {
+            var detail=new LinkedHashMap<String,Object>();
+            proof.put("firstTerrainDifference",detail);
+            detail.put("chain",chain);detail.put("phase",phase);detail.put("pos",pos.toShortString());
+            detail.put("session",sid.toString());detail.put("uuid",id.value().toString());
+            detail.put("worldKey",world.getRegistryKey().getValue().toString());
+            detail.put("worldOwnerExact",UniverseLifecycleService.resolveActive(server,id).orElse(null)==world);
+            detail.put("liveSeed",Long.toString(world.getSeed()));detail.put("frozenSeed",Long.toString(intent.rootWorldSeed()));
+            detail.put("sourceSeed",Long.toString(source.getSeed()));detail.put("serverTick",server.getTicks());
+            try {detail.put("storage",storage().toRealPath().toString());}
+            catch(Exception failure) {detail.put("storage",storage().toAbsolutePath().normalize().toString());
+                detail.put("storageCanonicalError",diagnosticError("storageCanonical",failure));}
+            detail.put("liveBlock",liveName);detail.put("liveState",live.toString());
+            detail.put("rawBlock",disk.name());detail.put("rawProperties",disk.properties());
+            detail.put("rawBlockEntity",disk.blockEntity());detail.put("comparedRaw",comparedRaw);
+            detail.put("rawAbsent",disk.name().equals(M5CollapseDiskEvidence.ABSENT));
+            detail.put("blockNameMismatch",!disk.name().equals(liveName));
+            detail.put("oracleDisagreement",disk.name().equals(liveName) && !disk.name().equals(M5CollapseDiskEvidence.ABSENT));
+            var loaded=world.getChunkManager().getWorldChunk(pos.getX()>>4,pos.getZ()>>4);
+            detail.put("chunkLoaded",loaded!=null);detail.put("liveChunkStatus",loaded==null?"NOT_LOADED":loaded.getStatus().toString());
+            try {
+                var rawChunk=rawChunk(pos);
+                detail.put("rawChunkStatus",rawChunk.map(nbt->nbt.getString("Status")).orElse("ABSENT_CHUNK"));
+                var region=storage().resolve("region/r.0.0.mca");
+                try(var input=new java.io.RandomAccessFile(region.toFile(),"r")) {
+                    input.seek(4L*((pos.getX()>>4&31)+(pos.getZ()>>4&31)*32));
+                    detail.put("rawChunkHeaderLocation",input.readInt());
+                }
+            } catch(Exception failure) {detail.put("rawChunkReadFailure",diagnosticError("rawChunk",failure));}
+            try {detail.put("liveBiome",world.getBiome(pos).getKey().map(key->key.getValue().toString()).orElse("UNKEYED"));
+                detail.put("rawBiome",rawBiome(pos));}
+            catch(Exception failure) {detail.put("rawBiomeReadFailure",diagnosticError("biome",failure));}
+            try {
+                var region=storage().resolve("region/r.0.0.mca");
+                var before=M5CollapseDiskEvidence.sha256(region);
+                detail.put("regionLength",Files.size(region));detail.put("regionSha256Before",before);
+                var partialPath=root.resolve("partial-storage.json");
+                var partial=com.google.gson.JsonParser.parseString(Files.readString(partialPath)).getAsJsonObject();
+                detail.put("partialMcaSha256",partial.getAsJsonObject("partialHashes").get("region/r.0.0.mca").getAsString());
+                detail.put("mcaHashMatchesPartial",before.equalsIgnoreCase((String)detail.get("partialMcaSha256")));
+                var manifest=com.google.gson.JsonParser.parseString(Files.readString(root.resolve("partial-before-restart.json"))).getAsJsonObject();
+                detail.put("partialManifestSha256",M5CollapseDiskEvidence.sha256(partialPath));
+                detail.put("manifestHashMatchesPartial",((String)detail.get("partialManifestSha256"))
+                        .equalsIgnoreCase(manifest.get("partialManifestSha256").getAsString()));
+                var after=M5CollapseDiskEvidence.sha256(region);
+                detail.put("regionSha256After",after);detail.put("hashStableDuringRead",before.equals(after));
+            } catch(Exception failure) {detail.put("diagnosticError",diagnosticError("hashManifest",failure));}
+        }
+
+        private static String diagnosticError(String stage,Exception failure) {
+            var message=String.valueOf(failure.getMessage());
+            return stage+":"+failure.getClass().getSimpleName()+":"+message.substring(0,Math.min(message.length(),160));
+        }
+
+        /** 沿用既有 raw MCA parser 的檔案、header、壓縮與 NBT 限制，只解單格 biome palette。 */
+        @SuppressWarnings("unchecked") private Optional<NbtCompound> rawChunk(BlockPos pos) throws Exception {
+            var method=M5CollapseDiskEvidence.class.getDeclaredMethod("chunk",Path.class,ChunkPos.class);
+            method.setAccessible(true);
+            return (Optional<NbtCompound>)method.invoke(null,storage().resolve("region"),new ChunkPos(pos));
+        }
+
+        private String rawBiome(BlockPos pos) throws Exception {
+            var chunk=rawChunk(pos);
+            if (chunk.isEmpty()) return "ABSENT_CHUNK";
+            var nbt=chunk.get();
+            for (var raw:nbt.getList("sections",net.minecraft.nbt.NbtElement.COMPOUND_TYPE)) {
+                var section=(NbtCompound)raw;
+                if(section.getByte("Y")!=(pos.getY()>>4))continue;
+                if(!section.contains("biomes",net.minecraft.nbt.NbtElement.COMPOUND_TYPE))return "ABSENT_BIOMES";
+                var biomes=section.getCompound("biomes");
+                var palette=biomes.getList("palette",net.minecraft.nbt.NbtElement.STRING_TYPE);
+                if(palette.isEmpty())throw new java.io.IOException("biome palette empty");
+                int index=0;
+                if(palette.size()>1) {
+                    int bits=Math.max(1,32-Integer.numberOfLeadingZeros(palette.size()-1));
+                    int perLong=64/bits;
+                    int cell=((pos.getY()&15)>>2)*16+((pos.getZ()&15)>>2)*4+((pos.getX()&15)>>2);
+                    var data=biomes.getLongArray("data");
+                    if(cell/perLong>=data.length)throw new java.io.IOException("biome data short");
+                    index=(int)((data[cell/perLong]>>>((cell%perLong)*bits))&((1L<<bits)-1));
+                }
+                if(index>=palette.size())throw new java.io.IOException("biome palette index");
+                return palette.getString(index);
+            }
+            return "ABSENT_SECTION";
         }
         private boolean noDiscovery() throws Exception {return UniverseDiscoveryState.load(root.resolve("world")).records().stream().noneMatch(row->row.universeId().equals(id));}
         private UniverseRecord checkedCatalog(DesiredAvailability availability) throws Exception {
