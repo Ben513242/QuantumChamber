@@ -65,6 +65,24 @@ final class M4CandidateTestAccess {
             }
             var before=java.util.HexFormat.of().formatHex(digest.digest());
             var nbt=dev.quantumchamber.persistence.SessionJournalStore.read(path).getCompound("data");
+            var decoded=decodeRecords(server,nbt);
+            int schema=nbt.getInt("SchemaVersion");
+            try (var input=new java.security.DigestInputStream(java.nio.file.Files.newInputStream(path),digest)) {
+                input.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            var after=java.util.HexFormat.of().formatHex(digest.digest());
+            if (!before.equals(after)) throw new IllegalStateException("M4_DISK_CHANGED：strict read 改動原檔");
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
+                    "M4_DISK_READ schema={} exactOwner={} exactValidator={} before={} after={} path={}",
+                    schema,schema==5,schema==5,before,after,path.toAbsolutePath().normalize());
+            return decoded.flushedRecords();
+        } catch (java.io.IOException | java.security.NoSuchAlgorithmException failure) {
+            throw new IllegalStateException("M4_DISK_DECODE：strict 磁碟讀回失敗",failure);
+        }
+    }
+    /** 同 server 的正式 validator；不能以安裝 state 的 map 冒充磁碟解碼。 */
+    private static dev.quantumchamber.persistence.SessionRecoveryState decodeRecords(MinecraftServer server,net.minecraft.nbt.NbtCompound nbt) {
+        try {
             if (!nbt.contains("SchemaVersion",net.minecraft.nbt.NbtElement.INT_TYPE))
                 throw new IllegalStateException("M4_DISK_SCHEMA：缺少 int SchemaVersion");
             int schema=nbt.getInt("SchemaVersion");
@@ -92,20 +110,53 @@ final class M4CandidateTestAccess {
                 if (decoded==installed) throw new IllegalStateException("M4_DISK_DECODE：不可回記憶體 state");
             }
             decoded.requireHealthy();
-            try (var input=new java.security.DigestInputStream(java.nio.file.Files.newInputStream(path),digest)) {
-                input.transferTo(java.io.OutputStream.nullOutputStream());
+            return decoded;
+        } catch(InvocationTargetException failure) {throw new IllegalStateException("M4_DISK_DECODE：正式 reader 呼叫失敗",failure.getCause());}
+        catch(ReflectiveOperationException failure) {throw new IllegalStateException("M4_DISK_DECODE：無法取得正式 reader",failure);}
+    }
+    record ReceiptRecords(net.minecraft.nbt.NbtCompound nbt,Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord> records) {}
+    /** 當次 nonce 直下裸 receipt；同一 compressed snapshot 做首欄判別、有界解碼與未壓縮 EOF 核對。 */
+    static ReceiptRecords receiptRecords(MinecraftServer server,java.nio.file.Path path) {
+        try {
+            if(!server.isOnThread()) throw new IllegalStateException("M4_RECEIPT_OWNER：必須在 server thread");
+            var world=server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).toAbsolutePath().normalize();
+            var root=world.getParent();
+            var nonce=System.getProperty("quantumchamber.m4recovery.nonce","");
+            var supplied=System.getProperty("quantumchamber.m4recovery.root","");
+            if(!nonce.matches("[a-z0-9]+(?:-[a-z0-9]+)*") || nonce.equals("disabled")
+                    || !world.getFileName().toString().equals("world") || !root.getFileName().toString().equals("m4-recovery-"+nonce)
+                    || !root.getParent().getFileName().toString().equals("run")
+                    || !root.equals(java.nio.file.Path.of(supplied)) || !root.equals(java.nio.file.Path.of("").toAbsolutePath().normalize())
+                    || !path.isAbsolute() || !path.equals(path.normalize())
+                    || !(path.equals(root.resolve("selected-receipt.dat")) || path.equals(root.resolve("fault-receipt.dat"))))
+                throw new IllegalStateException("M4_RECEIPT_ROOT：不是當次 exact nonce receipt");
+            for(var cursor=path;cursor!=null;cursor=cursor.getParent()) {
+                var attrs=java.nio.file.Files.readAttributes(cursor,java.nio.file.attribute.BasicFileAttributes.class,java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if(attrs.isSymbolicLink() || attrs.isOther() || (cursor.equals(path) ? !attrs.isRegularFile() : !attrs.isDirectory()))
+                    throw new IllegalStateException("M4_RECEIPT_ROOT：拒絕連結或非一般路徑");
             }
-            var after=java.util.HexFormat.of().formatHex(digest.digest());
-            if (!before.equals(after)) throw new IllegalStateException("M4_DISK_CHANGED：strict read 改動原檔");
-            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
-                    "M4_DISK_READ schema={} exactOwner={} exactValidator={} before={} after={} path={}",
-                    schema,exactOwner,exactValidator,before,after,path.toAbsolutePath().normalize());
-            return decoded.flushedRecords();
-        } catch (InvocationTargetException failure) {
-            throw new IllegalStateException("M4_DISK_DECODE：正式 reader 呼叫失敗",failure.getCause());
-        } catch (ReflectiveOperationException | java.io.IOException | java.security.NoSuchAlgorithmException failure) {
-            throw new IllegalStateException("M4_DISK_DECODE：strict 磁碟讀回失敗",failure);
-        }
+            byte[] snapshot;
+            try(var input=java.nio.file.Files.newInputStream(path,java.nio.file.StandardOpenOption.READ,java.nio.file.LinkOption.NOFOLLOW_LINKS)) {snapshot=input.readAllBytes();}
+            int schema;
+            try(var input=new java.io.DataInputStream(new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(snapshot)))) {
+                if(input.readUnsignedByte()!=10 || input.readUnsignedShort()!=0 || input.readUnsignedByte()!=3
+                        || input.readUnsignedShort()!=13 || !java.util.Arrays.equals(input.readNBytes(13),"SchemaVersion".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
+                    throw new java.io.IOException("M4_RECEIPT_SCHEMA：首欄不是 int SchemaVersion");
+                schema=input.readInt();
+                if(schema<1 || schema>5) throw new java.io.IOException("M4_RECEIPT_SCHEMA：版本不支援");
+            }
+            net.minecraft.nbt.NbtCompound nbt;
+            try(var input=new java.io.DataInputStream(new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(snapshot)))) {
+                var tracker=schema==5 ? net.minecraft.nbt.NbtSizeTracker.of(16L*1024*1024) : net.minecraft.nbt.NbtSizeTracker.ofUnlimitedBytes();
+                nbt=net.minecraft.nbt.NbtIo.readCompound(input,tracker);
+                // GZIPInputStream 與正式 reader 同等：核未壓縮 EOF，不宣稱可拒絕任意壓縮尾端垃圾。
+                if(input.read()!=-1) throw new java.io.IOException("M4_RECEIPT_TRAILING：root END 後有資料");
+            }
+            if(!nbt.contains("SchemaVersion",3) || nbt.getInt("SchemaVersion")!=schema) throw new java.io.IOException("M4_RECEIPT_SCHEMA：前後版本不符");
+            var decoded=decodeRecords(server,nbt);
+            if(!java.util.Arrays.equals(snapshot,java.nio.file.Files.readAllBytes(path))) throw new java.io.IOException("M4_RECEIPT_CHANGED：原件改變");
+            return new ReceiptRecords(nbt,decoded.flushedRecords());
+        } catch(java.io.IOException failure) {throw new IllegalStateException("M4_RECEIPT_READ：裸 receipt 無法驗證",failure);}
     }
     /** 僅在保存 DORMANT 測試證據後移除 testmod 自建 receipt；production 仍禁止一般 remove 消耗 MEASURED。 */
     @SuppressWarnings("unchecked")

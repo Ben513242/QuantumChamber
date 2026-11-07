@@ -102,7 +102,7 @@ F6-3e 的 CI 固定明列 default run 在 M5 期間新增的 33 個案例，以�
 | `main-oracle.ps1` | 讀 `-Mode Main` 的 gate root：Fabric mod list、runtime classpath／argfiles／DLI、exact server PID class-load 三層都不得有 testmod／clientProbe；另核對 world keys、正常停止與 exact restore |
 | `probe-common.ps1` | M4/M5 共用 owned-phase 程序生命週期、具名 Context/State 與診斷；`New-OwnedRoot` 建檔前以 `Assert-OwnedRunAncestor` 驗 canonical Project、run 與全部祖先非 reparse，root 必須直接位於 run 內；dot-source 本身沒有啟動或世界副作用 |
 | `m6-harness-safety-check.ps1` | `-Case owned-root -Label <唯一標籤>`：呼叫真實 `New-OwnedRoot`，驗既存／缺少實體 run 可用，junction、非 canonical／相對 Project 與越界 root 輸入以 `OWNED_ROOT_ANCESTOR_UNSAFE` 拒絕且不建設定檔。`-Case move-fresh` 以 AST 載入正式 `Move-Fresh`／`Restore-Root` 及相依函式，定向注入 fresh 建立與備份復原 I/O 故障；驗原世界逐檔 hash／lock、原例外、雙重失敗原因與部分 fresh 現場保存，並驗正常／原目錄不存在的語意。fixture／receipt 分別留在 M6 SDD task-01／task-02 唯一 nonce 目錄，不碰使用者 run、不啟動 Gradle |
-| `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，24 phases，每個 phase 一個 JVM |
+| `m4-recovery-probe.ps1` | M4 retained recovery 跨 JVM probe，25 phases（24 正常停止＋1 預期 pending 停寫），每個 phase 一個 JVM |
 | `m5-collapse-probe.ps1` | M5 塌縮的跨 JVM crash／restart probe（spec §12 的 crash 窗口），每個 phase 一個 JVM；見「M5 collapse probe」 |
 | `ci-rule-check.ps1` | 從 `.github/workflows/build.yml` 逐字抽出 step 的 `run: \|`，在 fixture 複本上以 pwsh 執行；fixture 同時放 default 與 M5 兩份 GameTest XML。可加 XML／原始碼 mutation 證明規則會失敗 |
 | `runtime.init.gradle` | 所有 gate 的 Gradle 呼叫都以 `-I` 載入：run* 接 stdin、寫 `classload-<pid>.log` |
@@ -623,4 +623,4 @@ Task12 M5 normal 來源窄補：同一 `gameTestM5`／fresh `run/gametest-m5` �
 
 Task12 CI preset marker 跨午夜核對：兩平台每個實際執行的 scope，第一個 GameTest 前確認各自 log 目錄為空；事後依當次 `latest.log` 加合法日期 gzip 逐 piece 驗嚴格／寬鬆 marker 總數恰一、六欄 exact，保留壓縮原件與 SHA。Log4j gzip 採固定單 member 解碼，壓縮輸入最多 **16 MiB**、展開輸出最多 **64 MiB**；超限、壞 header／trailer、第二 member、額外尾端、錯名或重複 marker 均具名拒絕。這是 CI 證據讀取上限，不是正式 journal 容量。原 CI run `42313448722` 及截斷 gzip 意外 PASS root 保留原判，新 pin 的兩平台 CI 與 artifact 尚待驗證。
 
-Task12 M4 recovery 待實作契約：現有腳本仍是24 phase，上表 M5 已採計24/24保留歷史原判。設計採用後預期改為25 phase：`readback-fault` 唯一用 `EXPECTED_PENDING_RESTART_REQUIRED` 專用 oracle 核未確認寫入後停寫與原檔不變，接續新 JVM `recover→verify`；其餘24 phase仍要求正常 `final.json PASS`。正式數字須待新 code pin、乾淨完整回歸驗證後再更新目前用法，不得以設計草稿冒25/25已過。
+Task12 M4 recovery 現行腳本為25 phase；上表 M5 已採計24/24保留歷史原判。`readback-fault` 唯一用 `EXPECTED_PENDING_RESTART_REQUIRED` 專用 oracle 核未確認寫入後停寫與原檔不變，接續新 JVM `recover→verify`；其餘24 phase仍要求正常 `final.json PASS`。這是現行用法，不代表新 code pin 的乾淨雙focused／完整run-all或遠端CI已通過。

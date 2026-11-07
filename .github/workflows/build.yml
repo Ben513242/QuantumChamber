@@ -66,6 +66,15 @@ jobs:
       - name: Build
         timeout-minutes: 25
         run: ./gradlew clean build
+      - name: 非 Windows GameTest 平台契約 日誌空目錄守門
+        shell: pwsh
+        run: |
+          foreach ($runName in @('gametest','gametest-legacy','gametest-m5','gametest-m6')) {
+            $logRoot = "run/$runName/logs"
+            if (Test-Path -LiteralPath $logRoot) {
+              if (-not (Test-Path -LiteralPath $logRoot -PathType Container) -or @(Get-ChildItem -LiteralPath $logRoot -Force).Count -ne 0) { throw "M4_PRESET_SOURCE：啟動前日誌目錄非空 $logRoot" }
+            }
+          }
       - name: 非 Windows GameTest 平台契約
         timeout-minutes: 15
         run: ./gradlew runGameTest --no-daemon
@@ -92,12 +101,86 @@ jobs:
         run: |
           # 每個平台只核其實際執行 scope 的原件，不以 flag 名稱代替實際 config。
           $presetScopes = @('default','legacy','m5','m6')
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.IO;
+          using System.IO.Compression;
+          using System.Buffers.Binary;
+          public static class CiPresetGzip {
+           public const int CompressedLimit=16*1024*1024, ExpandedLimit=64*1024*1024;
+           public sealed class Result {public byte[] Bytes;public string Hash;public long Delivered;public long End;}
+           sealed class ByteSource : MemoryStream {
+            public long Delivered;
+            public ByteSource(byte[] bytes):base(bytes,false) {Position=10;}
+            void NeedByte(){if(Position==Length)throw new InvalidDataException("GZIP_DEFLATE_TRUNCATED");}
+            public override int Read(byte[] b,int offset,int count) {if(count==0)return 0;NeedByte();int n=base.Read(b,offset,1);Delivered+=n;return n;}
+            public override int Read(Span<byte> b) {if(b.Length==0)return 0;NeedByte();int n=base.Read(b.Slice(0,1));Delivered+=n;return n;}
+            public override int ReadByte() {NeedByte();int value=base.ReadByte();Delivered++;return value;}
+           }
+           static uint Crc(byte[] bytes) {uint crc=0xffffffff;foreach(byte b in bytes){crc^=b;for(int i=0;i<8;i++)crc=(crc>>1)^((crc&1)!=0?0xedb88320u:0);}return ~crc;}
+           public static Result ReadFile(string path) {using(var input=File.OpenRead(path))return ReadBounded(input);}
+           public static Result ReadBounded(Stream input) {
+            using(var snapshot=new MemoryStream()) {
+             var chunk=new byte[8192];int count;
+             while((count=input.Read(chunk,0,chunk.Length))!=0){if(snapshot.Length+count>CompressedLimit)throw new InvalidDataException("GZIP_COMPRESSED_LIMIT");snapshot.Write(chunk,0,count);}
+             return Read(snapshot.ToArray());
+            }
+           }
+           public static Result Read(byte[] raw) {
+            if(raw.Length>CompressedLimit)throw new InvalidDataException("GZIP_COMPRESSED_LIMIT");
+            if(raw.Length<18||raw[0]!=31||raw[1]!=139||raw[2]!=8||raw[3]!=0)throw new InvalidDataException("GZIP_HEADER");
+            using(var source=new ByteSource(raw))using(var output=new MemoryStream()) {
+             using(var deflate=new DeflateStream(source,CompressionMode.Decompress,true)){
+              var buffer=new byte[8192];int count;
+              while((count=deflate.Read(buffer,0,buffer.Length))!=0){if(output.Length+count>ExpandedLimit)throw new InvalidDataException("GZIP_EXPANDED_LIMIT");output.Write(buffer,0,count);}
+             }
+             long end=source.Position;
+             if(source.Delivered!=end-10)throw new InvalidDataException("GZIP_INPUT_ACCOUNTING");
+             if(raw.Length-end!=8)throw new InvalidDataException("GZIP_TRAILER_EOF remaining="+(raw.Length-end));
+             byte[] bytes=output.ToArray();
+             if(BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan((int)end,4))!=Crc(bytes))throw new InvalidDataException("GZIP_CRC");
+             if(BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan((int)end+4,4))!=(uint)bytes.Length)throw new InvalidDataException("GZIP_ISIZE");
+             return new Result{Bytes=bytes,Hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(raw)),Delivered=source.Delivered,End=end};
+            }
+           }
+          }
+          '@
           foreach ($presetScope in $presetScopes) {
             $runName = switch ($presetScope) { 'default' {'gametest'} 'normal' {'gametest-m4-normal'} 'legacy' {'gametest-legacy'} 'm5' {'gametest-m5'} 'm6' {'gametest-m6'} }
-            $presetLog = Get-Content -LiteralPath "run/$runName/logs/latest.log" -Raw
-            $markers = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+            . ./scripts/verification/gate-evidence.ps1
+            $logRoot = "run/$runName/logs"
+            $pieces = @()
+            foreach ($entry in Get-ChildItem -LiteralPath $logRoot -Force) {
+              if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "M4_PRESET_SOURCE：非一般日誌檔 $($entry.Name)" }
+              if ($entry.Name -ceq 'debug.log' -or $entry.Name -cmatch '^debug-[1-9][0-9]*\.log\.gz$') { continue }
+              if ($entry.Name -ceq 'latest.log') { $pieces += [pscustomobject]@{File=$entry;Date='9999-12-31';Index=[long]::MaxValue}; continue }
+              $date = [datetime]::MinValue; $index = 0L
+              if ($entry.Name -cnotmatch '^(\d{4}-\d{2}-\d{2})-([1-9][0-9]*)\.log\.gz$') { throw "M4_PRESET_SOURCE：錯誤日誌檔名 $($entry.Name)" }
+              $dateText=$Matches[1]; $indexText=$Matches[2]
+              if (-not [datetime]::TryParseExact($dateText,'yyyy-MM-dd',[cultureinfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$date) -or -not [long]::TryParse($indexText,[ref]$index)) { throw "M4_PRESET_SOURCE：非法日期或序號 $($entry.Name)" }
+              $pieces += [pscustomobject]@{File=$entry;Date=$dateText;Index=$index}
+            }
+            $latest = @($pieces | Where-Object {$_.File.Name -ceq 'latest.log'})
+            if ($latest.Count -ne 1 -or $latest[0].File.Length -eq 0) { throw "M4_PRESET_SOURCE：latest.log 必須存在且非空" }
+            $markers = @(); $looseCount = 0
+            foreach ($piece in @($pieces | Sort-Object Date,Index)) {
+              try {
+                $beforeHash = (Get-FileHash -LiteralPath $piece.File.FullName).Hash
+                if ($piece.File.Name.EndsWith('.gz',[StringComparison]::Ordinal)) {
+                  $parsed = [CiPresetGzip]::ReadFile($piece.File.FullName)
+                  $pieceBytes = $parsed.Bytes; $pieceHash = $parsed.Hash
+                } else { $pieceBytes = Read-GateLogBytes -Path $piece.File.FullName; $pieceHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($pieceBytes)) }
+                if ($pieceHash -cne $beforeHash -or $pieceHash -cne (Get-FileHash -LiteralPath $piece.File.FullName).Hash) { throw 'M4_PRESET_SOURCE：piece 原件在讀取間改變' }
+                $presetLog = [Text.UTF8Encoding]::new($false,$true).GetString($pieceBytes)
+              }
+              catch { throw "M4_PRESET_SOURCE：日誌解壓或讀取失敗 $($piece.File.Name)：$_" }
+              $strict = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+              $loose = [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count
+              $markers += $strict; $looseCount += $loose
+              Write-Host "M4_PRESET_PIECE scope=$presetScope path=$logRoot/$($piece.File.Name) sha256=$pieceHash strict=$($strict.Count) loose=$loose"
+            }
             $expectedPreset = if ($presetScope -ceq 'default') { @('true','false','false','false','false','true') } elseif ($presetScope -ceq 'normal') { @('false','true','false','false','false','true') } elseif ($presetScope -ceq 'm5') { @('false','false','true','true','false','true') } else { @('false','false','false','false','true','false') }
-            if ($markers.Count -ne 1 -or [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count -ne 1) { throw "M4_TEST_PRESET_MISMATCH：$presetScope marker 必須恰一" }
+            if ($markers.Count -ne 1 -or $looseCount -ne 1) { throw "M4_TEST_PRESET_MISMATCH：$presetScope marker 必須恰一" }
             for ($field=0; $field -lt 6; $field++) { if ($markers[0].Groups[$field+1].Value -cne $expectedPreset[$field]) { throw "M4_TEST_PRESET_MISMATCH：$presetScope flag/config 錯配" } }
           }
           # normal scope 僅 Windows 真執行；兩平台都嚴格核來源宣告。
@@ -287,10 +370,15 @@ jobs:
             build/m6-oracle-selftest/**
             build/m6-verified/**
             run/gametest-legacy/logs/latest.log
+            run/gametest-legacy/logs/*.log.gz
             run/gametest-m4-normal/logs/latest.log
+            run/gametest-m4-normal/logs/*.log.gz
             run/gametest-m6/logs/latest.log
+            run/gametest-m6/logs/*.log.gz
             run/gametest/logs/latest.log
+            run/gametest/logs/*.log.gz
             run/gametest-m5/logs/latest.log
+            run/gametest-m5/logs/*.log.gz
           if-no-files-found: error
 
   windows-native:
@@ -304,6 +392,15 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6
       # 這一步含 clean build 與全部 JUnit（2026-10-01 run 36804549120 約 9 分鐘），上限比純 GameTest 的 step 寬。
+      - name: Windows 原生建置與 GameTest 日誌空目錄守門
+        shell: pwsh
+        run: |
+          foreach ($runName in @('gametest','gametest-legacy','gametest-m4-normal','gametest-m5','gametest-m6')) {
+            $logRoot = "run/$runName/logs"
+            if (Test-Path -LiteralPath $logRoot) {
+              if (-not (Test-Path -LiteralPath $logRoot -PathType Container) -or @(Get-ChildItem -LiteralPath $logRoot -Force).Count -ne 0) { throw "M4_PRESET_SOURCE：啟動前日誌目錄非空 $logRoot" }
+            }
+          }
       - name: Windows 原生建置與 GameTest
         timeout-minutes: 30
         run: ./gradlew.bat clean build runGameTest --rerun-tasks --no-daemon
@@ -339,12 +436,86 @@ jobs:
         run: |
           # 每個平台只核其實際執行 scope 的原件，不以 flag 名稱代替實際 config。
           $presetScopes = @('default','legacy','normal','m5','m6')
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.IO;
+          using System.IO.Compression;
+          using System.Buffers.Binary;
+          public static class CiPresetGzip {
+           public const int CompressedLimit=16*1024*1024, ExpandedLimit=64*1024*1024;
+           public sealed class Result {public byte[] Bytes;public string Hash;public long Delivered;public long End;}
+           sealed class ByteSource : MemoryStream {
+            public long Delivered;
+            public ByteSource(byte[] bytes):base(bytes,false) {Position=10;}
+            void NeedByte(){if(Position==Length)throw new InvalidDataException("GZIP_DEFLATE_TRUNCATED");}
+            public override int Read(byte[] b,int offset,int count) {if(count==0)return 0;NeedByte();int n=base.Read(b,offset,1);Delivered+=n;return n;}
+            public override int Read(Span<byte> b) {if(b.Length==0)return 0;NeedByte();int n=base.Read(b.Slice(0,1));Delivered+=n;return n;}
+            public override int ReadByte() {NeedByte();int value=base.ReadByte();Delivered++;return value;}
+           }
+           static uint Crc(byte[] bytes) {uint crc=0xffffffff;foreach(byte b in bytes){crc^=b;for(int i=0;i<8;i++)crc=(crc>>1)^((crc&1)!=0?0xedb88320u:0);}return ~crc;}
+           public static Result ReadFile(string path) {using(var input=File.OpenRead(path))return ReadBounded(input);}
+           public static Result ReadBounded(Stream input) {
+            using(var snapshot=new MemoryStream()) {
+             var chunk=new byte[8192];int count;
+             while((count=input.Read(chunk,0,chunk.Length))!=0){if(snapshot.Length+count>CompressedLimit)throw new InvalidDataException("GZIP_COMPRESSED_LIMIT");snapshot.Write(chunk,0,count);}
+             return Read(snapshot.ToArray());
+            }
+           }
+           public static Result Read(byte[] raw) {
+            if(raw.Length>CompressedLimit)throw new InvalidDataException("GZIP_COMPRESSED_LIMIT");
+            if(raw.Length<18||raw[0]!=31||raw[1]!=139||raw[2]!=8||raw[3]!=0)throw new InvalidDataException("GZIP_HEADER");
+            using(var source=new ByteSource(raw))using(var output=new MemoryStream()) {
+             using(var deflate=new DeflateStream(source,CompressionMode.Decompress,true)){
+              var buffer=new byte[8192];int count;
+              while((count=deflate.Read(buffer,0,buffer.Length))!=0){if(output.Length+count>ExpandedLimit)throw new InvalidDataException("GZIP_EXPANDED_LIMIT");output.Write(buffer,0,count);}
+             }
+             long end=source.Position;
+             if(source.Delivered!=end-10)throw new InvalidDataException("GZIP_INPUT_ACCOUNTING");
+             if(raw.Length-end!=8)throw new InvalidDataException("GZIP_TRAILER_EOF remaining="+(raw.Length-end));
+             byte[] bytes=output.ToArray();
+             if(BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan((int)end,4))!=Crc(bytes))throw new InvalidDataException("GZIP_CRC");
+             if(BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan((int)end+4,4))!=(uint)bytes.Length)throw new InvalidDataException("GZIP_ISIZE");
+             return new Result{Bytes=bytes,Hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(raw)),Delivered=source.Delivered,End=end};
+            }
+           }
+          }
+          '@
           foreach ($presetScope in $presetScopes) {
             $runName = switch ($presetScope) { 'default' {'gametest'} 'normal' {'gametest-m4-normal'} 'legacy' {'gametest-legacy'} 'm5' {'gametest-m5'} 'm6' {'gametest-m6'} }
-            $presetLog = Get-Content -LiteralPath "run/$runName/logs/latest.log" -Raw
-            $markers = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+            . ./scripts/verification/gate-evidence.ps1
+            $logRoot = "run/$runName/logs"
+            $pieces = @()
+            foreach ($entry in Get-ChildItem -LiteralPath $logRoot -Force) {
+              if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "M4_PRESET_SOURCE：非一般日誌檔 $($entry.Name)" }
+              if ($entry.Name -ceq 'debug.log' -or $entry.Name -cmatch '^debug-[1-9][0-9]*\.log\.gz$') { continue }
+              if ($entry.Name -ceq 'latest.log') { $pieces += [pscustomobject]@{File=$entry;Date='9999-12-31';Index=[long]::MaxValue}; continue }
+              $date = [datetime]::MinValue; $index = 0L
+              if ($entry.Name -cnotmatch '^(\d{4}-\d{2}-\d{2})-([1-9][0-9]*)\.log\.gz$') { throw "M4_PRESET_SOURCE：錯誤日誌檔名 $($entry.Name)" }
+              $dateText=$Matches[1]; $indexText=$Matches[2]
+              if (-not [datetime]::TryParseExact($dateText,'yyyy-MM-dd',[cultureinfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$date) -or -not [long]::TryParse($indexText,[ref]$index)) { throw "M4_PRESET_SOURCE：非法日期或序號 $($entry.Name)" }
+              $pieces += [pscustomobject]@{File=$entry;Date=$dateText;Index=$index}
+            }
+            $latest = @($pieces | Where-Object {$_.File.Name -ceq 'latest.log'})
+            if ($latest.Count -ne 1 -or $latest[0].File.Length -eq 0) { throw "M4_PRESET_SOURCE：latest.log 必須存在且非空" }
+            $markers = @(); $looseCount = 0
+            foreach ($piece in @($pieces | Sort-Object Date,Index)) {
+              try {
+                $beforeHash = (Get-FileHash -LiteralPath $piece.File.FullName).Hash
+                if ($piece.File.Name.EndsWith('.gz',[StringComparison]::Ordinal)) {
+                  $parsed = [CiPresetGzip]::ReadFile($piece.File.FullName)
+                  $pieceBytes = $parsed.Bytes; $pieceHash = $parsed.Hash
+                } else { $pieceBytes = Read-GateLogBytes -Path $piece.File.FullName; $pieceHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($pieceBytes)) }
+                if ($pieceHash -cne $beforeHash -or $pieceHash -cne (Get-FileHash -LiteralPath $piece.File.FullName).Hash) { throw 'M4_PRESET_SOURCE：piece 原件在讀取間改變' }
+                $presetLog = [Text.UTF8Encoding]::new($false,$true).GetString($pieceBytes)
+              }
+              catch { throw "M4_PRESET_SOURCE：日誌解壓或讀取失敗 $($piece.File.Name)：$_" }
+              $strict = @([regex]::Matches($presetLog, 'M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'))
+              $loose = [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count
+              $markers += $strict; $looseCount += $loose
+              Write-Host "M4_PRESET_PIECE scope=$presetScope path=$logRoot/$($piece.File.Name) sha256=$pieceHash strict=$($strict.Count) loose=$loose"
+            }
             $expectedPreset = if ($presetScope -ceq 'default') { @('true','false','false','false','false','true') } elseif ($presetScope -ceq 'normal') { @('false','true','false','false','false','true') } elseif ($presetScope -ceq 'm5') { @('false','false','true','true','false','true') } else { @('false','false','false','false','true','false') }
-            if ($markers.Count -ne 1 -or [regex]::Matches($presetLog,'M4_TEST_PRESET(?:\s|$)').Count -ne 1) { throw "M4_TEST_PRESET_MISMATCH：$presetScope marker 必須恰一" }
+            if ($markers.Count -ne 1 -or $looseCount -ne 1) { throw "M4_TEST_PRESET_MISMATCH：$presetScope marker 必須恰一" }
             for ($field=0; $field -lt 6; $field++) { if ($markers[0].Groups[$field+1].Value -cne $expectedPreset[$field]) { throw "M4_TEST_PRESET_MISMATCH：$presetScope flag/config 錯配" } }
           }
           # 各項檢查先彙整，最後一次列出全部缺席／失敗名稱；任一項不符即 throw（維持失敗即紅）。
@@ -664,8 +835,13 @@ jobs:
             build/m6-oracle-selftest/**
             build/m6-verified/**
             run/gametest-legacy/logs/latest.log
+            run/gametest-legacy/logs/*.log.gz
             run/gametest-m4-normal/logs/latest.log
+            run/gametest-m4-normal/logs/*.log.gz
             run/gametest-m6/logs/latest.log
+            run/gametest-m6/logs/*.log.gz
             run/gametest/logs/latest.log
+            run/gametest/logs/*.log.gz
             run/gametest-m5/logs/latest.log
+            run/gametest-m5/logs/*.log.gz
           if-no-files-found: error

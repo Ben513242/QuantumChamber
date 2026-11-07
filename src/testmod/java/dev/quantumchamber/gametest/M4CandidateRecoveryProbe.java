@@ -114,11 +114,11 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 var manifest=JsonParser.parseString(Files.readString(config.root().resolve("fault-manifest.json"))).getAsJsonObject();
                 sid=UUID.fromString(manifest.get("sessionUuid").getAsString()); chamber=UUID.fromString(manifest.get("chamberUuid").getAsString());
                 original=journal.flushedRecords().get(sid);
-                var receipt=SessionRecoveryState.fromNbt(NbtIo.readCompressed(config.root().resolve("fault-receipt.dat"),NbtSizeTracker.ofUnlimitedBytes()));
-                require(original!=null && original.equals(receipt.flushedRecords().get(sid)),"跨 JVM：重啟 flushed record 必須 exact 等於失敗後 checked receipt");
+                var receipt=M4CandidateTestAccess.receiptRecords(server,config.root().resolve("fault-receipt.dat"));
+                require(original!=null && original.equals(receipt.records().get(sid)),"跨 JVM：重啟 flushed record 必須 exact 等於失敗後 checked receipt");
                 require(original.state()==SessionState.RETURNING && original.candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable,
                         "selection 提交失敗後重啟不得回 SELECTED／MEASURED");
-                require(ledgerSha256(original).equals(manifest.get("ledgerSha256").getAsString()) && original.candidateLedger().size()==manifest.get("ledgerSize").getAsInt(),
+                require(ledgerSha256(receipt.nbt(),original).equals(manifest.get("ledgerSha256").getAsString()) && original.candidateLedger().size()==manifest.get("ledgerSize").getAsInt(),
                         "重啟不得重抽或截斷 candidate ledger");
                 catalogHash=manifest.get("catalogHash").getAsString(); entropyHash=manifest.get("entropyHash").getAsString();
                 require(hash(data("quantumchamber_universes.dat")).equals(catalogHash) && hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),
@@ -131,8 +131,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 journal=SessionRecoveryState.get(owner); original=journal.flushedRecords().values().iterator().next();
                 sid=original.sessionUuid(); chamber=original.chamberUuid(); dormantReceipt=original;
                 require(journal.flushedRecords().size()==1 && MeasuredRecoveryPhase.from(original)==MeasuredRecoveryPhase.DORMANT,"必須由真實 retained recovery 的 DORMANT receipt 開始");
-                var expected=NbtIo.readCompressed(config.root().resolve("selected-receipt.dat"),NbtSizeTracker.ofUnlimitedBytes());
-                require(sameReceipt(SessionRecoveryState.fromNbt(expected).flushedRecords().get(sid),original),"DORMANT receipt 與首次 SELECTED receipt 不符");
+                var expected=M4CandidateTestAccess.receiptRecords(server,config.root().resolve("selected-receipt.dat"));
+                require(sameReceipt(expected.records().get(sid),original),"DORMANT receipt 與首次 SELECTED receipt 不符");
                 var manifest=JsonParser.parseString(Files.readString(config.root().resolve("manifest.json"))).getAsJsonObject();
                 catalogHash=manifest.get("catalogHash").getAsString(); entropyHash=manifest.get("entropyHash").getAsString();
                 require(hash(data("quantumchamber_universes.dat")).equals(catalogHash) && hash(data("quantumchamber_candidate_entropy.dat")).equals(entropyHash),
@@ -143,8 +143,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             if(reloading()) {
                 journal=SessionRecoveryState.get(owner); original=journal.flushedRecords().values().iterator().next();
                 sid=original.sessionUuid(); chamber=original.chamberUuid();
-                var expected=NbtIo.readCompressed(config.root().resolve("selected-receipt.dat"),NbtSizeTracker.ofUnlimitedBytes());
-                var frozen=SessionRecoveryState.fromNbt(expected).flushedRecords().get(sid);
+                var expected=M4CandidateTestAccess.receiptRecords(server,config.root().resolve("selected-receipt.dat"));
+                var frozen=expected.records().get(sid);
                 require(frozen!=null && sameReceipt(frozen,original),"跨 JVM candidate context／ledger／selection 改變");
                 require(original.state()==SessionState.MEASURED,"重啟前必須已 MEASURED");
                 proof.put("receiptExactBeforeBootstrap",true);
@@ -318,11 +318,12 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             entropyHash=hash(data("quantumchamber_candidate_entropy.dat"));
             var manifest=new LinkedHashMap<String,Object>(); manifest.put("sessionUuid",sid.toString()); manifest.put("chamberUuid",chamber.toString());
             manifest.put("catalogHash",catalogHash); manifest.put("entropyHash",entropyHash); manifest.put("journalHash",hash(data("quantumchamber_sessions.dat")));
-            manifest.put("ledgerSize",disk.candidateLedger().size()); manifest.put("ledgerSha256",ledgerSha256(disk)); manifest.put("faultPhase",config.phase());
+            manifest.put("ledgerSize",disk.candidateLedger().size()); manifest.put("ledgerSha256",ledgerSha256(diskJournalAtReadback,disk)); manifest.put("faultPhase",config.phase());
             write(config.root().resolve("manifest.json"),JSON.toJson(manifest)); proof.putAll(manifest);
             proof.put("inProcessReverted",true); proof.put("crashWindowDiskState","MEASURED+SELECTED");
             success(); return;
         }
+        if(config.phase().equals("readback-fault")) { verifyPendingReadback(current,flushed); return; }
         require(current.equals(flushed) && flushed.state()==SessionState.RETURNING && sameReceipt(preFault,flushed),
                 "同 process 必須以 flushed SELECTABLE authority 寫 checked RETURNING");
         // 原生 autosave/stop 與其他 session 的 checked flush 都經同一 save(File) 寫整份 journal。
@@ -338,10 +339,50 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         entropyHash=hash(data("quantumchamber_candidate_entropy.dat"));
         var manifest=new LinkedHashMap<String,Object>(); manifest.put("sessionUuid",sid.toString()); manifest.put("chamberUuid",chamber.toString());
         manifest.put("catalogHash",catalogHash); manifest.put("entropyHash",entropyHash); manifest.put("journalHash",hash(data("quantumchamber_sessions.dat")));
-        manifest.put("ledgerSize",flushed.candidateLedger().size()); manifest.put("ledgerSha256",ledgerSha256(flushed)); manifest.put("faultPhase",config.phase());
+        manifest.put("ledgerSize",flushed.candidateLedger().size()); manifest.put("ledgerSha256",ledgerSha256(M4CandidateTestAccess.receiptRecords(server,config.root().resolve("fault-receipt.dat")).nbt(),flushed)); manifest.put("faultPhase",config.phase());
         write(config.root().resolve("fault-manifest.json"),JSON.toJson(manifest)); proof.putAll(manifest);
         proof.put("inProcessDurable","RETURNING+SELECTABLE"); proof.put("nativeSaveNotAdmitted",true); proof.put("otherSessionFlushNotAdmitted",true);
         success();
+    }
+    /** schema5 exact attempt 已落盤：本 instance 只能停寫，不能把未確認 SELECTED 寫回舊 authority。 */
+    private void verifyPendingReadback(SessionRecoveryRecord current,SessionRecoveryRecord flushed) throws Exception {
+        require(preFault.equals(flushed) && flushed.state()==SessionState.SUPERPOSITION
+                && current.state()==SessionState.RETURNING && sameReceipt(preFault,current) && !current.equals(flushed),"M4_PENDING_AUTHORITY：current/flushed 不符");
+        require(!freezeSave && faultCount==1,"M4_PENDING_FAULT：只能一次真 readback fault，不能 suppress save");
+        var disk=diskRecord(); var journalPath=data("quantumchamber_sessions.dat"); var before=hash(journalPath);
+        require(diskAtReadback.equals(disk) && disk.state()==SessionState.MEASURED
+                && disk.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected,"M4_PENDING_DISK：磁碟不是 exact SELECTED attempt");
+        require(diskJournalAtReadback.equals(SessionJournalStore.read(journalPath).getCompound("data")),"M4_PENDING_DISK：原 NBT 改變");
+        pendingRefusal("native",() -> {journal.markDirty();server.save(false,true,true);},current,before);
+        var other=M4CandidateTestAccess.syntheticSession(server,UUID.randomUUID(),10000);
+        journal.put(other);
+        pendingRefusal("other",() -> journal.flush(server),current,before);
+        require(!journal.flushedRecords().containsKey(other.sessionUuid()),"M4_PENDING_OTHER：其他 session 不可成為 checked");
+        proof.put("otherTransientCurrent",journal.records().containsKey(other.sessionUuid()));
+        require(UniverseRegistryState.get(server).records().isEmpty() && M4CandidateTestAccess.runtime(server).isEmpty()
+                && hash(data("quantumchamber_universes.dat")).equals(catalogHash)
+                && proof.get("universeBefore").equals(universeEvidence()),"M4_PENDING_UNIVERSE：不能配置或物化");
+        try(var output=Files.newOutputStream(config.root().resolve("selected-receipt.dat"),StandardOpenOption.CREATE_NEW)) {
+            NbtIo.writeCompressed(diskJournalAtReadback,output);
+        }
+        entropyHash=hash(data("quantumchamber_candidate_entropy.dat"));
+        var manifest=new LinkedHashMap<String,Object>(); manifest.put("sessionUuid",sid.toString()); manifest.put("chamberUuid",chamber.toString());
+        manifest.put("catalogHash",catalogHash);manifest.put("entropyHash",entropyHash);manifest.put("journalHash",before);
+        manifest.put("ledgerSize",disk.candidateLedger().size());manifest.put("ledgerSha256",ledgerSha256(diskJournalAtReadback,disk));manifest.put("faultPhase",config.phase());
+        write(config.root().resolve("manifest.json"),JSON.toJson(manifest));proof.putAll(manifest);
+        require(before.equals(hash(journalPath)),"M4_PENDING_DISK：產生證據不能改原件");
+        proof.put("noUniverseAllocation",true);proof.put("flushedUnchanged",true);proof.put("currentNotSelected",true);
+        proof.put("status","PENDING_PRESTOP");proof.put("stopRequested",true);finished=true;
+        write(config.evidence().resolve("pending-prestop.json"),JSON.toJson(proof));event("pending-prestop");server.stop(false);
+    }
+    private void pendingRefusal(String label,Checked action,SessionRecoveryRecord current,String before) throws Exception {
+        Exception refused=null;try {action.run();}catch(Exception failure){refused=failure;}
+        require(refused!=null,"M4_PENDING_FENCE："+label+" 沒有拒寫");
+        var stack=new java.io.StringWriter();refused.printStackTrace(new java.io.PrintWriter(stack));
+        require(stack.toString().contains("JOURNAL_PENDING_RESTART_REQUIRED") && !stack.toString().contains("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED"),"M4_PENDING_FENCE："+label+" 錯誤原因不符");
+        require(before.equals(hash(data("quantumchamber_sessions.dat"))) && current.equals(journal.records().get(sid)) && preFault.equals(record()),"M4_PENDING_AUTHORITY："+label+" 改變權威");
+        write(config.evidence().resolve("pending-"+label+"-refusal.txt"),stack.toString());
+        proof.put(label+"RefusalSha256",hash(config.evidence().resolve("pending-"+label+"-refusal.txt")));proof.put(label+"JournalHash",before);
     }
     private void restartAfterSelectionFault() throws Exception {
         var current=record();
@@ -408,12 +449,18 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 Set.copyOf(((Map<?,?>)M4CandidateTestAccess.get(gateway,"tickets")).keySet()));
     }
     private SessionRecoveryRecord diskRecord() throws IOException {
-        var decoded=SessionRecoveryState.fromNbt(SessionJournalStore.read(data("quantumchamber_sessions.dat")).getCompound("data"));
-        decoded.requireHealthy(); return decoded.flushedRecords().get(sid);
+        return M4CandidateTestAccess.diskRecords(server).get(sid);
     }
-    private static String ledgerSha256(SessionRecoveryRecord record) throws Exception {
-        var single=new SessionRecoveryState(); single.put(record);
-        var ledger=single.writeNbt(new NbtCompound()).getList("Records",NbtElement.COMPOUND_TYPE).getCompound(0).get("CandidateLedger").toString();
+    private static String ledgerSha256(NbtCompound nbt,SessionRecoveryRecord record) throws Exception {
+        NbtCompound exact=null;
+        for(var element:nbt.getList("Records",NbtElement.COMPOUND_TYPE)) {
+            var row=(NbtCompound)element;
+            if(row.containsUuid("SessionUuid") && row.getUuid("SessionUuid").equals(record.sessionUuid())) {
+                require(exact==null,"ledger hash：SessionUuid 重複"); exact=row;
+            }
+        }
+        require(exact!=null && exact.contains("CandidateLedger",NbtElement.LIST_TYPE),"ledger hash：缺少 exact UUID／CandidateLedger");
+        var ledger=exact.get("CandidateLedger").toString();
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ledger.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
     private void recovering() throws Exception {
@@ -595,12 +642,19 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
                 || !path.toAbsolutePath().normalize().equals(probe.data("quantumchamber_sessions.dat").toAbsolutePath().normalize())) return;
         probe.readbackArmed=false;
         try {
+            var before=hash(path);
             var written=SessionJournalStore.read(path).getCompound("data");
-            var decoded=SessionRecoveryState.fromNbt(written); decoded.requireHealthy();
-            probe.diskJournalAtReadback=written.copy(); probe.diskAtReadback=decoded.flushedRecords().get(probe.sid);
-        } catch(IOException | RuntimeException failure) { probe.failures.add("readback fault 前無法讀取已寫入 journal："+failure); }
+            var decoded=M4CandidateTestAccess.diskRecords(probe.server);
+            require(before.equals(hash(path)) && written.equals(SessionJournalStore.read(path).getCompound("data")),"readback callback 兩讀之間原件改變");
+            probe.diskJournalAtReadback=written.copy(); probe.diskAtReadback=decoded.get(probe.sid);
+        } catch(Exception failure) { probe.failures.add("readback fault 前無法讀取已寫入 journal："+failure); }
         if(probe.config.phase().equals("readback-crash")) probe.freezeSave=true;
-        throw new IllegalStateException("M4 owned-root 受控 journal readback fault（已寫入後）");
+        var fault=new IllegalStateException("M4 owned-root 受控 journal readback fault（已寫入後）");
+        if(probe.config.phase().equals("readback-fault")) {
+            var stack=new java.io.StringWriter();fault.printStackTrace(new java.io.PrintWriter(stack));
+            write(probe.config.evidence().resolve("pending-injected-fault.txt"),stack.toString());
+        }
+        throw fault;
     }
     public static boolean suppressJournalSave(Path path) {
         var probe=active;
@@ -614,8 +668,8 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         require(sameReceipt(original,current) && current.state()==SessionState.RETURNING,"dirty 窗口不得殘留未 checked candidate／selection");
         require(record().candidateSelection().orElseThrow() instanceof CandidateSelection.Selectable,"dirty selection 不得成為 durable SELECTED");
         require(pages.selectableDoors(sid).isEmpty(),"dirty window 不得發布 selectable door");
-        var disk=SessionRecoveryState.fromNbt(SessionJournalStore.read(data("quantumchamber_sessions.dat")).getCompound("data"));
-        require(original.equals(disk.flushedRecords().get(sid)),"正式 journal 不得包含 transient candidate/selection");
+        var disk=M4CandidateTestAccess.diskRecords(server).get(sid);
+        require(original.equals(disk),"正式 journal 不得包含 transient candidate/selection");
         proof.put("flushedOnly",true); proof.put("controlledUnhealthy",true); proof.put("noTransientDoorOrSelection",true);
         proof.put("faultCount",faultCount); success();
     }

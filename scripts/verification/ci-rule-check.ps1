@@ -24,7 +24,7 @@ param(
     [string]$M4NormalRuntimeLog='',
     [string]$M5RuntimeLog='',
     [switch]$PresetFixture,
-    [ValidateSet('none','missing-marker','wrong-flag','wrong-m5-only','wrong-m5-normal','wrong-config')][string]$PresetMutation='none',
+    [ValidateSet('none','missing-marker','wrong-flag','wrong-m5-only','wrong-m5-normal','wrong-config','rollover','duplicate','split-marker','format-drift','bad-gzip','wrong-name','bad-date','unexpected-log','cross-root','old-piece','truncated-gzip','missing-one','middle-truncated','crc','isize','flags','extra-tail','duplicate-trailer','second-member','compressed-limit','expanded-limit','original-truncated')][string]$PresetMutation='none',
     [ValidateSet('default','legacy','normal','m5','m6')][string]$PresetMutationScope='default',
     [string]$M6GameTestXml='',
     [string]$M6RuntimeLog='',
@@ -105,6 +105,15 @@ if($M6GameTestXml){
 # 正式full輸入必須由同runRoot的唯一gate/本次XML推回log；離線跨root原件須明示fixture。
 . (Join-Path $PSScriptRoot 'gate-evidence.ps1')
 $presetSources=@()
+New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'gate-evidence.ps1') -Destination (Join-Path $fixture 'scripts/verification')
+function Write-PresetPiece([string]$Path,[string]$Text) {
+    $bytes=[Text.UTF8Encoding]::new($false).GetBytes($Text)
+    if($Path.EndsWith('.gz',[StringComparison]::Ordinal)) {
+        $output=[IO.File]::Create($Path); $gzip=[IO.Compression.GZipStream]::new($output,[IO.Compression.CompressionMode]::Compress)
+        try {$gzip.Write($bytes,0,$bytes.Length)} finally {$gzip.Dispose();$output.Dispose()}
+    } else {[IO.File]::WriteAllBytes($Path,$bytes)}
+}
 if($Step -cin @('確認 Windows 原生案例確實執行','確認非 Windows 跨平台案例確實執行')) {
     $presetScopes=if($Step -ceq '確認 Windows 原生案例確實執行'){@('default','legacy','normal','m5','m6')}else{@('default','legacy','m5','m6')}
     if($PresetMutation -ne 'none' -and $PresetMutationScope -cnotin $presetScopes){throw 'M4_PRESET_INPUT：mutation scope未在此平台執行'}
@@ -113,7 +122,7 @@ if($Step -cin @('確認 Windows 原生案例確實執行','確認非 Windows 跨
     foreach($presetScope in $presetScopes) {
         $runtimeLog=switch($presetScope){'default'{$DefaultRuntimeLog};'legacy'{$LegacyRuntimeLog};'normal'{$M4NormalRuntimeLog};'m5'{$M5RuntimeLog};'m6'{$M6RuntimeLog}}
         $xmlInput=switch($presetScope){'default'{$GameTestXml};'normal'{$M4NormalGameTestXml};'m5'{$M5GameTestXml};default{''}}
-        $gateRoot='';$xmlHash='';$sourceHead=''
+        $gateRoot='';$xmlHash='';$sourceHead='';$selectedPieces=@()
         if(-not $PresetFixture) {
             if($runtimeLog){throw 'M4_PRESET_INPUT：跨root顯式log必須標示PresetFixture'}
             if($xmlInput){$xmlInput=(Resolve-Path -LiteralPath $xmlInput).Path;$gateRoot=Split-Path (Split-Path $xmlInput)}
@@ -137,6 +146,7 @@ if($Step -cin @('確認 Windows 原生案例確實執行','確認非 Windows 跨
             $runtimeLog=Join-Path $gateRoot 'execution/runtime-logs/latest.log'
             $null=Read-GateRuntimeLog -Evidence (Join-Path $gateRoot 'execution')
             $logManifest=Get-Content -LiteralPath (Join-Path $gateRoot 'execution/runtime-log.json') -Raw|ConvertFrom-Json -DateKind String
+            $selectedPieces=@($logManifest.pieces | Where-Object {$_.selected} | ForEach-Object {Join-Path (Join-Path $gateRoot 'execution') $_.path})
             $latest=@($logManifest.pieces | Where-Object {$_.name -ceq 'latest.log' -and $_.selected})
             if($latest.Count -ne 1 -or $logManifest.identity.start -cne $execution.start -or $logManifest.identity.end -cne $execution.end -or $logManifest.identity.launcherPid -ne $execution.launcherPid -or $latest[0].sha256 -cne (Get-FileHash -LiteralPath $runtimeLog).Hash){throw 'M4_PRESET_INPUT：log不是同execution的已核原件'}
 
@@ -146,23 +156,82 @@ if($Step -cin @('確認 Windows 原生案例確實執行','確認非 Windows 跨
         $runName=switch($presetScope){'default'{'gametest'};'normal'{'gametest-m4-normal'};'legacy'{'gametest-legacy'};'m5'{'gametest-m5'};'m6'{'gametest-m6'}}
         $dest=Join-Path $fixture "run/$runName/logs/latest.log"
         New-Item -ItemType Directory -Path (Split-Path $dest) -Force|Out-Null
-        Copy-Item -LiteralPath $runtimeLog -Destination $dest
+        if($PresetFixture){$selectedPieces=@($runtimeLog)}
+        $fixturePieces=@()
+        foreach($pieceSource in $selectedPieces) {
+            $pieceSource=(Resolve-Path -LiteralPath $pieceSource).Path
+            $pieceDest=Join-Path (Split-Path $dest) ([IO.Path]::GetFileName($pieceSource))
+            $pieceHash=(Get-FileHash -LiteralPath $pieceSource).Hash
+            Copy-Item -LiteralPath $pieceSource -Destination $pieceDest
+            $fixturePieces+=$pieceDest
+            $presetSources+=[pscustomobject]@{scope=$presetScope;source=$pieceSource;sha256=$pieceHash;gate=$gateRoot;xml=$xmlInput;xmlSha256=$xmlHash;head=$sourceHead;fixture=[bool]$PresetFixture}
+        }
         if($PresetMutation -ne 'none' -and $PresetMutationScope -ceq $presetScope){
-            $text=Get-Content -LiteralPath $dest -Raw
             $pattern='M4_TEST_PRESET defaultNormal=(true|false) normalScope=(true|false) m5Only=(true|false) m5Normal=(true|false) flatConfig=(true|false) normalConfig=(true|false)'
-            if([regex]::Matches($text,$pattern).Count -ne 1){throw 'M4_PRESET_INPUT：mutation前marker必須恰一'}
+            $owners=@();$strictTotal=0;$looseTotal=0
+            foreach($piece in $fixturePieces) {
+                $pieceText=[Text.UTF8Encoding]::new($false,$true).GetString((Read-GateLogBytes $piece))
+                $count=[regex]::Matches($pieceText,$pattern).Count
+                $strictTotal+=$count;$looseTotal+=[regex]::Matches($pieceText,'M4_TEST_PRESET(?:\s|$)').Count
+                if($count -gt 0){$owners+=$piece}
+            }
+            if($strictTotal -ne 1 -or $looseTotal -ne 1 -or $owners.Count -ne 1){throw 'M4_PRESET_INPUT：mutation前selected pieces marker必須恰一'}
+            $dest=$owners[0];$text=[Text.UTF8Encoding]::new($false,$true).GetString((Read-GateLogBytes $dest))
+            $marker=[regex]::Match($text,$pattern).Value
+            $logs=Split-Path $dest;$latestDest=Join-Path $logs 'latest.log'
+            $rolloverDest=Join-Path $logs '2026-11-06-2147483647.log.gz'
+            if(Test-Path -LiteralPath $rolloverDest){throw 'M4_PRESET_INPUT：受控rollover名稱已存在'}
             switch($PresetMutation){
                 'missing-marker' {$text=[regex]::Replace($text,$pattern,'REMOVED_PRESET_MARKER')}
+                'rollover' {Write-PresetPiece $rolloverDest ($marker+"`n");$text=$text.Replace($marker,'ROLLED_PRESET')}
+                'duplicate' {Write-PresetPiece $rolloverDest ($marker+"`n")}
+                'split-marker' {Write-PresetPiece $rolloverDest 'M4_TEST_PRESET ';$text=$text.Replace($marker,$marker.Substring('M4_TEST_PRESET '.Length))}
+                'format-drift' {$text=$text.Replace('M4_TEST_PRESET defaultNormal=','M4_TEST_PRESET  defaultNormal=')}
+                {$_ -cin @('missing-one','middle-truncated','crc','isize','flags','extra-tail','duplicate-trailer','second-member','compressed-limit','expanded-limit','original-truncated')} {
+                    Write-PresetPiece $rolloverDest 'framing fixture'
+                    $raw=[IO.File]::ReadAllBytes($rolloverDest)
+                    switch($PresetMutation) {
+                        'missing-one' {$raw=$raw[0..($raw.Length-2)]}
+                        'middle-truncated' {$raw=$raw[0..([int]($raw.Length/2))]}
+                        'crc' {$raw[$raw.Length-8]=$raw[$raw.Length-8] -bxor 1}
+                        'isize' {$raw[$raw.Length-4]=$raw[$raw.Length-4] -bxor 1}
+                        'flags' {$raw[3]=1}
+                        'extra-tail' {$raw=$raw+[byte[]]@(1)}
+                        'duplicate-trailer' {$raw=$raw+$raw[($raw.Length-8)..($raw.Length-1)]}
+                        'second-member' {$raw=$raw+$raw}
+                        'original-truncated' {$raw=[Convert]::FromHexString('1F8B080000000000000A4B4A4DCB2F4AD5CDCD4CC9CB4CCF280100')}
+                    }
+                    [IO.File]::WriteAllBytes($rolloverDest,[byte[]]$raw)
+                    if($PresetMutation -ceq 'compressed-limit') {$stream=[IO.File]::OpenWrite($rolloverDest);try{$stream.SetLength(16*1024*1024+1)}finally{$stream.Dispose()}}
+                    if($PresetMutation -ceq 'expanded-limit') {
+                        $stream=[IO.File]::Create($rolloverDest);$gzip=[IO.Compression.GZipStream]::new($stream,[IO.Compression.CompressionMode]::Compress)
+                        try {$chunk=[byte[]]::new(8192);for($i=0;$i -lt 8192;$i++){$gzip.Write($chunk)};$gzip.WriteByte(0)}finally{$gzip.Dispose();$stream.Dispose()}
+                    }
+                }
+                'truncated-gzip' {Write-PresetPiece $rolloverDest 'before-midnight';$raw=[IO.File]::ReadAllBytes($rolloverDest);[IO.File]::WriteAllBytes($rolloverDest,$raw[0..($raw.Length-9)])}
+                'bad-gzip' {[IO.File]::WriteAllBytes($rolloverDest,[byte[]]@(1,2,3,4))}
+                'wrong-name' {Write-PresetPiece (Join-Path $logs 'wrong.log.gz') ($marker+"`n");$text=$text.Replace($marker,'REMOVED_PRESET')}
+                'bad-date' {Write-PresetPiece (Join-Path $logs '2026-99-99-1.log.gz') ($marker+"`n");$text=$text.Replace($marker,'REMOVED_PRESET')}
+                'unexpected-log' {Write-PresetPiece (Join-Path $logs 'other.log') 'unexpected'}
+                'cross-root' {Write-PresetPiece (Join-Path $fixture 'foreign-root.log') ($marker+"`n");$text=$text.Replace($marker,'REMOVED_PRESET')}
+                'old-piece' {Write-PresetPiece (Join-Path $logs '2000-01-01-1.log.gz') ($marker+"`n")}
+
                 'wrong-flag' {$oldFlag=[regex]::Match($text,'M4_TEST_PRESET defaultNormal=(true|false)').Groups[1].Value;$newFlag=if($oldFlag -ceq 'true'){'false'}else{'true'};$text=$text.Replace("M4_TEST_PRESET defaultNormal=$oldFlag","M4_TEST_PRESET defaultNormal=$newFlag")}
                 'wrong-m5-only' {$oldFlag=[regex]::Match($text,'m5Only=(true|false)').Groups[1].Value;$newFlag=if($oldFlag -ceq 'true'){'false'}else{'true'};$text=$text.Replace("m5Only=$oldFlag","m5Only=$newFlag")}
                 'wrong-m5-normal' {$oldFlag=[regex]::Match($text,'m5Normal=(true|false)').Groups[1].Value;$newFlag=if($oldFlag -ceq 'true'){'false'}else{'true'};$text=$text.Replace("m5Normal=$oldFlag","m5Normal=$newFlag")}
                 'wrong-config' {$oldConfig=[regex]::Match($text,'flatConfig=(true|false) normalConfig=(true|false)').Value;$newConfig=if($oldConfig -ceq 'flatConfig=false normalConfig=true'){'flatConfig=true normalConfig=false'}else{'flatConfig=false normalConfig=true'};$text=$text.Replace($oldConfig,$newConfig)}
             }
-            Set-Content -LiteralPath $dest -Value $text -Encoding utf8
+            Write-PresetPiece $dest $text
         }
-        $presetSources+=[pscustomobject]@{scope=$presetScope;source=$runtimeLog;sha256=$sourceHash;gate=$gateRoot;xml=$xmlInput;xmlSha256=$xmlHash;head=$sourceHead;fixture=[bool]$PresetFixture}
+
     }
 }
+if($Step -cin @('非 Windows GameTest 平台契約 日誌空目錄守門','Windows 原生建置與 GameTest 日誌空目錄守門') -and $PresetMutation -ceq 'old-piece') {
+    $oldRoot=Join-Path $fixture 'run/gametest-m5/logs'
+    New-Item -ItemType Directory -Path $oldRoot -Force | Out-Null
+    Write-PresetPiece (Join-Path $oldRoot '2000-01-01-1.log.gz') '舊 invocation 日誌'
+}
+foreach($source in $presetSources){if((Get-FileHash -LiteralPath $source.source).Hash -cne $source.sha256){throw 'M4_PRESET_INPUT：原件被變更'}}
 $mainOriginalHash=''
 if($M6NativeSummary) {
     New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification') -Force | Out-Null
@@ -258,6 +327,7 @@ $info.Environment['GITHUB_SHA']=(git -C $repo rev-parse HEAD).Trim()
 $info.WorkingDirectory=$fixture;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
 $process=[Diagnostics.Process]::Start($info)
 $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEnd();$process.WaitForExit()
+foreach($source in $presetSources){if((Get-FileHash -LiteralPath $source.source).Hash -cne $source.sha256){throw 'M4_PRESET_INPUT：執行後原件被變更'}}
 $output=$stdout.Result+$stderr
 Set-Content -LiteralPath (Join-Path $root 'output.log') -Value $output -Encoding utf8
 $windowsCases=@($xml.SelectNodes('//testcase') | Where-Object {$_.name -like '*_windows'}).Count

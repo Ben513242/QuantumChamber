@@ -337,11 +337,11 @@ Step 'summary' {
     foreach($name in $m3Names){ $r=Read-Json (Join-Path $m3 "$name.json"); if($r.status -ne 'PASS' -or $r.evidenceOwner -ne $probeOwner){throw "M3 receipt 不符：$name"} }
     # 7. M4 recovery：全部 phases PASS、各自獨立 JVM、receipt hash 對上 launcher。
     $recovery=Read-Json $recoveryFile
-    if($recovery.status -ne 'PASS' -or @($recovery.only).Count -ne 0){throw 'recovery summary 不是完整 PASS'}
+    if($recovery.status -ne 'PASS' -or @($recovery.only).Count -ne 0 -or $recovery.phaseCount -ne 25){throw 'recovery summary 不是完整 PASS'}
     $phases=@($recovery.phases)
     $expectedPhases=@('chain:select','chain:recover','chain:verify','chain:dormant-reentry','native-save:select','native-save:native-write-fail','native-save:recover-after-write-fail','native-save:verify',
         'low:low','buff:buff','disconnect:disconnect','dirty-candidate:dirty-candidate','dirty-selection:dirty-selection','entropy-missing:entropy-missing','entropy-corrupt:entropy-corrupt','discovery-corrupt:discovery-corrupt','journal-corrupt:journal-corrupt',
-        'selection-flush-fault:selection-flush-fault','selection-flush-fault:selection-fault-restart','readback-fault:readback-fault','readback-fault:selection-fault-restart',
+        'selection-flush-fault:selection-flush-fault','selection-flush-fault:selection-fault-restart','readback-fault:readback-fault','readback-fault:recover','readback-fault:verify',
         'readback-crash:readback-crash','readback-crash:recover','readback-crash:verify')
     $observed=@($phases | ForEach-Object {($_.nonce -replace '^[0-9a-f]{32}-','')+':'+$_.phase})
     if(($observed -join ',') -cne ($expectedPhases -join ',')){throw "recovery phases 不符：$($observed -join ',')"}
@@ -349,6 +349,28 @@ Step 'summary' {
     if(@($phases | ForEach-Object startupNonce | Sort-Object -Unique).Count -ne $phases.Count){throw 'recovery phases 必須各自使用不同 startupNonce'}
     foreach($phase in $phases) {
         $receipt=Read-Json $phase.receipt
+        if($phase.phase -ceq 'readback-fault') {
+            $pendingRoot=Split-Path $phase.receipt
+            if($receipt.status -cne 'EXPECTED_PENDING_RESTART_REQUIRED' -or $receipt.normalStop -or $phase.normalStop -or -not $receipt.ownerAbsent -or -not $receipt.lockReleased -or $receipt.gradleExitCode -notin @(0,1) -or $receipt.javaExitCode -notin @(0,1) -or
+                 (Hash $phase.receipt) -cne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -cne $phase.startupNonce -or $receipt.runtimeScope -cne 'testmod-present'){throw 'M4_PENDING_SUMMARY：專用receipt不符'}
+            $required=@('pending-prestop.json','pending-injected-fault.txt','pending-native-refusal.txt','pending-other-refusal.txt','pending-exact-stack.txt','pending-stop-stack.txt','latest.log','events.jsonl','process.json','pending-journal.dat')
+            if((@($receipt.evidence|ForEach-Object {[IO.Path]::GetFileName($_.path)}|Sort-Object) -join ',') -cne (($required|Sort-Object) -join ',')){throw 'M4_PENDING_SUMMARY：原件集合不符'}
+            foreach($item in $receipt.evidence){if((Split-Path $item.path) -cne $pendingRoot -or (Hash $item.path) -cne $item.sha256.ToLowerInvariant()){throw 'M4_PENDING_SUMMARY：原件來源/hash不符'}}
+            $pre=Read-Json (Join-Path $pendingRoot 'pending-prestop.json')
+            if($pre.status -cne 'PENDING_PRESTOP' -or $pre.pid -ne $phase.javaPid -or $pre.startupNonce -cne $phase.startupNonce -or @($pre.failures).Count -ne 0 -or $pre.faultCount -ne 1 -or -not $pre.noUniverseAllocation -or -not $pre.currentNotSelected -or -not $pre.flushedUnchanged -or $pre.journalHash -cne $receipt.journalHash -or (Hash (Join-Path $pendingRoot 'pending-journal.dat')) -cne $receipt.journalHash){throw 'M4_PENDING_SUMMARY：prestop權威不符'}
+            $exact=Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-exact-stack.txt') -Raw
+            if($exact -notmatch 'CandidateDoorInteraction.failSession' -or $exact -notmatch 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED'){throw 'M4_PENDING_SUMMARY：首次exact拒寫缺失'}
+            foreach($kind in @('native-refusal','other-refusal','stop-stack')) {
+                $stack=Get-Content -LiteralPath (Join-Path $pendingRoot "pending-$kind.txt") -Raw
+                if($stack -notmatch 'JOURNAL_PENDING_RESTART_REQUIRED' -or $stack -match 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED'){throw 'M4_PENDING_SUMMARY：後續拒寫缺失'}
+            }
+            if((Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-injected-fault.txt') -Raw) -notmatch 'beforeJournalReadback'){throw 'M4_PENDING_SUMMARY：fault來源不符'}
+            $log=Get-Content -LiteralPath (Join-Path $pendingRoot 'latest.log') -Raw
+            $errorRows=@([regex]::Matches($log,'(?m)^.*?/ERROR\].*$')|ForEach-Object Value)
+            if($errorRows.Count -ne 2 -or @($errorRows|Where-Object {$_ -notmatch '走廊保留租約等待安全返還：|Exception stopping the server'}).Count){throw 'M4_PENDING_SUMMARY：額外ERROR'}
+            if((Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-native-refusal.txt') -Raw) -notmatch 'MinecraftServer.save' -or (Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-other-refusal.txt') -Raw) -notmatch 'SessionRecoveryState.flush' -or (Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-stop-stack.txt') -Raw) -notmatch 'MinecraftServer.shutdown'){throw 'M4_PENDING_SUMMARY：拒寫呼叫來源不符'}
+            continue
+        }
         if($receipt.status -ne 'PASS' -or (Hash $phase.receipt) -ne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -ne $phase.startupNonce -or $receipt.runtimeScope -ne 'testmod-present'){throw "recovery receipt 不符：$($phase.receipt)"}
     }
     # 7b. M5 collapse probe：全部 chain 的 phases 依 chain 表的預期結束（halt＝JVM exit 77＋halt.json 窗口相符且乾淨：hit 1、failures 空、crash 點沒有失敗；stop＝exit 0＋final.json PASS）、
