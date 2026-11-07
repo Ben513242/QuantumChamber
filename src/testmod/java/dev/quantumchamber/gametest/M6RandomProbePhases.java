@@ -685,7 +685,12 @@ public final class M6RandomProbePhases {
             for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
                 var pos=new BlockPos(x,y,z);
                 if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"BEFORE_FIRST_ORIGINAL_READ",null,null,null);
-                var live=world.getBlockState(pos);
+                net.minecraft.block.BlockState live;
+                try {live=world.getBlockState(pos);}
+                catch(RuntimeException | Error failure) {
+                    if(timing && sampleIndex==0) recordFirstOriginalReadFailure(failure);
+                    throw failure;
+                }
                 if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"AFTER_FIRST_ORIGINAL_READ",null,live,null);
                 var nativeName=net.minecraft.registry.Registries.BLOCK.getId(live.getBlock()).toString();
                 var disk=M5CollapseDiskEvidence.block(storage(),pos);
@@ -718,14 +723,23 @@ public final class M6RandomProbePhases {
         }
 
         /** 公開 API 僅觀測既存 FULL；getWorldChunk 會更新四格 cache，並非零時序擾動。 */
+        private void recordFirstOriginalReadFailure(Throwable original) {
+            try {
+                proof.put("partialLoadedTimingAfterMissing","ORIGINAL_READ_THROWN");
+                proof.put("partialLoadedTimingOriginalReadError",boundedLoadedError("originalRead",original));
+            } catch(Throwable diagnosticFailure) {
+                // 診斷記錄不能蓋掉原方塊讀取的 Throwable。
+            }
+        }
+
         private void loadedTimingSnapshot(ServerWorld world,ServerWorld callerResolvedActiveWorld,String point,Integer mismatchIndex,
                 net.minecraft.block.BlockState originalLive,BlockPos mismatchPos) {
             try {loadedTimingSnapshotFields(world,callerResolvedActiveWorld,point,mismatchIndex,originalLive,mismatchPos);}
             catch(Exception failure) {
                 @SuppressWarnings("unchecked") var snapshots=(List<Map<String,Object>>)proof.get("partialLoadedTiming");
                 if(snapshots!=null && !snapshots.isEmpty() && point.equals(snapshots.getLast().get("point")))
-                    snapshots.getLast().put("error",diagnosticError("loadedSnapshot",failure));
-                else proof.put("partialLoadedTimingError",diagnosticError("loadedSnapshotBeforeRow",failure));
+                    snapshots.getLast().put("error",boundedLoadedError("loadedSnapshot",failure));
+                else proof.put("partialLoadedTimingError",boundedLoadedError("loadedSnapshotBeforeRow",failure));
             }
         }
 
@@ -742,7 +756,7 @@ public final class M6RandomProbePhases {
             snapshot.put("holder","UNOBSERVABLE");snapshot.put("proto","UNOBSERVABLE");
             snapshot.put("generationFutures","UNOBSERVABLE");
             snapshot.put("session",sid.toString());snapshot.put("uuid",id.value().toString());
-            snapshot.put("worldKey",world.getRegistryKey().getValue().toString());
+            snapshot.put("worldKey",boundedTiming(world.getRegistryKey().getValue().toString()));
             snapshot.put("worldOwnerExact",callerResolvedActiveWorld==world);
             snapshot.put("ownerEvidence","CALLER_RESOLVE_ACTIVE_BEFORE_SNAPSHOT");
             snapshot.put("liveSeed",Long.toString(world.getSeed()));
@@ -751,9 +765,9 @@ public final class M6RandomProbePhases {
             snapshot.put("serverTick",server.getTicks());
             if(mismatchIndex!=null) {
                 snapshot.put("firstMismatchIndex",mismatchIndex);
-                snapshot.put("firstMismatchPos",mismatchPos.toShortString());
+                snapshot.put("firstMismatchPos",boundedTiming(mismatchPos.toShortString()));
                 snapshot.put("originalLiveState",boundedTiming(originalLive.toString()));
-                snapshot.put("originalLiveBlock",net.minecraft.registry.Registries.BLOCK.getId(originalLive.getBlock()).toString());
+                snapshot.put("originalLiveBlock",boundedTiming(net.minecraft.registry.Registries.BLOCK.getId(originalLive.getBlock()).toString()));
             } else if(originalLive!=null) {
                 snapshot.put("firstOriginalLiveState",boundedTiming(originalLive.toString()));
             }
@@ -769,7 +783,7 @@ public final class M6RandomProbePhases {
                     row.put("status",chunk==null?"UNOBSERVABLE":boundedTiming(chunk.getStatus().toString()));
                     row.put("wrapperFlag",chunk==null?"UNOBSERVABLE":"NOT_APPLICABLE");
                     if(dx==0 && dz==0)center=chunk;
-                } catch(Exception failure) {row.put("error",diagnosticError("loadedNeighbor",failure));}
+                } catch(Exception failure) {row.put("error",boundedLoadedError("loadedNeighbor",failure));}
                 row.put("holder","UNOBSERVABLE");row.put("proto","UNOBSERVABLE");
                 row.put("generationFutures","UNOBSERVABLE");
             }
@@ -778,13 +792,13 @@ public final class M6RandomProbePhases {
             int index=0;
             for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
                 var row=new LinkedHashMap<String,Object>();row.put("index",index++);
-                var pos=new BlockPos(x,y,z);row.put("pos",pos.toShortString());
+                var pos=new BlockPos(x,y,z);row.put("pos",boundedTiming(pos.toShortString()));
                 if(center==null)row.put("state","UNOBSERVABLE_NOT_LOADED");
                 else try {
                     var state=center.getBlockState(pos);
                     row.put("state",boundedTiming(state.toString()));
-                    row.put("block",net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).toString());
-                } catch(Exception failure) {row.put("error",diagnosticError("loadedBlock",failure));}
+                    row.put("block",boundedTiming(net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).toString()));
+                } catch(Exception failure) {row.put("error",boundedLoadedError("loadedBlock",failure));}
                 blocks.add(row);
             }
             snapshot.put("blocks",blocks);
@@ -792,6 +806,12 @@ public final class M6RandomProbePhases {
         }
 
         private static String boundedTiming(String value) {return value.length()<=256?value:value.substring(0,256);}
+        private static String boundedLoadedError(String stage,Throwable failure) {
+            try {
+                var value=stage+":"+failure.getClass().getSimpleName()+":"+String.valueOf(failure.getMessage());
+                return value.length()<=512?value:value.substring(0,512);
+            } catch(Throwable diagnosticFailure) {return "DIAGNOSTIC_ERROR_UNAVAILABLE";}
+        }
 
         private void firstTerrainDifference(ServerWorld world,BlockPos pos,net.minecraft.block.BlockState live,
                 M5CollapseDiskEvidence.DiskBlock disk,String liveName,String comparedRaw) {
