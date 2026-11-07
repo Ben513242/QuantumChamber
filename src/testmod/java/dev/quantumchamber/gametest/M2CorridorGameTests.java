@@ -2476,13 +2476,19 @@ public final class M2CorridorGameTests implements FabricGameTest {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生 journal rename拒絕與最後lease重試");
             context.complete(); return;
         }
-        var fixture=new TrustedSpace(context,Direction.NORTH,1); fixture.prepare();
+        var fixture=new TrustedSpace(context,Direction.NORTH,1);
+        var diag=new FinalFlushDiag(context,fixture);
+        diag.emit("ENTRY",null,null);
+        fixture.prepare();
         context.assertTrue(!fixture.manager.releaseComplete(UUID.randomUUID()),"未知 SID 不可冒充已完成");
         when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
             fixture.commit(); fixture.returnTrusted();
+            diag.emit("AFTER_RETURN",null,null);
             var returned=fixture.state.flushedRecords().get(fixture.session);
-            fixture.state.remove(fixture.session);
+            boolean removed=fixture.state.remove(fixture.session);
+            diag.emit("AFTER_REMOVE",removed,null);
             context.runAtTick(tick+2,() -> {
+                diag.emit("BEFORE_ASSERT",null,returned!=null);
                 context.assertTrue(!fixture.manager.releaseComplete(fixture.session),"只有 in-memory remove 不可當作返還完成");
                 context.assertTrue(fixture.state.flushedRecords().containsKey(fixture.session),"未flush必須保留 durable evidence");
                 fixture.state.put(returned); fixture.state.flush(context.getWorld().getServer());
@@ -2507,6 +2513,60 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 });
             });
         });
+    }
+    /** Windows 首錯的唯讀現場標記；失敗不參與原 GameTest 判決。 */
+    private static final class FinalFlushDiag {
+        private final TestContext context;
+        private final TrustedSpace fixture;
+        private final UUID sid;
+        private final long started=System.nanoTime();
+        private net.minecraft.server.MinecraftServer entryServer;
+
+        private FinalFlushDiag(TestContext context,TrustedSpace fixture) {
+            this.context=context;
+            this.fixture=fixture;
+            this.sid=fixture.session;
+        }
+
+        private void emit(String phase,Boolean removed,Boolean returnedPresent) {
+            try {
+                var server=context.getWorld().getServer();
+                if(entryServer==null && "ENTRY".equals(phase))entryServer=server;
+                if(server==null || server!=entryServer || !entryServer.isOnThread()) {
+                    unavailable(phase,"OWNER_OR_THREAD");
+                    return;
+                }
+                var current=fixture.state.records().get(sid);
+                var flushed=fixture.state.flushedRecords().get(sid);
+                String line="T12_FINAL_FLUSH_DIAG v1 phase="+phase+" sid="+sid
+                        +" sameServer=true onThread=true"
+                        +" serverTick="+server.getTicks()
+                        +" elapsedMs="+Math.max(0L,(System.nanoTime()-started)/1_000_000L)
+                        +" current="+(current!=null)+" flushed="+(flushed!=null)
+                        +" dirty="+fixture.state.isDirty()
+                        +" releaseComplete="+fixture.manager.releaseComplete(sid)
+                        +" flushedState="+(flushed==null ? "ABSENT" : flushed.state())
+                        +" flushedLeases="+(flushed==null ? "ABSENT" : flushed.spaceLeases().size())
+                        +(removed==null ? "" : " removed="+removed)
+                        +(returnedPresent==null ? "" : " returnedPresent="+returnedPresent);
+                if(line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>512) {
+                    unavailable(phase,"OVER_LIMIT");
+                    return;
+                }
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(line);
+            } catch (RuntimeException | Error failure) {
+                unavailable(phase,"EXCEPTION");
+            }
+        }
+
+        private void unavailable(String phase,String reason) {
+            try {
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
+                        "T12_FINAL_FLUSH_DIAG v1 phase={} sid={} DIAG_UNAVAILABLE reason={}",phase,sid,reason);
+            } catch (RuntimeException | Error ignored) {
+                // 診斷 logger 故障也不得遮蔽原測項的 Throwable。
+            }
+        }
     }
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_returning_before_build", tickLimit = 100000)
     public void trusted_returning_before_geometry_never_builds(TestContext context) {
