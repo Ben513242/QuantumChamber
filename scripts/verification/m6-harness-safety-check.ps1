@@ -177,7 +177,13 @@ function Invoke-CiCwdPreflightChecks {
         $roots=@([regex]::Matches($stdout,'(?m)^RUN_ROOT=(.+)\r?$') | ForEach-Object {$_.Groups[1].Value.Trim()})
         if($roots.Count -ne 1){throw "M6_CI_PREFLIGHT_TEST_FAILED：root不唯一 kind=$kind"}
         $receipt=Get-Content -LiteralPath (Join-Path $roots[0] 'ci-cwd-preflight.json') -Raw | ConvertFrom-Json
-        $noRuntime=$stdout -notmatch '(?m)^BEGIN ' -and @($receipt.worldOperations).Count -eq 0 -and -not $receipt.gradleStarted
+        $w10Begin=@([regex]::Matches($stdout,'(?m)^BEGIN w10-preflight \d{4}-\d{2}-\d{2}T[^\r\n ]+\r?$')).Count
+        $w10Pass=@([regex]::Matches($stdout,'(?m)^W10 PREFLIGHT PASS worldDispatch=0\r?$')).Count
+        $w10End=@([regex]::Matches($stdout,'(?m)^END w10-preflight exit=0 \d{4}-\d{2}-\d{2}T[^\r\n ]+\r?$')).Count
+        $allBegin=@([regex]::Matches($stdout,'(?m)^BEGIN ')).Count
+        $markersExact=if($scenario.success){$w10Begin -eq 1 -and $w10Pass -eq 1 -and $w10End -eq 1 -and $allBegin -eq 1}
+            else{$w10Begin -eq 0 -and $w10Pass -eq 0 -and $w10End -eq 0 -and $allBegin -eq 0}
+        $noRuntime=$markersExact -and @($receipt.worldOperations).Count -eq 0 -and -not $receipt.gradleStarted
         $modeExact=$receipt.testMode -ceq $scenario.mode
         $ok=if($scenario.success){$exit -eq 0 -and $receipt.status -ceq 'PASS' -and @($receipt.rows).Count -eq 21 -and $stdout.Contains('END PREFLIGHT exit=0')}
             else{$exit -ne 0 -and $receipt.status -ceq 'FAIL' -and ($stdout+$stderr).Contains('M6_CI_CWD_UNSUPPORTED') -and @($receipt.rows).Count -eq 1 -and -not $receipt.rows[0].started -and $null -ne $receipt.rows[0].nativeErrorCode -and -not $receipt.rows[0].effectiveCwdExisted -and -not $stdout.Contains('END ALL')}
