@@ -180,9 +180,12 @@ function Invoke-CiCwdPreflightChecks {
         $w10Begin=@([regex]::Matches($stdout,'(?m)^BEGIN w10-preflight \d{4}-\d{2}-\d{2}T[^\r\n ]+\r?$')).Count
         $w10Pass=@([regex]::Matches($stdout,'(?m)^W10 PREFLIGHT PASS worldDispatch=0\r?$')).Count
         $w10End=@([regex]::Matches($stdout,'(?m)^END w10-preflight exit=0 \d{4}-\d{2}-\d{2}T[^\r\n ]+\r?$')).Count
+        $allW10Begin=@([regex]::Matches($stdout,'(?m)^BEGIN w10-preflight')).Count
+        $allW10Pass=@([regex]::Matches($stdout,'(?m)^W10 PREFLIGHT PASS')).Count
+        $allW10End=@([regex]::Matches($stdout,'(?m)^END w10-preflight')).Count
         $allBegin=@([regex]::Matches($stdout,'(?m)^BEGIN ')).Count
-        $markersExact=if($scenario.success){$w10Begin -eq 1 -and $w10Pass -eq 1 -and $w10End -eq 1 -and $allBegin -eq 1}
-            else{$w10Begin -eq 0 -and $w10Pass -eq 0 -and $w10End -eq 0 -and $allBegin -eq 0}
+        $markersExact=if($scenario.success){$w10Begin -eq 1 -and $w10Pass -eq 1 -and $w10End -eq 1 -and $allW10Begin -eq 1 -and $allW10Pass -eq 1 -and $allW10End -eq 1 -and $allBegin -eq 1}
+            else{$allW10Begin -eq 0 -and $allW10Pass -eq 0 -and $allW10End -eq 0 -and $allBegin -eq 0}
         $noRuntime=$markersExact -and @($receipt.worldOperations).Count -eq 0 -and -not $receipt.gradleStarted
         $modeExact=$receipt.testMode -ceq $scenario.mode
         $ok=if($scenario.success){$exit -eq 0 -and $receipt.status -ceq 'PASS' -and @($receipt.rows).Count -eq 21 -and $stdout.Contains('END PREFLIGHT exit=0')}
