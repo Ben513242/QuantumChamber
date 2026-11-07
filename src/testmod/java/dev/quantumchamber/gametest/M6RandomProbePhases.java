@@ -37,6 +37,236 @@ import org.slf4j.LoggerFactory;
 
 /** Task11 的 seed owner fixture；Task12 GameplayPhases 另走真正式玩家 candidate／collapse 路徑。 */
 public final class M6RandomProbePhases {
+
+    /** 僅 testmod 的有界被動見證；worker 不碰 proof、檔案或世界鎖。 */
+    public static final class OreWitness {
+        private static volatile Window active;
+        private static final ThreadLocal<Frame> FRAME=new ThreadLocal<>();
+        private static final int LIMIT=256;
+        private record Association(ChunkSection section,int x,int y,int z) {}
+        private static final class Frame {
+            final Window window; final int sequence,cx,cz; Association association;
+            Frame(Window w,int sequence,int cx,int cz) {window=w;this.sequence=sequence;this.cx=cx;this.cz=cz;}
+        }
+        private record Event(int slot,int frame,int cx,int cz,int x,int y,int z,int lx,int ly,int lz,
+                long thread,long begin,long end,net.minecraft.block.BlockState oldState,
+                net.minecraft.block.BlockState newState,boolean returned,String error) {}
+        private record Read(int index,int x,int y,int z,long begin,long end,
+                net.minecraft.block.BlockState live,String raw,String rawProperties,String error) {}
+        private static final class Window {
+            final ServerWorld world; final String nonce,startup,session,uuid,worldKey;
+            final long begin=System.nanoTime();
+            final java.util.concurrent.atomic.AtomicInteger reserved=new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicInteger frames=new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicInteger overflow=new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicInteger errors=new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicInteger unobservable=new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicInteger late=new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicReferenceArray<Event> events=new java.util.concurrent.atomic.AtomicReferenceArray<>(LIMIT);
+            final List<Read> reads=new ArrayList<>(48); // 僅 server thread 使用。
+            Map<String,Object> frozen;
+            Window(ServerWorld w,String n,String s,String session,String uuid,String key) {
+                world=w;nonce=n;startup=s;this.session=session;this.uuid=uuid;worldKey=key;
+            }
+        }
+        private static void increment(java.util.concurrent.atomic.AtomicInteger n) {n.updateAndGet(v -> v==Integer.MAX_VALUE?v:v+1);}
+        private static void error(Window w) {if(w!=null)increment(w.errors);}
+        private static boolean selected(int x,int y,int z) {
+            return x>=0 && x<=15 && x%5==0 && z>=0 && z<=15 && z%5==0 && (y==-32 || y==0 || y==32);
+        }
+        private static boolean matches(Association a,ChunkSection section,int x,int y,int z) {
+            return a!=null && a.section==section && (a.x&15)==x && (a.y&15)==y && (a.z&15)==z;
+        }
+        /** 原呼叫在診斷 catch 外；原 Throwable 同物件重拋。 */
+        public static <T> T pass(java.util.function.Supplier<T> original,java.util.function.Consumer<T> returned,
+                java.util.function.Consumer<Throwable> thrown) {
+            T result;
+            try {result=original.get();}
+            catch(RuntimeException | Error failure) {
+                try {thrown.accept(failure);}catch(Throwable ignored) {}
+                throw failure;
+            }
+            try {returned.accept(result);}catch(Throwable ignored) {}
+            return result;
+        }
+        public static boolean vein(net.minecraft.world.StructureWorldAccess world,java.util.function.Supplier<Boolean> original) {
+            Frame previous=FRAME.get();Frame frame=null;
+            try {
+                Window w=active;
+                if(w!=null && world instanceof net.minecraft.world.ChunkRegion region && region.toServerWorld()==w.world) {
+                    var center=region.getCenterPos();
+                    if(center.x>=-1 && center.x<=1 && center.z>=-1 && center.z<=1)
+                        frame=new Frame(w,w.frames.getAndUpdate(v -> v==Integer.MAX_VALUE?v:v+1),center.x,center.z);
+                }
+                FRAME.set(frame); // nested 未涵蓋呼叫也不得借用外層關聯。
+            }catch(Throwable diagnostic) {error(active);FRAME.remove();}
+            try {return original.get();}
+            finally {if(previous==null)FRAME.remove();else FRAME.set(previous);}
+        }
+        public static ChunkSection section(BlockPos pos,java.util.function.Supplier<ChunkSection> original) {
+            Frame frame=FRAME.get();
+            if(frame!=null)frame.association=null;
+            return pass(original,result -> {
+                if(frame==null)return;
+                try {if(result!=null && active==frame.window)frame.association=new Association(result,pos.getX(),pos.getY(),pos.getZ());}
+                catch(Throwable diagnostic) {frame.association=null;error(frame.window);}
+            },failure -> {if(frame!=null)increment(frame.window.unobservable);});
+        }
+        public static net.minecraft.block.BlockState write(ChunkSection section,int x,int y,int z,
+                net.minecraft.block.BlockState requested,java.util.function.Supplier<net.minecraft.block.BlockState> original) {
+            Frame frame=FRAME.get();Association a=null;int slot=-1;
+            try {
+                if(frame!=null) {
+                    if(active!=frame.window)increment(frame.window.late);
+                    else if(!matches(frame.association,section,x,y,z)) {frame.association=null;increment(frame.window.unobservable);}
+                    else if(selected(frame.association.x,frame.association.y,frame.association.z)) {
+                        a=frame.association;slot=frame.window.reserved.getAndUpdate(v -> v>=LIMIT?LIMIT:v+1);
+                        if(slot>=LIMIT)increment(frame.window.overflow);
+                    }
+                }
+            }catch(Throwable diagnostic) {if(frame!=null)error(frame.window);slot=-1;}
+            final Association observed=a;final int index=slot;long begin=System.nanoTime();
+            return pass(original,old -> publish(frame,observed,index,x,y,z,begin,System.nanoTime(),old,requested,true,""),
+                    failure -> publish(frame,observed,index,x,y,z,begin,System.nanoTime(),null,requested,false,failure.getClass().getName()));
+        }
+        private static void publish(Frame f,Association a,int slot,int x,int y,int z,long begin,long end,
+                net.minecraft.block.BlockState old,net.minecraft.block.BlockState requested,boolean returned,String failure) {
+            if(f==null || a==null || slot<0 || slot>=LIMIT)return;
+            try { // set/get 是 release/acquire；不回填已凍結 receipt。
+                f.window.events.set(slot,new Event(slot,f.sequence,f.cx,f.cz,a.x,a.y,a.z,x,y,z,
+                        Thread.currentThread().threadId(),begin,end,old,requested,returned,failure));
+            }catch(Throwable diagnostic) {error(f.window);}
+        }
+        private static boolean eligible(Object world,Object exact,Object chain,Object phase,Object nonce,Object startup) {
+            return world!=null && world==exact && "partial-overworld".equals(chain) && "restart".equals(phase)
+                    && nonce instanceof String n && !n.isBlank() && n.length()<=128
+                    && startup instanceof String t && !t.isBlank() && t.length()<=128;
+        }
+        private static Window arm(ServerWorld world,ServerWorld exact,Map<String,Object> proof,String session,String uuid) {
+            try {
+                Object nonce=proof.get("nonce"),startup=proof.get("startupNonce");
+                if(!eligible(world,exact,proof.get("chain"),proof.get("phase"),nonce,startup))return null;
+                Window w=new Window(world,(String)nonce,(String)startup,session,uuid,world.getRegistryKey().getValue().toString());active=w;return w;
+            }catch(Throwable ignored) {return null;}
+        }
+        /** 純 helper 投影，arm 前執行；不接觸任何世界或權威，不能當真 writer。 */
+        private static boolean synthetic(Map<String,Object> proof) {
+            long start=System.nanoTime();Window previous=active;Frame prior=FRAME.get();
+            var checks=new ArrayList<String>();
+            try {
+                Object identity=new Object();int[] calls={0};
+                Object result=pass(() -> {calls[0]++;return identity;},value -> {throw new IllegalStateException("post diagnostic");},failure -> {});
+                check(result==identity && calls[0]==1,"RETURN_POST_ERROR_ONCE",checks);
+                var original=new IllegalStateException("original sentinel");
+                try {pass(() -> {calls[0]++;throw original;},value -> {},failure -> {throw new IllegalStateException("diagnostic");});}
+                catch(IllegalStateException failure) {check(failure==original && calls[0]==2,"THROW_IDENTITY_ONCE",checks);}
+                Object owner=new Object();
+                check(eligible(owner,owner,"partial-overworld","restart","nonce","startup")
+                        && !eligible(owner,new Object(),"partial-overworld","restart","nonce","startup")
+                        && !eligible(owner,owner,"partial-overworld","partial","nonce","startup")
+                        && !eligible(owner,owner,"other","restart","nonce","startup")
+                        && !eligible(owner,owner,"partial-overworld","restart","","startup")
+                        && !eligible(owner,owner,"partial-overworld","restart","nonce",null),"IDENTITY_SCOPE",checks);
+                var stone=net.minecraft.block.Blocks.STONE.getDefaultState();var ore=net.minecraft.block.Blocks.DIORITE.getDefaultState();
+                var one=new ChunkSection(new PalettedContainer<>(net.minecraft.block.Block.STATE_IDS,stone,PalettedContainer.PaletteProvider.BLOCK_STATE),null);
+                var two=new ChunkSection(new PalettedContainer<>(net.minecraft.block.Block.STATE_IDS,stone,PalettedContainer.PaletteProvider.BLOCK_STATE),null);
+                Window w=new Window(null,"synthetic","synthetic","synthetic","synthetic","synthetic");
+                active=w;Frame f=new Frame(w,0,0,0);FRAME.set(f);
+                var mutable=new BlockPos.Mutable(0,0,0);
+                check(section(mutable,() -> one)==one,"SECTION_RETURN",checks);mutable.set(5,0,0);
+                check(f.association.x==0 && matches(f.association,one,0,0,0) && !matches(f.association,two,0,0,0)
+                        && !matches(f.association,one,1,0,0),"MUTABLE_SECTION_LOCAL",checks);
+                write(two,0,0,0,ore,() -> stone);
+                check(f.association==null,"MISMATCH_INVALIDATES",checks);section(new BlockPos(0,0,0),() -> one);
+                write(one,1,0,0,ore,() -> stone);
+                check(w.reserved.get()==0 && w.unobservable.get()==2,"REJECT_WRONG_CORRELATION",checks);
+                section(null,() -> one);
+                check(f.association==null && w.errors.get()==1,"PRE_DIAGNOSTIC_INVALIDATES",checks);
+                section(new BlockPos(0,0,0),() -> one);section(new BlockPos(0,0,0),() -> null);
+                check(f.association==null,"NULL_INVALIDATES",checks);
+                section(new BlockPos(0,0,0),() -> one);
+                try {section(new BlockPos(0,0,0),() -> {throw original;});}
+                catch(IllegalStateException failure) {check(failure==original && f.association==null,"THROW_INVALIDATES",checks);}
+                check(vein(null,() -> {check(FRAME.get()==null,"NESTED_CLEAR",checks);return true;}) && FRAME.get()==f,"NESTED_RESTORE",checks);
+                try {vein(null,() -> {throw original;});}catch(IllegalStateException failure) {check(failure==original && FRAME.get()==f,"NESTED_THROW_RESTORE",checks);}
+                section(new BlockPos(0,0,0),() -> one);
+                for(int i=0;i<LIMIT+1;i++)check(write(one,0,0,0,ore,() -> stone)==stone,"",checks);
+                check(w.reserved.get()==LIMIT && w.overflow.get()==1 && w.events.get(0)!=null,"APPEND_CAPACITY",checks);
+                Event event=w.events.get(0);long after=event.end+1;
+                check(direct(event,new Read(0,0,0,0,after,after+1,ore,"minecraft:stone","{}",""),w,after+1)
+                        && !direct(event,new Read(0,0,0,0,event.end,event.end+1,ore,"minecraft:stone","{}",""),w,after+1)
+                        && !direct(event,new Read(0,1,0,0,after,after+1,ore,"minecraft:stone","{}",""),w,after+1),"STRICT_PRE_READ",checks);
+                w.events.set(1,null); // 純 synthetic 未發布 slot，非真事件覆寫。
+                var sink=new LinkedHashMap<String,Object>();freeze(w,sink);Object frozen=sink.get("partialOreWriter");
+                publish(f,new Association(one,0,0,0),1,0,0,0,event.begin,event.end,stone,ore,true,"");freeze(w,sink);
+                check(sink.get("partialOreWriter")==frozen && ((Number)w.frozen.get("inFlight")).intValue()==1,"FIXED_SNAPSHOT_NO_BACKFILL",checks);
+                active=new Window(null,"other-nonce","other-startup","synthetic","synthetic","synthetic");
+                write(one,0,0,0,ore,() -> stone);check(w.late.get()==1,"STALE_CONTEXT_NONCE",checks);
+                proof.put("partialOreWriterSynthetic",Map.of("synthetic",true,"status","PASS","checks",List.copyOf(checks),"elapsedNanos",System.nanoTime()-start));return true;
+            }catch(Throwable failure) {
+                try {proof.put("partialOreWriterSynthetic",Map.of("synthetic",true,"status","DIAGNOSTIC_INVALID","checks",List.copyOf(checks),
+                        "error",failure.getClass().getName()+":"+String.valueOf(failure.getMessage()).substring(0,Math.min(160,String.valueOf(failure.getMessage()).length())),"elapsedNanos",System.nanoTime()-start));}catch(Throwable ignored) {}return false;
+            }finally {active=previous;if(prior==null)FRAME.remove();else FRAME.set(prior);}
+        }
+        private static void check(boolean condition,String name,List<String> checks) {
+            if(!condition)throw new IllegalStateException(name);if(!name.isEmpty())checks.add(name);
+        }
+        private static void read(Window w,int index,BlockPos pos,long begin,long end,
+                net.minecraft.block.BlockState live,String raw,Throwable failure) {
+            if(w==null)return;
+            try {w.reads.add(new Read(index,pos.getX(),pos.getY(),pos.getZ(),begin,end,live,raw,"{}",
+                    failure==null?"":failure.getClass().getName()));}catch(Throwable ignored) {error(w);}
+        }
+        private static String block(net.minecraft.block.BlockState state) {
+            return state==null?"UNOBSERVABLE":net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).toString();
+        }
+        private static boolean direct(Event e,Read r,Window w,long end) {
+            return e.returned && e.error.isEmpty() && e.x==r.x && e.y==r.y && e.z==r.z && r.error.isEmpty()
+                    && e.begin>=w.begin && e.end<=end && e.end<r.begin && block(e.oldState).equals(r.raw)
+                    && Objects.equals(e.newState,r.live) && e.oldState!=null
+                    && net.minecraft.nbt.NbtHelper.fromBlockState(e.oldState).getCompound("Properties").toString().equals(r.rawProperties)
+                    && !Objects.equals(e.oldState,e.newState);
+        }
+        private static void freeze(Window w,Map<String,Object> proof) {
+            if(w==null) {try {proof.putIfAbsent("partialOreWriter",Map.of("conclusion","UNRESOLVED","coverage","NOT_ARMED"));}catch(Throwable ignored) {}return;}
+            if(w.frozen!=null)return;
+            if(active==w)active=null;
+            long end=System.nanoTime();int cutoff=w.reserved.get();
+            try {
+                var rows=new ArrayList<Map<String,Object>>(cutoff);int inFlight=0,direct=0;
+                for(int i=0;i<cutoff;i++) {
+                    Event e=w.events.get(i);if(e==null) {inFlight++;continue;}
+                    var row=new LinkedHashMap<String,Object>();
+                    row.put("slot",e.slot);row.put("frame",e.frame);row.put("regionCenter",List.of(e.cx,e.cz));
+                    row.put("absolutePos",List.of(e.x,e.y,e.z));row.put("localPos",List.of(e.lx,e.ly,e.lz));
+                    row.put("sectionCorrelation",true);row.put("exactWorld",true);row.put("thread",e.thread);
+                    row.put("beginNanos",e.begin);row.put("endNanos",e.end);row.put("originalCalls",1);
+                    row.put("returnedOldState",e.oldState==null?"UNOBSERVABLE":e.oldState.toString());
+                    row.put("requestedNewState",e.newState.toString());row.put("originalReturned",e.returned);
+                    row.put("error",e.error);row.put("writer","OreFeature.generateVeinPart/ChunkSection.setBlockState");
+                    Read matched=null;for(Read r:w.reads)if(direct(e,r,w,end)) {matched=r;break;}
+                    row.put("conclusion",matched==null?"RELATED_OR_UNRESOLVED":"DIRECT_PRE_READ_WRITE_WITNESS");
+                    if(matched!=null) {row.put("matchingSampleIndex",matched.index);direct++;}rows.add(row);
+                }
+                var reads=new ArrayList<Map<String,Object>>(48);
+                for(Read r:w.reads)reads.add(Map.of("sampleIndex",r.index,"pos",List.of(r.x,r.y,r.z),
+                        "originalReadStartNanos",r.begin,"originalReadEndNanos",r.end,
+                        "originalReturnedBlock",block(r.live),"rawBlock",r.raw,"rawProperties",r.rawProperties,"error",r.error));
+                var result=new LinkedHashMap<String,Object>();
+                result.put("rootNonce",w.nonce);result.put("startupNonce",w.startup);result.put("session",w.session);
+                result.put("uuid",w.uuid);result.put("worldKey",w.worldKey);result.put("beginNanos",w.begin);
+                result.put("cutoffNanos",end);result.put("cutoff",cutoff);result.put("capacity",LIMIT);result.put("observedFrames",w.frames.get());
+                result.put("inFlight",inFlight);result.put("overflow",w.overflow.get());result.put("diagnosticErrors",w.errors.get());
+                result.put("unobservableSectionPosition",w.unobservable.get());result.put("late",w.late.get());
+                result.put("events",List.copyOf(rows));result.put("originalReads",List.copyOf(reads));result.put("directWitnessCount",direct);
+                result.put("conclusion",direct>0?"DIRECT_PRE_READ_WRITE_WITNESS":"UNRESOLVED");
+                result.put("coverage","ARMED_VEINS_ONLY; NINE_CENTERS; ORIGINAL_48_POSITIONS; NO_WAIT; NO_BACKFILL; NOT_UNIQUE_CAUSE");
+                result.put("timingPerturbation",true);w.frozen=Collections.unmodifiableMap(result);proof.put("partialOreWriter",w.frozen);
+            }catch(Throwable failure) {w.frozen=Map.of("conclusion","UNRESOLVED","coverage","SNAPSHOT_ERROR");
+                try {proof.put("partialOreWriter",w.frozen);}catch(Throwable ignored) {}}
+        }
+    }
+
     private static final long[] SEEDS = {712345678901L, -99123456789L};
     private static final int[][] POINTS = {{0,64,0},{1032,80,-2056},{-9012,24,7196},{32768,112,16384}};
     private final String phase;
@@ -676,6 +906,8 @@ public final class M6RandomProbePhases {
             var details=new ArrayList<Map<String,Object>>();
             boolean timing=chain.equals("partial-overworld") && phase.equals("restart") && compareDisk;
             int sampleIndex=0;
+            OreWitness.Window writer=timing && OreWitness.synthetic(proof)?OreWitness.arm(world,callerResolvedActiveWorld,proof,sid.toString(),id.value().toString()):null;
+            try {
             if(phase.equals("partial")) {
                 var region=storage().resolve("region/r.0.0.mca");
                 try {proof.put("terrainSampleRegionSha256Before",M5CollapseDiskEvidence.sha256(region));
@@ -686,14 +918,22 @@ public final class M6RandomProbePhases {
                 var pos=new BlockPos(x,y,z);
                 if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"BEFORE_FIRST_ORIGINAL_READ",null,null,null);
                 net.minecraft.block.BlockState live;
-                try {live=world.getBlockState(pos);}
+                long originalReadStart=System.nanoTime();
+                long originalReadEnd;
+                try {live=world.getBlockState(pos);originalReadEnd=System.nanoTime();}
                 catch(RuntimeException | Error failure) {
+                    if(timing)OreWitness.read(writer,sampleIndex,pos,originalReadStart,System.nanoTime(),null,"UNOBSERVABLE",failure);
                     if(timing && sampleIndex==0) recordFirstOriginalReadFailure(failure);
                     throw failure;
                 }
+                if(timing)OreWitness.read(writer,sampleIndex,pos,originalReadStart,originalReadEnd,live,"UNOBSERVABLE",null);
                 if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"AFTER_FIRST_ORIGINAL_READ",null,live,null);
                 var nativeName=net.minecraft.registry.Registries.BLOCK.getId(live.getBlock()).toString();
                 var disk=M5CollapseDiskEvidence.block(storage(),pos);
+                if(timing && writer!=null) {
+                    try {writer.reads.set(writer.reads.size()-1,new OreWitness.Read(sampleIndex,x,y,z,originalReadStart,originalReadEnd,live,disk.name(),disk.properties(),""));}
+                    catch(Throwable diagnostic) {OreWitness.error(writer);}
+                }
                 boolean terrainMatches=!disk.name().equals(M5CollapseDiskEvidence.ABSENT)
                         && (!compareDisk || disk.name().equals(nativeName));
                 if (phase.equals("partial")) {
@@ -706,6 +946,7 @@ public final class M6RandomProbePhases {
                     details.add(detail);
                 }
                 if (!terrainMatches && !proof.containsKey("firstTerrainDifference")) {
+                    if(timing)OreWitness.freeze(writer,proof);
                     if(timing) loadedTimingSnapshot(world,callerResolvedActiveWorld,"FIRST_MISMATCH",sampleIndex,live,pos);
                     try {firstTerrainDifference(world,pos,live,disk,nativeName,disk.name());}
                     catch(Exception failure) {proof.put("diagnosticError",diagnosticError("firstTerrainDifference",failure));}
@@ -720,6 +961,7 @@ public final class M6RandomProbePhases {
                 catch(Exception failure) {proof.put("terrainSampleDiagnosticError",diagnosticError("partialRegionAfter",failure));}
             }
             return List.copyOf(samples);
+            } finally {if(timing)OreWitness.freeze(writer,proof);}
         }
 
         /** 公開 API 僅觀測既存 FULL；getWorldChunk 會更新四格 cache，並非零時序擾動。 */
