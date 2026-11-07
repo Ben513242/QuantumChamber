@@ -620,3 +620,7 @@ Task12 default-normal 窄補：default、normal 專用與 M5 scope 使用 vanill
 
 
 Task12 M5 normal 來源窄補：同一 `gameTestM5`／fresh `run/gametest-m5` 保留60案及catalog delta/suite-end串接，只加 exact `m5Normal=true`。兩平台marker均要求m5Only/m5Normal為true、flatConfig=false/normalConfig=true；其它scope不可帶m5Normal。`ci-rule-check.ps1 -PresetMutationScope m5` 可用missing-marker、wrong-m5-only、wrong-m5-normal、wrong-config，分別驗兩旗標與真config；正式來源仍須同runRoot/唯一gate/原log manifest，非fixture外部runtime log拒絕。focused M5須在try追加onlyBatches至JAVA_TOOL_OPTIONS、finally還原，不用不支援M5的-Batch。舊84e M5 59/60 FAIL保判，不能預先稱新full已通過。
+
+Task12 CI preset marker 跨午夜核對：兩平台每個實際執行的 scope，第一個 GameTest 前確認各自 log 目錄為空；事後依當次 `latest.log` 加合法日期 gzip 逐 piece 驗嚴格／寬鬆 marker 總數恰一、六欄 exact，保留壓縮原件與 SHA。Log4j gzip 採固定單 member 解碼，壓縮輸入最多 **16 MiB**、展開輸出最多 **64 MiB**；超限、壞 header／trailer、第二 member、額外尾端、錯名或重複 marker 均具名拒絕。這是 CI 證據讀取上限，不是正式 journal 容量。原 CI run `42313448722` 及截斷 gzip 意外 PASS root 保留原判，新 pin 的兩平台 CI 與 artifact 尚待驗證。
+
+Task12 M4 recovery 待實作契約：現有腳本仍是24 phase，上表 M5 已採計24/24保留歷史原判。設計採用後預期改為25 phase：`readback-fault` 唯一用 `EXPECTED_PENDING_RESTART_REQUIRED` 專用 oracle 核未確認寫入後停寫與原檔不變，接續新 JVM `recover→verify`；其餘24 phase仍要求正常 `final.json PASS`。正式數字須待新 code pin、乾淨完整回歸驗證後再更新目前用法，不得以設計草稿冒25/25已過。
