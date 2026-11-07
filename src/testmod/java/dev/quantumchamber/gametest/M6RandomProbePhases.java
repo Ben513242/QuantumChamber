@@ -514,7 +514,7 @@ public final class M6RandomProbePhases {
                 if(chain.equals("partial-overworld")) {
                     var partial=com.google.gson.JsonParser.parseString(Files.readString(root.resolve("partial-storage.json"))).getAsJsonObject();
                     require(partial.get("uuid").getAsString().equals(id.value().toString()) && partial.get("rootWorldSeed").getAsString().equals(Long.toString(intent.rootWorldSeed())),"PARTIAL_RESTART_IDENTITY");
-                    var actual=terrainSamples(active.get(),true);
+                    var actual=terrainSamples(active.get(),true,active.get());
                     require(new Gson().toJsonTree(actual).equals(partial.get("terrainSamples")),"PARTIAL_RESTART_TERRAIN");
                     proof.put("partialTerrainExact",true);proof.put("terrainSamples",actual);
                 }
@@ -651,7 +651,7 @@ public final class M6RandomProbePhases {
                 require(System.nanoTime()-started<60_000_000_000L,"PARTIAL_CHUNK_DEADLINE");
                 world.save(null,true,false);
                 require(System.nanoTime()-started<60_000_000_000L,"PARTIAL_SAVE_DEADLINE");
-                var terrain=terrainSamples(world,true);
+                var terrain=terrainSamples(world,true,null);
                 require(terrain.stream().anyMatch(sample -> !sample.endsWith("minecraft:air")),"PARTIAL_TERRAIN_EMPTY");
                 var hashes=new TreeMap<String,String>();
                 try(var files=Files.walk(storage())) {
@@ -671,7 +671,7 @@ public final class M6RandomProbePhases {
             throw new IllegalStateException("PARTIAL_LOAD_RETURNED");
         }
 
-        private List<String> terrainSamples(ServerWorld world,boolean compareDisk) throws Exception {
+        private List<String> terrainSamples(ServerWorld world,boolean compareDisk,ServerWorld callerResolvedActiveWorld) throws Exception {
             var samples=new ArrayList<String>();
             var details=new ArrayList<Map<String,Object>>();
             boolean timing=chain.equals("partial-overworld") && phase.equals("restart") && compareDisk;
@@ -684,9 +684,9 @@ public final class M6RandomProbePhases {
             }
             for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
                 var pos=new BlockPos(x,y,z);
-                if(timing && sampleIndex==0) loadedTimingSnapshot(world,"BEFORE_FIRST_ORIGINAL_READ",null,null,null);
+                if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"BEFORE_FIRST_ORIGINAL_READ",null,null,null);
                 var live=world.getBlockState(pos);
-                if(timing && sampleIndex==0) loadedTimingSnapshot(world,"AFTER_FIRST_ORIGINAL_READ",null,live,null);
+                if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"AFTER_FIRST_ORIGINAL_READ",null,live,null);
                 var nativeName=net.minecraft.registry.Registries.BLOCK.getId(live.getBlock()).toString();
                 var disk=M5CollapseDiskEvidence.block(storage(),pos);
                 boolean terrainMatches=!disk.name().equals(M5CollapseDiskEvidence.ABSENT)
@@ -701,7 +701,7 @@ public final class M6RandomProbePhases {
                     details.add(detail);
                 }
                 if (!terrainMatches && !proof.containsKey("firstTerrainDifference")) {
-                    if(timing) loadedTimingSnapshot(world,"FIRST_MISMATCH",sampleIndex,live,pos);
+                    if(timing) loadedTimingSnapshot(world,callerResolvedActiveWorld,"FIRST_MISMATCH",sampleIndex,live,pos);
                     try {firstTerrainDifference(world,pos,live,disk,nativeName,disk.name());}
                     catch(Exception failure) {proof.put("diagnosticError",diagnosticError("firstTerrainDifference",failure));}
                 }
@@ -718,20 +718,18 @@ public final class M6RandomProbePhases {
         }
 
         /** 公開 API 僅觀測既存 FULL；getWorldChunk 會更新四格 cache，並非零時序擾動。 */
-        private void loadedTimingSnapshot(ServerWorld world,String point,Integer mismatchIndex,
+        private void loadedTimingSnapshot(ServerWorld world,ServerWorld callerResolvedActiveWorld,String point,Integer mismatchIndex,
                 net.minecraft.block.BlockState originalLive,BlockPos mismatchPos) {
-            try {loadedTimingSnapshotFields(world,point,mismatchIndex,originalLive,mismatchPos);}
+            try {loadedTimingSnapshotFields(world,callerResolvedActiveWorld,point,mismatchIndex,originalLive,mismatchPos);}
             catch(Exception failure) {
-                @SuppressWarnings("unchecked") var snapshots=(List<Map<String,Object>>)proof.computeIfAbsent(
-                        "partialLoadedTiming",ignored -> new ArrayList<Map<String,Object>>(3));
-                var error=new LinkedHashMap<String,Object>();error.put("point",point);
-                error.put("error",diagnosticError("loadedSnapshot",failure));
-                if(snapshots.size()<3)snapshots.add(error);
-                else snapshots.getLast().put("error",diagnosticError("loadedSnapshot",failure));
+                @SuppressWarnings("unchecked") var snapshots=(List<Map<String,Object>>)proof.get("partialLoadedTiming");
+                if(snapshots!=null && !snapshots.isEmpty() && point.equals(snapshots.getLast().get("point")))
+                    snapshots.getLast().put("error",diagnosticError("loadedSnapshot",failure));
+                else proof.put("partialLoadedTimingError",diagnosticError("loadedSnapshotBeforeRow",failure));
             }
         }
 
-        private void loadedTimingSnapshotFields(ServerWorld world,String point,Integer mismatchIndex,
+        private void loadedTimingSnapshotFields(ServerWorld world,ServerWorld callerResolvedActiveWorld,String point,Integer mismatchIndex,
                 net.minecraft.block.BlockState originalLive,BlockPos mismatchPos) {
             @SuppressWarnings("unchecked") var snapshots=(List<Map<String,Object>>)proof.computeIfAbsent(
                     "partialLoadedTiming",ignored -> new ArrayList<Map<String,Object>>(3));
@@ -745,7 +743,8 @@ public final class M6RandomProbePhases {
             snapshot.put("generationFutures","UNOBSERVABLE");
             snapshot.put("session",sid.toString());snapshot.put("uuid",id.value().toString());
             snapshot.put("worldKey",world.getRegistryKey().getValue().toString());
-            snapshot.put("worldOwnerExact",UniverseLifecycleService.resolveActive(server,id).orElse(null)==world);
+            snapshot.put("worldOwnerExact",callerResolvedActiveWorld==world);
+            snapshot.put("ownerEvidence","CALLER_RESOLVE_ACTIVE_BEFORE_SNAPSHOT");
             snapshot.put("liveSeed",Long.toString(world.getSeed()));
             snapshot.put("frozenSeed",Long.toString(intent.rootWorldSeed()));
             snapshot.put("targetFingerprint",HexFormat.of().formatHex(intent.targetSettingsSnapshot().outputFingerprint()));
