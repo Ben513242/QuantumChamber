@@ -437,7 +437,7 @@ function Invoke-W10Fresh {
     $errFile=[IO.File]::Open((Join-Path $diagnostic 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     $outTask=$child.StandardOutput.BaseStream.CopyToAsync($outFile); $errTask=$child.StandardError.BaseStream.CopyToAsync($errFile)
     $timedOut=Wait-W10Producer $child $outTask $errTask $watch
-    if (-not $timedOut) { $outTask.GetAwaiter().GetResult(); $errTask.GetAwaiter().GetResult() }
+    if (-not $timedOut) { $null=$outTask.GetAwaiter().GetResult(); $null=$errTask.GetAwaiter().GetResult() }
     $outFile.Dispose(); $errFile.Dispose()
     $afterRoots=@(Get-W10RootSet $w10OldProject $false); $afterEvidence=@(Get-W10RootSet $w10OldProject $true)
     $processRecord=[ordered]@{pid=$child.Id;startTimeUtc=$started;cwd=$psi.WorkingDirectory;arguments=@($psi.ArgumentList);timedOut=$timedOut;outerExit=$(if ($child.HasExited) {$child.ExitCode}else{$null});elapsedSeconds=$watch.Elapsed.TotalSeconds;beforeRoots=$beforeRoots;afterRoots=$afterRoots;beforeEvidence=$beforeEvidence;afterEvidence=$afterEvidence;
@@ -662,7 +662,16 @@ if ($ResumeImportedW10) {
 
 foreach ($chain in $chains.Keys) {
     if ($Only.Count -gt 0 -and $chain -notin $Only) { continue }
-    if ($chain -ceq 'w10' -and -not $StopAfterPhase) { $w10Integration=Invoke-W10Fresh; continue }
+    if ($chain -ceq 'w10' -and -not $StopAfterPhase) {
+        $w10Output=@(Invoke-W10Fresh)
+        if ($w10Output.Count -ne 1 -or $null -eq $w10Output[0] -or
+            $w10Output[0] -isnot [pscustomobject] -or
+            $w10Output[0].contract -cne 'w10-fixed-m5-full-v1') {
+            throw 'W10_AGGREGATE_SHAPE：W10 必須恰好輸出一個有效契約物件'
+        }
+        $w10Integration=$w10Output[0]
+        continue
+    }
     if ($StopAfterPhase) {
         $freshNonce="$taskRunId-w10"
         $null=Assert-W10Path (Join-Path $taskProject "run/m5-collapse-$freshNonce") -Absent
