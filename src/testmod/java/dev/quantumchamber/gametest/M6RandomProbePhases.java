@@ -674,6 +674,8 @@ public final class M6RandomProbePhases {
         private List<String> terrainSamples(ServerWorld world,boolean compareDisk) throws Exception {
             var samples=new ArrayList<String>();
             var details=new ArrayList<Map<String,Object>>();
+            boolean timing=chain.equals("partial-overworld") && phase.equals("restart") && compareDisk;
+            int sampleIndex=0;
             if(phase.equals("partial")) {
                 var region=storage().resolve("region/r.0.0.mca");
                 try {proof.put("terrainSampleRegionSha256Before",M5CollapseDiskEvidence.sha256(region));
@@ -682,7 +684,9 @@ public final class M6RandomProbePhases {
             }
             for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
                 var pos=new BlockPos(x,y,z);
+                if(timing && sampleIndex==0) loadedTimingSnapshot(world,"BEFORE_FIRST_ORIGINAL_READ",null,null,null);
                 var live=world.getBlockState(pos);
+                if(timing && sampleIndex==0) loadedTimingSnapshot(world,"AFTER_FIRST_ORIGINAL_READ",null,live,null);
                 var nativeName=net.minecraft.registry.Registries.BLOCK.getId(live.getBlock()).toString();
                 var disk=M5CollapseDiskEvidence.block(storage(),pos);
                 boolean terrainMatches=!disk.name().equals(M5CollapseDiskEvidence.ABSENT)
@@ -697,11 +701,13 @@ public final class M6RandomProbePhases {
                     details.add(detail);
                 }
                 if (!terrainMatches && !proof.containsKey("firstTerrainDifference")) {
+                    if(timing) loadedTimingSnapshot(world,"FIRST_MISMATCH",sampleIndex,live,pos);
                     try {firstTerrainDifference(world,pos,live,disk,nativeName,disk.name());}
                     catch(Exception failure) {proof.put("diagnosticError",diagnosticError("firstTerrainDifference",failure));}
                 }
                 require(terrainMatches,"PARTIAL_RAW_MCA_TERRAIN");
                 samples.add(x+","+y+","+z+"="+disk.name());
+                sampleIndex++;
             }
             if (phase.equals("partial")) {
                 proof.put("partialTerrainDiagnostics",details);
@@ -710,6 +716,83 @@ public final class M6RandomProbePhases {
             }
             return List.copyOf(samples);
         }
+
+        /** 公開 API 僅觀測既存 FULL；getWorldChunk 會更新四格 cache，並非零時序擾動。 */
+        private void loadedTimingSnapshot(ServerWorld world,String point,Integer mismatchIndex,
+                net.minecraft.block.BlockState originalLive,BlockPos mismatchPos) {
+            try {loadedTimingSnapshotFields(world,point,mismatchIndex,originalLive,mismatchPos);}
+            catch(Exception failure) {
+                @SuppressWarnings("unchecked") var snapshots=(List<Map<String,Object>>)proof.computeIfAbsent(
+                        "partialLoadedTiming",ignored -> new ArrayList<Map<String,Object>>(3));
+                var error=new LinkedHashMap<String,Object>();error.put("point",point);
+                error.put("error",diagnosticError("loadedSnapshot",failure));
+                if(snapshots.size()<3)snapshots.add(error);
+                else snapshots.getLast().put("error",diagnosticError("loadedSnapshot",failure));
+            }
+        }
+
+        private void loadedTimingSnapshotFields(ServerWorld world,String point,Integer mismatchIndex,
+                net.minecraft.block.BlockState originalLive,BlockPos mismatchPos) {
+            @SuppressWarnings("unchecked") var snapshots=(List<Map<String,Object>>)proof.computeIfAbsent(
+                    "partialLoadedTiming",ignored -> new ArrayList<Map<String,Object>>(3));
+            if(snapshots.size()>=3)return;
+            long start=System.nanoTime();
+            var snapshot=new LinkedHashMap<String,Object>();
+            snapshots.add(snapshot);
+            snapshot.put("point",point);snapshot.put("sequence",snapshots.size()-1);
+            snapshot.put("startedNanos",start);snapshot.put("cacheEffect","GET_WORLD_CHUNK_WRITES_FOUR_SLOT_CACHE");
+            snapshot.put("holder","UNOBSERVABLE");snapshot.put("proto","UNOBSERVABLE");
+            snapshot.put("generationFutures","UNOBSERVABLE");
+            snapshot.put("session",sid.toString());snapshot.put("uuid",id.value().toString());
+            snapshot.put("worldKey",world.getRegistryKey().getValue().toString());
+            snapshot.put("worldOwnerExact",UniverseLifecycleService.resolveActive(server,id).orElse(null)==world);
+            snapshot.put("liveSeed",Long.toString(world.getSeed()));
+            snapshot.put("frozenSeed",Long.toString(intent.rootWorldSeed()));
+            snapshot.put("targetFingerprint",HexFormat.of().formatHex(intent.targetSettingsSnapshot().outputFingerprint()));
+            snapshot.put("serverTick",server.getTicks());
+            if(mismatchIndex!=null) {
+                snapshot.put("firstMismatchIndex",mismatchIndex);
+                snapshot.put("firstMismatchPos",mismatchPos.toShortString());
+                snapshot.put("originalLiveState",boundedTiming(originalLive.toString()));
+                snapshot.put("originalLiveBlock",net.minecraft.registry.Registries.BLOCK.getId(originalLive.getBlock()).toString());
+            } else if(originalLive!=null) {
+                snapshot.put("firstOriginalLiveState",boundedTiming(originalLive.toString()));
+            }
+            var neighbors=new ArrayList<Map<String,Object>>(9);
+            WorldChunk center=null;
+            for(int dx=-1;dx<=1;dx++)for(int dz=-1;dz<=1;dz++) {
+                var row=new LinkedHashMap<String,Object>();row.put("x",dx);row.put("z",dz);
+                neighbors.add(row);
+                try {
+                    WorldChunk chunk=world.getChunkManager().getWorldChunk(dx,dz);
+                    row.put("fullEntry",chunk==null?"NOT_OBTAINED_FULL":"OBTAINED_FULL");
+                    row.put("chunkType",chunk==null?"UNOBSERVABLE_CHUNK_TYPE":boundedTiming(chunk.getClass().getName()));
+                    row.put("status",chunk==null?"UNOBSERVABLE":boundedTiming(chunk.getStatus().toString()));
+                    row.put("wrapperFlag",chunk==null?"UNOBSERVABLE":"NOT_APPLICABLE");
+                    if(dx==0 && dz==0)center=chunk;
+                } catch(Exception failure) {row.put("error",diagnosticError("loadedNeighbor",failure));}
+                row.put("holder","UNOBSERVABLE");row.put("proto","UNOBSERVABLE");
+                row.put("generationFutures","UNOBSERVABLE");
+            }
+            snapshot.put("neighbors",neighbors);
+            var blocks=new ArrayList<Map<String,Object>>(48);
+            int index=0;
+            for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
+                var row=new LinkedHashMap<String,Object>();row.put("index",index++);
+                var pos=new BlockPos(x,y,z);row.put("pos",pos.toShortString());
+                if(center==null)row.put("state","UNOBSERVABLE_NOT_LOADED");
+                else try {
+                    var state=center.getBlockState(pos);
+                    row.put("state",boundedTiming(state.toString()));
+                    row.put("block",net.minecraft.registry.Registries.BLOCK.getId(state.getBlock()).toString());
+                } catch(Exception failure) {row.put("error",diagnosticError("loadedBlock",failure));}
+                blocks.add(row);
+            }
+            snapshot.put("blocks",blocks);
+            long end=System.nanoTime();snapshot.put("endedNanos",end);snapshot.put("elapsedNanos",end-start);
+        }
+
+        private static String boundedTiming(String value) {return value.length()<=256?value:value.substring(0,256);}
 
         private void firstTerrainDifference(ServerWorld world,BlockPos pos,net.minecraft.block.BlockState live,
                 M5CollapseDiskEvidence.DiskBlock disk,String liveName,String comparedRaw) {

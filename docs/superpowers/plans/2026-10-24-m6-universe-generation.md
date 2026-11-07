@@ -687,6 +687,8 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ## 切片③：same-seed fresh、mutation、registry
 
+**Task12 partial loaded-only 時序診斷第一片（2026-11-07）**：依 ignored 原設計與四補充、固定 Yarn 1.21 build.9 的 `task12-partial-loaded-api-audit.md`（SHA256 `A133A832B10C9B2B777303668B4639C488708B3C020C3938A18A3A184B8F864C`；設計及 API 審查均 C0/I0）縮至公開 API。只在 `partial-overworld/restart/compareDisk=true` 於原首次 `world.getBlockState` 前／返回後，以及原48格首差辨識後且 `firstTerrainDifference` 前取樣。每份固定九鄰 FULL metadata 與原順序48格；只呼 `getWorldChunk` 取既存 FULL，再對中心 `WorldChunk.getBlockState` 直接讀。holder/proto/future 標 `UNOBSERVABLE`，null 只表示本入口未取得 FULL；原 oracle、PARTIAL_RAW_MCA_TERRAIN 與舊 FAIL 不改。三份 snapshot 有單調耗時、原首差 index／原 live 回傳值；`getWorldChunk` 寫四格 cache，須回報時序擾動。先做無世界投影負控／mutation REVERT 與 compile，再以新 nonce 既有 `m6-universe-probe.ps1` 跑真 chain；診斷完整只算診斷 GREEN，功能 FAIL 仍 FAIL。白名單僅 `M6RandomProbePhases.java` 與本 plan；controller 接乾淨雙 focused/full、獨立 spec→quality。原自然 c444、b5b4、CI42375382039 判決永保。
+
 ### Task 13：policy2 的 same-seed fresh
 
 **Files:** Modify `src/main/java/dev/quantumchamber/candidate/CandidateResolver.java`、`NewUniverseIntent.java`、`M6CandidatePolicySelector.java`、`src/main/java/dev/quantumchamber/universe/UniverseProfileRegistry.java`、`src/test/java/dev/quantumchamber/candidate/CandidateResolverTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java`、`M6UniverseRecoveryProbe.java`、`scripts/verification/m6-universe-probe.ps1`；Create `src/testmod/java/dev/quantumchamber/gametest/M6ProfileProbePhases.java`。
