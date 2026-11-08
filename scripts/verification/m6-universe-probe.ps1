@@ -18,6 +18,8 @@ $manifest=@(
     [pscustomobject]@{chain='native-seed-functional';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('construct','reopen')}
     [pscustomobject]@{chain='intent-allocation';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('intent','allocation','restart')}
     [pscustomobject]@{chain='partial-overworld';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('intent','catalog','partial','restart')}
+    [pscustomobject]@{chain='same-seed-restart';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('source','new','restart')}
+    [pscustomobject]@{chain='same-seed-amplified-restart';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('source','new','restart')}
 )
 if(-not $IsWindows){throw 'M6_NATIVE_PLATFORM_UNSUPPORTED：owned Win32_Process原生鏈僅支援Windows'}
 if($IdleSeconds -ne 90 -or $PhaseMinutes -ne 3 -or $BlockMinutes -ne 60){throw 'M6_NATIVE_BUDGET_MISMATCH：phase3分/idle90秒/block60分'}
@@ -64,6 +66,7 @@ function Assert-DiagnosticReceipt($receipt,[string]$Phase,[string]$Nonce,[string
     if($Phase -ceq 'save-reopen' -and -not $receipt.diagnosticAssertions.reopenExact){throw 'M6_REOPEN_ORACLE_MISSING'}
 }
 function Assert-GameplayReceipt($receipt,$chain,$phase,$owned,$state) {
+    if($receipt.armingPolicy -ne 2 -or $receipt.policyVersion -ne 2 -or $receipt.familyCapability -ne 0){throw 'M6_FORMAL_POLICY_TWO'}
     if($receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cne $chain -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_FORMAL_RECEIPT_IDENTITY'}
     if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or -not $receipt.functionalPassed){throw 'M6_FORMAL_BEHAVIOR_FAILED'}
     if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds){throw 'M6_FORMAL_RUNTIME_SCOPE'}
@@ -87,6 +90,47 @@ function Assert-GameplayReceipt($receipt,$chain,$phase,$owned,$state) {
     if($phase -ceq 'restart' -and (-not $receipt.active -or $receipt.discoveryCount -ne 1 -or -not $receipt.catalogChecked -or $receipt.catalogAvailability -cne 'EAGER_ENABLED' -or $receipt.nativeSeed -cne $receipt.rootWorldSeed -or -not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen)){throw 'M6_FORMAL_RESTART_FAILED'}
     if($chain -ceq 'partial-overworld' -and $phase -ceq 'restart' -and (-not $receipt.partialProtectedSamplesExact)){throw 'M6_FORMAL_PARTIAL_RESTART'}
     if($chain -ceq 'partial-overworld' -and $phase -cin @('partial','restart')) { Assert-PartialSamples $receipt }
+}
+function Assert-ProfileReceipt($receipt,$phase,$owned,$state,[string]$ExpectedChain) {
+    if($receipt.chain -cne $ExpectedChain -or $receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cnotin @('same-seed-restart','same-seed-amplified-restart') -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_SAME_RECEIPT_IDENTITY'}
+    if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or -not $receipt.functionalPassed -or -not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen){throw "M6_SAME_FUNCTIONAL_FAILED:$($receipt.failures -join '; ')"}
+    if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds){throw 'M6_SAME_RUNTIME_SCOPE'}
+    $preset=if($receipt.chain -ceq 'same-seed-restart'){'normal'}else{'amplified'}
+    if(@($receipt.variants).Count -ne 1 -or $receipt.variants[0].preset -cne $preset){throw 'M6_SAME_VARIANT_SET'}
+    foreach($row in $receipt.variants) {
+        if($row.sourceInitialRequest -cne '128,128=minecraft:full'){throw 'M6_SAME_SOURCE_REQUEST'}
+        if($phase -cin @('source','new')) {
+            $preflight=$row.samplePreflight
+            $worldCount=if($phase -ceq 'source'){1}else{2}
+            if($preflight.status -cne 'PASS' -or $preflight.phase -cne $phase -or @($preflight.worlds).Count -ne $worldCount -or @($preflight.violations).Count){throw 'SAME_SAMPLE_PRIOR_GENERATION:receipt'}
+            $keys=@('minecraft:overworld');if($phase -ceq 'new'){$keys+="quantumchamber:universe/$($row.uuid)/overworld"}
+            if(($preflight.worlds.worldKey -join '|') -cne ($keys -join '|')){throw 'SAME_SAMPLE_PRIOR_GENERATION:owner'}
+            foreach($world in $preflight.worlds) {
+                $expected=@(foreach($x in 31..33){foreach($z in 31..33){"$x,$z"}})
+                if(@($world.cells).Count -ne 9 -or (($world.cells | ForEach-Object {"$($_.x),$($_.z)"}) -join '|') -cne ($expected -join '|')){throw 'SAME_SAMPLE_PRIOR_GENERATION:coordinates'}
+                foreach($cell in $world.cells){
+                    if($cell.currentHolder -ne $false -or $cell.unloadingHolder -ne $false -or $cell.liveFull -ne $false -or $cell.raw -cne 'ABSENT' -or $cell.canonicalNonReparse -ne $true -or $cell.headerValid -ne $true -or $cell.entryLocation -ne 0){throw 'SAME_SAMPLE_PRIOR_GENERATION:cell'}
+                }
+            }
+        }
+        if(-not $row.formalLeverEntry -or -not $row.formalBatch -or -not $row.formalSelected -or -not $row.emptyStorageBeforeAllocation -or -not $row.sourceTargetExact -or $row.policyVersion -ne 2 -or $row.profileId -cne 'quantumchamber:same_seed_fresh_v1' -or $row.sourceIdentity -cne 'minecraft:overworld' -or $row.uuid -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or $row.allocationToken -cnotmatch '^[0-9a-f]{64}$'){throw 'M6_SAME_FORMAL_ENTRY'}
+        if($phase -cne 'source') {
+            if(-not $row.catalogChecked -or -not $row.allocationChecked -or -not $row.buildingAbsent -or -not $row.editsIndependent -or $row.matchedMaturity -cne 'FULL_3X3' -or $row.sampleCount -ne 1440 -or $row.terrain -cnotmatch '^[0-9a-f]{64}$' -or $row.biomes -cnotmatch '^[0-9a-f]{64}$' -or @($row.structures).Count -ne 3){throw 'M6_SAME_GENERATION_OR_ISOLATION'}
+            $requests=@('32,32=minecraft:full')+@(foreach($x in 31..33){foreach($z in 31..33){"$x,$z=minecraft:full"}})
+            if(($row.sourceRequests -join '|') -cne ($requests -join '|') -or ($row.targetRequests -join '|') -cne ($requests -join '|')){throw 'M6_SAME_REQUEST_SEQUENCE'}
+            if($phase -ceq 'restart' -and -not $row.restartExact){throw 'M6_SAME_RESTART'}
+        }
+    }
+}
+function Assert-ProfileContinuity($receipts) {
+    for($i=0;$i -lt 1;$i++) {
+        foreach($field in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','policyVersion','profileId')) {
+            if(@($receipts | ForEach-Object {$_.variants[$i].$field} | Sort-Object -Unique).Count -ne 1){throw "M6_SAME_RESTART_IDENTITY:$field"}
+        }
+        foreach($field in @('terrain','biomes','structures')) {
+            if(($receipts[1].variants[$i].$field | ConvertTo-Json -Compress) -cne ($receipts[2].variants[$i].$field | ConvertTo-Json -Compress)){throw "M6_SAME_RESTART_GENERATION:$field"}
+        }
+    }
 }
 function Assert-PartialSamples($receipt) {
     $expected=@(foreach($x in 0,5,10,15){foreach($z in 0,5,10,15){"$x,-64,$z=minecraft:bedrock{}"}})
@@ -178,6 +222,8 @@ function Assert-SavedNativeSummary($native,$receiptOverrides=@{},$preservationOv
                 'native-seed-diagnostic' {Assert-DiagnosticReceipt $receipt $phaseName $row.nonce $row.startupNonce}
                 'catalog-readback' {Assert-CatalogReceipt $receipt $phaseName $owned $state $true}
                 'native-seed-functional' {Assert-SeedReceipt $receipt $phaseName $owned $state}
+                'same-seed-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
+                'same-seed-amplified-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
                 default {Assert-GameplayReceipt $receipt $spec.chain $phaseName $owned $state}
             }
             $receipts+=,$receipt;$pids+=,$row.javaPid;$offset++
@@ -189,6 +235,8 @@ function Assert-SavedNativeSummary($native,$receiptOverrides=@{},$preservationOv
             for($w=0;$w -lt 2;$w++){foreach($field in @('worldKey','seed','frozenStructures','accessorStructures','settingsKey','samples','positivePosition')) {
                 if(($receipts[0].worlds[$w].$field | ConvertTo-Json -Compress) -cne ($receipts[1].worlds[$w].$field | ConvertTo-Json -Compress)){throw 'M6_SAVED_SEED_REOPEN'}
             }}
+        } elseif($spec.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
+            Assert-ProfileContinuity $receipts
         } else {
             $fields=if($spec.chain -ceq 'catalog-readback'){@('uuid','session','allocationToken','rootWorldSeed','targetFingerprint','profileId','profileVersion','journalHash')}else{@('session','uuid','worldKey','allocationToken','rootWorldSeed','sourceRootWorldSeed','sourceFingerprint','targetFingerprint','profileId','storage')}
             foreach($field in $fields){if(@($receipts | ForEach-Object {$_.$field} | Sort-Object -Unique).Count -ne 1){throw "M6_SAVED_RESTART_IDENTITY:$field"}}
@@ -223,6 +271,17 @@ if($VerifySummary) {
                 $rejected=$false;try{Assert-SavedNativeSummary $native @{$index=$bad}}catch{$rejected=$true};if(-not $rejected){throw 'M6_SAVED_RECEIPT_NEGATIVE_MISSED'};$checks++
             }
             $original=Get-Content -LiteralPath $native.phases[$index].receipt -Raw | ConvertFrom-Json -DateKind String
+            if($original.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
+                $fields=@('formalLeverEntry','formalBatch','formalSelected','emptyStorageBeforeAllocation','sourceTargetExact','policyVersion','sourceInitialRequest')
+                if($original.phase -cne 'source'){$fields+=@('catalogChecked','allocationChecked','buildingAbsent','editsIndependent','sampleCount','sourceRequests','targetRequests')}
+                if($original.phase -ceq 'restart'){$fields+='restartExact'}
+                foreach($field in $fields) {
+                    $bad=$original | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String
+                    $bad.variants[0].$field=$false
+                    $rejected=$false;try{Assert-SavedNativeSummary $native @{$index=$bad}}catch{$rejected=$true}
+                    if(-not $rejected){throw "M6_SAME_NEGATIVE_MISSED:$field"};$checks++
+                }
+            }
             if($original.chain -ceq 'partial-overworld' -and $original.phase -cin @('partial','restart')) {
                 foreach($variant in @('kind','count','missing','duplicate','y','air','full','seed','settings','owner','fingerprint')) {
                     $bad=$original | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String
@@ -256,6 +315,11 @@ try {
         $owned=New-OwnedRoot -Context $context -Suffix $chainSpec.chain
         if($chainSpec.chain -ceq 'native-seed-functional'){'level-type=minecraft:amplified' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
         if($chainSpec.chain -cin @('intent-allocation','partial-overworld')){'level-type=minecraft:normal' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
+        if($chainSpec.chain -ceq 'same-seed-restart'){'level-type=minecraft:normal' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
+        if($chainSpec.chain -ceq 'same-seed-amplified-restart'){'level-type=minecraft:amplified' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
+        if($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart')){
+            'initial-enabled-packs=vanilla,fabric,fabric-gametest-api-v1,quantumchamber,fabric-convention-tags-v2,quantumchamber-testmod' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII
+        }
         $chainStart=$results.Count
         foreach($phase in $chainSpec.phases){
             if([DateTimeOffset]::UtcNow -ge $deadline){throw 'M6_NATIVE_BLOCK_BUDGET_EXCEEDED'}
@@ -287,6 +351,7 @@ try {
             } else {
                 if($state.Launcher.ExitCode -ne 0 -or $state.JavaProcess.ExitCode -ne 0){throw 'M6_PHASE_EXIT_NONZERO'}
                 if($gameplay){Assert-GameplayReceipt $receipt $chainSpec.chain $phase $owned $state}
+                elseif($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart')){Assert-ProfileReceipt $receipt $phase $owned $state $chainSpec.chain}
                 elseif($chainSpec.chain -ceq 'native-seed-functional'){
                     Assert-SeedReceipt $receipt $phase $owned $state
                     foreach($field in @('worldMonitorReadBlocked','thirdUniversePublishedAndUnloaded')) {
@@ -320,6 +385,9 @@ try {
             Write-Output "M6_PHASE PASS chain=$($chainSpec.chain) phase=$phase pid=$($row.javaPid) mode=$($chainSpec.expectedMode) ROOT=$($owned.root)"
         }
         $current=@($results.ToArray() | Select-Object -Skip $chainStart)
+        if($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
+            Assert-ProfileContinuity @($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String})
+        }
         if($gameplay) {
             $proofs=@($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String})
             foreach($field in @('session','uuid','worldKey','allocationToken','rootWorldSeed','sourceRootWorldSeed','sourceFingerprint','targetFingerprint','profileId','storage')) {

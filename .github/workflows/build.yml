@@ -44,6 +44,8 @@ jobs:
             build/m6-native-summary.json
             .superpowers/verification/m6-native-*/**
             .superpowers/verification/m6-native-run-*.json
+            run/m6-universe-*/same-seed-*.json
+            run/m6-universe-*/same-seed-*.nbt
             run/m6-universe-*/formal-intent.json
             run/m6-universe-*/partial-storage.json
             run/m6-universe-*/partial-before-restart.json
@@ -84,6 +86,7 @@ jobs:
         timeout-minutes: 15
         run: ./gradlew runGameTestM5 --no-daemon
       - name: Ubuntu M6 JUnit 與獨立 GameTest
+        if: ${{ !cancelled() }}
         timeout-minutes: 15
         shell: pwsh
         run: |
@@ -91,6 +94,7 @@ jobs:
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Ubuntu -CheckUnsupportedNative
       - name: 確認 Ubuntu M6 精確集合與隔離
+        if: ${{ !cancelled() }}
         timeout-minutes: 2
         shell: pwsh
         run: |
@@ -414,17 +418,20 @@ jobs:
         timeout-minutes: 20
         run: ./gradlew.bat runGameTestM5 --no-daemon
       - name: Windows M6 JUnit 與獨立 GameTest
+        if: ${{ !cancelled() }}
         timeout-minutes: 15
         shell: pwsh
         run: |
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows -SelfTest -OutputRoot build/m6-oracle-selftest
           & ./scripts/verification/m6-ci-gametest.ps1 -Platform Windows
       - name: Windows Main-only runtime 與三層 oracle
+        if: ${{ !cancelled() }}
         timeout-minutes: 7
         shell: pwsh
         run: |
           & ./scripts/verification/m6-ci-main-only.ps1 -Ci -Gradle (Join-Path $PWD 'gradlew.bat') -EvidenceRoot build/m6-main-only -ExpectedHead $env:GITHUB_SHA
       - name: 確認 Windows M6 精確集合與隔離
+        if: ${{ !cancelled() }}
         timeout-minutes: 2
         shell: pwsh
         run: |

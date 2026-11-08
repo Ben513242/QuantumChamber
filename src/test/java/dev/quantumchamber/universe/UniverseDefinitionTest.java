@@ -1,6 +1,7 @@
 package dev.quantumchamber.universe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.EnumMap;
@@ -180,6 +181,22 @@ class UniverseDefinitionTest {
         assertEquals(3, worlds.size());
         assertEquals(legacy.getList("Worlds", NbtElement.COMPOUND_TYPE).getCompound(0), worlds.getCompound(0));
         return migrated;
+    }
+
+    @Test void sameSeedCatalogStrictRoundTripNormalAndAmplified() {
+        for (String preset : java.util.List.of("normal", "amplified")) {
+            var row = newM6RecordNbt(); row.putString("ProfileId", "quantumchamber:same_seed_fresh_v1");
+            var snapshot = row.getCompound("TargetSettingsSnapshot");
+            snapshot.putString("ProviderId", "quantumchamber:vanilla_" + preset + "_v1");
+            snapshot.getCompound("Parameters").putString("OverworldPreset", preset);
+            assertEquals(row, assertDoesNotThrow(() -> UniverseRecord.fromNbt(row)).toNbt());
+            assertRejectedForEachMutation(row,
+                    nbt -> nbt.putString("ProfileId", "quantumchamber:unknown"),
+                    nbt -> nbt.getCompound("TargetSettingsSnapshot").putInt("ProviderVersion", 2),
+                    nbt -> nbt.getCompound("TargetSettingsSnapshot").putString("ProviderId", "quantumchamber:vanilla_" + (preset.equals("normal") ? "amplified" : "normal") + "_v1"));
+            if (preset.equals("amplified")) assertRejectedForEachMutation(row,
+                    nbt -> nbt.putString("ProfileId", "quantumchamber:random_vanilla_v1"));
+        }
     }
 
     private static NbtCompound newM6RecordNbt() {

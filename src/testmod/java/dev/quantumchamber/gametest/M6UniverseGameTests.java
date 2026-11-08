@@ -6,6 +6,31 @@ import net.minecraft.test.TestContext;
 
 /** 同 server 的真 schema2 backend 與 canonical／legacy 控制組。 */
 public final class M6UniverseGameTests implements FabricGameTest {
+    /** Task21 恢復測試標註；保留全量 U→U 斷言與原失敗起點，不由 Task13 owner 測試代驗。 */
+    public void same_seed_fresh_copies_settings_not_blocks(TestContext context) throws Exception {
+        M6ProfileProbePhases.verifyGameTest(context.getWorld().getServer());
+        context.complete();
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_same_seed", tickLimit=1200)
+    public void same_seed_owner_settings_match_frozen_snapshots(TestContext context) throws Exception {
+        M6ProfileProbePhases.verifyOwnerSettingsGameTest(context.getWorld().getServer());
+        context.complete();
+    }
+
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_same_seed", tickLimit=1200)
+    public void formal_entry_freezes_policy_two_and_source_snapshot(TestContext context) throws Exception {
+        var server = context.getWorld().getServer();
+        var root = server.getSavePath(net.minecraft.util.WorldSavePath.ROOT);
+        var entropy = dev.quantumchamber.candidate.CandidateEntropyState.loadOrCreate(root, false);
+        var policy = dev.quantumchamber.candidate.M6CandidatePolicySelector.forNewSession(server).freeze(-1,
+                entropy.entropyFingerprint(), new dev.quantumchamber.candidate.SourceFamilyRef.Vanilla(
+                        net.minecraft.world.World.OVERWORLD, dev.quantumchamber.universe.DimensionRole.OVERWORLD));
+        context.assertEquals(2, policy.policyVersion(), "formalEntryFreezesPolicyTwoAndSourceSnapshot");
+        context.assertEquals(0, policy.familyCapabilityVersion(), "新 session 固定 family0");
+        context.complete();
+    }
+
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_retry_high", tickLimit=100000)
     public void unknown_preset_high_requires_real_low_before_one_retry(TestContext context) {
         if (!com.sun.jna.Platform.isWindows()) { context.complete(); return; }
@@ -329,7 +354,7 @@ public final class M6UniverseGameTests implements FabricGameTest {
     }
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_random", tickLimit=100000)
-    public void formal_entry_freezes_policy_one_on_flat(TestContext context) {
+    public void formal_entry_freezes_policy_two_on_flat(TestContext context) {
         if (!com.sun.jna.Platform.isWindows()) { context.complete(); return; }
         var fixture = new M2CorridorGameTests.NativeEntry(context, 1);
         context.runAtTick(2, () -> {
@@ -339,8 +364,8 @@ public final class M6UniverseGameTests implements FabricGameTest {
             fixture.trustedTeardown(3, () -> {
                 context.assertEquals(dev.quantumchamber.superposition.SessionState.ARMING, initial.state(), "正式 ARMING");
                 var policy = initial.candidateContext().orElseThrow();
-                context.assertTrue(policy.isM6(), "FORMAL_ENTRY_POLICY_ONE：新玩家 session 必須凍結 M6 policy1");
-                context.assertEquals(1, policy.policyVersion(), "固定 policy1");
+                context.assertTrue(policy.isM6(), "FORMAL_ENTRY_POLICY_TWO：新玩家 session 必須凍結 M6 policy2");
+                context.assertEquals(2, policy.policyVersion(), "固定 policy2");
                 context.assertEquals(0, policy.familyCapabilityVersion(), "固定 family0");
                 context.assertTrue(initial.candidateLedger().isEmpty(), "ARMING 不偷產 snapshot");
                 context.complete();

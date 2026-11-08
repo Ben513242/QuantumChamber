@@ -86,6 +86,27 @@ class UniverseAllocationLedgerTest {
         assertEquals(original.get("Entries"), decoded.toNbt().get("Entries"));
     }
 
+    @Test void policyTwoAllocationStrictRoundTripKeepsPolicyOne() {
+        var ledger = UniverseAllocationLedger.empty().upgradeEnvelope();
+        int next = 30;
+        for (int version : new int[] {1, 2}) for (String profile : List.of(
+                "quantumchamber:random_vanilla_v1", "quantumchamber:same_seed_fresh_v1")) {
+            if (version == 1 && profile.contains("same_seed")) {
+                assertThrows(IllegalArgumentException.class, () -> new UniverseAllocationLedger.M6Fields(version, profile, 42, token(3)));
+                continue;
+            }
+            var allocation = token(next++);
+            var row = new UniverseAllocationLedger.Entry(allocation, UniverseAllocationLedger.deriveUniverseId(allocation),
+                    null, 1, new UniverseAllocationLedger.M6Fields(version, profile, 42, token(3)));
+            ledger = ledger.append(row);
+        }
+        var encoded = ledger.toNbt();
+        assertEquals(encoded, UniverseAllocationLedger.fromNbt(encoded).toNbt());
+        assertEquals(1, UniverseAllocationLedger.fromNbt(encoded).entries().getFirst().m6().policyVersion());
+        assertThrows(IllegalArgumentException.class, () -> new UniverseAllocationLedger.M6Fields(3,
+                "quantumchamber:random_vanilla_v1", 42, token(3)));
+    }
+
     @Test void mixedAllocationRowsPreserveFrozenSeedAndRejectMalformedFields() {
         var legacy = UniverseAllocationLedger.empty().append(entry(9)).toNbt();
         var mixed = legacy.copy();
@@ -111,7 +132,7 @@ class UniverseAllocationLedgerTest {
         rejects(cases, "多欄", mixed, nbt -> row(nbt, 1).putInt("Extra", 1));
         rejects(cases, "種子型別錯誤", mixed, nbt -> row(nbt, 1).putInt("RootWorldSeed", 0));
         rejects(cases, "指紋長度錯誤", mixed, nbt -> row(nbt, 1).putByteArray("TargetSettingsFingerprint", new byte[31]));
-        rejects(cases, "未知 policy", mixed, nbt -> row(nbt, 1).putInt("PolicyVersion", 2));
+        rejects(cases, "未知 policy", mixed, nbt -> row(nbt, 1).putInt("PolicyVersion", 3));
         rejects(cases, "未知 profile", mixed, nbt -> row(nbt, 1).putString("ProfileId", "quantumchamber:other"));
         rejects(cases, "未知列版本", mixed, nbt -> row(nbt, 1).putInt("EntryVersion", 3));
         assertAll(cases);

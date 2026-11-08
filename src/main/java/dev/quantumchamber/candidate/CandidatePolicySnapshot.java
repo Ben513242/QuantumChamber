@@ -22,7 +22,7 @@ public record CandidatePolicySnapshot(Identifier policyId, int policyVersion, in
                 && candidateSchemaVersion == 1 && maxCandidateEntries == 16384;
         boolean m6 = Identifier.of("quantumchamber:m6_profiles_v1").equals(policyId)
                 && candidateSchemaVersion == 2 && maxCandidateEntries == 4096;
-        if ((!legacy && !m6) || policyVersion != 1 || familyCapabilityVersion != 0
+        if ((!legacy && !m6) || (legacy ? policyVersion != 1 : policyVersion != 1 && policyVersion != 2) || familyCapabilityVersion != 0
                 || sourceWeight != 5 || discoveredWeight != 20 || newWeight != 75 || discoveryWatermark < -1) {
             throw new IllegalArgumentException("不支援的 candidate policy snapshot");
         }

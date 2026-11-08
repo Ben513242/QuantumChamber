@@ -11,6 +11,7 @@ import java.util.Objects;
 /** 明確分開舊四欄與 M6 九欄意圖；snapshot 本身亦為不可變值。 */
 public final class NewUniverseIntent {
     public static final String RANDOM_PROFILE_ID = "quantumchamber:random_vanilla_v1";
+    public static final String SAME_SEED_PROFILE_ID = "quantumchamber:same_seed_fresh_v1";
     private final CandidateBytes allocationToken;
     private final CandidateBytes generationSeedMaterial;
     private final int profileVersion;
@@ -34,11 +35,14 @@ public final class NewUniverseIntent {
         allocationToken = Objects.requireNonNull(token, "allocationToken");
         generationSeedMaterial = Objects.requireNonNull(material, "generationSeedMaterial");
         Objects.requireNonNull(source, "source"); Objects.requireNonNull(target, "target");
-        if (policyVersion != 1 || profileVersion != 1 || capability != 0
+        if ((policyVersion != 1 && policyVersion != 2) || profileVersion != 1 || capability != 0
                 || !selectedProfileId(policyVersion, material).equals(profileId))
             throw new IllegalArgumentException("不支援的 M6 policy/profile/capability");
         validateBuiltin(source); validateBuiltin(target);
-        if (!target.providerId().equals("quantumchamber:vanilla_normal_v1")
+        if (SAME_SEED_PROFILE_ID.equals(profileId)) {
+            if (!source.toNbt().equals(target.toNbt()))
+                throw new IllegalArgumentException("same-seed 目標必須保留 exact 來源 snapshot");
+        } else if (!target.providerId().equals("quantumchamber:vanilla_normal_v1")
                 || source.parameters().getByte("GenerateStructures") != target.parameters().getByte("GenerateStructures"))
             throw new IllegalArgumentException("random 目標必須 normal 且保留來源 GenerateStructures");
         this.profileVersion = profileVersion;
@@ -54,15 +58,15 @@ public final class NewUniverseIntent {
             throw new IllegalArgumentException("M6 來源／目標設定不屬於受支援內建 provider");
     }
 
-    /** 固定 domain 與明確版本；Task 9 只允 policy1 的單一 random 策略。 */
+    /** 固定 domain、版本及順序；既有 policy1 永遠只選 random。 */
     public static String selectedProfileId(int policyVersion, CandidateBytes material) {
-        if (policyVersion != 1) throw new IllegalArgumentException("尚未支援的 profile policy");
+        if (policyVersion != 1 && policyVersion != 2) throw new IllegalArgumentException("尚未支援的 profile policy");
         var hash = sha256();
         hash.update("quantumchamber:m6:profile-choice:v1".getBytes(StandardCharsets.UTF_8));
         hash.update(ByteBuffer.allocate(4).putInt(policyVersion).array());
         hash.update(material.bytes());
         long choice = ByteBuffer.wrap(hash.digest()).getLong();
-        return new String[] {RANDOM_PROFILE_ID}[(int) Long.remainderUnsigned(choice, 1)];
+        return new String[] {RANDOM_PROFILE_ID, SAME_SEED_PROFILE_ID}[(int) Long.remainderUnsigned(choice, policyVersion)];
     }
 
     public boolean isM6() { return m6 != null; }
@@ -85,6 +89,7 @@ public final class NewUniverseIntent {
     public GenerationSettingsSnapshot targetSettingsSnapshot() { return requireM6().target(); }
     public long rootWorldSeed() {
         var fields = requireM6();
+        if (SAME_SEED_PROFILE_ID.equals(fields.profileId())) return fields.sourceRootWorldSeed();
         var hash = sha256();
         hash.update("quantumchamber:m6:root-seed:v1".getBytes(StandardCharsets.UTF_8));
         hash.update(generationSeedMaterial.bytes()); hash.update(allocationToken.bytes());

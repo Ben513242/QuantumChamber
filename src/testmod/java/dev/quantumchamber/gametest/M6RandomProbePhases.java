@@ -927,15 +927,18 @@ public final class M6RandomProbePhases {
                     .orElseThrow(() -> new IllegalStateException("FORMAL_ARMING_MISSING powered="+source.isReceivingRedstonePower(frame.controllerPos())
                             +" uuid="+controller.chamberUuid()+" state="+controller.chamberState()+" readiness="+readiness));
             sid=initial.sessionUuid();
-            require(initial.state()==SessionState.ARMING && initial.candidateContext().orElseThrow().isM6(),"FORMAL_ARMING_POLICY_ONE");
-            proof.put("formalLeverEntry",true);proof.put("armingPolicy",1);proof.put("familyCapability",0);stage=2;
+            var policy=initial.candidateContext().orElseThrow();
+            require(initial.state()==SessionState.ARMING && policy.isM6() && policy.policyVersion()==2
+                    && policy.familyCapabilityVersion()==0,"FORMAL_ARMING_POLICY_TWO");
+            proof.put("formalLeverEntry",true);proof.put("armingPolicy",policy.policyVersion());proof.put("familyCapability",policy.familyCapabilityVersion());stage=2;
         }
 
         private void select() throws Exception {
             var current=record();
             if(current==null || current.state()!=SessionState.SUPERPOSITION)return;
             var pages=CorridorPageManager.forServer(server);
-            var entry=current.candidateLedger().stream().filter(row -> row.candidate() instanceof QuantumCandidate.New && pages.selectableDoors(sid).contains(row.doorKey())).findFirst();
+            var entry=current.candidateLedger().stream().filter(row -> row.candidate() instanceof QuantumCandidate.New fresh
+                    && NewUniverseIntent.RANDOM_PROFILE_ID.equals(fresh.intent().profileId()) && pages.selectableDoors(sid).contains(row.doorKey())).findFirst();
             if(entry.isEmpty())return;
             var key=entry.get().doorKey();
             BlockPos cell=null;
@@ -964,7 +967,9 @@ public final class M6RandomProbePhases {
         private void takeIntent(SessionRecoveryRecord row) {
             require(row.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New,"FORMAL_NOT_NEW");
             intent=((QuantumCandidate.New)row.selectedCandidate().orElseThrow()).intent();
-            require(intent.isM6() && intent.policyVersion()==1 && intent.familyCapabilityVersion()==0,"FORMAL_FROZEN_POLICY");
+            require(intent.isM6() && intent.policyVersion()==2 && intent.familyCapabilityVersion()==0
+                    && row.candidateContext().orElseThrow().policyVersion()==intent.policyVersion()
+                    && NewUniverseIntent.RANDOM_PROFILE_ID.equals(intent.profileId()),"FORMAL_FROZEN_POLICY");
             require(intent.sourceRootWorldSeed()==server.getSaveProperties().getGeneratorOptions().getSeed()
                     && intent.sourceSettingsSnapshot().parameters().getString("OverworldPreset").equals("normal")
                     && intent.targetSettingsSnapshot().parameters().getString("OverworldPreset").equals("normal"),"FORMAL_SOURCE_SNAPSHOT");
@@ -1285,6 +1290,7 @@ public final class M6RandomProbePhases {
         }
         private static String digest(Path path) throws Exception {return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));}
         private void stableFields() {
+            proof.put("policyVersion",intent.policyVersion());
             proof.put("session",sid.toString());proof.put("uuid",id.value().toString());proof.put("worldKey",UniverseKeys.world(id,DimensionRole.OVERWORLD).getValue().toString());
             proof.put("rootWorldSeed",Long.toString(intent.rootWorldSeed()));proof.put("sourceRootWorldSeed",Long.toString(intent.sourceRootWorldSeed()));
             proof.put("allocationToken",HexFormat.of().formatHex(intent.allocationToken().bytes()));
@@ -1298,6 +1304,8 @@ public final class M6RandomProbePhases {
                 require(proof.get(key).toString().equals(manifest.get(key).getAsString()),"FORMAL_RESTART_IDENTITY:"+key);
             require(manifest.get("formalLeverEntry").getAsBoolean() && manifest.get("formalBatch").getAsBoolean() && manifest.get("formalSelected").getAsBoolean(),"FORMAL_ENTRY_MANIFEST");
             proof.put("formalLeverEntry",true);proof.put("formalBatch",true);proof.put("formalSelected",true);
+            require(manifest.get("armingPolicy").getAsInt()==intent.policyVersion() && manifest.get("familyCapability").getAsInt()==0,"FORMAL_ARMING_POLICY_RESTART");
+            proof.put("armingPolicy",manifest.get("armingPolicy").getAsInt());proof.put("familyCapability",0);
             for(var key:List.of("providerACreateRejected","providerAResolveRejected","providerBLoadRejected","providerBPreflightRejected","providerAuthorityUnchanged","providerRegistrationRestored")) {
                 require(manifest.get(key).getAsBoolean(),"PROVIDER_BASELINE_MANIFEST:"+key);proof.put(key,true);
             }

@@ -28,10 +28,13 @@ public record UniverseRecord(UniverseDefinition definition, DesiredAvailability 
                 throw new IllegalArgumentException("schema2 profile 或 provenance 不符");
             }
             var snapshot = GenerationSettingsSnapshot.fromNbt(targetSettingsSnapshot);
-            if (provenance == Provenance.NEW_M6 && (!NewUniverseIntent.RANDOM_PROFILE_ID.equals(profileId)
-                    || !snapshot.providerId().equals("quantumchamber:vanilla_normal_v1") || snapshot.providerVersion() != 1
-                    || !snapshot.parameters().getString("OverworldPreset").equals("normal"))) {
-                throw new IllegalArgumentException("NEW_M6 只接受已支援的 random vanilla profile 與 normal 目標");
+            var preset = snapshot.parameters().getString("OverworldPreset");
+            if (provenance == Provenance.NEW_M6 && (snapshot.providerVersion() != 1
+                    || !GenerationSettingsSnapshot.isBuiltin(snapshot.providerId())
+                    || !snapshot.providerId().equals("quantumchamber:vanilla_" + preset + "_v1")
+                    || !(NewUniverseIntent.SAME_SEED_PROFILE_ID.equals(profileId)
+                    || NewUniverseIntent.RANDOM_PROFILE_ID.equals(profileId) && preset.equals("normal")))) {
+                throw new IllegalArgumentException("NEW_M6 profile 與受支援目標設定不符");
             }
             targetSettingsSnapshot = snapshot.toNbt();
         }

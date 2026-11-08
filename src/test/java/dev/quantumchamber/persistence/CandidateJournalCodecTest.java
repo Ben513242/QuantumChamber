@@ -6,6 +6,46 @@ import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
 
 class CandidateJournalCodecTest {
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path root;
+
+    /** 可攜的 strict codec fixture；不冒稱歷史真玩家 journal。 */
+    @Test void policyTwoJournalRoundTripAndPolicyOneNeverUpgrades() throws Exception {
+        for (int[] vector : new int[][] {{1, 0}, {2, 0}, {2, 1}}) {
+            int version = vector[0];
+            var record = SessionRecoverySchema3Test.record(SessionRecoverySchema3Test.fixture(false, false)).copy();
+            record.put("Collapse", new NbtCompound());
+            var context = m6Context(); context.putInt("PolicyVersion", version);
+            record.put("CandidateContext", context);
+            var entry = m6Entry(record.getUuid("SessionUuid"));
+            var intent = entry.getCompound("Candidate").getCompound("Intent");
+            intent.putInt("PolicyVersion", version);
+            byte[] rawMaterial = new byte[32]; rawMaterial[0] = (byte) vector[1];
+            intent.putByteArray("GenerationSeedMaterial", rawMaterial);
+            var material = new dev.quantumchamber.candidate.CandidateBytes(intent.getByteArray("GenerationSeedMaterial"));
+            String profile = dev.quantumchamber.candidate.NewUniverseIntent.selectedProfileId(version, material);
+            // Python hashlib 獨立預算：policy2 的首byte=0→random、1→same。
+            assertEquals(vector[1] == 1 ? "quantumchamber:same_seed_fresh_v1" : "quantumchamber:random_vanilla_v1", profile);
+            intent.putString("ProfileId", profile);
+            if (profile.equals("quantumchamber:same_seed_fresh_v1")) intent.put("TargetSettingsSnapshot", intent.getCompound("SourceSettingsSnapshot").copy());
+            var entries = new NbtList(); entries.add(entry); record.put("CandidateLedger", entries);
+            var read = assertDoesNotThrow(() -> SessionRecoveryRecord.fromNbt(record, 5));
+            assertEquals(record, read.toNbt(5));
+            assertEquals(version, read.candidateContext().orElseThrow().policyVersion());
+            var path = root.resolve("policy-" + version + "-" + vector[1] + "-fixture.nbt");
+            NbtIo.writeCompressed(read.toNbt(5), path);
+            var reopened = SessionRecoveryRecord.fromNbt(NbtIo.readCompressed(path, NbtSizeTracker.of(16L * 1024 * 1024)), 5);
+            assertEquals(record, reopened.toNbt(5));
+            assertEquals(version, reopened.candidateContext().orElseThrow().policyVersion());
+            var originalIntent = ((dev.quantumchamber.candidate.QuantumCandidate.New)read.candidateLedger().getFirst().candidate()).intent();
+            var reopenedIntent = ((dev.quantumchamber.candidate.QuantumCandidate.New)reopened.candidateLedger().getFirst().candidate()).intent();
+            assertEquals(originalIntent.rootWorldSeed(), reopenedIntent.rootWorldSeed());
+            assertEquals(originalIntent.sourceSettingsSnapshot().toNbt(), reopenedIntent.sourceSettingsSnapshot().toNbt());
+            assertEquals(originalIntent.targetSettingsSnapshot().toNbt(), reopenedIntent.targetSettingsSnapshot().toNbt());
+            if (version == 1) assertEquals("quantumchamber:random_vanilla_v1", reopenedIntent.profileId());
+            var mismatch = record.copy(); mismatch.getCompound("CandidateContext").putInt("PolicyVersion", version == 1 ? 2 : 1);
+            assertThrows(IllegalArgumentException.class, () -> SessionRecoveryRecord.fromNbt(mismatch, 5));
+        }
+    }
     @Test void m6ContextAndIntentRoundTripWithoutChangingLegacyShape() {
         var legacy = SessionRecoverySchema3Test.fixture(false, false);
         var oldContext = SessionRecoverySchema3Test.context(legacy);
@@ -27,7 +67,7 @@ class CandidateJournalCodecTest {
     @Test void unknownOrExtraNewFieldsAreRejected() {
         var row = m6Entry(UUID.randomUUID()); row.getCompound("Candidate").getCompound("Intent").putInt("Extra", 1);
         assertThrows(IllegalArgumentException.class, () -> CandidateJournalCodec.entry(row));
-        var context = m6Context(); context.putInt("PolicyVersion", 2);
+        var context = m6Context(); context.putInt("PolicyVersion", 3);
         assertThrows(IllegalArgumentException.class, () -> CandidateJournalCodec.context(context));
         var futureFamily = m6Context(); futureFamily.putInt("FamilyCapabilityVersion", 1);
         assertThrows(IllegalArgumentException.class, () -> CandidateJournalCodec.context(futureFamily));

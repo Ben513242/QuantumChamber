@@ -56,6 +56,15 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
         proof.put("loadedModIds", FabricLoader.getInstance().getAllMods().stream().map(m -> m.getMetadata().getId()).sorted().toList());
         proof.put("failures", failures);
         ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(Event.DEFAULT_PHASE, AFTER);
+        if (Set.of("same-seed-restart","same-seed-amplified-restart").contains(config.chain())) {
+            var profiles = new M6ProfileProbePhases(config.phase(), config.root(), config.evidence(), proof);
+            ServerLifecycleEvents.SERVER_STARTED.register(AFTER, profiles::started);
+            ServerTickEvents.END_SERVER_TICK.register(profiles::tick);
+            ServerLifecycleEvents.SERVER_STOPPING.register(profiles::stopping);
+            ServerLifecycleEvents.SERVER_STOPPED.register(profiles::stopped);
+            LOGGER.info("M6_NATIVE_BEGIN chain={} phase={} mode=FUNCTIONAL startupNonce={}", config.chain(), config.phase(), config.startupNonce());
+            return;
+        }
         if (Set.of("intent-allocation","partial-overworld").contains(config.chain())) {
             var gameplay = new M6RandomProbePhases.GameplayPhases(config.chain(), config.phase(), config.root(), config.evidence(), proof);
             ServerLifecycleEvents.SERVER_STARTED.register(AFTER, gameplay::started);
@@ -301,7 +310,10 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             if(values.stream().allMatch(Objects::isNull))return null;
             require(values.stream().allMatch(value->value!=null && !value.isBlank()),"M6_CONFIG_MISSING_PROPERTY");
             require(values.get(0).matches("[a-z0-9]+(?:-[a-z0-9]+)*") && values.get(2).matches("[0-9a-f]{32}"),"M6_CONFIG_NONCE_INVALID");
-            if (values.get(4).equals("partial-overworld")) {
+            if (Set.of("same-seed-restart","same-seed-amplified-restart").contains(values.get(4))) {
+                require(Set.of("source", "new", "restart").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
+                require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
+            } else if (values.get(4).equals("partial-overworld")) {
                 require(Set.of("intent", "catalog", "partial", "restart").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
                 require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
             } else if (values.get(4).equals("intent-allocation")) {

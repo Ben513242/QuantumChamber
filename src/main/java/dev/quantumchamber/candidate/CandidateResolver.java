@@ -76,11 +76,15 @@ public final class CandidateResolver {
         var lease = Objects.requireNonNull(acquire.get(), "lease");
         lease.requireValid();
         registry.resolve(source.settings(), lease);
-        var parameters = source.settings().parameters();
-        parameters.putString("OverworldPreset", "normal");
-        var target = registry.createSnapshot("quantumchamber:vanilla_normal_v1", 1, parameters, lease);
+        var profile = NewUniverseIntent.selectedProfileId(policy.policyVersion(), material);
+        var target = source.settings();
+        if (NewUniverseIntent.RANDOM_PROFILE_ID.equals(profile)) {
+            var parameters = source.settings().parameters();
+            parameters.putString("OverworldPreset", "normal");
+            target = registry.createSnapshot("quantumchamber:vanilla_normal_v1", 1, parameters, lease);
+        }
         var intent = new NewUniverseIntent(token, material, policy.policyVersion(),
-                NewUniverseIntent.selectedProfileId(policy.policyVersion(), material), 1,
+                profile, 1,
                 source.rootSeed(), source.settings(), target, policy.familyCapabilityVersion());
         lease.requireValid();
         return new QuantumCandidate.New(id, intent);

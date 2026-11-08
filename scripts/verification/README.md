@@ -528,15 +528,24 @@ W12 已驗證第二次 SEALED 的退避加倍：`INITIAL_TICKS＋6 < d ≤ 2×IN
 
 ### M6 Task12：正式玩家 random NEW 與原生鏈驗證入口
 
-`m6-universe-probe.ps1 -AllEnabled` 目前宣告五條鏈、十五個 phase：`native-seed-diagnostic`（2，仍為 DIAGNOSTIC）、`catalog-readback`（4）、`native-seed-functional`（2）、`intent-allocation`（3）、`partial-overworld`（4）。後四條為 FUNCTIONAL，各鏈使用自己的全新 owned root，不跨 root 拼接同一個 intent。這是要求集合，不代表任何尚未跑完的工作已驗收。
+`m6-universe-probe.ps1 -AllEnabled` 目前宣告七條鏈、21 個 phase：`native-seed-diagnostic`（2，仍為 DIAGNOSTIC）、`catalog-readback`（4）、`native-seed-functional`（2）、`intent-allocation`（3）、`partial-overworld`（4）、`same-seed-restart`（3）、`same-seed-amplified-restart`（3）。後六條為 FUNCTIONAL；合計 DIAGNOSTIC 2／FUNCTIONAL 19。各鏈使用自己的全新 owned root，不跨 root 拼接同一個 intent。`run-all.ps1` 的 SUMMARY 依實際 `native.phases` 各模式計數，不硬編 phase 數。
 
 正式玩家鏈請直接執行：
 
 ```powershell
 pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -Chain intent-allocation -ExpectedMode FUNCTIONAL
 pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -Chain partial-overworld -ExpectedMode FUNCTIONAL
+pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -Chain same-seed-restart -ExpectedMode FUNCTIONAL
+pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -Chain same-seed-amplified-restart -ExpectedMode FUNCTIONAL
+pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -AllEnabled
 pwsh -NoProfile -File scripts/verification/m6-universe-probe.ps1 -VerifySummary <AllEnabled-summary.json> -ExpectedHead <sha> -SelfTest
 ```
+
+Task13 的兩條 same-seed 鏈各以 canonical normal／amplified 為來源，執行 `source,new,restart` 三個獨立 JVM；都走真玩家、艙、槓桿與正式選門。玩家建築／修改位於 chunk128；原地形樣本仍在 chunk31..33，source phase 的來源九格、new phase 的兩側十八格須先通過 holder／raw entry 未生成前置。驗證範圍是固定配置與原始樣本區，保留 1440 格 block／biome、非空 structure、建築及雙向修改隔離、重啟 exact 收據；不外推任意玩家生成歷史。
+
+原生鏈僅支援 Windows。Ubuntu 使用 `m6-ci-gametest.ps1 -Platform Ubuntu -CheckUnsupportedNative` 留下具名 `UNSUPPORTED` 拒絕收據，這不是 Ubuntu 原生鏈 PASS；JUnit／GameTest 仍按各自的平台矩陣驗證。
+
+2026-11-08 本機 WIP 候選實測：base HEAD `5e9dc8fb7a2274858dc874ad517114bdf7cd014b`，`.superpowers/verification/m6-native-run-c9eb67b128a4421a87954f6b25e1ba4f.json`（SHA-256 `DAB08FAEFD918512DEDE43D2CE01CB1056969135D180BF4EA250372368F19DD4`）為 `AllEnabled` 七鏈／21 phase PASS；同摘要的 `-VerifySummary -SelfTest` 為 PASS，`negativeChecks=255`。本筆只採計本機原生鏈；GameTest、完整 `run-all`、CI 與人工驗收各自採計，歷史 FAIL 原判保留。
 
 IA 為 `intent,allocation,restart`；PO 為 `intent,catalog,partial,restart`。兩者都由真玩家、實體艙與拉桿進入正式 session／candidate batch，從該 batch 的 NEW 走正式側門選擇，沒有手工 session receipt。PO 的 `partial` 僅在正式 `ServerWorldEvents.LOAD` 同步窗口：checked EAGER、runtime MATERIALIZING、ACTIVE 空且 discovery 尚無該 U；固定一個 chunk 正式存檔、raw MCA 地形對讀與 SHA-256 manifest 完成後 halt77。超過 60 秒、窗口返回或沒有可驗的 partial storage 都是 FAIL，不能改下一 tick 重判。外層還在重啟前核原檔 hash，重啟後才驗 ACTIVE、原地形與唯一 discovery。
 

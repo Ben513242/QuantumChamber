@@ -32,6 +32,99 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CandidateResolverTest {
+    @Test void policyTwoCopiesExactSourceAndKeepsRandomDerivation() throws Exception {
+        var entropy = entropy();
+        var policy = new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"),
+                2, 2, 5, 20, 75, -1, 4096, entropy.entropyFingerprint(), SOURCE, 0);
+        try (var fixture = settingsFixture()) {
+            var registry = builtinRegistry(); var lease = new Lease(fixture.registries());
+            var resolver = new CandidateResolver(entropy, registry, () -> lease);
+            for (String preset : List.of("normal", "amplified")) for (boolean structures : new boolean[] {false, true}) {
+                var source = registry.createSnapshot("quantumchamber:vanilla_" + preset + "_v1", 1,
+                        parameters(preset, structures), lease);
+                var seen = new java.util.HashSet<String>();
+                for (int i = 0; i < 128; i++) {
+                    var candidate = resolver.resolve(key(i), policy, List.of(), () -> new SourceGenerationSnapshot(42, source));
+                    if (!(candidate instanceof QuantumCandidate.New fresh)) continue;
+                    var intent = fresh.intent();
+                    var digest = java.security.MessageDigest.getInstance("SHA-256");
+                    digest.update("quantumchamber:m6:profile-choice:v1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    digest.update(new byte[] {0, 0, 0, 2}); digest.update(intent.generationSeedMaterial().bytes());
+                    int choice = new java.math.BigInteger(1, java.util.Arrays.copyOf(digest.digest(), 8)).mod(java.math.BigInteger.TWO).intValueExact();
+                    String expected = choice == 0 ? "quantumchamber:random_vanilla_v1" : "quantumchamber:same_seed_fresh_v1";
+                    assertEquals(expected, intent.profileId()); seen.add(expected);
+                    assertEquals(2, intent.policyVersion()); assertEquals(0, intent.familyCapabilityVersion());
+                    assertEquals(source.toNbt(), intent.sourceSettingsSnapshot().toNbt());
+                    if (choice == 1) {
+                        assertEquals(42, intent.rootWorldSeed());
+                        assertEquals(source.toNbt(), intent.targetSettingsSnapshot().toNbt());
+                    } else {
+                        var old = assertInstanceOf(QuantumCandidate.New.class, resolver.resolve(key(i),
+                                m6Policy(entropy.entropyFingerprint(), -1), List.of(), () -> new SourceGenerationSnapshot(42, source)));
+                        assertEquals(old.intent().rootWorldSeed(), intent.rootWorldSeed());
+                        assertEquals(old.intent().targetSettingsSnapshot().toNbt(), intent.targetSettingsSnapshot().toNbt());
+                        assertNotEquals(42, intent.rootWorldSeed());
+                    }
+                    assertEquals(candidate, resolver.resolve(key(i), policy, List.of(), () -> new SourceGenerationSnapshot(42, source)));
+                }
+                assertEquals(2, seen.size(), "固定材料確實涵蓋 random 與 same");
+            }
+        }
+    }
+
+    @Test void policyOneNeverRechoosesSame() {
+        for (int i = 0; i < 256; i++) {
+            byte[] raw = new byte[32]; raw[0] = (byte) i;
+            assertEquals("quantumchamber:random_vanilla_v1", NewUniverseIntent.selectedProfileId(1, new CandidateBytes(raw)));
+        }
+    }
+
+    @Test void unknownSourcePresetRejectsNewOnly() throws Exception {
+        var entropy = entropy();
+        var policy = new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"),
+                2, 2, 5, 20, 75, 0, 4096, entropy.entropyFingerprint(), SOURCE, 0);
+        var resolver = new CandidateResolver(entropy, builtinRegistry(), () -> { throw new AssertionError("未知來源不得 acquire"); });
+        var pool = List.of(record(universe(1, 9), 0, true));
+        var derivation = new CandidateDerivation(entropy);
+        boolean source = false, existing = false, fresh = false;
+        for (int i = 0; i < 1000 && !(source && existing && fresh); i++) {
+            var door = key(i); int bucket = derivation.bucket(door, 2);
+            java.util.function.Supplier<SourceGenerationSnapshot> unsupported = () -> { throw new IllegalStateException("UNKNOWN_SOURCE_PRESET"); };
+            if (bucket < 5) { assertInstanceOf(QuantumCandidate.Source.class, resolver.resolve(door, policy, pool, unsupported)); source = true; }
+            else if (bucket < 25) { assertInstanceOf(QuantumCandidate.Existing.class, resolver.resolve(door, policy, pool, unsupported)); existing = true; }
+            else { assertTrue(assertThrows(IllegalStateException.class, () -> resolver.resolve(door, policy, pool, unsupported)).getMessage().contains("UNKNOWN_SOURCE_PRESET")); fresh = true; }
+        }
+        assertTrue(source && existing && fresh);
+    }
+
+    @Test void sameSeedStrictlyRejectsChangedSnapshotAndPolicyPair() throws Exception {
+        var source = structuralSnapshot("amplified", true);
+        // 獨立 SHA 選出 same 材料，不依正式 selector 決定測試預期。
+        byte[] raw = new byte[32];
+        for (int i = 0; ; i++) {
+            raw[0] = (byte) i;
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            digest.update("quantumchamber:m6:profile-choice:v1".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            digest.update(new byte[] {0,0,0,2}); digest.update(raw);
+            if ((digest.digest()[7] & 1) == 1) break;
+        }
+        var material = new CandidateBytes(raw);
+        var accepted = assertDoesNotThrow(() -> new NewUniverseIntent(bytes(), material, 2,
+                "quantumchamber:same_seed_fresh_v1", 1, Long.MIN_VALUE, source, source, 0));
+        assertEquals(Long.MIN_VALUE, accepted.rootWorldSeed());
+        for (var target : List.of(structuralSnapshot("normal", true), structuralSnapshot("amplified", false)))
+            assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, 2,
+                    "quantumchamber:same_seed_fresh_v1", 1, 42, source, target, 0));
+        var changed = source.toNbt(); var fingerprint = changed.getByteArray("OutputFingerprint"); fingerprint[0] = 1;
+        changed.putByteArray("OutputFingerprint", fingerprint);
+        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, 2,
+                "quantumchamber:same_seed_fresh_v1", 1, 42, source, GenerationSettingsSnapshot.fromNbt(changed), 0));
+        for (int version : new int[] {1,3}) assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, version,
+                "quantumchamber:same_seed_fresh_v1", 1, 42, source, source, 0));
+        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, 2,
+                "quantumchamber:random_vanilla_v1", 1, 42, structuralSnapshot("normal", true), structuralSnapshot("normal", true), 0));
+    }
+
     @TempDir Path root;
     private static final SourceFamilyRef SOURCE = new SourceFamilyRef.Vanilla(World.OVERWORLD, DimensionRole.OVERWORLD);
 
@@ -113,7 +206,7 @@ class CandidateResolverTest {
     }
 
     @Test void m6PolicyRejectsFutureVersionsAndWrongCapability() {
-        for (int version : new int[] {0, 2, 3, 4}) assertThrows(IllegalArgumentException.class,
+        for (int version : new int[] {0, 3, 4}) assertThrows(IllegalArgumentException.class,
                 () -> new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"), version, 2,
                         5, 20, 75, -1, 4096, bytes(), SOURCE, 0));
         for (int capability : new int[] {-1, 1, 2}) assertThrows(IllegalArgumentException.class,
@@ -140,7 +233,7 @@ class CandidateResolverTest {
                 "quantumchamber:random_vanilla_v1", 1, 42L, normal, amplified, 0));
         assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 1,
                 "quantumchamber:random_vanilla_v1", 1, 42L, normal, structuralSnapshot("normal", true), 0));
-        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 2,
+        assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 3,
                 "quantumchamber:random_vanilla_v1", 1, 42L, normal, normal, 0));
         assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), bytes(), 1,
                 "quantumchamber:random_vanilla_v1", 1, 42L, normal, normal, 1));
