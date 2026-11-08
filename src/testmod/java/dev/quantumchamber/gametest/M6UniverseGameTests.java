@@ -18,15 +18,16 @@ public final class M6UniverseGameTests implements FabricGameTest {
         context.complete();
     }
 
+    /** 僅直接呼叫 selector 的控制組；正式玩家入場另由 Windows 拉桿測試及 canonical 原生鏈驗證。 */
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_same_seed", tickLimit=1200)
-    public void formal_entry_freezes_policy_two_and_source_snapshot(TestContext context) throws Exception {
+    public void selector_freezes_policy_two_for_new_session(TestContext context) throws Exception {
         var server = context.getWorld().getServer();
         var root = server.getSavePath(net.minecraft.util.WorldSavePath.ROOT);
         var entropy = dev.quantumchamber.candidate.CandidateEntropyState.loadOrCreate(root, false);
         var policy = dev.quantumchamber.candidate.M6CandidatePolicySelector.forNewSession(server).freeze(-1,
                 entropy.entropyFingerprint(), new dev.quantumchamber.candidate.SourceFamilyRef.Vanilla(
                         net.minecraft.world.World.OVERWORLD, dev.quantumchamber.universe.DimensionRole.OVERWORLD));
-        context.assertEquals(2, policy.policyVersion(), "formalEntryFreezesPolicyTwoAndSourceSnapshot");
+        context.assertEquals(2, policy.policyVersion(), "selectorFreezesPolicyTwoForNewSession");
         context.assertEquals(0, policy.familyCapabilityVersion(), "新 session 固定 family0");
         context.complete();
     }
