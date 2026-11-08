@@ -195,6 +195,15 @@ source seed 與**來源**各 role settings 在候選生成時按 exact source fa
 
 **Task11 外部 mod 直接安裝 owner 的已知限制（2026-11-06）**：本模組正式 factory 只在 exact 建構 context 安裝 `WorldGenerationOwnerAccess` 的 `GenerationOwner`；原版與本模組正常路徑不會對 canonical world 安裝它。若**其他 mod** 在原本為 null 的 public setter 先造出並裝入同 server／world key／live instance 的偽 owner，現行後續 exact 檢查可能採到錯誤 frozen seed／結構旗標。Task11 不為此 mod-only 碰撞新增事前 setter 攔截或專用 runtime oracle；依使用者 2026-11-05「只有其他 mod 才觸發者先推主線」裁示，列 Task8-H H6 於 Task21 後 triage。這不表示此殘餘已受保護，也不放寬本模組／原版可達的 exact owner 與世界表並行驗收。
 
+### 4.1 Task 13／Task 21 same-seed 驗收分工（2026-11-08 使用者裁示；優先於本節與 plan 較早的 task 歸屬文字）
+
+使用者原話：「U→U 全量比較移 Task21；T13 保留 canonical→U 真玩家鏈與雙平台 owner／設定測試（建議）」。`SAME_SEED_FRESH_V1` 的同 seed、同已驗設定、原始 terrain／biome／structure 相符、新 UUID／空 storage、來源玩家建築不存在與後續修改互不影響之產品契約仍依上表；這次只改驗收責任與執行時點，沒有把全量比較的既有 FAIL 改判或縮成 base terrain。
+
+- **Task 13**：保留 policy2 resolver／codec／正式入口的具名 RED、嚴格選擇／持久化、新 session 的 `FamilyCapabilityVersion=0` 與舊 policy1 不升版。Windows 既有 `m6-native` job 的 canonical normal 與 canonical amplified 兩條獨立真玩家鏈，各自從正式來源艙的 checked `MEASURED+SELECTED` 走 source→new→restart；在同 seed、相同生成成熟度及相同 datapack／mod 配置下，完整驗來源與目標的固定 1440 方塊及 biome、非空正例 structure、來源建築不在新 U、雙向修改隔離、重啟同一權威。Ubuntu `build` 與 Windows `windows-native` 的 `m6_universe_same_seed` GameTest 各自具名驗 normal／amplified 的 direct catalog fixture：來源與目標的 exact frozen seed、provider id／version、preset、Parameters、fingerprint，以及實際 noise／biome／structure owner 與 frozen 設定一致；此雙平台測試不在 Task 13 對 direct catalog U→U 斷言全量 terrain／biome 相同。拆分後須以 testmod-only 錯 frozen seed／owner 負控具名殺 `SAME_NATIVE_CONSUMER_EXACT` 並逐位元還原，確保 owner-only oracle 仍有效。正式入場的 policy2 凍結、舊 policy1 與錯配拒絕仍須由具名測試守住；原 U→U c7d/e1d FAIL 不充當 Task 13 的 RED。
+- **Task 21**：用既有 direct catalog U→U helper，恢復來源與目標同樣本、同成熟度、同 datapack／mod 配置下的全量 exact 比較：固定 1440 方塊與 biome、非空正例 structure、來源玩家建築不存在、雙向修改互不影響。原 `c7d973d...`／`e1d1826...` 的 seagrass／water FAIL 與 raw MCA、階段收據保持原判，作為本項尚未通過的起點；新 RED、GREEN 與 mutation 須以新 root 證明，不以 Task 13 canonical→U 的 PASS 抵銷。
+
+Task 21 的 U→U 是 **testmod 直接 catalog 建立的測試控制**，不是正式 U-origin 玩家入場。§6 延後動態 U 內真正 Origin 的 activation／registry；本裁示與 Task 21 均不開啟該玩法。Task 13／21 的實作白名單、未發現測試方法的保留方式與各平台 gate 以 plan 相應最新補充為準。
+
 ## 5. 完整 family 與 routing
 
 身份 `(Universe UUID, DimensionRole)`，role 恰為 `OVERWORLD|NETHER|END`；keys 為 `quantumchamber:universe/<uuid>/overworld|the_nether|the_end`，各有獨立 region／entities／POI storage、持久化、ticket 與 lifecycle。End dragon fight、gateway、結束後狀態與 End portal 資料由同 U:END 所有；不得共用 canonical End 或另一 U 的持久 state。原版 1.21 `ServerWorld.<init>` 會讀全域 `SaveProperties.getDragonFight()`，`saveLevel()` 會寫回全域 `setDragonFight()`；custom End 必須把兩端導向同 U 的獨立 persistent owner，canonical End 無 context 時仍原版。原版傳入非 null `RandomSequencesState` 會直接共用；M6 新 U 各 role 應交由自己的 persistent state manager 建立／存回，禁止傳 canonical instance；schema1 舊 Overworld 行為另守相容。世界共用 global player inventory 等既有玩家資料政策照舊，但位置／目前 U 身分與 respawn 綁定精確 role。runtime index 必須雙向驗 exact key→U/role→同一活 world instance，unknown／stale key fail closed。
