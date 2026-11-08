@@ -715,6 +715,8 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task 13：policy2 的 same-seed fresh
 
+**Task13 原生鏈既有檔接線補充（2026-11-08；待窄審採用）：** 原 Files 與本節較早補充另加既有 `scripts/verification/run-all.ps1`、`scripts/verification/README.md`。Task13 將在既有 `m6-universe-probe.ps1 -AllEnabled` manifest 增 `same-seed-restart`；`run-all.ps1` 的外層 SUMMARY 目前硬寫 `m6native=DIAGNOSTIC:2,FUNCTIONAL:13`，新鏈後若不隨實際 manifest／summary 更新會輸出錯誤的驗證數，故只允窄改這一輸出與必要的同鏈 receipt 對照，不另開新驗證框架。README 目前也寫五鏈十五 phase，須按新鏈的**實測** phase／命令／平台矩陣更新，不預填假數。既有 `.github/workflows/build.yml` 已在上方白名單，可窄補新原生鏈必須上傳的 receipt 路徑與 M5 先失敗時 M6 JUnit／GameTest 仍執行的條件；不新增 workflow job、驗證腳本、外部 JVM observer 或 production 注入點。若程式實作證明還需其它既有檔，先把精確路徑／理由記回 plan 經照常審查，不私改。
+
 **2026-11-08 稍後最新順序裁示（優先於下方較早「先做 T13」文字）：** 使用者判定 Task12 卡在測試判定沿用平地假設，允許只改測試修正 PREPARE／wire／partial，不改 production，舊 FAIL 原件保留；Windows 30 分鐘無具名結果逾時列 `UNKNOWN`，自本裁示後再出現一次才查，不擋三項修正。流程固定：**本 Task13 plan 補充先完成一次獨立窄審、C/I0 採用 → Task12 三項測試判定寫一份合併設計與一次獨立窄審、C/I0 即實作並收尾 → 才開始 Task13 程式實作**。Task12 不再加觀測診斷；原「四格預熱」候選 I1/I2 未採用，PREPARE 不預熱。下方 K1–K3 是 Task12 未結時的歷史失敗指紋與 T13 CI 判定上限，**不是** Task12 修正後可容許的新 FAIL，也不改判任何舊根；若 Task12 收尾 gate 未過，先處理該根，不因早期排序例外逕行 T13。
 
 **使用者 2026-11-08「T12 未結期間 CI 判定」三點，隨本 Task13 補充同審採用：**
