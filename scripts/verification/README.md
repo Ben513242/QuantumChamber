@@ -30,6 +30,8 @@ M6 GameTest 用獨立 fresh `run/gametest-m6/world`，原世界可恢復 move／
 
 CI 使用該 checkout wrapper／Gradle 8.8／Java 21，經 `m6-ci-gametest.ps1 -Platform Windows|Ubuntu` 執行 JUnit、legacy、M6，再核對其實跑 run 的 exact 集合、pace 與內外 JAR 隔離。兩平台 M6 step 初始 15 分鐘、oracle 5 分鐘，原 job 上限 90 分鐘。Windows 原生 checkpoint／owned-process native chains 在 Ubuntu 不支援，`-CheckUnsupportedNative` 只在實際 Ubuntu 保存 `UNSUPPORTED` receipt；Windows 誤用或平台偽裝會被拒絕。
 
+launched 模式先嚴核當次 M6＋legacy 的 exact 集合、XML／runtime log freshness、pace、JAR 與 HEAD，在既有 OutputRoot 寫 `m6-own-summary.json`（`scopeKind=own-scope-only`，含兩 scope 與四份輸入 hash）。此後原 default／legacy／M5 完整檢查仍執行，全部通過才寫終局 `m6-summary.json`；default／M5 缺席、錯 scope 或 skipped 時，own 收據可留，但 step／job 仍 FAIL，不能把 own PASS 當成終局通過。`VerifyOnly` 不產生 own 收據。既有 `-SelfTest` 另以隔離 synthetic fixture 核此先後與 legacy 過期拒絕，不啟 Minecraft，也不以 fixture 收據冒實際 CI 執行。
+
 Windows CI 另以 `m6-ci-main-only.ps1 -Ci` 在獨立7分鐘step執行既有Main runner／三層oracle，保存同SHA的main-ci-receipt與原件hash並always-upload；既有oracle step必需驗此receipt。local run-all經同wrapper仍只跑一次Main並保留原world可恢復move／restore，Ubuntu不加Main-only。Windows預留改8分鐘，job90與M6step15不變。
 
 `ci-rule-check.ps1` 可加 `-M6GameTestXml`、`-M6RuntimeLog`、`-M6RuntimeRoot`、`-M6Artifacts`，複製到獨立 fixture 後執行 workflow 的 M6 oracle 原文。Windows另需 `-MainReceipt`，可用 `-MainMutation missing-receipt|wrong-head|gametest|testmod|stop|restore|missing-evidence`；每個新fixture改語意後重算外hash，必須以具名原因拒絕，不啟Minecraft。這是本機規則驗證，GitHub CI 成功另以遠端 run／exact SHA 證明。M6 native job／chains 的正式啟用屬 Task 12，此 task 未提前宣稱 native M6 通過。
@@ -616,7 +618,7 @@ schema5 一旦可能已 atomic move、同次 readback 卻未確認，該 instanc
 
 ## Task12 normal 選門／故障回歸 scope
 
-`pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M4NormalGameTest -Label normal` 執行13個 `m4_normal_*` batch；`-Batch m4_normal_m4_select_first_wins` 可保留單案focused證據。它們使用原測試方法與真玩家／故障路徑，只驗新 M6 policy1/family0 的回歸，不宣稱歷史 M4 schema1 活選門。
+`pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M4NormalGameTest -Label normal` 執行13個 `m4_normal_*` batch；`-Batch m4_normal_m4_select_first_wins` 可保留單案focused證據。它們使用原測試方法與真玩家／故障路徑，只驗當次新 session 的 M6 policy2/family0 回歸；舊凍結 policy1 Context 讀回不升版，不宣稱歷史 M4 schema1 活選門。
 
 `gameTestM4Normal` 以 exact `quantumchamber.gametest.m4NormalOnly=true` 在既有 testmod Redirect 選 vanilla normal holder，獨立 `run/gametest-m4-normal`／`build/gametest-m4-normal-results.xml`；default以exact `defaultNormal=true`、M5以 `m5Only=true`＋`m5Normal=true`亦使用normal，legacy、M6仍flat，scope flags互斥。新run沿用 Move-Fresh／Restore-Root、當次XML exact集合、M4 boundary及逐案收據；`run-all.ps1` 的default／legacy／normal收據分流核對。新session與來源preset須通過runtime斷言，不能以flag或名稱冒稱normal。
 

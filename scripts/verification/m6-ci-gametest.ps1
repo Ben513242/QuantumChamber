@@ -34,6 +34,11 @@ function Assert-M6FreshWorld([string]$World){
     if($children.Count){throw "M6_FRESH_ROOT_REQUIRED：世界必須為空或不存在：$full"}
     return $full
 }
+function Assert-M6OutputFresh([string]$Path){
+    try{$children=@(Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop)}
+    catch{throw "M6_OUTPUT_NOT_FRESH：無法證明輸出為空：$Path；$($_.Exception.Message)"}
+    if($children.Count){throw "M6_OUTPUT_NOT_FRESH：輸出已有子項，請使用新 root：$Path"}
+}
 if(-not $OutputRoot){$OutputRoot=Join-Path $repo 'build/m6-verification'}
 $OutputRoot=Assert-M6DirectoryPath $OutputRoot
 git -C $repo check-ignore -q -- ([IO.Path]::GetRelativePath($repo,$OutputRoot).Replace('\','/')+'/x')
@@ -86,7 +91,69 @@ function Assert-M6Runtime([string]$Log,[string]$Root){
     if($pace.waited -le 0 -or $pace.tps -gt 100.0 -or $pace.minTickMs -ne 10){throw 'M6_PACE_MISMATCH：必須 waited>0、tps<=100.0、minTickMs=10'}
     return $pace
 }
+function Complete-M6Verification {
+    param([hashtable]$Inputs,[string]$OutputRoot,[string]$SourceRoot,[string]$ExpectedHead,
+          [string]$Platform,[string]$ActualPlatform,[string]$Native,[bool]$Launched,
+          [DateTime]$LaunchStart,[string[]]$Artifacts=@(),[string[]]$OnlyBatches=@())
+    $gate=$OutputRoot
+    if($Launched){
+        try{$existing=@(Get-ChildItem -LiteralPath $OutputRoot -Force -ErrorAction Stop | Where-Object {$_.Name -cin @('scope.json','m6-own-summary.json','m6-summary.json')})}
+        catch{throw "M6_OUTPUT_NOT_FRESH：無法確認既有收據：$($_.Exception.Message)"}
+        if($existing.Count){throw 'M6_OUTPUT_NOT_FRESH：shared tail 拒絕覆寫既有 scope／own／full 收據'}
+    }
+    if(-not $Inputs.m6Xml -or -not $Inputs.m6Log -or -not $Inputs.m6Run){throw 'M6_ORACLE_INPUT_REQUIRED：必須指定本次 XML、完整日誌與 run root'}
+    if($Launched){
+        foreach($path in @($Inputs.m6Xml,$Inputs.m6Log)){
+            if(-not(Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).LastWriteTimeUtc -lt $LaunchStart){throw 'M6_SCOPE_MISMATCH：M6 XML／日誌不是本次 invocation'}
+        }
+        if($Artifacts.Count -ne 2){throw 'M6_TESTMOD_LEAK：必須核對 release 與 sources 兩個 JAR'}
+    }
+    Assert-Scope $Inputs.m6Xml 'm6' $SourceRoot $OnlyBatches | Out-Null
+    $pace=Assert-M6Runtime $Inputs.m6Log $Inputs.m6Run
+    $jars=@(foreach($artifact in $Artifacts){Assert-M6Artifact $artifact})
+    $scopes=[ordered]@{m6=(Get-Content -LiteralPath (Join-Path $OutputRoot 'scope.json') -Raw | ConvertFrom-Json)}
+    if($Launched){
+        foreach($path in @($Inputs.legacyXml,$Inputs.legacyLog)){
+            if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw 'M6_LEGACY_INPUT_MISSING：本次 legacy XML／日誌缺席'}
+            if((Get-Item -LiteralPath $path).LastWriteTimeUtc -lt $LaunchStart){throw 'M6_LEGACY_NOT_FRESH：legacy XML／日誌早於本次 invocation'}
+        }
+        $gate=Join-Path $OutputRoot 'own-legacy';New-Item -ItemType Directory -Path $gate | Out-Null
+        Assert-Scope $Inputs.legacyXml 'legacy' $SourceRoot | Out-Null
+        $legacy=Get-Content -LiteralPath (Join-Path $gate 'scope.json') -Raw | ConvertFrom-Json
+        $gate=$OutputRoot
+        if((git -C $repo rev-parse HEAD).Trim() -cne $ExpectedHead){throw 'M6_HEAD_CHANGED：own scope 寫入前 HEAD 改變'}
+        $ownInputs=[ordered]@{}
+        foreach($name in @('m6Xml','m6Log','legacyXml','legacyLog')){
+            $ownInputs[$name]=[ordered]@{path=$Inputs[$name];sha256=(Get-FileHash -LiteralPath $Inputs[$name]).Hash}
+        }
+        Save-Json (Join-Path $OutputRoot 'm6-own-summary.json') ([ordered]@{
+            status='PASS';scopeKind='own-scope-only';launched=$true;head=$ExpectedHead;platform=$Platform;actualPlatform=$ActualPlatform
+            launchStartUtc=$LaunchStart.ToString('o');scope=[ordered]@{m6=$scopes.m6;legacy=$legacy};inputs=$ownInputs;pacing=$pace;artifacts=$jars
+            meaning='僅本次 M6 與 legacy 的 exact scope／freshness／runtime／JAR；default、M5 及整個 step/job 另判'
+        })
+        # 原四 scope 終局門檻保留；own 收據不能使缺席、錯 scope 或 skipped 變成 PASS。
+        foreach($row in @('default:gametest-results.xml','legacy:gametest-legacy-results.xml','m5:gametest-m5-results.xml')){
+            $parts=$row.Split(':');$gate=Join-Path $OutputRoot $parts[0];New-Item -ItemType Directory -Path $gate | Out-Null
+            Assert-Scope $Inputs[$parts[0]+'Xml'] $parts[0] $SourceRoot | Out-Null
+            $scopes[$parts[0]]=Get-Content -LiteralPath (Join-Path $gate 'scope.json') -Raw | ConvertFrom-Json
+        }
+        $gate=$OutputRoot
+    }
+    if((git -C $repo rev-parse HEAD).Trim() -cne $ExpectedHead){throw 'M6_HEAD_CHANGED：執行期間 HEAD 改變'}
+    Save-Json (Join-Path $OutputRoot 'm6-summary.json') ([ordered]@{status='PASS';head=$ExpectedHead;platform=$Platform;actualPlatform=$ActualPlatform;remoteCi=($env:GITHUB_ACTIONS -ceq 'true');launched=$Launched;runtimeScope='testmod-present';scope=$scopes;pacing=$pace;boundaryReceipts=0;m5SuiteEnds=0;xmlSha256=(Get-FileHash -LiteralPath $Inputs.m6Xml).Hash;logSha256=(Get-FileHash -LiteralPath $Inputs.m6Log).Hash;artifacts=$jars;native=$Native})
+    Write-Output "M6_SUMMARY PASS HEAD=$ExpectedHead waited=$($pace.waited) tps=$($pace.tps) output=$OutputRoot"
+}
+
 function Invoke-M6OracleSelfTest {
+    # AST 核正式 launched 第一個 callsite；刪掉 launcher 呼叫也必須被自測殺，不靠重複 helper 測試冒接線證據。
+    $entry=[Management.Automation.Language.Parser]::ParseFile($PSCommandPath,[ref]$null,[ref]$null)
+    $launches=@($entry.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.IfStatementAst] -and $_.Clauses[0].Item1.Extent.Text.Trim() -ceq '$launched'})
+    if($launches.Count -ne 1){throw 'M6_OUTPUT_FRESH_WIRING：launched 分支不唯一'}
+    $first=$launches[0].Clauses[0].Item2.Statements[0]
+    if($first -isnot [Management.Automation.Language.PipelineAst] -or $first.PipelineElements.Count -ne 1 -or $first.PipelineElements[0].GetCommandName() -cne 'Assert-M6OutputFresh' -or
+            $first.PipelineElements[0].CommandElements.Count -ne 2 -or $first.PipelineElements[0].CommandElements[1].Extent.Text -cne '$OutputRoot'){
+        throw 'M6_OUTPUT_FRESH_WIRING：正式 launched 必須先對 exact OutputRoot 守門'
+    }
     # 四個 scope 的 literal fixture；預期識別字不從待測 scanner 反算。
     $fixture=Join-Path $OutputRoot 'fixtures';New-Item -ItemType Directory -Path $fixture | Out-Null
     $source=Join-Path $fixture 'source';New-Item -ItemType Directory -Path $source | Out-Null
@@ -199,7 +266,7 @@ function Invoke-M6OracleSelfTest {
     Reject 'output-reject-dangling-ancestor' 'M6_OUTPUT_UNSAFE' {Assert-M6DirectoryPath (Join-Path $dangling 'child')}
     $ioPath=Join-Path $paths 'controlled-io-error'
     function Get-Item {
-        param([string]$LiteralPath,[switch]$Force,[string]$ErrorAction)
+        param([string]$LiteralPath,[switch]$Force,[string]$ErrorAction='Stop')
         if($LiteralPath -ceq $ioPath){throw [IO.IOException]::new('INJECTED_M6_PATH_IO_FAILURE')}
         Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force -ErrorAction $ErrorAction
     }
@@ -213,6 +280,128 @@ function Invoke-M6OracleSelfTest {
     Reject 'output-reject-nonignored-before-first-write' 'M6_OUTPUT_NOT_IGNORED' {& $PSCommandPath -Platform $Platform -VerifyOnly -OutputRoot $nonignored}
     if(Test-Path -LiteralPath $nonignored){throw "M6_ORACLE_SELFTEST_FAILED：非ignored輸出先被建立：$nonignored"}
     $checks.Add([ordered]@{name='nonignored-output-remains-absent';passed=$true;path=$nonignored;observedExists=$false})
+    # 只在既有 fixture owner 內模擬 post-launch 輸入；共用正式尾段，不啟 Java、不碰真 build/run。
+    $sourcesJar=Join-Path $fixture 'allowed-sources.jar';$zip=[IO.Compression.ZipFile]::Open($sourcesJar,[IO.Compression.ZipArchiveMode]::Create)
+    try{[void]$zip.CreateEntry('dev/quantumchamber/compat/ModPresenceProbe.java')}finally{$zip.Dispose()}
+    $ownCases=@(
+        @{name='positive';own=$true;full=$true;code=''},
+        @{name='missing-default';own=$true;full=$false;code='default.xml'},
+        @{name='missing-m5';own=$true;full=$false;code='m5.xml'},
+        @{name='missing-m6';own=$false;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='wrong-m6';own=$false;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='old-m6-xml';own=$false;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='old-m6-log';own=$false;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='missing-legacy-xml';own=$false;full=$false;code='M6_LEGACY_INPUT_MISSING'},
+        @{name='missing-legacy-log';own=$false;full=$false;code='M6_LEGACY_INPUT_MISSING'},
+        @{name='wrong-legacy';own=$false;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='old-legacy-xml';own=$false;full=$false;code='M6_LEGACY_NOT_FRESH'},
+        @{name='old-legacy-log';own=$false;full=$false;code='M6_LEGACY_NOT_FRESH'},
+        @{name='wrong-default';own=$true;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='skipped-default';own=$true;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='wrong-m5';own=$true;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='skipped-m5';own=$true;full=$false;code='M6_SCOPE_MISMATCH'},
+        @{name='bad-pace';own=$false;full=$false;code='M6_PACE_MISMATCH'},
+        @{name='bad-jar';own=$false;full=$false;code='M6_TESTMOD_LEAK'},
+        @{name='bad-head';own=$false;full=$false;code='M6_HEAD_CHANGED'}
+    )
+    foreach($case in $ownCases){
+        $caseRoot=Join-Path $fixture ('own-scope/'+$case.name);$inputRoot=Join-Path $caseRoot 'inputs';$output=Join-Path $caseRoot 'output'
+        New-Item -ItemType Directory -Path $inputRoot,$output,(Join-Path $inputRoot 'run') -Force | Out-Null
+        if($case.name -ceq 'positive'){
+            'SYNTHETIC current-launch log' | Set-Content -LiteralPath (Join-Path $output 'gradle.log')
+            '{}' | Set-Content -LiteralPath (Join-Path $output 'execution.json')
+            New-Item -ItemType Directory -Path (Join-Path $output 'originals') | Out-Null
+        }
+        $files=@{m6Xml=(Join-Path $inputRoot 'm6.xml');legacyXml=(Join-Path $inputRoot 'legacy.xml');defaultXml=(Join-Path $inputRoot 'default.xml');m5Xml=(Join-Path $inputRoot 'm5.xml');m6Log=(Join-Path $inputRoot 'm6.log');legacyLog=(Join-Path $inputRoot 'legacy.log');m6Run=(Join-Path $inputRoot 'run')}
+        $start=[DateTime]::UtcNow
+        $omit=switch($case.name){'missing-default'{'default'};'missing-m5'{'m5'};'missing-m6'{'m6'};'missing-legacy-xml'{'legacy'};default{''}}
+        foreach($scope in @('default','legacy','m5','m6')){
+            if($scope -ceq $omit){continue}
+            $names=switch($scope){'default'{@('default_case')};'legacy'{@('legacy_case')};'m5'{@('m5_case')};'m6'{@('m6_first','m6_second')}}
+            Xml-Fixture $names $files[$scope+'Xml']
+        }
+        Set-Content -LiteralPath $files.m6Log -Value $valid -Encoding utf8
+        if($case.name -cne 'missing-legacy-log'){Set-Content -LiteralPath $files.legacyLog -Value 'SYNTHETIC legacy fixture; runtimeLaunched=false' -Encoding utf8}
+        $caseArtifacts=@($okJar,$sourcesJar);$pin=$head
+        switch($case.name){
+            'wrong-m6' {Xml-Fixture @('default_case') $files.m6Xml}
+            'wrong-legacy' {Xml-Fixture @('m6_first') $files.legacyXml}
+            'wrong-default' {Xml-Fixture @('m6_first') $files.defaultXml}
+            'wrong-m5' {Xml-Fixture @('m6_first') $files.m5Xml}
+            'skipped-default' {[xml]$doc=Get-Content -LiteralPath $files.defaultXml;[void]$doc.SelectSingleNode('//testcase').AppendChild($doc.CreateElement('skipped'));$doc.Save($files.defaultXml)}
+            'skipped-m5' {[xml]$doc=Get-Content -LiteralPath $files.m5Xml;[void]$doc.SelectSingleNode('//testcase').AppendChild($doc.CreateElement('skipped'));$doc.Save($files.m5Xml)}
+            'old-m6-xml' {(Get-Item -LiteralPath $files.m6Xml).LastWriteTimeUtc=$start.AddMinutes(-1)}
+            'old-m6-log' {(Get-Item -LiteralPath $files.m6Log).LastWriteTimeUtc=$start.AddMinutes(-1)}
+            'old-legacy-xml' {(Get-Item -LiteralPath $files.legacyXml).LastWriteTimeUtc=$start.AddMinutes(-1)}
+            'old-legacy-log' {(Get-Item -LiteralPath $files.legacyLog).LastWriteTimeUtc=$start.AddMinutes(-1)}
+            'bad-pace' {Set-Content -LiteralPath $files.m6Log -Value $valid.Replace('minTickMs=10','minTickMs=0') -Encoding utf8}
+            'bad-jar' {$caseArtifacts=@($okJar,$jar)}
+            'bad-head' {$pin='0'*40}
+        }
+        $manifest=@(foreach($path in @($files.Values | Where-Object {$_ -cne $files.m6Run})+$caseArtifacts){
+            if(Test-Path -LiteralPath $path -PathType Leaf){$item=Get-Item -LiteralPath $path;[ordered]@{path=$path;exists=$true;sha256=(Get-FileHash -LiteralPath $path).Hash;lastWriteTimeUtc=$item.LastWriteTimeUtc.ToString('o')}}
+            else{[ordered]@{path=$path;exists=$false}}
+        })
+        $inputManifest=Join-Path $caseRoot 'input-manifest.json'
+        Save-Json $inputManifest ([ordered]@{fixture=$true;minecraftLaunched=$false;launchStart=$start.ToString('o');expectedHead=$pin;inputs=$manifest})
+        $failure=$null
+        try{Complete-M6Verification -Inputs $files -OutputRoot $output -SourceRoot $source -ExpectedHead $pin -Platform $Platform -ActualPlatform $Platform -Native 'NOT_REQUESTED' -Launched $true -LaunchStart $start -Artifacts $caseArtifacts | Out-Null}
+        catch{$failure=$_.Exception.Message}
+        $ownPath=Join-Path $output 'm6-own-summary.json';$fullPath=Join-Path $output 'm6-summary.json'
+        $own=Test-Path -LiteralPath $ownPath;$full=Test-Path -LiteralPath $fullPath
+        if($own -ne $case.own -or $full -ne $case.full -or ($case.code -and (-not $failure -or -not $failure.Contains($case.code))) -or (-not $case.code -and $failure)){
+            throw "M6_OWN_SCOPE_SELFTEST_FAILED：$($case.name) own=$own full=$full error=$failure"
+        }
+        if($own){
+            $receipt=Get-Content -LiteralPath $ownPath -Raw | ConvertFrom-Json
+            if($receipt.status -cne 'PASS' -or $receipt.scopeKind -cne 'own-scope-only' -or -not $receipt.launched -or $receipt.head -cne $head -or $receipt.scope.m6.status -cne 'PASS' -or $receipt.scope.legacy.status -cne 'PASS' -or @($receipt.scope.PSObject.Properties).Count -ne 2 -or @($receipt.artifacts).Count -ne 2){throw 'M6_OWN_SCOPE_SELFTEST_FAILED：own receipt邊界不符'}
+            foreach($name in @('m6Xml','m6Log','legacyXml','legacyLog')){if($receipt.inputs.$name.sha256 -cne (Get-FileHash -LiteralPath $files[$name]).Hash){throw 'M6_OWN_SCOPE_SELFTEST_FAILED：own input hash不符'}}
+        }
+        $result=[ordered]@{name=('own-scope-'+$case.name);passed=$true;fixture=$true;minecraftLaunched=$false;validationStatus=$(if($failure){'FAIL'}else{'PASS'});ownSummary=$own;fullSummary=$full;error=$failure;inputManifest=$inputManifest;inputManifestSha256=(Get-FileHash -LiteralPath $inputManifest).Hash}
+        Save-Json (Join-Path $caseRoot 'result.json') $result;$checks.Add($result)
+        Write-Output "M6_OWN_SCOPE_FIXTURE PASS name=$($case.name) validation=$($result.validationStatus) own=$own full=$full"
+    }
+    $emptyOutput=Join-Path $fixture 'empty-output';New-Item -ItemType Directory -Path $emptyOutput | Out-Null
+    Assert-M6OutputFresh $emptyOutput
+    $checks.Add([ordered]@{name='fresh-output-empty';passed=$true;launcherAstWiring=$true;minecraftLaunched=$false})
+    $reuseOutput=Join-Path $fixture 'own-scope/positive/output'
+    $beforeReuse=[ordered]@{}
+    foreach($name in @('scope.json','m6-own-summary.json','m6-summary.json')){$beforeReuse[$name]=(Get-FileHash -LiteralPath (Join-Path $reuseOutput $name)).Hash}
+    Reject 'launcher-output-reuse' 'M6_OUTPUT_NOT_FRESH' {Assert-M6OutputFresh $reuseOutput}
+    $retryRoot=Join-Path $fixture 'retry-inputs';New-Item -ItemType Directory -Path $retryRoot,(Join-Path $retryRoot 'run') -Force | Out-Null
+    $retryStart=[DateTime]::UtcNow
+    $retry=@{m6Xml=(Join-Path $retryRoot 'm6.xml');legacyXml=(Join-Path $retryRoot 'legacy.xml');m6Log=(Join-Path $retryRoot 'm6.log');legacyLog=(Join-Path $retryRoot 'legacy.log');m6Run=(Join-Path $retryRoot 'run');defaultXml=(Join-Path $retryRoot 'missing-default.xml');m5Xml=(Join-Path $retryRoot 'missing-m5.xml')}
+    Xml-Fixture @('m6_first','m6_second') $retry.m6Xml;Xml-Fixture @('legacy_case') $retry.legacyXml
+    Set-Content -LiteralPath $retry.m6Log -Value $valid -Encoding utf8;Set-Content -LiteralPath $retry.legacyLog -Value 'SYNTHETIC retry; minecraftLaunched=false' -Encoding utf8
+    Reject 'shared-tail-output-reuse' 'M6_OUTPUT_NOT_FRESH' {
+        Complete-M6Verification -Inputs $retry -OutputRoot $reuseOutput -SourceRoot $source -ExpectedHead $head -Platform $Platform -ActualPlatform $Platform -Native 'NOT_REQUESTED' -Launched $true -LaunchStart $retryStart -Artifacts @($okJar,$sourcesJar)
+    }
+    foreach($name in $beforeReuse.Keys){if((Get-FileHash -LiteralPath (Join-Path $reuseOutput $name)).Hash -cne $beforeReuse[$name]){throw 'M6_ORACLE_SELFTEST_FAILED：重用拒絕改寫舊收據'}}
+    $checks.Add([ordered]@{name='reused-receipts-byte-preserved';passed=$true;oldHashes=$beforeReuse;output=$reuseOutput;minecraftLaunched=$false})
+    foreach($name in @('scope.json','m6-own-summary.json','m6-summary.json')){
+        $receiptRoot=Join-Path $fixture ('existing-'+$name);New-Item -ItemType Directory -Path $receiptRoot | Out-Null
+        $receiptPath=Join-Path $receiptRoot $name;'retained receipt fixture' | Set-Content -LiteralPath $receiptPath
+        $retainedHash=(Get-FileHash -LiteralPath $receiptPath).Hash
+        Reject ('receipt-reuse-'+$name) 'M6_OUTPUT_NOT_FRESH' {
+            Complete-M6Verification -Inputs $retry -OutputRoot $receiptRoot -SourceRoot $source -ExpectedHead $head -Platform $Platform -ActualPlatform $Platform -Native 'NOT_REQUESTED' -Launched $true -LaunchStart $retryStart -Artifacts @($okJar,$sourcesJar)
+        }
+        if((Get-FileHash -LiteralPath $receiptPath).Hash -cne $retainedHash){throw 'M6_ORACLE_SELFTEST_FAILED：既有收據被覆寫'}
+    }
+    $hidden=Join-Path $emptyOutput '.retained';'retained' | Set-Content -LiteralPath $hidden
+    if($IsWindows){[IO.File]::SetAttributes($hidden,[IO.FileAttributes]::Hidden)}
+    Reject 'hidden-output-not-fresh' 'M6_OUTPUT_NOT_FRESH' {Assert-M6OutputFresh $emptyOutput}
+    & {
+        function Get-ChildItem {param([string]$LiteralPath,[switch]$Force,[string]$ErrorAction) throw [IO.IOException]::new('INJECTED_OUTPUT_ENUMERATION_FAILURE')}
+        Reject 'output-enumeration-fails-closed' 'M6_OUTPUT_NOT_FRESH' {Assert-M6OutputFresh $emptyOutput}
+    }
+    $verifyOutput=Join-Path $fixture 'verify-existing';New-Item -ItemType Directory -Path $verifyOutput | Out-Null
+    'prior verify fixture' | Set-Content -LiteralPath (Join-Path $verifyOutput 'm6-summary.json')
+    Complete-M6Verification -Inputs $retry -OutputRoot $verifyOutput -SourceRoot $source -ExpectedHead $head -Platform $Platform -ActualPlatform $Platform -Native 'NOT_REQUESTED' -Launched $false -LaunchStart ([DateTime]::MinValue) -Artifacts @($okJar,$sourcesJar) | Out-Null
+    $checks.Add([ordered]@{name='verify-only-not-blocked-by-output-reuse';passed=$true;minecraftLaunched=$false})
+    $unsupportedOutput=Join-Path $fixture 'unsupported-existing';New-Item -ItemType Directory -Path $unsupportedOutput | Out-Null
+    'retained' | Set-Content -LiteralPath (Join-Path $unsupportedOutput 'sentinel.txt')
+    if($IsLinux){& $PSCommandPath -Platform Ubuntu -CheckUnsupportedNative -OutputRoot $unsupportedOutput | Out-Null}
+    else{Reject 'unsupported-native-not-blocked-by-fresh-guard' 'M6_PLATFORM_UNSUPPORTED' {& $PSCommandPath -Platform Ubuntu -CheckUnsupportedNative -OutputRoot $unsupportedOutput}}
     if((git -C $repo rev-parse HEAD).Trim() -cne $head){throw 'M6_HEAD_CHANGED：SelfTest期間HEAD改變'}
     # 最後一個負例不可污染正式 scope receipt。
     $processHarness=if($IsWindows){
@@ -241,7 +430,9 @@ if($VerifyOnly -and $Platform -eq 'Ubuntu'){
     $native='UNSUPPORTED'
 }
 $launched=-not $VerifyOnly
+$launchStart=[DateTime]::MinValue
 if($launched){
+    Assert-M6OutputFresh $OutputRoot
     if($Platform -cne $actualPlatform){throw 'M6_PLATFORM_UNSUPPORTED：不可模擬其他平台的 CI'}
     $expected=Join-Path $repo $(if($IsWindows){'gradlew.bat'}else{'gradlew'})
     if(-not $Gradle){$Gradle=$expected}
@@ -268,20 +459,6 @@ if($launched){
     $Artifacts=@(Get-ChildItem -LiteralPath (Join-Path $repo 'build/libs') -File -Filter '*.jar' | ForEach-Object FullName)
     if($Artifacts.Count -ne 2){throw 'M6_TESTMOD_LEAK：必須核對 release 與 sources 兩個 JAR'}
 }
-if(-not $GameTestXml -or -not $RuntimeLog -or -not $RuntimeRoot){throw 'M6_ORACLE_INPUT_REQUIRED：必須指定本次 XML、完整日誌與 run root'}
 $only=if($Batch){@($Batch.Split(','))}else{@()}
-Assert-Scope $GameTestXml 'm6' $SourceRoot $only | Out-Null
-$pace=Assert-M6Runtime $RuntimeLog $RuntimeRoot
-$jars=@(foreach($artifact in $Artifacts){Assert-M6Artifact $artifact})
-$scopes=[ordered]@{m6=(Get-Content -LiteralPath (Join-Path $OutputRoot 'scope.json') -Raw | ConvertFrom-Json)}
-if($launched){
-    foreach($row in @('default:gametest-results.xml','legacy:gametest-legacy-results.xml','m5:gametest-m5-results.xml')){
-        $parts=$row.Split(':');$gate=Join-Path $OutputRoot $parts[0];New-Item -ItemType Directory -Path $gate | Out-Null
-        Assert-Scope (Join-Path $repo ('build/'+$parts[1])) $parts[0] $SourceRoot | Out-Null
-        $scopes[$parts[0]]=Get-Content -LiteralPath (Join-Path $gate 'scope.json') -Raw | ConvertFrom-Json
-    }
-    $gate=$OutputRoot
-}
-if((git -C $repo rev-parse HEAD).Trim() -cne $head){throw 'M6_HEAD_CHANGED：執行期間 HEAD 改變'}
-Save-Json (Join-Path $OutputRoot 'm6-summary.json') ([ordered]@{status='PASS';head=$head;platform=$Platform;actualPlatform=$actualPlatform;remoteCi=($env:GITHUB_ACTIONS -ceq 'true');launched=$launched;runtimeScope='testmod-present';scope=$scopes;pacing=$pace;boundaryReceipts=0;m5SuiteEnds=0;xmlSha256=(Get-FileHash -LiteralPath $GameTestXml).Hash;logSha256=(Get-FileHash -LiteralPath $RuntimeLog).Hash;artifacts=$jars;native=$native})
-Write-Output "M6_SUMMARY PASS HEAD=$head waited=$($pace.waited) tps=$($pace.tps) output=$OutputRoot"
+$inputs=@{m6Xml=$GameTestXml;m6Log=$RuntimeLog;m6Run=$RuntimeRoot;legacyXml=(Join-Path $repo 'build/gametest-legacy-results.xml');legacyLog=(Join-Path $repo 'run/gametest-legacy/logs/latest.log');defaultXml=(Join-Path $repo 'build/gametest-results.xml');m5Xml=(Join-Path $repo 'build/gametest-m5-results.xml')}
+Complete-M6Verification -Inputs $inputs -OutputRoot $OutputRoot -SourceRoot $SourceRoot -ExpectedHead $head -Platform $Platform -ActualPlatform $actualPlatform -Native $native -Launched $launched -LaunchStart $launchStart -Artifacts $Artifacts -OnlyBatches $only

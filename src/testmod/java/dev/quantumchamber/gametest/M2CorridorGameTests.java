@@ -685,8 +685,10 @@ public final class M2CorridorGameTests implements FabricGameTest {
         when(context,3,fixture::activeReady,tick -> {
             var sid=fixture.record().sessionUuid(); var player=fixture.players.getFirst().player();
             walkNative(fixture,player,576.5);
+            var firstTrace=new CohortWaitTrace(fixture,sid,0,tick+1);
             when(context,tick+1,() -> fixture.pages.currentMappings(sid).epoch()==2,second -> {
                 walkNative(fixture,player,672.5);
+                var secondTrace=new CohortWaitTrace(fixture,sid,1,second+1);
                 when(context,second+1,() -> fixture.pages.currentMappings(sid).epoch()==3,third -> {
                     var view=fixture.pages.currentMappings(sid).instances().getFirst();
                     context.assertEquals(0L,view.aliasStartBlock(),"page7遠端alias從0開始，端cap不可假造入口");
@@ -694,8 +696,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     try { fixture.pages.entrance(sid); } catch(IllegalStateException expected) { absent=true; }
                     context.assertTrue(absent,"遠端current mapping明確沒有物化入口");
                     fixture.trustedTeardown(third+1,context::complete);
-                });
-            });
+                },secondTrace);
+            },firstTrace);
         });
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_entities",tickLimit=100000)

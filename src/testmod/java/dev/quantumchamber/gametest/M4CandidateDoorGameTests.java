@@ -220,7 +220,7 @@ public final class M4CandidateDoorGameTests {
         context.waitAndRun(2,fixture::power);
         whenWithin(context,3,60,() -> probe.fired,fired -> context.runAtTick(fired+1,() -> {
             batchFaultProbe=null;
-            assertPolicyOne(context,probe.faulted);
+            assertNewSessionPolicyTwo(context,probe.faulted);
             var sid=probe.faulted.sessionUuid(); var journal=SessionRecoveryState.get(fixture.server);
             var current=journal.records().get(sid); var flushed=journal.flushedRecords().get(sid);
             context.assertTrue(flushed!=null && current!=null,"batch fault 後 session record 不得消失");
@@ -1060,7 +1060,7 @@ public final class M4CandidateDoorGameTests {
         context.waitAndRun(2,fixture::power);
         whenWithin(context,3,60,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,tick -> {
             publishProbe=null;
-            assertPolicyOne(context,fixture.record());
+            assertNewSessionPolicyTwo(context,fixture.record());
             fixture.trustedTeardown(tick+1,() -> {
                 context.assertTrue(probe.observed && probe.rejected,"真候選batch未flush窗口：側門互動拒絕且current/durable零額外mutation"); M4PerTestUniverseProbe.complete(context);
             });
@@ -1131,9 +1131,9 @@ public final class M4CandidateDoorGameTests {
         context.assertEquals("normal",dev.quantumchamber.universe.Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(lease).orElse("unknown"),
                 "M4_NORMAL_PRESET：必須辨識真 normal 來源");
     }
-    private static void assertPolicyOne(TestContext context,SessionRecoveryRecord record) {
+    private static void assertNewSessionPolicyTwo(TestContext context,SessionRecoveryRecord record) {
         var policy=record.candidateContext().orElseThrow();
-        context.assertEquals(1,policy.policyVersion(),"M4_NORMAL_POLICY：新 session 固定 policy1");
+        context.assertEquals(2,policy.policyVersion(),"M4_NORMAL_POLICY：新 session 固定 policy2");
         context.assertEquals(0,policy.familyCapabilityVersion(),"M4_NORMAL_POLICY：新 session 固定 family0");
     }
     /**
@@ -1144,7 +1144,7 @@ public final class M4CandidateDoorGameTests {
         var fixture=new M2CorridorGameTests.NativeEntry(context,people,Direction.NORTH);
         context.waitAndRun(2,fixture::power);
         when(context,3,() -> fixture.activeReady() && fixture.pages.selectableDoors(fixture.record().sessionUuid()).size()==358,
-                tick -> { assertPolicyOne(context,fixture.record()); M5TestHooks.suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
+                tick -> { assertNewSessionPolicyTwo(context,fixture.record()); M5TestHooks.suspendCollapse(fixture.record().sessionUuid()); ready.accept(fixture,tick); });
     }
     private static net.minecraft.util.ActionResult use(M2CorridorGameTests.NativeEntry fixture,BlockPos pos,net.minecraft.server.network.ServerPlayerEntity player) {
         return M5GameTestSupport.interact(fixture.target,pos,player);
@@ -1759,7 +1759,7 @@ public final class M4CandidateDoorGameTests {
             context.assertEquals(SessionState.ARMING, initial.state(), "入場先承認 ARMING");
             fixture.trustedTeardown(tick + 1, () -> {
                 context.assertTrue(initial.candidateContext().isPresent(), "原生新 session 必須在 ARMING 凍結 candidate context");
-                assertPolicyOne(context,initial);
+                assertNewSessionPolicyTwo(context,initial);
                 var policy = initial.candidateContext().orElseThrow();
                 context.assertEquals(new SourceFamilyRef.Vanilla(World.OVERWORLD, DimensionRole.OVERWORLD), policy.sourceFamilyRef(), "凍結真來源 family");
                 context.assertTrue(initial.candidateLedger().isEmpty(), "ARMING 不能提早生成候選");
