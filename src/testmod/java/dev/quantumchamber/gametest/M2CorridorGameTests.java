@@ -407,23 +407,214 @@ public final class M2CorridorGameTests implements FabricGameTest {
         context.waitAndRun(2,fixture::power);
         when(context,3,fixture::activeReady,tick -> {
             var initial=fixture.record(); var fault=new RemapPowerLoss(fixture,true);
-            walkNative(fixture,fixture.players.get(0).player(),95.5); walkNative(fixture,fixture.players.get(1).player(),96.5);
-            when(context,tick+1,() -> fault.hit && fixture.returning(),returnTick -> {
-                try {
+            new MilkRemapWait(fixture,initial,fault,tick+1).start(tick);
+        });
+    }
+
+    /** milk 案獨有的終局：先停止不安全 runtime，再交回同一原錯。 */
+    private interface MilkCleanupTerminal {
+        void finish(Throwable original,boolean clean,String phase);
+        boolean done();
+        void lowAttempted();
+        void stopAfter(Throwable original);
+    }
+    private static void deliverMilkTerminal(MilkCleanupTerminal terminal,Throwable original,boolean clean,String phase) {
+        try {terminal.finish(original,clean,phase);}
+        catch(RuntimeException | Error failure) {
+            appendMilkFailure(original,failure);
+            try {terminal.stopAfter(original);}
+            catch(RuntimeException | Error stopFailure){appendMilkFailure(original,stopFailure);}
+        }
+    }
+    private static void appendMilkFailure(Throwable original,Throwable failure) {
+        if(original==failure) return;
+        for(var prior : original.getSuppressed()) if(prior==failure) return;
+        original.addSuppressed(failure);
+    }
+    private static void throwMilkFailure(Throwable original) {
+        if(original instanceof RuntimeException runtime) throw runtime;
+        throw (Error)original;
+    }
+    /** 只讀正式返還見證；已驗返還後只關連線，不再次要求返還。 */
+    private static boolean milkBackendClean(NativeEntry fixture,SessionRecoveryRecord initial,boolean checkPlayers) {
+        var gateway=dev.quantumchamber.chamber.ChamberSessions.gateway();
+        if(gateway.presence(fixture.server,initial.chamberUuid())!=dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE) return false;
+        var journal=SessionRecoveryState.get(fixture.server);
+        if(journal.flushedRecords().containsKey(initial.sessionUuid()) || journal.records().containsKey(initial.sessionUuid())) return false;
+        if(checkPlayers) for(var connection : fixture.players) {
+            var player=connection.player();
+            if(player.getServerWorld()!=fixture.context.getWorld() || !dev.quantumchamber.chamber.ChamberOccupantService.contains(
+                    dev.quantumchamber.chamber.ChamberGeometry.interiorBox(fixture.frame),player.getBoundingBox())) return false;
+        }
+        if(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(fixture.context.getWorld(),fixture.frame.controllerPos())) return false;
+        try { fixture.pages.currentMappings(initial.sessionUuid()); return false; }
+        catch(IllegalArgumentException unknown) { if(!"未知 session".equals(unknown.getMessage())) throw unknown; }
+        return !fixture.pages.releaseComplete(initial.sessionUuid());
+    }
+    /** 每條連線只嘗試一次；相同訊息的不同錯誤仍逐一保留。 */
+    private record MilkCloseResult(Throwable primary,boolean failed) {}
+    private static MilkCloseResult closeMilkPlayers(NativeEntry fixture,java.util.Set<UUID> attempted,Throwable original) {
+        Throwable result=original;boolean failed=false;
+        var connections=new java.util.ArrayList<>(fixture.players);connections.add(fixture.operator);
+        for(var connection : connections) {
+            if(!attempted.add(connection.player().getUuid())) continue;
+            try { connection.close(); }
+            catch(RuntimeException | Error failure) { failed=true;if(result==null)result=failure;else appendMilkFailure(result,failure); }
+        }
+        for(var connection : connections) if(fixture.server.getPlayerManager().getPlayer(connection.player().getUuid())!=null) {
+            failed=true;
+            var failure=new IllegalStateException("milk 玩家連線尚未關閉："+connection.player().getUuid());
+            if(result==null)result=failure;else appendMilkFailure(result,failure);
+        }
+        return new MilkCloseResult(result,failed);
+    }
+    /** milk 專用有限排程；LOW fence 與排程接手是不同狀態。 */
+    private static final class MilkRemapWait implements MilkCleanupTerminal {
+        private final NativeEntry fixture;
+        private final SessionRecoveryRecord initial;
+        private final RemapPowerLoss fault;
+        private final CohortWaitTrace trace;
+        private final java.util.Set<UUID> closeAttempted=new java.util.HashSet<>();
+        private boolean cleanupStarted,lowAttempted,returnedVerified,terminalDelivered,stopRequested,closing;
+        private Throwable primary;
+        private String phase="WAITING";
+        private long teardownDeadline;
+        MilkRemapWait(NativeEntry fixture,SessionRecoveryRecord initial,RemapPowerLoss fault,int tick) {
+            this.fixture=fixture;this.initial=initial;this.fault=fault;
+            trace=new CohortWaitTrace(fixture,initial.sessionUuid(),0,tick,1,"fault.hit && fixture.returning()","remap-milk-return",fault);
+        }
+        void start(int tick) {
+            guarded(tick,() -> {
+                trace.begin();
+                walkNative(fixture,fixture.players.get(0).player(),95.5);
+                walkNative(fixture,fixture.players.get(1).player(),96.5);
+                poll(tick+1);
+            });
+        }
+        private void poll(int tick) {
+            fixture.context.runAtTick(tick,() -> guarded(tick,() -> {
+                if(fault.hit && fixture.returning()) {
+                    trace.ready(tick);fault.close();hookClosed("READY");
+                    var context=fixture.context;
                     context.assertEquals(1L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"真首人remap移動後milk失效不可publish半群epoch2");
                     context.assertEquals(2,fixture.record().participants().size(),"不可縮減凍結cohort");
                     context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"remap失效保持KEEP_CURRENT");
-                    fault.close();
-                    fixture.trustedTeardown(returnTick+1,() -> {
-                        context.assertTrue(!fixture.server.getPlayerManager().getPlayer(fault.moved).hasStatusEffect(ModEffects.QUANTUM_STATE),"rollback與返還皆不得退款milk");
-                        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_REMAP_MILK_OK sid={} epoch=1 moved={}",initial.sessionUuid(),fault.moved);
-                        context.complete();
-                    });
-                } catch(RuntimeException | Error failure) {
-                    fault.close(); fixture.trustedTeardown(returnTick+1,() -> { throw failure; });
+                    prepareTeardown(tick+1);
+                } else {
+                    fixture.context.assertTrue(tick<90000 && System.nanoTime()<trace.deadlineNanos,"remap-milk-return 有限等待逾時："+trace.snapshot(tick));
+                    poll(tick+1);
                 }
-            });
-        });
+            }));
+        }
+        private void prepareTeardown(int tick) {
+            phase="PREPARING";
+            var current=fixture.record();
+            fixture.context.assertTrue(current!=null && current.sessionUuid().equals(initial.sessionUuid())
+                    && current.chamberUuid().equals(initial.chamberUuid()),"milk 收尾必須符合captured exact SID/chamber");
+            teardownDeadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+            boolean powered=fixture.context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos());
+            lowAttempted();
+            if(powered) fixture.power();
+            else dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(fixture.context.getWorld(),fixture.controller());
+            SessionRecoveryState.get(fixture.server).flushedRecords();
+            scheduleTeardown(tick);
+        }
+        @Override public void lowAttempted() {
+            if(lowAttempted) throw new IllegalStateException("MILK_DUPLICATE_LOW_ATTEMPT");
+            lowAttempted=true;phase="LOW_ATTEMPTED";
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK13_MILK_LOW_ATTEMPT sid={} count=1",initial.sessionUuid());
+        }
+        private void scheduleTeardown(int tick) {
+            fixture.context.runAtTick(tick,() -> guarded(tick,() -> teardownPoll(tick)));
+            phase="SCHEDULED";
+        }
+        private void teardownPoll(int tick) {
+            fixture.context.assertTrue(tick<99000 && System.nanoTime()<teardownDeadline,"MILK_TEARDOWN_TIMEOUT");
+            if(!milkBackendClean(fixture,initial,true)) { scheduleTeardown(tick+1);return; }
+            returnedVerified=true;phase="RETURN_VERIFIED";
+            fixture.context.assertTrue(!fixture.server.getPlayerManager().getPlayer(fault.moved).hasStatusEffect(ModEffects.QUANTUM_STATE),"rollback與返還皆不得退款milk");
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK8_NATIVE_REMAP_MILK_OK sid={} epoch=1 moved={}",initial.sessionUuid(),fault.moved);
+            closing=true;
+            var closeFailure=closeMilkPlayers(fixture,closeAttempted,null);
+            if(closeFailure.failed()) throwMilkFailure(closeFailure.primary());
+            phase="CLOSED";
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK13_MILK_RETURN_CLOSED sid={} playersClosed=true",initial.sessionUuid());
+            terminalDelivered=true;
+            fixture.context.complete();
+        }
+        private void guarded(int tick,Runnable work) {
+            if(cleanupStarted || terminalDelivered) return;
+            try { work.run(); }
+            catch(RuntimeException failure) { fail(tick,failure); }
+            catch(Error failure) {
+                if(primary==null)primary=failure;else appendMilkFailure(primary,failure);
+                closeAfter(primary);deliverMilkTerminal(this,primary,false,"ERROR");throwMilkFailure(primary);
+            }
+        }
+        private void fail(int tick,RuntimeException failure) {
+            if(primary==null)primary=failure;else appendMilkFailure(primary,failure);
+            if(terminalDelivered) {throwMilkFailure(primary);return;}
+            try { trace.failed(tick,failure); }
+            catch(RuntimeException diagnostic){appendMilkFailure(primary,diagnostic);}
+            catch(Error diagnostic){appendMilkFailure(primary,diagnostic);closeAfter(primary);deliverMilkTerminal(this,primary,false,"DIAGNOSTIC_ERROR");throwMilkFailure(primary);return;}
+            closeAfter(primary);
+            if(terminalDelivered){throwMilkFailure(primary);return;}
+            if(cleanupStarted) {deliverMilkTerminal(this,primary,false,"DUPLICATE_FAILURE");throwMilkFailure(primary);return;}
+            cleanupStarted=true;phase="FAILURE_OWNED";
+            if(returnedVerified) {
+                boolean backend=false;
+                try { backend=milkBackendClean(fixture,initial,false); }
+                catch(RuntimeException | Error observed){appendMilkFailure(primary,observed);}
+                boolean closeFailed=!backend || closeMilkPlayers(fixture,closeAttempted,primary).failed();
+                boolean clean=backend && !closeFailed && closeAttempted.size()==fixture.players.size()+1;
+                // close 已拋錯即使連線實際移除，也不能改稱 CLEAN。
+                if(closing || System.nanoTime()>=teardownDeadline) clean=false;
+                deliverMilkTerminal(this,primary,clean,clean?"CLEAN_WITH_RETRY_ERROR":"CLOSE_FAILED");throwMilkFailure(primary);return;
+            }
+            try {
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK13_MILK_CLEANUP_OWNER sid={} calls=1 skipLow={} hookClosed={}",initial.sessionUuid(),lowAttempted,REMAP_LOW.get(fixture.server)!=fault);
+                fixture.failCohortAfterCleanup(tick,(RuntimeException)primary,trace,initial,lowAttempted,this);
+            } catch(RuntimeException | Error observed) {
+                appendMilkFailure(primary,observed);
+                if(!terminalDelivered)deliverMilkTerminal(this,primary,false,"HANDOFF_FAILED");
+                throwMilkFailure(primary);
+            }
+        }
+        @Override public boolean done() {return terminalDelivered;}
+        @Override public void finish(Throwable original,boolean clean,String terminalPhase) {
+            if(terminalDelivered) return;
+            terminalDelivered=true;phase=terminalPhase;
+            if(primary==null)primary=original;else appendMilkFailure(primary,original);
+            try {org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK13_MILK_TERMINAL sid={} calls=1 phase={} clean={} primary={} suppressed={}",initial.sessionUuid(),phase,clean,primary.toString(),primary.getSuppressed().length);}
+            catch(RuntimeException | Error diagnostic){appendMilkFailure(primary,diagnostic);if(diagnostic instanceof Error)clean=false;}
+            if(!clean)stopAfter(primary);
+            failureEvidence();
+        }
+        @Override public void stopAfter(Throwable original) {
+            terminalDelivered=true;
+            if(primary==null)primary=original;else appendMilkFailure(primary,original);
+            if(stopRequested)return;
+            stopRequested=true;
+            try {org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK13_MILK_STOP_REQUESTED sid={} calls=1 beforePrimary=true",initial.sessionUuid());}
+            catch(RuntimeException | Error diagnostic){appendMilkFailure(primary,diagnostic);}
+            try {fixture.server.stop(false);}
+            catch(RuntimeException | Error stopFailure){appendMilkFailure(primary,stopFailure);}
+        }
+        private void failureEvidence() {
+            try {org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").error("TASK13_MILK_FAILURE_EVIDENCE sid={} primaryIdentity={} terminal=1 stopRequested={}",initial.sessionUuid(),System.identityHashCode(primary),stopRequested,primary);}
+            catch(RuntimeException | Error diagnostic){appendMilkFailure(primary,diagnostic);}
+        }
+        private void closeAfter(Throwable original) {
+            try {fault.close();}
+            catch(RuntimeException closeFailure){appendMilkFailure(original,closeFailure);}
+            catch(Error closeFailure){appendMilkFailure(original,closeFailure);deliverMilkTerminal(this,original,false,"HOOK_CLOSE_ERROR");return;}
+            try {hookClosed("FAILURE");}
+            catch(RuntimeException diagnostic){appendMilkFailure(original,diagnostic);}
+            catch(Error diagnostic){appendMilkFailure(original,diagnostic);deliverMilkTerminal(this,original,false,"HOOK_DIAGNOSTIC_ERROR");}
+        }
+        private void hookClosed(String state) {
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("TASK13_MILK_HOOK_CLOSED sid={} phase={} closed={}",initial.sessionUuid(),state,REMAP_LOW.get(fixture.server)!=fault);
+        }
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_task4_mid_remap_low",tickLimit=1000000)
     public void native_power_loss_during_actual_remap_returns_cohort_and_value_windows(TestContext context) {
@@ -605,12 +796,19 @@ public final class M2CorridorGameTests implements FabricGameTest {
         final UUID sid;
         final int stage;
         final int startTick;
+        final long expectedEpoch;
+        final String condition,label;
+        final RemapPowerLoss fault;
         final long startNanos=System.nanoTime();
         final long deadlineNanos=startNanos+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
         boolean readyLogged;
         boolean failureLogged;
         CohortWaitTrace(NativeEntry fixture,UUID sid,int stage,int startTick) {
+            this(fixture,sid,stage,startTick,stage+2,"epoch="+(stage+2),"cohort",null);
+        }
+        CohortWaitTrace(NativeEntry fixture,UUID sid,int stage,int startTick,long expectedEpoch,String condition,String label,RemapPowerLoss fault) {
             this.fixture=fixture; this.sid=sid; this.stage=stage; this.startTick=startTick;
+            this.expectedEpoch=expectedEpoch;this.condition=condition;this.label=label;this.fault=fault;
         }
         void begin() { log("BEGIN",startTick,null); }
         void ready(int tick) { if(!readyLogged) { readyLogged=true; log("READY",tick,null); } }
@@ -620,12 +818,14 @@ public final class M2CorridorGameTests implements FabricGameTest {
         String snapshot(int tick) {
             long now=System.nanoTime();
             var line=new StringBuilder("sid=").append(sid).append(" stage=").append(stage)
-                    .append(" expectedEpoch=").append(stage+2)
+                    .append(" expectedEpoch=").append(expectedEpoch)
                     .append(" elapsedMs=").append(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(now-startNanos))
                     .append(" elapsedTicks=").append(tick-startTick)
                     .append(" deadlineNanos=").append(deadlineNanos)
-                    .append(" remainingMs=").append(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadlineNanos-now));
+                    .append(" remainingMs=").append(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadlineNanos-now))
+                    .append(" label=").append(label).append(" condition=").append(condition);
             try {
+                if(fault!=null)line.append(" fault.hit=").append(fault.hit).append(" returning=").append(fixture.returning());
                 var journal=SessionRecoveryState.get(fixture.server);
                 var flushed=journal.flushedRecords().get(sid);
                 var staged=journal.records().get(sid);
@@ -2058,6 +2258,19 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 throw original;
             }
         }
+        /** milk 的 captured 身分與終局通知；舊 overload 不改。 */
+        void failCohortAfterCleanup(int tick,RuntimeException original,CohortWaitTrace trace,
+                SessionRecoveryRecord initial,boolean skipLow,MilkCleanupTerminal terminal) {
+            try {
+                if(cohortFailureOwned) throw new IllegalStateException("milk cleanup owner 重複");
+                cohortFailureOwned=true;
+                new CohortFailureCleanup(this,trace,original,tick,initial,skipLow,terminal).start();
+            } catch(RuntimeException | Error failure) {
+                appendMilkFailure(original,failure);
+                if(!terminal.done())deliverMilkTerminal(terminal,original,false,"CONSTRUCTOR_OR_START_FAILED");
+                throw original;
+            }
+        }
         @Override public void close() { players.forEach(ConnectedGameTestPlayer::close); operator.close(); }
     }
     /** 測試專用失敗收尾：只呼叫正式LOW與返還入口，不直接改journal、slot、lease或ticket。 */
@@ -2073,6 +2286,10 @@ public final class M2CorridorGameTests implements FabricGameTest {
         private final long deadlineNanos=startNanos+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
         private RuntimeException firstCleanupFailure;
         private String phase="START";
+        private SessionRecoveryRecord milkInitial;
+        private boolean milkSkipLow;
+        private MilkCleanupTerminal milkTerminal;
+        private final java.util.Set<UUID> milkCloseAttempted=new java.util.HashSet<>();
         CohortFailureCleanup(NativeEntry fixture,CohortWaitTrace trace,RuntimeException original,int startTick) {
             this.fixture=fixture; this.trace=trace; this.original=original; this.sid=trace.sid;
             var record=fixture.record();
@@ -2080,7 +2297,19 @@ public final class M2CorridorGameTests implements FabricGameTest {
             this.startTick=startTick;
             this.deadlineTick=Math.min(99000,startTick+20000);
         }
+        CohortFailureCleanup(NativeEntry fixture,CohortWaitTrace trace,RuntimeException original,int startTick,
+                SessionRecoveryRecord initial,boolean skipLow,MilkCleanupTerminal terminal) {
+            this.fixture=fixture;this.trace=trace;this.original=original;this.sid=trace.sid;
+            this.chamber=initial.chamberUuid();this.startTick=startTick;this.deadlineTick=Math.min(99000,startTick+20000);
+            this.milkInitial=initial;this.milkSkipLow=skipLow;this.milkTerminal=terminal;
+            if(!sid.equals(initial.sessionUuid()) || chamber==null || !chamber.equals(fixture.controller().chamberUuid()))
+                throw new IllegalStateException("MILK_CLEANUP_IDENTITY");
+            var current=fixture.record();
+            if(current!=null && (!sid.equals(current.sessionUuid()) || !chamber.equals(current.chamberUuid())))
+                throw new IllegalStateException("MILK_CLEANUP_FOREIGN_SESSION");
+        }
         void start() {
+            if(milkTerminal!=null) {milkGuard(() -> milkStart());return;}
             info("BEGIN",startTick);
             if(chamber==null || !sid.equals(fixture.record().sessionUuid())) {
                 failNow("找不到本cohort的checked來源session",startTick);
@@ -2092,6 +2321,69 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 if(fixture.context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos())) fixture.power();
             } catch(RuntimeException cleanupFailure) { firstCleanupFailure=cleanupFailure; failNow("LOW失敗",startTick); return; }
             schedule(startTick+1);
+        }
+        /** milk 的所有同步／異步出口都經同一 terminal，原 helper 分支維持不變。 */
+        private void milkGuard(Runnable work) {
+            if(milkTerminal.done())return;
+            try {work.run();}
+            catch(RuntimeException | Error failure) {
+                appendMilkFailure(original,failure);
+                if(!milkTerminal.done())milkFinish(false,"INCOMPLETE");
+                throw original;
+            }
+        }
+        private void milkError(Throwable failure) {
+            if(firstCleanupFailure==null && failure instanceof RuntimeException runtime)firstCleanupFailure=runtime;
+            appendMilkFailure(original,failure);
+        }
+        private void milkStart() {
+            info("BEGIN",startTick);
+            if(startTick>=deadlineTick) {milkIncomplete("GameTest剩餘tick不足");return;}
+            if(!milkSkipLow) {
+                boolean powered=fixture.context.getWorld().isReceivingRedstonePower(fixture.frame.controllerPos());
+                milkTerminal.lowAttempted();
+                if(powered)fixture.power();
+                else dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(fixture.context.getWorld(),fixture.controller());
+            }
+            milkSchedule(startTick+1);
+        }
+        private void milkSchedule(int tick) {
+            if(tick>deadlineTick || System.nanoTime()>=deadlineNanos){milkIncomplete("測試收尾觀測期限已到");return;}
+            fixture.context.runAtTick(tick,() -> milkGuard(() -> milkPoll(tick)));
+        }
+        private void milkPoll(int tick) {
+            boolean expired=tick>=deadlineTick || System.nanoTime()>=deadlineNanos;
+            phase="RETURNING";
+            if(!expired)try {
+                var current=fixture.record();
+                if(!milkInitial.chamberUuid().equals(fixture.controller().chamberUuid()) || current!=null
+                        && (!sid.equals(current.sessionUuid()) || !chamber.equals(current.chamberUuid())))
+                    throw new IllegalStateException("MILK_CLEANUP_FOREIGN_SESSION");
+                dev.quantumchamber.chamber.ChamberSessions.gateway().returnToOrigin(fixture.context.getWorld(),fixture.controller());
+            }catch(RuntimeException failure){milkError(failure);}
+            boolean clean=false;
+            try {clean=cleanWitness(dev.quantumchamber.chamber.ChamberSessions.gateway());}
+            catch(RuntimeException failure){milkError(failure);}
+            if(clean) {
+                phase="CLOSE";
+                boolean closeFailed=closeMilkPlayers(fixture,milkCloseAttempted,original).failed();
+                boolean late=expired || tick>=deadlineTick || System.nanoTime()>=deadlineNanos;
+                if(late)milkError(new IllegalStateException("milk 正式返還在期限後才確認"));
+                milkFinish(!closeFailed && !late,closeFailed?"CLOSE_FAILED":late?"LATE_BACKEND_CLEAN":
+                        firstCleanupFailure!=null || original.getSuppressed().length>0?"CLEAN_WITH_RETRY_ERROR":"CLEAN");return;
+            }
+            if(expired || tick>=deadlineTick || System.nanoTime()>=deadlineNanos){milkIncomplete("正式返還無法在期限內確認");return;}
+            milkSchedule(tick+1);
+        }
+        private void milkIncomplete(String reason) {
+            milkError(new IllegalStateException("milk 收尾未完成："+reason));
+            milkFinish(false,"INCOMPLETE");
+        }
+        private void milkFinish(boolean clean,String terminalPhase) {
+            phase=terminalPhase;
+            info("FINAL",startTick);
+            deliverMilkTerminal(milkTerminal,original,clean,phase);
+            throw original;
         }
         private void schedule(int tick) {
             if(tick>deadlineTick || System.nanoTime()-deadlineNanos>=0) {
@@ -2192,13 +2484,14 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 try { fixture.pages.currentMappings(sid); }
                 catch(IllegalArgumentException unknown) { if(!"未知 session".equals(unknown.getMessage())) throw unknown; spaceAbsent=true; }
                 line.append(" spaceAbsent=").append(spaceAbsent).append(" releaseReceiptOutstanding=").append(fixture.pages.releaseComplete(sid));
-            } catch(RuntimeException observed) { line.append(" witnessFailure=").append(observed.getClass().getSimpleName()).append(':').append(observed.getMessage()); }
+            } catch(RuntimeException observed) { if(milkTerminal!=null)milkError(observed);line.append(" witnessFailure=").append(observed.getClass().getSimpleName()).append(':').append(observed.getMessage()); }
             return line.append(" waitStage=").append(trace.stage)
-                    .append(" waitExpectedEpoch=").append(trace.stage+2).toString();
+                    .append(" waitExpectedEpoch=").append(trace.expectedEpoch)
+                    .append(" waitLabel=").append(trace.label).append(" waitCondition=").append(trace.condition).toString();
         }
         private void info(String event,int tick) {
             try { org.slf4j.LoggerFactory.getLogger("quantumchamber").info("CI_W1_COHORT_CLEANUP {} {}",event,witness(tick)); }
-            catch(RuntimeException diagnosticFailure) { original.addSuppressed(diagnosticFailure); }
+            catch(RuntimeException diagnosticFailure) { if(milkTerminal!=null)milkError(diagnosticFailure);else original.addSuppressed(diagnosticFailure); }
         }
     }
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_return_cohort", tickLimit = 100000)

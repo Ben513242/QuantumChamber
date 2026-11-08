@@ -313,7 +313,7 @@ function Invoke-M6OracleSelfTest {
             New-Item -ItemType Directory -Path (Join-Path $output 'originals') | Out-Null
         }
         $files=@{m6Xml=(Join-Path $inputRoot 'm6.xml');legacyXml=(Join-Path $inputRoot 'legacy.xml');defaultXml=(Join-Path $inputRoot 'default.xml');m5Xml=(Join-Path $inputRoot 'm5.xml');m6Log=(Join-Path $inputRoot 'm6.log');legacyLog=(Join-Path $inputRoot 'legacy.log');m6Run=(Join-Path $inputRoot 'run')}
-        $start=[DateTime]::UtcNow
+        $start=[DateTime]::UtcNow.AddSeconds(-5)
         $omit=switch($case.name){'missing-default'{'default'};'missing-m5'{'m5'};'missing-m6'{'m6'};'missing-legacy-xml'{'legacy'};default{''}}
         foreach($scope in @('default','legacy','m5','m6')){
             if($scope -ceq $omit){continue}

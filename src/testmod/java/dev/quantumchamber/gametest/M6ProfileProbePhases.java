@@ -274,7 +274,8 @@ public final class M6ProfileProbePhases {
             require(readAllocation().byToken(intent.allocationToken()).filter(UniverseAllocationLedger.Entry.of(intent)::equals).isPresent(),"SAME_ALLOCATION_RESTART_EXACT");
             row.put("allocationChecked",true);
             if(phase.equals("new"))samplePreflight(List.of(source,target),row);
-            compareAndEdit(source,target,phase.equals("restart"),row,evidence.resolve("comparison-before-assert.json"));
+            compareAndEdit(source,target,phase.equals("restart"),row,evidence.resolve("comparison-before-assert.json"),
+                    () -> nativeConsumer(server,target,targetRecord));
             if(phase.equals("new"))writeNew(root.resolve("same-seed-"+preset+"-new.json"),row);
             else {
                 var prior=JsonParser.parseString(Files.readString(root.resolve("same-seed-"+preset+"-new.json"))).getAsJsonObject();
@@ -544,16 +545,16 @@ public final class M6ProfileProbePhases {
 
     /** 兩側同一 registry/datapack、同一 FULL 鄰域後採樣，不把 live/raw 不同成熟度混比。 */
     static Map<String,Object> compareAndEdit(ServerWorld source,ServerWorld target,boolean restart) throws Exception {
-        return compareAndEdit(source,target,restart,new LinkedHashMap<>(),null);
+        return compareAndEdit(source,target,restart,new LinkedHashMap<>(),null,null);
     }
     private static Map<String,Object> compareAndEdit(ServerWorld source,ServerWorld target,boolean restart,
-            Map<String,Object> row,Path comparisonReceipt) throws Exception {
+            Map<String,Object> row,Path comparisonReceipt,Checked afterComparison) throws Exception {
         require(source!=target && source.getRegistryManager()==target.getRegistryManager() && source.getSeed()==target.getSeed(),"SAME_RUNTIME_IDENTITIES");
         // 來源先為玩家建築生成中心；目標也先中心，避免把不同 feature 寫入順序混成 seed 差異。
         var worlds=List.of(source,target);
         var requests=List.of(new ArrayList<String>(),new ArrayList<String>());
         var globalRequests=new ArrayList<String>();
-        boolean stageWitness=comparisonReceipt==null;
+        boolean stageWitness=true;
         var stages=new ArrayList<Map<String,Object>>();
         var centers=new net.minecraft.world.chunk.WorldChunk[2];
         // 保留 normal5 的全球交錯：兩側中心完成後，才依序完成各自鄰域。
@@ -595,8 +596,15 @@ public final class M6ProfileProbePhases {
         row.put("firstDifference",firstDifference);row.put("terrain",digest(sourceTerrain));row.put("targetTerrain",digest(targetTerrain));
         row.put("biomes",digest(sourceBiomes));row.put("targetBiomes",digest(targetBiomes));row.put("sampleCount",sourceTerrain.size());
         row.put("matchedMaturity","FULL_3X3");
+        if(afterComparison!=null) {
+            row.put("nativeConsumerCoverage","target-only");
+            row.put("canonicalSourceNativeConsumer","NOT_COVERED");
+            row.put("nativeConsumerOrder","after-snapshot-before-terrain-assert");
+        }
         if(comparisonReceipt!=null)writeNew(comparisonReceipt,row);
         else LoggerFactory.getLogger("quantumchamber-m6-gametest").info("SAME_COMPARISON {}",JSON.toJson(row));
+        // 原抽樣與收據先完成；owner FAIL 時原 terrain require 尚未執行。
+        if(afterComparison!=null)afterComparison.run();
         require(sourceTerrain.equals(targetTerrain) && sourceBiomes.equals(targetBiomes),"sameSeedFreshCopiesSettingsNotBlocks:TERRAIN_BIOME"+firstDifference);
         var a=structures(source);var b=structures(target);require(a.equals(b),"sameSeedFreshCopiesSettingsNotBlocks:STRUCTURE");
         require(source.getBlockState(BUILDING).isOf(Blocks.DIAMOND_BLOCK) && !target.getBlockState(BUILDING).isOf(Blocks.DIAMOND_BLOCK),"sameSeedFreshCopiesSettingsNotBlocks:BUILDING");
