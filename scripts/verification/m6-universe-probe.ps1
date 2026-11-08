@@ -83,9 +83,17 @@ function Assert-GameplayReceipt($receipt,$chain,$phase,$owned,$state) {
     else {if($receipt.allocationCount -ne 1 -or -not $receipt.allocationChecked){throw 'M6_FORMAL_ALLOCATION_ORDER'}}
     if($phase -ceq 'allocation' -and -not $receipt.worldAndStorageAbsent){throw 'M6_FORMAL_STORAGE_EARLY'}
     if($phase -ceq 'catalog' -and (-not $receipt.catalogChecked -or $receipt.catalogAvailability -cne 'DISABLED' -or -not $receipt.worldAndStorageAbsent -or $receipt.discoveryCount -ne 0)){throw 'M6_FORMAL_CATALOG_ORDER'}
-    if($phase -ceq 'partial' -and (-not $receipt.loadWindow -or $receipt.runtimeState -cne 'MATERIALIZING' -or $receipt.active -or $receipt.discoveryCount -ne 0 -or -not $receipt.catalogChecked -or $receipt.catalogAvailability -cne 'EAGER_ENABLED' -or -not $receipt.partialStorageVerified -or $receipt.chunkRequests -ne 1 -or $receipt.partialElapsedMs -ge 60000 -or @($receipt.terrainSamples).Count -ne 48)){throw 'M6_FORMAL_PARTIAL_WINDOW'}
+    if($phase -ceq 'partial' -and (-not $receipt.loadWindow -or $receipt.runtimeState -cne 'MATERIALIZING' -or $receipt.active -or $receipt.discoveryCount -ne 0 -or -not $receipt.catalogChecked -or $receipt.catalogAvailability -cne 'EAGER_ENABLED' -or -not $receipt.partialStorageVerified -or $receipt.chunkRequests -ne 1 -or $receipt.partialElapsedMs -ge 60000)){throw 'M6_FORMAL_PARTIAL_WINDOW'}
     if($phase -ceq 'restart' -and (-not $receipt.active -or $receipt.discoveryCount -ne 1 -or -not $receipt.catalogChecked -or $receipt.catalogAvailability -cne 'EAGER_ENABLED' -or $receipt.nativeSeed -cne $receipt.rootWorldSeed -or -not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen)){throw 'M6_FORMAL_RESTART_FAILED'}
-    if($chain -ceq 'partial-overworld' -and $phase -ceq 'restart' -and (-not $receipt.partialTerrainExact -or @($receipt.terrainSamples).Count -ne 48)){throw 'M6_FORMAL_PARTIAL_RESTART'}
+    if($chain -ceq 'partial-overworld' -and $phase -ceq 'restart' -and (-not $receipt.partialProtectedSamplesExact)){throw 'M6_FORMAL_PARTIAL_RESTART'}
+    if($chain -ceq 'partial-overworld' -and $phase -cin @('partial','restart')) { Assert-PartialSamples $receipt }
+}
+function Assert-PartialSamples($receipt) {
+    $expected=@(foreach($x in 0,5,10,15){foreach($z in 0,5,10,15){"$x,-64,$z=minecraft:bedrock{}"}})
+    if($receipt.storageSampleKind -cne 'VANILLA_BOTTOM_BEDROCK_V1' -or $receipt.storageSampleCount -ne 16 -or $receipt.protectedChunkX -ne 0 -or $receipt.protectedChunkZ -ne 0 -or $receipt.protectedChunkStatus -cne 'minecraft:full' -or ($receipt.protectedSamples | ConvertTo-Json -Compress) -cne ($expected | ConvertTo-Json -Compress)){throw 'PARTIAL_PROTECTED_SAMPLE_EXACT'}
+    $native=$receipt.partialNativeConsumers
+    if(-not $native.exact -or $native.seed -cne $receipt.rootWorldSeed -or $native.worldKey -cne "quantumchamber:universe/$($receipt.uuid)/overworld" -or $native.targetFingerprint -cne $receipt.targetFingerprint -or $native.settingsKey -cne 'minecraft:overworld' -or @($native.samples).Count -ne 4){throw 'PARTIAL_NATIVE_CONSUMER_EXACT'}
+    foreach($sample in $native.samples){if($sample -cnotmatch '^[0-9a-f]{1,16}:minecraft:[a-z0-9_/]+$'){throw 'PARTIAL_NATIVE_CONSUMER_SAMPLE'}}
 }
 function Assert-PartialStorage($receipt,$owned) {
     $uuid=[guid]::Parse($receipt.uuid).ToString()
@@ -189,7 +197,7 @@ function Assert-SavedNativeSummary($native,$receiptOverrides=@{},$preservationOv
             if($spec.chain -ceq 'partial-overworld') {
                 $before=Get-Content -LiteralPath (Join-Path $chainRow.root 'partial-before-restart.json') -Raw | ConvertFrom-Json -DateKind String
                 $partialPath=Join-Path $chainRow.root 'partial-storage.json'
-                if($before.status -cne 'PASS' -or -not $before.beforeRestart -or $before.root -cne $chainRow.root -or $before.nonce -cne $receipts[2].nonce -or $before.fileCount -ne @($receipts[2].partialHashes.PSObject.Properties).Count -or $before.partialManifestSha256 -cne (Get-FileHash -LiteralPath $partialPath).Hash -or ($receipts[2].terrainSamples | ConvertTo-Json -Compress) -cne ($receipts[3].terrainSamples | ConvertTo-Json -Compress)){throw 'M6_SAVED_PARTIAL_REOPEN'}
+                if($before.status -cne 'PASS' -or -not $before.beforeRestart -or $before.root -cne $chainRow.root -or $before.nonce -cne $receipts[2].nonce -or $before.fileCount -ne @($receipts[2].partialHashes.PSObject.Properties).Count -or $before.partialManifestSha256 -cne (Get-FileHash -LiteralPath $partialPath).Hash -or ($receipts[2].protectedSamples | ConvertTo-Json -Compress) -cne ($receipts[3].protectedSamples | ConvertTo-Json -Compress) -or ($receipts[2].partialNativeConsumers | ConvertTo-Json -Compress) -cne ($receipts[3].partialNativeConsumers | ConvertTo-Json -Compress)){throw 'M6_SAVED_PARTIAL_REOPEN'}
             }
         }
     }
@@ -213,6 +221,27 @@ if($VerifySummary) {
                 $bad=Get-Content -LiteralPath $native.phases[$index].receipt -Raw | ConvertFrom-Json -DateKind String
                 $bad.$field=if($field -ceq 'm6ProbeSchema'){2}else{'WRONG'}
                 $rejected=$false;try{Assert-SavedNativeSummary $native @{$index=$bad}}catch{$rejected=$true};if(-not $rejected){throw 'M6_SAVED_RECEIPT_NEGATIVE_MISSED'};$checks++
+            }
+            $original=Get-Content -LiteralPath $native.phases[$index].receipt -Raw | ConvertFrom-Json -DateKind String
+            if($original.chain -ceq 'partial-overworld' -and $original.phase -cin @('partial','restart')) {
+                foreach($variant in @('kind','count','missing','duplicate','y','air','full','seed','settings','owner','fingerprint')) {
+                    $bad=$original | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String
+                    switch($variant) {
+                        'kind' {$bad.storageSampleKind='WRONG'}
+                        'count' {$bad.storageSampleCount=48}
+                        'missing' {$bad.protectedSamples=@($bad.protectedSamples)[0..14]}
+                        'duplicate' {$bad.protectedSamples[1]=$bad.protectedSamples[0]}
+                        'y' {$bad.protectedSamples[0]='0,-32,0=minecraft:bedrock{}'}
+                        'air' {$bad.protectedSamples[0]='0,-64,0=minecraft:air{}'}
+                        'full' {$bad.protectedChunkStatus='minecraft:features'}
+                        'seed' {$bad.partialNativeConsumers.seed='WRONG'}
+                        'settings' {$bad.partialNativeConsumers.settingsKey='minecraft:amplified'}
+                        'owner' {$bad.partialNativeConsumers.worldKey='minecraft:overworld'}
+                        'fingerprint' {$bad.partialNativeConsumers.targetFingerprint='0'*64}
+                    }
+                    $rejected=$false;try{Assert-PartialSamples $bad}catch{$rejected=$true}
+                    if(-not $rejected){throw "M6_PARTIAL_NEGATIVE_MISSED:$variant"};$checks++
+                }
             }
             $bad=$native | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String;$bad.phases[$index].receiptSha256='0'*64
             $rejected=$false;try{Assert-SavedNativeSummary $bad}catch{$rejected=$true};if(-not $rejected){throw 'M6_SAVED_HASH_NEGATIVE_MISSED'};$checks++
@@ -296,7 +325,7 @@ try {
             foreach($field in @('session','uuid','worldKey','allocationToken','rootWorldSeed','sourceRootWorldSeed','sourceFingerprint','targetFingerprint','profileId','storage')) {
                 if(@($proofs | ForEach-Object {$_.$field} | Sort-Object -Unique).Count -ne 1){throw "M6_FORMAL_RESTART_IDENTITY：$field"}
             }
-            if($chainSpec.chain -ceq 'partial-overworld' -and ($proofs[2].terrainSamples | ConvertTo-Json -Compress) -cne ($proofs[3].terrainSamples | ConvertTo-Json -Compress)){throw 'M6_FORMAL_PARTIAL_TERRAIN_CHANGED'}
+            if($chainSpec.chain -ceq 'partial-overworld' -and ((($proofs[2].protectedSamples | ConvertTo-Json -Compress) -cne ($proofs[3].protectedSamples | ConvertTo-Json -Compress)) -or (($proofs[2].partialNativeConsumers | ConvertTo-Json -Compress) -cne ($proofs[3].partialNativeConsumers | ConvertTo-Json -Compress)))){throw 'M6_FORMAL_PARTIAL_PROTECTED_CHANGED'}
         }
         if(@($current.javaPid | Select-Object -Unique).Count -ne $chainSpec.phases.Count -or @($current.startupNonce | Select-Object -Unique).Count -ne $chainSpec.phases.Count){throw 'M6_PHASE_JVM_REUSED'}
         [ordered]@{strategy='NEW_OWNED_ROOT';existingWorldsMoved=0;existingWorldsChanged=$false;retainedRoot=$true;root=$owned.root;normalStop=(-not $functional);lockReleased=$true} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $owned.root 'preservation.json') -Encoding utf8

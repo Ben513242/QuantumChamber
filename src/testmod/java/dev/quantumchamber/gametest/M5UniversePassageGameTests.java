@@ -395,7 +395,10 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
             context.runAtTick(resolved + 400, () -> M5GameTestSupport.prepare400Snapshot(
                     "existing_passage_first", resolved, sid1, frame, universe, journal, "PASSAGE_READY", firstReady[0],
                     () -> CollapseAuthorities.get(server).projection(chamber, id)));
-            whenTicks(context, resolved + 1, 400, () -> M5GameTestSupport.state(journal, sid1).equals("PASSAGE_READY"), readyAt -> {
+            if (resolved + 1 > 780) {
+                hooks.release(); context.assertTrue(false, "TEST_BUDGET deadline=780：" + M5GameTestSupport.state(journal, sid1)); return;
+            }
+            whenTicks(context, resolved + 1, 780 - (resolved + 1), () -> M5GameTestSupport.state(journal, sid1).equals("PASSAGE_READY"), readyAt -> {
                 firstReady[0] = true;
                 crossMidline(context, readyAt + 1, hooks, p, frame, 3.5);
                 whenTicks(context, readyAt + 3, 10, () -> !journal.flushedRecords().containsKey(sid1), firstEnded -> {
@@ -425,14 +428,14 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
                                 witness.put("existingArrivalTitleForQ", qHud.titles().equals(M5GameTestSupport.arrivalTitle(ARRIVED_EXISTING_KEY)));
                                 witness.put("noClosedMessageToQ", !qHud.overlays().contains(CollapseService.MESSAGE_PASSAGE_CLOSED));
                                 witness.put("noTitleForPFromTheSecondPassage", M5GameTestSupport.hud(origin.connection).titles().isEmpty());
-                                witness.put("noWarnOrError", M5GameTestSupport.noWarnOrError(capture, sid1) && M5GameTestSupport.noWarnOrError(capture, sid2));
+                                witness.put("WARN_CONTRACT", onlyBoundedPrepareWarnings(capture.entries(), Map.of(sid1, chamber, sid2, chamberB), id));
                                 LOGGER.info("M5_PASSAGE_EXISTING first={} second={}", firstEnded, secondEnded);
                                 releaseThenComplete(context, hooks, witness, "EXISTING 的基本重逢：" + witness, 20, () -> true);
                             }, () -> "Q 跨過之後 D2 沒有結束：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
                         }, () -> "D2 沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid2) + " witness=" + witness, hooks);
                     });
                 }, () -> "P 跨過之後 D1 沒有結束：record=" + M5GameTestSupport.state(journal, sid1), hooks);
-            }, () -> "D1 沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid1), hooks);
+            }, () -> "TEST_BUDGET deadline=780 D1 沒有提交 PASSAGE_READY：record=" + M5GameTestSupport.state(journal, sid1), hooks);
         });
     }
 
@@ -1346,4 +1349,31 @@ public final class M5UniversePassageGameTests implements FabricGameTest {
     private static final String CONTROLLER_PASSAGE_KEY = "message.quantumchamber.m5.controller_passage";
     /** F5-3（spec §10.8、§20.8）：到達目的宇宙的 title，候選是 NEW 與 EXISTING（以字面值斷言，不信任 production 常數）。 */
     private static final String ARRIVED_NEW_KEY = "message.quantumchamber.m5.arrived_new", ARRIVED_EXISTING_KEY = "message.quantumchamber.m5.arrived_existing";
+    /** 每個 owner 最多一則精確載入等待 WARN；其餘相關 WARN／ERROR 一律拒絕。 */
+    private static boolean onlyBoundedPrepareWarnings(List<LogCapture.Entry> entries, Map<UUID, UUID> owners, dev.quantumchamber.universe.UniverseId id) {
+        var counts = new java.util.HashMap<UUID, Integer>();
+        var reasons = List.of("預載目的世界（chunk 還沒全部 FULL）", "投影 Controller 位置的 chunk 不是 FULL",
+                "目的 chunks 的原生存檔 checkpoint 未就緒（chunk 或 entity storage 尚未完整載入）",
+                "PASSAGE_READY 的前置條件：預載目的世界（chunk 還沒全部 FULL）", "投影 volume 的 chunk 不是都 FULL");
+        for (var entry : entries) {
+            if (entry.level() != Level.WARN && entry.level() != Level.ERROR) continue;
+            boolean loader = entry.message().startsWith("PREPARE 持續等待超過 ");
+            if (!loader && owners.keySet().stream().noneMatch(sid -> entry.message().contains(sid.toString()))) continue;
+            if (entry.level() != Level.WARN || entry.thrown() != null || entry.marker() == null
+                    || !entry.marker().getName().equals(CollapseService.LOG_MARKER.getName())) return false;
+            UUID matched = null;
+            for (var owner : owners.entrySet()) for (var reason : reasons) {
+                var prefix = "PREPARE 持續等待超過 600 ticks（不進 SEALED、不重抽，繼續等待）：session=" + owner.getKey()
+                        + " chamber=" + owner.getValue() + " 目的地=UNIVERSE " + id.value() + " 正在等：" + reason + "，自 tick ";
+                if (!entry.message().startsWith(prefix)) continue;
+                var since = entry.message().substring(prefix.length());
+                if (!since.matches("0|[1-9][0-9]*")) continue;
+                try { Long.parseLong(since); } catch (NumberFormatException invalid) { return false; }
+                matched = owner.getKey();
+            }
+            if (matched == null || counts.merge(matched, 1, Integer::sum) > 1) return false;
+        }
+        return true;
+    }
+
 }

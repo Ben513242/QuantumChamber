@@ -872,9 +872,15 @@ public final class M6RandomProbePhases {
                 if(chain.equals("partial-overworld")) {
                     var partial=com.google.gson.JsonParser.parseString(Files.readString(root.resolve("partial-storage.json"))).getAsJsonObject();
                     require(partial.get("uuid").getAsString().equals(id.value().toString()) && partial.get("rootWorldSeed").getAsString().equals(Long.toString(intent.rootWorldSeed())),"PARTIAL_RESTART_IDENTITY");
-                    var actual=terrainSamples(active.get(),true,active.get());
-                    require(new Gson().toJsonTree(actual).equals(partial.get("terrainSamples")),"PARTIAL_RESTART_TERRAIN");
-                    proof.put("partialTerrainExact",true);proof.put("terrainSamples",actual);
+                    var saved=rawChunk(new BlockPos(0,-64,0)).orElseThrow(() -> new IllegalStateException("PARTIAL_PROTECTED_RAW_FULL: missing"));
+                    require(saved.contains("xPos",3) && saved.contains("zPos",3) && saved.getInt("xPos")==0 && saved.getInt("zPos")==0
+                            && saved.getString("Status").equals("minecraft:full"),"PARTIAL_PROTECTED_RAW_FULL: restart");
+                    active.get().getChunk(0,0); // 重啟後讀入已保存的 C；不要求 ACTIVE 本身已載入該 chunk。
+                    var actual=protectedSamples(active.get(),false);
+                    require(new Gson().toJsonTree(actual).equals(partial.get("protectedSamples")),"PARTIAL_PROTECTED_SAMPLE_EXACT");
+                    partialNativeConsumers(active.get());
+                    require(new Gson().toJsonTree(proof.get("partialNativeConsumers")).equals(partial.get("partialNativeConsumers")),"PARTIAL_NATIVE_CONSUMER_EXACT: restart");
+                    proof.put("partialProtectedSamplesExact",true);proof.put("protectedSamples",actual);
                 }
                 proof.put("active",true);proof.put("discoveryCount",discovered.size());proof.put("nativeSeed",Long.toString(active.get().getSeed()));
                 proof.put("functionalPassed",true);proof.put("stopRequested",true);finished=true;
@@ -1009,8 +1015,8 @@ public final class M6RandomProbePhases {
                 require(System.nanoTime()-started<60_000_000_000L,"PARTIAL_CHUNK_DEADLINE");
                 world.save(null,true,false);
                 require(System.nanoTime()-started<60_000_000_000L,"PARTIAL_SAVE_DEADLINE");
-                var terrain=terrainSamples(world,true,null);
-                require(terrain.stream().anyMatch(sample -> !sample.endsWith("minecraft:air")),"PARTIAL_TERRAIN_EMPTY");
+                var terrain=protectedSamples(world,true);
+                partialNativeConsumers(world);
                 var hashes=new TreeMap<String,String>();
                 try(var files=Files.walk(storage())) {
                     for(var path:files.filter(Files::isRegularFile).toList()) {
@@ -1021,7 +1027,7 @@ public final class M6RandomProbePhases {
                 require(hashes.containsKey("region/r.0.0.mca"),"PARTIAL_STORAGE_MISSING");
                 require(runtime.state(server,row.definition().worlds().get(DimensionRole.OVERWORLD))==DynamicWorldRuntimeState.MATERIALIZING
                         && UniverseLifecycleService.resolveActive(server,id).isEmpty() && noDiscovery(),"PARTIAL_WINDOW_CHANGED");
-                proof.put("partialStorageVerified",true);proof.put("chunkRequests",1);proof.put("terrainSamples",terrain);
+                proof.put("partialStorageVerified",true);proof.put("chunkRequests",1);proof.put("protectedSamples",terrain);
                 proof.put("partialHashes",hashes);proof.put("partialElapsedMs",(System.nanoTime()-started)/1_000_000L);
                 durable(root.resolve("partial-storage.json"),proof);
                 finishHalt(true);
@@ -1029,67 +1035,65 @@ public final class M6RandomProbePhases {
             throw new IllegalStateException("PARTIAL_LOAD_RETURNED");
         }
 
-        private List<String> terrainSamples(ServerWorld world,boolean compareDisk,ServerWorld callerResolvedActiveWorld) throws Exception {
-            var samples=new ArrayList<String>();
-            var details=new ArrayList<Map<String,Object>>();
-            boolean timing=chain.equals("partial-overworld") && phase.equals("restart") && compareDisk;
-            int sampleIndex=0;
-            OreWitness.Window writer=timing && OreWitness.concurrentSynthetic(proof,server.isOnThread()) && OreWitness.synthetic(proof)?OreWitness.arm(world,callerResolvedActiveWorld,proof,sid.toString(),id.value().toString()):null;
-            try {
-            if(phase.equals("partial")) {
-                var region=storage().resolve("region/r.0.0.mca");
-                try {proof.put("terrainSampleRegionSha256Before",M5CollapseDiskEvidence.sha256(region));
-                    proof.put("terrainSampleRegionLength",Files.size(region));}
-                catch(Exception failure) {proof.put("terrainSampleDiagnosticError",diagnosticError("partialRegionBefore",failure));}
+        /** 固定 FULL C 的有限保存樣本；不宣稱整個 chunk 或所有天然地形不再改動。 */
+        private List<String> protectedSamples(ServerWorld world, boolean compareDisk) throws Exception {
+            var chunk=world.getChunkManager().getWorldChunk(0,0);
+            require(chunk!=null && chunk.getPos().equals(new ChunkPos(0,0)) && chunk.getStatus()==net.minecraft.world.chunk.ChunkStatus.FULL,
+                    "PARTIAL_PROTECTED_CHUNK_FULL");
+            if(compareDisk) {
+                var raw=rawChunk(new BlockPos(0,-64,0)).orElseThrow();
+                require(raw.getString("Status").equals("minecraft:full") && raw.getInt("xPos")==0 && raw.getInt("zPos")==0,
+                        "PARTIAL_PROTECTED_RAW_FULL");
             }
-            for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15})for(int y:new int[]{-32,0,32}) {
-                var pos=new BlockPos(x,y,z);
-                if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"BEFORE_FIRST_ORIGINAL_READ",null,null,null);
-                net.minecraft.block.BlockState live;
-                long originalReadStart=System.nanoTime();
-                long originalReadEnd;
-                try {live=world.getBlockState(pos);originalReadEnd=System.nanoTime();}
-                catch(RuntimeException | Error failure) {
-                    if(timing)OreWitness.read(writer,sampleIndex,pos,originalReadStart,System.nanoTime(),null,"UNOBSERVABLE",failure);
-                    if(timing && sampleIndex==0) recordFirstOriginalReadFailure(failure);
-                    throw failure;
+            var result=new ArrayList<String>();
+            for(int x:new int[]{0,5,10,15})for(int z:new int[]{0,5,10,15}) {
+                var pos=new BlockPos(x,-64,z);
+                var live=chunk.getBlockState(pos);
+                require(live.isOf(net.minecraft.block.Blocks.BEDROCK) && live.getEntries().isEmpty(),"PARTIAL_PROTECTED_SAMPLE_EXACT: live "+pos);
+                if(compareDisk) {
+                    var raw=M5CollapseDiskEvidence.block(storage(),pos);
+                    require(raw.name().equals("minecraft:bedrock") && raw.properties().equals("{}"),"PARTIAL_PROTECTED_SAMPLE_EXACT: raw "+pos);
                 }
-                if(timing)OreWitness.read(writer,sampleIndex,pos,originalReadStart,originalReadEnd,live,"UNOBSERVABLE",null);
-                if(timing && sampleIndex==0) loadedTimingSnapshot(world,callerResolvedActiveWorld,"AFTER_FIRST_ORIGINAL_READ",null,live,null);
-                var nativeName=net.minecraft.registry.Registries.BLOCK.getId(live.getBlock()).toString();
-                var disk=M5CollapseDiskEvidence.block(storage(),pos);
-                if(timing && writer!=null) {
-                    try {writer.reads.set(writer.reads.size()-1,new OreWitness.Read(sampleIndex,x,y,z,originalReadStart,originalReadEnd,live,disk.name(),disk.properties(),""));}
-                    catch(Throwable diagnostic) {OreWitness.error(writer);}
-                }
-                boolean terrainMatches=!disk.name().equals(M5CollapseDiskEvidence.ABSENT)
-                        && (!compareDisk || disk.name().equals(nativeName));
-                if (phase.equals("partial")) {
-                    var detail=new LinkedHashMap<String,Object>();
-                    detail.put("pos",pos.toShortString());detail.put("liveState",live.toString());
-                    detail.put("rawState",disk.name());detail.put("rawProperties",disk.properties());
-                    try {detail.put("liveBiome",world.getBiome(pos).getKey().map(key->key.getValue().toString()).orElse("UNKEYED"));
-                        detail.put("rawBiome",rawBiome(pos));}
-                    catch(Exception failure) {detail.put("diagnosticError",diagnosticError("partialBiome",failure));}
-                    details.add(detail);
-                }
-                if (!terrainMatches && !proof.containsKey("firstTerrainDifference")) {
-                    if(timing)OreWitness.freeze(writer,proof);
-                    if(timing) loadedTimingSnapshot(world,callerResolvedActiveWorld,"FIRST_MISMATCH",sampleIndex,live,pos);
-                    try {firstTerrainDifference(world,pos,live,disk,nativeName,disk.name());}
-                    catch(Exception failure) {proof.put("diagnosticError",diagnosticError("firstTerrainDifference",failure));}
-                }
-                require(terrainMatches,"PARTIAL_RAW_MCA_TERRAIN");
-                samples.add(x+","+y+","+z+"="+disk.name());
-                sampleIndex++;
+                result.add(x+",-64,"+z+"=minecraft:bedrock{}");
             }
-            if (phase.equals("partial")) {
-                proof.put("partialTerrainDiagnostics",details);
-                try {proof.put("terrainSampleRegionSha256After",M5CollapseDiskEvidence.sha256(storage().resolve("region/r.0.0.mca")));}
-                catch(Exception failure) {proof.put("terrainSampleDiagnosticError",diagnosticError("partialRegionAfter",failure));}
+            proof.put("storageSampleKind","VANILLA_BOTTOM_BEDROCK_V1");proof.put("storageSampleCount",16);
+            proof.put("protectedChunkX",0);proof.put("protectedChunkZ",0);proof.put("protectedChunkStatus","minecraft:full");
+            return List.copyOf(result);
+        }
+
+        /** expected 僅由 checked frozen target 與 root 建立，絕不沿用 actual generator 的 settings。 */
+        private void partialNativeConsumers(ServerWorld world) throws Exception {
+            var target=intent.targetSettingsSnapshot();
+            var resolved=new Minecraft121VanillaPresetProfileProvider(target.providerId())
+                    .resolveGenerationSettings(target.parameters(),Minecraft121SettingsLifecycle.acquire(server));
+            var expectedGenerator=(NoiseChunkGenerator)resolved.roles().get(DimensionRole.OVERWORLD).chunkGenerator();
+            require(world.getChunkManager().getChunkGenerator() instanceof NoiseChunkGenerator,"PARTIAL_NATIVE_CONSUMER_EXACT: generator");
+            var generator=(NoiseChunkGenerator)world.getChunkManager().getChunkGenerator();
+            long seed=intent.rootWorldSeed();
+            require(world.getSeed()==seed && world.getRegistryKey().equals(UniverseKeys.world(id,DimensionRole.OVERWORLD)),"PARTIAL_NATIVE_CONSUMER_EXACT: owner/seed");
+            require(generator.getSettings().getKey().equals(expectedGenerator.getSettings().getKey()),"PARTIAL_NATIVE_CONSUMER_EXACT: settings");
+            var expected=NoiseConfig.create(expectedGenerator.getSettings().value(),world.getRegistryManager().getWrapperOrThrow(RegistryKeys.NOISE_PARAMETERS),seed);
+            var expectedSamples=new ArrayList<String>();
+            for(var point:POINTS) {
+                var pos=new DensityFunction.UnblendedNoisePos(point[0],point[1],point[2]);
+                expectedSamples.add(Long.toHexString(Double.doubleToRawLongBits(expected.getNoiseRouter().finalDensity().sample(pos)))+":"
+                        +expectedGenerator.getBiomeSource().getBiome(point[0],point[1],point[2],expected.getMultiNoiseSampler()).getKey().orElseThrow().getValue());
             }
-            return List.copyOf(samples);
-            } finally {if(timing)OreWitness.freeze(writer,proof);}
+            var actual=samples(world,world.getChunkManager().getNoiseConfig());
+            require(actual.equals(expectedSamples),"PARTIAL_NATIVE_CONSUMER_EXACT: noise/biome");
+            var expectedPlacement=expectedGenerator.createStructurePlacementCalculator(world.getRegistryManager().getWrapperOrThrow(RegistryKeys.STRUCTURE_SET),expected,seed);
+            var placement=world.getChunkManager().getStructurePlacementCalculator();
+            require((long)field(field(world,"structureLocator"),"seed")==seed
+                    && field(placement,"structureSeed").equals(field(expectedPlacement,"structureSeed"))
+                    && field(placement,"concentricRingSeed").equals(field(expectedPlacement,"concentricRingSeed"))
+                    && (long)field(world.getBiomeAccess(),"seed")==BiomeAccess.hashSeed(seed)
+                    && world.getStructureAccessor().shouldGenerateStructures()==resolved.generateStructures(),"PARTIAL_NATIVE_CONSUMER_EXACT: native seeds/structures");
+            var row=new LinkedHashMap<String,Object>();
+            row.put("worldKey",world.getRegistryKey().getValue().toString());row.put("seed",Long.toString(seed));
+            row.put("settingsKey",generator.getSettings().getKey().orElseThrow().getValue().toString());
+            row.put("targetFingerprint",HexFormat.of().formatHex(target.outputFingerprint()));
+            row.put("generateStructures",resolved.generateStructures());row.put("samples",actual);row.put("exact",true);
+            proof.put("partialNativeConsumers",row);
         }
 
         /** 公開 API 僅觀測既存 FULL；getWorldChunk 會更新四格 cache，並非零時序擾動。 */

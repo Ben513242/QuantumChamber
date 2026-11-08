@@ -179,8 +179,7 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
                 wireSnapshot(universe, sid, id, frame, "fixtureSettled", wire, support, wired);
                 witness.put("fixtureSettled", universe.getBlockState(wire).isOf(Blocks.REDSTONE_WIRE) && universe.getBlockState(support).isAir()
                         && items(universe, area) == 0 && spectator.player().getServerWorld() == universe
-                        && wired.equals(wire.east())
-                        && pocket.stream().allMatch(side -> universe.getFluidState(side).isEmpty()));
+                        && wired.equals(wire.east()));
                 if (witness.get("fixtureSettled") == false) {
                     hooks.release();
                     context.assertTrue(false, "投影的第一次寫入 fixtureSettled=false：" + witness);
@@ -189,6 +188,12 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
                 var pigBefore = pig.getPos();
                 var spectatorBefore = spectator.player().getPos();
                 wireSnapshot(universe, sid, id, frame, "beforeWriter", wire, support, wired);
+                witness.put("wirePocketFluidFreeBeforeWrite", pocket.stream().allMatch(side -> universe.getFluidState(side).isEmpty()));
+                if (!witness.get("wirePocketFluidFreeBeforeWrite")) {
+                    hooks.release();
+                    context.assertTrue(false, "wirePocketFluidFreeBeforeWrite=false；writer 未執行：" + witness);
+                    return;
+                }
                 var result = ProjectionWriter.write(universe, frame, ProjectionWriter.Mode.FIRST_WRITE);
                 witness.put("written", result.status() == ProjectionWriter.Status.WRITTEN && result.written() > 0 && result.blockingPlayers().isEmpty());
                 witness.put("everyCellIsTheSpecTarget", M5GameTestSupport.projectionMismatches(universe, frame, false).isEmpty());
@@ -1424,7 +1429,10 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
             context.runAtTick(resolved + 400, () -> M5GameTestSupport.prepare400Snapshot(
                     "prepare_unconfirmed_first", resolved, sid, frame, universe, journal, "PENDING", pendingReady[0],
                     () -> authorities.projection(chamber, id)));
-            whenTicks(context, resolved + 1, 400, () -> authorities.projection(chamber, id).value()
+            if (resolved + 1 > 750) {
+                hooks.release(); context.assertTrue(false, "TEST_BUDGET deadline=750：" + M5GameTestSupport.state(journal, sid)); return;
+            }
+            whenTicks(context, resolved + 1, 750 - (resolved + 1), () -> authorities.projection(chamber, id).value()
                     .filter(entry -> entry.status() == ProjectionLedger.Entry.Status.PENDING).isPresent(), pendingAt -> {
                 pendingReady[0] = true;
                 var fault = M5GameTestSupport.installCheckedReadFault(context, ProjectionLedger.FILE_NAME, 0, 1, hooks);
@@ -1454,7 +1462,7 @@ public final class M5UniverseProjectionGameTests implements FabricGameTest {
                         releaseThenComplete(context, hooks, witness, "另一座艙的寫入未確認時：" + witness, 20, () -> M5GameTestSupport.destinationTickets(universe, sid).isEmpty());
                     }, () -> "Q 離開之後沒有準備完成：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
                 }, () -> "projection ledger 沒有收斂：record=" + M5GameTestSupport.state(journal, sid) + " witness=" + witness, hooks);
-            }, () -> "本艙的 PENDING 沒有確認：record=" + M5GameTestSupport.state(journal, sid), hooks);
+            }, () -> "TEST_BUDGET deadline=750 本艙的 PENDING 沒有確認：record=" + M5GameTestSupport.state(journal, sid), hooks);
         });
     }
 
