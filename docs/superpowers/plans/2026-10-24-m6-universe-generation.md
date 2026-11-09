@@ -957,3 +957,5 @@ A主控audit c5807ca3…3117b0與同席spec終局C0/I0/M0，原outer19+1SETUP保
 
 
 **2026-11-09 C前verifier fix1（原語意不變）：** code4593 CI native runtime21phase PASS但SavedSummary SelfTest5分鐘timeout，整體FAIL原判保留；C部分92JUnit PASS不冒新pin。只既有PS1將原global/chain predicates抽共用，真Verify全7、局部SelfTest同global+受影響chain、global/manifest/fullbaseline與277case全留、無PASScache/無timeout或worldgen改動。同席spec/quality C0/I0/M0，parser-only合成benchmark189.947秒不是functional或真CI重播；新pinC及同SHA真CI仍待，C checkbox不勾、不進Task14。
+
+**2026-11-09 C2 full FAIL／verifier fix2（判定不變）：** d973同SHA CI42581484000三job success、真277反例273秒，C2原雙focused／12 native phase全綠；本機f8 full最後ci-rule native-green因continuity錯用fixture `$project` 找sidecar而FAIL／outer1／無END ALL，原判保留，較早深路徑preflight FAIL另保。只既有PS1明傳caller已驗3phase evidence dirname，保持ReadLink／CARVERS／biome／structure／277／300秒、拒缺錯或換序base，不加fallback／拷檔／Java／wrapper修改。真f8 AllEnabled073c完整Verify＋277唯讀重驗203.610秒，不冒C3或原full改判。fresh e25355a8… fixture replay自然PASS（196.995秒／outer與step0／277），同兩席fix2窄審C0／I0／M0；新code pin須再做原C全部出口與同SHA CI；C仍未勾、T13 OPEN／不進T14，T21及舊FAIL不變。

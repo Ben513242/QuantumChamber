@@ -303,14 +303,24 @@ function Assert-ProfileReceipt($receipt,$phase,$owned,$state,[string]$ExpectedCh
         }
     }
 }
-function Assert-ProfileContinuity($receipts) {
+function Assert-ProfileContinuity($receipts,[string[]]$EvidenceBases) {
+    if(@($receipts).Count -ne 3 -or @($EvidenceBases).Count -ne 3){throw 'M6_SAME_CONTINUITY_CONTEXT'}
+    $phases=@('source','new','restart');$bases=@();$ownerBase=$null
+    for($phaseIndex=0;$phaseIndex -lt 3;$phaseIndex++) {
+        $r=$receipts[$phaseIndex];$given=$EvidenceBases[$phaseIndex]
+        if([string]::IsNullOrWhiteSpace($given) -or -not [IO.Path]::IsPathFullyQualified($given)){throw 'M6_SAME_CONTINUITY_CONTEXT'}
+        $base=[IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($given));$parent=[IO.Path]::GetDirectoryName($base)
+        if($r.phase -cne $phases[$phaseIndex] -or [IO.Path]::GetFileName($base) -cne $phases[$phaseIndex] -or [IO.Path]::GetFileName($parent) -cne "m6-native-$($r.nonce)" -or $r.nonce -cne $receipts[0].nonce -or $r.root -cne $receipts[0].root -or $r.chain -cne $receipts[0].chain -or -not(Test-Path -LiteralPath $base -PathType Container)){throw 'M6_SAME_CONTINUITY_CONTEXT'}
+        if($null -eq $ownerBase){$ownerBase=$parent}elseif(-not $parent.Equals($ownerBase,[StringComparison]::OrdinalIgnoreCase)){throw 'M6_SAME_CONTINUITY_CONTEXT'}
+        $bases+=,$base
+    }
     for($i=0;$i -lt 1;$i++) {
         foreach($field in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','policyVersion','profileId')) {
             if(@($receipts | ForEach-Object {$_.variants[$i].$field} | Sort-Object -Unique).Count -ne 1){throw "M6_SAME_RESTART_IDENTITY:$field"}
         }
-        $layers=@(foreach($r in @($receipts[1],$receipts[2])) {
-            $base=Join-Path $project ".superpowers/verification/m6-native-$($r.nonce)/$($r.phase)"
-            Read-ProfileJsonLink $base $r.variants[$i].carversReceiptPath "carvers-$($r.phase).json" $r.variants[$i].carversReceiptSha256
+        $layers=@(foreach($phaseIndex in 1..2) {
+            $r=$receipts[$phaseIndex]
+            Read-ProfileJsonLink $bases[$phaseIndex] $r.variants[$i].carversReceiptPath "carvers-$($r.phase).json" $r.variants[$i].carversReceiptSha256
         })
         for($side=0;$side -lt 2;$side++){foreach($field in @('block','biome')) {
             if((Get-ProfileListHash ([string[]]$layers[0].sides[$side].sample.rows.$field)) -cne (Get-ProfileListHash ([string[]]$layers[1].sides[$side].sample.rows.$field))){throw "M6_SAME_RESTART_CARVERS:$field"}
@@ -411,7 +421,7 @@ function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},
     if((Get-FileHash -LiteralPath $chainRow.preservation).Hash -cne $chainRow.preservationSha256){throw 'M6_SAVED_PRESERVATION_HASH'}
     $preserve=if($preservationOverrides.ContainsKey($i)){$preservationOverrides[$i]}else{Get-Content -LiteralPath $chainRow.preservation -Raw | ConvertFrom-Json -DateKind String}
     if($preserve.root -cne $chainRow.root -or $preserve.strategy -cne 'NEW_OWNED_ROOT' -or $preserve.existingWorldsMoved -ne 0 -or $preserve.existingWorldsChanged -or -not $preserve.retainedRoot -or -not $preserve.lockReleased -or $preserve.normalStop -ne ($spec.chain -cne 'catalog-readback')){throw 'M6_SAVED_PRESERVATION'}
-    $receipts=@();$pids=@()
+    $receipts=@();$pids=@();$phaseEvidenceBases=@()
     foreach($phaseName in $spec.phases) {
         $row=$native.phases[$offset]
         if((Get-FileHash -LiteralPath $row.receipt).Hash -cne $row.receiptSha256){throw 'M6_SAVED_RECEIPT_HASH'}
@@ -429,7 +439,7 @@ function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},
             'same-seed-amplified-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
             default {Assert-GameplayReceipt $receipt $spec.chain $phaseName $owned $state}
         }
-        $receipts+=,$receipt;$pids+=,$row.javaPid;$offset++
+        $receipts+=,$receipt;$pids+=,$row.javaPid;$phaseEvidenceBases+=,$state.PhaseEvidence;$offset++
     }
     if(@($pids | Sort-Object -Unique).Count -ne $spec.phases.Count){throw 'M6_SAVED_JVM_REUSED'}
     if($spec.chain -ceq 'native-seed-diagnostic') {
@@ -439,7 +449,7 @@ function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},
             if(($receipts[0].worlds[$w].$field | ConvertTo-Json -Compress) -cne ($receipts[1].worlds[$w].$field | ConvertTo-Json -Compress)){throw 'M6_SAVED_SEED_REOPEN'}
         }}
     } elseif($spec.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
-        Assert-ProfileContinuity $receipts
+        Assert-ProfileContinuity $receipts $phaseEvidenceBases
     } else {
         $fields=if($spec.chain -ceq 'catalog-readback'){@('uuid','session','allocationToken','rootWorldSeed','targetFingerprint','profileId','profileVersion','journalHash')}else{@('session','uuid','worldKey','allocationToken','rootWorldSeed','sourceRootWorldSeed','sourceFingerprint','targetFingerprint','profileId','storage')}
         foreach($field in $fields){if(@($receipts | ForEach-Object {$_.$field} | Sort-Object -Unique).Count -ne 1){throw "M6_SAVED_RESTART_IDENTITY:$field"}}
@@ -610,7 +620,7 @@ try {
         }
         $current=@($results.ToArray() | Select-Object -Skip $chainStart)
         if($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
-            Assert-ProfileContinuity @($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String})
+            Assert-ProfileContinuity @($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String}) @($current | ForEach-Object {[IO.Path]::GetDirectoryName($_.receipt)})
         }
         if($gameplay) {
             $proofs=@($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String})

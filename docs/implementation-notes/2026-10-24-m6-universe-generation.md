@@ -1703,3 +1703,19 @@ parser-only合成輸入以既存本地c9eb前五鏈15phase與真B normal/amp六p
 固定PS1 source SHA `e768b910d5fa23c6e1a92791255f260065a0b9e85a138bdadeeea4b1a84e0c8d`；fix diff(base4593) SHA `b8bc0d8b9e3144535a7706b4a10528d85af40e7b390ebc94d392bcf2dd4e529e`、pin SHA `bd2c17514ec82e83d82bd9ebc7d6e25f71a1728c216c959d7d24c38860289019`。原件在本plan SDD `carvers-verifier-timing-4593-20261109/`、`carvers-verifier-fix1-20261109/`；bench result SHA `10af9190efc695d741790c8b01549e2a15cde1fb7953a835f67e9125f672f73a`，predicate文字等價proof與原資料manifest另存。Java Profile仍 `e85a0e1d…4f18a`、Recovery仍 `e976ed5f…a2f8e6`；A20不因純PS流程抽取重跑，也不把A當C。
 
 同席fix1 spec／quality窄複審C0/I0/M0，獨立重核global/chain body、offset0/2/6/8/11/15/18及global唯一性/局部作用域/前後fullbaseline；這不是新CI已通過。fix1新code pin後須重新按原C做乾淨雙focused、正常native、完整run-all及同SHA CI。所有舊FAIL/UNRESOLVED仍保，T13OPEN、不進T14/no新CU-Uonly-client；任何final診斷審查只加獨立review，不回寫原producer UNRESOLVED/NOT_CLASSIFIED。
+
+### 2026-11-09：C2 full 原判 FAIL 與 continuity evidence-base fix2
+
+code `d973710cf21c89fa5f491dc3b9874e2bdf11058c` 的 CI `42581484000` 同 SHA 三 job 終局 success；真 SavedSummary-SelfTest 273秒、原300秒內，日誌為7鏈21phase／277反例。原 metadata、job logs、native ZIP 與430檔manifest在 SDD `ci-d973-42581484000-20261109-083f5344/`，artifact13657757471 digest `3ee812469f60369ee029199393ae1e7465d9ac5484aacbe50ef502c19aa102c2`。不改4593原CI FAIL，也不拿CI代本機 full。
+
+C2 compile、四class各雙JUnit共92案次、owner／selector各輪2case及milk／no-entrance各輪2case雙focused，另normal／amplified各雙fresh三phase鏈均通過；restore與環境精確還原。原owner locator遞迴錯算自測fixture的aux SETUP保留，另唯讀重核唯一真gate2case，不重跑改判。spec同席focused審C0/I0/M0，final所有rows／差格／UNRESOLVED保留。
+
+首full深路徑根 `carvers-stage-c2-evidence-t13lc-clean-d973-20261109/06-c2-full/run-all-d818a0ebde4141e29a020ec700f1f3ea` 在runtime前被 `M6_CI_CWD_UNSUPPORTED` 擋下，outer1／無END ALL。只改呼叫用原腳本預設短EvidenceRoot後的新根 `.superpowers/verification/run-all-f8eefde1119b4f55b24fde36668368db`，所有runtime gate自然exit0，但最後 `END ci-rule FAIL CI規則未原樣通過：native-green`，outer1／無END ALL。兩根與原failed fixture均保原判，不將runtime全綠稱full PASS。
+
+原f8的真AllEnabled native摘要 `073c800d4e394c529d8ec7a0c9d41f74` 為7鏈21phase PASS；失敗出在ci-rule複製腳本至新fixture後，`Assert-ProfileContinuity` 仍從全域 `$project` 重組CARVERS路徑而報 `M6_CARVERS_LINK_MISSING`。初步「少複製sidecar」猜測已撤回：既有wrapper刻意保留原absolute receipt paths，各phase從已驗receipt dirname讀sidecar本來正確，原new／restart sidecar存在且SHA精確。只讀診斷保在C2證據目錄 `native-green-path-diagnosis.json`。
+
+fix2僅既有 `scripts/verification/m6-universe-probe.ps1`：continuity顯式接caller已驗過的三phase receipt evidence bases，核長度／順序／absolute normalized path／nonce-root-chain／同父及exact phase目錄；Saved從已驗state累積，runtime從已驗current receipt dirname傳入。原ReadLink的檔名／相對正規化／SHA／schema及actual CARVERS／biome／structure比較原封；不glob／fallback／補拷sidecar／改wrapper或Java，也不提高timeout。
+
+固定source SHA `6d9f9e334e305919b122e23573f4dfd2b344eb12a4a8a69e73b963c8ac32c969`、base d973 diff SHA `9043ae5f2e20c5c6d9712c16fbbb4eb2027eb62dfac637b946a56c5e985a4ad2`，pin SHA `aa0ab4413d122d08a3215fb639657ce9c8f9b895862d1d743e2b33d198a6b31b`；原件在 SDD `carvers-continuity-fix2-20261109/`。9項context正反例均通過，包括正常base、原fixture context、缺／錯／換序base與缺witness時repo有同名仍不得fallback，以及錯SHA／檔名。f8真單run073c輸入完整Verify＋277及末全baseline自然exit0／空stderr，203.610秒，原300秒餘96.390秒；這是唯讀parser回歸，不是新pin C3或原full改判。
+
+fresh原ci-rule fixture `.superpowers/verification/ci-t13-fix2-native-green-e25355a8c9d042369ad305de69c1c3de` 自然PASS，outer／step0、196.995196秒，真7鏈21phase／277。result SHA `2fa654ece78df0838756fa5a7bae7512a44ad33d9e7b670bf349f50ae18c64c0`；原f8 summary SHA `cec6602ac2ac20b4b863e03479b2aeee9d41e01b05302da616711cb26cb2bf9e` 未變，原failed fixture未動，沒有啟新JVM。同兩席fix2窄審C0／I0／M0，均獨立核source／pin／context cases／真277與fresh replay，報告先留前版快照再追加。新乾淨code pin的C3雙focused／full／同SHA CI尚待；C checkbox不勾，T13仍OPEN、不進T14。Java與A20原封，不因路徑relay重跑20個控制或把它們當C；T21及所有舊FAIL／UNRESOLVED原判不變，新增canonical＋U／U-only／client未授權。
