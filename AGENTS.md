@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-09 最新接手點：canonical-only 對照已完成，T13仍OPEN。** 同碼十個無動態U的normal世界資料重現82e9×9／704b×1；biome、post-FULL density、設定指紋皆同，三差格全在x527且與兩舊704b原MCA的1440列相同。02原外層JSON鍵序SETUP錯誤保留、另逐欄唯讀重核；不稱原外層十根全PASS，排除02仍8／1兩種hash。本輪只改兩既有testmod，compile與控制切片獨立spec／quality各C0/I0/M0；正式oracle／production不變，不採14格或1%，不進T14。詳M6 note最末對照報告與spec §4.2；後續amplified-only／U-only／canonical+U僅提案，任何acceptance改動須新裁定及獨立spec review。全部舊FAIL保原判。
+**2026-11-09 最新交付／停等裁示：** normal t13vc-mw8nd4zy-r2為82e9×9／704b×1，3/1440差格皆x527且CENTER_FULL已不同，02原outer SETUP與唯讀重核保留。已授權amplified-only t13ac-mw8oturs完成10/10有效，CENTER/FULL皆3580×10，本批未觀察1a3c；不推純vanilla、跨世界根因或U→U。基線集合分T13/T21的候選已列strict／反例／spec影響／獨審計畫，文件C/I0不代表生效，人工改成另一已知variant仍會漏判。正式oracle不改、無數字容差；T13仍OPEN、不進T14。角色key／T14 Files比較層／T18–20 respawn-spawn-command稽核只記ledger，開工前處理；canonical+U、U-only、client未授權未執行。詳spec §4.2、plan末節、M6 note最後三節及候選；交付後停止等使用者裁示。
 
 **2026-11-09 Task13 收尾判定：未結，不進 Task14。** feature code pin `1332c527b829b4a228471de541aff493cdcc7e49` 已正常 push、遠端同 SHA；乾淨 milk／same-seed 雙 focused、獨立 spec／quality 各 C0/I0/M1，GitHub Actions `42499957714` Ubuntu `build`、Windows `windows-native`／`m6-native` 三 job success。可是本機完整 `run-all-dd57e94d52274671b4cfc506b390a9ab` 在 M6 native 的 canonical normal→U `new` 出現 `(527,72,512)` air／spruce leaves 地形差，outer exit 1、無 `END ALL`；summary SHA-256 `26804DFD00281087765A0F3D0EE1ABEDC5FD328E571C1B2E94C34230AE53B6B8`。舊 `35f5` amplified coal ore／stone FAIL 與本次 FAIL 都保留原判；同 seed／biome／FULL、target owner exact 與邊界位置尚不足以證明根因。同 pin CI PASS 不抵銷本機 FAIL。詳細原件、下一步及限制見目前接手檔、M6 note 末節與 ignored STATUS／progress；使用者限定本對話只處理 T13 後收尾。
 

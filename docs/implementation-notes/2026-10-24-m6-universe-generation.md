@@ -1592,3 +1592,50 @@ implementer 的回報（後經下方雙席審查核對）：
 - 歷史manifest `task13-historical-sample-manifest-v2-20261109.json` SHA-256 `94d081c58a13d0eb63266d13b4d02e2f7cea6440146e6efcc999e993fd93c963`；原收據／MCA僅讀，沒有改舊原件。
 
 本次對照不是T13正式full或新code雙平台CI驗收，不採前pin CI替代，也不將診斷切片當Task13結案。舊dd57／35f5、Task21 c7d／e1d與所有FAIL／NOT_KILLED／UNRESOLVED永久保原判；本次資料與code/doc truth提交推送狀態以實際Git／遠端ref為準。main／tag／人工smoke未放行。
+
+### 2026-11-09 補充交付：CENTER_FULL與基線集合候選（未生效）
+
+normal原批次 `t13vc-mw8nd4zy-r2` 的10份 `CENTER_FULL`／`FULL_3X3` 完整rows再次唯讀核對：CENTER_FULL即82e9×9／704b×1，每根到FULL_3X3皆零變動；第01與10在CENTER_FULL已恰3/1440格不同，座標及block正是上節表格，全部x=527。補核原件 `task13-normal-center-full-audit-20261109.json` SHA-256 `67181d7b809e47156a7073ec9abf6b1e7f02f7da11e5348b4b5d833113662962`。02原外層SETUP錯誤與只讀逐欄重核處置不變。結論只到「模組載入、無動態U的單世界取樣環境」，背景world keys仍完整揭露；不稱純vanilla，不由normal推論amplified或U→U，亦不證具體writer/feature時序。
+
+候選評估另見 `docs/superpowers/specs/2026-11-09-same-seed-baseline-set-candidate.md`。它分開討論T13／T21的固定受審canonical-only基線集合、新hash逐格差異並FAIL、strict項不降低、反例與spec §4.1／§4.2影響及獨審計畫；**未生效、未實作、不訂數字容差**。已明列關鍵缺口：人工把82e9三格改成704b時可命中另一已知成員，純集合判定不能保證所有人工改塊FAIL；不是SHA碰撞，也不能用故障旗標硬判遮掩。候選文件審查不等於正式spec acceptance已獲批准。
+
+本輪新增amplified-only10已明確授權，另列獨立結果；canonical+U、U-only與client未授權。維度key、T14 Files／比較層、T18–20 credits後respawn／spawn owner／管理員指令的稽核只記SDD ledger，對應task開工前處理，現在不修。所有舊FAIL原判保留，T13仍OPEN、不進T14，交付後停等使用者裁示。
+
+### 2026-11-09：amplified-only 十次對照交付（診斷切片，T13仍OPEN）
+
+依使用者明確授權，比照normal的條件完成批次 `t13ac-mw8oturs`，十個全新canonical amplified世界、seed20260921、無動態U。**10/10控制有效，只有 `35809b1527b2e30b08b74140d5f8911798758978672956d68b8cb889e0417c4f` 一型；本批未觀察到 `1a3c…`。** CENTER_FULL十根亦全3580，各根到FULL_3X3的1440列零變動。這不是純vanilla證明、不是跨世界bug證明，也不替舊amplified FAIL或T21 U→U改判。
+
+本次只在兩個既有testmod將嚴格chain對應expectedPreset、properties／actualpreset與post-FULL provider；normal原路徑保留，normal10原件不重跑。正式七鏈manifest、production、正式oracle、腳本、build、mixin與workflow皆不變。受驗HEAD基準 `c19aec704f71c93d9edf7de3b41aa8b29a2b3553` 加兩檔候選，十根前後source及330個編譯class逐檔exact：
+
+- `M6UniverseRecoveryProbe.java` SHA-256 `4eb5b14b223f2c2adebb6f925403066d5e0a63a34fcdbda750bdca93adceaeb0`。
+- `M6ProfileProbePhases.java` SHA-256 `7514d76d19cd630b1ef84393cef6d275b3f90ada17752ed7c2032c703bb21780`。
+- class manifest SHA-256 `57f012f7ff043da5803bd3571e82e8c53759f99804073f6e747fb17a516ea82f`。
+
+| 世界編號 | CENTER_FULL／FULL_3X3 | 有效性 |
+| --- | --- | --- |
+| 01 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 02 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 03 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 04 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 05 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 06 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 07 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 08 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 09 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+| 10 | `35809b15…`／`35809b15…` | VALID；center→full 0差 |
+
+十根的biome hash `ebba1f03180c56627a3df8ed55b7cc8a5995131df2f1d310f4f5a4553010188b`、density hash `d317d2cca4622ea21e1c70d10dcaf9fe19eadae743ea51a3ed8568efff8f411d`、amplified provider設定指紋 `102962da118dad66a5777ceeabd8590041862eea8f78a68f22725e6e2cdadf40` 均相同。density是FULL快照固定後的actual finalDensity raw bits；主控獨立重算的是原rows編碼／hash，**本控制沒有另建expected NoiseConfig獨立重做生成函式，也不是feature前NOISE方塊層**。control settings同樣標post-snapshot凍結，不冒正式MEASURED權威。
+
+十根的原1440座標／順序／Gson digest、0,0與128,128前置及32,32中心→x外圈z內圈31..33九格請求、strict virgin／FULL、pack／mod配置、provider/version/Parameters/frozen seed與no-U證據均核過。world keys仍為canonical Overworld／Nether／End及既有superposition背景；無動態U LOAD、無U storage、catalog/allocation為空。所有launcher／JVM自然exit0、十locks可獨占、JVM/startupNonce各自獨立，沒有沿用normal root或拼不同code pin。
+
+**歷史逐格比較**：唯讀解碼舊amplified FAIL原MCA，兩側重算hash分別等於原收據3580／1a3c；本10根每份1440列都同歷史canonical source3580。對歷史U target `1a3cd3e5a2bd1f9f9011dba0d13a369b7dcf8b6d492b618cd3662df543fbdcd1`，每根恰差index1216 `(527,64,512)`：control煤礦／舊target石頭。這不表示canonical-only重現1a3c；舊比較原件沒有stages時，不能倒推舊target在CENTER_FULL的狀態。
+
+**驗證與原件**：
+
+- compile `gate-t13-amplified-control-compile-5808cba6e51b43cfa752c8756cc76752` PASS；錯seed、錯preset各一個獨立fresh負控root，由 `VANILLA_CONTROL_SEED`／`VANILLA_CONTROL_PRESET` 具名拒絕，natural exit0／locks通過。只改各新root啟服前properties，沒有mutation候選碼，負控不混入十根。
+- amplified窄設計及獨立設計審 `task13-amplified-control-design-20261109.md`／`task13-amplified-control-design-review-20261109.md`，C0/I0/M0；實作報告 `task13-amplified-control-implementation-20261109.md`；獨立code spec／quality審 `task13-amplified-control-code-review-20261109.md`。這些皆在本plan ignored SDD目錄，不是T13整段正式兩席放行。
+- 批次原件在 `amplified-control-evidence-t13ac-mw8oturs/`；`ten-controls-index.json` SHA-256 `a3fae36a7ccd992ea8bf73e63c74f35b7cbf1e80794e1d1e938c23ae7936895b`，狀態 `TEN_VALID_AMPLIFIED_CONTROLS`。世界為 `run/m6-universe-t13ac-mw8oturs-amplified-control-NN`，原始三份收據及attempt/process/stdout/stderr在 `.superpowers/verification/m6-native-t13ac-mw8oturs-amplified-control-NN/sample/`。
+- 主控獨立audit `task13-amplified-independent-audit-20261109.json` SHA-256 `6f11b69be301d1e39d9a37c70616bc2dbeb091766095e0763113ad06c4737b4a`，重算30份原件與block／biome／density hash、核strict preflight／identity／runtime、逐檔source及330class。
+- 歷史兩側唯讀還原 `task13-amplified-historical-pair-20261109.json` SHA-256 `4f2eed28ac526442c8d0cc8cf35a59b9f92d10c15ae07837fb813f18b88ff004`；只作歷史對照，不是本次canonical-only見證。
+
+**交付與停止邊界**：normal仍9＋1且三差已在CENTER_FULL；amplified本批3580×10未重現另一型。兩批各自解讀，不能外推U→U。基線集合候選文件完成分T13／T21評估，獨立文件窄審C0/I0/M0只代表文件可交付；純集合無法拒絕人工改成另一已知型態的缺口保留，正式採用仍需使用者新裁定及獨立spec review。本輪不實作集合、不訂數字容差、不改正式oracle，所有舊FAIL／NOT_KILLED／SETUP原判保留，T13仍OPEN、不進T14。canonical+U、U-only與client未授權且未執行；交付後停等裁示。稽核只記ledger，T14／T15–16／T18–20開工前處理，現在未修。

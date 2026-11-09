@@ -35,6 +35,7 @@ public final class M6ProfileProbePhases {
     static final class VanillaNormalControl {
         private static final long CONTROL_SEED = 20260921L;
         private final Path root,evidence;
+        private final String chain,expectedPreset;
         private final Map<String,Object> proof;
         private final List<Map<String,Object>> loads=new ArrayList<>(),snapshots=new ArrayList<>();
         private final List<String> requests=new ArrayList<>();
@@ -45,6 +46,13 @@ public final class M6ProfileProbePhases {
 
         VanillaNormalControl(Path root,Path evidence,Map<String,Object> proof) {
             this.root=root;this.evidence=evidence;this.proof=proof;
+            chain=(String)proof.get("chain");
+            expectedPreset=switch(chain) {
+                case "vanilla-normal-control" -> "normal";
+                case "vanilla-amplified-control" -> "amplified";
+                default -> throw new IllegalArgumentException("VANILLA_CONTROL_CHAIN");
+            };
+            proof.put("expectedPreset",expectedPreset);
             proof.put("observerRegisteredAtModInit",true);proof.put("worldLoads",loads);
             proof.put("loadedWorldSnapshots",snapshots);proof.put("requests",requests);proof.put("uLoadCount",0);
             proof.put("preflightWaits",preflightWaits);
@@ -76,7 +84,7 @@ public final class M6ProfileProbePhases {
                 require(owner.getOverworld().getRegistryKey().equals(net.minecraft.world.World.OVERWORLD),"VANILLA_CONTROL_WORLD_KEY");
                 require(owner.getOverworld().getSeed()==CONTROL_SEED && owner.getSaveProperties().getGeneratorOptions().getSeed()==CONTROL_SEED
                         && properties.getProperty("level-seed","").equals(Long.toString(CONTROL_SEED)),"VANILLA_CONTROL_SEED");
-                require(preset.equals("normal") && properties.getProperty("level-type","").equals("minecraft:normal"),"VANILLA_CONTROL_PRESET");
+                require(preset.equals(expectedPreset) && properties.getProperty("level-type","").equals("minecraft:"+expectedPreset),"VANILLA_CONTROL_PRESET");
                 require(owner.getSaveProperties().getGeneratorOptions().shouldGenerateStructures()
                         && properties.getProperty("generate-structures","").equals("true"),"VANILLA_CONTROL_STRUCTURES");
                 require(PACKS.equals(proof.get("configuredPackOrder")),"VANILLA_CONTROL_PACKS");
@@ -108,8 +116,9 @@ public final class M6ProfileProbePhases {
                 proof.put("sampleCount",full.get("sampleCount"));proof.put("blockHash",full.get("blockHash"));proof.put("biomeHash",full.get("biomeHash"));
                 proof.put("matchedMaturity","FULL_3X3");snapshot("AFTER_SAMPLE");
                 // 正式 block/biome 快照已固定；以下只讀事後設定及密度，不再要求任何 chunk。
-                var parameters=new NbtCompound();parameters.putString("OverworldPreset","normal");parameters.putBoolean("GenerateStructures",true);
-                var frozen=Minecraft121SettingsLifecycle.registry().createSnapshot(Minecraft121VanillaPresetProfileProvider.NORMAL_ID,1,
+                var parameters=new NbtCompound();parameters.putString("OverworldPreset",expectedPreset);parameters.putBoolean("GenerateStructures",true);
+                var providerId=expectedPreset.equals("normal")?Minecraft121VanillaPresetProfileProvider.NORMAL_ID:Minecraft121VanillaPresetProfileProvider.AMPLIFIED_ID;
+                var frozen=Minecraft121SettingsLifecycle.registry().createSnapshot(providerId,1,
                         parameters,Minecraft121SettingsLifecycle.acquire(server));
                 proof.put("frozenSettings",Map.of("frozenSeed",Long.toString(world.getSeed()),"providerId",frozen.providerId(),
                         "providerVersion",frozen.providerVersion(),"parameters",frozen.parameters().toString(),
@@ -229,7 +238,7 @@ public final class M6ProfileProbePhases {
                     && Boolean.TRUE.equals(proof.get("stoppingSeen")) && failures().isEmpty()?"PASS":"FAIL");
             try {writeNew(evidence.resolve("final.json"),proof);}
             catch(Exception failure){throw new IllegalStateException("VANILLA_CONTROL_RECEIPT_WRITE",failure);}
-            LoggerFactory.getLogger("quantumchamber-m6-native").info("M6_NATIVE_END chain=vanilla-normal-control phase=sample mode=DIAGNOSTIC status={}",proof.get("status"));
+            LoggerFactory.getLogger("quantumchamber-m6-native").info("M6_NATIVE_END chain={} preset={} phase=sample mode=DIAGNOSTIC status={}",chain,expectedPreset,proof.get("status"));
         }
         @SuppressWarnings("unchecked") private List<String> failures(){return (List<String>)proof.get("failures");}
         private void stop(){if(!Boolean.TRUE.equals(proof.get("stopRequested"))){proof.put("stopRequested",true);server.stop(false);}}

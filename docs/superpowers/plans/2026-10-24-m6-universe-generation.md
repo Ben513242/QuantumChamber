@@ -912,3 +912,15 @@ Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14（§3.1.3／§3.1.2 8-core→T
 本輪是診斷切片，不宣稱T13完整驗收通過；所有舊FAIL／NOT_KILLED／UNRESOLVED與原root保留。
 
 診斷結果：十個世界資料82e9×9／704b×1，排除原外層SETUP錯誤的02仍8／1；biome／post-FULL density／設定皆同、三差格全在x527。完整表與限制見M6 note「2026-11-09：T13 canonical-only 十次對照」。本診斷交付不等於Task13正式gate通過；T13仍OPEN，不進T14。
+
+
+### 2026-11-09 最新補充：normal交付補核＋amplified-only10＋基線集合候選
+
+本輪依spec §4.2只交付診斷與候選；正式§4.1／§4.2 PASS標準不變，T13仍OPEN，不進T14。amplified-only已明確授權，canonical+U、U-only、client未授權。
+
+- [x] normal原t13vc-mw8nd4zy-r2補核9＋1、3/1440皆x527、CENTER_FULL已不同且到FULL各根零差、02原outer SETUP及唯讀重核保留。
+- [x] amplified獨立窄設計C/I0後，只改兩既有testmod加strict chain→expectedPreset；錯seed/錯preset各fresh負控、compile、同碼10fresh root完成。全部3580，CENTER/FULL相同，無U、設定/biome/post-FULL density同、source與330class pin不變；只記本批未觀察另一型，不判跨世界bug。
+- [x] 基線集合候選 `docs/superpowers/specs/2026-11-09-same-seed-baseline-set-candidate.md` 分T13/T21列分類／provenance、strict項、反例、spec影響與獨審計畫；文件審C0/I0/M0不等於生效。known-variant人工注入漏判保留；未實作、不訂容差。
+- [x] 使用者稽核記SDD deferred ledger：role key/catalog相容T16首次N/E物化前解決；T14 Files／比較層開工前釐清；T18–20 credits後respawn/U spawn/管理員指令caller矩陣開工前處理。現在不改這些程式或task內容，新增注入點先回報。
+
+原件、SHA、差格表與限制見M6 note最後兩節。完成獨立窄審與docs truth後正常提交推送；交付後停止，等待使用者裁示，不自動執行任何其他控制或milestone task。
