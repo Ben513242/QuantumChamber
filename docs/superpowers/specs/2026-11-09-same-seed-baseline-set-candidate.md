@@ -1,6 +1,6 @@
 # same-seed canonical-only 基線集合候選（2026-11-09）
 
-**未生效；等待使用者裁示與獨立 spec review。** 本文只分析驗收候選，不改 binding spec §4.1／§4.2、不改正式 oracle、不使任何舊 FAIL 轉為 PASS。核對基準 `c19aec704f71c93d9edf7de3b41aa8b29a2b3553`；Task13仍OPEN、不進Task14。本文未實作或執行下列oracle測試。
+**歷史候選，未生效；2026-11-09 最新裁示：T13 不採 baseline 集合作為 gate，T21 另裁。** T13 改依 binding spec §4.1／§4.2 的嚴格 actual CARVERS 層與完整 final 診斷；本文以下保留原候選、反例與當時待裁示文字，不解讀為目前 T13 路線。已見 hash 僅診斷分類，新 final hash 標 UNRESOLVED 送審，不自動加入集合、不使任何舊 FAIL 轉為 PASS。歷史核對基準 `c19aec704f71c93d9edf7de3b41aa8b29a2b3553`；Task13仍OPEN、不進Task14。本文未實作或執行下列集合 oracle 測試。
 
 ## 1. 目前證據及可支持範圍
 

@@ -924,3 +924,31 @@ Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14（§3.1.3／§3.1.2 8-core→T
 - [x] 使用者稽核記SDD deferred ledger：role key/catalog相容T16首次N/E物化前解決；T14 Files／比較層開工前釐清；T18–20 credits後respawn/U spawn/管理員指令caller矩陣開工前處理。現在不改這些程式或task內容，新增注入點先回報。
 
 原件、SHA、差格表與限制見M6 note最後兩節。完成獨立窄審與docs truth後正常提交推送；交付後停止，等待使用者裁示，不自動執行任何其他控制或milestone task。
+
+### 2026-11-09 Task13 最新裁示：actual CARVERS 分層（優先於上述較早停點，T21 不變）
+
+**Spec：** binding §4.1／§4.2；唯一設計為 ignored `.superpowers/sdd/2026-10-24-m6-universe-generation/task13-layered-carvers-design-20261109.md`。一次獨立窄審 C/I0 後直接實作；先 A20 控制、符合條件才 B 正式 T13、最後 C 原出口，不另增加使用者核可流程。seed／frozen settings／provider-FP／biome／structure／建築不複製／雙向edit／restart權威／UUID-catalog嚴格不變。T13 final1440完整rows/全部差格保留作診斷，block equality不作full gate；新final hash標UNRESOLVED送既定審查，不採baseline集合，不訂容差。Task21 exact原文與預設helper不改。
+
+**精確 Files（無新程式檔）：**
+
+| 階段 | Modify | 責任與界線 |
+| --- | --- | --- |
+| A | `src/testmod/java/dev/quantumchamber/gametest/M6ProfileProbePhases.java` | control-only CARVERS mode、固定點、隔離、actual rows與收據；不接正式Flow |
+| A | `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryProbe.java` | config/dispatch兩個control chain，沿原owned-phase入口 |
+| B | `src/testmod/java/dev/quantumchamber/gametest/M6ProfileProbePhases.java` | 正式T13 Flow的CARVERS/new/restart、T13限定final診斷；T21共用helper預設exact不減 |
+| B | `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryProbe.java` | 僅必要既有Profile dispatch/config/receipt接線 |
+| B | `scripts/verification/m6-universe-probe.ps1` | Profile receipt/continuity與既有SelfTest，Java/PS一致驗CARVERS並撤final terrain gate |
+
+不改production／build／workflow／mixin／accessor／其他task，不加script／observer／job。原control final-mode保留；A的新chain為 `vanilla-normal-carvers-control`／`vanilla-amplified-carvers-control`，sample/DIAGNOSTIC，互動重用既有 `New-OwnedRoot`／`Invoke-OwnedPhase`，不加正式phase table。新增canonical+U、U-only或client實驗未授權；既有T13正式normal/amplified三phase與原run-all依既有授權驗證。
+
+**固定介面與證據：** `M6ProfileProbePhases`內共用有界helper讀 `ChunkGenerationSteps.GENERATION` 的dependencies/radius；C=(1024,1024)，x/z相對0,3,6,9,12,15，y=-64..<256 step8，x→z→y固定1440點。H=CARVERS accumulated maxLevel + FULL accumulated maxLevel + 全GENERATION非負writeRadius最大值 +1；記各原值／完整dependency表。NOISE/SURFACE/CARVERS writeRadius各恰0，否則具名FAIL。new生成前H halo每格raw ABSENT／current+unloading holder無；唯讀holder最近FULL及raw halo下界均>H。只typed getChunk(C,CARVERS,true)，direct Chunk讀actual block/biome，讀前後status exact CARVERS、halo無>CARVERS；不呼world block查詢升FULL、不為求綠換點、不以density替代。
+
+- [ ] **A1／控制接線與靈敏度：** 先具名錯seed `SAME_CARVERS_SEED`、錯preset `SAME_CARVERS_PRESET` RED，並依B4在canonical-only負控新根做actual一格mutation，保存新根與mutation-only／SHA／逐位元REVERT。定共用純helper `requireCarversBlocksExact(List<String> expected,List<String> actual)`只驗完整1440列exact，身份由caller嚴核，不讓同世界guard遮住block負控；CARVERS stored biome用Chunk.getBiomeForNoiseGen(x>>2,y>>2,z>>2)，原final world.getBiome exact另保留。既有無U／空authority／配置／mod/class pin／自然停服守門保留。compile用原 `gates.ps1 -Mode M6Compile -Label <fresh>`，不把compile成功冒控制成功。
+- [ ] **A2／20根條件：** normal與amplified各10 fresh root／獨立JVM，seed20260921、同碼／pack／mod配置，`carvers-sample.json` CREATE_NEW保存完整1440 actual rows/hash/biome、radius/halo/nearestFULL/身份及設定；背景startup FULL如實記、不稱純vanilla。每preset block hash必單一、設定與biome可比；任一第二hash立即停止A/B/C回報，保原件、不調oracle、不補跑凑數。兩preset均成立才執行B。
+- [ ] **B1／source與new：** source只驗遠區virgin，不生成；new在既有checked catalog/allocation/frozen authority後驗兩側virgin，source→target各一次CARVERS並逐格exact。以 `carvers-new.json` 保存兩側完整actual rows/biome/hash與root/nonce/startupNonce/pid/keys/seed/settings/UUID/allocationToken/source-final及NBT SHA；new final與既有same-seed-new檔連其path/SHA。其後原32,32/3×3 FULL與四階段請求順序照舊。
+- [ ] **B2／restart真重讀或重建：** 固定JAR bytecode顯示save(holder)／save(true)有WorldChunk/WrapperProtoChunk filter，純CARVERS ProtoChunk不保證落盤；不能要求它一定已保存，也不能為保存升FULL/反射寫檔。restart必先驗carvers-new immutable receipt及完整source/new鏈與frozen authority，再唯讀raw/live halo，任何>CARVERS/錯型/IO/壞header拒絕。全halo ABSENT標FRESH_REGENERATED，其餘<=CARVERS標REOPENED_OR_COMPLETED_PARTIAL並逐格列初始status；只getChunk(C,CARVERS,true)，重新direct取actual rows，各側對new同側及彼此exact、biome exact。缺receipt不略過，已FULL不冒CARVERS，partial不稱virgin；新 `carvers-restart.json`明列重讀/完成/重建及原SHA。原UUID/catalog/frozen/structures/building/edit/storage權威strict不減。
+- [ ] **B3／final與雙callsite：** `Flow.verifyMaterialized`明確選T13分層選項，`compareAndEdit` default保T21 exact；T13只將原合併terrain/biome require拆為biome strict＋final block診斷，保存兩側1440完整rows/hash與全部pairwise及new→restart差格。Java restart loop撤terrain而保biomes/structures及原權威，新增actual CARVERS rows/hash/link嚴格比對；PS1 `Assert-ProfileReceipt`與 `Assert-ProfileContinuity`同步驗固定座標／rows／各側hash／stage／radius／provenance／SHA鏈並替代terrain equality，不能仍留隱藏final gate。PS獨立重算原JSON string-list→UTF8 digest及完整diff集合，缺層/漏格/假hash仍具名FAIL。已見final hash僅diagnostic分類，舊FAIL不翻案；新hash標UNRESOLVED附rows/diff送spec/quality，功能結果與reviewItem分欄，不作membership PASS/FAIL、不自動結案或擴集合。
+- [ ] **B4／具名反例：** `carversRejectsWrongSeed`／`carversRejectsWrongPreset`各用canonical-only fresh負控root，啟服前只改該root server.properties：level-seed=20260922，或level-type改chain期望的另一vanilla preset（normal↔amplified）；chain的seed20260921／preset期望與class pin不變。receipt先記實際properties、actual world seed／detected preset，必由正式 `SAME_CARVERS_SEED`／`SAME_CARVERS_PRESET`具名拒，不以改testmod期待值或setup錯充反例。此為獨立runtime負控輸入，不改正式script/code／正常十根properties，保各根輸入diff/SHA與原判。`carversRejectsActualBlockMutation`沿A canonical-only負控新root，在actual CARVERS ProtoChunk先保存自然immutable rows，再直接改一固定樣本成不同state，保存改前後actual讀值/status，正式共用sampler重新讀後由共用純helper的 `SAME_CARVERS_BLOCK_EXACT` FAIL，不只改receipt/依flag throw、不新增CU/U-only世界。另驗缺列、錯stage、wrong SHA/UUID、替換new witness、漏final差格；每項fresh root、RED/GREEN、mutation-only patch/SHA與finally逐位元REVERT。還原後正式兩條鏈新root GREEN，舊dd57/35f5/c7d/e1d及所有FAIL/NOT_KILLED/UNRESOLVED原判不動。
+- [ ] **C／原出口：** 同乾淨code HEAD原same-seed/owner與milk相關雙focused、正式兩條native三phase、完整 `pwsh -NoProfile -File scripts/verification/run-all.ps1`自然 `END ALL exit=0`、獨立task spec／quality C/I0與同SHA Ubuntu build／Windows windows-native／m6-native三job終局success。既有artifact isolation嚴守release/sources無testmod，docs truth後正常push。final新hash審查處置在交付明列；任何真正strict FAIL/缺席保原根，不進T14／M6人工/main/tag。
+
+本段只寫最新已授權設計；A控制、B程式與C驗證尚未執行。主控另維護handoff/note/ledger；此設計不改先前FAIL、不授權其他task。

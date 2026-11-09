@@ -1639,3 +1639,17 @@ normal原批次 `t13vc-mw8nd4zy-r2` 的10份 `CENTER_FULL`／`FULL_3X3` 完整ro
 - 歷史兩側唯讀還原 `task13-amplified-historical-pair-20261109.json` SHA-256 `4f2eed28ac526442c8d0cc8cf35a59b9f92d10c15ae07837fb813f18b88ff004`；只作歷史對照，不是本次canonical-only見證。
 
 **交付與停止邊界**：normal仍9＋1且三差已在CENTER_FULL；amplified本批3580×10未重現另一型。兩批各自解讀，不能外推U→U。基線集合候選文件完成分T13／T21評估，獨立文件窄審C0/I0/M0只代表文件可交付；純集合無法拒絕人工改成另一已知型態的缺口保留，正式採用仍需使用者新裁定及獨立spec review。本輪不實作集合、不訂數字容差、不改正式oracle，所有舊FAIL／NOT_KILLED／SETUP原判保留，T13仍OPEN、不進T14。canonical+U、U-only與client未授權且未執行；交付後停等裁示。稽核只記ledger，T14／T15–16／T18–20開工前處理，現在未修。
+
+### 2026-11-09：T13 CARVERS 分層裁示與受審設計（控制／程式尚待執行）
+
+使用者新裁示只適用T13；T21之後另裁，維持原exact。T13嚴格seed／frozen settings／provider-FP／biome／structure／建築不複製／雙向修改隔離／重啟權威／UUID-catalog不降；新增遠離FULL且初次virgin區的actual CARVERS 1440方塊exact，不以density代替、不設容差。final原1440 rows與所有差格保留、new hash標UNRESOLVED送審，final block相等不再作full回歸關卡；基線集合不採T13關卡。
+
+前置已核 `c19aec7` 的run42554234370與 `7c03919` 的run42556499574均同SHA三job終局success；metadata原件 `task13-layered-preflight-ci-c19aec7-20261109.json`／`task13-layered-preflight-ci-7c03919-20261109.json`。這只滿足使用者要求的先行CI，不是未來新code CI替代。
+
+一份設計 `task13-layered-carvers-design-20261109.md`，SHA-256 `e53f560020550b7079e1d05a35904a4e6524137d80067edf5d775b65baaf0e5d`；獨立窄審 `task13-layered-carvers-design-review-20261109.md` 初C0/I1/M0，唯一I1（只改期待值不足以證實際wrong seed/preset）已由fresh canonical root啟服前實改properties修正，chain期待及class pin不變；同席複核關閉為C0/I0/M0。失敗properties與prelaunch副本/SHA保留，不把wrong輸入改回掩蓋；只有實際testmod source mutation需逐位元REVERT。
+
+實作分A→B→C：A只兩個既有testmod，canonical normal/amplified各10全新CARVERS-only root，固定中心(1024,1024)平移原6×6×40點；用actual generation dependencies及write radius計halo，前後raw/live隔離、exact CARVERS直接讀塊與stored biome，不求FULL。每preset hash必單一，第二hash即停A/B/C回報，不移點／減halo／改判。兩preset均單一才可做B正式T13新strict層及final診斷（T21 default helper exact保留），再做C原雙focused／完整run-all／獨立spec-quality／同SHA三jobCI。錯seed、錯preset、actual一格CARVERS改塊各具名FAIL，不用故障旗標假殺。
+
+原生save/flush對純ProtoChunk有型別限制，不能預設CARVERS一定存MCA，也不得為保存升FULL。new actual witness及SHA／權威鏈必存；restart在raw/live不高於CARVERS前提下忠實標fresh重建或partial重讀／完成，實際取樣後對new同側及兩側exact。缺witness、錯鏈、升級或不相等均FAIL，不能missing-cache略過。Java與PS1的new/restart terrain隱藏關卡同步改CARVERS/權威strict，final跨phase也留診斷diff，biome／structure／edits等不降。
+
+本節是裁示／設計採用紀錄，不是控制或程式驗收通過。所有dd57／35f5／c7d／e1d及FAIL／NOT_KILLED／UNRESOLVED原判保留；T13未結不進T14，新增canonical+U／U-only／client控制仍未授權。

@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-09 最新交付／停等裁示：** normal t13vc-mw8nd4zy-r2為82e9×9／704b×1，3/1440差格皆x527且CENTER_FULL已不同，02原outer SETUP與唯讀重核保留。已授權amplified-only t13ac-mw8oturs完成10/10有效，CENTER/FULL皆3580×10，本批未觀察1a3c；不推純vanilla、跨世界根因或U→U。基線集合分T13/T21的候選已列strict／反例／spec影響／獨審計畫，文件C/I0不代表生效，人工改成另一已知variant仍會漏判。正式oracle不改、無數字容差；T13仍OPEN、不進T14。角色key／T14 Files比較層／T18–20 respawn-spawn-command稽核只記ledger，開工前處理；canonical+U、U-only、client未授權未執行。詳spec §4.2、plan末節、M6 note最後三節及候選；交付後停止等使用者裁示。
+**2026-11-09 T13分層設計已獨審C0/I0/M0，開始A控制。** c19aec7／7c03919的三job CI均終局success。spec §4.1／§4.2與plan已按最新裁示修訂：只T13新增遠區virgin actual CARVERS 1440逐格exact（不以density替代、無容差），final1440完整rows/diff與新hash UNRESOLVED診斷，不作full關卡；T21原exact與舊FAIL不變。先只改兩既有testmod做normal/amplified各10fresh CARVERS-only，任一preset第二hash即停報；雙組單一才可進正式T13分流與原雙focused/full/兩席/同SHA CI。設計I1已改為fresh root實際錯seed/preset負控，failed輸入留原件；沒有程式或runtime已完成的宣稱。基線集合不採T13gate，T21另裁；不進T14，新CU/U-only/client未授權。
 
 **2026-11-09 Task13 收尾判定：未結，不進 Task14。** feature code pin `1332c527b829b4a228471de541aff493cdcc7e49` 已正常 push、遠端同 SHA；乾淨 milk／same-seed 雙 focused、獨立 spec／quality 各 C0/I0/M1，GitHub Actions `42499957714` Ubuntu `build`、Windows `windows-native`／`m6-native` 三 job success。可是本機完整 `run-all-dd57e94d52274671b4cfc506b390a9ab` 在 M6 native 的 canonical normal→U `new` 出現 `(527,72,512)` air／spruce leaves 地形差，outer exit 1、無 `END ALL`；summary SHA-256 `26804DFD00281087765A0F3D0EE1ABEDC5FD328E571C1B2E94C34230AE53B6B8`。舊 `35f5` amplified coal ore／stone FAIL 與本次 FAIL 都保留原判；同 seed／biome／FULL、target owner exact 與邊界位置尚不足以證明根因。同 pin CI PASS 不抵銷本機 FAIL。詳細原件、下一步及限制見目前接手檔、M6 note 末節與 ignored STATUS／progress；使用者限定本對話只處理 T13 後收尾。
 
