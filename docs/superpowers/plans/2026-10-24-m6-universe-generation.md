@@ -954,3 +954,6 @@ Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14（§3.1.3／§3.1.2 8-core→T
 本段是已採用契約；A控制已核證，B候選已編譯／有界正負例與兩席早審，C乾淨code focused／full／新同SHA CI尚待執行。主控另維護handoff/note/ledger；此設計不改先前FAIL、不授權其他task。
 
 A主控audit c5807ca3…3117b0與同席spec終局C0/I0/M0，原outer19+1SETUP保判；B固定pin859c876d…efafb及immutable diff07115506…e76347，三source/1095class已核，spec/quality各C0/I0/M0。完整原件與限制見M6 note最新A/B章及SDD報告；不能把候選當C出口通過。
+
+
+**2026-11-09 C前verifier fix1（原語意不變）：** code4593 CI native runtime21phase PASS但SavedSummary SelfTest5分鐘timeout，整體FAIL原判保留；C部分92JUnit PASS不冒新pin。只既有PS1將原global/chain predicates抽共用，真Verify全7、局部SelfTest同global+受影響chain、global/manifest/fullbaseline與277case全留、無PASScache/無timeout或worldgen改動。同席spec/quality C0/I0/M0，parser-only合成benchmark189.947秒不是functional或真CI重播；新pinC及同SHA真CI仍待，C checkbox不勾、不進Task14。

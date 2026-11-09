@@ -101,7 +101,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-09 T13 CARVERS A/B候選已核，C正式驗證待跑。** c19/7c先行CI均三jobsuccess；A20 actual CARVERS normal957bf×10／amp742a×10單一，H22/1440/typed request/noU及1094class pin已兩方獨核，原outer19PASS+normal03 SETUP保留。B正式normal/amp候選三phase與最終pin受控FULL差格正例Java+PS通過，spec/quality早審各C0/I0/M0，三source/1095class凍結。只T13actual CARVERS exact；final1440完整rows/diff/UNRESOLVED診斷，不是full gate，T21原exact不變。尚未乾淨code雙focused/full/新同SHA CI，T13仍OPEN、不進T14。舊FAIL全保留；新CU/U-only/client未授權。最新code pin與後續結果見Git及SDD，不把候選證據當正式出口。
+**2026-11-09 verifier fix1候選已窄審，C須新pin重驗。** code4593 CI42572502698整體FAIL：native七鏈21phase PASS但SavedSummary-SelfTest超既有5分鐘，其他兩job PASS；原判不改。C舊pin僅compile+四class雙JUnit92 exact，其餘未啟即停，不能挪作新SHA。fix1只既有PS1抽global/chain共用流程，真Verify仍全7鏈、局部SelfTest仍global+受影響chain、原277反例/所有predicate/前後fullbaseline保留，無PASS cache/無提高timeout。parser-only合成bench189.947s（不是functional/CI重播）與同席spec/qualityC0/I0/M0齊；真正新code同SHA CI及C full仍待，T13OPEN/no14，T21/Java/CARVERS/舊FAIL不變，CU/Uonly/client未授權。
 
 **2026-11-09 Task13 收尾判定：未結，不進 Task14。** feature code pin `1332c527b829b4a228471de541aff493cdcc7e49` 已正常 push、遠端同 SHA；乾淨 milk／same-seed 雙 focused、獨立 spec／quality 各 C0/I0/M1，GitHub Actions `42499957714` Ubuntu `build`、Windows `windows-native`／`m6-native` 三 job success。可是本機完整 `run-all-dd57e94d52274671b4cfc506b390a9ab` 在 M6 native 的 canonical normal→U `new` 出現 `(527,72,512)` air／spruce leaves 地形差，outer exit 1、無 `END ALL`；summary SHA-256 `26804DFD00281087765A0F3D0EE1ABEDC5FD328E571C1B2E94C34230AE53B6B8`。舊 `35f5` amplified coal ore／stone FAIL 與本次 FAIL 都保留原判；同 seed／biome／FULL、target owner exact 與邊界位置尚不足以證明根因。同 pin CI PASS 不抵銷本機 FAIL。詳細原件、下一步及限制見目前接手檔、M6 note 末節與 ignored STATUS／progress；使用者限定本對話只處理 T13 後收尾。
 

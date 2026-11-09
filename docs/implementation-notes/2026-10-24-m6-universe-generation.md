@@ -1688,3 +1688,18 @@ Java/PS1兩處final terrain相等關卡皆移除，只T13 explicit opt-in；defa
 - 獨立formal spec早審 `task13-layered-spec-review-20261109.md`、fresh quality `task13-layered-quality-review-20261109.md` 均C0/I0/M0；只審immutable `.bin`/diff/archive與既有raw結果，未重跑runtime。C乾淨pin與終局會同席另補，不能預寫通過。
 
 本次具體code pin後才執行C：原same-seed owner/selector與milk相關雙focused、兩條正常native、完整run-all自然END ALL0、獨立spec/quality終局與新同SHA三jobCI。C前不結T13，不進T14，人工/main/tag與新增CU/U-only/client仍未授權。
+
+
+### 2026-11-09：4593 CI verifier逾時與PS1流程fix1（新C／真CI待驗）
+
+`4593e5cdb3f0ba02fe89eba42f8a0a26d308996f` 的CI `42572502698` 終局FAIL：Ubuntu及Windows主job成功，M6 native七鏈21個runtime phase全PASS，但後續精確收據 `-VerifySummary -SelfTest` 在既有5分鐘timeout。這不是已觀測CARVERS不等，仍是實際CI失敗，不採runtime PASS替代。完整job log捕獲SHA `b50853415792c2b62a044b778ef1e53f4d080c47dd9b2e69ff36ebea58a27f38`；原artifact13654541826 digest `611e54e837992e491b2928188cba022283401740614b1d27eb5da6c8096a7ea0` 在 `ci-4593-native-verifier-artifact/` 保留不改。獨立spec另核21receipt、兩T13 CARS/final/diffs/24linkSHA/52650halo及startup NBT無strict矛盾，只是資料review，不將CI改判。
+
+已向使用者先回報；本機C自然停在M6Compile一次PASS與四個既有JUnit各雙focused：CandidateResolver18、AllocationLedger10、CandidateJournalCodec6、UniverseDefinition12各×2＝92 exact，無bad/skip，HEAD4593/porcelain空。GameTest/milk/native/full未啟；這些只屬舊pin部分C歷史PASS，不假稱新pin門檻已滿足。
+
+唯讀profiling找出重複工作：原SelfTest連baseline234次總驗證／379次Profile consumer／normal continuity60次、277反例；單次normal source約128–226ms、new788–1036ms、restart1621–1913ms、continuity636ms，JSONparse/clone約300–781ms，halo68ms/sample14ms/diff18ms/hash5ms。工作投影348.7秒未含其他開銷，不能稱CI walltime。fix1只改既有 `scripts/verification/m6-universe-probe.ps1`：原global與整chain predicates逐字不變，真Verify先global+全7鏈；SelfTest局部receipt/preservation/hash override同global+受影響chain，manifest/global仍完整，另拒跨chain override並在SelfTest末再全7baseline。所有277反例、錯誤碼/identity/SHA/CARVERS/diff/lifecycle/continuity守門保留，不cache PASS、不改Java或任何worldgen/門檻/timeout/workflow。
+
+parser-only合成輸入以既存本地c9eb前五鏈15phase與真B normal/amp六phase聚合，只新summary/header/provenance，不改原receipt/path/SHA/world，不是同run functional或原CI replay。完整baseline7/21 PASS耗9.573秒；完整277反例＋末尾全baseline耗189.9467614秒、outer0/無stderr，在原300秒硬界內餘裕110.053秒。此只是本機parser benchmark，仍須真正新code SHA CI在原5分鐘通過。
+
+固定PS1 source SHA `e768b910d5fa23c6e1a92791255f260065a0b9e85a138bdadeeea4b1a84e0c8d`；fix diff(base4593) SHA `b8bc0d8b9e3144535a7706b4a10528d85af40e7b390ebc94d392bcf2dd4e529e`、pin SHA `bd2c17514ec82e83d82bd9ebc7d6e25f71a1728c216c959d7d24c38860289019`。原件在本plan SDD `carvers-verifier-timing-4593-20261109/`、`carvers-verifier-fix1-20261109/`；bench result SHA `10af9190efc695d741790c8b01549e2a15cde1fb7953a835f67e9125f672f73a`，predicate文字等價proof與原資料manifest另存。Java Profile仍 `e85a0e1d…4f18a`、Recovery仍 `e976ed5f…a2f8e6`；A20不因純PS流程抽取重跑，也不把A當C。
+
+同席fix1 spec／quality窄複審C0/I0/M0，獨立重核global/chain body、offset0/2/6/8/11/15/18及global唯一性/局部作用域/前後fullbaseline；這不是新CI已通過。fix1新code pin後須重新按原C做乾淨雙focused、正常native、完整run-all及同SHA CI。所有舊FAIL/UNRESOLVED仍保，T13OPEN、不進T14/no新CU-Uonly-client；任何final診斷審查只加獨立review，不回寫原producer UNRESOLVED/NOT_CLASSIFIED。
