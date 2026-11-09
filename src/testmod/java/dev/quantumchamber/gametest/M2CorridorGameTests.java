@@ -251,9 +251,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
     /** 只驗可信 lateral 幾何及原生 remap，飲用流程由明確 native drink 案例驗證。 */
     private static void lateralGeometry(TestContext context,Direction facing) {
         if(!Platform.isWindows()) { context.complete(); return; }
-        var fixture=new TrustedSpace(context,facing,2,SessionSemantics.LATERAL_BUFF_MAINTAINED);
+        withTrustedSpace(context,"lateral-"+facing,facing,2,SessionSemantics.LATERAL_BUFF_MAINTAINED,fixture -> {
         fixture.prepare();
-        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+        fixture.run.await(1,"INITIAL_READY",() -> fixture.manager.ready(fixture.prepared),tick -> {
             fixture.commit();
             var entrance=fixture.manager.entrance(fixture.session);
             // 左右模式入口正門位於走廊側牆，開啟會在牆面開出通往 lease 外 void 的 5×5 洞：Controller 右鍵一律 handled 拒絕，session 不因此失敗。
@@ -261,10 +261,11 @@ public final class M2CorridorGameTests implements FabricGameTest {
             var toggle=SessionEntranceDoorService.tryToggle(fixture.target,entrance.controllerPos());
             context.assertTrue(toggle.isPresent() && !toggle.orElseThrow().changed(),"lateral 入口 handled 拒絕，不回落 Origin 門交易");
             // publish 後兩側覆寫需走原本共用4096預算。
-            context.runAtTick(tick+1,() -> {
+            fixture.run.schedule(tick+1,"ENTRANCE_OVERLAY",() -> {
                 assertLateralEntrance(fixture);
                 lateralRemap(fixture,0,tick+2);
             });
+        });
         });
     }
     private static void assertLateralEntrance(TrustedSpace fixture) {
@@ -292,30 +293,32 @@ public final class M2CorridorGameTests implements FabricGameTest {
         double[][] positions={{95.5,96.5},{-97.5,-98.5},{3.5,4.5},{95.5,672.5},{95.5,1248.5},{95.5,1536.5},{672.5,866.5},{672.5,673.5},{576.5,577.5}};
         if(index==occupied.length) {
             fixture.returnTrusted();
-            when(fixture.context,tick,() -> fixture.manager.releaseComplete(fixture.session),ignored -> {fixture.assertComplete(); fixture.context.complete();});
+            fixture.run.await(tick,"RETURN_RELEASE",() -> fixture.manager.releaseComplete(fixture.session),ignored -> {fixture.assertComplete(); fixture.context.complete();});
             return;
         }
         var context=fixture.context;
-        for(int i=0;i<2;i++) move(fixture.target,fixture.players.get(i).player(),new CorridorPageManager.PhysicalPose(
+        for(int i=0;i<2;i++) fixture.run.moveToTarget(fixture.players.get(i).player(),new CorridorPageManager.PhysicalPose(
                 fixture.manager.toPhysical(fixture.session,3.5,1,positions[index][i]),Vec3d.ZERO,37,15));
         var extra=itemAt(fixture.target,fixture.manager.toPhysical(fixture.session,2.5,1,positions[index][0]),4);
-        context.assertTrue(fixture.target.spawnEntity(extra),"lateral item pin");
+        fixture.run.ownEntity(extra,fixture.initial.participants().getFirst().sourcePosition().add(11,0,0));
+        context.assertTrue(fixture.run.spawn(extra),"lateral item pin");
         var arrow=net.minecraft.entity.EntityType.ARROW.create(fixture.target);
         var point=fixture.manager.toPhysical(fixture.session,4.5,1,positions[index][0]);
         arrow.refreshPositionAndAngles(point.x,point.y,point.z,-25,12); arrow.setNoGravity(true); arrow.setVelocity(Vec3d.ZERO);
-        context.assertTrue(fixture.target.spawnEntity(arrow),"lateral projectile pin");
+        fixture.run.ownEntity(arrow,fixture.initial.participants().getFirst().sourcePosition().add(11,0,0));
+        context.assertTrue(fixture.run.spawn(arrow),"lateral projectile pin");
         var targetPages=java.util.Arrays.stream(occupied[index]).boxed().collect(java.util.stream.Collectors.toSet());
         var prepared=fixture.manager.prepareRemap(fixture.session,index+1,targetPages);
         context.assertEquals(index==5 ? 2 : 1,prepared.target().instances().size(),"0/16 split，其餘merge");
-        // 重型 lateral remap 在 CI 曾需 12.468 秒；只延長此 fixture 階段，仍等待真實 readiness。
-        whenUntil(context,tick,() -> fixture.manager.ready(prepared),readyTick -> {
+        // 保留整個 lease 的原 ready 條件，在本案既有測試 tick 預算內逐 tick 等候。
+        fixture.run.await(tick,"REMAP_READY",() -> fixture.manager.ready(prepared),readyTick -> {
             var owners=fixture.manager.affectedEntityOwners(prepared);
             var batch=fixture.manager.beginRemap(prepared,owners);
             for(var operation : batch.moves()) {
                 context.assertEquals(operation.before().velocity(),operation.after().velocity(),"正交同方向映射保留速度");
                 context.assertTrue(Math.abs(net.minecraft.util.math.MathHelper.wrapDegrees(operation.before().yaw()-operation.after().yaw()))<1e-4,"yaw不反射");
                 context.assertEquals(operation.before().pitch(),operation.after().pitch(),"pitch保留");
-                move(fixture.target,fixture.target.getEntity(operation.entityUuid()),operation.after());
+                fixture.run.moveToTarget(fixture.target.getEntity(operation.entityUuid()),operation.after());
                 var destination=prepared.target().instances().stream().filter(view -> view.ref().equals(operation.target())).findFirst().orElseThrow();
                 context.assertTrue(fullBox(destination.bounds(),fixture.target.getEntity(operation.entityUuid()).getBoundingBox()),"完整bbox仍在target lease");
             }
@@ -335,10 +338,11 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         Vec3d.ZERO,0,0,net.minecraft.world.TeleportTarget.NO_OP));
                 context.assertTrue(returned!=null && returned.getUuid().equals(id),"item/projectile UUID不遺失");
                 if(returned instanceof net.minecraft.entity.ItemEntity item) context.assertEquals(4,item.getStack().getCount(),"有價stack不減少");
+                fixture.run.recordReturn(id,returned);
             }
-            when(context,readyTick+1,() -> fixture.state.flushedRecords().get(fixture.session).spaceLeases().size()
+            fixture.run.await(readyTick+1,"LEASE_UNION",() -> fixture.state.flushedRecords().get(fixture.session).spaceLeases().size()
                     ==fixture.manager.currentMappings(fixture.session).instances().size(),nextTick -> lateralRemap(fixture,index+1,nextTick+1));
-        },System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+        });
     }
     private static final Map<net.minecraft.server.MinecraftServer,DisconnectJournalFault> DISCONNECT_FAULTS=new java.util.IdentityHashMap<>();
     private static final Map<net.minecraft.server.MinecraftServer,RemapPowerLoss> REMAP_LOW=new java.util.IdentityHashMap<>();
@@ -2562,8 +2566,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生來源快照不變與返還重試");
             context.complete(); return;
         }
-        var fixture=new TrustedSpace(context,Direction.NORTH,1); fixture.prepare();
-        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+        withTrustedSpace(context,"snapshot",Direction.NORTH,1,SessionSemantics.LEGACY_FORWARD_CONSUMED,fixture -> { fixture.prepare();
+        fixture.run.await(1,"INITIAL_READY",() -> fixture.manager.ready(fixture.prepared),tick -> {
             fixture.commit(); fixture.returnTrusted();
             var full=fixture.state.flushedRecords().get(fixture.session); var person=full.participants().getFirst();
             var before=journalBytes(context.getWorld().getServer());
@@ -2583,7 +2587,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
             context.assertEquals(full,fixture.state.records().get(fixture.session),"被拒絕的 put 不可修改 current record");
             fixture.state.flush(context.getWorld().getServer());
             context.assertTrue(java.util.Arrays.equals(before,journalBytes(context.getWorld().getServer())),"來源快照拒絕後正式 bytes 不變");
-            when(context,tick+1,() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
+            fixture.run.await(tick+1,"RETURN_RELEASE",() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
+        });
         });
     }
 
@@ -2771,42 +2776,45 @@ public final class M2CorridorGameTests implements FabricGameTest {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生 journal rename拒絕與最後lease重試");
             context.complete(); return;
         }
-        var fixture=new TrustedSpace(context,Direction.NORTH,1);
+        withTrustedSpace(context,"last",Direction.NORTH,1,SessionSemantics.LEGACY_FORWARD_CONSUMED,fixture -> {
         var diag=new FinalFlushDiag(context,fixture);
         diag.emit("ENTRY",null,null);
         fixture.prepare();
         context.assertTrue(!fixture.manager.releaseComplete(UUID.randomUUID()),"未知 SID 不可冒充已完成");
-        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+        fixture.run.await(1,"INITIAL_READY",() -> fixture.manager.ready(fixture.prepared),tick -> {
             fixture.commit(); fixture.returnTrusted();
             diag.emit("AFTER_RETURN",null,null);
             var returned=fixture.state.flushedRecords().get(fixture.session);
+            fixture.run.rememberRemoved(returned);
             boolean removed=fixture.state.remove(fixture.session);
             diag.emit("AFTER_REMOVE",removed,null);
-            context.runAtTick(tick+2,() -> {
+            fixture.run.schedule(tick+2,"DIRTY_REMOVE_ASSERT",() -> {
                 diag.emit("BEFORE_ASSERT",null,returned!=null);
                 context.assertTrue(!fixture.manager.releaseComplete(fixture.session),"只有 in-memory remove 不可當作返還完成");
                 context.assertTrue(fixture.state.flushedRecords().containsKey(fixture.session),"未flush必須保留 durable evidence");
-                fixture.state.put(returned); fixture.state.flush(context.getWorld().getServer());
+                fixture.run.restoreCaseCurrent(returned);
                 var path=context.getWorld().getServer().getSavePath(net.minecraft.util.WorldSavePath.ROOT)
                         .resolve("data").resolve(SessionRecoveryState.STATE_ID+".dat").toAbsolutePath().normalize();
                 var kernel=com.sun.jna.platform.win32.Kernel32.INSTANCE;
                 var held=kernel.CreateFile(path.toString(),0x80000000,3,null,3,0,null);
                 context.assertTrue(held!=null && !com.sun.jna.platform.win32.WinBase.INVALID_HANDLE_VALUE.equals(held),"取得own journal既有檔案的無DELETE分享HANDLE");
-                when(context,tick+3,fixture.state::isDirty,failedTick -> {
+                fixture.run.ownHandle(() -> context.assertTrue(kernel.CloseHandle(held),"測試HANDLE必須對稱關閉"));
+                fixture.run.await(tick+3,"JOURNAL_DIRTY",fixture.state::isDirty,failedTick -> {
                     try {
                         context.assertTrue(!fixture.manager.releaseComplete(fixture.session),"原生atomic rename拒絕不得完成退休");
                         context.assertTrue(fixture.state.flushedRecords().containsKey(fixture.session),"失敗仍保留上一份 durable record");
                         context.assertTrue(!dev.quantumchamber.chamber.ChamberProtectionService.get().mayMutate(fixture.target,
                                 fixture.manager.entrance(fixture.session).controllerPos()),"final flush失敗不得解除slot guard");
-                    } finally {
-                        context.assertTrue(kernel.CloseHandle(held),"測試HANDLE必須對稱關閉");
+                    } catch(RuntimeException | Error failure) {fixture.run.remember(failure);throw failure;} finally {
+                        fixture.run.closeHandle();
                     }
-                    when(context,failedTick+1,() -> fixture.manager.releaseComplete(fixture.session),ignored -> {
+                    fixture.run.await(failedTick+1,"RETURN_RELEASE",() -> fixture.manager.releaseComplete(fixture.session),ignored -> {
                         context.assertTrue(!fixture.state.flushedRecords().containsKey(fixture.session),"重試成功後才移除 durable SID");
                         fixture.assertComplete(); context.complete();
                     });
                 });
             });
+        });
         });
     }
     /** Windows 首錯的唯讀現場標記；失敗不參與原 GameTest 判決。 */
@@ -2970,12 +2978,12 @@ public final class M2CorridorGameTests implements FabricGameTest {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生 initial/remap 正向；此處不代表 checkpoint 通過");
             context.complete(); return;
         }
-        var fixture=new TrustedSpace(context,Direction.EAST,2);
+        withTrustedSpace(context,"initial",Direction.EAST,2,SessionSemantics.LEGACY_FORWARD_CONSUMED,fixture -> {
         fixture.prepare();
         var remap=new CorridorPageManager.PreparedMappings[1];
         var old=new CorridorPageManager.MappingSet[1];
         var extras=new net.minecraft.entity.Entity[2];
-        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
+        fixture.run.await(1,"INITIAL_READY",() -> fixture.manager.ready(fixture.prepared),tick -> {
             context.assertTrue(fixture.manager.ready(fixture.prepared),"typed initial 已準備");
             var pose=fixture.manager.toPhysical(fixture.prepared.target().instances().getFirst().ref(),
                     new CorridorPageManager.LogicalPose(3.5,1,3.5,Vec3d.ZERO,90,15));
@@ -2998,20 +3006,22 @@ public final class M2CorridorGameTests implements FabricGameTest {
             for(var door : dev.quantumchamber.chamber.ChamberGeometry.bulkheadPositions(sourceFrame)) {
                 context.assertTrue(!context.getWorld().getBlockState(door).get(dev.quantumchamber.chamber.QuantumBulkheadBlock.OPEN),"replica操作不改來源前門");
             }
-            for(int i=0;i<2;i++) move(fixture.target,fixture.players.get(i).player(),new CorridorPageManager.PhysicalPose(
+            for(int i=0;i<2;i++) fixture.run.moveToTarget(fixture.players.get(i).player(),new CorridorPageManager.PhysicalPose(
                     fixture.manager.toPhysical(fixture.session,3.5,1,95.5+i),Vec3d.ZERO,0,0));
             extras[0]=itemAt(fixture.target,fixture.manager.toPhysical(fixture.session,2.5,1,94.5),4);
-            context.assertTrue(fixture.target.spawnEntity(extras[0]),"建立真item remap對象");
+            fixture.run.ownEntity(extras[0],fixture.initial.participants().getFirst().sourcePosition().add(11,0,0));
+            context.assertTrue(fixture.run.spawn(extras[0]),"建立真item remap對象");
             extras[1]=net.minecraft.entity.EntityType.ARROW.create(fixture.target);
             context.assertTrue(extras[1]!=null,"建立原生 projectile");
             var arrowPos=fixture.manager.toPhysical(fixture.session,4.5,1,94.5);
             extras[1].refreshPositionAndAngles(arrowPos.x,arrowPos.y,arrowPos.z,0,0); extras[1].setNoGravity(true); extras[1].setVelocity(Vec3d.ZERO);
-            context.assertTrue(fixture.target.spawnEntity(extras[1]),"建立真projectile remap對象");
+            fixture.run.ownEntity(extras[1],fixture.initial.participants().getFirst().sourcePosition().add(12,0,0));
+            context.assertTrue(fixture.run.spawn(extras[1]),"建立真projectile remap對象");
             remap[0]=fixture.manager.prepareRemap(fixture.session,1,Set.of(1L));
             context.assertTrue(remap[0]!=null,"remap 必須預留新映射");
             context.assertEquals(old[0],fixture.manager.currentMappings(fixture.session),"準備時保留舊映射");
             context.assertEquals(2,fixture.state.flushedRecords().get(fixture.session).spaceLeases().size(),"geometry 前先保存新舊 union");
-            when(context,tick+1,() -> fixture.manager.ready(remap[0]),remapTick -> {
+            fixture.run.await(tick+1,"REMAP_READY",() -> fixture.manager.ready(remap[0]),remapTick -> {
             context.assertTrue(fixture.manager.ready(remap[0]),"remap 新幾何已完成");
             var source=old[0].instances().getFirst().ref();
             var a=fixture.players.get(0).player(); var b=fixture.players.get(1).player();
@@ -3023,15 +3033,17 @@ public final class M2CorridorGameTests implements FabricGameTest {
             assertRejected(context,() -> fixture.manager.commitRemap(new CorridorPageManager.RemapBatch(batch.token(),batch.prepared(),batch.moves())),
                     "caller不能複製batch token冒充authority");
             var first=batch.moves().getFirst();
-            move(fixture.target,fixture.target.getEntity(first.entityUuid()),first.after());
+            fixture.run.moveToTarget(fixture.target.getEntity(first.entityUuid()),first.after());
             assertRejected(context,() -> fixture.manager.commitRemap(batch),"部分移動不得發布");
             assertRejected(context,() -> fixture.manager.cancelPrepared(remap[0]),"部分移動不可釋放 target owner");
-            for (var operation : batch.moves()) move(fixture.target,fixture.target.getEntity(operation.entityUuid()),operation.after());
+            for (var operation : batch.moves()) fixture.run.moveToTarget(fixture.target.getEntity(operation.entityUuid()),operation.after());
             var newPin=itemAt(fixture.target,batch.moves().getFirst().before().position(),1);
-            context.assertTrue(fixture.target.spawnEntity(newPin),"begin之後新增真pin");
+            fixture.run.ownEntity(newPin,fixture.initial.participants().getFirst().sourcePosition().add(10,0,0));
+            context.assertTrue(fixture.run.spawn(newPin),"begin之後新增真pin");
             assertRejected(context,() -> fixture.manager.commitRemap(batch),"begin之後的新pin不得被略過");
-            newPin.teleportTo(new net.minecraft.world.TeleportTarget(context.getWorld(),fixture.initial.participants().getFirst().sourcePosition().add(10,0,0),
+            var movedPin=newPin.teleportTo(new net.minecraft.world.TeleportTarget(context.getWorld(),fixture.initial.participants().getFirst().sourcePosition().add(10,0,0),
                     Vec3d.ZERO,0,0,net.minecraft.world.TeleportTarget.NO_OP));
+            fixture.run.recordReturn(newPin.getUuid(),movedPin);
             var retired=fixture.manager.commitRemap(batch);
             context.assertEquals(2L,fixture.manager.currentMappings(fixture.session).epoch(),"真全群搬移後發布 epoch2");
             context.assertEquals(1.0,a.getPos().distanceTo(b.getPos()),"95.5/96.5跨頁近玩家仍保持距離1");
@@ -3045,10 +3057,12 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         Vec3d.ZERO,0,0,net.minecraft.world.TeleportTarget.NO_OP));
                 context.assertTrue(moved!=null && moved.getUuid().equals(extras[i].getUuid()),"回收前保留item/projectile UUID並安全移出");
                 if (moved instanceof net.minecraft.entity.ItemEntity item) context.assertEquals(4,item.getStack().getCount(),"remap不刪有價物品");
+                fixture.run.recordReturn(extras[i].getUuid(),moved);
             }
             fixture.returnTrusted();
-                when(context,remapTick+1,() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
+                fixture.run.await(remapTick+1,"RETURN_RELEASE",() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
             });
+        });
         });
     }
 
@@ -3191,8 +3205,370 @@ public final class M2CorridorGameTests implements FabricGameTest {
         return details.toString();
     }
 
+    /** 僅七個具名 TrustedSpace 案例啟用；其他 fixture 與所有舊等待介面不變。 */
+    private static void withTrustedSpace(TestContext context,String name,Direction facing,int count,
+            SessionSemantics semantics,java.util.function.Consumer<TrustedSpace> body) {
+        var run=new TrustedSpaceRun(context,name);
+        run.guarded(() -> body.accept(new TrustedSpace(context,facing,count,semantics,true,run)));
+    }
+    private static final class TrustedSpaceRun {
+        private final TestContext context;
+        private final String name;
+        private TrustedSpace fixture;
+        private CorridorPageManager.PreparedMappings reservation;
+        private SessionRecoveryRecord initial,returning,removedByCase,restoreFlushPending,observedAuthority;
+        private final Set<UUID> checkpoints=new java.util.HashSet<>(),closeAttempts=new java.util.HashSet<>();
+        private final Map<UUID,TrustedEntity> entities=new java.util.LinkedHashMap<>();
+        private Throwable primary;
+        private boolean connectionConstructing,reservationAttempted,cleanupStarted,terminal,stopRequested,releaseAccepted,releaseInFlight;
+        private boolean backendWitnessed,ackAttempted,acknowledged,closeFailed,handleAttempted;
+        private Runnable handleClose;
+        private int releaseAttempts,cleanupDeadlineTick;
+        private long cleanupDeadlineNanos;
+        private String phase="CONSTRUCT";
+        private TrustedSpaceRun(TestContext context,String name) {this.context=context;this.name=name;}
+        private int tick() {return Math.toIntExact(context.getTick());}
+        private void remember(Throwable failure) {
+            if(primary==null)primary=failure;
+            else if(primary!=failure) {
+                for(var prior:primary.getSuppressed())if(prior==failure)return;
+                primary.addSuppressed(failure);
+            }
+        }
+        private void rethrow() {if(primary instanceof RuntimeException failure)throw failure;throw (Error)primary;}
+        private void guarded(Runnable action) {
+            if(cleanupStarted || terminal)return;
+            try {action.run();}
+            catch(RuntimeException | Error failure) {fail(failure);}
+        }
+        private void schedule(int tick,String nextPhase,Runnable action) {
+            guarded(() -> {
+                context.assertTrue(tick<99900,"TRUSTED_SCHEDULE_BUDGET");
+                context.runAtTick(tick,() -> guarded(() -> {phase=nextPhase;action.run();}));
+            });
+        }
+        private void await(int tick,String nextPhase,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready) {
+            schedule(tick,nextPhase,() -> {
+                if(condition.getAsBoolean()) {observeChecked();ready.accept(tick);}
+                else {
+                    context.assertTrue(tick<90000,"TRUSTED_WAIT_ORIGINAL_READY phase="+phase+" tick="+tick);
+                    await(tick+1,nextPhase,condition,ready);
+                }
+            });
+        }
+        private void ownEntity(net.minecraft.entity.Entity entity,Vec3d destination) {
+            java.util.Objects.requireNonNull(entity);
+            if(entities.putIfAbsent(entity.getUuid(),new TrustedEntity(entity,destination))!=null)
+                throw new IllegalStateException("重複 entity owner");
+        }
+        private boolean spawn(net.minecraft.entity.Entity entity) {
+            var owned=java.util.Objects.requireNonNull(entities.get(entity.getUuid()));
+            owned.invalidateReturnWitness();
+            return fixture.target.spawnEntity(entity);
+        }
+        private void moveToTarget(net.minecraft.entity.Entity entity,CorridorPageManager.PhysicalPose pose) {
+            var owned=entities.get(entity.getUuid());
+            if(owned!=null)owned.invalidateReturnWitness();
+            move(fixture.target,entity,pose);
+        }
+        private void recordReturn(UUID id,net.minecraft.entity.Entity moved) {
+            var owned=entities.get(id);
+            requireAuthority(owned!=null,"TRUSTED_ENTITY_OWNER");
+            owned.recordReturn(moved);
+        }
+        private enum EntityOwnership { NEVER_SPAWNED, SPAWNED_UNRETURNED, VERIFIED_RETURNED }
+        /** 存證前完整比對原 stack；見證不持有或暴露可變的 Entity／ItemStack。 */
+        private record EntityReturnWitness(UUID uuid,net.minecraft.registry.RegistryKey<World> world,
+                net.minecraft.util.Identifier type,Vec3d destination,int itemCount) {}
+        private final class TrustedEntity {
+            private net.minecraft.entity.Entity entity;
+            private final UUID uuid;
+            private final net.minecraft.entity.EntityType<?> type;
+            private final net.minecraft.util.Identifier typeId;
+            private final Vec3d destination;
+            private final net.minecraft.item.ItemStack stack;
+            private EntityOwnership ownership=EntityOwnership.NEVER_SPAWNED;
+            private EntityReturnWitness witness;
+            private TrustedEntity(net.minecraft.entity.Entity entity,Vec3d destination) {
+                this.entity=entity;this.destination=destination;
+                uuid=entity.getUuid();type=entity.getType();typeId=net.minecraft.registry.Registries.ENTITY_TYPE.getId(type);
+                stack=entity instanceof net.minecraft.entity.ItemEntity item?item.getStack().copy():null;
+            }
+            private void invalidateReturnWitness() {
+                witness=null;ownership=EntityOwnership.SPAWNED_UNRETURNED;
+            }
+            private boolean stackMatches(net.minecraft.entity.Entity value) {
+                return stack==null || value instanceof net.minecraft.entity.ItemEntity item
+                        && net.minecraft.item.ItemStack.areItemsAndComponentsEqual(stack,item.getStack())
+                        && stack.getCount()==item.getStack().getCount();
+            }
+            private boolean targetPresent() {
+                var live=fixture.target.getEntity(uuid);
+                if(live==null || live.isRemoved())return false;
+                invalidateReturnWitness();entity=live;return true;
+            }
+            private void recordReturn(net.minecraft.entity.Entity moved) {
+                invalidateReturnWitness();
+                requireAuthority(moved!=null && moved.isAlive() && !moved.isRemoved()
+                        && moved.getWorld()==context.getWorld() && uuid.equals(moved.getUuid()) && moved.getType()==type
+                        && moved.getPos().squaredDistanceTo(destination)<1e-9 && stackMatches(moved),"TRUSTED_ENTITY_RETURN_PROOF");
+                requireAuthority(!targetPresent(),"TRUSTED_ENTITY_STILL_TARGET");
+                entity=moved;
+                witness=new EntityReturnWitness(moved.getUuid(),moved.getWorld().getRegistryKey(),
+                        net.minecraft.registry.Registries.ENTITY_TYPE.getId(moved.getType()),moved.getPos(),
+                        moved instanceof net.minecraft.entity.ItemEntity item?item.getStack().getCount():-1);
+                ownership=EntityOwnership.VERIFIED_RETURNED;
+            }
+            private boolean cleanupComplete() {
+                if(targetPresent())return false;
+                if(ownership==EntityOwnership.NEVER_SPAWNED) {
+                    // 沒有嘗試過 spawn 才可走未暴露分類；空 lookup 本身不是返還見證。
+                    return entity.isAlive() && !entity.isRemoved() && uuid.equals(entity.getUuid()) && entity.getType()==type
+                            && stackMatches(entity) && context.getWorld().getEntity(uuid)==null;
+                }
+                return ownership==EntityOwnership.VERIFIED_RETURNED && witness!=null
+                        && witness.uuid().equals(uuid) && witness.world().equals(context.getWorld().getRegistryKey())
+                        && witness.type().equals(typeId) && witness.destination().squaredDistanceTo(destination)<1e-9
+                        && witness.itemCount()==(stack==null?-1:stack.getCount());
+            }
+            private void assertCleanupComplete() {
+                requireAuthority(cleanupComplete(),"TRUSTED_ENTITY_RETURN_WITNESS uuid="+uuid+" state="+ownership);
+            }
+            private void returnOwned() {
+                if(cleanupComplete())return;
+                var live=fixture.target.getEntity(uuid);
+                requireAuthority(live!=null && !live.isRemoved() && live.getType()==type,"TRUSTED_ENTITY_UNRETURNED_MISSING uuid="+uuid);
+                var moved=live.teleportTo(new net.minecraft.world.TeleportTarget(context.getWorld(),destination,Vec3d.ZERO,0,0,
+                        net.minecraft.world.TeleportTarget.NO_OP));
+                recordReturn(moved);
+            }
+        }
+        private void ownHandle(Runnable close) {
+            context.assertTrue(handleClose==null,"TRUSTED_HANDLE_OWNER");handleClose=close;
+        }
+        private void closeHandle() {
+            if(handleClose==null || handleAttempted)return;
+            handleAttempted=true;
+            try {handleClose.run();}
+            catch(RuntimeException | Error failure) {closeFailed=true;remember(failure);rethrow();}
+        }
+        private void rememberRemoved(SessionRecoveryRecord record) {removedByCase=record;}
+        private void restoreCaseCurrent(SessionRecoveryRecord expected) {
+            requireAuthority(expected!=null && expected.equals(removedByCase),"TRUSTED_OWN_REMOVE_CAPTURE");
+            restoreOwnedRemove();
+        }
+        private static final class AuthorityFailure extends IllegalStateException {
+            private AuthorityFailure(String message) {super(message);}
+        }
+        private void requireAuthority(boolean valid,String message) {if(!valid)throw new AuthorityFailure(message);}
+        private void observeChecked() {
+            var flushed=fixture.state.flushedRecords().get(fixture.session);
+            if(flushed!=null && flushed.equals(fixture.state.records().get(fixture.session)))identity(flushed);
+        }
+        private void restoreOwnedRemove() {
+            if(removedByCase==null)return;
+            var expected=removedByCase;
+            var current=fixture.state.records().get(fixture.session);
+            var flushed=fixture.state.flushedRecords().get(fixture.session);
+            requireAuthority(expected.equals(flushed) && (current==null || current.equals(expected)),"TRUSTED_DIRTY_RESTORE_EXACT");
+            if(current==null)fixture.state.put(expected);
+            // current 已恢復就結束本 case 的 remove 窗口；flush 失敗不可讓舊窗口復活。
+            removedByCase=null;
+            restoreFlushPending=expected;
+            fixture.state.flush(context.getWorld().getServer());
+            requireAuthority(expected.equals(fixture.state.records().get(fixture.session))
+                    && expected.equals(fixture.state.flushedRecords().get(fixture.session)),"TRUSTED_RESTORE_FLUSH_EXACT");
+            restoreFlushPending=null;
+        }
+        private void identity(SessionRecoveryRecord record) {
+            requireAuthority(initial!=null && record!=null && record.sessionUuid().equals(initial.sessionUuid())
+                    && record.chamberUuid().equals(initial.chamberUuid()) && record.origin().equals(initial.origin())
+                    && record.semantics()==initial.semantics()
+                    && java.util.Objects.equals(record.candidateContext(),initial.candidateContext()),"TRUSTED_AUTHORITY_IDENTITY");
+            requireAuthority(SessionRecoveryRecord.sameAuthority(observedAuthority==null?initial:observedAuthority,record),"TRUSTED_AUTHORITY_LINEAGE");
+            requireAuthority(initial.participants().size()==record.participants().size(),"TRUSTED_COHORT_COMPLETE");
+            for(int i=0;i<initial.participants().size();i++) {
+                var person=record.participants().get(i);var original=initial.participants().get(i);
+                requireAuthority(new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),
+                        person.yaw(),person.pitch(),person.quantumStateSnapshot(),false).equals(original),"TRUSTED_SOURCE_IMMUTABLE");
+            }
+            observedAuthority=record;
+        }
+        private void sourcePlayers() {
+            context.assertTrue(initial!=null && checkpoints.size()==initial.participants().size(),"TRUSTED_CHECKPOINT_COMPLETE");
+            for(int i=0;i<fixture.players.size();i++) {
+                var player=fixture.players.get(i).player();var original=initial.participants().get(i);
+                context.assertTrue(player.getUuid().equals(original.playerUuid()) && player.getServerWorld()==context.getWorld()
+                        && player.getPos().squaredDistanceTo(original.sourcePosition())<1e-9
+                        && player.getVelocity().squaredDistanceTo(original.sourceVelocity())<1e-9
+                        && Math.abs(player.getYaw()-original.yaw())<1e-4 && Math.abs(player.getPitch()-original.pitch())<1e-4
+                        && dev.quantumchamber.chamber.ChamberOccupantService.contains(dev.quantumchamber.chamber.ChamberGeometry.interiorBox(
+                                new dev.quantumchamber.chamber.ChamberFrame(initial.origin().controllerPos(),initial.origin().facing())),player.getBoundingBox()),
+                        "TRUSTED_PLAYER_SOURCE_CHECKPOINT");
+            }
+        }
+        private void returnTrusted() {
+            context.assertTrue(!backendWitnessed && !ackAttempted,"TRUSTED_RETURN_PHASE");
+            if(fixture.manager.releaseComplete(fixture.session)) {backend();return;}
+            if(releaseAccepted) {acceptedPending();return;}
+            var current=fixture.state.records().get(fixture.session);var flushed=fixture.state.flushedRecords().get(fixture.session);
+            identity(flushed);requireAuthority(flushed.equals(current),"TRUSTED_CURRENT_CHECKED");
+            if(returning==null) {
+                var people=new java.util.ArrayList<SessionRecoveryRecord.Participant>();
+                for(int i=0;i<fixture.players.size();i++) {
+                    var player=fixture.players.get(i).player();var original=initial.participants().get(i);
+                    if(!checkpoints.contains(player.getUuid())) {
+                        move(context.getWorld(),player,new CorridorPageManager.PhysicalPose(original.sourcePosition(),original.sourceVelocity(),original.yaw(),original.pitch()));
+                        saveCheckpoint(context.getWorld().getServer(),player);checkpoints.add(player.getUuid());
+                    }
+                    people.add(new SessionRecoveryRecord.Participant(original.playerUuid(),original.sourcePosition(),original.sourceVelocity(),original.yaw(),
+                            original.pitch(),original.quantumStateSnapshot(),true));
+                }
+                sourcePlayers();
+                var wanted=flushed.withProgress(people,flushed.spaceLeases(),SessionState.RETURNING,flushed.restoreEntryEffectOnReturn());
+                fixture.state.put(wanted);fixture.state.flush(context.getWorld().getServer());
+                context.assertEquals(wanted,fixture.state.flushedRecords().get(fixture.session),"TRUSTED_RETURNING_CHECKED");
+                returning=wanted;
+            }
+            requireAuthority(returning.equals(fixture.state.flushedRecords().get(fixture.session)),"TRUSTED_RETURNING_EXACT");
+            if(!releaseAccepted) {
+                context.assertTrue(!releaseInFlight,"TRUSTED_RELEASE_REENTRY");
+                releaseInFlight=true;releaseAttempts++;
+                try {fixture.manager.release(fixture.session);releaseAccepted=true;}
+                finally {releaseInFlight=false;}
+            }
+        }
+        private void acceptedPending() {
+            requireAuthority(releaseAccepted && returning!=null,"TRUSTED_RELEASE_ACCEPTED_CAPTURE");
+            var current=fixture.state.records().get(fixture.session);
+            var flushed=fixture.state.flushedRecords().get(fixture.session);
+            // manager finalizing 可先移除 current，稍後才發布 receipt；此處不重建，也不猜已完成。
+            if(current!=null) {identity(current);requireAuthority(current.equals(returning),"TRUSTED_PENDING_CURRENT");}
+            if(flushed!=null) {identity(flushed);requireAuthority(flushed.equals(returning),"TRUSTED_PENDING_FLUSHED");}
+        }
+        private boolean mappingAbsent() {
+            try {fixture.manager.currentMappings(fixture.session);return false;}
+            catch(IllegalArgumentException failure) {if(!"未知 session".equals(failure.getMessage()))throw failure;return true;}
+        }
+        private void backend() {
+            context.assertTrue(fixture.manager.releaseComplete(fixture.session),"TRUSTED_RELEASE_RECEIPT");
+            context.assertTrue(returning!=null,"TRUSTED_RETURN_CAPTURE");identity(returning);sourcePlayers();
+            for(var entity:entities.values())entity.assertCleanupComplete();
+            context.assertTrue(!fixture.state.records().containsKey(fixture.session) && !fixture.state.flushedRecords().containsKey(fixture.session)
+                    && mappingAbsent(),"TRUSTED_BACKEND_ABSENT");
+            backendWitnessed=true;
+            removedByCase=null;restoreFlushPending=null;
+        }
+        private void closePlayers() {
+            for(var connection:fixture.players) {
+                if(!closeAttempts.add(connection.player().getUuid()))continue;
+                try {connection.close();}
+                catch(RuntimeException | Error failure) {closeFailed=true;remember(failure);}
+            }
+            for(var connection:fixture.players) {
+                try {context.assertTrue(context.getWorld().getServer().getPlayerManager().getPlayer(connection.player().getUuid())==null
+                        && fixture.target.getEntity(connection.player().getUuid())==null,"TRUSTED_PLAYER_CLOSED");}
+                catch(RuntimeException | Error failure) {closeFailed=true;remember(failure);}
+            }
+            if(closeFailed)rethrow();
+        }
+        private void assertComplete() {
+            if(!backendWitnessed)backend();
+            if(!ackAttempted) {
+                ackAttempted=true;fixture.manager.acknowledgeRelease(fixture.session);acknowledged=true;
+            }
+            context.assertTrue(acknowledged && !fixture.manager.releaseComplete(fixture.session),"TRUSTED_ACK_ONCE");
+            closePlayers();
+            info("CLOSED");
+        }
+        private void info(String event) {
+            org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
+                    "T13_TRUSTED_OWNER case={} sid={} event={} phase={} tick={} cleanup={} accepted={} attempts={} backend={} ack={} closed={} primary={} suppressed={}",
+                    name,fixture==null?"UNBOUND":fixture.session,event,phase,tick(),cleanupStarted,releaseAccepted,releaseAttempts,backendWitnessed,acknowledged,
+                    closeAttempts.size(),primary==null?0:System.identityHashCode(primary),primary==null?0:primary.getSuppressed().length);
+        }
+        private void fail(Throwable failure) {
+            remember(failure);
+            if(terminal){rethrow();return;}
+            if(failure instanceof Error) {
+                try {closeHandle();}catch(RuntimeException | Error cleanup){remember(cleanup);}
+                if(fixture!=null && !reservationAttempted) {
+                    try {closePlayers();}catch(RuntimeException | Error cleanup){remember(cleanup);}
+                }
+                finish(false,"ERROR");return;
+            }
+            if(cleanupStarted){finish(false,"DUPLICATE_FAILURE");return;}
+            cleanupStarted=true;cleanupDeadlineTick=Math.min(tick()+8000,99900);
+            cleanupDeadlineNanos=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60);
+            try {info("FAILURE_OWNED");}
+            catch(RuntimeException | Error diagnostic) {remember(diagnostic);if(diagnostic instanceof Error){finish(false,"DIAGNOSTIC_ERROR");return;}}
+            scheduleCleanup();
+        }
+        private void scheduleCleanup() {
+            if(terminal)return;
+            if(tick()>=cleanupDeadlineTick || System.nanoTime()>=cleanupDeadlineNanos){finish(false,"INCOMPLETE");return;}
+            try {context.runAtTick(tick()+1,this::cleanup);}
+            catch(RuntimeException | Error failure) {remember(failure);finish(false,"SCHEDULE_FAILED");}
+        }
+        private void cleanup() {
+            if(terminal)return;
+            if(tick()>=cleanupDeadlineTick || System.nanoTime()>=cleanupDeadlineNanos){finish(false,"INCOMPLETE");return;}
+            try {
+                closeHandle();
+                if(connectionConstructing) {if(fixture!=null)closePlayers();finish(false,"CONSTRUCTOR_INCOMPLETE");return;}
+                if(fixture==null) {finish(false,"CONSTRUCTOR_UNBOUND");return;}
+                if(ackAttempted) {
+                    context.assertTrue(acknowledged && backendWitnessed && !fixture.manager.releaseComplete(fixture.session)
+                            && !fixture.state.records().containsKey(fixture.session) && !fixture.state.flushedRecords().containsKey(fixture.session)
+                            && mappingAbsent(),"TRUSTED_AFTER_ACK");
+                    closePlayers();
+                } else if(fixture.manager.releaseComplete(fixture.session)) {backend();assertComplete();}
+                else if(reservation==null) {
+                    closePlayers();
+                    if(reservationAttempted){finish(false,"RESERVATION_UNCONFIRMED");return;}
+                }
+                else if(!fixture.state.records().containsKey(fixture.session) && !fixture.state.flushedRecords().containsKey(fixture.session)
+                        && returning==null) {
+                    fixture.manager.retire(fixture.manager.cancelPrepared(reservation));
+                    context.assertTrue(mappingAbsent(),"TRUSTED_PROVISIONAL_ABSENT");closePlayers();
+                } else {
+                    restoreOwnedRemove();
+                    if(releaseAccepted)acceptedPending();
+                    else {for(var entity:entities.values())entity.returnOwned();returnTrusted();}
+                    scheduleCleanup();return;
+                }
+            } catch(RuntimeException | Error failure) {
+                remember(failure);
+                if(terminal){rethrow();return;}
+                if(failure instanceof Error || failure instanceof AuthorityFailure || closeFailed || ackAttempted&&!acknowledged){finish(false,"CLEANUP_FAILED");return;}
+                scheduleCleanup();return;
+            }
+            finish(true,"CLEAN_WITH_ERRORS");
+        }
+        private void finish(boolean clean,String terminalPhase) {
+            if(terminal){rethrow();return;}
+            if(clean && cleanupStarted && (tick()>=cleanupDeadlineTick || System.nanoTime()>=cleanupDeadlineNanos)) {
+                clean=false;terminalPhase="INCOMPLETE_LATE";
+            }
+            terminal=true;phase=terminalPhase;
+            try {info("TERMINAL");}
+            catch(RuntimeException | Error failure) {remember(failure);clean=false;}
+            if(!clean)requestStop();
+            try {org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").error("T13_TRUSTED_FAILURE case="+name+" clean="+clean,primary);}
+            catch(RuntimeException | Error failure){remember(failure);clean=false;requestStop();}
+            rethrow();
+        }
+        private void requestStop() {
+            if(stopRequested)return;
+            stopRequested=true;
+            try {info("STOP_REQUESTED");}catch(RuntimeException | Error failure){remember(failure);}
+            try {context.getWorld().getServer().stop(false);}catch(RuntimeException | Error failure){remember(failure);}
+        }
+    }
+
     /** 只用於 geometry 測試的可信編排；紅石資格與失敗返還留 Task3/4。 */
     static final class TrustedSpace {
+        private final TrustedSpaceRun run;
         final TestContext context;
         final CorridorPageManager manager;
         final SessionRecoveryState state;
@@ -3208,15 +3584,22 @@ public final class M2CorridorGameTests implements FabricGameTest {
             this(context,facing,count,semantics,true);
         }
         TrustedSpace(TestContext context,Direction facing,int count,SessionSemantics semantics,boolean candidateAware) {
+            this(context,facing,count,semantics,candidateAware,null);
+        }
+        private TrustedSpace(TestContext context,Direction facing,int count,SessionSemantics semantics,boolean candidateAware,TrustedSpaceRun run) {
+            this.run=run;
             this.context=context;
             var server=context.getWorld().getServer(); manager=CorridorPageManager.forServer(server); state=SessionRecoveryState.get(server);
             target=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
+            if(run!=null)run.fixture=this;
             var frame=ChamberGameTestBuilder.build(context,false,facing,false);
             var chamber=dev.quantumchamber.chamber.ChamberRegistryState.get(server).registry()
                     .registerOrigin(World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,frame).chamberUuid();
             var people=new java.util.ArrayList<SessionRecoveryRecord.Participant>();
             for(int i=0;i<count;i++) {
+                if(run!=null)run.connectionConstructing=true;
                 var connected=new ConnectedGameTestPlayer(context.getWorld()); players.add(connected);
+                if(run!=null)run.connectionConstructing=false;
                 var player=connected.player(); var position=CorridorGeometry.position(frame,2.5+i,1,3.5);
                 player.teleport(context.getWorld(),position.x,position.y,position.z,Set.of(),0,0);
                 player.setNoGravity(true);
@@ -3224,12 +3607,15 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 people.add(new SessionRecoveryRecord.Participant(player.getUuid(),player.getPos(),player.getVelocity(),player.getYaw(),player.getPitch(),
                         (NbtCompound)player.getStatusEffect(ModEffects.QUANTUM_STATE).writeNbt(),false));
             }
+            if(run!=null)run.reservationAttempted=true;
             prepared=manager.reserveInitial(session,chamber,facing,Set.of(0L),semantics);
+            if(run!=null)run.reservation=prepared;
             var legacy=new SessionRecoveryRecord(session,chamber,new ChamberOriginAuthority(chamber,World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
                     frame.controllerPos(),facing,ChamberInstanceKind.ORIGIN),people,prepared.target().instances().stream()
                     .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,
                     semantics==SessionSemantics.LEGACY_FORWARD_CONSUMED,semantics);
             initial=candidateAware ? M4CandidateTestAccess.candidateAware(legacy,server) : legacy;
+            if(run!=null)run.initial=initial;
         }
         void prepare() { state.put(initial); state.flush(context.getWorld().getServer()); manager.prepare(prepared); }
         void commit() { manager.commitInitial(session,stageEntry()); }
@@ -3250,6 +3636,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             return Set.copyOf(cohort);
         }
         void returnTrusted() {
+            if(run!=null) { run.returnTrusted(); return; }
             var people=new java.util.ArrayList<SessionRecoveryRecord.Participant>();
             for(int i=0;i<players.size();i++) {
                 var player=players.get(i).player(); var original=initial.participants().get(i);
@@ -3279,6 +3666,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             state.flush(context.getWorld().getServer()); manager.release(session); players.forEach(ConnectedGameTestPlayer::close);
         }
         void assertComplete() {
+            if(run!=null) { run.assertComplete(); return; }
             context.assertTrue(manager.releaseComplete(session),"trusted returned／無 pins／完整清理後取得收據");
             manager.acknowledgeRelease(session);
         }

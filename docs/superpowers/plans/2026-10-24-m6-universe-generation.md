@@ -979,3 +979,39 @@ A主控audit c5807ca3…3117b0與同席spec終局C0/I0/M0，原outer19+1SETUP保
 現有原件只支持remap-ready當時slot3 loaded/ticking129/182未滿整lease；case-levelcleanup完成與15案是否同因未證。不能預設只延長等待就解全部；也不能以強制close／清authority冒正式完成，原錯／cleanup錯與失敗根必保。沿既有testmod／gates做受審設計的具名RED/GREEN／mutation-only／byteREVERT與focused，不新增script／workflow／JVMobserver或未授權世界控制。
 
 PS1 fix3可先作獨立checkpoint；M2受審候選完成後在最終固定code pin完成原C4雙focused／完整run-all／spec-quality／同SHA三job CI。所有舊FAIL／歷史PASS／producerUNRESOLVED各保原判，T13 OPEN，不進T14，T21另裁。
+
+
+**M2唯一設計採用（2026-11-09，實作待驗）：** `task13-m2-trusted-wait-cleanup-design-20261109.md` 最終SHA `69adaadb7bc136f59799aa6349a3a737390483546c40abb3181ed0c7b1fe2aa1`；同席獨立窄審初C0/I1/M1，兩次最小修訂後I1與M1皆ADDRESSED、終C0/I0/M0，終複審SHA `f0c21ba29cb01eaffeb81c0e26946ae59014ba65531c01d50eb66cf7e9e39f36`。原f57與8d稿及原finding保bytes，不另起設計或人類批准流程。controller採用後放行fresh implementer，只改本節同一M2 testmod檔。
+
+- 精確七案opt-in：`trusted_native_initial_and_whole_cohort_remap_windows`、`trusted_last_lease_requires_checked_remove_windows`、`trusted_return_source_snapshot_changes_are_rejected_windows`、`trusted_lateral_geometry_{north,south,east,west}_windows`。前三個case本文、`lateralGeometry`／`lateralRemap`及必要facing label參數只改owner/wait/schedule/資源登記與正常失敗交接，原功能／annotation／batchId／tickLimit100000不變。
+- 同檔只增private `withTrustedSpace`／`TrustedSpaceRun`小型owner及必要私有record/enum、TrustedSpace private opt-in constructor與`returnTrusted`／`assertComplete` owner非null分支；保三個舊constructor介面與null-owner路徑。HANDLE acquire/finally由同owner一次close，`FinalFlushDiag`本文不改。其他TrustedSpace／M4跨檔、projectionBoundary cancel/publish的Controller存在且!ready瞬間predicate、NativeEntry／milk／所有共用when/whenUntil／TestHooks／CohortFailureCleanup等均排除。
+- 正常wait沿原BooleanSupplier與功能斷言，七案移除10秒／lateral30秒牆鐘捷徑，仍每tick輪詢，以原scheduled test tick90000作business絕對截止（不是server worldTime），condition true維持原先判定順序；不預熱／新增chunk請求／sleep／提高annotation或CI/gate timeout。cleanup窗口為min(failureTick+8000,99900)且monotonic60秒，保留原tickLimit內terminal餘裕；逾期／排程拒絕／Error／未知資源不能假CLEAN，須有界終局與必要的非阻塞stop一次並保原FAIL。
+- owner在constructor前建立，逐資源成功取得立即登記、callback與同步schedule都guard，失敗接手後舊成功callback失效。TrustedSpace無lever/operator/activeowner，正式路徑依真teleport＋saveAndVerify＋checked RETURNING＋releaseComplete／ack及ownedclose；不假LOW、不forceclose冒正式完成、不改geometry/maps。不明constructor內部未回傳connection屬INCOMPLETE/stop，不反射或擴別檔。
+- I1核准狀態：`RETURNING_CHECKED`／`RELEASE_ATTEMPTED`／`RELEASE_ACCEPTED`／`BACKEND_WITNESSED`分離；accepted只在真release正常返回後立即記。poll先核captured SID正式receipt與完整backend/source/cohort/checkpoint/entity／absence/mapping見證，真完成直接BACKEND_WITNESSED→ack/close；僅receipt=false、仍exact RETURNING且尚未RELEASE_ACCEPTED時才沿原deadline重試真release，已ACCEPTED則只等待正式收據、不重呼release。不重teleport/checkpoint／RETURNING、不重設期限。沒有receipt且authority缺席仍不能當完成，ack後不重release。不得依賴下一poll前backend一定未完成的排程假設。
+- 保完整cohort／最新checked lease union、已登記item/arrow/newPin的UUID／有價stack與來源位置；last-lease HANDLE與temporary remove只依exact captured RETURNING／本case所擁有的暫時改動恢復，不泛寫journal。所有owner可見Throwable保持原primary物件，cleanup錯按identity完整suppressed；close同一primary重丟仍失敗。M1限制：FinalFlushDiag既有內部吞錯不改，不能宣稱那些不可見Throwable也已suppressed。
+- 原設計具名RED/GREEN與反向mutation照執行：原ready>10秒、never-ready、constructor／reserve／prepare／partial move／schedule／condition／ready／Error、可信return/release/ack/close、provisional cancel-retire、HANDLE/dirty restore、多錯/同物件close、bounded stop與七案scope隔離。I1含真API前throw、真release副作用後wrapper未正常回傳、首cleanup poll前backend真已收尾三分根控制；不額外manager.tick／假造receipt／新增productionhook。每fault新root、原FAIL及RED/GREEN與cleanup oracle分列、mutation-only/source/class byteREVERT，NOT_KILLED不補判。
+- 先候選七案與default166原scope正常回歸，其他10原FAIL若仍失敗保新根回報，不順修白名單外。之後最終乾淨pin雙七案focused、原milk/no-entrance與same-seed/owner/JUnit/native雙focused、完整run-all自然ENDALL0/outer0、spec/quality C/I0、同SHA三job CI；原277／300秒與CARVERS/完整final rows／T21不動。完整full內相同source的default可依實際採計，不為同一已驗條件無理由重跑。
+
+
+### 2026-11-09最新止損線與結案文件CI順序（使用者裁示）
+
+1. 照已審69ada設計完成本輪七案，不再擴大；§2對照列出的其餘10案不修、不開新設計／不加觀測。它們只由原既有full／CI scope回歸、保原輸出；不得藉scope-isolation改它們或增加runtime probe。69原文「其餘10案仍失敗後續調查」的擴展空間以本條收窄為停報，不自行派新調查／修法。
+2. 最終固定pin完成原full與同SHA build／windows-native／m6-native三job CI後，全通過才按原門檻收尾。若失敗僅Windows default指定10案或同類偶發，立即停止後續工作，列平台、job、具名test、訊息／狀態等失敗特徵，由使用者裁示是否視為Windows偶發；不rerun碰運氣、不自發waiver。其他失敗停下查證，不歸給偶發，不自動擴source或改oracle。
+3. T13結案的文件commit必先寫「待本 commit CI」與T13未結條件，正常push後等該commit CI真正三job success才算結案。不得重複43cb99b先寫結案、後來CI失敗的順序；CI真終局寫ignored STATUS／ledger與交付，不為更新同一狀態再遞迴出下一個docs commit。
+4. 每次commit、push與gate自然終局後更新 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md` 首段，標實際時間／HEAD／當前scope／PASS或FAIL／尚待項；當前M2 local gate由implementer更新，controller接commit／push／交回時更新，避免兩writer覆蓋。同一STATUS其餘歷史保留，liveSTATUS／progress不作不可變manifest引用。
+5. 所有舊FAIL原根原判不改。即使T13成功，T14開工前仍等待使用者回覆。canonical＋U、U-only、client等新控制仍未授權。受控negative的原GameTestFAIL與cleanup oracle結果照設計分列，不能將它們冒作正常全綠或Windows偶發。
+
+**M2多錯負控的可達時序校正（不擴設計）：** 同一原primary與三distinct cleanup錯的完整即時保存契約不變。M2 owner returnTrusted失敗後會remember並排下一poll；真receipt分支才可backend，故不沿用milk「同poll return＋witness」字面。測項依實際流程A(return錯)→後續真receipt分支B(witness錯)→再下一poll真backend成立後C(close錯)，記每poll／receipt／primary與suppressed，不為湊測試提前呼backend或改正常路徑。只七案同一控制、無額外觀測或七外10變更；FinalFlushDiag既有限制仍保。來源為immutable candidate-v3.java.bin SHA226a8c…1ce5c7a0之3469–3495，root已ledger ruling並交同spec窄核。
+
+
+**2026-11-10七內正常失敗查證／69實作落實（不擴scope）：** 九案root c8f028…首primary在backend的TRUSTED_ENTITY_RETURN_WITNESS，原92d9 source與FAIL保留、不歸偶發。只讀source與同spec確認正常lateral/extras/newPin真teleport返回及原UUID/itemassert成功後沒有交owner保存witness，backend又要求歷次pin最後仍live，未落實69成功返還記錄。最小修正僅共用真returned驗證／immutable witness：sourceWorld/live/UUID/type/dest/原stack全真；區分never-spawned/已spawn未返還/已驗返還，缺席或普通boolean不可造證據，再入target須invalidate，target重現亦拒沿用。backend核成功boundary見證而非永續live，不判舊entity消失原因，無見證仍拒。這是已審69缺口補齊，不改原UUID/value／功能，不開新設計/七外10觀測；等原gate自然終局與exact restore/lock後才新source正常驗證，任何正常FAIL按止損停查。
+
+
+**2026-11-10 M2正式code QA與第5輪I1收尾（不擴設計）：** 候選source0f1正常9/9＋唯一default166/166與原94gate原件已保，兩席code review皆C0/I1/M0，唯一I1是TrustedSpaceRun.finish的terminal logger RuntimeException與最後error logger Error可能漏必要stop-before-primary。spec SHA `f13aad41df4f456a9966e16a6a56ccbaa831109387893d33fa062b21a5cc957c`，quality SHA `f4e1df05e011a65447d0c5291440f3097978f1e1ef0681da8b0ef596565350d3`。沒有ruling可豁免69此契約，FinalFlushDiag舊吞錯限制不適用新owner。
+
+依SDD fix-loop第5輪fresh implementer僅改本M2新owner.finish／必要private stop-once helper，保original primary／每個owner可見Throwable／identity去重與stop fence，terminal不得因先設而漏stop；logger RTE/Error統一fail-stop、已nonclean再遇logger錯不能雙stop。兩個位置定向真控制與必要最小正常9source驗證、mutation-only／compiledbyteREVERT，原94/default不無理由重跑，原0f1 fullcandidate normal證據不冒新pin。不得改其他69支路／ready／預算／CaseBody／PS1／production／七外10；root brief `task13-m2-fix5-terminal-brief-20261110.md`，正常任意FAIL仍按止損停查。I1清零前不定版/C4，結案docs仍待本commitCI，T13 OPEN。
+
+
+**2026-11-10第5輪I1已閉，最終C4待驗：** M2 candidate `51fbf9198f1732dc604698fd73eb4afad35ba760b03c6fa15b5b2d2cd359c17e` 相對0f1只finish／private requestStop +9/-7；TERMINAL logger與末failure logger的RTE/Error均nonclean＋fenced stop一次、完整visible Throwable附同original primary並stop-before-dispatch，其他69支路/原正常路徑/預算不變。兩席限定複審I1 ADDRESSED、C0/I0/M0：spec `7576d425caa288e5cff7d167cd055ea731c8cfe2a6307b5ee2aa0f9f14d97f93`，quality `517afc24e9caaeaf5914b15c6dfd201c16f502fe53a8b068b8bcea3c1dc9ca47`。固定index `5894216cd575d5df3aa25763761e3526884c431a7c116b5659c3ab78b394ff2c`，有效2RED/5GREEN/1精確scopedKILLED、fresh9/9零badskip、source/1100class/env/world/locks exact。原682e temporary替換誤碰milk同字行，原patch/oracle保並標scope-tainted，不採精確scope證明；exact owner-only202c新控制獨立補證。extra checker期待SUCCESS首SETUP保、依原runner EXIT_ZERO只讀補核不rerun。
+
+下一步controller精確M2＋狀態文件定版後，只在同一乾淨pin完成原C4雙focused（四JUnit各雙、M6owner-selector雙、七案＋原milk/noEntrance雙、normal/amp兩鏈各雙fresh3phase）、完整run-all自然ENDALL0/outer0、final-data兩席C/I0、同SHA三jobCI。舊0f1候選default166 PASS與e338 checkpoint CI不替最終pin。C4期間全部tracked凍結只ignored報告，任何failure照最新止損停報/查，不midrun改source、無新七外10觀測。T13仍OPEN；後續結案docs commit先「待本 commit CI」，不預寫closed。

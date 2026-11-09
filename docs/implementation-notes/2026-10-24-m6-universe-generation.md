@@ -1787,3 +1787,28 @@ fix3正式窄spec／quality均C0／I0／M0、無必要修正，review另存本pl
 controller已派fresh設計者先寫唯一ignored有界設計，未放行任何M2碼。原read-only audit確認這個首列case是TrustedSpace manager.ready(prepared/remap)，不能混稱NativeEntry.activeReady；無hooks when每次10秒另有scheduledtesttick90000，generic FULL只固定62,125旁證。當時target182格loaded/ticking129不滿整lease必要條件，但哪個deadline OR分支／時間首因／case級cleanup完成與15案資源連帶尚未證；production allocator reserve empty亦不構成共因證明。
 
 PS1 fix3兩席C0／I0／M0可先checkpoint，後續M2受審候選完成後才以最終固定pin做原C4／完整回歸／同SHA CI，避免混source或重用舊pin驗收。T13仍OPEN，T14／T21／新canonical＋U／U-only／client與production等原邊界不擴。
+
+
+**M2唯一設計終複審與開碼（2026-11-09）：** f57初稿的release checked/accepted混用I1與FinalFlushDiag不可見Throwable文字M1，經同一設計8d與69ada最小修訂，兩項皆ADDRESSED；核可設計SHA `69adaadb7bc136f59799aa6349a3a737390483546c40abb3181ed0c7b1fe2aa1`，獨立終複審SHA `f0c21ba29cb01eaffeb81c0e26946ae59014ba65531c01d50eb66cf7e9e39f36`，C0／I0／M0。原f57、8d與原finding原件保留。controller已採用精確plan轉錄，放行fresh implementer僅七案opt-in與同檔privateowner／constructor／returnTrusted／assertComplete分支；receipt-first與release accepted分離、原ready/tickLimit/功能斷言、正式cleanup與primary/suppressed均依定稿，不改其他callers／production／observer。這是開始受限實作，不是已驗收；RED/GREEN／候選、最終固定pin C4／full／同SHA CI仍待。
+
+PS1 checkpoint `e3389d995eec46cbf562261ce01817a24b35b942` 的CI42619363848已三job終局success，真SavedSummary原300秒內212秒／7鏈21phase／277，rawlog已核；這份程式尚無M2修正，不回判43原FAIL、不認定15案同因，也不替最終M2 C4驗收。舊formal9d10／c024與fix3 e64等報告SHA均保原值。
+
+
+**2026-11-09使用者最新止損補充：** 本輪照69ada已審設計完成七案，不再擴大；七案外那10不修、不新設計／觀測。最終pin full／同SHA三jobCI若全過才依原門檻收尾；若失敗只落Windows default該10或同類偶發，保平台／job／具名test／特徵後停等使用者，不重跑湊綠／自發waiver；其他失敗停查不歸偶發。結案文件commit先「待本 commit CI」，該commitCI真過才算T13結案，不預寫closed、不在CI真過後再遞迴發狀態docs。每commit／push／gate終局更新ignored STATUS首段；controller已補正原停17:22的首段並保存原bytes，local gate交implementer即時更新，後文歷史保留。舊FAIL／T21／T14待使用者／未授權CU-Uonly-client邊界照舊。本段是流程限制，沒有更改任何原件判定或宣布目前候選完成。
+
+
+**2026-11-10 M2 code QA目前：** frozen source0f1、真9/9與唯一default166/166均PASS，但尚非最終C4。immutable packet index `c79b424ac8a8dcbd4f6288021dab41843da6f62227aec11df06ff7fb108c7f80`／supplement `42f057bafd8ae49cc696ad45ed890b4f618591aeb8778fad6264ac0c067c88b4`保94實際gate與normal fresh XML／scope／restore／locks、1100compiled pin。兩席正式source review同C0/I1/M0：finish的terminal診斷RTE及末error logger Error漏stop-before-primary，原candidate不定版。按SDD第5輪fresh agent只此finish/stopOnce收尾與兩位置定向控制，其他69支路不改，不重做94或default，不擴七外10。原candidate source／report／控制FAIL與UNRESOLVED保原判；I1未清與最終同SHA full/CI未完成，T13仍OPEN。最新首段/每gate/commit/push狀態以ignored STATUS即時更新；結案文件commit必先待本commitCI。
+
+
+### 2026-11-10：M2第5輪I1關閉，候選可定版（最終C4與CI待）
+
+M2 source `51fbf9198f1732dc604698fd73eb4afad35ba760b03c6fa15b5b2d2cd359c17e`，相對原0f1只finish／private requestStop +9/-7。兩個logger位置RTE/Error現在都走一次fail-stop、原primary不變、每個owner可見錯完整即時suppressed，stop fence在可能丟的diagnostic/API前，非clean後logger再錯也不雙stop。90000／8000／99900／60秒與69其他程式不變；不改production／PS1／任何七外caller。原兩席I1已逐一ADDRESSED，限定spec及quality皆C0／I0／M0（不代表最終C4/CI已通過）。
+
+- immutable fix5入口 `m2-terminal-fix5-20261110/index.json` SHA `5894216cd575d5df3aa25763761e3526884c431a7c116b5659c3ab78b394ff2c`，原report最後snapshot `c57f6fc0e9a3d9c71ec931ae8545d4185e36865c2a248f4de474038154bacb36`。
+- 有效控制2RED／5GREEN／1精確scoped fence KILLED；所有expected GameTestFAIL與契約oracle分列，真backend/ack/close、sameprimary/suppressed/stop1-before-dispatch、自然runtime終局／world／env／locks均核。原source與1100compiled逐位元REVERT，正常9根08104fb7 fresh9/9零badskip。
+- 原682e temporary全域替換誤碰舊milk stopAfter同字行，scope-tainted原source／patch／oracle仍保、不採scoped證明；新exact owner-only202c控制前onehunk/excludedbytes檢查、真2stop目標KILLED另列。正常9的額外只讀checker曾誤期待runner狀態SUCCESS，原SETUP保留、依原EXIT_ZERO schema補核，沒有重跑或改正式收據。
+- 限定spec report `m2-terminal-fix5-20261110/spec-i1-scoped-rereview-20261110.md` SHA `7576d425caa288e5cff7d167cd055ea731c8cfe2a6307b5ee2aa0f9f14d97f93`；quality `task13-m2-terminal-fix5-quality-rereview-20261110.md` SHA `517afc24e9caaeaf5914b15c6dfd201c16f502fe53a8b068b8bcea3c1dc9ca47`。原f13/f4e1 code finding與原0f1/9d10/c024/e64等時點報告不回判。
+
+此前M2固定codepacket `m2-trusted-fix4-20261109/delivery-0f1cd6e8-20261110/index.json` SHA `c79b424ac8a8dcbd4f6288021dab41843da6f62227aec11df06ff7fb108c7f80`，原source0f1正常9與唯一default166均真PASS；其source不同，不冒新51fb或最終C4的default/full。source69要求的retained entity witness已依同spec源證落實，不推論c8f028消失原因；所有七內原normalFAIL與controlledRED／UNRESOLVED保持，HANDLE只讀target補證仍不改原checker。
+
+目前只准定版這個候選並跑最終同乾淨pin的原雙focused／完整full／同SHA三jobCI與final-data兩席，tracked在C4凍結。T13保持OPEN，結案文件commit必先「待本 commit CI」、該commitCI真過才閉；Windowsdefault該10/同類偶發停報user，其他fail停查不歸偶發，不rerun湊綠，不擴七外10，不開T14／新CU-Uonly-client。每commit/push/gate更新STATUS首段。
