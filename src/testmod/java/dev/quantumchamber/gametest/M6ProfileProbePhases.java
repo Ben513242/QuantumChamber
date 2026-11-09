@@ -31,6 +31,213 @@ public final class M6ProfileProbePhases {
     private static final BlockPos BUILDING = new BlockPos(2051, 300, 2051);
     private static final BlockPos SOURCE_EDIT = BUILDING.east();
     private static final BlockPos TARGET_EDIT = BUILDING.west();
+    /** 無 U 的獨立控制；不建立 Flow，也不呼叫會初始化 authority 的 get()。 */
+    static final class VanillaNormalControl {
+        private static final long CONTROL_SEED = 20260921L;
+        private final Path root,evidence;
+        private final Map<String,Object> proof;
+        private final List<Map<String,Object>> loads=new ArrayList<>(),snapshots=new ArrayList<>();
+        private final List<String> requests=new ArrayList<>();
+        private MinecraftServer server;
+        private boolean sampled,finished,prepared;
+        private int uLoadCount,ticks,preflightAttempts;
+        private final List<Map<String,Object>> preflightWaits=new ArrayList<>();
+
+        VanillaNormalControl(Path root,Path evidence,Map<String,Object> proof) {
+            this.root=root;this.evidence=evidence;this.proof=proof;
+            proof.put("observerRegisteredAtModInit",true);proof.put("worldLoads",loads);
+            proof.put("loadedWorldSnapshots",snapshots);proof.put("requests",requests);proof.put("uLoadCount",0);
+            proof.put("preflightWaits",preflightWaits);
+        }
+        void loaded(MinecraftServer owner,ServerWorld world) {
+            var key=world.getRegistryKey().getValue().toString();
+            loads.add(Map.of("sequence",loads.size(),"worldKey",key,"serverIdentity",System.identityHashCode(owner)));
+            if(key.startsWith("quantumchamber:universe/")) {
+                proof.put("uLoadCount",++uLoadCount);failures().add("VANILLA_CONTROL_U_LOADED: "+key);
+            }
+        }
+        void started(MinecraftServer owner) {
+            server=owner;
+            guarded(() -> {
+                require(owner.isOnThread() && owner.getSavePath(WorldSavePath.ROOT).toRealPath().equals(root.resolve("world").toRealPath()),"VANILLA_CONTROL_ROOT");
+                proof.put("serverIdentity",System.identityHashCode(owner));
+                snapshot("STARTED");authority("startup");
+                var properties=new Properties();
+                try(var reader=Files.newBufferedReader(root.resolve("server.properties"))){properties.load(reader);}
+                proof.put("configuredPackOrder",properties.getProperty("initial-enabled-packs"));
+                proof.put("runtimePackOrder",String.join(",",owner.getDataPackManager().getEnabledIds()));
+                proof.put("configuredPreset",properties.getProperty("level-type"));
+                proof.put("configuredGenerateStructures",properties.getProperty("generate-structures"));
+                proof.put("configuredSeed",properties.getProperty("level-seed"));
+                proof.put("seed",Long.toString(owner.getOverworld().getSeed()));
+                var settings=Minecraft121SettingsLifecycle.acquire(owner);
+                var preset=Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(settings).orElse("");
+                proof.put("preset",preset);proof.put("generateStructures",owner.getSaveProperties().getGeneratorOptions().shouldGenerateStructures());
+                require(owner.getOverworld().getRegistryKey().equals(net.minecraft.world.World.OVERWORLD),"VANILLA_CONTROL_WORLD_KEY");
+                require(owner.getOverworld().getSeed()==CONTROL_SEED && owner.getSaveProperties().getGeneratorOptions().getSeed()==CONTROL_SEED
+                        && properties.getProperty("level-seed","").equals(Long.toString(CONTROL_SEED)),"VANILLA_CONTROL_SEED");
+                require(preset.equals("normal") && properties.getProperty("level-type","").equals("minecraft:normal"),"VANILLA_CONTROL_PRESET");
+                require(owner.getSaveProperties().getGeneratorOptions().shouldGenerateStructures()
+                        && properties.getProperty("generate-structures","").equals("true"),"VANILLA_CONTROL_STRUCTURES");
+                require(PACKS.equals(proof.get("configuredPackOrder")),"VANILLA_CONTROL_PACKS");
+                require(failures().isEmpty(),"VANILLA_CONTROL_U_LOADED");
+            });
+        }
+        void tick(MinecraftServer owner) {
+            if(owner!=server || finished || sampled)return;
+            guarded(() -> {
+                require(server.isOnThread(),"VANILLA_CONTROL_THREAD");
+                require(++ticks<1800,"VANILLA_CONTROL_PREFLIGHT_WAIT_TIMEOUT");
+                var world=server.getOverworld();
+                if(!prepared) {
+                    prepared=true;proof.put("firstRequestTick",server.getTicks());snapshot("BEFORE_SAMPLE");
+                    requests.add("0,0="+world.getChunk(0,0).getStatus());
+                    requests.add("128,128="+world.getChunk(128,128).getStatus());
+                }
+                if(!preflight(world))return;
+                sampled=true;proof.put("sampleTick",server.getTicks());
+                var center=world.getChunk(32,32);requests.add("32,32="+center.getStatus());
+                var stages=new ArrayList<Map<String,Object>>();proof.put("stages",stages);
+                stages.add(sample(world,center,"CENTER_FULL",false));
+                for(int x=31;x<=33;x++)for(int z=31;z<=33;z++)
+                    requests.add(x+","+z+"="+world.getChunk(x,z).getStatus());
+                var expected=new ArrayList<String>();expected.add("0,0=minecraft:full");expected.add("128,128=minecraft:full");expected.add("32,32=minecraft:full");
+                for(int x=31;x<=33;x++)for(int z=31;z<=33;z++)expected.add(x+","+z+"=minecraft:full");
+                require(requests.equals(expected),"VANILLA_CONTROL_REQUESTS");
+                var full=sample(world,center,"FULL_3X3",true);stages.add(full);
+                proof.put("sampleCount",full.get("sampleCount"));proof.put("blockHash",full.get("blockHash"));proof.put("biomeHash",full.get("biomeHash"));
+                proof.put("matchedMaturity","FULL_3X3");snapshot("AFTER_SAMPLE");
+                // 正式 block/biome 快照已固定；以下只讀事後設定及密度，不再要求任何 chunk。
+                var parameters=new NbtCompound();parameters.putString("OverworldPreset","normal");parameters.putBoolean("GenerateStructures",true);
+                var frozen=Minecraft121SettingsLifecycle.registry().createSnapshot(Minecraft121VanillaPresetProfileProvider.NORMAL_ID,1,
+                        parameters,Minecraft121SettingsLifecycle.acquire(server));
+                proof.put("frozenSettings",Map.of("frozenSeed",Long.toString(world.getSeed()),"providerId",frozen.providerId(),
+                        "providerVersion",frozen.providerVersion(),"parameters",frozen.parameters().toString(),
+                        "snapshotSnbt",frozen.toNbt().toString(),"outputFingerprint",HexFormat.of().formatHex(frozen.outputFingerprint()),
+                        "provenance","CONTROL_POST_SNAPSHOT_NOT_MEASURED_RECEIPT"));
+                var density=world.getChunkManager().getNoiseConfig().getNoiseRouter().finalDensity();
+                var densityRows=new ArrayList<Map<String,Object>>();var densityBits=new ArrayList<String>();
+                proof.put("noiseEvidenceKind","POST_FULL_FINAL_DENSITY_RAW_BITS");proof.put("densityRows",densityRows);
+                for(int x=512;x<528;x+=3)for(int z=512;z<528;z+=3)for(int y=-64;y<256;y+=8) {
+                    var point=new net.minecraft.world.gen.densityfunction.DensityFunction.UnblendedNoisePos(x,y,z);
+                    var bits=HexFormat.of().toHexDigits(Double.doubleToRawLongBits(density.sample(point)));
+                    densityRows.add(Map.of("index",densityRows.size(),"x",x,"y",y,"z",z,"rawDoubleBits",bits));densityBits.add(bits);
+                }
+                proof.put("densityCount",densityRows.size());proof.put("densityHash",digest(densityBits));
+                proof.put("densityLimitation","不是 NOISE 階段或 feature 前方塊；只計算實際 NoiseConfig 的 finalDensity。");
+                require(failures().isEmpty(),"VANILLA_CONTROL_U_LOADED");
+                writeNew(evidence.resolve("sample.json"),proof);
+                proof.put("sampleSha256",hash(evidence.resolve("sample.json")));
+                proof.put("diagnosticPassed",true);finished=true;stop();
+            });
+        }
+        /** 只容許空 virgin 區的短 header 等待下一 END tick；原嚴格 preflight 完全不變。 */
+        @SuppressWarnings("unchecked") private boolean preflight(ServerWorld world) throws Exception {
+            var observed=new LinkedHashMap<String,Object>();int attempt=++preflightAttempts;
+            try {
+                samplePreflight(server,root.resolve("world"),"sample",List.of(world),proof,observation -> {
+                    observed.putAll(observation);
+                    var lengths=new LinkedHashMap<String,Object>();
+                    var worlds=(List<Map<String,Object>>)observation.get("worlds");
+                    for(var owner:worlds)for(var cell:(List<Map<String,Object>>)owner.get("cells")) {
+                        var file=Path.of((String)cell.get("regionFile"));
+                        lengths.put(file.toString(),Files.exists(file)?Files.size(file):-1L);
+                    }
+                    observed.put("headerLengthsAfterAttempt",lengths);observed.put("attempt",attempt);observed.put("tick",server.getTicks());
+                    var receipt=new LinkedHashMap<>(proof);receipt.put("observation",observed);
+                    writeNew(evidence.resolve(String.format(Locale.ROOT,"sample-preflight-attempt-%04d.json",attempt)),receipt);
+                    observed.put("attemptReceiptWritten",true);
+                });
+            } catch(Exception failure) {
+                var owners=(List<Map<String,Object>>)observed.get("worlds");
+                boolean wait=owners!=null && owners.size()==1;
+                int shortHeaders=0,cells=0;
+                if(wait)for(var cell:(List<Map<String,Object>>)owners.getFirst().get("cells")) {
+                    cells++;
+                    boolean shortHeader="ERROR".equals(cell.get("raw"))
+                            && "java.lang.IllegalStateException: SAME_SAMPLE_SHORT_HEADER".equals(cell.get("rawError"));
+                    if(shortHeader)shortHeaders++;
+                    wait &= Boolean.FALSE.equals(cell.get("currentHolder")) && Boolean.FALSE.equals(cell.get("unloadingHolder"))
+                            && Boolean.FALSE.equals(cell.get("liveFull")) && (shortHeader || "ABSENT".equals(cell.get("raw")));
+                }
+                if(wait && cells==9 && shortHeaders>0 && !observed.containsKey("error") && Boolean.TRUE.equals(observed.get("attemptReceiptWritten"))) {
+                    preflightWaits.add(Map.of("event","CONTROL_PREFLIGHT_WAIT","attempt",attempt,"tick",server.getTicks(),
+                            "headerLengthsAfterAttempt",observed.get("headerLengthsAfterAttempt"),"error",failure.toString()));
+                    return false;
+                }
+                var receipt=new LinkedHashMap<>(proof);receipt.put("observation",observed);
+                writeNew(evidence.resolve("sample-before-generation.json"),receipt);throw failure;
+            }
+            var receipt=new LinkedHashMap<>(proof);receipt.put("observation",observed);
+            writeNew(evidence.resolve("sample-before-generation.json"),receipt);return true;
+        }
+        private Map<String,Object> sample(ServerWorld world,net.minecraft.world.chunk.WorldChunk center,String stage,boolean biome) throws Exception {
+            require(center.getWorld()==world && center.getPos().equals(new ChunkPos(32,32))
+                    && center.getStatus()==net.minecraft.world.chunk.ChunkStatus.FULL,"VANILLA_CONTROL_REQUESTS");
+            var rows=new ArrayList<Map<String,Object>>();var blocks=new ArrayList<String>();var biomes=new ArrayList<String>();
+            var result=new LinkedHashMap<String,Object>();result.put("stage",stage);result.put("rows",rows);
+            proof.put(stage,result);
+            result.put("chunkStatus",center.getStatus().toString());result.put("worldKey",world.getRegistryKey().getValue().toString());
+            for(int x=512;x<528;x+=3)for(int z=512;z<528;z+=3)for(int y=-64;y<256;y+=8) {
+                var pos=new BlockPos(x,y,z);var row=new LinkedHashMap<String,Object>();
+                row.put("index",rows.size());row.put("x",x);row.put("y",y);row.put("z",z);
+                var block=center.getBlockState(pos).toString();blocks.add(block);row.put("block",block);
+                if(biome) {var key=world.getBiome(pos).getKey().orElseThrow().getValue().toString();biomes.add(key);row.put("biome",key);}
+                rows.add(row);
+            }
+            result.put("sampleCount",rows.size());result.put("blockHash",digest(blocks));
+            if(biome)result.put("biomeHash",digest(biomes));
+            require(rows.size()==1440,"VANILLA_CONTROL_SAMPLE_COUNT");
+            return result;
+        }
+        private void snapshot(String label) {
+            var keys=new ArrayList<String>();for(var world:server.getWorlds())keys.add(world.getRegistryKey().getValue().toString());
+            snapshots.add(Map.of("stage",label,"worldKeys",keys,"serverIdentity",System.identityHashCode(server)));
+            require(uLoadCount==0 && keys.stream().noneMatch(k -> k.startsWith("quantumchamber:universe/")),"VANILLA_CONTROL_U_LOADED");
+            require(loads.stream().allMatch(r -> Integer.valueOf(System.identityHashCode(server)).equals(r.get("serverIdentity"))),"VANILLA_CONTROL_LOAD_OWNER");
+        }
+        private void authority(String label) throws Exception {
+            var result=new LinkedHashMap<String,Object>();proof.put(label+"Authority",result);
+            var storage=root.resolve("world/dimensions/quantumchamber/universe");
+            require(!Files.exists(storage,LinkOption.NOFOLLOW_LINKS),"VANILLA_CONTROL_U_STORAGE");
+            proof.put("uStorageAbsent",true);result.put("uStorageAbsent",true);
+            var catalog=root.resolve("world/data/"+UniverseRegistryState.STATE_ID+".dat");
+            result.put("catalog",emptyCatalog(catalog));proof.put("catalogEmpty",true);
+            var allocation=root.resolve("world/data/"+UniverseAllocationLedger.FILE_NAME);
+            if(Files.exists(allocation,LinkOption.NOFOLLOW_LINKS)) {
+                var decode=UniverseAllocationLedger.class.getDeclaredMethod("fromNbt",NbtCompound.class);decode.setAccessible(true);
+                var value=(UniverseAllocationLedger)decode.invoke(null,CheckedNbtFile.parse(CheckedNbtFile.readFile(allocation)));
+                require(value.entries().isEmpty(),"VANILLA_CONTROL_ALLOCATION");result.put("allocation","EMPTY");
+            }else result.put("allocation","ABSENT");
+            proof.put("allocationEmpty",true);
+        }
+        private String emptyCatalog(Path path) throws Exception {
+            if(!Files.exists(path,LinkOption.NOFOLLOW_LINKS))return "ABSENT";
+            // 與正式 checked reader 共用 codec，先以相同 16 MiB 上限限制解壓與輸入。
+            var wrapped=CheckedNbtFile.parse(CheckedNbtFile.readFile(path));
+            require(wrapped.contains("data",NbtElement.COMPOUND_TYPE) && wrapped.contains("DataVersion",NbtElement.INT_TYPE),"VANILLA_CONTROL_CATALOG");
+            var catalog=UniverseRegistryState.fromNbt(wrapped.getCompound("data"));catalog.requireHealthy();
+            require(catalog.records().isEmpty(),"VANILLA_CONTROL_CATALOG");return "EMPTY";
+        }
+        void stopping(MinecraftServer owner) {
+            if(owner!=server)return;proof.put("stoppingSeen",true);
+            guarded(() -> {snapshot("STOPPING");authority("stop");});
+        }
+        void stopped(MinecraftServer owner) {
+            if(owner!=server)return;proof.put("stoppedSeen",true);
+            proof.put("status",Boolean.TRUE.equals(proof.get("diagnosticPassed")) && Boolean.TRUE.equals(proof.get("stopRequested"))
+                    && Boolean.TRUE.equals(proof.get("stoppingSeen")) && failures().isEmpty()?"PASS":"FAIL");
+            try {writeNew(evidence.resolve("final.json"),proof);}
+            catch(Exception failure){throw new IllegalStateException("VANILLA_CONTROL_RECEIPT_WRITE",failure);}
+            LoggerFactory.getLogger("quantumchamber-m6-native").info("M6_NATIVE_END chain=vanilla-normal-control phase=sample mode=DIAGNOSTIC status={}",proof.get("status"));
+        }
+        @SuppressWarnings("unchecked") private List<String> failures(){return (List<String>)proof.get("failures");}
+        private void stop(){if(!Boolean.TRUE.equals(proof.get("stopRequested"))){proof.put("stopRequested",true);server.stop(false);}}
+        private void guarded(Checked action) {
+            try{action.run();}catch(Exception failure){failures().add(failure.toString());finished=true;
+                LoggerFactory.getLogger("quantumchamber-m6-native").error("VANILLA_CONTROL_FAILED",failure);stop();}
+        }
+    }
     private final String phase;
     private final String chain;
     private final Path root, evidence;

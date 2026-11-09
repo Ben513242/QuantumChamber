@@ -899,3 +899,16 @@ Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14（§3.1.3／§3.1.2 8-core→T
 ### 2026-11-09 Task13 乾淨驗證停點（未結）
 
 `1332c527b829b4a228471de541aff493cdcc7e49` 已 push，雙 clean focused、正式 spec／quality C0/I0/M1；同 pin CI `42499957714` Ubuntu／Windows／Windows native 三 job success、Windows原生七鏈21phase PASS。可是本機完整 `run-all-dd57e94d52274671b4cfc506b390a9ab` 在前段各gate自然exit0後，M6 native canonical normal→U `new` 於 `(527,72,512)` air／spruce_leaves 具名FAIL，summary SHA-256 `26804DFD00281087765A0F3D0EE1ABEDC5FD328E571C1B2E94C34230AE53B6B8`；outer1／無END ALL。四階段在 BOTH_CENTER 首次可比時已有差，3×3 virgin／FULL、target owner exact，source consumer未覆蓋；具體writer與內部時序未證。舊 `35f5` amplified FAIL與新根原判保留，CI PASS不抵銷；不得用變更請求順序／縮1440樣本／移Task21使本鏈變綠。Task13結案門檻未達，Task14不前進；如後續只做T13，先提出有界根因證據與受審修法。Task21 direct U→U c7d/e1d另保原判，M6人工／main／tag均未放行。
+
+### 2026-11-09 Task13 canonical-only 對照（最新參考採用）
+
+本輪只調查驗收前提，依spec §4.2；取代同日較早自動14格容差／全同真bug分支。設計為本plan ignored `task13-vanilla-control-design-20261109.md`，獨立窄審C0/I0/M0；只改既有 `M6UniverseRecoveryProbe.java`／`M6ProfileProbePhases.java`。新 `vanilla-normal-control/sample/DIAGNOSTIC` 於原分流前短路，以互動命令重用 `New-OwnedRoot`／`Invoke-OwnedPhase`；正式manifest／script／build／production不改。
+
+- [x] 完成控制身份、無U／空authority、九格virgin、原1440座標／digest／3×3 FULL／請求序列及自然停服守門，負控另根保判與REVERT。短header僅控制專屬有界END tick就緒，原strict preflight不變。
+- [x] FULL block／biome快照固定後才讀control設定snapshot／provider與同1440點actual finalDensity raw bits；不額外載chunk、不新增排程probe，明示非NOISE方塊層。十次同碼fresh root／獨立JVM，保存每根manifest／SHA及跨根設定可比性。
+- [x] 與歷史exact hash及可恢復原rows比對；列每格座標／狀態／差異數／首差，資料缺失如實標限制。多hash僅目前mod環境單世界變動，全同僅未觀察到差異；normal不替amplified改判。
+- [x] 交付證據／結論／未排除假設／契約候選及最小後續控制建議。不實作任何14格／1%容差、不改T13／T21正式oracle，正式契約變更待使用者新裁定與獨立spec review。T13仍OPEN、不進T14。
+
+本輪是診斷切片，不宣稱T13完整驗收通過；所有舊FAIL／NOT_KILLED／UNRESOLVED與原root保留。
+
+診斷結果：十個世界資料82e9×9／704b×1，排除原外層SETUP錯誤的02仍8／1；biome／post-FULL density／設定皆同、三差格全在x527。完整表與限制見M6 note「2026-11-09：T13 canonical-only 十次對照」。本診斷交付不等於Task13正式gate通過；T13仍OPEN，不進T14。

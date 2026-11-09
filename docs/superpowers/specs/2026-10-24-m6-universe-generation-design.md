@@ -204,6 +204,18 @@ source seed 與**來源**各 role settings 在候選生成時按 exact source fa
 
 Task 21 的 U→U 是 **testmod 直接 catalog 建立的測試控制**，不是正式 U-origin 玩家入場。§6 延後動態 U 內真正 Origin 的 activation／registry；本裁示與 Task 21 均不開啟該玩法。Task 13／21 的實作白名單、未發現測試方法的保留方式與各平台 gate 以 plan 相應最新補充為準。
 
+### 4.2 Task 13 canonical-only 對照（2026-11-09 最新參考採用）
+
+本輪先調查既有 native terrain FAIL 的驗收前提，不修改 generation production、T13／T21 正式 PASS 標準或舊 receipt。停止 feature writer 內部時序追查；只生成 canonical normal、完全不物化動態 U，seed `20260921`，十個全新 root／獨立 JVM，以原固定1440點、preset、pack／mod配置與每側顯式請求序列做有界控制。一份設計與一次獨立窄審 C/I0 後實作；只改既有 testmod，不新增 production mixin、驗證腳本、外部 JVM observer 或 workflow job。
+
+每根保存 HEAD／JVM／fresh root、實際world keys與無動態U、seed／設定／provider、3×3 virgin、status／請求序列、完整1440 block／biome及SHA，以及不額外載chunk的noise證據。noise raw density若於FULL快照後取樣，明示其範圍，不能稱為feature前方塊。無法成立的條件記SETUP／INCONCLUSIVE，不湊有效樣本。
+
+- 多種hash只支持「目前模組運行環境內，單世界最終方塊存在變動」，再核是否重現歷史exact hash；不能直接推論純vanilla或全部舊FAIL原因。
+- 十次全同只記未觀察到差異；不得直接判跨世界bug。後續只提出最小U-only／canonical+U控制候選，區分共享狀態、排程及fixture差異。normal結果不能替amplified判PASS；amplified-only是否需要另列建議。
+- 原T13／T21完整1440逐格比較與全部舊FAIL原判保留。本輪**不採14格或1%容差**；較早同日自動採容差／全同真bug的分支由本段取代。
+
+交付「證據→可支持結論→未排除假設→驗收契約候選」。若提出分層oracle，seed、frozen settings、biome、可證noise／density、structure authority仍嚴格一致，final FEATURES差異逐格保留分類，允許範圍必須有獨立控制證據；建築、修改隔離、UUID／catalog／restart不降低。任何正式acceptance改動須先交使用者裁定並經獨立spec review，不能由本次實驗直接改判。T13原完整回歸／兩席審查／同版CI未真正滿足前仍OPEN，不進T14。
+
 ## 5. 完整 family 與 routing
 
 身份 `(Universe UUID, DimensionRole)`，role 恰為 `OVERWORLD|NETHER|END`；keys 為 `quantumchamber:universe/<uuid>/overworld|the_nether|the_end`，各有獨立 region／entities／POI storage、持久化、ticket 與 lifecycle。End dragon fight、gateway、結束後狀態與 End portal 資料由同 U:END 所有；不得共用 canonical End 或另一 U 的持久 state。原版 1.21 `ServerWorld.<init>` 會讀全域 `SaveProperties.getDragonFight()`，`saveLevel()` 會寫回全域 `setDragonFight()`；custom End 必須把兩端導向同 U 的獨立 persistent owner，canonical End 無 context 時仍原版。原版傳入非 null `RandomSequencesState` 會直接共用；M6 新 U 各 role 應交由自己的 persistent state manager 建立／存回，禁止傳 canonical instance；schema1 舊 Overworld 行為另守相容。世界共用 global player inventory 等既有玩家資料政策照舊，但位置／目前 U 身分與 respawn 綁定精確 role。runtime index 必須雙向驗 exact key→U/role→同一活 world instance，unknown／stale key fail closed。
