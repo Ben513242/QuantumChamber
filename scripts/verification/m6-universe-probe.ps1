@@ -91,6 +91,186 @@ function Assert-GameplayReceipt($receipt,$chain,$phase,$owned,$state) {
     if($chain -ceq 'partial-overworld' -and $phase -ceq 'restart' -and (-not $receipt.partialProtectedSamplesExact)){throw 'M6_FORMAL_PARTIAL_RESTART'}
     if($chain -ceq 'partial-overworld' -and $phase -cin @('partial','restart')) { Assert-PartialSamples $receipt }
 }
+# 固定 1.21 generation API 表；與 Java 實際回傳逐欄核對，不採地形 hash baseline。
+function Get-CarversMetadataReference {
+    return ('{"carversDependencyRadius":9,"centerX":1024,"stages":[{"accumulated":[],"maxLevel":0,"writeRadius":-1,"direct":[],"status":"minecraft:empty"},{"accumulated":["minecraft:empty"],"maxLevel":0,"writeRadius":-1,"direct":["minecraft:empty"],"status":"minecraft:structure_starts"},{"accumulated":["minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":8,"writeRadius":-1,"direct":["minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"status":"minecraft:structure_references"},{"accumulated":["minecraft:structure_references","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":8,"writeRadius":-1,"direct":["minecraft:structure_references","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"status":"minecraft:biomes"},{"accumulated":["minecraft:biomes","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":9,"writeRadius":0,"direct":["minecraft:biomes","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"status":"minecraft:noise"},{"accumulated":["minecraft:noise","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":9,"writeRadius":0,"direct":["minecraft:noise","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"status":"minecraft:surface"},{"accumulated":["minecraft:surface","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":9,"writeRadius":0,"direct":["minecraft:surface","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"status":"minecraft:carvers"},{"accumulated":["minecraft:carvers","minecraft:carvers","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":10,"writeRadius":1,"direct":["minecraft:carvers","minecraft:carvers","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"status":"minecraft:features"},{"accumulated":["minecraft:features","minecraft:carvers","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":10,"writeRadius":-1,"direct":["minecraft:features"],"status":"minecraft:initialize_light"},{"accumulated":["minecraft:initialize_light","minecraft:initialize_light","minecraft:carvers","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":11,"writeRadius":-1,"direct":["minecraft:initialize_light","minecraft:initialize_light"],"status":"minecraft:light"},{"accumulated":["minecraft:light","minecraft:initialize_light","minecraft:carvers","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":11,"writeRadius":-1,"direct":["minecraft:light","minecraft:biomes"],"status":"minecraft:spawn"},{"accumulated":["minecraft:spawn","minecraft:initialize_light","minecraft:carvers","minecraft:biomes","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts","minecraft:structure_starts"],"maxLevel":11,"writeRadius":-1,"direct":["minecraft:spawn"],"status":"minecraft:full"}],"formula":"Rc+Rf+W+1","centerZ":1024,"fullDependencyRadius":11,"haloRadius":22,"maximumNonnegativeWriteRadius":1}' | ConvertFrom-Json)
+}
+function Get-ProfileListHash([string[]]$Values) {
+    $text=ConvertTo-Json -InputObject $Values -Compress
+    $text=$text.Replace('=','\u003d').Replace('<','\u003c').Replace('>','\u003e').Replace('&','\u0026').Replace("'",'\u0027').Replace([string][char]0x2028,'\u2028').Replace([string][char]0x2029,'\u2029')
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).ToLowerInvariant()
+}
+function Read-ProfileJsonLink([string]$Base,[string]$Relative,[string]$Expected,[string]$Sha,[switch]$Binary) {
+    if($Relative -cne $Expected -or $Sha -cnotmatch '^[0-9a-f]{64}$'){throw 'M6_CARVERS_LINK_PATH'}
+    $path=[IO.Path]::GetFullPath((Join-Path $Base $Relative))
+    if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw 'M6_CARVERS_LINK_MISSING'}
+    $cursor=$path
+    while($cursor){if((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'M6_CARVERS_LINK_REPARSE'};$cursor=[IO.Path]::GetDirectoryName($cursor)}
+    if((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $Sha){throw 'M6_CARVERS_LINK_SHA'}
+    if($Binary){return}
+    return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String
+}
+function Assert-ProfileSample($Sample,[int]$Offset,[string]$Status) {
+    try {
+        if(@($Sample.rows).Count -ne 1440 -or $Sample.sampleCount -ne 1440 -or $Sample.chunkStatus -cne $Status){throw 'M6_CARVERS_SAMPLE_COUNT_STAGE'}
+        $i=0
+        for($x=$Offset;$x -lt $Offset+16;$x+=3){for($z=$Offset;$z -lt $Offset+16;$z+=3){for($y=-64;$y -lt 256;$y+=8){
+            $row=$Sample.rows[$i]
+            if($row.index -ne $i -or $row.x -ne $x -or $row.y -ne $y -or $row.z -ne $z -or $row.block -cnotmatch '^Block\{minecraft:' -or $row.biome -cnotmatch '^[a-z0-9_.-]+:[a-z0-9_./-]+$'){throw 'M6_CARVERS_SAMPLE_COORDINATES'}
+            $i++
+        }}}
+        if((Get-ProfileListHash ([string[]]$Sample.rows.block)) -cne $Sample.blockHash -or (Get-ProfileListHash ([string[]]$Sample.rows.biome)) -cne $Sample.biomeHash){throw 'M6_CARVERS_SAMPLE_HASH'}
+        if($Status -ceq 'minecraft:carvers' -and ($Sample.chunkClass -cne 'net.minecraft.world.chunk.ProtoChunk' -or $Sample.biomeKind -cne 'STORED_CHUNK_NOISE_BIOME')){throw 'M6_CARVERS_SAMPLE_KIND'}
+    } catch {throw "M6_CARVERS_SAMPLE:$($_.Exception.Message)"}
+}
+function Assert-CarversMetadata($Metadata) {
+    $reference=Get-CarversMetadataReference
+    if(@($Metadata.stages).Count -ne 12){throw 'M6_CARVERS_METADATA_STAGES'}
+    for($i=0;$i -lt 12;$i++) {
+        foreach($key in @('status','writeRadius','maxLevel')){if($Metadata.stages[$i].$key -cne $reference.stages[$i].$key){throw "M6_CARVERS_METADATA:$key"}}
+        foreach($key in @('direct','accumulated')){if(($Metadata.stages[$i].$key -join '|') -cne ($reference.stages[$i].$key -join '|')){throw "M6_CARVERS_METADATA:$key"}}
+    }
+    $rc=($Metadata.stages | Where-Object status -CEQ 'minecraft:carvers').maxLevel
+    $rf=($Metadata.stages | Where-Object status -CEQ 'minecraft:full').maxLevel
+    $write=($Metadata.stages.writeRadius | Measure-Object -Maximum).Maximum
+    foreach($key in @('carversDependencyRadius','fullDependencyRadius','maximumNonnegativeWriteRadius','haloRadius','centerX','centerZ','formula')){if($Metadata.$key -cne $reference.$key){throw "M6_CARVERS_METADATA:$key"}}
+    if($rc+$rf+$write+1 -ne $Metadata.haloRadius){throw 'M6_CARVERS_HALO_FORMULA'}
+}
+function Assert-CarversHalo($Halo,[string]$WorldKey,[string]$Root,[bool]$Virgin) {
+    $h=(Get-CarversMetadataReference).haloRadius
+    $region=if($WorldKey -ceq 'minecraft:overworld'){Join-Path $Root 'world/region'}else{Join-Path $Root ('world/dimensions/'+$WorldKey.Replace(':','/')+'/region')}
+    $region=[IO.Path]::GetFullPath($region)
+    if($Halo.status -cne 'PASS' -or $Halo.haloRadius -ne $h -or $Halo.virginRequired -ne $Virgin -or $Halo.worldKey -cne $WorldKey -or $Halo.region -cne $region -or @($Halo.cells).Count -ne (2*$h+1)*(2*$h+1) -or $Halo.nearestRawFullDistanceLowerBoundExclusive -ne $h -or $Halo.rawFullClaim -cne 'HALO_ONLY_LOWER_BOUND_NOT_GLOBAL_NEAREST'){throw 'M6_CARVERS_HALO_SCHEMA'}
+    $allowed=@('ABSENT','minecraft:empty','minecraft:structure_starts','minecraft:structure_references','minecraft:biomes','minecraft:noise','minecraft:surface','minecraft:carvers')
+    $i=0
+    for($x=1024-$h;$x -le 1024+$h;$x++){for($z=1024-$h;$z -le 1024+$h;$z++){
+        $cell=$Halo.cells[$i++];$file=Join-Path $region ("r.$($x -shr 5).$($z -shr 5).mca")
+        if($cell.x -ne $x -or $cell.z -ne $z -or $cell.regionFile -cne $file -or $cell.canonicalNonReparse -ne $true -or $cell.headerValid -ne $true -or $cell.raw -cnotin $allowed -or (($cell.entryLocation -eq 0) -ne ($cell.raw -ceq 'ABSENT'))){throw 'M6_CARVERS_HALO_CELL'}
+        if($Virgin -and ($cell.currentHolder -ne $false -or $cell.unloadingHolder -ne $false -or $cell.raw -cne 'ABSENT')){throw 'M6_CARVERS_HALO_VIRGIN'}
+    }}
+    $distances=@()
+    foreach($holder in $Halo.liveHolders) {
+        $distance=[Math]::Max([Math]::Abs($holder.x-1024),[Math]::Abs($holder.z-1024))
+        if($holder.distance -ne $distance){throw 'M6_CARVERS_HOLDER_DISTANCE'}
+        $full=$holder.worldChunk -or $holder.actualStatus -ceq 'minecraft:full' -or $holder.latestStatus -ceq 'minecraft:full'
+        if($full){$distances+=$distance}
+        if($distance -le $h -and ($full -or $holder.actualStatus -cnotin (@('NONE')+$allowed) -or $holder.latestStatus -cnotin (@('NONE')+$allowed))){throw 'M6_CARVERS_HALO_STATUS'}
+    }
+    if($distances.Count){$nearest=($distances|Measure-Object -Minimum).Minimum;if($nearest -le $h -or $Halo.nearestLiveFullDistance -ne $nearest -or $Halo.nearestLiveFull.distance -ne $nearest){throw 'M6_CARVERS_NEAREST_FULL'}}
+    elseif($Halo.nearestLiveFullDistance -cne 'NONE_OBSERVED' -or $Halo.nearestLiveFull -cne 'NONE_OBSERVED'){throw 'M6_CARVERS_NEAREST_FULL'}
+}
+function Assert-ProfileDifferences($Before,$After,$Differences) {
+    $expected=[Collections.Generic.List[object]]::new()
+    for($i=0;$i -lt 1440;$i++){
+        $a=$Before[$i];$b=$After[$i]
+        if($a.block -cne $b.block -or $a.biome -cne $b.biome){$expected.Add([ordered]@{index=$i;x=$a.x;y=$a.y;z=$a.z;beforeBlock=$a.block;afterBlock=$b.block;beforeBiome=$a.biome;afterBiome=$b.biome})}
+    }
+    $actual=@($Differences)
+    if($actual.Count -ne $expected.Count){throw 'M6_FINAL_DIFF_COMPLETE'}
+    for($i=0;$i -lt $actual.Count;$i++){foreach($key in @('index','x','y','z','beforeBlock','afterBlock','beforeBiome','afterBiome')){if($actual[$i].$key -cne $expected[$i][$key]){throw 'M6_FINAL_DIFF_CONTENT'}}}
+}
+function Assert-ProfileFinalDiagnostic($Diagnostic,$Row,$Prior=$null) {
+    if($Diagnostic.schema -ne 1 -or $Diagnostic.kind -cne 'T13_FINAL_DIAGNOSTIC' -or $Diagnostic.classificationScope -cne 'NO_HISTORICAL_MEMBERSHIP_CHECK'){throw 'M6_FINAL_DIAGNOSTIC_SCHEMA'}
+    Assert-ProfileSample $Diagnostic.source 512 'minecraft:full';Assert-ProfileSample $Diagnostic.target 512 'minecraft:full'
+    if($Diagnostic.source.worldKey -cne $Row.sourceIdentity -or $Diagnostic.target.worldKey -cne "quantumchamber:universe/$($Row.uuid)/overworld" -or $Diagnostic.source.seed -cne $Row.seed -or $Diagnostic.target.seed -cne $Row.seed -or $Diagnostic.source.blockHash -cne $Row.terrain -or $Diagnostic.target.blockHash -cne $Row.targetTerrain -or $Diagnostic.source.biomeHash -cne $Row.biomes -or $Diagnostic.target.biomeHash -cne $Row.targetBiomes -or $Row.biomes -cne $Row.targetBiomes){throw 'M6_FINAL_DIAGNOSTIC_IDENTITY_HASH'}
+    Assert-ProfileDifferences $Diagnostic.source.rows $Diagnostic.target.rows $Diagnostic.differences
+    if(@($Diagnostic.reviewItems).Count -ne 2){throw 'M6_FINAL_REVIEW_ITEMS'}
+    for($i=0;$i -lt 2;$i++){$side=@('source','target')[$i];$item=$Diagnostic.reviewItems[$i];if($item.side -cne $side -or $item.blockHash -cne $Diagnostic.$side.blockHash -or $item.classification -cne 'UNRESOLVED' -or $item.novelty -cne 'NOT_CLASSIFIED' -or $item.reviewStatus -cne 'UNRESOLVED'){throw 'M6_FINAL_REVIEW_ITEMS'}}
+    if($null -ne $Prior){Assert-ProfileDifferences $Prior.source.rows $Diagnostic.source.rows $Diagnostic.newToRestartDifferences.source;Assert-ProfileDifferences $Prior.target.rows $Diagnostic.target.rows $Diagnostic.newToRestartDifferences.target}
+}
+function Assert-ProfileStartupAuthority($Receipt,$Row,$State) {
+    $captured=Read-ProfileJsonLink $State.PhaseEvidence $Row.startupAuthority.path 'carvers-startup-authority.json' $Row.startupAuthority.sha256
+    foreach($key in @('root','nonce','chain','phase','startupNonce','pid','startTimeUtc')){if($captured.$key -cne $Receipt.$key){throw "M6_STARTUP_AUTHORITY_IDENTITY:$key"}}
+    foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($captured.$key -cne $Row.$key){throw "M6_STARTUP_AUTHORITY_IDENTITY:$key"}}
+    if($captured.schema -ne 1 -or $captured.kind -cne 'CHECKED_STARTUP_SESSION_AUTHORITY' -or $captured.currentEqualsFlushed -ne $true -or $captured.frozenSelectedIntentChecked -ne $true -or $captured.notQuarantinedAndNoRollForward -ne $true -or $captured.startupState -cnotin @('COLLAPSING','PASSAGE_READY')){throw 'M6_STARTUP_AUTHORITY_SCHEMA'}
+    Read-ProfileJsonLink $State.PhaseEvidence $captured.nbtPath 'carvers-startup-authority.nbt' $captured.nbtSha256 -Binary
+    $authority=$Row.sessionAuthority
+    if($authority.startupState -cne $captured.startupState -or $authority.notQuarantinedAndNoRollForward -ne $true){throw 'M6_SAME_SESSION_AUTHORITY'}
+    if($authority.kind -ceq 'CHECKED_PASSAGE_ENDED') {
+        if($Receipt.phase -cne 'restart' -or $authority.startupState -cne 'PASSAGE_READY' -or $authority.currentState -cne 'ABSENT' -or $authority.terminatedThisInstance -ne $true -or $authority.currentAndFlushedAbsent -ne $true){throw 'M6_SAME_SESSION_TERMINATION'}
+    } elseif($authority.kind -cne 'LIVE_CHECKED' -or $authority.currentState -cin @('SEALED','ABSENT') -or $authority.currentAndFlushedAbsent -ne $false){throw 'M6_SAME_SESSION_AUTHORITY'}
+}
+function Assert-ProfileCarversLayer($Layer,$Receipt,$Row,$State,$Owned) {
+    foreach($key in @('root','nonce','chain','phase','startupNonce','pid','startTimeUtc')){if($Layer.$key -cne $Receipt.$key){throw "M6_CARVERS_IDENTITY:$key"}}
+    foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($Layer.$key -cne $Row.$key){throw "M6_CARVERS_IDENTITY:$key"}}
+    if($Layer.schema -ne 1 -or $Layer.layer -cne 'ACTUAL_CARVERS_V1' -or $Layer.status -cne 'PASS' -or $Layer.blocksExact -ne $true -or $Layer.biomesExact -ne $true -or $Layer.targetIdentity -cne "quantumchamber:universe/$($Row.uuid)/overworld" -or @($Layer.sides).Count -ne 2){throw 'M6_CARVERS_LAYER_SCHEMA'}
+    Assert-CarversMetadata $Layer.generationMetadata
+    if($Layer.startupAuthority.path -cne $Row.startupAuthority.path -or $Layer.startupAuthority.sha256 -cne $Row.startupAuthority.sha256){throw 'M6_STARTUP_AUTHORITY_LINK'}
+    Assert-ProfileStartupAuthority $Receipt $Row $State
+    $source=Read-ProfileJsonLink $State.PhaseEvidence $Layer.sourceFinal.path '../source/final.json' $Layer.sourceFinal.sha256
+    if($source.phase -cne 'source' -or $source.status -cne 'PASS' -or $source.root -cne $Receipt.root -or $source.nonce -cne $Receipt.nonce -or $source.chain -cne $Receipt.chain -or $source.startupNonce -cne $Layer.sourceFinal.startupNonce -or $source.pid -ne $Layer.sourceFinal.pid){throw 'M6_CARVERS_SOURCE_FINAL'}
+    foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($source.variants[0].$key -cne $Row.$key){throw 'M6_CARVERS_SOURCE_VARIANT'}}
+    $nbt=Join-Path $Owned.root "same-seed-$($Row.preset)-source.nbt"
+    if((Get-FileHash -LiteralPath $nbt).Hash.ToLowerInvariant() -cne $Layer.sourceRecordSha256){throw 'M6_CARVERS_SOURCE_NBT_SHA'}
+    for($i=0;$i -lt 2;$i++) {
+        $side=$Layer.sides[$i];$label=@('source','target')[$i];$worldKey=@($Layer.sourceIdentity,$Layer.targetIdentity)[$i]
+        if($side.side -cne $label -or $side.worldKey -cne $worldKey -or $side.seed -cne $Row.seed -or $side.frozenSettings -cne $Row.snapshot){throw 'M6_CARVERS_SIDE_IDENTITY'}
+        Assert-CarversHalo $side.initialHalo $worldKey $Owned.root ($Receipt.phase -ceq 'new')
+        Assert-CarversHalo $side.beforeSampleHalo $worldKey $Owned.root $false;Assert-CarversHalo $side.afterSampleHalo $worldKey $Owned.root $false
+        $absent=@($side.initialHalo.cells|Where-Object {$_.raw -cne 'ABSENT' -or $_.currentHolder -ne $false -or $_.unloadingHolder -ne $false}).Count -eq 0
+        $provenance=if($Receipt.phase -ceq 'new'){'VIRGIN_NEW'}elseif($absent){'FRESH_REGENERATED'}else{'REOPENED_OR_COMPLETED_PARTIAL'}
+        if($side.provenance -cne $provenance){throw 'M6_CARVERS_PROVENANCE'}
+        if($side.request.x -ne 1024 -or $side.request.z -ne 1024 -or $side.request.status -cne 'minecraft:carvers' -or $side.request.create -ne $true -or $side.request.explicitCount -ne 1 -or $side.returnedOwner.holderLatestIsReturnedChunk -ne $true -or $side.returnedOwner.holderStatus -cne 'minecraft:carvers' -or $side.returnedOwner.returnedStatus -cne 'minecraft:carvers' -or $side.returnedOwner.returnedClass -cne 'net.minecraft.world.chunk.ProtoChunk'){throw 'M6_CARVERS_REQUEST_OWNER'}
+        Assert-ProfileSample $side.sample 16384 'minecraft:carvers'
+    }
+    foreach($field in @('block','biome')){if((Get-ProfileListHash ([string[]]$Layer.sides[0].sample.rows.$field)) -cne (Get-ProfileListHash ([string[]]$Layer.sides[1].sample.rows.$field))){throw 'M6_CARVERS_PAIRWISE_EXACT'}}
+    if($Receipt.phase -ceq 'restart') {
+        $newFinal=Read-ProfileJsonLink $State.PhaseEvidence $Layer.newWitness.newFinalPath '../new/final.json' $Layer.newWitness.newFinalSha256
+        $newLayer=Read-ProfileJsonLink $State.PhaseEvidence $Layer.newWitness.path '../new/carvers-new.json' $Layer.newWitness.sha256
+        $newRow=$newFinal.variants[0]
+        if($newFinal.phase -cne 'new' -or $newFinal.status -cne 'PASS' -or $newRow.carversReceiptPath -cne 'carvers-new.json' -or $newRow.carversReceiptSha256 -cne $Layer.newWitness.sha256 -or $newRow.newSnapshotSha256 -cne $Layer.newWitness.newSnapshotSha256){throw 'M6_CARVERS_NEW_WITNESS'}
+        $rootNew=Read-ProfileJsonLink $Owned.root $Layer.newWitness.newSnapshotPath "same-seed-$($Row.preset)-new.json" $Layer.newWitness.newSnapshotSha256
+        foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($rootNew.$key -cne $Row.$key -or $newRow.$key -cne $Row.$key){throw 'M6_CARVERS_NEW_WITNESS_IDENTITY'}}
+        $newState=[pscustomobject]@{PhaseEvidence=[IO.Path]::GetFullPath((Join-Path $State.PhaseEvidence '../new'))}
+        Assert-ProfileCarversLayer $newLayer $newFinal $newRow $newState $Owned
+        for($i=0;$i -lt 2;$i++){foreach($field in @('block','biome')){if((Get-ProfileListHash ([string[]]$Layer.sides[$i].sample.rows.$field)) -cne (Get-ProfileListHash ([string[]]$newLayer.sides[$i].sample.rows.$field))){throw 'M6_CARVERS_RESTART_ACTUAL_EXACT'}}}
+        Assert-ProfileFinalDiagnostic $Row.finalDiagnostic $Row $newRow.finalDiagnostic
+        if($Row.finalDiagnostic.newFinalSha256 -cne $Layer.newWitness.newFinalSha256){throw 'M6_FINAL_RESTART_LINK'}
+    }
+}
+function Assert-ProfileCarvers($Receipt,$Row,$State,$Owned) {
+    if($Receipt.root -cne $Owned.root){throw 'M6_CARVERS_ROOT'}
+    if($Receipt.phase -ceq 'source') {
+        $pre=Read-ProfileJsonLink $State.PhaseEvidence $Row.carversPreflightPath 'carvers-source-preflight.json' $Row.carversPreflightSha256
+        Assert-CarversMetadata $pre.generationMetadata;Assert-CarversHalo $pre.sourceHalo 'minecraft:overworld' $Owned.root $true
+        if($pre.generated -ne $false -or $pre.seed -cne $Row.seed -or $pre.worldKey -cne 'minecraft:overworld' -or $pre.sourceRecordSha256 -cne $Row.sourceRecordSha256){throw 'M6_CARVERS_SOURCE_PREFLIGHT'}
+    } else {
+        if($Row.carversReceiptPhase -cne $Receipt.phase){throw 'M6_CARVERS_PHASE_LINK'}
+        $layer=Read-ProfileJsonLink $State.PhaseEvidence $Row.carversReceiptPath "carvers-$($Receipt.phase).json" $Row.carversReceiptSha256
+        Assert-ProfileCarversLayer $layer $Receipt $Row $State $Owned
+        Assert-ProfileFinalDiagnostic $Row.finalDiagnostic $Row
+    }
+}
+function Test-ProfileCarversNegatives($Receipt,$Owned,$State) {
+    if($Receipt.phase -ceq 'source'){return 0}
+    $row=$Receipt.variants[0];$layer=Read-ProfileJsonLink $State.PhaseEvidence $row.carversReceiptPath "carvers-$($Receipt.phase).json" $row.carversReceiptSha256
+    $checks=0
+    foreach($case in @('missing-row','wrong-stage','wrong-uuid')) {
+        $bad=$layer|ConvertTo-Json -Depth 40|ConvertFrom-Json -DateKind String
+        switch($case){
+            'missing-row' {$bad.sides[0].sample.rows=@($bad.sides[0].sample.rows)[0..1438]}
+            'wrong-stage' {$bad.sides[0].sample.chunkStatus='minecraft:full'}
+            'wrong-uuid' {$bad.uuid='00000000-0000-0000-0000-000000000000'}
+        }
+        $rejected=$false;try{Assert-ProfileCarversLayer $bad $Receipt $row $State $Owned}catch{if($_.Exception.Message -notmatch 'M6_CARVERS_'){throw};$rejected=$true}
+        if(-not $rejected){throw "M6_CARVERS_NEGATIVE_MISSED:$case"};$checks++
+    }
+    $bad=$Receipt|ConvertTo-Json -Depth 40|ConvertFrom-Json -DateKind String;$bad.variants[0].carversReceiptSha256='0'*64
+    $rejected=$false;try{Assert-ProfileCarvers $bad $bad.variants[0] $State $Owned}catch{if($_.Exception.Message -notmatch 'M6_CARVERS_LINK_SHA'){throw};$rejected=$true}
+    if(-not $rejected){throw 'M6_CARVERS_NEGATIVE_MISSED:wrong-sha'};$checks++
+    if($Receipt.phase -ceq 'restart'){
+        $bad=$layer|ConvertTo-Json -Depth 40|ConvertFrom-Json -DateKind String;$bad.newWitness.sha256='0'*64
+        $rejected=$false;try{Assert-ProfileCarversLayer $bad $Receipt $row $State $Owned}catch{if($_.Exception.Message -notmatch 'M6_CARVERS_LINK_SHA'){throw};$rejected=$true}
+        if(-not $rejected){throw 'M6_CARVERS_NEGATIVE_MISSED:replace-new-witness'};$checks++
+    }
+    # 純 parser 副本：保證有一個差格，再刻意漏掉；不冒充 functional runtime。
+    $before=$row.finalDiagnostic.source.rows|ConvertTo-Json -Depth 8|ConvertFrom-Json
+    $after=$before|ConvertTo-Json -Depth 8|ConvertFrom-Json;$after[0].block='Block{minecraft:diamond_block}'
+    if($before[0].block -ceq $after[0].block){$after[0].block='Block{minecraft:bedrock}'}
+    $rejected=$false;try{Assert-ProfileDifferences $before $after @()}catch{if($_.Exception.Message -notmatch 'M6_FINAL_DIFF_COMPLETE'){throw};$rejected=$true}
+    if(-not $rejected){throw 'M6_CARVERS_NEGATIVE_MISSED:missing-final-difference'};$checks++
+    return $checks
+}
 function Assert-ProfileReceipt($receipt,$phase,$owned,$state,[string]$ExpectedChain) {
     if($receipt.chain -cne $ExpectedChain -or $receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cnotin @('same-seed-restart','same-seed-amplified-restart') -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_SAME_RECEIPT_IDENTITY'}
     if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or -not $receipt.functionalPassed -or -not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen){throw "M6_SAME_FUNCTIONAL_FAILED:$($receipt.failures -join '; ')"}
@@ -98,6 +278,7 @@ function Assert-ProfileReceipt($receipt,$phase,$owned,$state,[string]$ExpectedCh
     $preset=if($receipt.chain -ceq 'same-seed-restart'){'normal'}else{'amplified'}
     if(@($receipt.variants).Count -ne 1 -or $receipt.variants[0].preset -cne $preset){throw 'M6_SAME_VARIANT_SET'}
     foreach($row in $receipt.variants) {
+        Assert-ProfileCarvers $receipt $row $state $owned
         if($row.sourceInitialRequest -cne '128,128=minecraft:full'){throw 'M6_SAME_SOURCE_REQUEST'}
         if($phase -cin @('source','new')) {
             $preflight=$row.samplePreflight
@@ -127,7 +308,14 @@ function Assert-ProfileContinuity($receipts) {
         foreach($field in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','policyVersion','profileId')) {
             if(@($receipts | ForEach-Object {$_.variants[$i].$field} | Sort-Object -Unique).Count -ne 1){throw "M6_SAME_RESTART_IDENTITY:$field"}
         }
-        foreach($field in @('terrain','biomes','structures')) {
+        $layers=@(foreach($r in @($receipts[1],$receipts[2])) {
+            $base=Join-Path $project ".superpowers/verification/m6-native-$($r.nonce)/$($r.phase)"
+            Read-ProfileJsonLink $base $r.variants[$i].carversReceiptPath "carvers-$($r.phase).json" $r.variants[$i].carversReceiptSha256
+        })
+        for($side=0;$side -lt 2;$side++){foreach($field in @('block','biome')) {
+            if((Get-ProfileListHash ([string[]]$layers[0].sides[$side].sample.rows.$field)) -cne (Get-ProfileListHash ([string[]]$layers[1].sides[$side].sample.rows.$field))){throw "M6_SAME_RESTART_CARVERS:$field"}
+        }}
+        foreach($field in @('biomes','structures')) {
             if(($receipts[1].variants[$i].$field | ConvertTo-Json -Compress) -cne ($receipts[2].variants[$i].$field | ConvertTo-Json -Compress)){throw "M6_SAME_RESTART_GENERATION:$field"}
         }
     }
@@ -275,6 +463,9 @@ if($VerifySummary) {
                 $fields=@('formalLeverEntry','formalBatch','formalSelected','emptyStorageBeforeAllocation','sourceTargetExact','policyVersion','sourceInitialRequest')
                 if($original.phase -cne 'source'){$fields+=@('catalogChecked','allocationChecked','buildingAbsent','editsIndependent','sampleCount','sourceRequests','targetRequests')}
                 if($original.phase -ceq 'restart'){$fields+='restartExact'}
+                $profileOwned=[pscustomobject]@{root=$original.root;nonce=$original.nonce}
+                $profileState=[pscustomobject]@{PhaseEvidence=(Split-Path -Parent $native.phases[$index].receipt)}
+                $checks+=Test-ProfileCarversNegatives $original $profileOwned $profileState
                 foreach($field in $fields) {
                     $bad=$original | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String
                     $bad.variants[0].$field=$false

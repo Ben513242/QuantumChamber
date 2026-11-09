@@ -20,6 +20,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.*;
 import net.minecraft.util.math.*;
 import net.minecraft.world.gen.chunk.placement.RandomSpreadStructurePlacement;
+import net.minecraft.world.chunk.*;
 import net.minecraft.world.gen.structure.Structure;
 import org.slf4j.LoggerFactory;
 
@@ -36,20 +37,23 @@ public final class M6ProfileProbePhases {
         private static final long CONTROL_SEED = 20260921L;
         private final Path root,evidence;
         private final String chain,expectedPreset;
+        private final boolean carversOnly;
         private final Map<String,Object> proof;
         private final List<Map<String,Object>> loads=new ArrayList<>(),snapshots=new ArrayList<>();
         private final List<String> requests=new ArrayList<>();
         private MinecraftServer server;
         private boolean sampled,finished,prepared;
-        private int uLoadCount,ticks,preflightAttempts;
+        private int uLoadCount,ticks,preflightAttempts,carversWaitAttempts;
+        private Chunk carversChunk;
         private final List<Map<String,Object>> preflightWaits=new ArrayList<>();
 
         VanillaNormalControl(Path root,Path evidence,Map<String,Object> proof) {
             this.root=root;this.evidence=evidence;this.proof=proof;
             chain=(String)proof.get("chain");
+            carversOnly=chain.endsWith("-carvers-control");
             expectedPreset=switch(chain) {
-                case "vanilla-normal-control" -> "normal";
-                case "vanilla-amplified-control" -> "amplified";
+                case "vanilla-normal-control", "vanilla-normal-carvers-control" -> "normal";
+                case "vanilla-amplified-control", "vanilla-amplified-carvers-control" -> "amplified";
                 default -> throw new IllegalArgumentException("VANILLA_CONTROL_CHAIN");
             };
             proof.put("expectedPreset",expectedPreset);
@@ -72,6 +76,8 @@ public final class M6ProfileProbePhases {
                 snapshot("STARTED");authority("startup");
                 var properties=new Properties();
                 try(var reader=Files.newBufferedReader(root.resolve("server.properties"))){properties.load(reader);}
+                proof.put("propertiesSha256",hash(root.resolve("server.properties")));
+                proof.put("propertiesText",Files.readString(root.resolve("server.properties")));
                 proof.put("configuredPackOrder",properties.getProperty("initial-enabled-packs"));
                 proof.put("runtimePackOrder",String.join(",",owner.getDataPackManager().getEnabledIds()));
                 proof.put("configuredPreset",properties.getProperty("level-type"));
@@ -83,8 +89,8 @@ public final class M6ProfileProbePhases {
                 proof.put("preset",preset);proof.put("generateStructures",owner.getSaveProperties().getGeneratorOptions().shouldGenerateStructures());
                 require(owner.getOverworld().getRegistryKey().equals(net.minecraft.world.World.OVERWORLD),"VANILLA_CONTROL_WORLD_KEY");
                 require(owner.getOverworld().getSeed()==CONTROL_SEED && owner.getSaveProperties().getGeneratorOptions().getSeed()==CONTROL_SEED
-                        && properties.getProperty("level-seed","").equals(Long.toString(CONTROL_SEED)),"VANILLA_CONTROL_SEED");
-                require(preset.equals(expectedPreset) && properties.getProperty("level-type","").equals("minecraft:"+expectedPreset),"VANILLA_CONTROL_PRESET");
+                        && properties.getProperty("level-seed","").equals(Long.toString(CONTROL_SEED)),carversOnly?"SAME_CARVERS_SEED":"VANILLA_CONTROL_SEED");
+                require(preset.equals(expectedPreset) && properties.getProperty("level-type","").equals("minecraft:"+expectedPreset),carversOnly?"SAME_CARVERS_PRESET":"VANILLA_CONTROL_PRESET");
                 require(owner.getSaveProperties().getGeneratorOptions().shouldGenerateStructures()
                         && properties.getProperty("generate-structures","").equals("true"),"VANILLA_CONTROL_STRUCTURES");
                 require(PACKS.equals(proof.get("configuredPackOrder")),"VANILLA_CONTROL_PACKS");
@@ -97,6 +103,7 @@ public final class M6ProfileProbePhases {
                 require(server.isOnThread(),"VANILLA_CONTROL_THREAD");
                 require(++ticks<1800,"VANILLA_CONTROL_PREFLIGHT_WAIT_TIMEOUT");
                 var world=server.getOverworld();
+                if(carversOnly){sampleCarvers(world);return;}
                 if(!prepared) {
                     prepared=true;proof.put("firstRequestTick",server.getTicks());snapshot("BEFORE_SAMPLE");
                     requests.add("0,0="+world.getChunk(0,0).getStatus());
@@ -139,6 +146,59 @@ public final class M6ProfileProbePhases {
                 proof.put("sampleSha256",hash(evidence.resolve("sample.json")));
                 proof.put("diagnosticPassed",true);finished=true;stop();
             });
+        }
+        private void sampleCarvers(ServerWorld world) throws Exception {
+            var metadata=carversMetadata();proof.put("generationMetadata",metadata);
+            int halo=((Number)metadata.get("haloRadius")).intValue();
+            if(!prepared) {
+                snapshot("BEFORE_SAMPLE");
+                var before=new LinkedHashMap<String,Object>();proof.put("haloBefore",before);
+                carversHalo(world,root.resolve("world"),halo,true,before);
+                writeNew(evidence.resolve("carvers-before-generation.json"),proof);
+                requests.add("1024,1024=minecraft:carvers");
+                carversChunk=world.getChunkManager().getChunk(1024,1024,ChunkStatus.CARVERS,true);
+                requireCarversChunk(world,carversChunk,true);proof.put("returnedChunkOwnerVerified",true);
+                var holders=(dev.quantumchamber.gametest.mixin.ServerChunkLoadingManagerTestAccessor)world.getChunkManager().chunkLoadingManager;
+                var holder=holders.quantumchamberTest$currentChunkHolders().get(carversChunk.getPos().toLong());
+                proof.put("returnedChunkOwner",Map.of("worldKey",world.getRegistryKey().getValue().toString(),
+                        "worldIdentity",System.identityHashCode(world),"managerIdentity",System.identityHashCode(world.getChunkManager()),
+                        "holderIdentity",System.identityHashCode(holder),"chunkIdentity",System.identityHashCode(carversChunk),
+                        "holderLatestIsReturnedChunk",holder.getLatest()==carversChunk,"holderStatus",holder.getActualStatus().toString(),
+                        "returnedStatus",carversChunk.getStatus().toString(),"returnedClass",carversChunk.getClass().getName()));
+                writeNew(evidence.resolve("carvers-request.json"),proof);prepared=true;
+            }
+            var chunk=carversChunk;
+            proof.put("request",Map.of("worldKey",world.getRegistryKey().getValue().toString(),
+                    "worldIdentity",System.identityHashCode(world),"managerIdentity",System.identityHashCode(world.getChunkManager()),
+                    "x",1024,"z",1024,"status","minecraft:carvers","create",true,"explicitCount",1));
+            requireCarversChunk(world,chunk,false);
+            Map<String,Object> sample;
+            try {
+                var before=new LinkedHashMap<String,Object>();proof.put("haloBeforeSample",before);
+                carversHalo(world,root.resolve("world"),halo,false,before);
+                sample=carversSample(chunk);proof.put("carvers",sample);
+                requireCarversBlocksExact(carversBlocks(sample),carversBlocks(sample));requireCarversChunk(world,chunk,false);
+                var after=new LinkedHashMap<String,Object>();proof.put("haloAfterSample",after);
+                carversHalo(world,root.resolve("world"),halo,false,after);
+            } catch(IllegalStateException failure) {
+                if(!"SAME_CARVERS_SHORT_HEADER".equals(failure.getMessage()))throw failure;
+                proof.put("carversHeaderWaitTick",server.getTicks());proof.put("carversHeaderWaitCount",++carversWaitAttempts);
+                writeNew(evidence.resolve(String.format(Locale.ROOT,"carvers-header-wait-%04d.json",carversWaitAttempts)),proof);
+                return;
+            }
+            sampled=true;proof.put("sampleTick",server.getTicks());
+            proof.put("sampleCount",sample.get("sampleCount"));proof.put("blockHash",sample.get("blockHash"));proof.put("biomeHash",sample.get("biomeHash"));
+            var parameters=new NbtCompound();parameters.putString("OverworldPreset",expectedPreset);parameters.putBoolean("GenerateStructures",true);
+            var providerId=expectedPreset.equals("normal")?Minecraft121VanillaPresetProfileProvider.NORMAL_ID:Minecraft121VanillaPresetProfileProvider.AMPLIFIED_ID;
+            var frozen=Minecraft121SettingsLifecycle.registry().createSnapshot(providerId,1,parameters,Minecraft121SettingsLifecycle.acquire(server));
+            proof.put("frozenSettings",Map.of("frozenSeed",Long.toString(world.getSeed()),"providerId",frozen.providerId(),
+                    "providerVersion",frozen.providerVersion(),"parameters",frozen.parameters().toString(),"snapshotSnbt",frozen.toNbt().toString(),
+                    "outputFingerprint",HexFormat.of().formatHex(frozen.outputFingerprint()),"provenance","CONTROL_CARVERS_NOT_MEASURED_RECEIPT"));
+            proof.put("matchedMaturity","CARVERS");snapshot("AFTER_SAMPLE");
+            require(failures().isEmpty(),"VANILLA_CONTROL_U_LOADED");
+            writeNew(evidence.resolve("carvers-sample.json"),proof);
+            proof.put("sampleSha256",hash(evidence.resolve("carvers-sample.json")));
+            proof.put("diagnosticPassed",true);finished=true;stop();
         }
         /** 只容許空 virgin 區的短 header 等待下一 END tick；原嚴格 preflight 完全不變。 */
         @SuppressWarnings("unchecked") private boolean preflight(ServerWorld world) throws Exception {
@@ -247,6 +307,106 @@ public final class M6ProfileProbePhases {
                 LoggerFactory.getLogger("quantumchamber-m6-native").error("VANILLA_CONTROL_FAILED",failure);stop();}
         }
     }
+    /** 固定 CARVERS 樣本；只讀傳入 chunk，不透過 world 觸發 FULL。 */
+    static Map<String,Object> carversSample(Chunk chunk) throws Exception {
+        require(chunk!=null && chunk.getStatus()==ChunkStatus.CARVERS && !(chunk instanceof WorldChunk)
+                && chunk.getPos().equals(new ChunkPos(1024,1024)),"SAME_CARVERS_STATUS");
+        var rows=new ArrayList<Map<String,Object>>();var blocks=new ArrayList<String>();var biomes=new ArrayList<String>();
+        for(int x=16384;x<16400;x+=3)for(int z=16384;z<16400;z+=3)for(int y=-64;y<256;y+=8) {
+            var block=chunk.getBlockState(new BlockPos(x,y,z)).toString();
+            var biome=chunk.getBiomeForNoiseGen(x>>2,y>>2,z>>2).getKey().orElseThrow().getValue().toString();
+            rows.add(Map.of("index",rows.size(),"x",x,"y",y,"z",z,"block",block,"biome",biome));blocks.add(block);biomes.add(biome);
+        }
+        require(chunk.getStatus()==ChunkStatus.CARVERS && rows.size()==1440,"SAME_CARVERS_STATUS");
+        return Map.of("rows",rows,"sampleCount",rows.size(),"blockHash",digest(blocks),"biomeHash",digest(biomes),
+                "chunkStatus",chunk.getStatus().toString(),"chunkClass",chunk.getClass().getName(),"biomeKind","STORED_CHUNK_NOISE_BIOME");
+    }
+    @SuppressWarnings("unchecked") static List<String> carversBlocks(Map<String,Object> sample) {
+        return ((List<Map<String,Object>>)sample.get("rows")).stream().map(row -> (String)row.get("block")).toList();
+    }
+    static void requireCarversBlocksExact(List<String> expected,List<String> actual) {
+        require(expected.size()==1440 && actual.size()==1440 && expected.equals(actual),"SAME_CARVERS_BLOCK_EXACT");
+    }
+    private static void requireCarversChunk(ServerWorld world,Chunk chunk,boolean requireCurrentHolder) {
+        require(world.getServer().isOnThread() && chunk!=null && chunk.getStatus()==ChunkStatus.CARVERS
+                && chunk instanceof ProtoChunk && !(chunk instanceof WorldChunk) && chunk.getPos().equals(new ChunkPos(1024,1024)),"SAME_CARVERS_STATUS");
+        var manager=(dev.quantumchamber.gametest.mixin.ServerChunkLoadingManagerTestAccessor)world.getChunkManager().chunkLoadingManager;
+        var holder=manager.quantumchamberTest$currentChunkHolders().get(chunk.getPos().toLong());
+        require(!requireCurrentHolder || holder!=null && holder.getLatest()==chunk && holder.getActualStatus()==ChunkStatus.CARVERS,"SAME_CARVERS_OWNER");
+        for(var candidate:Arrays.asList(holder,manager.quantumchamberTest$chunksToUnload().get(chunk.getPos().toLong())))if(candidate!=null)
+            require(candidate.getPos().equals(chunk.getPos()) && (candidate.getLatest()==null || candidate.getLatest()==chunk)
+                    && (candidate.getActualStatus()==null || candidate.getActualStatus()==ChunkStatus.CARVERS)
+                    && candidate.getWorldChunk()==null,"SAME_CARVERS_OWNER");
+    }
+    static Map<String,Object> carversMetadata() {
+        var rows=new ArrayList<Map<String,Object>>();int write=0;
+        for(var step:ChunkGenerationSteps.GENERATION.steps()) {
+            write=Math.max(write,step.blockStateWriteRadius());
+            rows.add(Map.of("status",step.targetStatus().toString(),"writeRadius",step.blockStateWriteRadius(),
+                    "direct",step.directDependencies().getDependencies().stream().map(Object::toString).toList(),
+                    "accumulated",step.accumulatedDependencies().getDependencies().stream().map(Object::toString).toList(),
+                    "maxLevel",step.accumulatedDependencies().getMaxLevel()));
+        }
+        for(var status:List.of(ChunkStatus.NOISE,ChunkStatus.SURFACE,ChunkStatus.CARVERS))
+            require(ChunkGenerationSteps.GENERATION.get(status).blockStateWriteRadius()==0,"SAME_CARVERS_WRITE_RADIUS");
+        int rc=ChunkGenerationSteps.GENERATION.get(ChunkStatus.CARVERS).accumulatedDependencies().getMaxLevel();
+        int rf=ChunkGenerationSteps.GENERATION.get(ChunkStatus.FULL).accumulatedDependencies().getMaxLevel();
+        return Map.of("stages",rows,"carversDependencyRadius",rc,"fullDependencyRadius",rf,"maximumNonnegativeWriteRadius",write,
+                "haloRadius",rc+rf+write+1,"formula","Rc+Rf+W+1","centerX",1024,"centerZ",1024);
+    }
+    /** 完整 halo 的唯讀觀測；region header 每次 snapshot 有界快取。 */
+    static Map<String,Object> carversHalo(ServerWorld world,Path saveRoot,int halo,boolean virgin,Map<String,Object> result) throws Exception {
+        require(world.getServer().isOnThread(),"SAME_CARVERS_THREAD");
+        var cells=new ArrayList<Map<String,Object>>();result.put("cells",cells);
+        var manager=(dev.quantumchamber.gametest.mixin.ServerChunkLoadingManagerTestAccessor)world.getChunkManager().chunkLoadingManager;
+        var current=manager.quantumchamberTest$currentChunkHolders();var unloading=manager.quantumchamberTest$chunksToUnload();
+        var live=new ArrayList<Map<String,Object>>();result.put("liveHolders",live);int nearest=Integer.MAX_VALUE;
+        for(var group:List.of(Map.entry("current",current),Map.entry("unloading",unloading)))for(var holder:group.getValue().values()) {
+            var latest=holder.getLatest();var status=holder.getActualStatus();var full=holder.getWorldChunk();var pos=holder.getPos();
+            int distance=Math.max(Math.abs(pos.x-1024),Math.abs(pos.z-1024));
+            var row=new LinkedHashMap<String,Object>();row.put("map",group.getKey());row.put("x",pos.x);row.put("z",pos.z);row.put("distance",distance);
+            row.put("actualStatus",status==null?"NONE":status.toString());row.put("latestStatus",latest==null?"NONE":latest.getStatus().toString());row.put("worldChunk",full!=null);live.add(row);
+            if(full!=null || status==ChunkStatus.FULL || latest!=null && latest.getStatus()==ChunkStatus.FULL)nearest=Math.min(nearest,distance);
+            if(distance<=halo)require((status==null || status.isAtMost(ChunkStatus.CARVERS))
+                    && (latest==null || latest.getStatus().isAtMost(ChunkStatus.CARVERS)) && full==null,"SAME_CARVERS_FULL_ISOLATION");
+        }
+        result.put("nearestLiveFullDistance",nearest==Integer.MAX_VALUE?"NONE_OBSERVED":nearest);
+        result.put("nearestLiveFull",live.stream().filter(r -> Boolean.TRUE.equals(r.get("worldChunk")) || "minecraft:full".equals(r.get("actualStatus")) || "minecraft:full".equals(r.get("latestStatus"))).min(Comparator.comparingInt(r -> (Integer)r.get("distance"))).<Object>map(r -> r).orElse("NONE_OBSERVED"));
+        require(nearest>halo,"SAME_CARVERS_FULL_ISOLATION");
+        require(world.getServer().getSavePath(WorldSavePath.ROOT).toAbsolutePath().normalize().equals(saveRoot),"SAME_CARVERS_SAVE_ROOT");
+        var key=world.getRegistryKey().getValue();
+        Path region=world==world.getServer().getOverworld()?saveRoot.resolve("region"):
+                saveRoot.resolve("dimensions").resolve(key.getNamespace()).resolve(key.getPath()).resolve("region");
+        region=region.toAbsolutePath().normalize();require(region.startsWith(saveRoot),"SAME_CARVERS_REGION_ESCAPE");
+        result.put("worldKey",key.toString());result.put("region",region.toString());
+        var headers=new HashMap<Path,Optional<int[]>>();
+        var reader=M5CollapseDiskEvidence.class.getDeclaredMethod("chunk",Path.class,ChunkPos.class);reader.setAccessible(true);
+        for(int x=1024-halo;x<=1024+halo;x++)for(int z=1024-halo;z<=1024+halo;z++) {
+            var pos=new ChunkPos(x,z);var cell=new LinkedHashMap<String,Object>();cells.add(cell);cell.put("x",x);cell.put("z",z);
+            boolean a=current.containsKey(pos.toLong()),b=unloading.containsKey(pos.toLong());cell.put("currentHolder",a);cell.put("unloadingHolder",b);
+            Path file=region.resolve("r."+(x>>5)+"."+(z>>5)+".mca");cell.put("regionFile",file.toString());
+            if(!headers.containsKey(file)) {
+                boolean exists=safeRawFile(file,saveRoot);int[] header=null;
+                if(exists){header=new int[1024];try(var input=new java.io.RandomAccessFile(file.toFile(),"r")) {
+                    cell.put("headerLength",input.length());
+                    require(input.length()>=8192,"SAME_CARVERS_SHORT_HEADER");for(int i=0;i<1024;i++)header[i]=input.readInt();}}
+                headers.put(file,Optional.ofNullable(header));
+            }
+            var header=headers.get(file);int location=header.isPresent()?header.get()[(x&31)+(z&31)*32]:0;
+            cell.put("canonicalNonReparse",true);cell.put("regionExists",header.isPresent());cell.put("headerValid",true);cell.put("entryLocation",location);
+            String raw="ABSENT";
+            if(location!=0) {
+                @SuppressWarnings("unchecked") var nbt=(Optional<NbtCompound>)reader.invoke(null,region,pos);
+                require(nbt.isPresent() && nbt.get().contains("Status",NbtElement.STRING_TYPE),"SAME_CARVERS_RAW_HEADER_MISMATCH");
+                raw=nbt.get().getString("Status");var status=ChunkStatus.byId(raw);
+                require(status!=null && status.toString().equals(raw) && status.isAtMost(ChunkStatus.CARVERS),"SAME_CARVERS_RAW_STATUS");
+            }
+            cell.put("raw",raw);
+            require(!virgin || !a && !b && location==0,"SAME_CARVERS_PRIOR_GENERATION");
+        }
+        result.put("haloRadius",halo);result.put("virginRequired",virgin);result.put("nearestRawFullDistanceLowerBoundExclusive",halo);
+        result.put("rawFullClaim","HALO_ONLY_LOWER_BOUND_NOT_GLOBAL_NEAREST");result.put("status","PASS");return result;
+    }
     private final String phase;
     private final String chain;
     private final Path root, evidence;
@@ -352,7 +512,13 @@ public final class M6ProfileProbePhases {
         NewUniverseIntent intent;
         UniverseId targetId;
         int stage;
-        boolean collapsing,done;
+        boolean collapsing,done,carversPrepared,carversDone;
+        final Chunk[] carversChunks=new Chunk[2];
+        final List<Map<String,Object>> carversSides=new ArrayList<>();
+        Map<String,Object> carversLayer;
+        com.google.gson.JsonObject priorCarvers,priorNewFinal;
+        SessionRecoveryRecord startupRecord;
+        int carversWaits;
         Flow(String preset,ServerWorld source){this.preset=preset;this.source=source;}
         SessionRecoveryRecord record(){return sid==null?null:SessionRecoveryState.get(server).flushedRecords().get(sid);}
         Path storage(){return root.resolve("world/dimensions/quantumchamber/universe/"+targetId.value()+"/overworld");}
@@ -375,6 +541,14 @@ public final class M6ProfileProbePhases {
             var encode=SessionRecoveryRecord.class.getDeclaredMethod("toNbt",int.class);encode.setAccessible(true);
             NbtIo.writeCompressed((NbtCompound)encode.invoke(record(),5),snapshotPath());
             row.put("sourceRecordSha256",hash(snapshotPath()));
+            var far=new LinkedHashMap<String,Object>();row.put("carversPreflight",far);
+            var metadata=carversMetadata();far.put("generationMetadata",metadata);
+            var halo=new LinkedHashMap<String,Object>();far.put("sourceHalo",halo);
+            carversHalo(source,root.resolve("world"),((Number)metadata.get("haloRadius")).intValue(),true,halo);
+            far.put("sourceRecordSha256",row.get("sourceRecordSha256"));far.put("worldKey",source.getRegistryKey().getValue().toString());
+            far.put("seed",Long.toString(source.getSeed()));far.put("generated",false);
+            writeNew(evidence.resolve("carvers-source-preflight.json"),far);
+            row.put("carversPreflightPath","carvers-source-preflight.json");row.put("carversPreflightSha256",hash(evidence.resolve("carvers-source-preflight.json")));
             row.put("player",participant.player().getUuid().toString());
             writeNew(root.resolve("same-seed-"+preset+"-source.json"),row);
             done=true;
@@ -465,20 +639,152 @@ public final class M6ProfileProbePhases {
             var decode=SessionRecoveryRecord.class.getDeclaredMethod("fromNbt",NbtCompound.class,int.class);decode.setAccessible(true);
             var saved=(SessionRecoveryRecord)decode.invoke(null,NbtIo.readCompressed(snapshotPath(),NbtSizeTracker.of(16L*1024*1024)),5);
             require(saved.candidateContext().equals(record().candidateContext()) && saved.selectedCandidate().equals(record().selectedCandidate()),"SAME_RESTART_FROZEN_JOURNAL");
-            frozen(record());
+            startupRecord=record();frozen(startupRecord);
             for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","profileId"))
                 require(row.get(key).toString().equals(prior.get(key).getAsString()),"SAME_RESTART_IDENTITY:"+key);
             require(prior.get("sourceInitialRequest").getAsString().equals("128,128=minecraft:full"),"SAME_SOURCE_GENERATION_REQUEST");
             row.put("sourceInitialRequest",prior.get("sourceInitialRequest").getAsString());
+            row.put("sourceRecordSha256",prior.get("sourceRecordSha256").getAsString());
             for(String key:List.of("formalLeverEntry","formalBatch","formalSelected","emptyStorageBeforeAllocation")) {
                 require(prior.get(key).getAsBoolean(),"SAME_FORMAL_SOURCE_RECEIPT:"+key);row.put(key,true);
             }
+            captureStartupAuthority();
             participant=new ConnectedGameTestPlayer(source,new com.mojang.authlib.GameProfile(UUID.fromString(prior.get("player").getAsString()),"m6-same"));
             participant.confirmTeleport();participant.player().setNoGravity(true);
         }
+        void captureStartupAuthority() throws Exception {
+            var journal=SessionRecoveryState.get(server);
+            require(startupRecord!=null && startupRecord.equals(journal.records().get(sid)) && startupRecord.equals(journal.flushedRecords().get(sid))
+                    && !journal.quarantinedSessions().contains(sid) && !journal.rollForwardPending(sid),"SAME_STARTUP_AUTHORITY_EXACT");
+            var encode=SessionRecoveryRecord.class.getDeclaredMethod("toNbt",int.class);encode.setAccessible(true);
+            Path nbt=evidence.resolve("carvers-startup-authority.nbt");
+            try(var output=Files.newOutputStream(nbt,StandardOpenOption.CREATE_NEW)){NbtIo.writeCompressed((NbtCompound)encode.invoke(startupRecord,5),output);}
+            var captured=new LinkedHashMap<String,Object>();
+            for(String key:List.of("chain","phase","root","nonce","startupNonce","pid","startTimeUtc"))captured.put(key,proof.get(key));
+            for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))captured.put(key,row.get(key));
+            captured.put("schema",1);captured.put("kind","CHECKED_STARTUP_SESSION_AUTHORITY");captured.put("startupState",startupRecord.state().toString());
+            captured.put("currentEqualsFlushed",true);captured.put("frozenSelectedIntentChecked",true);captured.put("notQuarantinedAndNoRollForward",true);
+            captured.put("nbtPath","carvers-startup-authority.nbt");captured.put("nbtSha256",hash(nbt));
+            Path receipt=evidence.resolve("carvers-startup-authority.json");writeNew(receipt,captured);
+            row.put("startupAuthority",Map.of("path",receipt.getFileName().toString(),"sha256",hash(receipt)));
+        }
+        Map<String,Object> layerEnvelope() throws Exception {
+            var layer=new LinkedHashMap<String,Object>();
+            for(String key:List.of("chain","phase","root","nonce","startupNonce","pid","startTimeUtc"))layer.put(key,proof.get(key));
+            for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))layer.put(key,row.get(key));
+            layer.put("schema",1);layer.put("layer","ACTUAL_CARVERS_V1");layer.put("startupAuthority",row.get("startupAuthority"));
+            layer.put("targetIdentity",UniverseKeys.world(targetId,DimensionRole.OVERWORLD).getValue().toString());
+            var sourceFinal=evidence.getParent().resolve("source/final.json");var original=readJson(sourceFinal);
+            require(original.get("status").getAsString().equals("PASS") && original.get("phase").getAsString().equals("source")
+                    && original.get("root").getAsString().equals(root.toString()) && original.get("nonce").getAsString().equals(proof.get("nonce"))
+                    && original.get("chain").getAsString().equals(chain),"SAME_CARVERS_SOURCE_LINK");
+            layer.put("sourceFinal",Map.of("path","../source/final.json","sha256",hash(sourceFinal),
+                    "startupNonce",original.get("startupNonce").getAsString(),"pid",original.get("pid").getAsLong()));
+            require(hash(snapshotPath()).equals(row.get("sourceRecordSha256")),"SAME_CARVERS_SOURCE_NBT_SHA");return layer;
+        }
+        void loadNewCarversWitness() throws Exception {
+            Path newFinalPath=evidence.getParent().resolve("new/final.json");priorNewFinal=readJson(newFinalPath);
+            require(priorNewFinal.get("status").getAsString().equals("PASS") && priorNewFinal.get("phase").getAsString().equals("new")
+                    && priorNewFinal.get("root").getAsString().equals(root.toString()) && priorNewFinal.get("nonce").getAsString().equals(proof.get("nonce"))
+                    && priorNewFinal.get("chain").getAsString().equals(chain),"SAME_CARVERS_NEW_FINAL_IDENTITY");
+            var priorRow=priorNewFinal.getAsJsonArray("variants").get(0).getAsJsonObject();
+            require(priorRow.get("carversReceiptPath").getAsString().equals("carvers-new.json")
+                    && hash(evidence.getParent().resolve("new/carvers-new.json")).equals(priorRow.get("carversReceiptSha256").getAsString()),"SAME_CARVERS_NEW_RECEIPT_SHA");
+            require(hash(root.resolve("same-seed-"+preset+"-new.json")).equals(priorRow.get("newSnapshotSha256").getAsString()),"SAME_CARVERS_NEW_SNAPSHOT_SHA");
+            priorCarvers=readJson(evidence.getParent().resolve("new/carvers-new.json"));
+            require(priorCarvers.get("startupNonce").equals(priorNewFinal.get("startupNonce")) && priorCarvers.get("pid").equals(priorNewFinal.get("pid")),"SAME_CARVERS_NEW_PRODUCER");
+            for(String key:List.of("chain","root","nonce"))require(priorCarvers.get(key).getAsString().equals(proof.get(key)),"SAME_CARVERS_NEW_IDENTITY:"+key);
+            for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))
+                require(priorCarvers.get(key).getAsString().equals(row.get(key)),"SAME_CARVERS_NEW_IDENTITY:"+key);
+            require(priorCarvers.get("phase").getAsString().equals("new") && priorCarvers.get("targetIdentity").getAsString().equals(UniverseKeys.world(targetId,DimensionRole.OVERWORLD).getValue().toString())
+                    && priorCarvers.get("schema").getAsInt()==1 && priorCarvers.get("layer").getAsString().equals("ACTUAL_CARVERS_V1")
+                    && priorCarvers.get("generationMetadata").equals(JSON.toJsonTree(carversMetadata())),"SAME_CARVERS_NEW_SCHEMA");
+            var sourceLink=priorCarvers.getAsJsonObject("sourceFinal");
+            require(sourceLink.get("path").getAsString().equals("../source/final.json") && hash(evidence.getParent().resolve("source/final.json")).equals(sourceLink.get("sha256").getAsString()),"SAME_CARVERS_SOURCE_LINK");
+            require(priorCarvers.getAsJsonArray("sides").size()==2,"SAME_CARVERS_NEW_SIDES");
+            for(int i=0;i<2;i++) {
+                var side=priorCarvers.getAsJsonArray("sides").get(i).getAsJsonObject();
+                require(side.get("side").getAsString().equals(i==0?"source":"target") && side.get("worldKey").getAsString().equals(i==0?source.getRegistryKey().getValue().toString():UniverseKeys.world(targetId,DimensionRole.OVERWORLD).getValue().toString())
+                        && side.get("seed").getAsString().equals(row.get("seed")),"SAME_CARVERS_NEW_SIDE_IDENTITY");
+                requireCarversSample(side.getAsJsonObject("sample"));
+            }
+            carversLayer.put("newWitness",Map.of("path","../new/carvers-new.json","sha256",hash(evidence.getParent().resolve("new/carvers-new.json")),
+                    "newFinalPath","../new/final.json","newFinalSha256",hash(newFinalPath),"newSnapshotPath","same-seed-"+preset+"-new.json",
+                    "newSnapshotSha256",priorRow.get("newSnapshotSha256").getAsString()));
+        }
+        @SuppressWarnings("unchecked") boolean advanceCarvers(ServerWorld target) throws Exception {
+            if(carversDone)return true;
+            require(source.getServer()==server && target.getServer()==server && server.getWorld(source.getRegistryKey())==source
+                    && server.getWorld(target.getRegistryKey())==target && source!=target && source.getSeed()==intent.sourceRootWorldSeed()
+                    && target.getSeed()==intent.rootWorldSeed() && target.getRegistryKey().equals(UniverseKeys.world(targetId,DimensionRole.OVERWORLD)),"SAME_CARVERS_RUNTIME_IDENTITY");
+            var worlds=List.of(source,target);int halo=((Number)carversMetadata().get("haloRadius")).intValue();
+            if(!carversPrepared) {
+                carversLayer=layerEnvelope();row.put("carversLayerProgress",carversLayer);carversLayer.put("generationMetadata",carversMetadata());carversLayer.put("sides",carversSides);
+                if(phase.equals("restart"))loadNewCarversWitness();
+                // 兩側 preflight 都完成後，才開始第一個 CARVERS request。
+                for(int i=0;i<2;i++) {
+                    var world=worlds.get(i);var side=new LinkedHashMap<String,Object>();carversSides.add(side);
+                    side.put("side",i==0?"source":"target");side.put("worldKey",world.getRegistryKey().getValue().toString());side.put("seed",Long.toString(world.getSeed()));
+                    side.put("frozenSettings",(i==0?intent.sourceSettingsSnapshot():intent.targetSettingsSnapshot()).toNbt().toString());
+                    var initial=new LinkedHashMap<String,Object>();side.put("initialHalo",initial);
+                    carversHalo(world,root.resolve("world"),halo,phase.equals("new"),initial);
+                    var cells=(List<Map<String,Object>>)initial.get("cells");boolean absent=cells.stream().allMatch(c -> "ABSENT".equals(c.get("raw")) && Boolean.FALSE.equals(c.get("currentHolder")) && Boolean.FALSE.equals(c.get("unloadingHolder")));
+                    side.put("provenance",phase.equals("new")?"VIRGIN_NEW":absent?"FRESH_REGENERATED":"REOPENED_OR_COMPLETED_PARTIAL");
+                }
+                writeNew(evidence.resolve("carvers-"+phase+"-before-generation.json"),carversLayer);
+                for(int i=0;i<2;i++) {
+                    var world=worlds.get(i);var side=carversSides.get(i);
+                    carversChunks[i]=world.getChunkManager().getChunk(1024,1024,ChunkStatus.CARVERS,true);
+                    requireCarversChunk(world,carversChunks[i],true);
+                    var access=(dev.quantumchamber.gametest.mixin.ServerChunkLoadingManagerTestAccessor)world.getChunkManager().chunkLoadingManager;
+                    var holder=access.quantumchamberTest$currentChunkHolders().get(carversChunks[i].getPos().toLong());
+                    side.put("request",Map.of("x",1024,"z",1024,"status","minecraft:carvers","create",true,"explicitCount",1));
+                    side.put("returnedOwner",Map.of("worldIdentity",System.identityHashCode(world),"managerIdentity",System.identityHashCode(world.getChunkManager()),
+                            "holderIdentity",System.identityHashCode(holder),"chunkIdentity",System.identityHashCode(carversChunks[i]),
+                            "holderLatestIsReturnedChunk",holder.getLatest()==carversChunks[i],"holderStatus",holder.getActualStatus().toString(),
+                            "returnedStatus",carversChunks[i].getStatus().toString(),"returnedClass",carversChunks[i].getClass().getName()));
+                    writeNew(evidence.resolve("carvers-"+phase+"-request-"+(i==0?"source":"target")+".json"),carversLayer);
+                }
+                carversPrepared=true;
+            }
+            try {
+                for(int i=0;i<2;i++) {
+                    var world=worlds.get(i);var side=carversSides.get(i);requireCarversChunk(world,carversChunks[i],false);
+                    var before=new LinkedHashMap<String,Object>();side.put("beforeSampleHalo",before);carversHalo(world,root.resolve("world"),halo,false,before);
+                    side.put("sample",carversSample(carversChunks[i]));requireCarversChunk(world,carversChunks[i],false);
+                    var after=new LinkedHashMap<String,Object>();side.put("afterSampleHalo",after);carversHalo(world,root.resolve("world"),halo,false,after);
+                }
+            } catch(IllegalStateException failure) {
+                if(!"SAME_CARVERS_SHORT_HEADER".equals(failure.getMessage()))throw failure;
+                carversLayer.put("headerWaitCount",++carversWaits);carversLayer.put("headerWaitTick",server.getTicks());
+                writeNew(evidence.resolve(String.format(Locale.ROOT,"carvers-%s-header-wait-%04d.json",phase,carversWaits)),carversLayer);return false;
+            }
+            var a=(Map<String,Object>)carversSides.get(0).get("sample");var b=(Map<String,Object>)carversSides.get(1).get("sample");
+            requireCarversBlocksExact(carversBlocks(a),carversBlocks(b));
+            require(a.get("biomeHash").equals(b.get("biomeHash")),"SAME_CARVERS_BIOME_EXACT");
+            if(phase.equals("restart"))for(int i=0;i<2;i++) {
+                var expected=priorCarvers.getAsJsonArray("sides").get(i).getAsJsonObject().getAsJsonObject("sample");
+                var actual=JSON.toJsonTree(carversSides.get(i).get("sample")).getAsJsonObject();
+                requireCarversBlocksExact(carversBlocksFromJson(expected),carversBlocksFromJson(actual));
+                require(expected.get("biomeHash").equals(actual.get("biomeHash")),"SAME_CARVERS_RESTART_BIOME_EXACT");
+            }
+            carversLayer.put("blocksExact",true);carversLayer.put("biomesExact",true);carversLayer.put("status","PASS");
+            Path receipt=evidence.resolve("carvers-"+phase+".json");writeNew(receipt,carversLayer);
+            row.put("carversReceiptPath",receipt.getFileName().toString());row.put("carversReceiptSha256",hash(receipt));row.put("carversReceiptPhase",phase);
+            carversDone=true;return true;
+        }
         void verifyMaterialized() throws Exception {
             if(done)return;
-            require(record()!=null && record().state()!=SessionState.SEALED,"SAME_COLLAPSE_SEALED");
+            var journal=SessionRecoveryState.get(server);var currentRecord=record();
+            boolean terminated=((Set<?>)field(journal,"terminated")).contains(sid);
+            boolean absent=!journal.records().containsKey(sid) && !journal.flushedRecords().containsKey(sid);
+            boolean healthy=!journal.quarantinedSessions().contains(sid) && !journal.rollForwardPending(sid);
+            if(currentRecord==null)require(phase.equals("restart") && startupRecord!=null && startupRecord.state()==SessionState.PASSAGE_READY
+                    && terminated && absent && healthy,"SAME_COLLAPSE_TERMINATION_AUTHORITY");
+            else require(currentRecord.state()!=SessionState.SEALED && currentRecord.equals(journal.records().get(sid)) && healthy,"SAME_COLLAPSE_SEALED");
+            row.put("sessionAuthority",Map.of("startupState",startupRecord.state().toString(),"currentState",currentRecord==null?"ABSENT":currentRecord.state().toString(),
+                    "kind",currentRecord==null?"CHECKED_PASSAGE_ENDED":"LIVE_CHECKED","terminatedThisInstance",terminated,
+                    "currentAndFlushedAbsent",absent,"notQuarantinedAndNoRollForward",healthy));
             var active=UniverseLifecycleService.resolveActive(server,targetId);if(active.isEmpty())return;
             var target=active.orElseThrow();
             var catalog=UniverseRegistryState.get(server);
@@ -489,16 +795,25 @@ public final class M6ProfileProbePhases {
             disk.requireHealthy();require(targetRecord.equals(disk.flushedRecords().get(targetId)),"SAME_CATALOG_RESTART_STRICT");
             require(readAllocation().byToken(intent.allocationToken()).filter(UniverseAllocationLedger.Entry.of(intent)::equals).isPresent(),"SAME_ALLOCATION_RESTART_EXACT");
             row.put("allocationChecked",true);
+            if(!advanceCarvers(target))return;
             if(phase.equals("new"))samplePreflight(List.of(source,target),row);
             compareAndEdit(source,target,phase.equals("restart"),row,evidence.resolve("comparison-before-assert.json"),
-                    () -> nativeConsumer(server,target,targetRecord));
-            if(phase.equals("new"))writeNew(root.resolve("same-seed-"+preset+"-new.json"),row);
-            else {
-                var prior=JsonParser.parseString(Files.readString(root.resolve("same-seed-"+preset+"-new.json"))).getAsJsonObject();
-                for(String key:List.of("terrain","biomes","structures")) require(JSON.toJsonTree(row.get(key)).equals(prior.get(key)),"SAME_RESTART_GENERATION:"+key);
+                    () -> nativeConsumer(server,target,targetRecord),FinalComparison.T13_LAYERED);
+            row.put("catalogChecked",true);
+            if(phase.equals("new")) {
+                writeNew(root.resolve("same-seed-"+preset+"-new.json"),row);
+                row.put("newSnapshotSha256",hash(root.resolve("same-seed-"+preset+"-new.json")));
+            } else {
+                var prior=readJson(root.resolve("same-seed-"+preset+"-new.json"));
+                for(String key:List.of("biomes","structures"))require(JSON.toJsonTree(row.get(key)).equals(prior.get(key)),"SAME_RESTART_GENERATION:"+key);
+                var current=(Map<String,Object>)row.get("finalDiagnostic");
+                var previous=prior.getAsJsonObject("finalDiagnostic");
+                current.put("newToRestartDifferences",Map.of("source",sampleDifferences(jsonRows(previous.getAsJsonObject("source")),jsonRows(JSON.toJsonTree(current.get("source")).getAsJsonObject())),
+                        "target",sampleDifferences(jsonRows(previous.getAsJsonObject("target")),jsonRows(JSON.toJsonTree(current.get("target")).getAsJsonObject()))));
+                current.put("newFinalSha256",hash(evidence.getParent().resolve("new/final.json")));
                 row.put("restartExact",true);
             }
-            row.put("catalogChecked",true);done=true;
+            done=true;
         }
     }
 
@@ -759,12 +1074,55 @@ public final class M6ProfileProbePhases {
         return result.world().orElseThrow();
     }
 
+    private static com.google.gson.JsonObject readJson(Path path) throws Exception {
+        require(Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(path),"SAME_CARVERS_RECEIPT_MISSING_OR_TYPE");
+        return JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+    }
+    private static List<Map<String,Object>> jsonRows(com.google.gson.JsonObject sample) {
+        var rows=new ArrayList<Map<String,Object>>();
+        for(var value:sample.getAsJsonArray("rows")) {
+            var row=value.getAsJsonObject();rows.add(Map.of("index",row.get("index").getAsInt(),"x",row.get("x").getAsInt(),"y",row.get("y").getAsInt(),
+                    "z",row.get("z").getAsInt(),"block",row.get("block").getAsString(),"biome",row.get("biome").getAsString()));
+        }return rows;
+    }
+    private static List<String> carversBlocksFromJson(com.google.gson.JsonObject sample) throws Exception {
+        requireCarversSample(sample);return jsonRows(sample).stream().map(r -> (String)r.get("block")).toList();
+    }
+    private static void requireCarversSample(com.google.gson.JsonObject sample) throws Exception {
+        var rows=jsonRows(sample);require(rows.size()==1440 && sample.get("sampleCount").getAsInt()==1440
+                && sample.get("chunkStatus").getAsString().equals("minecraft:carvers") && sample.get("chunkClass").getAsString().equals("net.minecraft.world.chunk.ProtoChunk")
+                && sample.get("biomeKind").getAsString().equals("STORED_CHUNK_NOISE_BIOME"),"SAME_CARVERS_SAMPLE_SCHEMA");
+        int index=0;for(int x=16384;x<16400;x+=3)for(int z=16384;z<16400;z+=3)for(int y=-64;y<256;y+=8) {
+            var row=rows.get(index);require(Integer.valueOf(index++).equals(row.get("index")) && Integer.valueOf(x).equals(row.get("x"))
+                    && Integer.valueOf(y).equals(row.get("y")) && Integer.valueOf(z).equals(row.get("z")),"SAME_CARVERS_SAMPLE_COORDINATES");
+        }
+        require(digest(rows.stream().map(r -> r.get("block")).toList()).equals(sample.get("blockHash").getAsString())
+                && digest(rows.stream().map(r -> r.get("biome")).toList()).equals(sample.get("biomeHash").getAsString()),"SAME_CARVERS_SAMPLE_HASH");
+    }
+    private enum FinalComparison {EXACT,T13_LAYERED}
+    private static Map<String,Object> finalSample(ServerWorld world,List<String> blocks,List<String> biomes) throws Exception {
+        var rows=new ArrayList<Map<String,Object>>();int index=0;
+        for(int x=512;x<528;x+=3)for(int z=512;z<528;z+=3)for(int y=-64;y<256;y+=8) {
+            rows.add(Map.of("index",index,"x",x,"y",y,"z",z,"block",blocks.get(index),"biome",biomes.get(index)));index++;
+        }
+        return Map.of("worldKey",world.getRegistryKey().getValue().toString(),"seed",Long.toString(world.getSeed()),"rows",rows,"sampleCount",rows.size(),
+                "blockHash",digest(blocks),"biomeHash",digest(biomes),"chunkStatus","minecraft:full");
+    }
+    private static List<Map<String,Object>> sampleDifferences(List<Map<String,Object>> before,List<Map<String,Object>> after) {
+        require(before.size()==1440 && after.size()==1440,"SAME_FINAL_DIFF_ROWS");var differences=new ArrayList<Map<String,Object>>();
+        for(int i=0;i<1440;i++) {
+            var a=before.get(i);var b=after.get(i);
+            if(!a.get("block").equals(b.get("block")) || !a.get("biome").equals(b.get("biome")))
+                differences.add(Map.of("index",i,"x",a.get("x"),"y",a.get("y"),"z",a.get("z"),
+                        "beforeBlock",a.get("block"),"afterBlock",b.get("block"),"beforeBiome",a.get("biome"),"afterBiome",b.get("biome")));
+        }return differences;
+    }
     /** 兩側同一 registry/datapack、同一 FULL 鄰域後採樣，不把 live/raw 不同成熟度混比。 */
     static Map<String,Object> compareAndEdit(ServerWorld source,ServerWorld target,boolean restart) throws Exception {
-        return compareAndEdit(source,target,restart,new LinkedHashMap<>(),null,null);
+        return compareAndEdit(source,target,restart,new LinkedHashMap<>(),null,null,FinalComparison.EXACT);
     }
     private static Map<String,Object> compareAndEdit(ServerWorld source,ServerWorld target,boolean restart,
-            Map<String,Object> row,Path comparisonReceipt,Checked afterComparison) throws Exception {
+            Map<String,Object> row,Path comparisonReceipt,Checked afterComparison,FinalComparison comparison) throws Exception {
         require(source!=target && source.getRegistryManager()==target.getRegistryManager() && source.getSeed()==target.getSeed(),"SAME_RUNTIME_IDENTITIES");
         // 來源先為玩家建築生成中心；目標也先中心，避免把不同 feature 寫入順序混成 seed 差異。
         var worlds=List.of(source,target);
@@ -812,6 +1170,15 @@ public final class M6ProfileProbePhases {
         row.put("firstDifference",firstDifference);row.put("terrain",digest(sourceTerrain));row.put("targetTerrain",digest(targetTerrain));
         row.put("biomes",digest(sourceBiomes));row.put("targetBiomes",digest(targetBiomes));row.put("sampleCount",sourceTerrain.size());
         row.put("matchedMaturity","FULL_3X3");
+        if(comparison==FinalComparison.T13_LAYERED) {
+            var a=finalSample(source,sourceTerrain,sourceBiomes);var b=finalSample(target,targetTerrain,targetBiomes);
+            var diagnostic=new LinkedHashMap<String,Object>();diagnostic.put("schema",1);diagnostic.put("kind","T13_FINAL_DIAGNOSTIC");
+            diagnostic.put("source",a);diagnostic.put("target",b);
+            diagnostic.put("differences",sampleDifferences(jsonRows(JSON.toJsonTree(a).getAsJsonObject()),jsonRows(JSON.toJsonTree(b).getAsJsonObject())));
+            diagnostic.put("reviewItems",List.of(Map.of("side","source","blockHash",a.get("blockHash"),"classification","UNRESOLVED","novelty","NOT_CLASSIFIED","reviewStatus","UNRESOLVED"),
+                    Map.of("side","target","blockHash",b.get("blockHash"),"classification","UNRESOLVED","novelty","NOT_CLASSIFIED","reviewStatus","UNRESOLVED")));
+            diagnostic.put("classificationScope","NO_HISTORICAL_MEMBERSHIP_CHECK");row.put("finalDiagnostic",diagnostic);
+        }
         if(afterComparison!=null) {
             row.put("nativeConsumerCoverage","target-only");
             row.put("canonicalSourceNativeConsumer","NOT_COVERED");
@@ -821,7 +1188,8 @@ public final class M6ProfileProbePhases {
         else LoggerFactory.getLogger("quantumchamber-m6-gametest").info("SAME_COMPARISON {}",JSON.toJson(row));
         // 原抽樣與收據先完成；owner FAIL 時原 terrain require 尚未執行。
         if(afterComparison!=null)afterComparison.run();
-        require(sourceTerrain.equals(targetTerrain) && sourceBiomes.equals(targetBiomes),"sameSeedFreshCopiesSettingsNotBlocks:TERRAIN_BIOME"+firstDifference);
+        if(comparison==FinalComparison.T13_LAYERED)require(sourceBiomes.equals(targetBiomes),"SAME_T13_FINAL_BIOME_EXACT"+firstDifference);
+        else require(sourceTerrain.equals(targetTerrain) && sourceBiomes.equals(targetBiomes),"sameSeedFreshCopiesSettingsNotBlocks:TERRAIN_BIOME"+firstDifference);
         var a=structures(source);var b=structures(target);require(a.equals(b),"sameSeedFreshCopiesSettingsNotBlocks:STRUCTURE");
         require(source.getBlockState(BUILDING).isOf(Blocks.DIAMOND_BLOCK) && !target.getBlockState(BUILDING).isOf(Blocks.DIAMOND_BLOCK),"sameSeedFreshCopiesSettingsNotBlocks:BUILDING");
         if(!restart){source.setBlockState(SOURCE_EDIT,Blocks.EMERALD_BLOCK.getDefaultState(),3);target.setBlockState(TARGET_EDIT,Blocks.GOLD_BLOCK.getDefaultState(),3);}

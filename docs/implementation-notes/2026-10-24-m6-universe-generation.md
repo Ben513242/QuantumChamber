@@ -1653,3 +1653,38 @@ normal原批次 `t13vc-mw8nd4zy-r2` 的10份 `CENTER_FULL`／`FULL_3X3` 完整ro
 原生save/flush對純ProtoChunk有型別限制，不能預設CARVERS一定存MCA，也不得為保存升FULL。new actual witness及SHA／權威鏈必存；restart在raw/live不高於CARVERS前提下忠實標fresh重建或partial重讀／完成，實際取樣後對new同側及兩側exact。缺witness、錯鏈、升級或不相等均FAIL，不能missing-cache略過。Java與PS1的new/restart terrain隱藏關卡同步改CARVERS/權威strict，final跨phase也留診斷diff，biome／structure／edits等不降。
 
 本節是裁示／設計採用紀錄，不是控制或程式驗收通過。所有dd57／35f5／c7d／e1d及FAIL／NOT_KILLED／UNRESOLVED原判保留；T13未結不進T14，新增canonical+U／U-only／client控制仍未授權。
+
+### 2026-11-09：T13 CARVERS A20與B候選交付（C正式出口待驗）
+
+**A前置條件已成立，B候選已完成且兩席早審C0/I0/M0；此時T13仍OPEN。** c19aec7／7c03919先行CI已三job終局success；新code的乾淨雙focused、完整run-all與同SHA CI仍待，不能沿用舊CI或dirty候選稱正式通過。T21原exact與dd57/35f5等全部舊FAIL不變，不進T14。
+
+| A：canonical-only CARVERS | 有效世界資料 | actual1440 block hash |
+| --- | --- | --- |
+| normal | 10 | `957bf76ec7cc5d47bbd4176e0876b5422d27545597234f95b369c1c72f47acb7` |
+| amplified | 10 | `742a4d5b7966e6d5596da7e62fbfc7916f7df14913f6e47649928996a1f05455` |
+
+固定chunk(1024,1024)，x/z16384+{0,3,6,9,12,15}、y=-64..<256 step8，直接讀原生ProtoChunk；每根恰一次typed CARVERS request、exact class/status、stored biome，無density替代、無FULL捷徑。actual依賴Rc9／Rf11／W1，H=22，三個snapshot各2025cell；NOISE/SURFACE/CARVERS writeRadius各0，virgin與live/raw>CARVERS排除、最近FULL在H外、配置/seed/provider/FP/mod/pack/身分/自然exit均核。只到模組載入／無動態U的canonical單世界取樣範圍，不稱純vanilla或推T21。
+
+A原外層結果為19PASS＋normal03一筆JSON鍵序比較SETUP；該根Java及raw條件有效，另有readonly逐欄核證/javaNotRerun，原錯誤保留、不說原外層20/20PASS。此前三個未達測項的前置失敗原判分列：uppercase nonce為啟JVM前SETUP；短region-header為runtime FAIL `SAME_CARVERS_SHORT_HEADER`；過強current-holder要求為runtime FAIL `SAME_CARVERS_OWNER`。它們皆無有效hash樣本、不冒具名RED；兩筆runtime FAIL沒有改稱SETUP或改判。僅exact SHORT_HEADER有界下一END tick就緒、不重請求／加票／升FULL；初次manager→holder==actual返回Chunk綁定不可覆寫，後續保同原生reference，允許自然卸載但pos/class/status與完整halo判定不降。
+
+實際wrong seed/preset各fresh properties負控具名拒（早期source pin，startup guard之後未改，不冒最終pin重跑）；actual CARVERS一格mutation由共用sampler/exact helper拒，guard bypass實際NOT_KILLED RED→恢復KILLED GREEN及source/全compiled byte REVERT齊。wrong properties留失敗根，不改回掩蓋。A20以同兩source與1094class完成，immutable保存；主控與獨立spec另讀20sample/final/request，重算1440座標/block/stored-biome與121500 halo cells。
+
+**B限定現有兩條正式T13鏈。** 只兩既有testmod及既有 `scripts/verification/m6-universe-probe.ps1`；source遠區只preflight，new雙側actual CARVERS exact及immutable witness，restart依raw/live<=CARVERS partial重讀／完成或fresh重建並對new同側及彼此actual exact。原生partial不保證存MCA，沒有靠FULL／反射硬寫或missing-witness略過。世界key→dimension region解析補齊，canonical path及A sampler/point/radius/H/exact body不變。
+
+Java/PS1兩處final terrain相等關卡皆移除，只T13 explicit opt-in；default helper的T21仍exact。原final32,32/3×3 FULL請求與1440點保留，完整兩側rows/hash、全部pairwise及new→restart差格、biome/structure/building/edits/UUID/catalog等strict不降。diagnostic採 `novelty=NOT_CLASSIFIED`／`reviewStatus=UNRESOLVED`（未作歷史新舊分類，不把已見hash宣稱新）；不維護或擴baseline、不以任何集合或UNRESOLVED當full PASS/FAIL，審查處置另記且不改原receipt。少列、假hash、漏diff、錯stage/link仍屬完整性FAIL。
+
+新增的跨tick會讓既有M5正常到PASSAGE_READY。舊probe合併null/SEALED guard在候選ed0c…誤擋，原FAIL保留。owning source確認M5§12以PASSAGE_ENDED exact current/flushed CAS後checked absent才留terminated tombstone；B只接受startup checked exact READY且frozen/selected/intent已核，之後current/flushed皆absent＋本instance tombstone＋無quarantine/rollforward的合法終局。CREATE_NEW startup NBT/JSON/SHA綁sameSid/UUID/root/source-new鏈；真SEALED、不明null、未確認刪除仍FAIL。正常候選normal648f…走CHECKED_PASSAGE_ENDED、amp e8d…走LIVE_CHECKED READY，兩者三phase皆Java＋PS通過；沒有修改production或暫停其狀態推進。
+
+**最終pin正向實證**：f0e2a2f353274d74b51e4ea67a16af48為既有normal三phase的temporary testmod controlled fault，restart在原FULL請求/四階段後、取樣前真改source index0 `(512,-64,512)` bedrock→diamond_block。far CARVERS仍兩側957bf exact；new source82e9→restart sourceaa116a66…28c2c7，target704b保持；pairwise完整4差（3自然＋1受控）、source new→restart完整1差、target0差。Java＋PS/continuity皆PASS且UNRESOLVED，證兩處沒有藏舊final gate。此fault不算正常C；完整patch/pin/原根保留且finally三source＋1095class逐檔REVERT。離線打包初誤設pairwise恰1已保為純離線檢查錯誤，只改獨立計算全差格與含受控格，不改runtime或oracle、不補跑；數字4/1/0只是該根事實，不是一般限制。
+
+14個獨立parser副本反例具名KILLED，涵蓋缺列/stage/SHA/UUID/替換new witness/漏pairwise或phase diff/halo/radius/request/真SEALED/不明null/未確認刪除；PS差格guard bypass NOT_KILLED RED→恢復 `M6_FINAL_DIFF_COMPLETE` GREEN並byte REVERT。synthetic不冒functional，原件不回填。最終候選compile與純parser sanity通過，正常兩鏈、受控正例與兩席早審皆不替代C出口。
+
+**固定候選與可核原件**（共同SDD前綴 `.superpowers/sdd/2026-10-24-m6-universe-generation/`）：
+
+- A報告/原件 `carvers-control-evidence-t13lc-20261109/`，index SHA `e708c7fa6075e5de98bd9a201b961cf8032a0d854e21d42eb221704a1464aeee`；主控audit `task13-carvers-a-independent-audit-20261109.json` SHA `c5807ca3d6f104ab012467fcd502b76b3e47e4260a59b204d424fbc59b3117b0`。
+- B `carvers-stage-b-evidence-t13lb-20261109/candidate-pin/pin.json` SHA `859c876d0169bdbb395503a957be29f836fa6192bc103e4753ab5349ec6efafb`；完整A+B diff SHA `0711550661b35ce482a68d8e42e3b1b89af347a9b8722b9255fc4130dde76347`。
+- source SHA：Profile `e85a0e1df634a7b46210199267d8521165541491d01a988c6db03675beb4f18a`；Recovery `e976ed5f0c90fcb455c00a6c44a22c494024e8d172dceff99b390ef317a2f8e6`；PS1 `46968771d579bf3090b38f4b0f1b9230f6952ff369eddefbff931d9b44acb36b`。
+- 實作報告 `task13-layered-carvers-implementation-20261109.md`（A/B各時點byte副本保留、live報告供追加）；B交付 `stage-b-delivery-index.json` 與1596檔manifest（SHA `1aab990709b4f299e8bf21cac77e7bc701213774e020377f04d3688b401f9bb7`）釘全路徑/原件SHA，非完整world備份。
+- 獨立formal spec早審 `task13-layered-spec-review-20261109.md`、fresh quality `task13-layered-quality-review-20261109.md` 均C0/I0/M0；只審immutable `.bin`/diff/archive與既有raw結果，未重跑runtime。C乾淨pin與終局會同席另補，不能預寫通過。
+
+本次具體code pin後才執行C：原same-seed owner/selector與milk相關雙focused、兩條正常native、完整run-all自然END ALL0、獨立spec/quality終局與新同SHA三jobCI。C前不結T13，不進T14，人工/main/tag與新增CU/U-only/client仍未授權。
