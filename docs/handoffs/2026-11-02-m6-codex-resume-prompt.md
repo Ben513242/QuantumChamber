@@ -1,5 +1,9 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
+**2026-11-09最新：T13 OPEN，fix3候選兩席0、新pin C4待驗。** 43cb99b純四docs CI42608921665終局build成功、兩Windows job失敗：native21phase成功後SelfTest原300秒逾時；Windows原default166中15FAIL，normal13／legacy1／M5 60／M6 19零bad，step9為default scope連帶拒。15案因果與case級cleanup完成未證，原件已保存。PS1-only fix3 source f12d80ee…69bf60已依受審設計完成候選、真3ea全7／21／277＋末baseline152.704秒、兩席code C0／I0／M0；新pin focused／full／同SHA真CI待，不把本地結果當新CI。使用者已明確新增M2CorridorGameTests這批TrustedSpace等待／失敗cleanup有界授權：原tickLimit內條件等待、原ready／功能斷言、正式cleanup，先一份設計獨審C/I0後碼；不production／外部observer，目前僅設計。d0原PASS、43新FAIL與formal報告各保原判，T21不變、不進T14。以下較早結案／初報段均為歷史快照。
+
+**同日fix3採用狀態：** 原XML現已分scope核：default166案15fail（10個有限等待逾時、5個局部實例／完整AABB容量不足），normal13／legacy1／M5 60／M6 19零bad、JUnit1107零fail/error且既有skip2；step9因default scope連帶拒，未證M6案例本身失敗。PS1-only fix3唯一設計8557…10cb＋plan已窄審C0I0M0，只准manifest cheap前置與SelfTest exact phase-scope，保真Verify全7／21、277、原300秒及全部criteria。實作／真單run完整277 bench已完成152.704秒／原300秒，兩席code C0／I0／M0；新pin gates仍待，M2已獲上述新窄授權，唯一設計獨審C/I0前不改碼，不新增外部observer；T13仍OPEN。
+
 **2026-11-09 T13 正式結案，依裁示停在 T14 前。** 程式pin `d0aafb47d574f5fff24f712246bbf3508ec2a635`：C3原雙focused與兩preset各雙fresh native鏈全過，完整 `run-all-3eaeb70caecd4e39b4e22935f05cd53d` 自然END ALL0／outer0，summary SHA `9bf3ceb82469b993d4e6b3205e8b08fc32cda86db86933c3e1831553a2bf9c05`；原native-green與末段verify各277通過，沒有新增standalone。CI42595046917同SHA build／windows-native／m6-native三job終局success，真SelfTest258秒／原300秒。formal spec／quality各C0／I0／M0，可關閉T13；source／1095class／554tracked前後exact。final1440rows與全部差格已獨審，producerUNRESOLVED／NOT_CLASSIFIED保留，不推根因、不採baseline或容差。舊FAIL不翻案、T21 exact不變，T14與新增canonical＋U／U-only／client皆未啟動。後續只四份結案狀態文件，程式驗收pin固定；文件HEAD／push以Git實際為準。詳M6 note「T13正式結案」與本檔§8；下方舊「最新／待驗」均為歷史快照。
 
 **2026-11-09 C2 full 原判 FAIL，continuity evidence-base fix2 待出口驗證。** code `d973710cf21c89fa5f491dc3b9874e2bdf11058c` 的 CI42581484000 三 job 終局 success（真 SelfTest273秒／原300秒、7鏈21phase／277反例），C2 雙 focused 全綠；本機短路徑 `run-all-f8eefde1119b4f55b24fde36668368db` 所有 runtime gate exit0，最後 `ci-rule native-green` 因 continuity 從 fixture `$project` 推錯 CARVERS 路徑而 FAIL／outer1／無 END ALL。原 sidecar 在且 SHA 相同，並非少複製檔案；原 failed fixture 與較早深路徑 preflight FAIL 全保留。fix2 只既有 PS1 明傳 caller 已驗的三 phase receipt dirname，不減守門／不加 fallback／不改 timeout。真 f8 AllEnabled073c輸入全 Verify＋277 自然203.610秒通過，僅屬唯讀 parser 回歸；新fixture e25355a8… replay亦自然PASS（196.995秒／outer與step0／277），同兩席fix2窄審C0／I0／M0；新pin C3／full／同SHA CI尚待。T13 OPEN，不進 T14；Java／A20／T21／舊 FAIL 不變，新增 canonical＋U／U-only／client 未授權。以下較早「待驗／最新」均為歷史快照。
@@ -145,6 +149,10 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 - 任何文件不得提前寫「已合併 main」「已 push」「人工驗收已通過」。
 
 ## 8. 交回紀錄
+
+- 2026-11-09最新（使用者M2新增授權）：使用者已明確回覆「授權此 M2 testmod 窄修」，範圍只限M2CorridorGameTests.java這批TrustedSpace等待／正式失敗cleanup，先一份設計與獨立窄審C/I0後實作，保原ready／功能斷言，以原tickLimit內條件等待，不production／外部observer。15案是否同因未證。controller派fresh設計者先寫唯一ignored設計，未准碼；PS1 fix3已兩席0，將先checkpoint提交，待M2受審候選完成後在最終固定pin跑原C4／同SHA CI，不以舊d0或checkpoint結果代最終驗收。
+
+- 2026-11-09稍後（Codex，T13重開初報快照；最新見本檔首段）：43cb99b純四docs push自動CI42608921665出現Windows default步驟FAIL與native SavedSummary-SelfTest300秒timeout；runtime21phase PASS不能代後者過關。已立即回報使用者並保存完成job原件，Windows具名case仍待job終局／原XML。無重送、無timeout／oracle／source變更；同一implementer只先量測PS1成本與提出保全部criteria／277的窄修候選，尚不實作。下方結案是d0當時真full／CI與兩席已通過的歷史，原件不翻案；T13最新狀態OPEN、不進T14。
 
 - 2026-11-09（Codex，T13正式結案）：依當日分層裁示，A normal／amplified各10個canonical-only CARVERS控制分別單一957bf…／742a4…，只有模組載入／無動態U的控制範圍，不稱純vanilla。程式pin `d0aafb47d574f5fff24f712246bbf3508ec2a635` 的C3完整雙focused、12個正常native phase、完整3ea END ALL0／outer0、原兩次各277及同SHA CI42595046917三job success均成立；formal spec／quality各C0／I0／M0。C3 index SHA `2b8a2cbc037a5a883251d1bed7c9a0cbbc0d9049a62e85474837b35d77cfd82e`，8804檔manifest與immutable source/class pin保在本plan SDD；完整索引／hash／counts見M6 note末節。normal／amplified final差格逐格已獨審，UNRESOLVED原值與dd57／35f5／4593CI／f8 full等全部舊FAIL保留；沒有把已見hash當關卡或歸因FEATURES時序。Task13完成，Task14未開工；T21另裁、deferred ledger事項到對應task前處理，新增canonical＋U／U-only／client、main／tag／PR未執行。本次只交付與文件收尾，後續程式工作等使用者新裁示。
 

@@ -1756,3 +1756,34 @@ A兩組actual CARVERS block hash仍為normal `957bf76ec7cc5d47bbd4176e0876b5422d
 **保留的失敗與停止界線：** dd57、35f5、U→U c7d／e1d、4593 CI timeout、C2深路徑preflight與f8 native-green FAIL，以及所有原NOT_KILLED／SETUP／UNRESOLVED均保原根原判。fix2只修證據base relay，不補檔覆蓋舊fixture；24份舊原件前後SHA仍相同。C3離線包裝曾用錯歷史class檔名而SETUP，原錯保留、修正唯讀包裝查找、runtimeRerun=false，沒有因此重跑或修改正式原件。
 
 本輪到T13與文件交付為止。Task14未開工，T21另裁；新增canonical＋U／U-only／client smoke未執行，M6整體／人工／main合併／tag／PR均未完成。維度key、T14模型Files／amplified比較層、T18–20 respawn／spawn與管理指令等deferred ledger事項只記錄，仍到對應task開工前依授權處理。
+
+
+### 2026-11-09稍後：純文件CI再發失敗，T13重新OPEN
+
+純四docs commit `43cb99b26543204ba23f9fbd3502b03cbe91c934` 已正常push／遠端讀回同SHA／porcelain空，對d0沒有任何code／script／build／workflow差異。自動CI `42608921665` 卻再發兩項實際失敗：Windows「原生建置與GameTest」step6於11:44:23Z FAIL（job後續仍跑，具名case尚待原log／XML）；m6-native runtime21phase成功後，SavedSummary-SelfTest step6於11:41:59Z至11:46:59Z正好原300秒timeout，log／annotation明記5分鐘逾時，沒有M6_NATIVE_VERIFIED終局。Ubuntu build成功不能抵銷兩個FAIL，runtime成功也不能代SelfTest過關。
+
+已立即回報使用者，原run／log／metadata／artifact保留，不重送碰運氣、不提高timeout、不減277或更改正式oracle。這是同程式再次暴露不穩定的驗證出口，故T13最新狀態重新OPEN、C checkbox恢復待驗；上節d0的C3 END ALL0／CI三job成功／兩席C0I0M0仍為真實歷史，原件與formal報告不回判。不得把純docs當作忽略此次失敗的理由，也不能尚未見Windows原case就判external、known或unrelated。
+
+初次回報時，同一implementer只做既有PS1 verifier的唯讀成本量測、確認重複驗證範圍及保全部criteria／277／前後全baseline／無PASS cache的最小流程改善候選；尚未改source或啟新runtime。候選須先量測／設計與同席窄審，再依已授權T13界線處理；不趁機修未授權檔案／production／workflow。不進T14、T21不變，全部舊FAIL／UNRESOLVED與原失敗根全保留。
+
+**上述新CI原件補核與fix3設計採用當時快照：** 42608921665終局build成功、兩Windows job失敗。Windows原XML default166中15fail／0skip（10個有限等待逾時、5個局部實例／完整AABB容量不足），normal13／legacy1／M5 60／M6 19零bad／0skip，JUnit1107零fail/error／既有skip2；step9由default scope連帶拒，不是M6原XML本身bad。原default XML SHA `15f387efb6ffa3d852bf287207cbc266fc80f7d591b7aeb95d7726e37ab75920`。完整capture在SDD `ci-docs43cb99b-42608921665-20261109-4e19fcb2/`，`CI_OBSERVATION.md`與`ci-terminal-failure-audit.json`（後者SHA `a278303337ee66e3378572e508a405ca2cf5acba4167f6f90b778a3e27f41b2e`）列實際終局及根因未證；未重跑。PS1-only fix3候選設計8557…10cb及plan已同spec窄審C0／I0／M0（review e07cc7…d703），准同一implementer僅manifest前置與SelfTest exact phase-scope，不減正常7／21／原277／common及continuity／首尾baseline，無PASS cache或clone語義／timeout更改；候選bench與新pin正式出口未完成。M2僅核owning-source，不改碼／新probe。
+
+
+### 2026-11-09：verifier fix3候選完成（新pin C4／真CI待，T13仍OPEN）
+
+同一implementer僅改既有PS1的manifest完整cheap檢查前置及SelfTest單receipt exact phase-scope，正常Verify仍完整7鏈21phase、全部原common SHA／header／JVM／lock／PID與cross-phase continuity、首尾全baseline／277皆保留。沒有PASS／parsed cache、clone／COW、Java／production／workflow或timeout修改；多故障first-error優先序可能因manifest前置改變已明列，單一代表反例拒碼等價。24原函式全文、manifest if與switch literal、原chain20個if與general／真runtime入口有獨立文字證明。
+
+真3ea／af9233單run完整Verify＋277＋末全baseline自然outer0，152.7044356秒，原300秒餘147.2955644秒；這是新候選對既存真原件的唯讀量測，不是43CI重播、新SHA CI或C4功能驗收。另45項context cases（含正例、拒碼等價、scope反向NOT_KILLED→KILLED、byteREVERT、raw tamper與object隔離，不能稱45個負控）完成。原62收據／CI43artifact438檔／兩Java source／1095classes前後exact，四份docs WIP明列由controller管理，不冒當時porcelain空。
+
+固定PS1 SHA `f12d80ee4dbdd14b44a2e4662a3e669ff2d0be6c4478aad4c5ced6fd6d69bf60`，base43 diff SHA `2ffefcaa4ecc7aeddb1ded423644399559526eb6cf8eeb31277efd1379c83075`；SDD `carvers-verifier-fix3-20261109/fix3-delivery-index.json` SHA `f807d494a33a2d0dad745c0e8d480768579c5903e451af209ab59612c0798345`，final-candidate-pin SHA `65c947514f23e2e94e3cf2e6d6501b3296948ee56a7612501158e227ebaf0b64`，manifest SHA `d7282687cf6152ea0231e3fca2b41cd97ae96516c48f894277f31b296d9fdfbe`。候選時點報告先保byte快照再append，`report-through-fix3.bin` SHA `4bf47aed46ecedec9c2b5b74bd5ae3b96637661f264dc98e549fe99aa9224ce7`。
+
+fix3正式窄spec／quality均C0／I0／M0、無必要修正，review另存本plan ignored檔，原formal9d10／c024／diagnostic不append或回判。新code pin的原C4 focused／完整run-all／同SHA真CI仍待；不得以152秒本地結果替代真5分鐘CI。M2一般TrustedSpace／whenUntil不在milk-only舊授權內；本段寫成時新增範圍尚未批准，其後使用者已明確授權（見下節），仍不能視為已修或以等待時間當授權。T13 OPEN、T14不前進，所有原FAIL／SETUP／NOT_KILLED／UNRESOLVED保留。
+
+
+### 2026-11-09：使用者另准M2 testmod窄修（尚在設計，未實作）
+
+使用者已明確回覆「授權此 M2 testmod 窄修」，核准範圍限M2CorridorGameTests.java這批TrustedSpace等待／失敗cleanup，先一份設計與獨立窄審C/I0後實作，保原ready predicate／功能斷言，以原tickLimit內條件等待及正式cleanup驗證，不改production／不加外部observer；15案是否同因仍待驗證。這是本次新增授權，取代上述當時『M2未准』狀態，不回寫歷史原件。
+
+controller已派fresh設計者先寫唯一ignored有界設計，未放行任何M2碼。原read-only audit確認這個首列case是TrustedSpace manager.ready(prepared/remap)，不能混稱NativeEntry.activeReady；無hooks when每次10秒另有scheduledtesttick90000，generic FULL只固定62,125旁證。當時target182格loaded/ticking129不滿整lease必要條件，但哪個deadline OR分支／時間首因／case級cleanup完成與15案資源連帶尚未證；production allocator reserve empty亦不構成共因證明。
+
+PS1 fix3兩席C0／I0／M0可先checkpoint，後續M2受審候選完成後才以最終固定pin做原C4／完整回歸／同SHA CI，避免混source或重用舊pin驗收。T13仍OPEN，T14／T21／新canonical＋U／U-only／client與production等原邊界不擴。

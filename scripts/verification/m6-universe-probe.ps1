@@ -394,11 +394,16 @@ function Assert-CatalogReceipt($receipt,$phase,$owned,$state,[bool]$Historical=$
         } elseif((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $receipt.$name){throw 'M6_CATALOG_AUTHORITY_HASH'}
     }
 }
+function Assert-SavedNativeManifestEntry($native,[int]$i) {
+    $spec=$manifest[$i];$entry=$native.enabledManifest[$i];$chainRow=$native.chains[$i]
+    if($entry.chain -cne $spec.chain -or $entry.expectedMode -cne $spec.expectedMode -or $entry.m6ProbeSchema -ne 1 -or ($entry.phases -join ',') -cne ($spec.phases -join ',') -or $chainRow.chain -cne $spec.chain -or $chainRow.expectedMode -cne $spec.expectedMode -or ($chainRow.phases -join ',') -cne ($spec.phases -join ',')){throw 'M6_SAVED_MANIFEST'}
+}
 function Assert-SavedNativeGlobal($native) {
     $phaseTotal=(@($manifest | ForEach-Object {$_.phases.Count}) | Measure-Object -Sum).Sum
     if($native.status -cne 'PASS' -or $native.head -cne $head -or -not $native.allEnabled -or $native.requireIndependentSeed -or $native.expectedMode -cne 'PER_CHAIN' -or $native.phaseCount -ne $phaseTotal -or $native.phaseMinutes -ne 3 -or $native.idleSeconds -ne 90 -or $native.blockMinutes -ne 60 -or $native.functionalAssertionsRemainRed -ne $true){throw 'M6_SAVED_SUMMARY'}
     if(@($native.enabledManifest).Count -ne $manifest.Count -or @($native.chains).Count -ne $manifest.Count -or @($native.phases).Count -ne $phaseTotal -or ($native.selectedChains -join ',') -cne ($manifest.chain -join ',')){throw 'M6_SAVED_MANIFEST'}
     if(@($native.phases.startupNonce | Sort-Object -Unique).Count -ne $phaseTotal -or @($native.chains.root | Sort-Object -Unique).Count -ne $manifest.Count){throw 'M6_SAVED_OWNER_REUSED'}
+    for($index=0;$index -lt $manifest.Count;$index++){Assert-SavedNativeManifestEntry $native $index}
 }
 function Get-SavedNativeChainOffset([int]$ChainIndex) {
     if($ChainIndex -lt 0 -or $ChainIndex -ge $manifest.Count){throw 'M6_SAVED_OVERRIDE_SCOPE'}
@@ -412,12 +417,27 @@ function Get-SavedNativeChainIndex([int]$PhaseIndex) {
     }
     throw 'M6_SAVED_OVERRIDE_SCOPE'
 }
+function Assert-SavedNativeReceiptPredicate($receipt,$phaseName,$owned,$state,$spec) {
+        switch -CaseSensitive ($spec.chain) {
+            'native-seed-diagnostic' {Assert-DiagnosticReceipt $receipt $phaseName $row.nonce $row.startupNonce}
+            'catalog-readback' {Assert-CatalogReceipt $receipt $phaseName $owned $state $true}
+            'native-seed-functional' {Assert-SeedReceipt $receipt $phaseName $owned $state}
+            'same-seed-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
+            'same-seed-amplified-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
+            default {Assert-GameplayReceipt $receipt $spec.chain $phaseName $owned $state}
+        }
+}
 # full與SelfTest共用原chain判定；不保存或重用任何PASS結論。
-function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},$preservationOverrides=@{}) {
+function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},$preservationOverrides=@{},$ReceiptPredicateIndex=$null) {
     $offset=Get-SavedNativeChainOffset $ChainIndex
+    if($null -ne $ReceiptPredicateIndex) {
+        if($ReceiptPredicateIndex -isnot [int] -or $receiptOverrides -isnot [hashtable] -or $preservationOverrides -isnot [hashtable] -or $receiptOverrides.Count -ne 1 -or $preservationOverrides.Count -ne 0 -or $ReceiptPredicateIndex -lt $offset -or $ReceiptPredicateIndex -ge $offset+$manifest[$ChainIndex].phases.Count){throw 'M6_SAVED_OVERRIDE_SCOPE'}
+        $overrideKey=@($receiptOverrides.Keys)[0]
+        if($overrideKey -isnot [int] -or $overrideKey -ne $ReceiptPredicateIndex){throw 'M6_SAVED_OVERRIDE_SCOPE'}
+    }
     $i=$ChainIndex
     $spec=$manifest[$i];$entry=$native.enabledManifest[$i];$chainRow=$native.chains[$i]
-    if($entry.chain -cne $spec.chain -or $entry.expectedMode -cne $spec.expectedMode -or $entry.m6ProbeSchema -ne 1 -or ($entry.phases -join ',') -cne ($spec.phases -join ',') -or $chainRow.chain -cne $spec.chain -or $chainRow.expectedMode -cne $spec.expectedMode -or ($chainRow.phases -join ',') -cne ($spec.phases -join ',')){throw 'M6_SAVED_MANIFEST'}
+    Assert-SavedNativeManifestEntry $native $i
     if((Get-FileHash -LiteralPath $chainRow.preservation).Hash -cne $chainRow.preservationSha256){throw 'M6_SAVED_PRESERVATION_HASH'}
     $preserve=if($preservationOverrides.ContainsKey($i)){$preservationOverrides[$i]}else{Get-Content -LiteralPath $chainRow.preservation -Raw | ConvertFrom-Json -DateKind String}
     if($preserve.root -cne $chainRow.root -or $preserve.strategy -cne 'NEW_OWNED_ROOT' -or $preserve.existingWorldsMoved -ne 0 -or $preserve.existingWorldsChanged -or -not $preserve.retainedRoot -or -not $preserve.lockReleased -or $preserve.normalStop -ne ($spec.chain -cne 'catalog-readback')){throw 'M6_SAVED_PRESERVATION'}
@@ -431,14 +451,7 @@ function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},
         $halt=$spec.chain -ceq 'catalog-readback' -or ($spec.chain -cin @('intent-allocation','partial-overworld') -and $phaseName -cne 'restart')
         if($row.normalStop -eq $halt -or $row.javaExitCode -ne $(if($halt){77}else{0}) -or ($halt -and $row.gradleExitCode -eq 0) -or (-not $halt -and $row.gradleExitCode -ne 0)){throw 'M6_SAVED_EXIT'}
         $owned=[pscustomobject]@{nonce=$row.nonce;root=$row.root};$state=[pscustomobject]@{StartupNonce=$row.startupNonce;PhaseEvidence=[IO.Path]::GetDirectoryName($row.receipt)}
-        switch -CaseSensitive ($spec.chain) {
-            'native-seed-diagnostic' {Assert-DiagnosticReceipt $receipt $phaseName $row.nonce $row.startupNonce}
-            'catalog-readback' {Assert-CatalogReceipt $receipt $phaseName $owned $state $true}
-            'native-seed-functional' {Assert-SeedReceipt $receipt $phaseName $owned $state}
-            'same-seed-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
-            'same-seed-amplified-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
-            default {Assert-GameplayReceipt $receipt $spec.chain $phaseName $owned $state}
-        }
+        if($null -eq $ReceiptPredicateIndex -or $offset -eq $ReceiptPredicateIndex){Assert-SavedNativeReceiptPredicate $receipt $phaseName $owned $state $spec}
         $receipts+=,$receipt;$pids+=,$row.javaPid;$phaseEvidenceBases+=,$state.PhaseEvidence;$offset++
     }
     if(@($pids | Sort-Object -Unique).Count -ne $spec.phases.Count){throw 'M6_SAVED_JVM_REUSED'}
@@ -478,6 +491,13 @@ function Assert-SavedNativeOverride($native,[int]$ChainIndex,$receiptOverrides=@
     Assert-SavedNativeChain $native $ChainIndex $receiptOverrides $preservationOverrides
 }
 
+# 只供SelfTest單receipt override；原SHA/header與跨phase條件照常逐次驗。
+function Assert-SavedNativeReceiptOverride($native,[int]$ChainIndex,$PhaseIndex,$receiptOverrides=@{},$preservationOverrides=@{}) {
+    Assert-SavedNativeGlobal $native
+    if($PhaseIndex -isnot [int]){throw 'M6_SAVED_OVERRIDE_SCOPE'}
+    Assert-SavedNativeChain $native $ChainIndex $receiptOverrides $preservationOverrides $PhaseIndex
+}
+
 if($VerifySummary) {
     $native=Get-Content -LiteralPath $VerifySummary -Raw | ConvertFrom-Json -DateKind String
     Assert-SavedNativeSummary $native
@@ -497,7 +517,7 @@ if($VerifySummary) {
             foreach($field in @('expectedMode','m6ProbeSchema','chain','phase','status')) {
                 $bad=Get-Content -LiteralPath $native.phases[$index].receipt -Raw | ConvertFrom-Json -DateKind String
                 $bad.$field=if($field -ceq 'm6ProbeSchema'){2}else{'WRONG'}
-                $rejected=$false;try{Assert-SavedNativeOverride $native $chainIndex @{$index=$bad}}catch{$rejected=$true};if(-not $rejected){throw 'M6_SAVED_RECEIPT_NEGATIVE_MISSED'};$checks++
+                $rejected=$false;try{Assert-SavedNativeReceiptOverride $native $chainIndex $index @{$index=$bad}}catch{$rejected=$true};if(-not $rejected){throw 'M6_SAVED_RECEIPT_NEGATIVE_MISSED'};$checks++
             }
             $original=Get-Content -LiteralPath $native.phases[$index].receipt -Raw | ConvertFrom-Json -DateKind String
             if($original.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
@@ -510,7 +530,7 @@ if($VerifySummary) {
                 foreach($field in $fields) {
                     $bad=$original | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String
                     $bad.variants[0].$field=$false
-                    $rejected=$false;try{Assert-SavedNativeOverride $native $chainIndex @{$index=$bad}}catch{$rejected=$true}
+                    $rejected=$false;try{Assert-SavedNativeReceiptOverride $native $chainIndex $index @{$index=$bad}}catch{$rejected=$true}
                     if(-not $rejected){throw "M6_SAME_NEGATIVE_MISSED:$field"};$checks++
                 }
             }
