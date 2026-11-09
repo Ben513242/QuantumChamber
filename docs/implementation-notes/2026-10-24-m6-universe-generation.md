@@ -1719,3 +1719,40 @@ fix2僅既有 `scripts/verification/m6-universe-probe.ps1`：continuity顯式接
 固定source SHA `6d9f9e334e305919b122e23573f4dfd2b344eb12a4a8a69e73b963c8ac32c969`、base d973 diff SHA `9043ae5f2e20c5c6d9712c16fbbb4eb2027eb62dfac637b946a56c5e985a4ad2`，pin SHA `aa0ab4413d122d08a3215fb639657ce9c8f9b895862d1d743e2b33d198a6b31b`；原件在 SDD `carvers-continuity-fix2-20261109/`。9項context正反例均通過，包括正常base、原fixture context、缺／錯／換序base與缺witness時repo有同名仍不得fallback，以及錯SHA／檔名。f8真單run073c輸入完整Verify＋277及末全baseline自然exit0／空stderr，203.610秒，原300秒餘96.390秒；這是唯讀parser回歸，不是新pin C3或原full改判。
 
 fresh原ci-rule fixture `.superpowers/verification/ci-t13-fix2-native-green-e25355a8c9d042369ad305de69c1c3de` 自然PASS，outer／step0、196.995196秒，真7鏈21phase／277。result SHA `2fa654ece78df0838756fa5a7bae7512a44ad33d9e7b670bf349f50ae18c64c0`；原f8 summary SHA `cec6602ac2ac20b4b863e03479b2aeee9d41e01b05302da616711cb26cb2bf9e` 未變，原failed fixture未動，沒有啟新JVM。同兩席fix2窄審C0／I0／M0，均獨立核source／pin／context cases／真277與fresh replay，報告先留前版快照再追加。新乾淨code pin的C3雙focused／full／同SHA CI尚待；C checkbox不勾，T13仍OPEN、不進T14。Java與A20原封，不因路徑relay重跑20個控制或把它們當C；T21及所有舊FAIL／UNRESOLVED原判不變，新增canonical＋U／U-only／client未授權。
+
+
+### 2026-11-09：T13正式結案（只適用T13，停在T14前）
+
+**T13已達本輪全部正式出口；formal spec／quality終局各C0／I0／M0，可關閉T13。** 程式驗收pin固定 `d0aafb47d574f5fff24f712246bbf3508ec2a635`；同pin雙focused、完整full與三job CI均已真正完成。後續本次提交只更新AGENTS、接手入口、plan及本note四份狀態文件，不改程式／測試／script／build／workflow，也不把任何舊FAIL翻案。文件HEAD與正常push狀態以Git／遠端ref為準，不預寫合併main、tag或人工驗收。
+
+| 出口 | 本次實測結果 |
+| --- | --- |
+| A canonical-only CARVERS | normal、amplified各10個有效fresh世界資料，各preset hash單一；原outer19PASS＋normal03鍵序SETUP與唯讀重核分列保留 |
+| 新strict層與反例 | actual CARVERS 1440逐格exact；實際錯seed、錯preset、actual一格改塊各具名拒，負控pin、RED／GREEN／REVERT限制見A／B原章，不冒最終pin重跑 |
+| C3原雙focused | compile1；四class各雙共92 JUnit案次零bad／skip；owner／selector兩輪各2case、milk／no-entrance兩輪各2case；world／env EXACT |
+| C3正常native focused | normal、amplified各雙fresh三phase，共12phase／12獨立owner，actual CARVERS與重啟連續性exact |
+| 完整run-all | `run-all-3eaeb70caecd4e39b4e22935f05cd53d` 自然END ALL exit0／outer0，同HEAD；summary SHA `9bf3ceb82469b993d4e6b3205e8b08fc32cda86db86933c3e1831553a2bf9c05` |
+| full實際scope | default166／normal13／legacy1／M5 GameTest60／M6 GameTest19，皆零bad／skip；JUnit1107＝1105實際執行＋2既有Windows平台skip，failure／error0；M3 4＋5、recovery25、M5collapse69 |
+| full原生與收據驗證 | AllEnabled7鏈21phase＝DIAGNOSTIC2＋FUNCTIONAL19；原ci-rule native-green與原末段VerifySummary各自277全過，分開採計、未新增standalone／未減原step |
+| artifact／還原 | release／sources testmodHits0、main-only PASS；原世界及環境還原exact；最終porcelain空、非daemon測試Java0 |
+| 同SHA CI | [42595046917](https://github.com/Ben513242/QuantumChamber/actions/runs/42595046917) 同d0aafb47，build／windows-native／m6-native三job終局success；真SavedSummary-SelfTest258秒／原300秒，7鏈21phase／277 |
+| 終局review | formal spec C0／I0／M0；formal quality C0／I0／M0；完整final診斷另有唯讀處置，producer原件不改 |
+
+A兩組actual CARVERS block hash仍為normal `957bf76ec7cc5d47bbd4176e0876b5422d27545597234f95b369c1c72f47acb7`、amplified `742a4d5b7966e6d5596da7e62fbfc7916f7df14913f6e47649928996a1f05455`。只支持本批模組載入、無動態U的canonical控制條件；不是純vanilla定理，也不外推T21或任意生成歷史。seed／frozen settings／provider-FP／biome／structure／建築不複製／雙向edit／restart權威／UUID-catalog與actual CARVERS exact均保持嚴格，不以density代替。
+
+**final診斷處置：** C3 focused、full及CI的每側1440列、digest、pairwise與new→restart完整差格均已獨立核算。C3 focused amplified第一輪是source1a3c／target3580，full則source3580／target1a3c；兩者都只有index1216 `(527,64,512)` stone／coal_ore方向相反的完整差格，各側跨phase0差。這是各根事實，不是容許一格或任何比例；兩側完整rows對上歷史觀測僅供分類，不構成集合membership關卡。此次正常觀測未見新形狀，審查接受為完整診斷輸出且未見新增strict finding；FEATURES先後、共享狀態等因果仍未證，不再追feature writer時序。受控人工FULL改塊正例另列B原章，不混入正常觀測。
+
+所有producer `reviewStatus=UNRESOLVED`／`novelty=NOT_CLASSIFIED`原值保留。獨立審查的「資料完整、可接受診斷」與「原因未證」分欄記錄；不回填receipt、不自動擴baseline、不將舊FAIL追認PASS。T21共用helper仍default exact，正式same-seed驗收之後另裁。
+
+**固定交付索引與SHA**（共同SDD前綴 `.superpowers/sdd/2026-10-24-m6-universe-generation/`）：
+
+- `carvers-stage-c3-evidence-t13lc-clean-d0aa-20261109/stage-c3-delivery-index.json` SHA `2b8a2cbc037a5a883251d1bed7c9a0cbbc0d9049a62e85474837b35d77cfd82e`；8804檔`owned-evidence-sha256.json` SHA `b70757bf73a3793393dfd743fd3c6ad1244f9d46de1513d4b1ed63fd62da0bf1`，42個intentional reparse只列不follow，不冒完整世界備份。
+- 同目錄`immutable-final/pin.json` SHA `0078c8d84f58235f65fcf0dd7a3ec6046d4c06376ea5c07d6a404d10d22d6b5d`；三source與1095compiled class current／archive逐檔exact、554tracked前後exact。C3原時點報告`report-through-c3.bin` SHA `a51340020e576a0d703e8696cb365a88aaa452449d80f09a6ee3f55592b5ceae`。
+- full native `m6-native-run-af923338ffa148d39e3c77f1d9e4c114.json` SHA `e1cbfd8a1de7e44fe492592a58aa522bbb27a7ffc91ae19004f192d351e9e6d7`；原末段`m6-native-verify.log` SHA `007d7529cd02dd9a586e7544bbed676da8ca026a5edff2d9c86c4c2e87dea383`；原native-green fixture69f186f…的command／result／stdout與同摘要鏈列於C3索引。
+- `task13-layered-spec-review-20261109.md` 正式終局SHA `9d10ec77cd76f61f2b59ddc41fb9fb0c2679f69e6d88c7845631783eca44a804`；`task13-layered-quality-review-20261109.md` 正式終局SHA `c02427c2fb989d1ac5a8f96b9959ff26e89e486152058a61bcd6f5a93b9c6dc4`。其後文件truth窄核如追加，原終局時點保byte快照，不讓append掩蓋此引用。
+- `task13-layered-final-diagnostic-review-20261109.md` SHA `0d09958b41cd8f0c22bdb5fc4c135a95ed25d3cbdfcbce3bc75f6492dc85c657`、同名JSON SHA `728f86eacdbc8f4c27bf623732419a627c19b269507b5550f0245fe148febebb`；`fullAccepted=true`只對本次3ea，不改舊f8／dd57等判定。
+- 新CI原metadata／全job log／native ZIP與445檔manifest在 `ci-d0aafb-42595046917-20261109-093b0f71/`；原ZIP API digest核相同。舊d973成功與4593失敗均另存各時點，不混用。
+
+**保留的失敗與停止界線：** dd57、35f5、U→U c7d／e1d、4593 CI timeout、C2深路徑preflight與f8 native-green FAIL，以及所有原NOT_KILLED／SETUP／UNRESOLVED均保原根原判。fix2只修證據base relay，不補檔覆蓋舊fixture；24份舊原件前後SHA仍相同。C3離線包裝曾用錯歷史class檔名而SETUP，原錯保留、修正唯讀包裝查找、runtimeRerun=false，沒有因此重跑或修改正式原件。
+
+本輪到T13與文件交付為止。Task14未開工，T21另裁；新增canonical＋U／U-only／client smoke未執行，M6整體／人工／main合併／tag／PR均未完成。維度key、T14模型Files／amplified比較層、T18–20 respawn／spawn與管理指令等deferred ledger事項只記錄，仍到對應task開工前依授權處理。

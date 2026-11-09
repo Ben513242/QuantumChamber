@@ -1,5 +1,7 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
+**2026-11-09 T13 正式結案，依裁示停在 T14 前。** 程式pin `d0aafb47d574f5fff24f712246bbf3508ec2a635`：C3原雙focused與兩preset各雙fresh native鏈全過，完整 `run-all-3eaeb70caecd4e39b4e22935f05cd53d` 自然END ALL0／outer0，summary SHA `9bf3ceb82469b993d4e6b3205e8b08fc32cda86db86933c3e1831553a2bf9c05`；原native-green與末段verify各277通過，沒有新增standalone。CI42595046917同SHA build／windows-native／m6-native三job終局success，真SelfTest258秒／原300秒。formal spec／quality各C0／I0／M0，可關閉T13；source／1095class／554tracked前後exact。final1440rows與全部差格已獨審，producerUNRESOLVED／NOT_CLASSIFIED保留，不推根因、不採baseline或容差。舊FAIL不翻案、T21 exact不變，T14與新增canonical＋U／U-only／client皆未啟動。後續只四份結案狀態文件，程式驗收pin固定；文件HEAD／push以Git實際為準。詳M6 note「T13正式結案」與本檔§8；下方舊「最新／待驗」均為歷史快照。
+
 **2026-11-09 C2 full 原判 FAIL，continuity evidence-base fix2 待出口驗證。** code `d973710cf21c89fa5f491dc3b9874e2bdf11058c` 的 CI42581484000 三 job 終局 success（真 SelfTest273秒／原300秒、7鏈21phase／277反例），C2 雙 focused 全綠；本機短路徑 `run-all-f8eefde1119b4f55b24fde36668368db` 所有 runtime gate exit0，最後 `ci-rule native-green` 因 continuity 從 fixture `$project` 推錯 CARVERS 路徑而 FAIL／outer1／無 END ALL。原 sidecar 在且 SHA 相同，並非少複製檔案；原 failed fixture 與較早深路徑 preflight FAIL 全保留。fix2 只既有 PS1 明傳 caller 已驗的三 phase receipt dirname，不減守門／不加 fallback／不改 timeout。真 f8 AllEnabled073c輸入全 Verify＋277 自然203.610秒通過，僅屬唯讀 parser 回歸；新fixture e25355a8… replay亦自然PASS（196.995秒／outer與step0／277），同兩席fix2窄審C0／I0／M0；新pin C3／full／同SHA CI尚待。T13 OPEN，不進 T14；Java／A20／T21／舊 FAIL 不變，新增 canonical＋U／U-only／client 未授權。以下較早「待驗／最新」均為歷史快照。
 
 **2026-11-09 verifier fix1候選已窄審，C須新pin重驗。** code4593 CI42572502698整體FAIL：native七鏈21phase PASS但SavedSummary-SelfTest超既有5分鐘，其他兩job PASS；原判不改。C舊pin僅compile+四class雙JUnit92 exact，其餘未啟即停，不能挪作新SHA。fix1只既有PS1抽global/chain共用流程，真Verify仍全7鏈、局部SelfTest仍global+受影響chain、原277反例/所有predicate/前後fullbaseline保留，無PASS cache/無提高timeout。parser-only合成bench189.947s（不是functional/CI重播）與同席spec/qualityC0/I0/M0齊；真正新code同SHA CI及C full仍待，T13OPEN/no14，T21/Java/CARVERS/舊FAIL不變，CU/Uonly/client未授權。
@@ -143,6 +145,8 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 - 任何文件不得提前寫「已合併 main」「已 push」「人工驗收已通過」。
 
 ## 8. 交回紀錄
+
+- 2026-11-09（Codex，T13正式結案）：依當日分層裁示，A normal／amplified各10個canonical-only CARVERS控制分別單一957bf…／742a4…，只有模組載入／無動態U的控制範圍，不稱純vanilla。程式pin `d0aafb47d574f5fff24f712246bbf3508ec2a635` 的C3完整雙focused、12個正常native phase、完整3ea END ALL0／outer0、原兩次各277及同SHA CI42595046917三job success均成立；formal spec／quality各C0／I0／M0。C3 index SHA `2b8a2cbc037a5a883251d1bed7c9a0cbbc0d9049a62e85474837b35d77cfd82e`，8804檔manifest與immutable source/class pin保在本plan SDD；完整索引／hash／counts見M6 note末節。normal／amplified final差格逐格已獨審，UNRESOLVED原值與dd57／35f5／4593CI／f8 full等全部舊FAIL保留；沒有把已見hash當關卡或歸因FEATURES時序。Task13完成，Task14未開工；T21另裁、deferred ledger事項到對應task前處理，新增canonical＋U／U-only／client、main／tag／PR未執行。本次只交付與文件收尾，後續程式工作等使用者新裁示。
 
 Codex 每次交回在此追加：日期、code pin、range、RED／GREEN、雙 focused、full nonce、兩席 review、CI run、下一步。
 
