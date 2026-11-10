@@ -1871,3 +1871,21 @@ sameSHA CI `42732476087` 終局FAIL：build success、m6-native真187秒／7鏈2
 本次五文件是 T13 候選結案文件，**待本 commit CI，T13 仍 OPEN**。production／client／build／workflow 自 `d0aafb47d574f5fff24f712246bbf3508ec2a635` 無差；其後僅 M2 testmod 與既有 M6 verifier PS1 增量。程式 pin `0abd50e92592e9d50a1c2fa0fe1c944409608c95` 的最終 focused index SHA `0e60b81a3924f0558632249efde25eaf9a599e097813a42e593b6b785735950d`：17 步 PASS，JUnit92、owner4、M2九案雙輪18、native12 phase；CI42675304922 三 job 真 success，CI audit SHA `6771e1dfe37673d2b4e23aa8b92c7ebf6ae20a352a28925b2fee44beef549ed4`。final-data／focused／CI quality 獨審 C0/I0/M0 報告 SHA `738e682dc258619724b2d55f6c1394965ae3e47bacab8b847f40b990bd0f05d6` 仍可採，normal-r2 三格 final 差異的完整 rows／diff 與 UNRESOLVED 診斷不改。
 
 依 B+C 對本次測試／腳本／文件增量不另跑本機 full 或 mutation。原 d0 full 是既有 production 基準，0abd focused／CI 與本次文件 CI 各依其 SHA 分列；80f9、f308 的所有 FAIL 仍原判，不能稱本次已重跑 full 通過。正常 commit／push 後等此文件 SHA 的 build／windows-native／m6-native 三 job 真全綠，才在 ignored STATUS／ledger 及交付記 T13 closed；不為更新這個狀態再遞迴發文件 CI。若仍 FAIL，保持 T13 OPEN 並依既有重跑次數止損回報。T14 未啟，8-H、M6 T22 與人工／main／tag 門檻仍待。
+
+
+### 2026-11-10：宇宙只有主世界／取代 T20 的宇宙內重生（範圍修訂待一次窄審）
+
+使用者明確改為宇宙只有主世界、Nether／End 共用原版；T15–T19、T21 不排 M6 或 M7，plan 只保留一段未排程構想。U→U 全量比較取消，c7d／e1d 原 FAIL 保為歷史；catalog 未物化 Nether／End descriptor 與 key 不一致待辦取消，不修程式或改已保存資料。這取代同日稍早的「整段移 M7」，不是舊 FAIL 改判。
+
+M6 新順序 T13→T14→宇宙內重生（取代 T20）→8-H triage（只有主世界重新提案）→收尾。重生限定 U 主世界死亡：同 U 有效床點優先；無有效點取 canonical 主世界 spawn 同 block XZ、同 U 安全 Y；U 無法使用 canonical fallback 並記錄。重啟後 U 未載入須依 checked authority 物化以保床點與登入；原版主世界／共用 Nether與End 死亡原版。原版 End credits 另屬非死亡路徑，U 床是否影響回 canonical 先驗、不擅擴 portal task。
+
+只讀固定 1.21 named JAR 的 javap 已定位兩個 proposed production 點：ServerPlayerEntity.getRespawnTarget 的床點 world lookup（offset25）與兩支 canonical fallback；PlayerManager.onPlayerConnect 的 MinecraftServer.getWorld lookup（offset106）在 missing-world fallback 前。plan 已具名 proposed method wrapper 與單 callsite WrapOperation，先回報、未實作；若需第三點先回報，不因文件審查冒 production gate。factory現有 UnmodifiableLevelProperties 來源與 canonical spawn 共用不代替新政策顯式讀 canonical spawn XZ；安全 Y 無解先回報，不擅造平台／換 XZ。
+
+人工 smoke 新建 tracked 待驗清單，含單人／多人與宇宙內死亡重生加一輪，明列從 U 經門到共用 Nether／End、回 canonical 主世界而非原 U 的產品預期；無人工實測或代操作授權，main／tag／人工各另問。spec v1.6／plan／三交接文件與清單待一次獨立窄審；本輪未改 production／testmod／腳本，未新增 runtime／本機 full／mutation。4e600a6 候選 T13 CI42746956981繼續獨立追蹤，不取消或重送。
+
+
+### 2026-11-10：只有主世界範圍唯一窄審採用
+
+初始六docs tracked patch SHA `bd438fed2fa082d6aacc7440aa2caef739624911b480defd96bf0f422ef90923` 加新 manual 清單經同一席窄審。唯一 Important I1 是 active 主幹仍殘留 future family／capability1／Task15–21 gate；只定向修 spec／plan（delta SHA `7bf3f810c6aea8479b51ecee46ca9bc23ffd9236a907a74657d11c57e9248c97`），未改既有資料shape／authority保證／歷史結果或 source。I1 ADDRESSED，終局 C0／I0／M0；唯一報告 `task13-overworld-only-scope-independent-review-20261110.md` SHA `062ac1acd07c6f073517c50f3cf69adfbaac7ab47ef6bad3e31ec13eb27cff3c`，可採用並只轉錄本段狀態，不另設計／觀測。
+
+Task R 的 getRespawnTarget 與 onPlayerConnect/getWorld 兩點仍為 proposed，已寫 plan 並先回報，沒有 production 變更或實作 gate 宣稱。manual 全部未執行，人工／main／tag 分別另問。T13 候選 commit 4e600a6 的 CI42746956981 尚未終局：已確認 build/m6-native job成功，Windows default與normal步驟成功、M5進行中；尚未三job全綠，不在本文件預寫T13 closed。新產品範圍文件只按 B+C 正常送CI，不以它改寫舊FAIL或重置額度。
